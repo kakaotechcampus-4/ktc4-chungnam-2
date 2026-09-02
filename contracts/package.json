@@ -1,0 +1,20 @@
+{
+  "name": "@pingo/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "pingo FE용 타입 생성 + 먹 서버(msw) 패키지. docs/api-spec.yaml에서 파생된다.",
+  "type": "module",
+  "scripts": {
+    "gen:types": "openapi-typescript ../docs/api-spec.yaml -o src/types/api.d.ts",
+    "lint:spec": "redocly lint ../docs/api-spec.yaml",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^1.25.0",
+    "msw": "^2.4.9",
+    "openapi-typescript": "^7.4.0",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.1"
+  }
+}
