@@ -413,7 +413,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 분류 × 종류 이중 필터 집계 (기획안 4절). 이슈 */
+        /** 분류 × 종류 이중 필터 집계 (기획안 4절) */
         get: {
             parameters: {
                 query?: never;
