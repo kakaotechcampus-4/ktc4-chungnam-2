@@ -31,8 +31,12 @@ Alembic 히스토리는 저장소 전체에 하나다. 모듈마다 별도 체�
 
 ## 로컬 실행
 
-- DB: PostgreSQL 17 + PostGIS, Redis — docker-compose (첫 착수자가 구성 파일 추가)
-- `uvicorn main:app --reload`
+- `pip install -r requirements.txt`, `.env.example`을 `.env`로 복사 후 값 채우기
+- DB·Redis: `docker-compose up -d` (`backend/docker-compose.yml` — PostgreSQL+PostGIS, Redis)
+- `uvicorn main:app --reload` — `backend/main.py`는 이미 있다. 각 모듈은 자기 `router.py`를 만들고
+  `main.py`의 주석 처리된 `include_router` 줄만 풀면 된다(그 외엔 `main.py`를 건드리지 않는다)
+- 마이그레이션: `alembic revision --autogenerate -m "..."` / `alembic upgrade head` — 모델을
+  추가했으면 `alembic/env.py`에 그 모듈의 `models` import를 추가해야 Alembic이 인식한다
 - 테스트: pytest, 모듈별 `tests/`
 
 ## 코드 품질

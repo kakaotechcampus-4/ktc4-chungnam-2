@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgis/postgis:17-3.4
+    environment:
+      POSTGRES_USER: pingo
+      POSTGRES_PASSWORD: pingo
+      POSTGRES_DB: pingo
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  pgdata:
