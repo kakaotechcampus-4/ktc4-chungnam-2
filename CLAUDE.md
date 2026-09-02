@@ -86,3 +86,4 @@ frontend/ (서브 디렉토리, 별도 Claude Code)
 | `contracts/` | FE 타입 생성 + 목 서버(msw) 패키지. `docs/api-spec.yaml`에서 파생됨. `contracts/README.md` 참고 |
 | `backend/CLAUDE.md` | 백엔드 공통 컨벤션 — 단일 FastAPI 앱 구조, 마이그레이션, 모듈 간 접근 규칙 |
 | `frontend/CLAUDE.md` | 프론트 공통 컨벤션 — 스택, 화면 구조, 계약 사용법 |
+| `docs/execution-order.md` | 이슈 "선행:" 표기 기반 실행 순서 초안 — 담당자 배정 전 참고용 |
