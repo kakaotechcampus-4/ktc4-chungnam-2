@@ -46,7 +46,7 @@ n명이 하나의 지도에 핀을 찍어 여행 장소를 정하고, 의견이 
 - 다른 모듈의 테이블을 직접 쿼리하지 않는다 — 필요하면 그 모듈이 공개한 함수나 API로.
 - 스펙이 부족하거나 틀렸다고 판단되면 직접 고치지 전에 루트에 보고하고 디스코드에 보고하고 그 다음 결정.
 
-### 백엔드 로컬에서 띄우기 (다운로드 후 이 순서 그대로)
+### 백엔드 로컬에서 띄우기 (다운로드 후 이 순서 그대로 ㄱㄱ)
 
 미리 설치할 것: [Python 3.10+](https://www.python.org/downloads/), [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 
@@ -55,7 +55,7 @@ git clone https://github.com/kakaotechcampus-4/ktc4-chungnam-2.git
 cd ktc4-chungnam-2/backend
 
 python -m venv .venv
-.venv\Scripts\activate        # 맥/리눅스는: source .venv/bin/activate
+.venv\Scripts\activate        # 맥/리눅스는: source .venv/bin/activate (검증은 못해봤습니다. 전 윈도우라서요.)
 
 pip install -r requirements.txt
 
@@ -66,9 +66,9 @@ docker-compose up -d          # DB(PostgreSQL+PostGIS)·Redis를 로컬에 띄�
 uvicorn main:app --reload
 ```
 
-브라우저로 `http://localhost:8000/health` 열어서 `{"status":"ok"}`가 뜨면 성공. 이게 뜬다는 건 "내 컴퓨터에서 이 프로젝트 서버가 정상적으로 돌고 있다"는 뜻이다 — 이제 `backend/<자기 모듈>/` 안에 실제 기능(라우터)을 짜기 시작하면 된다.
+브라우저로 `http://localhost:8000/health` 열어서 `{"status":"ok"}`가 뜨면 성공. 이게 뜬다는 건 내 컴퓨터에서 이 프로젝트 서버가 정상적으로 돌고 있다는 뜻 — 이제 `backend/<자기 모듈>/` 안에 실제 기능(라우터)을 짜기 시작하면 됨.
 
-`main.py`·`docker-compose.yml`·`requirements.txt`·`alembic/`은 이미 만들어져 있다. **이 파일들은 안 건드려도 된다** — 자기 모듈 폴더 안의 `router.py`, `models.py`만 만들고, `main.py` 안의 주석(`# from <모듈>.router import ...`)을 자기 모듈 부분만 풀어주면 된다.
+`main.py`·`docker-compose.yml`·`requirements.txt`·`alembic/`은 이미 만들어져 있습니다. **이 파일들은 안 건드려도 됩니다** — 자기 모듈 폴더 안의 `router.py`, `models.py`만 만들고, `main.py` 안의 주석(`# from <모듈>.router import ...`)을 자기 모듈 부분만 풀어주면 됩니다.
 
 ### 루트 (아키텍처 담당) 
 - `docs/`·`contracts/`처럼 여러 쪽이 공유하는 계약·툴링만 직접 만든다. 모듈 구현은 하지 않는다 — 담당 디렉토리와 이슈 번호만 안내하고, 그 사람이 새 세션을 연다.
