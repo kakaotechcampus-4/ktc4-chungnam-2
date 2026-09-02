@@ -168,7 +168,7 @@ paths:
   /maps/{mapId}/counts:
     get:
       tags: [pins]
-      summary: 분류 × 종류 이중 필터 집계 (기획안 4절). 이슈 #5의 "4중 필터" 표기는 확인 필요 — 오기로 추정
+      summary: 분류 × 종류 이중 필터 집계 (기획안 4절)
       parameters: [ { $ref: "#/components/parameters/MapId" } ]
       responses:
         "200":
