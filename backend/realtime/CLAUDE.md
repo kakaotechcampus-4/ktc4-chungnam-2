@@ -1,6 +1,6 @@
 # backend/realtime
 
-루트 문서를 먼저 읽는다: `/CLAUDE.md`, `docs/events.md`(정본), `docs/data-model.md`(`event_log`).
+루트 문서를 먼저 읽는다: `/CLAUDE.md`, `backend/CLAUDE.md`(백엔드 공통), `docs/events.md`(정본), `docs/data-model.md`(`event_log`).
 
 ## 책임
 

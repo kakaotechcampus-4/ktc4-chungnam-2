@@ -1,6 +1,6 @@
 # backend/auth
 
-루트 문서를 먼저 읽는다: `/CLAUDE.md`, `docs/api-spec.yaml`(`/auth/*`), `docs/data-model.md`(`users`, `memberships` 중 `users`만 이 모듈 소유).
+루트 문서를 먼저 읽는다: `/CLAUDE.md`, `backend/CLAUDE.md`(백엔드 공통), `docs/api-spec.yaml`(`/auth/*`), `docs/data-model.md`(`users`, `memberships` 중 `users`만 이 모듈 소유).
 
 ## 책임
 

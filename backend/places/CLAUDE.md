@@ -1,6 +1,6 @@
 # backend/places
 
-루트 문서를 먼저 읽는다: `/CLAUDE.md`, `docs/architecture.md` 2절(3층 데이터 모델), `docs/data-model.md`(`places`, `place_facts`), `docs/constraints.md`.
+루트 문서를 먼저 읽는다: `/CLAUDE.md`, `backend/CLAUDE.md`(백엔드 공통), `docs/architecture.md` 2절(3층 데이터 모델), `docs/data-model.md`(`places`, `place_facts`), `docs/constraints.md`.
 
 ## 책임
 

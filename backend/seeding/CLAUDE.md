@@ -1,6 +1,6 @@
 # backend/seeding (신규 모듈, D3)
 
-루트 문서를 먼저 읽는다: `/CLAUDE.md`, `docs/architecture.md` 3절(프리시딩 흐름), `docs/data-model.md`(`seeding_jobs`).
+루트 문서를 먼저 읽는다: `/CLAUDE.md`, `backend/CLAUDE.md`(백엔드 공통), `docs/architecture.md` 3절(프리시딩 흐름), `docs/data-model.md`(`seeding_jobs`).
 
 ## 책임
 

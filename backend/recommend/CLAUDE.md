@@ -1,6 +1,6 @@
 # backend/recommend
 
-루트 문서를 먼저 읽는다: `/CLAUDE.md`, `docs/api-spec.yaml`(`recommend` 태그 전체), `docs/data-model.md`(`recommend_runs`, `evidence_lines`, `regions`, `candidates`, `exclusions`), `docs/constraints.md`.
+루트 문서를 먼저 읽는다: `/CLAUDE.md`, `backend/CLAUDE.md`(백엔드 공통), `docs/api-spec.yaml`(`recommend` 태그 전체), `docs/data-model.md`(`recommend_runs`, `evidence_lines`, `regions`, `candidates`, `exclusions`), `docs/constraints.md`.
 
 ## 책임
 
