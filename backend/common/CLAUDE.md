@@ -1,6 +1,6 @@
 # backend/common
 
-루트 문서를 먼저 읽는다: `/CLAUDE.md`, `docs/api-spec.yaml`(`Error` 스키마), `docs/errors.md`(정본).
+루트 문서를 먼저 읽는다: `/CLAUDE.md`, `backend/CLAUDE.md`(백엔드 공통), `docs/api-spec.yaml`(`Error` 스키마), `docs/errors.md`(정본).
 
 ## 책임
 

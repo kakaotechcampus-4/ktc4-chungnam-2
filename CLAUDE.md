@@ -8,22 +8,27 @@
 ```
 루트 (이 저장소 최상위)
   ├─ 아키텍처 설계, 모듈 간 API 스펙 정의, 이슈/작업 분할, 통합 테스트
-  └─ FE↔BE 데이터 구조 정의 — 구조가 바뀌면 즉시 docs/CHANGELOG-api.md에 기록하고 프론트 담당자에게 보고
+  └─ FE↔BE 데이터 구조 정의 — 구조가 바뀌면 즉시 docs/CHANGELOG-api.md에 기록하고 각 담당자에게 보고
 
-backend/<module>/ (서브 디렉토리, 각각 별도 Claude Code)
+backend/ (backend/<module>/마다 별도 Claude Code)
+  └─ backend/CLAUDE.md(백엔드 공통) + backend/<module>/CLAUDE.md(모듈별)를 따른다
   └─ 루트가 정의한 스펙(docs/api-spec.yaml, docs/data-model.md, docs/constraints.md)에 맞춘 상세 구현
   └─ 해당 모듈의 단위 테스트 작성·통과까지가 책임의 끝
   └─ 스펙이 부족하거나 틀렸다고 판단되면 스펙을 임의로 바꾸지 말고 루트에 보고한다
+
+frontend/ (서브 디렉토리, 별도 Claude Code)
+  └─ frontend/CLAUDE.md를 따른다
+  └─ 위와 동일 원칙 — 루트 계약(docs/api-spec.yaml 등)을 임의로 바꾸지 않는다
 ```
 
-서브 디렉토리 Claude Code는 자기 모듈의 `CLAUDE.md`(`backend/<module>/CLAUDE.md`)를 반드시 먼저 읽는다. 거기 없는 결정(다른 모듈과의 계약, DB 스키마 변경, 실격 조건 값)은 루트 소관이다.
+서브 디렉토리 Claude Code는 자기 쪽 `CLAUDE.md`를 반드시 먼저 읽는다. 거기 없는 결정(다른 모듈·사이드와의 계약, DB 스키마 변경, 실격 조건 값, 화면 구조)은 루트 소관이다.
 
 ## 작업 착수 프로토콜
 
 프론트 담당자가 백엔드 진도에 발맞춰 병렬로 움직이는 게 이 팀의 기본 개발 양상이다. 그래서 루트 Claude Code는 새 작업에 들어갈 때마다 다음을 지킨다.
 
 1. **착수 전, 진행할 GitHub 이슈 번호를 먼저 보고한다.** 어떤 작업인지 번호로 먼저 밝히고 시작한다.
-2. **`backend/<module>/` 구현이 필요한 작업은 루트가 직접 하지 않는다.** 담당 디렉토리와 이슈 번호만 안내한다 — 사용자가 그 디렉토리에서 별도 터미널·별도 Claude Code 세션을 새로 연다. 루트가 직접 만드는 건 `docs/`·`contracts/`처럼 여러 모듈이 공유하는 계약·툴링뿐이다.
+2. **`backend/<module>/`·`frontend/` 구현이 필요한 작업은 루트가 직접 하지 않는다.** 담당 디렉토리와 이슈 번호만 안내한다 — 사용자가 그 디렉토리에서 별도 터미널·별도 Claude Code 세션을 새로 연다. 루트가 직접 만드는 건 `docs/`·`contracts/`처럼 여러 모듈·사이드가 공유하는 계약·툴링뿐이다.
 3. **착수 직후, 프론트 담당자에게 그대로 전달 가능한 요약을 함께 낸다.** "무엇을 개발하는지 + 명세(엔드포인트·스키마·연결 방법)"를 백엔드 리더가 복붙해서 보낼 수 있는 형태로 정리한다.
 4. 구조가 바뀌면 `docs/CHANGELOG-api.md`에 먼저 기록하고 즉시 보고한다(기존 규칙, 위와 같은 이유 — 프론트 병목 방지).
 
@@ -79,3 +84,5 @@ backend/<module>/ (서브 디렉토리, 각각 별도 Claude Code)
 | `docs/CHANGELOG-api.md` | 스펙 변경 이력 — 구조 변경 시 여기 먼저 기록 |
 | `docs/code-quality.md` | 클린 코드 원칙 + AI 작성 코드를 사람이 무엇을 리뷰할지 |
 | `contracts/` | FE 타입 생성 + 목 서버(msw) 패키지. `docs/api-spec.yaml`에서 파생됨. `contracts/README.md` 참고 |
+| `backend/CLAUDE.md` | 백엔드 공통 컨벤션 — 단일 FastAPI 앱 구조, 마이그레이션, 모듈 간 접근 규칙 |
+| `frontend/CLAUDE.md` | 프론트 공통 컨벤션 — 스택, 화면 구조, 계약 사용법 |

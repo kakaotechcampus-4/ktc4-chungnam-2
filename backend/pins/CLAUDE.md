@@ -1,6 +1,6 @@
 # backend/pins
 
-루트 문서를 먼저 읽는다: `/CLAUDE.md`, `docs/api-spec.yaml`(`/maps/{id}/pins`, `/maps/{id}/counts`, `/pins/*`), `docs/data-model.md`(`pins`, `reactions`, `shortlist_items`).
+루트 문서를 먼저 읽는다: `/CLAUDE.md`, `backend/CLAUDE.md`(백엔드 공통), `docs/api-spec.yaml`(`/maps/{id}/pins`, `/maps/{id}/counts`, `/pins/*`), `docs/data-model.md`(`pins`, `reactions`, `shortlist_items`).
 
 ## 책임
 

@@ -1,6 +1,6 @@
 # backend/llm
 
-루트 문서를 먼저 읽는다: `/CLAUDE.md`("모델 호출은 3곳뿐"), `docs/architecture.md` 2·3절, `docs/constraints.md`(fact_key 목록 = 구조화 출력 스키마의 근거).
+루트 문서를 먼저 읽는다: `/CLAUDE.md`("모델 호출은 3곳뿐"), `backend/CLAUDE.md`(백엔드 공통), `docs/architecture.md` 2·3절, `docs/constraints.md`(fact_key 목록 = 구조화 출력 스키마의 근거).
 
 ## 책임 — 모델 호출은 정확히 3곳
 

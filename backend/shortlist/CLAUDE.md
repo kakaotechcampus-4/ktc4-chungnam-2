@@ -1,6 +1,6 @@
 # backend/shortlist
 
-루트 문서를 먼저 읽는다: `/CLAUDE.md`, `docs/api-spec.yaml`(`shortlist` 태그), `docs/data-model.md`(`shortlist_items`).
+루트 문서를 먼저 읽는다: `/CLAUDE.md`, `backend/CLAUDE.md`(백엔드 공통), `docs/api-spec.yaml`(`shortlist` 태그), `docs/data-model.md`(`shortlist_items`).
 
 ## 책임
 

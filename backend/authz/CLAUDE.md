@@ -1,6 +1,6 @@
 # backend/authz
 
-루트 문서를 먼저 읽는다: `/CLAUDE.md`, `docs/permissions.md`(정본), `docs/api-spec.yaml`의 `Permissions` 스키마.
+루트 문서를 먼저 읽는다: `/CLAUDE.md`, `backend/CLAUDE.md`(백엔드 공통), `docs/permissions.md`(정본), `docs/api-spec.yaml`의 `Permissions` 스키마.
 
 ## 책임
 
