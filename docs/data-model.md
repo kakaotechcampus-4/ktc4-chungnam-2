@@ -82,7 +82,8 @@ places(
 place_facts(
   place_id references places(id),
   fact_key,                             -- 'contains_shellfish' | 'spicy_focused' | 'price_bucket' | ...
-                                         -- 8개 실격조건(5-7) + 선호 조건 전부가 fact_key로 존재
+                                         -- constraints.md의 라벨링 대상만 저장: 실격 6개 + 선호 조건
+                                         -- is_open/within_radius는 코드 판정이라 여기 없다(실시간 조회·좌표 계산)
   value,                                 -- boolean/enum, jsonb로 통일 저장
   confidence('known'|'unknown'),        -- D4: unknown_policy는 constraints.md 참고
   source_layer(1|2|3),                  -- architecture.md 3층 모델
