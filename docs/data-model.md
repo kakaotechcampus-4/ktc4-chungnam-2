@@ -16,12 +16,13 @@ users(
 )
 
 maps(
-  id, title, region_hint, day_count, member_count_expected,
+  id, title, start_date, end_date, member_count_expected,
   created_by, created_at
 )
+  CHECK (end_date >= start_date)   -- 9/4 결정 #22: 여행 제목 + 시작일·종료일. day_count·region_hint는 폐기
 
 memberships(
-  id, map_id, user_id, color, role('member'|'owner'),   -- authz 참고
+  id, map_id, user_id, role('member'|'owner'),   -- authz 참고. color는 9/4 결정 #26으로 폐기(구성원 구분에 색 불필요)
   joined_at
 )
   unique(map_id, user_id)
@@ -30,8 +31,6 @@ invites(
   token, map_id, created_by, expires_at, used_count
 )
 ```
-
-`region_hint`·`day_count` 등 지도 생성 입력값은 결정 이슈(#15 분리분 "지도 생성 입력값 정의") 확정 후 필드를 확정한다 — 현재는 자리만 잡아둔다.
 
 ---
 
@@ -47,7 +46,7 @@ pins(
   visibility('public'|'private'),      -- 5-5-1: AI 후보는 private로 시작
   created_by, created_at, deleted_at
 )
-  unique(map_id, place_id) where deleted_at is null   -- 중복 핀 판정(가드레일 6). 판정 기준은 결정 이슈로 별도 확정
+  unique(map_id, place_id) where deleted_at is null   -- 중복 핀 판정(가드레일 6). 판정 기준은 #33(보류)에서 별도 확정
 
 reactions(
   id, pin_id, user_id, type('like'|'neutral'|'against'),  -- ♥/△/🚫. '?'미확인은 행 없음으로 표현
@@ -58,7 +57,7 @@ reactions(
 
 shortlist_items(
   id, map_id, pin_id, added_by, added_at,
-  visit_order int null                 -- 5-10 자동계산 결과. 수동 정렬 허용 여부는 결정 이슈 미결
+  visit_order int null                 -- 5-10 자동계산 결과 + #30 수동 정렬(허용 확정) 둘 다 이 컬럼을 쓴다
 )
   unique(map_id, pin_id)
 ```
@@ -115,12 +114,12 @@ seeding_jobs(
 
 ## recommend (3절, 5-5~5-6-1)
 
-> `recommend_runs`·`candidates`는 **서버 DB 영속 저장**을 전제로 설계했다. 결정 이슈("AI 추천 결과 상태 관리 위치")가 휘발성(세션/캐시) 쪽으로 정해지면 이 두 테이블은 Redis TTL 키나 클라이언트 상태로 옮겨가야 한다 — 지금은 한쪽 안이다.
+> `recommend_runs`·`candidates`는 **서버 DB 영속 저장**으로 확정됐다(#43, 9/4 결정) — "비공개 AI 추천 후보는 시간이 지나도, 재접속해도 사라지지 않는다. 게시 또는 재추천으로만 대체된다."
 
 ```
 recommend_runs(
   id, map_id, category, requested_by, status,
-  attempt_no,                           -- 3회 상한. 스코프는 결정 이슈 미결
+  attempt_no,                           -- 재시도 상한. 집계 단위·수치는 #31 미확정(현재 3회는 잠정치)
   created_at
 )
 
@@ -153,7 +152,7 @@ exclusions(
   run_id, requested_by, created_at
 )
   -- "다시 추천 받기" 시 현재 뜬 후보 전체가 여기 들어간다(3절, 루프가 닫힌다)
-  -- map_id 단위로 쌓는 것으로 우선 설계했으나, 결정 이슈("제안·거절 이력의 단위") 미결 —
+  -- map_id 단위로 쌓는 것으로 우선 설계했으나, #42("제안·거절 이력의 단위") 미확정 —
   -- 개인 단위(requested_by 포함)로 정해지면 unique 제약·조회 조건이 바뀐다
 ```
 
@@ -174,10 +173,14 @@ event_log(
 
 ## 열린 항목 (결정 이슈로 별도 확정 — 이 문서는 자리만 잡음)
 
-- 중복 핀 "같은 곳" 판정 기준 (source_id 동일 / 좌표 반경 N m / 이름 유사도)
-- `visit_order` 수동 정렬 허용 여부와 자동 재계산 시 유지 규칙
-- 재시도 3회 상한의 집계 단위 (map+category / map+user 등)
-- N(구성원 수)의 정의 — 전체 vs 온라인, 변동 시 진행 중 run 처리
-- 지도 생성 입력 필드 확정 (`maps` 테이블 컬럼 확정)
-- **제안·거절 이력의 단위** — `exclusions`를 지도 단위로 쌓을지 개인 단위로 쌓을지 (README "정해야 할 것" #5)
-- **AI 추천 결과의 상태 관리 위치** — `recommend_runs`/`candidates`를 서버 DB에 영속 저장할지, 휘발성(세션/캐시)으로 둘지 (README "정해야 할 것" #8)
+- 중복 핀 "같은 곳" 판정 기준 (source_id 동일 / 좌표 반경 N m / 이름 유사도) — #33, 보류
+- 재시도 3회 상한의 집계 단위·상한 수치 — #31, BE 논의 중 (황준영: 지도+카테고리당·상한 상향 / 김도윤: 개인 단위)
+- N(구성원 수)의 정의 — #32, "온라인 구성원 현재 수"로 답은 나왔으나 ceil(N/2) 임계값 자체를 없앨지는 코멘트 상 아직 불명확
+- **제안·거절 이력의 단위** — #42, 지도 vs 개인 단위로 황준영·김도윤 의견이 갈려 아직 미확정. `exclusions` 스키마는 지도 단위(현재 설계)를 전제로 함
+
+## 9/4 회의로 해결된 것 (docs 반영 완료)
+
+- 지도 생성 입력 필드 — #22, 여행 제목 + 시작일·종료일로 확정, 위 `maps` 테이블에 반영
+- 구성원 색 — #26, 불필요로 확정, `memberships.color` 제거
+- `visit_order` 수동 정렬 — #30, 허용 확정(동선과 무관). `PUT /maps/{mapId}/shortlist/order` 참고
+- AI 추천 결과 상태 관리 위치 — #43, 서버 DB 영속 확정. `recommend_runs`/`candidates`는 이제 확정 설계
