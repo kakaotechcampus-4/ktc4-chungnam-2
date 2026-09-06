@@ -1,5 +1,5 @@
 import { http, HttpResponse } from "msw";
-import { ME_USER_ID, nextId, store, type Route } from "../store";
+import { ME_USER_ID, nextId, store, type Route, type ShortlistItem } from "../store";
 import { apiError, shortlistPermissions } from "../util";
 
 function haversineApproxMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
@@ -46,27 +46,54 @@ export const shortlistHandlers = [
     return apiError(404, "SHORTLIST_ITEM_NOT_FOUND", "확정 항목을 찾을 수 없습니다");
   }),
 
+  http.put("*/maps/:mapId/shortlist/order", async ({ params, request }) => {
+    // #30: 보기 좋게 순서만 바꾸는 것 — 동선과는 무관, 재계산을 트리거하지 않는다.
+    const mapId = params.mapId as string;
+    const body = (await request.json()) as { item_ids: string[] };
+    const items = store.shortlist[mapId] ?? [];
+    const byId = new Map(items.map((i) => [i.id, i]));
+    body.item_ids.forEach((id, idx) => {
+      const item = byId.get(id);
+      if (item) item.visit_order = idx;
+    });
+    items.sort((a, b) => (a.visit_order ?? 0) - (b.visit_order ?? 0));
+    return HttpResponse.json(items.map((i) => ({ ...i, permissions: shortlistPermissions(i) })));
+  }),
+
   http.get("*/maps/:mapId/route", ({ params }) => {
+    // 마지막으로 계산된 동선만 반환한다 — 여기서 재계산하지 않는다 (#30)
+    const mapId = params.mapId as string;
+    return HttpResponse.json(store.routes[mapId] ?? []);
+  }),
+
+  http.post("*/maps/:mapId/route", ({ params }) => {
+    // 「동선 짜주기」 — 사람이 눌러야만 실행된다 (#30)
     const mapId = params.mapId as string;
     const items = store.shortlist[mapId] ?? [];
-    if (items.length < 2) return HttpResponse.json([]);
-    // 5-10: 최근접 이웃 기반 순수 계산. 지역 클러스터링은 목 서버에서 단일 지역으로 단순화한다.
-    const pins = items.map((i) => i.pin).filter(Boolean) as NonNullable<(typeof items)[number]["pin"]>[];
-    const legs: Route["legs"] = [];
-    let total = 0;
-    for (let i = 0; i < pins.length - 1; i++) {
-      const a = pins[i]!;
-      const b = pins[i + 1]!;
-      const dist = haversineApproxMeters({ lat: a.lat ?? 0, lng: a.lng ?? 0 }, { lat: b.lat ?? 0, lng: b.lng ?? 0 });
-      total += dist;
-      legs.push({ from_pin_id: a.id, to_pin_id: b.id, distance_m: Math.round(dist), approx_minutes: Math.max(1, Math.round(dist / 67)) });
-    }
-    const route: Route = {
-      region_label: "제주시 권역",
-      ordered_pin_ids: pins.map((p) => p.id!).filter(Boolean) as string[],
-      total_distance_m: Math.round(total),
-      legs,
-    };
-    return HttpResponse.json([route]);
+    const routes = calculateRoutes(items);
+    store.routes[mapId] = routes;
+    return HttpResponse.json(routes);
   }),
 ];
+
+function calculateRoutes(items: ShortlistItem[]): Route[] {
+  if (items.length < 2) return [];
+  // 5-10: 최근접 이웃 기반 순수 계산. 지역 클러스터링은 목 서버에서 단일 지역으로 단순화한다.
+  const pins = items.map((i) => i.pin).filter(Boolean) as NonNullable<(typeof items)[number]["pin"]>[];
+  const legs: Route["legs"] = [];
+  let total = 0;
+  for (let i = 0; i < pins.length - 1; i++) {
+    const a = pins[i]!;
+    const b = pins[i + 1]!;
+    const dist = haversineApproxMeters({ lat: a.lat ?? 0, lng: a.lng ?? 0 }, { lat: b.lat ?? 0, lng: b.lng ?? 0 });
+    total += dist;
+    legs.push({ from_pin_id: a.id, to_pin_id: b.id, distance_m: Math.round(dist), approx_minutes: Math.max(1, Math.round(dist / 67)) });
+  }
+  const route: Route = {
+    region_label: "제주시 권역",
+    ordered_pin_ids: pins.map((p) => p.id!).filter(Boolean) as string[],
+    total_distance_m: Math.round(total),
+    legs,
+  };
+  return [route];
+}

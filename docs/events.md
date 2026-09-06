@@ -10,6 +10,8 @@
 | 전체(public) | `GET /maps/{mapId}/events` | 지도의 모든 구성원 | 게시된 핀·반응·확정 리스트 변화 |
 | 개인(private) | `GET /maps/{mapId}/events/me` | 요청자 본인만 | 본인의 비공개 AI 후보, run 진행 상태 (5-5-1) |
 
+두 경로 모두 `docs/api-spec.yaml`의 `realtime` 태그에 타입까지 있다 — `PublicEvent`/`PrivateEvent`가 이 문서의 이벤트 11종을 `oneOf`로 판별 유니온화한 것이다. 페이로드를 바꾸면 이 문서와 api-spec.yaml `Evt*` 스키마를 같이 고친다.
+
 **채널 분리가 5-5-1을 구조적으로 강제한다.** "요청한 사람에게만 보인다"를 애플리케이션 로직의 if문이 아니라 애초에 그 사람만 구독 가능한 채널로 만든다 — 실수로 전체 채널에 흘려보내는 버그 자체가 나지 않는다.
 
 ## 이벤트 목록
@@ -24,8 +26,8 @@
 | `pin.published` | `Pin` | 「지도에 올리기」 실행 시 (5-5-1) |
 | `pin.deleted` | `{ pin_id }` | 핀 삭제 |
 | `reaction.changed` | `{ pin_id, reaction_summary }` | 반응 등록/수정/삭제 |
-| `shortlist.changed` | `{ item: ShortlistItem, action: 'added'\|'removed' }` | 확정 리스트 변경 |
-| `route.recalculated` | `Route[]` | 확정 리스트 변경 시 즉시 재계산 결과 (5-10, 재계산 버튼 없음) |
+| `shortlist.changed` | `{ item: ShortlistItem, action: 'added'\|'removed'\|'reordered' }` | 확정 리스트 변경. `reordered`는 수동 정렬 (#30) |
+| `route.recalculated` | `Route[]` | **「동선 짜주기」 실행 시** (#30, `POST /maps/{mapId}/route`). 확정 리스트 변경만으로는 발행하지 않는다 |
 | `member.joined` | `Member` | 초대 수락 |
 | `member.presence` | `{ user_id, online }` | 접속 상태 변화 |
 

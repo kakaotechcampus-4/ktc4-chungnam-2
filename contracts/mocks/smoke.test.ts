@@ -83,9 +83,25 @@ describe("기획안 6절 핵심 시나리오 — happy path", () => {
     }).then((r) => r.json());
     expect(item2.pin.kind).toBe("확정");
 
-    const routes = await fetch(`${BASE}/maps/map_1/route`).then((r) => r.json());
+    // #30: GET은 마지막 계산 결과만 준다 — 확정 리스트가 바뀌어도 자동 재계산하지 않는다
+    const beforeCalc = await fetch(`${BASE}/maps/map_1/route`).then((r) => r.json());
+    expect(beforeCalc.length).toBe(0);
+
+    // 「동선 짜주기」를 눌러야 계산된다
+    const routes = await fetch(`${BASE}/maps/map_1/route`, { method: "POST" }).then((r) => r.json());
     expect(routes.length).toBe(1);
     expect(routes[0].legs.length).toBe(1);
+
+    const afterCalc = await fetch(`${BASE}/maps/map_1/route`).then((r) => r.json());
+    expect(afterCalc.length).toBe(1);
+
+    // 수동 정렬(#30) — 순서를 뒤집어도 동선과는 무관
+    const shortlistItems = await fetch(`${BASE}/maps/map_1/shortlist`).then((r) => r.json());
+    const reordered = await fetch(`${BASE}/maps/map_1/shortlist/order`, {
+      method: "PUT",
+      body: JSON.stringify({ item_ids: shortlistItems.map((i: any) => i.id).reverse() }),
+    }).then((r) => r.json());
+    expect(reordered[0].id).toBe(shortlistItems[1].id);
   });
 });
 

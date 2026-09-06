@@ -20,9 +20,11 @@ export const pinsHandlers = [
     const url = new URL(request.url);
     const category = url.searchParams.get("category");
     const kind = url.searchParams.get("kind");
+    const createdBy = url.searchParams.getAll("created_by");
     let pins = visiblePins(mapId);
     if (category) pins = pins.filter((p) => p.category === category);
     if (kind) pins = pins.filter((p) => p.kind === kind);
+    if (createdBy.length) pins = pins.filter((p) => p.created_by && createdBy.includes(p.created_by)); // #26
     return HttpResponse.json(pins.map((p) => ({ ...p, permissions: pinPermissions(p) })));
   }),
 
@@ -52,6 +54,8 @@ export const pinsHandlers = [
       lat: body.lat ?? 33.45,
       lng: body.lng ?? 126.56,
       place_name: "새로 찍은 핀",
+      created_by: ME_USER_ID,
+      created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 0, neutral: 0, against: 0 },

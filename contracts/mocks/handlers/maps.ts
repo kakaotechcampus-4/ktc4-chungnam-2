@@ -4,10 +4,17 @@ import { apiError, getMapOr404 } from "../util";
 
 export const mapsHandlers = [
   http.post("*/maps", async ({ request }) => {
-    const body = (await request.json()) as { title: string; region_hint?: string };
+    const body = (await request.json()) as { title: string; start_date: string; end_date: string };
     const mapId = nextId("map");
-    store.maps[mapId] = { id: mapId, title: body.title, member_count: 1, confirmed_count: 0 };
-    store.members[mapId] = [{ user_id: ME_USER_ID, display_name: store.users[ME_USER_ID]?.display_name ?? "나", color: "#F97316", online: true }];
+    store.maps[mapId] = {
+      id: mapId,
+      title: body.title,
+      start_date: body.start_date,
+      end_date: body.end_date,
+      member_count: 1,
+      confirmed_count: 0,
+    };
+    store.members[mapId] = [{ user_id: ME_USER_ID, display_name: store.users[ME_USER_ID]?.display_name ?? "나", online: true }];
     store.shortlist[mapId] = [];
     // architecture.md 3절: 지도 생성 시 프리시딩 잡을 큐잉한다 — 목 서버에서는 즉시 "완료된 것처럼" 취급
     return HttpResponse.json(store.maps[mapId], { status: 201 });
@@ -35,7 +42,7 @@ export const mapsHandlers = [
     if (!map) return apiError(404, "MAP_NOT_FOUND", "지도를 찾을 수 없습니다");
     const members = store.members[invite.mapId] ?? (store.members[invite.mapId] = []);
     if (!members.some((m) => m.user_id === ME_USER_ID)) {
-      members.push({ user_id: ME_USER_ID, display_name: store.users[ME_USER_ID]?.display_name ?? "나", color: "#EAB308", online: true });
+      members.push({ user_id: ME_USER_ID, display_name: store.users[ME_USER_ID]?.display_name ?? "나", online: true });
       map.member_count = members.length;
     }
     return HttpResponse.json(map);
