@@ -70,18 +70,22 @@ class PlaceFactLabel(BaseModel):
     """③-a-1 장소 라벨링 출력 (docs/api-spec.yaml LabelConfidence와 동일 값셋).
 
     confidence=unknown일 때 value를 지어내지 않는다 — 반드시 None이어야 한다
-    (backend/llm/CLAUDE.md "넘지 말 것", 가드레일 8·9).
+    (backend/llm/CLAUDE.md "넘지 말 것", 가드레일 8·9). evidence도 마찬가지다 —
+    판정 근거가 없는데 근거 텍스트만 지어내면 안 되므로 unknown이면 evidence도 None이어야 한다.
     unknown_policy 적용·실격 여부 판단은 이 스키마의 책임이 아니다 — recommend가 한다(가드레일 7).
     """
 
     fact_key: FactKey
     value: Optional[Union[bool, str, int]] = None
     confidence: Confidence
+    evidence: Optional[str] = None
 
     @model_validator(mode="after")
     def _unknown_must_not_have_value(self) -> "PlaceFactLabel":
         if self.confidence == "unknown" and self.value is not None:
             raise ValueError("confidence=unknown인데 value가 채워져 있다 — 값을 지어내면 안 된다")
+        if self.confidence == "unknown" and self.evidence is not None:
+            raise ValueError("confidence=unknown인데 evidence가 채워져 있다 — 근거를 지어내면 안 된다")
         if self.confidence == "known" and self.value is None:
             raise ValueError("confidence=known이면 value가 있어야 한다")
         return self
