@@ -169,3 +169,53 @@ def test_pin_deleted_event_payload_is_pin_id_only():
 
 def test_pin_deleted_event_private_pin_emits_nothing():
     assert core.pin_deleted_event("pin_1", visibility="private") is None
+
+
+# --- validate_reaction (가드레일 3) --------------------------------------------
+
+def test_validate_reaction_against_with_text_passes():
+    core.validate_reaction("against", "매워요", None)
+
+
+def test_validate_reaction_against_with_chip_ids_passes():
+    core.validate_reaction("against", None, ["spicy_focused"])
+
+
+def test_validate_reaction_against_whitespace_only_text_raises():
+    with pytest.raises(PinError) as exc_info:
+        core.validate_reaction("against", "   ", None)
+    assert exc_info.value.code == "EVIDENCE_REQUIRED"
+    assert exc_info.value.status_code == 422
+
+
+def test_validate_reaction_against_without_reason_raises():
+    with pytest.raises(PinError) as exc_info:
+        core.validate_reaction("against", None, None)
+    assert exc_info.value.code == "EVIDENCE_REQUIRED"
+
+
+def test_validate_reaction_against_with_empty_chip_list_raises():
+    with pytest.raises(PinError):
+        core.validate_reaction("against", None, [])
+
+
+@pytest.mark.parametrize("reaction_type", ["like", "neutral"])
+def test_validate_reaction_like_neutral_never_require_reason(reaction_type):
+    core.validate_reaction(reaction_type, None, None)
+
+
+# --- reaction_changed_event (가드레일 1) ---------------------------------------
+
+def test_reaction_changed_event_public_pin_emits_envelope():
+    summary = ReactionSummary(like=1, neutral=0, against=2)
+    event = core.reaction_changed_event("pin_1", "public", summary)
+    assert event is not None
+    channel, event_type, payload = event
+    assert channel == "public"
+    assert event_type == "reaction.changed"
+    assert payload == {"pin_id": "pin_1", "reaction_summary": {"like": 1, "neutral": 0, "against": 2}}
+
+
+def test_reaction_changed_event_private_pin_emits_nothing():
+    event = core.reaction_changed_event("pin_1", "private", ReactionSummary())
+    assert event is None

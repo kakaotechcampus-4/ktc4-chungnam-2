@@ -138,3 +138,24 @@ def pin_deleted_event(pin_id: str, visibility: str) -> tuple[str, str, dict] | N
     if visibility == "private":
         return None
     return ("public", "pin.deleted", {"pin_id": pin_id})
+
+
+def validate_reaction(reaction_type: str, reason_text: str | None, reason_chip_ids: list[str] | None) -> None:
+    """가드레일 3 — 반대(against)는 사유가 필수다. 공백만 있는 reason_text는 없는 것으로
+    취급한다(목 서버는 이걸 놓쳐 "   "도 통과시키는 버그가 있다). like/neutral은 항상 통과."""
+    if reaction_type != "against":
+        return
+    has_text = bool(reason_text and reason_text.strip())
+    has_chips = bool(reason_chip_ids)
+    if not has_text and not has_chips:
+        raise PinError(422, "EVIDENCE_REQUIRED", "반대 반응에는 사유가 필요합니다")
+
+
+def reaction_changed_event(
+    pin_id: str, visibility: str, reaction_summary: ReactionSummary
+) -> tuple[str, str, dict] | None:
+    """docs/events.md reaction.changed — 페이로드는 {pin_id, reaction_summary}. pin.created/
+    pin.deleted와 같은 이유로 private 핀의 반응 변화도 전체 채널로 새면 안 된다(가드레일 1)."""
+    if visibility == "private":
+        return None
+    return ("public", "reaction.changed", {"pin_id": pin_id, "reaction_summary": reaction_summary.model_dump()})

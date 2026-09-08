@@ -66,6 +66,19 @@ class Pin(BaseModel):
     permissions: Permissions
 
 
+class ReactionRequest(BaseModel):
+    type: ReactionKind
+    reason_text: str | None = Field(default=None, max_length=140)
+    reason_chip_ids: list[str] | None = None
+
+
+class Reaction(BaseModel):
+    pin_id: str
+    user_id: str
+    type: ReactionKind
+    reason_text: str | None = None
+
+
 class Error(BaseModel):
     code: str
     message: str

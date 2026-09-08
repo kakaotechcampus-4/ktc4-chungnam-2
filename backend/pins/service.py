@@ -7,7 +7,8 @@ import uuid
 from datetime import datetime, timezone
 
 from geoalchemy2 import Geometry
-from sqlalchemy import and_, cast, func, or_, select
+from sqlalchemy import and_, cast, delete, func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,7 +17,7 @@ from pins.errors import PinError
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
 from pins.ports import EventPublisher, MembershipGateway, PinDraft, PlaceGateway
-from pins.schemas import Pin, PinCreateRequest
+from pins.schemas import Pin, PinCreateRequest, Reaction, ReactionRequest, ReactionSummary
 
 
 def _lat_lng_columns():
@@ -213,6 +214,115 @@ def delete_pin(
     db.commit()
 
     event = core.pin_deleted_event(str(pin_row.id), pin_row.visibility)
+    if event is not None:
+        channel, event_type, payload = event
+        publisher.publish(pin_row.map_id, channel, event_type, payload)
+
+
+def _reaction_counts_for_pin(db: Session, pin_id: uuid.UUID) -> core.ReactionCounts:
+    row = db.execute(
+        select(
+            func.count().filter(ReactionRow.type == "like").label("like"),
+            func.count().filter(ReactionRow.type == "neutral").label("neutral"),
+            func.count().filter(ReactionRow.type == "against").label("against"),
+        ).where(ReactionRow.pin_id == pin_id)
+    ).one()
+    return core.ReactionCounts(like=row.like, neutral=row.neutral, against=row.against)
+
+
+def _get_pin_for_reaction(
+    db: Session, pin_id: str, viewer_id: str, membership: MembershipGateway
+) -> PinRow:
+    """PUT/DELETE reaction이 공유하는 확인 순서: 존재 → 비공개 접근 차단 → 구성원 확인.
+    비공개 접근 차단이 구성원 확인보다 먼저다 — 존재만 확인해도 5-5-1이 새므로, 남의
+    비공개 핀은 구성원 여부와 무관하게 404로 막는다(가드레일 1)."""
+    try:
+        pin_uuid = uuid.UUID(pin_id)
+    except ValueError:
+        raise PinError(404, "NOT_FOUND", "핀을 찾을 수 없습니다") from None
+
+    pin_row = db.get(PinRow, pin_uuid)
+    if pin_row is None or pin_row.deleted_at is not None:
+        raise PinError(404, "NOT_FOUND", "핀을 찾을 수 없습니다")
+
+    if pin_row.visibility == "private" and pin_row.created_by != viewer_id:
+        raise PinError(404, "AI_PIN_PRIVATE", "비공개 추천 후보입니다")
+
+    if not membership.is_member(pin_row.map_id, viewer_id):
+        raise PinError(403, "FORBIDDEN", "이 지도의 구성원이 아닙니다")
+
+    return pin_row
+
+
+def set_reaction(
+    db: Session,
+    pin_id: str,
+    viewer_id: str,
+    req: ReactionRequest,
+    membership: MembershipGateway,
+    publisher: EventPublisher,
+) -> Reaction:
+    core.validate_reaction(req.type, req.reason_text, req.reason_chip_ids)
+
+    pin_row = _get_pin_for_reaction(db, pin_id, viewer_id, membership)
+    reason_text = (req.reason_text or "").strip() or None
+
+    # 원자적 upsert — 조회 후 있으면 UPDATE 없으면 INSERT(check-then-act) 방식은 같은 유저가
+    # 동시에 두 번 PUT을 보내면 유니크 제약(uq_reactions_pin_user) 위반 레이스가 날 수 있다.
+    stmt = pg_insert(ReactionRow).values(
+        pin_id=pin_row.id,
+        user_id=viewer_id,
+        type=req.type,
+        reason_text=reason_text,
+        reason_chip_ids=req.reason_chip_ids,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["pin_id", "user_id"],
+        set_={
+            "type": stmt.excluded.type,
+            "reason_text": stmt.excluded.reason_text,
+            "reason_chip_ids": stmt.excluded.reason_chip_ids,
+            "updated_at": func.now(),
+        },
+    )
+    db.execute(stmt)
+
+    counts = _reaction_counts_for_pin(db, pin_row.id)
+    db.commit()
+
+    summary = ReactionSummary(like=counts.like, neutral=counts.neutral, against=counts.against)
+    event = core.reaction_changed_event(str(pin_row.id), pin_row.visibility, summary)
+    if event is not None:
+        channel, event_type, payload = event
+        publisher.publish(pin_row.map_id, channel, event_type, payload)
+
+    return Reaction(pin_id=str(pin_row.id), user_id=viewer_id, type=req.type, reason_text=reason_text)
+
+
+def delete_reaction(
+    db: Session,
+    pin_id: str,
+    viewer_id: str,
+    membership: MembershipGateway,
+    publisher: EventPublisher,
+) -> None:
+    pin_row = _get_pin_for_reaction(db, pin_id, viewer_id, membership)
+
+    result = db.execute(
+        delete(ReactionRow).where(ReactionRow.pin_id == pin_row.id, ReactionRow.user_id == viewer_id)
+    )
+    deleted = result.rowcount > 0
+
+    counts = _reaction_counts_for_pin(db, pin_row.id)
+    db.commit()
+
+    # 실제로 뭔가 지워졌을 때만 발행한다 — 반응이 원래 없던 핀에 DELETE를 보내도 204는
+    # 똑같이 나가지만(idempotent), 상태 변화가 없으므로 이벤트로 SSE를 스팸하지 않는다.
+    if not deleted:
+        return
+
+    summary = ReactionSummary(like=counts.like, neutral=counts.neutral, against=counts.against)
+    event = core.reaction_changed_event(str(pin_row.id), pin_row.visibility, summary)
     if event is not None:
         channel, event_type, payload = event
         publisher.publish(pin_row.map_id, channel, event_type, payload)
