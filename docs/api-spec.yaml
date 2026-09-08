@@ -5,6 +5,8 @@ info:
   description: |
     여행 공동 지도 API 계약. 정본은 이 파일이며 `최종기획안.md`의 절 번호를 각 엔드포인트 설명에 인용한다.
     변경 시 반드시 docs/CHANGELOG-api.md에 기록하고 프론트 담당자에게 통보한다 (CLAUDE.md 참고).
+    security가 전역이므로 모든 엔드포인트는 401 UNAUTHORIZED를 반환할 수 있다.
+    개별 엔드포인트에는 그 엔드포인트 고유의 에러만 명시한다.
 servers:
   - url: https://api.pingo.example.com
     description: 배포 시 Cloud Run URL로 교체
@@ -18,6 +20,8 @@ tags:
   - name: pins
   - name: recommend
   - name: shortlist
+  - name: realtime
+    description: 서버→클라이언트 SSE 채널. 이벤트 페이로드의 정본은 docs/events.md
 
 paths:
   # ---------- auth ----------
@@ -141,6 +145,12 @@ paths:
         - name: kind
           in: query
           schema: { $ref: "#/components/schemas/PinKind" }
+        - name: created_by
+          in: query
+          description: "구성원별 핀 필터 (#26). 여러 명을 지정하면 OR로 묶는다"
+          schema:
+            type: array
+            items: { type: string }
       responses:
         "200":
           description: OK
@@ -240,6 +250,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecommendRun" }
+        "409": { $ref: "#/components/responses/NotReady" }
 
   /runs/{runId}/evidence:
     get:
@@ -270,6 +281,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/EvidenceLine" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /runs/{runId}/regions/confirm:
     post:
@@ -306,6 +318,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecommendRun" }
+        "500": { $ref: "#/components/responses/RecommendFailed" }
 
   /runs/{runId}/result:
     get:
@@ -319,6 +332,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RecommendResult" }
         "404": { $ref: "#/components/responses/NoResults" }
+        "500": { $ref: "#/components/responses/RecommendFailed" }
 
   /runs/{runId}/widen:
     post:
@@ -400,12 +414,40 @@ paths:
           schema: { type: string }
       responses: { "204": { description: 제외됨 } }
 
+  /maps/{mapId}/shortlist/order:
+    put:
+      tags: [shortlist]
+      summary: |
+        확정 리스트 수동 정렬 (#30). 보기 좋게 순서를 바꾸는 것뿐이고 동선과는 무관하다.
+        동선을 다시 짜려면 POST /maps/{mapId}/route를 부른다.
+      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item_ids]
+              properties:
+                item_ids:
+                  type: array
+                  items: { type: string }
+                  description: "원하는 순서대로 나열한 shortlist item id 전체"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ShortlistItem" }
+
   /maps/{mapId}/route:
     get:
       tags: [shortlist]
       summary: |
-        동선 보기 (5-10). 순수 계산, 모델 미사용. 확정 핀이 여러 지역에 걸치면 지역별로 여러 동선을 반환한다.
-        확정 리스트가 바뀌면 즉시 재계산 — 별도 재계산 요청 API 없음.
+        마지막으로 계산된 동선 조회 (5-10). 순수 계산, 모델 미사용.
+        확정 핀이 여러 지역에 걸치면 지역별로 여러 동선을 반환한다.
+        한 번도 계산하지 않았으면 빈 배열.
       parameters: [ { $ref: "#/components/parameters/MapId" } ]
       responses:
         "200":
@@ -415,6 +457,55 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Route" }
+    post:
+      tags: [shortlist]
+      summary: |
+        「동선 짜주기」 — 현재 확정 리스트로 동선을 계산한다 (#30, 기획안 5-10의 "동선 보기" 토글).
+        확정 리스트가 바뀌어도 자동 재계산하지 않는다. 사람이 이 버튼을 눌러야 실행된다.
+      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      responses:
+        "200":
+          description: 계산된 동선. 같은 결과를 route.recalculated로도 발행한다
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Route" }
+
+  # ---------- realtime (SSE, docs/events.md가 정본) ----------
+  /maps/{mapId}/events:
+    get:
+      tags: [realtime]
+      summary: |
+        전체 채널 SSE. 지도의 모든 구성원이 구독한다.
+        visibility=private인 핀·후보는 이 채널로 절대 내려가지 않는다 (5-5-1, 가드레일 1).
+      parameters:
+        - { $ref: "#/components/parameters/MapId" }
+        - { $ref: "#/components/parameters/LastEventId" }
+      responses:
+        "200":
+          description: 전체 채널 이벤트 스트림
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/PublicEvent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /maps/{mapId}/events/me:
+    get:
+      tags: [realtime]
+      summary: |
+        개인 채널 SSE. 요청자 본인만 구독한다. 본인의 비공개 AI 후보와 run 진행 상태가 여기로만 온다.
+        채널 분리가 5-5-1을 if문이 아니라 구조로 강제한다.
+      parameters:
+        - { $ref: "#/components/parameters/MapId" }
+        - { $ref: "#/components/parameters/LastEventId" }
+      responses:
+        "200":
+          description: 개인 채널 이벤트 스트림
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/PrivateEvent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
 components:
   securitySchemes:
@@ -428,6 +519,14 @@ components:
     PinId: { name: pinId, in: path, required: true, schema: { type: string } }
     RunId: { name: runId, in: path, required: true, schema: { type: string } }
     CandidateId: { name: candidateId, in: path, required: true, schema: { type: string } }
+    LastEventId:
+      name: Last-Event-ID
+      in: header
+      required: false
+      description: |
+        브라우저 EventSource가 재연결 시 자동으로 보낸다. 이 seq 이후 이벤트만 재전송한다.
+        event_log 보존기간을 넘긴 값이면 REST 재조회로 폴백한다 (docs/events.md).
+      schema: { type: integer, format: int64 }
 
   responses:
     Unauthorized:
@@ -462,6 +561,28 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     AiPinPrivate:
       description: 비공개 AI 후보에 요청자 본인이 아닌 사람이 접근 (5절 "비공개 AI 핀 접근 시 안내")
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotReady:
+      description: 추천 준비 미달 — 해당 카테고리에 의견 남긴 핀이 기준 미달 (5-4, "핀 1/2 · 1개 더 필요")
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: |
+        권한 없는 액션 (docs/permissions.md 범위 밖).
+        이 응답이 화면에 보이면 버튼이 애초에 disabled였어야 했다는 신호다.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RecommendFailed:
+      description: 추천 파이프라인 실패 (6절 "조건이 까다로워서가 아니에요")
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    IdempotencyConflict:
+      description: 동일 Idempotency-Key로 다른 바디를 보냄 — 재시도 로직 버그 신호. 붙일 엔드포인트는 #48 결정에 따름
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -507,6 +628,8 @@ components:
       properties:
         id: { type: string }
         title: { type: string }
+        start_date: { type: string, format: date, description: "여행 시작일 (#22)" }
+        end_date: { type: string, format: date, description: "여행 종료일 (#22)" }
         member_count: { type: integer }
         confirmed_count: { type: integer }
 
@@ -522,15 +645,15 @@ components:
       properties:
         user_id: { type: string }
         display_name: { type: string }
-        color: { type: string, description: "구성원 색 팔레트·배정 주체는 결정 이슈 미결" }
         online: { type: boolean }
 
     MapCreateRequest:
       type: object
-      required: [title]
+      required: [title, start_date, end_date]
       properties:
-        title: { type: string }
-        region_hint: { type: string, description: "지도 생성 입력값 필드 확정 전 임시" }
+        title: { type: string, description: "여행 제목 (#22)" }
+        start_date: { type: string, format: date, description: "여행 시작일 (#22)" }
+        end_date: { type: string, format: date, description: "여행 종료일 (#22). start_date 이후여야 한다" }
 
     PinCreateRequest:
       type: object
@@ -573,6 +696,8 @@ components:
         lat: { type: number }
         lng: { type: number }
         place_name: { type: string }
+        created_by: { type: string, description: "핀을 찍은 구성원의 user_id (#26)" }
+        created_by_display_name: { type: string, description: "핀 상세에서 '누가 찍었는지' 표시용 (#26)" }
         price_bucket:
           $ref: "#/components/schemas/PriceBucket"
         checks:
@@ -727,3 +852,174 @@ components:
               to_pin_id: { type: string }
               distance_m: { type: number }
               approx_minutes: { type: integer }
+
+    # ---------- SSE 이벤트 (docs/events.md가 정본) ----------
+    SseEnvelope:
+      type: object
+      description: "모든 SSE 이벤트의 공통 봉투. id는 event_log.seq와 같고 SSE의 id: 필드로 전송된다"
+      required: [id, event, data]
+      properties:
+        id: { type: integer, format: int64, description: "= event_log.seq" }
+        event: { type: string }
+
+    PublicEvent:
+      description: 전체 채널 이벤트 (docs/events.md). event 값으로 data 타입이 갈린다
+      oneOf:
+        - $ref: "#/components/schemas/EvtPinCreated"
+        - $ref: "#/components/schemas/EvtPinPublished"
+        - $ref: "#/components/schemas/EvtPinDeleted"
+        - $ref: "#/components/schemas/EvtReactionChanged"
+        - $ref: "#/components/schemas/EvtShortlistChanged"
+        - $ref: "#/components/schemas/EvtRouteRecalculated"
+        - $ref: "#/components/schemas/EvtMemberJoined"
+        - $ref: "#/components/schemas/EvtMemberPresence"
+
+    PrivateEvent:
+      description: 개인 채널 이벤트 (docs/events.md, 5-5-1)
+      oneOf:
+        - $ref: "#/components/schemas/EvtRunProgress"
+        - $ref: "#/components/schemas/EvtRunCandidatesReady"
+        - $ref: "#/components/schemas/EvtRunFailed"
+
+    EvtPinCreated:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "pin.created" }
+            data: { $ref: "#/components/schemas/Pin" }
+
+    EvtPinPublished:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "pin.published" }
+            data: { $ref: "#/components/schemas/Pin" }
+
+    EvtPinDeleted:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "pin.deleted" }
+            data:
+              type: object
+              required: [pin_id]
+              properties:
+                pin_id: { type: string }
+
+    EvtReactionChanged:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "reaction.changed" }
+            data:
+              type: object
+              required: [pin_id, reaction_summary]
+              properties:
+                pin_id: { type: string }
+                reaction_summary:
+                  type: object
+                  properties:
+                    like: { type: integer }
+                    neutral: { type: integer }
+                    against: { type: integer }
+
+    EvtShortlistChanged:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "shortlist.changed" }
+            data:
+              type: object
+              required: [item, action]
+              properties:
+                item: { $ref: "#/components/schemas/ShortlistItem" }
+                action: { type: string, enum: [added, removed, reordered], description: "reordered는 수동 정렬 (#30)" }
+
+    EvtRouteRecalculated:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "route.recalculated" }
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Route" }
+
+    EvtMemberJoined:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "member.joined" }
+            data: { $ref: "#/components/schemas/Member" }
+
+    EvtMemberPresence:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "member.presence" }
+            data:
+              type: object
+              required: [user_id, online]
+              properties:
+                user_id: { type: string }
+                online: { type: boolean }
+
+    EvtRunProgress:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "run.progress" }
+            data:
+              type: object
+              required: [run_id, step, label]
+              properties:
+                run_id: { type: string }
+                step: { type: integer, minimum: 1, maximum: 8, description: "추천 8단계 (기획안 3절, 6절)" }
+                label: { type: string }
+
+    EvtRunCandidatesReady:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "run.candidates_ready" }
+            data:
+              type: object
+              required: [run_id, candidates]
+              properties:
+                run_id: { type: string }
+                candidates:
+                  type: array
+                  items: { $ref: "#/components/schemas/Candidate" }
+
+    EvtRunFailed:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "run.failed" }
+            data:
+              type: object
+              required: [run_id, error]
+              properties:
+                run_id: { type: string }
+                error: { $ref: "#/components/schemas/Error" }

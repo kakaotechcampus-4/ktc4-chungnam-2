@@ -18,15 +18,22 @@ export function buildBaseState(): StoreState {
 
   const members: StoreState["members"] = {
     [mapId]: [
-      { user_id: ME_USER_ID, display_name: "황경(나)", color: "#F97316", online: true },
-      { user_id: "u_2", display_name: "박서영", color: "#3B82F6", online: true },
-      { user_id: "u_3", display_name: "김도현", color: "#10B981", online: false },
-      { user_id: "u_4", display_name: "이유빈", color: "#A855F7", online: false },
+      { user_id: ME_USER_ID, display_name: "황경(나)", online: true },
+      { user_id: "u_2", display_name: "박서영", online: true },
+      { user_id: "u_3", display_name: "김도현", online: false },
+      { user_id: "u_4", display_name: "이유빈", online: false },
     ],
   };
 
   const maps: StoreState["maps"] = {
-    [mapId]: { id: mapId, title: "제주도 여행", member_count: 4, confirmed_count: 0 },
+    [mapId]: {
+      id: mapId,
+      title: "제주도 여행",
+      start_date: "2026-10-10",
+      end_date: "2026-10-12",
+      member_count: 4,
+      confirmed_count: 0,
+    },
   };
 
   // 음식점 핀 2개 — 각각 반응 2개씩(구성원 절반 = ceil(4/2) = 2) → 5-4 임계값 충족, 추천 버튼 활성화
@@ -44,6 +51,8 @@ export function buildBaseState(): StoreState {
       lat: 33.4996,
       lng: 126.5312,
       place_name: "흑돼지식당",
+      created_by: "u_2",
+      created_by_display_name: "박서영",
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, neutral: 0, against: 1 },
@@ -58,6 +67,8 @@ export function buildBaseState(): StoreState {
       lat: 33.5015,
       lng: 126.5254,
       place_name: "우진해장국",
+      created_by: ME_USER_ID,
+      created_by_display_name: "황경(나)",
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, neutral: 0, against: 1 },
@@ -104,6 +115,7 @@ export function buildBaseState(): StoreState {
     runRequestedBy: {},
     candidates: {},
     shortlist: { [mapId]: [] },
+    routes: {},
     invites: {},
   };
 }

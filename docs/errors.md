@@ -17,12 +17,12 @@
 | `SHORTLIST_CATEGORY_EMPTY` | 200(빈 배열) | 확정 분류에 항목 없음 | "이 분류에는 확정된 곳이 없어요" |
 | `UNAUTHORIZED` | 401 | 인증 실패 | 전역 인터셉터 + next 파라미터 리다이렉트 |
 | `FORBIDDEN` | 403 | 권한 없는 액션 (permissions.md 범위 밖) | 해당 버튼이 애초에 disabled여야 함 — 403이 보이면 FE 버그 신호 |
-| `IDEMPOTENCY_CONFLICT` | 409 | 동일 Idempotency-Key로 다른 바디 요청 | 재시도 로직 버그 신호 |
+| `IDEMPOTENCY_CONFLICT` | 409 | 동일 Idempotency-Key로 다른 바디 요청 | 재시도 로직 버그 신호. 붙일 엔드포인트는 #48 결정에 따름 |
 | `VALIDATION_ERROR` | 422 | 요청 형식·필수값 오류 | 폼 필드 오류 표시 — FE 버그 신호 |
 | `NOT_FOUND` | 404 | 없는 경로·없는 리소스 | 전역 404 |
 | `INTERNAL_ERROR` | 500 | 미처리 서버 예외 | 전역 에러 화면 |
 
-> **[루트 승인 대기 — backend/common 제안]** 표 마지막 3행(VALIDATION_ERROR·NOT_FOUND·INTERNAL_ERROR)은 화면 상태가 아니라 **봉투 통일용**이다. 이게 없으면 FastAPI 기본 응답(`{detail}`)이 그대로 나가서 FE가 에러 형태를 두 가지로 파싱해야 한다. 승인되면 이 주석을 지운다.
+마지막 3행(`VALIDATION_ERROR`·`NOT_FOUND`·`INTERNAL_ERROR`)은 화면 상태가 아니라 **봉투 통일용**이다 — 이게 없으면 FastAPI 기본 응답이 그대로 나가서 FE가 에러 형태를 두 가지로 파싱해야 한다(`backend/common/errors.py`, PR #49).
 
 ## 규칙
 

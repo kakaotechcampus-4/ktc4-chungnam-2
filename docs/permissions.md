@@ -13,6 +13,7 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     map: own                 # 자신이 속한 지도
   actions:
     - pin.create
+    - pin.delete               # "구성원 누구나" (9/4 결정 #25)
     - pin.react               # ♥/△/🚫 등록·수정
     - pin.revert               # 반응으로 바뀐 상태 되돌리기 — "누구나" (15-1)
     - shortlist.add
@@ -71,6 +72,7 @@ owner:                        # 지도 생성자. member 전체 + 아래 추가
 | 기획안 15-1 행동 | 이 모델에서의 표현 |
 |---|---|
 | 확정 리스트 추가·제외 — 구성원 누구나 | `member.actions: [shortlist.add, shortlist.remove]` |
+| 핀 삭제 — 구성원 누구나 (9/4 결정 #25) | `member.actions: [pin.delete]` |
 | 근거 리스트에서 항목 빼기 — 자기가 쓴 것만 | `author.scope.evidence_line: own`, `author.actions: [evidence.disable]` |
 | 핀 되돌리기 — 구성원 누구나 | `member.actions: [pin.revert]` |
 | 반경 조정 — 별도 권한 불필요 | 반경 사유도 `evidence_line`이므로 위 규칙을 그대로 상속. 별도 액션 없음 |
