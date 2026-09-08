@@ -56,6 +56,8 @@ class AppError(Exception):
 def error_response(code: str, message: str | None = None, detail: dict[str, Any] | None = None) -> JSONResponse:
     """카탈로그 코드 하나를 `Error` 스키마 응답으로. detail은 없으면 키 자체를 뺀다(스키마상 선택)."""
     status, default_message = CATALOG[code]
+    if status < 400:
+        raise ValueError(f"{code}는 200 응답용 코드다 — 에러 응답으로 만들지 않는다")
     body: dict[str, Any] = {"code": code, "message": message or default_message}
     if detail is not None:
         body["detail"] = detail
@@ -89,10 +91,19 @@ def register_error_handlers(app) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(_request, exc: StarletteHTTPException):
         code = _code_for_http_status(exc.status_code)
-        # 상태코드는 FastAPI가 정한 값을 그대로 쓴다(405 등 카탈로그에 없는 값이 올 수 있다)
+        # 상태코드는 FastAPI가 정한 값을 그대로 쓴다(405 등 카탈로그에 없는 값이 올 수 있다).
+        # headers도 그대로 넘긴다 — 405의 Allow, 401의 WWW-Authenticate가 여기서 사라지면 안 된다.
         _, default_message = CATALOG[code]
-        return JSONResponse(status_code=exc.status_code, content={"code": code, "message": default_message})
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"code": code, "message": default_message},
+            headers=exc.headers,
+        )
 
+    # ponytail: 이 핸들러는 ServerErrorMiddleware에서 돌아 CORSMiddleware 바깥이다 —
+    # 500 응답에는 CORS 헤더가 안 붙어서 브라우저 FE는 본문을 못 읽는다(네트워크 에러로 보인다).
+    # 고치려면 catch-all을 CORS보다 먼저 등록하는 미들웨어로 바꿔야 하는데,
+    # BaseHTTPMiddleware가 SSE(#13) 스트리밍을 버퍼링해 깨뜨린다. 500이 잦아지면 그때 교환한다.
     @app.exception_handler(Exception)
     async def _unhandled(_request, exc: Exception):
         # 예외 내용은 로그에만 남긴다 — 응답에 넣으면 내부 정보가 그대로 나간다

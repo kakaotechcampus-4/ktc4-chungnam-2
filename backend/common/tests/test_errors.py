@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
-from common.errors import CATALOG, AppError, register_error_handlers
+from common.errors import CATALOG, AppError, error_response, register_error_handlers
 
 DOCS_ERRORS = Path(__file__).resolve().parents[3] / "docs" / "errors.md"
 
@@ -41,6 +41,10 @@ def _client(raise_server_exceptions: bool = True) -> TestClient:
     def _validate(body: _Body):
         return {"place_id": body.place_id}
 
+    @app.post("/method-only")
+    def _method_only():
+        return {}
+
     @app.get("/boom")
     def _boom():
         raise RuntimeError("secret-internal-detail")
@@ -54,6 +58,7 @@ def test_catalog_matches_docs():
     documented = {code: int(status) for code, status in rows}
 
     assert documented, "errors.md 표를 한 줄도 못 읽었다 — 표 형식이 바뀌었는지 확인"
+    assert RAISABLE and NOT_RAISABLE, "둘 중 하나가 비면 아래 parametrize가 0건으로 조용히 통과한다"
     assert set(documented) == set(CATALOG), "errors.md와 CATALOG의 코드 집합이 다르다"
     assert documented == {code: status for code, (status, _) in CATALOG.items()}, "코드별 HTTP가 다르다"
 
@@ -111,3 +116,18 @@ def test_unhandled_exception_does_not_leak():
     assert response.status_code == 500
     assert response.json()["code"] == "INTERNAL_ERROR"
     assert "secret-internal-detail" not in response.text
+
+
+def test_error_response_also_rejects_200_codes():
+    """AppError뿐 아니라 error_response()로도 200 코드를 에러 응답으로 못 만든다."""
+    with pytest.raises(ValueError):
+        error_response("MAP_EMPTY")
+
+
+def test_405_keeps_allow_header():
+    """봉투를 갈아끼우면서 원래 헤더를 잃지 않아야 한다 (401의 WWW-Authenticate도 같은 경로)."""
+    response = _client().get("/method-only")
+
+    assert response.status_code == 405
+    assert "POST" in response.headers["allow"]
+    assert response.json()["code"] == "VALIDATION_ERROR"
