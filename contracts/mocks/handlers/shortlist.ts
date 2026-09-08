@@ -20,7 +20,7 @@ export const shortlistHandlers = [
     const mapId = params.mapId as string;
     const body = (await request.json()) as { pin_id: string };
     const pin = store.pins[body.pin_id];
-    if (!pin) return apiError(404, "PIN_NOT_FOUND", "핀을 찾을 수 없습니다");
+    if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
     pin.kind = "확정"; // 5-2: 확정이 원래 종류를 덮어쓴다
     const itemId = nextId("shortlist");
     const items = store.shortlist[mapId] ?? (store.shortlist[mapId] = []);
