@@ -68,6 +68,8 @@ shortlist_items(
 
 ## places / place_facts (architecture.md 2절 — 자체 장소 DB)
 
+> **🚨 이 스키마는 이용약관 검토가 끝나기 전까지 잠정안이다.** `places` 테이블이 `name`·`address`·`phone`·`geom`을 영구 저장하도록 설계돼 있는데, 카카오 로컬 API 등은 결과의 영구 저장 자체를 금지할 수 있다는 정황이 나왔다 — [#53](https://github.com/kakaotechcampus-4/ktc4-chungnam-2/issues/53) 참고. `source_id`/`place_url` 외 필드의 실제 수집·저장 구현은 이 이슈가 풀린 뒤에 시작한다.
+
 ```
 places(
   id, source('kakao'|'google'|'naver'),
