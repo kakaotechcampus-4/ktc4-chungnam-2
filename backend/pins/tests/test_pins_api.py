@@ -188,3 +188,189 @@ def test_delete_pin_forbidden_when_not_member(app_client, db_session):
 class _AlwaysDenyMembership:
     def is_member(self, map_id, user_id):
         return False
+
+
+def _reaction_summary_of(app_client, pin_id, user="user_1"):
+    pins = app_client.get("/maps/map_1/pins", cookies=_auth(user)).json()
+    return next(p["reaction_summary"] for p in pins if p["id"] == pin_id)
+
+
+def test_put_reaction_against_without_reason_is_422(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_1")
+    resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "against"}, cookies=_auth("user_2"))
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "EVIDENCE_REQUIRED"
+
+
+def test_put_reaction_against_with_whitespace_reason_is_422(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_ws")
+    resp = app_client.put(
+        f"/pins/{row.id}/reaction", json={"type": "against", "reason_text": "   "}, cookies=_auth("user_2")
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "EVIDENCE_REQUIRED"
+
+
+def test_put_reaction_like_without_reason_is_200(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_2")
+    resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["type"] == "like"
+    assert body["pin_id"] == str(row.id)
+    assert body["user_id"] == "user_2"
+
+
+def test_put_reaction_against_with_chip_ids_only_is_200(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_chip")
+    resp = app_client.put(
+        f"/pins/{row.id}/reaction",
+        json={"type": "against", "reason_chip_ids": ["spicy_focused"]},
+        cookies=_auth("user_2"),
+    )
+    assert resp.status_code == 200
+
+
+def test_put_reaction_twice_upserts_single_row(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_upsert")
+    app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
+    app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
+
+    summary = _reaction_summary_of(app_client, str(row.id))
+    assert summary["like"] == 1
+
+
+def test_put_reaction_type_change_still_requires_reason_for_against(app_client, db_session):
+    """반응 타입 전환 — 이전에 사유 없이 통과했다고 재검증을 건너뛰지 않는다."""
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_switch")
+    app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
+
+    resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "against"}, cookies=_auth("user_2"))
+    assert resp.status_code == 422
+
+    resp = app_client.put(
+        f"/pins/{row.id}/reaction", json={"type": "against", "reason_text": "매워요"}, cookies=_auth("user_2")
+    )
+    assert resp.status_code == 200
+
+    summary = _reaction_summary_of(app_client, str(row.id))
+    assert summary["like"] == 0
+    assert summary["against"] == 1
+
+
+def test_delete_reaction_removes_row_and_decrements_summary(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_delete")
+    app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
+    assert _reaction_summary_of(app_client, str(row.id))["like"] == 1
+
+    resp = app_client.delete(f"/pins/{row.id}/reaction", cookies=_auth("user_2"))
+    assert resp.status_code == 204
+    assert _reaction_summary_of(app_client, str(row.id))["like"] == 0
+
+
+def test_delete_reaction_when_none_exists_is_still_204(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_noop_delete")
+    resp = app_client.delete(f"/pins/{row.id}/reaction", cookies=_auth("user_2"))
+    assert resp.status_code == 204
+
+
+def test_put_reaction_on_nonexistent_pin_is_404(app_client):
+    resp = app_client.put(f"/pins/{uuid.uuid4()}/reaction", json={"type": "like"}, cookies=_auth())
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "NOT_FOUND"
+
+
+def test_delete_reaction_on_nonexistent_pin_is_404(app_client):
+    resp = app_client.delete(f"/pins/{uuid.uuid4()}/reaction", cookies=_auth())
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "NOT_FOUND"
+
+
+def test_put_reaction_forbidden_when_not_member(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_forbidden")
+    app.dependency_overrides[get_membership_gateway] = lambda: _AlwaysDenyMembership()
+    try:
+        resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
+    finally:
+        del app.dependency_overrides[get_membership_gateway]
+
+    assert resp.status_code == 403
+    assert resp.json()["code"] == "FORBIDDEN"
+
+
+def test_put_reaction_on_other_users_private_pin_is_404_regardless_of_membership(app_client, db_session):
+    """가드레일 1 — 비공개 접근 차단이 구성원 확인보다 먼저다. 구성원이어도 남의 비공개 핀엔 못 붙는다."""
+    row = _insert_pin(db_session, created_by="user_1", visibility="private", place_id="react_private")
+
+    resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "AI_PIN_PRIVATE"
+
+    app.dependency_overrides[get_membership_gateway] = lambda: _AlwaysDenyMembership()
+    try:
+        resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
+    finally:
+        del app.dependency_overrides[get_membership_gateway]
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "AI_PIN_PRIVATE"
+
+
+def test_delete_reaction_on_other_users_private_pin_is_404(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", visibility="private", place_id="react_private_del")
+    resp = app_client.delete(f"/pins/{row.id}/reaction", cookies=_auth("user_2"))
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "AI_PIN_PRIVATE"
+
+
+def test_put_reaction_on_own_private_pin_succeeds(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", visibility="private", place_id="react_own_private")
+    resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_1"))
+    assert resp.status_code == 200
+
+
+def test_put_reaction_publishes_event_for_public_pin(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_event")
+    spy = SpyPublisher()
+    app.dependency_overrides[get_event_publisher] = lambda: spy
+    try:
+        app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
+    finally:
+        del app.dependency_overrides[get_event_publisher]
+
+    assert len(spy.events) == 1
+    _map_id, channel, event_type, payload = spy.events[0]
+    assert channel == "public"
+    assert event_type == "reaction.changed"
+    assert payload == {"pin_id": str(row.id), "reaction_summary": {"like": 1, "neutral": 0, "against": 0}}
+
+
+def test_put_reaction_on_own_private_pin_emits_no_event(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", visibility="private", place_id="react_private_event")
+    spy = SpyPublisher()
+    app.dependency_overrides[get_event_publisher] = lambda: spy
+    try:
+        app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_1"))
+    finally:
+        del app.dependency_overrides[get_event_publisher]
+
+    assert spy.events == []
+
+
+def test_delete_reaction_emits_event_only_when_row_existed(app_client, db_session):
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_delete_event")
+    app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
+
+    spy = SpyPublisher()
+    app.dependency_overrides[get_event_publisher] = lambda: spy
+    try:
+        app_client.delete(f"/pins/{row.id}/reaction", cookies=_auth("user_2"))
+        assert len(spy.events) == 1
+        assert spy.events[0][2] == "reaction.changed"
+
+        # 이미 지워진 반응을 다시 DELETE — 상태 변화가 없으므로 이벤트도 없다.
+        spy.events.clear()
+        resp = app_client.delete(f"/pins/{row.id}/reaction", cookies=_auth("user_2"))
+        assert resp.status_code == 204
+        assert spy.events == []
+    finally:
+        del app.dependency_overrides[get_event_publisher]
