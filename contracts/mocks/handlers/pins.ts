@@ -81,7 +81,7 @@ export const pinsHandlers = [
 
   http.delete("*/pins/:pinId", ({ params }) => {
     const pinId = params.pinId as string;
-    if (!store.pins[pinId]) return apiError(404, "PIN_NOT_FOUND", "핀을 찾을 수 없습니다");
+    if (!store.pins[pinId]) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
     delete store.pins[pinId];
     delete store.reactions[pinId];
     return new HttpResponse(null, { status: 204 });
@@ -90,7 +90,7 @@ export const pinsHandlers = [
   http.put("*/pins/:pinId/reaction", async ({ params, request }) => {
     const pinId = params.pinId as string;
     const pin = store.pins[pinId];
-    if (!pin) return apiError(404, "PIN_NOT_FOUND", "핀을 찾을 수 없습니다");
+    if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
     const body = (await request.json()) as { type: "like" | "neutral" | "against"; reason_text?: string; reason_chip_ids?: string[] };
     if (body.type === "against" && !body.reason_text && !(body.reason_chip_ids && body.reason_chip_ids.length)) {
       return apiError(422, "EVIDENCE_REQUIRED", "반대에는 사유가 필요해요");
@@ -112,7 +112,7 @@ export const pinsHandlers = [
   http.delete("*/pins/:pinId/reaction", ({ params }) => {
     const pinId = params.pinId as string;
     const pin = store.pins[pinId];
-    if (!pin) return apiError(404, "PIN_NOT_FOUND", "핀을 찾을 수 없습니다");
+    if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
     const list = store.reactions[pinId] ?? [];
     store.reactions[pinId] = list.filter((r) => r.user_id !== ME_USER_ID);
     pin.reaction_summary = {
