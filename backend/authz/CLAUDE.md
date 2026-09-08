@@ -19,7 +19,7 @@
 ## 완료 정의
 
 - `can(user, action, resource) -> bool` 판정 함수 + 단위 테스트 (역할별·범위별 케이스 전부)
-- `docs/permissions.md`의 "15-1 표와의 매핑" 절 4개 행이 전부 테스트로 커버됨
+- `docs/permissions.md`의 "15-1 표와의 매핑" 절 5개 행이 전부 테스트로 커버됨
 
 ## 코드 품질
 

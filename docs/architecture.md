@@ -52,13 +52,15 @@ interface PlaceSource {
 }
 ```
 
-구현체: `KakaoPlaceSource`, `GooglePlaceSource`(Enterprise SKU 필요, 초기엔 미사용), `NaverPlaceSource`(예비). 소스 선택은 카테고리·지역별로 설정 가능해야 한다 — 하나로 고정하지 않는다.
+구현체: `KakaoPlaceSource`·`NaverPlaceSource`·`GooglePlaceSource` — **2026-09-07 결정으로 v1부터 3개 전부 실사용**(비용순 폴백: 카카오→네이버→구글, `backend/places/CLAUDE.md` 참고). 소스 선택은 카테고리·지역별로 설정 가능해야 한다 — 하나로 고정하지 않는다.
 
 ### 층2 차원 압축의 의미 (멘토 피드백)
 
 "카카오 메뉴 페이지에서 가격을 가져와 평균 낸다. 우리에게 필요한 건 '비싼 가격대냐 아니냐'뿐이니 차원을 압축해버리면 그건 그들이 제공하는 데이터가 아니다 → 우리 DB에 저장해도 문제없다."
 
-→ `place_facts`에는 **원본 가격 숫자를 저장하지 않는다.** `price_bucket ENUM(low|mid|high)`처럼 압축된 값만 저장한다. 압축 로직(임계값)은 `docs/constraints.md`에서 관리한다. 멘토가 단서를 단 대로 수집 범위·방식에 대한 윤리·약관 검토는 별도 이슈로 다룬다.
+→ `place_facts`에는 **원본 가격 숫자를 저장하지 않는다.** `price_bucket ENUM(low|mid|high)`처럼 압축된 값만 저장한다. 압축 로직(임계값)은 `docs/constraints.md`에서 관리한다.
+
+> **🚨 2026-09-07 — 이 문단의 법적 전제 자체가 현재 미확정이다.** 위 "차원 압축이니 저장 가능하다"는 논리를 검증한 적이 없었고, 카카오 개발자 포럼에서 로컬 API 결과의 영구 저장을 아예 금지하는 취지의 답변이 다수 확인됐다(ID·URL만 저장 가능, 좌표조차 불가할 수 있음). **파생 라벨(`place_facts`)도 저장 금지 대상인지까지 확인 대상이다.** 진행 상황·확인 순서는 이슈 [#53](https://github.com/kakaotechcampus-4/ktc4-chungnam-2/issues/53) 참고 — **이 이슈가 풀리기 전엔 `backend/places`의 실제 수집·저장 파이프라인을 구현하지 않는다.** 최악의 경우(좌표·라벨 모두 영구 저장 불가) 대비책: 반경 검색을 실시간 API 호출로 전환하고 필요시마다 재라벨링하는 방향으로 이 절 자체를 다시 쓴다.
 
 ---
 

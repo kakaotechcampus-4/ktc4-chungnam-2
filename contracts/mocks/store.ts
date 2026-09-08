@@ -35,6 +35,7 @@ export interface StoreState {
   runRequestedBy: Record<string, string>; // runId -> user_id (5-5-1 비공개 판정에 사용)
   candidates: Record<string, Candidate[]>; // runId -> candidates
   shortlist: Record<string, ShortlistItem[]>; // mapId -> items
+  routes: Record<string, Route[]>; // mapId -> 마지막으로 계산된 동선 (#30, POST로만 갱신)
   invites: Record<string, { mapId: string; expires_at: string }>; // token -> invite
 }
 
@@ -52,6 +53,7 @@ function emptyState(): StoreState {
     runRequestedBy: {},
     candidates: {},
     shortlist: {},
+    routes: {},
     invites: {},
   };
 }

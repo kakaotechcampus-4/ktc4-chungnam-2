@@ -351,6 +351,8 @@ export interface paths {
                 query?: {
                     category?: components["schemas"]["Category"];
                     kind?: components["schemas"]["PinKind"];
+                    /** @description 구성원별 핀 필터 (#26). 여러 명을 지정하면 OR로 묶는다 */
+                    created_by?: string[];
                 };
                 header?: never;
                 path: {
@@ -619,6 +621,7 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendRun"];
                     };
                 };
+                409: components["responses"]["NotReady"];
             };
         };
         delete?: never;
@@ -687,6 +690,7 @@ export interface paths {
                         "application/json": components["schemas"]["EvidenceLine"][];
                     };
                 };
+                403: components["responses"]["Forbidden"];
             };
         };
         trace?: never;
@@ -770,6 +774,7 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendRun"];
                     };
                 };
+                500: components["responses"]["RecommendFailed"];
             };
         };
         delete?: never;
@@ -807,6 +812,7 @@ export interface paths {
                     };
                 };
                 404: components["responses"]["NoResults"];
+                500: components["responses"]["RecommendFailed"];
             };
         };
         put?: never;
@@ -1036,6 +1042,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/{mapId}/shortlist/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 확정 리스트 수동 정렬 (#30). 보기 좋게 순서를 바꾸는 것뿐이고 동선과는 무관하다.
+         *     동선을 다시 짜려면 POST /maps/{mapId}/route를 부른다.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @description 원하는 순서대로 나열한 shortlist item id 전체 */
+                        item_ids: string[];
+                    };
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ShortlistItem"][];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/route": {
         parameters: {
             query?: never;
@@ -1044,8 +1098,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 동선 보기 (5-10). 순수 계산, 모델 미사용. 확정 핀이 여러 지역에 걸치면 지역별로 여러 동선을 반환한다.
-         *     확정 리스트가 바뀌면 즉시 재계산 — 별도 재계산 요청 API 없음.
+         * 마지막으로 계산된 동선 조회 (5-10). 순수 계산, 모델 미사용.
+         *     확정 핀이 여러 지역에 걸치면 지역별로 여러 동선을 반환한다.
+         *     한 번도 계산하지 않았으면 빈 배열.
          */
         get: {
             parameters: {
@@ -1067,6 +1122,127 @@ export interface paths {
                         "application/json": components["schemas"]["Route"][];
                     };
                 };
+            };
+        };
+        put?: never;
+        /**
+         * 「동선 짜주기」 — 현재 확정 리스트로 동선을 계산한다 (#30, 기획안 5-10의 "동선 보기" 토글).
+         *     확정 리스트가 바뀌어도 자동 재계산하지 않는다. 사람이 이 버튼을 눌러야 실행된다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 계산된 동선. 같은 결과를 route.recalculated로도 발행한다 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Route"][];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 전체 채널 SSE. 지도의 모든 구성원이 구독한다.
+         *     visibility=private인 핀·후보는 이 채널로 절대 내려가지 않는다 (5-5-1, 가드레일 1).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /**
+                     * @description 브라우저 EventSource가 재연결 시 자동으로 보낸다. 이 seq 이후 이벤트만 재전송한다.
+                     *     event_log 보존기간을 넘긴 값이면 REST 재조회로 폴백한다 (docs/events.md).
+                     */
+                    "Last-Event-ID"?: components["parameters"]["LastEventId"];
+                };
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 전체 채널 이벤트 스트림 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": components["schemas"]["PublicEvent"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/events/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 개인 채널 SSE. 요청자 본인만 구독한다. 본인의 비공개 AI 후보와 run 진행 상태가 여기로만 온다.
+         *     채널 분리가 5-5-1을 if문이 아니라 구조로 강제한다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /**
+                     * @description 브라우저 EventSource가 재연결 시 자동으로 보낸다. 이 seq 이후 이벤트만 재전송한다.
+                     *     event_log 보존기간을 넘긴 값이면 REST 재조회로 폴백한다 (docs/events.md).
+                     */
+                    "Last-Event-ID"?: components["parameters"]["LastEventId"];
+                };
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 개인 채널 이벤트 스트림 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": components["schemas"]["PrivateEvent"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
             };
         };
         put?: never;
@@ -1114,6 +1290,16 @@ export interface components {
         Map: {
             id?: string;
             title?: string;
+            /**
+             * Format: date
+             * @description 여행 시작일 (#22)
+             */
+            start_date?: string;
+            /**
+             * Format: date
+             * @description 여행 종료일 (#22)
+             */
+            end_date?: string;
             member_count?: number;
             confirmed_count?: number;
         };
@@ -1126,14 +1312,21 @@ export interface components {
         Member: {
             user_id?: string;
             display_name?: string;
-            /** @description 구성원 색 팔레트·배정 주체는 결정 이슈 미결 */
-            color?: string;
             online?: boolean;
         };
         MapCreateRequest: {
+            /** @description 여행 제목 (#22) */
             title: string;
-            /** @description 지도 생성 입력값 필드 확정 전 임시 */
-            region_hint?: string;
+            /**
+             * Format: date
+             * @description 여행 시작일 (#22)
+             */
+            start_date: string;
+            /**
+             * Format: date
+             * @description 여행 종료일 (#22). start_date 이후여야 한다
+             */
+            end_date: string;
         };
         PinCreateRequest: {
             category: components["schemas"]["Category"];
@@ -1170,6 +1363,10 @@ export interface components {
             lat?: number;
             lng?: number;
             place_name?: string;
+            /** @description 핀을 찍은 구성원의 user_id (#26) */
+            created_by?: string;
+            /** @description 핀 상세에서 '누가 찍었는지' 표시용 (#26) */
+            created_by_display_name?: string;
             price_bucket?: components["schemas"]["PriceBucket"];
             /** @description 게시된 AI 추천 핀도 상세에서 계속 노출한다 (가드레일 5) */
             checks?: components["schemas"]["Check"][];
@@ -1284,6 +1481,104 @@ export interface components {
                 approx_minutes?: number;
             }[];
         };
+        /** @description 모든 SSE 이벤트의 공통 봉투. id는 event_log.seq와 같고 SSE의 id: 필드로 전송된다 */
+        SseEnvelope: {
+            /**
+             * Format: int64
+             * @description = event_log.seq
+             */
+            id: number;
+            event: string;
+        };
+        /** @description 전체 채널 이벤트 (docs/events.md). event 값으로 data 타입이 갈린다 */
+        PublicEvent: components["schemas"]["EvtPinCreated"] | components["schemas"]["EvtPinPublished"] | components["schemas"]["EvtPinDeleted"] | components["schemas"]["EvtReactionChanged"] | components["schemas"]["EvtShortlistChanged"] | components["schemas"]["EvtRouteRecalculated"] | components["schemas"]["EvtMemberJoined"] | components["schemas"]["EvtMemberPresence"];
+        /** @description 개인 채널 이벤트 (docs/events.md, 5-5-1) */
+        PrivateEvent: components["schemas"]["EvtRunProgress"] | components["schemas"]["EvtRunCandidatesReady"] | components["schemas"]["EvtRunFailed"];
+        EvtPinCreated: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "pin.created";
+            data: components["schemas"]["Pin"];
+        };
+        EvtPinPublished: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "pin.published";
+            data: components["schemas"]["Pin"];
+        };
+        EvtPinDeleted: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "pin.deleted";
+            data: {
+                pin_id: string;
+            };
+        };
+        EvtReactionChanged: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "reaction.changed";
+            data: {
+                pin_id: string;
+                reaction_summary: {
+                    like?: number;
+                    neutral?: number;
+                    against?: number;
+                };
+            };
+        };
+        EvtShortlistChanged: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "shortlist.changed";
+            data: {
+                item: components["schemas"]["ShortlistItem"];
+                /**
+                 * @description reordered는 수동 정렬 (#30)
+                 * @enum {string}
+                 */
+                action: "added" | "removed" | "reordered";
+            };
+        };
+        EvtRouteRecalculated: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "route.recalculated";
+            data: components["schemas"]["Route"][];
+        };
+        EvtMemberJoined: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "member.joined";
+            data: components["schemas"]["Member"];
+        };
+        EvtMemberPresence: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "member.presence";
+            data: {
+                user_id: string;
+                online: boolean;
+            };
+        };
+        EvtRunProgress: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "run.progress";
+            data: {
+                run_id: string;
+                /** @description 추천 8단계 (기획안 3절, 6절) */
+                step: number;
+                label: string;
+            };
+        };
+        EvtRunCandidatesReady: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "run.candidates_ready";
+            data: {
+                run_id: string;
+                candidates: components["schemas"]["Candidate"][];
+            };
+        };
+        EvtRunFailed: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "run.failed";
+            data: {
+                run_id: string;
+                error: components["schemas"]["Error"];
+            };
+        };
     };
     responses: {
         /** @description 인증 실패 */
@@ -1349,12 +1644,56 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description 추천 준비 미달 — 해당 카테고리에 의견 남긴 핀이 기준 미달 (5-4, "핀 1/2 · 1개 더 필요") */
+        NotReady: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
+         * @description 권한 없는 액션 (docs/permissions.md 범위 밖).
+         *     이 응답이 화면에 보이면 버튼이 애초에 disabled였어야 했다는 신호다.
+         */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 추천 파이프라인 실패 (6절 "조건이 까다로워서가 아니에요") */
+        RecommendFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 동일 Idempotency-Key로 다른 바디를 보냄 — 재시도 로직 버그 신호. 붙일 엔드포인트는 */
+        IdempotencyConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
     parameters: {
         MapId: string;
         PinId: string;
         RunId: string;
         CandidateId: string;
+        /**
+         * @description 브라우저 EventSource가 재연결 시 자동으로 보낸다. 이 seq 이후 이벤트만 재전송한다.
+         *     event_log 보존기간을 넘긴 값이면 REST 재조회로 폴백한다 (docs/events.md).
+         */
+        LastEventId: number;
     };
     requestBodies: never;
     headers: never;
