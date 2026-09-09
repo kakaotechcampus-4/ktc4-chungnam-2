@@ -8,6 +8,8 @@ FastAPI 앱 진입점. 단일 앱, 마이크로서비스 아님(backend/CLAUDE.m
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from common.errors import register_error_handlers
+
 app = FastAPI(title="pingo API", version="0.1.0")
 
 app.add_middleware(
@@ -17,6 +19,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 모든 응답을 {code, message, detail?} 한 봉투로 통일한다(backend/common/errors.py, #2).
+register_error_handlers(app)
 
 
 @app.get("/health")
