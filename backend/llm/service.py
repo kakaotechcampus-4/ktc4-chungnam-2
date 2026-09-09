@@ -81,8 +81,13 @@ def label_place(
             continue
 
         evidence = evidence_by_fact_key.get(key)
-        if evidence is not None and not any(evidence in text for text in raw_texts):
-            # 근거가 원자료 어디에도 없다 — 지어낸 근거로 보고 강등한다.
+        if evidence is not None and (
+            not evidence.strip() or not any(evidence in text for text in raw_texts)
+        ):
+            # 공백만 있는 evidence는 근거가 없는 것과 동일하게 취급해 강등한다
+            # (pins/core.py validate_reaction이 공백만 있는 reason_text를 처리하는 패턴과 동일) —
+            # 그렇지 않으면 evidence=""일 때 "" in text가 항상 True라서 대조가 무력화된다.
+            # 원자료 어디에도 없는 근거(지어낸 근거)도 동일하게 강등한다.
             labels.append(PlaceFactLabel(fact_key=key, confidence="unknown"))
             continue
 

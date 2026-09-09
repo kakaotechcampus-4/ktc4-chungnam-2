@@ -134,6 +134,36 @@ class TestLabelPlaceEvidenceCrossCheck:
         assert label.confidence == "known"
         assert label.evidence == "새우가 신선"
 
+    def test_blank_evidence_downgrades_to_unknown(self):
+        # evidence=""이면 "" in text가 파이썬에서 항상 True라서 대조가 무력화되는 버그 재현.
+        # evidence가 아예 없는 것(None)과 동일하게 취급해 known을 유지하면 안 되고 unknown으로
+        # 강등되어야 한다(pins/core.py validate_reaction의 공백 처리와 동일 원칙).
+        place_raw_facts = {"contains_shellfish": True, "menu_text": "삼겹살 전문점"}
+
+        [label] = label_place(
+            place_raw_facts,
+            ["contains_shellfish"],
+            evidence_by_fact_key={"contains_shellfish": ""},
+        )
+
+        assert label.confidence == "unknown"
+        assert label.value is None
+        assert label.evidence is None
+
+    def test_whitespace_only_evidence_downgrades_to_unknown(self):
+        # 공백만 있는 evidence도 "" 취급과 동일해야 한다(strip() 기준).
+        place_raw_facts = {"contains_shellfish": True, "menu_text": "삼겹살 전문점"}
+
+        [label] = label_place(
+            place_raw_facts,
+            ["contains_shellfish"],
+            evidence_by_fact_key={"contains_shellfish": "   "},
+        )
+
+        assert label.confidence == "unknown"
+        assert label.value is None
+        assert label.evidence is None
+
     def test_no_evidence_supplied_keeps_previous_known_behavior(self):
         # evidence_by_fact_key를 아예 안 주면 기존 스텁 동작(evidence=None)과 같아야 한다.
         place_raw_facts = {"contains_shellfish": True}
