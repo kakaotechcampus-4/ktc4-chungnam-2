@@ -54,7 +54,9 @@ def _client(raise_server_exceptions: bool = True) -> TestClient:
 
 def test_catalog_matches_docs():
     """errors.md 표의 코드·HTTP가 CATALOG와 정확히 일치해야 한다."""
-    rows = re.findall(r"^\|\s*`([A-Z_]+)`\s*\|\s*(\d+)", DOCS_ERRORS.read_text(), re.MULTILINE)
+    # encoding 필수 — 없으면 로케일 인코딩을 써서 Windows(cp949)에서 한글 문서 읽다 터진다
+    text = DOCS_ERRORS.read_text(encoding="utf-8")
+    rows = re.findall(r"^\|\s*`([A-Z_]+)`\s*\|\s*(\d+)", text, re.MULTILINE)
     documented = {code: int(status) for code, status in rows}
 
     assert documented, "errors.md 표를 한 줄도 못 읽었다 — 표 형식이 바뀌었는지 확인"
