@@ -29,6 +29,7 @@ paths:
     get:
       tags: [auth]
       summary: 카카오 OAuth 콜백. httpOnly 쿠키 발급 (13절 "토큰을 프론트에 두지 않는다")
+      security: []  # 로그인 전 콜백이라 전역 cookieAuth가 적용되면 안 된다(PR #71 멘토 리뷰 대응)
       parameters:
         - name: code
           in: query

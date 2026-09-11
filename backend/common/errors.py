@@ -100,10 +100,9 @@ def register_error_handlers(app) -> None:
             headers=exc.headers,
         )
 
-    # ponytail: 이 핸들러는 ServerErrorMiddleware에서 돌아 CORSMiddleware 바깥이다 —
-    # 500 응답에는 CORS 헤더가 안 붙어서 브라우저 FE는 본문을 못 읽는다(네트워크 에러로 보인다).
-    # 고치려면 catch-all을 CORS보다 먼저 등록하는 미들웨어로 바꿔야 하는데,
-    # BaseHTTPMiddleware가 SSE(#13) 스트리밍을 버퍼링해 깨뜨린다. 500이 잦아지면 그때 교환한다.
+    # 이 핸들러는 ServerErrorMiddleware에서 돌아 앱 미들웨어 스택 바깥이다.
+    # 그래서 main.py는 CORSMiddleware를 add_middleware가 아니라 앱 전체를 감싸는 방식으로 붙인다
+    # (main.py의 asgi_app). 이 파일은 CORS 설정을 알지 않는다 — 여기서 헤더를 손대지 않는다.
     @app.exception_handler(Exception)
     async def _unhandled(_request, exc: Exception):
         # 예외 내용은 로그에만 남긴다 — 응답에 넣으면 내부 정보가 그대로 나간다

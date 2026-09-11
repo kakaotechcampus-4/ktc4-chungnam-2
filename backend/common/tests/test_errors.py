@@ -133,3 +133,43 @@ def test_405_keeps_allow_header():
     assert response.status_code == 405
     assert "POST" in response.headers["allow"]
     assert response.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_500_through_the_real_stack_has_cors_headers():
+    """throwaway 앱이 아니라 main.asgi_app을 그대로 태운다 —
+    500이 CORS 헤더 없이 나가면 브라우저 FE가 본문을 못 읽는다(회귀 방지).
+
+    전역 app.router.routes를 건드리므로(진짜 asgi_app을 태우려면 진짜 라우트가 필요해서)
+    스냅샷/복원 방식을 쓴다 — 경로 문자열로 걸러내는 방식은 등록 자체가 실패했을 때 아무 것도
+    못 지우거나, 우연히 같은 경로의 다른 라우트를 지울 위험이 있다(2차 DeepSeek 재검수 지적).
+    이 프로젝트는 pytest-xdist 등 병렬 실행 플러그인이 없어(requirements.txt에 없음, 확인됨)
+    순차 실행을 전제해도 안전하다 — 병렬 실행 플러그인을 나중에 도입하면 이 테스트는 별도
+    서브앱으로 격리해야 한다."""
+    from main import app as fastapi_app, asgi_app
+
+    original_routes = list(fastapi_app.router.routes)   # 전체 스냅샷 — 부분 필터링 안 함
+
+    @fastapi_app.get("/__boom__")
+    def _boom():
+        raise RuntimeError("secret-internal-detail")
+
+    origin = "http://localhost:5173"
+    try:
+        client = TestClient(asgi_app, raise_server_exceptions=False)
+        response = client.get("/__boom__", headers={"Origin": origin})
+        assert response.status_code == 500
+        assert response.headers["access-control-allow-origin"] == origin
+        assert response.headers["access-control-allow-credentials"] == "true"
+        assert response.json()["code"] == "INTERNAL_ERROR"
+        assert "secret-internal-detail" not in response.text
+    finally:
+        fastapi_app.router.routes = original_routes   # 등록이 실패했어도 항상 정확히 복원됨
+
+
+def test_wildcard_origin_is_never_used_with_credentials():
+    """ACAO:* + credentials는 브라우저가 거부한다 — 쿠키 인증이라 절대 쓰면 안 된다."""
+    from main import asgi_app
+    client = TestClient(asgi_app)
+    r = client.get("/health", headers={"Origin": "http://localhost:5173"})
+    assert r.headers.get("access-control-allow-origin") != "*"
+    assert r.headers.get("vary") == "Origin"
