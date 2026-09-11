@@ -5,6 +5,7 @@ FastAPI 앱 진입점. 단일 앱, 마이크로서비스 아님(backend/CLAUDE.m
 이 파일 자체를 수정하는 건 라우터 등록뿐 — 비즈니스 로직은 각 모듈에 둔다.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -14,6 +15,7 @@ from starlette.middleware.cors import CORSMiddleware
 from common.adapters import format_assembly
 from common.errors import register_error_handlers
 from common.settings import settings
+from realtime.dispatcher import dispatcher
 
 logger = logging.getLogger("pingo")
 
@@ -22,7 +24,11 @@ logger = logging.getLogger("pingo")
 async def lifespan(_app: FastAPI):
     # 서버가 어떤 조립(dev 스텁 vs 실구현)으로 떴는지 기동 로그 한 곳에서 보인다.
     logger.info("\n%s", format_assembly())
+    # 반드시 이 순서로: 이미 있는 event_log까지 따라잡은 뒤(동기, 한 번) 폴링 루프를 시작한다.
+    dispatcher.initialize_last_seen()
+    task = asyncio.create_task(dispatcher.run_forever())
     yield
+    task.cancel()
 
 
 app = FastAPI(title="pingo API", version="0.1.0", lifespan=lifespan)
@@ -40,17 +46,17 @@ def health():
 # from auth.router import router as auth_router
 # from maps.router import router as maps_router
 from pins.router import router as pins_router  # noqa: E402
+from realtime.router import router as realtime_router  # noqa: E402
 
 # from recommend.router import router as recommend_router
 # from shortlist.router import router as shortlist_router
-# from realtime.router import router as realtime_router
 #
 # app.include_router(auth_router)
 # app.include_router(maps_router)
 app.include_router(pins_router)
 # app.include_router(recommend_router)
 # app.include_router(shortlist_router)
-# app.include_router(realtime_router)
+app.include_router(realtime_router)
 
 # CORS는 add_middleware가 아니라 앱을 "바깥에서" 감싼다.
 # add_middleware로 넣으면 CORS가 ServerErrorMiddleware 안쪽이 돼서 500 응답에 CORS 헤더가
