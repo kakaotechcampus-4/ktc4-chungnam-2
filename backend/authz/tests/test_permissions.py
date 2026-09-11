@@ -96,44 +96,6 @@ def test_unsupported_resource_type_raises():
         permissions_for(user, _resource("map"))
 
 
-# --- backend/pins/core.py::pin_permissions 동등성 (#56 이관 안전망) ---
-#
-# 주의: pins가 pin_permissions를 삭제할 때(pins/mentor-review-plan.md) 이 테스트도 같이
-# 지운다 — pins/tests/test_permissions_contract.py가 실제 API 응답으로 같은 걸 검증하게
-# 되면 이 손베낀 비교표는 중복이 된다. pins의 대체 테스트가 먼저 통과한 뒤에 지운다
-# (순서 중요 — 커버리지 공백 방지).
-#
-# pins/core.py 현재 구현(수정하지 않음, 여기 표로만 옮겨 대조):
-#
-#   def pin_permissions(kind: str, is_member: bool) -> Permissions:
-#       return Permissions(
-#           can_react=is_member,
-#           can_revert=is_member,
-#           can_delete=is_member,
-#           can_add_to_shortlist=is_member and kind != "확정",
-#           can_remove_from_shortlist=is_member and kind == "확정",
-#       )
-#
-# pins의 Permissions는 5개 필드가 필수라 항상 나온다(can_disable만 optional). 그래서 비교는
-# "실제로 나가는 JSON이 같은가"를 봐야 하므로 Python 객체가 아니라 model_dump(exclude_none=True)
-# dict로 비교한다 — authz 쪽은 6개 필드가 전부 optional이라 값이 없으면 아예 빠지는데, pin 응답에서는
-# 5개 필드를 항상 채우므로(permissions_for의 _pin_permissions) 결과 dict가 같아야 맞다.
-
-PIN_KINDS = ["일반", "AI추천", "확정"]
-
-
-@pytest.mark.parametrize("kind", PIN_KINDS)
-@pytest.mark.parametrize("is_member", [True, False])
-def test_pin_permissions_matches_pins_module(kind, is_member):
-    user = _principal(role="member" if is_member else None)
-    resource = _resource("pin", kind=kind)
-    dumped = permissions_for(user, resource).model_dump(exclude_none=True)
-
-    expected = {
-        "can_react": is_member,
-        "can_revert": is_member,
-        "can_delete": is_member,
-        "can_add_to_shortlist": is_member and kind != "확정",
-        "can_remove_from_shortlist": is_member and kind == "확정",
-    }
-    assert dumped == expected
+# backend/pins/core.py::pin_permissions와의 동등성 검증은 pins/tests/test_permissions_contract.py로
+# 이관됐다(#56, pins/mentor-review-plan.md) — pin_permissions 자체가 삭제됐고, pins가 authz를
+# import하는 방향이 허용되므로 그 안전망은 이제 pins 쪽에 둔다.

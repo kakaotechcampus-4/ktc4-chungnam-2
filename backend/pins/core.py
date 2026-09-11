@@ -1,12 +1,18 @@
 """
 기능형 코어 — 순수 함수만 둔다(docs/code-quality.md). DB·시간·전역상태를 건드리지 않고,
 입력을 받아 값을 반환할 뿐이라 모의 객체 없이 직접 호출해서 테스트한다.
+
+pins → authz는 허용된 의존 방향(아래로만, docs/architecture.md 1절) — permissions 계산은
+authz.core.permissions_for에 위임한다. pin_permissions(kind, is_member)는 여기서 삭제됐다
+(#56 이관, mentor-review-plan.md) — authz/tests/test_permissions.py가 동등성을 보증한다.
 """
 
 from dataclasses import dataclass
 
-from pins.errors import PinError
-from pins.schemas import Permissions, Pin, PinCreateRequest, PinSource, ReactionSummary
+from authz.core import Principal, Resource, permissions_for
+from common.errors import AppError
+from common.events import Event
+from pins.schemas import Pin, PinCreateRequest, PinSource, ReactionSummary
 
 
 def resolve_source(req: PinCreateRequest) -> PinSource:
@@ -23,17 +29,12 @@ def resolve_source(req: PinCreateRequest) -> PinSource:
         provided.append("coordinate")
 
     if len(provided) == 0:
-        raise PinError(
-            422,
+        raise AppError(
             "VALIDATION_ERROR",
             "핀 생성 경로를 알 수 없습니다 — link_url, place_id, lat+lng 중 하나가 필요합니다",
         )
     if len(provided) > 1:
-        raise PinError(
-            422,
-            "VALIDATION_ERROR",
-            "여러 경로의 값이 동시에 왔습니다 — source를 명시해주세요",
-        )
+        raise AppError("VALIDATION_ERROR", "여러 경로의 값이 동시에 왔습니다 — source를 명시해주세요")
     return provided[0]
 
 
@@ -42,16 +43,16 @@ def validate_create(req: PinCreateRequest) -> PinSource:
     source = resolve_source(req)
 
     if source == "link" and not req.link_url:
-        raise PinError(422, "VALIDATION_ERROR", "link 경로에는 link_url이 필요합니다")
+        raise AppError("VALIDATION_ERROR", "link 경로에는 link_url이 필요합니다")
     if source == "search" and not req.place_id:
-        raise PinError(422, "VALIDATION_ERROR", "search 경로에는 place_id가 필요합니다")
+        raise AppError("VALIDATION_ERROR", "search 경로에는 place_id가 필요합니다")
     if source == "coordinate":
         if req.lat is None or req.lng is None:
-            raise PinError(422, "VALIDATION_ERROR", "coordinate 경로에는 lat, lng가 모두 필요합니다")
+            raise AppError("VALIDATION_ERROR", "coordinate 경로에는 lat, lng가 모두 필요합니다")
         if not (-90 <= req.lat <= 90):
-            raise PinError(422, "VALIDATION_ERROR", "lat은 -90~90 범위여야 합니다")
+            raise AppError("VALIDATION_ERROR", "lat은 -90~90 범위여야 합니다")
         if not (-180 <= req.lng <= 180):
-            raise PinError(422, "VALIDATION_ERROR", "lng는 -180~180 범위여야 합니다")
+            raise AppError("VALIDATION_ERROR", "lng는 -180~180 범위여야 합니다")
 
     return source
 
@@ -69,16 +70,11 @@ def is_visible_to(visibility: str, created_by: str, viewer_id: str) -> bool:
     return visibility == "public" or created_by == viewer_id
 
 
-def pin_permissions(kind: str, is_member: bool) -> Permissions:
-    """docs/permissions.md member.actions + 9/4 결정(#25 핀 삭제는 구성원 누구나)을 반영한다.
-    비구성원이면 전부 False. can_disable은 evidence_line 전용이라 여기서 다루지 않는다."""
-    return Permissions(
-        can_react=is_member,
-        can_revert=is_member,
-        can_delete=is_member,
-        can_add_to_shortlist=is_member and kind != "확정",
-        can_remove_from_shortlist=is_member and kind == "확정",
-    )
+def kind_after_unconfirm(origin: str) -> str:
+    """확정 리스트에서 뺄 때 되돌릴 kind — 저장하지 않고 origin에서 파생한다
+    (docs/data-model.md: kind가 바뀌는 유일한 경로는 확정 추가/제외, origin은 불변).
+    shortlist의 unconfirm flow가 쓴다(pins/api.py::unmark_confirmed)."""
+    return "AI추천" if origin == "ai" else "일반"
 
 
 @dataclass(frozen=True)
@@ -103,9 +99,11 @@ class PinRecord:
     reaction_counts: ReactionCounts
 
 
-def to_pin_response(record: PinRecord, viewer_id: str, is_member: bool) -> Pin:
+def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
     """place_name/price_bucket/created_by_display_name/checks/source_run_id는 places·maps·recommend가
-    없어 채울 수 없다 — None으로 두면 라우터가 response_model_exclude_none으로 생략한다."""
+    없어 채울 수 없다 — None으로 두면 라우터가 response_model_exclude_none으로 생략한다.
+    permissions는 authz.core.permissions_for가 계산 — principal은 호출부(service.list_pins 등)가
+    한 번만 만들어 그대로 내려보낸다(추가 멤버십 쿼리 없음)."""
     return Pin(
         id=record.id,
         map_id=record.map_id,
@@ -120,24 +118,27 @@ def to_pin_response(record: PinRecord, viewer_id: str, is_member: bool) -> Pin:
             neutral=record.reaction_counts.neutral,
             against=record.reaction_counts.against,
         ),
-        permissions=pin_permissions(record.kind, is_member),
+        permissions=permissions_for(
+            principal,
+            Resource(type="pin", map_id=record.map_id, author_id=record.created_by, kind=record.kind),
+        ),
     )
 
 
-def pin_created_event(pin: Pin) -> tuple[str, str, dict] | None:
+def pin_created_event(pin: Pin) -> Event | None:
     """docs/events.md pin.created. visibility='private'이면 발행하지 않는다(가드레일 1) —
     private 후보가 전체 채널로 새는 순간 「지도에 올리기」 전에 팀 전체가 보게 된다."""
     if pin.visibility == "private":
         return None
-    return ("public", "pin.created", pin.model_dump(exclude_none=True))
+    return Event(map_id=pin.map_id, channel="public", type="pin.created", payload=pin.model_dump(exclude_none=True))
 
 
-def pin_deleted_event(pin_id: str, visibility: str) -> tuple[str, str, dict] | None:
+def pin_deleted_event(pin_id: str, map_id: str, visibility: str) -> Event | None:
     """docs/events.md pin.deleted — 페이로드는 {pin_id}뿐이다. pin.created와 마찬가지로
     private 핀의 삭제 사실도 전체 채널로 새면 안 된다."""
     if visibility == "private":
         return None
-    return ("public", "pin.deleted", {"pin_id": pin_id})
+    return Event(map_id=map_id, channel="public", type="pin.deleted", payload={"pin_id": pin_id})
 
 
 def validate_reaction(reaction_type: str, reason_text: str | None, reason_chip_ids: list[str] | None) -> None:
@@ -148,14 +149,17 @@ def validate_reaction(reaction_type: str, reason_text: str | None, reason_chip_i
     has_text = bool(reason_text and reason_text.strip())
     has_chips = bool(reason_chip_ids)
     if not has_text and not has_chips:
-        raise PinError(422, "EVIDENCE_REQUIRED", "반대 반응에는 사유가 필요합니다")
+        raise AppError("EVIDENCE_REQUIRED", "반대 반응에는 사유가 필요합니다")
 
 
 def reaction_changed_event(
-    pin_id: str, visibility: str, reaction_summary: ReactionSummary
-) -> tuple[str, str, dict] | None:
+    pin_id: str, map_id: str, visibility: str, reaction_summary: ReactionSummary
+) -> Event | None:
     """docs/events.md reaction.changed — 페이로드는 {pin_id, reaction_summary}. pin.created/
     pin.deleted와 같은 이유로 private 핀의 반응 변화도 전체 채널로 새면 안 된다(가드레일 1)."""
     if visibility == "private":
         return None
-    return ("public", "reaction.changed", {"pin_id": pin_id, "reaction_summary": reaction_summary.model_dump()})
+    return Event(
+        map_id=map_id, channel="public", type="reaction.changed",
+        payload={"pin_id": pin_id, "reaction_summary": reaction_summary.model_dump()},
+    )
