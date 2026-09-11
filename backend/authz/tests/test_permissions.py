@@ -98,6 +98,11 @@ def test_unsupported_resource_type_raises():
 
 # --- backend/pins/core.py::pin_permissions 동등성 (#56 이관 안전망) ---
 #
+# 주의: pins가 pin_permissions를 삭제할 때(pins/mentor-review-plan.md) 이 테스트도 같이
+# 지운다 — pins/tests/test_permissions_contract.py가 실제 API 응답으로 같은 걸 검증하게
+# 되면 이 손베낀 비교표는 중복이 된다. pins의 대체 테스트가 먼저 통과한 뒤에 지운다
+# (순서 중요 — 커버리지 공백 방지).
+#
 # pins/core.py 현재 구현(수정하지 않음, 여기 표로만 옮겨 대조):
 #
 #   def pin_permissions(kind: str, is_member: bool) -> Permissions:
