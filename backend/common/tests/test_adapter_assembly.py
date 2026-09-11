@@ -16,10 +16,10 @@ MISSING_REAL = {
 }
 
 
-@pytest.mark.xfail(strict=False, reason="pins/authz/auth의 deps.py가 아직 select()로 재배선되지 않았다")
 def test_every_registered_port_is_accounted_for():
-    """이 테스트는 pins/authz/auth가 select()로 재배선을 마친 뒤에만 통과한다 —
-    그 전까지는 xfail(strict=False)로 표시해두고, 각 모듈의 계획 완료 후 strict로 바꾼다."""
+    """pins·authz·auth 세 모듈이 모두 select()로 재배선을 마쳐 xfail을 걷어냈다
+    (auth/mentor-review-plan.md 후속 — auth.SessionResolver가 마지막으로 등록된 포트였다).
+    이제부터는 진짜 회귀 검사다: 포트를 추가/삭제했는데 MISSING_REAL을 안 고치면 여기서 잡힌다."""
     import main  # noqa: F401 — 모든 deps.py를 import시켜 레지스트리를 채운다
     from common.adapters import assembly
     ports = {c.port for c in assembly()}
@@ -58,9 +58,8 @@ def test_select_registers_the_choice_in_assembly():
 
 
 # 새 dev/real 어댑터 포트가 생기면 여기 추가한다 — 위 settings.py의 _PORTS,
-# adapters.py의 select() 호출 이름들과 맞춘다. pins·authz가 각각 select()로 재배선을
-# 마쳤으므로 여기 등록한다.
-KNOWN_ADAPTER_FACTORIES = {"get_place_gateway", "get_membership_gateway"}
+# adapters.py의 select() 호출 이름들과 맞춘다.
+KNOWN_ADAPTER_FACTORIES = {"get_place_gateway", "get_membership_gateway", "get_current_user"}
 
 
 def _select_bound_names(tree: ast.Module) -> set[str]:
