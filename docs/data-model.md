@@ -155,6 +155,10 @@ regions(
 
 candidates(
   id, run_id, place_id, region_id,
+  lat, lng,                             -- places가 아직 없어 온디맨드 조회 불가 — 후보 생성
+                                         -- 시점에 좌표를 직접 들고 있는다(PR #71, pins가
+                                         -- 자기 geom을 따로 갖는 것과 같은 이유). places 붙으면
+                                         -- place_id로 조회하는 방향으로 재검토
   rank, checks jsonb,                   -- 조건별 충족 체크(가드레일 5)
   member_fulfillment jsonb,
   published_pin_id null,                -- 5-5-1 게시 후 연결
