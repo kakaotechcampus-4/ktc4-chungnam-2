@@ -58,8 +58,9 @@ def test_select_registers_the_choice_in_assembly():
 
 
 # 새 dev/real 어댑터 포트가 생기면 여기 추가한다 — 위 settings.py의 _PORTS,
-# adapters.py의 select() 호출 이름들과 맞춘다.
-KNOWN_ADAPTER_FACTORIES = set()
+# adapters.py의 select() 호출 이름들과 맞춘다. pins·authz가 각각 select()로 재배선을
+# 마쳤으므로 여기 등록한다.
+KNOWN_ADAPTER_FACTORIES = {"get_place_gateway", "get_membership_gateway"}
 
 
 def _select_bound_names(tree: ast.Module) -> set[str]:

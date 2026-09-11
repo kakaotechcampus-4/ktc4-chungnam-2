@@ -2,11 +2,16 @@
 docs/api-spec.yaml의 pins 태그 스키마와 1:1로 맞춘다.
 Pin의 place_name/price_bucket/created_by_display_name/checks/source_run_id는 places/maps/recommend
 모듈이 없어 채울 수 없다 — Optional로 두고 라우터에서 response_model_exclude_none으로 생략한다.
+
+Permissions는 여기서 정의하지 않는다 — Pin·EvidenceLine·ShortlistItem이 공유하는 스키마라
+authz가 소유한다(#56 이관, mentor-review-plan.md). pins는 authz의 것을 그대로 쓴다.
 """
 
 from typing import Literal
 
 from pydantic import BaseModel, Field
+
+from authz.schemas import Permissions
 
 Category = Literal["음식점", "카페", "숙소", "관광지"]
 PinKind = Literal["일반", "AI추천", "확정"]
@@ -28,15 +33,6 @@ class ReactionSummary(BaseModel):
     like: int = 0
     neutral: int = 0
     against: int = 0
-
-
-class Permissions(BaseModel):
-    can_react: bool
-    can_revert: bool
-    can_add_to_shortlist: bool
-    can_remove_from_shortlist: bool
-    can_disable: bool | None = None
-    can_delete: bool
 
 
 class PinCreateRequest(BaseModel):

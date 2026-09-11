@@ -3,7 +3,12 @@ test_pins_api.py용 픽스처 — 실제 PostgreSQL+PostGIS가 필요하다(dock
 DB에 못 붙으면 조용히 skip하지 않고 pytest.fail로 명확하게 실패시킨다
 (docs/code-quality.md: 실패를 감추는 코드를 만들지 않는다).
 
-이 저장소 전체에 conftest.py·pytest 설정이 아직 없어 pins가 처음 만든다.
+트랜잭션 격리: 이제 앱 코드(service.py)는 커밋하지 않지만 common.database.get_db는 여전히
+요청마다 커밋하므로 격리가 계속 필요하다. SQLAlchemy 2.0이 문서화한 방식을 쓴다 —
+join_transaction_mode="create_savepoint"로 세션을 만들면 세션의 commit()이 SAVEPOINT만
+해제하고 바깥 트랜잭션(outer)은 살아있다(직접 실행해 확인, mentor-review-plan.md). 이전의
+커스텀 after_transaction_end 리스너보다 짧고, 앱이 실제 commit()이나 begin_nested()
+(방어 코드 2)를 걸어도 안전하게 살아남는다.
 """
 
 import os
@@ -12,10 +17,12 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
+import common.events  # noqa: F401
 import pins.models  # noqa: F401
-from common.database import Base
+from common.database import Base, session_scope
 
-# 위 import는 Base.metadata에 테이블을 등록시키기 위한 것 — 직접 쓰이진 않는다.
+# 위 두 import는 Base.metadata에 테이블(pins/reactions, event_log)을 등록시키기 위한 것 —
+# 직접 쓰이진 않는다. event_log는 test_permissions_contract.py 등이 이벤트 발행을 검증할 때 쓴다.
 
 BASE_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://pingo:pingo@localhost:5432/pingo")
 
@@ -53,43 +60,25 @@ def test_engine():
     except Exception as exc:  # noqa: BLE001
         pytest.fail(f"pingo_test DB에 postgis 익스텐션을 켤 수 없습니다: {exc}")
 
-    Base.metadata.create_all(
-        bind=engine, tables=[pins.models.Pin.__table__, pins.models.Reaction.__table__]
-    )
+    Base.metadata.create_all(bind=engine)  # common.events.EventLog까지 포함 — 전체 등록된 테이블
 
     yield engine
 
-    Base.metadata.drop_all(
-        bind=engine, tables=[pins.models.Reaction.__table__, pins.models.Pin.__table__]
-    )
+    Base.metadata.drop_all(bind=engine)
     engine.dispose()
 
 
 @pytest.fixture()
 def db_session(test_engine):
-    """테스트마다 트랜잭션을 열고 끝나면 롤백한다 — 테스트 간 데이터가 섞이지 않는다.
-
-    service.py가 라우터 안에서 실제로 db.commit()을 부르므로, 단순 connection.begin()만으로는
-    그 commit()이 바깥 트랜잭션까지 끝내버려 마지막 rollback()이 무력해진다. SQLAlchemy가
-    문서화한 SAVEPOINT 패턴(외부 트랜잭션 안에 중첩 트랜잭션을 두고, 세션이 커밋할 때마다
-    SAVEPOINT를 다시 연다)으로 격리한다.
-    """
+    """테스트마다 트랜잭션을 열고 끝나면 롤백한다 — 테스트 간 데이터가 섞이지 않는다."""
     connection = test_engine.connect()
-    outer_transaction = connection.begin()
-    session = sessionmaker(bind=connection)()
-
-    nested = connection.begin_nested()
-
-    @sa.event.listens_for(session, "after_transaction_end")
-    def _restart_savepoint(sess, trans):
-        nonlocal nested
-        if not nested.is_active:
-            nested = connection.begin_nested()
+    outer = connection.begin()
+    session = sessionmaker(bind=connection, join_transaction_mode="create_savepoint")()
 
     yield session
 
     session.close()
-    outer_transaction.rollback()
+    outer.rollback()
     connection.close()
 
 
@@ -101,7 +90,10 @@ def app_client(db_session):
     from pins.deps import get_db_session
 
     def _override_get_db_session():
-        yield db_session
+        # session_scope는 db.close()를 부르지 않는다(바깥 finally만 닫는다, common/database.py
+        # 확인 완료) — 그래서 이 오버라이드가 끝난 뒤에도 db_session 픽스처로 계속 조회할 수 있다.
+        with session_scope(db_session) as s:
+            yield s
 
     app.dependency_overrides[get_db_session] = _override_get_db_session
 

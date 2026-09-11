@@ -35,15 +35,3 @@ class PlaceGateway(Protocol):
     """장소 조회 인터페이스. places(#34)가 실구현을 채운다."""
 
     def resolve(self, draft: PinDraft) -> ResolvedPlace: ...
-
-
-class MembershipGateway(Protocol):
-    """구성원 여부 확인 인터페이스. maps(#19)/authz(#36)가 실구현을 채운다."""
-
-    def is_member(self, map_id: str, user_id: str) -> bool: ...
-
-
-class EventPublisher(Protocol):
-    """이벤트 발행 인터페이스. realtime(#13)의 publish()가 실구현이다."""
-
-    def publish(self, map_id: str, channel: str, type: str, payload: dict) -> None: ...
