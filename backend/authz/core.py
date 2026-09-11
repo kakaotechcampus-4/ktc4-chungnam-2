@@ -50,6 +50,11 @@ def can(user: Principal, action: str, resource: Resource) -> bool:
     4~5. member/author/owner 중 부여된 역할들을 계산하고, 그중 하나라도 액션+범위를 통과시키면 True.
     """
     if user.map_id != resource.map_id:
+        # 전제: Principal은 항상 리소스에서 읽은 map_id로만 만들어진다(Rule A,
+        # docs/permissions.md "권한을 어디서 강제하는가"). 두 개의 독립된 id를 받는 요청은
+        # authz.guard의 loader가 여기 도달하기 전에 대조해서 404로 끝낸다(Rule B) — 예:
+        # POST /maps/{mapId}/shortlist가 mapId(경로)와 pin_id(바디)를 따로 받는 경우.
+        # 이 두 규칙이 지켜지는 한 여기 도달하는 것 자체가 호출부 배선 버그다.
         raise ValueError(
             f"principal.map_id({user.map_id!r})와 resource.map_id({resource.map_id!r})가 다릅니다 — "
             "이 role은 다른 지도 기준으로 조회된 값입니다"
