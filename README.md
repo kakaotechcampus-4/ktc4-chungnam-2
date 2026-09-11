@@ -63,7 +63,7 @@ copy .env.example .env        # 맥/리눅스는: cp .env.example .env
 
 docker-compose up -d          # DB(PostgreSQL+PostGIS)·Redis를 로컬에 띄운다
 
-uvicorn main:app --reload
+uvicorn main:asgi_app --reload
 ```
 
 브라우저로 `http://localhost:8000/health` 열어서 `{"status":"ok"}`가 뜨면 성공. 이게 뜬다는 건 내 컴퓨터에서 이 프로젝트 서버가 정상적으로 돌고 있다는 뜻 — 이제 `backend/<자기 모듈>/` 안에 실제 기능(라우터)을 짜기 시작하면 됨.

@@ -24,10 +24,76 @@
 | `recommend` | 추천 오케스트레이션(①②③-a-2④), 근거 조립, 검색범위(circles) 계산, funnel, 제외목록, 재시도 | 3절, 5-5~5-6-1 | `pins`, `places`, `llm` |
 | `llm` | 모델 호출 3곳 + 프롬프트 + 구조화 출력 스키마 | 8절 | (외부 LLM API) |
 | `shortlist` | 확정 리스트 추가/제외, 동선 계산(모델 미사용) | 5-3, 5-10 | `pins`, `maps` |
-| `realtime` | SSE 채널(전체/개인), `seq` 발행·재동기화 | 5-5-1 | 전 모듈이 이벤트 발행 |
-| `common` | 에러 포맷, 멱등키, 페이지네이션, `seq` 채번, 좌표 유틸(PostGIS) | #2 | — |
+| `realtime` | SSE 채널(전체/개인), `event_log` 폴링·재동기화 | 5-5-1 | `common` |
+| `common` | 에러 포맷, 멱등키, 페이지네이션, `seq` 채번, 좌표 유틸(PostGIS), `event_log` 발행 계약(`record_event`) | #2 | — |
 
 의존 방향은 위에서 아래로만 흐르게 한다. `pins`가 `recommend`를 참조하지 않는다(추천이 핀을 만들지만 핀이 추천을 알 필요는 없다).
+예외였던 `realtime`의 역방향 의존(전 모듈→realtime)은 이벤트 계약을 `common`으로 내려서
+없앴다 — 이제 화살표는 전부 아래로만 흐른다. 각 모듈은 `common.events.record_event(db, event)`
+로 쓰고, `realtime`은 `event_log`를 읽기만 한다.
+
+---
+
+## 1.1 기능 실행 함수(flow) — 언제, 어디에 두는가
+
+한 요청이 **두 모듈 이상의 테이블**을 같은 커밋 안에서 바꾸면 그 모듈이 `flows.py`에 기능
+실행 함수를 만든다. 한 모듈의 테이블만 바꾸면 기존 `service.py`가 그대로 처리한다.
+
+기능 실행 함수는 **`docs/api-spec.yaml`에서 그 엔드포인트의 태그가 가리키는 모듈**에 둔다 —
+별도의 `usecases/` 공유 디렉토리를 만들지 않는다. 6개 세션이 각자 디렉토리에서 병렬로 작업하는
+이 팀의 구조상, 아무도 소유하지 않는 공유 디렉토리는 모든 교차 기능의 병목이 된다.
+
+지금 flow가 필요한 것은 둘뿐이다:
+
+| flow | 엔드포인트 | 위치 |
+|---|---|---|
+| 후보 게시 | `POST /candidates/{candidateId}/publish` | `backend/recommend/flows.py::publish_candidate` |
+| 핀 확정 | `POST /maps/{mapId}/shortlist` | `backend/shortlist/flows.py::confirm_pin` |
+
+**flow 함수 자체는 순서와 실패 처리만 담당한다 — 판단 로직은 두지 않는다.** 판단은 각 모듈의
+`core.py` 순수 함수에 있다(`docs/code-quality.md`). flow에 `if`가 늘어나기 시작하면 그 분기는
+core.py로 옮긴다.
+
+**flow가 필요 없는 것들** (기존 `service.py`가 그대로 처리):
+
+| 작업 | 바뀌는 테이블 |
+|---|---|
+| 핀 CRUD, 반응 등록/삭제 | `pins` + `event_log` |
+| 확정 리스트 순서 변경 | `shortlist_items`만 |
+| 동선 계산 | 계산 결과 + `event_log` |
+| 근거 추가/토글, 추천 실행 생성 | `recommend` 테이블 + `event_log` |
+| 초대 수락 | `memberships` + `event_log` |
+
+`event_log`는 "다른 모듈의 테이블"로 세지 않는다 — 모든 모듈이 `common.events.record_event`로
+쓰도록 설계됐기 때문이다(§4.1). 그렇지 않으면 사실상 모든 쓰기가 flow가 되어 이 구분 자체가
+무의미해진다.
+
+교차 모듈 쓰기는 **`<module>/api.py`**를 통해서만 한다 — 다른 모듈의 `service.py`나 `models.py`를
+직접 import하지 않는다. 예: `recommend/flows.py`가 `pins.api.create_ai_pin(...)`을 부른다.
+
+---
+
+## 1.2 엔드투엔드 흐름 예시 — 후보 게시
+
+지금까지 이 문서에 모듈을 가로지르는 실행 흐름이 없었다(멘토 리뷰 지적). 가장 복잡한 흐름
+하나를 예로 남긴다 — 나머지 흐름은 `docs/api-spec.yaml`과 각 모듈 `flows.py`/`service.py`를
+따라가면 같은 패턴이다.
+
+```
+클라이언트 ─POST /candidates/{id}/publish→ recommend/router.py (HTTP 셸)
+   → recommend/flows.py::publish_candidate           ← 순서·트랜잭션 담당, 판단 없음
+       1. recommend/service.py  후보·run 조회                              (404)
+       2. recommend/core.py::check_publishable(...)  순수 판정             (409/403)
+       3. pins.api.create_ai_pin(db, ...)             INSERT pins          (커밋 안 함)
+       4. recommend/service.py  UPDATE candidates.published_pin_id        (커밋 안 함)
+       5. common.events.record_event(db, pin_published_event(pin))        (커밋 안 함)
+   ← 반환
+   common/database.py::get_db  ── COMMIT (요청당 이 한 곳뿐) ──→ pins·candidates·event_log 동시 확정
+   realtime/dispatcher.py  event_log 폴링 → 전체 채널 SSE
+```
+
+실패하면 1~5 전부 롤백된다 — pins 행만 생기고 이벤트는 안 나가는 상태는 구조적으로 불가능하다
+(§4.1).
 
 ---
 

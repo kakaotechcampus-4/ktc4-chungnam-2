@@ -54,7 +54,18 @@ reactions(
   created_at, updated_at
 )
   unique(pin_id, user_id)
+```
 
+`kind`가 바뀌는 유일한 경로는 확정 리스트 추가/제외(5-3)다. `origin`은 불변이며 "이미 제안·거절된 곳" 판정(가드레일 6)과 무관하다 — 그건 `recommend.exclusions`가 따로 갖는다.
+`kind='확정'`은 `shortlist`가 `pins.api.mark_confirmed()`/`unmark_confirmed()`를 통해서만
+바꾼다. 확정 제외 시 되돌릴 값은 저장하지 않고 `origin`에서 파생한다
+(`pins/core.py::kind_after_unconfirm`: `origin='ai'` → `'AI추천'`, `origin='direct'` → `'일반'`).
+
+---
+
+## shortlist
+
+```
 shortlist_items(
   id, map_id, pin_id, added_by, added_at,
   visit_order int null                 -- 5-10 자동계산 결과 + #30 수동 정렬(허용 확정) 둘 다 이 컬럼을 쓴다
@@ -62,7 +73,8 @@ shortlist_items(
   unique(map_id, pin_id)
 ```
 
-`kind`가 바뀌는 유일한 경로는 확정 리스트 추가/제외(5-3)다. `origin`은 불변이며 "이미 제안·거절된 곳" 판정(가드레일 6)과 무관하다 — 그건 `recommend.exclusions`가 따로 갖는다.
+쓰기 소유: `shortlist`. `pins.kind='확정'` 갱신은 `shortlist`가 `pins.api.mark_confirmed()`를
+통해서만 한다(위 규칙 유지).
 
 ---
 
@@ -160,16 +172,29 @@ exclusions(
 
 ---
 
-## realtime (5절)
+## common (모든 모듈이 쓰고 realtime만 읽는다)
 
 ```
 event_log(
-  seq bigserial primary key,            -- 단조증가, 재동기화 기준(events.md)
+  seq bigserial primary key,            -- 단조증가하지만 *커밋 순서와 일치하지 않을 수 있다*
+                                         -- (docs/events.md 「전달 보장」 4)
   map_id, channel('public'|'private'),
   recipient_user_id null,               -- channel='private'일 때만
-  type, payload jsonb, created_at
+  type, payload jsonb, created_at timestamptz default now()
 )
+  index(map_id, seq)                    -- 채널별 재전송 조회
+  index(created_at)                     -- 보존기간 삭제용
+  check ((channel='private') = (recipient_user_id is not null))
 ```
+
+쓰기: 모든 모듈이 `common.events.record_event(db, event)`로만. 상태 변경과 같은 트랜잭션에
+넣는다(`docs/events.md` 「전달 보장」 1). 읽기: `realtime`만.
+
+---
+
+## realtime (5절)
+
+이벤트 발행 계약은 위 `## common`의 `event_log` 참고 — `realtime`은 폴링해서 읽기만 한다.
 
 ---
 

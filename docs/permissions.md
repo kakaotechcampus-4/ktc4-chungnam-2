@@ -80,3 +80,35 @@ owner:                        # 지도 생성자. member 전체 + 아래 추가
 ## v2 확장 지점
 
 `owner.actions`에 `member.kick`이 이미 자리를 잡아뒀다 — #8 구현 시 `authz`에 액션 하나만 추가하면 되고 다른 모듈은 건드리지 않는다. 이게 멘토가 말한 "역할 추가가 쉽다"의 실제 이득이다.
+
+## 권한을 어디서 강제하는가
+
+이 문서는 지금까지 "무엇을 계산하는가"만 규정했다("표시용 permissions 객체"). 쓰기 시점의
+강제 지점은 다음과 같이 고정한다 — `authz`·`pins`를 비롯한 모듈 세션들이 이 시그니처를 두고
+서로 기다리지 않고 각자 구현하도록 미리 얼린다(실제로 `backend/authz/guard.py`에 구현·테스트
+완료됨, PR #71 멘토 리뷰 대응):
+
+```python
+# backend/authz/guard.py
+def require(action: str, loader) -> Depends:
+    """loader: 리소스를 읽어 {resource: Resource, obj: Any}를 돌려주는 FastAPI 의존성
+    (소유 모듈이 제공). 비구성원(role=None)→404, 구성원인데 액션 불가→403.
+    Resource.map_id는 항상 loader가 읽은 행에서 나온다 — URL의 mapId를 직접 쓰지 않는다."""
+
+def require_on_map(action: str) -> Depends:
+    """리소스가 아직 없는 액션(예: pin.create)용 — 대상이 지도 자신이다."""
+
+def require_map_member() -> Depends:
+    """액션 판정이 필요 없는 순수 멤버십 게이트 — 지도 안의 리소스를 조회만 하는 라우트용
+    (예: GET /maps/{mapId}/pins). "조회"는 member.actions에 없는 별개의 질문이라 액션 이름을
+    재사용하지 않는다."""
+```
+
+인증(쿠키/세션 파싱)은 `backend/auth/deps.py::get_current_user`가 라우터의
+`APIRouter(dependencies=[...])`로 걸린다 — 각 라우터 파일이 각자 기억해서 부르는 게 아니라
+라우터 선언 자체에 박혀 있다. 상세 근거는 `backend/authz/mentor-review-plan.md`,
+`backend/auth/mentor-review-plan.md` 참고.
+
+**비구성원 vs 권한 없음의 응답 차이(계약 변경, `docs/CHANGELOG-api.md` 참고):**
+- 그 지도의 구성원이 아님 → **404** (존재 자체를 흘리지 않는다)
+- 구성원이지만 그 액션이 롤에 없음 → **403**
