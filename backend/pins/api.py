@@ -9,7 +9,7 @@ db.flush()만으로 PK/유니크 충돌 등은 여전히 그 자리에서 드러
 
 from dataclasses import dataclass
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -18,6 +18,7 @@ from common.errors import AppError
 from common.events import Event
 from pins import core, service
 from pins.models import Pin as PinRow
+from pins.schemas import Pin
 
 
 @dataclass(frozen=True)
@@ -98,3 +99,21 @@ def get_pin_for_viewer(db: Session, *, pin_id: str, viewer_id: str) -> PinRow:
     if pin_row.visibility == "private" and pin_row.created_by != viewer_id:
         raise AppError("AI_PIN_PRIVATE")
     return pin_row
+
+
+def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, principal: Principal) -> Pin:
+    """shortlist(ShortlistItem.pin 조립)가 쓰는 완성형 핀 조회 — get_pin_for_viewer와 같은
+    존재·가시성 규칙 위에 lat/lng·반응 집계·permissions까지 채운다. 다른 모듈이 pins·reactions
+    테이블을 직접 쿼리하지 않고도 목록 화면(service.list_pins)과 같은 모양의 Pin을 받는다 —
+    pins/service.py의 비공개 헬퍼(_lat_lng_columns·_reaction_counts_for_pin)를 같은 모듈
+    안에서만 재사용한다."""
+    pin_row = get_pin_for_viewer(db, pin_id=pin_id, viewer_id=viewer_id)
+    lat_col, lng_col = service._lat_lng_columns()
+    lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()
+    reaction_counts = service._reaction_counts_for_pin(db, pin_row.id)
+    record = core.PinRecord(
+        id=str(pin_row.id), map_id=pin_row.map_id, category=pin_row.category, kind=pin_row.kind,
+        visibility=pin_row.visibility, lat=lat, lng=lng, created_by=pin_row.created_by,
+        reaction_counts=reaction_counts,
+    )
+    return core.to_pin_response(record, principal)
