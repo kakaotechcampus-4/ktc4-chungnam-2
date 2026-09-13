@@ -1,0 +1,262 @@
+"""backend/llm/CLAUDE.md 완료 정의:
+- ②③-a-1③-b 각각의 구조화 출력 스키마를 docs/constraints.md의 fact_key마다 최소 1개씩 커버
+- unknown 응답이 실제로 발생하는 경계 케이스(정보 부족한 후보) 테스트
+"""
+
+from typing import get_args
+
+import pytest
+from pydantic import ValidationError
+
+from llm.schemas import EvidenceLine, FactKey, PlaceFactLabel, RankedCandidate
+from llm.service import label_place, plan_evidence, rank_candidates
+
+ALL_FACT_KEYS = get_args(FactKey)
+
+# fact_key별로 "정보가 있을 때" known으로 판정되어야 할 표본값.
+# docs/constraints.md 조건별 정의 표의 실격(hard) 6개 + 선호(soft) 4개를 전부 포함한다.
+SAMPLE_VALUE_BY_FACT_KEY: dict[FactKey, object] = {
+    "contains_shellfish": True,
+    "spicy_focused": False,
+    "oily_focused": False,
+    "price_bucket": "mid",
+    "capacity_min": 4,
+    "is_crowded_large": False,
+    "wait_short": True,
+    "quiet": True,
+    "comfortable_seat": False,
+    "local_flavor": True,
+}
+
+
+def test_sample_values_cover_every_registered_fact_key():
+    # 테스트 표본 자체가 레지스트리 전체를 덮는지 먼저 보장한다(회귀 방지).
+    assert set(SAMPLE_VALUE_BY_FACT_KEY.keys()) == set(ALL_FACT_KEYS)
+
+
+class TestLabelPlaceKnown:
+    """③-a-1: 원자료에 값이 있으면 known + 그 값을 그대로 반환한다."""
+
+    @pytest.mark.parametrize("fact_key", ALL_FACT_KEYS)
+    def test_known_when_raw_fact_present(self, fact_key: FactKey):
+        sample_value = SAMPLE_VALUE_BY_FACT_KEY[fact_key]
+        place_raw_facts = {fact_key: sample_value}
+
+        [label] = label_place(place_raw_facts, [fact_key])
+
+        assert label.fact_key == fact_key
+        assert label.confidence == "known"
+        assert label.value == sample_value
+        # v1 스텁은 근거 텍스트를 만들어내지 않는다 — evidence는 항상 None.
+        assert label.evidence is None
+
+
+class TestLabelPlaceUnknownBoundary:
+    """③-a-1 경계 케이스: 정보 부족한 후보는 절대 값을 지어내지 않고 unknown을 반환한다."""
+
+    @pytest.mark.parametrize("fact_key", ALL_FACT_KEYS)
+    def test_unknown_when_raw_fact_missing(self, fact_key: FactKey):
+        place_raw_facts: dict = {}  # 정보가 전혀 없는 후보
+
+        [label] = label_place(place_raw_facts, [fact_key])
+
+        assert label.confidence == "unknown"
+        assert label.value is None
+        assert label.evidence is None
+
+    def test_unknown_when_raw_fact_is_none(self):
+        # 키는 있지만 값이 None인 경우(예: 수집 실패)도 known으로 오인하면 안 된다.
+        place_raw_facts = {"contains_shellfish": None}
+
+        [label] = label_place(place_raw_facts, ["contains_shellfish"])
+
+        assert label.confidence == "unknown"
+        assert label.value is None
+        assert label.evidence is None
+
+    def test_partial_information_place_mixes_known_and_unknown(self):
+        # 정보가 일부만 있는 실제 시나리오: 있는 것만 known, 나머지는 unknown이어야 한다.
+        place_raw_facts = {"contains_shellfish": True}
+        fact_keys = ["contains_shellfish", "spicy_focused", "price_bucket"]
+
+        labels = label_place(place_raw_facts, fact_keys)
+
+        by_key = {label.fact_key: label for label in labels}
+        assert by_key["contains_shellfish"].confidence == "known"
+        assert by_key["spicy_focused"].confidence == "unknown"
+        assert by_key["spicy_focused"].value is None
+        assert by_key["price_bucket"].confidence == "unknown"
+        assert by_key["price_bucket"].value is None
+
+
+class TestLabelPlaceEvidenceCrossCheck:
+    """evidence가 원자료에 실제로 있는지 대조 — 지어낸 근거는 unknown으로 강등한다."""
+
+    def test_fabricated_evidence_downgrades_to_unknown(self):
+        place_raw_facts = {"contains_shellfish": True, "menu_text": "삼겹살 전문점"}
+
+        [label] = label_place(
+            place_raw_facts,
+            ["contains_shellfish"],
+            evidence_by_fact_key={"contains_shellfish": "메뉴에 새우가 있다"},
+        )
+
+        assert label.confidence == "unknown"
+        assert label.value is None
+        assert label.evidence is None
+
+    def test_evidence_found_in_raw_text_stays_known(self):
+        place_raw_facts = {"contains_shellfish": True, "menu_text": "새우튀김 정식"}
+
+        [label] = label_place(
+            place_raw_facts,
+            ["contains_shellfish"],
+            evidence_by_fact_key={"contains_shellfish": "새우튀김"},
+        )
+
+        assert label.confidence == "known"
+        assert label.value is True
+        assert label.evidence == "새우튀김"
+
+    def test_evidence_matches_nested_raw_value(self):
+        # 리뷰 텍스트처럼 리스트 안에 중첩된 문자열도 대조 대상이어야 한다.
+        place_raw_facts = {
+            "contains_shellfish": True,
+            "reviews": ["맛있어요", "새우가 신선해요"],
+        }
+
+        [label] = label_place(
+            place_raw_facts,
+            ["contains_shellfish"],
+            evidence_by_fact_key={"contains_shellfish": "새우가 신선"},
+        )
+
+        assert label.confidence == "known"
+        assert label.evidence == "새우가 신선"
+
+    def test_blank_evidence_downgrades_to_unknown(self):
+        # evidence=""이면 "" in text가 파이썬에서 항상 True라서 대조가 무력화되는 버그 재현.
+        # evidence가 아예 없는 것(None)과 동일하게 취급해 known을 유지하면 안 되고 unknown으로
+        # 강등되어야 한다(pins/core.py validate_reaction의 공백 처리와 동일 원칙).
+        place_raw_facts = {"contains_shellfish": True, "menu_text": "삼겹살 전문점"}
+
+        [label] = label_place(
+            place_raw_facts,
+            ["contains_shellfish"],
+            evidence_by_fact_key={"contains_shellfish": ""},
+        )
+
+        assert label.confidence == "unknown"
+        assert label.value is None
+        assert label.evidence is None
+
+    def test_whitespace_only_evidence_downgrades_to_unknown(self):
+        # 공백만 있는 evidence도 "" 취급과 동일해야 한다(strip() 기준).
+        place_raw_facts = {"contains_shellfish": True, "menu_text": "삼겹살 전문점"}
+
+        [label] = label_place(
+            place_raw_facts,
+            ["contains_shellfish"],
+            evidence_by_fact_key={"contains_shellfish": "   "},
+        )
+
+        assert label.confidence == "unknown"
+        assert label.value is None
+        assert label.evidence is None
+
+    def test_no_evidence_supplied_keeps_previous_known_behavior(self):
+        # evidence_by_fact_key를 아예 안 주면 기존 스텁 동작(evidence=None)과 같아야 한다.
+        place_raw_facts = {"contains_shellfish": True}
+
+        [label] = label_place(place_raw_facts, ["contains_shellfish"])
+
+        assert label.confidence == "known"
+        assert label.evidence is None
+
+
+class TestPlaceFactLabelSchemaGuardsAgainstFabrication:
+    """스키마 레벨에서도 unknown+value/evidence 조합을 막아 값 지어내기를 원천 차단한다."""
+
+    def test_unknown_with_value_is_rejected(self):
+        with pytest.raises(ValidationError):
+            PlaceFactLabel(fact_key="contains_shellfish", value=True, confidence="unknown")
+
+    def test_known_without_value_is_rejected(self):
+        with pytest.raises(ValidationError):
+            PlaceFactLabel(fact_key="contains_shellfish", confidence="known")
+
+    def test_unknown_with_evidence_is_rejected(self):
+        # value는 비워도 evidence만 채우는 식으로 근거를 지어내는 것도 막는다.
+        with pytest.raises(ValidationError):
+            PlaceFactLabel(
+                fact_key="contains_shellfish",
+                confidence="unknown",
+                evidence="메뉴판에 새우가 보인다",
+            )
+
+    def test_known_with_evidence_is_allowed(self):
+        label = PlaceFactLabel(
+            fact_key="contains_shellfish",
+            value=True,
+            confidence="known",
+            evidence="메뉴판에 새우가 보인다",
+        )
+
+        assert label.evidence == "메뉴판에 새우가 보인다"
+
+    def test_known_without_evidence_is_allowed(self):
+        # evidence는 known이어도 선택이다 — 반드시 채울 필요는 없다.
+        label = PlaceFactLabel(fact_key="contains_shellfish", value=True, confidence="known")
+
+        assert label.evidence is None
+
+
+class TestPlanEvidence:
+    """② 사유 → 구조화. v1 스텁은 검증·통과만 하고 fact_key를 지어내 채우지 않는다."""
+
+    def test_passes_through_structured_reason(self):
+        raw = [
+            {
+                "source": "reaction",
+                "text": "갑각류 알러지 있어요",
+                "chip_id": "chip_shellfish",
+                "badge": "required",
+                "fact_key": "contains_shellfish",
+            }
+        ]
+
+        [evidence] = plan_evidence(raw)
+
+        assert isinstance(evidence, EvidenceLine)
+        assert evidence.badge == "required"
+        assert evidence.fact_key == "contains_shellfish"
+
+    def test_freeform_reason_without_fact_key_stays_unclassified(self):
+        # 자유 텍스트에서 fact_key를 추론하는 건 실제 모델 연동 이후 단계 —
+        # v1 스텁이 값을 지어내면 안 된다.
+        raw = [{"source": "manual", "text": "그냥 여기 가고 싶어요", "badge": "reference"}]
+
+        [evidence] = plan_evidence(raw)
+
+        assert evidence.fact_key is None
+
+
+class TestRankCandidates:
+    """③-b: 실격 통과분의 순위만 매기고, 근거 없는 코멘트를 지어내지 않는다."""
+
+    def test_assigns_sequential_rank_in_input_order(self):
+        candidate_place_ids = ["place-a", "place-b", "place-c"]
+
+        ranked = rank_candidates(candidate_place_ids)
+
+        assert [r.place_id for r in ranked] == candidate_place_ids
+        assert [r.rank for r in ranked] == [1, 2, 3]
+        assert all(isinstance(r, RankedCandidate) for r in ranked)
+
+    def test_no_fabricated_member_comment(self):
+        [ranked] = rank_candidates(["place-a"])
+
+        assert ranked.member_comment is None
+
+    def test_empty_candidates_returns_empty_ranking(self):
+        assert rank_candidates([]) == []
