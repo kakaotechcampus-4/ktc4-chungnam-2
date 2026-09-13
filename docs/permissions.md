@@ -112,3 +112,26 @@ def require_map_member() -> Depends:
 **비구성원 vs 권한 없음의 응답 차이(계약 변경, `docs/CHANGELOG-api.md` 참고):**
 - 그 지도의 구성원이 아님 → **404** (존재 자체를 흘리지 않는다)
 - 구성원이지만 그 액션이 롤에 없음 → **403**
+
+## 확정 리스트(shortlist) permissions 게이팅 (#65 결정)
+
+`authz`(#36) 구현 중 코드에 먼저 들어갔던 두 규칙을 #7(리스트 탭, PR #80) 도착으로 검증을
+마치고 여기 정본으로 확정한다.
+
+1. **pin.kind=="확정" 상태 게이팅** — `can_add_to_shortlist`/`can_remove_from_shortlist`는
+   역할·액션 판정(`can()`)이 아니라 핀의 현재 상태로 반전된다: `확정`이 아니면 추가만 가능,
+   `확정`이면 제외만 가능. 권한이 아니라 상태 규칙이라 `authz/core.py::_pin_permissions`가
+   `permissions_for`에서만 계산하고 `can()`에는 넣지 않는다.
+2. **`shortlist_item` 리소스의 `can_add_to_shortlist`는 항상 `false`** — 이미 리스트에 올라간
+   항목이라 "추가"가 의미 없다. `can_remove_from_shortlist`만 `can(user, "shortlist.remove",
+   resource)`를 따른다. `shortlist/core.py::to_shortlist_item_response`가 이 규칙을 그대로
+   써서 응답을 조립하며 통과 확인됨(29 tests).
+3. **비공개 AI 후보(visibility=private)는 확정 리스트로 직접 승격할 수 없다** — 소유자 본인이
+   자기 비공개 후보를 열람하는 것과, 그 핀을 그대로 확정 리스트(항상 전체 공개)에 올리는 것은
+   다른 문제다. 후자를 허용하면 「지도에 올리기」를 거치지 않고 비공개 AI 후보가 공개로
+   새는 셈이라 최종기획안 7절 가드레일 1을 어긴다. `resource.kind`에는 visibility 정보가 없어
+   authz 레이어(permissions 필드)에서는 이 판정이 불가능하므로, **`shortlist/loaders.py::
+   load_pin_for_confirm`이 pins 레이어에서 `visibility=="private"`이면 `AI_PIN_PRIVATE`로
+   막는다** — permissions 객체가 아니라 요청 처리 자체를 거부하는 방식으로 정본 확정.
+
+세 규칙 모두 코드와 이 문서 사이에 더 이상 갭이 없다.
