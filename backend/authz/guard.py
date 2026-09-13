@@ -56,6 +56,29 @@ def require(action: str, loader):
     return _dep
 
 
+def require_with_principal(action: str, loader):
+    """require()와 인가 로직은 동일하지만, 응답에 permissions를 계산해 넣어야 하는 호출부
+    (예: shortlist — ShortlistItem.pin·permissions 조립에 Principal이 그대로 필요하다)를 위해
+    `(loaded.obj, principal)` 튜플을 함께 돌려준다. require()의 반환 시그니처(obj만)를 쓰는
+    기존 호출부(pins 등)를 건드리지 않으려고 별도 함수로 분리했다 — Rule A는 여전히 이 파일
+    안에서만 resolve_principal을 부른다는 사실로 성립한다(test_rule_a_static.py 참고)."""
+    def _dep(
+        loaded=Depends(loader),
+        user: CurrentUser = Depends(get_current_user),
+        gateway: MembershipGateway = Depends(get_membership_gateway),
+    ):
+        if not hasattr(loaded, "resource") or not hasattr(loaded, "obj"):
+            raise AppError("INTERNAL_ERROR", detail={"loader": getattr(loader, "__name__", str(loader))})
+        principal = resolve_principal(gateway, loaded.resource.map_id, user.user_id)
+        if principal.role is None:
+            raise AppError("NOT_FOUND")
+        if not can(principal, action, loaded.resource):
+            raise AppError("FORBIDDEN")
+        return loaded.obj, principal
+
+    return _dep
+
+
 def require_on_map(action: str):
     """읽을 리소스가 없는 액션(pin.create 등) — 대상이 지도 자신이다.
     Principal과 Resource가 같은 mapId 하나에서 나오므로 교차 지도 불일치가 생길 수 없다.

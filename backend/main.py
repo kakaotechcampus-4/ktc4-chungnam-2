@@ -47,15 +47,15 @@ def health():
 # from maps.router import router as maps_router
 from pins.router import router as pins_router  # noqa: E402
 from realtime.router import router as realtime_router  # noqa: E402
+from shortlist.router import router as shortlist_router  # noqa: E402
 
 # from recommend.router import router as recommend_router
-# from shortlist.router import router as shortlist_router
 #
 # app.include_router(auth_router)
 # app.include_router(maps_router)
 app.include_router(pins_router)
 # app.include_router(recommend_router)
-# app.include_router(shortlist_router)
+app.include_router(shortlist_router)
 app.include_router(realtime_router)
 
 # CORS는 add_middleware가 아니라 앱을 "바깥에서" 감싼다.

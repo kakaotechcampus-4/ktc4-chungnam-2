@@ -15,12 +15,12 @@ from common.database import Base  # noqa: E402
 # 모듈이 models.py를 만들면 여기 추가한다. 예:
 # import auth.models  # noqa: F401
 # import maps.models  # noqa: F401
-import pins.models  # noqa: F401
 import common.events  # noqa: F401
+import pins.models  # noqa: F401
 import recommend.models  # noqa: F401
+import shortlist.models  # noqa: F401
 
 # import places.models  # noqa: F401
-# import shortlist.models  # noqa: F401
 # import realtime.models  # noqa: F401
 # import seeding.models  # noqa: F401
 

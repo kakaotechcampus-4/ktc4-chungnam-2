@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from auth.deps import get_current_user
 from authz.core import Resource
 from authz.deps import get_membership_gateway
-from authz.guard import require, require_map_member, require_on_map
+from authz.guard import require, require_map_member, require_on_map, require_with_principal
 from authz.service import resolve_principal
 from authz.testing import FakeMembership
 from common.errors import AppError, register_error_handlers
@@ -102,6 +102,30 @@ def test_rule_b_mismatched_loader_rejects_before_can_is_asked():
     client = _client(require("pin.react", loader), roles={("m1", "u1"): "member"})
     resp = client.get("/probe")
     assert resp.status_code == 404
+
+
+# --- require_with_principal() --- (shortlist가 사용 — 응답에 permissions를 계산해야 해서
+# require()의 obj-only 반환으로는 부족하다)
+
+
+def test_require_with_principal_non_member_returns_404():
+    def loader():
+        return _Loaded(resource=Resource(type="shortlist_item", map_id="m1"), obj={"id": "s1"})
+
+    client = _client(require_with_principal("shortlist.remove", loader), roles={})
+    resp = client.get("/probe")
+    assert resp.status_code == 404
+
+
+def test_require_with_principal_member_allowed_returns_obj_and_principal():
+    def loader():
+        return _Loaded(resource=Resource(type="shortlist_item", map_id="m1"), obj={"id": "s1"})
+
+    client = _client(require_with_principal("shortlist.remove", loader), roles={("m1", "u1"): "member"})
+    resp = client.get("/probe")
+    assert resp.status_code == 200
+    # probe()가 dict/str/int/float/None이 아니면 "ok"로 뭉갠다(_client 헬퍼) — 튜플이라 "ok".
+    assert resp.json() == {"value": "ok"}
 
 
 # --- require_on_map() ---

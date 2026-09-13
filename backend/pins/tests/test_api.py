@@ -111,6 +111,39 @@ def test_get_pin_for_viewer_other_users_private_pin_is_404(db_session):
         assert exc.code == "AI_PIN_PRIVATE"
 
 
+def test_get_pin_response_for_viewer_fills_lat_lng_and_reaction_summary(db_session):
+    """shortlist.flows가 ShortlistItem.pin 조립에 쓰는 함수 — service.list_pins과 같은 모양의
+    Pin(lat/lng·reaction_summary·permissions 전부 채워짐)을 돌려주는지(for_Root.md 보고)."""
+    from authz.core import Principal
+    from pins.models import Reaction as ReactionRow
+
+    row = _insert_pin(db_session, kind="확정")
+    db_session.add(ReactionRow(pin_id=row.id, user_id="user_2", type="like"))
+    db_session.commit()
+
+    principal = Principal(user_id="user_1", map_id="map_1", role="member")
+    pin = api.get_pin_response_for_viewer(db_session, pin_id=str(row.id), viewer_id="user_1", principal=principal)
+
+    assert pin.id == str(row.id)
+    assert pin.lat == 35.1
+    assert pin.lng == 129.0
+    assert pin.reaction_summary.like == 1
+    assert pin.permissions.can_remove_from_shortlist is True  # kind=확정
+
+
+def test_get_pin_response_for_viewer_other_users_private_pin_is_404(db_session):
+    from authz.core import Principal
+    from common.errors import AppError
+
+    row = _insert_pin(db_session, visibility="private", created_by="user_1")
+    principal = Principal(user_id="user_2", map_id="map_1", role="member")
+    try:
+        api.get_pin_response_for_viewer(db_session, pin_id=str(row.id), viewer_id="user_2", principal=principal)
+        raise AssertionError("AI_PIN_PRIVATE가 발생했어야 한다")
+    except AppError as exc:
+        assert exc.code == "AI_PIN_PRIVATE"
+
+
 def test_create_ai_pin_event_not_recorded_until_caller_calls_record_event(db_session):
     """api.py 자체는 record_event를 호출하지 않는다 — 이벤트를 반환만 하고, 커밋에
     무엇을 넣을지는 호출한 flow(recommend)가 결정한다(모듈 docstring 참고)."""
