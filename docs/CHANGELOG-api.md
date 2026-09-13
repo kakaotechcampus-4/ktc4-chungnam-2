@@ -2,6 +2,17 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-09-13 — 목서버·스펙 누락 2건 반영 (#50)
+
+- `POST /maps`에 `422`(신규 `ValidationError` 컴포넌트) 추가 — `end_date >= start_date`
+  위반 시 응답. `docs/data-model.md`의 `maps` 테이블 `CHECK` 제약과 대응.
+- `GET /maps/{mapId}/pins`의 `created_by` 배열 파라미터에 `style: form, explode: true`
+  (반복 방식: `?created_by=a&created_by=b`)를 명시 — 목서버 구현과 실제 백엔드가 다른
+  방식으로 갈릴 위험을 없앴다.
+
+**FE 영향**: `POST /maps` 응답에 422 케이스가 새로 잡힌다(기존 `Error` 스키마 재사용).
+`created_by` 쿼리 직렬화는 이미 쓰던 방식을 스펙에 맞춘 것뿐이라 동작 변경 없음.
+
 ## 2026-09-11 — 비구성원 응답: 403 → 404 (PR #71 멘토 리뷰 대응)
 
 `pins`를 비롯한 보호 리소스에서, 요청자가 해당 지도의 구성원이 아닐 때의 응답이 403에서
