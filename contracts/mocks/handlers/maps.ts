@@ -22,13 +22,13 @@ export const mapsHandlers = [
 
   http.get("*/maps/:mapId", ({ params }) => {
     const map = getMapOr404(params.mapId as string);
-    if (!map) return apiError(404, "MAP_NOT_FOUND", "지도를 찾을 수 없습니다");
+    if (!map) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
     return HttpResponse.json(map);
   }),
 
   http.post("*/maps/:mapId/invite", ({ params }) => {
     const mapId = params.mapId as string;
-    if (!getMapOr404(mapId)) return apiError(404, "MAP_NOT_FOUND", "지도를 찾을 수 없습니다");
+    if (!getMapOr404(mapId)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
     const token = nextId("invite");
     const expires_at = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
     store.invites[token] = { mapId, expires_at };
@@ -39,7 +39,7 @@ export const mapsHandlers = [
     const invite = store.invites[params.token as string];
     if (!invite) return apiError(401, "UNAUTHORIZED", "초대 링크가 유효하지 않습니다");
     const map = getMapOr404(invite.mapId);
-    if (!map) return apiError(404, "MAP_NOT_FOUND", "지도를 찾을 수 없습니다");
+    if (!map) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
     const members = store.members[invite.mapId] ?? (store.members[invite.mapId] = []);
     if (!members.some((m) => m.user_id === ME_USER_ID)) {
       members.push({ user_id: ME_USER_ID, display_name: store.users[ME_USER_ID]?.display_name ?? "나", online: true });
@@ -50,7 +50,7 @@ export const mapsHandlers = [
 
   http.get("*/maps/:mapId/members", ({ params }) => {
     const mapId = params.mapId as string;
-    if (!getMapOr404(mapId)) return apiError(404, "MAP_NOT_FOUND", "지도를 찾을 수 없습니다");
+    if (!getMapOr404(mapId)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
     return HttpResponse.json(store.members[mapId] ?? []);
   }),
 ];

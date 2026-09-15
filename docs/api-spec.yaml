@@ -89,11 +89,12 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Map" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /maps/{mapId}/invite:
     post:
       tags: [maps]
-      summary: 초대 링크 발급
+      summary: 초대 링크 발급 — 구성원 누구나 (#4, docs/permissions.md invite.create)
       parameters: [ { $ref: "#/components/parameters/MapId" } ]
       responses:
         "201":
@@ -101,6 +102,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Invite" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /invites/{token}/accept:
     post:
@@ -132,6 +134,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Member" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   # ---------- pins ----------
   /maps/{mapId}/pins:
@@ -574,6 +577,13 @@ components:
       description: |
         권한 없는 액션 (docs/permissions.md 범위 밖).
         이 응답이 화면에 보이면 버튼이 애초에 disabled였어야 했다는 신호다.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: |
+        존재하지 않거나(리소스 없음), 요청자가 그 지도의 구성원이 아님 (docs/permissions.md
+        "권한을 어디서 강제하는가" — 비구성원에게 존재 여부 자체를 흘리지 않는다).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
