@@ -70,3 +70,8 @@ target/
 *.sqlite3
 *.db
 .terraform/
+
+# ── Claude Code (개인 설정) ─────────────────────────
+# 활성 플러그인·개인 권한 같은 담당자별 설정. 팀 공용으로 공유할 게 생기면 `git add -f`.
+**/.claude/settings.json
+**/.claude/settings.local.json
