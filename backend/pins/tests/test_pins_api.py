@@ -239,6 +239,26 @@ def test_delete_pin_publishes_event_for_public_pin(app_client, db_session):
     assert events[0].payload == {"pin_id": str(row.id)}
 
 
+def test_delete_pin_concurrent_double_delete_publishes_event_only_once(db_session):
+    """#51 — 확인 후 처리(check-then-act, pin.deleted_at = ...; db.flush())였을 때는 동시
+    삭제 요청 두 개가 둘 다 loader를 통과한 뒤(둘 다 deleted_at IS NULL을 봄) 둘 다 UPDATE에
+    성공해 pin.deleted가 두 번 발행될 수 있었다. 서비스 함수를 같은 핀에 두 번 호출해
+    (두 번째 호출 시점엔 이미 DB상 deleted_at이 채워져 있다 — 두 요청이 각자 로드는 먼저
+    끝내고 나중에 순서대로 DB에 도달한 것과 동일한 조건) 조건부 UPDATE(WHERE deleted_at
+    IS NULL) + rowcount 판단이 실제로 두 번째 호출을 막는지 확인한다."""
+    from pins import service
+    from pins.models import Pin as PinRow
+
+    row = _insert_pin(db_session, created_by="user_1", place_id="race_delete")
+    pin = db_session.get(PinRow, row.id)
+
+    service.delete_pin(db_session, pin)  # 1번 요청 — 실제로 지운다, 이벤트 1건
+    service.delete_pin(db_session, pin)  # 2번 요청(레이스) — rowcount=0, 이벤트 없음
+
+    events = _events(db_session, type="pin.deleted")
+    assert len(events) == 1
+
+
 def test_delete_pin_non_member_is_404(app_client, db_session):
     """비구성원 응답은 403이 아니라 404다(docs/CHANGELOG-api.md 2026-09-11)."""
     row = _insert_pin(db_session, created_by="user_1", place_id="not_my_map")
