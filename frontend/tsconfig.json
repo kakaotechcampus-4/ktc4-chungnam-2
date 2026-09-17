@@ -10,7 +10,7 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@pingo/contracts/*": ["../contracts/*"]
+      "@pingo/contracts/src/types/*": ["../contracts/src/types/*"]
     }
   }
 }
