@@ -1,8 +1,8 @@
 import { ApiError } from '@/api'
 import MapCanvas from '@/features/map/MapCanvas'
 import PinList from '@/features/map/PinList'
-import PinSheet from '@/features/map/PinSheet'
-import { useMapUiStore } from '@/features/map/mapStore'
+import PinSheet, { PinUnavailableSheet } from '@/features/map/PinSheet'
+import { usePinSelection } from '@/features/map/usePinSelection'
 import { usePins } from '@/features/map/usePins'
 
 /**
@@ -11,11 +11,12 @@ import { usePins } from '@/features/map/usePins'
  * 새 기능은 이 파일을 키우지 말고 `features/map/` 에 파일을 더해서 여기서 끼운다.
  */
 export default function MapTab() {
-  const selectedPinId = useMapUiStore((s) => s.selectedPinId)
-  const selectPin = useMapUiStore((s) => s.selectPin)
-
+  const { selectedPinId, selectPin } = usePinSelection()
   const { data: pins, isPending, error } = usePins()
+
   const selectedPin = pins?.find((pin) => pin.id === selectedPinId)
+  // 목록을 다 받은 뒤에도 없으면 볼 수 없는 핀이다. 로딩 중이나 실패 중에는 판단하지 않는다.
+  const unavailable = Boolean(selectedPinId) && !selectedPin && !isPending && !error
 
   return (
     <div className="p-4">
@@ -40,6 +41,7 @@ export default function MapTab() {
       {pins && <PinList pins={pins} onSelect={selectPin} />}
 
       {selectedPin && <PinSheet pin={selectedPin} onClose={() => selectPin(null)} />}
+      {unavailable && <PinUnavailableSheet onClose={() => selectPin(null)} />}
     </div>
   )
 }
