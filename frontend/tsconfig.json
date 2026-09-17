@@ -1,0 +1,16 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ],
+  /* 컴파일에는 쓰이지 않는다. shadcn CLI 가 루트 tsconfig 에서 alias 를 찾기 때문에 미러링한다
+     (없으면 "No import alias found in your tsconfig.json file" 로 init 이 중단된다). */
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@pingo/contracts/*": ["../contracts/*"]
+    }
+  }
+}
