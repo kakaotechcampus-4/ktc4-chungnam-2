@@ -1,14 +1,12 @@
 """
-test_pins_api.py용 픽스처 — 실제 PostgreSQL+PostGIS가 필요하다(docker-compose up -d).
-DB에 못 붙으면 조용히 skip하지 않고 pytest.fail로 명확하게 실패시킨다
-(docs/code-quality.md: 실패를 감추는 코드를 만들지 않는다).
+test_maps_api.py·test_invites_api.py·test_membership_gateway.py·test_constraints.py용 픽스처.
+backend/pins/tests/conftest.py를 그대로 복제하고 import·오버라이드만 바꿨다(실제
+PostgreSQL+PostGIS 필요, docker-compose up -d).
 
-트랜잭션 격리: 이제 앱 코드(service.py)는 커밋하지 않지만 common.database.get_db는 여전히
-요청마다 커밋하므로 격리가 계속 필요하다. SQLAlchemy 2.0이 문서화한 방식을 쓴다 —
-join_transaction_mode="create_savepoint"로 세션을 만들면 세션의 commit()이 SAVEPOINT만
-해제하고 바깥 트랜잭션(outer)은 살아있다(직접 실행해 확인, mentor-review-plan.md). 이전의
-커스텀 after_transaction_end 리스너보다 짧고, 앱이 실제 commit()이나 begin_nested()
-(방어 코드 2)를 걸어도 안전하게 살아남는다.
+app_client는 오버라이드가 2개다 — DB 세션뿐 아니라 authz.deps.get_membership_gateway도
+maps.api.DbMembershipGateway로 바꿔 끼운다. 지금 authz/deps.py에 남아있는 AllowAllMembership
+스텁(모두 'member' 취급)을 그대로 두면 "비구성원 404" 단언이 전부 무의미하게 통과하기
+때문이다 — 이 오버라이드가 이 테스트 스위트의 핵심이다.
 """
 
 import os
@@ -19,12 +17,9 @@ from sqlalchemy.orm import sessionmaker
 
 import authz.deps
 import common.events  # noqa: F401
-import pins.models  # noqa: F401
-from authz.testing import FakeMembership
+import maps.models  # noqa: F401
 from common.database import Base, session_scope
-
-# 위 두 import는 Base.metadata에 테이블(pins/reactions, event_log)을 등록시키기 위한 것 —
-# 직접 쓰이진 않는다. event_log는 test_permissions_contract.py 등이 이벤트 발행을 검증할 때 쓴다.
+from maps.api import DbMembershipGateway
 
 BASE_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://pingo:pingo@localhost:5432/pingo")
 
@@ -62,7 +57,7 @@ def test_engine():
     except Exception as exc:  # noqa: BLE001
         pytest.fail(f"pingo_test DB에 postgis 익스텐션을 켤 수 없습니다: {exc}")
 
-    Base.metadata.create_all(bind=engine)  # common.events.EventLog까지 포함 — 전체 등록된 테이블
+    Base.metadata.create_all(bind=engine)
 
     yield engine
 
@@ -89,25 +84,16 @@ def app_client(db_session):
     from fastapi.testclient import TestClient
 
     from main import app
-    from pins.deps import get_db_session
+    from maps.deps import get_db_session
 
     def _override_get_db_session():
-        # session_scope는 db.close()를 부르지 않는다(바깥 finally만 닫는다, common/database.py
-        # 확인 완료) — 그래서 이 오버라이드가 끝난 뒤에도 db_session 픽스처로 계속 조회할 수 있다.
         with session_scope(db_session) as s:
             yield s
 
     app.dependency_overrides[get_db_session] = _override_get_db_session
-    # authz.deps.get_membership_gateway를 FakeMembership으로 명시 오버라이드한다 — 이 파일이 쓰는
-    # 모든 (map_id, user_id) 조합에 member를 준다(issue #87). 이 오버라이드는 실제
-    # DbMembershipGateway(DB 조회) 경로를 전혀 거치지 않는다 — "guard가 404/403을 올바르게
-    # 분기하는가"만 검증하고, DB 조회 자체의 회귀는 maps/tests가 커버한다. 개별 테스트가 쓰는
-    # _deny_membership(FakeMembership({}))은 그대로 따로 오버라이드해서 쓴다.
-    app.dependency_overrides[authz.deps.get_membership_gateway] = lambda: FakeMembership({
-        ("map_1", "user_1"): "member",
-        ("map_1", "user_2"): "member",
-        ("map_1", "stranger"): "member",
-    })
+    app.dependency_overrides[authz.deps.get_membership_gateway] = (
+        lambda: DbMembershipGateway(db_session)
+    )
 
     with TestClient(app) as client:
         yield client
