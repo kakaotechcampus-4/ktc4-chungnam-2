@@ -19,7 +19,7 @@ export default function MapTab() {
 
   return (
     <div className="p-4">
-      <MapCanvas pins={pins ?? []} />
+      <MapCanvas pins={pins ?? []} onSelect={selectPin} />
 
       {isPending && <p className="text-sm text-muted-foreground">핀을 불러오는 중…</p>}
 
