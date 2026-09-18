@@ -2,12 +2,10 @@
 다른 모듈이 maps를 부르는 유일한 접점(docs/architecture.md §1.1 "교차 모듈 쓰기는
 <module>/api.py를 통해서만"). 지금은 authz.ports.MembershipGateway 구현체 하나뿐이다.
 
-authz/deps.py는 여기서 건드리지 않는다 — 지금은 AllowAllMembership(모두 'member' 취급)
-스텁이 걸려 있어 로그인한 누구나 모든 지도를 볼 수 있는 상태다. 이 파일이 그 스텁을
-대체할 실구현을 내놓고, 실제 배선(authz/deps.py의 select() 호출 교체 + .env의
-MEMBERSHIP_MODE=real)은 diff를 maps/for_Root.md에 적어 루트가 적용한다 — authz는 다른
-세션이 담당하는 디렉토리라 그 파일을 직접 고치지 않는다. 이 모듈 자신의 테스트에서는
-dependency_overrides로 이 클래스를 직접 꽂아 비구성원 404가 실제로 걸리는지 검증한다.
+authz/deps.py::get_membership_gateway가 이 클래스를 직접 쓴다(#89로 AllowAllMembership
+스텁과 MEMBERSHIP_MODE 포트 자체가 제거됨, 배선은 루트가 적용) — 비구성원은 이제 실제로
+404를 받는다. 이 모듈 자신의 테스트에서도 dependency_overrides로 이 클래스를 직접 꽂아
+비구성원 404가 실제로 걸리는지 검증한다.
 """
 
 from sqlalchemy import select
