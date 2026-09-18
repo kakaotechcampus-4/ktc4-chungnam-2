@@ -2,6 +2,42 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-09-19 — 도메인 응답 스키마에 required 추가 (PR #94 멘토 리뷰 대응)
+
+`Map`·`Invite`·`Member`·`Pin`·`Reaction` 5개 응답 스키마에 `required`가 하나도 없었다는 걸
+멘토 리뷰에서 지적받았다. `MapCreateRequest` 등 요청 스키마는 `required`를 챙겼지만 응답
+스키마는 최초 작성(2026-09-02) 이후 아무도 다시 손보지 않은 것으로 확인됐다 — 의도적 설계가
+아니라 누락이었다.
+
+각 모듈의 실제 구현(`maps/core.py`, `pins/core.py`)을 근거로, **항상 채워지는 필드만**
+`required`로 추가했다. 다른 모듈 의존으로 못 채우는 필드(`Map.confirmed_count`,
+`Member.display_name`·`online`, `Pin.place_name`·`created_by_display_name`·`price_bucket`·
+`checks`·`source_run_id`, `Reaction.reason_text`)는 그대로 optional로 남겼다 — 이 필드들의
+"없을 수도 있음"이 이제 명세에 정식으로 드러난다.
+
+- `Map`: `required: [id, title, start_date, end_date, member_count]`
+- `Invite`: `required: [token, url, expires_at]` (전부 항상 채워짐)
+- `Member`: `required: [user_id]`
+- `Pin`: `required: [id, map_id, category, kind, visibility, lat, lng, created_by, reaction_summary, permissions]`,
+  `reaction_summary` 내부도 `required: [like, neutral, against]`
+- `Reaction`: `required: [pin_id, user_id, type]`
+
+타입을 재생성해서(`npm run gen:types`) 확인하는 과정에서 **목 서버 자체의 버그 2건**을 발견해
+같이 고쳤다 — `contracts/mocks/seed.ts`의 `pinCafe1`과 `contracts/mocks/handlers/recommend.ts`의
+후보 게시 핀이 `created_by`를 채우지 않고 있었다(실서버는 이 필드를 항상 채운다). `required`가
+없던 동안은 타입 에러로 안 잡히고 조용히 넘어갔던 것이다.
+
+`User`·`FilterCounts`·`Readiness`·`EvidenceLine`·`Region`·`RecommendRun`·`Candidate`·
+`RecommendResult`·`ShortlistItem`·`Route`·`Check`는 이번에 손대지 않았다 — 해당 모듈(auth·
+recommend·shortlist 등)의 실제 구현을 확인하지 않고 `required`를 추측해서 넣으면 이번에
+고친 것과 같은 종류의 실수(구현과 안 맞는 계약)를 새로 만들 수 있어서, 각 모듈 구현이 확인된
+뒤 같은 방식으로 정리하는 게 맞다고 판단했다.
+
+**FE 영향**: 타입 재생성(`npm run gen:types`) 필요. 위 5개 스키마의 필드 대부분이
+`T | undefined`에서 `T`로 좁혀진다 — 기존에 옵셔널 체이닝(`?.`)이나 널 체크를 했던 코드는
+그대로 동작하고, 새로 에러가 나는 방향은 없다. `redocly lint`·`tsc --noEmit`·`vitest`
+전부 통과 확인(경고 60개, 구조 변경 전과 동일).
+
 ## 2026-09-14 — maps 착수 반영: 404 커버리지 + invite.create 권한 결정 (#4)
 
 `maps` 모듈(#4·#19) 구현과 함께 발견된 계약 갭을 반영했다.

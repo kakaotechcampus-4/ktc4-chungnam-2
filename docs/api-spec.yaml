@@ -636,6 +636,9 @@ components:
 
     Map:
       type: object
+      # confirmed_count만 없을 수 있다 — shortlist/api.py::count_confirmed()가 없어 이 모듈이
+      # 못 채운다(maps/for_Root.md 5번). 나머지는 maps/core.py::to_map_response가 항상 채운다.
+      required: [id, title, start_date, end_date, member_count]
       properties:
         id: { type: string }
         title: { type: string }
@@ -646,6 +649,7 @@ components:
 
     Invite:
       type: object
+      required: [token, url, expires_at]
       properties:
         token: { type: string }
         url: { type: string }
@@ -653,6 +657,9 @@ components:
 
     Member:
       type: object
+      # display_name·online만 없을 수 있다 — auth(#4)의 users 테이블, realtime의 presence가
+      # 아직 없어 못 채운다(maps/core.py::to_member_response). user_id는 항상 채운다.
+      required: [user_id]
       properties:
         user_id: { type: string }
         display_name: { type: string }
@@ -698,6 +705,10 @@ components:
 
     Pin:
       type: object
+      # place_name·created_by_display_name·price_bucket·checks·source_run_id만 없을 수 있다 —
+      # places·maps·recommend가 없어 pins/core.py::to_pin_response가 못 채운다(pins/for_Root.md 6번).
+      # 나머지는 항상 채운다.
+      required: [id, map_id, category, kind, visibility, lat, lng, created_by, reaction_summary, permissions]
       properties:
         id: { type: string }
         map_id: { type: string }
@@ -718,6 +729,7 @@ components:
         source_run_id: { type: [string, "null"] }
         reaction_summary:
           type: object
+          required: [like, neutral, against]
           properties:
             like: { type: integer }
             neutral: { type: integer }
@@ -736,6 +748,8 @@ components:
 
     Reaction:
       type: object
+      # reason_text만 없을 수 있다 — like/neutral 반응은 사유가 필수가 아니다(가드레일 3).
+      required: [pin_id, user_id, type]
       properties:
         pin_id: { type: string }
         user_id: { type: string }
