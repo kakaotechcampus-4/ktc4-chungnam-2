@@ -679,7 +679,7 @@ components:
       properties:
         category: { $ref: "#/components/schemas/Category" }
         source: { type: string, enum: [link, search, coordinate] }
-        link_url: { type: string }
+        link_url: { type: string, maxLength: 2000 } # 사용자가 직접 붙여넣는 값, 코드에 근거 없음(멘토 리뷰 대응)
         place_id: { type: string }
         # pins/core.py::validate_create가 이미 검증하는 범위를 그대로 옮김(멘토 리뷰 대응).
         lat: { type: number, minimum: -90, maximum: 90 }
@@ -746,7 +746,8 @@ components:
         reason_text: { type: string, maxLength: 140 }
         reason_chip_ids:
           type: array
-          items: { type: string }
+          maxItems: 10 # 사전 정의된 칩 목록에서 고르는 값, 코드에 근거 없음(멘토 리뷰 대응)
+          items: { type: string, maxLength: 50 }
 
     Reaction:
       type: object
@@ -756,7 +757,7 @@ components:
         pin_id: { type: string }
         user_id: { type: string }
         type: { type: string, enum: [like, neutral, against] }
-        reason_text: { type: string }
+        reason_text: { type: string, maxLength: 140 } # ReactionRequest.reason_text와 짝을 맞춤
 
     FilterCounts:
       type: object
@@ -825,7 +826,7 @@ components:
       type: object
       properties:
         id: { type: string }
-        place_name: { type: string }
+        place_name: { type: string, maxLength: 100 } # Pin.place_name과 동일 근거(멘토 리뷰 대응)
         region_label: { type: string, description: "5-6-1 지역별 안배 태그" }
         rank: { type: integer }
         checks:

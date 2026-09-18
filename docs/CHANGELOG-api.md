@@ -20,17 +20,26 @@
   (`EvidenceLine`): 50
 - `text`(`EvidenceLine`·`EvidencePatchRequest.add[].text`): 140 (`reason_text`와 같은 성격의
   자유 텍스트라 같은 값을 씀)
+- `link_url`(`PinCreateRequest`): 2000 (사용자가 직접 붙여넣는 구글맵 링크)
+- `reason_chip_ids`(`ReactionRequest`): 배열 `maxItems: 10`, 항목당 `maxLength: 50` (사전
+  정의된 칩 목록에서 고르는 값이라 이 이상 올 이유가 없다)
+- `Candidate.place_name`: 100 (`Pin.place_name`과 동일 근거)
 
-**FE 영향**: 없음. `openapi-typescript`는 `maxLength`·`minimum`·`maximum`을 타입이나 주석
-어디에도 반영하지 않는다(`description`만 반영) — 확인해보니 타입 재생성 결과가 이전과
-바이트 단위로 동일했다. 프론트가 이 값을 알아야 하면 명세를 직접 참고해야 한다.
+짝이 안 맞던 것도 하나 고쳤다 — `ReactionRequest.reason_text`엔 `maxLength: 140`이 있는데
+그 값을 그대로 돌려주는 응답 스키마 `Reaction.reason_text`엔 없었다. 맞췄다.
 
-**후속 필요 — 아직 서버가 안 막는다**: `title`·`place_name`·`display_name`·`text` 4개는
-명세에만 추가됐고, 실제 Pydantic 스키마(`maps/schemas.py`·`llm/schemas.py`)는 아직 그냥
-`str`이라 이 값을 초과해도 서버가 거부하지 않는다(`reason_text`만 `pins/schemas.py`에
-`Field(max_length=140)`으로 이미 강제됨). `lat`/`lng`는 `pins/core.py`가 이미 강제하므로
-문제없다. 각 모듈(`maps`·`llm`) 담당자가 `Field(max_length=...)`를 추가하는 후속 이슈가
-필요하다 — 다른 모듈 파일이라 여기서 직접 고치지 않았다.
+**FE 영향**: 없음. `openapi-typescript`는 `maxLength`·`minimum`·`maximum`·`maxItems`를
+타입이나 주석 어디에도 반영하지 않는다(`description`만 반영) — 확인해보니 타입 재생성
+결과가 이전과 바이트 단위로 동일했다. 프론트가 이 값을 알아야 하면 명세를 직접 참고해야 한다.
+
+**후속 필요 — 아직 서버가 안 막는다**: `title`·`place_name`·`display_name`·`text`·`link_url`·
+`reason_chip_ids` 6개는 명세에만 추가됐고, 실제 Pydantic 스키마(`maps/schemas.py`·
+`llm/schemas.py`·`pins/schemas.py`)는 아직 그냥 `str`/`list[str]`이라 이 값을 초과해도
+서버가 거부하지 않는다(`reason_text`만 `pins/schemas.py`에 `Field(max_length=140)`으로 이미
+강제됨). `Candidate.place_name`은 `recommend` 모듈 자체가 아직 없어서 해당 없음. `lat`/`lng`는
+`pins/core.py`가 이미 강제하므로 문제없다. 각 모듈(`maps`·`llm`·`pins`) 담당자가
+`Field(max_length=...)`를 추가하는 후속 이슈가 필요하다 — 다른 모듈 파일이라 여기서 직접
+고치지 않았다.
 
 ## 2026-09-19 — 도메인 응답 스키마에 required 추가 (PR #94 멘토 리뷰 대응)
 
