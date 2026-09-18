@@ -66,6 +66,16 @@ class Settings:
     session_secret: str
     places_mode: AdapterMode
     auth_mode: AdapterMode
+    # auth 모듈 전용(#4) — "설정 한 곳" 원칙에 따라 os.getenv를 auth/service.py에서 직접
+    # 부르지 않고 여기 추가한다. 기본값 ""는 dev에서 카카오 앱 없이도 서버가 뜨게 하기 위함 —
+    # 실제 로그인 시도 시점에야 카카오 API가 400/401을 돌려주며 실패한다(여기서 미리 막지
+    # 않는다 — prod 가드는 __post_init__ 아래 참고).
+    kakao_client_id: str = ""
+    kakao_client_secret: str = ""
+    kakao_redirect_uri: str = ""
+    # 로그인 성공 후 리다이렉트할 FE 진입점. FE 오리진의 정본이 아직 없다(maps/for_Root.md
+    # "초대 링크 URL" 항목과 같은 갭 — auth/for_Root.md에도 보고) — 기본값은 상대경로 "/".
+    frontend_login_redirect_url: str = "/"
 
     def __post_init__(self) -> None:
         # 잘못된 Settings는 애초에 "만들어질 수 없다" — 호출 순서에 기대지 않는 게 핵심이다.
@@ -123,6 +133,10 @@ class Settings:
             session_secret=_env("SESSION_SECRET", "change-me-before-deploy"),
             places_mode=_mode("PLACES_MODE", default_mode),
             auth_mode=_mode("AUTH_MODE", default_mode),
+            kakao_client_id=_env("KAKAO_CLIENT_ID", ""),
+            kakao_client_secret=_env("KAKAO_CLIENT_SECRET", ""),
+            kakao_redirect_uri=_env("KAKAO_REDIRECT_URI", ""),
+            frontend_login_redirect_url=_env("FRONTEND_LOGIN_REDIRECT_URL", "/"),
         )
 
 
