@@ -632,7 +632,7 @@ components:
       type: object
       properties:
         id: { type: string }
-        display_name: { type: string }
+        display_name: { type: string, maxLength: 50 } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
 
     Map:
       type: object
@@ -641,7 +641,7 @@ components:
       required: [id, title, start_date, end_date, member_count]
       properties:
         id: { type: string }
-        title: { type: string }
+        title: { type: string, maxLength: 100 } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
         start_date: { type: string, format: date, description: "여행 시작일 (#22)" }
         end_date: { type: string, format: date, description: "여행 종료일 (#22)" }
         member_count: { type: integer }
@@ -662,14 +662,14 @@ components:
       required: [user_id]
       properties:
         user_id: { type: string }
-        display_name: { type: string }
+        display_name: { type: string, maxLength: 50 } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
         online: { type: boolean }
 
     MapCreateRequest:
       type: object
       required: [title, start_date, end_date]
       properties:
-        title: { type: string, description: "여행 제목 (#22)" }
+        title: { type: string, maxLength: 100, description: "여행 제목 (#22)" } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
         start_date: { type: string, format: date, description: "여행 시작일 (#22)" }
         end_date: { type: string, format: date, description: "여행 종료일 (#22). start_date 이후여야 한다" }
 
@@ -681,8 +681,9 @@ components:
         source: { type: string, enum: [link, search, coordinate] }
         link_url: { type: string }
         place_id: { type: string }
-        lat: { type: number }
-        lng: { type: number }
+        # pins/core.py::validate_create가 이미 검증하는 범위를 그대로 옮김(멘토 리뷰 대응).
+        lat: { type: number, minimum: -90, maximum: 90 }
+        lng: { type: number, minimum: -180, maximum: 180 }
 
     PriceBucket:
       type: string
@@ -715,11 +716,12 @@ components:
         category: { $ref: "#/components/schemas/Category" }
         kind: { $ref: "#/components/schemas/PinKind" }
         visibility: { type: string, enum: [public, private] }
-        lat: { type: number }
-        lng: { type: number }
-        place_name: { type: string }
+        # PinCreateRequest.lat/lng와 동일 근거(pins/core.py::validate_create).
+        lat: { type: number, minimum: -90, maximum: 90 }
+        lng: { type: number, minimum: -180, maximum: 180 }
+        place_name: { type: string, maxLength: 100 } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
         created_by: { type: string, description: "핀을 찍은 구성원의 user_id (#26)" }
-        created_by_display_name: { type: string, description: "핀 상세에서 '누가 찍었는지' 표시용 (#26)" }
+        created_by_display_name: { type: string, maxLength: 50, description: "핀 상세에서 '누가 찍었는지' 표시용 (#26)" } # 코드에 근거 없음, 팀 확인 필요
         price_bucket:
           $ref: "#/components/schemas/PriceBucket"
         checks:
@@ -778,8 +780,8 @@ components:
       properties:
         id: { type: string }
         author_id: { type: string }
-        author_display_name: { type: string }
-        text: { type: string }
+        author_display_name: { type: string, maxLength: 50 } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
+        text: { type: string, maxLength: 140 } # reason_text와 같은 성격의 자유 텍스트라 같은 값을 씀
         badge: { type: string, enum: [required, preferred, reference], description: "꼭/선호/참고 (5-5)" }
         fact_key: { type: [string, "null"] }
         is_active: { type: boolean }
@@ -800,7 +802,7 @@ components:
           items:
             type: object
             properties:
-              text: { type: string }
+              text: { type: string, maxLength: 140 } # EvidenceLine.text와 동일 근거
 
     Region:
       type: object

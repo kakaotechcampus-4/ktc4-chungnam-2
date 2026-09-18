@@ -2,6 +2,36 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-09-19 (2) — 값 제약(길이·범위) 보강 (PR #94 멘토 리뷰 대응)
+
+`reason_text`(maxLength 140)·`step`(1~8) 딱 둘만 값 제약이 있고 나머지 필드(문자열 82개,
+숫자 25개)엔 아무 제약이 없다는 걸 멘토 리뷰에서 지적받았다. 두 갈래로 나눠 반영했다.
+
+**코드에 이미 있는 검증을 명세로 끌어올림** — `pins/core.py::validate_create`가 이미
+`-90<=lat<=90`, `-180<=lng<=180`을 검증하고 있었는데 명세에는 없었다. `PinCreateRequest`·
+`Pin` 양쪽의 `lat`/`lng`에 `minimum`/`maximum`을 추가했다.
+
+**코드에 근거가 없어 이번에 새로 정한 값** — 자유 텍스트라 악용·오류 여지가 있는 필드에
+`maxLength`를 추가했다. 값 자체는 근거가 없으니 팀 확인이 필요하다.
+
+- `title`(`Map`·`MapCreateRequest`): 100
+- `place_name`(`Pin`): 100
+- `display_name`(`User`·`Member`), `created_by_display_name`(`Pin`), `author_display_name`
+  (`EvidenceLine`): 50
+- `text`(`EvidenceLine`·`EvidencePatchRequest.add[].text`): 140 (`reason_text`와 같은 성격의
+  자유 텍스트라 같은 값을 씀)
+
+**FE 영향**: 없음. `openapi-typescript`는 `maxLength`·`minimum`·`maximum`을 타입이나 주석
+어디에도 반영하지 않는다(`description`만 반영) — 확인해보니 타입 재생성 결과가 이전과
+바이트 단위로 동일했다. 프론트가 이 값을 알아야 하면 명세를 직접 참고해야 한다.
+
+**후속 필요 — 아직 서버가 안 막는다**: `title`·`place_name`·`display_name`·`text` 4개는
+명세에만 추가됐고, 실제 Pydantic 스키마(`maps/schemas.py`·`llm/schemas.py`)는 아직 그냥
+`str`이라 이 값을 초과해도 서버가 거부하지 않는다(`reason_text`만 `pins/schemas.py`에
+`Field(max_length=140)`으로 이미 강제됨). `lat`/`lng`는 `pins/core.py`가 이미 강제하므로
+문제없다. 각 모듈(`maps`·`llm`) 담당자가 `Field(max_length=...)`를 추가하는 후속 이슈가
+필요하다 — 다른 모듈 파일이라 여기서 직접 고치지 않았다.
+
 ## 2026-09-19 — 도메인 응답 스키마에 required 추가 (PR #94 멘토 리뷰 대응)
 
 `Map`·`Invite`·`Member`·`Pin`·`Reaction` 5개 응답 스키마에 `required`가 하나도 없었다는 걸
