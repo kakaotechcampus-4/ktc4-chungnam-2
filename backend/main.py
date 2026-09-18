@@ -44,7 +44,7 @@ def health():
 
 # 모듈 담당자가 router.py를 만들면 여기 등록한다. docs/api-spec.yaml 태그 = 모듈 단위.
 # from auth.router import router as auth_router
-# from maps.router import router as maps_router
+from maps.router import router as maps_router  # noqa: E402
 from pins.router import router as pins_router  # noqa: E402
 from realtime.router import router as realtime_router  # noqa: E402
 from shortlist.router import router as shortlist_router  # noqa: E402
@@ -52,7 +52,7 @@ from shortlist.router import router as shortlist_router  # noqa: E402
 # from recommend.router import router as recommend_router
 #
 # app.include_router(auth_router)
-# app.include_router(maps_router)
+app.include_router(maps_router)
 app.include_router(pins_router)
 # app.include_router(recommend_router)
 app.include_router(shortlist_router)

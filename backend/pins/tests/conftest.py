@@ -17,8 +17,10 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
+import authz.deps
 import common.events  # noqa: F401
 import pins.models  # noqa: F401
+from authz.testing import FakeMembership
 from common.database import Base, session_scope
 
 # 위 두 import는 Base.metadata에 테이블(pins/reactions, event_log)을 등록시키기 위한 것 —
@@ -96,6 +98,16 @@ def app_client(db_session):
             yield s
 
     app.dependency_overrides[get_db_session] = _override_get_db_session
+    # authz.deps.get_membership_gateway를 FakeMembership으로 명시 오버라이드한다 — 이 파일이 쓰는
+    # 모든 (map_id, user_id) 조합에 member를 준다(issue #87). 이 오버라이드는 실제
+    # DbMembershipGateway(DB 조회) 경로를 전혀 거치지 않는다 — "guard가 404/403을 올바르게
+    # 분기하는가"만 검증하고, DB 조회 자체의 회귀는 maps/tests가 커버한다. 개별 테스트가 쓰는
+    # _deny_membership(FakeMembership({}))은 그대로 따로 오버라이드해서 쓴다.
+    app.dependency_overrides[authz.deps.get_membership_gateway] = lambda: FakeMembership({
+        ("map_1", "user_1"): "member",
+        ("map_1", "user_2"): "member",
+        ("map_1", "stranger"): "member",
+    })
 
     with TestClient(app) as client:
         yield client
