@@ -14,7 +14,10 @@ from typing import Literal, get_args
 Environment = Literal["dev", "test", "prod"]
 AdapterMode = Literal["dev", "real"]
 
-_PORTS = ("places", "membership", "auth")
+_PORTS = ("places", "auth")
+# 주의: "membership"은 여기 없다(issue #89) — maps.api.DbMembershipGateway가 유일한 구현이라
+# dev/real을 오갈 대상 자체가 없다. authz/deps.py::get_membership_gateway가 직접 그 클래스를
+# 쓴다(select() 안 거침).
 # 주의: "events"는 여기 없다 — 이벤트 발행은 select()로 고르는 포트가 아니라
 # common.events.record_event를 직접 부르는 평범한 함수 호출이라 dev/real 모드 개념이 없다
 # (아래 MISSING_REAL 주석 참고, adapters.py 절).
@@ -62,7 +65,6 @@ class Settings:
     cors_allow_origin_regex: str | None
     session_secret: str
     places_mode: AdapterMode
-    membership_mode: AdapterMode
     auth_mode: AdapterMode
 
     def __post_init__(self) -> None:
@@ -120,7 +122,6 @@ class Settings:
             cors_allow_origin_regex=regex or None,
             session_secret=_env("SESSION_SECRET", "change-me-before-deploy"),
             places_mode=_mode("PLACES_MODE", default_mode),
-            membership_mode=_mode("MEMBERSHIP_MODE", default_mode),
             auth_mode=_mode("AUTH_MODE", default_mode),
         )
 
