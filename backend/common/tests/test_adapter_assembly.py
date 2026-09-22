@@ -11,15 +11,17 @@ import pytest
 # 구현이 영원히 하나뿐인 것에 어댑터 선택 레이어를 씌우지 않는다.
 MISSING_REAL = {
     "pins.PlaceGateway": "#34",
-    "authz.MembershipGateway": "#19",
     "auth.SessionResolver": "#4",
 }
+# 주의: "authz.MembershipGateway"는 여기 없다(issue #89) — maps.api.DbMembershipGateway가
+# 유일한 구현이 되면서 authz/deps.py가 select()를 완전히 그만 썼다. dev 스텁도 함께 제거됐다.
 
 
 def test_every_registered_port_is_accounted_for():
-    """pins·authz·auth 세 모듈이 모두 select()로 재배선을 마쳐 xfail을 걷어냈다
-    (auth/mentor-review-plan.md 후속 — auth.SessionResolver가 마지막으로 등록된 포트였다).
-    이제부터는 진짜 회귀 검사다: 포트를 추가/삭제했는데 MISSING_REAL을 안 고치면 여기서 잡힌다."""
+    """pins·auth 두 모듈이 아직 select()로 dev/real을 오간다(auth/mentor-review-plan.md 후속 —
+    auth.SessionResolver가 마지막으로 등록된 포트였다). authz.MembershipGateway는 실구현 하나뿐이라
+    아예 이 레지스트리에 없다(#89) — 이제부터는 진짜 회귀 검사다: 포트를 추가/삭제했는데
+    MISSING_REAL을 안 고치면 여기서 잡힌다."""
     import main  # noqa: F401 — 모든 deps.py를 import시켜 레지스트리를 채운다
     from common.adapters import assembly
     ports = {c.port for c in assembly()}
@@ -35,7 +37,7 @@ def test_prod_refuses_to_boot_while_real_impls_are_missing():
     with pytest.raises(ConfigError, match="prod"):
         Settings(environment="prod", database_url="x", cors_allow_origins=(),
                  cors_allow_origin_regex=None, session_secret="s",
-                 places_mode="dev", membership_mode="real", auth_mode="real")
+                 places_mode="dev", auth_mode="real")
 
 
 def test_select_registers_the_choice_in_assembly():
@@ -58,8 +60,9 @@ def test_select_registers_the_choice_in_assembly():
 
 
 # 새 dev/real 어댑터 포트가 생기면 여기 추가한다 — 위 settings.py의 _PORTS,
-# adapters.py의 select() 호출 이름들과 맞춘다.
-KNOWN_ADAPTER_FACTORIES = {"get_place_gateway", "get_membership_gateway", "get_current_user"}
+# adapters.py의 select() 호출 이름들과 맞춘다. "get_membership_gateway"는 여기 없다(issue #89) —
+# 이제 select() 없이 DbMembershipGateway 하나로 직접 정의된다(우회가 아니라 의도한 설계다).
+KNOWN_ADAPTER_FACTORIES = {"get_place_gateway", "get_current_user"}
 
 
 def _select_bound_names(tree: ast.Module) -> set[str]:
