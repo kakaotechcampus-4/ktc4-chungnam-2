@@ -201,6 +201,15 @@ candidates(
   published_pin_id null,                -- 5-5-1 게시 후 연결
   created_at
 )
+  -- 게시(publish) 구현 시 주의할 것(Antigravity 검수, #64/#57 처리 중 발견 — 아직 recommend가
+  -- 없어 지금 고치는 게 아니라 여기 남겨둔다):
+  -- 1. can_publish는 requested_by 본인만이 아니라 published_pin_id is null(아직 미게시)도
+  --    같이 봐야 한다 — 안 그러면 이미 게시된 후보도 게시 버튼이 계속 활성화된다.
+  -- 2. 게시는 pins.unique(map_id, place_id) where deleted_at is null 제약과 만난다 — 같은
+  --    장소에 이미 핀(수동이든 이전 게시든)이 있으면 게시 INSERT가 충돌한다. 409로 처리할지
+  --    기존 핀과 병합할지 정해야 한다.
+  -- 3. pins.source_run_id/checks는 write-once다 — 핀 수정 엔드포인트가 생기면 그 요청
+  --    스키마에서 반드시 제외한다(클라이언트가 덮어쓸 수 없게).
 
 exclusions(
   map_id, category, place_id, reason('proposed'|'dismissed'),
