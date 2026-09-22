@@ -9,18 +9,27 @@
 멘토 코멘트 4가 지적한 "라우터마다 세션 해석을 반복" 문제가 여기서 사라진다.
 
 get_current_user는 common.adapters.select()를 거친다 — settings.auth_mode가 "real"인데
-실구현(#4)이 없으면 여기서 ConfigError로 서버가 뜨기 전에 죽는다. prod에서 이 개발용 스텁이
-선택되는 것도 select()가 막는다(Settings.__post_init__과 select() 양쪽에서 이중으로 걸린다 —
-common/adapters.py 참고). 이걸 하기 전에는 검증 없는 쿠키 스텁이 이론상 PINGO_ENV=prod에서도
-그대로 돌아갈 수 있었다 — 멘토 코멘트 6이 우려한 상황이다(auth/for_Root.md에 근거 정리).
+실구현이 없으면 여기서 ConfigError로 서버가 뜨기 전에 죽는다. prod에서 dev 스텁이 선택되는
+것도 select()가 막는다(Settings.__post_init__과 select() 양쪽에서 이중으로 걸린다 —
+common/adapters.py 참고).
+
+**dev/real 두 구현이 계속 공존하는 이유**: dev 스텁(`_dev_get_current_user`, 쿠키 문자열을
+검증 없이 그대로 user_id로 받는다)은 auth 자신의 실구현이 생긴 뒤에도 없애지 않는다 —
+pins·maps·shortlist 등 다른 모든 모듈의 통합 테스트가 이미 `cookies={"session": "user_1"}`
+형태로 이 동작에 의존하고 있다(예: maps/tests/test_invites_api.py). 실서비스(prod)에서는
+Settings.__post_init__이 AUTH_MODE=dev를 막으므로 이 스텁이 실제로 쓰일 일은 없다.
 """
 
+import time
 from typing import Annotated
 
 from fastapi import Cookie, Depends
+from sqlalchemy.orm import Session
 
+from auth import core, service
 from auth.schemas import CurrentUser
 from common.adapters import select
+from common.database import get_db_session
 from common.errors import AppError
 from common.settings import settings
 
@@ -31,18 +40,34 @@ from common.settings import settings
 
 
 def _dev_get_current_user(session: str | None = Cookie(default=None)) -> CurrentUser:
-    """auth(#4) 도착 시 이 함수를 실구현으로 바꿔 아래 select()의 "real" 자리에 넣는다.
-    401을 여기서 던져도 된다 — common/errors.py의 앱 레벨 AppError 핸들러가
-    {code, message, detail?} 봉투로 변환한다(main.py가 register_error_handlers(app)을 호출)."""
+    """검증 없는 개발용 스텁 — 쿠키 문자열을 그대로 user_id로 받는다. DB를 보지 않으므로
+    users 테이블에 그 행이 실제로 있는지도 확인하지 않는다(다른 모듈 테스트가 임의의
+    "user_1" 문자열을 그대로 쓸 수 있어야 하기 때문 — 위 모듈 docstring 참고)."""
     if not session:
         raise AppError("UNAUTHORIZED", "로그인이 필요합니다")
-    return CurrentUser(user_id=session)  # #4 전까지: 쿠키 문자열 = user_id
+    return CurrentUser(user_id=session)
+
+
+def _real_get_current_user(
+    session: str | None = Cookie(default=None),
+    db: Session = Depends(get_db_session),
+) -> CurrentUser:
+    """실구현 — 서명된 세션 쿠키를 검증하고, 가리키는 사용자가 실제로 존재하며 탈퇴하지
+    않았는지 DB에서 재확인한다(쿠키 자체는 유효 기간 안이어도 그 사이 탈퇴했을 수 있다)."""
+    if not session:
+        raise AppError("UNAUTHORIZED", "로그인이 필요합니다")
+    user_id = core.parse_session_token(session, secret=settings.session_secret, now=int(time.time()))
+    if user_id is None:
+        raise AppError("UNAUTHORIZED", "로그인이 필요합니다")
+    service.get_active_user_or_401(db, user_id=user_id)
+    return CurrentUser(user_id=user_id)
 
 
 get_current_user = select(
     "auth.SessionResolver", settings.auth_mode,
-    {"dev": _dev_get_current_user, "real": None}, "#4",
+    {"dev": _dev_get_current_user, "real": _real_get_current_user}, "#4",
 )
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
+DbSession = Depends(get_db_session)
