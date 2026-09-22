@@ -9,7 +9,7 @@ DB 세션 배선뿐이다.
 from fastapi import Depends
 
 from common.adapters import select
-from common.database import get_db
+from common.database import get_db_session
 from common.errors import AppError
 from common.settings import settings
 from pins.ports import PinDraft, ResolvedPlace
@@ -40,10 +40,6 @@ get_place_gateway = select(
     "pins.PlaceGateway", settings.places_mode,
     {"dev": _dev_place_gateway, "real": None}, "places #34",
 )
-
-
-def get_db_session():
-    yield from get_db()
 
 
 DbSession = Depends(get_db_session)
