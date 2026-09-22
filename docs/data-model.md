@@ -68,7 +68,11 @@ reactions(
 ```
 shortlist_items(
   id, map_id, pin_id, added_by, added_at,
-  visit_order int null                 -- 5-10 자동계산 결과 + #30 수동 정렬(허용 확정) 둘 다 이 컬럼을 쓴다
+  visit_order int null                 -- #30 수동 정렬(허용 확정). 동선(routes)과는 무관한
+                                        -- 별개 컬럼이다(최종기획안.md 9/4 결정 "visit_order 수동
+                                        -- 정렬 허용, 동선과는 무관") — 플레인 리스트 화면의
+                                        -- 드래그 순서일 뿐, routes 재계산이 이 값을 읽거나 쓰지
+                                        -- 않는다.
 )
   unique(map_id, pin_id)
 
@@ -80,11 +84,19 @@ routes(
   legs jsonb,                          -- [{from_pin_id, to_pin_id, distance_m, approx_minutes}]
   computed_at
 )
+  unique(map_id, region_label)          -- 동시 POST 재계산 시 같은 지역 행이 중복 적재되는 것을 막는다
   index(map_id)
-  -- GET은 이 테이블의 마지막 결과만 반환(재계산 안 함, 없으면 빈 배열). POST가 재계산할 때마다
-  -- 그 map_id의 기존 행을 전부 지우고 새로 쓴다 — 이전 계산 결과는 최신 결과로 완전히 대체되는
-  -- 것이 맞고(동선은 "그 시점의 확정 리스트 스냅샷"이지 누적 이력이 아니다), 부분 갱신할 이유가
-  -- 없다.
+  -- GET은 그 map_id의 모든 행(=가장 최근 POST 한 번이 만든 지역별 결과 전부)을 그대로 반환한다
+  -- — "마지막 결과"란 "행 1개"가 아니라 "가장 최근 계산 배치"라는 뜻이다. 지역이 여러 개면
+  -- 여러 행이 그대로 여러 Route 원소가 된다. 재계산 안 함(GET은 절대 재계산하지 않는다).
+  --
+  -- POST가 재계산할 때마다 그 map_id의 기존 행을 전부 지우고 새로 쓴다 — 이전 계산 결과는
+  -- 최신 결과로 완전히 대체되는 것이 맞고(동선은 "그 시점의 확정 리스트 스냅샷"이지 누적
+  -- 이력이 아니다), 부분 갱신할 이유가 없다. DELETE와 INSERT는 반드시 같은 요청의 같은
+  -- 트랜잭션 안에서 실행한다(common.database.get_db_session 기본 동작 — 커밋 전까지 다른
+  -- 요청에는 삭제 전 상태가 그대로 보이므로 GET이 빈 배열을 보는 순간이 생기지 않는다).
+  -- 확정 핀이 0개면 행을 만들지 않는다(빈 배열로 응답). 1개면 legs는 빈 배열, total_distance_m
+  -- 은 0인 한 행을 만든다(에러 아님).
 ```
 
 쓰기 소유: `shortlist`. `pins.kind='확정'` 갱신은 `shortlist`가 `pins.api.mark_confirmed()`를
