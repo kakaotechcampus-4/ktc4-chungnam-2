@@ -37,6 +37,7 @@ POLICY: Mapping[str, RoleSpec] = {
                 "recommend.request",
                 "recommend.publish",  # 단, candidate.requested_by 본인만 — AUTHOR_CONSTRAINED_ACTIONS 참고
                 "invite.create",  # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
+                "route.recalculate",  # 동선 재계산 — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
             }
         ),
     ),
@@ -88,4 +89,5 @@ ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "member.kick": frozenset({"map"}),
     "map.settings.edit": frozenset({"map"}),
     "invite.create": frozenset({"map"}),
+    "route.recalculate": frozenset({"map"}),
 }

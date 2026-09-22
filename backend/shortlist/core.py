@@ -5,7 +5,7 @@
 from authz.core import Principal, Resource, permissions_for
 from common.events import Event
 from pins.schemas import Pin
-from shortlist.schemas import ShortlistItem
+from shortlist.schemas import Route, RouteLeg, ShortlistItem
 
 
 def to_shortlist_item_response(row, pin: Pin, principal: Principal) -> ShortlistItem:
@@ -28,4 +28,26 @@ def shortlist_changed_event(item: ShortlistItem, action: str) -> Event:
     return Event(
         map_id=item.pin.map_id, channel="public", type="shortlist.changed",
         payload={"item": item.model_dump(exclude_none=True), "action": action},
+    )
+
+
+def to_route_response(row) -> Route:
+    """row는 shortlist.models.Route ORM 행 — jsonb로 저장된 legs를 RouteLeg로 되살린다."""
+    return Route(
+        region_label=row.region_label,
+        ordered_pin_ids=list(row.ordered_pin_ids),
+        total_distance_m=row.total_distance_m,
+        legs=[RouteLeg(**leg) for leg in row.legs],
+    )
+
+
+def route_recalculated_event(map_id: str, routes: list[Route]) -> Event:
+    """docs/events.md route.recalculated — data는 다른 이벤트처럼 객체로 감싸지 않고 Route[]
+    그대로다. common.events.Event.payload는 dict로 타입힌트돼 있지만 `@dataclass`라 런타임
+    강제는 없다(pydantic이 아니다) — 이 이벤트에 한해 리스트를 그대로 담는다. 타입힌트를
+    `dict | list`로 넓히는 게 더 정확하겠지만 common은 여러 모듈이 공유해 이 커밋에서는
+    건드리지 않았다 — for_Root.md에 제안으로 남긴다."""
+    return Event(
+        map_id=map_id, channel="public", type="route.recalculated",
+        payload=[route.model_dump(exclude_none=True) for route in routes],
     )
