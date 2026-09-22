@@ -21,6 +21,7 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     - evidence.add
     - recommend.request        # 「추천 받기」
     - recommend.publish        # 「지도에 올리기」 — 단, candidate.requested_by 본인만(아래 author 참고)
+    - invite.create            # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
 
 author:                       # evidence_line 또는 candidate를 만든 당사자에게 얹히는 추가 범위
   scope:
@@ -76,6 +77,7 @@ owner:                        # 지도 생성자. member 전체 + 아래 추가
 | 근거 리스트에서 항목 빼기 — 자기가 쓴 것만 | `author.scope.evidence_line: own`, `author.actions: [evidence.disable]` |
 | 핀 되돌리기 — 구성원 누구나 | `member.actions: [pin.revert]` |
 | 반경 조정 — 별도 권한 불필요 | 반경 사유도 `evidence_line`이므로 위 규칙을 그대로 상속. 별도 액션 없음 |
+| 초대 링크 발급 — 구성원 누구나 (#4) | `member.actions: [invite.create]` |
 
 ## v2 확장 지점
 
