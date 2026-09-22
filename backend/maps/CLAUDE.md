@@ -14,13 +14,12 @@
 
 ## 넘지 말 것
 
-- 지도 생성 입력 필드(`region_hint` 등)는 `docs/data-model.md`에 "결정 이슈 미결"로 표시돼 있다. 필드를 임의로 확정하지 말고, 확정되면 루트가 스키마를 갱신한 뒤 반영한다.
-- 구성원 색 팔레트·배정 주체도 미결이다 — 우선 `color: string`으로 받되 배정 로직을 임의로 짜지 말 것.
+- `docs/permissions.md`의 역할·액션 목록(`invite.create` 포함)을 임의로 바꾸지 않는다 — 새 액션이 필요하면 루트에 보고 후 문서에 반영되면 구현한다(`authz/CLAUDE.md`와 같은 원칙).
 
 ## 완료 정의
 
 - `/maps`, `/maps/{id}`, `/maps/{id}/invite`, `/invites/{token}/accept`, `/maps/{id}/members` 구현 + 단위 테스트
-- 지도 생성 시 `seeding` 모듈에 프리시딩 잡을 큐잉하는 훅 호출 (architecture.md 3절) — 실제 라벨링 로직은 `seeding`/`places` 담당, 이 모듈은 트리거만
+- 지도 생성 시 `seeding` 모듈에 프리시딩 잡을 큐잉하는 훅 호출(architecture.md 3절)은 이 모듈의 완료 조건에서 뺐다 — 그 잡의 지역은 "첫 핀 좌표로 확정"되는데 지도 생성 시점엔 핀이 0개라 트리거 시점 자체가 모순이었다(maps/for_Root.md 항목 2). 트리거를 어디로 옮길지(핀 생성 시점 등)는 `seeding` 모듈 착수 시 루트가 정한다.
 
 ## 코드 품질
 

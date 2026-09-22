@@ -175,6 +175,9 @@ export const recommendHandlers = [
       lat: 33.45,
       lng: 126.56,
       place_name: cand.place_name,
+      // 실서버 recommend/flows.py::publish_candidate가 created_by=requester_id로 채우는 것과
+      // 동일 — "지도에 올리기"를 누른 사람이 창작자가 된다. 이 목 서버는 그 사람이 항상 ME_USER_ID.
+      created_by: ME_USER_ID,
       checks: cand.checks, // 가드레일 5: 게시 후에도 근거를 그대로 유지
       source_run_id: runId,
       reaction_summary: { like: 0, neutral: 0, against: 0 },

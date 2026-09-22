@@ -20,7 +20,6 @@ def _settings(**overrides):
         cors_allow_origin_regex=None,
         session_secret="real-secret",
         places_mode="real",
-        membership_mode="real",
         auth_mode="real",
     )
     base.update(overrides)
@@ -65,7 +64,6 @@ def test_non_prod_environment_allows_dev_stubs_and_wildcard():
         cors_allow_origin_regex=None,
         session_secret="change-me-before-deploy",
         places_mode="dev",
-        membership_mode="dev",
         auth_mode="dev",
     )
     assert s.is_prod is False
@@ -75,20 +73,17 @@ def test_non_prod_environment_allows_dev_stubs_and_wildcard():
 def test_from_env_defaults_to_dev_mode_outside_prod(monkeypatch):
     monkeypatch.setenv("PINGO_ENV", "dev")
     monkeypatch.delenv("PLACES_MODE", raising=False)
-    monkeypatch.delenv("MEMBERSHIP_MODE", raising=False)
     monkeypatch.delenv("AUTH_MODE", raising=False)
 
     s = Settings.from_env()
 
     assert s.places_mode == "dev"
-    assert s.membership_mode == "dev"
     assert s.auth_mode == "dev"
 
 
 def test_from_env_defaults_to_real_mode_in_prod(monkeypatch):
     monkeypatch.setenv("PINGO_ENV", "prod")
     monkeypatch.delenv("PLACES_MODE", raising=False)
-    monkeypatch.delenv("MEMBERSHIP_MODE", raising=False)
     monkeypatch.delenv("AUTH_MODE", raising=False)
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
     monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
@@ -96,7 +91,6 @@ def test_from_env_defaults_to_real_mode_in_prod(monkeypatch):
     s = Settings.from_env()
 
     assert s.places_mode == "real"
-    assert s.membership_mode == "real"
     assert s.auth_mode == "real"
 
 
@@ -116,7 +110,6 @@ def test_from_env_prod_has_no_regex_default(monkeypatch):
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
     monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
     monkeypatch.setenv("PLACES_MODE", "real")
-    monkeypatch.setenv("MEMBERSHIP_MODE", "real")
     monkeypatch.setenv("AUTH_MODE", "real")
 
     s = Settings.from_env()

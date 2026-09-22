@@ -213,6 +213,7 @@ export interface paths {
                         "application/json": components["schemas"]["Map"];
                     };
                 };
+                404: components["responses"]["NotFound"];
             };
         };
         put?: never;
@@ -232,7 +233,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 초대 링크 발급 */
+        /** 초대 링크 발급 — 구성원 누구나 (#4, docs/permissions.md invite.create) */
         post: {
             parameters: {
                 query?: never;
@@ -253,6 +254,7 @@ export interface paths {
                         "application/json": components["schemas"]["Invite"];
                     };
                 };
+                404: components["responses"]["NotFound"];
             };
         };
         delete?: never;
@@ -328,6 +330,7 @@ export interface paths {
                         "application/json": components["schemas"]["Member"][];
                     };
                 };
+                404: components["responses"]["NotFound"];
             };
         };
         put?: never;
@@ -1288,29 +1291,29 @@ export interface components {
             display_name?: string;
         };
         Map: {
-            id?: string;
-            title?: string;
+            id: string;
+            title: string;
             /**
              * Format: date
              * @description 여행 시작일 (#22)
              */
-            start_date?: string;
+            start_date: string;
             /**
              * Format: date
              * @description 여행 종료일 (#22)
              */
-            end_date?: string;
-            member_count?: number;
+            end_date: string;
+            member_count: number;
             confirmed_count?: number;
         };
         Invite: {
-            token?: string;
-            url?: string;
+            token: string;
+            url: string;
             /** Format: date-time */
-            expires_at?: string;
+            expires_at: string;
         };
         Member: {
-            user_id?: string;
+            user_id: string;
             display_name?: string;
             online?: boolean;
         };
@@ -1354,29 +1357,29 @@ export interface components {
             needs_check?: boolean;
         };
         Pin: {
-            id?: string;
-            map_id?: string;
-            category?: components["schemas"]["Category"];
-            kind?: components["schemas"]["PinKind"];
+            id: string;
+            map_id: string;
+            category: components["schemas"]["Category"];
+            kind: components["schemas"]["PinKind"];
             /** @enum {string} */
-            visibility?: "public" | "private";
-            lat?: number;
-            lng?: number;
+            visibility: "public" | "private";
+            lat: number;
+            lng: number;
             place_name?: string;
             /** @description 핀을 찍은 구성원의 user_id (#26) */
-            created_by?: string;
+            created_by: string;
             /** @description 핀 상세에서 '누가 찍었는지' 표시용 (#26) */
             created_by_display_name?: string;
             price_bucket?: components["schemas"]["PriceBucket"];
             /** @description 게시된 AI 추천 핀도 상세에서 계속 노출한다 (가드레일 5) */
             checks?: components["schemas"]["Check"][];
             source_run_id?: string | null;
-            reaction_summary?: {
-                like?: number;
-                neutral?: number;
-                against?: number;
+            reaction_summary: {
+                like: number;
+                neutral: number;
+                against: number;
             };
-            permissions?: components["schemas"]["Permissions"];
+            permissions: components["schemas"]["Permissions"];
         };
         ReactionRequest: {
             /** @enum {string} */
@@ -1385,10 +1388,10 @@ export interface components {
             reason_chip_ids?: string[];
         };
         Reaction: {
-            pin_id?: string;
-            user_id?: string;
+            pin_id: string;
+            user_id: string;
             /** @enum {string} */
-            type?: "like" | "neutral" | "against";
+            type: "like" | "neutral" | "against";
             reason_text?: string;
         };
         FilterCounts: {
@@ -1658,6 +1661,18 @@ export interface components {
          *     이 응답이 화면에 보이면 버튼이 애초에 disabled였어야 했다는 신호다.
          */
         Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
+         * @description 존재하지 않거나(리소스 없음), 요청자가 그 지도의 구성원이 아님 (docs/permissions.md
+         *     "권한을 어디서 강제하는가" — 비구성원에게 존재 여부 자체를 흘리지 않는다).
+         */
+        NotFound: {
             headers: {
                 [name: string]: unknown;
             };
