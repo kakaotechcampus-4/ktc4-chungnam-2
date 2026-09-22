@@ -44,6 +44,15 @@ pins(
   place_id references places(id),
   geom geography(Point,4326),
   visibility('public'|'private'),      -- 5-5-1: AI 후보는 private로 시작
+  source_run_id null,                  -- #57 결정: recommend_runs.id를 게시 시점에 한 번만
+                                        -- 써넣는 불투명 참조값(추적·표시용). FK 제약은 걸지 않고
+                                        -- pins는 이 값을 절대 다시 읽어 recommend를 조회하지
+                                        -- 않는다("모듈 간 접근은 함수/API로만" 원칙은 실시간
+                                        -- 조회 금지가 핵심이지, 게시 시점 1회성 값 복사를 막지
+                                        -- 않는다 — candidates.lat/lng 비정규화와 같은 논리).
+  checks jsonb null,                   -- #57 결정: candidate.checks를 게시 시점에 복사(가드레일
+                                        -- 5, 게시 후에도 조건별 충족 체크가 유지돼야 함). run·
+                                        -- candidate가 나중에 지워지거나 바뀌어도 이 값은 안 바뀐다.
   created_by, created_at, deleted_at
 )
   unique(map_id, place_id) where deleted_at is null   -- 중복 핀 판정(가드레일 6). 판정 기준은 #33(보류)에서 별도 확정
@@ -68,7 +77,11 @@ reactions(
 ```
 shortlist_items(
   id, map_id, pin_id, added_by, added_at,
-  visit_order int null                 -- 5-10 자동계산 결과 + #30 수동 정렬(허용 확정) 둘 다 이 컬럼을 쓴다
+  visit_order int null                 -- #30 수동 정렬(허용 확정). 동선(routes)과는 무관한
+                                        -- 별개 컬럼이다(최종기획안.md 9/4 결정 "visit_order 수동
+                                        -- 정렬 허용, 동선과는 무관") — 플레인 리스트 화면의
+                                        -- 드래그 순서일 뿐, routes 재계산이 이 값을 읽거나 쓰지
+                                        -- 않는다.
 )
   unique(map_id, pin_id)
 
@@ -80,11 +93,19 @@ routes(
   legs jsonb,                          -- [{from_pin_id, to_pin_id, distance_m, approx_minutes}]
   computed_at
 )
+  unique(map_id, region_label)          -- 동시 POST 재계산 시 같은 지역 행이 중복 적재되는 것을 막는다
   index(map_id)
-  -- GET은 이 테이블의 마지막 결과만 반환(재계산 안 함, 없으면 빈 배열). POST가 재계산할 때마다
-  -- 그 map_id의 기존 행을 전부 지우고 새로 쓴다 — 이전 계산 결과는 최신 결과로 완전히 대체되는
-  -- 것이 맞고(동선은 "그 시점의 확정 리스트 스냅샷"이지 누적 이력이 아니다), 부분 갱신할 이유가
-  -- 없다.
+  -- GET은 그 map_id의 모든 행(=가장 최근 POST 한 번이 만든 지역별 결과 전부)을 그대로 반환한다
+  -- — "마지막 결과"란 "행 1개"가 아니라 "가장 최근 계산 배치"라는 뜻이다. 지역이 여러 개면
+  -- 여러 행이 그대로 여러 Route 원소가 된다. 재계산 안 함(GET은 절대 재계산하지 않는다).
+  --
+  -- POST가 재계산할 때마다 그 map_id의 기존 행을 전부 지우고 새로 쓴다 — 이전 계산 결과는
+  -- 최신 결과로 완전히 대체되는 것이 맞고(동선은 "그 시점의 확정 리스트 스냅샷"이지 누적
+  -- 이력이 아니다), 부분 갱신할 이유가 없다. DELETE와 INSERT는 반드시 같은 요청의 같은
+  -- 트랜잭션 안에서 실행한다(common.database.get_db_session 기본 동작 — 커밋 전까지 다른
+  -- 요청에는 삭제 전 상태가 그대로 보이므로 GET이 빈 배열을 보는 순간이 생기지 않는다).
+  -- 확정 핀이 0개면 행을 만들지 않는다(빈 배열로 응답). 1개면 legs는 빈 배열, total_distance_m
+  -- 은 0인 한 행을 만든다(에러 아님).
 ```
 
 쓰기 소유: `shortlist`. `pins.kind='확정'` 갱신은 `shortlist`가 `pins.api.mark_confirmed()`를
@@ -221,9 +242,8 @@ event_log(
 ## 열린 항목 (결정 이슈로 별도 확정 — 이 문서는 자리만 잡음)
 
 - 중복 핀 "같은 곳" 판정 기준 (source_id 동일 / 좌표 반경 N m / 이름 유사도) — #33, 보류
-- 재시도 3회 상한의 집계 단위·상한 수치 — #31, BE 논의 중 (황준영: 지도+카테고리당·상한 상향 / 김도윤: 개인 단위)
 - N(구성원 수)의 정의 — #32, "온라인 구성원 현재 수"로 답은 나왔으나 ceil(N/2) 임계값 자체를 없앨지는 코멘트 상 아직 불명확
-- **제안·거절 이력의 단위** — #42, 지도 vs 개인 단위로 황준영·김도윤 의견이 갈려 아직 미확정. `exclusions` 스키마는 지도 단위(현재 설계)를 전제로 함
+- 재시도 3회 상한의 집계 단위(#31), 제안·거절 이력의 단위(#42) — 아래 "아직 팀이 정해야 하는 것" 참고(BE 내부 이견 그대로 남음)
 
 ## 9/4 회의로 해결된 것 (docs 반영 완료)
 
@@ -231,3 +251,28 @@ event_log(
 - 구성원 색 — #26, 불필요로 확정, `memberships.color` 제거
 - `visit_order` 수동 정렬 — #30, 허용 확정(동선과 무관). `PUT /maps/{mapId}/shortlist/order` 참고
 - AI 추천 결과 상태 관리 위치 — #43, 서버 DB 영속 확정. `recommend_runs`/`candidates`는 이제 확정 설계
+
+## 루트가 확정한 것 (2026-09-22)
+
+- **`pins.source_run_id`/`checks` 스키마** — #57. 둘 다 추가하는 쪽으로 확정: `source_run_id`는
+  게시 시점 1회성 불투명 참조(추적·표시용, FK 없음, pins가 다시 읽지 않음), `checks`는 게시
+  시점에 candidate에서 복사(가드레일 5). 위 `pins` 테이블에 반영. 이유: `source_run_id`는 이미
+  목 서버(`contracts/mocks`)가 private 판정에 쓰고 있어 없애면 FE 쪽 재작업이 필요하고,
+  `candidates.lat/lng` 비정규화와 같은 논리로 "1회성 복사"는 "실시간 모듈 간 조회 금지" 원칙과
+  충돌하지 않는다.
+- **`Candidate.permissions` 필드 추가 여부** — #64. 추가하는 쪽으로 확정: 이미 있는 공용
+  `Permissions` 스키마에 `can_publish`를 추가하고 `Candidate`가 이를 참조한다(`Pin`/`EvidenceLine`
+  등 다른 리소스와 같은 패턴). "FE가 권한 규칙을 재구현하지 않는다"(permissions.md) 원칙과
+  일관되고, `authz.core.can()`이 이미 `recommend.publish`를 판정할 수 있어 구현 비용도 낮다.
+  `docs/api-spec.yaml`·`docs/CHANGELOG-api.md`에 반영.
+- **게시 버튼 공개여부 구분 표시** — #27, FE가 결정하기로 함(투명도로 구분 제안). 백엔드
+  블로커 아님 — 이슈 종료.
+
+## 아직 팀이 정해야 하는 것 (실제 이견 있음 — 루트가 임의로 결정하지 않음)
+
+- **재시도 3회 상한의 집계 단위** — #31. 황준영은 "지도+카테고리당, 상한 상향"을, 김도윤은
+  "개인 단위"를 제안하고 그대로 남아 있다. `recommend_runs.attempt_no` 계산 로직이 이 결정을
+  기다린다.
+- **제안·거절 이력의 단위** — #42. 황준영은 "지도 단위"를, 김도윤은 "개인 단위"를 제안하고
+  그대로 남아 있다(위와 같은 두 사람, 같은 성격의 이견). `exclusions` 테이블의 unique 제약이
+  이 결정에 따라 달라진다.
