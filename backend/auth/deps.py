@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from auth import core, service
 from auth.schemas import CurrentUser
 from common.adapters import select
-from common.database import get_db
+from common.database import get_db_session
 from common.errors import AppError
 from common.settings import settings
 
@@ -46,10 +46,6 @@ def _dev_get_current_user(session: str | None = Cookie(default=None)) -> Current
     if not session:
         raise AppError("UNAUTHORIZED", "로그인이 필요합니다")
     return CurrentUser(user_id=session)
-
-
-def get_db_session():
-    yield from get_db()
 
 
 def _real_get_current_user(
