@@ -71,10 +71,26 @@ shortlist_items(
   visit_order int null                 -- 5-10 자동계산 결과 + #30 수동 정렬(허용 확정) 둘 다 이 컬럼을 쓴다
 )
   unique(map_id, pin_id)
+
+routes(
+  id, map_id,
+  region_label,                        -- 확정 핀이 여러 지역에 걸치면 지역별로 한 행씩(api-spec.yaml Route)
+  ordered_pin_ids jsonb,                -- pin_id 배열, 계산된 순서 그대로
+  total_distance_m,
+  legs jsonb,                          -- [{from_pin_id, to_pin_id, distance_m, approx_minutes}]
+  computed_at
+)
+  index(map_id)
+  -- GET은 이 테이블의 마지막 결과만 반환(재계산 안 함, 없으면 빈 배열). POST가 재계산할 때마다
+  -- 그 map_id의 기존 행을 전부 지우고 새로 쓴다 — 이전 계산 결과는 최신 결과로 완전히 대체되는
+  -- 것이 맞고(동선은 "그 시점의 확정 리스트 스냅샷"이지 누적 이력이 아니다), 부분 갱신할 이유가
+  -- 없다.
 ```
 
 쓰기 소유: `shortlist`. `pins.kind='확정'` 갱신은 `shortlist`가 `pins.api.mark_confirmed()`를
-통해서만 한다(위 규칙 유지).
+통해서만 한다(위 규칙 유지). 거리 계산(최근접 이웃, 원 겹침 판정)은 `common/geo.py`의 공용
+유틸을 쓴다 — `recommend`의 반경 판정(5-6-1)도 같은 종류의 계산이 필요해서 미리 공용화한다
+(`backend/common/CLAUDE.md`가 이미 "PostGIS 좌표 유틸"을 common의 책임으로 못박아둠).
 
 ---
 
