@@ -1,0 +1,45 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "types": ["vite/client"],
+    "allowArbitraryExtensions": true,
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* contracts(../contracts) 는 빌드 산출물이 없는 소스 전용 패키지다.
+       file: 의존성으로 붙이면 Vite 가 node_modules 안의 .ts 를 변환하지 않아 깨진다.
+       그래서 alias 로 소스를 직접 가리킨다 — 런타임 해석은 vite.config.ts 의 resolve.alias 가
+       `@pingo/contracts/*` 전체를 담당한다.
+
+       반면 타입은 **생성된 .d.ts 만** 매핑한다. `@pingo/contracts/*` 로 넓게 매핑하면
+       tsc 가 import 를 따라가 contracts/mocks/*.ts 까지 이쪽 strict 설정으로 검사하고,
+       남의 패키지 소스가 이 빌드를 깨뜨린다(contracts 수정은 루트 소관이라 손댈 수도 없다).
+       목 서버 쪽 표면은 src/contracts-mocks.d.ts 의 앰비언트 선언이 받는다.
+       paths 매핑이 앰비언트 선언보다 우선하므로 여기서 빼야 그게 동작한다.
+
+       baseUrl 은 쓰지 않는다 — TS 6 에서 deprecated 고,
+       paths 는 이 tsconfig 파일 위치 기준으로 해석되므로 결과가 같다. */
+    "paths": {
+      "@/*": ["./src/*"],
+      "@pingo/contracts/src/types/*": ["../contracts/src/types/*"]
+    },
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}

@@ -45,3 +45,16 @@ def get_db():
             yield s
     finally:
         db.close()
+
+
+def get_db_session():
+    """FastAPI Depends용 진입점 — get_db와 이름만 다르고 몸통은 같다(#101).
+
+    이전엔 maps/pins/shortlist가 각자 `def get_db_session(): yield from get_db()`를
+    복붙해뒀다. 내용이 같아도 FastAPI의 의존성 캐시는 함수 "객체"가 같은지로 재사용 여부를
+    판단하므로, 한 요청 안에서 서로 다른 모듈의 get_db_session이 같이 걸리면(예: pins 라우터
+    + authz.guard의 멤버십 확인) DB 세션이 2개 열려 "요청 하나 = 트랜잭션 하나"가 깨졌다
+    (PR #94 멘토 리뷰 포인트 2). 이제 이 함수 하나만 있고, 각 모듈의 deps.py는 이걸
+    재노출(`from common.database import get_db_session`)만 한다 — 그래야 Depends(get_db_session)이
+    어느 모듈에서 걸리든 항상 같은 객체라서 세션이 하나로 합쳐진다."""
+    yield from get_db()

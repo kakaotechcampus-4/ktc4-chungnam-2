@@ -16,8 +16,8 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from authz.ports import MembershipGateway
+from common.database import get_db_session
 from maps.api import DbMembershipGateway
-from maps.deps import get_db_session
 
 
 def get_membership_gateway(db: Session = Depends(get_db_session)) -> MembershipGateway:

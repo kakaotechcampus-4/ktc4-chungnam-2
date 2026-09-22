@@ -2,6 +2,81 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-09-19 (2) — 값 제약(길이·범위) 보강 (PR #94 멘토 리뷰 대응)
+
+`reason_text`(maxLength 140)·`step`(1~8) 딱 둘만 값 제약이 있고 나머지 필드(문자열 82개,
+숫자 25개)엔 아무 제약이 없다는 걸 멘토 리뷰에서 지적받았다. 두 갈래로 나눠 반영했다.
+
+**코드에 이미 있는 검증을 명세로 끌어올림** — `pins/core.py::validate_create`가 이미
+`-90<=lat<=90`, `-180<=lng<=180`을 검증하고 있었는데 명세에는 없었다. `PinCreateRequest`·
+`Pin` 양쪽의 `lat`/`lng`에 `minimum`/`maximum`을 추가했다.
+
+**코드에 근거가 없어 이번에 새로 정한 값** — 자유 텍스트라 악용·오류 여지가 있는 필드에
+`maxLength`를 추가했다. 값 자체는 근거가 없으니 팀 확인이 필요하다.
+
+- `title`(`Map`·`MapCreateRequest`): 100
+- `place_name`(`Pin`): 100
+- `display_name`(`User`·`Member`), `created_by_display_name`(`Pin`), `author_display_name`
+  (`EvidenceLine`): 50
+- `text`(`EvidenceLine`·`EvidencePatchRequest.add[].text`): 140 (`reason_text`와 같은 성격의
+  자유 텍스트라 같은 값을 씀)
+- `link_url`(`PinCreateRequest`): 2000 (사용자가 직접 붙여넣는 구글맵 링크)
+- `reason_chip_ids`(`ReactionRequest`): 배열 `maxItems: 10`, 항목당 `maxLength: 50` (사전
+  정의된 칩 목록에서 고르는 값이라 이 이상 올 이유가 없다)
+- `Candidate.place_name`: 100 (`Pin.place_name`과 동일 근거)
+
+짝이 안 맞던 것도 하나 고쳤다 — `ReactionRequest.reason_text`엔 `maxLength: 140`이 있는데
+그 값을 그대로 돌려주는 응답 스키마 `Reaction.reason_text`엔 없었다. 맞췄다.
+
+**FE 영향**: 없음. `openapi-typescript`는 `maxLength`·`minimum`·`maximum`·`maxItems`를
+타입이나 주석 어디에도 반영하지 않는다(`description`만 반영) — 확인해보니 타입 재생성
+결과가 이전과 바이트 단위로 동일했다. 프론트가 이 값을 알아야 하면 명세를 직접 참고해야 한다.
+
+**후속 필요 — 아직 서버가 안 막는다**: `title`·`place_name`·`display_name`·`text`·`link_url`·
+`reason_chip_ids` 6개는 명세에만 추가됐고, 실제 Pydantic 스키마(`maps/schemas.py`·
+`llm/schemas.py`·`pins/schemas.py`)는 아직 그냥 `str`/`list[str]`이라 이 값을 초과해도
+서버가 거부하지 않는다(`reason_text`만 `pins/schemas.py`에 `Field(max_length=140)`으로 이미
+강제됨). `Candidate.place_name`은 `recommend` 모듈 자체가 아직 없어서 해당 없음. `lat`/`lng`는
+`pins/core.py`가 이미 강제하므로 문제없다. 각 모듈(`maps`·`llm`·`pins`) 담당자가
+`Field(max_length=...)`를 추가하는 후속 이슈가 필요하다 — 다른 모듈 파일이라 여기서 직접
+고치지 않았다.
+
+## 2026-09-19 — 도메인 응답 스키마에 required 추가 (PR #94 멘토 리뷰 대응)
+
+`Map`·`Invite`·`Member`·`Pin`·`Reaction` 5개 응답 스키마에 `required`가 하나도 없었다는 걸
+멘토 리뷰에서 지적받았다. `MapCreateRequest` 등 요청 스키마는 `required`를 챙겼지만 응답
+스키마는 최초 작성(2026-09-02) 이후 아무도 다시 손보지 않은 것으로 확인됐다 — 의도적 설계가
+아니라 누락이었다.
+
+각 모듈의 실제 구현(`maps/core.py`, `pins/core.py`)을 근거로, **항상 채워지는 필드만**
+`required`로 추가했다. 다른 모듈 의존으로 못 채우는 필드(`Map.confirmed_count`,
+`Member.display_name`·`online`, `Pin.place_name`·`created_by_display_name`·`price_bucket`·
+`checks`·`source_run_id`, `Reaction.reason_text`)는 그대로 optional로 남겼다 — 이 필드들의
+"없을 수도 있음"이 이제 명세에 정식으로 드러난다.
+
+- `Map`: `required: [id, title, start_date, end_date, member_count]`
+- `Invite`: `required: [token, url, expires_at]` (전부 항상 채워짐)
+- `Member`: `required: [user_id]`
+- `Pin`: `required: [id, map_id, category, kind, visibility, lat, lng, created_by, reaction_summary, permissions]`,
+  `reaction_summary` 내부도 `required: [like, neutral, against]`
+- `Reaction`: `required: [pin_id, user_id, type]`
+
+타입을 재생성해서(`npm run gen:types`) 확인하는 과정에서 **목 서버 자체의 버그 2건**을 발견해
+같이 고쳤다 — `contracts/mocks/seed.ts`의 `pinCafe1`과 `contracts/mocks/handlers/recommend.ts`의
+후보 게시 핀이 `created_by`를 채우지 않고 있었다(실서버는 이 필드를 항상 채운다). `required`가
+없던 동안은 타입 에러로 안 잡히고 조용히 넘어갔던 것이다.
+
+`User`·`FilterCounts`·`Readiness`·`EvidenceLine`·`Region`·`RecommendRun`·`Candidate`·
+`RecommendResult`·`ShortlistItem`·`Route`·`Check`는 이번에 손대지 않았다 — 해당 모듈(auth·
+recommend·shortlist 등)의 실제 구현을 확인하지 않고 `required`를 추측해서 넣으면 이번에
+고친 것과 같은 종류의 실수(구현과 안 맞는 계약)를 새로 만들 수 있어서, 각 모듈 구현이 확인된
+뒤 같은 방식으로 정리하는 게 맞다고 판단했다.
+
+**FE 영향**: 타입 재생성(`npm run gen:types`) 필요. 위 5개 스키마의 필드 대부분이
+`T | undefined`에서 `T`로 좁혀진다 — 기존에 옵셔널 체이닝(`?.`)이나 널 체크를 했던 코드는
+그대로 동작하고, 새로 에러가 나는 방향은 없다. `redocly lint`·`tsc --noEmit`·`vitest`
+전부 통과 확인(경고 60개, 구조 변경 전과 동일).
+
 ## 2026-09-14 — maps 착수 반영: 404 커버리지 + invite.create 권한 결정 (#4)
 
 `maps` 모듈(#4·#19) 구현과 함께 발견된 계약 갭을 반영했다.
