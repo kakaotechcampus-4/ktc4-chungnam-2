@@ -35,8 +35,11 @@ POLICY: Mapping[str, RoleSpec] = {
                 "shortlist.remove",  # "구성원 누구나" (5-3, 15-1)
                 "evidence.add",
                 "recommend.request",
+                "recommend.manage",  # run 하위 전체 — 단, run.requested_by 본인만(가드레일1) —
+                                      # AUTHOR_CONSTRAINED_ACTIONS 참고
                 "recommend.publish",  # 단, candidate.requested_by 본인만 — AUTHOR_CONSTRAINED_ACTIONS 참고
                 "invite.create",  # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
+                "route.recalculate",  # 동선 재계산 — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
             }
         ),
     ),
@@ -63,7 +66,7 @@ POLICY: Mapping[str, RoleSpec] = {
 # permissions.md 23행 주석: recommend.publish는 member.actions에 있지만
 # "단, candidate.requested_by 본인만(아래 author 참고)". 표(actions 목록)가 아니라 산문 주석에만
 # 있는 제약이라 여기 명시적으로 격리해둔다 — for_Root.md에 "표로 승격 필요"로 보고.
-AUTHOR_CONSTRAINED_ACTIONS: frozenset[str] = frozenset({"recommend.publish"})
+AUTHOR_CONSTRAINED_ACTIONS: frozenset[str] = frozenset({"recommend.publish", "recommend.manage"})
 
 # permissions.md에는 액션이 어떤 리소스 종류에 쓰이는지가 없다 — 없으면
 # can(user, "recommend.publish", Resource(type="pin", ...))처럼 액션과 무관한 리소스 종류에 대해
@@ -83,9 +86,11 @@ ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "evidence.add": frozenset({"map"}),
     "evidence.disable": frozenset({"evidence_line"}),
     "recommend.request": frozenset({"map"}),
+    "recommend.manage": frozenset({"map"}),  # recommend/loaders.py::load_run이 Resource(type="map", ...)로 채운다
     "recommend.publish": frozenset({"candidate"}),
     "candidate.view_private": frozenset({"candidate"}),
     "member.kick": frozenset({"map"}),
     "map.settings.edit": frozenset({"map"}),
     "invite.create": frozenset({"map"}),
+    "route.recalculate": frozenset({"map"}),
 }

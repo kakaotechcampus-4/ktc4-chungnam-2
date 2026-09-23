@@ -1,5 +1,6 @@
-"""flows.py::publish_candidate — mentor-review-plan.md "검증" 절의 각 행을 그대로 테스트한다.
-실제 PostgreSQL이 필요하다(db_session/test_engine, conftest.py 참고)."""
+"""flows.py 전체 — publish_candidate(mentor-review-plan.md "검증" 절)와 #108 코어 파이프라인
+(readiness/run 생성/evidence/지역확인/실행/결과/반경넓히기/재시도) 둘 다. 실제 PostgreSQL이
+필요하다(db_session/test_engine, conftest.py 참고)."""
 
 import threading
 import uuid
@@ -8,12 +9,16 @@ import pytest
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import sessionmaker
 
+from authz.core import Principal
 from authz.testing import FakeMembership
 from common.errors import AppError
 from common.events import EventLog
+from maps.models import Membership as MembershipRow
 from pins.models import Pin as PinRow
+from pins.models import Reaction as ReactionRow
 from recommend import flows, service
-from recommend.models import Candidate, RecommendRun
+from recommend.models import Candidate, RecommendRun, Region
+from recommend.ports import PlaceStub
 
 
 def _make_run(db_session, **overrides):
@@ -42,6 +47,55 @@ def _make_candidate(db_session, run, **overrides):
 
 def _membership(map_id, user_id, role="member"):
     return FakeMembership({(map_id, user_id): role})
+
+
+def _make_pin(db_session, *, map_id="map_1", category="음식점", lat=35.1, lng=129.0, created_by="user_1"):
+    pin = PinRow(
+        id=uuid.uuid4(), map_id=map_id, category=category, kind="일반", origin="direct",
+        place_id=f"place_{uuid.uuid4().hex[:8]}",
+        geom=func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326),
+        visibility="public", created_by=created_by,
+    )
+    db_session.add(pin)
+    db_session.flush()
+    return pin
+
+
+def _react(db_session, pin, *, user_id, type="like", reason_text=None):
+    reaction = ReactionRow(pin_id=pin.id, user_id=user_id, type=type, reason_text=reason_text)
+    db_session.add(reaction)
+    db_session.flush()
+    return reaction
+
+
+def _make_members(db_session, *, map_id="map_1", user_ids):
+    # memberships.map_id -> maps.id FK(0005_maps.py 이후 추가) — 참조할 Map 행이 먼저 있어야 한다.
+    from maps.models import Map as MapRow
+
+    if db_session.get(MapRow, map_id) is None:
+        db_session.add(MapRow(
+            id=map_id, title="테스트 지도", start_date="2026-01-01", end_date="2026-01-02", created_by="owner_1",
+        ))
+        db_session.flush()
+    for user_id in user_ids:
+        db_session.add(MembershipRow(map_id=map_id, user_id=user_id, role="member"))
+    db_session.flush()
+
+
+class _FakePlaceSearch:
+    def __init__(self, places):
+        self._places = places
+
+    def search_nearby(self, *, category, circles):
+        return self._places
+
+
+class _FakePlaceFacts:
+    def __init__(self, facts_by_place=None):
+        self._facts = facts_by_place or {}
+
+    def get_raw_facts(self, place_id):
+        return self._facts.get(place_id, {})
 
 
 def test_publish_candidate_inserts_ai_pin_links_candidate_and_records_event(db_session):
@@ -275,3 +329,385 @@ def test_concurrent_publish_same_candidate_produces_exactly_one_pin(test_engine,
         verify.execute(delete(RecommendRun).where(RecommendRun.id == run_id))
         verify.commit()
         verify.close()
+
+
+# ============================================================================
+# #108 — 코어 파이프라인
+# ============================================================================
+
+def test_get_readiness_counts_distinct_reacted_users_per_category(db_session):
+    _make_members(db_session, user_ids=["user_1", "user_2", "user_3"])  # required = ceil(3/2) = 2
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="like")
+
+    readiness = flows.get_readiness(db_session, map_id="map_1")
+
+    assert readiness["음식점"] == {"ready": False, "answered_count": 1, "required_count": 2}
+    assert readiness["카페"] == {"ready": False, "answered_count": 0, "required_count": 2}
+
+
+def test_get_readiness_ready_when_enough_distinct_users_reacted(db_session):
+    _make_members(db_session, user_ids=["user_1", "user_2"])  # required = 1
+    pin = _make_pin(db_session, category="카페")
+    _react(db_session, pin, user_id="user_1", type="neutral")
+
+    readiness = flows.get_readiness(db_session, map_id="map_1")
+    assert readiness["카페"]["ready"] is True
+
+
+def test_create_run_raises_not_ready_when_readiness_fails(db_session):
+    _make_members(db_session, user_ids=["user_1", "user_2"])  # required = 1, 아무도 반응 안 함
+    with pytest.raises(AppError) as exc_info:
+        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    assert exc_info.value.code == "NOT_READY"
+
+
+def test_create_run_succeeds_assembles_evidence_and_default_region(db_session):
+    _make_members(db_session, user_ids=["user_1"])  # required = 1
+    pin = _make_pin(db_session, category="음식점", lat=35.2, lng=129.3)
+    _react(db_session, pin, user_id="user_1", type="against", reason_text="너무 매워요")
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    assert run.status == "collecting_evidence"
+    assert run.attempt_no == 1
+
+    lines = service.list_evidence(db_session, str(run.id))
+    assert len(lines) == 1
+    assert lines[0].source == "reaction"
+    assert lines[0].badge == "required"  # 반대(against) → required로 잠정 매핑
+    assert lines[0].text == "너무 매워요"
+
+    regions = service.list_regions(db_session, str(run.id))
+    assert len(regions) == 1
+    assert regions[0].confirmed is True
+    assert regions[0].center_lat == pytest.approx(35.2)
+    assert regions[0].center_lng == pytest.approx(129.3)
+    assert regions[0].radius_m == flows.DEFAULT_REGION_RADIUS_M
+
+
+def test_create_run_raises_retry_limit_when_already_exhausted(db_session):
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="카페")
+    _react(db_session, pin, user_id="user_1", type="like")
+    _make_run(db_session, map_id="map_1", requested_by="user_1", category="음식점", attempt_no=5)
+
+    with pytest.raises(AppError) as exc_info:
+        flows.create_run(db_session, map_id="map_1", category="카페", requested_by="user_1")  # 카테고리 무관(#31)
+    assert exc_info.value.code == "RETRY_LIMIT"
+
+
+# ---------- evidence ----------
+
+def test_list_evidence_reports_can_disable_only_for_author(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "a", "badge": "required", "fact_key": None},
+    ])
+    principal = Principal(user_id="user_1", map_id="map_1", role="member")
+    lines = flows.list_evidence(db_session, run_id=str(run.id), principal=principal)
+    assert lines[0].permissions.can_disable is True
+
+    other = Principal(user_id="user_2", map_id="map_1", role="member")
+    lines = flows.list_evidence(db_session, run_id=str(run.id), principal=other)
+    assert lines[0].permissions.can_disable is False
+
+
+def test_patch_evidence_toggle_own_line_succeeds(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "a", "badge": "required", "fact_key": None},
+    ])
+    [line] = service.list_evidence(db_session, str(run.id))
+    principal = Principal(user_id="user_1", map_id="map_1", role="member")
+
+    result = flows.patch_evidence(
+        db_session, run_id=str(run.id), principal=principal,
+        toggles=[(str(line.id), False)], adds=[],
+    )
+    assert result[0].is_active is False
+
+
+def test_patch_evidence_toggle_other_users_line_is_forbidden(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "a", "badge": "required", "fact_key": None},
+    ])
+    [line] = service.list_evidence(db_session, str(run.id))
+    principal = Principal(user_id="user_2", map_id="map_1", role="member")
+
+    with pytest.raises(AppError) as exc_info:
+        flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[(str(line.id), False)], adds=[])
+    assert exc_info.value.code == "FORBIDDEN"
+
+
+def test_patch_evidence_add_creates_manual_reference_line(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    principal = Principal(user_id="user_1", map_id="map_1", role="member")
+
+    result = flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["주차 필요해요"])
+    assert len(result) == 1
+    assert result[0].text == "주차 필요해요"
+    assert result[0].badge == "reference"
+
+
+# ---------- regions confirm ----------
+
+def test_confirm_regions_sets_status_executing_when_already_confirmed(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    db_session.add(Region(
+        run_id=run.id, signature="sig", label="기본 반경", center_lat=35.0, center_lng=129.0,
+        radius_m=2000, confirmed=True,
+    ))
+    db_session.flush()
+
+    regions = flows.confirm_regions(db_session, run_id=str(run.id), accept_union=False)
+    assert regions[0].confirmed is True
+    db_session.refresh(run)
+    assert run.status == "executing"
+
+
+def test_confirm_regions_conflict_when_unconfirmed_and_no_accept_union(db_session):
+    run = _make_run(db_session, status="awaiting_region_confirm")
+    db_session.add_all([
+        Region(run_id=run.id, signature="a", label="지역A", center_lat=35.0, center_lng=129.0, radius_m=500, confirmed=False),
+        Region(run_id=run.id, signature="b", label="지역B", center_lat=36.0, center_lng=130.0, radius_m=500, confirmed=False),
+    ])
+    db_session.flush()
+
+    with pytest.raises(AppError) as exc_info:
+        flows.confirm_regions(db_session, run_id=str(run.id), accept_union=False)
+    assert exc_info.value.code == "REGION_CONFLICT"
+
+
+def test_confirm_regions_accept_union_confirms_all(db_session):
+    run = _make_run(db_session, status="awaiting_region_confirm")
+    db_session.add_all([
+        Region(run_id=run.id, signature="a", label="지역A", center_lat=35.0, center_lng=129.0, radius_m=500, confirmed=False),
+        Region(run_id=run.id, signature="b", label="지역B", center_lat=36.0, center_lng=130.0, radius_m=500, confirmed=False),
+    ])
+    db_session.flush()
+
+    regions = flows.confirm_regions(db_session, run_id=str(run.id), accept_union=True)
+    assert all(r.confirmed for r in regions)
+
+
+# ---------- execute / result ----------
+
+def _make_region(db_session, run, *, center_lat=35.0, center_lng=129.0, radius_m=2000, label="기본 반경"):
+    region = Region(
+        run_id=run.id, signature="sig", label=label, center_lat=center_lat, center_lng=center_lng,
+        radius_m=radius_m, confirmed=True,
+    )
+    db_session.add(region)
+    db_session.flush()
+    return region
+
+
+def test_execute_run_full_funnel_removes_out_of_radius_disqualified_and_excluded(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "매운거 빼주세요",
+         "badge": "required", "fact_key": "spicy_focused"},
+    ])
+    service.add_exclusions(
+        db_session, map_id="map_1", category="음식점", place_ids=["excluded_place"],
+        reason="proposed", run_id=run.id, requested_by="user_1",
+    )
+
+    places = [
+        PlaceStub(place_id="ok_place", lat=35.0005, lng=129.0005),       # 반경 안, 실격 아님(known) → 통과
+        PlaceStub(place_id="spicy_place", lat=35.0005, lng=129.0006),    # 반경 안, 매운맛(known) → 실격
+        PlaceStub(place_id="far_place", lat=40.0, lng=135.0),            # 반경 밖 → 제거
+        PlaceStub(place_id="excluded_place", lat=35.0004, lng=129.0004),  # 반경 안, 실격 아님(known), 제외목록 → 제거
+    ]
+    place_search = _FakePlaceSearch(places)
+    # spicy_focused는 unknown_policy=exclude(가드레일8) — known 값을 명시해야 실격이 "매움" 하나로만
+    # 갈린다. facts에 없는 far_place는 반경 필터에서 이미 빠져 라벨링 자체를 안 받는다.
+    place_facts = _FakePlaceFacts({
+        "ok_place": {"spicy_focused": False},
+        "spicy_place": {"spicy_focused": True},
+        "excluded_place": {"spicy_focused": False},
+    })
+
+    updated = flows.execute_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
+
+    assert updated.status == "done"
+    candidates = service.list_candidates(db_session, str(run.id))
+    assert [c.place_id for c in candidates] == ["ok_place"]
+
+    funnel = {entry["label"]: entry["removed_count"] for entry in updated.last_funnel}
+    assert funnel["반경 밖 제거"] == 1
+    assert funnel["실격 조건 제거"] == 1
+    assert funnel["이미 제안·거절됨"] == 1
+
+    events = db_session.execute(
+        select(EventLog).where(EventLog.type == "run.candidates_ready")
+    ).scalars().all()
+    assert len(events) == 1
+    assert events[0].channel == "private"
+    assert events[0].recipient_user_id == "user_1"
+
+
+def test_execute_run_excludes_place_ids_already_pinned_on_the_map(db_session):
+    """루트 수정(2026-09-23) — 이전엔 exclusions 테이블만 봐서, 이미 지도에 있는 핀(수동이든
+    다른 run이 게시한 것이든)의 place_id가 그대로 다시 추천될 수 있었다. 게시하려는 순간
+    pins.unique(map_id, place_id) 위반으로 PIN_DUPLICATE만 반복되는 문제라 여기서 미리 뺀다."""
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
+
+    existing_pin = PinRow(
+        id=uuid.uuid4(), map_id="map_1", category="음식점", kind="일반", origin="direct",
+        place_id="already_pinned", geom=func.ST_SetSRID(func.ST_MakePoint(129.0005, 35.0005), 4326),
+        visibility="public", created_by="user_1",
+    )
+    db_session.add(existing_pin)
+    db_session.flush()
+
+    places = [
+        PlaceStub(place_id="already_pinned", lat=35.0005, lng=129.0005),
+        PlaceStub(place_id="new_place", lat=35.0006, lng=129.0006),
+    ]
+    place_search = _FakePlaceSearch(places)
+    place_facts = _FakePlaceFacts({"already_pinned": {}, "new_place": {}})
+
+    flows.execute_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
+
+    candidates = service.list_candidates(db_session, str(run.id))
+    assert [c.place_id for c in candidates] == ["new_place"]
+
+
+def test_execute_run_unknown_safety_fact_is_excluded_not_needs_check(db_session):
+    """가드레일8 — 안전 조건(spicy_focused)이 unknown이면 pass+needs_check가 아니라 제거된다."""
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "매운거 빼주세요",
+         "badge": "required", "fact_key": "spicy_focused"},
+    ])
+    places = [PlaceStub(place_id="unknown_place", lat=35.0005, lng=129.0005)]
+    place_search = _FakePlaceSearch(places)
+    place_facts = _FakePlaceFacts({})  # spicy_focused 원자료 없음 → unknown
+
+    flows.execute_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
+
+    candidates = service.list_candidates(db_session, str(run.id))
+    assert candidates == []  # exclude 정책 — unknown인데 통과시키지 않는다
+
+
+def test_execute_run_with_no_candidates_then_get_result_is_no_results(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run)
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts())
+
+    principal = Principal(user_id="user_1", map_id="map_1", role="member")
+    with pytest.raises(AppError) as exc_info:
+        flows.get_result(db_session, run_id=str(run.id), principal=principal)
+    assert exc_info.value.code == "NO_RESULTS"
+    assert "funnel" in exc_info.value.detail
+
+
+def test_get_result_marks_can_publish_true_only_for_run_author(db_session):
+    run = _make_run(db_session, status="collecting_evidence", requested_by="user_1")
+    _make_region(db_session, run)
+    places = [PlaceStub(place_id="p1", lat=35.0005, lng=129.0005)]
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts())
+
+    author = Principal(user_id="user_1", map_id="map_1", role="member")
+    result = flows.get_result(db_session, run_id=str(run.id), principal=author)
+    assert result.candidates[0].permissions.can_publish is True
+
+    stranger = Principal(user_id="user_2", map_id="map_1", role="member")
+    result2 = flows.get_result(db_session, run_id=str(run.id), principal=stranger)
+    assert result2.candidates[0].permissions.can_publish is False
+
+
+def test_get_result_marks_can_publish_false_once_already_published(db_session):
+    """루트 수정(2026-09-23) — can()은 requested_by만 보고 published_pin_id를 모른다. 이미
+    게시된 candidate까지 작성자에게 can_publish=true를 내려주면 FE가 게시 버튼을 계속 활성화된
+    채로 그린다(docs/data-model.md에 미리 남겨둔 주의사항, #108 구현이 놓쳤던 부분)."""
+    run = _make_run(db_session, status="collecting_evidence", requested_by="user_1")
+    _make_region(db_session, run)
+    places = [PlaceStub(place_id="p1", lat=35.0005, lng=129.0005)]
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts())
+
+    author = Principal(user_id="user_1", map_id="map_1", role="member")
+    candidate = service.list_candidates(db_session, str(run.id))[0]
+    service.link_published_pin(db_session, candidate_id=str(candidate.id), pin_id=str(uuid.uuid4()))
+
+    result = flows.get_result(db_session, run_id=str(run.id), principal=author)
+    assert result.candidates[0].visibility == "published"
+    assert result.candidates[0].permissions.can_publish is False
+
+
+# ---------- widen ----------
+
+def test_widen_run_doubles_region_radius_and_regenerates_candidates(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    region = _make_region(db_session, run, radius_m=1000)
+    places = [PlaceStub(place_id="p1", lat=35.0005, lng=129.0005)]
+    place_search = _FakePlaceSearch(places)
+    place_facts = _FakePlaceFacts()
+
+    flows.widen_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
+
+    db_session.refresh(region)
+    assert region.radius_m == 2000  # WIDEN_FACTOR(2.0) 적용
+    db_session.refresh(run)
+    assert run.status == "done"
+    assert service.list_candidates(db_session, str(run.id))[0].place_id == "p1"
+
+
+def test_widen_run_without_regions_raises_not_ready(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    with pytest.raises(AppError) as exc_info:
+        flows.widen_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts())
+    assert exc_info.value.code == "NOT_READY"
+
+
+# ---------- retry ----------
+
+def test_retry_run_excludes_previous_unpublished_candidates_and_bumps_attempt(db_session):
+    run = _make_run(db_session, status="done", attempt_no=1)
+    _make_region(db_session, run, radius_m=1000)
+    _make_candidate(db_session, run, place_id="old_place", published_pin_id=None)
+    published = _make_candidate(db_session, run, place_id="published_place", published_pin_id=uuid.uuid4())
+
+    new_places = [PlaceStub(place_id="old_place", lat=35.0005, lng=129.0005),
+                  PlaceStub(place_id="fresh_place", lat=35.0006, lng=129.0006)]
+    updated = flows.retry_run(
+        db_session, run_id=str(run.id),
+        place_search=_FakePlaceSearch(new_places), place_facts=_FakePlaceFacts(),
+    )
+
+    assert updated.attempt_no == 2
+    remaining_place_ids = {c.place_id for c in service.list_candidates(db_session, str(run.id))}
+    assert "old_place" not in remaining_place_ids  # 방금 제외목록에 들어간 곳은 재실행에서도 빠진다
+    assert "fresh_place" in remaining_place_ids
+    assert published.place_id in remaining_place_ids  # 게시된 후보는 그대로 유지
+
+
+def test_retry_run_raises_retry_limit_when_exhausted(db_session):
+    run = _make_run(db_session, status="done", attempt_no=5)
+    _make_region(db_session, run)
+    with pytest.raises(AppError) as exc_info:
+        flows.retry_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts())
+    assert exc_info.value.code == "RETRY_LIMIT"
+
+
+def test_retry_run_checks_requesters_true_max_not_this_runs_own_attempt_no(db_session):
+    """루트 수정(2026-09-23) — #31은 개인 단위 공유 카운터인데, retry_run이 이 run 자신의
+    attempt_no만 봐서, 오래된(attempt_no가 낮은) run으로 retry를 걸면 상한을 우회할 수 있었다
+    (Antigravity 검수로 발견). 같은 사람의 다른 run이 이미 상한(5)에 도달했으면, 더 오래된
+    run(attempt_no=1)으로 retry를 시도해도 막혀야 한다."""
+    old_run = _make_run(db_session, status="done", attempt_no=1, category="음식점")
+    _make_region(db_session, old_run, radius_m=1000)
+    _make_run(db_session, status="done", attempt_no=5, category="카페")  # 같은 사람의 최신 run
+
+    with pytest.raises(AppError) as exc_info:
+        flows.retry_run(
+            db_session, run_id=str(old_run.id),
+            place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts(),
+        )
+    assert exc_info.value.code == "RETRY_LIMIT"
