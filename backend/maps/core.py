@@ -66,9 +66,10 @@ def build_invite_url(base_url: str, token: str) -> str:
 
 
 def to_map_response(record: MapRecord, *, member_count: int, confirmed_count: int | None) -> Map:
-    """confirmed_count는 shortlist_items 개수인데 shortlist에 api.py가 없어 이번 PR은 계산하지
-    않는다 — None으로 두면 라우터의 response_model_exclude_none이 키 자체를 생략한다(0으로
-    채우면 "확정 3개인 지도가 0개로 보이는" 거짓말이 된다, maps/for_Root.md 항목 5)."""
+    """confirmed_count는 shortlist_items 개수 — shortlist.api.count_confirmed로 채운다(루트,
+    maps/for_Root.md 항목 5 해결). 그래도 매개변수를 Optional로 남긴다 — 값을 못 구하는
+    호출부가 생기면 0(거짓 "확정 0개")이 아니라 None(라우터가 키 자체를 생략)으로 정직하게
+    빠지게 하려는 의도다."""
     return Map(
         id=record.id,
         title=record.title,
@@ -80,9 +81,9 @@ def to_map_response(record: MapRecord, *, member_count: int, confirmed_count: in
 
 
 def to_member_response(user_id: str, *, display_name: str | None, online: bool | None) -> Member:
-    """display_name·online을 채울 데이터 출처가 없다(auth #4 users 테이블 없음, realtime에
-    presence 없음) — user_id로 대체하거나 False로 채우지 않는다(둘 다 그럴싸해 보이는 거짓
-    fallback이다)."""
+    """display_name은 auth.api.display_names로 채운다(루트, maps/for_Root.md 항목 5 해결).
+    online은 여전히 채울 데이터 출처가 없다(realtime에 presence 없음, #32 별건) — user_id로
+    대체하거나 False로 채우지 않는다(그럴싸해 보이는 거짓 fallback이다)."""
     return Member(user_id=user_id, display_name=display_name, online=online)
 
 

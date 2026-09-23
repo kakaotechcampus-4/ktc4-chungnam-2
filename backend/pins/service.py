@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from auth import api as auth_api
 from authz.core import Principal
 from common.errors import AppError
 from common.events import record_event
@@ -98,6 +99,9 @@ def list_pins(
 
     rows = db.execute(query).all()
 
+    # 배치 조회 — N개 핀에 N번 쿼리하지 않는다(auth.api.display_names 자체가 배치용으로 설계됨).
+    display_names = auth_api.display_names(db, [row[0].created_by for row in rows])
+
     result: list[Pin] = []
     for row in rows:
         pin_row: PinRow = row[0]
@@ -113,6 +117,8 @@ def list_pins(
             reaction_counts=core.ReactionCounts(
                 like=row.like_count, neutral=row.neutral_count, against=row.against_count
             ),
+            place_name=pin_row.place_name,
+            created_by_display_name=display_names.get(pin_row.created_by),
         )
         result.append(core.to_pin_response(record, principal))
     return result
@@ -159,6 +165,7 @@ def create_pin(
         kind="일반",
         origin="direct",
         place_id=resolved.place_id,
+        place_name=req.place_name,
         geom=func.ST_SetSRID(func.ST_MakePoint(resolved.lng, resolved.lat), 4326),
         visibility="public",
         created_by=principal.user_id,
@@ -186,6 +193,7 @@ def create_pin(
     lat_col, lng_col = _lat_lng_columns()
     lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()
 
+    display_name = auth_api.display_names(db, [pin_row.created_by]).get(pin_row.created_by)
     record = core.PinRecord(
         id=str(pin_row.id),
         map_id=pin_row.map_id,
@@ -196,6 +204,8 @@ def create_pin(
         lng=lng,
         created_by=pin_row.created_by,
         reaction_counts=core.ReactionCounts(),
+        place_name=pin_row.place_name,
+        created_by_display_name=display_name,
     )
     pin = core.to_pin_response(record, principal)
 

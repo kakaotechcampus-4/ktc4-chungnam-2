@@ -56,27 +56,26 @@ get_membership_gateway = select(
 `require_on_map("invite.create")` 한 줄 교체로 끝난다. `map.settings.edit`을 빌려 쓰는 안은
 기각했다 — 무관한 액션 이름 뒤에 정책 결정을 숨기게 된다.
 
-## 5. 생략한 필드 3개와 필요한 함수 시그니처
+## 5. 생략한 필드 3개와 필요한 함수 시그니처 — 2/3 해결됨(루트, 2026-09-23)
 
 계약(`Map`/`Member`)엔 있지만 이 모듈이 못 채우는 값은 0/false/user_id로 채우지 않고
 **응답에서 생략**했다(`response_model_exclude_none=True`) — 이 방식 자체는 진행 전 사용자
-확인을 받았다. FE가 이 필드들을 지금 렌더링에 쓰고 있다면(목서버 기준 개발 중이었다면) 그
-화면은 이 필드들이 없는 응답에 대비해야 한다 — 필요한 함수가 준비되는 대로 각각 한 줄 교체로
-채워진다.
-- `Map.confirmed_count` ← `shortlist/api.py::count_confirmed(db, *, map_id: str) -> int` 필요
-- `Member.display_name` ← `auth/api.py::display_names(db, user_ids: Sequence[str]) -> dict[str,str]`
-  필요(배치 — `/members` N명이 N번 쿼리하지 않도록)
-- `Member.online` ← `realtime/api.py::online_user_ids(map_id: str) -> frozenset[str]` 필요.
-  같은 갭이 `member.presence` 이벤트, #32 "N=온라인 구성원 수"에도 걸린다 — 워크어라운드
-  3개보다 이슈 1개가 맞다.
+확인을 받았다.
+- `Map.confirmed_count` ← **해결**. `shortlist/api.py::count_confirmed(db, *, map_id)` 신설,
+  `maps/service.py::_map_response`가 호출.
+- `Member.display_name` ← **해결**. `auth/api.py::display_names(db, user_ids)` 신설(배치),
+  `maps/service.py::list_members`·`accept_invite`가 호출.
+- `Member.online` ← 아직 미해결. `realtime/api.py::online_user_ids(map_id) -> frozenset[str]`
+  필요. 같은 갭이 `member.presence` 이벤트, #32 "N=온라인 구성원 수"(이 정의는 이미 "현재
+  참여 중인 인원 수"로 확정돼 online과 무관해졌다)에도 걸린다.
 
-## 6. 초대 링크 URL — 지금은 브라우저로 바로 열리는 페이지가 아니다
+## 6. 초대 링크 URL — 해결됨(루트, 2026-09-23)
 
-FE 오리진의 정본이 없어(`common/settings.py`는 다른 모듈들의 어댑터 모드 전용 파일이라
-이 모듈이 임의로 필드를 추가하지 않았다) `request.base_url`(백엔드 자신의 주소)로 URL을
-만든다. `POST /invites/{token}/accept`는 POST 전용 API라 그 주소를 브라우저로 열면 404/405다.
-FE 오리진을 어디서 관리할지(`common/settings.py`에 `INVITE_BASE_URL` 추가 등) 결정 요청 —
-결정되면 `maps/router.py::post_invite`에서 `base_url` 한 줄만 바꾸면 된다.
+`common/settings.py`에 `frontend_base_url` 신설(auth의 로그인 리다이렉트 갭과 같은 원인이라
+하나로 합침). `maps/router.py::post_invite`가 이제 `settings.frontend_base_url`을 우선
+쓴다(없으면 예전처럼 `request.base_url`로 폴백). 단, 이 링크가 실제로 열리려면 프론트에
+`/invites/{token}` 경로의 "초대 수락 화면"이 있어야 한다 — 그건 여전히 `#4`의 잔여 프론트
+항목이다(재오픈함).
 
 ## 7. api-spec 갭 — 비구성원 404가 스펙에 없다
 

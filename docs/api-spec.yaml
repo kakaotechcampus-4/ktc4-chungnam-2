@@ -627,6 +627,7 @@ components:
         can_remove_from_shortlist: { type: boolean }
         can_disable: { type: boolean, description: "evidence_line 전용: 자기가 쓴 것만 true" }
         can_delete: { type: boolean }
+        can_publish: { type: boolean, description: "candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64)" }
 
     User:
       type: object
@@ -681,6 +682,8 @@ components:
         source: { type: string, enum: [link, search, coordinate] }
         link_url: { type: string, maxLength: 2000 } # 사용자가 직접 붙여넣는 값, 코드에 근거 없음(멘토 리뷰 대응)
         place_id: { type: string }
+        place_name: { type: string, maxLength: 100 } # 루트 결정(2026-09-23): 사용자가 이미 들고 있는
+        # 값(구글맵 링크·검색 결과)을 그대로 저장 — places 파이프라인(#53 대기)을 기다리지 않는다.
         # pins/core.py::validate_create가 이미 검증하는 범위를 그대로 옮김(멘토 리뷰 대응).
         lat: { type: number, minimum: -90, maximum: 90 }
         lng: { type: number, minimum: -180, maximum: 180 }
@@ -834,6 +837,7 @@ components:
           items: { $ref: "#/components/schemas/Check" }
         visibility: { type: string, enum: [private, published] }
         published_pin_id: { type: [string, "null"] }
+        permissions: { $ref: "#/components/schemas/Permissions" }
 
     RecommendResult:
       type: object

@@ -56,6 +56,10 @@ class Pin(Base):
     kind: Mapped[str] = mapped_column(PinKind, nullable=False)
     origin: Mapped[str] = mapped_column(PinOrigin, nullable=False)
     place_id: Mapped[str] = mapped_column(String, nullable=False)
+    # 사용자가 이미 들고 있는 값(구글맵 링크·검색 결과)을 그대로 저장 — places 모듈(#53 대기)의
+    # 장소 라벨링(가격·재료 등)과는 다른 종류라 그 파이프라인을 기다리지 않는다(루트 결정,
+    # 2026-09-23, 0009 마이그레이션).
+    place_name: Mapped[str | None] = mapped_column(String, nullable=True)
     geom = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
     visibility: Mapped[str] = mapped_column(Visibility, nullable=False)
     created_by: Mapped[str] = mapped_column(String, nullable=False)

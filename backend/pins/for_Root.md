@@ -40,7 +40,10 @@
 5. 목 서버는 핀 하드 삭제, 실서버는 `deleted_at` soft delete(스키마 유니크 제약이 soft delete 전제라 이쪽이 맞다고 판단).
 
 **아직 못 채우는 필드**
-6. `place_name`/`price_bucket`/`created_by_display_name`은 `places`(#34)·`maps`(#19) 전엔 채울 수 없어 응답에서 생략된다.
+6. `place_name`·`created_by_display_name`은 **해결됨**(루트, 2026-09-23:
+   `PinCreateRequest.place_name` 추가 + `pins.place_name` 컬럼 신설(0009 마이그레이션),
+   `auth.api.display_names` 배선). `price_bucket`은 여전히 `places`(#34) 전엔 채울 수 없어
+   응답에서 생략된다.
 
 **설계상 남겨둔 비대칭**
 7. `create_pin`은 멤버십을 권한 계산에만 쓰고 생성 자체를 막지 않는다(`delete_pin`·반응 엔드포인트는 403으로 막음). `create_pin`도 같은 기준으로 맞출지 확인 필요.

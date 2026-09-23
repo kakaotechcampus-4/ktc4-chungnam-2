@@ -69,6 +69,36 @@ def test_create_pin_returns_201(app_client):
     assert body["category"] == "음식점"
     assert body["kind"] == "일반"
     assert body["visibility"] == "public"
+    assert "place_name" not in body  # 안 보냈으면 여전히 생략(response_model_exclude_none)
+
+
+def test_create_pin_stores_and_returns_place_name(app_client):
+    """루트 결정(2026-09-23) 회귀 테스트 — 사용자가 생성 요청에 넣은 이름을 그대로 저장·응답한다."""
+    resp = app_client.post(
+        "/maps/map_1/pins",
+        json={
+            "category": "음식점", "source": "coordinate", "lat": 35.15, "lng": 129.12,
+            "place_name": "부산 밀면집",
+        },
+        cookies=_auth(),
+    )
+    assert resp.status_code == 201
+    assert resp.json()["place_name"] == "부산 밀면집"
+
+
+def test_create_pin_includes_created_by_display_name_when_user_row_exists(app_client, db_session):
+    from auth.models import User
+
+    db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
+    db_session.commit()
+
+    resp = app_client.post(
+        "/maps/map_1/pins",
+        json={"category": "음식점", "source": "coordinate", "lat": 35.15, "lng": 129.12},
+        cookies=_auth("user_1"),
+    )
+    assert resp.status_code == 201
+    assert resp.json()["created_by_display_name"] == "철수"
 
 
 def test_create_pin_without_cookie_is_401(app_client):
