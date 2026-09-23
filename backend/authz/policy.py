@@ -35,7 +35,13 @@ POLICY: Mapping[str, RoleSpec] = {
                 "shortlist.remove",  # "구성원 누구나" (5-3, 15-1)
                 "evidence.add",
                 "recommend.request",
-                "recommend.manage",  # run 하위 전체 — 단, run.requested_by 본인만(가드레일1) —
+                "recommend.evidence",  # 근거 조회·토글·추가 — 지도 구성원 누구나(#32 결정,
+                                        # 2026-09-23: "근거 목록은 구성원별로 한 줄씩 따로 뜬다",
+                                        # 최종기획안 5-5). run.requested_by 본인 제한 없음 —
+                                        # AUTHOR_CONSTRAINED_ACTIONS에 없다. 개별 근거 줄
+                                        # 비활성화(evidence.disable)는 그 줄 작성자 본인만(author).
+                "recommend.manage",  # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
+                                      # 단, run.requested_by 본인만(가드레일1) —
                                       # AUTHOR_CONSTRAINED_ACTIONS 참고
                 "recommend.publish",  # 단, candidate.requested_by 본인만 — AUTHOR_CONSTRAINED_ACTIONS 참고
                 "invite.create",  # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
@@ -86,6 +92,7 @@ ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "evidence.add": frozenset({"map"}),
     "evidence.disable": frozenset({"evidence_line"}),
     "recommend.request": frozenset({"map"}),
+    "recommend.evidence": frozenset({"map"}),  # recommend/loaders.py::load_run이 Resource(type="map", ...)로 채운다
     "recommend.manage": frozenset({"map"}),  # recommend/loaders.py::load_run이 Resource(type="map", ...)로 채운다
     "recommend.publish": frozenset({"candidate"}),
     "candidate.view_private": frozenset({"candidate"}),

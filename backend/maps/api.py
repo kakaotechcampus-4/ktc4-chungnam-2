@@ -30,10 +30,9 @@ class DbMembershipGateway:
 
 
 def count_members(db: Session, map_id: str) -> int:
-    """recommend readiness(5-4)가 ceil(N/2)의 N으로 쓴다(recommend/#108). N의 정의(#32)는
-    여전히 결정 이슈 미결이라 "이 지도의 전체 구성원 수"로 잠정 구현했다 — recommend/for_Root.md에
-    보고, maps가 소유한 함수라 여기 추가했다(get_coordinates_for_pins를 pins가 shortlist를
-    위해 추가한 것과 같은 선례)."""
+    """recommend readiness(5-4)가 ceil(N/2)의 N으로 쓴다(recommend/#108). N="이 지도에
+    현재 참여 중인 인원 수"로 확정(#32, 2026-09-23) — maps가 소유한 함수라 여기 추가했다
+    (get_coordinates_for_pins를 pins가 shortlist를 위해 추가한 것과 같은 선례)."""
     return db.execute(
         select(func.count()).select_from(MembershipRow).where(MembershipRow.map_id == map_id)
     ).scalar_one()

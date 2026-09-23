@@ -105,18 +105,17 @@ def test_full_golden_path_run_to_execute_to_result_to_publish(app_client, db_ses
     assert published.json()["kind"] == "AI추천"
 
 
-def test_other_members_cannot_view_or_operate_someone_elses_run(app_client, db_session):
+def test_other_members_cannot_operate_someone_elses_run_execution(app_client, db_session):
     """가드레일1("대안은 요청한 사람에게만 먼저 보인다") 회귀 테스트 — 루트가 Antigravity
     검수로 발견해 고친 버그. user_2도 map_1의 실제 구성원이지만(app_client 픽스처의
-    FakeMembership 참고) user_1의 run에는 접근할 수 없어야 한다."""
+    FakeMembership 참고) user_1의 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도)에는
+    접근할 수 없어야 한다 — evidence는 협업적이라 별도 테스트(아래)로 뺐다(#32 결정)."""
     _seed_ready_map(db_session)
 
     created = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth("user_1"))
     run_id = created.json()["id"]
 
     for method, path in [
-        ("get", f"/runs/{run_id}/evidence"),
-        ("patch", f"/runs/{run_id}/evidence"),
         ("post", f"/runs/{run_id}/regions/confirm"),
         ("post", f"/runs/{run_id}/execute"),
         ("get", f"/runs/{run_id}/result"),
@@ -126,6 +125,27 @@ def test_other_members_cannot_view_or_operate_someone_elses_run(app_client, db_s
         kwargs = {"json": {}} if method in ("patch", "post") else {}
         resp = getattr(app_client, method)(path, cookies=_auth("user_2"), **kwargs)
         assert resp.status_code == 403, f"{method.upper()} {path} expected 403, got {resp.status_code}"
+
+
+def test_other_members_can_view_and_add_evidence_on_someone_elses_run(app_client, db_session):
+    """#32 결정(2026-09-23, 최종기획안 5-5 "근거 목록은 구성원별로 한 줄씩 따로 뜬다") 회귀
+    테스트 — evidence는 run.requested_by 본인이 아니어도 지도 구성원이면 조회·추가할 수
+    있어야 한다(recommend.evidence, 가드레일1과 무관 — 게시 전 비공개 후보 자체는 여전히
+    본인만 보인다, 위 test_other_members_cannot_operate 참고)."""
+    _seed_ready_map(db_session)
+
+    created = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth("user_1"))
+    run_id = created.json()["id"]
+
+    get_resp = app_client.get(f"/runs/{run_id}/evidence", cookies=_auth("user_2"))
+    assert get_resp.status_code == 200
+
+    patch_resp = app_client.patch(
+        f"/runs/{run_id}/evidence", json={"toggle": [], "add": [{"text": "user_2가 추가한 근거"}]},
+        cookies=_auth("user_2"),
+    )
+    assert patch_resp.status_code == 200
+    assert any(line["text"] == "user_2가 추가한 근거" for line in patch_resp.json())
 
 
 def test_run_not_found_is_404(app_client, db_session):

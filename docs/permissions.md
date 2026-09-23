@@ -20,7 +20,10 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     - shortlist.remove         # "구성원 누구나" (5-3, 15-1)
     - evidence.add
     - recommend.request        # 「추천 받기」 — 새 run 생성. 누구나 자기 몫의 run을 새로 만들 수 있다
-    - recommend.manage         # run 하위 전체(근거·지역확인·실행·결과조회·반경넓히기·재시도) —
+    - recommend.evidence       # run 하위 근거(조회·토글·추가) — 구성원 누구나(#32 결정: "근거
+                                # 목록은 구성원별로 한 줄씩 따로 뜬다", 최종기획안 5-5). 개별
+                                # 줄 비활성화만 그 줄 작성자 본인 제한(아래 author 참고)
+    - recommend.manage         # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
                                 # 단, run.requested_by 본인만(아래 author 참고). 가드레일1: 대안은
                                 # 요청한 사람에게만 먼저 보인다 — 게시 전 run은 본인 것만 조작·열람
     - recommend.publish        # 「지도에 올리기」 — 단, candidate.requested_by 본인만(아래 author 참고)
@@ -83,7 +86,8 @@ owner:                        # 지도 생성자. member 전체 + 아래 추가
 | 반경 조정 — 별도 권한 불필요 | 반경 사유도 `evidence_line`이므로 위 규칙을 그대로 상속. 별도 액션 없음 |
 | 초대 링크 발급 — 구성원 누구나 (#4) | `member.actions: [invite.create]` |
 | 동선 재계산 — 구성원 누구나 (#103) | `member.actions: [route.recalculate]` |
-| AI 추천 run 조작·열람 — 요청한 본인만 (#108, 가드레일1) | `member.actions: [recommend.manage]` + `AUTHOR_CONSTRAINED_ACTIONS` |
+| AI 추천 run 근거 조회·토글·추가 — 구성원 누구나 (#108, #32, 최종기획안 5-5) | `member.actions: [recommend.evidence]` (개별 줄 비활성화만 `author.actions: [evidence.disable]`) |
+| AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `member.actions: [recommend.manage]` + `AUTHOR_CONSTRAINED_ACTIONS` |
 
 ## v2 확장 지점
 

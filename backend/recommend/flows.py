@@ -126,8 +126,8 @@ DEFAULT_REGION_RADIUS_M = 15 * WALKING_SPEED_M_PER_MIN  # 15분 * 80m/분 = 1200
 
 
 def get_readiness(db: Session, *, map_id: str) -> dict[str, dict]:
-    """GET /maps/{mapId}/recommend/readiness (5-4). N(#32)의 정의가 결정 이슈 미결이라
-    "이 지도의 전체 구성원 수"로 잠정 구현했다(maps.api.count_members, for_Root.md 보고)."""
+    """GET /maps/{mapId}/recommend/readiness (5-4). N=이 지도의 현재 구성원 수로 확정
+    (#32, 2026-09-23, maps.api.count_members)."""
     member_count = maps_api.count_members(db, map_id)
     return {
         category: core.check_readiness(

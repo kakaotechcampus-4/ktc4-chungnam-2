@@ -37,8 +37,10 @@ def check_run_ready(run: RecommendRun) -> None:
 
 
 def required_count(member_count: int) -> int:
-    """ceil(N/2) — docs/api-spec.yaml Readiness.required_count. N의 정의(#32)는 여전히
-    결정 이슈 미결이라 호출부(service.py)가 넘겨주는 member_count를 그대로 따른다."""
+    """ceil(N/2) — docs/api-spec.yaml Readiness.required_count. N=현재 참여 중인(지도 구성원)
+    인원 수로 확정(#32, 2026-09-23) — 호출부(maps.api.count_members)가 그 값을 넘긴다.
+    member_count<=0은 지도가 생성 시점부터 항상 최소 1명(만든 사람)을 구성원으로 두어 실제
+    경로에서 도달하지 않는 방어 코드다."""
     if member_count <= 0:
         return 0
     return math.ceil(member_count / 2)
