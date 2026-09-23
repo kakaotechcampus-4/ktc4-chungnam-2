@@ -14,6 +14,7 @@ from auth.deps import get_current_user
 from auth.schemas import CurrentUser
 from authz.core import Principal
 from authz.guard import require_map_member
+from common.settings import settings
 from maps import service
 from maps.deps import DbSession
 from maps.schemas import Invite, Map, Member, MapCreateRequest
@@ -57,10 +58,10 @@ def post_invite(
     user: CurrentUser = Depends(get_current_user),
     db=DbSession,
 ):
-    # base_url = 이 백엔드 서버 자신의 주소다. FE 오리진의 정본이 없어(maps/for_Root.md 항목 8)
-    # 이 링크는 지금 브라우저로 바로 열리는 페이지가 아니다(accept는 POST 전용 API라 GET으로
-    # 열 수 없다) — 값을 지어내는 대신 이 한계를 그대로 안고 루트에 최우선으로 보고한다.
-    base_url = str(request.base_url)
+    # FE 오리진 정본이 생겼다(settings.frontend_base_url, 루트 확정 2026-09-23 — maps/for_Root.md
+    # 항목 6 해결). 못 정했을 때만(dev에서 지워버린 극단적 경우) 예전처럼 백엔드 자신의 주소로
+    # 대체한다 — accept가 POST 전용 API라 그 경로는 여전히 브라우저로 바로 열리지 않는다.
+    base_url = settings.frontend_base_url or str(request.base_url)
     return service.create_invite(db, map_id=mapId, creator_id=user.user_id, base_url=base_url)
 
 

@@ -11,6 +11,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from auth import api as auth_api
 from common.errors import AppError
 from common.events import record_event
 from maps import core
@@ -18,6 +19,7 @@ from maps.models import Invite as InviteRow
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
 from maps.schemas import Invite, Map, MapCreateRequest, Member
+from shortlist import api as shortlist_api
 
 INVITE_TOKEN_BYTES = 32  # secrets.token_urlsafe(32) — 256비트, 소지자가 곧 가입 권한을 갖는
 # bearer capability라 uuid4가 아니라 secrets 모듈을 쓴다(예측 불가능성이 목적, 유일성이 아니다).
@@ -41,7 +43,9 @@ def _map_response(db: Session, map_row: MapRow) -> Map:
         id=map_row.id, title=map_row.title, start_date=map_row.start_date, end_date=map_row.end_date
     )
     return core.to_map_response(
-        record, member_count=_member_count(db, map_row.id), confirmed_count=None
+        record,
+        member_count=_member_count(db, map_row.id),
+        confirmed_count=shortlist_api.count_confirmed(db, map_id=map_row.id),
     )
 
 
@@ -74,9 +78,11 @@ def get_map_response(db: Session, *, map_id: str) -> Map:
 
 
 def create_invite(db: Session, *, map_id: str, creator_id: str, base_url: str) -> Invite:
-    """base_url은 router가 만든 값을 그대로 받는다(request.base_url 기반) — FE 오리진의
-    정본이 없어(maps/for_Root.md 항목 8) 이 링크는 지금 브라우저로 바로 열 수 있는 페이지가
-    아니라는 한계가 있다. 값을 지어내는 대신 그 사실을 그대로 안고 간다."""
+    """base_url은 router가 만든 값을 그대로 받는다 — settings.frontend_base_url이 있으면
+    그 값(FE 오리진, 루트 확정 2026-09-23 — maps/for_Root.md 항목 6 해결), 없으면 예전처럼
+    request.base_url(백엔드 자신의 주소). 결과 URL은 `/invites/{token}` 경로를 프론트의
+    "초대 수락 화면"(#4 잔여 항목)이 받아서 POST /invites/{token}/accept를 호출하는 걸
+    전제로 한다."""
     token = secrets.token_urlsafe(INVITE_TOKEN_BYTES)
     now = datetime.now(timezone.utc)
     expires_at = core.invite_expires_at(now)
@@ -116,7 +122,8 @@ def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
             .where(InviteRow.token == token)
             .values(used_count=InviteRow.used_count + 1)
         )
-        member = core.to_member_response(user_id, display_name=None, online=None)
+        name = auth_api.display_names(db, [user_id]).get(user_id)
+        member = core.to_member_response(user_id, display_name=name, online=None)
         record_event(db, core.member_joined_event(invite_row.map_id, member))
 
     map_row = get_map_or_404(db, invite_row.map_id)
@@ -127,4 +134,6 @@ def list_members(db: Session, *, map_id: str) -> list[Member]:
     rows = db.execute(
         select(MembershipRow).where(MembershipRow.map_id == map_id).order_by(MembershipRow.joined_at)
     ).scalars().all()
-    return [core.to_member_response(row.user_id, display_name=None, online=None) for row in rows]
+    # 배치 조회 — N명에 N번 쿼리하지 않는다(auth.api.display_names 자체가 배치용으로 설계됨).
+    names = auth_api.display_names(db, [row.user_id for row in rows])
+    return [core.to_member_response(row.user_id, display_name=names.get(row.user_id), online=None) for row in rows]
