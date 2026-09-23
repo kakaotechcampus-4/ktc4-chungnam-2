@@ -1,8 +1,34 @@
 # 루트 리뷰 가이드 — backend/recommend
 
-`backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 두 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#108" 절이 최신(코어 파이프라인 전체), 그 아래 "PR #71" 절이
-`publish_candidate` 하나만 다룬 이전 세션 기록이다.
+`backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 세 세션에 걸친
+작업을 누적해서 담는다 — 아래 "#124" 절이 최신, 그 아래 "#108" 절이 코어 파이프라인 전체,
+가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+
+---
+
+# #124 — publish_candidate가 candidate.checks를 pins로 복사
+
+## 구현 범위
+
+#57 결정(data-model.md 51·57·288행)을 배선만 했다 — `recommend/flows.py::publish_candidate`가
+`pins_api.create_ai_pin(...)` 호출에 `checks=candidate.checks`를 추가로 넘긴다. 그 외 로직
+(인가 순서, 멱등 경로, 이벤트 처리)은 그대로다. `pins.api.create_ai_pin`이 자기 쪽에서
+`pins.schemas.Check`로 다시 검증해 저장한다(경계 검증 — recommend/pins 두 `Check` 스키마가
+같은 필드 모양(`fact_key`/`label`/`passed`/`confidence`/`needs_check`)이라 그대로 통과한다).
+
+**pins 쪽 계약과의 타이밍**: 착수 시점엔 pins 쪽 `create_ai_pin`/`Pin` 모델에 `checks`가 아직
+없었다(이 저장소가 git이 아니라 브랜치 격리가 없어 그 상태가 바로 보였다). 이 세션은
+recommend만 배선하고 실패를 감수하기로 사용자와 합의했는데, 구현 도중 pins 쪽 별도 작업이
+합쳐져 지금은 두 쪽 다 맞다 — 별도 조정 없이 자연히 정리됐다.
+
+- **뺀 것**: `pins.source_run_id`(같은 #57 결정 대상)는 이번 이슈 범위 밖이라 넣지 않았다.
+  `run_id`를 아는 건 recommend뿐이라, 넣으려면 `create_ai_pin`에 `run_id`(또는
+  `source_run_id`) 파라미터를 새로 추가해야 한다 — 별도 이슈로 진행 요망.
+- **회귀 테스트**: `recommend/tests/test_flows.py::test_publish_candidate_copies_candidate_checks_to_pin`
+  — 실제 PostgreSQL 왕복으로 (1) 게시된 핀의 checks가 candidate.checks와 같은지,
+  (2) 게시 후 candidate.checks를 바꿔도 핀 쪽은 그대로인지(write-once) 확인한다.
+- **검증**: `pytest recommend/tests -q` 102 passed, 백엔드 전체 `pytest --ignore=.venv -q`
+  519 passed/1 skipped, `ruff check` 클린(`recommend/flows.py`/`recommend/tests/test_flows.py`).
 
 ---
 

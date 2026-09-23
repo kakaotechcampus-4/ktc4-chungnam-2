@@ -14,6 +14,7 @@ from authz.testing import FakeMembership
 from common.errors import AppError
 from common.events import EventLog
 from maps.models import Membership as MembershipRow
+from pins import api as pins_api
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
 from recommend import flows, service
@@ -117,6 +118,42 @@ def test_publish_candidate_inserts_ai_pin_links_candidate_and_records_event(db_s
     events = db_session.execute(select(EventLog).where(EventLog.map_id == run.map_id)).scalars().all()
     assert len(events) == 1
     assert events[0].type == "pin.published"  # docs/events.md — pins.api의 pin.created가 아니다
+
+
+def test_publish_candidate_copies_candidate_checks_to_pin(db_session):
+    """#124/#57 — 게시 시점에 candidate.checks가 pins.checks로 복사되고, 게시 뒤 유지된다
+    (가드레일 5). pins.api.create_ai_pin(checks=...)/pins.schemas.Check 경계 검증까지 실제
+    PostgreSQL로 왕복 확인한다."""
+    run = _make_run(db_session)
+    checks = [
+        {"fact_key": "contains_shellfish", "label": "조개류 포함", "passed": True,
+         "confidence": "known", "needs_check": False},
+        {"fact_key": "price_bucket", "label": "가격대", "passed": True,
+         "confidence": "unknown", "needs_check": True},
+    ]
+    candidate = _make_candidate(db_session, run, checks=checks)
+
+    pin = flows.publish_candidate(
+        db_session, candidate_id=str(candidate.id), requester_id="user_1",
+        membership=_membership(run.map_id, "user_1"),
+    )
+
+    db_session.expire_all()  # DB에서 다시 읽는다 — flows.py가 세션에 든 파이썬 객체를 그대로 돌려준 게 아닌지 확인
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    response = pins_api.get_pin_response_for_viewer(
+        db_session, pin_id=str(pin.id), viewer_id="user_1", principal=principal,
+    )
+    assert [c.model_dump() for c in response.checks] == checks
+
+    # write-once — 게시 뒤 candidate.checks를 바꿔도 이미 복사된 pins.checks는 그대로다.
+    candidate.checks = [{"fact_key": "spicy_focused", "label": "매운맛 위주", "passed": False,
+                         "confidence": "known", "needs_check": False}]
+    db_session.flush()
+    db_session.expire_all()
+    response_after = pins_api.get_pin_response_for_viewer(
+        db_session, pin_id=str(pin.id), viewer_id="user_1", principal=principal,
+    )
+    assert [c.model_dump() for c in response_after.checks] == checks
 
 
 def test_publish_candidate_non_member_is_not_found(db_session):

@@ -103,6 +103,9 @@ def publish_candidate(
     mutation = pins_api.create_ai_pin(
         db, map_id=run.map_id, category=run.category, place_id=candidate.place_id,
         lat=candidate.lat, lng=candidate.lng, created_by=requester_id,
+        checks=candidate.checks,  # #124/#57 — 게시 시점에 candidate.checks를 pins로 복사(가드레일 5).
+        # pins.api.create_ai_pin이 자기 checks 파라미터에서 pins.schemas.Check로 다시 검증한다
+        # (경계 검증, pins/api.py 참고) — 여기서는 candidate.checks를 그대로 넘기기만 한다.
     )  # 5) INSERT pins (레이스 1번 — uq_pins_map_place 위반 시 여기서 PIN_DUPLICATE)
     service.link_published_pin(db, candidate_id=candidate_id, pin_id=str(mutation.pin.id))  # 6) 가드 UPDATE
 
