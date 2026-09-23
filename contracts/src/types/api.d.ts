@@ -1285,6 +1285,8 @@ export interface components {
             /** @description evidence_line 전용: 자기가 쓴 것만 true */
             can_disable?: boolean;
             can_delete?: boolean;
+            /** @description candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64) */
+            can_publish?: boolean;
         };
         User: {
             id?: string;
@@ -1455,6 +1457,7 @@ export interface components {
             /** @enum {string} */
             visibility?: "private" | "published";
             published_pin_id?: string | null;
+            permissions?: components["schemas"]["Permissions"];
         };
         RecommendResult: {
             run_id?: string;

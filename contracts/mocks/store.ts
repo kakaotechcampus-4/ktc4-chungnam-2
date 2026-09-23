@@ -22,6 +22,16 @@ export type User = Schemas["User"];
 /** 목 서버에서 "나"로 취급하는 사용자. 기획안 6절 시나리오의 요청자다. */
 export const ME_USER_ID = "u_me";
 
+/** docs/events.md 봉투 — SSE 목 핸들러(realtime.ts)가 이 로그를 폴링해서 흘려보낸다. */
+export interface EventLogEntry {
+  seq: number;
+  map_id: string;
+  channel: "public" | "private";
+  recipient_user_id?: string; // channel === "private"일 때만 의미 있음
+  type: string;
+  data: unknown;
+}
+
 export interface StoreState {
   seq: number;
   users: Record<string, User>;
@@ -37,6 +47,7 @@ export interface StoreState {
   shortlist: Record<string, ShortlistItem[]>; // mapId -> items
   routes: Record<string, Route[]>; // mapId -> 마지막으로 계산된 동선 (#30, POST로만 갱신)
   invites: Record<string, { mapId: string; expires_at: string }>; // token -> invite
+  eventLog: EventLogEntry[]; // realtime.ts SSE 핸들러가 폴링하는 대상
 }
 
 function emptyState(): StoreState {
@@ -55,6 +66,7 @@ function emptyState(): StoreState {
     shortlist: {},
     routes: {},
     invites: {},
+    eventLog: [],
   };
 }
 
@@ -65,10 +77,23 @@ export function resetStore(next: StoreState) {
   Object.assign(store, next);
 }
 
-/** SSE event_log.seq와 같은 개념 — 단조증가 값. 응답에 실어 보내진 않지만 재생성/재계산 순서 판단에 쓴다. */
+/** SSE event_log.seq와 같은 개념 — 단조증가 값. 재생성/재계산 순서 판단 + eventLog 번호로 쓴다. */
 export function nextSeq(): number {
   store.seq += 1;
   return store.seq;
+}
+
+/** docs/events.md 이벤트 발행 — 실제 record_event(db, event)의 목 서버 대응. 반환값은 seq. */
+export function emitEvent(
+  mapId: string,
+  channel: "public" | "private",
+  type: string,
+  data: unknown,
+  recipientUserId?: string,
+): number {
+  const seq = nextSeq();
+  store.eventLog.push({ seq, map_id: mapId, channel, recipient_user_id: recipientUserId, type, data });
+  return seq;
 }
 
 let idCounter = 0;
