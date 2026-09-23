@@ -10,6 +10,7 @@ db.flush()만으로 PK/유니크 충돌 등은 여전히 그 자리에서 드러
 import uuid
 from dataclasses import dataclass
 
+from pydantic import TypeAdapter
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -21,7 +22,9 @@ from common.events import Event
 from pins import core, service
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
-from pins.schemas import Pin
+from pins.schemas import Check, Pin
+
+_ChecksAdapter = TypeAdapter(list[Check])
 
 
 @dataclass(frozen=True)
@@ -32,24 +35,34 @@ class PinMutation:
 
 def create_ai_pin(
     db: Session, *, map_id: str, category: str, place_id: str, lat: float, lng: float, created_by: str,
+    checks: list[dict] | None = None,
 ) -> PinMutation:
     """recommend의 후보 게시 전용. kind='AI추천', origin='ai', visibility='public'.
     place_id 중복이면 AppError('PIN_DUPLICATE') — 누가 이미 그 장소를 직접 찍었다는 뜻이다.
     v1은 private pins 행을 만들지 않으므로(recommend 계획 참고) 이 함수는 항상 public으로
     바로 INSERT한다 — visibility 전환 로직이 없다.
 
+    checks: #57/#124 결정 — candidate.checks를 게시 시점에 pins로 복사한다(가드레일 5, 게시
+    후에도 조건별 충족 체크가 유지돼야 함). recommend가 나중에 candidate/run을 지우거나 바꿔도
+    이 값은 안 바뀐다. 모양이 pins.schemas.Check와 안 맞으면 INSERT 전에 ValidationError로
+    바로 실패한다(경계에서 검증) — recommend가 잘못된 페이로드를 그대로 밀어넣는 걸 막는다.
+
     permissions 계산에 쓸 Principal이 없어(호출자가 아직 없다) 게시자 본인을 map의 member로
     간주해 구성한다 — 게시(recommend.publish)는 이미 member 액션이라 이 전제가 깨질 일이 없다.
     recommend가 실제로 붙을 때 자신이 이미 resolve한 Principal을 넘기도록 바꾸는 편이 더
     정확하다(for_Root.md에 남김)."""
     principal = Principal(user_id=created_by, map_id=map_id, role="member")
+    validated_checks = (
+        [check.model_dump() for check in _ChecksAdapter.validate_python(checks)]
+        if checks is not None else None
+    )
 
     pin_row = PinRow(
         map_id=map_id, category=category, kind="AI추천", origin="ai",
         place_id=place_id,
         # service.py의 create_pin과 동일한 조립 방식(func.ST_SetSRID(func.ST_MakePoint(lng, lat), ...)).
         geom=func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326),
-        visibility="public", created_by=created_by,
+        visibility="public", created_by=created_by, checks=validated_checks,
     )
     db.add(pin_row)
     try:
@@ -71,6 +84,7 @@ def create_ai_pin(
         visibility="public", lat=lat, lng=lng, created_by=created_by,
         reaction_counts=core.ReactionCounts(),
         created_by_display_name=display_name,
+        checks=validated_checks,
     )
     pin = core.to_pin_response(record, principal)
     # pin.published다 — docs/events.md가 "지도에 올리기"의 타입을 이렇게 못박아뒀고, 이 함수
@@ -125,7 +139,7 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
         id=str(pin_row.id), map_id=pin_row.map_id, category=pin_row.category, kind=pin_row.kind,
         visibility=pin_row.visibility, lat=lat, lng=lng, created_by=pin_row.created_by,
         reaction_counts=reaction_counts, place_name=pin_row.place_name,
-        created_by_display_name=display_name,
+        created_by_display_name=display_name, checks=pin_row.checks,
     )
     return core.to_pin_response(record, principal)
 

@@ -99,15 +99,17 @@ class PinRecord:
     reaction_counts: ReactionCounts
     place_name: str | None = None
     created_by_display_name: str | None = None
+    checks: list[dict] | None = None
 
 
 def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
-    """place_name·created_by_display_name은 호출부가 채워 넘긴 값을 그대로 싣는다(루트 결정,
-    2026-09-23 — 각각 pins.place_name 컬럼, auth.api.display_names). price_bucket/checks/
-    source_run_id는 여전히 places·recommend 연동이 더 필요해 채울 수 없다 — None으로 두면
-    라우터가 response_model_exclude_none으로 생략한다. permissions는 authz.core.permissions_for가
-    계산 — principal은 호출부(service.list_pins 등)가 한 번만 만들어 그대로 내려보낸다(추가
-    멤버십 쿼리 없음)."""
+    """place_name·created_by_display_name·checks는 호출부가 채워 넘긴 값을 그대로 싣는다(각각
+    pins.place_name 컬럼, auth.api.display_names, pins.checks 컬럼 — checks는 #57/#124 결정:
+    게시 시점에 candidate.checks를 pins로 복사해두므로 여기서도 그 값을 그대로 옮긴다, 가드레일
+    5 "게시된 뒤에도 유지"). price_bucket/source_run_id는 여전히 places·recommend 연동이 더
+    필요해 채울 수 없다 — None으로 두면 라우터가 response_model_exclude_none으로 생략한다.
+    permissions는 authz.core.permissions_for가 계산 — principal은 호출부(service.list_pins 등)가
+    한 번만 만들어 그대로 내려보낸다(추가 멤버십 쿼리 없음)."""
     return Pin(
         id=record.id,
         map_id=record.map_id,
@@ -119,6 +121,7 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
         place_name=record.place_name,
         created_by=record.created_by,
         created_by_display_name=record.created_by_display_name,
+        checks=record.checks,
         reaction_summary=ReactionSummary(
             like=record.reaction_counts.like,
             neutral=record.reaction_counts.neutral,

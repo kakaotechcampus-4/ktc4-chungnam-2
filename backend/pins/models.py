@@ -61,6 +61,9 @@ class Pin(Base):
     # 2026-09-23, 0009 마이그레이션).
     place_name: Mapped[str | None] = mapped_column(String, nullable=True)
     geom = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
+    # #57 결정: candidate.checks를 게시 시점에 복사(가드레일 5) — recommend를 다시 조회하지
+    # 않는다. reason_chip_ids와 같은 방식(JSONB, 목록형이라 nullable).
+    checks: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     visibility: Mapped[str] = mapped_column(Visibility, nullable=False)
     created_by: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

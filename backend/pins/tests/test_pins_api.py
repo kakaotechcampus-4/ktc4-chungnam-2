@@ -21,7 +21,7 @@ from pins.models import Pin as PinRow
 
 
 def _insert_pin(db_session, *, map_id="map_1", place_id=None, created_by="user_1",
-                 visibility="public", kind="일반", category="음식점", deleted=False):
+                 visibility="public", kind="일반", category="음식점", deleted=False, checks=None):
     row = PinRow(
         id=uuid.uuid4(),
         map_id=map_id,
@@ -32,6 +32,7 @@ def _insert_pin(db_session, *, map_id="map_1", place_id=None, created_by="user_1
         geom=func.ST_SetSRID(func.ST_MakePoint(129.12, 35.15), 4326),
         visibility=visibility,
         created_by=created_by,
+        checks=checks,
     )
     db_session.add(row)
     db_session.commit()
@@ -208,6 +209,25 @@ def test_list_pins_hides_soft_deleted_other_users_private_pin(app_client, db_ses
     assert resp.json() == []
 
 
+def test_list_pins_keeps_checks_on_published_ai_pin(app_client, db_session):
+    """가드레일 5 회귀 — 게시된 AI 핀의 조건별 충족 체크는 목록 조회에서도 유지된다(#57/#124).
+    직접 생성한 핀(checks=None)은 반대로 응답에 checks 키 자체가 생략된다
+    (response_model_exclude_none, 계약 그대로)."""
+    checks = [
+        {"fact_key": "is_open", "label": "영업 중", "passed": True, "confidence": "known", "needs_check": False},
+    ]
+    _insert_pin(db_session, kind="AI추천", place_id="checked_place", checks=checks)
+    _insert_pin(db_session, kind="일반", place_id="unchecked_place")
+
+    resp = app_client.get("/maps/map_1/pins", cookies=_auth("user_1"))
+    assert resp.status_code == 200
+    pins = resp.json()
+    checked = next(p for p in pins if p["kind"] == "AI추천")
+    unchecked = next(p for p in pins if p["kind"] == "일반")
+    assert checked["checks"] == checks
+    assert "checks" not in unchecked
+
+
 def test_list_pins_filters_by_category_kind_and_created_by(app_client, db_session):
     _insert_pin(db_session, category="음식점", kind="일반", created_by="user_1", place_id="a")
     _insert_pin(db_session, category="카페", kind="일반", created_by="user_2", place_id="b")
@@ -267,6 +287,26 @@ def test_delete_pin_publishes_event_for_public_pin(app_client, db_session):
     events = _events(db_session, type="pin.deleted")
     assert len(events) == 1
     assert events[0].payload == {"pin_id": str(row.id)}
+
+
+def test_delete_pin_concurrent_double_delete_publishes_event_only_once(db_session):
+    """#51 — 확인 후 처리(check-then-act, pin.deleted_at = ...; db.flush())였을 때는 동시
+    삭제 요청 두 개가 둘 다 loader를 통과한 뒤(둘 다 deleted_at IS NULL을 봄) 둘 다 UPDATE에
+    성공해 pin.deleted가 두 번 발행될 수 있었다. 서비스 함수를 같은 핀에 두 번 호출해
+    (두 번째 호출 시점엔 이미 DB상 deleted_at이 채워져 있다 — 두 요청이 각자 로드는 먼저
+    끝내고 나중에 순서대로 DB에 도달한 것과 동일한 조건) 조건부 UPDATE(WHERE deleted_at
+    IS NULL) + rowcount 판단이 실제로 두 번째 호출을 막는지 확인한다."""
+    from pins import service
+    from pins.models import Pin as PinRow
+
+    row = _insert_pin(db_session, created_by="user_1", place_id="race_delete")
+    pin = db_session.get(PinRow, row.id)
+
+    service.delete_pin(db_session, pin)  # 1번 요청 — 실제로 지운다, 이벤트 1건
+    service.delete_pin(db_session, pin)  # 2번 요청(레이스) — rowcount=0, 이벤트 없음
+
+    events = _events(db_session, type="pin.deleted")
+    assert len(events) == 1
 
 
 def test_delete_pin_non_member_is_404(app_client, db_session):
