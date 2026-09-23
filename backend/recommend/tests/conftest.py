@@ -14,12 +14,14 @@ import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
 import common.events  # noqa: F401
+import maps.models  # noqa: F401
 import pins.models  # noqa: F401
 import recommend.models  # noqa: F401
 from common.database import Base
 
-# 위 import들은 Base.metadata에 테이블(pins/reactions, event_log, recommend_runs/candidates)을
-# 등록시키기 위한 것 — 직접 쓰이진 않는다.
+# 위 import들은 Base.metadata에 테이블(pins/reactions, event_log, recommend_runs/candidates/
+# evidence_lines/regions/exclusions, maps/memberships — flows.get_readiness가 maps.api.
+# count_members로 memberships를 읽는다)을 등록시키기 위한 것 — 직접 쓰이진 않는다.
 
 BASE_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://pingo:pingo@localhost:5432/pingo")
 

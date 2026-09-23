@@ -44,6 +44,15 @@ pins(
   place_id references places(id),
   geom geography(Point,4326),
   visibility('public'|'private'),      -- 5-5-1: AI 후보는 private로 시작
+  source_run_id null,                  -- #57 결정: recommend_runs.id를 게시 시점에 한 번만
+                                        -- 써넣는 불투명 참조값(추적·표시용). FK 제약은 걸지 않고
+                                        -- pins는 이 값을 절대 다시 읽어 recommend를 조회하지
+                                        -- 않는다("모듈 간 접근은 함수/API로만" 원칙은 실시간
+                                        -- 조회 금지가 핵심이지, 게시 시점 1회성 값 복사를 막지
+                                        -- 않는다 — candidates.lat/lng 비정규화와 같은 논리).
+  checks jsonb null,                   -- #57 결정: candidate.checks를 게시 시점에 복사(가드레일
+                                        -- 5, 게시 후에도 조건별 충족 체크가 유지돼야 함). run·
+                                        -- candidate가 나중에 지워지거나 바뀌어도 이 값은 안 바뀐다.
   created_by, created_at, deleted_at
 )
   unique(map_id, place_id) where deleted_at is null   -- 중복 핀 판정(가드레일 6). 판정 기준은 #33(보류)에서 별도 확정
@@ -68,7 +77,11 @@ reactions(
 ```
 shortlist_items(
   id, map_id, pin_id, added_by, added_at,
-  visit_order int null                 -- 5-10 자동계산 결과 + #30 수동 정렬(허용 확정) 둘 다 이 컬럼을 쓴다
+  visit_order int null                 -- #30 수동 정렬(허용 확정). 동선(routes)과는 무관한
+                                        -- 별개 컬럼이다(최종기획안.md 9/4 결정 "visit_order 수동
+                                        -- 정렬 허용, 동선과는 무관") — 플레인 리스트 화면의
+                                        -- 드래그 순서일 뿐, routes 재계산이 이 값을 읽거나 쓰지
+                                        -- 않는다.
 )
   unique(map_id, pin_id)
 
@@ -80,11 +93,19 @@ routes(
   legs jsonb,                          -- [{from_pin_id, to_pin_id, distance_m, approx_minutes}]
   computed_at
 )
+  unique(map_id, region_label)          -- 동시 POST 재계산 시 같은 지역 행이 중복 적재되는 것을 막는다
   index(map_id)
-  -- GET은 이 테이블의 마지막 결과만 반환(재계산 안 함, 없으면 빈 배열). POST가 재계산할 때마다
-  -- 그 map_id의 기존 행을 전부 지우고 새로 쓴다 — 이전 계산 결과는 최신 결과로 완전히 대체되는
-  -- 것이 맞고(동선은 "그 시점의 확정 리스트 스냅샷"이지 누적 이력이 아니다), 부분 갱신할 이유가
-  -- 없다.
+  -- GET은 그 map_id의 모든 행(=가장 최근 POST 한 번이 만든 지역별 결과 전부)을 그대로 반환한다
+  -- — "마지막 결과"란 "행 1개"가 아니라 "가장 최근 계산 배치"라는 뜻이다. 지역이 여러 개면
+  -- 여러 행이 그대로 여러 Route 원소가 된다. 재계산 안 함(GET은 절대 재계산하지 않는다).
+  --
+  -- POST가 재계산할 때마다 그 map_id의 기존 행을 전부 지우고 새로 쓴다 — 이전 계산 결과는
+  -- 최신 결과로 완전히 대체되는 것이 맞고(동선은 "그 시점의 확정 리스트 스냅샷"이지 누적
+  -- 이력이 아니다), 부분 갱신할 이유가 없다. DELETE와 INSERT는 반드시 같은 요청의 같은
+  -- 트랜잭션 안에서 실행한다(common.database.get_db_session 기본 동작 — 커밋 전까지 다른
+  -- 요청에는 삭제 전 상태가 그대로 보이므로 GET이 빈 배열을 보는 순간이 생기지 않는다).
+  -- 확정 핀이 0개면 행을 만들지 않는다(빈 배열로 응답). 1개면 legs는 빈 배열, total_distance_m
+  -- 은 0인 한 행을 만든다(에러 아님).
 ```
 
 쓰기 소유: `shortlist`. `pins.kind='확정'` 갱신은 `shortlist`가 `pins.api.mark_confirmed()`를
@@ -149,7 +170,15 @@ seeding_jobs(
 ```
 recommend_runs(
   id, map_id, category, requested_by, status,
-  attempt_no,                           -- 재시도 상한. 집계 단위·수치는 #31 미확정(현재 3회는 잠정치)
+  attempt_no,                           -- #31 확정(2026-09-22, 황준영·itsmedoyun 합의): 개인
+                                         -- (requested_by) 단위로 집계, 카테고리 구분 없음(그
+                                         -- 사람이 이 지도에서 만든 모든 run이 카테고리 무관하게
+                                         -- 한 카운터를 공유), 상한 5회(기존 3회에서 상향). 한
+                                         -- 사람이 상한에 도달해도 다른 사람의 추천 시도에는
+                                         -- 영향 없음.
+  last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
+                                         -- 않도록 마지막 execute/widen/retry의 깔때기 표를
+                                         -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.
   created_at
 )
 
@@ -166,7 +195,14 @@ evidence_lines(
 
 regions(
   id, run_id, signature,                -- 5-6-1 겹침 판정 서명. 무효화 규칙: signature 재계산 시 값이 바뀌면 재확인
-  geom geography, confirmed boolean, confirmed_at
+  label,                                 -- #108 확정: places가 없어 리버스 지오코딩(장소명 조회)이
+                                         -- 안 되므로 "N번째 지역" 같은 라벨을 여기서 직접 만들어 저장
+  center_lat, center_lng, radius_m,     -- #108 확정: geom geography 대신 병합된 원(중심+반경)을
+                                         -- 평범한 컬럼으로 저장 — candidates.lat/lng와 같은 차원
+                                         -- 압축 논리. 실제 PostGIS 연산이 필요해지면(예: 핀-지역
+                                         -- 포함 판정을 DB 레벨로 옮길 때) geom 컬럼을 추가하는
+                                         -- 별도 마이그레이션으로 되돌린다.
+  confirmed boolean, confirmed_at
 )
 
 candidates(
@@ -180,14 +216,26 @@ candidates(
   published_pin_id null,                -- 5-5-1 게시 후 연결
   created_at
 )
+  -- 게시(publish) 구현 시 주의할 것(Antigravity 검수, #64/#57 처리 중 발견 — 아직 recommend가
+  -- 없어 지금 고치는 게 아니라 여기 남겨둔다):
+  -- 1. can_publish는 requested_by 본인만이 아니라 published_pin_id is null(아직 미게시)도
+  --    같이 봐야 한다 — 안 그러면 이미 게시된 후보도 게시 버튼이 계속 활성화된다.
+  -- 2. 게시는 pins.unique(map_id, place_id) where deleted_at is null 제약과 만난다 — 같은
+  --    장소에 이미 핀(수동이든 이전 게시든)이 있으면 게시 INSERT가 충돌한다. 409로 처리할지
+  --    기존 핀과 병합할지 정해야 한다.
+  -- 3. pins.source_run_id/checks는 write-once다 — 핀 수정 엔드포인트가 생기면 그 요청
+  --    스키마에서 반드시 제외한다(클라이언트가 덮어쓸 수 없게).
 
 exclusions(
   map_id, category, place_id, reason('proposed'|'dismissed'),
   run_id, requested_by, created_at
 )
-  -- "다시 추천 받기" 시 현재 뜬 후보 전체가 여기 들어간다(3절, 루프가 닫힌다)
-  -- map_id 단위로 쌓는 것으로 우선 설계했으나, #42("제안·거절 이력의 단위") 미확정 —
-  -- 개인 단위(requested_by 포함)로 정해지면 unique 제약·조회 조건이 바뀐다
+  unique(map_id, requested_by, place_id)  -- #42 확정: 개인 단위라 (map_id, place_id)만으로는
+                                           -- 부족하다 — 같은 곳을 여러 명이 각자 거절할 수 있다
+  -- "다시 추천 받기" 시 현재 뜬 후보 전체가 이 사람(requested_by) 몫으로 여기 들어간다(3절,
+  -- 루프가 닫힌다). #42 확정(2026-09-22, 황준영·itsmedoyun 합의): 개인 단위 — A가 거절한
+  -- 곳도 B의 추천에는 그대로 뜬다. 조회 시 반드시 requested_by = 현재 사용자로 필터링한다
+  -- (map_id만으로 걸러진 예전 설계를 그대로 두면 다른 사람의 거절이 새어 들어간다).
 ```
 
 ---
@@ -221,9 +269,8 @@ event_log(
 ## 열린 항목 (결정 이슈로 별도 확정 — 이 문서는 자리만 잡음)
 
 - 중복 핀 "같은 곳" 판정 기준 (source_id 동일 / 좌표 반경 N m / 이름 유사도) — #33, 보류
-- 재시도 3회 상한의 집계 단위·상한 수치 — #31, BE 논의 중 (황준영: 지도+카테고리당·상한 상향 / 김도윤: 개인 단위)
 - N(구성원 수)의 정의 — #32, "온라인 구성원 현재 수"로 답은 나왔으나 ceil(N/2) 임계값 자체를 없앨지는 코멘트 상 아직 불명확
-- **제안·거절 이력의 단위** — #42, 지도 vs 개인 단위로 황준영·김도윤 의견이 갈려 아직 미확정. `exclusions` 스키마는 지도 단위(현재 설계)를 전제로 함
+- 재시도 상한의 집계 단위(#31), 제안·거절 이력의 단위(#42) — 아래 "팀이 결정한 것" 참고(2026-09-22 확정)
 
 ## 9/4 회의로 해결된 것 (docs 반영 완료)
 
@@ -231,3 +278,29 @@ event_log(
 - 구성원 색 — #26, 불필요로 확정, `memberships.color` 제거
 - `visit_order` 수동 정렬 — #30, 허용 확정(동선과 무관). `PUT /maps/{mapId}/shortlist/order` 참고
 - AI 추천 결과 상태 관리 위치 — #43, 서버 DB 영속 확정. `recommend_runs`/`candidates`는 이제 확정 설계
+
+## 루트가 확정한 것 (2026-09-22)
+
+- **`pins.source_run_id`/`checks` 스키마** — #57. 둘 다 추가하는 쪽으로 확정: `source_run_id`는
+  게시 시점 1회성 불투명 참조(추적·표시용, FK 없음, pins가 다시 읽지 않음), `checks`는 게시
+  시점에 candidate에서 복사(가드레일 5). 위 `pins` 테이블에 반영. 이유: `source_run_id`는 이미
+  목 서버(`contracts/mocks`)가 private 판정에 쓰고 있어 없애면 FE 쪽 재작업이 필요하고,
+  `candidates.lat/lng` 비정규화와 같은 논리로 "1회성 복사"는 "실시간 모듈 간 조회 금지" 원칙과
+  충돌하지 않는다.
+- **`Candidate.permissions` 필드 추가 여부** — #64. 추가하는 쪽으로 확정: 이미 있는 공용
+  `Permissions` 스키마에 `can_publish`를 추가하고 `Candidate`가 이를 참조한다(`Pin`/`EvidenceLine`
+  등 다른 리소스와 같은 패턴). "FE가 권한 규칙을 재구현하지 않는다"(permissions.md) 원칙과
+  일관되고, `authz.core.can()`이 이미 `recommend.publish`를 판정할 수 있어 구현 비용도 낮다.
+  `docs/api-spec.yaml`·`docs/CHANGELOG-api.md`에 반영.
+- **게시 버튼 공개여부 구분 표시** — #27, FE가 결정하기로 함(투명도로 구분 제안). 백엔드
+  블로커 아님 — 이슈 종료.
+
+## 팀이 결정한 것 (2026-09-22, 황준영·itsmedoyun 합의 — 루트는 기록만)
+
+- **재시도 상한의 집계 단위** — #31. 개인(requested_by) 단위, 카테고리 구분 없음, 상한
+  5회(기존 3회 잠정치에서 상향). 위 `recommend_runs.attempt_no`에 반영.
+- **제안·거절 이력의 단위** — #42. 개인 단위 — 한 사람이 거절한 곳도 다른 사람의 추천에는
+  그대로 뜬다. 위 `exclusions` 테이블에 `unique(map_id, requested_by, place_id)`로 반영.
+
+이 둘이 정해지면서 recommend 코어 스키마를 막던 미결 항목(#31·#42·#57·#64)이 전부 해소됐다 —
+다음은 #6(AI 추천 탭) 하위 이슈 분할과 recommend 코어 구현.

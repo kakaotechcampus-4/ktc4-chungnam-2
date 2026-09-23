@@ -8,7 +8,7 @@ authz/deps.py::get_membership_gateway가 이 클래스를 직접 쓴다(#89로 A
 비구성원 404가 실제로 걸리는지 검증한다.
 """
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from authz.policy import Role
@@ -27,3 +27,12 @@ class DbMembershipGateway:
                 MembershipRow.map_id == map_id, MembershipRow.user_id == user_id
             )
         ).scalar_one_or_none()
+
+
+def count_members(db: Session, map_id: str) -> int:
+    """recommend readiness(5-4)가 ceil(N/2)의 N으로 쓴다(recommend/#108). N="이 지도에
+    현재 참여 중인 인원 수"로 확정(#32, 2026-09-23) — maps가 소유한 함수라 여기 추가했다
+    (get_coordinates_for_pins를 pins가 shortlist를 위해 추가한 것과 같은 선례)."""
+    return db.execute(
+        select(func.count()).select_from(MembershipRow).where(MembershipRow.map_id == map_id)
+    ).scalar_one()
