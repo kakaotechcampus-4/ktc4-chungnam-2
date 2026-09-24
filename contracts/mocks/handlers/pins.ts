@@ -1,5 +1,5 @@
 import { http, HttpResponse } from "msw";
-import { ME_USER_ID, nextId, store, type Pin } from "../store";
+import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError, pinPermissions } from "../util";
 
 function visiblePins(mapId: string): Pin[] {
@@ -64,6 +64,7 @@ export const pinsHandlers = [
     (pin as any)._place_id = body.place_id;
     store.pins[pinId] = pin;
     store.reactions[pinId] = [];
+    emitEvent(mapId, "public", "pin.created", pin); // docs/events.md — private 핀은 여기 안 온다(지금 목 서버는 항상 public으로만 생성)
     return HttpResponse.json(pin, { status: 201 });
   }),
 
@@ -81,9 +82,11 @@ export const pinsHandlers = [
 
   http.delete("*/pins/:pinId", ({ params }) => {
     const pinId = params.pinId as string;
-    if (!store.pins[pinId]) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    const pin = store.pins[pinId];
+    if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
     delete store.pins[pinId];
     delete store.reactions[pinId];
+    emitEvent(pin.map_id, "public", "pin.deleted", { pin_id: pinId });
     return new HttpResponse(null, { status: 204 });
   }),
 
@@ -106,6 +109,7 @@ export const pinsHandlers = [
       neutral: list.filter((r) => r.type === "neutral").length,
       against: list.filter((r) => r.type === "against").length,
     };
+    emitEvent(pin.map_id, "public", "reaction.changed", { pin_id: pinId, reaction_summary: pin.reaction_summary });
     return HttpResponse.json(reaction);
   }),
 
@@ -120,6 +124,7 @@ export const pinsHandlers = [
       neutral: store.reactions[pinId].filter((r) => r.type === "neutral").length,
       against: store.reactions[pinId].filter((r) => r.type === "against").length,
     };
+    emitEvent(pin.map_id, "public", "reaction.changed", { pin_id: pinId, reaction_summary: pin.reaction_summary });
     return new HttpResponse(null, { status: 204 });
   }),
 ];

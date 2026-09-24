@@ -156,3 +156,30 @@ describe("에러 시나리오", () => {
     expect(res2.status).toBe(409);
   });
 });
+
+describe("realtime SSE (docs/events.md)", () => {
+  it("전체 채널 구독 중 핀을 생성하면 pin.created 이벤트가 온다", async () => {
+    const stream = await fetch(`${BASE}/maps/map_1/events`);
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toContain("text/event-stream");
+
+    const reader = stream.body!.getReader();
+    const decoder = new TextDecoder();
+
+    await fetch(`${BASE}/maps/map_1/pins`, {
+      method: "POST",
+      body: JSON.stringify({ category: "카페" }),
+    });
+
+    let received = "";
+    while (!received.includes("pin.created")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      received += decoder.decode(value);
+    }
+    await reader.cancel();
+
+    expect(received).toContain("event: pin.created");
+    expect(received).toMatch(/id: \d+/);
+  }, 10000);
+});
