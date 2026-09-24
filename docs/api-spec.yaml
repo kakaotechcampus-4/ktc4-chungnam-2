@@ -177,6 +177,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Pin" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/PinDuplicate" }
 
   /maps/{mapId}/counts:
@@ -196,7 +197,9 @@ paths:
       tags: [pins]
       summary: 핀 삭제. 권한 규정은 결정 이슈 미결 (#15 분리분)
       parameters: [ { $ref: "#/components/parameters/PinId" } ]
-      responses: { "204": { description: 삭제됨 } }
+      responses:
+        "204": { description: 삭제됨 }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /pins/{pinId}/reaction:
     put:
@@ -213,12 +216,15 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Reaction" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/EvidenceRequired" }
     delete:
       tags: [pins]
       summary: 핀 되돌리기 — 구성원 누구나 가능 (15-1)
       parameters: [ { $ref: "#/components/parameters/PinId" } ]
-      responses: { "204": { description: 반응 취소됨 } }
+      responses:
+        "204": { description: 반응 취소됨 }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   # ---------- recommend (3절, 5-5~5-6-1) ----------
   /maps/{mapId}/recommend/readiness:
@@ -406,6 +412,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ShortlistItem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /shortlist/{itemId}:
     delete:
@@ -416,7 +423,9 @@ paths:
           in: path
           required: true
           schema: { type: string }
-      responses: { "204": { description: 제외됨 } }
+      responses:
+        "204": { description: 제외됨 }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /maps/{mapId}/shortlist/order:
     put:

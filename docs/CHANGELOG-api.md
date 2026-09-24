@@ -93,6 +93,19 @@ recommend·shortlist 등)의 실제 구현을 확인하지 않고 `required`를 
 **FE 영향**: 타입 생성 시 위 3개 오퍼레이션에 404 케이스가 새로 잡힌다(기존 `Error` 스키마
 재사용). 초대 발급 버튼은 모든 구성원에게 노출해도 된다.
 
+## 2026-09-13 — 403 응답 커버리지 확대 (#67)
+
+authz(`can()`)가 실제로 권한 판정을 하는 6개 오퍼레이션에 `403` 응답을 명시했다(기존엔
+`PATCH /runs/{runId}/evidence` 한 곳뿐이었다): `POST /maps/{mapId}/pins`,
+`DELETE /pins/{pinId}`, `PUT /pins/{pinId}/reaction`, `DELETE /pins/{pinId}/reaction`,
+`POST /maps/{mapId}/shortlist`, `DELETE /shortlist/{itemId}`.
+
+조회(GET) 엔드포인트는 멤버십만 보고 액션 판정이 없어(`require_map_member()`) 대상에서
+뺐다 — 비구성원은 여기서도 여전히 404.
+
+**FE 영향**: 타입 생성 시 위 6개 오퍼레이션 응답에 403 케이스가 새로 잡힌다. 이미 존재하던
+`Error` 스키마 재사용이라 새 타입은 아니다.
+
 ## 2026-09-11 — 비구성원 응답: 403 → 404 (PR #71 멘토 리뷰 대응)
 
 `pins`를 비롯한 보호 리소스에서, 요청자가 해당 지도의 구성원이 아닐 때의 응답이 403에서
