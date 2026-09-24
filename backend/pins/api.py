@@ -7,6 +7,7 @@
 db.flush()만으로 PK/유니크 충돌 등은 여전히 그 자리에서 드러난다.
 """
 
+import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
@@ -117,3 +118,21 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
         reaction_counts=reaction_counts,
     )
     return core.to_pin_response(record, principal)
+
+
+def get_coordinates_for_pins(db: Session, pin_ids: list[str]) -> dict[str, tuple[float, float]]:
+    """좌표만 필요한 벌크 조회 — shortlist의 동선 계산(5-10, #103)이 쓴다. 가시성 판정은 하지
+    않는다: 확정 리스트(shortlist_items)에 들어간 핀은 가드레일 1(`shortlist/loaders.py::
+    load_pin_for_confirm`)로 항상 visibility=public이므로 호출자가 이미 공개 핀 id만 넘긴다는
+    전제다. 소프트 삭제된 핀(`deleted_at` not null)은 다른 모든 조회 함수와 같은 원칙으로
+    제외한다(Antigravity 검수 지적 — 이전엔 이 함수만 필터가 빠져서 삭제된 핀이 동선에 남을 수
+    있었다). 존재하지 않거나 삭제된 id는 결과 dict에서 조용히 빠진다(호출자가 필요하면 직접
+    검사 — `shortlist/flows.py::recalculate_route`는 빠진 id를 건너뛴다)."""
+    if not pin_ids:
+        return {}
+    uuids = [uuid.UUID(pid) for pid in pin_ids]
+    lat_col, lng_col = service._lat_lng_columns()
+    rows = db.execute(
+        select(PinRow.id, lat_col, lng_col).where(PinRow.id.in_(uuids), PinRow.deleted_at.is_(None))
+    ).all()
+    return {str(pin_id): (lat, lng) for pin_id, lat, lng in rows}
