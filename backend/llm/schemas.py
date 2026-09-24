@@ -5,10 +5,12 @@
 - docs/constraints.md `fact_key` 레지스트리 (값 변경은 루트만 — 여기서 새 fact_key를 만들지 않는다)
 - docs/api-spec.yaml `LabelConfidence`(known/unknown)와 1:1
 
-모델 호출 3곳(backend/llm/CLAUDE.md)에 대응하는 스키마만 담는다:
+모델 호출 2곳(backend/llm/CLAUDE.md)에 대응하는 스키마만 담는다:
   ②    PlanningOutput (사유 → 실격/선호/반경 구조화)
   ③-a-1 PlaceFactLabel (장소 라벨링)
-  ③-b   RankedCandidate (선호 순위)
+
+③-b 선호 순위(RankedCandidate)는 2026-09-21에 코드로 옮기면서 제거했다(#99).
+순위 계산은 recommend가 하고, 규칙은 docs/constraints.md "선호 점수 계산 (③-b)"에 있다.
 """
 
 from datetime import datetime
@@ -89,11 +91,3 @@ class PlaceFactLabel(BaseModel):
         if self.confidence == "known" and self.value is None:
             raise ValueError("confidence=known이면 value가 있어야 한다")
         return self
-
-
-class RankedCandidate(BaseModel):
-    """③-b 선호 순위 채점 출력. 입력은 이미 실격 통과분이며, 이 스키마는 순위만 매긴다."""
-
-    place_id: str
-    rank: int
-    member_comment: Optional[str] = None  # 근거 없으면 None (5-7-1) — 지어내지 않는다

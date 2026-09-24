@@ -1,6 +1,8 @@
 """backend/llm/CLAUDE.md 완료 정의:
-- ②③-a-1③-b 각각의 구조화 출력 스키마를 docs/constraints.md의 fact_key마다 최소 1개씩 커버
+- ②③-a-1 각각의 구조화 출력 스키마를 docs/constraints.md의 fact_key마다 최소 1개씩 커버
 - unknown 응답이 실제로 발생하는 경계 케이스(정보 부족한 후보) 테스트
+
+③-b 선호 순위 테스트는 2026-09-21에 제거했다(#99) — 순위 계산이 recommend로 옮겨갔다.
 """
 
 from typing import get_args
@@ -8,8 +10,8 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
-from llm.schemas import EvidenceLine, FactKey, PlaceFactLabel, RankedCandidate
-from llm.service import label_place, plan_evidence, rank_candidates
+from llm.schemas import EvidenceLine, FactKey, PlaceFactLabel
+from llm.service import label_place, plan_evidence
 
 ALL_FACT_KEYS = get_args(FactKey)
 
@@ -239,24 +241,3 @@ class TestPlanEvidence:
         [evidence] = plan_evidence(raw)
 
         assert evidence.fact_key is None
-
-
-class TestRankCandidates:
-    """③-b: 실격 통과분의 순위만 매기고, 근거 없는 코멘트를 지어내지 않는다."""
-
-    def test_assigns_sequential_rank_in_input_order(self):
-        candidate_place_ids = ["place-a", "place-b", "place-c"]
-
-        ranked = rank_candidates(candidate_place_ids)
-
-        assert [r.place_id for r in ranked] == candidate_place_ids
-        assert [r.rank for r in ranked] == [1, 2, 3]
-        assert all(isinstance(r, RankedCandidate) for r in ranked)
-
-    def test_no_fabricated_member_comment(self):
-        [ranked] = rank_candidates(["place-a"])
-
-        assert ranked.member_comment is None
-
-    def test_empty_candidates_returns_empty_ranking(self):
-        assert rank_candidates([]) == []
