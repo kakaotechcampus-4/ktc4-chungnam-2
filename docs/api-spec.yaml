@@ -627,6 +627,7 @@ components:
         can_remove_from_shortlist: { type: boolean }
         can_disable: { type: boolean, description: "evidence_line 전용: 자기가 쓴 것만 true" }
         can_delete: { type: boolean }
+        can_publish: { type: boolean, description: "candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64)" }
 
     User:
       type: object
@@ -834,6 +835,7 @@ components:
           items: { $ref: "#/components/schemas/Check" }
         visibility: { type: string, enum: [private, published] }
         published_pin_id: { type: [string, "null"] }
+        permissions: { $ref: "#/components/schemas/Permissions" }
 
     RecommendResult:
       type: object

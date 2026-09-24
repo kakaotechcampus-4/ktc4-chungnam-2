@@ -2,6 +2,19 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-09-22 — Candidate.permissions 추가 (#64 결정)
+
+`Candidate` 스키마에 `permissions` 필드가 없어서 "게시할 수 있는지"(`recommend.publish`,
+`candidate.requested_by` 본인만)를 FE가 판단할 방법이 없었다(#64). 다른 리소스와 같은 패턴으로
+풀었다 — 새 필드를 만들지 않고 기존 공용 `Permissions` 스키마에 `can_publish`를 추가하고,
+`Candidate`가 그 스키마를 참조하게 했다.
+
+- `Permissions.can_publish: boolean` 신설
+- `Candidate.permissions: Permissions` 신설
+
+**FE 영향**: 타입 재생성 필요(`npm run gen:types`). `recommend` 모듈이 아직 없어 실제로 이 필드가
+채워지는 엔드포인트는 없다 — 타입만 먼저 맞춰둔다.
+
 ## 2026-09-19 (2) — 값 제약(길이·범위) 보강 (PR #94 멘토 리뷰 대응)
 
 `reason_text`(maxLength 140)·`step`(1~8) 딱 둘만 값 제약이 있고 나머지 필드(문자열 82개,
