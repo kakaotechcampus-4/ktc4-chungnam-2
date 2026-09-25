@@ -150,32 +150,59 @@ core.py로 옮긴다.
 함수에 묶여 있다). 연결과 생애주기는 이미 `get_db_session`과 `session_scope`가 감추고 있어서,
 소비자가 커넥션을 열거나 커밋 시점을 정하는 일은 없다.
 
-**이건 아직 팀이 확정한 결정이 아니다.** 멘토 리뷰(PR #94)의 "데이터 전달 레이어 공통 설계"
-항목이 저장소 계층을 두라는 뜻인지 확인 중이고, 답을 받은 뒤에 팀에서 정한다.
+**이건 아직 팀이 확정한 결정이 아니다.** PR #118에서 받은 멘토 답변은 반대 방향이다. 연결
+풀을 관리하는 DB 서비스를 앱 런타임 동안 하나인 객체로 두고, 기능 모듈에는 세션보다 한 번 더
+추상화된 핸들(Unit of Work나 repository)을 넘기라는 것, 그리고 DB를 바꾸지 않을 것이라는 점은
+추상화하지 않을 이유가 되지 않는다는 것이다. 위 판단을 유지할지 팀에서 정해야 한다.
 
-### 상주 상태는 하나다
+### 상주 상태 (2026-09-26 개정)
 
-프로세스가 살아 있는 동안 메모리에 남는 상태는 `realtime/dispatcher.py`의 모듈 수준 싱글턴
-하나뿐이다.
+이전 판은 "상주 상태는 dispatcher 하나뿐"이라고 적었는데, `engine`과 연결 풀이 빠져 있었다(PR #118
+멘토 리뷰). 프로세스가 살아 있는 동안 메모리에 남는 객체를 두 종류로 나눠 적는다.
 
-```
-dispatcher = Dispatcher()
-  ._subscribers   지도별 SSE 구독자 목록
-  ._last_seen     마지막으로 처리한 event_log.seq
-  ._gap_since     순번 구멍 추적 시각
-```
+**바뀌는 상태.** 만드는 곳과 정리하는 곳을 반드시 적는다.
 
-접근 경로는 셋으로 제한된다.
+| 객체 | 위치 | 들고 있는 것 | 만드는 곳 | 정리하는 곳 |
+|---|---|---|---|---|
+| `engine` | `common/database.py` | DB 연결 풀 | import 시점, 모듈 전역 | 지금은 없음. #130에서 lifespan 종료 때 `engine.dispose()` |
+| `dispatcher` | `realtime/dispatcher.py` | 지도별 SSE 구독자 목록, 마지막으로 처리한 `event_log.seq`, 순번 구멍 추적 시각 | import 시점에 생성, lifespan에서 초기화하고 폴링 시작 | 지금은 lifespan 종료 때 폴링 작업 취소만. #130에서 정지 대기와 SSE 정리 |
+
+`SessionLocal`은 `engine`에 묶인 세션 공장이라 따로 상태를 들고 있지 않다.
+
+**읽기 전용.** 기동 때 한 번 만들어지고 이후 바뀌지 않는다. `settings`(frozen dataclass), FastAPI
+`app`과 모듈별 `router`가 여기 속한다. 카카오 API 호출은 `httpx.post`, `httpx.get`을 호출마다
+새로 불러서 상주하는 HTTP 연결 풀은 없다.
+
+### 접근 경로
+
+`engine`은 `SessionLocal`을 통해서만 쓴다.
 
 | 위치 | 하는 일 |
 |---|---|
-| `main.py` lifespan | 기동 시 `initialize_last_seen`, 폴링 태스크 시작·종료 |
+| `common/database.py::get_db_session` | 요청마다 세션 하나를 열고 `session_scope`로 커밋 또는 롤백 |
+| `realtime/router.py` | SSE 재전송 조회를 짧게 열고 닫는다. 요청 단위 세션을 스트림 내내 들고 있으면 연결 풀을 계속 점유하기 때문 |
+| `realtime/dispatcher.py` | 폴링과 기동 시 초기화. 요청 밖(lifespan 백그라운드 작업)에서 돈다 |
+
+`dispatcher`의 접근 경로는 셋으로 제한된다.
+
+| 위치 | 하는 일 |
+|---|---|
+| `main.py` lifespan | 기동 시 `initialize_last_seen`, 폴링 작업 시작과 종료 |
 | `realtime/router.py` | SSE 연결마다 `subscribe`, 끊길 때 `unsubscribe` |
 | `realtime/tests` | `_subscribers`를 직접 확인 |
 
 **다른 모듈은 `dispatcher`를 쓰지 않는다.** 이벤트를 내보내려는 쪽은 `common.events.record_event`로
 `event_log` 테이블에 쓰고, `dispatcher`는 그 테이블을 읽기만 한다(§4.1). 그래서 "이벤트를
 보내려면 dispatcher를 불러야 한다"는 의존이 생기지 않는다.
+
+### 종료 순서 (#130)
+
+```
+정지 신호 → SSE 구독 큐에 종료 표시 → 폴링 작업 종료 대기 → engine.dispose()
+```
+
+폴링은 DB 조회를 `asyncio.to_thread`로 스레드에서 돌린다. 작업을 취소해도 스레드는 멈출 수 없어서
+이미 시작된 조회는 끝까지 실행된다. 그래서 폴링이 끝난 것을 확인한 뒤에 연결 풀을 닫아야 한다.
 
 ### 새 상주 상태를 만들 때
 
@@ -184,8 +211,8 @@ dispatcher = Dispatcher()
 테스트가 격리된다.
 
 DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스에 묶인 것)에만 상주 상태를 만들고,
-그때는 접근 경로를 이 절의 표처럼 적어둔다. 어느 모듈이든 import해서 만질 수 있는 상태가
-둘 이상이 되면 변경 추적이 어려워진다.
+그때는 만드는 곳, 정리하는 곳, 접근 경로를 이 절의 표에 추가한다. 정리하는 곳이 없는 상주 상태는
+만들지 않는다.
 
 현재 `dispatcher`는 단일 서버를 전제한다. 서버가 여러 대가 되면 각 인스턴스가 따로 폴링하고
 따로 구독자를 든다(멘토 리뷰에서 "우선은 단일 서버로 돌아가는 환경을 전제로 구현해보세요"로
