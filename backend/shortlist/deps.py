@@ -6,11 +6,6 @@ authz.deps.get_membership_gateway를 그대로 가져다 쓴다(shortlist가 자
 
 from fastapi import Depends
 
-from common.database import get_db
-
-
-def get_db_session():
-    yield from get_db()
-
+from common.database import get_db_session
 
 DbSession = Depends(get_db_session)

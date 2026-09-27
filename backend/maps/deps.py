@@ -9,11 +9,6 @@ common/tests/test_adapter_assembly.py::test_adapter_factories_go_through_selectê
 
 from fastapi import Depends
 
-from common.database import get_db
-
-
-def get_db_session():
-    yield from get_db()
-
+from common.database import get_db_session
 
 DbSession = Depends(get_db_session)
