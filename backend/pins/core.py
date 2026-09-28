@@ -133,6 +133,15 @@ def pin_created_event(pin: Pin) -> Event | None:
     return Event(map_id=pin.map_id, channel="public", type="pin.created", payload=pin.model_dump(exclude_none=True))
 
 
+def pin_published_event(pin: Pin) -> Event | None:
+    """docs/events.md pin.published — recommend의 「지도에 올리기」 전용(pin_created_event와
+    페이로드는 같고 type만 다르다). 게시는 항상 public이라 private 분기는 없다(api.create_ai_pin이
+    이미 visibility='public'으로 INSERT함) — 그래도 방어적으로 같은 체크를 유지한다."""
+    if pin.visibility == "private":
+        return None
+    return Event(map_id=pin.map_id, channel="public", type="pin.published", payload=pin.model_dump(exclude_none=True))
+
+
 def pin_deleted_event(pin_id: str, map_id: str, visibility: str) -> Event | None:
     """docs/events.md pin.deleted — 페이로드는 {pin_id}뿐이다. pin.created와 마찬가지로
     private 핀의 삭제 사실도 전체 채널로 새면 안 된다."""

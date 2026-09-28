@@ -24,7 +24,9 @@ def test_create_ai_pin_inserts_public_ai_pin_and_returns_event(db_session):
     assert mutation.pin.visibility == "public"
 
     assert mutation.event is not None
-    assert mutation.event.type == "pin.created"
+    # docs/events.md — 「지도에 올리기」 전용 이벤트는 pin.created가 아니라 pin.published다
+    # (루트 수정, 2026-09-23 — recommend/#108 검증 중 발견된 기존 버그).
+    assert mutation.event.type == "pin.published"
     assert mutation.event.map_id == "map_1"
 
 
