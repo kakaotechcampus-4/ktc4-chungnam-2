@@ -1,11 +1,15 @@
 """
-docs/api-spec.yaml `maps` 태그 5개 엔드포인트. 경로 파라미터는 반드시 `mapId`(camelCase)다 —
+docs/api-spec.yaml `maps` 태그 6개 엔드포인트. 경로 파라미터는 반드시 `mapId`(camelCase)다 —
 authz/guard.py::require_on_map·require_map_member가 이 이름을 하드코딩해서, `map_id`로
 쓰면 기동 시점에 바로 실패한다.
 
 `POST /maps`와 `POST /invites/{token}/accept`에는 멤버십 가드가 없다 — 아직 소속될 지도가
 없는(또는 방금 발급된 초대로 처음 들어오는) 요청이라, 이 라우터 전체에 걸린 인증
 (get_current_user)만 거친다. 빠뜨린 게 아니다.
+
+`GET /maps`도 멤버십 가드가 없다 — 특정 mapId 하나를 전제하는 require_map_member()가 아예
+성립하지 않는 "내 지도 전체 목록" 조회라, 여기도 인증만 거친다(docs/CHANGELOG-api.md
+2026-09-28, #24).
 """
 
 from fastapi import APIRouter, Depends, Path, Request
@@ -28,6 +32,14 @@ MembersForMap = Depends(require_map_member())
 # 한 줄로 교체한다(maps/for_Root.md 항목 4). require_on_map("map.settings.edit")를 빌려
 # 쓰는 안은 기각했다 — 무관한 액션 이름 뒤에 정책 결정을 숨기게 된다.
 MapForInvite = Depends(require_map_member())
+
+
+@router.get("/maps", response_model=list[Map], response_model_exclude_none=True)
+def get_maps(
+    user: CurrentUser = Depends(get_current_user),
+    db=DbSession,
+):
+    return service.list_maps(db, user_id=user.user_id)
 
 
 @router.post("/maps", response_model=Map, response_model_exclude_none=True, status_code=201)

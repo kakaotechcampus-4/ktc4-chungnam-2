@@ -7,7 +7,8 @@
 import secrets
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select, update
+from geoalchemy2 import Geometry
+from sqlalchemy import cast, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -31,6 +32,27 @@ def _member_count(db: Session, map_id: str) -> int:
     ).scalar_one()
 
 
+def _member_counts(db: Session, map_ids: list[str]) -> dict[str, int]:
+    """GET /maps 목록용 — N개 지도에 N번 쿼리하지 않는다(pins/for_Root.md·auth.api.display_names와
+    같은 배치 원칙). map_ids가 비어 있으면 쿼리 자체를 건너뛴다."""
+    if not map_ids:
+        return {}
+    rows = db.execute(
+        select(MembershipRow.map_id, func.count())
+        .where(MembershipRow.map_id.in_(map_ids))
+        .group_by(MembershipRow.map_id)
+    ).all()
+    return {map_id: count for map_id, count in rows}
+
+
+def _region_lat_lng_columns():
+    """geom::geometry 캐스트 후 ST_X/ST_Y로 좌표를 뽑는다(pins/service.py::_lat_lng_columns와
+    동일 패턴 — geography 컬럼엔 ST_X/ST_Y가 직접 안 먹는다). region_center가 NULL이면
+    ST_X/ST_Y도 NULL을 돌려주므로 region 없는 지도도 그대로 섞어 쿼리할 수 있다."""
+    geom_as_geometry = cast(MapRow.region_center, Geometry())
+    return func.ST_Y(geom_as_geometry).label("region_lat"), func.ST_X(geom_as_geometry).label("region_lng")
+
+
 def get_map_or_404(db: Session, map_id: str) -> MapRow:
     row = db.execute(select(MapRow).where(MapRow.id == map_id)).scalar_one_or_none()
     if row is None:
@@ -38,12 +60,20 @@ def get_map_or_404(db: Session, map_id: str) -> MapRow:
     return row
 
 
-def _map_response(db: Session, map_row: MapRow) -> Map:
-    record = core.MapRecord(
-        id=map_row.id, title=map_row.title, start_date=map_row.start_date, end_date=map_row.end_date
+def _map_record(db: Session, map_row: MapRow) -> core.MapRecord:
+    lat_col, lng_col = _region_lat_lng_columns()
+    region_lat, region_lng = db.execute(
+        select(lat_col, lng_col).where(MapRow.id == map_row.id)
+    ).one()
+    return core.MapRecord(
+        id=map_row.id, title=map_row.title, start_date=map_row.start_date, end_date=map_row.end_date,
+        region_label=map_row.region_label, region_lat=region_lat, region_lng=region_lng,
     )
+
+
+def _map_response(db: Session, map_row: MapRow) -> Map:
     return core.to_map_response(
-        record,
+        _map_record(db, map_row),
         member_count=_member_count(db, map_row.id),
         confirmed_count=shortlist_api.count_confirmed(db, map_id=map_row.id),
     )
@@ -57,11 +87,16 @@ def create_map(db: Session, *, req: MapCreateRequest, creator_id: str) -> Map:
     "첫 핀 좌표로 확정"한다고 정의하는데, 이 시점엔 핀이 0개라 region을 채울 방법이 없다
     (maps/CLAUDE.md 완료 정의와의 모순 — maps/for_Root.md 항목 2로 보고). 로그만 찍는 no-op
     훅은 완료 정의 체크박스만 채우는 가짜 구현이라 만들지 않는다."""
-    new_map = core.validate_map_create(req.title, req.start_date, req.end_date)
+    new_map = core.validate_map_create(req.title, req.start_date, req.end_date, req.region)
 
     map_row = MapRow(
         title=new_map.title, start_date=new_map.start_date, end_date=new_map.end_date,
         created_by=creator_id,
+        region_label=new_map.region.label if new_map.region else None,
+        region_center=(
+            func.ST_SetSRID(func.ST_MakePoint(new_map.region.lng, new_map.region.lat), 4326)
+            if new_map.region else None
+        ),
     )
     db.add(map_row)
     db.flush()  # map_row.id 확정 — 멤버십 행이 참조해야 한다
@@ -75,6 +110,42 @@ def create_map(db: Session, *, req: MapCreateRequest, creator_id: str) -> Map:
 def get_map_response(db: Session, *, map_id: str) -> Map:
     map_row = get_map_or_404(db, map_id)
     return _map_response(db, map_row)
+
+
+def list_maps(db: Session, *, user_id: str) -> list[Map]:
+    """내가 구성원인 지도, 최근 생성순(#24, docs/CHANGELOG-api.md 2026-09-28). 특정 mapId를
+    전제하는 require_map_member()류 가드를 못 쓴다 — memberships를 user_id로 조인하는
+    전용 쿼리다.
+
+    member_count는 지도별로 따로 쿼리하지 않는다 — _member_counts가 이번 결과에 나온
+    map_id 전체를 한 번의 GROUP BY로 집계한다. region_lat/region_lng도 이 목록 쿼리 자체의
+    SELECT 절에 포함시켜서(join이 아니라 같은 행의 계산 컬럼) 지도당 추가 쿼리가 없다.
+    confirmed_count는 shortlist_api.count_confirmed에 배치 버전이 없어 지도당 한 번씩
+    호출한다 — 이 모듈이 shortlist/api.py를 소유하지 않아 여기서 배치화할 수 없다(maps/for_Root.md
+    보고 대상)."""
+    lat_col, lng_col = _region_lat_lng_columns()
+    rows = db.execute(
+        select(MapRow, lat_col, lng_col)
+        .join(MembershipRow, MembershipRow.map_id == MapRow.id)
+        .where(MembershipRow.user_id == user_id)
+        .order_by(MapRow.created_at.desc())
+    ).all()
+    if not rows:
+        return []
+
+    counts = _member_counts(db, [map_row.id for map_row, _, _ in rows])
+    return [
+        core.to_map_response(
+            core.MapRecord(
+                id=map_row.id, title=map_row.title, start_date=map_row.start_date,
+                end_date=map_row.end_date, region_label=map_row.region_label,
+                region_lat=region_lat, region_lng=region_lng,
+            ),
+            member_count=counts.get(map_row.id, 0),
+            confirmed_count=shortlist_api.count_confirmed(db, map_id=map_row.id),
+        )
+        for map_row, region_lat, region_lng in rows
+    ]
 
 
 def create_invite(db: Session, *, map_id: str, creator_id: str, base_url: str) -> Invite:

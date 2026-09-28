@@ -1,3 +1,41 @@
+# backend/maps → 루트 보고 (#137 — memberships.user_id 인덱스)
+
+`ix_memberships_user_id` 추가 완료(`alembic/versions/0012_memberships_user_id_index.py`).
+`uq_memberships_map_user`는 그대로 — 순수 추가만. `upgrade→downgrade -1→upgrade` 확인,
+`\d memberships`로 두 인덱스 공존 확인. 별도 회귀 테스트는 추가하지 않았다 — 인덱스
+자체는 쿼리 결과를 바꾸지 않아(성능만 바꿈) 단위 테스트로 관측할 게 없고, 실제 planner가
+타는지는 자동 테스트보다 `EXPLAIN`으로 수동 확인하는 게 맞는 성격이라 판단했다. 전체 회귀
+540 passed, 1 skipped(무관), 0 failed(변화 없음 — 예상대로 순수 인덱스 추가).
+
+---
+
+# backend/maps → 루트 보고 (#135 — GET /maps, 지도 생성 region)
+
+`GET /maps`(내 지도 목록), 지도 생성 `region`(선택) 구현 완료(docs/CHANGELOG-api.md 2026-09-28,
+#22·#24). `alembic/versions/0011_maps_region.py`(`maps.region_label`/`region_center` +
+`ck_maps_region_both_or_neither` CHECK) 추가, `upgrade head → downgrade -1 → upgrade head`
+사이클 확인. 신규 테스트 21개 + 전체 회귀 540 passed, 1 skipped(무관), 0 failed.
+
+## 12. `confirmed_count`는 `GET /maps` 목록에서 여전히 N+1이다 — member_count와 다른 처리
+
+이번 이슈는 `member_count`만 "N+1 안 나게" 명시했다. `member_count`는 `_member_counts()`로
+목록에 나온 map_id 전체를 한 번의 `GROUP BY`로 집계해서 해결했다(`maps/service.py::list_maps`).
+`confirmed_count`는 그대로 `shortlist_api.count_confirmed(db, map_id=...)`를 지도마다
+호출한다 — `shortlist/api.py`가 배치 버전(`count_confirmed_many(db, map_ids)`류)을 노출하지
+않고, 그 파일은 이 모듈이 아니라 shortlist 담당 세션이 소유한다(항목 5의 `count_confirmed`도
+루트가 신설했다는 선례를 따름). 사용자가 보통 속한 지도 수가 적어 실질 영향은 작지만, 필요하면
+`shortlist/api.py`에 배치 함수 추가를 요청한다.
+
+## 13. `region` 필드가 이제 DB에 실제로 저장·반환된다
+
+`docs/api-spec.yaml`의 `MapRegion{label,lat,lng}`을 `MapCreateRequest.region`·`Map.region`에
+그대로 연결했다. `region_center`는 `geography(Point,4326)`로 저장하고(`pins.geom`과 동일
+패턴), 응답 조립 시 `ST_X`/`ST_Y`로 되짚는다(`maps/service.py::_region_lat_lng_columns`,
+`pins/service.py::_lat_lng_columns`와 동일 기법). region 없이 만드는 기존 동작은 회귀 없음
+(`test_create_map_without_region_omits_region_key`로 고정).
+
+---
+
 # backend/maps → 루트 보고 (이슈 #4 지도 생성 파트 / 모듈 이슈 #19)
 
 `POST /maps`, `GET /maps/{mapId}`, `POST /maps/{mapId}/invite`, `POST /invites/{token}/accept`,
