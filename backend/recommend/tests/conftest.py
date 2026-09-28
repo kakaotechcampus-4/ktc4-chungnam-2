@@ -13,6 +13,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
+import auth.models  # noqa: F401 — pins.api(create_ai_pin)가 auth.api를 부른다
 import common.events  # noqa: F401
 import maps.models  # noqa: F401
 import pins.models  # noqa: F401

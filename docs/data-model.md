@@ -42,6 +42,10 @@ pins(
   kind('일반'|'AI추천'|'확정'),        -- 확정이 나머지 둘을 덮어쓴다(5-2)
   origin('direct'|'ai'),               -- kind와 별개. 원래 태생은 안 바뀐다(4절: 반대 많아도 모양 불변)
   place_id references places(id),
+  place_name null,                     -- 루트 결정(2026-09-23): 생성 요청 시점에 사용자가 이미
+                                        -- 들고 있는 값(구글맵 링크·검색 결과)을 그대로 저장.
+                                        -- places 모듈(#53 대기)의 장소 라벨링과는 다른 종류라
+                                        -- 그 파이프라인을 기다리지 않는다.
   geom geography(Point,4326),
   visibility('public'|'private'),      -- 5-5-1: AI 후보는 private로 시작
   source_run_id null,                  -- #57 결정: recommend_runs.id를 게시 시점에 한 번만
