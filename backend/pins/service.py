@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 
 from geoalchemy2 import Geometry
-from sqlalchemy import and_, cast, delete, func, or_, select
+from sqlalchemy import and_, cast, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -205,9 +205,21 @@ def create_pin(
 
 
 def delete_pin(db: Session, pin: PinRow) -> None:
-    # soft delete — data-model.md의 부분 유니크(where deleted_at is null)가 이를 전제한다.
-    pin.deleted_at = datetime.now(timezone.utc)
-    db.flush()
+    # 조건부 UPDATE — "확인 후 처리"(check-then-act, pin.deleted_at = ...; db.flush())는
+    # 동시 삭제 요청 두 개가 둘 다 loader를 통과한 뒤 둘 다 UPDATE에 성공해 pin.deleted
+    # 이벤트가 두 번 발행될 수 있다(#51 — realtime이 실제로 이벤트를 전송하므로 더 이상
+    # 무시할 수 있는 문제가 아니다). WHERE에 deleted_at IS NULL을 넣어 DB 레벨에서 원자적으로
+    # 처리하고, rowcount로 "내가 실제로 처음 지운 것"인지 판단한다(soft delete — data-model.md의
+    # 부분 유니크가 이를 전제한다).
+    result = db.execute(
+        update(PinRow)
+        .where(PinRow.id == pin.id, PinRow.deleted_at.is_(None))
+        .values(deleted_at=datetime.now(timezone.utc))
+    )
+    if result.rowcount == 0:
+        # 이미 다른 요청이 먼저 지웠다 — 상태 변화가 없으므로 이벤트를 또 쏘지 않는다
+        # (delete_reaction의 "실제로 지워졌을 때만 발행" 패턴과 동일한 원칙).
+        return
 
     record_event(db, core.pin_deleted_event(str(pin.id), pin.map_id, pin.visibility))
 
