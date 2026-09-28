@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 
+import { USE_MOCK } from '@/api'
 import App from '@/App'
 import './index.css'
 
@@ -18,10 +19,10 @@ const queryClient = new QueryClient({
 
 /**
  * contracts/README.md §2 — 백엔드 없이 전 화면을 돌리는 목 서버.
- * 실제 BE 가 붙으면 이 함수만 지우면 된다.
+ * VITE_API_BASE_URL 을 채우면 켜지지 않는다 (api.ts USE_MOCK).
  */
 async function enableMocking() {
-  if (!import.meta.env.DEV) return
+  if (!import.meta.env.DEV || !USE_MOCK) return
   const { worker } = await import('@pingo/contracts/mocks/browser')
   await worker.start({ onUnhandledRequest: 'bypass' })
 }
