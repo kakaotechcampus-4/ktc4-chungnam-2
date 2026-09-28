@@ -23,7 +23,12 @@ const queryClient = new QueryClient({
  */
 async function enableMocking() {
   if (!import.meta.env.DEV || !USE_MOCK) return
-  const { worker } = await import('@pingo/contracts/mocks/browser')
+  const [{ worker }, { http, passthrough }] = await Promise.all([
+    import('@pingo/contracts/mocks/browser'),
+    import('msw'),
+  ])
+  // 목 핸들러가 `*/maps/:mapId` 라 카카오 SDK(dapi.kakao.com/v2/maps/sdk.js)까지 잡아 404 를 준다.
+  worker.use(http.all('https://dapi.kakao.com/*', () => passthrough()))
   await worker.start({ onUnhandledRequest: 'bypass' })
 }
 
