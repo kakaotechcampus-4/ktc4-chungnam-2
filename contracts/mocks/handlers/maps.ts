@@ -1,16 +1,23 @@
 import { http, HttpResponse } from "msw";
-import { ME_USER_ID, nextId, store } from "../store";
+import { ME_USER_ID, nextId, store, type MapCreateRequest } from "../store";
 import { apiError, getMapOr404 } from "../util";
 
 export const mapsHandlers = [
+  // #24: 로그인 직후 진입점 — 내가 구성원인 지도, 최근 생성순(목 서버는 id 순번이 생성순)
+  http.get("*/maps", () => {
+    const mine = Object.values(store.maps).filter((m) => store.members[m.id]?.some((mem) => mem.user_id === ME_USER_ID));
+    return HttpResponse.json(mine.reverse());
+  }),
+
   http.post("*/maps", async ({ request }) => {
-    const body = (await request.json()) as { title: string; start_date: string; end_date: string };
+    const body = (await request.json()) as MapCreateRequest;
     const mapId = nextId("map");
     store.maps[mapId] = {
       id: mapId,
       title: body.title,
       start_date: body.start_date,
       end_date: body.end_date,
+      ...(body.region && { region: body.region }),
       member_count: 1,
       confirmed_count: 0,
     };

@@ -152,7 +152,27 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 속한 지도가 없으면 빈 배열 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Map"][];
+                    };
+                };
+            };
+        };
         put?: never;
         /** 지도 생성. 생성 시 seeding 잡을 트리거한다 (architecture.md 3절) */
         post: {
@@ -1303,6 +1323,7 @@ export interface components {
              * @description 여행 종료일 (#22)
              */
             end_date: string;
+            region?: components["schemas"]["MapRegion"];
             member_count: number;
             confirmed_count?: number;
         };
@@ -1330,6 +1351,17 @@ export interface components {
              * @description 여행 종료일 (#22). start_date 이후여야 한다
              */
             end_date: string;
+            region?: components["schemas"]["MapRegion"];
+        };
+        /**
+         * @description 지도 만들기의 지역 검색 결과 (#22, 2026-09-28 변경). 선택 입력 — 없으면 지금처럼
+         *     첫 핀 좌표로 지역을 정한다(architecture.md 3절). 어디에 쓸지(첫 지도 위치 등)는 기획안 15-4 미결.
+         */
+        MapRegion: {
+            /** @description 검색에서 고른 지역 이름 (예: 부산) */
+            label: string;
+            lat: number;
+            lng: number;
         };
         PinCreateRequest: {
             category: components["schemas"]["Category"];
