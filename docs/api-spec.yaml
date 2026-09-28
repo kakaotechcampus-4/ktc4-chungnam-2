@@ -64,6 +64,17 @@ paths:
 
   # ---------- maps ----------
   /maps:
+    get:
+      tags: [maps]
+      summary: 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절)
+      responses:
+        "200":
+          description: OK. 속한 지도가 없으면 빈 배열
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Map" }
     post:
       tags: [maps]
       summary: 지도 생성. 생성 시 seeding 잡을 트리거한다 (architecture.md 3절)
@@ -627,6 +638,7 @@ components:
         can_remove_from_shortlist: { type: boolean }
         can_disable: { type: boolean, description: "evidence_line 전용: 자기가 쓴 것만 true" }
         can_delete: { type: boolean }
+        can_publish: { type: boolean, description: "candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64)" }
 
     User:
       type: object
@@ -637,13 +649,15 @@ components:
     Map:
       type: object
       # confirmed_count만 없을 수 있다 — shortlist/api.py::count_confirmed()가 없어 이 모듈이
-      # 못 채운다(maps/for_Root.md 5번). 나머지는 maps/core.py::to_map_response가 항상 채운다.
+      # 못 채운다(maps/for_Root.md 5번). region은 애초에 선택 입력이라 없을 수 있다(#22).
+      # 나머지는 maps/core.py::to_map_response가 항상 채운다.
       required: [id, title, start_date, end_date, member_count]
       properties:
         id: { type: string }
         title: { type: string, maxLength: 100 } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
         start_date: { type: string, format: date, description: "여행 시작일 (#22)" }
         end_date: { type: string, format: date, description: "여행 종료일 (#22)" }
+        region: { $ref: "#/components/schemas/MapRegion" }
         member_count: { type: integer }
         confirmed_count: { type: integer }
 
@@ -672,6 +686,19 @@ components:
         title: { type: string, maxLength: 100, description: "여행 제목 (#22)" } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
         start_date: { type: string, format: date, description: "여행 시작일 (#22)" }
         end_date: { type: string, format: date, description: "여행 종료일 (#22). start_date 이후여야 한다" }
+        region: { $ref: "#/components/schemas/MapRegion" }
+
+    MapRegion:
+      type: object
+      description: |
+        지도 만들기의 지역 검색 결과 (#22, 2026-09-28 변경 — PR #132 제안, 루트 검증 후 승인).
+        선택 입력 — 없으면 지금처럼 첫 핀 좌표로 지역을 정한다(architecture.md 3절). 어디에
+        쓸지(첫 지도 위치 등)는 기획안 15-4 미결.
+      required: [label, lat, lng]
+      properties:
+        label: { type: string, maxLength: 100, description: "검색에서 고른 지역 이름 (예: 부산)" }
+        lat: { type: number, minimum: -90, maximum: 90 }
+        lng: { type: number, minimum: -180, maximum: 180 }
 
     PinCreateRequest:
       type: object
@@ -681,6 +708,8 @@ components:
         source: { type: string, enum: [link, search, coordinate] }
         link_url: { type: string, maxLength: 2000 } # 사용자가 직접 붙여넣는 값, 코드에 근거 없음(멘토 리뷰 대응)
         place_id: { type: string }
+        place_name: { type: string, maxLength: 100 } # 루트 결정(2026-09-23): 사용자가 이미 들고 있는
+        # 값(구글맵 링크·검색 결과)을 그대로 저장 — places 파이프라인(#53 대기)을 기다리지 않는다.
         # pins/core.py::validate_create가 이미 검증하는 범위를 그대로 옮김(멘토 리뷰 대응).
         lat: { type: number, minimum: -90, maximum: 90 }
         lng: { type: number, minimum: -180, maximum: 180 }
@@ -834,6 +863,7 @@ components:
           items: { $ref: "#/components/schemas/Check" }
         visibility: { type: string, enum: [private, published] }
         published_pin_id: { type: [string, "null"] }
+        permissions: { $ref: "#/components/schemas/Permissions" }
 
     RecommendResult:
       type: object
