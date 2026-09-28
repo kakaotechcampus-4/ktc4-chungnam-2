@@ -8,6 +8,8 @@ import type { components } from "../src/types/api";
 type Schemas = components["schemas"];
 export type Pin = Schemas["Pin"];
 export type MapEntity = Schemas["Map"];
+export type MapCreateRequest = Schemas["MapCreateRequest"];
+export type MapRegion = Schemas["MapRegion"];
 export type Member = Schemas["Member"];
 export type Reaction = Schemas["Reaction"];
 export type EvidenceLine = Schemas["EvidenceLine"];

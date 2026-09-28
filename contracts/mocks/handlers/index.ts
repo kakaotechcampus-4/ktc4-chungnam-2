@@ -5,7 +5,7 @@ import { realtimeHandlers } from "./realtime";
 import { recommendHandlers } from "./recommend";
 import { shortlistHandlers } from "./shortlist";
 
-/** docs/api-spec.yaml 28개 경로 전부를 커버하는 핸들러 모음(realtime SSE 2개 포함) */
+/** docs/api-spec.yaml 29개 경로 전부를 커버하는 핸들러 모음(realtime SSE 2개, GET /maps 포함) */
 export const handlers = [
   ...authHandlers,
   ...mapsHandlers,

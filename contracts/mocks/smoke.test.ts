@@ -157,6 +157,42 @@ describe("에러 시나리오", () => {
   });
 });
 
+describe("#22·#24 — 내 지도 목록 + 지도 생성 지역(선택)", () => {
+  it("GET /maps는 내가 구성원인 지도만 최근 생성순으로 준다", async () => {
+    const created = await fetch(`${BASE}/maps`, {
+      method: "POST",
+      body: JSON.stringify({ title: "제주 여행", start_date: "2026-11-01", end_date: "2026-11-03" }),
+    }).then((r) => r.json());
+
+    const list = await fetch(`${BASE}/maps`).then((r) => r.json());
+    expect(list[0].id).toBe(created.id); // 방금 만든 게 가장 최근이라 맨 앞
+    expect(list.some((m: { id: string }) => m.id === "map_1")).toBe(true); // 시드 지도도 이미 구성원
+  });
+
+  it("POST /maps에 region을 실으면 그대로 저장·응답된다", async () => {
+    const res = await fetch(`${BASE}/maps`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: "부산 여행", start_date: "2026-12-01", end_date: "2026-12-03",
+        region: { label: "부산", lat: 35.1796, lng: 129.0756 },
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.region).toEqual({ label: "부산", lat: 35.1796, lng: 129.0756 });
+  });
+
+  it("region 없이 POST /maps — 기존 동작 그대로(회귀 없음)", async () => {
+    const res = await fetch(`${BASE}/maps`, {
+      method: "POST",
+      body: JSON.stringify({ title: "당일치기", start_date: "2026-12-10", end_date: "2026-12-10" }),
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.region).toBeUndefined();
+  });
+});
+
 describe("realtime SSE (docs/events.md)", () => {
   it("전체 채널 구독 중 핀을 생성하면 pin.created 이벤트가 온다", async () => {
     const stream = await fetch(`${BASE}/maps/map_1/events`);
