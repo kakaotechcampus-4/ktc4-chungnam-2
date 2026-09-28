@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from authz.core import Principal
 from authz.schemas import Permissions
 from shortlist import core
-from shortlist.schemas import ShortlistItem
+from shortlist.schemas import Route, RouteLeg, ShortlistItem
 
 
 @dataclass
@@ -71,3 +71,37 @@ def test_shortlist_changed_event_uses_pin_map_id_and_public_channel():
     assert event.type == "shortlist.changed"
     assert event.payload["action"] == "added"
     assert event.payload["item"]["id"] == "item_1"
+
+
+@dataclass
+class _FakeRouteRow:
+    region_label: str
+    ordered_pin_ids: list
+    total_distance_m: float
+    legs: list
+
+
+def test_to_route_response_rebuilds_legs_from_jsonb():
+    row = _FakeRouteRow(
+        region_label="구역 1", ordered_pin_ids=["pin_1", "pin_2"], total_distance_m=150.0,
+        legs=[{"from_pin_id": "pin_1", "to_pin_id": "pin_2", "distance_m": 150.0, "approx_minutes": 2}],
+    )
+
+    route = core.to_route_response(row)
+
+    assert route.region_label == "구역 1"
+    assert route.ordered_pin_ids == ["pin_1", "pin_2"]
+    assert route.total_distance_m == 150.0
+    assert route.legs == [RouteLeg(from_pin_id="pin_1", to_pin_id="pin_2", distance_m=150.0, approx_minutes=2)]
+
+
+def test_route_recalculated_event_payload_is_a_bare_list_not_wrapped():
+    """docs/events.md route.recalculated — data는 다른 이벤트처럼 객체로 감싸지 않고 Route[] 그대로다."""
+    routes = [Route(region_label="구역 1", ordered_pin_ids=["pin_1"], total_distance_m=0, legs=[])]
+    event = core.route_recalculated_event("map_9", routes)
+
+    assert event.map_id == "map_9"
+    assert event.channel == "public"
+    assert event.type == "route.recalculated"
+    assert isinstance(event.payload, list)
+    assert event.payload == [{"region_label": "구역 1", "ordered_pin_ids": ["pin_1"], "total_distance_m": 0, "legs": []}]

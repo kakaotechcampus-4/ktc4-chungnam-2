@@ -1,8 +1,186 @@
 # 루트 리뷰 가이드 — backend/shortlist (PR #71 멘토 리뷰 대응)
 
+## [루트 검증, 2026-09-22] #103 구현 확인 + Antigravity 검수 반영
+
+아래 "구현 범위"를 코드로 직접 확인(테스트 419 passed, alembic 단일 head 확인)했고, 5개
+"확인이 필요한 것" 중 1·2·3번은 그대로 채택, 4·5번은 Antigravity 독립 검수로 실제 버그를
+추가로 찾아 직접 고쳤다.
+
+- **1번(액션 판정 없이 require_map_member만 씀)** — 채택하되, `docs/permissions.md`·
+  `authz/policy.py`에 `route.recalculate`를 등록했다(maps의 `invite.create`와 같은 패턴 —
+  "구성원 누구나"로 정본에 남기되, 라우터는 최소 침습으로 `require_map_member()`를 유지. 나중에
+  좁힐 일이 생기면 `require_on_map("route.recalculate")`로 한 줄 교체).
+- **2번(route.recalculated 페이로드가 배열)** — `docs/events.md`가 이미 그렇게 정의해뒀으므로
+  그대로 채택. 문제없음.
+- **3번(`sort_order` 없이 문자열 정렬)** — v1 규모에서는 그대로 채택. 다만 Antigravity가
+  "POST 응답과 그 직후 GET 응답의 순서가 다를 수 있다"는 더 구체적인 문제를 찾아서(아래 참고)
+  POST도 같은 정렬을 타도록 고쳤다.
+- **4·5번(recommend와 클러스터링 유틸 비공유, 3km 임계값)** — 그대로 채택, 근거 타당함.
+
+**Antigravity 독립 검수로 찾아 고친 것(직접 재현·확인 완료)**:
+1. `pins.api.get_coordinates_for_pins`에 다른 모든 조회 함수와 달리 `deleted_at IS NULL`
+   필터가 빠져 있었다 — 삭제된 핀이 동선에 남을 수 있었다. 필터 추가.
+2. 위 필터를 추가하면 `shortlist/flows.py::recalculate_route`가 `coordinates[pin_id]`를
+   무조건 인덱싱해 `KeyError`(500)가 날 수 있었다 — 좌표가 없는 pin_id는 건너뛰도록 수정.
+3. `POST .../route`가 `routing.compute_routes`의 계산 순서 그대로 반환하는데, `GET`은
+   `region_label` 문자열 정렬로 반환해 지역이 10개 이상이면 POST 직후 응답과 GET 응답의
+   순서가 달라질 수 있었다 — POST도 저장 후 `service.list_routes`로 다시 읽어 같은 정렬로
+   반환하도록 수정(SSE 이벤트 페이로드도 동일).
+4. `shortlist/service.list_items`가 `added_at`만으로 정렬해, 같은 트랜잭션에서 연달아
+   추가된 항목처럼 타임스탬프가 동률이면(PostgreSQL `now()`는 트랜잭션 시작 시각을 돌려줘서
+   실제로 흔함) 매번 다른 순서가 나올 수 있었다 — `id`를 2차 정렬 기준으로 추가. 회귀 테스트
+   추가(`test_list_items_tie_break_by_id_when_added_at_matches`), 기존
+   `test_list_items_orders_by_added_at`은 added_at을 명시적으로 벌리도록 수정.
+5. `shortlist/service.replace_routes`의 DELETE 후 INSERT가 동시 재계산 요청(더블 클릭 등)
+   사이에 경합하면 `uq_routes_map_region` 유니크 위반(500)이 날 수 있었다 — 트랜잭션 범위
+   advisory lock(`pg_advisory_xact_lock(hashtext(map_id))`)으로 같은 map_id의 재계산을
+   직렬화. 커밋/롤백 시 자동 해제.
+
+검증: `pytest -q`(backend 전체) → 419 passed, 1 skipped, 0 failed. `pytest shortlist/tests -q`
+→ 55 passed. `alembic heads` → `0007_routes` 단일.
+
+## [최신, 2026-09-22] #103 — GET/POST /maps/{mapId}/route(동선 계산) 구현
+
+### 구현 범위
+
+- **`shortlist/routing.py` (신규)** — 기능형 코어. `_cluster_points`(거리 임계값 기반
+  union-find 단일 연결 클러스터링) + `_build_single_route`(common/geo.py의
+  `nearest_neighbor_order`·`haversine_distance_m`·`approx_walk_minutes`로 구간 조립) +
+  `compute_routes`(둘을 합쳐 지역별 `Route` 목록 생성, "구역 1"부터 번호 매김).
+- **`shortlist/models.py`** — `Route` ORM 추가. `docs/data-model.md` 88-109행에 **루트가 이미
+  #103 대응으로 스키마를 정의해둔 걸 발견**(처음엔 없어서 직접 추가하려다 파일이 세션 도중
+  바뀐 걸 재확인 과정에서 알았다) — `computed_at`(내가 처음 쓰려던 `created_at`이 아니다),
+  `unique(map_id, region_label)`을 그 정의 그대로 반영했다. `sort_order` 같은 추가 컬럼은
+  넣지 않았다(아래 "확인이 필요한 것" 3번 참고).
+- **`shortlist/schemas.py`** — `RouteLeg`, `Route`(api-spec.yaml Route와 1:1).
+- **`shortlist/service.py`** — `replace_routes`(map_id 기존 행 삭제 후 재삽입, 부분 갱신 없음),
+  `list_routes`(`region_label` 오름차순).
+- **`shortlist/core.py`** — `to_route_response`(jsonb legs → RouteLeg 역직렬화),
+  `route_recalculated_event`(payload가 다른 이벤트와 달리 dict가 아니라 `Route[]` 그대로 —
+  아래 "확인이 필요한 것" 2번 참고).
+- **`shortlist/flows.py`** — `recalculate_route`: `service.list_items`(added_at 순)로 확정
+  리스트를 읽고, `pins.api.get_coordinates_for_pins`(신규, 아래)로 좌표만 벌크 조회 →
+  `routing.compute_routes` → `service.replace_routes` → `route_recalculated_event` 발행.
+- **`shortlist/router.py`** — `GET/POST /maps/{mapId}/route` 추가. 둘 다 `require_map_member()`
+  만 쓴다(액션 판정 없음) — 아래 "확인이 필요한 것" 1번 참고.
+- **`pins/api.py`에 함수 추가** — `get_coordinates_for_pins(db, pin_ids) -> {pin_id: (lat,lng)}`.
+  shortlist가 pins 테이블을 직접 쿼리하지 않고 좌표 벌크 조회를 해야 해서 추가했다
+  (`get_pin_response_for_viewer`를 추가했던 것과 같은 이유·같은 패턴, PR #80 for_Root.md 참고).
+  가시성 판정은 하지 않는다 — 호출자(shortlist)가 이미 확정된(=가드레일 1로 항상 public인)
+  핀 id만 넘긴다는 전제.
+- **`alembic/versions/0007_routes.py` (신규)** — `docs/data-model.md`가 정의한 스키마 그대로
+  `routes` 테이블 생성. `alembic upgrade head` 실제 적용 확인.
+- **`shortlist/CLAUDE.md`** — "넘지 말 것"의 클러스터링 상의 요청을 이슈 #103의 위임으로
+  해소된 것으로 정정, `visit_order` "결정 이슈 미결" 서술도 이미 낡은 것으로 정정
+  (`docs/data-model.md`엔 이미 허용 확정으로 나와 있었다 — 지난 #88 보고서에 남겨뒀던
+  지적을 이번에 실제로 고쳤다).
+- **테스트**: `shortlist/tests/test_routing.py`(신규, 순수 함수 6개), `test_service.py`에
+  `replace_routes`/`list_routes` 4개, `test_core.py`에 route 헬퍼 2개, `test_route_api.py`
+  (신규, API 통합 13개) — 총 **shortlist/tests 54 passed**(기존 29 + 신규 25).
+
+**검증**: `cd backend && ./.venv/Scripts/python.exe -m pytest shortlist/tests -q` → **54
+passed**. `pytest authz/tests shortlist/tests pins/tests -q` → **204 passed, 1 skipped**.
+`backend/`에서 인자 없이 `pytest -q` → **418 passed, 1 skipped, 0 failed**(회귀 없음).
+`alembic upgrade head` 실제 적용 확인.
+
+### 확인이 필요한 것 (판단이 들어간 곳)
+
+1. **`GET/POST /maps/{mapId}/route`에 별도 authz 액션을 추가하지 않고 `require_map_member()`
+   (순수 멤버십 게이트)만 썼다.** `docs/permissions.md`의 `member.actions`에도, 15-1
+   매핑표에도 동선 계산 전용 액션이 없고, `authz/policy.py` 자신의 docstring이 "값을 바꾸는
+   곳이 아니다 — 루트가 먼저 `docs/permissions.md`를 고친다"고 명시해 이 커밋에서 새 액션을
+   만들지 않았다. `Route` 응답에도 `permissions` 필드가 없어(api-spec.yaml) 표시할 값 자체가
+   없다. **다른 접근도 가능하다** — 예: "동선 재계산은 owner만" 같은 제약을 원하면
+   `docs/permissions.md`에 `route.recalculate` 같은 액션을 추가하고 `authz/policy.py`에 반영한
+   뒤 `require_on_map(action)`으로 바꾸면 된다(구조상 한 줄 교체). 지금은 "구성원 누구나"로
+   구현했다 — 15-1/기획안에 반대되는 서술을 찾지 못했다.
+2. **`common.events.Event.payload`는 `dict`로 타입힌트돼 있는데, `route.recalculated`
+   이벤트만 `Route[]`(리스트)를 그대로 담는다.** `docs/events.md` 30행이 이 이벤트의 data를
+   명시적으로 배열로 정의해서(다른 이벤트는 전부 객체) 그대로 따랐다. `Event`가
+   `@dataclass`라 런타임 타입 강제가 없어 실제로는 문제없이 동작하고 테스트로도 확인했지만
+   (`test_route_recalculated_event_payload_is_a_bare_list_not_wrapped`), `common/events.py`는
+   여러 모듈이 공유하는 파일이라 타입힌트를 `dict | list`로 넓히는 건 이 커밋에서 직접 고치지
+   않았다 — 필요하면 루트가 처리하거나 지시해달라.
+3. **`routes` 테이블에 `sort_order` 컬럼을 넣지 않고 `region_label` 문자열 정렬로 GET 순서를
+   고정했다.** 처음엔 안정적인 순서 보장을 위해 `sort_order` 정수 컬럼을 추가하려 했으나,
+   `docs/data-model.md`가 이미 정의해둔 스키마(88-109행)에 없는 컬럼이라 정본을 그대로
+   따랐다. 부작용: 지역이 10개 이상이면 `"구역 10"`이 문자열 정렬상 `"구역 2"`보다 앞에
+   온다(사전식 정렬 함정). v1 실사용 규모에서 지역이 10개를 넘을 일은 거의 없다고 보고
+   넘어갔다 — 실제로 문제가 되면 `region_label`을 `"구역 01"`처럼 0패딩하거나 정본에
+   `sort_order`를 추가하는 두 방법 중 루트가 정하면 된다.
+4. **거리 임계값(3km, `shortlist/routing.py::DEFAULT_CLUSTER_THRESHOLD_M`) 은 이슈 #103이
+   위임한 대로 구현하면서 정했다.** 근거: `common/geo.py`의 도보 속도 상수(80m/분) 기준 약
+   37분 거리 — 하루 일정 안에서 걸어서 묶을 만한 상한으로 잡은 v1 잠정치다.
+   `shortlist/CLAUDE.md` 완료 정의의 "8km 이상 떨어진 두 클러스터" 테스트 기준보다 충분히
+   작아 그 케이스는 항상 분리된다. 클러스터링 방식은 단일 연결(single-linkage, union-find) —
+   A-B·B-C가 각각 임계값 이내면 A-C가 임계값을 넘어도 한 클러스터로 묶이는 체이닝이 있다는
+   점은 알고 있고 의도한 단순화다(실사용 데이터로 조정 필요하면 상수 하나만 바꾸면 됨).
+5. **recommend와의 클러스터링 유틸 공유는 하지 않기로 했다** — `shortlist/CLAUDE.md` "넘지
+   말 것"에 원래 있던 요구사항인데, recommend에 아직 그런 유틸이 없고(코드베이스 확인 완료),
+   두 문제(반경 원 교집합/합집합 vs. 확정 핀 지리적 근접도)가 다르다고 판단해 자체 구현했다.
+   이슈 #103 본문이 "지역 클러스터링 기준은 구현하면서 정하되 근거를 남겨달라"고 명시적으로
+   위임했다고 해석했다 — 해석이 맞는지 확인 부탁.
+
+## [최신, 2026-09-15] #88 — app_client에 FakeMembership 기본 오버라이드 추가
+
+배경: `authz/for_Root.md`의 "[루트 정정] ... 이슈 #87/#88/#89로 대체" 절 — `.env`의
+`MEMBERSHIP_MODE=real`로 `authz.deps.get_membership_gateway`가 `DbMembershipGateway`(실제
+`memberships` 테이블 조회)를 돌려주게 되면서, `shortlist/tests/test_shortlist_api.py`가 지금까지
+`AllowAllMembership` dev 스텁(항상 `"member"`)에 암묵적으로 기대 통과해온 게 드러났다. 실제
+`memberships` 행을 픽스처가 미리 넣는 방식은 안 된다 — 그 어댑터가 쓰는 DB 세션이 이 conftest의
+테스트 트랜잭션이 아니라 별도 커넥션(`common.database.engine`, 실제 dev DB)이라 넣은 행이
+안 보이고, 이 conftest는 `maps.models`를 import하지 않아 테스트 DB에 `memberships` 테이블
+자체도 없다(#89에서 `maps/tests`가 이미 같은 원리로 게이트웨이 자체를 오버라이드해 43개 전부
+통과 중임을 확인).
+
+**변경**: `shortlist/tests/conftest.py`의 `app_client` 픽스처에 한 줄 추가 —
+```python
+app.dependency_overrides[get_membership_gateway] = lambda: FakeMembership(
+    {("map_1", "user_1"): "member", ("map_1", "user_2"): "member"}
+)
+```
+(`authz.deps.get_membership_gateway`·`authz.testing.FakeMembership` import 추가.) 이 파일이
+실제로 멤버십 판정을 타는 `(map_id, user_id)` 조합은 이 둘뿐이다 — `test_confirm_pin_twice_
+is_idempotent_no_duplicate_event`가 두 번째 요청에 `user_2`를 쓰는 것 말고는 전부 `map_1`/
+`user_1`.
+
+**map_2(교차-지도 테스트)는 넣지 않았다 — 코드를 직접 추적해 확인함.**
+`test_confirm_pin_cross_map_pin_id_is_404_not_500`은 경로 `mapId=map_1`, 바디 `pin_id`는
+`map_2` 소속 핀을 가리킨다. `shortlist/loaders.py::load_pin_for_confirm`이 `pin_row.map_id
+!= mapId`를 **게이트웨이를 부르기 전에** 직접 비교해 `AppError("NOT_FOUND")`를 던진다(Rule
+B는 loader 단계에서 끝남, `authz.guard.require_with_principal`의 `resolve_principal`은 그
+뒤에 실행되므로 이 경로에선 아예 호출되지 않는다). 그래서 `map_2`가 딕셔너리에 없어도, 있어도
+이 테스트 결과는 바뀌지 않는다 — 의도적으로 뺐다. 비구성원 케이스(`test_confirm_pin_non_
+member_is_404` 등 기존 `_deny_membership` 오버라이드 3개)는 그대로 뒀다(테스트 안에서
+`app.dependency_overrides[get_membership_gateway]`를 직접 덮어썼다가 되돌리는 기존 패턴,
+conftest 기본값과 무관하게 동작).
+
+**검증**: `cd backend && ./.venv/Scripts/python.exe -m pytest shortlist/tests -q` →
+**29 passed**(회귀 없음). 교차-지도 테스트만 따로 `-k cross_map -v`로도 재확인.
+
+**루트 확인 필요 없음** — `docs/` 계약이나 다른 모듈 파일은 건드리지 않았다(`shortlist/tests/
+conftest.py` 단독 변경). `#89`(authz) PR이 먼저 머지돼야 이 변경이 실제로 의미가 있다(그
+전엔 `MEMBERSHIP_MODE`가 아직 `dev`라 `AllowAllMembership`이 통과시켜준다) — 머지 순서는
+`authz/for_Root.md`의 "#89 ... #87·#88·maps PR 머지 선행" 그대로 따른다.
+
+
 `backend/pins/for_Root.md`와 같은 형식. `shortlist/mentor-review-plan.md`는 `confirm_pin`/
 `unconfirm_pin`(핀 확정/제외) 흐름만 다룬다 — 동선 계산·수동 정렬은 이 계획 범위 밖이라
 아래 "이번에 하지 않은 것"에 별도로 정리했다.
+
+## PR·머지 완료 (이번 턴)
+
+- `/tmp/pingo_prs`(공용 git 클론, 브랜치 `feat/pr71-shortlist-confirm-pin`)에 이 문서 아래
+  "구현 범위"의 변경 전부가 이미 반영돼 있었다 — `shortlist/deps.py`를 포함해 내가 만든
+  파일과 바이트 단위로 동일한지 확인.
+- 그 클론의 `backend/alembic/env.py`에서 `# import shortlist.models`/`# import realtime.models`
+  주석 줄이 중복으로 남아있던 걸 발견해 정리(다른 세션이 만든 실제 코드 문제는 아니고, 여러
+  세션 변경분을 합치는 과정에서 생긴 잔여물로 보인다).
+- Docker Desktop이 내려가 있어 재기동 후 `docker-compose up -d`로 `pingo`/`pingo_test` DB 확보.
+- `pytest shortlist/tests` → **29 passed**. 전체 `pytest -q` → **301 passed, 1 skipped, 0
+  failed**. `alembic upgrade head` 재확인.
+- PR **[#80](https://github.com/kakaotechcampus-4/ktc4-chungnam-2/pull/80)** 생성 후
+  `develop`에 병합 완료(머지 커밋 `59e4d6e`).
 
 ## 구현 범위
 
