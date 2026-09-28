@@ -1,17 +1,20 @@
-"""backend/llm 비즈니스 로직 — 모델 호출 3곳(plan_evidence/label_place/rank_candidates).
+"""backend/llm 비즈니스 로직 — 모델 호출 2곳(plan_evidence/label_place).
 
 v1은 backend/llm/CLAUDE.md "우선순위" 절 그대로 고정 응답 스텁이다. 실제 LLM API 호출은
 모델 확정(#12) 이후 이 파일의 함수 내부만 교체하면 되도록, 시그니처는 최종 형태(입력=구조화
 가능한 값, 출력=schemas.py 스키마)로 미리 맞춰둔다.
 
-세 함수 모두 값을 지어내지 않는다: 판단 근거가 없으면 항상 unknown/None을 반환한다
+두 함수 모두 값을 지어내지 않는다: 판단 근거가 없으면 항상 unknown/None을 반환한다
 (backend/llm/CLAUDE.md "넘지 말 것"). 실격 여부 판단·unknown_policy 적용은 이 모듈의
 책임이 아니다 — recommend가 한다(가드레일 7).
+
+③-b 선호 순위는 2026-09-21에 코드로 옮겼다(#99). 이 모듈은 사람 말과 장소 정보를
+fact_key로 정규화하는 데까지만 관여하고, 그 라벨을 대조해 순위를 정하는 건 recommend다.
 """
 
 from typing import Any, Mapping, Optional, Sequence
 
-from llm.schemas import EvidenceLine, FactKey, PlaceFactLabel, RankedCandidate
+from llm.schemas import EvidenceLine, FactKey, PlaceFactLabel
 
 
 def _flatten_string_values(data: Mapping[str, Any]) -> list[str]:
@@ -97,15 +100,6 @@ def label_place(
     return labels
 
 
-def rank_candidates(candidate_place_ids: Sequence[str]) -> list[RankedCandidate]:
-    """③-b 선호 순위 채점.
-
-    candidate_place_ids: 실격 통과분(recommend가 필터링을 마친 후보)만 들어온다는 전제.
-    이 함수는 순위만 매기며 실격 여부는 다시 판단하지 않는다(가드레일 7).
-    v1 스텁은 실제 모델 호출 없이 입력 순서를 그대로 순위로 반환하고, 근거가 없으므로
-    member_comment는 지어내지 않고 None으로 둔다(5-7-1).
-    """
-    return [
-        RankedCandidate(place_id=place_id, rank=index + 1, member_comment=None)
-        for index, place_id in enumerate(candidate_place_ids)
-    ]
+# ③-b 선호 순위(rank_candidates)는 2026-09-21에 코드로 옮겨졌다(#99) — 이 모듈에서 제거.
+# 프로필 구성·점수 계산·순차 선택은 recommend가 한다. 규칙은 docs/constraints.md
+# "선호 점수 계산 (③-b)". 이 모듈이 그 입력(fact_key)을 정규화해주는 것까지가 경계다.
