@@ -3,7 +3,7 @@ import { ME_USER_ID, nextId, store, type Pin } from "../store";
 import { apiError } from "../util";
 import { buildCandidates, buildEvidenceLines, buildRegions } from "../seed";
 
-const CATEGORIES = ["음식점", "카페", "숙소", "관광지"] as const;
+const CATEGORIES = ["음식점", "카페", "관광지"] as const; // 숙소는 추천 대상이 아니다 (#145)
 
 function requiredCount(mapId: string) {
   const n = store.members[mapId]?.length ?? 1;

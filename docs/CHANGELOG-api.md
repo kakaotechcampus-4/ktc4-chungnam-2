@@ -2,6 +2,24 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-09-30 — 추천 카테고리에서 숙소 제외, RecommendCategory 신설 (#145)
+
+숙소를 AI 대안 추천 대상에서 뺐다(#145). 숙소 핀은 그대로 찍고 반응을 남길 수 있어서 핀 쪽
+`Category`는 바꾸지 않고, 추천에 쓰는 카테고리만 따로 나눴다.
+
+- `RecommendCategory` 신설 — `[음식점, 카페, 관광지]`
+- `POST /maps/{mapId}/runs` 요청의 `category`: `Category` → `RecommendCategory`
+- `RecommendRun.category`: `Category` → `RecommendCategory`
+- `GET /maps/{mapId}/recommend/readiness` 응답의 키를 `RecommendCategory`로 한정 — 숙소 키는 오지 않는다
+- 목 서버: readiness에서 숙소 제외, 지역 확인 대기 시나리오의 run 카테고리를 숙소 → 관광지
+
+**FE 영향**: 타입 재생성 필요(`npm run gen:types`). 숙소 핀에서는 추천 버튼과 대안 추천 진입점을
+보이지 않게 한다. readiness 응답에 숙소 키가 없다고 가정하고 그리면 된다.
+
+**BE 영향**: `backend/recommend`의 카테고리 목록과 DB enum `recommend_category`에서 숙소 제거
+(마이그레이션), `capacity_min` 조건 제거. `backend/llm` 사유 구조화 출력의 `capacity_min` 제거.
+후속 이슈로 나눈다.
+
 ## 2026-09-23 — PinCreateRequest.place_name 추가 (루트 결정)
 
 프론트-백엔드 통합 감사에서 "핀 이름이 항상 빈칸으로 온다"는 게 확인됐다 — 원인은
