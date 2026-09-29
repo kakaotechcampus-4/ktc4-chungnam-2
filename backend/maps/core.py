@@ -41,7 +41,7 @@ def validate_map_create(title: str, start_date: date, end_date: date) -> NewMap:
     if not normalized_title:
         raise AppError("VALIDATION_ERROR", "제목이 비어 있습니다")
     if end_date < start_date:
-        raise AppError("VALIDATION_ERROR", "end_date는 start_date 이후여야 합니다")
+        raise AppError("VALIDATION_ERROR", "end_date는 start_date와 같거나 그 이후여야 합니다")
     return NewMap(title=normalized_title, start_date=start_date, end_date=end_date)
 
 
