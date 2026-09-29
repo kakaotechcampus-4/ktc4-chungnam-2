@@ -671,7 +671,7 @@ components:
       properties:
         title: { type: string, maxLength: 100, description: "여행 제목 (#22)" } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
         start_date: { type: string, format: date, description: "여행 시작일 (#22)" }
-        end_date: { type: string, format: date, description: "여행 종료일 (#22). start_date 이후여야 한다" }
+        end_date: { type: string, format: date, description: "여행 종료일 (#22). start_date와 같거나 그 이후여야 한다(당일치기는 같은 날)" }
 
     PinCreateRequest:
       type: object
