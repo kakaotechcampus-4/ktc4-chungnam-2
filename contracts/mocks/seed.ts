@@ -83,8 +83,8 @@ export function buildBaseState(): StoreState {
       lat: 33.489,
       lng: 126.4983,
       place_name: "카페 한라",
-      created_by: "u_2",
-      created_by_display_name: "박서영",
+      created_by: "u_3",
+      created_by_display_name: "김도현",
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, neutral: 0, against: 0 },
@@ -119,6 +119,7 @@ export function buildBaseState(): StoreState {
     shortlist: { [mapId]: [] },
     routes: {},
     invites: {},
+    eventLog: [],
   };
 }
 
