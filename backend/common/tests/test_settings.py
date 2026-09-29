@@ -21,6 +21,7 @@ def _settings(**overrides):
         session_secret="real-secret",
         places_mode="real",
         auth_mode="real",
+        frontend_base_url="https://app.pingo.example",
     )
     base.update(overrides)
     return Settings(**base)
@@ -56,6 +57,11 @@ def test_prod_refuses_empty_cors_origins_with_no_regex():
         _settings(cors_allow_origins=(), cors_allow_origin_regex=None)
 
 
+def test_prod_refuses_empty_frontend_base_url():
+    with pytest.raises(ConfigError, match="FRONTEND_BASE_URL"):
+        _settings(frontend_base_url="")
+
+
 def test_non_prod_environment_allows_dev_stubs_and_wildcard():
     s = Settings(
         environment="dev",
@@ -87,6 +93,7 @@ def test_from_env_defaults_to_real_mode_in_prod(monkeypatch):
     monkeypatch.delenv("AUTH_MODE", raising=False)
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
     monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
+    monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
 
     s = Settings.from_env()
 
@@ -104,6 +111,27 @@ def test_from_env_dev_regex_default_is_localhost_only(monkeypatch):
     assert "localhost" in s.cors_allow_origin_regex
 
 
+def test_from_env_dev_frontend_base_url_defaults_to_vite_dev_server(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    monkeypatch.delenv("FRONTEND_BASE_URL", raising=False)
+    monkeypatch.delenv("FRONTEND_LOGIN_REDIRECT_URL", raising=False)
+
+    s = Settings.from_env()
+
+    assert s.frontend_base_url == "http://localhost:5173"
+    assert s.frontend_login_redirect_url == "http://localhost:5173/"
+
+
+def test_from_env_frontend_login_redirect_url_explicit_overrides_derived(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
+    monkeypatch.setenv("FRONTEND_LOGIN_REDIRECT_URL", "https://app.pingo.example/login/callback")
+
+    s = Settings.from_env()
+
+    assert s.frontend_login_redirect_url == "https://app.pingo.example/login/callback"
+
+
 def test_from_env_prod_has_no_regex_default(monkeypatch):
     monkeypatch.setenv("PINGO_ENV", "prod")
     monkeypatch.delenv("CORS_ALLOW_ORIGIN_REGEX", raising=False)
@@ -111,6 +139,7 @@ def test_from_env_prod_has_no_regex_default(monkeypatch):
     monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
     monkeypatch.setenv("PLACES_MODE", "real")
     monkeypatch.setenv("AUTH_MODE", "real")
+    monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
 
     s = Settings.from_env()
 

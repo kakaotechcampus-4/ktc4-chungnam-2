@@ -10,10 +10,21 @@ from datetime import date, datetime
 from pydantic import BaseModel
 
 
+class MapRegion(BaseModel):
+    """지도 만들기의 지역 검색 결과(#22, 2026-09-28 변경 — PR #132). label/lat/lng 셋 다 있거나
+    Map/MapCreateRequest 양쪽 다 region 자체가 없거나(선택 필드) 둘 중 하나다 — 필드 일부만
+    있는 반쪽짜리 region은 만들지 않는다(maps/core.py::validate_map_create가 검증)."""
+
+    label: str
+    lat: float
+    lng: float
+
+
 class MapCreateRequest(BaseModel):
     title: str
     start_date: date
     end_date: date
+    region: MapRegion | None = None
 
 
 class Map(BaseModel):
@@ -21,6 +32,7 @@ class Map(BaseModel):
     title: str
     start_date: date
     end_date: date
+    region: MapRegion | None = None
     member_count: int
     # shortlist_items 개수 — shortlist에 api.py가 없어 이번 PR은 계산하지 않는다
     # (maps/for_Root.md 항목 5). 값이 없다는 사실 자체를 0으로 흐리지 않는다.
