@@ -7,17 +7,20 @@ model·messages·response_format 외에는 넘기지 않는다.
 """
 
 import json
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
-from openai import OpenAI, OpenAIError
-from pydantic import ValidationError
+from openai import OpenAI
 
 from common.settings import settings
 from llm.prompts import PLAN_EVIDENCE_PROMPT
 from llm.schemas import PlanningOutput
 
-_TIMEOUT_SECONDS = 30
-_MAX_RETRIES = 1
+# POST /runs 요청 안에서 동기로 도는 호출이라 길게 기다리지 않는다. 재시도도 안 한다 —
+# 실패하면 어차피 RECOMMEND_FAILED이고, 재시도는 요청 지연만 두 배로 만든다.
+_TIMEOUT_SECONDS = 15
+_MAX_RETRIES = 0
+
+_client: Optional[OpenAI] = None
 
 
 class LlmCallError(RuntimeError):
@@ -33,6 +36,15 @@ def make_client() -> OpenAI:
         timeout=_TIMEOUT_SECONDS,
         max_retries=_MAX_RETRIES,
     )
+
+
+def get_client() -> OpenAI:
+    """프로세스당 하나를 재사용한다(요청마다 커넥션 풀을 새로 만들지 않는다). 설정이 비어 있으면
+    캐시하지 않고 매번 LlmCallError — 테스트는 `llm.client._client`를 대역으로 바꾸면 된다."""
+    global _client
+    if _client is None:
+        _client = make_client()
+    return _client
 
 
 def _user_payload(reasons: Sequence[Mapping[str, Any]]) -> str:
@@ -56,7 +68,7 @@ def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]]) -> PlanningO
             response_format=PlanningOutput,
         )
         message = completion.choices[0].message
-    except (OpenAIError, ValidationError, IndexError) as exc:
+    except Exception as exc:  # noqa: BLE001 — 예상 못 한 예외도 원인 타입만 남기고 같은 실패로 올린다
         raise LlmCallError(f"사유 구조화 호출 실패: {type(exc).__name__}") from exc
     if getattr(message, "refusal", None):
         raise LlmCallError("모델이 사유 구조화를 거절했다")

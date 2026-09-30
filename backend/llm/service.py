@@ -16,7 +16,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 from common.adapters import select
 from common.errors import AppError
 from common.settings import settings
-from llm.client import LlmCallError, call_planner, make_client
+from llm.client import LlmCallError, call_planner, get_client
 from llm.schemas import EvidenceLine, FactKey, PlaceFactLabel, PlanningOutput, RankedCandidate
 
 EvidencePlanner = Callable[[Sequence[Mapping[str, Any]]], list[EvidenceLine]]
@@ -53,14 +53,26 @@ class PlanEvidenceFailed(AppError):
         super().__init__("RECOMMEND_FAILED", detail={"stage": "plan_evidence", "reason": reason})
 
 
+MIN_RADIUS_M = 50
+MAX_RADIUS_M = 20_000
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.split())
+
+
 def merge_planned(
     inputs: Sequence[Mapping[str, Any]], output: PlanningOutput
 ) -> list[EvidenceLine]:
-    """모델 응답을 입력에 합친다(순수 함수). 모델이 바꿀 수 있는 건 fact_key(입력에 없을 때)·
-    badge 격상·circle_radius_m뿐이다 — 나머지는 전부 입력 값이 이긴다.
+    """모델 응답을 입력에 합친다(순수 함수). 모델이 줄마다 바꿀 수 있는 건 fact_key(입력에 없을
+    때)와 circle_radius_m뿐이다 — badge를 포함한 나머지는 전부 입력 값이 이긴다.
 
-    개수·순서·text가 입력과 다르면 모델이 사유를 지어내거나 섞은 것이므로 ValueError다.
-    badge 격하는 무시한다: 제약을 AI가 완화하지 않는다(가드레일 4)."""
+    badge를 모델이 못 바꾸는 이유: 격하는 제약 완화(가드레일 4)이고, 격상도 사유 텍스트에 섞인
+    지시문이 다른 사람 줄을 required로 올리는 통로가 된다. 줄 사이가 섞이지 않게 줄 단위로만 합친다.
+
+    개수·순서가 입력과 다르거나 text가 (공백·개행 정규화 후에도) 다르면 모델이 사유를 지어내거나
+    섞은 것이므로 ValueError다. 공백만 달라진 건 통과시키되 결과 text는 항상 입력 원문이다.
+    반경은 MIN_RADIUS_M~MAX_RADIUS_M 밖이면 무시한다 — 비정상 값은 후보를 전멸시킨다."""
     lines = output.evidence_lines
     if len(lines) != len(inputs):
         raise ValueError(f"응답 개수({len(lines)})가 입력 개수({len(inputs)})와 다르다")
@@ -68,15 +80,14 @@ def merge_planned(
     merged: list[EvidenceLine] = []
     for raw, planned in zip(inputs, lines):
         base = EvidenceLine(**raw)
-        if planned.text != base.text:
+        if _normalize(planned.text) != _normalize(base.text):
             raise ValueError("응답 text가 입력 text와 다르다")
         radius = planned.circle_radius_m
         merged.append(
             base.model_copy(
                 update={
                     "fact_key": base.fact_key or planned.fact_key,
-                    "badge": "required" if planned.badge == "required" else base.badge,
-                    "circle_radius_m": radius if radius is not None and radius > 0 else base.circle_radius_m,
+                    "circle_radius_m": radius if radius is not None and MIN_RADIUS_M <= radius <= MAX_RADIUS_M else base.circle_radius_m,
                 }
             )
         )
@@ -97,7 +108,7 @@ def _dev_evidence_planner() -> EvidencePlanner:
 
 
 def _real_evidence_planner() -> EvidencePlanner:
-    return partial(_model_planner, make_client())
+    return partial(_model_planner, get_client())
 
 
 get_evidence_planner = select(
