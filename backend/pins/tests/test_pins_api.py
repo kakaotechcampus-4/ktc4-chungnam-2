@@ -524,7 +524,7 @@ def test_counts_fills_zero_for_empty_categories_and_kinds(app_client):
     resp = app_client.get("/maps/map_1/counts", cookies=_auth())
     assert resp.status_code == 200
     assert resp.json() == {
-        "by_category": {"음식점": 0, "카페": 0, "숙소": 0, "관광지": 0},
+        "by_category": {"음식점": 0, "카페": 0, "숙소": 0, "관광지": 0, "기타": 0},
         "by_kind": {"일반": 0, "AI추천": 0, "확정": 0},
     }
 
@@ -537,7 +537,7 @@ def test_counts_counts_seeded_pins_by_category_and_kind(app_client, db_session):
     _insert_pin(db_session, category="음식점", kind="일반", place_id="c5", map_id="map_other")  # 다른 지도
 
     body = app_client.get("/maps/map_1/counts", cookies=_auth()).json()
-    assert body["by_category"] == {"음식점": 2, "카페": 1, "숙소": 0, "관광지": 0}
+    assert body["by_category"] == {"음식점": 2, "카페": 1, "숙소": 0, "관광지": 0, "기타": 0}
     assert body["by_kind"] == {"일반": 1, "AI추천": 1, "확정": 1}
 
 

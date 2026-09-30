@@ -136,3 +136,40 @@
 통과 — pins와 무관해 보이나 **간헐 실패로 루트 확인 필요**. 공유 DB에선 타 세션과 충돌해 전체 0실패를 못 얻었다.
 
 **복잡도**: #148 1/5, #141 2/5 · **실제 소요**: #148 1/5, #141 2/5(코드는 예상대로, 공유 테스트 DB 충돌 진단에 시간).
+
+---
+
+## #157 — FE 스펙 갭 (의견 목록·my_reaction·숙소 반응 차단·기타·AI 핀 필드·탈퇴 함수)
+
+스펙(PR #156)대로 구현했고 스펙 문서는 건드리지 않았다. 마이그레이션 **0016** 하나.
+
+**구현**
+- `GET /pins/{pinId}/reactions` — `Reaction[]`(오래된 순), `display_name`은 `auth.api.display_names` 배치 1회, `reason_chip_ids` 포함.
+  숙소 핀은 `[]`, 비구성원·남의 비공개 핀은 404. 조회 전용 액션이 없어 가드는 `require("pin.react", load_pin)`를 빌렸다(주석 참고).
+- `Pin.my_reaction` — 목록·단건(`api.get_pin_response_for_viewer`, shortlist 경로) 모두. 핀 id 배치 쿼리 1회(N+1 방지 테스트 있음).
+  없으면 **`null`을 유지**한다: 라우터의 `response_model_exclude_none`이 null까지 지우므로 `Pin`에 wrap serializer를 뒀다.
+  **SSE 페이로드에는 싣지 않는다**(`core._public_pin_payload`가 `exclude={"my_reaction"}`) — 본인 값이 전체 채널로 새면 안 된다.
+- `Reaction.reason_chip_ids`/`display_name`; PUT 응답도 chips를 되돌려준다.
+- **계약 불일치 수정**: `PUT …/reaction` 응답이 `reason_text: null`을 주던 것을 `response_model_exclude_none=True`로 생략.
+  `KNOWN_DRIFT`의 해당 항목, `KNOWN_MISSING`의 `("get","/pins/{}/reactions")`를 지웠다.
+- 숙소: `permissions.can_react=false`, `PUT reaction` → 422 `REACTION_NOT_ALLOWED`(사유 검증보다 먼저), `DELETE`는 204.
+- `category`에 「기타」(0016, `ALTER TYPE … ADD VALUE`는 autocommit 블록). `Category` Literal 반영, `counts.by_category`에 `기타: 0`이 자동으로 추가됨
+  (기존 테스트 기대값 2곳 갱신). `recommend_category`는 그대로.
+- `pins.reason` / `member_fulfillment`(JSONB) / `place_source`(JSONB), 모두 nullable. `pins.api.create_ai_pin`에 **선택 인자**
+  `reason`, `member_fulfillment`, `place_source`를 추가 — 스키마(`MemberFulfillment{satisfied,total,by_member?}`, `PlaceSource`)로 INSERT 전 검증.
+  **recommend는 게시 시 candidate 값을 이 인자로 넘기면 된다**(지금은 안 넘겨서 NULL). 응답·SSE `pin.published`에는 값이 있을 때만 실린다.
+- `pins.api.delete_reactions_by_user(db, *, user_id) -> int` — auth가 호출(시그니처는 auth/for_Root.md 그대로). 핀은 남기고, `reaction.changed`는 발행하지 않는다.
+
+**루트 확인 필요**
+1. **authz 파일을 최소 수정했다**: `authz/core.py`의 `Resource`에 `category` 필드, `_pin_permissions`에 `can_react and category != "숙소"`.
+   `permissions.md`가 "`authz/core.py::_pin_permissions`가 `permissions_for`에서만 계산"이라고 정해서 그대로 따랐다(`can()`은 무변경, 403 아님).
+   authz 담당 확인 요청. 대안(pins가 응답을 덮어쓰기)은 권한 로직 중복이라 택하지 않았다.
+2. **마이그레이션 번호/체인**: 0015(recommend)가 아직 develop에 없어 `0016.down_revision = 0014`이다. 0015가 머지되면 **0016의 down_revision을 0015로 바꿔야**
+   헤드가 하나로 유지된다(지금은 단일 헤드). 머지 순서에 따라 루트가 확인.
+3. `docs/data-model.md`의 `pins` 표에 `reason`·`member_fulfillment`·`place_source` 컬럼과 category enum의 「기타」가 아직 적혀 있지 않다(스펙 문서라 손대지 않음).
+4. `for_Root.md` 상단 "테스트 68개"는 옛 숫자다. 이번엔 `test_spec_gaps_157.py` 20여 개를 추가했다.
+
+**검증**: `PINGO_TEST_DB=pingo_test_pins python -m pytest` 전체 **633 passed, 1 skipped, 실패 0**. 빈 DB에서 `alembic upgrade head → downgrade 0014 → upgrade head` 통과
+(enum에 기타, 컬럼 3개 확인). 테스트가 잡은 실제 결함 1건: 제 serializer가 `exclude`한 `my_reaction`을 null로 되살려 SSE에 새던 것 → 수정.
+
+**복잡도**: 예상 3/5 · **실제 소요**: 3/5.

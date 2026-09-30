@@ -131,28 +131,87 @@ def list_pins(
 
     # 배치 조회 — N개 핀에 N번 쿼리하지 않는다(auth.api.display_names 자체가 배치용으로 설계됨).
     display_names = auth_api.display_names(db, [row[0].created_by for row in rows])
+    my_reactions = my_reactions_for_pins(db, [row[0].id for row in rows], principal.user_id)
 
     result: list[Pin] = []
     for row in rows:
         pin_row: PinRow = row[0]
-        record = core.PinRecord(
-            id=str(pin_row.id),
-            map_id=pin_row.map_id,
-            category=pin_row.category,
-            kind=pin_row.kind,
-            visibility=pin_row.visibility,
+        record = record_from_row(
+            pin_row,
             lat=row.lat,
             lng=row.lng,
-            created_by=pin_row.created_by,
             reaction_counts=core.ReactionCounts(
                 like=row.like_count, neutral=row.neutral_count, against=row.against_count
             ),
-            place_name=pin_row.place_name,
             created_by_display_name=display_names.get(pin_row.created_by),
-            checks=pin_row.checks,
+            my_reaction=my_reactions.get(pin_row.id),
         )
         result.append(core.to_pin_response(record, principal))
     return result
+
+
+def record_from_row(
+    pin_row: PinRow,
+    *,
+    lat: float,
+    lng: float,
+    reaction_counts: core.ReactionCounts,
+    created_by_display_name: str | None,
+    my_reaction: Reaction | None,
+) -> core.PinRecord:
+    """ORM 행 → 응답 조립용 PinRecord. 목록·단건(api.get_pin_response_for_viewer)이 같은 필드를
+    싣도록 한 곳에 둔다 — 필드가 늘 때 한쪽만 빠지는 걸 막는다."""
+    return core.PinRecord(
+        id=str(pin_row.id),
+        map_id=pin_row.map_id,
+        category=pin_row.category,
+        kind=pin_row.kind,
+        visibility=pin_row.visibility,
+        lat=lat,
+        lng=lng,
+        created_by=pin_row.created_by,
+        reaction_counts=reaction_counts,
+        place_name=pin_row.place_name,
+        created_by_display_name=created_by_display_name,
+        checks=pin_row.checks,
+        reason=pin_row.reason,
+        member_fulfillment=pin_row.member_fulfillment,
+        place_source=pin_row.place_source,
+        my_reaction=my_reaction,
+    )
+
+
+def _reaction_from_row(row: ReactionRow, display_name: str | None = None) -> Reaction:
+    return Reaction(
+        pin_id=str(row.pin_id),
+        user_id=row.user_id,
+        type=row.type,
+        reason_text=row.reason_text,
+        reason_chip_ids=row.reason_chip_ids,
+        display_name=display_name,
+    )
+
+
+def my_reactions_for_pins(db: Session, pin_ids: list[uuid.UUID], viewer_id: str) -> dict[uuid.UUID, Reaction]:
+    """요청자 본인의 반응을 핀 id 배치로 한 번에 조회한다(N+1 금지). 반응 없는 핀은 키가 없다."""
+    if not pin_ids:
+        return {}
+    rows = db.execute(
+        select(ReactionRow).where(ReactionRow.pin_id.in_(pin_ids), ReactionRow.user_id == viewer_id)
+    ).scalars().all()
+    return {row.pin_id: _reaction_from_row(row) for row in rows}
+
+
+def list_reactions(db: Session, pin: PinRow) -> list[Reaction]:
+    """GET /pins/{pinId}/reactions — 반응한 구성원만(미응답자는 포함하지 않는다). 숙소 핀은 빈
+    배열(반응 행이 생기지 않는 카테고리, permissions.md). 오래된 순으로 안정 정렬한다."""
+    if pin.category == "숙소":
+        return []
+    rows = db.execute(
+        select(ReactionRow).where(ReactionRow.pin_id == pin.id).order_by(ReactionRow.created_at, ReactionRow.user_id)
+    ).scalars().all()
+    names = auth_api.display_names(db, [row.user_id for row in rows])
+    return [_reaction_from_row(row, names.get(row.user_id)) for row in rows]
 
 
 def _find_existing_pin_id(db: Session, map_id: str, place_id: str) -> str | None:
@@ -276,6 +335,7 @@ def _reaction_counts_for_pin(db: Session, pin_id: uuid.UUID) -> core.ReactionCou
 
 
 def set_reaction(db: Session, pin: PinRow, viewer_id: str, req: ReactionRequest) -> Reaction:
+    core.validate_reactable(pin.category)
     core.validate_reaction(req.type, req.reason_text, req.reason_chip_ids)
     reason_text = (req.reason_text or "").strip() or None
 
@@ -303,7 +363,10 @@ def set_reaction(db: Session, pin: PinRow, viewer_id: str, req: ReactionRequest)
     summary = ReactionSummary(like=counts.like, neutral=counts.neutral, against=counts.against)
     record_event(db, core.reaction_changed_event(str(pin.id), pin.map_id, pin.visibility, summary))
 
-    return Reaction(pin_id=str(pin.id), user_id=viewer_id, type=req.type, reason_text=reason_text)
+    return Reaction(
+        pin_id=str(pin.id), user_id=viewer_id, type=req.type,
+        reason_text=reason_text, reason_chip_ids=req.reason_chip_ids,
+    )
 
 
 def delete_reaction(db: Session, pin: PinRow, viewer_id: str) -> None:
