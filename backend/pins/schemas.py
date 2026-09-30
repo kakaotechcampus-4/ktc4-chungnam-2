@@ -66,6 +66,11 @@ class Pin(BaseModel):
     permissions: Permissions
 
 
+class FilterCounts(BaseModel):
+    by_category: dict[str, int]
+    by_kind: dict[str, int]
+
+
 class ReactionRequest(BaseModel):
     type: ReactionKind
     reason_text: str | None = Field(default=None, max_length=140)

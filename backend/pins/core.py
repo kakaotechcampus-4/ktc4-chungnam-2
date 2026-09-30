@@ -15,14 +15,16 @@ from common.events import Event
 from pins.schemas import Pin, PinCreateRequest, PinSource, ReactionSummary
 
 
+LINK_PIN_REJECTED_MESSAGE = "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"
+
+
 def resolve_source(req: PinCreateRequest) -> PinSource:
-    """source가 명시되지 않으면 어떤 필드가 왔는지로 추론한다. 결정 불가·모순이면 422."""
+    """source가 명시되지 않으면 어떤 필드가 왔는지로 추론한다. 결정 불가·모순이면 422.
+    link_url은 추론 대상이 아니다 — v1은 링크 핀 생성을 거절한다(validate_create, #147)."""
     if req.source is not None:
         return req.source
 
     provided: list[PinSource] = []
-    if req.link_url:
-        provided.append("link")
     if req.place_id:
         provided.append("search")
     if req.lat is not None and req.lng is not None:
@@ -31,7 +33,7 @@ def resolve_source(req: PinCreateRequest) -> PinSource:
     if len(provided) == 0:
         raise AppError(
             "VALIDATION_ERROR",
-            "핀 생성 경로를 알 수 없습니다 — link_url, place_id, lat+lng 중 하나가 필요합니다",
+            "핀 생성 경로를 알 수 없습니다 — place_id 또는 lat+lng가 필요합니다",
         )
     if len(provided) > 1:
         raise AppError("VALIDATION_ERROR", "여러 경로의 값이 동시에 왔습니다 — source를 명시해주세요")
@@ -39,11 +41,14 @@ def resolve_source(req: PinCreateRequest) -> PinSource:
 
 
 def validate_create(req: PinCreateRequest) -> PinSource:
-    """경로별 필수값과 좌표 범위를 검증하고, 확정된 source를 반환한다."""
+    """경로별 필수값과 좌표 범위를 검증하고, 확정된 source를 반환한다.
+    v1은 링크로 핀 찍기를 거절한다(결정 #147, #148) — PinSource "link"·link_url 필드는
+    v2 카톡 내보내기가 다시 쓰므로 스키마엔 남겨두고 여기서만 막는다."""
+    if req.source == "link" or req.link_url:
+        raise AppError("VALIDATION_ERROR", LINK_PIN_REJECTED_MESSAGE)
+
     source = resolve_source(req)
 
-    if source == "link" and not req.link_url:
-        raise AppError("VALIDATION_ERROR", "link 경로에는 link_url이 필요합니다")
     if source == "search" and not req.place_id:
         raise AppError("VALIDATION_ERROR", "search 경로에는 place_id가 필요합니다")
     if source == "coordinate":

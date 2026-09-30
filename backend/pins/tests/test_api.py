@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from common.events import EventLog
 from pins import api
 from pins.models import Pin as PinRow
+from pins.schemas import Check
 
 
 def test_create_ai_pin_inserts_public_ai_pin_and_returns_event(db_session):
@@ -28,6 +29,50 @@ def test_create_ai_pin_inserts_public_ai_pin_and_returns_event(db_session):
     # (루트 수정, 2026-09-23 — recommend/#108 검증 중 발견된 기존 버그).
     assert mutation.event.type == "pin.published"
     assert mutation.event.map_id == "map_1"
+
+
+_SAMPLE_CHECKS = [
+    {"fact_key": "is_open", "label": "영업 중", "passed": True, "confidence": "known", "needs_check": False},
+]
+
+
+def test_create_ai_pin_stores_and_returns_checks(db_session):
+    """#57/#124 — 게시 시점에 candidate.checks를 그대로 pins에 싣는다(가드레일 5)."""
+    mutation = api.create_ai_pin(
+        db_session, map_id="map_1", category="음식점", place_id="place_checks_1",
+        lat=35.1, lng=129.0, created_by="user_1", checks=_SAMPLE_CHECKS,
+    )
+    assert mutation.pin.checks == _SAMPLE_CHECKS
+    assert mutation.event.payload["checks"] == _SAMPLE_CHECKS
+
+
+def test_create_ai_pin_without_checks_stores_none(db_session):
+    """기존 호출부(checks 파라미터를 안 넘기는 코드)가 그대로 동작해야 한다."""
+    mutation = api.create_ai_pin(
+        db_session, map_id="map_1", category="음식점", place_id="place_checks_none",
+        lat=35.1, lng=129.0, created_by="user_1",
+    )
+    assert mutation.pin.checks is None
+
+
+def test_create_ai_pin_invalid_checks_raises_before_insert(db_session):
+    """Check 스키마에 안 맞는 값(필드 누락)은 경계에서 바로 실패한다 — 잘못된 페이로드가
+    그대로 저장되지 않는다."""
+    from pydantic import ValidationError
+
+    try:
+        api.create_ai_pin(
+            db_session, map_id="map_1", category="음식점", place_id="place_checks_invalid",
+            lat=35.1, lng=129.0, created_by="user_1", checks=[{"fact_key": "is_open"}],
+        )
+        raise AssertionError("ValidationError가 발생했어야 한다")
+    except ValidationError:
+        pass
+
+    rows = db_session.execute(
+        select(PinRow).where(PinRow.place_id == "place_checks_invalid")
+    ).scalars().all()
+    assert rows == []
 
 
 def test_create_ai_pin_duplicate_place_id_raises_pin_duplicate(db_session):
@@ -131,6 +176,18 @@ def test_get_pin_response_for_viewer_fills_lat_lng_and_reaction_summary(db_sessi
     assert pin.lng == 129.0
     assert pin.reaction_summary.like == 1
     assert pin.permissions.can_remove_from_shortlist is True  # kind=확정
+
+
+def test_get_pin_response_for_viewer_returns_checks(db_session):
+    from authz.core import Principal
+
+    row = _insert_pin(db_session, kind="AI추천")
+    row.checks = _SAMPLE_CHECKS
+    db_session.commit()
+
+    principal = Principal(user_id="user_1", map_id="map_1", role="member")
+    pin = api.get_pin_response_for_viewer(db_session, pin_id=str(row.id), viewer_id="user_1", principal=principal)
+    assert pin.checks == [Check(**c) for c in _SAMPLE_CHECKS]
 
 
 def test_get_pin_response_for_viewer_other_users_private_pin_is_404(db_session):

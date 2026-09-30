@@ -9,6 +9,7 @@
 
 import uuid
 from datetime import datetime, timezone
+from typing import get_args
 
 from geoalchemy2 import Geometry
 from sqlalchemy import and_, cast, delete, func, or_, select, update
@@ -24,13 +25,50 @@ from pins import core
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
 from pins.ports import PinDraft, PlaceGateway
-from pins.schemas import Pin, PinCreateRequest, Reaction, ReactionRequest, ReactionSummary
+from pins.schemas import (
+    Category,
+    FilterCounts,
+    Pin,
+    PinCreateRequest,
+    PinKind,
+    Reaction,
+    ReactionRequest,
+    ReactionSummary,
+)
 
 
 def _lat_lng_columns():
     """geom::geometry 캐스트 후 ST_X/ST_Y로 좌표를 뽑는다(geography 컬럼엔 ST_X/ST_Y가 직접 안 먹는다)."""
     geom_as_geometry = cast(PinRow.geom, Geometry())
     return func.ST_Y(geom_as_geometry).label("lat"), func.ST_X(geom_as_geometry).label("lng")
+
+
+def _visible_pins_clause(map_id: str, viewer_id: str):
+    """그 지도에서 viewer에게 보이는 핀의 단일 판정 — list_pins와 count_pins가 같이 쓴다
+    (목록과 집계가 어긋나면 비공개 후보 개수가 새거나 배지 숫자가 목록과 달라진다, 가드레일 1).
+    괄호를 명시한다 — AND가 OR보다 우선순위가 높아, 괄호 없이 이어붙이면 삭제된
+    (deleted_at NOT NULL) 남의 비공개 핀까지 새어나온다."""
+    return and_(
+        PinRow.map_id == map_id,
+        PinRow.deleted_at.is_(None),
+        or_(PinRow.visibility == "public", PinRow.created_by == viewer_id),
+    )
+
+
+def count_pins(db: Session, map_id: str, principal: Principal) -> FilterCounts:
+    """분류×종류 집계(#141) — 보이는 핀만 GROUP BY 한 번으로 센다. 핀이 없는 카테고리·종류도
+    0으로 채운다. 키는 스키마 Literal에서 만든다(「기타」가 추가돼도 여기를 안 고친다)."""
+    by_category = {c: 0 for c in get_args(Category)}
+    by_kind = {k: 0 for k in get_args(PinKind)}
+    rows = db.execute(
+        select(PinRow.category, PinRow.kind, func.count())
+        .where(_visible_pins_clause(map_id, principal.user_id))
+        .group_by(PinRow.category, PinRow.kind)
+    ).all()
+    for category, kind, n in rows:
+        by_category[category] += n
+        by_kind[kind] += n
+    return FilterCounts(by_category=by_category, by_kind=by_kind)
 
 
 def get_pin_or_404(db: Session, pin_id: str) -> PinRow:
@@ -80,15 +118,7 @@ def list_pins(
             func.coalesce(reaction_counts.c.against, 0).label("against_count"),
         )
         .outerjoin(reaction_counts, reaction_counts.c.pin_id == PinRow.id)
-        .where(PinRow.map_id == map_id)
-        .where(
-            # 괄호를 명시한다 — AND가 OR보다 우선순위가 높아, 괄호 없이 이어붙이면
-            # 삭제된(deleted_at NOT NULL) 남의 비공개 핀까지 새어나온다(가드레일 1).
-            and_(
-                PinRow.deleted_at.is_(None),
-                or_(PinRow.visibility == "public", PinRow.created_by == principal.user_id),
-            )
-        )
+        .where(_visible_pins_clause(map_id, principal.user_id))
     )
     if category:
         query = query.where(PinRow.category == category)
@@ -148,7 +178,6 @@ def create_pin(
     resolved = places.resolve(
         PinDraft(
             source=source,
-            link_url=req.link_url,
             place_id=req.place_id,
             lat=req.lat,
             lng=req.lng,
