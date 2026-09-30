@@ -6,6 +6,7 @@ from common.errors import AppError
 from recommend import core
 from recommend.models import RecommendRun
 from recommend.ports import Circle
+from recommend.schemas import Check
 
 
 def _run(status: str) -> RecommendRun:
@@ -175,3 +176,257 @@ def test_check_retry_limit_raises_at_or_above_limit(attempt_no):
     with pytest.raises(AppError) as exc_info:
         core.check_retry_limit(attempt_no)
     assert exc_info.value.code == "RETRY_LIMIT"
+
+
+# ============================================================================
+# #112 — build_preference_criteria / score_candidates / build_member_fulfillment /
+# select_top_candidates
+# ============================================================================
+
+
+def _check(fact_key: str, *, passed: bool = True, confidence: str = "known") -> Check:
+    return Check(fact_key=fact_key, label=str(passed), passed=passed, confidence=confidence, needs_check=False)
+
+
+def _place(*checks: Check, members: frozenset[str] = frozenset({"u1"})) -> core.HeartedPlace:
+    return core.HeartedPlace(checks=list(checks), member_ids=members)
+
+
+# ---------- build_preference_criteria ----------
+
+def test_build_preference_criteria_takes_majority_value_when_places_disagree():
+    # 3곳은 조용하고(quiet=True) 1곳은 시끄러웠다(quiet=False) → "조용함"으로 본다(이슈 본문 예시).
+    places = [
+        _place(_check("quiet", passed=True)),
+        _place(_check("quiet", passed=True)),
+        _place(_check("quiet", passed=True)),
+        _place(_check("quiet", passed=False)),
+    ]
+    criteria = core.build_preference_criteria(
+        places, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={},
+    )
+    assert criteria == {"quiet": True}
+
+
+def test_build_preference_criteria_excludes_fact_key_on_exact_tie():
+    places = [_place(_check("quiet", passed=True)), _place(_check("quiet", passed=False))]
+    criteria = core.build_preference_criteria(
+        places, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={},
+    )
+    assert "quiet" not in criteria
+
+
+def test_build_preference_criteria_ignores_unknown_confidence():
+    places = [_place(_check("quiet", passed=True, confidence="unknown"))]
+    criteria = core.build_preference_criteria(
+        places, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={},
+    )
+    assert criteria == {}
+
+
+def test_build_preference_criteria_excludes_value_comparison_unsupported_fact_keys():
+    places = [_place(_check("price_bucket", passed=True))]
+    criteria = core.build_preference_criteria(
+        places, excluded_fact_keys=frozenset({"price_bucket"}), disqualifying_fact_keys=[], preferred_authors={},
+    )
+    assert criteria == {}
+
+
+def test_build_preference_criteria_excludes_active_disqualifying_fact_keys():
+    # 모든 통과 후보가 이미 같은 값이라 점수 차이를 못 만드는 라벨 — 실격 사유로 등록된 것.
+    places = [_place(_check("contains_shellfish", passed=False), _check("quiet", passed=True))]
+    criteria = core.build_preference_criteria(
+        places, excluded_fact_keys=frozenset(), disqualifying_fact_keys=["contains_shellfish"], preferred_authors={},
+    )
+    assert criteria == {"quiet": True}
+
+
+def test_build_preference_criteria_adds_explicit_preference_as_true():
+    criteria = core.build_preference_criteria(
+        [], excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={"local_flavor": frozenset({"u1"})},
+    )
+    assert criteria == {"local_flavor": True}
+
+
+def test_build_preference_criteria_explicit_preference_overrides_tie():
+    places = [_place(_check("quiet", passed=True)), _place(_check("quiet", passed=False))]
+    criteria = core.build_preference_criteria(
+        places, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={"quiet": frozenset({"u1"})},
+    )
+    assert criteria == {"quiet": True}
+
+
+def test_build_preference_criteria_uses_only_soft_fact_keys():
+    # 하드 체크의 passed는 "실격 아님"이라 라벨 값과 뜻이 다르다 — 소프트 키만 신호로 쓴다.
+    places = [_place(_check("contains_shellfish", passed=True), _check("quiet", passed=True))]
+    criteria = core.build_preference_criteria(
+        places, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[],
+        preferred_authors={"is_open": frozenset({"u1"})},
+    )
+    assert criteria == {"quiet": True}
+
+
+# ---------- score_candidates ----------
+
+def test_score_candidates_counts_preference_author_as_supporter_without_heart():
+    # ♥ 이력이 없어도 선호 사유를 쓴 사람은 그 fact_key의 지지자다.
+    criteria = {"quiet": True}
+    candidates = {"p1": [_check("quiet", passed=True)]}
+    authors = {"quiet": frozenset({"u1"})}
+    assert core.score_candidates(candidates, [], criteria, authors) == {"p1": 1}
+
+
+def test_score_candidates_counts_author_who_also_hearted_once():
+    criteria = {"quiet": True}
+    hearted = [_place(_check("quiet", passed=True), members=frozenset({"u1", "u2"}))]
+    candidates = {"p1": [_check("quiet", passed=True)]}
+    authors = {"quiet": frozenset({"u1"})}
+    assert core.score_candidates(candidates, hearted, criteria, authors) == {"p1": 2}
+
+
+def test_score_candidates_ignores_non_soft_fact_keys_in_hearted_checks():
+    criteria = {"contains_shellfish": True}
+    hearted = [_place(_check("contains_shellfish", passed=True))]
+    candidates = {"p1": [_check("contains_shellfish", passed=True)]}
+    assert core.score_candidates(candidates, hearted, criteria) == {"p1": 0}
+
+def test_score_candidates_scores_only_when_both_sides_are_true():
+    criteria = {"quiet": True}
+    candidates = {
+        "match": [_check("quiet", passed=True)],
+        "mismatch": [_check("quiet", passed=False)],
+        "unknown": [_check("quiet", passed=True, confidence="unknown")],
+    }
+    hearted = [_place(_check("quiet", passed=True), members=frozenset({"u1"}))]
+    scores = core.score_candidates(candidates, hearted, criteria)
+    assert scores == {"match": 1, "mismatch": 0, "unknown": 0}
+
+
+def test_score_candidates_criteria_false_never_scores():
+    # 값이 갈려도 다수결로 False가 확정된 라벨은 "둘 다 참"이 될 수 없어 항상 0점.
+    criteria = {"quiet": False}
+    candidates = {"p1": [_check("quiet", passed=True)]}
+    hearted = [_place(_check("quiet", passed=True))]
+    assert core.score_candidates(candidates, hearted, criteria) == {"p1": 0}
+
+
+def test_score_candidates_adds_member_count_difference():
+    criteria = {"quiet": True}
+    hearted = [
+        _place(_check("quiet", passed=True), members=frozenset({"u1", "u2"})),
+        _place(_check("quiet", passed=False), members=frozenset({"u3"})),
+    ]
+    candidates = {"p1": [_check("quiet", passed=True)]}
+    assert core.score_candidates(candidates, hearted, criteria) == {"p1": 2 - 1}
+
+
+def test_score_candidates_counts_member_once_across_multiple_liked_places():
+    # 한 사람이 조용한 카페 3곳에 ♥를 눌러도 1명으로 센다.
+    criteria = {"quiet": True}
+    hearted = [
+        _place(_check("quiet", passed=True), members=frozenset({"u1"})),
+        _place(_check("quiet", passed=True), members=frozenset({"u1"})),
+        _place(_check("quiet", passed=True), members=frozenset({"u1"})),
+    ]
+    candidates = {"p1": [_check("quiet", passed=True)]}
+    assert core.score_candidates(candidates, hearted, criteria) == {"p1": 1}
+
+
+def test_score_candidates_sums_across_multiple_matching_fact_keys():
+    criteria = {"quiet": True, "local_flavor": True}
+    hearted = [_place(_check("quiet", passed=True), _check("local_flavor", passed=True), members=frozenset({"u1"}))]
+    candidates = {"p1": [_check("quiet", passed=True), _check("local_flavor", passed=True)]}
+    assert core.score_candidates(candidates, hearted, criteria) == {"p1": 2}
+
+
+# ---------- build_member_fulfillment ----------
+
+def test_build_member_fulfillment_lists_fact_keys_satisfied_per_member():
+    criteria = {"quiet": True}
+    hearted = [_place(_check("quiet", passed=True), members=frozenset({"u1", "u2"}))]
+    result = core.build_member_fulfillment([_check("quiet", passed=True)], hearted, criteria)
+    assert result == {"u1": ["quiet"], "u2": ["quiet"]}
+
+
+def test_build_member_fulfillment_excludes_members_not_actually_fulfilled():
+    criteria = {"quiet": True}
+    hearted = [_place(_check("quiet", passed=False), members=frozenset({"u1"}))]  # 반대 값에만 ♥
+    result = core.build_member_fulfillment([_check("quiet", passed=True)], hearted, criteria)
+    assert result == {}
+
+
+def test_build_member_fulfillment_includes_preference_author():
+    result = core.build_member_fulfillment(
+        [_check("quiet", passed=True)], [], {"quiet": True}, {"quiet": frozenset({"u9"})},
+    )
+    assert result == {"u9": ["quiet"]}
+
+
+# ---------- select_top_candidates ----------
+
+def test_select_top_candidates_picks_highest_scores_first():
+    candidates = [
+        core.ScoredCandidate(place_id="low", score=1, region_label="해운대", lat=35.0, lng=129.0),
+        core.ScoredCandidate(place_id="high", score=5, region_label="해운대", lat=35.0, lng=129.0),
+        core.ScoredCandidate(place_id="mid", score=3, region_label="해운대", lat=35.0, lng=129.0),
+    ]
+    anchors = {"해운대": [(35.0, 129.0)]}
+    assert core.select_top_candidates(candidates, anchors, limit=3) == ["high", "mid", "low"]
+
+
+def test_select_top_candidates_region_diversity_never_beats_score():
+    # 5점짜리가 전부 해운대고 광안리 최고점이 2점이면 해운대 3곳이 뽑힌다(이슈 본문 예시).
+    candidates = [
+        core.ScoredCandidate(place_id=f"haeundae_{i}", score=5, region_label="해운대", lat=35.0, lng=129.0)
+        for i in range(3)
+    ] + [core.ScoredCandidate(place_id="gwangalli", score=2, region_label="광안리", lat=35.1, lng=129.1)]
+    anchors = {"해운대": [(35.0, 129.0)], "광안리": [(35.1, 129.1)]}
+    result = core.select_top_candidates(candidates, anchors, limit=3)
+    assert result == ["haeundae_0", "haeundae_1", "haeundae_2"]
+
+
+def test_select_top_candidates_tie_break_prefers_unpicked_region():
+    candidates = [
+        core.ScoredCandidate(place_id="haeundae_a", score=5, region_label="해운대", lat=35.0, lng=129.0),
+        core.ScoredCandidate(place_id="haeundae_b", score=5, region_label="해운대", lat=35.0, lng=129.0001),
+        core.ScoredCandidate(place_id="gwangalli", score=5, region_label="광안리", lat=35.1, lng=129.1),
+    ]
+    anchors = {"해운대": [(35.0, 129.0)], "광안리": [(35.1, 129.1)]}
+    result = core.select_top_candidates(candidates, anchors, limit=2)
+    # 첫 번째는 (동점이라) 거리로 정해지고(해운대_a가 앵커에 더 가까움), 두 번째는 이미 해운대가
+    # 뽑혔으니 동점이면 아직 안 뽑힌 광안리를 우선한다 — 해운대_b가 아니라.
+    assert result == ["haeundae_a", "gwangalli"]
+
+
+def test_select_top_candidates_distance_tie_break_uses_average_not_sum():
+    # region_a는 기준 핀 1개, region_b는 기준 핀 2개(둘 다 후보와 같은 좌표) — 합으로 비교하면
+    # 기준 핀이 적은 region_a가 항상 이겨야 하지만, 평균이므로 둘 다 거리 0으로 동률이다.
+    candidates = [
+        core.ScoredCandidate(place_id="from_a", score=1, region_label="region_a", lat=35.0, lng=129.0),
+        core.ScoredCandidate(place_id="from_b", score=1, region_label="region_b", lat=36.0, lng=130.0),
+    ]
+    anchors = {"region_a": [(35.0, 129.0)], "region_b": [(36.0, 130.0), (36.0, 130.0)]}
+    result = core.select_top_candidates(candidates, anchors, limit=1)
+    # 거리가 둘 다 0으로 동률이면 이어지는 min()의 안정 정렬상 먼저 나온 후보(from_a)가 남는다 —
+    # 핵심 검증은 "region_b가 핀이 2개라서 불리해지지 않는다"는 것이다(합이었다면 절대 못 이김).
+    assert result == ["from_a"]
+
+
+def test_select_top_candidates_stops_at_limit():
+    candidates = [
+        core.ScoredCandidate(place_id=f"p{i}", score=i, region_label="r", lat=35.0, lng=129.0) for i in range(5)
+    ]
+    result = core.select_top_candidates(candidates, {"r": [(35.0, 129.0)]}, limit=3)
+    assert len(result) == 3
+
+
+def test_select_top_candidates_raises_when_no_anchor_points():
+    candidates = [core.ScoredCandidate(place_id="p1", score=1, region_label="빈동네", lat=35.0, lng=129.0)]
+    with pytest.raises(ValueError):
+        core.select_top_candidates(candidates, {}, limit=3)
+
+
+def test_select_top_candidates_raises_when_anchor_points_empty_list():
+    candidates = [core.ScoredCandidate(place_id="p1", score=1, region_label="빈동네", lat=35.0, lng=129.0)]
+    with pytest.raises(ValueError):
+        core.select_top_candidates(candidates, {"빈동네": []}, limit=3)
