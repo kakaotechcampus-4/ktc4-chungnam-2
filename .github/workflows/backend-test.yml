@@ -1,0 +1,44 @@
+name: backend-test
+
+# 백엔드 전체 pytest(모듈 단위 + backend/integration). develop/main으로 가는 PR과 develop push에서 돈다.
+# 결과는 차단이 아니라 신호다 — 필수 체크로 걸지 여부는 팀 결정(브랜치 보호 설정).
+on:
+  pull_request:
+    branches: [develop, main]
+    paths: ["backend/**", "docs/api-spec.yaml", ".github/workflows/backend-test.yml"]
+  push:
+    branches: [develop]
+    paths: ["backend/**", "docs/api-spec.yaml"]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: pingo
+          POSTGRES_PASSWORD: pingo
+          POSTGRES_DB: pingo
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pingo"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PINGO_ENV: test
+      DATABASE_URL: postgresql://pingo:pingo@localhost:5432/pingo
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      # PostGIS 익스텐션은 이미지에 있고, 스키마는 마이그레이션 체인으로 만든다 — 앱 lifespan이 event_log를 읽기 때문에
+      # 마이그레이션 없이는 TestClient가 뜨지 않는다. 체인이 깨졌는지(다중 head 등)도 여기서 잡힌다.
+      - run: python -m alembic upgrade head
+      - run: python -m pytest -q
