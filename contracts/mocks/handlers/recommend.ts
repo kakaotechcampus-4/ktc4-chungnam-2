@@ -136,20 +136,23 @@ export const recommendHandlers = [
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
+    const radius = run.default_radius_walk_min ?? 15;
+    if (radius >= 30) return apiError(409, "WIDEN_LIMIT", "더 넓히면 여행지를 벗어나요");
+    run.default_radius_walk_min = radius + 5; // docs/constraints.md: +5분/회, 상한 30분
     run.status = "executing";
     // 가드레일 4·5-6-1: 기본값 원만 넓힌다 — 목 서버는 재계산 결과로 후보를 다시 채워 넣는다
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
     store.candidates[runId] = buildCandidates(regionLabel);
     run.status = "done";
-    return new HttpResponse(null, { status: 202 });
+    return HttpResponse.json(run, { status: 202 });
   }),
 
   http.post("*/runs/:runId/retry", ({ params }) => {
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
-    if ((run.attempt_no ?? 1) >= 3) {
-      return apiError(429, "RETRY_LIMIT", "3번까지만 찾습니다", { attempt_no: run.attempt_no });
+    if ((run.attempt_no ?? 1) >= 5) {
+      return apiError(429, "RETRY_LIMIT", "5번까지만 찾습니다", { attempt_no: run.attempt_no });
     }
     run.attempt_no = (run.attempt_no ?? 1) + 1;
     run.status = "done";

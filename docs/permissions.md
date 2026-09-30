@@ -125,6 +125,16 @@ def require_map_member() -> Depends:
 - 그 지도의 구성원이 아님 → **404** (존재 자체를 흘리지 않는다)
 - 구성원이지만 그 액션이 롤에 없음 → **403**
 
+## 숙소 핀의 반응 게이팅 (#154 결정)
+
+숙소는 반응(♥/△/🚫)을 받지 않는 카테고리다 — 핀을 찍고 확정 리스트·동선 기준점으로 쓸 뿐이다.
+확정 리스트 게이팅(#65)과 같은 방식으로 **역할이 아니라 리소스 상태**로 반전한다:
+
+- `pin.category == "숙소"`이면 `permissions.can_react=false`. `authz/core.py::_pin_permissions`가 `permissions_for`에서만 계산하고 `can()`에는 넣지 않는다.
+- 그래도 `PUT /pins/{pinId}/reaction`이 오면 **422 `REACTION_NOT_ALLOWED`** — 권한(403)이 아니라 "이 리소스는 반응 대상이 아님"이라 요청 자체를 거부한다.
+- `GET /pins/{pinId}/reactions`는 숙소 핀에 빈 배열을 돌려준다.
+- 「기타」 카테고리는 일반 핀과 같다(반응 가능, 추천 대상만 아님).
+
 ## 확정 리스트(shortlist) permissions 게이팅 (#65 결정)
 
 `authz`(#36) 구현 중 코드에 먼저 들어갔던 두 규칙을 #7(리스트 탭, PR #80) 도착으로 검증을

@@ -25,7 +25,22 @@ export const pinsHandlers = [
     if (category) pins = pins.filter((p) => p.category === category);
     if (kind) pins = pins.filter((p) => p.kind === kind);
     if (createdBy.length) pins = pins.filter((p) => p.created_by && createdBy.includes(p.created_by)); // #26
-    return HttpResponse.json(pins.map((p) => ({ ...p, permissions: pinPermissions(p) })));
+    return HttpResponse.json(
+      pins.map((p) => ({
+        ...p,
+        permissions: pinPermissions(p),
+        my_reaction: (store.reactions[p.id] ?? []).find((r) => r.user_id === ME_USER_ID) ?? null,
+      })),
+    );
+  }),
+
+  http.get("*/pins/:pinId/reactions", ({ params }) => {
+    const pinId = params.pinId as string;
+    if (!store.pins[pinId]) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    const list = store.reactions[pinId] ?? [];
+    return HttpResponse.json(
+      list.map((r) => ({ ...r, display_name: store.members[store.pins[pinId].map_id]?.find((m) => m.user_id === r.user_id)?.display_name ?? "구성원" })),
+    );
   }),
 
   http.post("*/maps/:mapId/pins", async ({ params, request }) => {
@@ -94,13 +109,20 @@ export const pinsHandlers = [
     const pinId = params.pinId as string;
     const pin = store.pins[pinId];
     if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    if (pin.category === "숙소") return apiError(422, "REACTION_NOT_ALLOWED", "숙소에는 반응을 남길 수 없어요");
     const body = (await request.json()) as { type: "like" | "neutral" | "against"; reason_text?: string; reason_chip_ids?: string[] };
     if (body.type === "against" && !body.reason_text && !(body.reason_chip_ids && body.reason_chip_ids.length)) {
       return apiError(422, "EVIDENCE_REQUIRED", "반대에는 사유가 필요해요");
     }
     const list = store.reactions[pinId] ?? (store.reactions[pinId] = []);
     const idx = list.findIndex((r) => r.user_id === ME_USER_ID);
-    const reaction = { pin_id: pinId, user_id: ME_USER_ID, type: body.type, reason_text: body.reason_text ?? "" };
+    const reaction = {
+      pin_id: pinId,
+      user_id: ME_USER_ID,
+      type: body.type,
+      reason_text: body.reason_text ?? "",
+      reason_chip_ids: body.reason_chip_ids ?? [],
+    };
     if (idx >= 0) list[idx] = reaction;
     else list.push(reaction);
     // 요약 재계산

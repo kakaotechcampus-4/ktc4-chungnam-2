@@ -36,7 +36,7 @@ function buildNoResults(): StoreState {
 function buildRetryLimit(): StoreState {
   const state = buildBaseState();
   const runId = "run_retry_limit";
-  state.runs[runId] = { id: runId, map_id: SEED_MAP_ID, category: "음식점", status: "done", attempt_no: 3 };
+  state.runs[runId] = { id: runId, map_id: SEED_MAP_ID, category: "음식점", status: "done", attempt_no: 5 };
   state.runRequestedBy[runId] = ME_USER_ID;
   state.evidenceLines[runId] = buildEvidenceLines(runId);
   state.regions[runId] = buildRegions();
