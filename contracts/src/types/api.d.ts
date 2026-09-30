@@ -74,7 +74,41 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** 내 표시 이름 수정 — 계정 단위(모든 지도에 같은 이름, 2026-09-30). 지도마다 다른 이름은 두지 않는다 */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UserUpdateRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["User"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description VALIDATION_ERROR — display_name이 비었거나 50자 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/auth/logout": {
@@ -120,7 +154,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 탈퇴. 연결된 사유·반응 기록도 함께 삭제 (12절) */
+        /**
+         * 탈퇴 (12절, #155 결정). users 행은 soft delete, 반응·반대 사유·근거 줄은 삭제한다.
+         *     그 사람이 찍은 핀과 확정 리스트 항목은 남고, 작성자(created_by_display_name)는 "탈퇴한 구성원"으로 내려간다.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -283,6 +320,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/invites/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 초대 요약 — 수락 화면(C-1/C-2)이 수락 전에 지도를 보여주기 위한 조회. 로그인 없이 호출할 수 있다(#23 "로그인 전엔 읽기만").
+         *     토큰이 곧 접근 권한이므로 제목·기간·구성원 수·초대자 이름만 돌려주고 핀 등 지도 내용은 주지 않는다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InviteSummary"];
+                    };
+                };
+                404: components["responses"]["InviteNotFound"];
+                410: components["responses"]["InviteExpired"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/invites/{token}/accept": {
         parameters: {
             query?: never;
@@ -314,6 +394,8 @@ export interface paths {
                     };
                 };
                 401: components["responses"]["Unauthorized"];
+                404: components["responses"]["InviteNotFound"];
+                410: components["responses"]["InviteExpired"];
             };
         };
         delete?: never;
@@ -479,7 +561,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** 핀 삭제. 권한 규정은 결정 이슈 미결 (#15 분리분) */
+        /** 핀 삭제 — 지도 구성원 누구나 (#25, 9/4 결정). 요청자별 가능 여부는 Pin.permissions.can_delete */
         delete: {
             parameters: {
                 query?: never;
@@ -513,7 +595,10 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** 반응 등록/수정. 반대(against)는 reason 필수 (가드레일 3) */
+        /**
+         * 반응 등록/수정. 반대(against)는 reason 필수 (가드레일 3).
+         *     숙소 핀은 반응을 받지 않는다(#154) — permissions.can_react=false이고 요청하면 422 REACTION_NOT_ALLOWED
+         */
         put: {
             parameters: {
                 query?: never;
@@ -538,11 +623,19 @@ export interface paths {
                         "application/json": components["schemas"]["Reaction"];
                     };
                 };
-                422: components["responses"]["EvidenceRequired"];
+                /** @description EVIDENCE_REQUIRED(반대 사유 없음, 가드레일 3) 또는 REACTION_NOT_ALLOWED(숙소 핀, */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
             };
         };
         post?: never;
-        /** 핀 되돌리기 — 구성원 누구나 가능 (15-1) */
+        /** 내 반응 취소 (「의견 취소」) — 내가 남긴 반응만 지운다. 핀 상태는 되돌리지 않는다 */
         delete: {
             parameters: {
                 query?: never;
@@ -563,6 +656,45 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pins/{pinId}/reactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 핀별 구성원 의견 목록 — 핀 상세 「구성원 의견」. 구성원 누구나 조회 (숙소 핀은 빈 배열) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    pinId: components["parameters"]["PinId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 반응한 구성원만 온다 (미응답자는 포함하지 않는다) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Reaction"][];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -855,7 +987,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 반경 넓히기. 기본값 원만 확대한다 — 사람이 명시한 원(예 "숙소 기준 20분")은 자동으로 넓히지 않는다 (가드레일 4, 5-6-1) */
+        /**
+         * 반경 넓히기. 기본값 원만 확대한다 — 사람이 명시한 원(예 "숙소 기준 20분")은 자동으로 넓히지 않는다 (가드레일 4, 5-6-1).
+         *     한 번 누를 때마다 기본값 원의 도보 시간을 5분씩 늘린다(기본 15분 → 20분 → 25분 → 30분). 상한은 도보 30분이며 넘으면 409 WIDEN_LIMIT.
+         *     폭·상한은 docs/constraints.md의 조정 가능한 상수다 — 응답 RecommendRun에 현재 기본 반경(default_radius_walk_min)을 실어 화면이 "다음은 몇 분"을 안내한다.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -872,8 +1008,11 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["RecommendRun"];
+                    };
                 };
+                409: components["responses"]["WidenLimit"];
             };
         };
         delete?: never;
@@ -893,7 +1032,7 @@ export interface paths {
         put?: never;
         /**
          * 「다시 추천 받기」. 현재 뜬 대안 전체를 제외목록에 넣고 새로 찾는다 (3절, 루프가 닫힌다).
-         *     3회 상한 초과 시 429 RETRY_LIMIT. 상한의 집계 단위는 결정 이슈 미결 — 응답의 attempt_no로 우선 노출.
+         *     5회 상한 초과 시 429 RETRY_LIMIT (#31, 2026-09-22 확정). 응답의 attempt_no로 현재 몇 번째인지 노출한다.
          */
         post: {
             parameters: {
@@ -1290,7 +1429,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        Category: "음식점" | "카페" | "숙소" | "관광지";
+        Category: "음식점" | "카페" | "숙소" | "관광지" | "기타";
         /**
          * @description AI 대안 추천을 받을 수 있는 카테고리. 숙소는 핀으로는 찍지만 추천 대상이 아니다 (#145)
          * @enum {string}
@@ -1317,6 +1456,10 @@ export interface components {
             id?: string;
             display_name?: string;
         };
+        UserUpdateRequest: {
+            /** @description 계정 단위 표시 이름 (2026-09-30 결정) */
+            display_name: string;
+        };
         Map: {
             id: string;
             title: string;
@@ -1333,6 +1476,20 @@ export interface components {
             region?: components["schemas"]["MapRegion"];
             member_count: number;
             confirmed_count?: number;
+        };
+        /** @description 초대 수락 전 화면용 요약. 지도 내용(핀 등)은 포함하지 않는다 */
+        InviteSummary: {
+            map_id: string;
+            title: string;
+            /** Format: date */
+            start_date: string;
+            /** Format: date */
+            end_date: string;
+            member_count: number;
+            /** @description 초대 링크를 발급한 사람. 탈퇴했으면 '탈퇴한 구성원' */
+            inviter_display_name?: string;
+            /** Format: date-time */
+            expires_at: string;
         };
         Invite: {
             token: string;
@@ -1415,6 +1572,12 @@ export interface components {
             /** @description 게시된 AI 추천 핀도 상세에서 계속 노출한다 (가드레일 5) */
             checks?: components["schemas"]["Check"][];
             source_run_id?: string | null;
+            /** @description AI 추천 핀만 — 추천 이유. 게시된 뒤에도 유지 (가드레일 5) */
+            reason?: string;
+            member_fulfillment?: components["schemas"]["MemberFulfillment"];
+            place_source?: components["schemas"]["PlaceSource"];
+            /** @description 내가 이 핀에 남긴 반응. 없으면 null — 「♥ 2 · 나」 칩과 「의견 취소」 링크용 */
+            my_reaction?: null | components["schemas"]["Reaction"];
             reaction_summary: {
                 like: number;
                 neutral: number;
@@ -1434,6 +1597,9 @@ export interface components {
             /** @enum {string} */
             type: "like" | "neutral" | "against";
             reason_text?: string;
+            reason_chip_ids?: string[];
+            /** @description GET /pins/{pinId}/reactions 전용 — 의견 목록에 표시할 이름 */
+            display_name?: string;
         };
         FilterCounts: {
             by_category?: {
@@ -1485,6 +1651,27 @@ export interface components {
             /** @enum {string} */
             status?: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
             attempt_no?: number;
+            /** @description 기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (기본 15, 상한 30) */
+            default_radius_walk_min?: number;
+        };
+        /** @description 구성원 충족 집계 (가드레일 5). 게시 뒤에도 유지된다 */
+        MemberFulfillment: {
+            /** @description 이 후보가 자기 조건을 만족시키는 구성원 수 */
+            satisfied: number;
+            /** @description 집계 대상 구성원 수(조건을 남긴 구성원) */
+            total: number;
+            by_member?: {
+                user_id: string;
+                display_name?: string;
+                satisfied: boolean;
+            }[];
+        };
+        /** @description 장소 정보 출처 (가드레일 5, 5-6-1 지도 출처 표시) */
+        PlaceSource: {
+            /** @enum {string} */
+            provider: "kakao" | "naver" | "google";
+            /** @description 출처 페이지 링크. 이용약관상 링크 제공이 불가하면 생략 */
+            url?: string;
         };
         Candidate: {
             id?: string;
@@ -1493,6 +1680,10 @@ export interface components {
             region_label?: string;
             rank?: number;
             checks?: components["schemas"]["Check"][];
+            /** @description 추천 이유 — 근거 없는 한 줄 추천 금지 (가드레일 5) */
+            reason?: string;
+            member_fulfillment?: components["schemas"]["MemberFulfillment"];
+            place_source?: components["schemas"]["PlaceSource"];
             /** @enum {string} */
             visibility?: "private" | "published";
             published_pin_id?: string | null;
@@ -1662,7 +1853,43 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 재시도 3회 초과 (6절 "재시도 3회 초과") */
+        /** @description 반응을 받지 않는 핀(숙소, */
+        ReactionNotAllowed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 없거나 잘못된 초대 토큰 (INVITE_NOT_FOUND) */
+        InviteNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 만료된 초대 토큰 (INVITE_EXPIRED) */
+        InviteExpired: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 기본값 원이 이미 상한(도보 30분) — 더 넓힐 수 없음 (WIDEN_LIMIT). 「근거 고치기」/「직접 찍기」로 안내 */
+        WidenLimit: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 재시도 5회 초과 (6절 "재시도 5회 초과", */
         RetryLimit: {
             headers: {
                 [name: string]: unknown;

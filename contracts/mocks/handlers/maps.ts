@@ -50,9 +50,28 @@ export const mapsHandlers = [
     return HttpResponse.json({ token, url: `https://pingo.example.com/invites/${token}`, expires_at }, { status: 201 });
   }),
 
+  // 초대 요약 — 로그인 없이 호출 가능(#23). 지도 내용은 주지 않는다
+  http.get("*/invites/:token", ({ params }) => {
+    const invite = store.invites[params.token as string];
+    if (!invite) return apiError(404, "INVITE_NOT_FOUND", "유효하지 않은 초대 링크예요");
+    if (new Date(invite.expires_at).getTime() < Date.now()) return apiError(410, "INVITE_EXPIRED", "초대 링크가 만료됐어요");
+    const map = getMapOr404(invite.mapId);
+    if (!map) return apiError(404, "INVITE_NOT_FOUND", "유효하지 않은 초대 링크예요");
+    return HttpResponse.json({
+      map_id: map.id,
+      title: map.title,
+      start_date: map.start_date,
+      end_date: map.end_date,
+      member_count: store.members[map.id]?.length ?? map.member_count ?? 0,
+      inviter_display_name: store.members[map.id]?.[0]?.display_name,
+      expires_at: invite.expires_at,
+    });
+  }),
+
   http.post("*/invites/:token/accept", ({ params }) => {
     const invite = store.invites[params.token as string];
-    if (!invite) return apiError(401, "UNAUTHORIZED", "초대 링크가 유효하지 않습니다");
+    if (!invite) return apiError(404, "INVITE_NOT_FOUND", "유효하지 않은 초대 링크예요");
+    if (new Date(invite.expires_at).getTime() < Date.now()) return apiError(410, "INVITE_EXPIRED", "초대 링크가 만료됐어요");
     const map = getMapOr404(invite.mapId);
     if (!map) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
     const members = store.members[invite.mapId] ?? (store.members[invite.mapId] = []);
