@@ -5,8 +5,15 @@
 
 import hashlib
 import hmac
+from datetime import datetime
+from typing import NamedTuple
 
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 30  # 30일. 세션 테이블이 없어(data-model.md) 무상태 토큰의 자체 만료로 대신한다.
+
+
+class SessionClaims(NamedTuple):
+    user_id: str
+    issued_at: int
 
 
 def _sign(payload: str, secret: str) -> str:
@@ -21,8 +28,8 @@ def create_session_token(user_id: str, *, secret: str, issued_at: int) -> str:
     return f"{payload}.{_sign(payload, secret)}"
 
 
-def parse_session_token(token: str, *, secret: str, now: int, ttl_seconds: int = SESSION_TTL_SECONDS) -> str | None:
-    """서명·형식·만료를 확인해 user_id를 돌려준다. 뭐가 문제든 조용히 None만 반환한다 —
+def parse_session_token(token: str, *, secret: str, now: int, ttl_seconds: int = SESSION_TTL_SECONDS) -> SessionClaims | None:
+    """서명·형식·만료를 확인해 (user_id, 발급 시각)을 돌려준다. 뭐가 문제든 조용히 None만 반환한다 —
     호출부(auth/deps.py)가 이걸 UNAUTHORIZED로 바꾸는 게 유일한 책임이라, 여기서 어떤 조합이
     실패인지 구분해 알려줄 필요가 없다(실패 사유를 노출하면 토큰 위조 시도에 오라클을 주는 셈)."""
     parts = token.split(".")
@@ -37,7 +44,16 @@ def parse_session_token(token: str, *, secret: str, now: int, ttl_seconds: int =
     issued_at = int(issued_at_raw)
     if now < issued_at or now - issued_at > ttl_seconds:
         return None
-    return user_id
+    return SessionClaims(user_id, issued_at)
+
+
+def is_revoked(issued_at: int, sessions_valid_after: datetime | None) -> bool:
+    """로그아웃이 기록한 sessions_valid_after 이전(같은 초 포함)에 발급된 토큰이면 True.
+    토큰 발급 시각은 초 단위라, 로그아웃과 같은 초에 복사된 토큰도 막으려고 `<=`로 비교한다 —
+    대가로 로그아웃 직후 1초 안의 재로그인 토큰도 거절되지만 카카오 왕복이 있어 사실상 없다."""
+    if sessions_valid_after is None:
+        return False
+    return issued_at <= int(sessions_valid_after.timestamp())
 
 
 def display_name_from_kakao_profile(profile: dict) -> str:

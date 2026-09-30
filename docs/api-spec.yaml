@@ -49,6 +49,26 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/User" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [auth]
+      summary: 내 표시 이름 수정 — 계정 단위(모든 지도에 같은 이름, 2026-09-30). 지도마다 다른 이름은 두지 않는다
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserUpdateRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422":
+          description: VALIDATION_ERROR — display_name이 비었거나 50자 초과
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /auth/logout:
     post:
@@ -59,7 +79,9 @@ paths:
   /auth/withdraw:
     post:
       tags: [auth]
-      summary: 탈퇴. 연결된 사유·반응 기록도 함께 삭제 (12절)
+      summary: |
+        탈퇴 (12절, #155 결정). users 행은 soft delete, 반응·반대 사유·근거 줄은 삭제한다.
+        그 사람이 찍은 핀과 확정 리스트 항목은 남고, 작성자(created_by_display_name)는 "탈퇴한 구성원"으로 내려간다.
       responses: { "204": { description: 탈퇴 처리됨 } }
 
   # ---------- maps ----------
@@ -115,6 +137,27 @@ paths:
               schema: { $ref: "#/components/schemas/Invite" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /invites/{token}:
+    get:
+      tags: [maps]
+      summary: |
+        초대 요약 — 수락 화면(C-1/C-2)이 수락 전에 지도를 보여주기 위한 조회. 로그인 없이 호출할 수 있다(#23 "로그인 전엔 읽기만").
+        토큰이 곧 접근 권한이므로 제목·기간·구성원 수·초대자 이름만 돌려주고 핀 등 지도 내용은 주지 않는다.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InviteSummary" }
+        "404": { $ref: "#/components/responses/InviteNotFound" }
+        "410": { $ref: "#/components/responses/InviteExpired" }
+
   /invites/{token}/accept:
     post:
       tags: [maps]
@@ -131,6 +174,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Map" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InviteNotFound" }
+        "410": { $ref: "#/components/responses/InviteExpired" }
 
   /maps/{mapId}/members:
     get:
@@ -205,14 +250,16 @@ paths:
   /pins/{pinId}:
     delete:
       tags: [pins]
-      summary: 핀 삭제. 권한 규정은 결정 이슈 미결 (#15 분리분)
+      summary: 핀 삭제 — 지도 구성원 누구나 (#25, 9/4 결정). 요청자별 가능 여부는 Pin.permissions.can_delete
       parameters: [ { $ref: "#/components/parameters/PinId" } ]
       responses: { "204": { description: 삭제됨 } }
 
   /pins/{pinId}/reaction:
     put:
       tags: [pins]
-      summary: 반응 등록/수정. 반대(against)는 reason 필수 (가드레일 3)
+      summary: |
+        반응 등록/수정. 반대(against)는 reason 필수 (가드레일 3).
+        숙소 핀은 반응을 받지 않는다(#154) — permissions.can_react=false이고 요청하면 422 REACTION_NOT_ALLOWED
       parameters: [ { $ref: "#/components/parameters/PinId" } ]
       requestBody:
         content:
@@ -224,12 +271,31 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Reaction" }
-        "422": { $ref: "#/components/responses/EvidenceRequired" }
+        "422":
+          description: EVIDENCE_REQUIRED(반대 사유 없음, 가드레일 3) 또는 REACTION_NOT_ALLOWED(숙소 핀, #154)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     delete:
       tags: [pins]
-      summary: 핀 되돌리기 — 구성원 누구나 가능 (15-1)
+      summary: 내 반응 취소 (「의견 취소」) — 내가 남긴 반응만 지운다. 핀 상태는 되돌리지 않는다. 지울 반응이 없으면(숙소 핀 포함) 그대로 204
       parameters: [ { $ref: "#/components/parameters/PinId" } ]
       responses: { "204": { description: 반응 취소됨 } }
+
+  /pins/{pinId}/reactions:
+    get:
+      tags: [pins]
+      summary: 핀별 구성원 의견 목록 — 핀 상세 「구성원 의견」. 구성원 누구나 조회 (숙소 핀은 빈 배열)
+      parameters: [ { $ref: "#/components/parameters/PinId" } ]
+      responses:
+        "200":
+          description: OK. 반응한 구성원만 온다 (미응답자는 포함하지 않는다)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Reaction" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   # ---------- recommend (3절, 5-5~5-6-1) ----------
   /maps/{mapId}/recommend/readiness:
@@ -353,17 +419,25 @@ paths:
   /runs/{runId}/widen:
     post:
       tags: [recommend]
-      summary: 반경 넓히기. 기본값 원만 확대한다 — 사람이 명시한 원(예 "숙소 기준 20분")은 자동으로 넓히지 않는다 (가드레일 4, 5-6-1)
+      summary: |
+        반경 넓히기. 기본값 원만 확대한다 — 사람이 명시한 원(예 "숙소 기준 20분")은 자동으로 넓히지 않는다 (가드레일 4, 5-6-1).
+        한 번 누를 때마다 기본값 원의 도보 시간을 5분씩 늘린다(기본 15분 → 20분 → 25분 → 30분). 상한은 도보 30분이며 넘으면 409 WIDEN_LIMIT.
+        폭·상한은 docs/constraints.md의 조정 가능한 상수다 — 응답 RecommendRun에 현재 기본 반경(default_radius_walk_min)을 실어 화면이 "다음은 몇 분"을 안내한다.
       parameters: [ { $ref: "#/components/parameters/RunId" } ]
       responses:
-        "202": { description: 재실행 시작 }
+        "202":
+          description: 재실행 시작
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecommendRun" }
+        "409": { $ref: "#/components/responses/WidenLimit" }
 
   /runs/{runId}/retry:
     post:
       tags: [recommend]
       summary: |
         「다시 추천 받기」. 현재 뜬 대안 전체를 제외목록에 넣고 새로 찾는다 (3절, 루프가 닫힌다).
-        3회 상한 초과 시 429 RETRY_LIMIT. 상한의 집계 단위는 결정 이슈 미결 — 응답의 attempt_no로 우선 노출.
+        5회 상한 초과 시 429 RETRY_LIMIT (#31, 2026-09-22 확정). 응답의 attempt_no로 현재 몇 번째인지 노출한다.
       parameters: [ { $ref: "#/components/parameters/RunId" } ]
       responses:
         "202":
@@ -565,8 +639,23 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    InviteNotFound:
+      description: 없거나 잘못된 초대 토큰 (INVITE_NOT_FOUND)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InviteExpired:
+      description: 만료된 초대 토큰 (INVITE_EXPIRED)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    WidenLimit:
+      description: 기본값 원이 이미 상한(도보 30분) — 더 넓힐 수 없음 (WIDEN_LIMIT). 「근거 고치기」/「직접 찍기」로 안내
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     RetryLimit:
-      description: 재시도 3회 초과 (6절 "재시도 3회 초과")
+      description: 재시도 5회 초과 (6절 "재시도 5회 초과", #31)
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -622,7 +711,7 @@ components:
 
     Category:
       type: string
-      enum: [음식점, 카페, 숙소, 관광지]
+      enum: [음식점, 카페, 숙소, 관광지, 기타] # 숙소는 반응·AI 추천 불가, 기타는 추천 대상 아님 (#154)
 
     RecommendCategory:
       type: string
@@ -652,6 +741,12 @@ components:
         id: { type: string }
         display_name: { type: string, maxLength: 50 } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
 
+    UserUpdateRequest:
+      type: object
+      required: [display_name]
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 50, description: "계정 단위 표시 이름 (2026-09-30 결정)" }
+
     Map:
       type: object
       # confirmed_count만 없을 수 있다 — shortlist/api.py::count_confirmed()가 없어 이 모듈이
@@ -666,6 +761,18 @@ components:
         region: { $ref: "#/components/schemas/MapRegion" }
         member_count: { type: integer }
         confirmed_count: { type: integer }
+
+    InviteSummary:
+      type: object
+      description: 초대 수락 전 화면용 요약. 지도 내용(핀 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다
+      required: [title, start_date, end_date, member_count, inviter_display_name, expires_at]
+      properties:
+        title: { type: string, maxLength: 100 }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        member_count: { type: integer, minimum: 0 }
+        inviter_display_name: { type: string, maxLength: 50, description: "초대 링크를 발급한 사람. 탈퇴했으면 '탈퇴한 구성원'" }
+        expires_at: { type: string, format: date-time }
 
     Invite:
       type: object
@@ -764,6 +871,14 @@ components:
           items: { $ref: "#/components/schemas/Check" }
           description: "게시된 AI 추천 핀도 상세에서 계속 노출한다 (가드레일 5)"
         source_run_id: { type: [string, "null"] }
+        reason: { type: string, description: "AI 추천 핀만 — 추천 이유. 게시된 뒤에도 유지 (가드레일 5)" }
+        member_fulfillment: { $ref: "#/components/schemas/MemberFulfillment" }
+        place_source: { $ref: "#/components/schemas/PlaceSource" }
+        my_reaction:
+          description: 내가 이 핀에 남긴 반응. 없으면 null — 「♥ 2 · 나」 칩과 「의견 취소」 링크용
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Reaction"
         reaction_summary:
           type: object
           required: [like, neutral, against]
@@ -793,6 +908,11 @@ components:
         user_id: { type: string }
         type: { type: string, enum: [like, neutral, against] }
         reason_text: { type: string, maxLength: 140 } # ReactionRequest.reason_text와 짝을 맞춤
+        reason_chip_ids:
+          type: array
+          maxItems: 10
+          items: { type: string, maxLength: 50 }
+        display_name: { type: string, maxLength: 50, description: "GET /pins/{pinId}/reactions 전용 — 의견 목록에 표시할 이름" }
 
     FilterCounts:
       type: object
@@ -856,6 +976,32 @@ components:
         category: { $ref: "#/components/schemas/RecommendCategory" }
         status: { type: string, enum: [collecting_evidence, awaiting_region_confirm, executing, done, failed] }
         attempt_no: { type: integer }
+        default_radius_walk_min: { type: integer, description: "기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (기본 15, 상한 30)" }
+
+    MemberFulfillment:
+      type: object
+      description: 구성원 충족 집계 (가드레일 5). 게시 뒤에도 유지된다
+      required: [satisfied, total]
+      properties:
+        satisfied: { type: integer, minimum: 0, description: "이 후보가 자기 조건을 만족시키는 구성원 수" }
+        total: { type: integer, minimum: 0, description: "집계 대상 구성원 수(조건을 남긴 구성원)" }
+        by_member:
+          type: array
+          items:
+            type: object
+            required: [user_id, satisfied]
+            properties:
+              user_id: { type: string }
+              display_name: { type: string, maxLength: 50 }
+              satisfied: { type: boolean }
+
+    PlaceSource:
+      type: object
+      description: 장소 정보 출처 (가드레일 5, 5-6-1 지도 출처 표시)
+      required: [provider]
+      properties:
+        provider: { type: string, enum: [kakao, naver, google] }
+        url: { type: string, description: "출처 페이지 링크. 이용약관상 링크 제공이 불가하면 생략" }
 
     Candidate:
       type: object
@@ -867,6 +1013,9 @@ components:
         checks:
           type: array
           items: { $ref: "#/components/schemas/Check" }
+        reason: { type: string, description: "추천 이유 — 근거 없는 한 줄 추천 금지 (가드레일 5)" }
+        member_fulfillment: { $ref: "#/components/schemas/MemberFulfillment" }
+        place_source: { $ref: "#/components/schemas/PlaceSource" }
         visibility: { type: string, enum: [private, published] }
         published_pin_id: { type: [string, "null"] }
         permissions: { $ref: "#/components/schemas/Permissions" }

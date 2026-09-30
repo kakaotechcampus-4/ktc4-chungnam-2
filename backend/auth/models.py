@@ -33,6 +33,8 @@ class User(Base):
     # 탈퇴 시 soft delete(12절) — 하드 삭제하지 않는다. 다른 모듈이 이미 참조 중인 user_id가
     # 갑자기 사라지면(예: pins.created_by) 그쪽에서 예상 못한 404/조인 실패가 난다.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 로그아웃 시각 — 이 시각 이전에 발급된 세션 토큰은 무효(무상태 토큰을 서버에서 폐기하는 유일한 수단).
+    sessions_valid_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("provider", "provider_user_id", name="uq_users_provider_identity"),
