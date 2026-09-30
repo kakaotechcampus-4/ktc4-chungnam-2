@@ -13,6 +13,7 @@ from common.database import get_db_session
 from common.errors import AppError
 from common.settings import settings
 from pins.ports import PinDraft, ResolvedPlace
+from places import api as places_api
 
 
 class RequestEchoPlaceGateway:
@@ -36,9 +37,21 @@ def _dev_place_gateway() -> RequestEchoPlaceGateway:
     return RequestEchoPlaceGateway()
 
 
+class RealPlaceGateway:
+    """places(#34) 실시간 연결 — places.api에 위임하고 pins 타입으로 옮겨 담는다."""
+
+    def resolve(self, draft: PinDraft) -> ResolvedPlace:
+        resolved = places_api.resolve_place(draft.source, draft.place_id, draft.lat, draft.lng)
+        return ResolvedPlace(place_id=resolved.place_id, lat=resolved.lat, lng=resolved.lng)
+
+
+def _real_place_gateway() -> RealPlaceGateway:
+    return RealPlaceGateway()
+
+
 get_place_gateway = select(
     "pins.PlaceGateway", settings.places_mode,
-    {"dev": _dev_place_gateway, "real": None}, "places #34",
+    {"dev": _dev_place_gateway, "real": _real_place_gateway}, "places #34",
 )
 
 
