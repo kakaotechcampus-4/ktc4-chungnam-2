@@ -15,8 +15,7 @@ from typing import Protocol
 class PinDraft:
     """핀 생성 요청에서 장소 조회에 필요한 부분만 추린 값."""
 
-    source: str  # "link" | "search" | "coordinate"
-    link_url: str | None
+    source: str  # "search" | "coordinate" (link는 v1에서 거절 — core.validate_create)
     place_id: str | None
     lat: float | None
     lng: float | None
