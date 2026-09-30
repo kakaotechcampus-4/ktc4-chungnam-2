@@ -31,6 +31,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -39,7 +40,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from common.database import Base
 
-Category = Enum("음식점", "카페", "숙소", "관광지", name="recommend_category")
+# 추천 대상이 아닌 숙소는 뺐다(#145/#146) — pins.models의 category enum은 숙소 핀을 위해 그대로다.
+Category = Enum("음식점", "카페", "관광지", name="recommend_category")
 RunStatus = Enum(
     "collecting_evidence", "awaiting_region_confirm", "executing", "done", "failed",
     name="recommend_run_status",
@@ -63,6 +65,10 @@ class RecommendRun(Base):
     # data-model.md엔 없는 컬럼 — GET /runs/{runId}/result(깔때기 표)가 매번 재계산하지
     # 않도록 마지막 execute/widen/retry 결과를 저장해둔다(candidates.lat/lng와 같은 종류의
     # 결정, for_Root.md에 보고). funnel은 파생값이라 정본은 항상 마지막 실행 결과다.
+    # 반경 넓히기 누적 상태(docs/constraints.md "반경 넓히기 상수") — 기본값 원의 현재 도보
+    # 시간(분). 응답 RecommendRun.default_radius_walk_min의 정본이다(#158). regions.radius_m은
+    # 이 값에서 파생되지만, 사람이 명시한 원이 생기면 그 원은 이 값과 무관하므로 따로 둔다.
+    default_radius_walk_min: Mapped[int] = mapped_column(Integer, nullable=False, default=15, server_default="15")
     last_funnel: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -81,7 +87,12 @@ class Candidate(Base):
     lng: Mapped[float] = mapped_column(Float, nullable=False)
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     checks: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # 가드레일5 — 추천 이유 한 줄·구성원 충족 집계({satisfied,total,by_member})·장소 출처
+    # ({provider,url?}). 게시할 때 pins로 복사된다. reason/place_source는 기존 행·출처를 못 얻은
+    # 후보에서 비어 있을 수 있다(지어내지 않는다). member_fulfillment는 {} = 집계 없음.
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     member_fulfillment: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    place_source: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     published_pin_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from authz.schemas import Permissions
 
-Category = Literal["음식점", "카페", "숙소", "관광지"]
+Category = Literal["음식점", "카페", "관광지"]  # 스펙의 RecommendCategory — 숙소는 추천 대상이 아니다(#145)
 RunStatus = Literal["collecting_evidence", "awaiting_region_confirm", "executing", "done", "failed"]
 Badge = Literal["required", "preferred", "reference"]
 LabelConfidence = Literal["known", "unknown"]
@@ -40,6 +40,7 @@ class RecommendRun(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
+    default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한 30
 
 
 class EvidenceLine(BaseModel):
@@ -78,12 +79,32 @@ class RegionConfirmRequest(BaseModel):
     accept_union: bool = False
 
 
+class MemberFulfillmentEntry(BaseModel):
+    user_id: str
+    display_name: str | None = None  # auth 없어 못 채움(EvidenceLine.author_display_name과 같은 갭)
+    satisfied: bool
+
+
+class MemberFulfillment(BaseModel):
+    satisfied: int = Field(ge=0)
+    total: int = Field(ge=0)
+    by_member: list[MemberFulfillmentEntry] | None = None
+
+
+class PlaceSource(BaseModel):
+    provider: Literal["kakao", "naver", "google"]
+    url: str | None = None
+
+
 class Candidate(BaseModel):
     id: str
     place_name: str | None = None  # places 없어 못 채움
     region_label: str | None = None
     rank: int
     checks: list[Check]
+    reason: str | None = None
+    member_fulfillment: MemberFulfillment | None = None
+    place_source: PlaceSource | None = None
     visibility: Literal["private", "published"]
     published_pin_id: str | None = None
     permissions: Permissions
