@@ -12,7 +12,7 @@ from auth.schemas import CurrentUser
 from common.database import SessionLocal
 from common.events import EventLog
 from realtime import service
-from realtime.dispatcher import dispatcher
+from realtime.dispatcher import CLOSED, dispatcher
 
 router = APIRouter(tags=["realtime"], dependencies=[Depends(get_current_user)])
 
@@ -59,6 +59,8 @@ async def public_events(
         try:
             while not await request.is_disconnected():
                 row = await sub.queue.get()
+                if row is CLOSED:   # 서버 종료 — 대기를 풀고 스스로 빠져나온다
+                    break
                 yield _sse_format(row)   # Subscription.wants()가 이미 dispatcher._tick에서 걸러줌
         finally:
             dispatcher.unsubscribe(mapId, sub)
@@ -89,6 +91,8 @@ async def private_events(
         try:
             while not await request.is_disconnected():
                 row = await sub.queue.get()
+                if row is CLOSED:
+                    break
                 yield _sse_format(row)
         finally:
             dispatcher.unsubscribe(mapId, sub)

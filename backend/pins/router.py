@@ -29,6 +29,9 @@ PinToCreate = Depends(require_on_map("pin.create"))  # POST — 생성은 실제
 PinToDelete = Depends(require("pin.delete", load_pin))
 PinForReaction = Depends(require("pin.react", load_pin))
 PinForRevert = Depends(require("pin.revert", load_pin))
+# 조회는 액션이 아니라 멤버십만 본다(require_map_member와 같은 사정 — 조회 전용 액션이 없다).
+# 멤버 액션 하나를 빌려 비구성원 404를 얻는다.
+PinToRead = Depends(require("pin.react", load_pin))
 
 
 @router.get("/maps/{mapId}/pins", response_model=list[Pin], response_model_exclude_none=True)
@@ -78,7 +81,15 @@ def delete_pin(
     service.delete_pin(db, pin=pin)
 
 
-@router.put("/pins/{pinId}/reaction", response_model=Reaction)
+@router.get("/pins/{pinId}/reactions", response_model=list[Reaction], response_model_exclude_none=True)
+def get_reactions(
+    pin: PinRow = PinToRead,
+    db: Session = DbSession,
+):
+    return service.list_reactions(db, pin=pin)
+
+
+@router.put("/pins/{pinId}/reaction", response_model=Reaction, response_model_exclude_none=True)
 def put_reaction(
     body: ReactionRequest,
     pin: PinRow = PinForReaction,

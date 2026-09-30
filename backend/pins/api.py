@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 
 from pydantic import TypeAdapter
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,7 +22,7 @@ from common.events import Event
 from pins import core, service
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
-from pins.schemas import Check, Pin
+from pins.schemas import Check, MemberFulfillment, Pin, PlaceSource
 
 _ChecksAdapter = TypeAdapter(list[Check])
 
@@ -36,6 +36,7 @@ class PinMutation:
 def create_ai_pin(
     db: Session, *, map_id: str, category: str, place_id: str, lat: float, lng: float, created_by: str,
     checks: list[dict] | None = None,
+    reason: str | None = None, member_fulfillment: dict | None = None, place_source: dict | None = None,
 ) -> PinMutation:
     """recommend의 후보 게시 전용. kind='AI추천', origin='ai', visibility='public'.
     place_id 중복이면 AppError('PIN_DUPLICATE') — 누가 이미 그 장소를 직접 찍었다는 뜻이다.
@@ -47,6 +48,10 @@ def create_ai_pin(
     이 값은 안 바뀐다. 모양이 pins.schemas.Check와 안 맞으면 INSERT 전에 ValidationError로
     바로 실패한다(경계에서 검증) — recommend가 잘못된 페이로드를 그대로 밀어넣는 걸 막는다.
 
+    reason/member_fulfillment/place_source(#157): checks와 같은 방식으로 candidate 값을 1회 복사한다
+    (가드레일 5). 값은 recommend가 채우므로 모두 선택이고, 모양은 스키마(MemberFulfillment·
+    PlaceSource)로 INSERT 전에 검증한다. 없으면 NULL.
+
     permissions 계산에 쓸 Principal이 없어(호출자가 아직 없다) 게시자 본인을 map의 member로
     간주해 구성한다 — 게시(recommend.publish)는 이미 member 액션이라 이 전제가 깨질 일이 없다.
     recommend가 실제로 붙을 때 자신이 이미 resolve한 Principal을 넘기도록 바꾸는 편이 더
@@ -56,6 +61,14 @@ def create_ai_pin(
         [check.model_dump() for check in _ChecksAdapter.validate_python(checks)]
         if checks is not None else None
     )
+    validated_fulfillment = (
+        MemberFulfillment.model_validate(member_fulfillment).model_dump(exclude_none=True)
+        if member_fulfillment is not None else None
+    )
+    validated_source = (
+        PlaceSource.model_validate(place_source).model_dump(exclude_none=True)
+        if place_source is not None else None
+    )
 
     pin_row = PinRow(
         map_id=map_id, category=category, kind="AI추천", origin="ai",
@@ -63,6 +76,7 @@ def create_ai_pin(
         # service.py의 create_pin과 동일한 조립 방식(func.ST_SetSRID(func.ST_MakePoint(lng, lat), ...)).
         geom=func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326),
         visibility="public", created_by=created_by, checks=validated_checks,
+        reason=reason, member_fulfillment=validated_fulfillment, place_source=validated_source,
     )
     db.add(pin_row)
     try:
@@ -85,6 +99,7 @@ def create_ai_pin(
         reaction_counts=core.ReactionCounts(),
         created_by_display_name=display_name,
         checks=validated_checks,
+        reason=reason, member_fulfillment=validated_fulfillment, place_source=validated_source,
     )
     pin = core.to_pin_response(record, principal)
     # pin.published다 — docs/events.md가 "지도에 올리기"의 타입을 이렇게 못박아뒀고, 이 함수
@@ -135,11 +150,10 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
     lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()
     reaction_counts = service._reaction_counts_for_pin(db, pin_row.id)
     display_name = auth_api.display_names(db, [pin_row.created_by]).get(pin_row.created_by)
-    record = core.PinRecord(
-        id=str(pin_row.id), map_id=pin_row.map_id, category=pin_row.category, kind=pin_row.kind,
-        visibility=pin_row.visibility, lat=lat, lng=lng, created_by=pin_row.created_by,
-        reaction_counts=reaction_counts, place_name=pin_row.place_name,
-        created_by_display_name=display_name, checks=pin_row.checks,
+    my_reaction = service.my_reactions_for_pins(db, [pin_row.id], viewer_id).get(pin_row.id)
+    record = service.record_from_row(
+        pin_row, lat=lat, lng=lng, reaction_counts=reaction_counts,
+        created_by_display_name=display_name, my_reaction=my_reaction,
     )
     return core.to_pin_response(record, principal)
 
@@ -255,3 +269,11 @@ def get_coordinates_for_pins(db: Session, pin_ids: list[str]) -> dict[str, tuple
         select(PinRow.id, lat_col, lng_col).where(PinRow.id.in_(uuids), PinRow.deleted_at.is_(None))
     ).all()
     return {str(pin_id): (lat, lng) for pin_id, lat, lng in rows}
+
+
+def delete_reactions_by_user(db: Session, *, user_id: str) -> int:
+    """탈퇴(auth, #155)가 부른다 — 그 사용자가 남긴 모든 반응을 지우고 삭제 건수를 돌려준다.
+    핀은 건드리지 않는다(작성 핀은 남는다). reaction.changed는 발행하지 않는다 — 탈퇴 시점의
+    이벤트 정책은 auth 소관이고, 핀 목록을 다시 받으면 집계는 자연히 맞는다."""
+    result = db.execute(delete(ReactionRow).where(ReactionRow.user_id == user_id))
+    return result.rowcount

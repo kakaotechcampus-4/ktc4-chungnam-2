@@ -1,10 +1,86 @@
 # 루트 리뷰 가이드 — backend/recommend
 
 `backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 네 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#112" 절이 최신, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
+작업을 누적해서 담는다 — 아래 "#158·#146·#112 후속" 절이 최신, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
 전체, 가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
 
 ---
+
+# #158 · #146 · #112 후속 — Candidate 가드레일5 필드, 반경 넓히기 폭, 숙소 제거 (마이그레이션 0015)
+
+스펙(`docs/api-spec.yaml`·`constraints.md`)은 건드리지 않았다. 아래 "루트 확인" 항목만 루트 소관이다.
+
+## 구현 범위
+
+**#146 숙소 제거** — `schemas.Category`(=RecommendCategory)·`models.Category` enum·`flows.CATEGORIES`·
+`constraints._ALL_CATEGORIES`에서 숙소를 뺐고 `capacity_min`(레지스트리·`VALUE_COMPARISON_UNSUPPORTED`)을
+지웠다. readiness 응답 키는 음식점·카페·관광지 셋, 숙소로 run 생성 요청은 422.
+`test_response_contract.py`·`test_constraints_contract.py`의 `KNOWN_DRIFT` 해당 항목을 지웠다
+(후자는 딕셔너리 자체를 없애고 "문서에 없는 조건이 코드에 있으면 실패"로 단순화).
+
+**기존 숙소 run 처리 방침(0015 upgrade)** — 숙소 run과 그 하위 행(`candidates`/`regions`/`evidence_lines`)·
+숙소 `exclusions`를 삭제하고 enum에서 값을 뺀다. 이 테이블들은 요청자 개인의 작업 상태(근거 조립·비공개
+후보·재시도 제외목록)라 추천 대상에서 빠지면 쓸 곳이 없다. **이미 게시된 핀은 pins 소유라 그대로**이고
+게시 때 checks가 pins로 복사돼 있어 가드레일 5(게시 뒤 유지)가 깨지지 않는다. 지운 행은 downgrade로
+복원되지 않는다(enum 값만 되돌림). 검증: 숙소 run 1·카페 run 1을 넣고 upgrade → 숙소 쪽만 사라짐,
+downgrade → enum 4값 복귀, 재upgrade 정상.
+
+**#158**
+1. `candidates.reason`(text, nullable)·`place_source`(jsonb, nullable) 추가. `recommend_runs.default_radius_walk_min`
+   (int, 기본 15)도 0015에 같이 넣었다(아래 3번).
+2. `member_fulfillment`를 스펙 모양 `{satisfied, total, by_member[{user_id, satisfied}]}`로 채운다.
+   **`total` 계산 근거**: 스펙 정의("조건을 남긴 구성원")를 "이번 선호 기준(`criteria`가 True인 fact_key) 중
+   자기가 지지한 것이 하나라도 있는 구성원"으로 옮겼다. 지지 = 그 값의 장소에 ♥했거나 그 fact_key를
+   선호 사유로 직접 쓴 것(#112 기존 규칙 그대로). ♥만 누르고 기준에 안 든 사람·반대만 한 사람은 집계 밖.
+   **`satisfied`**는 자기 조건을 *전부* 이 후보가 known+참으로 충족한 구성원 수 — 일부만 맞으면 세지 않는다
+   (부풀리지 않는 쪽으로 정함, 스펙은 "자기 조건을 만족"이라고만 함 → 루트 확인). 옛 모양
+   `{member_id:[fact_key]}`은 사라졌고 0015가 기존 행의 값을 `{}`로 비운다(`{}`는 응답에서 필드 생략).
+   `display_name`은 auth 조회가 없어 못 채운다(EvidenceLine과 같은 갭).
+3. **반경 넓히기** — `core.next_default_radius_walk_min`(+5분, 상한 30분, 초과 시 409 `WIDEN_LIMIT`). 상수는
+   `core.DEFAULT_RADIUS_WALK_MIN/WIDEN_STEP_MIN/WIDEN_LIMIT_MIN`(constraints.md 표 그대로). 누적 상태는
+   `run.default_radius_walk_min`, 지역 반경은 거기서 `분×80m`로 파생. `POST /runs/{runId}/widen`이 이제
+   `RecommendRun`(+`default_radius_walk_min`)을 202로 돌려준다(이전엔 본문 없음). 옛 `widen_radius`(2배)는 삭제.
+   v1엔 사람이 명시한 원이 저장되지 않아 저장된 원이 전부 기본값 원이다 — 명시적 원이 생기면 그 원은
+   건드리지 않도록 `widen_run`을 좁혀야 한다(가드레일 4).
+4. 재시도 상한은 이미 5회(`core.ATTEMPT_LIMIT`) — 변경 없음.
+5. `recommend/api.py` 신설 — `delete_evidence_lines_by_author(db, *, user_id) -> int`(모든 run의 그 사용자 근거 줄 삭제).
+   커밋은 호출자(탈퇴 흐름)의 get_db가 한다. **auth 쪽 탈퇴 흐름이 이 함수를 부르는 배선은 이번 범위 밖이다.**
+6. `reason` = `core.build_reason` — 통과한 체크·충족한 선호 라벨에서 조립한 한 줄, **모델 호출 없음**.
+   "실격 조건 통과: A, B · 선호 충족: C (n/m명)". known으로 통과한 것만 말하고, unknown·불통과·
+   `price_bucket`(값 비교를 못 해 "표시만"인 키)은 말하지 않는다. 말할 게 하나도 없으면 고른 과정을
+   그대로 적는다("반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"). 표시 이름은
+   `constraints.PASSED_LABELS`(8개: 현재 레지스트리 키 전부) — **#171에서 키를 늘릴 때 같이 채워야 한다.**
+   `test_every_comparable_fact_key_has_a_reason_label`이 빠진 키를 잡는다.
+7. `place_source` — `PlaceStub.source`(선택, `{provider, url?}`)를 그대로 싣는다. dev 스텁은 출처가 없어
+   **항상 null**이다(지어내지 않는다). places(#14)가 실구현될 때 채워야 가드레일 5의 "출처가 항상 붙는다"가 성립한다.
+
+**#112 후속** — 선호 사유 작성자가 같은 fact_key의 반대 집합(False 장소에 ♥)에 들어 +1−1로 상쇄되던 것을
+`_member_support`에서 작성자를 반대 집합에서 빼는 것으로 정리했다(말로 쓴 선호가 ♥ 이력보다 우선). 다른
+사람의 반대 ♥는 그대로 상쇄된다. 테스트 2개.
+
+## 루트 확인 / 다른 세션에 넘기는 것
+
+- **[pins 세션 필요] 게시 시 3필드 복사**: `pins.api.create_ai_pin`에 `reason`·`member_fulfillment`·`place_source`
+  파라미터가 없고 pins에 해당 컬럼도 아직 없다(0016은 pins 몫). 그래서 `publish_candidate`는 이번에 그
+  필드를 넘기지 못했고, 이슈 완료 조건의 "pins로 3필드가 복사되는지 통합 테스트 1개"는 **미완료**다.
+  pins가 `create_ai_pin(..., reason: str | None = None, member_fulfillment: dict | None = None,
+  place_source: dict | None = None)`을 열면 `flows.publish_candidate`에서 `candidate.reason/
+  member_fulfillment/place_source`를 그대로 넘기는 한 줄 추가 + 통합 테스트로 닫는다. 스키마는
+  `MemberFulfillment`/`PlaceSource` 모양 그대로 저장하면 된다(필드가 비어 있으면 null/`{}`).
+- **[llm] `capacity_min` 잔존**: #146 본문은 `backend/llm/schemas.py:29`(사유 구조화 출력 fact_key 목록)의
+  `capacity_min` 제거도 적었지만 llm은 남의 모듈이고 이번 지시 범위가 아니어서 건드리지 않았다. recommend는
+  이제 그 키를 레지스트리에 갖지 않으므로 llm이 `capacity_min`을 내놓아도 `HARD_REGISTRY` 카테고리 필터에서
+  걸러져 실격에 쓰이지 않는다(값이 조용히 버려짐). llm 세션이 지워야 한다.
+- **[문서] `docs/data-model.md`** `candidates` 블록에 `reason`·`place_source` 컬럼이, `recommend_runs` 블록에
+  `default_radius_walk_min`이 없다(스펙엔 있음). 문서는 루트 소관이라 고치지 않았다 — 반영 필요.
+- `MemberFulfillment.satisfied` 정의(위 2번)와 `total`의 "조건을 남긴 구성원" 해석 확인 요청.
+- 마이그레이션 번호: 0015는 #146·#158 공용(이슈 지시대로). 0016은 pins.
+- **이슈 본문 "실제 소요"는 채우지 못했다** — 작업 시간 기록이 없다. 담당자가 기입.
+
+**검증**: `PINGO_TEST_DB=pingo_test_recommend python -m pytest --ignore=.venv` 633 passed / 1 skipped
+(착수 전 614 passed / 1 skipped). `alembic upgrade head`/`downgrade`/재`upgrade` 실제 PostgreSQL로 확인(위 시나리오).
+`ruff`는 이 환경에 설치돼 있지 않아 돌리지 못했다. `git merge origin/develop` — 이미 최신, 충돌 없음.
+
 
 # #112 — 선호 순위 점수 계산과 상위 3곳 선정 (#99 후속)
 

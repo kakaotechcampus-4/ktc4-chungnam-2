@@ -45,6 +45,17 @@ class Invite(BaseModel):
     expires_at: datetime
 
 
+class InviteSummary(BaseModel):
+    """GET /invites/{token} — 로그인 전 수락 화면용. map_id·핀은 포함하지 않는다."""
+
+    title: str
+    start_date: date
+    end_date: date
+    member_count: int
+    inviter_display_name: str
+    expires_at: datetime
+
+
 class Member(BaseModel):
     user_id: str
     # users 테이블이 없다(auth #4) — 채울 수 없다.

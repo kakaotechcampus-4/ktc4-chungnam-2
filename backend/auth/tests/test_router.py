@@ -74,6 +74,44 @@ def test_me_for_unknown_user_is_401(app_client):
     assert resp.status_code == 401
 
 
+def test_patch_me_updates_display_name(app_client, db_session):
+    _seed_user(db_session, user_id="user_1", display_name="철수")
+    resp = app_client.patch("/auth/me", json={"display_name": "  새이름 "}, cookies={"session": "user_1"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"id": "user_1", "display_name": "새이름"}
+
+    assert app_client.get("/auth/me", cookies={"session": "user_1"}).json()["display_name"] == "새이름"
+
+
+def test_patch_me_accepts_50_chars(app_client, db_session):
+    _seed_user(db_session, user_id="user_1")
+    resp = app_client.patch("/auth/me", json={"display_name": "가" * 50}, cookies={"session": "user_1"})
+    assert resp.status_code == 200
+
+
+def test_patch_me_rejects_invalid_names_with_validation_error(app_client, db_session):
+    _seed_user(db_session, user_id="user_1", display_name="철수")
+    for bad in ["", "   ", "가" * 51]:
+        resp = app_client.patch("/auth/me", json={"display_name": bad}, cookies={"session": "user_1"})
+        assert resp.status_code == 422, bad
+        assert resp.json()["code"] == "VALIDATION_ERROR"
+    assert app_client.patch("/auth/me", json={}, cookies={"session": "user_1"}).status_code == 422
+
+    assert app_client.get("/auth/me", cookies={"session": "user_1"}).json()["display_name"] == "철수"
+
+
+def test_patch_me_without_cookie_is_401(app_client):
+    resp = app_client.patch("/auth/me", json={"display_name": "새이름"})
+    assert resp.status_code == 401
+
+
+def test_patch_me_after_withdraw_is_401(app_client, db_session):
+    _seed_user(db_session, user_id="user_1")
+    app_client.post("/auth/withdraw", cookies={"session": "user_1"})
+    resp = app_client.patch("/auth/me", json={"display_name": "새이름"}, cookies={"session": "user_1"})
+    assert resp.status_code == 401
+
+
 def test_logout_clears_cookie(app_client):
     resp = app_client.post("/auth/logout", cookies={"session": "user_1"})
     assert resp.status_code == 204

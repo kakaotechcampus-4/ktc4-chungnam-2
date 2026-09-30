@@ -25,9 +25,6 @@ CONSTRAINTS_MD = Path(__file__).resolve().parents[2] / "docs" / "constraints.md"
 # 이 집합은 의도적으로 하드코딩이다: 레지스트리에서 계산하면 레지스트리를 바꾸는 순간 테스트도 같이 바뀐다.
 SAFETY_KEYS = frozenset({"contains_shellfish", "spicy_focused", "oily_focused"})
 
-# 코드(레지스트리)에 남아 있지만 문서에서는 이미 뺀 조건 → 정리 이슈. 정리되면 여기서 지운다(반대 방향 강제).
-KNOWN_DRIFT: dict[str, str] = {"capacity_min": "#146"}
-
 
 def _doc_policies() -> dict[str, str]:
     """constraints.md의 조건 표 행에서 fact_key -> 'exclude'|'pass' 를 뽑는다. 행 첫 칸이 `key`로 시작하는 줄만 본다."""
@@ -49,10 +46,7 @@ def test_registry_matches_constraints_md_unknown_policy():
         elif doc[key] != spec.unknown_policy:
             mismatched.append((key, f"코드={spec.unknown_policy} 문서={doc[key]}"))
     assert not mismatched, f"unknown_policy가 문서와 다르다(값 변경은 루트만): {mismatched}"
-    assert set(missing_in_doc) == set(KNOWN_DRIFT), (
-        f"문서에 없는 조건이 코드에 있다: {sorted(set(missing_in_doc) - set(KNOWN_DRIFT))} / "
-        f"이미 정리됐으니 KNOWN_DRIFT에서 지운다: {sorted(set(KNOWN_DRIFT) - set(missing_in_doc))}"
-    )
+    assert not missing_in_doc, f"문서에 없는 조건이 코드에 있다: {missing_in_doc}"
     for key in constraints.SOFT_FACT_KEYS:
         assert doc.get(key) == "pass", f"선호(soft) 조건 {key}는 pass여야 한다(5-1: 선호는 애초에 걸러내지 않는다)"
 
