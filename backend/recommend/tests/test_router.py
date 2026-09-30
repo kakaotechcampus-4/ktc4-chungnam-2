@@ -92,6 +92,55 @@ def test_widen_returns_run_with_default_radius_and_409_at_limit(app_client, db_s
     assert "WIDEN_LIMIT" in resp.text
 
 
+def test_published_pin_keeps_reason_member_fulfillment_and_place_source(app_client, db_session):
+    """가드레일5(#158/#177) — 후보의 이유·구성원 충족 집계·출처가 게시된 핀(GET /maps/{id}/pins)에도
+    유지된다. pins.api.create_ai_pin이 세 값을 받는 #177과 합쳐진 상태에서만 통과한다."""
+    from recommend.models import Candidate, RecommendRun
+
+    _seed_ready_map(db_session)
+    run = RecommendRun(map_id="map_1", category="음식점", requested_by="user_1", status="done")
+    db_session.add(run)
+    db_session.flush()
+    fulfillment = {"satisfied": 1, "total": 2, "by_member": [
+        {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": False},
+    ]}
+    source = {"provider": "kakao", "url": "https://place.map.kakao.com/1"}
+    candidate = Candidate(
+        run_id=run.id, place_id="place_ai", lat=35.0, lng=129.0, rank=1, checks=[],
+        reason="선호 충족: 조용함 (1/2명)", member_fulfillment=fulfillment, place_source=source,
+    )
+    db_session.add(candidate)
+    db_session.commit()
+
+    published = app_client.post(f"/candidates/{candidate.id}/publish", cookies=_auth())
+    assert published.status_code == 200
+
+    pins = app_client.get("/maps/map_1/pins", cookies=_auth()).json()
+    ai_pin = next(p for p in pins if p["id"] == published.json()["id"])
+    assert ai_pin["reason"] == "선호 충족: 조용함 (1/2명)"
+    assert ai_pin["member_fulfillment"]["satisfied"] == 1 and ai_pin["member_fulfillment"]["total"] == 2
+    assert ai_pin["place_source"] == source
+
+
+def test_published_pin_without_member_fulfillment_passes_none(app_client, db_session):
+    """member_fulfillment {}(집계 없음)는 None으로 넘겨 핀 응답에서 필드가 생략된다."""
+    from recommend.models import Candidate, RecommendRun
+
+    _seed_ready_map(db_session)
+    run = RecommendRun(map_id="map_1", category="음식점", requested_by="user_1", status="done")
+    db_session.add(run)
+    db_session.flush()
+    candidate = Candidate(run_id=run.id, place_id="place_ai2", lat=35.0, lng=129.0, rank=1, checks=[], reason="이유")
+    db_session.add(candidate)
+    db_session.commit()
+
+    published = app_client.post(f"/candidates/{candidate.id}/publish", cookies=_auth())
+    assert published.status_code == 200
+    ai_pin = next(p for p in app_client.get("/maps/map_1/pins", cookies=_auth()).json() if p["id"] == published.json()["id"])
+    assert ai_pin["reason"] == "이유"
+    assert "member_fulfillment" not in ai_pin and "place_source" not in ai_pin
+
+
 def test_readiness_non_member_is_404(app_client, db_session):
     app_client.app.dependency_overrides[get_membership_gateway] = lambda: FakeMembership({})
     resp = app_client.get("/maps/map_1/recommend/readiness", cookies=_auth())

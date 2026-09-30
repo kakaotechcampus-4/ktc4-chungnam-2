@@ -105,6 +105,11 @@ def publish_candidate(
         checks=candidate.checks,  # #124/#57 — 게시 시점에 candidate.checks를 pins로 복사(가드레일 5).
         # pins.api.create_ai_pin이 자기 checks 파라미터에서 pins.schemas.Check로 다시 검증한다
         # (경계 검증, pins/api.py 참고) — 여기서는 candidate.checks를 그대로 넘기기만 한다.
+        # #158/#177 — 가드레일5(이유·구성원 충족 집계·출처는 게시된 뒤에도 유지)도 같은 방식으로
+        # 복사한다. member_fulfillment의 {}는 "집계 없음"이라 None으로 넘긴다.
+        reason=candidate.reason,
+        member_fulfillment=candidate.member_fulfillment or None,
+        place_source=candidate.place_source,
     )  # 5) INSERT pins (레이스 1번 — uq_pins_map_place 위반 시 여기서 PIN_DUPLICATE)
     service.link_published_pin(db, candidate_id=candidate_id, pin_id=str(mutation.pin.id))  # 6) 가드 UPDATE
 
