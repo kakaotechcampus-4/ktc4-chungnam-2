@@ -8,7 +8,9 @@ from datetime import date, datetime, timedelta
 
 from common.errors import AppError
 from common.events import Event
-from maps.schemas import Map, MapRegion, Member
+from maps.schemas import InviteSummary, Map, MapRegion, Member
+
+WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 
 # 목서버(contracts/mocks/handlers/maps.ts:33)와 동일한 7일 — 정본이 없다(maps/for_Root.md 보고).
 INVITE_TTL = timedelta(days=7)
@@ -76,12 +78,28 @@ def invite_expires_at(now: datetime) -> datetime:
 
 
 def check_invite_acceptable(expires_at: datetime, now: datetime) -> None:
-    """만료된 초대는 401(계약이 그 엔드포인트에 선언한 유일한 에러) — 존재하지 않는 토큰과
-    구분되지 않는 응답이어야 한다(토큰 존재 여부를 탐지당하지 않는다), 호출부가 같은 코드를 쓴다."""
+    """만료된 초대는 410 INVITE_EXPIRED(#159, 없는 토큰의 404 INVITE_NOT_FOUND와 구분한다 —
+    수락 화면이 "새 링크를 요청하세요"를 안내해야 해서 계약이 둘을 나눴다). 조회(GET)와
+    수락(POST)이 같은 판정을 쓴다."""
     if expires_at.tzinfo is None or now.tzinfo is None:
         raise ValueError("expires_at·now는 모두 timezone-aware여야 합니다")
     if now >= expires_at:
-        raise AppError("UNAUTHORIZED", "초대 링크가 유효하지 않거나 만료되었습니다")
+        raise AppError("INVITE_EXPIRED")
+
+
+def to_invite_summary(
+    record: MapRecord, *, member_count: int, inviter_display_name: str | None, expires_at: datetime
+) -> InviteSummary:
+    """map_id와 핀 등 지도 내용은 싣지 않는다 — 토큰 소지자가 가입 전에 볼 수 있는 최소한만.
+    초대자 이름을 못 구하면(users 행이 없음) '탈퇴한 구성원'으로 채운다(스펙 InviteSummary)."""
+    return InviteSummary(
+        title=record.title,
+        start_date=record.start_date,
+        end_date=record.end_date,
+        member_count=member_count,
+        inviter_display_name=inviter_display_name or WITHDRAWN_MEMBER_NAME,
+        expires_at=expires_at,
+    )
 
 
 def build_invite_url(base_url: str, token: str) -> str:

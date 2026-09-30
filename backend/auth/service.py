@@ -92,6 +92,14 @@ def get_active_user_or_401(db: Session, *, user_id: str) -> User:
     return row
 
 
+def update_display_name(db: Session, *, user_id: str, display_name: str) -> User:
+    """계정 단위 표시 이름 수정 — 모든 지도에 같은 이름이 보인다(지도별 이름은 없다)."""
+    row = get_active_user_or_401(db, user_id=user_id)
+    row.display_name = display_name
+    db.flush()
+    return row
+
+
 def revoke_sessions(db: Session, *, user_id: str) -> None:
     """로그아웃 — 지금까지 발급된 모든 세션 토큰을 무효화한다(쿠키 삭제만으로는 이미 복사된
     토큰이 살아있다). UPDATE라 행이 없어도(dev 스텁 사용자) 실패하지 않는다."""

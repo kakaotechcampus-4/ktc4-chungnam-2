@@ -16,12 +16,12 @@ def test_display_names_batches_lookup_for_multiple_users(db_session):
     assert result == {"user_1": "철수", "user_2": "영희"}
 
 
-def test_display_names_still_returns_withdrawn_users(db_session):
-    """탈퇴한 사용자도 이름은 보여준다 — 과거 반응·핀 작성자 표시가 사라지면 안 된다."""
+def test_display_names_masks_withdrawn_users(db_session):
+    """탈퇴한 사용자는 "탈퇴한 구성원"으로 내려간다 — 남는 핀 작성자 표시는 유지하되 실명은 숨긴다."""
     db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
     db_session.flush()
     service.withdraw_user(db_session, user_id="user_1")
 
     result = api.display_names(db_session, ["user_1"])
 
-    assert result == {"user_1": "철수"}
+    assert result == {"user_1": "탈퇴한 구성원"}

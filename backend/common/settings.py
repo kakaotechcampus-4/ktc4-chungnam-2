@@ -88,6 +88,13 @@ class Settings:
     elice_ml_api_base_url: str = ""
     elice_ml_api_key: str = ""
     llm_model: str = "gpt-5.6-luna"
+    # places 실시간 연결(#34a) — 지도 API 키 3종. 기본값 ""는 위 kakao_*와 같은 이유(dev에서 키 없이도
+    # 서버가 뜨고, 그 소스는 "키 없음"으로 건너뛴다). 키는 로컬 .env에만 둔다.
+    # 카카오 로컬 API는 REST API 키를 쓴다 — 없으면 로그인용 KAKAO_CLIENT_ID(앱의 REST 키와 같은 값)로 폴백.
+    kakao_rest_api_key: str = ""
+    naver_search_client_id: str = ""
+    naver_search_client_secret: str = ""
+    google_places_api_key: str = ""
 
     def __post_init__(self) -> None:
         # 잘못된 Settings는 애초에 "만들어질 수 없다" — 호출 순서에 기대지 않는 게 핵심이다.
@@ -155,6 +162,10 @@ class Settings:
             elice_ml_api_base_url=_env("ELICE_ML_API_BASE_URL", ""),
             elice_ml_api_key=_env("ELICE_ML_API_KEY", ""),
             llm_model=_env("LLM_MODEL", "gpt-5.6-luna"),
+            kakao_rest_api_key=_env("KAKAO_REST_API_KEY", "") or _env("KAKAO_CLIENT_ID", ""),
+            naver_search_client_id=_env("NAVER_SEARCH_CLIENT_ID", ""),
+            naver_search_client_secret=_env("NAVER_SEARCH_CLIENT_SECRET", ""),
+            google_places_api_key=_env("GOOGLE_PLACES_API_KEY", ""),
             frontend_base_url=frontend_base_url,
             frontend_login_redirect_url=_env(
                 "FRONTEND_LOGIN_REDIRECT_URL",

@@ -19,7 +19,7 @@ from maps import core
 from maps.models import Invite as InviteRow
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
-from maps.schemas import Invite, Map, MapCreateRequest, Member
+from maps.schemas import Invite, InviteSummary, Map, MapCreateRequest, Member
 from shortlist import api as shortlist_api
 
 INVITE_TOKEN_BYTES = 32  # secrets.token_urlsafe(32) — 256비트, 소지자가 곧 가입 권한을 갖는
@@ -165,6 +165,29 @@ def create_invite(db: Session, *, map_id: str, creator_id: str, base_url: str) -
     return Invite(token=token, url=core.build_invite_url(base_url, token), expires_at=expires_at)
 
 
+def _acceptable_invite_or_raise(db: Session, token: str) -> InviteRow:
+    """없으면 404 INVITE_NOT_FOUND, 만료면 410 INVITE_EXPIRED — 조회와 수락이 공유한다."""
+    invite_row = db.execute(select(InviteRow).where(InviteRow.token == token)).scalar_one_or_none()
+    if invite_row is None:
+        raise AppError("INVITE_NOT_FOUND")
+    core.check_invite_acceptable(invite_row.expires_at, datetime.now(timezone.utc))
+    return invite_row
+
+
+def get_invite_summary(db: Session, *, token: str) -> InviteSummary:
+    """로그인 없이 호출된다(#23) — 토큰이 곧 접근 권한이라 제목·기간·구성원 수·초대자 이름만
+    돌려준다. 쓰기 없음(used_count도 안 올린다)."""
+    invite_row = _acceptable_invite_or_raise(db, token)
+    map_row = get_map_or_404(db, invite_row.map_id)
+    inviter_name = auth_api.display_names(db, [invite_row.created_by]).get(invite_row.created_by)
+    return core.to_invite_summary(
+        _map_record(db, map_row),
+        member_count=_member_count(db, map_row.id),
+        inviter_display_name=inviter_name,
+        expires_at=invite_row.expires_at,
+    )
+
+
 def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
     """순서가 핵심이다 — 존재·만료 확인 → 멤버십 upsert → used_count/이벤트(실제 가입 시에만).
     ON CONFLICT DO NOTHING을 쓴다(DO UPDATE 아님) — owner가 자기 초대를 열어도 role이
@@ -172,12 +195,7 @@ def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
     패턴을 여기선 쓰지 않는다 — 그 패턴의 db.rollback()은 같은 요청의 앞선 쓰기를 전부
     날리는데, 여기선 boolean 하나만 있으면 되고 pins/service.py::set_reaction이 이미
     pg_insert(...).on_conflict_do_update를 쓰는 선례가 있다(마이너 스킬 디테일)."""
-    invite_row = db.execute(select(InviteRow).where(InviteRow.token == token)).scalar_one_or_none()
-    if invite_row is None:
-        raise AppError("UNAUTHORIZED", "초대 링크가 유효하지 않거나 만료되었습니다")
-
-    now = datetime.now(timezone.utc)
-    core.check_invite_acceptable(invite_row.expires_at, now)
+    invite_row = _acceptable_invite_or_raise(db, token)
 
     stmt = (
         pg_insert(MembershipRow)

@@ -41,7 +41,7 @@ def test_invite_exactly_at_expiry_is_rejected():
     expires_at = datetime(2026, 10, 1, 12, 0, 0, tzinfo=timezone.utc)
     with pytest.raises(AppError) as exc_info:
         core.check_invite_acceptable(expires_at, now=expires_at)
-    assert exc_info.value.code == "UNAUTHORIZED"
+    assert exc_info.value.code == "INVITE_EXPIRED"
 
 
 def test_invite_one_microsecond_before_expiry_is_accepted():
