@@ -1,5 +1,15 @@
 # 루트 리뷰 가이드 — backend/auth
 
+## 이번 작업 (#160 탈퇴 연결, 2026-09-30)
+
+- `auth/service.py::withdraw_user`가 `pins.api.delete_reactions_by_user`·`recommend.api.delete_evidence_lines_by_author`를 호출한 뒤 users를 soft delete한다(핀은 남김). 세 쓰기는 같은 트랜잭션이다. 스펙·마이그레이션 변경 없음.
+- 테스트: `integration/test_withdraw_cascade.py` — 탈퇴 후 그 사용자의 반응·근거 줄이 사라지고(다른 사람 것은 유지), 핀 2개가 남으며, 탈퇴자 핀의 `created_by_display_name`이 "탈퇴한 구성원"임을 HTTP 끝단으로 확인.
+- 검증: `PINGO_TEST_DB=pingo_test_auth python -m pytest` → 725 passed, 1 skipped, 0 failed.
+- 이전 보고의 "완료하지 못한 것 1번(탈퇴 cascade)"은 이걸로 해소됐다. `reaction.changed` 이벤트는 발행하지 않는다(pins 함수 docstring 기준 — 탈퇴 시점 이벤트 정책이 필요하면 루트 결정).
+- 디스코드 "#160 착수합니다"는 CLI로 못 남겼다(이전과 동일).
+
+---
+
 ## 이번 작업 (#160 `PATCH /auth/me`, 2026-09-30)
 
 `docs/api-spec.yaml` 시그니처 변경 없음 — 스펙 그대로 구현. 마이그레이션 없음.
