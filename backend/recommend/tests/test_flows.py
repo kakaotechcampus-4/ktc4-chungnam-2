@@ -108,12 +108,13 @@ def test_publish_candidate_inserts_ai_pin_links_candidate_and_records_event(db_s
         membership=_membership(run.map_id, "user_1"),
     )
 
-    assert pin.kind == "AI추천"
-    assert pin.origin == "ai"
-    assert pin.place_id == candidate.place_id
+    assert pin.kind == "AI추천"  # 반환은 pins.schemas.Pin(#114) — origin·place_id는 DB 행에서 확인한다
+    row = db_session.execute(select(PinRow).where(PinRow.id == uuid.UUID(pin.id))).scalar_one()
+    assert row.origin == "ai"
+    assert row.place_id == candidate.place_id
 
     db_session.refresh(candidate)
-    assert candidate.published_pin_id == pin.id
+    assert str(candidate.published_pin_id) == pin.id
 
     events = db_session.execute(select(EventLog).where(EventLog.map_id == run.map_id)).scalars().all()
     assert len(events) == 1

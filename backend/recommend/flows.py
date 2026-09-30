@@ -54,7 +54,7 @@ from common.events import Event, record_event
 from llm import service as llm_service
 from maps import api as maps_api
 from pins import api as pins_api
-from pins.models import Pin as PinRow
+from pins.schemas import Pin
 from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
 from recommend.models import RecommendRun
@@ -74,9 +74,18 @@ class _LoadedCandidate:
 _require_publish = require("recommend.publish", loader=None)  # loader는 안 쓴다 — loaded를 직접 넘긴다
 
 
+def _published_pin_response(db: Session, *, pin_id: str, requester_id: str, run: RecommendRun) -> Pin:
+    # publish 가드(_require_publish)가 이미 멤버십을 확인했다 — pins.api.create_ai_pin과 같은 이유로
+    # 게시자 본인을 member로 간주해 응답 조립용 Principal을 구성한다(중복 조회 없이).
+    principal = Principal(user_id=requester_id, map_id=run.map_id, role="member")
+    return pins_api.get_pin_response_for_viewer(db, pin_id=pin_id, viewer_id=requester_id, principal=principal)
+
+
 def publish_candidate(
     db: Session, *, candidate_id: str, requester_id: str, membership: MembershipGateway,
-) -> PinRow:
+) -> Pin:
+    """반환은 게시된 핀의 응답 스키마(pins.schemas.Pin) — ORM 행(pins.models)을 받으면 이 모듈이
+    타입을 적으려고 pins.models를 import해야 해서 경계 규칙을 어긴다(#114)."""
     candidate, run = service.load_candidate_with_run(db, candidate_id)  # 1) 404 NOT_FOUND
 
     _require_publish(
@@ -91,11 +100,9 @@ def publish_candidate(
     #   멱등 경로·NOT_READY 판정보다 항상 먼저).
 
     if candidate.published_pin_id is not None:  #    멱등 빠른 경로 — run 상태와 무관하게 항상 통한다
-        return pins_api.get_pin_for_viewer(
-            db, pin_id=str(candidate.published_pin_id), viewer_id=requester_id
-        )  #    200, 이벤트 없음
-        # get_pin_for_viewer가 NOT_FOUND/AI_PIN_PRIVATE를 던지면(핀이 그 사이 삭제됐거나
-        # 비공개로 바뀐 극단적 경우) 그대로 전파한다 — 별도 처리 없음, 정직한 실패가 낫다.
+        return _published_pin_response(db, pin_id=str(candidate.published_pin_id), requester_id=requester_id, run=run)
+        #    200, 이벤트 없음. get_pin_response_for_viewer가 NOT_FOUND/AI_PIN_PRIVATE를 던지면(핀이 그
+        #    사이 삭제됐거나 비공개로 바뀐 극단적 경우) 그대로 전파한다 — 정직한 실패가 낫다.
 
     core.check_run_ready(run)  # 4) 409 NOT_READY
 
@@ -117,7 +124,7 @@ def publish_candidate(
     # pins/core.py에 pin_published_event를 추가해 근본 수정 — 예전엔 여기서 type만 교정하는
     # 우회가 있었다).
     record_event(db, mutation.event)  # 7) event_log — mutation과 같은 db 세션, 커밋 전
-    return mutation.pin  # 8) get_db가 커밋
+    return _published_pin_response(db, pin_id=str(mutation.pin.id), requester_id=requester_id, run=run)  # 8) get_db가 커밋
 
 
 # ============================================================================

@@ -30,7 +30,6 @@ from authz.core import Principal
 from authz.deps import MembershipGatewayDep
 from authz.guard import require_map_member, require_on_map, require_with_principal
 from authz.ports import MembershipGateway
-from pins import api as pins_api
 from pins.schemas import Pin
 from recommend import flows
 from recommend.deps import DbSession, PlaceFactsGatewayDep, PlaceSearchGatewayDep
@@ -135,8 +134,4 @@ def post_publish(
     candidateId: str = Path(...), user: CurrentUser = Depends(get_current_user),
     membership: MembershipGateway = MembershipGatewayDep, db: Session = DbSession,
 ):
-    pin_row = flows.publish_candidate(db, candidate_id=candidateId, requester_id=user.user_id, membership=membership)
-    # publish_candidate가 이미 멤버십을 확인했다 — pins.api.create_ai_pin과 같은 이유로
-    # 여기서도 게시자 본인을 member로 간주해 응답 조립용 Principal을 구성한다(중복 조회 없이).
-    principal = Principal(user_id=user.user_id, map_id=pin_row.map_id, role="member")
-    return pins_api.get_pin_response_for_viewer(db, pin_id=str(pin_row.id), viewer_id=user.user_id, principal=principal)
+    return flows.publish_candidate(db, candidate_id=candidateId, requester_id=user.user_id, membership=membership)
