@@ -17,10 +17,18 @@ os.environ["PINGO_ENV"] = "test"
 # DB에 못 붙으면 조용히 넘어간다: 모듈 conftest가 자기 메시지로 실패한다.
 
 
+import re
+
 import pytest
 import sqlalchemy as sa
 
 BASE_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://pingo:pingo@localhost:5432/pingo")
+
+# 세션(터미널)마다 다른 DB를 쓸 수 있게 한다 — 여러 pytest가 같은 DB에서 create_all/drop_all을 하면 서로의
+# 테이블을 지운다. 예: PINGO_TEST_DB=pingo_test_pins pytest pins. 지정 안 하면 기존과 같은 pingo_test.
+TEST_DB_NAME = os.getenv("PINGO_TEST_DB", "pingo_test")
+if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", TEST_DB_NAME):
+    raise RuntimeError(f"PINGO_TEST_DB={TEST_DB_NAME!r} — 영문·숫자·밑줄만 쓸 수 있다(63자 이하)")
 
 
 def _replace_dbname(url: str, dbname: str) -> str:
@@ -33,10 +41,10 @@ def _ensure_test_db_with_postgis():
     try:
         admin = sa.create_engine(_replace_dbname(BASE_DATABASE_URL, "postgres"), isolation_level="AUTOCOMMIT")
         with admin.connect() as conn:
-            if not conn.execute(sa.text("SELECT 1 FROM pg_database WHERE datname = 'pingo_test'")).first():
-                conn.execute(sa.text("CREATE DATABASE pingo_test"))
+            if not conn.execute(sa.text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": TEST_DB_NAME}).first():
+                conn.execute(sa.text(f'CREATE DATABASE "{TEST_DB_NAME}"'))
         admin.dispose()
-        engine = sa.create_engine(_replace_dbname(BASE_DATABASE_URL, "pingo_test"))
+        engine = sa.create_engine(_replace_dbname(BASE_DATABASE_URL, TEST_DB_NAME))
         with engine.connect() as conn:
             conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS postgis"))
             conn.commit()
