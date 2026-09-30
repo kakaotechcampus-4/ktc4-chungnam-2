@@ -23,7 +23,6 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
     ("get", "/pins/{}/reactions"): "#157",
-    ("patch", "/auth/me"): "#160",
 }
 
 # 스펙에 없어도 되는 라우트(운영/문서용).

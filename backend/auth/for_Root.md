@@ -1,6 +1,27 @@
 # 루트 리뷰 가이드 — backend/auth
 
-## 이번 작업 (이슈 #4 "로그인/로그아웃/탈퇴 API 구현")
+## 이번 작업 (#160 `PATCH /auth/me`, 2026-09-30)
+
+`docs/api-spec.yaml` 시그니처 변경 없음 — 스펙 그대로 구현. 마이그레이션 없음.
+
+- `PATCH /auth/me {display_name}` → `User`. 앞뒤 공백을 걷어낸 뒤 1~50자, 공백만/빈 값/51자/필드 누락은 422 `VALIDATION_ERROR`(기존 `RequestValidationError` 핸들러 그대로). 계정 단위 — `users.display_name` 하나를 고친다.
+  - 판단 한 가지: 저장값은 **strip된 값**이다(`"  새이름 "` → `"새이름"`). 스펙은 공백 처리를 말하지 않아 "공백만은 불가" 지시를 앞뒤 공백 제거로 구현했다. 다르게 원하면 `schemas.UserUpdateRequest` 한 줄.
+- `auth/api.py::display_names` — 탈퇴 사용자는 `"탈퇴한 구성원"`(`api.WITHDRAWN_DISPLAY_NAME`)을 돌려준다. pins·maps는 이 함수를 그대로 쓰므로 코드 변경 없음. **동작 변경**: 이전 테스트는 탈퇴자도 실명을 돌려주는 걸 요구했고 그걸 반대로 바꿨다(#155 결정 반영).
+- `integration/test_spec_route_coverage.py` `KNOWN_MISSING`에서 `("patch", "/auth/me")` 삭제.
+- 테스트: `auth/tests/test_router.py`(성공·strip·50자 경계·422 4종·401·탈퇴 후 401), `auth/tests/test_api.py`(탈퇴자 마스킹).
+- 검증: `PINGO_TEST_DB=pingo_test_auth python -m pytest` → 619 passed, 1 skipped, 0 failed.
+
+### 이번에 하지 않은 것 (지시대로 별도 PR)
+- `withdraw_user`가 pins/recommend 삭제 함수를 호출하는 연결 — 그 두 함수가 develop에 들어온 뒤 별도 PR로 이어간다.
+
+### 루트 확인 필요
+1. **디스코드 "#160 착수합니다"** — CLI에서 디스코드에 글을 남길 수 없어 못 했다. 사람이 남겨야 한다.
+2. **이슈 #160 본문 "실제 소요"** — 아래 "PR 작성 시" 메모 참고(기록했으면 채워져 있다).
+3. `docs/CHANGELOG-api.md`에는 이미 `PATCH /auth/me`가 기록돼 있어 추가하지 않았다.
+
+---
+
+## 이전 작업 (이슈 #4 "로그인/로그아웃/탈퇴 API 구현")
 
 `docs/api-spec.yaml`의 `/auth/kakao/callback`·`/auth/me`·`/auth/logout`·`/auth/withdraw` 4개
 전부 구현 완료. `auth/deps.py::get_current_user`가 이미 `select()`로 dev/real을 고르는
