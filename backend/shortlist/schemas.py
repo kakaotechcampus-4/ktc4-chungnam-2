@@ -13,6 +13,10 @@ class ShortlistAddRequest(BaseModel):
     pin_id: str
 
 
+class ShortlistReorderRequest(BaseModel):
+    item_ids: list[str]
+
+
 class ShortlistItem(BaseModel):
     id: str
     pin: Pin

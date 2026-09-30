@@ -23,7 +23,7 @@ class ShortlistItem(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     # #30 수동 정렬(9/4 결정, 허용 확정) 전용 컬럼 — docs/data-model.md 80-84행: 동선(routes
     # 테이블, #103)과는 무관한 별개 값이다. routes 재계산은 이 컬럼을 읽지도 쓰지도 않는다.
-    # 수동 정렬(PUT .../shortlist/order) 자체는 별도 이슈라 이번 커밋도 값을 쓰지 않는다.
+    # 수동 정렬(PUT .../shortlist/order, #142)만 이 값을 쓴다. NULL은 정렬 전에 추가된 항목.
     visit_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (

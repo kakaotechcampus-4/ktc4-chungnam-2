@@ -39,9 +39,25 @@ def unconfirm_pin(db, *, item_row, principal) -> None:
     item = core.to_shortlist_item_response(item_row, pin, principal)
     event = core.shortlist_changed_event(item, "removed")
 
+    service.lock_shortlist(db, map_id)  # 동시 수동 정렬이 이미 사라진 행을 정렬 대상으로 읽지 않게
     service.delete_item(db, str(item_row.id))
     pins_api.unmark_confirmed(db, pin_id=pin_id, map_id=map_id)
     record_event(db, event)
+
+
+def reorder_shortlist(db, *, map_id: str, item_ids: list[str], principal) -> list[ShortlistItem]:
+    """PUT /maps/{mapId}/shortlist/order(#142) — visit_order만 바꾼다. 동선(routes)은 건드리지
+    않고 route.recalculated도 내지 않는다. shortlist.changed(reordered)는 같은 트랜잭션에 기록한다."""
+    rows = service.reorder_items(db, map_id=map_id, item_ids=item_ids)
+    items = []
+    for row in rows:
+        pin = pins_api.get_pin_response_for_viewer(
+            db, pin_id=str(row.pin_id), viewer_id=principal.user_id, principal=principal,
+        )
+        items.append(core.to_shortlist_item_response(row, pin, principal))
+    for item in items:
+        record_event(db, core.shortlist_changed_event(item, "reordered"))
+    return items
 
 
 def recalculate_route(db, *, map_id: str) -> list[Route]:
@@ -54,7 +70,7 @@ def recalculate_route(db, *, map_id: str) -> list[Route]:
     KeyError로 500을 내는 대신, 그 핀만 이번 동선에서 빠지는 쪽이 맞다(Antigravity 검수 지적).
     POST 응답도 GET과 같은 정렬(service.list_routes)을 거쳐 반환한다 — 그래야 POST 직후 응답과
     바로 이어지는 GET 응답의 순서가 어긋나지 않는다."""
-    items = service.list_items(db, map_id=map_id)
+    items = service.list_items_by_added(db, map_id=map_id)
     pin_ids = [str(item.pin_id) for item in items]
     coordinates = pins_api.get_coordinates_for_pins(db, pin_ids)
     points = [

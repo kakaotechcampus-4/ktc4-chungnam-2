@@ -176,3 +176,40 @@ def test_list_routes_scoped_to_map(db_session):
 
     assert len(service.list_routes(db_session, map_id="map_1")) == 1
     assert len(service.list_routes(db_session, map_id="map_2")) == 1
+
+
+def test_list_items_orders_by_visit_order_nulls_last_then_added_at(db_session):
+    rows = [service.add_item(db_session, map_id="map_1", pin_id=str(_insert_pin(db_session).id),
+                             added_by="user_1")[0] for _ in range(3)]
+    rows[2].visit_order = 0
+    rows[0].visit_order = 1
+    db_session.flush()  # rows[1]은 NULL — 뒤로
+
+    got = service.list_items(db_session, map_id="map_1")
+    assert [r.id for r in got] == [rows[2].id, rows[0].id, rows[1].id]
+
+
+def test_list_items_by_added_ignores_visit_order(db_session):
+    rows = [service.add_item(db_session, map_id="map_1", pin_id=str(_insert_pin(db_session).id),
+                             added_by="user_1")[0] for _ in range(2)]
+    rows[1].visit_order = 0
+    db_session.flush()
+    got = service.list_items_by_added(db_session, map_id="map_1")
+    assert {r.id for r in got} == {r.id for r in rows}
+    assert [r.added_at for r in got] == sorted(r.added_at for r in got)
+
+
+def test_reorder_items_writes_contiguous_visit_order(db_session):
+    rows = [service.add_item(db_session, map_id="map_1", pin_id=str(_insert_pin(db_session).id),
+                             added_by="user_1")[0] for _ in range(3)]
+    ids = [str(r.id) for r in reversed(rows)]
+    out = service.reorder_items(db_session, map_id="map_1", item_ids=ids)
+    assert [str(r.id) for r in out] == ids
+    assert [r.visit_order for r in out] == [0, 1, 2]
+
+
+def test_reorder_items_rejects_set_mismatch(db_session):
+    row = service.add_item(db_session, map_id="map_1", pin_id=str(_insert_pin(db_session).id), added_by="user_1")[0]
+    with pytest.raises(AppError) as exc:
+        service.reorder_items(db_session, map_id="map_1", item_ids=[str(row.id), str(row.id)])
+    assert exc.value.code == "VALIDATION_ERROR"
