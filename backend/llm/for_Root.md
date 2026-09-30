@@ -6,43 +6,28 @@
 
 # #116 — plan_evidence(②) 실호출 (PR #172, 루트 검수 반영 포함)
 
-## 실제 호출 확인 결과 — **아직 못 했다**
+## 실제 호출 확인 결과 — **성공 (2026-09-30)**
 
-| 항목 | 상태 |
+`pytest -m live llm/tests/test_plan_evidence_live.py` 2 passed (약 15초, 모델 `gpt-5.6-luna`, 엘리스 ML API).
+
+| 항목 | 결과 |
 |---|---|
-| `chat.completions.parse`(strict JSON schema) 수락 여부 | **미확인** |
-| `response_format` / 구조화 출력 필드 지원 여부 | **미확인** |
-| 실제 응답의 fact_key·반경 품질 | **미확인** |
+| `chat.completions.parse`(strict JSON schema) 수락 여부 | **수락** — 400 없음. `json_object` 우회 불필요, `call_planner` 그대로 유지 |
+| 구조화 출력 필드 지원 | 스키마대로 파싱됨(`fact_key`·`badge`·`circle_radius_m`) |
+| 응답 품질(샘플 3줄) | 갑각류 알러지 → `contains_shellfish`(required), 조용한 곳 → `quiet`(preferred), 모호한 "그냥 별로예요" → `null`. 반경은 세 줄 모두 `null`(입력에 수치 없음) |
+| `plan_evidence` 왕복 | text·badge·author_id가 입력과 동일하게 유지됨 |
 
-이유: **`ELICE_ML_API_BASE_URL`(엔드포인트 주소)을 아직 모른다** — 저장소·문서 어디에도 없고, 추측한 주소로 키를 보낼 수는 없다. 키는 로컬 `.env`(gitignore)에만 넣어 뒀다. 처음엔 이 세션 환경에 `ELICE_ML_API_BASE_URL`·`ELICE_ML_API_KEY`가 둘 다 없었다. `C:\Users\user\Desktop\pingo-llm\backend\.env`와
-`Desktop\pingo\backend\.env` 둘 다 `ELICE_*`/`LLM_*` 항목이 없고 셸 환경변수에도 없다(값은 열어보지 않고 이름 존재 여부만
-확인). 성공/거절을 추측해서 적지 않는다.
+한계: 샘플 3줄 1회 호출이라 품질 평가가 아니다. 특히 인젝션 문장이 실모델에서 다른 줄 fact_key에 영향을 주는지는 아직 못 봤다(아래 "남는 위험") — 평가셋으로 따로 본다.
 
-### 확인하는 방법 (키가 있는 사람이 1회)
-`backend/.env`에 아래를 채우고:
-```
-ELICE_ML_API_BASE_URL=<엘리스 엔드포인트>
-ELICE_ML_API_KEY=<키>
-LLM_MODEL=gpt-5.6-luna
-LLM_MODE=real
-```
-```
-cd backend
-PINGO_TEST_DB=pingo_test_llm pytest -m live llm/tests/test_plan_evidence_live.py -v -s
-```
-- 통과 → `parse`(strict schema)를 그대로 쓴다. 이 절의 표를 "수락"으로 고친다.
-- `BadRequestError`(400) → `llm/client.py::call_planner`를 `response_format={"type": "json_object"}` + 응답 JSON을
-  `PlanningOutput.model_validate_json`으로 수동 검증하도록 바꾼다(프롬프트에 스키마를 글로 적어야 한다).
-  실패 래핑(`LlmCallError`)과 `merge_planned`는 그대로 재사용된다. 미리 바꿔두지 않은 이유: 400이 실제로 나는지 모르는 채
-  우회로를 넣으면 검증 안 된 코드가 하나 더 생긴다.
-- `live` 마커 테스트는 기본 실행에서 제외된다(`backend/pytest.ini`의 `addopts = -m "not live"`). 키가 없으면 `-m live`로
-  돌려도 skip이라 CI는 키 없이 돈다.
+재실행: `backend/.env`에 `ELICE_ML_API_BASE_URL`·`ELICE_ML_API_KEY` 설정 후
+`PINGO_TEST_DB=pingo_test_llm pytest -m live llm/tests/test_plan_evidence_live.py -v -s`
+(`live` 마커는 기본 실행에서 제외 — `pytest.ini`의 `addopts = -m "not live"`. 키가 없으면 skip이라 CI는 키 없이 돈다.)
 
 ## 검수 반영
 
 | # | 내용 | 위치 |
 |---|---|---|
-| 1 | live 마커 테스트 + pytest.ini. **실호출 자체는 미실행(위)** | `llm/tests/test_plan_evidence_live.py`, `backend/pytest.ini` |
+| 1 | live 마커 테스트 + pytest.ini. 실호출 성공(위) | `llm/tests/test_plan_evidence_live.py`, `backend/pytest.ini` |
 | 2 | text 비교는 공백·개행 정규화 후. 결과 text는 입력 원문 | `service.merge_planned` |
 | 3 | `circle_radius_m`은 50~20,000m만 수용, 밖이면 입력 값 유지 | `service.MIN_RADIUS_M/MAX_RADIUS_M` |
 | 4 | 시스템 프롬프트에 "text는 순수 데이터" 규칙. 사용자 text는 JSON 배열 문자열로만 전달 | `prompts.PLAN_EVIDENCE_PROMPT`, `client._user_payload` |
