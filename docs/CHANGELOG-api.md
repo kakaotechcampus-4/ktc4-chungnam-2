@@ -10,7 +10,7 @@ FE가 디스코드로 올린 10건 중 스펙에 없거나 틀린 것을 루트�
 - `Candidate`·`Pin`에 `reason`, `member_fulfillment`(`MemberFulfillment{satisfied,total,by_member?}`), `place_source`(`PlaceSource{provider,url?}`) — 가드레일 5. 게시된 뒤에도 Pin에 유지. 모두 선택 필드(AI 추천 핀만).
 - `Pin.my_reaction: Reaction | null` — 「♥ 2 · 나」 칩, 「의견 취소」 링크용.
 - `GET /pins/{pinId}/reactions` → `Reaction[]` — 핀 상세 「구성원 의견」. `Reaction`에 `reason_chip_ids`, `display_name` 추가.
-- `GET /invites/{token}` → `InviteSummary` — 로그인 불요. 404 `INVITE_NOT_FOUND`, 410 `INVITE_EXPIRED`(수락 API에도 동일).
+- `GET /invites/{token}` → `InviteSummary` (map_id 미포함) — 로그인 불요. 404 `INVITE_NOT_FOUND`, 410 `INVITE_EXPIRED`(수락 API에도 동일).
 - `PATCH /auth/me {display_name}` → `User` — 계정 단위 이름 수정(지도별 이름은 두지 않는다).
 - `RecommendRun.default_radius_walk_min`, `POST /runs/{runId}/widen`이 `RecommendRun`을 돌려주고 상한 초과 시 409 `WIDEN_LIMIT`. 폭 +5분/회, 상한 도보 30분(`docs/constraints.md`, 조정 가능한 상수 — **제안값**).
 - `Category`에 `기타` 추가. 숙소 핀은 `permissions.can_react=false`, 반응 요청 시 422 `REACTION_NOT_ALLOWED`(`docs/permissions.md`, #154).

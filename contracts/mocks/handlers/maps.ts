@@ -58,7 +58,6 @@ export const mapsHandlers = [
     const map = getMapOr404(invite.mapId);
     if (!map) return apiError(404, "INVITE_NOT_FOUND", "유효하지 않은 초대 링크예요");
     return HttpResponse.json({
-      map_id: map.id,
       title: map.title,
       start_date: map.start_date,
       end_date: map.end_date,

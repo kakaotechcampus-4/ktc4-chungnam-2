@@ -635,7 +635,7 @@ export interface paths {
             };
         };
         post?: never;
-        /** 내 반응 취소 (「의견 취소」) — 내가 남긴 반응만 지운다. 핀 상태는 되돌리지 않는다 */
+        /** 내 반응 취소 (「의견 취소」) — 내가 남긴 반응만 지운다. 핀 상태는 되돌리지 않는다. 지울 반응이 없으면(숙소 핀 포함) 그대로 204 */
         delete: {
             parameters: {
                 query?: never;
@@ -1477,9 +1477,8 @@ export interface components {
             member_count: number;
             confirmed_count?: number;
         };
-        /** @description 초대 수락 전 화면용 요약. 지도 내용(핀 등)은 포함하지 않는다 */
+        /** @description 초대 수락 전 화면용 요약. 지도 내용(핀 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다 */
         InviteSummary: {
-            map_id: string;
             title: string;
             /** Format: date */
             start_date: string;
@@ -1487,7 +1486,7 @@ export interface components {
             end_date: string;
             member_count: number;
             /** @description 초대 링크를 발급한 사람. 탈퇴했으면 '탈퇴한 구성원' */
-            inviter_display_name?: string;
+            inviter_display_name: string;
             /** Format: date-time */
             expires_at: string;
         };
@@ -1846,15 +1845,6 @@ export interface components {
         };
         /** @description 필터 통과 후보 0개 (6절 "결과 0개") */
         NoResults: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["Error"];
-            };
-        };
-        /** @description 반응을 받지 않는 핀(숙소, */
-        ReactionNotAllowed: {
             headers: {
                 [name: string]: unknown;
             };

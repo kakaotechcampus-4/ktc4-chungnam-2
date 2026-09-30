@@ -278,7 +278,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
     delete:
       tags: [pins]
-      summary: 내 반응 취소 (「의견 취소」) — 내가 남긴 반응만 지운다. 핀 상태는 되돌리지 않는다
+      summary: 내 반응 취소 (「의견 취소」) — 내가 남긴 반응만 지운다. 핀 상태는 되돌리지 않는다. 지울 반응이 없으면(숙소 핀 포함) 그대로 204
       parameters: [ { $ref: "#/components/parameters/PinId" } ]
       responses: { "204": { description: 반응 취소됨 } }
 
@@ -639,11 +639,6 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
-    ReactionNotAllowed:
-      description: 반응을 받지 않는 핀(숙소, #154)에 반응 요청
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
     InviteNotFound:
       description: 없거나 잘못된 초대 토큰 (INVITE_NOT_FOUND)
       content:
@@ -769,10 +764,9 @@ components:
 
     InviteSummary:
       type: object
-      description: 초대 수락 전 화면용 요약. 지도 내용(핀 등)은 포함하지 않는다
-      required: [map_id, title, start_date, end_date, member_count, expires_at]
+      description: 초대 수락 전 화면용 요약. 지도 내용(핀 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다
+      required: [title, start_date, end_date, member_count, inviter_display_name, expires_at]
       properties:
-        map_id: { type: string }
         title: { type: string, maxLength: 100 }
         start_date: { type: string, format: date }
         end_date: { type: string, format: date }

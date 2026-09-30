@@ -241,7 +241,8 @@ describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
     const res = await fetch(`${BASE}/invites/${inv.token}`);
     expect(res.status).toBe(200);
     const summary = await res.json();
-    expect(summary.map_id).toBe("map_1");
+    expect(summary.title).toBeTruthy();
+    expect(summary).not.toHaveProperty("map_id");
     expect(summary).toHaveProperty("member_count");
     expect(summary).not.toHaveProperty("pins");
     const missing = await fetch(`${BASE}/invites/nope`);
