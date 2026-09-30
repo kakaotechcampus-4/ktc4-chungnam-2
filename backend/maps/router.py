@@ -3,6 +3,8 @@ docs/api-spec.yaml `maps` 태그 6개 엔드포인트. 경로 파라미터는 �
 authz/guard.py::require_on_map·require_map_member가 이 이름을 하드코딩해서, `map_id`로
 쓰면 기동 시점에 바로 실패한다.
 
+`GET /invites/{token}`만 로그인 없이 열려 있다(public_router, #159).
+
 `POST /maps`와 `POST /invites/{token}/accept`에는 멤버십 가드가 없다 — 아직 소속될 지도가
 없는(또는 방금 발급된 초대로 처음 들어오는) 요청이라, 이 라우터 전체에 걸린 인증
 (get_current_user)만 거친다. 빠뜨린 게 아니다.
@@ -21,9 +23,12 @@ from authz.guard import require_map_member
 from common.settings import settings
 from maps import service
 from maps.deps import DbSession
-from maps.schemas import Invite, Map, Member, MapCreateRequest
+from maps.schemas import Invite, InviteSummary, Map, Member, MapCreateRequest
 
 router = APIRouter(tags=["maps"], dependencies=[Depends(get_current_user)])
+# 라우터 단위 의존성은 개별 라우트에서 뺄 수 없다 — 로그인 없이 호출되는 GET /invites/{token}(#23,
+# 스펙 security: [])만 인증 없는 별도 라우터에 둔다(auth의 auth_public_router와 같은 패턴).
+public_router = APIRouter(tags=["maps"])
 
 MapForRead = Depends(require_map_member())
 MembersForMap = Depends(require_map_member())
@@ -75,6 +80,11 @@ def post_invite(
     # 대체한다 — accept가 POST 전용 API라 그 경로는 여전히 브라우저로 바로 열리지 않는다.
     base_url = settings.frontend_base_url or str(request.base_url)
     return service.create_invite(db, map_id=mapId, creator_id=user.user_id, base_url=base_url)
+
+
+@public_router.get("/invites/{token}", response_model=InviteSummary)
+def get_invite_summary(token: str = Path(...), db=DbSession):
+    return service.get_invite_summary(db, token=token)
 
 
 @router.post("/invites/{token}/accept", response_model=Map, response_model_exclude_none=True)

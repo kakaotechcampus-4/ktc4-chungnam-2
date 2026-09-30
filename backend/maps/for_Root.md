@@ -159,3 +159,27 @@ API 대응 필드가 없다(`MapCreateRequest`·`Map` 어디에도 없음). `dat
 시나리오가 authz 배선 전제와 모순(위 1번 — 실제로 재현해 확인), (c) `test_constraints.py`가
 마이그레이션 파일 자체의 드리프트는 잡지 못한다는 설명 정확도 문제(테스트 자체는 유효, 문서화만
 수정). 필드 생략(위 5번)과 seeding 미호출(위 2번)은 이미 사용자 확인을 거친 설계라 유지했다.
+
+---
+
+## #159 — GET /invites/{token} 초대 요약 (2026-09-30)
+
+**구현**: `GET /invites/{token}` → `InviteSummary`, 로그인 불요. 라우터 단위 `dependencies`는 라우트
+개별로 뺄 수 없어서 인증 없는 `public_router`를 따로 두고 `main.py`에 include 한 줄을 더했다(auth의
+`auth_public_router`와 같은 패턴). 다른 maps 라우트는 인증 유지(`GET /maps` 401 테스트로 고정).
+`accept`도 없는 토큰 404 `INVITE_NOT_FOUND`, 만료 410 `INVITE_EXPIRED`로 바꿨다(기존엔 둘 다 401
+UNAUTHORIZED였다 — 스펙이 갈랐다). 조회·수락이 `_acceptable_invite_or_raise` 하나를 공유한다.
+
+**루트 확인 요청 (스펙 vs 구현 차이)**
+1. **탈퇴한 초대자 표시 미완**: 스펙은 "탈퇴했으면 '탈퇴한 구성원'"인데, `auth.api.display_names`는
+   soft delete(`deleted_at`)된 사용자의 이름도 그대로 돌려준다(의도된 동작, 과거 핀 작성자 표시용).
+   그래서 지금은 **users 행 자체가 없을 때만** '탈퇴한 구성원'으로 채우고, 탈퇴(soft delete)한
+   초대자는 실명이 그대로 나간다. 맞추려면 auth 쪽에 예: `auth.api.withdrawn_ids(db, user_ids) -> set[str]`
+   (또는 `display_names(..., mask_withdrawn=True)`)이 필요하다 — auth 담당에게 요청 바람. 남의 모듈이라 직접 안 만들었다.
+2. **rate limit 없음**: 비로그인 엔드포인트라 토큰 추측 시도를 막는 장치가 없다. 토큰이 256비트라
+   추측은 비현실적이지만 v1 범위 밖이면 후속 이슈로 분리할 것(이슈 본문 요청대로 PR에도 적는다).
+3. 스펙·`docs/CHANGELOG-api.md`는 이미 반영돼 있어 손대지 않았다.
+
+**테스트**: 비로그인 200(map_id 미노출)·조회가 가입/used_count를 바꾸지 않음·404·410·초대자 행 없음
+fallback·타 라우트 인증 유지. `KNOWN_MISSING`에서 `("get", "/invites/{}")` 제거. backend 전체 pytest 620 passed.
+복잡도 예상 2 / 실제 2.
