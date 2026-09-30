@@ -9,7 +9,7 @@ auth/core.py(순수 함수)에 있다(docs/code-quality.md 기능형 코어/명�
 from datetime import datetime, timezone
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from auth import core
@@ -90,6 +90,12 @@ def get_active_user_or_401(db: Session, *, user_id: str) -> User:
     if row is None or row.deleted_at is not None:
         raise AppError("UNAUTHORIZED", "로그인이 필요합니다")
     return row
+
+
+def revoke_sessions(db: Session, *, user_id: str) -> None:
+    """로그아웃 — 지금까지 발급된 모든 세션 토큰을 무효화한다(쿠키 삭제만으로는 이미 복사된
+    토큰이 살아있다). UPDATE라 행이 없어도(dev 스텁 사용자) 실패하지 않는다."""
+    db.execute(update(User).where(User.id == user_id).values(sessions_valid_after=datetime.now(timezone.utc)))
 
 
 def withdraw_user(db: Session, *, user_id: str) -> User:

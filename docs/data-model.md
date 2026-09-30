@@ -13,6 +13,7 @@ DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). 실시간 보조: Redis
 users(
   id, provider('kakao'), provider_user_id, display_name,
   created_at, deleted_at            -- 탈퇴 시 soft delete, 12절
+  sessions_valid_after timestamptz null   -- 로그아웃 시각. 이 시각 이전(같은 초 포함)에 발급된 세션 토큰은 무효, NULL이면 전부 유효 (#129)
 )
 
 maps(

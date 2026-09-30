@@ -56,7 +56,8 @@ def get_me(user: CurrentUser = Depends(get_current_user), db: Session = DbSessio
 
 
 @router.post("/logout", status_code=204)
-def post_logout(response: Response):
+def post_logout(response: Response, user: CurrentUser = Depends(get_current_user), db: Session = DbSession):
+    service.revoke_sessions(db, user_id=user.user_id)
     response.delete_cookie(SESSION_COOKIE)
 
 
