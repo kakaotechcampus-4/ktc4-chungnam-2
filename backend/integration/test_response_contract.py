@@ -20,6 +20,16 @@ from referencing.jsonschema import DRAFT202012
 # 알고 있고 이슈로 추적 중인 응답 불일치. (표식 문자열들) -> 이슈. 새 불일치가 생기면 실패하고, 고쳐졌는데 남아 있어도 실패한다.
 KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
+# 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
+KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
+    ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
+    ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
+    ("GET", "/maps/{mapId}/events/me"): "SSE 스트림 — realtime 테스트가 담당",
+    ("GET", "/places/search"): "#180 구현 전",
+}
+
+_EXERCISED: set[tuple[str, str]] = set()   # 이 모듈의 테스트들이 실제로 호출한 (메서드, 스펙 경로)
+
 SPEC = yaml.safe_load((Path(__file__).resolve().parents[2] / "docs" / "api-spec.yaml").read_text(encoding="utf-8"))
 _REGISTRY = Registry().with_resource("urn:pingo-spec", Resource.from_contents(SPEC, default_specification=DRAFT202012))
 
@@ -42,6 +52,7 @@ def _validate(method: str, url: str, status: int, body) -> None:
     path = url.split("?")[0]
     template = _template_for(path, method)
     assert template is not None, f"스펙에 없는 경로를 호출했다: {method} {path}"
+    _EXERCISED.add((method.upper(), template))
     responses = SPEC["paths"][template][method.lower()].get("responses", {})
     declared = responses.get(str(status))
     content = ((declared or {}).get("content") or {}).get("application/json")
@@ -94,6 +105,15 @@ def clients(app_client, two_users):
     yield _Checked(a, problems), _Checked(b, problems), problems
     a.close()
     b.close()
+
+
+@pytest.fixture()
+def anon_client(app_client):
+    from fastapi.testclient import TestClient
+
+    c = TestClient(app_client.app)
+    yield _Checked(c, [])
+    c.close()
 
 
 def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients):
@@ -163,6 +183,93 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients):
     stale = [issue for marks, issue in KNOWN_DRIFT.items() if not any(all(s in p for s in marks) for p in unique)]
     assert not unexpected, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unexpected)
     assert not stale, f"이미 고쳐졌으니 KNOWN_DRIFT에서 지운다: {stale}"
+
+
+def test_collaboration_extras_match_the_openapi_spec(clients, anon_client):
+    """골든 패스가 안 지나가는 나머지 엔드포인트와 에러 봉투 — 초대 요약(비로그인), 이름 수정, 의견 목록·my_reaction,
+    근거 수정, 반경 넓히기(상한 409)·다시 추천, 확정 취소, 핀 삭제, 탈퇴."""
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "제주", "start_date": "2026-12-01", "end_date": "2026-12-03"}).json()["id"]
+
+    # 초대 요약은 로그인 없이 — 지도 내용은 없고, 없는 토큰은 404 봉투
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert anon_client.get(f"/invites/{token}").status_code == 200
+    assert anon_client.get("/invites/no-such-token").status_code == 404
+    assert anon_client.get("/maps").status_code == 401
+    assert b.get(f"/maps/{map_id}").status_code == 404          # 비구성원은 존재를 모른다
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+
+    # 이름 수정(계정 단위)
+    assert a.patch("/auth/me", json={"display_name": "철수2"}).status_code == 200
+    assert a.patch("/auth/me", json={"display_name": ""}).status_code == 422
+
+    pins = []
+    for i, (lat, lng) in enumerate([(33.50, 126.53), (33.51, 126.54), (33.49, 126.52)]):
+        r = a.post(f"/maps/{map_id}/pins", json={"category": "음식점", "source": "coordinate", "lat": lat, "lng": lng,
+                                                 "place_id": f"jj{i}", "place_name": f"j{i}"})
+        assert r.status_code == 201, r.text
+        pins.append(r.json()["id"])
+    stay = a.post(f"/maps/{map_id}/pins", json={"category": "숙소", "source": "coordinate", "lat": 33.5, "lng": 126.5,
+                                                "place_id": "stay", "place_name": "호텔"})
+    assert stay.status_code == 201
+    # 숙소는 반응 불가(422) — 의견 목록은 빈 배열
+    assert a.put(f"/pins/{stay.json()['id']}/reaction", json={"type": "like"}).status_code == 422
+    assert a.get(f"/pins/{stay.json()['id']}/reactions").json() == []
+
+    # 반응 → 의견 목록 · my_reaction · 취소
+    for c in (a, b):
+        assert c.put(f"/pins/{pins[0]}/reaction", json={"type": "like"}).status_code == 200
+        assert c.put(f"/pins/{pins[1]}/reaction", json={"type": "against", "reason_text": "별로"}).status_code == 200
+    opinions = a.get(f"/pins/{pins[0]}/reactions")
+    assert opinions.status_code == 200 and len(opinions.json()) == 2
+    mine = [p for p in a.get(f"/maps/{map_id}/pins").json() if p["id"] == pins[0]][0]
+    assert mine["my_reaction"]["type"] == "like"
+    assert b.delete(f"/pins/{pins[0]}/reaction").status_code == 204
+
+    # 추천: 근거 수정 → 실행 → 반경 넓히기(15→20→25→30분, 그다음 409) → 다시 추천 → 게시
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    evidence = a.get(f"/runs/{run_id}/evidence").json()
+    assert evidence
+    assert a.patch(f"/runs/{run_id}/evidence", json={"toggle": [{"id": evidence[0]["id"], "is_active": False}]}).status_code == 200
+    assert a.patch(f"/runs/{run_id}/evidence", json={"toggle": [{"id": evidence[0]["id"], "is_active": True}],
+                                                     "add": [{"text": "조용한 곳"}]}).status_code == 200
+    assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
+    assert a.post(f"/runs/{run_id}/execute").status_code == 202
+    assert a.get(f"/runs/{run_id}/result").status_code == 200
+    walk = [a.post(f"/runs/{run_id}/widen") for _ in range(4)]
+    assert [r.status_code for r in walk] == [202, 202, 202, 409]
+    assert [r.json()["default_radius_walk_min"] for r in walk[:3]] == [20, 25, 30]
+    assert walk[3].json()["code"] == "WIDEN_LIMIT"
+    retry = a.post(f"/runs/{run_id}/retry")
+    assert retry.status_code == 202 and retry.json()["attempt_no"] >= 2
+    result = a.get(f"/runs/{run_id}/result").json()
+    assert result["candidates"]
+    published = a.post(f"/candidates/{result['candidates'][0]['id']}/publish")
+    assert published.status_code == 200
+    assert b.post(f"/candidates/{result['candidates'][0]['id']}/publish").status_code in (403, 404, 409)
+
+    # 확정 → 취소 → 핀 삭제
+    item = a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pins[0]})
+    assert item.status_code in (200, 201)
+    assert a.delete(f"/shortlist/{item.json()['id']}").status_code == 204
+    assert a.delete(f"/pins/{pins[2]}").status_code == 204
+
+    # 탈퇴 — 반응은 지워지고 핀은 남는다
+    assert b.post("/auth/withdraw").status_code == 204
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
+def test_zz_every_spec_operation_is_exercised_by_a_contract_test():
+    """계약 테스트가 지나가지 않는 엔드포인트는 응답 모양이 스펙과 맞는지 아무도 모른다. 스펙에 엔드포인트를 추가하면
+    이 테스트가 실패해 호출을 골든 패스에 넣게 한다. (파일 안에서 마지막에 실행돼야 한다 — 이름의 zz.)"""
+    spec_ops = {(m.upper(), p) for p, ops in SPEC["paths"].items() for m in ops if m in ("get", "post", "put", "patch", "delete")}
+    uncovered = spec_ops - _EXERCISED
+    unexpected = uncovered - set(KNOWN_UNCOVERED)
+    stale = set(KNOWN_UNCOVERED) - uncovered
+    assert not unexpected, f"계약 테스트가 지나가지 않는 엔드포인트: {sorted(unexpected)}"
+    assert not stale, f"이제 지나가니 KNOWN_UNCOVERED에서 지운다: {sorted(stale)}"
 
 
 def test_the_validator_actually_rejects_a_wrong_shape():
