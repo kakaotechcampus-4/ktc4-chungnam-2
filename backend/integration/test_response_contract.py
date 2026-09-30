@@ -19,7 +19,6 @@ from referencing.jsonschema import DRAFT202012
 
 # 알고 있고 이슈로 추적 중인 응답 불일치. (표식 문자열들) -> 이슈. 새 불일치가 생기면 실패하고, 고쳐졌는데 남아 있어도 실패한다.
 KNOWN_DRIFT: dict[tuple[str, ...], str] = {
-    ("PUT /pins/{pinId}/reaction", "reason_text: None"): "#157",                 # 스펙은 '없으면 필드 생략', 실제는 null
     ("GET /maps/{mapId}/recommend/readiness", "is not one of"): "#146",          # 추천 카테고리에서 숙소 제거 전
 }
 

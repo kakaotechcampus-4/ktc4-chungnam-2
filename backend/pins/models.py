@@ -23,7 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from common.database import Base
 
 Category = Enum(
-    "음식점", "카페", "숙소", "관광지",
+    "음식점", "카페", "숙소", "관광지", "기타",
     name="category",
 )
 PinKind = Enum(
@@ -64,6 +64,11 @@ class Pin(Base):
     # #57 결정: candidate.checks를 게시 시점에 복사(가드레일 5) — recommend를 다시 조회하지
     # 않는다. reason_chip_ids와 같은 방식(JSONB, 목록형이라 nullable).
     checks: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # #157: checks와 같은 방식으로 게시 시점에 candidate 값을 복사한다(가드레일 5). recommend가
+    # candidate에 값을 채우기 전에는 항상 NULL — 통로만 있다.
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    member_fulfillment: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    place_source: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     visibility: Mapped[str] = mapped_column(Visibility, nullable=False)
     created_by: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

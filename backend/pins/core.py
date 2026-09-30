@@ -12,7 +12,15 @@ from dataclasses import dataclass
 from authz.core import Principal, Resource, permissions_for
 from common.errors import AppError
 from common.events import Event
-from pins.schemas import Pin, PinCreateRequest, PinSource, ReactionSummary
+from pins.schemas import (
+    MemberFulfillment,
+    Pin,
+    PinCreateRequest,
+    PinSource,
+    PlaceSource,
+    Reaction,
+    ReactionSummary,
+)
 
 
 LINK_PIN_REJECTED_MESSAGE = "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"
@@ -105,6 +113,10 @@ class PinRecord:
     place_name: str | None = None
     created_by_display_name: str | None = None
     checks: list[dict] | None = None
+    reason: str | None = None
+    member_fulfillment: dict | None = None
+    place_source: dict | None = None
+    my_reaction: Reaction | None = None
 
 
 def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
@@ -127,6 +139,10 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
         created_by=record.created_by,
         created_by_display_name=record.created_by_display_name,
         checks=record.checks,
+        reason=record.reason,
+        member_fulfillment=MemberFulfillment(**record.member_fulfillment) if record.member_fulfillment else None,
+        place_source=PlaceSource(**record.place_source) if record.place_source else None,
+        my_reaction=record.my_reaction,
         reaction_summary=ReactionSummary(
             like=record.reaction_counts.like,
             neutral=record.reaction_counts.neutral,
@@ -134,9 +150,17 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
         ),
         permissions=permissions_for(
             principal,
-            Resource(type="pin", map_id=record.map_id, author_id=record.created_by, kind=record.kind),
+            Resource(
+                type="pin", map_id=record.map_id, author_id=record.created_by,
+                kind=record.kind, category=record.category,
+            ),
         ),
     )
+
+
+def _public_pin_payload(pin: Pin) -> dict:
+    """전체 채널로 나가는 페이로드 — my_reaction은 요청자 본인 것이라 싣지 않는다(가드레일 1)."""
+    return pin.model_dump(exclude_none=True, exclude={"my_reaction"})
 
 
 def pin_created_event(pin: Pin) -> Event | None:
@@ -144,7 +168,7 @@ def pin_created_event(pin: Pin) -> Event | None:
     private 후보가 전체 채널로 새는 순간 「지도에 올리기」 전에 팀 전체가 보게 된다."""
     if pin.visibility == "private":
         return None
-    return Event(map_id=pin.map_id, channel="public", type="pin.created", payload=pin.model_dump(exclude_none=True))
+    return Event(map_id=pin.map_id, channel="public", type="pin.created", payload=_public_pin_payload(pin))
 
 
 def pin_published_event(pin: Pin) -> Event | None:
@@ -153,7 +177,7 @@ def pin_published_event(pin: Pin) -> Event | None:
     이미 visibility='public'으로 INSERT함) — 그래도 방어적으로 같은 체크를 유지한다."""
     if pin.visibility == "private":
         return None
-    return Event(map_id=pin.map_id, channel="public", type="pin.published", payload=pin.model_dump(exclude_none=True))
+    return Event(map_id=pin.map_id, channel="public", type="pin.published", payload=_public_pin_payload(pin))
 
 
 def pin_deleted_event(pin_id: str, map_id: str, visibility: str) -> Event | None:
@@ -173,6 +197,12 @@ def validate_reaction(reaction_type: str, reason_text: str | None, reason_chip_i
     has_chips = bool(reason_chip_ids)
     if not has_text and not has_chips:
         raise AppError("EVIDENCE_REQUIRED", "반대 반응에는 사유가 필요합니다")
+
+
+def validate_reactable(category: str) -> None:
+    """숙소 핀은 반응 대상이 아니다(#154, permissions.md) — 403이 아니라 422로 요청 자체를 거부."""
+    if category == "숙소":
+        raise AppError("REACTION_NOT_ALLOWED")
 
 
 def reaction_changed_event(
