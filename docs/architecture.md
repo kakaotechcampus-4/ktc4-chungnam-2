@@ -241,7 +241,7 @@ interface PlaceSource {
 }
 ```
 
-구현체: `KakaoPlaceSource`·`NaverPlaceSource`·`GooglePlaceSource` — **2026-09-07 결정으로 v1부터 3개 전부 실사용**(비용순 폴백: 카카오→네이버→구글, `backend/places/CLAUDE.md` 참고). 소스 선택은 카테고리·지역별로 설정 가능해야 한다 — 하나로 고정하지 않는다.
+구현체: `KakaoPlaceSource`·`NaverPlaceSource`·`GooglePlaceSource` 3개가 코드에 있다(비용순 폴백: 카카오→네이버→구글, `backend/places/CLAUDE.md` 참고). **2026-10-01 결정(정정): v1 실연동은 카카오 하나만 쓴다** — `PLACES_SOURCES=kakao`. 네이버·구글 어댑터는 남겨 두되 비활성이다(2026-09-07의 "3개 전부 실사용" 결정을 이 결정이 대체). 이유: 이용약관 검토(#53)를 카카오 하나로 좁히고, 구글 과금 위험과 키 관리를 없앤다. 카카오가 못 주는 가격·평점·영업시간은 v1에서 unknown으로 두고 `unknown_policy`가 처리한다(가격 = 통과 + `needs_check`). 나중에 필요해지면 `PLACES_SOURCES`에 소스를 추가하는 것만으로 켠다(코드 변경 없음). 소스 선택은 설정으로 바꿀 수 있어야 한다 — 하나로 고정하는 코드는 만들지 않는다.
 
 ### 층2 차원 압축 설계
 
