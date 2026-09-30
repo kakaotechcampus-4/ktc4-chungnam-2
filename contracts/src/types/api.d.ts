@@ -555,7 +555,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 카테고리별 추천 버튼 활성화 판정 (5-4) */
+        /** 카테고리별 추천 버튼 활성화 판정 (5-4). 키는 RecommendCategory 값만 온다 — 숙소는 추천 대상이 아니다 (#145) */
         get: {
             parameters: {
                 query?: never;
@@ -610,7 +610,7 @@ export interface paths {
             requestBody?: {
                 content: {
                     "application/json": {
-                        category: components["schemas"]["Category"];
+                        category: components["schemas"]["RecommendCategory"];
                     };
                 };
             };
@@ -1272,6 +1272,11 @@ export interface components {
         /** @enum {string} */
         Category: "음식점" | "카페" | "숙소" | "관광지";
         /**
+         * @description AI 대안 추천을 받을 수 있는 카테고리. 숙소는 핀으로는 찍지만 추천 대상이 아니다 (#145)
+         * @enum {string}
+         */
+        RecommendCategory: "음식점" | "카페" | "관광지";
+        /**
          * @description 핀 종류는 이 3가지뿐 (기획안 9절). 확정이 나머지 둘을 덮어쓴다.
          * @enum {string}
          */
@@ -1285,6 +1290,8 @@ export interface components {
             /** @description evidence_line 전용: 자기가 쓴 것만 true */
             can_disable?: boolean;
             can_delete?: boolean;
+            /** @description candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64) */
+            can_publish?: boolean;
         };
         User: {
             id?: string;
@@ -1337,6 +1344,7 @@ export interface components {
             source?: "link" | "search" | "coordinate";
             link_url?: string;
             place_id?: string;
+            place_name?: string;
             lat?: number;
             lng?: number;
         };
@@ -1440,7 +1448,7 @@ export interface components {
         RecommendRun: {
             id?: string;
             map_id?: string;
-            category?: components["schemas"]["Category"];
+            category?: components["schemas"]["RecommendCategory"];
             /** @enum {string} */
             status?: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
             attempt_no?: number;
@@ -1455,6 +1463,7 @@ export interface components {
             /** @enum {string} */
             visibility?: "private" | "published";
             published_pin_id?: string | null;
+            permissions?: components["schemas"]["Permissions"];
         };
         RecommendResult: {
             run_id?: string;

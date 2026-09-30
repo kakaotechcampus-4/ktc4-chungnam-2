@@ -48,7 +48,7 @@ function buildRetryLimit(): StoreState {
 function buildRegionConflict(): StoreState {
   const state = buildBaseState();
   const runId = "run_region_conflict";
-  state.runs[runId] = { id: runId, map_id: SEED_MAP_ID, category: "숙소", status: "awaiting_region_confirm", attempt_no: 1 };
+  state.runs[runId] = { id: runId, map_id: SEED_MAP_ID, category: "관광지", status: "awaiting_region_confirm", attempt_no: 1 };
   state.runRequestedBy[runId] = ME_USER_ID;
   state.evidenceLines[runId] = [
     {
