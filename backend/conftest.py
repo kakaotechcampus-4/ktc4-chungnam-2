@@ -52,3 +52,19 @@ def _ensure_test_db_with_postgis():
     except Exception:  # noqa: BLE001 — 아래 이유로 삼킨다(모듈 conftest가 원인을 보고한다)
         pass
     yield
+
+
+# ---- live 마커: 실제 외부 API를 부르는 테스트는 기본 실행에서 뺀다 ----
+# 돌리려면 `python -m pytest -m live places` (키가 .env에 있어야 하고, 구글 등은 과금된다).
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "live: 실제 외부 API를 호출한다(과금·키 필요). -m live 로만 실행된다")
+
+
+def pytest_collection_modifyitems(config, items):
+    if "live" in (config.getoption("-m") or ""):
+        return
+    skip = pytest.mark.skip(reason="live 테스트 — `-m live`로만 실행")
+    for item in items:
+        if "live" in item.keywords:
+            item.add_marker(skip)

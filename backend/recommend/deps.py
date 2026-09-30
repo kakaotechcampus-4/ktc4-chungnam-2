@@ -11,11 +11,15 @@ llm.label_place가 모든 fact_key를 unknown으로 응답하게 만든다(archi
 없이도 unknown_policy 분기로 정상 처리된다는 전제 그대로).
 """
 
+from typing import Any, Mapping, Sequence
+
 from fastapi import Depends
 
 from common.adapters import select
 from common.database import get_db_session
 from common.settings import settings
+from places import api as places_api
+from places.schemas import Area
 from recommend.ports import Circle, PlaceFactsGateway, PlaceSearchGateway, PlaceStub
 
 
@@ -43,6 +47,27 @@ class DevPlaceFactsGateway:
         return {}
 
 
+class RealPlaceSearchGateway:
+    """places(#34) 실시간 검색 — places.api에 위임하고 recommend 타입(PlaceStub)으로 옮겨 담는다."""
+
+    def search_nearby(self, *, category: str, circles: Sequence[Circle]) -> list[PlaceStub]:
+        areas = [Area(lat=c.anchor_lat, lng=c.anchor_lng, radius_m=c.radius_m) for c in circles]
+        return [PlaceStub(place_id=r.place_id, lat=r.lat, lng=r.lng) for r in places_api.search_nearby(category, areas)]
+
+
+class RealPlaceFactsGateway:
+    def get_raw_facts(self, place_id: str) -> Mapping[str, Any]:
+        return places_api.get_raw_facts(place_id)
+
+
+def _real_place_search_gateway() -> PlaceSearchGateway:
+    return RealPlaceSearchGateway()
+
+
+def _real_place_facts_gateway() -> PlaceFactsGateway:
+    return RealPlaceFactsGateway()
+
+
 def _dev_place_search_gateway() -> PlaceSearchGateway:
     return DevPlaceSearchGateway()
 
@@ -53,12 +78,12 @@ def _dev_place_facts_gateway() -> PlaceFactsGateway:
 
 get_place_search_gateway = select(
     "recommend.PlaceSearchGateway", settings.places_mode,
-    {"dev": _dev_place_search_gateway, "real": None}, "places #14",
+    {"dev": _dev_place_search_gateway, "real": _real_place_search_gateway}, "places #14",
 )
 
 get_place_facts_gateway = select(
     "recommend.PlaceFactsGateway", settings.places_mode,
-    {"dev": _dev_place_facts_gateway, "real": None}, "places #14",
+    {"dev": _dev_place_facts_gateway, "real": _real_place_facts_gateway}, "places #14",
 )
 
 

@@ -14,6 +14,7 @@ from typing import Literal, get_args
 Environment = Literal["dev", "test", "prod"]
 AdapterMode = Literal["dev", "real"]
 
+PLACE_SOURCE_NAMES = ("kakao", "naver", "google")
 _PORTS = ("places", "auth", "llm")
 # 주의: "membership"은 여기 없다(issue #89) — maps.api.DbMembershipGateway가 유일한 구현이라
 # dev/real을 오갈 대상 자체가 없다. authz/deps.py::get_membership_gateway가 직접 그 클래스를
@@ -48,6 +49,22 @@ def _load_dotenv_once() -> None:
 
 def _env(name: str, default: str) -> str:
     return os.getenv(name, default).strip()
+
+
+def _int(name: str, default: int) -> int:
+    raw = _env(name, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        raise ConfigError(f"{name}={raw!r} — 정수여야 한다") from None
+
+
+def _float(name: str, default: float) -> float:
+    raw = _env(name, str(default))
+    try:
+        return float(raw)
+    except ValueError:
+        raise ConfigError(f"{name}={raw!r} — 숫자여야 한다") from None
 
 
 def _mode(name: str, default: AdapterMode) -> AdapterMode:
@@ -95,11 +112,20 @@ class Settings:
     naver_search_client_id: str = ""
     naver_search_client_secret: str = ""
     google_places_api_key: str = ""
+    # places 실시간 연결 튜닝(#34a). 소스 순서 = 폴백 순서(앞 소스가 우선). 소스를 빼면 그 소스는 안 부른다.
+    places_sources: tuple[str, ...] = ("kakao", "naver", "google")
+    places_cache_ttl_s: int = 600        # 메모리 TTL 캐시(영구 저장 아님). 0이면 끈다 — 끄면 get_raw_facts는 {}.
+    places_http_timeout_s: float = 3.0
+    places_http_retries: int = 1         # 타임아웃·429·5xx에만. 구글은 과금이라 재시도하지 않는다.
+    places_google_max_calls: int = 100   # 프로세스 수명 동안 구글 호출 상한(과금 안전장치). 0이면 무제한.
 
     def __post_init__(self) -> None:
         # 잘못된 Settings는 애초에 "만들어질 수 없다" — 호출 순서에 기대지 않는 게 핵심이다.
         if self.environment not in get_args(Environment):
             raise ConfigError(f"PINGO_ENV={self.environment!r} — dev|test|prod 중 하나여야 한다")
+        unknown_sources = [n for n in self.places_sources if n not in PLACE_SOURCE_NAMES]
+        if unknown_sources:
+            raise ConfigError(f"PLACES_SOURCES에 모르는 소스가 있다: {unknown_sources} — {PLACE_SOURCE_NAMES} 중에서 고른다")
         if self.environment != "prod":
             return
         stubbed = [p for p in _PORTS if getattr(self, f"{p}_mode") == "dev"]
@@ -166,6 +192,11 @@ class Settings:
             naver_search_client_id=_env("NAVER_SEARCH_CLIENT_ID", ""),
             naver_search_client_secret=_env("NAVER_SEARCH_CLIENT_SECRET", ""),
             google_places_api_key=_env("GOOGLE_PLACES_API_KEY", ""),
+            places_sources=tuple(n.strip() for n in _env("PLACES_SOURCES", "kakao,naver,google").split(",") if n.strip()),
+            places_cache_ttl_s=_int("PLACES_CACHE_TTL_S", 600),
+            places_http_timeout_s=_float("PLACES_HTTP_TIMEOUT_S", 3.0),
+            places_http_retries=_int("PLACES_HTTP_RETRIES", 1),
+            places_google_max_calls=_int("PLACES_GOOGLE_MAX_CALLS", 100),
             frontend_base_url=frontend_base_url,
             frontend_login_redirect_url=_env(
                 "FRONTEND_LOGIN_REDIRECT_URL",
