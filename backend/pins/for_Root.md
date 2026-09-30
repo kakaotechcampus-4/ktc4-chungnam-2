@@ -93,3 +93,46 @@
 없었다.**
 
 **복잡도**: 2/5 · **실제 소요**: 2/5 (스키마+배선+양방향 읽기 경로 확인까지 예상대로).
+
+---
+
+## 추가 — #148(링크 핀 거절)·#141(GET /maps/{id}/counts)
+
+**작업 환경 주의 — 루트가 알아야 할 것**
+- 이 작업 폴더는 **git 저장소가 아니다**(`.git` 없음). 그래서 지시받은 `develop` checkout·브랜치 생성·
+  develop merge·PR 생성은 **하지 못했다**. 코드·테스트까지만 끝났고, 브랜치/PR은 사용자가 저장소
+  clone에서 이 변경분을 옮겨 진행해야 한다. 디스코드 "#N 착수합니다"도 도구가 없어 못 남겼다.
+- `PINGO_TEST_DB`(테스트 DB 분리)는 이 트리에 **아직 없다**(grep 0건, develop merge 뒤에 들어오는 것으로
+  이해). 그래서 이번 검증은 공유 `pingo_test`가 다른 세션 pytest와 충돌(`relation "pins" does not
+  exist`, 교착)해서, 임시 플러그인으로 전용 DB(`pingo_test_148`)를 만들어 돌렸다. develop merge 뒤엔
+  `PINGO_TEST_DB=pingo_test_pins`로 재확인 필요.
+- 마이그레이션은 만들지 않았다(#157은 PR #156 머지 뒤 별도).
+
+**#148 — v1 링크 핀 거절**
+- `core.validate_create`: `source=="link"` 또는 `link_url`이 오면(다른 필드와 함께여도) 422
+  `VALIDATION_ERROR`, message `"링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"`(상수
+  `core.LINK_PIN_REJECTED_MESSAGE`). 검증은 source 추론보다 먼저 한다.
+- `core.resolve_source`의 link_url 추론 제거, `deps.py`의 `draft.place_id or draft.link_url` 제거,
+  `PinDraft.link_url`·service의 전달 제거(이제 도달 불가). `PinSource`의 "link"와 `PinCreateRequest.link_url`은
+  스키마에 그대로 둠(v2 카톡 내보내기용).
+- 테스트: `test_resolve_source_infers_link` → 추론 안 함 테스트로 교체, 모호성 테스트는 place_id+좌표
+  조합으로 변경, 거절 파라미터 테스트 5종 + API 레벨 422/미생성 + 검색 경로 201 유지.
+- **루트 확인**: `docs/api-spec.yaml`의 `source: link`/`link_url`에 "v1 미수신" 표기와
+  `CHANGELOG-api.md`(이슈 본문상 루트 몫, PR #131 머지 뒤)는 건드리지 않았다. 프론트 전달: "link_url을
+  보내면 422 + 위 문장, message를 그대로 노출".
+
+**#141 — GET /maps/{mapId}/counts**
+- 응답 `FilterCounts{by_category, by_kind}`(스펙 그대로, 스펙 변경 없음). `service.count_pins`가 GROUP BY 한 번
+  (category, kind)으로 세고, 없는 카테고리·종류는 0으로 채운다. 키는 `typing.get_args(Category/PinKind)`에서
+  만들어 「기타」 추가 시 코드 수정 불필요.
+- 가시성: `list_pins`의 WHERE를 `_visible_pins_clause`로 추출해 **목록과 집계가 같은 함수를 쓴다**(가드레일 1 —
+  남의 비공개 후보·soft delete 제외, 본인 비공개는 포함). 비구성원은 기존 `require_map_member`로 404.
+- 테스트 5개: 0 채움, 시드 집계(삭제·타지도 제외), 비공개 제외/본인 포함, 목록 길이와 합계 일치, 비구성원 404.
+- `integration/test_spec_route_coverage.py`의 `KNOWN_MISSING`에서 counts 항목을 삭제했다(그 파일이
+  "구현되면 지우라"고 스스로 실패하도록 돼 있음 — 이 파일은 pins 소유가 아니라 루트 확인 요망).
+
+**검증**: 전용 DB에서 `pins integration auth shortlist recommend maps` **422 passed, 1 skipped**, `realtime`
+단독 26 passed. 전체를 한 번에 돌리면 realtime 3건(`tick_done`, SSE 타이밍)이 한 차례 실패했고 재실행·단독에선
+통과 — pins와 무관해 보이나 **간헐 실패로 루트 확인 필요**. 공유 DB에선 타 세션과 충돌해 전체 0실패를 못 얻었다.
+
+**복잡도**: #148 1/5, #141 2/5 · **실제 소요**: #148 1/5, #141 2/5(코드는 예상대로, 공유 테스트 DB 충돌 진단에 시간).

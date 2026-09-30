@@ -34,8 +34,11 @@ def _pin(visibility: str = "public") -> Pin:
 
 # --- resolve_source / validate_create ---------------------------------------
 
-def test_resolve_source_infers_link():
-    assert core.resolve_source(_req(link_url="https://map.google.com/x")) == "link"
+def test_resolve_source_does_not_infer_link_from_link_url():
+    # link_url만으론 더 이상 source를 추론하지 않는다(#148) — 거절은 validate_create가 한다.
+    with pytest.raises(AppError) as exc_info:
+        core.resolve_source(_req(link_url="https://map.google.com/x"))
+    assert exc_info.value.code == "VALIDATION_ERROR"
 
 
 def test_resolve_source_infers_search():
@@ -58,15 +61,29 @@ def test_resolve_source_missing_raises_validation_error():
 
 
 def test_resolve_source_ambiguous_input_raises():
-    # link_url과 place_id가 동시에 왔는데 source가 없다 — 결정 불가.
+    # place_id와 lat/lng가 동시에 왔는데 source가 없다 — 결정 불가.
     with pytest.raises(AppError) as exc_info:
-        core.resolve_source(_req(link_url="https://x", place_id="p1"))
+        core.resolve_source(_req(place_id="p1", lat=35.1, lng=129.0))
     assert exc_info.value.code == "VALIDATION_ERROR"
 
 
-def test_validate_create_link_without_link_url_raises():
-    with pytest.raises(AppError):
-        core.validate_create(_req(source="link"))
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"link_url": "https://map.google.com/x"},
+        {"source": "link"},
+        {"source": "link", "link_url": "https://map.google.com/x"},
+        {"link_url": "https://x", "place_id": "p1"},
+        {"link_url": "https://x", "lat": 35.1, "lng": 129.0},
+    ],
+)
+def test_validate_create_rejects_link_paths(kwargs):
+    """#148 — v1은 링크 핀을 거절한다. 프론트가 그대로 보여줄 문장이 메시지다."""
+    with pytest.raises(AppError) as exc_info:
+        core.validate_create(_req(**kwargs))
+    assert exc_info.value.code == "VALIDATION_ERROR"
+    assert exc_info.value.status == 422
+    assert exc_info.value.message == "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"
 
 
 def test_validate_create_search_without_place_id_raises():

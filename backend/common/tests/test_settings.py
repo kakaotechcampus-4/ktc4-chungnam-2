@@ -21,6 +21,7 @@ def _settings(**overrides):
         session_secret="real-secret",
         places_mode="real",
         auth_mode="real",
+        llm_mode="real",
         frontend_base_url="https://app.pingo.example",
     )
     base.update(overrides)
@@ -30,6 +31,11 @@ def _settings(**overrides):
 def test_prod_refuses_dev_stub():
     with pytest.raises(ConfigError, match="places"):
         _settings(places_mode="dev")
+
+
+def test_prod_refuses_llm_dev_stub():
+    with pytest.raises(ConfigError, match="llm"):
+        _settings(llm_mode="dev")
 
 
 def test_prod_refuses_wildcard_cors_origin():
@@ -152,3 +158,55 @@ def test_invalid_adapter_mode_is_rejected(monkeypatch):
 
     with pytest.raises(ConfigError, match="PLACES_MODE"):
         Settings.from_env()
+
+
+def test_from_env_llm_defaults_outside_prod(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    for name in ("LLM_MODE", "LLM_MODEL", "ELICE_ML_API_BASE_URL", "ELICE_ML_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+    s = Settings.from_env()
+
+    assert s.llm_mode == "dev"
+    assert s.llm_model == "gpt-5.6-luna"
+    assert s.elice_ml_api_base_url == ""
+    assert s.elice_ml_api_key == ""
+    assert s.mode_for("llm") == "dev"
+
+
+def test_from_env_llm_mode_defaults_to_real_in_prod(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "prod")
+    monkeypatch.delenv("LLM_MODE", raising=False)
+    monkeypatch.setenv("PLACES_MODE", "real")
+    monkeypatch.setenv("AUTH_MODE", "real")
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
+    monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
+    monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
+
+    assert Settings.from_env().llm_mode == "real"
+
+
+def test_from_env_prod_with_llm_mode_dev_is_refused(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "prod")
+    monkeypatch.setenv("LLM_MODE", "dev")
+    monkeypatch.setenv("PLACES_MODE", "real")
+    monkeypatch.setenv("AUTH_MODE", "real")
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
+    monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
+    monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
+
+    with pytest.raises(ConfigError, match="llm"):
+        Settings.from_env()
+
+
+def test_from_env_reads_llm_overrides(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    monkeypatch.setenv("LLM_MODE", "real")
+    monkeypatch.setenv("LLM_MODEL", "other-model")
+    monkeypatch.setenv("ELICE_ML_API_BASE_URL", "https://ml.example/v1")
+    monkeypatch.setenv("ELICE_ML_API_KEY", "k")
+
+    s = Settings.from_env()
+
+    assert (s.llm_mode, s.llm_model) == ("real", "other-model")
+    assert (s.elice_ml_api_base_url, s.elice_ml_api_key) == ("https://ml.example/v1", "k")

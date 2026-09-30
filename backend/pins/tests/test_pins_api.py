@@ -18,6 +18,7 @@ from authz.testing import FakeMembership
 from common.events import EventLog
 from main import app
 from pins.models import Pin as PinRow
+from pins.models import Reaction as ReactionRow
 
 
 def _insert_pin(db_session, *, map_id="map_1", place_id=None, created_by="user_1",
@@ -71,6 +72,28 @@ def test_create_pin_returns_201(app_client):
     assert body["kind"] == "일반"
     assert body["visibility"] == "public"
     assert "place_name" not in body  # 안 보냈으면 여전히 생략(response_model_exclude_none)
+
+
+def test_create_pin_rejects_link_url_with_422(app_client, db_session):
+    """#148 — link_url만 보내도, source=link여도 422. 프론트가 그대로 보여줄 문장이 message다."""
+    for body in (
+        {"category": "음식점", "link_url": "https://maps.google.com/?q=x", "lat": 35.1, "lng": 129.0},
+        {"category": "음식점", "source": "link", "link_url": "https://maps.google.com/?q=x"},
+    ):
+        resp = app_client.post("/maps/map_1/pins", json=body, cookies=_auth())
+        assert resp.status_code == 422
+        assert resp.json()["code"] == "VALIDATION_ERROR"
+        assert resp.json()["message"] == "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"
+    assert db_session.execute(select(func.count()).select_from(PinRow)).scalar_one() == 0
+
+
+def test_create_pin_search_path_unchanged(app_client):
+    resp = app_client.post(
+        "/maps/map_1/pins",
+        json={"category": "카페", "source": "search", "place_id": "p_search", "lat": 35.1, "lng": 129.0},
+        cookies=_auth(),
+    )
+    assert resp.status_code == 201
 
 
 def test_create_pin_stores_and_returns_place_name(app_client):
@@ -493,3 +516,91 @@ def test_delete_reaction_emits_event_only_when_row_existed(app_client, db_sessio
     resp = app_client.delete(f"/pins/{row.id}/reaction", cookies=_auth("user_2"))
     assert resp.status_code == 204
     assert len(_events(db_session, type="reaction.changed")) == 2
+
+
+# --- GET /maps/{mapId}/counts (#141) ------------------------------------------------
+
+def test_counts_fills_zero_for_empty_categories_and_kinds(app_client):
+    resp = app_client.get("/maps/map_1/counts", cookies=_auth())
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "by_category": {"음식점": 0, "카페": 0, "숙소": 0, "관광지": 0},
+        "by_kind": {"일반": 0, "AI추천": 0, "확정": 0},
+    }
+
+
+def test_counts_counts_seeded_pins_by_category_and_kind(app_client, db_session):
+    _insert_pin(db_session, category="음식점", kind="일반", place_id="c1")
+    _insert_pin(db_session, category="음식점", kind="확정", place_id="c2", created_by="user_2")
+    _insert_pin(db_session, category="카페", kind="AI추천", place_id="c3")
+    _insert_pin(db_session, category="카페", kind="일반", place_id="c4", deleted=True)  # 삭제된 핀은 제외
+    _insert_pin(db_session, category="음식점", kind="일반", place_id="c5", map_id="map_other")  # 다른 지도
+
+    body = app_client.get("/maps/map_1/counts", cookies=_auth()).json()
+    assert body["by_category"] == {"음식점": 2, "카페": 1, "숙소": 0, "관광지": 0}
+    assert body["by_kind"] == {"일반": 1, "AI추천": 1, "확정": 1}
+
+
+def test_counts_excludes_other_users_private_pins_but_includes_own(app_client, db_session):
+    """가드레일 1 — 남의 비공개 후보는 개수에도 새면 안 된다. 본인 것은 센다."""
+    _insert_pin(db_session, kind="AI추천", visibility="private", created_by="stranger", place_id="p_other")
+    _insert_pin(db_session, kind="AI추천", visibility="private", created_by="user_1", place_id="p_mine")
+    _insert_pin(db_session, kind="일반", place_id="p_public", created_by="stranger")
+
+    mine = app_client.get("/maps/map_1/counts", cookies=_auth("user_1")).json()
+    assert mine["by_kind"] == {"일반": 1, "AI추천": 1, "확정": 0}
+
+    theirs = app_client.get("/maps/map_1/counts", cookies=_auth("user_2")).json()
+    assert theirs["by_kind"] == {"일반": 1, "AI추천": 0, "확정": 0}
+
+
+def test_counts_matches_list_pins_visibility(app_client, db_session):
+    _insert_pin(db_session, kind="AI추천", visibility="private", created_by="stranger", place_id="v1")
+    _insert_pin(db_session, kind="일반", place_id="v2")
+    _insert_pin(db_session, kind="AI추천", visibility="private", place_id="v3", created_by="user_1")
+    listed = app_client.get("/maps/map_1/pins", cookies=_auth("user_1")).json()
+    counted = app_client.get("/maps/map_1/counts", cookies=_auth("user_1")).json()
+    assert sum(counted["by_kind"].values()) == len(listed)
+    assert sum(counted["by_category"].values()) == len(listed)
+
+
+def test_counts_non_member_is_404(app_client, db_session):
+    _insert_pin(db_session, place_id="nm1")
+    app.dependency_overrides[get_membership_gateway] = _deny_membership
+    try:
+        resp = app_client.get("/maps/map_1/counts", cookies=_auth("user_1"))
+    finally:
+        del app.dependency_overrides[get_membership_gateway]
+    assert resp.status_code == 404
+
+
+def _like(db_session, pin_row, user_id):
+    db_session.add(ReactionRow(pin_id=pin_row.id, user_id=user_id, type="like"))
+    db_session.commit()
+
+
+def test_list_liked_pins_with_checks_excludes_other_users_private_pin(db_session):
+    """가드레일 1 — 타인의 비공개 후보에 ♥가 있어도 요청자의 선호 프로필에 안 들어간다."""
+    from pins import api as pins_api
+
+    other_private = _insert_pin(db_session, created_by="user_2", visibility="private", place_id="lk_other_priv",
+                                checks=[{"fact_key": "quiet"}])
+    public = _insert_pin(db_session, created_by="user_2", visibility="public", place_id="lk_public")
+    _like(db_session, other_private, "user_2")
+    _like(db_session, public, "user_2")
+
+    result = pins_api.list_liked_pins_with_checks(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    assert len(result) == 1  # 공개 핀 하나뿐
+
+
+def test_list_liked_pins_with_checks_includes_own_private_pin(db_session):
+    from pins import api as pins_api
+
+    own_private = _insert_pin(db_session, created_by="user_1", visibility="private", place_id="lk_own_priv",
+                              checks=[{"fact_key": "quiet"}])
+    _like(db_session, own_private, "user_1")
+
+    result = pins_api.list_liked_pins_with_checks(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    assert result == [{"checks": [{"fact_key": "quiet"}], "member_ids": {"user_1"}}]

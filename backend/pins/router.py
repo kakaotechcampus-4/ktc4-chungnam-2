@@ -1,6 +1,6 @@
 """
 docs/api-spec.yaml의 pins 태그 엔드포인트 중 #16(목록·생성·삭제)·#17(반응 등록/삭제) 범위.
-counts(#18)는 별도 이슈 — 이 파일에 추가하지 않는다.
+counts(#141)는 get_counts.
 prefix를 두지 않는다 — 경로가 /maps/{mapId}/... 와 /pins/{pinId}로 갈리기 때문이다.
 
 인가는 authz.guard를 거친다(mentor-review-plan.md #56 재정의) — 라우터는 더 이상
@@ -20,7 +20,7 @@ from pins.deps import DbSession, PlaceGatewayDep
 from pins.loaders import load_pin
 from pins.models import Pin as PinRow
 from pins.ports import PlaceGateway
-from pins.schemas import Category, Pin, PinCreateRequest, PinKind, Reaction, ReactionRequest
+from pins.schemas import Category, FilterCounts, Pin, PinCreateRequest, PinKind, Reaction, ReactionRequest
 
 router = APIRouter(tags=["pins"], dependencies=[Depends(get_current_user)])
 
@@ -43,6 +43,15 @@ def get_pins(
     return service.list_pins(
         db, map_id=mapId, principal=principal, category=category, kind=kind, created_by=created_by,
     )
+
+
+@router.get("/maps/{mapId}/counts", response_model=FilterCounts)
+def get_counts(
+    mapId: str = Path(...),
+    principal: Principal = PinsForMap,
+    db: Session = DbSession,
+):
+    return service.count_pins(db, map_id=mapId, principal=principal)
 
 
 @router.post(
