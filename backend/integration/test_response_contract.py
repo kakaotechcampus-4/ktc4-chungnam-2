@@ -1,0 +1,169 @@
+"""
+응답 계약 테스트 (#40) — 실제 앱이 돌려주는 JSON이 docs/api-spec.yaml의 응답 스키마와 맞는지 검증한다.
+
+test_spec_route_coverage.py는 "경로가 있는가"만 본다. 프론트가 실서버에 붙을 때 가장 자주 깨지는 건 경로가 아니라
+필드 이름·타입·필수값이라, 골든 패스의 모든 응답을 스펙의 (경로, 메서드, 상태코드) 스키마로 검증한다.
+
+- 2xx 응답은 스펙에 선언돼 있어야 하고 스키마에 맞아야 한다.
+- 에러 응답은 스펙에 선언돼 있으면 검증하고, 없으면 (docs/errors.md의 봉투 `code`,`message`만) 확인한다.
+"""
+
+import re
+from pathlib import Path
+
+import pytest
+import yaml
+from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
+from referencing.jsonschema import DRAFT202012
+
+# 알고 있고 이슈로 추적 중인 응답 불일치. (표식 문자열들) -> 이슈. 새 불일치가 생기면 실패하고, 고쳐졌는데 남아 있어도 실패한다.
+KNOWN_DRIFT: dict[tuple[str, ...], str] = {
+    ("PUT /pins/{pinId}/reaction", "reason_text: None"): "#157",                 # 스펙은 '없으면 필드 생략', 실제는 null
+    ("GET /maps/{mapId}/recommend/readiness", "is not one of"): "#146",          # 추천 카테고리에서 숙소 제거 전
+}
+
+SPEC = yaml.safe_load((Path(__file__).resolve().parents[2] / "docs" / "api-spec.yaml").read_text(encoding="utf-8"))
+_REGISTRY = Registry().with_resource("urn:pingo-spec", Resource.from_contents(SPEC, default_specification=DRAFT202012))
+
+
+def _template_for(path: str, method: str) -> str | None:
+    for template, ops in SPEC["paths"].items():
+        if method.lower() not in ops:
+            continue
+        pattern = "^" + re.sub(r"\{[^}]+\}", "[^/]+", template) + "$"
+        if re.match(pattern, path):
+            return template
+    return None
+
+
+def _pointer(*parts: str) -> str:
+    return "/" + "/".join(p.replace("~", "~0").replace("/", "~1") for p in parts)
+
+
+def _validate(method: str, url: str, status: int, body) -> None:
+    path = url.split("?")[0]
+    template = _template_for(path, method)
+    assert template is not None, f"스펙에 없는 경로를 호출했다: {method} {path}"
+    responses = SPEC["paths"][template][method.lower()].get("responses", {})
+    declared = responses.get(str(status))
+    content = ((declared or {}).get("content") or {}).get("application/json")
+    if declared is None or content is None:
+        if 200 <= status < 300 and body not in (None, "", []):
+            pytest.fail(f"{method} {template} → {status} 응답이 스펙에 선언돼 있지 않다(본문 있음)")
+        if status >= 400 and isinstance(body, dict):
+            assert {"code", "message"} <= set(body), f"에러 봉투가 아니다: {method} {template} {status} {body}"
+        return
+    ref = "urn:pingo-spec#" + _pointer("paths", template, method.lower(), "responses", str(status), "content", "application/json", "schema")
+    errors = sorted(Draft202012Validator({"$ref": ref}, registry=_REGISTRY).iter_errors(body), key=lambda e: list(e.path))
+    assert not errors, f"{method} {template} → {status} 응답이 스펙과 다르다: " + "; ".join(
+        f"{'/'.join(map(str, e.path)) or '(root)'}: {e.message[:120]}" for e in errors[:5]
+    )
+
+
+class _Checked:
+    """TestClient를 감싸 모든 응답을 스펙으로 검증한다."""
+
+    def __init__(self, client, problems):
+        self._c = client
+        self._problems = problems   # 첫 실패에서 멈추지 않고 전부 모아 한 번에 보여준다
+
+    def __getattr__(self, name):
+        attr = getattr(self._c, name)
+        if name not in ("get", "post", "put", "patch", "delete"):
+            return attr
+
+        def call(url, *args, **kwargs):
+            response = attr(url, *args, **kwargs)
+            body = None
+            if response.content and "json" in response.headers.get("content-type", ""):
+                body = response.json()
+            try:
+                _validate(name.upper(), url, response.status_code, body)
+            except (AssertionError, pytest.fail.Exception) as exc:
+                self._problems.append(str(exc).splitlines()[0])
+            return response
+
+        return call
+
+
+@pytest.fixture()
+def clients(app_client, two_users):
+    from fastapi.testclient import TestClient
+
+    a = TestClient(app_client.app, cookies={"session": "user_a"})
+    b = TestClient(app_client.app, cookies={"session": "user_b"})
+    problems: list[str] = []
+    yield _Checked(a, problems), _Checked(b, problems), problems
+    a.close()
+    b.close()
+
+
+def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients):
+    a, b, problems = clients
+    assert a.get("/auth/me").status_code == 200
+
+    created = a.post("/maps", json={"title": "부산 여행", "start_date": "2026-11-01", "end_date": "2026-11-03",
+                                    "region": {"label": "부산", "lat": 35.1796, "lng": 129.0756}})
+    assert created.status_code == 201
+    map_id = created.json()["id"]
+    assert a.get("/maps").status_code == 200
+    assert a.get(f"/maps/{map_id}").status_code == 200
+
+    invite = a.post(f"/maps/{map_id}/invite")
+    assert invite.status_code == 201
+    assert b.post(f"/invites/{invite.json()['token']}/accept").status_code == 200
+    assert a.get(f"/maps/{map_id}/members").status_code == 200
+
+    pin_ids = []
+    for i, (cat, lat, lng) in enumerate([("음식점", 35.10, 129.03), ("음식점", 35.16, 129.16), ("카페", 35.15, 129.12)]):
+        r = a.post(f"/maps/{map_id}/pins", json={"category": cat, "source": "coordinate", "lat": lat, "lng": lng,
+                                                 "place_id": f"pl{i}", "place_name": f"p{i}"})
+        assert r.status_code == 201, r.text
+        pin_ids.append(r.json()["id"])
+    assert a.post(f"/maps/{map_id}/pins", json={"category": "음식점", "source": "coordinate", "lat": 35.1,
+                                                "lng": 129.0, "place_id": "pl0"}).status_code == 409   # 에러 봉투
+    assert a.get(f"/maps/{map_id}/pins").status_code == 200
+    assert a.get(f"/maps/{map_id}/counts").status_code == 200
+
+    assert a.put(f"/pins/{pin_ids[0]}/reaction", json={"type": "like"}).status_code == 200
+    assert b.put(f"/pins/{pin_ids[0]}/reaction", json={"type": "like"}).status_code == 200
+    assert a.put(f"/pins/{pin_ids[1]}/reaction", json={"type": "against"}).status_code == 422       # 사유 없음
+    for c in (a, b):
+        assert c.put(f"/pins/{pin_ids[1]}/reaction", json={"type": "against", "reason_text": "별로"}).status_code == 200
+
+    assert a.get(f"/maps/{map_id}/recommend/readiness").status_code == 200
+    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    assert run.status_code == 202
+    run_id = run.json()["id"]
+    assert a.get(f"/runs/{run_id}/evidence").status_code == 200
+    assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
+    assert a.post(f"/runs/{run_id}/execute").status_code == 202
+    result = a.get(f"/runs/{run_id}/result")
+    assert result.status_code == 200
+    candidates = result.json()["candidates"]
+    assert candidates
+    assert a.post(f"/candidates/{candidates[0]['id']}/publish").status_code == 200
+
+    for pid in pin_ids[:2]:
+        assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pid}).status_code in (200, 201)
+    assert a.get(f"/maps/{map_id}/shortlist").status_code == 200
+    item_ids = [i["id"] for i in a.get(f"/maps/{map_id}/shortlist").json()]
+    assert a.put(f"/maps/{map_id}/shortlist/order", json={"item_ids": list(reversed(item_ids))}).status_code == 200
+    assert a.post(f"/maps/{map_id}/route").status_code in (200, 201)
+    assert a.get(f"/maps/{map_id}/route").status_code == 200
+
+    assert a.delete(f"/pins/{pin_ids[0]}/reaction").status_code == 204
+    assert a.post("/auth/logout").status_code == 204
+
+    unique = list(dict.fromkeys(problems))
+    unexpected = [p for p in unique if not any(all(s in p for s in marks) for marks in KNOWN_DRIFT)]
+    stale = [issue for marks, issue in KNOWN_DRIFT.items() if not any(all(s in p for s in marks) for p in unique)]
+    assert not unexpected, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unexpected)
+    assert not stale, f"이미 고쳐졌으니 KNOWN_DRIFT에서 지운다: {stale}"
+
+
+def test_the_validator_actually_rejects_a_wrong_shape():
+    """검증기가 조용히 다 통과시키는 게 아닌지 — 필수 필드가 빠진 Pin은 실패해야 한다."""
+    with pytest.raises(AssertionError, match="스펙과 다르다"):
+        _validate("GET", "/maps/m1/pins", 200, [{"id": "x"}])
