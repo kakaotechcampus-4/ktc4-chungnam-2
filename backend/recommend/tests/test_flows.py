@@ -683,20 +683,39 @@ def test_get_result_marks_can_publish_false_once_already_published(db_session):
 
 # ---------- widen ----------
 
-def test_widen_run_doubles_region_radius_and_regenerates_candidates(db_session):
+def test_widen_run_adds_five_walk_minutes_and_regenerates_candidates(db_session):
     run = _make_run(db_session, status="collecting_evidence")
-    region = _make_region(db_session, run, radius_m=1000)
+    region = _make_region(db_session, run, radius_m=15 * 80)
     places = [PlaceStub(place_id="p1", lat=35.0005, lng=129.0005)]
     place_search = _FakePlaceSearch(places)
     place_facts = _FakePlaceFacts()
 
-    flows.widen_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
+    returned = flows.widen_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
 
     db_session.refresh(region)
-    assert region.radius_m == 2000  # WIDEN_FACTOR(2.0) 적용
+    assert region.radius_m == 20 * 80  # 15분 → 20분(+5분)
     db_session.refresh(run)
+    assert returned is run
+    assert run.default_radius_walk_min == 20
     assert run.status == "done"
     assert service.list_candidates(db_session, str(run.id))[0].place_id == "p1"
+
+
+def test_widen_run_steps_to_limit_then_raises_widen_limit_without_changing_anything(db_session):
+    run = _make_run(db_session, status="done")
+    region = _make_region(db_session, run, radius_m=15 * 80)
+    kwargs = {"place_search": _FakePlaceSearch([]), "place_facts": _FakePlaceFacts()}
+
+    for expected in (20, 25, 30):
+        flows.widen_run(db_session, run_id=str(run.id), **kwargs)
+        assert run.default_radius_walk_min == expected
+
+    with pytest.raises(AppError) as exc_info:
+        flows.widen_run(db_session, run_id=str(run.id), **kwargs)
+    assert exc_info.value.code == "WIDEN_LIMIT"
+    db_session.refresh(region)
+    assert region.radius_m == 30 * 80  # 상한을 넘겨 완화하지 않는다(가드레일 4)
+    assert run.default_radius_walk_min == 30
 
 
 def test_widen_run_without_regions_raises_not_ready(db_session):
@@ -704,6 +723,52 @@ def test_widen_run_without_regions_raises_not_ready(db_session):
     with pytest.raises(AppError) as exc_info:
         flows.widen_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts())
     assert exc_info.value.code == "NOT_READY"
+
+
+# ---------- #158 Candidate 가드레일5 필드 ----------
+
+def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "매운거 빼주세요", "badge": "required", "fact_key": "spicy_focused"},
+        {"author_id": "user_2", "source": "reaction", "text": "조용했으면", "badge": "preferred", "fact_key": "quiet"},
+    ])
+    source = {"provider": "kakao", "url": "https://place.map.kakao.com/1"}
+    places = [
+        PlaceStub(place_id="sourced", lat=35.0005, lng=129.0005, source=source),
+        PlaceStub(place_id="bare", lat=35.0006, lng=129.0006),
+    ]
+    facts = _FakePlaceFacts({
+        "sourced": {"spicy_focused": False, "quiet": True},
+        "bare": {"spicy_focused": False},
+    })
+
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
+
+    by_place = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+    sourced, bare = by_place["sourced"], by_place["bare"]
+    assert sourced.reason == "실격 조건 통과: 매운맛 전문점 아님 · 선호 충족: 조용함 (1/1명)"
+    assert sourced.member_fulfillment == {"satisfied": 1, "total": 1, "by_member": [{"user_id": "user_2", "satisfied": True}]}
+    assert sourced.place_source == source
+    # 조용함을 모르는 후보 — 구성원은 집계 대상이지만 충족으로 세지 않고, 안 본 것을 이유로 들지 않는다.
+    assert bare.reason == "실격 조건 통과: 매운맛 전문점 아님"
+    assert bare.member_fulfillment == {"satisfied": 0, "total": 1, "by_member": [{"user_id": "user_2", "satisfied": False}]}
+    assert bare.place_source is None  # 출처를 못 얻으면 지어내지 않는다
+
+
+def test_get_result_exposes_reason_member_fulfillment_and_place_source(db_session):
+    run = _make_run(db_session, status="done")
+    _make_region(db_session, run)
+    _make_candidate(
+        db_session, run, reason="이유", member_fulfillment={"satisfied": 1, "total": 2, "by_member": []},
+        place_source={"provider": "naver"},
+    )
+    principal = Principal(user_id="user_1", map_id="map_1", role="member")
+    candidate = flows.get_result(db_session, run_id=str(run.id), principal=principal).candidates[0]
+    assert candidate.reason == "이유"
+    assert candidate.member_fulfillment.satisfied == 1 and candidate.member_fulfillment.total == 2
+    assert candidate.place_source.provider == "naver"
 
 
 # ---------- retry ----------

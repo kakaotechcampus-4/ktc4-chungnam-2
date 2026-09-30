@@ -3,6 +3,7 @@
 import pytest
 
 from common.errors import AppError
+from common.geo import WALKING_SPEED_M_PER_MIN
 from recommend import core
 from recommend.models import RecommendRun
 from recommend.ports import Circle
@@ -97,12 +98,21 @@ def test_merge_circles_empty_raises_value_error():
 
 # ---------- widen_radius ----------
 
-def test_widen_radius_doubles_by_default_factor():
-    circle = Circle(anchor_lat=35.0, anchor_lng=129.0, radius_m=1000)
-    widened = core.widen_radius(circle)
-    assert widened.radius_m == round(1000 * core.WIDEN_FACTOR)
-    assert widened.anchor_lat == circle.anchor_lat
-    assert widened.anchor_lng == circle.anchor_lng
+def test_next_default_radius_walk_min_steps_five_minutes_up_to_thirty():
+    """docs/constraints.md "반경 넓히기 상수" — 15 → 20 → 25 → 30."""
+    assert core.next_default_radius_walk_min(15) == 20
+    assert core.next_default_radius_walk_min(20) == 25
+    assert core.next_default_radius_walk_min(25) == 30
+
+
+def test_next_default_radius_walk_min_at_limit_raises_widen_limit():
+    with pytest.raises(AppError) as exc_info:
+        core.next_default_radius_walk_min(30)
+    assert exc_info.value.code == "WIDEN_LIMIT"
+
+
+def test_radius_m_for_walk_min_uses_walking_speed():
+    assert core.radius_m_for_walk_min(15) == 15 * WALKING_SPEED_M_PER_MIN
 
 
 # ---------- is_within_any_region ----------
@@ -341,25 +351,99 @@ def test_score_candidates_sums_across_multiple_matching_fact_keys():
 
 # ---------- build_member_fulfillment ----------
 
-def test_build_member_fulfillment_lists_fact_keys_satisfied_per_member():
+def test_build_member_fulfillment_has_spec_shape_with_satisfied_total_by_member():
     criteria = {"quiet": True}
     hearted = [_place(_check("quiet", passed=True), members=frozenset({"u1", "u2"}))]
     result = core.build_member_fulfillment([_check("quiet", passed=True)], hearted, criteria)
-    assert result == {"u1": ["quiet"], "u2": ["quiet"]}
+    assert result == {
+        "satisfied": 2, "total": 2,
+        "by_member": [{"user_id": "u1", "satisfied": True}, {"user_id": "u2", "satisfied": True}],
+    }
 
 
-def test_build_member_fulfillment_excludes_members_not_actually_fulfilled():
+def test_build_member_fulfillment_counts_member_with_unmet_condition_in_total_only():
     criteria = {"quiet": True}
-    hearted = [_place(_check("quiet", passed=False), members=frozenset({"u1"}))]  # 반대 값에만 ♥
+    hearted = [_place(_check("quiet", passed=True), members=frozenset({"u1"}))]
+    result = core.build_member_fulfillment([_check("quiet", passed=False)], hearted, criteria)  # 후보가 안 조용함
+    assert result == {"satisfied": 0, "total": 1, "by_member": [{"user_id": "u1", "satisfied": False}]}
+
+
+def test_build_member_fulfillment_requires_all_of_a_members_conditions():
+    """한 구성원의 조건이 둘인데 하나만 맞으면 충족으로 세지 않는다."""
+    criteria = {"quiet": True, "local_flavor": True}
+    hearted = [_place(_check("quiet"), _check("local_flavor"), members=frozenset({"u1"}))]
+    candidate = [_check("quiet", passed=True), _check("local_flavor", passed=True, confidence="unknown")]
+    result = core.build_member_fulfillment(candidate, hearted, criteria)
+    assert result["satisfied"] == 0 and result["total"] == 1
+
+
+def test_build_member_fulfillment_ignores_members_without_criteria_conditions():
+    criteria = {"quiet": True}
+    hearted = [
+        _place(_check("quiet", passed=True), members=frozenset({"u1"})),
+        _place(_check("quiet", passed=False), members=frozenset({"u2"})),  # 반대 값에만 ♥ — 조건 없음
+    ]
     result = core.build_member_fulfillment([_check("quiet", passed=True)], hearted, criteria)
-    assert result == {}
+    assert [entry["user_id"] for entry in result["by_member"]] == ["u1"]
+    assert result["total"] == 1
+
+
+def test_build_member_fulfillment_empty_when_no_criteria():
+    assert core.build_member_fulfillment([_check("quiet")], [], {}) == {"satisfied": 0, "total": 0, "by_member": []}
 
 
 def test_build_member_fulfillment_includes_preference_author():
     result = core.build_member_fulfillment(
         [_check("quiet", passed=True)], [], {"quiet": True}, {"quiet": frozenset({"u9"})},
     )
-    assert result == {"u9": ["quiet"]}
+    assert result == {"satisfied": 1, "total": 1, "by_member": [{"user_id": "u9", "satisfied": True}]}
+
+
+def test_preference_author_is_not_offset_by_their_own_opposing_heart():
+    """#112 후속 — 같은 fact_key가 False인 곳에 ♥했던 사람이 그 라벨을 선호 사유로 쓰면 지지만
+    센다(+1-1 상쇄 금지)."""
+    hearted = [_place(_check("quiet", passed=False), members=frozenset({"u1"}))]
+    authors = {"quiet": frozenset({"u1"})}
+    candidates = {"p1": [_check("quiet", passed=True)]}
+    scores = core.score_candidates(candidates, hearted, {"quiet": True}, authors)
+    assert scores == {"p1": 1}
+
+
+def test_opposing_heart_of_another_member_still_offsets_preference_author():
+    hearted = [_place(_check("quiet", passed=False), members=frozenset({"u1", "u2"}))]
+    authors = {"quiet": frozenset({"u1"})}
+    candidates = {"p1": [_check("quiet", passed=True)]}
+    # 지지 {u1}, 반대 {u2}(u1은 작성자라 빠진다) → 1 - 1
+    assert core.score_candidates(candidates, hearted, {"quiet": True}, authors) == {"p1": 0}
+
+
+# ---------- build_reason ----------
+
+def test_build_reason_lists_passed_disqualifiers_and_met_preferences_with_member_count():
+    checks = [_check("spicy_focused", passed=True), _check("quiet", passed=True)]
+    fulfillment = {"satisfied": 1, "total": 2, "by_member": []}
+    reason = core.build_reason(checks, {"quiet": True}, fulfillment)
+    assert reason == "실격 조건 통과: 매운맛 전문점 아님 · 선호 충족: 조용함 (1/2명)"
+
+
+def test_build_reason_does_not_claim_unknown_or_failed_checks():
+    checks = [
+        _check("spicy_focused", passed=True, confidence="unknown"),
+        _check("quiet", passed=False),
+        _check("local_flavor", passed=True, confidence="unknown"),
+    ]
+    reason = core.build_reason(checks, {"quiet": True, "local_flavor": True}, {"satisfied": 0, "total": 1})
+    assert "매운맛" not in reason and "조용함" not in reason and "지역색" not in reason
+
+
+def test_build_reason_skips_price_bucket_which_is_never_actually_compared():
+    reason = core.build_reason([_check("price_bucket", passed=True)], {}, {"satisfied": 0, "total": 0})
+    assert "price_bucket" not in reason and "가격" not in reason
+
+
+def test_build_reason_falls_back_to_selection_process_when_nothing_to_cite():
+    reason = core.build_reason([], {}, {"satisfied": 0, "total": 0})
+    assert reason == "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
 
 
 # ---------- select_top_candidates ----------

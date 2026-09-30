@@ -65,8 +65,31 @@ def test_readiness_endpoint_returns_all_categories(app_client, db_session):
     resp = app_client.get("/maps/map_1/recommend/readiness", cookies=_auth())
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body.keys()) == {"음식점", "카페", "숙소", "관광지"}
+    assert set(body.keys()) == {"음식점", "카페", "관광지"}
     assert body["음식점"]["ready"] is True
+
+
+def test_create_run_for_accommodation_is_422(app_client, db_session):
+    """#146 — 숙소는 추천 대상이 아니다(RecommendCategory)."""
+    _seed_ready_map(db_session)
+    resp = app_client.post("/maps/map_1/runs", json={"category": "숙소"}, cookies=_auth())
+    assert resp.status_code == 422
+
+
+def test_widen_returns_run_with_default_radius_and_409_at_limit(app_client, db_session):
+    _seed_ready_map(db_session)
+    created = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth()).json()
+    assert created["default_radius_walk_min"] == 15
+    run_id = created["id"]
+
+    for expected in (20, 25, 30):
+        resp = app_client.post(f"/runs/{run_id}/widen", cookies=_auth())
+        assert resp.status_code == 202
+        assert resp.json()["default_radius_walk_min"] == expected
+
+    resp = app_client.post(f"/runs/{run_id}/widen", cookies=_auth())
+    assert resp.status_code == 409
+    assert "WIDEN_LIMIT" in resp.text
 
 
 def test_readiness_non_member_is_404(app_client, db_session):

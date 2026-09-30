@@ -16,16 +16,18 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from common.errors import AppError
-from common.geo import haversine_distance_m
+from common.geo import WALKING_SPEED_M_PER_MIN, haversine_distance_m
 from recommend import constraints
 from recommend.models import RecommendRun
 from recommend.ports import Circle
 from recommend.schemas import Check
 
 ATTEMPT_LIMIT = 5  # docs/data-model.md #31 확정: 개인 단위, 카테고리 무관, 상한 5회
-# 가드레일4 "반경을 넓히는 것은 사람이 한다"는 배율 자체를 규정하지 않는다 — 2배는 이 세션의
-# 판단(for_Root.md에 루트 확인 요청으로 기록).
-WIDEN_FACTOR = 2.0
+# 반경 넓히기 상수 — docs/constraints.md "반경 넓히기 상수" 절 그대로(조정 가능한 상수, 바꿀
+# 때 루트에게 알린다). 기본값 원은 도보 15분에서 시작해 한 번에 5분씩, 30분까지.
+DEFAULT_RADIUS_WALK_MIN = 15
+WIDEN_STEP_MIN = 5
+WIDEN_LIMIT_MIN = 30
 
 
 def check_run_ready(run: RecommendRun) -> None:
@@ -107,13 +109,19 @@ def merge_circles(circles: list[Circle]) -> Circle:
     return Circle(anchor_lat=center_lat, anchor_lng=center_lng, radius_m=round(radius))
 
 
-def widen_radius(circle: Circle) -> Circle:
-    """반경 넓히기(5-6-1, 가드레일4) — 배율은 WIDEN_FACTOR. **주의**: "사람이 명시한 원은
-    자동으로 넓히지 않는다"는 가드레일4의 구분(기본값 원 vs 명시적 원)을 이 함수 자체는
-    모른다 — 호출부(flows.py::widen_run)가 위젯 대상 원을 이미 골라 넘긴다는 전제다. 어떤
-    원이 "기본값"인지 판별하는 규칙 자체가 현재 문서에 없어 이 세션이 임시로 좁혀 적용한
-    범위는 for_Root.md에 남긴다."""
-    return Circle(anchor_lat=circle.anchor_lat, anchor_lng=circle.anchor_lng, radius_m=round(circle.radius_m * WIDEN_FACTOR))
+def radius_m_for_walk_min(walk_min: int) -> int:
+    """기본값 원의 도보 시간(분) → 반경(m). common.geo의 보정계수를 그대로 쓴다."""
+    return walk_min * WALKING_SPEED_M_PER_MIN
+
+
+def next_default_radius_walk_min(current_walk_min: int) -> int:
+    """반경 넓히기(5-6-1, 가드레일4) — 기본값 원의 다음 도보 시간. 이미 상한이면 409
+    WIDEN_LIMIT — 상한을 넘겨 완화하는 건 AI도 코드도 하지 않는다(사람이 「근거 고치기」/
+    「직접 찍기」로 간다). "사람이 명시한 원은 넓히지 않는다"는 구분은 이 함수가 아니라 호출부가
+    넘기는 대상에 달려 있다(flows.widen_run)."""
+    if current_walk_min >= WIDEN_LIMIT_MIN:
+        raise AppError("WIDEN_LIMIT", detail={"default_radius_walk_min": current_walk_min})
+    return min(current_walk_min + WIDEN_STEP_MIN, WIDEN_LIMIT_MIN)
 
 
 def is_within_any_region(lat: float, lng: float, regions: list[Circle]) -> bool:
@@ -270,6 +278,11 @@ def _member_support(
     for fact_key, authors in (preferred_authors or {}).items():
         if fact_key in constraints.SOFT_FACT_KEYS:
             supporting.setdefault(fact_key, set()).update(authors)
+            # 그 라벨을 선호 사유로 직접 쓴 사람은 같은 라벨의 반대 집합에 있어도(예전에 ♥한 곳이
+            # 거짓이었던 경우) 반대로 세지 않는다 — 안 그러면 한 사람이 지지와 반대로 동시에
+            # 잡혀 +1−1로 상쇄된다(#112 후속). 말로 쓴 선호가 ♥ 이력보다 우선이다.
+            if fact_key in opposing:
+                opposing[fact_key] -= set(authors)
     return {
         fact_key: (frozenset(supporting.get(fact_key, ())), frozenset(opposing.get(fact_key, ())))
         for fact_key in set(supporting) | set(opposing)
@@ -308,23 +321,70 @@ def build_member_fulfillment(
     hearted_places: Sequence[HeartedPlace],
     criteria: Mapping[str, bool],
     preferred_authors: Mapping[str, frozenset[str]] | None = None,
-) -> dict[str, list[str]]:
-    """가드레일5 "구성원 충족 집계" — 이 후보가 어떤 구성원의 어떤 선호를 충족했는지.
-    api-spec.yaml/data-model.md 어디에도 이 jsonb의 정확한 모양이 정해져 있지 않아(recommend/
-    for_Root.md 보고 대상), 이 세션은 {member_id: [충족한 fact_key, ...]} 모양으로 정했다 —
-    score_candidates와 같은 "양쪽 다 참" 조건을 그대로 재사용해, 점수에 실제로 기여한 구성원만
-    담는다(점수 없이 그냥 ♥한 사람은 포함하지 않는다)."""
+) -> dict:
+    """가드레일5 "구성원 충족 집계" — api-spec.yaml `MemberFulfillment` 모양 그대로
+    `{satisfied, total, by_member}`을 돌려준다.
+
+    - **total** = 조건을 남긴 구성원 수. 조건 = 이번 선호 기준(`criteria`가 True인 fact_key)
+      중 그 구성원이 지지한(그 값의 장소에 ♥했거나 선호 사유로 쓴) 것. 조건이 하나도 없는
+      구성원은 집계 대상이 아니다(♥만 누르고 기준에 안 든 사람, 반대만 한 사람).
+    - **satisfied** = 자기 조건을 *전부* 이 후보가 known+참으로 충족한 구성원 수. 일부만
+      맞으면 충족으로 세지 않는다(구성원 만족을 부풀리지 않는다).
+    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다."""
     support = _member_support(hearted_places, preferred_authors)
-    fulfillment: dict[str, set[str]] = {}
-    for check in candidate_checks:
-        if check.confidence != "known" or not check.passed:
+    met = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
+    conditions: dict[str, set[str]] = {}
+    for fact_key, wanted in criteria.items():
+        if wanted is not True:
             continue
-        if criteria.get(check.fact_key) is not True:
-            continue
-        supporting, _opposing = support.get(check.fact_key, (frozenset(), frozenset()))
+        supporting, _opposing = support.get(fact_key, (frozenset(), frozenset()))
         for member_id in supporting:
-            fulfillment.setdefault(member_id, set()).add(check.fact_key)
-    return {member_id: sorted(fact_keys) for member_id, fact_keys in fulfillment.items()}
+            conditions.setdefault(member_id, set()).add(fact_key)
+    by_member = [
+        {"user_id": member_id, "satisfied": fact_keys <= met}
+        for member_id, fact_keys in sorted(conditions.items())
+    ]
+    return {
+        "satisfied": sum(1 for entry in by_member if entry["satisfied"]),
+        "total": len(by_member),
+        "by_member": by_member,
+    }
+
+
+def build_reason(
+    candidate_checks: Sequence[Check], criteria: Mapping[str, bool], member_fulfillment: Mapping,
+) -> str:
+    """Candidate.reason — 실제로 통과한 체크와 충족한 선호 라벨에서 조립한 한 줄(가드레일 5).
+    모델을 부르지 않는다. 두 종류만 말한다: 1) 이번 run의 활성 실격 조건 중 known으로 통과한
+    것 2) 선호 기준(criteria) 중 이 후보가 known+참인 것(+ 몇 명이 충족했는지). 표시 이름이
+    없는 키와 값 비교를 못 하는 키(price_bucket)는 말하지 않는다 — 안 본 것을 통과했다고 하지
+    않기 위해서다. 말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지
+    않는다)."""
+    known_passed = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
+    disqualifier_labels = [
+        constraints.PASSED_LABELS[c.fact_key]
+        for c in candidate_checks
+        if c.fact_key in constraints.HARD_REGISTRY
+        and c.fact_key not in constraints.VALUE_COMPARISON_UNSUPPORTED
+        and c.fact_key in constraints.PASSED_LABELS
+        and c.confidence == "known" and c.passed
+    ]
+    preference_labels = [
+        constraints.PASSED_LABELS[fact_key]
+        for fact_key in sorted(criteria)
+        if criteria[fact_key] is True and fact_key in known_passed and fact_key in constraints.PASSED_LABELS
+        and fact_key in constraints.SOFT_FACT_KEYS
+    ]
+    parts: list[str] = []
+    if disqualifier_labels:
+        parts.append("실격 조건 통과: " + ", ".join(disqualifier_labels))
+    if preference_labels:
+        text = "선호 충족: " + ", ".join(preference_labels)
+        total = member_fulfillment.get("total", 0)
+        if total:
+            text += f" ({member_fulfillment.get('satisfied', 0)}/{total}명)"
+        parts.append(text)
+    return " · ".join(parts) if parts else "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
 
 
 def select_top_candidates(

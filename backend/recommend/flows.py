@@ -51,7 +51,6 @@ from authz.ports import MembershipGateway
 from authz.schemas import Permissions
 from common.errors import AppError
 from common.events import Event, record_event
-from common.geo import WALKING_SPEED_M_PER_MIN
 from llm import service as llm_service
 from maps import api as maps_api
 from pins import api as pins_api
@@ -120,12 +119,12 @@ def publish_candidate(
 # #108 — 코어 파이프라인(llm 스텁 대상 통합)
 # ============================================================================
 
-CATEGORIES: list[str] = ["음식점", "카페", "숙소", "관광지"]
+CATEGORIES: list[str] = ["음식점", "카페", "관광지"]
 # 기본값 원 반경(m) — 최종기획안.md 248행에 이미 정의돼 있다: "기본 반경(도보 15분에 해당하는
 # 거리)". common.geo.WALKING_SPEED_M_PER_MIN(도보 시간 근사 보정계수)으로 환산한다 — 루트
 # 검증 중 발견: 이전 버전은 이 스펙을 못 찾고 2000m(약 25분)를 임의로 썼었다. 계산식으로
 # 두면 나중에 WALKING_SPEED_M_PER_MIN이 바뀌어도 같이 맞다.
-DEFAULT_REGION_RADIUS_M = 15 * WALKING_SPEED_M_PER_MIN  # 15분 * 80m/분 = 1200m
+DEFAULT_REGION_RADIUS_M = core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)  # 15분 * 80m/분 = 1200m
 
 
 def get_readiness(db: Session, *, map_id: str) -> dict[str, dict]:
@@ -280,7 +279,7 @@ def _active_hard_fact_keys(db: Session, run: RecommendRun) -> list[str]:
 
 def _passes_hard_check(fact_key: str, value) -> bool:
     if fact_key in constraints.VALUE_COMPARISON_UNSUPPORTED:
-        # price_bucket/capacity_min — evidence_lines에 사용자 기준값을 담을 컬럼이 없어(스키마
+        # price_bucket — evidence_lines에 사용자 기준값을 담을 컬럼이 없어(스키마
         # 갭, recommend/for_Root.md) 실제 비교를 할 수 없다. known이어도 항상 통과시키고
         # Check로만 노출한다(정보 제공, 실격 판정 아님).
         return True
@@ -372,18 +371,19 @@ def _run_pipeline(
     places_by_id = {p.place_id: p for p in after_exclusions}
     removed_ranking = len(after_exclusions) - len(top_place_ids)
 
-    candidates_data = [
-        {
-            "place_id": place_id, "region_id": region_id,
-            "lat": places_by_id[place_id].lat, "lng": places_by_id[place_id].lng,
+    candidates_data = []
+    for index, place_id in enumerate(top_place_ids):
+        place = places_by_id[place_id]
+        checks = checks_by_place[place_id]
+        fulfillment = core.build_member_fulfillment(checks, hearted_places, criteria, preferred_authors_frozen)
+        candidates_data.append({
+            "place_id": place_id, "region_id": region_id, "lat": place.lat, "lng": place.lng,
             "rank": index + 1,
-            "checks": [check.model_dump() for check in checks_by_place[place_id]],
-            "member_fulfillment": core.build_member_fulfillment(
-                checks_by_place[place_id], hearted_places, criteria, preferred_authors_frozen,
-            ),
-        }
-        for index, place_id in enumerate(top_place_ids)
-    ]
+            "checks": [check.model_dump() for check in checks],
+            "member_fulfillment": fulfillment,
+            "reason": core.build_reason(checks, criteria, fulfillment),
+            "place_source": dict(place.source) if place.source else None,
+        })
     funnel = core.funnel_counts([
         ("카테고리 후보 풀", 0),
         ("반경 밖 제거", removed_radius),
@@ -431,19 +431,22 @@ def execute_run(
 
 def widen_run(
     db: Session, *, run_id: str, place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
-) -> None:
-    """POST /runs/{runId}/widen (5-6-1, 가드레일4) — 기본값 원만 확대한다. v1은 사람이 명시한
-    원과 기본값 원을 구분할 방법이 없어(위 _default_circle 참고) 저장된 원 전부를 넓힌다 —
-    실제 반경 사유가 구조화되면 이 함수는 "명시적 원은 건드리지 않는다"로 좁혀져야 한다
-    (recommend/for_Root.md, 루트 확인 필요)."""
+) -> RecommendRun:
+    """POST /runs/{runId}/widen (5-6-1, 가드레일4) — 기본값 원을 +5분(도보) 넓힌다. 상한(30분)에
+    이미 닿았으면 409 WIDEN_LIMIT(core.next_default_radius_walk_min). v1은 사람이 명시한 원과
+    기본값 원을 구분할 방법이 없어 — 반경 사유가 구조화되기 전이라 명시적 원이 저장되지 않는다 —
+    저장된 원 전부가 기본값 원이다. 명시적 원이 생기면 그 원은 여기서 건드리지 않도록 좁혀야
+    한다(recommend/for_Root.md)."""
     run = service.get_run_or_404(db, run_id)
     regions = service.list_regions(db, run_id)
     if not regions:
         raise AppError("NOT_READY")
+    next_walk_min = core.next_default_radius_walk_min(run.default_radius_walk_min)  # 409 WIDEN_LIMIT
+    radius_m = core.radius_m_for_walk_min(next_walk_min)
     for region in regions:
-        widened = core.widen_radius(Circle(anchor_lat=region.center_lat, anchor_lng=region.center_lng, radius_m=region.radius_m))
-        signature = core.region_signature([widened])
-        service.update_region_radius(db, region, radius_m=widened.radius_m, signature=signature)
+        widened = Circle(anchor_lat=region.center_lat, anchor_lng=region.center_lng, radius_m=radius_m)
+        service.update_region_radius(db, region, radius_m=radius_m, signature=core.region_signature([widened]))
+    service.set_default_radius_walk_min(db, run, next_walk_min)
 
     service.set_run_status(db, run, "executing")
     # 제안·거절 이력(exclusions) + 이미 이 지도에 있는 핀(수동이든 게시된 것이든) 둘 다
@@ -460,6 +463,7 @@ def widen_run(
     service.set_last_funnel(db, run, funnel)
     service.set_run_status(db, run, "done")
     record_event(db, _candidates_ready_event(run, candidates))
+    return run
 
 
 def retry_run(
@@ -510,6 +514,9 @@ def _candidate_response(candidate: CandidateRow, run: RecommendRun, principal: P
     return schemas.Candidate(
         id=str(candidate.id), region_label=region_labels.get(candidate.region_id),
         rank=candidate.rank, checks=[Check(**c) for c in candidate.checks],
+        reason=candidate.reason,
+        member_fulfillment=candidate.member_fulfillment or None,  # {} = 집계 없음 → 필드 생략
+        place_source=candidate.place_source,
         visibility="published" if already_published else "private",
         published_pin_id=str(candidate.published_pin_id) if already_published else None,
         permissions=Permissions(

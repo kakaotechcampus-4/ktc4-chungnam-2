@@ -58,6 +58,7 @@ EvidenceGate = Depends(require_with_principal("recommend.evidence", load_run))
 def _run_response(run) -> RecommendRunResponse:
     return RecommendRunResponse(
         id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
+        default_radius_walk_min=run.default_radius_walk_min,
     )
 
 
@@ -109,13 +110,14 @@ def get_result(gated=RunGate, db: Session = DbSession):
     return flows.get_result(db, run_id=str(run.id), principal=principal)
 
 
-@router.post("/runs/{runId}/widen", status_code=202)
+@router.post("/runs/{runId}/widen", response_model=RecommendRunResponse, status_code=202)
 def post_widen(
     gated=RunGate, db: Session = DbSession,
     place_search: PlaceSearchGateway = PlaceSearchGatewayDep, place_facts: PlaceFactsGateway = PlaceFactsGatewayDep,
 ):
     run, _principal = gated
-    flows.widen_run(db, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
+    updated = flows.widen_run(db, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
+    return _run_response(updated)
 
 
 @router.post("/runs/{runId}/retry", response_model=RecommendRunResponse, status_code=202)
