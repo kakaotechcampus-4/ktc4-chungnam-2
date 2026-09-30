@@ -38,4 +38,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
+      # PostGIS 익스텐션은 이미지에 있고, 스키마는 마이그레이션 체인으로 만든다 — 앱 lifespan이 event_log를 읽기 때문에
+      # 마이그레이션 없이는 TestClient가 뜨지 않는다. 체인이 깨졌는지(다중 head 등)도 여기서 잡힌다.
+      - run: python -m alembic upgrade head
       - run: python -m pytest -q
