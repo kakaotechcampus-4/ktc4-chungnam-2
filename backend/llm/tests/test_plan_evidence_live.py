@@ -32,7 +32,7 @@ def test_strict_schema_is_accepted_by_the_api():
     """parse(strict JSON schema)가 400으로 거절되지 않는지 — 실패하면 BadRequest 여부가 메시지에 남는다."""
     output = llm_client.call_planner(llm_client.get_client(), REASONS)
 
-    print("\\n[live] model =", settings.llm_model)
+    print("\n[live] model =", settings.llm_model)
     for line in output.evidence_lines:
         print("[live] raw:", line.text, "->", line.fact_key, line.badge, line.circle_radius_m)
     assert len(output.evidence_lines) == len(REASONS)
