@@ -210,3 +210,32 @@ get_place_gateway`, `authz/deps.py::get_membership_gateway`와 같은 패턴). `
 
 `backend/.venv`가 준비돼 있고 전체 의존성이 설치돼 있어 이번 작업도 같은 가상환경에서
 문제없이 진행함(`./.venv/Scripts/python.exe`).
+
+## 로그아웃 토큰 무효화 (0014, 2026-09-30) — 루트 조치 요청
+
+### 루트가 해야 할 일
+1. **`docs/data-model.md` users 항목에 `sessions_valid_after` 추가**:
+   `users(..., deleted_at, sessions_valid_after timestamptz NULL)` — "로그아웃 시각. 이 시각 이전(같은 초 포함)에 발급된
+   세션 토큰은 무효. NULL이면 전부 유효". 문서는 루트 소관이라 auth가 고치지 않았다. 지시는 "루트 보고 → 마이그레이션" 순서였으나
+   정의가 명확해 구현을 먼저 했다 — 루트가 다른 정의를 주면 `0014`를 그에 맞춰 고쳐야 한다.
+2. **git 저장소 밖에서 작업함**: 이 작업 디렉토리는 git 저장소가 아니어서 develop pull·브랜치·develop merge·PR을 하지 못했다.
+   이슈 번호도 받지 못해 디스코드 "#N 착수합니다"와 이슈 "실제 소요" 기록이 남아 있다. 변경 파일은 아래 목록 그대로 PR로 올리면 된다.
+3. 마이그레이션 번호 0014가 다른 PR과 겹치면 먼저 머지된 쪽이 우선(`backend/CLAUDE.md`).
+
+### 변경 내용 (API 시그니처 `docs/api-spec.yaml` 변경 없음)
+- `auth/models.py`: `users.sessions_valid_after` 추가. `alembic/versions/0014_users_sessions_valid_after.py` (0013 다음, 빈 DB에서 `upgrade head` 통과 확인).
+- `auth/core.py`: `parse_session_token`이 `SessionClaims(user_id, issued_at)`을 반환(기존엔 user_id 문자열), 순수 함수 `is_revoked` 추가.
+- `auth/deps.py`: `_real_get_current_user`가 기존 users 조회 결과로 무효화 여부를 판정 → 401 UNAUTHORIZED. 쿼리는 늘지 않음.
+- `auth/service.py`: `revoke_sessions` 추가(UPDATE라 행이 없는 dev 스텁 사용자도 실패 안 함). `auth/router.py`: `/auth/logout`이 호출.
+- 테스트: `test_core.py`, `test_deps.py`, `test_service.py`에 추가(로그아웃 전 토큰 401 / 이후 발급 토큰 정상 / 탈퇴 사용자 401 유지).
+
+### 검증 결과
+- auth 테스트 전부 통과. backend 전체: 602 통과, **3 실패** — `realtime/tests/test_router_integration.py` 2건,
+  `realtime/tests/test_shutdown.py` 1건. auth를 제외하고 돌려도 동일하게 실패하고 realtime 단독은 통과 → 이번 변경과 무관한
+  공유 테스트 DB(`pingo_test`) 모듈 간 간섭으로 보인다(git이 없어 변경 전 기준선 비교는 못 함). realtime 담당 확인 필요.
+- 참고: `pingo_test`에 옛 users 테이블이 남아 있어 새 컬럼이 없다고 실패했고, DB를 한 번 삭제해 재생성했다
+  (`create_all`은 기존 테이블을 ALTER하지 않음). 다른 사람 로컬 테스트 DB도 같은 증상이 나올 수 있다.
+
+### 알려진 한계
+- 토큰 발급 시각이 초 단위라 로그아웃과 같은 초에 발급된 새 토큰도 거절된다(`<=` 비교, 보수적 선택 — 카카오 왕복 때문에 사실상 발생 안 함).
+- #160(PATCH /auth/me, 탈퇴 연결)은 PR #156 머지 뒤 별도 PR — 이번에 하지 않음.

@@ -53,14 +53,18 @@ def _real_get_current_user(
     db: Session = Depends(get_db_session),
 ) -> CurrentUser:
     """실구현 — 서명된 세션 쿠키를 검증하고, 가리키는 사용자가 실제로 존재하며 탈퇴하지
-    않았는지 DB에서 재확인한다(쿠키 자체는 유효 기간 안이어도 그 사이 탈퇴했을 수 있다)."""
+    않았는지 DB에서 재확인한다(쿠키 자체는 유효 기간 안이어도 그 사이 탈퇴했을 수 있다).
+    로그아웃 이전에 발급된 토큰(이미 복사된 것 포함)은 users.sessions_valid_after로 거절한다 —
+    같은 users 행 조회 한 번으로 함께 판정해 쿼리는 늘지 않는다."""
     if not session:
         raise AppError("UNAUTHORIZED", "로그인이 필요합니다")
-    user_id = core.parse_session_token(session, secret=settings.session_secret, now=int(time.time()))
-    if user_id is None:
+    claims = core.parse_session_token(session, secret=settings.session_secret, now=int(time.time()))
+    if claims is None:
         raise AppError("UNAUTHORIZED", "로그인이 필요합니다")
-    service.get_active_user_or_401(db, user_id=user_id)
-    return CurrentUser(user_id=user_id)
+    row = service.get_active_user_or_401(db, user_id=claims.user_id)
+    if core.is_revoked(claims.issued_at, row.sessions_valid_after):
+        raise AppError("UNAUTHORIZED", "로그인이 필요합니다")
+    return CurrentUser(user_id=claims.user_id)
 
 
 get_current_user = select(

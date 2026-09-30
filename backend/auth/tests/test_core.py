@@ -1,13 +1,15 @@
 """auth/core.py 순수 함수 테스트 — I/O 없이 직접 호출한다(docs/code-quality.md)."""
 
-from auth.core import create_session_token, display_name_from_kakao_profile, parse_session_token
+from datetime import datetime, timezone
+
+from auth.core import create_session_token, is_revoked, display_name_from_kakao_profile, parse_session_token
 
 SECRET = "test-secret"
 
 
 def test_round_trip_returns_the_same_user_id():
     token = create_session_token("user_1", secret=SECRET, issued_at=1_000)
-    assert parse_session_token(token, secret=SECRET, now=1_000) == "user_1"
+    assert parse_session_token(token, secret=SECRET, now=1_000) == ("user_1", 1_000)
 
 
 def test_expired_token_is_rejected():
@@ -19,7 +21,7 @@ def test_expired_token_is_rejected():
 def test_token_at_exact_ttl_boundary_is_still_valid():
     token = create_session_token("user_1", secret=SECRET, issued_at=1_000)
     at_ttl = 1_000 + 60 * 60 * 24 * 30
-    assert parse_session_token(token, secret=SECRET, now=at_ttl) == "user_1"
+    assert parse_session_token(token, secret=SECRET, now=at_ttl) == ("user_1", 1_000)
 
 
 def test_tampered_user_id_is_rejected():
@@ -59,3 +61,18 @@ def test_display_name_from_kakao_profile_falls_back_to_user_id_without_nickname(
 def test_display_name_from_kakao_profile_falls_back_without_kakao_account():
     profile = {"id": 42}
     assert display_name_from_kakao_profile(profile) == "user_42"
+
+
+def test_is_revoked_without_logout_record_is_false():
+    assert is_revoked(1_000, None) is False
+
+
+def test_is_revoked_token_issued_before_or_in_same_second_as_logout():
+    logout = datetime.fromtimestamp(1_000.5, tz=timezone.utc)
+    assert is_revoked(999, logout) is True
+    assert is_revoked(1_000, logout) is True
+
+
+def test_is_revoked_token_issued_after_logout_is_valid():
+    logout = datetime.fromtimestamp(1_000.5, tz=timezone.utc)
+    assert is_revoked(1_001, logout) is False

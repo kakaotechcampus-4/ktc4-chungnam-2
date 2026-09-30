@@ -72,6 +72,24 @@ def test_real_resolver_rejects_valid_signature_for_withdrawn_user(db_session):
     assert exc.value.code == "UNAUTHORIZED"
 
 
+def test_real_resolver_rejects_token_issued_before_logout_but_accepts_new_one(db_session):
+    now = int(time.time())
+    db_session.add(
+        User(
+            id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수",
+            sessions_valid_after=datetime.fromtimestamp(now - 5, tz=timezone.utc),
+        )
+    )
+    db_session.flush()
+    old = core.create_session_token("user_1", secret=settings.session_secret, issued_at=now - 10)
+    new = core.create_session_token("user_1", secret=settings.session_secret, issued_at=now - 1)
+
+    with pytest.raises(AppError) as exc:
+        _real_get_current_user(session=old, db=db_session)
+    assert exc.value.code == "UNAUTHORIZED"
+    assert _real_get_current_user(session=new, db=db_session).user_id == "user_1"
+
+
 def test_missing_cookie_via_http_returns_envelope():
     """common/errors.py의 앱 레벨 핸들러가 의존성 단계 예외도 잡는지 확인 —
     pins/deps.py의 예전 우회 이유가 더 이상 유효하지 않음을 증명하는 회귀 테스트.

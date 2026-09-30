@@ -118,3 +118,17 @@ def test_withdraw_user_sets_deleted_at(db_session):
     withdrawn = service.withdraw_user(db_session, user_id="user_1")
 
     assert withdrawn.deleted_at is not None
+
+
+def test_revoke_sessions_sets_sessions_valid_after(db_session):
+    db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
+    db_session.flush()
+
+    service.revoke_sessions(db_session, user_id="user_1")
+    db_session.expire_all()
+
+    assert db_session.get(User, "user_1").sessions_valid_after is not None
+
+
+def test_revoke_sessions_for_unknown_user_does_not_fail(db_session):
+    service.revoke_sessions(db_session, user_id="nobody")
