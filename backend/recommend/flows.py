@@ -54,7 +54,7 @@ from common.events import Event, record_event
 from llm import service as llm_service
 from maps import api as maps_api
 from pins import api as pins_api
-from pins.models import Pin as PinRow
+from pins.schemas import Pin
 from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
 from recommend.models import RecommendRun
@@ -74,9 +74,18 @@ class _LoadedCandidate:
 _require_publish = require("recommend.publish", loader=None)  # loader는 안 쓴다 — loaded를 직접 넘긴다
 
 
+def _published_pin_response(db: Session, *, pin_id: str, requester_id: str, run: RecommendRun) -> Pin:
+    # publish 가드(_require_publish)가 이미 멤버십을 확인했다 — pins.api.create_ai_pin과 같은 이유로
+    # 게시자 본인을 member로 간주해 응답 조립용 Principal을 구성한다(중복 조회 없이).
+    principal = Principal(user_id=requester_id, map_id=run.map_id, role="member")
+    return pins_api.get_pin_response_for_viewer(db, pin_id=pin_id, viewer_id=requester_id, principal=principal)
+
+
 def publish_candidate(
     db: Session, *, candidate_id: str, requester_id: str, membership: MembershipGateway,
-) -> PinRow:
+) -> Pin:
+    """반환은 게시된 핀의 응답 스키마(pins.schemas.Pin) — ORM 행(pins.models)을 받으면 이 모듈이
+    타입을 적으려고 pins.models를 import해야 해서 경계 규칙을 어긴다(#114)."""
     candidate, run = service.load_candidate_with_run(db, candidate_id)  # 1) 404 NOT_FOUND
 
     _require_publish(
@@ -91,11 +100,9 @@ def publish_candidate(
     #   멱등 경로·NOT_READY 판정보다 항상 먼저).
 
     if candidate.published_pin_id is not None:  #    멱등 빠른 경로 — run 상태와 무관하게 항상 통한다
-        return pins_api.get_pin_for_viewer(
-            db, pin_id=str(candidate.published_pin_id), viewer_id=requester_id
-        )  #    200, 이벤트 없음
-        # get_pin_for_viewer가 NOT_FOUND/AI_PIN_PRIVATE를 던지면(핀이 그 사이 삭제됐거나
-        # 비공개로 바뀐 극단적 경우) 그대로 전파한다 — 별도 처리 없음, 정직한 실패가 낫다.
+        return _published_pin_response(db, pin_id=str(candidate.published_pin_id), requester_id=requester_id, run=run)
+        #    200, 이벤트 없음. get_pin_response_for_viewer가 NOT_FOUND/AI_PIN_PRIVATE를 던지면(핀이 그
+        #    사이 삭제됐거나 비공개로 바뀐 극단적 경우) 그대로 전파한다 — 정직한 실패가 낫다.
 
     core.check_run_ready(run)  # 4) 409 NOT_READY
 
@@ -117,7 +124,7 @@ def publish_candidate(
     # pins/core.py에 pin_published_event를 추가해 근본 수정 — 예전엔 여기서 type만 교정하는
     # 우회가 있었다).
     record_event(db, mutation.event)  # 7) event_log — mutation과 같은 db 세션, 커밋 전
-    return mutation.pin  # 8) get_db가 커밋
+    return _published_pin_response(db, pin_id=str(mutation.pin.id), requester_id=requester_id, run=run)  # 8) get_db가 커밋
 
 
 # ============================================================================
@@ -412,18 +419,32 @@ def _candidates_ready_event(run: RecommendRun, candidates: list[CandidateRow]) -
                  payload=payload, recipient_user_id=run.requested_by)
 
 
+def _excluded_place_ids(db: Session, run: RecommendRun) -> set[str]:
+    """후보에서 뺄 place_id 전부(가드레일 6). 세 갈래를 합친다:
+    1) exclusions의 `proposed`(다시 추천 받기로 이미 제안한 곳)·`dismissed`
+    2) 요청자가 🚫한 핀의 장소 — 이 호출에서 `dismissed`로 exclusions에 쌓는다(#119). 핀이 지워진
+       뒤에도 거절 이력이 남도록 pins가 삭제된 핀까지 돌려준다. add_exclusions는 이미 있는
+       조합을 건너뛰므로 여러 번 불러도 안전하다(이미 proposed인 곳은 그대로 둔다).
+    3) 이미 이 지도에 있는 핀(수동이든 게시된 것이든) — 안 빼면 게시하려는 순간 pins.unique(map_id,
+       place_id)에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정, 2026-09-23)."""
+    service.add_exclusions(
+        db, map_id=run.map_id, category=run.category,
+        place_ids=pins_api.list_disliked_place_ids(
+            db, user_id=run.requested_by, map_id=run.map_id, category=run.category,
+        ),
+        reason="dismissed", run_id=run.id, requested_by=run.requested_by,
+    )
+    return service.list_excluded_place_ids(
+        db, map_id=run.map_id, requested_by=run.requested_by,
+    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id)
+
+
 def execute_run(
     db: Session, *, run_id: str, place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
 ) -> RecommendRun:
     """POST /runs/{runId}/execute — 실격 필터(③-a-2) + 선호 순위(③-b) + 대안 반영(④)."""
     run = service.get_run_or_404(db, run_id)
-    # 제안·거절 이력(exclusions) + 이미 이 지도에 있는 핀(수동이든 게시된 것이든) 둘 다
-    # 뺀다 — 후자를 빼먹으면 이미 핀으로 있는 장소가 그대로 다시 추천되고, 게시하려는 순간
-    # pins.unique(map_id, place_id) 제약에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정,
-    # 2026-09-23 — Antigravity 검수로 발견).
-    excluded = service.list_excluded_place_ids(
-        db, map_id=run.map_id, requested_by=run.requested_by,
-    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id)
+    excluded = _excluded_place_ids(db, run)
     candidates_data, funnel = _run_pipeline(
         db, run, place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
     )
@@ -454,13 +475,7 @@ def widen_run(
     service.set_default_radius_walk_min(db, run, next_walk_min)
 
     service.set_run_status(db, run, "executing")
-    # 제안·거절 이력(exclusions) + 이미 이 지도에 있는 핀(수동이든 게시된 것이든) 둘 다
-    # 뺀다 — 후자를 빼먹으면 이미 핀으로 있는 장소가 그대로 다시 추천되고, 게시하려는 순간
-    # pins.unique(map_id, place_id) 제약에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정,
-    # 2026-09-23 — Antigravity 검수로 발견).
-    excluded = service.list_excluded_place_ids(
-        db, map_id=run.map_id, requested_by=run.requested_by,
-    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id)
+    excluded = _excluded_place_ids(db, run)
     candidates_data, funnel = _run_pipeline(
         db, run, place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
     )
@@ -492,13 +507,7 @@ def retry_run(
     )
     service.bump_attempt_no(db, run)
 
-    # 제안·거절 이력(exclusions) + 이미 이 지도에 있는 핀(수동이든 게시된 것이든) 둘 다
-    # 뺀다 — 후자를 빼먹으면 이미 핀으로 있는 장소가 그대로 다시 추천되고, 게시하려는 순간
-    # pins.unique(map_id, place_id) 제약에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정,
-    # 2026-09-23 — Antigravity 검수로 발견).
-    excluded = service.list_excluded_place_ids(
-        db, map_id=run.map_id, requested_by=run.requested_by,
-    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id)
+    excluded = _excluded_place_ids(db, run)
     candidates_data, funnel = _run_pipeline(
         db, run, place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
     )

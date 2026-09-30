@@ -18,7 +18,7 @@ from pins import api as pins_api
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
 from recommend import flows, service
-from recommend.models import Candidate, RecommendRun, Region
+from recommend.models import Candidate, Exclusion, RecommendRun, Region
 from recommend.ports import PlaceStub
 
 
@@ -108,12 +108,13 @@ def test_publish_candidate_inserts_ai_pin_links_candidate_and_records_event(db_s
         membership=_membership(run.map_id, "user_1"),
     )
 
-    assert pin.kind == "AI추천"
-    assert pin.origin == "ai"
-    assert pin.place_id == candidate.place_id
+    assert pin.kind == "AI추천"  # 반환은 pins.schemas.Pin(#114) — origin·place_id는 DB 행에서 확인한다
+    row = db_session.execute(select(PinRow).where(PinRow.id == uuid.UUID(pin.id))).scalar_one()
+    assert row.origin == "ai"
+    assert row.place_id == candidate.place_id
 
     db_session.refresh(candidate)
-    assert candidate.published_pin_id == pin.id
+    assert str(candidate.published_pin_id) == pin.id
 
     events = db_session.execute(select(EventLog).where(EventLog.map_id == run.map_id)).scalars().all()
     assert len(events) == 1
@@ -616,6 +617,58 @@ def test_execute_run_excludes_place_ids_already_pinned_on_the_map(db_session):
 
     candidates = service.list_candidates(db_session, str(run.id))
     assert [c.place_id for c in candidates] == ["new_place"]
+
+
+def _dismissal_setup(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
+    disliked = _make_pin(db_session, lat=35.0005, lng=129.0005)
+    _react(db_session, disliked, user_id="user_1", type="against", reason_text="싫어요")
+    places = [
+        PlaceStub(place_id=disliked.place_id, lat=35.0005, lng=129.0005),
+        PlaceStub(place_id="new_place", lat=35.0006, lng=129.0006),
+    ]
+    return run, disliked, _FakePlaceSearch(places), _FakePlaceFacts({disliked.place_id: {}, "new_place": {}})
+
+
+def test_execute_run_excludes_place_the_requester_disliked_even_after_pin_is_deleted(db_session):
+    """가드레일 6(#119) — 핀이 소프트 삭제되면 list_place_ids_on_map에서 빠져 거절한 장소가 다시
+    추천됐다. 요청자의 🚫는 exclusions(dismissed)로 남아 삭제 뒤에도 제외된다."""
+    from datetime import datetime, timezone
+
+    run, disliked, place_search, place_facts = _dismissal_setup(db_session)
+    disliked.deleted_at = datetime.now(timezone.utc)
+    db_session.flush()
+
+    updated = flows.execute_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
+
+    assert [c.place_id for c in service.list_candidates(db_session, str(run.id))] == ["new_place"]
+    assert {entry["label"]: entry["removed_count"] for entry in updated.last_funnel}["이미 제안·거절됨"] == 1
+    rows = db_session.execute(select(Exclusion.place_id, Exclusion.reason)).all()
+    assert rows == [(disliked.place_id, "dismissed")]
+
+
+def test_execute_run_does_not_exclude_place_only_another_member_disliked(db_session):
+    """다른 구성원의 🚫는 요청자의 제외목록이 아니다(근거 줄을 거쳐 실격 경로로 간다)."""
+    from datetime import datetime, timezone
+
+    run, disliked, place_search, place_facts = _dismissal_setup(db_session)
+    db_session.execute(delete(ReactionRow))
+    _react(db_session, disliked, user_id="user_2", type="against", reason_text="싫어요")
+    disliked.deleted_at = datetime.now(timezone.utc)
+    db_session.flush()
+
+    flows.execute_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
+
+    assert {c.place_id for c in service.list_candidates(db_session, str(run.id))} == {disliked.place_id, "new_place"}
+    assert db_session.execute(select(func.count()).select_from(Exclusion)).scalar_one() == 0
+
+
+def test_execute_run_twice_with_dismissal_is_idempotent(db_session):
+    run, disliked, place_search, place_facts = _dismissal_setup(db_session)
+    flows.execute_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
+    flows.execute_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
+    assert db_session.execute(select(func.count()).select_from(Exclusion)).scalar_one() == 1
 
 
 def test_execute_run_unknown_safety_fact_is_excluded_not_needs_check(db_session):

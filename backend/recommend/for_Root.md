@@ -1,8 +1,40 @@
 # 루트 리뷰 가이드 — backend/recommend
 
 `backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 네 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#158·#146·#112 후속" 절이 최신, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
+작업을 누적해서 담는다 — 아래 "#119·#114" 절이 최신, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
 전체, 가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+
+---
+
+# #119 · #114 — dismissed 제외(가드레일 6)와 pins.models import 제거
+
+## #119 — 요청자가 🚫한 장소를 `exclusions.reason='dismissed'`로 제외
+
+- **`pins/api.py::list_disliked_place_ids(db, *, user_id, map_id, category) -> list[str]`(pins 소유 파일, 함수 추가만
+  — pins 세션의 리뷰가 필요하다)**. 그 사용자가 이 지도·카테고리에서 against를 남긴 핀의 place_id(중복 없이 정렬).
+  **소프트 삭제된 핀도 포함한다** — 다른 조회 함수와 달리 일부러 `deleted_at`을 거르지 않았다. 🚫는 이력이라
+  핀이 지워져도 남아야 하고, 지워진 핀은 `list_place_ids_on_map`(살아 있는 핀만)에서 빠져 이게 없으면 거절한
+  장소가 다시 추천된다. 핀이 살아 있는 동안은 기존 경로가 이미 막고 있었다 — 이번에 막는 건 삭제 뒤다.
+- **`flows._excluded_place_ids(db, run)`** — execute/widen/retry에 똑같이 복붙돼 있던 "exclusions ∪ 지도 위 핀" 3블록을
+  하나로 합치고, 그 안에서 위 함수 결과를 `dismissed`로 `add_exclusions`한다(이미 있는 조합은 건너뛰므로 반복 호출
+  안전, 이미 `proposed`인 곳은 그대로). 대상은 **요청자 본인의 🚫만**이다 — 다른 구성원의 🚫는 근거 줄(required)
+  → 실격 경로로 들어가 이미 반영된다(제외목록은 개인 단위, #42). funnel "이미 제안·거절됨"이 이 제외분을 센다.
+- 테스트: pins 3개(본인 against만/삭제 핀 포함/빈 결과), recommend 3개(삭제된 🚫 핀의 장소가 후보에서 빠지고
+  dismissed 행이 생김/타인의 🚫는 제외 아님/두 번 실행해도 멱등).
+- 아래 "#108" 절 8번("절반만 구현했다")은 이 작업으로 해소됐다.
+
+## #114 — `recommend/flows.py`의 `pins.models` import 제거
+
+`publish_candidate`가 ORM 행 대신 `pins.schemas.Pin`을 돌려준다(멱등 경로·새 게시 경로 모두
+`pins_api.get_pin_response_for_viewer`로 조립 — 존재·가시성 규칙이 `get_pin_for_viewer`와 같아 404 동작 불변).
+Principal 조립은 `post_publish`에서 `flows._published_pin_response`로 옮겼고 라우터는 결과를 그대로 반환한다.
+테스트는 스키마에 없는 `origin`/`place_id`를 DB 행에서 확인하도록 고쳤다. 이슈의 grep으로 recommend의 위반은 0건
+(남는 출력은 `integration/` 테스트 픽스처뿐 — 모듈 코드가 아니다).
+
+**[남은 일 — pins 후속 권고]** 근본 원인(이슈 본문 A안)은 그대로다: `pins.api.get_pin_for_viewer`와
+`PinMutation.pin`이 여전히 ORM 행(`PinRow`)을 노출한다. 이번엔 지시대로 pins 시그니처는 바꾸지 않았다.
+`shortlist/loaders.py`가 그 행의 `.map_id/.visibility/.created_by/.kind`를 쓰고 있어, 스키마 반환으로 바꾸려면
+shortlist도 함께 고쳐야 한다 — pins·shortlist 공동 후속 이슈를 권한다. 다음 소비자가 같은 문제를 만나기 전에.
 
 ---
 
