@@ -532,9 +532,12 @@ def test_confirm_regions_accept_union_confirms_all(db_session):
 # ---------- execute / result ----------
 
 def _make_region(db_session, run, *, center_lat=35.0, center_lng=129.0, radius_m=2000, label="기본 반경"):
+    # anchor_points(#112) — 이 헬퍼로 직접 만드는 region은 create_run을 거치지 않아 실제 핀
+    # 좌표를 모른다. 중심 좌표 자체를 기준 핀 1개로 대신한다 — select_top_candidates의 거리
+    # tie-break가 최소한 동작은 하도록(값 자체의 정확성보다 "기준 핀 없음" 에러를 피하는 게 목적).
     region = Region(
         run_id=run.id, signature="sig", label=label, center_lat=center_lat, center_lng=center_lng,
-        radius_m=radius_m, confirmed=True,
+        radius_m=radius_m, anchor_points=[[center_lat, center_lng]], confirmed=True,
     )
     db_session.add(region)
     db_session.flush()
