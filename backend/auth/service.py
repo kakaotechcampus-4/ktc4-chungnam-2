@@ -16,6 +16,8 @@ from auth import core
 from auth.models import User
 from common.errors import AppError
 from common.settings import settings
+from pins import api as pins_api
+from recommend import api as recommend_api
 
 KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 KAKAO_USERINFO_URL = "https://kapi.kakao.com/v2/user/me"
@@ -107,17 +109,14 @@ def revoke_sessions(db: Session, *, user_id: str) -> None:
 
 
 def withdraw_user(db: Session, *, user_id: str) -> User:
-    """탈퇴 처리(12절) — soft delete.
+    """탈퇴 처리(12절, #155) — users 행은 soft delete, 그 사람의 반응·근거 줄은 삭제한다.
 
-    **완료하지 못한 범위(auth/for_Root.md에 동일 내용 보고)**: 연결된 `pins.reactions`·
-    `recommend.evidence_lines` 삭제는 이 함수가 하지 않는다. 다른 모듈 테이블에 직접
-    쓰지 않는다는 원칙(backend/CLAUDE.md "모듈 간 접근", auth/CLAUDE.md) 때문에 여기서
-    ORM으로 지울 수 없고, 대신 그 모듈이 공개한 함수를 불러야 하는데 — 확인해보니
-    `pins/api.py`에는 아직 사용자 단위 일괄 삭제 함수가 없고, `recommend`는 `evidence_lines`
-    테이블 자체를 아직 만들지 않았다(`recommend/models.py` 상단 docstring이 "근거 조립
-    세션의 후속 범위"라고 명시). 두 모듈에 필요한 함수가 생기면 이 함수 안에서 호출 두 줄만
-    추가하면 된다 — 지금은 이 모듈이 소유한 `users` 행만 지운다."""
+    반응·근거 줄은 다른 모듈 테이블이라 각 모듈의 공개 함수(api.py)로만 지운다. 핀·확정 리스트
+    항목은 남고, 작성자 표시는 auth.api.display_names가 "탈퇴한 구성원"으로 내려준다.
+    세 쓰기는 같은 트랜잭션이라 중간에 실패하면 함께 롤백된다."""
     row = get_active_user_or_401(db, user_id=user_id)
+    pins_api.delete_reactions_by_user(db, user_id=user_id)
+    recommend_api.delete_evidence_lines_by_author(db, user_id=user_id)
     row.deleted_at = datetime.now(timezone.utc)
     db.flush()
     return row
