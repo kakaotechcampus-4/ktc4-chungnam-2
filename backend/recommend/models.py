@@ -117,6 +117,11 @@ class Region(Base):
     center_lat: Mapped[float] = mapped_column(Float, nullable=False)
     center_lng: Mapped[float] = mapped_column(Float, nullable=False)
     radius_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    # #112(선호 순위 3단계, 동네 배분 tie-break)가 추가 — 이 무리를 만든 "기준 핀"들의
+    # 좌표(merge_circles로 병합되기 전 원본 anchor 목록, [[lat, lng], ...]). v1은 항상 단일
+    # 기본값 원이라 이 목록이 곧 그 카테고리 핀 전체의 좌표다(flows.py::_default_circle 참고).
+    # data-model.md엔 없는 컬럼 — candidates.lat/lng와 같은 종류의 결정(for_Root.md 보고).
+    anchor_points: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

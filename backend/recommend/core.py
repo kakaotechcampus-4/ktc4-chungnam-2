@@ -12,9 +12,12 @@ recommend.publish가 등록됨). 이 파일에 남는 건 run/candidate/evidence
 
 import hashlib
 import math
+from dataclasses import dataclass
+from typing import Mapping, Sequence
 
 from common.errors import AppError
 from common.geo import haversine_distance_m
+from recommend import constraints
 from recommend.models import RecommendRun
 from recommend.ports import Circle
 from recommend.schemas import Check
@@ -158,3 +161,211 @@ def check_retry_limit(attempt_no: int) -> None:
     *전* 현재까지의 시도 횟수 — 이미 상한에 도달했으면(이번이 6번째가 될 것이므로) 429."""
     if attempt_no >= ATTEMPT_LIMIT:
         raise AppError("RETRY_LIMIT", detail={"attempt_no": attempt_no})
+
+
+# ============================================================================
+# #112 — 선호 순위 점수 계산과 상위 3곳 선정 (#99 후속, ③-b)
+#
+# 규칙 정본은 이슈 #112 본문("할 일" 절, docs/constraints.md에 아직 옮겨지지 않은 상태 —
+# for_Root.md에 문서 갭으로 보고). 아래 세 함수가 이슈의 1~3단계에 각각 대응한다.
+# ============================================================================
+
+
+@dataclass(frozen=True)
+class HeartedPlace:
+    """♥ 반응을 받은 핀 하나 — 그 핀의 라벨(checks)과 ♥를 누른 구성원 user_id 집합.
+
+    checks에 fact_key가 없거나(is_open 등 core.py가 직접 채우는 값) confidence='unknown'인
+    항목은 선호 기준·점수 계산 어디에도 기여하지 않는다(조사 안 된 라벨은 0점, 감점도 없다)."""
+
+    checks: list[Check]
+    member_ids: frozenset[str]
+
+
+@dataclass(frozen=True)
+class ScoredCandidate:
+    """3단계(상위 N곳 고르기) 입력 — 후보 하나의 점수·소속 동네·좌표."""
+
+    place_id: str
+    score: int
+    region_label: str
+    lat: float
+    lng: float
+
+
+def build_preference_criteria(
+    hearted_places: Sequence[HeartedPlace],
+    *,
+    excluded_fact_keys: frozenset[str],
+    disqualifying_fact_keys: Sequence[str],
+    preferred_authors: Mapping[str, frozenset[str]],
+) -> dict[str, bool]:
+    """1단계 — 선호 기준 만들기(이슈 #112 ①~⑤ 순서 그대로).
+
+    ① ♥ 받은 핀들의 라벨(checks)을 전부 모은다 — confidence='known'인 것만(②와 별개로,
+       조사 안 된 라벨은 애초에 신호가 없다).
+    ② 참/거짓으로 답할 수 없는 라벨(가격대·수용 인원, `excluded_fact_keys` — 정본은
+       constraints.VALUE_COMPARISON_UNSUPPORTED)은 뺀다.
+    ③ ♥ 받은 "장소" 개수(사람 수가 아니다)로 값이 갈리면 많은 쪽을 택한다. 정확히 반반이면
+       —이슈 본문이 이 경우를 정하지 않아 이 세션이 임시로 정함(for_Root.md 보고)— 신호가
+       없다고 보고 그 라벨 자체를 기준에서 뺀다.
+    ④ 이번 run에서 활성 실격 사유로 이미 쓰인 라벨(`disqualifying_fact_keys`)은 뺀다 — 통과한
+       후보 전부가 이미 같은 값이라 점수 차이를 못 만든다.
+    ⑤ 구성원이 직접 쓴 선호 사유의 라벨(`preferred_authors`의 키 — fact_key → 그 사유를 쓴
+       구성원들)은 True로 추가한다(②·④ 제외 대상이면 마찬가지로 뺀다) — ③의 다수결 결과보다
+       우선한다(명시적 선호이므로).
+
+    소프트 키(`constraints.SOFT_FACT_KEYS`)만 쓴다. 하드 체크의 passed는 "실격 아님"이라 라벨
+    값과 뜻이 다르므로 선호 신호로 섞으면 안 된다(①~⑤ 전부에 적용).
+
+    반환값은 fact_key -> "이 팀이 좋아하는 값" 매핑이다. 값이 False로 확정된 항목은 2단계에서
+    "양쪽 다 참일 때만 점수를 준다"는 규칙 때문에 점수에 기여하지 않지만, 어떤 라벨이 왜
+    후보에서 빠졌는지 추적할 수 있도록 그대로 남겨둔다."""
+    true_counts: dict[str, int] = {}
+    false_counts: dict[str, int] = {}
+    for place in hearted_places:
+        for check in place.checks:
+            if check.fact_key not in constraints.SOFT_FACT_KEYS:
+                continue
+            if check.fact_key in excluded_fact_keys or check.fact_key in disqualifying_fact_keys:
+                continue
+            if check.confidence != "known":
+                continue
+            counts = true_counts if check.passed else false_counts
+            counts[check.fact_key] = counts.get(check.fact_key, 0) + 1
+
+    criteria: dict[str, bool] = {}
+    for fact_key in set(true_counts) | set(false_counts):
+        true_count, false_count = true_counts.get(fact_key, 0), false_counts.get(fact_key, 0)
+        if true_count == false_count:
+            continue  # 동점 — 신호 없음(위 ③ docstring)
+        criteria[fact_key] = true_count > false_count
+
+    for fact_key in preferred_authors:
+        if fact_key not in constraints.SOFT_FACT_KEYS:
+            continue
+        if fact_key in excluded_fact_keys or fact_key in disqualifying_fact_keys:
+            continue
+        criteria[fact_key] = True  # ⑤ — 명시적 선호가 ③의 다수결보다 우선한다
+
+    return criteria
+
+
+def _member_support(
+    hearted_places: Sequence[HeartedPlace],
+    preferred_authors: Mapping[str, frozenset[str]] | None = None,
+) -> dict[str, tuple[frozenset[str], frozenset[str]]]:
+    """fact_key마다 (지지 구성원 집합, 반대 구성원 집합) — 지지는 그 값을 True로 가진 곳에 ♥한
+    구성원 + 그 fact_key를 선호 사유로 직접 쓴 구성원(♥ 이력이 없어도 명시적 선호는 지지다),
+    반대는 False로 가진 곳에 ♥한 구성원. "구성원 단위로 센다"(한 사람이 같은 값의 장소 여러
+    곳에 ♥해도, ♥하고 사유도 써도 1명)를 집합으로 자연스럽게 보장한다. 소프트 키만 쓴다."""
+    supporting: dict[str, set[str]] = {}
+    opposing: dict[str, set[str]] = {}
+    for place in hearted_places:
+        for check in place.checks:
+            if check.fact_key not in constraints.SOFT_FACT_KEYS or check.confidence != "known":
+                continue
+            bucket = supporting if check.passed else opposing
+            bucket.setdefault(check.fact_key, set()).update(place.member_ids)
+    for fact_key, authors in (preferred_authors or {}).items():
+        if fact_key in constraints.SOFT_FACT_KEYS:
+            supporting.setdefault(fact_key, set()).update(authors)
+    return {
+        fact_key: (frozenset(supporting.get(fact_key, ())), frozenset(opposing.get(fact_key, ())))
+        for fact_key in set(supporting) | set(opposing)
+    }
+
+
+def score_candidates(
+    candidate_checks_by_place: Mapping[str, list[Check]],
+    hearted_places: Sequence[HeartedPlace],
+    criteria: Mapping[str, bool],
+    preferred_authors: Mapping[str, frozenset[str]] | None = None,
+) -> dict[str, int]:
+    """2단계 — 후보마다 점수 매기기(이슈 #112).
+
+    criteria[fact_key] is True이고 후보 자신도 그 라벨이 known+True일 때만("양쪽 다 참일 때만")
+    점수를 준다. 더하는 값은 (그 라벨=True인 곳에 ♥한 구성원 수 − False인 곳에 ♥한 구성원 수).
+    조사 안 된(unknown) 라벨은 0점 — 감점도 없다."""
+    support = _member_support(hearted_places, preferred_authors)
+    empty: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset())
+    scores: dict[str, int] = {}
+    for place_id, checks in candidate_checks_by_place.items():
+        total = 0
+        for check in checks:
+            if check.confidence != "known" or not check.passed:
+                continue
+            if criteria.get(check.fact_key) is not True:
+                continue
+            supporting, opposing = support.get(check.fact_key, empty)
+            total += len(supporting) - len(opposing)
+        scores[place_id] = total
+    return scores
+
+
+def build_member_fulfillment(
+    candidate_checks: list[Check],
+    hearted_places: Sequence[HeartedPlace],
+    criteria: Mapping[str, bool],
+    preferred_authors: Mapping[str, frozenset[str]] | None = None,
+) -> dict[str, list[str]]:
+    """가드레일5 "구성원 충족 집계" — 이 후보가 어떤 구성원의 어떤 선호를 충족했는지.
+    api-spec.yaml/data-model.md 어디에도 이 jsonb의 정확한 모양이 정해져 있지 않아(recommend/
+    for_Root.md 보고 대상), 이 세션은 {member_id: [충족한 fact_key, ...]} 모양으로 정했다 —
+    score_candidates와 같은 "양쪽 다 참" 조건을 그대로 재사용해, 점수에 실제로 기여한 구성원만
+    담는다(점수 없이 그냥 ♥한 사람은 포함하지 않는다)."""
+    support = _member_support(hearted_places, preferred_authors)
+    fulfillment: dict[str, set[str]] = {}
+    for check in candidate_checks:
+        if check.confidence != "known" or not check.passed:
+            continue
+        if criteria.get(check.fact_key) is not True:
+            continue
+        supporting, _opposing = support.get(check.fact_key, (frozenset(), frozenset()))
+        for member_id in supporting:
+            fulfillment.setdefault(member_id, set()).add(check.fact_key)
+    return {member_id: sorted(fact_keys) for member_id, fact_keys in fulfillment.items()}
+
+
+def select_top_candidates(
+    candidates: Sequence[ScoredCandidate],
+    anchor_points_by_region: Mapping[str, Sequence[tuple[float, float]]],
+    *,
+    limit: int = 3,
+) -> list[str]:
+    """3단계 — 상위 N곳(기본 3곳) 고르기(이슈 #112).
+
+    한 번에 정렬하지 않고 점수 높은 순으로 하나씩 집는다 — 동네 배분 tie-break가 "이미 뽑힌
+    동네"에 따라 달라지기 때문이다. 우선순위: 1) 점수(무조건 우선 — 동네 배분이 점수를 이기지
+    않는다) 2) 점수가 같으면 아직 안 뽑힌 동네(region_label) 우선 3) 그래도 같으면 그 무리의
+    기준 핀들까지 거리 "평균"(합이 아니다 — 무리마다 기준 핀 개수가 달라 합으로 비교하면
+    핀이 적은 동네가 무조건 유리해진다)이 가까운 쪽.
+
+    anchor_points_by_region에 후보의 region_label 키가 없거나 빈 시퀀스면 ValueError —
+    "후보가 존재한다는 건 그 후보가 어떤 원 안에 있다는 뜻이고, 그 원의 중심이 기준 핀이다.
+    0개라면 반경 계산이 깨진 것"(이슈 본문)이라 거리를 0으로 취급하고 넘어가지 않는다."""
+
+    def avg_distance(candidate: ScoredCandidate) -> float:
+        anchors = anchor_points_by_region.get(candidate.region_label) or ()
+        if not anchors:
+            raise ValueError(f"기준 핀이 없습니다: region_label={candidate.region_label!r}")
+        distances = [
+            haversine_distance_m(candidate.lat, candidate.lng, anchor_lat, anchor_lng)
+            for anchor_lat, anchor_lng in anchors
+        ]
+        return sum(distances) / len(distances)
+
+    remaining = list(candidates)
+    chosen_ids: list[str] = []
+    chosen_regions: set[str] = set()
+
+    while remaining and len(chosen_ids) < limit:
+        best = min(
+            remaining,
+            key=lambda c: (-c.score, c.region_label in chosen_regions, avg_distance(c)),
+        )
+        chosen_ids.append(best.place_id)
+        chosen_regions.add(best.region_label)
+        remaining.remove(best)
+
+    return chosen_ids
