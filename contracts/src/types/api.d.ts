@@ -443,6 +443,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/places/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 장소 이름 검색 (#180, #147 — v1 핀 입력 경로 ①). 검색바에서 이름을 치면 후보를 돌려주고, 사용자가 하나를 골라
+         *     `POST /maps/{mapId}/pins`(source: search)로 핀을 만든다. 결과는 서버 DB에 저장하지 않는다(메모리 캐시만, #53).
+         *     결과가 0개면 빈 배열 그대로다 — 지어내서 채우지 않는다 (가드레일 2). 로그인만 필요하고 지도 구성원 여부는 보지 않는다.
+         *     지도 API가 모두 실패하면 503 PLACES_UNAVAILABLE. 외부 지도 API의 일일 쿼터를 지키려고 사용자당 호출 상한이 있다(초과 시 429 RATE_LIMITED, 상한 값은 서버 설정 — 기본 분당 30회). FE는 입력 debounce 300ms 이상으로 부르고 Enter/선택 시점에만 부르는 걸 권한다.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description 검색어. 앞뒤 공백을 걷은 뒤 1~50자 */
+                    q: string;
+                    /** @description 이 좌표에 가까운 순으로 정렬한다(현재 지도 중심 등, 반경 제한은 없다). 없으면 관련도 순. lat·lng는 함께 보낸다 */
+                    lat?: number;
+                    lng?: number;
+                    /** @description 최대 결과 수 (기본 10) */
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 관련도/거리 순. 없으면 빈 배열 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PlaceSearchResult"][];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description VALIDATION_ERROR — q가 비었거나 50자 초과, lat·lng 중 하나만 옴 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+                503: components["responses"]["PlacesUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/pins": {
         parameters: {
             query?: never;
@@ -479,7 +540,10 @@ export interface paths {
             };
         };
         put?: never;
-        /** 핀 생성 (링크·검색·좌표 3경로, 5-9의 대량 버전은 v2) */
+        /**
+         * 핀 생성. v1 경로는 둘이다 — `source: search`(GET /places/search 결과를 골라 그대로 보낸다: place_id·place_name·lat·lng 전부)와
+         *     `source: coordinate`(지도를 길게 눌러 lat·lng). `source: link`/`link_url`은 v1에서 받지 않는다(422, #147) — 카톡 내보내기(5-9, v2)가 다시 쓴다.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -1529,13 +1593,31 @@ export interface components {
         };
         PinCreateRequest: {
             category: components["schemas"]["Category"];
-            /** @enum {string} */
+            /**
+             * @description v1은 search·coordinate만. link는 422 (#147, v2에서 재사용)
+             * @enum {string}
+             */
             source?: "link" | "search" | "coordinate";
+            /** @description v1에서는 받지 않음 — 보내면 422 (#147). v2 카톡 내보내기용으로 남겨 둔 필드 */
             link_url?: string;
+            /** @description source=search일 때 GET /places/search 결과의 place_id를 그대로 */
             place_id?: string;
             place_name?: string;
             lat?: number;
             lng?: number;
+        };
+        /** @description GET /places/search 한 건. 핀을 만들 때 place_id·place_name·lat·lng를 그대로 POST /maps/{mapId}/pins로 보낸다 */
+        PlaceSearchResult: {
+            /** @description "<소스>:<소스 내 id>" 형태(예 kakao:1234). 불투명 값으로 취급한다 */
+            place_id: string;
+            /** @description POST /maps/{mapId}/pins의 place_name과 같은 이름 — 그대로 보낸다 */
+            place_name: string;
+            lat: number;
+            lng: number;
+            /** @description 제공 소스가 추정한 분류(제안일 뿐). 핀의 category는 사용자가 정한다 */
+            category?: components["schemas"]["Category"];
+            address?: string;
+            place_source?: components["schemas"]["PlaceSource"];
         };
         /**
          * @description docs/constraints.md 차원 압축 결과. 원본 가격 숫자는 API로 노출하지 않는다
@@ -1845,6 +1927,24 @@ export interface components {
         };
         /** @description 필터 통과 후보 0개 (6절 "결과 0개") */
         NoResults: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 요청이 너무 잦다 — 잠시 뒤 다시 시도 (RATE_LIMITED) */
+        RateLimited: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 지도 API를 모두 쓸 수 없다(키 없음·장애·호출 상한) — 잠시 뒤 다시 시도 (PLACES_UNAVAILABLE) */
+        PlacesUnavailable: {
             headers: {
                 [name: string]: unknown;
             };

@@ -32,6 +32,8 @@ CATALOG: dict[str, tuple[int, str]] = {
     "REACTION_NOT_ALLOWED": (422, "이 핀에는 반응을 남길 수 없습니다"),
     "INVITE_NOT_FOUND": (404, "유효하지 않은 초대 링크입니다"),
     "INVITE_EXPIRED": (410, "만료된 초대 링크입니다"),
+    "RATE_LIMITED": (429, "요청이 너무 잦습니다"),
+    "PLACES_UNAVAILABLE": (503, "장소 검색을 지금은 쓸 수 없습니다"),
     "RECOMMEND_FAILED": (500, "추천을 만들지 못했습니다"),
     "SHORTLIST_CATEGORY_EMPTY": (200, "이 분류에 확정된 곳이 없습니다"),
     "UNAUTHORIZED": (401, "인증이 필요합니다"),
