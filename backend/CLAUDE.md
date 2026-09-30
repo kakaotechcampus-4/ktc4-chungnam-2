@@ -47,7 +47,9 @@ Alembic 히스토리는 저장소 전체에 하나다. 모듈마다 별도 체�
   `main.py`의 주석 처리된 `include_router` 줄만 풀면 된다(그 외엔 `main.py`를 건드리지 않는다)
 - 마이그레이션: `alembic revision --autogenerate -m "..."` / `alembic upgrade head` — 모델을
   추가했으면 `alembic/env.py`에 그 모듈의 `models` import를 추가해야 Alembic이 인식한다
-- 테스트: pytest, 모듈별 `tests/`
+- 테스트: pytest, 모듈별 `tests/`. 테스트 DB는 기본 `pingo_test`인데, **터미널(세션) 여러 개가 같은 DB에서 동시에
+  돌리면 서로의 테이블을 지워 무작위로 실패한다** — 동시에 돌릴 땐 터미널마다 `PINGO_TEST_DB`를 다르게 준다
+  (예: `PINGO_TEST_DB=pingo_test_pins python -m pytest pins`, PowerShell은 `$env:PINGO_TEST_DB="pingo_test_pins"`)
 
 ## 코드 품질
 
