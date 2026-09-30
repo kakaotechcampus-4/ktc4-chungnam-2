@@ -2,6 +2,62 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-09-30 — 추천 카테고리에서 숙소 제외, RecommendCategory 신설 (#145)
+
+숙소를 AI 대안 추천 대상에서 뺐다(#145). 숙소 핀은 그대로 찍고 반응을 남길 수 있어서 핀 쪽
+`Category`는 바꾸지 않고, 추천에 쓰는 카테고리만 따로 나눴다.
+
+- `RecommendCategory` 신설 — `[음식점, 카페, 관광지]`
+- `POST /maps/{mapId}/runs` 요청의 `category`: `Category` → `RecommendCategory`
+- `RecommendRun.category`: `Category` → `RecommendCategory`
+- `GET /maps/{mapId}/recommend/readiness` 응답의 키를 `RecommendCategory`로 한정 — 숙소 키는 오지 않는다
+- 목 서버: readiness에서 숙소 제외, 지역 확인 대기 시나리오의 run 카테고리를 숙소 → 관광지
+
+**FE 영향**: 타입 재생성 필요(`npm run gen:types`). 숙소 핀에서는 추천 버튼과 대안 추천 진입점을
+보이지 않게 한다. readiness 응답에 숙소 키가 없다고 가정하고 그리면 된다.
+
+**BE 영향**: `backend/recommend`의 카테고리 목록과 DB enum `recommend_category`에서 숙소 제거
+(마이그레이션), `capacity_min` 조건 제거. `backend/llm` 사유 구조화 출력의 `capacity_min` 제거.
+후속 이슈로 나눈다.
+
+## 2026-09-28 — 내 지도 목록(`GET /maps`) 신설, 지도 생성에 지역(선택) 추가 (#22, #24 변경)
+
+PR #132(Solquick24) 제안을 루트가 검증 후 승인 — FE 회의 후속 결정(최종기획안 15절
+2026-09-28 항목)으로 9/4에 확정했던 #22·#24 두 결정이 바뀌었다. 이슈 자체는 재오픈하지
+않고 코멘트로만 갱신됐다(PR #131 본문에 "별도 PR로 고친다"고 명시) — 팀 컨벤션상 아쉬운
+지점이라 별도로 다뤘다.
+
+**#24 — 로그인 직후 진입점이 "지도"에서 "내 지도 목록"으로.** 목록을 줄 엔드포인트가 없어서
+새로 만든다.
+
+- `GET /maps` 신설: 내가 구성원인 지도를 최근 생성순으로 `Map[]`로 돌려준다. 속한 지도가
+  없으면 빈 배열이다. `POST /maps`와 같은 이유로 에러 응답을 따로 선언하지 않는다 — 특정
+  `mapId`를 대상으로 한 멤버십 판정이 없어(전체 목록 조회라) 404가 성립하지 않고, 이
+  `maps` 태그는 401도 엔드포인트별로 선언하는 관례가 아니다(`/auth/*`·realtime SSE만
+  선언). PR #132 원안 그대로 두고, 루트가 별도로 고칠 게 없었다.
+- 초대 링크로 들어온 구성원은 목록을 거치지 않고 해당 지도로 바로 간다. FE 라우팅만의
+  문제라 API 변경은 없다.
+- 로그인 콜백 리다이렉트(`FRONTEND_LOGIN_REDIRECT_URL`, 기본 `frontend_base_url` 기준)는
+  그대로다. `/`에서 목록을 보여줄지는 FE가 정한다.
+
+**#22 — 지도 만들기 입력값에 지역 검색 추가.** 9/4의 "지역힌트 아님"을 뒤집는다.
+
+- `MapRegion { label, lat, lng }` 스키마 신설. `MapCreateRequest.region`·`Map.region`에
+  **선택 필드**로 붙는다.
+- 지역이 없으면 지금처럼 첫 핀 좌표로 지역을 정한다(`architecture.md` 3절 프리시딩 트리거에
+  반영).
+- 시작일·종료일은 지금처럼 필수다.
+- `data-model.md`의 `maps`에 `region_label`·`region_center`(둘 다 nullable, 둘 다 있거나
+  둘 다 없음 — `CHECK` 제약)를 추가한다.
+- 지역을 어디에 쓸지(첫 지도 위치 등)는 기획안 15-4에 미결로 남아 있다. 이번 변경은 값을
+  받아 저장·반환하는 데까지다 — 막지 않는다.
+
+**FE 영향**: `contracts` 타입이 이미 재생성됨(PR #132) — `Map`·`MapCreateRequest`에 optional
+`region`, 목 서버에 `GET /maps` 핸들러 추가. 기존 호출은 그대로 동작한다.
+
+**BE 후속**: `backend/maps`에 `GET /maps` 라우트, `region` 필드(스키마·모델·마이그레이션),
+`member_count` N+1 방지가 필요 — 이슈로 안내.
+
 ## 2026-09-23 — PinCreateRequest.place_name 추가 (루트 결정)
 
 프론트-백엔드 통합 감사에서 "핀 이름이 항상 빈칸으로 온다"는 게 확인됐다 — 원인은

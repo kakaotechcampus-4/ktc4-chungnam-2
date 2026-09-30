@@ -156,3 +156,78 @@ describe("에러 시나리오", () => {
     expect(res2.status).toBe(409);
   });
 });
+
+describe("#139 — 외부 지도 SDK 요청은 목 서버가 가로채지 않는다", () => {
+  it("카카오맵 SDK 주소가 `*/maps/:mapId` 핸들러에 잡혀 404가 되지 않는다", async () => {
+    let body = "";
+    try {
+      body = await fetch("https://dapi.kakao.com/v2/maps/sdk.js").then((r) => r.text());
+    } catch {
+      // 네트워크가 없으면 요청이 실제로 밖으로 나가려다 실패한 것 — 목 서버가 가로채지 않았다는 뜻이다.
+    }
+    expect(body).not.toContain('"code":"NOT_FOUND"');
+  }, 15000);
+});
+
+describe("#22·#24 — 내 지도 목록 + 지도 생성 지역(선택)", () => {
+  it("GET /maps는 내가 구성원인 지도만 최근 생성순으로 준다", async () => {
+    const created = await fetch(`${BASE}/maps`, {
+      method: "POST",
+      body: JSON.stringify({ title: "제주 여행", start_date: "2026-11-01", end_date: "2026-11-03" }),
+    }).then((r) => r.json());
+
+    const list = await fetch(`${BASE}/maps`).then((r) => r.json());
+    expect(list[0].id).toBe(created.id); // 방금 만든 게 가장 최근이라 맨 앞
+    expect(list.some((m: { id: string }) => m.id === "map_1")).toBe(true); // 시드 지도도 이미 구성원
+  });
+
+  it("POST /maps에 region을 실으면 그대로 저장·응답된다", async () => {
+    const res = await fetch(`${BASE}/maps`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: "부산 여행", start_date: "2026-12-01", end_date: "2026-12-03",
+        region: { label: "부산", lat: 35.1796, lng: 129.0756 },
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.region).toEqual({ label: "부산", lat: 35.1796, lng: 129.0756 });
+  });
+
+  it("region 없이 POST /maps — 기존 동작 그대로(회귀 없음)", async () => {
+    const res = await fetch(`${BASE}/maps`, {
+      method: "POST",
+      body: JSON.stringify({ title: "당일치기", start_date: "2026-12-10", end_date: "2026-12-10" }),
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.region).toBeUndefined();
+  });
+});
+
+describe("realtime SSE (docs/events.md)", () => {
+  it("전체 채널 구독 중 핀을 생성하면 pin.created 이벤트가 온다", async () => {
+    const stream = await fetch(`${BASE}/maps/map_1/events`);
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toContain("text/event-stream");
+
+    const reader = stream.body!.getReader();
+    const decoder = new TextDecoder();
+
+    await fetch(`${BASE}/maps/map_1/pins`, {
+      method: "POST",
+      body: JSON.stringify({ category: "카페" }),
+    });
+
+    let received = "";
+    while (!received.includes("pin.created")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      received += decoder.decode(value);
+    }
+    await reader.cancel();
+
+    expect(received).toContain("event: pin.created");
+    expect(received).toMatch(/id: \d+/);
+  }, 10000);
+});

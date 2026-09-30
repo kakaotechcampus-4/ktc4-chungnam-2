@@ -152,7 +152,27 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 속한 지도가 없으면 빈 배열 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Map"][];
+                    };
+                };
+            };
+        };
         put?: never;
         /** 지도 생성. 생성 시 seeding 잡을 트리거한다 (architecture.md 3절) */
         post: {
@@ -555,7 +575,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 카테고리별 추천 버튼 활성화 판정 (5-4) */
+        /** 카테고리별 추천 버튼 활성화 판정 (5-4). 키는 RecommendCategory 값만 온다 — 숙소는 추천 대상이 아니다 (#145) */
         get: {
             parameters: {
                 query?: never;
@@ -610,7 +630,7 @@ export interface paths {
             requestBody?: {
                 content: {
                     "application/json": {
-                        category: components["schemas"]["Category"];
+                        category: components["schemas"]["RecommendCategory"];
                     };
                 };
             };
@@ -1272,6 +1292,11 @@ export interface components {
         /** @enum {string} */
         Category: "음식점" | "카페" | "숙소" | "관광지";
         /**
+         * @description AI 대안 추천을 받을 수 있는 카테고리. 숙소는 핀으로는 찍지만 추천 대상이 아니다 (#145)
+         * @enum {string}
+         */
+        RecommendCategory: "음식점" | "카페" | "관광지";
+        /**
          * @description 핀 종류는 이 3가지뿐 (기획안 9절). 확정이 나머지 둘을 덮어쓴다.
          * @enum {string}
          */
@@ -1285,6 +1310,8 @@ export interface components {
             /** @description evidence_line 전용: 자기가 쓴 것만 true */
             can_disable?: boolean;
             can_delete?: boolean;
+            /** @description candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64) */
+            can_publish?: boolean;
         };
         User: {
             id?: string;
@@ -1303,6 +1330,7 @@ export interface components {
              * @description 여행 종료일 (#22)
              */
             end_date: string;
+            region?: components["schemas"]["MapRegion"];
             member_count: number;
             confirmed_count?: number;
         };
@@ -1327,9 +1355,21 @@ export interface components {
             start_date: string;
             /**
              * Format: date
-             * @description 여행 종료일 (#22). start_date 이후여야 한다
+             * @description 여행 종료일 (#22). start_date와 같거나 그 이후여야 한다(당일치기는 같은 날)
              */
             end_date: string;
+            region?: components["schemas"]["MapRegion"];
+        };
+        /**
+         * @description 지도 만들기의 지역 검색 결과 (#22, 2026-09-28 변경 — PR #132 제안, 루트 검증 후 승인).
+         *     선택 입력 — 없으면 지금처럼 첫 핀 좌표로 지역을 정한다(architecture.md 3절). 어디에
+         *     쓸지(첫 지도 위치 등)는 기획안 15-4 미결.
+         */
+        MapRegion: {
+            /** @description 검색에서 고른 지역 이름 (예: 부산) */
+            label: string;
+            lat: number;
+            lng: number;
         };
         PinCreateRequest: {
             category: components["schemas"]["Category"];
@@ -1337,6 +1377,7 @@ export interface components {
             source?: "link" | "search" | "coordinate";
             link_url?: string;
             place_id?: string;
+            place_name?: string;
             lat?: number;
             lng?: number;
         };
@@ -1440,7 +1481,7 @@ export interface components {
         RecommendRun: {
             id?: string;
             map_id?: string;
-            category?: components["schemas"]["Category"];
+            category?: components["schemas"]["RecommendCategory"];
             /** @enum {string} */
             status?: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
             attempt_no?: number;
@@ -1455,6 +1496,7 @@ export interface components {
             /** @enum {string} */
             visibility?: "private" | "published";
             published_pin_id?: string | null;
+            permissions?: components["schemas"]["Permissions"];
         };
         RecommendResult: {
             run_id?: string;

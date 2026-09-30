@@ -17,9 +17,13 @@ users(
 
 maps(
   id, title, start_date, end_date, member_count_expected,
+  region_label NULL, region_center geography(Point) NULL,   -- 9/28 #22 변경(PR #132, 루트 검증
+                                                             -- 후 승인): 지역 검색(선택). 둘 다
+                                                             -- 있거나 둘 다 없음
   created_by, created_at
 )
-  CHECK (end_date >= start_date)   -- 9/4 결정 #22: 여행 제목 + 시작일·종료일. day_count·region_hint는 폐기
+  CHECK (end_date >= start_date)   -- 9/4 결정 #22: 여행 제목 + 시작일·종료일. day_count는 폐기
+  CHECK ((region_label IS NULL) = (region_center IS NULL))
 
 memberships(
   id, map_id, user_id, role('member'|'owner'),   -- authz 참고. color는 9/4 결정 #26으로 폐기(구성원 구분에 색 불필요)

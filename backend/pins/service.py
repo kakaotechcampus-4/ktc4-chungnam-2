@@ -119,6 +119,7 @@ def list_pins(
             ),
             place_name=pin_row.place_name,
             created_by_display_name=display_names.get(pin_row.created_by),
+            checks=pin_row.checks,
         )
         result.append(core.to_pin_response(record, principal))
     return result
