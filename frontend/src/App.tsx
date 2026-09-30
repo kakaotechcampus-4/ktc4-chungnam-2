@@ -1,47 +1,36 @@
-import { BrowserRouter, NavLink, Route, Routes } from 'react-router'
+import { BrowserRouter, Route, Routes } from 'react-router'
 
 import { USE_MOCK } from '@/api'
 import ScenarioSwitcher from '@/dev/ScenarioSwitcher'
+import RequireLogin from '@/features/auth/RequireLogin'
+import InvitePage from '@/routes/InvitePage'
+import MapCreatePage from '@/routes/MapCreatePage'
+import MapLayout from '@/routes/MapLayout'
+import MapListPage from '@/routes/MapListPage'
 import MapTab from '@/routes/MapTab'
 import RecommendTab from '@/routes/RecommendTab'
 import ShortlistTab from '@/routes/ShortlistTab'
-
-/** 최종기획안 4절 — 탭은 이 3개로 고정. 라벨도 고정 용어다(9절). */
-const TABS = [
-  { to: '/', label: '지도', end: true },
-  { to: '/recommend', label: 'AI 추천', end: false },
-  { to: '/shortlist', label: '리스트', end: false },
-]
 
 export default function App() {
   return (
     <BrowserRouter>
       {import.meta.env.DEV && USE_MOCK && <ScenarioSwitcher />}
 
-      <main className="pb-14">
-        <Routes>
-          <Route path="/" element={<MapTab />} />
-          <Route path="/recommend" element={<RecommendTab />} />
-          <Route path="/shortlist" element={<ShortlistTab />} />
-        </Routes>
-      </main>
+      <Routes>
+        {/* 초대 화면은 비로그인도 들어와야 해서 RequireLogin 밖에 둔다 (#23). */}
+        <Route path="/invites/:token" element={<InvitePage />} />
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid h-14 grid-cols-3 border-t bg-background">
-        {TABS.map((tab) => (
-          <NavLink
-            key={tab.to}
-            to={tab.to}
-            end={tab.end}
-            className={({ isActive }) =>
-              `flex items-center justify-center text-sm ${
-                isActive ? 'font-semibold text-foreground' : 'text-muted-foreground'
-              }`
-            }
-          >
-            {tab.label}
-          </NavLink>
-        ))}
-      </nav>
+        <Route element={<RequireLogin />}>
+          {/* 로그인 직후 진입점 = 내 지도 목록 (#24) */}
+          <Route path="/" element={<MapListPage />} />
+          <Route path="/maps/new" element={<MapCreatePage />} />
+          <Route path="/maps/:mapId" element={<MapLayout />}>
+            <Route index element={<MapTab />} />
+            <Route path="recommend" element={<RecommendTab />} />
+            <Route path="shortlist" element={<ShortlistTab />} />
+          </Route>
+        </Route>
+      </Routes>
     </BrowserRouter>
   )
 }

@@ -1355,7 +1355,7 @@ export interface components {
             start_date: string;
             /**
              * Format: date
-             * @description 여행 종료일 (#22). start_date 이후여야 한다
+             * @description 여행 종료일 (#22). start_date와 같거나 그 이후여야 한다(당일치기는 같은 날)
              */
             end_date: string;
             region?: components["schemas"]["MapRegion"];
