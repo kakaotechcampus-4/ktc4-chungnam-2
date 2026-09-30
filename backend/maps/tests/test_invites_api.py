@@ -134,29 +134,33 @@ def test_owner_accepting_own_invite_does_not_demote_role(app_client, db_session)
     assert len(_events(db_session, map_id=map_id, type="member.joined")) == 0
 
 
-def test_accept_unknown_token_is_401_and_creates_no_membership(app_client, db_session):
+def _add_expired_invite(db_session, map_id, token="expired-token-1234567890"):
+    db_session.add(
+        InviteRow(
+            token=token,
+            map_id=map_id,
+            created_by="user_1",
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+        )
+    )
+    db_session.commit()
+
+
+def test_accept_unknown_token_is_404_invite_not_found(app_client, db_session):
     resp = app_client.post("/invites/does-not-exist/accept", cookies=_auth("user_1"))
-    assert resp.status_code == 401
-    assert resp.json()["code"] == "UNAUTHORIZED"
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "INVITE_NOT_FOUND"
 
 
-def test_accept_expired_token_is_401_and_creates_no_membership(app_client, db_session):
+def test_accept_expired_token_is_410_and_creates_no_membership(app_client, db_session):
     map_body = _create_map(app_client, user_id="user_1")
     map_id = map_body["id"]
-
-    expired = InviteRow(
-        token="expired-token-1234567890",
-        map_id=map_id,
-        created_by="user_1",
-        expires_at=datetime.now(timezone.utc) - timedelta(days=1),
-    )
-    db_session.add(expired)
-    db_session.commit()
+    _add_expired_invite(db_session, map_id)
 
     before = _member_count(db_session, map_id)
     resp = app_client.post("/invites/expired-token-1234567890/accept", cookies=_auth("user_2"))
-    assert resp.status_code == 401
-    assert resp.json()["code"] == "UNAUTHORIZED"
+    assert resp.status_code == 410
+    assert resp.json()["code"] == "INVITE_EXPIRED"
 
     after = _member_count(db_session, map_id)
     assert len(after) == len(before)  # 검사가 INSERT보다 먼저 — 멤버십이 추가되지 않았다
@@ -168,3 +172,67 @@ def test_accept_invite_without_cookie_is_401(app_client):
 
     resp = app_client.post(f"/invites/{invite['token']}/accept")
     assert resp.status_code == 401
+
+
+# --- GET /invites/{token} (#159) — 로그인 없이 호출되는 초대 요약 ---
+
+
+def test_invite_summary_without_login_is_200_and_hides_map_id(app_client, db_session):
+    from auth.models import User
+
+    db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
+    db_session.commit()
+    map_body = _create_map(app_client, user_id="user_1")
+    invite = app_client.post(f"/maps/{map_body['id']}/invite", cookies=_auth("user_1")).json()
+
+    resp = app_client.get(f"/invites/{invite['token']}")  # 쿠키 없음
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body == {
+        "title": "부산 여행",
+        "start_date": "2026-10-10",
+        "end_date": "2026-10-12",
+        "member_count": 1,
+        "inviter_display_name": "철수",
+        "expires_at": body["expires_at"],
+    }
+    assert map_body["id"] not in resp.text
+
+
+def test_invite_summary_does_not_join_or_consume_invite(app_client, db_session):
+    map_body = _create_map(app_client, user_id="user_1")
+    invite = app_client.post(f"/maps/{map_body['id']}/invite", cookies=_auth("user_1")).json()
+
+    app_client.get(f"/invites/{invite['token']}")
+
+    assert len(_member_count(db_session, map_body["id"])) == 1
+    row = db_session.execute(select(InviteRow).where(InviteRow.token == invite["token"])).scalar_one()
+    assert row.used_count == 0
+
+
+def test_invite_summary_unknown_token_is_404(app_client):
+    resp = app_client.get("/invites/does-not-exist")
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "INVITE_NOT_FOUND"
+
+
+def test_invite_summary_expired_token_is_410(app_client, db_session):
+    map_body = _create_map(app_client, user_id="user_1")
+    _add_expired_invite(db_session, map_body["id"])
+
+    resp = app_client.get("/invites/expired-token-1234567890")
+    assert resp.status_code == 410
+    assert resp.json()["code"] == "INVITE_EXPIRED"
+
+
+def test_invite_summary_inviter_without_user_row_falls_back_to_withdrawn_label(app_client):
+    map_body = _create_map(app_client, user_id="user_1")  # users 행 없음
+    invite = app_client.post(f"/maps/{map_body['id']}/invite", cookies=_auth("user_1")).json()
+
+    resp = app_client.get(f"/invites/{invite['token']}")
+    assert resp.json()["inviter_display_name"] == "탈퇴한 구성원"
+
+
+def test_other_maps_routes_still_require_login(app_client):
+    """public_router 분리가 다른 라우트의 인증을 풀지 않았는지."""
+    assert app_client.get("/maps").status_code == 401

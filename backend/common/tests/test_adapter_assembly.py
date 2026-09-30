@@ -14,6 +14,7 @@ MISSING_REAL = {
     "auth.SessionResolver": "#4",
     "recommend.PlaceSearchGateway": "#14",
     "recommend.PlaceFactsGateway": "#14",
+    "llm.EvidencePlanner": "#116",
 }
 # 주의: "authz.MembershipGateway"는 여기 없다(issue #89) — maps.api.DbMembershipGateway가
 # 유일한 구현이 되면서 authz/deps.py가 select()를 완전히 그만 썼다. dev 스텁도 함께 제거됐다.

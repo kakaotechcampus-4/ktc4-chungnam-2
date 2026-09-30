@@ -210,3 +210,20 @@ def test_from_env_reads_llm_overrides(monkeypatch):
 
     assert (s.llm_mode, s.llm_model) == ("real", "other-model")
     assert (s.elice_ml_api_base_url, s.elice_ml_api_key) == ("https://ml.example/v1", "k")
+
+
+def test_from_env_kakao_rest_key_falls_back_to_client_id(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    monkeypatch.delenv("KAKAO_REST_API_KEY", raising=False)
+    monkeypatch.setenv("KAKAO_CLIENT_ID", "client-id")
+    assert Settings.from_env().kakao_rest_api_key == "client-id"
+    monkeypatch.setenv("KAKAO_REST_API_KEY", "rest-key")
+    assert Settings.from_env().kakao_rest_api_key == "rest-key"
+
+
+def test_from_env_places_keys_default_to_empty(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    for name in ("NAVER_SEARCH_CLIENT_ID", "NAVER_SEARCH_CLIENT_SECRET", "GOOGLE_PLACES_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    s = Settings.from_env()
+    assert (s.naver_search_client_id, s.naver_search_client_secret, s.google_places_api_key) == ("", "", "")

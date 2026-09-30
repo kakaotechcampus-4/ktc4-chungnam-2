@@ -12,11 +12,11 @@ authz가 소유한다(#56 이관, mentor-review-plan.md). pins는 authz의 것�
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from authz.schemas import Permissions
 
-Category = Literal["음식점", "카페", "숙소", "관광지"]
+Category = Literal["음식점", "카페", "숙소", "관광지", "기타"]
 PinKind = Literal["일반", "AI추천", "확정"]
 PriceBucket = Literal["low", "mid", "high"]
 LabelConfidence = Literal["known", "unknown"]
@@ -30,6 +30,25 @@ class Check(BaseModel):
     passed: bool
     confidence: LabelConfidence
     needs_check: bool
+
+
+class MemberFulfillmentEntry(BaseModel):
+    user_id: str
+    display_name: str | None = None
+    satisfied: bool
+
+
+class MemberFulfillment(BaseModel):
+    """구성원 충족 집계(가드레일 5) — 값은 recommend가 채워 게시 시점에 복사된다."""
+
+    satisfied: int = Field(ge=0)
+    total: int = Field(ge=0)
+    by_member: list[MemberFulfillmentEntry] | None = None
+
+
+class PlaceSource(BaseModel):
+    provider: Literal["kakao", "naver", "google"]
+    url: str | None = None
 
 
 class ReactionSummary(BaseModel):
@@ -48,6 +67,18 @@ class PinCreateRequest(BaseModel):
     lng: float | None = None
 
 
+class Reaction(BaseModel):
+    """None인 필드(reason_text·reason_chip_ids·display_name)는 응답에서 생략한다 — 라우터가
+    response_model_exclude_none을 쓴다(스펙: 없으면 필드 생략). display_name은 GET /reactions 전용."""
+
+    pin_id: str
+    user_id: str
+    type: ReactionKind
+    reason_text: str | None = None
+    reason_chip_ids: list[str] | None = None
+    display_name: str | None = None
+
+
 class Pin(BaseModel):
     id: str
     map_id: str
@@ -62,8 +93,23 @@ class Pin(BaseModel):
     price_bucket: PriceBucket | None = None
     checks: list[Check] | None = None
     source_run_id: str | None = None
+    reason: str | None = None
+    member_fulfillment: MemberFulfillment | None = None
+    place_source: PlaceSource | None = None
+    # 요청자 본인의 반응 — 없으면 null(스펙). 다른 구성원에게 새면 안 되는 값이라 SSE 페이로드엔
+    # 싣지 않는다(core.pin_*_event가 제외). 직렬화 때 null을 유지하는 건 아래 serializer.
+    my_reaction: Reaction | None = None
     reaction_summary: ReactionSummary = Field(default_factory=ReactionSummary)
     permissions: Permissions
+
+    @model_serializer(mode="wrap")
+    def _keep_my_reaction_null(self, handler, info):
+        """response_model_exclude_none이 my_reaction: null까지 지우면 "없으면 null"(스펙)이 깨진다."""
+        data = handler(self)
+        excluded = info.exclude or ()
+        if info.exclude_none and "my_reaction" not in excluded:
+            data["my_reaction"] = data.get("my_reaction")
+        return data
 
 
 class FilterCounts(BaseModel):
@@ -75,13 +121,6 @@ class ReactionRequest(BaseModel):
     type: ReactionKind
     reason_text: str | None = Field(default=None, max_length=140)
     reason_chip_ids: list[str] | None = None
-
-
-class Reaction(BaseModel):
-    pin_id: str
-    user_id: str
-    type: ReactionKind
-    reason_text: str | None = None
 
 
 class Error(BaseModel):
