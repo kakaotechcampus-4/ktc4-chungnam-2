@@ -13,11 +13,14 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from common.adapters import format_assembly
+from common.database import engine
 from common.errors import register_error_handlers
 from common.settings import settings
 from realtime.dispatcher import dispatcher
 
 logger = logging.getLogger("pingo")
+
+SHUTDOWN_TIMEOUT = 5.0   # dispatcher 정지 대기 상한(초)
 
 
 @asynccontextmanager
@@ -27,8 +30,22 @@ async def lifespan(_app: FastAPI):
     # 반드시 이 순서로: 이미 있는 event_log까지 따라잡은 뒤(동기, 한 번) 폴링 루프를 시작한다.
     dispatcher.initialize_last_seen()
     task = asyncio.create_task(dispatcher.run_forever())
-    yield
-    task.cancel()
+    try:
+        yield
+    finally:
+        # 종료 순서: dispatcher 정지 → SSE 정리 → 연결 풀 닫기(#130).
+        # 취소하지 않고 정지 신호로 멈춰, 스레드에서 도는 _tick이 끝난 뒤에야 풀을 닫는다.
+        dispatcher.request_stop()
+        try:
+            # _tick이 DB에서 오래 막혀도 종료가 멈추지 않게 한다. 초과하면 wait_for가 task를 취소한다.
+            await asyncio.wait_for(task, SHUTDOWN_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning("dispatcher가 %s초 안에 멈추지 않아 취소했다", SHUTDOWN_TIMEOUT)
+        except Exception:
+            logger.exception("dispatcher 종료 중 오류")
+        dispatcher.close_subscriptions()
+        engine.dispose()
+        dispatcher.finish_shutdown()
 
 
 app = FastAPI(title="pingo API", version="0.1.0", lifespan=lifespan)
