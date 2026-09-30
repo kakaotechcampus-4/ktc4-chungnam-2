@@ -2,7 +2,7 @@
 docs/api-spec.yaml `shortlist` 태그 중 확정 리스트 CRUD(GET/POST/DELETE)와 동선 계산
 (GET/POST .../route, #103) 범위.
 
-이 커밋에 포함하지 않는 것: `PUT /maps/{mapId}/shortlist/order`(수동 정렬) — 별도 이슈.
+`PUT /maps/{mapId}/shortlist/order`(수동 정렬, #142)도 여기 있다 — 동선과 무관하게 visit_order만 바꾼다.
 
 인가는 여기서 직접 분기하지 않는다 — GET(확정 리스트·동선 둘 다)은 require_map_member()
 (조회는 액션이 아니다), POST/DELETE .../shortlist는 require_with_principal(action, loader)이
@@ -22,7 +22,7 @@ from pins import api as pins_api
 from shortlist import core, flows, service
 from shortlist.deps import DbSession
 from shortlist.loaders import load_pin_for_confirm, load_shortlist_item
-from shortlist.schemas import Route, ShortlistItem
+from shortlist.schemas import Route, ShortlistItem, ShortlistReorderRequest
 
 router = APIRouter(tags=["shortlist"], dependencies=[Depends(get_current_user)])
 
@@ -36,6 +36,9 @@ ItemToUnconfirm = Depends(require_with_principal("shortlist.remove", load_shortl
 # 액션 판정 결과를 내려줄 필요가 없다. 나중에 좁혀야 하면(예: owner만 재계산 허용)
 # require_on_map("route.recalculate")로 한 줄 교체하면 된다.
 RouteForMap = Depends(require_map_member())
+# 수동 정렬도 "구성원 누구나"(shortlist.add/remove와 같은 기준)인데 대상이 지도 전체라 액션을
+# 새로 만들지 않고(authz 정책은 루트 소관) 멤버십 게이트만 쓴다. 비구성원은 404.
+ShortlistOrderForMap = Depends(require_map_member())
 
 
 @router.get("/maps/{mapId}/shortlist", response_model=list[ShortlistItem], response_model_exclude_none=True)
@@ -63,6 +66,16 @@ def get_shortlist(
 def post_shortlist(confirmed=PinToConfirm, db: Session = DbSession):
     pin_row, principal = confirmed
     return flows.confirm_pin(db, pin_row=pin_row, principal=principal)
+
+
+@router.put("/maps/{mapId}/shortlist/order", response_model=list[ShortlistItem], response_model_exclude_none=True)
+def put_shortlist_order(
+    body: ShortlistReorderRequest,
+    mapId: str = Path(...),
+    principal: Principal = ShortlistOrderForMap,
+    db: Session = DbSession,
+):
+    return flows.reorder_shortlist(db, map_id=mapId, item_ids=body.item_ids, principal=principal)
 
 
 @router.delete("/shortlist/{itemId}", status_code=204)

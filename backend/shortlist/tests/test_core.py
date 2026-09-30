@@ -105,3 +105,14 @@ def test_route_recalculated_event_payload_is_a_bare_list_not_wrapped():
     assert event.type == "route.recalculated"
     assert isinstance(event.payload, list)
     assert event.payload == [{"region_label": "구역 1", "ordered_pin_ids": ["pin_1"], "total_distance_m": 0, "legs": []}]
+
+
+def test_reorder_mismatch_none_for_same_set_any_order():
+    assert core.reorder_mismatch(["a", "b", "c"], ["c", "a", "b"]) is None
+    assert core.reorder_mismatch([], []) is None
+
+
+def test_reorder_mismatch_reports_missing_unknown_duplicated():
+    assert core.reorder_mismatch(["a", "b"], ["a"]) == {"duplicated": [], "missing": ["b"], "unknown": []}
+    assert core.reorder_mismatch(["a"], ["a", "x"])["unknown"] == ["x"]
+    assert core.reorder_mismatch(["a", "b"], ["a", "a", "b"])["duplicated"] == ["a"]

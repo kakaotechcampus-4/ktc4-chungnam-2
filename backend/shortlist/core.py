@@ -23,12 +23,25 @@ def to_shortlist_item_response(row, pin: Pin, principal: Principal) -> Shortlist
 def shortlist_changed_event(item: ShortlistItem, action: str) -> Event:
     """docs/events.md shortlist.changed. 확정 리스트에는 비공개 개념이 없다 — 확정된 핀은
     flows.confirm_pin이 이미 visibility=public인 핀만 통과시키므로(가드레일 1), pin.created류와
-    달리 채널 분기가 필요 없다. action은 'added'|'removed' 둘뿐이다(수동 정렬 'reordered'는
-    이 커밋 범위 밖 — for_Root.md 참고)."""
+    달리 채널 분기가 필요 없다. action은 'added'|'removed'|'reordered'다. 'reordered'는 정렬에 들어간
+    항목마다 하나씩(새 visit_order를 담아) 발행한다 — payload가 항목 하나 단위라서다."""
     return Event(
         map_id=item.pin.map_id, channel="public", type="shortlist.changed",
         payload={"item": item.model_dump(exclude_none=True), "action": action},
     )
+
+
+def reorder_mismatch(current_ids: list[str], requested_ids: list[str]) -> dict | None:
+    """수동 정렬 요청이 현재 확정 항목과 정확히 같은 집합이 아니면 이유를 돌려준다(같으면 None).
+    중복은 집합 비교로는 안 잡히므로 따로 센다."""
+    current, requested = set(current_ids), set(requested_ids)
+    if len(requested_ids) == len(requested) and requested == current:
+        return None
+    return {
+        "duplicated": sorted({i for i in requested_ids if requested_ids.count(i) > 1}),
+        "missing": sorted(current - requested),
+        "unknown": sorted(requested - current),
+    }
 
 
 def to_route_response(row) -> Route:

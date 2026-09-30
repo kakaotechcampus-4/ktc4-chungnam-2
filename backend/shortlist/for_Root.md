@@ -1,5 +1,52 @@
 # 루트 리뷰 가이드 — backend/shortlist (PR #71 멘토 리뷰 대응)
 
+## [보고, 2026-09-30] #142 `PUT /maps/{mapId}/shortlist/order` 구현
+
+상태: 코드·테스트 완료, **브랜치·PR 미생성**(이 작업 폴더가 git 저장소가 아니라 develop pull/merge,
+브랜치, PR을 못 했다). 이슈 본문 "실제 소요"와 디스코드 "#142 착수합니다"도 못 했다.
+
+### 구현
+- `router.py`: PUT 추가, 본문 `ShortlistReorderRequest { item_ids: list[str] }`. 인가는
+  `require_map_member()`(구성원 누구나, 비구성원 404). `shortlist.reorder` 같은 새 authz 액션은
+  만들지 않았다(정책은 루트 소관 — 필요하면 `route.recalculate`처럼 등록 후 `require_on_map`으로 한 줄 교체).
+- 집합 검증(`core.reorder_mismatch`, 순수): 현재 확정 항목과 정확히 같은 집합이 아니면(누락·중복·
+  다른 지도 항목·형식 오류) 422 `VALIDATION_ERROR`, detail에 `duplicated/missing/unknown`. 실패 시 아무것도 바꾸지 않는다.
+- `service.reorder_items`: lock 후 현재 집합을 읽고 `visit_order`를 0..N-1로 쓴다.
+- 동시성: `service.lock_shortlist`(advisory xact lock, 키 `shortlist:<map_id>`)를 정렬·추가(`add_item`)·
+  제외(`flows.unconfirm_pin`)에 건다. `replace_routes`의 동선 lock과 키가 달라 서로 막지 않는다.
+- `list_items` 정렬: `visit_order` 오름차순 NULL 뒤 → `added_at` → `id`.
+- 이벤트: `shortlist.changed`를 `action: "reordered"`로 같은 커밋에 기록. `route.recalculated`는 내지 않는다.
+- `backend/integration/test_spec_route_coverage.py`의 `KNOWN_MISSING`에서 `("put", "/maps/{}/shortlist/order")` 제거(`#141` counts는 유지).
+- 테스트: API 9 / service 4 / core 2 추가.
+
+### 루트 판단이 필요한 것
+1. **이벤트 모양.** `docs/events.md`의 `shortlist.changed`는 `item`이 항목 하나다. 재정렬은 항목이 N개라
+   **항목마다 이벤트 하나씩**(새 `visit_order` 포함) 냈다. 재정렬 전체를 담는 모양이 필요하면 events.md·
+   api-spec.yaml에서 정해 달라(스펙은 건드리지 않았다).
+2. **동선 입력 정렬 분리(스펙 해석).** 요청은 `list_items`가 `visit_order`를 반영하라는 것이었는데, 동선
+   계산(`flows.recalculate_route`)이 같은 함수를 쓰면 수동 정렬이 투어 시작점·구역 번호를 바꾼다. data-model의
+   "동선과 무관"과 충돌해 동선용으로 `list_items_by_added`(추가 순)를 따로 두고 `recalculate_route`가 그걸
+   쓰게 했다. 반대 의도(수동 정렬이 동선 시작점에 영향)였다면 알려 달라 — 한 줄 교체.
+3. **`CLAUDE.md` "넘지 말 것"의 "PUT 구현은 별도 이슈" 문구**는 이제 낡았다(이 모듈 CLAUDE.md는 임의로 고치지 않았다).
+
+### 검증 상태 — 정직하게
+- shortlist 테스트 전부 통과. 임시 PostGIS 컨테이너(alembic head 적용)로 돌린 backend 전체: **602 통과, 3 실패**.
+- 실패 3건은 `realtime`의 SSE 테스트(`test_router_integration` 2, `test_shutdown` 1). shortlist 미관련이고
+  공유 DB 첫 실행에서도 같은 테스트가 실패했지만, 수정 전 상태로 돌려보진 못해 **기존 실패라고 단정하지 않는다**.
+  develop merge 후 `PINGO_TEST_DB=pingo_test_shortlist`로 재확인 필요(현재 트리엔 `PINGO_TEST_DB` 지원이 없다).
+- 다른 터미널의 pytest가 `pingo_test`를 동시에 써서 공유 DB로는 실패 목록이 매번 달랐다 — DB 분리 안내와 같은 이유.
+
+### 프론트 전달용 요약
+- `PUT /maps/{mapId}/shortlist/order`, 본문 `{ "item_ids": ["<itemId>", ...] }`(현재 확정 항목 전체, 원하는 순서).
+- 200: 새 순서의 `ShortlistItem[]`(`visit_order` 0..N-1). 집합 불일치 422 `VALIDATION_ERROR`, 비구성원 404.
+- SSE: `shortlist.changed`가 `action:"reordered"`로 항목마다 하나씩(`item.visit_order`가 새 값).
+- 동선은 안 바뀐다 — 다시 짜려면 `POST /maps/{mapId}/route`.
+
+### 남은 절차
+브랜치 `feat/shortlist-order-142` → develop merge → `PINGO_TEST_DB`로 전체 pytest → PR(develop 대상, merge 안 함) → 이슈 "실제 소요" 기입.
+
+---
+
 ## [루트 검증, 2026-09-22] #103 구현 확인 + Antigravity 검수 반영
 
 아래 "구현 범위"를 코드로 직접 확인(테스트 419 passed, alembic 단일 head 확인)했고, 5개
