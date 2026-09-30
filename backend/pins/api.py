@@ -198,6 +198,28 @@ def list_place_ids_on_map(db: Session, *, map_id: str) -> set[str]:
     return set(rows)
 
 
+def list_disliked_place_ids(db: Session, *, user_id: str, map_id: str, category: str) -> list[str]:
+    """recommend의 가드레일 6(#119) — 이 사용자가 이 지도의 이 카테고리에서 🚫(against) 반응을
+    남긴 핀들의 place_id(중복 없이, 정렬). recommend가 exclusions.reason='dismissed'로 쌓는다.
+
+    소프트 삭제된 핀(`deleted_at` not null)도 **포함한다** — 다른 조회 함수와 달리 일부러다. 🚫는
+    "이 장소는 싫다"는 이력이라 핀이 지워져도 사라지면 안 된다. 삭제된 핀의 장소는
+    `list_place_ids_on_map`(살아 있는 핀만)에서 빠지므로, 여기서 잡지 않으면 거절한 장소가 다시
+    추천된다."""
+    rows = db.execute(
+        select(PinRow.place_id)
+        .select_from(ReactionRow)
+        .join(PinRow, PinRow.id == ReactionRow.pin_id)
+        .where(
+            ReactionRow.user_id == user_id, ReactionRow.type == "against",
+            PinRow.map_id == map_id, PinRow.category == category,
+        )
+        .distinct()
+        .order_by(PinRow.place_id)
+    ).scalars().all()
+    return list(rows)
+
+
 def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[dict]:
     """recommend의 근거 조립(①②, recommend/#108)이 쓴다 — 그 카테고리 핀에 남긴 반응 중
     사유가 있는 것만(반대는 사유 필수라 가드레일3로 항상 있고, 좋음/조율 필요도 사유가 있으면

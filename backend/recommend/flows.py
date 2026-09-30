@@ -412,18 +412,32 @@ def _candidates_ready_event(run: RecommendRun, candidates: list[CandidateRow]) -
                  payload=payload, recipient_user_id=run.requested_by)
 
 
+def _excluded_place_ids(db: Session, run: RecommendRun) -> set[str]:
+    """후보에서 뺄 place_id 전부(가드레일 6). 세 갈래를 합친다:
+    1) exclusions의 `proposed`(다시 추천 받기로 이미 제안한 곳)·`dismissed`
+    2) 요청자가 🚫한 핀의 장소 — 이 호출에서 `dismissed`로 exclusions에 쌓는다(#119). 핀이 지워진
+       뒤에도 거절 이력이 남도록 pins가 삭제된 핀까지 돌려준다. add_exclusions는 이미 있는
+       조합을 건너뛰므로 여러 번 불러도 안전하다(이미 proposed인 곳은 그대로 둔다).
+    3) 이미 이 지도에 있는 핀(수동이든 게시된 것이든) — 안 빼면 게시하려는 순간 pins.unique(map_id,
+       place_id)에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정, 2026-09-23)."""
+    service.add_exclusions(
+        db, map_id=run.map_id, category=run.category,
+        place_ids=pins_api.list_disliked_place_ids(
+            db, user_id=run.requested_by, map_id=run.map_id, category=run.category,
+        ),
+        reason="dismissed", run_id=run.id, requested_by=run.requested_by,
+    )
+    return service.list_excluded_place_ids(
+        db, map_id=run.map_id, requested_by=run.requested_by,
+    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id)
+
+
 def execute_run(
     db: Session, *, run_id: str, place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
 ) -> RecommendRun:
     """POST /runs/{runId}/execute — 실격 필터(③-a-2) + 선호 순위(③-b) + 대안 반영(④)."""
     run = service.get_run_or_404(db, run_id)
-    # 제안·거절 이력(exclusions) + 이미 이 지도에 있는 핀(수동이든 게시된 것이든) 둘 다
-    # 뺀다 — 후자를 빼먹으면 이미 핀으로 있는 장소가 그대로 다시 추천되고, 게시하려는 순간
-    # pins.unique(map_id, place_id) 제약에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정,
-    # 2026-09-23 — Antigravity 검수로 발견).
-    excluded = service.list_excluded_place_ids(
-        db, map_id=run.map_id, requested_by=run.requested_by,
-    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id)
+    excluded = _excluded_place_ids(db, run)
     candidates_data, funnel = _run_pipeline(
         db, run, place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
     )
@@ -454,13 +468,7 @@ def widen_run(
     service.set_default_radius_walk_min(db, run, next_walk_min)
 
     service.set_run_status(db, run, "executing")
-    # 제안·거절 이력(exclusions) + 이미 이 지도에 있는 핀(수동이든 게시된 것이든) 둘 다
-    # 뺀다 — 후자를 빼먹으면 이미 핀으로 있는 장소가 그대로 다시 추천되고, 게시하려는 순간
-    # pins.unique(map_id, place_id) 제약에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정,
-    # 2026-09-23 — Antigravity 검수로 발견).
-    excluded = service.list_excluded_place_ids(
-        db, map_id=run.map_id, requested_by=run.requested_by,
-    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id)
+    excluded = _excluded_place_ids(db, run)
     candidates_data, funnel = _run_pipeline(
         db, run, place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
     )
@@ -492,13 +500,7 @@ def retry_run(
     )
     service.bump_attempt_no(db, run)
 
-    # 제안·거절 이력(exclusions) + 이미 이 지도에 있는 핀(수동이든 게시된 것이든) 둘 다
-    # 뺀다 — 후자를 빼먹으면 이미 핀으로 있는 장소가 그대로 다시 추천되고, 게시하려는 순간
-    # pins.unique(map_id, place_id) 제약에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정,
-    # 2026-09-23 — Antigravity 검수로 발견).
-    excluded = service.list_excluded_place_ids(
-        db, map_id=run.map_id, requested_by=run.requested_by,
-    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id)
+    excluded = _excluded_place_ids(db, run)
     candidates_data, funnel = _run_pipeline(
         db, run, place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
     )

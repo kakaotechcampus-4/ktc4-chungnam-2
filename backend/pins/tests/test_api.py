@@ -212,3 +212,54 @@ def test_create_ai_pin_event_not_recorded_until_caller_calls_record_event(db_ses
     )
     rows = db_session.execute(select(EventLog).where(EventLog.map_id == "map_1")).scalars().all()
     assert rows == []
+
+
+# ---------- list_disliked_place_ids (#119) ----------
+
+def _react_on(db_session, pin, *, user_id, type):
+    from pins.models import Reaction as ReactionRow
+
+    db_session.add(ReactionRow(
+        pin_id=pin.id, user_id=user_id, type=type, reason_text="사유" if type == "against" else None,
+    ))
+    db_session.commit()
+
+
+def _pin_in(db_session, *, map_id="map_1", category="음식점"):
+    row = _insert_pin(db_session, map_id=map_id)
+    row.category = category
+    db_session.commit()
+    return row
+
+
+def test_list_disliked_place_ids_returns_only_own_against_in_map_and_category(db_session):
+    mine = _pin_in(db_session)
+    _react_on(db_session, mine, user_id="user_1", type="against")
+    liked = _pin_in(db_session)
+    _react_on(db_session, liked, user_id="user_1", type="like")
+    others = _pin_in(db_session)
+    _react_on(db_session, others, user_id="user_2", type="against")
+    other_category = _pin_in(db_session, category="카페")
+    _react_on(db_session, other_category, user_id="user_1", type="against")
+    other_map = _pin_in(db_session, map_id="map_2")
+    _react_on(db_session, other_map, user_id="user_1", type="against")
+
+    result = api.list_disliked_place_ids(db_session, user_id="user_1", map_id="map_1", category="음식점")
+
+    assert result == [mine.place_id]
+
+
+def test_list_disliked_place_ids_includes_soft_deleted_pins(db_session):
+    """🚫는 이력이라 핀이 지워져도 남는다 — 다른 조회 함수와 달리 deleted_at을 거르지 않는다."""
+    from datetime import datetime, timezone
+
+    row = _pin_in(db_session)
+    _react_on(db_session, row, user_id="user_1", type="against")
+    row.deleted_at = datetime.now(timezone.utc)
+    db_session.commit()
+
+    assert api.list_disliked_place_ids(db_session, user_id="user_1", map_id="map_1", category="음식점") == [row.place_id]
+
+
+def test_list_disliked_place_ids_is_empty_when_nothing_disliked(db_session):
+    assert api.list_disliked_place_ids(db_session, user_id="user_1", map_id="map_1", category="음식점") == []
