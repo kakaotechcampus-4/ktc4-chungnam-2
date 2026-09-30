@@ -157,6 +157,18 @@ describe("에러 시나리오", () => {
   });
 });
 
+describe("#139 — 외부 지도 SDK 요청은 목 서버가 가로채지 않는다", () => {
+  it("카카오맵 SDK 주소가 `*/maps/:mapId` 핸들러에 잡혀 404가 되지 않는다", async () => {
+    let body = "";
+    try {
+      body = await fetch("https://dapi.kakao.com/v2/maps/sdk.js").then((r) => r.text());
+    } catch {
+      // 네트워크가 없으면 요청이 실제로 밖으로 나가려다 실패한 것 — 목 서버가 가로채지 않았다는 뜻이다.
+    }
+    expect(body).not.toContain('"code":"NOT_FOUND"');
+  }, 15000);
+});
+
 describe("#22·#24 — 내 지도 목록 + 지도 생성 지역(선택)", () => {
   it("GET /maps는 내가 구성원인 지도만 최근 생성순으로 준다", async () => {
     const created = await fetch(`${BASE}/maps`, {
