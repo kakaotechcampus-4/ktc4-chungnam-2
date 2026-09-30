@@ -115,7 +115,7 @@ describe("에러 시나리오", () => {
     expect(body.detail.funnel.length).toBeGreaterThan(0);
   });
 
-  it("retry-limit — 3회 초과 시 429 RETRY_LIMIT", async () => {
+  it("retry-limit — 5회 초과 시 429 RETRY_LIMIT", async () => {
     resetScenario("retry-limit");
     const res = await fetch(`${BASE}/runs/run_retry_limit/retry`, { method: "POST" });
     expect(res.status).toBe(429);
@@ -202,6 +202,75 @@ describe("#22·#24 — 내 지도 목록 + 지도 생성 지역(선택)", () => 
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.region).toBeUndefined();
+  });
+});
+
+describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
+  const post = (path: string, body?: unknown) =>
+    fetch(`${BASE}${path}`, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
+
+  it("숙소 핀에는 반응을 남길 수 없다 — can_react=false, PUT은 422 REACTION_NOT_ALLOWED", async () => {
+    const created = await post("/maps/map_1/pins", { category: "숙소", source: "coordinate", lat: 33.5, lng: 126.5, place_id: "stay-1" });
+    expect(created.status).toBe(201);
+    const pin = await created.json();
+    const list = await fetch(`${BASE}/maps/map_1/pins`).then((r) => r.json());
+    expect(list.find((p: { id: string }) => p.id === pin.id).permissions.can_react).toBe(false);
+    const res = await fetch(`${BASE}/pins/${pin.id}/reaction`, { method: "PUT", body: JSON.stringify({ type: "like" }) });
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("REACTION_NOT_ALLOWED");
+  });
+
+  it("내 반응(my_reaction)과 구성원 의견 목록(reason_chip_ids 포함)", async () => {
+    await fetch(`${BASE}/pins/pin_1/reaction`, {
+      method: "PUT",
+      body: JSON.stringify({ type: "against", reason_text: "매워요", reason_chip_ids: ["too_spicy"] }),
+    });
+    const list = await fetch(`${BASE}/maps/map_1/pins`).then((r) => r.json());
+    expect(list.find((p: { id: string }) => p.id === "pin_1").my_reaction.type).toBe("against");
+    const opinions = await fetch(`${BASE}/pins/pin_1/reactions`).then((r) => r.json());
+    const mine = opinions.find((o: { user_id: string }) => o.user_id === "u_me");
+    expect(mine.reason_chip_ids).toEqual(["too_spicy"]);
+    expect(typeof mine.display_name).toBe("string");
+    await fetch(`${BASE}/pins/pin_1/reaction`, { method: "DELETE" });
+    const after = await fetch(`${BASE}/maps/map_1/pins`).then((r) => r.json());
+    expect(after.find((p: { id: string }) => p.id === "pin_1").my_reaction).toBeNull();
+  });
+
+  it("초대 요약 GET /invites/{token} — 요약·없는 토큰 404", async () => {
+    const inv = await post("/maps/map_1/invite").then((r) => r.json());
+    const res = await fetch(`${BASE}/invites/${inv.token}`);
+    expect(res.status).toBe(200);
+    const summary = await res.json();
+    expect(summary.title).toBeTruthy();
+    expect(summary).not.toHaveProperty("map_id");
+    expect(summary).toHaveProperty("member_count");
+    expect(summary).not.toHaveProperty("pins");
+    const missing = await fetch(`${BASE}/invites/nope`);
+    expect(missing.status).toBe(404);
+    expect((await missing.json()).code).toBe("INVITE_NOT_FOUND");
+  });
+
+  it("이름 수정 PATCH /auth/me — 계정 단위, 빈 이름은 422", async () => {
+    const ok = await fetch(`${BASE}/auth/me`, { method: "PATCH", body: JSON.stringify({ display_name: "새이름" }) });
+    expect(ok.status).toBe(200);
+    expect((await fetch(`${BASE}/auth/me`).then((r) => r.json())).display_name).toBe("새이름");
+    const bad = await fetch(`${BASE}/auth/me`, { method: "PATCH", body: JSON.stringify({ display_name: "" }) });
+    expect(bad.status).toBe(422);
+  });
+
+  it("반경 넓히기는 +5분씩, 도보 30분 상한에서 409 WIDEN_LIMIT", async () => {
+    resetScenario("region-conflict");
+    const runId = "run_region_conflict";
+    const radii: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const res = await post(`/runs/${runId}/widen`);
+      expect(res.status).toBe(202);
+      radii.push((await res.json()).default_radius_walk_min);
+    }
+    expect(radii).toEqual([20, 25, 30]);
+    const over = await post(`/runs/${runId}/widen`);
+    expect(over.status).toBe(409);
+    expect((await over.json()).code).toBe("WIDEN_LIMIT");
   });
 });
 

@@ -2,6 +2,29 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-09-30 (두 번째) — FE 스펙 갭 6건 + 숙소 반응 불가·「기타」·탈퇴 처리 (#154, #155)
+
+FE가 디스코드로 올린 10건 중 스펙에 없거나 틀린 것을 루트가 검증해 반영했다. 모듈 구현은 이 스펙을 기준으로 한다(스펙보다 구현이 앞서지 않는다).
+
+**추가 (FE 영향: 타입 재생성 `npm run gen:types`)**
+- `Candidate`·`Pin`에 `reason`, `member_fulfillment`(`MemberFulfillment{satisfied,total,by_member?}`), `place_source`(`PlaceSource{provider,url?}`) — 가드레일 5. 게시된 뒤에도 Pin에 유지. 모두 선택 필드(AI 추천 핀만).
+- `Pin.my_reaction: Reaction | null` — 「♥ 2 · 나」 칩, 「의견 취소」 링크용.
+- `GET /pins/{pinId}/reactions` → `Reaction[]` — 핀 상세 「구성원 의견」. `Reaction`에 `reason_chip_ids`, `display_name` 추가.
+- `GET /invites/{token}` → `InviteSummary` (map_id 미포함) — 로그인 불요. 404 `INVITE_NOT_FOUND`, 410 `INVITE_EXPIRED`(수락 API에도 동일).
+- `PATCH /auth/me {display_name}` → `User` — 계정 단위 이름 수정(지도별 이름은 두지 않는다).
+- `RecommendRun.default_radius_walk_min`, `POST /runs/{runId}/widen`이 `RecommendRun`을 돌려주고 상한 초과 시 409 `WIDEN_LIMIT`. 폭 +5분/회, 상한 도보 30분(`docs/constraints.md`, 조정 가능한 상수 — **제안값**).
+- `Category`에 `기타` 추가. 숙소 핀은 `permissions.can_react=false`, 반응 요청 시 422 `REACTION_NOT_ALLOWED`(`docs/permissions.md`, #154).
+
+**바로잡음 (동작 변화 없음)**
+- 재시도 상한 문구 3회 → 5회(#31 확정값이 이미 기획안·errors.md에 있었고 api-spec만 옛 값이었다).
+- `DELETE /pins/{pinId}` 권한 "결정 이슈 미결" → 구성원 누구나(#25). `DELETE /pins/{pinId}/reaction`은 "핀 되돌리기"에서 "내 반응 취소"로.
+- `/auth/withdraw`: 반응·사유·근거 줄 삭제, 핀 유지 + "탈퇴한 구성원" 표시(#155).
+
+**BE 후속** (마이그레이션 번호는 루트가 배정 — 0015 recommend: 숙소 enum 제거(#146)+candidates 컬럼, 0016 pins: 기타 enum+pins 컬럼)
+- pins: 의견 목록·`my_reaction`·`reason_chip_ids` 응답(DB 컬럼은 이미 있음), 숙소 반응 차단, 기타, AI 핀 3필드 복사, `delete_reactions_by_user`
+- recommend: Candidate 3필드(`member_fulfillment`은 지금 항상 `{}`), widen 폭/상한, `delete_evidence_lines_by_author`
+- maps: `GET /invites/{token}`+에러코드(마이그레이션 없음) · auth: `PATCH /auth/me`, 탈퇴 시 두 함수 호출
+
 ## 2026-09-30 — 추천 카테고리에서 숙소 제외, RecommendCategory 신설 (#145)
 
 숙소를 AI 대안 추천 대상에서 뺐다(#145). 숙소 핀은 그대로 찍고 반응을 남길 수 있어서 핀 쪽

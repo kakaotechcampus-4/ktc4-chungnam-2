@@ -12,7 +12,7 @@ DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). 실시간 보조: Redis
 ```
 users(
   id, provider('kakao'), provider_user_id, display_name,
-  created_at, deleted_at            -- 탈퇴 시 soft delete, 12절
+  created_at, deleted_at            -- 탈퇴 시 users만 soft delete. 반응·근거 줄은 hard delete, 핀은 유지하고 작성자는 '탈퇴한 구성원'으로 표시 (12절, #155)
 )
 
 maps(
@@ -67,7 +67,7 @@ pins(
 
 reactions(
   id, pin_id, user_id, type('like'|'neutral'|'against'),  -- ♥/△/🚫. '?'미확인은 행 없음으로 표현
-  reason_text, reason_chip_ids jsonb,   -- 반대는 reason 필수(가드레일 3)
+  reason_text, reason_chip_ids jsonb,   -- 반대는 reason 필수(가드레일 3). 숙소 핀엔 행이 생기지 않는다(#154). 작성자 탈퇴 시 삭제(#155)
   created_at, updated_at
 )
   unique(pin_id, user_id)
