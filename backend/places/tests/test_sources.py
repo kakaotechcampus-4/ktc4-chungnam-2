@@ -39,6 +39,20 @@ def test_kakao_clamps_radius_and_pages_until_end():
     assert seen[0].url.params["radius"] == "20000"
 
 
+def test_kakao_keeps_page1_when_page2_fails():
+    replies = iter([httpx.Response(200, json={"documents": [KAKAO_DOC], "meta": {"is_end": False}}),
+                    httpx.Response(500)])
+    http, _, seen = make_http(lambda r: next(replies))
+    found = KakaoPlaceSource(http, "k", max_pages=2).search_nearby(category="음식점", lat=1, lng=2, radius_m=10)
+    assert [p.place_id for p in found] == ["kakao:111"] and len(seen) == 2
+
+
+def test_kakao_page1_failure_still_raises_for_fallback():
+    http, _, _ = make_http(lambda r: httpx.Response(500))
+    with pytest.raises(SourceError):
+        KakaoPlaceSource(http, "k").search_nearby(category="음식점", lat=1, lng=2, radius_m=10)
+
+
 def test_kakao_skips_broken_documents():
     http, _, _ = make_http(json_response({"documents": [{"id": "1"}, KAKAO_DOC], "meta": {"is_end": True}}))
     assert len(KakaoPlaceSource(http, "k").search_nearby(category="음식점", lat=1, lng=2, radius_m=10)) == 1
