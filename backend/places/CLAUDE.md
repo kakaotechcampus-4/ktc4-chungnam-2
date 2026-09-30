@@ -4,8 +4,9 @@
 
 ## 책임
 
-- **`PlaceSource` 어댑터 구현 — v1부터 `KakaoPlaceSource`·`NaverPlaceSource`·`GooglePlaceSource` 3개 전부 실사용**
-  (2026-09-07 결정, 이슈 #14 하위 결정 갱신 — 상세는 이슈 코멘트 참고).
+- **`PlaceSource` 어댑터 구현 — `KakaoPlaceSource`·`NaverPlaceSource`·`GooglePlaceSource` 3개가 있고, v1 실연동은 카카오만 켠다**
+  (2026-10-01 정정: 2026-09-07의 "3개 전부 실사용" 결정을 대체. `PLACES_SOURCES=kakao`, 네이버·구글은 코드만 있고 비활성 — 필요해지면 설정으로 켠다).
+  아래 우선순위는 3개를 모두 켰을 때의 폴백 순서다.
   소스 우선순위(비용 순): ① 카카오 로컬 API로 좌표·기본정보(층1)를 채운다 → ② 카카오가 안
   주는 값(가격·평점·영업시간)은 **네이버 지역 검색 API**(무료 티어 검색 API, 유료 지도 SDK와는
   다른 상품이니 혼동 주의)로 먼저 보완한다 → ③ 그래도 없으면 **Google Places API**로 최종
