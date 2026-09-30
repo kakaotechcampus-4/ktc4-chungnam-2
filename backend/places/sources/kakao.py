@@ -54,6 +54,17 @@ class KakaoPlaceSource:
                 break
         return out
 
+    def search_by_name(self, *, query: str, lat: float | None, lng: float | None, limit: int) -> list[RawPlace]:
+        """키워드 검색. 좌표가 있으면 가까운 순(반경 제한 없음), 없으면 관련도 순."""
+        params: dict[str, Any] = {"query": query, "size": min(limit, _PAGE_SIZE), "page": 1}
+        if lat is not None and lng is not None:
+            params.update({"x": lng, "y": lat, "sort": "distance"})
+        body = self._http.request_json(
+            self.name, "keyword", "GET", f"{BASE}/keyword.json", headers=self._headers(), params=params,
+        )
+        found = (_parse(d) for d in body.get("documents", []))
+        return [p for p in found if p][:limit]
+
     def fill(self, place: RawPlace, wanted: frozenset[str]) -> dict[str, Any]:
         if "phone" not in wanted:
             return {}

@@ -10,10 +10,12 @@ from typing import Any, Sequence
 from common.errors import AppError
 from places import fallback
 from places.cache import TTLCache
-from places.schemas import Area, PlaceRef, ResolvedCoords
-from places.sources.base import PlaceSource, RawPlace
+from places.http import SourceError
+from places.schemas import Area, PlaceRef, PlaceSearchResult, PlaceSourceInfo, ResolvedCoords
+from places.sources.base import PlaceSource, RawPlace, distance_m
 
 _ENRICHED = "enriched:"
+_MAX_ECHO_DRIFT_M = 200.0   # search 경로에서 echo 좌표가 캐시 좌표와 이만큼 넘게 다르면 거절한다
 
 
 class PlaceService:
@@ -32,6 +34,21 @@ class PlaceService:
         for place in seen.values():
             self._cache.put(place.place_id, place)
         return [PlaceRef(p.place_id, p.lat, p.lng) for p in seen.values()]
+
+    def search_by_name(self, query: str, near: tuple[float, float] | None, limit: int) -> list[PlaceSearchResult]:
+        """이름 검색(#180). 결과는 메모리 캐시에만 둔다 — resolve가 나중에 echo 좌표를 대조한다.
+        0건이면 []. 소스가 전부 실패하면 503 PLACES_UNAVAILABLE."""
+        lat, lng = near if near else (None, None)
+        try:
+            found = fallback.search_by_name_with_fallback(self._sources, query=query, lat=lat, lng=lng, limit=limit)
+        except SourceError as exc:
+            raise AppError("PLACES_UNAVAILABLE") from exc
+        return self.remember_and_convert(found)
+
+    def remember_and_convert(self, found: list[RawPlace]) -> list[PlaceSearchResult]:
+        for place in found:
+            self._cache.put(place.place_id, place)
+        return [_to_result(p) for p in found]
 
     def get_raw_facts(self, place_id: str) -> dict[str, Any]:
         """캐시에 있는 장소의 원자료(층1·2). 없으면 {} — 못 찾은 것이지 "정보 없음"이 아니다."""
@@ -56,6 +73,11 @@ class PlaceService:
             if cached is None:
                 raise AppError("VALIDATION_ERROR", "장소를 찾지 못했습니다 — lat/lng를 함께 보내야 합니다")
             lat, lng = cached.lat, cached.lng
+        else:
+            cached = self._cache.get(place_id)
+            # 캐시에 없으면(만료) echo 좌표를 그대로 쓴다 — coordinate 경로가 이미 임의 좌표를 받으니 위험이 늘지 않는다
+            if cached is not None and distance_m(lat, lng, cached.lat, cached.lng) > _MAX_ECHO_DRIFT_M:
+                raise AppError("VALIDATION_ERROR", "검색 결과의 좌표와 다릅니다 — 검색 결과의 lat/lng를 그대로 보내야 합니다")
         return ResolvedCoords(place_id, lat, lng)
 
 
@@ -67,3 +89,15 @@ def _facts(place: RawPlace) -> dict[str, Any]:
         "opening_hours": list(place.opening_hours) if place.opening_hours else None,
     }
     return {k: v for k, v in raw.items() if v is not None}
+
+
+def _to_result(place: RawPlace) -> PlaceSearchResult:
+    return PlaceSearchResult(
+        place_id=place.place_id,
+        place_name=place.name[:100],   # 핀 생성 요청의 place_name 상한(100)과 같다
+        lat=place.lat,
+        lng=place.lng,
+        category=place.category,       # 소스가 추정한 제안값 — 핀의 category는 사용자가 정한다
+        address=place.address[:200] if place.address else None,
+        place_source=PlaceSourceInfo(provider=place.source, url=place.place_url),
+    )

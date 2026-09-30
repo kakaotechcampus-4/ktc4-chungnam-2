@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 CATEGORIES = ("음식점", "카페", "숙소", "관광지", "기타")
 
@@ -70,6 +70,17 @@ class PlaceSource(Protocol):
     def fill(self, place: RawPlace, wanted: frozenset[str]) -> dict[str, Any]:
         """place와 같은 장소를 이 소스에서 찾아 wanted 필드 값만 돌려준다. 못 찾으면 {}."""
         ...
+
+
+@runtime_checkable
+class NameSearchable(Protocol):
+    """이름 검색을 지원하는 소스(#180). 지금은 카카오만 — 네이버·구글은 켤 때 구현한다."""
+
+    name: str
+
+    def is_configured(self) -> bool: ...
+
+    def search_by_name(self, *, query: str, lat: float | None, lng: float | None, limit: int) -> list[RawPlace]: ...
 
 
 def synthetic_id(name: str, lat: float, lng: float) -> str:

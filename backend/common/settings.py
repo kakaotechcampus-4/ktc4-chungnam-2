@@ -118,6 +118,7 @@ class Settings:
     places_http_timeout_s: float = 3.0
     places_http_retries: int = 1         # 타임아웃·429·5xx에만. 구글은 과금이라 재시도하지 않는다.
     places_google_max_calls: int = 100   # 프로세스 수명 동안 구글 호출 상한(과금 안전장치). 0이면 무제한.
+    places_search_per_min: int = 30      # GET /places/search 사용자당 분당 상한(#180). 0 이하면 끈다.
 
     def __post_init__(self) -> None:
         # 잘못된 Settings는 애초에 "만들어질 수 없다" — 호출 순서에 기대지 않는 게 핵심이다.
@@ -197,6 +198,7 @@ class Settings:
             places_http_timeout_s=_float("PLACES_HTTP_TIMEOUT_S", 3.0),
             places_http_retries=_int("PLACES_HTTP_RETRIES", 1),
             places_google_max_calls=_int("PLACES_GOOGLE_MAX_CALLS", 100),
+            places_search_per_min=_int("PLACES_SEARCH_PER_MIN", 30),
             frontend_base_url=frontend_base_url,
             frontend_login_redirect_url=_env(
                 "FRONTEND_LOGIN_REDIRECT_URL",

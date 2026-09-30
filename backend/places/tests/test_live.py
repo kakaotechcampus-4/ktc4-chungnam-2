@@ -53,3 +53,12 @@ def test_google_fill_one_place(sources):
     got = srcs["google"].fill(base[0], frozenset({"rating", "price_level", "opening_hours"}))
     print("google fill:", base[0].name, got, "calls:", stats.snapshot())
     assert stats.count("google") == 1
+
+
+def test_kakao_keyword_search_by_name(sources):
+    srcs, _ = sources
+    _need(srcs["kakao"])
+    found = srcs["kakao"].search_by_name(query="성수 칼국수", lat=SEONGSU["lat"], lng=SEONGSU["lng"], limit=5)
+    print("kakao name search:", [(p.name, p.lat, p.lng) for p in found])
+    assert found and all(p.name and p.lat and p.lng for p in found)
+    assert all(p.place_id.startswith("kakao:") for p in found)
