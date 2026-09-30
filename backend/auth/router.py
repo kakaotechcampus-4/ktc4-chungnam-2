@@ -20,7 +20,7 @@ from starlette.responses import RedirectResponse
 
 from auth import core, service
 from auth.deps import DbSession, get_current_user
-from auth.schemas import CurrentUser, UserResponse
+from auth.schemas import CurrentUser, UserResponse, UserUpdateRequest
 from common.settings import settings
 
 SESSION_COOKIE = "session"
@@ -52,6 +52,12 @@ def get_kakao_callback(code: str = Query(...), db: Session = DbSession):
 @router.get("/me", response_model=UserResponse)
 def get_me(user: CurrentUser = Depends(get_current_user), db: Session = DbSession):
     row = service.get_active_user_or_401(db, user_id=user.user_id)
+    return UserResponse(id=row.id, display_name=row.display_name)
+
+
+@router.patch("/me", response_model=UserResponse)
+def patch_me(body: UserUpdateRequest, user: CurrentUser = Depends(get_current_user), db: Session = DbSession):
+    row = service.update_display_name(db, user_id=user.user_id, display_name=body.display_name)
     return UserResponse(id=row.id, display_name=row.display_name)
 
 

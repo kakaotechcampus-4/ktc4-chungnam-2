@@ -24,7 +24,6 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 KNOWN_MISSING: dict[tuple[str, str], str] = {
     ("get", "/invites/{}"): "#159",
     ("get", "/pins/{}/reactions"): "#157",
-    ("patch", "/auth/me"): "#160",
 }
 
 # 스펙에 없어도 되는 라우트(운영/문서용).
