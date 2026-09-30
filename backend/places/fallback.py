@@ -10,7 +10,7 @@ import logging
 from typing import Sequence
 
 from places.http import SourceError
-from places.sources.base import ENRICHABLE_FIELDS, PlaceSource, RawPlace
+from places.sources.base import ENRICHABLE_FIELDS, NameSearchable, PlaceSource, RawPlace
 
 log = logging.getLogger("pingo.places")
 
@@ -51,3 +51,28 @@ def enrich(place: RawPlace, sources: Sequence[PlaceSource], wanted: frozenset[st
             continue
         place = place.merged(fields, src.name, ask)
     return place
+
+
+def search_by_name_with_fallback(
+    sources: Sequence[PlaceSource], *, query: str, lat: float | None, lng: float | None, limit: int
+) -> list[RawPlace]:
+    """이름 검색. 결과가 있는 첫 소스가 이긴다. 성공했지만 0건이면 [] — 지어내지 않는다.
+    이름 검색이 가능한 소스가 하나도 성공하지 못하면(키 없음·장애·상한·소스 없음) SourceError."""
+    succeeded = False
+    for src in sources:
+        if not isinstance(src, NameSearchable):
+            continue
+        if not src.is_configured():
+            log.info("places.skip source=%s reason=no_key", src.name)
+            continue
+        try:
+            found = src.search_by_name(query=query, lat=lat, lng=lng, limit=limit)
+        except SourceError as exc:
+            log.warning("places.fallback source=%s reason=%s", src.name, exc)
+            continue
+        succeeded = True
+        if found:
+            return found
+    if succeeded:
+        return []
+    raise SourceError("이름 검색을 할 수 있는 소스가 없다(키 없음·장애·호출 상한)")

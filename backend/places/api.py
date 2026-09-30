@@ -11,7 +11,10 @@ import httpx
 from common.settings import settings
 from places.cache import TTLCache
 from places.http import CallStats, SourceHttp
-from places.schemas import Area, PlaceRef, ResolvedCoords
+from common.errors import AppError
+from places.ratelimit import SlidingWindowLimiter
+from places.samples import search_samples
+from places.schemas import Area, PlaceRef, PlaceSearchResult, ResolvedCoords
 from places.service import PlaceService
 from places.sources.base import PlaceSource, RawPlace
 from places.sources.google import GooglePlaceSource
@@ -20,6 +23,7 @@ from places.sources.naver import NaverPlaceSource
 
 log = logging.getLogger("pingo.places")
 _STATS = CallStats()
+search_limiter = SlidingWindowLimiter(settings.places_search_per_min)   # 사용자당 분당 상한, 인메모리
 
 
 def call_counts() -> dict[str, int]:
@@ -58,3 +62,21 @@ def get_raw_facts(place_id: str) -> dict[str, Any]:
 
 def resolve_place(source: str, place_id: str | None, lat: float | None, lng: float | None) -> ResolvedCoords:
     return _service().resolve(source, place_id, lat, lng)
+
+
+def _is_dev() -> bool:
+    return settings.places_mode == "dev"
+
+
+def check_search_rate(user_id: str) -> None:
+    """GET /places/search 사용자당 호출 상한. 카카오 응답 헤더에 쿼터가 없어 서버에서 직접 센다."""
+    if not search_limiter.allow(user_id):
+        raise AppError("RATE_LIMITED")
+
+
+def search_by_name(query: str, near: tuple[float, float] | None, limit: int) -> list[PlaceSearchResult]:
+    """이름 검색. dev 모드는 카카오를 부르지 않고 고정 샘플 5곳(이름 부분 일치)을 돌려준다."""
+    if _is_dev():
+        lat, lng = near if near else (None, None)
+        return _service().remember_and_convert(search_samples(query, lat, lng, limit))
+    return _service().search_by_name(query, near, limit)

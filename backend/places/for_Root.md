@@ -87,3 +87,33 @@ v1은 카카오만(`PLACES_SOURCES=kakao`). 네이버·구글은 켤 때 같은 
 - `place_facts` 쓰기·차원압축 파이프라인, DB 스키마/마이그레이션 변경(#34b, #53 이후)
 - `docs/`·`최종기획안.md` 수정
 - 이슈 #34 "실제 소요" 기입 — 이 이슈는 B(영구 수집)가 남아 있어 끝난 게 아니다. A 파트 실제 소요는 PR 머지 후 코멘트로 남기는 게 맞다고 본다.
+
+---
+
+# #180 GET /places/search 보고 (2026-09-30)
+
+## 구현
+- `places/router.py`(신설) + `main.py`에 `include_router` 한 줄. 로그인만 필요, 지도 구성원 여부 무관.
+- 검증 → 호출 상한 → 검색 순서. 검증 위반(q 공백·50자 초과, lat/lng 한쪽만, 범위·limit 위반)은 422 `VALIDATION_ERROR`이고 **상한을 소비하지 않는다.**
+- `KakaoPlaceSource.search_by_name`: keyword.json. 좌표가 있으면 `x,y`+`sort=distance`(반경 제한 없음), 없으면 관련도 순. `size=min(limit,15)`, 1페이지만 부른다(호출 1회/검색).
+- 카테고리는 `category_group_code` 제안값(음식점/카페/숙소/관광지/기타), 이름은 `place_name`(100자 상한으로 자름 — 핀 생성 요청과 같은 상한), `place_source{provider, url=place_url}`.
+- 0건은 `[]`. 이름 검색 가능한 소스가 하나도 성공하지 못하면(키 없음·장애·호출 상한) 503 `PLACES_UNAVAILABLE`. 소스 하나가 실패해도 다른 소스가 0건으로 성공하면 `[]`(503 아님).
+- 결과는 기존 `TTLCache`에만 담는다(영구 저장 없음). `resolve`(source=search)는 캐시에 place_id가 있고 echo 좌표가 캐시 좌표와 200m 넘게 다르면 422로 거절, 캐시에 없으면(만료) 지금처럼 echo 좌표를 쓴다.
+- `PLACES_MODE=dev`(기본)는 카카오를 부르지 않고 고정 샘플 5곳(이름 부분 일치, 거리순)을 돌려준다. `contracts/mocks/handlers/places.ts`의 seed와 같은 장소 — **둘 중 하나를 바꾸면 둘 다 바꿔야 한다.**
+- 설정 `PLACES_SEARCH_PER_MIN`(기본 30, 0 이하면 끔): `common/settings.py`, `.env.example`.
+- `NameSearchable` 프로토콜로 이름 검색 지원 소스만 고른다 — 네이버·구글 코드는 건드리지 않았다(켤 때 `search_by_name`을 구현하면 폴백에 자동 참여).
+
+## 한계·주의 (루트 확인)
+1. **호출 상한은 인메모리**다: 프로세스 재시작 시 초기화되고, 인스턴스가 여러 개(Cloud Run 다중)면 인스턴스마다 따로 센다 — 실효 상한은 `분당 30 × 인스턴스 수`까지 늘 수 있다. 카카오 일 쿼터(100,000건)를 지키는 용도로는 충분하지만 엄밀한 전역 상한은 아니다. 공개 배포 전에 Redis(`REDIS_URL`은 이미 있다) 등으로 옮길지 결정이 필요하다.
+2. 검색 응답 자체는 캐시하지 않는다(같은 검색어도 매번 카카오 1회). 결과 장소만 place_id 조회용으로 캐시한다. FE debounce와 사용자당 상한이 1차 방어다. 검색어 캐시가 필요하면 별도 결정.
+3. 캐시 TTL이 지나 만료된 뒤의 `source=search` 핀 생성은 echo 좌표를 그대로 믿는다(요청 사양대로). `PLACES_CACHE_TTL_S=0`이면 좌표 대조가 사실상 꺼진다.
+4. `source=search`이면서 `place_id`가 dev 샘플(`kakao:mock-*`)인 핀은 dev에서만 생긴다. real 전환 후 기존 dev 핀과 place_id 체계가 섞이지 않게 주의.
+5. 핀 생성 요청의 `place_name`은 클라이언트가 보낸 값을 그대로 저장한다(캐시의 이름과 대조하지 않는다) — 스펙 범위 밖이라 손대지 않았다.
+
+## 실측 (카카오 live, 성수동 좌표 기준 "성수 칼국수")
+키워드 검색이 5건의 `place_name`·좌표를 돌려주는 것을 확인했다(`pytest -m live places -k by_name`, 1 passed). 응답 필드는 3-1절의 12개와 같다.
+
+## 테스트
+- `places/tests/test_name_search.py`(요청 모양·폴백·503·상한·resolve 대조·샘플), `integration/test_places_search.py`(검색→핀 생성 201·place_name 저장, 0건, 422 10종, 429(사용자별), 503 2종, 401, 비구성원 허용), `test_response_contract.py` 골든 패스에 검색 호출 추가, `KNOWN_MISSING`에서 `("get","/places/search")` 삭제.
+- 통합 테스트에서 추가 클라이언트를 `with TestClient(...)`로 열면 lifespan이 한 번 더 열려 dispatcher 싱글턴 상태가 남아 `realtime/tests/test_shutdown.py`가 깨진다(전체 실행에서만 실패, 단독은 통과). `with` 없이 쓰는 기존 패턴을 따랐다.
+- `PINGO_TEST_DB=pingo_test_places python -m pytest` → 819 passed, 6 deselected(live), 실패 0.

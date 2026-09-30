@@ -112,6 +112,11 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients):
     assert b.post(f"/invites/{invite.json()['token']}/accept").status_code == 200
     assert a.get(f"/maps/{map_id}/members").status_code == 200
 
+    # 이름 검색(#180) — 결과 스키마 검증 + 0건(빈 배열) + 에러 봉투 422
+    assert a.get("/places/search", params={"q": "해운대", "lat": 35.16, "lng": 129.16}).status_code == 200
+    assert a.get("/places/search", params={"q": "존재하지않는가게"}).json() == []
+    assert a.get("/places/search", params={"q": ""}).status_code == 422
+
     pin_ids = []
     for i, (cat, lat, lng) in enumerate([("음식점", 35.10, 129.03), ("음식점", 35.16, 129.16), ("카페", 35.15, 129.12)]):
         r = a.post(f"/maps/{map_id}/pins", json={"category": cat, "source": "coordinate", "lat": lat, "lng": lng,
