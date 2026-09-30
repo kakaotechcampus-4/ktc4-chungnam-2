@@ -1,8 +1,112 @@
 # 루트 리뷰 가이드 — backend/recommend
 
-`backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 세 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#124" 절이 최신, 그 아래 "#108" 절이 코어 파이프라인 전체,
-가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+`backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 네 세션에 걸친
+작업을 누적해서 담는다 — 아래 "#112" 절이 최신, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
+전체, 가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+
+---
+
+# #112 — 선호 순위 점수 계산과 상위 3곳 선정 (#99 후속)
+
+## 구현 범위
+
+이슈 지시(`docs/constraints.md`의 "선호 점수 계산 (③-b)" 절 + 이슈 본문 요약)를 그대로
+따랐다 — `recommend/core.py`에 `HeartedPlace`/`ScoredCandidate` + `build_preference_criteria`/
+`score_candidates`/`build_member_fulfillment`/`select_top_candidates` 4개 순수 함수를 추가하고,
+`flows.py::_run_pipeline`이 `llm_service.rank_candidates`(항등 순서 스텁) 대신 이 함수들을
+쓰도록 배선했다. `member_fulfillment`도 이번 점수 계산과 연결되는 자리라고 판단해 같이 채웠다
+(아래 "꼭 읽어야 할 것" 3번).
+
+- **문서 갭(착수 시점 기록 — 이후 루트가 절을 추가해 해소됨)**: 이슈 본문은 "규칙 정본은 `docs/constraints.md`의 '선호 점수
+  계산 (③-b)' 절"이라고 안내하지만, 실제로 그 문서를 읽어보면 그 절이 존재하지 않는다(있는
+  건 "조건별 정의" 실격 표뿐). `docs/architecture.md:273`도 같은 절을 참조하고 있어 — 아마
+  `docs/CHANGELOG-api.md`에 없는 걸 보면 문서에 반영하는 걸 깜빡한 것으로 보인다. 이 세션은
+  `gh issue view 112`로 이슈 본문을 직접 읽어 규칙(①~⑤ 단계, 점수 공식, 3단계 tie-break)을
+  확인하고 그대로 구현했다 — **`docs/constraints.md`에 이 절을 실제로 추가하는 건 루트 소관
+  (값 변경은 루트만)이라 이번 세션이 하지 않았다.**
+- **`recommend/core.py`** — 위 4개 함수. `HeartedPlace`(checks + member_ids)와
+  `ScoredCandidate`(place_id/score/region_label/lat/lng) 두 dataclass도 추가.
+- **`recommend/models.py`/마이그레이션 `0013_regions_anchor_points`** — `regions.anchor_points`
+  (JSONB, `[[lat, lng], ...]`) 신규. 3단계 tie-break("그 무리의 기준 핀들까지 거리 평균")를
+  계산하려면 병합 전 원본 anchor 좌표가 필요한데, `regions`는 병합된 `center_lat/lng`만 갖고
+  있었다 — `candidates.lat/lng`·`regions.center_lat/lng`와 같은 종류의 차원 압축 결정이다.
+  `flows.py::_default_circle_and_anchors`(옛 `_default_circle`을 이름까지 바꿔 확장)가
+  `create_run` 시점에 이 값을 채운다.
+- **`pins/api.py::list_liked_pins_with_checks`(신규, pins 소유 파일)** — ♥(like) 반응을 받은
+  핀들의 `checks`(#124가 채운 값)와 ♥ 누른 구성원 집합을 묶어 돌려준다. 기존 세션들이
+  `count_reacted_users` 등을 추가한 것과 같은 선례를 따랐다 — **pins 세션의 리뷰가 필요하다.**
+  루트 검수 반영: `requested_by`를 받아 `service._visible_pins_clause`(공개 핀 + 본인 비공개
+  핀)로 거른다 — 타인의 비공개 후보에 붙은 ♥/라벨이 요청자의 선호 프로필에 섞이지 않는다(가드레일 1).
+  `flows._run_pipeline`이 `run.requested_by`를 넘긴다.
+- **`flows.py::_run_pipeline`** — 기존엔 활성 실격(hard) 라벨만 붙였는데, 이제 선호(soft) 라벨
+  (`constraints.SOFT_FACT_KEYS`)도 모든 후보에 붙인다 — 그래야 점수 계산에 쓸 known 값이
+  생긴다. funnel에 "상위 3곳 선정" 단계를 추가했다(최종기획안.md 239행 "남은 후보 5곳 →
+  상위 3곳 제시"와 맞춤).
+- **테스트**: `test_core.py`에 4개 함수 전부(값 갈릴 때/동점일 때/조사 안 됐을 때/실격 사유로
+  등록된 라벨/명시적 선호/구성원 수 diff/한 사람 중복 집계/동네 배분이 점수를 못 이기는 것/
+  거리는 합이 아니라 평균/기준 핀 없을 때 ValueError) 56개 신규 테스트. `test_flows.py`의
+  기존 region 헬퍼(`_make_region`)에 `anchor_points` 기본값을 추가해 회귀를 막았다.
+
+**검증**: `pytest recommend/tests -q` 123 passed. 백엔드 전체 `pytest --ignore=.venv -q` 561
+passed/1 skipped. `alembic upgrade head` 정상(0013이 head). `python -c "import main"` 정상.
+`ruff check`는 이 세션이 건드린 파일 전부 통과 — `alembic/versions/0013_...`의 `typing.Union`/
+`Sequence` 경고와 `core.py`의 `typing.Mapping`/`Sequence` 경고(UP035)는 0008 마이그레이션·
+`recommend/ports.py`가 이미 쓰는 것과 같은 기존 컨벤션이라 그대로 뒀다(#108 세션이 같은
+판단을 내린 전례 그대로).
+
+## 루트 검수 반영 (2026-09-30)
+
+- **[필수] 가드레일 1** — 위 pins 항목. 테스트: `pins/tests/test_pins_api.py`의
+  `test_list_liked_pins_with_checks_excludes_other_users_private_pin`(타인 비공개 핀의 ♥는 안
+  들어감) / `..._includes_own_private_pin`(본인 것은 들어감).
+- **선호 사유 작성자를 지지 구성원에 포함** — `flows`가 `preferred` 근거 줄의
+  `(fact_key → author_id 집합)`을 `preferred_authors`로 넘기고, `core._member_support`가 그
+  작성자를 그 fact_key의 지지자에 더한다(`score_candidates`/`build_member_fulfillment`/
+  `build_preference_criteria` 공통). 집합이라 ♥도 누르고 사유도 쓴 사람은 1명으로 센다.
+  `docs/constraints.md` "선호 점수 계산" 5번은 ♥ 없는 작성자를 지지자로 세는지 명시하지 않는다 —
+  "구성원 단위로 센다"(한 사람 1)와는 충돌하지 않지만 **문구로 못 박을지는 루트 확인 필요.**
+- **소프트 키만 사용** — `build_preference_criteria`/`_member_support`가
+  `constraints.SOFT_FACT_KEYS`에 속한 fact_key만 쓴다(하드 체크의 `passed`는 "실격 아님"이라
+  라벨 값과 뜻이 다르다). `preferred` 사유의 키도 소프트가 아니면 무시한다.
+- **0013 backfill** — 컬럼 추가 뒤 `anchor_points='[]'`인 기존 행을 `[[center_lat, center_lng]]`로
+  채운다(원본 anchor 목록은 복원 불가 — 중심을 대표 기준 핀으로 삼는 근사).
+- **[기록만·한계] `regions[0]` 하나만 쓴다** — `_run_pipeline`이 지역 여러 개를 다루지 않고
+  `regions[0]`의 label/anchor만 `select_top_candidates`에 넘긴다(모든 후보가 같은 region_label이라
+  "아직 안 뽑힌 동네 우선" tie-break가 사실상 동작하지 않는다). 지금은 v1 기본 원 하나뿐이라 실해는
+  없지만, **실제 장소 데이터(#34)를 연결해 후보가 여러 원에 걸치게 되면 후보→region 매핑과
+  region별 anchor 전달을 함께 고쳐야 한다.**
+
+## 꼭 읽어야 할 것 (이 세션이 직접 정한 것 — 문서에 없어 판단이 필요했던 지점)
+
+1. **선호 기준이 정확히 반반으로 갈릴 때(③단계) 그 라벨을 기준에서 뺐다.** 이슈 본문은
+   "많은 쪽을 택한다"만 말하고 동점은 다루지 않는다. 신호가 없다고 보고 배제하는 쪽을
+   택했다(True로 임의로 밀어붙이면 근거 없는 선호를 지어내는 셈이라 더 위험하다고 판단) —
+   `core.build_preference_criteria` docstring에 기록. **다른 처리(예: True 우선)가 맞다면
+   루트 결정 필요.**
+2. **`member_fulfillment`의 JSON 모양을 이 세션이 정했다.** `api-spec.yaml`/`data-model.md`
+   어디에도 스키마가 없다(이슈 본문도 "필요하면 채워달라"로 열어뒀다) — `{member_id: [충족한
+   fact_key, ...]}`로 정했다(점수에 실제로 기여한 구성원만 포함, 그냥 ♥한 사람 전부가 아니다).
+   API 응답(`recommend/schemas.py::Candidate`)엔 아직 이 필드가 없어 FE에 노출되지 않는다 —
+   노출하려면 스키마·`docs/api-spec.yaml`에 추가하는 결정이 먼저 필요하다.
+3. **선호(soft) 라벨링을 이번에 `_run_pipeline`에 새로 추가했다** — 이슈 범위(점수 계산)를
+   넘는 변경으로 보일 수 있어 명시한다. 기존 코드는 활성 실격(hard) 라벨만 `label_place`에
+   요청했는데, 점수 계산에 쓸 known 선호 라벨이 하나도 없으면 이번 기능 전체가 항상 0점만
+   내므로 반드시 같이 필요했다. dev 스텁(`place_facts.get_raw_facts`가 항상 `{}`)에서는 이
+   변경도 결과적으로 항상 unknown이라 실제 동작 차이는 없다(이슈 본문의 "동작 확인은 아직
+   못 한다"와 같은 이유).
+4. **`select_top_candidates`가 매 tie-break마다 거리 평균을 "남은 후보 전부"에 대해 미리
+   계산한다** — 점수만으로 승자가 갈리는 라운드에서도 기준 핀 없는 후보가 섞여 있으면
+   ValueError가 난다. 의도적이다(이슈 본문 "0개라면 반경 계산이 깨진 것이므로... 넘어가지
+   않는다"를 엄격하게 해석) — 운 좋게 tie-break에 안 걸렸다고 깨진 상태를 숨기지 않는다.
+
+## 루트 확인·결정 필요 (모아서)
+
+1. (해소) `docs/constraints.md`의 "선호 점수 계산 (③-b)" 절은 루트가 추가했다 — 이 세션 초기엔
+   없었다. 동점 처리·작성자 지지 여부(위 "루트 검수 반영")만 그 절에 명시할지 확인 필요.
+2. **위 "꼭 읽어야 할 것" 1·2번** — 동점 처리, `member_fulfillment` 모양.
+3. **`pins/api.py::list_liked_pins_with_checks`** — pins 세션 리뷰 필요(위 구현 범위 참고).
+4. **`regions.anchor_points` 컬럼을 새로 추가한 것** — `data-model.md`에 반영할지 여부(이전
+   `regions.geom` 미도입 결정과 같은 종류, 이미 그때도 루트 확인 대기 중이었다).
 
 ---
 

@@ -155,26 +155,31 @@ def _evidence_from_reaction(reaction: dict) -> dict:
     }
 
 
-def _default_circle(db: Session, *, map_id: str, category: str) -> Circle:
+def _default_circle_and_anchors(db: Session, *, map_id: str, category: str) -> tuple[Circle, list[tuple[float, float]]]:
     """지역(regions) 기본값 — places가 없어 실제 검색 범위를 스스로 정할 방법이 이것뿐이다:
     그 카테고리 핀들의 중심 좌표 + 고정 반경. 실제 반경 사유(circle_anchor_pin_id 등)가
     구조화되는 순간(모델 확정 이후) 이 기본값은 "사람이 명시하지 않았을 때만" 쓰여야 한다
-    (recommend/for_Root.md에 상세 기록)."""
+    (recommend/for_Root.md에 상세 기록). anchor 좌표 목록도 함께 돌려준다 — #112(선호 순위
+    3단계)의 "그 무리의 기준 핀들까지 거리 평균" 계산에 그대로 쓰인다(regions.anchor_points에
+    저장, for_Root.md 보고)."""
     coordinates = pins_api.get_category_pin_coordinates(db, map_id=map_id, category=category)
     if not coordinates:
         raise AppError("NOT_READY")
-    center_lat = sum(lat for _, lat, _ in coordinates) / len(coordinates)
-    center_lng = sum(lng for _, _, lng in coordinates) / len(coordinates)
-    return Circle(anchor_lat=center_lat, anchor_lng=center_lng, radius_m=DEFAULT_REGION_RADIUS_M)
+    anchors = [(lat, lng) for _, lat, lng in coordinates]
+    center_lat = sum(lat for lat, _ in anchors) / len(anchors)
+    center_lng = sum(lng for _, lng in anchors) / len(anchors)
+    circle = Circle(anchor_lat=center_lat, anchor_lng=center_lng, radius_m=DEFAULT_REGION_RADIUS_M)
+    return circle, anchors
 
 
-def _region_data(circle: Circle, *, label: str, confirmed: bool) -> dict:
+def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: list[tuple[float, float]]) -> dict:
     return {
         "signature": core.region_signature([circle]),
         "label": label,
         "center_lat": circle.anchor_lat,
         "center_lng": circle.anchor_lng,
         "radius_m": circle.radius_m,
+        "anchor_points": [[lat, lng] for lat, lng in anchor_points],
         "confirmed": confirmed,
         "confirmed_at": datetime.now(timezone.utc) if confirmed else None,
     }
@@ -201,8 +206,11 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str) ->
     merged = core.assemble_evidence([line.model_dump() for line in planned], [])
     service.add_reaction_evidence(db, run_id=run.id, lines=merged)
 
-    circle = _default_circle(db, map_id=map_id, category=category)
-    service.create_regions(db, run_id=run.id, regions_data=[_region_data(circle, label="기본 반경", confirmed=True)])
+    circle, anchors = _default_circle_and_anchors(db, map_id=map_id, category=category)
+    service.create_regions(
+        db, run_id=run.id,
+        regions_data=[_region_data(circle, label="기본 반경", confirmed=True, anchor_points=anchors)],
+    )
 
     return run
 
@@ -308,6 +316,13 @@ def _run_pipeline(
             known = label.confidence == "known"
             passes = _passes_hard_check(label.fact_key, label.value) if known else True
             checks.append(core.build_check(label.fact_key, spec.unknown_policy, known=known, value=label.value, passes=passes))
+        # #112 1단계 입력 — 선호(soft) 라벨도 같이 붙인다. unknown_policy는 표 그대로 "pass"
+        # 고정(constraints.md — wait_short/quiet/comfortable_seat/local_flavor 전부 "순위에서
+        # 중립 처리"). passed는 hard 체크처럼 "실격 아님"이 아니라 그 라벨의 실제 참/거짓값이다.
+        soft_labels = llm_service.label_place(raw_facts, sorted(constraints.SOFT_FACT_KEYS))
+        for label in soft_labels:
+            known = label.confidence == "known"
+            checks.append(core.build_check(label.fact_key, "pass", known=known, value=label.value, passes=bool(label.value)))
         checks_by_place[place.place_id] = checks
 
     pass_flags = core.apply_disqualifier_filters([checks_by_place[p.place_id] for p in within_radius])
@@ -317,19 +332,57 @@ def _run_pipeline(
     after_exclusions = [p for p in after_disqualify if p.place_id not in excluded_place_ids]
     removed_exclusions = len(after_disqualify) - len(after_exclusions)
 
-    ranked = llm_service.rank_candidates([p.place_id for p in after_exclusions])  # ③-b
-    rank_by_place = {r.place_id: r.rank for r in ranked}
+    # ③-b — #99 이후 모델이 아니라 코드가 점수를 매기고 상위 3곳을 고른다(recommend/core.py,
+    # 이슈 #112). ♥ 받은 핀들의 라벨로 "선호 기준"을 만들고, 그 기준으로 통과 후보 각각에
+    # 점수를 매긴 뒤, 점수 → 동네 배분 → 거리 평균 순으로 상위 3곳만 남긴다.
+    liked_pins = pins_api.list_liked_pins_with_checks(
+        db, map_id=run.map_id, category=run.category, requested_by=run.requested_by,
+    )
+    hearted_places = [
+        core.HeartedPlace(
+            checks=[Check(**check) for check in entry["checks"]],
+            member_ids=frozenset(entry["member_ids"]),
+        )
+        for entry in liked_pins
+    ]
+    preferred_authors: dict[str, set[str]] = {}
+    for line in service.list_active_evidence(db, run.id):
+        if line.badge == "preferred" and line.fact_key is not None:
+            preferred_authors.setdefault(line.fact_key, set()).add(line.author_id)
+    preferred_authors_frozen = {key: frozenset(authors) for key, authors in preferred_authors.items()}
+    criteria = core.build_preference_criteria(
+        hearted_places,
+        excluded_fact_keys=constraints.VALUE_COMPARISON_UNSUPPORTED,
+        disqualifying_fact_keys=active_hard_keys,
+        preferred_authors=preferred_authors_frozen,
+    )
+    region_label = regions[0].label if regions else ""
+    anchor_points_by_region = (
+        {region_label: [tuple(point) for point in regions[0].anchor_points]} if regions else {}
+    )
+    scores = core.score_candidates(
+        {p.place_id: checks_by_place[p.place_id] for p in after_exclusions}, hearted_places, criteria,
+        preferred_authors_frozen,
+    )
+    scored = [
+        core.ScoredCandidate(place_id=p.place_id, score=scores[p.place_id], region_label=region_label, lat=p.lat, lng=p.lng)
+        for p in after_exclusions
+    ]
+    top_place_ids = core.select_top_candidates(scored, anchor_points_by_region, limit=3) if scored else []
+    places_by_id = {p.place_id: p for p in after_exclusions}
+    removed_ranking = len(after_exclusions) - len(top_place_ids)
 
     candidates_data = [
         {
-            "place_id": p.place_id, "region_id": region_id, "lat": p.lat, "lng": p.lng,
-            "rank": rank_by_place.get(p.place_id, index + 1),
-            "checks": [check.model_dump() for check in checks_by_place[p.place_id]],
-            "member_fulfillment": {},  # 구성원별 선호 충족 집계 — evidence_lines에 구성원별
-            # 선호값을 담을 구조가 없어(위 _passes_hard_check와 같은 종류의 스키마 갭) v1은
-            # 항상 빈 dict다(recommend/for_Root.md에 보고).
+            "place_id": place_id, "region_id": region_id,
+            "lat": places_by_id[place_id].lat, "lng": places_by_id[place_id].lng,
+            "rank": index + 1,
+            "checks": [check.model_dump() for check in checks_by_place[place_id]],
+            "member_fulfillment": core.build_member_fulfillment(
+                checks_by_place[place_id], hearted_places, criteria, preferred_authors_frozen,
+            ),
         }
-        for index, p in enumerate(after_exclusions)
+        for index, place_id in enumerate(top_place_ids)
     ]
     funnel = core.funnel_counts([
         ("카테고리 후보 풀", 0),
@@ -337,6 +390,7 @@ def _run_pipeline(
         ("영업 종료 제거", removed_open),
         ("실격 조건 제거", removed_disqualify),
         ("이미 제안·거절됨", removed_exclusions),
+        ("상위 3곳 선정", removed_ranking),
     ])
     return candidates_data, funnel
 
