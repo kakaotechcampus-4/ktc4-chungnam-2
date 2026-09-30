@@ -1,17 +1,25 @@
 """backend/llm 비즈니스 로직 — 모델 호출 3곳(plan_evidence/label_place/rank_candidates).
 
-v1은 backend/llm/CLAUDE.md "우선순위" 절 그대로 고정 응답 스텁이다. 실제 LLM API 호출은
-모델 확정(#12) 이후 이 파일의 함수 내부만 교체하면 되도록, 시그니처는 최종 형태(입력=구조화
-가능한 값, 출력=schemas.py 스키마)로 미리 맞춰둔다.
+② plan_evidence는 LLM_MODE=real일 때 Luna를 실제로 부른다(#116). LLM_MODE=dev면 기존
+스텁(입력을 스키마로 검증·통과)이다. ③-a-1 label_place, ③-b rank_candidates는 아직 고정 응답
+스텁이다(backend/llm/CLAUDE.md "우선순위" 절) — 시그니처는 최종 형태(입력=구조화 가능한 값,
+출력=schemas.py 스키마)로 미리 맞춰둔다.
 
 세 함수 모두 값을 지어내지 않는다: 판단 근거가 없으면 항상 unknown/None을 반환한다
 (backend/llm/CLAUDE.md "넘지 말 것"). 실격 여부 판단·unknown_policy 적용은 이 모듈의
 책임이 아니다 — recommend가 한다(가드레일 7).
 """
 
-from typing import Any, Mapping, Optional, Sequence
+from functools import partial
+from typing import Any, Callable, Mapping, Optional, Sequence
 
-from llm.schemas import EvidenceLine, FactKey, PlaceFactLabel, RankedCandidate
+from common.adapters import select
+from common.errors import AppError
+from common.settings import settings
+from llm.client import LlmCallError, call_planner, make_client
+from llm.schemas import EvidenceLine, FactKey, PlaceFactLabel, PlanningOutput, RankedCandidate
+
+EvidencePlanner = Callable[[Sequence[Mapping[str, Any]]], list[EvidenceLine]]
 
 
 def _flatten_string_values(data: Mapping[str, Any]) -> list[str]:
@@ -37,15 +45,83 @@ def _flatten_string_values(data: Mapping[str, Any]) -> list[str]:
     return flattened
 
 
-def plan_evidence(raw_reasons: Sequence[Mapping[str, Any]]) -> list[EvidenceLine]:
+class PlanEvidenceFailed(AppError):
+    """②가 실패했다 — 사유를 "조건 없음"으로 간주해 통과시키지 않고 추천을 중단한다(가드레일 4·8).
+    기존 에러 코드 RECOMMEND_FAILED(500)로 나간다."""
+
+    def __init__(self, reason: str):
+        super().__init__("RECOMMEND_FAILED", detail={"stage": "plan_evidence", "reason": reason})
+
+
+def merge_planned(
+    inputs: Sequence[Mapping[str, Any]], output: PlanningOutput
+) -> list[EvidenceLine]:
+    """모델 응답을 입력에 합친다(순수 함수). 모델이 바꿀 수 있는 건 fact_key(입력에 없을 때)·
+    badge 격상·circle_radius_m뿐이다 — 나머지는 전부 입력 값이 이긴다.
+
+    개수·순서·text가 입력과 다르면 모델이 사유를 지어내거나 섞은 것이므로 ValueError다.
+    badge 격하는 무시한다: 제약을 AI가 완화하지 않는다(가드레일 4)."""
+    lines = output.evidence_lines
+    if len(lines) != len(inputs):
+        raise ValueError(f"응답 개수({len(lines)})가 입력 개수({len(inputs)})와 다르다")
+
+    merged: list[EvidenceLine] = []
+    for raw, planned in zip(inputs, lines):
+        base = EvidenceLine(**raw)
+        if planned.text != base.text:
+            raise ValueError("응답 text가 입력 text와 다르다")
+        radius = planned.circle_radius_m
+        merged.append(
+            base.model_copy(
+                update={
+                    "fact_key": base.fact_key or planned.fact_key,
+                    "badge": "required" if planned.badge == "required" else base.badge,
+                    "circle_radius_m": radius if radius is not None and radius > 0 else base.circle_radius_m,
+                }
+            )
+        )
+    return merged
+
+
+def _passthrough_planner(raw_reasons: Sequence[Mapping[str, Any]]) -> list[EvidenceLine]:
+    return [EvidenceLine(**reason) for reason in raw_reasons]
+
+
+def _model_planner(client: Any, raw_reasons: Sequence[Mapping[str, Any]]) -> list[EvidenceLine]:
+    _passthrough_planner(raw_reasons)  # 입력 shape부터 검증 — 깨진 입력으로 모델을 부르지 않는다
+    return merge_planned(raw_reasons, call_planner(client, raw_reasons))
+
+
+def _dev_evidence_planner() -> EvidencePlanner:
+    return _passthrough_planner
+
+
+def _real_evidence_planner() -> EvidencePlanner:
+    return partial(_model_planner, make_client())
+
+
+get_evidence_planner = select(
+    "llm.EvidencePlanner", settings.llm_mode,
+    {"dev": _dev_evidence_planner, "real": _real_evidence_planner}, "#116",
+)
+
+
+def plan_evidence(
+    raw_reasons: Sequence[Mapping[str, Any]], *, planner: Optional[EvidencePlanner] = None
+) -> list[EvidenceLine]:
     """② 사유 → 실격/선호/반경 구조화.
 
     raw_reasons: recommend가 모은 reaction/manual 원문(EvidenceLine 필드와 동일 shape의 dict).
-    v1 스텁은 실제 모델 호출 없이 입력을 스키마로 검증·통과시키기만 한다 — 자유 텍스트에서
-    fact_key를 추론하는 분류 로직은 모델 연동 이후 단계에서 채운다(품질은 스텁이 자리 잡은
-    뒤 끌어올린다).
+    planner를 안 넘기면 LLM_MODE로 고른 구현을 쓴다(dev=검증·통과 스텁, real=Luna 호출).
+    호출·검증이 실패하면 PlanEvidenceFailed — 빈 결과로 바꿔 삼키지 않는다.
     """
-    return [EvidenceLine(**reason) for reason in raw_reasons]
+    if not raw_reasons:
+        return []
+    try:
+        return (planner or get_evidence_planner())(raw_reasons)
+    except (LlmCallError, ValueError) as exc:
+        # pydantic.ValidationError는 ValueError의 하위 클래스다(입력 dict가 스키마에 안 맞는 경우 포함).
+        raise PlanEvidenceFailed(str(exc)) from exc
 
 
 def label_place(
