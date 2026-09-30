@@ -18,6 +18,8 @@ tags:
   - name: auth
   - name: maps
   - name: pins
+  - name: places
+    description: 지도 API 이름 검색(핀 만들기 전 단계). 결과는 저장하지 않는다 — v1은 카카오 하나만 켠다(2026-10-01)
   - name: recommend
   - name: shortlist
   - name: realtime
@@ -192,6 +194,49 @@ paths:
                 items: { $ref: "#/components/schemas/Member" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  # ---------- places ----------
+  /places/search:
+    get:
+      tags: [places]
+      summary: |
+        장소 이름 검색 (#180, #147 — v1 핀 입력 경로 ①). 검색바에서 이름을 치면 후보를 돌려주고, 사용자가 하나를 골라
+        `POST /maps/{mapId}/pins`(source: search)로 핀을 만든다. 결과는 서버 DB에 저장하지 않는다(메모리 캐시만, #53).
+        결과가 0개면 빈 배열 그대로다 — 지어내서 채우지 않는다 (가드레일 2). 로그인만 필요하고 지도 구성원 여부는 보지 않는다.
+        지도 API가 모두 실패하면 503 PLACES_UNAVAILABLE. 외부 지도 API의 일일 쿼터를 지키려고 사용자당 호출 상한이 있다(초과 시 429 RATE_LIMITED, 상한 값은 서버 설정 — 기본 분당 30회). FE는 입력 debounce 300ms 이상으로 부르고 Enter/선택 시점에만 부르는 걸 권한다.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: "검색어. 앞뒤 공백을 걷은 뒤 1~50자"
+          schema: { type: string, minLength: 1, maxLength: 50 }
+        - name: lat
+          in: query
+          description: "이 좌표에 가까운 순으로 정렬한다(현재 지도 중심 등, 반경 제한은 없다). 없으면 관련도 순. lat·lng는 함께 보낸다"
+          schema: { type: number, minimum: -90, maximum: 90 }
+        - name: lng
+          in: query
+          schema: { type: number, minimum: -180, maximum: 180 }
+        - name: limit
+          in: query
+          description: "최대 결과 수 (기본 10)"
+          schema: { type: integer, minimum: 1, maximum: 15, default: 10 }
+      responses:
+        "200":
+          description: OK. 관련도/거리 순. 없으면 빈 배열
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PlaceSearchResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422":
+          description: VALIDATION_ERROR — q가 비었거나 50자 초과, lat·lng 중 하나만 옴
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/PlacesUnavailable" }
+
   # ---------- pins ----------
   /maps/{mapId}/pins:
     get:
@@ -221,7 +266,9 @@ paths:
                 items: { $ref: "#/components/schemas/Pin" }
     post:
       tags: [pins]
-      summary: 핀 생성 (링크·검색·좌표 3경로, 5-9의 대량 버전은 v2)
+      summary: |
+        핀 생성. v1 경로는 둘이다 — `source: search`(GET /places/search 결과를 골라 그대로 보낸다: place_id·place_name·lat·lng 전부)와
+        `source: coordinate`(지도를 길게 눌러 lat·lng). `source: link`/`link_url`은 v1에서 받지 않는다(422, #147) — 카톡 내보내기(5-9, v2)가 다시 쓴다.
       parameters: [ { $ref: "#/components/parameters/MapId" } ]
       requestBody:
         content:
@@ -639,6 +686,16 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: 요청이 너무 잦다 — 잠시 뒤 다시 시도 (RATE_LIMITED)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PlacesUnavailable:
+      description: 지도 API를 모두 쓸 수 없다(키 없음·장애·호출 상한) — 잠시 뒤 다시 시도 (PLACES_UNAVAILABLE)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     InviteNotFound:
       description: 없거나 잘못된 초대 토큰 (INVITE_NOT_FOUND)
       content:
@@ -818,14 +875,27 @@ components:
       required: [category]
       properties:
         category: { $ref: "#/components/schemas/Category" }
-        source: { type: string, enum: [link, search, coordinate] }
-        link_url: { type: string, maxLength: 2000 } # 사용자가 직접 붙여넣는 값, 코드에 근거 없음(멘토 리뷰 대응)
-        place_id: { type: string }
+        source: { type: string, enum: [link, search, coordinate], description: "v1은 search·coordinate만. link는 422 (#147, v2에서 재사용)" }
+        link_url: { type: string, maxLength: 2000, description: "v1에서는 받지 않음 — 보내면 422 (#147). v2 카톡 내보내기용으로 남겨 둔 필드" } # 사용자가 직접 붙여넣는 값, 코드에 근거 없음(멘토 리뷰 대응)
+        place_id: { type: string, description: "source=search일 때 GET /places/search 결과의 place_id를 그대로" }
         place_name: { type: string, maxLength: 100 } # 루트 결정(2026-09-23): 사용자가 이미 들고 있는
         # 값(구글맵 링크·검색 결과)을 그대로 저장 — places 파이프라인(#53 대기)을 기다리지 않는다.
         # pins/core.py::validate_create가 이미 검증하는 범위를 그대로 옮김(멘토 리뷰 대응).
         lat: { type: number, minimum: -90, maximum: 90 }
         lng: { type: number, minimum: -180, maximum: 180 }
+
+    PlaceSearchResult:
+      type: object
+      description: GET /places/search 한 건. 핀을 만들 때 place_id·place_name·lat·lng를 그대로 POST /maps/{mapId}/pins로 보낸다
+      required: [place_id, place_name, lat, lng]
+      properties:
+        place_id: { type: string, description: "\"<소스>:<소스 내 id>\" 형태(예 kakao:1234). 불투명 값으로 취급한다" }
+        place_name: { type: string, maxLength: 100, description: "POST /maps/{mapId}/pins의 place_name과 같은 이름 — 그대로 보낸다" }
+        lat: { type: number, minimum: -90, maximum: 90 }
+        lng: { type: number, minimum: -180, maximum: 180 }
+        category: { $ref: "#/components/schemas/Category", description: "제공 소스가 추정한 분류(제안일 뿐). 핀의 category는 사용자가 정한다" }
+        address: { type: string, maxLength: 200 }
+        place_source: { $ref: "#/components/schemas/PlaceSource" }
 
     PriceBucket:
       type: string

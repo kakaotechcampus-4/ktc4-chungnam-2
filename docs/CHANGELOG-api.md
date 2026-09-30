@@ -2,6 +2,20 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-01 — 장소 이름 검색 `GET /places/search` 신설 (#180, #147)
+
+v1의 핀 입력은 **이름 검색 → 결과에서 골라 찍기**와 **지도 길게 눌러 좌표로 찍기** 둘뿐이다(#147). 그런데 스펙에 검색 엔드포인트가 없어 FE가 검색 결과의 `place_id`를 얻을 곳이 없었다.
+
+- `GET /places/search?q=&lat=&lng=&limit=` → `PlaceSearchResult[]`(`place_id`, `place_name`, `lat`, `lng`, `category?`, `address?`, `place_source?`). 로그인만 필요(지도 구성원 여부와 무관). `q`는 1~50자, `lat`·`lng`는 함께 보내면 가까운 곳 우선, `limit` 기본 10·최대 15.
+- 응답 필드 이름은 핀 생성 요청의 `place_name`과 같게 맞췄다(그대로 보낼 수 있다). 사용자당 호출 상한(기본 분당 30회) 초과 시 **429 `RATE_LIMITED`**(새 코드).
+- 결과 0개는 빈 배열 그대로다(가드레일 2, 지어내서 채우지 않는다). 지도 API가 전부 실패하면 **503 `PLACES_UNAVAILABLE`**(새 코드, `docs/errors.md`).
+- 검색 결과는 서버 DB에 저장하지 않는다(#53). v1은 카카오 하나만 켠다(2026-10-01).
+- **핀 만들기 연결**: `POST /maps/{mapId}/pins`의 `source: "search"`는 검색 결과의 `place_id`·`place_name`·`lat`·`lng`를 **그대로** 보낸다. 새 필드는 없다 — 설명만 명확히 했다. `source: "link"`/`link_url`은 "v1에서 받지 않음(422)"으로 표시했다(#147).
+- 신뢰 모델: 좌표는 클라이언트가 echo하지만, `source: "coordinate"`도 이미 임의 좌표를 받으므로 위험이 늘지 않는다. 서버는 캐시에 그 `place_id`가 있으면 좌표 일치를 확인한다(구현 재량, #180).
+
+**FE 영향**: 타입 재생성(`npm run gen:types`), 목 서버에 `GET /places/search` 핸들러 추가됨. 검색바 → 결과 목록 → 핀 생성 연결.
+**BE 후속**: `backend/places`(`search_by_name`), `backend/pins`(검색 경로 resolve) — #180.
+
 ## 2026-09-30 (두 번째) — FE 스펙 갭 6건 + 숙소 반응 불가·「기타」·탈퇴 처리 (#154, #155)
 
 FE가 디스코드로 올린 10건 중 스펙에 없거나 틀린 것을 루트가 검증해 반영했다. 모듈 구현은 이 스펙을 기준으로 한다(스펙보다 구현이 앞서지 않는다).

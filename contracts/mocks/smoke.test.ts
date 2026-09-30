@@ -274,6 +274,46 @@ describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
   });
 });
 
+describe("#180 — GET /places/search (이름 검색)", () => {
+  const search = (qs: string) => fetch(`${BASE}/places/search?${qs}`);
+
+  it("이름이 맞는 장소를 돌려주고, 핀 생성에 필요한 필드가 전부 있다", async () => {
+    const res = await search("q=" + encodeURIComponent("해운대"));
+    expect(res.status).toBe(200);
+    const items = await res.json();
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) {
+      expect(item).toMatchObject({ place_id: expect.any(String), place_name: expect.any(String), lat: expect.any(Number), lng: expect.any(Number) });
+    }
+  });
+
+  it("결과가 없으면 빈 배열이다(가드레일 2 — 지어내지 않는다)", async () => {
+    const res = await search("q=" + encodeURIComponent("없는가게없는가게"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it("lat·lng를 주면 가까운 곳이 먼저 온다", async () => {
+    const res = await search("q=" + encodeURIComponent("해운대") + "&lat=35.1587&lng=129.1604");
+    const items = await res.json();
+    expect(items[0].place_id).toBe("kakao:mock-2");
+  });
+
+  it("검증 실패는 422 — 빈 검색어, 51자, lat만 보냄, limit 범위 밖", async () => {
+    for (const qs of ["q=", "q=" + "가".repeat(51), "q=a&lat=35", "q=a&limit=16"]) {
+      const res = await search(qs);
+      expect(res.status, qs).toBe(422);
+      expect((await res.json()).code).toBe("VALIDATION_ERROR");
+    }
+  });
+
+  it("지도 API 장애는 503 PLACES_UNAVAILABLE", async () => {
+    const res = await search("q=__unavailable__");
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("PLACES_UNAVAILABLE");
+  });
+});
+
 describe("realtime SSE (docs/events.md)", () => {
   it("전체 채널 구독 중 핀을 생성하면 pin.created 이벤트가 온다", async () => {
     const stream = await fetch(`${BASE}/maps/map_1/events`);
