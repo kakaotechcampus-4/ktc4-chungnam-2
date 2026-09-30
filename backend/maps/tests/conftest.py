@@ -15,9 +15,12 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
+import auth.models  # noqa: F401 — maps.service가 auth.api를 부르면서 users 테이블도 있어야 한다
 import authz.deps
 import common.events  # noqa: F401
 import maps.models  # noqa: F401
+import pins.models  # noqa: F401 — shortlist_items.pin_id가 pins.id를 FK로 참조한다
+import shortlist.models  # noqa: F401 — maps.service가 shortlist.api를 부르면서 필요해짐
 from common.database import Base, session_scope
 from maps.api import DbMembershipGateway
 

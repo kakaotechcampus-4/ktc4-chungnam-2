@@ -21,8 +21,14 @@ export class ApiError extends Error {
   }
 }
 
-/** 배포 환경에서만 채운다. 비워두면 상대경로 — 목 서버가 와일드카드 오리진으로 잡는다. */
+/** 채우면 실제 BE 로 간다. 비워두면 상대경로 — 목 서버가 와일드카드 오리진으로 잡는다. */
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+
+/**
+ * BASE_URL 이 비었을 때만 목 서버를 켠다. 실제 BE 와 통합할 땐 BASE_URL 만 채우면 된다.
+ * 쓰는 쪽에서 `import.meta.env.DEV &&` 를 앞에 붙인다 — 그래야 프로덕션 번들에서 msw 가 잘려 나간다.
+ */
+export const USE_MOCK = !BASE_URL
 
 async function toApiError(res: Response): Promise<ApiError> {
   try {

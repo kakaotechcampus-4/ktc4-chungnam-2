@@ -1,7 +1,10 @@
 """
 docs/api-spec.yaml의 pins 태그 스키마와 1:1로 맞춘다.
-Pin의 place_name/price_bucket/created_by_display_name/checks/source_run_id는 places/maps/recommend
-모듈이 없어 채울 수 없다 — Optional로 두고 라우터에서 response_model_exclude_none으로 생략한다.
+Pin의 place_name은 생성 요청(PinCreateRequest.place_name)에서 그대로 저장한다(루트 결정,
+2026-09-23). checks는 게시(pins.api.create_ai_pin) 시점에 candidate.checks를 그대로 복사해
+채운다(#57/#124 결정, 가드레일 5). price_bucket/created_by_display_name/source_run_id는
+여전히 places/auth/recommend 모듈 연동이 더 필요해 채울 수 없다 — Optional로 두고 라우터에서
+response_model_exclude_none으로 생략한다.
 
 Permissions는 여기서 정의하지 않는다 — Pin·EvidenceLine·ShortlistItem이 공유하는 스키마라
 authz가 소유한다(#56 이관, mentor-review-plan.md). pins는 authz의 것을 그대로 쓴다.
@@ -40,6 +43,7 @@ class PinCreateRequest(BaseModel):
     source: PinSource | None = None
     link_url: str | None = None
     place_id: str | None = None
+    place_name: str | None = Field(default=None, max_length=100)
     lat: float | None = None
     lng: float | None = None
 

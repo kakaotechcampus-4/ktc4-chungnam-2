@@ -1,5 +1,6 @@
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router'
 
+import { USE_MOCK } from '@/api'
 import ScenarioSwitcher from '@/dev/ScenarioSwitcher'
 import MapTab from '@/routes/MapTab'
 import RecommendTab from '@/routes/RecommendTab'
@@ -15,7 +16,7 @@ const TABS = [
 export default function App() {
   return (
     <BrowserRouter>
-      {import.meta.env.DEV && <ScenarioSwitcher />}
+      {import.meta.env.DEV && USE_MOCK && <ScenarioSwitcher />}
 
       <main className="pb-14">
         <Routes>

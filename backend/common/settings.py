@@ -73,8 +73,12 @@ class Settings:
     kakao_client_id: str = ""
     kakao_client_secret: str = ""
     kakao_redirect_uri: str = ""
-    # 로그인 성공 후 리다이렉트할 FE 진입점. FE 오리진의 정본이 아직 없다(maps/for_Root.md
-    # "초대 링크 URL" 항목과 같은 갭 — auth/for_Root.md에도 보고) — 기본값은 상대경로 "/".
+    # FE 오리진의 정본(루트 확정, 2026-09-23) — maps의 "초대 링크 URL" 갭과 auth의 로그인
+    # 리다이렉트 갭이 같은 원인(FE 오리진을 몰라 백엔드 자신의 주소로 대체)이라 여기 하나로
+    # 합쳤다. dev 기본값은 Vite 개발 서버 주소. prod는 빈 값이면 아래 __post_init__이 막는다.
+    frontend_base_url: str = ""
+    # 로그인 성공 후 리다이렉트할 FE 진입점. 명시적으로 설정하지 않으면 frontend_base_url
+    # 기준으로 파생된다(from_env 참고) — frontend_base_url도 없으면 예전처럼 상대경로 "/".
     frontend_login_redirect_url: str = "/"
 
     def __post_init__(self) -> None:
@@ -106,6 +110,8 @@ class Settings:
             raise ConfigError("prod에서 CORS_ALLOW_ORIGINS가 비어있다 — FE 도메인을 명시한다")
         if self.session_secret in ("", "change-me-before-deploy"):
             raise ConfigError("prod에서 SESSION_SECRET이 기본값이다")
+        if not self.frontend_base_url:
+            raise ConfigError("prod에서 FRONTEND_BASE_URL이 비어있다 — 초대 링크·로그인 리다이렉트가 백엔드 자신의 주소로 샌다")
 
     @property
     def is_prod(self) -> bool:
@@ -124,6 +130,7 @@ class Settings:
         origins = tuple(o.strip() for o in _env("CORS_ALLOW_ORIGINS", "").split(",") if o.strip())
         regex = _env("CORS_ALLOW_ORIGIN_REGEX",
                      "" if environment == "prod" else r"http://(localhost|127\.0\.0\.1)(:\d+)?")
+        frontend_base_url = _env("FRONTEND_BASE_URL", "" if environment == "prod" else "http://localhost:5173").rstrip("/")
         return cls(
             environment=environment,  # type: ignore[arg-type]
             # 기본값 문자열은 common/database.py·alembic/env.py·pins/tests/conftest.py와 글자까지 같다.
@@ -136,7 +143,11 @@ class Settings:
             kakao_client_id=_env("KAKAO_CLIENT_ID", ""),
             kakao_client_secret=_env("KAKAO_CLIENT_SECRET", ""),
             kakao_redirect_uri=_env("KAKAO_REDIRECT_URI", ""),
-            frontend_login_redirect_url=_env("FRONTEND_LOGIN_REDIRECT_URL", "/"),
+            frontend_base_url=frontend_base_url,
+            frontend_login_redirect_url=_env(
+                "FRONTEND_LOGIN_REDIRECT_URL",
+                f"{frontend_base_url}/" if frontend_base_url else "/",
+            ),
         )
 
 

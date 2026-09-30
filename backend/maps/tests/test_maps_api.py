@@ -8,8 +8,12 @@ authz.deps.get_membership_gateway를 maps.api.DbMembershipGateway로 실제 배�
 단언들이 AllowAllMembership 스텁 아래에서 무의미하게 통과하지 않는다.
 """
 
-from sqlalchemy import select
+from datetime import datetime, timedelta, timezone
 
+import pytest
+from sqlalchemy import select, update
+
+from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
 
 
@@ -33,7 +37,7 @@ def test_create_map_returns_201_with_owner_membership(app_client, db_session):
     assert body["start_date"] == "2026-10-10"
     assert body["end_date"] == "2026-10-12"
     assert body["member_count"] == 1
-    assert "confirmed_count" not in body  # shortlist가 없어 생략(maps/for_Root.md 항목 5)
+    assert body["confirmed_count"] == 0  # 방금 만든 지도라 확정 리스트가 비어 있다(항목 5 해결)
 
     row = db_session.execute(
         select(MembershipRow).where(MembershipRow.map_id == body["id"], MembershipRow.user_id == "user_1")
@@ -104,7 +108,137 @@ def test_list_members_returns_only_honest_fields(app_client):
         assert set(m.keys()) == {"user_id"}
 
 
+def test_list_members_includes_display_name_when_user_row_exists(app_client, db_session):
+    """auth.api.display_names 배선(maps/for_Root.md 항목 5 해결) 회귀 테스트 — 실제 users
+    행이 있으면 display_name이 채워져야 한다(위 test_list_members_returns_only_honest_fields는
+    users 행이 없는 dev 세션 쿠키 케이스라 생략되는 게 여전히 맞다)."""
+    from auth.models import User
+
+    db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
+    db_session.commit()
+
+    body = _create_map(app_client, user_id="user_1")
+
+    resp = app_client.get(f"/maps/{body['id']}/members", cookies=_auth("user_1"))
+    assert resp.status_code == 200
+    members = resp.json()
+    assert members == [{"user_id": "user_1", "display_name": "철수"}]
+
+
 def test_list_members_as_non_member_is_404(app_client):
     body = _create_map(app_client, user_id="user_1")
     resp = app_client.get(f"/maps/{body['id']}/members", cookies=_auth("user_2"))
     assert resp.status_code == 404
+
+
+def test_create_map_without_region_omits_region_key(app_client):
+    """region 없이 생성하는 기존 동작은 회귀 없이 그대로 — 키 자체가 없어야 한다."""
+    body = _create_map(app_client)
+    assert "region" not in body
+
+
+def test_create_map_with_region_round_trips(app_client):
+    resp = app_client.post(
+        "/maps",
+        json={
+            "title": "부산 여행", "start_date": "2026-10-10", "end_date": "2026-10-12",
+            "region": {"label": "부산", "lat": 35.1, "lng": 129.0},
+        },
+        cookies=_auth(),
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["region"] == {"label": "부산", "lat": pytest.approx(35.1), "lng": pytest.approx(129.0)}
+
+
+def test_create_map_with_invalid_region_lat_is_422(app_client):
+    resp = app_client.post(
+        "/maps",
+        json={
+            "title": "부산 여행", "start_date": "2026-10-10", "end_date": "2026-10-12",
+            "region": {"label": "부산", "lat": 200, "lng": 129.0},
+        },
+        cookies=_auth(),
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_get_map_with_region_round_trips(app_client):
+    """POST 응답뿐 아니라 GET /maps/{mapId}로 다시 조회해도 region이 유지된다 — DB 왕복 확인."""
+    created = app_client.post(
+        "/maps",
+        json={
+            "title": "부산 여행", "start_date": "2026-10-10", "end_date": "2026-10-12",
+            "region": {"label": "부산", "lat": 35.1, "lng": 129.0},
+        },
+        cookies=_auth(),
+    ).json()
+
+    resp = app_client.get(f"/maps/{created['id']}", cookies=_auth())
+    assert resp.status_code == 200
+    assert resp.json()["region"] == {"label": "부산", "lat": pytest.approx(35.1), "lng": pytest.approx(129.0)}
+
+
+def test_list_maps_without_membership_is_empty(app_client):
+    resp = app_client.get("/maps", cookies=_auth("user_lonely"))
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_maps_without_cookie_is_401(app_client):
+    resp = app_client.get("/maps")
+    assert resp.status_code == 401
+
+
+def test_list_maps_returns_only_my_maps_most_recent_first(app_client, db_session):
+    """created_at은 이 테스트 픽스처의 트랜잭션 안에서 Postgres now()(트랜잭션 시작 시각 고정)로
+    채워져 두 map이 같은 값을 가질 수 있다 — 순서를 실제로 검증하려면 직접 벌려놓아야 한다."""
+    first = _create_map(app_client, user_id="user_1", title="첫 여행")
+    second = _create_map(app_client, user_id="user_1", title="둘째 여행")
+    _create_map(app_client, user_id="user_2", title="남의 여행")  # 목록에 섞이면 안 된다
+
+    now = datetime.now(timezone.utc)
+    db_session.execute(
+        update(MapRow).where(MapRow.id == first["id"]).values(created_at=now - timedelta(hours=1))
+    )
+    db_session.execute(update(MapRow).where(MapRow.id == second["id"]).values(created_at=now))
+    db_session.flush()
+
+    resp = app_client.get("/maps", cookies=_auth("user_1"))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [m["id"] for m in body] == [second["id"], first["id"]]
+
+
+def test_list_maps_member_count_has_no_n_plus_one(app_client):
+    """GET /maps에서 지도별 member_count가 정확해야 한다 — 한 번의 집계 쿼리로 채워도 값이
+    틀리면 의미가 없다(service.py::_member_counts의 GROUP BY 정확성 회귀 테스트)."""
+    map_a = _create_map(app_client, user_id="user_1", title="A")
+    map_b = _create_map(app_client, user_id="user_1", title="B")
+
+    invite = app_client.post(f"/maps/{map_a['id']}/invite", cookies=_auth("user_1")).json()
+    app_client.post(f"/invites/{invite['token']}/accept", cookies=_auth("user_2"))
+
+    resp = app_client.get("/maps", cookies=_auth("user_1"))
+    body = {m["id"]: m for m in resp.json()}
+    assert body[map_a["id"]]["member_count"] == 2
+    assert body[map_b["id"]]["member_count"] == 1
+
+
+def test_list_maps_includes_region_when_present(app_client):
+    with_region = app_client.post(
+        "/maps",
+        json={
+            "title": "부산 여행", "start_date": "2026-10-10", "end_date": "2026-10-12",
+            "region": {"label": "부산", "lat": 35.1, "lng": 129.0},
+        },
+        cookies=_auth(),
+    ).json()
+    without_region = _create_map(app_client, title="지역 없는 여행")
+
+    body = {m["id"]: m for m in app_client.get("/maps", cookies=_auth()).json()}
+    assert body[with_region["id"]]["region"] == {
+        "label": "부산", "lat": pytest.approx(35.1), "lng": pytest.approx(129.0)
+    }
+    assert "region" not in body[without_region["id"]]

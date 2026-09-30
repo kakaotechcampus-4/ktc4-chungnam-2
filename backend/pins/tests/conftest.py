@@ -17,6 +17,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
+import auth.models  # noqa: F401 — pins.service/api가 auth.api를 부르면서 users 테이블도 있어야 한다
 import authz.deps
 import common.events  # noqa: F401
 import pins.models  # noqa: F401
