@@ -14,14 +14,16 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 from places import matching
-from places.matching import Candidate
+from places.matching import OWN_CATEGORIES, Candidate
 from places.schemas import Area, FactLabel, PlaceHint, PlaceInfo, PlaceMatch, PlaceRef
 from places.sources.base import distance_m
 
-OWN_CATEGORIES = ("음식점", "카페", "관광지")   # 자체 DB가 담는 분류 — 숙소·기타는 v1에서 없다
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
 _NS = uuid.UUID("00000000-0000-0000-0000-00000000f4e5")
 
 
@@ -80,9 +82,9 @@ class FakePlaces:
     rows: list[_Row] = field(default_factory=_sample_rows)
     facts: dict[str, list[FactLabel]] = field(default_factory=_sample_facts)
 
-    # ---- 6개 공개 함수 (places.api와 같은 이름·시그니처) ----
+    # ---- 6개 공개 함수 (places.api와 같은 이름·시그니처). db는 메모리 대역이라 받기만 하고 쓰지 않는다 ----
 
-    def match_place(self, hint: PlaceHint) -> PlaceMatch | None:
+    def match_place(self, hint: PlaceHint, *, db: Session | None = None) -> PlaceMatch | None:
         near = sorted(
             (r for r in self.rows if r.status == "open"
              and distance_m(hint.lat, hint.lng, r.lat, r.lng) <= matching.MAX_RADIUS_M),
@@ -93,16 +95,16 @@ class FakePlaces:
                  and r.status == "open" and r not in near]
         return matching.pick_match(hint, [self._candidate(r) for r in near + by_id])
 
-    def record_kakao_match(self, place_id: str, kakao_place_id: str, kakao_place_url: str) -> None:
+    def record_kakao_match(self, place_id: str, kakao_place_id: str, kakao_place_url: str, *, db: Session | None = None) -> None:
         row = self._row(place_id)
         if row is None:
             raise KeyError(place_id)
         row.kakao_place_id, row.kakao_place_url = kakao_place_id, kakao_place_url
 
-    def pinnable_flags(self, hints: Sequence[PlaceHint]) -> list[bool]:
+    def pinnable_flags(self, hints: Sequence[PlaceHint], *, db: Session | None = None) -> list[bool]:
         return [self.match_place(h) is not None for h in hints]   # 읽기만 한다 — 카카오 ID를 기록하지 않는다
 
-    def get_places(self, place_ids: Sequence[str]) -> dict[str, PlaceInfo]:
+    def get_places(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceInfo]:
         out: dict[str, PlaceInfo] = {}
         for pid in place_ids:
             row = self._row(pid)
@@ -110,7 +112,7 @@ class FakePlaces:
                 out[pid] = PlaceInfo(pid, row.name, row.lat, row.lng, row.category, row.kakao_place_url)
         return out
 
-    def search_nearby_own(self, category: str, areas: Sequence[Area]) -> list[PlaceRef]:
+    def search_nearby_own(self, category: str, areas: Sequence[Area], *, db: Session | None = None) -> list[PlaceRef]:
         if category not in OWN_CATEGORIES:
             return []
         return [
@@ -120,7 +122,7 @@ class FakePlaces:
             and any(distance_m(a.lat, a.lng, r.lat, r.lng) <= a.radius_m for a in areas)
         ]
 
-    def get_facts(self, place_ids: Sequence[str]) -> dict[str, list[FactLabel]]:
+    def get_facts(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, list[FactLabel]]:
         return {pid: list(self.facts.get(pid, [])) for pid in place_ids}   # 라벨이 없으면 빈 리스트
 
     # ---- 편의 ----
