@@ -140,3 +140,21 @@ v1은 카카오만(`PLACES_SOURCES=kakao`). 네이버·구글은 켤 때 같은 
 - `places/tests/test_service.py`: 검색 직후·이름 검색 직후 `get_raw_facts == {}`, 보완 소스 호출 0회, 서비스 상태 없음, resolve 규칙(echo 그대로, 이전 검색과 다른 좌표도 통과, 좌표 없으면 422).
 - `integration/test_places_no_kakao_leak.py`: 실제 `recommend.flows.execute_run`을 real 게이트웨이로 돌리고 `llm.label_place` 인자를 가로채 표식 값(이름·전화·주소·URL)이 없고 `{}`인지, 후보 행에도 표식이 없는지 확인. 검색 후 좌표 없는 핀 생성이 422임을 확인.
 - `PINGO_TEST_DB=pingo_test_places python -m pytest` → 824 passed, 6 deselected(live), 실패 0.
+
+---
+
+# #189 PR 1 — 공개 함수 시그니처·대역 (2026-10-01)
+
+계약 정본은 PR #196(`docs/places-api-contract`, 아직 미머지)의 `docs/architecture.md` "places 공개 함수 계약". 이 PR은 그 시그니처를 코드로 고정한다.
+
+- `places/schemas.py`: `PlaceHint`, `PlaceMatch`, `PlaceInfo`, `PlaceRef`(기존), `FactLabel` 불변 dataclass.
+- `places/api.py`: `match_place`, `record_kakao_match`, `pinnable_flags`, `get_places`, `search_nearby_own`, `get_facts` — **PR 1에서는 `NotImplementedError`**(구현은 PR 2). 기존 `search_by_name`·`get_raw_facts`·`search_nearby`·`resolve_place`는 그대로.
+- `places/testing.py`: `FakePlaces` 메모리 대역(서울 가상 장소 8곳, 폐업 1곳, 라벨 3곳). `FakePlaces().install(monkeypatch)`로 `places.api`의 6개 함수를 바꿔 끼운다. 시그니처가 `api`와 같은지 테스트로 고정.
+- `places/matching.py`(순수): 대역과 PR 2의 실제 구현이 **같은 매칭 규칙**을 쓰도록 먼저 넣었다. 규칙 — 반경 300m, 후보 수 상한 20(DB 조회 쪽 적용), 분류 일치, 이름 유사도 ≥ 0.8(괄호·공백·기호 제거 후 일치 / 한쪽 포함이고 길이 비율 ≥ 0.5 / 문자열 유사도), 이미 같은 카카오 ID가 기록된 장소는 이름이 달라도 그 장소(분류 일치 시), 이름 점수가 비슷한 다른 점포가 비슷한 거리(30m 이내 차이)에 있으면 모호하다고 보고 **None**.
+
+## 계약에서 내가 정한 해석 (이견 있으면 알려 달라)
+1. `get_facts`는 요청한 모든 `place_id`를 키로 돌려주고, 라벨이 없으면 빈 리스트다(없는 ID도 빈 리스트). 반대로 `get_places`는 없는 ID를 키에서 뺀다 — 계약 표 그대로.
+2. `FactLabel.value`는 `Any`(boolean/문자열/None). `unknown`이면 `None`.
+3. `match_place`가 돌려주는 `PlaceMatch`의 이름·좌표는 **자체 DB 값**이다(힌트 값을 되돌려주지 않는다).
+4. `record_kakao_match`는 없는 `place_id`면 `KeyError`(대역 기준). 실제 구현은 PR 2에서 같은 동작으로 맞춘다.
+5. 마이그레이션 번호: 지시문은 0016이지만 develop에 `0016_pins_spec_gaps.py`가 이미 있다 — PR 2는 그 다음 번호(0017 이상, 올리기 직전 develop 기준)로 만든다.
