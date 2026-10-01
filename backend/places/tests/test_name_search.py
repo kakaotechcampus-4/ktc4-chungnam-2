@@ -3,7 +3,6 @@
 import pytest
 
 from common.errors import AppError
-from places.cache import TTLCache
 from places.fallback import search_by_name_with_fallback
 from places.http import SourceError
 from places.ratelimit import SlidingWindowLimiter
@@ -88,16 +87,15 @@ def test_failure_then_success_with_zero_results_is_empty_not_503():
     assert search_by_name_with_fallback([NamedFake("a", fail=True), NamedFake("b")], **ARGS) == []
 
 
-def _svc(*sources, ttl=600):
-    return PlaceService(sources, TTLCache(ttl))
+def _svc(*sources):
+    return PlaceService(sources)
 
 
-def test_service_maps_to_search_result_and_caches():
+def test_service_maps_to_search_result():
     svc = _svc(NamedFake("kakao", result=[place(address="서울", place_url="http://p")]))
     [r] = svc.search_by_name("가게", None, 5)
     assert (r.place_id, r.place_name, r.category, r.address) == ("kakao:1", "가게", "음식점", "서울")
     assert r.place_source.provider == "kakao" and r.place_source.url == "http://p"
-    assert svc.get_raw_facts("kakao:1")["name"] == "가게"
 
 
 def test_service_truncates_long_name_to_pin_limit():
@@ -109,28 +107,6 @@ def test_service_all_failing_is_places_unavailable():
     with pytest.raises(AppError) as e:
         _svc(NamedFake("kakao", fail=True)).search_by_name("x", None, 5)
     assert (e.value.code, e.value.status) == ("PLACES_UNAVAILABLE", 503)
-
-
-# ---- resolve: 캐시 좌표 대조 ----
-
-def _cached_svc():
-    svc = _svc(NamedFake("kakao", result=[place(lat=37.5, lng=127.0)]))
-    svc.search_by_name("가게", None, 5)
-    return svc
-
-
-def test_resolve_rejects_echo_far_from_cached_coords():
-    with pytest.raises(AppError) as e:
-        _cached_svc().resolve("search", "kakao:1", 37.6, 127.0)   # 약 11km
-    assert e.value.code == "VALIDATION_ERROR"
-
-
-def test_resolve_accepts_echo_within_200m():
-    assert _cached_svc().resolve("search", "kakao:1", 37.5005, 127.0).lat == 37.5005   # 약 55m
-
-
-def test_resolve_uses_echo_when_cache_is_gone():
-    assert _svc(ttl=0).resolve("search", "kakao:1", 10.0, 20.0).lat == 10.0
 
 
 # ---- 호출 상한 ----

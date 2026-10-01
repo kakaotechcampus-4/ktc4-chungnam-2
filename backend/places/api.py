@@ -9,14 +9,13 @@ from typing import Any, Sequence
 import httpx
 
 from common.settings import settings
-from places.cache import TTLCache
 from places.http import CallStats, SourceHttp
 from common.errors import AppError
 from places.ratelimit import SlidingWindowLimiter
 from places.samples import search_samples
 from places.schemas import Area, PlaceRef, PlaceSearchResult, ResolvedCoords
-from places.service import PlaceService
-from places.sources.base import PlaceSource, RawPlace
+from places.service import PlaceService, to_result
+from places.sources.base import PlaceSource
 from places.sources.google import GooglePlaceSource
 from places.sources.kakao import KakaoPlaceSource
 from places.sources.naver import NaverPlaceSource
@@ -48,8 +47,7 @@ def _service() -> PlaceService:
     ordered = [available[n] for n in settings.places_sources]
     log.info("places.sources order=%s", ", ".join(
         f"{s.name}({'key' if s.is_configured() else 'NO KEY'})" for s in ordered))
-    cache: TTLCache[RawPlace] = TTLCache(settings.places_cache_ttl_s)
-    return PlaceService(ordered, cache)
+    return PlaceService(ordered)
 
 
 def search_nearby(category: str, areas: Sequence[Area]) -> list[PlaceRef]:
@@ -78,5 +76,5 @@ def search_by_name(query: str, near: tuple[float, float] | None, limit: int) -> 
     """이름 검색. dev 모드는 카카오를 부르지 않고 고정 샘플 5곳(이름 부분 일치)을 돌려준다."""
     if _is_dev():
         lat, lng = near if near else (None, None)
-        return _service().remember_and_convert(search_samples(query, lat, lng, limit))
+        return [to_result(p) for p in search_samples(query, lat, lng, limit)]
     return _service().search_by_name(query, near, limit)

@@ -112,9 +112,8 @@ class Settings:
     naver_search_client_id: str = ""
     naver_search_client_secret: str = ""
     google_places_api_key: str = ""
-    # places 실시간 연결 튜닝(#34a). 소스 순서 = 폴백 순서(앞 소스가 우선). 소스를 빼면 그 소스는 안 부른다.
-    places_sources: tuple[str, ...] = ("kakao", "naver", "google")
-    places_cache_ttl_s: int = 600        # 메모리 TTL 캐시(영구 저장 아님). 0이면 끈다 — 끄면 get_raw_facts는 {}.
+    # places 실시간 연결 튜닝(#34a). v1은 카카오 하나(#53, #188) — 소스 순서 = 폴백 순서(앞 소스가 우선). 소스를 빼면 그 소스는 안 부른다.
+    places_sources: tuple[str, ...] = ("kakao",)
     places_http_timeout_s: float = 3.0
     places_http_retries: int = 1         # 타임아웃·429·5xx에만. 구글은 과금이라 재시도하지 않는다.
     places_google_max_calls: int = 100   # 프로세스 수명 동안 구글 호출 상한(과금 안전장치). 0이면 무제한.
@@ -193,8 +192,7 @@ class Settings:
             naver_search_client_id=_env("NAVER_SEARCH_CLIENT_ID", ""),
             naver_search_client_secret=_env("NAVER_SEARCH_CLIENT_SECRET", ""),
             google_places_api_key=_env("GOOGLE_PLACES_API_KEY", ""),
-            places_sources=tuple(n.strip() for n in _env("PLACES_SOURCES", "kakao,naver,google").split(",") if n.strip()),
-            places_cache_ttl_s=_int("PLACES_CACHE_TTL_S", 600),
+            places_sources=tuple(n.strip() for n in _env("PLACES_SOURCES", "kakao").split(",") if n.strip()),
             places_http_timeout_s=_float("PLACES_HTTP_TIMEOUT_S", 3.0),
             places_http_retries=_int("PLACES_HTTP_RETRIES", 1),
             places_google_max_calls=_int("PLACES_GOOGLE_MAX_CALLS", 100),
