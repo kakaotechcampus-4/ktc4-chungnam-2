@@ -46,12 +46,10 @@ pins(
   id, map_id, category('음식점'|'카페'|'숙소'|'관광지'),
   kind('일반'|'AI추천'|'확정'),        -- 확정이 나머지 둘을 덮어쓴다(5-2)
   origin('direct'|'ai'),               -- kind와 별개. 원래 태생은 안 바뀐다(4절: 반대 많아도 모양 불변)
-  place_id references places(id),
-  place_name null,                     -- 루트 결정(2026-09-23): 생성 요청 시점에 사용자가 이미
-                                        -- 들고 있는 값(구글맵 링크·검색 결과)을 그대로 저장.
-                                        -- places 모듈(#53 대기)의 장소 라벨링과는 다른 종류라
-                                        -- 그 파이프라인을 기다리지 않는다.
-  geom geography(Point,4326),
+  place_id references places(id),      -- 2026-10-01 결정(#191): v1의 핀은 모두 자체 DB 장소를 가리킨다.
+                                        -- 이름은 places.name에서 가져온다 — 핀에 따로 저장하지 않는다(place_name 컬럼은 없앤다).
+                                        -- 카카오 응답의 이름·좌표는 저장하지 않는다. 자체 DB에 없는 장소는 핀으로 만들 수 없다(PLACE_NOT_SUPPORTED).
+  geom geography(Point,4326),          -- 매칭된 places.geom의 복사(자체 데이터). 사용자가 카카오 지도에서 지정한 좌표는 저장하지 않는다
   visibility('public'|'private'),      -- 5-5-1: AI 후보는 private로 시작
   source_run_id null,                  -- #57 결정: recommend_runs.id를 게시 시점에 한 번만
                                         -- 써넣는 불투명 참조값(추적·표시용). FK 제약은 걸지 않고

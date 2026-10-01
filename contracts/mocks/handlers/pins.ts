@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw";
 import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError, pinPermissions } from "../util";
+import { SEED_PLACES } from "./places";
 
 function visiblePins(mapId: string): Pin[] {
   return Object.values(store.pins).filter((p) => {
@@ -50,15 +51,26 @@ export const pinsHandlers = [
       source?: "link" | "search" | "coordinate";
       link_url?: string;
       place_id?: string;
+      place_name?: string;
       lat?: number;
       lng?: number;
     };
-    // 가드레일 6 / 중복 판정: 이 목 서버는 (mapId, place_id) 동일 기준으로만 임시 판정한다.
-    // 실제 기준은 결정 이슈("중복 핀 '같은 곳' 판정 기준") 확정 후 반영한다.
-    if (body.place_id) {
-      const dup = Object.values(store.pins).find((p) => p.map_id === mapId && (p as any)._place_id === body.place_id);
-      if (dup) return apiError(409, "PIN_DUPLICATE", "이미 지도에 있는 장소예요", { pin_id: dup.id });
+    // #191(2026-10-01): v1의 핀은 모두 자체 DB 장소를 가리킨다. 목 서버는 GET /places/search의 시드 장소(kakao:mock-*)를
+    // "자체 DB에 짝이 있는 장소"로 본다. 요청의 place_name·lat·lng는 매칭 힌트라 쓰지 않는다.
+    if (body.source === "link" || body.link_url) {
+      return apiError(422, "VALIDATION_ERROR", "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요");
     }
+    if (body.source === "coordinate" || !body.place_id) {
+      return apiError(422, "VALIDATION_ERROR", "지도를 눌러 핀을 찍을 수는 없어요. 장소를 검색해서 골라 주세요");
+    }
+    const own = SEED_PLACES.find((p) => p.place_id === body.place_id);
+    if (!own) return apiError(422, "PLACE_NOT_SUPPORTED", "아직 지원하지 않는 장소예요");
+    if (own.category && body.category !== own.category) {
+      return apiError(422, "VALIDATION_ERROR", `이 장소의 분류는 ${own.category}예요`);
+    }
+    // 가드레일 6 / 중복 판정: 이 목 서버는 (mapId, 장소) 동일 기준으로만 임시 판정한다.
+    const dup = Object.values(store.pins).find((p) => p.map_id === mapId && (p as any)._place_id === own.place_id);
+    if (dup) return apiError(409, "PIN_DUPLICATE", "이미 지도에 있는 장소예요", { pin_id: dup.id });
     const pinId = nextId("pin");
     const pin: Pin = {
       id: pinId,
@@ -66,9 +78,10 @@ export const pinsHandlers = [
       category: body.category,
       kind: "일반",
       visibility: "public",
-      lat: body.lat ?? 33.45,
-      lng: body.lng ?? 126.56,
-      place_name: "새로 찍은 핀",
+      lat: own.lat,
+      lng: own.lng,
+      place_name: own.place_name,
+      ...(own.place_source?.url ? { place_url: own.place_source.url } : {}),
       created_by: ME_USER_ID,
       created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
       checks: [],
@@ -76,7 +89,7 @@ export const pinsHandlers = [
       reaction_summary: { like: 0, neutral: 0, against: 0 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     };
-    (pin as any)._place_id = body.place_id;
+    (pin as any)._place_id = own.place_id;
     store.pins[pinId] = pin;
     store.reactions[pinId] = [];
     emitEvent(mapId, "public", "pin.created", pin); // docs/events.md — private 핀은 여기 안 온다(지금 목 서버는 항상 public으로만 생성)
