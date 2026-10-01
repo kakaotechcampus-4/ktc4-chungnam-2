@@ -32,14 +32,6 @@ def test_fake_signatures_match_api(name):
     assert shape(getattr(FakePlaces, name)) == shape(getattr(api, name))
 
 
-@pytest.mark.parametrize("name", FUNCS)
-def test_api_functions_are_not_implemented_yet_in_pr1(name):
-    args = {"match_place": (_hint(),), "record_kakao_match": ("p", "k", "u"), "pinnable_flags": ([],),
-            "get_places": ([],), "search_nearby_own": ("음식점", []), "get_facts": ([],)}[name]
-    with pytest.raises(NotImplementedError):
-        getattr(api, name)(*args)
-
-
 def test_dataclasses_are_frozen():
     for obj in (_hint(), PlaceMatch("p", "n", 1, 2, "음식점"), PlaceInfo("p", "n", 1, 2, "음식점"),
                 PlaceRef("p", 1, 2), FactLabel("quiet", True, "known")):

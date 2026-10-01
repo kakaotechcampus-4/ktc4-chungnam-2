@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from functools import lru_cache
 from typing import Any, Sequence
 
 import httpx
+from sqlalchemy.orm import Session
 
+from common.database import SessionLocal
 from common.settings import settings
+from places import matching, repository
 from places.http import CallStats, SourceHttp
 from common.errors import AppError
 from places.ratelimit import SlidingWindowLimiter
@@ -83,35 +87,64 @@ def search_by_name(query: str, near: tuple[float, float] | None, limit: int) -> 
 
 
 # ---- 자체 장소 DB 공개 함수 (docs/architecture.md "places 공개 함수 계약", #189·#190·#195) ----
-# PR 1: 시그니처만 고정한다. 실제 구현은 PR 2(#189). pins·recommend는 places.testing.FakePlaces로 개발한다.
 # 카카오 원자료는 이 함수들의 입출력 어디에도 없다 — kakao_place_id·kakao_place_url만 예외.
+# `db`는 계약에 없는 선택 키워드 인자다: 호출한 쪽의 요청 트랜잭션에 참여하려면 넘긴다(특히 record_kakao_match는
+# 핀 생성과 같은 커밋이어야 한다). 안 넘기면 짧은 세션을 직접 열고 닫는다(읽기 전용 호출은 그걸로 충분).
+# 이 함수들은 커밋하지 않는다 — 넘겨받은 세션은 호출한 쪽이, 직접 연 세션은 여기서 닫기 전에 한 번 커밋한다.
 
-def match_place(hint: PlaceHint) -> PlaceMatch | None:
+@contextmanager
+def _session(db: Session | None):
+    if db is not None:
+        yield db
+        return
+    own = SessionLocal()
+    try:
+        yield own
+        own.commit()
+    except Exception:
+        own.rollback()
+        raise
+    finally:
+        own.close()
+
+
+def match_place(hint: PlaceHint, *, db: Session | None = None) -> PlaceMatch | None:
     """힌트에 맞는 자체 DB 장소 한 건. 읽기 전용. 반경 300m·후보 수 상한·분류 일치·이름 일치를 모두 만족할 때만,
     확신이 낮으면 None."""
-    raise NotImplementedError("places.api.match_place — #189 PR 2")
+    if hint.category not in matching.OWN_CATEGORIES:
+        return None   # 숙소·기타는 자체 DB에 없다
+    with _session(db) as s:
+        candidates = repository.find_candidates(s, hint.lat, hint.lng, hint.category, hint.kakao_place_id)
+    return matching.pick_match(hint, candidates)
 
 
-def record_kakao_match(place_id: str, kakao_place_id: str, kakao_place_url: str) -> None:
+def record_kakao_match(place_id: str, kakao_place_id: str, kakao_place_url: str, *, db: Session | None = None) -> None:
     """매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(핀 생성과 같은 트랜잭션). 이미 있으면 덮어쓴다."""
-    raise NotImplementedError("places.api.record_kakao_match — #189 PR 2")
+    with _session(db) as s:
+        repository.record_kakao_match(s, place_id, kakao_place_id, kakao_place_url)
 
 
-def pinnable_flags(hints: Sequence[PlaceHint]) -> list[bool]:
+def pinnable_flags(hints: Sequence[PlaceHint], *, db: Session | None = None) -> list[bool]:
     """힌트마다 match_place가 성공할지 읽기만 해서 계산한다. 카카오 ID를 기록하지 않는다."""
-    raise NotImplementedError("places.api.pinnable_flags — #189 PR 2")
+    with _session(db) as s:
+        return [match_place(h, db=s) is not None for h in hints]
 
 
-def get_places(place_ids: Sequence[str]) -> dict[str, PlaceInfo]:
+def get_places(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceInfo]:
     """이름·좌표·분류·kakao_place_url을 배치로 조회한다. 없는 ID는 키에서 빠진다."""
-    raise NotImplementedError("places.api.get_places — #189 PR 2")
+    with _session(db) as s:
+        return repository.get_places(s, place_ids)
 
 
-def search_nearby_own(category: str, areas: Sequence[Area]) -> list[PlaceRef]:
+def search_nearby_own(category: str, areas: Sequence[Area], *, db: Session | None = None) -> list[PlaceRef]:
     """반경 안의 영업 중(status='open') 장소의 place_id·좌표. 분류는 음식점·카페·관광지."""
-    raise NotImplementedError("places.api.search_nearby_own — #189 PR 2")
+    if category not in matching.OWN_CATEGORIES:
+        return []
+    with _session(db) as s:
+        return repository.search_nearby_own(s, category, areas)
 
 
-def get_facts(place_ids: Sequence[str]) -> dict[str, list[FactLabel]]:
+def get_facts(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, list[FactLabel]]:
     """place_facts의 fact_key·value·confidence를 그대로. 라벨이 없으면 빈 리스트. unknown_policy는 호출하는 쪽이 적용한다."""
-    raise NotImplementedError("places.api.get_facts — #189 PR 2")
+    with _session(db) as s:
+        return repository.get_facts(s, place_ids)

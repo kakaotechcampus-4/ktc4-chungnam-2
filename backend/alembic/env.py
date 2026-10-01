@@ -20,7 +20,7 @@ import pins.models  # noqa: F401
 import recommend.models  # noqa: F401
 import shortlist.models  # noqa: F401
 
-# import places.models  # noqa: F401
+import places.models  # noqa: F401
 # import realtime.models  # noqa: F401
 # import seeding.models  # noqa: F401
 
