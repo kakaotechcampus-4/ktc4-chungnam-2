@@ -104,9 +104,9 @@ def post_execute(
 
 
 @router.get("/runs/{runId}/result", response_model=RecommendResult, response_model_exclude_none=True)
-def get_result(gated=RunGate, db: Session = DbSession):
+def get_result(gated=RunGate, db: Session = DbSession, place_search: PlaceSearchGateway = PlaceSearchGatewayDep):
     run, principal = gated
-    return flows.get_result(db, run_id=str(run.id), principal=principal)
+    return flows.get_result(db, run_id=str(run.id), principal=principal, place_search=place_search)
 
 
 @router.post("/runs/{runId}/widen", response_model=RecommendRunResponse, status_code=202)

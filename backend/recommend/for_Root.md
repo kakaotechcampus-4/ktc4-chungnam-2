@@ -1,8 +1,45 @@
 # 루트 리뷰 가이드 — backend/recommend
 
 `backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 네 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#119·#114" 절이 최신, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
+작업을 누적해서 담는다 — 아래 "#190" 절이 최신, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
 전체, 가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+
+---
+
+# #190 — 후보·이름·라벨을 자체 장소 DB에서 읽기 (모델 호출은 ② 하나)
+
+## 구현
+
+- **포트 변경(`recommend/ports.py`)**: `PlaceFactsGateway.get_raw_facts(place_id)` → `get_facts(place_ids) -> Mapping[str, Sequence[FactLabel]]`
+  (배치, 라벨 그대로). `PlaceSearchGateway`에 `get_names(place_ids)`를 추가했다(후보 응답의 `place_name`용).
+- **실제 모드**: `RealPlaceSearchGateway` = `places.api.search_nearby_own`/`get_places`, `RealPlaceFactsGateway` = `places.api.get_facts`.
+  후보의 place_id·좌표는 places에서 온다(candidates 행에는 그 둘과 라벨 checks만 저장). 카카오 실시간 경로
+  (`search_nearby`·`get_raw_facts`·`resolve_place`)는 recommend 어디서도 부르지 않는다. 게이트웨이는 선택적 `db`를 받는다
+  (테스트가 세션을 넘긴다; 운영은 places가 짧은 세션을 연다).
+- **라벨**: `flows._run_pipeline`이 후보를 한 번에 `get_facts`로 읽고 `llm.label_place`를 **부르지 않는다**. 라벨이 없거나
+  `confidence=unknown`이거나 known인데 값이 비어 있으면(`core.resolve_label`) unknown으로 보고 `unknown_policy`를 그대로
+  적용한다 — 안전 조건은 제거, 취향 조건은 통과+`needs_check`(가드레일 8). 값 없는 known을 통과 쪽으로 읽지 않는다.
+- **이름**: `GET /runs/{id}/result`의 `Candidate.place_name`을 `place_search.get_names`로 채운다(이전엔 항상 비어 있었다).
+- **dev 모드는 그대로**: `DevPlaceSearchGateway`는 변하지 않았고(+`get_names`는 `{}`), `DevPlaceFactsGateway`는 빈 라벨을
+  돌려줘 이전과 같이 전부 unknown이 된다.
+- **llm 쪽**: `llm.label_place` 자체는 건드리지 않았다(v2 모델 라벨링용으로 남는다). 이제 recommend가 부르지 않을 뿐이다.
+
+## 테스트
+
+- `integration/test_recommend_own_places.py` 5개 — FakePlaces(`places.testing`)로 3개(unknown 안전 조건 제거/known 통과/이름·좌표가
+  places에서 옴), **places.api 실제 구현**(적재 픽스처, PostgreSQL+PostGIS)으로 2개. 전부 `label_place` 호출 0회를 확인한다.
+- `integration/test_places_no_kakao_leak.py` — 카카오 어댑터에 표식 값을 심은 채 real 게이트웨이로 실행해도: `label_place` 호출 0회,
+  카카오 경로 호출 0회, ②(`plan_evidence`) 인자와 candidates 행에 표식 없음. real 게이트웨이에 원자료 메서드가 없음을 고정.
+- `places/tests/test_gateways.py` 3개를 새 게이트웨이 계약에 맞췄다(places 소유 테스트 — recommend 게이트웨이를 검사하는 부분만).
+- 단위: `core.resolve_label`.
+- 마이그레이션 0017을 빈 DB에서 `alembic upgrade head`로 확인(places·place_facts 생성, head 단일).
+
+## 확인 요청
+
+- `PlaceStub.source`(#158 `place_source`)는 자체 DB 장소에는 카카오/네이버/구글 출처가 없어 real 모드에선 계속 null이다.
+  가드레일 5의 "출처가 항상 붙는다"는 `place_source` enum(kakao|naver|google)이 자체 DB 출처(permit·tourapi)를 담도록
+  스펙이 바뀌어야 성립한다 — 스펙은 루트 소관이라 건드리지 않았다.
+- 이슈 "실제 소요"는 기입하지 못했다.
 
 ---
 

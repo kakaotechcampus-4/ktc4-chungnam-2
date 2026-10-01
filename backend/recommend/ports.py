@@ -7,6 +7,8 @@ recommend가 다른 모듈에 대해 갖는 의존을 프로토콜로 좁혀둔�
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
+from places.schemas import FactLabel
+
 
 @dataclass(frozen=True)
 class Circle:
@@ -30,16 +32,21 @@ class PlaceStub:
 
 
 class PlaceSearchGateway(Protocol):
-    """반경 안 장소 검색(5-6 1단계 이전, 후보 풀 확보). places(#14) 실구현 전까지는
-    recommend/deps.py의 dev 스텁이 이 자리를 채운다."""
+    """반경 안 장소 검색(5-6 1단계 이전, 후보 풀 확보). 실제 모드는 places.api.search_nearby_own(자체 DB)
+    에 위임한다 — 후보의 place_id·좌표·이름은 전부 places에서 온다(#190). dev 모드는 recommend/deps.py의
+    스텁이 채운다."""
 
     def search_nearby(self, *, category: str, circles: Sequence[Circle]) -> list[PlaceStub]: ...
 
+    def get_names(self, place_ids: Sequence[str]) -> Mapping[str, str]:
+        """후보 응답의 place_name용 — 없는 ID는 키에서 빠진다."""
+        ...
+
 
 class PlaceFactsGateway(Protocol):
-    """장소 하나의 원자료(층1·2)를 조회한다(architecture.md 3층 모델) — recommend는 이 값을
-    llm.label_place에 그대로 넘겨 층3(라벨) 판정을 받는다. place_facts(#14)가 없으면 항상
-    빈 dict를 반환해도 안전하다 — llm.label_place가 빈 값을 전부 unknown으로 응답하고,
-    이 모듈이 docs/constraints.md의 unknown_policy로 마저 처리한다."""
+    """장소 라벨 조회(층3). 실제 모드는 places.api.get_facts(자체 DB의 place_facts)를 그대로 돌려준다.
+    **요청 중에 모델로 라벨을 만들지 않는다**(#190, v1) — 라벨이 없는 장소는 빈 리스트이고, recommend가
+    confidence=unknown으로 보고 docs/constraints.md의 unknown_policy를 적용한다. 카카오 원자료는 이
+    인터페이스 어디에도 없다."""
 
-    def get_raw_facts(self, place_id: str) -> Mapping[str, Any]: ...
+    def get_facts(self, place_ids: Sequence[str]) -> Mapping[str, Sequence[FactLabel]]: ...

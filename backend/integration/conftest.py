@@ -18,6 +18,7 @@ import auth.models  # noqa: F401
 import common.events  # noqa: F401
 import maps.models  # noqa: F401
 import pins.models  # noqa: F401
+import places.models  # noqa: F401 — 자체 장소 DB(#190 실제 구현 통합 테스트)
 import recommend.models  # noqa: F401
 import shortlist.models  # noqa: F401
 from auth.models import User

@@ -13,10 +13,11 @@ recommend.publish가 등록됨). 이 파일에 남는 건 run/candidate/evidence
 import hashlib
 import math
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from common.errors import AppError
 from common.geo import WALKING_SPEED_M_PER_MIN, haversine_distance_m
+from places.schemas import FactLabel
 from recommend import constraints
 from recommend.models import RecommendRun
 from recommend.ports import Circle
@@ -147,6 +148,17 @@ def build_check(fact_key: str, unknown_policy: str, *, known: bool, value, passe
             return Check(fact_key=fact_key, label="확인 불가", passed=False, confidence="unknown", needs_check=False)
         return Check(fact_key=fact_key, label="확인 필요", passed=True, confidence="unknown", needs_check=True)
     return Check(fact_key=fact_key, label=str(value), passed=passes, confidence="known", needs_check=False)
+
+
+def resolve_label(labels: Sequence[FactLabel], fact_key: str) -> tuple[bool, Any]:
+    """place_facts 라벨에서 fact_key 하나의 (known 여부, 값). 라벨이 없거나 confidence가 unknown이거나
+    known인데 값이 비어 있으면 unknown으로 본다 — 값 없는 known을 통과 쪽으로 읽지 않는다(안전 조건은
+    unknown_policy=exclude라 build_check가 후보를 내린다, 가드레일 8)."""
+    for label in labels:
+        if label.fact_key == fact_key:
+            known = label.confidence == "known" and label.value is not None
+            return known, label.value if known else None
+    return False, None
 
 
 def apply_disqualifier_filters(candidate_checks: list[list[Check]]) -> list[bool]:

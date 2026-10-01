@@ -30,21 +30,26 @@ def test_pins_gateway_returns_pins_type(monkeypatch):
 
 
 def test_recommend_gateway_converts_circles_and_results(monkeypatch):
+    """#190 — 후보 풀은 자체 DB(search_nearby_own)에서 온다. 카카오 실시간 search_nearby는 부르지 않는다."""
     got = {}
 
-    def fake_search(category, areas):
+    def fake_search(category, areas, *, db=None):
         got["args"] = (category, list(areas))
-        return [PlaceRef("kakao:1", 37.5, 127.0)]
+        return [PlaceRef("5b0e2f3a-0000-0000-0000-000000000001", 37.5, 127.0)]
 
-    monkeypatch.setattr(api, "search_nearby", fake_search)
+    monkeypatch.setattr(api, "search_nearby_own", fake_search)
+    monkeypatch.setattr(api, "search_nearby", lambda *a, **k: (_ for _ in ()).throw(AssertionError("카카오 실시간 경로")))
     stubs = RealPlaceSearchGateway().search_nearby(category="카페", circles=[Circle(37.5, 127.0, 800)])
-    assert stubs == [PlaceStub(place_id="kakao:1", lat=37.5, lng=127.0)]
+    assert stubs == [PlaceStub(place_id="5b0e2f3a-0000-0000-0000-000000000001", lat=37.5, lng=127.0)]
     assert got["args"][0] == "카페" and got["args"][1][0].radius_m == 800
 
 
 def test_facts_gateway_delegates(monkeypatch):
-    monkeypatch.setattr(api, "get_raw_facts", lambda pid: {"name": pid})
-    assert RealPlaceFactsGateway().get_raw_facts("kakao:1") == {"name": "kakao:1"}
+    from places.schemas import FactLabel
+
+    labels = {"p1": [FactLabel("quiet", True, "known")]}
+    monkeypatch.setattr(api, "get_facts", lambda ids, *, db=None: labels)
+    assert RealPlaceFactsGateway().get_facts(["p1"]) == labels
 
 
 def test_server_boots_with_places_mode_real_and_fills_all_three_slots():
