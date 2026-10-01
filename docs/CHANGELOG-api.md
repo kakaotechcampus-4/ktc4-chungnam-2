@@ -2,6 +2,13 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-02 — `PlaceSource.provider`에 `permit`·`tourapi` 추가, 음식점 라벨 키 15개 등록 (#203)
+
+- **`PlaceSource.provider` enum 확장(필수 필드 값 추가)**: `kakao | naver | google | permit | tourapi`. 자체 장소 DB의 장소(핀·추천 후보)에는 카카오 출처가 없으므로 `permit`(지방행정 인허가) 또는 `tourapi`(한국관광공사)가 온다. 가드레일 5(출처가 항상 붙는다)를 자체 DB 장소에서도 지키기 위한 변경이다. `url`은 출처 페이지 링크이며 없으면 생략한다.
+- **FE 영향**: 타입 재생성(`npm run gen:types`). `provider`로 분기하는 코드가 있으면 새 값 2개를 처리한다. 표시 문구 예시: `permit` → "서울시 인허가 공공데이터", `tourapi` → "한국관광공사". 문구는 데이터 담당 확인 후 확정한다.
+- **`fact_key` 음식점 15개 추가**(`docs/constraints.md`): `cuisine_*` 10개, `spacious`, `long_established`, `parking_available`, `vegetarian_friendly`, `franchise`. 모두 soft. API 응답의 `Check.fact_key`가 새 값을 가질 수 있다(자유 문자열이라 스키마 변경은 없다).
+- `place_facts`에 `evidence`·`label_source` 컬럼 추가(DB, API 노출은 아직 없음 — 후속에서 `Check`에 근거를 실을지 결정).
+
 ## 2026-10-01 (세 번째) — 핀은 자체 DB 장소를 가리킨다: 핀 생성 규칙 변경 (#191, #53)
 
 카카오 로컬 API 응답은 좌표·이름을 포함해 저장할 수 없다는 결정(#53)에 따라 핀을 만드는 방법과 핀 이름·좌표의 출처가 바뀐다. **스펙 문서가 먼저 바뀌었고 백엔드 구현은 아직이다** — 구현은 자체 장소 DB(#189)가 생긴 뒤 pins 이슈에서 한다. 그때까지 develop 백엔드는 이전 동작(좌표·이름을 그대로 저장)을 유지하며, 목 서버(contracts)는 새 규칙대로 동작한다.
