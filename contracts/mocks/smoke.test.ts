@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, afterEach, describe, expect, it } from "vitest";
 import { server } from "./node";
 import { resetScenario } from "./scenarios";
+import { store } from "./store";
 
 const BASE = "https://api.pingo.example.com";
 
@@ -210,9 +211,11 @@ describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
     fetch(`${BASE}${path}`, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 
   it("숙소 핀에는 반응을 남길 수 없다 — can_react=false, PUT은 422 REACTION_NOT_ALLOWED", async () => {
-    const created = await post("/maps/map_1/pins", { category: "숙소", source: "search", place_id: "kakao:mock-4" });
-    expect(created.status).toBe(201);
-    const pin = await created.json();
+    // v1에서는 숙소 핀을 만들 수 없지만(아래 #191 테스트), 반응 불가 규칙은 숙소 핀이 있을 때 그대로 적용된다 — 시드로 직접 넣는다
+    const base = Object.values(store.pins)[0];
+    const pin = { ...base, id: "stay_seed", category: "숙소" as const, place_name: "시드 숙소" };
+    store.pins[pin.id] = pin;
+    store.reactions[pin.id] = [];
     const list = await fetch(`${BASE}/maps/map_1/pins`).then((r) => r.json());
     expect(list.find((p: { id: string }) => p.id === pin.id).permissions.can_react).toBe(false);
     const res = await fetch(`${BASE}/pins/${pin.id}/reaction`, { method: "PUT", body: JSON.stringify({ type: "like" }) });
@@ -347,6 +350,12 @@ describe("#191 — 핀은 자체 DB 장소를 가리킨다 (핀 생성 규칙)",
       expect(res.status, JSON.stringify(body)).toBe(422);
       expect((await res.json()).code).toBe("VALIDATION_ERROR");
     }
+  });
+
+  it("숙소·기타 장소는 자체 DB에 없어 핀을 만들 수 없다 — 422 PLACE_NOT_SUPPORTED", async () => {
+    const res = await create({ category: "숙소", source: "search", place_id: "kakao:mock-4" });
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("PLACE_NOT_SUPPORTED");
   });
 
   it("요청 category가 장소의 분류와 다르면 422", async () => {

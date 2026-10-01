@@ -155,7 +155,7 @@ place_facts(
   primary key(place_id, fact_key)
 ```
 
-> **2026-10-01(#53) — `places`는 자체 DB다.** 카카오 로컬 API 응답(좌표·이름·주소 포함)은 어떤 형태로도 저장하지 않으므로 이 표의 이름·좌표는 인허가 공공데이터와 TourAPI에서만 온다(v1 서울만). 이전 설계의 `source('kakao'|'google'|'naver')`와 `last_synced_at`은 없앴다. 숙소·기타 장소의 출처와 핀이 `places.id`를 가리키도록 바꾸는 `pins` 변경은 #191 결정 후 반영한다.
+> **2026-10-01(#53) — `places`는 자체 DB다.** 카카오 로컬 API 응답(좌표·이름·주소 포함)은 어떤 형태로도 저장하지 않으므로 이 표의 이름·좌표는 인허가 공공데이터와 TourAPI에서만 온다(v1 서울만). 이전 설계의 `source('kakao'|'google'|'naver')`와 `last_synced_at`은 없앴다. 자체 DB는 음식점·카페·관광지만 담는다(TourAPI의 숙박은 받지 않는다, 2026-10-01) — 숙소·기타 장소는 `places`에 없으므로 v1에서 핀으로 만들 수 없다(`pins.category`의 숙소·기타 값은 스키마 호환으로 남긴다). 핀이 `places.id`를 가리키도록 바꾸는 `pins` 변경은 #195에서 한다.
 >
 > `place_facts`의 v1 라벨은 데이터 담당의 라벨 파일에서 적재한다(`model_version`은 모델 라벨링을 하는 v2부터 채운다). 값이 비어 있으면 `confidence=unknown`.
 

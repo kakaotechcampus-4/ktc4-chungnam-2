@@ -64,7 +64,10 @@ export const pinsHandlers = [
       return apiError(422, "VALIDATION_ERROR", "지도를 눌러 핀을 찍을 수는 없어요. 장소를 검색해서 골라 주세요");
     }
     const own = SEED_PLACES.find((p) => p.place_id === body.place_id);
-    if (!own) return apiError(422, "PLACE_NOT_SUPPORTED", "아직 지원하지 않는 장소예요");
+    // 자체 DB는 음식점·카페·관광지만 담는다(TourAPI 숙박 제외, 2026-10-01) — 숙소·기타는 핀으로 만들 수 없다
+    if (!own || own.category === "숙소" || own.category === "기타") {
+      return apiError(422, "PLACE_NOT_SUPPORTED", "아직 지원하지 않는 장소예요");
+    }
     if (own.category && body.category !== own.category) {
       return apiError(422, "VALIDATION_ERROR", `이 장소의 분류는 ${own.category}예요`);
     }
