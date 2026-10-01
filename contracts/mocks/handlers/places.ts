@@ -37,6 +37,7 @@ export const placesHandlers = [
       const lng = Number(lngRaw);
       found = [...found].sort((a, b) => distanceScore(a, lat, lng) - distanceScore(b, lat, lng));
     }
-    return HttpResponse.json(found.slice(0, limit)); // 0개는 빈 배열 그대로(가드레일 2)
+    // pinnable: 자체 DB에 짝이 있어 핀이 될 수 있는가 — 목 서버는 숙소·기타만 false(자체 DB는 음식점·카페·관광지만)
+    return HttpResponse.json(found.slice(0, limit).map((p) => ({ ...p, pinnable: p.category !== "숙소" && p.category !== "기타" }))); // 0개는 빈 배열 그대로(가드레일 2)
   }),
 ];

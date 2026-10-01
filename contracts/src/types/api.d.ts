@@ -1601,19 +1601,21 @@ export interface components {
         PinCreateRequest: {
             category: components["schemas"]["Category"];
             /**
-             * @description v1은 search만. coordinate·link는 422 (#191·#147) — 생략하면 search로 본다
+             * @description v1은 search만. coordinate·link는 값만 남겨 둔 것(v2 확장용)이며 보내면 422 (#191·#147) — 생략하면 search
+             * @default search
              * @enum {string}
              */
-            source?: "link" | "search" | "coordinate";
+            source: "link" | "search" | "coordinate";
             /** @description v1에서는 받지 않음 — 보내면 422 (#147). v2 카톡 내보내기용으로 남겨 둔 필드 */
             link_url?: string;
             /** @description source=search의 **매칭 힌트** — GET /places/search 결과의 place_id(카카오 장소 ID)를 그대로. 저장하지 않는다 */
-            place_id?: string;
+            place_id: string;
             /** @description 매칭 힌트 — 검색 결과의 이름을 그대로. 저장하지 않는다(핀 이름은 자체 DB 장소의 이름, #191) */
-            place_name?: string;
+            place_name: string;
             /** @description 매칭 힌트 — 검색 결과의 좌표를 그대로. 저장하지 않는다(핀 좌표는 자체 DB 장소의 좌표) */
-            lat?: number;
-            lng?: number;
+            lat: number;
+            /** @description 매칭 힌트 — 검색 결과의 좌표를 그대로. 저장하지 않는다 */
+            lng: number;
         };
         /** @description GET /places/search 한 건 — **화면 표시용이며 서버에 저장되지 않는다**. 핀을 만들 때 place_id·place_name·lat·lng·category를 그대로 POST /maps/{mapId}/pins로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는 매칭 힌트로 쓴다 */
         PlaceSearchResult: {
@@ -1627,6 +1629,8 @@ export interface components {
             category?: components["schemas"]["Category"];
             address?: string;
             place_source?: components["schemas"]["PlaceSource"];
+            /** @description 자체 DB에 짝이 있어 핀으로 만들 수 있는가(서버가 자체 DB를 읽기만 해서 계산, 카카오 ID를 기록하지 않는다). false면 FE는 이 결과를 흐리게 보이고 "아직 지원하지 않는 장소예요"를 미리 안내한다. 없으면 true로 본다(자체 DB 연결 전) */
+            pinnable?: boolean;
         };
         /**
          * @description docs/constraints.md 차원 압축 결과. 원본 가격 숫자는 API로 노출하지 않는다
@@ -1655,7 +1659,7 @@ export interface components {
             lng: number;
             /** @description 자체 DB 장소의 이름 (#191). 핀에 따로 저장하지 않고 장소에서 가져온다 */
             place_name?: string;
-            /** @description 매칭된 카카오 장소 페이지 링크(저장 허용). **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 매칭되지 않았으면 없다 */
+            /** @description 매칭된 카카오 장소 페이지 링크(저장 허용). **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 매칭된 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 필드를 생략한다 */
             place_url?: string;
             /** @description 핀을 찍은 구성원의 user_id (#26) */
             created_by: string;
@@ -1946,7 +1950,10 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 검색 결과와 짝이 되는 자체 DB 장소가 없다 — 핀을 만들지 않는다 (PLACE_NOT_SUPPORTED). 또는 요청 검증 실패(VALIDATION_ERROR) */
+        /**
+         * @description 핀을 만들 수 없다. 응답 본문의 `code`로 분기한다 — `PLACE_NOT_SUPPORTED`(짝이 되는 자체 DB 장소가 없음, 숙소·기타 포함),
+         *     `VALIDATION_ERROR`(필수 힌트 누락, `source`가 coordinate·link, 요청 `category`가 장소의 분류와 다름)
+         */
         PlaceNotSupported: {
             headers: {
                 [name: string]: unknown;

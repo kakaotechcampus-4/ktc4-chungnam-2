@@ -60,7 +60,7 @@ export const pinsHandlers = [
     if (body.source === "link" || body.link_url) {
       return apiError(422, "VALIDATION_ERROR", "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요");
     }
-    if (body.source === "coordinate" || !body.place_id) {
+    if (body.source === "coordinate" || !body.place_id || !body.place_name || body.lat === undefined || body.lng === undefined) {
       return apiError(422, "VALIDATION_ERROR", "지도를 눌러 핀을 찍을 수는 없어요. 장소를 검색해서 골라 주세요");
     }
     const own = SEED_PLACES.find((p) => p.place_id === body.place_id);
