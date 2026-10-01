@@ -272,6 +272,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 | `search_nearby_own(category, areas) -> list[PlaceRef]` | recommend(후보 풀) | 반경 안의 **영업 중**(`status='open'`) 장소의 `place_id`·좌표. 카테고리는 음식점·카페·관광지 |
 | `get_facts(place_ids) -> dict[str, list[FactLabel]]` | recommend(라벨) | `place_facts`의 `fact_key`·`value`·`confidence`를 그대로(없으면 빈 리스트). 호출하는 쪽이 `unknown_policy`를 적용한다 |
 
+- **`db` 선택 키워드 인자(#199에서 추가, 6개 함수 전부 `*, db: Session | None = None`)**: `db=db`를 넘기면 그 요청 트랜잭션에 참여한다(커밋은 호출한 쪽이 한다). **pins는 `record_kakao_match`를 반드시 `db=db`로 부른다** — 핀 생성과 같은 트랜잭션이어야 한다. 안 넘기면 places가 짧은 세션을 직접 열어 쓰고 닫는다(읽기 전용 호출은 충분하지만 호출마다 연결을 쓴다). `FakePlaces`도 같은 인자를 받는다.
 - `place_id`는 문자열(`places.id`의 UUID). 타입은 `places/schemas.py`의 불변 dataclass: `PlaceHint`, `PlaceMatch`, `PlaceInfo`, `PlaceRef`, `FactLabel`.
 - **카카오 원자료는 이 함수들의 입출력 어디에도 없다.** `kakao_place_id`·`kakao_place_url`만 예외(저장 허용 범위).
 - 기존 `places.api`의 실시간 카카오 검색(`search_by_name`, 표시용)과 `get_raw_facts`(항상 빈 값)는 그대로 둔다. `search_nearby`(카카오 실시간 후보 풀)와 `resolve_place`는 recommend·pins가 위 함수로 옮겨 가면 지운다(#190, #195).
