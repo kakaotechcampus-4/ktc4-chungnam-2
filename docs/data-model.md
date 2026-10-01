@@ -130,11 +130,16 @@ routes(
 
 ```
 places(
-  id, source('kakao'|'google'|'naver'),
-  source_id,                            -- 어댑터가 준 원본 식별자
-  name, category, address, phone, place_url,
-  geom geography(Point,4326),
-  first_seen_at, last_synced_at
+  id,
+  source('permit'|'tourapi'),          -- permit = 지방행정 인허가 공공데이터(음식점·카페), tourapi = 한국관광공사 TourAPI(관광지)
+  source_id,                            -- 그 데이터셋의 관리번호/콘텐츠 ID
+  name, category('음식점'|'카페'|'관광지'), address, phone,
+  geom geography(Point,4326),          -- 인허가 좌표계가 위경도가 아니면 변환해 넣는다. 좌표가 없는 행은 적재하지 않는다
+  status('open'|'closed'),             -- 인허가 영업 상태. closed는 검색·추천에서 제외
+  kakao_place_id null, kakao_place_url null, kakao_matched_at null,
+                                        -- 사용자가 검색해서 고를 때 한 건씩 매칭한 결과. 허용 범위: 카카오 장소 ID·URL·확인 일자.
+                                        -- 카카오 응답의 이름·주소·좌표는 저장하지 않는다(#53)
+  created_at, updated_at
 )
   unique(source, source_id)
 
@@ -151,6 +156,10 @@ place_facts(
 )
   primary key(place_id, fact_key)
 ```
+
+> **2026-10-01(#53) — `places`는 자체 DB다.** 카카오 로컬 API 응답(좌표·이름·주소 포함)은 어떤 형태로도 저장하지 않으므로 이 표의 이름·좌표는 인허가 공공데이터와 TourAPI에서만 온다(v1 서울만). 이전 설계의 `source('kakao'|'google'|'naver')`와 `last_synced_at`은 없앴다. 숙소·기타 장소의 출처와 핀이 `places.id`를 가리키도록 바꾸는 `pins` 변경은 #191 결정 후 반영한다.
+>
+> `place_facts`의 v1 라벨은 데이터 담당의 라벨 파일에서 적재한다(`model_version`은 모델 라벨링을 하는 v2부터 채운다). 값이 비어 있으면 `confidence=unknown`.
 
 **`place_facts`는 캐시가 아니다.** TTL로 만료시키지 않는다 — 원본이 따로 없는 1차 데이터이기 때문이다(멘토: "자체 DB 구축이 곧 해자"). 가게 정보가 실제로 바뀌었다고 판단되면 `labeled_at` 기준으로 재라벨링 잡을 새로 돌려 **덮어쓴다**(버전 갱신이지 캐시 무효화가 아니다).
 
