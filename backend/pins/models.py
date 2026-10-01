@@ -55,11 +55,10 @@ class Pin(Base):
     category: Mapped[str] = mapped_column(Category, nullable=False)
     kind: Mapped[str] = mapped_column(PinKind, nullable=False)
     origin: Mapped[str] = mapped_column(PinOrigin, nullable=False)
+    # #195: places.id(자체 DB 장소)의 문자열. 이름은 places.name에서 읽는다(핀에 저장하지 않는다 —
+    # 카카오 응답의 이름·좌표는 저장 금지, #53). DB FK·UUID 타입은 걸지 않았다 — for_Root.md 참고.
     place_id: Mapped[str] = mapped_column(String, nullable=False)
-    # 사용자가 이미 들고 있는 값(구글맵 링크·검색 결과)을 그대로 저장 — places 모듈(#53 대기)의
-    # 장소 라벨링(가격·재료 등)과는 다른 종류라 그 파이프라인을 기다리지 않는다(루트 결정,
-    # 2026-09-23, 0009 마이그레이션).
-    place_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 매칭된 places.geom의 복사(자체 데이터). 사용자가 보낸 좌표는 저장하지 않는다.
     geom = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
     # #57 결정: candidate.checks를 게시 시점에 복사(가드레일 5) — recommend를 다시 조회하지
     # 않는다. reason_chip_ids와 같은 방식(JSONB, 목록형이라 nullable).

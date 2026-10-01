@@ -7,6 +7,7 @@ pin_permissions(kind, is_member) 테스트는 여기 없다 — 그 함수 자�
 """
 
 import pytest
+from pydantic import ValidationError
 
 from authz.core import Principal
 from common.errors import AppError
@@ -15,7 +16,7 @@ from pins.schemas import Pin, PinCreateRequest, ReactionSummary
 
 
 def _req(**kwargs) -> PinCreateRequest:
-    base = {"category": "음식점"}
+    base = {"category": "음식점", "place_id": "kakao:1", "place_name": "성수 칼국수", "lat": 37.54, "lng": 127.05}
     base.update(kwargs)
     return PinCreateRequest(**base)
 
@@ -32,39 +33,11 @@ def _pin(visibility: str = "public") -> Pin:
     return core.to_pin_response(record, _principal())
 
 
-# --- resolve_source / validate_create ---------------------------------------
+# --- validate_create / 카카오 URL ---------------------------------------------
 
-def test_resolve_source_does_not_infer_link_from_link_url():
-    # link_url만으론 더 이상 source를 추론하지 않는다(#148) — 거절은 validate_create가 한다.
-    with pytest.raises(AppError) as exc_info:
-        core.resolve_source(_req(link_url="https://map.google.com/x"))
-    assert exc_info.value.code == "VALIDATION_ERROR"
-
-
-def test_resolve_source_infers_search():
-    assert core.resolve_source(_req(place_id="p1")) == "search"
-
-
-def test_resolve_source_infers_coordinate():
-    assert core.resolve_source(_req(lat=35.1, lng=129.0)) == "coordinate"
-
-
-def test_resolve_source_explicit_wins():
-    assert core.resolve_source(_req(source="search", place_id="p1")) == "search"
-
-
-def test_resolve_source_missing_raises_validation_error():
-    with pytest.raises(AppError) as exc_info:
-        core.resolve_source(_req())
-    assert exc_info.value.code == "VALIDATION_ERROR"
-    assert exc_info.value.status == 422
-
-
-def test_resolve_source_ambiguous_input_raises():
-    # place_id와 lat/lng가 동시에 왔는데 source가 없다 — 결정 불가.
-    with pytest.raises(AppError) as exc_info:
-        core.resolve_source(_req(place_id="p1", lat=35.1, lng=129.0))
-    assert exc_info.value.code == "VALIDATION_ERROR"
+def test_validate_create_accepts_search_hint():
+    core.validate_create(_req())
+    core.validate_create(_req(source="search"))
 
 
 @pytest.mark.parametrize(
@@ -73,8 +46,6 @@ def test_resolve_source_ambiguous_input_raises():
         {"link_url": "https://map.google.com/x"},
         {"source": "link"},
         {"source": "link", "link_url": "https://map.google.com/x"},
-        {"link_url": "https://x", "place_id": "p1"},
-        {"link_url": "https://x", "lat": 35.1, "lng": 129.0},
     ],
 )
 def test_validate_create_rejects_link_paths(kwargs):
@@ -83,27 +54,43 @@ def test_validate_create_rejects_link_paths(kwargs):
         core.validate_create(_req(**kwargs))
     assert exc_info.value.code == "VALIDATION_ERROR"
     assert exc_info.value.status == 422
-    assert exc_info.value.message == "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"
+    assert exc_info.value.message == core.LINK_PIN_REJECTED_MESSAGE
 
 
-def test_validate_create_search_without_place_id_raises():
-    with pytest.raises(AppError):
-        core.validate_create(_req(source="search"))
+def test_validate_create_rejects_coordinate_source():
+    """#195 — 좌표로 핀을 찍는 경로는 없다(자체 DB 장소만)."""
+    with pytest.raises(AppError) as exc_info:
+        core.validate_create(_req(source="coordinate"))
+    assert exc_info.value.code == "VALIDATION_ERROR" and exc_info.value.status == 422
+    assert exc_info.value.message == core.COORDINATE_PIN_REJECTED_MESSAGE
 
 
-def test_validate_create_coordinate_missing_lng_raises():
-    with pytest.raises(AppError):
-        core.validate_create(_req(source="coordinate", lat=35.1))
+def test_create_request_requires_all_hint_fields():
+    for missing in ("place_id", "place_name", "lat", "lng"):
+        base = {"category": "음식점", "place_id": "kakao:1", "place_name": "x", "lat": 37.5, "lng": 127.0}
+        del base[missing]
+        with pytest.raises(ValidationError):
+            PinCreateRequest(**base)
 
 
-@pytest.mark.parametrize("lat,lng", [(91, 129), (-91, 129), (35, 181), (35, -181)])
-def test_validate_create_coordinate_out_of_range_raises(lat, lng):
-    with pytest.raises(AppError):
-        core.validate_create(_req(source="coordinate", lat=lat, lng=lng))
+@pytest.mark.parametrize("lat,lng", [(91, 127), (-91, 127), (37, 181), (37, -181)])
+def test_create_request_rejects_out_of_range_coordinates(lat, lng):
+    with pytest.raises(ValidationError):
+        _req(lat=lat, lng=lng)
 
 
-def test_validate_create_valid_coordinate_passes():
-    assert core.validate_create(_req(source="coordinate", lat=35.1, lng=129.0)) == "coordinate"
+def test_validate_category_matches():
+    core.validate_category_matches("카페", "카페")
+    with pytest.raises(AppError) as exc_info:
+        core.validate_category_matches("카페", "음식점")
+    assert exc_info.value.code == "VALIDATION_ERROR"
+
+
+def test_kakao_place_url_only_for_kakao_ids():
+    assert core.kakao_place_url("kakao:1234") == "https://place.map.kakao.com/1234"
+    assert core.kakao_place_url("naver:1234") is None
+    assert core.kakao_place_url("kakao:") is None
+    assert core.kakao_place_url("1234") is None
 
 
 # --- is_duplicate -------------------------------------------------------------

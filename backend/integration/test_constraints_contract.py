@@ -83,16 +83,15 @@ def test_one_failed_check_disqualifies_even_if_the_rest_pass():
 
 # ---------------------------------------------------------------- 파이프라인(실제 앱 + DB) ----
 
-def _start_run_with_active_condition(a, b, db_session, fact_key: str) -> str:
+def _start_run_with_active_condition(a, b, db_session, fact_key: str, pin_body) -> str:
     """골든 패스와 같은 준비 뒤, 지정한 fact_key를 '꼭 지켜야 하는 조건'으로 켠 run을 만들어 execute까지 돌린다."""
     map_id = a.post("/maps", json={"title": "t", "start_date": "2026-11-01", "end_date": "2026-11-03",
                                    "region": {"label": "부산", "lat": 35.1796, "lng": 129.0756}}).json()["id"]
     inv = a.post(f"/maps/{map_id}/invite").json()
     assert b.post(f"/invites/{inv['token']}/accept").status_code == 200
     pins = []
-    for i, (lat, lng) in enumerate([(35.10, 129.03), (35.16, 129.16), (35.12, 129.05)]):
-        r = a.post(f"/maps/{map_id}/pins", json={"category": "음식점", "source": "coordinate", "lat": lat, "lng": lng,
-                                                 "place_id": f"pl{i}", "place_name": f"p{i}"})
+    for key in ("seongsu-kalguksu", "seongsu-bunsik", "hongdae-ramen"):
+        r = a.post(f"/maps/{map_id}/pins", json=pin_body(key))
         assert r.status_code == 201, r.text
         pins.append(r.json()["id"])
     for c, pid in ((a, pins[0]), (b, pins[0])):
@@ -123,9 +122,9 @@ def clients(app_client, two_users):
 
 
 @pytest.mark.parametrize("key", sorted(SAFETY_KEYS & set(constraints.hard_fact_keys_for("음식점"))))
-def test_pipeline_never_recommends_a_place_whose_safety_label_is_unknown(clients, db_session, key):
+def test_pipeline_never_recommends_a_place_whose_safety_label_is_unknown(clients, db_session, key, pin_body):
     a, b = clients
-    run_id = _start_run_with_active_condition(a, b, db_session, key)
+    run_id = _start_run_with_active_condition(a, b, db_session, key, pin_body)
     result = a.get(f"/runs/{run_id}/result")
     # dev 장소 정보는 라벨이 전부 unknown이다 → 안전 조건이 켜져 있으면 단 한 곳도 통과하면 안 된다.
     if result.status_code == 200:
@@ -134,9 +133,9 @@ def test_pipeline_never_recommends_a_place_whose_safety_label_is_unknown(clients
         assert result.status_code == 404 and result.json()["code"] == "NO_RESULTS"
 
 
-def test_pipeline_keeps_unknown_taste_candidates_but_flags_them(clients, db_session):
+def test_pipeline_keeps_unknown_taste_candidates_but_flags_them(clients, db_session, pin_body):
     a, b = clients
-    run_id = _start_run_with_active_condition(a, b, db_session, "price_bucket")
+    run_id = _start_run_with_active_condition(a, b, db_session, "price_bucket", pin_body)
     result = a.get(f"/runs/{run_id}/result")
     assert result.status_code == 200
     candidates = result.json()["candidates"]
