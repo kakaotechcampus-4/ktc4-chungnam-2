@@ -5,7 +5,7 @@ import { apiError } from "../util";
 type PlaceSearchResult = components["schemas"]["PlaceSearchResult"];
 
 /** 목 서버용 고정 장소 목록 — 실제 카카오 응답이 아니다. 이름 부분 일치로만 거른다. */
-const SEED_PLACES: PlaceSearchResult[] = [
+export const SEED_PLACES: PlaceSearchResult[] = [
   { place_id: "kakao:mock-1", place_name: "해운대 밀면", lat: 35.1631, lng: 129.1639, category: "음식점", address: "부산 해운대구 우동", place_source: { provider: "kakao", url: "https://place.map.kakao.com/mock-1" } },
   { place_id: "kakao:mock-2", place_name: "해운대 바다 카페", lat: 35.1587, lng: 129.1604, category: "카페", address: "부산 해운대구 중동", place_source: { provider: "kakao", url: "https://place.map.kakao.com/mock-2" } },
   { place_id: "kakao:mock-3", place_name: "광안리 해변", lat: 35.1532, lng: 129.1186, category: "관광지", address: "부산 수영구 광안동", place_source: { provider: "kakao" } },
@@ -37,6 +37,7 @@ export const placesHandlers = [
       const lng = Number(lngRaw);
       found = [...found].sort((a, b) => distanceScore(a, lat, lng) - distanceScore(b, lat, lng));
     }
-    return HttpResponse.json(found.slice(0, limit)); // 0개는 빈 배열 그대로(가드레일 2)
+    // pinnable: 자체 DB에 짝이 있어 핀이 될 수 있는가 — 목 서버는 숙소·기타만 false(자체 DB는 음식점·카페·관광지만)
+    return HttpResponse.json(found.slice(0, limit).map((p) => ({ ...p, pinnable: p.category !== "숙소" && p.category !== "기타" }))); // 0개는 빈 배열 그대로(가드레일 2)
   }),
 ];

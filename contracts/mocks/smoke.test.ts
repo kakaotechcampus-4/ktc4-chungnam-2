@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, afterEach, describe, expect, it } from "vitest";
 import { server } from "./node";
 import { resetScenario } from "./scenarios";
+import { store } from "./store";
 
 const BASE = "https://api.pingo.example.com";
 
@@ -146,12 +147,12 @@ describe("에러 시나리오", () => {
   it("중복 핀은 409 PIN_DUPLICATE", async () => {
     const res = await fetch(`${BASE}/maps/map_1/pins`, {
       method: "POST",
-      body: JSON.stringify({ category: "음식점", place_id: "dup-1" }),
+      body: JSON.stringify({ category: "음식점", source: "search", place_id: "kakao:mock-1", place_name: "해운대 밀면", lat: 35.1631, lng: 129.1639 }),
     });
     expect(res.status).toBe(201);
     const res2 = await fetch(`${BASE}/maps/map_1/pins`, {
       method: "POST",
-      body: JSON.stringify({ category: "음식점", place_id: "dup-1" }),
+      body: JSON.stringify({ category: "음식점", source: "search", place_id: "kakao:mock-1", place_name: "해운대 밀면", lat: 35.1631, lng: 129.1639 }),
     });
     expect(res2.status).toBe(409);
   });
@@ -210,9 +211,11 @@ describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
     fetch(`${BASE}${path}`, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 
   it("숙소 핀에는 반응을 남길 수 없다 — can_react=false, PUT은 422 REACTION_NOT_ALLOWED", async () => {
-    const created = await post("/maps/map_1/pins", { category: "숙소", source: "coordinate", lat: 33.5, lng: 126.5, place_id: "stay-1" });
-    expect(created.status).toBe(201);
-    const pin = await created.json();
+    // v1에서는 숙소 핀을 만들 수 없지만(아래 #191 테스트), 반응 불가 규칙은 숙소 핀이 있을 때 그대로 적용된다 — 시드로 직접 넣는다
+    const base = Object.values(store.pins)[0];
+    const pin = { ...base, id: "stay_seed", category: "숙소" as const, place_name: "시드 숙소" };
+    store.pins[pin.id] = pin;
+    store.reactions[pin.id] = [];
     const list = await fetch(`${BASE}/maps/map_1/pins`).then((r) => r.json());
     expect(list.find((p: { id: string }) => p.id === pin.id).permissions.can_react).toBe(false);
     const res = await fetch(`${BASE}/pins/${pin.id}/reaction`, { method: "PUT", body: JSON.stringify({ type: "like" }) });
@@ -314,6 +317,67 @@ describe("#180 — GET /places/search (이름 검색)", () => {
   });
 });
 
+describe("#191 — 핀은 자체 DB 장소를 가리킨다 (핀 생성 규칙)", () => {
+  const create = (body: unknown) => fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify(body) });
+
+  it("검색 결과를 골라 만든 핀은 장소의 이름·좌표·place_url을 쓴다(요청의 이름·좌표는 힌트일 뿐)", async () => {
+    const res = await create({ category: "관광지", source: "search", place_id: "kakao:mock-3", place_name: "내가 바꾼 이름", lat: 1, lng: 2 });
+    expect(res.status).toBe(201);
+    const pin = await res.json();
+    expect(pin.place_name).toBe("광안리 해변");
+    expect(pin.lat).toBeCloseTo(35.1532, 3);
+    expect(pin.lng).toBeCloseTo(129.1186, 3);
+  });
+
+  it("place_url이 있는 장소는 핀에 place_url이 실린다", async () => {
+    const pin = await (await create({ category: "음식점", source: "search", place_id: "kakao:mock-1", place_name: "해운대 밀면", lat: 35.1631, lng: 129.1639 })).json();
+    expect(pin.place_url).toContain("place.map.kakao.com");
+  });
+
+  it("자체 DB에 짝이 없는 장소는 422 PLACE_NOT_SUPPORTED", async () => {
+    const res = await create({ category: "음식점", source: "search", place_id: "kakao:no-such-place", place_name: "없는 곳", lat: 35.1, lng: 129.0 });
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("PLACE_NOT_SUPPORTED");
+  });
+
+  it("지도 길게 누르기(coordinate)와 링크는 v1에서 422 VALIDATION_ERROR", async () => {
+    for (const body of [
+      { category: "음식점", source: "coordinate", lat: 35.1, lng: 129.0 },
+      { category: "음식점", source: "link", link_url: "https://maps.app.goo.gl/x" },
+      { category: "음식점", lat: 35.1, lng: 129.0 },
+    ]) {
+      const res = await create(body);
+      expect(res.status, JSON.stringify(body)).toBe(422);
+      expect((await res.json()).code).toBe("VALIDATION_ERROR");
+    }
+  });
+
+  it("숙소·기타 장소는 자체 DB에 없어 핀을 만들 수 없다 — 422 PLACE_NOT_SUPPORTED", async () => {
+    const res = await create({ category: "숙소", source: "search", place_id: "kakao:mock-4", place_name: "광안리 게스트하우스", lat: 35.1547, lng: 129.1191 });
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("PLACE_NOT_SUPPORTED");
+  });
+
+  it("매칭 힌트(place_name·lat·lng)가 빠지면 422", async () => {
+    const res = await create({ category: "음식점", source: "search", place_id: "kakao:mock-1" });
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("VALIDATION_ERROR");
+  });
+
+  it("검색 결과의 pinnable로 핀이 될 수 있는 장소를 미리 안다(숙소·기타는 false)", async () => {
+    const items = await fetch(`${BASE}/places/search?q=` + encodeURIComponent("광안리")).then((r) => r.json());
+    const byId = Object.fromEntries(items.map((i: { place_id: string; pinnable: boolean }) => [i.place_id, i.pinnable]));
+    expect(byId["kakao:mock-3"]).toBe(true);
+    expect(byId["kakao:mock-4"]).toBe(false);
+  });
+
+  it("요청 category가 장소의 분류와 다르면 422", async () => {
+    const res = await create({ category: "카페", source: "search", place_id: "kakao:mock-1" });
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("VALIDATION_ERROR");
+  });
+});
+
 describe("realtime SSE (docs/events.md)", () => {
   it("전체 채널 구독 중 핀을 생성하면 pin.created 이벤트가 온다", async () => {
     const stream = await fetch(`${BASE}/maps/map_1/events`);
@@ -325,7 +389,7 @@ describe("realtime SSE (docs/events.md)", () => {
 
     await fetch(`${BASE}/maps/map_1/pins`, {
       method: "POST",
-      body: JSON.stringify({ category: "카페" }),
+      body: JSON.stringify({ category: "카페", source: "search", place_id: "kakao:mock-2", place_name: "해운대 바다 카페", lat: 35.1587, lng: 129.1604 }),
     });
 
     let received = "";

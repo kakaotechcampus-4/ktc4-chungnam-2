@@ -453,6 +453,7 @@ export interface paths {
         /**
          * 장소 이름 검색 (#180, #147 — v1 핀 입력 경로 ①). 검색바에서 이름을 치면 후보를 돌려주고, 사용자가 하나를 골라
          *     `POST /maps/{mapId}/pins`(source: search)로 핀을 만든다. 결과는 서버 DB에 저장하지 않는다(메모리 캐시만, #53).
+         *     **결과는 화면에 보여 주기만 하고 서버는 저장하지 않는다**(카카오 약관, #53) — 핀을 만들 때 "매칭 힌트"로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는다(POST /maps/{mapId}/pins).
          *     결과가 0개면 빈 배열 그대로다 — 지어내서 채우지 않는다 (가드레일 2). 로그인만 필요하고 지도 구성원 여부는 보지 않는다.
          *     지도 API가 모두 실패하면 503 PLACES_UNAVAILABLE. 외부 지도 API의 일일 쿼터를 지키려고 사용자당 호출 상한이 있다(초과 시 429 RATE_LIMITED, 상한 값은 서버 설정 — 기본 분당 30회). FE는 입력 debounce 300ms 이상으로 부르고 Enter/선택 시점에만 부르는 걸 권한다.
          */
@@ -541,8 +542,13 @@ export interface paths {
         };
         put?: never;
         /**
-         * 핀 생성. v1 경로는 둘이다 — `source: search`(GET /places/search 결과를 골라 그대로 보낸다: place_id·place_name·lat·lng 전부)와
-         *     `source: coordinate`(지도를 길게 눌러 lat·lng). `source: link`/`link_url`은 v1에서 받지 않는다(422, #147) — 카톡 내보내기(5-9, v2)가 다시 쓴다.
+         * 핀 생성 (#191, 2026-10-01 결정). **v1의 핀은 모두 자체 DB 장소(`places`)를 가리킨다.** 경로는 하나다 — `source: search`:
+         *     GET /places/search 결과를 골라 `place_id`·`place_name`·`lat`·`lng`·`category`를 그대로 보내면, 서버가 **그것과 같은 자체 DB 장소를 한 건 찾아**
+         *     그 장소의 이름·좌표만 핀에 쓴다. 요청의 `place_id`(카카오 장소 ID)·`place_name`·`lat`·`lng`는 **매칭 힌트일 뿐 저장하지 않는다**
+         *     (카카오 장소 ID와 `place_url`만 매칭된 자체 DB 장소에 함께 기록된다). 짝이 되는 자체 DB 장소가 없으면 핀을 만들지 않고
+         *     422 `PLACE_NOT_SUPPORTED`("아직 지원하지 않는 장소예요")다. 응답의 `category`는 장소의 분류이며, 요청 `category`가 다르면 422 `VALIDATION_ERROR`.
+         *     자체 DB는 음식점·카페·관광지만 담는다(TourAPI 숙박은 받지 않는다, 2026-10-01) — 검색 결과가 숙소·기타여도 핀을 만들 수 없고 422 `PLACE_NOT_SUPPORTED`다.
+         *     `source: coordinate`(지도 길게 눌러 찍기)와 `source: link`는 v1에서 받지 않는다(422 `VALIDATION_ERROR`) — 카카오 지도에서 사용자가 지정한 좌표는 저장할 수 없다.
          */
         post: {
             parameters: {
@@ -569,6 +575,7 @@ export interface paths {
                     };
                 };
                 409: components["responses"]["PinDuplicate"];
+                422: components["responses"]["PlaceNotSupported"];
             };
         };
         delete?: never;
@@ -1594,19 +1601,23 @@ export interface components {
         PinCreateRequest: {
             category: components["schemas"]["Category"];
             /**
-             * @description v1은 search·coordinate만. link는 422 (#147, v2에서 재사용)
+             * @description v1은 search만. coordinate·link는 값만 남겨 둔 것(v2 확장용)이며 보내면 422 (#191·#147) — 생략하면 search
+             * @default search
              * @enum {string}
              */
-            source?: "link" | "search" | "coordinate";
+            source: "link" | "search" | "coordinate";
             /** @description v1에서는 받지 않음 — 보내면 422 (#147). v2 카톡 내보내기용으로 남겨 둔 필드 */
             link_url?: string;
-            /** @description source=search일 때 GET /places/search 결과의 place_id를 그대로 */
-            place_id?: string;
-            place_name?: string;
-            lat?: number;
-            lng?: number;
+            /** @description source=search의 **매칭 힌트** — GET /places/search 결과의 place_id(카카오 장소 ID)를 그대로. 저장하지 않는다 */
+            place_id: string;
+            /** @description 매칭 힌트 — 검색 결과의 이름을 그대로. 저장하지 않는다(핀 이름은 자체 DB 장소의 이름, #191) */
+            place_name: string;
+            /** @description 매칭 힌트 — 검색 결과의 좌표를 그대로. 저장하지 않는다(핀 좌표는 자체 DB 장소의 좌표) */
+            lat: number;
+            /** @description 매칭 힌트 — 검색 결과의 좌표를 그대로. 저장하지 않는다 */
+            lng: number;
         };
-        /** @description GET /places/search 한 건. 핀을 만들 때 place_id·place_name·lat·lng를 그대로 POST /maps/{mapId}/pins로 보낸다 */
+        /** @description GET /places/search 한 건 — **화면 표시용이며 서버에 저장되지 않는다**. 핀을 만들 때 place_id·place_name·lat·lng·category를 그대로 POST /maps/{mapId}/pins로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는 매칭 힌트로 쓴다 */
         PlaceSearchResult: {
             /** @description "<소스>:<소스 내 id>" 형태(예 kakao:1234). 불투명 값으로 취급한다 */
             place_id: string;
@@ -1614,10 +1625,12 @@ export interface components {
             place_name: string;
             lat: number;
             lng: number;
-            /** @description 제공 소스가 추정한 분류(제안일 뿐). 핀의 category는 사용자가 정한다 */
+            /** @description 제공 소스가 추정한 분류(화면 표시용 제안). 숙소·기타로 추정되는 장소는 자체 DB에 없어 핀으로 만들 수 없다(v1) */
             category?: components["schemas"]["Category"];
             address?: string;
             place_source?: components["schemas"]["PlaceSource"];
+            /** @description 자체 DB에 짝이 있어 핀으로 만들 수 있는가(서버가 자체 DB를 읽기만 해서 계산, 카카오 ID를 기록하지 않는다). false면 FE는 이 결과를 흐리게 보이고 "아직 지원하지 않는 장소예요"를 미리 안내한다. 없으면 true로 본다(자체 DB 연결 전) */
+            pinnable?: boolean;
         };
         /**
          * @description docs/constraints.md 차원 압축 결과. 원본 가격 숫자는 API로 노출하지 않는다
@@ -1644,7 +1657,10 @@ export interface components {
             visibility: "public" | "private";
             lat: number;
             lng: number;
+            /** @description 자체 DB 장소의 이름 (#191). 핀에 따로 저장하지 않고 장소에서 가져온다 */
             place_name?: string;
+            /** @description 매칭된 카카오 장소 페이지 링크(저장 허용). **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 매칭된 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 필드를 생략한다 */
+            place_url?: string;
             /** @description 핀을 찍은 구성원의 user_id (#26) */
             created_by: string;
             /** @description 핀 상세에서 '누가 찍었는지' 표시용 (#26) */
@@ -1927,6 +1943,18 @@ export interface components {
         };
         /** @description 필터 통과 후보 0개 (6절 "결과 0개") */
         NoResults: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
+         * @description 핀을 만들 수 없다. 응답 본문의 `code`로 분기한다 — `PLACE_NOT_SUPPORTED`(짝이 되는 자체 DB 장소가 없음, 숙소·기타 포함),
+         *     `VALIDATION_ERROR`(필수 힌트 누락, `source`가 coordinate·link, 요청 `category`가 장소의 분류와 다름)
+         */
+        PlaceNotSupported: {
             headers: {
                 [name: string]: unknown;
             };
