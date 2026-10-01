@@ -31,7 +31,8 @@ def _make_map(client):
     return r.json()["id"]
 
 
-def test_search_result_goes_straight_into_pin_creation(client):
+def test_search_result_outside_own_db_cannot_become_a_pin(client):
+    """#195 — 검색 결과(카카오 쪽 장소)가 자체 DB에 짝이 없으면 핀이 되지 않는다. 이름·좌표를 그대로 꽂지 않는다."""
     map_id = _make_map(client)
     found = client.get("/places/search", params={"q": "해운대 밀면"})
     assert found.status_code == 200
@@ -42,9 +43,18 @@ def test_search_result_goes_straight_into_pin_creation(client):
     pin = client.post(f"/maps/{map_id}/pins", json={
         "category": hit["category"], "source": "search", "place_id": hit["place_id"],
         "place_name": hit["place_name"], "lat": hit["lat"], "lng": hit["lng"]})
+    assert pin.status_code == 422 and pin.json()["code"] == "PLACE_NOT_SUPPORTED"
+    assert client.get(f"/maps/{map_id}/pins").json() == []
+
+
+def test_search_hint_for_an_own_db_place_becomes_a_pin_with_the_places_name(client, pin_body):
+    map_id = _make_map(client)
+    hint = pin_body("seongsu-kalguksu", place_name="성수 칼국수 본점", lat=37.5446, lng=127.0562)   # 카카오 쪽 표기·좌표
+    pin = client.post(f"/maps/{map_id}/pins", json=hint)
     assert pin.status_code == 201, pin.text
-    assert pin.json()["place_name"] == "해운대 밀면"
-    assert [p["place_name"] for p in client.get(f"/maps/{map_id}/pins").json()] == ["해운대 밀면"]
+    assert pin.json()["place_name"] == "성수 칼국수"                 # 자체 DB 이름
+    assert (pin.json()["lat"], pin.json()["lng"]) == (37.5445, 127.0561)   # 자체 DB 좌표
+    assert [p["place_name"] for p in client.get(f"/maps/{map_id}/pins").json()] == ["성수 칼국수"]
 
 
 def test_partial_match_and_distance_order(client):

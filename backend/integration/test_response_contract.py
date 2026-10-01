@@ -9,6 +9,7 @@ test_spec_route_coverage.py는 "경로가 있는가"만 본다. 프론트가 실
 """
 
 import re
+import uuid
 from pathlib import Path
 
 import pytest
@@ -115,7 +116,7 @@ def anon_client(app_client):
     c.close()
 
 
-def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients):
+def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin_body):
     a, b, problems = clients
     assert a.get("/auth/me").status_code == 200
 
@@ -137,13 +138,13 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients):
     assert a.get("/places/search", params={"q": ""}).status_code == 422
 
     pin_ids = []
-    for i, (cat, lat, lng) in enumerate([("음식점", 35.10, 129.03), ("음식점", 35.16, 129.16), ("카페", 35.15, 129.12)]):
-        r = a.post(f"/maps/{map_id}/pins", json={"category": cat, "source": "coordinate", "lat": lat, "lng": lng,
-                                                 "place_id": f"pl{i}", "place_name": f"p{i}"})
+    for key in ("seongsu-kalguksu", "hongdae-ramen", "seongsu-cafe-a"):
+        r = a.post(f"/maps/{map_id}/pins", json=pin_body(key))
         assert r.status_code == 201, r.text
         pin_ids.append(r.json()["id"])
-    assert a.post(f"/maps/{map_id}/pins", json={"category": "음식점", "source": "coordinate", "lat": 35.1,
-                                                "lng": 129.0, "place_id": "pl0"}).status_code == 409   # 에러 봉투
+    assert a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-kalguksu")).status_code == 409   # 에러 봉투
+    assert a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-kalguksu", place_id="kakao:nope", place_name="없는 곳",
+                                                        lat=35.0, lng=129.0)).status_code == 422      # PLACE_NOT_SUPPORTED
     assert a.get(f"/maps/{map_id}/pins").status_code == 200
     assert a.get(f"/maps/{map_id}/counts").status_code == 200
 
@@ -184,7 +185,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients):
     assert not stale, f"이미 고쳐졌으니 KNOWN_DRIFT에서 지운다: {stale}"
 
 
-def test_collaboration_extras_match_the_openapi_spec(clients, anon_client):
+def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_session, pin_body):
     """골든 패스가 안 지나가는 나머지 엔드포인트와 에러 봉투 — 초대 요약(비로그인), 이름 수정, 의견 목록·my_reaction,
     근거 수정, 반경 넓히기(상한 409)·다시 추천, 확정 취소, 핀 삭제, 탈퇴."""
     a, b, problems = clients
@@ -203,17 +204,24 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client):
     assert a.patch("/auth/me", json={"display_name": ""}).status_code == 422
 
     pins = []
-    for i, (lat, lng) in enumerate([(33.50, 126.53), (33.51, 126.54), (33.49, 126.52)]):
-        r = a.post(f"/maps/{map_id}/pins", json={"category": "음식점", "source": "coordinate", "lat": lat, "lng": lng,
-                                                 "place_id": f"jj{i}", "place_name": f"j{i}"})
+    for key in ("seongsu-kalguksu", "seongsu-bunsik", "hongdae-ramen"):
+        r = a.post(f"/maps/{map_id}/pins", json=pin_body(key))
         assert r.status_code == 201, r.text
         pins.append(r.json()["id"])
-    stay = a.post(f"/maps/{map_id}/pins", json={"category": "숙소", "source": "coordinate", "lat": 33.5, "lng": 126.5,
-                                                "place_id": "stay", "place_name": "호텔"})
-    assert stay.status_code == 201
+    # 숙소는 자체 DB에 없어 API로 만들 수 없다(#191) — 스키마 호환으로 남은 값이라 행을 직접 심는다
+    from sqlalchemy import func
+
+    from pins.models import Pin as PinRow
+    stay_row = PinRow(
+        id=uuid.uuid4(), map_id=map_id, category="숙소", kind="일반", origin="direct", place_id="stay",
+        geom=func.ST_SetSRID(func.ST_MakePoint(126.5, 33.5), 4326), visibility="public", created_by="user_a",
+    )
+    db_session.add(stay_row)
+    db_session.commit()
+    stay_id = str(stay_row.id)
     # 숙소는 반응 불가(422) — 의견 목록은 빈 배열
-    assert a.put(f"/pins/{stay.json()['id']}/reaction", json={"type": "like"}).status_code == 422
-    assert a.get(f"/pins/{stay.json()['id']}/reactions").json() == []
+    assert a.put(f"/pins/{stay_id}/reaction", json={"type": "like"}).status_code == 422
+    assert a.get(f"/pins/{stay_id}/reactions").json() == []
 
     # 반응 → 의견 목록 · my_reaction · 취소
     for c in (a, b):

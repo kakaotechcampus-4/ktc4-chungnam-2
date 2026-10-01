@@ -18,13 +18,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import api as auth_api
+from places import api as places_api
+from places.schemas import PlaceHint, PlaceInfo
 from authz.core import Principal
 from common.errors import AppError
 from common.events import record_event
 from pins import core
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
-from pins.ports import PinDraft, PlaceGateway
 from pins.schemas import (
     Category,
     FilterCounts,
@@ -132,6 +133,7 @@ def list_pins(
     # 배치 조회 — N개 핀에 N번 쿼리하지 않는다(auth.api.display_names 자체가 배치용으로 설계됨).
     display_names = auth_api.display_names(db, [row[0].created_by for row in rows])
     my_reactions = my_reactions_for_pins(db, [row[0].id for row in rows], principal.user_id)
+    place_infos = places_api.get_places([row[0].place_id for row in rows], db=db)   # 배치 1회
 
     result: list[Pin] = []
     for row in rows:
@@ -145,6 +147,7 @@ def list_pins(
             ),
             created_by_display_name=display_names.get(pin_row.created_by),
             my_reaction=my_reactions.get(pin_row.id),
+            place=place_infos.get(pin_row.place_id),
         )
         result.append(core.to_pin_response(record, principal))
     return result
@@ -158,6 +161,7 @@ def record_from_row(
     reaction_counts: core.ReactionCounts,
     created_by_display_name: str | None,
     my_reaction: Reaction | None,
+    place: PlaceInfo | None,
 ) -> core.PinRecord:
     """ORM 행 → 응답 조립용 PinRecord. 목록·단건(api.get_pin_response_for_viewer)이 같은 필드를
     싣도록 한 곳에 둔다 — 필드가 늘 때 한쪽만 빠지는 걸 막는다."""
@@ -171,7 +175,8 @@ def record_from_row(
         lng=lng,
         created_by=pin_row.created_by,
         reaction_counts=reaction_counts,
-        place_name=pin_row.place_name,
+        place_name=place.name if place else None,
+        place_url=place.kakao_place_url if place else None,
         created_by_display_name=created_by_display_name,
         checks=pin_row.checks,
         reason=pin_row.reason,
@@ -230,22 +235,22 @@ def create_pin(
     map_id: str,
     principal: Principal,
     req: PinCreateRequest,
-    places: PlaceGateway,
 ) -> Pin:
-    source = core.validate_create(req)
+    """검색 결과를 골라 핀을 만든다(#195). 요청의 place_id·place_name·lat·lng는 같은 자체 DB 장소를 찾는
+    힌트일 뿐 저장하지 않는다 — 핀의 장소·좌표는 매칭된 places 행에서 온다."""
+    core.validate_create(req)
 
-    resolved = places.resolve(
-        PinDraft(
-            source=source,
-            place_id=req.place_id,
-            lat=req.lat,
-            lng=req.lng,
-        )
+    match = places_api.match_place(
+        PlaceHint(kakao_place_id=req.place_id, name=req.place_name, lat=req.lat, lng=req.lng, category=req.category),
+        db=db,
     )
+    if match is None:
+        raise AppError("PLACE_NOT_SUPPORTED")
+    core.validate_category_matches(req.category, match.category)
 
-    existing_id = _find_existing_pin_id(db, map_id, resolved.place_id) if resolved.place_id else None
-    existing_place_ids = {resolved.place_id} if existing_id is not None else set()
-    if core.is_duplicate(existing_place_ids, resolved.place_id):
+    existing_id = _find_existing_pin_id(db, map_id, match.place_id)
+    existing_place_ids = {match.place_id} if existing_id is not None else set()
+    if core.is_duplicate(existing_place_ids, match.place_id):
         raise AppError("PIN_DUPLICATE", detail={"pin_id": existing_id})
 
     pin_row = PinRow(
@@ -253,9 +258,8 @@ def create_pin(
         category=req.category,
         kind="일반",
         origin="direct",
-        place_id=resolved.place_id,
-        place_name=req.place_name,
-        geom=func.ST_SetSRID(func.ST_MakePoint(resolved.lng, resolved.lat), 4326),
+        place_id=match.place_id,
+        geom=func.ST_SetSRID(func.ST_MakePoint(match.lng, match.lat), 4326),
         visibility="public",
         created_by=principal.user_id,
     )
@@ -275,12 +279,18 @@ def create_pin(
         # pgcode가 SQLSTATE — 23505 = unique_violation.
         sqlstate = getattr(exc.orig, "pgcode", None)
         if sqlstate == "23505" and "uq_pins_map_place" in str(exc.orig):
-            existing_id = _find_existing_pin_id(db, map_id, resolved.place_id)
+            existing_id = _find_existing_pin_id(db, map_id, match.place_id)
             raise AppError("PIN_DUPLICATE", detail={"pin_id": existing_id}) from exc
         raise
 
+    # 핀이 만들어진 뒤에만 카카오 ID·URL을 기록한다(같은 트랜잭션) — 중복·실패한 요청이 자체 DB를 건드리지 않게.
+    kakao_url = core.kakao_place_url(req.place_id)
+    if kakao_url is not None:
+        places_api.record_kakao_match(match.place_id, req.place_id, kakao_url, db=db)
+
     lat_col, lng_col = _lat_lng_columns()
     lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()
+    place = places_api.get_places([match.place_id], db=db).get(match.place_id)
 
     display_name = auth_api.display_names(db, [pin_row.created_by]).get(pin_row.created_by)
     record = core.PinRecord(
@@ -293,7 +303,8 @@ def create_pin(
         lng=lng,
         created_by=pin_row.created_by,
         reaction_counts=core.ReactionCounts(),
-        place_name=pin_row.place_name,
+        place_name=place.name if place else match.name,
+        place_url=place.kakao_place_url if place else None,
         created_by_display_name=display_name,
     )
     pin = core.to_pin_response(record, principal)

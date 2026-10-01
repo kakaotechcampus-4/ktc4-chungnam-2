@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import api as auth_api
+from places import api as places_api
 from authz.core import Principal
 from common.errors import AppError
 from common.events import Event
@@ -93,10 +94,13 @@ def create_ai_pin(
         raise
 
     display_name = auth_api.display_names(db, [created_by]).get(created_by)
+    place = places_api.get_places([place_id], db=db).get(place_id)
     record = core.PinRecord(
         id=str(pin_row.id), map_id=map_id, category=category, kind="AI추천",
         visibility="public", lat=lat, lng=lng, created_by=created_by,
         reaction_counts=core.ReactionCounts(),
+        place_name=place.name if place else None,
+        place_url=place.kakao_place_url if place else None,
         created_by_display_name=display_name,
         checks=validated_checks,
         reason=reason, member_fulfillment=validated_fulfillment, place_source=validated_source,
@@ -154,6 +158,7 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
     record = service.record_from_row(
         pin_row, lat=lat, lng=lng, reaction_counts=reaction_counts,
         created_by_display_name=display_name, my_reaction=my_reaction,
+        place=places_api.get_places([pin_row.place_id], db=db).get(pin_row.place_id),
     )
     return core.to_pin_response(record, principal)
 

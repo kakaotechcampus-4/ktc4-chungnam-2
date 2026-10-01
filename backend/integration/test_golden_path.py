@@ -15,10 +15,7 @@ from main import app  # noqa: F401  — 라우터 등록을 보장
 REGION = {"label": "부산", "lat": 35.1796, "lng": 129.0756}
 
 
-def _pin(client, map_id, cat, lat, lng, place_id, name=None):
-    body = {"category": cat, "source": "coordinate", "lat": lat, "lng": lng, "place_id": place_id}
-    if name:
-        body["place_name"] = name
+def _pin(client, map_id, body):
     return client.post(f"/maps/{map_id}/pins", json=body)
 
 
@@ -42,7 +39,7 @@ def test_unauthenticated_request_is_401(clients):
     assert r.json()["code"] == "UNAUTHORIZED"
 
 
-def test_map_invite_pins_reactions_recommend_publish_shortlist_route(clients):
+def test_map_invite_pins_reactions_recommend_publish_shortlist_route(clients, pin_body):
     a, b, _ = clients
 
     # 지도 생성(region 왕복) · 목록 · 비구성원 격리
@@ -65,13 +62,11 @@ def test_map_invite_pins_reactions_recommend_publish_shortlist_route(clients):
 
     # 핀 3개 + 중복 409 + 링크만(좌표 없음)은 422
     pin_ids = []
-    for i, (cat, lat, lng, name) in enumerate(
-        [("음식점", 35.10, 129.03, "밀면집"), ("음식점", 35.16, 129.16, "횟집"), ("카페", 35.15, 129.12, "카페A")]
-    ):
-        r = _pin(a, map_id, cat, lat, lng, f"pl{i}", name)
+    for key in ("seongsu-kalguksu", "hongdae-ramen", "seongsu-cafe-a"):
+        r = _pin(a, map_id, pin_body(key))
         assert r.status_code == 201, r.text
         pin_ids.append(r.json()["id"])
-    dup = _pin(a, map_id, "음식점", 35.1, 129.0, "pl0")
+    dup = _pin(a, map_id, pin_body("seongsu-kalguksu"))
     assert dup.status_code == 409 and dup.json()["code"] == "PIN_DUPLICATE"
     pins = a.get(f"/maps/{map_id}/pins").json()
     assert len(pins) == 3
