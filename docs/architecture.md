@@ -259,6 +259,23 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 `backend/places`의 `PlaceSource` 어댑터는 **카카오 실시간 검색(표시용)**에만 쓴다. `NaverPlaceSource`·`GooglePlaceSource`는 코드에 남아 있지만 켜지 않는다(`PLACES_SOURCES=kakao`, #188에서 기본값을 이렇게 바꾼다). 자체 DB의 적재와 검색은 어댑터가 아니라 `places` 모듈의 적재 스크립트와 DB 쿼리가 맡는다(#189).
 
+### `places` 공개 함수 계약 (v1, #189·#190·#195가 공유)
+
+다른 모듈은 `places.api`의 아래 함수만 부른다(`places`의 ORM·내부 모듈을 import하지 않는다). 세 이슈가 **동시에** 진행되도록 시그니처를 먼저 고정한다 — pins·recommend는 `places.testing.FakePlaces`(메모리 대역, places 세션이 **첫 PR로 먼저 올린다**)에 대고 개발·테스트하고, 실제 구현이 들어오면 대역을 갈아 끼운다.
+
+| 함수 | 쓰는 곳 | 하는 일 |
+|---|---|---|
+| `match_place(hint) -> PlaceMatch \| None` | pins(핀 생성) | 힌트(`kakao_place_id`, `name`, `lat`, `lng`, `category`)에 맞는 **자체 DB 장소 한 건**을 찾는다. 읽기 전용. 반경 상한(기본 300m)·후보 수 상한·분류 일치·이름 일치를 모두 만족할 때만 돌려준다. 동명 점포가 여럿이면 이름 일치 + 거리 순으로 한 건, **확신이 낮으면 `None`**(엉뚱한 곳에 핀이 꽂히는 것보다 거절이 낫다) |
+| `record_kakao_match(place_id, kakao_place_id, kakao_place_url) -> None` | pins(핀 생성 같은 트랜잭션) | 매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(`places.kakao_*`). 이미 있으면 덮어쓴다 |
+| `pinnable_flags(hints) -> list[bool]` | 검색 응답(`GET /places/search`) | 힌트마다 `match_place`가 성공할지 읽기만 해서 계산한다. **카카오 ID를 기록하지 않는다**(`record_kakao_match`와 분리) |
+| `get_places(place_ids) -> dict[str, PlaceInfo]` | pins(핀 응답), recommend(후보 응답) | `name`, `lat`, `lng`, `category`, `kakao_place_url`을 배치로 조회(N+1 금지). 없는 ID는 키에서 빠진다 |
+| `search_nearby_own(category, areas) -> list[PlaceRef]` | recommend(후보 풀) | 반경 안의 **영업 중**(`status='open'`) 장소의 `place_id`·좌표. 카테고리는 음식점·카페·관광지 |
+| `get_facts(place_ids) -> dict[str, list[FactLabel]]` | recommend(라벨) | `place_facts`의 `fact_key`·`value`·`confidence`를 그대로(없으면 빈 리스트). 호출하는 쪽이 `unknown_policy`를 적용한다 |
+
+- `place_id`는 문자열(`places.id`의 UUID). 타입은 `places/schemas.py`의 불변 dataclass: `PlaceHint`, `PlaceMatch`, `PlaceInfo`, `PlaceRef`, `FactLabel`.
+- **카카오 원자료는 이 함수들의 입출력 어디에도 없다.** `kakao_place_id`·`kakao_place_url`만 예외(저장 허용 범위).
+- 기존 `places.api`의 실시간 카카오 검색(`search_by_name`, 표시용)과 `get_raw_facts`(항상 빈 값)는 그대로 둔다. `search_nearby`(카카오 실시간 후보 풀)와 `resolve_place`는 recommend·pins가 위 함수로 옮겨 가면 지운다(#190, #195).
+
 ### 층2 차원 압축 설계
 
 `place_facts`에는 **원본 가격 숫자를 저장하지 않는다.** `price_bucket ENUM(low|mid|high)`처럼 압축된 값만 저장한다 — 필요한 판정값만 남기고 원본은 버리는 데이터 최소화 설계다. 압축 로직(임계값)은 `docs/constraints.md`에서 관리한다.

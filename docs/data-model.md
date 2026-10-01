@@ -159,6 +159,19 @@ place_facts(
 >
 > `place_facts`의 v1 라벨은 데이터 담당의 라벨 파일에서 적재한다(`model_version`은 모델 라벨링을 하는 v2부터 채운다). 값이 비어 있으면 `confidence=unknown`.
 
+> **라벨 파일 형식 (v1, 데이터 담당 → `place_facts` 적재, #189)** — UTF-8 CSV, 한 줄이 (장소, `fact_key`) 하나.
+>
+> | 열 | 필수 | 설명 |
+> |---|---|---|
+> | `source` | O | `permit` 또는 `tourapi` (`places.source`) |
+> | `source_id` | O | 그 데이터셋의 관리번호/콘텐츠 ID (`places.source_id`) — `(source, source_id)`로 장소를 찾는다 |
+> | `fact_key` | O | `docs/constraints.md`에 있는 키만. 모르는 키가 있으면 적재 스크립트가 그 줄을 건너뛰고 건수를 보고한다 |
+> | `value` | △ | boolean 키는 `true`/`false`, `price_bucket`은 `low`/`mid`/`high`. `confidence=unknown`이면 비운다 |
+> | `confidence` | O | `known` 또는 `unknown` — 확인하지 않은 값은 `unknown` |
+> | `labeled_at` | X | ISO 날짜. 없으면 적재 시각 |
+>
+> 같은 `(source, source_id, fact_key)`가 여럿이면 마지막 줄이 이긴다(경고). 적재는 멱등 upsert(`primary key(place_id, fact_key)`)라 파일을 다시 올려도 안전하다. 파일에 없는 장소·키는 건드리지 않는다. 원본 가격 숫자는 이 파일에 넣지 않는다(`price_bucket`만).
+
 **`place_facts`는 캐시가 아니다.** TTL로 만료시키지 않는다 — 원본이 따로 없는 1차 데이터이기 때문이다(멘토: "자체 DB 구축이 곧 해자"). 가게 정보가 실제로 바뀌었다고 판단되면 `labeled_at` 기준으로 재라벨링 잡을 새로 돌려 **덮어쓴다**(버전 갱신이지 캐시 무효화가 아니다).
 
 `price_bucket`처럼 압축된 값만 저장하고 원본 가격 숫자는 저장하지 않는다(architecture.md 2절, 차원 압축).
