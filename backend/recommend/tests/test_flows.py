@@ -19,6 +19,7 @@ from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
 from recommend import flows, service
 from recommend.models import Candidate, Exclusion, RecommendRun, Region
+from places.schemas import FactLabel
 from recommend.ports import PlaceStub
 
 
@@ -90,13 +91,21 @@ class _FakePlaceSearch:
     def search_nearby(self, *, category, circles):
         return self._places
 
+    def get_names(self, place_ids):
+        return {p.place_id: f"이름-{p.place_id}" for p in self._places if p.place_id in set(place_ids)}
+
 
 class _FakePlaceFacts:
+    """{place_id: {fact_key: value}}를 place_facts 라벨(known)로 바꿔 돌려준다. 없는 장소·키는 라벨 없음 = unknown."""
+
     def __init__(self, facts_by_place=None):
         self._facts = facts_by_place or {}
 
-    def get_raw_facts(self, place_id):
-        return self._facts.get(place_id, {})
+    def get_facts(self, place_ids):
+        return {
+            pid: [FactLabel(key, value, "known") for key, value in self._facts.get(pid, {}).items()]
+            for pid in place_ids
+        }
 
 
 def test_publish_candidate_inserts_ai_pin_links_candidate_and_records_event(db_session):
@@ -696,7 +705,7 @@ def test_execute_run_with_no_candidates_then_get_result_is_no_results(db_session
 
     principal = Principal(user_id="user_1", map_id="map_1", role="member")
     with pytest.raises(AppError) as exc_info:
-        flows.get_result(db_session, run_id=str(run.id), principal=principal)
+        flows.get_result(db_session, run_id=str(run.id), principal=principal, place_search=_FakePlaceSearch([]))
     assert exc_info.value.code == "NO_RESULTS"
     assert "funnel" in exc_info.value.detail
 
@@ -708,11 +717,11 @@ def test_get_result_marks_can_publish_true_only_for_run_author(db_session):
     flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts())
 
     author = Principal(user_id="user_1", map_id="map_1", role="member")
-    result = flows.get_result(db_session, run_id=str(run.id), principal=author)
+    result = flows.get_result(db_session, run_id=str(run.id), principal=author, place_search=_FakePlaceSearch([]))
     assert result.candidates[0].permissions.can_publish is True
 
     stranger = Principal(user_id="user_2", map_id="map_1", role="member")
-    result2 = flows.get_result(db_session, run_id=str(run.id), principal=stranger)
+    result2 = flows.get_result(db_session, run_id=str(run.id), principal=stranger, place_search=_FakePlaceSearch([]))
     assert result2.candidates[0].permissions.can_publish is False
 
 
@@ -729,7 +738,7 @@ def test_get_result_marks_can_publish_false_once_already_published(db_session):
     candidate = service.list_candidates(db_session, str(run.id))[0]
     service.link_published_pin(db_session, candidate_id=str(candidate.id), pin_id=str(uuid.uuid4()))
 
-    result = flows.get_result(db_session, run_id=str(run.id), principal=author)
+    result = flows.get_result(db_session, run_id=str(run.id), principal=author, place_search=_FakePlaceSearch([]))
     assert result.candidates[0].visibility == "published"
     assert result.candidates[0].permissions.can_publish is False
 
@@ -818,7 +827,7 @@ def test_get_result_exposes_reason_member_fulfillment_and_place_source(db_sessio
         place_source={"provider": "naver"},
     )
     principal = Principal(user_id="user_1", map_id="map_1", role="member")
-    candidate = flows.get_result(db_session, run_id=str(run.id), principal=principal).candidates[0]
+    candidate = flows.get_result(db_session, run_id=str(run.id), principal=principal, place_search=_FakePlaceSearch([])).candidates[0]
     assert candidate.reason == "이유"
     assert candidate.member_fulfillment.satisfied == 1 and candidate.member_fulfillment.total == 2
     assert candidate.place_source.provider == "naver"

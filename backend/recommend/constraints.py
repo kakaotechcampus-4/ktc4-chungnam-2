@@ -3,7 +3,7 @@ docs/constraints.md "조건별 정의" 표를 그대로 옮긴 선언(authz/poli
 전사하는 것과 같은 원칙 — 정본은 docs/constraints.md, **값 변경은 루트만** 한다).
 
 within_radius/is_open은 이 레지스트리에 없다 — constraints.md 자신이 "코드 판정"으로 분류해
-라벨링(llm.label_place) 대상에서 뺐다(within_radius는 좌표 계산, is_open은 실시간 조회).
+라벨(place_facts) 대상에서 뺐다(within_radius는 좌표 계산, is_open은 실시간 조회).
 이 둘은 core.py/service.py가 별도로 처리한다.
 """
 

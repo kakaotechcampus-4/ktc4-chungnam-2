@@ -18,7 +18,7 @@ import auth.models  # noqa: F401
 import common.events  # noqa: F401
 import maps.models  # noqa: F401
 import pins.models  # noqa: F401
-import places.models  # noqa: F401 — pins가 places.api.get_places(db)로 이름·URL을 읽는다
+import places.models  # noqa: F401 — pins가 get_places(db)로 이름·URL을 읽고, recommend 통합 테스트가 자체 장소 DB를 쓴다
 import recommend.models  # noqa: F401
 import shortlist.models  # noqa: F401
 from auth.models import User

@@ -6,20 +6,24 @@ FastAPI 의존성 배선. places(#14)/seeding(#13)이 아직 없어, pins/deps.p
 **dev 스텁의 한계(recommend/for_Root.md에 자세히)**: `DevPlaceSearchGateway`는 실제 장소
 검색이 아니라 원 중심에서 고정 오프셋만큼 떨어진 좌표에 합성 place_id를 만드는 자리채움이다 —
 "AI 없이도 FE+BE 코어 루프가 도는 데모가 우선"(CLAUDE.md 이슈 운영 원칙)을 만족시키기 위한
-결정이고, 실제 장소 데이터가 아니다. `DevPlaceFactsGateway`는 항상 빈 dict를 반환해
-llm.label_place가 모든 fact_key를 unknown으로 응답하게 만든다(architecture.md 3절 — place_facts
-없이도 unknown_policy 분기로 정상 처리된다는 전제 그대로).
+결정이고, 실제 장소 데이터가 아니다. `DevPlaceFactsGateway`는 항상 빈 라벨을 돌려줘 모든
+fact_key가 unknown이 된다(architecture.md 3절 — 라벨 없이도 unknown_policy 분기로 정상 처리된다는
+전제 그대로).
+
+**실제 모드(#190)**: `Real*` 게이트웨이는 places.api의 자체 DB 함수(search_nearby_own·get_places·
+get_facts)에만 위임한다. 요청 중 모델 호출도 카카오 원자료도 이 경로에 없다.
 """
 
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence
 
 from fastapi import Depends
+from sqlalchemy.orm import Session
 
 from common.adapters import select
 from common.database import get_db_session
 from common.settings import settings
 from places import api as places_api
-from places.schemas import Area
+from places.schemas import Area, FactLabel
 from recommend.ports import Circle, PlaceFactsGateway, PlaceSearchGateway, PlaceStub
 
 
@@ -42,22 +46,38 @@ class DevPlaceSearchGateway:
         ]
 
 
+    def get_names(self, place_ids: Sequence[str]) -> Mapping[str, str]:
+        return {}  # 합성 place_id라 이름이 없다
+
+
 class DevPlaceFactsGateway:
-    def get_raw_facts(self, place_id: str) -> dict:
-        return {}
+    def get_facts(self, place_ids: Sequence[str]) -> Mapping[str, Sequence[FactLabel]]:
+        return {place_id: [] for place_id in place_ids}  # 라벨 없음 = 전부 unknown(unknown_policy 그대로 적용)
 
 
 class RealPlaceSearchGateway:
-    """places(#34) 실시간 검색 — places.api에 위임하고 recommend 타입(PlaceStub)으로 옮겨 담는다."""
+    """자체 장소 DB(places.api.search_nearby_own) 반경 검색 — 후보의 place_id·좌표는 places에서 온다(#190).
+    db를 넘기면 그 세션으로(테스트), 안 넘기면 places가 짧은 세션을 직접 연다."""
+
+    def __init__(self, db: Session | None = None):
+        self._db = db
 
     def search_nearby(self, *, category: str, circles: Sequence[Circle]) -> list[PlaceStub]:
         areas = [Area(lat=c.anchor_lat, lng=c.anchor_lng, radius_m=c.radius_m) for c in circles]
-        return [PlaceStub(place_id=r.place_id, lat=r.lat, lng=r.lng) for r in places_api.search_nearby(category, areas)]
+        return [PlaceStub(place_id=r.place_id, lat=r.lat, lng=r.lng) for r in places_api.search_nearby_own(category, areas, db=self._db)]
+
+    def get_names(self, place_ids: Sequence[str]) -> Mapping[str, str]:
+        return {pid: info.name for pid, info in places_api.get_places(list(place_ids), db=self._db).items()}
 
 
 class RealPlaceFactsGateway:
-    def get_raw_facts(self, place_id: str) -> Mapping[str, Any]:
-        return places_api.get_raw_facts(place_id)
+    """자체 DB place_facts의 라벨을 그대로 돌려준다 — 모델 호출도 카카오 원자료도 없다(#190)."""
+
+    def __init__(self, db: Session | None = None):
+        self._db = db
+
+    def get_facts(self, place_ids: Sequence[str]) -> Mapping[str, Sequence[FactLabel]]:
+        return places_api.get_facts(list(place_ids), db=self._db)
 
 
 def _real_place_search_gateway() -> PlaceSearchGateway:
@@ -78,12 +98,12 @@ def _dev_place_facts_gateway() -> PlaceFactsGateway:
 
 get_place_search_gateway = select(
     "recommend.PlaceSearchGateway", settings.places_mode,
-    {"dev": _dev_place_search_gateway, "real": _real_place_search_gateway}, "places #14",
+    {"dev": _dev_place_search_gateway, "real": _real_place_search_gateway}, "places #189",
 )
 
 get_place_facts_gateway = select(
     "recommend.PlaceFactsGateway", settings.places_mode,
-    {"dev": _dev_place_facts_gateway, "real": _real_place_facts_gateway}, "places #14",
+    {"dev": _dev_place_facts_gateway, "real": _real_place_facts_gateway}, "places #189",
 )
 
 

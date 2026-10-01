@@ -8,8 +8,8 @@ recommend.ports 게이트웨이)은 전부 이 파일에 둔다(이 모듈 자�
 **아래 나머지 함수 전부** — #108(코어 파이프라인, llm 스텁 대상 통합) 범위. v1은 실제 비동기
 큐가 없어 "202 진행 중"을 문자 그대로 구현하지 않는다 — run 생성·execute·widen·retry 전부
 동기로 끝낸다(recommend/for_Root.md에 기록). places(#14)/seeding(#13)이 없어 candidate 풀
-확보(PlaceSearchGateway)·장소 원자료 조회(PlaceFactsGateway) 둘 다 recommend/deps.py의 dev
-스텁이 채운다 — 실제 장소 데이터가 아니다.
+확보(PlaceSearchGateway)·라벨 조회(PlaceFactsGateway)는 dev 모드면 recommend/deps.py의 스텁이,
+real 모드면 places.api의 자체 DB 함수가 채운다(#190 — 모델 호출은 ② 사유 구조화 하나뿐이다).
 
 **mentor-review-plan.md 대비 실제 구현 차이 (for_Root.md에 자세히 기록, 요약만 여기)**:
 계획 문서(작성 09-11 22:46)는 `membership: MembershipGateway`에 `.is_member(map_id, user_id)
@@ -40,7 +40,7 @@ guard.py 안에서만 일어난다). "멤버십/작성자 확인이 멱등 경�
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping
 
 from sqlalchemy.orm import Session
 
@@ -317,23 +317,25 @@ def _run_pipeline(
     removed_open = 0  # dev 스텁은 실시간 영업시간 조회가 없어 항상 unknown+needs_check — 결코 제거하지 않는다
 
     active_hard_keys = _active_hard_fact_keys(db, run)
+    # ③-a-1 — 라벨은 자체 DB(place_facts)에서 읽는다. 요청 중 모델을 부르지 않는다(#190, v1). 없는 라벨은
+    # confidence=unknown으로 보고 unknown_policy를 그대로 적용한다. 한 번에 배치 조회(N+1 금지).
+    facts_by_place = place_facts.get_facts([p.place_id for p in within_radius])
     checks_by_place: dict[str, list[Check]] = {}
     for place in within_radius:
-        raw_facts = place_facts.get_raw_facts(place.place_id)
-        labels = llm_service.label_place(raw_facts, active_hard_keys)  # ③-a-1
+        labels = facts_by_place.get(place.place_id, [])
         checks = [is_open_check]
-        for label in labels:
-            spec = constraints.HARD_REGISTRY[label.fact_key]
-            known = label.confidence == "known"
-            passes = _passes_hard_check(label.fact_key, label.value) if known else True
-            checks.append(core.build_check(label.fact_key, spec.unknown_policy, known=known, value=label.value, passes=passes))
+        for fact_key in active_hard_keys:
+            known, value = core.resolve_label(labels, fact_key)
+            passes = _passes_hard_check(fact_key, value) if known else True
+            checks.append(core.build_check(
+                fact_key, constraints.HARD_REGISTRY[fact_key].unknown_policy, known=known, value=value, passes=passes,
+            ))
         # #112 1단계 입력 — 선호(soft) 라벨도 같이 붙인다. unknown_policy는 표 그대로 "pass"
-        # 고정(constraints.md — wait_short/quiet/comfortable_seat/local_flavor 전부 "순위에서
-        # 중립 처리"). passed는 hard 체크처럼 "실격 아님"이 아니라 그 라벨의 실제 참/거짓값이다.
-        soft_labels = llm_service.label_place(raw_facts, sorted(constraints.SOFT_FACT_KEYS))
-        for label in soft_labels:
-            known = label.confidence == "known"
-            checks.append(core.build_check(label.fact_key, "pass", known=known, value=label.value, passes=bool(label.value)))
+        # 고정(constraints.md — 순위에서 중립 처리). passed는 hard 체크처럼 "실격 아님"이 아니라
+        # 그 라벨의 실제 참/거짓값이다.
+        for fact_key in sorted(constraints.SOFT_FACT_KEYS):
+            known, value = core.resolve_label(labels, fact_key)
+            checks.append(core.build_check(fact_key, "pass", known=known, value=value, passes=bool(value)))
         checks_by_place[place.place_id] = checks
 
     pass_flags = core.apply_disqualifier_filters([checks_by_place[p.place_id] for p in within_radius])
@@ -518,7 +520,9 @@ def retry_run(
     return run
 
 
-def _candidate_response(candidate: CandidateRow, run: RecommendRun, principal: Principal, region_labels: dict) -> schemas.Candidate:
+def _candidate_response(
+    candidate: CandidateRow, run: RecommendRun, principal: Principal, region_labels: dict, place_names: Mapping[str, str],
+) -> schemas.Candidate:
     resource = Resource(type="candidate", map_id=run.map_id, author_id=run.requested_by)
     # can()은 역할·작성자만 본다(published_pin_id 같은 candidate 상태를 모른다) — 이미 게시된
     # candidate에도 can_publish=true가 나가면 FE가 게시 버튼을 계속 활성 상태로 그린다(루트가
@@ -526,7 +530,7 @@ def _candidate_response(candidate: CandidateRow, run: RecommendRun, principal: P
     # 여기서 직접 고친다). 게시 여부는 이 함수가 이미 알고 있으니 여기서 같이 확인한다.
     already_published = candidate.published_pin_id is not None
     return schemas.Candidate(
-        id=str(candidate.id), region_label=region_labels.get(candidate.region_id),
+        id=str(candidate.id), place_name=place_names.get(candidate.place_id), region_label=region_labels.get(candidate.region_id),
         rank=candidate.rank, checks=[Check(**c) for c in candidate.checks],
         reason=candidate.reason,
         member_fulfillment=candidate.member_fulfillment or None,  # {} = 집계 없음 → 필드 생략
@@ -539,7 +543,9 @@ def _candidate_response(candidate: CandidateRow, run: RecommendRun, principal: P
     )
 
 
-def get_result(db: Session, *, run_id: str, principal: Principal) -> schemas.RecommendResult:
+def get_result(
+    db: Session, *, run_id: str, principal: Principal, place_search: PlaceSearchGateway,
+) -> schemas.RecommendResult:
     """GET /runs/{runId}/result — funnel은 마지막 execute/widen/retry가 저장해둔 값을 그대로
     쓴다(재계산하지 않는다 — GET은 부작용도, 외부 게이트웨이 의존도 없어야 한다)."""
     run = service.get_run_or_404(db, run_id)
@@ -547,11 +553,13 @@ def get_result(db: Session, *, run_id: str, principal: Principal) -> schemas.Rec
     region_labels = {r.id: r.label for r in regions}
     candidates = service.list_candidates(db, run_id)
     funnel = run.last_funnel or []
+    # 후보 이름은 places(자체 DB)에서 온다 — candidates에는 place_id·좌표만 저장한다(#190).
+    place_names = place_search.get_names([c.place_id for c in candidates]) if candidates else {}
     if not candidates:
         raise AppError("NO_RESULTS", detail={"funnel": funnel})
     return schemas.RecommendResult(
         run_id=str(run.id),
         funnel=[schemas.FunnelEntry(**entry) for entry in funnel],
         regions=[_region_response(r) for r in regions],
-        candidates=[_candidate_response(c, run, principal, region_labels) for c in candidates],
+        candidates=[_candidate_response(c, run, principal, region_labels, place_names) for c in candidates],
     )

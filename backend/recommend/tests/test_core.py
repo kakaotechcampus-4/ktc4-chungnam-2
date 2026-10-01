@@ -514,3 +514,21 @@ def test_select_top_candidates_raises_when_anchor_points_empty_list():
     candidates = [core.ScoredCandidate(place_id="p1", score=1, region_label="빈동네", lat=35.0, lng=129.0)]
     with pytest.raises(ValueError):
         core.select_top_candidates(candidates, {"빈동네": []}, limit=3)
+
+
+# ---------- resolve_label (#190) ----------
+
+def test_resolve_label_returns_known_value_from_place_facts():
+    from places.schemas import FactLabel
+
+    assert core.resolve_label([FactLabel("quiet", True, "known")], "quiet") == (True, True)
+
+
+def test_resolve_label_treats_missing_unknown_and_valueless_known_as_unknown():
+    from places.schemas import FactLabel
+
+    labels = [FactLabel("quiet", None, "unknown"), FactLabel("spicy_focused", None, "known")]
+    assert core.resolve_label(labels, "quiet") == (False, None)
+    assert core.resolve_label(labels, "spicy_focused") == (False, None)   # 값 없는 known을 통과 쪽으로 읽지 않는다
+    assert core.resolve_label(labels, "oily_focused") == (False, None)
+    assert core.resolve_label([], "quiet") == (False, None)
