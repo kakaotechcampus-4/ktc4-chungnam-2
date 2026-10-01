@@ -117,3 +117,26 @@ v1은 카카오만(`PLACES_SOURCES=kakao`). 네이버·구글은 켤 때 같은 
 - `places/tests/test_name_search.py`(요청 모양·폴백·503·상한·resolve 대조·샘플), `integration/test_places_search.py`(검색→핀 생성 201·place_name 저장, 0건, 422 10종, 429(사용자별), 503 2종, 401, 비구성원 허용), `test_response_contract.py` 골든 패스에 검색 호출 추가, `KNOWN_MISSING`에서 `("get","/places/search")` 삭제.
 - 통합 테스트에서 추가 클라이언트를 `with TestClient(...)`로 열면 lifespan이 한 번 더 열려 dispatcher 싱글턴 상태가 남아 `realtime/tests/test_shutdown.py`가 깨진다(전체 실행에서만 실패, 단독은 통과). `with` 없이 쓰는 기존 패턴을 따랐다.
 - `PINGO_TEST_DB=pingo_test_places python -m pytest` → 819 passed, 6 deselected(live), 실패 0.
+
+---
+
+# #188 카카오 응답 캐시 제거·LLM 경로 차단 (2026-10-01)
+
+근거: #53 결정 — 카카오 응답은 저장·캐시하지 않고 외부 LLM으로 보내지 않는다.
+
+## 바뀐 것
+- `places/cache.py`(`TTLCache`) 삭제. `PlaceService`는 소스 목록 말고 어떤 상태도 갖지 않는다(`vars(svc) == {"_sources"}`를 테스트로 고정).
+- `get_raw_facts`는 **항상 `{}`**. recommend→llm 경로에 지도 API 원자료가 닿지 않는다 — 빈 값이면 `llm.label_place`가 전부 unknown으로 응답하고 recommend가 `unknown_policy`로 처리한다. 보완용 `fallback.enrich`는 코드에 남지만 서비스가 부르지 않는다(네이버·구글을 켤 때 다시 결정).
+- `GET /places/search`·`search_nearby`는 결과를 응답으로만 돌려주고 즉시 버린다. `remember_and_convert` 제거(`to_result`로 대체). dev 샘플 검색은 `PlaceService`를 만들지도 않는다.
+- `resolve`는 캐시를 쓰지 않는다. `source=search`도 echo된 `place_id`·`lat`·`lng`를 그대로 쓰고, 200m 캐시 대조는 없앴다. **좌표가 없으면 422**(이전에는 방금 검색한 캐시에서 채웠다).
+- `PLACES_SOURCES` 기본값 `kakao` 하나(`common/settings.py`, `.env.example`). `PLACES_CACHE_TTL_S`(`places_cache_ttl_s`) 설정 삭제.
+
+## 루트 확인
+1. **`resolve`의 echo 신뢰는 #191(핀 찍기 규칙) 전의 임시 동작이다.** `source=search`로 온 `place_id`·좌표·이름을 서버가 어디와도 대조하지 않는다 — `coordinate` 경로가 이미 임의 좌표를 받으므로 위험이 늘지는 않지만, 클라이언트가 `kakao:<id>`에 엉뚱한 좌표를 붙여도 막지 못한다. #191에서 규칙을 정한 뒤 이 자리를 바꾼다.
+2. **recommend의 후보 풀은 아직 `search_nearby`(카카오 실시간)에서 온다.** 후보 행에는 `place_id`·좌표만 저장되고(테스트로 확인), 라벨링 원자료는 비어 있어 라벨이 전부 unknown이 된다. 즉 실격 필터가 "모름" 정책만 타므로 추천 품질은 사실상 스텁 수준이다 — 카카오 응답을 LLM에 못 보내게 된 데 따른 결과다. 층2·3 라벨의 출처는 #53 후속 결정이 필요하다.
+3. 이전 보고(위 #180 절)의 "캐시 만료 후 echo 신뢰", "`PLACES_CACHE_TTL_S=0`이면 대조 꺼짐" 항목은 이제 해당 없다.
+
+## 테스트 (카카오 값이 어디에도 안 남는다는 고정)
+- `places/tests/test_service.py`: 검색 직후·이름 검색 직후 `get_raw_facts == {}`, 보완 소스 호출 0회, 서비스 상태 없음, resolve 규칙(echo 그대로, 이전 검색과 다른 좌표도 통과, 좌표 없으면 422).
+- `integration/test_places_no_kakao_leak.py`: 실제 `recommend.flows.execute_run`을 real 게이트웨이로 돌리고 `llm.label_place` 인자를 가로채 표식 값(이름·전화·주소·URL)이 없고 `{}`인지, 후보 행에도 표식이 없는지 확인. 검색 후 좌표 없는 핀 생성이 422임을 확인.
+- `PINGO_TEST_DB=pingo_test_places python -m pytest` → 824 passed, 6 deselected(live), 실패 0.

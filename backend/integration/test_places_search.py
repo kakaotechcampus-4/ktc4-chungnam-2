@@ -4,7 +4,6 @@ import pytest
 
 from main import app  # noqa: F401
 from places import api as places_api
-from places.cache import TTLCache
 from places.ratelimit import SlidingWindowLimiter
 from places.service import PlaceService
 from places.tests.test_name_search import NamedFake
@@ -110,7 +109,7 @@ def test_invalid_request_does_not_consume_the_limit(client, monkeypatch):
 
 
 def test_all_sources_failing_is_503(client, monkeypatch):
-    failing = PlaceService([NamedFake("kakao", fail=True)], TTLCache(60))
+    failing = PlaceService([NamedFake("kakao", fail=True)])
     monkeypatch.setattr(places_api, "_is_dev", lambda: False)
     monkeypatch.setattr(places_api, "_service", lambda: failing)
     r = client.get("/places/search", params={"q": "아무거나"})
@@ -119,5 +118,5 @@ def test_all_sources_failing_is_503(client, monkeypatch):
 
 def test_missing_key_is_503(client, monkeypatch):
     monkeypatch.setattr(places_api, "_is_dev", lambda: False)
-    monkeypatch.setattr(places_api, "_service", lambda: PlaceService([NamedFake("kakao", configured=False)], TTLCache(60)))
+    monkeypatch.setattr(places_api, "_service", lambda: PlaceService([NamedFake("kakao", configured=False)]))
     assert client.get("/places/search", params={"q": "a"}).status_code == 503
