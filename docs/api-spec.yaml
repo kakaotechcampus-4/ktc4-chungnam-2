@@ -1086,7 +1086,7 @@ components:
       description: 장소 정보 출처 (가드레일 5, 5-6-1 지도 출처 표시)
       required: [provider]
       properties:
-        provider: { type: string, enum: [kakao, naver, google] }
+        provider: { type: string, enum: [kakao, naver, google, permit, tourapi], description: "permit = 지방행정 인허가 공공데이터, tourapi = 한국관광공사 TourAPI — 자체 장소 DB의 출처(#53). kakao·naver·google은 검색 결과 표시용(저장하지 않음)" }
         url: { type: string, description: "출처 페이지 링크. 이용약관상 링크 제공이 불가하면 생략" }
 
     Candidate:
