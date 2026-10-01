@@ -16,10 +16,9 @@ from auth.schemas import CurrentUser
 from authz.core import Principal
 from authz.guard import require, require_map_member, require_on_map
 from pins import service
-from pins.deps import DbSession, PlaceGatewayDep
+from pins.deps import DbSession
 from pins.loaders import load_pin
 from pins.models import Pin as PinRow
-from pins.ports import PlaceGateway
 from pins.schemas import Category, FilterCounts, Pin, PinCreateRequest, PinKind, Reaction, ReactionRequest
 
 router = APIRouter(tags=["pins"], dependencies=[Depends(get_current_user)])
@@ -68,9 +67,8 @@ def post_pin(
     mapId: str = Path(...),
     principal: Principal = PinToCreate,
     db: Session = DbSession,
-    places: PlaceGateway = PlaceGatewayDep,
 ):
-    return service.create_pin(db, map_id=mapId, principal=principal, req=body, places=places)
+    return service.create_pin(db, map_id=mapId, principal=principal, req=body)
 
 
 @router.delete("/pins/{pinId}", status_code=204)

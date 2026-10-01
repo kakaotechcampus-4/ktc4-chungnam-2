@@ -58,13 +58,16 @@ class ReactionSummary(BaseModel):
 
 
 class PinCreateRequest(BaseModel):
+    """place_id·place_name·lat·lng·category는 **저장하지 않는 매칭 힌트**다(#191, 스펙 PinCreateRequest).
+    서버가 같은 자체 DB 장소를 찾아 그 장소의 값으로 핀을 만든다. v1은 source=search만 받는다."""
+
     category: Category
-    source: PinSource | None = None
+    source: PinSource = "search"
     link_url: str | None = None
-    place_id: str | None = None
-    place_name: str | None = Field(default=None, max_length=100)
-    lat: float | None = None
-    lng: float | None = None
+    place_id: str
+    place_name: str = Field(max_length=100)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
 
 
 class Reaction(BaseModel):
@@ -88,6 +91,7 @@ class Pin(BaseModel):
     lat: float
     lng: float
     place_name: str | None = None
+    place_url: str | None = None
     created_by: str
     created_by_display_name: str | None = None
     price_bucket: PriceBucket | None = None

@@ -10,7 +10,6 @@ import pytest
 # common.events.record_event를 직접 부르는 평범한 함수 호출로 바뀐다(pins 계획 참고).
 # 구현이 영원히 하나뿐인 것에 어댑터 선택 레이어를 씌우지 않는다.
 MISSING_REAL = {
-    "pins.PlaceGateway": "#34",
     "auth.SessionResolver": "#4",
     "recommend.PlaceSearchGateway": "#14",
     "recommend.PlaceFactsGateway": "#14",
@@ -65,7 +64,7 @@ def test_select_registers_the_choice_in_assembly():
 # 새 dev/real 어댑터 포트가 생기면 여기 추가한다 — 위 settings.py의 _PORTS,
 # adapters.py의 select() 호출 이름들과 맞춘다. "get_membership_gateway"는 여기 없다(issue #89) —
 # 이제 select() 없이 DbMembershipGateway 하나로 직접 정의된다(우회가 아니라 의도한 설계다).
-KNOWN_ADAPTER_FACTORIES = {"get_place_gateway", "get_current_user"}
+KNOWN_ADAPTER_FACTORIES = {"get_current_user"}
 
 
 def _select_bound_names(tree: ast.Module) -> set[str]:

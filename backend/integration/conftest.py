@@ -18,6 +18,7 @@ import auth.models  # noqa: F401
 import common.events  # noqa: F401
 import maps.models  # noqa: F401
 import pins.models  # noqa: F401
+import places.models  # noqa: F401 — pins가 places.api.get_places(db)로 이름·URL을 읽는다
 import recommend.models  # noqa: F401
 import shortlist.models  # noqa: F401
 from auth.models import User
@@ -75,7 +76,29 @@ def db_session(test_engine):
 
 
 @pytest.fixture()
-def app_client(db_session):
+def fake_places(monkeypatch):
+    """핀 생성은 places.api(match_place 등)만 거친다(#195). 자체 DB 적재 없이 FakePlaces 샘플 장소로 돌린다.
+    통합 테스트가 가짜로 바꾸는 유일한 경계다."""
+    from places.testing import FakePlaces
+
+    return FakePlaces().install(monkeypatch)
+
+
+@pytest.fixture()
+def pin_body(fake_places):
+    """FakePlaces 샘플 장소 키로 핀 생성 요청 본문을 만든다(검색 결과를 그대로 되돌려 보내는 것과 같다)."""
+
+    def build(key: str, **override) -> dict:
+        row = fake_places._row(fake_places.place_id(key))
+        body = {"category": row.category, "place_id": f"kakao:{key}", "place_name": row.name,
+                "lat": row.lat, "lng": row.lng}
+        return {**body, **override}
+
+    return build
+
+
+@pytest.fixture()
+def app_client(db_session, fake_places):
     from fastapi.testclient import TestClient
 
     from main import app

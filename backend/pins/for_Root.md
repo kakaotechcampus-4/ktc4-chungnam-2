@@ -173,3 +173,38 @@
 (enum에 기타, 컬럼 3개 확인). 테스트가 잡은 실제 결함 1건: 제 serializer가 `exclude`한 `my_reaction`을 null로 되살려 SSE에 새던 것 → 수정.
 
 **복잡도**: 예상 3/5 · **실제 소요**: 3/5.
+
+---
+
+## #195 — 핀이 자체 DB 장소를 가리키게 (검색 매칭, coordinate·link 거절, place_name 제거)
+
+스펙(PR #194)대로 구현했고 스펙 문서는 건드리지 않았다. 마이그레이션 **0018**(`down_revision=0017_places_own_db`).
+
+**구현**
+- `POST /maps/{mapId}/pins` — 필수 `category·place_id·place_name·lat·lng`(스키마), `source` 기본 `search`. `places.api.match_place(PlaceHint, db=db)` **한 번**으로
+  자체 DB 장소를 찾고, 없으면 **422 `PLACE_NOT_SUPPORTED`**(숙소·기타·영업 종료·반경 밖·모호함 모두 places가 `None`을 줘서 여기로 온다).
+  `source=coordinate|link`, `link_url`은 422 `VALIDATION_ERROR`(메시지는 FE가 그대로 노출 가능). 매칭된 장소의 분류가 요청과 다르면 422 `VALIDATION_ERROR`(방어 — 현재 `match_place`는 분류 불일치를 `None`으로 처리).
+- 저장되는 값은 **매칭된 장소의 것뿐**: `pins.place_id = places.id`, `pins.geom = 장소 좌표`. 요청의 이름·좌표·카카오 ID는 저장하지 않는다(테스트로 고정).
+- 성공 뒤(중복·실패 요청은 제외) `places.api.record_kakao_match(place_id, 요청 place_id, url, db=db)`를 **같은 트랜잭션**에서 부른다.
+- 응답의 `place_name`·`place_url`은 `places.api.get_places(...)`에서 — 목록은 핀 id 배치 1회. `place_url`은 값이 없으면 필드 생략.
+- 중복 판정: 같은 지도·같은 `places.id`(`uq_pins_map_place` 그대로, 카카오 ID가 달라도 같은 장소로 매칭되면 409).
+- 제거: `pins.place_name` 컬럼, `PlaceGateway`/`PinDraft`/`ResolvedPlace`(`pins/ports.py`), `RequestEchoPlaceGateway`/`RealPlaceGateway`(`pins/deps.py`), `pins.PlaceGateway` 어댑터 슬롯. echo 좌표 동작은 없어졌다.
+
+**테스트 이동**: pins·integration의 `coordinate` 핀 생성은 모두 `FakePlaces` 샘플 장소로 옮겼다(`pins/tests/conftest.py::fake_places`, `integration/conftest.py::fake_places·pin_body`).
+숙소·기타 핀은 API로 만들 수 없게 돼서(자체 DB에 없음) 해당 테스트는 행을 직접 심는다. `places/tests/test_gateways.py`·`common/tests/test_adapter_assembly.py`에서 pins 슬롯 항목을 지웠다.
+
+**개발 데이터 정리(항목 8)**: 0018이 `places.id`와 일치하지 않는 핀을 **reactions·shortlist_items와 함께 삭제**한다(카카오 좌표·이름·ID를 저장한 개발 데이터라 배포 전에 지워야 함). 일치하는 핀은 남는다.
+빈 DB에서 upgrade→downgrade→upgrade, 고아 핀+반응 1건·일치 핀+반응 1건 시드로 삭제/유지를 확인했다. downgrade는 컬럼만 되돌린다(삭제된 핀은 복구 불가).
+이미 올라간 환경이 있으면 `routes`·`recommend` 쪽에 남은 `pin_id` 문자열 참조(FK 없음)는 이 마이그레이션이 정리하지 않는다.
+
+**루트 확인 필요**
+1. **`pins.place_id`를 UUID+FK로 바꾸지 않았다.** 이슈 4번은 "places.id를 가리키게"인데, ① `FakePlaces`의 ID는 DB `places` 행이 없어 FK가 있으면 FakePlaces 기반 테스트가 불가능하고 ② recommend의 dev 스텁이 `dev-seed:…` 합성 ID로 `create_ai_pin`을 부르며 ③ recommend·shortlist 테스트 10여 곳이 임의 문자열로 `PinRow`를 만든다.
+   그래서 컬럼은 문자열 그대로 두고 값만 `places.id`가 되게 했다(무결성은 `match_place`가 보장). recommend가 `search_nearby_own`으로 옮겨 가면 UUID+FK 전환을 따로 하는 게 안전하다 — 결정 요청.
+2. **카카오 URL은 요청에 없다.** `PinCreateRequest`엔 URL 필드가 없어, 검색 결과 `place_id`가 `kakao:<id>` 형태일 때만 `https://place.map.kakao.com/<id>`를 만들어 기록한다(`core.kakao_place_url`). naver·google ID면 기록하지 않고 `place_url`도 생략된다.
+   이 URL 형식이 약관/실제 페이지와 맞는지 확인 필요(검색 응답 `place_source.url`을 FE가 같이 보내는 방식이 더 정확하다 — 스펙 변경이라 제안만 한다).
+3. **`recommend.create_ai_pin` 호출 경로**: `place_id`는 이제 자체 DB 장소 ID여야 의미가 있다. dev 합성 ID로 게시하면 `place_name`이 응답에서 빠진다(오류는 아니다).
+4. `docs/data-model.md` 63~65행 근처 `pins.place_id references places(id)` 문구는 현재 구현(FK 없음)과 다르다 — 위 1번 결정에 따라 갱신.
+
+**검증**: `PINGO_TEST_DB=pingo_test_pins python -m pytest`(backend 전체) **939 passed, 6 deselected(live), 실패 0**.
+
+**복잡도**: 예상 3/5 · **실제 소요**: 4/5(테스트 이동 범위가 예상보다 컸다 — integration 4개 파일).

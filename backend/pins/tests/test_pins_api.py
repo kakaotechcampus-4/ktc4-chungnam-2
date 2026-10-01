@@ -11,7 +11,9 @@ publisher 스파이가 아니라 event_log 테이블을 직접 조회해 확인�
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+import pytest
+from geoalchemy2 import Geometry
+from sqlalchemy import cast, func, select
 
 from authz.deps import get_membership_gateway
 from authz.testing import FakeMembership
@@ -43,6 +45,12 @@ def _insert_pin(db_session, *, map_id="map_1", place_id=None, created_by="user_1
     return row
 
 
+# 검색 결과를 골라 핀을 만드는 요청 본문 — 값은 places.testing.FakePlaces의 샘플 장소와 같다(#195).
+# place_id는 카카오 검색 결과의 ID(매칭 힌트)이고 핀에는 저장되지 않는다.
+KALGUKSU = {"category": "음식점", "place_id": "kakao:1001", "place_name": "성수 칼국수", "lat": 37.5445, "lng": 127.0561}
+CAFE = {"category": "카페", "place_id": "kakao:1002", "place_name": "온도 커피 성수", "lat": 37.5439, "lng": 127.0556}
+
+
 def _auth(user_id="user_1"):
     return {"session": user_id}
 
@@ -60,54 +68,118 @@ def _deny_membership():
     return FakeMembership({})
 
 
-def test_create_pin_returns_201(app_client):
-    resp = app_client.post(
-        "/maps/map_1/pins",
-        json={"category": "음식점", "source": "coordinate", "lat": 35.15, "lng": 129.12},
-        cookies=_auth(),
-    )
+def test_create_pin_returns_201_with_places_name_and_coordinates(app_client, fake_places):
+    resp = app_client.post("/maps/map_1/pins", json=KALGUKSU, cookies=_auth())
     assert resp.status_code == 201
     body = resp.json()
     assert body["category"] == "음식점"
     assert body["kind"] == "일반"
     assert body["visibility"] == "public"
-    assert "place_name" not in body  # 안 보냈으면 여전히 생략(response_model_exclude_none)
+    assert body["place_name"] == "성수 칼국수"
+    assert (body["lat"], body["lng"]) == (37.5445, 127.0561)
 
 
-def test_create_pin_rejects_link_url_with_422(app_client, db_session):
-    """#148 — link_url만 보내도, source=link여도 422. 프론트가 그대로 보여줄 문장이 message다."""
-    for body in (
-        {"category": "음식점", "link_url": "https://maps.google.com/?q=x", "lat": 35.1, "lng": 129.0},
-        {"category": "음식점", "source": "link", "link_url": "https://maps.google.com/?q=x"},
-    ):
-        resp = app_client.post("/maps/map_1/pins", json=body, cookies=_auth())
-        assert resp.status_code == 422
-        assert resp.json()["code"] == "VALIDATION_ERROR"
-        assert resp.json()["message"] == "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"
+def test_create_pin_uses_place_values_not_request_values(app_client, db_session, fake_places):
+    """#195 완료 조건 — 요청의 이름·좌표(카카오 값)는 저장되지 않는다. 핀의 이름·좌표는 장소의 것이다."""
+    body = {**KALGUKSU, "place_name": "성수 칼국수 (본점)", "lat": 37.5447, "lng": 127.0563}   # 카카오가 준 약간 다른 값
+    resp = app_client.post("/maps/map_1/pins", json=body, cookies=_auth())
+    assert resp.status_code == 201
+    assert resp.json()["place_name"] == "성수 칼국수"
+    assert (resp.json()["lat"], resp.json()["lng"]) == (37.5445, 127.0561)
+
+    row = db_session.execute(select(PinRow)).scalar_one()
+    assert row.place_id == fake_places.place_id("seongsu-kalguksu")      # places.id — 카카오 ID가 아니다
+    assert "place_name" not in PinRow.__table__.columns                  # 이름 컬럼 자체가 없다
+    geometry = cast(PinRow.geom, Geometry())
+    lng, lat = db_session.execute(select(func.ST_X(geometry), func.ST_Y(geometry))).one()
+    assert (round(lat, 4), round(lng, 4)) == (37.5445, 127.0561)         # 장소 좌표의 복사
+
+
+def test_create_pin_records_kakao_id_and_url_on_the_place_and_returns_place_url(app_client, fake_places):
+    resp = app_client.post("/maps/map_1/pins", json=KALGUKSU, cookies=_auth())
+    assert resp.status_code == 201
+    row = fake_places._row(fake_places.place_id("seongsu-kalguksu"))
+    assert row.kakao_place_id == "kakao:1001"
+    assert row.kakao_place_url == "https://place.map.kakao.com/1001"
+    assert resp.json()["place_url"] == "https://place.map.kakao.com/1001"
+    listed = app_client.get("/maps/map_1/pins", cookies=_auth()).json()
+    assert listed[0]["place_url"] == "https://place.map.kakao.com/1001" and listed[0]["place_name"] == "성수 칼국수"
+
+
+def test_create_pin_with_non_kakao_id_records_nothing_and_omits_place_url(app_client, fake_places):
+    resp = app_client.post("/maps/map_1/pins", json={**KALGUKSU, "place_id": "naver:77"}, cookies=_auth())
+    assert resp.status_code == 201
+    assert "place_url" not in resp.json()
+    assert fake_places._row(fake_places.place_id("seongsu-kalguksu")).kakao_place_id is None
+
+
+def test_create_pin_without_matching_place_is_422_place_not_supported(app_client, db_session, fake_places):
+    far = {**KALGUKSU, "place_name": "없는 가게", "lat": 35.0, "lng": 129.0}
+    resp = app_client.post("/maps/map_1/pins", json=far, cookies=_auth())
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "PLACE_NOT_SUPPORTED"
+    assert db_session.execute(select(func.count()).select_from(PinRow)).scalar_one() == 0
+    assert all(r.kakao_place_id is None for r in fake_places.rows)   # 실패한 요청이 카카오 ID를 남기지 않는다
+
+
+@pytest.mark.parametrize("category", ["숙소", "기타"])
+def test_create_pin_lodging_and_etc_are_not_supported(app_client, category):
+    resp = app_client.post("/maps/map_1/pins", json={**KALGUKSU, "category": category}, cookies=_auth())
+    assert resp.status_code == 422 and resp.json()["code"] == "PLACE_NOT_SUPPORTED"
+
+
+def test_create_pin_closed_place_is_not_supported(app_client):
+    closed = {"category": "음식점", "place_id": "kakao:9", "place_name": "종로 옛날국수", "lat": 37.5704, "lng": 126.9920}
+    resp = app_client.post("/maps/map_1/pins", json=closed, cookies=_auth())
+    assert resp.status_code == 422 and resp.json()["code"] == "PLACE_NOT_SUPPORTED"
+
+
+def test_create_pin_wrong_category_for_the_place_is_rejected(app_client, db_session):
+    """분류가 장소와 다르면 짝을 찾지 못하므로 핀을 만들지 않는다(엉뚱한 곳에 꽂지 않는다)."""
+    resp = app_client.post("/maps/map_1/pins", json={**KALGUKSU, "category": "카페"}, cookies=_auth())
+    assert resp.status_code == 422
+    assert resp.json()["code"] in ("PLACE_NOT_SUPPORTED", "VALIDATION_ERROR")
     assert db_session.execute(select(func.count()).select_from(PinRow)).scalar_one() == 0
 
 
-def test_create_pin_search_path_unchanged(app_client):
-    resp = app_client.post(
-        "/maps/map_1/pins",
-        json={"category": "카페", "source": "search", "place_id": "p_search", "lat": 35.1, "lng": 129.0},
-        cookies=_auth(),
+def test_create_pin_category_mismatch_after_match_is_validation_error(app_client, monkeypatch, db_session):
+    """match_place가 다른 분류의 장소를 돌려줘도(방어) 핀을 만들지 않고 VALIDATION_ERROR."""
+    from places import api as places_api
+    from places.schemas import PlaceMatch
+
+    monkeypatch.setattr(
+        places_api, "match_place",
+        lambda hint, *, db=None: PlaceMatch("p1", "x", 37.5, 127.0, "카페"),
     )
-    assert resp.status_code == 201
+    resp = app_client.post("/maps/map_1/pins", json=KALGUKSU, cookies=_auth())
+    assert resp.status_code == 422 and resp.json()["code"] == "VALIDATION_ERROR"
+    assert db_session.execute(select(func.count()).select_from(PinRow)).scalar_one() == 0
 
 
-def test_create_pin_stores_and_returns_place_name(app_client):
-    """루트 결정(2026-09-23) 회귀 테스트 — 사용자가 생성 요청에 넣은 이름을 그대로 저장·응답한다."""
+@pytest.mark.parametrize("source", ["coordinate", "link"])
+def test_create_pin_coordinate_and_link_sources_are_422_validation_error(app_client, db_session, source):
+    resp = app_client.post("/maps/map_1/pins", json={**KALGUKSU, "source": source}, cookies=_auth())
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+    assert db_session.execute(select(func.count()).select_from(PinRow)).scalar_one() == 0
+
+
+def test_create_pin_rejects_link_url_with_422(app_client, db_session):
+    """#148 — link_url을 보내면 422. 프론트가 그대로 보여줄 문장이 message다."""
     resp = app_client.post(
-        "/maps/map_1/pins",
-        json={
-            "category": "음식점", "source": "coordinate", "lat": 35.15, "lng": 129.12,
-            "place_name": "부산 밀면집",
-        },
-        cookies=_auth(),
+        "/maps/map_1/pins", json={**KALGUKSU, "link_url": "https://maps.google.com/?q=x"}, cookies=_auth()
     )
-    assert resp.status_code == 201
-    assert resp.json()["place_name"] == "부산 밀면집"
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+    assert resp.json()["message"] == "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"
+    assert db_session.execute(select(func.count()).select_from(PinRow)).scalar_one() == 0
+
+
+@pytest.mark.parametrize("missing", ["place_id", "place_name", "lat", "lng"])
+def test_create_pin_missing_hint_field_is_422(app_client, missing):
+    body = {k: v for k, v in KALGUKSU.items() if k != missing}
+    resp = app_client.post("/maps/map_1/pins", json=body, cookies=_auth())
+    assert resp.status_code == 422 and resp.json()["code"] == "VALIDATION_ERROR"
 
 
 def test_create_pin_includes_created_by_display_name_when_user_row_exists(app_client, db_session):
@@ -116,20 +188,13 @@ def test_create_pin_includes_created_by_display_name_when_user_row_exists(app_cl
     db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
     db_session.commit()
 
-    resp = app_client.post(
-        "/maps/map_1/pins",
-        json={"category": "음식점", "source": "coordinate", "lat": 35.15, "lng": 129.12},
-        cookies=_auth("user_1"),
-    )
+    resp = app_client.post("/maps/map_1/pins", json=KALGUKSU, cookies=_auth("user_1"))
     assert resp.status_code == 201
     assert resp.json()["created_by_display_name"] == "철수"
 
 
 def test_create_pin_without_cookie_is_401(app_client):
-    resp = app_client.post(
-        "/maps/map_1/pins",
-        json={"category": "음식점", "source": "coordinate", "lat": 35.15, "lng": 129.12},
-    )
+    resp = app_client.post("/maps/map_1/pins", json=KALGUKSU)
     assert resp.status_code == 401
     assert resp.json()["code"] == "UNAUTHORIZED"
 
@@ -138,11 +203,7 @@ def test_create_pin_non_member_is_404(app_client):
     """issue #61 — 비구성원이 핀을 생성할 수 있던 비대칭을 구조적으로 닫는다."""
     app.dependency_overrides[get_membership_gateway] = _deny_membership
     try:
-        resp = app_client.post(
-            "/maps/map_1/pins",
-            json={"category": "음식점", "source": "coordinate", "lat": 35.15, "lng": 129.12},
-            cookies=_auth(),
-        )
+        resp = app_client.post("/maps/map_1/pins", json=KALGUKSU, cookies=_auth())
     finally:
         del app.dependency_overrides[get_membership_gateway]
 
@@ -150,56 +211,48 @@ def test_create_pin_non_member_is_404(app_client):
     assert resp.json()["code"] == "NOT_FOUND"
 
 
-def test_create_pin_duplicate_place_id_is_409_with_existing_pin_id(app_client, db_session):
-    existing = _insert_pin(db_session, place_id="dup_place")
-    resp = app_client.post(
-        "/maps/map_1/pins",
-        json={"category": "음식점", "source": "search", "place_id": "dup_place", "lat": 35.1, "lng": 129.0},
-        cookies=_auth(),
-    )
+def test_create_pin_duplicate_place_is_409_with_existing_pin_id(app_client):
+    """같은 지도에서 같은 places.id면 중복 — 카카오 ID가 달라도(같은 장소로 매칭되면) 막는다."""
+    first = app_client.post("/maps/map_1/pins", json=KALGUKSU, cookies=_auth())
+    resp = app_client.post("/maps/map_1/pins", json={**KALGUKSU, "place_id": "kakao:2002"}, cookies=_auth("user_2"))
     assert resp.status_code == 409
     body = resp.json()
     assert body["code"] == "PIN_DUPLICATE"
-    assert body["detail"]["pin_id"] == str(existing.id)
+    assert body["detail"]["pin_id"] == first.json()["id"]
 
 
-def test_create_pin_reuses_place_id_after_soft_delete(app_client, db_session):
+def test_unique_index_is_per_map_and_place():
+    index = next(i for i in PinRow.__table__.indexes if i.name == "uq_pins_map_place")
+    assert [c.name for c in index.columns] == ["map_id", "place_id"]
+
+
+def test_create_pin_reuses_place_after_soft_delete(app_client, db_session, fake_places):
     """부분 유니크가 deleted_at IS NULL 조건을 실제로 타는지 — 삭제된 자리엔 다시 찍을 수 있다."""
-    _insert_pin(db_session, place_id="freed_place", deleted=True)
-    resp = app_client.post(
-        "/maps/map_1/pins",
-        json={"category": "음식점", "source": "search", "place_id": "freed_place", "lat": 35.1, "lng": 129.0},
-        cookies=_auth(),
-    )
+    _insert_pin(db_session, place_id=fake_places.place_id("seongsu-kalguksu"), deleted=True)
+    resp = app_client.post("/maps/map_1/pins", json=KALGUKSU, cookies=_auth())
     assert resp.status_code == 201
 
 
-def test_create_pin_recovers_from_real_db_constraint_violation(db_session, monkeypatch):
+def test_create_pin_recovers_from_real_db_constraint_violation(db_session, monkeypatch, fake_places):
     """사전조회(_find_existing_pin_id)가 놓친 경우(레이스)를 흉내내 실제 PostgreSQL 유니크
     제약 위반을 강제로 유발한다. begin_nested()만으로는 Session이 deactive 상태로 남아
     이후 쿼리가 PendingRollbackError로 죽는다는 걸 실측으로 확인한 회귀 테스트 —
     db.rollback()을 함께 불러야 여기서 실제로 복구된다(service.py::create_pin 참고)."""
     from authz.core import Principal
+    from common.errors import AppError
     from pins import service
-    from pins.ports import ResolvedPlace
     from pins.schemas import PinCreateRequest
 
-    existing = _insert_pin(db_session, place_id="race_place")
+    existing = _insert_pin(db_session, place_id=fake_places.place_id("seongsu-kalguksu"))
 
     # 사전조회가 항상 "안 겹침"으로 보이게 만들어 실제 INSERT까지 가게 한다(레이스 재현).
     monkeypatch.setattr(service, "_find_existing_pin_id", lambda db, map_id, place_id: None)
 
-    class _FixedPlaces:
-        def resolve(self, draft):
-            return ResolvedPlace(place_id="race_place", lat=35.1, lng=129.0)
-
     principal = Principal(user_id="user_1", map_id="map_1", role="member")
-    req = PinCreateRequest(category="음식점", source="coordinate", lat=35.1, lng=129.0)
-
-    from common.errors import AppError
+    req = PinCreateRequest(**KALGUKSU)
 
     try:
-        service.create_pin(db_session, "map_1", principal, req, _FixedPlaces())
+        service.create_pin(db_session, "map_1", principal, req)
         raise AssertionError("PIN_DUPLICATE가 발생했어야 한다")
     except AppError as exc:
         assert exc.code == "PIN_DUPLICATE"
@@ -289,11 +342,7 @@ def test_delete_nonexistent_pin_is_404(app_client):
 
 
 def test_create_pin_publishes_event_for_public_pin(app_client, db_session):
-    resp = app_client.post(
-        "/maps/map_1/pins",
-        json={"category": "음식점", "source": "coordinate", "lat": 35.15, "lng": 129.12},
-        cookies=_auth(),
-    )
+    resp = app_client.post("/maps/map_1/pins", json=KALGUKSU, cookies=_auth())
     pin_id = resp.json()["id"]
 
     events = _events(db_session, type="pin.created")

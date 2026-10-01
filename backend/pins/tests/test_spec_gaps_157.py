@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from pins import api
 from pins.models import Pin as PinRowAlias
 from pins.models import Reaction as ReactionRow
-from pins.tests.test_pins_api import _auth, _deny_membership, _events, _insert_pin
+from pins.tests.test_pins_api import KALGUKSU, _auth, _deny_membership, _events, _insert_pin
 from authz.deps import get_membership_gateway
 from main import app
 
@@ -127,11 +127,7 @@ def test_get_single_pin_response_includes_my_reaction(app_client, db_session):
 
 def test_public_events_never_carry_my_reaction(app_client, db_session):
     """my_reaction은 요청자 본인 값이라 전체 채널 이벤트 페이로드에 실리면 안 된다(가드레일 1)."""
-    resp = app_client.post(
-        "/maps/map_1/pins",
-        json={"category": "음식점", "source": "coordinate", "lat": 35.15, "lng": 129.12},
-        cookies=_auth("user_1"),
-    )
+    resp = app_client.post("/maps/map_1/pins", json=KALGUKSU, cookies=_auth("user_1"))
     assert resp.status_code == 201
     assert resp.json()["my_reaction"] is None
     created = _events(db_session, type="pin.created")
@@ -178,19 +174,15 @@ def test_delete_reaction_on_lodging_pin_is_204(app_client, db_session):
 
 # ---- 「기타」 카테고리 ----
 
-def test_create_and_filter_etc_category_pin_and_it_is_reactable(app_client, db_session):
-    resp = app_client.post(
-        "/maps/map_1/pins",
-        json={"category": "기타", "source": "coordinate", "lat": 35.15, "lng": 129.12, "place_id": "r157_etc"},
-        cookies=_auth("user_1"),
-    )
-    assert resp.status_code == 201, resp.text
-    body = resp.json()
-    assert body["category"] == "기타" and body["permissions"]["can_react"] is True
+def test_etc_category_pin_lists_filters_counts_and_is_reactable(app_client, db_session):
+    """「기타」는 일반 핀과 같다(반응 가능, 추천 대상만 아님). 자체 DB엔 기타 장소가 없어 API로는
+    만들 수 없으므로(#191) 행을 직접 심어 확인한다."""
+    pin = _insert_pin(db_session, category="기타", place_id="r157_etc")
     listed = app_client.get("/maps/map_1/pins", params={"category": "기타"}, cookies=_auth("user_1")).json()
-    assert [p["id"] for p in listed] == [body["id"]]
+    assert [p["id"] for p in listed] == [str(pin.id)]
+    assert listed[0]["permissions"]["can_react"] is True
     assert app_client.get("/maps/map_1/counts", cookies=_auth("user_1")).json()["by_category"]["기타"] == 1
-    assert app_client.put(f"/pins/{body['id']}/reaction", json={"type": "like"}, cookies=_auth("user_2")).status_code == 200
+    assert _react(app_client, pin, "user_2").status_code == 200
 
 
 # ---- AI 핀 reason / member_fulfillment / place_source ----

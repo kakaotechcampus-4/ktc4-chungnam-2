@@ -24,22 +24,21 @@ def clients(app_client, two_users):
     b.close()
 
 
-def _pin(client, map_id, place_id):
-    body = {"category": "음식점", "source": "coordinate", "lat": 35.1, "lng": 129.0, "place_id": place_id}
+def _pin(client, map_id, body):
     r = client.post(f"/maps/{map_id}/pins", json=body)
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
 
-def test_withdraw_removes_reactions_and_evidence_lines_but_keeps_pins(clients, db_session):
+def test_withdraw_removes_reactions_and_evidence_lines_but_keeps_pins(clients, db_session, pin_body):
     a, b = clients
     map_id = a.post("/maps", json={"title": "부산", "start_date": "2026-11-01",
                                    "end_date": "2026-11-03", "region": REGION}).json()["id"]
     token = a.post(f"/maps/{map_id}/invite").json()["token"]
     assert b.post(f"/invites/{token}/accept").status_code == 200
 
-    pin_a = _pin(a, map_id, "wd_a")
-    pin_b = _pin(b, map_id, "wd_b")  # 탈퇴자가 찍은 핀
+    pin_a = _pin(a, map_id, pin_body("seongsu-kalguksu"))
+    pin_b = _pin(b, map_id, pin_body("hongdae-ramen"))  # 탈퇴자가 찍은 핀
     for client in (a, b):
         for pin in (pin_a, pin_b):
             assert client.put(f"/pins/{pin}/reaction", json={"type": "like"}).status_code == 200

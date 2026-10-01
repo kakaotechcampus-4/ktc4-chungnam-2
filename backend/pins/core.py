@@ -16,7 +16,6 @@ from pins.schemas import (
     MemberFulfillment,
     Pin,
     PinCreateRequest,
-    PinSource,
     PlaceSource,
     Reaction,
     ReactionSummary,
@@ -26,48 +25,33 @@ from pins.schemas import (
 LINK_PIN_REJECTED_MESSAGE = "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"
 
 
-def resolve_source(req: PinCreateRequest) -> PinSource:
-    """source가 명시되지 않으면 어떤 필드가 왔는지로 추론한다. 결정 불가·모순이면 422.
-    link_url은 추론 대상이 아니다 — v1은 링크 핀 생성을 거절한다(validate_create, #147)."""
-    if req.source is not None:
-        return req.source
-
-    provided: list[PinSource] = []
-    if req.place_id:
-        provided.append("search")
-    if req.lat is not None and req.lng is not None:
-        provided.append("coordinate")
-
-    if len(provided) == 0:
-        raise AppError(
-            "VALIDATION_ERROR",
-            "핀 생성 경로를 알 수 없습니다 — place_id 또는 lat+lng가 필요합니다",
-        )
-    if len(provided) > 1:
-        raise AppError("VALIDATION_ERROR", "여러 경로의 값이 동시에 왔습니다 — source를 명시해주세요")
-    return provided[0]
+COORDINATE_PIN_REJECTED_MESSAGE = "지도를 눌러 핀을 찍을 수는 없어요. 장소를 검색해서 골라 주세요"
+CATEGORY_MISMATCH_MESSAGE = "고른 장소의 분류와 요청한 분류가 달라요"
+KAKAO_ID_PREFIX = "kakao:"
+KAKAO_PLACE_PAGE = "https://place.map.kakao.com/"
 
 
-def validate_create(req: PinCreateRequest) -> PinSource:
-    """경로별 필수값과 좌표 범위를 검증하고, 확정된 source를 반환한다.
-    v1은 링크로 핀 찍기를 거절한다(결정 #147, #148) — PinSource "link"·link_url 필드는
-    v2 카톡 내보내기가 다시 쓰므로 스키마엔 남겨두고 여기서만 막는다."""
+def validate_create(req: PinCreateRequest) -> None:
+    """v1은 source=search 하나만 받는다(#191, #147). coordinate·link(link_url 포함)는 422 —
+    스키마엔 v2 확장용으로 값이 남아 있어 여기서만 막는다. 좌표 범위·필수값은 스키마가 검증한다."""
     if req.source == "link" or req.link_url:
         raise AppError("VALIDATION_ERROR", LINK_PIN_REJECTED_MESSAGE)
+    if req.source == "coordinate":
+        raise AppError("VALIDATION_ERROR", COORDINATE_PIN_REJECTED_MESSAGE)
 
-    source = resolve_source(req)
 
-    if source == "search" and not req.place_id:
-        raise AppError("VALIDATION_ERROR", "search 경로에는 place_id가 필요합니다")
-    if source == "coordinate":
-        if req.lat is None or req.lng is None:
-            raise AppError("VALIDATION_ERROR", "coordinate 경로에는 lat, lng가 모두 필요합니다")
-        if not (-90 <= req.lat <= 90):
-            raise AppError("VALIDATION_ERROR", "lat은 -90~90 범위여야 합니다")
-        if not (-180 <= req.lng <= 180):
-            raise AppError("VALIDATION_ERROR", "lng는 -180~180 범위여야 합니다")
+def validate_category_matches(requested: str, place_category: str) -> None:
+    if requested != place_category:
+        raise AppError("VALIDATION_ERROR", CATEGORY_MISMATCH_MESSAGE)
 
-    return source
+
+def kakao_place_url(kakao_place_id: str) -> str | None:
+    """검색 결과 place_id("kakao:<id>")에서 카카오 장소 페이지 링크를 만든다. 요청에 URL 필드가 없고
+    다른 소스(naver·google)의 ID에서는 만들 수 없으므로 그때는 None — 기록하지 않는다."""
+    if not kakao_place_id.startswith(KAKAO_ID_PREFIX):
+        return None
+    raw = kakao_place_id[len(KAKAO_ID_PREFIX):]
+    return f"{KAKAO_PLACE_PAGE}{raw}" if raw else None
 
 
 def is_duplicate(existing_place_ids: set[str], place_id: str | None) -> bool:
@@ -111,6 +95,7 @@ class PinRecord:
     created_by: str
     reaction_counts: ReactionCounts
     place_name: str | None = None
+    place_url: str | None = None
     created_by_display_name: str | None = None
     checks: list[dict] | None = None
     reason: str | None = None
@@ -120,8 +105,8 @@ class PinRecord:
 
 
 def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
-    """place_name·created_by_display_name·checks는 호출부가 채워 넘긴 값을 그대로 싣는다(각각
-    pins.place_name 컬럼, auth.api.display_names, pins.checks 컬럼 — checks는 #57/#124 결정:
+    """place_name·place_url·created_by_display_name·checks는 호출부가 채워 넘긴 값을 그대로 싣는다(각각
+    places.api.get_places(자체 DB 이름·카카오 URL), auth.api.display_names, pins.checks 컬럼 — checks는 #57/#124 결정:
     게시 시점에 candidate.checks를 pins로 복사해두므로 여기서도 그 값을 그대로 옮긴다, 가드레일
     5 "게시된 뒤에도 유지"). price_bucket/source_run_id는 여전히 places·recommend 연동이 더
     필요해 채울 수 없다 — None으로 두면 라우터가 response_model_exclude_none으로 생략한다.
@@ -136,6 +121,7 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
         lat=record.lat,
         lng=record.lng,
         place_name=record.place_name,
+        place_url=record.place_url,
         created_by=record.created_by,
         created_by_display_name=record.created_by_display_name,
         checks=record.checks,

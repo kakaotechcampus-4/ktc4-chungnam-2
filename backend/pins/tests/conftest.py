@@ -22,6 +22,7 @@ import auth.models  # noqa: F401 — pins.service/api가 auth.api를 부르면�
 import authz.deps
 import common.events  # noqa: F401
 import pins.models  # noqa: F401
+import places.models  # noqa: F401 — places.api.get_places(db)가 places 테이블을 읽는다
 from authz.testing import FakeMembership
 from common.database import Base, session_scope
 
@@ -93,7 +94,16 @@ def db_session(test_engine):
 
 
 @pytest.fixture()
-def app_client(db_session):
+def fake_places(monkeypatch):
+    """핀 생성의 장소 매칭은 places.api(match_place 등)만 거친다(#195). 실제 적재 없이 FakePlaces의
+    샘플 장소(places/testing.py)로 돌린다 — 이름·좌표·분류 규칙은 실제 구현과 같다."""
+    from places.testing import FakePlaces
+
+    return FakePlaces().install(monkeypatch)
+
+
+@pytest.fixture()
+def app_client(db_session, fake_places):
     from fastapi.testclient import TestClient
 
     from main import app
