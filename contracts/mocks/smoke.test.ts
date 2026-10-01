@@ -398,7 +398,9 @@ describe("realtime SSE (docs/events.md)", () => {
       if (done) break;
       received += decoder.decode(value);
     }
-    await reader.cancel();
+    // reader.cancel()을 기다리면 msw/undici가 스트림을 닫는 데 4~8초가 걸려(부하가 있으면 더) 10초 제한을 넘기곤 했다.
+    // 이벤트는 이미 받았으니 닫기는 기다리지 않는다 — 목 서버의 cancel()이 폴링 타이머를 곧 정리한다.
+    void reader.cancel().catch(() => undefined);
 
     expect(received).toContain("event: pin.created");
     expect(received).toMatch(/id: \d+/);
