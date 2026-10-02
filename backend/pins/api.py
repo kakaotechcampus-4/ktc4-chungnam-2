@@ -244,16 +244,22 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
         .join(PinRow, PinRow.id == ReactionRow.pin_id)
         .where(
             PinRow.map_id == map_id, PinRow.category == category, PinRow.deleted_at.is_(None),
-            ReactionRow.reason_text.is_not(None),
+            or_(ReactionRow.reason_text.is_not(None), func.jsonb_typeof(ReactionRow.reason_chip_ids) == "array"),
         )
     ).all()
-    return [
-        {
+    reasoned = []
+    for pin_id, user_id, reaction_type, reason_text, reason_chip_ids in rows:
+        if reason_text is None:
+            if not reason_chip_ids:
+                continue
+            # 칩만 남긴 반대(#236) — 칩 id↔사유 문구 registry가 없어(#60 결정 대기) 칩 id를 그대로 사유
+            # 문장으로 써서 ②가 구조화하게 한다. registry가 생기면 여기서 문구로 바꾼다.
+            reason_text = ", ".join(reason_chip_ids)
+        reasoned.append({
             "pin_id": str(pin_id), "user_id": user_id, "type": reaction_type,
             "reason_text": reason_text, "reason_chip_ids": reason_chip_ids,
-        }
-        for pin_id, user_id, reaction_type, reason_text, reason_chip_ids in rows
-    ]
+        })
+    return reasoned
 
 
 def list_liked_pins_with_checks(db: Session, *, map_id: str, category: str, requested_by: str) -> list[dict]:
