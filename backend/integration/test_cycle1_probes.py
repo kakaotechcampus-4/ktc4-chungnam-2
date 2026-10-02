@@ -46,7 +46,7 @@ def test_retry_after_publish_keeps_ranks_unique(members, place_ids, fake_planner
     assert len(ranks) == len(set(ranks)), f"순위가 겹친다: {ranks}"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D15 — 스펙은 404 AI_PIN_PRIVATE, 코드는 403 FORBIDDEN(결정 대기). #246")
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D15 — 스펙은 404 AI_PIN_PRIVATE, 코드는 403 FORBIDDEN(결정: 404로 코드를 맞춘다). #255")
 def test_non_author_publish_status_matches_spec(members, place_ids, fake_planner):
     """스펙은 비작성자의 게시를 404 AI_PIN_PRIVATE로 선언한다(코드는 403이라는 보고)."""
     a, b, map_id = members

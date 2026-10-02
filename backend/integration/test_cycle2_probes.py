@@ -54,7 +54,7 @@ def test_d6_hearted_places_shape_the_preference_profile(members, place_ids, fake
 
 # ───────────────────────── D10 — 검색 원 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D10 — 카테고리 핀 중심점 하나의 원이라 먼 핀들 사이 빈 땅이 중심이 된다. #226")
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D10 — 카테고리 핀 중심점 하나의 원이라 먼 핀들 사이 빈 땅이 중심이 된다(v1 미수정, 알려진 한계 — 시연 가이드 5-3-1). #226")
 def test_d10_pins_far_apart_still_yield_candidates_around_each_pin(members, place_ids, fake_planner, db_session):
     """스펙 5-6-1: 핀마다 원을 그린다. 성수 핀 하나와 8km 떨어진 홍대 핀 하나 — 성수 일대 후보가 나와야 한다.
     카테고리 핀의 중심점 하나로 원을 그리면 두 곳 사이 빈 땅이 중심이 되어 후보가 0이 된다."""
