@@ -9,7 +9,10 @@ import { useToastStore } from './toast'
  * 넘치면 두 줄, 그래도 넘치면 …로 줄인다. 동작 글자는 줄이지 않는다.
  * 지도 버튼 묶음과 겹치면 옆으로 비키지 않고 묶음 위로 올린다.
  */
-export default function Toaster({ controlsVisible }: { controlsVisible: boolean }) {
+/**
+ * `inside` 면 시트 윗변 위가 아니라 시트 안 아래쪽(AI 버튼 위)에 띄운다 — 3단계처럼 시트 위에 자리가 없을 때.
+ */
+export default function Toaster({ controlsVisible, inside = false }: { controlsVisible: boolean; inside?: boolean }) {
   const boxRef = useRef<HTMLDivElement>(null)
   const [overlaps, setOverlaps] = useState(false)
   const toast = useToastStore((s) => s.toast)
@@ -26,14 +29,14 @@ export default function Toaster({ controlsVisible }: { controlsVisible: boolean 
   return (
     <div
       role="status"
-      style={{ bottom: `calc(100% + 12px${raised ? ` + ${CONTROLS.stackHeight}px` : ''})` }}
-      className={`pointer-events-none absolute inset-x-4 flex justify-center transition-opacity duration-300 ${
+      style={{ bottom: inside ? 48 : `calc(100% + 12px${raised ? ` + ${CONTROLS.stackHeight}px` : ''})` }}
+      className={`pointer-events-none absolute inset-x-4 z-10 flex justify-center transition-opacity duration-300 ${
         toast.leaving ? 'opacity-0' : 'opacity-100'
       }`}
     >
       <div
         ref={boxRef}
-        className="pointer-events-auto flex max-w-[361px] items-center gap-3 rounded-xl bg-[#3A3F4B]/82 px-4 py-2.5 text-sm text-white backdrop-blur-[12px]">
+        className="pointer-events-auto flex max-w-[361px] items-center gap-3 rounded-xl bg-[var(--toast-bg)] px-4 py-2.5 text-sm text-white backdrop-blur-[12px]">
         <span className="line-clamp-2 [text-wrap:balance]">{toast.message}</span>
         {toast.action && (
           <button
@@ -42,7 +45,7 @@ export default function Toaster({ controlsVisible }: { controlsVisible: boolean 
               toast.action?.onClick()
               dismiss(toast.id)
             }}
-            className="shrink-0 font-semibold text-brand-300"
+            className="shrink-0 font-bold text-white underline underline-offset-2"
           >
             {toast.action.label}
           </button>

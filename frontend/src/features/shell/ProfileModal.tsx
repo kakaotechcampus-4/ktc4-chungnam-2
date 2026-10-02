@@ -75,7 +75,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
         <Share size={18} aria-hidden="true" /> 초대 링크 공유하기
       </button>
       <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-ink-100 px-3 py-2.5 text-sm">
-        <span className="truncate text-ink-500">{url ?? '링크를 만드는 중…'}</span>
+        <span className="truncate text-ink-600">{url ?? '링크를 만드는 중…'}</span>
         <button type="button" onClick={() => void copy()} disabled={!url} className="shrink-0 font-semibold text-brand-600">
           {copied ? '✓ 복사됨' : '복사'}
         </button>
@@ -93,7 +93,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
             </span>
             <span className="text-ink-900">
               {m.name}
-              {m.isMe && <span className="ml-1 text-ink-400">(나)</span>}
+              {m.isMe && <span className="ml-1 text-ink-500">(나)</span>}
             </span>
           </li>
         ))}

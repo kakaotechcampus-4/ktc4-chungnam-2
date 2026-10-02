@@ -10,7 +10,7 @@ export default function LogoutConfirm({ onCancel }: { onCancel: () => void }) {
   const logout = useLogoutMutation()
 
   return (
-    <div role="alertdialog" aria-modal="true" aria-label="로그아웃 확인" className="absolute inset-0 flex items-center justify-center bg-black/32 p-6">
+    <div role="alertdialog" aria-modal="true" aria-label="로그아웃 확인" className="absolute inset-0 flex items-center justify-center bg-scrim p-6">
       <div className="w-full max-w-sm rounded-2xl bg-white p-5">
         <p className="font-semibold text-ink-900">로그아웃할까요?</p>
         <p className="mt-1 text-sm text-ink-500">지도와 핀은 그대로 남아요. 다시 들어오려면 카카오로 로그인하면 돼요.</p>

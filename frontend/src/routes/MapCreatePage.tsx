@@ -39,7 +39,7 @@ export default function MapCreatePage() {
   return (
     <form onSubmit={submit} className="flex min-h-dvh flex-col bg-ink-50 px-4 pb-6 pt-4">
       <header className="mb-6 flex items-center gap-3">
-        <Link to="/" aria-label="내 지도 목록으로" className="flex size-8 items-center justify-center rounded-full bg-white shadow-sm">
+        <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-sm">
           <ChevronLeft size={20} />
         </Link>
         <h1 className="text-2xl font-bold text-ink-900">새 지도</h1>
@@ -55,14 +55,14 @@ export default function MapCreatePage() {
             className="min-w-0 flex-1 bg-transparent outline-none"
           />
           {title && <ClearButton label="제목 지우기" onClick={() => setTitle('')} />}
-          {title && <span className="text-xs text-ink-400">{title.length}/{TITLE_MAX}</span>}
+          {title && <span className="text-xs text-ink-500">{title.length}/{TITLE_MAX}</span>}
         </div>
       </Field>
 
-      <Field as="div" label={<>지역 <span className="font-normal text-ink-400">(선택)</span></>}>
+      <Field as="div" label={<>지역 <span className="font-normal text-ink-500">(선택)</span></>}>
         <div className="flex items-center gap-2 rounded-xl border border-ink-300 bg-white px-3 py-3">
           <button type="button" onClick={() => setPickingRegion(true)} className="min-w-0 flex-1 text-left">
-            {region ? region.label : <span className="text-ink-400">시·도 선택</span>}
+            {region ? region.label : <span className="text-ink-500">시·도 선택</span>}
           </button>
           {region ? (
             <ClearButton label="지역 지우기" onClick={() => setRegion(null)} />
