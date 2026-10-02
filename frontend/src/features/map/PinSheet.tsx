@@ -9,6 +9,7 @@ const REACTION_LABEL = {
   against: '🚫 반대',
 } as const
 
+/** 탭 시트(TabSheet) 안에 들어가는 상세 본문. Esc 로 상세를 닫고 목록으로 돌아간다. */
 function SheetShell({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -19,14 +20,9 @@ function SheetShell({ title, onClose, children }: { title: string; onClose: () =
   }, [onClose])
 
   return (
-    <aside
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      className="fixed inset-x-0 bottom-14 z-30 max-h-[60vh] overflow-y-auto rounded-t-xl border-t bg-background p-4 shadow-lg"
-    >
+    <div role="region" aria-label={title} className="rounded-xl border border-ink-200 p-4">
       {children}
-    </aside>
+    </div>
   )
 }
 

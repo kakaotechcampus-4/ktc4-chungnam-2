@@ -1,33 +1,48 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { createMarkerLayer, type MarkerLayer } from './markerLayer'
 import type { Pin } from './model'
 
-/** 핀이 하나라도 있으면 곧바로 bounds 로 덮어쓴다. 빈 지도에서만 보이는 값이다. */
-const FALLBACK_CENTER = { lat: 33.4996, lng: 126.5312 }
+/** 핀이 하나라도 있으면 곧바로 bounds 로 덮어쓴다. 빈 지도에서만 보이는 값이다(v1 장소 데이터는 서울). */
+const FALLBACK_CENTER = { lat: 37.5665, lng: 126.978 }
 
+/** 지도 버튼(현재 위치·최근 핀·전체 핀)이 지도를 움직이는 통로. */
+export type MapController = {
+  panTo: (lat: number, lng: number) => void
+  fitPins: (pins: Pin[]) => void
+}
+
+/**
+ * 화면 전체를 덮는 지도. 탭을 바꿔도 다시 만들지 않으려고 MapLayout 에 한 번만 둔다.
+ * 마커는 React 바깥(markerLayer)에서 산다 — frontend/CLAUDE.md.
+ */
 export default function MapCanvas({
   pins,
   onSelect,
+  onReady,
+  onMovingChange,
 }: {
   pins: Pin[]
   onSelect: (pinId: string) => void
+  onReady: (controller: MapController) => void
+  /** 사용자가 지도를 끌기 시작하면 true, 멈추면 false. */
+  onMovingChange: (moving: boolean) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const layerRef = useRef<MarkerLayer | null>(null)
-  const onSelectRef = useRef(onSelect)
+  // 콜백이 바뀔 때마다 지도를 다시 만들면 깜빡인다. 최신 참조만 갈아끼운다.
+  const callbacks = useRef({ onSelect, onReady, onMovingChange })
+  useLayoutEffect(() => {
+    callbacks.current = { onSelect, onReady, onMovingChange }
+  })
   const fittedRef = useRef(false)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<Error | null>(null)
 
-  // 콜백이 바뀔 때마다 지도를 다시 만들면 깜빡인다. 최신 참조만 갈아끼운다.
-  useEffect(() => {
-    onSelectRef.current = onSelect
-  }, [onSelect])
-
   useEffect(() => {
     let cancelled = false
+    let detach = () => {}
 
     loadKakaoMaps()
       .then((maps) => {
@@ -36,7 +51,22 @@ export default function MapCanvas({
           center: new maps.LatLng(FALLBACK_CENTER.lat, FALLBACK_CENTER.lng),
           level: 5,
         })
-        layerRef.current = createMarkerLayer(maps, map, (pinId) => onSelectRef.current(pinId))
+        const layer = createMarkerLayer(maps, map, (pinId) => callbacks.current.onSelect(pinId))
+        layerRef.current = layer
+
+        const onDragStart = () => callbacks.current.onMovingChange(true)
+        const onIdle = () => callbacks.current.onMovingChange(false)
+        maps.event.addListener(map, 'dragstart', onDragStart)
+        maps.event.addListener(map, 'idle', onIdle)
+        detach = () => {
+          maps.event.removeListener(map, 'dragstart', onDragStart)
+          maps.event.removeListener(map, 'idle', onIdle)
+        }
+
+        callbacks.current.onReady({
+          panTo: (lat, lng) => map.panTo(new maps.LatLng(lat, lng)),
+          fitPins: (list) => layer.fit(list),
+        })
         setReady(true)
       })
       .catch((err: unknown) => {
@@ -48,6 +78,7 @@ export default function MapCanvas({
 
     return () => {
       cancelled = true
+      detach()
       layerRef.current?.destroy()
       layerRef.current = null
     }
@@ -66,27 +97,25 @@ export default function MapCanvas({
     }
   }, [pins, ready])
 
-  if (error) {
-    return (
-      <div className="mb-4 flex h-64 flex-col items-center justify-center gap-1 rounded-lg border border-dashed p-4 text-center">
-        <p className="text-sm text-destructive">지도를 불러오지 못했어요</p>
-        <p className="text-xs text-muted-foreground">
-          {error instanceof KakaoMapKeyMissingError
-            ? 'frontend/.env.local 에 VITE_KAKAO_MAP_KEY 를 넣어주세요 (.env.example 참고)'
-            : error.message}
-        </p>
-        <p className="text-xs text-muted-foreground">핀 {pins.length}개는 아래 목록에 그대로 있어요</p>
-      </div>
-    )
-  }
-
   return (
-    <div className="relative mb-4 h-64 overflow-hidden rounded-lg border">
+    <div className="fixed inset-0 bg-ink-100">
       <div ref={containerRef} className="h-full w-full" />
       {!ready && (
-        <p className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
-          지도를 불러오는 중…
-        </p>
+        <div className="absolute inset-x-0 top-32 flex flex-col items-center gap-1 px-4 text-center">
+          {error ? (
+            <>
+              <p className="text-sm text-danger">지도를 불러오지 못했어요</p>
+              <p className="text-xs text-ink-500">
+                {error instanceof KakaoMapKeyMissingError
+                  ? 'frontend/.env.local 에 VITE_KAKAO_MAP_KEY 를 넣어주세요 (.env.example 참고)'
+                  : error.message}
+              </p>
+              <p className="text-xs text-ink-500">핀 {pins.length}개는 아래 목록에 그대로 있어요</p>
+            </>
+          ) : (
+            <p className="text-sm text-ink-500">지도를 불러오는 중…</p>
+          )}
+        </div>
       )}
     </div>
   )

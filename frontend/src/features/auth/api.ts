@@ -16,3 +16,5 @@ export function kakaoLoginUrl(): string {
   const base = import.meta.env.VITE_API_BASE_URL
   return base ? `${base}/auth/kakao/login` : '/'
 }
+
+export const logout = () => api<void>('/auth/logout', { method: 'POST' })
