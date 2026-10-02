@@ -1,0 +1,31 @@
+name: contracts-test
+
+# FE↔BE 계약 패키지(타입 생성 + 목 서버) 검증. 스펙이나 contracts가 바뀐 PR과 develop push에서 돈다.
+# 결과는 차단이 아니라 신호다 — 필수 체크로 걸지 여부는 팀 결정(브랜치 보호 설정).
+on:
+  pull_request:
+    branches: [develop, main]
+    paths: ["contracts/**", "docs/api-spec.yaml", ".github/workflows/contracts-test.yml"]
+  push:
+    branches: [develop]
+    paths: ["contracts/**", "docs/api-spec.yaml"]
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: contracts/package-lock.json
+      - run: npm ci
+      # 스펙을 고치고 타입을 다시 만들지 않으면 FE가 낡은 타입을 쓴다 — 생성 결과가 커밋된 파일과 같아야 한다.
+      - run: npm run gen:types
+      - run: git diff --exit-code -- src/types/api.d.ts
+      - run: npm run typecheck
+      - run: npm test

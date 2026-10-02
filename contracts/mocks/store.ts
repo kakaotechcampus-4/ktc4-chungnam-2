@@ -98,7 +98,13 @@ export function emitEvent(
   return seq;
 }
 
-let idCounter = 0;
+// 시드가 "pin_1"~"pin_3"처럼 작은 번호를 직접 쓰므로, 만들어지는 id는 100부터 센다 — 테스트 순서에 따라
+// 새 핀 id가 시드 id와 겹치는 일이 없게 한다. resetScenario가 시나리오를 만들기 전에 카운터를 되돌린다.
+const ID_START = 100;
+let idCounter = ID_START;
+export function resetIdCounter(): void {
+  idCounter = ID_START;
+}
 export function nextId(prefix: string): string {
   idCounter += 1;
   return `${prefix}_${idCounter}`;
