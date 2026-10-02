@@ -7,7 +7,7 @@ None으로 둔다. 라우터가 response_model_exclude_none=True를 쓰므로 �
 
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MapRegion(BaseModel):
@@ -15,13 +15,13 @@ class MapRegion(BaseModel):
     Map/MapCreateRequest 양쪽 다 region 자체가 없거나(선택 필드) 둘 중 하나다 — 필드 일부만
     있는 반쪽짜리 region은 만들지 않는다(maps/core.py::validate_map_create가 검증)."""
 
-    label: str
+    label: str = Field(max_length=100)
     lat: float
     lng: float
 
 
 class MapCreateRequest(BaseModel):
-    title: str
+    title: str = Field(max_length=100)
     start_date: date
     end_date: date
     region: MapRegion | None = None
