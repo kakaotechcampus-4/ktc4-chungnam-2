@@ -43,6 +43,13 @@ describe("기획안 6절 핵심 시나리오 — happy path", () => {
     const evidence = await fetch(`${BASE}/runs/${run.id}/evidence`).then((r) => r.json());
     expect(evidence.length).toBeGreaterThan(0);
     expect(evidence[0].permissions.can_disable).toBe(true); // 내가 쓴 것
+    // #228 — 방향: wants=false는 "제외", true는 "선호", 키 없는 줄은 둘 다 없다
+    const excluded = evidence.find((e: { fact_key: string }) => e.fact_key === "cuisine_korean");
+    expect(excluded.wants).toBe(false);
+    expect(excluded.fact_label).toBe("한식");
+    expect(evidence.find((e: { fact_key: string }) => e.fact_key === "cuisine_raw_fish").wants).toBe(true);
+    const plain = evidence.find((e: { fact_key: string | null }) => e.fact_key === null);
+    expect(plain.wants).toBeUndefined();
 
     // 지역 확인
     const regionsRes = await fetch(`${BASE}/runs/${run.id}/regions/confirm`, { method: "POST", body: "{}" });
