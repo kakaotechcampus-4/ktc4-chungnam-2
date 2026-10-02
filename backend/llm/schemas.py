@@ -119,8 +119,10 @@ class EvidenceLine(BaseModel):
 
     @model_validator(mode="after")
     def _wants_needs_fact_key(self) -> "EvidenceLine":
-        if self.fact_key is None and self.wants is not None:
-            raise ValueError("fact_key가 없는데 wants가 채워져 있다 — 방향은 키가 있을 때만 의미가 있다")
+        # 방향은 키가 있을 때만 의미가 있다. 모델이 키 없이 wants를 채워 와도 예외로 ② 전체를 무너뜨리지
+        # 않고 버린다(merge_planned도 같은 정리를 한다).
+        if self.fact_key is None:
+            self.wants = None
         return self
 
 

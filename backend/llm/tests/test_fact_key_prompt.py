@@ -104,9 +104,15 @@ WANTS_CASES = json.loads((Path(__file__).parent / "fixtures" / "wants_cases.json
 
 
 class TestWantsSchema:
-    def test_wants_without_fact_key_is_rejected(self):
-        with pytest.raises(ValidationError):
-            EvidenceLine(source="reaction", text="x", badge="preferred", wants=True)
+    def test_wants_without_fact_key_is_normalized_to_none(self):
+        line = EvidenceLine(source="reaction", text="x", badge="preferred", wants=True)
+        assert (line.fact_key, line.wants) == (None, None)
+
+    def test_model_output_with_null_key_and_wants_does_not_raise(self):
+        out = PlanningOutput.model_validate(
+            {"evidence_lines": [{"source": "reaction", "text": "x", "badge": "preferred", "fact_key": None, "wants": True}]}
+        )
+        assert out.evidence_lines[0].wants is None
 
     def test_wants_defaults_to_none(self):
         assert EvidenceLine(source="reaction", text="x", badge="preferred", fact_key="quiet").wants is None
@@ -131,11 +137,11 @@ class TestWantsMerge:
 
         assert line.wants is True
 
-    def test_wants_without_key_in_input_is_rejected(self):
-        raw = {**_reason("그냥", "preferred"), "wants": False}  # key 없는 wants는 merge 전에 스키마가 거부한다
-        with pytest.raises(ValidationError):
-            service.merge_planned([raw], PlanningOutput(evidence_lines=[
-                EvidenceLine(source="reaction", text="그냥", badge="preferred")]))
+    def test_wants_without_key_is_dropped(self):
+        raw = {**_reason("그냥", "preferred"), "wants": False}
+        [line] = service.merge_planned([raw], PlanningOutput(evidence_lines=[
+            EvidenceLine(source="reaction", text="그냥", badge="preferred")]))
+        assert (line.fact_key, line.wants) == (None, None)
 
     def test_unknown_direction_stays_null(self):
         planned = EvidenceLine(source="reaction", text="한식", badge="preferred", fact_key="cuisine_korean")
