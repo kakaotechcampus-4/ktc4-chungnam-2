@@ -20,20 +20,12 @@ export function isUnauthorized(err: unknown) {
 }
 
 /**
- * 카카오 인가 화면 주소. 카카오가 BE 콜백(/auth/kakao/callback)으로 code 를 넘기고,
- * BE 가 쿠키를 심은 뒤 FRONTEND_LOGIN_REDIRECT_URL 로 돌려보낸다.
- * redirect_uri 는 BE 의 KAKAO_REDIRECT_URI 와 글자까지 같아야 한다.
+ * 로그인 시작 주소(#128). BE 가 state 를 쿠키에 심고 카카오 인가 화면으로 보낸다 — 프론트는 이동만 한다(fetch 아님).
+ * 목 서버 모드에선 msw 가 페이지 이동을 가로채지 못하므로, 목 핸들러(/auth/kakao/login → /)와 같은 곳으로 바로 보낸다.
  */
-export function kakaoLoginUrl(): string | null {
-  const clientId = import.meta.env.VITE_KAKAO_REST_KEY
+export function kakaoLoginUrl(): string {
   const base = import.meta.env.VITE_API_BASE_URL
-  if (!clientId || !base) return null
-  const q = new URLSearchParams({
-    response_type: 'code',
-    client_id: clientId,
-    redirect_uri: `${base}/auth/kakao/callback`,
-  })
-  return `https://kauth.kakao.com/oauth/authorize?${q}`
+  return base ? `${base}/auth/kakao/login` : '/'
 }
 
 /**

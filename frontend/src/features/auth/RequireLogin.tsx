@@ -21,21 +21,13 @@ export default function RequireLogin() {
 }
 
 export function LoginScreen({ message = '같이 갈 곳을 한 지도에 모아요' }: { message?: string }) {
-  const url = kakaoLoginUrl()
-
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-4 p-4">
       <h1 className="text-xl font-semibold">핀고핀고</h1>
       <p className="text-sm text-muted-foreground">{message}</p>
-      {url ? (
-        <a href={url} className="rounded-md bg-[#FEE500] px-4 py-2 text-sm font-medium text-black">
-          카카오로 로그인
-        </a>
-      ) : (
-        <p className="text-sm text-destructive">
-          frontend/.env.local 에 VITE_KAKAO_REST_KEY 와 VITE_API_BASE_URL 을 넣어주세요 (.env.example 참고)
-        </p>
-      )}
+      <a href={kakaoLoginUrl()} className="rounded-md bg-[#FEE500] px-4 py-2 text-sm font-medium text-black">
+        카카오로 로그인
+      </a>
     </div>
   )
 }
