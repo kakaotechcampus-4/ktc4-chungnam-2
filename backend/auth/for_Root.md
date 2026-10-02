@@ -304,3 +304,30 @@ get_place_gateway`, `authz/deps.py::get_membership_gateway`와 같은 패턴). `
 ### 검증
 - backend 전체 949개 통과(변경 전 946개 + 신규 3개).
 - 동시 첫 로그인 테스트는 "두 요청이 둘 다 없다고 본 순간"을 첫 조회만 비우는 방식으로 재현한다. 두 커넥션을 실제로 경쟁시키는 테스트는 아니다.
+
+## #128 — 카카오 로그인 OAuth state 검증 (2026-10-02) — 루트 조치 요청
+
+백엔드(이슈 할 일 2·3)를 구현했다. **`docs/api-spec.yaml`은 건드리지 않았다** — 아래는 루트가 먼저 정리해야 할 스펙·문서·FE 쪽이다.
+이 PR은 #126 PR(#213) 위에 쌓여 있다(테스트가 `auth.testing`을 쓴다). #213이 머지되면 base가 `develop`으로 바뀐다.
+
+### 루트가 해야 할 일
+1. **스펙에 `GET /auth/kakao/login` 추가** (`tags: [auth]`, `security: []`, 응답 `302` — 카카오 인가 화면으로, `Set-Cookie: kakao_oauth_state`).
+   구현은 이미 `auth/router.py::get_kakao_login`에 있다. 카카오 설정(`KAKAO_CLIENT_ID`·`KAKAO_REDIRECT_URI`)이 비어 있으면 `500 INTERNAL_ERROR`.
+2. **`/auth/kakao/callback`에 `state` 쿼리 파라미터 추가.** 코드는 없으면 거절로 처리하므로 스펙에서는 `required: true`가 맞다
+   (FastAPI에서 `Query(...)`로 두면 빠졌을 때 `VALIDATION_ERROR` 422가 되어 이슈의 "state가 없다 → 거절" 단일 응답과 달라져 `Optional`로 두고 401로 통일했다 — 스펙을 required로 쓰더라도 구현은 그대로 맞다).
+   `401` 응답을 스펙에 적어야 한다: `{code: UNAUTHORIZED, detail: {reason: "invalid_state"}}`.
+3. **`docs/CHANGELOG-api.md`에 먼저 기록하고 프론트에 알린다.** 프론트 변경점:
+   - `frontend/src/features/auth/auth.ts::kakaoLoginUrl()`이 지금 카카오 인가 URL을 직접 만든다(이슈 본문의 "만드는 곳이 없다"와 다르다).
+     `{백엔드}/auth/kakao/login`으로 이동하게 바꿔야 한다. 직접 만든 URL로 가면 `state`가 없어 콜백이 **항상 거절**된다 — BE가 먼저 머지되면 로그인이 깨지므로
+     **BE·FE를 같은 시점에 배포**하거나 FE를 먼저 바꾼다.
+   - `contracts/`(msw 목 서버)에 `/auth/kakao/login` 추가.
+4. **에러 코드**: 새 코드 없이 기존 `UNAUTHORIZED`(401)에 `detail.reason = "invalid_state"`로 거절한다. `docs/errors.md`에 `detail.reason` 규약을 적을지 판단 필요.
+5. **UX 결정 필요**: 콜백은 브라우저의 최상위 이동이라 거절되면 사용자가 JSON 에러 봉투를 그대로 본다(기존 카카오 실패 경로도 같다). FE 로그인 화면으로
+   `?error=...`와 함께 돌려보낼지는 루트 결정 — 이번엔 이슈대로 "로그인을 거절"만 했다.
+
+### 구현 요약
+- `auth/core.py`(순수): `new_state`, `create_state_cookie_value`/`verify_state`(서명 대상에 용도 문자열 `kakao_oauth_state:`를 넣어 세션 토큰과 서로 대체 불가, 상수 시간 비교, TTL 10분), `kakao_authorize_url`.
+- `auth/router.py`: `/auth/kakao/login`이 state 쿠키(`kakao_oauth_state`, HttpOnly, SameSite=Lax, prod에서 Secure, Path=`/auth/kakao`, 10분)를 심고 302.
+  콜백은 카카오 호출 **전에** state를 검증하고, 성공·실패 모두 쿠키를 지운다(실패 때는 예외 대신 같은 에러 봉투 응답을 만들어 쿠키 삭제를 실어 보낸다).
+- 쿠키는 **백엔드 오리진**에 붙는다 — 로그인 시작(`/auth/kakao/login`)과 콜백(`KAKAO_REDIRECT_URI`)이 같은 호스트여야 한다(로컬은 `localhost`로 통일, `openapi-workflow.md` 5절과 같은 주의).
+- 테스트 72개(auth): 다른 브라우저의 콜백 링크 거절, 같은 링크 두 번째 거절, state 누락·불일치·서명 위조·만료, 정상 흐름, 실패 시에도 쿠키 삭제, state 쿠키가 세션으로 통하지 않음. state 검증을 끄면 7개가 실패하는 것을 확인했다.
