@@ -11,7 +11,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 # ---------------------------------------------------------------- 공통
 
@@ -269,6 +269,8 @@ class LabelRow:
     confidence: str                  # known | unknown
     source_layer: int                # price_bucket은 2(차원 압축), 나머지 3
     labeled_at: datetime | None
+    evidence: str | None = None      # 근거 원문(place_facts.evidence, #203) — 가드레일 5의 "이유·출처"에 쓴다
+    label_source: str | None = None  # 근거의 종류(license_business_type, 모범음식점 …)
 
 
 def _parse_bool(raw: str) -> bool | None:
@@ -316,9 +318,89 @@ def parse_label_rows(rows: Iterable[Mapping[str, Any]], allowed: frozenset[str])
         ident = (source, source_id, key)
         if ident in latest:
             duplicates += 1
-        latest[ident] = LabelRow(source, source_id, key, value, confidence, 2 if key == "price_bucket" else 3, labeled_at)
+        latest[ident] = LabelRow(
+            source, source_id, key, value, confidence, 2 if key == "price_bucket" else 3, labeled_at,
+            _pick(row, ("evidence",)) or None, _pick(row, ("label_source",)) or None,
+        )
     if duplicates:
         report.warnings.append(f"같은 (source, source_id, fact_key)가 {duplicates}번 더 있었다 — 마지막 줄을 썼다")
     out = list(latest.values())
     report.accepted = len(out)
     return out, report
+
+
+# ---------------------------------------------------------------- 음식점 납품본 (#207)
+# 데이터 담당이 큐레이션한 restaurant_seoul_curated.csv(+ _labels.json). 인허가 원본과 달리 좌표가 이미 WGS84 위도/경도이고
+# 영업 중인 곳만 담겨 있어 영업상태·좌표 변환·업태→분류 대응이 없다(전부 음식점, source='permit', source_id=관리번호).
+
+CURATED_ALIASES = {
+    "source_id": ("관리번호",),
+    "name": ("사업장명",),
+    "type": ("업태",),
+    "address": ("도로명주소", "도로명전체주소", "소재지전체주소"),
+    "phone": ("전화번호",),
+    "lat": ("위도",),
+    "lng": ("경도",),
+}
+# 유흥·주점류 업태. 지금은 기본으로 적재하고(--exclude-bars로 제외), 제외 여부는 루트 결정 대기(#207).
+BAR_TYPES = frozenset({"정종/대포집/소주방", "감성주점"})
+
+
+def parse_curated_rows(
+    rows: Iterable[Mapping[str, Any]], *, exclude_bars: bool = False, seoul_only: bool = True
+) -> tuple[list[PlaceRow], Report]:
+    report = Report()
+    out: list[PlaceRow] = []
+    seen_bars = 0
+    for row in rows:
+        report.read += 1
+        f = {k: _pick(row, a) for k, a in CURATED_ALIASES.items()}
+        if not f["source_id"] or not f["name"]:
+            report.skip("관리번호 또는 사업장명 없음")
+            continue
+        if seoul_only and not f["address"].startswith("서울"):
+            report.skip("서울 아님(또는 주소 없음)")
+            continue
+        if f["type"] in BAR_TYPES:
+            seen_bars += 1
+            if exclude_bars:
+                report.skip(f"유흥·주점류 제외(--exclude-bars): {f['type']}")
+                continue
+        lat, lng = _to_float(f["lat"]), _to_float(f["lng"])
+        if lat is None or lng is None:
+            report.skip("좌표 없음")
+            continue
+        if not in_korea(lat, lng):
+            report.skip("좌표가 한국 범위 밖")
+            continue
+        if not f["type"]:
+            report.warnings.append(f"업태가 비어 있는 행을 음식점으로 적재했다: {f['source_id']}")
+        out.append(PlaceRow("permit", f["source_id"], f["name"], "음식점", f["address"] or None, f["phone"] or None, lat, lng, "open"))
+        report.accepted += 1
+    if seen_bars:
+        verb = "제외했다" if exclude_bars else "그대로 적재 대상에 포함했다"
+        report.warnings.append(f"유흥·주점류 업태(정종/대포집/소주방, 감성주점) {seen_bars}행을 {verb} — 루트 결정 대기")
+    return out, report
+
+
+CURATED_PLACE_ID_PREFIX = "rest_"
+
+
+def curated_labels_to_rows(entries: Iterable[Mapping[str, Any]]) -> Iterator[dict[str, str]]:
+    """납품본 라벨 JSON → parse_label_rows가 읽는 CSV 행 형식. 장소마다 place_id(rest_<관리번호>)와
+    labels{fact_key: {value: "true|false|unknown"(문자열), evidence, source}}가 있다. unknown은 confidence=unknown(값 없음)."""
+    for entry in entries:
+        place_id = str(entry.get("place_id", ""))
+        source_id = place_id[len(CURATED_PLACE_ID_PREFIX):] if place_id.startswith(CURATED_PLACE_ID_PREFIX) else ""
+        for key, label in (entry.get("labels") or {}).items():
+            raw = str((label or {}).get("value", "")).strip()
+            unknown = raw.lower() == "unknown" or raw == ""
+            yield {
+                "source": "permit" if source_id else "",   # source_id가 없으면 parse_label_rows가 "source/source_id 이상"으로 센다
+                "source_id": source_id,
+                "fact_key": key,
+                "value": "" if unknown else raw,
+                "confidence": "unknown" if unknown else "known",
+                "evidence": str((label or {}).get("evidence") or ""),
+                "label_source": str((label or {}).get("source") or ""),
+            }

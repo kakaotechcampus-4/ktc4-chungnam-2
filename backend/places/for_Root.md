@@ -204,3 +204,14 @@ PR 1(#197)에서 고정한 6개 공개 함수를 실제로 구현했다. 이 브
 ## 테스트
 `places/tests/` — `test_ingest.py`(폐업·좌표 변환·업태 대응·서울 필터·TourAPI·라벨, 가짜 픽스처 25행/8항목/17줄, 실제 상호 아님), `test_own_db.py`(적재 upsert·멱등·폐업 갱신·6개 함수·CLI, 실제 PostGIS), `test_own_db_contract.py`(FakePlaces ≡ api 시그니처, 대역 동작). 실제 공공데이터 파일은 저장소에 없다(`.gitignore`: `backend/data/`, `backend/places/data/`).
 `PINGO_TEST_DB=pingo_test_places python -m pytest` → 933 passed, 6 deselected(live), 실패 0.
+
+---
+
+# #207 음식점 납품본 적재 (2026-10-02)
+
+- `python -m places.load restaurants --file restaurant_seoul_curated.csv [--labels restaurant_seoul_curated_labels.json] [--exclude-bars] [--constraints …] [--dry-run]` — 장소 CSV와 라벨 JSON을 **같은 트랜잭션**으로 적재(dry-run이면 전부 롤백). 라벨만 다시 올릴 때는 `restaurant-labels --file …json`.
+- 장소: `source='permit'`, `source_id=관리번호`, 분류는 전부 음식점, `status='open'`(영업 중인 곳만 받음), 좌표는 이미 WGS84라 변환하지 않고, 위·경도 중 하나라도 비면 건너뛴다. 업태가 빈 1곳은 음식점으로 넣고 경고한다.
+- 라벨: `place_id`에서 `rest_`를 떼 `(permit, 관리번호)`로 장소를 찾고, `"true"/"false"`→boolean, `"unknown"`→`confidence=unknown`·value SQL NULL. `evidence`·`source`는 새 컬럼 `place_facts.evidence`·`label_source`(마이그레이션 `0019_place_facts_evidence`, down_revision `0018_pins_own_db_places`)에 저장. 같은 키 재적재는 근거까지 덮어쓴다. 허용 `fact_key`는 constraints.md에서 읽는다(미등록은 건너뛰고 키별 건수 보고).
+- 유흥·주점류(정종/대포집/소주방 33곳, 감성주점 3곳)는 **루트 결정 대기**라 기본은 포함, `--exclude-bars`로 제외한다. 제외하면 그 장소의 라벨은 "장소 못 찾음"으로 센다.
+- **`FactLabel`/`get_facts`는 `evidence`·`label_source`를 아직 내보내지 않는다.** 가드레일 5의 "이유·출처"에 쓰려면 계약(`FactLabel` 필드) 확장이 필요하다 — 루트 결정 필요(스키마만 먼저 저장해 뒀다).
+- 성능: 라벨 18만 건 upsert가 이 PC에서 약 4분 걸렸다(청크 1,000건). 실제 적재는 한 번이라 그대로 뒀다.

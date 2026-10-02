@@ -109,13 +109,14 @@ def upsert_facts(db: Session, labels: Sequence[LabelRow]) -> FactUpsertResult:
             values.append({
                 "place_id": pid, "fact_key": l.fact_key, "value": l.value, "confidence": l.confidence,
                 "source_layer": l.source_layer, "model_version": None,
+                "evidence": l.evidence, "label_source": l.label_source,
                 "labeled_at": l.labeled_at if l.labeled_at is not None else func.now(),
             })
         if values:
             stmt = pg_insert(PlaceFact).values(values)
             stmt = stmt.on_conflict_do_update(
                 index_elements=["place_id", "fact_key"],
-                set_={c: stmt.excluded[c] for c in ("value", "confidence", "source_layer", "model_version", "labeled_at")},
+                set_={c: stmt.excluded[c] for c in ("value", "confidence", "source_layer", "model_version", "evidence", "label_source", "labeled_at")},
             )
             db.execute(stmt)
             upserted += len(values)
