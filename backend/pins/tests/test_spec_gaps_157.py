@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from auth.testing import ensure_users
 from pins import api
 from pins.models import Pin as PinRowAlias
 from pins.models import Reaction as ReactionRow
@@ -18,8 +19,7 @@ def _react(client, pin, user, body=None):
 # ---- GET /pins/{pinId}/reactions ----
 
 def test_get_reactions_returns_only_responders_with_display_name_and_chips(app_client, db_session):
-    from auth.models import User
-    db_session.add(User(id="user_2", display_name="민수", provider="kakao", provider_user_id="k2"))
+    ensure_users(db_session, "user_2", display_names={"user_2": "민수"})
     db_session.commit()
     pin = _insert_pin(db_session, place_id="r157_list")
     _react(app_client, pin, "user_2", {"type": "against", "reason_text": "멀어요", "reason_chip_ids": ["far"]})

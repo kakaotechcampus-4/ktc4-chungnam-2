@@ -132,3 +132,50 @@ def test_revoke_sessions_sets_sessions_valid_after(db_session):
 
 def test_revoke_sessions_for_unknown_user_does_not_fail(db_session):
     service.revoke_sessions(db_session, user_id="nobody")
+
+
+# ---- 첫 로그인 동시 요청(#126) ----
+
+def _simulate_lost_race(monkeypatch):
+    """두 요청이 거의 동시에 들어와 둘 다 "사용자가 없다"고 본 순간을 만든다 — 첫 조회만 None을 돌려주고,
+    그 뒤(유일 제약 위반 후 재조회)는 실제 조회다."""
+    real_find = service._find_user
+    calls = {"n": 0}
+
+    def find_once_empty(db, **kwargs):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else real_find(db, **kwargs)
+
+    monkeypatch.setattr(service, "_find_user", find_once_empty)
+
+
+def test_concurrent_first_login_returns_the_row_created_by_the_other_request(db_session, monkeypatch):
+    winner = User(provider="kakao", provider_user_id="777", display_name="먼저 온 요청")
+    db_session.add(winner)
+    db_session.flush()
+    _simulate_lost_race(monkeypatch)
+
+    row = service.find_or_create_user(db_session, provider="kakao", provider_user_id="777", display_name="나중 요청")
+
+    assert row.id == winner.id
+    assert row.display_name == "먼저 온 요청"   # 나중 요청이 덮어쓰지 않는다
+    assert db_session.query(User).filter_by(provider_user_id="777").count() == 1
+
+
+def test_concurrent_first_login_still_rejects_withdrawn_account(db_session, monkeypatch):
+    from datetime import datetime, timezone
+
+    db_session.add(User(provider="kakao", provider_user_id="778", display_name="x", deleted_at=datetime.now(timezone.utc)))
+    db_session.flush()
+    _simulate_lost_race(monkeypatch)
+
+    with pytest.raises(AppError) as exc:
+        service.find_or_create_user(db_session, provider="kakao", provider_user_id="778", display_name="x")
+    assert exc.value.code == "UNAUTHORIZED"
+
+
+def test_other_integrity_errors_are_not_swallowed(db_session):
+    from sqlalchemy.exc import IntegrityError
+
+    with pytest.raises(IntegrityError):   # NOT NULL 위반(23502) — 유일 제약 위반이 아니므로 그대로 올라온다
+        service.find_or_create_user(db_session, provider="kakao", provider_user_id="779", display_name=None)

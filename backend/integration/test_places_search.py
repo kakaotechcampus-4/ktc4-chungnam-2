@@ -2,6 +2,7 @@
 
 import pytest
 
+from auth.testing import session_cookie
 from main import app  # noqa: F401
 from places import api as places_api
 from places.ratelimit import SlidingWindowLimiter
@@ -15,7 +16,7 @@ REGION = {"label": "부산", "lat": 35.1796, "lng": 129.0756}
 def client(app_client, two_users):
     from fastapi.testclient import TestClient
 
-    c = TestClient(app_client.app, cookies={"session": "user_a"})   # with 없이 — lifespan은 app_client가 이미 연다
+    c = TestClient(app_client.app, cookies=session_cookie("user_a"))   # with 없이 — lifespan은 app_client가 이미 연다
     yield c
     c.close()
 
@@ -96,7 +97,7 @@ def test_requires_login(app_client):
 def test_does_not_require_map_membership(app_client, two_users):
     from fastapi.testclient import TestClient
 
-    b = TestClient(app_client.app, cookies={"session": "user_b"})   # 어떤 지도의 구성원도 아니다
+    b = TestClient(app_client.app, cookies=session_cookie("user_b"))   # 어떤 지도의 구성원도 아니다
     assert b.get("/places/search", params={"q": "광안리"}).status_code == 200
 
 
@@ -108,7 +109,7 @@ def test_rate_limit_is_429_per_user(client, app_client, monkeypatch):
     assert client.get("/places/search", params={"q": "광안리"}).status_code == 200
     r = client.get("/places/search", params={"q": "광안리"})
     assert r.status_code == 429 and r.json()["code"] == "RATE_LIMITED"
-    b = TestClient(app_client.app, cookies={"session": "user_b"})   # 다른 사용자는 별도로 센다
+    b = TestClient(app_client.app, cookies=session_cookie("user_b"))   # 다른 사용자는 별도로 센다
     assert b.get("/places/search", params={"q": "광안리"}).status_code == 200
 
 

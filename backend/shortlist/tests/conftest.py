@@ -25,8 +25,12 @@ import common.events  # noqa: F401 — event_log 테이블 등록
 import pins.models  # noqa: F401 — shortlist_items.pin_id FK 대상 + 테스트가 직접 핀을 심는다
 import shortlist.models  # noqa: F401
 from authz.deps import get_membership_gateway
+from auth.testing import ensure_users
 from authz.testing import FakeMembership
 from common.database import Base, session_scope
+
+# 이 모듈 테스트가 쿠키로 로그인시키는 사용자 id 전부
+TEST_USER_IDS = ("user_1", "user_2", "outsider", "user_lonely")
 
 BASE_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://pingo:pingo@localhost:5432/pingo")
 
@@ -110,6 +114,8 @@ def app_client(db_session):
     app.dependency_overrides[get_membership_gateway] = lambda: FakeMembership(
         {("map_1", "user_1"): "member", ("map_1", "user_2"): "member"}
     )
+
+    ensure_users(db_session, *TEST_USER_IDS)   # 인증이 요청마다 users 행을 확인한다(#126)
 
     with TestClient(app) as client:
         yield client

@@ -270,3 +270,37 @@ get_place_gateway`, `authz/deps.py::get_membership_gateway`와 같은 패턴). `
 ### 알려진 한계
 - 토큰 발급 시각이 초 단위라 로그아웃과 같은 초에 발급된 새 토큰도 거절된다(`<=` 비교, 보수적 선택 — 카카오 왕복 때문에 사실상 발생 안 함).
 - #160(PATCH /auth/me, 탈퇴 연결)은 PR #156 머지 뒤 별도 PR — 이번에 하지 않음.
+
+## #126 — PINGO_ENV 기본값 prod, 인증 스텁·AUTH_MODE 제거 (2026-10-02) — 루트 확인 요청
+
+### 루트가 확인·갱신할 것 (루트 소관이라 손대지 않았다)
+1. **`docs/openapi-workflow.md` 5절 표**: `AUTH_MODE | real | ...` 행을 **삭제**해야 한다(환경변수가 없어졌다). 그 아래
+   "`PINGO_ENV`를 dev로" 문구(104행 트러블슈팅)는 여전히 맞다. 5절 `backend/.env`에 `PINGO_ENV=dev`를 한 줄 적도록
+   표에 추가하는 것을 권한다 — 이제 안 적으면 prod 가드가 돌아 로컬 서버가 `ConfigError`로 안 뜬다.
+2. **`backend/.env.example`**: 이번 PR에서 갱신 완료(`AUTH_MODE` 줄 삭제, `PINGO_ENV` 기본값 설명). 로컬 `.env`에 남은
+   `AUTH_MODE=dev`는 무시되므로 지워도 되고 안 지워도 된다.
+3. **배포 설정(Cloud Run 등)**: `PINGO_ENV`를 빠뜨리면 이제 prod로 뜬다 — 의도한 동작이지만, prod 가드(SESSION_SECRET·
+   FRONTEND_BASE_URL·CORS_ALLOW_ORIGINS·PLACES_MODE=real·LLM_MODE=real)를 채우지 않은 환경은 기동 단계에서 멈춘다.
+   `PLACES_MODE=real`은 places 실구현이 있어야 하니 배포 전 확인이 필요하다.
+4. `PINGO_ENV` 없이 `alembic`·시딩 스크립트 등 `common.settings`를 import하는 CLI를 돌리던 사람은 같은 가드에 걸린다
+   (로컬은 `.env`의 `PINGO_ENV=dev`가 `load_dotenv`로 읽혀 영향 없다).
+
+### 변경 내용 (API 시그니처 `docs/api-spec.yaml` 변경 없음)
+- `common/settings.py`: `PINGO_ENV` 기본값 `prod`, `auth_mode` 필드·`AUTH_MODE`·`_PORTS`의 `auth` 제거.
+- `auth/deps.py`: `_dev_get_current_user`·`select()` 제거, `get_current_user`가 서명 쿠키 검증 구현 하나.
+- `auth/testing.py`(신규): `session_cookie(user_id)`(서명된 토큰), `ensure_users(db, *ids, display_names=)`.
+  `maps`·`pins`·`shortlist`·`recommend`·`integration` 테스트가 이걸로 로그인한다(각 conftest의 `app_client`가 사용자 행을 만든다).
+  `realtime`·`authz`·`places` 테스트는 스텁에 기대지 않아 바꿀 게 없었다.
+- `auth/service.py::find_or_create_user`: 동시 첫 로그인 — 세이브포인트 안에서 INSERT, `23505` + `uq_users_provider_identity`일 때만
+  기존 행을 재조회(탈퇴 행이면 거절). 이슈가 말한 `add_item`과 달리 `db.add`를 세이브포인트 **안**에서 하고 `db.rollback()`은 부르지 않는다 —
+  밖에서 add하면 `begin_nested()` 진입 시 autoflush가 세이브포인트 밖에서 터지기 때문이다(`shortlist/service.py::add_item`이
+  `db.rollback()`을 부르는 이유로 보인다. 이쪽은 손대지 않았다).
+
+### 테스트 의미가 바뀐 곳
+- users 행이 있어야 로그인되므로 "users 행이 없는 구성원은 `display_name` 키가 없다"는 maps 테스트는 구성원 응답이 `{user_id, display_name}`이라는
+  단언으로 바꿨고, "초대자 행 없음 → 탈퇴한 구성원" 테스트는 초대 생성 뒤 행을 지우는 방식으로 만든다.
+- `pins/tests/test_permissions_contract.py::test_get_pins_non_member_is_404`는 `app_client` 없이 실제 DB로 나가던 것을 `app_client`를 쓰게 했다.
+
+### 검증
+- backend 전체 949개 통과(변경 전 946개 + 신규 3개).
+- 동시 첫 로그인 테스트는 "두 요청이 둘 다 없다고 본 순간"을 첫 조회만 비우는 방식으로 재현한다. 두 커넥션을 실제로 경쟁시키는 테스트는 아니다.

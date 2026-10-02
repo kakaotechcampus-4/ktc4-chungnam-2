@@ -12,6 +12,7 @@ import uuid
 
 from sqlalchemy import func, select
 
+from auth.testing import session_cookie
 from authz.deps import get_membership_gateway
 from authz.testing import FakeMembership
 from common.events import EventLog
@@ -35,7 +36,7 @@ def _insert_confirmed_pin(db_session, *, map_id="map_1", lat, lng, created_by="u
 
 
 def _auth(user_id="user_1"):
-    return {"session": user_id}
+    return session_cookie(user_id)
 
 
 def _confirm(app_client, pin, *, map_id="map_1", user_id="user_1"):

@@ -20,7 +20,6 @@ def _settings(**overrides):
         cors_allow_origin_regex=None,
         session_secret="real-secret",
         places_mode="real",
-        auth_mode="real",
         llm_mode="real",
         frontend_base_url="https://app.pingo.example",
     )
@@ -76,7 +75,6 @@ def test_non_prod_environment_allows_dev_stubs_and_wildcard():
         cors_allow_origin_regex=None,
         session_secret="change-me-before-deploy",
         places_mode="dev",
-        auth_mode="dev",
     )
     assert s.is_prod is False
     assert s.mode_for("places") == "dev"
@@ -85,18 +83,15 @@ def test_non_prod_environment_allows_dev_stubs_and_wildcard():
 def test_from_env_defaults_to_dev_mode_outside_prod(monkeypatch):
     monkeypatch.setenv("PINGO_ENV", "dev")
     monkeypatch.delenv("PLACES_MODE", raising=False)
-    monkeypatch.delenv("AUTH_MODE", raising=False)
 
     s = Settings.from_env()
 
     assert s.places_mode == "dev"
-    assert s.auth_mode == "dev"
 
 
 def test_from_env_defaults_to_real_mode_in_prod(monkeypatch):
     monkeypatch.setenv("PINGO_ENV", "prod")
     monkeypatch.delenv("PLACES_MODE", raising=False)
-    monkeypatch.delenv("AUTH_MODE", raising=False)
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
     monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
@@ -104,7 +99,6 @@ def test_from_env_defaults_to_real_mode_in_prod(monkeypatch):
     s = Settings.from_env()
 
     assert s.places_mode == "real"
-    assert s.auth_mode == "real"
 
 
 def test_from_env_dev_regex_default_is_localhost_only(monkeypatch):
@@ -144,7 +138,6 @@ def test_from_env_prod_has_no_regex_default(monkeypatch):
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
     monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
     monkeypatch.setenv("PLACES_MODE", "real")
-    monkeypatch.setenv("AUTH_MODE", "real")
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
 
     s = Settings.from_env()
@@ -178,7 +171,6 @@ def test_from_env_llm_mode_defaults_to_real_in_prod(monkeypatch):
     monkeypatch.setenv("PINGO_ENV", "prod")
     monkeypatch.delenv("LLM_MODE", raising=False)
     monkeypatch.setenv("PLACES_MODE", "real")
-    monkeypatch.setenv("AUTH_MODE", "real")
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
     monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
@@ -190,7 +182,6 @@ def test_from_env_prod_with_llm_mode_dev_is_refused(monkeypatch):
     monkeypatch.setenv("PINGO_ENV", "prod")
     monkeypatch.setenv("LLM_MODE", "dev")
     monkeypatch.setenv("PLACES_MODE", "real")
-    monkeypatch.setenv("AUTH_MODE", "real")
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
     monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
@@ -227,3 +218,31 @@ def test_from_env_places_keys_default_to_empty(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     s = Settings.from_env()
     assert (s.naver_search_client_id, s.naver_search_client_secret, s.google_places_api_key) == ("", "", "")
+
+
+def test_from_env_without_pingo_env_is_prod(monkeypatch):
+    """PINGO_ENV를 빠뜨려도 가장 엄격한 쪽이다(#126) — 배포에서 변수 하나 놓쳤다고 개발용 설정이 올라가면 안 된다."""
+    monkeypatch.delenv("PINGO_ENV", raising=False)
+    monkeypatch.setenv("PLACES_MODE", "real")
+    monkeypatch.setenv("LLM_MODE", "real")
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
+    monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
+    monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
+
+    s = Settings.from_env()
+
+    assert s.is_prod
+    assert (s.places_mode, s.llm_mode) == ("real", "real")
+
+
+def test_from_env_without_pingo_env_runs_prod_guards(monkeypatch):
+    """PINGO_ENV 없이 SESSION_SECRET도 안 정하면 prod 가드가 서버를 세운다 — 쿠키만으로 로그인되는 경로는 이제 없다."""
+    monkeypatch.delenv("PINGO_ENV", raising=False)
+    monkeypatch.setenv("PLACES_MODE", "real")
+    monkeypatch.setenv("LLM_MODE", "real")
+    monkeypatch.delenv("SESSION_SECRET", raising=False)
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
+    monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
+
+    with pytest.raises(ConfigError, match="SESSION_SECRET"):
+        Settings.from_env()

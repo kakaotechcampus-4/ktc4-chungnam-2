@@ -7,15 +7,17 @@ POST /maps/{mapId}/invite, POST /invites/{token}/accept 통합 테스트(conftes
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
+from auth.models import User
+from auth.testing import ensure_users, session_cookie
 from common.events import EventLog
 from maps.models import Invite as InviteRow
 from maps.models import Membership as MembershipRow
 
 
 def _auth(user_id="user_1"):
-    return {"session": user_id}
+    return session_cookie(user_id)
 
 
 def _create_map(app_client, *, user_id="user_1"):
@@ -92,7 +94,7 @@ def test_accept_invite_adds_member_and_emits_event(app_client, db_session):
     assert len(events) == 1
     assert events[0].channel == "public"
     assert events[0].recipient_user_id is None
-    assert events[0].payload == {"user_id": "user_2"}
+    assert events[0].payload == {"user_id": "user_2", "display_name": "user_2"}
 
 
 def test_accept_invite_twice_is_idempotent(app_client, db_session):
@@ -178,9 +180,7 @@ def test_accept_invite_without_cookie_is_401(app_client):
 
 
 def test_invite_summary_without_login_is_200_and_hides_map_id(app_client, db_session):
-    from auth.models import User
-
-    db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
+    ensure_users(db_session, "user_1", display_names={"user_1": "철수"})
     db_session.commit()
     map_body = _create_map(app_client, user_id="user_1")
     invite = app_client.post(f"/maps/{map_body['id']}/invite", cookies=_auth("user_1")).json()
@@ -225,9 +225,10 @@ def test_invite_summary_expired_token_is_410(app_client, db_session):
     assert resp.json()["code"] == "INVITE_EXPIRED"
 
 
-def test_invite_summary_inviter_without_user_row_falls_back_to_withdrawn_label(app_client):
-    map_body = _create_map(app_client, user_id="user_1")  # users 행 없음
+def test_invite_summary_inviter_without_user_row_falls_back_to_withdrawn_label(app_client, db_session):
+    map_body = _create_map(app_client, user_id="user_1")
     invite = app_client.post(f"/maps/{map_body['id']}/invite", cookies=_auth("user_1")).json()
+    db_session.execute(delete(User).where(User.id == "user_1"))  # 초대를 만든 뒤 users 행이 사라진 경우
 
     resp = app_client.get(f"/invites/{invite['token']}")
     assert resp.json()["inviter_display_name"] == "탈퇴한 구성원"

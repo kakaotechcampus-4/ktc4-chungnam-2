@@ -22,8 +22,12 @@ import common.events  # noqa: F401
 import maps.models  # noqa: F401
 import pins.models  # noqa: F401 — shortlist_items.pin_id가 pins.id를 FK로 참조한다
 import shortlist.models  # noqa: F401 — maps.service가 shortlist.api를 부르면서 필요해짐
+from auth.testing import ensure_users
 from common.database import Base, session_scope
 from maps.api import DbMembershipGateway
+
+# 이 모듈 테스트가 쿠키로 로그인시키는 사용자 id 전부
+TEST_USER_IDS = ("user_1", "user_2", "outsider", "user_lonely")
 
 BASE_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://pingo:pingo@localhost:5432/pingo")
 
@@ -104,6 +108,8 @@ def app_client(db_session):
     app.dependency_overrides[authz.deps.get_membership_gateway] = (
         lambda: DbMembershipGateway(db_session)
     )
+
+    ensure_users(db_session, *TEST_USER_IDS)   # 인증이 요청마다 users 행을 확인한다(#126)
 
     with TestClient(app) as client:
         yield client

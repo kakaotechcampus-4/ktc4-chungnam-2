@@ -8,6 +8,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from auth.testing import session_cookie
 from main import app  # noqa: F401  — 라우터 등록을 보장
 from pins.models import Pin, Reaction
 from recommend.models import EvidenceLine, RecommendRun
@@ -17,8 +18,8 @@ REGION = {"label": "부산", "lat": 35.1796, "lng": 129.0756}
 
 @pytest.fixture()
 def clients(app_client, two_users):
-    a = TestClient(app_client.app, cookies={"session": "user_a"})
-    b = TestClient(app_client.app, cookies={"session": "user_b"})
+    a = TestClient(app_client.app, cookies=session_cookie("user_a"))
+    b = TestClient(app_client.app, cookies=session_cookie("user_b"))
     yield a, b
     a.close()
     b.close()

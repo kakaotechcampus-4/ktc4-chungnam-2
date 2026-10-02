@@ -13,12 +13,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select, update
 
+from auth.testing import ensure_users, session_cookie
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
 
 
 def _auth(user_id="user_1"):
-    return {"session": user_id}
+    return session_cookie(user_id)
 
 
 def _create_map(app_client, *, user_id="user_1", title="부산 여행", start="2026-10-10", end="2026-10-12"):
@@ -102,19 +103,17 @@ def test_list_members_returns_only_honest_fields(app_client):
     assert resp.status_code == 200
     members = resp.json()
     assert {m["user_id"] for m in members} == {"user_1", "user_2"}
-    # display_name·online을 채울 데이터 출처가 없다 — 응답에 키 자체가 없어야 한다
-    # (user_id로 대체하거나 False로 채우는 거짓 fallback을 만들지 않았다는 증거).
+    # online을 채울 데이터 출처가 없다 — 응답에 키 자체가 없어야 한다
+    # (False로 채우는 거짓 fallback을 만들지 않았다는 증거). display_name은 users 행에서 온다.
     for m in members:
-        assert set(m.keys()) == {"user_id"}
+        assert set(m.keys()) == {"user_id", "display_name"}
 
 
 def test_list_members_includes_display_name_when_user_row_exists(app_client, db_session):
     """auth.api.display_names 배선(maps/for_Root.md 항목 5 해결) 회귀 테스트 — 실제 users
-    행이 있으면 display_name이 채워져야 한다(위 test_list_members_returns_only_honest_fields는
-    users 행이 없는 dev 세션 쿠키 케이스라 생략되는 게 여전히 맞다)."""
-    from auth.models import User
-
-    db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
+    행이 있으면 display_name이 채워져야 한다(인증이 users 행을 요구하므로(#126)
+    행이 없는 구성원은 탈퇴 등으로 행이 사라진 경우뿐이다)."""
+    ensure_users(db_session, "user_1", display_names={"user_1": "철수"})
     db_session.commit()
 
     body = _create_map(app_client, user_id="user_1")

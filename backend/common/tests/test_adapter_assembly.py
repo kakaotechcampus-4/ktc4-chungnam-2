@@ -10,7 +10,6 @@ import pytest
 # common.events.record_event를 직접 부르는 평범한 함수 호출로 바뀐다(pins 계획 참고).
 # 구현이 영원히 하나뿐인 것에 어댑터 선택 레이어를 씌우지 않는다.
 MISSING_REAL = {
-    "auth.SessionResolver": "#4",
     "recommend.PlaceSearchGateway": "#14",
     "recommend.PlaceFactsGateway": "#14",
     "llm.EvidencePlanner": "#116",
@@ -20,9 +19,8 @@ MISSING_REAL = {
 
 
 def test_every_registered_port_is_accounted_for():
-    """pins·auth 두 모듈이 아직 select()로 dev/real을 오간다(auth/mentor-review-plan.md 후속 —
-    auth.SessionResolver가 마지막으로 등록된 포트였다). authz.MembershipGateway는 실구현 하나뿐이라
-    아예 이 레지스트리에 없다(#89) — 이제부터는 진짜 회귀 검사다: 포트를 추가/삭제했는데
+    """authz.MembershipGateway(#89)와 auth.SessionResolver(#126)는 실구현 하나뿐이라
+    아예 이 레지스트리에 없다 — 이제부터는 진짜 회귀 검사다: 포트를 추가/삭제했는데
     MISSING_REAL을 안 고치면 여기서 잡힌다."""
     import main  # noqa: F401 — 모든 deps.py를 import시켜 레지스트리를 채운다
     from common.adapters import assembly
@@ -39,7 +37,7 @@ def test_prod_refuses_to_boot_while_real_impls_are_missing():
     with pytest.raises(ConfigError, match="prod"):
         Settings(environment="prod", database_url="x", cors_allow_origins=(),
                  cors_allow_origin_regex=None, session_secret="s",
-                 places_mode="dev", auth_mode="real")
+                 places_mode="dev")
 
 
 def test_select_registers_the_choice_in_assembly():
@@ -64,7 +62,8 @@ def test_select_registers_the_choice_in_assembly():
 # 새 dev/real 어댑터 포트가 생기면 여기 추가한다 — 위 settings.py의 _PORTS,
 # adapters.py의 select() 호출 이름들과 맞춘다. "get_membership_gateway"는 여기 없다(issue #89) —
 # 이제 select() 없이 DbMembershipGateway 하나로 직접 정의된다(우회가 아니라 의도한 설계다).
-KNOWN_ADAPTER_FACTORIES = {"get_current_user"}
+# "get_current_user"도 여기 없다(#126) — 개발용 스텁과 AUTH_MODE를 없애 구현이 하나뿐이다.
+KNOWN_ADAPTER_FACTORIES = {"get_place_search_gateway", "get_place_facts_gateway"}
 
 
 def _select_bound_names(tree: ast.Module) -> set[str]:
@@ -83,8 +82,7 @@ def test_adapter_factories_go_through_select():
     """dev/real 두 구현을 오갈 수 있는 어댑터 팩토리(KNOWN_ADAPTER_FACTORIES)는 반드시
     select()의 반환값이어야 한다. 직접 `def get_place_gateway(): return RequestEchoPlaceGateway()`
     처럼 정의하면 select()를 완전히 우회해 prod 가드가 무의미해진다 — 이 패턴만 정확히 잡는다.
-    get_current_user도 auth(#4) 전까지는 dev 스텁과 실구현을 오가야 하므로 이제 이 목록에 있다
-    (auth/mentor-review-plan.md 후속) — get_db_session·리소스 로더처럼 애초에 dev/real 구분이
+    get_db_session·리소스 로더처럼 애초에 dev/real 구분이
     없는 Depends 대상만 이 테스트의 관심사 밖이다(그런 것까지 오탐했던 이전 버전의 문제를
     여기서 바로잡음)."""
     for path in Path(__file__).resolve().parents[2].glob("*/deps.py"):

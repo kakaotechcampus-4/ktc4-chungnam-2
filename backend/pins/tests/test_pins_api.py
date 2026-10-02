@@ -15,6 +15,7 @@ import pytest
 from geoalchemy2 import Geometry
 from sqlalchemy import cast, func, select
 
+from auth.testing import ensure_users, session_cookie
 from authz.deps import get_membership_gateway
 from authz.testing import FakeMembership
 from common.events import EventLog
@@ -52,7 +53,7 @@ CAFE = {"category": "카페", "place_id": "kakao:1002", "place_name": "온도 �
 
 
 def _auth(user_id="user_1"):
-    return {"session": user_id}
+    return session_cookie(user_id)
 
 
 def _events(db_session, *, map_id="map_1", type=None):
@@ -183,9 +184,7 @@ def test_create_pin_missing_hint_field_is_422(app_client, missing):
 
 
 def test_create_pin_includes_created_by_display_name_when_user_row_exists(app_client, db_session):
-    from auth.models import User
-
-    db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
+    ensure_users(db_session, "user_1", display_names={"user_1": "철수"})
     db_session.commit()
 
     resp = app_client.post("/maps/map_1/pins", json=KALGUKSU, cookies=_auth("user_1"))

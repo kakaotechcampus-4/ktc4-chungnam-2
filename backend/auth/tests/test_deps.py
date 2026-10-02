@@ -1,11 +1,6 @@
 """
-auth.deps.get_current_user 단위 테스트 + 회귀 테스트.
-
-아래 두 테스트(`test_missing_cookie_raises_unauthorized`, `test_present_cookie_becomes_user_id`)는
-테스트 환경의 기본 AUTH_MODE=dev를 전제로 `_dev_get_current_user`를 직접 검증한다 — "잘못된
-쿠키"(서명 위조·만료) 케이스는 dev 스텁엔 여전히 존재하지 않는 상태다(검증 자체가 없으므로).
-그 케이스는 이제 `_real_get_current_user`를 직접 호출하는 아래 테스트들이 다룬다(실제
-PostgreSQL 필요 — auth/tests/conftest.py의 db_session).
+auth.deps.get_current_user 단위 테스트 + 회귀 테스트 — 실제 PostgreSQL 필요(auth/tests/conftest.py의 db_session).
+AUTH_MODE·개발용 스텁은 없다(#126) — 구현은 서명된 세션 쿠키를 검증하는 이것 하나다.
 """
 
 import time
@@ -16,46 +11,35 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from auth import core
-from auth.deps import _real_get_current_user, get_current_user
+from auth.deps import get_current_user
 from auth.models import User
 from common.errors import AppError, register_error_handlers
 from common.settings import settings
 
 
-def test_missing_cookie_raises_unauthorized():
+def test_resolver_missing_cookie_raises_unauthorized(db_session):
     with pytest.raises(AppError) as exc:
-        get_current_user(session=None)
+        get_current_user(session=None, db=db_session)
     assert exc.value.code == "UNAUTHORIZED"
 
 
-def test_present_cookie_becomes_user_id():
-    user = get_current_user(session="user_42")
-    assert user.user_id == "user_42"
-
-
-def test_real_resolver_missing_cookie_raises_unauthorized(db_session):
-    with pytest.raises(AppError) as exc:
-        _real_get_current_user(session=None, db=db_session)
-    assert exc.value.code == "UNAUTHORIZED"
-
-
-def test_real_resolver_accepts_valid_signed_cookie_for_active_user(db_session):
+def test_resolver_accepts_valid_signed_cookie_for_active_user(db_session):
     db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
     db_session.flush()
     token = core.create_session_token("user_1", secret=settings.session_secret, issued_at=int(time.time()))
 
-    user = _real_get_current_user(session=token, db=db_session)
+    user = get_current_user(session=token, db=db_session)
 
     assert user.user_id == "user_1"
 
 
-def test_real_resolver_rejects_tampered_cookie(db_session):
+def test_resolver_rejects_tampered_cookie(db_session):
     with pytest.raises(AppError) as exc:
-        _real_get_current_user(session="tampered.123.deadbeef", db=db_session)
+        get_current_user(session="tampered.123.deadbeef", db=db_session)
     assert exc.value.code == "UNAUTHORIZED"
 
 
-def test_real_resolver_rejects_valid_signature_for_withdrawn_user(db_session):
+def test_resolver_rejects_valid_signature_for_withdrawn_user(db_session):
     """서명은 멀쩡해도(쿠키가 만료 전) 그 사이 탈퇴한 계정이면 즉시 막힌다 — 쿠키만 보고
     판정하지 않고 매번 DB를 재확인하는 이유(auth/deps.py 참고)."""
     db_session.add(
@@ -68,11 +52,11 @@ def test_real_resolver_rejects_valid_signature_for_withdrawn_user(db_session):
     token = core.create_session_token("user_1", secret=settings.session_secret, issued_at=int(time.time()))
 
     with pytest.raises(AppError) as exc:
-        _real_get_current_user(session=token, db=db_session)
+        get_current_user(session=token, db=db_session)
     assert exc.value.code == "UNAUTHORIZED"
 
 
-def test_real_resolver_rejects_token_issued_before_logout_but_accepts_new_one(db_session):
+def test_resolver_rejects_token_issued_before_logout_but_accepts_new_one(db_session):
     now = int(time.time())
     db_session.add(
         User(
@@ -85,9 +69,9 @@ def test_real_resolver_rejects_token_issued_before_logout_but_accepts_new_one(db
     new = core.create_session_token("user_1", secret=settings.session_secret, issued_at=now - 1)
 
     with pytest.raises(AppError) as exc:
-        _real_get_current_user(session=old, db=db_session)
+        get_current_user(session=old, db=db_session)
     assert exc.value.code == "UNAUTHORIZED"
-    assert _real_get_current_user(session=new, db=db_session).user_id == "user_1"
+    assert get_current_user(session=new, db=db_session).user_id == "user_1"
 
 
 def test_missing_cookie_via_http_returns_envelope():
