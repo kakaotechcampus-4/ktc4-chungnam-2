@@ -114,6 +114,12 @@ def create_ai_pin(
     return PinMutation(pin=pin_row, event=event)
 
 
+def public_pin_payload(pin: Pin) -> dict:
+    """전체 채널(SSE public) 이벤트에 싣는 핀 페이로드 — 보는 사람마다 다른 값(my_reaction)은 뺀다. 다른
+    모듈(shortlist)이 공개 이벤트에 핀을 실을 때 같은 규칙을 재사용한다(#241)."""
+    return core._public_pin_payload(pin)
+
+
 def mark_confirmed(db: Session, *, pin_id: str, map_id: str) -> PinMutation:
     """docs/data-model.md — kind를 바꾸는 유일한 경로. shortlist만 부른다."""
     pin_row = service.get_pin_or_404(db, pin_id)

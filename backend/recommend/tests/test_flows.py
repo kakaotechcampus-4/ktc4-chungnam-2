@@ -1136,3 +1136,20 @@ def test_wants_is_stored_and_returned_by_the_evidence_api(db_session):
     by_text = {e.text: e for e in flows.list_evidence(db_session, run_id=str(run.id), principal=principal)}
     assert by_text["사유"].wants is False and by_text["사유"].fact_label == "한식"
     assert by_text["옛 데이터"].wants is None and by_text["옛 데이터"].fact_label is None
+
+
+def test_candidates_ready_event_payload_validates_as_spec_candidates(db_session):
+    """#241 — run.candidates_ready는 스펙의 Candidate 모양(reason·member_fulfillment·permissions 포함)이다."""
+    from common.events import EventLog
+    from recommend import schemas
+
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    places = [PlaceStub(place_id="p1", lat=35.0005, lng=129.0005)]
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts())
+
+    event = db_session.execute(select(EventLog).where(EventLog.type == "run.candidates_ready")).scalars().all()[-1]
+    [payload] = event.payload["candidates"]
+    candidate = schemas.Candidate(**payload)
+    assert candidate.permissions.can_publish is True and candidate.place_name == "이름-p1"
+    assert payload["visibility"] == "private" and payload["reason"]

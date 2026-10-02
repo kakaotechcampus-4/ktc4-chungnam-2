@@ -457,11 +457,18 @@ def _run_pipeline(
     return candidates_data, funnel
 
 
-def _candidates_ready_event(run: RecommendRun, candidates: list[CandidateRow]) -> Event:
+def _candidates_ready_event(
+    db: Session, run: RecommendRun, candidates: list[CandidateRow], place_search: PlaceSearchGateway,
+) -> Event:
+    """docs/events.md run.candidates_ready — 스펙의 Candidate 모양 그대로(#241). 받는 사람은 요청자 본인
+    하나라 permissions도 그 사람 기준으로 만든다(응답과 같은 _candidate_response)."""
+    requester = Principal(user_id=run.requested_by, map_id=run.map_id, role="member")
+    region_labels = {r.id: r.label for r in service.list_regions(db, str(run.id))}
+    place_names = place_search.get_names([c.place_id for c in candidates]) if candidates else {}
     payload = {
         "run_id": str(run.id),
         "candidates": [
-            {"id": str(c.id), "rank": c.rank, "checks": c.checks, "visibility": "private"}
+            _candidate_response(c, run, requester, region_labels, place_names).model_dump(exclude_none=True)
             for c in candidates
         ],
     }
@@ -501,7 +508,7 @@ def execute_run(
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
     service.set_run_status(db, run, "done")
-    record_event(db, _candidates_ready_event(run, candidates))
+    record_event(db, _candidates_ready_event(db, run, candidates, place_search))
     return run
 
 
@@ -532,7 +539,7 @@ def widen_run(
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
     service.set_run_status(db, run, "done")
-    record_event(db, _candidates_ready_event(run, candidates))
+    record_event(db, _candidates_ready_event(db, run, candidates, place_search))
     return run
 
 
@@ -564,7 +571,7 @@ def retry_run(
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
     service.set_run_status(db, run, "done")
-    record_event(db, _candidates_ready_event(run, candidates))
+    record_event(db, _candidates_ready_event(db, run, candidates, place_search))
     return run
 
 
