@@ -21,7 +21,13 @@ declare namespace kakao.maps {
     constructor(container: HTMLElement, options: { center: LatLng; level?: number })
     setBounds(bounds: LatLngBounds): void
     setCenter(latlng: LatLng): void
+    panTo(latlng: LatLng): void
     relayout(): void
+  }
+
+  namespace event {
+    function addListener(target: Map, type: 'dragstart' | 'idle', handler: () => void): void
+    function removeListener(target: Map, type: 'dragstart' | 'idle', handler: () => void): void
   }
 
   class CustomOverlay {

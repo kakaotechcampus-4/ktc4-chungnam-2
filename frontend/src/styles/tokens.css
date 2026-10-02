@@ -1,0 +1,74 @@
+/* 색의 단일 소스(docs/design/colors.md 5절). 값을 바꾸면 그 문서의 사본 표도 같이 고친다. */
+:root {
+  /* ── 브랜드 · 파랑 217° ──────────────── */
+  --brand-50:  #EFF5FE;  --brand-100: #DBE8FD;
+  --brand-200: #B8D0F9;  --brand-300: #84AFF5;
+  --brand-400: #5A8FEF;  --brand-500: #3B72E4;
+  --brand-600: #2A57C4;  --brand-700: #1E4197;
+  --brand-800: #142C68;
+
+  /* ── 중립 · 228° 저채도 ──────────────── */
+  --ink-50:  #F8F9FB;  --ink-100: #F0F1F5;
+  --ink-200: #E2E4EB;  --ink-300: #C9CCD6;
+  --ink-400: #9EA3B2;  --ink-500: #6B7181;
+  --ink-600: #545A6B;  --ink-700: #3B4050;
+  --ink-900: #14161F;
+
+  /* ── 시맨틱 ──────────────────────────── */
+  --good-bg: #E6F4ED;  --good-line: #12855A;  --good-text: #0D6B49;
+  --warn-bg: #FBF0DC;  --warn-line: #C77700;  --warn-text: #A35F00;
+  --bad-bg:  #FBEAEA;  --bad-line:  #D02A2A;  --bad-text:  #A32020;
+
+  /* ── 면 ──────────────────────────────── */
+  --surface-page:    var(--ink-50);
+  --surface-card:    #FFFFFF;
+  --surface-sunken:  var(--ink-100);
+  --surface-overlay: #FFFFFF;
+  --scrim:           rgba(20, 22, 31, 0.45);
+
+  /* ── 글자 ────────────────────────────── */
+  --text-primary:   var(--ink-900);
+  --text-secondary: var(--ink-500);
+  --text-muted:     var(--ink-400);
+  --text-on-fill:   #FFFFFF;
+  --text-link:      var(--brand-600);
+
+  /* ── 선 ──────────────────────────────── */
+  --line-hairline: var(--ink-200);
+  --line-control:  var(--ink-300);
+  --line-focus:    var(--brand-500);
+
+  /* ── 액션 ────────────────────────────── */
+  --action-fill:          var(--brand-600);
+  --action-fill-hover:    var(--brand-700);
+  --action-quiet-text:    var(--brand-600);
+  --action-danger:        #D02A2A;
+  --action-disabled-bg:   var(--ink-100);
+  --action-disabled-text: var(--ink-400);
+
+  /* ── 선택 상태 ───────────────────────── */
+  --selected-bg:   var(--brand-100);
+  --selected-line: var(--brand-600);
+  --selected-text: var(--brand-700);
+
+  /* ── 핑고 ────────────────────────────── */
+  --pingo-body: var(--brand-300);
+  --pingo-bg:   var(--brand-50);
+  --pingo-line: var(--brand-300);
+  --pingo-text: var(--brand-700);
+
+  /* ── 핀 · 지도 위 전용 ───────────────── */
+  --pin-stroke:     #D02A2A;
+  --pin-fill-empty: var(--ink-200);
+  --pin-fill-full:  #D02A2A;
+  --pin-confirmed:        #F5B301;   /* 확정 핀 속 (#149) */
+  --pin-confirmed-mark:   #6B4500;   /* 확정 핀 ♥ · 순서 번호 글자 */
+  --pin-confirmed-stroke: #FFFFFF;   /* 3px. 가시성을 여기서 맡는다 */
+  --pin-confirmed-shadow: 0 2px 4px rgba(0, 0, 0, 0.28);
+
+  /* ── 반응 · 지도 밖 UI 전용 ──────────── */
+  --reaction-good:    var(--good-line);
+  --reaction-adjust:  var(--warn-line);
+  --reaction-against: #D02A2A;
+  --reaction-unknown: var(--ink-400);
+}
