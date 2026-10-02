@@ -146,7 +146,6 @@ def test_d7_search_results_carry_pinnable(clients):
 
 # ───────────────────────────── D9 — 반대 사유 ─────────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D9 — 빈 문자열 칩만으로 사유 없는 🚫가 등록된다(가드레일 3). #236")
 def test_d9_empty_chip_is_not_a_reason(clients, seoul_map, pin_body):
     a, _ = clients
     pin = a.post(f"/maps/{seoul_map}/pins", json=pin_body("hongdae-ramen")).json()["id"]
@@ -154,7 +153,6 @@ def test_d9_empty_chip_is_not_a_reason(clients, seoul_map, pin_body):
     assert r.status_code == 422, "내용 없는 칩은 사유가 아니다"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D9 — 칩만 있는 🚫는 근거 줄이 되지 않는다(reason_text IS NOT NULL 필터). #236")
 def test_d9_chip_only_against_becomes_evidence(clients, seoul_map, pin_body):
     a, _ = clients
     pin = a.post(f"/maps/{seoul_map}/pins", json=pin_body("hongdae-ramen")).json()["id"]
