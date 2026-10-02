@@ -1,11 +1,15 @@
+import type { ReactNode } from 'react'
+
+import AgainstMark from '@/ui/AgainstMark'
+
 import { toPinCard, type Pin, type PinCardView, type ReactionType } from './model'
 
 /** 반응 용어·기호는 고정(기획안 9절). 색은 지도 밖 UI 전용 반응 토큰(colors.md). */
-const REACTION: Record<ReactionType | 'unknown', { mark: string; label: string; color: string; chip: string }> = {
+const REACTION: Record<ReactionType | 'unknown', { mark: ReactNode; label: string; color: string; chip: string }> = {
   like: { mark: '♥', label: '좋음', color: 'text-[var(--good-line)]', chip: 'border-[var(--good-line)] bg-[var(--good-bg)] text-[var(--good-text)]' },
   neutral: { mark: '△', label: '조율 필요', color: 'text-[var(--warn-line)]', chip: 'border-[var(--warn-line)] bg-[var(--warn-bg)] text-[var(--warn-text)]' },
-  against: { mark: '🚫', label: '반대', color: 'text-[var(--bad-line)]', chip: 'border-[var(--bad-line)] bg-[var(--bad-bg)] text-[var(--bad-text)]' },
-  unknown: { mark: '?', label: '미확인', color: 'text-ink-400', chip: '' },
+  against: { mark: <AgainstMark size={12} />, label: '반대', color: 'text-[var(--bad-line)]', chip: 'border-[var(--bad-line)] bg-[var(--bad-bg)] text-[var(--bad-text)]' },
+  unknown: { mark: '?', label: '미확인', color: 'text-ink-500', chip: '' },
 }
 const ORDER = ['like', 'neutral', 'against', 'unknown'] as const
 
@@ -40,7 +44,7 @@ function PinCard({ card, onSelect }: { card: PinCardView; onSelect: () => void }
     <button
       type="button"
       onClick={onSelect}
-      className={`w-full rounded-xl p-3.5 text-left ${todo ? 'border-[1.5px] border-brand-600 bg-white' : 'bg-ink-100'}`}
+      className={`w-full rounded-xl p-3.5 text-left ${todo ? 'border-[1.5px] border-brand-600 bg-white' : 'border border-ink-200 bg-white'}`}
     >
       <div className="flex items-start justify-between gap-2">
         <p className="truncate font-bold text-ink-900">{card.name}</p>

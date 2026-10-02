@@ -18,6 +18,7 @@ import ProfileModal from '@/features/shell/ProfileModal'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import type { ShellContext } from '@/features/shell/shellContext'
 import { showToast } from '@/features/shell/toast'
+import Pingo from '@/ui/Pingo'
 
 /**
  * 지도 하나 안의 화면(최종기획안 4절). 지도는 항상 떠 있고, 하단 탭 3개가 그 위 바텀시트 내용을 바꾼다.
@@ -136,7 +137,7 @@ export default function MapLayout() {
     setActiveControl(key)
   }
 
-  const context: ShellContext = { mapId, activeControl, onControl }
+  const context: ShellContext = { mapId, activeControl, onControl, connection }
 
   return (
     <>
@@ -173,7 +174,7 @@ export default function MapLayout() {
           role="search"
           inert={mapMoving}
           onSubmit={submitSearch}
-          className={`pointer-events-auto flex items-center gap-2 rounded-xl border bg-white px-4 py-3 shadow-md transition-opacity ${
+          className={`pointer-events-auto flex items-center gap-2 rounded-xl border bg-white px-4 py-3 shadow-md transition-opacity has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
             search.query ? 'border-brand-600' : 'border-ink-200'
           } ${mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'}`}
         >
@@ -208,20 +209,6 @@ export default function MapLayout() {
             }`}
           />
         )}
-        {connection.state !== 'open' && (
-          <div role="status" className="pointer-events-auto flex w-fit items-center gap-2 rounded-full border border-[var(--warn-line)] bg-[var(--warn-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--warn-text)]">
-            {connection.state === 'reconnecting' ? (
-              '연결이 끊겼어요. 다시 연결하는 중…'
-            ) : (
-              <>
-                연결이 끊겼어요
-                <button type="button" onClick={connection.reconnect} className="underline">
-                  다시 연결
-                </button>
-              </>
-            )}
-          </div>
-        )}
       </header>
 
       <Outlet context={context} />
@@ -231,17 +218,25 @@ export default function MapLayout() {
         className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 items-end border-t border-ink-100 bg-white"
       >
         <TabLink to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={26} />} />
-        {/* 원이 너무 크면 시트 목록 끝을 가린다. 56px로 줄이고, 활성은 안쪽 링 + 라벨 색 두 가지로 보인다 — 바깥 링은 탭 막대 위로 튀어나온다(#299). */}
+        {/* AI 는 핑고가 말한다. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 핑고, 활성만 파랑 채움 + 흰 핑고(#299). */}
         <NavLink
           to={`/maps/${mapId}/recommend`}
           className={({ isActive }) =>
-            `group flex flex-col items-center gap-0.5 pb-2 text-[11px] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
+            `flex flex-col items-center gap-0.5 pb-2 text-[11px] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
           }
         >
-          <span className="flex size-14 items-center justify-center rounded-full bg-brand-600 text-lg font-bold text-white shadow-md ring-brand-100 ring-inset group-aria-[current=page]:ring-4">
-            AI
-          </span>
-          AI 추천
+          {({ isActive }) => (
+            <>
+              <span
+                className={`flex size-12 items-center justify-center rounded-full shadow-md ${
+                  isActive ? 'bg-brand-600' : 'border-2 border-brand-300 bg-white'
+                }`}
+              >
+                <Pingo size={30} onFill={isActive} />
+              </span>
+              AI 추천
+            </>
+          )}
         </NavLink>
         <TabLink to={`/maps/${mapId}/shortlist`} label="확정된 장소" icon={<FileText size={26} />} />
       </nav>

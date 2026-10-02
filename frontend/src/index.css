@@ -130,7 +130,7 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
     }
   body {
     @apply bg-background text-foreground;
@@ -152,4 +152,13 @@
 /* 홈 표시줄 높이. 데스크톱·안드로이드는 0. */
 @utility pb-safe {
     padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* 키보드 포커스는 불투명 2px(3:1 이상). shadcn 기본 outline-ring/50 은 흰 바탕에서 1.98:1이라 안 보였다(#299). */
+@layer base {
+    /* base 층에 둬서 outline-none 을 준 곳(검색 input 등 — 틀이 대신 표시)은 그대로 꺼진다. */
+    :focus-visible {
+        outline: 2px solid var(--line-focus);
+        outline-offset: 2px;
+    }
 }

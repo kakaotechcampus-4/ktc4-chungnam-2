@@ -1,18 +1,21 @@
+import type { ReactNode } from 'react'
+
+import AgainstMark from '@/ui/AgainstMark'
 import { josa } from '@/ui/josa'
 import Pingo from '@/ui/Pingo'
 
 export type OnboardingKind = 'owner' | 'member'
 
 /** v1은 지도를 길게 눌러 핀을 찍지 않는다(#191) — Figma 문구에서 그 부분만 뺐다. */
-const STEPS: Record<OnboardingKind, string[]> = {
+const STEPS: Record<OnboardingKind, ReactNode[]> = {
   owner: [
     '위 검색창에 가게 이름을 검색해서 핀을 찍으세요',
     '오른쪽 위 프로필에서 초대 링크로 친구를 초대하세요',
-    '각자 ♥ △ 🚫로 의견을 남기면 AI가 대안을 찾아줘요',
+    <>각자 ♥ △ <AgainstMark />로 의견을 남기면 AI가 대안을 찾아줘요</>,
   ],
   member: [
-    '핀을 눌러 ♥ △ 🚫로 의견을 남겨주세요',
-    '🚫는 이유가 필요해요. 그 이유로 대안을 찾습니다',
+    <>핀을 눌러 ♥ △ <AgainstMark />로 의견을 남겨주세요</>,
+    <><AgainstMark /> 반대는 이유가 필요해요. 그 이유로 대안을 찾아요</>,
     '가고 싶은 곳이 있으면 위 검색창에서 추가하세요',
   ],
 }
@@ -40,8 +43,8 @@ export function OnboardingBody({ kind, onDone }: { kind: OnboardingKind; onDone:
     <>
       <ol className="mt-2 space-y-4">
         {STEPS[kind].map((step, i) => (
-          <li key={step} className="flex gap-3 text-ink-900">
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">
+          <li key={i} className="flex gap-3 text-ink-900">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-600">
               {i + 1}
             </span>
             {step}

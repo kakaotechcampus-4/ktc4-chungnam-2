@@ -55,14 +55,14 @@ export default function MapCreatePage() {
             className="min-w-0 flex-1 bg-transparent outline-none"
           />
           {title && <ClearButton label="제목 지우기" onClick={() => setTitle('')} />}
-          {title && <span className="text-xs text-ink-400">{title.length}/{TITLE_MAX}</span>}
+          {title && <span className="text-xs text-ink-500">{title.length}/{TITLE_MAX}</span>}
         </div>
       </Field>
 
-      <Field as="div" label={<>지역 <span className="font-normal text-ink-400">(선택)</span></>}>
+      <Field as="div" label={<>지역 <span className="font-normal text-ink-500">(선택)</span></>}>
         <div className="flex items-center gap-2 rounded-xl border border-ink-300 bg-white px-3 py-3">
           <button type="button" onClick={() => setPickingRegion(true)} className="min-w-0 flex-1 text-left">
-            {region ? region.label : <span className="text-ink-400">시·도 선택</span>}
+            {region ? region.label : <span className="text-ink-500">시·도 선택</span>}
           </button>
           {region ? (
             <ClearButton label="지역 지우기" onClick={() => setRegion(null)} />

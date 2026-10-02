@@ -35,6 +35,7 @@ export default function ModalSheet({
         {/* 내용 틀이 화면 전체라 빈 곳을 누르면 딤을 누른 것으로 본다. */}
         <Dialog.Content
           aria-describedby={undefined}
+          aria-modal="true"
           onClick={onClose}
           // 첫 버튼이 아니라 시트 자체에 포커스를 둔다 — 열자마자 「로그아웃」에 포커스가 가면 안 된다.
           onOpenAutoFocus={(e) => {

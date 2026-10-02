@@ -30,6 +30,7 @@ export default function BottomSheet({
   onStageChange,
   header,
   top,
+  banner,
   expandOnScroll = false,
   children,
 }: {
@@ -37,6 +38,8 @@ export default function BottomSheet({
   onStageChange: (stage: SheetStage) => void
   header: ReactNode
   top?: ReactNode
+  /** 시트 윗변에 붙는 띠(연결 끊김 등). 손잡이 위에 온다. */
+  banner?: ReactNode
   /** 2단계에서는 안을 스크롤하지 않고, 내용을 위로 끌면 3단계로 올린다(핀 상세 '3단계 자동 확장'). */
   expandOnScroll?: boolean
   children: ReactNode
@@ -103,6 +106,7 @@ export default function BottomSheet({
       }`}
     >
       {top}
+      {banner}
       <div
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
