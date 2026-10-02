@@ -22,9 +22,9 @@ def _resource(type_, author_id=None, kind=None) -> Resource:
 # --- pin ---
 
 
-@pytest.mark.parametrize("category,expected", [("숙소", False), ("음식점", True), ("기타", True), (None, True)])
-def test_pin_can_react_is_false_only_for_lodging_category(category, expected):
-    """#154/#157 — 숙소는 역할이 아니라 리소스 상태로 반응을 막는다. 다른 필드는 그대로."""
+@pytest.mark.parametrize("category,expected", [("숙소", False), ("기타", False), ("음식점", True), (None, True)])
+def test_pin_can_react_is_false_for_lodging_and_etc_category(category, expected):
+    """#154/#280 — 숙소·기타는 역할이 아니라 리소스 상태로 반응을 막는다. 다른 필드는 그대로."""
     resource = Resource(type="pin", map_id=MAP, author_id="user_1", kind="일반", category=category)
     perms = permissions_for(_principal(role="member"), resource)
     assert perms.can_react is expected

@@ -38,10 +38,11 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from common import categories
 from common.database import Base
 
-# 추천 대상이 아닌 숙소는 뺐다(#145/#146) — pins.models의 category enum은 숙소 핀을 위해 그대로다.
-Category = Enum("음식점", "카페", "관광지", name="recommend_category")
+# 추천 대상인 분류만 담는다(common/categories.py, #280) — pins.models의 category enum은 전체 분류다.
+Category = Enum(*categories.recommendable(), name="recommend_category")
 RunStatus = Enum(
     "collecting_evidence", "awaiting_region_confirm", "executing", "done", "failed",
     name="recommend_run_status",

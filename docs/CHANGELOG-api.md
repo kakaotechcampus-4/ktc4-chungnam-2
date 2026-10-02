@@ -2,6 +2,13 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-03 — 카테고리 정의 한 곳, 「기타」 핀 반응 불가 (#280)
+
+- 카테고리마다 핀 생성(`pinnable`)·반응(`reactable`)·추천(`recommendable`) 가능 여부를 `backend/common/categories.py` 한 곳에서 정한다. 스펙 `Category`·`RecommendCategory`, DB enum, 목 서버(`contracts/mocks/categories.ts`)와 대조 테스트로 맞춘다. enum 값은 그대로다.
+- **v1에 숙소와 기타는 없다.** 둘 다 자체 DB에 없어 핀으로 만들 수 없고(#191), 세 성질이 모두 거짓이다. 값은 스키마 호환으로만 남는다. 다시 살리는 방법은 v2에서 검토한다(#281).
+- 그래서 「기타」 핀도 숙소처럼 `permissions.can_react=false`, `PUT /pins/{pinId}/reaction`은 422 `REACTION_NOT_ALLOWED`, `GET /pins/{pinId}/reactions`는 빈 배열이다(이전 #157은 「기타는 일반 핀과 같다」). v1에서 기타 핀은 만들어지지 않으므로 화면 동작은 같다.
+- **FE 영향**: 없음. 스키마가 그대로라 타입 재생성도 필요 없다.
+
 ## 2026-10-02 (다섯 번째) — 스펙에 빠져 있던 응답 선언 정리, 충족 집계, 안전 사유 규칙 (#246, D11)
 
 점검 루프 1회차에서 코드는 합당하게 동작하는데 스펙에 선언이 없던 곳을 정리한다(사용자 결정: 권고대로 스펙을 코드에 맞춘다).

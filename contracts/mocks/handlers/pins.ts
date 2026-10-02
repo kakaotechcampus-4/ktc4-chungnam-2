@@ -2,6 +2,7 @@ import { http, HttpResponse } from "msw";
 import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError, pinPermissions } from "../util";
 import { SEED_PLACES } from "./places";
+import { CATEGORY_RULES } from "../categories";
 
 function visiblePins(mapId: string): Pin[] {
   return Object.values(store.pins).filter((p) => {
@@ -64,8 +65,8 @@ export const pinsHandlers = [
       return apiError(422, "VALIDATION_ERROR", "지도를 눌러 핀을 찍을 수는 없어요. 장소를 검색해서 골라 주세요");
     }
     const own = SEED_PLACES.find((p) => p.place_id === body.place_id);
-    // 자체 DB는 음식점·카페·관광지만 담는다(TourAPI 숙박 제외, 2026-10-01) — 숙소·기타는 핀으로 만들 수 없다
-    if (!own || own.category === "숙소" || own.category === "기타") {
+    // 자체 DB는 pinnable 카테고리(음식점·카페·관광지)만 담는다(TourAPI 숙박 제외, 2026-10-01) — 숙소·기타는 핀으로 만들 수 없다
+    if (!own || (own.category && !CATEGORY_RULES[own.category].pinnable)) {
       return apiError(422, "PLACE_NOT_SUPPORTED", "아직 지원하지 않는 장소예요");
     }
     if (own.category && body.category !== own.category) {
@@ -125,7 +126,7 @@ export const pinsHandlers = [
     const pinId = params.pinId as string;
     const pin = store.pins[pinId];
     if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
-    if (pin.category === "숙소") return apiError(422, "REACTION_NOT_ALLOWED", "숙소에는 반응을 남길 수 없어요");
+    if (!CATEGORY_RULES[pin.category].reactable) return apiError(422, "REACTION_NOT_ALLOWED", `${pin.category}에는 반응을 남길 수 없어요`);
     const body = (await request.json()) as { type: "like" | "neutral" | "against"; reason_text?: string; reason_chip_ids?: string[] };
     if (body.type === "against" && !body.reason_text && !(body.reason_chip_ids && body.reason_chip_ids.length)) {
       return apiError(422, "EVIDENCE_REQUIRED", "반대에는 사유가 필요해요");

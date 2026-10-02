@@ -1567,10 +1567,13 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @enum {string} */
+        /**
+         * @description 장소 카테고리 전체. 카테고리마다 핀을 만들 수 있는지, 반응할 수 있는지, 추천 대상인지는 backend/common/categories.py 한 곳에서 정하고 대조 테스트로 이 목록과 맞춘다(#280). v1은 음식점, 카페, 관광지만 핀을 만들 수 있다. 숙소와 기타는 자체 장소 DB에 없어 핀으로 만들 수 없고 값만 남아 있다(#191)
+         * @enum {string}
+         */
         Category: "음식점" | "카페" | "숙소" | "관광지" | "기타";
         /**
-         * @description AI 대안 추천을 받을 수 있는 카테고리. 숙소는 핀으로는 찍지만 추천 대상이 아니다 (#145)
+         * @description AI 대안 추천을 받을 수 있는 카테고리. backend/common/categories.py에서 추천 대상인 카테고리와 같아야 한다(대조 테스트, #280). 숙소는 추천 대상이 아니다(#145)
          * @enum {string}
          */
         RecommendCategory: "음식점" | "카페" | "관광지";

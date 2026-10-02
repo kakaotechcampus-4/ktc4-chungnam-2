@@ -10,10 +10,12 @@ within_radius/is_open은 이 레지스트리에 없다 — constraints.md 자신
 from dataclasses import dataclass
 from typing import Literal
 
+from common import categories
+
 Kind = Literal["hard", "soft"]
 UnknownPolicy = Literal["exclude", "pass"]
 
-_ALL_CATEGORIES: frozenset[str] = frozenset({"음식점", "카페", "관광지"})
+_ALL_CATEGORIES: frozenset[str] = frozenset(categories.recommendable())  # 추천 대상 전부(common/categories.py, #280)
 
 
 @dataclass(frozen=True)
@@ -69,7 +71,7 @@ _SOFT_KEYS_BY_CATEGORY: dict[str, frozenset[str]] = {
     )},
 }
 SOFT_REGISTRY: dict[str, ConstraintSpec] = {
-    key: ConstraintSpec(key, categories, "soft", "pass") for key, categories in _SOFT_KEYS_BY_CATEGORY.items()
+    key: ConstraintSpec(key, applies_to, "soft", "pass") for key, applies_to in _SOFT_KEYS_BY_CATEGORY.items()
 }
 SOFT_FACT_KEYS: frozenset[str] = frozenset(SOFT_REGISTRY)
 
