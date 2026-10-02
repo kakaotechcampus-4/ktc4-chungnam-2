@@ -64,7 +64,7 @@ class PinCreateRequest(BaseModel):
     category: Category
     source: PinSource = "search"
     link_url: str | None = None
-    place_id: str
+    place_id: str = Field(max_length=100)
     place_name: str = Field(max_length=100)
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)

@@ -91,6 +91,9 @@ def test_kakao_place_url_only_for_kakao_ids():
     assert core.kakao_place_url("naver:1234") is None
     assert core.kakao_place_url("kakao:") is None
     assert core.kakao_place_url("1234") is None
+    assert core.kakao_place_url("kakao:../../evil?x=1#frag") is None   # #248 — 숫자가 아니면 링크로 못 만든다
+    assert core.kakao_place_url("kakao:12a4") is None
+    assert core.kakao_place_url("kakao:" + "9" * 21) is None
 
 
 # --- is_duplicate -------------------------------------------------------------
