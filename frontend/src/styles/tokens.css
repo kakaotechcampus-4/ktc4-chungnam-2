@@ -24,7 +24,7 @@
   --surface-card:    #FFFFFF;
   --surface-sunken:  var(--ink-100);
   --surface-overlay: #FFFFFF;
-  --scrim:           rgba(20, 22, 31, 0.45);
+  --scrim:           rgba(20, 22, 31, 0.32);   /* 지도가 비쳐야 모달이 지도 위에 뜬 맥락이 남는다(#299) */
 
   /* ── 글자 ────────────────────────────── */
   --text-primary:   var(--ink-900);

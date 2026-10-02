@@ -92,7 +92,7 @@ export default function MapLayout() {
           <Link
             to="/"
             aria-label="내 지도 목록으로"
-            className="pointer-events-auto flex size-8 items-center justify-center rounded-full bg-white text-ink-900 shadow-md"
+            className="pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-white text-ink-900 shadow-md"
           >
             <ChevronLeft size={20} />
           </Link>
@@ -100,18 +100,26 @@ export default function MapLayout() {
             type="button"
             aria-label="지도 정보와 구성원"
             onClick={() => openProfile(true)}
-            className="pointer-events-auto flex size-8 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-white shadow-md"
+            className="pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-white shadow-md"
           >
             {me.data?.display_name?.slice(0, 1) ?? '나'}
           </button>
         </div>
         {/* 지도 위에는 검색창만 둔다(FE 회의). 지도를 끄는 동안엔 지도에 집중하게 흐려진다. 검색 동작은 #293. */}
+        {/* 사라진 동안에는 눌리지도 포커스되지도 않는다(inert). */}
         <label
+          inert={mapMoving}
           className={`pointer-events-auto flex items-center gap-2 rounded-xl border border-ink-200 bg-white px-4 py-3 shadow-md transition-opacity ${
             mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
           }`}
         >
-          <input id="place-search" readOnly placeholder="장소 검색하기" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+          <input
+            id="place-search"
+            readOnly
+            aria-label="장소 검색"
+            placeholder="장소 검색하기"
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-ink-500"
+          />
           <Search size={20} className="text-brand-600" aria-hidden="true" />
         </label>
       </header>
@@ -119,16 +127,21 @@ export default function MapLayout() {
       <Outlet context={context} />
 
       <nav
-        style={{ height: TAB_BAR_H }}
-        className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 items-center border-t border-ink-100 bg-white"
+        style={{ height: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
+        className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 items-end border-t border-ink-100 bg-white"
       >
         <TabLink to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={26} />} />
+        {/* 원이 너무 크면 시트 목록 끝을 가린다. 56px로 줄이고, 활성은 링 + 라벨 색 두 가지로 보인다(#299). */}
         <NavLink
           to={`/maps/${mapId}/recommend`}
-          aria-label="AI 추천"
-          className="mx-auto -mt-8 flex size-[72px] items-center justify-center rounded-full bg-brand-600 text-xl font-bold text-white shadow-lg"
+          className={({ isActive }) =>
+            `group flex flex-col items-center gap-0.5 pb-2 text-[11px] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
+          }
         >
-          AI
+          <span className="flex size-14 items-center justify-center rounded-full bg-brand-600 text-lg font-bold text-white shadow-md ring-brand-100 group-aria-[current=page]:ring-4">
+            AI
+          </span>
+          AI 추천
         </NavLink>
         <TabLink to={`/maps/${mapId}/shortlist`} label="확정된 장소" icon={<FileText size={26} />} />
       </nav>
@@ -145,7 +158,7 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
       to={to}
       end={end}
       className={({ isActive }) =>
-        `flex flex-col items-center gap-0.5 text-[11px] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
+        `flex flex-col items-center gap-0.5 pb-2 text-[11px] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
       }
     >
       {icon}
