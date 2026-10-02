@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from geoalchemy2 import Geography, Geometry, WKTElement
-from sqlalchemy import cast, func, or_, select
+from sqlalchemy import and_, cast, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -18,7 +18,8 @@ from places import matching
 from places.ingest import LabelRow, PlaceRow
 from places.matching import Candidate
 from places.models import Place, PlaceFact
-from places.schemas import Area, FactLabel, PlaceInfo, PlaceRef
+from places.schemas import Area, FactLabel, PlaceHint, PlaceInfo, PlaceRef
+from places.sources.base import distance_m
 
 _CHUNK = 1000
 
@@ -146,11 +147,45 @@ def find_candidates(db: Session, hint_lat: float, hint_lng: float, category: str
     return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id) for r in rows]
 
 
+def find_candidates_many(db: Session, hints: Sequence[PlaceHint]) -> list[list[Candidate]]:
+    """find_candidates를 힌트 N개에 대해 쿼리 한 번으로 한다(N+1 방지). 힌트마다 가까운 순 상한 MAX_CANDIDATES와
+    같은 카카오 ID가 기록된 장소를 돌려준다 — 한 건씩 부른 것과 같은 후보 집합이다."""
+    if not hints:
+        return []
+    lat, lng = _lat_lng()
+    conds = [and_(Place.category == h.category, func.ST_DWithin(Place.geom, _geog(h.lat, h.lng), matching.MAX_RADIUS_M))
+             for h in hints]
+    kakao_ids = {h.kakao_place_id for h in hints if h.kakao_place_id}
+    if kakao_ids:
+        conds.append(Place.kakao_place_id.in_(kakao_ids))
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, lat, lng)
+        .where(Place.status == "open", or_(*conds))
+    ).all()
+    out: list[list[Candidate]] = []
+    for h in hints:
+        near = sorted(
+            ((distance_m(h.lat, h.lng, r.lat, r.lng), r) for r in rows if r.category == h.category),
+            key=lambda t: t[0],
+        )
+        picked = [r for d, r in near if d <= matching.MAX_RADIUS_M][: matching.MAX_CANDIDATES]
+        have = {r.id for r in picked}
+        picked += [r for r in rows if h.kakao_place_id and r.kakao_place_id == h.kakao_place_id and r.id not in have]
+        out.append([Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id) for r in picked])
+    return out
+
+
 def record_kakao_match(db: Session, place_id: str, kakao_place_id: str, kakao_place_url: str) -> None:
+    """첫 값 유지(#248): 이미 다른 카카오 ID가 기록된 장소는 덮어쓰지 않는다 — 같은 자체 장소를 다른 카카오 ID로
+    찍은 사용자가 다른 지도의 링크를 바꾸지 못하게. 같은 ID면 확인 일자만 갱신한다."""
     place = db.get(Place, _uuid(place_id))
     if place is None:
         raise KeyError(place_id)
-    place.kakao_place_id, place.kakao_place_url, place.kakao_matched_at = kakao_place_id, kakao_place_url, func.now()
+    if place.kakao_place_id is None:
+        place.kakao_place_id, place.kakao_place_url = kakao_place_id, kakao_place_url
+    elif place.kakao_place_id != kakao_place_id:
+        return
+    place.kakao_matched_at = func.now()
     db.flush()
 
 

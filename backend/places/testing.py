@@ -99,7 +99,8 @@ class FakePlaces:
         row = self._row(place_id)
         if row is None:
             raise KeyError(place_id)
-        row.kakao_place_id, row.kakao_place_url = kakao_place_id, kakao_place_url
+        if row.kakao_place_id is None:   # 첫 값 유지 — 실제 구현과 같다(#248)
+            row.kakao_place_id, row.kakao_place_url = kakao_place_id, kakao_place_url
 
     def pinnable_flags(self, hints: Sequence[PlaceHint], *, db: Session | None = None) -> list[bool]:
         return [self.match_place(h) is not None for h in hints]   # 읽기만 한다 — 카카오 ID를 기록하지 않는다

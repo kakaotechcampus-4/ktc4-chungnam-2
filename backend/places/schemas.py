@@ -96,3 +96,4 @@ class PlaceSearchResult(BaseModel):
     category: Literal["음식점", "카페", "숙소", "관광지", "기타"] | None = None   # 소스가 추정한 제안값
     address: str | None = None
     place_source: PlaceSourceInfo | None = None
+    pinnable: bool | None = None   # 자체 DB에 짝이 있어 핀으로 만들 수 있는가(#238). 계산 못 했으면 생략
