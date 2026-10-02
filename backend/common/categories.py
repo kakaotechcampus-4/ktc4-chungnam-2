@@ -19,14 +19,14 @@ class CategoryRule:
 
 
 # 순서는 스펙 Category enum 순서다. 분류별 집계(GET /maps/{mapId}/counts) 키 순서도 이걸 따른다.
-# 숙소와 기타는 v1에서 핀으로 만들 수 없다(자체 DB에 없다). 스키마 호환을 위해 값은 남긴다.
-# 기타는 핀이 있으면 일반 핀처럼 반응을 받는다(docs/permissions.md "숙소 핀의 반응 게이팅", #157).
+# v1에 숙소와 기타는 없다 — 자체 DB에 없어 핀으로 만들 수 없고 성질도 모두 거짓이다. 스키마 호환을 위해 값만 남긴다.
+# 다시 살리는 방법은 v2에서 검토한다(#281).
 RULES: tuple[CategoryRule, ...] = (
     CategoryRule("음식점", pinnable=True, reactable=True, recommendable=True),
     CategoryRule("카페", pinnable=True, reactable=True, recommendable=True),
     CategoryRule("숙소", pinnable=False, reactable=False, recommendable=False),
     CategoryRule("관광지", pinnable=True, reactable=True, recommendable=True),
-    CategoryRule("기타", pinnable=False, reactable=True, recommendable=False),
+    CategoryRule("기타", pinnable=False, reactable=False, recommendable=False),
 )
 
 _BY_NAME: dict[str, CategoryRule] = {rule.name: rule for rule in RULES}

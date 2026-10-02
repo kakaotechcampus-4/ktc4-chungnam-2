@@ -174,15 +174,17 @@ def test_delete_reaction_on_lodging_pin_is_204(app_client, db_session):
 
 # ---- 「기타」 카테고리 ----
 
-def test_etc_category_pin_lists_filters_counts_and_is_reactable(app_client, db_session):
-    """「기타」는 일반 핀과 같다(반응 가능, 추천 대상만 아님). 자체 DB엔 기타 장소가 없어 API로는
-    만들 수 없으므로(#191) 행을 직접 심어 확인한다."""
+def test_etc_category_pin_lists_filters_counts_and_is_not_reactable(app_client, db_session):
+    """「기타」는 숙소와 같다(#280 — v1에 기타는 없다, 반응도 받지 않는다). 자체 DB엔 기타 장소가 없어
+    API로는 만들 수 없으므로(#191) 행을 직접 심어 확인한다. 목록·필터·집계에는 그대로 나온다."""
     pin = _insert_pin(db_session, category="기타", place_id="r157_etc")
     listed = app_client.get("/maps/map_1/pins", params={"category": "기타"}, cookies=_auth("user_1")).json()
     assert [p["id"] for p in listed] == [str(pin.id)]
-    assert listed[0]["permissions"]["can_react"] is True
+    assert listed[0]["permissions"]["can_react"] is False
     assert app_client.get("/maps/map_1/counts", cookies=_auth("user_1")).json()["by_category"]["기타"] == 1
-    assert _react(app_client, pin, "user_2").status_code == 200
+    resp = _react(app_client, pin, "user_2")
+    assert resp.status_code == 422 and resp.json()["code"] == "REACTION_NOT_ALLOWED"
+    assert app_client.get(f"/pins/{pin.id}/reactions", cookies=_auth("user_1")).json() == []
 
 
 # ---- AI 핀 reason / member_fulfillment / place_source ----

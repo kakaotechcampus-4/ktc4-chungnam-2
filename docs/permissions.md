@@ -125,15 +125,16 @@ def require_map_member() -> Depends:
 - 그 지도의 구성원이 아님 → **404** (존재 자체를 흘리지 않는다)
 - 구성원이지만 그 액션이 롤에 없음 → **403**
 
-## 숙소 핀의 반응 게이팅 (#154 결정)
+## 숙소·기타 핀의 반응 게이팅 (#154 결정, #280 갱신)
 
-숙소는 반응(♥/△/🚫)을 받지 않는 카테고리다 — 핀을 찍고 확정 리스트·동선 기준점으로 쓸 뿐이다.
+숙소와 기타는 반응(♥/△/🚫)을 받지 않는 카테고리다. v1에서는 둘 다 자체 장소 DB에 없어 핀으로 만들 수 없고(#191),
+값은 스키마 호환으로만 남는다 — v1에 숙소·기타는 없다. 다시 살리는 방법은 v2에서 검토한다(#281).
 확정 리스트 게이팅(#65)과 같은 방식으로 **역할이 아니라 리소스 상태**로 반전한다:
 
-- 핀의 카테고리가 반응을 받지 않으면(v1은 숙소) `permissions.can_react=false`. 카테고리마다 반응을 받는지는 `backend/common/categories.py`의 `reactable`이 정한다(#280). `authz/core.py::_pin_permissions`가 `permissions_for`에서만 계산하고 `can()`에는 넣지 않는다.
+- 핀의 카테고리가 반응을 받지 않으면(숙소·기타) `permissions.can_react=false`. 카테고리마다 반응을 받는지는 `backend/common/categories.py`의 `reactable`이 정한다(#280). `authz/core.py::_pin_permissions`가 `permissions_for`에서만 계산하고 `can()`에는 넣지 않는다.
 - 그래도 `PUT /pins/{pinId}/reaction`이 오면 **422 `REACTION_NOT_ALLOWED`** — 권한(403)이 아니라 "이 리소스는 반응 대상이 아님"이라 요청 자체를 거부한다.
-- `GET /pins/{pinId}/reactions`는 숙소 핀에 빈 배열을 돌려준다.
-- 「기타」 카테고리는 일반 핀과 같다(반응 가능, 추천 대상만 아님).
+- `GET /pins/{pinId}/reactions`는 숙소·기타 핀에 빈 배열을 돌려준다.
+- 「기타」는 예전에 일반 핀처럼 반응을 받았지만(#157) 2026-10-03(#280)부터 숙소와 같다. v1에서 기타 핀은 만들어지지 않으므로 사용자가 보는 동작은 같다.
 
 ## 확정 리스트(shortlist) permissions 게이팅 (#65 결정)
 

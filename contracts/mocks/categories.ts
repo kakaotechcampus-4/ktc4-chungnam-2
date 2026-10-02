@@ -13,7 +13,7 @@ export const CATEGORY_RULES: Record<Category, { pinnable: boolean; reactable: bo
   카페: { pinnable: true, reactable: true, recommendable: true },
   숙소: { pinnable: false, reactable: false, recommendable: false },
   관광지: { pinnable: true, reactable: true, recommendable: true },
-  기타: { pinnable: false, reactable: true, recommendable: false },
+  기타: { pinnable: false, reactable: false, recommendable: false },
 };
 
 /** 추천 대상 카테고리(스펙 RecommendCategory). */

@@ -210,7 +210,7 @@ def my_reactions_for_pins(db: Session, pin_ids: list[uuid.UUID], viewer_id: str)
 
 def list_reactions(db: Session, pin: PinRow) -> list[Reaction]:
     """GET /pins/{pinId}/reactions — 반응한 구성원만(미응답자는 포함하지 않는다). 반응 못 받는
-    카테고리(숙소)의 핀은 빈 배열(반응 행이 생기지 않는다, permissions.md). 오래된 순으로 안정 정렬한다."""
+    카테고리(숙소·기타)의 핀은 빈 배열(반응 행이 생기지 않는다, permissions.md). 오래된 순으로 안정 정렬한다."""
     if not categories.is_reactable(pin.category):
         return []
     rows = db.execute(

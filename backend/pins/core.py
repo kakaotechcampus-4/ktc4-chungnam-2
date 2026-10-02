@@ -203,7 +203,7 @@ def validate_reaction(reaction_type: str, reason_text: str | None, reason_chip_i
 
 
 def validate_reactable(category: str) -> None:
-    """반응 못 받는 카테고리(숙소, #154, permissions.md)의 핀은 403이 아니라 422로 요청 자체를 거부.
+    """반응 못 받는 카테고리(숙소·기타, #154, permissions.md)의 핀은 403이 아니라 422로 요청 자체를 거부.
     어떤 카테고리인지는 common/categories.py가 정한다(#280)."""
     if not categories.is_reactable(category):
         raise AppError("REACTION_NOT_ALLOWED")
