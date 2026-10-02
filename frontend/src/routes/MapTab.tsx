@@ -9,7 +9,8 @@ import { filterPins } from '@/features/map/model'
 import { CategoryChips, PinFilterBar } from '@/features/map/PinFilterControls'
 import PinList, { PinListSkeleton } from '@/features/map/PinList'
 import { usePinFilters } from '@/features/map/usePinFilters'
-import PinSheet, { PinUnavailableSheet } from '@/features/map/PinSheet'
+import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
+import PinUnavailable from '@/features/map/PinUnavailable'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
@@ -73,8 +74,12 @@ export default function MapTab() {
 
   if (selectedPin) {
     return (
-      <TabSheet tab="map" header={<SheetTitle>{selectedPin.place_name ?? '핀 상세'}</SheetTitle>}>
-        <PinSheet pin={selectedPin} onClose={() => selectPin(null)} />
+      <TabSheet
+        tab="map"
+        expandOnScroll
+        header={<PinDetailHeader pin={selectedPin} mapId={mapId} onBack={() => selectPin(null)} />}
+      >
+        <PinDetailBody pin={selectedPin} mapId={mapId} members={members} onDone={() => selectPin(null)} />
       </TabSheet>
     )
   }
@@ -91,7 +96,7 @@ export default function MapTab() {
         </>
       }
     >
-      {unavailable && <PinUnavailableSheet onClose={() => selectPin(null)} />}
+      {unavailable && <PinUnavailable onClose={() => selectPin(null)} />}
       {isPending && <PinListSkeleton />}
       {error && <ErrorText message="핀을 불러오지 못했어요" error={error} />}
       {pins?.length === 0 && <EmptyMap />}

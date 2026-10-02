@@ -66,3 +66,52 @@ export function toPinCard(pin: Pin, memberCount: number): PinCardView {
     mine: pin.my_reaction?.type ?? null,
   }
 }
+
+export type ReactionDto = components['schemas']['Reaction']
+export type ReactionRequest = components['schemas']['ReactionRequest']
+
+/** 반대 사유 칩(최종기획안 5-1-1). 지금은 음식점만 정해져 있다 — 다른 카테고리는 자유서술만 받는다. */
+export const REASON_CHIPS: Partial<Record<PinCategory, string[]>> = {
+  음식점: ['매워요', '비싸요', '멀어요', '웨이팅', '가봤어요'],
+}
+// ponytail: 칩 id 목록이 스펙에 없어 칩 이름을 id로 보낸다(백엔드는 사유 글이 없으면 id를 이어 붙여 사유로 쓴다). id가 정해지면 표로.
+
+/**
+ * 내 반응을 바꾼 뒤의 핀(낙관적 반영). 서버 응답(Reaction)에는 집계가 없어서 직접 고친다 —
+ * 그래야 같은 변경이 SSE 로 돌아왔을 때 "남이 남긴 의견"으로 오인해 토스트를 띄우지 않는다.
+ */
+export function withMyReaction(pin: Pin, next: ReactionDto | null): Pin {
+  const s = { ...pin.reaction_summary }
+  const prev = pin.my_reaction?.type
+  if (prev) s[prev] = Math.max(0, s[prev] - 1)
+  if (next) s[next.type] += 1
+  return { ...pin, my_reaction: next, reaction_summary: s }
+}
+
+export type OpinionView = { userId: string; name: string; isMe: boolean; type: ReactionType; chips: string[]; text?: string }
+
+/**
+ * 핀 상세 「구성원 의견」(Figma 구성원 의견 표시 원칙). 위 집계 줄과 같은 내용을 되풀이하지 않는다 —
+ * 갈린 의견(반대 → 조율)만 카드로 펼치고, 좋음은 한 줄로 접고, 미확인은 이름을 보여준다.
+ */
+export function toOpinions(reactions: ReactionDto[], members: { userId: string; name: string; isMe: boolean }[]) {
+  const nameOf = (userId: string) => members.find((m) => m.userId === userId)
+  const views: OpinionView[] = reactions.map((r) => {
+    const m = nameOf(r.user_id)
+    return {
+      userId: r.user_id,
+      name: m?.name ?? r.display_name ?? '구성원',
+      isMe: m?.isMe ?? false,
+      type: r.type,
+      chips: r.reason_chip_ids ?? [],
+      // 칩만 고른 반대는 서버가 칩을 이어 붙여 사유 글로 돌려줄 수 있다 — 같은 말을 두 번 보이지 않는다.
+      text: r.reason_text && r.reason_text !== (r.reason_chip_ids ?? []).join(', ') ? r.reason_text : undefined,
+    }
+  })
+  const reacted = new Set(reactions.map((r) => r.user_id))
+  return {
+    split: [...views.filter((v) => v.type === 'against'), ...views.filter((v) => v.type === 'neutral')],
+    likes: views.filter((v) => v.type === 'like'),
+    unknown: members.filter((m) => !reacted.has(m.userId)),
+  }
+}

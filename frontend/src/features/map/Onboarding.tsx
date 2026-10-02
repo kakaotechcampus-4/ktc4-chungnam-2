@@ -1,12 +1,7 @@
+import { josa } from '@/ui/josa'
 import Pingo from '@/ui/Pingo'
 
 export type OnboardingKind = 'owner' | 'member'
-
-/** 받침 있으면 첫째, 없으면 둘째 조사. 한글이 아니면 받침 없는 쪽으로 본다. */
-function josa(word: string, withFinal: string, withoutFinal: string) {
-  const code = word.charCodeAt(word.length - 1) - 0xac00
-  return code >= 0 && code <= 11171 && code % 28 !== 0 ? withFinal : withoutFinal
-}
 
 /** v1은 지도를 길게 눌러 핀을 찍지 않는다(#191) — Figma 문구에서 그 부분만 뺐다. */
 const STEPS: Record<OnboardingKind, string[]> = {

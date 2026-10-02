@@ -19,7 +19,8 @@ declare namespace kakao.maps {
 
   class Map {
     constructor(container: HTMLElement, options: { center: LatLng; level?: number })
-    setBounds(bounds: LatLngBounds): void
+    /** 여백(px) 안쪽으로 맞춘다 — 위·오른쪽·아래·왼쪽. */
+    setBounds(bounds: LatLngBounds, paddingTop?: number, paddingRight?: number, paddingBottom?: number, paddingLeft?: number): void
     setCenter(latlng: LatLng): void
     panTo(latlng: LatLng): void
     relayout(): void
