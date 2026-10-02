@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useMeQuery } from '@/features/auth/queries'
 
-import { acceptInvite, createInvite, createMap, fetchMap, fetchMaps, fetchMembers } from './api'
-import { toMapHeaderView, toMapView, toMemberView, type MapCreateRequest } from './model'
+import { acceptInvite, createInvite, createMap, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers } from './api'
+import { inviteProblem, toInviteView, toMapHeaderView, toMapView, toMemberView, type MapCreateRequest } from './model'
 
 export const mapKeys = {
   all: ['maps'] as const,
@@ -63,4 +63,19 @@ export function useInviteQuery(mapId: string, enabled: boolean) {
     enabled,
     staleTime: Infinity,
   })
+}
+
+/** 초대 요약(C-1/C-2). 로그인 없이 부를 수 있다. 만료·없는 링크는 다시 물어도 같으니 재시도하지 않는다. */
+export function useInviteSummaryQuery(token: string) {
+  return useQuery({
+    queryKey: ['invites', token],
+    queryFn: () => fetchInviteSummary(token),
+    select: toInviteView,
+    retry: (count, err) => !inviteProblem(err) && count < 1,
+  })
+}
+
+/** 계정 시트의 "지도마다 링크 복사". 누를 때 만든다 — 목록을 열 때마다 지도 수만큼 링크를 만들지 않게. */
+export function useCreateInviteMutation() {
+  return useMutation({ mutationFn: (mapId: string) => createInvite(mapId) })
 }

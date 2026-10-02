@@ -111,7 +111,7 @@ export default function MapLayout() {
             mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
           }`}
         >
-          <input readOnly placeholder="장소 검색하기" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+          <input id="place-search" readOnly placeholder="장소 검색하기" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
           <Search size={20} className="text-brand-600" aria-hidden="true" />
         </label>
       </header>

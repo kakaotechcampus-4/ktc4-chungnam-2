@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 
 import { CONTROLS } from './layout'
 
-import { TOAST_MS, useToastStore } from './toast'
+import { useToastStore } from './toast'
 
 /**
  * 시트 윗변 12px 위, 가로 가운데(Figma 참고 섹션). 최대 폭 361 = 화면 − 16×2.
@@ -14,19 +14,6 @@ export default function Toaster({ controlsVisible }: { controlsVisible: boolean 
   const [overlaps, setOverlaps] = useState(false)
   const toast = useToastStore((s) => s.toast)
   const dismiss = useToastStore((s) => s.dismiss)
-  const [leavingId, setLeavingId] = useState<number | null>(null)
-
-  useEffect(() => {
-    if (!toast) return
-    const ms = toast.action ? TOAST_MS.withAction : TOAST_MS.plain
-    const fade = setTimeout(() => setLeavingId(toast.id), ms)
-    const gone = setTimeout(() => dismiss(toast.id), ms + 300)
-    return () => {
-      clearTimeout(fade)
-      clearTimeout(gone)
-    }
-  }, [toast, dismiss])
-
   // 가운데 놓인 토스트 양옆 여백이 버튼 묶음 자리(오른쪽 여백 + 버튼 폭 + 틈)보다 좁으면 겹친다.
   useLayoutEffect(() => {
     const w = boxRef.current?.offsetWidth ?? 0
@@ -35,14 +22,13 @@ export default function Toaster({ controlsVisible }: { controlsVisible: boolean 
 
   if (!toast) return null
   const raised = controlsVisible && overlaps
-  const leaving = leavingId === toast.id
 
   return (
     <div
       role="status"
       style={{ bottom: `calc(100% + 12px${raised ? ` + ${CONTROLS.stackHeight}px` : ''})` }}
       className={`pointer-events-none absolute inset-x-4 flex justify-center transition-opacity duration-300 ${
-        leaving ? 'opacity-0' : 'opacity-100'
+        toast.leaving ? 'opacity-0' : 'opacity-100'
       }`}
     >
       <div

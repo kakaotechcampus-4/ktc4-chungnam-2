@@ -6,9 +6,13 @@ export type MapDto = components['schemas']['Map']
 export type MapCreateRequest = components['schemas']['MapCreateRequest']
 export type MemberDto = components['schemas']['Member']
 export type InviteDto = components['schemas']['Invite']
+export type InviteSummaryDto = components['schemas']['InviteSummary']
+export type MapRegion = components['schemas']['MapRegion']
 
 export type MapView = Pick<MapDto, 'id' | 'title'> & {
-  /** 목록 한 줄 요약 — "2026-10-03 ~ 2026-10-05 · 3명" */
+  /** 지역 태그. 지도를 만들 때 고르지 않았으면 없다. */
+  region?: string
+  /** 목록 한 줄 요약 — "10.3 (토) ~ 10.5 (월) · 구성원 4명" */
   summary: string
 }
 
@@ -18,7 +22,7 @@ export function formatTripDates(start: string, end: string): string {
     const d = new Date(`${iso}T00:00:00`)
     return `${d.getMonth() + 1}.${d.getDate()} (${'일월화수목금토'[d.getDay()]})`
   }
-  return start === end ? fmt(start) : `${fmt(start)} ~ ${fmt(end)}`
+  return start === end ? `${fmt(start)} 당일치기` : `${fmt(start)} ~ ${fmt(end)}`
 }
 
 export type MapHeaderView = Pick<MapDto, 'id' | 'title'> & { dates: string; memberCount: number }
@@ -43,7 +47,8 @@ export function toMapView(map: MapDto): MapView {
   return {
     id: map.id,
     title: map.title,
-    summary: `${map.start_date} ~ ${map.end_date} · ${map.member_count}명`,
+    region: map.region?.label,
+    summary: `${formatTripDates(map.start_date, map.end_date)} · 구성원 ${map.member_count}명`,
   }
 }
 
@@ -55,4 +60,23 @@ const INVITE_ERROR_MESSAGES: Record<string, string> = {
 
 export function inviteErrorMessage(err: unknown): string {
   return (err instanceof ApiError && INVITE_ERROR_MESSAGES[err.code]) || '참여하지 못했어요'
+}
+
+export type InviteView = { title: string; dates: string; memberCount: number; inviter: string }
+
+export function toInviteView(invite: InviteSummaryDto): InviteView {
+  return {
+    title: invite.title,
+    dates: formatTripDates(invite.start_date, invite.end_date),
+    memberCount: invite.member_count,
+    inviter: invite.inviter_display_name,
+  }
+}
+
+/** 초대 요약을 못 받은 이유. 만료·없는 링크는 화면을 따로 띄운다(Figma C-3). */
+export function inviteProblem(err: unknown): 'expired' | 'invalid' | null {
+  if (!(err instanceof ApiError)) return null
+  if (err.code === 'INVITE_EXPIRED') return 'expired'
+  if (err.code === 'INVITE_NOT_FOUND') return 'invalid'
+  return null
 }
