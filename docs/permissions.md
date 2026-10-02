@@ -23,20 +23,22 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     - recommend.evidence       # run 하위 근거(조회·토글·추가) — 구성원 누구나(#32 결정: "근거
                                 # 목록은 구성원별로 한 줄씩 따로 뜬다", 최종기획안 5-5). 개별
                                 # 줄 비활성화만 그 줄 작성자 본인 제한(아래 author 참고)
-    - recommend.manage         # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
-                                # 단, run.requested_by 본인만(아래 author 참고). 가드레일1: 대안은
-                                # 요청한 사람에게만 먼저 보인다 — 게시 전 run은 본인 것만 조작·열람
-    - recommend.publish        # 「지도에 올리기」 — 단, candidate.requested_by 본인만(아래 author 참고)
     - invite.create            # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
     - route.recalculate        # 동선 재계산(5-10) — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
 
-author:                       # evidence_line 또는 candidate를 만든 당사자에게 얹히는 추가 범위
+author:                       # 리소스를 만든 당사자에게 얹히는 추가 범위. 저장된 역할이 아니라
+                              # 리소스의 작성자 칸(evidence_lines.author_id, recommend_runs.requested_by,
+                              # candidate의 run 요청자)과 요청자를 비교해 판정할 때마다 만든다
   scope:
     evidence_line: own         # 자기가 쓴 줄만
-    candidate: own              # 자기가 요청한 run의 비공개 후보만
+    run: own                   # 자기가 요청한 run만 (#272)
+    candidate: own             # 자기가 요청한 run의 후보만
   actions:
     - evidence.disable          # '-'로 빼기 — "자기가 쓴 것만" (5-5)
-    - candidate.view_private     # 게시 전 비공개 후보 열람 (5-5-1)
+    - recommend.manage          # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도).
+                                # 가드레일1: 대안은 요청한 사람에게만 먼저 보인다. 게시 전 후보는
+                                # 결과 조회(GET /runs/{runId}/result)로만 보이므로 이 액션이 열람도 막는다
+    - recommend.publish         # 「지도에 올리기」. 자기가 요청한 run의 후보만
 
 owner:                        # 지도 생성자. member 전체 + 아래 추가
   scope:
@@ -46,7 +48,7 @@ owner:                        # 지도 생성자. member 전체 + 아래 추가
     - map.settings.edit
 ```
 
-역할은 배타적이지 않고 누적된다 — 한 사용자는 `member` + (자기 evidence에 한해) `author` + (자기 지도에 한해) `owner`를 동시에 가질 수 있다. 판정은 "이 액션이 이 리소스의 scope 안에 있는가"로 계산한다.
+역할은 배타적이지 않고 누적된다 — 한 사용자는 `member` + (자기가 만든 근거 줄, run, 후보에 한해) `author` + (자기 지도에 한해) `owner`를 동시에 가질 수 있다. 판정은 "이 액션이 이 리소스의 scope 안에 있는가"로 계산한다.
 
 ## API 계약과의 연결
 
@@ -87,7 +89,10 @@ owner:                        # 지도 생성자. member 전체 + 아래 추가
 | 초대 링크 발급 — 구성원 누구나 (#4) | `member.actions: [invite.create]` |
 | 동선 재계산 — 구성원 누구나 (#103) | `member.actions: [route.recalculate]` |
 | AI 추천 run 근거 조회·토글·추가 — 구성원 누구나 (#108, #32, 최종기획안 5-5) | `member.actions: [recommend.evidence]` (개별 줄 비활성화만 `author.actions: [evidence.disable]`) |
-| AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `member.actions: [recommend.manage]` + `AUTHOR_CONSTRAINED_ACTIONS` |
+| AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `author.scope.run: own`, `author.actions: [recommend.manage]` (#272) |
+| 「지도에 올리기」, 요청한 본인만 (5-5-1) | `author.scope.candidate: own`, `author.actions: [recommend.publish]` (#272) |
+
+> **2026-10-03, 소유자 체크를 author 하나로 통일(#272, PR #152 멘토 리뷰).** 전에는 `recommend.manage`, `recommend.publish`를 `member` 액션에 두고 `AUTHOR_CONSTRAINED_ACTIONS` 목록과 판정 엔진의 별도 `if`로 요청자 본인만 통과시켰다. `evidence.disable`(author 역할)과 같은 제약을 두 방식으로 표현한 셈이라, `run`을 리소스 종류로 추가하고 두 액션을 `author`로 옮겨 정책 표 하나로 관리한다. 동작은 같다: 남의 run에는 author가 얹히지 않고, `owner`에도 두 액션이 없어 지도 생성자도 남의 run은 다룰 수 없다. 실제로 쓰는 곳이 없던 `candidate.view_private`는 지웠다. 비공개 후보는 결과 조회로만 보이고 그 엔드포인트를 `recommend.manage`가 막고 있다.
 
 ## v2 확장 지점
 
