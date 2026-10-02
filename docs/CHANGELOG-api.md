@@ -2,6 +2,11 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-02 (다섯 번째) — `PinCreateRequest.place_id` 길이 제한, 카카오 힌트 검증 (#248)
+
+- **`PinCreateRequest.place_id`에 `maxLength: 100` 추가**(`place_name`은 이미 100). 넘기면 422 `VALIDATION_ERROR`. 검색 결과의 `place_id`를 그대로 보내는 FE는 영향 없다. 타입(`string`)은 그대로라 재생성할 것이 없다.
+- 서버 동작: `place_id`가 `kakao:<숫자 1~20자리>`가 아니면 핀은 만들되(매칭은 좌표·이름으로) 카카오 ID·링크는 기록하지 않는다 — 임의 문자열이 모든 구성원의 `place_url`이 되는 것을 막는다. 이미 다른 카카오 ID가 기록된 장소는 덮어쓰지 않는다(첫 값 유지). 응답 모양 변화 없음.
+
 ## 2026-10-02 (네 번째) — `EvidenceLine.wants` 추가: 사유의 방향 (#228)
 
 soft 키(한식·횟집·조용함 등)에 붙은 반대 사유가 추천에서 아무 효과가 없던 문제를 푼다. "한식 먹자"와 "한식 말고"가 둘 다 `cuisine_korean`이라 방향을 알 수 없었다. 규칙 전문은 `docs/constraints.md` "사유의 방향(`wants`)과 실격".

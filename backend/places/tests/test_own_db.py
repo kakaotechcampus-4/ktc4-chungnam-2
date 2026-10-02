@@ -149,13 +149,13 @@ def test_pinnable_flags_do_not_write(loaded):
     assert loaded.get(Place, uuid.UUID(pid)).kakao_matched_at is None
 
 
-def test_record_kakao_match_writes_only_id_url_and_date_and_overwrites(loaded):
+def test_record_kakao_match_writes_only_id_url_and_date_and_keeps_the_first_value(loaded):
     pid = _pid(loaded, "permit", "P001")
     api.record_kakao_match(pid, "k1", "http://p/1", db=loaded)
     api.record_kakao_match(pid, "k2", "http://p/2", db=loaded)
     row = loaded.get(Place, uuid.UUID(pid))
     loaded.refresh(row)
-    assert (row.kakao_place_id, row.kakao_place_url) == ("k2", "http://p/2") and row.kakao_matched_at is not None
+    assert (row.kakao_place_id, row.kakao_place_url) == ("k1", "http://p/1") and row.kakao_matched_at is not None
     assert row.name == "성수 칼국수"   # 카카오 값으로 이름·주소·좌표를 바꾸지 않는다
 
 

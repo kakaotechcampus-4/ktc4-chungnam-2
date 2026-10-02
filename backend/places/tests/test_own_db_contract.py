@@ -116,11 +116,11 @@ def test_pinnable_flags_follow_match_and_do_not_record(fake):
     assert fake.get_places([sample_id("seongsu-kalguksu")])[sample_id("seongsu-kalguksu")].kakao_place_url is None
 
 
-def test_record_kakao_match_stores_only_id_and_url_and_overwrites(fake):
+def test_record_kakao_match_stores_only_id_and_url_and_keeps_the_first_value(fake):
     pid = sample_id("seongsu-kalguksu")
     fake.record_kakao_match(pid, "k1", "http://p/1")
     fake.record_kakao_match(pid, "k2", "http://p/2")
-    assert fake.get_places([pid])[pid].kakao_place_url == "http://p/2"
+    assert fake.get_places([pid])[pid].kakao_place_url == "http://p/1"   # 첫 값 유지(#248)
 
 
 def test_record_kakao_match_unknown_place_raises(fake):

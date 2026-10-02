@@ -910,7 +910,7 @@ components:
         category: { $ref: "#/components/schemas/Category" }
         source: { type: string, enum: [link, search, coordinate], default: search, description: "v1은 search만. coordinate·link는 값만 남겨 둔 것(v2 확장용)이며 보내면 422 (#191·#147) — 생략하면 search" }
         link_url: { type: string, maxLength: 2000, description: "v1에서는 받지 않음 — 보내면 422 (#147). v2 카톡 내보내기용으로 남겨 둔 필드" } # 사용자가 직접 붙여넣는 값, 코드에 근거 없음(멘토 리뷰 대응)
-        place_id: { type: string, description: "source=search의 **매칭 힌트** — GET /places/search 결과의 place_id(카카오 장소 ID)를 그대로. 저장하지 않는다" }
+        place_id: { type: string, maxLength: 100, description: "source=search의 **매칭 힌트** — GET /places/search 결과의 place_id(카카오 장소 ID)를 그대로. 저장하지 않는다" }
         place_name: { type: string, maxLength: 100, description: "매칭 힌트 — 검색 결과의 이름을 그대로. 저장하지 않는다(핀 이름은 자체 DB 장소의 이름, #191)" } # 루트 결정(2026-09-23, 2026-10-01 #191로 대체): 사용자가 이미 들고 있는
         # 값(구글맵 링크·검색 결과)을 그대로 저장 — places 파이프라인(#53 대기)을 기다리지 않는다.
         # pins/core.py::validate_create가 이미 검증하는 범위를 그대로 옮김(멘토 리뷰 대응).

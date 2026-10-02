@@ -7,6 +7,7 @@ authz.core.permissions_for에 위임한다. pin_permissions(kind, is_member)는 
 (#56 이관, mentor-review-plan.md) — authz/tests/test_permissions.py가 동등성을 보증한다.
 """
 
+import re
 from dataclasses import dataclass
 
 from authz.core import Principal, Resource, permissions_for
@@ -29,6 +30,7 @@ COORDINATE_PIN_REJECTED_MESSAGE = "지도를 눌러 핀을 찍을 수는 없어�
 CATEGORY_MISMATCH_MESSAGE = "고른 장소의 분류와 요청한 분류가 달라요"
 KAKAO_ID_PREFIX = "kakao:"
 KAKAO_PLACE_PAGE = "https://place.map.kakao.com/"
+KAKAO_RAW_ID = re.compile(r"[0-9]{1,20}")
 
 
 def validate_create(req: PinCreateRequest) -> None:
@@ -51,7 +53,9 @@ def kakao_place_url(kakao_place_id: str) -> str | None:
     if not kakao_place_id.startswith(KAKAO_ID_PREFIX):
         return None
     raw = kakao_place_id[len(KAKAO_ID_PREFIX):]
-    return f"{KAKAO_PLACE_PAGE}{raw}" if raw else None
+    # 실제 카카오 장소 ID는 숫자뿐이다. 그 밖의 값(`../../x?y#z` 등)을 이어 붙이면 이 장소를 보는 모든
+    # 사용자에게 오염된 링크가 나간다(#248) — 형식이 틀리면 매칭은 하되 ID·URL을 기록하지 않는다.
+    return f"{KAKAO_PLACE_PAGE}{raw}" if KAKAO_RAW_ID.fullmatch(raw) else None
 
 
 def is_duplicate(existing_place_ids: set[str], place_id: str | None) -> bool:

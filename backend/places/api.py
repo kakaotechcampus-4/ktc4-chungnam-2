@@ -119,7 +119,7 @@ def match_place(hint: PlaceHint, *, db: Session | None = None) -> PlaceMatch | N
 
 
 def record_kakao_match(place_id: str, kakao_place_id: str, kakao_place_url: str, *, db: Session | None = None) -> None:
-    """매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(핀 생성과 같은 트랜잭션). 이미 있으면 덮어쓴다."""
+    """매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(핀 생성과 같은 트랜잭션). 이미 다른 ID가 기록돼 있으면 덮어쓰지 않는다(첫 값 유지, #248) — 같은 ID면 확인 일자만 갱신한다."""
     with _session(db) as s:
         repository.record_kakao_match(s, place_id, kakao_place_id, kakao_place_url)
 

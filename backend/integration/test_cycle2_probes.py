@@ -77,7 +77,6 @@ def _kakao_url_of(db, source_id):
     return db.execute(text("SELECT kakao_place_url FROM places WHERE source_id = :s"), {"s": source_id}).scalar_one()
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D21 — 형식이 잘못된 카카오 ID가 링크로 저장된다. #248")
 def test_d21_malformed_kakao_id_is_not_turned_into_a_stored_link(members, place_ids, db_session):
     a, _, map_id = members
     name, lat, lng, _ = PLACES["K"]
@@ -87,7 +86,6 @@ def test_d21_malformed_kakao_id_is_not_turned_into_a_stored_link(members, place_
     assert r.status_code == 422 or stored is None, f"형식이 잘못된 카카오 ID가 링크로 저장됐다: {stored}"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D21 — place_id 길이 제한이 없다. #248")
 def test_d21_oversized_place_id_is_rejected(members, place_ids):
     a, _, map_id = members
     name, lat, lng, _ = PLACES["K"]

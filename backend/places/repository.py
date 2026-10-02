@@ -150,7 +150,13 @@ def record_kakao_match(db: Session, place_id: str, kakao_place_id: str, kakao_pl
     place = db.get(Place, _uuid(place_id))
     if place is None:
         raise KeyError(place_id)
-    place.kakao_place_id, place.kakao_place_url, place.kakao_matched_at = kakao_place_id, kakao_place_url, func.now()
+    # 첫 값 유지(#248) — 다른 ID로 덮어쓰면 한 사용자가 다른 지도들의 링크를 바꿀 수 있다.
+    # 같은 ID가 다시 확인되면 확인 일자만 갱신한다.
+    if place.kakao_place_id is None:
+        place.kakao_place_id, place.kakao_place_url = kakao_place_id, kakao_place_url
+    elif place.kakao_place_id != kakao_place_id:
+        return
+    place.kakao_matched_at = func.now()
     db.flush()
 
 
