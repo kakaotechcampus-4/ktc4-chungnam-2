@@ -214,6 +214,28 @@ def test_validate_reaction_against_with_empty_chip_list_raises():
         core.validate_reaction("against", None, [])
 
 
+@pytest.mark.parametrize("text", ["​", " ​‍﻿ "])
+def test_validate_reaction_against_zero_width_only_text_raises(text):
+    with pytest.raises(AppError) as exc_info:
+        core.validate_reaction("against", text, None)
+    assert exc_info.value.code == "EVIDENCE_REQUIRED"
+
+
+@pytest.mark.parametrize("chips", [[""], ["  "], ["​"], ["ok", ""]])
+@pytest.mark.parametrize("reaction_type", ["against", "like"])
+def test_validate_reaction_blank_chip_is_a_validation_error(reaction_type, chips):
+    with pytest.raises(AppError) as exc_info:
+        core.validate_reaction(reaction_type, "매워요", chips)
+    assert exc_info.value.code == "VALIDATION_ERROR"
+    assert exc_info.value.status == 422
+
+
+def test_reason_content_strips_and_rejects_invisible_only():
+    assert core.reason_content(" 매워요 ") == "매워요"
+    assert core.reason_content(None) is None
+    assert core.reason_content("​") is None
+
+
 @pytest.mark.parametrize("reaction_type", ["like", "neutral"])
 def test_validate_reaction_like_neutral_never_require_reason(reaction_type):
     core.validate_reaction(reaction_type, None, None)

@@ -2,7 +2,20 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
-## 2026-10-02 (다섯 번째) — `PinCreateRequest.place_id` 길이 제한, 카카오 힌트 검증 (#248)
+## 2026-10-02 (다섯 번째) — 스펙에 빠져 있던 응답 선언 정리, 충족 집계, 안전 사유 규칙 (#246, D11)
+
+점검 루프 1회차에서 코드는 합당하게 동작하는데 스펙에 선언이 없던 곳을 정리한다(사용자 결정: 권고대로 스펙을 코드에 맞춘다).
+
+- **`POST /maps/{mapId}/runs`**: 429 `RETRY_LIMIT`(5회 상한은 카테고리 무관 개인 단위라 새 run에도 걸린다, #31), 500 `RECOMMEND_FAILED` 추가.
+- **`/runs/{id}/execute·result·widen·retry·regions/confirm`**: 403 `FORBIDDEN` 추가 — run 실행계는 run을 요청한 본인만(`docs/permissions.md`, 가드레일 1).
+- **`PATCH /runs/{id}/evidence`**: 404 `NOT_FOUND`(없는 근거 줄 id).
+- **`POST /candidates/{id}/publish`**: 409 추가 — `NOT_READY`(run이 아직 done이 아님) 또는 `PIN_DUPLICATE`(`detail.pin_id`). 비작성자는 스펙 그대로 **404 `AI_PIN_PRIVATE`**이고 **코드를 스펙에 맞춘다**(구성원에게도 남의 후보 존재를 숨긴다, D15). 동시 게시의 `IDEMPOTENCY_CONFLICT`는 `PIN_DUPLICATE`로 정리한다(`errors.md`의 `IDEMPOTENCY_CONFLICT`는 Idempotency-Key 충돌이다).
+- **`PUT /maps/{mapId}/shortlist/order`**: 422(`item_ids`가 현재 리스트와 맞지 않음).
+- **`MemberFulfillment.total`**: 실격 사유(required)를 낸 구성원도 센다(G1). 후보는 실격을 통과했으므로 충족으로 센다 — 선호가 없는 run에서도 "N명 중 N명 충족"으로 가드레일 5의 설명이 남는다.
+- **안전 조건 사유는 배지와 무관하게 실격**(`docs/constraints.md` "안전 조건 사유는 배지와 무관하게 실격이다"): △·♥·「+」로 남긴 알러지 사유도 `wants=false`면 실격이다. ②는 hard 키에도 `wants`를 낸다. 「+」 줄도 ②를 거친다. API 스키마 변경은 없다(`EvidenceLine.wants`는 이미 있다).
+- **FE 영향**: 타입 재생성(`npm run gen:types`). 새로 선언된 상태코드(특히 409·403·429)의 화면 처리. 동작이 바뀌는 곳은 후보 게시 비작성자(403 → 404)뿐이다.
+
+## 2026-10-02 (여섯 번째) — `PinCreateRequest.place_id` 길이 제한, 카카오 힌트 검증 (#248)
 
 - **`PinCreateRequest.place_id`에 `maxLength: 100` 추가**(`place_name`은 이미 100). 넘기면 422 `VALIDATION_ERROR`. 검색 결과의 `place_id`를 그대로 보내는 FE는 영향 없다. 타입(`string`)은 그대로라 재생성할 것이 없다.
 - 서버 동작: `place_id`가 `kakao:<숫자 1~20자리>`가 아니면 핀은 만들되(매칭은 좌표·이름으로) 카카오 ID·링크는 기록하지 않는다 — 임의 문자열이 모든 구성원의 `place_url`이 되는 것을 막는다. 이미 다른 카카오 ID가 기록된 장소는 덮어쓰지 않는다(첫 값 유지). 응답 모양 변화 없음.

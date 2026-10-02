@@ -42,6 +42,7 @@ class _Row:
     status: str = "open"
     kakao_place_id: str | None = None
     kakao_place_url: str | None = None
+    source: str = "permit"
 
     @property
     def place_id(self) -> str:
@@ -99,7 +100,7 @@ class FakePlaces:
         row = self._row(place_id)
         if row is None:
             raise KeyError(place_id)
-        if row.kakao_place_id is None:   # repository와 같은 정책 — 첫 값 유지(#248)
+        if row.kakao_place_id is None:   # 첫 값 유지 — 실제 구현과 같다(#248)
             row.kakao_place_id, row.kakao_place_url = kakao_place_id, kakao_place_url
 
     def pinnable_flags(self, hints: Sequence[PlaceHint], *, db: Session | None = None) -> list[bool]:
@@ -110,7 +111,7 @@ class FakePlaces:
         for pid in place_ids:
             row = self._row(pid)
             if row is not None:
-                out[pid] = PlaceInfo(pid, row.name, row.lat, row.lng, row.category, row.kakao_place_url)
+                out[pid] = PlaceInfo(pid, row.name, row.lat, row.lng, row.category, row.kakao_place_url, row.source)
         return out
 
     def search_nearby_own(self, category: str, areas: Sequence[Area], *, db: Session | None = None) -> list[PlaceRef]:

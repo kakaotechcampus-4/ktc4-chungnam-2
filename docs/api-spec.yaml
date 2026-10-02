@@ -405,6 +405,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RecommendRun" }
         "409": { $ref: "#/components/responses/NotReady" }
+        "429": { $ref: "#/components/responses/RetryLimit" }
+        "500": { $ref: "#/components/responses/RecommendFailed" }
 
   /runs/{runId}/evidence:
     get:
@@ -436,6 +438,7 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/EvidenceLine" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /runs/{runId}/regions/confirm:
     post:
@@ -460,6 +463,7 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Region" }
         "409": { $ref: "#/components/responses/RegionConflict" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /runs/{runId}/execute:
     post:
@@ -473,6 +477,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RecommendRun" }
         "500": { $ref: "#/components/responses/RecommendFailed" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /runs/{runId}/result:
     get:
@@ -487,6 +492,7 @@ paths:
               schema: { $ref: "#/components/schemas/RecommendResult" }
         "404": { $ref: "#/components/responses/NoResults" }
         "500": { $ref: "#/components/responses/RecommendFailed" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /runs/{runId}/widen:
     post:
@@ -503,6 +509,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RecommendRun" }
         "409": { $ref: "#/components/responses/WidenLimit" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /runs/{runId}/retry:
     post:
@@ -518,6 +525,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RecommendRun" }
         "429": { $ref: "#/components/responses/RetryLimit" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /candidates/{candidateId}/publish:
     post:
@@ -531,6 +539,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Pin" }
         "404": { $ref: "#/components/responses/AiPinPrivate" }
+        "409": { description: "게시할 수 없다 — NOT_READY(run이 아직 done이 아니다) 또는 PIN_DUPLICATE(그 장소가 이미 지도에 있다, detail.pin_id)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   # ---------- shortlist (5-3, 5-10) ----------
   /maps/{mapId}/shortlist:
@@ -602,6 +611,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/ShortlistItem" }
+        "422": { description: "item_ids가 현재 확정 리스트와 맞지 않는다(VALIDATION_ERROR, detail에 불일치 항목)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /maps/{mapId}/route:
     get:
@@ -1096,7 +1106,7 @@ components:
       required: [satisfied, total]
       properties:
         satisfied: { type: integer, minimum: 0, description: "이 후보가 자기 조건을 만족시키는 구성원 수" }
-        total: { type: integer, minimum: 0, description: "집계 대상 구성원 수(조건을 남긴 구성원)" }
+        total: { type: integer, minimum: 0, description: "집계 대상 구성원 수 — 조건을 남긴 구성원. 선호(♥·선호 사유)뿐 아니라 실격 사유(required)를 낸 구성원도 포함한다(#246 G1). 후보는 실격을 통과했으므로 그 구성원은 충족으로 센다" }
         by_member:
           type: array
           items:

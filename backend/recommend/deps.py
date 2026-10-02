@@ -55,6 +55,17 @@ class DevPlaceFactsGateway:
         return {place_id: [] for place_id in place_ids}  # 라벨 없음 = 전부 unknown(unknown_policy 그대로 적용)
 
 
+def _place_source(info) -> dict | None:
+    """가드레일 5 출처 — places의 데이터 출처(permit|tourapi)와, 있으면 카카오 장소 페이지 링크. 출처를 모르면
+    None(없는 출처를 지어내지 않는다)."""
+    if info is None or info.source is None:
+        return None
+    source: dict = {"provider": info.source}
+    if info.kakao_place_url:
+        source["url"] = info.kakao_place_url
+    return source
+
+
 class RealPlaceSearchGateway:
     """자체 장소 DB(places.api.search_nearby_own) 반경 검색 — 후보의 place_id·좌표는 places에서 온다(#190).
     db를 넘기면 그 세션으로(테스트), 안 넘기면 places가 짧은 세션을 직접 연다."""
@@ -64,7 +75,9 @@ class RealPlaceSearchGateway:
 
     def search_nearby(self, *, category: str, circles: Sequence[Circle]) -> list[PlaceStub]:
         areas = [Area(lat=c.anchor_lat, lng=c.anchor_lng, radius_m=c.radius_m) for c in circles]
-        return [PlaceStub(place_id=r.place_id, lat=r.lat, lng=r.lng) for r in places_api.search_nearby_own(category, areas, db=self._db)]
+        refs = places_api.search_nearby_own(category, areas, db=self._db)
+        infos = places_api.get_places([r.place_id for r in refs], db=self._db) if refs else {}
+        return [PlaceStub(place_id=r.place_id, lat=r.lat, lng=r.lng, source=_place_source(infos.get(r.place_id))) for r in refs]
 
     def get_names(self, place_ids: Sequence[str]) -> Mapping[str, str]:
         return {pid: info.name for pid, info in places_api.get_places(list(place_ids), db=self._db).items()}

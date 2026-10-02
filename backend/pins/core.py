@@ -178,14 +178,26 @@ def pin_deleted_event(pin_id: str, map_id: str, visibility: str) -> Event | None
     return Event(map_id=map_id, channel="public", type="pin.deleted", payload={"pin_id": pin_id})
 
 
+# strip()이 못 잡는 폭 없는 문자(zero-width space·joiner·word joiner·BOM) — 눈에 안 보이는 사유를 막는다.
+_INVISIBLE = dict.fromkeys(map(ord, "​‌‍⁠﻿"))
+
+
+def reason_content(text: str | None) -> str | None:
+    """공백·제로폭 문자만 있으면 None, 아니면 앞뒤 공백을 뗀 문자열. 사유가 "있는지" 판단하는 유일한 기준이다."""
+    if not text or not text.translate(_INVISIBLE).strip():
+        return None
+    return text.strip()
+
+
 def validate_reaction(reaction_type: str, reason_text: str | None, reason_chip_ids: list[str] | None) -> None:
-    """가드레일 3 — 반대(against)는 사유가 필수다. 공백만 있는 reason_text는 없는 것으로
-    취급한다(목 서버는 이걸 놓쳐 "   "도 통과시키는 버그가 있다). like/neutral은 항상 통과."""
+    """가드레일 3 — 반대(against)는 사유가 필수다. 공백·제로폭만 있는 reason_text는 없는 것으로
+    취급한다(목 서버는 이걸 놓쳐 "   "도 통과시키는 버그가 있다). 내용 없는 칩은 사유가 아니라
+    요청 오류다(422 VALIDATION_ERROR — 반응 종류와 무관하게). like/neutral은 사유 없이 통과."""
+    if any(reason_content(chip) is None for chip in reason_chip_ids or []):
+        raise AppError("VALIDATION_ERROR", "reason_chip_ids에 내용 없는 칩이 있습니다")
     if reaction_type != "against":
         return
-    has_text = bool(reason_text and reason_text.strip())
-    has_chips = bool(reason_chip_ids)
-    if not has_text and not has_chips:
+    if reason_content(reason_text) is None and not reason_chip_ids:
         raise AppError("EVIDENCE_REQUIRED", "반대 반응에는 사유가 필요합니다")
 
 

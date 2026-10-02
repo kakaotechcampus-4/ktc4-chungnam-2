@@ -45,6 +45,10 @@ FactKey = Literal[
     "parking_available",
     "vegetarian_friendly",
     "franchise",
+    # 카페 전용 (#263)
+    "bakery",
+    "serves_alcohol",
+    "open_late",
     # 카페·관광지 공통
     "is_crowded_large",
     "quiet",

@@ -114,6 +114,12 @@ def create_ai_pin(
     return PinMutation(pin=pin_row, event=event)
 
 
+def public_pin_payload(pin: Pin) -> dict:
+    """전체 채널(SSE public) 이벤트에 싣는 핀 페이로드 — 보는 사람마다 다른 값(my_reaction)은 뺀다. 다른
+    모듈(shortlist)이 공개 이벤트에 핀을 실을 때 같은 규칙을 재사용한다(#241)."""
+    return core._public_pin_payload(pin)
+
+
 def mark_confirmed(db: Session, *, pin_id: str, map_id: str) -> PinMutation:
     """docs/data-model.md — kind를 바꾸는 유일한 경로. shortlist만 부른다."""
     pin_row = service.get_pin_or_404(db, pin_id)
@@ -228,7 +234,13 @@ def list_disliked_place_ids(db: Session, *, user_id: str, map_id: str, category:
 def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[dict]:
     """recommend의 근거 조립(①②, recommend/#108)이 쓴다 — 그 카테고리 핀에 남긴 반응 중
     사유가 있는 것만(반대는 사유 필수라 가드레일3로 항상 있고, 좋음/조율 필요도 사유가 있으면
-    포함한다). llm.service.plan_evidence에 넘길 raw_reasons의 원자료다."""
+    포함한다). llm.service.plan_evidence에 넘길 raw_reasons의 원자료다.
+
+    소프트 삭제된 핀의 반응도 **포함한다**(#243) — 사유는 사람이 한 말이라 핀이 지워져도 사라지면 안 된다.
+    구성원 누구나 핀을 지울 수 있어서(#25), 안 그러면 한 명이 b의 "조개 알러지" 핀을 지우는 것만으로 안전
+    조건이 다음 run에서 빠진다(가드레일 8). 반대로 준비 판정(`count_reacted_users`)은 삭제 핀을 계속
+    센다고 보지 않는다 — 사유(이력)와 "지금 몇 명이 반응했나"는 다른 질문이다. 같은 이유로
+    `list_disliked_place_ids`도 삭제 핀을 포함한다."""
     rows = db.execute(
         select(
             ReactionRow.pin_id, ReactionRow.user_id, ReactionRow.type,
@@ -237,17 +249,23 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
         .select_from(ReactionRow)
         .join(PinRow, PinRow.id == ReactionRow.pin_id)
         .where(
-            PinRow.map_id == map_id, PinRow.category == category, PinRow.deleted_at.is_(None),
-            ReactionRow.reason_text.is_not(None),
+            PinRow.map_id == map_id, PinRow.category == category,   # 삭제된 핀의 반응도 포함한다(#243)
+            or_(ReactionRow.reason_text.is_not(None), func.jsonb_typeof(ReactionRow.reason_chip_ids) == "array"),   # 칩만 남긴 반대도(#236)
         )
     ).all()
-    return [
-        {
+    reasoned = []
+    for pin_id, user_id, reaction_type, reason_text, reason_chip_ids in rows:
+        if reason_text is None:
+            if not reason_chip_ids:
+                continue
+            # 칩만 남긴 반대(#236) — 칩 id↔사유 문구 registry가 없어(#60 결정 대기) 칩 id를 그대로 사유
+            # 문장으로 써서 ②가 구조화하게 한다. registry가 생기면 여기서 문구로 바꾼다.
+            reason_text = ", ".join(reason_chip_ids)
+        reasoned.append({
             "pin_id": str(pin_id), "user_id": user_id, "type": reaction_type,
             "reason_text": reason_text, "reason_chip_ids": reason_chip_ids,
-        }
-        for pin_id, user_id, reaction_type, reason_text, reason_chip_ids in rows
-    ]
+        })
+    return reasoned
 
 
 def list_liked_pins_with_checks(db: Session, *, map_id: str, category: str, requested_by: str) -> list[dict]:

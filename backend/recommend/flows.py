@@ -340,8 +340,9 @@ def _run_pipeline(
     preferred_authors: dict[str, set[str]] = {}
     avoided_authors: dict[str, set[str]] = {}  # preferred + wants=false — 점수에서 반대 구성원(#231)
     for line in active_lines:
-        if line.badge == "preferred" and line.fact_key is not None:
-            by_direction = avoided_authors if line.wants is False else preferred_authors
+        # wants=None(방향을 모름)인 선호는 지지·반대 어디에도 세지 않는다 — 효과 없음(constraints.md 표, #237).
+        if line.badge == "preferred" and line.fact_key is not None and line.wants is not None:
+            by_direction = preferred_authors if line.wants else avoided_authors
             by_direction.setdefault(line.fact_key, set()).add(line.author_id)
     preferred_authors_frozen = {key: frozenset(authors) for key, authors in preferred_authors.items()}
     avoided_authors_frozen = {key: frozenset(authors) for key, authors in avoided_authors.items()}
@@ -406,6 +407,13 @@ def _run_pipeline(
     wanted_soft_keys = {line.fact_key for line in active_lines if line.fact_key is not None} | {
         fact_key for fact_key, wanted in criteria.items() if wanted is True
     }
+    # 방향이 있는 사유는 응답 체크를 "만족 여부"로 보인다(#237). 같은 키에 방향이 갈리면 required가 이긴다.
+    directions: dict[str, bool] = {}
+    for badge in ("preferred", "required"):
+        directions.update({
+            line.fact_key: line.wants for line in active_lines
+            if line.badge == badge and line.fact_key in constraints.SOFT_FACT_KEYS and line.wants is not None
+        })
     region_label = regions[0].label if regions else ""
     anchor_points_by_region = (
         {region_label: [tuple(point) for point in regions[0].anchor_points]} if regions else {}
@@ -430,7 +438,10 @@ def _run_pipeline(
         candidates_data.append({
             "place_id": place_id, "region_id": region_id, "lat": place.lat, "lng": place.lng,
             "rank": index + 1,
-            "checks": [check.model_dump() for check in core.checks_to_show(checks, wanted_soft_keys)],
+            "checks": [
+                check.model_dump()
+                for check in core.to_satisfaction_checks(core.checks_to_show(checks, wanted_soft_keys), directions)
+            ],
             "member_fulfillment": fulfillment,
             "reason": core.build_reason(checks, criteria, fulfillment),
             "place_source": dict(place.source) if place.source else None,
@@ -446,11 +457,18 @@ def _run_pipeline(
     return candidates_data, funnel
 
 
-def _candidates_ready_event(run: RecommendRun, candidates: list[CandidateRow]) -> Event:
+def _candidates_ready_event(
+    db: Session, run: RecommendRun, candidates: list[CandidateRow], place_search: PlaceSearchGateway,
+) -> Event:
+    """docs/events.md run.candidates_ready — 스펙의 Candidate 모양 그대로(#241). 받는 사람은 요청자 본인
+    하나라 permissions도 그 사람 기준으로 만든다(응답과 같은 _candidate_response)."""
+    requester = Principal(user_id=run.requested_by, map_id=run.map_id, role="member")
+    region_labels = {r.id: r.label for r in service.list_regions(db, str(run.id))}
+    place_names = place_search.get_names([c.place_id for c in candidates]) if candidates else {}
     payload = {
         "run_id": str(run.id),
         "candidates": [
-            {"id": str(c.id), "rank": c.rank, "checks": c.checks, "visibility": "private"}
+            _candidate_response(c, run, requester, region_labels, place_names).model_dump(exclude_none=True)
             for c in candidates
         ],
     }
@@ -490,7 +508,7 @@ def execute_run(
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
     service.set_run_status(db, run, "done")
-    record_event(db, _candidates_ready_event(run, candidates))
+    record_event(db, _candidates_ready_event(db, run, candidates, place_search))
     return run
 
 
@@ -521,7 +539,7 @@ def widen_run(
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
     service.set_run_status(db, run, "done")
-    record_event(db, _candidates_ready_event(run, candidates))
+    record_event(db, _candidates_ready_event(db, run, candidates, place_search))
     return run
 
 
@@ -553,7 +571,7 @@ def retry_run(
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
     service.set_run_status(db, run, "done")
-    record_event(db, _candidates_ready_event(run, candidates))
+    record_event(db, _candidates_ready_event(db, run, candidates, place_search))
     return run
 
 

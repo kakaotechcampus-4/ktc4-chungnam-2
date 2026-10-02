@@ -35,6 +35,10 @@ FACT_KEY_MEANINGS: dict[str, str] = {
     "parking_available": "주차할 수 있는가",
     "vegetarian_friendly": "채식 메뉴가 있는가",
     "franchise": "체인점인가",
+    # 카페 전용 (#263)
+    "bakery": "빵·디저트가 중심인 카페 — 예: 빵 맛있는 곳, 베이커리 카페",
+    "serves_alcohol": "술도 파는 카페 — 예: 카페인데 맥주도 되는 곳",
+    "open_late": "밤 10시 이후까지 여는가 — 예: 저녁 먹고 갈 카페, 늦게까지 하는 곳",
     # 카페·관광지 공통
     "is_crowded_large": "붐비는 대형 카페·명소인가",
     "quiet": "조용한가",

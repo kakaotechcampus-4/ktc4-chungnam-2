@@ -124,3 +124,14 @@ def test_real_places_known_true_safety_label_disqualifies_and_missing_label_excl
     funnel = {e["label"]: e["removed_count"] for e in run.last_funnel}
     assert funnel["실격 조건 제거"] >= 1
     assert no_label_place == []
+
+
+def test_real_places_candidates_carry_the_data_source(own_db, no_label_place):
+    """#242 — 후보 응답에 places의 데이터 출처(permit|tourapi)가 붙는다(가드레일 5)."""
+    run = _setup_run(own_db, required_fact_key=None)
+    search, facts = RealPlaceSearchGateway(db=own_db), RealPlaceFactsGateway(db=own_db)
+    flows.execute_run(own_db, run_id=str(run.id), place_search=search, place_facts=facts)
+
+    principal = Principal(user_id="user_1", map_id="map_1", role="member")
+    result = flows.get_result(own_db, run_id=str(run.id), principal=principal, place_search=search)
+    assert result.candidates and all(c.place_source and c.place_source.provider == "permit" for c in result.candidates)
