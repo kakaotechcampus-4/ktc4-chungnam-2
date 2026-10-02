@@ -629,3 +629,20 @@ def test_avoided_authors_subtract_from_a_place_with_the_true_label():
     checks = {"a": [_label_check("cuisine_korean", value=True)], "b": [_label_check("cuisine_korean", value=False)]}
     scores = core.score_candidates(checks, [], {}, {}, {"cuisine_korean": frozenset({"user_1", "user_2"})})
     assert scores == {"a": -2, "b": 0}
+
+
+def test_member_fulfillment_counts_disqualifier_authors_as_satisfied():
+    """#255 — 실격 사유를 낸 구성원도 total에 센다. 후보가 실격을 통과했으니 충족이고, 선호가 없어도 N명 중 N명이 남는다."""
+    result = core.build_member_fulfillment([_check("quiet", passed=True)], [], {}, disqualifier_authors=["u2", "u1"])
+    assert result == {"satisfied": 2, "total": 2, "by_member": [
+        {"user_id": "u1", "satisfied": True}, {"user_id": "u2", "satisfied": True},
+    ]}
+
+
+def test_member_fulfillment_disqualifier_author_with_unmet_preference_is_not_satisfied():
+    """선호 조건도 가진 구성원은 지금처럼 전부 충족해야 충족이다."""
+    result = core.build_member_fulfillment(
+        [_check("quiet", passed=False)], [], {"quiet": True}, {"quiet": frozenset({"u1"})}, disqualifier_authors=["u1", "u2"],
+    )
+    assert result["total"] == 2 and result["satisfied"] == 1
+    assert {e["user_id"]: e["satisfied"] for e in result["by_member"]} == {"u1": False, "u2": True}

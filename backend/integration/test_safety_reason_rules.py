@@ -105,8 +105,6 @@ def test_liking_a_hard_key_feature_is_not_a_disqualifier(members, place_ids, saf
     assert "성수 마라탕" in names, f"좋아하는 매운맛을 실격 처리했다: {names}"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="G1 — member_fulfillment.total이 실격 사유를 낸 구성원을 세지 않아 선호가 없으면 항상 0명 중 0명이다. #255")
 def test_member_fulfillment_counts_members_who_left_disqualifying_reasons(members, place_ids, safety_planner, db_session):
     from integration.real_places_fixtures import _recommend  # noqa: F401  (픽스처 모듈의 헬퍼 재사용)
 

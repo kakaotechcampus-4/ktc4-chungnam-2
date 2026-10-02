@@ -72,7 +72,8 @@ def load_candidate_with_run(db: Session, candidate_id: str) -> tuple[Candidate, 
 
 def link_published_pin(db: Session, *, candidate_id: str, pin_id: str) -> None:
     """가드 UPDATE — WHERE published_pin_id IS NULL(mentor-review-plan.md "레이스 2번").
-    rowcount==0이면 다른 경로로 이미 링크된 것 → 409 IDEMPOTENCY_CONFLICT, 호출부(flows.py)가
+    rowcount==0이면 다른 경로로 이미 링크된 것 → 409 PIN_DUPLICATE(#255 — IDEMPOTENCY_CONFLICT는
+    Idempotency-Key 충돌이라 뜻이 다르다), 호출부(flows.py)가
     커밋 전이라 이 예외로 인한 전체 롤백이 직전 pins INSERT까지 되돌린다."""
     result = db.execute(
         update(Candidate)
@@ -80,7 +81,7 @@ def link_published_pin(db: Session, *, candidate_id: str, pin_id: str) -> None:
         .values(published_pin_id=uuid.UUID(pin_id))
     )
     if result.rowcount == 0:
-        raise AppError("IDEMPOTENCY_CONFLICT")
+        raise AppError("PIN_DUPLICATE")
 
 
 # ---------- evidence_lines ----------

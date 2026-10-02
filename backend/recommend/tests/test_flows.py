@@ -181,10 +181,9 @@ def test_publish_candidate_non_member_is_not_found(db_session):
     assert candidate.published_pin_id is None  # 멱등 경로까지 도달하지 않는다
 
 
-def test_publish_candidate_non_author_member_is_forbidden(db_session):
-    """recommend.publish는 candidate.requested_by 본인만 가능(authz/policy.py
-    AUTHOR_CONSTRAINED_ACTIONS) — 같은 지도 구성원이라도 본인이 아니면 403.
-    docs/permissions.md의 404(비구성원)/403(구성원인데 액션 불가) 두 값 중 후자다."""
+def test_publish_candidate_non_author_member_gets_404_ai_pin_private(db_session):
+    """recommend.publish는 candidate.requested_by 본인만 가능(authz/policy.py AUTHOR_CONSTRAINED_ACTIONS).
+    같은 지도 구성원이라도 본인이 아니면 남의 비공개 후보의 존재를 숨겨 404 AI_PIN_PRIVATE다(#255, 가드레일 1)."""
     run = _make_run(db_session, requested_by="user_1")
     candidate = _make_candidate(db_session, run)
 
@@ -193,7 +192,7 @@ def test_publish_candidate_non_author_member_is_forbidden(db_session):
             db_session, candidate_id=str(candidate.id), requester_id="user_2",
             membership=_membership(run.map_id, "user_2"),  # 같은 지도 구성원이지만 run 요청자 본인이 아니다
         )
-    assert exc_info.value.code == "FORBIDDEN"
+    assert exc_info.value.code == "AI_PIN_PRIVATE"
 
 
 def test_publish_candidate_run_not_done_is_not_ready(db_session):
@@ -272,14 +271,14 @@ def test_publish_candidate_duplicate_place_id_rolls_back_everything(db_session):
 
 def test_publish_candidate_guard_update_conflict_rolls_back_pin_insert(db_session, monkeypatch):
     """link_published_pin의 가드 UPDATE가 rowcount==0을 반환하도록 강제로 흉내 낸 경우 —
-    409 IDEMPOTENCY_CONFLICT, 그리고 직전에 생긴 pins INSERT까지 함께 롤백돼 고아 행이
+    409 PIN_DUPLICATE, 그리고 직전에 생긴 pins INSERT까지 함께 롤백돼 고아 행이
     안 남는지 확인한다(mentor-review-plan.md 레이스 2번)."""
     run = _make_run(db_session)
     candidate = _make_candidate(db_session, run)
     db_session.commit()  # 기준선
 
     def _fake_link_published_pin(db, *, candidate_id, pin_id):
-        raise AppError("IDEMPOTENCY_CONFLICT")
+        raise AppError("PIN_DUPLICATE")
 
     monkeypatch.setattr(service, "link_published_pin", _fake_link_published_pin)
 
@@ -288,7 +287,7 @@ def test_publish_candidate_guard_update_conflict_rolls_back_pin_insert(db_sessio
             db_session, candidate_id=str(candidate.id), requester_id="user_1",
             membership=_membership(run.map_id, "user_1"),
         )
-    assert exc_info.value.code == "IDEMPOTENCY_CONFLICT"
+    assert exc_info.value.code == "PIN_DUPLICATE"
     db_session.rollback()  # common/database.py get_db와 동일
 
     db_session.refresh(candidate)
@@ -302,7 +301,7 @@ def test_publish_candidate_guard_update_conflict_rolls_back_pin_insert(db_sessio
 
 def test_concurrent_publish_same_candidate_produces_exactly_one_pin(test_engine, monkeypatch):
     """동시에 두 요청을 보내 같은 후보를 게시하는 시나리오(세션 두 개로 흉내) — 하나는
-    200(생성), 다른 하나는 409 PIN_DUPLICATE(IDEMPOTENCY_CONFLICT가 아니다). 최종적으로
+    200(생성), 다른 하나는 409 PIN_DUPLICATE(PIN_DUPLICATE가 아니다). 최종적으로
     pins 행은 정확히 1개. db_session(세이브포인트, 롤백 전용) 대신 test_engine에 직접
     연결한다 — 실제 유니크 제약 락 경합을 재현하려면 진짜 커밋이 필요하다.
 
@@ -954,11 +953,16 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
     by_place = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
     sourced, bare = by_place["sourced"], by_place["bare"]
     assert sourced.reason == "실격 조건 통과: 매운맛 전문점 아님 · 선호 충족: 조용함 (1/1명)"
-    assert sourced.member_fulfillment == {"satisfied": 1, "total": 1, "by_member": [{"user_id": "user_2", "satisfied": True}]}
+    # user_1은 실격 사유(매운거 빼주세요)를 냈고 후보가 통과했으니 충족(#255). 이유 문장의 (1/1명)은 선호 구성원만 센다.
+    assert sourced.member_fulfillment == {"satisfied": 2, "total": 2, "by_member": [
+        {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": True},
+    ]}
     assert sourced.place_source == source
     # 조용함을 모르는 후보 — 구성원은 집계 대상이지만 충족으로 세지 않고, 안 본 것을 이유로 들지 않는다.
     assert bare.reason == "실격 조건 통과: 매운맛 전문점 아님"
-    assert bare.member_fulfillment == {"satisfied": 0, "total": 1, "by_member": [{"user_id": "user_2", "satisfied": False}]}
+    assert bare.member_fulfillment == {"satisfied": 1, "total": 2, "by_member": [
+        {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": False},
+    ]}
     assert bare.place_source is None  # 출처를 못 얻으면 지어내지 않는다
 
 

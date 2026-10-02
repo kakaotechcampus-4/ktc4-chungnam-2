@@ -88,14 +88,20 @@ def publish_candidate(
     타입을 적으려고 pins.models를 import해야 해서 경계 규칙을 어긴다(#114)."""
     candidate, run = service.load_candidate_with_run(db, candidate_id)  # 1) 404 NOT_FOUND
 
-    _require_publish(
-        loaded=_LoadedCandidate(
-            resource=Resource(type="candidate", map_id=run.map_id, author_id=run.requested_by),
-            obj=candidate,
-        ),
-        user=CurrentUser(user_id=requester_id),
-        gateway=membership,
-    )  # 2)+3) 비구성원 404 NOT_FOUND / 구성원인데 본인 요청 아님 403 FORBIDDEN
+    try:
+        _require_publish(
+            loaded=_LoadedCandidate(
+                resource=Resource(type="candidate", map_id=run.map_id, author_id=run.requested_by),
+                obj=candidate,
+            ),
+            user=CurrentUser(user_id=requester_id),
+            gateway=membership,
+        )
+    except AppError as error:
+        if error.code == "FORBIDDEN":  # 구성원이지만 요청자가 아니다 — 남의 비공개 후보의 존재를 숨긴다(가드레일 1, #255)
+            raise AppError("AI_PIN_PRIVATE") from error
+        raise
+    # 2)+3) 비구성원 404 NOT_FOUND / 구성원인데 본인 요청 아님 404 AI_PIN_PRIVATE
     # ↑ 여기까지 통과해야만 아래로 내려간다 — 순서를 바꾸지 않는다(멤버십/작성자 확인이
     #   멱등 경로·NOT_READY 판정보다 항상 먼저).
 
@@ -337,6 +343,8 @@ def _run_pipeline(
     active_hard_keys = _active_hard_fact_keys(db, run)
     active_lines = service.list_active_evidence(db, run.id)
     soft_requirements = _active_soft_requirements(db, run)
+    # 반대 사유(활성 required)를 낸 구성원 — fact_key로 구조화됐든 아니든 충족 집계에 센다(#255).
+    disqualifier_authors = sorted({line.author_id for line in active_lines if line.badge == "required"})
     preferred_authors: dict[str, set[str]] = {}
     avoided_authors: dict[str, set[str]] = {}  # preferred + wants=false — 점수에서 반대 구성원(#231)
     for line in active_lines:
@@ -434,7 +442,11 @@ def _run_pipeline(
     for index, place_id in enumerate(top_place_ids):
         place = places_by_id[place_id]
         checks = checks_by_place[place_id]
-        fulfillment = core.build_member_fulfillment(checks, hearted_places, criteria, preferred_authors_frozen)
+        fulfillment = core.build_member_fulfillment(
+            checks, hearted_places, criteria, preferred_authors_frozen, disqualifier_authors,
+        )
+        # 이유 문장의 "(n/m명)"은 선호를 가진 구성원만 센다 — 실격 사유만 낸 사람을 선호 충족으로 부풀리지 않는다.
+        preference_fulfillment = core.build_member_fulfillment(checks, hearted_places, criteria, preferred_authors_frozen)
         candidates_data.append({
             "place_id": place_id, "region_id": region_id, "lat": place.lat, "lng": place.lng,
             "rank": index + 1,
@@ -443,7 +455,7 @@ def _run_pipeline(
                 for check in core.to_satisfaction_checks(core.checks_to_show(checks, wanted_soft_keys), directions)
             ],
             "member_fulfillment": fulfillment,
-            "reason": core.build_reason(checks, criteria, fulfillment),
+            "reason": core.build_reason(checks, criteria, preference_fulfillment),
             "place_source": dict(place.source) if place.source else None,
         })
     funnel = core.funnel_counts([
