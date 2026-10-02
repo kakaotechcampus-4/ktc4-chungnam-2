@@ -744,7 +744,65 @@ def test_execute_run_keeps_restaurants_whose_cuisine_labels_are_mostly_false(db_
     candidates = service.list_candidates(db_session, str(run.id))
     assert len(candidates) == 3  # 상위 3곳 선정까지 가고, 실격으로 줄지 않는다
     keys = {check["fact_key"] for check in candidates[0].checks}
-    assert "cuisine_korean" in keys and "quiet" not in keys and "winter_spot" not in keys
+    assert not keys & set(cuisines)  # 아무도 말하지 않은 known(거짓 9개) cuisine_*은 응답 checks에 없다
+    assert "quiet" not in keys and "winter_spot" not in keys
+
+
+def _run_with_wanted_and_unwanted_soft_keys(db_session):
+    """음식점 run — hard spicy_focused 활성, 선호 사유 wait_short(unknown), ♥ 핀 기준 parking_available.
+    라벨: spicy_focused·franchise 거짓 known, parking_available 참 known, 나머지 soft는 unknown."""
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "매운거 빼주세요", "badge": "required", "fact_key": "spicy_focused"},
+        {"author_id": "user_2", "source": "reaction", "text": "대기 짧았으면", "badge": "preferred", "fact_key": "wait_short"},
+    ])
+    liked = _make_pin(db_session, lat=35.0008, lng=129.0008)
+    liked.checks = [{"fact_key": "parking_available", "label": "True", "passed": True,
+                     "confidence": "known", "needs_check": False}]
+    _react(db_session, liked, user_id="user_1", type="like")
+    places = [PlaceStub(place_id="cand", lat=35.0005, lng=129.0005)]
+    facts = _FakePlaceFacts({"cand": {"spicy_focused": False, "franchise": False, "parking_available": True}})
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
+    [candidate] = service.list_candidates(db_session, str(run.id))
+    return run, candidate
+
+
+def test_execute_run_checks_omit_unwanted_unknown_soft_keys(db_session):
+    """#216 — 아무도 원하지 않았고 unknown인 soft 키(pet_friendly 등)는 저장되는 checks에 없다(known인 franchise도). 원한 키는
+    known이든 unknown이든 남고(unknown은 needs_check), hard 체크는 그대로다."""
+    _run, candidate = _run_with_wanted_and_unwanted_soft_keys(db_session)
+    by_key = {c["fact_key"]: c for c in candidate.checks}
+
+    assert "pet_friendly" not in by_key and "vegetarian_friendly" not in by_key  # 원하지 않은 unknown
+    assert "franchise" not in by_key  # 원하지 않은 known(거짓)도 싣지 않는다
+    assert by_key["wait_short"]["needs_check"] is True and by_key["wait_short"]["confidence"] == "unknown"  # 활성 근거 줄
+    assert by_key["parking_available"]["confidence"] == "known"  # ♥ 핀 기준(known)
+    assert by_key["spicy_focused"]["passed"] is True and "is_open" in by_key  # hard 그대로
+
+
+def test_execute_run_unwanted_unknown_soft_checks_still_feed_scoring(db_session):
+    """점수 입력은 전체 soft 체크다 — 저장에서 빠져도 ♥ 핀 기준(parking_available)이 점수에 쓰인다."""
+    _run, candidate = _run_with_wanted_and_unwanted_soft_keys(db_session)
+    assert candidate.member_fulfillment["total"] >= 1 and candidate.member_fulfillment["satisfied"] >= 1
+    assert "주차할 수 있음" in candidate.reason
+
+
+def test_publish_candidate_pin_checks_follow_the_same_filter(db_session):
+    """게시(pins 복사)는 candidate.checks 그대로라 같은 기준이다 — 원하지 않은 unknown soft는 핀에도 없다."""
+    run, candidate = _run_with_wanted_and_unwanted_soft_keys(db_session)
+    pin = flows.publish_candidate(
+        db_session, candidate_id=str(candidate.id), requester_id="user_1",
+        membership=_membership(run.map_id, "user_1"),
+    )
+    db_session.expire_all()
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    response = pins_api.get_pin_response_for_viewer(
+        db_session, pin_id=str(pin.id), viewer_id="user_1", principal=principal,
+    )
+    pin_keys = [c.fact_key for c in response.checks]
+    assert pin_keys == [c["fact_key"] for c in candidate.checks]
+    assert "pet_friendly" not in pin_keys and "wait_short" in pin_keys
 
 
 def test_create_run_leaves_no_run_row_when_planning_fails(db_session, monkeypatch):

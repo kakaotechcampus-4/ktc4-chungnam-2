@@ -324,8 +324,9 @@ def _run_pipeline(
     removed_open = 0  # dev 스텁은 실시간 영업시간 조회가 없어 항상 unknown+needs_check — 결코 제거하지 않는다
 
     active_hard_keys = _active_hard_fact_keys(db, run)
+    active_lines = service.list_active_evidence(db, run.id)
     preferred_authors: dict[str, set[str]] = {}
-    for line in service.list_active_evidence(db, run.id):
+    for line in active_lines:
         if line.badge == "preferred" and line.fact_key is not None:
             preferred_authors.setdefault(line.fact_key, set()).add(line.author_id)
     preferred_authors_frozen = {key: frozenset(authors) for key, authors in preferred_authors.items()}
@@ -379,6 +380,11 @@ def _run_pipeline(
         disqualifying_fact_keys=active_hard_keys,
         preferred_authors=preferred_authors_frozen,
     )
+    # #216 — 점수 계산은 전체 soft 체크를 쓰지만 저장·응답에는 사람이 원하지 않은 soft 체크(known 포함)를 싣지 않는다.
+    # 사람이 원한 키 = 활성 근거 줄의 fact_key + ♥ 핀 기준으로 점수에 쓰인 키.
+    wanted_soft_keys = {line.fact_key for line in active_lines if line.fact_key is not None} | {
+        fact_key for fact_key, wanted in criteria.items() if wanted is True
+    }
     region_label = regions[0].label if regions else ""
     anchor_points_by_region = (
         {region_label: [tuple(point) for point in regions[0].anchor_points]} if regions else {}
@@ -403,7 +409,7 @@ def _run_pipeline(
         candidates_data.append({
             "place_id": place_id, "region_id": region_id, "lat": place.lat, "lng": place.lng,
             "rank": index + 1,
-            "checks": [check.model_dump() for check in checks],
+            "checks": [check.model_dump() for check in core.checks_to_show(checks, wanted_soft_keys)],
             "member_fulfillment": fulfillment,
             "reason": core.build_reason(checks, criteria, fulfillment),
             "place_source": dict(place.source) if place.source else None,

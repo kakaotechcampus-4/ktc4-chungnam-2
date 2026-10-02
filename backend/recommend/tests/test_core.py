@@ -395,6 +395,23 @@ def test_soft_keys_nobody_wants_score_zero_for_every_candidate():
     assert core.score_candidates(candidates, [], criteria) == {"p1": 0}
 
 
+def test_checks_to_show_keeps_hard_and_only_wanted_soft_checks():
+    """#216 — hard는 그대로, soft는 원한 키만(known 여부 무관). 원하지 않은 known·unknown soft는 없다."""
+    hard_unknown = core.build_check("price_bucket", "pass", known=False, value=None, passes=True)
+    hard_known = core.build_check("spicy_focused", "exclude", known=True, value=False, passes=True)
+    unwanted_known = core.build_check("cuisine_chinese", "pass", known=True, value=False, passes=False)
+    unwanted_unknown = core.build_check("franchise", "pass", known=False, value=None, passes=False)
+    wanted_known = core.build_check("cuisine_korean", "pass", known=True, value=True, passes=True)
+    wanted_unknown = core.build_check("wait_short", "pass", known=False, value=None, passes=False)
+    checks = [hard_unknown, hard_known, unwanted_known, unwanted_unknown, wanted_known, wanted_unknown]
+
+    shown = core.checks_to_show(checks, {"cuisine_korean", "wait_short"})
+
+    assert [c.fact_key for c in shown] == ["price_bucket", "spicy_focused", "cuisine_korean", "wait_short"]
+    assert shown[-1].needs_check is True  # 원한 키는 unknown이어도 「확인 필요」로 남는다
+    assert shown[2].confidence == "known"  # 원한 키는 known이어도 남는다
+
+
 # ---------- build_member_fulfillment ----------
 
 def test_build_member_fulfillment_has_spec_shape_with_satisfied_total_by_member():
