@@ -35,6 +35,13 @@ def test_every_comparable_fact_key_has_a_reason_label():
     assert comparable <= set(constraints.PASSED_LABELS)
 
 
+def test_every_registry_fact_key_has_a_short_display_name():
+    """#231 — 근거 줄의 "한식 제외"에 쓰는 표시 이름. 키를 추가하고 이름을 빠뜨리면 실패한다."""
+    registry_keys = set(constraints.HARD_REGISTRY) | constraints.SOFT_FACT_KEYS
+    assert registry_keys <= set(constraints.FACT_LABELS)
+    assert all(0 < len(name) <= 30 for name in constraints.FACT_LABELS.values())
+
+
 def test_soft_fact_keys_are_not_in_hard_registry():
     assert constraints.SOFT_FACT_KEYS.isdisjoint(constraints.HARD_REGISTRY.keys())
 

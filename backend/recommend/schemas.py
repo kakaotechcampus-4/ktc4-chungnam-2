@@ -50,6 +50,8 @@ class EvidenceLine(BaseModel):
     text: str = Field(max_length=140)
     badge: Badge
     fact_key: str | None = None
+    fact_label: str | None = None  # fact_key의 표시 이름("한식") — constraints.FACT_LABELS
+    wants: bool | None = None  # 이 특징이 있는 장소를 원하는가(#228). None = 모름
     is_active: bool
     permissions: Permissions
 

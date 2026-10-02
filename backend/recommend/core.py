@@ -161,7 +161,9 @@ def resolve_label(labels: Sequence[FactLabel], fact_key: str) -> tuple[bool, Any
     return False, None
 
 
-def apply_disqualifier_filters(candidate_checks: list[list[Check]]) -> list[bool]:
+def apply_disqualifier_filters(
+    candidate_checks: list[list[Check]], soft_requirements: Collection[tuple[str, bool]] = (),
+) -> list[bool]:
     """5-6 3단계(실격 조건) + 가드레일9("한 명이라도 실격이면 후보에서 내린다"의 조건판
     버전 — 여기서는 "체크 하나라도 불통과면 후보 전체 탈락"). 후보별 checks 리스트를 받아
     후보별 통과 여부(bool) 리스트를 그대로 반환한다 — 실제 제거는 호출부(service.py)가 이
@@ -170,11 +172,24 @@ def apply_disqualifier_filters(candidate_checks: list[list[Check]]) -> list[bool
 
     hard 체크만 본다. 선호(soft) 라벨(`constraints.SOFT_FACT_KEYS`)의 passed는 "실격 아님"이 아니라
     그 라벨의 참/거짓값이라(예: quiet=False → passed=False), 판정에 섞으면 아무도 원하지 않은
-    조건 때문에 후보가 전멸한다(#208). soft 체크는 선호 점수(score_candidates)의 입력으로만 쓴다."""
+    조건 때문에 후보가 전멸한다(#208). soft 체크는 선호 점수(score_candidates)의 입력으로만 쓴다.
+
+    예외는 사람이 방향을 밝혀 `required`로 낸 soft 사유(#231, `soft_requirements` = (fact_key, wants)).
+    라벨이 known일 때만 본다 — wants=False("한식 말고")는 라벨 참이면, wants=True("조용한 곳이어야 해")는
+    라벨 거짓이면 실격이고, 모름은 통과(needs_check는 체크가 이미 달고 있다). 같은 키에 한 명은 "원함",
+    한 명은 "원하지 않음 required"여도 실격이 먼저다(가드레일 9) — 실격은 여기서만 정해진다."""
     return [
         all(check.passed for check in checks if check.fact_key not in constraints.SOFT_FACT_KEYS)
+        and not any(_violates_soft_requirement(checks, fact_key, wants) for fact_key, wants in soft_requirements)
         for checks in candidate_checks
     ]
+
+
+def _violates_soft_requirement(checks: Sequence[Check], fact_key: str, wants: bool) -> bool:
+    for check in checks:
+        if check.fact_key == fact_key and check.confidence == "known":
+            return check.passed != wants  # passed = 라벨의 실제 참/거짓값
+    return False
 
 
 def checks_to_show(checks: Sequence[Check], wanted_fact_keys: Collection[str]) -> list[Check]:
@@ -293,6 +308,7 @@ def build_preference_criteria(
 def _member_support(
     hearted_places: Sequence[HeartedPlace],
     preferred_authors: Mapping[str, frozenset[str]] | None = None,
+    avoided_authors: Mapping[str, frozenset[str]] | None = None,
 ) -> dict[str, tuple[frozenset[str], frozenset[str]]]:
     """fact_key마다 (지지 구성원 집합, 반대 구성원 집합) — 지지는 그 값을 True로 가진 곳에 ♥한
     구성원 + 그 fact_key를 선호 사유로 직접 쓴 구성원(♥ 이력이 없어도 명시적 선호는 지지다),
@@ -314,6 +330,12 @@ def _member_support(
             # 잡혀 +1−1로 상쇄된다(#112 후속). 말로 쓴 선호가 ♥ 이력보다 우선이다.
             if fact_key in opposing:
                 opposing[fact_key] -= set(authors)
+    for fact_key, authors in (avoided_authors or {}).items():
+        # #231 — "한식은 피하고 싶어"(preferred + wants=false)는 반대 구성원으로 센다. 새 공식이 아니다.
+        if fact_key in constraints.SOFT_FACT_KEYS:
+            opposing.setdefault(fact_key, set()).update(authors)
+            if fact_key in supporting:
+                supporting[fact_key] -= set(authors)
     return {
         fact_key: (frozenset(supporting.get(fact_key, ())), frozenset(opposing.get(fact_key, ())))
         for fact_key in set(supporting) | set(opposing)
@@ -325,13 +347,17 @@ def score_candidates(
     hearted_places: Sequence[HeartedPlace],
     criteria: Mapping[str, bool],
     preferred_authors: Mapping[str, frozenset[str]] | None = None,
+    avoided_authors: Mapping[str, frozenset[str]] | None = None,
 ) -> dict[str, int]:
     """2단계 — 후보마다 점수 매기기(이슈 #112).
 
     criteria[fact_key] is True이고 후보 자신도 그 라벨이 known+True일 때만("양쪽 다 참일 때만")
     점수를 준다. 더하는 값은 (그 라벨=True인 곳에 ♥한 구성원 수 − False인 곳에 ♥한 구성원 수).
-    조사 안 된(unknown) 라벨은 0점 — 감점도 없다."""
-    support = _member_support(hearted_places, preferred_authors)
+    조사 안 된(unknown) 라벨은 0점 — 감점도 없다.
+
+    `avoided_authors`(fact_key → "있는 곳은 피하고 싶다"고 선호로 쓴 구성원, #231)는 그 키를 가진 후보에서
+    그 사람 수만큼 깎는다. 기준(criteria)이 그 키를 True로 두지 않았어도 깎는다(피하는 사람이 있으니까)."""
+    support = _member_support(hearted_places, preferred_authors, avoided_authors)
     empty: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset())
     scores: dict[str, int] = {}
     for place_id, checks in candidate_checks_by_place.items():
@@ -339,10 +365,11 @@ def score_candidates(
         for check in checks:
             if check.confidence != "known" or not check.passed:
                 continue
-            if criteria.get(check.fact_key) is not True:
-                continue
-            supporting, opposing = support.get(check.fact_key, empty)
-            total += len(supporting) - len(opposing)
+            if criteria.get(check.fact_key) is True:
+                supporting, opposing = support.get(check.fact_key, empty)
+                total += len(supporting) - len(opposing)
+            elif check.fact_key in (avoided_authors or {}):
+                total -= len(avoided_authors[check.fact_key])
         scores[place_id] = total
     return scores
 

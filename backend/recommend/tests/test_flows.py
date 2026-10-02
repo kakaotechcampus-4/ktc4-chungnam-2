@@ -1021,3 +1021,108 @@ def test_retry_run_checks_requesters_true_max_not_this_runs_own_attempt_no(db_se
             place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts(),
         )
     assert exc_info.value.code == "RETRY_LIMIT"
+
+
+# ---------- #231 — 사유의 방향(wants) ----------
+
+def _line(author, badge, fact_key, wants, text="사유"):
+    return {"author_id": author, "source": "reaction", "text": text, "badge": badge, "fact_key": fact_key, "wants": wants}
+
+
+def _execute_with_lines(db_session, lines, facts_by_place):
+    """wants를 직접 심은 근거 줄로 파이프라인을 돌린다(②의 wants 생성은 llm 쪽 이슈)."""
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=lines)
+    places = [PlaceStub(place_id=pid, lat=35.0005, lng=129.0005) for pid in facts_by_place]
+    flows.execute_run(
+        db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places),
+        place_facts=_FakePlaceFacts(facts_by_place),
+    )
+    candidates = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+    funnel = {entry["label"]: entry["removed_count"] for entry in run.last_funnel}
+    return candidates, funnel
+
+
+def test_required_wants_false_removes_places_whose_label_is_true(db_session):
+    """"한식 말고"(required, wants=false) — 한식 참인 후보는 제거되고 거짓이면 남는다. 깔때기에 세어진다."""
+    candidates, funnel = _execute_with_lines(
+        db_session, [_line("user_1", "required", "cuisine_korean", False)],
+        {"korean": {"cuisine_korean": True}, "other": {"cuisine_korean": False}},
+    )
+    assert set(candidates) == {"other"}
+    assert funnel["실격 조건 제거"] == 1
+
+
+def test_required_wants_false_unknown_label_passes_with_needs_check(db_session):
+    candidates, funnel = _execute_with_lines(
+        db_session, [_line("user_1", "required", "cuisine_korean", False)], {"unknown_place": {}},
+    )
+    check = next(c for c in candidates["unknown_place"].checks if c["fact_key"] == "cuisine_korean")
+    assert check["confidence"] == "unknown" and check["needs_check"] is True and check["passed"] is True
+    assert funnel["실격 조건 제거"] == 0
+
+
+def test_required_wants_true_is_the_inverse(db_session):
+    """"조용한 곳이어야 해"(required, wants=true) — 라벨 거짓이면 실격, 참이면 통과, 모름은 통과 + needs_check."""
+    candidates, funnel = _execute_with_lines(
+        db_session, [_line("user_1", "required", "quiet", True)],
+        {"quiet": {"quiet": True}, "noisy": {"quiet": False}, "unknown_place": {}},
+    )
+    assert set(candidates) == {"quiet", "unknown_place"}
+    assert funnel["실격 조건 제거"] == 1
+    check = next(c for c in candidates["unknown_place"].checks if c["fact_key"] == "quiet")
+    assert check["needs_check"] is True
+
+
+def test_required_soft_with_null_wants_has_no_effect(db_session):
+    """방향이 없던 시절 근거 줄(wants=NULL)은 이전과 같다 — 라벨이 참이어도 실격이 아니다."""
+    candidates, funnel = _execute_with_lines(
+        db_session, [_line("user_1", "required", "cuisine_korean", None)], {"korean": {"cuisine_korean": True}},
+    )
+    assert set(candidates) == {"korean"} and funnel["실격 조건 제거"] == 0
+
+
+def test_hard_key_ignores_wants_direction(db_session):
+    """hard 키는 방향이 고정(있으면 실격)이다 — wants가 true여도 spicy_focused=True는 실격이고 모름도 제외."""
+    candidates, funnel = _execute_with_lines(
+        db_session, [_line("user_1", "required", "spicy_focused", True)],
+        {"spicy": {"spicy_focused": True}, "mild": {"spicy_focused": False}, "unknown_place": {}},
+    )
+    assert set(candidates) == {"mild"} and funnel["실격 조건 제거"] == 2
+
+
+def test_preferred_wants_false_subtracts_and_wants_null_still_adds(db_session):
+    """"한식은 피하고 싶어"(preferred, wants=false)는 한식 참인 후보를 반대 구성원 +1로 깎아 순위가 내려간다.
+    wants=NULL 선호(옛 데이터)는 이전처럼 지지로 센다."""
+    candidates, _ = _execute_with_lines(
+        db_session, [_line("user_1", "preferred", "cuisine_korean", False), _line("user_2", "preferred", "quiet", None)],
+        {"korean_quiet": {"cuisine_korean": True, "quiet": True}, "quiet_only": {"quiet": True},
+         "korean_only": {"cuisine_korean": True}, "plain": {}},
+    )
+    ranks = {pid: c.rank for pid, c in candidates.items()}
+    assert ranks["quiet_only"] == 1          # +1(quiet)
+    assert "korean_only" not in ranks         # −1 → 상위 3곳 밖(plain 0점·korean_quiet 0점이 앞선다)
+    assert set(ranks) == {"quiet_only", "korean_quiet", "plain"}
+
+
+def test_same_key_disqualification_beats_a_supporter(db_session):
+    """가드레일 9 — 한 명은 "한식 먹자"(preferred true), 한 명은 "한식 말고"(required false)여도 한식집은 빠진다."""
+    candidates, funnel = _execute_with_lines(
+        db_session,
+        [_line("user_1", "preferred", "cuisine_korean", True), _line("user_2", "required", "cuisine_korean", False)],
+        {"korean": {"cuisine_korean": True}, "other": {"cuisine_korean": False}},
+    )
+    assert set(candidates) == {"other"} and funnel["실격 조건 제거"] == 1
+
+
+def test_wants_is_stored_and_returned_by_the_evidence_api(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        _line("user_1", "required", "cuisine_korean", False),
+        {"author_id": "user_1", "source": "reaction", "text": "옛 데이터", "badge": "reference"},
+    ])
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    by_text = {e.text: e for e in flows.list_evidence(db_session, run_id=str(run.id), principal=principal)}
+    assert by_text["사유"].wants is False and by_text["사유"].fact_label == "한식"
+    assert by_text["옛 데이터"].wants is None and by_text["옛 데이터"].fact_label is None

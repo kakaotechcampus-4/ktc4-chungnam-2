@@ -109,7 +109,7 @@ def add_reaction_evidence(db: Session, *, run_id: uuid.UUID, lines: list[dict]) 
     for line in lines:
         db.add(EvidenceLine(
             run_id=run_id, author_id=line["author_id"], source=line["source"], text=line["text"],
-            chip_id=line.get("chip_id"), badge=line["badge"], fact_key=line.get("fact_key"),
+            chip_id=line.get("chip_id"), badge=line["badge"], fact_key=line.get("fact_key"), wants=line.get("wants"),
             circle_anchor_pin_id=line.get("circle_anchor_pin_id"), circle_radius_m=line.get("circle_radius_m"),
             is_active=line.get("is_active", True),
         ))
