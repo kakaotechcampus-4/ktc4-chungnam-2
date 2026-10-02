@@ -668,3 +668,53 @@ def test_deleted_pin_reasons_still_reach_the_evidence_but_not_the_readiness_coun
     reasons = pins_api.list_reasoned_reactions(db_session, map_id="map_1", category="음식점")
     assert [(r["user_id"], r["reason_text"]) for r in reasons] == [("user_2", "조개 알러지")]
     assert pins_api.count_reacted_users(db_session, map_id="map_1", category="음식점") == 1
+
+
+# --- list_liked_places (#247) ---
+
+def test_list_liked_places_collects_distinct_members_per_pin(db_session):
+    from pins import api as pins_api
+
+    pin = _insert_pin(db_session, place_id="lp_both")
+    _like(db_session, pin, "user_1")
+    _like(db_session, pin, "user_2")
+
+    assert pins_api.list_liked_places(db_session, map_id="map_1", category="음식점", requested_by="user_1") == [
+        {"place_id": "lp_both", "member_ids": {"user_1", "user_2"}}
+    ]
+
+
+def test_list_liked_places_excludes_pins_without_like_and_non_like_reactions(db_session):
+    from pins import api as pins_api
+
+    _insert_pin(db_session, place_id="lp_none")
+    disliked = _insert_pin(db_session, place_id="lp_against")
+    db_session.add(ReactionRow(pin_id=disliked.id, user_id="user_1", type="against", reason_text="멀어요"))
+    db_session.commit()
+
+    assert pins_api.list_liked_places(db_session, map_id="map_1", category="음식점", requested_by="user_1") == []
+
+
+def test_list_liked_places_excludes_other_category_other_map_and_deleted_pins(db_session):
+    from pins import api as pins_api
+
+    for kwargs in ({"category": "카페"}, {"map_id": "map_2"}, {"deleted": True}):
+        _like(db_session, _insert_pin(db_session, place_id=f"lp_x_{len(kwargs)}_{next(iter(kwargs))}", **kwargs), "user_1")
+    keep = _insert_pin(db_session, place_id="lp_keep")
+    _like(db_session, keep, "user_1")
+
+    result = pins_api.list_liked_places(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    assert [r["place_id"] for r in result] == ["lp_keep"]
+
+
+def test_list_liked_places_excludes_other_users_private_pin_but_keeps_own(db_session):
+    """가드레일 1 — 남의 비공개 핀의 ♥는 요청자의 선호에 안 들어가고, 본인의 비공개 핀은 들어간다."""
+    from pins import api as pins_api
+
+    _like(db_session, _insert_pin(db_session, created_by="user_2", visibility="private", place_id="lp_theirs"), "user_2")
+    _like(db_session, _insert_pin(db_session, created_by="user_1", visibility="private", place_id="lp_mine"), "user_1")
+
+    result = pins_api.list_liked_places(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    assert result == [{"place_id": "lp_mine", "member_ids": {"user_1"}}]

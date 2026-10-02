@@ -269,7 +269,10 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
 
 
 def list_liked_pins_with_checks(db: Session, *, map_id: str, category: str, requested_by: str) -> list[dict]:
-    """recommend의 선호 기준 만들기(#112 1단계)가 쓴다 — 이 카테고리의 삭제되지 않은 핀 중
+    """**Deprecated(#247)** — `list_liked_places`로 대체된다. recommend가 옮겨 간 뒤 지운다
+    (`pins.checks`는 직접 찍은 핀에서 항상 비어 있어 선호 프로필이 죽는다, D6).
+
+    recommend의 선호 기준 만들기(#112 1단계)가 쓴다 — 이 카테고리의 삭제되지 않은 핀 중
     ♥(like) 반응을 받은 것들의 checks(가드레일5 — #124가 게시 시점에 candidate.checks를
     복사해둔 값. 직접 찍었거나 아직 recommend를 거치지 않은 핀은 항상 빈 리스트)와, 그 핀에
     ♥를 누른 서로 다른 user_id 집합을 핀 하나당 한 항목으로 묶어 돌려준다.
@@ -296,6 +299,30 @@ def list_liked_pins_with_checks(db: Session, *, map_id: str, category: str, requ
         entry = grouped.setdefault(str(pin_id), {"checks": checks or [], "member_ids": set()})
         entry["member_ids"].add(user_id)
     return [{"checks": entry["checks"], "member_ids": entry["member_ids"]} for entry in grouped.values()]
+
+
+def list_liked_places(db: Session, *, map_id: str, category: str, requested_by: str) -> list[dict]:
+    """recommend의 선호 프로필(#247, D6)이 쓴다 — 이 지도·카테고리의 삭제되지 않은 핀 중 ♥(like)를
+    받은 것을 핀 하나당 한 항목 `{"place_id": str, "member_ids": set[str]}`로 돌려준다
+    (member_ids = 그 핀에 ♥를 누른 서로 다른 user_id). 라벨은 pins가 다루지 않는다 — recommend가
+    place_id로 `places.api.get_facts`(배치)를 불러 읽는다. place_id 순으로 정렬한다.
+
+    가드레일 1 — 공개 핀 + requested_by 본인의 비공개 핀만 포함한다(`list_liked_pins_with_checks`와
+    같은 판정). 남의 비공개 AI 후보의 ♥가 요청자의 선호 순위에 섞이면 안 된다."""
+    rows = db.execute(
+        select(PinRow.place_id, ReactionRow.user_id)
+        .select_from(PinRow)
+        .join(ReactionRow, ReactionRow.pin_id == PinRow.id)
+        .where(
+            PinRow.map_id == map_id, PinRow.category == category, PinRow.deleted_at.is_(None),
+            or_(PinRow.visibility == "public", PinRow.created_by == requested_by),
+            ReactionRow.type == "like",
+        )
+    ).all()
+    grouped: dict[str, set[str]] = {}
+    for place_id, user_id in rows:
+        grouped.setdefault(place_id, set()).add(user_id)
+    return [{"place_id": place_id, "member_ids": members} for place_id, members in sorted(grouped.items())]
 
 
 def get_coordinates_for_pins(db: Session, pin_ids: list[str]) -> dict[str, tuple[float, float]]:
