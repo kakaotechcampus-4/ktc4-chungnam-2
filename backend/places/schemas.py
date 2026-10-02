@@ -63,6 +63,7 @@ class PlaceInfo:
     lng: float
     category: str
     kakao_place_url: str | None = None
+    source: str | None = None   # 데이터 출처 — "permit"(인허가 공공데이터) | "tourapi"(한국관광공사). 가드레일 5 출처 표시용(#242)
 
 
 @dataclass(frozen=True)
