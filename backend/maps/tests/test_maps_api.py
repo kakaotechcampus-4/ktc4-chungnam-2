@@ -241,3 +241,71 @@ def test_list_maps_includes_region_when_present(app_client):
         "label": "부산", "lat": pytest.approx(35.1), "lng": pytest.approx(129.0)
     }
     assert "region" not in body[without_region["id"]]
+
+
+# --- #244 입력 길이 제한 / #245 탈퇴한 구성원 수 ---
+
+
+def _create_body(**overrides):
+    body = {"title": "부산 여행", "start_date": "2026-10-10", "end_date": "2026-10-12"}
+    body.update(overrides)
+    return body
+
+
+def test_title_and_region_label_accept_exactly_100_chars(app_client):
+    resp = app_client.post(
+        "/maps",
+        json=_create_body(title="가" * 100, region={"label": "나" * 100, "lat": 35.1, "lng": 129.0}),
+        cookies=_auth("user_1"),
+    )
+    assert resp.status_code == 201, resp.text
+
+
+def test_title_over_100_chars_is_422(app_client):
+    resp = app_client.post("/maps", json=_create_body(title="가" * 101), cookies=_auth("user_1"))
+    assert resp.status_code == 422
+
+
+def test_region_label_over_100_chars_is_422(app_client):
+    resp = app_client.post(
+        "/maps",
+        json=_create_body(region={"label": "나" * 101, "lat": 35.1, "lng": 129.0}),
+        cookies=_auth("user_1"),
+    )
+    assert resp.status_code == 422
+
+
+def test_empty_title_is_still_422(app_client):
+    resp = app_client.post("/maps", json=_create_body(title=""), cookies=_auth("user_1"))
+    assert resp.status_code == 422
+
+
+def _join(app_client, map_id, user_id):
+    invite = app_client.post(f"/maps/{map_id}/invite", cookies=_auth("user_1")).json()
+    assert app_client.post(f"/invites/{invite['token']}/accept", cookies=_auth(user_id)).status_code == 200
+
+
+def _withdraw(db_session, user_id):
+    from datetime import datetime, timezone
+
+    from sqlalchemy import update
+
+    from auth.models import User
+
+    db_session.execute(update(User).where(User.id == user_id).values(deleted_at=datetime.now(timezone.utc)))
+    db_session.commit()
+
+
+def test_withdrawn_member_is_excluded_from_member_count_but_kept_in_members(app_client, db_session):
+    from maps.api import count_members
+
+    map_id = app_client.post("/maps", json=_create_body(), cookies=_auth("user_1")).json()["id"]
+    _join(app_client, map_id, "user_2")
+    _withdraw(db_session, "user_2")
+
+    assert app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()["member_count"] == 1
+    listed = app_client.get("/maps", cookies=_auth("user_1")).json()
+    assert [m["member_count"] for m in listed if m["id"] == map_id] == [1]
+    assert count_members(db_session, map_id) == 1
+    # 구성원 목록엔 남는다 — 핀 작성자 표기용(#155)
+    assert len(app_client.get(f"/maps/{map_id}/members", cookies=_auth("user_1")).json()) == 2

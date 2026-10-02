@@ -83,7 +83,6 @@ def test_shortlist_changed_event_does_not_leak_actors_my_reaction(members, place
 
 # ───────────────────────── 탈퇴 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D20 — 탈퇴한 구성원이 member_count에 남는다. #245")
 def test_withdrawn_member_is_not_counted_in_member_count(members, place_ids):
     a, b, map_id = members
     assert len(a.get(f"/maps/{map_id}/members").json()) == 2
@@ -120,7 +119,6 @@ def test_safety_reason_survives_deleting_its_pin(members, place_ids, fake_planne
 
 # ───────────────────────── 입력 제한·선택 본문 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D19 — title 100자 제한 미적용. #244")
 def test_map_title_longer_than_100_is_rejected(members):
     a, _, _ = members
     r = a.post("/maps", json={"title": "가" * 101, "start_date": "2026-11-01", "end_date": "2026-11-02",
