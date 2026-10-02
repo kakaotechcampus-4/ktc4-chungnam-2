@@ -7,10 +7,16 @@ import type { Pin } from './model'
 /** 핀이 하나라도 있으면 곧바로 bounds 로 덮어쓴다. 빈 지도에서만 보이는 값이다(v1 장소 데이터는 서울). */
 const FALLBACK_CENTER = { lat: 37.5665, lng: 126.978 }
 
-/** 지도 버튼(현재 위치·최근 핀·전체 핀)이 지도를 움직이는 통로. */
+/** 검색창·칩 아래, 지도가 가려지지 않기 시작하는 높이(px). */
+const VISIBLE_TOP = 170
+
+export type SearchMarker = { n: number; lat: number; lng: number; selected: boolean; onClick: () => void }
+
+/** 지도 버튼(현재 위치·최근 핀·전체 핀)·검색이 지도를 움직이는 통로. */
 export type MapController = {
   panTo: (lat: number, lng: number) => void
-  fitPins: (pins: Pin[]) => void
+  getCenter: () => { lat: number; lng: number }
+  fitPins: (points: { lat: number; lng: number }[]) => void
 }
 
 /**
@@ -19,11 +25,17 @@ export type MapController = {
  */
 export default function MapCanvas({
   pins,
+  memberCount,
+  results = [],
   onSelect,
   onReady,
   onMovingChange,
 }: {
   pins: Pin[]
+  /** 핀 색(참여율)의 분모 — 지도 전체 구성원 수. */
+  memberCount: number
+  /** 장소 검색 결과(Figma 4절) — 파란 번호 원으로 띄운다. 핀이 아니다. */
+  results?: SearchMarker[]
   onSelect: (pinId: string) => void
   onReady: (controller: MapController) => void
   /** 사용자가 지도를 끌기 시작하면 true, 멈추면 false. */
@@ -37,6 +49,7 @@ export default function MapCanvas({
     callbacks.current = { onSelect, onReady, onMovingChange }
   })
   const fittedRef = useRef(false)
+  const mapRef = useRef<{ maps: typeof kakao.maps; map: kakao.maps.Map } | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<Error | null>(null)
 
@@ -63,8 +76,18 @@ export default function MapCanvas({
           maps.event.removeListener(map, 'idle', onIdle)
         }
 
+        mapRef.current = { maps, map }
         callbacks.current.onReady({
-          panTo: (lat, lng) => map.panTo(new maps.LatLng(lat, lng)),
+          // 지도 가운데는 2단계 시트 뒤에 숨는다. 검색창 아래 ~ 시트 윗변 사이 가운데로 오게 아래로 더 민다.
+          panTo: (lat, lng) => {
+            map.setCenter(new maps.LatLng(lat, lng))
+            const h = window.innerHeight
+            map.panBy(0, Math.round(h / 2 - (VISIBLE_TOP + h * 0.41) / 2))
+          },
+          getCenter: () => {
+            const c = map.getCenter()
+            return { lat: c.getLat(), lng: c.getLng() }
+          },
           fitPins: (list) => layer.fit(list),
         })
         setReady(true)
@@ -88,14 +111,35 @@ export default function MapCanvas({
     const layer = layerRef.current
     if (!ready || !layer) return
 
-    layer.sync(pins)
+    layer.sync(pins, memberCount)
 
     // 처음 핀이 들어왔을 때만 시야를 맞춘다. 매번 하면 사용자가 옮긴 시야를 뺏는다.
     if (!fittedRef.current && pins.length > 0) {
       layer.fit(pins)
       fittedRef.current = true
     }
-  }, [pins, ready])
+  }, [pins, memberCount, ready])
+
+  // 검색 결과 번호 원. 몇 개 안 되고 검색할 때마다 통째로 바뀌어서 매번 새로 그린다.
+  useEffect(() => {
+    const m = mapRef.current
+    if (!ready || !m) return
+    const overlays = results.map((r) => {
+      const el = document.createElement('button')
+      el.type = 'button'
+      el.setAttribute('aria-label', `검색 결과 ${r.n}번`)
+      el.textContent = String(r.n)
+      const size = r.selected ? 30 : 24
+      el.style.cssText = `width:${size}px;height:${size}px;border-radius:50%;border:2px solid #fff;font:700 12px/1 var(--font-sans);display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(20,22,31,.3);cursor:pointer;${
+        r.selected ? 'background:var(--brand-600);color:#fff' : 'background:#fff;color:var(--brand-600);border-color:var(--brand-600)'
+      }`
+      el.addEventListener('click', r.onClick)
+      const overlay = new m.maps.CustomOverlay({ position: new m.maps.LatLng(r.lat, r.lng), content: el, clickable: true, zIndex: 5 })
+      overlay.setMap(m.map)
+      return overlay
+    })
+    return () => overlays.forEach((o) => o.setMap(null))
+  }, [results, ready])
 
   return (
     <div className="fixed inset-0 bg-ink-100">

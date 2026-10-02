@@ -30,12 +30,15 @@ export default function BottomSheet({
   onStageChange,
   header,
   top,
+  expandOnScroll = false,
   children,
 }: {
   stage: SheetStage
   onStageChange: (stage: SheetStage) => void
   header: ReactNode
   top?: ReactNode
+  /** 2단계에서는 안을 스크롤하지 않고, 내용을 위로 끌면 3단계로 올린다(핀 상세 '3단계 자동 확장'). */
+  expandOnScroll?: boolean
   children: ReactNode
 }) {
   const [dragY, setDragY] = useState<number | null>(null)
@@ -69,6 +72,24 @@ export default function BottomSheet({
   }
 
   const dragging = dragY !== null && Math.abs(dragY) >= TAP_SLOP
+
+  // 2단계 자동 확장 — 휠·터치로 내용을 위로 밀면 3단계로. 끌지 않으면 2단계에 머문다.
+  const autoExpand = expandOnScroll && stage === 2
+  const touchY = useRef<number | null>(null)
+  const expandHandlers = autoExpand
+    ? {
+        onWheel: (e: React.WheelEvent) => e.deltaY > 0 && onStageChange(3),
+        // 키보드로 안쪽 입력칸에 들어가면 스크롤할 수 있게 3단계로 올린다.
+        onFocusCapture: () => onStageChange(3),
+        onTouchStart: (e: React.TouchEvent) => (touchY.current = e.touches[0].clientY),
+        onTouchMove: (e: React.TouchEvent) => {
+          if (touchY.current !== null && touchY.current - e.touches[0].clientY > TAP_SLOP) {
+            touchY.current = null
+            onStageChange(3)
+          }
+        },
+      }
+    : {}
 
   return (
     <section
@@ -108,7 +129,12 @@ export default function BottomSheet({
         />
         {header}
       </div>
-      <div hidden={stage === 1} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6">
+      <div
+        hidden={stage === 1}
+        {...expandHandlers}
+        // 아래 여백은 탭 바 위로 솟은 AI 버튼(32px)에 마지막 내용이 가리지 않게.
+        className={`min-h-0 flex-1 overscroll-contain px-4 pb-12 ${autoExpand ? 'overflow-hidden' : 'overflow-y-auto'}`}
+      >
         {children}
       </div>
     </section>
