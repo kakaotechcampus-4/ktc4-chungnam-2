@@ -1,7 +1,7 @@
 import { api } from '@/api'
+import type { PinDto } from '@/features/map/model'
 
 import type {
-  CandidateDto,
   EvidenceLineDto,
   EvidencePatchRequest,
   ReadinessDto,
@@ -33,5 +33,4 @@ export const widenRun = (runId: string) => api<RecommendRunDto>(`/runs/${runId}/
 
 export const retryRun = (runId: string) => api<RecommendRunDto>(`/runs/${runId}/retry`, { method: 'POST' })
 
-export const publishCandidate = (candidateId: string) =>
-  api<CandidateDto & Record<string, unknown>>(`/candidates/${candidateId}/publish`, { method: 'POST' })
+export const publishCandidate = (candidateId: string) => api<PinDto>(`/candidates/${candidateId}/publish`, { method: 'POST' })

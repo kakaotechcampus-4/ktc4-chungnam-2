@@ -53,3 +53,42 @@ export function runErrorMessage(err: unknown): string {
   }
   return '추천을 시작하지 못했어요'
 }
+
+export type FunnelRow = RecommendResultDto['funnel'][number]
+
+/** 결과가 0곳일 때(404 NO_RESULTS) 서버가 detail 에 깔때기를 실어 보낸다 — "무엇을 시도했는지 화면에 남긴다"(가드레일 10). */
+export function noResultsFunnel(err: unknown): FunnelRow[] | null {
+  if (!(err instanceof ApiError) || err.code !== 'NO_RESULTS') return null
+  return (err.detail?.funnel as FunnelRow[] | undefined) ?? []
+}
+
+export const RETRY_MAX = 5
+
+export type CheckView = { label: string; tone: 'pass' | 'check' | 'fail' }
+
+/** 조건별 충족 체크(가드레일 5). 모름(needs_check)은 통과가 아니라 "확인 필요"로 따로 보인다. */
+export function toChecks(c: CandidateDto): CheckView[] {
+  return c.checks.map((k) => ({ label: k.label, tone: !k.passed ? 'fail' : k.needs_check ? 'check' : 'pass' }))
+}
+
+/**
+ * 구성원 충족 한 줄(Figma 구성원 의견 표시 원칙) — "조건을 건 A·B 모두 통과 · C·D는 건 조건 없음".
+ * by_member 에 없는 구성원은 조건을 걸지 않은 사람이다.
+ */
+export function fulfillmentLine(c: CandidateDto, members: { userId: string; name: string; isMe: boolean }[]): string {
+  const by = c.member_fulfillment.by_member ?? []
+  const nameOf = (id: string, fallback?: string) => {
+    const m = members.find((x) => x.userId === id)
+    return m ? `${m.name}${m.isMe ? ' (나)' : ''}` : (fallback ?? '구성원')
+  }
+  const ok = by.filter((b) => b.satisfied).map((b) => nameOf(b.user_id, b.display_name))
+  const no = by.filter((b) => !b.satisfied).map((b) => nameOf(b.user_id, b.display_name))
+  const none = members.filter((m) => !by.some((b) => b.user_id === m.userId)).map((m) => nameOf(m.userId))
+  return [
+    ok.length && (no.length ? `${ok.join('·')} 통과` : `조건을 건 ${ok.join('·')} 모두 통과`),
+    no.length && `${no.join('·')} 미충족`,
+    none.length && `${none.join('·')}은(는) 건 조건 없음`,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
