@@ -58,6 +58,34 @@ def test_search_hint_for_an_own_db_place_becomes_a_pin_with_the_places_name(clie
     assert [p["place_name"] for p in client.get(f"/maps/{map_id}/pins").json()] == ["성수 칼국수"]
 
 
+def test_results_carry_pinnable_computed_from_the_own_db(client, pin_body, fake_places, monkeypatch):
+    """#238 — 검색 결과마다 자체 DB에 짝이 있는지 미리 알려 준다. 읽기만 한다(카카오 ID를 기록하지 않는다)."""
+    [hit] = client.get("/places/search", params={"q": "해운대 밀면"}).json()
+    assert hit["pinnable"] is False
+
+    from places.schemas import PlaceSearchResult
+
+    hint = pin_body("seongsu-kalguksu", place_name="성수 칼국수 본점")
+    own = PlaceSearchResult(place_id=hint["place_id"], place_name=hint["place_name"], lat=hint["lat"], lng=hint["lng"], category="음식점")
+    monkeypatch.setattr(places_api, "search_by_name", lambda q, near, limit: [own, own.model_copy(update={"place_id": "kakao:2", "place_name": "없는 가게"})])
+    found = client.get("/places/search", params={"q": "성수"}).json()
+    assert [r["pinnable"] for r in found] == [True, False]
+    pid = fake_places.place_id("seongsu-kalguksu")
+    assert places_api.get_places([pid])[pid].kakao_place_url is None
+
+
+def test_pinnable_is_omitted_when_the_own_db_cannot_be_read(client, monkeypatch, caplog):
+    from sqlalchemy.exc import OperationalError
+
+    def boom(hints, **kw):
+        raise OperationalError("select", {"name": "해운대 밀면"}, Exception("db down"))
+
+    monkeypatch.setattr(places_api, "pinnable_flags", boom)
+    r = client.get("/places/search", params={"q": "해운대 밀면"})
+    assert r.status_code == 200 and "pinnable" not in r.json()[0]
+    assert "해운대" not in caplog.text and "OperationalError" in caplog.text   # 로그엔 예외 타입만(카카오 값 금지)
+
+
 def test_partial_match_and_distance_order(client):
     r = client.get("/places/search", params={"q": "해운대", "lat": 35.1587, "lng": 129.1604})
     assert [p["place_name"] for p in r.json()] == ["해운대 바다 카페", "해운대 밀면"]

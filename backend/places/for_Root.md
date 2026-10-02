@@ -215,3 +215,10 @@ PR 1(#197)에서 고정한 6개 공개 함수를 실제로 구현했다. 이 브
 - 유흥·주점류(정종/대포집/소주방 33곳, 감성주점 3곳)는 **루트 결정 대기**라 기본은 포함, `--exclude-bars`로 제외한다. 제외하면 그 장소의 라벨은 "장소 못 찾음"으로 센다.
 - **`FactLabel`/`get_facts`는 `evidence`·`label_source`를 아직 내보내지 않는다.** 가드레일 5의 "이유·출처"에 쓰려면 계약(`FactLabel` 필드) 확장이 필요하다 — 루트 결정 필요(스키마만 먼저 저장해 뒀다).
 - 성능: 라벨 18만 건 upsert가 이 PC에서 약 4분 걸렸다(청크 1,000건). 실제 적재는 한 번이라 그대로 뒀다.
+
+## #238 검색 응답 `pinnable` + #248 `record_kakao_match` 첫 값 유지 (places 몫)
+
+- **#238**: `GET /places/search`가 결과마다 `pinnable`을 채운다(`places.api.pinnable_flags`). 힌트는 결과의 `place_id`·이름·좌표·추정 분류로 만들고, **읽기만 한다**(카카오 ID 기록 없음). 힌트 N개를 **쿼리 한 번**(`repository.find_candidates_many`)으로 처리한다 — 힌트별로 가까운 순 20개와 같은 카카오 ID 장소를 뽑는 규칙은 `match_place`와 같고, 테스트가 둘의 결과가 같음을 확인한다. 자체 DB를 못 읽으면(`SQLAlchemyError`) 검색은 그대로 주고 `pinnable`만 생략한다(스펙상 optional). dev 모드도 같은 경로라 값을 낸다. `PlaceSearchResult.pinnable: bool | None` 추가.
+- **#248 정책**: `record_kakao_match`는 **첫 값 유지**다. 장소에 카카오 ID가 이미 있고 다른 ID가 오면 아무것도 바꾸지 않는다. 같은 ID면 `kakao_matched_at`만 갱신한다. `FakePlaces`도 같다. (시그니처·예외는 그대로 — 없는 `place_id`는 `KeyError`.)
+- **루트에 요청**: `docs/architecture.md`의 `record_kakao_match` 행("이미 있으면 덮어쓴다")을 "첫 값 유지, 같은 ID면 확인 일자만 갱신"으로 고쳐 주세요(스펙이라 이 모듈에서 바꾸지 않았다). `test_d7_*`의 xfail은 develop을 합친 뒤 이 PR에서 지웠다. `test_d21_*`는 pins 입력 검증(ID 형식·길이)과 함께 정리해야 한다.
+- **#248의 pins 몫(미착수)**: 카카오 ID 형식 검증(`pins/core.py::kakao_place_url`)·`place_id`/`place_name` 길이 제한은 pins 담당이다. 이 PR은 places 정책만 한다.
