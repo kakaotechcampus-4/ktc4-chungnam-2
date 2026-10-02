@@ -1048,6 +1048,7 @@ components:
         text: { type: string, maxLength: 140 } # reason_text와 같은 성격의 자유 텍스트라 같은 값을 씀
         badge: { type: string, enum: [required, preferred, reference], description: "꼭/선호/참고 (5-5)" }
         fact_key: { type: [string, "null"] }
+        wants: { type: [boolean, "null"], description: "이 특징(fact_key)이 있는 장소를 원하는가(#228). true=원함(\"한식 먹자\"), false=원하지 않음(\"한식 말고\"), 없거나 null=모름. FE는 근거 줄에 해석한 방향(예: \"한식 제외\")을 보여 주어 틀리면 −로 뺄 수 있게 한다" }
         is_active: { type: boolean }
         permissions: { $ref: "#/components/schemas/Permissions" }
 

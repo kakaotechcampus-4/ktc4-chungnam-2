@@ -1765,6 +1765,8 @@ export interface components {
              */
             badge: "required" | "preferred" | "reference";
             fact_key?: string | null;
+            /** @description 이 특징(fact_key)이 있는 장소를 원하는가(#228). true=원함("한식 먹자"), false=원하지 않음("한식 말고"), 없거나 null=모름. FE는 근거 줄에 해석한 방향(예: "한식 제외")을 보여 주어 틀리면 −로 뺄 수 있게 한다 */
+            wants?: boolean | null;
             is_active: boolean;
             permissions: components["schemas"]["Permissions"];
         };
