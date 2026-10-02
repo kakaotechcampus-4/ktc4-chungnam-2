@@ -10,6 +10,7 @@ SSE는 TestClient가 스트림을 끊지 못해 여기서 다루지 않는다(re
 
 import pytest
 
+from auth.testing import session_cookie
 from main import app  # noqa: F401  — 라우터 등록을 보장
 
 REGION = {"label": "부산", "lat": 35.1796, "lng": 129.0756}
@@ -24,8 +25,8 @@ def clients(app_client, two_users):
     """같은 앱에 쿠키만 다른 두 클라이언트(a=지도 만든 사람, b=초대받는 사람)."""
     from fastapi.testclient import TestClient
 
-    a = TestClient(app_client.app, cookies={"session": "user_a"})
-    b = TestClient(app_client.app, cookies={"session": "user_b"})
+    a = TestClient(app_client.app, cookies=session_cookie("user_a"))
+    b = TestClient(app_client.app, cookies=session_cookie("user_b"))
     anon = TestClient(app_client.app)
     yield a, b, anon
     for c in (a, b, anon):

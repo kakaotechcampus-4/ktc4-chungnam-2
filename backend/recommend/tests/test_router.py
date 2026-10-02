@@ -8,6 +8,7 @@
 import pytest
 from sqlalchemy import func
 
+from auth.testing import ensure_users, session_cookie
 from authz.deps import get_membership_gateway
 from authz.testing import FakeMembership
 from common.database import get_db_session, session_scope
@@ -17,7 +18,7 @@ from pins.models import Reaction as ReactionRow
 
 
 def _auth(user_id="user_1"):
-    return {"session": user_id}
+    return session_cookie(user_id)
 
 
 @pytest.fixture()
@@ -34,6 +35,8 @@ def app_client(db_session):
     app.dependency_overrides[get_membership_gateway] = lambda: FakeMembership(
         {("map_1", "user_1"): "member", ("map_1", "user_2"): "member"}
     )
+
+    ensure_users(db_session, "user_1", "user_2", "outsider", "user_lonely")   # 인증이 요청마다 users 행을 확인한다(#126)
 
     with TestClient(app) as client:
         yield client

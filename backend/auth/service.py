@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import core
@@ -22,6 +23,7 @@ from recommend import api as recommend_api
 KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 KAKAO_USERINFO_URL = "https://kapi.kakao.com/v2/user/me"
 _HTTP_TIMEOUT_SECONDS = 5.0
+_USER_IDENTITY_CONSTRAINT = "uq_users_provider_identity"
 
 
 def _exchange_kakao_code(code: str) -> str:
@@ -61,19 +63,40 @@ def _fetch_kakao_profile(access_token: str) -> dict:
     return resp.json()
 
 
-def find_or_create_user(db: Session, *, provider: str, provider_user_id: str, display_name: str) -> User:
-    row = db.execute(
+def _find_user(db: Session, *, provider: str, provider_user_id: str) -> User | None:
+    return db.execute(
         select(User).where(User.provider == provider, User.provider_user_id == provider_user_id)
     ).scalar_one_or_none()
+
+
+def _reject_if_withdrawn(row: User) -> User:
+    if row.deleted_at is not None:
+        # 탈퇴한 계정으로 재로그인 — 조용히 되살리지 않는다. 재활성화를 허용할지는
+        # 12절 범위 밖의 별도 결정이라 지금은 막고 루트에 보고한다(auth/for_Root.md).
+        raise AppError("UNAUTHORIZED", "탈퇴한 계정입니다")
+    return row
+
+
+def find_or_create_user(db: Session, *, provider: str, provider_user_id: str, display_name: str) -> User:
+    """같은 카카오 계정의 첫 로그인이 동시에 두 번 들어오면 둘 다 "없다"고 보고 INSERT한다 —
+    유일 제약(uq_users_provider_identity)이 계정 분열은 막지만, 나중 요청의 위반을 안 잡으면
+    500이 된다. 세이브포인트 안에서 넣어 보고, 그 제약 위반이면 먼저 만들어진 행을 다시 읽어
+    돌려준다(shortlist.service.add_item과 같은 세이브포인트 패턴 — 단, add를 세이브포인트 안에서 해서
+    위반이 세이브포인트 안에서 터지므로 세션 전체를 db.rollback()할 필요가 없다). 오류 코드와 제약 이름을 함께 확인해서 다른 무결성 오류는 삼키지 않는다."""
+    row = _find_user(db, provider=provider, provider_user_id=provider_user_id)
     if row is not None:
-        if row.deleted_at is not None:
-            # 탈퇴한 계정으로 재로그인 — 조용히 되살리지 않는다. 재활성화를 허용할지는
-            # 12절 범위 밖의 별도 결정이라 지금은 막고 루트에 보고한다(auth/for_Root.md).
-            raise AppError("UNAUTHORIZED", "탈퇴한 계정입니다")
-        return row
+        return _reject_if_withdrawn(row)
     row = User(provider=provider, provider_user_id=provider_user_id, display_name=display_name)
-    db.add(row)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(row)   # 세이브포인트 안에서 add한다 — 밖에서 add하면 begin_nested() 진입 시 autoflush가 먼저 터진다
+            db.flush()
+    except IntegrityError as exc:
+        if getattr(exc.orig, "pgcode", None) == "23505" and _USER_IDENTITY_CONSTRAINT in str(exc.orig):
+            existing = _find_user(db, provider=provider, provider_user_id=provider_user_id)
+            if existing is not None:
+                return _reject_if_withdrawn(existing)
+        raise
     return row
 
 

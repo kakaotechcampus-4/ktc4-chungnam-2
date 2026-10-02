@@ -23,11 +23,15 @@ import authz.deps
 import common.events  # noqa: F401
 import pins.models  # noqa: F401
 import places.models  # noqa: F401 — places.api.get_places(db)가 places 테이블을 읽는다
+from auth.testing import ensure_users
 from authz.testing import FakeMembership
 from common.database import Base, session_scope
 
 # 위 두 import는 Base.metadata에 테이블(pins/reactions, event_log)을 등록시키기 위한 것 —
 # 직접 쓰이진 않는다. event_log는 test_permissions_contract.py 등이 이벤트 발행을 검증할 때 쓴다.
+
+# 이 모듈 테스트가 쿠키로 로그인시키는 사용자 id 전부
+TEST_USER_IDS = ("user_1", "user_2", "outsider", "user_lonely")
 
 BASE_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://pingo:pingo@localhost:5432/pingo")
 
@@ -126,6 +130,8 @@ def app_client(db_session, fake_places):
         ("map_1", "user_2"): "member",
         ("map_1", "stranger"): "member",
     })
+
+    ensure_users(db_session, *TEST_USER_IDS)   # 인증이 요청마다 users 행을 확인한다(#126)
 
     with TestClient(app) as client:
         yield client

@@ -32,6 +32,7 @@ _EXERCISED: set[tuple[str, str]] = set()   # 이 모듈의 테스트들이 실�
 
 SPEC = yaml.safe_load((Path(__file__).resolve().parents[2] / "docs" / "api-spec.yaml").read_text(encoding="utf-8"))
 _REGISTRY = Registry().with_resource("urn:pingo-spec", Resource.from_contents(SPEC, default_specification=DRAFT202012))
+from auth.testing import session_cookie
 
 
 def _template_for(path: str, method: str) -> str | None:
@@ -99,8 +100,8 @@ class _Checked:
 def clients(app_client, two_users):
     from fastapi.testclient import TestClient
 
-    a = TestClient(app_client.app, cookies={"session": "user_a"})
-    b = TestClient(app_client.app, cookies={"session": "user_b"})
+    a = TestClient(app_client.app, cookies=session_cookie("user_a"))
+    b = TestClient(app_client.app, cookies=session_cookie("user_b"))
     problems: list[str] = []
     yield _Checked(a, problems), _Checked(b, problems), problems
     a.close()

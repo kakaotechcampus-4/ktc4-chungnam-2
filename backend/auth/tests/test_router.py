@@ -1,9 +1,7 @@
 """auth/router.py 통합 테스트 — 실제 PostgreSQL 필요(conftest.py 참고), main.app을 그대로 태운다.
 
-AUTH_MODE는 테스트 환경에서 기본 dev다(common/settings.py) — 다른 모든 모듈의 통합 테스트와
-같은 방식으로 `cookies={"session": user_id}`를 그대로 쓴다(auth/deps.py 모듈 docstring 참고).
-카카오 콜백만 dev/real 구분 없이 항상 실제 service.login_with_kakao_code를 타므로, 그 안의
-httpx 호출만 몬키패치한다.
+인증은 서명된 세션 토큰이다(#126) — `auth.testing.session_cookie`로 만든다. 카카오 콜백은 실제
+service.login_with_kakao_code를 타므로 그 안의 httpx 호출만 몬키패치한다.
 """
 
 from fastapi.testclient import TestClient
@@ -11,6 +9,7 @@ from sqlalchemy import select
 
 from auth import service
 from auth.models import User
+from auth.testing import session_cookie
 from auth.tests.test_service import _FakeResponse
 
 
@@ -58,7 +57,7 @@ def test_kakao_callback_surfaces_kakao_failure_as_unauthorized_envelope(app_clie
 
 def test_me_returns_current_user(app_client, db_session):
     _seed_user(db_session, user_id="user_1", display_name="철수")
-    resp = app_client.get("/auth/me", cookies={"session": "user_1"})
+    resp = app_client.get("/auth/me", cookies=session_cookie("user_1"))
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"id": "user_1", "display_name": "철수"}
 
@@ -70,34 +69,34 @@ def test_me_without_cookie_is_401(app_client):
 
 
 def test_me_for_unknown_user_is_401(app_client):
-    resp = app_client.get("/auth/me", cookies={"session": "no-such-user"})
+    resp = app_client.get("/auth/me", cookies=session_cookie("no-such-user"))
     assert resp.status_code == 401
 
 
 def test_patch_me_updates_display_name(app_client, db_session):
     _seed_user(db_session, user_id="user_1", display_name="철수")
-    resp = app_client.patch("/auth/me", json={"display_name": "  새이름 "}, cookies={"session": "user_1"})
+    resp = app_client.patch("/auth/me", json={"display_name": "  새이름 "}, cookies=session_cookie("user_1"))
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"id": "user_1", "display_name": "새이름"}
 
-    assert app_client.get("/auth/me", cookies={"session": "user_1"}).json()["display_name"] == "새이름"
+    assert app_client.get("/auth/me", cookies=session_cookie("user_1")).json()["display_name"] == "새이름"
 
 
 def test_patch_me_accepts_50_chars(app_client, db_session):
     _seed_user(db_session, user_id="user_1")
-    resp = app_client.patch("/auth/me", json={"display_name": "가" * 50}, cookies={"session": "user_1"})
+    resp = app_client.patch("/auth/me", json={"display_name": "가" * 50}, cookies=session_cookie("user_1"))
     assert resp.status_code == 200
 
 
 def test_patch_me_rejects_invalid_names_with_validation_error(app_client, db_session):
     _seed_user(db_session, user_id="user_1", display_name="철수")
     for bad in ["", "   ", "가" * 51]:
-        resp = app_client.patch("/auth/me", json={"display_name": bad}, cookies={"session": "user_1"})
+        resp = app_client.patch("/auth/me", json={"display_name": bad}, cookies=session_cookie("user_1"))
         assert resp.status_code == 422, bad
         assert resp.json()["code"] == "VALIDATION_ERROR"
-    assert app_client.patch("/auth/me", json={}, cookies={"session": "user_1"}).status_code == 422
+    assert app_client.patch("/auth/me", json={}, cookies=session_cookie("user_1")).status_code == 422
 
-    assert app_client.get("/auth/me", cookies={"session": "user_1"}).json()["display_name"] == "철수"
+    assert app_client.get("/auth/me", cookies=session_cookie("user_1")).json()["display_name"] == "철수"
 
 
 def test_patch_me_without_cookie_is_401(app_client):
@@ -107,13 +106,14 @@ def test_patch_me_without_cookie_is_401(app_client):
 
 def test_patch_me_after_withdraw_is_401(app_client, db_session):
     _seed_user(db_session, user_id="user_1")
-    app_client.post("/auth/withdraw", cookies={"session": "user_1"})
-    resp = app_client.patch("/auth/me", json={"display_name": "새이름"}, cookies={"session": "user_1"})
+    app_client.post("/auth/withdraw", cookies=session_cookie("user_1"))
+    resp = app_client.patch("/auth/me", json={"display_name": "새이름"}, cookies=session_cookie("user_1"))
     assert resp.status_code == 401
 
 
-def test_logout_clears_cookie(app_client):
-    resp = app_client.post("/auth/logout", cookies={"session": "user_1"})
+def test_logout_clears_cookie(app_client, db_session):
+    _seed_user(db_session, user_id="user_1")
+    resp = app_client.post("/auth/logout", cookies=session_cookie("user_1"))
     assert resp.status_code == 204
     assert "session=" in resp.headers.get("set-cookie", "")
 
@@ -125,7 +125,7 @@ def test_logout_without_cookie_is_401(app_client):
 
 def test_withdraw_soft_deletes_user_and_clears_cookie(app_client, db_session):
     _seed_user(db_session, user_id="user_1")
-    resp = app_client.post("/auth/withdraw", cookies={"session": "user_1"})
+    resp = app_client.post("/auth/withdraw", cookies=session_cookie("user_1"))
     assert resp.status_code == 204
     assert "session=" in resp.headers.get("set-cookie", "")
 
@@ -141,10 +141,10 @@ def test_withdraw_without_cookie_is_401(app_client):
 
 def test_me_after_withdraw_is_401(app_client, db_session):
     _seed_user(db_session, user_id="user_1")
-    withdraw_resp = app_client.post("/auth/withdraw", cookies={"session": "user_1"})
+    withdraw_resp = app_client.post("/auth/withdraw", cookies=session_cookie("user_1"))
     assert withdraw_resp.status_code == 204
 
-    resp = app_client.get("/auth/me", cookies={"session": "user_1"})
+    resp = app_client.get("/auth/me", cookies=session_cookie("user_1"))
     assert resp.status_code == 401
 
 

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from auth.testing import session_cookie
 from recommend import constraints
 from recommend.core import apply_disqualifier_filters, build_check
 from recommend.models import EvidenceLine
@@ -114,8 +115,8 @@ def _start_run_with_active_condition(a, b, db_session, fact_key: str, pin_body) 
 @pytest.fixture()
 def clients(app_client, two_users):
     from fastapi.testclient import TestClient
-    a = TestClient(app_client.app, cookies={"session": "user_a"})
-    b = TestClient(app_client.app, cookies={"session": "user_b"})
+    a = TestClient(app_client.app, cookies=session_cookie("user_a"))
+    b = TestClient(app_client.app, cookies=session_cookie("user_b"))
     yield a, b
     a.close()
     b.close()

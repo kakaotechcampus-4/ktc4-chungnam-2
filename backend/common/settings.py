@@ -15,7 +15,9 @@ Environment = Literal["dev", "test", "prod"]
 AdapterMode = Literal["dev", "real"]
 
 PLACE_SOURCE_NAMES = ("kakao", "naver", "google")
-_PORTS = ("places", "auth", "llm")
+_PORTS = ("places", "llm")
+# 주의: "auth"도 여기 없다(#126) — 쿠키 문자열을 그대로 user_id로 믿는 개발용 스텁을 없앴다.
+# 인증 구현은 auth/deps.py의 실구현 하나뿐이라 dev/real을 오갈 대상이 없다.
 # 주의: "membership"은 여기 없다(issue #89) — maps.api.DbMembershipGateway가 유일한 구현이라
 # dev/real을 오갈 대상 자체가 없다. authz/deps.py::get_membership_gateway가 직접 그 클래스를
 # 쓴다(select() 안 거침).
@@ -82,7 +84,6 @@ class Settings:
     cors_allow_origin_regex: str | None
     session_secret: str
     places_mode: AdapterMode
-    auth_mode: AdapterMode
     # llm 모듈 전용 — real 구현은 #116. 기본값 "real"은 prod 안전 쪽이다(스텁이 조용히 올라가지
     # 않게). from_env()는 항상 명시적으로 넘긴다.
     llm_mode: AdapterMode = "real"
@@ -164,7 +165,9 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         _load_dotenv_once()
-        environment = _env("PINGO_ENV", "dev")
+        # 안 정했으면 가장 엄격한 쪽(prod)이다(#126) — 배포에서 PINGO_ENV를 빠뜨려도 prod 가드가 돈다.
+        # 로컬 개발은 .env에 PINGO_ENV=dev를 적는다(.env.example).
+        environment = _env("PINGO_ENV", "prod")
         # prod에서는 "안 정했으면 dev"가 아니라 "안 정했으면 real"이다 —
         # 환경변수 하나 빠뜨렸다고 스텁이 조용히 올라가면 안 된다.
         default_mode: AdapterMode = "real" if environment == "prod" else "dev"
@@ -180,7 +183,6 @@ class Settings:
             cors_allow_origin_regex=regex or None,
             session_secret=_env("SESSION_SECRET", "change-me-before-deploy"),
             places_mode=_mode("PLACES_MODE", default_mode),
-            auth_mode=_mode("AUTH_MODE", default_mode),
             llm_mode=_mode("LLM_MODE", default_mode),
             kakao_client_id=_env("KAKAO_CLIENT_ID", ""),
             kakao_client_secret=_env("KAKAO_CLIENT_SECRET", ""),

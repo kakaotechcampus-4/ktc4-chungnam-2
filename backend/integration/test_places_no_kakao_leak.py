@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from auth.testing import session_cookie
 from main import app  # noqa: F401
 from places import api as places_api
 from places.service import PlaceService
@@ -99,7 +100,7 @@ def test_name_search_response_is_display_only_and_pin_creation_needs_echo(app_cl
     """GET /places/search는 응답으로만 값을 돌려준다. 이어지는 핀 생성은 서버 기억이 아니라 echo 값에 의존한다."""
     from fastapi.testclient import TestClient
 
-    c = TestClient(app_client.app, cookies={"session": "user_a"})
+    c = TestClient(app_client.app, cookies=session_cookie("user_a"))
     r = c.get("/places/search", params={"q": "카카오"})
     assert r.status_code == 200 and r.json()[0]["place_name"] == "카카오전용가게ZZ"
     m = c.post("/maps", json={"title": "t", "start_date": "2026-11-01", "end_date": "2026-11-02",
