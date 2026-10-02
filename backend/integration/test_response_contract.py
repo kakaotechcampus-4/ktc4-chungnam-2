@@ -283,3 +283,58 @@ def test_the_validator_actually_rejects_a_wrong_shape():
     """검증기가 조용히 다 통과시키는 게 아닌지 — 필수 필드가 빠진 Pin은 실패해야 한다."""
     with pytest.raises(AssertionError, match="스펙과 다르다"):
         _validate("GET", "/maps/m1/pins", 200, [{"id": "x"}])
+
+
+# 응답 객체 스키마는 `required`를 선언해야 한다 — 비어 있으면 핸들러가 `{}`를 돌려줘도 위 검증이 통과하고,
+# 생성되는 FE 타입이 전부 optional이 된다(멘토 리뷰, PR #152). 의도적으로 비워 둔 스키마는 이유와 함께 여기에 둔다.
+NO_REQUIRED_OK: dict[str, str] = {
+    "Permissions": "맥락마다 쓰는 필드가 다르다(can_disable은 근거 줄 전용, can_publish는 후보 전용) — 필드별로 선택",
+}
+
+
+def _response_object_schemas_without_required() -> set[str]:
+    schemas = SPEC["components"]["schemas"]
+    seen: set[str] = set()
+    bad: set[str] = set()
+
+    def walk(sch, name: str) -> None:
+        if not isinstance(sch, dict):
+            return
+        if "$ref" in sch:
+            ref = sch["$ref"].rsplit("/", 1)[-1]
+            if ref not in seen:
+                seen.add(ref)
+                walk(schemas[ref], ref)
+            return
+        for key in ("oneOf", "anyOf", "allOf"):
+            for sub in sch.get(key, []):
+                walk(sub, name)
+        if sch.get("type") == "array":
+            walk(sch.get("items"), name)
+        if "properties" in sch:
+            if not sch.get("required"):
+                bad.add(name)
+            for prop, sub in sch["properties"].items():
+                walk(sub, f"{name}.{prop}")
+
+    for ops in SPEC["paths"].values():
+        for op in ops.values():
+            if not isinstance(op, dict):
+                continue
+            for status, resp in op.get("responses", {}).items():
+                if not str(status).startswith("2"):
+                    continue
+                if "$ref" in resp:
+                    resp = SPEC["components"]["responses"][resp["$ref"].rsplit("/", 1)[-1]]
+                walk(((resp.get("content") or {}).get("application/json") or {}).get("schema"), "(inline)")
+    return bad
+
+
+def test_response_object_schemas_declare_required():
+    missing = sorted(_response_object_schemas_without_required() - set(NO_REQUIRED_OK))
+    assert not missing, f"응답 스키마에 required가 없다 — 항상 오는 필드를 채우거나 NO_REQUIRED_OK에 이유와 함께 등록: {missing}"
+
+
+def test_no_required_exceptions_are_still_needed():
+    stale = sorted(set(NO_REQUIRED_OK) - _response_object_schemas_without_required())
+    assert not stale, f"required가 채워져 예외가 필요 없다 — NO_REQUIRED_OK에서 지운다: {stale}"
