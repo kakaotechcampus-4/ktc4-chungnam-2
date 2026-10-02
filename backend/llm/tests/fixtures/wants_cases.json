@@ -1,0 +1,20 @@
+[
+  {"text": "한식 먹자", "badge": "preferred", "fact_key": "cuisine_korean", "wants": true, "note": "긍정"},
+  {"text": "한식 말고 다른 거", "badge": "required", "fact_key": "cuisine_korean", "wants": false, "note": "부정형 — 있는 곳을 원하지 않음"},
+  {"text": "회 못 먹어", "badge": "required", "fact_key": "cuisine_raw_fish", "wants": false, "note": "못 먹는다 = 있는 곳 원하지 않음"},
+  {"text": "회 좋아해", "badge": "preferred", "fact_key": "cuisine_raw_fish", "wants": true, "note": "긍정"},
+  {"text": "고기 먹자", "badge": "preferred", "fact_key": "cuisine_bbq", "wants": true, "note": "긍정"},
+  {"text": "고기는 별로야", "badge": "preferred", "fact_key": "cuisine_bbq", "wants": false, "note": "부정형"},
+  {"text": "조용한 곳이 좋아", "badge": "preferred", "fact_key": "quiet", "wants": true, "note": "긍정"},
+  {"text": "시끄러운 데는 싫어", "badge": "required", "fact_key": "quiet", "wants": true, "note": "부정형 뒤집기 — 키 뜻(조용한가) 기준으로 조용한 곳을 원함"},
+  {"text": "조용한 곳은 심심해", "badge": "preferred", "fact_key": "quiet", "wants": false, "note": "조용한 곳을 원하지 않음"},
+  {"text": "붐비는 데는 질색이야", "badge": "required", "fact_key": "is_crowded_large", "wants": null, "note": "hard 키 — 방향 고정이라 wants 없음"},
+  {"text": "너무 매워요", "badge": "required", "fact_key": "spicy_focused", "wants": null, "note": "hard 키"},
+  {"text": "주차 안 되는 곳은 안 갈래", "badge": "required", "fact_key": "parking_available", "wants": true, "note": "부정형 뒤집기 — 주차 가능한 곳을 원함"},
+  {"text": "주차 안 되는 곳이 오히려 낫지", "badge": "preferred", "fact_key": "parking_available", "wants": false, "note": "주차 가능한 곳을 원하지 않음(드문 말)"},
+  {"text": "강아지랑 못 가는 데는 싫어", "badge": "required", "fact_key": "pet_friendly", "wants": true, "note": "부정형 뒤집기 — 반려동물 가능한 곳을 원함"},
+  {"text": "실내 말고 야외가 좋아", "badge": "preferred", "fact_key": "is_outdoor", "wants": true, "note": "'말고'가 붙어도 실제 원하는 건 야외"},
+  {"text": "한식이 싫은 건 아닌데 오늘은 다른 게 끌려", "badge": "preferred", "fact_key": "cuisine_korean", "wants": false, "note": "이중 부정 — 결국 한식 있는 곳을 원하지 않음"},
+  {"text": "한식 안 먹고 싶다는 건 아니야", "badge": "preferred", "fact_key": "cuisine_korean", "wants": null, "note": "이중 부정 + 의향 불분명 — 확실하지 않으면 null"},
+  {"text": "그냥 별로예요", "badge": "preferred", "fact_key": null, "wants": null, "note": "키 없음 — wants도 null"}
+]

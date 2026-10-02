@@ -65,7 +65,7 @@ def merge_planned(
     inputs: Sequence[Mapping[str, Any]], output: PlanningOutput
 ) -> list[EvidenceLine]:
     """모델 응답을 입력에 합친다(순수 함수). 모델이 줄마다 바꿀 수 있는 건 fact_key(입력에 없을
-    때)와 circle_radius_m뿐이다 — badge를 포함한 나머지는 전부 입력 값이 이긴다.
+    때), wants(입력에 없을 때), circle_radius_m뿐이다 — badge를 포함한 나머지는 전부 입력 값이 이긴다.
 
     badge를 모델이 못 바꾸는 이유: 격하는 제약 완화(가드레일 4)이고, 격상도 사유 텍스트에 섞인
     지시문이 다른 사람 줄을 required로 올리는 통로가 된다. 줄 사이가 섞이지 않게 줄 단위로만 합친다.
@@ -83,10 +83,13 @@ def merge_planned(
         if _normalize(planned.text) != _normalize(base.text):
             raise ValueError("응답 text가 입력 text와 다르다")
         radius = planned.circle_radius_m
+        fact_key = base.fact_key or planned.fact_key
+        wants = base.wants if base.wants is not None else planned.wants
         merged.append(
             base.model_copy(
                 update={
-                    "fact_key": base.fact_key or planned.fact_key,
+                    "fact_key": fact_key,
+                    "wants": wants if fact_key is not None else None,
                     "circle_radius_m": radius if radius is not None and MIN_RADIUS_M <= radius <= MAX_RADIUS_M else base.circle_radius_m,
                 }
             )

@@ -6,6 +6,7 @@
    (예전엔 이 키들이 FactKey에 없어서 검증에서 거부됐다.)
 """
 
+import re
 from functools import partial
 from types import SimpleNamespace
 from typing import get_args
@@ -27,7 +28,7 @@ class TestPromptListIsBuiltFromFactKey:
         assert set(prompts.FACT_KEY_MEANINGS) == set(FACT_KEYS)
 
     def test_prompt_lists_nothing_beyond_fact_keys(self):
-        listed = [line.split(":")[0].removeprefix("   - ") for line in prompts.PLAN_EVIDENCE_PROMPT.splitlines() if line.startswith("   - ")]
+        listed = re.findall(r"^   - ([a-z_]+): ", prompts.PLAN_EVIDENCE_PROMPT, flags=re.MULTILINE)
         assert listed == list(FACT_KEYS)
 
     def test_retired_capacity_min_is_gone(self):
@@ -90,3 +91,91 @@ def test_unrelated_phrase_stays_null():
 def test_model_cannot_emit_key_outside_registry():
     with pytest.raises(ValidationError):
         EvidenceLine(source="reaction", text="x", badge="preferred", fact_key="cuisine_pizza")
+
+
+# ── 방향(wants) — #230 ──────────────────────────────────────────────────────
+
+import json
+from pathlib import Path
+
+from llm.prompts import HARD_FACT_KEYS
+
+WANTS_CASES = json.loads((Path(__file__).parent / "fixtures" / "wants_cases.json").read_text(encoding="utf-8"))
+
+
+class TestWantsSchema:
+    def test_wants_without_fact_key_is_rejected(self):
+        with pytest.raises(ValidationError):
+            EvidenceLine(source="reaction", text="x", badge="preferred", wants=True)
+
+    def test_wants_defaults_to_none(self):
+        assert EvidenceLine(source="reaction", text="x", badge="preferred", fact_key="quiet").wants is None
+
+    def test_null_fact_key_with_null_wants_is_fine(self):
+        assert EvidenceLine(source="reaction", text="x", badge="preferred").wants is None
+
+
+class TestWantsMerge:
+    def test_model_wants_is_taken_when_input_has_none(self):
+        planned = EvidenceLine(source="reaction", text="한식 말고", badge="required", fact_key="cuisine_korean", wants=False)
+
+        [line] = service.merge_planned([_reason("한식 말고", "required")], PlanningOutput(evidence_lines=[planned]))
+
+        assert (line.fact_key, line.wants) == ("cuisine_korean", False)
+
+    def test_input_wants_is_not_overwritten_by_model(self):
+        raw = {**_reason("한식 먹자", "preferred"), "fact_key": "cuisine_korean", "wants": True}
+        planned = EvidenceLine(source="reaction", text="한식 먹자", badge="preferred", fact_key="cuisine_korean", wants=False)
+
+        [line] = service.merge_planned([raw], PlanningOutput(evidence_lines=[planned]))
+
+        assert line.wants is True
+
+    def test_wants_without_key_in_input_is_rejected(self):
+        raw = {**_reason("그냥", "preferred"), "wants": False}  # key 없는 wants는 merge 전에 스키마가 거부한다
+        with pytest.raises(ValidationError):
+            service.merge_planned([raw], PlanningOutput(evidence_lines=[
+                EvidenceLine(source="reaction", text="그냥", badge="preferred")]))
+
+    def test_unknown_direction_stays_null(self):
+        planned = EvidenceLine(source="reaction", text="한식", badge="preferred", fact_key="cuisine_korean")
+
+        [line] = service.merge_planned([_reason("한식", "preferred")], PlanningOutput(evidence_lines=[planned]))
+
+        assert line.wants is None
+
+
+class TestWantsPrompt:
+    def test_prompt_explains_direction_and_flip_rule(self):
+        prompt = prompts.PLAN_EVIDENCE_PROMPT
+        assert "wants" in prompt
+        assert '"시끄러운 데는 싫어" → quiet, wants=true' in prompt
+        assert '"한식 말고" → cuisine_korean, wants=false' in prompt
+
+    def test_prompt_names_every_hard_key_as_fixed_direction(self):
+        for key in HARD_FACT_KEYS:
+            assert key in prompts.PLAN_EVIDENCE_PROMPT.split("hard 키(")[1].split(")")[0]
+
+    def test_hard_keys_are_registered_fact_keys(self):
+        assert set(HARD_FACT_KEYS) <= set(FACT_KEYS)
+
+    def test_no_unreplaced_placeholder(self):
+        assert "__HARD_KEYS__" not in prompts.PLAN_EVIDENCE_PROMPT
+        assert "{fact_key_lines}" not in prompts.PLAN_EVIDENCE_PROMPT
+
+
+class TestWantsFixtures:
+    """#116에서 실제 Luna에 먹일 문장·기대값 쌍이다. 여기서는 파일 자체가 규칙에 맞는지만 본다."""
+
+    def test_at_least_twelve_cases(self):
+        assert len(WANTS_CASES) >= 12
+
+    @pytest.mark.parametrize("case", WANTS_CASES, ids=[c["text"] for c in WANTS_CASES])
+    def test_case_is_valid_and_consistent(self, case):
+        line = EvidenceLine(source="reaction", text=case["text"], badge=case["badge"], fact_key=case["fact_key"], wants=case["wants"])
+        if line.fact_key in HARD_FACT_KEYS:
+            assert line.wants is None, "hard 키는 방향이 고정이라 기대값도 null이다"
+
+    def test_cases_cover_both_directions_and_the_flip(self):
+        assert {c["wants"] for c in WANTS_CASES} == {True, False, None}
+        assert any(c["fact_key"] == "quiet" and c["wants"] is True and "싫" in c["text"] for c in WANTS_CASES)
