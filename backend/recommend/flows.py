@@ -264,8 +264,17 @@ def patch_evidence(
         if not can(principal, "evidence.disable", resource):
             raise AppError("FORBIDDEN")
         service.set_evidence_active(db, line.id, is_active)
-    for text in adds:
-        service.add_manual_evidence(db, run_id=run.id, author_id=principal.user_id, text=text)
+    # 「+」로 추가한 줄도 ②를 거쳐 fact_key·wants를 붙인다(#254) — 안전 사유("조개 알러지")가 reference로만 남아
+    # 실격이 안 켜지는 걸 막는다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다).
+    if adds:
+        planned = llm_service.plan_evidence([
+            {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "reference", "fact_key": None}
+            for text in adds
+        ])
+        for text, line in zip(adds, planned):
+            service.add_manual_evidence(
+                db, run_id=run.id, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
+            )
     return [_evidence_response(line, principal) for line in service.list_evidence(db, run_id)]
 
 
@@ -288,12 +297,17 @@ def confirm_regions(db: Session, *, run_id: str, accept_union: bool) -> list[sch
 
 
 def _active_hard_fact_keys(db: Session, run: RecommendRun) -> list[str]:
-    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: is_active=True인
-    evidence_line 중 badge='required'로 fact_key가 매핑된 것만 실격 대상으로 켠다(누구도
-    문제 제기 안 한 조건은 검사하지 않는다). 카테고리에 안 맞는 fact_key는 애초에 제외."""
+    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: is_active=True인 evidence_line 중 fact_key가
+    매핑된 hard 키를 "안전 조건 사유는 배지와 무관하게 실격이다" 판정표대로 켠다(#254). required는 wants가
+    true가 아니면(false·null) 켜고, preferred·reference는 wants=false일 때만 켠다. 켜진 키는 라벨이 참이든
+    모름이든 제외한다(안전 조건, 가드레일 8). 카테고리에 안 맞는 fact_key는 애초에 제외."""
     lines = service.list_active_evidence(db, run.id)
     applicable = set(constraints.hard_fact_keys_for(run.category))
-    active = {line.fact_key for line in lines if line.badge == "required" and line.fact_key is not None}
+    active = {
+        line.fact_key for line in lines
+        if line.fact_key is not None
+        and (line.wants is not True if line.badge == "required" else line.wants is False)
+    }
     return sorted(active & applicable)
 
 

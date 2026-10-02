@@ -116,10 +116,13 @@ def add_reaction_evidence(db: Session, *, run_id: uuid.UUID, lines: list[dict]) 
     db.flush()
 
 
-def add_manual_evidence(db: Session, *, run_id: uuid.UUID, author_id: str, text: str) -> EvidenceLine:
+def add_manual_evidence(
+    db: Session, *, run_id: uuid.UUID, author_id: str, text: str, fact_key: str | None = None, wants: bool | None = None,
+) -> EvidenceLine:
+    """「+」로 직접 추가한 줄 — 배지는 reference 고정. fact_key·wants는 ②(plan_evidence)가 붙인 값이다(#254)."""
     line = EvidenceLine(
         run_id=run_id, author_id=author_id, source="manual", text=text,
-        badge="reference", fact_key=None, is_active=True,
+        badge="reference", fact_key=fact_key, wants=wants, is_active=True,
     )
     db.add(line)
     db.flush()
