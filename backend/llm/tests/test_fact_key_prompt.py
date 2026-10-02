@@ -185,3 +185,26 @@ class TestWantsFixtures:
     def test_cases_cover_both_directions_and_the_flip(self):
         assert {c["wants"] for c in WANTS_CASES} == {True, False, None}
         assert any(c["fact_key"] == "quiet" and c["wants"] is True and "싫" in c["text"] for c in WANTS_CASES)
+
+
+# ── 줄 text 비교 정규화 — #249 ───────────────────────────────────────────────
+
+import unicodedata
+
+
+class TestTextEchoNormalization:
+    def _merge(self, echoed: str):
+        planned = EvidenceLine(source="reaction", text=echoed, badge="required", fact_key="cuisine_korean", wants=False)
+        return service.merge_planned([_reason("한식 말고 다른 거", "required")], PlanningOutput(evidence_lines=[planned]))
+
+    def test_nfd_echo_is_accepted_and_result_keeps_input_text(self):
+        [line] = self._merge(unicodedata.normalize("NFD", "한식 말고 다른 거"))
+        assert line.text == "한식 말고 다른 거" and line.fact_key == "cuisine_korean"
+
+    def test_zero_width_and_spacing_differences_are_accepted(self):
+        [line] = self._merge("한식\u200b 말고\u00a0 다른\n거")
+        assert line.text == "한식 말고 다른 거"
+
+    def test_different_text_is_still_rejected(self):
+        with pytest.raises(ValueError):
+            self._merge("중식 먹자")
