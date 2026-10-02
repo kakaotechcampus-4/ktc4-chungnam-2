@@ -34,7 +34,6 @@ def _run(a, map_id):
 
 # ───────────────────────── D6 — ♥ 선호 프로필 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D6 — ♥ 선호 프로필이 pins.checks만 읽어 죽어 있다. #247")
 def test_d6_hearted_places_shape_the_preference_profile(members, place_ids, fake_planner, db_session):
     """문서 "선호 점수 — 입력 1": ♥가 달린 장소들의 라벨 자체를 선호 신호로 쓴다. 둘이 횟집에 ♥ → 횟집 계열(raw_fish 참)이 위로."""
     a, b, map_id = members

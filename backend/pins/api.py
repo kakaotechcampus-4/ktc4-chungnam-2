@@ -268,21 +268,16 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
     return reasoned
 
 
-def list_liked_pins_with_checks(db: Session, *, map_id: str, category: str, requested_by: str) -> list[dict]:
-    """recommend의 선호 기준 만들기(#112 1단계)가 쓴다 — 이 카테고리의 삭제되지 않은 핀 중
-    ♥(like) 반응을 받은 것들의 checks(가드레일5 — #124가 게시 시점에 candidate.checks를
-    복사해둔 값. 직접 찍었거나 아직 recommend를 거치지 않은 핀은 항상 빈 리스트)와, 그 핀에
-    ♥를 누른 서로 다른 user_id 집합을 핀 하나당 한 항목으로 묶어 돌려준다.
+def list_liked_pins(db: Session, *, map_id: str, category: str, requested_by: str) -> list[dict]:
+    """recommend의 ♥ 선호 프로필(#112 1단계, #247)이 쓴다 — 이 카테고리의 삭제되지 않은 핀 중 ♥(like)를
+    받은 것의 place_id와, 그 핀에 ♥를 누른 서로 다른 user_id 집합(`member_ids`)을 핀 하나당 한 항목으로
+    돌려준다. 라벨은 pins가 알 필요 없다 — recommend가 place_id로 places의 라벨을 직접 읽는다.
 
     가드레일 1 — requested_by(이번 run의 요청자)에게 보이는 핀만 포함한다(공개 핀 + 본인의 비공개
     핀, `service.list_pins`의 가시성 판정과 같다). 안 그러면 다른 구성원의 비공개 AI 후보에 붙은
-    ♥/라벨이 요청자의 선호 프로필에 섞여 남의 비공개 후보가 순위에 영향을 준다.
-
-    checks가 비어 있으면 recommend 쪽에서 known 라벨이 하나도 없어 자연히 선호 기준에
-    기여하지 못한다(라벨 프리시딩 파이프라인 #13/#110/#111이 아직 없다는 뜻 — 실제 라벨이
-    들어오면 이 함수는 그대로 두고 checks가 채워지는 쪽에서 자동으로 해결된다)."""
+    ♥가 요청자의 선호 프로필에 섞여 남의 비공개 후보가 순위에 영향을 준다."""
     rows = db.execute(
-        select(PinRow.id, PinRow.checks, ReactionRow.user_id)
+        select(PinRow.id, PinRow.place_id, ReactionRow.user_id)
         .select_from(PinRow)
         .join(ReactionRow, ReactionRow.pin_id == PinRow.id)
         .where(
@@ -292,10 +287,10 @@ def list_liked_pins_with_checks(db: Session, *, map_id: str, category: str, requ
         )
     ).all()
     grouped: dict[str, dict] = {}
-    for pin_id, checks, user_id in rows:
-        entry = grouped.setdefault(str(pin_id), {"checks": checks or [], "member_ids": set()})
+    for pin_id, place_id, user_id in rows:
+        entry = grouped.setdefault(str(pin_id), {"place_id": place_id, "member_ids": set()})
         entry["member_ids"].add(user_id)
-    return [{"checks": entry["checks"], "member_ids": entry["member_ids"]} for entry in grouped.values()]
+    return list(grouped.values())
 
 
 def get_coordinates_for_pins(db: Session, pin_ids: list[str]) -> dict[str, tuple[float, float]]:

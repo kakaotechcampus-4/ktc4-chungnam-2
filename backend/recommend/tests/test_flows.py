@@ -757,11 +757,13 @@ def _run_with_wanted_and_unwanted_soft_keys(db_session):
         {"author_id": "user_2", "source": "reaction", "text": "대기 짧았으면", "badge": "preferred", "fact_key": "wait_short"},
     ])
     liked = _make_pin(db_session, lat=35.0008, lng=129.0008)
-    liked.checks = [{"fact_key": "parking_available", "label": "True", "passed": True,
-                     "confidence": "known", "needs_check": False}]
     _react(db_session, liked, user_id="user_1", type="like")
     places = [PlaceStub(place_id="cand", lat=35.0005, lng=129.0005)]
-    facts = _FakePlaceFacts({"cand": {"spicy_focused": False, "franchise": False, "parking_available": True}})
+    # ♥ 핀의 라벨은 places(place_facts)에서 읽는다(#247) — 핀에 복사된 checks가 아니다.
+    facts = _FakePlaceFacts({
+        "cand": {"spicy_focused": False, "franchise": False, "parking_available": True},
+        liked.place_id: {"parking_available": True},
+    })
     flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
     [candidate] = service.list_candidates(db_session, str(run.id))
     return run, candidate
@@ -1219,3 +1221,21 @@ def test_candidates_ready_event_payload_validates_as_spec_candidates(db_session)
     candidate = schemas.Candidate(**payload)
     assert candidate.permissions.can_publish is True and candidate.place_name == "이름-p1"
     assert payload["visibility"] == "private" and payload["reason"]
+
+
+def test_hearted_pin_labels_come_from_place_facts_not_pin_checks(db_session):
+    """#247 — 직접 찍은 핀(pins.checks 비어 있음)도 ♥를 받으면 places 라벨이 선호 신호가 된다. 모름 라벨은 0점."""
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    liked = _make_pin(db_session, lat=35.0008, lng=129.0008)
+    assert not liked.checks
+    _react(db_session, liked, user_id="user_1", type="like")
+    _react(db_session, liked, user_id="user_2", type="like")
+    places = [PlaceStub(place_id="near", lat=35.0001, lng=129.0001), PlaceStub(place_id="far_raw", lat=35.005, lng=129.005)]
+    facts = _FakePlaceFacts({
+        liked.place_id: {"cuisine_raw_fish": True, "quiet": None},
+        "near": {"cuisine_raw_fish": False}, "far_raw": {"cuisine_raw_fish": True},
+    })
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
+    ranks = {c.place_id: c.rank for c in service.list_candidates(db_session, str(run.id))}
+    assert ranks["far_raw"] == 1 and ranks["near"] == 2

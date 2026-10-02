@@ -408,12 +408,15 @@ def _run_pipeline(
     # ③-b — #99 이후 모델이 아니라 코드가 점수를 매기고 상위 3곳을 고른다(recommend/core.py,
     # 이슈 #112). ♥ 받은 핀들의 라벨로 "선호 기준"을 만들고, 그 기준으로 통과 후보 각각에
     # 점수를 매긴 뒤, 점수 → 동네 배분 → 거리 평균 순으로 상위 3곳만 남긴다.
-    liked_pins = pins_api.list_liked_pins_with_checks(
+    liked_pins = pins_api.list_liked_pins(
         db, map_id=run.map_id, category=run.category, requested_by=run.requested_by,
     )
+    # ♥ 핀의 라벨은 핀에 복사된 checks가 아니라 places의 place_facts에서 읽는다(#247) — 직접 찍은 핀도 같은
+    # 라벨을 갖는다. known인 soft 라벨만 선호 신호가 된다(모름은 0점, 감점도 없다). 배치 조회 한 번.
+    liked_facts = place_facts.get_facts([entry["place_id"] for entry in liked_pins]) if liked_pins else {}
     hearted_places = [
         core.HeartedPlace(
-            checks=[Check(**check) for check in entry["checks"]],
+            checks=core.label_checks(liked_facts.get(entry["place_id"], [])),
             member_ids=frozenset(entry["member_ids"]),
         )
         for entry in liked_pins
