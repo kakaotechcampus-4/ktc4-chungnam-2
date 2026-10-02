@@ -120,7 +120,6 @@ def test_safety_reason_survives_deleting_its_pin(members, place_ids, fake_planne
 
 # ───────────────────────── 입력 제한·선택 본문 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D19 — title 100자 제한 미적용. #244")
 def test_map_title_longer_than_100_is_rejected(members):
     a, _, _ = members
     r = a.post("/maps", json={"title": "가" * 101, "start_date": "2026-11-01", "end_date": "2026-11-02",
@@ -128,14 +127,12 @@ def test_map_title_longer_than_100_is_rejected(members):
     assert r.status_code == 422, "스펙: title maxLength 100"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D19 — regions/confirm 본문이 필수로 처리된다(스펙은 선택). #244")
 def test_regions_confirm_without_body_is_ok(members, place_ids, fake_planner):
     a, b, map_id = members
     run_id, _ = _recommend(a, b, map_id, place_ids, executed=False)
     assert a.post(f"/runs/{run_id}/regions/confirm").status_code == 200, "스펙: requestBody는 선택"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D19 — evidence PATCH 본문이 필수로 처리된다(스펙은 선택). #244")
 def test_evidence_patch_empty_body_is_ok(members, place_ids, fake_planner):
     a, b, map_id = members
     run_id, _ = _recommend(a, b, map_id, place_ids, executed=False)
