@@ -1,6 +1,6 @@
 import { api } from '@/api'
 
-import type { PinDto, ReactionDto, ReactionRequest } from './model'
+import type { PinCreateRequest, PinDto, ReactionDto, ReactionRequest } from './model'
 
 export const fetchPins = (mapId: string) => api<PinDto[]>(`/maps/${mapId}/pins`)
 
@@ -10,3 +10,6 @@ export const putReaction = (pinId: string, body: ReactionRequest) =>
   api<ReactionDto>(`/pins/${pinId}/reaction`, { method: 'PUT', body: JSON.stringify(body) })
 
 export const deleteReaction = (pinId: string) => api<void>(`/pins/${pinId}/reaction`, { method: 'DELETE' })
+
+export const createPin = (mapId: string, body: PinCreateRequest) =>
+  api<PinDto>(`/maps/${mapId}/pins`, { method: 'POST', body: JSON.stringify(body) })

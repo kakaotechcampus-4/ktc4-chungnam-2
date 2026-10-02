@@ -14,6 +14,9 @@ import PinUnavailable from '@/features/map/PinUnavailable'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
+import { usePlaceSearchQuery } from '@/features/search/queries'
+import { SearchResultsBody, SearchResultsHeader } from '@/features/search/SearchResults'
+import { useSearchStore } from '@/features/search/searchStore'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
@@ -34,6 +37,8 @@ export default function MapTab() {
   const members = useMembersQuery(mapId).data ?? []
   const { filters, setFilter, clear } = usePinFilters()
   const shown = pins && filterPins(pins, filters)
+  const search = useSearchStore()
+  const found = usePlaceSearchQuery(search.query, search.near).data
   const filtered = Boolean(filters.category || filters.createdBy)
   const [params, setParams] = useSearchParams()
   const onboarding = params.get('onboarding') as OnboardingKind | null
@@ -63,6 +68,15 @@ export default function MapTab() {
   const selectedPin = pins?.find((pin) => pin.id === selectedPinId)
   // 목록을 다 받은 뒤에도 없으면 볼 수 없는 핀이다. 로딩 중이나 실패 중에는 판단하지 않는다.
   const unavailable = Boolean(selectedPinId) && !selectedPin && !isPending && !error
+
+  // 검색은 잠깐 하는 작업이라 다른 화면(상세·온보딩)보다 앞에 온다. 닫으면 원래 화면으로 돌아간다.
+  if (search.query) {
+    return (
+      <TabSheet tab="map" header={<SearchResultsHeader count={found ? found.length : null} />}>
+        <SearchResultsBody mapId={mapId} pins={pins ?? []} />
+      </TabSheet>
+    )
+  }
 
   if (onboarding && mapTitle) {
     return (

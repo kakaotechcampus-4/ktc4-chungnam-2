@@ -9,6 +9,8 @@
 declare namespace kakao.maps {
   class LatLng {
     constructor(lat: number, lng: number)
+    getLat(): number
+    getLng(): number
   }
 
   class LatLngBounds {
@@ -23,6 +25,9 @@ declare namespace kakao.maps {
     setBounds(bounds: LatLngBounds, paddingTop?: number, paddingRight?: number, paddingBottom?: number, paddingLeft?: number): void
     setCenter(latlng: LatLng): void
     panTo(latlng: LatLng): void
+    /** 지도 가운데를 픽셀만큼 옮긴다. */
+    panBy(dx: number, dy: number): void
+    getCenter(): LatLng
     relayout(): void
   }
 
