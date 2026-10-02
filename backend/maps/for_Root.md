@@ -183,3 +183,12 @@ UNAUTHORIZED였다 — 스펙이 갈랐다). 조회·수락이 `_acceptable_invi
 **테스트**: 비로그인 200(map_id 미노출)·조회가 가입/used_count를 바꾸지 않음·404·410·초대자 행 없음
 fallback·타 라우트 인증 유지. `KNOWN_MISSING`에서 `("get", "/invites/{}")` 제거. backend 전체 pytest 620 passed.
 복잡도 예상 2 / 실제 2.
+
+---
+
+## #244(maps 몫)·#245 — 입력 길이 제한, 탈퇴자 구성원 수 (2026-10-02)
+
+- **#244 maps**: `MapCreateRequest.title`·`MapRegion.label` `Field(max_length=100)`. 빈 제목은 기존대로 422. recommend 쪽 두 본문 선택화는 이 PR 범위 밖(recommend 담당) — 루트 xfail 2건(`regions_confirm`·`evidence_patch`)은 남겨 뒀다.
+- **#245**: `Map.member_count`(단건·`GET /maps` 목록)와 `maps.api.count_members`(준비 판정 N)가 탈퇴자를 뺀다. 구성원 목록(`GET /members`)은 핀 작성자 표기용(#155)으로 그대로 둔다.
+  - **다른 모듈 파일 수정 보고**: 탈퇴 여부를 알 공개 함수가 없어 `auth/api.py`에 읽기 전용 `withdrawn_user_ids(db, user_ids) -> set[str]`을 **추가**했다(기존 함수 불변). 원칙상 auth 담당에게 요청해야 하나 이슈가 "auth 탈퇴 연쇄 확인"을 명시해 최소 추가로 처리 — 마음에 안 들면 이 함수만 auth PR로 옮기면 된다.
+  - **recommend 경계값(루트 확인)**: 구성원이 전부 탈퇴하면 N=0이고 `recommend.core.required_count(0)`은 0 → `ready=True`. 이슈 문구("반응 가능 인원이 없으면 준비 판정이 안 걸린다")와 다르다. 도달 경로가 "마지막 구성원 탈퇴"뿐이라(요청할 사람이 없음) 손대지 않았다. 바꾸려면 recommend 담당 몫.

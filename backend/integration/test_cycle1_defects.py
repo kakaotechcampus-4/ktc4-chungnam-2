@@ -119,7 +119,6 @@ def test_d2_sse_data_is_the_payload_itself():
 
 # ───────────────────────────── D3 — 확정 핀 삭제 ─────────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D3 — 확정 핀을 삭제하면 확정 리스트 전체가 404가 된다. #235")
 def test_d3_deleting_a_confirmed_pin_does_not_break_the_shortlist(clients, seoul_map, pin_body):
     a, _ = clients
     keep = a.post(f"/maps/{seoul_map}/pins", json=pin_body("seongsu-kalguksu")).json()["id"]
@@ -146,7 +145,6 @@ def test_d7_search_results_carry_pinnable(clients):
 
 # ───────────────────────────── D9 — 반대 사유 ─────────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D9 — 빈 문자열 칩만으로 사유 없는 🚫가 등록된다(가드레일 3). #236")
 def test_d9_empty_chip_is_not_a_reason(clients, seoul_map, pin_body):
     a, _ = clients
     pin = a.post(f"/maps/{seoul_map}/pins", json=pin_body("hongdae-ramen")).json()["id"]
@@ -154,7 +152,6 @@ def test_d9_empty_chip_is_not_a_reason(clients, seoul_map, pin_body):
     assert r.status_code == 422, "내용 없는 칩은 사유가 아니다"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D9 — 칩만 있는 🚫는 근거 줄이 되지 않는다(reason_text IS NOT NULL 필터). #236")
 def test_d9_chip_only_against_becomes_evidence(clients, seoul_map, pin_body):
     a, _ = clients
     pin = a.post(f"/maps/{seoul_map}/pins", json=pin_body("hongdae-ramen")).json()["id"]
@@ -181,7 +178,6 @@ def _run_recommend(db_session, lines, facts, places):
     return {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D4 — wants=null인 선호가 '원함'으로 계산된다(문서 표는 효과 없음). #237")
 def test_d4_preferred_with_unknown_direction_has_no_effect(db_session):
     from recommend.ports import PlaceStub
 
@@ -197,7 +193,6 @@ def test_d4_preferred_with_unknown_direction_has_no_effect(db_session):
     assert ranked == ["near_plain", "far_raw"], "방향을 모르는 사유는 점수에 영향이 없다 — 가까운 곳이 먼저여야 한다"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D5 — '한식 말고'를 만족한 비한식 후보에 실패 체크(passed=False)가 붙는다. #237")
 def test_d5_satisfied_exclusion_is_not_shown_as_failed(db_session):
     from recommend.ports import PlaceStub
 

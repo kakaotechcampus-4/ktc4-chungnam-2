@@ -26,23 +26,26 @@ INVITE_TOKEN_BYTES = 32  # secrets.token_urlsafe(32) — 256비트, 소지자가
 # bearer capability라 uuid4가 아니라 secrets 모듈을 쓴다(예측 불가능성이 목적, 유일성이 아니다).
 
 
-def _member_count(db: Session, map_id: str) -> int:
-    return db.execute(
-        select(func.count()).select_from(MembershipRow).where(MembershipRow.map_id == map_id)
-    ).scalar_one()
-
-
 def _member_counts(db: Session, map_ids: list[str]) -> dict[str, int]:
-    """GET /maps 목록용 — N개 지도에 N번 쿼리하지 않는다(pins/for_Root.md·auth.api.display_names와
-    같은 배치 원칙). map_ids가 비어 있으면 쿼리 자체를 건너뛴다."""
+    """탈퇴하지 않은 구성원 수(#245) — Map.member_count와 recommend 준비 판정 N이 쓴다.
+    구성원 목록(list_members)은 핀 작성자 표기용으로 탈퇴자를 남기지만(#155) 수에서는 뺀다.
+    GET /maps 목록용 배치이기도 하다 — N개 지도에 N번 쿼리하지 않는다(memberships 한 번 +
+    auth.api.withdrawn_user_ids 한 번). map_ids가 비어 있으면 쿼리 자체를 건너뛴다."""
     if not map_ids:
         return {}
     rows = db.execute(
-        select(MembershipRow.map_id, func.count())
-        .where(MembershipRow.map_id.in_(map_ids))
-        .group_by(MembershipRow.map_id)
+        select(MembershipRow.map_id, MembershipRow.user_id).where(MembershipRow.map_id.in_(map_ids))
     ).all()
-    return {map_id: count for map_id, count in rows}
+    withdrawn = auth_api.withdrawn_user_ids(db, list({user_id for _, user_id in rows}))
+    counts = {map_id: 0 for map_id in map_ids}
+    for map_id, user_id in rows:
+        if user_id not in withdrawn:
+            counts[map_id] += 1
+    return counts
+
+
+def member_count(db: Session, map_id: str) -> int:
+    return _member_counts(db, [map_id])[map_id]
 
 
 def _region_lat_lng_columns():
@@ -74,7 +77,7 @@ def _map_record(db: Session, map_row: MapRow) -> core.MapRecord:
 def _map_response(db: Session, map_row: MapRow) -> Map:
     return core.to_map_response(
         _map_record(db, map_row),
-        member_count=_member_count(db, map_row.id),
+        member_count=member_count(db, map_row.id),
         confirmed_count=shortlist_api.count_confirmed(db, map_id=map_row.id),
     )
 
@@ -182,7 +185,7 @@ def get_invite_summary(db: Session, *, token: str) -> InviteSummary:
     inviter_name = auth_api.display_names(db, [invite_row.created_by]).get(invite_row.created_by)
     return core.to_invite_summary(
         _map_record(db, map_row),
-        member_count=_member_count(db, map_row.id),
+        member_count=member_count(db, map_row.id),
         inviter_display_name=inviter_name,
         expires_at=invite_row.expires_at,
     )

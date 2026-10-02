@@ -10,7 +10,7 @@ Permissions는 여기서 정의하지 않는다 — Pin·EvidenceLine·Shortlist
 authz가 소유한다(#56 이관, mentor-review-plan.md). pins는 authz의 것을 그대로 쓴다.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_serializer
 
@@ -124,7 +124,9 @@ class FilterCounts(BaseModel):
 class ReactionRequest(BaseModel):
     type: ReactionKind
     reason_text: str | None = Field(default=None, max_length=140)
-    reason_chip_ids: list[str] | None = None
+    # docs/api-spec.yaml ReactionRequest — 최대 10개, 칩 하나는 50자까지. 내용이 비었는지는
+    # core.validate_reaction이 본다(공백·제로폭만 있는 칩은 길이만으론 못 거른다).
+    reason_chip_ids: list[Annotated[str, Field(max_length=50)]] | None = Field(default=None, max_length=10)
 
 
 class Error(BaseModel):
