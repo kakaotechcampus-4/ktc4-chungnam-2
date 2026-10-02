@@ -13,7 +13,7 @@ recommend.publish가 등록됨). 이 파일에 남는 건 run/candidate/evidence
 import hashlib
 import math
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Collection, Mapping, Sequence
 
 from common.errors import AppError
 from common.geo import WALKING_SPEED_M_PER_MIN, haversine_distance_m
@@ -174,6 +174,17 @@ def apply_disqualifier_filters(candidate_checks: list[list[Check]]) -> list[bool
     return [
         all(check.passed for check in checks if check.fact_key not in constraints.SOFT_FACT_KEYS)
         for checks in candidate_checks
+    ]
+
+
+def checks_to_show(checks: Sequence[Check], wanted_fact_keys: Collection[str]) -> list[Check]:
+    """후보 저장·응답·게시(pins 복사)에 남길 체크(#216, 가드레일 5). hard 체크는 전부, soft 체크는
+    known이거나 사람이 원한 키(`wanted_fact_keys`)일 때만 — 아무도 원하지 않았는데 unknown인 soft는
+    "확인 필요"만 늘려 조건별 충족 체크를 흐린다. 점수 계산은 이 함수를 거치지 않은 전체 체크를 쓴다."""
+    return [
+        check for check in checks
+        if check.fact_key not in constraints.SOFT_FACT_KEYS
+        or check.confidence == "known" or check.fact_key in wanted_fact_keys
     ]
 
 
