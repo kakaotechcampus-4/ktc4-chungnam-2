@@ -85,3 +85,11 @@ restaurant_seoul_DB.zip
 restaurant_seoul_*.csv
 restaurant_seoul_*.json
 __MACOSX/
+# 식당·카페 라벨 납품본(2026-10-02~) — 폴더·zip·카페 파일·변환 도구 폴더 모두 커밋하지 않는다 (#263)
+식당카페_라벨_*/
+식당카페_라벨_*.zip
+cafe_seoul_*.csv
+cafe_seoul_*.json
+json_to_csv/
+json_to_csv.zip
+franchise_brands.csv
