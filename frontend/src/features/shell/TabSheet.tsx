@@ -10,7 +10,18 @@ import Toaster from './Toaster'
  * 탭 하나의 바텀시트. 탭 컴포넌트는 제목 줄(header)과 본문만 넘긴다 —
  * 단계 기억·지도 버튼·토스트 자리는 여기서 탭 3개가 똑같이 갖는다.
  */
-export default function TabSheet({ tab, header, children }: { tab: TabKey; header: ReactNode; children: ReactNode }) {
+export default function TabSheet({
+  tab,
+  header,
+  expandOnScroll,
+  children,
+}: {
+  tab: TabKey
+  header: ReactNode
+  /** 2단계에서 내용을 끌면 3단계로 올라간다(핀 상세 — 최종기획안 4절). */
+  expandOnScroll?: boolean
+  children: ReactNode
+}) {
   const { activeControl, onControl } = useShell()
   const stage = useSheetStore((s) => s.stages[tab])
   const setStage = useSheetStore((s) => s.setStage)
@@ -25,10 +36,11 @@ export default function TabSheet({ tab, header, children }: { tab: TabKey; heade
       stage={stage}
       onStageChange={(next) => setStage(tab, next)}
       header={header}
+      expandOnScroll={expandOnScroll}
       top={
         <>
           <MapControls hidden={controlsHidden} fading={mapMoving} active={activeControl} onPress={onControl} />
-          {!modalOpen && <Toaster controlsVisible={!controlsHidden && !mapMoving} />}
+          {!modalOpen && <Toaster controlsVisible={!controlsHidden && !mapMoving} inside={stage === 3} />}
         </>
       }
     >

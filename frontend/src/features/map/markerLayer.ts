@@ -79,7 +79,8 @@ export function createMarkerLayer(
         bounds.extend(new maps.LatLng(pin.lat, pin.lng))
         placed += 1
       }
-      if (placed > 0) map.setBounds(bounds)
+      // 위는 검색창·칩, 아래는 2단계 시트가 덮는다. 그 바깥에 핀이 오도록 여백을 둔다.
+      if (placed > 0) map.setBounds(bounds, 170, 64, Math.round(window.innerHeight * 0.62), 32)
     },
 
     destroy() {
