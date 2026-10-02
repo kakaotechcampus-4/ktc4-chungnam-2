@@ -18,45 +18,57 @@
 
 카테고리별로 나눈다. 하나의 키가 여러 카테고리에 쓰이면 각 절에 모두 적는다.
 
-값은 참, 거짓, 모름 셋 중 하나다. `price_bucket`만 예외로 비교할 수치를 가진다. 실격(hard)은 후보를 걸러내고, 선호(soft)는 순위에만 영향을 준다.
+값은 참, 거짓, 모름 셋 중 하나다. `price_bucket`만 예외로 비교할 수치를 가진다.
+
+### 실격 여부는 키가 아니라 사유가 정한다 (2026-10-03, #125, #276)
+
+표의 키는 **장소의 특징**일 뿐 실격이나 선호가 아니다. 같은 `spicy_focused`도 누군가에게는 "빼 줘", 누군가에게는 "좋아"다. 그래서 둘을 따로 둔다.
+
+- **장소 특징**: (장소, `fact_key`, 값, `confidence`). `confidence`는 장소 데이터가 정확한지다.
+- **구성원 의견**: (구성원, `fact_key`, `wants`, 꼭/가능하면). v1에서 꼭과 가능하면은 **반응 종류로 정한다.** 🚫 사유는 꼭(`required`), ♥와 △ 사유와 「+」는 가능하면(`preferred`). 사유 문장으로 정하는 방식은 v2 검토(#277).
+- 체크는 둘을 맞대어 그때 계산하고, `passed`는 언제나 "그 사람의 조건을 만족하는가"다. **아무도 의견을 내지 않은 키는 실격에도 점수에도 쓰이지 않는다.**
+- 키에 남는 것은 **모를 때 처리(`unknown_policy`) 하나**다. `exclude`인 키(갑각류 등 재료, 매운맛, 기름짐)가 **안전 키**이고, 아래 "안전 조건 사유는 배지와 무관하게 실격이다" 규칙을 따른다. 나머지는 **취향 키**이고 "배지 × `wants`" 표를 따른다. 취향 키는 꼭 조건으로 쓰일 때 모르면 통과 + 「확인 필요」, 가능하면 조건일 때 모르면 0점이다. 표의 `pass + needs_check`가 이 뜻이다.
+- `is_open`과 `within_radius`는 의견과 무관하게 코드가 늘 적용하는 조건이다.
+
+이전에는 표에 "종류(hard/soft)" 칸이 있어 키 자체를 실격용과 선호용으로 나눴다. 그 구분 때문에 아무도 원하지 않은 선호 라벨이 후보를 실격시키는 버그(#208)가 났고, 멘토 리뷰(PR #152)도 같은 점을 짚었다. 그래서 칸을 지웠다. 예전 "hard"였던 취향 키(`is_crowded_large`, `price_bucket`)도 이제 취향 키 규칙을 따른다. 🚫 "너무 붐벼요"는 ②가 `wants=false`로 읽어야 실격이 된다.
 
 ### 모든 카테고리 공통
 
-| `fact_key` | 종류 | 뜻 | `unknown_policy` | 근거 |
-|---|---|---|---|---|
-| `contains_shellfish` 등 재료 태그 | hard | 갑각류 제외 등 (5-7) | **exclude** | 기획안 50줄 알러지 사고 사례 |
-| `price_bucket` | hard | 1인/음료/입장료 상한과 비교 (5-7) | pass + `needs_check` | 취향 영역(D4) |
-| `is_open` | hard (코드 판정, 5-6 순서 3) | 영업 종료 제거 | pass + `needs_check` | 취향 영역. 라벨링이 아니라 실시간 조회 실패 시 적용 |
-| `within_radius` | hard (코드 판정, 5-6-1) | 도보 15분 등 | 해당 없음 | 좌표는 항상 known. `places.geom`이 없으면 애초 후보에 못 들어옴 |
-| `pet_friendly` | soft | 반려동물을 데려갈 수 있는가 | pass | #122 |
+| `fact_key` | 뜻 | `unknown_policy` | 근거 |
+|---|---|---|---|
+| `contains_shellfish` 등 재료 태그 | 갑각류 제외 등 (5-7) | **exclude** | 기획안 50줄 알러지 사고 사례 |
+| `price_bucket` | 1인/음료/입장료 상한과 비교 (5-7) | pass + `needs_check` | 취향 영역(D4) |
+| `is_open` | 영업 종료 제거 | pass + `needs_check` | 코드 판정, 5-6 순서 3. 취향 영역. 라벨링이 아니라 실시간 조회 실패 시 적용 |
+| `within_radius` | 도보 15분 등 | 해당 없음 | 코드 판정, 5-6-1. 좌표는 항상 known. `places.geom`이 없으면 애초 후보에 못 들어옴 |
+| `pet_friendly` | 반려동물을 데려갈 수 있는가 | pass + `needs_check` | #122 |
 
 ### 음식점
 
-| `fact_key` | 종류 | 뜻 | `unknown_policy` | 근거 |
-|---|---|---|---|---|
-| `spicy_focused` | hard | 매운맛 전문 제외 (5-7) | **exclude** | 실측 실패 6건 중 다수가 "매워요" |
-| `oily_focused` | hard | 기름진 메뉴 제외 (5-7) | **exclude** | 위와 같은 성격(안전, 건강) |
-| `wait_short` | soft | 대기가 짧은가 | pass | 선호는 애초에 걸러내지 않음(5-1) |
-| `cuisine_korean` | soft | 한식 (인허가 업태 한식·탕류·냉면집) | pass | #203 — "한식 말고" |
-| `cuisine_chinese` | soft | 중식 (중국식) | pass | #203 |
-| `cuisine_japanese` | soft | 일식 | pass | #203 |
-| `cuisine_western` | soft | 양식 (경양식·패밀리레스토랑) | pass | #203 |
-| `cuisine_bunsik` | soft | 분식 (분식·김밥) | pass | #203 |
-| `cuisine_chicken_pub` | soft | 호프·치킨 (호프/통닭·통닭) | pass | #203 |
-| `cuisine_bbq` | soft | 고기구이 (식육 숯불구이) | pass | #203 — "고기 먹자" |
-| `cuisine_foreign` | soft | 외국음식 전문점 (인도·태국 등) | pass | #203 |
-| `cuisine_raw_fish` | soft | 횟집 (횟집·복어) | pass | #203 — "회 못 먹어" |
-| `cuisine_buffet` | soft | 뷔페 | pass | #203 |
-| `spacious` | soft | 넓은 곳 — 3~5명 단체 (인허가 면적 120㎡ 이상) | pass | #203 |
-| `long_established` | soft | 30년 이상 된 가게(노포) | pass | #203. **거짓은 만들지 않는다** — 주인이 바뀌면 인허가일자가 새로 시작된다 |
-| `parking_available` | soft | 주차할 수 있는가 | pass | #203. 거짓은 원본에 "불가"라고 적힌 곳만 |
-| `vegetarian_friendly` | soft | 채식 메뉴가 있는가 | pass | #203. **거짓은 만들지 않는다** — 명단에 없다고 메뉴가 없는 것은 아니다 |
-| `franchise` | soft | 체인점인가 | pass | #203. **거짓은 만들지 않는다** — 브랜드 목록(606개, 음식점·카페 공통) 밖의 작은 체인이 있다 |
+| `fact_key` | 뜻 | `unknown_policy` | 근거 |
+|---|---|---|---|
+| `spicy_focused` | 매운맛 전문 제외 (5-7) | **exclude** | 실측 실패 6건 중 다수가 "매워요" |
+| `oily_focused` | 기름진 메뉴 제외 (5-7) | **exclude** | 위와 같은 성격(안전, 건강) |
+| `wait_short` | 대기가 짧은가 | pass + `needs_check` | 선호는 애초에 걸러내지 않음(5-1) |
+| `cuisine_korean` | 한식 (인허가 업태 한식·탕류·냉면집) | pass + `needs_check` | #203 — "한식 말고" |
+| `cuisine_chinese` | 중식 (중국식) | pass + `needs_check` | #203 |
+| `cuisine_japanese` | 일식 | pass + `needs_check` | #203 |
+| `cuisine_western` | 양식 (경양식·패밀리레스토랑) | pass + `needs_check` | #203 |
+| `cuisine_bunsik` | 분식 (분식·김밥) | pass + `needs_check` | #203 |
+| `cuisine_chicken_pub` | 호프·치킨 (호프/통닭·통닭) | pass + `needs_check` | #203 |
+| `cuisine_bbq` | 고기구이 (식육 숯불구이) | pass + `needs_check` | #203 — "고기 먹자" |
+| `cuisine_foreign` | 외국음식 전문점 (인도·태국 등) | pass + `needs_check` | #203 |
+| `cuisine_raw_fish` | 횟집 (횟집·복어) | pass + `needs_check` | #203 — "회 못 먹어" |
+| `cuisine_buffet` | 뷔페 | pass + `needs_check` | #203 |
+| `spacious` | 넓은 곳 — 3~5명 단체 (인허가 면적 120㎡ 이상) | pass + `needs_check` | #203 |
+| `long_established` | 30년 이상 된 가게(노포) | pass + `needs_check` | #203. **거짓은 만들지 않는다** — 주인이 바뀌면 인허가일자가 새로 시작된다 |
+| `parking_available` | 주차할 수 있는가 | pass + `needs_check` | #203. 거짓은 원본에 "불가"라고 적힌 곳만 |
+| `vegetarian_friendly` | 채식 메뉴가 있는가 | pass + `needs_check` | #203. **거짓은 만들지 않는다** — 명단에 없다고 메뉴가 없는 것은 아니다 |
+| `franchise` | 체인점인가 | pass + `needs_check` | #203. **거짓은 만들지 않는다** — 브랜드 목록(606개, 음식점·카페 공통) 밖의 작은 체인이 있다 |
 
-**음식점 라벨 15개 키 등록 (2026-10-02, #203, 데이터 담당 납품).** 서울 음식점 8,610곳(인허가 식당 중 외부 소스가 1개 이상 붙은 곳)의 라벨이다. 15개 모두 soft, `unknown_policy`는 pass다.
+**음식점 라벨 15개 키 등록 (2026-10-02, #203, 데이터 담당 납품).** 서울 음식점 8,610곳(인허가 식당 중 외부 소스가 1개 이상 붙은 곳)의 라벨이다. 15개 모두 취향 키다(`unknown_policy`는 pass + `needs_check`).
 
 - **`cuisine_*` 10개는 한 곳에서 하나만 참이고 나머지 9개는 거짓이다.** 거짓의 근거도 업태다(채움률 93%, 모름 640곳). 선호 점수는 참/거짓 키만 읽으므로 값이 여러 개인 `cuisine_type` 하나로 두지 않고 10개로 나눴다.
-- **soft 키의 거짓은 "이 장소의 특징이 아니다"일 뿐 실격이 아니다.** 사람이 "회 못 먹어"처럼 말해 실격 조건으로 쓰이더라도 취향 영역이라 모름은 pass + `needs_check`로 본다(#125). 안전 조건이 아니기 때문이다.
+- **취향 키의 거짓은 "이 장소의 특징이 아니다"일 뿐 실격이 아니다.** 사람이 "회 못 먹어"처럼 말해 실격 조건으로 쓰이더라도 취향 영역이라 모름은 pass + `needs_check`로 본다(#125). 안전 조건이 아니기 때문이다.
 - `cuisine_chicken_pub`(호프/통닭)과 `oily_focused`(치킨)는 둘 다 참일 수 있다. 서로 다른 뜻이라 그대로 둔다. 점수가 이중으로 붙는 건 사람이 두 키를 모두 원했을 때뿐이다.
 - 영문 키 이름은 데이터 담당이 임의로 지은 것이다. 바꿀 때는 양쪽(라벨 파일, 이 표)을 함께 바꾼다.
 
@@ -70,24 +82,24 @@
 | **contains_shellfish** | 492 | — | 메뉴에 갑각류·조개 키워드(새우, 게장, 해물, 짬뽕 등)가 있으면 참. **거짓은 만들지 않는다** |
 | **pet_friendly, wait_short** | — | — | 데이터가 없다(채움 0%) |
 
-`spicy_focused`·`oily_focused`는 hard이고 `unknown_policy`가 exclude라서, 참만 채우면 "매운 거 빼줘" 한마디에 모름인 식당이 전부 빠진다. 그래서 위 거짓 규칙을 받아들였다(2026-10-02). 한계: 거짓 판단에 쓰는 메뉴는 대부분 대표 메뉴 한 단어뿐이다. 키 이름이 "전문(focused)"이라 대표 메뉴로 판단하는 게 뜻에 맞고, 실격 키는 넓게 잡는 쪽이 안전하다.
+`spicy_focused`·`oily_focused`는 안전 키(`unknown_policy`가 exclude)라서, 참만 채우면 "매운 거 빼줘" 한마디에 모름인 식당이 전부 빠진다. 그래서 위 거짓 규칙을 받아들였다(2026-10-02). 한계: 거짓 판단에 쓰는 메뉴는 대부분 대표 메뉴 한 단어뿐이다. 키 이름이 "전문(focused)"이라 대표 메뉴로 판단하는 게 뜻에 맞고, 실격 키는 넓게 잡는 쪽이 안전하다.
 
 ### 카페
 
-| `fact_key` | 종류 | 뜻 | `unknown_policy` | 근거 |
-|---|---|---|---|---|
-| `is_crowded_large` | hard | 붐비는 대형 카페 제외 (5-7) | pass + `needs_check` | 취향 영역 |
-| `quiet` | soft | 조용한가 | pass | 5-7 |
-| `comfortable_seat` | soft | 좌석이 편한가 | pass | 5-7 |
-| `local_flavor` | soft | 지역색이 있는가 | pass | 5-7 |
-| `bakery` | soft | 빵·디저트가 중심인 카페 | pass | #263. 제과점영업 인허가 또는 가게 이름(베이커리·빵·제과·브레드). **거짓은 만들지 않는다** — 제과점 허가가 없는 커피숍도 빵을 판다. 예: "빵 맛있는 곳" |
-| `serves_alcohol` | soft | 술도 파는 카페 | pass | #263. 일반음식점 허가면 참, **휴게음식점·제과점 허가는 법상 주류 판매 불가라 거짓**(근거 문구에 적힘). 예: "카페인데 맥주도 되는 곳" |
-| `open_late` | soft | 밤 10시 이후까지 여는가 | pass | #263. 영업시간 마감이 22시 이후면 참, 모두 22시 전이면 거짓("익일 02:00"·새벽 1~5시 마감은 자정을 넘긴 것, "24시간"은 참). 예: "저녁 먹고 갈 카페" |
-| `franchise` | soft | 체인점인가 | pass | 음식점 표와 같은 키·규칙(#203). 카페에도 적용(#263) |
-| `spacious` | soft | 넓은 곳 — 인허가 면적 120㎡ 이상 | pass | 음식점 표와 같은 키·규칙. 카페에도 적용(#263) |
-| `long_established` | soft | 30년 이상 된 가게 | pass | 음식점 표와 같은 키·규칙(거짓은 만들지 않는다). 카페에도 적용(#263) |
-| `vegetarian_friendly` | soft | 채식 메뉴가 있는가 | pass | 음식점 표와 같은 키·규칙. 카페에도 적용(#263) |
-| `accessible` | soft | 휠체어·유모차로 다닐 수 있는가 | pass | 관광지 표와 같은 키(무장애 여행 API). 카페에도 적용(#263) |
+| `fact_key` | 뜻 | `unknown_policy` | 근거 |
+|---|---|---|---|
+| `is_crowded_large` | 붐비는 대형 카페 제외 (5-7) | pass + `needs_check` | 취향 영역 |
+| `quiet` | 조용한가 | pass + `needs_check` | 5-7 |
+| `comfortable_seat` | 좌석이 편한가 | pass + `needs_check` | 5-7 |
+| `local_flavor` | 지역색이 있는가 | pass + `needs_check` | 5-7 |
+| `bakery` | 빵·디저트가 중심인 카페 | pass + `needs_check` | #263. 제과점영업 인허가 또는 가게 이름(베이커리·빵·제과·브레드). **거짓은 만들지 않는다** — 제과점 허가가 없는 커피숍도 빵을 판다. 예: "빵 맛있는 곳" |
+| `serves_alcohol` | 술도 파는 카페 | pass + `needs_check` | #263. 일반음식점 허가면 참, **휴게음식점·제과점 허가는 법상 주류 판매 불가라 거짓**(근거 문구에 적힘). 예: "카페인데 맥주도 되는 곳" |
+| `open_late` | 밤 10시 이후까지 여는가 | pass + `needs_check` | #263. 영업시간 마감이 22시 이후면 참, 모두 22시 전이면 거짓("익일 02:00"·새벽 1~5시 마감은 자정을 넘긴 것, "24시간"은 참). 예: "저녁 먹고 갈 카페" |
+| `franchise` | 체인점인가 | pass + `needs_check` | 음식점 표와 같은 키·규칙(#203). 카페에도 적용(#263) |
+| `spacious` | 넓은 곳 — 인허가 면적 120㎡ 이상 | pass + `needs_check` | 음식점 표와 같은 키·규칙. 카페에도 적용(#263) |
+| `long_established` | 30년 이상 된 가게 | pass + `needs_check` | 음식점 표와 같은 키·규칙(거짓은 만들지 않는다). 카페에도 적용(#263) |
+| `vegetarian_friendly` | 채식 메뉴가 있는가 | pass + `needs_check` | 음식점 표와 같은 키·규칙. 카페에도 적용(#263) |
+| `accessible` | 휠체어·유모차로 다닐 수 있는가 | pass + `needs_check` | 관광지 표와 같은 키(무장애 여행 API). 카페에도 적용(#263) |
 
 `price_bucket`(착한가격업소만 `low`)과 `pet_friendly`는 공통 절의 키라 카페에도 이미 적용된다. `contains_shellfish`는 카페에 해당하지 않아 라벨이 전부 모름이다(안전 조건이라 갑각류 사유가 켜지면 카페는 전부 제외된다 — 음식점과 같다).
 
@@ -103,43 +115,43 @@ AI 추천 대상이 아니다(2026-09-30, #145). 숙소 핀은 지도에 찍고 
 
 ### 관광지
 
-| `fact_key` | 묶음 | 종류 | 뜻 | `unknown_policy` | 근거 |
-|---|---|---|---|---|---|
-| `is_crowded_large` | 성격 | hard | 붐비는 대형 명소 제외 (5-7) | pass + `needs_check` | 취향 영역 |
-| `quiet` | 성격 | soft | 조용한가 | pass | 5-7 |
-| `comfortable_seat` | 성격 | soft | 좌석이 편한가 | pass | 5-7 |
-| `local_flavor` | 성격 | soft | 지역색이 있는가 | pass | 5-7 |
-| `restful` | 성격 | soft | 쉬어가기 좋은가 | pass | #122 |
-| `good_view` | 성격 | soft | 전망이 좋은가 | pass | #122 |
-| `photogenic` | 성격 | soft | 사진 찍기 좋은가 | pass | #122 |
-| `night_view` | 성격 | soft | 야경이 좋은가 | pass | #122 |
-| `date_spot` | 성격 | soft | 데이트하기 좋은가 | pass | #122 |
-| `hallyu_related` | 성격 | soft | 한류와 관련이 있는가 | pass | #122 |
-| `traditional_hanok` | 성격 | soft | 전통 한옥인가 | pass | #122 |
-| `modern_architecture` | 성격 | soft | 근현대 건축물인가 | pass | #122 |
-| `religious_site` | 성격 | soft | 종교 성지인가 | pass | #122 |
-| `is_indoor` | 공간 | soft | 건물 안에서만 둘러보는 곳인가 (박물관, 미술관 등) | pass | #122 |
-| `is_outdoor` | 공간 | soft | 건물 밖에서 둘러보는 곳인가 (공원, 산책로 등) | pass | #122 |
-| `mountain` | 자연 | soft | 등산로가 있거나 산자락에 있는가 | pass | #122 |
-| `waterside` | 자연 | soft | 물가인가 (한강, 하천, 호수, 저수지) | pass | #122 |
-| `forest` | 자연 | soft | 숲인가 (수목원, 숲길) | pass | #122 |
-| `flower_garden` | 자연 | soft | 계절 꽃을 보는 곳인가 (벚꽃, 단풍 제외) | pass | #122 |
-| `seaside` | 자연 | soft | 바닷가인가 | pass | #122. 서울 데이터에는 해당 없음 |
-| `walkable` | 활동 | soft | 산책하기 좋은가 | pass | #122 |
-| `hiking` | 활동 | soft | 등산하는 곳인가 (`walkable`보다 체력 부담이 큰 경우) | pass | #122 |
-| `cycling` | 활동 | soft | 자전거를 타는 곳인가 (한강공원, 자전거길) | pass | #122 |
-| `hands_on` | 활동 | soft | 직접 해보는 체험이 있는가 | pass | #122 |
-| `exhibition` | 활동 | soft | 전시를 보는 곳인가 (박물관, 미술관, 전시관) | pass | #122 |
-| `performance` | 활동 | soft | 공연이나 축제가 있는가 (상설 공연장, 정기 행사 장소) | pass | #122 |
-| `shopping` | 활동 | soft | 쇼핑하는 곳인가 (시장, 거리 상권) | pass | #122 |
-| `heritage_tour` | 활동 | soft | 역사 유적인가 (궁, 성곽, 유적) | pass | #122 |
-| `family_friendly` | 동반 | soft | 가족끼리 가기 좋은가 | pass | #122 |
-| `kid_friendly` | 동반 | soft | 아이를 데려가기 좋은가 (`family_friendly`보다 좁다) | pass | #122 |
-| `accessible` | 동반 | soft | 휠체어나 유모차로 다닐 수 있는가 | pass | #122. 웹에서 확인된 곳만 참 |
-| `cherry_blossom` | 계절 | soft | 벚꽃 명소인가 | pass | #122 |
-| `autumn_foliage` | 계절 | soft | 단풍 명소인가 | pass | #122 |
-| `water_play` | 계절 | soft | 물놀이를 하는 곳인가 (물놀이장, 계곡) | pass | #122 |
-| `winter_spot` | 계절 | soft | 겨울 명소인가 (스케이트장, 눈 경관) | pass | #122 |
+| `fact_key` | 묶음 | 뜻 | `unknown_policy` | 근거 |
+|---|---|---|---|---|
+| `is_crowded_large` | 성격 | 붐비는 대형 명소 제외 (5-7) | pass + `needs_check` | 취향 영역 |
+| `quiet` | 성격 | 조용한가 | pass + `needs_check` | 5-7 |
+| `comfortable_seat` | 성격 | 좌석이 편한가 | pass + `needs_check` | 5-7 |
+| `local_flavor` | 성격 | 지역색이 있는가 | pass + `needs_check` | 5-7 |
+| `restful` | 성격 | 쉬어가기 좋은가 | pass + `needs_check` | #122 |
+| `good_view` | 성격 | 전망이 좋은가 | pass + `needs_check` | #122 |
+| `photogenic` | 성격 | 사진 찍기 좋은가 | pass + `needs_check` | #122 |
+| `night_view` | 성격 | 야경이 좋은가 | pass + `needs_check` | #122 |
+| `date_spot` | 성격 | 데이트하기 좋은가 | pass + `needs_check` | #122 |
+| `hallyu_related` | 성격 | 한류와 관련이 있는가 | pass + `needs_check` | #122 |
+| `traditional_hanok` | 성격 | 전통 한옥인가 | pass + `needs_check` | #122 |
+| `modern_architecture` | 성격 | 근현대 건축물인가 | pass + `needs_check` | #122 |
+| `religious_site` | 성격 | 종교 성지인가 | pass + `needs_check` | #122 |
+| `is_indoor` | 공간 | 건물 안에서만 둘러보는 곳인가 (박물관, 미술관 등) | pass + `needs_check` | #122 |
+| `is_outdoor` | 공간 | 건물 밖에서 둘러보는 곳인가 (공원, 산책로 등) | pass + `needs_check` | #122 |
+| `mountain` | 자연 | 등산로가 있거나 산자락에 있는가 | pass + `needs_check` | #122 |
+| `waterside` | 자연 | 물가인가 (한강, 하천, 호수, 저수지) | pass + `needs_check` | #122 |
+| `forest` | 자연 | 숲인가 (수목원, 숲길) | pass + `needs_check` | #122 |
+| `flower_garden` | 자연 | 계절 꽃을 보는 곳인가 (벚꽃, 단풍 제외) | pass + `needs_check` | #122 |
+| `seaside` | 자연 | 바닷가인가 | pass + `needs_check` | #122. 서울 데이터에는 해당 없음 |
+| `walkable` | 활동 | 산책하기 좋은가 | pass + `needs_check` | #122 |
+| `hiking` | 활동 | 등산하는 곳인가 (`walkable`보다 체력 부담이 큰 경우) | pass + `needs_check` | #122 |
+| `cycling` | 활동 | 자전거를 타는 곳인가 (한강공원, 자전거길) | pass + `needs_check` | #122 |
+| `hands_on` | 활동 | 직접 해보는 체험이 있는가 | pass + `needs_check` | #122 |
+| `exhibition` | 활동 | 전시를 보는 곳인가 (박물관, 미술관, 전시관) | pass + `needs_check` | #122 |
+| `performance` | 활동 | 공연이나 축제가 있는가 (상설 공연장, 정기 행사 장소) | pass + `needs_check` | #122 |
+| `shopping` | 활동 | 쇼핑하는 곳인가 (시장, 거리 상권) | pass + `needs_check` | #122 |
+| `heritage_tour` | 활동 | 역사 유적인가 (궁, 성곽, 유적) | pass + `needs_check` | #122 |
+| `family_friendly` | 동반 | 가족끼리 가기 좋은가 | pass + `needs_check` | #122 |
+| `kid_friendly` | 동반 | 아이를 데려가기 좋은가 (`family_friendly`보다 좁다) | pass + `needs_check` | #122 |
+| `accessible` | 동반 | 휠체어나 유모차로 다닐 수 있는가 | pass + `needs_check` | #122. 웹에서 확인된 곳만 참 |
+| `cherry_blossom` | 계절 | 벚꽃 명소인가 | pass + `needs_check` | #122 |
+| `autumn_foliage` | 계절 | 단풍 명소인가 | pass + `needs_check` | #122 |
+| `water_play` | 계절 | 물놀이를 하는 곳인가 (물놀이장, 계곡) | pass + `needs_check` | #122 |
+| `winter_spot` | 계절 | 겨울 명소인가 (스케이트장, 눈 경관) | pass + `needs_check` | #122 |
 
 `is_indoor`와 `is_outdoor`는 **확실할 때만 참으로 둔다.** 박물관과 미술관은 `is_indoor`, 공원과 산책로는 `is_outdoor`다. 둘이 동시에 참일 수는 없다.
 
@@ -185,9 +197,9 @@ AI 추천 대상이 아니다(2026-09-30, #145). 숙소 핀은 지도에 찍고 
 - **부정형 문장은 키의 뜻 기준으로 뒤집어 읽는다.** 키는 항상 긍정 특징("조용한가")이다. "시끄러운 데 싫어"는 "조용한 곳을 원함"이라 `wants=true`다.
 - `null`: 모르겠다 — 키는 있어도 방향을 못 정했다. `fact_key`가 null이면 항상 null.
 
-**hard 키(안전 조건)는 방향이 고정이다** — 전부 "있으면 실격"이라 `wants`를 보지 않고 지금처럼 동작한다(회귀 없음). 방향은 soft 키에만 쓴다.
+**안전 키는 아래 "안전 조건 사유는 배지와 무관하게 실격이다" 규칙을 따른다.** 아래 "배지 × `wants`" 표는 취향 키의 규칙이다.
 
-**soft 키 × 배지 × `wants`** (🚫 반응의 사유는 `required`, ♥·「+」 선호는 `preferred`)
+**취향 키 × 배지 × `wants`** (🚫 반응의 사유는 `required`, ♥·「+」 선호는 `preferred`)
 
 | 배지 | wants | 장소 라벨이 참(known) | 거짓(known) | 모름 |
 |---|---|---|---|---|
@@ -201,7 +213,7 @@ AI 추천 대상이 아니다(2026-09-30, #145). 숙소 핀은 지도에 찍고 
 - 선호의 감산은 새 공식이 아니다. 위 "점수"의 (지지 구성원 수 − 반대 구성원 수)에서 `wants=false` 선호를 **반대 구성원**으로 센다.
 - 한 명이라도 실격이면 후보에서 내린다(가드레일 9). 같은 키에 의견이 갈려도(한 명은 "한식 먹자", 한 명은 "한식 말고") 실격이 먼저다 — 한식집은 후보에서 빠진다.
 - 실격을 거르는 것은 여전히 **코드**다(가드레일 7). 모델은 방향 값을 내놓을 뿐 어떤 장소를 뺄지 정하지 않는다. 모델이 방향을 잘못 읽을 위험은 "되돌릴 수 있게" 막는다: 근거 줄에 해석한 방향(예: "한식 제외")을 보여 주고, 틀리면 `−`로 뺄 수 있다(5-5). 빠진 후보 수는 깔때기("실격 조건 제거")에 보인다.
-- ♥ 선호 프로필(위 "입력" 4번)에서 "구성원이 실격 사유로 등록한 fact_key는 제외"는 이제 soft 키의 `required`도 포함한다 — 그 축은 필터가 이미 걸렀기 때문이다.
+- ♥ 선호 프로필(위 "입력" 4번)에서 "구성원이 실격 사유로 등록한 fact_key는 제외"는 이제 취향 키의 `required`도 포함한다 — 그 축은 필터가 이미 걸렀기 때문이다.
 
 예) 세 사람이 음식점 후보를 받는다.
 
@@ -209,13 +221,13 @@ AI 추천 대상이 아니다(2026-09-30, #145). 숙소 핀은 지도에 찍고 
 |---|---|---|
 | 가 | 🚫 순대국집 "한식 말고 다른 거" | cuisine_korean, required, wants=false |
 | 나 | 「+」 "회 좋아해" | cuisine_raw_fish, preferred, wants=true |
-| 다 | 🚫 "너무 매워요" | spicy_focused, required (hard라 wants 무시) |
+| 다 | 🚫 "너무 매워요" | spicy_focused, required (안전 키라 아래 안전 규칙을 따른다) |
 
 결과: 한식집(라벨 참)은 실격이고, 한식 라벨이 모름인 곳은 통과하되 "확인 필요"가 붙는다. 횟집(라벨 참)은 실격이 아니라 +1점을 받아 위로 올라간다. 매운맛 전문(라벨 참 또는 모름)은 지금처럼 실격이다.
 
 ### 안전 조건 사유는 배지와 무관하게 실격이다 — 2026-10-02 결정(사용자), 점검 D11
 
-알러지처럼 틀리면 "못 먹는 걸 추천하는 사고"인 사유는 🚫가 아니라 △·♥·「+」로 남겨도 실격 조건이어야 한다. 위 표는 soft 키의 규칙이고, **hard 키(안전 조건: 갑각류·매운맛·기름짐 등)는 배지로 실격 여부를 가르지 않는다.**
+알러지처럼 틀리면 "못 먹는 걸 추천하는 사고"인 사유는 🚫가 아니라 △·♥·「+」로 남겨도 실격 조건이어야 한다. 위 표는 취향 키의 규칙이고, **안전 키(`unknown_policy`가 exclude인 키: 갑각류·매운맛·기름짐 등)는 배지로 실격 여부를 가르지 않는다.**
 
 | 줄의 배지 | wants | 장소 라벨이 참(known) | 모름 |
 |---|---|---|---|
@@ -224,10 +236,10 @@ AI 추천 대상이 아니다(2026-09-30, #145). 숙소 핀은 지도에 찍고 
 | preferred·reference (△·♥·「+」) | **false** ("저 조개 알러지") | **실격** | **실격** |
 | preferred·reference | true 또는 null | 효과 없음 | 효과 없음 |
 
-- ②는 hard 키에도 `wants`를 낸다(이전에는 null로 고정했다). 피하겠다는 표현("알러지", "못 먹는다", "빼 주세요")은 false, 좋아한다는 표현은 true, 확실하지 않으면 null이다. 안전 사유는 놓치는 쪽이 위험하므로 **피하겠다는 뜻이 조금이라도 분명하면 false**로 읽는다.
+- ②는 안전 키에도 `wants`를 낸다(이전에는 null로 고정했다). 피하겠다는 표현("알러지", "못 먹는다", "빼 주세요")은 false, 좋아한다는 표현은 true, 확실하지 않으면 null이다. 안전 사유는 놓치는 쪽이 위험하므로 **피하겠다는 뜻이 조금이라도 분명하면 false**로 읽는다.
 - 「+」로 직접 추가한 근거 줄도 ②를 거쳐 `fact_key`·`wants`가 붙는다(지금은 모델에 보내지 않아 항상 `fact_key=None`이다).
 - 모델이 방향을 잘못 읽을 위험은 앞 절과 같은 방식으로 막는다: 근거 줄에 "갑각류 제외"가 보이고 틀리면 `−`로 뺀다. 안전 사유를 못 읽어 놓치는 것은 모델의 몫이 아니라 사유 문구의 한계로 두되, 화면에 근거 줄이 남아 사용자가 확인할 수 있다.
-- soft 키(취향)는 이 규칙이 아니다 — 위 표대로 `required`일 때만 실격이다.
+- 취향 키는 이 규칙이 아니다. 위 표대로 `required`일 때만 실격이다.
 
 ## 실격 필터 순서에서의 적용 지점
 
