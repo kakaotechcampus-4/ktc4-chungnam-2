@@ -5,13 +5,8 @@ import { SEED_PLACES } from "./places";
 
 function visiblePins(mapId: string): Pin[] {
   return Object.values(store.pins).filter((p) => {
-    if (p.map_id !== mapId) return false;
-    if (p.visibility === "private") {
-      // 5-5-1: 요청한 사람에게만 보인다. 목 서버는 항상 ME_USER_ID로 요청한다고 가정한다.
-      const runId = p.source_run_id ?? undefined;
-      return runId ? store.runRequestedBy[runId] === ME_USER_ID : false;
-    }
-    return true;
+    // v1의 핀은 모두 public이다(#273). 비공개 AI 후보는 핀이 아니라 store.candidates에 있다.
+    return p.map_id === mapId;
   });
 }
 

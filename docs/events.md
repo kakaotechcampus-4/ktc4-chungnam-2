@@ -22,7 +22,7 @@
 
 | type | 페이로드 | 발생 시점 |
 |---|---|---|
-| `pin.created` | `Pin` (api-spec.yaml) | 핀 생성 직후. `visibility=private`인 핀은 이 채널에 보내지 않는다 |
+| `pin.created` | `Pin` (api-spec.yaml) | 핀 생성 직후. v1의 핀은 모두 public이다. 비공개 AI 후보는 핀이 아니라 개인 채널의 `run.candidates_ready`로만 간다(#273) |
 | `pin.published` | `Pin` | 「지도에 올리기」 실행 시 (5-5-1) |
 | `pin.deleted` | `{ pin_id }` | 핀 삭제 |
 | `reaction.changed` | `{ pin_id, reaction_summary }` | 반응 등록/수정/삭제 |

@@ -50,7 +50,9 @@ pins(
                                         -- 이름은 places.name에서 가져온다 — 핀에 따로 저장하지 않는다(place_name 컬럼은 없앤다).
                                         -- 카카오 응답의 이름·좌표는 저장하지 않는다. 자체 DB에 없는 장소는 핀으로 만들 수 없다(PLACE_NOT_SUPPORTED).
   geom geography(Point,4326),          -- 매칭된 places.geom의 복사(자체 데이터). 사용자가 카카오 지도에서 지정한 좌표는 저장하지 않는다
-  visibility('public'|'private'),      -- 5-5-1: AI 후보는 private로 시작
+  visibility('public'|'private'),      -- v1은 항상 public(#273). 이 값으로 분기하지 않는다.
+                                        -- 비공개 AI 후보는 pins 행이 아니라 candidates 행이고, 게시할 때
+                                        -- 처음부터 public 핀으로 만든다. 칸은 다음 Pin 스키마 정리 때 지운다
   source_run_id null,                  -- #57 결정: recommend_runs.id를 게시 시점에 한 번만
                                         -- 써넣는 불투명 참조값(추적·표시용). FK 제약은 걸지 않고
                                         -- pins는 이 값을 절대 다시 읽어 recommend를 조회하지

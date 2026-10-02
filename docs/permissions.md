@@ -148,7 +148,7 @@ def require_map_member() -> Depends:
    항목이라 "추가"가 의미 없다. `can_remove_from_shortlist`만 `can(user, "shortlist.remove",
    resource)`를 따른다. `shortlist/core.py::to_shortlist_item_response`가 이 규칙을 그대로
    써서 응답을 조립하며 통과 확인됨(29 tests).
-3. **비공개 AI 후보(visibility=private)는 확정 리스트로 직접 승격할 수 없다** — 소유자 본인이
+3. **(2026-10-03 폐기, #273) 비공개 AI 후보(visibility=private)는 확정 리스트로 직접 승격할 수 없다.** v1에는 private 핀이 없어(비공개 후보는 candidates 행) 아래 검사는 지운다. 원래 내용: 소유자 본인이
    자기 비공개 후보를 열람하는 것과, 그 핀을 그대로 확정 리스트(항상 전체 공개)에 올리는 것은
    다른 문제다. 후자를 허용하면 「지도에 올리기」를 거치지 않고 비공개 AI 후보가 공개로
    새는 셈이라 최종기획안 7절 가드레일 1을 어긴다. `resource.kind`에는 visibility 정보가 없어

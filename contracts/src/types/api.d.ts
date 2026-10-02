@@ -554,7 +554,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 핀 목록. 보는 사람 기준 필터링 — visibility=private인 남의 후보는 내려주지 않는다 (5-5-1) */
+        /** 핀 목록. v1의 핀은 모두 public이다. 비공개 AI 후보는 핀이 아니라 Candidate라 이 목록에 없다 (5-5-1, */
         get: {
             parameters: {
                 query?: {
@@ -1467,7 +1467,7 @@ export interface paths {
         };
         /**
          * 전체 채널 SSE. 지도의 모든 구성원이 구독한다.
-         *     visibility=private인 핀·후보는 이 채널로 절대 내려가지 않는다 (5-5-1, 가드레일 1).
+         *     비공개 AI 후보(Candidate)는 이 채널로 내려가지 않고 요청자 개인 채널(/events/me)의 run.candidates_ready로만 간다 (5-5-1, 가드레일 1).
          */
         get: {
             parameters: {
@@ -1721,7 +1721,10 @@ export interface components {
             map_id: string;
             category: components["schemas"]["Category"];
             kind: components["schemas"]["PinKind"];
-            /** @enum {string} */
+            /**
+             * @description v1은 항상 public(#273). 이 값으로 분기하지 않는다. 비공개 AI 후보는 Candidate.visibility로 표현한다
+             * @enum {string}
+             */
             visibility: "public" | "private";
             lat: number;
             lng: number;

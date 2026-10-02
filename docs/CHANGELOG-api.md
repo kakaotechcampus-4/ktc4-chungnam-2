@@ -2,6 +2,19 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-03, v1에 없는 private 핀 정리 (#273, PR #152 멘토 리뷰)
+
+v1에는 `visibility=private`인 핀이 생기지 않는다. 비공개 AI 후보는 `candidates` 행이고, 게시할 때 처음부터 public 핀으로 만든다. 그런데 핀 쪽에 이 상태를 막는 분기가 여러 군데 있어 실제로 막는 곳을 찾기 어려웠다. 계약 구조는 바뀌지 않고 설명만 맞춘다.
+
+- `Pin.visibility`: 필드와 enum은 그대로 두고 "v1은 항상 public, 이 값으로 분기하지 않는다"를 설명에 적는다. 칸은 다음 `Pin` 스키마 정리 때 지운다.
+- `GET /maps/{mapId}/pins`, `GET /maps/{mapId}/events`, `docs/events.md`의 `pin.created`: private 핀을 거른다는 설명을 지우고, 비공개 후보는 개인 채널 `run.candidates_ready`로만 간다고 적는다.
+- `AI_PIN_PRIVATE`: 삭제하지 않는다. 같은 지도 구성원이 남의 후보를 게시하려 할 때(`POST /candidates/{id}/publish`) 쓰는 코드로 뜻을 좁힌다(D15). 핀 조회와 확정 리스트에서는 더 이상 나오지 않는다.
+- 목 서버: private 핀 필터를 지우고, 없는 후보 게시는 `NOT_FOUND`로 실서버와 맞춘다.
+
+**FE 영향**: 동작 변화 없음. 타입 재생성 시 `Pin.visibility`에 설명만 붙는다. 핀 조회에서 `AI_PIN_PRIVATE`를 따로 처리하던 곳이 있으면 지워도 된다.
+
+**BE 영향**: `pins`(목록 필터, `loaders.py`, `api.py`, `core.py` 이벤트 분기)와 `shortlist/loaders.py`의 private 검사를 지운다(#273).
+
 ## 2026-10-02 (다섯 번째) — 스펙에 빠져 있던 응답 선언 정리, 충족 집계, 안전 사유 규칙 (#246, D11)
 
 점검 루프 1회차에서 코드는 합당하게 동작하는데 스펙에 선언이 없던 곳을 정리한다(사용자 결정: 권고대로 스펙을 코드에 맞춘다).
