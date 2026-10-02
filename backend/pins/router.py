@@ -14,18 +14,19 @@ from sqlalchemy.orm import Session
 from auth.deps import get_current_user
 from auth.schemas import CurrentUser
 from authz.core import Principal
-from authz.guard import require, require_map_member, require_on_map
+from authz.guard import require, require_map_member, require_on_map, require_with_principal
 from pins import service
 from pins.deps import DbSession
 from pins.loaders import load_pin
 from pins.models import Pin as PinRow
 from pins.schemas import Category, FilterCounts, Pin, PinCreateRequest, PinKind, Reaction, ReactionRequest
+from shortlist import api as shortlist_api
 
 router = APIRouter(tags=["pins"], dependencies=[Depends(get_current_user)])
 
 PinsForMap = Depends(require_map_member())          # GET — 조회는 액션이 아니라 멤버십만
 PinToCreate = Depends(require_on_map("pin.create"))  # POST — 생성은 실제 액션 판정
-PinToDelete = Depends(require("pin.delete", load_pin))
+PinToDelete = Depends(require_with_principal("pin.delete", load_pin))
 PinForReaction = Depends(require("pin.react", load_pin))
 PinForRevert = Depends(require("pin.revert", load_pin))
 # 조회는 액션이 아니라 멤버십만 본다(require_map_member와 같은 사정 — 조회 전용 액션이 없다).
@@ -73,9 +74,12 @@ def post_pin(
 
 @router.delete("/pins/{pinId}", status_code=204)
 def delete_pin(
-    pin: PinRow = PinToDelete,
+    deletable=PinToDelete,
     db: Session = DbSession,
 ):
+    pin, principal = deletable
+    # 확정 핀이면 확정 항목을 먼저 정리한다(#235) — 핀이 읽히는 동안이어야 이벤트를 만들 수 있다.
+    shortlist_api.remove_for_deleted_pin(db, map_id=pin.map_id, pin_id=str(pin.id), principal=principal)
     service.delete_pin(db, pin=pin)
 
 
