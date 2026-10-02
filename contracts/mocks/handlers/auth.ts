@@ -3,6 +3,11 @@ import { ME_USER_ID, store } from "../store";
 import { apiError } from "../util";
 
 export const authHandlers = [
+  // #128 — 로그인 시작은 BE가 카카오로 보낸다. 목 서버는 로그인된 것처럼 진입점으로 돌려보낸다.
+  http.get("*/auth/kakao/login", () => {
+    return new HttpResponse(null, { status: 302, headers: { Location: "/" } });
+  }),
+
   http.get("*/auth/kakao/callback", () => {
     return new HttpResponse(null, { status: 302, headers: { Location: "/" } });
   }),

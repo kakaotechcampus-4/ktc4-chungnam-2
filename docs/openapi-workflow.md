@@ -52,13 +52,15 @@ npm test             # vitest — smoke.test.ts
 docker-compose up -d                  # PostgreSQL+PostGIS, Redis
 cp .env.example .env                  # 없으면. 값은 커밋하지 않는다
 python -m alembic upgrade head        # 마이그레이션 체인이 head 하나여야 한다
+# 자체 장소 DB 적재(한 번, 약 4분) — 파일은 저장소 밖에 둔다(.gitignore). 안 하면 검색·핀·추천이 모두 빈다
+python -m places.load restaurants --file <restaurant_seoul_curated.csv> --labels <restaurant_seoul_curated_labels.json> --dry-run   # 리포트 확인 후 --dry-run을 뺀다
 python -m uvicorn main:asgi_app --port 8000
 ```
 `backend/.env`에 채울 값 (**localhost로 통일** — `127.0.0.1`과 섞으면 쿠키가 안 붙는다):
 
 | 값 | 설정 | 비고 |
 |---|---|---|
-| `AUTH_MODE` | `real` | `dev`는 쿠키 값을 user_id로 그대로 믿는 개발용이라 실연동 점검에는 쓰지 않는다 |
+| `PINGO_ENV` | `dev` | **꼭 적는다(#126).** 안 적으면 prod로 떠서 prod 가드가 서버 기동을 막는다(`ConfigError`). `AUTH_MODE`는 없어졌다 — 쿠키 값을 믿는 개발용 인증이 사라졌고 로그인은 항상 실제 카카오다 |
 | `KAKAO_CLIENT_ID` | 카카오 **REST API 키** | JavaScript 키·Admin 키 아님. 로그인용이자 places가 `KAKAO_REST_API_KEY` 대신 쓴다 |
 | `KAKAO_CLIENT_SECRET` | (콘솔에서 Client Secret을 켰을 때만) | |
 | `KAKAO_REDIRECT_URI` | `http://localhost:8000/auth/kakao/callback` | 카카오 콘솔 Redirect URI, FE가 만드는 authorize URL과 **글자까지 같아야** 한다 |
@@ -72,21 +74,20 @@ python -m uvicorn main:asgi_app --port 8000
 **프론트** (`frontend/.env.local` — 커밋 금지)
 ```
 VITE_API_BASE_URL=http://localhost:8000
-VITE_KAKAO_REST_KEY=<백엔드 KAKAO_CLIENT_ID와 같은 값>
 VITE_KAKAO_MAP_KEY=<JavaScript 키>
 ```
-`VITE_API_BASE_URL`을 채우면 목 서버가 꺼진다(`api.ts`). `npm run dev`로 `http://localhost:5173`을 연다.
+`VITE_API_BASE_URL`을 채우면 목 서버가 꺼진다(`api.ts`). 로그인은 FE가 카카오 URL을 만들지 않고 `${VITE_API_BASE_URL}/auth/kakao/login`으로 이동한다(#128, 그래서 `VITE_KAKAO_REST_KEY`는 필요 없다). `npm run dev`로 `http://localhost:5173`을 연다.
 
 ### 5-2. 점검 흐름 (화면이 있는 만큼 위에서부터)
 
 | # | 흐름 | 기대 결과 | 어긋나면 먼저 볼 곳 |
 |---|---|---|---|
-| 1 | `/`에서 로그인 버튼 → 카카오 → 돌아옴 | 내 지도 목록(`GET /maps`) 화면. 브라우저 쿠키에 `session`(HttpOnly)이 생김 | 카카오 `KOE006`(Redirect URI 불일치), 401 반복(쿠키 미저장) |
+| 1 | `/`에서 로그인 버튼 → `/auth/kakao/login` → 카카오 → 돌아옴 | 내 지도 목록(`GET /maps`) 화면. 브라우저 쿠키에 `session`(HttpOnly)이 생김 | 카카오 `KOE006`(Redirect URI 불일치), 401 반복(쿠키 미저장), 콜백 401 `invalid_state`(login을 안 거치고 카카오로 직접 갔거나 쿠키 호스트 불일치) |
 | 2 | 지도 만들기(제목·기간·지역) | `POST /maps` 201 → 그 지도로 이동, 목록에 나타남 | 422(날짜: 종료일은 시작일과 같거나 이후) |
 | 3 | 초대 링크 발급 → **다른 브라우저/시크릿 창**에서 열기 | 비로그인으로 초대 요약(`GET /invites/{token}`) 표시 → 로그인 → 수락 → 같은 지도, 구성원 2명 | 링크 호스트가 `FRONTEND_BASE_URL`인지, 410(만료)/404(없는 토큰) 화면 |
-| 4 | 이름 검색으로 핀 찍기 (`GET /places/search`, #180 머지 후) | 결과 선택 → `POST /maps/{id}/pins`(source=search) 201. 0개면 "결과 없음" | 429(빨리 침), 503(검색 불가 → 길게 눌러 좌표로) |
-| 5 | 지도 길게 눌러 좌표로 핀 찍기 | 201, 지도에 핀, 다른 창에 **실시간으로** 나타남(SSE `pin.created`) | 다른 창에 안 뜨면 `GET /maps/{id}/events` 연결(401/CORS) |
-| 6 | 핀 상세: ♥/△/🚫 남기기, 의견 목록, 내 반응 취소 | 🚫는 사유 없으면 422 `EVIDENCE_REQUIRED`. 숙소 핀은 반응 UI 없음(422 `REACTION_NOT_ALLOWED`) | `my_reaction`, 반응 요약이 바로 갱신되는지 |
+| 4 | 이름 검색으로 핀 찍기 (`GET /places/search`) | 결과에 `pinnable`(자체 DB에 짝이 있는가) — false는 흐리게 "아직 지원하지 않는 장소예요". 고르면 `POST /maps/{id}/pins`(source=search) 201, 핀 이름·좌표는 **자체 DB 장소의 것**. 0개면 "결과 없음" | 422 `PLACE_NOT_SUPPORTED`(자체 DB에 없음 — 서울 음식점 8,539곳만 있다), 429(빨리 침), 503(검색 불가) |
+| 5 | 같은 핀이 다른 창에 **실시간으로** 나타남 | SSE `pin.created`. 같은 장소를 또 찍으면 409 `PIN_DUPLICATE`. 지도 길게 눌러 찍기·링크로 찍기는 없다(v1에서 뺌, 보내면 422) | 다른 창에 안 뜨면 `GET /maps/{id}/events` 연결(401/CORS) |
+| 6 | 핀 상세: ♥/△/🚫 남기기, 의견 목록, 내 반응 취소 | 🚫는 사유 없으면 422 `EVIDENCE_REQUIRED`. (숙소는 v1에서 핀 자체를 만들 수 없다) | `my_reaction`, 반응 요약이 바로 갱신되는지 |
 | 7 | 추천 받기(음식점) → 근거 확인 → 실행 | 준비 미달이면 409 `NOT_READY`. 후보는 **요청자에게만** 점선 핀. 후보 카드에 이유·체크·구성원 충족·출처 | 다른 구성원 화면에 후보가 보이면 가드레일 1 위반 — 즉시 이슈 |
 | 8 | 반경 넓히기 ×4, 다시 추천 | 15→20→25→30분, 네 번째는 409 `WIDEN_LIMIT`. 재시도 5회 초과는 429 `RETRY_LIMIT` | |
 | 9 | 「지도에 올리기」 | 모든 구성원에게 핀이 나타나고 이유·체크가 **게시 뒤에도 유지** | |
@@ -101,7 +102,7 @@ VITE_KAKAO_MAP_KEY=<JavaScript 키>
 | 요청마다 401, 로그인 루프 | 쿠키가 안 붙는다 — 호스트 혼용(`127.0.0.1`↔`localhost`) 또는 `credentials: 'include'` 누락 | 주소를 `localhost`로 통일 |
 | 브라우저 콘솔에 CORS 오류 | 오리진이 허용 목록에 없다 | dev는 localhost 정규식이 기본 허용. 다른 오리진이면 `CORS_ALLOW_ORIGINS`에 명시(와일드카드 불가) |
 | 카카오 `KOE006` | Redirect URI가 콘솔·BE·FE 셋 중 하나와 다르다 | 세 곳을 글자까지 일치 |
-| 서버가 안 뜨고 `ConfigError` | prod 가드(스텁·기본 시크릿·와일드카드 CORS) | `PINGO_ENV`를 dev로, 또는 값 채우기 |
+| 서버가 안 뜨고 `ConfigError` | `PINGO_ENV`를 안 적으면 prod로 뜬다(#126) — prod 가드(기본 시크릿·와일드카드 CORS 등) | `backend/.env`에 `PINGO_ENV=dev`, 또는 값 채우기 |
 | `relation "..." does not exist` | 마이그레이션 누락 | `python -m alembic upgrade head` |
 | `503 PLACES_UNAVAILABLE` | `PLACES_MODE=real`인데 카카오 키 없음/장애/403 | 키·"카카오맵" 사용 설정 확인, 또는 `dev`로 |
 | 추천이 항상 `NO_RESULTS` | dev 장소 라벨이 전부 unknown인 상태에서 안전 조건(갑각류 등)이 켜졌다 — **정상 동작**(모르면 제거) | 실제 라벨링(데이터 담당)이 붙기 전까지 시연에서는 안전 조건을 켜지 않은 사유로 |

@@ -2,6 +2,15 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-02 (세 번째) — 로그인 시작 엔드포인트 `GET /auth/kakao/login` 추가, 콜백에 `state` (#128)
+
+로그인 CSRF 방지(멘토 리뷰). 로그인 시작을 백엔드로 옮겼다 — 서버가 `state`를 만들어 서명한 httpOnly 쿠키(`kakao_oauth_state`, 경로 `/auth/kakao`, 10분)에 넣고 카카오로 보낸다. 콜백이 쿠키와 `state`를 대조하고, 성공·실패와 관계없이 쿠키를 지운다(같은 콜백 링크는 한 번만 쓸 수 있다).
+
+- **`GET /auth/kakao/login`(신규, `security: []`)**: 302로 카카오 인가 화면 이동 + `Set-Cookie`. fetch가 아니라 **브라우저 이동**으로 부른다.
+- **`GET /auth/kakao/callback`**: `state` 쿼리 추가. 쿠키와 다르거나 없거나 만료면 **401 `UNAUTHORIZED`**, `detail.reason = "invalid_state"`(JSON 봉투가 BE 주소에 그대로 보인다).
+- **FE 영향(필수)**: `frontend/src/features/auth/auth.ts`의 `kakaoLoginUrl()`이 카카오 인가 URL(`client_id`·`redirect_uri` 포함)을 직접 만드는 것을 그만두고 `${VITE_API_BASE_URL}/auth/kakao/login`으로 `window.location`을 옮기게 바꾼다. `VITE_KAKAO_REST_KEY`는 로그인에 더 필요 없다(지도 SDK용 JavaScript 키와는 별개). 이 변경 전의 FE 방식은 `state`가 없어 콜백이 401로 거절한다. 목 서버(msw)는 `/auth/kakao/login`을 `/`로 302한다.
+- 쿠키 호스트(`localhost`↔`127.0.0.1` 혼용) 주의는 runbook 5-3 그대로다.
+
 ## 2026-10-02 (두 번째) — 응답 객체 스키마에 `required` 선언 (멘토 리뷰 PR #152)
 
 응답 스키마에 `required`가 없으면 핸들러가 `{}`를 돌려줘도 계약 테스트가 통과하고 생성된 FE 타입이 전부 optional이 된다. 서버가 항상 내려주는 필드를 `required`로 올렸다. 값이 없을 때 필드가 아예 빠지는 nullable 필드는 required에서 뺀다.
