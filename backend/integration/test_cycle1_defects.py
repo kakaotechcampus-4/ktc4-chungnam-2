@@ -181,7 +181,6 @@ def _run_recommend(db_session, lines, facts, places):
     return {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D4 — wants=null인 선호가 '원함'으로 계산된다(문서 표는 효과 없음). #237")
 def test_d4_preferred_with_unknown_direction_has_no_effect(db_session):
     from recommend.ports import PlaceStub
 
@@ -197,7 +196,6 @@ def test_d4_preferred_with_unknown_direction_has_no_effect(db_session):
     assert ranked == ["near_plain", "far_raw"], "방향을 모르는 사유는 점수에 영향이 없다 — 가까운 곳이 먼저여야 한다"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D5 — '한식 말고'를 만족한 비한식 후보에 실패 체크(passed=False)가 붙는다. #237")
 def test_d5_satisfied_exclusion_is_not_shown_as_failed(db_session):
     from recommend.ports import PlaceStub
 

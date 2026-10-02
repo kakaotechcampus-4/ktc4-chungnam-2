@@ -937,7 +937,7 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
     _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
     service.add_reaction_evidence(db_session, run_id=run.id, lines=[
         {"author_id": "user_1", "source": "reaction", "text": "매운거 빼주세요", "badge": "required", "fact_key": "spicy_focused"},
-        {"author_id": "user_2", "source": "reaction", "text": "조용했으면", "badge": "preferred", "fact_key": "quiet"},
+        {"author_id": "user_2", "source": "reaction", "text": "조용했으면", "badge": "preferred", "fact_key": "quiet", "wants": True},
     ])
     source = {"provider": "kakao", "url": "https://place.map.kakao.com/1"}
     places = [
@@ -1092,18 +1092,28 @@ def test_hard_key_ignores_wants_direction(db_session):
     assert set(candidates) == {"mild"} and funnel["실격 조건 제거"] == 2
 
 
-def test_preferred_wants_false_subtracts_and_wants_null_still_adds(db_session):
+def test_preferred_wants_false_subtracts_and_wants_null_has_no_effect(db_session):
     """"한식은 피하고 싶어"(preferred, wants=false)는 한식 참인 후보를 반대 구성원 +1로 깎아 순위가 내려간다.
-    wants=NULL 선호(옛 데이터)는 이전처럼 지지로 센다."""
+    wants=NULL 선호(방향을 모름)는 지지도 반대도 아니다(#237)."""
     candidates, _ = _execute_with_lines(
         db_session, [_line("user_1", "preferred", "cuisine_korean", False), _line("user_2", "preferred", "quiet", None)],
         {"korean_quiet": {"cuisine_korean": True, "quiet": True}, "quiet_only": {"quiet": True},
          "korean_only": {"cuisine_korean": True}, "plain": {}},
     )
     ranks = {pid: c.rank for pid, c in candidates.items()}
-    assert ranks["quiet_only"] == 1          # +1(quiet)
-    assert "korean_only" not in ranks         # −1 → 상위 3곳 밖(plain 0점·korean_quiet 0점이 앞선다)
-    assert set(ranks) == {"quiet_only", "korean_quiet", "plain"}
+    assert {ranks["quiet_only"], ranks["plain"]} == {1, 2}  # quiet(wants=NULL)는 0점 — 한식 후보 둘(−1)만 뒤로 밀린다
+
+
+def test_satisfied_directed_checks_are_shown_as_satisfied(db_session):
+    """#237 — "한식 말고"를 만족한 비한식 후보는 ✓, "조용한 곳"(wants=true)은 라벨이 참일 때 ✓. 라벨은 읽을 수 있는 문구."""
+    candidates, _ = _execute_with_lines(
+        db_session,
+        [_line("user_1", "required", "cuisine_korean", False), _line("user_2", "required", "quiet", True)],
+        {"ok": {"cuisine_korean": False, "quiet": True}},
+    )
+    by_key = {c["fact_key"]: c for c in candidates["ok"].checks}
+    assert by_key["cuisine_korean"]["passed"] is True and by_key["cuisine_korean"]["label"] == "한식 제외"
+    assert by_key["quiet"]["passed"] is True and by_key["quiet"]["label"] == "조용한 곳"
 
 
 def test_same_key_disqualification_beats_a_supporter(db_session):
