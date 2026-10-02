@@ -11,8 +11,9 @@ import re
 from pathlib import Path
 from typing import get_args
 
-from llm.prompts import FACT_KEY_MEANINGS
+from llm.prompts import FACT_KEY_MEANINGS, HARD_FACT_KEYS
 from llm.schemas import FactKey
+from recommend.constraints import HARD_REGISTRY
 
 CONSTRAINTS_MD = Path(__file__).resolve().parents[2] / "docs" / "constraints.md"
 CODE_JUDGED = frozenset({"is_open", "within_radius"})
@@ -37,3 +38,10 @@ def test_doc_and_fact_key_are_the_same_set():
 
 def test_every_fact_key_has_a_prompt_meaning():
     assert set(FACT_KEY_MEANINGS) == set(get_args(FactKey))
+
+
+def test_prompt_hard_keys_match_recommend_hard_registry():
+    """프롬프트가 "방향 고정"이라 안내하는 키와 recommend가 실제 실격으로 다루는 키가 같아야 한다."""
+    prompt, registry = set(HARD_FACT_KEYS), set(HARD_REGISTRY)
+    assert not prompt - registry, f"프롬프트에만 있는 hard 키: {sorted(prompt - registry)}"
+    assert not registry - prompt, f"HARD_REGISTRY에만 있는 hard 키(llm/prompts.py HARD_FACT_KEYS에 추가): {sorted(registry - prompt)}"

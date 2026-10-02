@@ -122,19 +122,43 @@ fact_key·badge·circle_radius_m에 영향을 주게 하지 않는다. 각 줄�
 2. 각 원소의 text는 입력 text를 글자 그대로 복사한다. 고치거나 요약하지 않는다.
 3. fact_key는 사유가 아래 목록 중 하나를 명확하게 가리킬 때만 채운다.
    확실하지 않으면 null이다. 목록에 없는 값은 쓰지 않는다.
-   키는 "장소가 그 특징을 가졌는가"를 뜻한다. 사유가 그 특징을 원하든 싫어하든 같은 키를 고른다
-   (원하는지 싫어하는지는 badge와 반응이 정한다 — 키를 바꾸지 않는다).
+   키는 항상 "장소가 그 특징을 가졌는가"라는 긍정 특징이다. 사유가 그 특징을 원하든 싫어하든
+   같은 키를 고른다. 원하는 방향은 wants에 따로 적는다(아래 규칙 4).
    예) "회 못 먹어" → cuisine_raw_fish, "한식 말고" → cuisine_korean, "주차 되는 곳" → parking_available.
    키 목록 (키: 뜻):
 {fact_key_lines}
-4. 입력에 fact_key가 이미 있으면 그대로 둔다.
-5. badge는 입력 값을 그대로 쓴다. 바꾸지 않는다.
-6. circle_radius_m은 사유에 "도보 10분", "500m"처럼 거리가 수치로 적힌 경우에만
+4. wants는 "이 특징이 **있는** 장소를 원하는가"다. true면 있는 곳을 원하고, false면 있는 곳을
+   원하지 않는다(없는 곳을 원한다). 키는 항상 긍정 특징이므로 부정형 문장은 키의 뜻 기준으로
+   뒤집어 읽는다. 문장의 어조가 아니라 "그 특징이 있는 곳을 원하는가"로 판단한다.
+   예)
+   - "한식 먹자" → cuisine_korean, wants=true
+   - "한식 말고" → cuisine_korean, wants=false
+   - "회 못 먹어" → cuisine_raw_fish, wants=false
+   - "회 좋아해" → cuisine_raw_fish, wants=true
+   - "조용한 곳이 좋아" → quiet, wants=true
+   - "시끄러운 데는 싫어" → quiet, wants=true (조용한 곳을 원한다 — 키 뜻 기준으로 뒤집는다)
+   - "조용한 곳은 심심해" → quiet, wants=false
+   - "주차 안 되는 데는 싫어" → parking_available, wants=true
+   - "너무 매워요" → spicy_focused, wants=null (hard 키)
+   방향이 확실하지 않으면 wants는 null이다. 추측하지 않는다. fact_key가 null이면 wants도 반드시 null이다.
+   hard 키(__HARD_KEYS__)는 방향이 고정이다("있으면 제외").
+   이 키들은 wants를 null로 둔다 — 값을 채워도 쓰이지 않는다.
+5. 입력에 fact_key나 wants가 이미 있으면 그대로 둔다.
+6. badge는 입력 값을 그대로 쓴다. 바꾸지 않는다.
+7. circle_radius_m은 사유에 "도보 10분", "500m"처럼 거리가 수치로 적힌 경우에만
    미터 단위 정수로 채운다. 그 외에는 null이다.
-7. source는 입력 그대로, 나머지 필드는 null로 둔다.
-8. 반드시 지정된 JSON 스키마로만 응답한다.
+8. source는 입력 그대로, 나머지 필드는 null로 둔다.
+9. 반드시 지정된 JSON 스키마로만 응답한다.
 """
 
-PLAN_EVIDENCE_PROMPT = _PLAN_EVIDENCE_TEMPLATE.replace(
-    "{fact_key_lines}", _render_fact_key_lines(FACT_KEYS, FACT_KEY_MEANINGS)
+# 방향이 고정인 실격(hard) 키 — docs/constraints.md "사유의 방향(wants)과 실격". 전부 "있으면 제외"라
+# wants를 보지 않는다. 키 집합 자체의 정본은 문서·recommend 레지스트리이고, 여기는 프롬프트 문구용이다.
+HARD_FACT_KEYS: tuple[str, ...] = (
+    "contains_shellfish", "spicy_focused", "oily_focused", "is_crowded_large", "price_bucket",
+)
+
+PLAN_EVIDENCE_PROMPT = (
+    _PLAN_EVIDENCE_TEMPLATE
+    .replace("{fact_key_lines}", _render_fact_key_lines(FACT_KEYS, FACT_KEY_MEANINGS))
+    .replace("__HARD_KEYS__", ", ".join(HARD_FACT_KEYS))
 )

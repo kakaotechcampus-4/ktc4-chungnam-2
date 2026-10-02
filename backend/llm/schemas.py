@@ -109,10 +109,21 @@ class EvidenceLine(BaseModel):
     chip_id: Optional[str] = None
     badge: Badge
     fact_key: Optional[FactKey] = None
+    # 이 특징(fact_key)이 있는 장소를 원하는가 (docs/constraints.md "사유의 방향(wants)과 실격", #228).
+    # true="한식 먹자", false="한식 말고". 모르면 None. fact_key가 없으면 반드시 None.
+    wants: Optional[bool] = None
     circle_anchor_pin_id: Optional[str] = None
     circle_radius_m: Optional[int] = None
     is_active: bool = True
     created_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _wants_needs_fact_key(self) -> "EvidenceLine":
+        # 방향은 키가 있을 때만 의미가 있다. 모델이 키 없이 wants를 채워 와도 예외로 ② 전체를 무너뜨리지
+        # 않고 버린다(merge_planned도 같은 정리를 한다).
+        if self.fact_key is None:
+            self.wants = None
+        return self
 
 
 class PlanningOutput(BaseModel):

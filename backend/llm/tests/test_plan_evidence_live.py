@@ -44,3 +44,23 @@ def test_plan_evidence_real_call_round_trip():
     assert [ln.text for ln in lines] == [r["text"] for r in REASONS]
     assert [ln.badge for ln in lines] == [r["badge"] for r in REASONS]
     assert [ln.author_id for ln in lines] == ["u1", "u2", "u3"]
+
+
+def test_wants_fixture_cases_against_real_model():
+    """#230 — 실제 Luna가 방향(wants)을 맞게 읽는지. 틀린 건 모아서 보여 주고 실패시킨다(#116에서 확인)."""
+    import json
+    from pathlib import Path
+
+    cases = json.loads((Path(__file__).parent / "fixtures" / "wants_cases.json").read_text(encoding="utf-8"))
+    reasons = [{"author_id": "u", "source": "reaction", "text": c["text"], "badge": c["badge"], "fact_key": None} for c in cases]
+
+    output = llm_client.call_planner(llm_client.get_client(), reasons)
+
+    wrong = [
+        (c["text"], (c["fact_key"], c["wants"]), (o.fact_key, o.wants))
+        for c, o in zip(cases, output.evidence_lines)
+        if (o.fact_key, o.wants) != (c["fact_key"], c["wants"])
+    ]
+    for text, want, got in wrong:
+        print(f"[live] MISMATCH {text!r}: 기대 {want} / 실제 {got}")
+    assert not wrong
