@@ -234,7 +234,13 @@ def list_disliked_place_ids(db: Session, *, user_id: str, map_id: str, category:
 def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[dict]:
     """recommend의 근거 조립(①②, recommend/#108)이 쓴다 — 그 카테고리 핀에 남긴 반응 중
     사유가 있는 것만(반대는 사유 필수라 가드레일3로 항상 있고, 좋음/조율 필요도 사유가 있으면
-    포함한다). llm.service.plan_evidence에 넘길 raw_reasons의 원자료다."""
+    포함한다). llm.service.plan_evidence에 넘길 raw_reasons의 원자료다.
+
+    소프트 삭제된 핀의 반응도 **포함한다**(#243) — 사유는 사람이 한 말이라 핀이 지워져도 사라지면 안 된다.
+    구성원 누구나 핀을 지울 수 있어서(#25), 안 그러면 한 명이 b의 "조개 알러지" 핀을 지우는 것만으로 안전
+    조건이 다음 run에서 빠진다(가드레일 8). 반대로 준비 판정(`count_reacted_users`)은 삭제 핀을 계속
+    센다고 보지 않는다 — 사유(이력)와 "지금 몇 명이 반응했나"는 다른 질문이다. 같은 이유로
+    `list_disliked_place_ids`도 삭제 핀을 포함한다."""
     rows = db.execute(
         select(
             ReactionRow.pin_id, ReactionRow.user_id, ReactionRow.type,
@@ -243,8 +249,8 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
         .select_from(ReactionRow)
         .join(PinRow, PinRow.id == ReactionRow.pin_id)
         .where(
-            PinRow.map_id == map_id, PinRow.category == category, PinRow.deleted_at.is_(None),
-            or_(ReactionRow.reason_text.is_not(None), func.jsonb_typeof(ReactionRow.reason_chip_ids) == "array"),
+            PinRow.map_id == map_id, PinRow.category == category,   # 삭제된 핀의 반응도 포함한다(#243)
+            or_(ReactionRow.reason_text.is_not(None), func.jsonb_typeof(ReactionRow.reason_chip_ids) == "array"),   # 칩만 남긴 반대도(#236)
         )
     ).all()
     reasoned = []
