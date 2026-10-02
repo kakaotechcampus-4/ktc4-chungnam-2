@@ -4,10 +4,10 @@ import { Share } from 'lucide-react'
 import ErrorText from '@/ErrorText'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import { useMeQuery } from '@/features/auth/queries'
-import { useInviteQuery, useMapQuery, useMembersQuery } from '@/features/maps/queries'
+import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
+import { useShareInvite } from '@/features/maps/useShareInvite'
 
 import ModalSheet from './ModalSheet'
-import { showToast } from './toast'
 
 /**
  * 프로필 모달(Figma 8절). 탭 시트가 아니라 모달이다 — 탭 시트 자리에 띄우면 켜진 탭과 내용이 어긋난다.
@@ -17,38 +17,9 @@ import { showToast } from './toast'
 export default function ProfileModal({ mapId, onClose }: { mapId: string; onClose: () => void }) {
   const map = useMapQuery(mapId)
   const members = useMembersQuery(mapId)
-  const invite = useInviteQuery(mapId, true)
+  const { url, error: inviteError, copied, copy, share } = useShareInvite(mapId)
   const me = useMeQuery()
-  const [copied, setCopied] = useState(false)
   const [confirmLogout, setConfirmLogout] = useState(false)
-
-  const url = invite.data?.url
-
-  async function copy() {
-    if (!url) return
-    try {
-      await navigator.clipboard.writeText(url)
-      setCopied(true)
-      showToast('초대 링크를 복사했어요')
-    } catch (err) {
-      console.error('[profile] 링크 복사 실패', err)
-      showToast('링크를 복사하지 못했어요. 길게 눌러 직접 복사해 주세요')
-    }
-  }
-
-  async function share() {
-    if (!url) return
-    // 공유 창이 없는 브라우저(데스크톱 대부분)는 복사로 대신한다.
-    if (!navigator.share) return copy()
-    try {
-      await navigator.share({ title: map.data?.title, url })
-    } catch (err) {
-      // 사용자가 공유 창을 닫은 건 실패가 아니다.
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      console.error('[profile] 공유 실패', err)
-      void copy()
-    }
-  }
 
   return (
     <ModalSheet
@@ -80,7 +51,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
           {copied ? '✓ 복사됨' : '복사'}
         </button>
       </div>
-      {invite.error && <ErrorText message="초대 링크를 만들지 못했어요" error={invite.error} />}
+      {inviteError && <ErrorText message="초대 링크를 만들지 못했어요" error={inviteError} />}
 
       <h3 className="mb-2 mt-6 font-semibold text-ink-900">구성원</h3>
       {members.error && <ErrorText message="구성원을 불러오지 못했어요" error={members.error} />}
