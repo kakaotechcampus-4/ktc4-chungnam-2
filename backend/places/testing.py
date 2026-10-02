@@ -42,6 +42,7 @@ class _Row:
     status: str = "open"
     kakao_place_id: str | None = None
     kakao_place_url: str | None = None
+    source: str = "permit"
 
     @property
     def place_id(self) -> str:
@@ -109,7 +110,7 @@ class FakePlaces:
         for pid in place_ids:
             row = self._row(pid)
             if row is not None:
-                out[pid] = PlaceInfo(pid, row.name, row.lat, row.lng, row.category, row.kakao_place_url)
+                out[pid] = PlaceInfo(pid, row.name, row.lat, row.lng, row.category, row.kakao_place_url, row.source)
         return out
 
     def search_nearby_own(self, category: str, areas: Sequence[Area], *, db: Session | None = None) -> list[PlaceRef]:

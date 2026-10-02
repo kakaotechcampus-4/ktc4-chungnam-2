@@ -47,7 +47,7 @@ class MemberFulfillment(BaseModel):
 
 
 class PlaceSource(BaseModel):
-    provider: Literal["kakao", "naver", "google"]
+    provider: Literal["kakao", "naver", "google", "permit", "tourapi"]
     url: str | None = None
 
 
