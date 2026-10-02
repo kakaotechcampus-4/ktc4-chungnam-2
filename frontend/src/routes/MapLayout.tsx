@@ -131,14 +131,14 @@ export default function MapLayout() {
         className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 items-end border-t border-ink-100 bg-white"
       >
         <TabLink to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={26} />} />
-        {/* 원이 너무 크면 시트 목록 끝을 가린다. 56px로 줄이고, 활성은 링 + 라벨 색 두 가지로 보인다(#299). */}
+        {/* 원이 너무 크면 시트 목록 끝을 가린다. 56px로 줄이고, 활성은 안쪽 링 + 라벨 색 두 가지로 보인다 — 바깥 링은 탭 막대 위로 튀어나온다(#299). */}
         <NavLink
           to={`/maps/${mapId}/recommend`}
           className={({ isActive }) =>
             `group flex flex-col items-center gap-0.5 pb-2 text-[11px] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
           }
         >
-          <span className="flex size-14 items-center justify-center rounded-full bg-brand-600 text-lg font-bold text-white shadow-md ring-brand-100 group-aria-[current=page]:ring-4">
+          <span className="flex size-14 items-center justify-center rounded-full bg-brand-600 text-lg font-bold text-white shadow-md ring-brand-100 ring-inset group-aria-[current=page]:ring-4">
             AI
           </span>
           AI 추천
