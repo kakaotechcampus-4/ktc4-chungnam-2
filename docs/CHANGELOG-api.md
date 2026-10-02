@@ -8,6 +8,7 @@ soft 키(한식·횟집·조용함 등)에 붙은 반대 사유가 추천에서 
 
 - **`EvidenceLine.wants`(선택, 신규, `boolean | null`)**: 이 특징이 있는 장소를 원하는가. `true`=원함, `false`=원하지 않음, 없거나 `null`=모름. `fact_key`가 null이면 null. hard 키(매운맛·기름짐·갑각류 등)는 방향이 고정이라 값이 있어도 쓰지 않는다.
 - **FE 영향**: 타입 재생성(`npm run gen:types`). 근거 줄에 해석한 방향을 보여 준다 — 예: `wants=false` + `cuisine_korean`이면 "한식 제외", `wants=true`면 "한식 선호". 모델이 방향을 잘못 읽었을 때 사용자가 `−`로 뺄 수 있어야 한다(5-5). `wants`가 없거나 null이면 방향 표시 없이 지금처럼 보인다.
+- **`EvidenceLine.fact_label`(선택, 신규, `string | null`)**: `fact_key`의 화면 표시 이름("한식", "횟집", "조용한 곳"). 서버가 내려 주므로 FE는 키→이름 표를 들지 않는다. FE는 `wants=false`면 "{fact_label} 제외", `true`면 "{fact_label} 선호"로 그린다. 서버는 `fact_key`가 있는데 이름이 없으면 안 된다(recommend 레지스트리 계약 테스트가 모든 키에 이름이 있는지 강제한다).
 - 추천 결과가 바뀐다: 같은 입력이라도 "한식 말고" 사유가 있으면 한식집이 후보에서 빠진다(깔때기 "실격 조건 제거"에 세어진다).
 - 구현은 llm(②가 `wants`를 낸다)과 recommend(실격·점수에 쓴다)가 한다. 그 전에는 `wants`가 항상 비어 있고 동작은 이전과 같다.
 

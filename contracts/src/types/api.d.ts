@@ -1765,6 +1765,8 @@ export interface components {
              */
             badge: "required" | "preferred" | "reference";
             fact_key?: string | null;
+            /** @description fact_key의 화면 표시 이름(예: "한식", "횟집", "조용한 곳", "주차 가능"). 서버가 내려 주므로 FE가 키→이름 표를 따로 들지 않는다. 방향 표시는 "{fact_label} 제외"(wants=false) / "{fact_label} 선호"(wants=true). fact_key가 없으면 없거나 null */
+            fact_label?: string | null;
             /** @description 이 특징(fact_key)이 있는 장소를 원하는가(#228). true=원함("한식 먹자"), false=원하지 않음("한식 말고"), 없거나 null=모름. FE는 근거 줄에 해석한 방향(예: "한식 제외")을 보여 주어 틀리면 −로 뺄 수 있게 한다 */
             wants?: boolean | null;
             is_active: boolean;
