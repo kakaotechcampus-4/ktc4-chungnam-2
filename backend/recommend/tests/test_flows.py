@@ -744,7 +744,8 @@ def test_execute_run_keeps_restaurants_whose_cuisine_labels_are_mostly_false(db_
     candidates = service.list_candidates(db_session, str(run.id))
     assert len(candidates) == 3  # 상위 3곳 선정까지 가고, 실격으로 줄지 않는다
     keys = {check["fact_key"] for check in candidates[0].checks}
-    assert "cuisine_korean" in keys and "quiet" not in keys and "winter_spot" not in keys
+    assert not keys & set(cuisines)  # 아무도 말하지 않은 known(거짓 9개) cuisine_*은 응답 checks에 없다
+    assert "quiet" not in keys and "winter_spot" not in keys
 
 
 def _run_with_wanted_and_unwanted_soft_keys(db_session):
@@ -768,15 +769,15 @@ def _run_with_wanted_and_unwanted_soft_keys(db_session):
 
 
 def test_execute_run_checks_omit_unwanted_unknown_soft_keys(db_session):
-    """#216 — 아무도 원하지 않았고 unknown인 soft 키(pet_friendly 등)는 저장되는 checks에 없다. 원한 키는
-    unknown이어도 needs_check로 남고, known soft와 hard 체크는 그대로다."""
+    """#216 — 아무도 원하지 않았고 unknown인 soft 키(pet_friendly 등)는 저장되는 checks에 없다(known인 franchise도). 원한 키는
+    known이든 unknown이든 남고(unknown은 needs_check), hard 체크는 그대로다."""
     _run, candidate = _run_with_wanted_and_unwanted_soft_keys(db_session)
     by_key = {c["fact_key"]: c for c in candidate.checks}
 
     assert "pet_friendly" not in by_key and "vegetarian_friendly" not in by_key  # 원하지 않은 unknown
+    assert "franchise" not in by_key  # 원하지 않은 known(거짓)도 싣지 않는다
     assert by_key["wait_short"]["needs_check"] is True and by_key["wait_short"]["confidence"] == "unknown"  # 활성 근거 줄
     assert by_key["parking_available"]["confidence"] == "known"  # ♥ 핀 기준(known)
-    assert by_key["franchise"]["confidence"] == "known"  # known이면 원하지 않았어도 남는다
     assert by_key["spicy_focused"]["passed"] is True and "is_open" in by_key  # hard 그대로
 
 

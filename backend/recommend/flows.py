@@ -380,7 +380,7 @@ def _run_pipeline(
         disqualifying_fact_keys=active_hard_keys,
         preferred_authors=preferred_authors_frozen,
     )
-    # #216 — 점수 계산은 전체 soft 체크를 쓰지만 저장·응답에는 원하지 않은 unknown soft 체크를 싣지 않는다.
+    # #216 — 점수 계산은 전체 soft 체크를 쓰지만 저장·응답에는 사람이 원하지 않은 soft 체크(known 포함)를 싣지 않는다.
     # 사람이 원한 키 = 활성 근거 줄의 fact_key + ♥ 핀 기준으로 점수에 쓰인 키.
     wanted_soft_keys = {line.fact_key for line in active_lines if line.fact_key is not None} | {
         fact_key for fact_key, wanted in criteria.items() if wanted is True
