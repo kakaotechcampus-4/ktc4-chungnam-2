@@ -652,3 +652,19 @@ def test_list_liked_pins_includes_own_private_pin(db_session):
     result = pins_api.list_liked_pins(db_session, map_id="map_1", category="음식점", requested_by="user_1")
 
     assert result == [{"place_id": "lk_own_priv", "member_ids": {"user_1"}}]
+
+
+def test_deleted_pin_reasons_still_reach_the_evidence_but_not_the_readiness_count(db_session):
+    """#243 — 구성원 누구나 핀을 지울 수 있어서(#25), 지워진 핀에 남긴 알러지 사유가 근거에서 빠지면 안 된다(가드레일 8).
+    준비 판정(몇 명이 반응했나)은 삭제 핀을 세지 않는다 — 사유(이력)와 현재 반응 수는 다른 질문이다."""
+    from pins import api as pins_api
+
+    gone = _insert_pin(db_session, place_id="rs_gone", deleted=True)
+    alive = _insert_pin(db_session, place_id="rs_alive")
+    db_session.add(ReactionRow(pin_id=gone.id, user_id="user_2", type="against", reason_text="조개 알러지"))
+    db_session.add(ReactionRow(pin_id=alive.id, user_id="user_1", type="like"))
+    db_session.commit()
+
+    reasons = pins_api.list_reasoned_reactions(db_session, map_id="map_1", category="음식점")
+    assert [(r["user_id"], r["reason_text"]) for r in reasons] == [("user_2", "조개 알러지")]
+    assert pins_api.count_reacted_users(db_session, map_id="map_1", category="음식점") == 1

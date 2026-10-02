@@ -158,9 +158,15 @@ class TestWantsPrompt:
         assert '"시끄러운 데는 싫어" → quiet, wants=true' in prompt
         assert '"한식 말고" → cuisine_korean, wants=false' in prompt
 
-    def test_prompt_names_every_hard_key_as_fixed_direction(self):
+    def test_prompt_names_every_hard_key_and_asks_for_wants(self):
+        section = prompts.PLAN_EVIDENCE_PROMPT.split("안전 키(")[1].split(")")[0]
         for key in HARD_FACT_KEYS:
-            assert key in prompts.PLAN_EVIDENCE_PROMPT.split("hard 키(")[1].split(")")[0]
+            assert key in section
+        assert "wants는 null로 둔다" not in prompts.PLAN_EVIDENCE_PROMPT
+        assert '"저 조개 알러지 있어요" → contains_shellfish, wants=false' in prompts.PLAN_EVIDENCE_PROMPT
+
+    def test_prompt_leans_to_false_for_safety_reasons(self):
+        assert "조금이라도 분명하면 false" in prompts.PLAN_EVIDENCE_PROMPT
 
     def test_hard_keys_are_registered_fact_keys(self):
         assert set(HARD_FACT_KEYS) <= set(FACT_KEYS)
@@ -179,8 +185,16 @@ class TestWantsFixtures:
     @pytest.mark.parametrize("case", WANTS_CASES, ids=[c["text"] for c in WANTS_CASES])
     def test_case_is_valid_and_consistent(self, case):
         line = EvidenceLine(source="reaction", text=case["text"], badge=case["badge"], fact_key=case["fact_key"], wants=case["wants"])
-        if line.fact_key in HARD_FACT_KEYS:
-            assert line.wants is None, "hard 키는 방향이 고정이라 기대값도 null이다"
+
+    def test_at_least_eight_safety_cases_covering_all_directions(self):
+        safety = [c for c in WANTS_CASES if c["fact_key"] in HARD_FACT_KEYS]
+        assert len(safety) >= 8
+        assert {c["wants"] for c in safety} == {True, False, None}
+
+    def test_allergy_and_cannot_eat_cases_expect_false(self):
+        for c in WANTS_CASES:
+            if c["fact_key"] in HARD_FACT_KEYS and any(w in c["text"] for w in ("알러지", "못 먹", "빼 주세요")):
+                assert c["wants"] is False, c["text"]
 
     def test_cases_cover_both_directions_and_the_flip(self):
         assert {c["wants"] for c in WANTS_CASES} == {True, False, None}

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from common.contracts import assert_signature_matches
 from places import api
-from places.schemas import PlaceRef
+from places.schemas import PlaceInfo, PlaceRef
 from recommend.deps import RealPlaceFactsGateway, RealPlaceSearchGateway
 from recommend.ports import Circle, PlaceFactsGateway, PlaceSearchGateway, PlaceStub
 
@@ -29,8 +29,14 @@ def test_recommend_gateway_converts_circles_and_results(monkeypatch):
 
     monkeypatch.setattr(api, "search_nearby_own", fake_search)
     monkeypatch.setattr(api, "search_nearby", lambda *a, **k: (_ for _ in ()).throw(AssertionError("카카오 실시간 경로")))
+    place_id = "5b0e2f3a-0000-0000-0000-000000000001"
+    monkeypatch.setattr(api, "get_places", lambda ids, *, db=None: {
+        place_id: PlaceInfo(place_id, "카페", 37.5, 127.0, "카페", "https://place.map.kakao.com/1", "permit"),
+    })
     stubs = RealPlaceSearchGateway().search_nearby(category="카페", circles=[Circle(37.5, 127.0, 800)])
-    assert stubs == [PlaceStub(place_id="5b0e2f3a-0000-0000-0000-000000000001", lat=37.5, lng=127.0)]
+    # 출처(#242) — places의 데이터 출처 + 있으면 카카오 장소 링크
+    assert stubs == [PlaceStub(place_id=place_id, lat=37.5, lng=127.0,
+                               source={"provider": "permit", "url": "https://place.map.kakao.com/1"})]
     assert got["args"][0] == "카페" and got["args"][1][0].radius_m == 800
 
 

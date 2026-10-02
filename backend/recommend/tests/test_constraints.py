@@ -56,5 +56,9 @@ def test_soft_registry_covers_the_doc_categories_and_is_all_pass():
     sight = set(constraints.soft_fact_keys_for("관광지"))
     assert len(sight) + len(constraints.hard_fact_keys_for("관광지")) - 2 == 36  # price_bucket·contains_shellfish는 공통 hard
     assert "winter_spot" in sight and "cuisine_korean" not in sight
-    assert set(constraints.soft_fact_keys_for("카페")) == {"quiet", "comfortable_seat", "local_flavor", "pet_friendly"}
+    assert set(constraints.soft_fact_keys_for("카페")) == {
+        "quiet", "comfortable_seat", "local_flavor", "pet_friendly", "accessible",      # 기존 + 관광지 키를 카페에도(#263)
+        "bakery", "serves_alcohol", "open_late",                                         # 카페 전용(#263)
+        "spacious", "long_established", "vegetarian_friendly", "franchise",             # 음식점 키를 카페에도(#263)
+    }
     assert "pet_friendly" in restaurant and "pet_friendly" in sight

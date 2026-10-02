@@ -73,7 +73,7 @@ def test_link_published_pin_guard_rejects_already_linked(db_session):
 
     with pytest.raises(AppError) as exc_info:
         service.link_published_pin(db_session, candidate_id=str(candidate.id), pin_id=str(uuid.uuid4()))
-    assert exc_info.value.code == "IDEMPOTENCY_CONFLICT"
+    assert exc_info.value.code == "PIN_DUPLICATE"
 
     db_session.refresh(candidate)
     assert candidate.published_pin_id == already_linked  # 덮어써지지 않았다

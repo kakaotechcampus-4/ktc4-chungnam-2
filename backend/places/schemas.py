@@ -63,6 +63,7 @@ class PlaceInfo:
     lng: float
     category: str
     kakao_place_url: str | None = None
+    source: str | None = None   # 데이터 출처 — "permit"(인허가 공공데이터) | "tourapi"(한국관광공사). 가드레일 5 출처 표시용(#242)
 
 
 @dataclass(frozen=True)
@@ -96,3 +97,4 @@ class PlaceSearchResult(BaseModel):
     category: Literal["음식점", "카페", "숙소", "관광지", "기타"] | None = None   # 소스가 추정한 제안값
     address: str | None = None
     place_source: PlaceSourceInfo | None = None
+    pinnable: bool | None = None   # 자체 DB에 짝이 있어 핀으로 만들 수 있는가(#238). 계산 못 했으면 생략

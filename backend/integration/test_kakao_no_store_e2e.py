@@ -23,7 +23,7 @@ from places.tests.test_name_search import NamedFake
 
 # 카카오가 준 값 — 자체 DB(인허가 데이터)에는 없다
 KAKAO = dict(
-    source_id="MARKKID", name=PLACES["K"][0], phone="02-000-KAKAO", address="카카오주소ZZ",
+    source_id="9900777123", name=PLACES["K"][0], phone="02-000-KAKAO", address="카카오주소ZZ",
     lat=37.54471234, lng=127.05631234, place_url="http://kakao.example/zz",
 )
 MARKERS = ("02-000-KAKAO", "카카오주소ZZ", "37.54471234", "127.05631234", "kakao.example/zz")
@@ -98,9 +98,9 @@ def test_no_kakao_value_is_stored_logged_or_sent_to_the_model(members, place_ids
     assert sent_to_model, "대조군 — ②가 실제로 불렸다(검사가 공허하지 않다)"
 
     # 5) 허용된 것만: places.kakao_place_id/url/matched_at
-    kakao_rows = [row for row in rows["places"] if "MARKKID" in row]
+    kakao_rows = [row for row in rows["places"] if "9900777123" in row]
     assert kakao_rows, "매칭된 자체 DB 장소에 카카오 장소 ID가 기록된다(허용)"
-    others = [(t, r) for t, texts in rows.items() if t != "places" for r in texts if "MARKKID" in r and t != "event_log"]
+    others = [(t, r) for t, texts in rows.items() if t != "places" for r in texts if "9900777123" in r and t != "event_log"]
     assert not others, f"카카오 장소 ID가 places 밖에 저장됐다: {[t for t, _ in others]}"
 
 

@@ -4,6 +4,7 @@
 
 from authz.core import Principal, Resource, permissions_for
 from common.events import Event
+from pins import api as pins_api
 from pins.schemas import Pin
 from shortlist.schemas import Route, RouteLeg, ShortlistItem
 
@@ -20,6 +21,14 @@ def to_shortlist_item_response(row, pin: Pin, principal: Principal) -> Shortlist
     )
 
 
+def _public_item_payload(item: ShortlistItem) -> dict:
+    """공개 채널 페이로드는 보는 사람마다 다른 값을 담지 않는다(docs/events.md) — 행위자의 my_reaction과
+    permissions(항목·핀 둘 다)를 뺀다. 핀 쪽은 pins가 쓰는 공개 페이로드 규칙을 그대로 쓴다(#241)."""
+    payload = item.model_dump(exclude_none=True, exclude={"pin", "permissions"})
+    payload["pin"] = {k: v for k, v in pins_api.public_pin_payload(item.pin).items() if k != "permissions"}
+    return payload
+
+
 def shortlist_changed_event(item: ShortlistItem, action: str) -> Event:
     """docs/events.md shortlist.changed. 확정 리스트에는 비공개 개념이 없다 — 확정된 핀은
     flows.confirm_pin이 이미 visibility=public인 핀만 통과시키므로(가드레일 1), pin.created류와
@@ -27,7 +36,7 @@ def shortlist_changed_event(item: ShortlistItem, action: str) -> Event:
     항목마다 하나씩(새 visit_order를 담아) 발행한다 — payload가 항목 하나 단위라서다."""
     return Event(
         map_id=item.pin.map_id, channel="public", type="shortlist.changed",
-        payload={"item": item.model_dump(exclude_none=True), "action": action},
+        payload={"item": _public_item_payload(item), "action": action},
     )
 
 
