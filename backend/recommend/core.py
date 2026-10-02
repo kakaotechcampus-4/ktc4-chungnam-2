@@ -204,6 +204,27 @@ def checks_to_show(checks: Sequence[Check], wanted_fact_keys: Collection[str]) -
     ]
 
 
+def to_satisfaction_checks(checks: Sequence[Check], directions: Mapping[str, bool]) -> list[Check]:
+    """저장·응답용 체크에서 방향이 있는 soft 키(`directions` = fact_key → wants)를 "그 사람 조건을 만족하는가"로
+    바꾼다(#237) — passed = (라벨 참거짓 == wants). "한식 말고"에 비한식 후보는 ✗가 아니라 ✓로 보이고(가드레일 5),
+    wants=true는 반대로 라벨이 참일 때 만족이다. 라벨 문구는 표시 이름 기반("한식 제외"). 모름과 방향 없는 키는
+    그대로 둔다. 점수·실격은 라벨 참거짓(passed)을 쓰므로 이 변환은 점수 계산 *뒤에* 한다."""
+    shown = []
+    for check in checks:
+        wants = directions.get(check.fact_key)
+        if wants is None or check.confidence != "known":
+            shown.append(check)
+            continue
+        satisfied = check.passed == wants
+        name = constraints.FACT_LABELS.get(check.fact_key, check.fact_key)
+        if wants:
+            label = name if satisfied else f"{name} 아님"
+        else:
+            label = f"{name} 제외" if satisfied else f"{name} 제외 안 됨"
+        shown.append(check.model_copy(update={"passed": satisfied, "label": label}))
+    return shown
+
+
 def funnel_counts(stage_removed: list[tuple[str, int]]) -> list[dict]:
     """5-6 깔때기 표 — (라벨, 이번 단계에서 제거된 수) 쌍의 리스트를 api-spec.yaml
     FunnelEntry 모양으로 그대로 옮긴다."""
