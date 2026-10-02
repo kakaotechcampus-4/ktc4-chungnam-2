@@ -724,6 +724,29 @@ def test_execute_run_keeps_candidate_whose_unwanted_soft_label_is_false(db_sessi
     assert {e["label"]: e["removed_count"] for e in updated.last_funnel}["실격 조건 제거"] == 1
 
 
+def test_execute_run_keeps_restaurants_whose_cuisine_labels_are_mostly_false(db_session):
+    """#171 + #208 — cuisine_* 10개는 한 곳당 9개가 거짓이다. 아무도 원하지 않았으니 전원 후보에 남고,
+    점수 영향도 없다(전원 0점). 음식점 카테고리에는 음식점 선호 키만 체크로 붙는다."""
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    cuisines = [
+        "cuisine_korean", "cuisine_chinese", "cuisine_japanese", "cuisine_western", "cuisine_bunsik",
+        "cuisine_chicken_pub", "cuisine_bbq", "cuisine_foreign", "cuisine_raw_fish", "cuisine_buffet",
+    ]
+    places = [PlaceStub(place_id=f"r{i}", lat=35.0005 + i * 0.0001, lng=129.0005) for i in range(len(cuisines))]
+    place_facts = _FakePlaceFacts({
+        f"r{i}": {**{key: (key == cuisines[i]) for key in cuisines}, "franchise": False, "spacious": False}
+        for i in range(len(cuisines))
+    })
+
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=place_facts)
+
+    candidates = service.list_candidates(db_session, str(run.id))
+    assert len(candidates) == 3  # 상위 3곳 선정까지 가고, 실격으로 줄지 않는다
+    keys = {check["fact_key"] for check in candidates[0].checks}
+    assert "cuisine_korean" in keys and "quiet" not in keys and "winter_spot" not in keys
+
+
 def test_create_run_leaves_no_run_row_when_planning_fails(db_session, monkeypatch):
     """#208 — 모델 호출(②)을 INSERT보다 먼저 하므로 실패하면 run 행이 남지 않는다."""
     _make_members(db_session, user_ids=["user_1"])
