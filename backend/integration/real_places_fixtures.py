@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from auth.testing import session_cookie
+from common.events import EventLog
 from common.database import get_db_session, session_scope
 from main import app
 from places import repository
@@ -125,3 +126,24 @@ def _pin(client, map_id, sid, place_ids):
     assert r.status_code == 201, r.text
     assert r.json()["place_name"] == name
     return r.json()["id"]
+
+
+def _events(db_session, map_id, type_):
+    return list(db_session.execute(
+        select(EventLog).where(EventLog.map_id == map_id, EventLog.type == type_).order_by(EventLog.seq)
+    ).scalars())
+
+
+def _recommend(a, b, map_id, place_ids, *, executed=True):
+    """K·S에 핀을 찍고 사유를 남긴 뒤 run을 만들고(선택적으로 실행) (run_id, candidates)를 돌려준다."""
+    k = _pin(a, map_id, "K", place_ids)
+    s = _pin(a, map_id, "S", place_ids)
+    assert a.put(f"/pins/{k}/reaction", json={"type": "against", "reason_text": "한식 말고 다른 거"}).status_code == 200
+    assert b.put(f"/pins/{s}/reaction", json={"type": "against", "reason_text": "너무 매워요"}).status_code == 200
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    a.post(f"/runs/{run_id}/regions/confirm", json={})
+    candidates = []
+    if executed:
+        assert a.post(f"/runs/{run_id}/execute").status_code == 202
+        candidates = a.get(f"/runs/{run_id}/result").json()["candidates"]
+    return run_id, candidates

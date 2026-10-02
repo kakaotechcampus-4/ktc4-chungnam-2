@@ -6,33 +6,9 @@
 """
 
 import pytest
-from sqlalchemy import select
-
-from common.events import EventLog
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
-    PLACES, _pin, fake_planner, members, own_db, place_ids, real_client,
+    PLACES, _events, _pin, _recommend, fake_planner, members, own_db, place_ids, real_client,
 )
-
-
-def _events(db_session, map_id, type_):
-    return list(db_session.execute(
-        select(EventLog).where(EventLog.map_id == map_id, EventLog.type == type_).order_by(EventLog.seq)
-    ).scalars())
-
-
-def _recommend(a, b, map_id, place_ids, *, executed=True):
-    """K·S에 핀을 찍고 사유를 남긴 뒤 run을 만들고(선택적으로 실행) (run_id, candidates)를 돌려준다."""
-    k = _pin(a, map_id, "K", place_ids)
-    s = _pin(a, map_id, "S", place_ids)
-    assert a.put(f"/pins/{k}/reaction", json={"type": "against", "reason_text": "한식 말고 다른 거"}).status_code == 200
-    assert b.put(f"/pins/{s}/reaction", json={"type": "against", "reason_text": "너무 매워요"}).status_code == 200
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
-    a.post(f"/runs/{run_id}/regions/confirm", json={})
-    candidates = []
-    if executed:
-        assert a.post(f"/runs/{run_id}/execute").status_code == 202
-        candidates = a.get(f"/runs/{run_id}/result").json()["candidates"]
-    return run_id, candidates
 
 
 # ───────────────────────── 게시 ─────────────────────────
