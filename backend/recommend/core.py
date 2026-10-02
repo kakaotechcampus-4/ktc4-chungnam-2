@@ -161,6 +161,16 @@ def resolve_label(labels: Sequence[FactLabel], fact_key: str) -> tuple[bool, Any
     return False, None
 
 
+def label_checks(labels: Sequence[FactLabel]) -> list[Check]:
+    """♥ 핀의 place_facts 라벨 → 선호 프로필 입력 체크(#247). known인 soft 라벨만, passed는 라벨의 참/거짓값."""
+    checks = []
+    for label in labels:
+        known, value = resolve_label(labels, label.fact_key)
+        if known and label.fact_key in constraints.SOFT_FACT_KEYS:
+            checks.append(build_check(label.fact_key, "pass", known=True, value=value, passes=bool(value)))
+    return checks
+
+
 def apply_disqualifier_filters(
     candidate_checks: list[list[Check]], soft_requirements: Collection[tuple[str, bool]] = (),
 ) -> list[bool]:

@@ -627,7 +627,7 @@ def _like(db_session, pin_row, user_id):
     db_session.commit()
 
 
-def test_list_liked_pins_with_checks_excludes_other_users_private_pin(db_session):
+def test_list_liked_pins_excludes_other_users_private_pin(db_session):
     """가드레일 1 — 타인의 비공개 후보에 ♥가 있어도 요청자의 선호 프로필에 안 들어간다."""
     from pins import api as pins_api
 
@@ -637,18 +637,18 @@ def test_list_liked_pins_with_checks_excludes_other_users_private_pin(db_session
     _like(db_session, other_private, "user_2")
     _like(db_session, public, "user_2")
 
-    result = pins_api.list_liked_pins_with_checks(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    result = pins_api.list_liked_pins(db_session, map_id="map_1", category="음식점", requested_by="user_1")
 
     assert len(result) == 1  # 공개 핀 하나뿐
 
 
-def test_list_liked_pins_with_checks_includes_own_private_pin(db_session):
+def test_list_liked_pins_includes_own_private_pin(db_session):
     from pins import api as pins_api
 
     own_private = _insert_pin(db_session, created_by="user_1", visibility="private", place_id="lk_own_priv",
                               checks=[{"fact_key": "quiet"}])
     _like(db_session, own_private, "user_1")
 
-    result = pins_api.list_liked_pins_with_checks(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    result = pins_api.list_liked_pins(db_session, map_id="map_1", category="음식점", requested_by="user_1")
 
-    assert result == [{"checks": [{"fact_key": "quiet"}], "member_ids": {"user_1"}}]
+    assert result == [{"place_id": "lk_own_priv", "member_ids": {"user_1"}}]
