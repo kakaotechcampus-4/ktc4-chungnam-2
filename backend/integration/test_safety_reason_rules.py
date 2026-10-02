@@ -64,8 +64,6 @@ def safe_and_unsafe(db_session):
                  {"contains_shellfish": False, "spicy_focused": False, "cuisine_korean": False})
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="D11 — △ 반응에 쓴 알러지 사유(preferred)가 hard 실격으로 켜지지 않는다. #254")
 def test_allergy_reason_on_a_neutral_reaction_disqualifies(members, place_ids, safety_planner, safe_and_unsafe):
     a, b, map_id = members
     pin = _pin(a, map_id, "K", place_ids)
@@ -74,8 +72,6 @@ def test_allergy_reason_on_a_neutral_reaction_disqualifies(members, place_ids, s
     assert names == {"성수 담백집"}, f"조개가 참이거나 확인 안 된 곳은 모두 빠져야 한다: {names}"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="D11 — 「+」로 직접 추가한 근거 줄은 ②를 거치지 않아 fact_key가 항상 없다. #254")
 def test_allergy_reason_added_with_plus_is_structured_and_disqualifies(members, place_ids, safety_planner, safe_and_unsafe):
     a, b, map_id = members
     pin = _pin(a, map_id, "K", place_ids)

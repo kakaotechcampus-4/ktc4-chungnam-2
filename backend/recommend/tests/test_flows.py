@@ -1087,13 +1087,75 @@ def test_required_soft_with_null_wants_has_no_effect(db_session):
     assert set(candidates) == {"korean"} and funnel["실격 조건 제거"] == 0
 
 
-def test_hard_key_ignores_wants_direction(db_session):
-    """hard 키는 방향이 고정(있으면 실격)이다 — wants가 true여도 spicy_focused=True는 실격이고 모름도 제외."""
+def test_hard_key_required_with_wants_true_is_not_a_disqualifier(db_session):
+    """#254 판정표 — required + wants=true("매운 걸 좋아하는데…")는 실격이 아니다. 아무것도 켜지지 않는다."""
     candidates, funnel = _execute_with_lines(
         db_session, [_line("user_1", "required", "spicy_focused", True)],
         {"spicy": {"spicy_focused": True}, "mild": {"spicy_focused": False}, "unknown_place": {}},
     )
-    assert set(candidates) == {"mild"} and funnel["실격 조건 제거"] == 2
+    assert set(candidates) == {"spicy", "mild", "unknown_place"} and funnel["실격 조건 제거"] == 0
+
+
+def test_hard_key_required_with_wants_false_or_null_disqualifies_true_and_unknown(db_session):
+    for wants in (False, None):
+        candidates, funnel = _execute_with_lines(
+            db_session, [_line("user_1", "required", "spicy_focused", wants)],
+            {"spicy": {"spicy_focused": True}, "mild": {"spicy_focused": False}, "unknown_place": {}},
+        )
+        assert set(candidates) == {"mild"} and funnel["실격 조건 제거"] == 2, wants
+
+
+def test_hard_key_preferred_and_reference_disqualify_only_when_wants_false(db_session):
+    """△·♥·「+」 — "저 조개 알러지"(wants=false)는 배지와 무관하게 실격(참·모름 모두), true·null은 효과 없음."""
+    facts = {"shell": {"contains_shellfish": True}, "clean": {"contains_shellfish": False}, "unknown_place": {}}
+    for badge in ("preferred", "reference"):
+        candidates, funnel = _execute_with_lines(db_session, [_line("user_1", badge, "contains_shellfish", False)], facts)
+        assert set(candidates) == {"clean"} and funnel["실격 조건 제거"] == 2, badge
+        for wants in (True, None):
+            candidates, funnel = _execute_with_lines(db_session, [_line("user_1", badge, "contains_shellfish", wants)], facts)
+            assert set(candidates) == set(facts) and funnel["실격 조건 제거"] == 0, (badge, wants)
+
+
+def test_inactive_safety_reason_is_not_applied(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {**_line("user_1", "preferred", "contains_shellfish", False), "is_active": False},
+    ])
+    assert flows._active_hard_fact_keys(db_session, run) == []
+
+
+def test_plus_manual_line_goes_through_plan_evidence_and_keeps_reference_badge(db_session, monkeypatch):
+    """#254 — 「+」로 추가한 줄도 ②로 보내 fact_key·wants를 붙인다. 배지는 reference."""
+    from llm.schemas import EvidenceLine as PlannedLine
+
+    sent = []
+
+    def planner(raw):
+        sent.extend(raw)
+        return [PlannedLine(**{**r, "fact_key": "contains_shellfish", "wants": False}) for r in raw]
+
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", lambda raw: planner(raw))
+    run = _make_run(db_session, status="collecting_evidence")
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+
+    flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["저 조개 알러지 있어요"])
+
+    assert [r["source"] for r in sent] == ["manual"]
+    [line] = service.list_evidence(db_session, str(run.id))
+    assert (line.badge, line.fact_key, line.wants) == ("reference", "contains_shellfish", False)
+    assert flows._active_hard_fact_keys(db_session, run) == ["contains_shellfish"]
+
+
+def test_plus_manual_line_planner_failure_leaves_no_line(db_session, monkeypatch):
+    def boom(raw):
+        raise RuntimeError("②가 죽었다")
+
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", boom)
+    run = _make_run(db_session, status="collecting_evidence")
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    with pytest.raises(RuntimeError):
+        flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["x"])
+    assert service.list_evidence(db_session, str(run.id)) == []
 
 
 def test_preferred_wants_false_subtracts_and_wants_null_has_no_effect(db_session):
