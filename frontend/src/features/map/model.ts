@@ -67,6 +67,7 @@ export function toPinCard(pin: Pin, memberCount: number): PinCardView {
   }
 }
 
+export type PinCreateRequest = components['schemas']['PinCreateRequest']
 export type ReactionDto = components['schemas']['Reaction']
 export type ReactionRequest = components['schemas']['ReactionRequest']
 

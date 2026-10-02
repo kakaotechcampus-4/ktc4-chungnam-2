@@ -4,8 +4,8 @@ import { participationRatio, type Pin } from './model'
 export interface MarkerLayer {
   /** 들어온 목록과 지금 떠 있는 마커를 비교해 추가·삭제만 한다. 구성원 수는 핀 색(참여율)의 분모다. */
   sync(pins: Pin[], memberCount: number): void
-  /** 핀 전체가 들어오도록 시야를 맞춘다. */
-  fit(pins: Pin[]): void
+  /** 점(핀·검색 결과) 전체가 들어오도록 시야를 맞춘다. */
+  fit(points: { lat: number; lng: number }[]): void
   destroy(): void
 }
 
@@ -71,12 +71,11 @@ export function createMarkerLayer(
       }
     },
 
-    fit(pins) {
+    fit(points) {
       const bounds = new maps.LatLngBounds()
       let placed = 0
-      for (const pin of pins) {
-        if (!isPlaced(pin)) continue
-        bounds.extend(new maps.LatLng(pin.lat, pin.lng))
+      for (const p of points) {
+        bounds.extend(new maps.LatLng(p.lat, p.lng))
         placed += 1
       }
       // 위는 검색창·칩, 아래는 2단계 시트가 덮는다. 그 바깥에 핀이 오도록 여백을 둔다.

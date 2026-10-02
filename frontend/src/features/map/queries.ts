@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { deleteReaction, fetchPins, fetchReactions, putReaction } from './api'
-import { withMyReaction, type Pin, type ReactionRequest } from './model'
+import { createPin, deleteReaction, fetchPins, fetchReactions, putReaction } from './api'
+import { withMyReaction, type Pin, type PinCreateRequest, type ReactionRequest } from './model'
 
 export const pinKeys = {
   list: (mapId: string) => ['pins', mapId] as const,
@@ -42,5 +42,17 @@ export function useMyReactionMutation(mapId: string, pin: Pin) {
       )
       void queryClient.invalidateQueries({ queryKey: pinKeys.reactions(pin.id) })
     },
+  })
+}
+
+/** 검색 결과로 핀 찍기(v1 유일한 경로, #191). 만든 핀을 목록 끝에 바로 넣는다 — SSE 로 같은 핀이 와도 id 로 덮어쓴다. */
+export function useCreatePinMutation(mapId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: PinCreateRequest) => createPin(mapId, body),
+    onSuccess: (pin) =>
+      queryClient.setQueryData<Pin[]>(pinKeys.list(mapId), (pins) =>
+        pins && (pins.some((p) => p.id === pin.id) ? pins : [...pins, pin]),
+      ),
   })
 }
