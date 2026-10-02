@@ -890,6 +890,8 @@ export interface paths {
                     };
                 };
                 409: components["responses"]["NotReady"];
+                429: components["responses"]["RetryLimit"];
+                500: components["responses"]["RecommendFailed"];
             };
         };
         delete?: never;
@@ -959,6 +961,7 @@ export interface paths {
                     };
                 };
                 403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
             };
         };
         trace?: never;
@@ -1003,6 +1006,7 @@ export interface paths {
                         "application/json": components["schemas"]["Region"][];
                     };
                 };
+                403: components["responses"]["Forbidden"];
                 409: components["responses"]["RegionConflict"];
             };
         };
@@ -1042,6 +1046,7 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendRun"];
                     };
                 };
+                403: components["responses"]["Forbidden"];
                 500: components["responses"]["RecommendFailed"];
             };
         };
@@ -1079,6 +1084,7 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendResult"];
                     };
                 };
+                403: components["responses"]["Forbidden"];
                 404: components["responses"]["NoResults"];
                 500: components["responses"]["RecommendFailed"];
             };
@@ -1125,6 +1131,7 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendRun"];
                     };
                 };
+                403: components["responses"]["Forbidden"];
                 409: components["responses"]["WidenLimit"];
             };
         };
@@ -1167,6 +1174,7 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendRun"];
                     };
                 };
+                403: components["responses"]["Forbidden"];
                 429: components["responses"]["RetryLimit"];
             };
         };
@@ -1207,6 +1215,15 @@ export interface paths {
                     };
                 };
                 404: components["responses"]["AiPinPrivate"];
+                /** @description 게시할 수 없다 — NOT_READY(run이 아직 done이 아니다) 또는 PIN_DUPLICATE(그 장소가 이미 지도에 있다, detail.pin_id) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1354,6 +1371,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["ShortlistItem"][];
+                    };
+                };
+                /** @description item_ids가 현재 확정 리스트와 맞지 않는다(VALIDATION_ERROR, detail에 불일치 항목) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
                     };
                 };
             };
@@ -1801,7 +1827,7 @@ export interface components {
         MemberFulfillment: {
             /** @description 이 후보가 자기 조건을 만족시키는 구성원 수 */
             satisfied: number;
-            /** @description 집계 대상 구성원 수(조건을 남긴 구성원) */
+            /** @description 집계 대상 구성원 수 — 조건을 남긴 구성원. 선호(♥·선호 사유)뿐 아니라 실격 사유(required)를 낸 구성원도 포함한다(#246 G1). 후보는 실격을 통과했으므로 그 구성원은 충족으로 센다 */
             total: number;
             by_member?: {
                 user_id: string;
