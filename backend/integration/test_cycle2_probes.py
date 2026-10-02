@@ -98,7 +98,6 @@ def test_d21_oversized_place_id_is_rejected(members, place_ids):
 
 # ───────────────────────── D25 — ② 글자 에코 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=ValueError, reason="D25 — ②가 text를 글자 그대로 비교해 NFD 한 줄이 run 전체를 막는다. #249")
 def test_d25_planner_output_with_decomposed_hangul_is_accepted():
     """모델이 같은 글자를 자모 분리형(NFD)으로 돌려줘도(눈에 같아 보인다) ②가 통째로 실패하면 run 생성이 막힌다."""
     from llm.schemas import EvidenceLine, PlanningOutput

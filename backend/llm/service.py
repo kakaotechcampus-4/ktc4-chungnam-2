@@ -10,6 +10,8 @@
 책임이 아니다 — recommend가 한다(가드레일 7).
 """
 
+import re
+import unicodedata
 from functools import partial
 from typing import Any, Callable, Mapping, Optional, Sequence
 
@@ -57,8 +59,13 @@ MIN_RADIUS_M = 50
 MAX_RADIUS_M = 20_000
 
 
+_INVISIBLE = re.compile(r"[​-‏⁠﻿­\s]+")
+
+
 def _normalize(text: str) -> str:
-    return " ".join(text.split())
+    """비교용 정규화 — NFC로 합치고 제로폭 문자·공백을 전부 뺀다. 눈에 같은 글자(자모 분리형 한글 등)를
+    같다고 본다. 결과 text에는 쓰지 않는다(결과는 항상 입력 원문)."""
+    return _INVISIBLE.sub("", unicodedata.normalize("NFC", text))
 
 
 def merge_planned(
@@ -70,8 +77,9 @@ def merge_planned(
     badge를 모델이 못 바꾸는 이유: 격하는 제약 완화(가드레일 4)이고, 격상도 사유 텍스트에 섞인
     지시문이 다른 사람 줄을 required로 올리는 통로가 된다. 줄 사이가 섞이지 않게 줄 단위로만 합친다.
 
-    개수·순서가 입력과 다르거나 text가 (공백·개행 정규화 후에도) 다르면 모델이 사유를 지어내거나
-    섞은 것이므로 ValueError다. 공백만 달라진 건 통과시키되 결과 text는 항상 입력 원문이다.
+    줄은 순서(index)로 합친다 — 결과 text는 항상 입력 원문이고 모델이 돌려준 text는 쓰지 않는다.
+    개수가 다르면 ValueError다. 줄이 섞이지 않았는지 보는 확인용으로 text는 NFC·제로폭·공백 제거 후
+    비교하고, 그래도 다르면 모델이 사유를 지어내거나 섞은 것이므로 ValueError다.
     반경은 MIN_RADIUS_M~MAX_RADIUS_M 밖이면 무시한다 — 비정상 값은 후보를 전멸시킨다."""
     lines = output.evidence_lines
     if len(lines) != len(inputs):
