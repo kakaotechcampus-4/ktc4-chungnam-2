@@ -27,6 +27,18 @@ tags:
 
 paths:
   # ---------- auth ----------
+  /auth/kakao/login:
+    get:
+      tags: [auth]
+      summary: 로그인 시작 (#128). state를 만들어 카카오 인가 화면으로 302. 브라우저를 이 주소로 **이동**시킨다(fetch 아님)
+      description: |
+        로그인 CSRF를 막으려고 서버가 `state`를 만들어 서명한 httpOnly 쿠키(`kakao_oauth_state`, 경로 `/auth/kakao`, 10분)에 넣고
+        같은 값을 붙여 카카오 인가 URL로 보낸다. 콜백이 그 쿠키와 `state`를 대조한다. 프론트는 카카오 인가 URL을 직접 만들지 않는다 —
+        `${VITE_API_BASE_URL}/auth/kakao/login`으로 `window.location`을 옮기기만 한다(client_id·redirect_uri를 프론트가 알 필요가 없다).
+      security: []  # 로그인 전 경로
+      responses:
+        "302": { description: "카카오 인가 화면(`https://kauth.kakao.com/oauth/authorize?...&state=...`)으로 리다이렉트. `Set-Cookie: kakao_oauth_state`" }
+
   /auth/kakao/callback:
     get:
       tags: [auth]
@@ -37,8 +49,14 @@ paths:
           in: query
           required: true
           schema: { type: string }
+        - name: state
+          in: query
+          required: false
+          schema: { type: string }
+          description: "로그인 시작 때 서버가 만든 값을 카카오가 그대로 돌려준다. 쿠키와 다르거나 없으면 401(`detail.reason=invalid_state`)"
       responses:
         "302": { description: 로그인 성공 시 진입점으로 리다이렉트 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /auth/me:
     get:

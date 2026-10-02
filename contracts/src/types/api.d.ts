@@ -4,6 +4,45 @@
  */
 
 export interface paths {
+    "/auth/kakao/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 로그인 시작 (#128). state를 만들어 카카오 인가 화면으로 302. 브라우저를 이 주소로 **이동**시킨다(fetch 아님)
+         * @description 로그인 CSRF를 막으려고 서버가 `state`를 만들어 서명한 httpOnly 쿠키(`kakao_oauth_state`, 경로 `/auth/kakao`, 10분)에 넣고
+         *     같은 값을 붙여 카카오 인가 URL로 보낸다. 콜백이 그 쿠키와 `state`를 대조한다. 프론트는 카카오 인가 URL을 직접 만들지 않는다 —
+         *     `${VITE_API_BASE_URL}/auth/kakao/login`으로 `window.location`을 옮기기만 한다(client_id·redirect_uri를 프론트가 알 필요가 없다).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 카카오 인가 화면(`https://kauth.kakao.com/oauth/authorize?...&state=...`)으로 리다이렉트. `Set-Cookie: kakao_oauth_state` */
+                302: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/kakao/callback": {
         parameters: {
             query?: never;
@@ -16,6 +55,8 @@ export interface paths {
             parameters: {
                 query: {
                     code: string;
+                    /** @description 로그인 시작 때 서버가 만든 값을 카카오가 그대로 돌려준다. 쿠키와 다르거나 없으면 401(`detail.reason=invalid_state`) */
+                    state?: string;
                 };
                 header?: never;
                 path?: never;
@@ -30,6 +71,7 @@ export interface paths {
                     };
                     content?: never;
                 };
+                401: components["responses"]["Unauthorized"];
             };
         };
         put?: never;
