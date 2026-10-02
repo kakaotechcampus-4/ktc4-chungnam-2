@@ -1,4 +1,4 @@
-import type { Pin } from './usePins'
+import type { Pin } from './model'
 
 /**
  * 핀 목록. 지금은 목 서버가 살아 있는지 확인하는 텍스트 나열까지만이다 —

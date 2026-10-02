@@ -1,12 +1,8 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router'
-import type { components } from '@pingo/contracts/src/types/api'
 
-import { api, ApiError } from '@/api'
-
-type MapInfo = components['schemas']['Map']
-type MapCreateRequest = components['schemas']['MapCreateRequest']
+import ErrorText from '@/ErrorText'
+import { useCreateMapMutation } from '@/features/maps/queries'
 
 /**
  * 지도 생성 폼 (#22) — 여행 제목 + 시작일·종료일.
@@ -14,26 +10,20 @@ type MapCreateRequest = components['schemas']['MapCreateRequest']
  */
 export default function MapCreatePage() {
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
   const [startDate, setStartDate] = useState('')
-
-  const create = useMutation({
-    mutationFn: (body: MapCreateRequest) =>
-      api<MapInfo>('/maps', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: (map) => {
-      void queryClient.invalidateQueries({ queryKey: ['maps'] })
-      navigate(`/maps/${map.id}`, { replace: true })
-    },
-  })
+  const create = useCreateMapMutation()
 
   function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const form = new FormData(e.currentTarget)
-    create.mutate({
-      title: String(form.get('title')).trim(),
-      start_date: String(form.get('start_date')),
-      end_date: String(form.get('end_date')),
-    })
+    create.mutate(
+      {
+        title: String(form.get('title')).trim(),
+        start_date: String(form.get('start_date')),
+        end_date: String(form.get('end_date')),
+      },
+      { onSuccess: (map) => navigate(`/maps/${map.id}`, { replace: true }) },
+    )
   }
 
   return (
@@ -81,14 +71,7 @@ export default function MapCreatePage() {
         </label>
       </div>
 
-      {create.error && (
-        <p className="text-sm text-destructive">
-          지도를 만들지 못했어요
-          {create.error instanceof ApiError && (
-            <span className="ml-1 font-mono text-xs">({create.error.code})</span>
-          )}
-        </p>
-      )}
+      {create.error && <ErrorText message="지도를 만들지 못했어요" error={create.error} />}
 
       <button
         type="submit"

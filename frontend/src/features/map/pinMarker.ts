@@ -1,4 +1,4 @@
-import type { Pin } from './usePins'
+import type { Pin } from './model'
 
 type PinKind = NonNullable<Pin['kind']>
 
