@@ -135,7 +135,6 @@ def test_d3_deleting_a_confirmed_pin_does_not_break_the_shortlist(clients, seoul
 
 # ───────────────────────────── D7 — pinnable ─────────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D7 — /places/search가 pinnable을 내려주지 않는다(pinnable_flags를 아무도 안 부른다). #238")
 def test_d7_search_results_carry_pinnable(clients):
     a, _ = clients
     found = a.get("/places/search", params={"q": "해운대 밀면"})

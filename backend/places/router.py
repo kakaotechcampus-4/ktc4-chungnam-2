@@ -7,9 +7,11 @@ import logging
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from auth.deps import get_current_user
 from auth.schemas import CurrentUser
+from common.database import get_db_session
 from common.errors import AppError
 from places import api
 from places.schemas import PlaceHint, PlaceSearchResult
@@ -27,6 +29,7 @@ def search_places(
     lng: float | None = Query(default=None, ge=-180, le=180),
     limit: int = Query(default=10, ge=1, le=15),
     user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
 ):
     query = q.strip()
     if not 1 <= len(query) <= _MAX_QUERY_LEN:
@@ -36,20 +39,21 @@ def search_places(
     api.check_search_rate(user.user_id)
     near = (lat, lng) if lat is not None and lng is not None else None
     results = api.search_by_name(query, near, limit)
-    _fill_pinnable(results)
+    _fill_pinnable(results, db)
     return results
 
 
-def _fill_pinnable(results: list[PlaceSearchResult]) -> None:
+def _fill_pinnable(results: list[PlaceSearchResult], db: Session) -> None:
     """결과마다 자체 DB에 짝이 있는지(#238) 한 번의 쿼리로 읽기만 해서 채운다 — 카카오 ID를 기록하지 않는다.
     자체 DB를 못 읽으면 검색은 살리고 pinnable만 생략한다(스펙상 optional, FE는 true로 본다)."""
     if not results:
         return
     hints = [PlaceHint(r.place_id, r.place_name, r.lat, r.lng, r.category or "") for r in results]
     try:
-        flags = api.pinnable_flags(hints)
-    except SQLAlchemyError:
-        logger.warning("pinnable 계산 실패 — 생략한다", exc_info=True)
+        flags = api.pinnable_flags(hints, db=db)
+    except SQLAlchemyError as exc:
+        # 예외 타입만 남긴다 — 메시지·스택에는 SQL 파라미터(카카오가 준 이름·좌표)가 실린다(#53)
+        logger.warning("pinnable 계산 실패(%s) — 생략한다", type(exc).__name__)
         return
     for r, ok in zip(results, flags):
         r.pinnable = ok

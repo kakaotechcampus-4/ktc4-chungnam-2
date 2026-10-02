@@ -74,15 +74,16 @@ def test_results_carry_pinnable_computed_from_the_own_db(client, pin_body, fake_
     assert places_api.get_places([pid])[pid].kakao_place_url is None
 
 
-def test_pinnable_is_omitted_when_the_own_db_cannot_be_read(client, monkeypatch):
+def test_pinnable_is_omitted_when_the_own_db_cannot_be_read(client, monkeypatch, caplog):
     from sqlalchemy.exc import OperationalError
 
     def boom(hints, **kw):
-        raise OperationalError("select", {}, Exception("db down"))
+        raise OperationalError("select", {"name": "해운대 밀면"}, Exception("db down"))
 
     monkeypatch.setattr(places_api, "pinnable_flags", boom)
     r = client.get("/places/search", params={"q": "해운대 밀면"})
     assert r.status_code == 200 and "pinnable" not in r.json()[0]
+    assert "해운대" not in caplog.text and "OperationalError" in caplog.text   # 로그엔 예외 타입만(카카오 값 금지)
 
 
 def test_partial_match_and_distance_order(client):

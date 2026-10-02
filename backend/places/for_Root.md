@@ -220,5 +220,5 @@ PR 1(#197)에서 고정한 6개 공개 함수를 실제로 구현했다. 이 브
 
 - **#238**: `GET /places/search`가 결과마다 `pinnable`을 채운다(`places.api.pinnable_flags`). 힌트는 결과의 `place_id`·이름·좌표·추정 분류로 만들고, **읽기만 한다**(카카오 ID 기록 없음). 힌트 N개를 **쿼리 한 번**(`repository.find_candidates_many`)으로 처리한다 — 힌트별로 가까운 순 20개와 같은 카카오 ID 장소를 뽑는 규칙은 `match_place`와 같고, 테스트가 둘의 결과가 같음을 확인한다. 자체 DB를 못 읽으면(`SQLAlchemyError`) 검색은 그대로 주고 `pinnable`만 생략한다(스펙상 optional). dev 모드도 같은 경로라 값을 낸다. `PlaceSearchResult.pinnable: bool | None` 추가.
 - **#248 정책**: `record_kakao_match`는 **첫 값 유지**다. 장소에 카카오 ID가 이미 있고 다른 ID가 오면 아무것도 바꾸지 않는다. 같은 ID면 `kakao_matched_at`만 갱신한다. `FakePlaces`도 같다. (시그니처·예외는 그대로 — 없는 `place_id`는 `KeyError`.)
-- **루트에 요청**: `docs/architecture.md`의 `record_kakao_match` 행("이미 있으면 덮어쓴다")을 "첫 값 유지, 같은 ID면 확인 일자만 갱신"으로 고쳐 주세요(스펙이라 이 모듈에서 바꾸지 않았다). 점검 루프의 `test_cycle1_defects.py`·`test_cycle2_probes.py`는 이 브랜치(develop)에 없어 xfail 표식을 지우지 못했다 — 해당 파일이 올라온 쪽에서 `test_d7_*`의 xfail 제거, `test_d21_*`는 pins 입력 검증(ID 형식·길이)과 함께 정리해야 한다.
+- **루트에 요청**: `docs/architecture.md`의 `record_kakao_match` 행("이미 있으면 덮어쓴다")을 "첫 값 유지, 같은 ID면 확인 일자만 갱신"으로 고쳐 주세요(스펙이라 이 모듈에서 바꾸지 않았다). `test_d7_*`의 xfail은 develop을 합친 뒤 이 PR에서 지웠다. `test_d21_*`는 pins 입력 검증(ID 형식·길이)과 함께 정리해야 한다.
 - **#248의 pins 몫(미착수)**: 카카오 ID 형식 검증(`pins/core.py::kakao_place_url`)·`place_id`/`place_name` 길이 제한은 pins 담당이다. 이 PR은 places 정책만 한다.
