@@ -2,13 +2,17 @@ import { useCallback, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
+import Pingo from '@/ui/Pingo'
 import EmptyMap from '@/features/map/EmptyMap'
 import { OnboardingBody, OnboardingHeader, type OnboardingKind } from '@/features/map/Onboarding'
-import PinList from '@/features/map/PinList'
+import { filterPins } from '@/features/map/model'
+import { CategoryChips, PinFilterBar } from '@/features/map/PinFilterControls'
+import PinList, { PinListSkeleton } from '@/features/map/PinList'
+import { usePinFilters } from '@/features/map/usePinFilters'
 import PinSheet, { PinUnavailableSheet } from '@/features/map/PinSheet'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { usePinsQuery } from '@/features/map/queries'
-import { useMapQuery } from '@/features/maps/queries'
+import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
@@ -23,7 +27,13 @@ export default function MapTab() {
   const { data: pins, isPending, error } = usePinsQuery(mapId)
   const setStage = useSheetStore((s) => s.setStage)
   const stage = useSheetStore((s) => s.stages.map)
-  const mapTitle = useMapQuery(mapId).data?.title
+  const map = useMapQuery(mapId).data
+  const mapTitle = map?.title
+  const memberCount = map?.memberCount ?? 0
+  const members = useMembersQuery(mapId).data ?? []
+  const { filters, setFilter, clear } = usePinFilters()
+  const shown = pins && filterPins(pins, filters)
+  const filtered = Boolean(filters.category || filters.createdBy)
   const [params, setParams] = useSearchParams()
   const onboarding = params.get('onboarding') as OnboardingKind | null
 
@@ -75,16 +85,36 @@ export default function MapTab() {
       header={
         <>
           <SheetTitle>마킹된 장소</SheetTitle>
-          {pins && <p className="text-xs text-ink-500">{pins.length}곳</p>}
+          {stage === 3 && <CategoryChips value={filters.category} onChange={(c) => setFilter('category', c)} className="mt-2" />}
+          {pins && pins.length > 0 && <PinFilterBar filters={filters} members={members} pins={pins} onChange={setFilter} />}
+          <p className="mt-2 text-xs text-ink-500">{isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}</p>
         </>
       }
     >
       {unavailable && <PinUnavailableSheet onClose={() => selectPin(null)} />}
-      {isPending && <p className="text-sm text-ink-500">핀을 불러오는 중…</p>}
+      {isPending && <PinListSkeleton />}
       {error && <ErrorText message="핀을 불러오지 못했어요" error={error} />}
       {pins?.length === 0 && <EmptyMap />}
-      {pins && <PinList pins={pins} onSelect={selectPin} />}
+      {pins && pins.length > 0 && shown?.length === 0 && filtered && (
+        <FilterEmpty who={members.find((m) => m.userId === filters.createdBy)?.name} category={filters.category} onClear={clear} />
+      )}
+      {shown && shown.length > 0 && <PinList pins={shown} memberCount={memberCount} onSelect={selectPin} />}
     </TabSheet>
+  )
+}
+
+/** 필터 0곳(Figma) — 필터 때문에 비었다는 걸 알려주고 바로 풀 수 있게 한다. */
+function FilterEmpty({ who, category, onClear }: { who?: string; category: string | null; onClear: () => void }) {
+  const what = [who && `${who}님이 올린`, category].filter(Boolean).join(' ')
+  return (
+    <div className="flex flex-col items-center py-6 text-center">
+      <Pingo size={48} />
+      <p className="mt-3 font-semibold text-ink-900">필터에 걸리는 핀이 없어요</p>
+      <p className="mt-1 text-sm text-ink-500">{what} 핀은 아직 없어요</p>
+      <button type="button" onClick={onClear} className="mt-4 rounded-lg border border-brand-600 px-4 py-2 text-sm font-semibold text-brand-600">
+        필터 해제
+      </button>
+    </div>
   )
 }
 
