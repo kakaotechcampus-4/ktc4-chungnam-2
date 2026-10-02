@@ -19,11 +19,14 @@ export type MapController = {
  */
 export default function MapCanvas({
   pins,
+  memberCount,
   onSelect,
   onReady,
   onMovingChange,
 }: {
   pins: Pin[]
+  /** 핀 색(참여율)의 분모 — 지도 전체 구성원 수. */
+  memberCount: number
   onSelect: (pinId: string) => void
   onReady: (controller: MapController) => void
   /** 사용자가 지도를 끌기 시작하면 true, 멈추면 false. */
@@ -88,14 +91,14 @@ export default function MapCanvas({
     const layer = layerRef.current
     if (!ready || !layer) return
 
-    layer.sync(pins)
+    layer.sync(pins, memberCount)
 
     // 처음 핀이 들어왔을 때만 시야를 맞춘다. 매번 하면 사용자가 옮긴 시야를 뺏는다.
     if (!fittedRef.current && pins.length > 0) {
       layer.fit(pins)
       fittedRef.current = true
     }
-  }, [pins, ready])
+  }, [pins, memberCount, ready])
 
   return (
     <div className="fixed inset-0 bg-ink-100">
