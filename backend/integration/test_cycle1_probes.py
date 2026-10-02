@@ -57,7 +57,6 @@ def test_non_author_publish_status_matches_spec(members, place_ids, fake_planner
 
 # ───────────────────────── 이벤트 페이로드 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D13 — run.candidates_ready가 Candidate 필수 필드를 싣지 않는다. #241")
 def test_candidates_ready_event_payload_has_the_candidate_fields(members, place_ids, fake_planner, db_session):
     a, b, map_id = members
     _recommend(a, b, map_id, place_ids)
@@ -69,7 +68,6 @@ def test_candidates_ready_event_payload_has_the_candidate_fields(members, place_
             assert {"id", "rank", "checks", "reason", "member_fulfillment", "visibility", "permissions"} <= set(cand), sorted(cand)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D14 — shortlist.changed가 행위자의 my_reaction을 공개 채널로 보낸다. #241")
 def test_shortlist_changed_event_does_not_leak_actors_my_reaction(members, place_ids, fake_planner, db_session):
     a, b, map_id = members
     k = _pin(a, map_id, "K", place_ids)
