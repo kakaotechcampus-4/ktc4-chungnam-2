@@ -1,20 +1,21 @@
 import { Outlet } from 'react-router'
 
-import { ApiError } from '@/api'
-import { isUnauthorized, kakaoLoginUrl, useMe } from '@/features/auth/auth'
+import ErrorText from '@/ErrorText'
+
+import { isUnauthorized, kakaoLoginUrl } from './api'
+import { useMeQuery } from './queries'
 
 /** 로그인해야 볼 수 있는 화면들을 감싼다. 비로그인이면 그 자리에 로그인 화면을 띄운다. */
 export default function RequireLogin() {
-  const { isPending, error } = useMe()
+  const { isPending, error } = useMeQuery()
 
   if (isPending) return <p className="p-4 text-sm text-muted-foreground">확인하는 중…</p>
   if (isUnauthorized(error)) return <LoginScreen />
   if (error) {
     return (
-      <p className="p-4 text-sm text-destructive">
-        로그인 상태를 확인하지 못했어요
-        {error instanceof ApiError && <span className="ml-1 font-mono text-xs">({error.code})</span>}
-      </p>
+      <div className="p-4">
+        <ErrorText message="로그인 상태를 확인하지 못했어요" error={error} />
+      </div>
     )
   }
   return <Outlet />

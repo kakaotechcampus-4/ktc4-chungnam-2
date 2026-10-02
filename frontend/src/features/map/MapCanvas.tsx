@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { createMarkerLayer, type MarkerLayer } from './markerLayer'
-import type { Pin } from './usePins'
+import type { Pin } from './model'
 
 /** 핀이 하나라도 있으면 곧바로 bounds 로 덮어쓴다. 빈 지도에서만 보이는 값이다. */
 const FALLBACK_CENTER = { lat: 33.4996, lng: 126.5312 }
