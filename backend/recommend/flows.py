@@ -237,7 +237,8 @@ def _evidence_response(line, principal: Principal) -> schemas.EvidenceLine:
     resource = Resource(type="evidence_line", map_id=principal.map_id, author_id=line.author_id)
     return schemas.EvidenceLine(
         id=str(line.id), author_id=line.author_id, text=line.text, badge=line.badge,
-        fact_key=line.fact_key, is_active=line.is_active,
+        fact_key=line.fact_key, fact_label=constraints.FACT_LABELS.get(line.fact_key) if line.fact_key else None,
+        wants=line.wants, is_active=line.is_active,
         permissions=Permissions(can_disable=can(principal, "evidence.disable", resource)),
     )
 
@@ -296,6 +297,16 @@ def _active_hard_fact_keys(db: Session, run: RecommendRun) -> list[str]:
     return sorted(active & applicable)
 
 
+def _active_soft_requirements(db: Session, run: RecommendRun) -> list[tuple[str, bool]]:
+    """#231 — soft 키 중 `required` + `wants`가 true/false인 활성 사유를 (fact_key, wants)로 켠다. wants가
+    null이거나 hard 키(방향 고정)면 여기 오지 않는다. 사람이 직접 밝힌 사유라 카테고리 기본 키에 없어도
+    적용한다(선호 사유와 같다 — 아래 soft_keys가 그 키의 체크를 붙인다)."""
+    return sorted({
+        (line.fact_key, line.wants) for line in service.list_active_evidence(db, run.id)
+        if line.badge == "required" and line.wants is not None and line.fact_key in constraints.SOFT_FACT_KEYS
+    })
+
+
 def _passes_hard_check(fact_key: str, value) -> bool:
     if fact_key in constraints.VALUE_COMPARISON_UNSUPPORTED:
         # price_bucket — evidence_lines에 사용자 기준값을 담을 컬럼이 없어(스키마
@@ -325,14 +336,22 @@ def _run_pipeline(
 
     active_hard_keys = _active_hard_fact_keys(db, run)
     active_lines = service.list_active_evidence(db, run.id)
+    soft_requirements = _active_soft_requirements(db, run)
     preferred_authors: dict[str, set[str]] = {}
+    avoided_authors: dict[str, set[str]] = {}  # preferred + wants=false — 점수에서 반대 구성원(#231)
     for line in active_lines:
         if line.badge == "preferred" and line.fact_key is not None:
-            preferred_authors.setdefault(line.fact_key, set()).add(line.author_id)
+            by_direction = avoided_authors if line.wants is False else preferred_authors
+            by_direction.setdefault(line.fact_key, set()).add(line.author_id)
     preferred_authors_frozen = {key: frozenset(authors) for key, authors in preferred_authors.items()}
+    avoided_authors_frozen = {key: frozenset(authors) for key, authors in avoided_authors.items()}
     # 선호 라벨 체크는 이 카테고리에 적용되는 키 + 사람이 직접 원한 키만 붙인다 — 50여 개를 전부 붙이면
     # 「확인 필요」 체크가 넘치고, 원하지 않은 키는 어차피 점수에 쓰이지 않는다.
-    soft_keys = sorted(set(constraints.soft_fact_keys_for(run.category)) | (constraints.SOFT_FACT_KEYS & preferred_authors.keys()))
+    soft_keys = sorted(
+        set(constraints.soft_fact_keys_for(run.category))
+        | (constraints.SOFT_FACT_KEYS & (preferred_authors.keys() | avoided_authors.keys()))
+        | {fact_key for fact_key, _wants in soft_requirements}
+    )
     # ③-a-1 — 라벨은 자체 DB(place_facts)에서 읽는다. 요청 중 모델을 부르지 않는다(#190, v1). 없는 라벨은
     # confidence=unknown으로 보고 unknown_policy를 그대로 적용한다. 한 번에 배치 조회(N+1 금지).
     facts_by_place = place_facts.get_facts([p.place_id for p in within_radius])
@@ -354,7 +373,9 @@ def _run_pipeline(
             checks.append(core.build_check(fact_key, "pass", known=known, value=value, passes=bool(value)))
         checks_by_place[place.place_id] = checks
 
-    pass_flags = core.apply_disqualifier_filters([checks_by_place[p.place_id] for p in within_radius])
+    pass_flags = core.apply_disqualifier_filters(
+        [checks_by_place[p.place_id] for p in within_radius], soft_requirements,
+    )
     after_disqualify = [p for p, ok in zip(within_radius, pass_flags) if ok]
     removed_disqualify = len(within_radius) - len(after_disqualify)
 
@@ -377,7 +398,7 @@ def _run_pipeline(
     criteria = core.build_preference_criteria(
         hearted_places,
         excluded_fact_keys=constraints.VALUE_COMPARISON_UNSUPPORTED,
-        disqualifying_fact_keys=active_hard_keys,
+        disqualifying_fact_keys=[*active_hard_keys, *{fact_key for fact_key, _wants in soft_requirements}],
         preferred_authors=preferred_authors_frozen,
     )
     # #216 — 점수 계산은 전체 soft 체크를 쓰지만 저장·응답에는 사람이 원하지 않은 soft 체크(known 포함)를 싣지 않는다.
@@ -391,7 +412,7 @@ def _run_pipeline(
     )
     scores = core.score_candidates(
         {p.place_id: checks_by_place[p.place_id] for p in after_exclusions}, hearted_places, criteria,
-        preferred_authors_frozen,
+        preferred_authors_frozen, avoided_authors_frozen,
     )
     scored = [
         core.ScoredCandidate(place_id=p.place_id, score=scores[p.place_id], region_label=region_label, lat=p.lat, lng=p.lng)

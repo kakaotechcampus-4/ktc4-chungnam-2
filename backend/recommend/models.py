@@ -110,6 +110,8 @@ class EvidenceLine(Base):
     chip_id: Mapped[str | None] = mapped_column(String, nullable=True)
     badge: Mapped[str] = mapped_column(EvidenceBadge, nullable=False)
     fact_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 사유의 방향(#228): 이 특징이 있는 장소를 원하는가. NULL = 모름(방향이 없던 시절 데이터 포함).
+    wants: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     circle_anchor_pin_id: Mapped[str | None] = mapped_column(String, nullable=True)
     circle_radius_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

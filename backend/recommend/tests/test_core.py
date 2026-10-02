@@ -595,3 +595,37 @@ def test_resolve_label_treats_missing_unknown_and_valueless_known_as_unknown():
     assert core.resolve_label(labels, "spicy_focused") == (False, None)   # 값 없는 known을 통과 쪽으로 읽지 않는다
     assert core.resolve_label(labels, "oily_focused") == (False, None)
     assert core.resolve_label([], "quiet") == (False, None)
+
+
+# ---------- #231 — soft 사유의 방향(wants) ----------
+
+def _label_check(fact_key, *, value=None):
+    """soft 라벨 체크 — value가 None이면 모름(known=False)."""
+    return core.build_check(fact_key, "pass", known=value is not None, value=value, passes=bool(value))
+
+
+def test_soft_requirement_wants_false_disqualifies_only_a_true_label():
+    flags = core.apply_disqualifier_filters(
+        [[_label_check("cuisine_korean", value=True)], [_label_check("cuisine_korean", value=False)],
+         [_label_check("cuisine_korean")]],
+        [("cuisine_korean", False)],
+    )
+    assert flags == [False, True, True]
+
+
+def test_soft_requirement_wants_true_disqualifies_only_a_false_label():
+    flags = core.apply_disqualifier_filters(
+        [[_label_check("quiet", value=True)], [_label_check("quiet", value=False)], [_label_check("quiet")]],
+        [("quiet", True)],
+    )
+    assert flags == [True, False, True]
+
+
+def test_soft_checks_without_requirement_never_disqualify():
+    assert core.apply_disqualifier_filters([[_label_check("quiet", value=False)]]) == [True]
+
+
+def test_avoided_authors_subtract_from_a_place_with_the_true_label():
+    checks = {"a": [_label_check("cuisine_korean", value=True)], "b": [_label_check("cuisine_korean", value=False)]}
+    scores = core.score_candidates(checks, [], {}, {}, {"cuisine_korean": frozenset({"user_1", "user_2"})})
+    assert scores == {"a": -2, "b": 0}

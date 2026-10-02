@@ -139,6 +139,69 @@ PASSED_LABELS: dict[str, str] = {
 }
 
 
+# 근거 줄에 그리는 키의 표시 이름(#231) — "한식 제외"·"횟집 선호"처럼 방향 앞에 붙는 짧은 명사구.
+# PASSED_LABELS(서술형 "조용함")와 뜻이 달라 별도 표다. 레지스트리의 모든 키가 여기 있어야 하고
+# test_constraints.py가 빠진 키(30자 초과 포함)를 잡는다.
+FACT_LABELS: dict[str, str] = {
+    "contains_shellfish": "갑각류",
+    "spicy_focused": "매운맛 전문",
+    "oily_focused": "기름진 메뉴 위주",
+    "price_bucket": "가격대",
+    "is_crowded_large": "붐비는 대형 장소",
+    "wait_short": "대기가 짧은 곳",
+    "quiet": "조용한 곳",
+    "comfortable_seat": "좌석이 편한 곳",
+    "local_flavor": "지역색이 있는 곳",
+    "pet_friendly": "반려동물 동반",
+    "cuisine_korean": "한식",
+    "cuisine_chinese": "중식",
+    "cuisine_japanese": "일식",
+    "cuisine_western": "양식",
+    "cuisine_bunsik": "분식",
+    "cuisine_chicken_pub": "호프·치킨",
+    "cuisine_bbq": "고기구이",
+    "cuisine_foreign": "외국음식",
+    "cuisine_raw_fish": "횟집",
+    "cuisine_buffet": "뷔페",
+    "spacious": "넓은 곳",
+    "long_established": "노포",
+    "parking_available": "주차 가능",
+    "vegetarian_friendly": "채식 메뉴",
+    "franchise": "체인점",
+    "restful": "쉬어가기 좋은 곳",
+    "good_view": "전망 좋은 곳",
+    "photogenic": "사진 찍기 좋은 곳",
+    "night_view": "야경 명소",
+    "date_spot": "데이트 코스",
+    "hallyu_related": "한류 명소",
+    "traditional_hanok": "전통 한옥",
+    "modern_architecture": "근현대 건축물",
+    "religious_site": "종교 성지",
+    "is_indoor": "실내",
+    "is_outdoor": "야외",
+    "mountain": "등산로·산자락",
+    "waterside": "물가",
+    "forest": "숲",
+    "flower_garden": "꽃 명소",
+    "seaside": "바닷가",
+    "walkable": "산책하기 좋은 곳",
+    "hiking": "등산",
+    "cycling": "자전거",
+    "hands_on": "체험",
+    "exhibition": "전시",
+    "performance": "공연·축제",
+    "shopping": "쇼핑",
+    "heritage_tour": "역사 유적",
+    "family_friendly": "가족 나들이",
+    "kid_friendly": "아이 동반",
+    "accessible": "휠체어·유모차 이용",
+    "cherry_blossom": "벚꽃 명소",
+    "autumn_foliage": "단풍 명소",
+    "water_play": "물놀이",
+    "winter_spot": "겨울 명소",
+}
+
+
 def hard_fact_keys_for(category: str) -> list[str]:
     return sorted(key for key, spec in HARD_REGISTRY.items() if category in spec.categories)
 
