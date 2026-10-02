@@ -2,7 +2,7 @@
  * 시나리오 전환. docs/errors.md의 8종 화면과 대응한다.
  * FE에서: import { resetScenario } from "@pingo/contracts/mocks/scenarios"; resetScenario("no-results");
  */
-import { ME_USER_ID, nextId, resetStore, type StoreState } from "./store";
+import { ME_USER_ID, nextId, resetIdCounter, resetStore, type StoreState } from "./store";
 import { buildBaseState, buildCandidates, buildEvidenceLines, buildRegions, SEED_MAP_ID } from "./seed";
 
 export type ScenarioName = "empty" | "happy-path" | "no-results" | "retry-limit" | "region-conflict";
@@ -88,6 +88,7 @@ const BUILDERS: Record<ScenarioName, () => StoreState> = {
 };
 
 export function resetScenario(name: ScenarioName) {
+  resetIdCounter(); // 시나리오가 만드는 id가 테스트 순서와 무관하게 같다
   resetStore(BUILDERS[name]());
 }
 

@@ -379,30 +379,44 @@ describe("#191 — 핀은 자체 DB 장소를 가리킨다 (핀 생성 규칙)",
 });
 
 describe("realtime SSE (docs/events.md)", () => {
-  it("전체 채널 구독 중 핀을 생성하면 pin.created 이벤트가 온다", async () => {
+  const createCafePin = () =>
+    fetch(`${BASE}/maps/map_1/pins`, {
+      method: "POST",
+      body: JSON.stringify({ category: "카페", source: "search", place_id: "kakao:mock-2", place_name: "해운대 바다 카페", lat: 35.1587, lng: 129.1604 }),
+    });
+
+  // "핀을 만들면 이벤트가 쌓인다"는 시간과 무관하다 — 스트림·타이머를 거치지 않고 로그를 직접 본다.
+  it("핀을 만들면 event_log에 public pin.created가 seq와 함께 쌓인다", async () => {
+    const before = store.eventLog.length;
+    expect((await createCafePin()).status).toBe(201);
+    const added = store.eventLog.slice(before);
+    expect(added.map((e) => e.type)).toEqual(["pin.created"]);
+    expect(added[0].channel).toBe("public");
+    expect(added[0].map_id).toBe("map_1");
+    expect(added[0].seq).toBeGreaterThan(0);
+  });
+
+  // 스트림은 형식(헤더·id/event/data 줄)만 본다. 이벤트를 **연결 전에** 만들어 두면 Last-Event-ID 0부터 다시 보내므로
+  // "연결과 생성 중 어느 쪽이 먼저냐"에 결과가 달라지지 않는다.
+  it("스트림은 쌓여 있는 이벤트를 id/event/data 형식으로 보낸다", async () => {
+    await createCafePin();
     const stream = await fetch(`${BASE}/maps/map_1/events`);
     expect(stream.status).toBe(200);
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
 
     const reader = stream.body!.getReader();
     const decoder = new TextDecoder();
-
-    await fetch(`${BASE}/maps/map_1/pins`, {
-      method: "POST",
-      body: JSON.stringify({ category: "카페", source: "search", place_id: "kakao:mock-2", place_name: "해운대 바다 카페", lat: 35.1587, lng: 129.1604 }),
-    });
-
     let received = "";
     while (!received.includes("pin.created")) {
       const { value, done } = await reader.read();
       if (done) break;
       received += decoder.decode(value);
     }
-    // reader.cancel()을 기다리면 msw/undici가 스트림을 닫는 데 4~8초가 걸려(부하가 있으면 더) 10초 제한을 넘기곤 했다.
-    // 이벤트는 이미 받았으니 닫기는 기다리지 않는다 — 목 서버의 cancel()이 폴링 타이머를 곧 정리한다.
+    // reader.cancel()을 기다리면 msw/undici가 스트림을 닫는 데 4~8초가 걸릴 수 있어 기다리지 않는다.
     void reader.cancel().catch(() => undefined);
 
     expect(received).toContain("event: pin.created");
     expect(received).toMatch(/id: \d+/);
+    expect(received).toMatch(/data: \{/);
   }, 10000);
 });
