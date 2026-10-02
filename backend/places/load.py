@@ -3,6 +3,9 @@
     python -m places.load permit  --file 서울_일반음식점.csv [--crs EPSG:5174] [--encoding cp949] [--dry-run]
     python -m places.load tourapi --file tourapi_items.json [--dry-run]
     python -m places.load labels  --file labels.csv [--constraints ../docs/constraints.md] [--dry-run]
+    python -m places.load restaurants --file restaurant_seoul_curated.csv [--labels restaurant_seoul_curated_labels.json]
+                                      [--exclude-bars] [--constraints ...] [--dry-run]
+    python -m places.load restaurant-labels --file restaurant_seoul_curated_labels.json [--constraints ...] [--dry-run]
 
 - 서울만. 인허가는 폐업을 새로 넣지 않고(이미 있는 장소가 폐업으로 바뀌면 status만 갱신), 좌표가 없는 행·업태
   대응표에 없는 행은 건너뛴다. 건너뛴 이유는 건수로 보고한다.
@@ -64,20 +67,52 @@ def load_labels(db: Session, path: Path, *, constraints: Path, encoding: str | N
     return report.lines() + [f"DB: place_facts upsert {result.upserted}, {skipped}"]
 
 
+def _read_curated_labels(path: Path) -> list[dict]:
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(data, list):
+        raise ValueError(f"{path}: 최상위가 배열이 아니다 — 음식점 납품본 라벨 JSON이 맞는지 확인")
+    return data
+
+
+def _load_curated_labels(db: Session, path: Path, *, constraints: Path) -> list[str]:
+    allowed = ingest.allowed_fact_keys_from_constraints(constraints.read_text(encoding="utf-8"))
+    if not allowed:
+        raise ValueError(f"{constraints}: fact_key를 하나도 읽지 못했다 — 경로 확인")
+    labels, report = ingest.parse_label_rows(ingest.curated_labels_to_rows(_read_curated_labels(path)), allowed)
+    result = repository.upsert_facts(db, labels)
+    skipped = f"장소를 못 찾아 건너뜀 {result.place_not_found}" if result.place_not_found else "장소 못 찾음 0"
+    return report.lines() + [f"DB: place_facts upsert {result.upserted}, {skipped}"]
+
+
+def load_restaurants(
+    db: Session, path: Path, *, labels: Path | None, constraints: Path, exclude_bars: bool, encoding: str | None = None
+) -> list[str]:
+    """음식점 납품본: 장소 CSV를 먼저 넣고(같은 트랜잭션) 라벨 JSON이 주어지면 이어서 넣는다."""
+    rows, report = ingest.parse_curated_rows(read_csv_rows(path, encoding), exclude_bars=exclude_bars)
+    result = repository.upsert_places(db, rows)
+    lines = ["[장소]"] + report.lines() + [f"DB: 신규 {result.inserted}, 갱신 {result.updated}"]
+    if labels is not None:
+        lines += ["[라벨]"] + _load_curated_labels(db, labels, constraints=constraints)
+    return lines
+
+
 def main(argv: list[str] | None = None, *, session_factory: Callable[[], Session] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m places.load", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("permit", "tourapi", "labels"):
+    for name in ("permit", "tourapi", "labels", "restaurants", "restaurant-labels"):
         p = sub.add_parser(name)
         p.add_argument("--file", required=True, type=Path)
         p.add_argument("--dry-run", action="store_true", help="파일을 해석하고 DB에는 쓰지 않는다(롤백)")
-        if name != "tourapi":
+        if name in ("permit", "labels", "restaurants"):
             p.add_argument("--encoding", default=None)
         if name == "permit":
             p.add_argument("--crs", default=ingest.DEFAULT_PERMIT_CRS, help="좌표계(기본 EPSG:5174). 위경도 값은 자동으로 그대로 쓴다")
             p.add_argument("--all-regions", action="store_true", help="서울 필터를 끈다(테스트용)")
-        if name == "labels":
+        if name in ("labels", "restaurants", "restaurant-labels"):
             p.add_argument("--constraints", type=Path, default=DEFAULT_CONSTRAINTS)
+        if name == "restaurants":
+            p.add_argument("--labels", type=Path, default=None, help="라벨 JSON — 있으면 장소 다음에 같은 트랜잭션으로 적재")
+            p.add_argument("--exclude-bars", action="store_true", help="유흥·주점류(정종/대포집/소주방, 감성주점) 제외 — 루트 결정 대기")
     args = parser.parse_args(argv)
 
     if not args.file.is_file():
@@ -94,6 +129,14 @@ def main(argv: list[str] | None = None, *, session_factory: Callable[[], Session
             lines = load_permit(db, args.file, crs=args.crs, encoding=args.encoding, seoul_only=not args.all_regions)
         elif args.command == "tourapi":
             lines = load_tourapi(db, args.file)
+        elif args.command == "restaurants":
+            if args.labels is not None and not args.labels.is_file():
+                print(f"파일이 없다: {args.labels}", file=sys.stderr)
+                return 2
+            lines = load_restaurants(db, args.file, labels=args.labels, constraints=args.constraints,
+                                     exclude_bars=args.exclude_bars, encoding=args.encoding)
+        elif args.command == "restaurant-labels":
+            lines = _load_curated_labels(db, args.file, constraints=args.constraints)
         else:
             lines = load_labels(db, args.file, constraints=args.constraints, encoding=args.encoding)
         if args.dry_run:

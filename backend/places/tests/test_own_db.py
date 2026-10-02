@@ -287,3 +287,113 @@ class _NoCloseSession:
 
     def rollback(self):
         self._s.rollback()
+
+
+# ---- 음식점 납품본 (#207) ----
+
+CURATED_CSV = FIX / "restaurant_curated_sample.csv"
+CURATED_LABELS = FIX / "restaurant_curated_labels.json"
+_MINI_KEYS = ["cuisine_korean", "cuisine_chinese", "spacious", "long_established", "franchise", "spicy_focused",
+              "oily_focused", "price_bucket", "contains_shellfish", "wait_short", "pet_friendly", "quiet"]
+
+
+@pytest.fixture()
+def mini_constraints(tmp_path):
+    """#206 머지 전에도 신규 키로 시험할 수 있게, constraints.md 표 모양의 작은 파일을 만든다."""
+    path = tmp_path / "constraints.md"
+    path.write_text("| `fact_key` | 종류 |\n|---|---|\n" + "\n".join(f"| `{k}` | soft |" for k in _MINI_KEYS), encoding="utf-8")
+    return path
+
+
+def _restaurants(db, constraints, *, exclude_bars=False, labels=CURATED_LABELS):
+    return load.load_restaurants(db, CURATED_CSV, labels=labels, constraints=constraints, exclude_bars=exclude_bars)
+
+
+def test_restaurants_load_places_as_open_permit_restaurants(db_session, mini_constraints):
+    _restaurants(db_session, mini_constraints)
+    rows = db_session.execute(select(Place)).scalars().all()
+    assert len(rows) == 9 and {p.source for p in rows} == {"permit"} and {p.category for p in rows} == {"음식점"}
+    assert {p.status for p in rows} == {"open"}
+    r1 = next(p for p in rows if p.source_id == "R001")
+    got = api.get_places([str(r1.id)], db=db_session)[str(r1.id)]
+    assert (got.lat, got.lng) == pytest.approx((37.5704, 126.9920), abs=1e-6) and got.name == "가상 한식당"
+
+
+def test_restaurants_exclude_bars_drops_them_and_their_labels_are_reported_missing(db_session, mini_constraints):
+    lines = _restaurants(db_session, mini_constraints, exclude_bars=True)
+    assert db_session.scalar(select(func.count()).select_from(Place)) == 7
+    assert db_session.scalar(select(Place.id).where(Place.source_id == "R007")) is None
+    assert any("장소를 못 찾아 건너뜀 2" in l for l in lines)   # R007(제외됨) + R404
+
+
+def test_restaurant_labels_store_value_confidence_evidence_and_source(db_session, mini_constraints):
+    _restaurants(db_session, mini_constraints)
+    pid = _pid(db_session, "permit", "R001")
+    by_key = {f.fact_key: f for f in db_session.scalars(select(PlaceFact).where(PlaceFact.place_id == uuid.UUID(pid)))}
+    assert by_key["spicy_focused"].value is True and by_key["spicy_focused"].confidence == "known"
+    assert by_key["spicy_focused"].evidence == "가게 이름 '짬뽕'" and by_key["spicy_focused"].label_source == "menu_keyword"
+    assert by_key["price_bucket"].value == "low" and by_key["price_bucket"].source_layer == 2
+    assert by_key["cuisine_chinese"].value is False
+    for key in ("contains_shellfish", "wait_short", "pet_friendly"):
+        assert by_key[key].confidence == "unknown" and by_key[key].evidence is None and by_key[key].label_source is None
+
+
+def test_restaurant_unknown_label_is_sql_null_and_visible_through_get_facts(db_session, mini_constraints):
+    _restaurants(db_session, mini_constraints)
+    pid = _pid(db_session, "permit", "R001")
+    assert db_session.execute(
+        select(PlaceFact.value.is_(None)).where(PlaceFact.place_id == uuid.UUID(pid), PlaceFact.fact_key == "wait_short")
+    ).scalar_one() is True
+    by_key = {f.fact_key: f for f in api.get_facts([pid], db=db_session)[pid]}
+    assert (by_key["wait_short"].confidence, by_key["wait_short"].value) == ("unknown", None)
+
+
+def test_restaurant_load_skips_bad_label_rows_but_keeps_the_good_ones(db_session, mini_constraints):
+    _restaurants(db_session, mini_constraints)
+    pid = uuid.UUID(_pid(db_session, "permit", "R003"))
+    keys = set(db_session.scalars(select(PlaceFact.fact_key).where(PlaceFact.place_id == pid)))
+    assert keys == {"long_established"}   # made_up_key·가격 숫자·quiet=maybe는 건너뜀
+
+
+def test_restaurant_load_is_idempotent_and_reupload_replaces_evidence(db_session, mini_constraints):
+    _restaurants(db_session, mini_constraints)
+    places_before = db_session.scalar(select(func.count()).select_from(Place))
+    facts_before = db_session.scalar(select(func.count()).select_from(PlaceFact))
+    _restaurants(db_session, mini_constraints)
+    assert db_session.scalar(select(func.count()).select_from(Place)) == places_before
+    assert db_session.scalar(select(func.count()).select_from(PlaceFact)) == facts_before
+    pid = uuid.UUID(_pid(db_session, "permit", "R001"))
+    repository.upsert_facts(db_session, [ingest.LabelRow("permit", "R001", "spicy_focused", False, "known", 3, None, "새 근거", "menu_keyword")])
+    row = db_session.get(PlaceFact, (pid, "spicy_focused"))
+    db_session.refresh(row)
+    assert (row.value, row.evidence) == (False, "새 근거")
+
+
+def test_restaurant_labels_command_alone_attaches_to_already_loaded_places(db_session, mini_constraints):
+    load.load_restaurants(db_session, CURATED_CSV, labels=None, constraints=mini_constraints, exclude_bars=False)
+    assert db_session.scalar(select(func.count()).select_from(PlaceFact)) == 0
+    lines = load._load_curated_labels(db_session, CURATED_LABELS, constraints=mini_constraints)
+    assert db_session.scalar(select(func.count()).select_from(PlaceFact)) > 0 and any("place_facts upsert" in l for l in lines)
+
+
+def test_restaurant_labels_with_unregistered_keys_are_reported_not_loaded(db_session, tmp_path):
+    old = tmp_path / "old.md"
+    old.write_text("| `fact_key` | 종류 |\n|---|---|\n| `spicy_focused` | hard |\n| `price_bucket` | hard |\n", encoding="utf-8")
+    lines = load.load_restaurants(db_session, CURATED_CSV, labels=CURATED_LABELS, constraints=old, exclude_bars=False)
+    assert any("모르는 fact_key: cuisine_korean" in l for l in lines)
+    keys = set(db_session.scalars(select(PlaceFact.fact_key)))
+    assert "cuisine_korean" not in keys and "spicy_focused" in keys
+    assert keys <= {"spicy_focused", "price_bucket", "contains_shellfish"}   # contains_* 재료 태그는 접두 규칙으로 항상 허용
+
+
+def test_cli_restaurants_dry_run_with_labels_writes_nothing(db_session, mini_constraints, capsys):
+    rc = load.main(["restaurants", "--file", str(CURATED_CSV), "--labels", str(CURATED_LABELS),
+                    "--constraints", str(mini_constraints), "--dry-run"], session_factory=lambda: _NoCloseSession(db_session))
+    out = capsys.readouterr().out
+    assert rc == 0 and "[장소]" in out and "[라벨]" in out and "dry-run" in out and "읽음 14행" in out
+    assert db_session.scalar(select(func.count()).select_from(Place)) == 0
+
+
+def test_cli_restaurants_missing_labels_file_exits_2(db_session, capsys):
+    assert load.main(["restaurants", "--file", str(CURATED_CSV), "--labels", "/no/such.json"],
+                     session_factory=lambda: _NoCloseSession(db_session)) == 2
