@@ -103,7 +103,6 @@ def test_withdrawn_member_does_not_raise_the_readiness_bar(members, place_ids):
 
 # ───────────────────────── 삭제된 핀의 사유 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D12 — 핀 삭제 시 그 핀의 알러지 사유가 근거에서 사라진다. #243")
 def test_safety_reason_survives_deleting_its_pin(members, place_ids, fake_planner):
     """누가 핀을 지워도(구성원 누구나 삭제 가능) 다른 사람의 알러지 사유가 사라져 위험한 추천이 나가면 안 된다."""
     a, b, map_id = members
