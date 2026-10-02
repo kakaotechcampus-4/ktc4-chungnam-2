@@ -37,3 +37,17 @@ def test_every_comparable_fact_key_has_a_reason_label():
 
 def test_soft_fact_keys_are_not_in_hard_registry():
     assert constraints.SOFT_FACT_KEYS.isdisjoint(constraints.HARD_REGISTRY.keys())
+
+
+def test_soft_registry_covers_the_doc_categories_and_is_all_pass():
+    """#171 — docs/constraints.md 음식점 15개(+wait_short)·관광지 36개(hard is_crowded_large 포함)와 같은 수."""
+    assert all(spec.kind == "soft" and spec.unknown_policy == "pass" for spec in constraints.SOFT_REGISTRY.values())
+    assert constraints.SOFT_FACT_KEYS == frozenset(constraints.SOFT_REGISTRY)
+    restaurant = set(constraints.soft_fact_keys_for("음식점"))
+    assert {"wait_short", "spacious", "long_established", "parking_available", "vegetarian_friendly", "franchise"} <= restaurant
+    assert len([k for k in restaurant if k.startswith("cuisine_")]) == 10
+    sight = set(constraints.soft_fact_keys_for("관광지"))
+    assert len(sight) + len(constraints.hard_fact_keys_for("관광지")) - 2 == 36  # price_bucket·contains_shellfish는 공통 hard
+    assert "winter_spot" in sight and "cuisine_korean" not in sight
+    assert set(constraints.soft_fact_keys_for("카페")) == {"quiet", "comfortable_seat", "local_flavor", "pet_friendly"}
+    assert "pet_friendly" in restaurant and "pet_friendly" in sight

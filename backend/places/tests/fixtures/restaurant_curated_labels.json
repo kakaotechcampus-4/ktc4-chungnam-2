@@ -1,0 +1,127 @@
+[
+ {
+  "place_id": "rest_R001",
+  "title": "x",
+  "labels": {
+   "cuisine_korean": {
+    "value": "true",
+    "evidence": "인허가 업태 '한식'",
+    "source": "license_business_type"
+   },
+   "cuisine_chinese": {
+    "value": "false",
+    "evidence": "인허가 업태 '한식'",
+    "source": "license_business_type"
+   },
+   "spicy_focused": {
+    "value": "true",
+    "evidence": "가게 이름 '짬뽕'",
+    "source": "menu_keyword"
+   },
+   "price_bucket": {
+    "value": "low",
+    "evidence": "착한가격업소",
+    "source": "goodprice"
+   },
+   "contains_shellfish": {
+    "value": "unknown",
+    "evidence": "",
+    "source": ""
+   },
+   "wait_short": {
+    "value": "unknown",
+    "evidence": "",
+    "source": ""
+   },
+   "pet_friendly": {
+    "value": "unknown",
+    "evidence": "",
+    "source": ""
+   },
+   "franchise": {
+    "value": "true",
+    "evidence": "브랜드 목록",
+    "source": "franchise_brands"
+   }
+  }
+ },
+ {
+  "place_id": "rest_R002",
+  "title": "x",
+  "labels": {
+   "cuisine_chinese": {
+    "value": "true",
+    "evidence": "인허가 업태 '중국식'",
+    "source": "license_business_type"
+   },
+   "spacious": {
+    "value": "true",
+    "evidence": "면적 120㎡ 이상",
+    "source": "license_area"
+   },
+   "oily_focused": {
+    "value": "false",
+    "evidence": "메뉴 원문",
+    "source": "tourapi"
+   }
+  }
+ },
+ {
+  "place_id": "rest_R007",
+  "title": "x",
+  "labels": {
+   "cuisine_korean": {
+    "value": "true",
+    "evidence": "x",
+    "source": "license_business_type"
+   }
+  }
+ },
+ {
+  "place_id": "rest_R404",
+  "title": "x",
+  "labels": {
+   "cuisine_korean": {
+    "value": "true",
+    "evidence": "없는 장소",
+    "source": "license_business_type"
+   }
+  }
+ },
+ {
+  "place_id": "weird_R001",
+  "labels": {
+   "cuisine_korean": {
+    "value": "true",
+    "evidence": "",
+    "source": ""
+   }
+  }
+ },
+ {
+  "place_id": "rest_R003",
+  "title": "x",
+  "labels": {
+   "made_up_key": {
+    "value": "true",
+    "evidence": "모르는 키",
+    "source": "x"
+   },
+   "long_established": {
+    "value": "true",
+    "evidence": "30년 이상",
+    "source": "license_date"
+   },
+   "price_bucket": {
+    "value": "12000",
+    "evidence": "가격 숫자",
+    "source": "x"
+   },
+   "quiet": {
+    "value": "maybe",
+    "evidence": "",
+    "source": ""
+   }
+  }
+ }
+]

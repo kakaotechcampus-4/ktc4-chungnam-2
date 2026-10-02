@@ -149,6 +149,8 @@ place_facts(
   value,                                 -- boolean/enum, jsonb로 통일 저장
   confidence('known'|'unknown'),        -- D4: unknown_policy는 constraints.md 참고
   source_layer(1|2|3),                  -- architecture.md 3층 모델
+  evidence null,                        -- 라벨의 근거 원문(예: "인허가 업태 '일식'") — 가드레일 5의 "이유·출처"에 쓴다 (#203)
+  label_source null,                    -- 근거의 종류(license_business_type, license_date, 모범음식점 …)
   model_version null,                   -- source_layer=3일 때만
   labeled_at
 )
@@ -169,6 +171,10 @@ place_facts(
 > | `value` | △ | boolean 키는 `true`/`false`, `price_bucket`은 `low`/`mid`/`high`. `confidence=unknown`이면 비운다 |
 > | `confidence` | O | `known` 또는 `unknown` — 확인하지 않은 값은 `unknown` |
 > | `labeled_at` | X | ISO 날짜. 없으면 적재 시각 |
+> | `evidence` | X | 근거 원문(`place_facts.evidence`). 있으면 그대로 저장한다 |
+> | `label_source` | X | 근거의 종류(`place_facts.label_source`) |
+>
+> **음식점 납품본은 JSON이다**(`restaurant_seoul_curated_labels.json`, #203): 장소마다 `place_id`(`rest_<인허가 관리번호>`)와 `labels{fact_key: {value, evidence, source}}`가 있다. 적재 스크립트가 이를 위 CSV 형식으로 변환해 읽는다(`place_id`에서 `rest_`를 떼면 `source_id`, `source`는 `permit`). `value`가 문자열 `"true"/"false"/"unknown"`으로 온다. `unknown`은 `confidence=unknown`으로 옮긴다.
 >
 > 같은 `(source, source_id, fact_key)`가 여럿이면 마지막 줄이 이긴다(경고). 적재는 멱등 upsert(`primary key(place_id, fact_key)`)라 파일을 다시 올려도 안전하다. 파일에 없는 장소·키는 건드리지 않는다. 원본 가격 숫자는 이 파일에 넣지 않는다(`price_bucket`만).
 

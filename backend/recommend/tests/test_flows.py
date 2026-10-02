@@ -698,6 +698,91 @@ def test_execute_run_unknown_safety_fact_is_excluded_not_needs_check(db_session)
     assert candidates == []  # exclude 정책 — unknown인데 통과시키지 않는다
 
 
+def test_execute_run_keeps_candidate_whose_unwanted_soft_label_is_false(db_session):
+    """#208 — 아무도 조용한 곳을 원하지 않았어도 quiet=False 장소가 실격되던 버그. soft 라벨은
+    실격 판정에 쓰이지 않으므로 후보에 남고, hard spicy_focused=True인 장소만 여전히 실격이다."""
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "매운거 빼주세요",
+         "badge": "required", "fact_key": "spicy_focused"},
+    ])
+    places = [
+        PlaceStub(place_id="noisy_place", lat=35.0005, lng=129.0005),
+        PlaceStub(place_id="spicy_place", lat=35.0005, lng=129.0006),
+    ]
+    place_facts = _FakePlaceFacts({
+        "noisy_place": {"spicy_focused": False, "quiet": False, "wait_short": False},
+        "spicy_place": {"spicy_focused": True, "quiet": False},
+    })
+
+    updated = flows.execute_run(
+        db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=place_facts,
+    )
+
+    assert [c.place_id for c in service.list_candidates(db_session, str(run.id))] == ["noisy_place"]
+    assert {e["label"]: e["removed_count"] for e in updated.last_funnel}["실격 조건 제거"] == 1
+
+
+def test_execute_run_keeps_restaurants_whose_cuisine_labels_are_mostly_false(db_session):
+    """#171 + #208 — cuisine_* 10개는 한 곳당 9개가 거짓이다. 아무도 원하지 않았으니 전원 후보에 남고,
+    점수 영향도 없다(전원 0점). 음식점 카테고리에는 음식점 선호 키만 체크로 붙는다."""
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    cuisines = [
+        "cuisine_korean", "cuisine_chinese", "cuisine_japanese", "cuisine_western", "cuisine_bunsik",
+        "cuisine_chicken_pub", "cuisine_bbq", "cuisine_foreign", "cuisine_raw_fish", "cuisine_buffet",
+    ]
+    places = [PlaceStub(place_id=f"r{i}", lat=35.0005 + i * 0.0001, lng=129.0005) for i in range(len(cuisines))]
+    place_facts = _FakePlaceFacts({
+        f"r{i}": {**{key: (key == cuisines[i]) for key in cuisines}, "franchise": False, "spacious": False}
+        for i in range(len(cuisines))
+    })
+
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=place_facts)
+
+    candidates = service.list_candidates(db_session, str(run.id))
+    assert len(candidates) == 3  # 상위 3곳 선정까지 가고, 실격으로 줄지 않는다
+    keys = {check["fact_key"] for check in candidates[0].checks}
+    assert "cuisine_korean" in keys and "quiet" not in keys and "winter_spot" not in keys
+
+
+def test_create_run_leaves_no_run_row_when_planning_fails(db_session, monkeypatch):
+    """#208 — 모델 호출(②)을 INSERT보다 먼저 하므로 실패하면 run 행이 남지 않는다."""
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="against", reason_text="너무 매워요")
+
+    def boom(_lines):
+        raise RuntimeError("model down")
+
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", boom)
+    with pytest.raises(RuntimeError):
+        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    assert db_session.execute(select(func.count()).select_from(RecommendRun)).scalar_one() == 0
+
+
+def test_create_run_rechecks_retry_limit_after_planning(db_session, monkeypatch):
+    """#208 — LLM 대기 중 동시 요청이 상한(5)에 도달시키면 INSERT 직전 재검사가 429로 막는다."""
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="against", reason_text="너무 매워요")
+    real_plan = flows.llm_service.plan_evidence
+
+    def plan_while_other_request_hits_limit(lines):
+        _make_run(db_session, map_id="map_1", requested_by="user_1", category="카페", attempt_no=5)
+        return real_plan(lines)
+
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", plan_while_other_request_hits_limit)
+    with pytest.raises(AppError) as exc_info:
+        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    assert exc_info.value.code == "RETRY_LIMIT"
+    assert db_session.execute(
+        select(func.count()).select_from(RecommendRun).where(RecommendRun.category == "음식점")
+    ).scalar_one() == 0
+
+
 def test_execute_run_with_no_candidates_then_get_result_is_no_results(db_session):
     run = _make_run(db_session, status="collecting_evidence")
     _make_region(db_session, run)

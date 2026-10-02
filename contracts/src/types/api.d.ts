@@ -1524,8 +1524,8 @@ export interface components {
             can_publish?: boolean;
         };
         User: {
-            id?: string;
-            display_name?: string;
+            id: string;
+            display_name: string;
         };
         UserUpdateRequest: {
             /** @description 계정 단위 표시 이름 (2026-09-30 결정) */
@@ -1641,10 +1641,10 @@ export interface components {
         LabelConfidence: "known" | "unknown";
         /** @description 가드레일 5 "조건별 충족 체크" */
         Check: {
-            fact_key?: string;
-            label?: string;
-            passed?: boolean;
-            confidence?: components["schemas"]["LabelConfidence"];
+            fact_key: string;
+            label: string;
+            passed: boolean;
+            confidence: components["schemas"]["LabelConfidence"];
             /** @description unknown_policy=pass+needs_check인 취향 조건이 unknown일 때 true */
             needs_check?: boolean;
         };
@@ -1699,10 +1699,10 @@ export interface components {
             display_name?: string;
         };
         FilterCounts: {
-            by_category?: {
+            by_category: {
                 [key: string]: number;
             };
-            by_kind?: {
+            by_kind: {
                 [key: string]: number;
             };
         };
@@ -1713,18 +1713,18 @@ export interface components {
             required_count?: number;
         };
         EvidenceLine: {
-            id?: string;
-            author_id?: string;
+            id: string;
+            author_id: string;
             author_display_name?: string;
-            text?: string;
+            text: string;
             /**
              * @description 꼭/선호/참고 (5-5)
              * @enum {string}
              */
-            badge?: "required" | "preferred" | "reference";
+            badge: "required" | "preferred" | "reference";
             fact_key?: string | null;
-            is_active?: boolean;
-            permissions?: components["schemas"]["Permissions"];
+            is_active: boolean;
+            permissions: components["schemas"]["Permissions"];
         };
         EvidencePatchRequest: {
             toggle?: {
@@ -1736,18 +1736,18 @@ export interface components {
             }[];
         };
         Region: {
-            id?: string;
-            label?: string;
-            signature?: string;
-            confirmed?: boolean;
+            id: string;
+            label: string;
+            signature: string;
+            confirmed: boolean;
         };
         RecommendRun: {
-            id?: string;
-            map_id?: string;
-            category?: components["schemas"]["RecommendCategory"];
+            id: string;
+            map_id: string;
+            category: components["schemas"]["RecommendCategory"];
             /** @enum {string} */
-            status?: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
-            attempt_no?: number;
+            status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
+            attempt_no: number;
             /** @description 기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (기본 15, 상한 30) */
             default_radius_walk_min?: number;
         };
@@ -1765,53 +1765,58 @@ export interface components {
         };
         /** @description 장소 정보 출처 (가드레일 5, 5-6-1 지도 출처 표시) */
         PlaceSource: {
-            /** @enum {string} */
-            provider: "kakao" | "naver" | "google";
+            /**
+             * @description permit = 지방행정 인허가 공공데이터, tourapi = 한국관광공사 TourAPI — 자체 장소 DB의 출처(#53). kakao·naver·google은 검색 결과 표시용(저장하지 않음)
+             * @enum {string}
+             */
+            provider: "kakao" | "naver" | "google" | "permit" | "tourapi";
             /** @description 출처 페이지 링크. 이용약관상 링크 제공이 불가하면 생략 */
             url?: string;
         };
         Candidate: {
-            id?: string;
+            id: string;
             place_name?: string;
             /** @description 5-6-1 지역별 안배 태그 */
             region_label?: string;
-            rank?: number;
-            checks?: components["schemas"]["Check"][];
+            rank: number;
+            checks: components["schemas"]["Check"][];
             /** @description 추천 이유 — 근거 없는 한 줄 추천 금지 (가드레일 5) */
-            reason?: string;
-            member_fulfillment?: components["schemas"]["MemberFulfillment"];
+            reason: string;
+            member_fulfillment: components["schemas"]["MemberFulfillment"];
             place_source?: components["schemas"]["PlaceSource"];
             /** @enum {string} */
-            visibility?: "private" | "published";
+            visibility: "private" | "published";
+            /** @description 게시하기 전에는 null이거나 필드가 없다 */
             published_pin_id?: string | null;
-            permissions?: components["schemas"]["Permissions"];
+            permissions: components["schemas"]["Permissions"];
         };
         RecommendResult: {
-            run_id?: string;
+            run_id: string;
             /** @description 5-6 깔때기 표 */
-            funnel?: {
-                label?: string;
-                removed_count?: number;
+            funnel: {
+                label: string;
+                removed_count: number;
             }[];
-            regions?: components["schemas"]["Region"][];
-            candidates?: components["schemas"]["Candidate"][];
+            regions: components["schemas"]["Region"][];
+            candidates: components["schemas"]["Candidate"][];
         };
         ShortlistItem: {
-            id?: string;
-            pin?: components["schemas"]["Pin"];
+            id: string;
+            pin: components["schemas"]["Pin"];
+            /** @description 순서를 정하지 않았으면 null이거나 필드가 없다 */
             visit_order?: number | null;
-            added_by?: string;
-            permissions?: components["schemas"]["Permissions"];
+            added_by: string;
+            permissions: components["schemas"]["Permissions"];
         };
         Route: {
-            region_label?: string;
-            ordered_pin_ids?: string[];
-            total_distance_m?: number;
-            legs?: {
-                from_pin_id?: string;
-                to_pin_id?: string;
-                distance_m?: number;
-                approx_minutes?: number;
+            region_label: string;
+            ordered_pin_ids: string[];
+            total_distance_m: number;
+            legs: {
+                from_pin_id: string;
+                to_pin_id: string;
+                distance_m: number;
+                approx_minutes: number;
             }[];
         };
         /** @description 모든 SSE 이벤트의 공통 봉투. id는 event_log.seq와 같고 SSE의 id: 필드로 전송된다 */

@@ -4,7 +4,7 @@ import pytest
 
 from common.errors import AppError
 from common.geo import WALKING_SPEED_M_PER_MIN
-from recommend import core
+from recommend import constraints, core
 from recommend.models import RecommendRun
 from recommend.ports import Circle
 from recommend.schemas import Check
@@ -162,6 +162,15 @@ def test_apply_disqualifier_filters_fails_candidate_with_any_failing_check():
     failing = core.build_check("b", "exclude", known=True, value=True, passes=False)
     result = core.apply_disqualifier_filters([[passing], [passing, failing], []])
     assert result == [True, False, True]  # 빈 checks는 all([])==True
+
+
+def test_apply_disqualifier_filters_ignores_soft_checks_even_when_not_passed():
+    """#208 — soft 라벨의 passed는 라벨의 참/거짓값이다. quiet=False(passed=False)여도 실격이 아니다."""
+    hard_ok = core.build_check("spicy_focused", "exclude", known=True, value=False, passes=True)
+    soft_false = core.build_check("quiet", "pass", known=True, value=False, passes=False)
+    hard_fail = core.build_check("spicy_focused", "exclude", known=True, value=True, passes=False)
+    result = core.apply_disqualifier_filters([[hard_ok, soft_false], [hard_fail, soft_false], [soft_false]])
+    assert result == [True, False, True]
 
 
 # ---------- funnel_counts ----------
@@ -347,6 +356,43 @@ def test_score_candidates_sums_across_multiple_matching_fact_keys():
     hearted = [_place(_check("quiet", passed=True), _check("local_flavor", passed=True), members=frozenset({"u1"}))]
     candidates = {"p1": [_check("quiet", passed=True), _check("local_flavor", passed=True)]}
     assert core.score_candidates(candidates, hearted, criteria) == {"p1": 2}
+
+
+def test_unwanted_soft_keys_never_change_the_score():
+    """#171 — 음식점 키 15개가 등록돼도, 사람이 원하지 않은 키는 점수에 영향이 없다.
+    ♥ 장소는 한식(참)이고 나머지 cuisine_*는 거짓이다. 기준(criteria)에는 한식만 참으로 남고,
+    다른 업태가 참인 후보도, cuisine_* 아홉 개가 거짓인 후보도 한식 가산·감점 외에는 0점이다."""
+    cuisines = [
+        "cuisine_korean", "cuisine_chinese", "cuisine_japanese", "cuisine_western", "cuisine_bunsik",
+        "cuisine_chicken_pub", "cuisine_bbq", "cuisine_foreign", "cuisine_raw_fish", "cuisine_buffet",
+    ]
+
+    def labels(true_key):
+        return [_check(key, passed=(key == true_key)) for key in cuisines]
+
+    hearted = [_place(*labels("cuisine_korean"), _check("spacious", passed=False), members=frozenset({"u1"}))]
+    criteria = core.build_preference_criteria(
+        hearted, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={},
+    )
+    assert criteria["cuisine_korean"] is True
+    assert not any(criteria[key] for key in cuisines if key != "cuisine_korean")
+
+    candidates = {
+        "korean": labels("cuisine_korean"),
+        "raw_fish": labels("cuisine_raw_fish") + [_check("spacious", passed=True), _check("franchise", passed=True)],
+        "chinese": labels("cuisine_chinese"),
+    }
+    assert core.score_candidates(candidates, hearted, criteria) == {"korean": 1, "raw_fish": 0, "chinese": 0}
+
+
+def test_soft_keys_nobody_wants_score_zero_for_every_candidate():
+    """아무도 ♥하지 않고 선호 사유도 없으면 criteria가 비어 모든 후보가 0점이다(키가 몇 개든)."""
+    candidates = {"p1": [_check(key, passed=True) for key in sorted(constraints.SOFT_FACT_KEYS)]}
+    criteria = core.build_preference_criteria(
+        [], excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={},
+    )
+    assert criteria == {}
+    assert core.score_candidates(candidates, [], criteria) == {"p1": 0}
 
 
 # ---------- build_member_fulfillment ----------

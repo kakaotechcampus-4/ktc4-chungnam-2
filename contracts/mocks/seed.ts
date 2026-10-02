@@ -181,6 +181,9 @@ export function buildCandidates(regionLabel: string) {
       ],
       visibility: "private" as const,
       published_pin_id: null,
+      reason: "매운 음식을 피하는 조건을 지키면서 1인 예산 안에 들어요",
+      member_fulfillment: { satisfied: 2, total: 2 },
+      permissions: { can_publish: true },
     },
     {
       id: nextId("cand"),
@@ -193,6 +196,9 @@ export function buildCandidates(regionLabel: string) {
       ],
       visibility: "private" as const,
       published_pin_id: null,
+      reason: "매운맛 조건은 지키지만 가격대는 확인이 필요해요",
+      member_fulfillment: { satisfied: 1, total: 2 },
+      permissions: { can_publish: true },
     },
     {
       id: nextId("cand"),
@@ -205,6 +211,9 @@ export function buildCandidates(regionLabel: string) {
       ],
       visibility: "private" as const,
       published_pin_id: null,
+      reason: "매운 음식을 피하는 조건을 지키고 예산도 맞아요",
+      member_fulfillment: { satisfied: 2, total: 2 },
+      permissions: { can_publish: true },
     },
   ];
 }

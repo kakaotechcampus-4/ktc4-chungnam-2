@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 
 from geoalchemy2 import Geography
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, SmallInteger, String, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, SmallInteger, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -61,6 +61,9 @@ class PlaceFact(Base):
     confidence: Mapped[str] = mapped_column(FactConfidence, nullable=False)
     source_layer: Mapped[int] = mapped_column(SmallInteger, nullable=False)   # architecture.md 3층 모델
     model_version: Mapped[str | None] = mapped_column(String, nullable=True)  # v2 모델 라벨링부터
+    # 라벨의 근거 원문과 종류(#203) — 가드레일 5의 "이유·출처". 근거가 없는 라벨(예: unknown)은 NULL.
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    label_source: Mapped[str | None] = mapped_column(Text, nullable=True)
     labeled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (CheckConstraint("source_layer IN (1, 2, 3)", name="ck_place_facts_source_layer"),)

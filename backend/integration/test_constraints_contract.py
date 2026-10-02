@@ -32,7 +32,7 @@ def _doc_policies() -> dict[str, str]:
     policies: dict[str, str] = {}
     for line in CONSTRAINTS_MD.read_text(encoding="utf-8").splitlines():
         m = re.match(r"^\|\s*`([a-z_]+)`", line)
-        if not m or "unknown_policy" in line:
+        if not m or "unknown_policy" in line or m.group(1) == "fact_key":  # 헤더 행(음식점 채움 규칙 표는 unknown_policy 열이 없다)
             continue
         policies[m.group(1)] = "exclude" if "**exclude**" in line else "pass"
     return policies
@@ -50,6 +50,14 @@ def test_registry_matches_constraints_md_unknown_policy():
     assert not missing_in_doc, f"문서에 없는 조건이 코드에 있다: {missing_in_doc}"
     for key in constraints.SOFT_FACT_KEYS:
         assert doc.get(key) == "pass", f"선호(soft) 조건 {key}는 pass여야 한다(5-1: 선호는 애초에 걸러내지 않는다)"
+
+
+def test_every_condition_in_constraints_md_is_in_the_registry():
+    """문서에만 있고 코드에 없는 조건(#171) — 라벨이 와도 조용히 버려진다. is_open·within_radius는 코드 판정이라 레지스트리 밖."""
+    code_judged = {"is_open", "within_radius"}
+    registered = set(constraints.HARD_REGISTRY) | constraints.SOFT_FACT_KEYS
+    missing = sorted(set(_doc_policies()) - code_judged - registered)
+    assert not missing, f"constraints.md에 있는데 레지스트리에 없는 조건: {missing}"
 
 
 def test_safety_conditions_are_exclude_and_nothing_else_is():
