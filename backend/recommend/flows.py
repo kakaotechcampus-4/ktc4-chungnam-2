@@ -324,6 +324,14 @@ def _run_pipeline(
     removed_open = 0  # dev 스텁은 실시간 영업시간 조회가 없어 항상 unknown+needs_check — 결코 제거하지 않는다
 
     active_hard_keys = _active_hard_fact_keys(db, run)
+    preferred_authors: dict[str, set[str]] = {}
+    for line in service.list_active_evidence(db, run.id):
+        if line.badge == "preferred" and line.fact_key is not None:
+            preferred_authors.setdefault(line.fact_key, set()).add(line.author_id)
+    preferred_authors_frozen = {key: frozenset(authors) for key, authors in preferred_authors.items()}
+    # 선호 라벨 체크는 이 카테고리에 적용되는 키 + 사람이 직접 원한 키만 붙인다 — 50여 개를 전부 붙이면
+    # 「확인 필요」 체크가 넘치고, 원하지 않은 키는 어차피 점수에 쓰이지 않는다.
+    soft_keys = sorted(set(constraints.soft_fact_keys_for(run.category)) | (constraints.SOFT_FACT_KEYS & preferred_authors.keys()))
     # ③-a-1 — 라벨은 자체 DB(place_facts)에서 읽는다. 요청 중 모델을 부르지 않는다(#190, v1). 없는 라벨은
     # confidence=unknown으로 보고 unknown_policy를 그대로 적용한다. 한 번에 배치 조회(N+1 금지).
     facts_by_place = place_facts.get_facts([p.place_id for p in within_radius])
@@ -340,7 +348,7 @@ def _run_pipeline(
         # #112 1단계 입력 — 선호(soft) 라벨도 같이 붙인다. unknown_policy는 표 그대로 "pass"
         # 고정(constraints.md — 순위에서 중립 처리). passed는 hard 체크처럼 "실격 아님"이 아니라
         # 그 라벨의 실제 참/거짓값이다.
-        for fact_key in sorted(constraints.SOFT_FACT_KEYS):
+        for fact_key in soft_keys:
             known, value = core.resolve_label(labels, fact_key)
             checks.append(core.build_check(fact_key, "pass", known=known, value=value, passes=bool(value)))
         checks_by_place[place.place_id] = checks
@@ -365,11 +373,6 @@ def _run_pipeline(
         )
         for entry in liked_pins
     ]
-    preferred_authors: dict[str, set[str]] = {}
-    for line in service.list_active_evidence(db, run.id):
-        if line.badge == "preferred" and line.fact_key is not None:
-            preferred_authors.setdefault(line.fact_key, set()).add(line.author_id)
-    preferred_authors_frozen = {key: frozenset(authors) for key, authors in preferred_authors.items()}
     criteria = core.build_preference_criteria(
         hearted_places,
         excluded_fact_keys=constraints.VALUE_COMPARISON_UNSUPPORTED,
