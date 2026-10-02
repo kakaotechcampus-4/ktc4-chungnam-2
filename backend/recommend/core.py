@@ -166,8 +166,15 @@ def apply_disqualifier_filters(candidate_checks: list[list[Check]]) -> list[bool
     버전 — 여기서는 "체크 하나라도 불통과면 후보 전체 탈락"). 후보별 checks 리스트를 받아
     후보별 통과 여부(bool) 리스트를 그대로 반환한다 — 실제 제거는 호출부(service.py)가 이
     bool로 후보 리스트를 필터링한다(이 함수는 후보 객체 자체를 모른다 — 순수하게 checks만
-    본다)."""
-    return [all(check.passed for check in checks) for checks in candidate_checks]
+    본다).
+
+    hard 체크만 본다. 선호(soft) 라벨(`constraints.SOFT_FACT_KEYS`)의 passed는 "실격 아님"이 아니라
+    그 라벨의 참/거짓값이라(예: quiet=False → passed=False), 판정에 섞으면 아무도 원하지 않은
+    조건 때문에 후보가 전멸한다(#208). soft 체크는 선호 점수(score_candidates)의 입력으로만 쓴다."""
+    return [
+        all(check.passed for check in checks if check.fact_key not in constraints.SOFT_FACT_KEYS)
+        for checks in candidate_checks
+    ]
 
 
 def funnel_counts(stage_removed: list[tuple[str, int]]) -> list[dict]:

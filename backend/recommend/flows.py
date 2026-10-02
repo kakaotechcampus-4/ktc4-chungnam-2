@@ -199,7 +199,9 @@ def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: 
 def create_run(db: Session, *, map_id: str, category: str, requested_by: str) -> RecommendRun:
     """POST /maps/{mapId}/runs — run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
     안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 재시도 상한(#31) 3) run INSERT
-    4) 반응 → 근거 구조화(llm.plan_evidence) → evidence_lines INSERT 5) 기본값 지역 INSERT."""
+    4) 반응 → 근거 구조화(llm.plan_evidence) 5) run INSERT → evidence_lines INSERT 6) 기본값
+    지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
+    트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다."""
     readiness = core.check_readiness(
         pins_api.count_reacted_users(db, map_id=map_id, category=category),
         maps_api.count_members(db, map_id),
@@ -209,12 +211,17 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str) ->
 
     current_max = service.max_attempt_no_for_requester(db, map_id=map_id, requested_by=requested_by)
     core.check_retry_limit(current_max)  # #31 — 카테고리 무관 개인 단위 카운터가 이미 상한이면 새 run도 막는다
-    run = service.create_run(db, map_id=map_id, category=category, requested_by=requested_by, attempt_no=current_max + 1)
 
     raw_reactions = pins_api.list_reasoned_reactions(db, map_id=map_id, category=category)
     reaction_lines = [_evidence_from_reaction(r) for r in raw_reactions]
-    planned = llm_service.plan_evidence(reaction_lines)  # ② — v1 스텁은 스키마 검증만 하고 그대로 통과시킨다
+    planned = llm_service.plan_evidence(reaction_lines)  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
     merged = core.assemble_evidence([line.model_dump() for line in planned], [])
+
+    # LLM 대기 중 같은 사용자의 동시 요청이 상한(#31)에 도달시켰을 수 있다 — INSERT 직전에 다시 읽어
+    # 경합 구간을 수 ms로 줄인다(첫 검사는 모델을 부르기 전에 막는 빠른 실패용).
+    current_max = service.max_attempt_no_for_requester(db, map_id=map_id, requested_by=requested_by)
+    core.check_retry_limit(current_max)
+    run = service.create_run(db, map_id=map_id, category=category, requested_by=requested_by, attempt_no=current_max + 1)
     service.add_reaction_evidence(db, run_id=run.id, lines=merged)
 
     circle, anchors = _default_circle_and_anchors(db, map_id=map_id, category=category)

@@ -164,6 +164,15 @@ def test_apply_disqualifier_filters_fails_candidate_with_any_failing_check():
     assert result == [True, False, True]  # 빈 checks는 all([])==True
 
 
+def test_apply_disqualifier_filters_ignores_soft_checks_even_when_not_passed():
+    """#208 — soft 라벨의 passed는 라벨의 참/거짓값이다. quiet=False(passed=False)여도 실격이 아니다."""
+    hard_ok = core.build_check("spicy_focused", "exclude", known=True, value=False, passes=True)
+    soft_false = core.build_check("quiet", "pass", known=True, value=False, passes=False)
+    hard_fail = core.build_check("spicy_focused", "exclude", known=True, value=True, passes=False)
+    result = core.apply_disqualifier_filters([[hard_ok, soft_false], [hard_fail, soft_false], [soft_false]])
+    assert result == [True, False, True]
+
+
 # ---------- funnel_counts ----------
 
 def test_funnel_counts_maps_pairs_to_dicts():
