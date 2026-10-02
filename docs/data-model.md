@@ -234,11 +234,13 @@ regions(
   id, run_id, signature,                -- 5-6-1 겹침 판정 서명. 무효화 규칙: signature 재계산 시 값이 바뀌면 재확인
   label,                                 -- #108 확정: places가 없어 리버스 지오코딩(장소명 조회)이
                                          -- 안 되므로 "N번째 지역" 같은 라벨을 여기서 직접 만들어 저장
-  center_lat, center_lng, radius_m,     -- #108 확정: geom geography 대신 병합된 원(중심+반경)을
-                                         -- 평범한 컬럼으로 저장 — candidates.lat/lng와 같은 차원
-                                         -- 압축 논리. 실제 PostGIS 연산이 필요해지면(예: 핀-지역
-                                         -- 포함 판정을 DB 레벨로 옮길 때) geom 컬럼을 추가하는
-                                         -- 별도 마이그레이션으로 되돌린다.
+  anchor_points,                         -- #274: 행 하나가 핀 "무리" 하나다. 지도의 핀 전부(카테고리, 상태 무관)를
+                                         -- common/geo.py의 cluster_points로 묶은 결과의 핀 좌표 목록.
+                                         -- 후보는 이 중 어느 핀에서든 radius_m 안이면 이 지역에 든다(핀마다 원의 합집합)
+  center_lat, center_lng, radius_m,     -- #274: radius_m은 핀마다 그리는 원의 반경(기본 도보 15분 1,200m, 넓히기 때 이것만 커진다).
+                                         -- center_lat/lng는 무리의 평균점이고 라벨과 정렬 같은 표시용으로만 쓴다(검색 범위 판정에 쓰지 않는다).
+                                         -- #108 확정: geom geography 대신 평범한 컬럼. 실제 PostGIS 연산이 필요해지면
+                                         -- geom 컬럼을 추가하는 별도 마이그레이션으로 되돌린다.
   confirmed boolean, confirmed_at
 )
 
