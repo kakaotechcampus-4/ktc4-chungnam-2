@@ -23,7 +23,6 @@ def test_publish_twice_is_idempotent_and_emits_one_event(members, place_ids, fak
     assert len(_events(db_session, map_id, "pin.published")) == 1
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D8 — 게시된 AI 핀에 place_source가 없다(가드레일 5). #242")
 def test_published_ai_pin_keeps_reason_checks_fulfillment_and_source(members, place_ids, fake_planner):
     """가드레일 5 — 게시된 핀에도 이유·체크·구성원 충족 집계·출처가 붙는다."""
     a, b, map_id = members
