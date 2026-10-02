@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from authz.policy import ACTION_RESOURCE_TYPES, AUTHOR_CONSTRAINED_ACTIONS, POLICY, ResourceType, Role
 from authz.schemas import Permissions
+from common import categories
 
 
 @dataclass(frozen=True)
@@ -32,7 +33,7 @@ class Resource:
     map_id: str
     author_id: str | None = None
     kind: str | None = None  # pins.kind — 상태 게이팅 전용, can()은 이 값을 쓰지 않는다
-    category: str | None = None  # pins.category — 숙소 반응 게이팅 전용(#154), can()은 쓰지 않는다
+    category: str | None = None  # pins.category — 반응 게이팅 전용(#154), can()은 쓰지 않는다
 
 
 def can(user: Principal, action: str, resource: Resource) -> bool:
@@ -94,8 +95,10 @@ def _pin_permissions(user: Principal, resource: Resource) -> Permissions:
     한다 — #56 이관 시 FE가 받는 JSON이 바뀌면 안 된다."""
     can_add = can(user, "shortlist.add", resource) and resource.kind != "확정"
     can_remove = can(user, "shortlist.remove", resource) and resource.kind == "확정"
-    # 숙소는 반응 대상이 아니다(permissions.md "숙소 핀의 반응 게이팅") — 역할이 아니라 리소스 상태.
-    can_react = can(user, "pin.react", resource) and resource.category != "숙소"
+    # 반응 못 받는 카테고리(숙소, permissions.md "숙소 핀의 반응 게이팅")는 역할이 아니라 리소스 상태로 막는다.
+    # 어떤 카테고리가 반응을 받는지는 common/categories.py가 정한다(#280).
+    reactable = resource.category is None or categories.is_reactable(resource.category)
+    can_react = can(user, "pin.react", resource) and reactable
     return Permissions(
         can_react=can_react,
         can_revert=can(user, "pin.revert", resource),

@@ -130,7 +130,7 @@ def require_map_member() -> Depends:
 숙소는 반응(♥/△/🚫)을 받지 않는 카테고리다 — 핀을 찍고 확정 리스트·동선 기준점으로 쓸 뿐이다.
 확정 리스트 게이팅(#65)과 같은 방식으로 **역할이 아니라 리소스 상태**로 반전한다:
 
-- `pin.category == "숙소"`이면 `permissions.can_react=false`. `authz/core.py::_pin_permissions`가 `permissions_for`에서만 계산하고 `can()`에는 넣지 않는다.
+- 핀의 카테고리가 반응을 받지 않으면(v1은 숙소) `permissions.can_react=false`. 카테고리마다 반응을 받는지는 `backend/common/categories.py`의 `reactable`이 정한다(#280). `authz/core.py::_pin_permissions`가 `permissions_for`에서만 계산하고 `can()`에는 넣지 않는다.
 - 그래도 `PUT /pins/{pinId}/reaction`이 오면 **422 `REACTION_NOT_ALLOWED`** — 권한(403)이 아니라 "이 리소스는 반응 대상이 아님"이라 요청 자체를 거부한다.
 - `GET /pins/{pinId}/reactions`는 숙소 핀에 빈 배열을 돌려준다.
 - 「기타」 카테고리는 일반 핀과 같다(반응 가능, 추천 대상만 아님).

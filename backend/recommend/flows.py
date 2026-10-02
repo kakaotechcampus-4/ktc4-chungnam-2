@@ -49,6 +49,7 @@ from authz.core import Principal, Resource, can
 from authz.guard import require
 from authz.ports import MembershipGateway
 from authz.schemas import Permissions
+from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
 from llm import service as llm_service
@@ -137,7 +138,7 @@ def publish_candidate(
 # #108 — 코어 파이프라인(llm 스텁 대상 통합)
 # ============================================================================
 
-CATEGORIES: list[str] = ["음식점", "카페", "관광지"]
+CATEGORIES: tuple[str, ...] = categories.recommendable()  # common/categories.py(#280)
 # 기본값 원 반경(m) — 최종기획안.md 248행에 이미 정의돼 있다: "기본 반경(도보 15분에 해당하는
 # 거리)". common.geo.WALKING_SPEED_M_PER_MIN(도보 시간 근사 보정계수)으로 환산한다 — 루트
 # 검증 중 발견: 이전 버전은 이 스펙을 못 찾고 2000m(약 25분)를 임의로 썼었다. 계산식으로

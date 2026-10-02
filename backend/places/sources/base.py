@@ -7,8 +7,6 @@ import math
 from dataclasses import dataclass, replace
 from typing import Any, Protocol, runtime_checkable
 
-CATEGORIES = ("음식점", "카페", "숙소", "관광지", "기타")
-
 # 층2 원자료 중 소스가 채워줄 수 있는 필드 묶음. 값이 None이면 "아직 못 채운 것"이다.
 # rating은 rating_count와 한 묶음이다(같이 오고 같이 없다).
 ENRICHABLE_FIELDS = frozenset({"phone", "rating", "price_level", "opening_hours"})

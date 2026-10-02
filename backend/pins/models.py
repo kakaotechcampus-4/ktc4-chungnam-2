@@ -20,12 +20,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from common import categories
 from common.database import Base
 
-Category = Enum(
-    "음식점", "카페", "숙소", "관광지", "기타",
-    name="category",
-)
+Category = Enum(*categories.all_categories(), name="category")  # 값은 common/categories.py(#280)
 PinKind = Enum(
     "일반", "AI추천", "확정",
     name="pin_kind",

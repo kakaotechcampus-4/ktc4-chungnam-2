@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Sequence
 
+from common import categories
 from places.schemas import PlaceHint, PlaceMatch
 from places.sources.base import distance_m
 
-OWN_CATEGORIES = ("음식점", "카페", "관광지")   # 자체 DB가 담는 분류 — 숙소·기타는 v1에서 없다(#191)
+OWN_CATEGORIES = categories.pinnable()   # 자체 DB가 담는 분류(common/categories.py, #191·#280)
 MAX_RADIUS_M = 300.0     # 힌트 좌표에서 이 거리 안의 후보만 본다
 MAX_CANDIDATES = 20      # DB에서 가져올 후보 수 상한(가까운 순)
 NAME_MIN_SCORE = 0.8     # 이름 유사도가 이보다 낮으면 같은 곳으로 보지 않는다

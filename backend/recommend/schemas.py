@@ -9,8 +9,9 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from authz.schemas import Permissions
+from common import categories
 
-Category = Literal["음식점", "카페", "관광지"]  # 스펙의 RecommendCategory — 숙소는 추천 대상이 아니다(#145)
+Category = Literal[categories.recommendable()]  # 스펙의 RecommendCategory(common/categories.py, #280)
 RunStatus = Literal["collecting_evidence", "awaiting_region_confirm", "executing", "done", "failed"]
 Badge = Literal["required", "preferred", "reference"]
 LabelConfidence = Literal["known", "unknown"]

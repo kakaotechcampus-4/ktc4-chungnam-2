@@ -15,8 +15,9 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, model_serializer
 
 from authz.schemas import Permissions
+from common import categories
 
-Category = Literal["음식점", "카페", "숙소", "관광지", "기타"]
+Category = Literal[categories.all_categories()]  # 스펙의 Category(common/categories.py, #280)
 PinKind = Literal["일반", "AI추천", "확정"]
 PriceBucket = Literal["low", "mid", "high"]
 LabelConfidence = Literal["known", "unknown"]
