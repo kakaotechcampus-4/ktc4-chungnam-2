@@ -119,7 +119,6 @@ def test_d2_sse_data_is_the_payload_itself():
 
 # ───────────────────────────── D3 — 확정 핀 삭제 ─────────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D3 — 확정 핀을 삭제하면 확정 리스트 전체가 404가 된다. #235")
 def test_d3_deleting_a_confirmed_pin_does_not_break_the_shortlist(clients, seoul_map, pin_body):
     a, _ = clients
     keep = a.post(f"/maps/{seoul_map}/pins", json=pin_body("seongsu-kalguksu")).json()["id"]
