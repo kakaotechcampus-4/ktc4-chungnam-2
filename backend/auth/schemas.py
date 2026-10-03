@@ -6,8 +6,9 @@ UserResponse는 반대로 계약용이다 — api-spec.yaml의 User 스키마(id
 """
 
 from dataclasses import dataclass
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
 
 
 @dataclass(frozen=True)
@@ -23,3 +24,10 @@ class UserResponse(BaseModel):
 
     id: str
     display_name: str
+
+
+class UserUpdateRequest(BaseModel):
+    """PATCH /auth/me 요청 — api-spec.yaml의 UserUpdateRequest(1~50자). 앞뒤 공백을 먼저
+    걷어낸 뒤 길이를 재므로 공백만 든 값은 빈 값과 같이 422가 된다."""
+
+    display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]

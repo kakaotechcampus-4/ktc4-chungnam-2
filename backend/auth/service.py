@@ -9,17 +9,21 @@ auth/core.py(순수 함수)에 있다(docs/code-quality.md 기능형 코어/명�
 from datetime import datetime, timezone
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import core
 from auth.models import User
 from common.errors import AppError
 from common.settings import settings
+from pins import api as pins_api
+from recommend import api as recommend_api
 
 KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 KAKAO_USERINFO_URL = "https://kapi.kakao.com/v2/user/me"
 _HTTP_TIMEOUT_SECONDS = 5.0
+_USER_IDENTITY_CONSTRAINT = "uq_users_provider_identity"
 
 
 def _exchange_kakao_code(code: str) -> str:
@@ -59,19 +63,40 @@ def _fetch_kakao_profile(access_token: str) -> dict:
     return resp.json()
 
 
-def find_or_create_user(db: Session, *, provider: str, provider_user_id: str, display_name: str) -> User:
-    row = db.execute(
+def _find_user(db: Session, *, provider: str, provider_user_id: str) -> User | None:
+    return db.execute(
         select(User).where(User.provider == provider, User.provider_user_id == provider_user_id)
     ).scalar_one_or_none()
+
+
+def _reject_if_withdrawn(row: User) -> User:
+    if row.deleted_at is not None:
+        # 탈퇴한 계정으로 재로그인 — 조용히 되살리지 않는다. 재활성화를 허용할지는
+        # 12절 범위 밖의 별도 결정이라 지금은 막고 루트에 보고한다(auth/for_Root.md).
+        raise AppError("UNAUTHORIZED", "탈퇴한 계정입니다")
+    return row
+
+
+def find_or_create_user(db: Session, *, provider: str, provider_user_id: str, display_name: str) -> User:
+    """같은 카카오 계정의 첫 로그인이 동시에 두 번 들어오면 둘 다 "없다"고 보고 INSERT한다 —
+    유일 제약(uq_users_provider_identity)이 계정 분열은 막지만, 나중 요청의 위반을 안 잡으면
+    500이 된다. 세이브포인트 안에서 넣어 보고, 그 제약 위반이면 먼저 만들어진 행을 다시 읽어
+    돌려준다(shortlist.service.add_item과 같은 세이브포인트 패턴 — 단, add를 세이브포인트 안에서 해서
+    위반이 세이브포인트 안에서 터지므로 세션 전체를 db.rollback()할 필요가 없다). 오류 코드와 제약 이름을 함께 확인해서 다른 무결성 오류는 삼키지 않는다."""
+    row = _find_user(db, provider=provider, provider_user_id=provider_user_id)
     if row is not None:
-        if row.deleted_at is not None:
-            # 탈퇴한 계정으로 재로그인 — 조용히 되살리지 않는다. 재활성화를 허용할지는
-            # 12절 범위 밖의 별도 결정이라 지금은 막고 루트에 보고한다(auth/for_Root.md).
-            raise AppError("UNAUTHORIZED", "탈퇴한 계정입니다")
-        return row
+        return _reject_if_withdrawn(row)
     row = User(provider=provider, provider_user_id=provider_user_id, display_name=display_name)
-    db.add(row)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(row)   # 세이브포인트 안에서 add한다 — 밖에서 add하면 begin_nested() 진입 시 autoflush가 먼저 터진다
+            db.flush()
+    except IntegrityError as exc:
+        if getattr(exc.orig, "pgcode", None) == "23505" and _USER_IDENTITY_CONSTRAINT in str(exc.orig):
+            existing = _find_user(db, provider=provider, provider_user_id=provider_user_id)
+            if existing is not None:
+                return _reject_if_withdrawn(existing)
+        raise
     return row
 
 
@@ -92,18 +117,29 @@ def get_active_user_or_401(db: Session, *, user_id: str) -> User:
     return row
 
 
-def withdraw_user(db: Session, *, user_id: str) -> User:
-    """탈퇴 처리(12절) — soft delete.
-
-    **완료하지 못한 범위(auth/for_Root.md에 동일 내용 보고)**: 연결된 `pins.reactions`·
-    `recommend.evidence_lines` 삭제는 이 함수가 하지 않는다. 다른 모듈 테이블에 직접
-    쓰지 않는다는 원칙(backend/CLAUDE.md "모듈 간 접근", auth/CLAUDE.md) 때문에 여기서
-    ORM으로 지울 수 없고, 대신 그 모듈이 공개한 함수를 불러야 하는데 — 확인해보니
-    `pins/api.py`에는 아직 사용자 단위 일괄 삭제 함수가 없고, `recommend`는 `evidence_lines`
-    테이블 자체를 아직 만들지 않았다(`recommend/models.py` 상단 docstring이 "근거 조립
-    세션의 후속 범위"라고 명시). 두 모듈에 필요한 함수가 생기면 이 함수 안에서 호출 두 줄만
-    추가하면 된다 — 지금은 이 모듈이 소유한 `users` 행만 지운다."""
+def update_display_name(db: Session, *, user_id: str, display_name: str) -> User:
+    """계정 단위 표시 이름 수정 — 모든 지도에 같은 이름이 보인다(지도별 이름은 없다)."""
     row = get_active_user_or_401(db, user_id=user_id)
+    row.display_name = display_name
+    db.flush()
+    return row
+
+
+def revoke_sessions(db: Session, *, user_id: str) -> None:
+    """로그아웃 — 지금까지 발급된 모든 세션 토큰을 무효화한다(쿠키 삭제만으로는 이미 복사된
+    토큰이 살아있다). UPDATE라 행이 없어도(dev 스텁 사용자) 실패하지 않는다."""
+    db.execute(update(User).where(User.id == user_id).values(sessions_valid_after=datetime.now(timezone.utc)))
+
+
+def withdraw_user(db: Session, *, user_id: str) -> User:
+    """탈퇴 처리(12절, #155) — users 행은 soft delete, 그 사람의 반응·근거 줄은 삭제한다.
+
+    반응·근거 줄은 다른 모듈 테이블이라 각 모듈의 공개 함수(api.py)로만 지운다. 핀·확정 리스트
+    항목은 남고, 작성자 표시는 auth.api.display_names가 "탈퇴한 구성원"으로 내려준다.
+    세 쓰기는 같은 트랜잭션이라 중간에 실패하면 함께 롤백된다."""
+    row = get_active_user_or_401(db, user_id=user_id)
+    pins_api.delete_reactions_by_user(db, user_id=user_id)
+    recommend_api.delete_evidence_lines_by_author(db, user_id=user_id)
     row.deleted_at = datetime.now(timezone.utc)
     db.flush()
     return row

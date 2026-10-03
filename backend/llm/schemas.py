@@ -12,28 +12,87 @@
 """
 
 from datetime import datetime
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Union, get_args
 
 from pydantic import BaseModel, model_validator
 
-# docs/constraints.md 조건별 정의 표에 명시된 fact_key만 고정한다.
-# ("...등"으로 표시된 확장분은 루트가 레지스트리를 늘릴 때 여기도 같이 늘린다.)
-# within_radius / is_open은 표에서도 "코드 판정"으로 분류되어 라벨링(③-a-1) 대상이
-# 아니므로 place_facts 라벨 스키마의 fact_key 후보에서 제외한다.
+# docs/constraints.md `fact_key` 레지스트리와 같다 — backend/integration/test_llm_fact_key_contract.py가
+# 양방향으로 강제한다(문서에만 키를 넣으면 CI 실패). 새 키는 루트가 문서에 먼저 넣고, 여기와
+# prompts.FACT_KEY_MEANINGS에 같이 넣는다. 값 변경은 루트만이다.
+# within_radius / is_open은 표에서도 "코드 판정"으로 분류되어 라벨링(③-a-1)·사유 구조화(②) 대상이
+# 아니므로 후보에서 제외한다. 숙소는 AI 추천 대상이 아니라 숙소 전용 키(capacity_min)는 없다(#145).
 FactKey = Literal[
-    # 실격(hard) 조건
+    # 공통
     "contains_shellfish",
+    "price_bucket",
+    "pet_friendly",
+    # 음식점
     "spicy_focused",
     "oily_focused",
-    "price_bucket",
-    "capacity_min",
-    "is_crowded_large",
-    # 선호(soft) 조건
     "wait_short",
+    "cuisine_korean",
+    "cuisine_chinese",
+    "cuisine_japanese",
+    "cuisine_western",
+    "cuisine_bunsik",
+    "cuisine_chicken_pub",
+    "cuisine_bbq",
+    "cuisine_foreign",
+    "cuisine_raw_fish",
+    "cuisine_buffet",
+    "spacious",
+    "long_established",
+    "parking_available",
+    "vegetarian_friendly",
+    "franchise",
+    # 카페 전용 (#263)
+    "bakery",
+    "serves_alcohol",
+    "open_late",
+    # 카페·관광지 공통
+    "is_crowded_large",
     "quiet",
     "comfortable_seat",
     "local_flavor",
+    # 관광지 — 성격
+    "restful",
+    "good_view",
+    "photogenic",
+    "night_view",
+    "date_spot",
+    "hallyu_related",
+    "traditional_hanok",
+    "modern_architecture",
+    "religious_site",
+    # 관광지 — 공간
+    "is_indoor",
+    "is_outdoor",
+    # 관광지 — 자연
+    "mountain",
+    "waterside",
+    "forest",
+    "flower_garden",
+    "seaside",
+    # 관광지 — 활동
+    "walkable",
+    "hiking",
+    "cycling",
+    "hands_on",
+    "exhibition",
+    "performance",
+    "shopping",
+    "heritage_tour",
+    # 관광지 — 동반
+    "family_friendly",
+    "kid_friendly",
+    "accessible",
+    # 관광지 — 계절
+    "cherry_blossom",
+    "autumn_foliage",
+    "water_play",
+    "winter_spot",
 ]
+FACT_KEYS: tuple[str, ...] = get_args(FactKey)
 
 Badge = Literal["required", "preferred", "reference"]
 Confidence = Literal["known", "unknown"]
@@ -54,10 +113,21 @@ class EvidenceLine(BaseModel):
     chip_id: Optional[str] = None
     badge: Badge
     fact_key: Optional[FactKey] = None
+    # 이 특징(fact_key)이 있는 장소를 원하는가 (docs/constraints.md "사유의 방향(wants)과 실격", #228).
+    # true="한식 먹자", false="한식 말고". 모르면 None. fact_key가 없으면 반드시 None.
+    wants: Optional[bool] = None
     circle_anchor_pin_id: Optional[str] = None
     circle_radius_m: Optional[int] = None
     is_active: bool = True
     created_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _wants_needs_fact_key(self) -> "EvidenceLine":
+        # 방향은 키가 있을 때만 의미가 있다. 모델이 키 없이 wants를 채워 와도 예외로 ② 전체를 무너뜨리지
+        # 않고 버린다(merge_planned도 같은 정리를 한다).
+        if self.fact_key is None:
+            self.wants = None
+        return self
 
 
 class PlanningOutput(BaseModel):

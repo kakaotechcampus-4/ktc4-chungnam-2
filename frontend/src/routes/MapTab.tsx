@@ -1,3 +1,5 @@
+import { useParams } from 'react-router'
+
 import { ApiError } from '@/api'
 import MapCanvas from '@/features/map/MapCanvas'
 import PinList from '@/features/map/PinList'
@@ -11,8 +13,10 @@ import { usePins } from '@/features/map/usePins'
  * 새 기능은 이 파일을 키우지 말고 `features/map/` 에 파일을 더해서 여기서 끼운다.
  */
 export default function MapTab() {
+  // MapLayout 의 `/maps/:mapId` 아래에서만 렌더되므로 항상 있다.
+  const { mapId = '' } = useParams()
   const { selectedPinId, selectPin } = usePinSelection()
-  const { data: pins, isPending, error } = usePins()
+  const { data: pins, isPending, error } = usePins(mapId)
 
   const selectedPin = pins?.find((pin) => pin.id === selectedPinId)
   // 목록을 다 받은 뒤에도 없으면 볼 수 없는 핀이다. 로딩 중이나 실패 중에는 판단하지 않는다.

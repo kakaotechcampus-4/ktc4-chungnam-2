@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from authz.core import Principal
 from common.errors import AppError
 from pins import service
-from pins.ports import ResolvedPlace
+from places.schemas import PlaceMatch
 from pins.schemas import PinCreateRequest
 
 
@@ -42,19 +42,24 @@ def _principal() -> Principal:
 
 
 def _req() -> PinCreateRequest:
-    return PinCreateRequest(category="음식점", source="coordinate", lat=35.1, lng=129.0)
+    return PinCreateRequest(category="음식점", place_id="kakao:1", place_name="성수 칼국수", lat=35.1, lng=129.0)
+
+
+def _matching_place():
+    """places.api.match_place를 고정 결과로 대체한다 — 이 파일은 무결성 오류 분류만 본다."""
+    return patch(
+        "pins.service.places_api.match_place",
+        return_value=PlaceMatch(place_id="p1", name="성수 칼국수", lat=35.1, lng=129.0, category="음식점"),
+    )
 
 
 def test_non_duplicate_integrity_error_is_not_disguised_as_409():
     not_null_violation = _FakeOrig("23502", "null value in column violates not-null constraint")
     db = _make_db_with_integrity_error(not_null_violation)
 
-    places = MagicMock()
-    places.resolve.return_value = ResolvedPlace(place_id="p1", lat=35.1, lng=129.0)
-
-    with patch("pins.service.record_event") as record_event_mock:
+    with patch("pins.service.record_event") as record_event_mock, _matching_place():
         with pytest.raises(IntegrityError):
-            service.create_pin(db, "map_1", _principal(), _req(), places)
+            service.create_pin(db, "map_1", _principal(), _req())
         # 발행되지 않아야 한다 — 실패한 생성이 이벤트로 새면 안 된다.
         record_event_mock.assert_not_called()
 
@@ -66,12 +71,9 @@ def test_unique_violation_on_map_place_constraint_becomes_409():
     )
     db = _make_db_with_integrity_error(unique_violation)
 
-    places = MagicMock()
-    places.resolve.return_value = ResolvedPlace(place_id="p1", lat=35.1, lng=129.0)
-
-    with patch("pins.service.record_event") as record_event_mock:
+    with patch("pins.service.record_event") as record_event_mock, _matching_place():
         with pytest.raises(AppError) as exc_info:
-            service.create_pin(db, "map_1", _principal(), _req(), places)
+            service.create_pin(db, "map_1", _principal(), _req())
         record_event_mock.assert_not_called()
 
     assert exc_info.value.status == 409

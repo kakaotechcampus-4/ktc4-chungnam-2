@@ -29,6 +29,7 @@ declare module '@pingo/contracts/mocks/browser' {
       onUnhandledRequest?: 'bypass' | 'warn' | 'error'
     }): Promise<ServiceWorkerRegistration | undefined>
     stop(): void
+    use(...handlers: import('msw').RequestHandler[]): void
   }
 
   export function resetScenario(name: ScenarioName): void

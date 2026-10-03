@@ -1,6 +1,37 @@
 # 루트 리뷰 가이드 — backend/auth
 
-## 이번 작업 (이슈 #4 "로그인/로그아웃/탈퇴 API 구현")
+## 이번 작업 (#160 탈퇴 연결, 2026-09-30)
+
+- `auth/service.py::withdraw_user`가 `pins.api.delete_reactions_by_user`·`recommend.api.delete_evidence_lines_by_author`를 호출한 뒤 users를 soft delete한다(핀은 남김). 세 쓰기는 같은 트랜잭션이다. 스펙·마이그레이션 변경 없음.
+- 테스트: `integration/test_withdraw_cascade.py` — 탈퇴 후 그 사용자의 반응·근거 줄이 사라지고(다른 사람 것은 유지), 핀 2개가 남으며, 탈퇴자 핀의 `created_by_display_name`이 "탈퇴한 구성원"임을 HTTP 끝단으로 확인.
+- 검증: `PINGO_TEST_DB=pingo_test_auth python -m pytest` → 725 passed, 1 skipped, 0 failed.
+- 이전 보고의 "완료하지 못한 것 1번(탈퇴 cascade)"은 이걸로 해소됐다. `reaction.changed` 이벤트는 발행하지 않는다(pins 함수 docstring 기준 — 탈퇴 시점 이벤트 정책이 필요하면 루트 결정).
+- 디스코드 "#160 착수합니다"는 CLI로 못 남겼다(이전과 동일).
+
+---
+
+## 이번 작업 (#160 `PATCH /auth/me`, 2026-09-30)
+
+`docs/api-spec.yaml` 시그니처 변경 없음 — 스펙 그대로 구현. 마이그레이션 없음.
+
+- `PATCH /auth/me {display_name}` → `User`. 앞뒤 공백을 걷어낸 뒤 1~50자, 공백만/빈 값/51자/필드 누락은 422 `VALIDATION_ERROR`(기존 `RequestValidationError` 핸들러 그대로). 계정 단위 — `users.display_name` 하나를 고친다.
+  - 판단 한 가지: 저장값은 **strip된 값**이다(`"  새이름 "` → `"새이름"`). 스펙은 공백 처리를 말하지 않아 "공백만은 불가" 지시를 앞뒤 공백 제거로 구현했다. 다르게 원하면 `schemas.UserUpdateRequest` 한 줄.
+- `auth/api.py::display_names` — 탈퇴 사용자는 `"탈퇴한 구성원"`(`api.WITHDRAWN_DISPLAY_NAME`)을 돌려준다. pins·maps는 이 함수를 그대로 쓰므로 코드 변경 없음. **동작 변경**: 이전 테스트는 탈퇴자도 실명을 돌려주는 걸 요구했고 그걸 반대로 바꿨다(#155 결정 반영).
+- `integration/test_spec_route_coverage.py` `KNOWN_MISSING`에서 `("patch", "/auth/me")` 삭제.
+- 테스트: `auth/tests/test_router.py`(성공·strip·50자 경계·422 4종·401·탈퇴 후 401), `auth/tests/test_api.py`(탈퇴자 마스킹).
+- 검증: `PINGO_TEST_DB=pingo_test_auth python -m pytest` → 619 passed, 1 skipped, 0 failed.
+
+### 이번에 하지 않은 것 (지시대로 별도 PR)
+- `withdraw_user`가 pins/recommend 삭제 함수를 호출하는 연결 — 그 두 함수가 develop에 들어온 뒤 별도 PR로 이어간다.
+
+### 루트 확인 필요
+1. **디스코드 "#160 착수합니다"** — CLI에서 디스코드에 글을 남길 수 없어 못 했다. 사람이 남겨야 한다.
+2. **이슈 #160 본문 "실제 소요"** — 아래 "PR 작성 시" 메모 참고(기록했으면 채워져 있다).
+3. `docs/CHANGELOG-api.md`에는 이미 `PATCH /auth/me`가 기록돼 있어 추가하지 않았다.
+
+---
+
+## 이전 작업 (이슈 #4 "로그인/로그아웃/탈퇴 API 구현")
 
 `docs/api-spec.yaml`의 `/auth/kakao/callback`·`/auth/me`·`/auth/logout`·`/auth/withdraw` 4개
 전부 구현 완료. `auth/deps.py::get_current_user`가 이미 `select()`로 dev/real을 고르는
@@ -210,3 +241,93 @@ get_place_gateway`, `authz/deps.py::get_membership_gateway`와 같은 패턴). `
 
 `backend/.venv`가 준비돼 있고 전체 의존성이 설치돼 있어 이번 작업도 같은 가상환경에서
 문제없이 진행함(`./.venv/Scripts/python.exe`).
+
+## 로그아웃 토큰 무효화 (0014, 2026-09-30) — 루트 조치 요청
+
+### 루트가 해야 할 일
+1. **`docs/data-model.md` users 항목에 `sessions_valid_after` 추가**:
+   `users(..., deleted_at, sessions_valid_after timestamptz NULL)` — "로그아웃 시각. 이 시각 이전(같은 초 포함)에 발급된
+   세션 토큰은 무효. NULL이면 전부 유효". 문서는 루트 소관이라 auth가 고치지 않았다. 지시는 "루트 보고 → 마이그레이션" 순서였으나
+   정의가 명확해 구현을 먼저 했다 — 루트가 다른 정의를 주면 `0014`를 그에 맞춰 고쳐야 한다.
+2. **git 저장소 밖에서 작업함**: 이 작업 디렉토리는 git 저장소가 아니어서 develop pull·브랜치·develop merge·PR을 하지 못했다.
+   이슈 번호도 받지 못해 디스코드 "#N 착수합니다"와 이슈 "실제 소요" 기록이 남아 있다. 변경 파일은 아래 목록 그대로 PR로 올리면 된다.
+3. 마이그레이션 번호 0014가 다른 PR과 겹치면 먼저 머지된 쪽이 우선(`backend/CLAUDE.md`).
+
+### 변경 내용 (API 시그니처 `docs/api-spec.yaml` 변경 없음)
+- `auth/models.py`: `users.sessions_valid_after` 추가. `alembic/versions/0014_users_sessions_valid_after.py` (0013 다음, 빈 DB에서 `upgrade head` 통과 확인).
+- `auth/core.py`: `parse_session_token`이 `SessionClaims(user_id, issued_at)`을 반환(기존엔 user_id 문자열), 순수 함수 `is_revoked` 추가.
+- `auth/deps.py`: `_real_get_current_user`가 기존 users 조회 결과로 무효화 여부를 판정 → 401 UNAUTHORIZED. 쿼리는 늘지 않음.
+- `auth/service.py`: `revoke_sessions` 추가(UPDATE라 행이 없는 dev 스텁 사용자도 실패 안 함). `auth/router.py`: `/auth/logout`이 호출.
+- 테스트: `test_core.py`, `test_deps.py`, `test_service.py`에 추가(로그아웃 전 토큰 401 / 이후 발급 토큰 정상 / 탈퇴 사용자 401 유지).
+
+### 검증 결과
+- auth 테스트 전부 통과. backend 전체: 602 통과, **3 실패** — `realtime/tests/test_router_integration.py` 2건,
+  `realtime/tests/test_shutdown.py` 1건. auth를 제외하고 돌려도 동일하게 실패하고 realtime 단독은 통과 → 이번 변경과 무관한
+  공유 테스트 DB(`pingo_test`) 모듈 간 간섭으로 보인다(git이 없어 변경 전 기준선 비교는 못 함). realtime 담당 확인 필요.
+- 참고: `pingo_test`에 옛 users 테이블이 남아 있어 새 컬럼이 없다고 실패했고, DB를 한 번 삭제해 재생성했다
+  (`create_all`은 기존 테이블을 ALTER하지 않음). 다른 사람 로컬 테스트 DB도 같은 증상이 나올 수 있다.
+
+### 알려진 한계
+- 토큰 발급 시각이 초 단위라 로그아웃과 같은 초에 발급된 새 토큰도 거절된다(`<=` 비교, 보수적 선택 — 카카오 왕복 때문에 사실상 발생 안 함).
+- #160(PATCH /auth/me, 탈퇴 연결)은 PR #156 머지 뒤 별도 PR — 이번에 하지 않음.
+
+## #126 — PINGO_ENV 기본값 prod, 인증 스텁·AUTH_MODE 제거 (2026-10-02) — 루트 확인 요청
+
+### 루트가 확인·갱신할 것 (루트 소관이라 손대지 않았다)
+1. **`docs/openapi-workflow.md` 5절 표**: `AUTH_MODE | real | ...` 행을 **삭제**해야 한다(환경변수가 없어졌다). 그 아래
+   "`PINGO_ENV`를 dev로" 문구(104행 트러블슈팅)는 여전히 맞다. 5절 `backend/.env`에 `PINGO_ENV=dev`를 한 줄 적도록
+   표에 추가하는 것을 권한다 — 이제 안 적으면 prod 가드가 돌아 로컬 서버가 `ConfigError`로 안 뜬다.
+2. **`backend/.env.example`**: 이번 PR에서 갱신 완료(`AUTH_MODE` 줄 삭제, `PINGO_ENV` 기본값 설명). 로컬 `.env`에 남은
+   `AUTH_MODE=dev`는 무시되므로 지워도 되고 안 지워도 된다.
+3. **배포 설정(Cloud Run 등)**: `PINGO_ENV`를 빠뜨리면 이제 prod로 뜬다 — 의도한 동작이지만, prod 가드(SESSION_SECRET·
+   FRONTEND_BASE_URL·CORS_ALLOW_ORIGINS·PLACES_MODE=real·LLM_MODE=real)를 채우지 않은 환경은 기동 단계에서 멈춘다.
+   `PLACES_MODE=real`은 places 실구현이 있어야 하니 배포 전 확인이 필요하다.
+4. `PINGO_ENV` 없이 `alembic`·시딩 스크립트 등 `common.settings`를 import하는 CLI를 돌리던 사람은 같은 가드에 걸린다
+   (로컬은 `.env`의 `PINGO_ENV=dev`가 `load_dotenv`로 읽혀 영향 없다).
+
+### 변경 내용 (API 시그니처 `docs/api-spec.yaml` 변경 없음)
+- `common/settings.py`: `PINGO_ENV` 기본값 `prod`, `auth_mode` 필드·`AUTH_MODE`·`_PORTS`의 `auth` 제거.
+- `auth/deps.py`: `_dev_get_current_user`·`select()` 제거, `get_current_user`가 서명 쿠키 검증 구현 하나.
+- `auth/testing.py`(신규): `session_cookie(user_id)`(서명된 토큰), `ensure_users(db, *ids, display_names=)`.
+  `maps`·`pins`·`shortlist`·`recommend`·`integration` 테스트가 이걸로 로그인한다(각 conftest의 `app_client`가 사용자 행을 만든다).
+  `realtime`·`authz`·`places` 테스트는 스텁에 기대지 않아 바꿀 게 없었다.
+- `auth/service.py::find_or_create_user`: 동시 첫 로그인 — 세이브포인트 안에서 INSERT, `23505` + `uq_users_provider_identity`일 때만
+  기존 행을 재조회(탈퇴 행이면 거절). 이슈가 말한 `add_item`과 달리 `db.add`를 세이브포인트 **안**에서 하고 `db.rollback()`은 부르지 않는다 —
+  밖에서 add하면 `begin_nested()` 진입 시 autoflush가 세이브포인트 밖에서 터지기 때문이다(`shortlist/service.py::add_item`이
+  `db.rollback()`을 부르는 이유로 보인다. 이쪽은 손대지 않았다).
+
+### 테스트 의미가 바뀐 곳
+- users 행이 있어야 로그인되므로 "users 행이 없는 구성원은 `display_name` 키가 없다"는 maps 테스트는 구성원 응답이 `{user_id, display_name}`이라는
+  단언으로 바꿨고, "초대자 행 없음 → 탈퇴한 구성원" 테스트는 초대 생성 뒤 행을 지우는 방식으로 만든다.
+- `pins/tests/test_permissions_contract.py::test_get_pins_non_member_is_404`는 `app_client` 없이 실제 DB로 나가던 것을 `app_client`를 쓰게 했다.
+
+### 검증
+- backend 전체 949개 통과(변경 전 946개 + 신규 3개).
+- 동시 첫 로그인 테스트는 "두 요청이 둘 다 없다고 본 순간"을 첫 조회만 비우는 방식으로 재현한다. 두 커넥션을 실제로 경쟁시키는 테스트는 아니다.
+
+## #128 — 카카오 로그인 OAuth state 검증 (2026-10-02) — 루트 조치 요청
+
+백엔드(이슈 할 일 2·3)를 구현했다. **`docs/api-spec.yaml`은 건드리지 않았다** — 아래는 루트가 먼저 정리해야 할 스펙·문서·FE 쪽이다.
+이 PR은 #126 PR(#213) 위에 쌓여 있다(테스트가 `auth.testing`을 쓴다). #213이 머지되면 base가 `develop`으로 바뀐다.
+
+### 루트가 해야 할 일
+1. **스펙에 `GET /auth/kakao/login` 추가** (`tags: [auth]`, `security: []`, 응답 `302` — 카카오 인가 화면으로, `Set-Cookie: kakao_oauth_state`).
+   구현은 이미 `auth/router.py::get_kakao_login`에 있다. 카카오 설정(`KAKAO_CLIENT_ID`·`KAKAO_REDIRECT_URI`)이 비어 있으면 `500 INTERNAL_ERROR`.
+2. **`/auth/kakao/callback`에 `state` 쿼리 파라미터 추가.** 코드는 없으면 거절로 처리하므로 스펙에서는 `required: true`가 맞다
+   (FastAPI에서 `Query(...)`로 두면 빠졌을 때 `VALIDATION_ERROR` 422가 되어 이슈의 "state가 없다 → 거절" 단일 응답과 달라져 `Optional`로 두고 401로 통일했다 — 스펙을 required로 쓰더라도 구현은 그대로 맞다).
+   `401` 응답을 스펙에 적어야 한다: `{code: UNAUTHORIZED, detail: {reason: "invalid_state"}}`.
+3. **`docs/CHANGELOG-api.md`에 먼저 기록하고 프론트에 알린다.** 프론트 변경점:
+   - `frontend/src/features/auth/auth.ts::kakaoLoginUrl()`이 지금 카카오 인가 URL을 직접 만든다(이슈 본문의 "만드는 곳이 없다"와 다르다).
+     `{백엔드}/auth/kakao/login`으로 이동하게 바꿔야 한다. 직접 만든 URL로 가면 `state`가 없어 콜백이 **항상 거절**된다 — BE가 먼저 머지되면 로그인이 깨지므로
+     **BE·FE를 같은 시점에 배포**하거나 FE를 먼저 바꾼다.
+   - `contracts/`(msw 목 서버)에 `/auth/kakao/login` 추가.
+4. **에러 코드**: 새 코드 없이 기존 `UNAUTHORIZED`(401)에 `detail.reason = "invalid_state"`로 거절한다. `docs/errors.md`에 `detail.reason` 규약을 적을지 판단 필요.
+5. **UX 결정 필요**: 콜백은 브라우저의 최상위 이동이라 거절되면 사용자가 JSON 에러 봉투를 그대로 본다(기존 카카오 실패 경로도 같다). FE 로그인 화면으로
+   `?error=...`와 함께 돌려보낼지는 루트 결정 — 이번엔 이슈대로 "로그인을 거절"만 했다.
+
+### 구현 요약
+- `auth/core.py`(순수): `new_state`, `create_state_cookie_value`/`verify_state`(서명 대상에 용도 문자열 `kakao_oauth_state:`를 넣어 세션 토큰과 서로 대체 불가, 상수 시간 비교, TTL 10분), `kakao_authorize_url`.
+- `auth/router.py`: `/auth/kakao/login`이 state 쿠키(`kakao_oauth_state`, HttpOnly, SameSite=Lax, prod에서 Secure, Path=`/auth/kakao`, 10분)를 심고 302.
+  콜백은 카카오 호출 **전에** state를 검증하고, 성공·실패 모두 쿠키를 지운다(실패 때는 예외 대신 같은 에러 봉투 응답을 만들어 쿠키 삭제를 실어 보낸다).
+- 쿠키는 **백엔드 오리진**에 붙는다 — 로그인 시작(`/auth/kakao/login`)과 콜백(`KAKAO_REDIRECT_URI`)이 같은 호스트여야 한다(로컬은 `localhost`로 통일, `openapi-workflow.md` 5절과 같은 주의).
+- 테스트 72개(auth): 다른 브라우저의 콜백 링크 거절, 같은 링크 두 번째 거절, state 누락·불일치·서명 위조·만료, 정상 흐름, 실패 시에도 쿠키 삭제, state 쿠키가 세션으로 통하지 않음. state 검증을 끄면 7개가 실패하는 것을 확인했다.

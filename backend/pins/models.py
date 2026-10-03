@@ -20,12 +20,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from common import categories
 from common.database import Base
 
-Category = Enum(
-    "음식점", "카페", "숙소", "관광지",
-    name="category",
-)
+Category = Enum(*categories.all_categories(), name="category")  # 값은 common/categories.py(#280)
 PinKind = Enum(
     "일반", "AI추천", "확정",
     name="pin_kind",
@@ -55,8 +53,19 @@ class Pin(Base):
     category: Mapped[str] = mapped_column(Category, nullable=False)
     kind: Mapped[str] = mapped_column(PinKind, nullable=False)
     origin: Mapped[str] = mapped_column(PinOrigin, nullable=False)
+    # #195: places.id(자체 DB 장소)의 문자열. 이름은 places.name에서 읽는다(핀에 저장하지 않는다 —
+    # 카카오 응답의 이름·좌표는 저장 금지, #53). DB FK·UUID 타입은 걸지 않았다 — for_Root.md 참고.
     place_id: Mapped[str] = mapped_column(String, nullable=False)
+    # 매칭된 places.geom의 복사(자체 데이터). 사용자가 보낸 좌표는 저장하지 않는다.
     geom = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
+    # #57 결정: candidate.checks를 게시 시점에 복사(가드레일 5) — recommend를 다시 조회하지
+    # 않는다. reason_chip_ids와 같은 방식(JSONB, 목록형이라 nullable).
+    checks: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # #157: checks와 같은 방식으로 게시 시점에 candidate 값을 복사한다(가드레일 5). recommend가
+    # candidate에 값을 채우기 전에는 항상 NULL — 통로만 있다.
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    member_fulfillment: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    place_source: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     visibility: Mapped[str] = mapped_column(Visibility, nullable=False)
     created_by: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

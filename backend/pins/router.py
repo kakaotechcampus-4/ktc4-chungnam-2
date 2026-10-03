@@ -1,6 +1,6 @@
 """
 docs/api-spec.yaml의 pins 태그 엔드포인트 중 #16(목록·생성·삭제)·#17(반응 등록/삭제) 범위.
-counts(#18)는 별도 이슈 — 이 파일에 추가하지 않는다.
+counts(#141)는 get_counts.
 prefix를 두지 않는다 — 경로가 /maps/{mapId}/... 와 /pins/{pinId}로 갈리기 때문이다.
 
 인가는 authz.guard를 거친다(mentor-review-plan.md #56 재정의) — 라우터는 더 이상
@@ -14,21 +14,24 @@ from sqlalchemy.orm import Session
 from auth.deps import get_current_user
 from auth.schemas import CurrentUser
 from authz.core import Principal
-from authz.guard import require, require_map_member, require_on_map
+from authz.guard import require, require_map_member, require_on_map, require_with_principal
 from pins import service
-from pins.deps import DbSession, PlaceGatewayDep
+from pins.deps import DbSession
 from pins.loaders import load_pin
 from pins.models import Pin as PinRow
-from pins.ports import PlaceGateway
-from pins.schemas import Category, Pin, PinCreateRequest, PinKind, Reaction, ReactionRequest
+from pins.schemas import Category, FilterCounts, Pin, PinCreateRequest, PinKind, Reaction, ReactionRequest
+from shortlist import api as shortlist_api
 
 router = APIRouter(tags=["pins"], dependencies=[Depends(get_current_user)])
 
 PinsForMap = Depends(require_map_member())          # GET — 조회는 액션이 아니라 멤버십만
 PinToCreate = Depends(require_on_map("pin.create"))  # POST — 생성은 실제 액션 판정
-PinToDelete = Depends(require("pin.delete", load_pin))
+PinToDelete = Depends(require_with_principal("pin.delete", load_pin))
 PinForReaction = Depends(require("pin.react", load_pin))
 PinForRevert = Depends(require("pin.revert", load_pin))
+# 조회는 액션이 아니라 멤버십만 본다(require_map_member와 같은 사정 — 조회 전용 액션이 없다).
+# 멤버 액션 하나를 빌려 비구성원 404를 얻는다.
+PinToRead = Depends(require("pin.react", load_pin))
 
 
 @router.get("/maps/{mapId}/pins", response_model=list[Pin], response_model_exclude_none=True)
@@ -45,6 +48,15 @@ def get_pins(
     )
 
 
+@router.get("/maps/{mapId}/counts", response_model=FilterCounts)
+def get_counts(
+    mapId: str = Path(...),
+    principal: Principal = PinsForMap,
+    db: Session = DbSession,
+):
+    return service.count_pins(db, map_id=mapId, principal=principal)
+
+
 @router.post(
     "/maps/{mapId}/pins",
     response_model=Pin,
@@ -56,20 +68,30 @@ def post_pin(
     mapId: str = Path(...),
     principal: Principal = PinToCreate,
     db: Session = DbSession,
-    places: PlaceGateway = PlaceGatewayDep,
 ):
-    return service.create_pin(db, map_id=mapId, principal=principal, req=body, places=places)
+    return service.create_pin(db, map_id=mapId, principal=principal, req=body)
 
 
 @router.delete("/pins/{pinId}", status_code=204)
 def delete_pin(
-    pin: PinRow = PinToDelete,
+    deletable=PinToDelete,
     db: Session = DbSession,
 ):
+    pin, principal = deletable
+    # 확정 핀이면 확정 항목을 먼저 정리한다(#235) — 핀이 읽히는 동안이어야 이벤트를 만들 수 있다.
+    shortlist_api.remove_for_deleted_pin(db, map_id=pin.map_id, pin_id=str(pin.id), principal=principal)
     service.delete_pin(db, pin=pin)
 
 
-@router.put("/pins/{pinId}/reaction", response_model=Reaction)
+@router.get("/pins/{pinId}/reactions", response_model=list[Reaction], response_model_exclude_none=True)
+def get_reactions(
+    pin: PinRow = PinToRead,
+    db: Session = DbSession,
+):
+    return service.list_reactions(db, pin=pin)
+
+
+@router.put("/pins/{pinId}/reaction", response_model=Reaction, response_model_exclude_none=True)
 def put_reaction(
     body: ReactionRequest,
     pin: PinRow = PinForReaction,

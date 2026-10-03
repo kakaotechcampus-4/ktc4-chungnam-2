@@ -18,7 +18,12 @@ WALKING_SPEED_M_PER_MIN = 80  # 성인 평균 도보 속도 약 4.8km/h 근사�
 
 
 def haversine_distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    """두 좌표 사이의 직선거리(미터). PostGIS의 geography 캐스트와 같은 구면 근사(WGS84 구 가정)."""
+    """두 좌표 사이의 직선거리(미터). 지구를 반지름 6,371km의 **구**로 보는 근사다.
+
+    PostGIS의 `geography`(`ST_Distance`·`ST_DWithin`)는 기본이 WGS84 **타원체**라 이 값과 똑같지 않다. 서울
+    구간에서 최대 약 0.25%(9km에서 20m 안팎, 반경 1.2km 기준 3m) 어긋난다 — 지금의 도보 반경·동선 용도로는 충분하다.
+    나중에 반경 판정을 DB 쿼리로 옮기면 두 기준이 갈려 같은 장소가 어떤 경로에선 안이고 다른 경로에선 밖이 될 수
+    있으니, 옮길 때는 반경 판정을 한쪽(`ST_DWithin`)으로 통일한다."""
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     d_phi = math.radians(lat2 - lat1)
     d_lambda = math.radians(lng2 - lng1)

@@ -83,8 +83,8 @@ export function buildBaseState(): StoreState {
       lat: 33.489,
       lng: 126.4983,
       place_name: "카페 한라",
-      created_by: "u_2",
-      created_by_display_name: "박서영",
+      created_by: "u_3",
+      created_by_display_name: "김도현",
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, neutral: 0, against: 0 },
@@ -119,6 +119,7 @@ export function buildBaseState(): StoreState {
     shortlist: { [mapId]: [] },
     routes: {},
     invites: {},
+    eventLog: [],
   };
 }
 
@@ -137,6 +138,7 @@ export function buildEvidenceLines(runId: string) {
       text: "매워요",
       badge: "required" as const,
       fact_key: "spicy_focused",
+      fact_label: "매운맛 전문",
       is_active: true,
       permissions: { can_disable: true },
     },
@@ -147,6 +149,31 @@ export function buildEvidenceLines(runId: string) {
       text: "비싸요",
       badge: "required" as const,
       fact_key: "price_bucket",
+      fact_label: "가격대",
+      is_active: true,
+      permissions: { can_disable: false },
+    },
+    {
+      id: nextId("evi"),
+      author_id: "u_2",
+      author_display_name: "박서영",
+      text: "한식 말고 다른 거",
+      badge: "required" as const,
+      fact_key: "cuisine_korean",
+      fact_label: "한식",
+      wants: false, // 「한식 제외」 — 방향 표시(#228)
+      is_active: true,
+      permissions: { can_disable: false },
+    },
+    {
+      id: nextId("evi"),
+      author_id: "u_3",
+      author_display_name: "김도현",
+      text: "회 좋아해",
+      badge: "preferred" as const,
+      fact_key: "cuisine_raw_fish",
+      fact_label: "횟집",
+      wants: true, // 「횟집 선호」
       is_active: true,
       permissions: { can_disable: false },
     },
@@ -180,6 +207,9 @@ export function buildCandidates(regionLabel: string) {
       ],
       visibility: "private" as const,
       published_pin_id: null,
+      reason: "매운 음식을 피하는 조건을 지키면서 1인 예산 안에 들어요",
+      member_fulfillment: { satisfied: 2, total: 2 },
+      permissions: { can_publish: true },
     },
     {
       id: nextId("cand"),
@@ -192,6 +222,9 @@ export function buildCandidates(regionLabel: string) {
       ],
       visibility: "private" as const,
       published_pin_id: null,
+      reason: "매운맛 조건은 지키지만 가격대는 확인이 필요해요",
+      member_fulfillment: { satisfied: 1, total: 2 },
+      permissions: { can_publish: true },
     },
     {
       id: nextId("cand"),
@@ -204,6 +237,9 @@ export function buildCandidates(regionLabel: string) {
       ],
       visibility: "private" as const,
       published_pin_id: null,
+      reason: "매운 음식을 피하는 조건을 지키고 예산도 맞아요",
+      member_fulfillment: { satisfied: 2, total: 2 },
+      permissions: { can_publish: true },
     },
   ];
 }

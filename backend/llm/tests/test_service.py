@@ -13,20 +13,12 @@ from llm.service import label_place, plan_evidence, rank_candidates
 
 ALL_FACT_KEYS = get_args(FactKey)
 
-# fact_key별로 "정보가 있을 때" known으로 판정되어야 할 표본값.
-# docs/constraints.md 조건별 정의 표의 실격(hard) 6개 + 선호(soft) 4개를 전부 포함한다.
-SAMPLE_VALUE_BY_FACT_KEY: dict[FactKey, object] = {
-    "contains_shellfish": True,
-    "spicy_focused": False,
-    "oily_focused": False,
-    "price_bucket": "mid",
-    "capacity_min": 4,
-    "is_crowded_large": False,
-    "wait_short": True,
-    "quiet": True,
-    "comfortable_seat": False,
-    "local_flavor": True,
-}
+# fact_key별로 "정보가 있을 때" known으로 판정되어야 할 표본값. 레지스트리 전체(FactKey)를 덮는다 —
+# price_bucket만 수치가 아닌 버킷 문자열이고 나머지는 참/거짓이다.
+SAMPLE_VALUE_BY_FACT_KEY: dict[FactKey, object] = {key: True for key in ALL_FACT_KEYS}
+SAMPLE_VALUE_BY_FACT_KEY["price_bucket"] = "mid"
+SAMPLE_VALUE_BY_FACT_KEY["spicy_focused"] = False
+SAMPLE_VALUE_BY_FACT_KEY["cuisine_korean"] = False
 
 
 def test_sample_values_cover_every_registered_fact_key():

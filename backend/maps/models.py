@@ -13,7 +13,19 @@ memberships.id는 반대로 UUID다 — 이 값은 모듈 경계를 넘어 다�
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint, func, text
+from geoalchemy2 import Geography
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,12 +49,22 @@ class Map(Base):
     # 컬럼이라 스키마는 맞추되 이 모듈은 절대 쓰지 않는다(항상 NULL). #32 확정 전까지 보류
     # (maps/for_Root.md 참고).
     member_count_expected: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 지역 검색(선택) — 9/28 #22 변경(PR #132, 루트 검증 후 승인). 둘 다 NULL이거나 둘 다
+    # 값이 있어야 한다(아래 CHECK). 없으면 지금처럼 첫 핀 좌표로 지역을 정한다.
+    region_label: Mapped[str | None] = mapped_column(String, nullable=True)
+    region_center = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)
     created_by: Mapped[str] = mapped_column(String, nullable=False)  # users(id) — auth 도착 시 FK
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (CheckConstraint("end_date >= start_date", name="ck_maps_date_order"),)
+    __table_args__ = (
+        CheckConstraint("end_date >= start_date", name="ck_maps_date_order"),
+        CheckConstraint(
+            "(region_label IS NULL) = (region_center IS NULL)",
+            name="ck_maps_region_both_or_neither",
+        ),
+    )
 
 
 class Membership(Base):
@@ -56,7 +78,14 @@ class Membership(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (UniqueConstraint("map_id", "user_id", name="uq_memberships_map_user"),)
+    __table_args__ = (
+        UniqueConstraint("map_id", "user_id", name="uq_memberships_map_user"),
+        # (map_id, user_id) 복합 유니크 인덱스는 선두 컬럼이 map_id라 `WHERE user_id = X`
+        # 단독 조회(maps/service.py::list_maps)를 못 탄다 — #137, Antigravity 검수로 발견.
+        # map_id 단독 조회(_member_count·list_members)는 그 복합 인덱스로 이미 충분해 건드리지
+        # 않는다.
+        Index("ix_memberships_user_id", "user_id"),
+    )
 
 
 class Invite(Base):

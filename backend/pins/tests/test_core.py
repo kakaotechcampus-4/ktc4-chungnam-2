@@ -7,6 +7,7 @@ pin_permissions(kind, is_member) 테스트는 여기 없다 — 그 함수 자�
 """
 
 import pytest
+from pydantic import ValidationError
 
 from authz.core import Principal
 from common.errors import AppError
@@ -15,7 +16,7 @@ from pins.schemas import Pin, PinCreateRequest, ReactionSummary
 
 
 def _req(**kwargs) -> PinCreateRequest:
-    base = {"category": "음식점"}
+    base = {"category": "음식점", "place_id": "kakao:1", "place_name": "성수 칼국수", "lat": 37.54, "lng": 127.05}
     base.update(kwargs)
     return PinCreateRequest(**base)
 
@@ -32,61 +33,67 @@ def _pin(visibility: str = "public") -> Pin:
     return core.to_pin_response(record, _principal())
 
 
-# --- resolve_source / validate_create ---------------------------------------
+# --- validate_create / 카카오 URL ---------------------------------------------
 
-def test_resolve_source_infers_link():
-    assert core.resolve_source(_req(link_url="https://map.google.com/x")) == "link"
-
-
-def test_resolve_source_infers_search():
-    assert core.resolve_source(_req(place_id="p1")) == "search"
+def test_validate_create_accepts_search_hint():
+    core.validate_create(_req())
+    core.validate_create(_req(source="search"))
 
 
-def test_resolve_source_infers_coordinate():
-    assert core.resolve_source(_req(lat=35.1, lng=129.0)) == "coordinate"
-
-
-def test_resolve_source_explicit_wins():
-    assert core.resolve_source(_req(source="search", place_id="p1")) == "search"
-
-
-def test_resolve_source_missing_raises_validation_error():
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"link_url": "https://map.google.com/x"},
+        {"source": "link"},
+        {"source": "link", "link_url": "https://map.google.com/x"},
+    ],
+)
+def test_validate_create_rejects_link_paths(kwargs):
+    """#148 — v1은 링크 핀을 거절한다. 프론트가 그대로 보여줄 문장이 메시지다."""
     with pytest.raises(AppError) as exc_info:
-        core.resolve_source(_req())
+        core.validate_create(_req(**kwargs))
     assert exc_info.value.code == "VALIDATION_ERROR"
     assert exc_info.value.status == 422
+    assert exc_info.value.message == core.LINK_PIN_REJECTED_MESSAGE
 
 
-def test_resolve_source_ambiguous_input_raises():
-    # link_url과 place_id가 동시에 왔는데 source가 없다 — 결정 불가.
+def test_validate_create_rejects_coordinate_source():
+    """#195 — 좌표로 핀을 찍는 경로는 없다(자체 DB 장소만)."""
     with pytest.raises(AppError) as exc_info:
-        core.resolve_source(_req(link_url="https://x", place_id="p1"))
+        core.validate_create(_req(source="coordinate"))
+    assert exc_info.value.code == "VALIDATION_ERROR" and exc_info.value.status == 422
+    assert exc_info.value.message == core.COORDINATE_PIN_REJECTED_MESSAGE
+
+
+def test_create_request_requires_all_hint_fields():
+    for missing in ("place_id", "place_name", "lat", "lng"):
+        base = {"category": "음식점", "place_id": "kakao:1", "place_name": "x", "lat": 37.5, "lng": 127.0}
+        del base[missing]
+        with pytest.raises(ValidationError):
+            PinCreateRequest(**base)
+
+
+@pytest.mark.parametrize("lat,lng", [(91, 127), (-91, 127), (37, 181), (37, -181)])
+def test_create_request_rejects_out_of_range_coordinates(lat, lng):
+    with pytest.raises(ValidationError):
+        _req(lat=lat, lng=lng)
+
+
+def test_validate_category_matches():
+    core.validate_category_matches("카페", "카페")
+    with pytest.raises(AppError) as exc_info:
+        core.validate_category_matches("카페", "음식점")
     assert exc_info.value.code == "VALIDATION_ERROR"
 
 
-def test_validate_create_link_without_link_url_raises():
-    with pytest.raises(AppError):
-        core.validate_create(_req(source="link"))
-
-
-def test_validate_create_search_without_place_id_raises():
-    with pytest.raises(AppError):
-        core.validate_create(_req(source="search"))
-
-
-def test_validate_create_coordinate_missing_lng_raises():
-    with pytest.raises(AppError):
-        core.validate_create(_req(source="coordinate", lat=35.1))
-
-
-@pytest.mark.parametrize("lat,lng", [(91, 129), (-91, 129), (35, 181), (35, -181)])
-def test_validate_create_coordinate_out_of_range_raises(lat, lng):
-    with pytest.raises(AppError):
-        core.validate_create(_req(source="coordinate", lat=lat, lng=lng))
-
-
-def test_validate_create_valid_coordinate_passes():
-    assert core.validate_create(_req(source="coordinate", lat=35.1, lng=129.0)) == "coordinate"
+def test_kakao_place_url_only_for_kakao_ids():
+    assert core.kakao_place_url("kakao:1234") == "https://place.map.kakao.com/1234"
+    assert core.kakao_place_url("naver:1234") is None
+    assert core.kakao_place_url("kakao:") is None
+    assert core.kakao_place_url("1234") is None
+    assert core.kakao_place_url("kakao:../../evil?x=1#frag") is None   # #248 — 숫자가 아니면 링크로 못 만든다
+    assert core.kakao_place_url("kakao:12a4") is None
+    assert core.kakao_place_url("kakao:" + "9" * 21) is None
 
 
 # --- is_duplicate -------------------------------------------------------------
@@ -205,6 +212,28 @@ def test_validate_reaction_against_without_reason_raises():
 def test_validate_reaction_against_with_empty_chip_list_raises():
     with pytest.raises(AppError):
         core.validate_reaction("against", None, [])
+
+
+@pytest.mark.parametrize("text", ["​", " ​‍﻿ "])
+def test_validate_reaction_against_zero_width_only_text_raises(text):
+    with pytest.raises(AppError) as exc_info:
+        core.validate_reaction("against", text, None)
+    assert exc_info.value.code == "EVIDENCE_REQUIRED"
+
+
+@pytest.mark.parametrize("chips", [[""], ["  "], ["​"], ["ok", ""]])
+@pytest.mark.parametrize("reaction_type", ["against", "like"])
+def test_validate_reaction_blank_chip_is_a_validation_error(reaction_type, chips):
+    with pytest.raises(AppError) as exc_info:
+        core.validate_reaction(reaction_type, "매워요", chips)
+    assert exc_info.value.code == "VALIDATION_ERROR"
+    assert exc_info.value.status == 422
+
+
+def test_reason_content_strips_and_rejects_invisible_only():
+    assert core.reason_content(" 매워요 ") == "매워요"
+    assert core.reason_content(None) is None
+    assert core.reason_content("​") is None
 
 
 @pytest.mark.parametrize("reaction_type", ["like", "neutral"])
