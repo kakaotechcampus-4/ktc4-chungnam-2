@@ -26,6 +26,7 @@ export type MapController = {
 export default function MapCanvas({
   pins,
   memberCount,
+  selectedPinId = null,
   results = [],
   onSelect,
   onReady,
@@ -34,6 +35,8 @@ export default function MapCanvas({
   pins: Pin[]
   /** 핀 색(참여율)의 분모 — 지도 전체 구성원 수. */
   memberCount: number
+  /** 상세를 연 핀(주소의 ?pin=). 지도에서 강조한다. */
+  selectedPinId?: string | null
   /** 장소 검색 결과(Figma 4절) — 파란 번호 원으로 띄운다. 핀이 아니다. */
   results?: SearchMarker[]
   onSelect: (pinId: string) => void
@@ -119,6 +122,10 @@ export default function MapCanvas({
       fittedRef.current = true
     }
   }, [pins, memberCount, ready])
+
+  useEffect(() => {
+    if (ready) layerRef.current?.select(selectedPinId)
+  }, [selectedPinId, pins, ready])
 
   // 검색 결과 번호 원. 몇 개 안 되고 검색할 때마다 통째로 바뀌어서 매번 새로 그린다.
   useEffect(() => {

@@ -149,6 +149,16 @@
     }
 }
 
+/* 가로로 붙어 있는 칩·드롭다운용 — 위아래로만 넓혀 이웃과 누르는 영역이 겹치지 않는다. */
+@utility hit-y-44 {
+    position: relative;
+    &::before {
+        content: '';
+        position: absolute;
+        inset: -6px 0;
+    }
+}
+
 /* 홈 표시줄 높이. 데스크톱·안드로이드는 0. */
 @utility pb-safe {
     padding-bottom: env(safe-area-inset-bottom, 0px);

@@ -4,6 +4,7 @@ import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import type { Pin } from '@/features/map/model'
 import { useCreatePinMutation } from '@/features/map/queries'
+import { usePinSelection } from '@/features/map/usePinSelection'
 import { showToast } from '@/features/shell/toast'
 import { josa } from '@/ui/josa'
 
@@ -19,7 +20,7 @@ export function SearchResultsHeader({ count }: { count: number | null }) {
       <h2 className="truncate text-lg font-bold text-ink-900">
         ‘{query}’ 검색 결과{count !== null && ` ${count}곳`}
       </h2>
-      <button type="button" onClick={close} className="shrink-0 text-sm text-ink-500">
+      <button type="button" onClick={close} className="hit-44 shrink-0 text-sm text-ink-500">
         닫기
       </button>
     </div>
@@ -31,6 +32,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   const { query, near, selectedId, select, close } = useSearchStore()
   const search = usePlaceSearchQuery(query, near)
   const create = useCreatePinMutation(mapId)
+  const { selectPin } = usePinSelection()
   const results = (search.data ?? []).map((r) => toSearchResult(r, near, pins))
   const selected = results.find((r) => r.id === selectedId)
 
@@ -45,6 +47,8 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
           const name = pin.place_name ?? place_name
           showToast(`${name}${josa(name, '을', '를')} 지도에 찍었어요`)
           close()
+          // 새 핀은 0표라 목록 끝으로 간다. 다음 할 일은 그 핀에 의견 남기기라 바로 상세를 연다(#308).
+          if (pin.id) selectPin(pin.id)
         },
         onError: (err) => showToast(pinErrorMessage(err)),
       },
@@ -65,16 +69,16 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   if (selected) {
     return (
       <div className="space-y-3">
-        <button type="button" onClick={() => select(null)} className="text-[13px] font-medium text-ink-500">
+        <button type="button" onClick={() => select(null)} className="hit-44 text-[0.8125rem] font-medium text-ink-500">
           ‹ 검색 결과 {results.length}곳
         </button>
         <div>
-          <h3 className="text-[22px] font-bold text-ink-900">{selected.name}</h3>
-          <p className="text-[13px] text-ink-600">{selected.meta}</p>
+          <h3 className="text-[1.375rem] font-bold text-ink-900">{selected.name}</h3>
+          <p className="text-[0.8125rem] text-ink-600">{selected.meta}</p>
         </div>
         {/* 카카오 검색은 사진·영업시간을 주지 않는다 — 사진 없이 카카오맵으로 보낸다(Figma 장소 정보 출처). */}
         {(selected.address || selected.url) && (
-          <div className="space-y-2 rounded-xl bg-ink-50 p-3.5 text-[13px]">
+          <div className="space-y-2 rounded-xl bg-ink-50 p-3.5 text-[0.8125rem]">
             {selected.address && <p className="text-ink-700">{selected.address}</p>}
             {selected.url && (
               <a href={selected.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 font-bold text-brand-600">

@@ -47,6 +47,7 @@ declare namespace kakao.maps {
       clickable?: boolean
     })
     setMap(map: Map | null): void
+    setZIndex(zIndex: number): void
   }
 
   /** autoload=false 로 받은 SDK 를 실제로 초기화한다. */
