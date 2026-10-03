@@ -220,7 +220,7 @@ export default function MapLayout() {
         style={{ minHeight: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
         className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 items-end border-t border-ink-100 bg-white"
       >
-        <TabLink to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={26} />} />
+        <TabLink to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={24} />} />
         {/* AI 는 핑고가 말한다. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 핑고, 활성만 파랑 채움 + 흰 핑고(#299). */}
         <NavLink
           to={`/maps/${mapId}/recommend`}
@@ -241,7 +241,7 @@ export default function MapLayout() {
             </>
           )}
         </NavLink>
-        <TabLink to={`/maps/${mapId}/shortlist`} label="확정된 장소" icon={<FileText size={26} />} />
+        <TabLink to={`/maps/${mapId}/shortlist`} label="확정된 장소" icon={<FileText size={24} />} />
       </nav>
 
       {profileOpen && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
