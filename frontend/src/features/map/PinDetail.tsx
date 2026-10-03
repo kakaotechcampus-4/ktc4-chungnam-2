@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react'
-import { ExternalLink, ImageOff, X } from 'lucide-react'
+import { ExternalLink, X } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import type { MemberView } from '@/features/maps/model'
+import { useMeQuery } from '@/features/auth/queries'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation } from '@/features/shortlist/queries'
 import AgainstMark from '@/ui/AgainstMark'
@@ -15,7 +16,7 @@ import { useMyReactionMutation, useReactionsQuery } from './queries'
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
   like: { mark: '♥', label: '좋음', bg: 'var(--good-bg)', line: 'var(--good-line)', text: 'var(--good-text)' },
-  neutral: { mark: '△', label: '조율', bg: 'var(--warn-bg)', line: 'var(--warn-line)', text: 'var(--warn-text)' },
+  neutral: { mark: '△', label: '조율 필요', bg: 'var(--warn-bg)', line: 'var(--warn-line)', text: 'var(--warn-text)' },
   against: { mark: <AgainstMark />, label: '반대', bg: 'var(--bad-bg)', line: 'var(--bad-line)', text: 'var(--bad-text)' },
 }
 const TYPES: ReactionType[] = ['like', 'neutral', 'against']
@@ -34,11 +35,11 @@ export function PinDetailHeader({ pin, mapId, onBack }: { pin: Pin; mapId: strin
 
   return (
     <div>
-      <button type="button" onClick={onBack} className="mb-2 text-[13px] font-medium text-ink-500">
+      <button type="button" onClick={onBack} className="hit-44 mb-2 text-[0.8125rem] font-medium text-ink-500">
         ‹ 마킹된 장소
       </button>
       <div className="flex items-center justify-between gap-2">
-        <h2 className="truncate text-[22px] font-bold text-ink-900">{pin.place_name ?? '이름 없는 장소'}</h2>
+        <h2 className="truncate text-[1.375rem] font-bold text-ink-900">{pin.place_name ?? '이름 없는 장소'}</h2>
         {confirmed ? (
           <span className="shrink-0 rounded-lg border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)]">
             ✓ 확정됨
@@ -86,13 +87,20 @@ export function PinDetailBody({
   const memberCount = members.length
   const s = pin.reaction_summary
   const mine = pin.my_reaction?.type ?? null
+  const myId = useMeQuery().data?.id
 
   return (
     <div className="space-y-4">
       <div className="space-y-1">
-        <p className="text-[13px] text-ink-600">
+        <p className="flex flex-wrap items-center gap-x-1 text-[0.8125rem] text-ink-600">
           {pin.category}
-          {pin.created_by_display_name && <span className="text-ink-500"> · {pin.created_by_display_name}님이 찍은 핀</span>}
+          <span className="text-ink-500">· {pin.created_by === myId ? '내가 찍은 핀' : `${pin.created_by_display_name ?? '탈퇴한 구성원'}님이 찍은 핀`}</span>
+          {/* 사진·주소·전화는 핀 응답에 없다(카카오 응답 저장 금지, #53) — 자세한 정보는 카카오맵 새 창으로. */}
+          {pin.place_url && (
+            <a href={pin.place_url} target="_blank" rel="noopener noreferrer" className="hit-44 ml-auto inline-flex items-center gap-0.5 font-bold text-brand-600">
+              카카오맵 <ExternalLink size={12} aria-hidden="true" />
+            </a>
+          )}
         </p>
         {/* 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자로 꼭 적는다(colors.md 3절 한계). */}
         {memberCount > 0 && (
@@ -100,7 +108,7 @@ export function PinDetailBody({
             {participants(pin)}/{memberCount}명이 의견을 남겼어요
           </p>
         )}
-        <div className="flex flex-wrap items-center gap-3 border-y border-ink-200 py-2 text-[13px]">
+        <div className="flex flex-wrap items-center gap-3 border-y border-ink-200 py-2 text-[0.8125rem]">
           {TYPES.map((t) => (
             <span
               key={t}
@@ -120,53 +128,28 @@ export function PinDetailBody({
         </div>
       </div>
 
-      <PlaceInfo pin={pin} />
-
-      {reactions.error ? (
-        <ErrorText message="구성원 의견을 불러오지 못했어요" error={reactions.error} />
-      ) : (
-        reactions.data && <Opinions {...toOpinions(reactions.data, members)} />
-      )}
-
-      <div className="-mx-4 h-1.5 bg-ink-100" />
-
+      {/* 2단계에서 바로 보이게 「내 의견」을 구성원 의견보다 위에 둔다(#308). */}
       {pin.permissions.can_react ? (
         <MyOpinion key={pin.my_reaction?.type ?? 'none'} pin={pin} mapId={mapId} onDone={onDone} />
       ) : (
         // 숙소 핀은 반응을 받지 않는다(#154). v1엔 숙소 핀이 없지만 권한이 꺼져 오면 그린다.
         <p className="text-sm text-ink-500">이 장소에는 의견을 남길 수 없어요</p>
       )}
-    </div>
-  )
-}
 
-/**
- * 장소 사진·주소·전화는 핀 응답에 없다(카카오 응답은 저장 금지, #53). 그래서 사진 자리엔 Figma 의
- * '사진이 없어요' 표시를 두고, 자세한 정보는 카카오맵으로 보낸다. 앱 안 WebView 금지 — 새 창으로 연다.
- */
-function PlaceInfo({ pin }: { pin: Pin }) {
-  return (
-    <div className="space-y-2">
-      <div className="relative flex h-[100px] flex-col items-center justify-center gap-1 rounded-xl bg-ink-100 text-ink-500">
-        <span className="absolute left-3 top-3 rounded-xl bg-ink-900/80 px-2.5 py-1 text-[11px] font-bold text-white">{pin.category}</span>
-        <ImageOff size={20} aria-hidden="true" />
-        <p className="text-xs">사진이 없어요</p>
-      </div>
-      {pin.place_url && (
-        <a
-          href={pin.place_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 rounded-xl bg-ink-50 p-3.5 text-[13px] font-bold text-brand-600"
-        >
-          카카오맵에서 자세히 보기 <ExternalLink size={14} aria-hidden="true" />
-        </a>
+      <div className="-mx-4 h-1.5 bg-ink-100" />
+
+      {reactions.error ? (
+        <ErrorText message="구성원 의견을 불러오지 못했어요" error={reactions.error} />
+      ) : (
+        reactions.data && <Opinions {...toOpinions(reactions.data, members)} />
       )}
     </div>
   )
 }
 
-function Opinions({ split, likes, unknown }: ReturnType<typeof toOpinions>) {
+function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>) {
+  // 내 의견은 위 「내 의견」에 이미 있어서 갈린 의견에선 뺀다.
+  const split = all.filter((o) => !o.isMe)
   const [showLikes, setShowLikes] = useState(false)
   const nameOf = (o: { name: string; isMe: boolean }) => `${o.name}${o.isMe ? ' (나)' : ''}`
 
@@ -174,7 +157,7 @@ function Opinions({ split, likes, unknown }: ReturnType<typeof toOpinions>) {
     <section className="space-y-2.5">
       {split.length > 0 && (
         <>
-          <h3 className="text-[15px] font-bold text-ink-900">갈린 의견 {split.length}</h3>
+          <h3 className="text-[0.9375rem] font-bold text-ink-900">갈린 의견 {split.length}</h3>
           <ul className="divide-y divide-ink-200 overflow-hidden rounded-xl bg-ink-50">
             {split.map((o) => (
               <OpinionRow key={o.userId} o={o} name={nameOf(o)} />
@@ -184,12 +167,12 @@ function Opinions({ split, likes, unknown }: ReturnType<typeof toOpinions>) {
       )}
       {likes.length > 0 && (
         <div>
-          <div className="flex items-center justify-between text-[13px]">
+          <div className="flex items-center justify-between text-[0.8125rem]">
             <p className="font-medium text-ink-900">
               <span style={{ color: R.like.line }}>♥</span> {likes.map(nameOf).join(' · ')} 좋아해요
             </p>
             {likes.some((l) => l.chips.length || l.text) && (
-              <button type="button" onClick={() => setShowLikes((v) => !v)} className="text-xs font-medium text-ink-500">
+              <button type="button" onClick={() => setShowLikes((v) => !v)} className="hit-44 text-xs font-medium text-ink-500">
                 {showLikes ? '접기 ▴' : '펼치기 ▾'}
               </button>
             )}
@@ -203,11 +186,11 @@ function Opinions({ split, likes, unknown }: ReturnType<typeof toOpinions>) {
           )}
         </div>
       )}
-      {unknown.map((m) => (
-        <p key={m.userId} className="text-[13px] text-ink-500">
-          ? {m.isMe ? '나는 아직 의견을 안 남겼어요' : `${m.name}님이 아직 의견을 안 남겼어요`}
+      {unknown.some((m) => !m.isMe) && (
+        <p className="text-[0.8125rem] text-ink-500">
+          ? 아직 안 남겼어요 · {unknown.filter((m) => !m.isMe).map((m) => m.name).join(' · ')}
         </p>
-      ))}
+      )}
     </section>
   )
 }
@@ -215,14 +198,14 @@ function Opinions({ split, likes, unknown }: ReturnType<typeof toOpinions>) {
 function OpinionRow({ o, name }: { o: OpinionView; name: string }) {
   return (
     <li className="space-y-1 px-3 py-2.5">
-      <p className="flex flex-wrap items-center gap-1.5 text-[13px]">
+      <p className="flex flex-wrap items-center gap-1.5 text-[0.8125rem]">
         <span className="rounded-lg px-1.5 py-px text-xs font-bold" style={{ background: R[o.type].bg, color: R[o.type].text }}>
           {R[o.type].mark} {R[o.type].label}
         </span>
         <span className="font-medium text-ink-900">{name}</span>
         {o.chips.length > 0 && <span className="font-bold text-ink-900">· {o.chips.join(' · ')}</span>}
       </p>
-      {o.text && <p className="text-[13px] text-ink-600">“{o.text}”</p>}
+      {o.text && <p className="text-[0.8125rem] text-ink-600">“{o.text}”</p>}
     </li>
   )
 }
@@ -275,11 +258,11 @@ function MyOpinion({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
   }
 
   return (
-    <section className="space-y-2.5 pb-4">
+    <section className="space-y-2.5">
       <div className="flex items-center justify-between">
-        <h3 className="text-[15px] font-bold text-ink-900">내 의견 선택</h3>
+        <h3 className="text-[0.9375rem] font-bold text-ink-900">내 의견 선택</h3>
         {saved && (
-          <button type="button" onClick={cancel} disabled={react.isPending} className="text-[13px] font-medium text-ink-500 underline">
+          <button type="button" onClick={cancel} disabled={react.isPending} className="hit-44 text-[0.8125rem] font-medium text-ink-500 underline">
             의견 취소
           </button>
         )}
@@ -308,7 +291,7 @@ function MyOpinion({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
 
       {type && (
         <div className="space-y-2">
-          <p className="text-[13px] font-bold text-ink-900">{PROMPT[type].title}</p>
+          <p className="text-[0.8125rem] font-bold text-ink-900">{PROMPT[type].title}</p>
           {type === 'against' && chipOptions.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {chipOptions.map((chip) => {
@@ -319,7 +302,7 @@ function MyOpinion({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
                     type="button"
                     aria-pressed={on}
                     onClick={() => setChips((cs) => (on ? cs.filter((c) => c !== chip) : [...cs, chip]))}
-                    className={`rounded-full border px-3 py-1.5 text-[13px] ${
+                    className={`rounded-full border px-3 py-1.5 text-[0.8125rem] ${
                       on ? 'border-[var(--bad-line)] bg-[var(--bad-bg)] font-bold text-[var(--bad-text)]' : 'border-ink-300 bg-white font-medium text-ink-700'
                     }`}
                   >
@@ -336,18 +319,18 @@ function MyOpinion({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
               maxLength={TEXT_MAX}
               placeholder={PROMPT[type].placeholder}
               aria-label={PROMPT[type].title}
-              className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"
+              className="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none"
             />
             {text && (
-              <button type="button" aria-label="사유 지우기" onClick={() => setText('')} className="flex size-[18px] items-center justify-center rounded-full bg-ink-300 text-white">
+              <button type="button" aria-label="사유 지우기" onClick={() => setText('')} className="hit-44 flex size-[18px] items-center justify-center rounded-full bg-ink-300 text-white">
                 <X size={10} />
               </button>
             )}
-            <span className="text-[11px] text-ink-500">
+            <span className="text-[0.6875rem] text-ink-500">
               {text.length}/{TEXT_MAX}
             </span>
           </div>
-          {type === 'against' && <p className="text-[11px] text-ink-500">자세히 적을수록 더 정확한 추천을 받을 수 있어요</p>}
+          {type === 'against' && <p className="text-[0.6875rem] text-ink-500">자세히 적을수록 더 정확한 추천을 받을 수 있어요</p>}
         </div>
       )}
 

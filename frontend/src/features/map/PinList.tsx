@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 
+import { useMeQuery } from '@/features/auth/queries'
 import AgainstMark from '@/ui/AgainstMark'
 
 import { toPinCard, type Pin, type PinCardView, type ReactionType } from './model'
@@ -23,11 +24,12 @@ export default function PinList({
   memberCount: number
   onSelect: (pinId: string) => void
 }) {
+  const myId = useMeQuery().data?.id
   return (
     <ul className="space-y-2.5 pb-[100px]">
       {pins.map((pin) => (
         <li key={pin.id}>
-          <PinCard card={toPinCard(pin, memberCount)} onSelect={() => onSelect(pin.id)} />
+          <PinCard card={toPinCard(pin, memberCount, myId)} onSelect={() => onSelect(pin.id)} />
         </li>
       ))}
     </ul>
