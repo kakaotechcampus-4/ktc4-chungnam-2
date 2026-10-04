@@ -880,7 +880,7 @@ components:
       # confirmed_count만 없을 수 있다 — shortlist/api.py::count_confirmed()가 없어 이 모듈이
       # 못 채운다(maps/for_Root.md 5번). region은 애초에 선택 입력이라 없을 수 있다(#22).
       # 나머지는 maps/core.py::to_map_response가 항상 채운다.
-      required: [id, title, start_date, end_date, member_count]
+      required: [id, title, start_date, end_date, member_count, pin_count]
       properties:
         id: { type: string }
         title: { type: string, maxLength: 100 } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
@@ -888,19 +888,19 @@ components:
         end_date: { type: string, format: date, description: "여행 종료일 (#22)" }
         region: { $ref: "#/components/schemas/MapRegion" }
         member_count: { type: integer }
-        pin_count: { type: integer, minimum: 0, description: "지도에 올라와 있는(삭제[서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다] 되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청)" }
+        pin_count: { type: integer, minimum: 0, description: "지도에 올라와 있는(삭제되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청)" }
         confirmed_count: { type: integer }
 
     InviteSummary:
       type: object
       description: 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다
-      required: [title, start_date, end_date, member_count, inviter_display_name, expires_at]
+      required: [title, start_date, end_date, member_count, pin_count, inviter_display_name, expires_at]
       properties:
         title: { type: string, maxLength: 100 }
         start_date: { type: string, format: date }
         end_date: { type: string, format: date }
         member_count: { type: integer, minimum: 0 }
-        pin_count: { type: integer, minimum: 0, description: "지도에 올라와 있는 핀 수 — 초대[서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다]  카드 「핀 12개」 표시용 (2026-10-04, FE 요청)" }
+        pin_count: { type: integer, minimum: 0, description: "지도에 올라와 있는 핀 수 — 초대 카드 「핀 12개」 표시용 (2026-10-04, FE 요청)" }
         inviter_display_name: { type: string, maxLength: 50, description: "초대 링크를 발급한 사람. 탈퇴했으면 '탈퇴한 구성원'" }
         expires_at: { type: string, format: date-time }
 

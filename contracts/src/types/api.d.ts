@@ -1666,8 +1666,8 @@ export interface components {
             end_date: string;
             region?: components["schemas"]["MapRegion"];
             member_count: number;
-            /** @description 지도에 올라와 있는(삭제[서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다] 되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청) */
-            pin_count?: number;
+            /** @description 지도에 올라와 있는(삭제되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청) */
+            pin_count: number;
             confirmed_count?: number;
         };
         /** @description 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다 */
@@ -1678,8 +1678,8 @@ export interface components {
             /** Format: date */
             end_date: string;
             member_count: number;
-            /** @description 지도에 올라와 있는 핀 수 — 초대[서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다]  카드 「핀 12개」 표시용 (2026-10-04, FE 요청) */
-            pin_count?: number;
+            /** @description 지도에 올라와 있는 핀 수 — 초대 카드 「핀 12개」 표시용 (2026-10-04, FE 요청) */
+            pin_count: number;
             /** @description 초대 링크를 발급한 사람. 탈퇴했으면 '탈퇴한 구성원' */
             inviter_display_name: string;
             /** Format: date-time */
