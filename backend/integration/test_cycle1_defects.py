@@ -154,7 +154,7 @@ def test_d9_empty_chip_is_not_a_reason(clients, seoul_map, pin_body):
 def test_d9_chip_only_against_becomes_evidence(clients, seoul_map, pin_body):
     a, _ = clients
     pin = a.post(f"/maps/{seoul_map}/pins", json=pin_body("hongdae-ramen")).json()["id"]
-    assert a.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_chip_ids": ["too_spicy"]}).status_code == 200
+    assert a.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_chip_ids": ["food_spicy"]}).status_code == 200
     run = a.post(f"/maps/{seoul_map}/runs", json={"category": "음식점"})
     assert run.status_code == 202, run.text
     evidence = a.get(f"/runs/{run.json()['id']}/evidence").json()

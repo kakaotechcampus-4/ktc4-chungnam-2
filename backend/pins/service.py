@@ -24,7 +24,7 @@ from authz.core import Principal
 from common import categories
 from common.errors import AppError
 from common.events import record_event
-from pins import core
+from pins import chips, core
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
 from pins.schemas import (
@@ -57,9 +57,22 @@ def _visible_pins_clause(map_id: str, viewer_id: str):
     )
 
 
-def count_pins(db: Session, map_id: str, principal: Principal) -> FilterCounts:
+def _count_members_with_opinion(db: Session, map_id: str, viewer_id: str) -> int:
+    """이 지도의 보이는 핀 중 하나에든 ♥·△·🚫를 남긴 서로 다른 현재 구성원 수. 삭제된 핀의 반응은 세지 않고
+    (「삭제된 핀은 세지 않는다」), 탈퇴한 사용자는 뺀다. 가시성 판정은 목록·집계와 같다(가드레일 1)."""
+    user_ids = db.execute(
+        select(ReactionRow.user_id)
+        .join(PinRow, PinRow.id == ReactionRow.pin_id)
+        .where(_visible_pins_clause(map_id, viewer_id))
+        .distinct()
+    ).scalars().all()
+    return len(set(user_ids) - auth_api.withdrawn_user_ids(db, user_ids))
+
+
+def count_pins(db: Session, map_id: str, principal: Principal, members_total: int) -> FilterCounts:
     """분류×종류 집계(#141) — 보이는 핀만 GROUP BY 한 번으로 센다. 핀이 없는 카테고리·종류도
-    0으로 채운다. 키는 스키마 Literal에서 만든다(「기타」가 추가돼도 여기를 안 고친다)."""
+    0으로 채운다. 키는 스키마 Literal에서 만든다(「기타」가 추가돼도 여기를 안 고친다).
+    members_total은 현재 구성원 수 — maps.api가 세므로 라우터가 받아 넘긴다(모듈 경계)."""
     by_category = {c: 0 for c in get_args(Category)}
     by_kind = {k: 0 for k in get_args(PinKind)}
     rows = db.execute(
@@ -70,7 +83,10 @@ def count_pins(db: Session, map_id: str, principal: Principal) -> FilterCounts:
     for category, kind, n in rows:
         by_category[category] += n
         by_kind[kind] += n
-    return FilterCounts(by_category=by_category, by_kind=by_kind)
+    return FilterCounts(
+        by_category=by_category, by_kind=by_kind, members_total=members_total,
+        members_with_opinion=_count_members_with_opinion(db, map_id, principal.user_id),
+    )
 
 
 def get_pin_or_404(db: Session, pin_id: str) -> PinRow:
@@ -179,6 +195,7 @@ def record_from_row(
         place_name=place.name if place else None,
         place_url=place.kakao_place_url if place else None,
         created_by_display_name=created_by_display_name,
+        created_at=pin_row.created_at,
         checks=pin_row.checks,
         reason=pin_row.reason,
         member_fulfillment=pin_row.member_fulfillment,
@@ -307,6 +324,7 @@ def create_pin(
         place_name=place.name if place else match.name,
         place_url=place.kakao_place_url if place else None,
         created_by_display_name=display_name,
+        created_at=pin_row.created_at,
     )
     pin = core.to_pin_response(record, principal)
 
@@ -349,6 +367,7 @@ def _reaction_counts_for_pin(db: Session, pin_id: uuid.UUID) -> core.ReactionCou
 def set_reaction(db: Session, pin: PinRow, viewer_id: str, req: ReactionRequest) -> Reaction:
     core.validate_reactable(pin.category)
     core.validate_reaction(req.type, req.reason_text, req.reason_chip_ids)
+    core.validate_chip_ids(pin.category, req.reason_chip_ids)
     reason_text = core.reason_content(req.reason_text)
 
     # 원자적 upsert — 조회 후 있으면 UPDATE 없으면 INSERT(check-then-act) 방식은 같은 유저가
@@ -373,7 +392,10 @@ def set_reaction(db: Session, pin: PinRow, viewer_id: str, req: ReactionRequest)
 
     counts = _reaction_counts_for_pin(db, pin.id)
     summary = ReactionSummary(like=counts.like, neutral=counts.neutral, against=counts.against)
-    record_event(db, core.reaction_changed_event(str(pin.id), pin.map_id, pin.visibility, summary))
+    display_name = auth_api.display_names(db, [viewer_id]).get(viewer_id)
+    record_event(db, core.reaction_changed_event(
+        str(pin.id), pin.map_id, pin.visibility, summary, viewer_id, display_name, req.type,
+    ))
 
     return Reaction(
         pin_id=str(pin.id), user_id=viewer_id, type=req.type,
@@ -394,4 +416,7 @@ def delete_reaction(db: Session, pin: PinRow, viewer_id: str) -> None:
 
     counts = _reaction_counts_for_pin(db, pin.id)
     summary = ReactionSummary(like=counts.like, neutral=counts.neutral, against=counts.against)
-    record_event(db, core.reaction_changed_event(str(pin.id), pin.map_id, pin.visibility, summary))
+    display_name = auth_api.display_names(db, [viewer_id]).get(viewer_id)
+    record_event(db, core.reaction_changed_event(
+        str(pin.id), pin.map_id, pin.visibility, summary, viewer_id, display_name, None,
+    ))

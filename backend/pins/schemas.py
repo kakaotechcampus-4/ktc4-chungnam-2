@@ -10,6 +10,7 @@ Permissions는 여기서 정의하지 않는다 — Pin·EvidenceLine·Shortlist
 authz가 소유한다(#56 이관, mentor-review-plan.md). pins는 authz의 것을 그대로 쓴다.
 """
 
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_serializer
@@ -95,6 +96,7 @@ class Pin(BaseModel):
     place_url: str | None = None
     created_by: str
     created_by_display_name: str | None = None
+    created_at: datetime | None = None   # 지도에 올라온 시각(AI 추천 핀은 「지도에 올리기」 시각) — 서버가 채우면 항상 있다
     price_bucket: PriceBucket | None = None
     checks: list[Check] | None = None
     source_run_id: str | None = None
@@ -117,7 +119,17 @@ class Pin(BaseModel):
         return data
 
 
+class ReasonChip(BaseModel):
+    """반대 사유 칩(#60). fact_key가 없으면(「공통」 칩) 응답에서 생략한다 — 라우터의 response_model_exclude_none."""
+
+    id: str
+    label: str
+    fact_key: str | None = None
+
+
 class FilterCounts(BaseModel):
+    members_with_opinion: int | None = None
+    members_total: int | None = None
     by_category: dict[str, int]
     by_kind: dict[str, int]
 
