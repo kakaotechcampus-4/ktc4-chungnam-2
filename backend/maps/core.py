@@ -88,7 +88,12 @@ def check_invite_acceptable(expires_at: datetime, now: datetime) -> None:
 
 
 def to_invite_summary(
-    record: MapRecord, *, member_count: int, inviter_display_name: str | None, expires_at: datetime
+    record: MapRecord,
+    *,
+    member_count: int,
+    pin_count: int,
+    inviter_display_name: str | None,
+    expires_at: datetime,
 ) -> InviteSummary:
     """map_id와 핀 등 지도 내용은 싣지 않는다 — 토큰 소지자가 가입 전에 볼 수 있는 최소한만.
     초대자 이름을 못 구하면(users 행이 없음) '탈퇴한 구성원'으로 채운다(스펙 InviteSummary)."""
@@ -97,6 +102,7 @@ def to_invite_summary(
         start_date=record.start_date,
         end_date=record.end_date,
         member_count=member_count,
+        pin_count=pin_count,
         inviter_display_name=inviter_display_name or WITHDRAWN_MEMBER_NAME,
         expires_at=expires_at,
     )
@@ -107,7 +113,9 @@ def build_invite_url(base_url: str, token: str) -> str:
     return f"{base_url.rstrip('/')}/invites/{token}"
 
 
-def to_map_response(record: MapRecord, *, member_count: int, confirmed_count: int | None) -> Map:
+def to_map_response(
+    record: MapRecord, *, member_count: int, pin_count: int, confirmed_count: int | None
+) -> Map:
     """confirmed_count는 shortlist_items 개수 — shortlist.api.count_confirmed로 채운다(루트,
     maps/for_Root.md 항목 5 해결). 그래도 매개변수를 Optional로 남긴다 — 값을 못 구하는
     호출부가 생기면 0(거짓 "확정 0개")이 아니라 None(라우터가 키 자체를 생략)으로 정직하게
@@ -125,6 +133,7 @@ def to_map_response(record: MapRecord, *, member_count: int, confirmed_count: in
         end_date=record.end_date,
         region=region,
         member_count=member_count,
+        pin_count=pin_count,
         confirmed_count=confirmed_count,
     )
 

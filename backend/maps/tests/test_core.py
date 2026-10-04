@@ -82,14 +82,14 @@ def test_build_invite_url_has_no_double_slash(base):
 def test_map_response_omits_confirmed_count_when_unknown():
     """0을 보내면 '확정 3개인 지도가 0개로 보이는' 거짓말이 된다 — 키 자체가 없어야 한다."""
     record = core.MapRecord(id="m1", title="부산", start_date=date(2026, 10, 10), end_date=date(2026, 10, 12))
-    response = core.to_map_response(record, member_count=1, confirmed_count=None)
+    response = core.to_map_response(record, member_count=1, pin_count=0, confirmed_count=None)
     dumped = response.model_dump(exclude_none=True)
     assert "confirmed_count" not in dumped
 
 
 def test_map_response_includes_confirmed_count_when_known():
     record = core.MapRecord(id="m1", title="부산", start_date=date(2026, 10, 10), end_date=date(2026, 10, 12))
-    response = core.to_map_response(record, member_count=1, confirmed_count=3)
+    response = core.to_map_response(record, member_count=1, pin_count=0, confirmed_count=3)
     assert response.model_dump(exclude_none=True)["confirmed_count"] == 3
 
 
