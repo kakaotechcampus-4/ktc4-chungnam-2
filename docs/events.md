@@ -29,15 +29,24 @@
 | `shortlist.changed` | `{ item: ShortlistItem, action: 'added'\|'removed'\|'reordered' }` | 확정 리스트 변경. `reordered`는 수동 정렬 (#30) |
 | `route.recalculated` | `Route[]` | **「동선 짜주기」 실행 시** (#30, `POST /maps/{mapId}/route`). 확정 리스트 변경만으로는 발행하지 않는다 |
 | `member.joined` | `Member` | 초대 수락 |
-| `member.presence` | `{ user_id, online }` | 접속 상태 변화 |
+| `member.presence` | `{ user_id, online }` | 접속 상태 변화 — **v1 서버는 발행하지 않는다**(아래 「v1에서 발행하지 않는 이벤트」) |
 
 ### 개인 채널
 
 | type | 페이로드 | 발생 시점 |
 |---|---|---|
-| `run.progress` | `{ run_id, step: 1..8, label }` | 추천 8단계 진행 (3절, 6절 "8단계 진행 표시") |
+| `run.progress` | `{ run_id, step: 1..8, label }` | 추천 8단계 진행 (3절, 6절 "8단계 진행 표시") — **v1 서버는 발행하지 않는다** |
 | `run.candidates_ready` | `{ run_id, candidates: Candidate[] }` | ④ 반영 — 점선 핀이 본인에게만 뜨는 시점 |
-| `run.failed` | `{ run_id, error: Error }` | 추천 실패 (6절 "추천 실패" 화면) |
+| `run.failed` | `{ run_id, error: Error }` | 추천 실패 (6절 "추천 실패" 화면) — **v1 서버는 발행하지 않는다** |
+
+### v1에서 발행하지 않는 이벤트 (2026-10-04)
+
+- **`run.progress`·`run.failed`**: 추천 실행(`POST /runs/{id}/execute`·`/widen`·`/retry`)이 요청 안에서 동기로 끝나고, 이벤트는 요청 하나가 커밋될 때 한꺼번에 나간다 — 단계마다 보내도 끝에 한 번에 도착해 진행 표시가 되지 않고, 실패하면 트랜잭션이 롤백돼 `run.failed`도 저장되지 않는다. 그래서 v1에서는 보내지 않는다.
+  - **진행 표시**는 프론트가 실행 요청이 돌아올 때까지(또는 결과 조회가 `done`이 될 때까지) 자체 애니메이션으로 보여 준다.
+  - **실패**는 실행 요청의 HTTP 응답(500 `RECOMMEND_FAILED`, 상한이면 429 `RETRY_LIMIT` 등)으로 받는다. 이벤트를 기다리지 않는다.
+  - 단계별 진행을 실시간으로 보여 주려면 실행을 백그라운드로 옮겨야 한다(v2 검토).
+- **`member.presence`**: 접속 상태 추적이 없다. `Member.online`은 비어 온다 — 접속 점은 그리지 않는다.
+- **FE는 이 이벤트들을 받아도 되지만 의존하지 않는다.** 결과는 항상 `GET /runs/{id}/result`가 정본이다(`done`이 될 때까지 2초 간격 조회).
 
 ## 페이로드 봉투
 
