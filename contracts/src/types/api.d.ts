@@ -53,10 +53,13 @@ export interface paths {
         /** 카카오 OAuth 콜백. httpOnly 쿠키 발급 (13절 "토큰을 프론트에 두지 않는다") */
         get: {
             parameters: {
-                query: {
-                    code: string;
-                    /** @description 로그인 시작 때 서버가 만든 값을 카카오가 그대로 돌려준다. 쿠키와 다르거나 없으면 401(`detail.reason=invalid_state`) */
+                query?: {
+                    /** @description 카카오가 준 인가 코드. 사용자가 카카오 화면에서 취소하면 없고 error가 대신 온다(2026-10-04부터 선택) */
+                    code?: string;
+                    /** @description 로그인 시작 때 서버가 만든 값을 카카오가 그대로 돌려준다. 쿠키와 다르거나 없으면 실패(`login_error=invalid_state`) */
                     state?: string;
+                    /** @description 카카오가 실패·취소 때 붙이는 값(예: access_denied). 있으면 로그인하지 않고 `login_error=cancelled`로 돌려보낸다 */
+                    error?: string;
                 };
                 header?: never;
                 path?: never;
@@ -64,14 +67,18 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description 로그인 성공 시 진입점으로 리다이렉트 */
+                /**
+                 * @description **성공이든 실패든 항상 302다** — 이 경로는 fetch가 아니라 브라우저 이동이라 JSON을 돌려주면 사용자가 그대로 본다(2026-10-04).
+                 *     성공: 진입점(`FRONTEND_LOGIN_REDIRECT_URL`)으로, 세션 쿠키와 함께.
+                 *     실패: 같은 주소에 쿼리 `?login_error=<값>`을 붙여 돌려보내고 세션 쿠키는 만들지 않는다. state 쿠키는 성공·실패 모두 지운다.
+                 *     `login_error` 값: `cancelled`(사용자가 카카오 화면에서 취소), `invalid_state`(state 쿠키와 다르거나 없음 — 처음부터 다시), `kakao_failed`(카카오 토큰 교환·프로필 조회 실패), `server_error`(그 밖의 실패).
+                 */
                 302: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content?: never;
                 };
-                401: components["responses"]["Unauthorized"];
             };
         };
         put?: never;
@@ -1658,8 +1665,8 @@ export interface components {
             end_date: string;
             region?: components["schemas"]["MapRegion"];
             member_count: number;
-            /** @description 지도에 올라와 있는(삭제되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청) */
-            pin_count: number;
+            /** @description 지도에 올라와 있는(삭제[서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다] 되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청) */
+            pin_count?: number;
             confirmed_count?: number;
         };
         /** @description 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다 */
@@ -1670,8 +1677,8 @@ export interface components {
             /** Format: date */
             end_date: string;
             member_count: number;
-            /** @description 지도에 올라와 있는 핀 수 — 초대 카드 「핀 12개」 표시용 (2026-10-04, FE 요청) */
-            pin_count: number;
+            /** @description 지도에 올라와 있는 핀 수 — 초대[서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다]  카드 「핀 12개」 표시용 (2026-10-04, FE 요청) */
+            pin_count?: number;
             /** @description 초대 링크를 발급한 사람. 탈퇴했으면 '탈퇴한 구성원' */
             inviter_display_name: string;
             /** Format: date-time */
@@ -1686,10 +1693,10 @@ export interface components {
         Member: {
             user_id: string;
             /**
-             * @description owner = 지도를 만든 사람(방장), 나머지는 member. 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)
+             * @description [서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다] owner = 지도를 만든 사람(방장), 나머지는 member. 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)
              * @enum {string}
              */
-            role: "owner" | "member";
+            role?: "owner" | "member";
             display_name?: string;
             online?: boolean;
         };
@@ -1786,9 +1793,9 @@ export interface components {
             created_by: string;
             /**
              * Format: date-time
-             * @description 핀이 지도에 올라온 시각. AI 추천 핀은 「지도에 올리기」를 누른 시각이다. 「최근 추가 순」 정렬, 「최근 핀으로 이동」, 「10분 전」 표시용 (2026-10-04, FE 요청)
+             * @description [서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다] 핀이 지도에 올라온 시각. AI 추천 핀은 「지도에 올리기」를 누른 시각이다. 「최근 추가 순」 정렬, 「최근 핀으로 이동」, 「10분 전」 표시용 (2026-10-04, FE 요청)
              */
-            created_at: string;
+            created_at?: string;
             /** @description 핀 상세에서 '누가 찍었는지' 표시용 (#26) */
             created_by_display_name?: string;
             price_bucket?: components["schemas"]["PriceBucket"];
@@ -1836,10 +1843,10 @@ export interface components {
             fact_key?: string;
         };
         FilterCounts: {
-            /** @description 이 지도의 핀에 ♥·△·🚫 반응을 하나라도 남긴 구성원 수. 「2/4명이 의견을 남겼어요」의 2. 탈퇴한 구성원은 세지 않는다 (2026-10-04, FE 요청) */
-            members_with_opinion: number;
-            /** @description 현재 구성원 수(= Map.member_count). 「2/4명」의 4 */
-            members_total: number;
+            /** @description [서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다] 이 지도의 핀에 ♥·△·🚫 반응을 하나라도 남긴 구성원 수. 「2/4명이 의견을 남겼어요」의 2. 탈퇴한 구성원은 세지 않는다 (2026-10-04, FE 요청) */
+            members_with_opinion?: number;
+            /** @description [서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다] 현재 구성원 수(= Map.member_count). 「2/4명」의 4 */
+            members_total?: number;
             by_category: {
                 [key: string]: number;
             };
