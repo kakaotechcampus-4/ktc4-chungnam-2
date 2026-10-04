@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from geoalchemy2 import Geography, Geometry
 from sqlalchemy import func, select
 
 from places import api, ingest, load, repository
@@ -447,3 +448,51 @@ def test_cli_restaurants_dry_run_with_labels_writes_nothing(db_session, mini_con
 def test_cli_restaurants_missing_labels_file_exits_2(db_session, capsys):
     assert load.main(["restaurants", "--file", str(CURATED_CSV), "--labels", "/no/such.json"],
                      session_factory=lambda: _NoCloseSession(db_session)) == 2
+
+
+# ---- 반경 경계: 판정은 DB(ST_DWithin, 타원체) 한 곳 (#316) ----
+
+def _place_at(db, source_id, lat, lng, meters, azimuth_deg):
+    """(lat, lng)에서 PostGIS가 잰 타원체 거리로 정확히 meters만큼 떨어진 곳에 장소를 넣는다."""
+    pt = db.execute(
+        select(func.ST_Y(func.ST_Project(func.cast(func.ST_MakePoint(lng, lat), Geography()), meters, func.radians(azimuth_deg)).cast(Geometry())),
+               func.ST_X(func.ST_Project(func.cast(func.ST_MakePoint(lng, lat), Geography()), meters, func.radians(azimuth_deg)).cast(Geometry())))
+    ).one()
+    repository.upsert_places(db, [ingest.PlaceRow("permit", source_id, "경계 식당", "음식점", None, None, pt[0], pt[1], "open")])
+    return str(db.execute(select(Place.id).where(Place.source_id == source_id)).scalar_one())
+
+
+def test_radius_boundary_is_decided_by_db_not_haversine(db_session):
+    """위도 37.5에서 구(haversine)와 타원체 거리는 방향에 따라 0.2%쯤 다르다. 북쪽 299.9m는 haversine으로 300.4m라
+    예전엔 검색 단계(SQL 통과)와 파이썬 재필터 결과가 갈렸다. 지금은 DB가 정한 대로 모든 경로가 같다."""
+    lat, lng = 37.5, 127.0
+    cases = {   # (방위, 타원체 거리) -> DB가 반경 안으로 보는가
+        "n299": (0, 299.9, True), "n301": (0, 300.1, False),
+        "e299": (90, 299.9, True), "e301": (90, 300.1, False),
+    }
+    ids = {k: _place_at(db_session, k, lat, lng, m, az) for k, (az, m, _) in cases.items()}
+    hint = _hint("경계 식당", lat, lng)
+    got = {c.place_id for c in repository.find_candidates_many(db_session, [hint])[0]}
+    assert got == {ids[k] for k, (_, _, inside) in cases.items() if inside}
+    assert got == {c.place_id for c in repository.find_candidates(db_session, lat, lng, "음식점", None)}
+    # 이름이 같은 점포가 둘 다 반경 안이면 모호해서 거절되니, 경계 하나씩만 두고 판정이 DB와 같은지 본다
+    for k, (az, m, inside) in cases.items():
+        for other in cases:
+            if other != k:
+                db_session.execute(Place.__table__.update().where(Place.id == uuid.UUID(ids[other])).values(status="closed"))
+        assert (api.match_place(hint, db=db_session) is not None) is inside, k
+        assert api.pinnable_flags([hint], db=db_session) == [inside], k
+        for other in cases:
+            db_session.execute(Place.__table__.update().where(Place.id == uuid.UUID(ids[other])).values(status="open"))
+
+
+def test_find_candidates_many_caps_rows_per_hint_nearest_first(db_session):
+    from places import matching
+
+    lat, lng = 37.5, 127.0
+    rows = [ingest.PlaceRow("permit", f"c{i:02d}", f"식당{i}", "음식점", None, None, lat + i * 0.00004, lng, "open")   # 4.4m 간격
+            for i in range(matching.MAX_CANDIDATES + 5)]
+    repository.upsert_places(db_session, rows)
+    out = repository.find_candidates_many(db_session, [_hint("x", lat, lng), _hint("y", lat, lng)])
+    for cands in out:
+        assert [c.name for c in cands] == [f"식당{i}" for i in range(matching.MAX_CANDIDATES)]   # 가까운 순, 상한까지

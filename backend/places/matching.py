@@ -58,6 +58,8 @@ def name_score(a: str, b: str) -> float:
 
 
 def pick_match(hint: PlaceHint, candidates: Sequence[Candidate]) -> PlaceMatch | None:
+    """candidates는 이미 반경(MAX_RADIUS_M) 안으로 걸러진 것이다 — 여기서 거리로 다시 자르지 않는다(#316).
+    메모리 대역(testing.FakePlaces)은 같은 반경 규칙을 직접 적용해서 넘긴다."""
     # 1) 이미 이 카카오 장소 ID로 매칭된 적 있는 자체 DB 장소가 있으면 그것(분류가 같을 때만)
     if hint.kakao_place_id:
         for c in candidates:
@@ -68,9 +70,7 @@ def pick_match(hint: PlaceHint, candidates: Sequence[Candidate]) -> PlaceMatch |
     for c in candidates:
         if c.category != hint.category:
             continue
-        dist = distance_m(hint.lat, hint.lng, c.lat, c.lng)
-        if dist > MAX_RADIUS_M:
-            continue
+        dist = distance_m(hint.lat, hint.lng, c.lat, c.lng)   # 순서·동명 점포 구분용 — 반경 판정은 후보를 준 쪽(DB ST_DWithin)이 한다(#316)
         score = name_score(hint.name, c.name)
         if score >= NAME_MIN_SCORE:
             scored.append((score, dist, c))
