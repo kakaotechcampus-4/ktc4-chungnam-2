@@ -2,6 +2,12 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-04 (세 번째) — 서버가 채우기 시작한 필드를 필수로 바꾼다, PATCH evidence 500 선언
+
+- **필수로 전환**: `Pin.created_at`(#321), `FilterCounts.members_with_opinion`·`members_total`(#321), `Member.role`(#319). 서버가 항상 채우므로 FE 타입에서 optional이 사라진다(`?` 제거) — **타입 재생성 후 우회 코드를 걷어도 된다**: 「최근 추가 순」 정렬(서버 순서를 거꾸로 쓰던 것)은 `created_at`으로, 의견 남긴 구성원 수는 `members_with_opinion`/`members_total`로, 방장 표시는 `role === "owner"`로.
+- **아직 선택**: `Map.pin_count`·`InviteSummary.pin_count`(#313, maps 세션 진행 중).
+- **`PATCH /runs/{id}/evidence`에 500 `RECOMMEND_FAILED` 선언**: 「+」로 직접 추가한 줄도 ②(사유 구조화)를 거치므로(#254) 모델 호출이 실패하면 500이 날 수 있다. 코드는 이미 그렇게 동작했고 스펙에 빠져 있었다. FE는 「추가하지 못했어요, 다시 시도해 주세요」로 처리하면 된다.
+
 ## 2026-10-04 (두 번째) — 로그인 콜백은 실패도 302로 프론트에 돌려보낸다 (멘토 리뷰 #152)
 
 - **`GET /auth/kakao/callback`**: 성공·실패 모두 **302**다(브라우저 이동이라 JSON을 돌려주면 사용자가 그대로 본다). 실패는 진입점 주소에 `?login_error=<값>`을 붙여 돌려보낸다 — `cancelled`(카카오 화면에서 취소), `invalid_state`, `kakao_failed`, `server_error`. 이전에는 취소하면 `code` 누락으로 422 JSON이, 카카오 오류에는 500이 그대로 보였다. `code`는 선택, `error` 쿼리를 새로 받는다. 401 응답 선언은 없어진다.

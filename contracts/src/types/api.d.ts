@@ -1010,6 +1010,7 @@ export interface paths {
                 };
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
+                500: components["responses"]["RecommendFailed"];
             };
         };
         trace?: never;
@@ -1693,10 +1694,10 @@ export interface components {
         Member: {
             user_id: string;
             /**
-             * @description [서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다] owner = 지도를 만든 사람(방장), 나머지는 member. 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)
+             * @description owner = 지도를 만든 사람(방장), 나머지는 member. 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)
              * @enum {string}
              */
-            role?: "owner" | "member";
+            role: "owner" | "member";
             display_name?: string;
             online?: boolean;
         };
@@ -1793,9 +1794,9 @@ export interface components {
             created_by: string;
             /**
              * Format: date-time
-             * @description [서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다] 핀이 지도에 올라온 시각. AI 추천 핀은 「지도에 올리기」를 누른 시각이다. 「최근 추가 순」 정렬, 「최근 핀으로 이동」, 「10분 전」 표시용 (2026-10-04, FE 요청)
+             * @description 핀이 지도에 올라온 시각. AI 추천 핀은 「지도에 올리기」를 누른 시각이다. 「최근 추가 순」 정렬, 「최근 핀으로 이동」, 「10분 전」 표시용 (2026-10-04, FE 요청)
              */
-            created_at?: string;
+            created_at: string;
             /** @description 핀 상세에서 '누가 찍었는지' 표시용 (#26) */
             created_by_display_name?: string;
             price_bucket?: components["schemas"]["PriceBucket"];
@@ -1843,10 +1844,10 @@ export interface components {
             fact_key?: string;
         };
         FilterCounts: {
-            /** @description [서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다] 이 지도의 핀에 ♥·△·🚫 반응을 하나라도 남긴 구성원 수. 「2/4명이 의견을 남겼어요」의 2. 탈퇴한 구성원은 세지 않는다 (2026-10-04, FE 요청) */
-            members_with_opinion?: number;
-            /** @description [서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다] 현재 구성원 수(= Map.member_count). 「2/4명」의 4 */
-            members_total?: number;
+            /** @description 이 지도의 핀에 ♥·△·🚫 반응을 하나라도 남긴 구성원 수. 「2/4명이 의견을 남겼어요」의 2. 탈퇴한 구성원은 세지 않는다 (2026-10-04, FE 요청) */
+            members_with_opinion: number;
+            /** @description 현재 구성원 수(= Map.member_count). 「2/4명」의 4 */
+            members_total: number;
             by_category: {
                 [key: string]: number;
             };
