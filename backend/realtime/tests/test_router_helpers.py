@@ -24,15 +24,13 @@ class _Row:
     payload: dict
 
 
-def test_sse_format_uses_seq_as_id_and_json_payload():
+def test_sse_format_uses_seq_as_id_and_payload_as_data():
     row = _Row(seq=7, type="pin.created", map_id="map1", payload={"pin_id": "p1"})
     out = _sse_format(row)
     assert out.startswith("id: 7\n")
     assert "event: pin.created\n" in out
     data_line = next(line for line in out.splitlines() if line.startswith("data: "))
-    assert json.loads(data_line[len("data: "):]) == {
-        "type": "pin.created", "map_id": "map1", "payload": {"pin_id": "p1"},
-    }
+    assert json.loads(data_line[len("data: "):]) == {"pin_id": "p1"}
 
 
 def test_sse_control_event_carries_type():

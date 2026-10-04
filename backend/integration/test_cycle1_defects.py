@@ -93,18 +93,15 @@ def test_control_member_can_subscribe_to_public_sse(clients, seoul_map):
     assert _asgi_status(f"/maps/{seoul_map}/events", "user_a") == 200
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D1 — SSE 구독에 지도 구성원 확인이 없다(로그인만 하면 남의 지도 이벤트를 받는다). #239")
 def test_d1_non_member_cannot_subscribe_to_public_sse(clients, seoul_map):
     status = _asgi_status(f"/maps/{seoul_map}/events", "user_b", {"Last-Event-ID": "0"})
     assert status == 404, "비구성원은 지도가 있는지도 알 수 없어야 한다(docs/permissions.md: 비구성원 404)"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D1 — 개인 채널도 지도 구성원 확인이 없다. #239")
 def test_d1_non_member_cannot_subscribe_to_private_sse(clients, seoul_map):
     assert _asgi_status(f"/maps/{seoul_map}/events/me", "user_b") == 404
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D2 — SSE data가 스펙(페이로드 자체)이 아니라 {type,map_id,payload} 봉투다. #239")
 def test_d2_sse_data_is_the_payload_itself():
     from common.events import EventLog
     from realtime.router import _sse_format
