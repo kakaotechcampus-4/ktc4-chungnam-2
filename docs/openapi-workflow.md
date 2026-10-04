@@ -54,6 +54,7 @@ cp .env.example .env                  # 없으면. 값은 커밋하지 않는다
 python -m alembic upgrade head        # 마이그레이션 체인이 head 하나여야 한다
 # 자체 장소 DB 적재(한 번, 약 4분) — 파일은 저장소 밖에 둔다(.gitignore). 안 하면 검색·핀·추천이 모두 빈다
 python -m places.load restaurants --file <restaurant_seoul_curated.csv> --labels <restaurant_seoul_curated_labels.json> --dry-run   # 리포트 확인 후 --dry-run을 뺀다
+python -m places.load cafes --file <cafe_seoul_curated.csv> --labels <cafe_seoul_curated_labels.json|.csv> --dry-run          # 카페(분류 '카페'). 좌표 없는 행·모르는 업태는 건너뛰고 건수를 보고한다
 python -m uvicorn main:asgi_app --port 8000
 ```
 `backend/.env`에 채울 값 (**localhost로 통일** — `127.0.0.1`과 섞으면 쿠키가 안 붙는다):

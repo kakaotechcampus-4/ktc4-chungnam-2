@@ -346,9 +346,15 @@ CURATED_ALIASES = {
 BAR_TYPES = frozenset({"정종/대포집/소주방", "감성주점"})
 
 
+# 카페 납품본(cafe_seoul_curated.csv, #266)의 업태 8종 — 전부 분류 '카페'. 대응표에 없는 업태는 건너뛰고 건수를 보고한다.
+CURATED_CAFE_TYPES = frozenset({"커피숍", "제과점영업", "까페", "다방", "전통찻집", "라이브카페", "키즈카페", "떡카페"})
+
+
 def parse_curated_rows(
-    rows: Iterable[Mapping[str, Any]], *, exclude_bars: bool = False, seoul_only: bool = True
+    rows: Iterable[Mapping[str, Any]], *, exclude_bars: bool = False, seoul_only: bool = True,
+    category: str = "음식점", allowed_types: frozenset[str] | None = None,
 ) -> tuple[list[PlaceRow], Report]:
+    """allowed_types를 주면 그 업태만 적재하고 나머지(빈 업태 포함)는 '모르는 업태'로 건너뛴다. 안 주면 업태를 가리지 않는다."""
     report = Report()
     out: list[PlaceRow] = []
     seen_bars = 0
@@ -366,6 +372,9 @@ def parse_curated_rows(
             if exclude_bars:
                 report.skip(f"유흥·주점류 제외(--exclude-bars): {f['type']}")
                 continue
+        if allowed_types is not None and f["type"] not in allowed_types:
+            report.skip(f"모르는 업태: {f['type'] or '(비어 있음)'}")
+            continue
         lat, lng = _to_float(f["lat"]), _to_float(f["lng"])
         if lat is None or lng is None:
             report.skip("좌표 없음")
@@ -374,8 +383,8 @@ def parse_curated_rows(
             report.skip("좌표가 한국 범위 밖")
             continue
         if not f["type"]:
-            report.warnings.append(f"업태가 비어 있는 행을 음식점으로 적재했다: {f['source_id']}")
-        out.append(PlaceRow("permit", f["source_id"], f["name"], "음식점", f["address"] or None, f["phone"] or None, lat, lng, "open"))
+            report.warnings.append(f"업태가 비어 있는 행을 {category}로 적재했다: {f['source_id']}")
+        out.append(PlaceRow("permit", f["source_id"], f["name"], category, f["address"] or None, f["phone"] or None, lat, lng, "open"))
         report.accepted += 1
     if seen_bars:
         verb = "제외했다" if exclude_bars else "그대로 적재 대상에 포함했다"
@@ -383,15 +392,21 @@ def parse_curated_rows(
     return out, report
 
 
-CURATED_PLACE_ID_PREFIX = "rest_"
+def parse_cafe_rows(rows: Iterable[Mapping[str, Any]], *, seoul_only: bool = True) -> tuple[list[PlaceRow], Report]:
+    """카페 납품본: 분류 '카페', source='permit', source_id=관리번호. 업태 8종 밖·좌표 없는 행은 건너뛰고 센다."""
+    return parse_curated_rows(rows, seoul_only=seoul_only, category="카페", allowed_types=CURATED_CAFE_TYPES)
+
+
+CURATED_PLACE_ID_PREFIXES = ("rest_", "cafe_")   # 음식점·카페 납품본 라벨 JSON의 place_id 접두어(CSV 쪽은 접두어가 이미 없다)
 
 
 def curated_labels_to_rows(entries: Iterable[Mapping[str, Any]]) -> Iterator[dict[str, str]]:
-    """납품본 라벨 JSON → parse_label_rows가 읽는 CSV 행 형식. 장소마다 place_id(rest_<관리번호>)와
+    """납품본 라벨 JSON → parse_label_rows가 읽는 CSV 행 형식. 장소마다 place_id(rest_|cafe_<관리번호>)와
     labels{fact_key: {value: "true|false|unknown"(문자열), evidence, source}}가 있다. unknown은 confidence=unknown(값 없음)."""
     for entry in entries:
         place_id = str(entry.get("place_id", ""))
-        source_id = place_id[len(CURATED_PLACE_ID_PREFIX):] if place_id.startswith(CURATED_PLACE_ID_PREFIX) else ""
+        prefix = next((p for p in CURATED_PLACE_ID_PREFIXES if place_id.startswith(p)), None)
+        source_id = place_id[len(prefix):] if prefix else ""
         for key, label in (entry.get("labels") or {}).items():
             raw = str((label or {}).get("value", "")).strip()
             unknown = raw.lower() == "unknown" or raw == ""

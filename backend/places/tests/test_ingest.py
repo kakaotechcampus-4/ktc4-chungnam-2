@@ -364,3 +364,45 @@ def test_keys_missing_from_constraints_are_reported_as_unregistered():
     rows, report = ingest.parse_label_rows(ingest.curated_labels_to_rows(entries), old)
     assert report.skipped["모르는 fact_key: cuisine_korean"] == 3   # R001, R007, R404, weird_R001은 id 이상보다 키 검사가 먼저
     assert all(r.fact_key in old for r in rows)
+
+
+# ---- 카페 납품본 (#266) ----
+
+@pytest.fixture()
+def cafes():
+    rows, report = ingest.parse_cafe_rows(read_csv_rows(FIX / "cafe_curated_sample.csv"))
+    return {r.source_id: r for r in rows}, report
+
+
+def test_cafe_rows_are_loaded_as_cafe_category_permit_source_with_given_coordinates(cafes):
+    by_id, _ = cafes
+    assert set(by_id) == {f"C00{i}" for i in range(1, 9)}   # 업태 8종 8곳
+    assert {r.category for r in by_id.values()} == {"카페"} and {r.source for r in by_id.values()} == {"permit"}
+    assert {r.status for r in by_id.values()} == {"open"}
+    assert (by_id["C001"].lat, by_id["C001"].lng) == (37.5446, 127.0562)
+
+
+def test_cafe_unknown_business_types_and_missing_coordinates_are_skipped_and_counted(cafes):
+    by_id, report = cafes
+    assert report.skipped["좌표 없음"] == 1 and "C009" not in by_id
+    assert report.skipped["모르는 업태: 북카페"] == 1 and "C010" not in by_id
+    assert report.skipped["모르는 업태: (비어 있음)"] == 1 and "C011" not in by_id
+    assert report.skipped["서울 아님(또는 주소 없음)"] == 1 and "C012" not in by_id
+    assert report.read == 12 and report.accepted == 8 and sum(report.skipped.values()) == 4
+
+
+def test_cafe_type_table_has_the_eight_delivered_types():
+    assert ingest.CURATED_CAFE_TYPES == {"커피숍", "제과점영업", "까페", "다방", "전통찻집", "라이브카페", "키즈카페", "떡카페"}
+
+
+def test_restaurant_parser_is_unchanged_by_the_cafe_option():
+    rows, _ = ingest.parse_curated_rows(read_csv_rows(FIX / "restaurant_curated_sample.csv"))
+    assert {r.category for r in rows} == {"음식점"}
+
+
+def test_label_json_reads_both_rest_and_cafe_prefixes():
+    entries = [{"place_id": "rest_R1", "labels": {"quiet": {"value": "true"}}},
+               {"place_id": "cafe_3000000-101-1995-02376", "labels": {"quiet": {"value": "true"}}},
+               {"place_id": "other_X", "labels": {"quiet": {"value": "true"}}}]
+    got = [(r["source"], r["source_id"]) for r in ingest.curated_labels_to_rows(entries)]
+    assert got == [("permit", "R1"), ("permit", "3000000-101-1995-02376"), ("", "")]
