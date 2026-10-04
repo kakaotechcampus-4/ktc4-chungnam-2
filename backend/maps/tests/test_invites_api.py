@@ -193,6 +193,7 @@ def test_invite_summary_without_login_is_200_and_hides_map_id(app_client, db_ses
         "start_date": "2026-10-10",
         "end_date": "2026-10-12",
         "member_count": 1,
+        "pin_count": 0,
         "inviter_display_name": "철수",
         "expires_at": body["expires_at"],
     }
