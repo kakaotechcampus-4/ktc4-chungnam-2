@@ -12,7 +12,9 @@ get_current_user)]`가 라우터 선언 자체에 박혀 있어 개별 엔드포
 필요가 없다(mentor-review-plan.md "사용 규약").
 """
 
+import logging
 import time
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Cookie, Depends, Query, Response
 from sqlalchemy.orm import Session
@@ -21,8 +23,10 @@ from starlette.responses import RedirectResponse
 from auth import core, service
 from auth.deps import DbSession, get_current_user
 from auth.schemas import CurrentUser, UserResponse, UserUpdateRequest
-from common.errors import AppError, error_response
+from common.errors import AppError
 from common.settings import settings
+
+logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "session"
 STATE_COOKIE = "kakao_oauth_state"
@@ -75,27 +79,45 @@ def get_kakao_login():
     return redirect
 
 
+def _login_redirect(*, error: str | None = None) -> RedirectResponse:
+    """진입점으로 302. 실패면 `login_error`를 붙이고(주소에 있던 쿼리·조각은 보존), state 쿠키는 어느 쪽이든 지운다."""
+    url = settings.frontend_login_redirect_url
+    if error is not None:
+        parts = urlsplit(url)
+        query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "login_error"]
+        url = urlunsplit(parts._replace(query=urlencode(query + [("login_error", error)])))
+    redirect = RedirectResponse(url=url, status_code=302)
+    _clear_state_cookie(redirect)
+    return redirect
+
+
 @public_router.get("/kakao/callback")
 def get_kakao_callback(
-    code: str = Query(...),
+    code: str | None = Query(default=None),
     state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
     state_cookie: str | None = Cookie(default=None, alias=STATE_COOKIE),
     db: Session = DbSession,
 ):
-    """성공이든 실패든 state 쿠키를 지운다 — 같은 콜백 링크를 다시 쓸 수 없게 한다. 실패를 로그인
-    성공처럼 넘기지 않고 그대로 에러 봉투로 돌려주되, 쿠키를 지우려고 예외 대신 응답을 만든다."""
+    """브라우저가 카카오에서 돌아오는 이동이라 성공이든 실패든 항상 302다(JSON을 돌려주면 사용자가 그대로 본다).
+    실패는 진입점에 `?login_error=`로 알린다(cancelled·invalid_state·kakao_failed·server_error) — 실패를
+    로그인 성공처럼 넘기지 않는다. state 검증이 먼저다: 위조된 요청에는 카카오를 부르지 않는다.
+    성공이든 실패든 state 쿠키를 지워 같은 콜백 링크를 다시 쓸 수 없게 한다."""
+    if not core.verify_state(state_cookie, state, secret=settings.session_secret, now=int(time.time())):
+        return _login_redirect(error="invalid_state")
+    if error is not None or not code:
+        return _login_redirect(error="cancelled")
     try:
-        if not core.verify_state(state_cookie, state, secret=settings.session_secret, now=int(time.time())):
-            raise AppError("UNAUTHORIZED", "로그인 요청을 확인할 수 없습니다. 처음부터 다시 로그인해 주세요",
-                           detail={"reason": "invalid_state"})
         user = service.login_with_kakao_code(db, code=code)
-    except AppError as exc:
-        failure = error_response(exc.code, exc.message, exc.detail)
-        _clear_state_cookie(failure)
-        return failure
-    redirect = RedirectResponse(url=settings.frontend_login_redirect_url, status_code=302)
+    except service.KakaoApiError as exc:
+        logger.warning("kakao login failed: reason=%s kakao_status=%s", exc.detail.get("reason"), exc.detail.get("kakao_status"))
+        return _login_redirect(error="kakao_failed")
+    except Exception as exc:  # noqa: BLE001 — 사용자는 어떤 실패든 JSON 대신 진입점으로 돌아가야 한다
+        logger.error("kakao login failed: %s", type(exc).__name__)   # 종류만 — 메시지에 토큰·프로필이 섞일 수 있다
+        db.rollback()   # 실패한 요청이 만든 반쪽 상태를 커밋하지 않는다
+        return _login_redirect(error="server_error")
+    redirect = _login_redirect()
     _set_session_cookie(redirect, user.id)
-    _clear_state_cookie(redirect)
     return redirect
 
 
