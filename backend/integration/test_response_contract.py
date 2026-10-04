@@ -27,6 +27,7 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/maps/{mapId}/events/me"): "SSE 스트림 — realtime 테스트가 담당",
+    ("GET", "/categories/{category}/reason-chips"): "#312 — 반대 사유 칩 목록. pins가 구현하면 골든 패스에 넣고 지운다",
 }
 
 _EXERCISED: set[tuple[str, str]] = set()   # 이 모듈의 테스트들이 실제로 호출한 (메서드, 스펙 경로)

@@ -2,6 +2,19 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-04 — FE 화면 구현에서 나온 필드 6건, 반대 사유 칩 API (#60)
+
+프론트가 Figma를 구현하다 스펙에 없어 우회하던 값들이다. 모두 **추가**이고 기존 필드는 안 바뀐다. 서버(pins·maps)가 채울 때까지 새 필드는 **선택**으로 두고(서버가 못 채운 응답이 계약 테스트를 깨지 않게), 목 서버는 항상 채워 준다. 서버 이슈가 닫히면 필수로 바꾸고 다시 알린다.
+
+- **`Pin.created_at`**(date-time): 핀이 지도에 올라온 시각. 「최근 추가 순」 정렬·「최근 핀으로 이동」·「10분 전」용. AI 추천 핀은 「지도에 올리기」를 누른 시각이다.
+- **`FilterCounts.members_with_opinion`·`members_total`**(`GET /maps/{id}/counts`): 「2/4명이 의견을 남겼어요」의 2와 4. 반응을 하나라도 남긴 구성원 수(탈퇴자 제외)와 현재 구성원 수.
+- **`Map.pin_count`·`InviteSummary.pin_count`**: 「핀 12개」. 초대 요약은 핀의 이름·위치 없이 개수만 준다.
+- **`Member.role`**(`owner`·`member`): 방장 표시. `member.joined` 이벤트의 Member에도 같다.
+- **`reaction.changed` 이벤트**: 페이로드에 `user_id`·`display_name`·`type`(삭제면 null)을 더한다 — 「지우님이 반대 의견을 남겼어요」. 사유 내용은 싣지 않는다.
+- **`GET /categories/{category}/reason-chips`**(새 경로, #60): 카테고리별 반대 사유 칩 `[{id, label, fact_key?}]`. 목록의 정본은 `docs/constraints.md` 「반대 사유 칩」(음식점 6·카페 4·관광지 3·공통 2). `reason_chip_ids`에는 **id**를 보낸다 — 이름("매워요")을 그대로 보내던 것을 바꿔야 한다. 그 카테고리 목록에 없는 id는 `PUT /pins/{id}/reaction`이 422 `VALIDATION_ERROR`.
+- **FE 영향**: 타입 재생성(`npm run gen:types`). 칩 UI는 이 API로 목록을 받아 그리고 id를 보낸다. 새 필드는 서버 구현 전에는 비어 올 수 있으니(실서버 연결 시) 지금 쓰는 우회 코드는 서버 이슈가 닫히고 필수로 바뀐 뒤에 걷는다.
+- 서버 작업: pins(created_at·counts·칩·반응 이벤트), maps(pin_count·role).
+
 ## 2026-10-03 — 카테고리 정의 한 곳, 「기타」 핀 반응 불가 (#280)
 
 - 카테고리마다 핀 생성(`pinnable`)·반응(`reactable`)·추천(`recommendable`) 가능 여부를 `backend/common/categories.py` 한 곳에서 정한다. 스펙 `Category`·`RecommendCategory`, DB enum, 목 서버(`contracts/mocks/categories.ts`)와 대조 테스트로 맞춘다. enum 값은 그대로다.

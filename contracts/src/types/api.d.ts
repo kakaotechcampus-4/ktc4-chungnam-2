@@ -547,6 +547,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/categories/{category}/reason-chips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 카테고리별 반대 사유 칩 목록 (#60). 고정 목록이라 지도와 무관하다 — 로그인만 필요하다
+         * @description 해당 카테고리 칩 다음에 모든 카테고리 공통 칩이 온다. 반응할 수 없는 카테고리(숙소·기타)는 빈 배열
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    category: components["schemas"]["Category"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReasonChip"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/pins": {
         parameters: {
             query?: never;
@@ -736,7 +777,7 @@ export interface paths {
                         "application/json": components["schemas"]["Reaction"];
                     };
                 };
-                /** @description EVIDENCE_REQUIRED(반대 사유 없음, 가드레일 3) 또는 REACTION_NOT_ALLOWED(숙소 핀, */
+                /** @description EVIDENCE_REQUIRED(반대 사유 없음, 가드레일 3), REACTION_NOT_ALLOWED(숙소·기타 핀, */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -1617,9 +1658,11 @@ export interface components {
             end_date: string;
             region?: components["schemas"]["MapRegion"];
             member_count: number;
+            /** @description 지도에 올라와 있는(삭제되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청) */
+            pin_count: number;
             confirmed_count?: number;
         };
-        /** @description 초대 수락 전 화면용 요약. 지도 내용(핀 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다 */
+        /** @description 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다 */
         InviteSummary: {
             title: string;
             /** Format: date */
@@ -1627,6 +1670,8 @@ export interface components {
             /** Format: date */
             end_date: string;
             member_count: number;
+            /** @description 지도에 올라와 있는 핀 수 — 초대 카드 「핀 12개」 표시용 (2026-10-04, FE 요청) */
+            pin_count: number;
             /** @description 초대 링크를 발급한 사람. 탈퇴했으면 '탈퇴한 구성원' */
             inviter_display_name: string;
             /** Format: date-time */
@@ -1640,6 +1685,11 @@ export interface components {
         };
         Member: {
             user_id: string;
+            /**
+             * @description owner = 지도를 만든 사람(방장), 나머지는 member. 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)
+             * @enum {string}
+             */
+            role: "owner" | "member";
             display_name?: string;
             online?: boolean;
         };
@@ -1734,6 +1784,11 @@ export interface components {
             place_url?: string;
             /** @description 핀을 찍은 구성원의 user_id (#26) */
             created_by: string;
+            /**
+             * Format: date-time
+             * @description 핀이 지도에 올라온 시각. AI 추천 핀은 「지도에 올리기」를 누른 시각이다. 「최근 추가 순」 정렬, 「최근 핀으로 이동」, 「10분 전」 표시용 (2026-10-04, FE 요청)
+             */
+            created_at: string;
             /** @description 핀 상세에서 '누가 찍었는지' 표시용 (#26) */
             created_by_display_name?: string;
             price_bucket?: components["schemas"]["PriceBucket"];
@@ -1757,6 +1812,7 @@ export interface components {
             /** @enum {string} */
             type: "like" | "neutral" | "against";
             reason_text?: string;
+            /** @description GET /categories/{category}/reason-chips가 준 칩의 id. 그 핀의 카테고리 목록에 없는 id는 422 VALIDATION_ERROR (2026-10-04, #60). 반대(against)에서만 보낸다 */
             reason_chip_ids?: string[];
         };
         Reaction: {
@@ -1765,11 +1821,25 @@ export interface components {
             /** @enum {string} */
             type: "like" | "neutral" | "against";
             reason_text?: string;
+            /** @description 반대 사유 칩 id (ReasonChip.id) */
             reason_chip_ids?: string[];
             /** @description GET /pins/{pinId}/reactions 전용 — 의견 목록에 표시할 이름 */
             display_name?: string;
         };
+        /** @description 반대(🚫) 사유로 고를 수 있는 미리 정의된 칩 (#60, 2026-10-04). 목록의 정본은 docs/constraints.md 「반대 사유 칩」 표 */
+        ReasonChip: {
+            /** @description 안정적인 식별자(예: food_spicy). 반응 요청의 reason_chip_ids에 넣는다. 이름이 바뀌어도 id는 바뀌지 않는다 */
+            id: string;
+            /** @description 화면에 보이는 이름(예: 매워요) */
+            label: string;
+            /** @description 이 칩이 뜻하는 조건의 fact_key. 있을 때만. v1에서는 힌트일 뿐이다 — 서버는 칩 label을 사유 문장으로 ②에 넘기는 기존 경로를 그대로 쓴다 */
+            fact_key?: string;
+        };
         FilterCounts: {
+            /** @description 이 지도의 핀에 ♥·△·🚫 반응을 하나라도 남긴 구성원 수. 「2/4명이 의견을 남겼어요」의 2. 탈퇴한 구성원은 세지 않는다 (2026-10-04, FE 요청) */
+            members_with_opinion: number;
+            /** @description 현재 구성원 수(= Map.member_count). 「2/4명」의 4 */
+            members_total: number;
             by_category: {
                 [key: string]: number;
             };
