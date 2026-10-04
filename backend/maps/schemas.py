@@ -6,6 +6,7 @@ None으로 둔다. 라우터가 response_model_exclude_none=True를 쓰므로 �
 """
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -58,6 +59,9 @@ class InviteSummary(BaseModel):
 
 class Member(BaseModel):
     user_id: str
+    # owner = maps.created_by(지도를 만든 사람), 나머지 member. memberships.role 컬럼이 아니라
+    # created_by가 정본이다(#313).
+    role: Literal["owner", "member"] | None = None
     # users 테이블이 없다(auth #4) — 채울 수 없다.
     display_name: str | None = None
     # 접속 상태 추적이 realtime에 아직 없다 — 채울 수 없다(maps/for_Root.md 항목 5).

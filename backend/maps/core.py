@@ -129,11 +129,14 @@ def to_map_response(record: MapRecord, *, member_count: int, confirmed_count: in
     )
 
 
-def to_member_response(user_id: str, *, display_name: str | None, online: bool | None) -> Member:
+def to_member_response(
+    user_id: str, *, owner_id: str, display_name: str | None, online: bool | None
+) -> Member:
     """display_name은 auth.api.display_names로 채운다(루트, maps/for_Root.md 항목 5 해결).
     online은 여전히 채울 데이터 출처가 없다(realtime에 presence 없음, #32 별건) — user_id로
     대체하거나 False로 채우지 않는다(그럴싸해 보이는 거짓 fallback이다)."""
-    return Member(user_id=user_id, display_name=display_name, online=online)
+    role = "owner" if user_id == owner_id else "member"
+    return Member(user_id=user_id, role=role, display_name=display_name, online=online)
 
 
 def member_joined_event(map_id: str, member: Member) -> Event:

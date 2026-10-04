@@ -96,8 +96,13 @@ def test_map_response_includes_confirmed_count_when_known():
 def test_member_response_omits_display_name_and_online_when_unknown():
     """user_id로 display_name을 대체하거나 online=False로 채우면 그럴싸해 보이는 거짓
     fallback이 된다 — 둘 다 응답에서 빠져야 한다."""
-    response = core.to_member_response("user_1", display_name=None, online=None)
-    assert response.model_dump(exclude_none=True) == {"user_id": "user_1"}
+    response = core.to_member_response("user_1", owner_id="user_1", display_name=None, online=None)
+    assert response.model_dump(exclude_none=True) == {"user_id": "user_1", "role": "owner"}
+
+
+def test_member_response_role_is_owner_only_for_creator():
+    assert core.to_member_response("u1", owner_id="u1", display_name=None, online=None).role == "owner"
+    assert core.to_member_response("u2", owner_id="u1", display_name=None, online=None).role == "member"
 
 
 def test_member_joined_event_shape():
