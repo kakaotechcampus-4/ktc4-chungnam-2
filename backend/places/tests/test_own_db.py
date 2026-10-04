@@ -516,3 +516,64 @@ def test_cli_restaurants_dry_run_with_labels_writes_nothing(db_session, mini_con
 def test_cli_restaurants_missing_labels_file_exits_2(db_session, capsys):
     assert load.main(["restaurants", "--file", str(CURATED_CSV), "--labels", "/no/such.json"],
                      session_factory=lambda: _NoCloseSession(db_session)) == 2
+
+
+# ---- 카페 납품본 (#266) — 가상 카페 fixtures만 쓴다(실데이터는 저장소 밖) ----
+
+CAFE_CSV = FIX / "cafe_curated_sample.csv"
+CAFE_LABELS_JSON = FIX / "cafe_curated_labels.json"
+CAFE_LABELS_CSV = FIX / "cafe_curated_labels.csv"
+
+
+def _cafes(db, **kw):
+    return load.load_cafes(db, CAFE_CSV, labels=kw.pop("labels", None), constraints=CONSTRAINTS, **kw)
+
+
+def _fact_rows(db):
+    return sorted(
+        (p.source_id, f.fact_key, f.value, f.confidence, f.evidence, f.label_source)
+        for f, p in db.execute(select(PlaceFact, Place).join(Place, Place.id == PlaceFact.place_id))
+    )
+
+
+def test_cafes_load_as_cafe_category_and_skip_unknown_types_and_missing_coordinates(db_session):
+    lines = _cafes(db_session)
+    rows = db_session.execute(select(Place)).scalars().all()
+    assert len(rows) == 8 and {p.category for p in rows} == {"카페"} and {p.source for p in rows} == {"permit"}
+    assert {p.source_id for p in rows} == {f"C00{i}" for i in range(1, 9)}
+    assert any("모르는 업태: 북카페: 1" in l for l in lines) and any("좌표 없음: 1" in l for l in lines)
+    near = api.search_nearby_own("카페", [Area(37.5446, 127.0562, 100)], db=db_session)
+    assert len(near) == 1   # 카페 분류로 반경 검색에 잡힌다
+    assert api.search_nearby_own("음식점", [Area(37.5446, 127.0562, 100)], db=db_session) == []
+
+
+def test_cafes_load_is_idempotent(db_session):
+    _cafes(db_session, labels=CAFE_LABELS_JSON)
+    places, facts = (db_session.scalar(select(func.count()).select_from(t)) for t in (Place, PlaceFact))
+    lines = _cafes(db_session, labels=CAFE_LABELS_JSON)
+    assert db_session.scalar(select(func.count()).select_from(Place)) == places == 8
+    assert db_session.scalar(select(func.count()).select_from(PlaceFact)) == facts
+    assert any("신규 0, 갱신 8" in l for l in lines)
+
+
+def test_cafe_labels_json_and_csv_paths_give_the_same_result(db_session):
+    """라벨 JSON(cafe_ 접두어)을 --labels로 넣은 결과와, 기존 labels 명령(CSV)으로 넣은 결과가 같다."""
+    _cafes(db_session, labels=CAFE_LABELS_JSON)
+    via_json = _fact_rows(db_session)
+    db_session.execute(PlaceFact.__table__.delete())
+    load.load_labels(db_session, CAFE_LABELS_CSV, constraints=CONSTRAINTS, encoding=None)
+    via_csv = _fact_rows(db_session)
+    assert via_json == via_csv and len(via_json) == 7
+    assert next(r for r in via_json if r[:2] == ("C001", "quiet"))[2:4] == (None, "unknown")   # unknown은 값 없이 그대로 보인다
+
+
+def test_cafes_command_accepts_labels_csv_too(db_session):
+    lines = _cafes(db_session, labels=CAFE_LABELS_CSV)
+    assert len(_fact_rows(db_session)) == 7
+    assert any("장소를 못 찾아 건너뜀 1" in l for l in lines)   # C404: 장소 없는 라벨
+
+
+def test_cafes_cli_dry_run_writes_nothing(db_session, capsys):
+    rc = load.main(["cafes", "--file", str(CAFE_CSV), "--labels", str(CAFE_LABELS_JSON), "--dry-run"], session_factory=lambda: db_session)
+    assert rc == 0 and "dry-run" in capsys.readouterr().out
+    assert db_session.scalar(select(func.count()).select_from(Place)) == 0
