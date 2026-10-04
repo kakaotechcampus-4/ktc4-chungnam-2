@@ -2,6 +2,11 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-04 (네 번째) — v1에서 발행하지 않는 이벤트를 문서에 못 박는다
+
+- `run.progress`·`run.failed`·`member.presence`는 **v1 서버가 발행하지 않는다**(`docs/events.md`「v1에서 발행하지 않는 이벤트」). 추천 실행이 요청 안에서 동기로 끝나 이벤트가 끝에 한꺼번에 나가고, 실패는 롤백돼 저장되지 않기 때문이다. 스펙·코드의 변화는 없고 **문서가 실제와 달랐던 것을 고친다**.
+- **FE 영향**: 추천 진행 표시는 자체 애니메이션(실행 요청이 돌아오면 끝), 실패는 실행 요청의 HTTP 응답(500 `RECOMMEND_FAILED`·429 `RETRY_LIMIT`)으로 처리한다. 구성원 접속 점(`online`)은 그리지 않는다. 결과의 정본은 `GET /runs/{id}/result`다.
+
 ## 2026-10-04 (세 번째) — 서버가 채우기 시작한 필드를 필수로 바꾼다, PATCH evidence 500 선언
 
 - **필수로 전환**: `Pin.created_at`(#321), `FilterCounts.members_with_opinion`·`members_total`(#321), `Member.role`(#319). 서버가 항상 채우므로 FE 타입에서 optional이 사라진다(`?` 제거) — **타입 재생성 후 우회 코드를 걷어도 된다**: 「최근 추가 순」 정렬(서버 순서를 거꾸로 쓰던 것)은 `created_at`으로, 의견 남긴 구성원 수는 `members_with_opinion`/`members_total`로, 방장 표시는 `role === "owner"`로.
