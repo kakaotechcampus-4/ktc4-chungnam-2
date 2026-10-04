@@ -94,7 +94,7 @@ def test_accept_invite_adds_member_and_emits_event(app_client, db_session):
     assert len(events) == 1
     assert events[0].channel == "public"
     assert events[0].recipient_user_id is None
-    assert events[0].payload == {"user_id": "user_2", "display_name": "user_2"}
+    assert events[0].payload == {"user_id": "user_2", "role": "member", "display_name": "user_2"}
 
 
 def test_accept_invite_twice_is_idempotent(app_client, db_session):
