@@ -299,3 +299,73 @@ class TestMakeClient:
         user_message = client.calls[0]["messages"][1]["content"]
         assert '"index": 0' in user_message
         assert "갑각류 알러지 있어요" in user_message
+
+
+class BatchClient(FakeClient):
+    """묶음마다 입력 payload의 text를 그대로 에코한다. fail_on_call은 그 번째(0부터) 호출에서 실패한다."""
+
+    def __init__(self, fail_on_call=None):
+        super().__init__()
+        self._fail_on_call = fail_on_call
+
+    def _parse(self, **kwargs):
+        if self._fail_on_call == len(self.calls):
+            self.calls.append(kwargs)
+            raise openai.APITimeoutError(request=httpx.Request("POST", "http://x"))
+        self.calls.append(kwargs)
+        payload = json.loads(kwargs["messages"][1]["content"])
+        parsed = _output(*[_planned(text=item["text"], badge=item["badge"]) for item in payload])
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(parsed=parsed, refusal=None))])
+
+
+def _many(n):
+    return [_reason(text=f"사유 {i}번") for i in range(n)]
+
+
+class TestBatching:
+    @pytest.mark.parametrize("count,calls", [(1, 1), (10, 1), (11, 2), (20, 2), (21, 3), (28, 3)])
+    def test_split_boundaries(self, count, calls):
+        client = BatchClient()
+
+        result = _planner(client)(_many(count))
+
+        assert len(client.calls) == calls
+        sizes = [len(json.loads(c["messages"][1]["content"])) for c in client.calls]
+        assert sizes == [min(10, count - i * 10) for i in range(calls)]
+        assert len(result) == count
+
+    def test_order_is_preserved_across_batches(self):
+        reasons = _many(23)
+
+        result = plan_evidence(reasons, planner=_planner(BatchClient()))
+
+        assert [line.text for line in result] == [r["text"] for r in reasons]
+        assert [line.author_id for line in result] == ["u1"] * 23
+
+    def test_each_batch_is_indexed_from_zero(self):
+        client = BatchClient()
+
+        _planner(client)(_many(12))
+
+        second = json.loads(client.calls[1]["messages"][1]["content"])
+        assert [item["index"] for item in second] == [0, 1]
+
+    @pytest.mark.parametrize("fail_on_call", [0, 1, 2])
+    def test_one_failed_batch_fails_everything(self, fail_on_call):
+        client = BatchClient(fail_on_call=fail_on_call)
+
+        with pytest.raises(PlanEvidenceFailed):
+            plan_evidence(_many(25), planner=_planner(client))
+
+        assert len(client.calls) == fail_on_call + 1  # 실패 뒤 묶음은 부르지 않는다
+
+    def test_echo_check_runs_on_merged_result(self):
+        class Swapped(BatchClient):
+            def _parse(self, **kwargs):
+                result = super()._parse(**kwargs)
+                if len(self.calls) == 2:  # 둘째 묶음에서 text를 바꿔 지어낸다
+                    result.choices[0].message.parsed.evidence_lines[0].text = "지어낸 사유"
+                return result
+
+        with pytest.raises(PlanEvidenceFailed):
+            plan_evidence(_many(15), planner=_planner(Swapped()))
