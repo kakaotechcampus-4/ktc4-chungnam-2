@@ -7,26 +7,53 @@
 import secrets
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select, update
+from geoalchemy2 import Geometry
+from sqlalchemy import cast, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from auth import api as auth_api
 from common.errors import AppError
 from common.events import record_event
 from maps import core
 from maps.models import Invite as InviteRow
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
-from maps.schemas import Invite, Map, MapCreateRequest, Member
+from maps.schemas import Invite, InviteSummary, Map, MapCreateRequest, Member
+from shortlist import api as shortlist_api
 
 INVITE_TOKEN_BYTES = 32  # secrets.token_urlsafe(32) — 256비트, 소지자가 곧 가입 권한을 갖는
 # bearer capability라 uuid4가 아니라 secrets 모듈을 쓴다(예측 불가능성이 목적, 유일성이 아니다).
 
 
-def _member_count(db: Session, map_id: str) -> int:
-    return db.execute(
-        select(func.count()).select_from(MembershipRow).where(MembershipRow.map_id == map_id)
-    ).scalar_one()
+def _member_counts(db: Session, map_ids: list[str]) -> dict[str, int]:
+    """탈퇴하지 않은 구성원 수(#245) — Map.member_count와 recommend 준비 판정 N이 쓴다.
+    구성원 목록(list_members)은 핀 작성자 표기용으로 탈퇴자를 남기지만(#155) 수에서는 뺀다.
+    GET /maps 목록용 배치이기도 하다 — N개 지도에 N번 쿼리하지 않는다(memberships 한 번 +
+    auth.api.withdrawn_user_ids 한 번). map_ids가 비어 있으면 쿼리 자체를 건너뛴다."""
+    if not map_ids:
+        return {}
+    rows = db.execute(
+        select(MembershipRow.map_id, MembershipRow.user_id).where(MembershipRow.map_id.in_(map_ids))
+    ).all()
+    withdrawn = auth_api.withdrawn_user_ids(db, list({user_id for _, user_id in rows}))
+    counts = {map_id: 0 for map_id in map_ids}
+    for map_id, user_id in rows:
+        if user_id not in withdrawn:
+            counts[map_id] += 1
+    return counts
+
+
+def member_count(db: Session, map_id: str) -> int:
+    return _member_counts(db, [map_id])[map_id]
+
+
+def _region_lat_lng_columns():
+    """geom::geometry 캐스트 후 ST_X/ST_Y로 좌표를 뽑는다(pins/service.py::_lat_lng_columns와
+    동일 패턴 — geography 컬럼엔 ST_X/ST_Y가 직접 안 먹는다). region_center가 NULL이면
+    ST_X/ST_Y도 NULL을 돌려주므로 region 없는 지도도 그대로 섞어 쿼리할 수 있다."""
+    geom_as_geometry = cast(MapRow.region_center, Geometry())
+    return func.ST_Y(geom_as_geometry).label("region_lat"), func.ST_X(geom_as_geometry).label("region_lng")
 
 
 def get_map_or_404(db: Session, map_id: str) -> MapRow:
@@ -36,12 +63,22 @@ def get_map_or_404(db: Session, map_id: str) -> MapRow:
     return row
 
 
-def _map_response(db: Session, map_row: MapRow) -> Map:
-    record = core.MapRecord(
-        id=map_row.id, title=map_row.title, start_date=map_row.start_date, end_date=map_row.end_date
+def _map_record(db: Session, map_row: MapRow) -> core.MapRecord:
+    lat_col, lng_col = _region_lat_lng_columns()
+    region_lat, region_lng = db.execute(
+        select(lat_col, lng_col).where(MapRow.id == map_row.id)
+    ).one()
+    return core.MapRecord(
+        id=map_row.id, title=map_row.title, start_date=map_row.start_date, end_date=map_row.end_date,
+        region_label=map_row.region_label, region_lat=region_lat, region_lng=region_lng,
     )
+
+
+def _map_response(db: Session, map_row: MapRow) -> Map:
     return core.to_map_response(
-        record, member_count=_member_count(db, map_row.id), confirmed_count=None
+        _map_record(db, map_row),
+        member_count=member_count(db, map_row.id),
+        confirmed_count=shortlist_api.count_confirmed(db, map_id=map_row.id),
     )
 
 
@@ -53,11 +90,16 @@ def create_map(db: Session, *, req: MapCreateRequest, creator_id: str) -> Map:
     "첫 핀 좌표로 확정"한다고 정의하는데, 이 시점엔 핀이 0개라 region을 채울 방법이 없다
     (maps/CLAUDE.md 완료 정의와의 모순 — maps/for_Root.md 항목 2로 보고). 로그만 찍는 no-op
     훅은 완료 정의 체크박스만 채우는 가짜 구현이라 만들지 않는다."""
-    new_map = core.validate_map_create(req.title, req.start_date, req.end_date)
+    new_map = core.validate_map_create(req.title, req.start_date, req.end_date, req.region)
 
     map_row = MapRow(
         title=new_map.title, start_date=new_map.start_date, end_date=new_map.end_date,
         created_by=creator_id,
+        region_label=new_map.region.label if new_map.region else None,
+        region_center=(
+            func.ST_SetSRID(func.ST_MakePoint(new_map.region.lng, new_map.region.lat), 4326)
+            if new_map.region else None
+        ),
     )
     db.add(map_row)
     db.flush()  # map_row.id 확정 — 멤버십 행이 참조해야 한다
@@ -73,10 +115,48 @@ def get_map_response(db: Session, *, map_id: str) -> Map:
     return _map_response(db, map_row)
 
 
+def list_maps(db: Session, *, user_id: str) -> list[Map]:
+    """내가 구성원인 지도, 최근 생성순(#24, docs/CHANGELOG-api.md 2026-09-28). 특정 mapId를
+    전제하는 require_map_member()류 가드를 못 쓴다 — memberships를 user_id로 조인하는
+    전용 쿼리다.
+
+    member_count는 지도별로 따로 쿼리하지 않는다 — _member_counts가 이번 결과에 나온
+    map_id 전체를 한 번의 GROUP BY로 집계한다. region_lat/region_lng도 이 목록 쿼리 자체의
+    SELECT 절에 포함시켜서(join이 아니라 같은 행의 계산 컬럼) 지도당 추가 쿼리가 없다.
+    confirmed_count는 shortlist_api.count_confirmed에 배치 버전이 없어 지도당 한 번씩
+    호출한다 — 이 모듈이 shortlist/api.py를 소유하지 않아 여기서 배치화할 수 없다(maps/for_Root.md
+    보고 대상)."""
+    lat_col, lng_col = _region_lat_lng_columns()
+    rows = db.execute(
+        select(MapRow, lat_col, lng_col)
+        .join(MembershipRow, MembershipRow.map_id == MapRow.id)
+        .where(MembershipRow.user_id == user_id)
+        .order_by(MapRow.created_at.desc())
+    ).all()
+    if not rows:
+        return []
+
+    counts = _member_counts(db, [map_row.id for map_row, _, _ in rows])
+    return [
+        core.to_map_response(
+            core.MapRecord(
+                id=map_row.id, title=map_row.title, start_date=map_row.start_date,
+                end_date=map_row.end_date, region_label=map_row.region_label,
+                region_lat=region_lat, region_lng=region_lng,
+            ),
+            member_count=counts.get(map_row.id, 0),
+            confirmed_count=shortlist_api.count_confirmed(db, map_id=map_row.id),
+        )
+        for map_row, region_lat, region_lng in rows
+    ]
+
+
 def create_invite(db: Session, *, map_id: str, creator_id: str, base_url: str) -> Invite:
-    """base_url은 router가 만든 값을 그대로 받는다(request.base_url 기반) — FE 오리진의
-    정본이 없어(maps/for_Root.md 항목 8) 이 링크는 지금 브라우저로 바로 열 수 있는 페이지가
-    아니라는 한계가 있다. 값을 지어내는 대신 그 사실을 그대로 안고 간다."""
+    """base_url은 router가 만든 값을 그대로 받는다 — settings.frontend_base_url이 있으면
+    그 값(FE 오리진, 루트 확정 2026-09-23 — maps/for_Root.md 항목 6 해결), 없으면 예전처럼
+    request.base_url(백엔드 자신의 주소). 결과 URL은 `/invites/{token}` 경로를 프론트의
+    "초대 수락 화면"(#4 잔여 항목)이 받아서 POST /invites/{token}/accept를 호출하는 걸
+    전제로 한다."""
     token = secrets.token_urlsafe(INVITE_TOKEN_BYTES)
     now = datetime.now(timezone.utc)
     expires_at = core.invite_expires_at(now)
@@ -88,6 +168,29 @@ def create_invite(db: Session, *, map_id: str, creator_id: str, base_url: str) -
     return Invite(token=token, url=core.build_invite_url(base_url, token), expires_at=expires_at)
 
 
+def _acceptable_invite_or_raise(db: Session, token: str) -> InviteRow:
+    """없으면 404 INVITE_NOT_FOUND, 만료면 410 INVITE_EXPIRED — 조회와 수락이 공유한다."""
+    invite_row = db.execute(select(InviteRow).where(InviteRow.token == token)).scalar_one_or_none()
+    if invite_row is None:
+        raise AppError("INVITE_NOT_FOUND")
+    core.check_invite_acceptable(invite_row.expires_at, datetime.now(timezone.utc))
+    return invite_row
+
+
+def get_invite_summary(db: Session, *, token: str) -> InviteSummary:
+    """로그인 없이 호출된다(#23) — 토큰이 곧 접근 권한이라 제목·기간·구성원 수·초대자 이름만
+    돌려준다. 쓰기 없음(used_count도 안 올린다)."""
+    invite_row = _acceptable_invite_or_raise(db, token)
+    map_row = get_map_or_404(db, invite_row.map_id)
+    inviter_name = auth_api.display_names(db, [invite_row.created_by]).get(invite_row.created_by)
+    return core.to_invite_summary(
+        _map_record(db, map_row),
+        member_count=member_count(db, map_row.id),
+        inviter_display_name=inviter_name,
+        expires_at=invite_row.expires_at,
+    )
+
+
 def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
     """순서가 핵심이다 — 존재·만료 확인 → 멤버십 upsert → used_count/이벤트(실제 가입 시에만).
     ON CONFLICT DO NOTHING을 쓴다(DO UPDATE 아님) — owner가 자기 초대를 열어도 role이
@@ -95,12 +198,7 @@ def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
     패턴을 여기선 쓰지 않는다 — 그 패턴의 db.rollback()은 같은 요청의 앞선 쓰기를 전부
     날리는데, 여기선 boolean 하나만 있으면 되고 pins/service.py::set_reaction이 이미
     pg_insert(...).on_conflict_do_update를 쓰는 선례가 있다(마이너 스킬 디테일)."""
-    invite_row = db.execute(select(InviteRow).where(InviteRow.token == token)).scalar_one_or_none()
-    if invite_row is None:
-        raise AppError("UNAUTHORIZED", "초대 링크가 유효하지 않거나 만료되었습니다")
-
-    now = datetime.now(timezone.utc)
-    core.check_invite_acceptable(invite_row.expires_at, now)
+    invite_row = _acceptable_invite_or_raise(db, token)
 
     stmt = (
         pg_insert(MembershipRow)
@@ -116,15 +214,27 @@ def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
             .where(InviteRow.token == token)
             .values(used_count=InviteRow.used_count + 1)
         )
-        member = core.to_member_response(user_id, display_name=None, online=None)
-        record_event(db, core.member_joined_event(invite_row.map_id, member))
+        name = auth_api.display_names(db, [user_id]).get(user_id)
 
     map_row = get_map_or_404(db, invite_row.map_id)
+    if created:
+        member = core.to_member_response(
+            user_id, owner_id=map_row.created_by, display_name=name, online=None
+        )
+        record_event(db, core.member_joined_event(invite_row.map_id, member))
     return _map_response(db, map_row)
 
 
 def list_members(db: Session, *, map_id: str) -> list[Member]:
+    owner_id = get_map_or_404(db, map_id).created_by
     rows = db.execute(
         select(MembershipRow).where(MembershipRow.map_id == map_id).order_by(MembershipRow.joined_at)
     ).scalars().all()
-    return [core.to_member_response(row.user_id, display_name=None, online=None) for row in rows]
+    # 배치 조회 — N명에 N번 쿼리하지 않는다(auth.api.display_names 자체가 배치용으로 설계됨).
+    names = auth_api.display_names(db, [row.user_id for row in rows])
+    return [
+        core.to_member_response(
+            row.user_id, owner_id=owner_id, display_name=names.get(row.user_id), online=None
+        )
+        for row in rows
+    ]

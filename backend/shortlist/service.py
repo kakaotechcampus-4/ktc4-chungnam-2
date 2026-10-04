@@ -5,12 +5,22 @@ shortlist/core.py로, pins 테이블을 건드리는 부분은 shortlist/flows.p
 
 import uuid
 
-from sqlalchemy import delete, select
+from sqlalchemy import BigInteger, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from common.errors import AppError
+from shortlist import core
+from shortlist.models import Route as RouteRow
 from shortlist.models import ShortlistItem as ShortlistItemRow
+from shortlist.schemas import Route
+
+
+def lock_shortlist(db: Session, map_id: str) -> None:
+    """같은 지도의 확정 리스트 변경(추가·제외·수동 정렬)을 직렬화하는 트랜잭션 범위 advisory
+    lock — replace_routes와 같은 패턴이되 키에 접두어를 둬서 동선 재계산 lock과 서로 막지
+    않는다. 커밋/롤백 시 자동 해제된다."""
+    db.execute(select(func.pg_advisory_xact_lock(func.hashtext(f"shortlist:{map_id}").cast(BigInteger))))
 
 
 def _find_existing_item(db: Session, map_id: str, pin_id: str) -> ShortlistItemRow:
@@ -26,6 +36,7 @@ def add_item(db: Session, *, map_id: str, pin_id: str, added_by: str) -> tuple[S
     (pins.api.create_ai_pin과 같은 패턴 — db.rollback()을 begin_nested()와 함께 반드시 부른다,
     안 그러면 세션이 PendingRollbackError로 죽는다). 반환한 bool이 flows.confirm_pin의 멱등
     분기 기준이다 — False면 pins.kind 재변경도 이벤트도 건너뛴다."""
+    lock_shortlist(db, map_id)
     row = ShortlistItemRow(map_id=map_id, pin_id=uuid.UUID(pin_id), added_by=added_by)
     db.add(row)
     try:
@@ -59,10 +70,84 @@ def delete_item(db: Session, item_id: str) -> None:
 
 
 def list_items(db: Session, *, map_id: str) -> list[ShortlistItemRow]:
+    """화면에 보이는 순서 — 수동 정렬(visit_order)이 있으면 그 순서, NULL(정렬 전에 추가된
+    항목)은 뒤로, 동률은 added_at·id 순이다. added_at만으로는 같은 트랜잭션에서 여러 핀을
+    연달아 확정하면 타임스탬프가 같을 수 있어 id를 마지막 기준으로 둔다."""
     return list(
         db.execute(
             select(ShortlistItemRow)
             .where(ShortlistItemRow.map_id == map_id)
-            .order_by(ShortlistItemRow.added_at)
+            .order_by(
+                ShortlistItemRow.visit_order.asc().nulls_last(),
+                ShortlistItemRow.added_at,
+                ShortlistItemRow.id,
+            )
+        ).scalars()
+    )
+
+
+def list_items_by_added(db: Session, *, map_id: str) -> list[ShortlistItemRow]:
+    """동선 계산 입력용 — visit_order를 보지 않는다(수동 정렬과 동선은 무관, data-model.md).
+    동선 구역 번호·투어 시작점이 수동 정렬에 흔들리지 않도록 추가된 순서로 고정한다."""
+    return list(
+        db.execute(
+            select(ShortlistItemRow)
+            .where(ShortlistItemRow.map_id == map_id)
+            .order_by(ShortlistItemRow.added_at, ShortlistItemRow.id)
+        ).scalars()
+    )
+
+
+def reorder_items(db: Session, *, map_id: str, item_ids: list[str]) -> list[ShortlistItemRow]:
+    """item_ids 순서대로 visit_order를 0..N-1로 쓴다. 현재 확정 항목과 정확히 같은 집합이
+    아니면(누락·중복·다른 지도 항목) 422. lock을 잡은 뒤에 현재 집합을 읽어야 동시 추가·제외와
+    어긋나지 않는다."""
+    lock_shortlist(db, map_id)
+    rows = list_items(db, map_id=map_id)
+    mismatch = core.reorder_mismatch([str(row.id) for row in rows], item_ids)
+    if mismatch is not None:
+        raise AppError("VALIDATION_ERROR", detail=mismatch)
+    by_id = {str(row.id): row for row in rows}
+    ordered = [by_id[item_id] for item_id in item_ids]
+    for index, row in enumerate(ordered):
+        row.visit_order = index
+    db.flush()
+    return ordered
+
+
+def replace_routes(db: Session, *, map_id: str, routes: list[Route]) -> list[RouteRow]:
+    """POST /maps/{mapId}/route 계약대로 해당 map_id의 기존 행을 지우고 새로 쓴다 — 부분
+    갱신은 없다(docs/data-model.md 100-108행). DELETE·INSERT를 같은 트랜잭션에서 실행해
+    GET이 빈 배열을 보는 순간을 만들지 않는다(호출자인 shortlist/flows.py::recalculate_route가
+    커밋 전까지 이 세션을 그대로 들고 있는다).
+
+    같은 map_id에 대한 재계산 요청 두 개가 동시에 들어오면(더블 클릭, 두 구성원이 동시에 버튼을
+    누름) DELETE와 INSERT가 경합해 uq_routes_map_region 유니크 제약을 위반할 수 있다(Antigravity
+    검수 지적, 실제로 재현 가능한 경합임을 확인). 트랜잭션 범위 advisory lock으로 같은 map_id의
+    재계산을 직렬화한다 — 커밋/롤백 시 자동 해제되므로 별도 unlock이 필요 없다."""
+    db.execute(select(func.pg_advisory_xact_lock(func.hashtext(map_id).cast(BigInteger))))
+    db.execute(delete(RouteRow).where(RouteRow.map_id == map_id))
+    rows = [
+        RouteRow(
+            map_id=map_id,
+            region_label=route.region_label,
+            ordered_pin_ids=route.ordered_pin_ids,
+            total_distance_m=route.total_distance_m,
+            legs=[leg.model_dump() for leg in route.legs],
+        )
+        for route in routes
+    ]
+    db.add_all(rows)
+    db.flush()
+    return rows
+
+
+def list_routes(db: Session, *, map_id: str) -> list[RouteRow]:
+    # region_label("구역 N")로 정렬 — routing.compute_routes가 만드는 지역 수는 v1 실사용
+    # 범위에서 한 자릿수를 벗어나지 않을 것으로 보고 문자열 정렬을 그대로 쓴다(구역 10 이상이면
+    # "구역 10"이 "구역 2"보다 앞에 오는 사전식 정렬 함정이 있음 — for_Root.md에 남김).
+    return list(
+        db.execute(
+            select(RouteRow).where(RouteRow.map_id == map_id).order_by(RouteRow.region_label)
         ).scalars()
     )

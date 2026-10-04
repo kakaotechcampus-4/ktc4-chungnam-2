@@ -4,6 +4,45 @@
  */
 
 export interface paths {
+    "/auth/kakao/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 로그인 시작 (#128). state를 만들어 카카오 인가 화면으로 302. 브라우저를 이 주소로 **이동**시킨다(fetch 아님)
+         * @description 로그인 CSRF를 막으려고 서버가 `state`를 만들어 서명한 httpOnly 쿠키(`kakao_oauth_state`, 경로 `/auth/kakao`, 10분)에 넣고
+         *     같은 값을 붙여 카카오 인가 URL로 보낸다. 콜백이 그 쿠키와 `state`를 대조한다. 프론트는 카카오 인가 URL을 직접 만들지 않는다 —
+         *     `${VITE_API_BASE_URL}/auth/kakao/login`으로 `window.location`을 옮기기만 한다(client_id·redirect_uri를 프론트가 알 필요가 없다).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 카카오 인가 화면(`https://kauth.kakao.com/oauth/authorize?...&state=...`)으로 리다이렉트. `Set-Cookie: kakao_oauth_state` */
+                302: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/kakao/callback": {
         parameters: {
             query?: never;
@@ -14,8 +53,13 @@ export interface paths {
         /** 카카오 OAuth 콜백. httpOnly 쿠키 발급 (13절 "토큰을 프론트에 두지 않는다") */
         get: {
             parameters: {
-                query: {
-                    code: string;
+                query?: {
+                    /** @description 카카오가 준 인가 코드. 사용자가 카카오 화면에서 취소하면 없고 error가 대신 온다(2026-10-04부터 선택) */
+                    code?: string;
+                    /** @description 로그인 시작 때 서버가 만든 값을 카카오가 그대로 돌려준다. 쿠키와 다르거나 없으면 실패(`login_error=invalid_state`) */
+                    state?: string;
+                    /** @description 카카오가 실패·취소 때 붙이는 값(예: access_denied). 있으면 로그인하지 않고 `login_error=cancelled`로 돌려보낸다 */
+                    error?: string;
                 };
                 header?: never;
                 path?: never;
@@ -23,7 +67,12 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description 로그인 성공 시 진입점으로 리다이렉트 */
+                /**
+                 * @description **성공이든 실패든 항상 302다** — 이 경로는 fetch가 아니라 브라우저 이동이라 JSON을 돌려주면 사용자가 그대로 본다(2026-10-04).
+                 *     성공: 진입점(`FRONTEND_LOGIN_REDIRECT_URL`)으로, 세션 쿠키와 함께.
+                 *     실패: 같은 주소에 쿼리 `?login_error=<값>`을 붙여 돌려보내고 세션 쿠키는 만들지 않는다. state 쿠키는 성공·실패 모두 지운다.
+                 *     `login_error` 값: `cancelled`(사용자가 카카오 화면에서 취소), `invalid_state`(state 쿠키와 다르거나 없음 — 처음부터 다시), `kakao_failed`(카카오 토큰 교환·프로필 조회 실패), `server_error`(그 밖의 실패).
+                 */
                 302: {
                     headers: {
                         [name: string]: unknown;
@@ -74,7 +123,41 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** 내 표시 이름 수정 — 계정 단위(모든 지도에 같은 이름, 2026-09-30). 지도마다 다른 이름은 두지 않는다 */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UserUpdateRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["User"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description VALIDATION_ERROR — display_name이 비었거나 50자 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/auth/logout": {
@@ -120,7 +203,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 탈퇴. 연결된 사유·반응 기록도 함께 삭제 (12절) */
+        /**
+         * 탈퇴 (12절, #155 결정). users 행은 soft delete, 반응·반대 사유·근거 줄은 삭제한다.
+         *     그 사람이 찍은 핀과 확정 리스트 항목은 남고, 작성자(created_by_display_name)는 "탈퇴한 구성원"으로 내려간다.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -152,7 +238,27 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 속한 지도가 없으면 빈 배열 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Map"][];
+                    };
+                };
+            };
+        };
         put?: never;
         /** 지도 생성. 생성 시 seeding 잡을 트리거한다 (architecture.md 3절) */
         post: {
@@ -263,6 +369,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/invites/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 초대 요약 — 수락 화면(C-1/C-2)이 수락 전에 지도를 보여주기 위한 조회. 로그인 없이 호출할 수 있다(#23 "로그인 전엔 읽기만").
+         *     토큰이 곧 접근 권한이므로 제목·기간·구성원 수·초대자 이름만 돌려주고 핀 등 지도 내용은 주지 않는다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InviteSummary"];
+                    };
+                };
+                404: components["responses"]["InviteNotFound"];
+                410: components["responses"]["InviteExpired"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/invites/{token}/accept": {
         parameters: {
             query?: never;
@@ -294,6 +443,8 @@ export interface paths {
                     };
                 };
                 401: components["responses"]["Unauthorized"];
+                404: components["responses"]["InviteNotFound"];
+                410: components["responses"]["InviteExpired"];
             };
         };
         delete?: never;
@@ -341,6 +492,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/places/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 장소 이름 검색 (#180, #147 — v1 핀 입력 경로 ①). 검색바에서 이름을 치면 후보를 돌려주고, 사용자가 하나를 골라
+         *     `POST /maps/{mapId}/pins`(source: search)로 핀을 만든다. 결과는 서버 DB에 저장하지 않는다(메모리 캐시만, #53).
+         *     **결과는 화면에 보여 주기만 하고 서버는 저장하지 않는다**(카카오 약관, #53) — 핀을 만들 때 "매칭 힌트"로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는다(POST /maps/{mapId}/pins).
+         *     결과가 0개면 빈 배열 그대로다 — 지어내서 채우지 않는다 (가드레일 2). 로그인만 필요하고 지도 구성원 여부는 보지 않는다.
+         *     지도 API가 모두 실패하면 503 PLACES_UNAVAILABLE. 외부 지도 API의 일일 쿼터를 지키려고 사용자당 호출 상한이 있다(초과 시 429 RATE_LIMITED, 상한 값은 서버 설정 — 기본 분당 30회). FE는 입력 debounce 300ms 이상으로 부르고 Enter/선택 시점에만 부르는 걸 권한다.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description 검색어. 앞뒤 공백을 걷은 뒤 1~50자 */
+                    q: string;
+                    /** @description 이 좌표에 가까운 순으로 정렬한다(현재 지도 중심 등, 반경 제한은 없다). 없으면 관련도 순. lat·lng는 함께 보낸다 */
+                    lat?: number;
+                    lng?: number;
+                    /** @description 최대 결과 수 (기본 10) */
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 관련도/거리 순. 없으면 빈 배열 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PlaceSearchResult"][];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description VALIDATION_ERROR — q가 비었거나 50자 초과, lat·lng 중 하나만 옴 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+                503: components["responses"]["PlacesUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/categories/{category}/reason-chips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 카테고리별 반대 사유 칩 목록 (#60). 고정 목록이라 지도와 무관하다 — 로그인만 필요하다
+         * @description 해당 카테고리 칩 다음에 모든 카테고리 공통 칩이 온다. 반응할 수 없는 카테고리(숙소·기타)는 빈 배열
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    category: components["schemas"]["Category"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReasonChip"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/pins": {
         parameters: {
             query?: never;
@@ -377,7 +631,15 @@ export interface paths {
             };
         };
         put?: never;
-        /** 핀 생성 (링크·검색·좌표 3경로, 5-9의 대량 버전은 v2) */
+        /**
+         * 핀 생성 (#191, 2026-10-01 결정). **v1의 핀은 모두 자체 DB 장소(`places`)를 가리킨다.** 경로는 하나다 — `source: search`:
+         *     GET /places/search 결과를 골라 `place_id`·`place_name`·`lat`·`lng`·`category`를 그대로 보내면, 서버가 **그것과 같은 자체 DB 장소를 한 건 찾아**
+         *     그 장소의 이름·좌표만 핀에 쓴다. 요청의 `place_id`(카카오 장소 ID)·`place_name`·`lat`·`lng`는 **매칭 힌트일 뿐 저장하지 않는다**
+         *     (카카오 장소 ID와 `place_url`만 매칭된 자체 DB 장소에 함께 기록된다). 짝이 되는 자체 DB 장소가 없으면 핀을 만들지 않고
+         *     422 `PLACE_NOT_SUPPORTED`("아직 지원하지 않는 장소예요")다. 응답의 `category`는 장소의 분류이며, 요청 `category`가 다르면 422 `VALIDATION_ERROR`.
+         *     자체 DB는 음식점·카페·관광지만 담는다(TourAPI 숙박은 받지 않는다, 2026-10-01) — 검색 결과가 숙소·기타여도 핀을 만들 수 없고 422 `PLACE_NOT_SUPPORTED`다.
+         *     `source: coordinate`(지도 길게 눌러 찍기)와 `source: link`는 v1에서 받지 않는다(422 `VALIDATION_ERROR`) — 카카오 지도에서 사용자가 지정한 좌표는 저장할 수 없다.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -403,6 +665,7 @@ export interface paths {
                     };
                 };
                 409: components["responses"]["PinDuplicate"];
+                422: components["responses"]["PlaceNotSupported"];
             };
         };
         delete?: never;
@@ -459,7 +722,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** 핀 삭제. 권한 규정은 결정 이슈 미결 (#15 분리분) */
+        /** 핀 삭제 — 지도 구성원 누구나 (#25, 9/4 결정). 요청자별 가능 여부는 Pin.permissions.can_delete */
         delete: {
             parameters: {
                 query?: never;
@@ -493,7 +756,10 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** 반응 등록/수정. 반대(against)는 reason 필수 (가드레일 3) */
+        /**
+         * 반응 등록/수정. 반대(against)는 reason 필수 (가드레일 3).
+         *     숙소 핀은 반응을 받지 않는다(#154) — permissions.can_react=false이고 요청하면 422 REACTION_NOT_ALLOWED
+         */
         put: {
             parameters: {
                 query?: never;
@@ -518,11 +784,19 @@ export interface paths {
                         "application/json": components["schemas"]["Reaction"];
                     };
                 };
-                422: components["responses"]["EvidenceRequired"];
+                /** @description EVIDENCE_REQUIRED(반대 사유 없음, 가드레일 3), REACTION_NOT_ALLOWED(숙소·기타 핀, */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
             };
         };
         post?: never;
-        /** 핀 되돌리기 — 구성원 누구나 가능 (15-1) */
+        /** 내 반응 취소 (「의견 취소」) — 내가 남긴 반응만 지운다. 핀 상태는 되돌리지 않는다. 지울 반응이 없으면(숙소 핀 포함) 그대로 204 */
         delete: {
             parameters: {
                 query?: never;
@@ -548,6 +822,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pins/{pinId}/reactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 핀별 구성원 의견 목록 — 핀 상세 「구성원 의견」. 구성원 누구나 조회 (숙소 핀은 빈 배열) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    pinId: components["parameters"]["PinId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 반응한 구성원만 온다 (미응답자는 포함하지 않는다) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Reaction"][];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/recommend/readiness": {
         parameters: {
             query?: never;
@@ -555,7 +868,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 카테고리별 추천 버튼 활성화 판정 (5-4) */
+        /** 카테고리별 추천 버튼 활성화 판정 (5-4). 키는 RecommendCategory 값만 온다 — 숙소는 추천 대상이 아니다 (#145) */
         get: {
             parameters: {
                 query?: never;
@@ -610,7 +923,7 @@ export interface paths {
             requestBody?: {
                 content: {
                     "application/json": {
-                        category: components["schemas"]["Category"];
+                        category: components["schemas"]["RecommendCategory"];
                     };
                 };
             };
@@ -625,6 +938,8 @@ export interface paths {
                     };
                 };
                 409: components["responses"]["NotReady"];
+                429: components["responses"]["RetryLimit"];
+                500: components["responses"]["RecommendFailed"];
             };
         };
         delete?: never;
@@ -694,6 +1009,8 @@ export interface paths {
                     };
                 };
                 403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                500: components["responses"]["RecommendFailed"];
             };
         };
         trace?: never;
@@ -738,6 +1055,7 @@ export interface paths {
                         "application/json": components["schemas"]["Region"][];
                     };
                 };
+                403: components["responses"]["Forbidden"];
                 409: components["responses"]["RegionConflict"];
             };
         };
@@ -777,6 +1095,7 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendRun"];
                     };
                 };
+                403: components["responses"]["Forbidden"];
                 500: components["responses"]["RecommendFailed"];
             };
         };
@@ -814,6 +1133,7 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendResult"];
                     };
                 };
+                403: components["responses"]["Forbidden"];
                 404: components["responses"]["NoResults"];
                 500: components["responses"]["RecommendFailed"];
             };
@@ -835,7 +1155,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 반경 넓히기. 기본값 원만 확대한다 — 사람이 명시한 원(예 "숙소 기준 20분")은 자동으로 넓히지 않는다 (가드레일 4, 5-6-1) */
+        /**
+         * 반경 넓히기. 기본값 원만 확대한다 — 사람이 명시한 원(예 "숙소 기준 20분")은 자동으로 넓히지 않는다 (가드레일 4, 5-6-1).
+         *     한 번 누를 때마다 기본값 원의 도보 시간을 5분씩 늘린다(기본 15분 → 20분 → 25분 → 30분). 상한은 도보 30분이며 넘으면 409 WIDEN_LIMIT.
+         *     폭·상한은 docs/constraints.md의 조정 가능한 상수다 — 응답 RecommendRun에 현재 기본 반경(default_radius_walk_min)을 실어 화면이 "다음은 몇 분"을 안내한다.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -852,8 +1176,12 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["RecommendRun"];
+                    };
                 };
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["WidenLimit"];
             };
         };
         delete?: never;
@@ -873,7 +1201,7 @@ export interface paths {
         put?: never;
         /**
          * 「다시 추천 받기」. 현재 뜬 대안 전체를 제외목록에 넣고 새로 찾는다 (3절, 루프가 닫힌다).
-         *     3회 상한 초과 시 429 RETRY_LIMIT. 상한의 집계 단위는 결정 이슈 미결 — 응답의 attempt_no로 우선 노출.
+         *     5회 상한 초과 시 429 RETRY_LIMIT (#31, 2026-09-22 확정). 응답의 attempt_no로 현재 몇 번째인지 노출한다.
          */
         post: {
             parameters: {
@@ -895,6 +1223,7 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendRun"];
                     };
                 };
+                403: components["responses"]["Forbidden"];
                 429: components["responses"]["RetryLimit"];
             };
         };
@@ -935,6 +1264,15 @@ export interface paths {
                     };
                 };
                 404: components["responses"]["AiPinPrivate"];
+                /** @description 게시할 수 없다 — NOT_READY(run이 아직 done이 아니다) 또는 PIN_DUPLICATE(그 장소가 이미 지도에 있다, detail.pin_id) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1082,6 +1420,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["ShortlistItem"][];
+                    };
+                };
+                /** @description item_ids가 현재 확정 리스트와 맞지 않는다(VALIDATION_ERROR, detail에 불일치 항목) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
                     };
                 };
             };
@@ -1269,8 +1616,16 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @enum {string} */
-        Category: "음식점" | "카페" | "숙소" | "관광지";
+        /**
+         * @description 장소 카테고리 전체. 카테고리마다 핀을 만들 수 있는지, 반응할 수 있는지, 추천 대상인지는 backend/common/categories.py 한 곳에서 정하고 대조 테스트로 이 목록과 맞춘다(#280). v1은 음식점, 카페, 관광지만 핀을 만들 수 있다. 숙소와 기타는 자체 장소 DB에 없어 핀으로 만들 수 없고 값만 남아 있다(#191)
+         * @enum {string}
+         */
+        Category: "음식점" | "카페" | "숙소" | "관광지" | "기타";
+        /**
+         * @description AI 대안 추천을 받을 수 있는 카테고리. backend/common/categories.py에서 추천 대상인 카테고리와 같아야 한다(대조 테스트, #280). 숙소는 추천 대상이 아니다(#145)
+         * @enum {string}
+         */
+        RecommendCategory: "음식점" | "카페" | "관광지";
         /**
          * @description 핀 종류는 이 3가지뿐 (기획안 9절). 확정이 나머지 둘을 덮어쓴다.
          * @enum {string}
@@ -1285,10 +1640,16 @@ export interface components {
             /** @description evidence_line 전용: 자기가 쓴 것만 true */
             can_disable?: boolean;
             can_delete?: boolean;
+            /** @description candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64) */
+            can_publish?: boolean;
         };
         User: {
-            id?: string;
-            display_name?: string;
+            id: string;
+            display_name: string;
+        };
+        UserUpdateRequest: {
+            /** @description 계정 단위 표시 이름 (2026-09-30 결정) */
+            display_name: string;
         };
         Map: {
             id: string;
@@ -1303,8 +1664,26 @@ export interface components {
              * @description 여행 종료일 (#22)
              */
             end_date: string;
+            region?: components["schemas"]["MapRegion"];
             member_count: number;
+            /** @description 지도에 올라와 있는(삭제[서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다] 되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청) */
+            pin_count?: number;
             confirmed_count?: number;
+        };
+        /** @description 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다 */
+        InviteSummary: {
+            title: string;
+            /** Format: date */
+            start_date: string;
+            /** Format: date */
+            end_date: string;
+            member_count: number;
+            /** @description 지도에 올라와 있는 핀 수 — 초대[서버 구현 전까지 선택 — 이슈가 닫히면 필수로 바꾼다]  카드 「핀 12개」 표시용 (2026-10-04, FE 요청) */
+            pin_count?: number;
+            /** @description 초대 링크를 발급한 사람. 탈퇴했으면 '탈퇴한 구성원' */
+            inviter_display_name: string;
+            /** Format: date-time */
+            expires_at: string;
         };
         Invite: {
             token: string;
@@ -1314,6 +1693,11 @@ export interface components {
         };
         Member: {
             user_id: string;
+            /**
+             * @description owner = 지도를 만든 사람(방장), 나머지는 member. 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)
+             * @enum {string}
+             */
+            role: "owner" | "member";
             display_name?: string;
             online?: boolean;
         };
@@ -1327,18 +1711,55 @@ export interface components {
             start_date: string;
             /**
              * Format: date
-             * @description 여행 종료일 (#22). start_date 이후여야 한다
+             * @description 여행 종료일 (#22). start_date와 같거나 그 이후여야 한다(당일치기는 같은 날)
              */
             end_date: string;
+            region?: components["schemas"]["MapRegion"];
+        };
+        /**
+         * @description 지도 만들기의 지역 검색 결과 (#22, 2026-09-28 변경 — PR #132 제안, 루트 검증 후 승인).
+         *     선택 입력 — 없으면 지금처럼 첫 핀 좌표로 지역을 정한다(architecture.md 3절). 어디에
+         *     쓸지(첫 지도 위치 등)는 기획안 15-4 미결.
+         */
+        MapRegion: {
+            /** @description 검색에서 고른 지역 이름 (예: 부산) */
+            label: string;
+            lat: number;
+            lng: number;
         };
         PinCreateRequest: {
             category: components["schemas"]["Category"];
-            /** @enum {string} */
-            source?: "link" | "search" | "coordinate";
+            /**
+             * @description v1은 search만. coordinate·link는 값만 남겨 둔 것(v2 확장용)이며 보내면 422 (#191·#147) — 생략하면 search
+             * @default search
+             * @enum {string}
+             */
+            source: "link" | "search" | "coordinate";
+            /** @description v1에서는 받지 않음 — 보내면 422 (#147). v2 카톡 내보내기용으로 남겨 둔 필드 */
             link_url?: string;
-            place_id?: string;
-            lat?: number;
-            lng?: number;
+            /** @description source=search의 **매칭 힌트** — GET /places/search 결과의 place_id(카카오 장소 ID)를 그대로. 저장하지 않는다 */
+            place_id: string;
+            /** @description 매칭 힌트 — 검색 결과의 이름을 그대로. 저장하지 않는다(핀 이름은 자체 DB 장소의 이름, #191) */
+            place_name: string;
+            /** @description 매칭 힌트 — 검색 결과의 좌표를 그대로. 저장하지 않는다(핀 좌표는 자체 DB 장소의 좌표) */
+            lat: number;
+            /** @description 매칭 힌트 — 검색 결과의 좌표를 그대로. 저장하지 않는다 */
+            lng: number;
+        };
+        /** @description GET /places/search 한 건 — **화면 표시용이며 서버에 저장되지 않는다**. 핀을 만들 때 place_id·place_name·lat·lng·category를 그대로 POST /maps/{mapId}/pins로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는 매칭 힌트로 쓴다 */
+        PlaceSearchResult: {
+            /** @description "<소스>:<소스 내 id>" 형태(예 kakao:1234). 불투명 값으로 취급한다 */
+            place_id: string;
+            /** @description POST /maps/{mapId}/pins의 place_name과 같은 이름 — 그대로 보낸다 */
+            place_name: string;
+            lat: number;
+            lng: number;
+            /** @description 제공 소스가 추정한 분류(화면 표시용 제안). 숙소·기타로 추정되는 장소는 자체 DB에 없어 핀으로 만들 수 없다(v1) */
+            category?: components["schemas"]["Category"];
+            address?: string;
+            place_source?: components["schemas"]["PlaceSource"];
+            /** @description 자체 DB에 짝이 있어 핀으로 만들 수 있는가(서버가 자체 DB를 읽기만 해서 계산, 카카오 ID를 기록하지 않는다). false면 FE는 이 결과를 흐리게 보이고 "아직 지원하지 않는 장소예요"를 미리 안내한다. 없으면 true로 본다(자체 DB 연결 전) */
+            pinnable?: boolean;
         };
         /**
          * @description docs/constraints.md 차원 압축 결과. 원본 가격 숫자는 API로 노출하지 않는다
@@ -1349,10 +1770,10 @@ export interface components {
         LabelConfidence: "known" | "unknown";
         /** @description 가드레일 5 "조건별 충족 체크" */
         Check: {
-            fact_key?: string;
-            label?: string;
-            passed?: boolean;
-            confidence?: components["schemas"]["LabelConfidence"];
+            fact_key: string;
+            label: string;
+            passed: boolean;
+            confidence: components["schemas"]["LabelConfidence"];
             /** @description unknown_policy=pass+needs_check인 취향 조건이 unknown일 때 true */
             needs_check?: boolean;
         };
@@ -1365,15 +1786,29 @@ export interface components {
             visibility: "public" | "private";
             lat: number;
             lng: number;
+            /** @description 자체 DB 장소의 이름 (#191). 핀에 따로 저장하지 않고 장소에서 가져온다 */
             place_name?: string;
+            /** @description 매칭된 카카오 장소 페이지 링크(저장 허용). **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 매칭된 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 필드를 생략한다 */
+            place_url?: string;
             /** @description 핀을 찍은 구성원의 user_id (#26) */
             created_by: string;
+            /**
+             * Format: date-time
+             * @description 핀이 지도에 올라온 시각. AI 추천 핀은 「지도에 올리기」를 누른 시각이다. 「최근 추가 순」 정렬, 「최근 핀으로 이동」, 「10분 전」 표시용 (2026-10-04, FE 요청)
+             */
+            created_at: string;
             /** @description 핀 상세에서 '누가 찍었는지' 표시용 (#26) */
             created_by_display_name?: string;
             price_bucket?: components["schemas"]["PriceBucket"];
             /** @description 게시된 AI 추천 핀도 상세에서 계속 노출한다 (가드레일 5) */
             checks?: components["schemas"]["Check"][];
             source_run_id?: string | null;
+            /** @description AI 추천 핀만 — 추천 이유. 게시된 뒤에도 유지 (가드레일 5) */
+            reason?: string;
+            member_fulfillment?: components["schemas"]["MemberFulfillment"];
+            place_source?: components["schemas"]["PlaceSource"];
+            /** @description 내가 이 핀에 남긴 반응. 없으면 null — 「♥ 2 · 나」 칩과 「의견 취소」 링크용 */
+            my_reaction?: null | components["schemas"]["Reaction"];
             reaction_summary: {
                 like: number;
                 neutral: number;
@@ -1385,6 +1820,7 @@ export interface components {
             /** @enum {string} */
             type: "like" | "neutral" | "against";
             reason_text?: string;
+            /** @description GET /categories/{category}/reason-chips가 준 칩의 id. 그 핀의 카테고리 목록에 없는 id는 422 VALIDATION_ERROR (2026-10-04, #60). 반대(against)에서만 보낸다 */
             reason_chip_ids?: string[];
         };
         Reaction: {
@@ -1393,12 +1829,29 @@ export interface components {
             /** @enum {string} */
             type: "like" | "neutral" | "against";
             reason_text?: string;
+            /** @description 반대 사유 칩 id (ReasonChip.id) */
+            reason_chip_ids?: string[];
+            /** @description GET /pins/{pinId}/reactions 전용 — 의견 목록에 표시할 이름 */
+            display_name?: string;
+        };
+        /** @description 반대(🚫) 사유로 고를 수 있는 미리 정의된 칩 (#60, 2026-10-04). 목록의 정본은 docs/constraints.md 「반대 사유 칩」 표 */
+        ReasonChip: {
+            /** @description 안정적인 식별자(예: food_spicy). 반응 요청의 reason_chip_ids에 넣는다. 이름이 바뀌어도 id는 바뀌지 않는다 */
+            id: string;
+            /** @description 화면에 보이는 이름(예: 매워요) */
+            label: string;
+            /** @description 이 칩이 뜻하는 조건의 fact_key. 있을 때만. v1에서는 힌트일 뿐이다 — 서버는 칩 label을 사유 문장으로 ②에 넘기는 기존 경로를 그대로 쓴다 */
+            fact_key?: string;
         };
         FilterCounts: {
-            by_category?: {
+            /** @description 이 지도의 핀에 ♥·△·🚫 반응을 하나라도 남긴 구성원 수. 「2/4명이 의견을 남겼어요」의 2. 탈퇴한 구성원은 세지 않는다 (2026-10-04, FE 요청) */
+            members_with_opinion: number;
+            /** @description 현재 구성원 수(= Map.member_count). 「2/4명」의 4 */
+            members_total: number;
+            by_category: {
                 [key: string]: number;
             };
-            by_kind?: {
+            by_kind: {
                 [key: string]: number;
             };
         };
@@ -1409,18 +1862,22 @@ export interface components {
             required_count?: number;
         };
         EvidenceLine: {
-            id?: string;
-            author_id?: string;
+            id: string;
+            author_id: string;
             author_display_name?: string;
-            text?: string;
+            text: string;
             /**
              * @description 꼭/선호/참고 (5-5)
              * @enum {string}
              */
-            badge?: "required" | "preferred" | "reference";
+            badge: "required" | "preferred" | "reference";
             fact_key?: string | null;
-            is_active?: boolean;
-            permissions?: components["schemas"]["Permissions"];
+            /** @description fact_key의 화면 표시 이름(예: "한식", "횟집", "조용한 곳", "주차 가능"). 서버가 내려 주므로 FE가 키→이름 표를 따로 들지 않는다. 방향 표시는 "{fact_label} 제외"(wants=false) / "{fact_label} 선호"(wants=true). fact_key가 없으면 없거나 null */
+            fact_label?: string | null;
+            /** @description 이 특징(fact_key)이 있는 장소를 원하는가(#228). true=원함("한식 먹자"), false=원하지 않음("한식 말고"), 없거나 null=모름. FE는 근거 줄에 해석한 방향(예: "한식 제외")을 보여 주어 틀리면 −로 뺄 수 있게 한다 */
+            wants?: boolean | null;
+            is_active: boolean;
+            permissions: components["schemas"]["Permissions"];
         };
         EvidencePatchRequest: {
             toggle?: {
@@ -1432,56 +1889,87 @@ export interface components {
             }[];
         };
         Region: {
-            id?: string;
-            label?: string;
-            signature?: string;
-            confirmed?: boolean;
+            id: string;
+            label: string;
+            signature: string;
+            confirmed: boolean;
         };
         RecommendRun: {
-            id?: string;
-            map_id?: string;
-            category?: components["schemas"]["Category"];
+            id: string;
+            map_id: string;
+            category: components["schemas"]["RecommendCategory"];
             /** @enum {string} */
-            status?: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
-            attempt_no?: number;
+            status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
+            attempt_no: number;
+            /** @description 기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (기본 15, 상한 30) */
+            default_radius_walk_min?: number;
+        };
+        /** @description 구성원 충족 집계 (가드레일 5). 게시 뒤에도 유지된다 */
+        MemberFulfillment: {
+            /** @description 이 후보가 자기 조건을 만족시키는 구성원 수 */
+            satisfied: number;
+            /** @description 집계 대상 구성원 수 — 조건을 남긴 구성원. 선호(♥·선호 사유)뿐 아니라 실격 사유(required)를 낸 구성원도 포함한다(#246 G1). 후보는 실격을 통과했으므로 그 구성원은 충족으로 센다 */
+            total: number;
+            by_member?: {
+                user_id: string;
+                display_name?: string;
+                satisfied: boolean;
+            }[];
+        };
+        /** @description 장소 정보 출처 (가드레일 5, 5-6-1 지도 출처 표시) */
+        PlaceSource: {
+            /**
+             * @description permit = 지방행정 인허가 공공데이터, tourapi = 한국관광공사 TourAPI — 자체 장소 DB의 출처(#53). kakao·naver·google은 검색 결과 표시용(저장하지 않음)
+             * @enum {string}
+             */
+            provider: "kakao" | "naver" | "google" | "permit" | "tourapi";
+            /** @description 출처 페이지 링크. 이용약관상 링크 제공이 불가하면 생략 */
+            url?: string;
         };
         Candidate: {
-            id?: string;
+            id: string;
             place_name?: string;
             /** @description 5-6-1 지역별 안배 태그 */
             region_label?: string;
-            rank?: number;
-            checks?: components["schemas"]["Check"][];
+            rank: number;
+            checks: components["schemas"]["Check"][];
+            /** @description 추천 이유 — 근거 없는 한 줄 추천 금지 (가드레일 5) */
+            reason: string;
+            member_fulfillment: components["schemas"]["MemberFulfillment"];
+            place_source?: components["schemas"]["PlaceSource"];
             /** @enum {string} */
-            visibility?: "private" | "published";
+            visibility: "private" | "published";
+            /** @description 게시하기 전에는 null이거나 필드가 없다 */
             published_pin_id?: string | null;
+            permissions: components["schemas"]["Permissions"];
         };
         RecommendResult: {
-            run_id?: string;
+            run_id: string;
             /** @description 5-6 깔때기 표 */
-            funnel?: {
-                label?: string;
-                removed_count?: number;
+            funnel: {
+                label: string;
+                removed_count: number;
             }[];
-            regions?: components["schemas"]["Region"][];
-            candidates?: components["schemas"]["Candidate"][];
+            regions: components["schemas"]["Region"][];
+            candidates: components["schemas"]["Candidate"][];
         };
         ShortlistItem: {
-            id?: string;
-            pin?: components["schemas"]["Pin"];
+            id: string;
+            pin: components["schemas"]["Pin"];
+            /** @description 순서를 정하지 않았으면 null이거나 필드가 없다 */
             visit_order?: number | null;
-            added_by?: string;
-            permissions?: components["schemas"]["Permissions"];
+            added_by: string;
+            permissions: components["schemas"]["Permissions"];
         };
         Route: {
-            region_label?: string;
-            ordered_pin_ids?: string[];
-            total_distance_m?: number;
-            legs?: {
-                from_pin_id?: string;
-                to_pin_id?: string;
-                distance_m?: number;
-                approx_minutes?: number;
+            region_label: string;
+            ordered_pin_ids: string[];
+            total_distance_m: number;
+            legs: {
+                from_pin_id: string;
+                to_pin_id: string;
+                distance_m: number;
+                approx_minutes: number;
             }[];
         };
         /** @description 모든 SSE 이벤트의 공통 봉투. id는 event_log.seq와 같고 SSE의 id: 필드로 전송된다 */
@@ -1620,7 +2108,64 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 재시도 3회 초과 (6절 "재시도 3회 초과") */
+        /**
+         * @description 핀을 만들 수 없다. 응답 본문의 `code`로 분기한다 — `PLACE_NOT_SUPPORTED`(짝이 되는 자체 DB 장소가 없음, 숙소·기타 포함),
+         *     `VALIDATION_ERROR`(필수 힌트 누락, `source`가 coordinate·link, 요청 `category`가 장소의 분류와 다름)
+         */
+        PlaceNotSupported: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 요청이 너무 잦다 — 잠시 뒤 다시 시도 (RATE_LIMITED) */
+        RateLimited: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 지도 API를 모두 쓸 수 없다(키 없음·장애·호출 상한) — 잠시 뒤 다시 시도 (PLACES_UNAVAILABLE) */
+        PlacesUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 없거나 잘못된 초대 토큰 (INVITE_NOT_FOUND) */
+        InviteNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 만료된 초대 토큰 (INVITE_EXPIRED) */
+        InviteExpired: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 기본값 원이 이미 상한(도보 30분) — 더 넓힐 수 없음 (WIDEN_LIMIT). 「근거 고치기」/「직접 찍기」로 안내 */
+        WidenLimit: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 재시도 5회 초과 (6절 "재시도 5회 초과", */
         RetryLimit: {
             headers: {
                 [name: string]: unknown;

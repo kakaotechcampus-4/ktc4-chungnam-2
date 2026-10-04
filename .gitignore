@@ -75,3 +75,21 @@ target/
 # 활성 플러그인·개인 권한 같은 담당자별 설정. 팀 공용으로 공유할 게 생기면 `git add -f`.
 **/.claude/settings.json
 **/.claude/settings.local.json
+
+# ── 공공데이터 원본(인허가 CSV, TourAPI JSON, 라벨 파일) — 저장소에 커밋하지 않는다 (#189) ──
+backend/data/
+backend/places/data/
+# 음식점 DB 납품본(restaurant_seoul_DB 폴더·zip, curated CSV/라벨 JSON) — 어느 경로에 풀어도 커밋하지 않는다 (#189, #203)
+restaurant_seoul_DB/
+restaurant_seoul_DB.zip
+restaurant_seoul_*.csv
+restaurant_seoul_*.json
+__MACOSX/
+# 식당·카페 라벨 납품본(2026-10-02~) — 폴더·zip·카페 파일·변환 도구 폴더 모두 커밋하지 않는다 (#263)
+식당카페_라벨_*/
+식당카페_라벨_*.zip
+cafe_seoul_*.csv
+cafe_seoul_*.json
+json_to_csv/
+json_to_csv.zip
+franchise_brands.csv

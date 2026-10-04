@@ -13,9 +13,27 @@ class ShortlistAddRequest(BaseModel):
     pin_id: str
 
 
+class ShortlistReorderRequest(BaseModel):
+    item_ids: list[str]
+
+
 class ShortlistItem(BaseModel):
     id: str
     pin: Pin
     visit_order: int | None = None
     added_by: str
     permissions: Permissions
+
+
+class RouteLeg(BaseModel):
+    from_pin_id: str
+    to_pin_id: str
+    distance_m: float
+    approx_minutes: int
+
+
+class Route(BaseModel):
+    region_label: str
+    ordered_pin_ids: list[str]
+    total_distance_m: float
+    legs: list[RouteLeg]

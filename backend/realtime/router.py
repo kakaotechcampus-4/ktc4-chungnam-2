@@ -9,10 +9,11 @@ from fastapi.responses import StreamingResponse
 
 from auth.deps import get_current_user
 from auth.schemas import CurrentUser
+from authz.guard import require_map_member
 from common.database import SessionLocal
 from common.events import EventLog
 from realtime import service
-from realtime.dispatcher import dispatcher
+from realtime.dispatcher import CLOSED, dispatcher
 
 router = APIRouter(tags=["realtime"], dependencies=[Depends(get_current_user)])
 
@@ -29,7 +30,8 @@ def _parse_last_event_id(raw: str | None) -> int | None:
 
 
 def _sse_format(row: EventLog) -> str:
-    data = json.dumps({"type": row.type, "map_id": row.map_id, "payload": row.payload})
+    # docs/events.md: data는 페이로드 자체다(타입은 event:, 지도는 구독 경로가 이미 말해 준다).
+    data = json.dumps(row.payload)
     return f"id: {row.seq}\nevent: {row.type}\ndata: {data}\n\n"
 
 
@@ -37,7 +39,8 @@ def _sse_control_event(type_: str) -> str:
     return f"event: control\ndata: {json.dumps({'type': type_})}\n\n"
 
 
-@router.get("/maps/{mapId}/events")
+# 비구성원은 404 — 지도가 있는지도 알리지 않는다(docs/permissions.md). 재전송도 이 게이트 뒤라 구성원만.
+@router.get("/maps/{mapId}/events", dependencies=[Depends(require_map_member())])
 async def public_events(
     request: Request,
     mapId: str = Path(...),
@@ -59,6 +62,8 @@ async def public_events(
         try:
             while not await request.is_disconnected():
                 row = await sub.queue.get()
+                if row is CLOSED:   # 서버 종료 — 대기를 풀고 스스로 빠져나온다
+                    break
                 yield _sse_format(row)   # Subscription.wants()가 이미 dispatcher._tick에서 걸러줌
         finally:
             dispatcher.unsubscribe(mapId, sub)
@@ -66,7 +71,7 @@ async def public_events(
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@router.get("/maps/{mapId}/events/me")
+@router.get("/maps/{mapId}/events/me", dependencies=[Depends(require_map_member())])
 async def private_events(
     request: Request,
     mapId: str = Path(...),
@@ -89,6 +94,8 @@ async def private_events(
         try:
             while not await request.is_disconnected():
                 row = await sub.queue.get()
+                if row is CLOSED:
+                    break
                 yield _sse_format(row)
         finally:
             dispatcher.unsubscribe(mapId, sub)

@@ -24,10 +24,20 @@ backend/
 Alembic 히스토리는 저장소 전체에 하나다. 모듈마다 별도 체인을 만들지 않는다 — PR 올리기 전
 `develop`을 받아서 마이그레이션 순서를 맞춘다. 충돌 나면 먼저 머지된 쪽이 우선.
 
-## 모듈 간 접근 — 함수/API로만
+## 모듈 간 접근
 
-`docs/architecture.md` 1절 원칙 그대로: 다른 모듈의 테이블(ORM 모델)을 직접 import·쿼리하지
-않는다. 필요하면 그 모듈이 공개한 서비스 함수를 부르거나 API로 요청한다.
+`docs/architecture.md` 1절의 "모듈 간 import 규칙"이 정본이다(2026-09-23 개정, #113). 무엇을
+가져오느냐에 따라 다르다.
+
+| 가져오는 것 | 허용 |
+|---|---|
+| `common`, `auth`, `authz` (수평 레이어) | 직접 import |
+| 다른 모듈의 `schemas.py` (응답 타입) | 직접 import |
+| 다른 모듈의 데이터 조회·변경 | 그 모듈의 `api.py`만 |
+| 다른 모듈의 `models.py`, `service.py` | 금지 |
+
+`api.py`에 필요한 함수가 없으면 직접 만들지 말고 그 모듈 담당에게 요청한다. 필요한 시그니처를
+`<module>/for_Root.md`에 적어 루트에 보고하는 방식을 써왔다.
 
 ## 로컬 실행
 
@@ -37,7 +47,9 @@ Alembic 히스토리는 저장소 전체에 하나다. 모듈마다 별도 체�
   `main.py`의 주석 처리된 `include_router` 줄만 풀면 된다(그 외엔 `main.py`를 건드리지 않는다)
 - 마이그레이션: `alembic revision --autogenerate -m "..."` / `alembic upgrade head` — 모델을
   추가했으면 `alembic/env.py`에 그 모듈의 `models` import를 추가해야 Alembic이 인식한다
-- 테스트: pytest, 모듈별 `tests/`
+- 테스트: pytest, 모듈별 `tests/`. 테스트 DB는 기본 `pingo_test`인데, **터미널(세션) 여러 개가 같은 DB에서 동시에
+  돌리면 서로의 테이블을 지워 무작위로 실패한다** — 동시에 돌릴 땐 터미널마다 `PINGO_TEST_DB`를 다르게 준다
+  (예: `PINGO_TEST_DB=pingo_test_pins python -m pytest pins`, PowerShell은 `$env:PINGO_TEST_DB="pingo_test_pins"`)
 
 ## 코드 품질
 

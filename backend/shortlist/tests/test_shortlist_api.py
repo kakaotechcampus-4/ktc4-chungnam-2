@@ -10,6 +10,7 @@ import uuid
 
 from sqlalchemy import func, select
 
+from auth.testing import session_cookie
 from authz.deps import get_membership_gateway
 from authz.testing import FakeMembership
 from common.events import EventLog
@@ -31,7 +32,7 @@ def _insert_pin(db_session, *, map_id="map_1", created_by="user_1", visibility="
 
 
 def _auth(user_id="user_1"):
-    return {"session": user_id}
+    return session_cookie(user_id)
 
 
 def _events(db_session, *, map_id="map_1", type=None):
@@ -240,3 +241,100 @@ def test_unconfirm_pin_survives_delete_then_pin_access_no_detached_instance_erro
     # 커밋 이후 상태까지 실제로 확인 — 세이브포인트가 아니라 진짜 delete+flush 조합에서 깨지는지.
     listed = app_client.get("/maps/map_1/shortlist", cookies=_auth())
     assert listed.json() == []
+
+
+# --- PUT /maps/{mapId}/shortlist/order (#142) ---
+
+def _confirm(app_client, db_session, n=3, *, map_id="map_1"):
+    ids = []
+    for _ in range(n):
+        pin = _insert_pin(db_session, map_id=map_id)
+        resp = app_client.post(f"/maps/{map_id}/shortlist", json={"pin_id": str(pin.id)}, cookies=_auth())
+        ids.append(resp.json()["id"])
+    return ids
+
+
+def test_reorder_returns_items_in_requested_order_and_get_reflects_it(app_client, db_session):
+    a, b, c = _confirm(app_client, db_session)
+    resp = app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [c, a, b]}, cookies=_auth("user_2"))
+
+    assert resp.status_code == 200
+    assert [i["id"] for i in resp.json()] == [c, a, b]
+    assert [i["visit_order"] for i in resp.json()] == [0, 1, 2]
+    got = app_client.get("/maps/map_1/shortlist", cookies=_auth())
+    assert [i["id"] for i in got.json()] == [c, a, b]
+
+
+def test_reorder_missing_item_is_422(app_client, db_session):
+    a, b, c = _confirm(app_client, db_session)
+    # 같은 트랜잭션에서 확정하면 added_at이 같아 초기 순서는 id 순이다 — 요청 전 GET을 기준으로 삼는다
+    before = [i["id"] for i in app_client.get("/maps/map_1/shortlist", cookies=_auth()).json()]
+    resp = app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [a, b]}, cookies=_auth())
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+    got = app_client.get("/maps/map_1/shortlist", cookies=_auth())
+    assert [i["id"] for i in got.json()] == before  # 실패한 요청은 아무것도 바꾸지 않는다
+
+
+def test_reorder_duplicate_item_is_422(app_client, db_session):
+    a, b = _confirm(app_client, db_session, n=2)
+    resp = app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [a, a, b]}, cookies=_auth())
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_reorder_item_from_other_map_is_422(app_client, db_session):
+    a, b = _confirm(app_client, db_session, n=2)
+    other = _insert_pin(db_session, map_id="map_2")
+    from shortlist import service
+    foreign = service.add_item(db_session, map_id="map_2", pin_id=str(other.id), added_by="user_1")[0]
+    resp = app_client.put(
+        "/maps/map_1/shortlist/order", json={"item_ids": [a, str(foreign.id)]}, cookies=_auth(),
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_reorder_unknown_or_malformed_id_is_422(app_client, db_session):
+    a, = _confirm(app_client, db_session, n=1)
+    resp = app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [a, "not-a-uuid"]}, cookies=_auth())
+    assert resp.status_code == 422
+
+
+def test_reorder_non_member_is_404(app_client, db_session):
+    a, = _confirm(app_client, db_session, n=1)
+    app.dependency_overrides[get_membership_gateway] = _deny_membership
+    resp = app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [a]}, cookies=_auth("outsider"))
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "NOT_FOUND"
+
+
+def test_reorder_records_reordered_event_per_item_in_same_commit(app_client, db_session):
+    a, b = _confirm(app_client, db_session, n=2)
+    before = len(_events(db_session, type="shortlist.changed"))
+    app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [b, a]}, cookies=_auth())
+
+    events = _events(db_session, type="shortlist.changed")[before:]
+    assert {e.payload["action"] for e in events} == {"reordered"}
+    by_item = {e.payload["item"]["id"]: e.payload["item"]["visit_order"] for e in events}
+    assert by_item == {b: 0, a: 1}
+
+
+def test_reorder_does_not_touch_routes_or_emit_route_event(app_client, db_session):
+    a, b = _confirm(app_client, db_session, n=2)
+    app_client.post("/maps/map_1/route", cookies=_auth())
+    routes_before = app_client.get("/maps/map_1/route", cookies=_auth()).json()
+    route_events_before = len(_events(db_session, type="route.recalculated"))
+
+    app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [b, a]}, cookies=_auth())
+
+    assert app_client.get("/maps/map_1/route", cookies=_auth()).json() == routes_before
+    assert len(_events(db_session, type="route.recalculated")) == route_events_before
+
+
+def test_new_item_after_reorder_goes_last(app_client, db_session):
+    a, b = _confirm(app_client, db_session, n=2)
+    app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [b, a]}, cookies=_auth())
+    c, = _confirm(app_client, db_session, n=1)
+    got = app_client.get("/maps/map_1/shortlist", cookies=_auth())
+    assert [i["id"] for i in got.json()] == [b, a, c]
