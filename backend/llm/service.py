@@ -109,9 +109,18 @@ def _passthrough_planner(raw_reasons: Sequence[Mapping[str, Any]]) -> list[Evide
     return [EvidenceLine(**reason) for reason in raw_reasons]
 
 
+# 엘리스 게이트웨이가 비스트리밍 응답을 2000토큰으로 제한한다(#325). 사유 한 줄의 에코가 70토큰
+# 안팎이라 한 호출에 10개씩만 보낸다. 묶음은 순차로 부른다(동시 호출은 상한·429 위험).
+PLAN_BATCH_SIZE = 10
+
+
 def _model_planner(client: Any, raw_reasons: Sequence[Mapping[str, Any]]) -> list[EvidenceLine]:
     _passthrough_planner(raw_reasons)  # 입력 shape부터 검증 — 깨진 입력으로 모델을 부르지 않는다
-    return merge_planned(raw_reasons, call_planner(client, raw_reasons))
+    lines: list[EvidenceLine] = []
+    for start in range(0, len(raw_reasons), PLAN_BATCH_SIZE):
+        # 한 묶음이 실패하면 LlmCallError가 그대로 올라간다 — 부분 결과를 지어내지 않는다.
+        lines.extend(call_planner(client, raw_reasons[start:start + PLAN_BATCH_SIZE]).evidence_lines)
+    return merge_planned(raw_reasons, PlanningOutput(evidence_lines=lines))
 
 
 def _dev_evidence_planner() -> EvidencePlanner:
