@@ -17,7 +17,7 @@ from maps.models import Membership as MembershipRow
 from pins import api as pins_api
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
-from recommend import flows, service
+from recommend import core, flows, service
 from recommend.models import Candidate, Exclusion, RecommendRun, Region
 from places.schemas import FactLabel
 from recommend.ports import PlaceStub
@@ -164,6 +164,33 @@ def test_publish_candidate_copies_candidate_checks_to_pin(db_session):
         db_session, pin_id=str(pin.id), viewer_id="user_1", principal=principal,
     )
     assert [c.model_dump() for c in response_after.checks] == checks
+
+
+def test_publish_candidate_keeps_human_readable_check_labels(db_session):
+    """#329 — build_check가 만든 사람 말 라벨("False"가 아님)이 게시된 핀에도 그대로 유지된다(가드레일 5)."""
+    run = _make_run(db_session)
+    built = [
+        core.build_check("is_open", "pass", known=False, value=None, passes=True),
+        core.build_check("oily_focused", "exclude", known=True, value=False, passes=True),
+        core.build_check("cuisine_korean", "pass", known=True, value=True, passes=True),
+        core.build_check("quiet", "pass", known=False, value=None, passes=True),
+    ]
+    checks = [c.model_dump() for c in built]
+    candidate = _make_candidate(db_session, run, checks=checks)
+
+    pin = flows.publish_candidate(
+        db_session, candidate_id=str(candidate.id), requester_id="user_1",
+        membership=_membership(run.map_id, "user_1"),
+    )
+
+    db_session.expire_all()
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    response = pins_api.get_pin_response_for_viewer(
+        db_session, pin_id=str(pin.id), viewer_id="user_1", principal=principal,
+    )
+    assert [c.label for c in response.checks] == [
+        "영업 여부 확인 필요", "기름진 메뉴 위주 아님", "한식", "조용한 곳 확인 필요",
+    ]
 
 
 def test_publish_candidate_non_member_is_not_found(db_session):
@@ -1181,7 +1208,7 @@ def test_satisfied_directed_checks_are_shown_as_satisfied(db_session):
     )
     by_key = {c["fact_key"]: c for c in candidates["ok"].checks}
     assert by_key["cuisine_korean"]["passed"] is True and by_key["cuisine_korean"]["label"] == "한식 제외"
-    assert by_key["quiet"]["passed"] is True and by_key["quiet"]["label"] == "조용한 곳"
+    assert by_key["quiet"]["passed"] is True and by_key["quiet"]["label"] == "조용함"
 
 
 def test_same_key_disqualification_beats_a_supporter(db_session):
