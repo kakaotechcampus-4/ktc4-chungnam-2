@@ -178,6 +178,7 @@ export const recommendHandlers = [
       lng: 126.56,
       place_name: cand.place_name,
       created_by: ME_USER_ID, // 목 서버는 단일 사용자 시뮬레이션이라 run 요청자 = 나
+      created_at: new Date().toISOString(), // 「지도에 올리기」를 누른 시각
       checks: cand.checks, // 가드레일 5: 게시 후에도 근거를 그대로 유지
       source_run_id: runId,
       reaction_summary: { like: 0, neutral: 0, against: 0 },
