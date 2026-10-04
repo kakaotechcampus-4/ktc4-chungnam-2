@@ -22,7 +22,6 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
-    ("get", "/categories/{}/reason-chips"): "#312 — 반대 사유 칩 목록(스펙 2026-10-04, #60). pins가 구현하면 지운다",
 }
 
 # 스펙에 없어도 되는 라우트(운영/문서용).
