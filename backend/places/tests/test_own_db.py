@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from geoalchemy2 import Geography
 from sqlalchemy import func, select
 
 from places import api, ingest, load, repository
@@ -137,6 +138,74 @@ def test_ambiguous_same_name_nearby_is_none(db_session):
         ingest.PlaceRow("permit", "B", "똑같은 카페", "카페", None, None, 37.50010, 127.00000, "open"),
     ])
     assert api.match_place(_hint("똑같은 카페", 37.50000, 127.00000, "카페"), db=db_session) is None
+
+
+# ---- 반경 판정은 DB(ST_DWithin) 한 곳 — 300m 경계 (#316) ----
+
+ORIGIN = (37.5, 127.0)
+
+
+def _place_at(db, source_id, distance, azimuth, *, name="경계 카페", category="카페", kakao_place_id=None):
+    """ORIGIN에서 타원체 기준 distance(m)만큼 azimuth(도) 방향에 장소를 둔다 — DB가 재는 거리와 정확히 일치한다."""
+    point = func.ST_Project(func.ST_SetSRID(func.ST_MakePoint(ORIGIN[1], ORIGIN[0]), 4326).cast(Geography()), distance, func.radians(azimuth))
+    db.add(Place(source="permit", source_id=source_id, name=name, category=category, geom=point, status="open",
+                 kakao_place_id=kakao_place_id))
+    db.flush()
+
+
+@pytest.mark.parametrize("azimuth", [0, 90, 45])   # 북·동·북동 — 구(haversine)와 타원체의 차이가 방향마다 다르다
+def test_radius_boundary_is_decided_by_the_db_alone(db_session, azimuth):
+    """타원체로 299.9m는 안, 300.1m는 밖. 북쪽에서는 haversine이 299.9m 지점을 300.4m로 재서 예전엔 안쪽도 거절했다."""
+    _place_at(db_session, "in", 299.9, azimuth, name="안쪽 카페")
+    _place_at(db_session, "out", 300.1, azimuth, name="바깥 카페")
+
+    inside = _hint("안쪽 카페", *ORIGIN, "카페")
+    outside = _hint("바깥 카페", *ORIGIN, "카페")
+
+    assert api.match_place(inside, db=db_session) is not None
+    assert api.match_place(outside, db=db_session) is None
+    assert api.pinnable_flags([inside, outside], db=db_session) == [True, False]   # 검색(pinnable)과 핀 생성이 같은 답
+
+
+def test_find_candidates_many_returns_the_same_set_as_find_candidates(db_session):
+    for i in range(25):
+        _place_at(db_session, f"n{i}", 10 + i * 10, (i * 37) % 360, name=f"카페{i}")   # 10m~250m, 25곳
+    _place_at(db_session, "edge-in", 299.9, 0, name="안 카페")
+    _place_at(db_session, "edge-out", 300.1, 0, name="밖 카페")
+    _place_at(db_session, "other-cat", 20, 0, name="식당", category="음식점")
+    _place_at(db_session, "far-linked", 5000, 0, name="멀리 있는 연결 장소", kakao_place_id="k-far")
+    hints = [_hint("x", *ORIGIN, "카페", kakao_place_id=None), _hint("x", *ORIGIN, "카페", kakao_place_id="k-far"),
+             _hint("x", ORIGIN[0] + 0.01, ORIGIN[1], "카페", kakao_place_id=None), _hint("x", *ORIGIN, "음식점", kakao_place_id=None)]
+
+    many = repository.find_candidates_many(db_session, hints)
+
+    for h, got in zip(hints, many):
+        one = repository.find_candidates(db_session, h.lat, h.lng, h.category, h.kakao_place_id)
+        assert [c.place_id for c in got] == [c.place_id for c in one]   # 순서(가까운 순)까지 같다
+    assert len(many[0]) == 20                                           # 힌트별 상한 — 반경 안 장소는 26곳이다
+    assert [c.name for c in many[0]][:2] == ["카페0", "카페1"]
+    assert "밖 카페" not in {c.name for c in many[0]}
+    assert [c.name for c in many[1]][-1] == "멀리 있는 연결 장소"       # 카카오 ID로 연결된 장소는 반경 밖이어도 붙는다
+    assert many[2] == []                                                # 1.1km 떨어진 힌트
+    assert [c.name for c in many[3]] == ["식당"]
+
+
+def test_find_candidates_many_is_one_query_with_bounded_rows(db_session):
+    from sqlalchemy import event
+
+    for i in range(30):
+        _place_at(db_session, f"n{i}", 10 + i * 5, 0, name=f"카페{i}")
+    hints = [_hint("x", *ORIGIN, "카페", kakao_place_id=None)] * 3 + [_hint("y", ORIGIN[0] + 0.0005, ORIGIN[1], "카페", kakao_place_id=None)]
+    sizes: list[int] = []
+    engine = db_session.get_bind()
+    listener = lambda conn, cur, stmt, *a: sizes.append(1) if stmt.lstrip().upper().startswith("SELECT") else None
+    event.listen(engine, "before_cursor_execute", listener)
+    try:
+        out = repository.find_candidates_many(db_session, hints)
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+    assert len(sizes) == 1
+    assert [len(c) for c in out] == [20, 20, 20, 20]
 
 
 # ---- pinnable_flags / record_kakao_match ----
