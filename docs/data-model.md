@@ -43,7 +43,7 @@ invites(
 
 ```
 pins(
-  id, map_id, category('음식점'|'카페'|'숙소'|'관광지'),
+  id, map_id, category('음식점'|'카페'|'숙소'|'관광지'|'기타'),  -- 정의는 backend/common/categories.py(#280). v1 핀은 음식점·카페·관광지만
   kind('일반'|'AI추천'|'확정'),        -- 확정이 나머지 둘을 덮어쓴다(5-2)
   origin('direct'|'ai'),               -- kind와 별개. 원래 태생은 안 바뀐다(4절: 반대 많아도 모양 불변)
   place_id references places(id),      -- 2026-10-01 결정(#191): v1의 핀은 모두 자체 DB 장소를 가리킨다.

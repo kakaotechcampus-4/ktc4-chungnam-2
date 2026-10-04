@@ -49,6 +49,7 @@ from authz.core import Principal, Resource, can
 from authz.guard import require
 from authz.ports import MembershipGateway
 from authz.schemas import Permissions
+from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
 from llm import service as llm_service
@@ -88,14 +89,20 @@ def publish_candidate(
     타입을 적으려고 pins.models를 import해야 해서 경계 규칙을 어긴다(#114)."""
     candidate, run = service.load_candidate_with_run(db, candidate_id)  # 1) 404 NOT_FOUND
 
-    _require_publish(
-        loaded=_LoadedCandidate(
-            resource=Resource(type="candidate", map_id=run.map_id, author_id=run.requested_by),
-            obj=candidate,
-        ),
-        user=CurrentUser(user_id=requester_id),
-        gateway=membership,
-    )  # 2)+3) 비구성원 404 NOT_FOUND / 구성원인데 본인 요청 아님 403 FORBIDDEN
+    try:
+        _require_publish(
+            loaded=_LoadedCandidate(
+                resource=Resource(type="candidate", map_id=run.map_id, author_id=run.requested_by),
+                obj=candidate,
+            ),
+            user=CurrentUser(user_id=requester_id),
+            gateway=membership,
+        )
+    except AppError as error:
+        if error.code == "FORBIDDEN":  # 구성원이지만 요청자가 아니다 — 남의 비공개 후보의 존재를 숨긴다(가드레일 1, #255)
+            raise AppError("AI_PIN_PRIVATE") from error
+        raise
+    # 2)+3) 비구성원 404 NOT_FOUND / 구성원인데 본인 요청 아님 404 AI_PIN_PRIVATE
     # ↑ 여기까지 통과해야만 아래로 내려간다 — 순서를 바꾸지 않는다(멤버십/작성자 확인이
     #   멱등 경로·NOT_READY 판정보다 항상 먼저).
 
@@ -131,7 +138,7 @@ def publish_candidate(
 # #108 — 코어 파이프라인(llm 스텁 대상 통합)
 # ============================================================================
 
-CATEGORIES: list[str] = ["음식점", "카페", "관광지"]
+CATEGORIES: tuple[str, ...] = categories.recommendable()  # common/categories.py(#280)
 # 기본값 원 반경(m) — 최종기획안.md 248행에 이미 정의돼 있다: "기본 반경(도보 15분에 해당하는
 # 거리)". common.geo.WALKING_SPEED_M_PER_MIN(도보 시간 근사 보정계수)으로 환산한다 — 루트
 # 검증 중 발견: 이전 버전은 이 스펙을 못 찾고 2000m(약 25분)를 임의로 썼었다. 계산식으로
@@ -264,8 +271,17 @@ def patch_evidence(
         if not can(principal, "evidence.disable", resource):
             raise AppError("FORBIDDEN")
         service.set_evidence_active(db, line.id, is_active)
-    for text in adds:
-        service.add_manual_evidence(db, run_id=run.id, author_id=principal.user_id, text=text)
+    # 「+」로 추가한 줄도 ②를 거쳐 fact_key·wants를 붙인다(#254) — 안전 사유("조개 알러지")가 reference로만 남아
+    # 실격이 안 켜지는 걸 막는다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다).
+    if adds:
+        planned = llm_service.plan_evidence([
+            {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "reference", "fact_key": None}
+            for text in adds
+        ])
+        for text, line in zip(adds, planned):
+            service.add_manual_evidence(
+                db, run_id=run.id, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
+            )
     return [_evidence_response(line, principal) for line in service.list_evidence(db, run_id)]
 
 
@@ -288,12 +304,17 @@ def confirm_regions(db: Session, *, run_id: str, accept_union: bool) -> list[sch
 
 
 def _active_hard_fact_keys(db: Session, run: RecommendRun) -> list[str]:
-    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: is_active=True인
-    evidence_line 중 badge='required'로 fact_key가 매핑된 것만 실격 대상으로 켠다(누구도
-    문제 제기 안 한 조건은 검사하지 않는다). 카테고리에 안 맞는 fact_key는 애초에 제외."""
+    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: is_active=True인 evidence_line 중 fact_key가
+    매핑된 hard 키를 "안전 조건 사유는 배지와 무관하게 실격이다" 판정표대로 켠다(#254). required는 wants가
+    true가 아니면(false·null) 켜고, preferred·reference는 wants=false일 때만 켠다. 켜진 키는 라벨이 참이든
+    모름이든 제외한다(안전 조건, 가드레일 8). 카테고리에 안 맞는 fact_key는 애초에 제외."""
     lines = service.list_active_evidence(db, run.id)
     applicable = set(constraints.hard_fact_keys_for(run.category))
-    active = {line.fact_key for line in lines if line.badge == "required" and line.fact_key is not None}
+    active = {
+        line.fact_key for line in lines
+        if line.fact_key is not None
+        and (line.wants is not True if line.badge == "required" else line.wants is False)
+    }
     return sorted(active & applicable)
 
 
@@ -337,11 +358,14 @@ def _run_pipeline(
     active_hard_keys = _active_hard_fact_keys(db, run)
     active_lines = service.list_active_evidence(db, run.id)
     soft_requirements = _active_soft_requirements(db, run)
+    # 반대 사유(활성 required)를 낸 구성원 — fact_key로 구조화됐든 아니든 충족 집계에 센다(#255).
+    disqualifier_authors = sorted({line.author_id for line in active_lines if line.badge == "required"})
     preferred_authors: dict[str, set[str]] = {}
     avoided_authors: dict[str, set[str]] = {}  # preferred + wants=false — 점수에서 반대 구성원(#231)
     for line in active_lines:
-        if line.badge == "preferred" and line.fact_key is not None:
-            by_direction = avoided_authors if line.wants is False else preferred_authors
+        # wants=None(방향을 모름)인 선호는 지지·반대 어디에도 세지 않는다 — 효과 없음(constraints.md 표, #237).
+        if line.badge == "preferred" and line.fact_key is not None and line.wants is not None:
+            by_direction = preferred_authors if line.wants else avoided_authors
             by_direction.setdefault(line.fact_key, set()).add(line.author_id)
     preferred_authors_frozen = {key: frozenset(authors) for key, authors in preferred_authors.items()}
     avoided_authors_frozen = {key: frozenset(authors) for key, authors in avoided_authors.items()}
@@ -385,12 +409,15 @@ def _run_pipeline(
     # ③-b — #99 이후 모델이 아니라 코드가 점수를 매기고 상위 3곳을 고른다(recommend/core.py,
     # 이슈 #112). ♥ 받은 핀들의 라벨로 "선호 기준"을 만들고, 그 기준으로 통과 후보 각각에
     # 점수를 매긴 뒤, 점수 → 동네 배분 → 거리 평균 순으로 상위 3곳만 남긴다.
-    liked_pins = pins_api.list_liked_pins_with_checks(
+    liked_pins = pins_api.list_liked_pins(
         db, map_id=run.map_id, category=run.category, requested_by=run.requested_by,
     )
+    # ♥ 핀의 라벨은 핀에 복사된 checks가 아니라 places의 place_facts에서 읽는다(#247) — 직접 찍은 핀도 같은
+    # 라벨을 갖는다. known인 soft 라벨만 선호 신호가 된다(모름은 0점, 감점도 없다). 배치 조회 한 번.
+    liked_facts = place_facts.get_facts([entry["place_id"] for entry in liked_pins]) if liked_pins else {}
     hearted_places = [
         core.HeartedPlace(
-            checks=[Check(**check) for check in entry["checks"]],
+            checks=core.label_checks(liked_facts.get(entry["place_id"], [])),
             member_ids=frozenset(entry["member_ids"]),
         )
         for entry in liked_pins
@@ -406,6 +433,13 @@ def _run_pipeline(
     wanted_soft_keys = {line.fact_key for line in active_lines if line.fact_key is not None} | {
         fact_key for fact_key, wanted in criteria.items() if wanted is True
     }
+    # 방향이 있는 사유는 응답 체크를 "만족 여부"로 보인다(#237). 같은 키에 방향이 갈리면 required가 이긴다.
+    directions: dict[str, bool] = {}
+    for badge in ("preferred", "required"):
+        directions.update({
+            line.fact_key: line.wants for line in active_lines
+            if line.badge == badge and line.fact_key in constraints.SOFT_FACT_KEYS and line.wants is not None
+        })
     region_label = regions[0].label if regions else ""
     anchor_points_by_region = (
         {region_label: [tuple(point) for point in regions[0].anchor_points]} if regions else {}
@@ -426,13 +460,20 @@ def _run_pipeline(
     for index, place_id in enumerate(top_place_ids):
         place = places_by_id[place_id]
         checks = checks_by_place[place_id]
-        fulfillment = core.build_member_fulfillment(checks, hearted_places, criteria, preferred_authors_frozen)
+        fulfillment = core.build_member_fulfillment(
+            checks, hearted_places, criteria, preferred_authors_frozen, disqualifier_authors,
+        )
+        # 이유 문장의 "(n/m명)"은 선호를 가진 구성원만 센다 — 실격 사유만 낸 사람을 선호 충족으로 부풀리지 않는다.
+        preference_fulfillment = core.build_member_fulfillment(checks, hearted_places, criteria, preferred_authors_frozen)
         candidates_data.append({
             "place_id": place_id, "region_id": region_id, "lat": place.lat, "lng": place.lng,
             "rank": index + 1,
-            "checks": [check.model_dump() for check in core.checks_to_show(checks, wanted_soft_keys)],
+            "checks": [
+                check.model_dump()
+                for check in core.to_satisfaction_checks(core.checks_to_show(checks, wanted_soft_keys), directions)
+            ],
             "member_fulfillment": fulfillment,
-            "reason": core.build_reason(checks, criteria, fulfillment),
+            "reason": core.build_reason(checks, criteria, preference_fulfillment),
             "place_source": dict(place.source) if place.source else None,
         })
     funnel = core.funnel_counts([
@@ -446,11 +487,18 @@ def _run_pipeline(
     return candidates_data, funnel
 
 
-def _candidates_ready_event(run: RecommendRun, candidates: list[CandidateRow]) -> Event:
+def _candidates_ready_event(
+    db: Session, run: RecommendRun, candidates: list[CandidateRow], place_search: PlaceSearchGateway,
+) -> Event:
+    """docs/events.md run.candidates_ready — 스펙의 Candidate 모양 그대로(#241). 받는 사람은 요청자 본인
+    하나라 permissions도 그 사람 기준으로 만든다(응답과 같은 _candidate_response)."""
+    requester = Principal(user_id=run.requested_by, map_id=run.map_id, role="member")
+    region_labels = {r.id: r.label for r in service.list_regions(db, str(run.id))}
+    place_names = place_search.get_names([c.place_id for c in candidates]) if candidates else {}
     payload = {
         "run_id": str(run.id),
         "candidates": [
-            {"id": str(c.id), "rank": c.rank, "checks": c.checks, "visibility": "private"}
+            _candidate_response(c, run, requester, region_labels, place_names).model_dump(exclude_none=True)
             for c in candidates
         ],
     }
@@ -490,7 +538,7 @@ def execute_run(
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
     service.set_run_status(db, run, "done")
-    record_event(db, _candidates_ready_event(run, candidates))
+    record_event(db, _candidates_ready_event(db, run, candidates, place_search))
     return run
 
 
@@ -521,7 +569,7 @@ def widen_run(
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
     service.set_run_status(db, run, "done")
-    record_event(db, _candidates_ready_event(run, candidates))
+    record_event(db, _candidates_ready_event(db, run, candidates, place_search))
     return run
 
 
@@ -553,7 +601,7 @@ def retry_run(
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
     service.set_run_status(db, run, "done")
-    record_event(db, _candidates_ready_event(run, candidates))
+    record_event(db, _candidates_ready_event(db, run, candidates, place_search))
     return run
 
 

@@ -10,13 +10,14 @@ Permissions는 여기서 정의하지 않는다 — Pin·EvidenceLine·Shortlist
 authz가 소유한다(#56 이관, mentor-review-plan.md). pins는 authz의 것을 그대로 쓴다.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_serializer
 
 from authz.schemas import Permissions
+from common import categories
 
-Category = Literal["음식점", "카페", "숙소", "관광지", "기타"]
+Category = Literal[categories.all_categories()]  # 스펙의 Category(common/categories.py, #280)
 PinKind = Literal["일반", "AI추천", "확정"]
 PriceBucket = Literal["low", "mid", "high"]
 LabelConfidence = Literal["known", "unknown"]
@@ -47,7 +48,7 @@ class MemberFulfillment(BaseModel):
 
 
 class PlaceSource(BaseModel):
-    provider: Literal["kakao", "naver", "google"]
+    provider: Literal["kakao", "naver", "google", "permit", "tourapi"]
     url: str | None = None
 
 
@@ -64,7 +65,7 @@ class PinCreateRequest(BaseModel):
     category: Category
     source: PinSource = "search"
     link_url: str | None = None
-    place_id: str
+    place_id: str = Field(max_length=100)
     place_name: str = Field(max_length=100)
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
@@ -124,7 +125,9 @@ class FilterCounts(BaseModel):
 class ReactionRequest(BaseModel):
     type: ReactionKind
     reason_text: str | None = Field(default=None, max_length=140)
-    reason_chip_ids: list[str] | None = None
+    # docs/api-spec.yaml ReactionRequest — 최대 10개, 칩 하나는 50자까지. 내용이 비었는지는
+    # core.validate_reaction이 본다(공백·제로폭만 있는 칩은 길이만으론 못 거른다).
+    reason_chip_ids: list[Annotated[str, Field(max_length=50)]] | None = Field(default=None, max_length=10)
 
 
 class Error(BaseModel):

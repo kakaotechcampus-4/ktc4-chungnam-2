@@ -119,15 +119,23 @@ def match_place(hint: PlaceHint, *, db: Session | None = None) -> PlaceMatch | N
 
 
 def record_kakao_match(place_id: str, kakao_place_id: str, kakao_place_url: str, *, db: Session | None = None) -> None:
-    """매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(핀 생성과 같은 트랜잭션). 이미 있으면 덮어쓴다."""
+    """매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(핀 생성과 같은 트랜잭션).
+    이미 다른 카카오 ID가 있으면 덮어쓰지 않고(첫 값 유지, #248) 같은 ID면 확인 일자만 갱신한다."""
     with _session(db) as s:
         repository.record_kakao_match(s, place_id, kakao_place_id, kakao_place_url)
 
 
 def pinnable_flags(hints: Sequence[PlaceHint], *, db: Session | None = None) -> list[bool]:
-    """힌트마다 match_place가 성공할지 읽기만 해서 계산한다. 카카오 ID를 기록하지 않는다."""
+    """힌트마다 match_place가 성공할지 읽기만 해서 계산한다. 카카오 ID를 기록하지 않는다. 쿼리 한 번(#238)."""
+    own = [i for i, h in enumerate(hints) if h.category in matching.OWN_CATEGORIES]
+    flags = [False] * len(hints)
+    if not own:
+        return flags
     with _session(db) as s:
-        return [match_place(h, db=s) is not None for h in hints]
+        candidates = repository.find_candidates_many(s, [hints[i] for i in own])
+    for i, cands in zip(own, candidates):
+        flags[i] = matching.pick_match(hints[i], cands) is not None
+    return flags
 
 
 def get_places(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceInfo]:

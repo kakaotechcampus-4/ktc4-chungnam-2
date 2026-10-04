@@ -1,17 +1,35 @@
 name: contracts-test
 
-# FE↔BE 계약 패키지(타입 생성 + 목 서버) 검증. 스펙이나 contracts가 바뀐 PR과 develop push에서 돈다.
-# 결과는 차단이 아니라 신호다 — 필수 체크로 걸지 여부는 팀 결정(브랜치 보호 설정).
+# FE↔BE 계약 패키지(타입 생성 + 목 서버) 검증. develop 필수 검사다(#278) — 실패하면 PR이 머지되지 않는다.
+# PR에서는 항상 시작하고, 관련 파일이 안 바뀌었으면 contracts job을 건너뛴다. 필수 검사가 경로 필터로
+# 아예 시작되지 않으면 PR이 "대기 중"으로 멈추기 때문이다(건너뛴 job은 통과로 보고된다).
 on:
   pull_request:
     branches: [develop, main]
-    paths: ["contracts/**", "docs/api-spec.yaml", ".github/workflows/contracts-test.yml"]
   push:
     branches: [develop]
     paths: ["contracts/**", "docs/api-spec.yaml"]
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ github.event_name == 'push' || steps.filter.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            run:
+              - "contracts/**"
+              - "docs/api-spec.yaml"
+              - ".github/workflows/contracts-test.yml"
+
   contracts:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:

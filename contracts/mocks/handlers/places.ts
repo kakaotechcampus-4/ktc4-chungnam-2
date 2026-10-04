@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw";
 import type { components } from "../../src/types/api";
 import { apiError } from "../util";
+import { CATEGORY_RULES } from "../categories";
 
 type PlaceSearchResult = components["schemas"]["PlaceSearchResult"];
 
@@ -37,7 +38,7 @@ export const placesHandlers = [
       const lng = Number(lngRaw);
       found = [...found].sort((a, b) => distanceScore(a, lat, lng) - distanceScore(b, lat, lng));
     }
-    // pinnable: 자체 DB에 짝이 있어 핀이 될 수 있는가 — 목 서버는 숙소·기타만 false(자체 DB는 음식점·카페·관광지만)
-    return HttpResponse.json(found.slice(0, limit).map((p) => ({ ...p, pinnable: p.category !== "숙소" && p.category !== "기타" }))); // 0개는 빈 배열 그대로(가드레일 2)
+    // pinnable: 자체 DB에 짝이 있어 핀이 될 수 있는가 — 목 서버는 카테고리의 pinnable을 그대로 쓴다(숙소·기타만 false)
+    return HttpResponse.json(found.slice(0, limit).map((p) => ({ ...p, pinnable: !p.category || CATEGORY_RULES[p.category].pinnable }))); // 0개는 빈 배열 그대로(가드레일 2)
   }),
 ];

@@ -181,10 +181,9 @@ def test_publish_candidate_non_member_is_not_found(db_session):
     assert candidate.published_pin_id is None  # 멱등 경로까지 도달하지 않는다
 
 
-def test_publish_candidate_non_author_member_is_forbidden(db_session):
-    """recommend.publish는 candidate.requested_by 본인만 가능(authz/policy.py
-    AUTHOR_CONSTRAINED_ACTIONS) — 같은 지도 구성원이라도 본인이 아니면 403.
-    docs/permissions.md의 404(비구성원)/403(구성원인데 액션 불가) 두 값 중 후자다."""
+def test_publish_candidate_non_author_member_gets_404_ai_pin_private(db_session):
+    """recommend.publish는 candidate.requested_by 본인만 가능(authz/policy.py AUTHOR_CONSTRAINED_ACTIONS).
+    같은 지도 구성원이라도 본인이 아니면 남의 비공개 후보의 존재를 숨겨 404 AI_PIN_PRIVATE다(#255, 가드레일 1)."""
     run = _make_run(db_session, requested_by="user_1")
     candidate = _make_candidate(db_session, run)
 
@@ -193,7 +192,7 @@ def test_publish_candidate_non_author_member_is_forbidden(db_session):
             db_session, candidate_id=str(candidate.id), requester_id="user_2",
             membership=_membership(run.map_id, "user_2"),  # 같은 지도 구성원이지만 run 요청자 본인이 아니다
         )
-    assert exc_info.value.code == "FORBIDDEN"
+    assert exc_info.value.code == "AI_PIN_PRIVATE"
 
 
 def test_publish_candidate_run_not_done_is_not_ready(db_session):
@@ -272,14 +271,14 @@ def test_publish_candidate_duplicate_place_id_rolls_back_everything(db_session):
 
 def test_publish_candidate_guard_update_conflict_rolls_back_pin_insert(db_session, monkeypatch):
     """link_published_pin의 가드 UPDATE가 rowcount==0을 반환하도록 강제로 흉내 낸 경우 —
-    409 IDEMPOTENCY_CONFLICT, 그리고 직전에 생긴 pins INSERT까지 함께 롤백돼 고아 행이
+    409 PIN_DUPLICATE, 그리고 직전에 생긴 pins INSERT까지 함께 롤백돼 고아 행이
     안 남는지 확인한다(mentor-review-plan.md 레이스 2번)."""
     run = _make_run(db_session)
     candidate = _make_candidate(db_session, run)
     db_session.commit()  # 기준선
 
     def _fake_link_published_pin(db, *, candidate_id, pin_id):
-        raise AppError("IDEMPOTENCY_CONFLICT")
+        raise AppError("PIN_DUPLICATE")
 
     monkeypatch.setattr(service, "link_published_pin", _fake_link_published_pin)
 
@@ -288,7 +287,7 @@ def test_publish_candidate_guard_update_conflict_rolls_back_pin_insert(db_sessio
             db_session, candidate_id=str(candidate.id), requester_id="user_1",
             membership=_membership(run.map_id, "user_1"),
         )
-    assert exc_info.value.code == "IDEMPOTENCY_CONFLICT"
+    assert exc_info.value.code == "PIN_DUPLICATE"
     db_session.rollback()  # common/database.py get_db와 동일
 
     db_session.refresh(candidate)
@@ -302,7 +301,7 @@ def test_publish_candidate_guard_update_conflict_rolls_back_pin_insert(db_sessio
 
 def test_concurrent_publish_same_candidate_produces_exactly_one_pin(test_engine, monkeypatch):
     """동시에 두 요청을 보내 같은 후보를 게시하는 시나리오(세션 두 개로 흉내) — 하나는
-    200(생성), 다른 하나는 409 PIN_DUPLICATE(IDEMPOTENCY_CONFLICT가 아니다). 최종적으로
+    200(생성), 다른 하나는 409 PIN_DUPLICATE(PIN_DUPLICATE가 아니다). 최종적으로
     pins 행은 정확히 1개. db_session(세이브포인트, 롤백 전용) 대신 test_engine에 직접
     연결한다 — 실제 유니크 제약 락 경합을 재현하려면 진짜 커밋이 필요하다.
 
@@ -758,11 +757,13 @@ def _run_with_wanted_and_unwanted_soft_keys(db_session):
         {"author_id": "user_2", "source": "reaction", "text": "대기 짧았으면", "badge": "preferred", "fact_key": "wait_short"},
     ])
     liked = _make_pin(db_session, lat=35.0008, lng=129.0008)
-    liked.checks = [{"fact_key": "parking_available", "label": "True", "passed": True,
-                     "confidence": "known", "needs_check": False}]
     _react(db_session, liked, user_id="user_1", type="like")
     places = [PlaceStub(place_id="cand", lat=35.0005, lng=129.0005)]
-    facts = _FakePlaceFacts({"cand": {"spicy_focused": False, "franchise": False, "parking_available": True}})
+    # ♥ 핀의 라벨은 places(place_facts)에서 읽는다(#247) — 핀에 복사된 checks가 아니다.
+    facts = _FakePlaceFacts({
+        "cand": {"spicy_focused": False, "franchise": False, "parking_available": True},
+        liked.place_id: {"parking_available": True},
+    })
     flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
     [candidate] = service.list_candidates(db_session, str(run.id))
     return run, candidate
@@ -937,7 +938,7 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
     _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
     service.add_reaction_evidence(db_session, run_id=run.id, lines=[
         {"author_id": "user_1", "source": "reaction", "text": "매운거 빼주세요", "badge": "required", "fact_key": "spicy_focused"},
-        {"author_id": "user_2", "source": "reaction", "text": "조용했으면", "badge": "preferred", "fact_key": "quiet"},
+        {"author_id": "user_2", "source": "reaction", "text": "조용했으면", "badge": "preferred", "fact_key": "quiet", "wants": True},
     ])
     source = {"provider": "kakao", "url": "https://place.map.kakao.com/1"}
     places = [
@@ -954,11 +955,16 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
     by_place = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
     sourced, bare = by_place["sourced"], by_place["bare"]
     assert sourced.reason == "실격 조건 통과: 매운맛 전문점 아님 · 선호 충족: 조용함 (1/1명)"
-    assert sourced.member_fulfillment == {"satisfied": 1, "total": 1, "by_member": [{"user_id": "user_2", "satisfied": True}]}
+    # user_1은 실격 사유(매운거 빼주세요)를 냈고 후보가 통과했으니 충족(#255). 이유 문장의 (1/1명)은 선호 구성원만 센다.
+    assert sourced.member_fulfillment == {"satisfied": 2, "total": 2, "by_member": [
+        {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": True},
+    ]}
     assert sourced.place_source == source
     # 조용함을 모르는 후보 — 구성원은 집계 대상이지만 충족으로 세지 않고, 안 본 것을 이유로 들지 않는다.
     assert bare.reason == "실격 조건 통과: 매운맛 전문점 아님"
-    assert bare.member_fulfillment == {"satisfied": 0, "total": 1, "by_member": [{"user_id": "user_2", "satisfied": False}]}
+    assert bare.member_fulfillment == {"satisfied": 1, "total": 2, "by_member": [
+        {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": False},
+    ]}
     assert bare.place_source is None  # 출처를 못 얻으면 지어내지 않는다
 
 
@@ -1083,27 +1089,99 @@ def test_required_soft_with_null_wants_has_no_effect(db_session):
     assert set(candidates) == {"korean"} and funnel["실격 조건 제거"] == 0
 
 
-def test_hard_key_ignores_wants_direction(db_session):
-    """hard 키는 방향이 고정(있으면 실격)이다 — wants가 true여도 spicy_focused=True는 실격이고 모름도 제외."""
+def test_hard_key_required_with_wants_true_is_not_a_disqualifier(db_session):
+    """#254 판정표 — required + wants=true("매운 걸 좋아하는데…")는 실격이 아니다. 아무것도 켜지지 않는다."""
     candidates, funnel = _execute_with_lines(
         db_session, [_line("user_1", "required", "spicy_focused", True)],
         {"spicy": {"spicy_focused": True}, "mild": {"spicy_focused": False}, "unknown_place": {}},
     )
-    assert set(candidates) == {"mild"} and funnel["실격 조건 제거"] == 2
+    assert set(candidates) == {"spicy", "mild", "unknown_place"} and funnel["실격 조건 제거"] == 0
 
 
-def test_preferred_wants_false_subtracts_and_wants_null_still_adds(db_session):
+def test_hard_key_required_with_wants_false_or_null_disqualifies_true_and_unknown(db_session):
+    for wants in (False, None):
+        candidates, funnel = _execute_with_lines(
+            db_session, [_line("user_1", "required", "spicy_focused", wants)],
+            {"spicy": {"spicy_focused": True}, "mild": {"spicy_focused": False}, "unknown_place": {}},
+        )
+        assert set(candidates) == {"mild"} and funnel["실격 조건 제거"] == 2, wants
+
+
+def test_hard_key_preferred_and_reference_disqualify_only_when_wants_false(db_session):
+    """△·♥·「+」 — "저 조개 알러지"(wants=false)는 배지와 무관하게 실격(참·모름 모두), true·null은 효과 없음."""
+    facts = {"shell": {"contains_shellfish": True}, "clean": {"contains_shellfish": False}, "unknown_place": {}}
+    for badge in ("preferred", "reference"):
+        candidates, funnel = _execute_with_lines(db_session, [_line("user_1", badge, "contains_shellfish", False)], facts)
+        assert set(candidates) == {"clean"} and funnel["실격 조건 제거"] == 2, badge
+        for wants in (True, None):
+            candidates, funnel = _execute_with_lines(db_session, [_line("user_1", badge, "contains_shellfish", wants)], facts)
+            assert set(candidates) == set(facts) and funnel["실격 조건 제거"] == 0, (badge, wants)
+
+
+def test_inactive_safety_reason_is_not_applied(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {**_line("user_1", "preferred", "contains_shellfish", False), "is_active": False},
+    ])
+    assert flows._active_hard_fact_keys(db_session, run) == []
+
+
+def test_plus_manual_line_goes_through_plan_evidence_and_keeps_reference_badge(db_session, monkeypatch):
+    """#254 — 「+」로 추가한 줄도 ②로 보내 fact_key·wants를 붙인다. 배지는 reference."""
+    from llm.schemas import EvidenceLine as PlannedLine
+
+    sent = []
+
+    def planner(raw):
+        sent.extend(raw)
+        return [PlannedLine(**{**r, "fact_key": "contains_shellfish", "wants": False}) for r in raw]
+
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", lambda raw: planner(raw))
+    run = _make_run(db_session, status="collecting_evidence")
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+
+    flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["저 조개 알러지 있어요"])
+
+    assert [r["source"] for r in sent] == ["manual"]
+    [line] = service.list_evidence(db_session, str(run.id))
+    assert (line.badge, line.fact_key, line.wants) == ("reference", "contains_shellfish", False)
+    assert flows._active_hard_fact_keys(db_session, run) == ["contains_shellfish"]
+
+
+def test_plus_manual_line_planner_failure_leaves_no_line(db_session, monkeypatch):
+    def boom(raw):
+        raise RuntimeError("②가 죽었다")
+
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", boom)
+    run = _make_run(db_session, status="collecting_evidence")
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    with pytest.raises(RuntimeError):
+        flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["x"])
+    assert service.list_evidence(db_session, str(run.id)) == []
+
+
+def test_preferred_wants_false_subtracts_and_wants_null_has_no_effect(db_session):
     """"한식은 피하고 싶어"(preferred, wants=false)는 한식 참인 후보를 반대 구성원 +1로 깎아 순위가 내려간다.
-    wants=NULL 선호(옛 데이터)는 이전처럼 지지로 센다."""
+    wants=NULL 선호(방향을 모름)는 지지도 반대도 아니다(#237)."""
     candidates, _ = _execute_with_lines(
         db_session, [_line("user_1", "preferred", "cuisine_korean", False), _line("user_2", "preferred", "quiet", None)],
         {"korean_quiet": {"cuisine_korean": True, "quiet": True}, "quiet_only": {"quiet": True},
          "korean_only": {"cuisine_korean": True}, "plain": {}},
     )
     ranks = {pid: c.rank for pid, c in candidates.items()}
-    assert ranks["quiet_only"] == 1          # +1(quiet)
-    assert "korean_only" not in ranks         # −1 → 상위 3곳 밖(plain 0점·korean_quiet 0점이 앞선다)
-    assert set(ranks) == {"quiet_only", "korean_quiet", "plain"}
+    assert {ranks["quiet_only"], ranks["plain"]} == {1, 2}  # quiet(wants=NULL)는 0점 — 한식 후보 둘(−1)만 뒤로 밀린다
+
+
+def test_satisfied_directed_checks_are_shown_as_satisfied(db_session):
+    """#237 — "한식 말고"를 만족한 비한식 후보는 ✓, "조용한 곳"(wants=true)은 라벨이 참일 때 ✓. 라벨은 읽을 수 있는 문구."""
+    candidates, _ = _execute_with_lines(
+        db_session,
+        [_line("user_1", "required", "cuisine_korean", False), _line("user_2", "required", "quiet", True)],
+        {"ok": {"cuisine_korean": False, "quiet": True}},
+    )
+    by_key = {c["fact_key"]: c for c in candidates["ok"].checks}
+    assert by_key["cuisine_korean"]["passed"] is True and by_key["cuisine_korean"]["label"] == "한식 제외"
+    assert by_key["quiet"]["passed"] is True and by_key["quiet"]["label"] == "조용한 곳"
 
 
 def test_same_key_disqualification_beats_a_supporter(db_session):
@@ -1126,3 +1204,38 @@ def test_wants_is_stored_and_returned_by_the_evidence_api(db_session):
     by_text = {e.text: e for e in flows.list_evidence(db_session, run_id=str(run.id), principal=principal)}
     assert by_text["사유"].wants is False and by_text["사유"].fact_label == "한식"
     assert by_text["옛 데이터"].wants is None and by_text["옛 데이터"].fact_label is None
+
+
+def test_candidates_ready_event_payload_validates_as_spec_candidates(db_session):
+    """#241 — run.candidates_ready는 스펙의 Candidate 모양(reason·member_fulfillment·permissions 포함)이다."""
+    from common.events import EventLog
+    from recommend import schemas
+
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    places = [PlaceStub(place_id="p1", lat=35.0005, lng=129.0005)]
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts())
+
+    event = db_session.execute(select(EventLog).where(EventLog.type == "run.candidates_ready")).scalars().all()[-1]
+    [payload] = event.payload["candidates"]
+    candidate = schemas.Candidate(**payload)
+    assert candidate.permissions.can_publish is True and candidate.place_name == "이름-p1"
+    assert payload["visibility"] == "private" and payload["reason"]
+
+
+def test_hearted_pin_labels_come_from_place_facts_not_pin_checks(db_session):
+    """#247 — 직접 찍은 핀(pins.checks 비어 있음)도 ♥를 받으면 places 라벨이 선호 신호가 된다. 모름 라벨은 0점."""
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    liked = _make_pin(db_session, lat=35.0008, lng=129.0008)
+    assert not liked.checks
+    _react(db_session, liked, user_id="user_1", type="like")
+    _react(db_session, liked, user_id="user_2", type="like")
+    places = [PlaceStub(place_id="near", lat=35.0001, lng=129.0001), PlaceStub(place_id="far_raw", lat=35.005, lng=129.005)]
+    facts = _FakePlaceFacts({
+        liked.place_id: {"cuisine_raw_fish": True, "quiet": None},
+        "near": {"cuisine_raw_fish": False}, "far_raw": {"cuisine_raw_fish": True},
+    })
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
+    ranks = {c.place_id: c.rank for c in service.list_candidates(db_session, str(run.id))}
+    assert ranks["far_raw"] == 1 and ranks["near"] == 2

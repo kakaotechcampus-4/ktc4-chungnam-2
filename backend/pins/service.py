@@ -21,6 +21,7 @@ from auth import api as auth_api
 from places import api as places_api
 from places.schemas import PlaceHint, PlaceInfo
 from authz.core import Principal
+from common import categories
 from common.errors import AppError
 from common.events import record_event
 from pins import core
@@ -208,9 +209,9 @@ def my_reactions_for_pins(db: Session, pin_ids: list[uuid.UUID], viewer_id: str)
 
 
 def list_reactions(db: Session, pin: PinRow) -> list[Reaction]:
-    """GET /pins/{pinId}/reactions — 반응한 구성원만(미응답자는 포함하지 않는다). 숙소 핀은 빈
-    배열(반응 행이 생기지 않는 카테고리, permissions.md). 오래된 순으로 안정 정렬한다."""
-    if pin.category == "숙소":
+    """GET /pins/{pinId}/reactions — 반응한 구성원만(미응답자는 포함하지 않는다). 반응 못 받는
+    카테고리(숙소·기타)의 핀은 빈 배열(반응 행이 생기지 않는다, permissions.md). 오래된 순으로 안정 정렬한다."""
+    if not categories.is_reactable(pin.category):
         return []
     rows = db.execute(
         select(ReactionRow).where(ReactionRow.pin_id == pin.id).order_by(ReactionRow.created_at, ReactionRow.user_id)
@@ -348,7 +349,7 @@ def _reaction_counts_for_pin(db: Session, pin_id: uuid.UUID) -> core.ReactionCou
 def set_reaction(db: Session, pin: PinRow, viewer_id: str, req: ReactionRequest) -> Reaction:
     core.validate_reactable(pin.category)
     core.validate_reaction(req.type, req.reason_text, req.reason_chip_ids)
-    reason_text = (req.reason_text or "").strip() or None
+    reason_text = core.reason_content(req.reason_text)
 
     # 원자적 upsert — 조회 후 있으면 UPDATE 없으면 INSERT(check-then-act) 방식은 같은 유저가
     # 동시에 두 번 PUT을 보내면 유니크 제약(uq_reactions_pin_user) 위반 레이스가 날 수 있다.

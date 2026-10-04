@@ -22,3 +22,14 @@ def display_names(db: Session, user_ids: Sequence[str]) -> dict[str, str]:
         return {}
     rows = db.execute(select(User.id, User.display_name, User.deleted_at).where(User.id.in_(user_ids))).all()
     return {row.id: WITHDRAWN_DISPLAY_NAME if row.deleted_at is not None else row.display_name for row in rows}
+
+
+def withdrawn_user_ids(db: Session, user_ids: Sequence[str]) -> set[str]:
+    """주어진 user_id 중 탈퇴(deleted_at)한 사람만 돌려준다(#245) — maps의 구성원 수가 탈퇴자를
+    빼는 데 쓴다. 배치 조회. users 행이 없는 id는 탈퇴로 치지 않는다(dev 스텁 세션 등)."""
+    if not user_ids:
+        return set()
+    rows = db.execute(
+        select(User.id).where(User.id.in_(user_ids), User.deleted_at.is_not(None))
+    ).scalars().all()
+    return set(rows)

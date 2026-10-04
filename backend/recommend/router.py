@@ -79,7 +79,8 @@ def get_evidence(gated=EvidenceGate, db: Session = DbSession):
 
 
 @router.patch("/runs/{runId}/evidence", response_model=list[EvidenceLine], response_model_exclude_none=True)
-def patch_evidence(body: EvidencePatchRequest, gated=EvidenceGate, db: Session = DbSession):
+def patch_evidence(body: EvidencePatchRequest | None = None, gated=EvidenceGate, db: Session = DbSession):
+    body = body or EvidencePatchRequest()  # 스펙: requestBody는 선택
     run, principal = gated
     return flows.patch_evidence(
         db, run_id=str(run.id), principal=principal,
@@ -88,7 +89,8 @@ def patch_evidence(body: EvidencePatchRequest, gated=EvidenceGate, db: Session =
 
 
 @router.post("/runs/{runId}/regions/confirm", response_model=list[Region])
-def post_regions_confirm(body: RegionConfirmRequest, gated=RunGate, db: Session = DbSession):
+def post_regions_confirm(body: RegionConfirmRequest | None = None, gated=RunGate, db: Session = DbSession):
+    body = body or RegionConfirmRequest()  # 스펙: requestBody는 선택, 속성도 전부 선택
     run, _principal = gated
     return flows.confirm_regions(db, run_id=str(run.id), accept_union=body.accept_union)
 

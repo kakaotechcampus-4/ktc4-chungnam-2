@@ -34,7 +34,6 @@ def _run(a, map_id):
 
 # ───────────────────────── D6 — ♥ 선호 프로필 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D6 — ♥ 선호 프로필이 pins.checks만 읽어 죽어 있다. #247")
 def test_d6_hearted_places_shape_the_preference_profile(members, place_ids, fake_planner, db_session):
     """문서 "선호 점수 — 입력 1": ♥가 달린 장소들의 라벨 자체를 선호 신호로 쓴다. 둘이 횟집에 ♥ → 횟집 계열(raw_fish 참)이 위로."""
     a, b, map_id = members
@@ -54,7 +53,7 @@ def test_d6_hearted_places_shape_the_preference_profile(members, place_ids, fake
 
 # ───────────────────────── D10 — 검색 원 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D10 — 카테고리 핀 중심점 하나의 원이라 먼 핀들 사이 빈 땅이 중심이 된다. #226")
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D10 — 카테고리 핀 중심점 하나의 원이라 먼 핀들 사이 빈 땅이 중심이 된다(v1 미수정, 알려진 한계 — 시연 가이드 5-3-1). #226")
 def test_d10_pins_far_apart_still_yield_candidates_around_each_pin(members, place_ids, fake_planner, db_session):
     """스펙 5-6-1: 핀마다 원을 그린다. 성수 핀 하나와 8km 떨어진 홍대 핀 하나 — 성수 일대 후보가 나와야 한다.
     카테고리 핀의 중심점 하나로 원을 그리면 두 곳 사이 빈 땅이 중심이 되어 후보가 0이 된다."""
@@ -77,7 +76,6 @@ def _kakao_url_of(db, source_id):
     return db.execute(text("SELECT kakao_place_url FROM places WHERE source_id = :s"), {"s": source_id}).scalar_one()
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D21 — 형식이 잘못된 카카오 ID가 링크로 저장된다. #248")
 def test_d21_malformed_kakao_id_is_not_turned_into_a_stored_link(members, place_ids, db_session):
     a, _, map_id = members
     name, lat, lng, _ = PLACES["K"]
@@ -87,7 +85,6 @@ def test_d21_malformed_kakao_id_is_not_turned_into_a_stored_link(members, place_
     assert r.status_code == 422 or stored is None, f"형식이 잘못된 카카오 ID가 링크로 저장됐다: {stored}"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D21 — place_id 길이 제한이 없다. #248")
 def test_d21_oversized_place_id_is_rejected(members, place_ids):
     a, _, map_id = members
     name, lat, lng, _ = PLACES["K"]
@@ -98,7 +95,6 @@ def test_d21_oversized_place_id_is_rejected(members, place_ids):
 
 # ───────────────────────── D25 — ② 글자 에코 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=ValueError, reason="D25 — ②가 text를 글자 그대로 비교해 NFD 한 줄이 run 전체를 막는다. #249")
 def test_d25_planner_output_with_decomposed_hangul_is_accepted():
     """모델이 같은 글자를 자모 분리형(NFD)으로 돌려줘도(눈에 같아 보인다) ②가 통째로 실패하면 run 생성이 막힌다."""
     from llm.schemas import EvidenceLine, PlanningOutput

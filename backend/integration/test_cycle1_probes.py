@@ -23,7 +23,6 @@ def test_publish_twice_is_idempotent_and_emits_one_event(members, place_ids, fak
     assert len(_events(db_session, map_id, "pin.published")) == 1
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D8 — 게시된 AI 핀에 place_source가 없다(가드레일 5). #242")
 def test_published_ai_pin_keeps_reason_checks_fulfillment_and_source(members, place_ids, fake_planner):
     """가드레일 5 — 게시된 핀에도 이유·체크·구성원 충족 집계·출처가 붙는다."""
     a, b, map_id = members
@@ -46,7 +45,6 @@ def test_retry_after_publish_keeps_ranks_unique(members, place_ids, fake_planner
     assert len(ranks) == len(set(ranks)), f"순위가 겹친다: {ranks}"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D15 — 스펙은 404 AI_PIN_PRIVATE, 코드는 403 FORBIDDEN(결정 대기). #246")
 def test_non_author_publish_status_matches_spec(members, place_ids, fake_planner):
     """스펙은 비작성자의 게시를 404 AI_PIN_PRIVATE로 선언한다(코드는 403이라는 보고)."""
     a, b, map_id = members
@@ -57,7 +55,6 @@ def test_non_author_publish_status_matches_spec(members, place_ids, fake_planner
 
 # ───────────────────────── 이벤트 페이로드 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D13 — run.candidates_ready가 Candidate 필수 필드를 싣지 않는다. #241")
 def test_candidates_ready_event_payload_has_the_candidate_fields(members, place_ids, fake_planner, db_session):
     a, b, map_id = members
     _recommend(a, b, map_id, place_ids)
@@ -69,7 +66,6 @@ def test_candidates_ready_event_payload_has_the_candidate_fields(members, place_
             assert {"id", "rank", "checks", "reason", "member_fulfillment", "visibility", "permissions"} <= set(cand), sorted(cand)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D14 — shortlist.changed가 행위자의 my_reaction을 공개 채널로 보낸다. #241")
 def test_shortlist_changed_event_does_not_leak_actors_my_reaction(members, place_ids, fake_planner, db_session):
     a, b, map_id = members
     k = _pin(a, map_id, "K", place_ids)
@@ -83,7 +79,6 @@ def test_shortlist_changed_event_does_not_leak_actors_my_reaction(members, place
 
 # ───────────────────────── 탈퇴 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D20 — 탈퇴한 구성원이 member_count에 남는다. #245")
 def test_withdrawn_member_is_not_counted_in_member_count(members, place_ids):
     a, b, map_id = members
     assert len(a.get(f"/maps/{map_id}/members").json()) == 2
@@ -103,7 +98,6 @@ def test_withdrawn_member_does_not_raise_the_readiness_bar(members, place_ids):
 
 # ───────────────────────── 삭제된 핀의 사유 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D12 — 핀 삭제 시 그 핀의 알러지 사유가 근거에서 사라진다. #243")
 def test_safety_reason_survives_deleting_its_pin(members, place_ids, fake_planner):
     """누가 핀을 지워도(구성원 누구나 삭제 가능) 다른 사람의 알러지 사유가 사라져 위험한 추천이 나가면 안 된다."""
     a, b, map_id = members
@@ -120,7 +114,6 @@ def test_safety_reason_survives_deleting_its_pin(members, place_ids, fake_planne
 
 # ───────────────────────── 입력 제한·선택 본문 ─────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D19 — title 100자 제한 미적용. #244")
 def test_map_title_longer_than_100_is_rejected(members):
     a, _, _ = members
     r = a.post("/maps", json={"title": "가" * 101, "start_date": "2026-11-01", "end_date": "2026-11-02",
@@ -128,14 +121,12 @@ def test_map_title_longer_than_100_is_rejected(members):
     assert r.status_code == 422, "스펙: title maxLength 100"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D19 — regions/confirm 본문이 필수로 처리된다(스펙은 선택). #244")
 def test_regions_confirm_without_body_is_ok(members, place_ids, fake_planner):
     a, b, map_id = members
     run_id, _ = _recommend(a, b, map_id, place_ids, executed=False)
     assert a.post(f"/runs/{run_id}/regions/confirm").status_code == 200, "스펙: requestBody는 선택"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="D19 — evidence PATCH 본문이 필수로 처리된다(스펙은 선택). #244")
 def test_evidence_patch_empty_body_is_ok(members, place_ids, fake_planner):
     a, b, map_id = members
     run_id, _ = _recommend(a, b, map_id, place_ids, executed=False)

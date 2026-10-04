@@ -10,10 +10,12 @@ within_radius/is_open은 이 레지스트리에 없다 — constraints.md 자신
 from dataclasses import dataclass
 from typing import Literal
 
+from common import categories
+
 Kind = Literal["hard", "soft"]
 UnknownPolicy = Literal["exclude", "pass"]
 
-_ALL_CATEGORIES: frozenset[str] = frozenset({"음식점", "카페", "관광지"})
+_ALL_CATEGORIES: frozenset[str] = frozenset(categories.recommendable())  # 추천 대상 전부(common/categories.py, #280)
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,8 @@ HARD_REGISTRY: dict[str, ConstraintSpec] = {
 }
 
 _RESTAURANT: frozenset[str] = frozenset({"음식점"})
+_CAFE: frozenset[str] = frozenset({"카페"})
+_RESTAURANT_AND_CAFE: frozenset[str] = frozenset({"음식점", "카페"})
 _CAFE_AND_SIGHT: frozenset[str] = frozenset({"카페", "관광지"})
 _SIGHT: frozenset[str] = frozenset({"관광지"})
 
@@ -47,10 +51,14 @@ _SOFT_KEYS_BY_CATEGORY: dict[str, frozenset[str]] = {
         "wait_short",
         "cuisine_korean", "cuisine_chinese", "cuisine_japanese", "cuisine_western", "cuisine_bunsik",
         "cuisine_chicken_pub", "cuisine_bbq", "cuisine_foreign", "cuisine_raw_fish", "cuisine_buffet",
-        "spacious", "long_established", "parking_available", "vegetarian_friendly", "franchise",
+        "parking_available",
     )},
+    # 음식점·카페 공통 (#203, #263)
+    **{key: _RESTAURANT_AND_CAFE for key in ("spacious", "long_established", "vegetarian_friendly", "franchise")},
+    # 카페 전용 (#263)
+    **{key: _CAFE for key in ("bakery", "serves_alcohol", "open_late")},
     # 카페·관광지 공통
-    **{key: _CAFE_AND_SIGHT for key in ("quiet", "comfortable_seat", "local_flavor")},
+    **{key: _CAFE_AND_SIGHT for key in ("quiet", "comfortable_seat", "local_flavor", "accessible")},   # accessible: 관광지 키를 카페에도(#263)
     # 관광지 (#122) — 성격·공간·자연·활동·동반·계절
     **{key: _SIGHT for key in (
         "restful", "good_view", "photogenic", "night_view", "date_spot", "hallyu_related",
@@ -58,12 +66,12 @@ _SOFT_KEYS_BY_CATEGORY: dict[str, frozenset[str]] = {
         "is_indoor", "is_outdoor",
         "mountain", "waterside", "forest", "flower_garden", "seaside",
         "walkable", "hiking", "cycling", "hands_on", "exhibition", "performance", "shopping", "heritage_tour",
-        "family_friendly", "kid_friendly", "accessible",
+        "family_friendly", "kid_friendly",
         "cherry_blossom", "autumn_foliage", "water_play", "winter_spot",
     )},
 }
 SOFT_REGISTRY: dict[str, ConstraintSpec] = {
-    key: ConstraintSpec(key, categories, "soft", "pass") for key, categories in _SOFT_KEYS_BY_CATEGORY.items()
+    key: ConstraintSpec(key, applies_to, "soft", "pass") for key, applies_to in _SOFT_KEYS_BY_CATEGORY.items()
 }
 SOFT_FACT_KEYS: frozenset[str] = frozenset(SOFT_REGISTRY)
 
@@ -132,6 +140,9 @@ PASSED_LABELS: dict[str, str] = {
     "family_friendly": "가족끼리 가기 좋음",
     "kid_friendly": "아이를 데려가기 좋음",
     "accessible": "휠체어·유모차로 다닐 수 있음",
+    "bakery": "빵·디저트가 중심인 카페",
+    "serves_alcohol": "술도 파는 카페",
+    "open_late": "밤늦게까지 여는 곳",
     "cherry_blossom": "벚꽃 명소",
     "autumn_foliage": "단풍 명소",
     "water_play": "물놀이를 하는 곳",
@@ -195,6 +206,9 @@ FACT_LABELS: dict[str, str] = {
     "family_friendly": "가족 나들이",
     "kid_friendly": "아이 동반",
     "accessible": "휠체어·유모차 이용",
+    "bakery": "빵·디저트 카페",
+    "serves_alcohol": "술도 파는 곳",
+    "open_late": "밤늦게까지 여는 곳",
     "cherry_blossom": "벚꽃 명소",
     "autumn_foliage": "단풍 명소",
     "water_play": "물놀이",

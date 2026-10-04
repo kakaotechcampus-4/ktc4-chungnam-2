@@ -405,6 +405,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RecommendRun" }
         "409": { $ref: "#/components/responses/NotReady" }
+        "429": { $ref: "#/components/responses/RetryLimit" }
+        "500": { $ref: "#/components/responses/RecommendFailed" }
 
   /runs/{runId}/evidence:
     get:
@@ -436,6 +438,7 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/EvidenceLine" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /runs/{runId}/regions/confirm:
     post:
@@ -460,6 +463,7 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Region" }
         "409": { $ref: "#/components/responses/RegionConflict" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /runs/{runId}/execute:
     post:
@@ -473,6 +477,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RecommendRun" }
         "500": { $ref: "#/components/responses/RecommendFailed" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /runs/{runId}/result:
     get:
@@ -487,6 +492,7 @@ paths:
               schema: { $ref: "#/components/schemas/RecommendResult" }
         "404": { $ref: "#/components/responses/NoResults" }
         "500": { $ref: "#/components/responses/RecommendFailed" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /runs/{runId}/widen:
     post:
@@ -503,6 +509,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RecommendRun" }
         "409": { $ref: "#/components/responses/WidenLimit" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /runs/{runId}/retry:
     post:
@@ -518,6 +525,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RecommendRun" }
         "429": { $ref: "#/components/responses/RetryLimit" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /candidates/{candidateId}/publish:
     post:
@@ -531,6 +539,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Pin" }
         "404": { $ref: "#/components/responses/AiPinPrivate" }
+        "409": { description: "게시할 수 없다 — NOT_READY(run이 아직 done이 아니다) 또는 PIN_DUPLICATE(그 장소가 이미 지도에 있다, detail.pin_id)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   # ---------- shortlist (5-3, 5-10) ----------
   /maps/{mapId}/shortlist:
@@ -602,6 +611,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/ShortlistItem" }
+        "422": { description: "item_ids가 현재 확정 리스트와 맞지 않는다(VALIDATION_ERROR, detail에 불일치 항목)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /maps/{mapId}/route:
     get:
@@ -800,11 +810,12 @@ components:
 
     Category:
       type: string
-      enum: [음식점, 카페, 숙소, 관광지, 기타] # 숙소는 반응·AI 추천 불가, 기타는 추천 대상 아님 (#154)
+      description: "장소 카테고리 전체. 카테고리마다 핀을 만들 수 있는지, 반응할 수 있는지, 추천 대상인지는 backend/common/categories.py 한 곳에서 정하고 대조 테스트로 이 목록과 맞춘다(#280). v1은 음식점, 카페, 관광지만 핀을 만들 수 있다. 숙소와 기타는 자체 장소 DB에 없어 핀으로 만들 수 없고 값만 남아 있다(#191)"
+      enum: [음식점, 카페, 숙소, 관광지, 기타]
 
     RecommendCategory:
       type: string
-      description: AI 대안 추천을 받을 수 있는 카테고리. 숙소는 핀으로는 찍지만 추천 대상이 아니다 (#145)
+      description: "AI 대안 추천을 받을 수 있는 카테고리. backend/common/categories.py에서 추천 대상인 카테고리와 같아야 한다(대조 테스트, #280). 숙소는 추천 대상이 아니다(#145)"
       enum: [음식점, 카페, 관광지]
 
     PinKind:
@@ -910,7 +921,7 @@ components:
         category: { $ref: "#/components/schemas/Category" }
         source: { type: string, enum: [link, search, coordinate], default: search, description: "v1은 search만. coordinate·link는 값만 남겨 둔 것(v2 확장용)이며 보내면 422 (#191·#147) — 생략하면 search" }
         link_url: { type: string, maxLength: 2000, description: "v1에서는 받지 않음 — 보내면 422 (#147). v2 카톡 내보내기용으로 남겨 둔 필드" } # 사용자가 직접 붙여넣는 값, 코드에 근거 없음(멘토 리뷰 대응)
-        place_id: { type: string, description: "source=search의 **매칭 힌트** — GET /places/search 결과의 place_id(카카오 장소 ID)를 그대로. 저장하지 않는다" }
+        place_id: { type: string, maxLength: 100, description: "source=search의 **매칭 힌트** — GET /places/search 결과의 place_id(카카오 장소 ID)를 그대로. 저장하지 않는다" }
         place_name: { type: string, maxLength: 100, description: "매칭 힌트 — 검색 결과의 이름을 그대로. 저장하지 않는다(핀 이름은 자체 DB 장소의 이름, #191)" } # 루트 결정(2026-09-23, 2026-10-01 #191로 대체): 사용자가 이미 들고 있는
         # 값(구글맵 링크·검색 결과)을 그대로 저장 — places 파이프라인(#53 대기)을 기다리지 않는다.
         # pins/core.py::validate_create가 이미 검증하는 범위를 그대로 옮김(멘토 리뷰 대응).
@@ -1096,7 +1107,7 @@ components:
       required: [satisfied, total]
       properties:
         satisfied: { type: integer, minimum: 0, description: "이 후보가 자기 조건을 만족시키는 구성원 수" }
-        total: { type: integer, minimum: 0, description: "집계 대상 구성원 수(조건을 남긴 구성원)" }
+        total: { type: integer, minimum: 0, description: "집계 대상 구성원 수 — 조건을 남긴 구성원. 선호(♥·선호 사유)뿐 아니라 실격 사유(required)를 낸 구성원도 포함한다(#246 G1). 후보는 실격을 통과했으므로 그 구성원은 충족으로 센다" }
         by_member:
           type: array
           items:

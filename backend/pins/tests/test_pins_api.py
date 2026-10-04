@@ -627,7 +627,7 @@ def _like(db_session, pin_row, user_id):
     db_session.commit()
 
 
-def test_list_liked_pins_with_checks_excludes_other_users_private_pin(db_session):
+def test_list_liked_pins_excludes_other_users_private_pin(db_session):
     """가드레일 1 — 타인의 비공개 후보에 ♥가 있어도 요청자의 선호 프로필에 안 들어간다."""
     from pins import api as pins_api
 
@@ -637,18 +637,34 @@ def test_list_liked_pins_with_checks_excludes_other_users_private_pin(db_session
     _like(db_session, other_private, "user_2")
     _like(db_session, public, "user_2")
 
-    result = pins_api.list_liked_pins_with_checks(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    result = pins_api.list_liked_pins(db_session, map_id="map_1", category="음식점", requested_by="user_1")
 
     assert len(result) == 1  # 공개 핀 하나뿐
 
 
-def test_list_liked_pins_with_checks_includes_own_private_pin(db_session):
+def test_list_liked_pins_includes_own_private_pin(db_session):
     from pins import api as pins_api
 
     own_private = _insert_pin(db_session, created_by="user_1", visibility="private", place_id="lk_own_priv",
                               checks=[{"fact_key": "quiet"}])
     _like(db_session, own_private, "user_1")
 
-    result = pins_api.list_liked_pins_with_checks(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    result = pins_api.list_liked_pins(db_session, map_id="map_1", category="음식점", requested_by="user_1")
 
-    assert result == [{"checks": [{"fact_key": "quiet"}], "member_ids": {"user_1"}}]
+    assert result == [{"place_id": "lk_own_priv", "member_ids": {"user_1"}}]
+
+
+def test_deleted_pin_reasons_still_reach_the_evidence_but_not_the_readiness_count(db_session):
+    """#243 — 구성원 누구나 핀을 지울 수 있어서(#25), 지워진 핀에 남긴 알러지 사유가 근거에서 빠지면 안 된다(가드레일 8).
+    준비 판정(몇 명이 반응했나)은 삭제 핀을 세지 않는다 — 사유(이력)와 현재 반응 수는 다른 질문이다."""
+    from pins import api as pins_api
+
+    gone = _insert_pin(db_session, place_id="rs_gone", deleted=True)
+    alive = _insert_pin(db_session, place_id="rs_alive")
+    db_session.add(ReactionRow(pin_id=gone.id, user_id="user_2", type="against", reason_text="조개 알러지"))
+    db_session.add(ReactionRow(pin_id=alive.id, user_id="user_1", type="like"))
+    db_session.commit()
+
+    reasons = pins_api.list_reasoned_reactions(db_session, map_id="map_1", category="음식점")
+    assert [(r["user_id"], r["reason_text"]) for r in reasons] == [("user_2", "조개 알러지")]
+    assert pins_api.count_reacted_users(db_session, map_id="map_1", category="음식점") == 1

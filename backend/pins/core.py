@@ -7,9 +7,11 @@ authz.core.permissions_for에 위임한다. pin_permissions(kind, is_member)는 
 (#56 이관, mentor-review-plan.md) — authz/tests/test_permissions.py가 동등성을 보증한다.
 """
 
+import re
 from dataclasses import dataclass
 
 from authz.core import Principal, Resource, permissions_for
+from common import categories
 from common.errors import AppError
 from common.events import Event
 from pins.schemas import (
@@ -29,6 +31,7 @@ COORDINATE_PIN_REJECTED_MESSAGE = "지도를 눌러 핀을 찍을 수는 없어�
 CATEGORY_MISMATCH_MESSAGE = "고른 장소의 분류와 요청한 분류가 달라요"
 KAKAO_ID_PREFIX = "kakao:"
 KAKAO_PLACE_PAGE = "https://place.map.kakao.com/"
+KAKAO_RAW_ID = re.compile(r"[0-9]{1,20}")
 
 
 def validate_create(req: PinCreateRequest) -> None:
@@ -51,7 +54,9 @@ def kakao_place_url(kakao_place_id: str) -> str | None:
     if not kakao_place_id.startswith(KAKAO_ID_PREFIX):
         return None
     raw = kakao_place_id[len(KAKAO_ID_PREFIX):]
-    return f"{KAKAO_PLACE_PAGE}{raw}" if raw else None
+    # 실제 카카오 장소 ID는 숫자뿐이다. 그 밖의 값(`../../x?y#z` 등)을 이어 붙이면 이 장소를 보는 모든
+    # 사용자에게 오염된 링크가 나간다(#248) — 형식이 틀리면 매칭은 하되 ID·URL을 기록하지 않는다.
+    return f"{KAKAO_PLACE_PAGE}{raw}" if KAKAO_RAW_ID.fullmatch(raw) else None
 
 
 def is_duplicate(existing_place_ids: set[str], place_id: str | None) -> bool:
@@ -174,20 +179,33 @@ def pin_deleted_event(pin_id: str, map_id: str, visibility: str) -> Event | None
     return Event(map_id=map_id, channel="public", type="pin.deleted", payload={"pin_id": pin_id})
 
 
+# strip()이 못 잡는 폭 없는 문자(zero-width space·joiner·word joiner·BOM) — 눈에 안 보이는 사유를 막는다.
+_INVISIBLE = dict.fromkeys(map(ord, "​‌‍⁠﻿"))
+
+
+def reason_content(text: str | None) -> str | None:
+    """공백·제로폭 문자만 있으면 None, 아니면 앞뒤 공백을 뗀 문자열. 사유가 "있는지" 판단하는 유일한 기준이다."""
+    if not text or not text.translate(_INVISIBLE).strip():
+        return None
+    return text.strip()
+
+
 def validate_reaction(reaction_type: str, reason_text: str | None, reason_chip_ids: list[str] | None) -> None:
-    """가드레일 3 — 반대(against)는 사유가 필수다. 공백만 있는 reason_text는 없는 것으로
-    취급한다(목 서버는 이걸 놓쳐 "   "도 통과시키는 버그가 있다). like/neutral은 항상 통과."""
+    """가드레일 3 — 반대(against)는 사유가 필수다. 공백·제로폭만 있는 reason_text는 없는 것으로
+    취급한다(목 서버는 이걸 놓쳐 "   "도 통과시키는 버그가 있다). 내용 없는 칩은 사유가 아니라
+    요청 오류다(422 VALIDATION_ERROR — 반응 종류와 무관하게). like/neutral은 사유 없이 통과."""
+    if any(reason_content(chip) is None for chip in reason_chip_ids or []):
+        raise AppError("VALIDATION_ERROR", "reason_chip_ids에 내용 없는 칩이 있습니다")
     if reaction_type != "against":
         return
-    has_text = bool(reason_text and reason_text.strip())
-    has_chips = bool(reason_chip_ids)
-    if not has_text and not has_chips:
+    if reason_content(reason_text) is None and not reason_chip_ids:
         raise AppError("EVIDENCE_REQUIRED", "반대 반응에는 사유가 필요합니다")
 
 
 def validate_reactable(category: str) -> None:
-    """숙소 핀은 반응 대상이 아니다(#154, permissions.md) — 403이 아니라 422로 요청 자체를 거부."""
-    if category == "숙소":
+    """반응 못 받는 카테고리(숙소·기타, #154, permissions.md)의 핀은 403이 아니라 422로 요청 자체를 거부.
+    어떤 카테고리인지는 common/categories.py가 정한다(#280)."""
+    if not categories.is_reactable(category):
         raise AppError("REACTION_NOT_ALLOWED")
 
 

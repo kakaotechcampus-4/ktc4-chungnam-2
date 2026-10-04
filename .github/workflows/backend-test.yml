@@ -1,17 +1,39 @@
 name: backend-test
 
-# 백엔드 전체 pytest(모듈 단위 + backend/integration). develop/main으로 가는 PR과 develop push에서 돈다.
-# 결과는 차단이 아니라 신호다 — 필수 체크로 걸지 여부는 팀 결정(브랜치 보호 설정).
+# 백엔드 전체 pytest(모듈 단위 + backend/integration). develop 필수 검사다(#278) — 실패하면 PR이 머지되지 않는다.
+# PR에서는 항상 시작하고, 관련 파일이 안 바뀌었으면 pytest job을 건너뛴다(건너뛴 job은 통과로 보고된다).
+# 테스트가 직접 읽어 코드와 대조하는 문서(constraints.md, permissions.md, errors.md, api-spec.yaml)와 목 서버(contracts/mocks, #280)도 관련 파일이다.
 on:
   pull_request:
     branches: [develop, main]
-    paths: ["backend/**", "docs/api-spec.yaml", ".github/workflows/backend-test.yml"]
   push:
     branches: [develop]
-    paths: ["backend/**", "docs/api-spec.yaml"]
+    paths: ["backend/**", "docs/api-spec.yaml", "docs/constraints.md", "docs/permissions.md", "docs/errors.md", "contracts/mocks/**"]
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ github.event_name == 'push' || steps.filter.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            run:
+              - "backend/**"
+              - "docs/api-spec.yaml"
+              - "docs/constraints.md"
+              - "docs/permissions.md"
+              - "docs/errors.md"
+              - "contracts/mocks/**"
+              - ".github/workflows/backend-test.yml"
+
   pytest:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:

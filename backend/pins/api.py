@@ -114,6 +114,12 @@ def create_ai_pin(
     return PinMutation(pin=pin_row, event=event)
 
 
+def public_pin_payload(pin: Pin) -> dict:
+    """전체 채널(SSE public) 이벤트에 싣는 핀 페이로드 — 보는 사람마다 다른 값(my_reaction)은 뺀다. 다른
+    모듈(shortlist)이 공개 이벤트에 핀을 실을 때 같은 규칙을 재사용한다(#241)."""
+    return core._public_pin_payload(pin)
+
+
 def mark_confirmed(db: Session, *, pin_id: str, map_id: str) -> PinMutation:
     """docs/data-model.md — kind를 바꾸는 유일한 경로. shortlist만 부른다."""
     pin_row = service.get_pin_or_404(db, pin_id)
@@ -228,7 +234,13 @@ def list_disliked_place_ids(db: Session, *, user_id: str, map_id: str, category:
 def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[dict]:
     """recommend의 근거 조립(①②, recommend/#108)이 쓴다 — 그 카테고리 핀에 남긴 반응 중
     사유가 있는 것만(반대는 사유 필수라 가드레일3로 항상 있고, 좋음/조율 필요도 사유가 있으면
-    포함한다). llm.service.plan_evidence에 넘길 raw_reasons의 원자료다."""
+    포함한다). llm.service.plan_evidence에 넘길 raw_reasons의 원자료다.
+
+    소프트 삭제된 핀의 반응도 **포함한다**(#243) — 사유는 사람이 한 말이라 핀이 지워져도 사라지면 안 된다.
+    구성원 누구나 핀을 지울 수 있어서(#25), 안 그러면 한 명이 b의 "조개 알러지" 핀을 지우는 것만으로 안전
+    조건이 다음 run에서 빠진다(가드레일 8). 반대로 준비 판정(`count_reacted_users`)은 삭제 핀을 계속
+    센다고 보지 않는다 — 사유(이력)와 "지금 몇 명이 반응했나"는 다른 질문이다. 같은 이유로
+    `list_disliked_place_ids`도 삭제 핀을 포함한다."""
     rows = db.execute(
         select(
             ReactionRow.pin_id, ReactionRow.user_id, ReactionRow.type,
@@ -237,34 +249,35 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
         .select_from(ReactionRow)
         .join(PinRow, PinRow.id == ReactionRow.pin_id)
         .where(
-            PinRow.map_id == map_id, PinRow.category == category, PinRow.deleted_at.is_(None),
-            ReactionRow.reason_text.is_not(None),
+            PinRow.map_id == map_id, PinRow.category == category,   # 삭제된 핀의 반응도 포함한다(#243)
+            or_(ReactionRow.reason_text.is_not(None), func.jsonb_typeof(ReactionRow.reason_chip_ids) == "array"),   # 칩만 남긴 반대도(#236)
         )
     ).all()
-    return [
-        {
+    reasoned = []
+    for pin_id, user_id, reaction_type, reason_text, reason_chip_ids in rows:
+        if reason_text is None:
+            if not reason_chip_ids:
+                continue
+            # 칩만 남긴 반대(#236) — 칩 id↔사유 문구 registry가 없어(#60 결정 대기) 칩 id를 그대로 사유
+            # 문장으로 써서 ②가 구조화하게 한다. registry가 생기면 여기서 문구로 바꾼다.
+            reason_text = ", ".join(reason_chip_ids)
+        reasoned.append({
             "pin_id": str(pin_id), "user_id": user_id, "type": reaction_type,
             "reason_text": reason_text, "reason_chip_ids": reason_chip_ids,
-        }
-        for pin_id, user_id, reaction_type, reason_text, reason_chip_ids in rows
-    ]
+        })
+    return reasoned
 
 
-def list_liked_pins_with_checks(db: Session, *, map_id: str, category: str, requested_by: str) -> list[dict]:
-    """recommend의 선호 기준 만들기(#112 1단계)가 쓴다 — 이 카테고리의 삭제되지 않은 핀 중
-    ♥(like) 반응을 받은 것들의 checks(가드레일5 — #124가 게시 시점에 candidate.checks를
-    복사해둔 값. 직접 찍었거나 아직 recommend를 거치지 않은 핀은 항상 빈 리스트)와, 그 핀에
-    ♥를 누른 서로 다른 user_id 집합을 핀 하나당 한 항목으로 묶어 돌려준다.
+def list_liked_pins(db: Session, *, map_id: str, category: str, requested_by: str) -> list[dict]:
+    """recommend의 ♥ 선호 프로필(#112 1단계, #247)이 쓴다 — 이 카테고리의 삭제되지 않은 핀 중 ♥(like)를
+    받은 것의 place_id와, 그 핀에 ♥를 누른 서로 다른 user_id 집합(`member_ids`)을 핀 하나당 한 항목으로
+    돌려준다. 라벨은 pins가 알 필요 없다 — recommend가 place_id로 places의 라벨을 직접 읽는다.
 
     가드레일 1 — requested_by(이번 run의 요청자)에게 보이는 핀만 포함한다(공개 핀 + 본인의 비공개
     핀, `service.list_pins`의 가시성 판정과 같다). 안 그러면 다른 구성원의 비공개 AI 후보에 붙은
-    ♥/라벨이 요청자의 선호 프로필에 섞여 남의 비공개 후보가 순위에 영향을 준다.
-
-    checks가 비어 있으면 recommend 쪽에서 known 라벨이 하나도 없어 자연히 선호 기준에
-    기여하지 못한다(라벨 프리시딩 파이프라인 #13/#110/#111이 아직 없다는 뜻 — 실제 라벨이
-    들어오면 이 함수는 그대로 두고 checks가 채워지는 쪽에서 자동으로 해결된다)."""
+    ♥가 요청자의 선호 프로필에 섞여 남의 비공개 후보가 순위에 영향을 준다."""
     rows = db.execute(
-        select(PinRow.id, PinRow.checks, ReactionRow.user_id)
+        select(PinRow.id, PinRow.place_id, ReactionRow.user_id)
         .select_from(PinRow)
         .join(ReactionRow, ReactionRow.pin_id == PinRow.id)
         .where(
@@ -274,10 +287,10 @@ def list_liked_pins_with_checks(db: Session, *, map_id: str, category: str, requ
         )
     ).all()
     grouped: dict[str, dict] = {}
-    for pin_id, checks, user_id in rows:
-        entry = grouped.setdefault(str(pin_id), {"checks": checks or [], "member_ids": set()})
+    for pin_id, place_id, user_id in rows:
+        entry = grouped.setdefault(str(pin_id), {"place_id": place_id, "member_ids": set()})
         entry["member_ids"].add(user_id)
-    return [{"checks": entry["checks"], "member_ids": entry["member_ids"]} for entry in grouped.values()]
+    return list(grouped.values())
 
 
 def get_coordinates_for_pins(db: Session, pin_ids: list[str]) -> dict[str, tuple[float, float]]:

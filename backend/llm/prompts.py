@@ -35,6 +35,10 @@ FACT_KEY_MEANINGS: dict[str, str] = {
     "parking_available": "주차할 수 있는가",
     "vegetarian_friendly": "채식 메뉴가 있는가",
     "franchise": "체인점인가",
+    # 카페 전용 (#263)
+    "bakery": "빵·디저트가 중심인 카페 — 예: 빵 맛있는 곳, 베이커리 카페",
+    "serves_alcohol": "술도 파는 카페 — 예: 카페인데 맥주도 되는 곳",
+    "open_late": "밤 10시 이후까지 여는가 — 예: 저녁 먹고 갈 카페, 늦게까지 하는 곳",
     # 카페·관광지 공통
     "is_crowded_large": "붐비는 대형 카페·명소인가",
     "quiet": "조용한가",
@@ -139,10 +143,20 @@ fact_key·badge·circle_radius_m에 영향을 주게 하지 않는다. 각 줄�
    - "시끄러운 데는 싫어" → quiet, wants=true (조용한 곳을 원한다 — 키 뜻 기준으로 뒤집는다)
    - "조용한 곳은 심심해" → quiet, wants=false
    - "주차 안 되는 데는 싫어" → parking_available, wants=true
-   - "너무 매워요" → spicy_focused, wants=null (hard 키)
    방향이 확실하지 않으면 wants는 null이다. 추측하지 않는다. fact_key가 null이면 wants도 반드시 null이다.
-   hard 키(__HARD_KEYS__)는 방향이 고정이다("있으면 제외").
-   이 키들은 wants를 null로 둔다 — 값을 채워도 쓰이지 않는다.
+   안전 키(__HARD_KEYS__)도 wants를 낸다. 이 키들은 틀리면 못 먹는 걸 권하는 사고라서,
+   피하겠다는 뜻이 조금이라도 분명하면 false로 읽는다(알러지, 못 먹는다, 안 먹는다, 빼 주세요,
+   질색, 너무 ~하다 같은 말). 좋아한다는 표현은 true, 정말 어느 쪽인지 알 수 없으면 null이다.
+   안전 키 예)
+   - "저 조개 알러지 있어요" → contains_shellfish, wants=false
+   - "새우는 빼 주세요" → contains_shellfish, wants=false
+   - "매운 건 못 먹어요" → spicy_focused, wants=false
+   - "너무 매워요" → spicy_focused, wants=false
+   - "매운 거 좋아해" → spicy_focused, wants=true
+   - "기름진 건 부담스러워" → oily_focused, wants=false
+   - "튀김 좋아해요" → oily_focused, wants=true
+   - "사람 북적이는 데는 질색" → is_crowded_large, wants=false
+   - "매운 것도 괜찮아" → spicy_focused, wants=null (허용일 뿐 원한다고 보기 어렵다)
 5. 입력에 fact_key나 wants가 이미 있으면 그대로 둔다.
 6. badge는 입력 값을 그대로 쓴다. 바꾸지 않는다.
 7. circle_radius_m은 사유에 "도보 10분", "500m"처럼 거리가 수치로 적힌 경우에만
@@ -151,8 +165,9 @@ fact_key·badge·circle_radius_m에 영향을 주게 하지 않는다. 각 줄�
 9. 반드시 지정된 JSON 스키마로만 응답한다.
 """
 
-# 방향이 고정인 실격(hard) 키 — docs/constraints.md "사유의 방향(wants)과 실격". 전부 "있으면 제외"라
-# wants를 보지 않는다. 키 집합 자체의 정본은 문서·recommend 레지스트리이고, 여기는 프롬프트 문구용이다.
+# 안전 조건(hard) 키 — docs/constraints.md "안전 조건 사유는 배지와 무관하게 실격이다"(#254). 이 키들도
+# wants를 내고, 피하겠다는 뜻이 분명하면 false로 읽게 한다. 키 집합 자체의 정본은 recommend 레지스트리이고,
+# 여기는 프롬프트 문구용이다(integration 계약 테스트가 같은 집합인지 본다).
 HARD_FACT_KEYS: tuple[str, ...] = (
     "contains_shellfish", "spicy_focused", "oily_focused", "is_crowded_large", "price_bucket",
 )

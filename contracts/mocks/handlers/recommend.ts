@@ -2,8 +2,7 @@ import { http, HttpResponse } from "msw";
 import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError } from "../util";
 import { buildCandidates, buildEvidenceLines, buildRegions } from "../seed";
-
-const CATEGORIES = ["음식점", "카페", "관광지"] as const; // 숙소는 추천 대상이 아니다 (#145)
+import { RECOMMEND_CATEGORIES } from "../categories";
 
 function requiredCount(mapId: string) {
   const n = store.members[mapId]?.length ?? 1;
@@ -32,7 +31,7 @@ export const recommendHandlers = [
     const mapId = params.mapId as string;
     const required = requiredCount(mapId);
     const result: Record<string, { ready: boolean; answered_count: number; required_count: number }> = {};
-    for (const category of CATEGORIES) {
+    for (const category of RECOMMEND_CATEGORIES) {
       const pinsInCategory = Object.values(store.pins).filter((p) => p.map_id === mapId && p.category === category);
       const answeredUsers = new Set<string>();
       for (const pin of pinsInCategory) {

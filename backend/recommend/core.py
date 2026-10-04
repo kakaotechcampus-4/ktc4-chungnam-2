@@ -161,6 +161,16 @@ def resolve_label(labels: Sequence[FactLabel], fact_key: str) -> tuple[bool, Any
     return False, None
 
 
+def label_checks(labels: Sequence[FactLabel]) -> list[Check]:
+    """♥ 핀의 place_facts 라벨 → 선호 프로필 입력 체크(#247). known인 soft 라벨만, passed는 라벨의 참/거짓값."""
+    checks = []
+    for label in labels:
+        known, value = resolve_label(labels, label.fact_key)
+        if known and label.fact_key in constraints.SOFT_FACT_KEYS:
+            checks.append(build_check(label.fact_key, "pass", known=True, value=value, passes=bool(value)))
+    return checks
+
+
 def apply_disqualifier_filters(
     candidate_checks: list[list[Check]], soft_requirements: Collection[tuple[str, bool]] = (),
 ) -> list[bool]:
@@ -202,6 +212,27 @@ def checks_to_show(checks: Sequence[Check], wanted_fact_keys: Collection[str]) -
         check for check in checks
         if check.fact_key not in constraints.SOFT_FACT_KEYS or check.fact_key in wanted_fact_keys
     ]
+
+
+def to_satisfaction_checks(checks: Sequence[Check], directions: Mapping[str, bool]) -> list[Check]:
+    """저장·응답용 체크에서 방향이 있는 soft 키(`directions` = fact_key → wants)를 "그 사람 조건을 만족하는가"로
+    바꾼다(#237) — passed = (라벨 참거짓 == wants). "한식 말고"에 비한식 후보는 ✗가 아니라 ✓로 보이고(가드레일 5),
+    wants=true는 반대로 라벨이 참일 때 만족이다. 라벨 문구는 표시 이름 기반("한식 제외"). 모름과 방향 없는 키는
+    그대로 둔다. 점수·실격은 라벨 참거짓(passed)을 쓰므로 이 변환은 점수 계산 *뒤에* 한다."""
+    shown = []
+    for check in checks:
+        wants = directions.get(check.fact_key)
+        if wants is None or check.confidence != "known":
+            shown.append(check)
+            continue
+        satisfied = check.passed == wants
+        name = constraints.FACT_LABELS.get(check.fact_key, check.fact_key)
+        if wants:
+            label = name if satisfied else f"{name} 아님"
+        else:
+            label = f"{name} 제외" if satisfied else f"{name} 제외 안 됨"
+        shown.append(check.model_copy(update={"passed": satisfied, "label": label}))
+    return shown
 
 
 def funnel_counts(stage_removed: list[tuple[str, int]]) -> list[dict]:
@@ -379,6 +410,7 @@ def build_member_fulfillment(
     hearted_places: Sequence[HeartedPlace],
     criteria: Mapping[str, bool],
     preferred_authors: Mapping[str, frozenset[str]] | None = None,
+    disqualifier_authors: Collection[str] = (),
 ) -> dict:
     """가드레일5 "구성원 충족 집계" — api-spec.yaml `MemberFulfillment` 모양 그대로
     `{satisfied, total, by_member}`을 돌려준다.
@@ -388,7 +420,10 @@ def build_member_fulfillment(
       구성원은 집계 대상이 아니다(♥만 누르고 기준에 안 든 사람, 반대만 한 사람).
     - **satisfied** = 자기 조건을 *전부* 이 후보가 known+참으로 충족한 구성원 수. 일부만
       맞으면 충족으로 세지 않는다(구성원 만족을 부풀리지 않는다).
-    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다."""
+    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다.
+    - 실격 사유를 낸 구성원(`disqualifier_authors`, #255)도 total에 센다. 이 후보는 실격을 통과했으므로 그
+      구성원의 조건은 충족이다 — 선호가 하나도 없는 run에서도 "N명 중 N명"이 남는다. 선호 조건도 가진
+      구성원은 위 규칙(전부 충족해야 충족)을 그대로 따른다."""
     support = _member_support(hearted_places, preferred_authors)
     met = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
     conditions: dict[str, set[str]] = {}
@@ -398,6 +433,8 @@ def build_member_fulfillment(
         supporting, _opposing = support.get(fact_key, (frozenset(), frozenset()))
         for member_id in supporting:
             conditions.setdefault(member_id, set()).add(fact_key)
+    for member_id in disqualifier_authors:
+        conditions.setdefault(member_id, set())  # 선호 조건이 없으면 빈 집합 → 후보가 실격을 통과했으니 충족
     by_member = [
         {"user_id": member_id, "satisfied": fact_keys <= met}
         for member_id, fact_keys in sorted(conditions.items())

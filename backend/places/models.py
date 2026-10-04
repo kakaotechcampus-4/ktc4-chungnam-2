@@ -13,10 +13,11 @@ from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, SmallInteger
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from common import categories
 from common.database import Base
 
-# pins.category enum("category")는 5값이라 따로 둔다 — 자체 DB는 음식점·카페·관광지만 담는다(숙소·기타 없음).
-PlaceCategory = Enum("음식점", "카페", "관광지", name="place_category")
+# pins.category enum("category")과 따로 둔다 — 자체 DB는 핀을 만들 수 있는 분류만 담는다(common/categories.py, #280).
+PlaceCategory = Enum(*categories.pinnable(), name="place_category")
 PlaceSourceEnum = Enum("permit", "tourapi", name="place_source")
 PlaceStatus = Enum("open", "closed", name="place_status")
 FactConfidence = Enum("known", "unknown", name="fact_confidence")

@@ -149,14 +149,64 @@ def test_pinnable_flags_do_not_write(loaded):
     assert loaded.get(Place, uuid.UUID(pid)).kakao_matched_at is None
 
 
-def test_record_kakao_match_writes_only_id_url_and_date_and_overwrites(loaded):
+def test_pinnable_flags_is_one_query_for_many_hints(loaded):
+    from sqlalchemy import event
+
+    hints = [_hint("성수 칼국수", 37.5445, 127.0561), _hint("없는 가게", 37.5445, 127.0561)] * 8   # 16개
+    selects: list[str] = []
+    engine = loaded.get_bind()
+    listener = lambda conn, cur, stmt, *a: selects.append(stmt) if stmt.lstrip().upper().startswith("SELECT") else None
+    event.listen(engine, "before_cursor_execute", listener)
+    try:
+        flags = api.pinnable_flags(hints, db=loaded)
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+    assert flags == [True, False] * 8
+    assert len(selects) == 1
+
+
+def test_pinnable_flags_equal_match_place_per_hint(loaded):
+    hints = [_hint("성수 칼국수", 37.5445, 127.0561), _hint("성수 칼국수", 37.60, 127.10),
+             _hint("성수 칼국수", 37.5445, 127.0561, category="숙소"), _hint("성수 칼국수", 37.5445, 127.0561, category="카페")]
+    assert api.pinnable_flags(hints, db=loaded) == [api.match_place(h, db=loaded) is not None for h in hints]
+
+
+def test_pinnable_flags_empty_and_non_own_category_skip_the_db(loaded):
+    assert api.pinnable_flags([], db=loaded) == []
+    assert api.pinnable_flags([_hint("x", 37.5, 127.0, category="숙소")], db=loaded) == [False]
+
+
+def test_record_kakao_match_writes_only_id_url_and_date(loaded):
+    pid = _pid(loaded, "permit", "P001")
+    api.record_kakao_match(pid, "k1", "http://p/1", db=loaded)
+    row = loaded.get(Place, uuid.UUID(pid))
+    loaded.refresh(row)
+    assert (row.kakao_place_id, row.kakao_place_url) == ("k1", "http://p/1") and row.kakao_matched_at is not None
+    assert row.name == "성수 칼국수"   # 카카오 값으로 이름·주소·좌표를 바꾸지 않는다
+
+
+def test_record_kakao_match_keeps_the_first_id_and_url(loaded):
+    """#248 — 같은 자체 장소를 다른 카카오 ID로 찍어도 먼저 기록된 ID·URL은 그대로다(다른 지도의 링크가 안 바뀐다)."""
     pid = _pid(loaded, "permit", "P001")
     api.record_kakao_match(pid, "k1", "http://p/1", db=loaded)
     api.record_kakao_match(pid, "k2", "http://p/2", db=loaded)
     row = loaded.get(Place, uuid.UUID(pid))
     loaded.refresh(row)
-    assert (row.kakao_place_id, row.kakao_place_url) == ("k2", "http://p/2") and row.kakao_matched_at is not None
-    assert row.name == "성수 칼국수"   # 카카오 값으로 이름·주소·좌표를 바꾸지 않는다
+    assert (row.kakao_place_id, row.kakao_place_url) == ("k1", "http://p/1")
+
+
+def test_record_kakao_match_same_id_refreshes_the_date_only(loaded):
+    pid = _pid(loaded, "permit", "P001")
+    api.record_kakao_match(pid, "k1", "http://p/1", db=loaded)
+    row = loaded.get(Place, uuid.UUID(pid))
+    loaded.refresh(row)
+    row.kakao_matched_at = func.now() - func.make_interval(0, 0, 0, 1)   # 하루 전으로
+    loaded.flush()
+    loaded.refresh(row)
+    old = row.kakao_matched_at
+    api.record_kakao_match(pid, "k1", "http://p/1", db=loaded)
+    loaded.refresh(row)
+    assert row.kakao_matched_at > old and row.kakao_place_url == "http://p/1"
 
 
 def test_record_kakao_match_unknown_place_raises(loaded):
