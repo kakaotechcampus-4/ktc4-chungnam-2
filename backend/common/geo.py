@@ -18,11 +18,19 @@ WALKING_SPEED_M_PER_MIN = 80  # 성인 평균 도보 속도 약 4.8km/h 근사�
 
 
 def haversine_distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    """두 좌표 사이의 직선거리(미터). PostGIS의 geography 캐스트와 같은 구면 근사(WGS84 구 가정)."""
+    """두 좌표 사이의 직선거리(미터). 지구를 반지름 6,371km의 **구**로 보는 근사다.
+
+    PostGIS의 `geography`(`ST_Distance`·`ST_DWithin`)는 기본이 WGS84 **타원체**라 이 값과 똑같지 않다. 서울
+    구간에서 최대 약 0.25%(9km에서 20m 안팎, 반경 1.2km 기준 3m) 어긋난다 — 지금의 도보 반경·동선 용도로는 충분하다.
+    나중에 반경 판정을 DB 쿼리로 옮기면 두 기준이 갈려 같은 장소가 어떤 경로에선 안이고 다른 경로에선 밖이 될 수
+    있으니, 옮길 때는 반경 판정을 한쪽(`ST_DWithin`)으로 통일한다."""
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     d_phi = math.radians(lat2 - lat1)
     d_lambda = math.radians(lng2 - lng1)
     a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    # 부동소수점 반올림으로 a가 1.0을 미세하게 넘으면 asin(sqrt(a))가 math domain error를
+    # 낸다(대척점 근처 좌표에서 실제로 발생) — 수학적으로 a는 [0,1] 안이어야 하므로 클램핑한다.
+    a = min(1.0, a)
     return 2 * EARTH_RADIUS_M * math.asin(math.sqrt(a))
 
 
@@ -44,13 +52,19 @@ def nearest_neighbor_order(points: Sequence[Point], *, start_id: str | None = No
     않는다(NP-hard TSP의 근사) — v1 범위는 "합리적인 순서"면 충분하다(기획안에 최적 경로 요구
     없음).
 
-    `start_id`를 안 주면 첫 번째 점에서 시작한다. 빈 입력은 빈 리스트를 반환한다."""
+    `start_id`를 안 주면 첫 번째 점에서 시작한다. 빈 입력은 빈 리스트를 반환한다.
+
+    `start_id`가 `points`에 없으면(예: 그 사이 핀이 삭제됨) `ValueError`로 실패한다 — 조용히
+    첫 번째 점으로 넘어가면 호출자가 "왜 내가 지정한 시작점이 아니지"를 알아챌 방법이 없다
+    (docs/code-quality.md: 실패를 감추지 않는다)."""
     if not points:
         return []
 
     remaining = list(points)
     if start_id is not None:
-        start_idx = next(i for i, p in enumerate(remaining) if p.id == start_id)
+        start_idx = next((i for i, p in enumerate(remaining) if p.id == start_id), None)
+        if start_idx is None:
+            raise ValueError(f"start_id {start_id!r}가 points 안에 없습니다")
         current = remaining.pop(start_idx)
     else:
         current = remaining.pop(0)

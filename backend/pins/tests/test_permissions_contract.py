@@ -18,6 +18,7 @@ import uuid
 import pytest
 from sqlalchemy import func
 
+from auth.testing import session_cookie
 from authz.core import Principal, Resource, permissions_for
 from authz.deps import get_membership_gateway
 from authz.testing import FakeMembership
@@ -40,7 +41,7 @@ def _insert_pin(db_session, *, map_id=MAP, created_by="user_1", kind="일반", v
 
 
 def _auth(user_id="user_1"):
-    return {"session": user_id}
+    return session_cookie(user_id)
 
 
 # --- 1. API 통합 테스트 — 관측 가능한 조합만 ------------------------------------------
@@ -62,16 +63,11 @@ def test_get_pins_permissions_matches_kind_shortlist_direction(app_client, db_se
     assert perms_by_kind["일반"]["can_delete"] is True
 
 
-def test_get_pins_non_member_is_404():
+def test_get_pins_non_member_is_404(app_client):
     """비구성원 응답 403→404 계약 변경(docs/CHANGELOG-api.md 2026-09-11) — issue #61과 같은 증거."""
-    from fastapi.testclient import TestClient
-
+    # app_client가 이미 lifespan을 열었다 — 새 TestClient를 또 열면 dispatcher가 두 번 기동한다.
     app.dependency_overrides[get_membership_gateway] = lambda: FakeMembership({})
-    try:
-        with TestClient(app) as client:
-            resp = client.get("/maps/map_1/pins", cookies=_auth("user_1"))
-    finally:
-        del app.dependency_overrides[get_membership_gateway]
+    resp = app_client.get("/maps/map_1/pins", cookies=_auth("user_1"))
 
     assert resp.status_code == 404
     assert resp.json()["code"] == "NOT_FOUND"

@@ -1,0 +1,103 @@
+{
+ "response": {
+  "header": {
+   "resultCode": "0000"
+  },
+  "body": {
+   "items": {
+    "item": [
+     {
+      "contentid": "T100",
+      "contenttypeid": "12",
+      "title": "서울숲",
+      "addr1": "서울특별시 성동구 뚝섬로 273",
+      "addr2": "",
+      "tel": "02-460-2905",
+      "mapx": "127.0374",
+      "mapy": "37.5444",
+      "areacode": "1"
+     },
+     {
+      "contentid": "T101",
+      "contenttypeid": "12",
+      "title": "경복궁",
+      "addr1": "서울특별시 종로구 사직로 161",
+      "addr2": "(세종로)",
+      "tel": "",
+      "mapx": "126.9770",
+      "mapy": "37.5796",
+      "areacode": "1"
+     },
+     {
+      "contentid": "T102",
+      "contenttypeid": "12",
+      "title": "남산서울타워",
+      "addr1": "서울특별시 용산구 남산공원길 105",
+      "addr2": "",
+      "tel": "",
+      "mapx": "126.9882",
+      "mapy": "37.5512",
+      "areacode": "1"
+     },
+     {
+      "contentid": "T200",
+      "contenttypeid": "32",
+      "title": "가상 호텔",
+      "addr1": "서울특별시 중구 소공로 1",
+      "addr2": "",
+      "tel": "",
+      "mapx": "126.98",
+      "mapy": "37.56",
+      "areacode": "1"
+     },
+     {
+      "contentid": "T300",
+      "contenttypeid": "39",
+      "title": "가상 음식점(TourAPI)",
+      "addr1": "서울특별시 중구 1",
+      "addr2": "",
+      "tel": "",
+      "mapx": "126.98",
+      "mapy": "37.56",
+      "areacode": "1"
+     },
+     {
+      "contentid": "T400",
+      "contenttypeid": "12",
+      "title": "경기 관광지",
+      "addr1": "경기도 수원시 팔달구 정조로 825",
+      "addr2": "",
+      "tel": "",
+      "mapx": "127.0141",
+      "mapy": "37.2870",
+      "areacode": "31"
+     },
+     {
+      "contentid": "T401",
+      "contenttypeid": "12",
+      "title": "좌표 없는 관광지",
+      "addr1": "서울특별시 종로구 1",
+      "addr2": "",
+      "tel": "",
+      "mapx": "",
+      "mapy": "",
+      "areacode": "1"
+     },
+     {
+      "contentid": "T402",
+      "contenttypeid": "12",
+      "title": "",
+      "addr1": "서울특별시 종로구 2",
+      "addr2": "",
+      "tel": "",
+      "mapx": "126.97",
+      "mapy": "37.57",
+      "areacode": "1"
+     }
+    ]
+   },
+   "numOfRows": 8,
+   "totalCount": 8
+  }
+ }
+}

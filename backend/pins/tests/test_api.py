@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from common.events import EventLog
 from pins import api
 from pins.models import Pin as PinRow
+from pins.schemas import Check
 
 
 def test_create_ai_pin_inserts_public_ai_pin_and_returns_event(db_session):
@@ -24,8 +25,54 @@ def test_create_ai_pin_inserts_public_ai_pin_and_returns_event(db_session):
     assert mutation.pin.visibility == "public"
 
     assert mutation.event is not None
-    assert mutation.event.type == "pin.created"
+    # docs/events.md — 「지도에 올리기」 전용 이벤트는 pin.created가 아니라 pin.published다
+    # (루트 수정, 2026-09-23 — recommend/#108 검증 중 발견된 기존 버그).
+    assert mutation.event.type == "pin.published"
     assert mutation.event.map_id == "map_1"
+
+
+_SAMPLE_CHECKS = [
+    {"fact_key": "is_open", "label": "영업 중", "passed": True, "confidence": "known", "needs_check": False},
+]
+
+
+def test_create_ai_pin_stores_and_returns_checks(db_session):
+    """#57/#124 — 게시 시점에 candidate.checks를 그대로 pins에 싣는다(가드레일 5)."""
+    mutation = api.create_ai_pin(
+        db_session, map_id="map_1", category="음식점", place_id="place_checks_1",
+        lat=35.1, lng=129.0, created_by="user_1", checks=_SAMPLE_CHECKS,
+    )
+    assert mutation.pin.checks == _SAMPLE_CHECKS
+    assert mutation.event.payload["checks"] == _SAMPLE_CHECKS
+
+
+def test_create_ai_pin_without_checks_stores_none(db_session):
+    """기존 호출부(checks 파라미터를 안 넘기는 코드)가 그대로 동작해야 한다."""
+    mutation = api.create_ai_pin(
+        db_session, map_id="map_1", category="음식점", place_id="place_checks_none",
+        lat=35.1, lng=129.0, created_by="user_1",
+    )
+    assert mutation.pin.checks is None
+
+
+def test_create_ai_pin_invalid_checks_raises_before_insert(db_session):
+    """Check 스키마에 안 맞는 값(필드 누락)은 경계에서 바로 실패한다 — 잘못된 페이로드가
+    그대로 저장되지 않는다."""
+    from pydantic import ValidationError
+
+    try:
+        api.create_ai_pin(
+            db_session, map_id="map_1", category="음식점", place_id="place_checks_invalid",
+            lat=35.1, lng=129.0, created_by="user_1", checks=[{"fact_key": "is_open"}],
+        )
+        raise AssertionError("ValidationError가 발생했어야 한다")
+    except ValidationError:
+        pass
+
+    rows = db_session.execute(
+        select(PinRow).where(PinRow.place_id == "place_checks_invalid")
+    ).scalars().all()
+    assert rows == []
 
 
 def test_create_ai_pin_duplicate_place_id_raises_pin_duplicate(db_session):
@@ -131,6 +178,18 @@ def test_get_pin_response_for_viewer_fills_lat_lng_and_reaction_summary(db_sessi
     assert pin.permissions.can_remove_from_shortlist is True  # kind=확정
 
 
+def test_get_pin_response_for_viewer_returns_checks(db_session):
+    from authz.core import Principal
+
+    row = _insert_pin(db_session, kind="AI추천")
+    row.checks = _SAMPLE_CHECKS
+    db_session.commit()
+
+    principal = Principal(user_id="user_1", map_id="map_1", role="member")
+    pin = api.get_pin_response_for_viewer(db_session, pin_id=str(row.id), viewer_id="user_1", principal=principal)
+    assert pin.checks == [Check(**c) for c in _SAMPLE_CHECKS]
+
+
 def test_get_pin_response_for_viewer_other_users_private_pin_is_404(db_session):
     from authz.core import Principal
     from common.errors import AppError
@@ -153,3 +212,54 @@ def test_create_ai_pin_event_not_recorded_until_caller_calls_record_event(db_ses
     )
     rows = db_session.execute(select(EventLog).where(EventLog.map_id == "map_1")).scalars().all()
     assert rows == []
+
+
+# ---------- list_disliked_place_ids (#119) ----------
+
+def _react_on(db_session, pin, *, user_id, type):
+    from pins.models import Reaction as ReactionRow
+
+    db_session.add(ReactionRow(
+        pin_id=pin.id, user_id=user_id, type=type, reason_text="사유" if type == "against" else None,
+    ))
+    db_session.commit()
+
+
+def _pin_in(db_session, *, map_id="map_1", category="음식점"):
+    row = _insert_pin(db_session, map_id=map_id)
+    row.category = category
+    db_session.commit()
+    return row
+
+
+def test_list_disliked_place_ids_returns_only_own_against_in_map_and_category(db_session):
+    mine = _pin_in(db_session)
+    _react_on(db_session, mine, user_id="user_1", type="against")
+    liked = _pin_in(db_session)
+    _react_on(db_session, liked, user_id="user_1", type="like")
+    others = _pin_in(db_session)
+    _react_on(db_session, others, user_id="user_2", type="against")
+    other_category = _pin_in(db_session, category="카페")
+    _react_on(db_session, other_category, user_id="user_1", type="against")
+    other_map = _pin_in(db_session, map_id="map_2")
+    _react_on(db_session, other_map, user_id="user_1", type="against")
+
+    result = api.list_disliked_place_ids(db_session, user_id="user_1", map_id="map_1", category="음식점")
+
+    assert result == [mine.place_id]
+
+
+def test_list_disliked_place_ids_includes_soft_deleted_pins(db_session):
+    """🚫는 이력이라 핀이 지워져도 남는다 — 다른 조회 함수와 달리 deleted_at을 거르지 않는다."""
+    from datetime import datetime, timezone
+
+    row = _pin_in(db_session)
+    _react_on(db_session, row, user_id="user_1", type="against")
+    row.deleted_at = datetime.now(timezone.utc)
+    db_session.commit()
+
+    assert api.list_disliked_place_ids(db_session, user_id="user_1", map_id="map_1", category="음식점") == [row.place_id]
+
+
+def test_list_disliked_place_ids_is_empty_when_nothing_disliked(db_session):
+    assert api.list_disliked_place_ids(db_session, user_id="user_1", map_id="map_1", category="음식점") == []

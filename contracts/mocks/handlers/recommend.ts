@@ -1,9 +1,8 @@
 import { http, HttpResponse } from "msw";
-import { ME_USER_ID, nextId, store, type Pin } from "../store";
+import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError } from "../util";
 import { buildCandidates, buildEvidenceLines, buildRegions } from "../seed";
-
-const CATEGORIES = ["음식점", "카페", "숙소", "관광지"] as const;
+import { RECOMMEND_CATEGORIES } from "../categories";
 
 function requiredCount(mapId: string) {
   const n = store.members[mapId]?.length ?? 1;
@@ -32,7 +31,7 @@ export const recommendHandlers = [
     const mapId = params.mapId as string;
     const required = requiredCount(mapId);
     const result: Record<string, { ready: boolean; answered_count: number; required_count: number }> = {};
-    for (const category of CATEGORIES) {
+    for (const category of RECOMMEND_CATEGORIES) {
       const pinsInCategory = Object.values(store.pins).filter((p) => p.map_id === mapId && p.category === category);
       const answeredUsers = new Set<string>();
       for (const pin of pinsInCategory) {
@@ -136,20 +135,23 @@ export const recommendHandlers = [
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
+    const radius = run.default_radius_walk_min ?? 15;
+    if (radius >= 30) return apiError(409, "WIDEN_LIMIT", "더 넓히면 여행지를 벗어나요");
+    run.default_radius_walk_min = radius + 5; // docs/constraints.md: +5분/회, 상한 30분
     run.status = "executing";
     // 가드레일 4·5-6-1: 기본값 원만 넓힌다 — 목 서버는 재계산 결과로 후보를 다시 채워 넣는다
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
     store.candidates[runId] = buildCandidates(regionLabel);
     run.status = "done";
-    return new HttpResponse(null, { status: 202 });
+    return HttpResponse.json(run, { status: 202 });
   }),
 
   http.post("*/runs/:runId/retry", ({ params }) => {
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
-    if ((run.attempt_no ?? 1) >= 3) {
-      return apiError(429, "RETRY_LIMIT", "3번까지만 찾습니다", { attempt_no: run.attempt_no });
+    if ((run.attempt_no ?? 1) >= 5) {
+      return apiError(429, "RETRY_LIMIT", "5번까지만 찾습니다", { attempt_no: run.attempt_no });
     }
     run.attempt_no = (run.attempt_no ?? 1) + 1;
     run.status = "done";
@@ -175,9 +177,8 @@ export const recommendHandlers = [
       lat: 33.45,
       lng: 126.56,
       place_name: cand.place_name,
-      // 실서버 recommend/flows.py::publish_candidate가 created_by=requester_id로 채우는 것과
-      // 동일 — "지도에 올리기"를 누른 사람이 창작자가 된다. 이 목 서버는 그 사람이 항상 ME_USER_ID.
-      created_by: ME_USER_ID,
+      created_by: ME_USER_ID, // 목 서버는 단일 사용자 시뮬레이션이라 run 요청자 = 나
+      created_at: new Date().toISOString(), // 「지도에 올리기」를 누른 시각
       checks: cand.checks, // 가드레일 5: 게시 후에도 근거를 그대로 유지
       source_run_id: runId,
       reaction_summary: { like: 0, neutral: 0, against: 0 },
@@ -187,6 +188,7 @@ export const recommendHandlers = [
     store.reactions[pinId] = [];
     cand.visibility = "published";
     cand.published_pin_id = pinId;
+    emitEvent(pin.map_id, "public", "pin.published", pin); // 5-5-1: 「지도에 올리기」 순간 전체 채널로
     return HttpResponse.json(pin);
   }),
 ];
