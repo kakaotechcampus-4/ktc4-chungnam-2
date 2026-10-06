@@ -106,7 +106,16 @@ def test_list_members_returns_only_honest_fields(app_client):
     # online을 채울 데이터 출처가 없다 — 응답에 키 자체가 없어야 한다
     # (False로 채우는 거짓 fallback을 만들지 않았다는 증거). display_name은 users 행에서 온다.
     for m in members:
-        assert set(m.keys()) == {"user_id", "display_name"}
+        assert set(m.keys()) == {"user_id", "role", "display_name"}
+
+
+def test_list_members_marks_creator_as_owner_and_joiner_as_member(app_client):
+    map_id = _create_map(app_client, user_id="user_1")["id"]
+    invite = app_client.post(f"/maps/{map_id}/invite", cookies=_auth("user_1")).json()
+    app_client.post(f"/invites/{invite['token']}/accept", cookies=_auth("user_2"))
+
+    members = app_client.get(f"/maps/{map_id}/members", cookies=_auth("user_2")).json()
+    assert {m["user_id"]: m["role"] for m in members} == {"user_1": "owner", "user_2": "member"}
 
 
 def test_list_members_includes_display_name_when_user_row_exists(app_client, db_session):
@@ -121,7 +130,7 @@ def test_list_members_includes_display_name_when_user_row_exists(app_client, db_
     resp = app_client.get(f"/maps/{body['id']}/members", cookies=_auth("user_1"))
     assert resp.status_code == 200
     members = resp.json()
-    assert members == [{"user_id": "user_1", "display_name": "철수"}]
+    assert members == [{"user_id": "user_1", "role": "owner", "display_name": "철수"}]
 
 
 def test_list_members_as_non_member_is_404(app_client):

@@ -3,6 +3,13 @@ import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError, pinPermissions } from "../util";
 import { SEED_PLACES } from "./places";
 import { CATEGORY_RULES } from "../categories";
+import { chipsFor } from "../chips";
+
+/** reaction.changed 에 싣는 "남긴 사람"(docs/events.md). 목 서버는 단일 사용자라 나다. */
+const actor = (mapId: string) => ({
+  user_id: ME_USER_ID,
+  display_name: store.members[mapId]?.find((m) => m.user_id === ME_USER_ID)?.display_name ?? "구성원",
+});
 
 function visiblePins(mapId: string): Pin[] {
   return Object.values(store.pins).filter((p) => {
@@ -88,6 +95,7 @@ export const pinsHandlers = [
       ...(own.place_source?.url ? { place_url: own.place_source.url } : {}),
       created_by: ME_USER_ID,
       created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
+      created_at: new Date().toISOString(),
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 0, neutral: 0, against: 0 },
@@ -109,8 +117,19 @@ export const pinsHandlers = [
       if (p.category) by_category[p.category] = (by_category[p.category] ?? 0) + 1;
       if (p.kind) by_kind[p.kind] = (by_kind[p.kind] ?? 0) + 1;
     }
-    return HttpResponse.json({ by_category, by_kind });
+    // 반응을 하나라도 남긴 구성원 수 — 이 지도의 핀 중 하나라도 반응한 사람(탈퇴자는 members에 없어 자연히 빠진다)
+    const memberIds = new Set((store.members[mapId] ?? []).map((m) => m.user_id));
+    const reacted = new Set(
+      Object.values(store.pins)
+        .filter((p) => p.map_id === mapId)
+        .flatMap((p) => (store.reactions[p.id] ?? []).map((r) => r.user_id))
+        .filter((id) => memberIds.has(id)),
+    );
+    return HttpResponse.json({ by_category, by_kind, members_with_opinion: reacted.size, members_total: memberIds.size });
   }),
+
+  // #60: 반대 사유 칩 — 고정 목록(docs/constraints.md「반대 사유 칩」)
+  http.get("*/categories/:category/reason-chips", ({ params }) => HttpResponse.json(chipsFor(decodeURIComponent(params.category as string)))),
 
   http.delete("*/pins/:pinId", ({ params }) => {
     const pinId = params.pinId as string;
@@ -131,6 +150,10 @@ export const pinsHandlers = [
     if (body.type === "against" && !body.reason_text && !(body.reason_chip_ids && body.reason_chip_ids.length)) {
       return apiError(422, "EVIDENCE_REQUIRED", "반대에는 사유가 필요해요");
     }
+    // #60: 칩은 그 핀의 카테고리 목록에 있는 id여야 한다(이름을 그대로 보내면 422)
+    const allowed = new Set(chipsFor(pin.category).map((c) => c.id));
+    const unknownChip = (body.reason_chip_ids ?? []).find((id) => !allowed.has(id));
+    if (unknownChip) return apiError(422, "VALIDATION_ERROR", "알 수 없는 사유 칩이에요", { reason_chip_id: unknownChip });
     const list = store.reactions[pinId] ?? (store.reactions[pinId] = []);
     const idx = list.findIndex((r) => r.user_id === ME_USER_ID);
     const reaction = {
@@ -148,7 +171,7 @@ export const pinsHandlers = [
       neutral: list.filter((r) => r.type === "neutral").length,
       against: list.filter((r) => r.type === "against").length,
     };
-    emitEvent(pin.map_id, "public", "reaction.changed", { pin_id: pinId, reaction_summary: pin.reaction_summary });
+    emitEvent(pin.map_id, "public", "reaction.changed", { pin_id: pinId, reaction_summary: pin.reaction_summary, ...actor(pin.map_id), type: body.type });
     return HttpResponse.json(reaction);
   }),
 
@@ -163,7 +186,7 @@ export const pinsHandlers = [
       neutral: store.reactions[pinId].filter((r) => r.type === "neutral").length,
       against: store.reactions[pinId].filter((r) => r.type === "against").length,
     };
-    emitEvent(pin.map_id, "public", "reaction.changed", { pin_id: pinId, reaction_summary: pin.reaction_summary });
+    emitEvent(pin.map_id, "public", "reaction.changed", { pin_id: pinId, reaction_summary: pin.reaction_summary, ...actor(pin.map_id), type: null });
     return new HttpResponse(null, { status: 204 });
   }),
 ];

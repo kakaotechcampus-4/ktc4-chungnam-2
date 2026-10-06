@@ -134,6 +134,32 @@ def is_within_any_region(lat: float, lng: float, regions: list[Circle]) -> bool:
     )
 
 
+def condition_label(fact_key: str, *, satisfied: bool, wants: bool | None = None) -> str:
+    """Check.label — 조건 하나를 사람이 읽는 말로(가드레일 5, 칩 글자 그대로). 체크 이름 규칙은 여기 한 곳이다.
+
+    `wants`는 그 조건을 어느 쪽으로 원했는지(True 원함 / False "말고" / None 방향 없는 실격).
+    - 충족: 표시 이름 표(PASSED_LABELS — "기름진 메뉴 위주 아님", "한식"). wants=False면 "<이름> 제외".
+    - 미충족: 원함이면 "<이름> 아님", "말고"면 "<이름> 제외 안 됨", 실격이면 걸린 이유 "<이름> 해당".
+    표에 없는 키는 FACT_LABELS 이름을 쓴다(레지스트리 키는 두 표에 다 있다는 계약 테스트가 보장)."""
+    name = constraints.FACT_LABELS.get(fact_key, fact_key)
+    if wants is False:
+        return f"{name} 제외" if satisfied else f"{name} 제외 안 됨"
+    if satisfied:
+        return constraints.PASSED_LABELS.get(fact_key, name)
+    return f"{name} 아님" if wants else f"{name} 해당"
+
+
+def _check_label(fact_key: str, *, known: bool, value, passes: bool) -> str:
+    name = constraints.FACT_LABELS.get(fact_key, fact_key)
+    if not known:
+        return f"{name} 확인 필요"
+    if fact_key in constraints.VALUE_COMPARISON_UNSUPPORTED:
+        return constraints.PRICE_BUCKET_LABELS.get(str(value), f"{name} {value}")
+    # 선호(soft) 체크의 passed는 라벨 참/거짓 그대로라 "원함" 쪽으로 읽는다. 실격(hard)은 passed=통과 여부.
+    wants = True if fact_key in constraints.SOFT_FACT_KEYS else None
+    return condition_label(fact_key, satisfied=passes, wants=wants)
+
+
 def build_check(fact_key: str, unknown_policy: str, *, known: bool, value, passes: bool) -> Check:
     """docs/constraints.md 조건 하나에 대한 Check 조립 — unknown_policy 분기를 여기 한 곳에
     고정한다(가드레일 8: "판정 불확실은 조건 종류에 따라 다르게 처리한다").
@@ -142,12 +168,14 @@ def build_check(fact_key: str, unknown_policy: str, *, known: bool, value, passe
       해서 뺀 것이지 "확인해 달라"는 배지가 아니다 — 안전 조건이므로 절대 통과시키지 않는다).
     - known=False & unknown_policy='pass'(+needs_check) → passed=True, needs_check=True.
     - known=True → passed는 실제 값 기반 통과 여부(호출부가 계산해 넘긴다), needs_check=False.
+    label은 어느 조건인지 보이는 사람 말이다(`condition_label`) — 값 문자열("False")을 그대로 쓰지 않는다.
     """
+    label = _check_label(fact_key, known=known, value=value, passes=passes)
     if not known:
         if unknown_policy == "exclude":
-            return Check(fact_key=fact_key, label="확인 불가", passed=False, confidence="unknown", needs_check=False)
-        return Check(fact_key=fact_key, label="확인 필요", passed=True, confidence="unknown", needs_check=True)
-    return Check(fact_key=fact_key, label=str(value), passed=passes, confidence="known", needs_check=False)
+            return Check(fact_key=fact_key, label=label, passed=False, confidence="unknown", needs_check=False)
+        return Check(fact_key=fact_key, label=label, passed=True, confidence="unknown", needs_check=True)
+    return Check(fact_key=fact_key, label=label, passed=passes, confidence="known", needs_check=False)
 
 
 def resolve_label(labels: Sequence[FactLabel], fact_key: str) -> tuple[bool, Any]:
@@ -217,7 +245,7 @@ def checks_to_show(checks: Sequence[Check], wanted_fact_keys: Collection[str]) -
 def to_satisfaction_checks(checks: Sequence[Check], directions: Mapping[str, bool]) -> list[Check]:
     """저장·응답용 체크에서 방향이 있는 soft 키(`directions` = fact_key → wants)를 "그 사람 조건을 만족하는가"로
     바꾼다(#237) — passed = (라벨 참거짓 == wants). "한식 말고"에 비한식 후보는 ✗가 아니라 ✓로 보이고(가드레일 5),
-    wants=true는 반대로 라벨이 참일 때 만족이다. 라벨 문구는 표시 이름 기반("한식 제외"). 모름과 방향 없는 키는
+    wants=true는 반대로 라벨이 참일 때 만족이다. 라벨 문구는 `condition_label`("한식 제외"). 모름과 방향 없는 키는
     그대로 둔다. 점수·실격은 라벨 참거짓(passed)을 쓰므로 이 변환은 점수 계산 *뒤에* 한다."""
     shown = []
     for check in checks:
@@ -226,11 +254,7 @@ def to_satisfaction_checks(checks: Sequence[Check], directions: Mapping[str, boo
             shown.append(check)
             continue
         satisfied = check.passed == wants
-        name = constraints.FACT_LABELS.get(check.fact_key, check.fact_key)
-        if wants:
-            label = name if satisfied else f"{name} 아님"
-        else:
-            label = f"{name} 제외" if satisfied else f"{name} 제외 안 됨"
+        label = condition_label(check.fact_key, satisfied=satisfied, wants=wants)
         shown.append(check.model_copy(update={"passed": satisfied, "label": label}))
     return shown
 

@@ -245,14 +245,23 @@ def test_validate_reaction_like_neutral_never_require_reason(reaction_type):
 
 def test_reaction_changed_event_public_pin_emits_envelope():
     summary = ReactionSummary(like=1, neutral=0, against=2)
-    event = core.reaction_changed_event("pin_1", "map_1", "public", summary)
+    event = core.reaction_changed_event("pin_1", "map_1", "public", summary, "user_2", "민수", "against")
     assert event is not None
     assert event.map_id == "map_1"
     assert event.channel == "public"
     assert event.type == "reaction.changed"
-    assert event.payload == {"pin_id": "pin_1", "reaction_summary": {"like": 1, "neutral": 0, "against": 2}}
+    assert event.payload == {
+        "pin_id": "pin_1", "reaction_summary": {"like": 1, "neutral": 0, "against": 2},
+        "user_id": "user_2", "display_name": "민수", "type": "against",
+    }
+
+
+def test_reaction_changed_event_delete_has_null_type_and_never_carries_reasons():
+    event = core.reaction_changed_event("pin_1", "map_1", "public", ReactionSummary(), "user_2", "민수", None)
+    assert event.payload["type"] is None
+    assert not {"reason_text", "reason_chip_ids", "my_reaction"} & set(event.payload)
 
 
 def test_reaction_changed_event_private_pin_emits_nothing():
-    event = core.reaction_changed_event("pin_1", "map_1", "private", ReactionSummary())
+    event = core.reaction_changed_event("pin_1", "map_1", "private", ReactionSummary(), "user_2", "민수", "like")
     assert event is None

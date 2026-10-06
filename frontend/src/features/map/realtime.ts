@@ -11,6 +11,11 @@ import { pinKeys } from './queries'
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 /** reconnecting = 브라우저가 알아서 다시 붙는 중, closed = 포기함(사람이 다시 연결을 눌러야 한다). */
+/** 새로고침·닫기로 페이지를 떠날 때 브라우저가 연결을 끊는 건 장애가 아니다 — 그때는 끊김으로 알리지 않는다. */
+let leaving = false
+window.addEventListener('pagehide', () => (leaving = true))
+export const isPageLeaving = () => leaving
+
 export type ConnectionState = 'open' | 'reconnecting' | 'closed'
 
 /**
@@ -62,6 +67,7 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
     source.addEventListener('member.joined', members)
     source.onopen = () => setState('open')
     source.onerror = () => {
+      if (leaving) return
       // CLOSED 는 브라우저가 재연결을 포기한 상태(인증 실패 등). 조용히 넘기지 않는다.
       if (source.readyState === EventSource.CLOSED) {
         console.error('[realtime] 실시간 연결이 닫혔어요', mapId)

@@ -1,0 +1,66 @@
+[
+ {
+  "place_id": "cafe_C001",
+  "title": "가상",
+  "labels": {
+   "is_crowded_large": {
+    "value": "false",
+    "evidence": "인허가 소재지면적 30㎡",
+    "source": "license_area"
+   },
+   "franchise": {
+    "value": "true",
+    "evidence": "브랜드 목록",
+    "source": "franchise_list"
+   },
+   "quiet": {
+    "value": "unknown",
+    "evidence": "",
+    "source": ""
+   }
+  }
+ },
+ {
+  "place_id": "cafe_C002",
+  "title": "가상",
+  "labels": {
+   "bakery": {
+    "value": "true",
+    "evidence": "인허가 업태 '제과점영업'",
+    "source": "license_business_type"
+   },
+   "price_bucket": {
+    "value": "mid",
+    "evidence": "가상 근거",
+    "source": "goodprice"
+   }
+  }
+ },
+ {
+  "place_id": "cafe_C004",
+  "title": "가상",
+  "labels": {
+   "local_flavor": {
+    "value": "true",
+    "evidence": "인허가 업태 '전통찻집'",
+    "source": "license_business_type"
+   },
+   "open_late": {
+    "value": "false",
+    "evidence": "가상 근거",
+    "source": "menu_keyword"
+   }
+  }
+ },
+ {
+  "place_id": "cafe_C404",
+  "title": "가상",
+  "labels": {
+   "quiet": {
+    "value": "true",
+    "evidence": "장소가 없는 라벨",
+    "source": "x"
+   }
+  }
+ }
+]
