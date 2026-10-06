@@ -360,7 +360,8 @@ def _owned_map_ids(db: Session, *, user_id: str) -> list[str]:
 def transfer_or_delete_owned_maps(db: Session, *, user_id: str) -> None:
     """탈퇴(#369 10번) — 방장인 지도마다 후임에게 넘기고, 넘길 사람이 없으면 지도를 삭제한다.
     탈퇴자의 멤버십 행은 핀 작성자 표시용으로 남긴다(#245) — 강등만 하고 지우지 않는다.
-    위임에는 이벤트를 내지 않는다 — docs/events.md에 방장 변경 이벤트가 없다(maps/for_Root.md)."""
+    위임한 지도에는 member.left(user_id=탈퇴자, new_owner_user_id=후임)를, 삭제한 지도에는 map.deleted만
+    남긴다(docs/events.md, 2026-10-07 결정)."""
     for map_id in _owned_map_ids(db, user_id=user_id):
         get_map_or_404(db, map_id, for_update=True)
         roster, withdrawn = roster_of(db, map_id)
@@ -371,3 +372,4 @@ def transfer_or_delete_owned_maps(db: Session, *, user_id: str) -> None:
             delete_map(db, map_id=map_id)
         else:
             transfer_owner(db, map_id=map_id, from_user_id=user_id, to_user_id=successor)
+            record_event(db, core.member_left_event(map_id, user_id, successor))

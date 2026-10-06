@@ -321,7 +321,11 @@ def test_withdrawing_owner_hands_over_or_deletes(app_client, db_session):
     assert _roles(db_session, shared) == {"user_1": "member", "user_2": "owner"}   # 행은 남긴다(#245)
     assert db_session.get(MapRow, alone).deleted_at is not None
     assert len(_events(db_session, alone, "map.deleted")) == 1
+    assert _events(db_session, alone, "member.left") == []   # 삭제한 지도는 map.deleted만
     assert db_session.get(MapRow, shared).deleted_at is None
+    [left] = _events(db_session, shared, "member.left")   # 위임한 지도는 member.left(2026-10-07 결정)
+    assert left.payload == {"map_id": shared, "user_id": "user_1", "new_owner_user_id": "user_2"}
+    assert _events(db_session, shared, "map.deleted") == []
 
 
 # --- 내 지도 10개 상한 ------------------------------------------------------------------

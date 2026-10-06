@@ -1,3 +1,15 @@
+# backend/maps → 루트 보고 (#369 2단계 auth 세션이 maps 파일을 고친 내역, 2026-10-07)
+
+auth 세션이 아래 2절의 "탈퇴 위임에는 이벤트를 내지 않는다"를 루트 결정(007fc55)대로 바꿨다.
+- `maps/service.py::transfer_or_delete_owned_maps`: 위임한 지도마다 `record_event(db, core.member_left_event(map_id, user_id, successor))`
+  한 줄 추가(`user_id`=탈퇴자, `new_owner_user_id`=후임). 넘길 사람이 없어 삭제하는 지도는 지금처럼 `map.deleted`만 나간다. docstring 갱신.
+- `maps/api.py::transfer_or_delete_owned_maps`: docstring만 갱신.
+- `maps/tests/test_delete_leave_api.py::test_withdrawing_owner_hands_over_or_deletes`: 위임한 지도에 `member.left` 하나(페이로드 확인)와
+  `map.deleted` 없음, 삭제한 지도에 `member.left` 없음을 추가로 확인한다.
+- 탈퇴자의 반응·근거 줄은 탈퇴 경로(`withdraw_user`)가 전 지도에서 지우므로, 이 이벤트는 나가기와 달리 멤버십 행을 지우지 않는다(#245).
+
+---
+
 # backend/maps → 루트 보고 (#369 2단계 maps 몫 — 지도 삭제·나가기·방장 위임)
 
 브랜치 `docs/map-delete-leave-369`. 마이그레이션 `0021_maps_delete_leave`(`maps.deleted_at`,

@@ -60,5 +60,6 @@ def count_members(db: Session, map_id: str) -> int:
 def transfer_or_delete_owned_maps(db: Session, user_id: str) -> None:
     """탈퇴(auth.service.withdraw_user)가 부른다(#369 10번). 이 사용자가 방장인 지도마다
     joined_at이 가장 빠른 구성원(탈퇴자 제외)에게 방장을 넘기고, 넘길 사람이 없으면 지도를
-    삭제한다(map.deleted 발행). 탈퇴자의 멤버십 행은 지우지 않는다(#245). 커밋하지 않는다."""
+    삭제한다(map.deleted 발행). 위임한 지도에는 member.left를 발행한다(new_owner_user_id=후임).
+    탈퇴자의 멤버십 행은 지우지 않는다(#245). 커밋하지 않는다."""
     service.transfer_or_delete_owned_maps(db, user_id=user_id)
