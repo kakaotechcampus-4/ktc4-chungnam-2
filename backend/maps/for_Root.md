@@ -1,3 +1,41 @@
+# backend/maps → 루트 보고 (#137 — memberships.user_id 인덱스)
+
+`ix_memberships_user_id` 추가 완료(`alembic/versions/0012_memberships_user_id_index.py`).
+`uq_memberships_map_user`는 그대로 — 순수 추가만. `upgrade→downgrade -1→upgrade` 확인,
+`\d memberships`로 두 인덱스 공존 확인. 별도 회귀 테스트는 추가하지 않았다 — 인덱스
+자체는 쿼리 결과를 바꾸지 않아(성능만 바꿈) 단위 테스트로 관측할 게 없고, 실제 planner가
+타는지는 자동 테스트보다 `EXPLAIN`으로 수동 확인하는 게 맞는 성격이라 판단했다. 전체 회귀
+540 passed, 1 skipped(무관), 0 failed(변화 없음 — 예상대로 순수 인덱스 추가).
+
+---
+
+# backend/maps → 루트 보고 (#135 — GET /maps, 지도 생성 region)
+
+`GET /maps`(내 지도 목록), 지도 생성 `region`(선택) 구현 완료(docs/CHANGELOG-api.md 2026-09-28,
+#22·#24). `alembic/versions/0011_maps_region.py`(`maps.region_label`/`region_center` +
+`ck_maps_region_both_or_neither` CHECK) 추가, `upgrade head → downgrade -1 → upgrade head`
+사이클 확인. 신규 테스트 21개 + 전체 회귀 540 passed, 1 skipped(무관), 0 failed.
+
+## 12. `confirmed_count`는 `GET /maps` 목록에서 여전히 N+1이다 — member_count와 다른 처리
+
+이번 이슈는 `member_count`만 "N+1 안 나게" 명시했다. `member_count`는 `_member_counts()`로
+목록에 나온 map_id 전체를 한 번의 `GROUP BY`로 집계해서 해결했다(`maps/service.py::list_maps`).
+`confirmed_count`는 그대로 `shortlist_api.count_confirmed(db, map_id=...)`를 지도마다
+호출한다 — `shortlist/api.py`가 배치 버전(`count_confirmed_many(db, map_ids)`류)을 노출하지
+않고, 그 파일은 이 모듈이 아니라 shortlist 담당 세션이 소유한다(항목 5의 `count_confirmed`도
+루트가 신설했다는 선례를 따름). 사용자가 보통 속한 지도 수가 적어 실질 영향은 작지만, 필요하면
+`shortlist/api.py`에 배치 함수 추가를 요청한다.
+
+## 13. `region` 필드가 이제 DB에 실제로 저장·반환된다
+
+`docs/api-spec.yaml`의 `MapRegion{label,lat,lng}`을 `MapCreateRequest.region`·`Map.region`에
+그대로 연결했다. `region_center`는 `geography(Point,4326)`로 저장하고(`pins.geom`과 동일
+패턴), 응답 조립 시 `ST_X`/`ST_Y`로 되짚는다(`maps/service.py::_region_lat_lng_columns`,
+`pins/service.py::_lat_lng_columns`와 동일 기법). region 없이 만드는 기존 동작은 회귀 없음
+(`test_create_map_without_region_omits_region_key`로 고정).
+
+---
+
 # backend/maps → 루트 보고 (이슈 #4 지도 생성 파트 / 모듈 이슈 #19)
 
 `POST /maps`, `GET /maps/{mapId}`, `POST /maps/{mapId}/invite`, `POST /invites/{token}/accept`,
@@ -56,27 +94,26 @@ get_membership_gateway = select(
 `require_on_map("invite.create")` 한 줄 교체로 끝난다. `map.settings.edit`을 빌려 쓰는 안은
 기각했다 — 무관한 액션 이름 뒤에 정책 결정을 숨기게 된다.
 
-## 5. 생략한 필드 3개와 필요한 함수 시그니처
+## 5. 생략한 필드 3개와 필요한 함수 시그니처 — 2/3 해결됨(루트, 2026-09-23)
 
 계약(`Map`/`Member`)엔 있지만 이 모듈이 못 채우는 값은 0/false/user_id로 채우지 않고
 **응답에서 생략**했다(`response_model_exclude_none=True`) — 이 방식 자체는 진행 전 사용자
-확인을 받았다. FE가 이 필드들을 지금 렌더링에 쓰고 있다면(목서버 기준 개발 중이었다면) 그
-화면은 이 필드들이 없는 응답에 대비해야 한다 — 필요한 함수가 준비되는 대로 각각 한 줄 교체로
-채워진다.
-- `Map.confirmed_count` ← `shortlist/api.py::count_confirmed(db, *, map_id: str) -> int` 필요
-- `Member.display_name` ← `auth/api.py::display_names(db, user_ids: Sequence[str]) -> dict[str,str]`
-  필요(배치 — `/members` N명이 N번 쿼리하지 않도록)
-- `Member.online` ← `realtime/api.py::online_user_ids(map_id: str) -> frozenset[str]` 필요.
-  같은 갭이 `member.presence` 이벤트, #32 "N=온라인 구성원 수"에도 걸린다 — 워크어라운드
-  3개보다 이슈 1개가 맞다.
+확인을 받았다.
+- `Map.confirmed_count` ← **해결**. `shortlist/api.py::count_confirmed(db, *, map_id)` 신설,
+  `maps/service.py::_map_response`가 호출.
+- `Member.display_name` ← **해결**. `auth/api.py::display_names(db, user_ids)` 신설(배치),
+  `maps/service.py::list_members`·`accept_invite`가 호출.
+- `Member.online` ← 아직 미해결. `realtime/api.py::online_user_ids(map_id) -> frozenset[str]`
+  필요. 같은 갭이 `member.presence` 이벤트, #32 "N=온라인 구성원 수"(이 정의는 이미 "현재
+  참여 중인 인원 수"로 확정돼 online과 무관해졌다)에도 걸린다.
 
-## 6. 초대 링크 URL — 지금은 브라우저로 바로 열리는 페이지가 아니다
+## 6. 초대 링크 URL — 해결됨(루트, 2026-09-23)
 
-FE 오리진의 정본이 없어(`common/settings.py`는 다른 모듈들의 어댑터 모드 전용 파일이라
-이 모듈이 임의로 필드를 추가하지 않았다) `request.base_url`(백엔드 자신의 주소)로 URL을
-만든다. `POST /invites/{token}/accept`는 POST 전용 API라 그 주소를 브라우저로 열면 404/405다.
-FE 오리진을 어디서 관리할지(`common/settings.py`에 `INVITE_BASE_URL` 추가 등) 결정 요청 —
-결정되면 `maps/router.py::post_invite`에서 `base_url` 한 줄만 바꾸면 된다.
+`common/settings.py`에 `frontend_base_url` 신설(auth의 로그인 리다이렉트 갭과 같은 원인이라
+하나로 합침). `maps/router.py::post_invite`가 이제 `settings.frontend_base_url`을 우선
+쓴다(없으면 예전처럼 `request.base_url`로 폴백). 단, 이 링크가 실제로 열리려면 프론트에
+`/invites/{token}` 경로의 "초대 수락 화면"이 있어야 한다 — 그건 여전히 `#4`의 잔여 프론트
+항목이다(재오픈함).
 
 ## 7. api-spec 갭 — 비구성원 404가 스펙에 없다
 
@@ -122,3 +159,36 @@ API 대응 필드가 없다(`MapCreateRequest`·`Map` 어디에도 없음). `dat
 시나리오가 authz 배선 전제와 모순(위 1번 — 실제로 재현해 확인), (c) `test_constraints.py`가
 마이그레이션 파일 자체의 드리프트는 잡지 못한다는 설명 정확도 문제(테스트 자체는 유효, 문서화만
 수정). 필드 생략(위 5번)과 seeding 미호출(위 2번)은 이미 사용자 확인을 거친 설계라 유지했다.
+
+---
+
+## #159 — GET /invites/{token} 초대 요약 (2026-09-30)
+
+**구현**: `GET /invites/{token}` → `InviteSummary`, 로그인 불요. 라우터 단위 `dependencies`는 라우트
+개별로 뺄 수 없어서 인증 없는 `public_router`를 따로 두고 `main.py`에 include 한 줄을 더했다(auth의
+`auth_public_router`와 같은 패턴). 다른 maps 라우트는 인증 유지(`GET /maps` 401 테스트로 고정).
+`accept`도 없는 토큰 404 `INVITE_NOT_FOUND`, 만료 410 `INVITE_EXPIRED`로 바꿨다(기존엔 둘 다 401
+UNAUTHORIZED였다 — 스펙이 갈랐다). 조회·수락이 `_acceptable_invite_or_raise` 하나를 공유한다.
+
+**루트 확인 요청 (스펙 vs 구현 차이)**
+1. **탈퇴한 초대자 표시 미완**: 스펙은 "탈퇴했으면 '탈퇴한 구성원'"인데, `auth.api.display_names`는
+   soft delete(`deleted_at`)된 사용자의 이름도 그대로 돌려준다(의도된 동작, 과거 핀 작성자 표시용).
+   그래서 지금은 **users 행 자체가 없을 때만** '탈퇴한 구성원'으로 채우고, 탈퇴(soft delete)한
+   초대자는 실명이 그대로 나간다. 맞추려면 auth 쪽에 예: `auth.api.withdrawn_ids(db, user_ids) -> set[str]`
+   (또는 `display_names(..., mask_withdrawn=True)`)이 필요하다 — auth 담당에게 요청 바람. 남의 모듈이라 직접 안 만들었다.
+2. **rate limit 없음**: 비로그인 엔드포인트라 토큰 추측 시도를 막는 장치가 없다. 토큰이 256비트라
+   추측은 비현실적이지만 v1 범위 밖이면 후속 이슈로 분리할 것(이슈 본문 요청대로 PR에도 적는다).
+3. 스펙·`docs/CHANGELOG-api.md`는 이미 반영돼 있어 손대지 않았다.
+
+**테스트**: 비로그인 200(map_id 미노출)·조회가 가입/used_count를 바꾸지 않음·404·410·초대자 행 없음
+fallback·타 라우트 인증 유지. `KNOWN_MISSING`에서 `("get", "/invites/{}")` 제거. backend 전체 pytest 620 passed.
+복잡도 예상 2 / 실제 2.
+
+---
+
+## #244(maps 몫)·#245 — 입력 길이 제한, 탈퇴자 구성원 수 (2026-10-02)
+
+- **#244 maps**: `MapCreateRequest.title`·`MapRegion.label` `Field(max_length=100)`. 빈 제목은 기존대로 422. recommend 쪽 두 본문 선택화는 이 PR 범위 밖(recommend 담당) — 루트 xfail 2건(`regions_confirm`·`evidence_patch`)은 남겨 뒀다.
+- **#245**: `Map.member_count`(단건·`GET /maps` 목록)와 `maps.api.count_members`(준비 판정 N)가 탈퇴자를 뺀다. 구성원 목록(`GET /members`)은 핀 작성자 표기용(#155)으로 그대로 둔다.
+  - **다른 모듈 파일 수정 보고**: 탈퇴 여부를 알 공개 함수가 없어 `auth/api.py`에 읽기 전용 `withdrawn_user_ids(db, user_ids) -> set[str]`을 **추가**했다(기존 함수 불변). 원칙상 auth 담당에게 요청해야 하나 이슈가 "auth 탈퇴 연쇄 확인"을 명시해 최소 추가로 처리 — 마음에 안 들면 이 함수만 auth PR로 옮기면 된다.
+  - **recommend 경계값(루트 확인)**: 구성원이 전부 탈퇴하면 N=0이고 `recommend.core.required_count(0)`은 0 → `ready=True`. 이슈 문구("반응 가능 인원이 없으면 준비 판정이 안 걸린다")와 다르다. 도달 경로가 "마지막 구성원 탈퇴"뿐이라(요청할 사람이 없음) 손대지 않았다. 바꾸려면 recommend 담당 몫.

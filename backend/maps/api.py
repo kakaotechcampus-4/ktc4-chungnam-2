@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from authz.policy import Role
+from maps import service
 from maps.models import Membership as MembershipRow
 
 
@@ -27,3 +28,11 @@ class DbMembershipGateway:
                 MembershipRow.map_id == map_id, MembershipRow.user_id == user_id
             )
         ).scalar_one_or_none()
+
+
+def count_members(db: Session, map_id: str) -> int:
+    """recommend readiness(5-4)가 ceil(N/2)의 N으로 쓴다(recommend/#108). N="이 지도에
+    현재 참여 중인 인원 수"로 확정(#32, 2026-09-23) — maps가 소유한 함수라 여기 추가했다
+    (get_coordinates_for_pins를 pins가 shortlist를 위해 추가한 것과 같은 선례).
+    탈퇴한 구성원은 센 N에서 뺀다(#245) — 반응할 수 없는 사람이 ceil(N/2)를 부풀리지 않게."""
+    return service.member_count(db, map_id)

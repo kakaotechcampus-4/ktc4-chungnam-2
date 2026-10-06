@@ -1,6 +1,15 @@
 import { http, HttpResponse } from "msw";
-import { ME_USER_ID, nextId, store, type Pin } from "../store";
+import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError, pinPermissions } from "../util";
+import { SEED_PLACES } from "./places";
+import { CATEGORY_RULES } from "../categories";
+import { chipsFor } from "../chips";
+
+/** reaction.changed 에 싣는 "남긴 사람"(docs/events.md). 목 서버는 단일 사용자라 나다. */
+const actor = (mapId: string) => ({
+  user_id: ME_USER_ID,
+  display_name: store.members[mapId]?.find((m) => m.user_id === ME_USER_ID)?.display_name ?? "구성원",
+});
 
 function visiblePins(mapId: string): Pin[] {
   return Object.values(store.pins).filter((p) => {
@@ -25,7 +34,22 @@ export const pinsHandlers = [
     if (category) pins = pins.filter((p) => p.category === category);
     if (kind) pins = pins.filter((p) => p.kind === kind);
     if (createdBy.length) pins = pins.filter((p) => p.created_by && createdBy.includes(p.created_by)); // #26
-    return HttpResponse.json(pins.map((p) => ({ ...p, permissions: pinPermissions(p) })));
+    return HttpResponse.json(
+      pins.map((p) => ({
+        ...p,
+        permissions: pinPermissions(p),
+        my_reaction: (store.reactions[p.id] ?? []).find((r) => r.user_id === ME_USER_ID) ?? null,
+      })),
+    );
+  }),
+
+  http.get("*/pins/:pinId/reactions", ({ params }) => {
+    const pinId = params.pinId as string;
+    if (!store.pins[pinId]) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    const list = store.reactions[pinId] ?? [];
+    return HttpResponse.json(
+      list.map((r) => ({ ...r, display_name: store.members[store.pins[pinId].map_id]?.find((m) => m.user_id === r.user_id)?.display_name ?? "구성원" })),
+    );
   }),
 
   http.post("*/maps/:mapId/pins", async ({ params, request }) => {
@@ -35,15 +59,29 @@ export const pinsHandlers = [
       source?: "link" | "search" | "coordinate";
       link_url?: string;
       place_id?: string;
+      place_name?: string;
       lat?: number;
       lng?: number;
     };
-    // 가드레일 6 / 중복 판정: 이 목 서버는 (mapId, place_id) 동일 기준으로만 임시 판정한다.
-    // 실제 기준은 결정 이슈("중복 핀 '같은 곳' 판정 기준") 확정 후 반영한다.
-    if (body.place_id) {
-      const dup = Object.values(store.pins).find((p) => p.map_id === mapId && (p as any)._place_id === body.place_id);
-      if (dup) return apiError(409, "PIN_DUPLICATE", "이미 지도에 있는 장소예요", { pin_id: dup.id });
+    // #191(2026-10-01): v1의 핀은 모두 자체 DB 장소를 가리킨다. 목 서버는 GET /places/search의 시드 장소(kakao:mock-*)를
+    // "자체 DB에 짝이 있는 장소"로 본다. 요청의 place_name·lat·lng는 매칭 힌트라 쓰지 않는다.
+    if (body.source === "link" || body.link_url) {
+      return apiError(422, "VALIDATION_ERROR", "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요");
     }
+    if (body.source === "coordinate" || !body.place_id || !body.place_name || body.lat === undefined || body.lng === undefined) {
+      return apiError(422, "VALIDATION_ERROR", "지도를 눌러 핀을 찍을 수는 없어요. 장소를 검색해서 골라 주세요");
+    }
+    const own = SEED_PLACES.find((p) => p.place_id === body.place_id);
+    // 자체 DB는 pinnable 카테고리(음식점·카페·관광지)만 담는다(TourAPI 숙박 제외, 2026-10-01) — 숙소·기타는 핀으로 만들 수 없다
+    if (!own || (own.category && !CATEGORY_RULES[own.category].pinnable)) {
+      return apiError(422, "PLACE_NOT_SUPPORTED", "아직 지원하지 않는 장소예요");
+    }
+    if (own.category && body.category !== own.category) {
+      return apiError(422, "VALIDATION_ERROR", `이 장소의 분류는 ${own.category}예요`);
+    }
+    // 가드레일 6 / 중복 판정: 이 목 서버는 (mapId, 장소) 동일 기준으로만 임시 판정한다.
+    const dup = Object.values(store.pins).find((p) => p.map_id === mapId && (p as any)._place_id === own.place_id);
+    if (dup) return apiError(409, "PIN_DUPLICATE", "이미 지도에 있는 장소예요", { pin_id: dup.id });
     const pinId = nextId("pin");
     const pin: Pin = {
       id: pinId,
@@ -51,19 +89,22 @@ export const pinsHandlers = [
       category: body.category,
       kind: "일반",
       visibility: "public",
-      lat: body.lat ?? 33.45,
-      lng: body.lng ?? 126.56,
-      place_name: "새로 찍은 핀",
+      lat: own.lat,
+      lng: own.lng,
+      place_name: own.place_name,
+      ...(own.place_source?.url ? { place_url: own.place_source.url } : {}),
       created_by: ME_USER_ID,
       created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
+      created_at: new Date().toISOString(),
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 0, neutral: 0, against: 0 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     };
-    (pin as any)._place_id = body.place_id;
+    (pin as any)._place_id = own.place_id;
     store.pins[pinId] = pin;
     store.reactions[pinId] = [];
+    emitEvent(mapId, "public", "pin.created", pin); // docs/events.md — private 핀은 여기 안 온다(지금 목 서버는 항상 public으로만 생성)
     return HttpResponse.json(pin, { status: 201 });
   }),
 
@@ -76,14 +117,27 @@ export const pinsHandlers = [
       if (p.category) by_category[p.category] = (by_category[p.category] ?? 0) + 1;
       if (p.kind) by_kind[p.kind] = (by_kind[p.kind] ?? 0) + 1;
     }
-    return HttpResponse.json({ by_category, by_kind });
+    // 반응을 하나라도 남긴 구성원 수 — 이 지도의 핀 중 하나라도 반응한 사람(탈퇴자는 members에 없어 자연히 빠진다)
+    const memberIds = new Set((store.members[mapId] ?? []).map((m) => m.user_id));
+    const reacted = new Set(
+      Object.values(store.pins)
+        .filter((p) => p.map_id === mapId)
+        .flatMap((p) => (store.reactions[p.id] ?? []).map((r) => r.user_id))
+        .filter((id) => memberIds.has(id)),
+    );
+    return HttpResponse.json({ by_category, by_kind, members_with_opinion: reacted.size, members_total: memberIds.size });
   }),
+
+  // #60: 반대 사유 칩 — 고정 목록(docs/constraints.md「반대 사유 칩」)
+  http.get("*/categories/:category/reason-chips", ({ params }) => HttpResponse.json(chipsFor(decodeURIComponent(params.category as string)))),
 
   http.delete("*/pins/:pinId", ({ params }) => {
     const pinId = params.pinId as string;
-    if (!store.pins[pinId]) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    const pin = store.pins[pinId];
+    if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
     delete store.pins[pinId];
     delete store.reactions[pinId];
+    emitEvent(pin.map_id, "public", "pin.deleted", { pin_id: pinId });
     return new HttpResponse(null, { status: 204 });
   }),
 
@@ -91,13 +145,24 @@ export const pinsHandlers = [
     const pinId = params.pinId as string;
     const pin = store.pins[pinId];
     if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    if (!CATEGORY_RULES[pin.category].reactable) return apiError(422, "REACTION_NOT_ALLOWED", `${pin.category}에는 반응을 남길 수 없어요`);
     const body = (await request.json()) as { type: "like" | "neutral" | "against"; reason_text?: string; reason_chip_ids?: string[] };
     if (body.type === "against" && !body.reason_text && !(body.reason_chip_ids && body.reason_chip_ids.length)) {
       return apiError(422, "EVIDENCE_REQUIRED", "반대에는 사유가 필요해요");
     }
+    // #60: 칩은 그 핀의 카테고리 목록에 있는 id여야 한다(이름을 그대로 보내면 422)
+    const allowed = new Set(chipsFor(pin.category).map((c) => c.id));
+    const unknownChip = (body.reason_chip_ids ?? []).find((id) => !allowed.has(id));
+    if (unknownChip) return apiError(422, "VALIDATION_ERROR", "알 수 없는 사유 칩이에요", { reason_chip_id: unknownChip });
     const list = store.reactions[pinId] ?? (store.reactions[pinId] = []);
     const idx = list.findIndex((r) => r.user_id === ME_USER_ID);
-    const reaction = { pin_id: pinId, user_id: ME_USER_ID, type: body.type, reason_text: body.reason_text ?? "" };
+    const reaction = {
+      pin_id: pinId,
+      user_id: ME_USER_ID,
+      type: body.type,
+      reason_text: body.reason_text ?? "",
+      reason_chip_ids: body.reason_chip_ids ?? [],
+    };
     if (idx >= 0) list[idx] = reaction;
     else list.push(reaction);
     // 요약 재계산
@@ -106,6 +171,7 @@ export const pinsHandlers = [
       neutral: list.filter((r) => r.type === "neutral").length,
       against: list.filter((r) => r.type === "against").length,
     };
+    emitEvent(pin.map_id, "public", "reaction.changed", { pin_id: pinId, reaction_summary: pin.reaction_summary, ...actor(pin.map_id), type: body.type });
     return HttpResponse.json(reaction);
   }),
 
@@ -120,6 +186,7 @@ export const pinsHandlers = [
       neutral: store.reactions[pinId].filter((r) => r.type === "neutral").length,
       against: store.reactions[pinId].filter((r) => r.type === "against").length,
     };
+    emitEvent(pin.map_id, "public", "reaction.changed", { pin_id: pinId, reaction_summary: pin.reaction_summary, ...actor(pin.map_id), type: null });
     return new HttpResponse(null, { status: 204 });
   }),
 ];

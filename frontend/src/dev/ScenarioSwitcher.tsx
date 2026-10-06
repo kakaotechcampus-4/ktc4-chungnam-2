@@ -19,6 +19,8 @@ export default function ScenarioSwitcher() {
   const queryClient = useQueryClient()
   const [current, setCurrent] = useState<ScenarioName>('happy-path')
   const [failed, setFailed] = useState<string | null>(null)
+  // 접어 두면 지도 화면 상단 가운데 빈자리(‹와 프로필 사이)에 이름 하나만 보인다.
+  const [open, setOpen] = useState(false)
 
   async function switchTo(name: ScenarioName) {
     setFailed(null)
@@ -28,6 +30,7 @@ export default function ScenarioSwitcher() {
       // 스토어가 통째로 갈렸으니 캐시도 버린다. invalidate 로는 이전 결과가 잠깐 남는다.
       await queryClient.resetQueries()
       setCurrent(name)
+      setOpen(false)
     } catch (err) {
       setFailed(name)
       console.error('[dev] 시나리오 전환 실패', err)
@@ -35,20 +38,25 @@ export default function ScenarioSwitcher() {
   }
 
   return (
-    <div className="fixed right-2 top-2 z-50 flex flex-wrap gap-1 rounded-md border bg-background/90 p-1 backdrop-blur">
-      {SCENARIOS.map((name) => (
+    <div className="fixed left-1/2 top-3 z-50 flex max-w-[280px] -translate-x-1/2 flex-wrap justify-center gap-1 rounded-md border bg-background/90 p-1 backdrop-blur">
+      {!open && (
+        <button type="button" onClick={() => setOpen(true)} className="px-2 py-1 font-mono text-[0.625rem] text-muted-foreground">
+          목 · {current} ▾
+        </button>
+      )}
+      {open && SCENARIOS.map((name) => (
         <button
           key={name}
           type="button"
           onClick={() => void switchTo(name)}
-          className={`rounded px-2 py-1 font-mono text-[10px] ${
+          className={`rounded px-2 py-1 font-mono text-[0.625rem] ${
             name === current ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'
           }`}
         >
           {name}
         </button>
       ))}
-      {failed && <span className="px-2 py-1 text-[10px] text-destructive">{failed} 전환 실패</span>}
+      {failed && <span className="px-2 py-1 text-[0.625rem] text-destructive">{failed} 전환 실패</span>}
     </div>
   )
 }

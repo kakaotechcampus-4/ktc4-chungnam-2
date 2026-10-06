@@ -2,7 +2,7 @@
  * 시나리오 전환. docs/errors.md의 8종 화면과 대응한다.
  * FE에서: import { resetScenario } from "@pingo/contracts/mocks/scenarios"; resetScenario("no-results");
  */
-import { ME_USER_ID, nextId, resetStore, type StoreState } from "./store";
+import { ME_USER_ID, nextId, resetIdCounter, resetStore, type StoreState } from "./store";
 import { buildBaseState, buildCandidates, buildEvidenceLines, buildRegions, SEED_MAP_ID } from "./seed";
 
 export type ScenarioName = "empty" | "happy-path" | "no-results" | "retry-limit" | "region-conflict";
@@ -36,7 +36,7 @@ function buildNoResults(): StoreState {
 function buildRetryLimit(): StoreState {
   const state = buildBaseState();
   const runId = "run_retry_limit";
-  state.runs[runId] = { id: runId, map_id: SEED_MAP_ID, category: "음식점", status: "done", attempt_no: 3 };
+  state.runs[runId] = { id: runId, map_id: SEED_MAP_ID, category: "음식점", status: "done", attempt_no: 5 };
   state.runRequestedBy[runId] = ME_USER_ID;
   state.evidenceLines[runId] = buildEvidenceLines(runId);
   state.regions[runId] = buildRegions();
@@ -48,13 +48,13 @@ function buildRetryLimit(): StoreState {
 function buildRegionConflict(): StoreState {
   const state = buildBaseState();
   const runId = "run_region_conflict";
-  state.runs[runId] = { id: runId, map_id: SEED_MAP_ID, category: "숙소", status: "awaiting_region_confirm", attempt_no: 1 };
+  state.runs[runId] = { id: runId, map_id: SEED_MAP_ID, category: "관광지", status: "awaiting_region_confirm", attempt_no: 1 };
   state.runRequestedBy[runId] = ME_USER_ID;
   state.evidenceLines[runId] = [
     {
       id: nextId("evi"),
       author_id: ME_USER_ID,
-      author_display_name: "황경(나)",
+      author_display_name: "황경",
       text: "해운대 기준 도보 5분",
       badge: "required",
       fact_key: "within_radius",
@@ -88,6 +88,7 @@ const BUILDERS: Record<ScenarioName, () => StoreState> = {
 };
 
 export function resetScenario(name: ScenarioName) {
+  resetIdCounter(); // 시나리오가 만드는 id가 테스트 순서와 무관하게 같다
   resetStore(BUILDERS[name]());
 }
 
