@@ -210,6 +210,16 @@ def delete_evidence_lines_by_author(db: Session, *, user_id: str) -> int:
     return result.rowcount
 
 
+def delete_evidence_lines_by_author_in_map(db: Session, *, user_id: str, map_id: str) -> int:
+    """지도 나가기(#369) — 이 사용자가 그 지도의 run에 쓴 근거 줄만 지운다."""
+    run_ids_on_map = select(RecommendRun.id).where(RecommendRun.map_id == map_id)
+    result = db.execute(
+        delete(EvidenceLine).where(EvidenceLine.author_id == user_id, EvidenceLine.run_id.in_(run_ids_on_map))
+    )
+    db.flush()
+    return result.rowcount
+
+
 def replace_unpublished_candidates(db: Session, *, run_id: uuid.UUID, candidates_data: list[dict]) -> list[Candidate]:
     """실행/재시도/반경넓히기가 후보 집합을 다시 채울 때 쓴다. 이미 게시된(published_pin_id
     not null) 후보는 지우지 않는다 — 공개된 핀의 출처 기록이라 사라지면 안 된다."""

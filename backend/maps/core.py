@@ -3,12 +3,17 @@
 쓰지 않는다 — 둘 다 비결정적이라 service.py가 만들어 파라미터로 넘긴다.
 """
 
+import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
+from authz.core import Principal, Resource, can
+from authz.policy import Role
+from authz.schemas import Permissions
 from common.errors import AppError
 from common.events import Event
-from maps.schemas import InviteSummary, Map, MapRegion, Member
+from maps.schemas import InviteSummary, Map, MapRegion, Member, NextOwner
 
 WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 
@@ -40,6 +45,16 @@ class MapRecord:
     region_label: str | None = None
     region_lat: float | None = None
     region_lng: float | None = None
+
+
+@dataclass(frozen=True)
+class MembershipEntry:
+    """memberships 행에서 위임 판정에 필요한 값만 추린 것. id는 joined_at이 같을 때의 순서용(#369 8번)."""
+
+    id: uuid.UUID
+    user_id: str
+    role: Role
+    joined_at: datetime
 
 
 def validate_map_create(
@@ -113,8 +128,70 @@ def build_invite_url(base_url: str, token: str) -> str:
     return f"{base_url.rstrip('/')}/invites/{token}"
 
 
+def pick_successor(
+    memberships: Iterable[MembershipEntry], withdrawn: set[str], leaving_user_id: str
+) -> str | None:
+    """방장이 빠질 때 방장이 될 사람(#369 확정 3번, 구현 결정 8번). 나가는 사람과 탈퇴자를 빼고
+    joined_at이 가장 빠른 구성원, 같으면 memberships.id 순. 넘길 사람이 없으면 None."""
+    candidates = [
+        m for m in memberships if m.user_id != leaving_user_id and m.user_id not in withdrawn
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda m: (m.joined_at, m.id)).user_id
+
+
+def role_in(roster: Iterable[MembershipEntry], user_id: str) -> Role | None:
+    return next((m.role for m in roster if m.user_id == user_id), None)
+
+
+def owner_successor(
+    principal: Principal, roster: Iterable[MembershipEntry], withdrawn: set[str]
+) -> str | None:
+    """요청자가 방장일 때만 후임을 계산한다 — 구성원이 나갈 때는 위임이 없다."""
+    if principal.role != "owner":
+        return None
+    return pick_successor(roster, withdrawn, principal.user_id)
+
+
+def can_leave(role: Role | None, successor: str | None) -> bool:
+    """구성원은 언제나 나갈 수 있다. 방장은 넘길 사람이 있을 때만(#369 9번)."""
+    if role is None:
+        return False
+    return role != "owner" or successor is not None
+
+
+def check_leave_allowed(role: Role, successor: str | None) -> None:
+    if not can_leave(role, successor):
+        raise AppError("OWNER_CANNOT_LEAVE")
+
+
+def map_permissions(principal: Principal, successor: str | None) -> Permissions:
+    """Map 응답의 permissions(#369). 역할로 정해지는 부분은 authz.can이, 넘길 사람이 있는지는 지도
+    상태라 can_leave가 판정한다(docs/permissions.md map.leave 주석)."""
+    resource = Resource(type="map", map_id=principal.map_id)
+    return Permissions(
+        can_delete=can(principal, "map.delete", resource),
+        can_leave=can(principal, "map.leave", resource) and can_leave(principal.role, successor),
+    )
+
+
+def to_next_owner(principal: Principal, successor: str | None, display_name: str | None) -> NextOwner | None:
+    """요청자가 방장이고 넘길 사람이 있을 때만 채운다. 이름을 못 구하면(users 행이 없음) 거짓 이름을
+    만들지 않고 생략한다."""
+    if principal.role != "owner" or successor is None or display_name is None:
+        return None
+    return NextOwner(user_id=successor, display_name=display_name)
+
+
 def to_map_response(
-    record: MapRecord, *, member_count: int, pin_count: int, confirmed_count: int | None
+    record: MapRecord,
+    *,
+    member_count: int,
+    pin_count: int,
+    confirmed_count: int | None,
+    permissions: Permissions,
+    next_owner: NextOwner | None = None,
 ) -> Map:
     """confirmed_count는 shortlist_items 개수 — shortlist.api.count_confirmed로 채운다(루트,
     maps/for_Root.md 항목 5 해결). 그래도 매개변수를 Optional로 남긴다 — 값을 못 구하는
@@ -135,16 +212,18 @@ def to_map_response(
         member_count=member_count,
         pin_count=pin_count,
         confirmed_count=confirmed_count,
+        permissions=permissions,
+        next_owner=next_owner,
     )
 
 
 def to_member_response(
-    user_id: str, *, owner_id: str, display_name: str | None, online: bool | None
+    user_id: str, *, role: Role, display_name: str | None, online: bool | None
 ) -> Member:
-    """display_name은 auth.api.display_names로 채운다(루트, maps/for_Root.md 항목 5 해결).
+    """role은 memberships.role 그대로다(#369 11번 — maps.created_by로 판정하지 않는다).
+    display_name은 auth.api.display_names로 채운다(루트, maps/for_Root.md 항목 5 해결).
     online은 여전히 채울 데이터 출처가 없다(realtime에 presence 없음, #32 별건) — user_id로
     대체하거나 False로 채우지 않는다(그럴싸해 보이는 거짓 fallback이다)."""
-    role = "owner" if user_id == owner_id else "member"
     return Member(user_id=user_id, role=role, display_name=display_name, online=online)
 
 
@@ -155,4 +234,19 @@ def member_joined_event(map_id: str, member: Member) -> Event:
         channel="public",
         type="member.joined",
         payload=member.model_dump(exclude_none=True),
+    )
+
+
+def map_deleted_event(map_id: str) -> Event:
+    """docs/events.md map.deleted — public 채널. 삭제와 같은 트랜잭션에 기록한다(#369)."""
+    return Event(map_id=map_id, channel="public", type="map.deleted", payload={"map_id": map_id})
+
+
+def member_left_event(map_id: str, user_id: str, new_owner_user_id: str | None) -> Event:
+    """docs/events.md member.left — public 채널(#369). 위임이 없었으면 new_owner_user_id는 null."""
+    return Event(
+        map_id=map_id,
+        channel="public",
+        type="member.left",
+        payload={"map_id": map_id, "user_id": user_id, "new_owner_user_id": new_owner_user_id},
     )

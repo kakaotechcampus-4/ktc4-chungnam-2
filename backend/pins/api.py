@@ -335,3 +335,13 @@ def delete_reactions_by_user(db: Session, *, user_id: str) -> int:
     이벤트 정책은 auth 소관이고, 핀 목록을 다시 받으면 집계는 자연히 맞는다."""
     result = db.execute(delete(ReactionRow).where(ReactionRow.user_id == user_id))
     return result.rowcount
+
+
+def delete_reactions_by_user_in_map(db: Session, *, user_id: str, map_id: str) -> int:
+    """지도 나가기(maps, #369)가 부른다 — delete_reactions_by_user를 그 지도 하나로 좁힌 것.
+    다른 지도에 남긴 반응은 그대로 둔다. 이벤트는 내지 않는다(maps가 member.left 하나로 알린다)."""
+    pin_ids_on_map = select(PinRow.id).where(PinRow.map_id == map_id)
+    result = db.execute(
+        delete(ReactionRow).where(ReactionRow.user_id == user_id, ReactionRow.pin_id.in_(pin_ids_on_map))
+    )
+    return result.rowcount

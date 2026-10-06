@@ -1,12 +1,15 @@
 """maps/core.py — 순수 함수만 테스트한다. DB·TestClient·mock 없음, 밀리초 단위로 끝난다.
 틀리면 실패하는 것만 검증한다(존재/통과가 아니라 실제로 잘못된 동작을 잡는지)."""
 
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import get_args
 
 import pytest
 
+from authz.core import Principal
 from authz.policy import Role
+from authz.schemas import Permissions
 from common.errors import AppError
 from maps import core
 from maps.models import MembershipRole
@@ -82,27 +85,26 @@ def test_build_invite_url_has_no_double_slash(base):
 def test_map_response_omits_confirmed_count_when_unknown():
     """0을 보내면 '확정 3개인 지도가 0개로 보이는' 거짓말이 된다 — 키 자체가 없어야 한다."""
     record = core.MapRecord(id="m1", title="부산", start_date=date(2026, 10, 10), end_date=date(2026, 10, 12))
-    response = core.to_map_response(record, member_count=1, pin_count=0, confirmed_count=None)
+    response = core.to_map_response(
+        record, member_count=1, pin_count=0, confirmed_count=None, permissions=Permissions()
+    )
     dumped = response.model_dump(exclude_none=True)
     assert "confirmed_count" not in dumped
 
 
 def test_map_response_includes_confirmed_count_when_known():
     record = core.MapRecord(id="m1", title="부산", start_date=date(2026, 10, 10), end_date=date(2026, 10, 12))
-    response = core.to_map_response(record, member_count=1, pin_count=0, confirmed_count=3)
+    response = core.to_map_response(
+        record, member_count=1, pin_count=0, confirmed_count=3, permissions=Permissions()
+    )
     assert response.model_dump(exclude_none=True)["confirmed_count"] == 3
 
 
 def test_member_response_omits_display_name_and_online_when_unknown():
     """user_id로 display_name을 대체하거나 online=False로 채우면 그럴싸해 보이는 거짓
     fallback이 된다 — 둘 다 응답에서 빠져야 한다."""
-    response = core.to_member_response("user_1", owner_id="user_1", display_name=None, online=None)
+    response = core.to_member_response("user_1", role="owner", display_name=None, online=None)
     assert response.model_dump(exclude_none=True) == {"user_id": "user_1", "role": "owner"}
-
-
-def test_member_response_role_is_owner_only_for_creator():
-    assert core.to_member_response("u1", owner_id="u1", display_name=None, online=None).role == "owner"
-    assert core.to_member_response("u2", owner_id="u1", display_name=None, online=None).role == "member"
 
 
 def test_member_joined_event_shape():
@@ -118,3 +120,87 @@ def test_membership_role_enum_matches_authz_policy_role():
     """DB enum이 authz.policy.Role과 어긋나면 여기서 잡는다 — 루트가 permissions.md에
     역할을 추가/변경했는데 이 모듈의 DB enum이 안 따라가는 드리프트 방지."""
     assert set(get_args(Role)) == set(MembershipRole.enums)
+
+
+# --- #369 지도 나가기·방장 위임 ---
+
+T0 = datetime(2026, 10, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _entry(user_id, *, role="member", minutes=0, id_=None):
+    return core.MembershipEntry(
+        id=id_ or uuid.uuid4(), user_id=user_id, role=role, joined_at=T0 + timedelta(minutes=minutes)
+    )
+
+
+def test_pick_successor_is_earliest_joined_other_than_leaver():
+    roster = [_entry("owner", role="owner"), _entry("late", minutes=20), _entry("early", minutes=10)]
+    assert core.pick_successor(roster, set(), "owner") == "early"
+
+
+def test_pick_successor_skips_withdrawn_members():
+    roster = [_entry("owner", role="owner"), _entry("gone", minutes=1), _entry("next", minutes=2)]
+    assert core.pick_successor(roster, {"gone"}, "owner") == "next"
+
+
+def test_pick_successor_breaks_joined_at_tie_by_membership_id():
+    low, high = uuid.UUID(int=1), uuid.UUID(int=2)
+    roster = [_entry("owner", role="owner"), _entry("b", minutes=5, id_=high), _entry("a", minutes=5, id_=low)]
+    assert core.pick_successor(roster, set(), "owner") == "a"
+
+
+@pytest.mark.parametrize("others, withdrawn", [([], set()), (["gone"], {"gone"})])
+def test_pick_successor_is_none_when_nobody_can_take_over(others, withdrawn):
+    roster = [_entry("owner", role="owner")] + [_entry(u, minutes=1) for u in others]
+    assert core.pick_successor(roster, withdrawn, "owner") is None
+
+
+def test_owner_without_successor_cannot_leave():
+    with pytest.raises(AppError) as exc_info:
+        core.check_leave_allowed("owner", None)
+    assert exc_info.value.code == "OWNER_CANNOT_LEAVE"
+
+
+def test_member_and_owner_with_successor_can_leave():
+    core.check_leave_allowed("member", None)
+    core.check_leave_allowed("owner", "next")
+
+
+def test_owner_successor_is_only_computed_for_the_owner():
+    roster = [_entry("owner", role="owner"), _entry("m", minutes=1)]
+    member = Principal(user_id="m", map_id="m1", role="member")
+    owner = Principal(user_id="owner", map_id="m1", role="owner")
+    assert core.owner_successor(member, roster, set()) is None
+    assert core.owner_successor(owner, roster, set()) == "m"
+
+
+@pytest.mark.parametrize(
+    "role, successor, expected",
+    [
+        ("owner", "next", {"can_delete": True, "can_leave": True}),
+        ("owner", None, {"can_delete": True, "can_leave": False}),
+        ("member", None, {"can_delete": False, "can_leave": True}),
+    ],
+)
+def test_map_permissions(role, successor, expected):
+    principal = Principal(user_id="u", map_id="m1", role=role)
+    assert core.map_permissions(principal, successor).model_dump(exclude_none=True) == expected
+
+
+def test_next_owner_only_for_owner_with_named_successor():
+    owner = Principal(user_id="o", map_id="m1", role="owner")
+    member = Principal(user_id="m", map_id="m1", role="member")
+    assert core.to_next_owner(owner, "s", "수지").model_dump() == {"user_id": "s", "display_name": "수지"}
+    assert core.to_next_owner(owner, None, None) is None
+    assert core.to_next_owner(member, "s", "수지") is None
+    assert core.to_next_owner(owner, "s", None) is None  # 이름을 지어내지 않는다
+
+
+def test_member_left_and_map_deleted_event_shapes():
+    left = core.member_left_event("m1", "u1", "u2")
+    assert (left.channel, left.type) == ("public", "member.left")
+    assert left.payload == {"map_id": "m1", "user_id": "u1", "new_owner_user_id": "u2"}
+    assert core.member_left_event("m1", "u1", None).payload["new_owner_user_id"] is None
+    deleted = core.map_deleted_event("m1")
+    assert (deleted.channel, deleted.type, deleted.payload) == ("public", "map.deleted", {"map_id": "m1"})
+

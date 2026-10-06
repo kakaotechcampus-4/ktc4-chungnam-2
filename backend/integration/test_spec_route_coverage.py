@@ -22,8 +22,6 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
-    ("delete", "/maps/{}"): "#369 지도 삭제 — 스펙 먼저, maps 구현은 같은 브랜치에서",
-    ("delete", "/maps/{}/members/me"): "#369 지도 나가기 — 스펙 먼저, maps 구현은 같은 브랜치에서",
 }
 
 # 스펙에 없어도 되는 라우트(운영/문서용).

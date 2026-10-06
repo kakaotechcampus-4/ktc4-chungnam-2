@@ -31,6 +31,7 @@ CATALOG: dict[str, tuple[int, str]] = {
     "WIDEN_LIMIT": (409, "반경을 더 넓힐 수 없습니다"),
     "REACTION_NOT_ALLOWED": (422, "이 핀에는 반응을 남길 수 없습니다"),
     "INVITE_NOT_FOUND": (404, "유효하지 않은 초대 링크입니다"),
+    "OWNER_CANNOT_LEAVE": (409, "넘길 사람이 없는 방장은 나갈 수 없습니다"),
     "INVITE_EXPIRED": (410, "만료된 초대 링크입니다"),
     "PLACE_NOT_SUPPORTED": (422, "아직 지원하지 않는 장소입니다"),
     "RATE_LIMITED": (429, "요청이 너무 잦습니다"),
