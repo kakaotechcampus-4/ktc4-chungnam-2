@@ -8,7 +8,7 @@ import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 
 import { useAiStore } from './aiStore'
-import { evidenceLabel, groupEvidence, runErrorMessage, type EvidenceLineDto, type RecommendRunDto, type RegionDto } from './model'
+import { evidenceLabel, groupEvidence, type EvidenceLineDto, type RecommendRunDto, type RegionDto } from './model'
 import { useConfirmRegionsMutation, useEvidenceQuery, useExecuteRunMutation, usePatchEvidenceMutation } from './queries'
 
 /**
@@ -29,7 +29,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
   const groups = groupEvidence(evidence.data ?? [])
-  const busy = confirm.isPending || execute.isPending
+  const busy = confirm.isPending
 
   function toggle(line: EvidenceLineDto, active: boolean) {
     patch.mutate(
@@ -47,7 +47,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
     confirm.mutate(acceptUnion, {
       onSuccess: () => {
         setConflict(null)
-        execute.mutate(run.id)
+        execute.mutate(run)
       },
       onError: (err) => {
         // 사람이 쓴 반경 사유끼리 안 겹친다 — 사람에게 묻는다(5-6-1). 다른 실패는 그대로 보여 준다.
@@ -167,7 +167,6 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
         {confirm.error && !(confirm.error instanceof ApiError && confirm.error.code === 'REGION_CONFLICT') && (
           <ErrorText message="지역을 확인하지 못했어요" error={confirm.error} />
         )}
-        {execute.error && <ErrorText message={runErrorMessage(execute.error)} error={execute.error} />}
       </div>
 
       {/* 이 화면은 시트가 없어서 토스트를 아래 버튼 줄 위에 띄운다. */}

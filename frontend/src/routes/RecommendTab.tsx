@@ -71,6 +71,10 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
     </TabSheet>
   )
 
+  // 실행 중이면 다른 무엇보다 먼저 '진행 중'이다 — 같은 시도의 예전 결과(0곳·실패)가 캐시에 남아 있어도 덮는다(#349).
+  if (run.status === 'executing') {
+    return tab(<AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" />, <ProgressBody />)
+  }
   if (view.kind === 'limit') {
     return tab(
       <>
@@ -86,7 +90,7 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
         <BackToReadiness mapId={mapId} />
         <AiHeader title="추천을 끝내지 못했어요" sub="조건이 까다로워서가 아니에요. 잠깐 문제가 생겼어요" />
       </>,
-      <Failed mapId={mapId} run={run} error={result.error} />,
+      <Failed mapId={mapId} run={run} />,
     )
   }
   if (noResults) {
