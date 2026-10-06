@@ -41,13 +41,13 @@
     --color-card: var(--card);
     --color-foreground: var(--foreground);
     --color-background: var(--background);
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+    /* 반경 단계(DESIGN.md Shapes) — 태그 6 / 컨트롤 8 / 카드·버튼 12 / 시트 16. shadcn 배수 대신 고정값. */
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 12px;
+    --radius-2xl: 16px;
+    --radius-3xl: 16px;
 }
 
 /* tokens.css 를 Tailwind 클래스로 쓰게 이어 준다 — bg-brand-600, text-ink-500 처럼. */
@@ -67,41 +67,31 @@
     --color-ink-700: var(--ink-700);
     --color-ink-900: var(--ink-900);
     --color-danger: var(--action-danger);
+    --color-warn-text: var(--warn-text);
+    --color-scrim: var(--scrim);
 }
 
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    /* shadcn 이름 → tokens.css 역할 토큰(colors.md 10절). shadcn 부품을 꺼내 써도 브랜드 색이 나온다. */
+    --background: var(--surface-card);
+    --foreground: var(--text-primary);
+    --card: var(--surface-card);
+    --card-foreground: var(--text-primary);
+    --popover: var(--surface-overlay);
+    --popover-foreground: var(--text-primary);
+    --primary: var(--action-fill);
+    --primary-foreground: var(--text-on-fill);
+    --secondary: var(--surface-sunken);
+    --secondary-foreground: var(--text-primary);
+    --muted: var(--surface-sunken);
+    --muted-foreground: var(--text-secondary);
+    --accent: var(--surface-sunken);
+    --accent-foreground: var(--text-primary);
+    --destructive: var(--action-danger);
+    --border: var(--line-hairline);
+    --input: var(--line-control);
+    --ring: var(--line-focus);
+    --radius: 12px;
 }
 
 .dark {
@@ -140,12 +130,35 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
     }
   body {
     @apply bg-background text-foreground;
     }
   html {
     @apply font-sans;
+    }
+}
+/* 보이는 원은 32px 그대로 두고 누르는 영역만 44px로 넓힌다(PRODUCT.md 접근성 — 터치 44px). */
+@utility hit-44 {
+    position: relative;
+    &::before {
+        content: '';
+        position: absolute;
+        inset: -6px;
+    }
+}
+
+/* 홈 표시줄 높이. 데스크톱·안드로이드는 0. */
+@utility pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* 키보드 포커스는 불투명 2px(3:1 이상). shadcn 기본 outline-ring/50 은 흰 바탕에서 1.98:1이라 안 보였다(#299). */
+@layer base {
+    /* base 층에 둬서 outline-none 을 준 곳(검색 input 등 — 틀이 대신 표시)은 그대로 꺼진다. */
+    :focus-visible {
+        outline: 2px solid var(--line-focus);
+        outline-offset: 2px;
     }
 }

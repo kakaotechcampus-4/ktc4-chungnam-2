@@ -26,7 +26,7 @@ export default function MapListPage() {
           type="button"
           aria-label="계정"
           onClick={() => setAccountOpen(true)}
-          className="flex size-8 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-white"
+          className="hit-44 flex size-8 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-white"
         >
           {me?.display_name?.slice(0, 1)}
         </button>

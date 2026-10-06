@@ -10,7 +10,8 @@ const HEART = 'M12 14.2l-.6-.5C9.3 11.8 8 10.6 8 9.2 8 8.1 8.9 7.2 10 7.2c.6 0 1
  * 핀 3종(docs/design/colors.md 3절) — 종류는 **모양**으로, 색의 진하기는 **참여율**로 나타낸다.
  * - 일반: 빨강 실선 테두리 + 속은 참여율만큼 회색→빨강(oklch 로 섞어야 중간이 탁해지지 않는다)
  * - AI 추천: 빨강 점선 테두리 + 회색 속. 참여율을 넣지 않는다(올리기 전엔 나만 본다)
- * - 확정: 골드 채움 + 흰 테두리 3px + 그림자 + 갈색 ♥. 참여율과 무관하다
+ * - 확정: 골드 채움 + 흰 테두리 3px + 그 바깥 갈색 1px + 그림자 + 갈색 ♥. 참여율과 무관하다.
+ *   밝은 땅 위에선 흰 테두리가 묻혀서(실측 1.2:1) 갈색 선이 가시성을 맡는다(#299)
  * 구성원별 색 구분은 없다(#26).
  */
 function shapeOf(kind: PinKind, ratio: number) {
@@ -34,9 +35,10 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
   el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'} · ${pin.kind} 핀`)
   el.style.cssText =
     'display:block;width:30px;height:38px;padding:0;border:0;background:none;cursor:pointer;line-height:0;' +
-    (pin.kind === '확정' ? 'filter:drop-shadow(0 2px 4px rgba(0,0,0,.28));' : '')
+    (pin.kind === '확정' ? 'filter:drop-shadow(var(--pin-confirmed-shadow));' : '')
   el.innerHTML = `
     <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true">
+      ${pin.kind === '확정' ? `<path d="${PIN_PATH}" stroke-linejoin="round" style="fill:none;stroke:var(--pin-confirmed-mark);stroke-width:5" />` : ''}
       <path d="${PIN_PATH}" stroke-linejoin="round"
             style="fill:${shape.fill};stroke:${shape.stroke};stroke-width:${shape.width};stroke-dasharray:${shape.dash}" />
       ${shape.heart ? `<path d="${HEART}" style="fill:var(--pin-confirmed-mark)" />` : ''}

@@ -50,7 +50,7 @@ export default function InvitePage() {
     <div className="flex min-h-dvh flex-col bg-ink-50 px-4 pb-6 pt-4">
       <div className="h-8">
         {loggedIn && (
-          <Link to="/" aria-label="내 지도 목록으로" className="flex size-8 items-center justify-center rounded-full bg-white shadow-sm">
+          <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-sm">
             <ChevronLeft size={20} />
           </Link>
         )}

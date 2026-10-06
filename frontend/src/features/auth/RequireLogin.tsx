@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Outlet, useSearchParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
+import AgainstMark from '@/ui/AgainstMark'
 import MapIllustration from '@/ui/MapIllustration'
 
 import { isUnauthorized } from './api'
@@ -26,7 +27,7 @@ export default function RequireLogin() {
 
 const STEPS = [
   '가고 싶은 곳을 핀으로 찍어요',
-  '♥ 좋음 · △ 조율 필요 · 🚫 반대로 의견을 남겨요',
+  <>♥ 좋음 · △ 조율 필요 · <AgainstMark /> 반대로 의견을 남겨요</>,
   '반대가 있으면 AI가 대안을 찾아줘요',
 ]
 
@@ -57,7 +58,7 @@ function LoginScreen() {
       <MapIllustration className="mt-6" />
       <ol className="mt-6 space-y-3">
         {STEPS.map((step, i) => (
-          <li key={step} className="flex items-center gap-3 text-sm text-ink-700">
+          <li key={i} className="flex items-center gap-3 text-sm text-ink-700">
             <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-600">
               {i + 1}
             </span>
