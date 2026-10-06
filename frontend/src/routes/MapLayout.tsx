@@ -26,6 +26,9 @@ import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import Pingo from '@/ui/Pingo'
 
+/** 넓은 화면 패널이 미끄러지는 시간. 패널·덧칠의 `duration-300` 과 같은 값이다. */
+const PANEL_SLIDE_MS = 300
+
 /**
  * 지도 하나 안의 화면(최종기획안 4절). 지도는 항상 떠 있고, 하단 탭 3개가 그 위 바텀시트 내용을 바꾼다.
  * 지도는 여기 한 번만 만든다 — 탭마다 만들면 탭을 바꿀 때마다 지도가 다시 뜬다.
@@ -171,7 +174,19 @@ export default function MapLayout() {
   const chipsShown = onMarkingTab && (desktop || markingStage !== 3) && !search.query
   const fade = mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
   // 넓은 화면의 지도 영역 왼쪽 끝 — 패널을 접어도 탭 줄은 남는다.
-  const mapLeft = desktop ? (panelOpen ? PANEL_W : RAIL_W) : 0
+  // 지도 틀은 패널이 다 열린 뒤에 좁히고, 접기 시작할 때 바로 넓힌다. 그래야 패널이 미끄러지는 동안
+  // 그 뒤에 늘 지도가 깔려 있다(지도 틀을 같이 움직이면 카카오맵이 프레임마다 다시 재지 못해 회색이 비친다).
+  const [mapNarrow, setMapNarrow] = useState(panelOpen)
+  if (!panelOpen && mapNarrow) setMapNarrow(false)
+  useEffect(() => {
+    if (!panelOpen) return
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const t = window.setTimeout(() => setMapNarrow(true), reduce ? 0 : PANEL_SLIDE_MS)
+    return () => window.clearTimeout(t)
+  }, [panelOpen])
+  const mapLeft = desktop ? (mapNarrow ? PANEL_W : RAIL_W) : 0
+  // 지도 위 덧칠(칩·« 손잡이)은 패널 가장자리를 따라 같이 미끄러진다.
+  const overlayLeft = panelOpen ? PANEL_W : RAIL_W
 
   return (
     <>
@@ -194,16 +209,24 @@ export default function MapLayout() {
       {desktop && <TabRail mapId={mapId} onOpen={() => setPanelOpen(true)} />}
 
       {/* 모바일은 'contents' 라 틀이 없고 안쪽이 각자 화면에 붙는다. 넓은 화면은 이 틀이 탭 줄 오른쪽 내용 패널이다. */}
-      {/* 접기는 transform 대신 hidden — transform 이면 안쪽 fixed 확인 창이 패널 기준으로 잡힌다. */}
+      {/* 접기는 탭 줄 뒤로 left 를 옮겨 미끄러뜨린다 — transform 이면 안쪽 fixed 확인 창이 패널 기준으로 잡힌다. */}
+      {/* 다 접히면 invisible + inert 로 보이지도, 포커스가 들어가지도 않는다. */}
       <div
         id="map-panel"
-        hidden={desktop && !panelOpen}
-        style={desktop ? { left: RAIL_W, width: PANEL_W - RAIL_W } : undefined}
-        className={desktop ? 'fixed inset-y-0 z-30 flex flex-col border-r border-ink-200 bg-white' : 'contents'}
+        inert={desktop && !panelOpen}
+        style={desktop ? { left: panelOpen ? RAIL_W : RAIL_W - (PANEL_W - RAIL_W), width: PANEL_W - RAIL_W } : undefined}
+        className={
+          desktop
+            ? `fixed inset-y-0 z-30 flex flex-col border-r border-ink-200 bg-white transition-[left,visibility] duration-300 ease-out motion-reduce:transition-none ${
+                panelOpen ? 'visible' : 'invisible'
+              }`
+            : 'contents'
+        }
       >
+        {/* 넓은 화면 pb-1: 검색창 포커스 테두리(바깥 4px)가 바로 아래 탭 내용(흰 바탕)에 덮이지 않게 자리를 둔다. */}
         <header
           data-map-header
-          className={desktop ? 'shrink-0 space-y-3 px-4 pt-3' : 'pointer-events-none fixed inset-x-0 top-0 z-20 space-y-2 px-4 pt-3'}
+          className={desktop ? 'shrink-0 space-y-3 px-4 pb-1 pt-3' : 'pointer-events-none fixed inset-x-0 top-0 z-20 space-y-2 px-4 pt-3'}
         >
           <div className={desktop ? 'flex items-center gap-2' : 'flex items-center justify-between'}>
             <Link
@@ -309,7 +332,10 @@ export default function MapLayout() {
 
       {/* 넓은 화면의 지도 영역 위. 지도를 끌 수 있게 누름은 통과시키고, 올린 것들만 다시 받는다. */}
       {desktop && (
-        <div className="pointer-events-none fixed inset-y-0 right-0 z-20" style={{ left: mapLeft }}>
+        <div
+          className="pointer-events-none fixed inset-y-0 right-0 z-20 transition-[left] duration-300 ease-out motion-reduce:transition-none"
+          style={{ left: overlayLeft }}
+        >
           <div className="absolute inset-x-4 top-3 flex flex-col items-start gap-2">
             {chipsShown && (
               <CategoryChips
@@ -354,7 +380,8 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
  */
 function TabRail({ mapId, onOpen }: { mapId: string; onOpen: () => void }) {
   return (
-    <nav style={{ width: RAIL_W }} className="fixed inset-y-0 left-0 z-30 flex flex-col gap-1 border-r border-ink-200 bg-white px-1 pt-3">
+    // 패널(z-30)이 이 아래로 미끄러져 들어가고 나온다.
+    <nav style={{ width: RAIL_W }} className="fixed inset-y-0 left-0 z-40 flex flex-col gap-1 border-r border-ink-200 bg-white px-1 pt-3">
       <RailTab to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={22} />} onOpen={onOpen} />
       <RailTab to={`/maps/${mapId}/recommend`} label="AI 추천" icon={<Pingo size={26} />} onOpen={onOpen} />
       <RailTab to={`/maps/${mapId}/shortlist`} label="확정된 장소" icon={<FileText size={22} />} onOpen={onOpen} />
