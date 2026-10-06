@@ -1,11 +1,11 @@
 import { createPinMarkerElement } from './pinMarker'
-import type { Pin } from './model'
+import { participationRatio, type Pin } from './model'
 
 export interface MarkerLayer {
-  /** 들어온 목록과 지금 떠 있는 마커를 비교해 추가·삭제만 한다. */
-  sync(pins: Pin[]): void
-  /** 핀 전체가 들어오도록 시야를 맞춘다. */
-  fit(pins: Pin[]): void
+  /** 들어온 목록과 지금 떠 있는 마커를 비교해 추가·삭제만 한다. 구성원 수는 핀 색(참여율)의 분모다. */
+  sync(pins: Pin[], memberCount: number): void
+  /** 점(핀·검색 결과) 전체가 들어오도록 시야를 맞춘다. */
+  fit(points: { lat: number; lng: number }[]): void
   destroy(): void
 }
 
@@ -17,8 +17,8 @@ function isPlaced(pin: Pin): pin is Placed {
 }
 
 /** 이 값이 그대로면 오버레이를 다시 만들 이유가 없다. */
-function signature(pin: Placed): string {
-  return [pin.kind, pin.lat, pin.lng, pin.place_name].join('|')
+function signature(pin: Placed, ratio: number): string {
+  return [pin.kind, pin.lat, pin.lng, pin.place_name, ratio].join('|')
 }
 
 /**
@@ -43,20 +43,21 @@ export function createMarkerLayer(
   }
 
   return {
-    sync(pins) {
+    sync(pins, memberCount) {
       const alive = new Set<string>()
 
       for (const pin of pins) {
         if (!isPlaced(pin)) continue
         alive.add(pin.id)
 
-        const sig = signature(pin)
+        const ratio = participationRatio(pin, memberCount)
+        const sig = signature(pin, ratio)
         if (signatures.get(pin.id) === sig) continue
 
         drop(pin.id)
         const overlay = new maps.CustomOverlay({
           position: new maps.LatLng(pin.lat, pin.lng),
-          content: createPinMarkerElement(pin, () => onSelect(pin.id)),
+          content: createPinMarkerElement(pin, ratio, () => onSelect(pin.id)),
           yAnchor: 1,
           clickable: true,
         })
@@ -70,15 +71,15 @@ export function createMarkerLayer(
       }
     },
 
-    fit(pins) {
+    fit(points) {
       const bounds = new maps.LatLngBounds()
       let placed = 0
-      for (const pin of pins) {
-        if (!isPlaced(pin)) continue
-        bounds.extend(new maps.LatLng(pin.lat, pin.lng))
+      for (const p of points) {
+        bounds.extend(new maps.LatLng(p.lat, p.lng))
         placed += 1
       }
-      if (placed > 0) map.setBounds(bounds)
+      // 위는 검색창·칩, 아래는 2단계 시트가 덮는다. 그 바깥에 핀이 오도록 여백을 둔다.
+      if (placed > 0) map.setBounds(bounds, 170, 64, Math.round(window.innerHeight * 0.62), 32)
     },
 
     destroy() {

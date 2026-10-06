@@ -9,6 +9,8 @@
 declare namespace kakao.maps {
   class LatLng {
     constructor(lat: number, lng: number)
+    getLat(): number
+    getLng(): number
   }
 
   class LatLngBounds {
@@ -19,9 +21,19 @@ declare namespace kakao.maps {
 
   class Map {
     constructor(container: HTMLElement, options: { center: LatLng; level?: number })
-    setBounds(bounds: LatLngBounds): void
+    /** 여백(px) 안쪽으로 맞춘다 — 위·오른쪽·아래·왼쪽. */
+    setBounds(bounds: LatLngBounds, paddingTop?: number, paddingRight?: number, paddingBottom?: number, paddingLeft?: number): void
     setCenter(latlng: LatLng): void
+    panTo(latlng: LatLng): void
+    /** 지도 가운데를 픽셀만큼 옮긴다. */
+    panBy(dx: number, dy: number): void
+    getCenter(): LatLng
     relayout(): void
+  }
+
+  namespace event {
+    function addListener(target: Map, type: 'dragstart' | 'idle', handler: () => void): void
+    function removeListener(target: Map, type: 'dragstart' | 'idle', handler: () => void): void
   }
 
   class CustomOverlay {
@@ -34,6 +46,11 @@ declare namespace kakao.maps {
       zIndex?: number
       clickable?: boolean
     })
+    setMap(map: Map | null): void
+  }
+
+  class Polyline {
+    constructor(options: { path: LatLng[]; strokeWeight?: number; strokeColor?: string; strokeOpacity?: number; strokeStyle?: string })
     setMap(map: Map | null): void
   }
 
