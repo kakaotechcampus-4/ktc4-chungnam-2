@@ -11,7 +11,7 @@ export function buildBaseState(): StoreState {
   const mapId = "map_1";
 
   const users: StoreState["users"] = {
-    [ME_USER_ID]: { id: ME_USER_ID, display_name: "황경(나)" },
+    [ME_USER_ID]: { id: ME_USER_ID, display_name: "황경" },
     u_2: { id: "u_2", display_name: "박서영" },
     u_3: { id: "u_3", display_name: "김도현" },
     u_4: { id: "u_4", display_name: "이유빈" },
@@ -19,7 +19,7 @@ export function buildBaseState(): StoreState {
 
   const members: StoreState["members"] = {
     [mapId]: [
-      { user_id: ME_USER_ID, role: "owner", display_name: "황경(나)", online: true },
+      { user_id: ME_USER_ID, role: "owner", display_name: "황경", online: true },
       { user_id: "u_2", role: "member", display_name: "박서영", online: true },
       { user_id: "u_3", role: "member", display_name: "김도현", online: false },
       { user_id: "u_4", role: "member", display_name: "이유빈", online: false },
@@ -71,7 +71,7 @@ export function buildBaseState(): StoreState {
       lng: 126.5254,
       place_name: "우진해장국",
       created_by: ME_USER_ID,
-      created_by_display_name: "황경(나)",
+      created_by_display_name: "황경",
       created_at: minutesAgo(50),
       checks: [],
       source_run_id: null,
@@ -139,7 +139,7 @@ export function buildEvidenceLines(runId: string) {
     {
       id: nextId("evi"),
       author_id: ME_USER_ID,
-      author_display_name: "황경(나)",
+      author_display_name: "황경",
       text: "매워요",
       badge: "required" as const,
       fact_key: "spicy_focused",
