@@ -45,6 +45,7 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
     const source = new EventSource(`${BASE_URL}/maps/${mapId}/events`, { withCredentials: true })
     const update = (fn: (pins: Pin[]) => Pin[]) => queryClient.setQueryData<Pin[]>(key, (pins) => pins && fn(pins))
     const parse = <T>(e: MessageEvent) => JSON.parse(e.data) as T
+    const refreshCounts = () => void queryClient.invalidateQueries({ queryKey: pinKeys.counts(mapId) })
 
     const upsert = (e: MessageEvent) => {
       const pin = parse<Pin>(e)
@@ -53,22 +54,25 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       if (!known && e.type === 'pin.created' && pin.created_by !== myUserId) {
         showToast(`${pin.created_by_display_name ?? '구성원'}님이 ${pin.place_name ?? '새 장소'} 핀을 찍었어요`)
       }
+      refreshCounts()
     }
     const remove = (e: MessageEvent) => {
       const { pin_id } = parse<{ pin_id: string }>(e)
       update((pins) => pins.filter((p) => p.id !== pin_id))
+      // 핀이 지워지면 그 핀의 의견도 사라져 「2/4명」이 줄 수 있다.
+      refreshCounts()
     }
     const reaction = (e: MessageEvent) => {
       const { pin_id, reaction_summary, user_id, display_name, type } = parse<ReactionChanged>(e)
       const pin = queryClient.getQueryData<Pin[]>(key)?.find((p) => p.id === pin_id)
-      // 내 의견은 이미 캐시에 반영했다. 의견을 거둔 것(type=null)은 알리지 않는다.
-      if (pin && type && user_id !== myUserId) {
-        const place = pin.place_name ?? '핀'
-        showToast(`${display_name ?? '구성원'}님이 ${place}에 ${REACTION_WORD[type]} 의견을 남겼어요`)
+      // 내 의견은 이미 캐시에 반영했다 — 알리지 않는다. 사유는 이벤트에 없다.
+      if (pin && user_id !== myUserId) {
+        const who = `${display_name ?? '구성원'}님이 ${pin.place_name ?? '핀'}`
+        showToast(type ? `${who}에 ${REACTION_WORD[type]} 의견을 남겼어요` : `${who} 의견을 거뒀어요`)
       }
       update((pins) => pins.map((p) => (p.id === pin_id ? { ...p, reaction_summary } : p)))
       // 의견을 남긴 사람 수(「2/4명」)와 열려 있는 핀 상세의 의견 목록이 바뀐다.
-      void queryClient.invalidateQueries({ queryKey: pinKeys.counts(mapId) })
+      refreshCounts()
       void queryClient.invalidateQueries({ queryKey: pinKeys.reactions(pin_id) })
     }
     const members = () => void queryClient.invalidateQueries({ queryKey: mapKeys.detail(mapId) })
