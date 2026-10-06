@@ -7,6 +7,7 @@ import { TAB_BAR_H } from '@/features/shell/layout'
 import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
+import ConfirmDialog from '@/ui/ConfirmDialog'
 
 import { useAiStore } from './aiStore'
 import { evidenceLabel, groupEvidence, type EvidenceLineDto, type RecommendRunDto, type RegionDto } from './model'
@@ -187,7 +188,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
       </div>
 
       {askRemove && (
-        <Confirm
+        <ConfirmDialog
           title="꼭 지켜야 하는 조건을 뺄까요?"
           body={`‘${evidenceLabel(askRemove)}’을(를) 빼면 이번 추천에서 이 조건으로 거르지 않아요. 알레르기처럼 한 번 틀리면 안 되는 조건이라면 그대로 두세요.`}
           note="내가 쓴 조건만 뺄 수 있어요. 다른 구성원의 조건은 그대로 남아요."
@@ -202,10 +203,18 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
         />
       )}
       {conflict && (
-        <Confirm
+        <ConfirmDialog
           title="두 조건을 동시에 만족하는 곳이 없어요"
           body="두 곳이 멀어서 한 번에 찾을 수 없어요. 각 지역에서 따로 찾아 결과를 나눠 보여 드릴 수 있어요."
-          list={conflict.map((r) => r.label)}
+          detail={
+            conflict.length > 0 && (
+              <ul className="space-y-1 font-semibold text-ink-900">
+                {conflict.map((r) => (
+                  <li key={r.label}>{r.label}</li>
+                ))}
+              </ul>
+            )
+          }
           note="같은 사유가 남아 있는 동안에는 다시 묻지 않아요."
           cancel="근거를 다시 볼게요"
           ok="두 지역 각각 찾기"
@@ -225,56 +234,4 @@ function mergeTags(lines: EvidenceLineDto[]) {
     tags.set(tag, tags.get(tag) ?? mine)
   }
   return [...tags].map(([tag, mine]) => ({ tag, mine }))
-}
-
-/** 확인 창(Figma 근거 확인 계열). 빨강은 파괴적 동작(빼기)에만 쓴다. */
-function Confirm({
-  title,
-  body,
-  list,
-  note,
-  cancel,
-  ok,
-  danger = false,
-  onCancel,
-  onOk,
-}: {
-  title: string
-  body: string
-  list?: string[]
-  note?: string
-  cancel: string
-  ok: string
-  danger?: boolean
-  onCancel: () => void
-  onOk: () => void
-}) {
-  return (
-    <div role="alertdialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-6">
-      <div className="w-full max-w-sm space-y-2 rounded-2xl bg-white p-5">
-        <p className="text-lg font-bold text-ink-900">{title}</p>
-        {list && list.length > 0 && (
-          <ul className="space-y-1 rounded-lg bg-ink-50 p-3 text-sm font-semibold text-ink-900">
-            {list.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        )}
-        <p className="text-sm text-ink-600">{body}</p>
-        {note && <p className="text-xs text-ink-500">{note}</p>}
-        <div className="grid grid-cols-2 gap-2 pt-2">
-          <button type="button" onClick={onCancel} className="rounded-lg border border-ink-300 py-2.5 text-sm font-semibold">
-            {cancel}
-          </button>
-          <button
-            type="button"
-            onClick={onOk}
-            className={`btn-primary py-2.5 text-sm ${danger ? 'bg-[var(--action-danger)]' : ''}`}
-          >
-            {ok}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
 }
