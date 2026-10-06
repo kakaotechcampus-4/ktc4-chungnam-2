@@ -21,6 +21,7 @@ from places import api as places_api
 from authz.core import Principal
 from common.errors import AppError
 from common.events import Event
+from maps import api as maps_api
 from pins import chips, core, service
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
@@ -94,6 +95,7 @@ def create_ai_pin(
             raise AppError("PIN_DUPLICATE", detail={"pin_id": existing_id}) from exc
         raise
 
+    # 게시자는 recommend가 가드를 거친 요청자라 탈퇴·나감 판정(#369)이 필요 없다 — 실명 그대로.
     display_name = auth_api.display_names(db, [created_by]).get(created_by)
     place = places_api.get_places([place_id], db=db).get(place_id)
     record = core.PinRecord(
@@ -161,7 +163,8 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
     lat_col, lng_col = service._lat_lng_columns()
     lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()
     reaction_counts = service._reaction_counts_for_pin(db, pin_row.id)
-    display_name = auth_api.display_names(db, [pin_row.created_by]).get(pin_row.created_by)
+    current_member_ids = maps_api.DbMembershipGateway(db).current_member_ids(pin_row.map_id)
+    display_name = service.author_display_names(db, [pin_row.created_by], current_member_ids).get(pin_row.created_by)
     my_reaction = service.my_reactions_for_pins(db, [pin_row.id], viewer_id).get(pin_row.id)
     record = service.record_from_row(
         pin_row, lat=lat, lng=lng, reaction_counts=reaction_counts,
@@ -334,4 +337,14 @@ def delete_reactions_by_user(db: Session, *, user_id: str) -> int:
     핀은 건드리지 않는다(작성 핀은 남는다). reaction.changed는 발행하지 않는다 — 탈퇴 시점의
     이벤트 정책은 auth 소관이고, 핀 목록을 다시 받으면 집계는 자연히 맞는다."""
     result = db.execute(delete(ReactionRow).where(ReactionRow.user_id == user_id))
+    return result.rowcount
+
+
+def delete_reactions_by_user_in_map(db: Session, *, user_id: str, map_id: str) -> int:
+    """지도 나가기(maps, #369)가 부른다 — delete_reactions_by_user를 그 지도 하나로 좁힌 것.
+    다른 지도에 남긴 반응은 그대로 둔다. 이벤트는 내지 않는다(maps가 member.left 하나로 알린다)."""
+    pin_ids_on_map = select(PinRow.id).where(PinRow.map_id == map_id)
+    result = db.execute(
+        delete(ReactionRow).where(ReactionRow.user_id == user_id, ReactionRow.pin_id.in_(pin_ids_on_map))
+    )
     return result.rowcount

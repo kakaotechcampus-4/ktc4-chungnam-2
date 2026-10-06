@@ -1,5 +1,24 @@
 # 루트 리뷰 가이드 — backend/auth
 
+## 이번 작업 (#369 2단계 auth 몫 — 방장 탈퇴 위임, 2026-10-07)
+
+- `auth/service.py::withdraw_user`가 맨 먼저 `maps.api.transfer_or_delete_owned_maps(db, user_id)`를 부른다. 방장인 지도마다
+  joined_at이 가장 빠른 구성원(탈퇴자 제외)에게 넘기고, 넘길 사람이 없으면 지도를 soft delete한다. 탈퇴자 멤버십 행은 member로
+  강등만 하고 지우지 않는다(#245). 반응·근거 줄 삭제, users soft delete와 같은 트랜잭션이다. 스펙·마이그레이션 변경 없음.
+- 위임 순서를 탈퇴 표시(`deleted_at`) 앞에 둔 이유: 후임 판정은 "탈퇴자 집합"을 읽는데 본인은 `user_id`로 따로 빠지므로 순서는
+  결과에 영향이 없다. 실패 시 롤백 범위를 같게 하려고 첫 쓰기로 둔다.
+- **다른 모듈 파일 수정**: `maps/service.py`(위임 시 `member.left` 발행), `maps/api.py`(docstring), `maps/tests/test_delete_leave_api.py`.
+  내역은 `maps/for_Root.md` 맨 위.
+- 테스트: `auth/tests/test_router.py::test_withdrawing_owner_hands_over_shared_map_and_deletes_solo_map` — `POST /auth/withdraw`로
+  공유 지도는 후임이 owner·탈퇴자는 member로 남고 `member.left{map_id, user_id, new_owner_user_id}` 하나, 혼자인 지도는
+  `map.deleted`만 나가고 404가 되는지 HTTP 끝단으로 확인.
+- 검증: `PINGO_TEST_DB=pingo_test_auth369 PLACES_MODE=dev LLM_MODE=dev python -m pytest` → 1400 passed, 1 xfailed, 7 deselected,
+  실패 2개는 `common/tests/test_settings.py`의 prod 기본값 테스트로 `LLM_MODE=dev`를 환경에 준 탓(빼고 돌리면 24 passed).
+  작업 폴더에 pins 세션의 미커밋 변경(`pins/core.py`·`router.py`·`service.py`)이 같이 있는 상태에서 돌렸다.
+- 복잡도: 예상 1, 실제 1.
+
+---
+
 ## 이번 작업 (#160 탈퇴 연결, 2026-09-30)
 
 - `auth/service.py::withdraw_user`가 `pins.api.delete_reactions_by_user`·`recommend.api.delete_evidence_lines_by_author`를 호출한 뒤 users를 soft delete한다(핀은 남김). 세 쓰기는 같은 트랜잭션이다. 스펙·마이그레이션 변경 없음.
