@@ -118,7 +118,7 @@ paths:
   /maps:
     get:
       tags: [maps]
-      summary: 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절). 삭제된 지도와 내가 나간 지도는 빠진다 (#369). 목록의 Map에는 next_owner를 채우지 않는다
+      summary: 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절). 삭제된 지도와 내가 나간 지도는 빠진다 (#369). 목록의 Map에는 next_owner를 채우지 않는다. 이 목록의 지도는 최대 10개다(만들거나 참여한 지도 합산, #369)
       responses:
         "200":
           description: OK. 속한 지도가 없으면 빈 배열
@@ -129,7 +129,7 @@ paths:
                 items: { $ref: "#/components/schemas/Map" }
     post:
       tags: [maps]
-      summary: 지도 생성. 생성 시 seeding 잡을 트리거한다 (architecture.md 3절)
+      summary: 지도 생성. 생성 시 seeding 잡을 트리거한다 (architecture.md 3절). 내 지도(만들거나 참여한 지도, 삭제·나간 지도 제외)가 이미 10개면 409 MAP_LIMIT (#369)
       requestBody:
         content:
           application/json:
@@ -140,6 +140,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Map" }
+        "409": { $ref: "#/components/responses/MapLimit" }
 
   /maps/{mapId}:
     get:
@@ -215,7 +216,7 @@ paths:
   /invites/{token}/accept:
     post:
       tags: [maps]
-      summary: 초대 수락. 로그인 전 접근 시 처리 방식은 결정 이슈 미결 (#15 분리분)
+      summary: 초대 수락. 로그인 전 접근 시 처리 방식은 결정 이슈 미결 (#15 분리분). 내 지도가 이미 10개면 409 MAP_LIMIT(#369). 이미 구성원인 지도의 초대를 다시 수락하는 경우는 새로 참여하는 게 아니라 막지 않는다
       parameters:
         - name: token
           in: path
@@ -229,6 +230,7 @@ paths:
               schema: { $ref: "#/components/schemas/Map" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/InviteNotFound" }
+        "409": { $ref: "#/components/responses/MapLimit" }
         "410": { $ref: "#/components/responses/InviteExpired" }
 
   /maps/{mapId}/members:
@@ -836,6 +838,11 @@ components:
         존재하지 않거나(리소스 없음), 요청자가 그 지도의 구성원이 아님 (docs/permissions.md
         "권한을 어디서 강제하는가" — 비구성원에게 존재 여부 자체를 흘리지 않는다).
         삭제된 지도(#369)와 그 지도에 딸린 모든 리소스도 404다.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    MapLimit:
+      description: 내 지도가 이미 10개다 — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다 (MAP_LIMIT, #369). detail에 { limit, count }. 지도를 나가거나 삭제하면 다시 할 수 있다
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

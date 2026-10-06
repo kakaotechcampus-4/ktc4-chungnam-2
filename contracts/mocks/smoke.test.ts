@@ -219,6 +219,21 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
   });
 });
 
+describe("#369 — 내 지도 10개 상한", () => {
+  const create = () =>
+    fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "상한 시험", start_date: "2026-11-01", end_date: "2026-11-02" }) });
+
+  it("내 지도가 10개면 만들기가 409 MAP_LIMIT, 하나 지우면 다시 된다", async () => {
+    while ((await (await fetch(`${BASE}/maps`)).json()).length < 10) expect((await create()).status).toBe(201);
+    const r = await create();
+    expect(r.status).toBe(409);
+    expect(await r.json()).toMatchObject({ code: "MAP_LIMIT", detail: { limit: 10, count: 10 } });
+    const [last] = await (await fetch(`${BASE}/maps`)).json();
+    expect((await fetch(`${BASE}/maps/${last.id}`, { method: "DELETE" })).status).toBe(204);
+    expect((await create()).status).toBe(201);
+  });
+});
+
 describe("#22·#24 — 내 지도 목록 + 지도 생성 지역(선택)", () => {
   it("GET /maps는 내가 구성원인 지도만 최근 생성순으로 준다", async () => {
     const created = await fetch(`${BASE}/maps`, {

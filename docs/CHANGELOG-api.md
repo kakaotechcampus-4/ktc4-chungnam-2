@@ -14,8 +14,9 @@
 - **이벤트**(`docs/events.md`): 전체 채널에 `map.deleted { map_id }`, `member.left { map_id, user_id, new_owner_user_id | null }`.
 - **에러**(`docs/errors.md`): `OWNER_CANNOT_LEAVE`(409).
 - `GET /maps`는 삭제된 지도와 내가 나간 지도를 뺀다.
+- **상한** 내 지도(만들거나 참여한 지도 합산, 삭제·나간 지도 제외)는 **10개**까지다. 이미 10개면 `POST /maps`와 `POST /invites/{token}/accept`가 409 `MAP_LIMIT`(`detail: { limit, count }`). 이미 구성원인 지도의 초대를 다시 수락하는 경우는 막지 않는다. 나가거나 삭제하면 자리가 생긴다(2026-10-07 결정).
 
-**FE 영향**: 타입 재생성 필요(`npm run gen:types`). `Map.permissions`가 필수가 됐다. 지도 메뉴에 「지도 삭제」(`can_delete`), 「지도 나가기」(`can_leave`)를 그리고, 나가기 확인 창에 `next_owner.display_name`을 쓴다. 넘길 사람이 없는 방장에게는 나가기 대신 삭제를 안내한다. `member.left`를 받으면 핀 목록(작성자 표시 포함), 핀 참여율, `FilterCounts`, readiness를 다시 불러오고, `map.deleted`를 받으면 내 지도 목록으로 돌아간다. 목 서버에 두 엔드포인트와 `permissions`, `next_owner`를 넣었다.
+**FE 영향**: 타입 재생성 필요(`npm run gen:types`). `Map.permissions`가 필수가 됐다. 지도 메뉴에 「지도 삭제」(`can_delete`), 「지도 나가기」(`can_leave`)를 그리고, 나가기 확인 창에 `next_owner.display_name`을 쓴다. 넘길 사람이 없는 방장에게는 나가기 대신 삭제를 안내한다. 지도 만들기와 초대 수락에서 409 `MAP_LIMIT`이 오면 "지도는 10개까지" 안내와 함께 나가기나 삭제를 권한다. `member.left`를 받으면 핀 목록(작성자 표시 포함), 핀 참여율, `FilterCounts`, readiness를 다시 불러오고, `map.deleted`를 받으면 내 지도 목록으로 돌아간다. 목 서버에 두 엔드포인트와 `permissions`, `next_owner`를 넣었다.
 
 **BE 영향**: #369 2단계. maps(마이그레이션 `maps.deleted_at`, `memberships`의 방장 부분 유니크 인덱스, 삭제 필터, 위임, `list_members`와 `accept_invite`의 방장 판정을 `memberships.role`로), pins(지도 범위 반응 삭제, 작성자 표시), recommend(지도 범위 근거 줄 삭제), auth(방장 탈퇴 시 위임 또는 삭제), authz(`map.delete`, `map.leave`, `can_leave`), realtime(`map.deleted`를 보낸 뒤 연결 종료). 이 스펙 변경은 구현과 같은 브랜치(`docs/map-delete-leave-369`)에서 PR 하나로 머지한다. 문서만으로는 대조 테스트가 실패한다.
 

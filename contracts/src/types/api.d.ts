@@ -238,7 +238,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절). 삭제된 지도와 내가 나간 지도는 빠진다 (#369). 목록의 Map에는 next_owner를 채우지 않는다 */
+        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절). 삭제된 지도와 내가 나간 지도는 빠진다 (#369). 목록의 Map에는 next_owner를 채우지 않는다. 이 목록의 지도는 최대 10개다(만들거나 참여한 지도 합산, */
         get: {
             parameters: {
                 query?: never;
@@ -260,7 +260,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** 지도 생성. 생성 시 seeding 잡을 트리거한다 (architecture.md 3절) */
+        /** 지도 생성. 생성 시 seeding 잡을 트리거한다 (architecture.md 3절). 내 지도(만들거나 참여한 지도, 삭제·나간 지도 제외)가 이미 10개면 409 MAP_LIMIT (#369) */
         post: {
             parameters: {
                 query?: never;
@@ -283,6 +283,7 @@ export interface paths {
                         "application/json": components["schemas"]["Map"];
                     };
                 };
+                409: components["responses"]["MapLimit"];
             };
         };
         delete?: never;
@@ -489,7 +490,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 초대 수락. 로그인 전 접근 시 처리 방식은 결정 이슈 미결 (#15 분리분) */
+        /** 초대 수락. 로그인 전 접근 시 처리 방식은 결정 이슈 미결 (#15 분리분). 내 지도가 이미 10개면 409 MAP_LIMIT(#369). 이미 구성원인 지도의 초대를 다시 수락하는 경우는 새로 참여하는 게 아니라 막지 않는다 */
         post: {
             parameters: {
                 query?: never;
@@ -512,6 +513,7 @@ export interface paths {
                 };
                 401: components["responses"]["Unauthorized"];
                 404: components["responses"]["InviteNotFound"];
+                409: components["responses"]["MapLimit"];
                 410: components["responses"]["InviteExpired"];
             };
         };
@@ -2299,6 +2301,15 @@ export interface components {
          *     삭제된 지도(#369)와 그 지도에 딸린 모든 리소스도 404다.
          */
         NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 내 지도가 이미 10개다 — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다 (MAP_LIMIT, */
+        MapLimit: {
             headers: {
                 [name: string]: unknown;
             };

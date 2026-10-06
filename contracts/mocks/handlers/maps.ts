@@ -6,6 +6,12 @@ import { apiError, getMapOr404 } from "../util";
 const pinCount = (mapId: string) => Object.values(store.pins).filter((p) => p.map_id === mapId && p.visibility === "public").length;
 const withPinCount = <T extends { id: string }>(map: T) => ({ ...map, pin_count: pinCount(map.id) });
 
+/** 내 지도 상한(#369). 만들거나 참여한 지도 합산 — 목 서버는 삭제·나간 지도를 이미 지우므로 지금 속한 지도만 센다. */
+export const MAP_LIMIT = 10;
+const myMapCount = () => Object.keys(store.maps).filter((id) => (store.members[id] ?? []).some((m) => m.user_id === ME_USER_ID)).length;
+const mapLimitError = () =>
+  apiError(409, "MAP_LIMIT", "지도는 10개까지 만들거나 참여할 수 있어요. 지도를 나가거나 삭제한 뒤 다시 시도해 주세요", { limit: MAP_LIMIT, count: myMapCount() });
+
 /** 방장이 나가면 방장이 될 사람(#369). 목 서버의 구성원 배열은 들어온 순서라 나 다음 첫 사람이다(탈퇴자 개념은 없다). */
 const successorOf = (mapId: string) => (store.members[mapId] ?? []).find((m) => m.user_id !== ME_USER_ID) ?? null;
 const isOwner = (mapId: string) => (store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID && m.role === "owner");
@@ -36,6 +42,7 @@ export const mapsHandlers = [
     const body = (await request.json()) as {
       title: string; start_date: string; end_date: string; region?: MapRegion;
     };
+    if (myMapCount() >= MAP_LIMIT) return mapLimitError();
     const mapId = nextId("map");
     store.maps[mapId] = {
       id: mapId,
@@ -131,6 +138,7 @@ export const mapsHandlers = [
     if (!map) return apiError(404, "INVITE_NOT_FOUND", "유효하지 않은 초대 링크예요"); // 삭제된 지도의 토큰(#369)
     const members = store.members[invite.mapId] ?? (store.members[invite.mapId] = []);
     if (!members.some((m) => m.user_id === ME_USER_ID)) {
+      if (myMapCount() >= MAP_LIMIT) return mapLimitError(); // 이미 구성원이면 새 참여가 아니라 막지 않는다
       members.push({ user_id: ME_USER_ID, role: "member", display_name: store.users[ME_USER_ID]?.display_name ?? "나", online: true });
       map.member_count = members.length;
     }
