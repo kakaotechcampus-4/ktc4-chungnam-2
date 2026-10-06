@@ -6,5 +6,8 @@ export const TAB_BAR_H = 74
 /** 지도 버튼 한 변 44px(터치 최소), 화면 오른쪽 여백 16px, 세 개를 쌓은 높이 + 시트와의 틈. */
 export const CONTROLS = { size: 44, right: 16, stackHeight: 44 * 3 + 12 }
 
-/** 넓은 화면의 왼쪽 패널 폭(#351·#338). 지도는 그 오른쪽부터다. */
+/** 넓은 화면의 왼쪽 전체 폭(#351·#338) = 탭 줄 + 내용 패널. 지도는 그 오른쪽부터다. */
 export const PANEL_W = 480
+
+/** 넓은 화면 왼쪽 끝 세로 탭 줄 폭(네이버 지도처럼). 패널을 접어도 남는다. */
+export const RAIL_W = 72

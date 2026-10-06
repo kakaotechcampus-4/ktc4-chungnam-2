@@ -15,7 +15,7 @@ import { toRouteDrawings } from '@/features/shortlist/model'
 import { useRouteQuery } from '@/features/shortlist/queries'
 import { useRouteStore } from '@/features/shortlist/routeStore'
 import { useSearchStore } from '@/features/search/searchStore'
-import { PANEL_W, TAB_BAR_H } from '@/features/shell/layout'
+import { PANEL_W, RAIL_W, TAB_BAR_H } from '@/features/shell/layout'
 import MapControls, { type ControlKey } from '@/features/shell/MapControls'
 import ProfileModal from '@/features/shell/ProfileModal'
 import { useSheetStore } from '@/features/shell/sheetStore'
@@ -30,7 +30,7 @@ import Pingo from '@/ui/Pingo'
  * 지도 하나 안의 화면(최종기획안 4절). 지도는 항상 떠 있고, 하단 탭 3개가 그 위 바텀시트 내용을 바꾼다.
  * 지도는 여기 한 번만 만든다 — 탭마다 만들면 탭을 바꿀 때마다 지도가 다시 뜬다.
  *
- * 넓은 화면(768px 이상, #338)은 왼쪽 480px 높이 전체 패널(헤더·검색·상단 탭·탭 내용) + 오른쪽 지도 영역이다.
+ * 넓은 화면(768px 이상, #338)은 왼쪽 480px(세로 탭 줄 72 + 높이 전체 내용 패널 408: 헤더·검색·탭 내용) + 오른쪽 지도 영역이다.
  * 칩·연결 띠·지도 버튼·토스트는 지도 영역에 둔다. 패널과 모바일은 같은 트리를 쓰고 틀의 클래스만 바꾼다 —
  * 768px 경계를 넘나들어도 탭 내용(쓰던 의견 등)이 다시 마운트되지 않게.
  */
@@ -170,6 +170,8 @@ export default function MapLayout() {
   // 3단계에서는 칩이 시트 제목 아래로 옮겨 간다(MapTab). 넓은 화면엔 단계가 없다. 검색 중에는 숨긴다(Figma 규칙).
   const chipsShown = onMarkingTab && (desktop || markingStage !== 3) && !search.query
   const fade = mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
+  // 넓은 화면의 지도 영역 왼쪽 끝 — 패널을 접어도 탭 줄은 남는다.
+  const mapLeft = desktop ? (panelOpen ? PANEL_W : RAIL_W) : 0
 
   return (
     <>
@@ -186,16 +188,18 @@ export default function MapLayout() {
         }}
         onReady={onMapReady}
         onMovingChange={onMovingChange}
-        leftInset={desktop && panelOpen ? PANEL_W : 0}
+        leftInset={mapLeft}
       />
 
-      {/* 모바일은 'contents' 라 틀이 없고 안쪽이 각자 화면에 붙는다. 넓은 화면은 이 틀이 왼쪽 패널이다. */}
+      {desktop && <TabRail mapId={mapId} onOpen={() => setPanelOpen(true)} />}
+
+      {/* 모바일은 'contents' 라 틀이 없고 안쪽이 각자 화면에 붙는다. 넓은 화면은 이 틀이 탭 줄 오른쪽 내용 패널이다. */}
       {/* 접기는 transform 대신 hidden — transform 이면 안쪽 fixed 확인 창이 패널 기준으로 잡힌다. */}
       <div
         id="map-panel"
         hidden={desktop && !panelOpen}
-        style={desktop ? { width: PANEL_W } : undefined}
-        className={desktop ? 'fixed inset-y-0 left-0 z-30 flex flex-col border-r border-ink-200 bg-white' : 'contents'}
+        style={desktop ? { left: RAIL_W, width: PANEL_W - RAIL_W } : undefined}
+        className={desktop ? 'fixed inset-y-0 z-30 flex flex-col border-r border-ink-200 bg-white' : 'contents'}
       >
         <header
           data-map-header
@@ -270,8 +274,6 @@ export default function MapLayout() {
           )}
         </header>
 
-        {desktop && <PanelTabs mapId={mapId} />}
-
         <Outlet context={context} />
 
         {!desktop && (
@@ -307,7 +309,7 @@ export default function MapLayout() {
 
       {/* 넓은 화면의 지도 영역 위. 지도를 끌 수 있게 누름은 통과시키고, 올린 것들만 다시 받는다. */}
       {desktop && (
-        <div className="pointer-events-none fixed inset-y-0 right-0 z-20" style={{ left: panelOpen ? PANEL_W : 0 }}>
+        <div className="pointer-events-none fixed inset-y-0 right-0 z-20" style={{ left: mapLeft }}>
           <div className="absolute inset-x-4 top-3 flex flex-col items-start gap-2">
             {chipsShown && (
               <CategoryChips
@@ -346,35 +348,44 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
   )
 }
 
-/** 넓은 화면의 탭 3개(#338). 라벨·아이콘은 하단 탭과 같고, AI 도 다른 탭과 같은 모양이다. 활성은 brand-600 글자 + 밑줄. */
-function PanelTabs({ mapId }: { mapId: string }) {
+/**
+ * 넓은 화면 왼쪽 끝 세로 탭 줄(#338, 네이버 지도처럼). 라벨·아이콘은 하단 탭과 같고 AI 도 다른 탭과 같은 모양이다.
+ * 패널을 접어도 남고, 누르면 그 탭으로 가면서 패널을 다시 연다.
+ */
+function TabRail({ mapId, onOpen }: { mapId: string; onOpen: () => void }) {
   return (
-    <nav className="grid shrink-0 grid-cols-3 border-b border-ink-100 px-4">
-      <PanelTab to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={18} />} />
-      <PanelTab to={`/maps/${mapId}/recommend`} label="AI 추천" icon={<Pingo size={20} />} />
-      <PanelTab to={`/maps/${mapId}/shortlist`} label="확정된 장소" icon={<FileText size={18} />} />
+    <nav style={{ width: RAIL_W }} className="fixed inset-y-0 left-0 z-30 flex flex-col gap-1 border-r border-ink-200 bg-white px-1 pt-3">
+      <RailTab to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={22} />} onOpen={onOpen} />
+      <RailTab to={`/maps/${mapId}/recommend`} label="AI 추천" icon={<Pingo size={26} />} onOpen={onOpen} />
+      <RailTab to={`/maps/${mapId}/shortlist`} label="확정된 장소" icon={<FileText size={22} />} onOpen={onOpen} />
     </nav>
   )
 }
 
-function PanelTab({ to, end, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
+/** 탭 줄의 칸 하나. 아이콘 + 11/500 라벨(하단 탭과 같은 위계), 활성은 brand-50 면 + brand-600. */
+function RailTab({ to, end, label, icon, onOpen }: { to: string; end?: boolean; label: string; icon: ReactNode; onOpen: () => void }) {
   return (
     <NavLink
       to={to}
       end={end}
+      onClick={onOpen}
       className={({ isActive }) =>
-        `-mb-px flex h-12 items-center justify-center gap-1.5 border-b-2 text-sm font-semibold ${
-          isActive ? 'border-brand-600 text-brand-600' : 'border-transparent text-ink-500 hover:text-ink-700'
+        `flex flex-col items-center gap-1 rounded-xl py-2.5 text-[0.6875rem] font-medium break-keep ${
+          isActive ? 'bg-brand-50 text-brand-600' : 'text-ink-500 hover:bg-ink-50 hover:text-ink-700'
         }`
       }
     >
-      {icon}
+      {/* 핑고는 선 아이콘보다 커서 같은 칸에 넣어 세 칸 높이를 맞춘다. */}
+      <span className="flex size-7 items-center justify-center">{icon}</span>
       {label}
     </NavLink>
   )
 }
 
-/** 패널 접기·펼치기 손잡이(#338). 패널 오른쪽 가장자리 세로 가운데에 붙는다. 보이는 건 24×48, 누르는 곳은 44×56. */
+/**
+ * 패널 접기·펼치기 손잡이(#338). 지도 영역 왼쪽 끝(펼치면 패널, 접으면 탭 줄 오른쪽) 세로 가운데에 붙는다.
+ * 보이는 건 24×48, 누르는 곳은 44×56.
+ */
 function PanelToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   return (
     <button
