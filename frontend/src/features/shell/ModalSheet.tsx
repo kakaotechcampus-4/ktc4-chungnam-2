@@ -45,7 +45,7 @@ export default function ModalSheet({
           className="fixed inset-0 z-50 outline-none"
         >
           <Dialog.Title className="sr-only">{label}</Dialog.Title>
-          <div className="absolute inset-x-0 bottom-0" onClick={(e) => e.stopPropagation()}>
+          <div className="absolute inset-x-0 bottom-0 md:right-auto md:w-[480px]" onClick={(e) => e.stopPropagation()}>
             <Toaster controlsVisible={false} />
             {/* 홈 표시줄이 있으면 그만큼, 없으면 16px. */}
             <section ref={sheetRef} tabIndex={-1} className="max-h-[90dvh] overflow-y-auto rounded-t-2xl bg-white px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2 outline-none">

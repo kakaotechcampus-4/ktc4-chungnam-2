@@ -19,7 +19,7 @@ export default function MapListPage() {
   if (pendingInvite) return <Navigate to={`/invites/${pendingInvite}`} replace />
 
   return (
-    <div className="flex min-h-dvh flex-col bg-ink-50 px-4 pb-6 pt-6">
+    <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6 pt-6">
       <header className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-ink-900">내 지도</h1>
         <button

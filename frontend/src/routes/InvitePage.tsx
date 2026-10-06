@@ -47,7 +47,7 @@ export default function InvitePage() {
     accept.mutate(undefined, { onSuccess: (map) => navigate(`/maps/${map.id}?onboarding=member`, { replace: true }) })
 
   return (
-    <div className="flex min-h-dvh flex-col bg-ink-50 px-4 pb-6 pt-4">
+    <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6 pt-4">
       <div className="h-8">
         {loggedIn && (
           <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-sm">
@@ -108,7 +108,7 @@ function InviteCard({ invite }: { invite: InviteView }) {
 /** C-3 — 만료됐거나 없는 링크. 초대한 사람에게 새 링크를 받는 것 말고는 할 수 있는 게 없다. */
 function InviteBroken({ expired }: { expired: boolean }) {
   return (
-    <div className="flex min-h-dvh flex-col bg-ink-50 px-4 pb-6">
+    <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6">
       <div className="flex flex-1 flex-col items-center justify-center text-center">
         <span className="mb-3 flex size-16 items-center justify-center rounded-2xl bg-ink-100 text-ink-500">
           <Link2Off size={28} aria-hidden="true" />

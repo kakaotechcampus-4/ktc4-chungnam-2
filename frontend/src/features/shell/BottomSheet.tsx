@@ -101,7 +101,7 @@ export default function BottomSheet({
         top: dragging ? `calc(${STAGE_TOP[stage]} + ${dragY}px)` : STAGE_TOP[stage],
         bottom: SHEET_BOTTOM,
       }}
-      className={`fixed inset-x-0 z-30 flex flex-col rounded-t-2xl bg-white shadow-[0_-2px_12px_rgba(20,22,31,0.08)] ${
+      className={`fixed inset-x-0 z-30 md:right-auto md:w-[480px] flex flex-col rounded-t-2xl bg-white shadow-[0_-2px_12px_rgba(20,22,31,0.08)] ${
         dragging ? '' : 'transition-[top] duration-300 ease-out motion-reduce:transition-none'
       }`}
     >

@@ -22,7 +22,9 @@ export default function Toaster({ controlsVisible, inside = false }: { controlsV
     const box = boxRef.current
     if (!box || inside || !controlsVisible) return setMode('center')
     // 가운데 놓인 토스트 양옆 여백이 버튼 묶음 자리(오른쪽 여백 + 버튼 폭 + 틈)보다 좁으면 겹친다.
-    if ((window.innerWidth - box.offsetWidth) / 2 >= CONTROLS.right + CONTROLS.size + 8) return setMode('center')
+    // 데스크톱에선 시트가 480px 패널이라 창 폭이 아니라 시트 폭으로 잰다.
+    const sheetWidth = box.closest('section')?.clientWidth ?? window.innerWidth
+    if ((sheetWidth - box.offsetWidth) / 2 >= CONTROLS.right + CONTROLS.size + 8) return setMode('center')
     const sheetTop = box.closest('section')?.getBoundingClientRect().top ?? 0
     const headerBottom = document.querySelector('[data-map-header]')?.getBoundingClientRect().bottom ?? 0
     const raisedTop = sheetTop - 12 - CONTROLS.stackHeight - box.offsetHeight
