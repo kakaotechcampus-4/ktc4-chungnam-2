@@ -97,7 +97,9 @@ function InviteCard({ invite }: { invite: InviteView }) {
         <MapIllustration />
         <h1 className="mt-4 text-2xl font-bold text-ink-900">{invite.title}</h1>
         <p className="mt-1 text-sm text-ink-500">{invite.dates}</p>
-        <p className="mt-1 text-xs text-ink-500">구성원 {invite.memberCount}명</p>
+        <p className="mt-1 text-xs text-ink-500">
+          구성원 {invite.memberCount}명 · 핀 {invite.pinCount}개
+        </p>
       </div>
     </>
   )

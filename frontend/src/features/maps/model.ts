@@ -12,7 +12,7 @@ export type MapRegion = components['schemas']['MapRegion']
 export type MapView = Pick<MapDto, 'id' | 'title'> & {
   /** 지역 태그. 지도를 만들 때 고르지 않았으면 없다. */
   region?: string
-  /** 목록 한 줄 요약 — "10.3 (토) ~ 10.5 (월) · 구성원 4명" */
+  /** 목록 한 줄 요약 — "10.3 (토) ~ 10.5 (월) · 구성원 4명 · 핀 3개" */
   summary: string
 }
 
@@ -36,11 +36,11 @@ export function toMapHeaderView(map: MapDto): MapHeaderView {
   }
 }
 
-export type MemberView = { userId: string; name: string; initial: string; isMe: boolean }
+export type MemberView = { userId: string; name: string; initial: string; isMe: boolean; isOwner: boolean }
 
 export function toMemberView(member: MemberDto, myUserId: string | undefined): MemberView {
   const name = member.display_name ?? '이름 없음'
-  return { userId: member.user_id, name, initial: name.slice(0, 1), isMe: member.user_id === myUserId }
+  return { userId: member.user_id, name, initial: name.slice(0, 1), isMe: member.user_id === myUserId, isOwner: member.role === 'owner' }
 }
 
 export function toMapView(map: MapDto): MapView {
@@ -48,7 +48,7 @@ export function toMapView(map: MapDto): MapView {
     id: map.id,
     title: map.title,
     region: map.region?.label,
-    summary: `${formatTripDates(map.start_date, map.end_date)} · 구성원 ${map.member_count}명`,
+    summary: `${formatTripDates(map.start_date, map.end_date)} · 구성원 ${map.member_count}명 · 핀 ${map.pin_count}개`,
   }
 }
 
@@ -62,13 +62,14 @@ export function inviteErrorMessage(err: unknown): string {
   return (err instanceof ApiError && INVITE_ERROR_MESSAGES[err.code]) || '참여하지 못했어요'
 }
 
-export type InviteView = { title: string; dates: string; memberCount: number; inviter: string }
+export type InviteView = { title: string; dates: string; memberCount: number; pinCount: number; inviter: string }
 
 export function toInviteView(invite: InviteSummaryDto): InviteView {
   return {
     title: invite.title,
     dates: formatTripDates(invite.start_date, invite.end_date),
     memberCount: invite.member_count,
+    pinCount: invite.pin_count,
     inviter: invite.inviter_display_name,
   }
 }

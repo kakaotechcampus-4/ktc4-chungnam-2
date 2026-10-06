@@ -40,25 +40,6 @@ export function BackToReadiness({ mapId }: { mapId: string }) {
   )
 }
 
-/** 진행 중(Figma '진행 중'). 단계 이름은 서버가 개인 채널(run.progress)로 보낸다. 오기 전에는 첫 줄만 보인다. */
-export function ProgressBody({ steps }: { steps: { step: number; label: string }[] }) {
-  const shown = steps.length ? steps : [{ step: 1, label: '후보를 모으는 중' }]
-  return (
-    <ol className="space-y-2 rounded-xl border border-brand-300 bg-brand-50 p-3 text-sm">
-      {shown.map((s, i) => {
-        const current = i === shown.length - 1
-        return (
-          <li key={s.step} className={`flex items-center gap-2 ${current ? 'font-bold text-ink-900' : 'text-ink-700'}`}>
-            <span aria-hidden="true">{current ? '●' : '✓'}</span>
-            {s.label}
-            {current && <span className="ml-auto text-xs text-brand-600">진행 중</span>}
-          </li>
-        )
-      })}
-    </ol>
-  )
-}
-
 /** 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 「↻ 다시 추천 · N번 남음」. */
 export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; run: RecommendRunDto; count: number; onLimit: () => void }) {
   const retry = useRetryMutation(mapId)
@@ -83,7 +64,7 @@ export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; r
           <span className="flex items-center gap-1">
             <RotateCw size={12} aria-hidden="true" /> 다시 추천
           </span>
-          <span className="font-normal text-ink-500">{left}번 남음</span>
+          <span className="font-normal text-ink-500">{retry.isPending ? '찾는 중…' : `${left}번 남음`}</span>
         </button>
       </div>
     </div>
@@ -369,9 +350,10 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
                       showToast(err instanceof ApiError && err.code === 'WIDEN_LIMIT' ? '더 넓히면 여행지를 벗어나요. 근거를 고치거나 직접 찍어 보세요' : '반경을 넓히지 못했어요'),
                   })
                 }
-                className="rounded-lg bg-brand-600 py-2.5 text-sm font-bold text-white"
+                disabled={widen.isPending}
+                className="rounded-lg bg-brand-600 py-2.5 text-sm font-bold text-white disabled:opacity-50"
               >
-                넓혀서 다시 찾기
+                {widen.isPending ? '다시 찾는 중…' : '넓혀서 다시 찾기'}
               </button>
             </div>
           </div>
@@ -397,7 +379,7 @@ export function Failed({ mapId, run, error }: { mapId: string; run: RecommendRun
         onClick={() => execute.mutate(run.id, { onError: () => showToast('다시 시도하지 못했어요') })}
         className="w-full rounded-xl border-[1.5px] border-brand-600 py-3 font-bold text-brand-600 disabled:opacity-50"
       >
-        다시 시도
+        {execute.isPending ? '다시 찾는 중…' : '다시 시도'}
       </button>
     </div>
   )

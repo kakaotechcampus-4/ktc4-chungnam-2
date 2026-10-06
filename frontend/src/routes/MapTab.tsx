@@ -12,7 +12,7 @@ import { usePinFilters } from '@/features/map/usePinFilters'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import PinUnavailable from '@/features/map/PinUnavailable'
 import { usePinSelection } from '@/features/map/usePinSelection'
-import { usePinsQuery } from '@/features/map/queries'
+import { useCountsQuery, usePinsQuery } from '@/features/map/queries'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
 import { usePlaceSearchQuery } from '@/features/search/queries'
 import { SearchResultsBody, SearchResultsHeader } from '@/features/search/SearchResults'
@@ -29,6 +29,7 @@ export default function MapTab() {
   const { mapId } = useShell()
   const { selectedPinId, selectPin } = usePinSelection()
   const { data: pins, isPending, error } = usePinsQuery(mapId)
+  const counts = useCountsQuery(mapId).data
   const setStage = useSheetStore((s) => s.setStage)
   const stage = useSheetStore((s) => s.stages.map)
   const map = useMapQuery(mapId).data
@@ -112,7 +113,12 @@ export default function MapTab() {
           <SheetTitle>마킹된 장소</SheetTitle>
           {stage === 3 && <CategoryChips value={filters.category} onChange={(c) => setFilter('category', c)} className="mt-2" />}
           {pins && pins.length > 0 && <PinFilterBar filters={filters} members={members} pins={pins} onChange={setFilter} />}
-          <p className="mt-2 text-xs text-ink-500">{isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}</p>
+          <p className="mt-2 text-xs text-ink-500">
+            {isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}
+            {counts && counts.members_total > 0 && (
+              <span className="font-bold text-ink-600"> · {counts.members_with_opinion}/{counts.members_total}명이 의견을 남겼어요</span>
+            )}
+          </p>
         </>
       }
     >

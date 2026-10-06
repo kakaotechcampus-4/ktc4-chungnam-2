@@ -1,4 +1,5 @@
-import { Outlet } from 'react-router'
+import { useEffect, useState } from 'react'
+import { Outlet, useSearchParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
 import AgainstMark from '@/ui/AgainstMark'
@@ -30,8 +31,26 @@ const STEPS = [
   '반대가 있으면 AI가 대안을 찾아줘요',
 ]
 
+/**
+ * 카카오 로그인이 실패하면 서버가 진입점에 `?login_error=`를 붙여 돌려보낸다(#315).
+ * 처음 한 번 읽고 주소에서는 지운다 — 새로고침해도 같은 안내가 다시 뜨지 않게.
+ */
+function useLoginError(): string | null {
+  const [params, setParams] = useSearchParams()
+  const [code] = useState(() => params.get('login_error'))
+  useEffect(() => {
+    if (!params.has('login_error')) return
+    const next = new URLSearchParams(params)
+    next.delete('login_error')
+    setParams(next, { replace: true })
+  }, [params, setParams])
+  if (!code) return null
+  return code === 'cancelled' ? '로그인을 취소했어요' : '로그인하지 못했어요. 다시 시도해 주세요'
+}
+
 /** 로그인(랜딩) — Figma 1절. */
 function LoginScreen() {
+  const loginError = useLoginError()
   return (
     <div className="flex min-h-dvh flex-col bg-white px-5 pb-8 pt-24">
       <h1 className="text-3xl font-extrabold text-brand-600">핑고핑고</h1>
@@ -48,7 +67,12 @@ function LoginScreen() {
         ))}
       </ol>
       <div className="mt-auto space-y-3 text-center">
-        <KakaoButton />
+        {loginError && (
+          <p role="alert" className="rounded-xl border border-[var(--bad-line)] bg-[var(--bad-bg)] px-3 py-2.5 text-sm font-semibold text-[var(--bad-text)]">
+            {loginError}
+          </p>
+        )}
+        <KakaoButton retry={Boolean(loginError)} />
         <p className="text-xs text-ink-500">카카오 표시 이름만 받아요</p>
       </div>
     </div>
