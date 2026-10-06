@@ -66,7 +66,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
               {m.name}
               {m.isMe && <span className="ml-1 text-ink-500">(나)</span>}
             </span>
-            {m.isOwner && <span className="rounded-md bg-ink-100 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-ink-600">방장</span>}
+            {m.isOwner && <span className="rounded-md bg-ink-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-600">방장</span>}
           </li>
         ))}
       </ul>
