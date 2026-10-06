@@ -24,7 +24,8 @@
   --surface-card:    #FFFFFF;
   --surface-sunken:  var(--ink-100);
   --surface-overlay: #FFFFFF;
-  --scrim:           rgba(20, 22, 31, 0.45);
+  --toast-bg:        rgba(58, 63, 75, 0.82);
+  --scrim:           rgba(20, 22, 31, 0.32);   /* 지도가 비쳐야 모달이 지도 위에 뜬 맥락이 남는다(#299) */
 
   /* ── 글자 ────────────────────────────── */
   --text-primary:   var(--ink-900);
@@ -63,8 +64,9 @@
   --pin-fill-full:  #D02A2A;
   --pin-confirmed:        #F5B301;   /* 확정 핀 속 (#149) */
   --pin-confirmed-mark:   #6B4500;   /* 확정 핀 ♥ · 순서 번호 글자 */
-  --pin-confirmed-stroke: #FFFFFF;   /* 3px. 가시성을 여기서 맡는다 */
-  --pin-confirmed-shadow: 0 2px 4px rgba(0, 0, 0, 0.28);
+  --pin-confirmed-stroke: #FFFFFF;   /* 3px. 바다·어두운 타일 위 가시성. 밝은 땅 위는 바깥 갈색 1px(--pin-confirmed-mark)이 맡는다(#299) */
+  --pin-confirmed-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  --confirmed-bg:         #FFF6DB;   /* 「★ 확정 리스트에 넣기」 바탕 */
 
   /* ── 반응 · 지도 밖 UI 전용 ──────────── */
   --reaction-good:    var(--good-line);

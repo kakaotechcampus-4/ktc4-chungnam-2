@@ -191,7 +191,7 @@ export default function MapCanvas({
         <div className="absolute inset-x-0 top-32 flex flex-col items-center gap-1 px-4 text-center">
           {error ? (
             <>
-              <p className="text-sm text-danger">지도를 불러오지 못했어요</p>
+              <p className="text-sm text-warn-text">지도를 불러오지 못했어요</p>
               <p className="text-xs text-ink-500">
                 {error instanceof KakaoMapKeyMissingError
                   ? 'frontend/.env.local 에 VITE_KAKAO_MAP_KEY 를 넣어주세요 (.env.example 참고)'

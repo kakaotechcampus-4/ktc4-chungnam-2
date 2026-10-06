@@ -4,6 +4,10 @@ import BottomSheet from './BottomSheet'
 import MapControls from './MapControls'
 import { useShell } from './shellContext'
 import { useSheetStore, type TabKey } from './sheetStore'
+import { TriangleAlert } from 'lucide-react'
+
+import type { ConnectionState } from '@/features/map/realtime'
+
 import Toaster from './Toaster'
 
 /**
@@ -22,7 +26,7 @@ export default function TabSheet({
   expandOnScroll?: boolean
   children: ReactNode
 }) {
-  const { activeControl, onControl } = useShell()
+  const { activeControl, onControl, connection } = useShell()
   const stage = useSheetStore((s) => s.stages[tab])
   const setStage = useSheetStore((s) => s.setStage)
   const mapMoving = useSheetStore((s) => s.mapMoving)
@@ -37,6 +41,7 @@ export default function TabSheet({
       onStageChange={(next) => setStage(tab, next)}
       header={header}
       expandOnScroll={expandOnScroll}
+      banner={connection.state !== 'open' && <ConnectionBanner state={connection.state} onReconnect={connection.reconnect} />}
       top={
         <>
           <MapControls hidden={controlsHidden} fading={mapMoving} active={activeControl} onPress={onControl} />
@@ -46,5 +51,27 @@ export default function TabSheet({
     >
       {children}
     </BottomSheet>
+  )
+}
+
+/**
+ * 연결 끊김 띠(#299). 지도 위에 띄우면 핀·지도 버튼을 가리고, 노란 면은 확정 골드와 겹친다.
+ * 그래서 시트 윗변에 회색 띠로 붙이고 문구를 자르지 않는다.
+ */
+function ConnectionBanner({ state, onReconnect }: { state: Exclude<ConnectionState, 'open'>; onReconnect: () => void }) {
+  return (
+    <div role="status" className="flex items-center gap-2 rounded-t-2xl bg-ink-100 px-4 py-1.5 text-xs font-medium text-ink-700">
+      <TriangleAlert size={14} className="shrink-0 text-[var(--warn-line)]" aria-hidden="true" />
+      {state === 'reconnecting' ? (
+        '연결이 끊겼어요. 다시 연결하는 중…'
+      ) : (
+        <>
+          <span className="flex-1">연결이 끊겼어요</span>
+          <button type="button" onClick={onReconnect} className="hit-44 font-bold text-brand-600">
+            다시 연결
+          </button>
+        </>
+      )}
+    </div>
   )
 }

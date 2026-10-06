@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ExternalLink, ImageOff, X } from 'lucide-react'
 
 import { ApiError } from '@/api'
@@ -6,16 +6,17 @@ import ErrorText from '@/ErrorText'
 import type { MemberView } from '@/features/maps/model'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation } from '@/features/shortlist/queries'
+import AgainstMark from '@/ui/AgainstMark'
 import { josa } from '@/ui/josa'
 
 import { participants, REASON_CHIPS, toOpinions, type OpinionView, type Pin, type ReactionDto, type ReactionType } from './model'
 import { useMyReactionMutation, useReactionsQuery } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
-const R: Record<ReactionType, { mark: string; label: string; bg: string; line: string; text: string }> = {
+const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
   like: { mark: '♥', label: '좋음', bg: 'var(--good-bg)', line: 'var(--good-line)', text: 'var(--good-text)' },
   neutral: { mark: '△', label: '조율', bg: 'var(--warn-bg)', line: 'var(--warn-line)', text: 'var(--warn-text)' },
-  against: { mark: '🚫', label: '반대', bg: 'var(--bad-bg)', line: 'var(--bad-line)', text: 'var(--bad-text)' },
+  against: { mark: <AgainstMark />, label: '반대', bg: 'var(--bad-bg)', line: 'var(--bad-line)', text: 'var(--bad-text)' },
 }
 const TYPES: ReactionType[] = ['like', 'neutral', 'against']
 const TEXT_MAX = 140
@@ -49,7 +50,7 @@ export function PinDetailHeader({
       <div className="flex items-center justify-between gap-2">
         <h2 className="truncate text-[22px] font-bold text-ink-900">{pin.place_name ?? '이름 없는 장소'}</h2>
         {confirmed ? (
-          <span className="shrink-0 rounded-lg border-[1.5px] border-[var(--pin-confirmed)] bg-[#FFF6DB] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)]">
+          <span className="shrink-0 rounded-lg border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)]">
             ✓ 확정됨
           </span>
         ) : (
@@ -67,7 +68,7 @@ export function PinDetailHeader({
                   onError: () => showToast('확정 리스트에 넣지 못했어요'),
                 })
               }
-              className="shrink-0 rounded-lg border-[1.5px] border-[var(--pin-confirmed)] bg-[#FFF6DB] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)] disabled:opacity-50"
+              className="shrink-0 rounded-lg border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)] disabled:opacity-50"
             >
               ★ 확정 리스트에 넣기
             </button>
@@ -114,17 +115,17 @@ export function PinDetailBody({
             <span
               key={t}
               className="flex items-center gap-1 font-bold"
-              style={mine === t ? { background: R[t].bg, border: `1px solid ${R[t].line}`, color: R[t].text, padding: '2px 8px', borderRadius: 10 } : undefined}
+              style={mine === t ? { background: R[t].bg, border: `1px solid ${R[t].line}`, color: R[t].text, padding: '2px 8px', borderRadius: 8 } : undefined}
             >
               <span style={{ color: R[t].line }}>{R[t].mark}</span>
               <span className={mine === t ? '' : 'text-ink-900'}>{R[t].label}</span>
-              <span style={mine === t ? undefined : { color: R[t].line }}>{s[t]}</span>
+              <span style={mine === t ? undefined : { color: R[t].text }}>{s[t]}</span>
               {mine === t && '· 나'}
             </span>
           ))}
           <span className="flex items-center gap-1 font-bold">
-            <span className="text-ink-400">?</span> <span className="text-ink-900">미확인</span>
-            <span className="text-ink-400">{Math.max(0, memberCount - participants(pin))}</span>
+            <span className="text-ink-500">?</span> <span className="text-ink-900">미확인</span>
+            <span className="text-ink-600">{Math.max(0, memberCount - participants(pin))}</span>
           </span>
         </div>
       </div>
@@ -329,7 +330,7 @@ function MyOpinion({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
                     aria-pressed={on}
                     onClick={() => setChips((cs) => (on ? cs.filter((c) => c !== chip) : [...cs, chip]))}
                     className={`rounded-full border px-3 py-1.5 text-[13px] ${
-                      on ? 'border-brand-600 bg-brand-100 font-bold text-brand-700' : 'border-ink-300 bg-white font-medium text-ink-700'
+                      on ? 'border-[var(--bad-line)] bg-[var(--bad-bg)] font-bold text-[var(--bad-text)]' : 'border-ink-300 bg-white font-medium text-ink-700'
                     }`}
                   >
                     {chip}
@@ -352,7 +353,7 @@ function MyOpinion({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
                 <X size={10} />
               </button>
             )}
-            <span className="text-[11px] text-ink-400">
+            <span className="text-[11px] text-ink-500">
               {text.length}/{TEXT_MAX}
             </span>
           </div>

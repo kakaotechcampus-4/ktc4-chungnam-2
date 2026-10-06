@@ -36,7 +36,7 @@ export default function Toaster({ controlsVisible, inside = false }: { controlsV
     >
       <div
         ref={boxRef}
-        className="pointer-events-auto flex max-w-[361px] items-center gap-3 rounded-xl bg-[#3A3F4B]/82 px-4 py-2.5 text-sm text-white backdrop-blur-[12px]">
+        className="pointer-events-auto flex max-w-[361px] items-center gap-3 rounded-xl bg-[var(--toast-bg)] px-4 py-2.5 text-sm text-white backdrop-blur-[12px]">
         <span className="line-clamp-2 [text-wrap:balance]">{toast.message}</span>
         {toast.action && (
           <button
@@ -45,7 +45,7 @@ export default function Toaster({ controlsVisible, inside = false }: { controlsV
               toast.action?.onClick()
               dismiss(toast.id)
             }}
-            className="shrink-0 font-semibold text-brand-300"
+            className="shrink-0 font-bold text-white underline underline-offset-2"
           >
             {toast.action.label}
           </button>
