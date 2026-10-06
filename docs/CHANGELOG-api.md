@@ -2,6 +2,23 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-07, 지도 삭제와 나가기, 방장 위임 (#369)
+
+방장은 지도를 삭제하고, 구성원은 누구나 나갈 수 있다. 방장이 나가면 들어온 순서가 가장 빠른 구성원(탈퇴자 제외)에게 방장이 넘어간다. 방장 판단의 정본은 `memberships.role`이고 `maps.created_by`는 만든 사람 기록일 뿐이다.
+
+- **신설** `DELETE /maps/{mapId}`: 방장만. 204. 방장이 아닌 구성원 403, 비구성원과 삭제된 지도 404. soft delete라 모든 구성원에게서 사라지고, 이후 이 지도와 지도에 딸린 모든 경로, 이 지도의 초대 토큰이 404(`INVITE_NOT_FOUND`)다.
+- **신설** `DELETE /maps/{mapId}/members/me`: 구성원 누구나. 204. 넘길 사람이 없는 방장(혼자이거나 남은 사람이 전부 탈퇴자)은 409 `OWNER_CANNOT_LEAVE`. 나간 사람이 그 지도에 남긴 반응과 근거 줄만 지우고, 핀, 확정 리스트 항목, 초대 링크, 추천 run과 후보는 남긴다.
+- **필수 추가** `Map.permissions`: 요청자 기준 `can_delete`(방장만 true), `can_leave`(넘길 사람이 없는 방장은 false). 공용 `Permissions` 스키마에 `can_leave`를 추가했다.
+- **추가** `Map.next_owner`: `{ user_id, display_name } | null`. 요청자가 방장이고 넘길 사람이 있을 때만, 상세(`GET /maps/{mapId}`)에서만 채운다. 나가기 확인 창("나가면 ○○님이 방장이 돼요")용이다.
+- **설명 변경** `Member.role`은 위임되면 바뀐다. `Pin.created_by_display_name`은 탈퇴했으면 "탈퇴한 구성원", 이 지도에서 나갔으면 "나간 구성원", 아니면 실명이다(조회할 때 계산, 다시 들어오면 실명).
+- **이벤트**(`docs/events.md`): 전체 채널에 `map.deleted { map_id }`, `member.left { map_id, user_id, new_owner_user_id | null }`.
+- **에러**(`docs/errors.md`): `OWNER_CANNOT_LEAVE`(409).
+- `GET /maps`는 삭제된 지도와 내가 나간 지도를 뺀다.
+
+**FE 영향**: 타입 재생성 필요(`npm run gen:types`). `Map.permissions`가 필수가 됐다. 지도 메뉴에 「지도 삭제」(`can_delete`), 「지도 나가기」(`can_leave`)를 그리고, 나가기 확인 창에 `next_owner.display_name`을 쓴다. 넘길 사람이 없는 방장에게는 나가기 대신 삭제를 안내한다. `member.left`를 받으면 핀 목록(작성자 표시 포함), 핀 참여율, `FilterCounts`, readiness를 다시 불러오고, `map.deleted`를 받으면 내 지도 목록으로 돌아간다. 목 서버에 두 엔드포인트와 `permissions`, `next_owner`를 넣었다.
+
+**BE 영향**: #369 2단계. maps(마이그레이션 `maps.deleted_at`, `memberships`의 방장 부분 유니크 인덱스, 삭제 필터, 위임, `list_members`와 `accept_invite`의 방장 판정을 `memberships.role`로), pins(지도 범위 반응 삭제, 작성자 표시), recommend(지도 범위 근거 줄 삭제), auth(방장 탈퇴 시 위임 또는 삭제), authz(`map.delete`, `map.leave`, `can_leave`), realtime(`map.deleted`를 보낸 뒤 연결 종료). 이 스펙 변경은 구현과 같은 브랜치(`docs/map-delete-leave-369`)에서 PR 하나로 머지한다. 문서만으로는 대조 테스트가 실패한다.
+
 ## 2026-10-04 (다섯 번째) — `pin_count`를 필수로 전환 (#313)
 
 - `Map.pin_count`와 `InviteSummary.pin_count`를 **필수**로 바꾼다(서버가 지도 목록·상세·생성·초대 수락·초대 요약 모두에서 채운다, PR #328). 타입 재생성(`npm run gen:types`) 후 optional 처리(`?? 0`·숨김)를 걷어도 된다. 초대 요약은 개수만 주고 핀의 이름·위치는 주지 않는다.

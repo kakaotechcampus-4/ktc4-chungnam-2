@@ -7,7 +7,8 @@ import type { components } from "../src/types/api";
 
 type Schemas = components["schemas"];
 export type Pin = Schemas["Pin"];
-export type MapEntity = Schemas["Map"];
+// 저장하는 지도 필드. permissions·next_owner는 요청자 기준 계산값이라 응답할 때 붙인다(handlers/maps.ts, #369).
+export type MapEntity = Omit<Schemas["Map"], "permissions" | "next_owner">;
 export type MapCreateRequest = Schemas["MapCreateRequest"];
 export type MapRegion = Schemas["MapRegion"];
 export type Member = Schemas["Member"];

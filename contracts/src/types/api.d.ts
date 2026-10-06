@@ -238,7 +238,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절) */
+        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절). 삭제된 지도와 내가 나간 지도는 빠진다 (#369). 목록의 Map에는 next_owner를 채우지 않는다 */
         get: {
             parameters: {
                 query?: never;
@@ -298,7 +298,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 지도 상세 조회 */
+        /** 지도 상세 조회. 삭제된 지도는 404 (#369). 상세에서만 next_owner를 채운다 */
         get: {
             parameters: {
                 query?: never;
@@ -324,7 +324,75 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * 지도 삭제 — 방장만 (#369, docs/permissions.md map.delete). soft delete라 모든 구성원에게서 사라진다.
+         *     이후 이 지도와 지도에 딸린 모든 경로, 이 지도의 초대 토큰은 404다. 전체 채널에 map.deleted를 보낸다(docs/events.md).
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 삭제됨 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/members/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 지도 나가기 — 구성원 누구나 (#369, docs/permissions.md map.leave). 내 멤버십을 지우고, 내가 이 지도에 남긴 반응과
+         *     근거 줄만 지운다. 핀, 확정 리스트 항목, 초대 링크, 추천 run과 후보는 남는다. 내가 찍은 핀의 작성자는 '나간 구성원'으로 보인다.
+         *     방장이 나가면 joined_at이 가장 빠른 구성원(탈퇴자 제외)에게 방장이 넘어간다. 넘길 사람이 없으면 409 OWNER_CANNOT_LEAVE.
+         *     전체 채널에 member.left를 보낸다(docs/events.md). 경로를 members/me로 둔 것은 v2 강퇴(#8)가 members/{userId}를 쓰기 위해서다.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 나감 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["OwnerCannotLeave"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -1639,7 +1707,10 @@ export interface components {
             can_remove_from_shortlist?: boolean;
             /** @description evidence_line 전용: 자기가 쓴 것만 true */
             can_disable?: boolean;
+            /** @description pin: 핀 삭제. map: 지도 삭제, 방장만 true (#369) */
             can_delete?: boolean;
+            /** @description map 전용: 지도 나가기. 넘길 사람이 없는 방장은 false (#369) */
+            can_leave?: boolean;
             /** @description candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64) */
             can_publish?: boolean;
         };
@@ -1653,6 +1724,10 @@ export interface components {
         };
         Map: {
             id: string;
+            /** @description 요청자 기준. map 응답은 can_delete(방장만), can_leave(넘길 사람이 없는 방장은 false)만 쓴다 (#369) */
+            permissions: components["schemas"]["Permissions"];
+            /** @description 요청자가 방장이고 넘길 사람이 있을 때만 채운다. 나가기 확인 창("나가면 ○○님이 방장이 돼요")용. 탈퇴자 건너뛰기를 FE가 다시 계산하지 않게 서버가 정한다. 상세(GET /maps/{mapId})에서만 채우고 목록에서는 생략한다 (#369) */
+            next_owner?: components["schemas"]["NextOwner"] | null;
             title: string;
             /**
              * Format: date
@@ -1669,6 +1744,11 @@ export interface components {
             /** @description 지도에 올라와 있는(삭제되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청) */
             pin_count: number;
             confirmed_count?: number;
+        };
+        /** @description 방장이 나가면 방장이 될 사람 (#369) */
+        NextOwner: {
+            user_id: string;
+            display_name: string;
         };
         /** @description 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다 */
         InviteSummary: {
@@ -1694,7 +1774,7 @@ export interface components {
         Member: {
             user_id: string;
             /**
-             * @description owner = 지도를 만든 사람(방장), 나머지는 member. 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)
+             * @description owner = 방장, 나머지는 member. memberships.role 기준이라 방장이 나가 위임되면 바뀐다(지도를 만든 사람과 다를 수 있다, #369). 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)
              * @enum {string}
              */
             role: "owner" | "member";
@@ -1797,7 +1877,7 @@ export interface components {
              * @description 핀이 지도에 올라온 시각. AI 추천 핀은 「지도에 올리기」를 누른 시각이다. 「최근 추가 순」 정렬, 「최근 핀으로 이동」, 「10분 전」 표시용 (2026-10-04, FE 요청)
              */
             created_at: string;
-            /** @description 핀 상세에서 '누가 찍었는지' 표시용 (#26) */
+            /** @description 핀 상세에서 '누가 찍었는지' 표시용 (#26). 작성자가 탈퇴했으면 '탈퇴한 구성원', 탈퇴하지 않았는데 이 지도에서 나갔으면 '나간 구성원', 아니면 실명. 조회할 때 계산하고 다시 들어오면 실명으로 돌아간다 (#369) */
             created_by_display_name?: string;
             price_bucket?: components["schemas"]["PriceBucket"];
             /** @description 게시된 AI 추천 핀도 상세에서 계속 노출한다 (가드레일 5) */
@@ -2138,7 +2218,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 없거나 잘못된 초대 토큰 (INVITE_NOT_FOUND) */
+        /** @description 없거나 잘못된 초대 토큰 (INVITE_NOT_FOUND). 삭제된 지도의 토큰도 같다 (#369) */
         InviteNotFound: {
             headers: {
                 [name: string]: unknown;
@@ -2216,8 +2296,18 @@ export interface components {
         /**
          * @description 존재하지 않거나(리소스 없음), 요청자가 그 지도의 구성원이 아님 (docs/permissions.md
          *     "권한을 어디서 강제하는가" — 비구성원에게 존재 여부 자체를 흘리지 않는다).
+         *     삭제된 지도(#369)와 그 지도에 딸린 모든 리소스도 404다.
          */
         NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 넘길 사람이 없는 방장은 나갈 수 없다 — 혼자이거나 남은 사람이 전부 탈퇴자 (OWNER_CANNOT_LEAVE, */
+        OwnerCannotLeave: {
             headers: {
                 [name: string]: unknown;
             };
