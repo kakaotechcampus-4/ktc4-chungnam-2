@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, Outlet, useMatch, useNavigate, useParams } from 'react-router'
-import { ChevronLeft, FileText, MapPin, Search, X } from 'lucide-react'
+import { ChevronLeft, FileText, MapPin, Search, Users, X } from 'lucide-react'
 
-import { useMeQuery } from '@/features/auth/queries'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { byNewest, filterPins, timeAgo } from '@/features/map/model'
@@ -47,6 +46,12 @@ export default function MapLayout() {
   const setStage = useSheetStore((s) => s.setStage)
   const search = useSearchStore()
   const [searchText, setSearchText] = useState('')
+  // 결과 시트에서 「닫기」를 눌러도 입력칸에 글자가 남지 않게, 검색이 닫히면 같이 비운다(#351).
+  const [lastQuery, setLastQuery] = useState(search.query)
+  if (lastQuery !== search.query) {
+    setLastQuery(search.query)
+    if (search.query === null) setSearchText('')
+  }
   const found = usePlaceSearchQuery(search.query, search.near).data
   // 검색 결과 번호 원 — 결과나 선택이 바뀔 때만 다시 그린다.
   const searchMarkers = useMemo(
@@ -75,7 +80,6 @@ export default function MapLayout() {
     setSearchText('')
     search.close()
   }
-  const me = useMeQuery()
   const mapMoving = useSheetStore((s) => s.mapMoving)
   const setMapMoving = useSheetStore((s) => s.setMapMoving)
   const setModalOpen = useSheetStore((s) => s.setModalOpen)
@@ -162,7 +166,7 @@ export default function MapLayout() {
         onMovingChange={onMovingChange}
       />
 
-      <header data-map-header className="pointer-events-none fixed inset-x-0 top-0 z-20 space-y-2 px-4 pt-3">
+      <header data-map-header className="pointer-events-none fixed inset-x-0 top-0 z-20 md:right-auto md:w-[480px] space-y-2 px-4 pt-3">
         <div className="flex items-center justify-between">
           <Link
             to="/"
@@ -171,13 +175,15 @@ export default function MapLayout() {
           >
             <ChevronLeft size={20} />
           </Link>
+          {/* 내 이니셜 원은 계정 버튼처럼 읽혀서, 구성원 아이콘 + 인원 수로 "이 지도의 정보·구성원"임을 보인다(#351). */}
           <button
             type="button"
-            aria-label="지도 정보와 구성원"
+            aria-label={`지도 정보와 구성원 · ${memberCount}명`}
             onClick={() => openProfile(true)}
-            className="pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-white shadow-md"
+            className="pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-md"
           >
-            {me.data?.display_name?.slice(0, 1) ?? '나'}
+            <Users size={16} aria-hidden="true" />
+            {memberCount > 0 && memberCount}
           </button>
         </div>
         {/* 지도 위에는 검색창만 둔다(FE 회의). 지도를 끄는 동안엔 지도에 집중하게 흐려진다. 검색 동작은 #293. */}
@@ -227,7 +233,7 @@ export default function MapLayout() {
 
       <nav
         style={{ minHeight: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
-        className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 items-end border-t border-ink-100 bg-white"
+        className="pb-safe fixed inset-x-0 bottom-0 z-40 md:right-auto md:w-[480px] grid grid-cols-3 items-end border-t border-ink-100 bg-white"
       >
         <TabLink to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={24} />} />
         {/* AI 는 핑고가 말한다. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 핑고, 활성만 파랑 채움 + 흰 핑고(#299). */}
