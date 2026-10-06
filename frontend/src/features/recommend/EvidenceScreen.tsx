@@ -59,7 +59,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
   }
 
   return (
-    <div className="fixed inset-x-0 top-0 z-30 flex flex-col bg-white" style={{ bottom: TAB_BAR_H }}>
+    <div className="fixed inset-x-0 top-0 z-30 md:right-auto md:w-[480px] flex flex-col bg-white" style={{ bottom: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}>
       <header className="flex items-center gap-2 border-b border-ink-100 px-4 py-3">
         <button type="button" aria-label="추천 그만두기" onClick={() => setRun(mapId, undefined)} className="text-ink-900">
           <ChevronLeft size={22} />

@@ -88,7 +88,7 @@ export default function MapTab() {
   if (onboarding && mapTitle) {
     return (
       <TabSheet tab="map" header={<OnboardingHeader kind={onboarding} mapTitle={mapTitle} />}>
-        <OnboardingBody kind={onboarding} onDone={closeOnboarding} />
+        <OnboardingBody mapId={mapId} kind={onboarding} onDone={closeOnboarding} />
       </TabSheet>
     )
   }

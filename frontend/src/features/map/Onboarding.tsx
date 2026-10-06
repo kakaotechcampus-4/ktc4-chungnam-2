@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 
+import { useShareInvite } from '@/features/maps/useShareInvite'
 import AgainstMark from '@/ui/AgainstMark'
 import { josa } from '@/ui/josa'
 import Pingo from '@/ui/Pingo'
@@ -10,7 +11,7 @@ export type OnboardingKind = 'owner' | 'member'
 const STEPS: Record<OnboardingKind, ReactNode[]> = {
   owner: [
     '위 검색창에 가게 이름을 검색해서 핀을 찍으세요',
-    '오른쪽 위 프로필에서 초대 링크로 친구를 초대하세요',
+    '친구를 초대하세요. 나중에도 오른쪽 위 구성원 버튼에서 초대할 수 있어요',
     <>각자 ♥ △ <AgainstMark />로 의견을 남기면 AI가 대안을 찾아줘요</>,
   ],
   member: [
@@ -38,7 +39,7 @@ export function OnboardingHeader({ kind, mapTitle }: { kind: OnboardingKind; map
   )
 }
 
-export function OnboardingBody({ kind, onDone }: { kind: OnboardingKind; onDone: () => void }) {
+export function OnboardingBody({ mapId, kind, onDone }: { mapId: string; kind: OnboardingKind; onDone: () => void }) {
   return (
     <>
       <ol className="mt-2 space-y-4">
@@ -47,13 +48,40 @@ export function OnboardingBody({ kind, onDone }: { kind: OnboardingKind; onDone:
             <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-600">
               {i + 1}
             </span>
-            {step}
+            <span className="break-keep">{step}</span>
           </li>
         ))}
       </ol>
-      <button type="button" onClick={onDone} className="mt-6 w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white">
-        알겠어요
-      </button>
+      {kind === 'owner' ? (
+        <OwnerActions mapId={mapId} onDone={onDone} />
+      ) : (
+        <button type="button" onClick={onDone} className="mt-6 w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white">
+          알겠어요
+        </button>
+      )}
     </>
+  )
+}
+
+/**
+ * 지도를 막 만든 방장의 다음 할 일은 초대다. 문장으로만 안내하지 않고 이 화면의 유일한 채움 버튼으로 둔다(#351).
+ * 공유 창이 없는 브라우저는 링크 복사로 대신한다.
+ */
+function OwnerActions({ mapId, onDone }: { mapId: string; onDone: () => void }) {
+  const { share, url } = useShareInvite(mapId)
+  return (
+    <div className="mt-6 space-y-1">
+      <button
+        type="button"
+        onClick={() => void share()}
+        disabled={!url}
+        className="w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white disabled:bg-ink-100 disabled:text-ink-400"
+      >
+        {url ? '친구 초대하기' : '초대 링크를 만드는 중…'}
+      </button>
+      <button type="button" onClick={onDone} className="w-full py-3 text-sm font-semibold text-ink-600">
+        나중에 할게요
+      </button>
+    </div>
   )
 }

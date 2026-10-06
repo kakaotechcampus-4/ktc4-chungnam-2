@@ -23,3 +23,10 @@ export const REGIONS: MapRegion[] = [
   { label: '경상남도', lat: 35.2383, lng: 128.6924 },
   { label: '제주특별자치도', lat: 33.489, lng: 126.4983 },
 ]
+
+/**
+ * v1 장소 데이터(자체 DB)가 있는 시·도. 다른 지역을 고르면 모든 검색이 「아직 지원하지 않는 장소예요」로 끝나서
+ * 고르지 못하게 하고 「곧 열려요」로 보여 준다(#351, docs/demo-guide.md — 서울 음식점·카페만). 데이터가 늘면 여기에 더한다.
+ */
+export const AVAILABLE_REGIONS = new Set(['서울특별시'])
+

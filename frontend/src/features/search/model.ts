@@ -29,8 +29,13 @@ export type SearchResultView = {
   unsupported: boolean
   /** 이미 지도에 있는 장소로 보인다. 서버도 PIN_DUPLICATE 로 막는다. */
   alreadyPinned: boolean
+  /** 검색한 지도 가운데에서 멀다 — 이름이 같은 다른 지역 가게일 수 있어 알려 준다. */
+  far: boolean
   dto: PlaceSearchResultDto
 }
+
+/** 이보다 멀면 「지금 보는 곳에서 멀어요」를 붙인다. 시·도 하나를 넘는 정도. */
+const FAR_M = 30_000
 
 /** 같은 이름이 이만큼 안에 있으면 이미 찍힌 장소로 본다. */
 const SAME_PLACE_M = 50
@@ -47,6 +52,7 @@ export function toSearchResult(r: PlaceSearchResultDto, center: LatLng | null, p
     // 분류를 모르면 핀을 만들 요청 자체를 못 채운다(category 필수).
     unsupported: r.pinnable === false || !r.category,
     alreadyPinned,
+    far: center !== null && distanceM(center, r) > FAR_M,
     dto: r,
   }
 }

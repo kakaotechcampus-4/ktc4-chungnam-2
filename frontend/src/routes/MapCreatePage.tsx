@@ -37,7 +37,7 @@ export default function MapCreatePage() {
   }
 
   return (
-    <form onSubmit={submit} className="flex min-h-dvh flex-col bg-ink-50 px-4 pb-6 pt-4">
+    <form onSubmit={submit} className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6 pt-4">
       <header className="mb-6 flex items-center gap-3">
         <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-sm">
           <ChevronLeft size={20} />

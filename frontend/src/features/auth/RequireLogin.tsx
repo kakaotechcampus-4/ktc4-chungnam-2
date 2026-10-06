@@ -52,7 +52,7 @@ function useLoginError(): string | null {
 function LoginScreen() {
   const loginError = useLoginError()
   return (
-    <div className="flex min-h-dvh flex-col bg-white px-5 pb-8 pt-24">
+    <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-white px-5 pb-8 pt-24">
       <h1 className="text-3xl font-extrabold text-brand-600">핑고핑고</h1>
       <p className="mt-1 font-semibold text-ink-900">같이 갈 곳을 한 지도에 모아요</p>
       <MapIllustration className="mt-6" />
@@ -62,7 +62,7 @@ function LoginScreen() {
             <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-600">
               {i + 1}
             </span>
-            {step}
+            <span className="break-keep">{step}</span>
           </li>
         ))}
       </ol>

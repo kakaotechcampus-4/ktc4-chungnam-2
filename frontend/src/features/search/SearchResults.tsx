@@ -62,6 +62,17 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
       <div className="py-8 text-center">
         <p className="font-semibold text-ink-900">찾는 장소가 없어요</p>
         <p className="mt-1 text-sm text-ink-500">이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요</p>
+        {/* 다음 행동을 하나 둔다 — 검색어를 지우고 바로 다시 입력하게(#351). */}
+        <button
+          type="button"
+          onClick={() => {
+            close()
+            document.getElementById('place-search')?.focus()
+          }}
+          className="mt-4 rounded-xl border border-brand-600 px-4 py-2.5 text-sm font-bold text-brand-600"
+        >
+          검색어 지우고 다시 찾기
+        </button>
       </div>
     )
   }
@@ -75,6 +86,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
         <div>
           <h3 className="text-[1.375rem] font-bold text-ink-900">{selected.name}</h3>
           <p className="text-[0.8125rem] text-ink-600">{selected.meta}</p>
+          {selected.far && <p className="text-[0.8125rem] font-semibold text-warn-text">지금 보는 곳에서 멀어요 — 같은 이름의 다른 지역 가게일 수 있어요</p>}
         </div>
         {/* 카카오 검색은 사진·영업시간을 주지 않는다 — 사진 없이 카카오맵으로 보낸다(Figma 장소 정보 출처). */}
         {(selected.address || selected.url) && (
@@ -105,6 +117,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
           <button type="button" onClick={() => select(r.id)} className="min-w-0 flex-1 text-left">
             <p className="truncate font-bold text-ink-900">{r.name}</p>
             <p className="truncate text-xs text-ink-500">{r.meta}</p>
+            {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}
           </button>
           <PinItButton result={r} pending={create.isPending && create.variables?.place_id === r.id} onPin={() => pinIt(r)} />
         </li>
