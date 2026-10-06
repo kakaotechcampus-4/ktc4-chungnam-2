@@ -88,6 +88,8 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
         ))}
       </div>
       <p className="text-[0.6875rem] text-ink-500">* 의견 남긴 구성원이 {required}명(구성원 절반) 이상이면 추천 가능해요.</p>
+      {/* 사유가 곧 추천 조건이 된다(②) — 의견이 많을수록 거르고 고를 근거가 늘어난다. */}
+      <p className="text-[0.6875rem] text-ink-500">* 핀에 의견을 많이 남길수록 추천이 더 정확해져요.</p>
       {/* run 을 만들 때 AI가 사유를 조건으로 정리한다(②) — 5~12초 걸린다(백엔드 안내). 그동안 진행을 보인다. */}
       {create.isPending && <ProgressBody steps={COLLECT_STEPS} />}
       {create.error && <ErrorText message={runErrorMessage(create.error)} error={create.error} />}
