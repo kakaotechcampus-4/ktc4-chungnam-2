@@ -131,8 +131,9 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
         <div className={`h-full rounded-full ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`} style={{ width: `${pct}%` }} />
       </div>
       <p className="mt-1.5 flex justify-between text-[0.6875rem] font-semibold text-ink-700">
+        {/* 「4/2」처럼 분자가 분모를 넘으면 뜻이 헷갈려서 두 숫자를 따로 적는다(#344). */}
         <span>
-          의견 {card.answered}/{card.required}
+          의견 {card.answered}명 · 필요 {card.required}명
         </span>
         <span className={card.ready ? 'text-[var(--good-text)]' : 'text-[var(--warn-text)]'}>{card.ready ? '✓ 완료' : `${short}명 더 필요`}</span>
       </p>
