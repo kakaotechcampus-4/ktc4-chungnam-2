@@ -160,7 +160,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
               placeholder="예: 비 오면 실내로 가고 싶어요"
               className="min-w-0 flex-1 rounded-xl border border-ink-300 px-3 py-2 text-sm"
             />
-            <button type="submit" disabled={patch.isPending} className="rounded-xl border border-brand-600 px-3 text-sm font-semibold text-brand-600">
+            <button type="submit" disabled={patch.isPending} className="btn-outline px-3 text-sm">
               더하기
             </button>
           </form>
@@ -181,7 +181,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
         <button type="button" onClick={() => setRun(mapId, undefined)} className="rounded-xl border border-ink-300 py-3 font-semibold text-ink-900">
           취소
         </button>
-        <button type="button" disabled={busy || evidence.isPending} onClick={() => start(false)} className="rounded-xl bg-brand-600 py-3 font-bold text-white disabled:opacity-50">
+        <button type="button" disabled={busy || evidence.isPending} onClick={() => start(false)} className="btn-primary py-3">
           {busy ? '찾기 시작하는 중…' : '네, 추천해주세요'}
         </button>
       </div>
@@ -269,7 +269,7 @@ function Confirm({
           <button
             type="button"
             onClick={onOk}
-            className={`rounded-lg py-2.5 text-sm font-bold text-white ${danger ? 'bg-[var(--action-danger)]' : 'bg-brand-600'}`}
+            className={`btn-primary py-2.5 text-sm ${danger ? 'bg-[var(--action-danger)]' : ''}`}
           >
             {ok}
           </button>

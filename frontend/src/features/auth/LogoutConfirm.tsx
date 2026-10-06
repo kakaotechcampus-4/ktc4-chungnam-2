@@ -23,7 +23,7 @@ export default function LogoutConfirm({ onCancel }: { onCancel: () => void }) {
             type="button"
             disabled={logout.isPending}
             onClick={() => logout.mutate(undefined, { onSuccess: () => navigate('/', { replace: true }) })}
-            className="rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+            className="btn-primary py-2.5 text-sm"
           >
             로그아웃
           </button>

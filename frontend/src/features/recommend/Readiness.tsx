@@ -95,7 +95,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
         type="button"
         disabled={!chosen || create.isPending}
         onClick={() => chosen && create.mutate(chosen)}
-        className="w-full rounded-xl bg-brand-600 py-3.5 font-bold text-white disabled:bg-ink-100 disabled:text-ink-400"
+        className="btn-primary w-full py-3.5"
       >
         {create.isPending ? '조건을 모으는 중…' : chosen ? `${chosen} 추천받기` : '아직 추천할 수 있는 곳이 없어요'}
       </button>
@@ -161,7 +161,7 @@ export function SoloBody({ mapId }: { mapId: string }) {
         type="button"
         onClick={() => void share()}
         disabled={!url}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 py-3.5 font-bold text-white disabled:opacity-50"
+        className="btn-primary flex w-full items-center justify-center gap-2 py-3.5"
       >
         <Share size={18} aria-hidden="true" /> 초대 링크 공유하기
       </button>

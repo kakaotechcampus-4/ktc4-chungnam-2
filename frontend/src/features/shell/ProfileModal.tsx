@@ -41,7 +41,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
         type="button"
         onClick={() => void share()}
         disabled={!url}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 py-3 font-semibold text-white disabled:bg-ink-100 disabled:text-ink-400"
+        className="btn-primary flex w-full items-center justify-center gap-2 py-3"
       >
         <Share size={18} aria-hidden="true" /> 초대 링크 공유하기
       </button>

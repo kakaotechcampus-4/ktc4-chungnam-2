@@ -63,7 +63,7 @@ export default function MapListPage() {
 
       <Link
         to="/maps/new"
-        className="sticky bottom-6 mt-4 flex items-center justify-center gap-1 rounded-xl bg-brand-600 py-3.5 font-semibold text-white"
+        className="btn-primary sticky bottom-6 mt-4 flex items-center justify-center gap-1 py-3.5"
       >
         <Plus size={18} aria-hidden="true" /> 새 지도 만들기
       </Link>

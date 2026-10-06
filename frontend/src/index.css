@@ -164,6 +164,17 @@
     padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
+/* 버튼 모양(DESIGN.md Buttons). 색·테두리·반경·굵기·비활성만 정하고, 크기와 여백은 쓰는 곳에서 준다.
+   components 층이라 쓰는 곳의 유틸리티(bg-[var(--action-danger)] 등)가 이긴다(#359). */
+@layer components {
+    .btn-primary {
+        @apply rounded-xl bg-brand-600 font-bold text-white disabled:bg-ink-100 disabled:text-ink-400;
+    }
+    .btn-outline {
+        @apply rounded-xl border border-brand-600 bg-white font-bold text-brand-600 disabled:border-ink-300 disabled:text-ink-400;
+    }
+}
+
 /* 키보드 포커스는 불투명 2px(3:1 이상). shadcn 기본 outline-ring/50 은 흰 바탕에서 1.98:1이라 안 보였다(#299). */
 @layer base {
     /* base 층에 둬서 outline-none 을 준 곳(검색 input 등 — 틀이 대신 표시)은 그대로 꺼진다. */

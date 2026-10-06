@@ -106,7 +106,7 @@ export default function MapCreatePage() {
       <button
         type="submit"
         disabled={!ready || create.isPending}
-        className="mt-auto rounded-xl bg-brand-600 py-3.5 font-semibold text-white disabled:bg-ink-100 disabled:text-ink-400"
+        className="btn-primary mt-auto py-3.5"
       >
         {create.isPending ? '만드는 중…' : '지도 만들기'}
       </button>

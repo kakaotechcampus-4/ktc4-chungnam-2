@@ -362,7 +362,7 @@ function MyOpinion({
         type="button"
         onClick={submit}
         disabled={!type || missingReason || react.isPending}
-        className="w-full rounded-xl bg-brand-600 py-2.5 text-sm font-bold text-white disabled:bg-ink-100 disabled:text-ink-400"
+        className="btn-primary w-full py-2.5 text-sm"
       >
         {react.isPending ? '등록하는 중…' : '의견 등록'}
       </button>
