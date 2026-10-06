@@ -1,11 +1,11 @@
 import { useParams } from 'react-router'
 
-import { ApiError } from '@/api'
+import ErrorText from '@/ErrorText'
 import MapCanvas from '@/features/map/MapCanvas'
 import PinList from '@/features/map/PinList'
 import PinSheet, { PinUnavailableSheet } from '@/features/map/PinSheet'
 import { usePinSelection } from '@/features/map/usePinSelection'
-import { usePins } from '@/features/map/usePins'
+import { usePinsQuery } from '@/features/map/queries'
 
 /**
  * 지도 탭은 조립만 한다. 실제 내용은 전부 `features/map/` 안에 있다 —
@@ -16,7 +16,7 @@ export default function MapTab() {
   // MapLayout 의 `/maps/:mapId` 아래에서만 렌더되므로 항상 있다.
   const { mapId = '' } = useParams()
   const { selectedPinId, selectPin } = usePinSelection()
-  const { data: pins, isPending, error } = usePins(mapId)
+  const { data: pins, isPending, error } = usePinsQuery(mapId)
 
   const selectedPin = pins?.find((pin) => pin.id === selectedPinId)
   // 목록을 다 받은 뒤에도 없으면 볼 수 없는 핀이다. 로딩 중이나 실패 중에는 판단하지 않는다.
@@ -28,14 +28,7 @@ export default function MapTab() {
 
       {isPending && <p className="text-sm text-muted-foreground">핀을 불러오는 중…</p>}
 
-      {error && (
-        <p className="text-sm text-destructive">
-          핀을 불러오지 못했어요
-          {error instanceof ApiError && (
-            <span className="ml-1 font-mono text-xs">({error.code})</span>
-          )}
-        </p>
-      )}
+      {error && <ErrorText message="핀을 불러오지 못했어요" error={error} />}
 
       {pins?.length === 0 && (
         // docs/errors.md MAP_EMPTY. 입력 경로 3개 안내는 #16.

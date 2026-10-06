@@ -1,5 +1,5 @@
 import { createPinMarkerElement } from './pinMarker'
-import type { Pin } from './usePins'
+import type { Pin } from './model'
 
 export interface MarkerLayer {
   /** 들어온 목록과 지금 떠 있는 마커를 비교해 추가·삭제만 한다. */

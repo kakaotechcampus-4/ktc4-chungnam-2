@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
 
-import type { Pin } from './usePins'
+import type { Pin } from './model'
 
 /** 용어 고정(기획안 9절). 반응은 이 4개 말고 다른 이름으로 부르지 않는다. */
 const REACTION_LABEL = {
