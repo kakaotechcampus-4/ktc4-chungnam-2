@@ -20,7 +20,7 @@ import {
 import { useRouteStore } from '@/features/shortlist/routeStore'
 import ShortlistList from '@/features/shortlist/ShortlistList'
 import { josa } from '@/ui/josa'
-import Pingo from '@/ui/Pingo'
+import EmptyState from '@/ui/EmptyState'
 
 /** 확정된 장소 탭(Figma 7절). 동선은 순서만 — 몇 시에 어디는 정하지 않는다(범위 밖). */
 export default function ShortlistTab() {
@@ -117,18 +117,18 @@ export default function ShortlistTab() {
       {shortlist.error && <ErrorText message="확정 리스트를 불러오지 못했어요" error={shortlist.error} />}
       {calc.error && <ErrorText message="동선을 계산하지 못했어요" error={calc.error} />}
       {shortlist.data?.length === 0 && (
-        <div className="flex flex-col items-center py-6 text-center">
-          <Pingo size={48} />
-          <p className="mt-3 font-semibold text-ink-900">아직 확정된 장소가 없어요</p>
-          <p className="mt-1 text-sm text-ink-500">
-            마킹된 장소에서 「확정 리스트에 넣기」를 누르면 여기 모여요.
-            <br />
-            2곳 이상이면 동선도 볼 수 있어요
-          </p>
-          <Link to={`/maps/${mapId}`} className="btn-outline mt-4 px-4 py-2 text-sm">
-            마킹된 장소 보러 가기
-          </Link>
-        </div>
+        <EmptyState
+          title="아직 확정된 장소가 없어요"
+          action={
+            <Link to={`/maps/${mapId}`} className="btn-outline px-4 py-2 text-sm">
+              마킹된 장소 보러 가기
+            </Link>
+          }
+        >
+          마킹된 장소에서 「확정 리스트에 넣기」를 누르면 여기 모여요.
+          <br />
+          2곳 이상이면 동선도 볼 수 있어요
+        </EmptyState>
       )}
       {items.length > 0 && (
         <ShortlistList

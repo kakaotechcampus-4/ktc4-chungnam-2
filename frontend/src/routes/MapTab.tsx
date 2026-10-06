@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
-import Pingo from '@/ui/Pingo'
+import EmptyState from '@/ui/EmptyState'
 import EmptyMap from '@/features/map/EmptyMap'
 import { OnboardingBody, OnboardingHeader, type OnboardingKind } from '@/features/map/Onboarding'
 import { filterPins } from '@/features/map/model'
@@ -141,14 +141,16 @@ export default function MapTab() {
 function FilterEmpty({ who, category, onClear }: { who?: string; category: string | null; onClear: () => void }) {
   const what = [who && `${who}님이 올린`, category].filter(Boolean).join(' ')
   return (
-    <div className="flex flex-col items-center py-6 text-center">
-      <Pingo size={48} />
-      <p className="mt-3 font-semibold text-ink-900">필터에 걸리는 핀이 없어요</p>
-      <p className="mt-1 text-sm text-ink-500">{what} 핀은 아직 없어요</p>
-      <button type="button" onClick={onClear} className="btn-outline mt-4 px-4 py-2 text-sm">
-        필터 해제
-      </button>
-    </div>
+    <EmptyState
+      title="필터에 걸리는 핀이 없어요"
+      action={
+        <button type="button" onClick={onClear} className="btn-outline px-4 py-2 text-sm">
+          필터 해제
+        </button>
+      }
+    >
+      {what} 핀은 아직 없어요
+    </EmptyState>
   )
 }
 
