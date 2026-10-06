@@ -51,7 +51,7 @@ export default function MapListPage() {
                 <p className="flex items-center gap-2">
                   <span className="truncate text-lg font-bold text-ink-900">{map.title}</span>
                   {map.region && (
-                    <span className="shrink-0 rounded-md bg-ink-100 px-1.5 py-0.5 text-[11px] text-ink-500">{map.region}</span>
+                    <span className="shrink-0 rounded-md bg-ink-100 px-1.5 py-0.5 text-[0.6875rem] text-ink-500">{map.region}</span>
                   )}
                 </p>
                 <p className="mt-1 text-sm text-ink-500">{map.summary}</p>

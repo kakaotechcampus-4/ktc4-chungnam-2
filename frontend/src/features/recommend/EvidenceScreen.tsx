@@ -70,7 +70,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
       <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4">
         <div className="rounded-2xl border border-brand-300 bg-[var(--pingo-bg)] p-4">
           <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--pingo-text)]">
-            <span className="rounded bg-brand-600 px-1.5 text-[11px] text-white">AI</span> AI가 정리한 조건
+            <span className="rounded bg-brand-600 px-1.5 text-[0.6875rem] text-white">AI</span> AI가 정리한 조건
           </p>
           <p className="mt-1 font-bold text-ink-900">이 조건으로 추천해도 될까요?</p>
           <p className="mt-1 text-xs text-ink-500">지금까지 남긴 의견을 이렇게 정리했어요.</p>
@@ -86,7 +86,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
               <div key={line.id} className="flex items-center gap-3 rounded-xl border border-ink-200 p-3">
                 <Ban size={16} className="shrink-0 text-[var(--bad-line)]" aria-hidden="true" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-[11px] text-ink-500">{line.author_display_name} · 반대 조건</p>
+                  <p className="text-[0.6875rem] text-ink-500">{line.author_display_name} · 반대 조건</p>
                   <p className="font-bold text-ink-900">{evidenceLabel(line)}</p>
                 </div>
                 {line.permissions.can_disable && (
@@ -123,7 +123,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
             <h2 className="text-sm font-bold text-ink-900">지금까지 나온 의견에서</h2>
             {groups.reference.map((line) => (
               <blockquote key={line.id} className="rounded-xl bg-ink-50 p-3 text-sm text-ink-700">
-                <p className="text-[11px] text-ink-500">{line.author_display_name}</p>“{line.text}”
+                <p className="text-[0.6875rem] text-ink-500">{line.author_display_name}</p>“{line.text}”
               </blockquote>
             ))}
           </section>
@@ -245,7 +245,7 @@ function Confirm({
   onOk: () => void
 }) {
   return (
-    <div role="alertdialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-50 flex items-center justify-center bg-black/32 p-6">
+    <div role="alertdialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-6">
       <div className="w-full max-w-sm space-y-2 rounded-2xl bg-white p-5">
         <p className="text-lg font-bold text-ink-900">{title}</p>
         {list && list.length > 0 && (
@@ -256,7 +256,7 @@ function Confirm({
           </ul>
         )}
         <p className="text-sm text-ink-600">{body}</p>
-        {note && <p className="text-xs text-ink-400">{note}</p>}
+        {note && <p className="text-xs text-ink-500">{note}</p>}
         <div className="grid grid-cols-2 gap-2 pt-2">
           <button type="button" onClick={onCancel} className="rounded-lg border border-ink-300 py-2.5 text-sm font-semibold">
             {cancel}

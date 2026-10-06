@@ -47,7 +47,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
       </button>
       <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-ink-100 px-3 py-2.5 text-sm">
         <span className="truncate text-ink-600">{url ?? '링크를 만드는 중…'}</span>
-        <button type="button" onClick={() => void copy()} disabled={!url} className="shrink-0 font-semibold text-brand-600">
+        <button type="button" onClick={() => void copy()} disabled={!url} className="hit-44 shrink-0 font-semibold text-brand-600">
           {copied ? '✓ 복사됨' : '복사'}
         </button>
       </div>
@@ -66,7 +66,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
               {m.name}
               {m.isMe && <span className="ml-1 text-ink-500">(나)</span>}
             </span>
-            {m.isOwner && <span className="rounded-md bg-ink-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-600">방장</span>}
+            {m.isOwner && <span className="rounded-md bg-ink-100 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-ink-600">방장</span>}
           </li>
         ))}
       </ul>

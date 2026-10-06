@@ -63,7 +63,7 @@ export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClo
                   type="button"
                   onClick={() => copyLink(map)}
                   disabled={invite.isPending && invite.variables === map.id}
-                  className="flex shrink-0 items-center gap-1 rounded-lg border border-brand-600 px-2.5 py-1 text-xs font-semibold text-brand-600"
+                  className="hit-44 flex shrink-0 items-center gap-1 rounded-lg border border-brand-600 px-2.5 py-1 text-xs font-semibold text-brand-600"
                 >
                   {copiedId === map.id ? '✓ 복사됨' : <><Share size={12} aria-hidden="true" /> 링크 복사</>}
                 </button>

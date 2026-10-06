@@ -40,7 +40,7 @@ export default function ScenarioSwitcher() {
   return (
     <div className="fixed left-1/2 top-3 z-50 flex max-w-[280px] -translate-x-1/2 flex-wrap justify-center gap-1 rounded-md border bg-background/90 p-1 backdrop-blur">
       {!open && (
-        <button type="button" onClick={() => setOpen(true)} className="px-2 py-1 font-mono text-[10px] text-muted-foreground">
+        <button type="button" onClick={() => setOpen(true)} className="px-2 py-1 font-mono text-[0.625rem] text-muted-foreground">
           목 · {current} ▾
         </button>
       )}
@@ -49,14 +49,14 @@ export default function ScenarioSwitcher() {
           key={name}
           type="button"
           onClick={() => void switchTo(name)}
-          className={`rounded px-2 py-1 font-mono text-[10px] ${
+          className={`rounded px-2 py-1 font-mono text-[0.625rem] ${
             name === current ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'
           }`}
         >
           {name}
         </button>
       ))}
-      {failed && <span className="px-2 py-1 text-[10px] text-destructive">{failed} 전환 실패</span>}
+      {failed && <span className="px-2 py-1 text-[0.625rem] text-destructive">{failed} 전환 실패</span>}
     </div>
   )
 }

@@ -4,6 +4,8 @@ import { participationRatio, type Pin } from './model'
 export interface MarkerLayer {
   /** 들어온 목록과 지금 떠 있는 마커를 비교해 추가·삭제만 한다. 구성원 수는 핀 색(참여율)의 분모다. */
   sync(pins: Pin[], memberCount: number): void
+  /** 상세를 연 핀을 크게·맨 위로·이름과 함께 보여 준다. null 이면 해제. */
+  select(pinId: string | null): void
   /** 점(핀·검색 결과) 전체가 들어오도록 시야를 맞춘다. */
   fit(points: { lat: number; lng: number }[]): void
   destroy(): void
@@ -35,11 +37,43 @@ export function createMarkerLayer(
 ): MarkerLayer {
   const overlays = new Map<string, kakao.maps.CustomOverlay>()
   const signatures = new Map<string, string>()
+  const names = new Map<string, string>()
+  const elements = new Map<string, HTMLElement>()
+  let selected: string | null = null
+
+  /** 지도 위에서 어느 핀을 보고 있는지 보이게 한다(#308). 다시 그려진 마커에도 다시 건다. */
+  function mark(pinId: string, on: boolean) {
+    const overlay = overlays.get(pinId)
+    const el = elements.get(pinId)
+    if (!overlay || !el) return
+    overlay.setZIndex(on ? 10 : 0)
+    const svg = el.querySelector('svg')
+    if (svg) {
+      svg.style.transformOrigin = '50% 100%'
+      svg.style.transform = on ? 'scale(1.25)' : ''
+      svg.style.filter = on ? 'drop-shadow(0 0 2px #fff) drop-shadow(0 0 2px #fff)' : ''
+    }
+    el.querySelector('[data-pin-name]')?.remove()
+    if (on) {
+      const label = document.createElement('span')
+      label.dataset.pinName = ''
+      // 이름은 textContent 로만 넣는다(마크업으로 해석되지 않게).
+      label.textContent = names.get(pinId) ?? ''
+      label.setAttribute('aria-hidden', 'true')
+      label.style.cssText =
+        'position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;padding:2px 8px;border-radius:8px;' +
+        'background:#fff;color:var(--ink-900);font-size:0.75rem;font-weight:700;line-height:1.4;white-space:nowrap;box-shadow:0 1px 4px rgba(20,22,31,.18)'
+      el.style.position = 'relative'
+      el.appendChild(label)
+    }
+  }
 
   function drop(pinId: string) {
     overlays.get(pinId)?.setMap(null)
     overlays.delete(pinId)
     signatures.delete(pinId)
+    names.delete(pinId)
+    elements.delete(pinId)
   }
 
   return {
@@ -55,20 +89,30 @@ export function createMarkerLayer(
         if (signatures.get(pin.id) === sig) continue
 
         drop(pin.id)
+        const el = createPinMarkerElement(pin, ratio, () => onSelect(pin.id))
         const overlay = new maps.CustomOverlay({
           position: new maps.LatLng(pin.lat, pin.lng),
-          content: createPinMarkerElement(pin, ratio, () => onSelect(pin.id)),
+          content: el,
           yAnchor: 1,
           clickable: true,
         })
         overlay.setMap(map)
         overlays.set(pin.id, overlay)
         signatures.set(pin.id, sig)
+        names.set(pin.id, pin.place_name ?? '')
+        elements.set(pin.id, el)
+        if (pin.id === selected) mark(pin.id, true)
       }
 
       for (const pinId of [...overlays.keys()]) {
         if (!alive.has(pinId)) drop(pinId)
       }
+    },
+
+    select(pinId) {
+      if (selected) mark(selected, false)
+      selected = pinId
+      if (pinId) mark(pinId, true)
     },
 
     fit(points) {

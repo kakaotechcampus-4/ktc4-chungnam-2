@@ -3,6 +3,7 @@ import { Check, Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { useShareInvite } from '@/features/maps/useShareInvite'
+import AgainstMark from '@/ui/AgainstMark'
 import Pingo from '@/ui/Pingo'
 
 import { runErrorMessage, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
@@ -15,7 +16,7 @@ export function AiHeader({ title, sub }: { title: string; sub: string }) {
       <Pingo size={36} />
       <div className="min-w-0">
         <p className="flex items-center gap-1.5 font-bold text-ink-900">
-          <span className="rounded bg-brand-600 px-1.5 text-[11px] text-white">AI</span>
+          <span className="rounded bg-brand-600 px-1.5 text-[0.6875rem] text-white">AI</span>
           {title}
         </p>
         <p className="text-xs text-ink-500">{sub}</p>
@@ -86,7 +87,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           />
         ))}
       </div>
-      <p className="text-[11px] text-ink-500">* 의견 남긴 구성원이 {required}명(구성원 절반) 이상이면 추천 가능해요.</p>
+      <p className="text-[0.6875rem] text-ink-500">* 의견 남긴 구성원이 {required}명(구성원 절반) 이상이면 추천 가능해요.</p>
       {/* run 을 만들 때 AI가 사유를 조건으로 정리한다(②) — 5~12초 걸린다(백엔드 안내). 그동안 진행을 보인다. */}
       {create.isPending && <ProgressBody steps={COLLECT_STEPS} />}
       {create.error && <ErrorText message={runErrorMessage(create.error)} error={create.error} />}
@@ -119,7 +120,7 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
         <span className="flex items-center gap-1.5">
           {card.category}
           <span
-            className={`rounded px-1.5 text-[10px] text-white ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`}
+            className={`rounded px-1.5 text-[0.625rem] text-white ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`}
           >
             {card.ready ? '준비 완료' : '추가 필요'}
           </span>
@@ -129,7 +130,7 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
       <div className="mt-2 h-1.5 rounded-full bg-ink-200">
         <div className={`h-full rounded-full ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`} style={{ width: `${pct}%` }} />
       </div>
-      <p className="mt-1.5 flex justify-between text-[11px] font-semibold text-ink-700">
+      <p className="mt-1.5 flex justify-between text-[0.6875rem] font-semibold text-ink-700">
         <span>
           의견 {card.answered}/{card.required}
         </span>
@@ -154,7 +155,7 @@ export function SoloBody({ mapId }: { mapId: string }) {
           </li>
         ))}
       </ul>
-      <p className="text-xs text-ink-500">지금은 나 혼자예요. 친구를 초대해서 핀에 ♥ △ 🚫를 남겨 보세요</p>
+      <p className="text-xs text-ink-500">지금은 나 혼자예요. 친구를 초대해서 핀에 ♥ △ <AgainstMark />를 남겨 보세요</p>
       <button
         type="button"
         onClick={() => void share()}

@@ -65,12 +65,17 @@ export type PinCardView = {
 }
 
 /** 카드 한 장. 미확인(?)은 구성원 수에서 반응한 사람을 뺀 값이다. */
-export function toPinCard(pin: Pin, memberCount: number): PinCardView {
+/** myId: 내가 찍은 핀은 이름 대신 「내가 찍음」(기획안 9절 — 내 것은 항상 나로 보인다). */
+export function toPinCard(pin: Pin, memberCount: number, myId?: string): PinCardView {
   const s = pin.reaction_summary
   return {
     id: pin.id,
     name: pin.place_name ?? '이름 없는 장소',
-    meta: [pin.category, pin.created_by_display_name && `${pin.created_by_display_name}님이 찍음`, timeAgo(pin.created_at)]
+    meta: [
+      pin.category,
+      pin.created_by === myId ? '내가 찍음' : pin.created_by_display_name && `${pin.created_by_display_name}님이 찍음`,
+      timeAgo(pin.created_at),
+    ]
       .filter(Boolean)
       .join(' · '),
     counts: { ...s, unknown: Math.max(0, memberCount - participants(pin)) },

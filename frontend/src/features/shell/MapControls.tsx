@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { History, LocateFixed, Scan } from 'lucide-react'
 
 import { CONTROLS } from './layout'
@@ -20,6 +20,7 @@ export default function MapControls({
   fading,
   active,
   onPress,
+  onCrampedChange,
 }: {
   /** 시트 3단계·모달 — 바로 숨긴다. */
   hidden: boolean
@@ -27,9 +28,36 @@ export default function MapControls({
   fading: boolean
   active: ControlKey | null
   onPress: (key: ControlKey) => void
+  /** 검색창·칩과 시트 사이가 버튼 묶음보다 좁아지면 true — 그때는 숨긴다(작은 화면·높은 시트, #308). */
+  onCrampedChange: (cramped: boolean) => void
 }) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const sheet = ref.current?.closest('section')
+    const header = document.querySelector('[data-map-header]')
+    if (!sheet || !header) return
+    // 숨겨진 동안에도 잰다 — 버튼 자리가 아니라 시트 윗변과 상단 UI 아래끝 사이를 본다.
+    // stackHeight 는 버튼 3개 + 시트와의 틈(12)이다. 상단 UI와는 4px만 떨어져 있으면 보인다(Figma 같은 식).
+    const check = () =>
+      onCrampedChange(sheet.getBoundingClientRect().top - CONTROLS.stackHeight < header.getBoundingClientRect().bottom + 4)
+    check()
+    const ro = new ResizeObserver(check)
+    ro.observe(sheet)
+    ro.observe(header)
+    sheet.addEventListener('transitionend', check)
+    window.addEventListener('resize', check)
+    return () => {
+      ro.disconnect()
+      sheet.removeEventListener('transitionend', check)
+      window.removeEventListener('resize', check)
+    }
+    // onCrampedChange 는 useState 의 setter 라 바뀌지 않는다.
+  }, [onCrampedChange])
+
   return (
     <div
+      ref={ref}
       hidden={hidden}
       style={{ right: CONTROLS.right }}
       className={`absolute bottom-[calc(100%+12px)] flex flex-col rounded-xl bg-white shadow-md transition-opacity ${

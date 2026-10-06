@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
@@ -37,7 +37,13 @@ export default function MapTab() {
   const memberCount = map?.memberCount ?? 0
   const members = useMembersQuery(mapId).data ?? []
   const { filters, setFilter, clear } = usePinFilters()
-  const shown = pins && filterPins(pins, filters)
+  const sorted = pins && filterPins(pins, filters)
+  // 순서는 필터·정렬을 바꾸거나 핀이 늘고 줄 때만 다시 매긴다. 의견 수만 바뀌었을 땐 그대로 둬서
+  // 방금 의견을 남긴 카드가 맨 위로 튀지 않게 한다(#308).
+  const orderKey = sorted ? `${filters.category}|${filters.createdBy}|${filters.sort}|${sorted.map((p) => p.id).sort().join(',')}` : ''
+  const [order, setOrder] = useState<{ key: string; ids: string[] } | null>(null)
+  if (sorted && order?.key !== orderKey) setOrder({ key: orderKey, ids: sorted.map((p) => p.id) })
+  const shown = sorted && order?.key === orderKey ? order.ids.map((id) => sorted.find((p) => p.id === id)).filter((p) => p !== undefined) : sorted
   const search = useSearchStore()
   const found = usePlaceSearchQuery(search.query, search.near).data
   const filtered = Boolean(filters.category || filters.createdBy)
