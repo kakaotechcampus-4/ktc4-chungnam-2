@@ -153,7 +153,7 @@ export default function MapLayout() {
         onMovingChange={onMovingChange}
       />
 
-      <header className="pointer-events-none fixed inset-x-0 top-0 z-20 space-y-2 px-4 pt-3">
+      <header data-map-header className="pointer-events-none fixed inset-x-0 top-0 z-20 space-y-2 px-4 pt-3">
         <div className="flex items-center justify-between">
           <Link
             to="/"
