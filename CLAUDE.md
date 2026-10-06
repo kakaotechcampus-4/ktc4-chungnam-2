@@ -72,6 +72,8 @@ v1에서 요청 중 모델 호출은 **② 사유 구조화 하나**다(Luna, �
 | `docs/CHANGELOG-api.md` | 스펙 변경 이력 — 구조 변경 시 여기 먼저 |
 | `docs/code-quality.md` | 클린 코드 원칙, AI 작성 코드 리뷰 포인트 |
 | `docs/design/colors.md` | 색 결정 이유(값 정본은 `frontend/src/styles/tokens.css`) |
+| `frontend/DESIGN.md` | 화면 디자인 규칙 — 글자·반경·컴포넌트·지도 핀·지도 버튼·토스트, Do/Don't(Impeccable 스킬이 읽음) |
+| `frontend/PRODUCT.md` | 제품 요약 — 사용자·제약·말투·접근성 기준(정본은 기획안, Impeccable 스킬이 읽음) |
 | `docs/execution-order.md` | 이슈 실행 순서 초안 |
 | `docs/team-setup-guide.md` | 팀원용 설치·실행 설명서 — 도구 설치·키 넣기(`.env`)·데이터 넣기·켜기·막혔을 때(비개발자용) |
 | `docs/demo-guide.md` | 팀 시연 따라 하기 — 준비·켜기·시연 대본·문제 해결(비개발자용, localhost) |

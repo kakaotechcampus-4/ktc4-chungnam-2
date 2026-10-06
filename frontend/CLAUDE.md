@@ -35,6 +35,12 @@ React는 UI 상태(선택된 핀, 필터 값 등)만 갖는다.
 지금은 프론트 담당이 한 명이라 이 문서 하나로 충분하다. 인원이 늘면 backend처럼
 `frontend/<feature>/CLAUDE.md`로 쪼갠다.
 
+## 디자인 규칙
+
+화면을 만들거나 고치기 전에 `frontend/DESIGN.md`를 읽는다(글자 위계·반경·컴포넌트·지도 버튼·토스트 규칙, Do/Don't).
+접근성 기준은 WCAG 2.2 AA + 터치 44×44px(`frontend/PRODUCT.md`). Figma는 참고안이다 — 더 나은 안은 근거를 붙여 제안하고,
+정해지면 DESIGN.md와 Figma를 같이 고친다. 색 값은 `src/styles/tokens.css`만 쓴다.
+
 ## 코드 품질
 
 `docs/code-quality.md` 참고. 이 쪽은 "요청받은 범위만 건드렸는가"·"에러를 조용히 삼키지 않는가"가
