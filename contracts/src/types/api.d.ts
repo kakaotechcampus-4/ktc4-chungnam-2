@@ -868,7 +868,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 카테고리별 추천 버튼 활성화 판정 (5-4). 키는 RecommendCategory 값만 온다 — 숙소는 추천 대상이 아니다 (#145) */
+        /** 카테고리별 추천 버튼 활성화 판정 (5-4). 의견이 남은 핀 수가 ceil(N/2) 이상이면 ready, N은 지도 전체 구성원 수 (#360). 키는 RecommendCategory 값만 온다 — 숙소는 추천 대상이 아니다 (#145) */
         get: {
             parameters: {
                 query?: never;
@@ -1857,8 +1857,9 @@ export interface components {
         };
         Readiness: {
             ready?: boolean;
+            /** @description 그 카테고리에서 의견(♥/△/🚫)이 하나라도 남은 핀의 수. 핀 하나는 반응이 몇 개든 1로 센다. 삭제된 핀 제외 (#360) */
             answered_count?: number;
-            /** @description ceil(N/2). N의 정의는 결정 이슈 미결 */
+            /** @description ceil(N/2). N은 지도 전체 구성원 수다 (#360). ready는 answered_count >= required_count */
             required_count?: number;
         };
         EvidenceLine: {

@@ -33,12 +33,9 @@ export const recommendHandlers = [
     const result: Record<string, { ready: boolean; answered_count: number; required_count: number }> = {};
     for (const category of RECOMMEND_CATEGORIES) {
       const pinsInCategory = Object.values(store.pins).filter((p) => p.map_id === mapId && p.category === category);
-      const answeredUsers = new Set<string>();
-      for (const pin of pinsInCategory) {
-        if (!pin.id) continue;
-        for (const r of store.reactions[pin.id] ?? []) answeredUsers.add(r.user_id!);
-      }
-      result[category] = { ready: answeredUsers.size >= required, answered_count: answeredUsers.size, required_count: required };
+      // 의견(♥/△/🚫)이 하나라도 남은 핀의 수다. 핀 하나는 반응이 몇 개든 1로 센다 (#360).
+      const answered = pinsInCategory.filter((pin) => pin.id && (store.reactions[pin.id] ?? []).length > 0).length;
+      result[category] = { ready: answered >= required, answered_count: answered, required_count: required };
     }
     return HttpResponse.json(result);
   }),
