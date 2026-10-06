@@ -331,3 +331,18 @@ get_place_gateway`, `authz/deps.py::get_membership_gateway`와 같은 패턴). `
   콜백은 카카오 호출 **전에** state를 검증하고, 성공·실패 모두 쿠키를 지운다(실패 때는 예외 대신 같은 에러 봉투 응답을 만들어 쿠키 삭제를 실어 보낸다).
 - 쿠키는 **백엔드 오리진**에 붙는다 — 로그인 시작(`/auth/kakao/login`)과 콜백(`KAKAO_REDIRECT_URI`)이 같은 호스트여야 한다(로컬은 `localhost`로 통일, `openapi-workflow.md` 5절과 같은 주의).
 - 테스트 72개(auth): 다른 브라우저의 콜백 링크 거절, 같은 링크 두 번째 거절, state 누락·불일치·서명 위조·만료, 정상 흐름, 실패 시에도 쿠키 삭제, state 쿠키가 세션으로 통하지 않음. state 검증을 끄면 7개가 실패하는 것을 확인했다.
+
+## #315 — 카카오 콜백 실패를 진입점으로 돌려보내기 (2026-10-04) — 루트 확인 요청
+
+계약(`docs/api-spec.yaml` `/auth/kakao/callback`, CHANGELOG 2026-10-04 두 번째)대로 구현했다. 스펙·docs는 건드리지 않았다.
+
+### 루트가 판단할 것
+- **탈퇴한 계정으로 로그인하면** 스펙의 `login_error` 4개 값 어디에도 맞지 않는다(카카오 실패도 서버 오류도 아님). 지금은 `server_error`로 보낸다. FE가 "탈퇴한 계정입니다"를 따로 보여 주려면 값(예: `withdrawn`)을 스펙에 추가해야 한다.
+- 스펙 `login_error` 설명은 구현과 일치한다. 다만 `code`가 비어 있으면(빈 문자열) `cancelled`로 본다 — 스펙 문구("code가 없음")의 연장이다.
+
+### 구현 메모
+- 순서: state 검증 → `error` 쿼리·`code` 없음(`cancelled`) → 카카오 호출. 위조된 요청에는 카카오를 부르지 않고, state가 틀리면 `error`가 붙어 있어도 `invalid_state`다.
+- `service.KakaoApiError`(AppError 하위, `UNAUTHORIZED`): 카카오 HTTP 비200·네트워크 오류·JSON 아님·`access_token`/`id` 누락. 콜백이 `kakao_failed`로 돌려보내는 근거다. 그 밖의 예외는 `server_error`(세션 롤백 후)이고 로그에는 예외 **종류**만 남긴다(응답 본문·토큰·예외 메시지 금지).
+- 기존 쿼리가 있는 진입점 주소는 보존하고 같은 이름의 `login_error`만 대체한다.
+- `/me`의 "이중 조회"는 같은 요청 세션의 identity map에서 나와 SQL이 한 번만 나간다(`get_db_session` 캐시) — 바꾸지 않았다.
+- FE: `login_error` 값별 안내는 FE 몫이다. 목 서버(`contracts/mocks/handlers/auth.ts`)가 실패 경로를 흉내 내는지는 루트 확인.

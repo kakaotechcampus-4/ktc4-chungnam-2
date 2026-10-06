@@ -155,6 +155,36 @@ def test_build_check_known_value_uses_given_passes():
     assert check.needs_check is False
 
 
+@pytest.mark.parametrize("fact_key, policy, known, value, passes, label", [
+    ("spicy_focused", "exclude", True, False, True, "매운맛 전문점 아님"),   # 통과한 실격
+    ("spicy_focused", "exclude", True, True, False, "매운맛 전문 해당"),     # 탈락한 실격 — 걸린 이유
+    ("spicy_focused", "exclude", False, None, True, "매운맛 전문 확인 필요"),
+    ("contains_shellfish", "exclude", False, None, False, "갑각류 확인 필요"),  # 안전 조건 모름 → 실격이어도 이름이 보인다
+    ("cuisine_korean", "pass", True, True, True, "한식"),                    # 참인 선호
+    ("quiet", "pass", True, False, False, "조용한 곳 아님"),                  # 거짓인 선호
+    ("quiet", "pass", False, None, True, "조용한 곳 확인 필요"),
+    ("price_bucket", "pass", True, "low", True, "착한가격업소"),             # 값을 문장에 녹인다
+    ("price_bucket", "pass", True, "mid", True, "가격대 mid"),
+    ("price_bucket", "pass", False, None, True, "가격대 확인 필요"),
+    ("is_open", "pass", False, None, True, "영업 여부 확인 필요"),
+])
+def test_build_check_label_is_human_readable(fact_key, policy, known, value, passes, label):
+    check = core.build_check(fact_key, policy, known=known, value=value, passes=passes)
+    assert check.label == label
+    assert check.label not in ("True", "False", "확인 필요", "확인 불가")
+
+
+@pytest.mark.parametrize("wants, truth, label", [
+    (True, True, "조용함"), (True, False, "조용한 곳 아님"),
+    (False, False, "조용한 곳 제외"), (False, True, "조용한 곳 제외 안 됨"),
+])
+def test_to_satisfaction_checks_uses_the_same_label_rule(wants, truth, label):
+    check = core.build_check("quiet", "pass", known=True, value=truth, passes=truth)
+    (shown,) = core.to_satisfaction_checks([check], {"quiet": wants})
+    assert shown.label == label
+    assert shown.label == core.condition_label("quiet", satisfied=(truth == wants), wants=wants)
+
+
 # ---------- apply_disqualifier_filters ----------
 
 def test_apply_disqualifier_filters_fails_candidate_with_any_failing_check():

@@ -50,6 +50,11 @@ declare namespace kakao.maps {
     setZIndex(zIndex: number): void
   }
 
+  class Polyline {
+    constructor(options: { path: LatLng[]; strokeWeight?: number; strokeColor?: string; strokeOpacity?: number; strokeStyle?: string })
+    setMap(map: Map | null): void
+  }
+
   /** autoload=false 로 받은 SDK 를 실제로 초기화한다. */
   function load(callback: () => void): void
 }

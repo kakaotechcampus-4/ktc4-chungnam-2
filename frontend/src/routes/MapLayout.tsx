@@ -12,6 +12,9 @@ import { useMapEvents } from '@/features/map/realtime'
 import { usePinFilters } from '@/features/map/usePinFilters'
 import { useMapQuery } from '@/features/maps/queries'
 import { usePlaceSearchQuery } from '@/features/search/queries'
+import { toRouteDrawings } from '@/features/shortlist/model'
+import { useRouteQuery } from '@/features/shortlist/queries'
+import { useRouteStore } from '@/features/shortlist/routeStore'
 import { useSearchStore } from '@/features/search/searchStore'
 import { TAB_BAR_H } from '@/features/shell/layout'
 import type { ControlKey } from '@/features/shell/MapControls'
@@ -32,10 +35,14 @@ export default function MapLayout() {
   const { data: allPins = [] } = usePinsQuery(mapId)
   const memberCount = useMapQuery(mapId).data?.memberCount ?? 0
   const { filters, setFilter } = usePinFilters()
-  // 마커와 목록이 같은 필터를 본다. 다른 탭엔 필터가 없어 전부 보인다.
-  const pins = filterPins(allPins, filters)
   const connection = useMapEvents(mapId)
   const onMarkingTab = useMatch('/maps/:mapId') !== null
+  const onShortlistTab = useMatch('/maps/:mapId/shortlist') !== null
+  // 마커와 목록이 같은 필터를 본다. 확정 탭은 확정 핀만, 다른 탭엔 필터가 없어 전부 보인다.
+  const pins = onShortlistTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters)
+  const routeOn = useRouteStore((s) => s.on) && onShortlistTab
+  const routes = useRouteQuery(mapId, routeOn).data
+  const routeDrawings = useMemo(() => (routeOn && routes ? toRouteDrawings(routes, allPins) : []), [routeOn, routes, allPins])
   const markingStage = useSheetStore((s) => s.stages.map)
   const setStage = useSheetStore((s) => s.setStage)
   const search = useSearchStore()
@@ -148,7 +155,9 @@ export default function MapLayout() {
         selectedPinId={selectedPinId}
         memberCount={memberCount}
         results={searchMarkers}
-        onSelect={(pinId) => navigate(`/maps/${mapId}?pin=${encodeURIComponent(pinId)}`)}
+        route={routeDrawings}
+        // 확정 탭에서 누른 핀은 확정 탭 안에서 연다(「‹ 확정된 장소」로 돌아온다).
+        onSelect={(pinId) => navigate(`/maps/${mapId}${onShortlistTab ? '/shortlist' : ''}?pin=${encodeURIComponent(pinId)}`)}
         onReady={onMapReady}
         onMovingChange={onMovingChange}
       />

@@ -1,6 +1,7 @@
 """힌트 → 자체 DB 장소 한 건 매칭의 판단(순수 함수). DB를 모른다 — 후보 목록을 받아 고른다.
 
 원칙: 엉뚱한 곳에 핀이 꽂히는 것보다 거절(None)이 낫다. 확신이 낮으면 None.
+반경은 여기서 다시 재지 않는다 — 후보를 건네는 쪽(repository의 ST_DWithin)이 한 번만 판정한다(#316).
 실제 DB 구현(api.match_place)과 메모리 대역(testing.FakePlaces)이 같은 규칙을 쓰도록 여기 한 곳에 둔다.
 """
 
@@ -16,7 +17,7 @@ from places.schemas import PlaceHint, PlaceMatch
 from places.sources.base import distance_m
 
 OWN_CATEGORIES = categories.pinnable()   # 자체 DB가 담는 분류(common/categories.py, #191·#280)
-MAX_RADIUS_M = 300.0     # 힌트 좌표에서 이 거리 안의 후보만 본다
+MAX_RADIUS_M = 300.0     # 힌트 좌표에서 이 거리 안의 후보만 본다 — 판정은 후보를 주는 쪽(DB의 ST_DWithin)이 한다
 MAX_CANDIDATES = 20      # DB에서 가져올 후보 수 상한(가까운 순)
 NAME_MIN_SCORE = 0.8     # 이름 유사도가 이보다 낮으면 같은 곳으로 보지 않는다
 AMBIGUITY_GAP_M = 30.0   # 이름 점수가 비슷한 2등이 1등보다 이만큼 더 멀어야 1등을 고른다(동명 점포)
@@ -68,9 +69,7 @@ def pick_match(hint: PlaceHint, candidates: Sequence[Candidate]) -> PlaceMatch |
     for c in candidates:
         if c.category != hint.category:
             continue
-        dist = distance_m(hint.lat, hint.lng, c.lat, c.lng)
-        if dist > MAX_RADIUS_M:
-            continue
+        dist = distance_m(hint.lat, hint.lng, c.lat, c.lng)   # 동명 점포 구분용 상대 거리 — 반경 판정이 아니다
         score = name_score(hint.name, c.name)
         if score >= NAME_MIN_SCORE:
             scored.append((score, dist, c))

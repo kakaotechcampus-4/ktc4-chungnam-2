@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from geoalchemy2 import Geography, Geometry, WKTElement
-from sqlalchemy import and_, cast, func, or_, select
+from sqlalchemy import Float, cast, func, literal, null, or_, select, union_all
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -19,7 +19,6 @@ from places.ingest import LabelRow, PlaceRow
 from places.matching import Candidate
 from places.models import Place, PlaceFact
 from places.schemas import Area, FactLabel, PlaceHint, PlaceInfo, PlaceRef
-from places.sources.base import distance_m
 
 _CHUNK = 1000
 
@@ -149,28 +148,50 @@ def find_candidates(db: Session, hint_lat: float, hint_lng: float, category: str
 
 def find_candidates_many(db: Session, hints: Sequence[PlaceHint]) -> list[list[Candidate]]:
     """find_candidates를 힌트 N개에 대해 쿼리 한 번으로 한다(N+1 방지). 힌트마다 가까운 순 상한 MAX_CANDIDATES와
-    같은 카카오 ID가 기록된 장소를 돌려준다 — 한 건씩 부른 것과 같은 후보 집합이다."""
+    같은 카카오 ID가 기록된 장소를 돌려준다 — 한 건씩 부른 것과 같은 후보 집합이다.
+
+    반경 판정·정렬·상한은 전부 DB가 한다(ST_DWithin/ST_Distance, 둘 다 타원체) — find_candidates와 같은 기준이라
+    파이썬에서 거리를 다시 계산하지 않는다. 힌트마다 `ORDER BY ST_Distance LIMIT`인 SELECT를 UNION ALL로 묶으므로
+    돌려받는 행은 최대 (서로 다른 힌트 수 × MAX_CANDIDATES) + 카카오 ID 일치 장소다."""
     if not hints:
         return []
     lat, lng = _lat_lng()
-    conds = [and_(Place.category == h.category, func.ST_DWithin(Place.geom, _geog(h.lat, h.lng), matching.MAX_RADIUS_M))
-             for h in hints]
+    cols = (Place.id, Place.name, Place.category, Place.kakao_place_id, lat, lng)
+    keys = list(dict.fromkeys((h.category, h.lat, h.lng) for h in hints))   # 같은 좌표·분류는 한 번만 묻는다
+    members = []
+    for i, (category, h_lat, h_lng) in enumerate(keys):
+        point = _geog(h_lat, h_lng)
+        members.append(
+            select(literal(i).label("hint_idx"), func.ST_Distance(Place.geom, point).label("dist"), *cols)
+            .where(Place.status == "open", Place.category == category,
+                   func.ST_DWithin(Place.geom, point, matching.MAX_RADIUS_M))
+            .order_by(func.ST_Distance(Place.geom, point), Place.id)
+            .limit(matching.MAX_CANDIDATES)
+            .subquery().select()
+        )
     kakao_ids = {h.kakao_place_id for h in hints if h.kakao_place_id}
     if kakao_ids:
-        conds.append(Place.kakao_place_id.in_(kakao_ids))
-    rows = db.execute(
-        select(Place.id, Place.name, Place.category, Place.kakao_place_id, lat, lng)
-        .where(Place.status == "open", or_(*conds))
-    ).all()
+        members.append(
+            select(literal(-1).label("hint_idx"), cast(null(), Float).label("dist"), *cols)
+            .where(Place.status == "open", Place.kakao_place_id.in_(kakao_ids))
+            .subquery().select()
+        )
+    union = union_all(*members).subquery()
+    rows = db.execute(select(union).order_by(union.c.hint_idx, union.c.dist, union.c.id)).all()   # 바깥 정렬이 가까운 순을 다시 보장한다
+
+    near_by_key: dict[tuple[str, float, float], list] = {k: [] for k in keys}
+    by_kakao_id: dict[str, list] = {}
+    for r in rows:
+        if r.hint_idx < 0:
+            by_kakao_id.setdefault(r.kakao_place_id, []).append(r)
+        else:
+            near_by_key[keys[r.hint_idx]].append(r)
     out: list[list[Candidate]] = []
     for h in hints:
-        near = sorted(
-            ((distance_m(h.lat, h.lng, r.lat, r.lng), r) for r in rows if r.category == h.category),
-            key=lambda t: t[0],
-        )
-        picked = [r for d, r in near if d <= matching.MAX_RADIUS_M][: matching.MAX_CANDIDATES]
+        picked = list(near_by_key[(h.category, h.lat, h.lng)])
         have = {r.id for r in picked}
-        picked += [r for r in rows if h.kakao_place_id and r.kakao_place_id == h.kakao_place_id and r.id not in have]
+        if h.kakao_place_id:
+            picked += [r for r in by_kakao_id.get(h.kakao_place_id, []) if r.id not in have]
         out.append([Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id) for r in picked])
     return out
 

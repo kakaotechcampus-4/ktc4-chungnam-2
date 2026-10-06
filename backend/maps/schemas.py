@@ -6,6 +6,7 @@ None으로 둔다. 라우터가 response_model_exclude_none=True를 쓰므로 �
 """
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -34,6 +35,8 @@ class Map(BaseModel):
     end_date: date
     region: MapRegion | None = None
     member_count: int
+    # 삭제되지 않은 공개 핀 수 — pins.api.count_public_pins_by_map으로 센다(#313).
+    pin_count: int | None = None
     # shortlist_items 개수 — shortlist에 api.py가 없어 이번 PR은 계산하지 않는다
     # (maps/for_Root.md 항목 5). 값이 없다는 사실 자체를 0으로 흐리지 않는다.
     confirmed_count: int | None = None
@@ -52,12 +55,17 @@ class InviteSummary(BaseModel):
     start_date: date
     end_date: date
     member_count: int
+    # 개수만 준다 — 핀의 이름·위치 등 내용은 로그인 전 화면에 주지 않는다(#313).
+    pin_count: int | None = None
     inviter_display_name: str
     expires_at: datetime
 
 
 class Member(BaseModel):
     user_id: str
+    # owner = maps.created_by(지도를 만든 사람), 나머지 member. memberships.role 컬럼이 아니라
+    # created_by가 정본이다(#313).
+    role: Literal["owner", "member"] | None = None
     # users 테이블이 없다(auth #4) — 채울 수 없다.
     display_name: str | None = None
     # 접속 상태 추적이 realtime에 아직 없다 — 채울 수 없다(maps/for_Root.md 항목 5).
