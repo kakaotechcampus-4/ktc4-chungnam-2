@@ -233,13 +233,13 @@ describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
   it("내 반응(my_reaction)과 구성원 의견 목록(reason_chip_ids 포함)", async () => {
     await fetch(`${BASE}/pins/pin_1/reaction`, {
       method: "PUT",
-      body: JSON.stringify({ type: "against", reason_text: "매워요", reason_chip_ids: ["too_spicy"] }),
+      body: JSON.stringify({ type: "against", reason_text: "매워요", reason_chip_ids: ["food_spicy"] }),
     });
     const list = await fetch(`${BASE}/maps/map_1/pins`).then((r) => r.json());
     expect(list.find((p: { id: string }) => p.id === "pin_1").my_reaction.type).toBe("against");
     const opinions = await fetch(`${BASE}/pins/pin_1/reactions`).then((r) => r.json());
     const mine = opinions.find((o: { user_id: string }) => o.user_id === "u_me");
-    expect(mine.reason_chip_ids).toEqual(["too_spicy"]);
+    expect(mine.reason_chip_ids).toEqual(["food_spicy"]);
     expect(typeof mine.display_name).toBe("string");
     await fetch(`${BASE}/pins/pin_1/reaction`, { method: "DELETE" });
     const after = await fetch(`${BASE}/maps/map_1/pins`).then((r) => r.json());
@@ -426,4 +426,74 @@ describe("realtime SSE (docs/events.md)", () => {
     expect(received).toMatch(/id: \d+/);
     expect(received).toMatch(/data: \{/);
   }, 10000);
+});
+
+describe("FE 요청 필드 6건과 반대 사유 칩 (2026-10-04, #60)", () => {
+  it("Pin.created_at — 시드 핀마다 있고, 새로 찍은 핀이 가장 최근이다", async () => {
+    const pins = await fetch(`${BASE}/maps/map_1/pins`).then((r) => r.json());
+    for (const p of pins) expect(Number.isNaN(Date.parse(p.created_at))).toBe(false);
+    const created = await fetch(`${BASE}/maps/map_1/pins`, {
+      method: "POST",
+      body: JSON.stringify({ category: "음식점", source: "search", place_id: "kakao:mock-1", place_name: "x", lat: 0, lng: 0 }),
+    });
+    if (created.status === 201) {
+      const pin = await created.json();
+      expect(Date.parse(pin.created_at)).toBeGreaterThanOrEqual(Math.max(...pins.map((p: { created_at: string }) => Date.parse(p.created_at))));
+    }
+  });
+
+  it("counts — 의견을 남긴 구성원 수/전체 구성원 수", async () => {
+    const counts = await fetch(`${BASE}/maps/map_1/counts`).then((r) => r.json());
+    expect(counts.members_total).toBe(4);
+    // 시드 반응 5개 = u_me·u_2·u_3·u_4 → 4명이 남겼다
+    expect(counts.members_with_opinion).toBe(4);
+  });
+
+  it("Map.pin_count·InviteSummary.pin_count — 지금 있는 핀 수", async () => {
+    const map = await fetch(`${BASE}/maps/map_1`).then((r) => r.json());
+    expect(map.pin_count).toBe(3);
+    await fetch(`${BASE}/pins/pin_3`, { method: "DELETE" });
+    const after = await fetch(`${BASE}/maps/map_1`).then((r) => r.json());
+    expect(after.pin_count).toBe(2);
+    const inv = await fetch(`${BASE}/maps/map_1/invite`, { method: "POST" }).then((r) => r.json());
+    const summary = await fetch(`${BASE}/invites/${inv.token}`).then((r) => r.json());
+    expect(summary.pin_count).toBe(2);
+    expect(summary.pins).toBeUndefined(); // 개수만, 핀 내용은 주지 않는다
+  });
+
+  it("Member.role — 방장은 owner 한 명, 나머지는 member", async () => {
+    const members = await fetch(`${BASE}/maps/map_1/members`).then((r) => r.json());
+    expect(members.filter((m: { role: string }) => m.role === "owner")).toHaveLength(1);
+    expect(members.every((m: { role: string }) => ["owner", "member"].includes(m.role))).toBe(true);
+  });
+
+  it("칩 목록 — 카테고리 칩 다음에 공통 칩, 숙소·기타는 빈 배열", async () => {
+    const food = await fetch(`${BASE}/categories/${encodeURIComponent("음식점")}/reason-chips`).then((r) => r.json());
+    expect(food.map((c: { id: string }) => c.id)).toContain("food_spicy");
+    expect(food.slice(-2).map((c: { id: string }) => c.id)).toEqual(["common_not_my_taste", "common_far"]);
+    const lodging = await fetch(`${BASE}/categories/${encodeURIComponent("숙소")}/reason-chips`).then((r) => r.json());
+    expect(lodging).toEqual([]);
+  });
+
+  it("칩 id 검증 — 이름을 그대로 보내거나 다른 카테고리 칩은 422 VALIDATION_ERROR", async () => {
+    const byName = await fetch(`${BASE}/pins/pin_1/reaction`, { method: "PUT", body: JSON.stringify({ type: "against", reason_chip_ids: ["매워요"] }) });
+    expect(byName.status).toBe(422);
+    expect((await byName.json()).code).toBe("VALIDATION_ERROR");
+    const otherCategory = await fetch(`${BASE}/pins/pin_1/reaction`, { method: "PUT", body: JSON.stringify({ type: "against", reason_chip_ids: ["cafe_noisy"] }) });
+    expect(otherCategory.status).toBe(422);
+    const common = await fetch(`${BASE}/pins/pin_1/reaction`, { method: "PUT", body: JSON.stringify({ type: "against", reason_chip_ids: ["common_far"] }) });
+    expect(common.status).toBe(200);
+  });
+
+  it("reaction.changed — 남긴 사람과 종류가 실린다(삭제면 type null)", async () => {
+    const before = store.eventLog.length;
+    await fetch(`${BASE}/pins/pin_1/reaction`, { method: "PUT", body: JSON.stringify({ type: "like" }) });
+    await fetch(`${BASE}/pins/pin_1/reaction`, { method: "DELETE" });
+    const events = store.eventLog.slice(before).filter((e) => e.type === "reaction.changed");
+    expect(events).toHaveLength(2);
+    const [put, del] = events.map((e) => e.data as { user_id: string; display_name: string; type: string | null });
+    expect(put).toMatchObject({ user_id: "u_me", type: "like" });
+    expect(typeof put.display_name).toBe("string");
+    expect(del.type).toBeNull();
+  });
 });

@@ -22,7 +22,7 @@ def test_get_reactions_returns_only_responders_with_display_name_and_chips(app_c
     ensure_users(db_session, "user_2", display_names={"user_2": "민수"})
     db_session.commit()
     pin = _insert_pin(db_session, place_id="r157_list")
-    _react(app_client, pin, "user_2", {"type": "against", "reason_text": "멀어요", "reason_chip_ids": ["far"]})
+    _react(app_client, pin, "user_2", {"type": "against", "reason_text": "멀어요", "reason_chip_ids": ["common_far"]})
     _react(app_client, pin, "user_1", {"type": "like"})
 
     resp = app_client.get(f"/pins/{pin.id}/reactions", cookies=_auth("user_1"))
@@ -32,7 +32,7 @@ def test_get_reactions_returns_only_responders_with_display_name_and_chips(app_c
     mine = next(r for r in body if r["user_id"] == "user_2")
     assert mine["type"] == "against"
     assert mine["reason_text"] == "멀어요"
-    assert mine["reason_chip_ids"] == ["far"]
+    assert mine["reason_chip_ids"] == ["common_far"]
     assert mine["display_name"] == "민수"
     like = next(r for r in body if r["user_id"] == "user_1")
     assert "reason_text" not in like and "reason_chip_ids" not in like
@@ -69,8 +69,8 @@ def test_put_reaction_response_omits_reason_text_when_absent_and_echoes_chips(ap
     pin = _insert_pin(db_session, place_id="r157_put_shape")
     body = _react(app_client, pin, "user_2").json()
     assert "reason_text" not in body and "reason_chip_ids" not in body
-    body = _react(app_client, pin, "user_2", {"type": "neutral", "reason_chip_ids": ["a"]}).json()
-    assert body["reason_chip_ids"] == ["a"]
+    body = _react(app_client, pin, "user_2", {"type": "neutral", "reason_chip_ids": ["common_not_my_taste"]}).json()
+    assert body["reason_chip_ids"] == ["common_not_my_taste"]
 
 
 # ---- Pin.my_reaction ----

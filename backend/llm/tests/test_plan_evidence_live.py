@@ -54,11 +54,12 @@ def test_wants_fixture_cases_against_real_model():
     cases = json.loads((Path(__file__).parent / "fixtures" / "wants_cases.json").read_text(encoding="utf-8"))
     reasons = [{"author_id": "u", "source": "reaction", "text": c["text"], "badge": c["badge"], "fact_key": None} for c in cases]
 
-    output = llm_client.call_planner(llm_client.get_client(), reasons)
+    # 서비스 경로여야 10개씩 묶음이 적용된다 — call_planner를 직접 부르면 게이트웨이 2000토큰 상한에 걸린다(#325).
+    lines = service._model_planner(llm_client.get_client(), reasons)
 
     wrong = [
         (c["text"], (c["fact_key"], c["wants"]), (o.fact_key, o.wants))
-        for c, o in zip(cases, output.evidence_lines)
+        for c, o in zip(cases, lines)
         if (o.fact_key, o.wants) != (c["fact_key"], c["wants"])
     ]
     for text, want, got in wrong:

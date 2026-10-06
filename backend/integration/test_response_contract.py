@@ -153,6 +153,13 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.put(f"/pins/{pin_ids[0]}/reaction", json={"type": "like"}).status_code == 200
     assert b.put(f"/pins/{pin_ids[0]}/reaction", json={"type": "like"}).status_code == 200
     assert a.put(f"/pins/{pin_ids[1]}/reaction", json={"type": "against"}).status_code == 422       # 사유 없음
+    chips = a.get("/categories/음식점/reason-chips")
+    assert chips.status_code == 200 and chips.json()                                                    # 반대 사유 칩(#312)
+    assert a.get("/categories/숙소/reason-chips").json() == []
+    bad_chip = {"type": "against", "reason_chip_ids": ["cafe_noisy"]}
+    assert a.put(f"/pins/{pin_ids[1]}/reaction", json=bad_chip).status_code == 422                   # 다른 카테고리 칩
+    chip_only = {"type": "against", "reason_chip_ids": [chips.json()[0]["id"]]}
+    assert a.put(f"/pins/{pin_ids[1]}/reaction", json=chip_only).status_code == 200
     for c in (a, b):
         assert c.put(f"/pins/{pin_ids[1]}/reaction", json={"type": "against", "reason_text": "별로"}).status_code == 200
 

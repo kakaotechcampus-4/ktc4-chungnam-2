@@ -26,41 +26,71 @@ _HTTP_TIMEOUT_SECONDS = 5.0
 _USER_IDENTITY_CONSTRAINT = "uq_users_provider_identity"
 
 
+class KakaoApiError(AppError):
+    """카카오 토큰 교환·프로필 조회가 실패했다 — 상태 코드, 네트워크 오류, 응답 모양이 기대와 다른 경우 모두.
+    콜백이 `login_error=kakao_failed`로 돌려보내려고 다른 AppError(탈퇴 계정 등)와 구분한다.
+    응답 본문·토큰은 메시지·detail·로그 어디에도 넣지 않는다 — 실패 종류(`reason`)만."""
+
+    def __init__(self, message: str, *, reason: str, kakao_status: int | None = None):
+        detail = {"reason": reason}
+        if kakao_status is not None:
+            detail["kakao_status"] = kakao_status
+        super().__init__("UNAUTHORIZED", message, detail=detail)
+
+
+def _kakao_request(send, *, message: str) -> dict:
+    """카카오 HTTP 호출 한 번 — 200이 아니거나, 연결에 실패하거나, JSON 객체가 아니면 KakaoApiError."""
+    try:
+        resp = send()
+    except httpx.HTTPError as exc:
+        raise KakaoApiError(message, reason=type(exc).__name__) from None   # 요청 URL·헤더가 든 예외 본문은 버린다
+    if resp.status_code != 200:
+        raise KakaoApiError(message, reason="http_status", kakao_status=resp.status_code)
+    try:
+        body = resp.json()
+    except ValueError:
+        raise KakaoApiError(message, reason="invalid_json") from None
+    if not isinstance(body, dict):
+        raise KakaoApiError(message, reason="unexpected_shape")
+    return body
+
+
 def _exchange_kakao_code(code: str) -> str:
     """인가 코드 → 액세스 토큰. 실패를 조용히 삼키지 않는다 — OAuth 콜백 실패가 로그인
     성공처럼 처리되면 안 된다(auth/CLAUDE.md "코드 품질" 절)."""
-    resp = httpx.post(
-        KAKAO_TOKEN_URL,
-        data={
-            "grant_type": "authorization_code",
-            "client_id": settings.kakao_client_id,
-            "client_secret": settings.kakao_client_secret,
-            "redirect_uri": settings.kakao_redirect_uri,
-            "code": code,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=_HTTP_TIMEOUT_SECONDS,
+    body = _kakao_request(
+        lambda: httpx.post(
+            KAKAO_TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "client_id": settings.kakao_client_id,
+                "client_secret": settings.kakao_client_secret,
+                "redirect_uri": settings.kakao_redirect_uri,
+                "code": code,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=_HTTP_TIMEOUT_SECONDS,
+        ),
+        message="카카오 인증에 실패했습니다",
     )
-    if resp.status_code != 200:
-        raise AppError(
-            "UNAUTHORIZED", "카카오 인증에 실패했습니다",
-            detail={"kakao_status": resp.status_code},
-        )
-    return resp.json()["access_token"]
+    token = body.get("access_token")
+    if not isinstance(token, str) or not token:
+        raise KakaoApiError("카카오 인증에 실패했습니다", reason="missing_access_token")
+    return token
 
 
 def _fetch_kakao_profile(access_token: str) -> dict:
-    resp = httpx.get(
-        KAKAO_USERINFO_URL,
-        headers={"Authorization": f"Bearer {access_token}"},
-        timeout=_HTTP_TIMEOUT_SECONDS,
+    body = _kakao_request(
+        lambda: httpx.get(
+            KAKAO_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=_HTTP_TIMEOUT_SECONDS,
+        ),
+        message="카카오 사용자 정보를 가져오지 못했습니다",
     )
-    if resp.status_code != 200:
-        raise AppError(
-            "UNAUTHORIZED", "카카오 사용자 정보를 가져오지 못했습니다",
-            detail={"kakao_status": resp.status_code},
-        )
-    return resp.json()
+    if body.get("id") is None:
+        raise KakaoApiError("카카오 사용자 정보를 가져오지 못했습니다", reason="missing_user_id")
+    return body
 
 
 def _find_user(db: Session, *, provider: str, provider_user_id: str) -> User | None:
