@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from realtime.core import GRACE, advance
+from realtime.core import GRACE, CloseScope, advance, close_after
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -43,3 +43,34 @@ def test_fresh_gap_waits_without_emitting():
     """구멍이 막 생겼을 때(아직 GRACE 안 지남)는 아무 것도 안 내보내고 기다린다."""
     emit, last, gaps = advance(0, [Row(5)], NOW, {})
     assert emit == [] and last == 0 and 1 in gaps
+
+
+# ── close_after: 어떤 행 다음에 어떤 구독을 닫는가 (#369) ──
+
+@dataclass(frozen=True)
+class EventRow:
+    map_id: str
+    type: str
+    payload: dict
+
+
+def test_map_deleted_closes_every_subscription_on_the_map():
+    scope = close_after(EventRow("m1", "map.deleted", {"map_id": "m1"}))
+    assert scope == CloseScope("m1")
+    assert scope.covers("anyone")
+
+
+def test_member_left_closes_only_that_users_subscriptions():
+    scope = close_after(EventRow("m1", "member.left", {"map_id": "m1", "user_id": "u1", "new_owner_user_id": "u2"}))
+    assert scope == CloseScope("m1", "u1")
+    assert scope.covers("u1")
+    assert not scope.covers("u2")
+
+
+def test_member_left_without_user_id_closes_nothing():
+    assert close_after(EventRow("m1", "member.left", {"map_id": "m1"})) is None
+
+
+def test_other_events_close_nothing():
+    assert close_after(EventRow("m1", "pin.created", {})) is None
+    assert close_after(EventRow("m1", "member.joined", {"user_id": "u1"})) is None

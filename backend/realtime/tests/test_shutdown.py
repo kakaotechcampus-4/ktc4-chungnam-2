@@ -8,6 +8,7 @@ import time
 import pytest
 
 import main
+from auth.schemas import CurrentUser
 from realtime.dispatcher import Dispatcher
 from realtime.router import public_events
 
@@ -34,7 +35,9 @@ async def test_lifespan_exit_is_fast_and_ordered_with_open_sse(monkeypatch):
     sse_done = asyncio.Event()
 
     async def consume():
-        response = await public_events(request=_AliveRequest(), mapId="m1", last_event_id=None)
+        response = await public_events(
+            request=_AliveRequest(), mapId="m1", user=CurrentUser(user_id="u1"), last_event_id=None
+        )
         async for _ in response.body_iterator:
             pass
         events.append("sse_closed")
@@ -75,7 +78,7 @@ async def test_run_forever_stops_by_signal_and_can_restart(monkeypatch):
 async def test_subscribe_after_close_is_already_closed():
     d = Dispatcher()
     d.close_subscriptions()
-    sub = d.subscribe("m1", channel="public")
+    sub = d.subscribe("m1", channel="public", user_id="u1")
     from realtime.dispatcher import CLOSED
 
     assert sub.queue.get_nowait() is CLOSED
@@ -90,7 +93,7 @@ async def test_lifespan_leaves_no_closed_state_behind(monkeypatch):
     monkeypatch.setattr(main.engine, "dispose", lambda *a, **k: None)
     async with main.lifespan(main.app):
         pass
-    sub = d.subscribe("m-after", channel="public")
+    sub = d.subscribe("m-after", channel="public", user_id="u1")
     try:
         assert sub.queue.empty()
     finally:
