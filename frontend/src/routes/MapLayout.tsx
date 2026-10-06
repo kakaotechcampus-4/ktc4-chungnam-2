@@ -186,6 +186,7 @@ export default function MapLayout() {
         }}
         onReady={onMapReady}
         onMovingChange={onMovingChange}
+        leftInset={desktop && panelOpen ? PANEL_W : 0}
       />
 
       {/* 모바일은 'contents' 라 틀이 없고 안쪽이 각자 화면에 붙는다. 넓은 화면은 이 틀이 왼쪽 패널이다. */}
