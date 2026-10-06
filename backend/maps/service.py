@@ -119,6 +119,16 @@ def _map_response(db: Session, map_row: MapRow, *, viewer_id: str, with_next_own
     )
 
 
+def _my_map_count(db: Session, user_id: str) -> int:
+    """내 지도 수 — list_maps와 같은 기준(내 멤버십이 있고 삭제되지 않은 지도). 나간 지도는 행이 없어 안 센다."""
+    return db.execute(
+        select(func.count())
+        .select_from(MembershipRow)
+        .join(MapRow, MapRow.id == MembershipRow.map_id)
+        .where(MembershipRow.user_id == user_id, MapRow.deleted_at.is_(None))
+    ).scalar_one()
+
+
 def create_map(db: Session, *, req: MapCreateRequest, creator_id: str) -> Map:
     """maps 행 + owner 멤버십 행을 같은 트랜잭션에 만든다. 멤버십이 빠지면 생성자가 자기
     지도의 비구성원이 되어 이후 모든 요청이 404가 된다 — 테스트가 DB를 직접 확인한다.
@@ -128,6 +138,7 @@ def create_map(db: Session, *, req: MapCreateRequest, creator_id: str) -> Map:
     (maps/CLAUDE.md 완료 정의와의 모순 — maps/for_Root.md 항목 2로 보고). 로그만 찍는 no-op
     훅은 완료 정의 체크박스만 채우는 가짜 구현이라 만들지 않는다."""
     new_map = core.validate_map_create(req.title, req.start_date, req.end_date, req.region)
+    core.check_map_limit(_my_map_count(db, creator_id))
 
     map_row = MapRow(
         title=new_map.title, start_date=new_map.start_date, end_date=new_map.end_date,
@@ -249,6 +260,12 @@ def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
     날리는데, 여기선 boolean 하나만 있으면 되고 pins/service.py::set_reaction이 이미
     pg_insert(...).on_conflict_do_update를 쓰는 선례가 있다(마이너 스킬 디테일)."""
     invite_row = _acceptable_invite_or_raise(db, token)
+    already_member = db.execute(
+        select(MembershipRow.id).where(MembershipRow.map_id == invite_row.map_id, MembershipRow.user_id == user_id)
+    ).first() is not None
+    if not already_member:
+        # 이미 구성원인 지도의 재수락은 새 참여가 아니라 막지 않는다(#369 15번).
+        core.check_map_limit(_my_map_count(db, user_id))
 
     stmt = (
         pg_insert(MembershipRow)

@@ -17,6 +17,9 @@ from maps.schemas import InviteSummary, Map, MapRegion, Member, NextOwner
 
 WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 
+# 내 지도 상한(#369 15번) — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다.
+MAP_LIMIT = 10
+
 # 목서버(contracts/mocks/handlers/maps.ts:33)와 동일한 7일 — 정본이 없다(maps/for_Root.md 보고).
 INVITE_TTL = timedelta(days=7)
 
@@ -84,6 +87,12 @@ def validate_map_create(
     return NewMap(
         title=normalized_title, start_date=start_date, end_date=end_date, region=normalized_region
     )
+
+
+def check_map_limit(my_map_count: int) -> None:
+    """지도를 만들거나 새로 참여하기 전에 부른다. 이미 MAP_LIMIT개면 409 MAP_LIMIT(detail: limit, count)."""
+    if my_map_count >= MAP_LIMIT:
+        raise AppError("MAP_LIMIT", detail={"limit": MAP_LIMIT, "count": my_map_count})
 
 
 def invite_expires_at(now: datetime) -> datetime:

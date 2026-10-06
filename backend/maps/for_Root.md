@@ -1,7 +1,8 @@
 # backend/maps → 루트 보고 (#369 2단계 maps 몫 — 지도 삭제·나가기·방장 위임)
 
 브랜치 `docs/map-delete-leave-369`. 마이그레이션 `0021_maps_delete_leave`(`maps.deleted_at`,
-`uq_memberships_one_owner_per_map` = `memberships(map_id) WHERE role='owner'`, 로컬 DB에서 `upgrade → downgrade -1 → upgrade` 확인). maps 테스트 97개(이번에 늘어난 것 13개, 기존 84개), `integration` 103 passed. 백엔드 전체 실패 6개는 전부 재시도 상한 테스트로 루트의 로컬 시연용
+`uq_memberships_one_owner_per_map` = `memberships(map_id) WHERE role='owner'`, 로컬 DB에서 `upgrade → downgrade -1 → upgrade` 확인).
+내 지도 10개 상한(62ccd92)도 같이 했다(5절). maps 테스트 104개(이번에 늘어난 것 20개, 기존 84개), `integration` 103 passed. 백엔드 전체 실패 6개는 전부 재시도 상한 테스트로 루트의 로컬 시연용
 `ATTEMPT_LIMIT=100` 때문이다(깨끗한 브랜치 head에서는 recommend 206 passed). 로컬 `.env`가 `PLACES_MODE=real`·`LLM_MODE=real`이면
 integration 9개가 브랜치 head에서도 실패해서, `PLACES_MODE=dev LLM_MODE=dev`로 돌렸다.
 
@@ -9,7 +10,7 @@ integration 9개가 브랜치 head에서도 실패해서, `PLACES_MODE=dev LLM_M
 - `authz/policy.py`: `map.leave`(member), `map.delete`(owner), `ACTION_RESOURCE_TYPES`에 둘 다 `map`. 라우터가
   `require_on_map("map.delete"/"map.leave")`를 쓰려면 필요했다. `test_policy_drift` 3개가 이걸로 통과한다.
 - `authz/schemas.py`: `Permissions.can_leave`.
-- `common/errors.py`: `OWNER_CANNOT_LEAVE`(409). `test_catalog_matches_docs`가 통과한다.
+- `common/errors.py`: `OWNER_CANNOT_LEAVE`(409), `MAP_LIMIT`(409). `test_catalog_matches_docs`가 통과한다.
 - `pins/api.py`: `delete_reactions_by_user_in_map(db, *, user_id, map_id)` 추가.
 - `recommend/api.py`, `recommend/service.py`: `delete_evidence_lines_by_author_in_map(db, *, user_id, map_id)` 추가. run과 후보는 건드리지 않는다.
 - `integration/test_response_contract.py`: `test_map_leave_and_delete_match_the_openapi_spec`(204·403·409·404). `test_spec_route_coverage.py`의 `KNOWN_MISSING` 두 줄 삭제.
@@ -33,6 +34,12 @@ integration 9개가 브랜치 head에서도 실패해서, `PLACES_MODE=dev LLM_M
 - **realtime**: 삭제된 지도는 게이트웨이가 404를 주므로 새 SSE 구독은 막힌다. 이미 연결된 구독자에게 `map.deleted`를 보낸 뒤 닫는 순서는 realtime 몫이다.
 - **동시성**: 두 세션이 동시에 나가는 테스트는 만들지 않았다. `SELECT ... FOR UPDATE`로 잠그고, 잠근 뒤 멤버십을 다시 읽는 순서만 코드로 보장한다.
   방장 2명은 부분 유니크 인덱스가 막는다(`test_two_owners_on_one_map_is_impossible`).
+
+## 5. 내 지도 10개 상한 (62ccd92)
+- 상한은 `maps/core.py::MAP_LIMIT = 10` 한 곳이고, 판정은 `core.check_map_limit(count)`가 한다(`AppError("MAP_LIMIT", detail={"limit", "count"})`).
+- 세는 기준은 `service._my_map_count`다. `list_maps`와 같이 내 멤버십이 있고 삭제되지 않은 지도를 센다. 나간 지도는 행이 없어 자연히 빠진다.
+- `create_map`은 입력을 검증한 뒤 센다(입력이 잘못됐으면 422가 409보다 먼저다). `accept_invite`는 토큰 확인(404/410) → 이미 구성원인지 → 아니면 상한 순서로 본다. 재수락은 막지 않는다.
+- 한 사용자가 수락 두 건을 동시에 보내면 10개를 넘을 수 있다. 사용자 단위 잠금이 없어서다. 화면 흐름상 일어나기 어려워 막지 않았다.
 
 ## 4. 복잡도
 예상 4(이슈 전체). maps 몫 실제 3.

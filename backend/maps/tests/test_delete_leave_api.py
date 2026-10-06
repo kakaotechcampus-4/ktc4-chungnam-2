@@ -323,3 +323,46 @@ def test_withdrawing_owner_hands_over_or_deletes(app_client, db_session):
     assert len(_events(db_session, alone, "map.deleted")) == 1
     assert db_session.get(MapRow, shared).deleted_at is None
 
+
+# --- 내 지도 10개 상한 ------------------------------------------------------------------
+
+
+def _fill_to_limit(app_client, user_id="user_2"):
+    return [_create_map(app_client, user_id=user_id, title=f"지도 {i}") for i in range(10)]
+
+
+def test_creating_an_eleventh_map_is_409(app_client):
+    own = _fill_to_limit(app_client)
+    resp = app_client.post(
+        "/maps", json={"title": "하나 더", "start_date": "2026-10-10", "end_date": "2026-10-12"}, cookies=_auth("user_2")
+    )
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "MAP_LIMIT"
+    assert resp.json()["detail"] == {"limit": 10, "count": 10}
+    assert len(app_client.get("/maps", cookies=_auth("user_2")).json()) == len(own)
+
+
+def test_accepting_a_new_invite_at_the_limit_is_409_but_rejoin_is_allowed(app_client):
+    joined = _create_map(app_client, user_id="user_1", title="이미 참여")
+    token_joined = _invite_token(app_client, joined)
+    assert app_client.post(f"/invites/{token_joined}/accept", cookies=_auth("user_2")).status_code == 200
+    for i in range(9):
+        _create_map(app_client, user_id="user_2", title=f"지도 {i}")
+
+    other = _create_map(app_client, user_id="user_1", title="새 초대")
+    resp = app_client.post(f"/invites/{_invite_token(app_client, other)}/accept", cookies=_auth("user_2"))
+    assert (resp.status_code, resp.json()["code"]) == (409, "MAP_LIMIT")
+    assert app_client.post(f"/invites/{token_joined}/accept", cookies=_auth("user_2")).status_code == 200
+
+
+@pytest.mark.parametrize("free_up", ["leave", "delete"])
+def test_leaving_or_deleting_a_map_frees_a_slot(app_client, free_up):
+    joined = _create_map(app_client, user_id="user_1", title="참여한 지도")
+    _join(app_client, joined, "user_2")
+    own = [_create_map(app_client, user_id="user_2", title=f"지도 {i}") for i in range(9)]
+
+    if free_up == "leave":
+        assert app_client.delete(f"/maps/{joined}/members/me", cookies=_auth("user_2")).status_code == 204
+    else:
+        assert app_client.delete(f"/maps/{own[0]}", cookies=_auth("user_2")).status_code == 204
+    _create_map(app_client, user_id="user_2", title="이제 된다")
