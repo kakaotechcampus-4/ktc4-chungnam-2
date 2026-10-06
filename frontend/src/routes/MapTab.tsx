@@ -20,6 +20,7 @@ import { useSearchStore } from '@/features/search/searchStore'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
+import { useIsDesktop } from '@/features/shell/useIsDesktop'
 
 /**
  * 마킹된 장소 탭은 조립만 한다. 실제 내용은 전부 `features/map/` 안에 있다.
@@ -32,6 +33,7 @@ export default function MapTab() {
   const counts = useCountsQuery(mapId).data
   const setStage = useSheetStore((s) => s.setStage)
   const stage = useSheetStore((s) => s.stages.map)
+  const desktop = useIsDesktop()
   const map = useMapQuery(mapId).data
   const mapTitle = map?.title
   const memberCount = map?.memberCount ?? 0
@@ -111,7 +113,8 @@ export default function MapTab() {
       header={
         <>
           <SheetTitle>마킹된 장소</SheetTitle>
-          {stage === 3 && <CategoryChips value={filters.category} onChange={(c) => setFilter('category', c)} className="mt-2" />}
+          {/* 넓은 화면은 단계가 없고 칩이 지도 영역 왼쪽 위에 있다(#338). */}
+          {stage === 3 && !desktop && <CategoryChips value={filters.category} onChange={(c) => setFilter('category', c)} className="mt-2" />}
           {pins && pins.length > 0 && <PinFilterBar filters={filters} members={members} pins={pins} onChange={setFilter} />}
           <p className="mt-2 text-xs text-ink-500">
             {isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}

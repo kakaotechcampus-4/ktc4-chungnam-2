@@ -6,6 +6,7 @@ import ErrorText from '@/ErrorText'
 import { TAB_BAR_H } from '@/features/shell/layout'
 import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
+import { useIsDesktop } from '@/features/shell/useIsDesktop'
 
 import { useAiStore } from './aiStore'
 import { evidenceLabel, groupEvidence, type EvidenceLineDto, type RecommendRunDto, type RegionDto } from './model'
@@ -30,6 +31,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
   const [draft, setDraft] = useState('')
   const groups = groupEvidence(evidence.data ?? [])
   const busy = confirm.isPending
+  const desktop = useIsDesktop()
 
   function toggle(line: EvidenceLineDto, active: boolean) {
     patch.mutate(
@@ -59,7 +61,11 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
   }
 
   return (
-    <div className="fixed inset-x-0 top-0 z-30 md:right-auto md:w-[480px] flex flex-col bg-white" style={{ bottom: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}>
+    // 넓은 화면에서는 패널 안 탭 아래를 채운다 — 위쪽 헤더·탭은 그대로 보인다(#338).
+    <div
+      className={desktop ? 'relative flex min-h-0 flex-1 flex-col bg-white' : 'fixed inset-x-0 top-0 z-30 flex flex-col bg-white'}
+      style={desktop ? undefined : { bottom: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
+    >
       <header className="flex items-center gap-2 border-b border-ink-100 px-4 py-3">
         <button type="button" aria-label="추천 그만두기" onClick={() => setRun(mapId, undefined)} className="text-ink-900">
           <ChevronLeft size={22} />
@@ -169,9 +175,9 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
         )}
       </div>
 
-      {/* 이 화면은 시트가 없어서 토스트를 아래 버튼 줄 위에 띄운다. */}
+      {/* 이 화면은 시트가 없어서 토스트를 아래 버튼 줄 위에 띄운다. 넓은 화면은 지도 영역 토스트 하나만 쓴다. */}
       <div className="relative grid grid-cols-2 gap-2 border-t border-ink-100 p-4">
-        <Toaster controlsVisible={false} />
+        {!desktop && <Toaster controlsVisible={false} />}
         <button type="button" onClick={() => setRun(mapId, undefined)} className="rounded-xl border border-ink-300 py-3 font-semibold text-ink-900">
           취소
         </button>

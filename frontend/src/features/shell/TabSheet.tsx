@@ -4,6 +4,7 @@ import BottomSheet from './BottomSheet'
 import MapControls from './MapControls'
 import { useShell } from './shellContext'
 import { useSheetStore, type TabKey } from './sheetStore'
+import { useIsDesktop } from './useIsDesktop'
 import { TriangleAlert } from 'lucide-react'
 
 import type { ConnectionState } from '@/features/map/realtime'
@@ -13,6 +14,7 @@ import Toaster from './Toaster'
 /**
  * 탭 하나의 바텀시트. 탭 컴포넌트는 제목 줄(header)과 본문만 넘긴다 —
  * 단계 기억·지도 버튼·토스트 자리는 여기서 탭 3개가 똑같이 갖는다.
+ * 넓은 화면에서는 지도 버튼·토스트·연결 띠를 지도 영역에 두므로(MapLayout) 시트에 붙이지 않는다(#338).
  */
 export default function TabSheet({
   tab,
@@ -27,6 +29,7 @@ export default function TabSheet({
   children: ReactNode
 }) {
   const { activeControl, onControl, connection } = useShell()
+  const desktop = useIsDesktop()
   const stage = useSheetStore((s) => s.stages[tab])
   const setStage = useSheetStore((s) => s.setStage)
   const mapMoving = useSheetStore((s) => s.mapMoving)
@@ -42,12 +45,14 @@ export default function TabSheet({
       onStageChange={(next) => setStage(tab, next)}
       header={header}
       expandOnScroll={expandOnScroll}
-      banner={connection.state !== 'open' && <ConnectionBanner state={connection.state} onReconnect={connection.reconnect} />}
+      banner={!desktop && connection.state !== 'open' && <ConnectionBanner state={connection.state} onReconnect={connection.reconnect} />}
       top={
-        <>
-          <MapControls hidden={controlsHidden} fading={mapMoving} active={activeControl} onPress={onControl} onCrampedChange={setCramped} />
-          {!modalOpen && <Toaster controlsVisible={!controlsHidden && !mapMoving} inside={stage === 3} />}
-        </>
+        !desktop && (
+          <>
+            <MapControls hidden={controlsHidden} fading={mapMoving} active={activeControl} onPress={onControl} onCrampedChange={setCramped} />
+            {!modalOpen && <Toaster controlsVisible={!controlsHidden && !mapMoving} inside={stage === 3} />}
+          </>
+        )
       }
     >
       {children}
@@ -58,10 +63,22 @@ export default function TabSheet({
 /**
  * 연결 끊김 띠(#299). 지도 위에 띄우면 핀·지도 버튼을 가리고, 노란 면은 확정 골드와 겹친다.
  * 그래서 시트 윗변에 회색 띠로 붙이고 문구를 자르지 않는다.
+ * 넓은 화면은 시트 윗변이 없어서 지도 영역 왼쪽 위, 칩 아래에 떠 있는 띠(`floating`)로 둔다(#338).
  */
-function ConnectionBanner({ state, onReconnect }: { state: Exclude<ConnectionState, 'open'>; onReconnect: () => void }) {
+export function ConnectionBanner({
+  state,
+  onReconnect,
+  floating = false,
+}: {
+  state: Exclude<ConnectionState, 'open'>
+  onReconnect: () => void
+  floating?: boolean
+}) {
   return (
-    <div role="status" className="flex items-center gap-2 rounded-t-2xl bg-ink-100 px-4 py-1.5 text-xs font-medium text-ink-700">
+    <div
+      role="status"
+      className={`flex items-center gap-2 bg-ink-100 px-4 py-1.5 text-xs font-medium text-ink-700 ${floating ? 'pointer-events-auto rounded-xl shadow-md' : 'rounded-t-2xl'}`}
+    >
       <TriangleAlert size={14} className="shrink-0 text-[var(--warn-line)]" aria-hidden="true" />
       {state === 'reconnecting' ? (
         '연결이 끊겼어요. 다시 연결하는 중…'

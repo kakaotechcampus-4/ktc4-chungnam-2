@@ -12,8 +12,17 @@ import { useToastStore } from './toast'
  */
 /**
  * `inside` 면 시트 윗변 위가 아니라 시트 안 아래쪽(AI 버튼 위)에 띄운다 — 3단계처럼 시트 위에 자리가 없을 때.
+ * `docked` 면 넓은 화면의 지도 영역 바닥 16px 위 가운데다. 지도 버튼과 같은 높이라 겹치면 버튼 왼쪽까지로 줄인다(#338).
  */
-export default function Toaster({ controlsVisible, inside = false }: { controlsVisible: boolean; inside?: boolean }) {
+export default function Toaster({
+  controlsVisible,
+  inside = false,
+  docked = false,
+}: {
+  controlsVisible: boolean
+  inside?: boolean
+  docked?: boolean
+}) {
   const boxRef = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<'center' | 'raised' | 'narrow'>('center')
   const toast = useToastStore((s) => s.toast)
@@ -22,14 +31,16 @@ export default function Toaster({ controlsVisible, inside = false }: { controlsV
     const box = boxRef.current
     if (!box || inside || !controlsVisible) return setMode('center')
     // 가운데 놓인 토스트 양옆 여백이 버튼 묶음 자리(오른쪽 여백 + 버튼 폭 + 틈)보다 좁으면 겹친다.
-    // 데스크톱에선 시트가 480px 패널이라 창 폭이 아니라 시트 폭으로 잰다.
-    const sheetWidth = box.closest('section')?.clientWidth ?? window.innerWidth
-    if ((sheetWidth - box.offsetWidth) / 2 >= CONTROLS.right + CONTROLS.size + 8) return setMode('center')
-    const sheetTop = box.closest('section')?.getBoundingClientRect().top ?? 0
-    const headerBottom = document.querySelector('[data-map-header]')?.getBoundingClientRect().bottom ?? 0
-    const raisedTop = sheetTop - 12 - CONTROLS.stackHeight - box.offsetHeight
-    setMode(raisedTop >= headerBottom + 8 ? 'raised' : 'narrow')
-  }, [toast, inside, controlsVisible])
+    // 고정이면 지도 영역 폭으로 잰다. 버튼 묶음 위로 올리면 지도 가운데를 가려서 줄이기만 한다.
+    const frameWidth = docked ? box.parentElement?.parentElement?.clientWidth : box.closest('section')?.clientWidth
+    if (((frameWidth ?? window.innerWidth) - box.offsetWidth) / 2 >= CONTROLS.right + CONTROLS.size + 8) return setMode('center')
+    const canRaise = () => {
+      const sheetTop = box.closest('section')?.getBoundingClientRect().top ?? 0
+      const headerBottom = document.querySelector('[data-map-header]')?.getBoundingClientRect().bottom ?? 0
+      return sheetTop - 12 - CONTROLS.stackHeight - box.offsetHeight >= headerBottom + 8
+    }
+    setMode(!docked && canRaise() ? 'raised' : 'narrow')
+  }, [toast, inside, controlsVisible, docked])
 
   if (!toast) return null
 
@@ -37,7 +48,7 @@ export default function Toaster({ controlsVisible, inside = false }: { controlsV
     <div
       role="status"
       style={{
-        bottom: inside ? 48 : `calc(100% + 12px${mode === 'raised' ? ` + ${CONTROLS.stackHeight}px` : ''})`,
+        bottom: docked ? 16 : inside ? 48 : `calc(100% + 12px${mode === 'raised' ? ` + ${CONTROLS.stackHeight}px` : ''})`,
         // 좁힐 때는 버튼 묶음 왼쪽 8px까지만 쓴다.
         right: mode === 'narrow' ? CONTROLS.right + CONTROLS.size + 8 : undefined,
       }}

@@ -13,6 +13,7 @@ const BUTTONS: { key: ControlKey; label: string; icon: ReactNode }[] = [
 
 /**
  * 지도 버튼 3개(Figma 참고 '지도 버튼 3개'). 시트 윗변에 붙어서 시트와 같이 오르내린다.
+ * 넓은 화면(`docked`)에서는 지도 영역 우하단에 고정한다(#338).
  * 화면에 글자 설명은 붙이지 않는다 — aria-label 과 길게 누르면 뜨는 툴팁만 둔다.
  */
 export default function MapControls({
@@ -21,6 +22,7 @@ export default function MapControls({
   active,
   onPress,
   onCrampedChange,
+  docked = false,
 }: {
   /** 시트 3단계·모달 — 바로 숨긴다. */
   hidden: boolean
@@ -28,12 +30,15 @@ export default function MapControls({
   fading: boolean
   active: ControlKey | null
   onPress: (key: ControlKey) => void
-  /** 검색창·칩과 시트 사이가 버튼 묶음보다 좁아지면 true — 그때는 숨긴다(작은 화면·높은 시트, #308). */
-  onCrampedChange: (cramped: boolean) => void
+  /** 검색창·칩과 시트 사이가 버튼 묶음보다 좁아지면 true — 그때는 숨긴다(작은 화면·높은 시트, #308). 고정이면 재지 않는다. */
+  onCrampedChange?: (cramped: boolean) => void
+  /** 지도 영역 우하단 고정(넓은 화면). 시트를 따라다니지 않는다. */
+  docked?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    if (docked || !onCrampedChange) return
     const sheet = ref.current?.closest('section')
     const header = document.querySelector('[data-map-header]')
     if (!sheet || !header) return
@@ -53,15 +58,16 @@ export default function MapControls({
       window.removeEventListener('resize', check)
     }
     // onCrampedChange 는 useState 의 setter 라 바뀌지 않는다.
-  }, [onCrampedChange])
+  }, [onCrampedChange, docked])
 
   return (
     <div
       ref={ref}
       hidden={hidden}
       style={{ right: CONTROLS.right }}
-      className={`absolute bottom-[calc(100%+12px)] flex flex-col rounded-xl bg-white shadow-md transition-opacity ${
-        fading ? 'pointer-events-none opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
+      // 고정일 때 부모(지도 영역 덧칠)는 지도를 끌 수 있게 누름을 통과시킨다. 버튼만 다시 받는다.
+      className={`absolute ${docked ? 'bottom-4' : 'bottom-[calc(100%+12px)]'} flex flex-col rounded-xl bg-white shadow-md transition-opacity ${
+        fading ? 'pointer-events-none opacity-0 duration-150' : `${docked ? 'pointer-events-auto ' : ''}opacity-100 delay-800 duration-300`
       }`}
     >
       {BUTTONS.map((b, i) => (
