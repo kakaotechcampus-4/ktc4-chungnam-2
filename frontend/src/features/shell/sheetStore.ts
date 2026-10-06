@@ -14,6 +14,9 @@ type SheetState = {
   /** 프로필 같은 모달이 떠 있으면 지도 버튼을 숨긴다. */
   modalOpen: boolean
   setModalOpen: (open: boolean) => void
+  /** 넓은 화면의 왼쪽 패널 열림·닫힘(#338). 모바일 단계와는 따로 간다. */
+  panelOpen: boolean
+  setPanelOpen: (open: boolean) => void
 }
 
 export const useSheetStore = create<SheetState>((set) => ({
@@ -23,4 +26,6 @@ export const useSheetStore = create<SheetState>((set) => ({
   setMapMoving: (mapMoving) => set({ mapMoving }),
   modalOpen: false,
   setModalOpen: (modalOpen) => set({ modalOpen }),
+  panelOpen: true,
+  setPanelOpen: (panelOpen) => set({ panelOpen }),
 }))

@@ -13,6 +13,18 @@ declare namespace kakao.maps {
     getLng(): number
   }
 
+  /** 지도 틀 안의 픽셀 좌표. */
+  class Point {
+    constructor(x: number, y: number)
+    x: number
+    y: number
+  }
+
+  interface MapProjection {
+    containerPointFromCoords(latlng: LatLng): Point
+    coordsFromContainerPoint(point: Point): LatLng
+  }
+
   class LatLngBounds {
     constructor()
     extend(latlng: LatLng): void
@@ -28,6 +40,8 @@ declare namespace kakao.maps {
     /** 지도 가운데를 픽셀만큼 옮긴다. */
     panBy(dx: number, dy: number): void
     getCenter(): LatLng
+    getProjection(): MapProjection
+    /** 지도 틀 크기를 CSS 로 바꾼 뒤 부른다. 창 크기 변경(resize)에는 SDK 가 알아서 부른다. */
     relayout(): void
   }
 

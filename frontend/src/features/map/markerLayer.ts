@@ -1,3 +1,5 @@
+import { isDesktopNow } from '@/features/shell/useIsDesktop'
+
 import { createPinMarkerElement } from './pinMarker'
 import { participationRatio, type Pin } from './model'
 
@@ -122,8 +124,11 @@ export function createMarkerLayer(
         bounds.extend(new maps.LatLng(p.lat, p.lng))
         placed += 1
       }
+      if (placed === 0) return
+      // 넓은 화면은 지도 영역에 시트가 없다. 위는 칩, 오른쪽은 지도 버튼만 비킨다(#338).
+      if (isDesktopNow()) return map.setBounds(bounds, 64, 76, 32, 32)
       // 위는 검색창·칩, 아래는 2단계 시트가 덮는다. 그 바깥에 핀이 오도록 여백을 둔다.
-      if (placed > 0) map.setBounds(bounds, 170, 64, Math.round(window.innerHeight * 0.62), 32)
+      map.setBounds(bounds, 170, 64, Math.round(window.innerHeight * 0.62), 32)
     },
 
     destroy() {

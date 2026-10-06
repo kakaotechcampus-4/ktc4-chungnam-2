@@ -2,6 +2,7 @@ import { useRef, useState, type ReactNode } from 'react'
 
 import { TAB_BAR_H } from './layout'
 import type { SheetStage } from './sheetStore'
+import { useIsDesktop } from './useIsDesktop'
 
 /**
  * 단계별 시트 윗변(Figma iPhone 16 852px 기준을 화면 비율로 옮김).
@@ -24,6 +25,7 @@ const TAP_SLOP = 6
  * 탭 3개가 함께 쓰는 바텀시트 하나(FE 회의 — 시트는 하나, 내용만 바뀐다).
  * 손잡이·제목 줄을 위로 끌면 한 단계 올라가고, 아래로 끌면 내려간다. 탭하면 접고 펼친다.
  * `top` 은 시트 위에 붙어 다니는 것(지도 버튼·토스트)을 넣는 자리다.
+ * 넓은 화면에서는 왼쪽 패널 안을 채우는 평범한 스크롤 영역이다 — 단계·손잡이·끌기·자동 확장이 없다(#338).
  */
 export default function BottomSheet({
   stage,
@@ -44,8 +46,21 @@ export default function BottomSheet({
   expandOnScroll?: boolean
   children: ReactNode
 }) {
+  const desktop = useIsDesktop()
   const [dragY, setDragY] = useState<number | null>(null)
   const startY = useRef(0)
+  const touchY = useRef<number | null>(null)
+
+  if (desktop) {
+    return (
+      <section aria-label="탭 내용" className="relative flex min-h-0 flex-1 flex-col bg-white">
+        {top}
+        {banner}
+        <div className="shrink-0 px-4 pb-2 pt-4">{header}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6">{children}</div>
+      </section>
+    )
+  }
 
   function onPointerDown(e: React.PointerEvent) {
     // 제목 줄 안의 버튼·드롭다운은 끌기가 아니라 그 버튼 동작이다.
@@ -78,7 +93,6 @@ export default function BottomSheet({
 
   // 2단계 자동 확장 — 휠·터치로 내용을 위로 밀면 3단계로. 끌지 않으면 2단계에 머문다.
   const autoExpand = expandOnScroll && stage === 2
-  const touchY = useRef<number | null>(null)
   const expandHandlers = autoExpand
     ? {
         onWheel: (e: React.WheelEvent) => e.deltaY > 0 && onStageChange(3),
@@ -101,7 +115,7 @@ export default function BottomSheet({
         top: dragging ? `calc(${STAGE_TOP[stage]} + ${dragY}px)` : STAGE_TOP[stage],
         bottom: SHEET_BOTTOM,
       }}
-      className={`fixed inset-x-0 z-30 md:right-auto md:w-[480px] flex flex-col rounded-t-2xl bg-white shadow-[0_-2px_12px_rgba(20,22,31,0.08)] ${
+      className={`fixed inset-x-0 z-30 flex flex-col rounded-t-2xl bg-white shadow-[0_-2px_12px_rgba(20,22,31,0.08)] ${
         dragging ? '' : 'transition-[top] duration-300 ease-out motion-reduce:transition-none'
       }`}
     >
