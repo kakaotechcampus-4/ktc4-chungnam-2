@@ -11,7 +11,7 @@
 - **필수 추가** `Map.permissions`: 요청자 기준 `can_delete`(방장만 true), `can_leave`(넘길 사람이 없는 방장은 false). 공용 `Permissions` 스키마에 `can_leave`를 추가했다.
 - **추가** `Map.next_owner`: `{ user_id, display_name } | null`. 요청자가 방장이고 넘길 사람이 있을 때만, 상세(`GET /maps/{mapId}`)에서만 채운다. 나가기 확인 창("나가면 ○○님이 방장이 돼요")용이다.
 - **설명 변경** `Member.role`은 위임되면 바뀐다. `Pin.created_by_display_name`은 탈퇴했으면 "탈퇴한 구성원", 이 지도에서 나갔으면 "나간 구성원", 아니면 실명이다(조회할 때 계산, 다시 들어오면 실명).
-- **이벤트**(`docs/events.md`): 전체 채널에 `map.deleted { map_id }`, `member.left { map_id, user_id, new_owner_user_id | null }`. `member.left`는 방장이 계정을 탈퇴해 위임될 때도 나간다(넘길 사람이 없어 지도가 삭제되면 `map.deleted`만).
+- **이벤트**(`docs/events.md`): 전체 채널에 `map.deleted { map_id }`, `member.left { map_id, user_id, new_owner_user_id | null }`. `member.left`는 방장이 계정을 탈퇴해 위임될 때도 나간다(넘길 사람이 없어 지도가 삭제되면 `map.deleted`만). 서버는 `map.deleted`를 보낸 뒤 그 지도의 모든 구독을, `member.left`를 보낸 뒤 그 사람의 그 지도 구독을 닫는다(`docs/events.md` "구독을 끊는 경우").
 - **에러**(`docs/errors.md`): `OWNER_CANNOT_LEAVE`(409).
 - `GET /maps`는 삭제된 지도와 내가 나간 지도를 뺀다.
 - **상한** 내 지도(만들거나 참여한 지도 합산, 삭제·나간 지도 제외)는 **10개**까지다. 이미 10개면 `POST /maps`와 `POST /invites/{token}/accept`가 409 `MAP_LIMIT`(`detail: { limit, count }`). 이미 구성원인 지도의 초대를 다시 수락하는 경우는 막지 않는다. 나가거나 삭제하면 자리가 생긴다(2026-10-07 결정).
