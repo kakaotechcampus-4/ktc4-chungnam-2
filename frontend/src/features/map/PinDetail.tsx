@@ -27,15 +27,25 @@ const PROMPT: Record<ReactionType, { title: string; placeholder: string }> = {
   against: { title: '왜 별로인가요? (필수)', placeholder: '예: 지난번 여행 때 가봤어요' },
 }
 
-/** 제목 줄(시트 끌기 영역). 「‹ 마킹된 장소」는 시트 안 이전 화면 — 좌상단 ‹(내 지도 목록)와 다르다. */
-export function PinDetailHeader({ pin, mapId, onBack }: { pin: Pin; mapId: string; onBack: () => void }) {
+/** 제목 줄(시트 끌기 영역). 「‹ 마킹된 장소」(확정 탭에선 「‹ 확정된 장소」)는 시트 안 이전 화면 — 좌상단 ‹(내 지도 목록)와 다르다. */
+export function PinDetailHeader({
+  pin,
+  mapId,
+  backLabel = '마킹된 장소',
+  onBack,
+}: {
+  pin: Pin
+  mapId: string
+  backLabel?: string
+  onBack: () => void
+}) {
   const add = useAddToShortlistMutation(mapId)
   const confirmed = pin.kind === '확정'
 
   return (
     <div>
       <button type="button" onClick={onBack} className="mb-2 text-[13px] font-medium text-ink-500">
-        ‹ 마킹된 장소
+        ‹ {backLabel}
       </button>
       <div className="flex items-center justify-between gap-2">
         <h2 className="truncate text-[22px] font-bold text-ink-900">{pin.place_name ?? '이름 없는 장소'}</h2>

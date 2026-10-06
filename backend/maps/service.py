@@ -20,6 +20,7 @@ from maps.models import Invite as InviteRow
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
 from maps.schemas import Invite, InviteSummary, Map, MapCreateRequest, Member
+from pins import api as pins_api
 from shortlist import api as shortlist_api
 
 INVITE_TOKEN_BYTES = 32  # secrets.token_urlsafe(32) — 256비트, 소지자가 곧 가입 권한을 갖는
@@ -42,6 +43,11 @@ def _member_counts(db: Session, map_ids: list[str]) -> dict[str, int]:
         if user_id not in withdrawn:
             counts[map_id] += 1
     return counts
+
+
+def _pin_counts(db: Session, map_ids: list[str]) -> dict[str, int]:
+    """핀은 pins 소유 — pins.api가 id 목록을 한 번에 센다(지도 목록 N+1 방지, #313)."""
+    return pins_api.count_public_pins_by_map(db, map_ids)
 
 
 def member_count(db: Session, map_id: str) -> int:
@@ -78,6 +84,7 @@ def _map_response(db: Session, map_row: MapRow) -> Map:
     return core.to_map_response(
         _map_record(db, map_row),
         member_count=member_count(db, map_row.id),
+        pin_count=_pin_counts(db, [map_row.id])[map_row.id],
         confirmed_count=shortlist_api.count_confirmed(db, map_id=map_row.id),
     )
 
@@ -136,7 +143,9 @@ def list_maps(db: Session, *, user_id: str) -> list[Map]:
     if not rows:
         return []
 
-    counts = _member_counts(db, [map_row.id for map_row, _, _ in rows])
+    map_ids = [map_row.id for map_row, _, _ in rows]
+    counts = _member_counts(db, map_ids)
+    pin_counts = _pin_counts(db, map_ids)
     return [
         core.to_map_response(
             core.MapRecord(
@@ -145,6 +154,7 @@ def list_maps(db: Session, *, user_id: str) -> list[Map]:
                 region_lat=region_lat, region_lng=region_lng,
             ),
             member_count=counts.get(map_row.id, 0),
+            pin_count=pin_counts[map_row.id],
             confirmed_count=shortlist_api.count_confirmed(db, map_id=map_row.id),
         )
         for map_row, region_lat, region_lng in rows
@@ -186,6 +196,7 @@ def get_invite_summary(db: Session, *, token: str) -> InviteSummary:
     return core.to_invite_summary(
         _map_record(db, map_row),
         member_count=member_count(db, map_row.id),
+        pin_count=_pin_counts(db, [map_row.id])[map_row.id],
         inviter_display_name=inviter_name,
         expires_at=invite_row.expires_at,
     )
@@ -215,17 +226,26 @@ def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
             .values(used_count=InviteRow.used_count + 1)
         )
         name = auth_api.display_names(db, [user_id]).get(user_id)
-        member = core.to_member_response(user_id, display_name=name, online=None)
-        record_event(db, core.member_joined_event(invite_row.map_id, member))
 
     map_row = get_map_or_404(db, invite_row.map_id)
+    if created:
+        member = core.to_member_response(
+            user_id, owner_id=map_row.created_by, display_name=name, online=None
+        )
+        record_event(db, core.member_joined_event(invite_row.map_id, member))
     return _map_response(db, map_row)
 
 
 def list_members(db: Session, *, map_id: str) -> list[Member]:
+    owner_id = get_map_or_404(db, map_id).created_by
     rows = db.execute(
         select(MembershipRow).where(MembershipRow.map_id == map_id).order_by(MembershipRow.joined_at)
     ).scalars().all()
     # 배치 조회 — N명에 N번 쿼리하지 않는다(auth.api.display_names 자체가 배치용으로 설계됨).
     names = auth_api.display_names(db, [row.user_id for row in rows])
-    return [core.to_member_response(row.user_id, display_name=names.get(row.user_id), online=None) for row in rows]
+    return [
+        core.to_member_response(
+            row.user_id, owner_id=owner_id, display_name=names.get(row.user_id), online=None
+        )
+        for row in rows
+    ]

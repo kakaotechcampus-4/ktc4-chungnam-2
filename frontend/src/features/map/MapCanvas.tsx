@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { createMarkerLayer, type MarkerLayer } from './markerLayer'
+import type { RouteDrawing } from '@/features/shortlist/model'
+
 import type { Pin } from './model'
 
 /** 핀이 하나라도 있으면 곧바로 bounds 로 덮어쓴다. 빈 지도에서만 보이는 값이다(v1 장소 데이터는 서울). */
@@ -27,6 +29,7 @@ export default function MapCanvas({
   pins,
   memberCount,
   results = [],
+  route = [],
   onSelect,
   onReady,
   onMovingChange,
@@ -36,6 +39,8 @@ export default function MapCanvas({
   memberCount: number
   /** 장소 검색 결과(Figma 4절) — 파란 번호 원으로 띄운다. 핀이 아니다. */
   results?: SearchMarker[]
+  /** 확정 탭 「동선 보기」 — 경로선·순서 번호·구간 시간. */
+  route?: RouteDrawing[]
   onSelect: (pinId: string) => void
   onReady: (controller: MapController) => void
   /** 사용자가 지도를 끌기 시작하면 true, 멈추면 false. */
@@ -140,6 +145,44 @@ export default function MapCanvas({
     })
     return () => overlays.forEach((o) => o.setMap(null))
   }, [results, ready])
+
+  // 동선(Figma 7절): brand-600 4px 직선, 순서 번호는 골드 + 갈색 숫자, 구간 "약 N분" 흰 알약.
+  useEffect(() => {
+    const m = mapRef.current
+    if (!ready || !m) return
+    const { maps, map } = m
+    const drawn: { setMap: (map: kakao.maps.Map | null) => void }[] = []
+    const overlay = (lat: number, lng: number, html: HTMLElement, yAnchor = 0.5) => {
+      const o = new maps.CustomOverlay({ position: new maps.LatLng(lat, lng), content: html, yAnchor, zIndex: 6 })
+      o.setMap(map)
+      drawn.push(o)
+    }
+    for (const r of route) {
+      const line = new maps.Polyline({
+        path: r.stops.map((s) => new maps.LatLng(s.lat, s.lng)),
+        strokeWeight: 4,
+        strokeColor: getComputedStyle(document.documentElement).getPropertyValue('--brand-600').trim() || '#2A57C4',
+        strokeOpacity: 1,
+      })
+      line.setMap(map)
+      drawn.push(line)
+      for (const s of r.stops) {
+        const el = document.createElement('span')
+        el.textContent = String(s.n)
+        el.style.cssText =
+          'display:flex;width:18px;height:18px;align-items:center;justify-content:center;border-radius:50%;background:var(--pin-confirmed);color:var(--pin-confirmed-mark);border:2px solid #fff;font:700 11px/1 var(--font-sans);transform:translate(14px,-34px)'
+        overlay(s.lat, s.lng, el)
+      }
+      for (const l of r.legs) {
+        const el = document.createElement('span')
+        el.textContent = l.label
+        el.style.cssText =
+          'padding:2px 8px;border-radius:999px;background:#fff;border:1px solid var(--brand-600);color:var(--brand-700);font:700 11px/1.4 var(--font-sans);white-space:nowrap'
+        overlay((l.from.lat + l.to.lat) / 2, (l.from.lng + l.to.lng) / 2, el)
+      }
+    }
+    return () => drawn.forEach((d) => d.setMap(null))
+  }, [route, ready])
 
   return (
     <div className="fixed inset-0 bg-ink-100">

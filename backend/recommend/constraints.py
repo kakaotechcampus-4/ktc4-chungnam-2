@@ -158,6 +158,7 @@ FACT_LABELS: dict[str, str] = {
     "spicy_focused": "매운맛 전문",
     "oily_focused": "기름진 메뉴 위주",
     "price_bucket": "가격대",
+    "is_open": "영업 여부",  # 레지스트리 밖(코드 판정)이지만 체크가 붙는다 — 모름 문장에 이름이 필요하다
     "is_crowded_large": "붐비는 대형 장소",
     "wait_short": "대기가 짧은 곳",
     "quiet": "조용한 곳",
@@ -214,6 +215,11 @@ FACT_LABELS: dict[str, str] = {
     "water_play": "물놀이",
     "winter_spot": "겨울 명소",
 }
+
+
+# price_bucket은 참/거짓이 아니라 값이다 — 체크 라벨에 값을 문장으로 녹인다. 값 정본은 docs/constraints.md
+# (착한가격업소 지정만 `low`). 표에 없는 값은 "가격대 <값>"으로 말한다.
+PRICE_BUCKET_LABELS: dict[str, str] = {"low": "착한가격업소"}
 
 
 def hard_fact_keys_for(category: str) -> list[str]:

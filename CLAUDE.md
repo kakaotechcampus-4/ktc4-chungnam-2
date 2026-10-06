@@ -73,5 +73,6 @@ v1에서 요청 중 모델 호출은 **② 사유 구조화 하나**다(Luna, �
 | `docs/code-quality.md` | 클린 코드 원칙, AI 작성 코드 리뷰 포인트 |
 | `docs/design/colors.md` | 색 결정 이유(값 정본은 `frontend/src/styles/tokens.css`) |
 | `docs/execution-order.md` | 이슈 실행 순서 초안 |
+| `docs/demo-guide.md` | 팀 시연 따라 하기 — 준비·켜기·시연 대본·문제 해결(비개발자용, localhost) |
 | `contracts/` | FE 타입 생성 + 목 서버(msw), `docs/api-spec.yaml`에서 파생 |
 | `backend/CLAUDE.md` · `frontend/CLAUDE.md` | 백엔드·프론트 공통 컨벤션 |
