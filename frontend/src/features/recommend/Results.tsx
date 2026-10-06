@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { MessageSquare, RotateCw, Users } from 'lucide-react'
 
 import { ApiError } from '@/api'
-import ErrorText from '@/ErrorText'
 import type { MemberView } from '@/features/maps/model'
 import { showToast } from '@/features/shell/toast'
 import { josa } from '@/ui/josa'
@@ -55,9 +54,8 @@ export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; r
           type="button"
           disabled={retry.isPending}
           onClick={() =>
-            retry.mutate(run.id, {
-              onError: (err) => (err instanceof ApiError && err.code === 'RETRY_LIMIT' ? onLimit() : showToast('다시 추천하지 못했어요')),
-            })
+            // 남은 횟수가 없으면 보내지 않고 상한 화면으로(서버도 429 로 막는다). 그 밖의 결과는 요청 훅이 처리한다(#349).
+            left === 0 ? onLimit() : retry.mutate(run)
           }
           className="shrink-0 text-right text-xs font-bold text-brand-600 disabled:opacity-50"
         >
@@ -344,11 +342,8 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
               <button
                 type="button"
                 onClick={() =>
-                  widen.mutate(run.id, {
-                    onSettled: () => setAsking(false),
-                    onError: (err) =>
-                      showToast(err instanceof ApiError && err.code === 'WIDEN_LIMIT' ? '더 넓히면 여행지를 벗어나요. 근거를 고치거나 직접 찍어 보세요' : '반경을 넓히지 못했어요'),
-                  })
+                  // 진행 중 → 결과/실패/상한 안내는 요청 훅이 맡는다(#349).
+                  widen.mutate(run, { onSettled: () => setAsking(false) })
                 }
                 disabled={widen.isPending}
                 className="rounded-lg bg-brand-600 py-2.5 text-sm font-bold text-white disabled:opacity-50"
@@ -364,7 +359,7 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
 }
 
 /** 추천 실패(Figma '추천 실패'). 조건 탓이 아니다 — 남긴 것은 그대로 있고, 다시 시도는 횟수에서 빠지지 않는다. */
-export function Failed({ mapId, run, error }: { mapId: string; run: RecommendRunDto; error: unknown }) {
+export function Failed({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   const execute = useExecuteRunMutation(mapId)
   return (
     <div className="space-y-3">
@@ -372,11 +367,11 @@ export function Failed({ mapId, run, error }: { mapId: string; run: RecommendRun
         <p className="font-bold text-brand-700">남긴 의견과 근거는 그대로 있어요</p>
         <p className="text-xs text-ink-600">이번 시도는 다시 추천 횟수에서 빠지지 않아요</p>
       </div>
-      <ErrorText message="" error={error} />
       <button
         type="button"
         disabled={execute.isPending}
-        onClick={() => execute.mutate(run.id, { onError: () => showToast('다시 시도하지 못했어요') })}
+        // 다시 '진행 중'으로 간다. 또 실패하면 이 화면으로, 다른 오류는 토스트로(요청 훅, #349).
+        onClick={() => execute.mutate(run)}
         className="w-full rounded-xl border-[1.5px] border-brand-600 py-3 font-bold text-brand-600 disabled:opacity-50"
       >
         {execute.isPending ? '다시 찾는 중…' : '다시 시도'}

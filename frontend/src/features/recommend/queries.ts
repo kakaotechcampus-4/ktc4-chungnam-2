@@ -4,6 +4,7 @@ import { useAiStore } from './aiStore'
 import { ApiError } from '@/api'
 import { pinKeys } from '@/features/map/queries'
 import type { Pin } from '@/features/map/model'
+import { showToast } from '@/features/shell/toast'
 
 import {
   confirmRegions,
@@ -17,7 +18,7 @@ import {
   retryRun,
   widenRun,
 } from './api'
-import type { EvidencePatchRequest, RecommendCategory, RecommendResultDto, RecommendRunDto } from './model'
+import { runErrorMessage, type EvidencePatchRequest, type RecommendCategory, type RecommendResultDto, type RecommendRunDto } from './model'
 
 export const recommendKeys = {
   readiness: (mapId: string) => ['recommend', mapId, 'readiness'] as const,
@@ -40,8 +41,42 @@ export function useCreateRunMutation(mapId: string) {
   return useRunMutation(mapId, (category: RecommendCategory) => createRun(mapId, category))
 }
 
+/**
+ * 추천을 실제로 돌리는 요청(실행·다시 추천·반경 넓히기, #349).
+ * v1 서버는 진행 이벤트를 보내지 않고 요청 안에서 끝낸다(docs/events.md) — 그래서 보내는 순간 run 을 '실행 중'으로 두어
+ * 탭이 '진행 중' 시트를 그리게 하고, 응답이 오면 그 run 으로 갈아 끼운다.
+ * 500 RECOMMEND_FAILED 는 run 을 '실패'로 두어 '추천 실패' 화면을 띄운다. 그 밖의 실패는 원래 상태로 되돌리고 알린다.
+ * 이 처리(안내 포함)를 버튼이 아니라 여기에 두는 이유: 누른 화면(근거 확인·결과·0곳)은 '실행 중'이 되는 순간
+ * 사라져서 그 화면의 mutate 콜백은 불리지 않는다.
+ */
+function useRunningMutation(mapId: string, fn: (runId: string) => Promise<RecommendRunDto>) {
+  const setRun = useAiStore((s) => s.setRun)
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (run: RecommendRunDto) => fn(run.id),
+    onMutate: (run) => {
+      setRun(mapId, { ...run, status: 'executing' })
+      return { before: run }
+    },
+    onSuccess: (run) => {
+      // 실패 뒤 「다시 시도」로 성공하면 같은 run·같은 시도 번호라 예전(실패) 결과가 캐시에 남아 있을 수 있다 — 새로 받는다.
+      void queryClient.invalidateQueries({ queryKey: recommendKeys.result(run.id) })
+      setRun(mapId, run)
+    },
+    onError: (err, _run, ctx) => {
+      if (!ctx) return
+      if (err instanceof ApiError && err.code === 'RECOMMEND_FAILED') {
+        setRun(mapId, { ...ctx.before, status: 'failed' })
+        return
+      }
+      setRun(mapId, ctx.before)
+      showToast(runErrorMessage(err))
+    },
+  })
+}
+
 export function useExecuteRunMutation(mapId: string) {
-  return useRunMutation(mapId, (runId: string) => executeRun(runId))
+  return useRunningMutation(mapId, executeRun)
 }
 
 export function useEvidenceQuery(runId: string) {
@@ -63,11 +98,11 @@ export function useConfirmRegionsMutation(runId: string) {
 }
 
 export function useWidenMutation(mapId: string) {
-  return useRunMutation(mapId, (runId: string) => widenRun(runId))
+  return useRunningMutation(mapId, widenRun)
 }
 
 export function useRetryMutation(mapId: string) {
-  return useRunMutation(mapId, (runId: string) => retryRun(runId))
+  return useRunningMutation(mapId, retryRun)
 }
 
 /**
@@ -80,7 +115,8 @@ export function useResultQuery(run: RecommendRunDto) {
     queryKey: [...recommendKeys.result(run.id), run.attempt_no, run.default_radius_walk_min],
     queryFn: () => fetchResult(run.id),
     retry: (count, err) => !(err instanceof ApiError && ['NO_RESULTS', 'RECOMMEND_FAILED', 'FORBIDDEN'].includes(err.code)) && count < 1,
-    refetchInterval: run.status === 'executing' ? 2000 : false,
+    // v1 은 실행이 요청 안에서 끝난다 — 실행 중에 결과를 물으면 끝나기 전 상태(0곳 등)가 올 수 있어 묻지 않는다(#349).
+    enabled: run.status !== 'executing' && run.status !== 'failed',
   })
 }
 
