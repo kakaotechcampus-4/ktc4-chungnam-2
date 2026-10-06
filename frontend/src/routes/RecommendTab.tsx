@@ -7,19 +7,17 @@ import { useAiStore } from '@/features/recommend/aiStore'
 import EvidenceScreen from '@/features/recommend/EvidenceScreen'
 import { noResultsFunnel, RETRY_MAX, type RecommendRunDto } from '@/features/recommend/model'
 import { useResultQuery } from '@/features/recommend/queries'
-import { AiHeader, ReadinessBody, SoloBody } from '@/features/recommend/Readiness'
+import { AiHeader, ProgressBody, ReadinessBody, SoloBody } from '@/features/recommend/Readiness'
 import {
   BackToReadiness,
   CandidateDetail,
   Failed,
   HowPicked,
   NoResults,
-  ProgressBody,
   ResultsBody,
   ResultsHeader,
   RetryLimit,
 } from '@/features/recommend/Results'
-import { useRunEvents } from '@/features/recommend/runEvents'
 import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
 import { josa } from '@/ui/josa'
@@ -37,7 +35,7 @@ export default function RecommendTab() {
   if (run && (run.status === 'collecting_evidence' || run.status === 'awaiting_region_confirm')) {
     return <EvidenceScreen mapId={mapId} run={run} />
   }
-  // 다시 추천·반경 넓히기마다 진행 단계를 새로 센다.
+  // 다시 추천·반경 넓히기마다 화면(후보 상세 등)을 처음부터 그린다.
   if (run) return <RunResult key={`${run.id}-${run.attempt_no}-${run.default_radius_walk_min ?? 0}`} mapId={mapId} run={run} />
 
   if (memberCount === 1) {
@@ -57,7 +55,6 @@ export default function RecommendTab() {
 type View = { kind: 'list' } | { kind: 'detail'; id: string } | { kind: 'how' } | { kind: 'limit' }
 
 function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
-  const steps = useRunEvents(mapId, run.id)
   const result = useResultQuery(run)
   const members = useMembersQuery(mapId).data ?? []
   const setRun = useAiStore((s) => s.setRun)
@@ -104,7 +101,7 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   if (!result.data) {
     return tab(
       <AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" />,
-      result.error ? <ErrorText message="결과를 불러오지 못했어요" error={result.error} /> : <ProgressBody steps={steps} />,
+      result.error ? <ErrorText message="결과를 불러오지 못했어요" error={result.error} /> : <ProgressBody />,
     )
   }
 

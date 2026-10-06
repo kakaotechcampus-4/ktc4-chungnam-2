@@ -4,7 +4,7 @@ import { ChevronLeft, FileText, MapPin, Search, X } from 'lucide-react'
 
 import { useMeQuery } from '@/features/auth/queries'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
-import { filterPins } from '@/features/map/model'
+import { byNewest, filterPins, timeAgo } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMapEvents } from '@/features/map/realtime'
@@ -132,10 +132,10 @@ export default function MapLayout() {
     }
     if (placed.length === 0) return showToast(pins.length < allPins.length ? '필터에 걸리는 핀이 없어요' : '아직 지도에 핀이 없어요')
     if (key === 'recent') {
-      // ponytail: 핀 응답에 만든 시각이 없어 목록 마지막을 최근으로 본다. created_at 이 생기면 그 값으로.
-      const pin = placed[placed.length - 1]
+      const pin = [...placed].sort(byNewest)[0]
       map.panTo(pin.lat!, pin.lng!)
-      showToast(`가장 최근 핀 · ${pin.place_name ?? '이름 없는 핀'}${pin.created_by_display_name ? ` (${pin.created_by_display_name})` : ''}`)
+      const who = [pin.created_by_display_name, timeAgo(pin.created_at)].filter(Boolean).join(' · ')
+      showToast(`가장 최근 핀 · ${pin.place_name ?? '이름 없는 핀'} (${who})`)
     } else {
       map.fitPins(placed)
       showToast(`핀 ${placed.length}곳을 모두 보여 줘요`)

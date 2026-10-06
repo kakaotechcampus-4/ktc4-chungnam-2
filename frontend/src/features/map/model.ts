@@ -38,13 +38,22 @@ export function filterPins(pins: Pin[], f: PinFilters): Pin[] {
   const kept = pins.filter(
     (p) => (!f.category || p.category === f.category) && (!f.createdBy || p.created_by === f.createdBy),
   )
-  if (f.sort === 'recent') {
-    // ponytail: 핀 응답에 만든 시각이 없어 서버가 준 순서의 역순을 최근 순으로 본다. created_at 이 생기면 그 값으로.
-    return kept.reverse()
-  }
+  if (f.sort === 'recent') return kept.sort(byNewest)
   const dir = f.sort === 'most' ? -1 : 1
   // 같은 참여 수면 원래 순서를 지킨다(Array.prototype.sort 는 안정 정렬).
   return kept.sort((a, b) => dir * (participants(a) - participants(b)))
+}
+
+/** 최근에 찍은 핀이 앞으로. created_at 은 ISO 8601 이라 문자열 비교로 시간 순서가 맞지 않을 수 있어(시간대 표기) 숫자로 비교한다. */
+export const byNewest = (a: Pin, b: Pin) => Date.parse(b.created_at) - Date.parse(a.created_at)
+
+/** "방금 전" · "10분 전" · "3시간 전" · "2일 전". */
+export function timeAgo(iso: string, now = Date.now()): string {
+  const min = Math.floor((now - Date.parse(iso)) / 60_000)
+  if (min < 1) return '방금 전'
+  if (min < 60) return `${min}분 전`
+  if (min < 60 * 24) return `${Math.floor(min / 60)}시간 전`
+  return `${Math.floor(min / (60 * 24))}일 전`
 }
 
 export type PinCardView = {
@@ -61,7 +70,9 @@ export function toPinCard(pin: Pin, memberCount: number): PinCardView {
   return {
     id: pin.id,
     name: pin.place_name ?? '이름 없는 장소',
-    meta: [pin.category, pin.created_by_display_name && `${pin.created_by_display_name}님이 찍음`].filter(Boolean).join(' · '),
+    meta: [pin.category, pin.created_by_display_name && `${pin.created_by_display_name}님이 찍음`, timeAgo(pin.created_at)]
+      .filter(Boolean)
+      .join(' · '),
     counts: { ...s, unknown: Math.max(0, memberCount - participants(pin)) },
     mine: pin.my_reaction?.type ?? null,
   }
@@ -70,17 +81,12 @@ export function toPinCard(pin: Pin, memberCount: number): PinCardView {
 export type PinCreateRequest = components['schemas']['PinCreateRequest']
 export type ReactionDto = components['schemas']['Reaction']
 export type ReactionRequest = components['schemas']['ReactionRequest']
+/** 반대 사유 칩(최종기획안 5-1-1). 목록은 서버가 카테고리별로 준다 — 화면엔 label, 요청엔 id. */
+export type ReasonChip = components['schemas']['ReasonChip']
+/** 지도 전체 집계. 쓰는 건 「2/4명이 의견을 남겼어요」(members_with_opinion·members_total)뿐이다. */
+export type FilterCounts = components['schemas']['FilterCounts']
 
-/** 반대 사유 칩(최종기획안 5-1-1). 지금은 음식점만 정해져 있다 — 다른 카테고리는 자유서술만 받는다. */
-export const REASON_CHIPS: Partial<Record<PinCategory, string[]>> = {
-  음식점: ['매워요', '비싸요', '멀어요', '웨이팅', '가봤어요'],
-}
-// ponytail: 칩 id 목록이 스펙에 없어 칩 이름을 id로 보낸다(백엔드는 사유 글이 없으면 id를 이어 붙여 사유로 쓴다). id가 정해지면 표로.
-
-/**
- * 내 반응을 바꾼 뒤의 핀(낙관적 반영). 서버 응답(Reaction)에는 집계가 없어서 직접 고친다 —
- * 그래야 같은 변경이 SSE 로 돌아왔을 때 "남이 남긴 의견"으로 오인해 토스트를 띄우지 않는다.
- */
+/** 내 반응을 바꾼 뒤의 핀. 서버 응답(Reaction)에는 집계가 없어서 직접 고친다 — SSE 가 오면 그 집계로 덮인다. */
 export function withMyReaction(pin: Pin, next: ReactionDto | null): Pin {
   const s = { ...pin.reaction_summary }
   const prev = pin.my_reaction?.type
@@ -95,7 +101,12 @@ export type OpinionView = { userId: string; name: string; isMe: boolean; type: R
  * 핀 상세 「구성원 의견」(Figma 구성원 의견 표시 원칙). 위 집계 줄과 같은 내용을 되풀이하지 않는다 —
  * 갈린 의견(반대 → 조율)만 카드로 펼치고, 좋음은 한 줄로 접고, 미확인은 이름을 보여준다.
  */
-export function toOpinions(reactions: ReactionDto[], members: { userId: string; name: string; isMe: boolean }[]) {
+export function toOpinions(
+  reactions: ReactionDto[],
+  members: { userId: string; name: string; isMe: boolean }[],
+  chips: ReasonChip[] = [],
+) {
+  const labelOf = (id: string) => chips.find((c) => c.id === id)?.label ?? id
   const nameOf = (userId: string) => members.find((m) => m.userId === userId)
   const views: OpinionView[] = reactions.map((r) => {
     const m = nameOf(r.user_id)
@@ -104,9 +115,8 @@ export function toOpinions(reactions: ReactionDto[], members: { userId: string; 
       name: m?.name ?? r.display_name ?? '구성원',
       isMe: m?.isMe ?? false,
       type: r.type,
-      chips: r.reason_chip_ids ?? [],
-      // 칩만 고른 반대는 서버가 칩을 이어 붙여 사유 글로 돌려줄 수 있다 — 같은 말을 두 번 보이지 않는다.
-      text: r.reason_text && r.reason_text !== (r.reason_chip_ids ?? []).join(', ') ? r.reason_text : undefined,
+      chips: (r.reason_chip_ids ?? []).map(labelOf),
+      text: r.reason_text || undefined,
     }
   })
   const reacted = new Set(reactions.map((r) => r.user_id))

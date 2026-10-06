@@ -71,7 +71,8 @@ export function useRetryMutation(mapId: string) {
 }
 
 /**
- * 추천 결과. 실행 중이면 2초마다 다시 본다(개인 채널 SSE 가 먼저 오면 그걸로 끝난다).
+ * 추천 결과. 실행 중이면 2초마다 다시 본다. v1 서버는 실행 요청 안에서 끝내므로 보통은 한 번에 받는다
+ * (run.candidates_ready·run.failed 이벤트를 기다리지 않는다 — docs/events.md).
  * 0곳(NO_RESULTS)·실패(RECOMMEND_FAILED)는 답이 정해진 것이라 다시 묻지 않는다.
  */
 export function useResultQuery(run: RecommendRunDto) {

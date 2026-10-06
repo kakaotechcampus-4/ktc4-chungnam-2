@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { createPin, deleteReaction, fetchPins, fetchReactions, putReaction } from './api'
-import { withMyReaction, type Pin, type PinCreateRequest, type ReactionRequest } from './model'
+import { createPin, deleteReaction, fetchCounts, fetchPins, fetchReactions, fetchReasonChips, putReaction } from './api'
+import { withMyReaction, type Pin, type PinCategory, type PinCreateRequest, type ReactionRequest } from './model'
 
 export const pinKeys = {
   list: (mapId: string) => ['pins', mapId] as const,
   reactions: (pinId: string) => ['pins', 'reactions', pinId] as const,
+  counts: (mapId: string) => ['pins', mapId, 'counts'] as const,
+  chips: (category: PinCategory) => ['reason-chips', category] as const,
 }
 
 /**
@@ -27,6 +29,16 @@ export function useReactionsQuery(pinId: string) {
   return useQuery({ queryKey: pinKeys.reactions(pinId), queryFn: () => fetchReactions(pinId) })
 }
 
+/** 「2/4명이 의견을 남겼어요」. 누가 의견을 남기면(내 것은 mutation, 남의 것은 SSE) 다시 받는다. */
+export function useCountsQuery(mapId: string) {
+  return useQuery({ queryKey: pinKeys.counts(mapId), queryFn: () => fetchCounts(mapId) })
+}
+
+/** 반대 사유 칩. 고정 목록이라(api-spec) 한 번 받으면 다시 묻지 않는다. */
+export function useReasonChipsQuery(category: PinCategory) {
+  return useQuery({ queryKey: pinKeys.chips(category), queryFn: () => fetchReasonChips(category), staleTime: Infinity })
+}
+
 /**
  * 내 의견 등록·바꾸기·취소. 성공하면 핀 목록 캐시에 바로 반영하고(withMyReaction) 의견 목록은 다시 받는다.
  * 실패를 조용히 삼키지 않는다 — 부르는 쪽이 토스트로 알린다.
@@ -41,6 +53,7 @@ export function useMyReactionMutation(mapId: string, pin: Pin) {
         pins?.map((p) => (p.id === pin.id ? withMyReaction(p, reaction) : p)),
       )
       void queryClient.invalidateQueries({ queryKey: pinKeys.reactions(pin.id) })
+      void queryClient.invalidateQueries({ queryKey: pinKeys.counts(mapId) })
     },
   })
 }

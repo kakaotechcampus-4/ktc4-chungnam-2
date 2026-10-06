@@ -12,7 +12,7 @@ import ModalSheet from './ModalSheet'
 /**
  * 프로필 모달(Figma 8절). 탭 시트가 아니라 모달이다 — 탭 시트 자리에 띄우면 켜진 탭과 내용이 어긋난다.
  * 검정 32% 딤이 지도·상단 버튼·하단 바까지 덮고, 시트는 화면 바닥에 붙는다.
- * 강퇴는 v2라 버튼이 없다. 방장 표시는 구성원 응답에 역할 필드가 없어 아직 못 붙인다.
+ * 강퇴는 v2라 버튼이 없다.
  */
 export default function ProfileModal({ mapId, onClose }: { mapId: string; onClose: () => void }) {
   const map = useMapQuery(mapId)
@@ -66,6 +66,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
               {m.name}
               {m.isMe && <span className="ml-1 text-ink-400">(나)</span>}
             </span>
+            {m.isOwner && <span className="rounded-md bg-ink-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-600">방장</span>}
           </li>
         ))}
       </ul>

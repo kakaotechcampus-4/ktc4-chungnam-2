@@ -1,6 +1,6 @@
 import { api } from '@/api'
 
-import type { PinCreateRequest, PinDto, ReactionDto, ReactionRequest } from './model'
+import type { PinCategory, PinCreateRequest, PinDto, ReactionDto, ReactionRequest, ReasonChip, FilterCounts } from './model'
 
 export const fetchPins = (mapId: string) => api<PinDto[]>(`/maps/${mapId}/pins`)
 
@@ -13,3 +13,8 @@ export const deleteReaction = (pinId: string) => api<void>(`/pins/${pinId}/react
 
 export const createPin = (mapId: string, body: PinCreateRequest) =>
   api<PinDto>(`/maps/${mapId}/pins`, { method: 'POST', body: JSON.stringify(body) })
+
+export const fetchReasonChips = (category: PinCategory) =>
+  api<ReasonChip[]>(`/categories/${encodeURIComponent(category)}/reason-chips`)
+
+export const fetchCounts = (mapId: string) => api<FilterCounts>(`/maps/${mapId}/counts`)

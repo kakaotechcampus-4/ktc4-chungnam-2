@@ -8,8 +8,8 @@ import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation } from '@/features/shortlist/queries'
 import { josa } from '@/ui/josa'
 
-import { participants, REASON_CHIPS, toOpinions, type OpinionView, type Pin, type ReactionDto, type ReactionType } from './model'
-import { useMyReactionMutation, useReactionsQuery } from './queries'
+import { participants, toOpinions, type OpinionView, type Pin, type ReactionDto, type ReactionType, type ReasonChip } from './model'
+import { useMyReactionMutation, useReactionsQuery, useReasonChipsQuery } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: string; label: string; bg: string; line: string; text: string }> = {
@@ -92,6 +92,7 @@ export function PinDetailBody({
   onDone: () => void
 }) {
   const reactions = useReactionsQuery(pin.id)
+  const chips = useReasonChipsQuery(pin.category)
   const memberCount = members.length
   const s = pin.reaction_summary
   const mine = pin.my_reaction?.type ?? null
@@ -134,13 +135,13 @@ export function PinDetailBody({
       {reactions.error ? (
         <ErrorText message="구성원 의견을 불러오지 못했어요" error={reactions.error} />
       ) : (
-        reactions.data && <Opinions {...toOpinions(reactions.data, members)} />
+        reactions.data && <Opinions {...toOpinions(reactions.data, members, chips.data)} />
       )}
 
       <div className="-mx-4 h-1.5 bg-ink-100" />
 
       {pin.permissions.can_react ? (
-        <MyOpinion key={pin.my_reaction?.type ?? 'none'} pin={pin} mapId={mapId} onDone={onDone} />
+        <MyOpinion key={pin.my_reaction?.type ?? 'none'} pin={pin} mapId={mapId} chipOptions={chips.data ?? []} chipsError={chips.error} onDone={onDone} />
       ) : (
         // 숙소 핀은 반응을 받지 않는다(#154). v1엔 숙소 핀이 없지만 권한이 꺼져 오면 그린다.
         <p className="text-sm text-ink-500">이 장소에는 의견을 남길 수 없어요</p>
@@ -240,13 +241,25 @@ function OpinionRow({ o, name }: { o: OpinionView; name: string }) {
  * 「내 의견 선택」. 조율·반대는 아래에 사유 입력이 펼쳐진다. 등록 전까지 위 집계는 바뀌지 않는다.
  * 반대는 칩이나 글 중 하나가 있어야 등록된다(가드레일 3). 이 화면의 채움 버튼은 「의견 등록」 하나다.
  */
-function MyOpinion({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: () => void }) {
+function MyOpinion({
+  pin,
+  mapId,
+  chipOptions,
+  chipsError,
+  onDone,
+}: {
+  pin: Pin
+  mapId: string
+  /** 화면엔 label, 요청엔 id 를 보낸다 — 이름을 보내면 서버가 422 로 막는다. */
+  chipOptions: ReasonChip[]
+  chipsError: Error | null
+  onDone: () => void
+}) {
   const saved = pin.my_reaction
   const [type, setType] = useState<ReactionType | null>(saved?.type ?? null)
   const [chips, setChips] = useState<string[]>(saved?.reason_chip_ids ?? [])
   const [text, setText] = useState(saved?.reason_text ?? '')
   const react = useMyReactionMutation(mapId, pin)
-  const chipOptions = REASON_CHIPS[pin.category] ?? []
   const missingReason = type === 'against' && chips.length === 0 && text.trim() === ''
 
   function submit() {
@@ -321,23 +334,24 @@ function MyOpinion({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
           {type === 'against' && chipOptions.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {chipOptions.map((chip) => {
-                const on = chips.includes(chip)
+                const on = chips.includes(chip.id)
                 return (
                   <button
-                    key={chip}
+                    key={chip.id}
                     type="button"
                     aria-pressed={on}
-                    onClick={() => setChips((cs) => (on ? cs.filter((c) => c !== chip) : [...cs, chip]))}
+                    onClick={() => setChips((cs) => (on ? cs.filter((c) => c !== chip.id) : [...cs, chip.id]))}
                     className={`rounded-full border px-3 py-1.5 text-[13px] ${
                       on ? 'border-brand-600 bg-brand-100 font-bold text-brand-700' : 'border-ink-300 bg-white font-medium text-ink-700'
                     }`}
                   >
-                    {chip}
+                    {chip.label}
                   </button>
                 )
               })}
             </div>
           )}
+          {type === 'against' && chipsError && <ErrorText message="사유 칩을 불러오지 못했어요 — 글로 적어 주세요" error={chipsError} />}
           <div className="flex items-center gap-2 rounded-xl border-[1.5px] border-ink-300 bg-white py-3 pl-3.5 pr-3 focus-within:border-[var(--line-focus)]">
             <input
               value={text}

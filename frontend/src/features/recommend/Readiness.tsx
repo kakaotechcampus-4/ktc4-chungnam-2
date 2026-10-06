@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Check, Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
@@ -21,6 +21,42 @@ export function AiHeader({ title, sub }: { title: string; sub: string }) {
         <p className="text-xs text-ink-500">{sub}</p>
       </div>
     </div>
+  )
+}
+
+/** 실행 단계(실격 거르기·순위는 코드가 한다 — 가드레일 7). */
+const RUN_STEPS = ['반경 안 후보를 모으는 중', '꼭 지켜야 하는 조건으로 거르는 중', '구성원 선호로 순서를 정하는 중']
+/** run 만들기 단계 — 사유를 조건으로 정리하는 건 AI(②) 한 번뿐이다(CLAUDE.md 모델 호출). */
+const COLLECT_STEPS = ['구성원 의견을 모으는 중', 'AI가 사유를 조건으로 정리하는 중', '확인할 조건을 준비하는 중']
+const STEP_MS = 3000
+
+/**
+ * 진행 중(Figma '진행 중'). v1 서버는 단계 이벤트(run.progress)를 보내지 않는다 — 실행이 요청 안에서 끝난다
+ * (docs/events.md「v1에서 발행하지 않는 이벤트」). 그래서 요청이 돌아올 때까지 정해진 단계를 시간으로 넘긴다.
+ * 마지막 단계에서는 멈춰 있는다. 실제 진행과 맞지 않을 수 있어 단계에 숫자·퍼센트는 붙이지 않는다.
+ */
+export function ProgressBody({ steps = RUN_STEPS }: { steps?: string[] }) {
+  const [at, setAt] = useState(0)
+  useEffect(() => {
+    if (at >= steps.length - 1) return
+    const t = setTimeout(() => setAt(at + 1), STEP_MS)
+    return () => clearTimeout(t)
+  }, [at, steps.length])
+  return (
+    <ol aria-live="polite" className="space-y-2 rounded-xl border border-brand-300 bg-brand-50 p-3 text-sm">
+      {steps.slice(0, at + 1).map((label, i) => {
+        const current = i === at
+        return (
+          <li key={label} className={`flex items-center gap-2 ${current ? 'font-bold text-ink-900' : 'text-ink-700'}`}>
+            <span aria-hidden="true" className={current ? 'animate-pulse' : ''}>
+              {current ? '●' : '✓'}
+            </span>
+            {label}
+            {current && <span className="ml-auto text-xs text-brand-600">진행 중</span>}
+          </li>
+        )
+      })}
+    </ol>
   )
 }
 
@@ -51,6 +87,8 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
         ))}
       </div>
       <p className="text-[11px] text-ink-500">* 의견 남긴 구성원이 {required}명(구성원 절반) 이상이면 추천 가능해요.</p>
+      {/* run 을 만들 때 AI가 사유를 조건으로 정리한다(②) — 5~12초 걸린다(백엔드 안내). 그동안 진행을 보인다. */}
+      {create.isPending && <ProgressBody steps={COLLECT_STEPS} />}
       {create.error && <ErrorText message={runErrorMessage(create.error)} error={create.error} />}
       <button
         type="button"

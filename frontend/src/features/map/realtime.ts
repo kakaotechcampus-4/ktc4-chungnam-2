@@ -5,7 +5,7 @@ import { useMeQuery } from '@/features/auth/queries'
 import { mapKeys } from '@/features/maps/queries'
 import { showToast } from '@/features/shell/toast'
 
-import type { Pin } from './model'
+import type { Pin, ReactionType } from './model'
 import { pinKeys } from './queries'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -17,6 +17,16 @@ window.addEventListener('pagehide', () => (leaving = true))
 export const isPageLeaving = () => leaving
 
 export type ConnectionState = 'open' | 'reconnecting' | 'closed'
+
+/** docs/events.md — 삭제면 type 이 null 이다. 사유는 싣지 않는다. */
+type ReactionChanged = {
+  pin_id: string
+  reaction_summary: Pin['reaction_summary']
+  user_id: string
+  display_name?: string
+  type: ReactionType | null
+}
+const REACTION_WORD: Record<ReactionType, string> = { like: '좋음', neutral: '조율 필요', against: '반대' }
 
 /**
  * 지도 전체 채널(docs/events.md). 받은 이벤트를 핀 캐시에 바로 반영한다.
@@ -49,14 +59,17 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       update((pins) => pins.filter((p) => p.id !== pin_id))
     }
     const reaction = (e: MessageEvent) => {
-      const { pin_id, reaction_summary } = parse<{ pin_id: string; reaction_summary: Pin['reaction_summary'] }>(e)
-      const before = queryClient.getQueryData<Pin[]>(key)?.find((p) => p.id === pin_id)
-      // 내가 남긴 의견은 이미 캐시에 반영돼 집계가 같다. 다를 때만 남이 남긴 것으로 보고 알린다.
-      // ponytail: 이벤트에 누가 남겼는지가 없어 "지우님이 반대" 같은 문구는 못 쓴다. 페이로드에 user 가 생기면 그 문구로.
-      if (before && JSON.stringify(before.reaction_summary) !== JSON.stringify(reaction_summary)) {
-        showToast(`${before.place_name ?? '핀'}에 새 의견이 올라왔어요`)
+      const { pin_id, reaction_summary, user_id, display_name, type } = parse<ReactionChanged>(e)
+      const pin = queryClient.getQueryData<Pin[]>(key)?.find((p) => p.id === pin_id)
+      // 내 의견은 이미 캐시에 반영했다. 의견을 거둔 것(type=null)은 알리지 않는다.
+      if (pin && type && user_id !== myUserId) {
+        const place = pin.place_name ?? '핀'
+        showToast(`${display_name ?? '구성원'}님이 ${place}에 ${REACTION_WORD[type]} 의견을 남겼어요`)
       }
       update((pins) => pins.map((p) => (p.id === pin_id ? { ...p, reaction_summary } : p)))
+      // 의견을 남긴 사람 수(「2/4명」)와 열려 있는 핀 상세의 의견 목록이 바뀐다.
+      void queryClient.invalidateQueries({ queryKey: pinKeys.counts(mapId) })
+      void queryClient.invalidateQueries({ queryKey: pinKeys.reactions(pin_id) })
     }
     const members = () => void queryClient.invalidateQueries({ queryKey: mapKeys.detail(mapId) })
 
