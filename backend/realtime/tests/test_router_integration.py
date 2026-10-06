@@ -112,8 +112,8 @@ async def test_private_events_never_leaks_other_users_row(db_session):
     try:
         chunk = await asyncio.wait_for(agen.__anext__(), timeout=1)
         # user-b가 받은 첫 청크가 user-a용("x")이 아니라 user-b용("y")이어야 한다 — 새지 않았다는 증거.
-        assert "\"type\": \"y\"" in chunk
-        assert "\"type\": \"x\"" not in chunk
+        assert "event: y\n" in chunk
+        assert "event: x\n" not in chunk
     finally:
         await emitter
         await agen.aclose()

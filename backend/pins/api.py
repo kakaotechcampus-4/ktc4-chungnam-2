@@ -8,6 +8,7 @@ db.flush()만으로 PK/유니크 충돌 등은 여전히 그 자리에서 드러
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from pydantic import TypeAdapter
@@ -20,7 +21,7 @@ from places import api as places_api
 from authz.core import Principal
 from common.errors import AppError
 from common.events import Event
-from pins import core, service
+from pins import chips, core, service
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
 from pins.schemas import Check, MemberFulfillment, Pin, PlaceSource
@@ -102,6 +103,7 @@ def create_ai_pin(
         place_name=place.name if place else None,
         place_url=place.kakao_place_url if place else None,
         created_by_display_name=display_name,
+        created_at=pin_row.created_at,
         checks=validated_checks,
         reason=reason, member_fulfillment=validated_fulfillment, place_source=validated_source,
     )
@@ -167,6 +169,22 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
         place=places_api.get_places([pin_row.place_id], db=db).get(pin_row.place_id),
     )
     return core.to_pin_response(record, principal)
+
+
+def count_public_pins_by_map(db: Session, map_ids: Sequence[str]) -> dict[str, int]:
+    """maps(#313)가 Map.pin_count·InviteSummary.pin_count에 쓴다 — 삭제되지 않은 공개 핀 수.
+    핀이 없는 지도는 0이다. 쿼리는 한 번이다. 비공개 핀(남의 AI 후보)은 세지 않는다(가드레일 1) —
+    요청자 본인의 비공개 핀도 뺀다: 초대 요약은 비구성원도 보는 값이라 보는 사람마다 달라지면 안 된다."""
+    counts = {map_id: 0 for map_id in map_ids}
+    if not counts:
+        return counts
+    rows = db.execute(
+        select(PinRow.map_id, func.count())
+        .where(PinRow.map_id.in_(counts), PinRow.deleted_at.is_(None), PinRow.visibility == "public")
+        .group_by(PinRow.map_id)
+    ).all()
+    counts.update({map_id: n for map_id, n in rows})
+    return counts
 
 
 def count_reacted_users(db: Session, *, map_id: str, category: str) -> int:
@@ -258,9 +276,9 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
         if reason_text is None:
             if not reason_chip_ids:
                 continue
-            # 칩만 남긴 반대(#236) — 칩 id↔사유 문구 registry가 없어(#60 결정 대기) 칩 id를 그대로 사유
-            # 문장으로 써서 ②가 구조화하게 한다. registry가 생기면 여기서 문구로 바꾼다.
-            reason_text = ", ".join(reason_chip_ids)
+            # 칩만 남긴 반대(#236) — 칩 id를 label로 바꿔 사유 문장으로 써서 ②가 구조화하게 한다(#60, #312).
+            # 옛 값(이름 그대로 저장된 것)은 그대로 문장이 된다.
+            reason_text = chips.reason_text_from_chips(reason_chip_ids)
         reasoned.append({
             "pin_id": str(pin_id), "user_id": user_id, "type": reaction_type,
             "reason_text": reason_text, "reason_chip_ids": reason_chip_ids,

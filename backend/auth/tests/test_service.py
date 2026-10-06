@@ -179,3 +179,61 @@ def test_other_integrity_errors_are_not_swallowed(db_session):
 
     with pytest.raises(IntegrityError):   # NOT NULL 위반(23502) — 유일 제약 위반이 아니므로 그대로 올라온다
         service.find_or_create_user(db_session, provider="kakao", provider_user_id="779", display_name=None)
+
+
+# ---- 카카오 응답 정리 (#315) — KeyError·500이 아니라 KakaoApiError(kakao_failed) ----
+
+class _BadJson(_FakeResponse):
+    def json(self):
+        raise ValueError("not json")
+
+
+@pytest.mark.parametrize("token_response, reason", [
+    (_FakeResponse(200, {}), "missing_access_token"),
+    (_FakeResponse(200, {"access_token": ""}), "missing_access_token"),
+    (_FakeResponse(200, {"access_token": None}), "missing_access_token"),
+    (_FakeResponse(200, ["not", "an", "object"]), "unexpected_shape"),
+    (_BadJson(200, {}), "invalid_json"),
+    (_FakeResponse(400, {"error": "invalid_grant"}), "http_status"),
+])
+def test_bad_token_response_is_kakao_api_error(db_session, monkeypatch, token_response, reason):
+    monkeypatch.setattr(service.httpx, "post", lambda url, **kw: token_response)
+
+    with pytest.raises(service.KakaoApiError) as exc:
+        service.login_with_kakao_code(db_session, code="auth-code")
+
+    assert exc.value.code == "UNAUTHORIZED"
+    assert exc.value.detail["reason"] == reason
+
+
+def test_profile_without_id_is_kakao_api_error(db_session, monkeypatch):
+    monkeypatch.setattr(service.httpx, "post", lambda url, **kw: _FakeResponse(200, {"access_token": "t"}))
+    monkeypatch.setattr(service.httpx, "get", lambda url, **kw: _FakeResponse(200, {"kakao_account": {}}))
+
+    with pytest.raises(service.KakaoApiError) as exc:
+        service.login_with_kakao_code(db_session, code="auth-code")
+    assert exc.value.detail["reason"] == "missing_user_id"
+
+
+def test_network_error_is_kakao_api_error_and_hides_request_details(db_session, monkeypatch):
+    import httpx
+
+    def refuse(url, **kw):
+        raise httpx.ConnectError("connect failed for code=auth-code")
+
+    monkeypatch.setattr(service.httpx, "post", refuse)
+
+    with pytest.raises(service.KakaoApiError) as exc:
+        service.login_with_kakao_code(db_session, code="auth-code")
+    assert exc.value.detail == {"reason": "ConnectError"}
+    assert "auth-code" not in str(exc.value)
+
+
+def test_withdrawn_account_is_not_a_kakao_api_error(db_session, monkeypatch):
+    _mock_kakao_success(monkeypatch, kakao_id=98, nickname="영희")
+    user = service.login_with_kakao_code(db_session, code="c")
+    service.withdraw_user(db_session, user_id=user.id)
+
+    with pytest.raises(AppError) as exc:
+        service.login_with_kakao_code(db_session, code="c2")
+    assert not isinstance(exc.value, service.KakaoApiError)

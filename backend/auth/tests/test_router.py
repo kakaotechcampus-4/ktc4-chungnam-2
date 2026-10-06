@@ -18,6 +18,9 @@ from auth.testing import session_cookie
 from auth.tests.test_service import _FakeResponse
 
 
+LOGIN_URL = "http://localhost:5173/login"
+
+
 def _seed_user(db_session, *, user_id="user_1", display_name="철수"):
     row = User(id=user_id, provider="kakao", provider_user_id=f"kakao_{user_id}", display_name=display_name)
     db_session.add(row)
@@ -34,6 +37,7 @@ def kakao_configured(monkeypatch):
         router_module.settings,
         kakao_client_id="test-client-id",
         kakao_redirect_uri="http://localhost:8000/auth/kakao/callback",
+        frontend_login_redirect_url=LOGIN_URL,
     )
     monkeypatch.setattr(router_module, "settings", configured)
 
@@ -103,6 +107,28 @@ def test_kakao_login_needs_no_session(app_client, kakao_configured):
     assert app_client.get("/auth/kakao/login", follow_redirects=False).status_code == 302
 
 
+def _login_error(resp) -> str | None:
+    """실패 302가 진입점에 붙인 login_error 값. 성공이면 None."""
+    assert resp.status_code == 302, resp.text
+    return parse_qs(urlparse(resp.headers["location"]).query).get("login_error", [None])[0]
+
+
+def _has_session_cookie(resp) -> bool:
+    return any(h.startswith("session=") for h in resp.headers.get_list("set-cookie"))
+
+
+def _callback(client, **params):
+    return client.get("/auth/kakao/callback", params=params, follow_redirects=False)
+
+
+def _assert_failed_with(resp, reason, db_session=None):
+    assert _login_error(resp) == reason
+    assert not _has_session_cookie(resp)
+    assert _is_cleared(resp, "kakao_oauth_state")
+    if db_session is not None:
+        assert db_session.execute(select(User)).first() is None   # 사용자도 만들어지지 않았다
+
+
 # ---- GET /auth/kakao/callback ----
 
 def test_kakao_callback_creates_user_and_sets_session_cookie(app_client, db_session, monkeypatch, kakao_configured):
@@ -118,27 +144,163 @@ def test_kakao_callback_creates_user_and_sets_session_cookie(app_client, db_sess
     assert row.display_name == "민수"
 
 
-def test_kakao_callback_without_code_is_422(app_client):
-    resp = app_client.get("/auth/kakao/callback")
-    assert resp.status_code == 422
+def test_success_redirects_to_entry_without_login_error_and_clears_state_cookie(app_client, monkeypatch, kakao_configured):
+    _mock_kakao_login(monkeypatch)
+    state = _start_login(app_client)
+
+    resp = _callback(app_client, code="auth-code", state=state)
+
+    assert _login_error(resp) is None
+    assert resp.headers["location"] == LOGIN_URL
+    assert _has_session_cookie(resp)
+    assert _is_cleared(resp, "kakao_oauth_state")
 
 
-def test_kakao_callback_surfaces_kakao_failure_as_unauthorized_envelope(app_client, monkeypatch, kakao_configured):
+def test_user_cancel_at_kakao_is_cancelled(app_client, db_session, monkeypatch, kakao_configured):
+    """카카오 화면에서 취소하면 code 없이 error(와 state)만 돌아온다 — 예전엔 422 JSON이 그대로 보였다."""
+    _mock_kakao_login(monkeypatch)
+    state = _start_login(app_client)
+
+    resp = _callback(app_client, error="access_denied", error_description="User denied access", state=state)
+
+    _assert_failed_with(resp, "cancelled", db_session)
+
+
+def test_missing_code_without_error_is_also_cancelled(app_client, kakao_configured):
+    state = _start_login(app_client)
+    _assert_failed_with(_callback(app_client, state=state), "cancelled")
+
+
+def test_error_with_code_does_not_log_in(app_client, db_session, monkeypatch, kakao_configured):
+    _mock_kakao_login(monkeypatch)
+    state = _start_login(app_client)
+    _assert_failed_with(_callback(app_client, code="auth-code", error="access_denied", state=state), "cancelled", db_session)
+
+
+def test_cancel_with_bad_state_is_invalid_state_not_cancelled(app_client, kakao_configured):
+    """state 검증이 먼저다 — 위조된 요청이 error만 붙여 cancelled로 위장하지 못한다."""
+    _start_login(app_client)
+    _assert_failed_with(_callback(app_client, error="access_denied", state="forged"), "invalid_state")
+
+
+def test_no_kakao_call_is_made_when_state_is_invalid(app_client, monkeypatch, kakao_configured):
+    def boom(*a, **k):
+        raise AssertionError("state가 틀렸는데 카카오를 불렀다")
+
+    monkeypatch.setattr(service.httpx, "post", boom)
+    monkeypatch.setattr(service.httpx, "get", boom)
+    _start_login(app_client)
+
+    _assert_failed_with(_callback(app_client, code="x", state="forged"), "invalid_state")
+
+
+def test_token_exchange_failure_is_kakao_failed(app_client, db_session, monkeypatch, kakao_configured):
     monkeypatch.setattr(service.httpx, "post", lambda url, **kw: _FakeResponse(400, {"error": "invalid_grant"}))
     state = _start_login(app_client)
 
-    resp = app_client.get("/auth/kakao/callback", params={"code": "bad-code", "state": state})
-    assert resp.status_code == 401
-    assert resp.json()["code"] == "UNAUTHORIZED"
-    assert "kakao_status" in resp.json()["detail"]    # state 거절이 아니라 카카오 실패다
+    resp = _callback(app_client, code="bad-code", state=state)
+
+    _assert_failed_with(resp, "kakao_failed", db_session)
+    assert "bad-code" not in resp.headers["location"]
+
+
+def test_token_response_without_access_token_is_kakao_failed_not_500(app_client, db_session, monkeypatch, kakao_configured):
+    """멘토 지적: access_token이 없으면 KeyError로 500이 되던 경로."""
+    monkeypatch.setattr(service.httpx, "post", lambda url, **kw: _FakeResponse(200, {"token_type": "bearer"}))
+    state = _start_login(app_client)
+
+    _assert_failed_with(_callback(app_client, code="auth-code", state=state), "kakao_failed", db_session)
+
+
+def test_profile_failure_is_kakao_failed(app_client, db_session, monkeypatch, kakao_configured):
+    monkeypatch.setattr(service.httpx, "post", lambda url, **kw: _FakeResponse(200, {"access_token": "fake-token"}))
+    monkeypatch.setattr(service.httpx, "get", lambda url, **kw: _FakeResponse(401, {"error": "invalid_token"}))
+    state = _start_login(app_client)
+
+    _assert_failed_with(_callback(app_client, code="auth-code", state=state), "kakao_failed", db_session)
+
+
+def test_kakao_network_error_is_kakao_failed(app_client, monkeypatch, kakao_configured):
+    import httpx
+
+    def timeout(url, **kw):
+        raise httpx.ConnectTimeout("timed out")
+
+    monkeypatch.setattr(service.httpx, "post", timeout)
+    state = _start_login(app_client)
+
+    _assert_failed_with(_callback(app_client, code="auth-code", state=state), "kakao_failed")
+
+
+def test_unexpected_exception_is_server_error_and_logs_only_the_kind(app_client, monkeypatch, caplog, kakao_configured):
+    def broken(db, *, code):
+        raise RuntimeError("secret-token-abc leaked in message")
+
+    monkeypatch.setattr(service, "login_with_kakao_code", broken)
+    state = _start_login(app_client)
+
+    with caplog.at_level("DEBUG"):
+        resp = _callback(app_client, code="auth-code", state=state)
+
+    _assert_failed_with(resp, "server_error")
+    assert "RuntimeError" in caplog.text
+    assert "secret-token-abc" not in caplog.text
+
+
+def test_kakao_failure_logs_do_not_contain_response_body_or_token(app_client, monkeypatch, caplog, kakao_configured):
+    monkeypatch.setattr(service.httpx, "post", lambda url, **kw: _FakeResponse(200, {"access_token": "tok-123", "extra": "body-secret"}))
+    monkeypatch.setattr(service.httpx, "get", lambda url, **kw: _FakeResponse(500, {"error": "body-secret"}))
+    state = _start_login(app_client)
+
+    with caplog.at_level("DEBUG"):
+        _assert_failed_with(_callback(app_client, code="auth-code", state=state), "kakao_failed")
+
+    assert "tok-123" not in caplog.text and "body-secret" not in caplog.text
+    assert "kakao_status=500" in caplog.text
+
+
+def test_failure_keeps_existing_query_of_the_entry_url(app_client, monkeypatch, kakao_configured):
+    import auth.router as router_module
+
+    monkeypatch.setattr(
+        router_module, "settings",
+        dataclasses.replace(router_module.settings, frontend_login_redirect_url=f"{LOGIN_URL}?next=%2Fmaps%2F1&login_error=old#top"),
+    )
+    state = _start_login(app_client)
+
+    resp = _callback(app_client, error="access_denied", state=state)
+
+    location = urlparse(resp.headers["location"])
+    assert parse_qs(location.query) == {"next": ["/maps/1"], "login_error": ["cancelled"]}   # 기존 쿼리 보존, 옛 login_error는 대체
+    assert location.fragment == "top"
+    assert f"{location.scheme}://{location.netloc}{location.path}" == LOGIN_URL
+
+
+def test_success_keeps_entry_url_untouched(app_client, monkeypatch, kakao_configured):
+    import auth.router as router_module
+
+    entry = f"{LOGIN_URL}?next=%2Fmaps%2F1"
+    monkeypatch.setattr(router_module, "settings", dataclasses.replace(router_module.settings, frontend_login_redirect_url=entry))
+    _mock_kakao_login(monkeypatch)
+    state = _start_login(app_client)
+
+    assert _callback(app_client, code="auth-code", state=state).headers["location"] == entry
+
+
+def test_withdrawn_account_login_is_redirected_not_json(app_client, db_session, monkeypatch, kakao_configured):
+    """탈퇴 계정의 재로그인도 JSON이 아니라 302다. 스펙에 맞는 값이 없어 server_error로 간다(auth/for_Root.md)."""
+    from datetime import datetime, timezone
+
+    _mock_kakao_login(monkeypatch, kakao_id=77)
+    db_session.add(User(provider="kakao", provider_user_id="77", display_name="탈퇴자", deleted_at=datetime.now(timezone.utc)))
+    db_session.flush()
+    state = _start_login(app_client)
+
+    _assert_failed_with(_callback(app_client, code="auth-code", state=state), "server_error")
 
 
 def _assert_rejected_without_login(resp, db_session):
-    assert resp.status_code == 401, resp.text
-    assert resp.json()["code"] == "UNAUTHORIZED"
-    assert resp.json()["detail"] == {"reason": "invalid_state"}
-    assert not any(h.startswith("session=") for h in resp.headers.get_list("set-cookie"))
-    assert db_session.execute(select(User)).first() is None   # 사용자도 만들어지지 않았다
+    _assert_failed_with(resp, "invalid_state", db_session)
 
 
 def test_callback_link_opened_in_another_browser_is_rejected(app_client, db_session, monkeypatch, kakao_configured):
@@ -147,7 +309,7 @@ def test_callback_link_opened_in_another_browser_is_rejected(app_client, db_sess
     attacker_state = _start_login(_other_browser(app_client))
 
     victim = _other_browser(app_client)
-    resp = victim.get("/auth/kakao/callback", params={"code": "attacker-code", "state": attacker_state})
+    resp = _callback(victim, code="attacker-code", state=attacker_state)
 
     _assert_rejected_without_login(resp, db_session)
 
@@ -158,7 +320,7 @@ def test_callback_with_state_from_a_different_login_is_rejected(app_client, db_s
     attacker_state = _start_login(_other_browser(app_client))
     _start_login(app_client)
 
-    resp = app_client.get("/auth/kakao/callback", params={"code": "attacker-code", "state": attacker_state})
+    resp = _callback(app_client, code="attacker-code", state=attacker_state)
 
     _assert_rejected_without_login(resp, db_session)
 
@@ -167,7 +329,7 @@ def test_callback_without_state_param_is_rejected(app_client, db_session, monkey
     _mock_kakao_login(monkeypatch)
     _start_login(app_client)
 
-    resp = app_client.get("/auth/kakao/callback", params={"code": "auth-code"})
+    resp = _callback(app_client, code="auth-code")
 
     _assert_rejected_without_login(resp, db_session)
 
@@ -175,7 +337,7 @@ def test_callback_without_state_param_is_rejected(app_client, db_session, monkey
 def test_callback_without_state_cookie_is_rejected(app_client, db_session, monkeypatch):
     _mock_kakao_login(monkeypatch)
 
-    resp = app_client.get("/auth/kakao/callback", params={"code": "auth-code", "state": "anything"})
+    resp = _callback(app_client, code="auth-code", state="anything")
 
     _assert_rejected_without_login(resp, db_session)
 
@@ -192,7 +354,7 @@ def test_callback_with_tampered_or_expired_state_cookie_is_rejected(app_client, 
     for value, state in ((forged, "forged-state"), (expired, "old-state")):
         client = _other_browser(app_client)
         client.cookies.set("kakao_oauth_state", value, path="/auth/kakao")
-        resp = client.get("/auth/kakao/callback", params={"code": "auth-code", "state": state})
+        resp = _callback(client, code="auth-code", state=state)
         _assert_rejected_without_login(resp, db_session)
 
 
@@ -203,24 +365,18 @@ def test_callback_link_cannot_be_used_twice(app_client, monkeypatch, kakao_confi
     params = {"code": "auth-code", "state": state}
 
     first = app_client.get("/auth/kakao/callback", params=params, follow_redirects=False)
-    assert first.status_code == 302
+    assert _login_error(first) is None
     assert _is_cleared(first, "kakao_oauth_state")
 
-    second = app_client.get("/auth/kakao/callback", params=params, follow_redirects=False)
-    assert second.status_code == 401
-    assert second.json()["detail"] == {"reason": "invalid_state"}
+    _assert_failed_with(app_client.get("/auth/kakao/callback", params=params, follow_redirects=False), "invalid_state")
 
 
 def test_state_cookie_is_cleared_on_failure_too(app_client, monkeypatch, kakao_configured):
     monkeypatch.setattr(service.httpx, "post", lambda url, **kw: _FakeResponse(400, {"error": "invalid_grant"}))
     state = _start_login(app_client)
 
-    failed = app_client.get("/auth/kakao/callback", params={"code": "bad-code", "state": state})
-    assert failed.status_code == 401
-    assert _is_cleared(failed, "kakao_oauth_state")
-
-    retry = app_client.get("/auth/kakao/callback", params={"code": "bad-code", "state": state})
-    assert retry.json()["detail"] == {"reason": "invalid_state"}
+    _assert_failed_with(_callback(app_client, code="bad-code", state=state), "kakao_failed")
+    _assert_failed_with(_callback(app_client, code="bad-code", state=state), "invalid_state")   # 같은 링크는 다시 못 쓴다
 
 
 def test_state_cookie_is_not_a_session(app_client, kakao_configured):
