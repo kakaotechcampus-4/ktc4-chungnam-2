@@ -15,11 +15,14 @@ from auth.deps import get_current_user
 from auth.schemas import CurrentUser
 from authz.core import Principal
 from authz.guard import require, require_map_member, require_on_map, require_with_principal
-from pins import service
+from maps import api as maps_api
+from pins import chips, service
 from pins.deps import DbSession
 from pins.loaders import load_pin
 from pins.models import Pin as PinRow
-from pins.schemas import Category, FilterCounts, Pin, PinCreateRequest, PinKind, Reaction, ReactionRequest
+from pins.schemas import (
+    Category, FilterCounts, Pin, PinCreateRequest, PinKind, Reaction, ReactionRequest, ReasonChip,
+)
 from shortlist import api as shortlist_api
 
 router = APIRouter(tags=["pins"], dependencies=[Depends(get_current_user)])
@@ -32,6 +35,12 @@ PinForRevert = Depends(require("pin.revert", load_pin))
 # 조회는 액션이 아니라 멤버십만 본다(require_map_member와 같은 사정 — 조회 전용 액션이 없다).
 # 멤버 액션 하나를 빌려 비구성원 404를 얻는다.
 PinToRead = Depends(require("pin.react", load_pin))
+
+
+@router.get("/categories/{category}/reason-chips", response_model=list[ReasonChip], response_model_exclude_none=True)
+def get_reason_chips(category: Category = Path(...)):
+    """고정 목록이라 지도와 무관하다 — 라우터 전체의 로그인 의존성(get_current_user)만 걸린다(#60)."""
+    return chips.chips_for(category)
 
 
 @router.get("/maps/{mapId}/pins", response_model=list[Pin], response_model_exclude_none=True)
@@ -54,7 +63,9 @@ def get_counts(
     principal: Principal = PinsForMap,
     db: Session = DbSession,
 ):
-    return service.count_pins(db, map_id=mapId, principal=principal)
+    return service.count_pins(
+        db, map_id=mapId, principal=principal, members_total=maps_api.count_members(db, mapId),
+    )
 
 
 @router.post(

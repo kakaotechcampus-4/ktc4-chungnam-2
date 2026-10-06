@@ -5,6 +5,7 @@
 import { ME_USER_ID, nextId, type StoreState } from "./store";
 
 const NOW = new Date().toISOString();
+const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
 export function buildBaseState(): StoreState {
   const mapId = "map_1";
@@ -18,10 +19,10 @@ export function buildBaseState(): StoreState {
 
   const members: StoreState["members"] = {
     [mapId]: [
-      { user_id: ME_USER_ID, display_name: "황경(나)", online: true },
-      { user_id: "u_2", display_name: "박서영", online: true },
-      { user_id: "u_3", display_name: "김도현", online: false },
-      { user_id: "u_4", display_name: "이유빈", online: false },
+      { user_id: ME_USER_ID, role: "owner", display_name: "황경(나)", online: true },
+      { user_id: "u_2", role: "member", display_name: "박서영", online: true },
+      { user_id: "u_3", role: "member", display_name: "김도현", online: false },
+      { user_id: "u_4", role: "member", display_name: "이유빈", online: false },
     ],
   };
 
@@ -32,6 +33,7 @@ export function buildBaseState(): StoreState {
       start_date: "2026-10-10",
       end_date: "2026-10-12",
       member_count: 4,
+      pin_count: 3,
       confirmed_count: 0,
     },
   };
@@ -53,6 +55,7 @@ export function buildBaseState(): StoreState {
       place_name: "흑돼지식당",
       created_by: "u_2",
       created_by_display_name: "박서영",
+      created_at: minutesAgo(180),
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, neutral: 0, against: 1 },
@@ -69,6 +72,7 @@ export function buildBaseState(): StoreState {
       place_name: "우진해장국",
       created_by: ME_USER_ID,
       created_by_display_name: "황경(나)",
+      created_at: minutesAgo(50),
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, neutral: 0, against: 1 },
@@ -85,6 +89,7 @@ export function buildBaseState(): StoreState {
       place_name: "카페 한라",
       created_by: "u_3",
       created_by_display_name: "김도현",
+      created_at: minutesAgo(10),
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, neutral: 0, against: 0 },

@@ -9,11 +9,13 @@ authz.core.permissions_for에 위임한다. pin_permissions(kind, is_member)는 
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 
 from authz.core import Principal, Resource, permissions_for
 from common import categories
 from common.errors import AppError
 from common.events import Event
+from pins import chips
 from pins.schemas import (
     MemberFulfillment,
     Pin,
@@ -102,6 +104,7 @@ class PinRecord:
     place_name: str | None = None
     place_url: str | None = None
     created_by_display_name: str | None = None
+    created_at: datetime | None = None
     checks: list[dict] | None = None
     reason: str | None = None
     member_fulfillment: dict | None = None
@@ -129,6 +132,7 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
         place_url=record.place_url,
         created_by=record.created_by,
         created_by_display_name=record.created_by_display_name,
+        created_at=record.created_at,
         checks=record.checks,
         reason=record.reason,
         member_fulfillment=MemberFulfillment(**record.member_fulfillment) if record.member_fulfillment else None,
@@ -151,7 +155,7 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
 
 def _public_pin_payload(pin: Pin) -> dict:
     """전체 채널로 나가는 페이로드 — my_reaction은 요청자 본인 것이라 싣지 않는다(가드레일 1)."""
-    return pin.model_dump(exclude_none=True, exclude={"my_reaction"})
+    return pin.model_dump(mode="json", exclude_none=True, exclude={"my_reaction"})
 
 
 def pin_created_event(pin: Pin) -> Event | None:
@@ -209,14 +213,34 @@ def validate_reactable(category: str) -> None:
         raise AppError("REACTION_NOT_ALLOWED")
 
 
+def validate_chip_ids(category: str, reason_chip_ids: list[str] | None) -> None:
+    """칩 id는 그 핀 카테고리 목록(공통 포함)에 있어야 한다(#60). 이름("매워요")이나 다른 카테고리 칩은
+    422 VALIDATION_ERROR(detail.reason_chip_id). 내용 없는 칩은 validate_reaction이 먼저 거른다."""
+    unknown = chips.unknown_chip_ids(category, reason_chip_ids or [])
+    if unknown:
+        raise AppError(
+            "VALIDATION_ERROR", "이 핀의 카테고리에 없는 반대 사유 칩입니다", detail={"reason_chip_id": unknown[0]}
+        )
+
+
 def reaction_changed_event(
-    pin_id: str, map_id: str, visibility: str, reaction_summary: ReactionSummary
+    pin_id: str,
+    map_id: str,
+    visibility: str,
+    reaction_summary: ReactionSummary,
+    user_id: str,
+    display_name: str | None,
+    reaction_type: str | None,
 ) -> Event | None:
-    """docs/events.md reaction.changed — 페이로드는 {pin_id, reaction_summary}. pin.created/
-    pin.deleted와 같은 이유로 private 핀의 반응 변화도 전체 채널로 새면 안 된다(가드레일 1)."""
+    """docs/events.md reaction.changed — 페이로드는 {pin_id, reaction_summary, user_id, display_name, type}.
+    type은 삭제면 None이다. 사유(reason_text·칩)와 my_reaction은 싣지 않는다 — 전체 채널이라 구독자 전원이
+    본다. pin.created/pin.deleted와 같은 이유로 private 핀의 반응 변화도 새면 안 된다(가드레일 1)."""
     if visibility == "private":
         return None
     return Event(
         map_id=map_id, channel="public", type="reaction.changed",
-        payload={"pin_id": pin_id, "reaction_summary": reaction_summary.model_dump()},
+        payload={
+            "pin_id": pin_id, "reaction_summary": reaction_summary.model_dump(),
+            "user_id": user_id, "display_name": display_name, "type": reaction_type,
+        },
     )

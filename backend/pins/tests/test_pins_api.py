@@ -428,7 +428,7 @@ def test_put_reaction_against_with_chip_ids_only_is_200(app_client, db_session):
     row = _insert_pin(db_session, created_by="user_1", place_id="react_chip")
     resp = app_client.put(
         f"/pins/{row.id}/reaction",
-        json={"type": "against", "reason_chip_ids": ["spicy_focused"]},
+        json={"type": "against", "reason_chip_ids": ["food_spicy"]},
         cookies=_auth("user_2"),
     )
     assert resp.status_code == 200
@@ -540,7 +540,10 @@ def test_put_reaction_publishes_event_for_public_pin(app_client, db_session):
     events = _events(db_session, type="reaction.changed")
     assert len(events) == 1
     assert events[0].channel == "public"
-    assert events[0].payload == {"pin_id": str(row.id), "reaction_summary": {"like": 1, "neutral": 0, "against": 0}}
+    assert events[0].payload == {
+        "pin_id": str(row.id), "reaction_summary": {"like": 1, "neutral": 0, "against": 0},
+        "user_id": "user_2", "display_name": "user_2", "type": "like",
+    }
 
 
 def test_put_reaction_on_own_private_pin_emits_no_event(app_client, db_session):
@@ -572,6 +575,7 @@ def test_counts_fills_zero_for_empty_categories_and_kinds(app_client):
     resp = app_client.get("/maps/map_1/counts", cookies=_auth())
     assert resp.status_code == 200
     assert resp.json() == {
+        "members_with_opinion": 0, "members_total": 0,   # 이 파일은 FakeMembership이라 memberships 행이 없다
         "by_category": {"음식점": 0, "카페": 0, "숙소": 0, "관광지": 0, "기타": 0},
         "by_kind": {"일반": 0, "AI추천": 0, "확정": 0},
     }
