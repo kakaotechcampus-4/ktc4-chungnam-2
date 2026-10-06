@@ -38,8 +38,9 @@ export default function MapControls({
     const header = document.querySelector('[data-map-header]')
     if (!sheet || !header) return
     // 숨겨진 동안에도 잰다 — 버튼 자리가 아니라 시트 윗변과 상단 UI 아래끝 사이를 본다.
+    // stackHeight 는 버튼 3개 + 시트와의 틈(12)이다. 상단 UI와는 4px만 떨어져 있으면 보인다(Figma 같은 식).
     const check = () =>
-      onCrampedChange(sheet.getBoundingClientRect().top - 12 - CONTROLS.stackHeight < header.getBoundingClientRect().bottom + 8)
+      onCrampedChange(sheet.getBoundingClientRect().top - CONTROLS.stackHeight < header.getBoundingClientRect().bottom + 4)
     check()
     const ro = new ResizeObserver(check)
     ro.observe(sheet)

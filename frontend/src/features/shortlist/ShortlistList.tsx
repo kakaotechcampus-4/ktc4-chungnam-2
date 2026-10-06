@@ -101,7 +101,7 @@ function SwipeRow({
         onClick={onRemove}
         tabIndex={open ? 0 : -1}
         style={{ width: SWIPE_W }}
-        className="absolute inset-y-0 right-0 flex flex-col items-center justify-center gap-0.5 bg-[var(--action-danger)] text-xs font-bold text-white"
+        className="absolute inset-y-0 right-0 flex flex-col items-center justify-center gap-0.5 bg-ink-600 text-xs font-bold text-white"
       >
         <Trash2 size={18} aria-hidden="true" /> 빼기
       </button>
