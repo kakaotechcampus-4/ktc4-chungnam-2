@@ -19,7 +19,7 @@ export function CategoryChips({
 }) {
   const chips: { key: string | null; label: string }[] = [{ key: null, label: '전체' }, ...FILTER_CATEGORIES.map((c) => ({ key: c, label: c }))]
   return (
-    <div role="group" aria-label="카테고리" className={`flex gap-2 overflow-x-auto ${className}`}>
+    <div role="group" aria-label="카테고리" className={`flex gap-2 overflow-x-auto py-1.5 ${className}`}>
       {chips.map((chip) => {
         const on = value === chip.key
         return (
@@ -28,7 +28,7 @@ export function CategoryChips({
             type="button"
             aria-pressed={on}
             onClick={() => onChange(chip.key)}
-            className={`shrink-0 rounded-full border px-3.5 py-1.5 text-sm shadow-sm ${
+            className={`hit-y-44 shrink-0 rounded-full border px-3.5 py-1.5 text-sm shadow-sm ${
               on ? 'border-brand-600 bg-brand-100 font-semibold text-brand-700' : 'border-ink-200 bg-white text-ink-700'
             }`}
           >
@@ -57,13 +57,13 @@ export function PinFilterBar({
 }) {
   const countBy = (userId: string) => pins.filter((p) => p.created_by === userId).length
   return (
-    <div className="mt-2 flex gap-2">
+    <div className="mt-2 flex flex-wrap gap-2">
       <Pill label="올린 사람">
         <select
           aria-label="올린 사람"
           value={filters.createdBy ?? ''}
           onChange={(e) => onChange('by', e.target.value || null)}
-          className="appearance-none bg-transparent pr-4 font-semibold text-ink-900 outline-none"
+          className="appearance-none bg-transparent pr-4 font-semibold text-ink-900 outline-none focus-visible:outline-2"
         >
           <option value="">전체 · {pins.length}곳</option>
           {members.map((m) => (
@@ -79,7 +79,7 @@ export function PinFilterBar({
           aria-label="정렬"
           value={filters.sort}
           onChange={(e) => onChange('sort', e.target.value === 'most' ? null : e.target.value)}
-          className="appearance-none bg-transparent pr-4 font-semibold text-ink-900 outline-none"
+          className="appearance-none bg-transparent pr-4 font-semibold text-ink-900 outline-none focus-visible:outline-2"
         >
           {(Object.keys(SORTS) as PinSort[]).map((key) => (
             <option key={key} value={key}>
@@ -94,7 +94,7 @@ export function PinFilterBar({
 
 function Pill({ label, children }: { label?: string; children: React.ReactNode }) {
   return (
-    <label className="relative flex items-center gap-1 rounded-lg border border-ink-200 bg-white px-2.5 py-1 text-xs">
+    <label className="hit-y-44 relative flex min-h-8 items-center gap-1 whitespace-nowrap rounded-lg border border-ink-200 bg-white px-2.5 py-1 text-xs">
       {label && <span className="text-ink-500">{label}</span>}
       {children}
       <ChevronDown size={12} className="pointer-events-none absolute right-2 text-ink-500" aria-hidden="true" />

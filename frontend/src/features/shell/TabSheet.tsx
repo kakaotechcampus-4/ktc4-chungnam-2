@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 
 import BottomSheet from './BottomSheet'
 import MapControls from './MapControls'
@@ -32,8 +32,9 @@ export default function TabSheet({
   const mapMoving = useSheetStore((s) => s.mapMoving)
   const modalOpen = useSheetStore((s) => s.modalOpen)
 
-  // 3단계·모달에서는 지도 버튼을 숨긴다(Figma 참고 '지도 버튼 규칙').
-  const controlsHidden = stage === 3 || modalOpen
+  // 3단계·모달, 그리고 검색창·칩과 시트 사이가 버튼 묶음보다 좁으면 숨긴다(Figma 참고 '지도 버튼 규칙', #308).
+  const [cramped, setCramped] = useState(false)
+  const controlsHidden = stage === 3 || modalOpen || cramped
 
   return (
     <BottomSheet
@@ -44,7 +45,7 @@ export default function TabSheet({
       banner={connection.state !== 'open' && <ConnectionBanner state={connection.state} onReconnect={connection.reconnect} />}
       top={
         <>
-          <MapControls hidden={controlsHidden} fading={mapMoving} active={activeControl} onPress={onControl} />
+          <MapControls hidden={controlsHidden} fading={mapMoving} active={activeControl} onPress={onControl} onCrampedChange={setCramped} />
           {!modalOpen && <Toaster controlsVisible={!controlsHidden && !mapMoving} inside={stage === 3} />}
         </>
       }

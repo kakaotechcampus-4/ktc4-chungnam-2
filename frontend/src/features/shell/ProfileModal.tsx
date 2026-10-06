@@ -47,7 +47,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
       </button>
       <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-ink-100 px-3 py-2.5 text-sm">
         <span className="truncate text-ink-600">{url ?? '링크를 만드는 중…'}</span>
-        <button type="button" onClick={() => void copy()} disabled={!url} className="shrink-0 font-semibold text-brand-600">
+        <button type="button" onClick={() => void copy()} disabled={!url} className="hit-44 shrink-0 font-semibold text-brand-600">
           {copied ? '✓ 복사됨' : '복사'}
         </button>
       </div>

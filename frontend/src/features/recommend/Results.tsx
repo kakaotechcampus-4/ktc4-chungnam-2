@@ -34,7 +34,7 @@ const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이
 export function BackToReadiness({ mapId }: { mapId: string }) {
   const setRun = useAiStore((s) => s.setRun)
   return (
-    <button type="button" onClick={() => setRun(mapId, undefined)} className="mb-2 text-[13px] font-medium text-ink-500">
+    <button type="button" onClick={() => setRun(mapId, undefined)} className="hit-44 mb-2 text-[0.8125rem] font-medium text-ink-500">
       ‹ AI 추천
     </button>
   )
@@ -134,14 +134,14 @@ function CandidateCard({ mapId, run, c, members, onOpen }: { mapId: string; run:
           {c.rank}
         </span>
         <h3 className="min-w-0 flex-1 truncate text-lg font-bold text-ink-900">{c.place_name}</h3>
-        {c.region_label && <span className="shrink-0 rounded-md border border-brand-300 bg-white px-1.5 text-[11px] text-brand-700">{c.region_label} 기준</span>}
+        {c.region_label && <span className="shrink-0 rounded-md border border-brand-300 bg-white px-1.5 text-[0.6875rem] text-brand-700">{c.region_label} 기준</span>}
       </header>
       <p className="text-xs text-ink-500">{run.category}</p>
       <Reason text={c.reason} />
       <Checks c={c} />
       <p className="flex items-center gap-1.5 text-xs font-bold text-brand-700">
         <Users size={14} aria-hidden="true" /> {c.member_fulfillment.total}명 중 {c.member_fulfillment.satisfied}명 조건 충족
-        <span className="ml-auto font-normal text-ink-400">출처 · {PROVIDER[c.place_source?.provider ?? ''] ?? '확인 안 됨'}</span>
+        <span className="ml-auto font-normal text-ink-500">출처 · {PROVIDER[c.place_source?.provider ?? ''] ?? '확인 안 됨'}</span>
       </p>
       <div className="flex items-center justify-between">
         <PublishButton mapId={mapId} run={run} c={c} />
@@ -156,7 +156,7 @@ function CandidateCard({ mapId, run, c, members, onOpen }: { mapId: string; run:
 
 function Reason({ text }: { text: string }) {
   return (
-    <p className="flex gap-2 rounded-lg border border-brand-300 bg-white p-2.5 text-[13px] text-ink-900">
+    <p className="flex gap-2 rounded-lg border border-brand-300 bg-white p-2.5 text-[0.8125rem] text-ink-900">
       <MessageSquare size={14} className="mt-0.5 shrink-0 text-ink-500" aria-hidden="true" />
       {text}
     </p>
@@ -226,15 +226,15 @@ export function CandidateDetail({
 }) {
   return (
     <div className="space-y-3">
-      <div className="flex justify-between text-[13px]">
+      <div className="flex justify-between text-[0.8125rem]">
         <button type="button" onClick={onBack} className="font-medium text-ink-500">
           ‹ 추천 결과 {count}곳
         </button>
         <span className="text-ink-500">{c.visibility === 'published' ? '모두에게 보여요' : '나에게만 보여요'}</span>
       </div>
       <div>
-        <h3 className="text-[22px] font-bold text-ink-900">{c.place_name}</h3>
-        <p className="text-[13px] text-ink-600">
+        <h3 className="text-[1.375rem] font-bold text-ink-900">{c.place_name}</h3>
+        <p className="text-[0.8125rem] text-ink-600">
           {run.category}
           {c.region_label && ` · ${c.region_label} 기준`} · {c.rank}순위
         </p>
@@ -242,7 +242,7 @@ export function CandidateDetail({
       <Reason text={c.reason} />
       <section>
         <h4 className="mb-1 text-sm font-bold text-ink-900">조건별 충족</h4>
-        <ul className="space-y-0.5 text-[13px]">
+        <ul className="space-y-0.5 text-[0.8125rem]">
           {toChecks(c).map((k) => (
             <li key={k.label} className={k.tone === 'pass' ? 'text-[var(--good-text)]' : k.tone === 'check' ? 'text-[var(--warn-text)]' : 'text-[var(--bad-text)]'}>
               {MARK[k.tone]} {k.label}
@@ -255,9 +255,9 @@ export function CandidateDetail({
         <h4 className="text-sm font-bold text-ink-900">
           구성원 충족 {c.member_fulfillment.total}명 중 {c.member_fulfillment.satisfied}명
         </h4>
-        <p className="text-[13px] text-ink-600">{fulfillmentLine(c, members)}</p>
+        <p className="text-[0.8125rem] text-ink-600">{fulfillmentLine(c, members)}</p>
       </section>
-      <p className="text-[11px] text-ink-400">
+      <p className="text-[0.6875rem] text-ink-500">
         출처 · {PROVIDER[c.place_source?.provider ?? ''] ?? '확인 안 됨'}
         {c.place_source?.url && (
           <>
@@ -277,12 +277,12 @@ export function CandidateDetail({
 export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; count: number; onBack: () => void }) {
   return (
     <div className="space-y-3">
-      <button type="button" onClick={onBack} className="text-[13px] font-medium text-ink-500">
+      <button type="button" onClick={onBack} className="hit-44 text-[0.8125rem] font-medium text-ink-500">
         ‹ 추천 결과 {count}곳
       </button>
       <h3 className="text-xl font-bold text-ink-900">이렇게 {count}곳을 골랐어요</h3>
       <FunnelTable funnel={funnel} left={count} />
-      <section className="text-[13px] text-ink-600">
+      <section className="text-[0.8125rem] text-ink-600">
         <h4 className="mb-1 font-bold text-ink-900">순위는 이렇게 정했어요</h4>
         <ul className="list-inside list-disc space-y-0.5">
           <li>가능하면 맞춰 달라는 조건에 맞는 개수로 점수를 매겼어요</li>
@@ -296,7 +296,7 @@ export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; coun
 
 function FunnelTable({ funnel, left }: { funnel: FunnelRow[]; left: number }) {
   return (
-    <table className="w-full rounded-xl bg-brand-50 text-[13px]">
+    <table className="w-full rounded-xl bg-brand-50 text-[0.8125rem]">
       <tbody>
         {funnel.map((f) => (
           <tr key={f.label} className="border-b border-brand-100">
@@ -339,7 +339,7 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
       </button>
 
       {asking && (
-        <div role="alertdialog" aria-modal="true" aria-label="반경 넓히기 확인" className="fixed inset-0 z-50 flex items-center justify-center bg-black/32 p-6">
+        <div role="alertdialog" aria-modal="true" aria-label="반경 넓히기 확인" className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-6">
           <div className="w-full max-w-sm space-y-2 rounded-2xl bg-white p-5">
             <p className="text-lg font-bold text-ink-900">기본 반경만 넓혀서 다시 찾을까요?</p>
             <dl className="space-y-1 rounded-lg bg-ink-50 p-3 text-sm">
@@ -355,7 +355,7 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
               </div>
             </dl>
             <p className="text-sm text-ink-600">사람이 직접 정한 반경은 넓히지 않아요. 더 멀리 찾고 싶으면 그 사유를 고쳐 주세요.</p>
-            <p className="text-xs text-ink-400">꼭 지켜야 하는 조건도 그대로 적용돼요.</p>
+            <p className="text-xs text-ink-500">꼭 지켜야 하는 조건도 그대로 적용돼요.</p>
             <div className="grid grid-cols-2 gap-2 pt-2">
               <button type="button" onClick={() => setAsking(false)} className="rounded-lg border border-ink-300 py-2.5 text-sm font-semibold">
                 취소

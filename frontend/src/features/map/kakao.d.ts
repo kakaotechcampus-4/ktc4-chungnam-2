@@ -47,6 +47,7 @@ declare namespace kakao.maps {
       clickable?: boolean
     })
     setMap(map: Map | null): void
+    setZIndex(zIndex: number): void
   }
 
   class Polyline {

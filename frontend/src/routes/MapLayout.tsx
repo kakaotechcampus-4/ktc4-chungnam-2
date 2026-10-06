@@ -4,6 +4,7 @@ import { ChevronLeft, FileText, MapPin, Search, X } from 'lucide-react'
 
 import { useMeQuery } from '@/features/auth/queries'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
+import { usePinSelection } from '@/features/map/usePinSelection'
 import { filterPins } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
 import { usePinsQuery } from '@/features/map/queries'
@@ -30,6 +31,7 @@ import Pingo from '@/ui/Pingo'
 export default function MapLayout() {
   const { mapId = '' } = useParams()
   const navigate = useNavigate()
+  const { selectedPinId } = usePinSelection()
   const { data: allPins = [] } = usePinsQuery(mapId)
   const memberCount = useMapQuery(mapId).data?.memberCount ?? 0
   const { filters, setFilter } = usePinFilters()
@@ -150,6 +152,7 @@ export default function MapLayout() {
     <>
       <MapCanvas
         pins={pins}
+        selectedPinId={selectedPinId}
         memberCount={memberCount}
         results={searchMarkers}
         route={routeDrawings}
@@ -159,7 +162,7 @@ export default function MapLayout() {
         onMovingChange={onMovingChange}
       />
 
-      <header className="pointer-events-none fixed inset-x-0 top-0 z-20 space-y-2 px-4 pt-3">
+      <header data-map-header className="pointer-events-none fixed inset-x-0 top-0 z-20 space-y-2 px-4 pt-3">
         <div className="flex items-center justify-between">
           <Link
             to="/"
@@ -199,11 +202,11 @@ export default function MapLayout() {
             className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-ink-500 [&::-webkit-search-cancel-button]:hidden"
           />
           {searchText && (
-            <button type="button" aria-label="검색어 지우기" onClick={clearSearch} className="flex size-5 items-center justify-center rounded-full bg-ink-300 text-white">
+            <button type="button" aria-label="검색어 지우기" onClick={clearSearch} className="hit-44 flex size-5 items-center justify-center rounded-full bg-ink-300 text-white">
               <X size={12} />
             </button>
           )}
-          <button type="submit" aria-label="검색" className="text-brand-600">
+          <button type="submit" aria-label="검색" className="hit-44 text-brand-600">
             <Search size={20} />
           </button>
         </form>
@@ -223,15 +226,15 @@ export default function MapLayout() {
       <Outlet context={context} />
 
       <nav
-        style={{ height: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
+        style={{ minHeight: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
         className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 items-end border-t border-ink-100 bg-white"
       >
-        <TabLink to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={26} />} />
+        <TabLink to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={24} />} />
         {/* AI 는 핑고가 말한다. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 핑고, 활성만 파랑 채움 + 흰 핑고(#299). */}
         <NavLink
           to={`/maps/${mapId}/recommend`}
           className={({ isActive }) =>
-            `flex flex-col items-center gap-0.5 pb-2 text-[11px] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
+            `flex flex-col items-center gap-0.5 pb-2 text-[0.6875rem] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
           }
         >
           {({ isActive }) => (
@@ -247,7 +250,7 @@ export default function MapLayout() {
             </>
           )}
         </NavLink>
-        <TabLink to={`/maps/${mapId}/shortlist`} label="확정된 장소" icon={<FileText size={26} />} />
+        <TabLink to={`/maps/${mapId}/shortlist`} label="확정된 장소" icon={<FileText size={24} />} />
       </nav>
 
       {profileOpen && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
@@ -262,7 +265,7 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
       to={to}
       end={end}
       className={({ isActive }) =>
-        `flex flex-col items-center gap-0.5 pb-2 text-[11px] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
+        `flex flex-col items-center gap-0.5 pb-2 text-[0.6875rem] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
       }
     >
       {icon}

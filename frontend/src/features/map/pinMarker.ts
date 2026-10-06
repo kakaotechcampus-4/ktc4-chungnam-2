@@ -34,7 +34,7 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
   // 장소 이름은 setAttribute 로만 넣는다 — innerHTML 로 들어가면 이름이 마크업으로 해석된다.
   el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'} · ${pin.kind} 핀`)
   el.style.cssText =
-    'display:block;width:30px;height:38px;padding:0;border:0;background:none;cursor:pointer;line-height:0;' +
+    'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;' +
     (pin.kind === '확정' ? 'filter:drop-shadow(var(--pin-confirmed-shadow));' : '')
   el.innerHTML = `
     <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true">

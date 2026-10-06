@@ -34,7 +34,7 @@ const STEPS = [
 function LoginScreen() {
   return (
     <div className="flex min-h-dvh flex-col bg-white px-5 pb-8 pt-24">
-      <h1 className="text-3xl font-extrabold text-brand-600">핀고핀고</h1>
+      <h1 className="text-3xl font-extrabold text-brand-600">핑고핑고</h1>
       <p className="mt-1 font-semibold text-ink-900">같이 갈 곳을 한 지도에 모아요</p>
       <MapIllustration className="mt-6" />
       <ol className="mt-6 space-y-3">
