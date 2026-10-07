@@ -554,3 +554,31 @@ describe("FE 요청 필드 6건과 반대 사유 칩 (2026-10-04, #60)", () => {
     expect(del.type).toBeNull();
   });
 });
+
+describe("#340·회의 14번 — 지도 목록 구분과 후보 좌표", () => {
+  it("내가 만든 지도는 my_role=owner, created_by_me=true", async () => {
+    const maps = await fetch(`${BASE}/maps`).then((r) => r.json());
+    expect(maps[0]).toMatchObject({ my_role: "owner", created_by_me: true });
+    expect(maps[0].created_by).toBeUndefined(); // 목 서버 내부 값은 응답에 새지 않는다
+  });
+
+  it("방장을 넘기고 나면 my_role과 created_by_me가 달라질 수 있다(내가 만들었지만 이제 방장이 아님)", async () => {
+    const m = store.members["map_1"];
+    m.find((x) => x.user_id === "u_me")!.role = "member";
+    m.find((x) => x.user_id === "u_2")!.role = "owner";
+    const one = await fetch(`${BASE}/maps/map_1`).then((r) => r.json());
+    expect(one).toMatchObject({ my_role: "member", created_by_me: true });
+  });
+
+  it("추천 후보에는 자체 DB 장소의 좌표가 있다", async () => {
+    const run = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점" }) }).then((r) => r.json());
+    await fetch(`${BASE}/runs/${run.id}/regions/confirm`, { method: "POST", body: JSON.stringify({ region_labels: ["제주시 권역"] }) }).catch(() => undefined);
+    const exec = await fetch(`${BASE}/runs/${run.id}/execute`, { method: "POST" });
+    expect(exec.ok).toBe(true);
+    const result = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    for (const c of result.candidates) {
+      expect(typeof c.lat).toBe("number");
+      expect(typeof c.lng).toBe("number");
+    }
+  });
+});

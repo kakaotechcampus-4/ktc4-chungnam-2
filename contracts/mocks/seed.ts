@@ -34,6 +34,7 @@ export function buildBaseState(): StoreState {
       end_date: "2026-10-12",
       member_count: 4,
       pin_count: 3,
+      created_by: ME_USER_ID,
       confirmed_count: 0,
     },
   };
@@ -204,6 +205,8 @@ export function buildCandidates(regionLabel: string) {
     {
       id: nextId("cand"),
       place_name: "올레국수",
+      lat: 33.4996,
+      lng: 126.5312,
       region_label: regionLabel,
       rank: 1,
       checks: [
@@ -219,6 +222,8 @@ export function buildCandidates(regionLabel: string) {
     {
       id: nextId("cand"),
       place_name: "제주보말칼국수",
+      lat: 33.5072,
+      lng: 126.5219,
       region_label: regionLabel,
       rank: 2,
       checks: [
@@ -234,6 +239,8 @@ export function buildCandidates(regionLabel: string) {
     {
       id: nextId("cand"),
       place_name: "고기국수 명가",
+      lat: 33.4891,
+      lng: 126.4983,
       region_label: regionLabel,
       rank: 3,
       checks: [
