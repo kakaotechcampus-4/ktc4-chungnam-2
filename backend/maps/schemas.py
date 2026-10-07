@@ -41,6 +41,10 @@ class Map(BaseModel):
     id: str
     # 요청자 기준. map은 can_delete(방장만)·can_leave(넘길 사람이 없는 방장은 false)만 채운다(#369).
     permissions: Permissions
+    # 요청자의 지금 역할(memberships.role) — 방장을 위임하면 바뀐다. 내 지도 목록의 방장 배지용(#391).
+    my_role: Literal["owner", "member"] | None = None
+    # maps.created_by == 요청자 — 만든 사람 기록이라 위임돼도 안 바뀐다(my_role과 달라질 수 있다, #391).
+    created_by_me: bool | None = None
     # 요청자가 방장이고 넘길 사람이 있을 때만, 상세(GET /maps/{mapId})에서만 채운다(#369).
     next_owner: NextOwner | None = None
     title: str
