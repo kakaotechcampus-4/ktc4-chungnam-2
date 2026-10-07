@@ -1,7 +1,7 @@
 import { http, HttpResponse } from "msw";
 import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError, pinPermissions } from "../util";
-import { SEED_PLACES } from "./places";
+import { NOT_IN_OWN_DB, SEED_PLACES } from "./places";
 import { CATEGORY_RULES } from "../categories";
 import { chipsFor } from "../chips";
 
@@ -110,7 +110,7 @@ export const pinsHandlers = [
     }
     const own = SEED_PLACES.find((p) => p.place_id === body.place_id);
     // 자체 DB는 pinnable 카테고리(음식점·카페·관광지)만 담는다(TourAPI 숙박 제외, 2026-10-01) — 숙소·기타는 핀으로 만들 수 없다
-    if (!own || (own.category && !CATEGORY_RULES[own.category].pinnable)) {
+    if (!own || NOT_IN_OWN_DB.has(own.place_id) || (own.category && !CATEGORY_RULES[own.category].pinnable)) {
       return apiError(422, "PLACE_NOT_SUPPORTED", "아직 지원하지 않는 장소예요");
     }
     if (own.category && body.category !== own.category) {
