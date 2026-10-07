@@ -156,7 +156,7 @@ export function SoloBody({ mapId }: { mapId: string }) {
           </li>
         ))}
       </ul>
-      <p className="text-xs text-ink-500">지금은 나 혼자예요. 친구를 초대해서 핀에 ♥ △ <AgainstMark />를 남겨 보세요</p>
+      <p className="text-xs text-ink-500">지금은 나 혼자예요. 친구를 초대해서 핀에 ♥ <AgainstMark />를 남겨 보세요</p>
       <button
         type="button"
         onClick={() => void share()}

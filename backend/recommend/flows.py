@@ -616,6 +616,7 @@ def _candidate_response(
     already_published = candidate.published_pin_id is not None
     return schemas.Candidate(
         id=str(candidate.id), place_name=place_names.get(candidate.place_id), region_label=region_labels.get(candidate.region_id),
+        lat=candidate.lat, lng=candidate.lng,
         rank=candidate.rank, checks=[Check(**c) for c in candidate.checks],
         reason=candidate.reason,
         member_fulfillment=candidate.member_fulfillment or None,  # {} = 집계 없음 → 필드 생략

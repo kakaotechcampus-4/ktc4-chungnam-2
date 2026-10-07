@@ -103,6 +103,9 @@ class Candidate(BaseModel):
     id: str
     place_name: str | None = None  # places 없어 못 채움
     region_label: str | None = None
+    # 자체 DB 장소의 좌표(candidates.lat/lng, #391) — 「지도에 올리기」 전에도 지도에 그릴 수 있게.
+    lat: float | None = None
+    lng: float | None = None
     rank: int
     checks: list[Check]
     reason: str | None = None
