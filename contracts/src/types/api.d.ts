@@ -702,12 +702,20 @@ export interface paths {
         };
         put?: never;
         /**
-         * 핀 생성 (#191, 2026-10-01 결정). **v1의 핀은 모두 자체 DB 장소(`places`)를 가리킨다.** 경로는 하나다 — `source: search`:
-         *     GET /places/search 결과를 골라 `place_id`·`place_name`·`lat`·`lng`·`category`를 그대로 보내면, 서버가 **그것과 같은 자체 DB 장소를 한 건 찾아**
+         * 핀 생성 (#191, 2026-10-01 결정, #382로 확장). 경로는 둘이다.
+         *
+         *     **`source: search`(자체 DB 장소)**: GET /places/search 결과를 골라 `place_id`·`place_name`·`lat`·`lng`·`category`를 그대로 보내면, 서버가 **그것과 같은 자체 DB 장소를 한 건 찾아**
          *     그 장소의 이름·좌표만 핀에 쓴다. 요청의 `place_id`(카카오 장소 ID)·`place_name`·`lat`·`lng`는 **매칭 힌트일 뿐 저장하지 않는다**
-         *     (카카오 장소 ID와 `place_url`만 매칭된 자체 DB 장소에 함께 기록된다). 짝이 되는 자체 DB 장소가 없으면 핀을 만들지 않고
-         *     422 `PLACE_NOT_SUPPORTED`("아직 지원하지 않는 장소예요")다. 응답의 `category`는 장소의 분류이며, 요청 `category`가 다르면 422 `VALIDATION_ERROR`.
-         *     자체 DB는 음식점·카페·관광지만 담는다(TourAPI 숙박은 받지 않는다, 2026-10-01) — 검색 결과가 숙소·기타여도 핀을 만들 수 없고 422 `PLACE_NOT_SUPPORTED`다.
+         *     (카카오 장소 ID와 `place_url`만 매칭된 자체 DB 장소에 함께 기록된다). 짝이 되는 자체 DB 장소가 없으면 이 경로는 422 `PLACE_NOT_SUPPORTED`다 —
+         *     화면은 이때 아래 `live`로 다시 보내 「그래도 핀 남기기」를 열 수 있다. 응답의 `category`는 장소의 분류이며, 요청 `category`가 다르면 422 `VALIDATION_ERROR`.
+         *     자체 DB는 음식점·카페·관광지만 담는다(TourAPI 숙박은 받지 않는다, 2026-10-01).
+         *
+         *     **`source: live`(실시간 핀, #382)**: 자체 DB에 없는 장소를 사람이 핀으로 남긴다. 서버는 **카카오 장소 ID(`kakao_place_id`), 사용자가 친 검색어(`search_query`),
+         *     사용자가 쓴 메모(`memo`), 카테고리**만 저장하고 **이름·좌표는 저장하지 않는다**(카카오 응답의 이름·좌표·주소는 저장 불가, #53). 화면은 지도를 열 때마다
+         *     카카오 JS SDK 키워드 검색으로 `search_query`를 다시 찾고 결과 중 장소 ID가 같은 것의 이름·좌표를 그 자리에서만 쓴다(서버로 보내지 않는다). 응답 `Pin`에는 `lat`·`lng`·`place_name`이 없다.
+         *     같은 지도에서 같은 `kakao_place_id`의 핀이 이미 있으면 409 `PIN_DUPLICATE`다. 숙소·기타 카테고리는 live로도 만들 수 없다(422 `VALIDATION_ERROR`).
+         *     live 핀은 반응·사유·필터·확정 리스트·삭제는 되지만 장소 정보·조건별 체크가 없고, AI 후보와 추천 검색 범위 기준점이 될 수 없으며, 서버가 좌표를 모르므로 동선 계산에서 빠진다(확정 리스트 항목의 `pin.source`가 live인 것 — FE가 "위치를 몰라 동선에서 빠졌어요"를 안내한다).
+         *
          *     `source: coordinate`(지도 길게 눌러 찍기)와 `source: link`는 v1에서 받지 않는다(422 `VALIDATION_ERROR`) — 카카오 지도에서 사용자가 지정한 좌표는 저장할 수 없다.
          */
         post: {
@@ -1520,7 +1528,7 @@ export interface paths {
         /**
          * 마지막으로 계산된 동선 조회 (5-10). 순수 계산, 모델 미사용.
          *     확정 핀이 여러 지역에 걸치면 지역별로 여러 동선을 반환한다.
-         *     한 번도 계산하지 않았으면 빈 배열.
+         *     한 번도 계산하지 않았으면 빈 배열. 좌표가 없는 실시간 핀(`Pin.source=live`, #382)은 계산에서 빠지고 `ordered_pin_ids`에 들어가지 않는다.
          */
         get: {
             parameters: {
@@ -1809,10 +1817,25 @@ export interface components {
             lat: number;
             lng: number;
         };
-        PinCreateRequest: {
+        /** @description `source`로 갈린다 — 생략하면 search(자체 DB 장소), `live`면 실시간 핀(#382) */
+        PinCreateRequest: components["schemas"]["PinCreateSearch"] | components["schemas"]["PinCreateLive"];
+        /** @description #382 실시간 핀 — 자체 DB에 없는 장소. 이름·좌표는 받지도 저장하지도 않는다 */
+        PinCreateLive: {
+            /** @enum {string} */
+            source: "live";
+            /** @description 음식점·카페·관광지만. 숙소·기타는 422 VALIDATION_ERROR */
+            category: components["schemas"]["Category"];
+            /** @description GET /places/search 결과의 place_id(예 kakao:1234)를 그대로. 저장이 허용된 유일한 카카오 값(#53). 같은 지도에서 같으면 409 PIN_DUPLICATE */
+            kakao_place_id: string;
+            /** @description 사용자가 장소 검색창에 친 검색어(사용자 입력이라 저장 가능). 화면이 지도를 열 때마다 이 검색어로 카카오 키워드 검색을 다시 해서 kakao_place_id를 찾는다 */
+            search_query: string;
+            /** @description 선택. 핀을 찍은 사람이 남기는 한마디(예 "여기 곱창 맛있대"). 사용자 입력 */
+            memo?: string;
+        };
+        PinCreateSearch: {
             category: components["schemas"]["Category"];
             /**
-             * @description v1은 search만. coordinate·link는 값만 남겨 둔 것(v2 확장용)이며 보내면 422 (#191·#147) — 생략하면 search
+             * @description search 경로(자체 DB 장소). coordinate·link는 값만 남겨 둔 것(v2 확장용)이며 보내면 422 (#191·#147) — 생략하면 search. 실시간 핀은 PinCreateLive(source=live)
              * @default search
              * @enum {string}
              */
@@ -1840,7 +1863,7 @@ export interface components {
             category?: components["schemas"]["Category"];
             address?: string;
             place_source?: components["schemas"]["PlaceSource"];
-            /** @description 자체 DB에 짝이 있어 핀으로 만들 수 있는가(서버가 자체 DB를 읽기만 해서 계산, 카카오 ID를 기록하지 않는다). false면 FE는 이 결과를 흐리게 보이고 "아직 지원하지 않는 장소예요"를 미리 안내한다. 없으면 true로 본다(자체 DB 연결 전) */
+            /** @description 자체 DB에 짝이 있어 `source: search`로 핀을 만들 수 있는가(서버가 자체 DB를 읽기만 해서 계산, 카카오 ID를 기록하지 않는다). false여도 `source: live`(#382)로 「그래도 핀 남기기」를 열 수 있다 — FE는 이 결과에 "장소 정보가 없는 핀이에요"를 안내한다. 없으면 true로 본다(자체 DB 연결 전) */
             pinnable?: boolean;
         };
         /**
@@ -1866,9 +1889,22 @@ export interface components {
             kind: components["schemas"]["PinKind"];
             /** @enum {string} */
             visibility: "public" | "private";
-            lat: number;
-            lng: number;
-            /** @description 자체 DB 장소의 이름 (#191). 핀에 따로 저장하지 않고 장소에서 가져온다 */
+            /** @description 자체 DB 장소의 좌표. **live 핀에는 없다**(#382) — 그 핀의 위치는 화면이 kakao_place_id로 실시간에 찾는다 */
+            lat?: number;
+            /** @description lat과 같다. live 핀에는 없다 */
+            lng?: number;
+            /**
+             * @description db = 자체 DB 장소를 가리키는 핀, live = 실시간 핀(#382, PinCreateLive). 없으면 db로 본다 — 서버가 채우기 시작하면 필수로 바꾼다. (`default`를 쓰지 않는다: 타입 생성기가 필수로 바꿔 버린다)
+             * @enum {string}
+             */
+            source?: "db" | "live";
+            /** @description live 핀의 메모(작성자가 남긴 한마디). 없을 수 있다 */
+            memo?: string;
+            /** @description live 핀만 — 카카오 장소 ID. 화면이 위치를 다시 찾는 열쇠다 */
+            kakao_place_id?: string;
+            /** @description live 핀만 — 핀을 찍을 때 사용자가 친 검색어. 화면이 `kakao_place_id`를 이 검색어로 다시 찾는다 */
+            search_query?: string;
+            /** @description 자체 DB 장소의 이름 (#191). 핀에 따로 저장하지 않고 장소에서 가져온다. live 핀에는 없다(#382) — 화면이 실시간 검색 결과에서 읽는다 */
             place_name?: string;
             /** @description 매칭된 카카오 장소 페이지 링크(저장 허용). **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 매칭된 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 필드를 생략한다 */
             place_url?: string;
@@ -2191,8 +2227,8 @@ export interface components {
             };
         };
         /**
-         * @description 핀을 만들 수 없다. 응답 본문의 `code`로 분기한다 — `PLACE_NOT_SUPPORTED`(짝이 되는 자체 DB 장소가 없음, 숙소·기타 포함),
-         *     `VALIDATION_ERROR`(필수 힌트 누락, `source`가 coordinate·link, 요청 `category`가 장소의 분류와 다름)
+         * @description 핀을 만들 수 없다. 응답 본문의 `code`로 분기한다 — `PLACE_NOT_SUPPORTED`(`source: search`인데 짝이 되는 자체 DB 장소가 없음 — 화면은 `source: live`로 다시 보낼 수 있다, #382),
+         *     `VALIDATION_ERROR`(필수 힌트 누락, `source`가 coordinate·link, 요청 `category`가 장소의 분류와 다름, live에 숙소·기타 카테고리)
          */
         PlaceNotSupported: {
             headers: {

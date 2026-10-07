@@ -56,8 +56,11 @@ export const pinsHandlers = [
     const mapId = params.mapId as string;
     const body = (await request.json()) as {
       category: Pin["category"];
-      source?: "link" | "search" | "coordinate";
+      source?: "link" | "search" | "coordinate" | "live";
       link_url?: string;
+      kakao_place_id?: string;
+      search_query?: string;
+      memo?: string;
       place_id?: string;
       place_name?: string;
       lat?: number;
@@ -67,6 +70,40 @@ export const pinsHandlers = [
     // "자체 DB에 짝이 있는 장소"로 본다. 요청의 place_name·lat·lng는 매칭 힌트라 쓰지 않는다.
     if (body.source === "link" || body.link_url) {
       return apiError(422, "VALIDATION_ERROR", "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요");
+    }
+    // #382 실시간 핀 — 자체 DB에 없는 장소. 카카오 장소 ID·검색어·메모·카테고리만 받고 이름·좌표는 받지도 돌려주지도 않는다.
+    if (body.source === "live") {
+      if (!body.kakao_place_id || !body.search_query?.trim()) {
+        return apiError(422, "VALIDATION_ERROR", "장소 ID와 검색어가 필요해요");
+      }
+      if (!CATEGORY_RULES[body.category]?.pinnable) {
+        return apiError(422, "VALIDATION_ERROR", `${body.category}은(는) 핀으로 남길 수 없어요`);
+      }
+      const dupLive = Object.values(store.pins).find((p) => p.map_id === mapId && p.kakao_place_id === body.kakao_place_id);
+      if (dupLive) return apiError(409, "PIN_DUPLICATE", "이미 지도에 있는 장소예요", { pin_id: dupLive.id });
+      const liveId = nextId("pin");
+      const livePin: Pin = {
+        id: liveId,
+        map_id: mapId,
+        category: body.category,
+        kind: "일반",
+        visibility: "public",
+        source: "live",
+        kakao_place_id: body.kakao_place_id,
+        search_query: body.search_query.trim(),
+        ...(body.memo ? { memo: body.memo } : {}),
+        created_by: ME_USER_ID,
+        created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
+        created_at: new Date().toISOString(),
+        checks: [],
+        source_run_id: null,
+        reaction_summary: { like: 0, neutral: 0, against: 0 },
+        permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      };
+      store.pins[liveId] = livePin;
+      store.reactions[liveId] = [];
+      emitEvent(mapId, "public", "pin.created", livePin);
+      return HttpResponse.json(livePin, { status: 201 });
     }
     if (body.source === "coordinate" || !body.place_id || !body.place_name || body.lat === undefined || body.lng === undefined) {
       return apiError(422, "VALIDATION_ERROR", "지도를 눌러 핀을 찍을 수는 없어요. 장소를 검색해서 골라 주세요");
@@ -89,6 +126,7 @@ export const pinsHandlers = [
       category: body.category,
       kind: "일반",
       visibility: "public",
+      source: "db",
       lat: own.lat,
       lng: own.lng,
       place_name: own.place_name,
