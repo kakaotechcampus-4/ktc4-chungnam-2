@@ -119,7 +119,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
             <p className="truncate text-xs text-ink-500">{r.meta}</p>
             {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}
           </button>
-          <PinItButton result={r} pending={create.isPending && create.variables?.place_id === r.id} onPin={() => pinIt(r)} />
+          <PinItButton result={r} pending={create.isPending && !!create.variables && 'place_id' in create.variables && create.variables.place_id === r.id} onPin={() => pinIt(r)} />
         </li>
       ))}
     </ol>
