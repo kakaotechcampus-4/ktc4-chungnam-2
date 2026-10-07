@@ -190,17 +190,20 @@ def count_public_pins_by_map(db: Session, map_ids: Sequence[str]) -> dict[str, i
     return counts
 
 
-def count_reacted_users(db: Session, *, map_id: str, category: str) -> int:
-    """recommend readiness(5-4, recommend/#108)가 "카테고리별 의견 남긴 핀" 판정에 쓴다 —
-    그 카테고리의 삭제되지 않은 핀 중 하나 이상에 반응(♥/△/🚫, '?' 미확인은 행 없음이라
-    여기 안 잡힌다)을 남긴 서로 다른 user_id 수. shortlist를 위해 get_coordinates_for_pins를
-    추가한 것과 같은 선례로 여기 추가한다."""
-    return db.execute(
-        select(func.count(func.distinct(ReactionRow.user_id)))
-        .select_from(ReactionRow)
+def count_opinion_pins(db: Session, *, map_id: str, category: str) -> int:
+    """recommend readiness(5-4, #360)가 쓴다 — 그 카테고리에서 ♥ 또는 🚫 의견이 달린 핀의 수. 삭제된 핀은
+    세지 않고, 반응한 사람이 현재 구성원일 때만 센다(나간 사람은 멤버십 행이 없고, 탈퇴자는 행이 남아 있어
+    withdrawn으로 뺀다). 핀 하나에 의견이 여럿이어도 1이다. '?' 미확인은 행이 없어 잡히지 않는다.
+    shortlist를 위해 get_coordinates_for_pins를 추가한 것과 같은 선례로 여기 추가한다."""
+    rows = db.execute(
+        select(ReactionRow.pin_id, ReactionRow.user_id)
         .join(PinRow, PinRow.id == ReactionRow.pin_id)
         .where(PinRow.map_id == map_id, PinRow.category == category, PinRow.deleted_at.is_(None))
-    ).scalar_one()
+    ).all()
+    members = maps_api.DbMembershipGateway(db).current_member_ids(map_id)
+    candidates = {user_id for _, user_id in rows if user_id in members}
+    active = candidates - auth_api.withdrawn_user_ids(db, candidates)
+    return len({pin_id for pin_id, user_id in rows if user_id in active})
 
 
 def get_category_pin_coordinates(db: Session, *, map_id: str, category: str) -> list[tuple[str, float, float]]:
@@ -254,12 +257,12 @@ def list_disliked_place_ids(db: Session, *, user_id: str, map_id: str, category:
 
 def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[dict]:
     """recommend의 근거 조립(①②, recommend/#108)이 쓴다 — 그 카테고리 핀에 남긴 반응 중
-    사유가 있는 것만(반대는 사유 필수라 가드레일3로 항상 있고, 좋음/조율 필요도 사유가 있으면
+    사유가 있는 것만(반대는 사유 필수라 가드레일3로 항상 있고, 좋음도 사유가 있으면
     포함한다). llm.service.plan_evidence에 넘길 raw_reasons의 원자료다.
 
     소프트 삭제된 핀의 반응도 **포함한다**(#243) — 사유는 사람이 한 말이라 핀이 지워져도 사라지면 안 된다.
     구성원 누구나 핀을 지울 수 있어서(#25), 안 그러면 한 명이 b의 "조개 알러지" 핀을 지우는 것만으로 안전
-    조건이 다음 run에서 빠진다(가드레일 8). 반대로 준비 판정(`count_reacted_users`)은 삭제 핀을 계속
+    조건이 다음 run에서 빠진다(가드레일 8). 반대로 준비 판정(`count_opinion_pins`)은 삭제 핀을 계속
     센다고 보지 않는다 — 사유(이력)와 "지금 몇 명이 반응했나"는 다른 질문이다. 같은 이유로
     `list_disliked_place_ids`도 삭제 핀을 포함한다."""
     rows = db.execute(

@@ -22,7 +22,7 @@ Category = Literal[categories.all_categories()]  # 스펙의 Category(common/cat
 PinKind = Literal["일반", "AI추천", "확정"]
 PriceBucket = Literal["low", "mid", "high"]
 LabelConfidence = Literal["known", "unknown"]
-ReactionKind = Literal["like", "neutral", "against"]
+ReactionKind = Literal["like", "against"]
 PinSource = Literal["link", "search", "coordinate"]
 
 
@@ -55,7 +55,6 @@ class PlaceSource(BaseModel):
 
 class ReactionSummary(BaseModel):
     like: int = 0
-    neutral: int = 0
     against: int = 0
 
 

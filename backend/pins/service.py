@@ -58,7 +58,7 @@ def _visible_pins_clause(map_id: str, viewer_id: str):
 
 
 def _count_members_with_opinion(db: Session, map_id: str, viewer_id: str) -> int:
-    """이 지도의 보이는 핀 중 하나에든 ♥·△·🚫를 남긴 서로 다른 현재 구성원 수. 삭제된 핀의 반응은 세지 않고
+    """이 지도의 보이는 핀 중 하나에든 ♥·🚫를 남긴 서로 다른 현재 구성원 수. 삭제된 핀의 반응은 세지 않고
     (「삭제된 핀은 세지 않는다」), 탈퇴한 사용자는 뺀다. 가시성 판정은 목록·집계와 같다(가드레일 1)."""
     user_ids = db.execute(
         select(ReactionRow.user_id)
@@ -137,7 +137,6 @@ def list_pins(
         select(
             ReactionRow.pin_id.label("pin_id"),
             func.count().filter(ReactionRow.type == "like").label("like"),
-            func.count().filter(ReactionRow.type == "neutral").label("neutral"),
             func.count().filter(ReactionRow.type == "against").label("against"),
         )
         .group_by(ReactionRow.pin_id)
@@ -150,7 +149,6 @@ def list_pins(
             lat_col,
             lng_col,
             func.coalesce(reaction_counts.c.like, 0).label("like_count"),
-            func.coalesce(reaction_counts.c.neutral, 0).label("neutral_count"),
             func.coalesce(reaction_counts.c.against, 0).label("against_count"),
         )
         .outerjoin(reaction_counts, reaction_counts.c.pin_id == PinRow.id)
@@ -178,7 +176,7 @@ def list_pins(
             lat=row.lat,
             lng=row.lng,
             reaction_counts=core.ReactionCounts(
-                like=row.like_count, neutral=row.neutral_count, against=row.against_count
+                like=row.like_count, against=row.against_count
             ),
             created_by_display_name=display_names.get(pin_row.created_by),
             my_reaction=my_reactions.get(pin_row.id),
@@ -376,11 +374,10 @@ def _reaction_counts_for_pin(db: Session, pin_id: uuid.UUID) -> core.ReactionCou
     row = db.execute(
         select(
             func.count().filter(ReactionRow.type == "like").label("like"),
-            func.count().filter(ReactionRow.type == "neutral").label("neutral"),
             func.count().filter(ReactionRow.type == "against").label("against"),
         ).where(ReactionRow.pin_id == pin_id)
     ).one()
-    return core.ReactionCounts(like=row.like, neutral=row.neutral, against=row.against)
+    return core.ReactionCounts(like=row.like, against=row.against)
 
 
 def set_reaction(db: Session, pin: PinRow, viewer_id: str, req: ReactionRequest) -> Reaction:
@@ -410,7 +407,7 @@ def set_reaction(db: Session, pin: PinRow, viewer_id: str, req: ReactionRequest)
     db.execute(stmt)
 
     counts = _reaction_counts_for_pin(db, pin.id)
-    summary = ReactionSummary(like=counts.like, neutral=counts.neutral, against=counts.against)
+    summary = ReactionSummary(like=counts.like, against=counts.against)
     display_name = auth_api.display_names(db, [viewer_id]).get(viewer_id)
     record_event(db, core.reaction_changed_event(
         str(pin.id), pin.map_id, pin.visibility, summary, viewer_id, display_name, req.type,
@@ -434,7 +431,7 @@ def delete_reaction(db: Session, pin: PinRow, viewer_id: str) -> None:
         return
 
     counts = _reaction_counts_for_pin(db, pin.id)
-    summary = ReactionSummary(like=counts.like, neutral=counts.neutral, against=counts.against)
+    summary = ReactionSummary(like=counts.like, against=counts.against)
     display_name = auth_api.display_names(db, [viewer_id]).get(viewer_id)
     record_event(db, core.reaction_changed_event(
         str(pin.id), pin.map_id, pin.visibility, summary, viewer_id, display_name, None,

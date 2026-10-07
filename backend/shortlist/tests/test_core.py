@@ -20,7 +20,7 @@ def _pin(map_id="map_1", pin_id="pin_1"):
     return {
         "id": pin_id, "map_id": map_id, "category": "음식점", "kind": "확정",
         "visibility": "public", "lat": 35.1, "lng": 129.0, "created_by": "user_1",
-        "reaction_summary": {"like": 0, "neutral": 0, "against": 0},
+        "reaction_summary": {"like": 0, "against": 0},
         "permissions": {},
     }
 

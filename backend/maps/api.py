@@ -49,10 +49,8 @@ class DbMembershipGateway:
 
 
 def count_members(db: Session, map_id: str) -> int:
-    """recommend readiness(5-4)가 ceil(N/2)의 N으로 쓴다(recommend/#108). N="이 지도에
-    현재 참여 중인 인원 수"로 확정(#32, 2026-09-23) — maps가 소유한 함수라 여기 추가했다
-    (get_coordinates_for_pins를 pins가 shortlist를 위해 추가한 것과 같은 선례).
-    탈퇴한 구성원은 센 N에서 뺀다(#245) — 반응할 수 없는 사람이 ceil(N/2)를 부풀리지 않게.
+    """이 지도에 현재 참여 중인 인원 수(Map.member_count, FilterCounts.members_total). 추천 준비 판정은
+    더 이상 쓰지 않는다(#360 — 의견 핀 1곳이면 열린다). 탈퇴한 구성원은 뺀다(#245).
     나간 구성원은 멤버십 행이 지워져 자연히 빠진다(#369)."""
     return service.member_count(db, map_id)
 

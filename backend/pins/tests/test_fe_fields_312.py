@@ -37,7 +37,7 @@ def test_counts_members_with_opinion_counts_distinct_current_members(app_client,
     pin_a = _insert_pin(db_session, place_id="m_a")
     pin_b = _insert_pin(db_session, place_id="m_b")
     _react(app_client, pin_a, "user_1", {"type": "like"})
-    _react(app_client, pin_b, "user_1", {"type": "neutral"})   # 같은 사람이 두 핀에 — 한 명
+    _react(app_client, pin_b, "user_1", {"type": "like"})   # 같은 사람이 두 핀에 — 한 명
     _react(app_client, pin_a, "user_2", {"type": "against", "reason_text": "멀어요"})
 
     body = app_client.get("/maps/map_1/counts", cookies=_auth()).json()
