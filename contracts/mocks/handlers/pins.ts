@@ -1,7 +1,7 @@
 import { http, HttpResponse } from "msw";
 import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError, pinPermissions } from "../util";
-import { SEED_PLACES } from "./places";
+import { NOT_IN_OWN_DB, SEED_PLACES } from "./places";
 import { CATEGORY_RULES } from "../categories";
 import { chipsFor } from "../chips";
 
@@ -56,8 +56,11 @@ export const pinsHandlers = [
     const mapId = params.mapId as string;
     const body = (await request.json()) as {
       category: Pin["category"];
-      source?: "link" | "search" | "coordinate";
+      source?: "link" | "search" | "coordinate" | "live";
       link_url?: string;
+      kakao_place_id?: string;
+      search_query?: string;
+      memo?: string;
       place_id?: string;
       place_name?: string;
       lat?: number;
@@ -68,12 +71,46 @@ export const pinsHandlers = [
     if (body.source === "link" || body.link_url) {
       return apiError(422, "VALIDATION_ERROR", "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요");
     }
+    // #382 실시간 핀 — 자체 DB에 없는 장소. 카카오 장소 ID·검색어·메모·카테고리만 받고 이름·좌표는 받지도 돌려주지도 않는다.
+    if (body.source === "live") {
+      if (!body.kakao_place_id || !body.search_query?.trim()) {
+        return apiError(422, "VALIDATION_ERROR", "장소 ID와 검색어가 필요해요");
+      }
+      if (!CATEGORY_RULES[body.category]?.pinnable) {
+        return apiError(422, "VALIDATION_ERROR", `${body.category}은(는) 핀으로 남길 수 없어요`);
+      }
+      const dupLive = Object.values(store.pins).find((p) => p.map_id === mapId && p.kakao_place_id === body.kakao_place_id);
+      if (dupLive) return apiError(409, "PIN_DUPLICATE", "이미 지도에 있는 장소예요", { pin_id: dupLive.id });
+      const liveId = nextId("pin");
+      const livePin: Pin = {
+        id: liveId,
+        map_id: mapId,
+        category: body.category,
+        kind: "일반",
+        visibility: "public",
+        source: "live",
+        kakao_place_id: body.kakao_place_id,
+        search_query: body.search_query.trim(),
+        ...(body.memo ? { memo: body.memo } : {}),
+        created_by: ME_USER_ID,
+        created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
+        created_at: new Date().toISOString(),
+        checks: [],
+        source_run_id: null,
+        reaction_summary: { like: 0, against: 0 },
+        permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      };
+      store.pins[liveId] = livePin;
+      store.reactions[liveId] = [];
+      emitEvent(mapId, "public", "pin.created", livePin);
+      return HttpResponse.json(livePin, { status: 201 });
+    }
     if (body.source === "coordinate" || !body.place_id || !body.place_name || body.lat === undefined || body.lng === undefined) {
       return apiError(422, "VALIDATION_ERROR", "지도를 눌러 핀을 찍을 수는 없어요. 장소를 검색해서 골라 주세요");
     }
     const own = SEED_PLACES.find((p) => p.place_id === body.place_id);
     // 자체 DB는 pinnable 카테고리(음식점·카페·관광지)만 담는다(TourAPI 숙박 제외, 2026-10-01) — 숙소·기타는 핀으로 만들 수 없다
-    if (!own || (own.category && !CATEGORY_RULES[own.category].pinnable)) {
+    if (!own || NOT_IN_OWN_DB.has(own.place_id) || (own.category && !CATEGORY_RULES[own.category].pinnable)) {
       return apiError(422, "PLACE_NOT_SUPPORTED", "아직 지원하지 않는 장소예요");
     }
     if (own.category && body.category !== own.category) {
@@ -89,6 +126,7 @@ export const pinsHandlers = [
       category: body.category,
       kind: "일반",
       visibility: "public",
+      source: "db",
       lat: own.lat,
       lng: own.lng,
       place_name: own.place_name,
@@ -98,7 +136,7 @@ export const pinsHandlers = [
       created_at: new Date().toISOString(),
       checks: [],
       source_run_id: null,
-      reaction_summary: { like: 0, neutral: 0, against: 0 },
+      reaction_summary: { like: 0, against: 0 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     };
     (pin as any)._place_id = own.place_id;
@@ -146,7 +184,10 @@ export const pinsHandlers = [
     const pin = store.pins[pinId];
     if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
     if (!CATEGORY_RULES[pin.category].reactable) return apiError(422, "REACTION_NOT_ALLOWED", `${pin.category}에는 반응을 남길 수 없어요`);
-    const body = (await request.json()) as { type: "like" | "neutral" | "against"; reason_text?: string; reason_chip_ids?: string[] };
+    const body = (await request.json()) as { type: "like" | "against"; reason_text?: string; reason_chip_ids?: string[] };
+    if (body.type !== "like" && body.type !== "against") {
+      return apiError(422, "VALIDATION_ERROR", "반응은 좋음(like)과 반대(against)만 남길 수 있어요"); // 2026-10-07 #360: neutral(△) 폐지
+    }
     if (body.type === "against" && !body.reason_text && !(body.reason_chip_ids && body.reason_chip_ids.length)) {
       return apiError(422, "EVIDENCE_REQUIRED", "반대에는 사유가 필요해요");
     }
@@ -168,7 +209,6 @@ export const pinsHandlers = [
     // 요약 재계산
     pin.reaction_summary = {
       like: list.filter((r) => r.type === "like").length,
-      neutral: list.filter((r) => r.type === "neutral").length,
       against: list.filter((r) => r.type === "against").length,
     };
     emitEvent(pin.map_id, "public", "reaction.changed", { pin_id: pinId, reaction_summary: pin.reaction_summary, ...actor(pin.map_id), type: body.type });
@@ -183,7 +223,6 @@ export const pinsHandlers = [
     store.reactions[pinId] = list.filter((r) => r.user_id !== ME_USER_ID);
     pin.reaction_summary = {
       like: store.reactions[pinId].filter((r) => r.type === "like").length,
-      neutral: store.reactions[pinId].filter((r) => r.type === "neutral").length,
       against: store.reactions[pinId].filter((r) => r.type === "against").length,
     };
     emitEvent(pin.map_id, "public", "reaction.changed", { pin_id: pinId, reaction_summary: pin.reaction_summary, ...actor(pin.map_id), type: null });

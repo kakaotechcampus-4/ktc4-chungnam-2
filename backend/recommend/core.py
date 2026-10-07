@@ -42,20 +42,17 @@ def check_run_ready(run: RecommendRun) -> None:
         raise AppError("NOT_READY")
 
 
-def required_count(member_count: int) -> int:
-    """ceil(N/2) — docs/api-spec.yaml Readiness.required_count. N=현재 참여 중인(지도 구성원)
-    인원 수로 확정(#32, 2026-09-23) — 호출부(maps.api.count_members)가 그 값을 넘긴다.
-    member_count<=0은 지도가 생성 시점부터 항상 최소 1명(만든 사람)을 구성원으로 두어 실제
-    경로에서 도달하지 않는 방어 코드다."""
-    if member_count <= 0:
-        return 0
-    return math.ceil(member_count / 2)
+REQUIRED_OPINION_PINS = 1  # #360 — 카테고리마다 ♥/🚫 의견이 달린 핀 1곳. 구성원 수에 비례하던 ceil(N/2)는 폐기
 
 
-def check_readiness(answered_count: int, member_count: int) -> dict:
-    """5-4 추천 버튼 활성화 판정. api-spec.yaml Readiness와 같은 모양의 dict를 돌려준다."""
-    required = required_count(member_count)
-    return {"ready": answered_count >= required, "answered_count": answered_count, "required_count": required}
+def check_readiness(answered_count: int) -> dict:
+    """5-4 추천 버튼 활성화 판정. api-spec.yaml Readiness와 같은 모양의 dict를 돌려준다.
+    answered_count는 그 카테고리의 의견 핀 수(pins.api.count_opinion_pins)."""
+    return {
+        "ready": answered_count >= REQUIRED_OPINION_PINS,
+        "answered_count": answered_count,
+        "required_count": REQUIRED_OPINION_PINS,
+    }
 
 
 def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> list[dict]:
@@ -149,18 +146,20 @@ def condition_label(fact_key: str, *, satisfied: bool, wants: bool | None = None
     return f"{name} 아님" if wants else f"{name} 해당"
 
 
-def _check_label(fact_key: str, *, known: bool, value, passes: bool) -> str:
+def _check_label(fact_key: str, *, known: bool, value, passes: bool, category: str | None = None) -> str:
     name = constraints.FACT_LABELS.get(fact_key, fact_key)
     if not known:
         return f"{name} 확인 필요"
     if fact_key in constraints.VALUE_COMPARISON_UNSUPPORTED:
-        return constraints.PRICE_BUCKET_LABELS.get(str(value), f"{name} {value}")
+        return constraints.price_bucket_label(value, category) or f"{name} {value}"
     # 선호(soft) 체크의 passed는 라벨 참/거짓 그대로라 "원함" 쪽으로 읽는다. 실격(hard)은 passed=통과 여부.
     wants = True if fact_key in constraints.SOFT_FACT_KEYS else None
     return condition_label(fact_key, satisfied=passes, wants=wants)
 
 
-def build_check(fact_key: str, unknown_policy: str, *, known: bool, value, passes: bool) -> Check:
+def build_check(
+    fact_key: str, unknown_policy: str, *, known: bool, value, passes: bool, category: str | None = None,
+) -> Check:
     """docs/constraints.md 조건 하나에 대한 Check 조립 — unknown_policy 분기를 여기 한 곳에
     고정한다(가드레일 8: "판정 불확실은 조건 종류에 따라 다르게 처리한다").
 
@@ -169,8 +168,9 @@ def build_check(fact_key: str, unknown_policy: str, *, known: bool, value, passe
     - known=False & unknown_policy='pass'(+needs_check) → passed=True, needs_check=True.
     - known=True → passed는 실제 값 기반 통과 여부(호출부가 계산해 넘긴다), needs_check=False.
     label은 어느 조건인지 보이는 사람 말이다(`condition_label`) — 값 문자열("False")을 그대로 쓰지 않는다.
+    category는 값 문구가 카테고리마다 다른 키(price_bucket)에만 쓴다. 모르면(None) 기본 문구다.
     """
-    label = _check_label(fact_key, known=known, value=value, passes=passes)
+    label = _check_label(fact_key, known=known, value=value, passes=passes, category=category)
     if not known:
         if unknown_policy == "exclude":
             return Check(fact_key=fact_key, label=label, passed=False, confidence="unknown", needs_check=False)

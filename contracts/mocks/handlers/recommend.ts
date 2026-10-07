@@ -4,9 +4,13 @@ import { apiError } from "../util";
 import { buildCandidates, buildEvidenceLines, buildRegions } from "../seed";
 import { RECOMMEND_CATEGORIES } from "../categories";
 
-function requiredCount(mapId: string) {
-  const n = store.members[mapId]?.length ?? 1;
-  return Math.ceil(n / 2);
+// 2026-10-07(#360): 카테고리에 ♥/🚫 의견이 달린 핀이 1개 이상이면 열린다. 구성원 수와 무관 — 혼자 쓰는 지도도 같다.
+const REQUIRED_OPINION_PINS = 1;
+
+function opinionPinCount(mapId: string, category: string) {
+  return Object.values(store.pins).filter(
+    (p) => p.map_id === mapId && p.category === category && p.visibility === "public" && p.id && (store.reactions[p.id] ?? []).length > 0,
+  ).length;
 }
 
 function findCandidateRun(candidateId: string) {
@@ -29,16 +33,10 @@ function ensureCandidates(runId: string) {
 export const recommendHandlers = [
   http.get("*/maps/:mapId/recommend/readiness", ({ params }) => {
     const mapId = params.mapId as string;
-    const required = requiredCount(mapId);
     const result: Record<string, { ready: boolean; answered_count: number; required_count: number }> = {};
     for (const category of RECOMMEND_CATEGORIES) {
-      const pinsInCategory = Object.values(store.pins).filter((p) => p.map_id === mapId && p.category === category);
-      const answeredUsers = new Set<string>();
-      for (const pin of pinsInCategory) {
-        if (!pin.id) continue;
-        for (const r of store.reactions[pin.id] ?? []) answeredUsers.add(r.user_id!);
-      }
-      result[category] = { ready: answeredUsers.size >= required, answered_count: answeredUsers.size, required_count: required };
+      const answered = opinionPinCount(mapId, category);
+      result[category] = { ready: answered >= REQUIRED_OPINION_PINS, answered_count: answered, required_count: REQUIRED_OPINION_PINS };
     }
     return HttpResponse.json(result);
   }),
@@ -46,6 +44,14 @@ export const recommendHandlers = [
   http.post("*/maps/:mapId/runs", async ({ params, request }) => {
     const mapId = params.mapId as string;
     const body = (await request.json()) as { category: string };
+    const answered = opinionPinCount(mapId, body.category);
+    if (answered < REQUIRED_OPINION_PINS) {
+      return apiError(409, "NOT_READY", `의견 핀 ${answered}곳 · ${REQUIRED_OPINION_PINS - answered}곳 더 필요`, {
+        ready: false,
+        answered_count: answered,
+        required_count: REQUIRED_OPINION_PINS,
+      });
+    }
     const runId = nextId("run");
     store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1 };
     store.runRequestedBy[runId] = ME_USER_ID;
@@ -174,14 +180,14 @@ export const recommendHandlers = [
       category: (run?.category as Pin["category"]) ?? "음식점",
       kind: "AI추천",
       visibility: "public",
-      lat: 33.45,
-      lng: 126.56,
+      lat: cand.lat ?? 33.45, // #340: 후보 좌표가 있으면 그대로 핀이 된다
+      lng: cand.lng ?? 126.56,
       place_name: cand.place_name,
       created_by: ME_USER_ID, // 목 서버는 단일 사용자 시뮬레이션이라 run 요청자 = 나
       created_at: new Date().toISOString(), // 「지도에 올리기」를 누른 시각
       checks: cand.checks, // 가드레일 5: 게시 후에도 근거를 그대로 유지
       source_run_id: runId,
-      reaction_summary: { like: 0, neutral: 0, against: 0 },
+      reaction_summary: { like: 0, against: 0 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     };
     store.pins[pinId] = pin;

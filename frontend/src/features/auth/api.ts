@@ -18,3 +18,6 @@ export function kakaoLoginUrl(): string {
 }
 
 export const logout = () => api<void>('/auth/logout', { method: 'POST' })
+
+/** 회원 탈퇴(#155). 반응·사유는 지워지고 찍은 핀은 '탈퇴한 구성원'의 이름으로 남는다. */
+export const withdraw = () => api<void>('/auth/withdraw', { method: 'POST' })

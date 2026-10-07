@@ -12,10 +12,10 @@ const STEPS: Record<OnboardingKind, ReactNode[]> = {
   owner: [
     '위 검색창에 가게 이름을 검색해서 핀을 찍으세요',
     '친구를 초대하세요. 나중에도 오른쪽 위 구성원 버튼에서 초대할 수 있어요',
-    <>각자 ♥ △ <AgainstMark />로 의견을 남기면 AI가 대안을 찾아줘요</>,
+    <>각자 ♥ <AgainstMark />로 의견을 남기면 AI가 대안을 찾아줘요</>,
   ],
   member: [
-    <>핀을 눌러 ♥ △ <AgainstMark />로 의견을 남겨주세요</>,
+    <>핀을 눌러 ♥ <AgainstMark />로 의견을 남겨주세요</>,
     <><AgainstMark /> 반대는 이유가 필요해요. 그 이유로 대안을 찾아요</>,
     '가고 싶은 곳이 있으면 위 검색창에서 추가하세요',
   ],

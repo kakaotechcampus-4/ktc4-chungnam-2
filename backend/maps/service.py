@@ -95,6 +95,7 @@ def _map_record(db: Session, map_row: MapRow) -> core.MapRecord:
     ).one()
     return core.MapRecord(
         id=map_row.id, title=map_row.title, start_date=map_row.start_date, end_date=map_row.end_date,
+        created_by=map_row.created_by,
         region_label=map_row.region_label, region_lat=region_lat, region_lng=region_lng,
     )
 
@@ -115,6 +116,8 @@ def _map_response(db: Session, map_row: MapRow, *, viewer_id: str, with_next_own
         pin_count=_pin_counts(db, [map_row.id])[map_row.id],
         confirmed_count=shortlist_api.count_confirmed(db, map_id=map_row.id),
         permissions=core.map_permissions(principal, successor),
+        my_role=principal.role,
+        viewer_id=viewer_id,
         next_owner=next_owner,
     )
 
@@ -195,13 +198,15 @@ def list_maps(db: Session, *, user_id: str) -> list[Map]:
         responses.append(core.to_map_response(
             core.MapRecord(
                 id=map_row.id, title=map_row.title, start_date=map_row.start_date,
-                end_date=map_row.end_date, region_label=map_row.region_label,
-                region_lat=region_lat, region_lng=region_lng,
+                end_date=map_row.end_date, created_by=map_row.created_by,
+                region_label=map_row.region_label, region_lat=region_lat, region_lng=region_lng,
             ),
             member_count=_active_count(roster, withdrawn),
             pin_count=pin_counts[map_row.id],
             confirmed_count=shortlist_api.count_confirmed(db, map_id=map_row.id),
             permissions=core.map_permissions(principal, successor),
+            my_role=principal.role,
+            viewer_id=user_id,
         ))
     return responses
 

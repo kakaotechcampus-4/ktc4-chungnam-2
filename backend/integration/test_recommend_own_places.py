@@ -31,31 +31,33 @@ def no_label_place(monkeypatch):
     return calls
 
 
-def _setup_run(db_session, *, required_fact_key: str | None):
+def _setup_run(db_session, *, required_fact_key: str | None, wants: bool | None = None):
     run = _make_run(db_session, status="collecting_evidence")
     _make_members(db_session, user_ids=["user_1"])
     _make_region(db_session, run, **SEONGSU)
     if required_fact_key:
         service.add_reaction_evidence(db_session, run_id=run.id, lines=[
-            {"author_id": "user_1", "source": "reaction", "text": "빼주세요", "badge": "required", "fact_key": required_fact_key},
+            {"author_id": "user_1", "source": "reaction", "text": "빼주세요", "badge": "required", "fact_key": required_fact_key, "wants": wants},
         ])
     return run
 
 
 # ---------- 1) FakePlaces ----------
 
-def test_fake_places_unknown_safety_label_is_excluded_known_pass_is_kept(db_session, monkeypatch, no_label_place):
+def test_fake_places_unknown_taste_label_passes_with_needs_check_known_pass_is_kept(db_session, monkeypatch, no_label_place):
     fake = FakePlaces().install(monkeypatch)
-    run = _setup_run(db_session, required_fact_key="spicy_focused")
+    run = _setup_run(db_session, required_fact_key="spicy_focused", wants=False)   # 🚫 "매워요" — 취향 키(#378)
 
     flows.execute_run(db_session, run_id=str(run.id),
                       place_search=RealPlaceSearchGateway(), place_facts=RealPlaceFactsGateway())
 
-    # 성수 칼국수: spicy_focused=False(known) → 통과 / 어묵나라: 라벨 없음 → unknown + 안전 조건(exclude) → 제거
-    candidates = service.list_candidates(db_session, str(run.id))
-    assert [c.place_id for c in candidates] == [fake.place_id("seongsu-kalguksu")]
-    spicy = next(c for c in candidates[0].checks if c["fact_key"] == "spicy_focused")
-    assert spicy["confidence"] == "known" and spicy["passed"] is True
+    # 성수 칼국수: spicy_focused=False(known) → 통과 / 어묵나라: 라벨 없음 → unknown + 취향 키(pass) → 통과 + 확인 필요
+    candidates = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+    assert set(candidates) == {fake.place_id("seongsu-kalguksu"), fake.place_id("seongsu-bunsik")}
+    known = next(c for c in candidates[fake.place_id("seongsu-kalguksu")].checks if c["fact_key"] == "spicy_focused")
+    assert known["confidence"] == "known" and known["passed"] is True
+    unknown = next(c for c in candidates[fake.place_id("seongsu-bunsik")].checks if c["fact_key"] == "spicy_focused")
+    assert unknown["confidence"] == "unknown" and unknown["passed"] is True and unknown["needs_check"] is True
     assert no_label_place == []
 
 

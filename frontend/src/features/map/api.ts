@@ -14,6 +14,9 @@ export const deleteReaction = (pinId: string) => api<void>(`/pins/${pinId}/react
 export const createPin = (mapId: string, body: PinCreateRequest) =>
   api<PinDto>(`/maps/${mapId}/pins`, { method: 'POST', body: JSON.stringify(body) })
 
+/** 핀 삭제 — 구성원 누구나 남의 핀도 지울 수 있다(기획안 #25). */
+export const deletePin = (pinId: string) => api<void>(`/pins/${pinId}`, { method: 'DELETE' })
+
 export const fetchReasonChips = (category: PinCategory) =>
   api<ReasonChip[]>(`/categories/${encodeURIComponent(category)}/reason-chips`)
 

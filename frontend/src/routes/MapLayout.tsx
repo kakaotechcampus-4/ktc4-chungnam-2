@@ -4,8 +4,9 @@ import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Use
 
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { usePinSelection } from '@/features/map/usePinSelection'
-import { byNewest, filterPins, timeAgo } from '@/features/map/model'
+import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
+import { useLivePinResolver } from '@/features/map/livePlaces'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMapEvents } from '@/features/map/realtime'
 import { usePinFilters } from '@/features/map/usePinFilters'
@@ -41,6 +42,7 @@ export default function MapLayout() {
   const { data: allPins = [] } = usePinsQuery(mapId)
   const mapInfo = useMapQuery(mapId).data
   const memberCount = mapInfo?.memberCount ?? 0
+  useLivePinResolver(allPins, mapInfo?.regionCenter)
   const desktop = useIsDesktop()
   const panelOpen = useSheetStore((s) => s.panelOpen)
   const setPanelOpen = useSheetStore((s) => s.setPanelOpen)
@@ -49,7 +51,7 @@ export default function MapLayout() {
   const onMarkingTab = useMatch('/maps/:mapId') !== null
   const onShortlistTab = useMatch('/maps/:mapId/shortlist') !== null
   // 마커와 목록이 같은 필터를 본다. 확정 탭은 확정 핀만, 다른 탭엔 필터가 없어 전부 보인다.
-  const pins = onShortlistTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters)
+  const pins = onShortlistTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters, memberCount)
   const routeOn = useRouteStore((s) => s.on) && onShortlistTab
   const routes = useRouteQuery(mapId, routeOn).data
   const routeDrawings = useMemo(() => (routeOn && routes ? toRouteDrawings(routes, allPins) : []), [routeOn, routes, allPins])
@@ -133,7 +135,6 @@ export default function MapLayout() {
   function onControl(key: ControlKey) {
     const map = controller.current
     if (!map) return showToast('지도가 아직 준비되지 않았어요')
-    const isPlaced = (p: (typeof allPins)[number]) => typeof p.lat === 'number' && typeof p.lng === 'number'
     // 최근 핀은 필터와 상관없이 지도 전체에서, 전체 핀 보기는 지금 보이는(필터된) 핀으로.
     const placed = (key === 'recent' ? allPins : pins).filter(isPlaced)
 

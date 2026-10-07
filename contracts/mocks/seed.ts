@@ -34,6 +34,7 @@ export function buildBaseState(): StoreState {
       end_date: "2026-10-12",
       member_count: 4,
       pin_count: 3,
+      created_by: ME_USER_ID,
       confirmed_count: 0,
     },
   };
@@ -58,7 +59,7 @@ export function buildBaseState(): StoreState {
       created_at: minutesAgo(180),
       checks: [],
       source_run_id: null,
-      reaction_summary: { like: 1, neutral: 0, against: 1 },
+      reaction_summary: { like: 1, against: 1 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     },
     [pinFood2]: {
@@ -75,7 +76,7 @@ export function buildBaseState(): StoreState {
       created_at: minutesAgo(50),
       checks: [],
       source_run_id: null,
-      reaction_summary: { like: 1, neutral: 0, against: 1 },
+      reaction_summary: { like: 1, against: 1 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     },
     [pinCafe1]: {
@@ -92,7 +93,7 @@ export function buildBaseState(): StoreState {
       created_at: minutesAgo(10),
       checks: [],
       source_run_id: null,
-      reaction_summary: { like: 1, neutral: 0, against: 0 },
+      reaction_summary: { like: 1, against: 0 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     },
   };
@@ -204,6 +205,8 @@ export function buildCandidates(regionLabel: string) {
     {
       id: nextId("cand"),
       place_name: "올레국수",
+      lat: 33.4996,
+      lng: 126.5312,
       region_label: regionLabel,
       rank: 1,
       checks: [
@@ -219,6 +222,8 @@ export function buildCandidates(regionLabel: string) {
     {
       id: nextId("cand"),
       place_name: "제주보말칼국수",
+      lat: 33.5072,
+      lng: 126.5219,
       region_label: regionLabel,
       rank: 2,
       checks: [
@@ -234,6 +239,8 @@ export function buildCandidates(regionLabel: string) {
     {
       id: nextId("cand"),
       place_name: "고기국수 명가",
+      lat: 33.4891,
+      lng: 126.4983,
       region_label: regionLabel,
       rank: 3,
       checks: [

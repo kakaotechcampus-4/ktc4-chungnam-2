@@ -10,6 +10,7 @@
 책임이 아니다 — recommend가 한다(가드레일 7).
 """
 
+import logging
 import re
 import unicodedata
 from functools import partial
@@ -20,6 +21,8 @@ from common.errors import AppError
 from common.settings import settings
 from llm.client import LlmCallError, call_planner, get_client
 from llm.schemas import EvidenceLine, FactKey, PlaceFactLabel, PlanningOutput, RankedCandidate
+
+log = logging.getLogger("pingo.llm")
 
 EvidencePlanner = Callable[[Sequence[Mapping[str, Any]]], list[EvidenceLine]]
 
@@ -152,7 +155,10 @@ def plan_evidence(
         return (planner or get_evidence_planner())(raw_reasons)
     except (LlmCallError, ValueError) as exc:
         # pydantic.ValidationError는 ValueError의 하위 클래스다(입력 dict가 스키마에 안 맞는 경우 포함).
-        raise PlanEvidenceFailed(str(exc)) from exc
+        # str(exc)는 응답에 넣지 않는다 — ValidationError 문자열에는 입력값(사용자 사유 원문)이 들어 있다(#390).
+        cause = exc.__cause__ or exc  # LlmCallError는 원인 예외를 달고 온다 — 응답에는 클래스명만
+        log.warning("plan_evidence 실패: %s(%s), 사유 %d개", type(exc).__name__, type(cause).__name__, len(raw_reasons))
+        raise PlanEvidenceFailed(f"{type(exc).__name__}({type(cause).__name__}): 사유 구조화에 실패했다") from exc
 
 
 def label_place(
