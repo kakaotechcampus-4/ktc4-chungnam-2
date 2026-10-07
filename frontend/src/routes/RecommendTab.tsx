@@ -2,12 +2,12 @@ import { useState } from 'react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
-import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
+import { useMembersQuery } from '@/features/maps/queries'
 import { useAiStore } from '@/features/recommend/aiStore'
 import EvidenceScreen from '@/features/recommend/EvidenceScreen'
 import { noResultsFunnel, RETRY_MAX, type RecommendRunDto } from '@/features/recommend/model'
 import { useResultQuery } from '@/features/recommend/queries'
-import { AiHeader, ProgressBody, ReadinessBody, SoloBody } from '@/features/recommend/Readiness'
+import { AiHeader, ProgressBody, ReadinessBody } from '@/features/recommend/Readiness'
 import {
   BackToReadiness,
   CandidateDetail,
@@ -30,7 +30,6 @@ import { josa } from '@/ui/josa'
 export default function RecommendTab() {
   const { mapId } = useShell()
   const run = useAiStore((s) => s.runs[mapId])
-  const memberCount = useMapQuery(mapId).data?.memberCount
 
   if (run && (run.status === 'collecting_evidence' || run.status === 'awaiting_region_confirm')) {
     return <EvidenceScreen mapId={mapId} run={run} />
@@ -38,13 +37,7 @@ export default function RecommendTab() {
   // 다시 추천·반경 넓히기마다 화면(후보 상세 등)을 처음부터 그린다.
   if (run) return <RunResult key={`${run.id}-${run.attempt_no}-${run.default_radius_walk_min ?? 0}`} mapId={mapId} run={run} />
 
-  if (memberCount === 1) {
-    return (
-      <TabSheet tab="recommend" header={<AiHeader title="의견이 모여야 추천이 열려요" sub="한 카테고리에 의견이 모이면 추천을 받을 수 있어요" />}>
-        <SoloBody mapId={mapId} />
-      </TabSheet>
-    )
-  }
+  // 혼자 쓰는 지도도 같은 조건으로 추천을 받는다(2026-10-07, #360) — 구성원 수로 막지 않는다.
   return (
     <TabSheet tab="recommend" header={<AiHeader title="AI 추천" sub="준비된 카테고리를 골라 주세요" />}>
       <ReadinessBody mapId={mapId} />
