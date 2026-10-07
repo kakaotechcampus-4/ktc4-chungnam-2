@@ -2,7 +2,7 @@ import { ChevronDown } from 'lucide-react'
 
 import type { MemberView } from '@/features/maps/model'
 
-import { FILTER_CATEGORIES, SORTS, type Pin, type PinFilters, type PinSort } from './model'
+import { FILTER_CATEGORIES, KINDS, OPINIONS, SORTS, type Pin, type PinFilters, type PinOpinion, type PinSort } from './model'
 
 /**
  * 카테고리 칩 줄(Figma 마킹 탭). 2단계까지는 지도 위 검색창 아래, 3단계에서는 시트 제목 아래에 놓인다.
@@ -53,7 +53,7 @@ export function PinFilterBar({
   filters: PinFilters
   members: MemberView[]
   pins: Pin[]
-  onChange: (key: 'by' | 'sort', value: string | null) => void
+  onChange: (key: 'by' | 'kind' | 'opinion' | 'sort', value: string | null) => void
 }) {
   const countBy = (userId: string) => pins.filter((p) => p.created_by === userId).length
   return (
@@ -70,6 +70,36 @@ export function PinFilterBar({
             <option key={m.userId} value={m.userId}>
               {m.name}
               {m.isMe ? ' (나)' : ''} · {countBy(m.userId)}곳
+            </option>
+          ))}
+        </select>
+      </Pill>
+      <Pill label="종류">
+        <select
+          aria-label="종류"
+          value={filters.kind ?? ''}
+          onChange={(e) => onChange('kind', e.target.value || null)}
+          className="appearance-none bg-transparent pr-4 font-semibold text-ink-900 outline-none focus-visible:outline-2"
+        >
+          <option value="">전체</option>
+          {KINDS.map((k) => (
+            <option key={k} value={k}>
+              {k === 'AI추천' ? 'AI 추천' : k}
+            </option>
+          ))}
+        </select>
+      </Pill>
+      <Pill label="의견">
+        <select
+          aria-label="의견"
+          value={filters.opinion ?? ''}
+          onChange={(e) => onChange('opinion', e.target.value || null)}
+          className="appearance-none bg-transparent pr-4 font-semibold text-ink-900 outline-none focus-visible:outline-2"
+        >
+          <option value="">전체</option>
+          {(Object.keys(OPINIONS) as PinOpinion[]).map((key) => (
+            <option key={key} value={key}>
+              {OPINIONS[key]}
             </option>
           ))}
         </select>

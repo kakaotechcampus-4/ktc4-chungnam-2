@@ -51,7 +51,7 @@ export default function MapLayout() {
   const onMarkingTab = useMatch('/maps/:mapId') !== null
   const onShortlistTab = useMatch('/maps/:mapId/shortlist') !== null
   // 마커와 목록이 같은 필터를 본다. 확정 탭은 확정 핀만, 다른 탭엔 필터가 없어 전부 보인다.
-  const pins = onShortlistTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters)
+  const pins = onShortlistTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters, memberCount)
   const routeOn = useRouteStore((s) => s.on) && onShortlistTab
   const routes = useRouteQuery(mapId, routeOn).data
   const routeDrawings = useMemo(() => (routeOn && routes ? toRouteDrawings(routes, allPins) : []), [routeOn, routes, allPins])
