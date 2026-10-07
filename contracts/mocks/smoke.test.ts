@@ -183,6 +183,22 @@ describe("에러 시나리오", () => {
     expect(react.status).toBe(200);
   });
 
+  it("#382 자체 DB에 없는 장소는 검색에서 pinnable:false, search 로는 422, live 로는 핀이 된다", async () => {
+    const items = await fetch(`${BASE}/places/search?q=${encodeURIComponent("곱창")}`).then((r) => r.json());
+    expect(items[0]).toMatchObject({ place_id: "kakao:mock-6", pinnable: false });
+    const asSearch = await fetch(`${BASE}/maps/map_1/pins`, {
+      method: "POST",
+      body: JSON.stringify({ category: "음식점", source: "search", place_id: "kakao:mock-6", place_name: "성수 노포 곱창", lat: 37.5445, lng: 127.0557 }),
+    });
+    expect(asSearch.status).toBe(422);
+    expect((await asSearch.json()).code).toBe("PLACE_NOT_SUPPORTED");
+    const asLive = await fetch(`${BASE}/maps/map_1/pins`, {
+      method: "POST",
+      body: JSON.stringify({ source: "live", category: "음식점", kakao_place_id: "kakao:mock-6", search_query: "곱창" }),
+    });
+    expect(asLive.status).toBe(201);
+  });
+
   it("#382 실시간 핀은 필수 값이 빠지거나 숙소·기타면 422", async () => {
     const noQuery = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify({ source: "live", category: "음식점", kakao_place_id: "kakao:live-2" }) });
     expect(noQuery.status).toBe(422);
