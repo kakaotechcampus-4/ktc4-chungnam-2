@@ -177,6 +177,63 @@ describe("#139 — 외부 지도 SDK 요청은 목 서버가 가로채지 않는
   }, 15000);
 });
 
+describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
+  const me = () => store.members["map_1"]?.find((m) => m.user_id === "u_me");
+
+  it("지도 응답에 요청자 기준 permissions가 붙고, 상세에서만 next_owner가 온다", async () => {
+    const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true });
+    expect(detail.next_owner.user_id).toBe("u_2");
+    const list = await (await fetch(`${BASE}/maps`)).json();
+    expect(list[0].permissions.can_delete).toBe(true);
+    expect(list[0].next_owner).toBeUndefined();
+  });
+
+  it("방장이 나가면 다음 사람이 방장이 되고 member.left에 실린다", async () => {
+    const before = store.eventLog.length;
+    expect((await fetch(`${BASE}/maps/map_1/members/me`, { method: "DELETE" })).status).toBe(204);
+    expect(me()).toBeUndefined();
+    expect(store.members["map_1"].find((m) => m.user_id === "u_2")?.role).toBe("owner");
+    const ev = store.eventLog.slice(before).find((e) => e.type === "member.left");
+    expect(ev?.data).toMatchObject({ user_id: "u_me", new_owner_user_id: "u_2" });
+  });
+
+  it("넘길 사람이 없는 방장은 409 OWNER_CANNOT_LEAVE, can_leave=false", async () => {
+    store.members["map_1"] = store.members["map_1"].filter((m) => m.user_id === "u_me");
+    const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false });
+    const r = await fetch(`${BASE}/maps/map_1/members/me`, { method: "DELETE" });
+    expect(r.status).toBe(409);
+    expect((await r.json()).code).toBe("OWNER_CANNOT_LEAVE");
+  });
+
+  it("방장이 아니면 삭제 403, 방장이 삭제하면 지도와 초대 토큰이 404", async () => {
+    me()!.role = "member";
+    expect((await fetch(`${BASE}/maps/map_1`, { method: "DELETE" })).status).toBe(403);
+    me()!.role = "owner";
+    const invite = await (await fetch(`${BASE}/maps/map_1/invite`, { method: "POST" })).json();
+    expect((await fetch(`${BASE}/maps/map_1`, { method: "DELETE" })).status).toBe(204);
+    expect((await fetch(`${BASE}/maps/map_1`)).status).toBe(404);
+    expect((await (await fetch(`${BASE}/invites/${invite.token}/accept`, { method: "POST" })).json()).code).toBe("INVITE_NOT_FOUND");
+    expect(await (await fetch(`${BASE}/maps`)).json()).toEqual([]);
+  });
+});
+
+describe("#369 — 내 지도 10개 상한", () => {
+  const create = () =>
+    fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "상한 시험", start_date: "2026-11-01", end_date: "2026-11-02" }) });
+
+  it("내 지도가 10개면 만들기가 409 MAP_LIMIT, 하나 지우면 다시 된다", async () => {
+    while ((await (await fetch(`${BASE}/maps`)).json()).length < 10) expect((await create()).status).toBe(201);
+    const r = await create();
+    expect(r.status).toBe(409);
+    expect(await r.json()).toMatchObject({ code: "MAP_LIMIT", detail: { limit: 10, count: 10 } });
+    const [last] = await (await fetch(`${BASE}/maps`)).json();
+    expect((await fetch(`${BASE}/maps/${last.id}`, { method: "DELETE" })).status).toBe(204);
+    expect((await create()).status).toBe(201);
+  });
+});
+
 describe("#22·#24 — 내 지도 목록 + 지도 생성 지역(선택)", () => {
   it("GET /maps는 내가 구성원인 지도만 최근 생성순으로 준다", async () => {
     const created = await fetch(`${BASE}/maps`, {

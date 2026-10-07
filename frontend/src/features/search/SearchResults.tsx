@@ -138,7 +138,7 @@ function PinItButton({ result, filled = false, pending, onPin }: { result: Searc
       className={
         filled
           ? 'btn-primary w-full py-3'
-          : 'btn-outline shrink-0 px-3 py-1.5 text-sm'
+          : 'btn-outline shrink-0 rounded-md px-3 py-1.5 text-sm'
       }
     >
       {pending ? '찍는 중…' : '핀 찍기'}

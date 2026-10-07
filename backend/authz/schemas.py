@@ -17,5 +17,6 @@ class Permissions(BaseModel):
     can_add_to_shortlist: bool | None = None
     can_remove_from_shortlist: bool | None = None
     can_disable: bool | None = None  # evidence_line 전용: 자기가 쓴 것만 true
-    can_delete: bool | None = None
+    can_delete: bool | None = None  # pin: 핀 삭제. map: 지도 삭제, 방장만 (#369)
+    can_leave: bool | None = None  # map 전용: 지도 나가기. 넘길 사람이 없는 방장은 false (#369)
     can_publish: bool | None = None  # candidate 전용: recommend.publish, requested_by 본인만 (#64)

@@ -180,7 +180,7 @@ function PublishButton({ mapId, run, c, filled = false }: { mapId: string; run: 
       className={
         filled
           ? 'btn-primary w-full py-3.5'
-          : 'btn-outline px-3 py-1.5 text-sm'
+          : 'btn-outline rounded-md px-3 py-1.5 text-sm'
       }
     >
       {publish.isPending ? '올리는 중…' : '지도에 올리기'}

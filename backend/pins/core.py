@@ -28,6 +28,21 @@ from pins.schemas import (
 
 LINK_PIN_REJECTED_MESSAGE = "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"
 
+# 핀 작성자 표시(#155, #369). 탈퇴 문구는 auth.api.WITHDRAWN_DISPLAY_NAME과 같은 값이다(test_core가 대조한다).
+WITHDRAWN_AUTHOR_NAME = "탈퇴한 구성원"
+LEFT_AUTHOR_NAME = "나간 구성원"
+
+
+def author_display_name(real_name: str | None, *, is_withdrawn: bool, is_current_member: bool) -> str | None:
+    """핀 created_by_display_name 판정(#369 설계 14번). 탈퇴를 먼저 본다 — 탈퇴자는 멤버십 행이
+    남아 현재 구성원으로 잡히기 때문이다(#245). 그다음 그 지도에서 나갔으면 '나간 구성원', 아니면 실명.
+    핀 행에는 아무것도 쓰지 않고 조회할 때마다 계산하므로, 다시 들어오면 실명으로 돌아간다."""
+    if is_withdrawn:
+        return WITHDRAWN_AUTHOR_NAME
+    if not is_current_member:
+        return LEFT_AUTHOR_NAME
+    return real_name
+
 
 COORDINATE_PIN_REJECTED_MESSAGE = "지도를 눌러 핀을 찍을 수는 없어요. 장소를 검색해서 골라 주세요"
 CATEGORY_MISMATCH_MESSAGE = "고른 장소의 분류와 요청한 분류가 달라요"
