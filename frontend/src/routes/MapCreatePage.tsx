@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router'
 import { ChevronDown, ChevronLeft, X } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
-import type { MapRegion } from '@/features/maps/model'
+import { createMapErrorMessage, type MapRegion } from '@/features/maps/model'
 import { useCreateMapMutation } from '@/features/maps/queries'
 import RegionPicker from '@/features/maps/RegionPicker'
 
@@ -101,7 +101,7 @@ export default function MapCreatePage() {
         </p>
       )}
 
-      {create.error && <ErrorText message="지도를 만들지 못했어요" error={create.error} />}
+      {create.error && <ErrorText message={createMapErrorMessage(create.error)} error={create.error} />}
 
       <button
         type="submit"

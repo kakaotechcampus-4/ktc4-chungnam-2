@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useMeQuery } from '@/features/auth/queries'
 
-import { acceptInvite, createInvite, createMap, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers } from './api'
+import { acceptInvite, createInvite, createMap, deleteMap, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, leaveMap } from './api'
 import { inviteProblem, toInviteView, toMapHeaderView, toMapView, toMemberView, type MapCreateRequest } from './model'
 
 export const mapKeys = {
@@ -27,6 +27,30 @@ export function useCreateMapMutation() {
     mutationFn: (body: MapCreateRequest) => createMap(body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: mapKeys.all }),
   })
+}
+
+/**
+ * 지도 삭제·나가기 뒤엔 그 지도의 캐시를 버리고 목록을 다시 받는다 — 지워진 지도의 핀이 화면에 남지 않게.
+ * 어느 쪽이든 이 지도는 더 이상 내 지도가 아니다.
+ */
+function useLeaveCleanup() {
+  const queryClient = useQueryClient()
+  return (mapId: string) => {
+    queryClient.removeQueries({ queryKey: mapKeys.detail(mapId) })
+    queryClient.removeQueries({ queryKey: ['pins', mapId] })
+    queryClient.removeQueries({ queryKey: ['shortlist', mapId] })
+    void queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true })
+  }
+}
+
+export function useDeleteMapMutation(mapId: string) {
+  const cleanup = useLeaveCleanup()
+  return useMutation({ mutationFn: () => deleteMap(mapId), onSuccess: () => cleanup(mapId) })
+}
+
+export function useLeaveMapMutation(mapId: string) {
+  const cleanup = useLeaveCleanup()
+  return useMutation({ mutationFn: () => leaveMap(mapId), onSuccess: () => cleanup(mapId) })
 }
 
 export function useAcceptInviteMutation(token: string) {

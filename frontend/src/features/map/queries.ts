@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { createPin, deleteReaction, fetchCounts, fetchPins, fetchReactions, fetchReasonChips, putReaction } from './api'
+import { createPin, deletePin, deleteReaction, fetchCounts, fetchPins, fetchReactions, fetchReasonChips, putReaction } from './api'
 import { useLivePlaceStore, withLivePlace } from './livePlaces'
 import { withMyReaction, type Pin, type PinCategory, type PinCreateRequest, type ReactionRequest } from './model'
 
@@ -28,6 +28,23 @@ export function usePinsQuery(mapId: string) {
   const places = useLivePlaceStore((s) => s.places)
   const data = useMemo(() => query.data?.map((p) => withLivePlace(p, places)), [query.data, places])
   return { ...query, data }
+}
+
+/**
+ * 핀 삭제(구성원 누구나). 목록 캐시에서 바로 빼고, 같이 달라지는 집계·확정 리스트·추천 준비 상태는 다시 받는다.
+ * 확정 리스트의 항목은 서버가 핀과 함께 지운다.
+ */
+export function useDeletePinMutation(mapId: string, pinId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => deletePin(pinId),
+    onSuccess: () => {
+      queryClient.setQueryData<Pin[]>(pinKeys.list(mapId), (pins) => pins?.filter((p) => p.id !== pinId))
+      void queryClient.invalidateQueries({ queryKey: pinKeys.counts(mapId) })
+      void queryClient.invalidateQueries({ queryKey: ['shortlist', mapId] })
+      void queryClient.invalidateQueries({ queryKey: ['recommend', mapId] })
+    },
+  })
 }
 
 /** 핀 상세 「구성원 의견」. 반응한 구성원만 온다. */
