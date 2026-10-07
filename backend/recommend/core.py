@@ -146,18 +146,20 @@ def condition_label(fact_key: str, *, satisfied: bool, wants: bool | None = None
     return f"{name} 아님" if wants else f"{name} 해당"
 
 
-def _check_label(fact_key: str, *, known: bool, value, passes: bool) -> str:
+def _check_label(fact_key: str, *, known: bool, value, passes: bool, category: str | None = None) -> str:
     name = constraints.FACT_LABELS.get(fact_key, fact_key)
     if not known:
         return f"{name} 확인 필요"
     if fact_key in constraints.VALUE_COMPARISON_UNSUPPORTED:
-        return constraints.PRICE_BUCKET_LABELS.get(str(value), f"{name} {value}")
+        return constraints.price_bucket_label(value, category) or f"{name} {value}"
     # 선호(soft) 체크의 passed는 라벨 참/거짓 그대로라 "원함" 쪽으로 읽는다. 실격(hard)은 passed=통과 여부.
     wants = True if fact_key in constraints.SOFT_FACT_KEYS else None
     return condition_label(fact_key, satisfied=passes, wants=wants)
 
 
-def build_check(fact_key: str, unknown_policy: str, *, known: bool, value, passes: bool) -> Check:
+def build_check(
+    fact_key: str, unknown_policy: str, *, known: bool, value, passes: bool, category: str | None = None,
+) -> Check:
     """docs/constraints.md 조건 하나에 대한 Check 조립 — unknown_policy 분기를 여기 한 곳에
     고정한다(가드레일 8: "판정 불확실은 조건 종류에 따라 다르게 처리한다").
 
@@ -166,8 +168,9 @@ def build_check(fact_key: str, unknown_policy: str, *, known: bool, value, passe
     - known=False & unknown_policy='pass'(+needs_check) → passed=True, needs_check=True.
     - known=True → passed는 실제 값 기반 통과 여부(호출부가 계산해 넘긴다), needs_check=False.
     label은 어느 조건인지 보이는 사람 말이다(`condition_label`) — 값 문자열("False")을 그대로 쓰지 않는다.
+    category는 값 문구가 카테고리마다 다른 키(price_bucket)에만 쓴다. 모르면(None) 기본 문구다.
     """
-    label = _check_label(fact_key, known=known, value=value, passes=passes)
+    label = _check_label(fact_key, known=known, value=value, passes=passes, category=category)
     if not known:
         if unknown_policy == "exclude":
             return Check(fact_key=fact_key, label=label, passed=False, confidence="unknown", needs_check=False)

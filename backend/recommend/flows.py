@@ -381,6 +381,7 @@ def _run_pipeline(
             passes = _passes_hard_check(fact_key, value) if known else True
             checks.append(core.build_check(
                 fact_key, constraints.HARD_REGISTRY[fact_key].unknown_policy, known=known, value=value, passes=passes,
+                category=run.category,
             ))
         # #112 1단계 입력 — 선호(soft) 라벨도 같이 붙인다. unknown_policy는 표 그대로 "pass"
         # 고정(constraints.md — 순위에서 중립 처리). passed는 hard 체크처럼 "실격 아님"이 아니라

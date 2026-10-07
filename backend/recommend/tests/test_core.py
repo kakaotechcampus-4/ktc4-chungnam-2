@@ -180,6 +180,28 @@ def test_to_satisfaction_checks_uses_the_same_label_rule(wants, truth, label):
     assert shown.label == core.condition_label("quiet", satisfied=(truth == wants), wants=wants)
 
 
+@pytest.mark.parametrize("category, value, label", [
+    ("관광지", "low", "무료 입장"),
+    ("관광지", "mid", "입장료 15,000원 이하"),
+    ("관광지", "high", "입장료 15,000원 초과"),
+    ("관광지", "weird", "가격대 weird"),            # 표에 없는 값은 카테고리가 있어도 값 그대로
+    ("음식점", "low", "착한가격업소"),
+    ("카페", "low", "착한가격업소"),
+    ("음식점", "mid", "가격대 mid"),
+    (None, "low", "착한가격업소"),                   # 카테고리를 모르면 기존 문구
+    ("숙소", "low", "착한가격업소"),                 # 표에 없는 카테고리도 기존 문구
+])
+def test_price_bucket_label_follows_the_category(category, value, label):
+    """#379 — 같은 low도 관광지는 입장료 무료, 음식점·카페는 착한가격업소다."""
+    check = core.build_check("price_bucket", "pass", known=True, value=value, passes=True, category=category)
+    assert check.label == label
+
+
+def test_price_bucket_unknown_label_ignores_category():
+    check = core.build_check("price_bucket", "pass", known=False, value=None, passes=True, category="관광지")
+    assert check.label == "가격대 확인 필요" and check.needs_check is True
+
+
 # ---------- apply_disqualifier_filters ----------
 
 def test_apply_disqualifier_filters_fails_candidate_with_any_failing_check():
