@@ -270,3 +270,13 @@ def test_invalid_log_level_is_rejected(monkeypatch):
 
     with pytest.raises(ConfigError, match="LOG_LEVEL"):
         Settings.from_env()
+
+
+def test_main_quiets_http_client_loggers():
+    """httpx는 INFO에서 요청 주소(엘리스 경로 id, 사용자 검색어)를 찍는다 — 앱을 올리면 경고부터만 남긴다."""
+    import logging
+
+    import main  # noqa: F401  (import 시 로깅을 설정한다)
+
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("httpcore").level == logging.WARNING
