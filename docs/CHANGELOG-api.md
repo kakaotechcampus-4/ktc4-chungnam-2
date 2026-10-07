@@ -30,6 +30,18 @@
 **FE 영향(타입 재생성 필요, 컴파일이 깨진다)**: `neutral`을 읽거나 쓰는 곳(`PinDetail` 반응 버튼·스타일, `PinList` 정렬과 줄, `model.ts`의 `participants`·`split`, `realtime.ts`의 반응 문구, 온보딩 문구)을 지운다. `Readiness.tsx`의 안내를 "카테고리마다 좋음·반대 의견이 달린 핀이 1곳 이상이면 추천을 받을 수 있어요"로 바꾸고 타일 표기는 「의견 핀 N/1」, **`RecommendTab.tsx`의 구성원 1명이면 추천을 막는 분기(SoloBody)를 지운다**(혼자도 추천). 이 변경은 FE가 먼저 `neutral` 의존을 걷어 낸 코드를 develop에 넣어야 CI를 통과한다.
 
 **BE 영향**: pins(마이그레이션: `reaction_type` enum을 `like|against`로 새로 만들고 neutral 행 삭제, `ReactionCounts`·schemas·core·service에서 neutral 제거, `count_reacted_users`를 카테고리별 의견 핀 수로 교체), recommend(`get_readiness`·`create_run`의 임계값 1, `_evidence_from_reaction`의 neutral 분기 삭제, 테스트), 통합 테스트(`test_safety_reason_rules` 등의 △ 사례를 ♥ 사유로).
+## 2026-10-07 (네 번째), 지도 목록의 내가 만든 지도·초대받은 지도 구분, 후보 좌표 (#340)
+
+둘 다 **선택 필드 추가**라 기존 프론트 빌드와 계약 테스트는 깨지지 않는다. 서버가 채우기 시작하면 필수로 올린다(`pin_count`와 같은 순서).
+
+- **`Map.my_role`** (`owner | member`): 요청자의 지금 역할. 방장이 위임되면 바뀐다.
+- **`Map.created_by_me`** (boolean): 내가 이 지도를 만들었는가. 내 지도 목록을 「내가 만든 지도」와 「초대받은 지도」로 나누는 값이다. 위임 뒤에는 `my_role`과 달라질 수 있다(만든 사람이 방장을 넘겼거나, 초대받은 사람이 방장이 된 경우).
+- **`Candidate.lat`·`lng`**: 자체 DB 장소의 좌표. 게시 전 나만 보는 점선 핀을 지도에 그린다(#340 1번). `run.candidates_ready`의 Candidate에도 같다.
+- #340의 2번(핀 응답의 장소 id)은 실시간 핀(#382)의 `Pin.kakao_place_id`와 함께 다룬다. 3번(추천 준비 카운트의 단위)은 #360에서 답이 났다(의견이 달린 핀 수, 항상 1 이상 필요).
+
+**FE 영향**: `npm run gen:types`. `MapListPage`를 두 묶음으로 나누고 방장이면 배지를 단다. 추천 결과 화면은 후보 좌표로 점선 핀을 그린다.
+
+**BE 영향**: maps(`to_map_response`가 두 필드를 채움), recommend(`Candidate` 스키마에 `lat`·`lng`, DB에는 이미 있다 — `candidates.lat/lng`).
 
 ## 2026-10-07, 지도 삭제와 나가기, 방장 위임 (#369)
 

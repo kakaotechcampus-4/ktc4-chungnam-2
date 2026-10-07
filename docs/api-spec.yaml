@@ -944,6 +944,8 @@ components:
         member_count: { type: integer }
         pin_count: { type: integer, minimum: 0, description: "지도에 올라와 있는(삭제되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청)" }
         confirmed_count: { type: integer }
+        my_role: { type: string, enum: [owner, member], description: "요청자의 지금 역할(memberships.role). 위임되면 바뀐다. 내 지도 목록의 방장 배지용 (2026-10-07, 회의). 서버가 채우기 시작하면 필수로 올린다" }
+        created_by_me: { type: boolean, description: "내가 이 지도를 만들었는가(maps.created_by == 나). 내 지도 목록의 「내가 만든 지도」와 「초대받은 지도」를 가르는 값이다. 방장이 위임되면 my_role과 달라질 수 있다 — 만든 사람이 나가도 값은 바뀌지 않는다. 서버가 채우기 시작하면 필수로 올린다" }
 
     NextOwner:
       type: object
@@ -1259,6 +1261,8 @@ components:
       properties:
         id: { type: string }
         place_name: { type: string, maxLength: 100 } # Pin.place_name과 동일 근거(멘토 리뷰 대응)
+        lat: { type: number, minimum: -90, maximum: 90, description: "자체 DB 장소의 좌표(자체 데이터라 저장·노출 가능, #190). 게시 전 나만 보는 점선 핀을 지도에 그리는 데 쓴다 (#340, 최종기획안 5-5-1). 서버가 채우기 시작하면 필수로 올린다" }
+        lng: { type: number, minimum: -180, maximum: 180, description: "lat과 같다" }
         region_label: { type: string, description: "5-6-1 지역별 안배 태그" }
         rank: { type: integer }
         checks:
