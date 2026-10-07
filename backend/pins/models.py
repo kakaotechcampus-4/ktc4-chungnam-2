@@ -37,7 +37,7 @@ Visibility = Enum(
     name="visibility",
 )
 ReactionType = Enum(
-    "like", "neutral", "against",
+    "like", "against",
     name="reaction_type",
 )
 

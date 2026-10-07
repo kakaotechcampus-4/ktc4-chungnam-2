@@ -53,7 +53,6 @@ from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
 from llm import service as llm_service
-from maps import api as maps_api
 from pins import api as pins_api
 from pins.schemas import Pin
 from recommend import constraints, core, schemas, service
@@ -147,13 +146,10 @@ DEFAULT_REGION_RADIUS_M = core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MI
 
 
 def get_readiness(db: Session, *, map_id: str) -> dict[str, dict]:
-    """GET /maps/{mapId}/recommend/readiness (5-4). N=이 지도의 현재 구성원 수로 확정
-    (#32, 2026-09-23, maps.api.count_members)."""
-    member_count = maps_api.count_members(db, map_id)
+    """GET /maps/{mapId}/recommend/readiness (5-4). 카테고리마다 ♥/🚫 의견이 달린 핀이 1곳 이상이면 열린다
+    (#360 — 구성원 수와 무관, 혼자 쓰는 지도도 같다)."""
     return {
-        category: core.check_readiness(
-            pins_api.count_reacted_users(db, map_id=map_id, category=category), member_count
-        )
+        category: core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
         for category in CATEGORIES
     }
 
@@ -163,7 +159,7 @@ def _evidence_from_reaction(reaction: dict) -> dict:
     확정 #12 전) 없이는 자유 텍스트에서 fact_key를 안전하게 추론할 수 없어 fact_key는 항상
     None으로 둔다(값을 지어내지 않는다는 llm/CLAUDE.md 원칙과 같은 이유 — 실격 조건은 확실할
     때만 활성화되어야 한다). badge만 반응 종류로 잠정 매핑한다: 🚫(against)는 반드시 사유가
-    있고(가드레일3) 실격 성격이 강해 required, ♥/△는 preferred로 낮춘다."""
+    있고(가드레일3) 실격 성격이 강해 required, ♥는 preferred로 낮춘다."""
     return {
         "author_id": reaction["user_id"],
         "source": "reaction",
@@ -209,10 +205,7 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str) ->
     4) 반응 → 근거 구조화(llm.plan_evidence) 5) run INSERT → evidence_lines INSERT 6) 기본값
     지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
     트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다."""
-    readiness = core.check_readiness(
-        pins_api.count_reacted_users(db, map_id=map_id, category=category),
-        maps_api.count_members(db, map_id),
-    )
+    readiness = core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
 

@@ -4,6 +4,7 @@
 
 import threading
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import delete, func, select
@@ -408,24 +409,37 @@ def test_concurrent_publish_same_candidate_produces_exactly_one_pin(test_engine,
 # #108 — 코어 파이프라인
 # ============================================================================
 
-def test_get_readiness_counts_distinct_reacted_users_per_category(db_session):
-    _make_members(db_session, user_ids=["user_1", "user_2", "user_3"])  # required = ceil(3/2) = 2
+def test_get_readiness_counts_opinion_pins_per_category(db_session):
+    _make_members(db_session, user_ids=["user_1", "user_2", "user_3"])
     pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="like")
+    _react(db_session, pin, user_id="user_2", type="like")   # 같은 핀의 의견 둘 — 핀 1곳
+
+    readiness = flows.get_readiness(db_session, map_id="map_1")
+
+    assert readiness["음식점"] == {"ready": True, "answered_count": 1, "required_count": 1}
+    assert readiness["카페"] == {"ready": False, "answered_count": 0, "required_count": 1}
+
+
+def test_get_readiness_opens_for_a_solo_map_with_one_opinion_pin(db_session):
+    _make_members(db_session, user_ids=["user_1"])   # 혼자 쓰는 지도
+    pin = _make_pin(db_session, category="카페")
     _react(db_session, pin, user_id="user_1", type="like")
 
     readiness = flows.get_readiness(db_session, map_id="map_1")
-
-    assert readiness["음식점"] == {"ready": False, "answered_count": 1, "required_count": 2}
-    assert readiness["카페"] == {"ready": False, "answered_count": 0, "required_count": 2}
+    assert readiness["카페"] == {"ready": True, "answered_count": 1, "required_count": 1}
 
 
-def test_get_readiness_ready_when_enough_distinct_users_reacted(db_session):
-    _make_members(db_session, user_ids=["user_1", "user_2"])  # required = 1
-    pin = _make_pin(db_session, category="카페")
-    _react(db_session, pin, user_id="user_1", type="neutral")
+def test_get_readiness_ignores_opinions_of_non_members_and_deleted_pins(db_session):
+    _make_members(db_session, user_ids=["user_1"])
+    gone = _make_pin(db_session, category="음식점")
+    gone.deleted_at = datetime.now(timezone.utc)
+    _react(db_session, gone, user_id="user_1", type="like")        # 삭제된 핀
+    alive = _make_pin(db_session, category="음식점")
+    _react(db_session, alive, user_id="left_user", type="against", reason_text="멀어요")   # 나간 사람
 
     readiness = flows.get_readiness(db_session, map_id="map_1")
-    assert readiness["카페"]["ready"] is True
+    assert readiness["음식점"]["answered_count"] == 0 and readiness["음식점"]["ready"] is False
 
 
 def test_create_run_raises_not_ready_when_readiness_fails(db_session):

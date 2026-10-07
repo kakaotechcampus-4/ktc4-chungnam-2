@@ -42,20 +42,17 @@ def check_run_ready(run: RecommendRun) -> None:
         raise AppError("NOT_READY")
 
 
-def required_count(member_count: int) -> int:
-    """ceil(N/2) — docs/api-spec.yaml Readiness.required_count. N=현재 참여 중인(지도 구성원)
-    인원 수로 확정(#32, 2026-09-23) — 호출부(maps.api.count_members)가 그 값을 넘긴다.
-    member_count<=0은 지도가 생성 시점부터 항상 최소 1명(만든 사람)을 구성원으로 두어 실제
-    경로에서 도달하지 않는 방어 코드다."""
-    if member_count <= 0:
-        return 0
-    return math.ceil(member_count / 2)
+REQUIRED_OPINION_PINS = 1  # #360 — 카테고리마다 ♥/🚫 의견이 달린 핀 1곳. 구성원 수에 비례하던 ceil(N/2)는 폐기
 
 
-def check_readiness(answered_count: int, member_count: int) -> dict:
-    """5-4 추천 버튼 활성화 판정. api-spec.yaml Readiness와 같은 모양의 dict를 돌려준다."""
-    required = required_count(member_count)
-    return {"ready": answered_count >= required, "answered_count": answered_count, "required_count": required}
+def check_readiness(answered_count: int) -> dict:
+    """5-4 추천 버튼 활성화 판정. api-spec.yaml Readiness와 같은 모양의 dict를 돌려준다.
+    answered_count는 그 카테고리의 의견 핀 수(pins.api.count_opinion_pins)."""
+    return {
+        "ready": answered_count >= REQUIRED_OPINION_PINS,
+        "answered_count": answered_count,
+        "required_count": REQUIRED_OPINION_PINS,
+    }
 
 
 def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> list[dict]:

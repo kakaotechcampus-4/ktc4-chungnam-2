@@ -69,7 +69,7 @@ def test_put_reaction_response_omits_reason_text_when_absent_and_echoes_chips(ap
     pin = _insert_pin(db_session, place_id="r157_put_shape")
     body = _react(app_client, pin, "user_2").json()
     assert "reason_text" not in body and "reason_chip_ids" not in body
-    body = _react(app_client, pin, "user_2", {"type": "neutral", "reason_chip_ids": ["common_not_my_taste"]}).json()
+    body = _react(app_client, pin, "user_2", {"type": "like", "reason_chip_ids": ["common_not_my_taste"]}).json()
     assert body["reason_chip_ids"] == ["common_not_my_taste"]
 
 
