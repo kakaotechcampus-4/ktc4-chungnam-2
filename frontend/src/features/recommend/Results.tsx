@@ -4,6 +4,7 @@ import { MessageSquare, RotateCw, Users } from 'lucide-react'
 import { ApiError } from '@/api'
 import type { MemberView } from '@/features/maps/model'
 import { showToast } from '@/features/shell/toast'
+import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
 
 import { useAiStore } from './aiStore'
@@ -318,10 +319,10 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
       </button>
 
       {asking && (
-        <div role="alertdialog" aria-modal="true" aria-label="반경 넓히기 확인" className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-6">
-          <div className="w-full max-w-sm space-y-2 rounded-2xl bg-white p-5">
-            <p className="text-lg font-bold text-ink-900">기본 반경만 넓혀서 다시 찾을까요?</p>
-            <dl className="space-y-1 rounded-lg bg-ink-50 p-3 text-sm">
+        <ConfirmDialog
+          title="기본 반경만 넓혀서 다시 찾을까요?"
+          detail={
+            <dl className="space-y-1">
               <div className="flex gap-2">
                 <dt className="text-ink-500">넓혀요</dt>
                 <dd className="font-semibold text-ink-900">
@@ -333,26 +334,17 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
                 <dd className="font-semibold text-ink-900">사람이 직접 정한 반경 조건</dd>
               </div>
             </dl>
-            <p className="text-sm text-ink-600">사람이 직접 정한 반경은 넓히지 않아요. 더 멀리 찾고 싶으면 그 사유를 고쳐 주세요.</p>
-            <p className="text-xs text-ink-500">꼭 지켜야 하는 조건도 그대로 적용돼요.</p>
-            <div className="grid grid-cols-2 gap-2 pt-2">
-              <button type="button" onClick={() => setAsking(false)} className="rounded-lg border border-ink-300 py-2.5 text-sm font-semibold">
-                취소
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  // 진행 중 → 결과/실패/상한 안내는 요청 훅이 맡는다(#349).
-                  widen.mutate(run, { onSettled: () => setAsking(false) })
-                }
-                disabled={widen.isPending}
-                className="btn-primary py-2.5 text-sm"
-              >
-                {widen.isPending ? '다시 찾는 중…' : '넓혀서 다시 찾기'}
-              </button>
-            </div>
-          </div>
-        </div>
+          }
+          body="사람이 직접 정한 반경은 넓히지 않아요. 더 멀리 찾고 싶으면 그 사유를 고쳐 주세요."
+          note="꼭 지켜야 하는 조건도 그대로 적용돼요."
+          ok={widen.isPending ? '다시 찾는 중…' : '넓혀서 다시 찾기'}
+          pending={widen.isPending}
+          onCancel={() => setAsking(false)}
+          onOk={() =>
+            // 진행 중 → 결과/실패/상한 안내는 요청 훅이 맡는다(#349).
+            widen.mutate(run, { onSettled: () => setAsking(false) })
+          }
+        />
       )}
     </div>
   )
