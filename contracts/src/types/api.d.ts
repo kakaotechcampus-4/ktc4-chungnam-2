@@ -1754,6 +1754,13 @@ export interface components {
             /** @description 지도에 올라와 있는(삭제되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청) */
             pin_count: number;
             confirmed_count?: number;
+            /**
+             * @description 요청자의 지금 역할(memberships.role). 위임되면 바뀐다. 내 지도 목록의 방장 배지용 (2026-10-07, 회의). 서버가 채우기 시작하면 필수로 올린다
+             * @enum {string}
+             */
+            my_role?: "owner" | "member";
+            /** @description 내가 이 지도를 만들었는가(maps.created_by == 나). 내 지도 목록의 「내가 만든 지도」와 「초대받은 지도」를 가르는 값이다. 방장이 위임되면 my_role과 달라질 수 있다 — 만든 사람이 나가도 값은 바뀌지 않는다. 서버가 채우기 시작하면 필수로 올린다 */
+            created_by_me?: boolean;
         };
         /** @description 방장이 나가면 방장이 될 사람 (#369) */
         NextOwner: {
@@ -2047,6 +2054,10 @@ export interface components {
         Candidate: {
             id: string;
             place_name?: string;
+            /** @description 자체 DB 장소의 좌표(자체 데이터라 저장·노출 가능, #190). 게시 전 나만 보는 점선 핀을 지도에 그리는 데 쓴다 (#340, 최종기획안 5-5-1). 서버가 채우기 시작하면 필수로 올린다 */
+            lat?: number;
+            /** @description lat과 같다 */
+            lng?: number;
             /** @description 5-6-1 지역별 안배 태그 */
             region_label?: string;
             rank: number;

@@ -20,8 +20,11 @@ const isOwner = (mapId: string) => (store.members[mapId] ?? []).some((m) => m.us
 function toMapResponse(map: MapEntity, { detail = false } = {}) {
   const owner = isOwner(map.id);
   const next = owner ? successorOf(map.id) : null;
+  const { created_by: createdBy, ...rest } = map;
   return {
-    ...withPinCount(map),
+    ...withPinCount(rest),
+    my_role: owner ? ("owner" as const) : ("member" as const),
+    created_by_me: createdBy === ME_USER_ID, // #340·회의 14번: 만든 사람이 위임해도 값은 그대로다(my_role과 달라질 수 있다)
     permissions: { can_delete: owner, can_leave: !owner || next !== null },
     ...(detail && next ? { next_owner: { user_id: next.user_id!, display_name: next.display_name ?? "" } } : {}),
   };
@@ -53,6 +56,7 @@ export const mapsHandlers = [
       member_count: 1,
       pin_count: 0,
       confirmed_count: 0,
+      created_by: ME_USER_ID,
     };
     store.members[mapId] = [{ user_id: ME_USER_ID, role: "owner", display_name: store.users[ME_USER_ID]?.display_name ?? "나", online: true }];
     store.shortlist[mapId] = [];

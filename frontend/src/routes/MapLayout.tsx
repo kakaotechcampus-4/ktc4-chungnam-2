@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Use
 
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { usePinSelection } from '@/features/map/usePinSelection'
-import { byNewest, filterPins, timeAgo } from '@/features/map/model'
+import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMapEvents } from '@/features/map/realtime'
@@ -133,7 +133,6 @@ export default function MapLayout() {
   function onControl(key: ControlKey) {
     const map = controller.current
     if (!map) return showToast('지도가 아직 준비되지 않았어요')
-    const isPlaced = (p: (typeof allPins)[number]) => typeof p.lat === 'number' && typeof p.lng === 'number'
     // 최근 핀은 필터와 상관없이 지도 전체에서, 전체 핀 보기는 지금 보이는(필터된) 핀으로.
     const placed = (key === 'recent' ? allPins : pins).filter(isPlaced)
 
