@@ -58,7 +58,7 @@ export function buildBaseState(): StoreState {
       created_at: minutesAgo(180),
       checks: [],
       source_run_id: null,
-      reaction_summary: { like: 1, neutral: 0, against: 1 },
+      reaction_summary: { like: 1, against: 1 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     },
     [pinFood2]: {
@@ -75,7 +75,7 @@ export function buildBaseState(): StoreState {
       created_at: minutesAgo(50),
       checks: [],
       source_run_id: null,
-      reaction_summary: { like: 1, neutral: 0, against: 1 },
+      reaction_summary: { like: 1, against: 1 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     },
     [pinCafe1]: {
@@ -92,7 +92,7 @@ export function buildBaseState(): StoreState {
       created_at: minutesAgo(10),
       checks: [],
       source_run_id: null,
-      reaction_summary: { like: 1, neutral: 0, against: 0 },
+      reaction_summary: { like: 1, against: 0 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     },
   };
