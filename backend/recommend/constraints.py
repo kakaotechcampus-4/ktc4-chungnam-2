@@ -29,8 +29,6 @@ class ConstraintSpec:
 # 실격(hard) 조건 — 5-6 3단계에서 순회 대상.
 HARD_REGISTRY: dict[str, ConstraintSpec] = {
     "contains_shellfish": ConstraintSpec("contains_shellfish", _ALL_CATEGORIES, "hard", "exclude"),
-    "spicy_focused": ConstraintSpec("spicy_focused", frozenset({"음식점"}), "hard", "exclude"),
-    "oily_focused": ConstraintSpec("oily_focused", frozenset({"음식점"}), "hard", "exclude"),
     "price_bucket": ConstraintSpec("price_bucket", _ALL_CATEGORIES, "hard", "pass"),
     "is_crowded_large": ConstraintSpec("is_crowded_large", frozenset({"카페", "관광지"}), "hard", "pass"),
 }
@@ -48,7 +46,7 @@ _SOFT_KEYS_BY_CATEGORY: dict[str, frozenset[str]] = {
     "pet_friendly": _ALL_CATEGORIES,
     # 음식점 (#203)
     **{key: _RESTAURANT for key in (
-        "wait_short",
+        "wait_short", "spicy_focused", "oily_focused",   # 매운맛·기름진 메뉴는 안전이 아니라 취향이다(#378)
         "cuisine_korean", "cuisine_chinese", "cuisine_japanese", "cuisine_western", "cuisine_bunsik",
         "cuisine_chicken_pub", "cuisine_bbq", "cuisine_foreign", "cuisine_raw_fish", "cuisine_buffet",
         "parking_available",
@@ -90,8 +88,8 @@ VALUE_COMPARISON_UNSUPPORTED: frozenset[str] = frozenset({"price_bucket"})
 # 레지스트리에 키를 추가할 때(#171) 여기도 같이 채운다. test_constraints.py가 빠진 키를 잡는다.
 PASSED_LABELS: dict[str, str] = {
     "contains_shellfish": "갑각류 없음",
-    "spicy_focused": "매운맛 전문점 아님",
-    "oily_focused": "기름진 메뉴 위주 아님",
+    "spicy_focused": "매운맛 전문점",       # 취향 키(#378) — 선호 충족 문장이라 "그렇다"는 쪽이다(피한 쪽은 "<이름> 제외")
+    "oily_focused": "기름진 메뉴 위주",
     "is_crowded_large": "붐비는 대형 장소 아님",
     "wait_short": "대기가 짧음",
     "quiet": "조용함",

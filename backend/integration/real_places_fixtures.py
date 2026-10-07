@@ -79,7 +79,7 @@ def fake_planner(monkeypatch):
     mapping = {
         "한식 말고": ("cuisine_korean", False),
         "회 좋아해": ("cuisine_raw_fish", True),
-        "너무 매워요": ("spicy_focused", None),     # hard 키 — 방향 고정
+        "너무 매워요": ("spicy_focused", False),    # 취향 키(#378) — "피하겠다"는 방향
         "조개 알러지": ("contains_shellfish", None),
     }
 

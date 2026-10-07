@@ -150,9 +150,10 @@ def test_build_check_known_value_uses_given_passes():
 
 
 @pytest.mark.parametrize("fact_key, policy, known, value, passes, label", [
-    ("spicy_focused", "exclude", True, False, True, "매운맛 전문점 아님"),   # 통과한 실격
-    ("spicy_focused", "exclude", True, True, False, "매운맛 전문 해당"),     # 탈락한 실격 — 걸린 이유
-    ("spicy_focused", "exclude", False, None, True, "매운맛 전문 확인 필요"),
+    ("contains_shellfish", "exclude", True, False, True, "갑각류 없음"),     # 통과한 실격
+    ("contains_shellfish", "exclude", True, True, False, "갑각류 해당"),     # 탈락한 실격 — 걸린 이유
+    ("spicy_focused", "pass", True, True, True, "매운맛 전문점"),            # 취향 키(#378) — 참인 선호
+    ("spicy_focused", "pass", False, None, True, "매운맛 전문 확인 필요"),   # 취향 키 모름 → 통과 + 확인 필요
     ("contains_shellfish", "exclude", False, None, False, "갑각류 확인 필요"),  # 안전 조건 모름 → 실격이어도 이름이 보인다
     ("cuisine_korean", "pass", True, True, True, "한식"),                    # 참인 선호
     ("quiet", "pass", True, False, False, "조용한 곳 아님"),                  # 거짓인 선호
@@ -190,9 +191,9 @@ def test_apply_disqualifier_filters_fails_candidate_with_any_failing_check():
 
 def test_apply_disqualifier_filters_ignores_soft_checks_even_when_not_passed():
     """#208 — soft 라벨의 passed는 라벨의 참/거짓값이다. quiet=False(passed=False)여도 실격이 아니다."""
-    hard_ok = core.build_check("spicy_focused", "exclude", known=True, value=False, passes=True)
+    hard_ok = core.build_check("contains_shellfish", "exclude", known=True, value=False, passes=True)
     soft_false = core.build_check("quiet", "pass", known=True, value=False, passes=False)
-    hard_fail = core.build_check("spicy_focused", "exclude", known=True, value=True, passes=False)
+    hard_fail = core.build_check("contains_shellfish", "exclude", known=True, value=True, passes=False)
     result = core.apply_disqualifier_filters([[hard_ok, soft_false], [hard_fail, soft_false], [soft_false]])
     assert result == [True, False, True]
 
@@ -422,7 +423,7 @@ def test_soft_keys_nobody_wants_score_zero_for_every_candidate():
 def test_checks_to_show_keeps_hard_and_only_wanted_soft_checks():
     """#216 — hard는 그대로, soft는 원한 키만(known 여부 무관). 원하지 않은 known·unknown soft는 없다."""
     hard_unknown = core.build_check("price_bucket", "pass", known=False, value=None, passes=True)
-    hard_known = core.build_check("spicy_focused", "exclude", known=True, value=False, passes=True)
+    hard_known = core.build_check("contains_shellfish", "exclude", known=True, value=False, passes=True)
     unwanted_known = core.build_check("cuisine_chinese", "pass", known=True, value=False, passes=False)
     unwanted_unknown = core.build_check("franchise", "pass", known=False, value=None, passes=False)
     wanted_known = core.build_check("cuisine_korean", "pass", known=True, value=True, passes=True)
@@ -431,7 +432,7 @@ def test_checks_to_show_keeps_hard_and_only_wanted_soft_checks():
 
     shown = core.checks_to_show(checks, {"cuisine_korean", "wait_short"})
 
-    assert [c.fact_key for c in shown] == ["price_bucket", "spicy_focused", "cuisine_korean", "wait_short"]
+    assert [c.fact_key for c in shown] == ["price_bucket", "contains_shellfish", "cuisine_korean", "wait_short"]
     assert shown[-1].needs_check is True  # 원한 키는 unknown이어도 「확인 필요」로 남는다
     assert shown[2].confidence == "known"  # 원한 키는 known이어도 남는다
 
@@ -507,20 +508,20 @@ def test_opposing_heart_of_another_member_still_offsets_preference_author():
 # ---------- build_reason ----------
 
 def test_build_reason_lists_passed_disqualifiers_and_met_preferences_with_member_count():
-    checks = [_check("spicy_focused", passed=True), _check("quiet", passed=True)]
+    checks = [_check("contains_shellfish", passed=True), _check("quiet", passed=True)]
     fulfillment = {"satisfied": 1, "total": 2, "by_member": []}
     reason = core.build_reason(checks, {"quiet": True}, fulfillment)
-    assert reason == "실격 조건 통과: 매운맛 전문점 아님 · 선호 충족: 조용함 (1/2명)"
+    assert reason == "실격 조건 통과: 갑각류 없음 · 선호 충족: 조용함 (1/2명)"
 
 
 def test_build_reason_does_not_claim_unknown_or_failed_checks():
     checks = [
-        _check("spicy_focused", passed=True, confidence="unknown"),
+        _check("contains_shellfish", passed=True, confidence="unknown"),
         _check("quiet", passed=False),
         _check("local_flavor", passed=True, confidence="unknown"),
     ]
     reason = core.build_reason(checks, {"quiet": True, "local_flavor": True}, {"satisfied": 0, "total": 1})
-    assert "매운맛" not in reason and "조용함" not in reason and "지역색" not in reason
+    assert "갑각류" not in reason and "조용함" not in reason and "지역색" not in reason
 
 
 def test_build_reason_skips_price_bucket_which_is_never_actually_compared():

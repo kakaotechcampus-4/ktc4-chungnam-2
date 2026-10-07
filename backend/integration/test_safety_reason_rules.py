@@ -41,6 +41,8 @@ def safety_planner(monkeypatch):
                 key, wants = "contains_shellfish", False
             elif "매운 거 좋아해" in text_:
                 key, wants = "spicy_focused", True
+            elif "매운 건 질색" in text_ or "너무 매워요" in text_:
+                key, wants = "spicy_focused", False   # 취향 키(#378) — 방향은 wants가 정한다
             else:
                 key, wants = None, None
             out.append(EvidenceLine(**{**reason, "fact_key": key, "wants": wants}))
@@ -87,8 +89,8 @@ def test_allergy_reason_added_with_plus_is_structured_and_disqualifies(members, 
     assert names == {"성수 담백집"}, names
 
 
-def test_liking_a_hard_key_feature_is_not_a_disqualifier(members, place_ids, safety_planner, db_session):
-    """회귀 방지 — "매운 거 좋아해"(♥, spicy_focused, wants=true)가 매운맛 전문 가게를 실격시키면 안 된다."""
+def test_liking_a_spicy_feature_is_not_a_disqualifier(members, place_ids, safety_planner, db_session):
+    """회귀 방지 — "매운 거 좋아해"(♥, spicy_focused, wants=true, 취향 키)가 매운맛 전문 가게를 실격시키면 안 된다."""
     a, b, map_id = members
     _extra_place(db_session, "SP", "성수 마라탕", 37.5443, 127.0557,
                  {"spicy_focused": True, "oily_focused": False, "contains_shellfish": False, "cuisine_korean": False})
@@ -116,3 +118,42 @@ def test_member_fulfillment_counts_members_who_left_disqualifying_reasons(member
     assert cands
     fulfillment = cands[0].get("member_fulfillment") or {}
     assert fulfillment.get("total") == 2 and fulfillment.get("satisfied") == 2, fulfillment
+
+
+
+def _narrow_to_b_s_u(a, map_id, place_ids):
+    """후보는 3곳까지만 나가므로 K·R·C에 핀을 찍어 B(매운맛 거짓)·S(참)·U(라벨 없음)만 남긴다. K 핀을 돌려준다."""
+    k = _pin(a, map_id, "K", place_ids)
+    _pin(a, map_id, "R", place_ids)
+    _pin(a, map_id, "C", place_ids)
+    return k
+
+
+def _result(a, map_id):
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    a.post(f"/runs/{run_id}/regions/confirm", json={})
+    assert a.post(f"/runs/{run_id}/execute").status_code == 202
+    return {c["place_name"]: c for c in a.get(f"/runs/{run_id}/result").json()["candidates"]}
+
+
+def test_spicy_against_reason_disqualifies_only_known_true_and_unknown_passes_with_needs_check(
+    members, place_ids, safety_planner,
+):
+    """#378 — 🚫 "너무 매워요"는 취향 키라 라벨이 참인 곳(S)만 실격이고 모름(U)은 통과 + 확인 필요다."""
+    a, b, map_id = members
+    k = _narrow_to_b_s_u(a, map_id, place_ids)
+    assert b.put(f"/pins/{k}/reaction", json={"type": "against", "reason_text": "너무 매워요"}).status_code == 200
+    candidates = _result(a, map_id)
+    assert set(candidates) == {"성수 분식집", "성수 이름모를집"}, set(candidates)
+    spicy = next(ch for ch in candidates["성수 이름모를집"]["checks"] if ch["fact_key"] == "spicy_focused")
+    assert spicy["needs_check"] is True and spicy["passed"] is True
+
+
+def test_spicy_avoid_reason_on_a_like_reaction_is_a_penalty_not_a_disqualifier(members, place_ids, safety_planner):
+    """#378 — ♥ "매운 건 질색"(preferred, wants=false)은 실격이 아니라 감점: 매운집(S)은 남되 분식집(B)보다 아래다."""
+    a, b, map_id = members
+    k = _narrow_to_b_s_u(a, map_id, place_ids)
+    assert b.put(f"/pins/{k}/reaction", json={"type": "like", "reason_text": "매운 건 질색이지만 여기는 좋아요"}).status_code == 200
+    candidates = _result(a, map_id)
+    assert "성수 매운집" in candidates, "♥ 사유는 실격이 아니다"
+    assert candidates["성수 매운집"]["rank"] > candidates["성수 분식집"]["rank"]

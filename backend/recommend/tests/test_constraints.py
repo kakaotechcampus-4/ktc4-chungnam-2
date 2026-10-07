@@ -4,17 +4,23 @@ from recommend import constraints
 
 
 def test_hard_fact_keys_for_restricts_by_category():
-    assert constraints.hard_fact_keys_for("음식점") == sorted(
-        ["contains_shellfish", "spicy_focused", "oily_focused", "price_bucket"]
-    )
+    assert constraints.hard_fact_keys_for("음식점") == sorted(["contains_shellfish", "price_bucket"])
     assert constraints.hard_fact_keys_for("카페") == sorted(["contains_shellfish", "price_bucket", "is_crowded_large"])
     assert constraints.hard_fact_keys_for("관광지") == sorted(["contains_shellfish", "price_bucket", "is_crowded_large"])
 
 
 def test_safety_fact_keys_have_exclude_unknown_policy():
     """가드레일8 — 안전 조건은 unknown이면 절대 통과시키지 않는다."""
-    for key in ("contains_shellfish", "spicy_focused", "oily_focused"):
-        assert constraints.HARD_REGISTRY[key].unknown_policy == "exclude"
+    assert constraints.HARD_REGISTRY["contains_shellfish"].unknown_policy == "exclude"
+    assert {k for k, s in constraints.HARD_REGISTRY.items() if s.unknown_policy == "exclude"} == {"contains_shellfish"}
+
+
+def test_spicy_and_oily_are_soft_taste_keys_not_safety():
+    """#378 — 매운맛·기름진 메뉴는 안전이 아니라 취향이다: soft + pass, 음식점에만 적용."""
+    for key in ("spicy_focused", "oily_focused"):
+        assert key not in constraints.HARD_REGISTRY
+        assert constraints.SOFT_REGISTRY[key].unknown_policy == "pass"
+        assert constraints.SOFT_REGISTRY[key].categories == frozenset({"음식점"})
 
 
 def test_preference_leaning_fact_keys_have_pass_unknown_policy():
