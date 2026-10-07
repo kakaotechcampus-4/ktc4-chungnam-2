@@ -106,7 +106,18 @@ declare namespace kakao.maps.services {
     keywordSearch(
       keyword: string,
       callback: (data: PlaceResult[], status: Status, pagination: Pagination) => void,
-      options?: { location?: kakao.maps.LatLng; radius?: number; page?: number; size?: number },
+      options?: {
+        location?: kakao.maps.LatLng
+        radius?: number
+        page?: number
+        size?: number
+        sort?: SortBy
+        /** 음식점 FD6 · 카페 CE7 · 관광명소 AT4 */
+        category_group_code?: string
+      },
     ): void
   }
+
+  type SortBy = 'accuracy' | 'distance'
+  const SortBy: { ACCURACY: 'accuracy'; DISTANCE: 'distance' }
 }

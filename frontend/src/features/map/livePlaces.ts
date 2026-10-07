@@ -2,7 +2,7 @@ import { useCallback, useEffect } from 'react'
 import { create } from 'zustand'
 
 import { loadKakaoMaps } from './kakaoMap'
-import type { Pin } from './model'
+import { isPlaced, type Pin } from './model'
 
 /**
  * 실시간 핀(#382)의 위치.
@@ -61,12 +61,20 @@ const RADIUS_M = 20_000
 
 type Center = { lat: number; lng: number }
 
-/** 같은 검색어는 이 화면이 열려 있는 동안 한 번만 부른다. 새로고침하면 사라지는 메모리 캐시다. */
+/** 분류 → 카카오 카테고리 그룹 코드. 같은 이름 검색이어도 분류로 좁히면 45건 안에 들 가능성이 커진다. */
+const GROUP_CODE: Partial<Record<Pin['category'], string>> = { 음식점: 'FD6', 카페: 'CE7', 관광지: 'AT4' }
+
+/**
+ * 같은 검색은 이 화면이 열려 있는 동안 한 번만 부른다. 새로고침하면 사라지는 메모리 캐시다.
+ * 키의 중심은 0.02도(약 2km)로 뭉쳐서, 핀이 하나 늘 때마다 새로 찾지 않게 한다.
+ */
 const searches = new Map<string, Promise<kakao.maps.services.PlaceResult[]>>()
 const inflight = new Set<string>()
 
-function searchAll(query: string, center: Center): Promise<kakao.maps.services.PlaceResult[]> {
-  const key = `${query}|${center.lat.toFixed(1)},${center.lng.toFixed(1)}`
+type SearchOptions = { center: Center | null; category: Pin['category'] }
+
+function searchAll(query: string, { center, category }: SearchOptions): Promise<kakao.maps.services.PlaceResult[]> {
+  const key = [query, category, center ? `${center.lat.toFixed(2)},${center.lng.toFixed(2)}` : 'none'].join('|')
   const cached = searches.get(key)
   if (cached) return cached
 
@@ -82,7 +90,12 @@ function searchAll(query: string, center: Center): Promise<kakao.maps.services.P
             else if (status === 'ZERO_RESULT') resolve({ data: [], hasNext: false })
             else reject(new Error('카카오 장소 검색에 실패했어요'))
           },
-          { location: new maps.LatLng(center.lat, center.lng), radius: RADIUS_M, page },
+          {
+            page,
+            category_group_code: GROUP_CODE[category],
+            // 기준이 있으면 그 근처부터 거리순으로 — 기준이 없으면 카카오의 정확도순.
+            ...(center ? { location: new maps.LatLng(center.lat, center.lng), radius: RADIUS_M, sort: maps.services.SortBy.DISTANCE } : {}),
+          },
         )
       })
       all.push(...data)
@@ -99,10 +112,32 @@ function searchAll(query: string, center: Center): Promise<kakao.maps.services.P
 const FALLBACK_CENTER: Center = { lat: 37.5665, lng: 126.978 }
 
 /**
+ * 이 지도의 위치 기준. 실시간 핀은 같은 동네에 모이는 경우가 많아서, 이미 지도에 있는 자체 DB 핀들의 중심
+ * (우리 데이터)을 기준으로 가까운 곳부터 찾는다. 없으면 지도를 만들 때 고른 지역, 그것도 없으면 서울 한가운데.
+ */
+export function livePlaceAnchor(pins: Pin[], regionCenter: Center | null | undefined): Center {
+  const own = pins.filter((p) => !isLive(p) && isPlaced(p))
+  if (own.length === 0) return regionCenter ?? FALLBACK_CENTER
+  const sum = own.reduce((s, p) => ({ lat: s.lat + p.lat!, lng: s.lng + p.lng! }), { lat: 0, lng: 0 })
+  return { lat: sum.lat / own.length, lng: sum.lng / own.length }
+}
+
+/** 기준 근처 거리순으로 먼저, 못 찾으면 기준 없이 정확도순으로 한 번 더. */
+async function findLivePlace(pin: Pin, anchor: Center): Promise<kakao.maps.services.PlaceResult | undefined> {
+  const wanted = pin.kakao_place_id!.replace(/^kakao:/, '')
+  for (const center of [anchor, null]) {
+    const results = await searchAll(pin.search_query!, { center, category: pin.category })
+    const hit = results.find((r) => r.id === wanted)
+    if (hit) return hit
+  }
+  return undefined
+}
+
+/**
  * 아직 위치를 모르는 실시간 핀을 찾는다. 지도 화면(MapLayout)에서 한 번만 쓴다.
  * 검색이 실패(키 없음·네트워크)하면 'missing'으로 박지 않고 둔다 — 다음에 핀 목록이 바뀔 때 다시 찾는다.
  */
-export function useLivePinResolver(pins: Pin[], center: Center | null | undefined) {
+export function useLivePinResolver(pins: Pin[], regionCenter: Center | null | undefined) {
   const places = useLivePlaceStore((s) => s.places)
   const set = useLivePlaceStore((s) => s.set)
 
@@ -110,23 +145,13 @@ export function useLivePinResolver(pins: Pin[], center: Center | null | undefine
     const todo = pins.filter((p) => isLive(p) && p.search_query && p.kakao_place_id && !(p.id in places) && !inflight.has(p.id))
     if (todo.length === 0) return
 
-    const byQuery = new Map<string, Pin[]>()
-    for (const p of todo) {
-      inflight.add(p.id)
-      byQuery.set(p.search_query!, [...(byQuery.get(p.search_query!) ?? []), p])
-    }
-
-    for (const [query, group] of byQuery) {
-      searchAll(query, center ?? FALLBACK_CENTER)
-        .then((results) => {
-          for (const pin of group) {
-            const wanted = pin.kakao_place_id!.replace(/^kakao:/, '')
-            const hit = results.find((r) => r.id === wanted)
-            set(pin.id, hit ? { name: hit.place_name, lat: Number(hit.y), lng: Number(hit.x) } : 'missing')
-          }
-        })
+    const anchor = livePlaceAnchor(pins, regionCenter)
+    for (const pin of todo) {
+      inflight.add(pin.id)
+      findLivePlace(pin, anchor)
+        .then((hit) => set(pin.id, hit ? { name: hit.place_name, lat: Number(hit.y), lng: Number(hit.x) } : 'missing'))
         .catch(() => undefined)
-        .finally(() => group.forEach((p) => inflight.delete(p.id)))
+        .finally(() => inflight.delete(pin.id))
     }
-  }, [pins, places, center, set])
+  }, [pins, places, regionCenter, set])
 }
