@@ -224,7 +224,9 @@ def replace_unpublished_candidates(db: Session, *, run_id: uuid.UUID, candidates
     """실행/재시도/반경넓히기가 후보 집합을 다시 채울 때 쓴다. 이미 게시된(published_pin_id
     not null) 후보는 지우지 않는다 — 공개된 핀의 출처 기록이라 사라지면 안 된다."""
     db.execute(delete(Candidate).where(Candidate.run_id == run_id, Candidate.published_pin_id.is_(None)))
-    rows = [Candidate(run_id=run_id, **data) for data in candidates_data]
+    # 남은 게시 후보의 순위 뒤에 이어 붙인다 — 새 후보가 1부터 다시 시작하면 순위가 겹친다.
+    kept_max_rank = db.execute(select(func.max(Candidate.rank)).where(Candidate.run_id == run_id)).scalar() or 0
+    rows = [Candidate(run_id=run_id, **{**data, "rank": data["rank"] + kept_max_rank}) for data in candidates_data]
     db.add_all(rows)
     db.flush()
     return rows

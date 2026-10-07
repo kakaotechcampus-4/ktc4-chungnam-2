@@ -327,7 +327,7 @@ def _passes_hard_check(fact_key: str, value) -> bool:
         # 갭, recommend/for_Root.md) 실제 비교를 할 수 없다. known이어도 항상 통과시키고
         # Check로만 노출한다(정보 제공, 실격 판정 아님).
         return True
-    return not bool(value)  # contains_shellfish/spicy_focused/oily_focused/is_crowded_large — "있으면 실격"류
+    return not bool(value)  # contains_shellfish/is_crowded_large — "있으면 실격"류
 
 
 def _run_pipeline(
