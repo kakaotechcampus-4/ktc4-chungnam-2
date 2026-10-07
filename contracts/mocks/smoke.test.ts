@@ -163,6 +163,57 @@ describe("에러 시나리오", () => {
     });
     expect(res2.status).toBe(409);
   });
+
+  it("#382 실시간 핀: 카카오 장소 ID·검색어·메모만 받고 이름·좌표는 없다. 같은 장소는 409", async () => {
+    const body = { source: "live", category: "음식점", kakao_place_id: "kakao:live-1", search_query: "성수 곱창", memo: "여기 곱창 맛있대" };
+    const res = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify(body) });
+    expect(res.status).toBe(201);
+    const pin = await res.json();
+    expect(pin.source).toBe("live");
+    expect(pin.kakao_place_id).toBe("kakao:live-1");
+    expect(pin.search_query).toBe("성수 곱창");
+    expect(pin.memo).toBe("여기 곱창 맛있대");
+    expect(pin.lat).toBeUndefined();
+    expect(pin.lng).toBeUndefined();
+    expect(pin.place_name).toBeUndefined();
+    const dup = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify(body) });
+    expect(dup.status).toBe(409);
+    // 반응은 자체 DB 핀과 똑같이 된다
+    const react = await fetch(`${BASE}/pins/${pin.id}/reaction`, { method: "PUT", body: JSON.stringify({ type: "like" }) });
+    expect(react.status).toBe(200);
+  });
+
+  it("#382 자체 DB에 없는 장소는 검색에서 pinnable:false, search 로는 422, live 로는 핀이 된다", async () => {
+    const items = await fetch(`${BASE}/places/search?q=${encodeURIComponent("곱창")}`).then((r) => r.json());
+    expect(items[0]).toMatchObject({ place_id: "kakao:mock-6", pinnable: false });
+    const asSearch = await fetch(`${BASE}/maps/map_1/pins`, {
+      method: "POST",
+      body: JSON.stringify({ category: "음식점", source: "search", place_id: "kakao:mock-6", place_name: "성수 노포 곱창", lat: 37.5445, lng: 127.0557 }),
+    });
+    expect(asSearch.status).toBe(422);
+    expect((await asSearch.json()).code).toBe("PLACE_NOT_SUPPORTED");
+    const asLive = await fetch(`${BASE}/maps/map_1/pins`, {
+      method: "POST",
+      body: JSON.stringify({ source: "live", category: "음식점", kakao_place_id: "kakao:mock-6", search_query: "곱창" }),
+    });
+    expect(asLive.status).toBe(201);
+  });
+
+  it("#382 실시간 핀은 필수 값이 빠지거나 숙소·기타면 422", async () => {
+    const noQuery = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify({ source: "live", category: "음식점", kakao_place_id: "kakao:live-2" }) });
+    expect(noQuery.status).toBe(422);
+    const lodging = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify({ source: "live", category: "숙소", kakao_place_id: "kakao:live-3", search_query: "호텔" }) });
+    expect(lodging.status).toBe(422);
+  });
+
+  it("#382 좌표가 없는 실시간 핀은 동선에서 빠진다", async () => {
+    const make = async (id: string) =>
+      (await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify({ source: "live", category: "음식점", kakao_place_id: id, search_query: "곱창" }) })).json();
+    const live = await make("kakao:live-4");
+    await fetch(`${BASE}/maps/map_1/shortlist`, { method: "POST", body: JSON.stringify({ pin_id: live.id }) });
+    const routes = await fetch(`${BASE}/maps/map_1/route`, { method: "POST" }).then((r) => r.json());
+    expect(routes.flatMap((r: { ordered_pin_ids: string[] }) => r.ordered_pin_ids)).not.toContain(live.id);
+  });
 });
 
 describe("#139 — 외부 지도 SDK 요청은 목 서버가 가로채지 않는다", () => {

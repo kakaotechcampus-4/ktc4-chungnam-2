@@ -22,7 +22,7 @@
 
 | type | 페이로드 | 발생 시점 |
 |---|---|---|
-| `pin.created` | `Pin` (api-spec.yaml) | 핀 생성 직후. `visibility=private`인 핀은 이 채널에 보내지 않는다 |
+| `pin.created` | `Pin` (api-spec.yaml) | 핀 생성 직후. `visibility=private`인 핀은 이 채널에 보내지 않는다. 실시간 핀(`source=live`, #382)은 `lat`·`lng`·`place_name` 없이 `kakao_place_id`·`search_query`·`memo`만 실린다 — 받은 화면이 그 자리에서 위치를 다시 찾는다 |
 | `pin.published` | `Pin` | 「지도에 올리기」 실행 시 (5-5-1) |
 | `pin.deleted` | `{ pin_id }` | 핀 삭제 |
 | `reaction.changed` | `{ pin_id, reaction_summary, user_id, display_name, type }` | 반응 등록/수정/삭제. `user_id`·`display_name`은 그 반응을 남긴(지운) 구성원, `type`은 `like`·`neutral`·`against`이고 삭제면 `null`이다(2026-10-04, FE 요청 — 「지우님이 반대 의견을 남겼어요」). 반응 내용(사유)은 싣지 않는다 |

@@ -53,10 +53,14 @@ pins(
   id, map_id, category('음식점'|'카페'|'숙소'|'관광지'|'기타'),  -- 정의는 backend/common/categories.py(#280). v1 핀은 음식점·카페·관광지만
   kind('일반'|'AI추천'|'확정'),        -- 확정이 나머지 둘을 덮어쓴다(5-2)
   origin('direct'|'ai'),               -- kind와 별개. 원래 태생은 안 바뀐다(4절: 반대 많아도 모양 불변)
-  place_id references places(id),      -- 2026-10-01 결정(#191): v1의 핀은 모두 자체 DB 장소를 가리킨다.
+  place_id null references places(id), -- 2026-10-01 결정(#191): 자체 DB 핀(source='db')은 자체 DB 장소를 가리킨다.
                                         -- 이름은 places.name에서 가져온다 — 핀에 따로 저장하지 않는다(place_name 컬럼은 없앤다).
-                                        -- 카카오 응답의 이름·좌표는 저장하지 않는다. 자체 DB에 없는 장소는 핀으로 만들 수 없다(PLACE_NOT_SUPPORTED).
-  geom geography(Point,4326),          -- 매칭된 places.geom의 복사(자체 데이터). 사용자가 카카오 지도에서 지정한 좌표는 저장하지 않는다
+                                        -- 카카오 응답의 이름·좌표는 저장하지 않는다. #382: source='live'(실시간 핀)는 place_id가 NULL이다.
+  source('db'|'live'),                 -- #382. live = 자체 DB에 없는 장소를 사람이 남긴 핀. AI 핀(origin='ai')은 항상 db
+  kakao_place_id null,                 -- #382 live만. 저장이 허용된 유일한 카카오 값. 화면이 위치를 다시 찾는 열쇠
+  search_query null,                   -- #382 live만. 사용자가 친 검색어(사용자 입력). 화면이 이 검색어로 카카오 키워드 검색을 다시 한다
+  memo null,                           -- #382 live만. 사용자가 남긴 한마디(최대 200자)
+  geom null geography(Point,4326),     -- 매칭된 places.geom의 복사(자체 데이터). 사용자가 카카오 지도에서 지정한 좌표와 카카오 응답 좌표는 저장하지 않는다. live 핀은 NULL
   visibility('public'|'private'),      -- 5-5-1: AI 후보는 private로 시작
   source_run_id null,                  -- #57 결정: recommend_runs.id를 게시 시점에 한 번만
                                         -- 써넣는 불투명 참조값(추적·표시용). FK 제약은 걸지 않고
@@ -70,6 +74,9 @@ pins(
   created_by, created_at, deleted_at
 )
   unique(map_id, place_id) where deleted_at is null   -- 중복 핀 판정(가드레일 6). 판정 기준은 #33(보류)에서 별도 확정
+  unique(map_id, kakao_place_id) where deleted_at is null and kakao_place_id is not null   -- #382 live 핀 중복
+  check (source = 'db' and place_id is not null and geom is not null
+      or source = 'live' and place_id is null and geom is null and kakao_place_id is not null and search_query is not null)
 
 reactions(
   id, pin_id, user_id, type('like'|'neutral'|'against'),  -- ♥/△/🚫. '?'미확인은 행 없음으로 표현
