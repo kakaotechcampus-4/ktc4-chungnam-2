@@ -169,7 +169,7 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
     record = service.record_from_row(
         pin_row, lat=lat, lng=lng, reaction_counts=reaction_counts,
         created_by_display_name=display_name, my_reaction=my_reaction,
-        place=places_api.get_places([pin_row.place_id], db=db).get(pin_row.place_id),
+        place=places_api.get_places([pin_row.place_id], db=db).get(pin_row.place_id) if pin_row.place_id else None,
     )
     return core.to_pin_response(record, principal)
 
@@ -210,12 +210,12 @@ def get_category_pin_coordinates(db: Session, *, map_id: str, category: str) -> 
     """recommend의 지역(regions) 기본값 계산(5-6-1, recommend/#108)이 쓴다 — 그 카테고리의
     삭제되지 않은 공개 핀 좌표 전부(anchor 후보). place_facts/PlaceSource가 아직 없어 recommend가
     "검색 범위 중심"을 스스로 정할 방법이 이것뿐이다(recommend/for_Root.md에 이 기본값 원
-    설계를 상세히 기록)."""
+    설계를 상세히 기록). 좌표가 없는 실시간 핀(#382)은 빠진다."""
     lat_col, lng_col = service._lat_lng_columns()
     rows = db.execute(
         select(PinRow.id, lat_col, lng_col).where(
             PinRow.map_id == map_id, PinRow.category == category,
-            PinRow.visibility == "public", PinRow.deleted_at.is_(None),
+            PinRow.visibility == "public", PinRow.deleted_at.is_(None), PinRow.geom.is_not(None),
         )
     ).all()
     return [(str(pin_id), lat, lng) for pin_id, lat, lng in rows]
@@ -228,7 +228,9 @@ def list_place_ids_on_map(db: Session, *, map_id: str) -> set[str]:
     `exclusions`(제안·거절 이력)만 걸러서, 이미 지도에 있는 핀(수동이든 이전 게시든)이 그대로
     다시 추천될 수 있었다(루트 수정, 2026-09-23 — Antigravity 검수로 발견)."""
     rows = db.execute(
-        select(PinRow.place_id).where(PinRow.map_id == map_id, PinRow.deleted_at.is_(None))
+        select(PinRow.place_id).where(
+            PinRow.map_id == map_id, PinRow.deleted_at.is_(None), PinRow.place_id.is_not(None),   # live 핀(#382)은 place_id가 없다
+        )
     ).scalars().all()
     return set(rows)
 
@@ -248,6 +250,7 @@ def list_disliked_place_ids(db: Session, *, user_id: str, map_id: str, category:
         .where(
             ReactionRow.user_id == user_id, ReactionRow.type == "against",
             PinRow.map_id == map_id, PinRow.category == category,
+            PinRow.place_id.is_not(None),   # live 핀(#382)은 제외할 자체 DB 장소가 없다
         )
         .distinct()
         .order_by(PinRow.place_id)
@@ -308,6 +311,7 @@ def list_liked_pins(db: Session, *, map_id: str, category: str, requested_by: st
             PinRow.map_id == map_id, PinRow.category == category, PinRow.deleted_at.is_(None),
             or_(PinRow.visibility == "public", PinRow.created_by == requested_by),
             ReactionRow.type == "like",
+            PinRow.place_id.is_not(None),   # live 핀(#382)은 장소 라벨이 없어 선호 신호가 못 된다
         )
     ).all()
     grouped: dict[str, dict] = {}
@@ -324,13 +328,16 @@ def get_coordinates_for_pins(db: Session, pin_ids: list[str]) -> dict[str, tuple
     전제다. 소프트 삭제된 핀(`deleted_at` not null)은 다른 모든 조회 함수와 같은 원칙으로
     제외한다(Antigravity 검수 지적 — 이전엔 이 함수만 필터가 빠져서 삭제된 핀이 동선에 남을 수
     있었다). 존재하지 않거나 삭제된 id는 결과 dict에서 조용히 빠진다(호출자가 필요하면 직접
-    검사 — `shortlist/flows.py::recalculate_route`는 빠진 id를 건너뛴다)."""
+    검사 — `shortlist/flows.py::recalculate_route`는 빠진 id를 건너뛴다). 좌표가 없는 실시간 핀(#382)도
+    같은 방식으로 빠진다 — 서버가 카카오 좌표를 모르므로 동선에서 제외된다."""
     if not pin_ids:
         return {}
     uuids = [uuid.UUID(pid) for pid in pin_ids]
     lat_col, lng_col = service._lat_lng_columns()
     rows = db.execute(
-        select(PinRow.id, lat_col, lng_col).where(PinRow.id.in_(uuids), PinRow.deleted_at.is_(None))
+        select(PinRow.id, lat_col, lng_col).where(
+            PinRow.id.in_(uuids), PinRow.deleted_at.is_(None), PinRow.geom.is_not(None),
+        )
     ).all()
     return {str(pin_id): (lat, lng) for pin_id, lat, lng in rows}
 

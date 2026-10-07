@@ -8,6 +8,7 @@
 """
 
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import get_args
 
@@ -31,7 +32,9 @@ from pins.schemas import (
     Category,
     FilterCounts,
     Pin,
+    PinCreateLive,
     PinCreateRequest,
+    PinCreateSearch,
     PinKind,
     Reaction,
     ReactionRequest,
@@ -166,7 +169,7 @@ def list_pins(
     # 배치 조회 — N개 핀에 N번 쿼리하지 않는다. 구성원 집합도 라우터가 지도당 한 번 구해 넘긴다(#369).
     display_names = author_display_names(db, [row[0].created_by for row in rows], current_member_ids)
     my_reactions = my_reactions_for_pins(db, [row[0].id for row in rows], principal.user_id)
-    place_infos = places_api.get_places([row[0].place_id for row in rows], db=db)   # 배치 1회
+    place_infos = places_api.get_places([row[0].place_id for row in rows if row[0].place_id], db=db)   # 배치 1회(live 핀은 place_id 없음)
 
     result: list[Pin] = []
     for row in rows:
@@ -180,7 +183,7 @@ def list_pins(
             ),
             created_by_display_name=display_names.get(pin_row.created_by),
             my_reaction=my_reactions.get(pin_row.id),
-            place=place_infos.get(pin_row.place_id),
+            place=place_infos.get(pin_row.place_id) if pin_row.place_id else None,
         )
         result.append(core.to_pin_response(record, principal))
     return result
@@ -189,8 +192,8 @@ def list_pins(
 def record_from_row(
     pin_row: PinRow,
     *,
-    lat: float,
-    lng: float,
+    lat: float | None,
+    lng: float | None,
     reaction_counts: core.ReactionCounts,
     created_by_display_name: str | None,
     my_reaction: Reaction | None,
@@ -208,6 +211,10 @@ def record_from_row(
         lng=lng,
         created_by=pin_row.created_by,
         reaction_counts=reaction_counts,
+        source=pin_row.source,
+        memo=pin_row.memo,
+        kakao_place_id=pin_row.kakao_place_id,
+        search_query=pin_row.search_query,
         place_name=place.name if place else None,
         place_url=place.kakao_place_url if place else None,
         created_by_display_name=created_by_display_name,
@@ -270,6 +277,40 @@ def create_pin(
     principal: Principal,
     req: PinCreateRequest,
 ) -> Pin:
+    """POST /maps/{mapId}/pins — source로 갈린다. live는 자체 DB 없이 카카오 장소 ID·검색어·메모로 만든다(#382)."""
+    if isinstance(req, PinCreateLive):
+        return _create_live_pin(db, map_id, principal, req)
+    return _create_db_pin(db, map_id, principal, req)
+
+
+def _flush_pin_row(db: Session, pin_row: PinRow, *, duplicate_index: str, find_existing) -> None:
+    """INSERT를 SAVEPOINT 안에서 flush한다. 부분 유니크(duplicate_index) 위반만 409 PIN_DUPLICATE로 바꾼다."""
+    db.add(pin_row)
+    try:
+        with db.begin_nested():   # SAVEPOINT — 실패해도 바깥 트랜잭션은 살아 있다
+            db.flush()
+    except IntegrityError as exc:
+        # begin_nested()가 SAVEPOINT까지는 롤백해도 Session 자체는 "deactive" 상태로 남는다 —
+        # 실제 PostgreSQL로 직접 확인함(세이브포인트만으론 이후 쿼리가 PendingRollbackError로
+        # 죽는다). db.rollback()을 명시적으로 불러야 세션이 다시 쓸 수 있는 상태가 되고,
+        # 이전에 커밋된 데이터는 그대로 남는다(같은 방식으로 검증). 원래(#16) 코드의
+        # db.rollback()을 지우지 않고 begin_nested()와 함께 쓴다.
+        db.rollback()
+        # 부분 유니크 위반일 때만 409로 바꾼다 — 그 외 무결성 오류를
+        # 조용히 삼키면 실패를 감추는 코드가 된다(docs/code-quality.md). psycopg2 예외의
+        # pgcode가 SQLSTATE — 23505 = unique_violation.
+        sqlstate = getattr(exc.orig, "pgcode", None)
+        if sqlstate == "23505" and duplicate_index in str(exc.orig):
+            raise AppError("PIN_DUPLICATE", detail={"pin_id": find_existing()}) from exc
+        raise
+
+
+def _create_db_pin(
+    db: Session,
+    map_id: str,
+    principal: Principal,
+    req: PinCreateSearch,
+) -> Pin:
     """검색 결과를 골라 핀을 만든다(#195). 요청의 place_id·place_name·lat·lng는 같은 자체 DB 장소를 찾는
     힌트일 뿐 저장하지 않는다 — 핀의 장소·좌표는 매칭된 places 행에서 온다."""
     core.validate_create(req)
@@ -292,30 +333,16 @@ def create_pin(
         category=req.category,
         kind="일반",
         origin="direct",
+        source="db",
         place_id=match.place_id,
         geom=func.ST_SetSRID(func.ST_MakePoint(match.lng, match.lat), 4326),
         visibility="public",
         created_by=principal.user_id,
     )
-    db.add(pin_row)
-    try:
-        with db.begin_nested():   # SAVEPOINT — 실패해도 바깥 트랜잭션은 살아 있다
-            db.flush()
-    except IntegrityError as exc:
-        # begin_nested()가 SAVEPOINT까지는 롤백해도 Session 자체는 "deactive" 상태로 남는다 —
-        # 실제 PostgreSQL로 직접 확인함(세이브포인트만으론 이후 쿼리가 PendingRollbackError로
-        # 죽는다). db.rollback()을 명시적으로 불러야 세션이 다시 쓸 수 있는 상태가 되고,
-        # 이전에 커밋된 데이터는 그대로 남는다(같은 방식으로 검증). 원래(#16) 코드의
-        # db.rollback()을 지우지 않고 begin_nested()와 함께 쓴다.
-        db.rollback()
-        # 부분 유니크(uq_pins_map_place) 위반일 때만 409로 바꾼다 — 그 외 무결성 오류를
-        # 조용히 삼키면 실패를 감추는 코드가 된다(docs/code-quality.md). psycopg2 예외의
-        # pgcode가 SQLSTATE — 23505 = unique_violation.
-        sqlstate = getattr(exc.orig, "pgcode", None)
-        if sqlstate == "23505" and "uq_pins_map_place" in str(exc.orig):
-            existing_id = _find_existing_pin_id(db, map_id, match.place_id)
-            raise AppError("PIN_DUPLICATE", detail={"pin_id": existing_id}) from exc
-        raise
+    _flush_pin_row(
+        db, pin_row, duplicate_index="uq_pins_map_place",
+        find_existing=lambda: _find_existing_pin_id(db, map_id, match.place_id),
+    )
 
     # 핀이 만들어진 뒤에만 카카오 ID·URL을 기록한다(같은 트랜잭션) — 중복·실패한 요청이 자체 DB를 건드리지 않게.
     kakao_url = core.kakao_place_url(req.place_id)
@@ -328,25 +355,65 @@ def create_pin(
 
     # 작성자는 방금 pin.create 가드를 통과한 요청자라 탈퇴·나감 판정(#369)이 필요 없다 — 실명 그대로.
     display_name = auth_api.display_names(db, [pin_row.created_by]).get(pin_row.created_by)
-    record = core.PinRecord(
-        id=str(pin_row.id),
-        map_id=pin_row.map_id,
-        category=pin_row.category,
-        kind=pin_row.kind,
-        visibility=pin_row.visibility,
-        lat=lat,
-        lng=lng,
-        created_by=pin_row.created_by,
-        reaction_counts=core.ReactionCounts(),
-        place_name=place.name if place else match.name,
-        place_url=place.kakao_place_url if place else None,
-        created_by_display_name=display_name,
-        created_at=pin_row.created_at,
+    record = record_from_row(
+        pin_row, lat=lat, lng=lng, reaction_counts=core.ReactionCounts(),
+        created_by_display_name=display_name, my_reaction=None, place=place,
     )
+    if place is None:   # 방금 매칭한 장소라 거의 없는 경우 — 매칭 결과의 이름으로 대신한다
+        record = replace(record, place_name=match.name)
     pin = core.to_pin_response(record, principal)
 
     record_event(db, core.pin_created_event(pin))
 
+    return pin
+
+
+def _find_existing_live_pin_id(db: Session, map_id: str, kakao_place_id: str) -> str | None:
+    row = db.execute(
+        select(PinRow.id).where(
+            PinRow.map_id == map_id,
+            PinRow.kakao_place_id == kakao_place_id,
+            PinRow.deleted_at.is_(None),
+        )
+    ).first()
+    return str(row[0]) if row else None
+
+
+def _create_live_pin(db: Session, map_id: str, principal: Principal, req: PinCreateLive) -> Pin:
+    """실시간 핀(#382) — 카카오 장소 ID·검색어·메모·분류만 저장한다. 이름·좌표는 요청에 없고(스키마가 거부) 어디에도
+    남기지 않는다. place_id·geom은 NULL이라 자체 DB 매칭·카카오 기록(record_kakao_match)도 하지 않는다."""
+    core.validate_live_create(req)
+
+    existing_id = _find_existing_live_pin_id(db, map_id, req.kakao_place_id)
+    if existing_id is not None:
+        raise AppError("PIN_DUPLICATE", detail={"pin_id": existing_id})
+
+    pin_row = PinRow(
+        map_id=map_id,
+        category=req.category,
+        kind="일반",
+        origin="direct",
+        source="live",
+        place_id=None,
+        geom=None,
+        kakao_place_id=req.kakao_place_id,
+        search_query=req.search_query,
+        memo=core.reason_content(req.memo),   # 공백뿐인 메모는 없는 것으로(사유 판정과 같은 기준)
+        visibility="public",
+        created_by=principal.user_id,
+    )
+    _flush_pin_row(
+        db, pin_row, duplicate_index="uq_pins_map_kakao_place",
+        find_existing=lambda: _find_existing_live_pin_id(db, map_id, req.kakao_place_id),
+    )
+
+    display_name = auth_api.display_names(db, [pin_row.created_by]).get(pin_row.created_by)
+    record = record_from_row(
+        pin_row, lat=None, lng=None, reaction_counts=core.ReactionCounts(),
+        created_by_display_name=display_name, my_reaction=None, place=None,
+    )
+    pin = core.to_pin_response(record, principal)
+    record_event(db, core.pin_created_event(pin))
     return pin
 
 
