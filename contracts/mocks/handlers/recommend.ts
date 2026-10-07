@@ -174,8 +174,8 @@ export const recommendHandlers = [
       category: (run?.category as Pin["category"]) ?? "음식점",
       kind: "AI추천",
       visibility: "public",
-      lat: 33.45,
-      lng: 126.56,
+      lat: cand.lat ?? 33.45, // #340: 후보 좌표가 있으면 그대로 핀이 된다
+      lng: cand.lng ?? 126.56,
       place_name: cand.place_name,
       created_by: ME_USER_ID, // 목 서버는 단일 사용자 시뮬레이션이라 run 요청자 = 나
       created_at: new Date().toISOString(), // 「지도에 올리기」를 누른 시각
