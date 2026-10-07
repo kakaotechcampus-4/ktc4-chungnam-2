@@ -160,7 +160,7 @@ def test_tourapi_keeps_only_seoul_tourist_spots(tour):
 def test_tourapi_does_not_take_lodging(tour):
     _, report = tour
     assert report.skipped["숙박은 받지 않는다"] == 1
-    assert report.skipped["관광지(contenttypeid=12) 아님"] == 1   # 음식점(39)
+    assert report.skipped["관광지·문화시설·쇼핑(contenttypeid=12·14·38) 아님"] == 1   # 음식점(39)
 
 
 def test_tourapi_mapx_is_lng_and_mapy_is_lat(tour):
@@ -176,6 +176,30 @@ def test_tourapi_skips_other_regions_missing_coords_and_missing_title(tour):
 def test_tourapi_address_joins_addr1_and_addr2(tour):
     rows, _ = tour
     assert rows[1].address == "서울특별시 종로구 사직로 161 (세종로)"
+
+
+def _tour_item(ctype: str, cid: str, *, mapx: str = "126.9770", mapy: str = "37.5796", addr: str = "서울특별시 종로구 사직로 161") -> dict:
+    return {"contentid": cid, "contenttypeid": ctype, "title": f"장소{cid}", "addr1": addr, "mapx": mapx, "mapy": mapy, "areacode": ""}
+
+
+def test_tourapi_takes_tourist_spot_culture_and_market_as_tourist_category():
+    rows, report = ingest.parse_tourapi_items([_tour_item("12", "1"), _tour_item("14", "2"), _tour_item("38", "3"), _tour_item("32", "4")])
+    assert [r.source_id for r in rows] == ["1", "2", "3"]
+    assert {r.category for r in rows} == {"관광지"}
+    assert report.skipped["숙박은 받지 않는다"] == 1
+    assert report.accepted_by_type == {"12": 1, "14": 1, "38": 1} and report.skipped_by_type == {"32": 1}
+    assert "  [contenttypeid 14] 받음 1 / 건너뜀 0" in report.lines()
+    assert "  [contenttypeid 32] 받음 0 / 건너뜀 1" in report.lines()
+
+
+def test_tourapi_skips_coords_outside_seoul_even_with_seoul_address():
+    wrong = _tour_item("12", "128933", mapx="127.709322", mapy="37.470571", addr="서울특별시 관악구 관악로 173")
+    rows, report = ingest.parse_tourapi_items([wrong, _tour_item("12", "1")])
+    assert [r.source_id for r in rows] == ["1"]
+    assert report.skipped["서울 밖 좌표"] == 1
+    assert "  - 서울 밖 좌표: 1" in report.lines()
+    kept, _ = ingest.parse_tourapi_items([wrong], seoul_only=False)
+    assert [r.source_id for r in kept] == ["128933"]
 
 
 def test_extract_tourapi_items_shapes():
