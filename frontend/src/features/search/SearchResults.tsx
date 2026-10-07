@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
+import { useLivePlaceStore } from '@/features/map/livePlaces'
 import type { Pin } from '@/features/map/model'
 import { useCreatePinMutation } from '@/features/map/queries'
 import { usePinSelection } from '@/features/map/usePinSelection'
@@ -55,6 +57,27 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
     )
   }
 
+  /**
+   * 자체 DB에 없는 장소를 실시간 핀으로 남긴다(#382). 서버에는 카카오 장소 ID·검색어·메모·분류만 보내고,
+   * 이름·좌표는 보내지 않는다(저장 불가). 방금 찍은 핀의 위치는 이미 손에 있으니 바로 얹는다 — 메모리에만 둔다.
+   */
+  function pinLive(r: SearchResultView, memo: string) {
+    const { place_id, lat, lng, category } = r.dto
+    if (!category || !query) return
+    create.mutate(
+      { source: 'live', category, kakao_place_id: place_id, search_query: query, ...(memo.trim() ? { memo: memo.trim() } : {}) },
+      {
+        onSuccess: (pin) => {
+          useLivePlaceStore.getState().set(pin.id, { name: r.name, lat, lng })
+          showToast(`${r.name}${josa(r.name, '을', '를')} 지도에 남겼어요`)
+          close()
+          selectPin(pin.id)
+        },
+        onError: (err) => showToast(pinErrorMessage(err)),
+      },
+    )
+  }
+
   if (search.isPending) return <p className="text-sm text-ink-500">찾는 중…</p>
   if (search.error) return <ErrorText message={searchErrorMessage(search.error)} error={search.error} />
   if (results.length === 0) {
@@ -99,7 +122,11 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
             )}
           </div>
         )}
-        <PinItButton result={selected} filled pending={create.isPending} onPin={() => pinIt(selected)} />
+        {selected.canLeaveLive && !selected.alreadyPinned ? (
+          <LiveLeaveForm pending={create.isPending} onSubmit={(memo) => pinLive(selected, memo)} />
+        ) : (
+          <PinItButton result={selected} filled pending={create.isPending} onPin={() => pinIt(selected)} />
+        )}
       </div>
     )
   }
@@ -109,7 +136,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
       {results.map((r, i) => (
         <li
           key={r.id}
-          className={`flex items-center gap-3 rounded-xl border p-3 ${r.unsupported ? 'border-ink-200 opacity-60' : 'border-ink-200'}`}
+          className={`flex items-center gap-3 rounded-xl border p-3 ${r.unsupported && !r.canLeaveLive ? 'border-ink-200 opacity-60' : 'border-ink-200'}`}
         >
           <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
             {i + 1}
@@ -119,17 +146,58 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
             <p className="truncate text-xs text-ink-500">{r.meta}</p>
             {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}
           </button>
-          <PinItButton result={r} pending={create.isPending && !!create.variables && 'place_id' in create.variables && create.variables.place_id === r.id} onPin={() => pinIt(r)} />
+          {r.canLeaveLive && !r.alreadyPinned ? (
+            <button type="button" onClick={() => select(r.id)} className="btn-outline shrink-0 rounded-md px-3 py-1.5 text-sm">
+              핀 남기기
+            </button>
+          ) : (
+            <PinItButton result={r} pending={create.isPending && !!create.variables && 'place_id' in create.variables && create.variables.place_id === r.id} onPin={() => pinIt(r)} />
+          )}
         </li>
       ))}
     </ol>
   )
 }
 
+const MEMO_MAX = 200
+
+/** 자체 DB에 없는 장소 — 장소 정보·AI 추천·동선에는 못 쓰지만 핀으로 남겨 의견을 나눌 수 있다(#382). 메모는 선택이다. */
+function LiveLeaveForm({ pending, onSubmit }: { pending: boolean; onSubmit: (memo: string) => void }) {
+  const [memo, setMemo] = useState('')
+  return (
+    <div className="space-y-2.5">
+      <div className="rounded-xl bg-ink-50 p-3.5 text-[0.8125rem] text-ink-700">
+        <p className="font-semibold text-ink-900">우리 장소 데이터에 없는 곳이에요</p>
+        <p className="mt-0.5">장소 정보와 조건 확인, AI 추천, 동선에는 쓰이지 않아요. 그래도 핀으로 남겨서 서로 의견을 나눌 수 있어요.</p>
+      </div>
+      <label className="block text-[0.8125rem] font-bold text-ink-900" htmlFor="live-pin-memo">
+        한마디 남기기 (선택)
+      </label>
+      <textarea
+        id="live-pin-memo"
+        value={memo}
+        maxLength={MEMO_MAX}
+        onChange={(e) => setMemo(e.target.value)}
+        placeholder="예: 여기 곱창 맛있대"
+        rows={2}
+        className="w-full resize-none rounded-lg border border-ink-300 p-2.5 text-sm"
+      />
+      <p className="text-right text-[0.6875rem] text-ink-500">
+        {memo.length}/{MEMO_MAX}
+      </p>
+      <button type="button" onClick={() => onSubmit(memo)} disabled={pending} className="btn-primary w-full py-3">
+        {pending ? '남기는 중…' : '그래도 핀 남기기'}
+      </button>
+    </div>
+  )
+}
+
 /** 상세에선 이 화면의 유일한 채움 버튼, 목록에선 외곽선. 찍을 수 없으면 버튼 대신 이유를 적는다. */
 function PinItButton({ result, filled = false, pending, onPin }: { result: SearchResultView; filled?: boolean; pending: boolean; onPin: () => void }) {
   if (result.alreadyPinned) return <span className="shrink-0 text-xs text-ink-500">이미 지도에 있어요</span>
-  if (result.unsupported) return <span className="shrink-0 text-xs text-ink-500">아직 지원하지 않는 장소예요</span>
+  if (result.unsupported) {
+    return <span className="shrink-0 text-xs text-ink-500">{result.dto.category ? '핀으로 남길 수 없는 분류예요' : '분류를 알 수 없는 장소예요'}</span>
+  }
   return (
     <button
       type="button"
