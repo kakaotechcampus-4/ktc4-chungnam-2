@@ -10,21 +10,19 @@ import { useAddToShortlistMutation } from '@/features/shortlist/queries'
 import AgainstMark from '@/ui/AgainstMark'
 import { josa } from '@/ui/josa'
 
-import { participants, toOpinions, type OpinionView, type Pin, type ReactionDto, type ReactionType, type ReasonChip } from './model'
+import { asReactionType, participants, toOpinions, type OpinionView, type Pin, type ReactionDto, type ReactionType, type ReasonChip } from './model'
 import { useMyReactionMutation, useReactionsQuery, useReasonChipsQuery } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
   like: { mark: '♥', label: '좋음', bg: 'var(--good-bg)', line: 'var(--good-line)', text: 'var(--good-text)' },
-  neutral: { mark: '△', label: '조율 필요', bg: 'var(--warn-bg)', line: 'var(--warn-line)', text: 'var(--warn-text)' },
   against: { mark: <AgainstMark />, label: '반대', bg: 'var(--bad-bg)', line: 'var(--bad-line)', text: 'var(--bad-text)' },
 }
-const TYPES: ReactionType[] = ['like', 'neutral', 'against']
+const TYPES: ReactionType[] = ['like', 'against']
 const TEXT_MAX = 140
 
 const PROMPT: Record<ReactionType, { title: string; placeholder: string }> = {
   like: { title: '무엇이 좋았나요? (선택)', placeholder: '예: 국물이 진하고 양이 많아요' },
-  neutral: { title: '무엇을 조율하면 좋을까요? (선택)', placeholder: '예: 점심보다 저녁이 좋아요' },
   against: { title: '왜 별로인가요? (필수)', placeholder: '예: 지난번 여행 때 가봤어요' },
 }
 
@@ -222,7 +220,7 @@ function OpinionRow({ o, name }: { o: OpinionView; name: string }) {
 }
 
 /**
- * 「내 의견 선택」. 조율·반대는 아래에 사유 입력이 펼쳐진다. 등록 전까지 위 집계는 바뀌지 않는다.
+ * 「내 의견 선택」. 고르면 아래에 사유 입력이 펼쳐진다. 등록 전까지 위 집계는 바뀌지 않는다.
  * 반대는 칩이나 글 중 하나가 있어야 등록된다(가드레일 3). 이 화면의 채움 버튼은 「의견 등록」 하나다.
  */
 function MyOpinion({
@@ -240,7 +238,7 @@ function MyOpinion({
   onDone: () => void
 }) {
   const saved = pin.my_reaction
-  const [type, setType] = useState<ReactionType | null>(saved?.type ?? null)
+  const [type, setType] = useState<ReactionType | null>(asReactionType(saved?.type))
   const [chips, setChips] = useState<string[]>(saved?.reason_chip_ids ?? [])
   const [text, setText] = useState(saved?.reason_text ?? '')
   const react = useMyReactionMutation(mapId, pin)
@@ -290,7 +288,7 @@ function MyOpinion({
           </button>
         )}
       </div>
-      <div role="radiogroup" aria-label="내 의견" className="grid grid-cols-3 gap-1.5">
+      <div role="radiogroup" aria-label="내 의견" className="grid grid-cols-2 gap-1.5">
         {TYPES.map((t) => {
           const on = type === t
           return (
