@@ -27,21 +27,15 @@ def test_check_run_ready_raises_not_ready_when_not_done(status):
     assert exc_info.value.code == "NOT_READY"
 
 
-# ---------- required_count / check_readiness ----------
+# ---------- check_readiness ----------
 
-@pytest.mark.parametrize("member_count,expected", [(0, 0), (1, 1), (2, 1), (3, 2), (4, 2), (5, 3)])
-def test_required_count_is_ceil_half(member_count, expected):
-    assert core.required_count(member_count) == expected
-
-
-def test_check_readiness_ready_when_answered_meets_required():
-    result = core.check_readiness(answered_count=2, member_count=3)
-    assert result == {"ready": True, "answered_count": 2, "required_count": 2}
+def test_check_readiness_ready_from_one_opinion_pin():
+    assert core.check_readiness(answered_count=1) == {"ready": True, "answered_count": 1, "required_count": 1}
+    assert core.check_readiness(answered_count=5) == {"ready": True, "answered_count": 5, "required_count": 1}
 
 
-def test_check_readiness_not_ready_when_answered_below_required():
-    result = core.check_readiness(answered_count=1, member_count=4)
-    assert result == {"ready": False, "answered_count": 1, "required_count": 2}
+def test_check_readiness_not_ready_without_opinion_pin():
+    assert core.check_readiness(answered_count=0) == {"ready": False, "answered_count": 0, "required_count": 1}
 
 
 # ---------- assemble_evidence ----------

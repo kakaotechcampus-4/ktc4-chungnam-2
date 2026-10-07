@@ -405,6 +405,14 @@ def test_put_reaction_against_without_reason_is_422(app_client, db_session):
     assert resp.json()["code"] == "EVIDENCE_REQUIRED"
 
 
+def test_put_reaction_neutral_is_422_validation_error(app_client, db_session):
+    """#360 — △ 조율 필요(neutral)는 없어졌다."""
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_neutral")
+    resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "neutral"}, cookies=_auth("user_2"))
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+
+
 def test_put_reaction_against_with_whitespace_reason_is_422(app_client, db_session):
     row = _insert_pin(db_session, created_by="user_1", place_id="react_ws")
     resp = app_client.put(
@@ -541,7 +549,7 @@ def test_put_reaction_publishes_event_for_public_pin(app_client, db_session):
     assert len(events) == 1
     assert events[0].channel == "public"
     assert events[0].payload == {
-        "pin_id": str(row.id), "reaction_summary": {"like": 1, "neutral": 0, "against": 0},
+        "pin_id": str(row.id), "reaction_summary": {"like": 1, "against": 0},
         "user_id": "user_2", "display_name": "user_2", "type": "like",
     }
 
@@ -663,6 +671,9 @@ def test_deleted_pin_reasons_still_reach_the_evidence_but_not_the_readiness_coun
     준비 판정(몇 명이 반응했나)은 삭제 핀을 세지 않는다 — 사유(이력)와 현재 반응 수는 다른 질문이다."""
     from pins import api as pins_api
 
+    from pins.tests.test_author_display_369 import _make_map
+
+    _make_map(db_session, "map_1", {"user_1": "owner", "user_2": "member"})
     gone = _insert_pin(db_session, place_id="rs_gone", deleted=True)
     alive = _insert_pin(db_session, place_id="rs_alive")
     db_session.add(ReactionRow(pin_id=gone.id, user_id="user_2", type="against", reason_text="조개 알러지"))
@@ -671,4 +682,30 @@ def test_deleted_pin_reasons_still_reach_the_evidence_but_not_the_readiness_coun
 
     reasons = pins_api.list_reasoned_reactions(db_session, map_id="map_1", category="음식점")
     assert [(r["user_id"], r["reason_text"]) for r in reasons] == [("user_2", "조개 알러지")]
-    assert pins_api.count_reacted_users(db_session, map_id="map_1", category="음식점") == 1
+    assert pins_api.count_opinion_pins(db_session, map_id="map_1", category="음식점") == 1
+
+
+def test_count_opinion_pins_counts_pins_not_people_and_skips_left_and_withdrawn_members(db_session):
+    """#388 — 의견 핀 수: 한 핀에 의견이 여럿이어도 1, 나간 사람·탈퇴자의 반응만 있는 핀은 세지 않는다."""
+    from datetime import datetime, timezone
+
+    from auth.models import User
+    from auth.testing import ensure_users
+    from pins import api as pins_api
+    from pins.tests.test_author_display_369 import _make_map
+
+    _make_map(db_session, "map_1", {"user_1": "owner", "user_2": "member", "user_3": "member"})
+    ensure_users(db_session, "user_3")
+    shared = _insert_pin(db_session, place_id="op_shared")
+    left_only = _insert_pin(db_session, place_id="op_left")
+    withdrawn_only = _insert_pin(db_session, place_id="op_withdrawn")
+    db_session.add_all([
+        ReactionRow(pin_id=shared.id, user_id="user_1", type="like"),
+        ReactionRow(pin_id=shared.id, user_id="user_2", type="against", reason_text="멀어요"),
+        ReactionRow(pin_id=left_only.id, user_id="gone_user", type="like"),
+        ReactionRow(pin_id=withdrawn_only.id, user_id="user_3", type="like"),
+    ])
+    db_session.query(User).filter(User.id == "user_3").update({"deleted_at": datetime.now(timezone.utc)})
+    db_session.commit()
+
+    assert pins_api.count_opinion_pins(db_session, map_id="map_1", category="음식점") == 1

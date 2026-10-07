@@ -99,7 +99,6 @@ def kind_after_unconfirm(origin: str) -> str:
 @dataclass(frozen=True)
 class ReactionCounts:
     like: int = 0
-    neutral: int = 0
     against: int = 0
 
 
@@ -155,7 +154,6 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
         my_reaction=record.my_reaction,
         reaction_summary=ReactionSummary(
             like=record.reaction_counts.like,
-            neutral=record.reaction_counts.neutral,
             against=record.reaction_counts.against,
         ),
         permissions=permissions_for(
@@ -212,7 +210,7 @@ def reason_content(text: str | None) -> str | None:
 def validate_reaction(reaction_type: str, reason_text: str | None, reason_chip_ids: list[str] | None) -> None:
     """가드레일 3 — 반대(against)는 사유가 필수다. 공백·제로폭만 있는 reason_text는 없는 것으로
     취급한다(목 서버는 이걸 놓쳐 "   "도 통과시키는 버그가 있다). 내용 없는 칩은 사유가 아니라
-    요청 오류다(422 VALIDATION_ERROR — 반응 종류와 무관하게). like/neutral은 사유 없이 통과."""
+    요청 오류다(422 VALIDATION_ERROR — 반응 종류와 무관하게). like는 사유 없이 통과."""
     if any(reason_content(chip) is None for chip in reason_chip_ids or []):
         raise AppError("VALIDATION_ERROR", "reason_chip_ids에 내용 없는 칩이 있습니다")
     if reaction_type != "against":

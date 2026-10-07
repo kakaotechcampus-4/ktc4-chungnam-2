@@ -236,22 +236,21 @@ def test_reason_content_strips_and_rejects_invisible_only():
     assert core.reason_content("​") is None
 
 
-@pytest.mark.parametrize("reaction_type", ["like", "neutral"])
-def test_validate_reaction_like_neutral_never_require_reason(reaction_type):
-    core.validate_reaction(reaction_type, None, None)
+def test_validate_reaction_like_never_requires_reason():
+    core.validate_reaction("like", None, None)
 
 
 # --- reaction_changed_event (가드레일 1) ---------------------------------------
 
 def test_reaction_changed_event_public_pin_emits_envelope():
-    summary = ReactionSummary(like=1, neutral=0, against=2)
+    summary = ReactionSummary(like=1, against=2)
     event = core.reaction_changed_event("pin_1", "map_1", "public", summary, "user_2", "민수", "against")
     assert event is not None
     assert event.map_id == "map_1"
     assert event.channel == "public"
     assert event.type == "reaction.changed"
     assert event.payload == {
-        "pin_id": "pin_1", "reaction_summary": {"like": 1, "neutral": 0, "against": 2},
+        "pin_id": "pin_1", "reaction_summary": {"like": 1, "against": 2},
         "user_id": "user_2", "display_name": "민수", "type": "against",
     }
 

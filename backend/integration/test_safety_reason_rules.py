@@ -64,10 +64,10 @@ def safe_and_unsafe(db_session):
                  {"contains_shellfish": False, "spicy_focused": False, "cuisine_korean": False})
 
 
-def test_allergy_reason_on_a_neutral_reaction_disqualifies(members, place_ids, safety_planner, safe_and_unsafe):
+def test_allergy_reason_on_a_like_reaction_disqualifies(members, place_ids, safety_planner, safe_and_unsafe):
     a, b, map_id = members
     pin = _pin(a, map_id, "K", place_ids)
-    assert b.put(f"/pins/{pin}/reaction", json={"type": "neutral", "reason_text": "저 조개 알러지 있어요"}).status_code == 200
+    assert b.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "저 조개 알러지 있어요"}).status_code == 200
     names, _ = _candidates(a, map_id)
     assert names == {"성수 담백집"}, f"조개가 참이거나 확인 안 된 곳은 모두 빠져야 한다: {names}"
 
