@@ -192,6 +192,29 @@ def test_find_candidates_many_returns_the_same_set_as_find_candidates(db_session
     assert [c.name for c in many[3]] == ["식당"]
 
 
+def test_candidates_carry_the_db_distance_and_kakao_only_ones_have_none(db_session):
+    """pick_match가 파이썬으로 거리를 다시 재지 않도록 두 조회 모두 ST_Distance를 Candidate에 싣는다(#381)."""
+    _place_at(db_session, "near", 40, 90, name="가까운 카페")
+    _place_at(db_session, "far-linked", 5000, 0, name="멀리 연결된 카페", kakao_place_id="k-far")
+    hint = _hint("x", *ORIGIN, "카페", kakao_place_id="k-far")
+
+    one = repository.find_candidates(db_session, hint.lat, hint.lng, hint.category, hint.kakao_place_id)
+    many = repository.find_candidates_many(db_session, [hint])[0]
+
+    for got in (one, many):
+        by_name = {c.name: c for c in got}
+        assert by_name["가까운 카페"].distance_m == pytest.approx(40, abs=0.01)   # 타원체 기준 — ST_Project와 같은 잣대
+        assert by_name["멀리 연결된 카페"].distance_m is None
+
+
+def test_same_name_pick_uses_db_distance_end_to_end(db_session):
+    _place_at(db_session, "a", 200, 0, name="같은 이름 카페")
+    _place_at(db_session, "b", 20, 90, name="같은 이름 카페")
+    m = api.match_place(_hint("같은 이름 카페", *ORIGIN, "카페"), db=db_session)
+    assert m is not None and (m.lat, m.lng) != (0, 0)
+    assert round(m.lng, 4) != round(ORIGIN[1], 4) and abs(m.lat - ORIGIN[0]) < 0.0001   # 동쪽 20m 쪽이 골라진다
+
+
 def test_find_candidates_many_is_one_query_with_bounded_rows(db_session):
     from sqlalchemy import event
 

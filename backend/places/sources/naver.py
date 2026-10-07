@@ -6,8 +6,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from common.geo import haversine_distance_m
 from places.http import SourceHttp
-from places.sources.base import RawPlace, distance_m, is_same_place, synthetic_id
+from places.sources.base import RawPlace, is_same_place, synthetic_id
 
 URL = "https://openapi.naver.com/v1/search/local.json"
 _KEYWORD = {"음식점": "맛집", "카페": "카페", "숙소": "숙소", "관광지": "관광지"}
@@ -38,7 +39,7 @@ class NaverPlaceSource:
         keyword = _KEYWORD.get(category)
         if keyword is None:
             return []
-        return [p for p in self._search("local", keyword) if distance_m(lat, lng, p.lat, p.lng) <= radius_m]
+        return [p for p in self._search("local", keyword) if haversine_distance_m(lat, lng, p.lat, p.lng) <= radius_m]
 
     def fill(self, place: RawPlace, wanted: frozenset[str]) -> dict[str, Any]:
         if "phone" not in wanted:
