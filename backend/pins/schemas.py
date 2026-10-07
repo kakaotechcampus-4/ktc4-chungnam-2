@@ -13,7 +13,7 @@ authz가 소유한다(#56 이관, mentor-review-plan.md). pins는 authz의 것�
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 from authz.schemas import Permissions
 from common import categories
@@ -23,7 +23,8 @@ PinKind = Literal["일반", "AI추천", "확정"]
 PriceBucket = Literal["low", "mid", "high"]
 LabelConfidence = Literal["known", "unknown"]
 ReactionKind = Literal["like", "against"]
-PinSource = Literal["link", "search", "coordinate"]
+PinSource = Literal["link", "search", "coordinate"]   # PinCreateSearch.source — 실시간 핀은 PinCreateLive
+PinStorage = Literal["db", "live"]   # Pin.source — 자체 DB 장소를 가리키는 핀(db) / 실시간 핀(live, #382)
 
 
 class Check(BaseModel):
@@ -58,9 +59,22 @@ class ReactionSummary(BaseModel):
     against: int = 0
 
 
-class PinCreateRequest(BaseModel):
-    """place_id·place_name·lat·lng·category는 **저장하지 않는 매칭 힌트**다(#191, 스펙 PinCreateRequest).
-    서버가 같은 자체 DB 장소를 찾아 그 장소의 값으로 핀을 만든다. v1은 source=search만 받는다."""
+class PinCreateLive(BaseModel):
+    """실시간 핀(#382, 스펙 PinCreateLive) — 자체 DB에 없는 장소. 저장하는 카카오 값은 장소 ID뿐이고
+    이름·좌표는 받지도 않는다(extra=forbid → 422, 카카오 응답은 저장 불가 #53)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: Literal["live"]
+    category: Category
+    kakao_place_id: str = Field(min_length=1, max_length=100)
+    search_query: str = Field(min_length=1, max_length=100)
+    memo: str | None = Field(default=None, max_length=200)
+
+
+class PinCreateSearch(BaseModel):
+    """place_id·place_name·lat·lng·category는 **저장하지 않는 매칭 힌트**다(#191, 스펙 PinCreateSearch).
+    서버가 같은 자체 DB 장소를 찾아 그 장소의 값으로 핀을 만든다. source를 생략하거나 search로 보낸다."""
 
     category: Category
     source: PinSource = "search"
@@ -69,6 +83,11 @@ class PinCreateRequest(BaseModel):
     place_name: str = Field(max_length=100)
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
+
+
+# 스펙 PinCreateRequest = oneOf(PinCreateSearch, PinCreateLive). source로 갈린다 — live는 extra=forbid라
+# 이름·좌표가 섞이면 live에서 떨어지고, search는 source=live를 받지 않아 둘 다 실패한다(422).
+PinCreateRequest = PinCreateLive | PinCreateSearch
 
 
 class Reaction(BaseModel):
@@ -89,8 +108,12 @@ class Pin(BaseModel):
     category: Category
     kind: PinKind
     visibility: Literal["public", "private"]
-    lat: float
-    lng: float
+    lat: float | None = None   # live 핀(#382)에는 없다 — 서버가 카카오 좌표를 저장하지 않는다
+    lng: float | None = None
+    source: PinStorage = "db"
+    memo: str | None = None
+    kakao_place_id: str | None = None   # live 핀만
+    search_query: str | None = None     # live 핀만
     place_name: str | None = None
     place_url: str | None = None
     created_by: str

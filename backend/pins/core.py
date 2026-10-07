@@ -19,7 +19,8 @@ from pins import chips
 from pins.schemas import (
     MemberFulfillment,
     Pin,
-    PinCreateRequest,
+    PinCreateLive,
+    PinCreateSearch,
     PlaceSource,
     Reaction,
     ReactionSummary,
@@ -51,13 +52,25 @@ KAKAO_PLACE_PAGE = "https://place.map.kakao.com/"
 KAKAO_RAW_ID = re.compile(r"[0-9]{1,20}")
 
 
-def validate_create(req: PinCreateRequest) -> None:
-    """v1은 source=search 하나만 받는다(#191, #147). coordinate·link(link_url 포함)는 422 —
+LIVE_CATEGORY_MESSAGE = "이 분류는 아직 핀으로 남길 수 없어요"
+
+
+def validate_create(req: PinCreateSearch) -> None:
+    """search 경로는 source=search 하나만 받는다(#191, #147). coordinate·link(link_url 포함)는 422 —
     스키마엔 v2 확장용으로 값이 남아 있어 여기서만 막는다. 좌표 범위·필수값은 스키마가 검증한다."""
     if req.source == "link" or req.link_url:
         raise AppError("VALIDATION_ERROR", LINK_PIN_REJECTED_MESSAGE)
     if req.source == "coordinate":
         raise AppError("VALIDATION_ERROR", COORDINATE_PIN_REJECTED_MESSAGE)
+
+
+def validate_live_create(req: PinCreateLive) -> None:
+    """실시간 핀(#382)은 자체 DB 장소가 없어도 되지만, 핀으로 만들 수 있는 분류(음식점·카페·관광지)만 받는다.
+    숙소·기타는 live로도 422 VALIDATION_ERROR. 내용 없는 장소 ID·검색어(공백뿐)도 요청 오류다."""
+    if not categories.is_pinnable(req.category):
+        raise AppError("VALIDATION_ERROR", LIVE_CATEGORY_MESSAGE)
+    if not req.kakao_place_id.strip() or not req.search_query.strip():
+        raise AppError("VALIDATION_ERROR", "kakao_place_id와 search_query에는 내용이 있어야 해요")
 
 
 def validate_category_matches(requested: str, place_category: str) -> None:
@@ -111,10 +124,14 @@ class PinRecord:
     category: str
     kind: str
     visibility: str
-    lat: float
-    lng: float
+    lat: float | None
+    lng: float | None
     created_by: str
     reaction_counts: ReactionCounts
+    source: str = "db"
+    memo: str | None = None
+    kakao_place_id: str | None = None
+    search_query: str | None = None
     place_name: str | None = None
     place_url: str | None = None
     created_by_display_name: str | None = None
@@ -142,6 +159,10 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
         visibility=record.visibility,
         lat=record.lat,
         lng=record.lng,
+        source=record.source,
+        memo=record.memo,
+        kakao_place_id=record.kakao_place_id,
+        search_query=record.search_query,
         place_name=record.place_name,
         place_url=record.place_url,
         created_by=record.created_by,
