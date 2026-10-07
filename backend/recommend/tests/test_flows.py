@@ -1218,6 +1218,21 @@ def test_spicy_and_oily_preferred_wants_false_is_a_penalty_not_a_disqualifier(db
         assert candidates["hot"].rank > candidates["mild"].rank, key
 
 
+def test_price_bucket_check_label_uses_the_run_category(db_session):
+    """#379 — 관광지 run의 price_bucket low는 "무료 입장", 음식점 run은 "착한가격업소"로 말한다."""
+    for category, expected in (("관광지", "무료 입장"), ("음식점", "착한가격업소")):
+        run = _make_run(db_session, status="collecting_evidence", category=category)
+        _make_region(db_session, run, radius_m=1000)
+        service.add_reaction_evidence(db_session, run_id=run.id, lines=[_line("user_1", "required", "price_bucket", False)])
+        flows.execute_run(
+            db_session, run_id=str(run.id), place_search=_FakePlaceSearch([PlaceStub(place_id="p", lat=35.0005, lng=129.0005)]),
+            place_facts=_FakePlaceFacts({"p": {"price_bucket": "low"}}),
+        )
+        (candidate,) = service.list_candidates(db_session, str(run.id))
+        check = next(c for c in candidate.checks if c["fact_key"] == "price_bucket")
+        assert check["label"] == expected, category
+
+
 def test_hard_key_preferred_and_reference_disqualify_only_when_wants_false(db_session):
     """△·♥·「+」 — "저 조개 알러지"(wants=false)는 배지와 무관하게 실격(참·모름 모두), true·null은 효과 없음."""
     facts = {"shell": {"contains_shellfish": True}, "clean": {"contains_shellfish": False}, "unknown_place": {}}

@@ -216,8 +216,20 @@ FACT_LABELS: dict[str, str] = {
 
 
 # price_bucket은 참/거짓이 아니라 값이다 — 체크 라벨에 값을 문장으로 녹인다. 값 정본은 docs/constraints.md
-# (착한가격업소 지정만 `low`). 표에 없는 값은 "가격대 <값>"으로 말한다.
+# (음식점·카페는 착한가격업소 지정만 `low`). 표에 없는 값은 "가격대 <값>"으로 말한다.
+# 같은 값도 카테고리마다 뜻이 다르다 — 관광지의 low는 입장료 무료다(#379). 카테고리를 모르면 기본 표(음식점·카페)로 말한다.
 PRICE_BUCKET_LABELS: dict[str, str] = {"low": "착한가격업소"}
+PRICE_BUCKET_LABELS_BY_CATEGORY: dict[str, dict[str, str]] = {
+    "음식점": PRICE_BUCKET_LABELS,
+    "카페": PRICE_BUCKET_LABELS,
+    "관광지": {"low": "무료 입장", "mid": "입장료 15,000원 이하", "high": "입장료 15,000원 초과"},
+}
+
+
+def price_bucket_label(value, category: str | None = None) -> str | None:
+    """price_bucket 값을 사람 말로. 표에 없는 (카테고리, 값)은 None이다 — 호출부가 "가격대 <값>"으로 떨어진다."""
+    table = PRICE_BUCKET_LABELS_BY_CATEGORY.get(category, PRICE_BUCKET_LABELS) if category else PRICE_BUCKET_LABELS
+    return table.get(str(value))
 
 
 def hard_fact_keys_for(category: str) -> list[str]:
