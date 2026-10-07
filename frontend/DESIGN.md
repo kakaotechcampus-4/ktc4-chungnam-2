@@ -76,7 +76,7 @@ components:
     textColor: "#FFFFFF"
     typography: "{typography.button}"
     rounded: "{rounded.button}"
-    padding: "15px 16px"
+    padding: "14px 16px"
   button-outline:
     backgroundColor: "#FFFFFF"
     textColor: "{colors.brand-600}"
