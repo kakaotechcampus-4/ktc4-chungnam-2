@@ -45,6 +45,8 @@ POLICY: Mapping[str, RoleSpec] = {
                                       # AUTHOR_CONSTRAINED_ACTIONS 참고
                 "recommend.publish",  # 단, candidate.requested_by 본인만 — AUTHOR_CONSTRAINED_ACTIONS 참고
                 "invite.create",  # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
+                "map.leave",  # 지도 나가기(#369). 넘길 사람이 없는 방장 차단은 역할이 아니라 지도 상태라
+                               # 여기 넣지 않고 maps/core.py가 판정한다(409 OWNER_CANNOT_LEAVE)
                 "route.recalculate",  # 동선 재계산 — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
             }
         ),
@@ -64,6 +66,7 @@ POLICY: Mapping[str, RoleSpec] = {
             {
                 "member.kick",  # v2, #8
                 "map.settings.edit",
+                "map.delete",  # 지도 삭제(#369). 방장만, soft delete
             }
         ),
     ),
@@ -98,6 +101,8 @@ ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "candidate.view_private": frozenset({"candidate"}),
     "member.kick": frozenset({"map"}),
     "map.settings.edit": frozenset({"map"}),
+    "map.delete": frozenset({"map"}),
+    "map.leave": frozenset({"map"}),
     "invite.create": frozenset({"map"}),
     "route.recalculate": frozenset({"map"}),
 }

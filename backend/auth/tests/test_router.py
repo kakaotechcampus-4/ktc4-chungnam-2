@@ -468,6 +468,51 @@ def test_withdraw_soft_deletes_user_and_clears_cookie(app_client, db_session):
     assert row.deleted_at is not None
 
 
+def _create_map(app_client, user_id, title):
+    resp = app_client.post(
+        "/maps", json={"title": title, "start_date": "2026-10-10", "end_date": "2026-10-12"},
+        cookies=session_cookie(user_id),
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
+def test_withdrawing_owner_hands_over_shared_map_and_deletes_solo_map(app_client, db_session):
+    """#369 10번 — 방장이 탈퇴하면 후임이 있는 지도는 위임(member.left), 없는 지도는 삭제(map.deleted만).
+    탈퇴자의 멤버십 행은 member로 남는다(#245)."""
+    from common.events import EventLog
+    from maps.models import Membership
+
+    _seed_user(db_session, user_id="user_1")
+    _seed_user(db_session, user_id="user_2", display_name="영희")
+    shared = _create_map(app_client, "user_1", "함께")
+    solo = _create_map(app_client, "user_1", "혼자")
+    token = app_client.post(f"/maps/{shared}/invite", cookies=session_cookie("user_1")).json()["token"]
+    assert app_client.post(f"/invites/{token}/accept", cookies=session_cookie("user_2")).status_code == 200
+
+    assert app_client.post("/auth/withdraw", cookies=session_cookie("user_1")).status_code == 204
+
+    db_session.expire_all()
+    roles = dict(db_session.execute(
+        select(Membership.user_id, Membership.role).where(Membership.map_id == shared)
+    ).all())
+    assert roles == {"user_1": "member", "user_2": "owner"}
+
+    def events(map_id):
+        return [
+            (e.type, e.payload) for e in db_session.execute(
+                select(EventLog).where(EventLog.map_id == map_id, EventLog.type.in_(["member.left", "map.deleted"]))
+            ).scalars()
+        ]
+
+    assert events(shared) == [
+        ("member.left", {"map_id": shared, "user_id": "user_1", "new_owner_user_id": "user_2"})
+    ]
+    assert events(solo) == [("map.deleted", {"map_id": solo})]
+    assert app_client.get(f"/maps/{shared}", cookies=session_cookie("user_2")).status_code == 200
+    assert app_client.get(f"/maps/{solo}", cookies=session_cookie("user_2")).status_code == 404
+
+
 def test_withdraw_without_cookie_is_401(app_client):
     resp = app_client.post("/auth/withdraw")
     assert resp.status_code == 401

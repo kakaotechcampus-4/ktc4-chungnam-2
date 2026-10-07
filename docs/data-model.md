@@ -21,16 +21,23 @@ maps(
   region_label NULL, region_center geography(Point) NULL,   -- 9/28 #22 변경(PR #132, 루트 검증
                                                              -- 후 승인): 지역 검색(선택). 둘 다
                                                              -- 있거나 둘 다 없음
-  created_by, created_at
+  created_by, created_at,              -- created_by는 "만든 사람" 기록일 뿐 방장 판단에 쓰지 않는다(#369, 방장 정본은 memberships.role)
+  deleted_at timestamptz null          -- #369: 방장이 삭제하면 찍는다(soft delete). 찍히면 모든 조회 경로에서 없는 지도(404)로 보인다.
+                                       --   실제 파기는 범위 밖
 )
   CHECK (end_date >= start_date)   -- 9/4 결정 #22: 여행 제목 + 시작일·종료일. day_count는 폐기
   CHECK ((region_label IS NULL) = (region_center IS NULL))
 
 memberships(
   id, map_id, user_id, role('member'|'owner'),   -- authz 참고. color는 9/4 결정 #26으로 폐기(구성원 구분에 색 불필요)
+                                                 -- #369: role이 방장 판단의 정본이다. 방장이 나가면 joined_at이 가장 빠른
+                                                 --   구성원(탈퇴자 제외, 같으면 id 순)에게 위임된다
   joined_at
 )
   unique(map_id, user_id)
+  unique(map_id) where role = 'owner'   -- #369: 지도당 방장은 최대 1명. 위임은 한 트랜잭션에서 강등 후 승격
+  -- 나가기(#369)는 이 행을 지운다. 다시 초대를 수락하면 새 행과 새 joined_at이 생겨 순서 맨 뒤로 간다.
+  -- 탈퇴자의 행은 핀 작성자 표시용으로 남는다(#245).
 
 invites(
   token, map_id, created_by, expires_at, used_count

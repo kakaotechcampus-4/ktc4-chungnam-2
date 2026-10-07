@@ -1,5 +1,5 @@
 """
-docs/api-spec.yaml `maps` 태그 6개 엔드포인트. 경로 파라미터는 반드시 `mapId`(camelCase)다 —
+docs/api-spec.yaml `maps` 태그 8개 엔드포인트. 경로 파라미터는 반드시 `mapId`(camelCase)다 —
 authz/guard.py::require_on_map·require_map_member가 이 이름을 하드코딩해서, `map_id`로
 쓰면 기동 시점에 바로 실패한다.
 
@@ -19,9 +19,9 @@ from fastapi import APIRouter, Depends, Path, Request
 from auth.deps import get_current_user
 from auth.schemas import CurrentUser
 from authz.core import Principal
-from authz.guard import require_map_member
+from authz.guard import require_map_member, require_on_map
 from common.settings import settings
-from maps import service
+from maps import flows, service
 from maps.deps import DbSession
 from maps.schemas import Invite, InviteSummary, Map, Member, MapCreateRequest
 
@@ -37,6 +37,8 @@ MembersForMap = Depends(require_map_member())
 # 한 줄로 교체한다(maps/for_Root.md 항목 4). require_on_map("map.settings.edit")를 빌려
 # 쓰는 안은 기각했다 — 무관한 액션 이름 뒤에 정책 결정을 숨기게 된다.
 MapForInvite = Depends(require_map_member())
+MapToDelete = Depends(require_on_map("map.delete"))  # 방장만 — 구성원 403, 비구성원·삭제된 지도 404
+MapToLeave = Depends(require_on_map("map.leave"))  # 넘길 사람이 없는 방장 409는 maps.core가 판정
 
 
 @router.get("/maps", response_model=list[Map], response_model_exclude_none=True)
@@ -59,10 +61,28 @@ def post_map(
 @router.get("/maps/{mapId}", response_model=Map, response_model_exclude_none=True)
 def get_map(
     mapId: str = Path(...),
-    _principal: Principal = MapForRead,
+    principal: Principal = MapForRead,
     db=DbSession,
 ):
-    return service.get_map_response(db, map_id=mapId)
+    return service.get_map_response(db, map_id=mapId, viewer_id=principal.user_id)
+
+
+@router.delete("/maps/{mapId}", status_code=204)
+def delete_map(
+    mapId: str = Path(...),
+    _principal: Principal = MapToDelete,
+    db=DbSession,
+):
+    service.delete_map(db, map_id=mapId)
+
+
+@router.delete("/maps/{mapId}/members/me", status_code=204)
+def leave_map(
+    mapId: str = Path(...),
+    principal: Principal = MapToLeave,
+    db=DbSession,
+):
+    flows.leave_map(db, map_id=mapId, user_id=principal.user_id)
 
 
 @router.post(

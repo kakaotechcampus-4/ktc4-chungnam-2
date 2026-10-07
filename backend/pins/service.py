@@ -105,10 +105,28 @@ def get_pin_or_404(db: Session, pin_id: str) -> PinRow:
     return row
 
 
+def author_display_names(
+    db: Session, author_ids: list[str], current_member_ids: set[str],
+) -> dict[str, str | None]:
+    """핀 작성자 표시를 작성자 id 배치로 한 번에 계산한다(#369) — 핀 수와 상관없이 쿼리 2번(이름, 탈퇴 여부).
+    current_member_ids는 호출부가 maps.api.DbMembershipGateway.current_member_ids(map_id)로 한 번 구해 넘긴다."""
+    names = auth_api.display_names(db, author_ids)
+    withdrawn = auth_api.withdrawn_user_ids(db, author_ids)
+    return {
+        author_id: core.author_display_name(
+            names.get(author_id),
+            is_withdrawn=author_id in withdrawn,
+            is_current_member=author_id in current_member_ids,
+        )
+        for author_id in set(author_ids)
+    }
+
+
 def list_pins(
     db: Session,
     map_id: str,
     principal: Principal,
+    current_member_ids: set[str],
     category: str | None = None,
     kind: str | None = None,
     created_by: list[str] | None = None,
@@ -147,8 +165,8 @@ def list_pins(
 
     rows = db.execute(query).all()
 
-    # 배치 조회 — N개 핀에 N번 쿼리하지 않는다(auth.api.display_names 자체가 배치용으로 설계됨).
-    display_names = auth_api.display_names(db, [row[0].created_by for row in rows])
+    # 배치 조회 — N개 핀에 N번 쿼리하지 않는다. 구성원 집합도 라우터가 지도당 한 번 구해 넘긴다(#369).
+    display_names = author_display_names(db, [row[0].created_by for row in rows], current_member_ids)
     my_reactions = my_reactions_for_pins(db, [row[0].id for row in rows], principal.user_id)
     place_infos = places_api.get_places([row[0].place_id for row in rows], db=db)   # 배치 1회
 
@@ -310,6 +328,7 @@ def create_pin(
     lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()
     place = places_api.get_places([match.place_id], db=db).get(match.place_id)
 
+    # 작성자는 방금 pin.create 가드를 통과한 요청자라 탈퇴·나감 판정(#369)이 필요 없다 — 실명 그대로.
     display_name = auth_api.display_names(db, [pin_row.created_by]).get(pin_row.created_by)
     record = core.PinRecord(
         id=str(pin_row.id),

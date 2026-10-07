@@ -277,6 +277,23 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
+def test_map_leave_and_delete_match_the_openapi_spec(clients):
+    """지도 나가기·삭제(#369) — 성공 204와 에러 봉투(구성원의 삭제 403, 넘길 사람 없는 방장의 나가기 409, 삭제 뒤 404)."""
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "강릉", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+
+    assert b.delete(f"/maps/{map_id}").status_code == 403
+    assert b.delete(f"/maps/{map_id}/members/me").status_code == 204
+    assert a.delete(f"/maps/{map_id}/members/me").status_code == 409     # 혼자 남은 방장
+    assert a.delete(f"/maps/{map_id}").status_code == 204
+    assert a.get(f"/maps/{map_id}").status_code == 404
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
 def test_zz_every_spec_operation_is_exercised_by_a_contract_test():
     """계약 테스트가 지나가지 않는 엔드포인트는 응답 모양이 스펙과 맞는지 아무도 모른다. 스펙에 엔드포인트를 추가하면
     이 테스트가 실패해 호출을 골든 패스에 넣게 한다. (파일 안에서 마지막에 실행돼야 한다 — 이름의 zz.)"""
