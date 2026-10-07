@@ -614,6 +614,9 @@ describe("#360 — 반응은 ♥/🚫 둘뿐, 추천은 ♥/🚫 의견이 달�
     const res = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "관광지" }) });
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("NOT_READY");
+  });
+});
+
 describe("#340·회의 14번 — 지도 목록 구분과 후보 좌표", () => {
   it("내가 만든 지도는 my_role=owner, created_by_me=true", async () => {
     const maps = await fetch(`${BASE}/maps`).then((r) => r.json());

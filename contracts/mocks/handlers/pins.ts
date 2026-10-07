@@ -97,7 +97,7 @@ export const pinsHandlers = [
         created_at: new Date().toISOString(),
         checks: [],
         source_run_id: null,
-        reaction_summary: { like: 0, neutral: 0, against: 0 },
+        reaction_summary: { like: 0, against: 0 },
         permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
       };
       store.pins[liveId] = livePin;
