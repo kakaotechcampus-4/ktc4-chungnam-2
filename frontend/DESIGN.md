@@ -80,7 +80,7 @@ components:
   button-outline:
     backgroundColor: "#FFFFFF"
     textColor: "{colors.brand-600}"
-    rounded: "{rounded.control}"
+    rounded: "{rounded.button}"
   button-confirm:
     backgroundColor: "{colors.confirmed-gold-bg}"
     textColor: "{colors.confirmed-mark}"
@@ -220,7 +220,7 @@ components:
 
 ### Buttons
 - **Primary:** 채움 brand-600, 흰 글자 16/700, 반경 12. 화면당 하나다(「의견 등록」, 「지도 만들기」, 「초대 링크 공유하기」).
-- **Outline:** 흰 바탕 + brand-600 테두리·글자, 반경 8. 「지도에 올리기」 등이다.
+- **Outline:** 흰 바탕 + brand-600 1px 테두리·글자, 반경 12(채움 버튼과 같음, #359). 「지도에 올리기」 등이다.
 - **Confirm:** 연골드 바탕 + 골드 테두리 + 갈색 글자 + ★. 확정 리스트 넣기 전용이다.
 - **Kakao:** 카카오 노랑 + 검정 글자. 「카카오로 시작하기」 한 곳뿐이다.
 - **코드:** 채움은 `btn-primary`, 외곽선은 `btn-outline` 클래스(`src/index.css`)를 붙이고 크기·여백만 그 자리에서 준다. 버튼마다 색·굵기를 다시 적지 않는다(#359).
