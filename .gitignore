@@ -93,3 +93,8 @@ cafe_seoul_*.json
 json_to_csv/
 json_to_csv.zip
 franchise_brands.csv
+# 관광지 라벨 납품본(2026-10-07~, #379) — 폴더·zip·원본 JSON·라벨 파일 모두 커밋하지 않는다
+관광지_라벨_*/
+관광지_라벨_*.zip
+tourist_seoul_*.csv
+tourist_seoul_*.json
