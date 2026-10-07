@@ -1,6 +1,8 @@
+import { useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { createPin, deleteReaction, fetchCounts, fetchPins, fetchReactions, fetchReasonChips, putReaction } from './api'
+import { useLivePlaceStore, withLivePlace } from './livePlaces'
 import { withMyReaction, type Pin, type PinCategory, type PinCreateRequest, type ReactionRequest } from './model'
 
 export const pinKeys = {
@@ -18,10 +20,14 @@ export const pinKeys = {
  * 필터(#18)가 붙으면 pinKeys.list 에 필터 값을 더하고 쿼리스트링을 붙인다 — 그때 이 파일만 고치면 된다.
  */
 export function usePinsQuery(mapId: string) {
-  return useQuery<Pin[]>({
+  const query = useQuery<Pin[]>({
     queryKey: pinKeys.list(mapId),
     queryFn: () => fetchPins(mapId),
   })
+  // 실시간 핀(#382)은 서버에 이름·좌표가 없다. 화면이 다시 찾은 값을 여기서 한 번 얹어 마커·목록·상세가 같은 핀을 보게 한다.
+  const places = useLivePlaceStore((s) => s.places)
+  const data = useMemo(() => query.data?.map((p) => withLivePlace(p, places)), [query.data, places])
+  return { ...query, data }
 }
 
 /** 핀 상세 「구성원 의견」. 반응한 구성원만 온다. */

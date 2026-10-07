@@ -6,6 +6,7 @@ import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
+import { useLivePinResolver } from '@/features/map/livePlaces'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMapEvents } from '@/features/map/realtime'
 import { usePinFilters } from '@/features/map/usePinFilters'
@@ -41,6 +42,7 @@ export default function MapLayout() {
   const { data: allPins = [] } = usePinsQuery(mapId)
   const mapInfo = useMapQuery(mapId).data
   const memberCount = mapInfo?.memberCount ?? 0
+  useLivePinResolver(allPins, mapInfo?.regionCenter)
   const desktop = useIsDesktop()
   const panelOpen = useSheetStore((s) => s.panelOpen)
   const setPanelOpen = useSheetStore((s) => s.setPanelOpen)
