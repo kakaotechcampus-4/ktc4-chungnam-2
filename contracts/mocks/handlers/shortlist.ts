@@ -77,9 +77,12 @@ export const shortlistHandlers = [
 ];
 
 function calculateRoutes(items: ShortlistItem[]): Route[] {
-  if (items.length < 2) return [];
   // 5-10: 최근접 이웃 기반 순수 계산. 지역 클러스터링은 목 서버에서 단일 지역으로 단순화한다.
-  const pins = items.map((i) => i.pin).filter(Boolean) as NonNullable<(typeof items)[number]["pin"]>[];
+  // #382: 좌표가 없는 실시간 핀(source=live)은 서버가 위치를 몰라 동선에서 빠진다.
+  const pins = items
+    .map((i) => i.pin)
+    .filter((p): p is NonNullable<typeof p> => !!p && p.lat !== undefined && p.lng !== undefined);
+  if (pins.length < 2) return [];
   const legs: Route["legs"] = [];
   let total = 0;
   for (let i = 0; i < pins.length - 1; i++) {
