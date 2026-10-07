@@ -145,7 +145,7 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
       <Pingo size={48} />
       <p className="mt-3 font-semibold text-ink-900">필터에 걸리는 핀이 없어요</p>
       <p className="mt-1 text-sm text-ink-500">{what} 핀은 아직 없어요</p>
-      <button type="button" onClick={onClear} className="mt-4 rounded-lg border border-brand-600 px-4 py-2 text-sm font-semibold text-brand-600">
+      <button type="button" onClick={onClear} className="btn-outline mt-4 px-4 py-2 text-sm">
         필터 해제
       </button>
     </div>

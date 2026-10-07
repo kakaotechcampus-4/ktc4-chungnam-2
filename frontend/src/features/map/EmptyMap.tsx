@@ -10,7 +10,7 @@ export default function EmptyMap() {
       <button
         type="button"
         onClick={() => document.getElementById('place-search')?.focus()}
-        className="mt-4 rounded-lg border border-brand-600 px-4 py-2 text-sm font-semibold text-brand-600"
+        className="btn-outline mt-4 px-4 py-2 text-sm"
       >
         장소 검색하기
       </button>

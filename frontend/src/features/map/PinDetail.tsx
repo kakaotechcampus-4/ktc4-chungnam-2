@@ -51,7 +51,7 @@ export function PinDetailHeader({
       <div className="flex items-center justify-between gap-2">
         <h2 className="truncate text-[1.375rem] font-bold text-ink-900">{pin.place_name ?? '이름 없는 장소'}</h2>
         {confirmed ? (
-          <span className="shrink-0 rounded-lg border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)]">
+          <span className="shrink-0 rounded-md border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)]">
             ✓ 확정됨
           </span>
         ) : (
@@ -69,7 +69,7 @@ export function PinDetailHeader({
                   onError: () => showToast('확정 리스트에 넣지 못했어요'),
                 })
               }
-              className="shrink-0 rounded-lg border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)] disabled:opacity-50"
+              className="shrink-0 rounded-md border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)] disabled:opacity-50"
             >
               ★ 확정 리스트에 넣기
             </button>
@@ -362,7 +362,7 @@ function MyOpinion({
         type="button"
         onClick={submit}
         disabled={!type || missingReason || react.isPending}
-        className="w-full rounded-xl bg-brand-600 py-2.5 text-sm font-bold text-white disabled:bg-ink-100 disabled:text-ink-400"
+        className="btn-primary w-full py-2.5 text-sm"
       >
         {react.isPending ? '등록하는 중…' : '의견 등록'}
       </button>

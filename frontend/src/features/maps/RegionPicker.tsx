@@ -54,7 +54,7 @@ export default function RegionPicker({
           type="button"
           disabled={!picked}
           onClick={() => onDone(picked)}
-          className="rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white disabled:bg-ink-100 disabled:text-ink-400"
+          className="btn-primary py-3 text-sm"
         >
           {picked ? `${picked.label}로 정하기` : '지역을 골라 주세요'}
         </button>

@@ -69,7 +69,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
             close()
             document.getElementById('place-search')?.focus()
           }}
-          className="mt-4 rounded-xl border border-brand-600 px-4 py-2.5 text-sm font-bold text-brand-600"
+          className="btn-outline mt-4 px-4 py-2.5 text-sm"
         >
           검색어 지우고 다시 찾기
         </button>
@@ -137,8 +137,8 @@ function PinItButton({ result, filled = false, pending, onPin }: { result: Searc
       disabled={pending}
       className={
         filled
-          ? 'w-full rounded-xl bg-brand-600 py-3 font-bold text-white disabled:opacity-50'
-          : 'shrink-0 rounded-lg border border-brand-600 px-3 py-1.5 text-sm font-bold text-brand-600 disabled:opacity-50'
+          ? 'btn-primary w-full py-3'
+          : 'btn-outline shrink-0 rounded-md px-3 py-1.5 text-sm'
       }
     >
       {pending ? '찍는 중…' : '핀 찍기'}

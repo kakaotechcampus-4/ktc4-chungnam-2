@@ -55,7 +55,7 @@ export function OnboardingBody({ mapId, kind, onDone }: { mapId: string; kind: O
       {kind === 'owner' ? (
         <OwnerActions mapId={mapId} onDone={onDone} />
       ) : (
-        <button type="button" onClick={onDone} className="mt-6 w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white">
+        <button type="button" onClick={onDone} className="btn-primary mt-6 w-full py-3.5">
           알겠어요
         </button>
       )}
@@ -75,7 +75,7 @@ function OwnerActions({ mapId, onDone }: { mapId: string; onDone: () => void }) 
         type="button"
         onClick={() => void share()}
         disabled={!url}
-        className="w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white disabled:bg-ink-100 disabled:text-ink-400"
+        className="btn-primary w-full py-3.5"
       >
         {url ? '친구 초대하기' : '초대 링크를 만드는 중…'}
       </button>

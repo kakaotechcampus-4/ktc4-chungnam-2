@@ -125,7 +125,7 @@ export default function ShortlistTab() {
             <br />
             2곳 이상이면 동선도 볼 수 있어요
           </p>
-          <Link to={`/maps/${mapId}`} className="mt-4 rounded-lg border border-brand-600 px-4 py-2 text-sm font-semibold text-brand-600">
+          <Link to={`/maps/${mapId}`} className="btn-outline mt-4 px-4 py-2 text-sm">
             마킹된 장소 보러 가기
           </Link>
         </div>
