@@ -3,6 +3,7 @@ import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
+import WithdrawConfirm from '@/features/auth/WithdrawConfirm'
 import { useMeQuery } from '@/features/auth/queries'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
@@ -12,13 +13,14 @@ import { useCreateInviteMutation } from './queries'
 
 /**
  * 내 지도 목록의 계정 시트(Figma 1절). 지도마다 초대 링크가 따로라 줄마다 복사 버튼을 둔다.
- * 회원 탈퇴는 확인 창 디자인이 아직 없어 넣지 않았다.
+ * 회원 탈퇴는 로그아웃 아래 글자 버튼으로 둔다(#155) — 눈에 잘 띄는 자리에 두지 않는다.
  */
 export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClose: () => void }) {
   const me = useMeQuery().data
   const invite = useCreateInviteMutation()
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [confirmLogout, setConfirmLogout] = useState(false)
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false)
 
   function copyLink(map: MapView) {
     invite.mutate(map.id, {
@@ -39,7 +41,12 @@ export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClo
     <ModalSheet
       label="계정"
       onClose={onClose}
-      overlay={confirmLogout && <LogoutConfirm onCancel={() => setConfirmLogout(false)} />}
+      overlay={
+        <>
+          {confirmLogout && <LogoutConfirm onCancel={() => setConfirmLogout(false)} />}
+          {confirmWithdraw && <WithdrawConfirm onCancel={() => setConfirmWithdraw(false)} />}
+        </>
+      }
     >
       <div className="mb-5 flex items-center gap-3">
         <span className="flex size-11 items-center justify-center rounded-full bg-brand-600 text-lg font-bold text-white">
@@ -47,7 +54,7 @@ export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClo
         </span>
         <div>
           <p className="text-lg font-bold text-ink-900">{me?.display_name}</p>
-          <p className="text-xs text-ink-500">카카오로 로그인됨 · 지도 {maps.length}개</p>
+          <p className="text-xs text-ink-500">카카오로 로그인됨 · 지도 {maps.length}/10개</p>
         </div>
       </div>
 
@@ -80,6 +87,9 @@ export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClo
         className="mt-5 w-full rounded-xl border border-ink-300 py-3 font-semibold text-ink-900"
       >
         로그아웃
+      </button>
+      <button type="button" onClick={() => setConfirmWithdraw(true)} className="hit-44 mt-2 w-full text-center text-xs text-ink-500 underline">
+        회원 탈퇴
       </button>
     </ModalSheet>
   )

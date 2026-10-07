@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { fetchMe, isUnauthorized, logout } from './api'
+import { fetchMe, isUnauthorized, logout, withdraw } from './api'
 import type { User } from './model'
 
 export const authKeys = {
@@ -14,6 +14,15 @@ export function useMeQuery() {
     queryFn: fetchMe,
     // 401 은 다시 물어도 401 이다.
     retry: (count, err) => !isUnauthorized(err) && count < 1,
+  })
+}
+
+/** 탈퇴도 로그아웃처럼 캐시를 통째로 비운다 — 계정이 사라졌으니 남은 데이터를 화면에 두지 않는다. */
+export function useWithdrawMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: withdraw,
+    onSuccess: () => queryClient.clear(),
   })
 }
 

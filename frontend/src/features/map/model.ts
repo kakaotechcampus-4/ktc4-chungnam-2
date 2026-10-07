@@ -27,7 +27,19 @@ export const SORTS = {
 } as const
 export type PinSort = keyof typeof SORTS
 
-export type PinFilters = { category: PinCategory | null; createdBy: string | null; sort: PinSort }
+/** 의견 필터(기획안 4절). 'none' = 내가 아직 의견을 안 남긴 핀. */
+export const OPINIONS = { like: '♥ 좋음', against: '🚫 반대', unknown: '? 미확인', none: '내가 아직 안 남김' } as const
+export type PinOpinion = keyof typeof OPINIONS
+/** 종류 필터(기획안 5-2: 확정/일반/AI 추천 셋뿐). */
+export const KINDS: Pin['kind'][] = ['확정', '일반', 'AI추천']
+
+export type PinFilters = {
+  category: PinCategory | null
+  createdBy: string | null
+  kind: Pin['kind'] | null
+  opinion: PinOpinion | null
+  sort: PinSort
+}
 
 /** ♥·🚫 중 하나라도 남긴 사람 수. 한 사람은 한 핀에 반응 하나만 남긴다. */
 export function participants(pin: Pin): number {
@@ -44,9 +56,27 @@ export function participationRatio(pin: Pin, memberCount: number): number {
   return Math.min(1, participants(pin) / memberCount)
 }
 
-export function filterPins(pins: Pin[], f: PinFilters): Pin[] {
+/** 이 핀에 이 의견이 있는가. unknown 은 아직 안 남긴 구성원이 있다는 뜻이라 구성원 수가 필요하다. */
+function hasOpinion(pin: Pin, opinion: PinOpinion, memberCount: number): boolean {
+  switch (opinion) {
+    case 'like':
+      return pin.reaction_summary.like > 0
+    case 'against':
+      return pin.reaction_summary.against > 0
+    case 'unknown':
+      return participants(pin) < memberCount
+    case 'none':
+      return !pin.my_reaction
+  }
+}
+
+export function filterPins(pins: Pin[], f: PinFilters, memberCount = 0): Pin[] {
   const kept = pins.filter(
-    (p) => (!f.category || p.category === f.category) && (!f.createdBy || p.created_by === f.createdBy),
+    (p) =>
+      (!f.category || p.category === f.category) &&
+      (!f.createdBy || p.created_by === f.createdBy) &&
+      (!f.kind || p.kind === f.kind) &&
+      (!f.opinion || hasOpinion(p, f.opinion, memberCount)),
   )
   if (f.sort === 'recent') return kept.sort(byNewest)
   const dir = f.sort === 'most' ? -1 : 1
