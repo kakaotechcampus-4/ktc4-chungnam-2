@@ -18,6 +18,10 @@ from common.errors import register_error_handlers
 from common.settings import settings
 from realtime.dispatcher import dispatcher
 
+# uvicorn은 자기 로거(uvicorn.*)만 설정한다 — 앱 로거(pingo.*)는 핸들러가 없으면 버려진다(#390).
+# 앱을 만들기 전에 루트 로거를 한 번 설정한다.
+logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
 logger = logging.getLogger("pingo")
 
 SHUTDOWN_TIMEOUT = 5.0   # dispatcher 정지 대기 상한(초)

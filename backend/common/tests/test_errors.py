@@ -173,3 +173,30 @@ def test_wildcard_origin_is_never_used_with_credentials():
     r = client.get("/health", headers={"Origin": "http://localhost:5173"})
     assert r.headers.get("access-control-allow-origin") != "*"
     assert r.headers.get("vary") == "Origin"
+
+
+def test_server_error_app_error_is_warned_with_code_and_stage_only(caplog):
+    import logging
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from common.errors import AppError, register_error_handlers
+
+    app = FastAPI()
+    register_error_handlers(app)
+
+    @app.get("/boom")
+    def boom():
+        raise AppError("RECOMMEND_FAILED", message="비밀문구", detail={"stage": "plan_evidence", "reason": "비밀사유"})
+
+    @app.get("/nope")
+    def nope():
+        raise AppError("NOT_READY")
+
+    client = TestClient(app)
+    with caplog.at_level(logging.INFO, logger="common.errors"):
+        assert client.get("/boom").status_code == 500
+        assert client.get("/nope").status_code == 409
+
+    [record] = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert "RECOMMEND_FAILED" in record.getMessage() and "plan_evidence" in record.getMessage()
+    assert "비밀" not in caplog.text

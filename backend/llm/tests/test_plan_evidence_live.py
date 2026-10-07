@@ -1,8 +1,8 @@
 """② plan_evidence 실호출 확인 — 엘리스 ML API에 실제로 요청한다.
 
 기본 실행에서는 제외된다(pytest.ini의 addopts `-m "not live"`) — 키 없이도 CI가 돌아야 한다.
-돌릴 때: backend/.env에 ELICE_ML_API_BASE_URL / ELICE_ML_API_KEY / LLM_MODEL=gpt-5.6-luna가 있는 상태에서
-    PINGO_TEST_DB=pingo_test_llm pytest -m live llm/tests/test_plan_evidence_live.py -v -s
+돌릴 때: backend/.env에 ELICE_ML_API_BASE_URL / ELICE_ML_API_KEY / LLM_MODEL=gpt-6-luna가 있는 상태에서
+    PINGO_TEST_DOTENV=1 PINGO_TEST_DB=pingo_test_llm pytest -m live llm/tests/test_plan_evidence_live.py -v -s
 chat.completions.parse(strict JSON schema)가 400으로 거절되면 이 테스트가 실패한다 — 그때
 call_planner를 response_format={"type": "json_object"} + 수동 Pydantic 검증으로 바꾼다(backend/llm/for_Root.md).
 """
