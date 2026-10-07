@@ -91,6 +91,11 @@ def register_error_handlers(app) -> None:
 
     @app.exception_handler(AppError)
     async def _app_error(_request, exc: AppError):
+        if exc.status >= 500:
+            # 서버 쪽 실패는 응답 본문 말고 콘솔에도 남긴다(#390). 코드·stage만 — detail 전체나 message는
+            # 사용자 입력을 품을 수 있어 넣지 않는다.
+            stage = exc.detail.get("stage") if isinstance(exc.detail, dict) else None
+            logger.warning("AppError %s status=%s stage=%s", exc.code, exc.status, stage)
         return error_response(exc.code, exc.message, exc.detail)
 
     @app.exception_handler(RequestValidationError)

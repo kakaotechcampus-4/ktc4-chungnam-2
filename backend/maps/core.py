@@ -45,6 +45,7 @@ class MapRecord:
     title: str
     start_date: date
     end_date: date
+    created_by: str
     region_label: str | None = None
     region_lat: float | None = None
     region_lng: float | None = None
@@ -200,6 +201,8 @@ def to_map_response(
     pin_count: int,
     confirmed_count: int | None,
     permissions: Permissions,
+    my_role: Role | None,
+    viewer_id: str,
     next_owner: NextOwner | None = None,
 ) -> Map:
     """confirmed_count는 shortlist_items 개수 — shortlist.api.count_confirmed로 채운다(루트,
@@ -222,6 +225,8 @@ def to_map_response(
         pin_count=pin_count,
         confirmed_count=confirmed_count,
         permissions=permissions,
+        my_role=my_role,
+        created_by_me=record.created_by == viewer_id,
         next_owner=next_owner,
     )
 

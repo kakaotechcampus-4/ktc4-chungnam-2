@@ -8,7 +8,7 @@
 
 ## 실제 호출 확인 결과 — **성공 (2026-09-30)**
 
-`pytest -m live llm/tests/test_plan_evidence_live.py` 2 passed (약 15초, 모델 `gpt-5.6-luna`, 엘리스 ML API).
+`pytest -m live llm/tests/test_plan_evidence_live.py` 2 passed (약 15초, 모델 `gpt-6-luna`, 엘리스 ML API).
 
 | 항목 | 결과 |
 |---|---|

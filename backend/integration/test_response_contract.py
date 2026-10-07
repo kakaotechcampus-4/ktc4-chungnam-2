@@ -128,6 +128,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     map_id = created.json()["id"]
     assert a.get("/maps").status_code == 200
     assert a.get(f"/maps/{map_id}").status_code == 200
+    assert (created.json()["my_role"], created.json()["created_by_me"]) == ("owner", True)  # #391
 
     invite = a.post(f"/maps/{map_id}/invite")
     assert invite.status_code == 201
@@ -174,6 +175,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert result.status_code == 200
     candidates = result.json()["candidates"]
     assert candidates
+    assert all(isinstance(c["lat"], float) and isinstance(c["lng"], float) for c in candidates)  # #391
     assert a.post(f"/candidates/{candidates[0]['id']}/publish").status_code == 200
 
     for pid in pin_ids[:2]:

@@ -40,6 +40,8 @@ def _load_dotenv_once() -> None:
     if _dotenv_loaded:
         return
     _dotenv_loaded = True
+    if os.getenv("PINGO_LOAD_DOTENV", "1").strip() == "0":
+        return   # 테스트가 개발자 .env(실제 모드·키)에 따라 달라지지 않게 conftest가 끈다(#370)
     try:
         from dotenv import load_dotenv
     except ImportError:          # dotenv 없이도 환경변수만으로 동작해야 한다
@@ -76,6 +78,13 @@ def _mode(name: str, default: AdapterMode) -> AdapterMode:
     return value  # type: ignore[return-value]
 
 
+def _log_level() -> str:
+    value = _env("LOG_LEVEL", "INFO").upper()
+    if value not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+        raise ConfigError(f"LOG_LEVEL={value!r} — DEBUG|INFO|WARNING|ERROR|CRITICAL 중 하나여야 한다")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     environment: Environment
@@ -105,7 +114,9 @@ class Settings:
     # 뜨게 하고, 실제 호출 시점에 실패한다.
     elice_ml_api_base_url: str = ""
     elice_ml_api_key: str = ""
-    llm_model: str = "gpt-5.6-luna"
+    llm_model: str = "gpt-6-luna"
+    # 로그 레벨(LOG_LEVEL). main.py가 logging.basicConfig에 넘긴다(#390).
+    log_level: str = "INFO"
     # places 실시간 연결(#34a) — 지도 API 키 3종. 기본값 ""는 위 kakao_*와 같은 이유(dev에서 키 없이도
     # 서버가 뜨고, 그 소스는 "키 없음"으로 건너뛴다). 키는 로컬 .env에만 둔다.
     # 카카오 로컬 API는 REST API 키를 쓴다 — 없으면 로그인용 KAKAO_CLIENT_ID(앱의 REST 키와 같은 값)로 폴백.
@@ -189,7 +200,8 @@ class Settings:
             kakao_redirect_uri=_env("KAKAO_REDIRECT_URI", ""),
             elice_ml_api_base_url=_env("ELICE_ML_API_BASE_URL", ""),
             elice_ml_api_key=_env("ELICE_ML_API_KEY", ""),
-            llm_model=_env("LLM_MODEL", "gpt-5.6-luna"),
+            llm_model=_env("LLM_MODEL", "gpt-6-luna"),
+            log_level=_log_level(),
             kakao_rest_api_key=_env("KAKAO_REST_API_KEY", "") or _env("KAKAO_CLIENT_ID", ""),
             naver_search_client_id=_env("NAVER_SEARCH_CLIENT_ID", ""),
             naver_search_client_secret=_env("NAVER_SEARCH_CLIENT_SECRET", ""),
