@@ -82,14 +82,14 @@ def test_match_none_for_lodging_and_etc(fake):
 
 
 def test_match_ambiguous_same_name_nearby_is_none():
-    cands = [Candidate("a", "스타벅스 성수점", 37.5000, 127.0000, "카페"),
-             Candidate("b", "스타벅스 성수점", 37.5001, 127.0000, "카페")]   # 11m 차
+    cands = [Candidate("a", "스타벅스 성수점", 37.5000, 127.0000, "카페", distance_m=0.0),
+             Candidate("b", "스타벅스 성수점", 37.5001, 127.0000, "카페", distance_m=11.1)]   # 11m 차
     assert pick_match(_hint("스타벅스 성수점", 37.5000, 127.0000, "카페"), cands) is None
 
 
 def test_match_same_name_picks_clearly_nearer_one():
-    cands = [Candidate("far", "스타벅스 성수점", 37.5020, 127.0000, "카페"),     # 222m
-             Candidate("near", "스타벅스 성수점", 37.5001, 127.0000, "카페")]    # 11m
+    cands = [Candidate("far", "스타벅스 성수점", 37.5020, 127.0000, "카페", distance_m=222.0),     # 222m
+             Candidate("near", "스타벅스 성수점", 37.5001, 127.0000, "카페", distance_m=11.1)]    # 11m
     assert pick_match(_hint("스타벅스 성수점", 37.5000, 127.0000, "카페"), cands).place_id == "near"
 
 
