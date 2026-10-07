@@ -25,7 +25,12 @@ export function formatTripDates(start: string, end: string): string {
   return start === end ? `${fmt(start)} 당일치기` : `${fmt(start)} ~ ${fmt(end)}`
 }
 
-export type MapHeaderView = Pick<MapDto, 'id' | 'title'> & { dates: string; memberCount: number }
+export type MapHeaderView = Pick<MapDto, 'id' | 'title'> & {
+  dates: string
+  memberCount: number
+  /** 지도를 만들 때 고른 지역의 가운데. 실시간 핀의 위치를 이 근처에서 찾는다(#382). 고르지 않았으면 없다. */
+  regionCenter?: { lat: number; lng: number }
+}
 
 export function toMapHeaderView(map: MapDto): MapHeaderView {
   return {
@@ -33,6 +38,7 @@ export function toMapHeaderView(map: MapDto): MapHeaderView {
     title: map.title,
     dates: formatTripDates(map.start_date, map.end_date),
     memberCount: map.member_count,
+    regionCenter: map.region ? { lat: map.region.lat, lng: map.region.lng } : undefined,
   }
 }
 

@@ -10,6 +10,7 @@ import { useAddToShortlistMutation } from '@/features/shortlist/queries'
 import AgainstMark from '@/ui/AgainstMark'
 import { josa } from '@/ui/josa'
 
+import { isLive, locationState, useLivePlaceStore } from './livePlaces'
 import { asReactionType, participants, toOpinions, type OpinionView, type Pin, type ReactionDto, type ReactionType, type ReasonChip } from './model'
 import { useMyReactionMutation, useReactionsQuery, useReasonChipsQuery } from './queries'
 
@@ -78,6 +79,24 @@ export function PinDetailHeader({
   )
 }
 
+/**
+ * 실시간 핀(#382) — 자체 장소 데이터에 없는 곳을 사람이 남긴 핀. 조건 확인·AI 추천·동선에는 쓰이지 않는다.
+ * 메모는 핀을 찍은 사람이 남긴 한마디다. 위치는 지도를 열 때마다 카카오에서 다시 찾는다(못 찾으면 지도에 안 뜬다).
+ */
+function LiveInfo({ pin }: { pin: Pin }) {
+  const places = useLivePlaceStore((s) => s.places)
+  const state = locationState(pin, places)
+  return (
+    <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-[0.8125rem]">
+      <p className="font-semibold text-ink-900">장소 정보가 없는 핀이에요</p>
+      <p className="text-ink-600">우리 장소 데이터에 없는 곳이라 조건 확인·AI 추천·동선에는 쓰이지 않아요. 의견은 그대로 남길 수 있어요.</p>
+      {pin.memo && <p className="text-ink-900">“{pin.memo}”</p>}
+      {state === 'loading' && <p className="text-ink-500">위치를 찾는 중이에요…</p>}
+      {state === 'missing' && <p className="font-semibold text-warn-text">카카오에서 이 장소의 위치를 다시 찾지 못했어요. 지도에는 표시되지 않아요.</p>}
+    </div>
+  )
+}
+
 /** 핀 상세 본문(Figma 5절 '마킹된 장소 상세'). */
 export function PinDetailBody({
   pin,
@@ -111,6 +130,7 @@ export function PinDetailBody({
             </a>
           )}
         </p>
+        {isLive(pin) && <LiveInfo pin={pin} />}
         {/* 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자로 꼭 적는다(colors.md 3절 한계). */}
         {memberCount > 0 && (
           <p className="text-xs font-bold text-ink-600">

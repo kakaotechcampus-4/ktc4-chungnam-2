@@ -76,3 +76,37 @@ declare namespace kakao.maps {
 interface Window {
   kakao?: { maps?: typeof kakao.maps }
 }
+
+/**
+ * 키워드 장소 검색(`libraries=services`). 실시간 핀(#382)의 위치를 지도를 열 때마다 다시 찾는 데만 쓴다.
+ * 응답(이름·좌표)은 메모리에서만 쓰고 서버·저장소로 보내지 않는다(카카오 약관, #53).
+ */
+declare namespace kakao.maps.services {
+  type Status = 'OK' | 'ZERO_RESULT' | 'ERROR'
+
+  interface PlaceResult {
+    id: string
+    place_name: string
+    /** 경도 */
+    x: string
+    /** 위도 */
+    y: string
+    place_url: string
+    address_name: string
+  }
+
+  interface Pagination {
+    current: number
+    last: number
+    hasNextPage: boolean
+  }
+
+  class Places {
+    constructor()
+    keywordSearch(
+      keyword: string,
+      callback: (data: PlaceResult[], status: Status, pagination: Pagination) => void,
+      options?: { location?: kakao.maps.LatLng; radius?: number; page?: number; size?: number },
+    ): void
+  }
+}
