@@ -15,6 +15,23 @@
 
 **BE 영향**: pins(마이그레이션: `reaction_type` enum을 `like|against`로 새로 만들고 neutral 행 삭제, `ReactionCounts`·schemas·core·service에서 neutral 제거, `count_reacted_users`를 카테고리별 의견 핀 수로 교체), recommend(`get_readiness`·`create_run`의 임계값 1, `_evidence_from_reaction`의 neutral 분기 삭제, 테스트), 통합 테스트(`test_safety_reason_rules` 등의 △ 사례를 ♥ 사유로).
 
+## 2026-10-07 (두 번째), 실시간 핀 — 자체 DB에 없는 장소도 사람이 핀으로 남긴다 (#382)
+
+검색에서 나온 가게의 약 9/10이 자체 DB에 없어 핀을 못 찍던 문제를 푼다. 서버는 카카오 장소 ID·사용자가 친 검색어·메모·카테고리만 저장하고(약관상 허용되는 값만, 이름·좌표는 저장하지 않는다), 화면이 지도를 열 때마다 카카오 JS SDK 키워드 검색으로 그 검색어를 다시 찾아 위치를 그린다. 가드레일 2번의 적용 대상을 "AI가 만드는 핀"으로 좁혔다.
+
+- **`POST /maps/{mapId}/pins` 본문이 `source`로 갈린다**: `PinCreateRequest = PinCreateSearch | PinCreateLive`. 기존 `search`(생략 가능)는 그대로다. 신규 `PinCreateLive`는 `source: "live"`, `category`, `kakao_place_id`, `search_query` 필수 + `memo`(선택, 200자). `lat`·`lng`·`place_name`은 받지 않는다(`additionalProperties: false`). 숙소·기타는 live로도 422 `VALIDATION_ERROR`. 같은 지도에서 `kakao_place_id`가 같으면 409 `PIN_DUPLICATE`.
+- **`Pin`**: `lat`·`lng`가 **필수에서 선택으로** 바뀐다(live 핀에 없다). `place_name`도 live 핀에는 없다. 신규 선택 필드 `source`(`db | live`, 없으면 db), `memo`, `kakao_place_id`, `search_query`. 서버가 `source`를 채우기 시작하면 필수로 올린다.
+- **`PlaceSearchResult.pinnable`** 설명 변경: false여도 `source: live`로 핀을 남길 수 있다. 422 `PLACE_NOT_SUPPORTED`는 `source: search`에서만 난다.
+- **동선**: 좌표가 없는 live 핀은 `POST /maps/{mapId}/route` 계산에서 빠지고 `ordered_pin_ids`에 없다(`Route` 스키마 변경 없음). 확정 리스트에는 남는다 — FE는 항목의 `pin.source === "live"`로 "위치를 몰라 동선에서 빠졌어요"를 안내한다.
+- **AI 추천**: live 핀은 후보가 될 수 없고 추천 검색 범위의 기준점에서도 빠진다. 반응·사유(근거 줄)는 자체 DB 핀과 똑같이 된다.
+- **목 서버**: `source: live` 생성(중복 409, 필수 누락·숙소 422), 동선에서 좌표 없는 핀 제외. smoke 테스트 3건 추가.
+
+**FE 영향(타입 재생성 필요, 컴파일이 깨지는 곳이 있다)**: `Pin.lat`·`lng`가 `number | undefined`가 된다. `MapCanvas.tsx`, `routes/MapLayout.tsx`, `features/search/model.ts`, `features/shortlist/model.ts`가 좌표를 숫자로 가정하고, `features/search/SearchResults.tsx`는 `PinCreateRequest.place_id`를 읽는다(`PinCreateSearch`로 좁혀야 한다). 새 화면: 「그래도 핀 남기기」(메모 입력), live 핀 위치 해석(카카오 SDK에 `&libraries=services` 추가 후 `keywordSearch`), 핀 상세의 "장소 정보 없음"·메모·카카오 링크, 동선 안내. **머지 전 선행**: FE가 먼저 좌표 optional에 맞춘 코드를 develop에 넣어야 이 변경이 CI(frontend 빌드)를 통과한다.
+
+**BE 영향**: pins(마이그레이션 0022: `place_id`·`geom` nullable, `source`·`kakao_place_id`·`search_query`·`memo`, CHECK, 부분 유니크 인덱스, live 생성 분기), recommend(좌표 없는 핀을 기준 원·후보에서 제외), shortlist(동선 계산에서 제외).
+
+**미확인**: "장소 ID와 검색어만 저장하고 표시할 때마다 키워드 검색으로 다시 찾는" 패턴을 카카오에 직접 확인하지 않았다(데브톡 재확인 예정). 거절되면 이 변경을 되돌린다.
+
 ## 2026-10-07, 지도 삭제와 나가기, 방장 위임 (#369)
 
 방장은 지도를 삭제하고, 구성원은 누구나 나갈 수 있다. 방장이 나가면 들어온 순서가 가장 빠른 구성원(탈퇴자 제외)에게 방장이 넘어간다. 방장 판단의 정본은 `memberships.role`이고 `maps.created_by`는 만든 사람 기록일 뿐이다.
