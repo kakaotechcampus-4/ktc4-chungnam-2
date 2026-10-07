@@ -1,6 +1,6 @@
 import type { components } from '@pingo/contracts/src/types/api'
 
-import type { Pin } from '@/features/map/model'
+import { isPlaced, type Pin } from '@/features/map/model'
 
 export type ShortlistItemDto = components['schemas']['ShortlistItem']
 export type RouteDto = components['schemas']['Route']
@@ -33,18 +33,18 @@ export type RouteDrawing = {
   legs: { from: { lat: number; lng: number }; to: { lat: number; lng: number }; label: string }[]
 }
 
-/** 지도에 그릴 동선 — 경로선(직선), 순서 번호, 구간 "약 N분". 좌표는 핀에서 찾는다. */
+/** 지도에 그릴 동선 — 경로선(직선), 순서 번호, 구간 "약 N분". 좌표는 핀에서 찾는다. 좌표가 없는 핀(실시간 핀)은 서버 동선에도 없지만 여기서도 걸러 둔다. */
 export function toRouteDrawings(routes: RouteDto[], pins: Pin[]): RouteDrawing[] {
   const at = (id: string) => pins.find((p) => p.id === id)
   return routes.map((r) => ({
     stops: r.ordered_pin_ids.flatMap((id, i) => {
       const p = at(id)
-      return p ? [{ n: i + 1, lat: p.lat, lng: p.lng }] : []
+      return p && isPlaced(p) ? [{ n: i + 1, lat: p.lat, lng: p.lng }] : []
     }),
     legs: r.legs.flatMap((l) => {
       const a = at(l.from_pin_id)
       const b = at(l.to_pin_id)
-      return a && b ? [{ from: a, to: b, label: `약 ${l.approx_minutes}분` }] : []
+      return a && b && isPlaced(a) && isPlaced(b) ? [{ from: a, to: b, label: `약 ${l.approx_minutes}분` }] : []
     }),
   }))
 }

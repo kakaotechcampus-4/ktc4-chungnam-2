@@ -8,11 +8,10 @@ import { toPinCard, type Pin, type PinCardView, type ReactionType } from './mode
 /** 반응 용어·기호는 고정(기획안 9절). 색은 지도 밖 UI 전용 반응 토큰(colors.md). */
 const REACTION: Record<ReactionType | 'unknown', { mark: ReactNode; label: string; color: string; chip: string }> = {
   like: { mark: '♥', label: '좋음', color: 'text-[var(--good-line)]', chip: 'border-[var(--good-line)] bg-[var(--good-bg)] text-[var(--good-text)]' },
-  neutral: { mark: '△', label: '조율 필요', color: 'text-[var(--warn-line)]', chip: 'border-[var(--warn-line)] bg-[var(--warn-bg)] text-[var(--warn-text)]' },
   against: { mark: <AgainstMark size={12} />, label: '반대', color: 'text-[var(--bad-line)]', chip: 'border-[var(--bad-line)] bg-[var(--bad-bg)] text-[var(--bad-text)]' },
   unknown: { mark: '?', label: '미확인', color: 'text-ink-500', chip: '' },
 }
-const ORDER = ['like', 'neutral', 'against', 'unknown'] as const
+const ORDER = ['like', 'against', 'unknown'] as const
 
 /** 마킹된 장소 목록(Figma 5절). "마킹됨" 배지는 넣지 않는다 — 여기엔 마킹된 장소만 올라온다. */
 export default function PinList({

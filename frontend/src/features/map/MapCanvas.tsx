@@ -5,7 +5,7 @@ import { createMarkerLayer, type MarkerLayer } from './markerLayer'
 import { isDesktopNow } from '@/features/shell/useIsDesktop'
 import type { RouteDrawing } from '@/features/shortlist/model'
 
-import type { Pin } from './model'
+import { isPlaced, type Pin } from './model'
 
 /** 핀이 하나라도 있으면 곧바로 bounds 로 덮어쓴다. 빈 지도에서만 보이는 값이다(v1 장소 데이터는 서울). */
 const FALLBACK_CENTER = { lat: 37.5665, lng: 126.978 }
@@ -130,7 +130,7 @@ export default function MapCanvas({
 
     // 처음 핀이 들어왔을 때만 시야를 맞춘다. 매번 하면 사용자가 옮긴 시야를 뺏는다.
     if (!fittedRef.current && pins.length > 0) {
-      layer.fit(pins)
+      layer.fit(pins.filter(isPlaced))
       fittedRef.current = true
     }
   }, [pins, memberCount, ready])

@@ -1,6 +1,6 @@
 import type { components } from '@pingo/contracts/src/types/api'
 
-import type { Pin } from '@/features/map/model'
+import { isPlaced, type Pin } from '@/features/map/model'
 
 export type PlaceSearchResultDto = components['schemas']['PlaceSearchResult']
 export type LatLng = { lat: number; lng: number }
@@ -42,7 +42,7 @@ const SAME_PLACE_M = 50
 
 export function toSearchResult(r: PlaceSearchResultDto, center: LatLng | null, pins: Pin[]): SearchResultView {
   // ponytail: 핀 응답에 장소 id가 없어 이름 + 50m 로 "이미 있음"을 짐작한다. 핀에 place_id 가 생기면 그 값으로.
-  const alreadyPinned = pins.some((p) => p.place_name === r.place_name && distanceM(p, r) < SAME_PLACE_M)
+  const alreadyPinned = pins.some((p) => isPlaced(p) && p.place_name === r.place_name && distanceM(p, r) < SAME_PLACE_M)
   return {
     id: r.place_id,
     name: r.place_name,

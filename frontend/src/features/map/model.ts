@@ -4,8 +4,18 @@ export type PinDto = components['schemas']['Pin']
 /** 지금은 응답 그대로다. 화면용으로 바꿀 게 생기면(반응 집계 등) 여기서 바꾸고 화면은 그대로 둔다. */
 export type Pin = PinDto
 
+/** 지도에 그릴 수 있는 핀. 좌표가 없는 핀(실시간 핀 #382, 아직 위치를 못 찾은 핀)은 목록에는 남고 지도에는 올리지 않는다. */
+export type PlacedPin = Pin & { id: string; lat: number; lng: number }
+export function isPlaced(pin: Pin): pin is PlacedPin {
+  return typeof pin.id === 'string' && typeof pin.lat === 'number' && typeof pin.lng === 'number'
+}
+
 export type PinCategory = Pin['category']
-export type ReactionType = 'like' | 'neutral' | 'against'
+/** ♥ 좋음 / 🚫 반대. △ 조율 필요는 2026-10-07에 없앴다(#360). 서버가 아직 neutral 을 줄 수 있는 동안엔 화면에서 걸러 쓴다. */
+export type ReactionType = 'like' | 'against'
+const isReactionType = (t: string): t is ReactionType => t === 'like' || t === 'against'
+/** 서버가 준 반응 종류를 화면 종류로. 없애기로 한 neutral 이 오면 반응이 없는 것으로 본다. */
+export const asReactionType = (t: string | undefined): ReactionType | null => (t && isReactionType(t) ? t : null)
 
 /** v1에 핀으로 만들 수 있는 카테고리만 칩으로 둔다 — 숙소·기타는 핀을 만들 수 없다(#191). */
 export const FILTER_CATEGORIES: PinCategory[] = ['음식점', '카페', '관광지']
@@ -19,10 +29,10 @@ export type PinSort = keyof typeof SORTS
 
 export type PinFilters = { category: PinCategory | null; createdBy: string | null; sort: PinSort }
 
-/** ♥·△·🚫 중 하나라도 남긴 사람 수. 한 사람은 한 핀에 반응 하나만 남긴다. */
+/** ♥·🚫 중 하나라도 남긴 사람 수. 한 사람은 한 핀에 반응 하나만 남긴다. */
 export function participants(pin: Pin): number {
   const s = pin.reaction_summary
-  return s.like + s.neutral + s.against
+  return s.like + s.against
 }
 
 /**
@@ -79,7 +89,7 @@ export function toPinCard(pin: Pin, memberCount: number, myId?: string): PinCard
       .filter(Boolean)
       .join(' · '),
     counts: { ...s, unknown: Math.max(0, memberCount - participants(pin)) },
-    mine: pin.my_reaction?.type ?? null,
+    mine: asReactionType(pin.my_reaction?.type),
   }
 }
 
@@ -104,7 +114,7 @@ export type OpinionView = { userId: string; name: string; isMe: boolean; type: R
 
 /**
  * 핀 상세 「구성원 의견」(Figma 구성원 의견 표시 원칙). 위 집계 줄과 같은 내용을 되풀이하지 않는다 —
- * 갈린 의견(반대 → 조율)만 카드로 펼치고, 좋음은 한 줄로 접고, 미확인은 이름을 보여준다.
+ * 갈린 의견(반대)만 카드로 펼치고, 좋음은 한 줄로 접고, 미확인은 이름을 보여준다.
  */
 export function toOpinions(
   reactions: ReactionDto[],
@@ -113,20 +123,20 @@ export function toOpinions(
 ) {
   const labelOf = (id: string) => chips.find((c) => c.id === id)?.label ?? id
   const nameOf = (userId: string) => members.find((m) => m.userId === userId)
-  const views: OpinionView[] = reactions.map((r) => {
+  const views: OpinionView[] = reactions.filter((r) => isReactionType(r.type)).map((r) => {
     const m = nameOf(r.user_id)
     return {
       userId: r.user_id,
       name: m?.name ?? r.display_name ?? '구성원',
       isMe: m?.isMe ?? false,
-      type: r.type,
+      type: r.type as ReactionType,
       chips: (r.reason_chip_ids ?? []).map(labelOf),
       text: r.reason_text || undefined,
     }
   })
   const reacted = new Set(reactions.map((r) => r.user_id))
   return {
-    split: [...views.filter((v) => v.type === 'against'), ...views.filter((v) => v.type === 'neutral')],
+    split: views.filter((v) => v.type === 'against'),
     likes: views.filter((v) => v.type === 'like'),
     unknown: members.filter((m) => !reacted.has(m.userId)),
   }

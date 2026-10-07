@@ -1,7 +1,7 @@
 import { isDesktopNow } from '@/features/shell/useIsDesktop'
 
 import { createPinMarkerElement } from './pinMarker'
-import { participationRatio, type Pin } from './model'
+import { isPlaced, participationRatio, type Pin, type PlacedPin } from './model'
 
 export interface MarkerLayer {
   /** 들어온 목록과 지금 떠 있는 마커를 비교해 추가·삭제만 한다. 구성원 수는 핀 색(참여율)의 분모다. */
@@ -13,12 +13,7 @@ export interface MarkerLayer {
   destroy(): void
 }
 
-type Placed = Pin & { id: string; lat: number; lng: number }
-
-/** 좌표 없는 핀은 지도에 올릴 수 없다. 목록에는 그대로 남으므로 조용히 버리는 게 아니다. */
-function isPlaced(pin: Pin): pin is Placed {
-  return typeof pin.id === 'string' && typeof pin.lat === 'number' && typeof pin.lng === 'number'
-}
+type Placed = PlacedPin
 
 /** 이 값이 그대로면 오버레이를 다시 만들 이유가 없다. */
 function signature(pin: Placed, ratio: number): string {

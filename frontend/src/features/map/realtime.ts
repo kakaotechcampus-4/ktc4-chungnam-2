@@ -26,7 +26,7 @@ type ReactionChanged = {
   display_name?: string
   type: ReactionType | null
 }
-const REACTION_WORD: Record<ReactionType, string> = { like: '좋음', neutral: '조율 필요', against: '반대' }
+const REACTION_WORD: Record<ReactionType, string> = { like: '좋음', against: '반대' }
 
 /**
  * 지도 전체 채널(docs/events.md). 받은 이벤트를 핀 캐시에 바로 반영한다.
