@@ -1,5 +1,7 @@
 """자체 장소 DB — 적재(upsert, 멱등, 폐업 갱신)와 6개 공개 함수의 실제 구현. 실제 PostgreSQL+PostGIS."""
 
+import csv
+import json
 import uuid
 from pathlib import Path
 
@@ -383,6 +385,26 @@ def test_cli_reports_skip_reasons(db_session, capsys):
     load.main(["labels", "--file", str(FIX / "labels.csv"), "--dry-run"], session_factory=lambda: _NoCloseSession(db_session))
     out = capsys.readouterr().out
     assert "모르는 fact_key: made_up_key" in out and "원본 가격 숫자 거부" in out
+
+
+def test_cli_tourapi_loads_types_12_14_38_with_labels(db_session, tmp_path, capsys):
+    items = [
+        {"contentid": "1", "contenttypeid": "12", "title": "경복궁", "addr1": "서울특별시 종로구 사직로 161", "mapx": "126.977", "mapy": "37.5796"},
+        {"contentid": "2", "contenttypeid": "14", "title": "국립중앙박물관", "addr1": "서울특별시 용산구 서빙고로 137", "mapx": "126.9804", "mapy": "37.5239"},
+        {"contentid": "3", "contenttypeid": "38", "title": "광장시장", "addr1": "서울특별시 종로구 창경궁로 88", "mapx": "126.9996", "mapy": "37.5700"},
+        {"contentid": "4", "contenttypeid": "32", "title": "호텔", "addr1": "서울특별시 중구 소공로 1", "mapx": "126.98", "mapy": "37.56"},
+        {"contentid": "5", "contenttypeid": "12", "title": "좌표 잘못", "addr1": "서울특별시 관악구 관악로 173", "mapx": "127.709322", "mapy": "37.470571"},
+    ]
+    places_file = tmp_path / "tour.json"
+    places_file.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    labels_file = tmp_path / "labels.csv"
+    header = next(csv.reader((FIX / "labels.csv").open(encoding="utf-8-sig")))
+    labels_file.write_text(",".join(header) + "\n", encoding="utf-8")
+    rc = load.main(["tourapi", "--file", str(places_file), "--labels", str(labels_file)], session_factory=lambda: _NoCloseSession(db_session))
+    out = capsys.readouterr().out
+    assert rc == 0 and "[contenttypeid 14] 받음 1 / 건너뜀 0" in out and "서울 밖 좌표: 1" in out
+    rows = db_session.execute(select(Place.source_id, Place.category).where(Place.source == "tourapi").order_by(Place.source_id)).all()
+    assert rows == [("1", "관광지"), ("2", "관광지"), ("3", "관광지")]
 
 
 def test_cli_missing_file_exits_2(capsys):
