@@ -1929,14 +1929,16 @@ export interface components {
             my_reaction?: null | components["schemas"]["Reaction"];
             reaction_summary: {
                 like: number;
-                neutral: number;
                 against: number;
             };
             permissions: components["schemas"]["Permissions"];
         };
         ReactionRequest: {
-            /** @enum {string} */
-            type: "like" | "neutral" | "against";
+            /**
+             * @description ♥ 좋음 / 🚫 반대. 2026-10-07(#360)에 neutral(△ 조율 필요)을 없앴다 — 보내면 422 VALIDATION_ERROR
+             * @enum {string}
+             */
+            type: "like" | "against";
             reason_text?: string;
             /** @description GET /categories/{category}/reason-chips가 준 칩의 id. 그 핀의 카테고리 목록에 없는 id는 422 VALIDATION_ERROR (2026-10-04, #60). 반대(against)에서만 보낸다 */
             reason_chip_ids?: string[];
@@ -1945,7 +1947,7 @@ export interface components {
             pin_id: string;
             user_id: string;
             /** @enum {string} */
-            type: "like" | "neutral" | "against";
+            type: "like" | "against";
             reason_text?: string;
             /** @description 반대 사유 칩 id (ReasonChip.id) */
             reason_chip_ids?: string[];
@@ -1962,7 +1964,7 @@ export interface components {
             fact_key?: string;
         };
         FilterCounts: {
-            /** @description 이 지도의 핀에 ♥·△·🚫 반응을 하나라도 남긴 구성원 수. 「2/4명이 의견을 남겼어요」의 2. 탈퇴한 구성원은 세지 않는다 (2026-10-04, FE 요청) */
+            /** @description 이 지도의 핀에 ♥·🚫 반응을 하나라도 남긴 구성원 수. 「2/4명이 의견을 남겼어요」의 2. 탈퇴한 구성원은 세지 않는다 (2026-10-04, FE 요청) */
             members_with_opinion: number;
             /** @description 현재 구성원 수(= Map.member_count). 「2/4명」의 4 */
             members_total: number;
@@ -1974,9 +1976,11 @@ export interface components {
             };
         };
         Readiness: {
+            /** @description answered_count >= required_count (2026-10-07, #360) */
             ready?: boolean;
+            /** @description 그 카테고리에서 ♥ 또는 🚫 의견이 달린 핀의 수. 삭제된 핀·나간 구성원·탈퇴자의 반응은 세지 않는다. 혼자 쓰는 지도도 똑같다 */
             answered_count?: number;
-            /** @description ceil(N/2). N의 정의는 결정 이슈 미결 */
+            /** @description 항상 1. 구성원 수에 비례하던 ceil(N/2)는 폐기했다(#360). 필드를 남긴 것은 FE 호환(「의견 핀 0/1」 표기)용이다 */
             required_count?: number;
         };
         EvidenceLine: {
@@ -2127,7 +2131,6 @@ export interface components {
                 pin_id: string;
                 reaction_summary: {
                     like?: number;
-                    neutral?: number;
                     against?: number;
                 };
             };
@@ -2310,7 +2313,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 추천 준비 미달 — 해당 카테고리에 의견 남긴 핀이 기준 미달 (5-4, "핀 1/2 · 1개 더 필요") */
+        /** @description 추천 준비 미달 — 해당 카테고리에 ♥/🚫 의견이 달린 핀이 하나도 없다 (5-4, 2026-10-07 */
         NotReady: {
             headers: {
                 [name: string]: unknown;

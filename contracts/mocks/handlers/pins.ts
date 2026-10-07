@@ -136,7 +136,7 @@ export const pinsHandlers = [
       created_at: new Date().toISOString(),
       checks: [],
       source_run_id: null,
-      reaction_summary: { like: 0, neutral: 0, against: 0 },
+      reaction_summary: { like: 0, against: 0 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     };
     (pin as any)._place_id = own.place_id;
@@ -184,7 +184,10 @@ export const pinsHandlers = [
     const pin = store.pins[pinId];
     if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
     if (!CATEGORY_RULES[pin.category].reactable) return apiError(422, "REACTION_NOT_ALLOWED", `${pin.category}에는 반응을 남길 수 없어요`);
-    const body = (await request.json()) as { type: "like" | "neutral" | "against"; reason_text?: string; reason_chip_ids?: string[] };
+    const body = (await request.json()) as { type: "like" | "against"; reason_text?: string; reason_chip_ids?: string[] };
+    if (body.type !== "like" && body.type !== "against") {
+      return apiError(422, "VALIDATION_ERROR", "반응은 좋음(like)과 반대(against)만 남길 수 있어요"); // 2026-10-07 #360: neutral(△) 폐지
+    }
     if (body.type === "against" && !body.reason_text && !(body.reason_chip_ids && body.reason_chip_ids.length)) {
       return apiError(422, "EVIDENCE_REQUIRED", "반대에는 사유가 필요해요");
     }
@@ -206,7 +209,6 @@ export const pinsHandlers = [
     // 요약 재계산
     pin.reaction_summary = {
       like: list.filter((r) => r.type === "like").length,
-      neutral: list.filter((r) => r.type === "neutral").length,
       against: list.filter((r) => r.type === "against").length,
     };
     emitEvent(pin.map_id, "public", "reaction.changed", { pin_id: pinId, reaction_summary: pin.reaction_summary, ...actor(pin.map_id), type: body.type });
@@ -221,7 +223,6 @@ export const pinsHandlers = [
     store.reactions[pinId] = list.filter((r) => r.user_id !== ME_USER_ID);
     pin.reaction_summary = {
       like: store.reactions[pinId].filter((r) => r.type === "like").length,
-      neutral: store.reactions[pinId].filter((r) => r.type === "neutral").length,
       against: store.reactions[pinId].filter((r) => r.type === "against").length,
     };
     emitEvent(pin.map_id, "public", "reaction.changed", { pin_id: pinId, reaction_summary: pin.reaction_summary, ...actor(pin.map_id), type: null });

@@ -589,3 +589,30 @@ describe("FE 요청 필드 6건과 반대 사유 칩 (2026-10-04, #60)", () => {
     expect(del.type).toBeNull();
   });
 });
+
+describe("#360 — 반응은 ♥/🚫 둘뿐, 추천은 ♥/🚫 의견이 달린 핀 1개부터 열린다", () => {
+  it("△(neutral) 반응은 422 VALIDATION_ERROR", async () => {
+    const res = await fetch(`${BASE}/pins/pin_1/reaction`, { method: "PUT", body: JSON.stringify({ type: "neutral" }) });
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("VALIDATION_ERROR");
+  });
+
+  it("핀의 reaction_summary에는 like·against만 있다", async () => {
+    const pins = await fetch(`${BASE}/maps/map_1/pins`).then((r) => r.json());
+    for (const p of pins) expect(Object.keys(p.reaction_summary).sort()).toEqual(["against", "like"]);
+  });
+
+  it("준비 판정: 의견이 달린 핀 수 ≥ 1, required_count는 항상 1이고 구성원 수와 무관하다(혼자여도 같다)", async () => {
+    store.members["map_1"] = store.members["map_1"].filter((m) => m.user_id === "u_me"); // 혼자
+    const r = await fetch(`${BASE}/maps/map_1/recommend/readiness`).then((x) => x.json());
+    expect(r["음식점"]).toMatchObject({ ready: true, required_count: 1 });
+    expect(r["음식점"].answered_count).toBeGreaterThanOrEqual(1);
+    expect(r["관광지"]).toMatchObject({ ready: false, answered_count: 0, required_count: 1 });
+  });
+
+  it("의견 핀이 없는 카테고리로 run을 만들면 409 NOT_READY", async () => {
+    const res = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "관광지" }) });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("NOT_READY");
+  });
+});
