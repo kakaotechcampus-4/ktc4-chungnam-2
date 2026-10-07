@@ -473,6 +473,53 @@ def test_create_run_succeeds_assembles_evidence_and_default_region(db_session):
     assert regions[0].radius_m == flows.DEFAULT_REGION_RADIUS_M
 
 
+def _make_live_pin(db_session, *, map_id="map_1", category="음식점", kakao_place_id="kakao:live1", created_by="user_1"):
+    """실시간 핀(#382) — place_id·geom이 없다."""
+    pin = PinRow(
+        id=uuid.uuid4(), map_id=map_id, category=category, kind="일반", origin="direct", source="live",
+        kakao_place_id=kakao_place_id, search_query="q", visibility="public", created_by=created_by,
+    )
+    db_session.add(pin)
+    db_session.flush()
+    return pin
+
+
+def test_create_run_skips_live_pins_for_the_search_circle_but_keeps_their_reasons(db_session):
+    """#386 — 좌표 없는 live 핀은 기준 원에서 빠지고, 그 핀에 남긴 사유는 근거 줄로 그대로 쓰인다."""
+    _make_members(db_session, user_ids=["user_1"])
+    db_pin = _make_pin(db_session, category="음식점", lat=35.2, lng=129.3)
+    live_pin = _make_live_pin(db_session)
+    _react(db_session, live_pin, user_id="user_1", type="against", reason_text="조개 알러지")
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    assert [line.text for line in service.list_evidence(db_session, str(run.id))] == ["조개 알러지"]
+    (region,) = service.list_regions(db_session, str(run.id))
+    assert (region.center_lat, region.center_lng) == (pytest.approx(35.2), pytest.approx(129.3))
+    assert len(region.anchor_points) == 1 and db_pin is not None
+
+
+def test_readiness_counts_a_live_pin_with_an_opinion(db_session):
+    _make_members(db_session, user_ids=["user_1"])
+    live_pin = _make_live_pin(db_session, category="카페")
+    _react(db_session, live_pin, user_id="user_1", type="like")
+
+    assert flows.get_readiness(db_session, map_id="map_1")["카페"] == {
+        "ready": True, "answered_count": 1, "required_count": 1,
+    }
+
+
+def test_create_run_with_only_live_pins_has_no_anchor_so_not_ready(db_session):
+    """live 핀만 있으면 기준 원을 만들 좌표가 없다 — 준비 판정은 통과해도 run 생성은 409 NOT_READY(스펙 갭, 루트 보고)."""
+    _make_members(db_session, user_ids=["user_1"])
+    live_pin = _make_live_pin(db_session)
+    _react(db_session, live_pin, user_id="user_1", type="like")
+
+    with pytest.raises(AppError) as exc_info:
+        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    assert exc_info.value.code == "NOT_READY"
+
+
 def test_create_run_raises_retry_limit_when_already_exhausted(db_session):
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="카페")

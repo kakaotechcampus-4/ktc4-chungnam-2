@@ -12,13 +12,13 @@ from pydantic import ValidationError
 from authz.core import Principal
 from common.errors import AppError
 from pins import core
-from pins.schemas import Pin, PinCreateRequest, ReactionSummary
+from pins.schemas import Pin, PinCreateSearch, ReactionSummary
 
 
-def _req(**kwargs) -> PinCreateRequest:
+def _req(**kwargs) -> PinCreateSearch:
     base = {"category": "음식점", "place_id": "kakao:1", "place_name": "성수 칼국수", "lat": 37.54, "lng": 127.05}
     base.update(kwargs)
-    return PinCreateRequest(**base)
+    return PinCreateSearch(**base)
 
 
 def _principal(role: str | None = "member") -> Principal:
@@ -70,7 +70,7 @@ def test_create_request_requires_all_hint_fields():
         base = {"category": "음식점", "place_id": "kakao:1", "place_name": "x", "lat": 37.5, "lng": 127.0}
         del base[missing]
         with pytest.raises(ValidationError):
-            PinCreateRequest(**base)
+            PinCreateSearch(**base)
 
 
 @pytest.mark.parametrize("lat,lng", [(91, 127), (-91, 127), (37, 181), (37, -181)])

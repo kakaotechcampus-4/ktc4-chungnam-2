@@ -9,6 +9,7 @@ from datetime import datetime
 
 from geoalchemy2 import Geography
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -36,6 +37,10 @@ Visibility = Enum(
     "public", "private",
     name="visibility",
 )
+PinSource = Enum(
+    "db", "live",
+    name="pin_source",
+)
 ReactionType = Enum(
     "like", "against",
     name="reaction_type",
@@ -55,9 +60,15 @@ class Pin(Base):
     origin: Mapped[str] = mapped_column(PinOrigin, nullable=False)
     # #195: places.id(자체 DB 장소)의 문자열. 이름은 places.name에서 읽는다(핀에 저장하지 않는다 —
     # 카카오 응답의 이름·좌표는 저장 금지, #53). DB FK·UUID 타입은 걸지 않았다 — for_Root.md 참고.
-    place_id: Mapped[str] = mapped_column(String, nullable=False)
-    # 매칭된 places.geom의 복사(자체 데이터). 사용자가 보낸 좌표는 저장하지 않는다.
-    geom = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
+    # #382: 실시간 핀(source='live')은 place_id·geom이 NULL이다 — 아래 CHECK가 source와 짝을 강제한다.
+    place_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 매칭된 places.geom의 복사(자체 데이터). 사용자가 보낸 좌표와 카카오 응답 좌표는 저장하지 않는다.
+    geom = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)
+    # #382 실시간 핀: 저장이 허용된 카카오 값은 장소 ID뿐이다(#53). 이름·좌표는 컬럼 자체가 없다.
+    source: Mapped[str] = mapped_column(PinSource, nullable=False, server_default="db")
+    kakao_place_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    search_query: Mapped[str | None] = mapped_column(String, nullable=True)   # 사용자가 친 검색어(사용자 입력)
+    memo: Mapped[str | None] = mapped_column(String, nullable=True)           # 사용자가 남긴 한마디(사용자 입력)
     # #57 결정: candidate.checks를 게시 시점에 복사(가드레일 5) — recommend를 다시 조회하지
     # 않는다. reason_chip_ids와 같은 방식(JSONB, 목록형이라 nullable).
     checks: Mapped[list | None] = mapped_column(JSONB, nullable=True)
@@ -79,6 +90,20 @@ class Pin(Base):
             "place_id",
             unique=True,
             postgresql_where=deleted_at.is_(None),
+        ),
+        # #382 live 핀 중복 — 같은 지도에서 같은 카카오 장소 ID는 한 번만.
+        Index(
+            "uq_pins_map_kakao_place",
+            "map_id",
+            "kakao_place_id",
+            unique=True,
+            postgresql_where=deleted_at.is_(None) & kakao_place_id.is_not(None),
+        ),
+        CheckConstraint(
+            "(source = 'db' AND place_id IS NOT NULL AND geom IS NOT NULL) OR "
+            "(source = 'live' AND place_id IS NULL AND geom IS NULL "
+            "AND kakao_place_id IS NOT NULL AND search_query IS NOT NULL)",
+            name="ck_pins_source_fields",
         ),
     )
 

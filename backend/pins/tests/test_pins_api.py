@@ -240,7 +240,7 @@ def test_create_pin_recovers_from_real_db_constraint_violation(db_session, monke
     from authz.core import Principal
     from common.errors import AppError
     from pins import service
-    from pins.schemas import PinCreateRequest
+    from pins.schemas import PinCreateSearch
 
     existing = _insert_pin(db_session, place_id=fake_places.place_id("seongsu-kalguksu"))
 
@@ -248,7 +248,7 @@ def test_create_pin_recovers_from_real_db_constraint_violation(db_session, monke
     monkeypatch.setattr(service, "_find_existing_pin_id", lambda db, map_id, place_id: None)
 
     principal = Principal(user_id="user_1", map_id="map_1", role="member")
-    req = PinCreateRequest(**KALGUKSU)
+    req = PinCreateSearch(**KALGUKSU)
 
     try:
         service.create_pin(db_session, "map_1", principal, req)
