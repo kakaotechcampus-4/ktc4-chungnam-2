@@ -4,6 +4,12 @@ export type PinDto = components['schemas']['Pin']
 /** 지금은 응답 그대로다. 화면용으로 바꿀 게 생기면(반응 집계 등) 여기서 바꾸고 화면은 그대로 둔다. */
 export type Pin = PinDto
 
+/** 지도에 그릴 수 있는 핀. 좌표가 없는 핀(실시간 핀 #382, 아직 위치를 못 찾은 핀)은 목록에는 남고 지도에는 올리지 않는다. */
+export type PlacedPin = Pin & { id: string; lat: number; lng: number }
+export function isPlaced(pin: Pin): pin is PlacedPin {
+  return typeof pin.id === 'string' && typeof pin.lat === 'number' && typeof pin.lng === 'number'
+}
+
 export type PinCategory = Pin['category']
 export type ReactionType = 'like' | 'neutral' | 'against'
 
