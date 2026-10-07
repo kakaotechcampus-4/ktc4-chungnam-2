@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router'
 
 import { useMeQuery } from '@/features/auth/queries'
 import { mapKeys } from '@/features/maps/queries'
@@ -36,12 +37,15 @@ const REACTION_WORD: Record<ReactionType, string> = { like: '좋음', against: '
  */
 export function useMapEvents(mapId: string): { state: ConnectionState; reconnect: () => void } {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const myUserId = useMeQuery().data?.id
   const [state, setState] = useState<ConnectionState>('open')
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     const key = pinKeys.list(mapId)
+    // 서버가 지도 삭제로 닫은 연결은 에러로 보지 않는다. 페이지를 떠나는 중(leaving)과는 따로 둔다.
+    let closedByServer = false
     const source = new EventSource(`${BASE_URL}/maps/${mapId}/events`, { withCredentials: true })
     const update = (fn: (pins: Pin[]) => Pin[]) => queryClient.setQueryData<Pin[]>(key, (pins) => pins && fn(pins))
     const parse = <T>(e: MessageEvent) => JSON.parse(e.data) as T
@@ -76,15 +80,41 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       void queryClient.invalidateQueries({ queryKey: pinKeys.reactions(pin_id) })
     }
     const members = () => void queryClient.invalidateQueries({ queryKey: mapKeys.detail(mapId) })
+    // 누가 나가면 그 사람의 의견이 지워진다 — 핀 집계·「N/M명」·추천 준비 상태·구성원 목록을 다시 받는다(docs/events.md).
+    const memberLeft = () => {
+      void queryClient.invalidateQueries({ queryKey: pinKeys.list(mapId) })
+      refreshCounts()
+      members()
+      void queryClient.invalidateQueries({ queryKey: mapKeys.members(mapId) })
+      void queryClient.invalidateQueries({ queryKey: ['recommend', mapId] })
+    }
+    // 지도가 삭제됐다 — 이 화면에 더 둘 게 없다. 서버가 구독도 닫는다.
+    const mapDeleted = () => {
+      closedByServer = true
+      source.close()
+      showToast('방장이 이 지도를 삭제했어요')
+      queryClient.removeQueries({ queryKey: mapKeys.detail(mapId) })
+      void queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true })
+      navigate('/', { replace: true })
+    }
+    // 확정 리스트와 동선은 다른 구성원이 바꿀 수 있다(5-10).
+    const shortlistChanged = () => {
+      void queryClient.invalidateQueries({ queryKey: ['shortlist', mapId] })
+      void queryClient.invalidateQueries({ queryKey: pinKeys.list(mapId) })
+    }
 
     source.addEventListener('pin.created', upsert)
     source.addEventListener('pin.published', upsert)
     source.addEventListener('pin.deleted', remove)
     source.addEventListener('reaction.changed', reaction)
     source.addEventListener('member.joined', members)
+    source.addEventListener('member.left', memberLeft)
+    source.addEventListener('map.deleted', mapDeleted)
+    source.addEventListener('shortlist.changed', shortlistChanged)
+    source.addEventListener('route.recalculated', shortlistChanged)
     source.onopen = () => setState('open')
     source.onerror = () => {
-      if (leaving) return
+      if (leaving || closedByServer) return
       // CLOSED 는 브라우저가 재연결을 포기한 상태(인증 실패 등). 조용히 넘기지 않는다.
       if (source.readyState === EventSource.CLOSED) {
         console.error('[realtime] 실시간 연결이 닫혔어요', mapId)
@@ -94,7 +124,7 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       }
     }
     return () => source.close()
-  }, [mapId, myUserId, queryClient, attempt])
+  }, [mapId, myUserId, queryClient, navigate, attempt])
 
   const reconnect = () => {
     // 끊긴 동안 놓친 변화는 이벤트로 다시 오지 않을 수 있어 목록을 새로 받는다.

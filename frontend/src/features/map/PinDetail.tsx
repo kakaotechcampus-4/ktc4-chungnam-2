@@ -7,12 +7,13 @@ import type { MemberView } from '@/features/maps/model'
 import { useMeQuery } from '@/features/auth/queries'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation } from '@/features/shortlist/queries'
+import ConfirmDialog from '@/ui/ConfirmDialog'
 import AgainstMark from '@/ui/AgainstMark'
 import { josa } from '@/ui/josa'
 
 import { isLive, locationState, useLivePlaceStore } from './livePlaces'
 import { asReactionType, participants, toOpinions, type OpinionView, type Pin, type ReactionDto, type ReactionType, type ReasonChip } from './model'
-import { useMyReactionMutation, useReactionsQuery, useReasonChipsQuery } from './queries'
+import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReasonChipsQuery } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
@@ -171,6 +172,42 @@ export function PinDetailBody({
         <ErrorText message="구성원 의견을 불러오지 못했어요" error={reactions.error} />
       ) : (
         reactions.data && <Opinions {...toOpinions(reactions.data, members, chips.data)} />
+      )}
+
+      {pin.permissions.can_delete && <DeletePin pin={pin} mapId={mapId} onDone={onDone} />}
+    </div>
+  )
+}
+
+/** 핀 삭제 — 구성원 누구나 남의 핀도 지울 수 있다(기획안 #25). 지우면 그 핀의 의견과 확정 리스트 항목도 함께 사라진다. */
+function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: () => void }) {
+  const [asking, setAsking] = useState(false)
+  const del = useDeletePinMutation(mapId, pin.id)
+  const name = pin.place_name ?? '이 핀'
+  return (
+    <div className="border-t border-ink-200 pt-3 text-center">
+      <button type="button" onClick={() => setAsking(true)} className="hit-44 text-[0.8125rem] font-medium text-ink-500 underline">
+        핀 삭제
+      </button>
+      {asking && (
+        <ConfirmDialog
+          title="이 핀을 삭제할까요?"
+          body={`${name} 핀과 거기에 남긴 의견이 모든 구성원에게서 사라져요. 확정 리스트에 있으면 함께 빠져요.`}
+          ok="삭제"
+          danger
+          pending={del.isPending}
+          onCancel={() => setAsking(false)}
+          onOk={() =>
+            del.mutate(undefined, {
+              onSuccess: () => {
+                setAsking(false)
+                showToast(`${name}${josa(name, '을', '를')} 삭제했어요`)
+                onDone()
+              },
+              onError: () => showToast('핀을 삭제하지 못했어요'),
+            })
+          }
+        />
       )}
     </div>
   )
