@@ -2,6 +2,18 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-07 (세 번째), 반응에서 △ 삭제, 추천 열림은 ♥/🚫 의견 핀 1개부터 (#360, 회의 결정) — **호환 깨짐**
+
+- **`ReactionRequest.type`·`Reaction.type`**: `like | neutral | against` → **`like | against`**. `neutral`(△ 조율 필요)을 보내면 422 `VALIDATION_ERROR`. 의견이 갈리면 그 자체가 조율이 필요한 상황이라고 본다.
+- **`Pin.reaction_summary`**: `neutral` 필드를 없앤다(`required: [like, against]`). SSE `reaction.changed`의 `reaction_summary`도 같다. `type`은 `like`·`against`(삭제는 `null`).
+- **`Readiness`**: `answered_count` = 그 카테고리에서 ♥ 또는 🚫 의견이 달린 **핀의 수**, `required_count` = **항상 1**, `ready` = `answered_count >= 1`. 구성원 수에 비례하던 `ceil(N/2)`는 폐기했고, **혼자 쓰는 지도도 같은 조건으로 추천을 받는다**. 필드 이름과 모양은 그대로다. `POST /maps/{mapId}/runs`가 준비 미달이면 409 `NOT_READY`(`detail`에 같은 `Readiness`).
+- **`FilterCounts.members_with_opinion`** 설명: ♥·🚫 기준. 핀 참여율의 분모와 `members_total`은 지도 전체 구성원 수로 그대로다. 문서마다 달랐던 N은 이것으로 통일했다("온라인 구성원 수"는 없어졌다).
+- **목 서버**: △ 반응 422, 새 준비 판정(혼자도 열림), 준비 미달이면 run 생성 409, smoke 4건 추가.
+- 기존 △ 반응 행은 마이그레이션에서 **삭제**한다(배포 전이라 테스트 데이터뿐이다). 삭제한 사람의 반응 사유(근거 줄)는 남아 추천 근거로 쓰인다 — 근거 줄은 반응 행과 별개 테이블이다.
+
+**FE 영향(타입 재생성 필요, 컴파일이 깨진다)**: `neutral`을 읽거나 쓰는 곳(`PinDetail` 반응 버튼·스타일, `PinList` 정렬과 줄, `model.ts`의 `participants`·`split`, `realtime.ts`의 반응 문구, 온보딩 문구)을 지운다. `Readiness.tsx`의 안내를 "카테고리마다 좋음·반대 의견이 달린 핀이 1곳 이상이면 추천을 받을 수 있어요"로 바꾸고 타일 표기는 「의견 핀 N/1」, **`RecommendTab.tsx`의 구성원 1명이면 추천을 막는 분기(SoloBody)를 지운다**(혼자도 추천). 이 변경은 FE가 먼저 `neutral` 의존을 걷어 낸 코드를 develop에 넣어야 CI를 통과한다.
+
+**BE 영향**: pins(마이그레이션: `reaction_type` enum을 `like|against`로 새로 만들고 neutral 행 삭제, `ReactionCounts`·schemas·core·service에서 neutral 제거, `count_reacted_users`를 카테고리별 의견 핀 수로 교체), recommend(`get_readiness`·`create_run`의 임계값 1, `_evidence_from_reaction`의 neutral 분기 삭제, 테스트), 통합 테스트(`test_safety_reason_rules` 등의 △ 사례를 ♥ 사유로).
 ## 2026-10-07 (두 번째), 실시간 핀 — 자체 DB에 없는 장소도 사람이 핀으로 남긴다 (#382)
 
 검색에서 나온 가게의 약 9/10이 자체 DB에 없어 핀을 못 찍던 문제를 푼다. 서버는 카카오 장소 ID·사용자가 친 검색어·메모·카테고리만 저장하고(약관상 허용되는 값만, 이름·좌표는 저장하지 않는다), 화면이 지도를 열 때마다 카카오 JS SDK 키워드 검색으로 그 검색어를 다시 찾아 위치를 그린다. 가드레일 2번의 적용 대상을 "AI가 만드는 핀"으로 좁혔다.
