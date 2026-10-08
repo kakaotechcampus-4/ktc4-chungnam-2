@@ -1967,7 +1967,7 @@ export interface components {
             id: string;
             /** @description 화면에 보이는 이름(예: 매워요) */
             label: string;
-            /** @description 이 칩이 뜻하는 조건의 fact_key. 있을 때만. v1에서는 힌트일 뿐이다 — 서버는 칩 label을 사유 문장으로 ②에 넘기는 기존 경로를 그대로 쓴다 */
+            /** @description 이 칩이 뜻하는 조건의 fact_key. 있을 때만. 추천 근거를 만들 때 서버가 칩 하나당 근거 줄 하나를 만들고 이 키와 표의 방향(wants)을 코드로 채운다. 모델(②)을 거치지 않는다(#412) */
             fact_key?: string;
         };
         FilterCounts: {

@@ -2,6 +2,12 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-09, 사유 칩은 ②를 거치지 않고 키와 방향을 코드로 채운다 (#412)
+
+- **API 스키마는 그대로다.** `ReasonChip.fact_key` 설명만 바뀌었다. `GET /categories/{category}/reason-chips` 응답 모양도 같다.
+- **근거 줄이 달라진다(`GET /runs/{runId}/evidence`).** 🚫에 고른 칩은 칩 하나당 근거 줄 하나가 되고 `chip_id`, `fact_key`, `wants`가 채워진다(글은 칩 label). 전에는 칩 여러 개가 "매워요, 비싸요"처럼 한 줄로 묶였다. 글과 칩을 함께 남기면 글 줄 하나가 더 생긴다(전에는 칩이 버려졌다). FE는 줄 수가 늘 수 있다는 것만 알면 된다.
+- 칩마다의 방향은 `docs/constraints.md` 「반대 사유 칩」 표의 `wants` 열이 정본이다. 실제 모델이 칩 글의 방향을 자주 비우거나 거꾸로 읽어서 바꿨다(PR #411 코멘트).
+
 ## 2026-10-07 (세 번째), 반응에서 △ 삭제, 추천 열림은 ♥/🚫 의견 핀 1개부터 (#360, 회의 결정) — **호환 깨짐**
 
 - **`ReactionRequest.type`·`Reaction.type`**: `like | neutral | against` → **`like | against`**. `neutral`(△ 조율 필요)을 보내면 422 `VALIDATION_ERROR`. 의견이 갈리면 그 자체가 조율이 필요한 상황이라고 본다.
