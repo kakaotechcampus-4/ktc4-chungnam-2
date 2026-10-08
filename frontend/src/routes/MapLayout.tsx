@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, Outlet, useMatch, useNavigate, useParams } from 'react-router'
-import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Users, X } from 'lucide-react'
+import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Users, X, type LucideIcon } from 'lucide-react'
 
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { usePinSelection } from '@/features/map/usePinSelection'
-import { byNewest, filterPins, timeAgo } from '@/features/map/model'
+import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
+import { useLivePinResolver } from '@/features/map/livePlaces'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMapEvents } from '@/features/map/realtime'
 import { usePinFilters } from '@/features/map/usePinFilters'
@@ -44,6 +45,7 @@ export default function MapLayout() {
   const { data: allPins = [] } = usePinsQuery(mapId)
   const mapInfo = useMapQuery(mapId).data
   const memberCount = mapInfo?.memberCount ?? 0
+  useLivePinResolver(allPins, mapInfo?.regionCenter)
   const desktop = useIsDesktop()
   const panelOpen = useSheetStore((s) => s.panelOpen)
   const setPanelOpen = useSheetStore((s) => s.setPanelOpen)
@@ -52,7 +54,7 @@ export default function MapLayout() {
   const onMarkingTab = useMatch('/maps/:mapId') !== null
   const onShortlistTab = useMatch('/maps/:mapId/shortlist') !== null
   // 마커와 목록이 같은 필터를 본다. 확정 탭은 확정 핀만, 다른 탭엔 필터가 없어 전부 보인다.
-  const pins = onShortlistTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters)
+  const pins = onShortlistTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters, memberCount)
   const routeOn = useRouteStore((s) => s.on) && onShortlistTab
   const routes = useRouteQuery(mapId, routeOn).data
   const routeDrawings = useMemo(() => (routeOn && routes ? toRouteDrawings(routes, allPins) : []), [routeOn, routes, allPins])
@@ -136,7 +138,6 @@ export default function MapLayout() {
   function onControl(key: ControlKey) {
     const map = controller.current
     if (!map) return showToast('지도가 아직 준비되지 않았어요')
-    const isPlaced = (p: (typeof allPins)[number]) => typeof p.lat === 'number' && typeof p.lng === 'number'
     // 최근 핀은 필터와 상관없이 지도 전체에서, 전체 핀 보기는 지금 보이는(필터된) 핀으로.
     const placed = (key === 'recent' ? allPins : pins).filter(isPlaced)
 
@@ -173,18 +174,20 @@ export default function MapLayout() {
   // 3단계에서는 칩이 시트 제목 아래로 옮겨 간다(MapTab). 넓은 화면엔 단계가 없다. 검색 중에는 숨긴다(Figma 규칙).
   const chipsShown = onMarkingTab && (desktop || markingStage !== 3) && !search.query
   const fade = mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
-  // 넓은 화면의 지도 영역 왼쪽 끝 — 패널을 접어도 탭 줄은 남는다.
-  // 지도 틀은 패널이 다 열린 뒤에 좁히고, 접기 시작할 때 바로 넓힌다. 그래야 패널이 미끄러지는 동안
-  // 그 뒤에 늘 지도가 깔려 있다(지도 틀을 같이 움직이면 카카오맵이 프레임마다 다시 재지 못해 회색이 비친다).
-  const [mapNarrow, setMapNarrow] = useState(panelOpen)
-  if (!panelOpen && mapNarrow) setMapNarrow(false)
+  // 패널이 다 열려 자리 잡았는지. 접기 시작하면 바로 false, 펼치면 미끄러지기가 끝난 뒤 true.
+  // - 지도 틀은 이때만 좁힌다. 그래야 패널이 미끄러지는 동안 그 뒤에 늘 지도가 깔려 있다
+  //   (지도 틀을 같이 움직이면 카카오맵이 프레임마다 다시 재지 못해 회색이 비친다).
+  // - 탭 줄은 이때만 패널 아래로 내린다(TabRail).
+  const [panelSettled, setPanelSettled] = useState(panelOpen)
+  if (!panelOpen && panelSettled) setPanelSettled(false)
   useEffect(() => {
     if (!panelOpen) return
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const t = window.setTimeout(() => setMapNarrow(true), reduce ? 0 : PANEL_SLIDE_MS)
+    const t = window.setTimeout(() => setPanelSettled(true), reduce ? 0 : PANEL_SLIDE_MS)
     return () => window.clearTimeout(t)
   }, [panelOpen])
-  const mapLeft = desktop ? (mapNarrow ? PANEL_W : RAIL_W) : 0
+  // 넓은 화면의 지도 영역 왼쪽 끝 — 패널을 접어도 탭 줄은 남는다.
+  const mapLeft = desktop ? (panelSettled ? PANEL_W : RAIL_W) : 0
   // 지도 위 덧칠(칩·« 손잡이)은 패널 가장자리를 따라 같이 미끄러진다.
   const overlayLeft = panelOpen ? PANEL_W : RAIL_W
 
@@ -206,7 +209,7 @@ export default function MapLayout() {
         leftInset={mapLeft}
       />
 
-      {desktop && <TabRail mapId={mapId} onOpen={() => setPanelOpen(true)} />}
+      {desktop && <TabRail mapId={mapId} raised={!panelSettled} />}
 
       {/* 모바일은 'contents' 라 틀이 없고 안쪽이 각자 화면에 붙는다. 넓은 화면은 이 틀이 탭 줄 오른쪽 내용 패널이다. */}
       {/* 접기는 탭 줄 뒤로 left 를 옮겨 미끄러뜨린다 — transform 이면 안쪽 fixed 확인 창이 패널 기준으로 잡힌다. */}
@@ -304,28 +307,13 @@ export default function MapLayout() {
             style={{ minHeight: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
             className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 items-end border-t border-ink-100 bg-white"
           >
-            <TabLink to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={24} />} />
-            {/* AI 는 핑고가 말한다. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 핑고, 활성만 파랑 채움 + 흰 핑고(#299). */}
-            <NavLink
-              to={`/maps/${mapId}/recommend`}
-              className={({ isActive }) =>
-                `flex flex-col items-center gap-0.5 pb-2 text-[0.6875rem] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <span
-                    className={`flex size-12 items-center justify-center rounded-full shadow-md ${
-                      isActive ? 'bg-brand-600' : 'border-2 border-brand-300 bg-white'
-                    }`}
-                  >
-                    <Pingo size={30} onFill={isActive} />
-                  </span>
-                  AI 추천
-                </>
-              )}
-            </NavLink>
-            <TabLink to={`/maps/${mapId}/shortlist`} label="확정된 장소" icon={<FileText size={24} />} />
+            {TABS.map((tab) =>
+              tab.Icon ? (
+                <TabLink key={tab.path} to={`/maps/${mapId}${tab.path}`} end={tab.end} label={tab.label} icon={<tab.Icon size={24} />} />
+              ) : (
+                <AiTabLink key={tab.path} to={`/maps/${mapId}${tab.path}`} label={tab.label} />
+              ),
+            )}
           </nav>
         )}
       </div>
@@ -358,7 +346,17 @@ export default function MapLayout() {
   )
 }
 
-/** 최종기획안 4절 — 탭은 이 3개로 고정, 라벨도 고정 용어(9절). 비활성 #6B7181(흰 바탕 대비 약 5:1). */
+/**
+ * 최종기획안 4절 — 탭은 이 3개로 고정, 라벨도 고정 용어(9절). 하단 탭과 넓은 화면 탭 줄이 이 표 하나를 쓴다.
+ * AI 는 선 아이콘 대신 핑고가 말한다(Icon 없음).
+ */
+const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | null }[] = [
+  { path: '', end: true, label: '마킹된 장소', Icon: MapPin },
+  { path: '/recommend', label: 'AI 추천', Icon: null },
+  { path: '/shortlist', label: '확정된 장소', Icon: FileText },
+]
+
+/** 비활성 #6B7181(흰 바탕 대비 약 5:1). */
 function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
   return (
     <NavLink
@@ -374,28 +372,74 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
   )
 }
 
+/** 하단 탭의 AI. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 핑고, 활성만 파랑 채움 + 흰 핑고(#299). */
+function AiTabLink({ to, label }: { to: string; label: string }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        `flex flex-col items-center gap-0.5 pb-2 text-[0.6875rem] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
+      }
+    >
+      {({ isActive }) => (
+        <>
+          <span
+            className={`flex size-12 items-center justify-center rounded-full shadow-md ${
+              isActive ? 'bg-brand-600' : 'border-2 border-brand-300 bg-white'
+            }`}
+          >
+            <Pingo size={30} onFill={isActive} />
+          </span>
+          {label}
+        </>
+      )}
+    </NavLink>
+  )
+}
+
 /**
  * 넓은 화면 왼쪽 끝 세로 탭 줄(#338, 네이버 지도처럼). 라벨·아이콘은 하단 탭과 같고 AI 도 다른 탭과 같은 모양이다.
  * 패널을 접어도 남고, 누르면 그 탭으로 가면서 패널을 다시 연다.
  */
-function TabRail({ mapId, onOpen }: { mapId: string; onOpen: () => void }) {
+function TabRail({ mapId, raised }: { mapId: string; raised: boolean }) {
+  // 패널이 다 열려 있으면 탭 줄은 패널(z-30)보다 아래 — 패널 안 확인 창의 딤이 DOM 순서와 상관없이 탭 줄까지 덮는다.
+  // 미끄러지는 중이거나 접혀 있으면(raised) 위 — 패널이 탭 줄 밑으로 들어가고 나온다. 확인 창은 다 열린 패널에서만 뜬다.
   return (
-    // 패널(z-30)이 이 아래로 미끄러져 들어가고 나온다.
-    <nav style={{ width: RAIL_W }} className="fixed inset-y-0 left-0 z-40 flex flex-col gap-1 border-r border-ink-200 bg-white px-1 pt-3">
-      <RailTab to={`/maps/${mapId}`} end label="마킹된 장소" icon={<MapPin size={22} />} onOpen={onOpen} />
-      <RailTab to={`/maps/${mapId}/recommend`} label="AI 추천" icon={<Pingo size={26} />} onOpen={onOpen} />
-      <RailTab to={`/maps/${mapId}/shortlist`} label="확정된 장소" icon={<FileText size={22} />} onOpen={onOpen} />
+    <nav
+      aria-label="지도 탭"
+      style={{ width: RAIL_W }}
+      className={`fixed inset-y-0 left-0 ${raised ? 'z-40' : 'z-20'} flex flex-col gap-1 border-r border-ink-200 bg-white px-1 pt-3`}
+    >
+      {TABS.map((tab) => (
+        <RailTab
+          key={tab.path}
+          to={`/maps/${mapId}${tab.path}`}
+          end={tab.end}
+          label={tab.label}
+          icon={tab.Icon ? <tab.Icon size={22} /> : <Pingo size={26} />}
+        />
+      ))}
     </nav>
   )
 }
 
-/** 탭 줄의 칸 하나. 아이콘 + 11/500 라벨(하단 탭과 같은 위계), 활성은 brand-50 면 + brand-600. */
-function RailTab({ to, end, label, icon, onOpen }: { to: string; end?: boolean; label: string; icon: ReactNode; onOpen: () => void }) {
+/**
+ * 탭 줄의 칸 하나. 아이콘 + 11/500 라벨(하단 탭과 같은 위계), 활성은 brand-50 면 + brand-600.
+ * 지금 탭을 다시 누르면 이동하지 않고 패널만 연다 — 이동하면 보던 핀 상세(?pin=)가 사라진다.
+ */
+function RailTab({ to, end = false, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
+  const active = useMatch({ path: to, end }) !== null
+  const panelOpen = useSheetStore((s) => s.panelOpen)
   return (
     <NavLink
       to={to}
       end={end}
-      onClick={onOpen}
+      aria-controls="map-panel"
+      aria-expanded={panelOpen}
+      onClick={(e) => {
+        if (active) e.preventDefault()
+        useSheetStore.getState().setPanelOpen(true)
+      }}
       className={({ isActive }) =>
         `flex flex-col items-center gap-1 rounded-xl py-2.5 text-[0.6875rem] font-medium break-keep ${
           isActive ? 'bg-brand-50 text-brand-600' : 'text-ink-500 hover:bg-ink-50 hover:text-ink-700'

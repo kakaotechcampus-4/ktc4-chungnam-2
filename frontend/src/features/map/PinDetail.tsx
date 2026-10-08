@@ -7,24 +7,24 @@ import type { MemberView } from '@/features/maps/model'
 import { useMeQuery } from '@/features/auth/queries'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation } from '@/features/shortlist/queries'
+import ConfirmDialog from '@/ui/ConfirmDialog'
 import AgainstMark from '@/ui/AgainstMark'
 import { josa } from '@/ui/josa'
 
-import { participants, toOpinions, type OpinionView, type Pin, type ReactionDto, type ReactionType, type ReasonChip } from './model'
-import { useMyReactionMutation, useReactionsQuery, useReasonChipsQuery } from './queries'
+import { isLive, locationState, useLivePlaceStore } from './livePlaces'
+import { asReactionType, participants, toOpinions, type OpinionView, type Pin, type ReactionDto, type ReactionType, type ReasonChip } from './model'
+import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReasonChipsQuery } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
   like: { mark: '♥', label: '좋음', bg: 'var(--good-bg)', line: 'var(--good-line)', text: 'var(--good-text)' },
-  neutral: { mark: '△', label: '조율 필요', bg: 'var(--warn-bg)', line: 'var(--warn-line)', text: 'var(--warn-text)' },
   against: { mark: <AgainstMark />, label: '반대', bg: 'var(--bad-bg)', line: 'var(--bad-line)', text: 'var(--bad-text)' },
 }
-const TYPES: ReactionType[] = ['like', 'neutral', 'against']
+const TYPES: ReactionType[] = ['like', 'against']
 const TEXT_MAX = 140
 
 const PROMPT: Record<ReactionType, { title: string; placeholder: string }> = {
   like: { title: '무엇이 좋았나요? (선택)', placeholder: '예: 국물이 진하고 양이 많아요' },
-  neutral: { title: '무엇을 조율하면 좋을까요? (선택)', placeholder: '예: 점심보다 저녁이 좋아요' },
   against: { title: '왜 별로인가요? (필수)', placeholder: '예: 지난번 여행 때 가봤어요' },
 }
 
@@ -51,7 +51,7 @@ export function PinDetailHeader({
       <div className="flex items-center justify-between gap-2">
         <h2 className="truncate text-[1.375rem] font-bold text-ink-900">{pin.place_name ?? '이름 없는 장소'}</h2>
         {confirmed ? (
-          <span className="shrink-0 rounded-lg border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)]">
+          <span className="shrink-0 rounded-md border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)]">
             ✓ 확정됨
           </span>
         ) : (
@@ -69,13 +69,31 @@ export function PinDetailHeader({
                   onError: () => showToast('확정 리스트에 넣지 못했어요'),
                 })
               }
-              className="shrink-0 rounded-lg border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)] disabled:opacity-50"
+              className="shrink-0 rounded-md border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)] disabled:opacity-50"
             >
               ★ 확정 리스트에 넣기
             </button>
           )
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * 실시간 핀(#382) — 자체 장소 데이터에 없는 곳을 사람이 남긴 핀. 조건 확인·AI 추천·동선에는 쓰이지 않는다.
+ * 메모는 핀을 찍은 사람이 남긴 한마디다. 위치는 지도를 열 때마다 카카오에서 다시 찾는다(못 찾으면 지도에 안 뜬다).
+ */
+function LiveInfo({ pin }: { pin: Pin }) {
+  const places = useLivePlaceStore((s) => s.places)
+  const state = locationState(pin, places)
+  return (
+    <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-[0.8125rem]">
+      <p className="font-semibold text-ink-900">장소 정보가 없는 핀이에요</p>
+      <p className="text-ink-600">우리 장소 데이터에 없는 곳이라 조건 확인·AI 추천·동선에는 쓰이지 않아요. 의견은 그대로 남길 수 있어요.</p>
+      {pin.memo && <p className="text-ink-900">“{pin.memo}”</p>}
+      {state === 'loading' && <p className="text-ink-500">위치를 찾는 중이에요…</p>}
+      {state === 'missing' && <p className="font-semibold text-warn-text">카카오에서 이 장소의 위치를 다시 찾지 못했어요. 지도에는 표시되지 않아요.</p>}
     </div>
   )
 }
@@ -113,6 +131,7 @@ export function PinDetailBody({
             </a>
           )}
         </p>
+        {isLive(pin) && <LiveInfo pin={pin} />}
         {/* 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자로 꼭 적는다(colors.md 3절 한계). */}
         {memberCount > 0 && (
           <p className="text-xs font-bold text-ink-600">
@@ -153,6 +172,42 @@ export function PinDetailBody({
         <ErrorText message="구성원 의견을 불러오지 못했어요" error={reactions.error} />
       ) : (
         reactions.data && <Opinions {...toOpinions(reactions.data, members, chips.data)} />
+      )}
+
+      {pin.permissions.can_delete && <DeletePin pin={pin} mapId={mapId} onDone={onDone} />}
+    </div>
+  )
+}
+
+/** 핀 삭제 — 구성원 누구나 남의 핀도 지울 수 있다(기획안 #25). 지우면 그 핀의 의견과 확정 리스트 항목도 함께 사라진다. */
+function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: () => void }) {
+  const [asking, setAsking] = useState(false)
+  const del = useDeletePinMutation(mapId, pin.id)
+  const name = pin.place_name ?? '이 핀'
+  return (
+    <div className="border-t border-ink-200 pt-3 text-center">
+      <button type="button" onClick={() => setAsking(true)} className="hit-44 text-[0.8125rem] font-medium text-ink-500 underline">
+        핀 삭제
+      </button>
+      {asking && (
+        <ConfirmDialog
+          title="이 핀을 삭제할까요?"
+          body={`${name} 핀과 거기에 남긴 의견이 모든 구성원에게서 사라져요. 확정 리스트에 있으면 함께 빠져요.`}
+          ok="삭제"
+          danger
+          pending={del.isPending}
+          onCancel={() => setAsking(false)}
+          onOk={() =>
+            del.mutate(undefined, {
+              onSuccess: () => {
+                setAsking(false)
+                showToast(`${name}${josa(name, '을', '를')} 삭제했어요`)
+                onDone()
+              },
+              onError: () => showToast('핀을 삭제하지 못했어요'),
+            })
+          }
+        />
       )}
     </div>
   )
@@ -222,7 +277,7 @@ function OpinionRow({ o, name }: { o: OpinionView; name: string }) {
 }
 
 /**
- * 「내 의견 선택」. 조율·반대는 아래에 사유 입력이 펼쳐진다. 등록 전까지 위 집계는 바뀌지 않는다.
+ * 「내 의견 선택」. 고르면 아래에 사유 입력이 펼쳐진다. 등록 전까지 위 집계는 바뀌지 않는다.
  * 반대는 칩이나 글 중 하나가 있어야 등록된다(가드레일 3). 이 화면의 채움 버튼은 「의견 등록」 하나다.
  */
 function MyOpinion({
@@ -240,7 +295,7 @@ function MyOpinion({
   onDone: () => void
 }) {
   const saved = pin.my_reaction
-  const [type, setType] = useState<ReactionType | null>(saved?.type ?? null)
+  const [type, setType] = useState<ReactionType | null>(asReactionType(saved?.type))
   const [chips, setChips] = useState<string[]>(saved?.reason_chip_ids ?? [])
   const [text, setText] = useState(saved?.reason_text ?? '')
   const react = useMyReactionMutation(mapId, pin)
@@ -290,7 +345,7 @@ function MyOpinion({
           </button>
         )}
       </div>
-      <div role="radiogroup" aria-label="내 의견" className="grid grid-cols-3 gap-1.5">
+      <div role="radiogroup" aria-label="내 의견" className="grid grid-cols-2 gap-1.5">
         {TYPES.map((t) => {
           const on = type === t
           return (
@@ -362,7 +417,7 @@ function MyOpinion({
         type="button"
         onClick={submit}
         disabled={!type || missingReason || react.isPending}
-        className="w-full rounded-xl bg-brand-600 py-2.5 text-sm font-bold text-white disabled:bg-ink-100 disabled:text-ink-400"
+        className="btn-primary w-full py-2.5 text-sm"
       >
         {react.isPending ? '등록하는 중…' : '의견 등록'}
       </button>

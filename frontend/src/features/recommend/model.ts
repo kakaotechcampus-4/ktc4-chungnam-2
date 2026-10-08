@@ -47,7 +47,7 @@ export function groupEvidence(lines: EvidenceLineDto[]) {
 /** docs/errors.md — run 시작·실행 실패 문구. */
 export function runErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.code === 'NOT_READY') return '아직 의견이 모자라요. 핀에 의견이 더 모이면 다시 눌러 주세요'
+    if (err.code === 'NOT_READY') return '아직 의견이 달린 핀이 없어요. 핀에 ♥나 반대 의견을 남기면 다시 눌러 주세요'
     if (err.code === 'RETRY_LIMIT') return '5번까지만 찾습니다'
     if (err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 근거를 고치거나 직접 찍어 보세요'
     if (err.code === 'RECOMMEND_FAILED') return '추천을 찾지 못했어요. 조건이 까다로워서가 아니에요 — 남긴 것은 그대로 있어요'

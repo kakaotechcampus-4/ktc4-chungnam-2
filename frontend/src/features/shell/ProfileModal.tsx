@@ -5,6 +5,7 @@ import ErrorText from '@/ErrorText'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import { useMeQuery } from '@/features/auth/queries'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
+import { DeleteMapConfirm, LeaveMapConfirm } from '@/features/maps/MapLifecycle'
 import { useShareInvite } from '@/features/maps/useShareInvite'
 
 import ModalSheet from './ModalSheet'
@@ -20,12 +21,23 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
   const { url, error: inviteError, copied, copy, share } = useShareInvite(mapId)
   const me = useMeQuery()
   const [confirmLogout, setConfirmLogout] = useState(false)
+  const [lifecycle, setLifecycle] = useState<'leave' | 'delete' | null>(null)
 
   return (
     <ModalSheet
       label="지도 정보"
       onClose={onClose}
-      overlay={confirmLogout && <LogoutConfirm onCancel={() => setConfirmLogout(false)} />}
+      overlay={
+        <>
+          {confirmLogout && <LogoutConfirm onCancel={() => setConfirmLogout(false)} />}
+          {lifecycle === 'leave' && (
+            <LeaveMapConfirm mapId={mapId} nextOwnerName={map.data?.nextOwnerName} onCancel={() => setLifecycle(null)} />
+          )}
+          {lifecycle === 'delete' && map.data && (
+            <DeleteMapConfirm mapId={mapId} title={map.data.title} onCancel={() => setLifecycle(null)} />
+          )}
+        </>
+      }
     >
       {map.data && (
         <header className="mb-4">
@@ -41,7 +53,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
         type="button"
         onClick={() => void share()}
         disabled={!url}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 py-3 font-semibold text-white disabled:bg-ink-100 disabled:text-ink-400"
+        className="btn-primary flex w-full items-center justify-center gap-2 py-3"
       >
         <Share size={18} aria-hidden="true" /> 초대 링크 공유하기
       </button>
@@ -71,7 +83,29 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
         ))}
       </ul>
 
-      <div className="mt-6 flex items-center justify-between border-t border-ink-200 pt-4">
+      {map.data && (
+        <div className="mt-6 flex gap-2 border-t border-ink-200 pt-4">
+          {/* 넘길 사람이 없는 방장은 나갈 수 없다 — 나가기 자리에 이유를 적고 삭제를 안내한다. */}
+          {map.data.canLeave ? (
+            <button type="button" onClick={() => setLifecycle('leave')} className="flex-1 rounded-lg border border-ink-300 py-2.5 text-sm font-semibold text-ink-900">
+              지도 나가기
+            </button>
+          ) : (
+            <p className="flex-1 self-center text-xs text-ink-500">혼자 남은 방장은 나갈 수 없어요. 대신 지도를 삭제할 수 있어요</p>
+          )}
+          {map.data.canDelete && (
+            <button
+              type="button"
+              onClick={() => setLifecycle('delete')}
+              className="flex-1 rounded-lg border border-[var(--action-danger)] py-2.5 text-sm font-semibold text-[var(--action-danger)]"
+            >
+              지도 삭제
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="mt-4 flex items-center justify-between border-t border-ink-200 pt-4">
         <div>
           <p className="text-sm font-semibold text-ink-900">계정</p>
           <p className="text-xs text-ink-500">카카오로 로그인됨 · {me.data?.display_name}</p>

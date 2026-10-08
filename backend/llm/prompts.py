@@ -143,6 +143,12 @@ fact_key·badge·circle_radius_m에 영향을 주게 하지 않는다. 각 줄�
    - "시끄러운 데는 싫어" → quiet, wants=true (조용한 곳을 원한다 — 키 뜻 기준으로 뒤집는다)
    - "조용한 곳은 심심해" → quiet, wants=false
    - "주차 안 되는 데는 싫어" → parking_available, wants=true
+   - "매운 건 못 먹어요" → spicy_focused, wants=false
+   - "너무 매워요" → spicy_focused, wants=false
+   - "매운 거 좋아해" → spicy_focused, wants=true
+   - "기름진 건 부담스러워" → oily_focused, wants=false
+   - "튀김 좋아해요" → oily_focused, wants=true
+   - "매운 것도 괜찮아" → spicy_focused, wants=null (허용일 뿐 원한다고 보기 어렵다)
    방향이 확실하지 않으면 wants는 null이다. 추측하지 않는다. fact_key가 null이면 wants도 반드시 null이다.
    안전 키(__HARD_KEYS__)도 wants를 낸다. 이 키들은 틀리면 못 먹는 걸 권하는 사고라서,
    피하겠다는 뜻이 조금이라도 분명하면 false로 읽는다(알러지, 못 먹는다, 안 먹는다, 빼 주세요,
@@ -150,11 +156,6 @@ fact_key·badge·circle_radius_m에 영향을 주게 하지 않는다. 각 줄�
    안전 키 예)
    - "저 조개 알러지 있어요" → contains_shellfish, wants=false
    - "새우는 빼 주세요" → contains_shellfish, wants=false
-   - "매운 건 못 먹어요" → spicy_focused, wants=false
-   - "너무 매워요" → spicy_focused, wants=false
-   - "매운 거 좋아해" → spicy_focused, wants=true
-   - "기름진 건 부담스러워" → oily_focused, wants=false
-   - "튀김 좋아해요" → oily_focused, wants=true
    - "사람 북적이는 데는 질색" → is_crowded_large, wants=false
    - "매운 것도 괜찮아" → spicy_focused, wants=null (허용일 뿐 원한다고 보기 어렵다)
 5. 입력에 fact_key나 wants가 이미 있으면 그대로 둔다.
@@ -169,7 +170,7 @@ fact_key·badge·circle_radius_m에 영향을 주게 하지 않는다. 각 줄�
 # wants를 내고, 피하겠다는 뜻이 분명하면 false로 읽게 한다. 키 집합 자체의 정본은 recommend 레지스트리이고,
 # 여기는 프롬프트 문구용이다(integration 계약 테스트가 같은 집합인지 본다).
 HARD_FACT_KEYS: tuple[str, ...] = (
-    "contains_shellfish", "spicy_focused", "oily_focused", "is_crowded_large", "price_bucket",
+    "contains_shellfish", "is_crowded_large", "price_bucket",
 )
 
 PLAN_EVIDENCE_PROMPT = (

@@ -173,7 +173,7 @@ authz.deps.get_db_session is common.database.get_db_session` — 전부 `True` �
 ## 구현 범위
 
 - `common/settings.py`: `Settings`에 `elice_ml_api_base_url`, `elice_ml_api_key`, `llm_model`(기본
-  `gpt-5.6-luna`), `llm_mode`(dev|real) 추가. 환경변수는 `ELICE_ML_API_BASE_URL`,
+  `gpt-6-luna`), `llm_mode`(dev|real) 추가. 환경변수는 `ELICE_ML_API_BASE_URL`,
   `ELICE_ML_API_KEY`, `LLM_MODEL`, `LLM_MODE`이며 kakao_*와 같은 방식(`_env`)으로 읽는다.
 - `_PORTS`에 `"llm"` 추가 → prod에서 `LLM_MODE=dev`면 places/auth와 같은 `ConfigError`로 기동 거부.
   `LLM_MODE` 미지정 시 기본값은 prod=`real`, 그 외=`dev`. `mode_for("llm")` 동작.

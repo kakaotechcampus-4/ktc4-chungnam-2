@@ -12,7 +12,14 @@ export const SEED_PLACES: PlaceSearchResult[] = [
   { place_id: "kakao:mock-3", place_name: "광안리 해변", lat: 35.1532, lng: 129.1186, category: "관광지", address: "부산 수영구 광안동", place_source: { provider: "kakao" } },
   { place_id: "kakao:mock-4", place_name: "광안리 게스트하우스", lat: 35.1547, lng: 129.1191, category: "숙소", address: "부산 수영구 광안동", place_source: { provider: "kakao" } },
   { place_id: "kakao:mock-5", place_name: "제주 흑돼지 거리", lat: 33.5131, lng: 126.5296, category: "음식점", address: "제주 제주시 일도이동", place_source: { provider: "kakao" } },
+  { place_id: "kakao:mock-6", place_name: "성수 노포 곱창", lat: 37.5445, lng: 127.0557, category: "음식점", address: "서울 성동구 성수동2가", place_source: { provider: "kakao", url: "https://place.map.kakao.com/mock-6" } },
 ];
+
+/**
+ * 카카오에는 있지만 자체 장소 DB에는 없는 장소(#382). 검색 결과는 pinnable:false 이고, `source: search` 로는 핀이 안 된다
+ * (422 PLACE_NOT_SUPPORTED). `source: live`(실시간 핀)로만 남길 수 있다. 실서버에서 검색 결과의 약 9할이 이런 장소다.
+ */
+export const NOT_IN_OWN_DB = new Set(["kakao:mock-6"]);
 
 function distanceScore(a: PlaceSearchResult, lat: number, lng: number) {
   return (a.lat - lat) ** 2 + (a.lng - lng) ** 2;
@@ -38,7 +45,7 @@ export const placesHandlers = [
       const lng = Number(lngRaw);
       found = [...found].sort((a, b) => distanceScore(a, lat, lng) - distanceScore(b, lat, lng));
     }
-    // pinnable: 자체 DB에 짝이 있어 핀이 될 수 있는가 — 목 서버는 카테고리의 pinnable을 그대로 쓴다(숙소·기타만 false)
-    return HttpResponse.json(found.slice(0, limit).map((p) => ({ ...p, pinnable: !p.category || CATEGORY_RULES[p.category].pinnable }))); // 0개는 빈 배열 그대로(가드레일 2)
+    // pinnable: 자체 DB에 짝이 있어 핀이 될 수 있는가 — 목 서버는 카테고리의 pinnable(숙소·기타 false)과 NOT_IN_OWN_DB 를 본다
+    return HttpResponse.json(found.slice(0, limit).map((p) => ({ ...p, pinnable: !NOT_IN_OWN_DB.has(p.place_id) && (!p.category || CATEGORY_RULES[p.category].pinnable) }))); // 0개는 빈 배열 그대로(가드레일 2)
   }),
 ];

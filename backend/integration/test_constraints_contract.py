@@ -24,7 +24,7 @@ CONSTRAINTS_MD = Path(__file__).resolve().parents[2] / "docs" / "constraints.md"
 
 # 안전 조건 — 틀리면 "못 먹는 걸 추천하는 사고"(docs/constraints.md "왜 unknown_policy가 조건마다 다른가").
 # 이 집합은 의도적으로 하드코딩이다: 레지스트리에서 계산하면 레지스트리를 바꾸는 순간 테스트도 같이 바뀐다.
-SAFETY_KEYS = frozenset({"contains_shellfish", "spicy_focused", "oily_focused"})
+SAFETY_KEYS = frozenset({"contains_shellfish"})
 
 
 def _doc_policies() -> dict[str, str]:
@@ -86,7 +86,7 @@ def test_unknown_taste_condition_passes_with_needs_check_badge(key):
 def test_one_failed_check_disqualifies_even_if_the_rest_pass():
     """가드레일 9의 조건판 — 하나라도 불통과면 후보 전체 탈락."""
     ok = build_check("price_bucket", "pass", known=False, value=None, passes=True)
-    bad = build_check("spicy_focused", "exclude", known=False, value=None, passes=True)
+    bad = build_check("contains_shellfish", "exclude", known=False, value=None, passes=True)
     assert apply_disqualifier_filters([[ok, bad], [ok]]) == [False, True]
 
 

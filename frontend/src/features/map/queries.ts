@@ -1,6 +1,8 @@
+import { useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { createPin, deleteReaction, fetchCounts, fetchPins, fetchReactions, fetchReasonChips, putReaction } from './api'
+import { createPin, deletePin, deleteReaction, fetchCounts, fetchPins, fetchReactions, fetchReasonChips, putReaction } from './api'
+import { useLivePlaceStore, withLivePlace } from './livePlaces'
 import { withMyReaction, type Pin, type PinCategory, type PinCreateRequest, type ReactionRequest } from './model'
 
 export const pinKeys = {
@@ -18,9 +20,30 @@ export const pinKeys = {
  * 필터(#18)가 붙으면 pinKeys.list 에 필터 값을 더하고 쿼리스트링을 붙인다 — 그때 이 파일만 고치면 된다.
  */
 export function usePinsQuery(mapId: string) {
-  return useQuery<Pin[]>({
+  const query = useQuery<Pin[]>({
     queryKey: pinKeys.list(mapId),
     queryFn: () => fetchPins(mapId),
+  })
+  // 실시간 핀(#382)은 서버에 이름·좌표가 없다. 화면이 다시 찾은 값을 여기서 한 번 얹어 마커·목록·상세가 같은 핀을 보게 한다.
+  const places = useLivePlaceStore((s) => s.places)
+  const data = useMemo(() => query.data?.map((p) => withLivePlace(p, places)), [query.data, places])
+  return { ...query, data }
+}
+
+/**
+ * 핀 삭제(구성원 누구나). 목록 캐시에서 바로 빼고, 같이 달라지는 집계·확정 리스트·추천 준비 상태는 다시 받는다.
+ * 확정 리스트의 항목은 서버가 핀과 함께 지운다.
+ */
+export function useDeletePinMutation(mapId: string, pinId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => deletePin(pinId),
+    onSuccess: () => {
+      queryClient.setQueryData<Pin[]>(pinKeys.list(mapId), (pins) => pins?.filter((p) => p.id !== pinId))
+      void queryClient.invalidateQueries({ queryKey: pinKeys.counts(mapId) })
+      void queryClient.invalidateQueries({ queryKey: ['shortlist', mapId] })
+      void queryClient.invalidateQueries({ queryKey: ['recommend', mapId] })
+    },
   })
 }
 

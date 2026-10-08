@@ -21,6 +21,7 @@ from places import api as places_api
 from authz.core import Principal
 from common.errors import AppError
 from common.events import Event
+from maps import api as maps_api
 from pins import chips, core, service
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
@@ -94,6 +95,7 @@ def create_ai_pin(
             raise AppError("PIN_DUPLICATE", detail={"pin_id": existing_id}) from exc
         raise
 
+    # 게시자는 recommend가 가드를 거친 요청자라 탈퇴·나감 판정(#369)이 필요 없다 — 실명 그대로.
     display_name = auth_api.display_names(db, [created_by]).get(created_by)
     place = places_api.get_places([place_id], db=db).get(place_id)
     record = core.PinRecord(
@@ -161,12 +163,13 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
     lat_col, lng_col = service._lat_lng_columns()
     lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()
     reaction_counts = service._reaction_counts_for_pin(db, pin_row.id)
-    display_name = auth_api.display_names(db, [pin_row.created_by]).get(pin_row.created_by)
+    current_member_ids = maps_api.DbMembershipGateway(db).current_member_ids(pin_row.map_id)
+    display_name = service.author_display_names(db, [pin_row.created_by], current_member_ids).get(pin_row.created_by)
     my_reaction = service.my_reactions_for_pins(db, [pin_row.id], viewer_id).get(pin_row.id)
     record = service.record_from_row(
         pin_row, lat=lat, lng=lng, reaction_counts=reaction_counts,
         created_by_display_name=display_name, my_reaction=my_reaction,
-        place=places_api.get_places([pin_row.place_id], db=db).get(pin_row.place_id),
+        place=places_api.get_places([pin_row.place_id], db=db).get(pin_row.place_id) if pin_row.place_id else None,
     )
     return core.to_pin_response(record, principal)
 
@@ -187,29 +190,32 @@ def count_public_pins_by_map(db: Session, map_ids: Sequence[str]) -> dict[str, i
     return counts
 
 
-def count_reacted_users(db: Session, *, map_id: str, category: str) -> int:
-    """recommend readiness(5-4, recommend/#108)가 "카테고리별 의견 남긴 핀" 판정에 쓴다 —
-    그 카테고리의 삭제되지 않은 핀 중 하나 이상에 반응(♥/△/🚫, '?' 미확인은 행 없음이라
-    여기 안 잡힌다)을 남긴 서로 다른 user_id 수. shortlist를 위해 get_coordinates_for_pins를
-    추가한 것과 같은 선례로 여기 추가한다."""
-    return db.execute(
-        select(func.count(func.distinct(ReactionRow.user_id)))
-        .select_from(ReactionRow)
+def count_opinion_pins(db: Session, *, map_id: str, category: str) -> int:
+    """recommend readiness(5-4, #360)가 쓴다 — 그 카테고리에서 ♥ 또는 🚫 의견이 달린 핀의 수. 삭제된 핀은
+    세지 않고, 반응한 사람이 현재 구성원일 때만 센다(나간 사람은 멤버십 행이 없고, 탈퇴자는 행이 남아 있어
+    withdrawn으로 뺀다). 핀 하나에 의견이 여럿이어도 1이다. '?' 미확인은 행이 없어 잡히지 않는다.
+    shortlist를 위해 get_coordinates_for_pins를 추가한 것과 같은 선례로 여기 추가한다."""
+    rows = db.execute(
+        select(ReactionRow.pin_id, ReactionRow.user_id)
         .join(PinRow, PinRow.id == ReactionRow.pin_id)
         .where(PinRow.map_id == map_id, PinRow.category == category, PinRow.deleted_at.is_(None))
-    ).scalar_one()
+    ).all()
+    members = maps_api.DbMembershipGateway(db).current_member_ids(map_id)
+    candidates = {user_id for _, user_id in rows if user_id in members}
+    active = candidates - auth_api.withdrawn_user_ids(db, candidates)
+    return len({pin_id for pin_id, user_id in rows if user_id in active})
 
 
 def get_category_pin_coordinates(db: Session, *, map_id: str, category: str) -> list[tuple[str, float, float]]:
     """recommend의 지역(regions) 기본값 계산(5-6-1, recommend/#108)이 쓴다 — 그 카테고리의
     삭제되지 않은 공개 핀 좌표 전부(anchor 후보). place_facts/PlaceSource가 아직 없어 recommend가
     "검색 범위 중심"을 스스로 정할 방법이 이것뿐이다(recommend/for_Root.md에 이 기본값 원
-    설계를 상세히 기록)."""
+    설계를 상세히 기록). 좌표가 없는 실시간 핀(#382)은 빠진다."""
     lat_col, lng_col = service._lat_lng_columns()
     rows = db.execute(
         select(PinRow.id, lat_col, lng_col).where(
             PinRow.map_id == map_id, PinRow.category == category,
-            PinRow.visibility == "public", PinRow.deleted_at.is_(None),
+            PinRow.visibility == "public", PinRow.deleted_at.is_(None), PinRow.geom.is_not(None),
         )
     ).all()
     return [(str(pin_id), lat, lng) for pin_id, lat, lng in rows]
@@ -222,7 +228,9 @@ def list_place_ids_on_map(db: Session, *, map_id: str) -> set[str]:
     `exclusions`(제안·거절 이력)만 걸러서, 이미 지도에 있는 핀(수동이든 이전 게시든)이 그대로
     다시 추천될 수 있었다(루트 수정, 2026-09-23 — Antigravity 검수로 발견)."""
     rows = db.execute(
-        select(PinRow.place_id).where(PinRow.map_id == map_id, PinRow.deleted_at.is_(None))
+        select(PinRow.place_id).where(
+            PinRow.map_id == map_id, PinRow.deleted_at.is_(None), PinRow.place_id.is_not(None),   # live 핀(#382)은 place_id가 없다
+        )
     ).scalars().all()
     return set(rows)
 
@@ -242,6 +250,7 @@ def list_disliked_place_ids(db: Session, *, user_id: str, map_id: str, category:
         .where(
             ReactionRow.user_id == user_id, ReactionRow.type == "against",
             PinRow.map_id == map_id, PinRow.category == category,
+            PinRow.place_id.is_not(None),   # live 핀(#382)은 제외할 자체 DB 장소가 없다
         )
         .distinct()
         .order_by(PinRow.place_id)
@@ -251,12 +260,12 @@ def list_disliked_place_ids(db: Session, *, user_id: str, map_id: str, category:
 
 def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[dict]:
     """recommend의 근거 조립(①②, recommend/#108)이 쓴다 — 그 카테고리 핀에 남긴 반응 중
-    사유가 있는 것만(반대는 사유 필수라 가드레일3로 항상 있고, 좋음/조율 필요도 사유가 있으면
+    사유가 있는 것만(반대는 사유 필수라 가드레일3로 항상 있고, 좋음도 사유가 있으면
     포함한다). llm.service.plan_evidence에 넘길 raw_reasons의 원자료다.
 
     소프트 삭제된 핀의 반응도 **포함한다**(#243) — 사유는 사람이 한 말이라 핀이 지워져도 사라지면 안 된다.
     구성원 누구나 핀을 지울 수 있어서(#25), 안 그러면 한 명이 b의 "조개 알러지" 핀을 지우는 것만으로 안전
-    조건이 다음 run에서 빠진다(가드레일 8). 반대로 준비 판정(`count_reacted_users`)은 삭제 핀을 계속
+    조건이 다음 run에서 빠진다(가드레일 8). 반대로 준비 판정(`count_opinion_pins`)은 삭제 핀을 계속
     센다고 보지 않는다 — 사유(이력)와 "지금 몇 명이 반응했나"는 다른 질문이다. 같은 이유로
     `list_disliked_place_ids`도 삭제 핀을 포함한다."""
     rows = db.execute(
@@ -302,6 +311,7 @@ def list_liked_pins(db: Session, *, map_id: str, category: str, requested_by: st
             PinRow.map_id == map_id, PinRow.category == category, PinRow.deleted_at.is_(None),
             or_(PinRow.visibility == "public", PinRow.created_by == requested_by),
             ReactionRow.type == "like",
+            PinRow.place_id.is_not(None),   # live 핀(#382)은 장소 라벨이 없어 선호 신호가 못 된다
         )
     ).all()
     grouped: dict[str, dict] = {}
@@ -318,13 +328,16 @@ def get_coordinates_for_pins(db: Session, pin_ids: list[str]) -> dict[str, tuple
     전제다. 소프트 삭제된 핀(`deleted_at` not null)은 다른 모든 조회 함수와 같은 원칙으로
     제외한다(Antigravity 검수 지적 — 이전엔 이 함수만 필터가 빠져서 삭제된 핀이 동선에 남을 수
     있었다). 존재하지 않거나 삭제된 id는 결과 dict에서 조용히 빠진다(호출자가 필요하면 직접
-    검사 — `shortlist/flows.py::recalculate_route`는 빠진 id를 건너뛴다)."""
+    검사 — `shortlist/flows.py::recalculate_route`는 빠진 id를 건너뛴다). 좌표가 없는 실시간 핀(#382)도
+    같은 방식으로 빠진다 — 서버가 카카오 좌표를 모르므로 동선에서 제외된다."""
     if not pin_ids:
         return {}
     uuids = [uuid.UUID(pid) for pid in pin_ids]
     lat_col, lng_col = service._lat_lng_columns()
     rows = db.execute(
-        select(PinRow.id, lat_col, lng_col).where(PinRow.id.in_(uuids), PinRow.deleted_at.is_(None))
+        select(PinRow.id, lat_col, lng_col).where(
+            PinRow.id.in_(uuids), PinRow.deleted_at.is_(None), PinRow.geom.is_not(None),
+        )
     ).all()
     return {str(pin_id): (lat, lng) for pin_id, lat, lng in rows}
 
@@ -334,4 +347,14 @@ def delete_reactions_by_user(db: Session, *, user_id: str) -> int:
     핀은 건드리지 않는다(작성 핀은 남는다). reaction.changed는 발행하지 않는다 — 탈퇴 시점의
     이벤트 정책은 auth 소관이고, 핀 목록을 다시 받으면 집계는 자연히 맞는다."""
     result = db.execute(delete(ReactionRow).where(ReactionRow.user_id == user_id))
+    return result.rowcount
+
+
+def delete_reactions_by_user_in_map(db: Session, *, user_id: str, map_id: str) -> int:
+    """지도 나가기(maps, #369)가 부른다 — delete_reactions_by_user를 그 지도 하나로 좁힌 것.
+    다른 지도에 남긴 반응은 그대로 둔다. 이벤트는 내지 않는다(maps가 member.left 하나로 알린다)."""
+    pin_ids_on_map = select(PinRow.id).where(PinRow.map_id == map_id)
+    result = db.execute(
+        delete(ReactionRow).where(ReactionRow.user_id == user_id, ReactionRow.pin_id.in_(pin_ids_on_map))
+    )
     return result.rowcount

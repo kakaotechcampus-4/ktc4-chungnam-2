@@ -2,6 +2,65 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-07 (세 번째), 반응에서 △ 삭제, 추천 열림은 ♥/🚫 의견 핀 1개부터 (#360, 회의 결정) — **호환 깨짐**
+
+- **`ReactionRequest.type`·`Reaction.type`**: `like | neutral | against` → **`like | against`**. `neutral`(△ 조율 필요)을 보내면 422 `VALIDATION_ERROR`. 의견이 갈리면 그 자체가 조율이 필요한 상황이라고 본다.
+- **`Pin.reaction_summary`**: `neutral` 필드를 없앤다(`required: [like, against]`). SSE `reaction.changed`의 `reaction_summary`도 같다. `type`은 `like`·`against`(삭제는 `null`).
+- **`Readiness`**: `answered_count` = 그 카테고리에서 ♥ 또는 🚫 의견이 달린 **핀의 수**, `required_count` = **항상 1**, `ready` = `answered_count >= 1`. 구성원 수에 비례하던 `ceil(N/2)`는 폐기했고, **혼자 쓰는 지도도 같은 조건으로 추천을 받는다**. 필드 이름과 모양은 그대로다. `POST /maps/{mapId}/runs`가 준비 미달이면 409 `NOT_READY`(`detail`에 같은 `Readiness`).
+- **`FilterCounts.members_with_opinion`** 설명: ♥·🚫 기준. 핀 참여율의 분모와 `members_total`은 지도 전체 구성원 수로 그대로다. 문서마다 달랐던 N은 이것으로 통일했다("온라인 구성원 수"는 없어졌다).
+- **목 서버**: △ 반응 422, 새 준비 판정(혼자도 열림), 준비 미달이면 run 생성 409, smoke 4건 추가.
+- 기존 △ 반응 행은 마이그레이션에서 **삭제**한다(배포 전이라 테스트 데이터뿐이다). 삭제한 사람의 반응 사유(근거 줄)는 남아 추천 근거로 쓰인다 — 근거 줄은 반응 행과 별개 테이블이다.
+
+**FE 영향(타입 재생성 필요, 컴파일이 깨진다)**: `neutral`을 읽거나 쓰는 곳(`PinDetail` 반응 버튼·스타일, `PinList` 정렬과 줄, `model.ts`의 `participants`·`split`, `realtime.ts`의 반응 문구, 온보딩 문구)을 지운다. `Readiness.tsx`의 안내를 "카테고리마다 좋음·반대 의견이 달린 핀이 1곳 이상이면 추천을 받을 수 있어요"로 바꾸고 타일 표기는 「의견 핀 N/1」, **`RecommendTab.tsx`의 구성원 1명이면 추천을 막는 분기(SoloBody)를 지운다**(혼자도 추천). 이 변경은 FE가 먼저 `neutral` 의존을 걷어 낸 코드를 develop에 넣어야 CI를 통과한다.
+
+**BE 영향**: pins(마이그레이션: `reaction_type` enum을 `like|against`로 새로 만들고 neutral 행 삭제, `ReactionCounts`·schemas·core·service에서 neutral 제거, `count_reacted_users`를 카테고리별 의견 핀 수로 교체), recommend(`get_readiness`·`create_run`의 임계값 1, `_evidence_from_reaction`의 neutral 분기 삭제, 테스트), 통합 테스트(`test_safety_reason_rules` 등의 △ 사례를 ♥ 사유로).
+## 2026-10-07 (두 번째), 실시간 핀 — 자체 DB에 없는 장소도 사람이 핀으로 남긴다 (#382)
+
+검색에서 나온 가게의 약 9/10이 자체 DB에 없어 핀을 못 찍던 문제를 푼다. 서버는 카카오 장소 ID·사용자가 친 검색어·메모·카테고리만 저장하고(약관상 허용되는 값만, 이름·좌표는 저장하지 않는다), 화면이 지도를 열 때마다 카카오 JS SDK 키워드 검색으로 그 검색어를 다시 찾아 위치를 그린다. 가드레일 2번의 적용 대상을 "AI가 만드는 핀"으로 좁혔다.
+
+- **`POST /maps/{mapId}/pins` 본문이 `source`로 갈린다**: `PinCreateRequest = PinCreateSearch | PinCreateLive`. 기존 `search`(생략 가능)는 그대로다. 신규 `PinCreateLive`는 `source: "live"`, `category`, `kakao_place_id`, `search_query` 필수 + `memo`(선택, 200자). `lat`·`lng`·`place_name`은 받지 않는다(`additionalProperties: false`). 숙소·기타는 live로도 422 `VALIDATION_ERROR`. 같은 지도에서 `kakao_place_id`가 같으면 409 `PIN_DUPLICATE`.
+- **`Pin`**: `lat`·`lng`가 **필수에서 선택으로** 바뀐다(live 핀에 없다). `place_name`도 live 핀에는 없다. 신규 선택 필드 `source`(`db | live`, 없으면 db), `memo`, `kakao_place_id`, `search_query`. 서버가 `source`를 채우기 시작하면 필수로 올린다.
+- **`PlaceSearchResult.pinnable`** 설명 변경: false여도 `source: live`로 핀을 남길 수 있다. 422 `PLACE_NOT_SUPPORTED`는 `source: search`에서만 난다.
+- **동선**: 좌표가 없는 live 핀은 `POST /maps/{mapId}/route` 계산에서 빠지고 `ordered_pin_ids`에 없다(`Route` 스키마 변경 없음). 확정 리스트에는 남는다 — FE는 항목의 `pin.source === "live"`로 "위치를 몰라 동선에서 빠졌어요"를 안내한다.
+- **AI 추천**: live 핀은 후보가 될 수 없고 추천 검색 범위의 기준점에서도 빠진다. 반응·사유(근거 줄)는 자체 DB 핀과 똑같이 된다.
+- **목 서버**: `source: live` 생성(중복 409, 필수 누락·숙소 422), 동선에서 좌표 없는 핀 제외. smoke 테스트 3건 추가.
+
+**FE 영향(타입 재생성 필요, 컴파일이 깨지는 곳이 있다)**: `Pin.lat`·`lng`가 `number | undefined`가 된다. `MapCanvas.tsx`, `routes/MapLayout.tsx`, `features/search/model.ts`, `features/shortlist/model.ts`가 좌표를 숫자로 가정하고, `features/search/SearchResults.tsx`는 `PinCreateRequest.place_id`를 읽는다(`PinCreateSearch`로 좁혀야 한다). 새 화면: 「그래도 핀 남기기」(메모 입력), live 핀 위치 해석(카카오 SDK에 `&libraries=services` 추가 후 `keywordSearch`), 핀 상세의 "장소 정보 없음"·메모·카카오 링크, 동선 안내. **머지 전 선행**: FE가 먼저 좌표 optional에 맞춘 코드를 develop에 넣어야 이 변경이 CI(frontend 빌드)를 통과한다.
+
+**BE 영향**: pins(마이그레이션 0022: `place_id`·`geom` nullable, `source`·`kakao_place_id`·`search_query`·`memo`, CHECK, 부분 유니크 인덱스, live 생성 분기), recommend(좌표 없는 핀을 기준 원·후보에서 제외), shortlist(동선 계산에서 제외).
+
+**미확인**: "장소 ID와 검색어만 저장하고 표시할 때마다 키워드 검색으로 다시 찾는" 패턴을 카카오에 직접 확인하지 않았다(데브톡 재확인 예정). 거절되면 이 변경을 되돌린다.
+## 2026-10-07 (네 번째), 지도 목록의 내가 만든 지도·초대받은 지도 구분, 후보 좌표 (#340)
+
+둘 다 **선택 필드 추가**라 기존 프론트 빌드와 계약 테스트는 깨지지 않는다. 서버가 채우기 시작하면 필수로 올린다(`pin_count`와 같은 순서).
+
+- **`Map.my_role`** (`owner | member`): 요청자의 지금 역할. 방장이 위임되면 바뀐다.
+- **`Map.created_by_me`** (boolean): 내가 이 지도를 만들었는가. 내 지도 목록을 「내가 만든 지도」와 「초대받은 지도」로 나누는 값이다. 위임 뒤에는 `my_role`과 달라질 수 있다(만든 사람이 방장을 넘겼거나, 초대받은 사람이 방장이 된 경우).
+- **`Candidate.lat`·`lng`**: 자체 DB 장소의 좌표. 게시 전 나만 보는 점선 핀을 지도에 그린다(#340 1번). `run.candidates_ready`의 Candidate에도 같다.
+- #340의 2번(핀 응답의 장소 id)은 실시간 핀(#382)의 `Pin.kakao_place_id`와 함께 다룬다. 3번(추천 준비 카운트의 단위)은 #360에서 답이 났다(의견이 달린 핀 수, 항상 1 이상 필요).
+
+**FE 영향**: `npm run gen:types`. `MapListPage`를 두 묶음으로 나누고 방장이면 배지를 단다. 추천 결과 화면은 후보 좌표로 점선 핀을 그린다.
+
+**BE 영향**: maps(`to_map_response`가 두 필드를 채움), recommend(`Candidate` 스키마에 `lat`·`lng`, DB에는 이미 있다 — `candidates.lat/lng`).
+
+## 2026-10-07, 지도 삭제와 나가기, 방장 위임 (#369)
+
+방장은 지도를 삭제하고, 구성원은 누구나 나갈 수 있다. 방장이 나가면 들어온 순서가 가장 빠른 구성원(탈퇴자 제외)에게 방장이 넘어간다. 방장 판단의 정본은 `memberships.role`이고 `maps.created_by`는 만든 사람 기록일 뿐이다.
+
+- **신설** `DELETE /maps/{mapId}`: 방장만. 204. 방장이 아닌 구성원 403, 비구성원과 삭제된 지도 404. soft delete라 모든 구성원에게서 사라지고, 이후 이 지도와 지도에 딸린 모든 경로, 이 지도의 초대 토큰이 404(`INVITE_NOT_FOUND`)다.
+- **신설** `DELETE /maps/{mapId}/members/me`: 구성원 누구나. 204. 넘길 사람이 없는 방장(혼자이거나 남은 사람이 전부 탈퇴자)은 409 `OWNER_CANNOT_LEAVE`. 나간 사람이 그 지도에 남긴 반응과 근거 줄만 지우고, 핀, 확정 리스트 항목, 초대 링크, 추천 run과 후보는 남긴다.
+- **필수 추가** `Map.permissions`: 요청자 기준 `can_delete`(방장만 true), `can_leave`(넘길 사람이 없는 방장은 false). 공용 `Permissions` 스키마에 `can_leave`를 추가했다.
+- **추가** `Map.next_owner`: `{ user_id, display_name } | null`. 요청자가 방장이고 넘길 사람이 있을 때만, 상세(`GET /maps/{mapId}`)에서만 채운다. 나가기 확인 창("나가면 ○○님이 방장이 돼요")용이다.
+- **설명 변경** `Member.role`은 위임되면 바뀐다. `Pin.created_by_display_name`은 탈퇴했으면 "탈퇴한 구성원", 이 지도에서 나갔으면 "나간 구성원", 아니면 실명이다(조회할 때 계산, 다시 들어오면 실명).
+- **이벤트**(`docs/events.md`): 전체 채널에 `map.deleted { map_id }`, `member.left { map_id, user_id, new_owner_user_id | null }`. `member.left`는 방장이 계정을 탈퇴해 위임될 때도 나간다(넘길 사람이 없어 지도가 삭제되면 `map.deleted`만). 서버는 `map.deleted`를 보낸 뒤 그 지도의 모든 구독을, `member.left`를 보낸 뒤 그 사람의 그 지도 구독을 닫는다(`docs/events.md` "구독을 끊는 경우").
+- **에러**(`docs/errors.md`): `OWNER_CANNOT_LEAVE`(409).
+- `GET /maps`는 삭제된 지도와 내가 나간 지도를 뺀다.
+- **상한** 내 지도(만들거나 참여한 지도 합산, 삭제·나간 지도 제외)는 **10개**까지다. 이미 10개면 `POST /maps`와 `POST /invites/{token}/accept`가 409 `MAP_LIMIT`(`detail: { limit, count }`). 이미 구성원인 지도의 초대를 다시 수락하는 경우는 막지 않는다. 나가거나 삭제하면 자리가 생긴다(2026-10-07 결정).
+
+**FE 영향**: 타입 재생성 필요(`npm run gen:types`). `Map.permissions`가 필수가 됐다. 지도 메뉴에 「지도 삭제」(`can_delete`), 「지도 나가기」(`can_leave`)를 그리고, 나가기 확인 창에 `next_owner.display_name`을 쓴다. 넘길 사람이 없는 방장에게는 나가기 대신 삭제를 안내한다. 지도 만들기와 초대 수락에서 409 `MAP_LIMIT`이 오면 "지도는 10개까지" 안내와 함께 나가기나 삭제를 권한다. `member.left`를 받으면 핀 목록(작성자 표시 포함), 핀 참여율, `FilterCounts`, readiness를 다시 불러오고, `map.deleted`를 받으면 내 지도 목록으로 돌아간다. 목 서버에 두 엔드포인트와 `permissions`, `next_owner`를 넣었다.
+
+**BE 영향**: #369 2단계. maps(마이그레이션 `maps.deleted_at`, `memberships`의 방장 부분 유니크 인덱스, 삭제 필터, 위임, `list_members`와 `accept_invite`의 방장 판정을 `memberships.role`로), pins(지도 범위 반응 삭제, 작성자 표시), recommend(지도 범위 근거 줄 삭제), auth(방장 탈퇴 시 위임 또는 삭제), authz(`map.delete`, `map.leave`, `can_leave`), realtime(`map.deleted`를 보낸 뒤 연결 종료). 이 스펙 변경은 구현과 같은 브랜치(`docs/map-delete-leave-369`)에서 PR 하나로 머지한다. 문서만으로는 대조 테스트가 실패한다.
+
 ## 2026-10-04 (다섯 번째) — `pin_count`를 필수로 전환 (#313)
 
 - `Map.pin_count`와 `InviteSummary.pin_count`를 **필수**로 바꾼다(서버가 지도 목록·상세·생성·초대 수락·초대 요약 모두에서 채운다, PR #328). 타입 재생성(`npm run gen:types`) 후 optional 처리(`?? 0`·숨김)를 걷어도 된다. 초대 요약은 개수만 주고 핀의 이름·위치는 주지 않는다.

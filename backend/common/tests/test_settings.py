@@ -12,6 +12,14 @@ import pytest
 from common.settings import ConfigError, Settings
 
 
+@pytest.fixture(autouse=True)
+def _nothing_decided(monkeypatch):
+    """conftest가 PLACES_MODE·LLM_MODE를 dev로 고정해 둔다(#370) — 여기서는 "아무것도 정하지 않은 상태"를
+    직접 만든다. 모드를 정하는 테스트는 각자 setenv한다."""
+    for name in ("PLACES_MODE", "LLM_MODE", "LOG_LEVEL"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def _settings(**overrides):
     base = dict(
         environment="prod",
@@ -161,7 +169,7 @@ def test_from_env_llm_defaults_outside_prod(monkeypatch):
     s = Settings.from_env()
 
     assert s.llm_mode == "dev"
-    assert s.llm_model == "gpt-5.6-luna"
+    assert s.llm_model == "gpt-6-luna"
     assert s.elice_ml_api_base_url == ""
     assert s.elice_ml_api_key == ""
     assert s.mode_for("llm") == "dev"
@@ -246,3 +254,29 @@ def test_from_env_without_pingo_env_runs_prod_guards(monkeypatch):
 
     with pytest.raises(ConfigError, match="SESSION_SECRET"):
         Settings.from_env()
+
+
+def test_log_level_defaults_to_info_and_reads_env(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    assert Settings.from_env().log_level == "INFO"
+
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    assert Settings.from_env().log_level == "DEBUG"
+
+
+def test_invalid_log_level_is_rejected(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    monkeypatch.setenv("LOG_LEVEL", "loud")
+
+    with pytest.raises(ConfigError, match="LOG_LEVEL"):
+        Settings.from_env()
+
+
+def test_main_quiets_http_client_loggers():
+    """httpx는 INFO에서 요청 주소(엘리스 경로 id, 사용자 검색어)를 찍는다 — 앱을 올리면 경고부터만 남긴다."""
+    import logging
+
+    import main  # noqa: F401  (import 시 로깅을 설정한다)
+
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("httpcore").level == logging.WARNING

@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from authz.schemas import Permissions
+
 
 class MapRegion(BaseModel):
     """지도 만들기의 지역 검색 결과(#22, 2026-09-28 변경 — PR #132). label/lat/lng 셋 다 있거나
@@ -28,8 +30,23 @@ class MapCreateRequest(BaseModel):
     region: MapRegion | None = None
 
 
+class NextOwner(BaseModel):
+    """방장이 나가면 방장이 될 사람(#369) — 나가기 확인 창 "나가면 ○○님이 방장이 돼요"용."""
+
+    user_id: str
+    display_name: str
+
+
 class Map(BaseModel):
     id: str
+    # 요청자 기준. map은 can_delete(방장만)·can_leave(넘길 사람이 없는 방장은 false)만 채운다(#369).
+    permissions: Permissions
+    # 요청자의 지금 역할(memberships.role) — 방장을 위임하면 바뀐다. 내 지도 목록의 방장 배지용(#391).
+    my_role: Literal["owner", "member"] | None = None
+    # maps.created_by == 요청자 — 만든 사람 기록이라 위임돼도 안 바뀐다(my_role과 달라질 수 있다, #391).
+    created_by_me: bool | None = None
+    # 요청자가 방장이고 넘길 사람이 있을 때만, 상세(GET /maps/{mapId})에서만 채운다(#369).
+    next_owner: NextOwner | None = None
     title: str
     start_date: date
     end_date: date
@@ -63,8 +80,8 @@ class InviteSummary(BaseModel):
 
 class Member(BaseModel):
     user_id: str
-    # owner = maps.created_by(지도를 만든 사람), 나머지 member. memberships.role 컬럼이 아니라
-    # created_by가 정본이다(#313).
+    # owner = 방장, 나머지 member. memberships.role이 정본이다(#369) — 위임되면 바뀌어서
+    # 지도를 만든 사람(maps.created_by)과 다를 수 있다.
     role: Literal["owner", "member"] | None = None
     # users 테이블이 없다(auth #4) — 채울 수 없다.
     display_name: str | None = None

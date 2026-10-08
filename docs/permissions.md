@@ -14,7 +14,7 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
   actions:
     - pin.create
     - pin.delete               # "구성원 누구나" (9/4 결정 #25)
-    - pin.react               # ♥/△/🚫 등록·수정
+    - pin.react               # ♥/🚫 등록·수정
     - pin.revert               # 반응으로 바뀐 상태 되돌리기 — "누구나" (15-1)
     - shortlist.add
     - shortlist.remove         # "구성원 누구나" (5-3, 15-1)
@@ -28,6 +28,8 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
                                 # 요청한 사람에게만 먼저 보인다 — 게시 전 run은 본인 것만 조작·열람
     - recommend.publish        # 「지도에 올리기」 — 단, candidate.requested_by 본인만(아래 author 참고)
     - invite.create            # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
+    - map.leave                # 지도 나가기(#369). 방장도 member라 이 액션을 갖는다. 넘길 사람이 없는
+                                # 방장을 막는 건 역할이 아니라 지도 상태라 여기 넣지 않고 maps 코어가 판정한다(409 OWNER_CANNOT_LEAVE)
     - route.recalculate        # 동선 재계산(5-10) — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
 
 author:                       # evidence_line 또는 candidate를 만든 당사자에게 얹히는 추가 범위
@@ -38,12 +40,14 @@ author:                       # evidence_line 또는 candidate를 만든 당사�
     - evidence.disable          # '-'로 빼기 — "자기가 쓴 것만" (5-5)
     - candidate.view_private     # 게시 전 비공개 후보 열람 (5-5-1)
 
-owner:                        # 지도 생성자. member 전체 + 아래 추가
+owner:                        # 방장. 처음엔 지도 생성자, 위임되면 바뀐다(#369). 판단 정본은 memberships.role
+                              # (maps.created_by는 "만든 사람" 기록일 뿐 방장 판단에 쓰지 않는다). member 전체 + 아래 추가
   scope:
     map: own
   actions:
     - member.kick               # v2, #8
     - map.settings.edit
+    - map.delete                # 지도 삭제(#369). 방장만. soft delete라 모든 구성원에게서 사라진다
 ```
 
 역할은 배타적이지 않고 누적된다 — 한 사용자는 `member` + (자기 evidence에 한해) `author` + (자기 지도에 한해) `owner`를 동시에 가질 수 있다. 판정은 "이 액션이 이 리소스의 scope 안에 있는가"로 계산한다.
@@ -127,7 +131,7 @@ def require_map_member() -> Depends:
 
 ## 숙소·기타 핀의 반응 게이팅 (#154 결정, #280 갱신)
 
-숙소와 기타는 반응(♥/△/🚫)을 받지 않는 카테고리다. v1에서는 둘 다 자체 장소 DB에 없어 핀으로 만들 수 없고(#191),
+숙소와 기타는 반응(♥/🚫)을 받지 않는 카테고리다. v1에서는 둘 다 자체 장소 DB에 없어 핀으로 만들 수 없고(#191),
 값은 스키마 호환으로만 남는다 — v1에 숙소·기타는 없다. 다시 살리는 방법은 v2에서 검토한다(#281).
 확정 리스트 게이팅(#65)과 같은 방식으로 **역할이 아니라 리소스 상태**로 반전한다:
 

@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Check, Share } from 'lucide-react'
+import { Check } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
-import { useShareInvite } from '@/features/maps/useShareInvite'
-import AgainstMark from '@/ui/AgainstMark'
 import Pingo from '@/ui/Pingo'
 
 import { runErrorMessage, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
@@ -69,7 +67,6 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const firstReady = cards.find((c) => c.ready)?.category ?? null
   const [picked, setPicked] = useState<RecommendCategory | null>(null)
   const chosen = picked && cards.find((c) => c.category === picked)?.ready ? picked : firstReady
-  const required = cards[0]?.required ?? 0
 
   if (readiness.isPending) return <p className="text-sm text-ink-500">준비 상태를 확인하는 중…</p>
   if (readiness.error) return <ErrorText message="추천 준비 상태를 불러오지 못했어요" error={readiness.error} />
@@ -87,7 +84,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           />
         ))}
       </div>
-      <p className="text-[0.6875rem] text-ink-500">* 의견 남긴 구성원이 {required}명(구성원 절반) 이상이면 추천 가능해요.</p>
+      <p className="text-[0.6875rem] text-ink-500">* 카테고리마다 좋음·반대 의견이 달린 핀이 1곳 이상이면 추천을 받을 수 있어요.</p>
       {/* 사유가 곧 추천 조건이 된다(②) — 의견이 많을수록 거르고 고를 근거가 늘어난다. */}
       <p className="text-[0.6875rem] text-ink-500">* 핀에 의견을 많이 남길수록 추천이 더 정확해져요.</p>
       {/* run 을 만들 때 AI가 사유를 조건으로 정리한다(②) — 5~12초 걸린다(백엔드 안내). 그동안 진행을 보인다. */}
@@ -97,7 +94,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
         type="button"
         disabled={!chosen || create.isPending}
         onClick={() => chosen && create.mutate(chosen)}
-        className="w-full rounded-xl bg-brand-600 py-3.5 font-bold text-white disabled:bg-ink-100 disabled:text-ink-400"
+        className="btn-primary w-full py-3.5"
       >
         {create.isPending ? '조건을 모으는 중…' : chosen ? `${chosen} 추천받기` : '아직 추천할 수 있는 곳이 없어요'}
       </button>
@@ -133,40 +130,12 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
         <div className={`h-full rounded-full ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`} style={{ width: `${pct}%` }} />
       </div>
       <p className="mt-1.5 flex justify-between text-[0.6875rem] font-semibold text-ink-700">
-        {/* 「4/2」처럼 분자가 분모를 넘으면 뜻이 헷갈려서 두 숫자를 따로 적는다(#344). */}
+        {/* 센 것은 사람이 아니라 의견이 달린 핀이다(#360). 「4/1」처럼 분자가 분모를 넘으면 뜻이 헷갈려서 두 숫자를 따로 적는다(#344). */}
         <span>
-          의견 {card.answered}명 · 필요 {card.required}명
+          의견 핀 {card.answered}곳 · 필요 {card.required}곳
         </span>
-        <span className={card.ready ? 'text-[var(--good-text)]' : 'text-[var(--warn-text)]'}>{card.ready ? '✓ 완료' : `${short}명 더 필요`}</span>
+        <span className={card.ready ? 'text-[var(--good-text)]' : 'text-[var(--warn-text)]'}>{card.ready ? '✓ 완료' : `${short}곳 더 필요`}</span>
       </p>
     </button>
-  )
-}
-
-/** 구성원이 나 혼자일 때(Figma '준비 전 (방장 흐름)') — 추천은 여럿의 의견이 있어야 열린다. 친구를 부르게 한다. */
-export function SoloBody({ mapId }: { mapId: string }) {
-  const readiness = useReadinessQuery(mapId)
-  const { share, url } = useShareInvite(mapId)
-  const cards = readiness.data ? toReadinessCards(readiness.data) : []
-  return (
-    <div className="space-y-3">
-      <ul className="divide-y divide-ink-200 rounded-xl border border-brand-300 bg-brand-50 px-3 text-sm">
-        {cards.map((c) => (
-          <li key={c.category} className="flex justify-between py-2">
-            <span className="font-bold text-ink-900">{c.category}</span>
-            <span className="text-xs text-ink-500">{c.answered ? `의견 ${c.answered}/${c.required}` : '의견 없음'}</span>
-          </li>
-        ))}
-      </ul>
-      <p className="text-xs text-ink-500">지금은 나 혼자예요. 친구를 초대해서 핀에 ♥ △ <AgainstMark />를 남겨 보세요</p>
-      <button
-        type="button"
-        onClick={() => void share()}
-        disabled={!url}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 py-3.5 font-bold text-white disabled:opacity-50"
-      >
-        <Share size={18} aria-hidden="true" /> 초대 링크 공유하기
-      </button>
-    </div>
   )
 }

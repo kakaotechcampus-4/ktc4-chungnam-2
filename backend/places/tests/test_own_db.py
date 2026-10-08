@@ -1,5 +1,7 @@
 """자체 장소 DB — 적재(upsert, 멱등, 폐업 갱신)와 6개 공개 함수의 실제 구현. 실제 PostgreSQL+PostGIS."""
 
+import csv
+import json
 import uuid
 from pathlib import Path
 
@@ -188,6 +190,29 @@ def test_find_candidates_many_returns_the_same_set_as_find_candidates(db_session
     assert [c.name for c in many[1]][-1] == "멀리 있는 연결 장소"       # 카카오 ID로 연결된 장소는 반경 밖이어도 붙는다
     assert many[2] == []                                                # 1.1km 떨어진 힌트
     assert [c.name for c in many[3]] == ["식당"]
+
+
+def test_candidates_carry_the_db_distance_and_kakao_only_ones_have_none(db_session):
+    """pick_match가 파이썬으로 거리를 다시 재지 않도록 두 조회 모두 ST_Distance를 Candidate에 싣는다(#381)."""
+    _place_at(db_session, "near", 40, 90, name="가까운 카페")
+    _place_at(db_session, "far-linked", 5000, 0, name="멀리 연결된 카페", kakao_place_id="k-far")
+    hint = _hint("x", *ORIGIN, "카페", kakao_place_id="k-far")
+
+    one = repository.find_candidates(db_session, hint.lat, hint.lng, hint.category, hint.kakao_place_id)
+    many = repository.find_candidates_many(db_session, [hint])[0]
+
+    for got in (one, many):
+        by_name = {c.name: c for c in got}
+        assert by_name["가까운 카페"].distance_m == pytest.approx(40, abs=0.01)   # 타원체 기준 — ST_Project와 같은 잣대
+        assert by_name["멀리 연결된 카페"].distance_m is None
+
+
+def test_same_name_pick_uses_db_distance_end_to_end(db_session):
+    _place_at(db_session, "a", 200, 0, name="같은 이름 카페")
+    _place_at(db_session, "b", 20, 90, name="같은 이름 카페")
+    m = api.match_place(_hint("같은 이름 카페", *ORIGIN, "카페"), db=db_session)
+    assert m is not None and (m.lat, m.lng) != (0, 0)
+    assert round(m.lng, 4) != round(ORIGIN[1], 4) and abs(m.lat - ORIGIN[0]) < 0.0001   # 동쪽 20m 쪽이 골라진다
 
 
 def test_find_candidates_many_is_one_query_with_bounded_rows(db_session):
@@ -383,6 +408,26 @@ def test_cli_reports_skip_reasons(db_session, capsys):
     load.main(["labels", "--file", str(FIX / "labels.csv"), "--dry-run"], session_factory=lambda: _NoCloseSession(db_session))
     out = capsys.readouterr().out
     assert "모르는 fact_key: made_up_key" in out and "원본 가격 숫자 거부" in out
+
+
+def test_cli_tourapi_loads_types_12_14_38_with_labels(db_session, tmp_path, capsys):
+    items = [
+        {"contentid": "1", "contenttypeid": "12", "title": "경복궁", "addr1": "서울특별시 종로구 사직로 161", "mapx": "126.977", "mapy": "37.5796"},
+        {"contentid": "2", "contenttypeid": "14", "title": "국립중앙박물관", "addr1": "서울특별시 용산구 서빙고로 137", "mapx": "126.9804", "mapy": "37.5239"},
+        {"contentid": "3", "contenttypeid": "38", "title": "광장시장", "addr1": "서울특별시 종로구 창경궁로 88", "mapx": "126.9996", "mapy": "37.5700"},
+        {"contentid": "4", "contenttypeid": "32", "title": "호텔", "addr1": "서울특별시 중구 소공로 1", "mapx": "126.98", "mapy": "37.56"},
+        {"contentid": "5", "contenttypeid": "12", "title": "좌표 잘못", "addr1": "서울특별시 관악구 관악로 173", "mapx": "127.709322", "mapy": "37.470571"},
+    ]
+    places_file = tmp_path / "tour.json"
+    places_file.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    labels_file = tmp_path / "labels.csv"
+    header = next(csv.reader((FIX / "labels.csv").open(encoding="utf-8-sig")))
+    labels_file.write_text(",".join(header) + "\n", encoding="utf-8")
+    rc = load.main(["tourapi", "--file", str(places_file), "--labels", str(labels_file)], session_factory=lambda: _NoCloseSession(db_session))
+    out = capsys.readouterr().out
+    assert rc == 0 and "[contenttypeid 14] 받음 1 / 건너뜀 0" in out and "서울 밖 좌표: 1" in out
+    rows = db_session.execute(select(Place.source_id, Place.category).where(Place.source == "tourapi").order_by(Place.source_id)).all()
+    assert rows == [("1", "관광지"), ("2", "관광지"), ("3", "관광지")]
 
 
 def test_cli_missing_file_exits_2(capsys):

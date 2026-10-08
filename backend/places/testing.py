@@ -16,10 +16,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Sequence
 
+from common.geo import haversine_distance_m
 from places import matching
 from places.matching import OWN_CATEGORIES, Candidate
 from places.schemas import Area, FactLabel, PlaceHint, PlaceInfo, PlaceMatch, PlaceRef
-from places.sources.base import distance_m
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -86,15 +86,16 @@ class FakePlaces:
     # ---- 6개 공개 함수 (places.api와 같은 이름·시그니처). db는 메모리 대역이라 받기만 하고 쓰지 않는다 ----
 
     def match_place(self, hint: PlaceHint, *, db: Session | None = None) -> PlaceMatch | None:
+        # 메모리 대역에는 DB(ST_DWithin)가 없어서 반경 판정만 여기서 파이썬으로 흉내 낸다 — 실제 구현은 DB 한 곳이 판정한다(#316·#381)
         near = sorted(
             (r for r in self.rows if r.status == "open"
-             and distance_m(hint.lat, hint.lng, r.lat, r.lng) <= matching.MAX_RADIUS_M),
-            key=lambda r: distance_m(hint.lat, hint.lng, r.lat, r.lng),
+             and haversine_distance_m(hint.lat, hint.lng, r.lat, r.lng) <= matching.MAX_RADIUS_M),
+            key=lambda r: haversine_distance_m(hint.lat, hint.lng, r.lat, r.lng),
         )[: matching.MAX_CANDIDATES]
         # 이미 같은 카카오 ID로 매칭된 장소는 반경 밖이어도 후보에 넣는다(실제 구현의 ID 조회와 같다)
         by_id = [r for r in self.rows if hint.kakao_place_id and r.kakao_place_id == hint.kakao_place_id
                  and r.status == "open" and r not in near]
-        return matching.pick_match(hint, [self._candidate(r) for r in near + by_id])
+        return matching.pick_match(hint, [self._candidate(r, hint) for r in near] + [self._candidate(r, None) for r in by_id])
 
     def record_kakao_match(self, place_id: str, kakao_place_id: str, kakao_place_url: str, *, db: Session | None = None) -> None:
         row = self._row(place_id)
@@ -121,7 +122,7 @@ class FakePlaces:
             PlaceRef(r.place_id, r.lat, r.lng)
             for r in self.rows
             if r.status == "open" and r.category == category
-            and any(distance_m(a.lat, a.lng, r.lat, r.lng) <= a.radius_m for a in areas)
+            and any(haversine_distance_m(a.lat, a.lng, r.lat, r.lng) <= a.radius_m for a in areas)
         ]
 
     def get_facts(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, list[FactLabel]]:
@@ -144,5 +145,7 @@ class FakePlaces:
         return next((r for r in self.rows if r.place_id == place_id), None)
 
     @staticmethod
-    def _candidate(r: _Row) -> Candidate:
-        return Candidate(r.place_id, r.name, r.lat, r.lng, r.category, r.kakao_place_id)
+    def _candidate(r: _Row, hint: PlaceHint | None) -> Candidate:
+        # 실제 구현은 DB의 ST_Distance를 싣는다 — 대역은 같은 값을 직접 재고, 카카오 ID로만 붙은 후보(hint=None)는 비운다
+        dist = haversine_distance_m(hint.lat, hint.lng, r.lat, r.lng) if hint is not None else None
+        return Candidate(r.place_id, r.name, r.lat, r.lng, r.category, r.kakao_place_id, dist)

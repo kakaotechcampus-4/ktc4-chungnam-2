@@ -19,7 +19,8 @@ from pins import chips
 from pins.schemas import (
     MemberFulfillment,
     Pin,
-    PinCreateRequest,
+    PinCreateLive,
+    PinCreateSearch,
     PlaceSource,
     Reaction,
     ReactionSummary,
@@ -27,6 +28,21 @@ from pins.schemas import (
 
 
 LINK_PIN_REJECTED_MESSAGE = "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"
+
+# 핀 작성자 표시(#155, #369). 탈퇴 문구는 auth.api.WITHDRAWN_DISPLAY_NAME과 같은 값이다(test_core가 대조한다).
+WITHDRAWN_AUTHOR_NAME = "탈퇴한 구성원"
+LEFT_AUTHOR_NAME = "나간 구성원"
+
+
+def author_display_name(real_name: str | None, *, is_withdrawn: bool, is_current_member: bool) -> str | None:
+    """핀 created_by_display_name 판정(#369 설계 14번). 탈퇴를 먼저 본다 — 탈퇴자는 멤버십 행이
+    남아 현재 구성원으로 잡히기 때문이다(#245). 그다음 그 지도에서 나갔으면 '나간 구성원', 아니면 실명.
+    핀 행에는 아무것도 쓰지 않고 조회할 때마다 계산하므로, 다시 들어오면 실명으로 돌아간다."""
+    if is_withdrawn:
+        return WITHDRAWN_AUTHOR_NAME
+    if not is_current_member:
+        return LEFT_AUTHOR_NAME
+    return real_name
 
 
 COORDINATE_PIN_REJECTED_MESSAGE = "지도를 눌러 핀을 찍을 수는 없어요. 장소를 검색해서 골라 주세요"
@@ -36,13 +52,25 @@ KAKAO_PLACE_PAGE = "https://place.map.kakao.com/"
 KAKAO_RAW_ID = re.compile(r"[0-9]{1,20}")
 
 
-def validate_create(req: PinCreateRequest) -> None:
-    """v1은 source=search 하나만 받는다(#191, #147). coordinate·link(link_url 포함)는 422 —
+LIVE_CATEGORY_MESSAGE = "이 분류는 아직 핀으로 남길 수 없어요"
+
+
+def validate_create(req: PinCreateSearch) -> None:
+    """search 경로는 source=search 하나만 받는다(#191, #147). coordinate·link(link_url 포함)는 422 —
     스키마엔 v2 확장용으로 값이 남아 있어 여기서만 막는다. 좌표 범위·필수값은 스키마가 검증한다."""
     if req.source == "link" or req.link_url:
         raise AppError("VALIDATION_ERROR", LINK_PIN_REJECTED_MESSAGE)
     if req.source == "coordinate":
         raise AppError("VALIDATION_ERROR", COORDINATE_PIN_REJECTED_MESSAGE)
+
+
+def validate_live_create(req: PinCreateLive) -> None:
+    """실시간 핀(#382)은 자체 DB 장소가 없어도 되지만, 핀으로 만들 수 있는 분류(음식점·카페·관광지)만 받는다.
+    숙소·기타는 live로도 422 VALIDATION_ERROR. 내용 없는 장소 ID·검색어(공백뿐)도 요청 오류다."""
+    if not categories.is_pinnable(req.category):
+        raise AppError("VALIDATION_ERROR", LIVE_CATEGORY_MESSAGE)
+    if not req.kakao_place_id.strip() or not req.search_query.strip():
+        raise AppError("VALIDATION_ERROR", "kakao_place_id와 search_query에는 내용이 있어야 해요")
 
 
 def validate_category_matches(requested: str, place_category: str) -> None:
@@ -84,7 +112,6 @@ def kind_after_unconfirm(origin: str) -> str:
 @dataclass(frozen=True)
 class ReactionCounts:
     like: int = 0
-    neutral: int = 0
     against: int = 0
 
 
@@ -97,10 +124,14 @@ class PinRecord:
     category: str
     kind: str
     visibility: str
-    lat: float
-    lng: float
+    lat: float | None
+    lng: float | None
     created_by: str
     reaction_counts: ReactionCounts
+    source: str = "db"
+    memo: str | None = None
+    kakao_place_id: str | None = None
+    search_query: str | None = None
     place_name: str | None = None
     place_url: str | None = None
     created_by_display_name: str | None = None
@@ -128,6 +159,10 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
         visibility=record.visibility,
         lat=record.lat,
         lng=record.lng,
+        source=record.source,
+        memo=record.memo,
+        kakao_place_id=record.kakao_place_id,
+        search_query=record.search_query,
         place_name=record.place_name,
         place_url=record.place_url,
         created_by=record.created_by,
@@ -140,7 +175,6 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
         my_reaction=record.my_reaction,
         reaction_summary=ReactionSummary(
             like=record.reaction_counts.like,
-            neutral=record.reaction_counts.neutral,
             against=record.reaction_counts.against,
         ),
         permissions=permissions_for(
@@ -197,7 +231,7 @@ def reason_content(text: str | None) -> str | None:
 def validate_reaction(reaction_type: str, reason_text: str | None, reason_chip_ids: list[str] | None) -> None:
     """가드레일 3 — 반대(against)는 사유가 필수다. 공백·제로폭만 있는 reason_text는 없는 것으로
     취급한다(목 서버는 이걸 놓쳐 "   "도 통과시키는 버그가 있다). 내용 없는 칩은 사유가 아니라
-    요청 오류다(422 VALIDATION_ERROR — 반응 종류와 무관하게). like/neutral은 사유 없이 통과."""
+    요청 오류다(422 VALIDATION_ERROR — 반응 종류와 무관하게). like는 사유 없이 통과."""
     if any(reason_content(chip) is None for chip in reason_chip_ids or []):
         raise AppError("VALIDATION_ERROR", "reason_chip_ids에 내용 없는 칩이 있습니다")
     if reaction_type != "against":

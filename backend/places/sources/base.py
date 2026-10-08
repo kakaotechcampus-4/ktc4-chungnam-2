@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import math
 from dataclasses import dataclass, replace
 from typing import Any, Protocol, runtime_checkable
+
+from common.geo import haversine_distance_m
 
 # 층2 원자료 중 소스가 채워줄 수 있는 필드 묶음. 값이 None이면 "아직 못 채운 것"이다.
 # rating은 rating_count와 한 묶음이다(같이 오고 같이 없다).
@@ -91,14 +92,6 @@ def normalize_name(name: str) -> str:
     return "".join(ch for ch in name.lower() if ch.isalnum())
 
 
-def distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    r = 6371000.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp, dl = p2 - p1, math.radians(lng2 - lng1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
-
-
 def is_same_place(a_name: str, a_lat: float, a_lng: float, b: RawPlace, max_dist_m: float = 200.0) -> bool:
     """이름이 같거나 한쪽이 다른 쪽을 포함하고, 가까울 때 같은 장소로 본다."""
     na, nb = normalize_name(a_name), normalize_name(b.name)
@@ -106,4 +99,4 @@ def is_same_place(a_name: str, a_lat: float, a_lng: float, b: RawPlace, max_dist
         return False
     if not (na == nb or na in nb or nb in na):
         return False
-    return distance_m(a_lat, a_lng, b.lat, b.lng) <= max_dist_m
+    return haversine_distance_m(a_lat, a_lng, b.lat, b.lng) <= max_dist_m
