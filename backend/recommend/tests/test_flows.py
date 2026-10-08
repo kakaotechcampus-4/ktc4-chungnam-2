@@ -946,8 +946,9 @@ def test_execute_run_keeps_restaurants_whose_cuisine_labels_are_mostly_false(db_
 
 
 def _run_with_wanted_and_unwanted_soft_keys(db_session):
-    """음식점 run — hard contains_shellfish 활성, 선호 사유 wait_short(unknown), ♥ 핀 기준 parking_available.
-    라벨: contains_shellfish·franchise 거짓 known, parking_available 참 known, 나머지 soft는 unknown."""
+    """음식점 run — hard contains_shellfish 활성, 선호 사유 wait_short(unknown), ♥ 핀 기준 cuisine_japanese.
+    라벨: contains_shellfish·franchise 거짓 known, cuisine_japanese 참 known, 나머지 soft는 unknown.
+    ♥ 핀 기준은 음식점에서 ♥ 한 곳으로도 쓰이는 업태 키다(#414 — 주차 같은 편의 키는 ♥에서 쓰지 않는다)."""
     run = _make_run(db_session, status="collecting_evidence")
     _make_region(db_session, run, radius_m=1000)
     service.add_reaction_evidence(db_session, run_id=run.id, lines=[
@@ -959,8 +960,8 @@ def _run_with_wanted_and_unwanted_soft_keys(db_session):
     places = [PlaceStub(place_id="cand", lat=35.0005, lng=129.0005)]
     # ♥ 핀의 라벨은 places(place_facts)에서 읽는다(#247) — 핀에 복사된 checks가 아니다.
     facts = _FakePlaceFacts({
-        "cand": {"contains_shellfish": False, "franchise": False, "parking_available": True},
-        liked.place_id: {"parking_available": True},
+        "cand": {"contains_shellfish": False, "franchise": False, "cuisine_japanese": True},
+        liked.place_id: {"cuisine_japanese": True},
     })
     flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
     [candidate] = service.list_candidates(db_session, str(run.id))
@@ -976,15 +977,15 @@ def test_execute_run_checks_omit_unwanted_unknown_soft_keys(db_session):
     assert "pet_friendly" not in by_key and "vegetarian_friendly" not in by_key  # 원하지 않은 unknown
     assert "franchise" not in by_key  # 원하지 않은 known(거짓)도 싣지 않는다
     assert by_key["wait_short"]["needs_check"] is True and by_key["wait_short"]["confidence"] == "unknown"  # 활성 근거 줄
-    assert by_key["parking_available"]["confidence"] == "known"  # ♥ 핀 기준(known)
+    assert by_key["cuisine_japanese"]["confidence"] == "known"  # ♥ 핀 기준(known)
     assert by_key["contains_shellfish"]["passed"] is True and "is_open" in by_key  # hard 그대로
 
 
 def test_execute_run_unwanted_unknown_soft_checks_still_feed_scoring(db_session):
-    """점수 입력은 전체 soft 체크다 — 저장에서 빠져도 ♥ 핀 기준(parking_available)이 점수에 쓰인다."""
+    """점수 입력은 전체 soft 체크다 — 저장에서 빠져도 ♥ 핀 기준(cuisine_japanese)이 점수에 쓰인다."""
     _run, candidate = _run_with_wanted_and_unwanted_soft_keys(db_session)
     assert candidate.member_fulfillment["total"] >= 1 and candidate.member_fulfillment["satisfied"] >= 1
-    assert "주차할 수 있음" in candidate.reason
+    assert "일식" in candidate.reason
 
 
 def test_publish_candidate_pin_checks_follow_the_same_filter(db_session):
@@ -1475,3 +1476,30 @@ def test_hearted_pin_labels_come_from_place_facts_not_pin_checks(db_session):
     flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
     ranks = {c.place_id: c.rank for c in service.list_candidates(db_session, str(run.id))}
     assert ranks["far_raw"] == 1 and ranks["near"] == 2
+
+
+def test_restaurant_heart_convenience_labels_do_not_outrank_a_written_preference(db_session):
+    """#414 — 명동 시험 재현. ♥ 핀(일식·체인점·기름진 메뉴·주차·넓음) + "초밥 좋아해요"(cuisine_japanese 직접 씀).
+    전에는 체인 뷔페가 4점으로 초밥집(2점)보다 위였다. 이제 ♥에서 일식만 남아 초밥집이 1위이고, 뷔페 이유에
+    선호 충족이 없다."""
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        _line("user_1", "preferred", "cuisine_japanese", True, text="초밥 좋아해요"),
+    ])
+    liked = _make_pin(db_session, lat=35.0008, lng=129.0008)
+    _react(db_session, liked, user_id="user_1", type="like")
+    convenience = {"franchise": True, "oily_focused": True, "parking_available": True, "spacious": True}
+    places = [PlaceStub(place_id=pid, lat=35.0005, lng=129.0005) for pid in ("buffet", "sushi")]
+    facts = _FakePlaceFacts({
+        liked.place_id: {"cuisine_japanese": True, **convenience},
+        "buffet": {"cuisine_buffet": True, **convenience},
+        "sushi": {"cuisine_japanese": True},
+    })
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
+
+    candidates = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+    assert candidates["sushi"].rank == 1 and candidates["buffet"].rank == 2
+    assert candidates["sushi"].reason == "선호 충족: 일식 (1/1명)"
+    assert "선호 충족" not in candidates["buffet"].reason
+    assert "franchise" not in {c["fact_key"] for c in candidates["buffet"].checks}  # ♥에서 빠진 키는 응답 체크에도 없다

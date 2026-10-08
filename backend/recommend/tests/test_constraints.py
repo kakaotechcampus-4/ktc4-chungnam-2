@@ -68,3 +68,19 @@ def test_soft_registry_covers_the_doc_categories_and_is_all_pass():
         "spacious", "long_established", "vegetarian_friendly", "franchise",             # 음식점 키를 카페에도(#263)
     }
     assert "pet_friendly" in restaurant and "pet_friendly" in sight
+
+
+def test_heart_signal_table_classifies_every_restaurant_soft_key():
+    """#414 — docs/constraints.md "♥에서 선호로 쓰는 라벨 (음식점)" 표 전사. 새 음식점 soft 키는 표에도 넣는다."""
+    table = constraints.HEART_SIGNAL_BY_CATEGORY["음식점"]
+    assert set(table) == set(constraints.soft_fact_keys_for("음식점"))
+    by_use = {use: {k for k, v in table.items() if v == use} for use in ("use", "two_or_more", "unused")}
+    assert by_use["use"] == {k for k in table if k.startswith("cuisine_")} and len(by_use["use"]) == 10
+    assert by_use["two_or_more"] == {"spicy_focused", "oily_focused", "long_established", "vegetarian_friendly"}
+    assert by_use["unused"] == {"franchise", "spacious", "parking_available", "pet_friendly", "wait_short"}
+    assert constraints.HEART_SIGNAL_MIN_TRUE_PLACES == 2
+
+
+def test_heart_signal_defaults_to_use_outside_the_restaurant_table():
+    assert constraints.heart_signal_use("카페", "franchise") == "use"
+    assert constraints.heart_signal_use("관광지", "quiet") == "use"

@@ -339,15 +339,16 @@ def test_score_candidates_counts_preference_author_as_supporter_without_heart():
     criteria = {"quiet": True}
     candidates = {"p1": [_check("quiet", passed=True)]}
     authors = {"quiet": frozenset({"u1"})}
-    assert core.score_candidates(candidates, [], criteria, authors) == {"p1": 1}
+    assert core.score_candidates(candidates, [], criteria, authors) == {"p1": 3}
 
 
 def test_score_candidates_counts_author_who_also_hearted_once():
+    # #414 — u1은 ♥도 하고 직접 썼으니 3점(4점이 아니다), u2는 ♥만 해서 1점.
     criteria = {"quiet": True}
     hearted = [_place(_check("quiet", passed=True), members=frozenset({"u1", "u2"}))]
     candidates = {"p1": [_check("quiet", passed=True)]}
     authors = {"quiet": frozenset({"u1"})}
-    assert core.score_candidates(candidates, hearted, criteria, authors) == {"p1": 2}
+    assert core.score_candidates(candidates, hearted, criteria, authors) == {"p1": 3 + 1}
 
 
 def test_score_candidates_ignores_non_soft_fact_keys_in_hearted_checks():
@@ -516,15 +517,15 @@ def test_preference_author_is_not_offset_by_their_own_opposing_heart():
     authors = {"quiet": frozenset({"u1"})}
     candidates = {"p1": [_check("quiet", passed=True)]}
     scores = core.score_candidates(candidates, hearted, {"quiet": True}, authors)
-    assert scores == {"p1": 1}
+    assert scores == {"p1": 3}
 
 
 def test_opposing_heart_of_another_member_still_offsets_preference_author():
     hearted = [_place(_check("quiet", passed=False), members=frozenset({"u1", "u2"}))]
     authors = {"quiet": frozenset({"u1"})}
     candidates = {"p1": [_check("quiet", passed=True)]}
-    # 지지 {u1}, 반대 {u2}(u1은 작성자라 빠진다) → 1 - 1
-    assert core.score_candidates(candidates, hearted, {"quiet": True}, authors) == {"p1": 0}
+    # 지지 {u1}(직접 씀 3), 반대 {u2}(♥ 1, u1은 작성자라 빠진다) → 3 - 1
+    assert core.score_candidates(candidates, hearted, {"quiet": True}, authors) == {"p1": 3 - 1}
 
 
 # ---------- build_reason ----------
@@ -675,7 +676,7 @@ def test_soft_checks_without_requirement_never_disqualify():
 def test_avoided_authors_subtract_from_a_place_with_the_true_label():
     checks = {"a": [_label_check("cuisine_korean", value=True)], "b": [_label_check("cuisine_korean", value=False)]}
     scores = core.score_candidates(checks, [], {}, {}, {"cuisine_korean": frozenset({"user_1", "user_2"})})
-    assert scores == {"a": -2, "b": 0}
+    assert scores == {"a": -3 * 2, "b": 0}  # 피하겠다고 직접 쓴 사람당 −3(#414)
 
 
 def test_member_fulfillment_counts_disqualifier_authors_as_satisfied():
@@ -693,3 +694,93 @@ def test_member_fulfillment_disqualifier_author_with_unmet_preference_is_not_sat
     )
     assert result["total"] == 2 and result["satisfied"] == 1
     assert {e["user_id"]: e["satisfied"] for e in result["by_member"]} == {"u1": False, "u2": True}
+
+
+# ---------- #414 — ♥ 신호 거르기(음식점)와 직접 쓴 사유 3점 ----------
+
+def _keys(places):
+    return [sorted(c.fact_key for c in place.checks) for place in places]
+
+
+def test_filter_heart_signals_drops_restaurant_convenience_keys():
+    """'쓰지 않음' 키(체인점·넓음·주차·반려동물·웨이팅)는 ♥ 핀에서 참이든 거짓이든 뺀다."""
+    unused = ["franchise", "spacious", "parking_available", "pet_friendly", "wait_short"]
+    hearted = [_place(_check("cuisine_japanese"), *[_check(k) for k in unused], _check("franchise", passed=False))]
+    assert _keys(core.filter_heart_signals(hearted, "음식점")) == [["cuisine_japanese"]]
+
+
+def test_filter_heart_signals_keeps_cuisine_from_a_single_place():
+    hearted = [_place(_check("cuisine_raw_fish"), _check("cuisine_korean", passed=False))]
+    assert _keys(core.filter_heart_signals(hearted, "음식점")) == [["cuisine_korean", "cuisine_raw_fish"]]
+
+
+def test_filter_heart_signals_style_key_needs_two_true_places():
+    """'2곳 이상' 키는 참인 ♥ 핀이 1곳이면 참·거짓 모두 빠지고, 2곳이면 참·거짓 모두 남는다(다수결은 그다음)."""
+    one = [_place(_check("spicy_focused")), _place(_check("spicy_focused", passed=False))]
+    assert _keys(core.filter_heart_signals(one, "음식점")) == [[], []]
+
+    two = [
+        _place(_check("spicy_focused")), _place(_check("spicy_focused")), _place(_check("spicy_focused", passed=False)),
+    ]
+    assert _keys(core.filter_heart_signals(two, "음식점")) == [["spicy_focused"]] * 3
+
+
+def test_filter_heart_signals_style_key_ignores_unknown_true_labels():
+    hearted = [_place(_check("oily_focused")), _place(_check("oily_focused", confidence="unknown"))]
+    assert _keys(core.filter_heart_signals(hearted, "음식점")) == [[], []]
+
+
+def test_filter_heart_signals_counts_places_not_members():
+    """한 곳에 두 사람이 ♥해도 1곳이다 — 우연을 거르는 기준은 사람 수가 아니라 가게 수다."""
+    hearted = [_place(_check("long_established"), members=frozenset({"u1", "u2"}))]
+    assert _keys(core.filter_heart_signals(hearted, "음식점")) == [[]]
+
+
+def test_filter_heart_signals_leaves_cafe_unchanged():
+    """카페·관광지는 아직 나누지 않았다 — 같은 키(franchise·spacious)도 그대로 쓴다."""
+    hearted = [_place(_check("franchise"), _check("spacious"), _check("quiet"), members=frozenset({"u1", "u2"}))]
+    assert core.filter_heart_signals(hearted, "카페") == hearted
+
+
+def test_written_preference_for_an_unused_key_still_counts_but_hearts_do_not():
+    """'쓰지 않음' 키도 직접 쓰면 그대로 쓴다(3점). ♥만 한 사람은 그 키를 지지한 것으로 세지 않는다."""
+    hearted = core.filter_heart_signals([_place(_check("franchise"), members=frozenset({"u2"}))], "음식점")
+    authors = {"franchise": frozenset({"u1"})}
+    criteria = core.build_preference_criteria(
+        hearted, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors=authors,
+    )
+    assert criteria == {"franchise": True}
+    assert core.score_candidates({"p1": [_check("franchise")]}, hearted, criteria, authors) == {"p1": 3}
+
+
+def test_member_who_hearted_and_wrote_avoid_counts_minus_three_once():
+    """♥한 곳이 조용했어도 "조용한 곳은 피하고 싶다"고 직접 쓰면 반대 3점이다(−1−3이 아니다)."""
+    hearted = [_place(_check("quiet"), members=frozenset({"u2"}))]
+    preferred, avoided = {"quiet": frozenset({"u1"})}, {"quiet": frozenset({"u2"})}
+    scores = core.score_candidates({"p1": [_check("quiet")]}, hearted, {"quiet": True}, preferred, avoided)
+    assert scores == {"p1": 3 - 3}
+
+
+def test_written_preference_outweighs_other_heart_labels():
+    """2026-10-08 명동 시험 — "초밥 좋아해요"를 직접 썼고 ♥ 핀은 일식+체인점+기름진 메뉴+주차+넓음이었다.
+    걸러진 ♥ 신호로는 일식만 남아, 초밥집이 체인 뷔페보다 위다."""
+    raw = [_place(
+        _check("cuisine_japanese"), _check("franchise"), _check("oily_focused"),
+        _check("parking_available"), _check("spacious"), members=frozenset({"u1"}),
+    )]
+    hearted = core.filter_heart_signals(raw, "음식점")
+    authors = {"cuisine_japanese": frozenset({"u1"})}
+    criteria = core.build_preference_criteria(
+        hearted, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors=authors,
+    )
+    assert criteria == {"cuisine_japanese": True}
+
+    candidates = {
+        "sushi": [_check("cuisine_japanese")],
+        "buffet": [_check("cuisine_buffet"), _check("franchise"), _check("oily_focused"),
+                   _check("parking_available"), _check("spacious")],
+    }
+    assert core.score_candidates(candidates, hearted, criteria, authors) == {"sushi": 3, "buffet": 0}
+
+    fulfillment = core.build_member_fulfillment(candidates["buffet"], hearted, criteria, authors)
+    assert core.build_reason(candidates["buffet"], criteria, fulfillment) == "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"

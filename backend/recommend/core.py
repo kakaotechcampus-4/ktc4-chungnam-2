@@ -280,6 +280,12 @@ def check_retry_limit(attempt_no: int) -> None:
 # ============================================================================
 
 
+# 지지·반대 한 사람의 점수 — docs/constraints.md "점수"(#414). 직접 쓴 선호 사유(wants=true/false)의 작성자는 3점,
+# ♥로만 나온 지지·반대는 1점. 한 사람이 ♥도 하고 같은 키를 직접 쓰면 3점이다(더하지 않는다). 3은 시작값이다.
+WRITTEN_PREFERENCE_POINTS = 3
+HEART_PREFERENCE_POINTS = 1
+
+
 @dataclass(frozen=True)
 class HeartedPlace:
     """♥ 반응을 받은 핀 하나 — 그 핀의 라벨(checks)과 ♥를 누른 구성원 user_id 집합.
@@ -300,6 +306,32 @@ class ScoredCandidate:
     region_label: str
     lat: float
     lng: float
+
+
+def filter_heart_signals(hearted_places: Sequence[HeartedPlace], category: str) -> list[HeartedPlace]:
+    """0단계 — ♥ 핀 라벨 중 선호 신호로 쓸 것만 남긴다(docs/constraints.md "♥에서 선호로 쓰는 라벨", #414).
+
+    'unused' 키는 뺀다. 'two_or_more' 키는 known+참인 ♥ 핀이 `HEART_SIGNAL_MIN_TRUE_PLACES`곳 미만이면 그 키를
+    참·거짓 모두 뺀다(신호가 없으면 반대 신호도 없다). 직접 쓴 선호 사유는 여기를 거치지 않는다. 걸러진 목록을
+    기준·점수·충족 집계·이유에 똑같이 넘겨야 ♥ 신호가 한 곳에서만 빠지는 일이 없다."""
+    true_places: dict[str, int] = {}
+    for place in hearted_places:
+        for check in place.checks:
+            if check.confidence == "known" and check.passed:
+                true_places[check.fact_key] = true_places.get(check.fact_key, 0) + 1
+
+    def keep(fact_key: str) -> bool:
+        use = constraints.heart_signal_use(category, fact_key)
+        if use == "unused":
+            return False
+        if use == "two_or_more":
+            return true_places.get(fact_key, 0) >= constraints.HEART_SIGNAL_MIN_TRUE_PLACES
+        return True
+
+    return [
+        HeartedPlace(checks=[c for c in place.checks if keep(c.fact_key)], member_ids=place.member_ids)
+        for place in hearted_places
+    ]
 
 
 def build_preference_criteria(
@@ -368,7 +400,8 @@ def _member_support(
     """fact_key마다 (지지 구성원 집합, 반대 구성원 집합) — 지지는 그 값을 True로 가진 곳에 ♥한
     구성원 + 그 fact_key를 선호 사유로 직접 쓴 구성원(♥ 이력이 없어도 명시적 선호는 지지다),
     반대는 False로 가진 곳에 ♥한 구성원. "구성원 단위로 센다"(한 사람이 같은 값의 장소 여러
-    곳에 ♥해도, ♥하고 사유도 써도 1명)를 집합으로 자연스럽게 보장한다. 소프트 키만 쓴다."""
+    곳에 ♥해도, ♥하고 사유도 써도 1명)를 집합으로 자연스럽게 보장한다. 소프트 키만 쓴다.
+    사람마다 몇 점인지(직접 씀 3, ♥ 1)는 `score_candidates`가 정한다 — 여기는 누가 지지·반대인지만 센다."""
     supporting: dict[str, set[str]] = {}
     opposing: dict[str, set[str]] = {}
     for place in hearted_places:
@@ -407,11 +440,15 @@ def score_candidates(
     """2단계 — 후보마다 점수 매기기(이슈 #112).
 
     criteria[fact_key] is True이고 후보 자신도 그 라벨이 known+True일 때만("양쪽 다 참일 때만")
-    점수를 준다. 더하는 값은 (그 라벨=True인 곳에 ♥한 구성원 수 − False인 곳에 ♥한 구성원 수).
+    점수를 준다. 더하는 값은 (지지 점수 − 반대 점수)다. 지지·반대 구성원 한 사람이 직접 쓴 사유의
+    작성자면 `WRITTEN_PREFERENCE_POINTS`, ♥로만 나왔으면 `HEART_PREFERENCE_POINTS`다(#414).
     조사 안 된(unknown) 라벨은 0점 — 감점도 없다.
 
     `avoided_authors`(fact_key → "있는 곳은 피하고 싶다"고 선호로 쓴 구성원, #231)는 그 키를 가진 후보에서
-    그 사람 수만큼 깎는다. 기준(criteria)이 그 키를 True로 두지 않았어도 깎는다(피하는 사람이 있으니까)."""
+    한 사람당 `WRITTEN_PREFERENCE_POINTS`씩 깎는다. 기준(criteria)이 그 키를 True로 두지 않았어도 깎는다(피하는
+    사람이 있으니까)."""
+    preferred_authors = preferred_authors or {}
+    avoided_authors = avoided_authors or {}
     support = _member_support(hearted_places, preferred_authors, avoided_authors)
     empty: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset())
     scores: dict[str, int] = {}
@@ -422,11 +459,17 @@ def score_candidates(
                 continue
             if criteria.get(check.fact_key) is True:
                 supporting, opposing = support.get(check.fact_key, empty)
-                total += len(supporting) - len(opposing)
-            elif check.fact_key in (avoided_authors or {}):
-                total -= len(avoided_authors[check.fact_key])
+                total += _points(supporting, preferred_authors.get(check.fact_key, frozenset()))
+                total -= _points(opposing, avoided_authors.get(check.fact_key, frozenset()))
+            elif check.fact_key in avoided_authors:
+                total -= WRITTEN_PREFERENCE_POINTS * len(avoided_authors[check.fact_key])
         scores[place_id] = total
     return scores
+
+
+def _points(members: frozenset[str], writers: frozenset[str]) -> int:
+    """구성원 집합의 점수 — 같은 방향으로 직접 쓴 사람은 3점, 나머지(♥만)는 1점. 한 사람은 한 번만 센다."""
+    return sum(WRITTEN_PREFERENCE_POINTS if member in writers else HEART_PREFERENCE_POINTS for member in members)
 
 
 def build_member_fulfillment(
