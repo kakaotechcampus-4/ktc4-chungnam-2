@@ -222,3 +222,58 @@ class TestTextEchoNormalization:
     def test_different_text_is_still_rejected(self):
         with pytest.raises(ValueError):
             self._merge("중식 먹자")
+
+
+# ── 입력 payload에서 fact_key null 빼기 — #410 ───────────────────────────────
+
+from llm.client import _user_payload
+
+
+class TestUserPayloadOmitsNullKey:
+    """null을 보내면 모델이 "이미 정해진 값"으로 읽고 키를 붙일 사유에도 null을 돌려준다(25%)."""
+
+    def test_line_without_key_has_no_fact_key_field(self):
+        [line] = json.loads(_user_payload([_reason("갑각류 알러지 있어요", "required")]))
+        assert "fact_key" not in line
+        assert line == {"index": 0, "text": "갑각류 알러지 있어요", "badge": "required"}
+
+    def test_missing_fact_key_entry_is_also_omitted(self):
+        raw = {"author_id": "u1", "source": "reaction", "text": "한식 말고", "badge": "required"}
+        [line] = json.loads(_user_payload([raw]))
+        assert "fact_key" not in line
+
+    def test_chip_line_keeps_its_key(self):
+        chip = {**_reason("매워요", "required"), "fact_key": "spicy_focused"}
+        [line] = json.loads(_user_payload([chip]))
+        assert line["fact_key"] == "spicy_focused"
+
+    def test_mixed_batch_keeps_order_and_only_chip_has_key(self):
+        chip = {**_reason("매워요", "required"), "fact_key": "spicy_focused"}
+        lines = json.loads(_user_payload([chip, _reason("알러지 있어요", "required"), _reason("초밥 먹자", "preferred")]))
+        assert [l["index"] for l in lines] == [0, 1, 2]
+        assert ["fact_key" in l for l in lines] == [True, False, False]
+
+    def test_payload_contains_no_null_value_at_all(self):
+        assert "null" not in _user_payload([_reason("그냥 별로예요", "preferred")])
+
+
+class TestPromptDescribesOmittedKey:
+    def test_input_description_says_key_exists_only_on_chip_lines(self):
+        prompt = prompts.PLAN_EVIDENCE_PROMPT
+        assert "각 원소는 index·text·badge를 가진다" in prompt
+        assert "fact_key는 칩으로 이미 정해진 줄에만 있다" in prompt
+
+    def test_rule_5_only_keeps_a_key_that_is_present(self):
+        prompt = prompts.PLAN_EVIDENCE_PROMPT
+        assert "입력에 fact_key나 wants가 이미 있으면" not in prompt
+        assert "입력 줄에 fact_key가 있으면(칩으로 이미 정해진 줄) 그대로 둔다. 없는 줄은 규칙 3으로 정한다." in prompt
+
+    def test_food_names_map_to_cuisine_keys(self):
+        prompt = prompts.PLAN_EVIDENCE_PROMPT
+        assert "초밥 먹고 싶어" in prompt and "라멘" in prompt and "돈가스" in prompt
+        assert "cuisine_japanese" in prompt.split("음식 이름만 말해도")[1]
+
+    def test_ambiguous_allowance_with_safety_key_is_null(self):
+        prompt = prompts.PLAN_EVIDENCE_PROMPT
+        assert '"새우 빼고 시키면 괜찮아요" → contains_shellfish, wants=null' in prompt
+        assert '"새우 빼고 주문하면 돼서 상관없어요" → contains_shellfish, wants=null' in prompt
