@@ -20,11 +20,15 @@ from common.adapters import select
 from common.errors import AppError
 from common.settings import settings
 from llm.client import LlmCallError, call_planner, get_client
-from llm.schemas import EvidenceLine, FactKey, PlaceFactLabel, PlanningOutput, RankedCandidate
+from llm.prompts import HARD_FACT_KEYS
+from llm.schemas import (
+    EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, RankedCandidate,
+)
 
 log = logging.getLogger("pingo.llm")
 
-EvidencePlanner = Callable[[Sequence[Mapping[str, Any]]], list[EvidenceLine]]
+# 입력 글마다 근거 줄 묶음 하나(#419) — 바깥 리스트는 입력과 개수·순서가 같다.
+EvidencePlanner = Callable[[Sequence[Mapping[str, Any]]], list[list[EvidenceLine]]]
 
 
 def _flatten_string_values(data: Mapping[str, Any]) -> list[str]:
@@ -71,59 +75,100 @@ def _normalize(text: str) -> str:
     return _INVISIBLE.sub("", unicodedata.normalize("NFC", text))
 
 
-def merge_planned(
-    inputs: Sequence[Mapping[str, Any]], output: PlanningOutput
-) -> list[EvidenceLine]:
-    """모델 응답을 입력에 합친다(순수 함수). 모델이 줄마다 바꿀 수 있는 건 fact_key(입력에 없을
-    때), wants(입력에 없을 때), circle_radius_m뿐이다 — badge를 포함한 나머지는 전부 입력 값이 이긴다.
-
-    badge를 모델이 못 바꾸는 이유: 격하는 제약 완화(가드레일 4)이고, 격상도 사유 텍스트에 섞인
-    지시문이 다른 사람 줄을 required로 올리는 통로가 된다. 줄 사이가 섞이지 않게 줄 단위로만 합친다.
-
-    줄은 순서(index)로 합친다 — 결과 text는 항상 입력 원문이고 모델이 돌려준 text는 쓰지 않는다.
-    개수가 다르면 ValueError다. 줄이 섞이지 않았는지 보는 확인용으로 text는 NFC·제로폭·공백 제거 후
-    비교하고, 그래도 다르면 모델이 사유를 지어내거나 섞은 것이므로 ValueError다.
-    반경은 MIN_RADIUS_M~MAX_RADIUS_M 밖이면 무시한다 — 비정상 값은 후보를 전멸시킨다."""
-    lines = output.evidence_lines
-    if len(lines) != len(inputs):
-        raise ValueError(f"응답 개수({len(lines)})가 입력 개수({len(inputs)})와 다르다")
-
-    merged: list[EvidenceLine] = []
-    for raw, planned in zip(inputs, lines):
-        base = EvidenceLine(**raw)
-        if _normalize(planned.text) != _normalize(base.text):
-            raise ValueError("응답 text가 입력 text와 다르다")
-        radius = planned.circle_radius_m
-        fact_key = base.fact_key or planned.fact_key
-        wants = base.wants if base.wants is not None else planned.wants
-        merged.append(
-            base.model_copy(
-                update={
-                    "fact_key": fact_key,
-                    "wants": wants if fact_key is not None else None,
-                    "circle_radius_m": radius if radius is not None and MIN_RADIUS_M <= radius <= MAX_RADIUS_M else base.circle_radius_m,
-                }
-            )
-        )
+def _merge_conditions(conditions: Sequence[PlannedCondition]) -> list[tuple[str, Optional[bool]]]:
+    """같은 키가 한 글에서 여러 번 나오면 하나로 합친다(#419). 순서는 처음 나온 순서다.
+    방향이 엇갈리면(true와 false) 어느 쪽인지 지어내지 않고 null이다 — 단 안전 키는 false가 하나라도
+    있으면 false다(피하겠다는 뜻을 놓치면 못 먹는 걸 권한다, 가드레일 8)."""
+    directions: dict[str, set[bool]] = {}
+    for condition in conditions:
+        seen = directions.setdefault(condition.fact_key, set())
+        if condition.wants is not None:
+            seen.add(condition.wants)
+    merged: list[tuple[str, Optional[bool]]] = []
+    for key, seen in directions.items():
+        if len(seen) == 1:
+            wants: Optional[bool] = next(iter(seen))
+        else:
+            wants = False if key in HARD_FACT_KEYS and False in seen else None
+        merged.append((key, wants))
     return merged
 
 
-def _passthrough_planner(raw_reasons: Sequence[Mapping[str, Any]]) -> list[EvidenceLine]:
-    return [EvidenceLine(**reason) for reason in raw_reasons]
+def _split_reason(base: EvidenceLine, planned: PlannedReason) -> list[EvidenceLine]:
+    """입력 글 한 줄 → 근거 줄 1개 이상(#419). 조건이 없으면 키 없는 줄 하나, 여럿이면 조건마다 하나.
+
+    입력에 fact_key가 이미 있으면(칩처럼 정해진 줄) 나누지 않는다 — 키는 입력 값이고, 방향은 입력에
+    없을 때만 같은 키 조건에서 가져온다. 반경은 입력 글당 하나라 첫 줄에만 붙인다."""
+    radius = planned.circle_radius_m
+    if radius is None or not MIN_RADIUS_M <= radius <= MAX_RADIUS_M:
+        radius = base.circle_radius_m
+
+    if base.fact_key is not None:
+        same_key = [c for c in planned.conditions if c.fact_key == base.fact_key]
+        planned_wants = _merge_conditions(same_key)[0][1] if same_key else None
+        conditions = [(base.fact_key, base.wants if base.wants is not None else planned_wants)]
+    else:
+        conditions = _merge_conditions(planned.conditions) or [(None, None)]
+
+    return [
+        base.model_copy(update={
+            "fact_key": fact_key,
+            "wants": wants if fact_key is not None else None,
+            "circle_radius_m": radius if position == 0 else None,
+            "circle_anchor_pin_id": base.circle_anchor_pin_id if position == 0 else None,
+        })
+        for position, (fact_key, wants) in enumerate(conditions)
+    ]
 
 
-# 엘리스 게이트웨이가 비스트리밍 응답을 2000토큰으로 제한한다(#325). 사유 한 줄의 에코가 70토큰
-# 안팎이라 한 호출에 10개씩만 보낸다. 묶음은 순차로 부른다(동시 호출은 상한·429 위험).
+def merge_planned(
+    inputs: Sequence[Mapping[str, Any]], output: PlanningOutput
+) -> list[list[EvidenceLine]]:
+    """모델 응답을 입력에 합친다(순수 함수). 돌려주는 바깥 리스트는 입력과 개수·순서가 같다 — i번째
+    묶음이 i번째 입력 글에서 나온 근거 줄들이고, 묶음마다 1줄 이상이다(#419).
+
+    모델이 정하는 건 조건(fact_key·wants, 입력에 없을 때)과 circle_radius_m뿐이다 — badge·author·text·
+    source를 포함한 나머지는 전부 입력 값이고, 나눠진 줄들도 그대로 물려받는다.
+    badge를 모델이 못 바꾸는 이유: 격하는 제약 완화(가드레일 4)이고, 격상도 사유 텍스트에 섞인
+    지시문이 다른 사람 줄을 required로 올리는 통로가 된다. 줄 사이가 섞이지 않게 줄 단위로만 합친다.
+
+    응답은 순서로 합친다 — 개수가 다르거나 index가 위치와 다르면 ValueError다. 결과 text는 항상 입력
+    원문이고, 모델이 돌려준 text는 줄이 섞이지 않았는지 보는 확인용이다(NFC·제로폭·공백 제거 후 비교,
+    그래도 다르면 지어내거나 섞은 것이라 ValueError).
+    반경은 MIN_RADIUS_M~MAX_RADIUS_M 밖이면 무시한다 — 비정상 값은 후보를 전멸시킨다."""
+    reasons = output.reasons
+    if len(reasons) != len(inputs):
+        raise ValueError(f"응답 개수({len(reasons)})가 입력 개수({len(inputs)})와 다르다")
+
+    groups: list[list[EvidenceLine]] = []
+    for position, (raw, planned) in enumerate(zip(inputs, reasons)):
+        base = EvidenceLine(**raw)
+        if planned.index != position:
+            raise ValueError(f"응답 index({planned.index})가 위치({position})와 다르다")
+        if _normalize(planned.text) != _normalize(base.text):
+            raise ValueError("응답 text가 입력 text와 다르다")
+        groups.append(_split_reason(base, planned))
+    return groups
+
+
+def _passthrough_planner(raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[EvidenceLine]]:
+    return [[EvidenceLine(**reason)] for reason in raw_reasons]
+
+
+# 엘리스 게이트웨이가 비스트리밍 응답을 2000토큰으로 제한한다(#325). 사유 한 줄의 응답(text 에코 + 조건
+# 몇 개)이 70토큰 안팎이라 한 호출에 10개씩만 보낸다. 묶음은 순차로 부른다(동시 호출은 상한·429 위험).
 PLAN_BATCH_SIZE = 10
 
 
-def _model_planner(client: Any, raw_reasons: Sequence[Mapping[str, Any]]) -> list[EvidenceLine]:
+def _model_planner(client: Any, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[EvidenceLine]]:
     _passthrough_planner(raw_reasons)  # 입력 shape부터 검증 — 깨진 입력으로 모델을 부르지 않는다
-    lines: list[EvidenceLine] = []
+    groups: list[list[EvidenceLine]] = []
     for start in range(0, len(raw_reasons), PLAN_BATCH_SIZE):
-        # 한 묶음이 실패하면 LlmCallError가 그대로 올라간다 — 부분 결과를 지어내지 않는다.
-        lines.extend(call_planner(client, raw_reasons[start:start + PLAN_BATCH_SIZE]).evidence_lines)
-    return merge_planned(raw_reasons, PlanningOutput(evidence_lines=lines))
+        batch = raw_reasons[start:start + PLAN_BATCH_SIZE]
+        # index는 묶음마다 0부터라 묶음 단위로 합친다. 한 묶음이 실패하면 LlmCallError·ValueError가
+        # 그대로 올라간다 — 부분 결과를 지어내지 않는다.
+        groups.extend(merge_planned(batch, call_planner(client, batch)))
+    return groups
 
 
 def _dev_evidence_planner() -> EvidencePlanner:
@@ -142,10 +187,12 @@ get_evidence_planner = select(
 
 def plan_evidence(
     raw_reasons: Sequence[Mapping[str, Any]], *, planner: Optional[EvidencePlanner] = None
-) -> list[EvidenceLine]:
+) -> list[list[EvidenceLine]]:
     """② 사유 → 실격/선호/반경 구조화.
 
     raw_reasons: recommend가 모은 reaction/manual 원문(EvidenceLine 필드와 동일 shape의 dict).
+    반환: 입력 글마다 근거 줄 묶음 하나 — 바깥 리스트는 입력과 개수·순서가 같고(i번째 묶음 = i번째 입력),
+    묶음마다 1줄 이상이다. 글 하나에 조건이 여럿이면 묶음 안에 조건마다 줄이 하나씩 있다(#419).
     planner를 안 넘기면 LLM_MODE로 고른 구현을 쓴다(dev=검증·통과 스텁, real=Luna 호출).
     호출·검증이 실패하면 PlanEvidenceFailed — 빈 결과로 바꿔 삼키지 않는다.
     """
