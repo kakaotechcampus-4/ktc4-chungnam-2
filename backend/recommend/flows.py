@@ -409,13 +409,15 @@ def _run_pipeline(
     # ♥ 핀의 라벨은 핀에 복사된 checks가 아니라 places의 place_facts에서 읽는다(#247) — 직접 찍은 핀도 같은
     # 라벨을 갖는다. known인 soft 라벨만 선호 신호가 된다(모름은 0점, 감점도 없다). 배치 조회 한 번.
     liked_facts = place_facts.get_facts([entry["place_id"] for entry in liked_pins]) if liked_pins else {}
-    hearted_places = [
+    # 음식점은 ♥를 누른 이유로 보기 어려운 라벨(체인점·주차 등)을 여기서 한 번 거른다(#414). 걸러진 목록을 기준·점수·충족
+    # 집계·이유에 똑같이 쓴다 — 직접 쓴 선호 사유(preferred_authors)는 거르지 않는다.
+    hearted_places = core.filter_heart_signals([
         core.HeartedPlace(
             checks=core.label_checks(liked_facts.get(entry["place_id"], [])),
             member_ids=frozenset(entry["member_ids"]),
         )
         for entry in liked_pins
-    ]
+    ], run.category)
     criteria = core.build_preference_criteria(
         hearted_places,
         excluded_fact_keys=constraints.VALUE_COMPARISON_UNSUPPORTED,

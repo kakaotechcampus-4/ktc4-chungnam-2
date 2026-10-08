@@ -73,6 +73,29 @@ SOFT_REGISTRY: dict[str, ConstraintSpec] = {
 }
 SOFT_FACT_KEYS: frozenset[str] = frozenset(SOFT_REGISTRY)
 
+# ♥ 핀 라벨을 선호 신호로 쓰는 방법 — docs/constraints.md "♥에서 선호로 쓰는 라벨 (음식점)" 표 그대로(#414).
+# 직접 쓴 선호 사유에는 적용하지 않는다(♥ 핀 라벨에서 나온 신호만 거른다). 표에 없는 카테고리·키는 "use"다.
+HeartSignalUse = Literal["use", "two_or_more", "unused"]
+HEART_SIGNAL_MIN_TRUE_PLACES = 2  # '2곳 이상' — 그 라벨이 참인 ♥ 핀 수. 시작값(시험으로 조정)
+HEART_SIGNAL_BY_CATEGORY: dict[str, dict[str, HeartSignalUse]] = {
+    "음식점": {
+        **{key: "use" for key in (   # 가게의 정체(무엇을 파는 곳인가)
+            "cuisine_korean", "cuisine_chinese", "cuisine_japanese", "cuisine_western", "cuisine_bunsik",
+            "cuisine_chicken_pub", "cuisine_bbq", "cuisine_foreign", "cuisine_raw_fish", "cuisine_buffet",
+        )},
+        **{key: "two_or_more" for key in (   # 스타일(취향일 수도, 우연일 수도)
+            "spicy_focused", "oily_focused", "long_established", "vegetarian_friendly",
+        )},
+        **{key: "unused" for key in (   # 편의, 조건(필요하면 말로 남기는 것)
+            "franchise", "spacious", "parking_available", "pet_friendly", "wait_short",
+        )},
+    },
+}
+
+
+def heart_signal_use(category: str, fact_key: str) -> HeartSignalUse:
+    return HEART_SIGNAL_BY_CATEGORY.get(category, {}).get(fact_key, "use")
+
 # 값 기반 비교(가격 상한 등)를 판정하려면 "사용자가 명시한 기준값"이 필요한데,
 # docs/data-model.md의 evidence_lines 스키마엔 그 기준값을 담을 컬럼이 없다(badge/fact_key/
 # text/circle_*뿐 — 자유 텍스트 text 안에 숫자가 있어도 구조화된 값이 아니다). 이 세션은
