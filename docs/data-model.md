@@ -237,6 +237,7 @@ evidence_lines(
   text, chip_id null,
   badge('required'|'preferred'|'reference'),  -- 꼭/선호/참고
   fact_key null,                        -- 실격/선호 조건에 매핑되면 채움
+                                         --   한 행은 조건 하나다. 사유 글 하나에 조건이 여럿이면 같은 text로 여러 행이 된다(#419). 칩은 칩마다 한 행(#412)
   wants boolean null,                   -- 방향(#228): 이 특징이 있는 장소를 원하는가. true=원함, false=원하지 않음, null=모름.
                                          --   fact_key가 null이면 null. hard 키는 방향이 고정(있으면 실격)이라 wants를 보지 않는다. docs/constraints.md "사유의 방향"
   circle_anchor_pin_id null, circle_radius_m null,  -- 반경 사유(5-6-1)
