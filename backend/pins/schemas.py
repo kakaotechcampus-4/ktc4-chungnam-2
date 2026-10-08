@@ -142,11 +142,14 @@ class Pin(BaseModel):
 
 
 class ReasonChip(BaseModel):
-    """반대 사유 칩(#60). fact_key가 없으면(「공통」 칩) 응답에서 생략한다 — 라우터의 response_model_exclude_none."""
+    """반대 사유 칩(#60). fact_key가 없으면(「공통」 칩) 응답에서 생략한다 — 라우터의 response_model_exclude_none.
+    wants(docs/constraints.md 칩 표의 방향, #412)는 서버가 근거 줄을 만들 때만 쓰고 응답에는 내보내지 않는다
+    (api-spec.yaml ReasonChip에 없다)."""
 
     id: str
     label: str
     fact_key: str | None = None
+    wants: bool | None = Field(default=None, exclude=True)
 
 
 class FilterCounts(BaseModel):

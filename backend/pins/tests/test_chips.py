@@ -9,23 +9,27 @@ from llm.schemas import FactKey
 from pins import chips
 
 CONSTRAINTS = Path(__file__).resolve().parents[3] / "docs" / "constraints.md"
-NO_FACT_KEY = "(없음)"
+NONE = "(없음)"
+WANTS = {"true": True, "false": False, NONE: None}   # 표에 다른 값이 있으면 KeyError로 실패한다
+
+Row = tuple[str, str, str, str | None, bool | None]   # id, label, 카테고리, fact_key, wants
 
 
-def _doc_table() -> list[tuple[str, str, str, str | None]]:
+def _doc_table() -> list[Row]:
     text = CONSTRAINTS.read_text(encoding="utf-8")
     section = text.split("## 반대 사유 칩 (v1)", 1)[1].split("\n## ", 1)[0]
     rows = []
     for line in section.splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) == 4 and re.fullmatch(r"[a-z]+_[a-z_]+", cells[0]):
-            rows.append((cells[0], cells[1], cells[2], None if cells[3] == NO_FACT_KEY else cells[3]))
+        if len(cells) == 5 and re.fullmatch(r"[a-z]+_[a-z_]+", cells[0]):
+            chip_id, label, category, fact_key, wants = cells
+            rows.append((chip_id, label, category, None if fact_key == NONE else fact_key, WANTS[wants]))
     return rows
 
 
-def _code_table() -> list[tuple[str, str, str, str | None]]:
+def _code_table() -> list[Row]:
     return [
-        (chip.id, chip.label, category, chip.fact_key)
+        (chip.id, chip.label, category, chip.fact_key, chip.wants)
         for category, items in chips.category_chips().items()
         for chip in items
     ]
@@ -47,7 +51,7 @@ def test_chip_ids_are_unique_and_fit_the_spec_limits():
 
 
 def test_fact_keys_exist_in_llm_fact_key():
-    keys = {fact_key for *_, fact_key in _code_table() if fact_key}
+    keys = {fact_key for *_, fact_key, _ in _code_table() if fact_key}
     assert keys <= set(get_args(FactKey)), sorted(keys - set(get_args(FactKey)))
 
 
@@ -62,6 +66,21 @@ def test_non_reactable_categories_have_no_chips():
             assert chips.chips_for(category) == []
 
 
-def test_reason_text_uses_labels_and_keeps_legacy_values():
-    assert chips.reason_text_from_chips(["food_spicy", "common_far"]) == "매워요, 너무 멀어요"
-    assert chips.reason_text_from_chips(["too_spicy"]) == "too_spicy"   # 옛 값은 깨지지 않고 그대로
+def test_chip_with_fact_key_has_direction_and_keyless_chip_has_none():
+    """키가 있으면 방향도 있다 — 근거 줄의 wants는 fact_key 없이 못 선다(llm.schemas.EvidenceLine)."""
+    for chip_id, _, _, fact_key, wants in _code_table():
+        assert (fact_key is None) == (wants is None), chip_id
+
+
+def test_wants_is_not_in_the_api_response_shape():
+    """wants는 서버 안에서만 쓴다 — api-spec.yaml ReasonChip에 없다(#412)."""
+    assert "wants" not in chips.chips_for("음식점")[0].model_dump()
+
+
+def test_evidence_chips_fill_key_and_direction_from_the_table_and_keep_legacy_values():
+    assert chips.evidence_chips(["food_spicy", "food_cramped", "common_far", "매워요"]) == [
+        {"chip_id": "food_spicy", "label": "매워요", "fact_key": "spicy_focused", "wants": False},
+        {"chip_id": "food_cramped", "label": "좁아요", "fact_key": "spacious", "wants": True},
+        {"chip_id": "common_far", "label": "너무 멀어요", "fact_key": None, "wants": None},
+        {"chip_id": "매워요", "label": "매워요", "fact_key": None, "wants": None},   # 옛 값은 깨지지 않고 글로
+    ]
