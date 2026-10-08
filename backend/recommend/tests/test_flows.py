@@ -1371,7 +1371,7 @@ def test_plus_manual_line_goes_through_plan_evidence_and_keeps_reference_badge(d
 
     def planner(raw):
         sent.extend(raw)
-        return [PlannedLine(**{**r, "fact_key": "contains_shellfish", "wants": False}) for r in raw]
+        return [[PlannedLine(**{**r, "fact_key": "contains_shellfish", "wants": False})] for r in raw]
 
     monkeypatch.setattr(flows.llm_service, "plan_evidence", lambda raw: planner(raw))
     run = _make_run(db_session, status="collecting_evidence")
@@ -1395,6 +1395,106 @@ def test_plus_manual_line_planner_failure_leaves_no_line(db_session, monkeypatch
     with pytest.raises(RuntimeError):
         flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["x"])
     assert service.list_evidence(db_session, str(run.id)) == []
+
+
+# ---------- #419 — 사유 글 하나에 조건이 여럿이면 근거 줄을 나눈다 ----------
+
+def _planner_with_conditions(monkeypatch, conditions_by_text, *, radius_by_text=None):
+    """② 대역 — 모델 응답(글마다 조건 목록·반경)만 지어 넣고, 줄 나누기는 llm의 진짜 merge_planned가 한다.
+    그래서 recommend에 저장된 결과가 constraints.md #419 규칙(조건마다 줄, 같은 키 하나로, 반경은 첫 줄) 그대로인지 본다."""
+    from llm.schemas import PlannedCondition, PlannedReason, PlanningOutput
+
+    radius_by_text = radius_by_text or {}
+
+    def planner(raw):
+        output = PlanningOutput(reasons=[
+            PlannedReason(
+                index=i, text=r["text"], circle_radius_m=radius_by_text.get(r["text"]),
+                conditions=[PlannedCondition(fact_key=k, wants=w) for k, w in conditions_by_text.get(r["text"], [])],
+            )
+            for i, r in enumerate(raw)
+        ])
+        return flows.llm_service.merge_planned(raw, output)
+
+    monkeypatch.setattr(flows.llm_service, "get_evidence_planner", lambda: planner)
+
+
+def _lines_by_author(db_session, run):
+    by_author: dict[str, list[tuple]] = {}
+    for l in service.list_evidence(db_session, str(run.id)):
+        by_author.setdefault(l.author_id, []).append((l.text, l.chip_id, l.fact_key, l.wants, l.badge, l.circle_radius_m))
+    return by_author
+
+
+def test_create_run_splits_a_reason_into_one_line_per_condition_then_the_chips(db_session, monkeypatch):
+    """#419 — "한식 말고 고기 먹고 싶어요"는 같은 글·작성자·배지의 줄 2개(한식 피함, 고기구이 원함). 반경은 첫 줄에만.
+    한 반응에서는 글에서 나온 줄들 다음에 칩 줄. 같은 키가 두 번 나오면 하나, 조건 없는 글은 키 없는 줄 하나."""
+    _make_members(db_session, user_ids=["user_1", "user_2", "user_3"])
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="against", reason_text="한식 말고 고기 먹고 싶어요",
+           reason_chip_ids=["food_oily"])
+    _react(db_session, pin, user_id="user_2", type="like", reason_text="고기 좋아요, 고기가 최고")
+    _react(db_session, pin, user_id="user_3", type="against", reason_text="그냥 별로예요")
+    _planner_with_conditions(monkeypatch, {
+        "한식 말고 고기 먹고 싶어요": [("cuisine_korean", False), ("cuisine_bbq", True)],
+        "고기 좋아요, 고기가 최고": [("cuisine_bbq", True), ("cuisine_bbq", True)],
+    }, radius_by_text={"한식 말고 고기 먹고 싶어요": 800})
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    assert _lines_by_author(db_session, run) == {
+        "user_1": [
+            ("한식 말고 고기 먹고 싶어요", None, "cuisine_korean", False, "required", 800),
+            ("한식 말고 고기 먹고 싶어요", None, "cuisine_bbq", True, "required", None),
+            ("느끼해요", "food_oily", "oily_focused", False, "required", None),
+        ],
+        "user_2": [("고기 좋아요, 고기가 최고", None, "cuisine_bbq", True, "preferred", None)],
+        "user_3": [("그냥 별로예요", None, None, None, "required", None)],
+    }
+    # 거르기는 줄 단위 그대로다 — 나뉜 두 조건이 각각 켜진다(전에는 하나가 조용히 사라졌다).
+    assert flows._active_soft_requirements(db_session, run) == [
+        ("cuisine_bbq", True), ("cuisine_korean", False), ("oily_focused", False),
+    ]
+
+
+def test_split_lines_are_turned_off_one_condition_at_a_time(db_session, monkeypatch):
+    """#419 — 같은 글에서 나온 줄은 조건 이름으로 구분되고, 「−」는 조건 하나만 끈다."""
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="against", reason_text="한식 말고 고기 먹고 싶어요")
+    _planner_with_conditions(monkeypatch, {"한식 말고 고기 먹고 싶어요": [("cuisine_korean", False), ("cuisine_bbq", True)]})
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    principal = Principal(user_id="user_1", map_id="map_1", role="member")
+    korean, bbq = flows.list_evidence(db_session, run_id=str(run.id), principal=principal)
+    assert korean.text == bbq.text and korean.fact_label != bbq.fact_label
+
+    result = flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[(korean.id, False)], adds=[])
+
+    # 순서는 보지 않는다 — 한 트랜잭션에서 넣은 줄은 created_at이 같아 UPDATE 뒤 순서가 바뀔 수 있다(루트 보고).
+    assert {e.fact_key: e.is_active for e in result} == {"cuisine_korean": False, "cuisine_bbq": True}
+    assert flows._active_soft_requirements(db_session, run) == [("cuisine_bbq", True)]
+
+
+def test_plus_manual_text_with_several_conditions_adds_a_reference_line_per_condition(db_session, monkeypatch):
+    """#419 — 「+」 글도 같다. "매운 거랑 해산물 둘 다 안 돼요"에서 해산물(안전 조건)이 빠지지 않고 실격을 켠다.
+    여러 글을 한 번에 더하면 글 순서대로, 글마다 조건 줄들이 붙는다."""
+    _planner_with_conditions(monkeypatch, {
+        "매운 거랑 해산물 둘 다 안 돼요": [("spicy_focused", False), ("contains_shellfish", False)],
+    })
+    run = _make_run(db_session, status="collecting_evidence")
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+
+    flows.patch_evidence(
+        db_session, run_id=str(run.id), principal=principal, toggles=[],
+        adds=["매운 거랑 해산물 둘 다 안 돼요", "주차 필요해요"],
+    )
+
+    assert _lines_by_author(db_session, run) == {"user_1": [
+        ("매운 거랑 해산물 둘 다 안 돼요", None, "spicy_focused", False, "reference", None),
+        ("매운 거랑 해산물 둘 다 안 돼요", None, "contains_shellfish", False, "reference", None),
+        ("주차 필요해요", None, None, None, "reference", None),
+    ]}
+    assert flows._active_hard_fact_keys(db_session, run) == ["contains_shellfish"]
 
 
 def test_preferred_wants_false_subtracts_and_wants_null_has_no_effect(db_session):
