@@ -261,7 +261,11 @@ def list_disliked_place_ids(db: Session, *, user_id: str, map_id: str, category:
 def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[dict]:
     """recommend의 근거 조립(①②, recommend/#108)이 쓴다 — 그 카테고리 핀에 남긴 반응 중
     사유가 있는 것만(반대는 사유 필수라 가드레일3로 항상 있고, 좋음도 사유가 있으면
-    포함한다). llm.service.plan_evidence에 넘길 raw_reasons의 원자료다.
+    포함한다). 근거 줄의 원자료다.
+
+    글과 칩은 따로 돌려준다(#412) — 둘 다 남긴 반응은 둘 다 근거다. `reason_text`는 사람이 쓴 글
+    그대로(없으면 None)이고 ②에 보낼 것이다. `chips`는 칩 하나당 하나(`chip_id`·`label`·`fact_key`·
+    `wants`, docs/constraints.md 칩 표대로)이고 ②를 거치지 않는다. `reason_chip_ids`는 저장된 값 그대로다.
 
     소프트 삭제된 핀의 반응도 **포함한다**(#243) — 사유는 사람이 한 말이라 핀이 지워져도 사라지면 안 된다.
     구성원 누구나 핀을 지울 수 있어서(#25), 안 그러면 한 명이 b의 "조개 알러지" 핀을 지우는 것만으로 안전
@@ -282,15 +286,12 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
     ).all()
     reasoned = []
     for pin_id, user_id, reaction_type, reason_text, reason_chip_ids in rows:
-        if reason_text is None:
-            if not reason_chip_ids:
-                continue
-            # 칩만 남긴 반대(#236) — 칩 id를 label로 바꿔 사유 문장으로 써서 ②가 구조화하게 한다(#60, #312).
-            # 옛 값(이름 그대로 저장된 것)은 그대로 문장이 된다.
-            reason_text = chips.reason_text_from_chips(reason_chip_ids)
+        if reason_text is None and not reason_chip_ids:
+            continue
         reasoned.append({
             "pin_id": str(pin_id), "user_id": user_id, "type": reaction_type,
             "reason_text": reason_text, "reason_chip_ids": reason_chip_ids,
+            "chips": chips.evidence_chips(reason_chip_ids or []),
         })
     return reasoned
 

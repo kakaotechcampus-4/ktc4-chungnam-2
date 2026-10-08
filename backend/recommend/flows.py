@@ -155,11 +155,10 @@ def get_readiness(db: Session, *, map_id: str) -> dict[str, dict]:
 
 
 def _evidence_from_reaction(reaction: dict) -> dict:
-    """반응 하나를 llm.schemas.EvidenceLine 생성 가능한 dict로 — 실제 ②(사유 구조화, 모델
-    확정 #12 전) 없이는 자유 텍스트에서 fact_key를 안전하게 추론할 수 없어 fact_key는 항상
-    None으로 둔다(값을 지어내지 않는다는 llm/CLAUDE.md 원칙과 같은 이유 — 실격 조건은 확실할
-    때만 활성화되어야 한다). badge만 반응 종류로 잠정 매핑한다: 🚫(against)는 반드시 사유가
-    있고(가드레일3) 실격 성격이 강해 required, ♥는 preferred로 낮춘다."""
+    """반응에 사람이 쓴 글(reason_text)을 llm.schemas.EvidenceLine 생성 가능한 dict로 — ②에 보낼 입력이다.
+    fact_key는 None으로 두고 ②가 채운다(값을 지어내지 않는다 — 실격 조건은 확실할 때만 켜져야 한다).
+    badge는 반응 종류로 정한다: 🚫(against)는 반드시 사유가 있고(가드레일3) 실격 성격이 강해 required,
+    ♥는 preferred로 낮춘다. 칩은 여기로 오지 않는다 — `_evidence_from_chip`(#412)."""
     return {
         "author_id": reaction["user_id"],
         "source": "reaction",
@@ -167,6 +166,33 @@ def _evidence_from_reaction(reaction: dict) -> dict:
         "badge": "required" if reaction["type"] == "against" else "preferred",
         "fact_key": None,
     }
+
+
+def _evidence_from_chip(reaction: dict, chip: dict) -> dict:
+    """반응에 고른 칩 하나 → 근거 줄 하나(#412). 키와 방향은 docs/constraints.md 칩 표 그대로(pins.api가
+    채워 준다)라 ②를 거치지 않는다. 칩은 🚫에만 있고 고른 순간 뜻이 정해지므로 배지는 required, 글은 칩 label이다.
+    키 없는 칩(「공통」·옛 값)도 줄은 만든다 — 반대한 구성원으로 센다(#255)."""
+    return {
+        "author_id": reaction["user_id"],
+        "source": "reaction",
+        "text": chip["label"],
+        "chip_id": chip["chip_id"],
+        "badge": "required",
+        "fact_key": chip["fact_key"],
+        "wants": chip["wants"],
+    }
+
+
+def _reaction_evidence_lines(raw_reactions: list[dict], planned_texts: list[dict]) -> list[dict]:
+    """반응마다 글 줄(②를 거친 것, 있을 때만) 다음에 칩 줄을 붙인다(#412) — 한 사람이 한 반응에 남긴 줄이
+    붙어 있어야 「−」로 뺄 자기 근거를 찾기 쉽다. planned_texts는 글이 있는 반응 순서 그대로의 ② 결과다."""
+    planned = iter(planned_texts)
+    lines: list[dict] = []
+    for reaction in raw_reactions:
+        if reaction["reason_text"] is not None:
+            lines.append(next(planned))
+        lines.extend(_evidence_from_chip(reaction, chip) for chip in reaction["chips"])
+    return lines
 
 
 def _default_circle_and_anchors(db: Session, *, map_id: str, category: str) -> tuple[Circle, list[tuple[float, float]]]:
@@ -202,7 +228,7 @@ def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: 
 def create_run(db: Session, *, map_id: str, category: str, requested_by: str) -> RecommendRun:
     """POST /maps/{mapId}/runs — run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
     안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 재시도 상한(#31) 3) run INSERT
-    4) 반응 → 근거 구조화(llm.plan_evidence) 5) run INSERT → evidence_lines INSERT 6) 기본값
+    4) 반응 → 근거 구조화(글은 llm.plan_evidence, 칩은 코드 #412) 5) run INSERT → evidence_lines INSERT 6) 기본값
     지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
     트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다."""
     readiness = core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
@@ -213,9 +239,11 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str) ->
     core.check_retry_limit(current_max)  # #31 — 카테고리 무관 개인 단위 카운터가 이미 상한이면 새 run도 막는다
 
     raw_reactions = pins_api.list_reasoned_reactions(db, map_id=map_id, category=category)
-    reaction_lines = [_evidence_from_reaction(r) for r in raw_reactions]
-    planned = llm_service.plan_evidence(reaction_lines)  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
-    merged = core.assemble_evidence([line.model_dump() for line in planned], [])
+    # ②에는 사람이 쓴 글만 보낸다(#412) — 칩은 키·방향이 정해져 있어 코드가 줄을 만든다. 글이 없으면 ② 호출도 없다.
+    text_inputs = [_evidence_from_reaction(r) for r in raw_reactions if r["reason_text"] is not None]
+    planned = llm_service.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
+    reaction_lines = _reaction_evidence_lines(raw_reactions, [line.model_dump() for line in planned])
+    merged = core.assemble_evidence(reaction_lines, [])
 
     # LLM 대기 중 같은 사용자의 동시 요청이 상한(#31)에 도달시켰을 수 있다 — INSERT 직전에 다시 읽어
     # 경합 구간을 수 ms로 줄인다(첫 검사는 모델을 부르기 전에 막는 빠른 실패용).

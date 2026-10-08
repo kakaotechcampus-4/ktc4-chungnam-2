@@ -18,7 +18,7 @@ from maps.models import Membership as MembershipRow
 from pins import api as pins_api
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
-from recommend import core, flows, service
+from recommend import constraints, core, flows, service
 from recommend.models import Candidate, Exclusion, RecommendRun, Region
 from places.schemas import FactLabel
 from recommend.ports import PlaceStub
@@ -64,8 +64,8 @@ def _make_pin(db_session, *, map_id="map_1", category="음식점", lat=35.1, lng
     return pin
 
 
-def _react(db_session, pin, *, user_id, type="like", reason_text=None):
-    reaction = ReactionRow(pin_id=pin.id, user_id=user_id, type=type, reason_text=reason_text)
+def _react(db_session, pin, *, user_id, type="like", reason_text=None, reason_chip_ids=None):
+    reaction = ReactionRow(pin_id=pin.id, user_id=user_id, type=type, reason_text=reason_text, reason_chip_ids=reason_chip_ids)
     db_session.add(reaction)
     db_session.flush()
     return reaction
@@ -471,6 +471,116 @@ def test_create_run_succeeds_assembles_evidence_and_default_region(db_session):
     assert regions[0].center_lat == pytest.approx(35.2)
     assert regions[0].center_lng == pytest.approx(129.3)
     assert regions[0].radius_m == flows.DEFAULT_REGION_RADIUS_M
+
+
+def _no_plan_call(raw):
+    raise AssertionError(f"칩만 있으면 ②를 부르지 않는다: {raw}")
+
+
+def test_create_run_turns_each_chip_into_its_own_evidence_line_without_calling_the_model(db_session, monkeypatch):
+    """#412 — 칩만 남긴 🚫는 ② 호출 없이 칩 하나당 줄 하나. 키·방향은 칩 표 그대로, 배지 required, 글은 label."""
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_spicy", "food_cramped"])
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", _no_plan_call)
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    lines = service.list_evidence(db_session, str(run.id))
+    assert [(l.text, l.chip_id, l.fact_key, l.wants, l.badge, l.source, l.author_id) for l in lines] == [
+        ("매워요", "food_spicy", "spicy_focused", False, "required", "reaction", "user_1"),
+        ("좁아요", "food_cramped", "spacious", True, "required", "reaction", "user_1"),
+    ]
+
+
+def test_create_run_sends_only_the_written_text_to_the_model_and_keeps_the_chips(db_session, monkeypatch):
+    """#412 — 글과 칩을 함께 남기면 둘 다 근거다. ②에는 글만 가고, 반응마다 글 줄 다음에 칩 줄이 붙는다."""
+    _make_members(db_session, user_ids=["user_1", "user_2"])
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="against", reason_text="한식 말고", reason_chip_ids=["food_oily"])
+    _react(db_session, pin, user_id="user_2", type="against", reason_chip_ids=["common_far"])
+    sent = []
+    real_plan = flows.llm_service.plan_evidence
+
+    def spy_plan(raw):
+        sent.append([line["text"] for line in raw])
+        return real_plan(raw)
+
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", spy_plan)
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    assert sent == [["한식 말고"]]
+    lines = service.list_evidence(db_session, str(run.id))
+    by_author = sorted((l.author_id, l.text, l.chip_id, l.fact_key, l.wants, l.badge) for l in lines)
+    assert by_author == [
+        ("user_1", "느끼해요", "food_oily", "oily_focused", False, "required"),
+        ("user_1", "한식 말고", None, None, None, "required"),   # dev 패스스루 ②라 키는 비어 있다
+        ("user_2", "너무 멀어요", "common_far", None, None, "required"),   # 키 없는 공통 칩도 줄은 있다(#255)
+    ]
+
+
+def test_create_run_keeps_a_legacy_chip_value_as_text_without_key(db_session, monkeypatch):
+    """#412 — #312 전에 이름 그대로 저장된 옛 값은 그 값을 글로 쓰고 키·방향 없이 둔다(② 호출 없음)."""
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["매워요"])
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", _no_plan_call)
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    [line] = service.list_evidence(db_session, str(run.id))
+    assert (line.text, line.chip_id, line.fact_key, line.wants, line.badge) == ("매워요", "매워요", None, None, "required")
+
+
+def test_shellfish_chip_turns_on_the_safety_condition_without_the_model(db_session, monkeypatch):
+    """#412 — 안전 조건 칩(갑각류)은 모델 없이 contains_shellfish 실격을 켠다(가드레일 8)."""
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_shellfish"])
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", _no_plan_call)
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    assert flows._active_hard_fact_keys(db_session, run) == ["contains_shellfish"]
+
+
+def test_soft_chip_becomes_a_directed_requirement(db_session, monkeypatch):
+    """#412 — 「좁아요」는 넓은 곳을 원한다(spacious, wants=true). required라 #231 방향 실격으로 켜진다."""
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_cramped", "food_spicy"])
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", _no_plan_call)
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    assert flows._active_soft_requirements(db_session, run) == [("spacious", True), ("spicy_focused", False)]
+
+
+_ALL_CHIP_IDS = {
+    "음식점": ["food_spicy", "food_oily", "food_expensive", "food_wait", "food_cramped", "food_shellfish"],
+    "카페": ["cafe_crowded", "cafe_noisy", "cafe_seat", "cafe_expensive"],
+    "관광지": ["sight_inaccessible", "sight_expensive", "sight_noisy"],
+}
+
+
+@pytest.mark.parametrize("category", list(_ALL_CHIP_IDS))
+def test_every_chip_key_is_one_the_filter_knows(db_session, category):
+    """#412 — 칩 줄은 ②를 거치지 않아 모델 스키마 검증을 안 받는다. 칩 표(docs/constraints.md)의 키가 그 카테고리의
+    레지스트리에 있고 방향이 있어야 실격·선호가 켜진다. 「공통」 칩은 키·방향이 둘 다 없다."""
+    pin = _make_pin(db_session, category=category)
+    _react(db_session, pin, user_id="user_1", type="against",
+           reason_chip_ids=[*_ALL_CHIP_IDS[category], "common_not_my_taste", "common_far"])
+
+    [reaction] = pins_api.list_reasoned_reactions(db_session, map_id="map_1", category=category)
+
+    applicable = {*constraints.hard_fact_keys_for(category), *constraints.soft_fact_keys_for(category)}
+    keyed = [chip for chip in reaction["chips"] if chip["fact_key"] is not None]
+    assert [chip["chip_id"] for chip in keyed] == _ALL_CHIP_IDS[category]
+    assert all(chip["fact_key"] in applicable and chip["wants"] is not None for chip in keyed)
+    assert [(c["chip_id"], c["wants"]) for c in reaction["chips"] if c["fact_key"] is None] == [
+        ("common_not_my_taste", None), ("common_far", None),
+    ]
 
 
 def _make_live_pin(db_session, *, map_id="map_1", category="음식점", kakao_place_id="kakao:live1", created_by="user_1"):
