@@ -233,31 +233,35 @@ AI 추천 대상이 아니다(2026-09-30, #145). v1에서는 숙소 핀도 만�
 - 모델이 방향을 잘못 읽을 위험은 앞 절과 같은 방식으로 막는다: 근거 줄에 "갑각류 제외"가 보이고 틀리면 `−`로 뺀다. 안전 사유를 못 읽어 놓치는 것은 모델의 몫이 아니라 사유 문구의 한계로 두되, 화면에 근거 줄이 남아 사용자가 확인할 수 있다.
 - soft 키(취향)는 이 규칙이 아니다 — 위 표대로 `required`일 때만 실격이다.
 
-## 반대 사유 칩 (v1) — #60, 2026-10-04 결정(사용자)
+## 반대 사유 칩 (v1) — #60, 2026-10-04 결정(사용자), 방향은 #412(2026-10-09)
 
 반대(🚫)를 누를 때 글을 쓰지 않고 고를 수 있는 미리 정의된 사유다. `GET /categories/{category}/reason-chips`가 이 표를 그대로 준다. 해당 카테고리 칩 다음에 「공통」 칩이 붙는다.
 
 - **id는 안정적이다.** 이름(label)이 바뀌어도 id는 바뀌지 않는다. 반응 요청의 `reason_chip_ids`에는 id를 보낸다 — 이름을 보내면 안 된다. 그 핀의 카테고리 목록에 없는 id는 422 `VALIDATION_ERROR`.
-- **칩은 사유 글과 같은 길을 간다.** 서버는 칩 id를 label로 바꿔 사유 문장으로 ②에 넘긴다(칩만 있는 🚫도 근거가 된다, #236). `fact_key`는 힌트일 뿐 ②를 건너뛰지 않는다 — 방향(`wants`)은 ②가 정한다. 칩은 모두 "싫다"는 뜻이라 대부분 `wants=false`로 읽힌다.
+- **칩은 ②를 거치지 않는다(#412).** 칩은 고른 순간 키와 방향이 정해진 입력이다. 서버가 칩 하나당 근거 줄 하나를 만들고 `chip_id`, `fact_key`, `wants`를 아래 표대로 코드가 채운다(배지는 required, 글은 칩 label). 모델은 사용자가 직접 쓴 글에만 쓴다. 칩만 남긴 🚫는 ② 호출이 없다.
+  - 전에는 칩을 label 글로 바꿔 ②에 넘겼는데, 실제 모델이 「매워요」를 20회 중 13회 방향 없음(효과 없음)으로, 「좁아요」를 6회 반대 방향으로 읽었고, 칩 2개를 고르면 13회 둘 다 놓쳤다(PR #411 코멘트).
+  - **글과 칩을 함께 남기면 둘 다 근거다.** 칩마다 줄 하나, 글은 줄 하나로 ②가 구조화한다. 전에는 글이 있으면 칩이 버려졌다.
+  - 키가 없는 공통 칩도 근거 줄은 만든다(키 없음). 충족 집계의 "반대한 구성원"으로 센다(#255).
+  - `wants`는 "이 특징이 있는 곳을 원하는가"다("사유의 방향" 절과 같은 뜻). 「좁아요」는 넓은 곳을 원하므로 `spacious`, `true`다.
 - 칩을 더하거나 바꾸는 것은 루트만 한다(이 표 + 구현의 목록을 같이 고친다). 구현의 목록은 이 표와 어긋나면 테스트가 실패한다.
 
-| id | label | 카테고리 | fact_key |
-|---|---|---|---|
-| food_spicy | 매워요 | 음식점 | spicy_focused |
-| food_oily | 느끼해요 | 음식점 | oily_focused |
-| food_expensive | 비싸요 | 음식점 | price_bucket |
-| food_wait | 웨이팅이 길어요 | 음식점 | wait_short |
-| food_cramped | 좁아요 | 음식점 | spacious |
-| food_shellfish | 갑각류 알러지가 있어요 | 음식점 | contains_shellfish |
-| cafe_crowded | 너무 붐벼요 | 카페 | is_crowded_large |
-| cafe_noisy | 시끄러워요 | 카페 | quiet |
-| cafe_seat | 자리가 불편해요 | 카페 | comfortable_seat |
-| cafe_expensive | 비싸요 | 카페 | price_bucket |
-| sight_inaccessible | 휠체어·유모차로 가기 힘들어요 | 관광지 | accessible |
-| sight_expensive | 입장료가 비싸요 | 관광지 | price_bucket |
-| sight_noisy | 시끄러워요 | 관광지 | quiet |
-| common_not_my_taste | 취향이 아니에요 | 공통 | (없음) |
-| common_far | 너무 멀어요 | 공통 | (없음) |
+| id | label | 카테고리 | fact_key | wants |
+|---|---|---|---|---|
+| food_spicy | 매워요 | 음식점 | spicy_focused | false |
+| food_oily | 느끼해요 | 음식점 | oily_focused | false |
+| food_expensive | 비싸요 | 음식점 | price_bucket | false |
+| food_wait | 웨이팅이 길어요 | 음식점 | wait_short | true |
+| food_cramped | 좁아요 | 음식점 | spacious | true |
+| food_shellfish | 갑각류 알러지가 있어요 | 음식점 | contains_shellfish | false |
+| cafe_crowded | 너무 붐벼요 | 카페 | is_crowded_large | false |
+| cafe_noisy | 시끄러워요 | 카페 | quiet | true |
+| cafe_seat | 자리가 불편해요 | 카페 | comfortable_seat | true |
+| cafe_expensive | 비싸요 | 카페 | price_bucket | false |
+| sight_inaccessible | 휠체어·유모차로 가기 힘들어요 | 관광지 | accessible | true |
+| sight_expensive | 입장료가 비싸요 | 관광지 | price_bucket | false |
+| sight_noisy | 시끄러워요 | 관광지 | quiet | true |
+| common_not_my_taste | 취향이 아니에요 | 공통 | (없음) | (없음) |
+| common_far | 너무 멀어요 | 공통 | (없음) | (없음) |
 
 ## 실격 필터 순서에서의 적용 지점
 
