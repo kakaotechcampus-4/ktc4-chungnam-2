@@ -59,14 +59,17 @@ def get_client() -> OpenAI:
     return _client
 
 
+def _payload_line(index: int, reason: Mapping[str, Any]) -> dict[str, Any]:
+    line: dict[str, Any] = {"index": index, "text": reason["text"], "badge": reason["badge"]}
+    # fact_key는 칩에서 이미 정해진 줄에만 보낸다. null을 보내면 모델이 "이미 정해진 값"으로 읽고
+    # 키를 붙여야 할 사유에도 null을 돌려준다(#410). 칩 키는 merge_planned가 raw로 지킨다.
+    if reason.get("fact_key") is not None:
+        line["fact_key"] = reason["fact_key"]
+    return line
+
+
 def _user_payload(reasons: Sequence[Mapping[str, Any]]) -> str:
-    return json.dumps(
-        [
-            {"index": i, "text": r["text"], "badge": r["badge"], "fact_key": r.get("fact_key")}
-            for i, r in enumerate(reasons)
-        ],
-        ensure_ascii=False,
-    )
+    return json.dumps([_payload_line(i, r) for i, r in enumerate(reasons)], ensure_ascii=False)
 
 
 def _elapsed_ms(started: float) -> int:
