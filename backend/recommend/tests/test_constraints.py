@@ -58,7 +58,7 @@ def test_soft_registry_covers_the_doc_categories_and_is_all_pass():
     assert constraints.SOFT_FACT_KEYS == frozenset(constraints.SOFT_REGISTRY)
     restaurant = set(constraints.soft_fact_keys_for("음식점"))
     assert {"wait_short", "spacious", "long_established", "parking_available", "vegetarian_friendly", "franchise"} <= restaurant
-    assert len([k for k in restaurant if k.startswith("cuisine_")]) == 10
+    assert len([k for k in restaurant if k.startswith("cuisine_")]) == 11  # cuisine_gopchang(#417)
     sight = set(constraints.soft_fact_keys_for("관광지"))
     assert len(sight) + len(constraints.hard_fact_keys_for("관광지")) - 2 == 36  # price_bucket·contains_shellfish는 공통 hard
     assert "winter_spot" in sight and "cuisine_korean" not in sight
@@ -75,9 +75,10 @@ def test_heart_signal_table_classifies_every_restaurant_soft_key():
     table = constraints.HEART_SIGNAL_BY_CATEGORY["음식점"]
     assert set(table) == set(constraints.soft_fact_keys_for("음식점"))
     by_use = {use: {k for k, v in table.items() if v == use} for use in ("use", "two_or_more", "unused")}
-    assert by_use["use"] == {k for k in table if k.startswith("cuisine_")} and len(by_use["use"]) == 10
+    assert by_use["use"] == {k for k in table if k.startswith("cuisine_")} and len(by_use["use"]) == 11
     assert by_use["two_or_more"] == {"spicy_focused", "oily_focused", "long_established", "vegetarian_friendly"}
     assert by_use["unused"] == {"franchise", "spacious", "parking_available", "pet_friendly", "wait_short"}
+    assert constraints.heart_signal_use("음식점", "cuisine_gopchang") == "use"   # 가게의 정체(#417)
     assert constraints.HEART_SIGNAL_MIN_TRUE_PLACES == 2
 
 

@@ -37,6 +37,7 @@ FactKey = Literal[
     "cuisine_bunsik",
     "cuisine_chicken_pub",
     "cuisine_bbq",
+    "cuisine_gopchang",
     "cuisine_foreign",
     "cuisine_raw_fish",
     "cuisine_buffet",
