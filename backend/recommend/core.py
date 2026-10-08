@@ -233,8 +233,8 @@ def _violates_soft_requirement(checks: Sequence[Check], fact_key: str, wants: bo
 def checks_to_show(checks: Sequence[Check], wanted_fact_keys: Collection[str]) -> list[Check]:
     """후보 저장·응답·게시(pins 복사)에 남길 체크(#216, 가드레일 5). hard 체크는 전부, soft 체크는
     사람이 원한 키(`wanted_fact_keys`)일 때만 — known 여부와 무관하다(원한 키가 unknown이면
-    needs_check로 남는다). 아무도 말하지 않은 soft는 known이어도 싣지 않는다: cuisine_* 10개처럼
-    한 곳당 9개가 거짓인 키가 실패 체크로 줄줄이 보이고, 모름은 「확인 필요」만 늘린다.
+    needs_check로 남는다). 아무도 말하지 않은 soft는 known이어도 싣지 않는다: cuisine_*처럼
+    한 곳당 대부분이 거짓인 키가 실패 체크로 줄줄이 보이고, 모름은 「확인 필요」만 늘린다.
     점수 계산은 이 함수를 거치지 않은 전체 체크를 쓴다."""
     return [
         check for check in checks

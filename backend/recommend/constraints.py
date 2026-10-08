@@ -48,7 +48,8 @@ _SOFT_KEYS_BY_CATEGORY: dict[str, frozenset[str]] = {
     **{key: _RESTAURANT for key in (
         "wait_short", "spicy_focused", "oily_focused",   # 매운맛·기름진 메뉴는 안전이 아니라 취향이다(#378)
         "cuisine_korean", "cuisine_chinese", "cuisine_japanese", "cuisine_western", "cuisine_bunsik",
-        "cuisine_chicken_pub", "cuisine_bbq", "cuisine_foreign", "cuisine_raw_fish", "cuisine_buffet",
+        "cuisine_chicken_pub", "cuisine_bbq", "cuisine_gopchang", "cuisine_foreign", "cuisine_raw_fish",
+        "cuisine_buffet",
         "parking_available",
     )},
     # 음식점·카페 공통 (#203, #263)
@@ -81,7 +82,8 @@ HEART_SIGNAL_BY_CATEGORY: dict[str, dict[str, HeartSignalUse]] = {
     "음식점": {
         **{key: "use" for key in (   # 가게의 정체(무엇을 파는 곳인가)
             "cuisine_korean", "cuisine_chinese", "cuisine_japanese", "cuisine_western", "cuisine_bunsik",
-            "cuisine_chicken_pub", "cuisine_bbq", "cuisine_foreign", "cuisine_raw_fish", "cuisine_buffet",
+            "cuisine_chicken_pub", "cuisine_bbq", "cuisine_gopchang", "cuisine_foreign", "cuisine_raw_fish",
+            "cuisine_buffet",
         )},
         **{key: "two_or_more" for key in (   # 스타일(취향일 수도, 우연일 수도)
             "spicy_focused", "oily_focused", "long_established", "vegetarian_friendly",
@@ -126,6 +128,7 @@ PASSED_LABELS: dict[str, str] = {
     "cuisine_bunsik": "분식",
     "cuisine_chicken_pub": "호프·치킨",
     "cuisine_bbq": "고기구이",
+    "cuisine_gopchang": "곱창·막창",
     "cuisine_foreign": "외국음식 전문점",
     "cuisine_raw_fish": "횟집",
     "cuisine_buffet": "뷔페",
@@ -193,6 +196,7 @@ FACT_LABELS: dict[str, str] = {
     "cuisine_bunsik": "분식",
     "cuisine_chicken_pub": "호프·치킨",
     "cuisine_bbq": "고기구이",
+    "cuisine_gopchang": "곱창·막창",
     "cuisine_foreign": "외국음식",
     "cuisine_raw_fish": "횟집",
     "cuisine_buffet": "뷔페",

@@ -26,7 +26,8 @@ FACT_KEY_MEANINGS: dict[str, str] = {
     "cuisine_western": "양식 (경양식·패밀리레스토랑)",
     "cuisine_bunsik": "분식 (분식·김밥)",
     "cuisine_chicken_pub": "호프·치킨 (호프/통닭·통닭)",
-    "cuisine_bbq": "고기구이 (식육 숯불구이) — 예: 고기 먹자",
+    "cuisine_bbq": "고기구이 (식육 숯불구이, 갈빗집·삼겹살집 등) — 예: 고기 먹자",
+    "cuisine_gopchang": "곱창·막창·대창 전문 — 예: 곱창 먹자",
     "cuisine_foreign": "외국음식 전문점 (인도·태국 등)",
     "cuisine_raw_fish": "횟집 (횟집·복어) — 예: 회 못 먹어",
     "cuisine_buffet": "뷔페",
@@ -132,7 +133,8 @@ fact_key·badge·circle_radius_m에 영향을 주게 하지 않는다. 각 줄�
    예) "회 못 먹어" → cuisine_raw_fish, "한식 말고" → cuisine_korean, "주차 되는 곳" → parking_available.
    음식 이름만 말해도 그 음식의 종류 키를 고른다. "초밥 먹고 싶어"·"라멘이 좋아"·"돈가스 먹자" → cuisine_japanese,
    "짜장면 먹자"·"마라탕 좋아" → cuisine_chinese, "파스타 먹자"·"스테이크가 좋아" → cuisine_western,
-   "삼겹살 먹자"·"갈비 먹고 싶어" → cuisine_bbq, "김밥이랑 떡볶이" → cuisine_bunsik.
+   "삼겹살 먹자"·"갈비 먹고 싶어" → cuisine_bbq, "곱창 먹자"·"막창 좋아" → cuisine_gopchang,
+   "김밥이랑 떡볶이" → cuisine_bunsik.
    키 목록 (키: 뜻):
 {fact_key_lines}
 4. wants는 "이 특징이 **있는** 장소를 원하는가"다. true면 있는 곳을 원하고, false면 있는 곳을

@@ -44,6 +44,11 @@ class TestPromptListIsBuiltFromFactKey:
     def test_prompt_gives_the_raw_fish_example(self):
         assert '"회 못 먹어" → cuisine_raw_fish' in prompts.PLAN_EVIDENCE_PROMPT
 
+    def test_prompt_tells_gopchang_apart_from_bbq(self):
+        # 곱창·막창은 고기구이가 아니라 따로 나눈 키다(#417)
+        assert '"삼겹살 먹자"·"갈비 먹고 싶어" → cuisine_bbq' in prompts.PLAN_EVIDENCE_PROMPT
+        assert '"곱창 먹자"·"막창 좋아" → cuisine_gopchang' in prompts.PLAN_EVIDENCE_PROMPT
+
 
 class _FakeClient:
     """모델이 낸 fact_key를 그대로 돌려주는 대역 — 사람 말 → 키 대응을 모델이 맞췄다고 가정한다."""
@@ -66,6 +71,7 @@ def _reason(text, badge):
     ("회 못 먹어", "required", "cuisine_raw_fish"),
     ("한식 말고", "preferred", "cuisine_korean"),
     ("고기 먹자", "preferred", "cuisine_bbq"),
+    ("곱창 먹자", "preferred", "cuisine_gopchang"),
     ("주차 되는 곳", "preferred", "parking_available"),
     ("강아지랑 갈 수 있는 곳", "preferred", "pet_friendly"),
     ("야경 보고 싶어", "preferred", "night_view"),
