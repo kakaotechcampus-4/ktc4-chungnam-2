@@ -129,7 +129,8 @@ def test_is_within_any_region_false_when_empty():
 # ---------- build_check ----------
 
 def test_build_check_unknown_exclude_policy_fails_without_needs_check():
-    check = core.build_check("contains_shellfish", "exclude", known=False, value=None, passes=False)
+    # 레지스트리에 exclude 키는 없지만(#425) 분기 자체는 정책 값만 보고 정한다.
+    check = core.build_check("is_crowded_large", "exclude", known=False, value=None, passes=False)
     assert check.passed is False
     assert check.confidence == "unknown"
     assert check.needs_check is False
@@ -143,18 +144,18 @@ def test_build_check_unknown_pass_policy_passes_with_needs_check():
 
 
 def test_build_check_known_value_uses_given_passes():
-    check = core.build_check("contains_shellfish", "exclude", known=True, value=True, passes=False)
+    check = core.build_check("is_crowded_large", "pass", known=True, value=True, passes=False)
     assert check.passed is False
     assert check.confidence == "known"
     assert check.needs_check is False
 
 
 @pytest.mark.parametrize("fact_key, policy, known, value, passes, label", [
-    ("contains_shellfish", "exclude", True, False, True, "갑각류 없음"),     # 통과한 실격
-    ("contains_shellfish", "exclude", True, True, False, "갑각류 해당"),     # 탈락한 실격 — 걸린 이유
+    ("is_crowded_large", "pass", True, False, True, "붐비는 대형 장소 아님"),   # 통과한 실격
+    ("is_crowded_large", "pass", True, True, False, "붐비는 대형 장소 해당"),   # 탈락한 실격 — 걸린 이유
     ("spicy_focused", "pass", True, True, True, "매운맛 전문점"),            # 취향 키(#378) — 참인 선호
     ("spicy_focused", "pass", False, None, True, "매운맛 전문 확인 필요"),   # 취향 키 모름 → 통과 + 확인 필요
-    ("contains_shellfish", "exclude", False, None, False, "갑각류 확인 필요"),  # 안전 조건 모름 → 실격이어도 이름이 보인다
+    ("is_crowded_large", "exclude", False, None, False, "붐비는 대형 장소 확인 필요"),  # exclude 모름 → 실격이어도 이름이 보인다
     ("cuisine_korean", "pass", True, True, True, "한식"),                    # 참인 선호
     ("quiet", "pass", True, False, False, "조용한 곳 아님"),                  # 거짓인 선호
     ("quiet", "pass", False, None, True, "조용한 곳 확인 필요"),
@@ -189,9 +190,9 @@ def test_apply_disqualifier_filters_fails_candidate_with_any_failing_check():
 
 def test_apply_disqualifier_filters_ignores_soft_checks_even_when_not_passed():
     """#208 — soft 라벨의 passed는 라벨의 참/거짓값이다. quiet=False(passed=False)여도 실격이 아니다."""
-    hard_ok = core.build_check("contains_shellfish", "exclude", known=True, value=False, passes=True)
+    hard_ok = core.build_check("is_crowded_large", "pass", known=True, value=False, passes=True)
     soft_false = core.build_check("quiet", "pass", known=True, value=False, passes=False)
-    hard_fail = core.build_check("contains_shellfish", "exclude", known=True, value=True, passes=False)
+    hard_fail = core.build_check("is_crowded_large", "pass", known=True, value=True, passes=False)
     result = core.apply_disqualifier_filters([[hard_ok, soft_false], [hard_fail, soft_false], [soft_false]])
     assert result == [True, False, True]
 
@@ -268,9 +269,9 @@ def test_build_preference_criteria_ignores_unknown_confidence():
 
 def test_build_preference_criteria_excludes_active_disqualifying_fact_keys():
     # 모든 통과 후보가 이미 같은 값이라 점수 차이를 못 만드는 라벨 — 실격 사유로 등록된 것.
-    places = [_place(_check("contains_shellfish", passed=False), _check("quiet", passed=True))]
+    places = [_place(_check("is_crowded_large", passed=False), _check("quiet", passed=True))]
     criteria = core.build_preference_criteria(
-        places, disqualifying_fact_keys=["contains_shellfish"], preferred_authors={},
+        places, disqualifying_fact_keys=["is_crowded_large"], preferred_authors={},
     )
     assert criteria == {"quiet": True}
 
@@ -292,7 +293,7 @@ def test_build_preference_criteria_explicit_preference_overrides_tie():
 
 def test_build_preference_criteria_uses_only_soft_fact_keys():
     # 하드 체크의 passed는 "실격 아님"이라 라벨 값과 뜻이 다르다 — 소프트 키만 신호로 쓴다.
-    places = [_place(_check("contains_shellfish", passed=True), _check("quiet", passed=True))]
+    places = [_place(_check("is_crowded_large", passed=True), _check("quiet", passed=True))]
     criteria = core.build_preference_criteria(
         places, disqualifying_fact_keys=[],
         preferred_authors={"is_open": frozenset({"u1"})},
@@ -320,9 +321,9 @@ def test_score_candidates_counts_author_who_also_hearted_once():
 
 
 def test_score_candidates_ignores_non_soft_fact_keys_in_hearted_checks():
-    criteria = {"contains_shellfish": True}
-    hearted = [_place(_check("contains_shellfish", passed=True))]
-    candidates = {"p1": [_check("contains_shellfish", passed=True)]}
+    criteria = {"is_crowded_large": True}
+    hearted = [_place(_check("is_crowded_large", passed=True))]
+    candidates = {"p1": [_check("is_crowded_large", passed=True)]}
     assert core.score_candidates(candidates, hearted, criteria) == {"p1": 0}
 
 def test_score_candidates_scores_only_when_both_sides_are_true():
@@ -414,7 +415,7 @@ def test_soft_keys_nobody_wants_score_zero_for_every_candidate():
 def test_checks_to_show_keeps_hard_and_only_wanted_soft_checks():
     """#216 — hard는 그대로, soft는 원한 키만(known 여부 무관). 원하지 않은 known·unknown soft는 없다."""
     hard_unknown = core.build_check("is_crowded_large", "pass", known=False, value=None, passes=True)
-    hard_known = core.build_check("contains_shellfish", "exclude", known=True, value=False, passes=True)
+    hard_known = core.build_check("is_open", "pass", known=True, value=True, passes=True)
     unwanted_known = core.build_check("cuisine_chinese", "pass", known=True, value=False, passes=False)
     unwanted_unknown = core.build_check("franchise", "pass", known=False, value=None, passes=False)
     wanted_known = core.build_check("cuisine_korean", "pass", known=True, value=True, passes=True)
@@ -423,7 +424,7 @@ def test_checks_to_show_keeps_hard_and_only_wanted_soft_checks():
 
     shown = core.checks_to_show(checks, {"cuisine_korean", "wait_short"})
 
-    assert [c.fact_key for c in shown] == ["is_crowded_large", "contains_shellfish", "cuisine_korean", "wait_short"]
+    assert [c.fact_key for c in shown] == ["is_crowded_large", "is_open", "cuisine_korean", "wait_short"]
     assert shown[-1].needs_check is True  # 원한 키는 unknown이어도 「확인 필요」로 남는다
     assert shown[2].confidence == "known"  # 원한 키는 known이어도 남는다
 
@@ -499,20 +500,20 @@ def test_opposing_heart_of_another_member_still_offsets_preference_author():
 # ---------- build_reason ----------
 
 def test_build_reason_lists_passed_disqualifiers_and_met_preferences_with_member_count():
-    checks = [_check("contains_shellfish", passed=True), _check("quiet", passed=True)]
+    checks = [_check("is_crowded_large", passed=True), _check("quiet", passed=True)]
     fulfillment = {"satisfied": 1, "total": 2, "by_member": []}
     reason = core.build_reason(checks, {"quiet": True}, fulfillment)
-    assert reason == "실격 조건 통과: 갑각류 없음 · 선호 충족: 조용함 (1/2명)"
+    assert reason == "실격 조건 통과: 붐비는 대형 장소 아님 · 선호 충족: 조용함 (1/2명)"
 
 
 def test_build_reason_does_not_claim_unknown_or_failed_checks():
     checks = [
-        _check("contains_shellfish", passed=True, confidence="unknown"),
+        _check("is_crowded_large", passed=True, confidence="unknown"),
         _check("quiet", passed=False),
         _check("local_flavor", passed=True, confidence="unknown"),
     ]
     reason = core.build_reason(checks, {"quiet": True, "local_flavor": True}, {"satisfied": 0, "total": 1})
-    assert "갑각류" not in reason and "조용함" not in reason and "지역색" not in reason
+    assert "붐비는" not in reason and "조용함" not in reason and "지역색" not in reason
 
 
 def test_build_reason_falls_back_to_selection_process_when_nothing_to_cite():
