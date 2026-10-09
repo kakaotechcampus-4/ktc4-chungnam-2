@@ -85,14 +85,14 @@ def test_unknown_taste_condition_passes_with_needs_check_badge(key):
 
 def test_one_failed_check_disqualifies_even_if_the_rest_pass():
     """가드레일 9의 조건판 — 하나라도 불통과면 후보 전체 탈락."""
-    ok = build_check("price_bucket", "pass", known=False, value=None, passes=True)
+    ok = build_check("is_crowded_large", "pass", known=False, value=None, passes=True)   # price_bucket은 #423에서 뺐다
     bad = build_check("contains_shellfish", "exclude", known=False, value=None, passes=True)
     assert apply_disqualifier_filters([[ok, bad], [ok]]) == [False, True]
 
 
 # ---------------------------------------------------------------- 파이프라인(실제 앱 + DB) ----
 
-def _start_run_with_active_condition(a, b, db_session, fact_key: str, pin_body) -> str:
+def _start_run_with_active_condition(a, b, db_session, fact_key: str, pin_body, wants: bool | None = None) -> str:
     """골든 패스와 같은 준비 뒤, 지정한 fact_key를 '꼭 지켜야 하는 조건'으로 켠 run을 만들어 execute까지 돌린다."""
     map_id = a.post("/maps", json={"title": "t", "start_date": "2026-11-01", "end_date": "2026-11-03",
                                    "region": {"label": "부산", "lat": 35.1796, "lng": 129.0756}}).json()["id"]
@@ -112,7 +112,7 @@ def _start_run_with_active_condition(a, b, db_session, fact_key: str, pin_body) 
     run_id = run.json()["id"]
     db_session.add(EvidenceLine(
         id=uuid.uuid4(), run_id=uuid.UUID(run_id), author_id="user_a", source="manual",
-        text=f"{fact_key} 조건", badge="required", fact_key=fact_key, is_active=True,
+        text=f"{fact_key} 조건", badge="required", fact_key=fact_key, wants=wants, is_active=True,
     ))
     db_session.commit()
     assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
@@ -144,11 +144,12 @@ def test_pipeline_never_recommends_a_place_whose_safety_label_is_unknown(clients
 
 def test_pipeline_keeps_unknown_taste_candidates_but_flags_them(clients, db_session, pin_body):
     a, b = clients
-    run_id = _start_run_with_active_condition(a, b, db_session, "price_bucket", pin_body)
+    # 음식점에서 모름이면 통과 + 확인 필요인 조건: 취향 키 required, wants=true(주차가 꼭 돼야 해). price_bucket은 #423에서 뺐다.
+    run_id = _start_run_with_active_condition(a, b, db_session, "parking_available", pin_body, wants=True)
     result = a.get(f"/runs/{run_id}/result")
     assert result.status_code == 200
     candidates = result.json()["candidates"]
     assert candidates, "취향 조건(pass + needs_check)이 unknown이라고 후보를 지우면 안 된다"
     for candidate in candidates:
-        flagged = [c for c in candidate["checks"] if c["fact_key"] == "price_bucket"]
+        flagged = [c for c in candidate["checks"] if c["fact_key"] == "parking_available"]
         assert flagged and all(c["needs_check"] for c in flagged)

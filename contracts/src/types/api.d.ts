@@ -1873,11 +1873,6 @@ export interface components {
             /** @description 자체 DB에 짝이 있어 `source: search`로 핀을 만들 수 있는가(서버가 자체 DB를 읽기만 해서 계산, 카카오 ID를 기록하지 않는다). false여도 `source: live`(#382)로 「그래도 핀 남기기」를 열 수 있다 — FE는 이 결과에 "장소 정보가 없는 핀이에요"를 안내한다. 없으면 true로 본다(자체 DB 연결 전) */
             pinnable?: boolean;
         };
-        /**
-         * @description docs/constraints.md 차원 압축 결과. 원본 가격 숫자는 API로 노출하지 않는다
-         * @enum {string}
-         */
-        PriceBucket: "low" | "mid" | "high";
         /** @enum {string} */
         LabelConfidence: "known" | "unknown";
         /** @description 가드레일 5 "조건별 충족 체크" */
@@ -1924,7 +1919,6 @@ export interface components {
             created_at: string;
             /** @description 핀 상세에서 '누가 찍었는지' 표시용 (#26). 작성자가 탈퇴했으면 '탈퇴한 구성원', 탈퇴하지 않았는데 이 지도에서 나갔으면 '나간 구성원', 아니면 실명. 조회할 때 계산하고 다시 들어오면 실명으로 돌아간다 (#369) */
             created_by_display_name?: string;
-            price_bucket?: components["schemas"]["PriceBucket"];
             /** @description 게시된 AI 추천 핀도 상세에서 계속 노출한다 (가드레일 5) */
             checks?: components["schemas"]["Check"][];
             source_run_id?: string | null;

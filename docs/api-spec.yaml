@@ -1054,11 +1054,6 @@ components:
         place_source: { $ref: "#/components/schemas/PlaceSource" }
         pinnable: { type: boolean, description: "자체 DB에 짝이 있어 `source: search`로 핀을 만들 수 있는가(서버가 자체 DB를 읽기만 해서 계산, 카카오 ID를 기록하지 않는다). false여도 `source: live`(#382)로 「그래도 핀 남기기」를 열 수 있다 — FE는 이 결과에 \"장소 정보가 없는 핀이에요\"를 안내한다. 없으면 true로 본다(자체 DB 연결 전)" }
 
-    PriceBucket:
-      type: string
-      enum: [low, mid, high]
-      description: "docs/constraints.md 차원 압축 결과. 원본 가격 숫자는 API로 노출하지 않는다"
-
     LabelConfidence:
       type: string
       enum: [known, unknown]
@@ -1076,7 +1071,7 @@ components:
 
     Pin:
       type: object
-      # place_name·created_by_display_name·price_bucket·checks·source_run_id만 없을 수 있다 —
+      # place_name·created_by_display_name·checks·source_run_id만 없을 수 있다 —
       # places·maps·recommend가 없어 pins/core.py::to_pin_response가 못 채운다(pins/for_Root.md 6번).
       # lat·lng는 실시간 핀(source=live, #382)에 없다 — 서버가 카카오 좌표를 저장하지 않는다. 나머지는 항상 채운다.
       required: [id, map_id, category, kind, visibility, created_by, created_at, reaction_summary, permissions]
@@ -1098,8 +1093,6 @@ components:
         created_by: { type: string, description: "핀을 찍은 구성원의 user_id (#26)" }
         created_at: { type: string, format: date-time, description: "핀이 지도에 올라온 시각. AI 추천 핀은 「지도에 올리기」를 누른 시각이다. 「최근 추가 순」 정렬, 「최근 핀으로 이동」, 「10분 전」 표시용 (2026-10-04, FE 요청)" }
         created_by_display_name: { type: string, maxLength: 50, description: "핀 상세에서 '누가 찍었는지' 표시용 (#26). 작성자가 탈퇴했으면 '탈퇴한 구성원', 탈퇴하지 않았는데 이 지도에서 나갔으면 '나간 구성원', 아니면 실명. 조회할 때 계산하고 다시 들어오면 실명으로 돌아간다 (#369)" } # 코드에 근거 없음, 팀 확인 필요
-        price_bucket:
-          $ref: "#/components/schemas/PriceBucket"
         checks:
           type: array
           items: { $ref: "#/components/schemas/Check" }
