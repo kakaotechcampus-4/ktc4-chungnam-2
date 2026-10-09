@@ -157,7 +157,7 @@ places(
 
 place_facts(
   place_id references places(id),
-  fact_key,                             -- 'contains_shellfish' | 'spicy_focused' | 'cuisine_korean' | ... (price_bucket은 #423에서 뺐다)
+  fact_key,                             -- 'spicy_focused' | 'cuisine_korean' | 'parking_available' | ... (price_bucket은 #423, contains_shellfish는 #425에서 뺐다)
                                          -- constraints.md의 라벨링 대상만 저장: 실격 6개 + 선호 조건
                                          -- is_open/within_radius는 코드 판정이라 여기 없다(실시간 조회·좌표 계산)
   value,                                 -- boolean/enum, jsonb로 통일 저장

@@ -80,19 +80,27 @@ def test_chip_only_reaction_skips_the_planner_and_still_filters(members, place_i
     assert names, "매운맛이 거짓이거나 모름(취향 조건)인 곳은 남는다"
 
 
-def test_shellfish_chip_alone_applies_the_safety_rule(members, place_ids, planner_calls, db_session):
-    """「갑각류 알러지가 있어요」 칩만으로 안전 조건이 걸린다 — 모름도 빼므로 이 픽스처에서는 후보가 0곳이다
-    (갑각류 라벨은 조개구이의 '참'뿐이고 나머지는 모름). 전에는 ②가 키를 못 붙이면 그대로 통과했다."""
+def test_retired_shellfish_chip_is_rejected_for_new_reactions(members, place_ids):
+    """「갑각류 알러지가 있어요」 칩은 #425에서 뺐다 — 새 반응에서는 고를 수 없다."""
     a, b, map_id = members
     pin = _pin(a, map_id, "K", place_ids)
-    assert b.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_chip_ids": ["food_shellfish"]}).status_code == 200
+    r = b.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_chip_ids": ["food_shellfish"]})
+    assert r.status_code == 422, r.text
+
+
+def test_reaction_left_with_the_retired_chip_shows_its_label_without_a_condition(members, place_ids, planner_calls, db_session):
+    """#425 전에 이 칩으로 남긴 반응 — 근거 줄에 id("food_shellfish")가 아니라 이름이 보이고, 조건(키)은 없다(거르지 않는다)."""
+    from sqlalchemy import update
+
+    from pins.models import Reaction
+
+    a, b, map_id = members
+    pin = _pin(a, map_id, "K", place_ids)
+    assert b.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_chip_ids": ["food_spicy"]}).status_code == 200
+    db_session.execute(update(Reaction).where(Reaction.pin_id == pin).values(reason_chip_ids=["food_shellfish"]))   # 옛 데이터 흉내
+    db_session.commit()
 
     run_id = _run(a, map_id)
     assert planner_calls == []
     [line] = a.get(f"/runs/{run_id}/evidence").json()
-    assert (line["text"], line["fact_key"], line["wants"]) == ("갑각류 알러지가 있어요", "contains_shellfish", False)
-    assert _chip_ids(db_session, run_id) == {"food_shellfish"}
-    a.post(f"/runs/{run_id}/regions/confirm", json={})
-    assert a.post(f"/runs/{run_id}/execute").status_code == 202
-    result = a.get(f"/runs/{run_id}/result")
-    assert result.status_code == 404 and result.json()["code"] == "NO_RESULTS", result.text
+    assert (line["text"], line["fact_key"], line["wants"]) == ("갑각류 알러지가 있어요", None, None)

@@ -27,8 +27,7 @@ PLACES = {
     "R": ("성수 횟집", 37.5449, 127.0558, {"cuisine_korean": False, "cuisine_raw_fish": True, "spicy_focused": False}),
     "B": ("성수 분식집", 37.5441, 127.0566, {"cuisine_korean": False, "cuisine_raw_fish": False, "spicy_focused": False}),
     "S": ("성수 매운집", 37.5443, 127.0554, {"cuisine_korean": False, "cuisine_raw_fish": False, "spicy_focused": True}),
-    "C": ("성수 조개구이", 37.5451, 127.0569, {"cuisine_korean": False, "cuisine_raw_fish": False, "spicy_focused": False,
-                                            "contains_shellfish": True}),
+    "C": ("성수 조개구이", 37.5451, 127.0569, {"cuisine_korean": False, "cuisine_raw_fish": False, "spicy_focused": False}),
     "U": ("성수 이름모를집", 37.5439, 127.0560, {}),
 }
 
@@ -80,7 +79,6 @@ def fake_planner(monkeypatch):
         "한식 말고": ("cuisine_korean", False),
         "회 좋아해": ("cuisine_raw_fish", True),
         "너무 매워요": ("spicy_focused", False),    # 취향 키(#378) — "피하겠다"는 방향
-        "조개 알러지": ("contains_shellfish", None),
     }
 
     def planner(raw_reasons):
