@@ -62,7 +62,7 @@ pins(
   search_query null,                   -- #382 live만. 사용자가 친 검색어(사용자 입력). 화면이 이 검색어로 카카오 키워드 검색을 다시 한다
   memo null,                           -- #382 live만. 사용자가 남긴 한마디(최대 200자)
   geom null geography(Point,4326),     -- 매칭된 places.geom의 복사(자체 데이터). 사용자가 카카오 지도에서 지정한 좌표와 카카오 응답 좌표는 저장하지 않는다. live 핀은 NULL
-  visibility('public'|'private'),      -- 5-5-1: AI 후보는 private로 시작
+  visibility('public'|'private'),      -- v1은 항상 public. 이 값으로 분기하지 않는다(#273). 비공개 AI 후보는 pins가 아니라 candidates 행이고, 게시할 때 처음부터 public 핀으로 만든다. 칸은 마이그레이션 때문에 남기고, Pin 스키마를 크게 바꿀 때 같이 지운다
   source_run_id null,                  -- #57 결정: recommend_runs.id를 게시 시점에 한 번만
                                         -- 써넣는 불투명 참조값(추적·표시용). FK 제약은 걸지 않고
                                         -- pins는 이 값을 절대 다시 읽어 recommend를 조회하지
@@ -340,7 +340,7 @@ event_log(
 - **`pins.source_run_id`/`checks` 스키마** — #57. 둘 다 추가하는 쪽으로 확정: `source_run_id`는
   게시 시점 1회성 불투명 참조(추적·표시용, FK 없음, pins가 다시 읽지 않음), `checks`는 게시
   시점에 candidate에서 복사(가드레일 5). 위 `pins` 테이블에 반영. 이유: `source_run_id`는 이미
-  목 서버(`contracts/mocks`)가 private 판정에 쓰고 있어 없애면 FE 쪽 재작업이 필요하고,
+  목 서버(`contracts/mocks`)가 쓰고 있어 없애면 FE 쪽 재작업이 필요하고,
   `candidates.lat/lng` 비정규화와 같은 논리로 "1회성 복사"는 "실시간 모듈 간 조회 금지" 원칙과
   충돌하지 않는다.
 - **`Candidate.permissions` 필드 추가 여부** — #64. 추가하는 쪽으로 확정: 이미 있는 공용

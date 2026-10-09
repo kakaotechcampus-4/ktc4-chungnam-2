@@ -170,7 +170,7 @@ export const recommendHandlers = [
   http.post("*/candidates/:candidateId/publish", ({ params }) => {
     const candidateId = params.candidateId as string;
     const found = findCandidateRun(candidateId);
-    if (!found) return apiError(404, "AI_PIN_PRIVATE", "비공개 AI 후보를 찾을 수 없습니다");
+    if (!found) return apiError(404, "NOT_FOUND", "후보를 찾을 수 없습니다");
     const { runId, cand } = found;
     const run = store.runs[runId];
     const pinId = nextId("pin");

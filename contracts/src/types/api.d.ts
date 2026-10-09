@@ -675,7 +675,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 핀 목록. 보는 사람 기준 필터링 — visibility=private인 남의 후보는 내려주지 않는다 (5-5-1) */
+        /** 핀 목록. 지도의 삭제되지 않은 핀 전부 (비공개 후보는 핀이 아니라 후보라 여기 없다, 5-5-1) */
         get: {
             parameters: {
                 query?: {
@@ -1597,7 +1597,7 @@ export interface paths {
         };
         /**
          * 전체 채널 SSE. 지도의 모든 구성원이 구독한다.
-         *     visibility=private인 핀·후보는 이 채널로 절대 내려가지 않는다 (5-5-1, 가드레일 1).
+         *     비공개 후보는 이 채널로 절대 내려가지 않는다 — 후보는 개인 채널(`/events/me`)로만 온다 (5-5-1, 가드레일 1).
          */
         get: {
             parameters: {
@@ -1893,7 +1893,10 @@ export interface components {
             map_id: string;
             category: components["schemas"]["Category"];
             kind: components["schemas"]["PinKind"];
-            /** @enum {string} */
+            /**
+             * @description v1은 항상 public. 이 값으로 분기하지 않는다 — 비공개 후보는 핀이 아니라 Candidate다(#273). 다음에 Pin 스키마를 크게 바꿀 때 같이 지운다
+             * @enum {string}
+             */
             visibility: "public" | "private";
             /** @description 자체 DB 장소의 좌표. **live 핀에는 없다**(#382) — 그 핀의 위치는 화면이 kakao_place_id로 실시간에 찾는다 */
             lat?: number;
@@ -2313,7 +2316,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 비공개 AI 후보에 요청자 본인이 아닌 사람이 접근 (5절 "비공개 AI 핀 접근 시 안내") */
+        /** @description 「지도에 올리기」 전용 — 구성원이어도 요청자가 아닌 사람이 남의 후보를 게시하려 함. 후보의 존재를 숨기려고 404 `AI_PIN_PRIVATE`로 답한다. 후보가 없거나 비구성원이면 404 `NOT_FOUND` (5절 "비공개 AI 핀 접근 시 안내") */
         AiPinPrivate: {
             headers: {
                 [name: string]: unknown;

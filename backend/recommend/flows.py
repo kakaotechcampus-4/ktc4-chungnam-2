@@ -107,8 +107,8 @@ def publish_candidate(
 
     if candidate.published_pin_id is not None:  #    멱등 빠른 경로 — run 상태와 무관하게 항상 통한다
         return _published_pin_response(db, pin_id=str(candidate.published_pin_id), requester_id=requester_id, run=run)
-        #    200, 이벤트 없음. get_pin_response_for_viewer가 NOT_FOUND/AI_PIN_PRIVATE를 던지면(핀이 그
-        #    사이 삭제됐거나 비공개로 바뀐 극단적 경우) 그대로 전파한다 — 정직한 실패가 낫다.
+        #    200, 이벤트 없음. get_pin_response_for_viewer가 NOT_FOUND를 던지면(핀이 그
+        #    사이 삭제된 극단적 경우) 그대로 전파한다 — 정직한 실패가 낫다.
 
     core.check_run_ready(run)  # 4) 409 NOT_READY
 

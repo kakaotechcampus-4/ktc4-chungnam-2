@@ -145,12 +145,9 @@ def unmark_confirmed(db: Session, *, pin_id: str, map_id: str) -> PinMutation:
 
 
 def get_pin_for_viewer(db: Session, *, pin_id: str, viewer_id: str) -> PinRow:
-    """존재·가시성 확인. 없으면 404 NOT_FOUND, 남의 private 핀은 404 AI_PIN_PRIVATE
-    (둘 다 404라 호출자 입장에서 구분할 필요가 없다 — 존재를 흘리지 않는다는 원칙은 동일)."""
-    pin_row = service.get_pin_or_404(db, pin_id)
-    if pin_row.visibility == "private" and pin_row.created_by != viewer_id:
-        raise AppError("AI_PIN_PRIVATE")
-    return pin_row
+    """존재 확인. 없으면 404 NOT_FOUND. viewer_id는 호출부 호환을 위해 남긴다(v1은 private 핀이 없어
+    보는 사람에 따라 달라지지 않는다)."""
+    return service.get_pin_or_404(db, pin_id)
 
 
 def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, principal: Principal) -> Pin:
@@ -301,16 +298,13 @@ def list_liked_pins(db: Session, *, map_id: str, category: str, requested_by: st
     받은 것의 place_id와, 그 핀에 ♥를 누른 서로 다른 user_id 집합(`member_ids`)을 핀 하나당 한 항목으로
     돌려준다. 라벨은 pins가 알 필요 없다 — recommend가 place_id로 places의 라벨을 직접 읽는다.
 
-    가드레일 1 — requested_by(이번 run의 요청자)에게 보이는 핀만 포함한다(공개 핀 + 본인의 비공개
-    핀, `service.list_pins`의 가시성 판정과 같다). 안 그러면 다른 구성원의 비공개 AI 후보에 붙은
-    ♥가 요청자의 선호 프로필에 섞여 남의 비공개 후보가 순위에 영향을 준다."""
+    v1은 private 핀 행이 없어 requested_by로 거르지 않는다(호출부 호환을 위해 인자만 남긴다)."""
     rows = db.execute(
         select(PinRow.id, PinRow.place_id, ReactionRow.user_id)
         .select_from(PinRow)
         .join(ReactionRow, ReactionRow.pin_id == PinRow.id)
         .where(
             PinRow.map_id == map_id, PinRow.category == category, PinRow.deleted_at.is_(None),
-            or_(PinRow.visibility == "public", PinRow.created_by == requested_by),
             ReactionRow.type == "like",
             PinRow.place_id.is_not(None),   # live 핀(#382)은 장소 라벨이 없어 선호 신호가 못 된다
         )
