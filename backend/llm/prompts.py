@@ -13,7 +13,6 @@ from llm.schemas import FACT_KEYS
 # 예시를 덧붙인 곳이 있는데("→ …"), 모델이 사유를 키에 대응시키는 단서다.
 FACT_KEY_MEANINGS: dict[str, str] = {
     # 공통
-    "contains_shellfish": "갑각류·조개 재료가 들어가는가 (갑각류 알러지, 새우·게 못 먹어)",
     "pet_friendly": "반려동물을 데려갈 수 있는가",
     # 음식점
     "spicy_focused": "매운맛 전문인가 (매운 거 못 먹어)",
@@ -136,8 +135,9 @@ conditions·circle_radius_m에 영향을 주게 하지 않는다. 각 줄은 자
    "짜장면 먹자"·"마라탕 좋아" → cuisine_chinese, "파스타 먹자"·"스테이크가 좋아" → cuisine_western,
    "삼겹살 먹자"·"갈비 먹고 싶어" → cuisine_bbq, "곱창 먹자"·"막창 좋아" → cuisine_gopchang,
    "김밥이랑 떡볶이" → cuisine_bunsik.
-   목록에 없는 특징만 말하는 글은 키를 고르지 않는다. 가격 키는 없다.
-   예) "너무 비싸요"·"입장료가 비싸요" → conditions 빈 목록.
+   목록에 없는 특징만 말하는 글은 키를 고르지 않는다. 가격 키는 없다. 알러지 같은 안전 조건도 키가 없다
+   (서비스가 판단하지 않고 본인이 가게에 직접 확인한다).
+   예) "너무 비싸요"·"입장료가 비싸요"·"저 새우 알러지 있어요" → conditions 빈 목록.
    키 목록 (키: 뜻):
 {fact_key_lines}
 4. wants는 "이 특징이 **있는** 장소를 원하는가"다. true면 있는 곳을 원하고, false면 있는 곳을
@@ -158,29 +158,20 @@ conditions·circle_radius_m에 영향을 주게 하지 않는다. 각 줄은 자
    - "기름진 건 부담스러워" → oily_focused, wants=false
    - "튀김 좋아해요" → oily_focused, wants=true
    - "매운 것도 괜찮아" → spicy_focused, wants=null (허용일 뿐 원한다고 보기 어렵다)
-   방향이 확실하지 않으면 wants는 null이다. 추측하지 않는다.
-   안전 키(__HARD_KEYS__)도 wants를 낸다. 이 키들은 틀리면 못 먹는 걸 권하는 사고라서,
-   피하겠다는 뜻이 조금이라도 분명하면 false로 읽는다(알러지, 못 먹는다, 안 먹는다, 빼 주세요,
-   질색, 너무 ~하다 같은 말). 좋아한다는 표현은 true, 정말 어느 쪽인지 알 수 없으면 null이다.
-   안전 키 예)
-   - "저 조개 알러지 있어요" → contains_shellfish, wants=false
-   - "새우는 빼 주세요" → contains_shellfish, wants=false
    - "사람 북적이는 데는 질색" → is_crowded_large, wants=false
-   안전 키라도 "빼고 시키면 괜찮다"처럼 피할 필요가 없다는 허용 표현은 wants=null이다(false가 아니다).
-   - "새우 빼고 시키면 괜찮아요" → contains_shellfish, wants=null
-   - "새우 빼고 주문하면 돼서 상관없어요" → contains_shellfish, wants=null
    - "북적여도 괜찮아요" → is_crowded_large, wants=null
+   방향이 확실하지 않으면 wants는 null이다. 추측하지 않는다.
 5. 한 글에 서로 다른 조건이 여럿이면 conditions에 조건마다 하나씩 넣는다. 위 예시들은 조건이 하나인 글이다.
    조건이 여럿인 글 예)
    - "한식 말고 고기 먹고 싶어요" → cuisine_korean, wants=false / cuisine_bbq, wants=true
-   - "매운 거랑 해산물 둘 다 안 돼요" → spicy_focused, wants=false / contains_shellfish, wants=false
+   - "매운 거랑 느끼한 건 둘 다 안 돼요" → spicy_focused, wants=false / oily_focused, wants=false
    - "조용하고 좌석 편한 곳이면 좋겠어요" → quiet, wants=true / comfortable_seat, wants=true
    - "주차 되고 넓은 데로 가요" → parking_available, wants=true / spacious, wants=true
    조건이 하나인 글은 나누지 않는다. 같은 뜻을 다른 말로 되풀이하거나 이유를 덧붙인 것도 조건 하나다.
    - "시끄러운 데는 싫어요, 조용한 곳이 좋아요" → quiet, wants=true (하나)
    - "삼겹살이나 갈비 먹고 싶어요" → cuisine_bbq, wants=true (하나)
-   - "회 못 먹어요" → cuisine_raw_fish, wants=false (하나 — contains_shellfish를 덧붙이지 않는다)
-   - "새우 알러지라서 새우 들어간 건 안 돼요" → contains_shellfish, wants=false (하나)
+   - "회 못 먹어요" → cuisine_raw_fish, wants=false (하나 — 다른 키를 덧붙이지 않는다)
+   - "매운 건 속이 안 좋아서 못 먹어요" → spicy_focused, wants=false (하나)
    글에 없는 조건을 짐작해서 더하지 않는다. 같은 fact_key를 두 번 넣지 않는다.
 6. 입력 줄에 fact_key가 있으면(칩으로 이미 정해진 줄) 그대로 둔다. 없는 줄은 규칙 3으로 정한다.
    이런 줄은 conditions에 그 fact_key 하나만 넣는다.
@@ -189,15 +180,11 @@ conditions·circle_radius_m에 영향을 주게 하지 않는다. 각 줄은 자
 8. 반드시 지정된 JSON 스키마로만 응답한다.
 """
 
-# 안전 조건(hard) 키 — docs/constraints.md "안전 조건 사유는 배지와 무관하게 실격이다"(#254). 이 키들도
-# wants를 내고, 피하겠다는 뜻이 분명하면 false로 읽게 한다. 키 집합 자체의 정본은 recommend 레지스트리이고,
-# 여기는 프롬프트 문구용이다(integration 계약 테스트가 같은 집합인지 본다).
-HARD_FACT_KEYS: tuple[str, ...] = (
-    "contains_shellfish", "is_crowded_large",
-)
+# 실격(hard) 키 — recommend 레지스트리와 같은 집합이다(integration 계약 테스트가 본다). 알러지 같은 안전 조건
+# 키(contains_shellfish)는 #425에서 없어졌고, 지금 hard 키는 모름을 통과시키는 취향 영역뿐이다.
+HARD_FACT_KEYS: tuple[str, ...] = ("is_crowded_large",)
 
 PLAN_EVIDENCE_PROMPT = (
     _PLAN_EVIDENCE_TEMPLATE
     .replace("{fact_key_lines}", _render_fact_key_lines(FACT_KEYS, FACT_KEY_MEANINGS))
-    .replace("__HARD_KEYS__", ", ".join(HARD_FACT_KEYS))
 )

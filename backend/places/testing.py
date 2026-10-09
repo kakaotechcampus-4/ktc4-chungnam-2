@@ -65,7 +65,7 @@ def _sample_rows() -> list[_Row]:
 def _sample_facts() -> dict[str, list[FactLabel]]:
     return {
         sample_id("seongsu-kalguksu"): [
-            FactLabel("contains_shellfish", True, "known"),
+            FactLabel("cuisine_korean", True, "known"),
             FactLabel("spicy_focused", False, "known"),
             FactLabel("oily_focused", None, "unknown"),
         ],

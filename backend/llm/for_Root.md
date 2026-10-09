@@ -26,7 +26,7 @@ badge·source·author는 응답에 없다(에코 토큰 절약, 바꿀 통로도
 
 ## merge_planned 규칙
 - 응답 개수 ≠ 입력 개수, `index` ≠ 위치, text 불일치(정규화 후) → ValueError(→ RECOMMEND_FAILED). 묶음(10개)마다 따로 합친다.
-- 같은 키 중복은 하나로. 방향이 엇갈리면 null(지어내지 않음) — **안전 키는 false가 하나라도 있으면 false**(가드레일 8).
+- 같은 키 중복은 하나로. 방향이 엇갈리면 null(지어내지 않음). 안전 키는 #425에서 없어져 예외가 없다(전에는 false가 하나라도 있으면 false였다).
 - 반경·앵커는 첫 줄에만.
 - 입력에 `fact_key`가 있는 줄(칩)은 나누지 않는다 — 방향은 같은 키 조건에서만 가져온다.
 
@@ -52,7 +52,7 @@ badge·source·author는 응답에 없다(에코 토큰 절약, 바꿀 통로도
 |---|---|
 | `chat.completions.parse`(strict JSON schema) 수락 여부 | **수락** — 400 없음. `json_object` 우회 불필요, `call_planner` 그대로 유지 |
 | 구조화 출력 필드 지원 | 스키마대로 파싱됨(`fact_key`·`badge`·`circle_radius_m`) |
-| 응답 품질(샘플 3줄) | 갑각류 알러지 → `contains_shellfish`(required), 조용한 곳 → `quiet`(preferred), 모호한 "그냥 별로예요" → `null`. 반경은 세 줄 모두 `null`(입력에 수치 없음) |
+| 응답 품질(샘플 3줄) | 갑각류 알러지 → `contains_shellfish`(required, 2026-10-09 당시 — #425에서 키를 지워 지금은 키 없는 줄), 조용한 곳 → `quiet`(preferred), 모호한 "그냥 별로예요" → `null`. 반경은 세 줄 모두 `null`(입력에 수치 없음) |
 | `plan_evidence` 왕복 | text·badge·author_id가 입력과 동일하게 유지됨 |
 
 한계: 샘플 3줄 1회 호출이라 품질 평가가 아니다. 특히 인젝션 문장이 실모델에서 다른 줄 fact_key에 영향을 주는지는 아직 못 봤다(아래 "남는 위험") — 평가셋으로 따로 본다.

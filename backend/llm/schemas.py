@@ -23,7 +23,6 @@ from pydantic import BaseModel, model_validator
 # 아니므로 후보에서 제외한다. 숙소는 AI 추천 대상이 아니라 숙소 전용 키(capacity_min)는 없다(#145).
 FactKey = Literal[
     # 공통
-    "contains_shellfish",
     "pet_friendly",
     # 음식점
     "spicy_focused",

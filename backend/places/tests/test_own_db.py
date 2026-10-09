@@ -354,7 +354,7 @@ def test_search_nearby_own_returns_coordinates(loaded):
 def test_get_facts_returns_labels_as_stored_including_unknown(loaded):
     pid = _pid(loaded, "permit", "P001")
     by_key = {f.fact_key: f for f in api.get_facts([pid], db=loaded)[pid]}
-    assert by_key["contains_shellfish"].value is True and by_key["contains_shellfish"].confidence == "known"
+    assert by_key["cuisine_korean"].value is True and by_key["cuisine_korean"].confidence == "known"
     assert by_key["oily_focused"].confidence == "unknown" and by_key["oily_focused"].value is None
     assert by_key["spicy_focused"].value is True   # 같은 키가 둘이면 마지막 줄
 
@@ -373,7 +373,7 @@ def test_get_facts_without_labels_is_empty_list_for_every_requested_id(loaded):
 
 
 def test_labels_for_missing_places_and_bad_rows_are_not_loaded(loaded):
-    assert loaded.scalar(select(func.count()).select_from(PlaceFact)) == 8   # 파일 15줄 → 해석 가능 9(중복 1 합침 포함) → 장소 없는 NOPE 1줄 제외
+    assert loaded.scalar(select(func.count()).select_from(PlaceFact)) == 7   # 파일 15줄 → 해석 가능 8(중복 1 합침 포함, contains_peanut은 #425로 건너뜀) → 장소 없는 NOPE 1줄 제외
     pid = uuid.UUID(_pid(loaded, "permit", "P001"))
     keys = set(loaded.scalars(select(PlaceFact.fact_key).where(PlaceFact.place_id == pid)))
     assert "made_up_key" not in keys and "is_open" not in keys
@@ -381,9 +381,9 @@ def test_labels_for_missing_places_and_bad_rows_are_not_loaded(loaded):
 
 def test_relabel_overwrites_and_keeps_one_row(loaded):
     pid = uuid.UUID(_pid(loaded, "permit", "P001"))
-    row = ingest.LabelRow("permit", "P001", "contains_shellfish", False, "known", 3, None)
+    row = ingest.LabelRow("permit", "P001", "cuisine_korean", False, "known", 3, None)
     repository.upsert_facts(loaded, [row])
-    values = loaded.scalars(select(PlaceFact.value).where(PlaceFact.place_id == pid, PlaceFact.fact_key == "contains_shellfish")).all()
+    values = loaded.scalars(select(PlaceFact.value).where(PlaceFact.place_id == pid, PlaceFact.fact_key == "cuisine_korean")).all()
     assert values == [False]
 
 
@@ -457,7 +457,7 @@ class _NoCloseSession:
 CURATED_CSV = FIX / "restaurant_curated_sample.csv"
 CURATED_LABELS = FIX / "restaurant_curated_labels.json"
 _MINI_KEYS = ["cuisine_korean", "cuisine_chinese", "spacious", "long_established", "franchise", "spicy_focused",
-              "oily_focused", "contains_shellfish", "wait_short", "pet_friendly", "quiet"]
+              "oily_focused", "wait_short", "pet_friendly", "quiet"]
 
 
 @pytest.fixture()
@@ -497,7 +497,7 @@ def test_restaurant_labels_store_value_confidence_evidence_and_source(db_session
     assert by_key["spicy_focused"].evidence == "가게 이름 '짬뽕'" and by_key["spicy_focused"].label_source == "menu_keyword"
     assert by_key["spicy_focused"].source_layer == 3
     assert by_key["cuisine_chinese"].value is False
-    for key in ("contains_shellfish", "wait_short", "pet_friendly"):
+    for key in ("wait_short", "pet_friendly"):
         assert by_key[key].confidence == "unknown" and by_key[key].evidence is None and by_key[key].label_source is None
 
 
@@ -546,7 +546,7 @@ def test_restaurant_labels_with_unregistered_keys_are_reported_not_loaded(db_ses
     assert any("모르는 fact_key: cuisine_korean" in l for l in lines)
     keys = set(db_session.scalars(select(PlaceFact.fact_key)))
     assert "cuisine_korean" not in keys and "spicy_focused" in keys
-    assert keys <= {"spicy_focused", "contains_shellfish"}   # contains_* 재료 태그는 접두 규칙으로 항상 허용
+    assert keys <= {"spicy_focused"}   # 표에 없는 키는 접두와 상관없이 모두 건너뛴다(#425로 contains_* 접두 규칙 삭제)
 
 
 def test_cli_restaurants_dry_run_with_labels_writes_nothing(db_session, mini_constraints, capsys):

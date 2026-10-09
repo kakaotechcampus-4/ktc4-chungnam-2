@@ -50,7 +50,7 @@ class TestPromptListIsBuiltFromFactKey:
         assert "price_bucket" not in FACT_KEYS
         assert "price_bucket" not in HARD_FACT_KEYS
         assert "price_bucket" not in prompts.PLAN_EVIDENCE_PROMPT
-        assert '"너무 비싸요"·"입장료가 비싸요" → conditions 빈 목록' in prompts.PLAN_EVIDENCE_PROMPT
+        assert '"너무 비싸요"·"입장료가 비싸요"·"저 새우 알러지 있어요" → conditions 빈 목록' in prompts.PLAN_EVIDENCE_PROMPT
         with pytest.raises(ValidationError):
             PlannedCondition(fact_key="price_bucket", wants=False)
 
@@ -177,21 +177,24 @@ class TestWantsPrompt:
         assert '"시끄러운 데는 싫어" → quiet, wants=true' in prompt
         assert '"한식 말고" → cuisine_korean, wants=false' in prompt
 
-    def test_prompt_names_every_hard_key_and_asks_for_wants(self):
-        section = prompts.PLAN_EVIDENCE_PROMPT.split("안전 키(")[1].split(")")[0]
-        for key in HARD_FACT_KEYS:
-            assert key in section
-        assert "wants는 null로 둔다" not in prompts.PLAN_EVIDENCE_PROMPT
-        assert '"저 조개 알러지 있어요" → contains_shellfish, wants=false' in prompts.PLAN_EVIDENCE_PROMPT
+    def test_prompt_has_no_safety_key_section(self):
+        # 알러지 같은 안전 조건은 서비스가 판단하지 않는다(#425) — 키도, "피하겠다면 false" 규칙도 없다.
+        prompt = prompts.PLAN_EVIDENCE_PROMPT
+        assert "contains_shellfish" not in prompt
+        assert "안전 키" not in prompt
+        assert "조금이라도 분명하면 false" not in prompt
 
-    def test_prompt_leans_to_false_for_safety_reasons(self):
-        assert "조금이라도 분명하면 false" in prompts.PLAN_EVIDENCE_PROMPT
+    def test_prompt_tells_allergy_reason_has_no_key(self):
+        assert '"저 새우 알러지 있어요" → conditions 빈 목록' in prompts.PLAN_EVIDENCE_PROMPT
+
+    def test_shellfish_key_is_gone_from_registry(self):
+        assert "contains_shellfish" not in FACT_KEYS
+        assert "contains_shellfish" not in prompts.FACT_KEY_MEANINGS
 
     def test_hard_keys_are_registered_fact_keys(self):
         assert set(HARD_FACT_KEYS) <= set(FACT_KEYS)
 
     def test_no_unreplaced_placeholder(self):
-        assert "__HARD_KEYS__" not in prompts.PLAN_EVIDENCE_PROMPT
         assert "{fact_key_lines}" not in prompts.PLAN_EVIDENCE_PROMPT
 
 
@@ -205,15 +208,8 @@ class TestWantsFixtures:
     def test_case_is_valid_and_consistent(self, case):
         line = EvidenceLine(source="reaction", text=case["text"], badge=case["badge"], fact_key=case["fact_key"], wants=case["wants"])
 
-    def test_at_least_eight_safety_cases_covering_all_directions(self):
-        safety = [c for c in WANTS_CASES if c["fact_key"] in HARD_FACT_KEYS]
-        assert len(safety) >= 8
-        assert {c["wants"] for c in safety} == {True, False, None}
-
-    def test_allergy_and_cannot_eat_cases_expect_false(self):
-        for c in WANTS_CASES:
-            if c["fact_key"] in HARD_FACT_KEYS and any(w in c["text"] for w in ("알러지", "못 먹", "빼 주세요")):
-                assert c["wants"] is False, c["text"]
+    def test_no_case_uses_a_removed_safety_key(self):
+        assert all(c["fact_key"] in FACT_KEYS or c["fact_key"] is None for c in WANTS_CASES)
 
     def test_cases_cover_both_directions_and_the_flip(self):
         assert {c["wants"] for c in WANTS_CASES} == {True, False, None}
@@ -292,10 +288,8 @@ class TestPromptDescribesOmittedKey:
         assert "초밥 먹고 싶어" in prompt and "라멘" in prompt and "돈가스" in prompt
         assert "cuisine_japanese" in prompt.split("음식 이름만 말해도")[1]
 
-    def test_ambiguous_allowance_with_safety_key_is_null(self):
-        prompt = prompts.PLAN_EVIDENCE_PROMPT
-        assert '"새우 빼고 시키면 괜찮아요" → contains_shellfish, wants=null' in prompt
-        assert '"새우 빼고 주문하면 돼서 상관없어요" → contains_shellfish, wants=null' in prompt
+    def test_allowance_with_hard_key_is_null(self):
+        assert '"북적여도 괜찮아요" → is_crowded_large, wants=null' in prompts.PLAN_EVIDENCE_PROMPT
 
 
 # ── 글 하나에 조건 여럿 — #419 ───────────────────────────────────────────────
@@ -313,7 +307,7 @@ class TestMultiConditionPrompt:
     def test_prompt_gives_multi_condition_examples(self):
         prompt = prompts.PLAN_EVIDENCE_PROMPT
         assert '"한식 말고 고기 먹고 싶어요" → cuisine_korean, wants=false / cuisine_bbq, wants=true' in prompt
-        assert '"매운 거랑 해산물 둘 다 안 돼요" → spicy_focused, wants=false / contains_shellfish, wants=false' in prompt
+        assert '"매운 거랑 느끼한 건 둘 다 안 돼요" → spicy_focused, wants=false / oily_focused, wants=false' in prompt
 
     def test_prompt_says_not_to_split_a_single_condition(self):
         prompt = prompts.PLAN_EVIDENCE_PROMPT
@@ -341,4 +335,9 @@ class TestMultiKeyFixtures:
     def test_covers_split_single_and_empty(self):
         sizes = {len(c["conditions"]) for c in MULTI_KEY_CASES}
         assert {0, 1, 2} <= sizes
-        assert any(k in HARD_FACT_KEYS for c in MULTI_KEY_CASES if len(c["conditions"]) > 1 for k, _ in c["conditions"])
+
+    def test_allergy_reasons_have_no_condition(self):
+        allergy = [c for c in MULTI_KEY_CASES if "알러지" in c["text"]]
+        assert allergy
+        for c in allergy:
+            assert all(k in FACT_KEYS for k, _ in c["conditions"]), c["text"]

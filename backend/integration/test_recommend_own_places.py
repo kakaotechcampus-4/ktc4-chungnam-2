@@ -116,18 +116,6 @@ def test_real_places_implementation_feeds_candidates_names_and_labels(own_db, no
     assert no_label_place == []
 
 
-def test_real_places_known_true_safety_label_disqualifies_and_missing_label_excludes(own_db, no_label_place):
-    run = _setup_run(own_db, required_fact_key="contains_shellfish")
-    flows.execute_run(own_db, run_id=str(run.id),
-                      place_search=RealPlaceSearchGateway(db=own_db), place_facts=RealPlaceFactsGateway(db=own_db))
-
-    # P001(성수 칼국수)은 contains_shellfish=known true → 실격, 나머지는 라벨이 없어 unknown → 안전 조건이라 제거
-    assert service.list_candidates(own_db, str(run.id)) == []
-    funnel = {e["label"]: e["removed_count"] for e in run.last_funnel}
-    assert funnel["실격 조건 제거"] >= 1
-    assert no_label_place == []
-
-
 def test_real_places_candidates_carry_the_data_source(own_db, no_label_place):
     """#242 — 후보 응답에 places의 데이터 출처(permit|tourapi)가 붙는다(가드레일 5)."""
     run = _setup_run(own_db, required_fact_key=None)
