@@ -50,6 +50,24 @@
 - **`member.presence`**: 접속 상태 추적이 없다. `Member.online`은 비어 온다 — 접속 점은 그리지 않는다.
 - **FE는 이 이벤트들을 받아도 되지만 의존하지 않는다.** 결과는 항상 `GET /runs/{id}/result`가 정본이다(`done`이 될 때까지 2초 간격 조회).
 
+## 이벤트별로 화면이 다시 받을 것 (#449)
+
+FE는 이벤트를 받으면 아래 표대로 화면 데이터를 다시 받는다(캐시 무효화). 이벤트 페이로드로 바로 고칠 수 있는 것(핀 목록의 한 핀, 토스트)은 페이로드를 쓰고, 나머지는 다시 받는다. 이벤트나 화면 데이터를 추가할 때 이 표를 함께 고친다. 예전에는 핸들러마다 흩어져 있어 준비 상태와 구성원 목록이 빠졌다(멘토 리뷰).
+
+| 이벤트 | 다시 받을 것 |
+|---|---|
+| `pin.created`, `pin.published` | 핀 목록(페이로드로 갱신), `GET /maps/{mapId}/counts` |
+| `pin.deleted` | 핀 목록(페이로드로 갱신), `GET /maps/{mapId}/counts`, `GET /maps/{mapId}/recommend/readiness` |
+| `reaction.changed` | 핀 목록의 그 핀(페이로드로 갱신), `GET /maps/{mapId}/counts`, `GET /pins/{pinId}/reactions`(열려 있으면), `GET /maps/{mapId}/recommend/readiness` |
+| `member.joined` | `GET /maps/{mapId}`, `GET /maps/{mapId}/members` |
+| `member.left` | `GET /maps/{mapId}/pins`, `GET /maps/{mapId}/counts`, `GET /maps/{mapId}`, `GET /maps/{mapId}/members`, 추천(준비 상태 포함) |
+| `map.deleted` | 지도 화면을 닫고 내 지도 목록(`GET /maps`)으로 |
+| `shortlist.changed` | `GET /maps/{mapId}/shortlist`, `GET /maps/{mapId}/pins`(확정 핀 표시) |
+| `route.recalculated` | `GET /maps/{mapId}/shortlist`(동선 포함) |
+
+- 추천 준비 상태는 "♥나 🚫 의견이 달린 핀 1개"(#360)라 의견 하나, 핀 하나로 바뀐다. 그래서 반응과 핀 삭제에도 다시 받는다.
+- 개인 채널의 `run.candidates_ready`는 결과 조회(`GET /runs/{id}/result`)가 정본이라 이 표와 상관없다(위 "v1에서 발행하지 않는 이벤트").
+
 ## 페이로드 봉투
 
 ```json
