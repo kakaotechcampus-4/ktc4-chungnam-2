@@ -1912,7 +1912,7 @@ export interface components {
             search_query?: string;
             /** @description 자체 DB 장소의 이름 (#191). 핀에 따로 저장하지 않고 장소에서 가져온다. live 핀에는 없다(#382) — 화면이 실시간 검색 결과에서 읽는다 */
             place_name?: string;
-            /** @description 매칭된 카카오 장소 페이지 링크(저장 허용). **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 매칭된 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 필드를 생략한다 */
+            /** @description 카카오 장소 페이지 링크. **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 자체 DB 핀은 매칭된 장소에 기록된 URL(저장 허용), 실시간 핀(source=live)은 kakao_place_id로 응답 때 만든다(저장하지 않음, #445). 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 필드를 생략한다 */
             place_url?: string;
             /** @description 핀을 찍은 구성원의 user_id (#26) */
             created_by: string;
