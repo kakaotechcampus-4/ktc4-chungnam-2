@@ -305,7 +305,7 @@ def _withdraw(db_session, user_id):
     db_session.commit()
 
 
-def test_withdrawn_member_is_excluded_from_member_count_but_kept_in_members(app_client, db_session):
+def test_withdrawn_member_is_excluded_from_member_count_and_members(app_client, db_session):
     from maps.api import count_members
 
     map_id = app_client.post("/maps", json=_create_body(), cookies=_auth("user_1")).json()["id"]
@@ -316,5 +316,31 @@ def test_withdrawn_member_is_excluded_from_member_count_but_kept_in_members(app_
     listed = app_client.get("/maps", cookies=_auth("user_1")).json()
     assert [m["member_count"] for m in listed if m["id"] == map_id] == [1]
     assert count_members(db_session, map_id) == 1
-    # 구성원 목록엔 남는다 — 핀 작성자 표기용(#155)
-    assert len(app_client.get(f"/maps/{map_id}/members", cookies=_auth("user_1")).json()) == 2
+    # 구성원 목록도 같은 기준이다(#439) — 탈퇴자는 목록에 없다
+    members = app_client.get(f"/maps/{map_id}/members", cookies=_auth("user_1")).json()
+    assert [m["user_id"] for m in members] == ["user_1"]
+
+
+def test_members_length_equals_member_count_with_withdrawn_among_three(app_client, db_session):
+    map_id = app_client.post("/maps", json=_create_body(), cookies=_auth("user_1")).json()["id"]
+    _join(app_client, map_id, "user_2")
+    _join(app_client, map_id, "user_3")
+    _withdraw(db_session, "user_2")
+
+    detail = app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()
+    members = app_client.get(f"/maps/{map_id}/members", cookies=_auth("user_3")).json()
+    assert len(members) == detail["member_count"] == 2
+    assert {m["user_id"]: m["role"] for m in members} == {"user_1": "owner", "user_3": "member"}
+
+
+def test_withdrawn_owner_is_not_listed_and_role_shown_as_stored(app_client, db_session):
+    """방장이 탈퇴하면 위임(#369 10번)으로 새 방장이 owner로 보이고, 탈퇴한 사람은 목록에 없다."""
+    from maps.service import transfer_or_delete_owned_maps
+
+    map_id = app_client.post("/maps", json=_create_body(), cookies=_auth("user_1")).json()["id"]
+    _join(app_client, map_id, "user_2")
+    transfer_or_delete_owned_maps(db_session, user_id="user_1")
+    _withdraw(db_session, "user_1")
+
+    members = app_client.get(f"/maps/{map_id}/members", cookies=_auth("user_2")).json()
+    assert [(m["user_id"], m["role"]) for m in members] == [("user_2", "owner")]
