@@ -162,7 +162,7 @@ def test_search_nearby_own_multiple_areas_is_union(fake):
 def test_get_facts_passes_labels_through_including_unknown(fake):
     labels = fake.get_facts([sample_id("seongsu-kalguksu")])[sample_id("seongsu-kalguksu")]
     by_key = {l.fact_key: l for l in labels}
-    assert by_key["contains_shellfish"] == FactLabel("contains_shellfish", True, "known")
+    assert by_key["cuisine_korean"] == FactLabel("cuisine_korean", True, "known")
     assert by_key["oily_focused"].confidence == "unknown" and by_key["oily_focused"].value is None
 
 

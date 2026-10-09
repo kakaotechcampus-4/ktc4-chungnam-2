@@ -220,15 +220,15 @@ def labels():
 
 def test_allowed_keys_come_from_constraints_md_without_code_judged_ones(labels):
     allowed, _, _ = labels
-    assert {"spicy_focused", "quiet", "good_view", "contains_shellfish"} <= allowed
+    assert {"spicy_focused", "quiet", "good_view", "cuisine_korean"} <= allowed
     assert "is_open" not in allowed and "within_radius" not in allowed
 
 
 def test_label_rows_known_unknown_and_layers(labels):
     _, rows, _ = labels
     by_key = {(r.source_id, r.fact_key): r for r in rows}
-    assert by_key[("P001", "contains_shellfish")].value is True
-    assert by_key[("P001", "contains_shellfish")].source_layer == 3
+    assert by_key[("P001", "cuisine_korean")].value is True
+    assert by_key[("P001", "cuisine_korean")].source_layer == 3
     unknown = by_key[("P001", "oily_focused")]
     assert unknown.confidence == "unknown" and unknown.value is None
     assert by_key[("T100", "good_view")].value is True   # TRUE도 받는다
@@ -242,9 +242,11 @@ def test_unknown_fact_keys_are_skipped_and_counted(labels):
     assert all(r.fact_key != "made_up_key" for r in rows)
 
 
-def test_contains_prefix_keys_are_allowed_even_if_not_listed(labels):
-    _, rows, _ = labels
-    assert any(r.fact_key == "contains_peanut" for r in rows)
+def test_contains_prefix_keys_are_not_allowed_unless_listed(labels):
+    """#425: 재료 태그 접두 규칙을 없앴다. constraints.md 표에 없으면 contains_*도 건너뛴다."""
+    _, rows, report = labels
+    assert report.skipped["모르는 fact_key: contains_peanut"] == 1
+    assert all(not r.fact_key.startswith("contains_") for r in rows)
 
 
 def test_bad_boolean_bad_confidence_bad_source_are_skipped(labels):
@@ -332,7 +334,7 @@ def test_curated_bom_header_is_read():
 
 NEW_KEYS = frozenset({
     "cuisine_korean", "cuisine_chinese", "spacious", "long_established", "franchise", "spicy_focused", "oily_focused",
-    "contains_shellfish", "wait_short", "pet_friendly", "quiet",
+    "wait_short", "pet_friendly", "quiet",
 })
 
 
@@ -351,7 +353,7 @@ def test_string_values_become_bool_and_unknown_has_no_value(curated_labels):
     rows, _ = curated_labels
     by = {(r.source_id, r.fact_key): r for r in rows}
     assert by[("R001", "cuisine_korean")].value is True and by[("R001", "cuisine_chinese")].value is False
-    unknown = by[("R001", "contains_shellfish")]
+    unknown = by[("R001", "wait_short")]
     assert (unknown.confidence, unknown.value) == ("unknown", None)
     assert by[("R001", "wait_short")].confidence == "unknown" and by[("R001", "pet_friendly")].confidence == "unknown"
 
@@ -361,7 +363,7 @@ def test_evidence_and_label_source_are_carried(curated_labels):
     by = {(r.source_id, r.fact_key): r for r in rows}
     assert by[("R001", "spicy_focused")].evidence == "가게 이름 '짬뽕'"
     assert by[("R001", "spicy_focused")].label_source == "menu_keyword"
-    assert by[("R001", "contains_shellfish")].evidence is None   # 근거 없는 unknown
+    assert by[("R001", "wait_short")].evidence is None   # 근거 없는 unknown
 
 
 def test_unregistered_keys_wrong_values_and_bad_ids_are_skipped_and_counted(curated_labels):
@@ -376,7 +378,7 @@ def test_unregistered_keys_wrong_values_and_bad_ids_are_skipped_and_counted(cura
 def test_keys_missing_from_constraints_are_reported_as_unregistered():
     """#206 머지 전 상태(신규 15개 미등록)를 흉내 낸다 — 건너뛰고 키별로 센다."""
     entries = json.loads((FIX / "restaurant_curated_labels.json").read_text(encoding="utf-8"))
-    old = frozenset({"spicy_focused", "oily_focused", "contains_shellfish", "wait_short", "pet_friendly"})
+    old = frozenset({"spicy_focused", "oily_focused", "wait_short", "pet_friendly"})
     rows, report = ingest.parse_label_rows(ingest.curated_labels_to_rows(entries), old)
     assert report.skipped["모르는 fact_key: cuisine_korean"] == 3   # R001, R007, R404, weird_R001은 id 이상보다 키 검사가 먼저
     assert all(r.fact_key in old for r in rows)
