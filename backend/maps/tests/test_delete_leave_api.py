@@ -18,6 +18,7 @@ from auth.testing import session_cookie
 from common.events import EventLog
 from maps import api as maps_api
 from maps.api import DbMembershipGateway
+from maps.core import MAP_LIMIT
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
 from pins.models import Pin as PinRow
@@ -328,21 +329,21 @@ def test_withdrawing_owner_hands_over_or_deletes(app_client, db_session):
     assert _events(db_session, shared, "map.deleted") == []
 
 
-# --- 내 지도 10개 상한 ------------------------------------------------------------------
+# --- 내 지도 MAP_LIMIT개 상한 ------------------------------------------------------------------
 
 
 def _fill_to_limit(app_client, user_id="user_2"):
-    return [_create_map(app_client, user_id=user_id, title=f"지도 {i}") for i in range(10)]
+    return [_create_map(app_client, user_id=user_id, title=f"지도 {i}") for i in range(MAP_LIMIT)]
 
 
-def test_creating_an_eleventh_map_is_409(app_client):
+def test_creating_a_map_over_the_limit_is_409(app_client):
     own = _fill_to_limit(app_client)
     resp = app_client.post(
         "/maps", json={"title": "하나 더", "start_date": "2026-10-10", "end_date": "2026-10-12"}, cookies=_auth("user_2")
     )
     assert resp.status_code == 409
     assert resp.json()["code"] == "MAP_LIMIT"
-    assert resp.json()["detail"] == {"limit": 10, "count": 10}
+    assert resp.json()["detail"] == {"limit": MAP_LIMIT, "count": MAP_LIMIT}
     assert len(app_client.get("/maps", cookies=_auth("user_2")).json()) == len(own)
 
 
@@ -350,7 +351,7 @@ def test_accepting_a_new_invite_at_the_limit_is_409_but_rejoin_is_allowed(app_cl
     joined = _create_map(app_client, user_id="user_1", title="이미 참여")
     token_joined = _invite_token(app_client, joined)
     assert app_client.post(f"/invites/{token_joined}/accept", cookies=_auth("user_2")).status_code == 200
-    for i in range(9):
+    for i in range(MAP_LIMIT - 1):
         _create_map(app_client, user_id="user_2", title=f"지도 {i}")
 
     other = _create_map(app_client, user_id="user_1", title="새 초대")

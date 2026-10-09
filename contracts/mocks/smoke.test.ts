@@ -2,6 +2,7 @@ import { afterAll, beforeAll, afterEach, describe, expect, it } from "vitest";
 import { server } from "./node";
 import { resetScenario } from "./scenarios";
 import { store } from "./store";
+import { MAP_LIMIT } from "./handlers/maps";
 
 const BASE = "https://api.pingo.example.com";
 
@@ -270,15 +271,16 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
   });
 });
 
-describe("#369 — 내 지도 10개 상한", () => {
+describe("#369 — 내 지도 상한(#433에서 20개)", () => {
   const create = () =>
     fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "상한 시험", start_date: "2026-11-01", end_date: "2026-11-02" }) });
 
-  it("내 지도가 10개면 만들기가 409 MAP_LIMIT, 하나 지우면 다시 된다", async () => {
-    while ((await (await fetch(`${BASE}/maps`)).json()).length < 10) expect((await create()).status).toBe(201);
+  it("내 지도가 상한이면 만들기가 409 MAP_LIMIT, 하나 지우면 다시 된다", async () => {
+    expect(MAP_LIMIT).toBe(20);
+    while ((await (await fetch(`${BASE}/maps`)).json()).length < MAP_LIMIT) expect((await create()).status).toBe(201);
     const r = await create();
     expect(r.status).toBe(409);
-    expect(await r.json()).toMatchObject({ code: "MAP_LIMIT", detail: { limit: 10, count: 10 } });
+    expect(await r.json()).toMatchObject({ code: "MAP_LIMIT", detail: { limit: MAP_LIMIT, count: MAP_LIMIT } });
     const [last] = await (await fetch(`${BASE}/maps`)).json();
     expect((await fetch(`${BASE}/maps/${last.id}`, { method: "DELETE" })).status).toBe(204);
     expect((await create()).status).toBe(201);

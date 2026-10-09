@@ -18,7 +18,7 @@ from maps.schemas import InviteSummary, Map, MapRegion, Member, NextOwner
 WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 
 # 내 지도 상한(#369 15번) — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다.
-MAP_LIMIT = 10
+MAP_LIMIT = 20
 
 # 목서버(contracts/mocks/handlers/maps.ts:33)와 동일한 7일 — 정본이 없다(maps/for_Root.md 보고).
 INVITE_TTL = timedelta(days=7)
