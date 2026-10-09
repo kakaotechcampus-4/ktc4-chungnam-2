@@ -69,6 +69,20 @@ def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> l
     return [*reaction_lines, *manual_lines]
 
 
+def demote_wanted_place_identity(lines: Sequence[dict], category: str) -> list[dict]:
+    """docs/constraints.md "🚫 사유 안의 음식 종류 '원함'은 선호다"(#422): required이면서 wants=true이고 키가
+    가게의 정체(음식점 cuisine_*)인 줄은 배지를 preferred로 내린다. wants=false·다른 키·다른 배지는 그대로다.
+    글 줄·칩 줄 모두 같은 규칙이라 ②가 낸 줄과 칩 줄을 합친 뒤에 한 번 건다. 원본은 바꾸지 않는다."""
+    return [
+        {**line, "badge": "preferred"}
+        if line.get("badge") == "required"
+        and line.get("wants") is True
+        and constraints.is_place_identity_key(category, line.get("fact_key"))
+        else line
+        for line in lines
+    ]
+
+
 def circles_all_overlap(circles: list[Circle]) -> bool:
     """모든 원 쌍이 겹치면 하나의 지역으로 병합 가능(자동 확인 — 5-6-1 "사람이 쓴 반경 사유
     끼리 안 겹칠 때만" region/confirm 호출이 실제로 필요해진다). 0~1개는 겹칠 대상이 없으므로

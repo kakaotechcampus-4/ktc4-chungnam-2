@@ -98,6 +98,11 @@ def heart_signal_use(category: str, fact_key: str) -> HeartSignalUse:
     return HEART_SIGNAL_BY_CATEGORY.get(category, {}).get(fact_key, "use")
 
 
+def is_place_identity_key(category: str, fact_key: str | None) -> bool:
+    """표에 "use"로 적힌 키 = "가게의 정체"(음식점 cuisine_*, #422). heart_signal_use와 달리 표에 없는 키는 아니다."""
+    return fact_key is not None and HEART_SIGNAL_BY_CATEGORY.get(category, {}).get(fact_key) == "use"
+
+
 # 추천 이유(Candidate.reason) 한 줄에 쓰는 표시 이름 — fact_key를 사용자 문장으로 옮긴다. 값이
 # 아니라 "통과/충족했을 때 뭐라고 말하나"이다. 이 표에 없는 키는 이유에서 조용히 빠지므로
 # (가드레일 5는 근거가 있는 것만 말하라는 뜻 — 이름 없는 키를 날것으로 노출하지 않는다)
