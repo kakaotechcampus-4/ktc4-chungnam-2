@@ -22,7 +22,6 @@ from places.schemas import (
 )
 from places.service import PlaceService, to_result
 from places.sources.base import PlaceSource
-from places.sources.google import GooglePlaceSource
 from places.sources.kakao import KakaoPlaceSource
 from places.sources.naver import NaverPlaceSource
 
@@ -36,12 +35,10 @@ def call_counts() -> dict[str, int]:
     return _STATS.snapshot()
 
 
-def build_sources(http: SourceHttp, stats: CallStats = _STATS) -> dict[str, PlaceSource]:
+def build_sources(http: SourceHttp) -> dict[str, PlaceSource]:
     return {
         "kakao": KakaoPlaceSource(http, settings.kakao_rest_api_key),
         "naver": NaverPlaceSource(http, settings.naver_search_client_id, settings.naver_search_client_secret),
-        "google": GooglePlaceSource(http, stats, settings.google_places_api_key,
-                                    max_calls=settings.places_google_max_calls),
     }
 
 

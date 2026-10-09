@@ -3,7 +3,6 @@ permit,C001,is_crowded_large,false,known,2026-10-02,인허가 소재지면적 30
 permit,C001,franchise,true,known,2026-10-02,브랜드 목록,franchise_list
 permit,C001,quiet,,unknown,2026-10-02,,
 permit,C002,bakery,true,known,2026-10-02,인허가 업태 '제과점영업',license_business_type
-permit,C002,price_bucket,mid,known,2026-10-02,가상 근거,goodprice
 permit,C004,local_flavor,true,known,2026-10-02,인허가 업태 '전통찻집',license_business_type
 permit,C004,open_late,false,known,2026-10-02,가상 근거,menu_keyword
 permit,C404,quiet,true,known,2026-10-02,장소가 없는 라벨,x

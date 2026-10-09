@@ -355,7 +355,6 @@ def test_get_facts_returns_labels_as_stored_including_unknown(loaded):
     pid = _pid(loaded, "permit", "P001")
     by_key = {f.fact_key: f for f in api.get_facts([pid], db=loaded)[pid]}
     assert by_key["contains_shellfish"].value is True and by_key["contains_shellfish"].confidence == "known"
-    assert "price_bucket" not in by_key   # #423에서 뺀 키라 적재하지 않는다
     assert by_key["oily_focused"].confidence == "unknown" and by_key["oily_focused"].value is None
     assert by_key["spicy_focused"].value is True   # 같은 키가 둘이면 마지막 줄
 
@@ -374,7 +373,7 @@ def test_get_facts_without_labels_is_empty_list_for_every_requested_id(loaded):
 
 
 def test_labels_for_missing_places_and_bad_rows_are_not_loaded(loaded):
-    assert loaded.scalar(select(func.count()).select_from(PlaceFact)) == 8   # 파일 17줄 → 해석 가능 9(중복 1 합침 포함) → 장소 없는 NOPE 1줄 제외
+    assert loaded.scalar(select(func.count()).select_from(PlaceFact)) == 8   # 파일 15줄 → 해석 가능 9(중복 1 합침 포함) → 장소 없는 NOPE 1줄 제외
     pid = uuid.UUID(_pid(loaded, "permit", "P001"))
     keys = set(loaded.scalars(select(PlaceFact.fact_key).where(PlaceFact.place_id == pid)))
     assert "made_up_key" not in keys and "is_open" not in keys
@@ -407,7 +406,7 @@ def test_cli_dry_run_writes_nothing(db_session, capsys):
 def test_cli_reports_skip_reasons(db_session, capsys):
     load.main(["labels", "--file", str(FIX / "labels.csv"), "--dry-run"], session_factory=lambda: _NoCloseSession(db_session))
     out = capsys.readouterr().out
-    assert "모르는 fact_key: made_up_key" in out and "모르는 fact_key: price_bucket" in out
+    assert "모르는 fact_key: made_up_key" in out
 
 
 def test_cli_tourapi_loads_types_12_14_38_with_labels(db_session, tmp_path, capsys):
@@ -496,7 +495,7 @@ def test_restaurant_labels_store_value_confidence_evidence_and_source(db_session
     by_key = {f.fact_key: f for f in db_session.scalars(select(PlaceFact).where(PlaceFact.place_id == uuid.UUID(pid)))}
     assert by_key["spicy_focused"].value is True and by_key["spicy_focused"].confidence == "known"
     assert by_key["spicy_focused"].evidence == "가게 이름 '짬뽕'" and by_key["spicy_focused"].label_source == "menu_keyword"
-    assert by_key["spicy_focused"].source_layer == 3 and "price_bucket" not in by_key   # 가격대는 #423에서 뺐다
+    assert by_key["spicy_focused"].source_layer == 3
     assert by_key["cuisine_chinese"].value is False
     for key in ("contains_shellfish", "wait_short", "pet_friendly"):
         assert by_key[key].confidence == "unknown" and by_key[key].evidence is None and by_key[key].label_source is None
@@ -516,7 +515,7 @@ def test_restaurant_load_skips_bad_label_rows_but_keeps_the_good_ones(db_session
     _restaurants(db_session, mini_constraints)
     pid = uuid.UUID(_pid(db_session, "permit", "R003"))
     keys = set(db_session.scalars(select(PlaceFact.fact_key).where(PlaceFact.place_id == pid)))
-    assert keys == {"long_established"}   # made_up_key·price_bucket(#423에서 뺌)·quiet=maybe는 건너뜀
+    assert keys == {"long_established"}   # made_up_key·quiet=maybe는 건너뜀
 
 
 def test_restaurant_load_is_idempotent_and_reupload_replaces_evidence(db_session, mini_constraints):
@@ -608,7 +607,7 @@ def test_cafe_labels_json_and_csv_paths_give_the_same_result(db_session):
     db_session.execute(PlaceFact.__table__.delete())
     load.load_labels(db_session, CAFE_LABELS_CSV, constraints=CONSTRAINTS, encoding=None)
     via_csv = _fact_rows(db_session)
-    assert via_json == via_csv and len(via_json) == 6   # C002 price_bucket은 #423에서 뺀 키라 건너뜀
+    assert via_json == via_csv and len(via_json) == 6
     assert next(r for r in via_json if r[:2] == ("C001", "quiet"))[2:4] == (None, "unknown")   # unknown은 값 없이 그대로 보인다
 
 

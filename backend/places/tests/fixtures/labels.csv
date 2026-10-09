@@ -1,14 +1,12 @@
 source,source_id,fact_key,value,confidence,labeled_at
 permit,P001,contains_shellfish,true,known,2026-09-30
 permit,P001,spicy_focused,false,known,
-permit,P001,price_bucket,mid,known,
 permit,P001,oily_focused,,unknown,
 permit,P010,is_crowded_large,false,known,
 permit,P010,quiet,,unknown,
 tourapi,T100,quiet,true,known,2026-09-30T12:00:00
 tourapi,T100,good_view,TRUE,known,
 permit,P001,made_up_key,true,known,
-permit,P001,price_bucket,12000,known,
 permit,P001,contains_peanut,true,known,
 permit,P010,spicy_focused,maybe,known,
 permit,NOPE,spicy_focused,true,known,

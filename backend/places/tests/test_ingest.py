@@ -222,7 +222,6 @@ def test_allowed_keys_come_from_constraints_md_without_code_judged_ones(labels):
     allowed, _, _ = labels
     assert {"spicy_focused", "quiet", "good_view", "contains_shellfish"} <= allowed
     assert "is_open" not in allowed and "within_radius" not in allowed
-    assert "price_bucket" not in allowed   # #423에서 뺐다
 
 
 def test_label_rows_known_unknown_and_layers(labels):
@@ -246,13 +245,6 @@ def test_unknown_fact_keys_are_skipped_and_counted(labels):
 def test_contains_prefix_keys_are_allowed_even_if_not_listed(labels):
     _, rows, _ = labels
     assert any(r.fact_key == "contains_peanut" for r in rows)
-
-
-def test_retired_price_bucket_rows_are_skipped_whatever_the_value(labels):
-    """#423 — 납품 파일에 남은 가격대 줄(mid, 원본 숫자 12000)은 등록 안 된 키라 건너뛴다."""
-    _, rows, report = labels
-    assert report.skipped["모르는 fact_key: price_bucket"] == 2
-    assert all(r.fact_key != "price_bucket" for r in rows)
 
 
 def test_bad_boolean_bad_confidence_bad_source_are_skipped(labels):
@@ -376,7 +368,6 @@ def test_unregistered_keys_wrong_values_and_bad_ids_are_skipped_and_counted(cura
     rows, report = curated_labels
     assert report.skipped["모르는 fact_key: made_up_key"] == 1
     assert report.skipped["모르는 fact_key: long_established"] == 0   # NEW_KEYS에 있으니 통과
-    assert report.skipped["모르는 fact_key: price_bucket"] == 2        # R001 low, R003 가격 숫자 — #423에서 뺀 키
     assert report.skipped["known인데 value가 true/false가 아님"] == 1   # quiet=maybe
     assert report.skipped["source/source_id 이상"] == 1                # weird_R001
     assert all(r.fact_key != "made_up_key" for r in rows)

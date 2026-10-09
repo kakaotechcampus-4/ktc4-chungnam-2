@@ -14,7 +14,7 @@ from typing import Literal, get_args
 Environment = Literal["dev", "test", "prod"]
 AdapterMode = Literal["dev", "real"]
 
-PLACE_SOURCE_NAMES = ("kakao", "naver", "google")
+PLACE_SOURCE_NAMES = ("kakao", "naver")
 _PORTS = ("places", "llm")
 # 주의: "auth"도 여기 없다(#126) — 쿠키 문자열을 그대로 user_id로 믿는 개발용 스텁을 없앴다.
 # 인증 구현은 auth/deps.py의 실구현 하나뿐이라 dev/real을 오갈 대상이 없다.
@@ -117,18 +117,16 @@ class Settings:
     llm_model: str = "gpt-6-luna"
     # 로그 레벨(LOG_LEVEL). main.py가 logging.basicConfig에 넘긴다(#390).
     log_level: str = "INFO"
-    # places 실시간 연결(#34a) — 지도 API 키 3종. 기본값 ""는 위 kakao_*와 같은 이유(dev에서 키 없이도
+    # places 실시간 연결(#34a) — 지도 API 키 2종. 기본값 ""는 위 kakao_*와 같은 이유(dev에서 키 없이도
     # 서버가 뜨고, 그 소스는 "키 없음"으로 건너뛴다). 키는 로컬 .env에만 둔다.
     # 카카오 로컬 API는 REST API 키를 쓴다 — 없으면 로그인용 KAKAO_CLIENT_ID(앱의 REST 키와 같은 값)로 폴백.
     kakao_rest_api_key: str = ""
     naver_search_client_id: str = ""
     naver_search_client_secret: str = ""
-    google_places_api_key: str = ""
     # places 실시간 연결 튜닝(#34a). v1은 카카오 하나(#53, #188) — 소스 순서 = 폴백 순서(앞 소스가 우선). 소스를 빼면 그 소스는 안 부른다.
     places_sources: tuple[str, ...] = ("kakao",)
     places_http_timeout_s: float = 3.0
-    places_http_retries: int = 1         # 타임아웃·429·5xx에만. 구글은 과금이라 재시도하지 않는다.
-    places_google_max_calls: int = 100   # 프로세스 수명 동안 구글 호출 상한(과금 안전장치). 0이면 무제한.
+    places_http_retries: int = 1         # 타임아웃·429·5xx에만.
     places_search_per_min: int = 30      # GET /places/search 사용자당 분당 상한(#180). 0 이하면 끈다.
 
     def __post_init__(self) -> None:
@@ -205,11 +203,9 @@ class Settings:
             kakao_rest_api_key=_env("KAKAO_REST_API_KEY", "") or _env("KAKAO_CLIENT_ID", ""),
             naver_search_client_id=_env("NAVER_SEARCH_CLIENT_ID", ""),
             naver_search_client_secret=_env("NAVER_SEARCH_CLIENT_SECRET", ""),
-            google_places_api_key=_env("GOOGLE_PLACES_API_KEY", ""),
             places_sources=tuple(n.strip() for n in _env("PLACES_SOURCES", "kakao").split(",") if n.strip()),
             places_http_timeout_s=_float("PLACES_HTTP_TIMEOUT_S", 3.0),
             places_http_retries=_int("PLACES_HTTP_RETRIES", 1),
-            places_google_max_calls=_int("PLACES_GOOGLE_MAX_CALLS", 100),
             places_search_per_min=_int("PLACES_SEARCH_PER_MIN", 30),
             frontend_base_url=frontend_base_url,
             frontend_login_redirect_url=_env(

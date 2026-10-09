@@ -17,8 +17,8 @@
 - **카카오 응답(좌표·이름·주소 포함)을 메모리·DB·로그 어디에도 남기지 않고 LLM·`recommend`로 넘기지 않는다.** 응답 속도용 캐시도 안 된다(#188에서 `TTLCache` 사용을 없앤다).
 - **자체 DB 전체를 카카오로 일괄 조회해 ID를 매칭하지 않는다**(대량 호출 금지). 매칭은 사용자가 고를 때 한 건씩.
 - 사용자가 카카오 지도 위에서 지정한 좌표는 저장하지 않는다(길게 누르기 규칙은 #191 결정 후).
-- `NaverPlaceSource`·`GooglePlaceSource`는 코드에만 있고 켜지 않는다.
-- 원본 숫자(가격·면적 등)를 저장하지 않는다(`spacious`처럼 압축된 값만 — architecture.md 2절. 가격대 `price_bucket`은 #423에서 뺐다). `place_facts`를 TTL 캐시로 취급하지 않는다.
+- `NaverPlaceSource`는 코드에만 있고 켜지 않는다. 구글 소스는 #423에서 지웠다.
+- 원본 숫자(면적 등)를 저장하지 않는다(`spacious`처럼 압축된 값만 — architecture.md 2절). `place_facts`를 TTL 캐시로 취급하지 않는다.
 - `docs/constraints.md`의 `fact_key` 목록·`unknown_policy`를 이 모듈에서 바꾸지 않는다. 새 조건이 필요하면 루트에 보고.
 - 공공데이터 데이터셋별 이용허락 범위와 갱신 주기를 적재 전에 확인해 for_Root.md에 적는다.
 

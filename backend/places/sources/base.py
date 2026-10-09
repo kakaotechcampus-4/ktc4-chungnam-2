@@ -10,7 +10,7 @@ from common.geo import haversine_distance_m
 
 # 층2 원자료 중 소스가 채워줄 수 있는 필드 묶음. 값이 None이면 "아직 못 채운 것"이다.
 # rating은 rating_count와 한 묶음이다(같이 오고 같이 없다).
-ENRICHABLE_FIELDS = frozenset({"phone", "rating", "price_level", "opening_hours"})
+ENRICHABLE_FIELDS = frozenset({"phone", "rating", "opening_hours"})
 
 
 @dataclass(frozen=True)
@@ -26,7 +26,6 @@ class RawPlace:
     phone: str | None = None
     rating: float | None = None
     rating_count: int | None = None
-    price_level: str | None = None       # 구글 priceLevel 열거값(예: "MODERATE"). 가격 숫자가 아니다.
     opening_hours: tuple[str, ...] | None = None
     contributed_by: tuple[str, ...] = ()  # 이 값에 필드를 채운 소스들(원 소스가 첫째)
 
@@ -39,15 +38,13 @@ class RawPlace:
         empty = {
             "phone": not self.phone,
             "rating": self.rating is None,
-            "price_level": self.price_level is None,
             "opening_hours": not self.opening_hours,
         }
         return frozenset(k for k, v in empty.items() if v)
 
     def merged(self, fields: dict[str, Any], by: str, wanted: frozenset[str]) -> RawPlace:
         """wanted 안에서, 아직 비어 있는 필드만 채운다 — 이미 채워진 값은 덮어쓰지 않는다."""
-        allowed = {"phone": ("phone",), "rating": ("rating", "rating_count"),
-                   "price_level": ("price_level",), "opening_hours": ("opening_hours",)}
+        allowed = {"phone": ("phone",), "rating": ("rating", "rating_count"), "opening_hours": ("opening_hours",)}
         updates: dict[str, Any] = {}
         for group in wanted & self.missing():
             for attr in allowed[group]:
@@ -73,7 +70,7 @@ class PlaceSource(Protocol):
 
 @runtime_checkable
 class NameSearchable(Protocol):
-    """이름 검색을 지원하는 소스(#180). 지금은 카카오만 — 네이버·구글은 켤 때 구현한다."""
+    """이름 검색을 지원하는 소스(#180). 지금은 카카오만 — 네이버는 켤 때 구현한다."""
 
     name: str
 
