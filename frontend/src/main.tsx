@@ -37,7 +37,7 @@ function render() {
     <StrictMode>
       <QueryClientProvider client={queryClient}>
         <App />
-        {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
+        {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} buttonPosition="top-right" />}
       </QueryClientProvider>
     </StrictMode>,
   )
