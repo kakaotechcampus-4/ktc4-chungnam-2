@@ -103,4 +103,4 @@ def test_reaction_left_with_the_retired_chip_shows_its_label_without_a_condition
     run_id = _run(a, map_id)
     assert planner_calls == []
     [line] = a.get(f"/runs/{run_id}/evidence").json()
-    assert (line["text"], line["fact_key"], line["wants"]) == ("갑각류 알러지가 있어요", None, None)
+    assert (line["text"], line.get("fact_key"), line.get("wants")) == ("갑각류 알러지가 있어요", None, None)   # 값이 없는 필드는 응답에서 빠진다
