@@ -362,6 +362,21 @@ def _owned_map_ids(db: Session, *, user_id: str) -> list[str]:
     ).scalars().all())
 
 
+def lock_member_maps(db: Session, *, user_id: str) -> list[str]:
+    """이 사용자가 속한 삭제되지 않은 지도 행을 지도 id 순서로 FOR UPDATE 잠근다(#435). 방장이 아니어도
+    잠근다 — 탈퇴가 이 사람의 모든 지도에서 나가기와 줄을 서야 하기 때문이다. 순서를 고정해
+    서로 기다리다 멈추는 교착을 피한다. 잠근 지도 id를 돌려준다. 커밋하지 않는다(잠금은 트랜잭션 끝까지)."""
+    return list(db.execute(
+        select(MapRow.id)
+        .where(
+            MapRow.id.in_(select(MembershipRow.map_id).where(MembershipRow.user_id == user_id)),
+            MapRow.deleted_at.is_(None),
+        )
+        .order_by(MapRow.id)
+        .with_for_update()
+    ).scalars().all())
+
+
 def transfer_or_delete_owned_maps(db: Session, *, user_id: str) -> None:
     """탈퇴(#369 10번) — 방장인 지도마다 후임에게 넘기고, 넘길 사람이 없으면 지도를 삭제한다.
     탈퇴자의 멤버십 행은 핀 작성자 표시용으로 남긴다(#245) — 강등만 하고 지우지 않는다.
