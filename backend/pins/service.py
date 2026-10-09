@@ -503,3 +503,15 @@ def delete_reaction(db: Session, pin: PinRow, viewer_id: str) -> None:
     record_event(db, core.reaction_changed_event(
         str(pin.id), pin.map_id, pin.visibility, summary, viewer_id, display_name, None,
     ))
+
+
+def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+    """지도 정리(#431) — 이 지도들의 반응과 핀(소프트 삭제된 것 포함)을 지운다. 테이블 이름 → 지운 행 수.
+    반응이 핀을 참조해서 반응부터 지운다."""
+    if not map_ids:
+        return {"reactions": 0, "pins": 0}
+    pin_ids = select(PinRow.id).where(PinRow.map_id.in_(map_ids))
+    return {
+        "reactions": db.execute(delete(ReactionRow).where(ReactionRow.pin_id.in_(pin_ids))).rowcount,
+        "pins": db.execute(delete(PinRow).where(PinRow.map_id.in_(map_ids))).rowcount,
+    }

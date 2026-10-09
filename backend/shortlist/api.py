@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from authz.core import Principal
-from shortlist import flows
+from shortlist import flows, service
 from shortlist.models import ShortlistItem
 
 
@@ -35,3 +35,9 @@ def remove_for_deleted_pin(db: Session, *, map_id: str, pin_id: str, principal: 
     ).scalar_one_or_none()
     if item_row is not None:
         flows.unconfirm_pin(db, item_row=item_row, principal=principal)
+
+
+def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+    """지도 정리(maps.purge, #431)가 부른다 — 이 지도들의 shortlist_items·routes만 지우고 테이블 이름 →
+    지운 행 수를 돌려준다. 핀(pins)보다 먼저 불러야 한다(shortlist_items.pin_id가 pins를 참조). 커밋하지 않는다."""
+    return service.purge_map_data(db, map_ids=map_ids)

@@ -68,3 +68,9 @@ def transfer_or_delete_owned_maps(db: Session, user_id: str) -> None:
     삭제한다(map.deleted 발행). 위임한 지도에는 member.left를 발행한다(new_owner_user_id=후임).
     탈퇴자의 멤버십 행은 지우지 않는다(#245). 커밋하지 않는다."""
     service.transfer_or_delete_owned_maps(db, user_id=user_id)
+
+
+def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+    """지도 정리(maps.purge, #431) — 이 지도들의 invites·memberships·maps만 지우고 테이블 이름 → 지운 행 수를
+    돌려준다. 삭제되지 않은(deleted_at이 없는) 지도가 섞여 있으면 ValueError. 커밋하지 않는다."""
+    return service.purge_map_data(db, map_ids=map_ids)

@@ -151,3 +151,13 @@ def list_routes(db: Session, *, map_id: str) -> list[RouteRow]:
             select(RouteRow).where(RouteRow.map_id == map_id).order_by(RouteRow.region_label)
         ).scalars()
     )
+
+
+def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+    """지도 정리(#431) — 이 지도들의 확정 항목과 동선을 지운다. 테이블 이름 → 지운 행 수."""
+    if not map_ids:
+        return {"shortlist_items": 0, "routes": 0}
+    return {
+        "shortlist_items": db.execute(delete(ShortlistItemRow).where(ShortlistItemRow.map_id.in_(map_ids))).rowcount,
+        "routes": db.execute(delete(RouteRow).where(RouteRow.map_id.in_(map_ids))).rowcount,
+    }
