@@ -4,9 +4,9 @@ from recommend import constraints
 
 
 def test_hard_fact_keys_for_restricts_by_category():
-    assert constraints.hard_fact_keys_for("음식점") == sorted(["contains_shellfish", "price_bucket"])
-    assert constraints.hard_fact_keys_for("카페") == sorted(["contains_shellfish", "price_bucket", "is_crowded_large"])
-    assert constraints.hard_fact_keys_for("관광지") == sorted(["contains_shellfish", "price_bucket", "is_crowded_large"])
+    assert constraints.hard_fact_keys_for("음식점") == ["contains_shellfish"]
+    assert constraints.hard_fact_keys_for("카페") == sorted(["contains_shellfish", "is_crowded_large"])
+    assert constraints.hard_fact_keys_for("관광지") == sorted(["contains_shellfish", "is_crowded_large"])
 
 
 def test_safety_fact_keys_have_exclude_unknown_policy():
@@ -24,8 +24,14 @@ def test_spicy_and_oily_are_soft_taste_keys_not_safety():
 
 
 def test_preference_leaning_fact_keys_have_pass_unknown_policy():
-    for key in ("price_bucket", "is_crowded_large"):
-        assert constraints.HARD_REGISTRY[key].unknown_policy == "pass"
+    assert constraints.HARD_REGISTRY["is_crowded_large"].unknown_policy == "pass"
+
+
+def test_price_bucket_is_not_a_v1_key():
+    """#423 — 가격 라벨은 v1에서 뺐다. 시연 DB에 라벨 행이 남아 있어도 레지스트리에 없으니 체크가 붙지 않는다."""
+    assert "price_bucket" not in constraints.HARD_REGISTRY
+    assert "price_bucket" not in constraints.SOFT_FACT_KEYS
+    assert "price_bucket" not in constraints.FACT_LABELS
 
 
 def test_accommodation_is_not_a_recommend_category():
@@ -37,8 +43,8 @@ def test_accommodation_is_not_a_recommend_category():
 
 def test_every_comparable_fact_key_has_a_reason_label():
     """추천 이유 문장(core.build_reason)에 쓰는 이름 — 레지스트리에 키를 추가하면(#171) 여기도 채워야 한다."""
-    comparable = (set(constraints.HARD_REGISTRY) - constraints.VALUE_COMPARISON_UNSUPPORTED) | constraints.SOFT_FACT_KEYS
-    assert comparable <= set(constraints.PASSED_LABELS)
+    registry_keys = set(constraints.HARD_REGISTRY) | constraints.SOFT_FACT_KEYS
+    assert registry_keys <= set(constraints.PASSED_LABELS)
 
 
 def test_every_registry_fact_key_has_a_short_display_name():
@@ -60,7 +66,7 @@ def test_soft_registry_covers_the_doc_categories_and_is_all_pass():
     assert {"wait_short", "spacious", "long_established", "parking_available", "vegetarian_friendly", "franchise"} <= restaurant
     assert len([k for k in restaurant if k.startswith("cuisine_")]) == 11  # cuisine_gopchang(#417)
     sight = set(constraints.soft_fact_keys_for("관광지"))
-    assert len(sight) + len(constraints.hard_fact_keys_for("관광지")) - 2 == 36  # price_bucket·contains_shellfish는 공통 hard
+    assert len(sight) + len(constraints.hard_fact_keys_for("관광지")) - 1 == 36  # contains_shellfish는 공통 hard
     assert "winter_spot" in sight and "cuisine_korean" not in sight
     assert set(constraints.soft_fact_keys_for("카페")) == {
         "quiet", "comfortable_seat", "local_flavor", "pet_friendly", "accessible",      # 기존 + 관광지 키를 카페에도(#263)
