@@ -216,7 +216,7 @@ def record_from_row(
         kakao_place_id=pin_row.kakao_place_id,
         search_query=pin_row.search_query,
         place_name=place.name if place else None,
-        place_url=place.kakao_place_url if place else None,
+        place_url=_place_url(pin_row, place),
         created_by_display_name=created_by_display_name,
         created_at=pin_row.created_at,
         checks=pin_row.checks,
@@ -225,6 +225,13 @@ def record_from_row(
         place_source=pin_row.place_source,
         my_reaction=my_reaction,
     )
+
+
+def _place_url(pin_row: PinRow, place: PlaceInfo | None) -> str | None:
+    """db 핀은 자체 DB가 기록한 카카오 URL, live 핀(#445)은 저장하지 않고 kakao_place_id로 응답 때 만든다."""
+    if pin_row.source == "live":
+        return core.kakao_place_url(pin_row.kakao_place_id) if pin_row.kakao_place_id else None
+    return place.kakao_place_url if place else None
 
 
 def _reaction_from_row(row: ReactionRow, display_name: str | None = None) -> Reaction:
