@@ -55,6 +55,8 @@ def test_chips_and_text_become_one_line_each_and_only_text_goes_to_the_planner(m
 
     assert planner_calls == [["주차도 안 돼요"]], "칩 label은 ②에 가지 않는다"
     assert len(lines) == 3, lines   # 글 1줄 + 칩 2줄(전에는 글 1줄만 남고 칩이 버려졌다)
+    # 순서: 한 반응에서는 글 줄 다음에 칩 줄, 칩은 고른 순서대로(#412, #419). 한 트랜잭션에서 넣어 created_at이 같으므로 seq가 정한다(#428)
+    assert [line["text"] for line in lines] == ["주차도 안 돼요", "매워요", "좁아요"], lines
     by_text = {line["text"]: line for line in lines}
     assert (by_text["매워요"]["fact_key"], by_text["매워요"]["wants"]) == ("spicy_focused", False)
     assert (by_text["좁아요"]["fact_key"], by_text["좁아요"]["wants"]) == ("spacious", True)

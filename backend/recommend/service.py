@@ -89,14 +89,16 @@ def link_published_pin(db: Session, *, candidate_id: str, pin_id: str) -> None:
 def list_evidence(db: Session, run_id: str) -> list[EvidenceLine]:
     run_uuid = uuid.UUID(run_id)
     rows = db.execute(
-        select(EvidenceLine).where(EvidenceLine.run_id == run_uuid).order_by(EvidenceLine.created_at)
+        select(EvidenceLine).where(EvidenceLine.run_id == run_uuid).order_by(EvidenceLine.created_at, EvidenceLine.seq)
     ).scalars().all()
     return list(rows)
 
 
 def list_active_evidence(db: Session, run_id: uuid.UUID) -> list[EvidenceLine]:
     rows = db.execute(
-        select(EvidenceLine).where(EvidenceLine.run_id == run_id, EvidenceLine.is_active.is_(True))
+        select(EvidenceLine)
+        .where(EvidenceLine.run_id == run_id, EvidenceLine.is_active.is_(True))
+        .order_by(EvidenceLine.created_at, EvidenceLine.seq)
     ).scalars().all()
     return list(rows)
 
