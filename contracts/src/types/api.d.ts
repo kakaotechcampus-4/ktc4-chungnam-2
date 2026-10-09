@@ -530,7 +530,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 구성원 목록 (color, online) — 5절 "구성원 배지 + 목록". 지금 구성원만 준다 — 나간 사람과 탈퇴한 사람은 빠진다. 목록 수는 Map.member_count와 같다 (#439) */
+        /**
+         * 구성원 목록 (color, online) — 5절 "구성원 배지 + 목록". **지금 구성원만** 돌려준다 — 나간 사람과 탈퇴한 사람은 없다.
+         *     그래서 이 목록의 길이는 `Map.member_count`와 항상 같다(#439, 멘토 리뷰 PR #380).
+         */
         get: {
             parameters: {
                 query?: never;
@@ -1750,7 +1753,7 @@ export interface components {
              */
             end_date: string;
             region?: components["schemas"]["MapRegion"];
-            /** @description 지금 구성원 수 — 나간 사람과 탈퇴한 사람은 세지 않는다. GET /maps/{mapId}/members의 목록 수와 같다 (#439) */
+            /** @description 지금 구성원 수 — 나간 사람과 탈퇴한 사람은 세지 않는다. GET /maps/{mapId}/members의 길이와 같다 (#439) */
             member_count: number;
             /** @description 지도에 올라와 있는(삭제되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청) */
             pin_count: number;
