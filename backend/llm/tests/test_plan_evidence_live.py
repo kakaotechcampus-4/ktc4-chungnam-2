@@ -40,7 +40,7 @@ def test_strict_schema_is_accepted_by_the_api():
 
 
 def test_plan_evidence_real_call_round_trip():
-    groups = service.plan_evidence(REASONS, planner=service._real_evidence_planner())
+    groups = service.plan_evidence(REASONS, planner=service.real_evidence_planner)
 
     assert len(groups) == len(REASONS)
     for reason, group in zip(REASONS, groups):

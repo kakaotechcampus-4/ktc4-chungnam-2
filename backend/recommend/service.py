@@ -1,6 +1,6 @@
 """
 얇은 I/O 셸 — 이 모듈이 소유한 테이블(recommend_runs/candidates/evidence_lines/regions/
-exclusions)만 건드린다(docs/code-quality.md). 다른 모듈 접근(pins.api/authz/llm.service/
+exclusions)만 건드린다(docs/code-quality.md). 다른 모듈 접근(pins.api/authz/llm.api(Gateway)/
 recommend.ports 게이트웨이)은 이 파일에 두지 않는다 — flows.py가 한다(모듈 자체 관례,
 flows.py 모듈 docstring 참고). event_log 기록만 예외다 — architecture.md 1.1절이 "모든
 모듈이 record_event로 쓰는" event_log를 "다른 모듈의 테이블"로 세지 않는다고 명시한다.

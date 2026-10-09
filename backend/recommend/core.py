@@ -57,7 +57,7 @@ def check_readiness(answered_count: int) -> dict:
 
 def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> list[dict]:
     """② 사유 → 실격/선호/반경 구조화 이후, 근거 리스트 하나로 병합한다 — 실제 구조화(모델
-    호출)는 llm.service.plan_evidence가 하고(service.py에서 호출, 여기는 그 결과를 받기만
+    호출)는 llm.api.plan_evidence가 하고(flows.py가 Gateway로 호출, 여기는 그 결과를 받기만
     한다) 이 함수는 순수 병합/정렬만 한다.
 
     reaction_lines: badge='required'(반대) 등 반응에서 파생된 근거(source='reaction').

@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from llm.schemas import EvidenceLine, FactKey, PlaceFactLabel, RankedCandidate
-from llm.service import label_place, plan_evidence, rank_candidates
+from llm.service import label_place, passthrough_planner, plan_evidence, rank_candidates
 
 ALL_FACT_KEYS = get_args(FactKey)
 
@@ -216,7 +216,7 @@ class TestPlanEvidence:
             }
         ]
 
-        [[evidence]] = plan_evidence(raw)
+        [[evidence]] = plan_evidence(raw, planner=passthrough_planner)
 
         assert isinstance(evidence, EvidenceLine)
         assert evidence.badge == "required"
@@ -227,7 +227,7 @@ class TestPlanEvidence:
         # v1 스텁이 값을 지어내면 안 된다.
         raw = [{"source": "manual", "text": "그냥 여기 가고 싶어요", "badge": "reference"}]
 
-        [[evidence]] = plan_evidence(raw)
+        [[evidence]] = plan_evidence(raw, planner=passthrough_planner)
 
         assert evidence.fact_key is None
 

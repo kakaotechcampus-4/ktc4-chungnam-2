@@ -69,10 +69,22 @@ def real_client(db_session, own_db, monkeypatch):
     app.dependency_overrides.clear()
 
 
+def plan_with(monkeypatch, planner):
+    """② 대역을 recommend의 EvidencePlanGateway 자리에 끼운다(#219) — 대역은 입력 글마다 줄 묶음을 돌려주는 함수다.
+    llm.api.plan_evidence를 거치므로 검증·실패 변환(PlanEvidenceFailed)은 실제와 같다. 테스트가 끝나면 원복된다."""
+    from llm import api as llm_api
+    from recommend.deps import get_evidence_plan_gateway
+
+    class _Gateway:
+        def plan_evidence(self, raw_reasons):
+            return llm_api.plan_evidence(raw_reasons, planner=planner)
+
+    monkeypatch.setitem(app.dependency_overrides, get_evidence_plan_gateway, lambda: _Gateway())
+
+
 @pytest.fixture()
 def fake_planner(monkeypatch):
     """② 대역 — 사유 문구로 fact_key·wants를 낸다(진짜 Luna 대신). 방향을 모르는 말은 null."""
-    import llm.service as llm_service
     from llm.schemas import EvidenceLine
 
     mapping = {
@@ -88,7 +100,7 @@ def fake_planner(monkeypatch):
             out.append([EvidenceLine(**{**reason, "fact_key": key, "wants": wants if key else None})])
         return out
 
-    monkeypatch.setattr(llm_service, "get_evidence_planner", lambda: planner)
+    plan_with(monkeypatch, planner)
     return planner
 
 

@@ -32,9 +32,9 @@ from authz.guard import require_map_member, require_on_map, require_with_princip
 from authz.ports import MembershipGateway
 from pins.schemas import Pin
 from recommend import flows
-from recommend.deps import DbSession, PlaceFactsGatewayDep, PlaceSearchGatewayDep
+from recommend.deps import DbSession, EvidencePlanGatewayDep, PlaceFactsGatewayDep, PlaceSearchGatewayDep
 from recommend.loaders import load_run
-from recommend.ports import PlaceFactsGateway, PlaceSearchGateway
+from recommend.ports import EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
 from recommend.schemas import (
     EvidenceLine,
     EvidencePatchRequest,
@@ -67,8 +67,11 @@ def get_readiness(mapId: str = Path(...), _principal: Principal = RecommendForMa
 
 
 @router.post("/maps/{mapId}/runs", response_model=RecommendRunResponse, status_code=202)
-def post_run(body: RunCreateRequest, mapId: str = Path(...), principal: Principal = RunToCreate, db: Session = DbSession):
-    run = flows.create_run(db, map_id=mapId, category=body.category, requested_by=principal.user_id)
+def post_run(body: RunCreateRequest, mapId: str = Path(...), principal: Principal = RunToCreate, db: Session = DbSession,
+             evidence_planner: EvidencePlanGateway = EvidencePlanGatewayDep):
+    run = flows.create_run(
+        db, map_id=mapId, category=body.category, requested_by=principal.user_id, evidence_planner=evidence_planner,
+    )
     return _run_response(run)
 
 
@@ -79,12 +82,16 @@ def get_evidence(gated=EvidenceGate, db: Session = DbSession):
 
 
 @router.patch("/runs/{runId}/evidence", response_model=list[EvidenceLine], response_model_exclude_none=True)
-def patch_evidence(body: EvidencePatchRequest | None = None, gated=EvidenceGate, db: Session = DbSession):
+def patch_evidence(
+    body: EvidencePatchRequest | None = None, gated=EvidenceGate, db: Session = DbSession,
+    evidence_planner: EvidencePlanGateway = EvidencePlanGatewayDep,
+):
     body = body or EvidencePatchRequest()  # 스펙: requestBody는 선택
     run, principal = gated
     return flows.patch_evidence(
         db, run_id=str(run.id), principal=principal,
         toggles=[(t.id, t.is_active) for t in body.toggle], adds=[a.text for a in body.add],
+        evidence_planner=evidence_planner,
     )
 
 

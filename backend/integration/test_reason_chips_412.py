@@ -9,22 +9,20 @@
 import pytest
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
-    PLACES, _pin, fake_planner, members, own_db, place_ids, real_client,
+    PLACES, _pin, fake_planner, plan_with, members, own_db, place_ids, real_client,
 )
 
 
 @pytest.fixture()
 def planner_calls(fake_planner, monkeypatch):
     """fake_planner를 감싸 ②에 들어간 글을 기록한다."""
-    import llm.service as llm_service
-
     calls: list[list[str]] = []
 
     def recording(raw_reasons):
         calls.append([r["text"] for r in raw_reasons])
         return fake_planner(raw_reasons)
 
-    monkeypatch.setattr(llm_service, "get_evidence_planner", lambda: recording)
+    plan_with(monkeypatch, recording)
     return calls
 
 

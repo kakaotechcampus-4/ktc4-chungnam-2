@@ -21,7 +21,11 @@ from pins.models import Reaction as ReactionRow
 from recommend import constraints, core, flows, service
 from recommend.models import Candidate, Exclusion, RecommendRun, Region
 from places.schemas import FactLabel
+from recommend.deps import DevEvidencePlanGateway
 from recommend.ports import PlaceStub
+
+# ② 대역 — 테스트가 monkeypatch.setattr(PLANNER, "plan_evidence", ...)로 바꿔 끼운다(#219). 기본은 dev 통과 스텁.
+PLANNER = DevEvidencePlanGateway()
 
 
 def _make_run(db_session, **overrides):
@@ -445,7 +449,7 @@ def test_get_readiness_ignores_opinions_of_non_members_and_deleted_pins(db_sessi
 def test_create_run_raises_not_ready_when_readiness_fails(db_session):
     _make_members(db_session, user_ids=["user_1", "user_2"])  # required = 1, 아무도 반응 안 함
     with pytest.raises(AppError) as exc_info:
-        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
     assert exc_info.value.code == "NOT_READY"
 
 
@@ -455,7 +459,7 @@ def test_create_run_succeeds_assembles_evidence_and_default_region(db_session):
     _react(db_session, pin, user_id="user_1", type="against", reason_text="너무 매워요")
 
     db_session.commit()  # 요청 앞의 준비는 커밋된 상태다 — 모델 직전에 읽기 트랜잭션을 롤백한다(#275)
-    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
     assert run.status == "collecting_evidence"
     assert run.attempt_no == 1
@@ -483,9 +487,9 @@ def test_create_run_turns_each_chip_into_its_own_evidence_line_without_calling_t
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="음식점")
     _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_spicy", "food_cramped"])
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", _no_plan_call)
+    monkeypatch.setattr(PLANNER, "plan_evidence", _no_plan_call)
 
-    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
     lines = service.list_evidence(db_session, str(run.id))
     assert [(l.text, l.chip_id, l.fact_key, l.wants, l.badge, l.source, l.author_id) for l in lines] == [
@@ -501,16 +505,16 @@ def test_create_run_sends_only_the_written_text_to_the_model_and_keeps_the_chips
     _react(db_session, pin, user_id="user_1", type="against", reason_text="한식 말고", reason_chip_ids=["food_oily"])
     _react(db_session, pin, user_id="user_2", type="against", reason_chip_ids=["common_far"])
     sent = []
-    real_plan = flows.llm_service.plan_evidence
+    real_plan = PLANNER.plan_evidence
 
     def spy_plan(raw):
         sent.append([line["text"] for line in raw])
         return real_plan(raw)
 
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", spy_plan)
+    monkeypatch.setattr(PLANNER, "plan_evidence", spy_plan)
 
     db_session.commit()  # 요청 앞의 준비는 커밋된 상태다 — 모델 직전에 읽기 트랜잭션을 롤백한다(#275)
-    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
     assert sent == [["한식 말고"]]
     lines = service.list_evidence(db_session, str(run.id))
@@ -529,13 +533,13 @@ def test_create_run_demotes_wanted_cuisine_from_a_against_reason_to_preferred(db
     pin = _make_pin(db_session, category="음식점")
     _react(db_session, pin, user_id="user_1", type="against", reason_text="한식 말고 고기 먹고 싶어요")
     text = "한식 말고 고기 먹고 싶어요"
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", lambda raw: [[
+    monkeypatch.setattr(PLANNER, "plan_evidence", lambda raw: [[
         EvidenceLine(author_id="user_1", source="reaction", text=text, badge="required", fact_key="cuisine_korean", wants=False),
         EvidenceLine(author_id="user_1", source="reaction", text=text, badge="required", fact_key="cuisine_bbq", wants=True),
     ]])
 
     db_session.commit()  # 요청 앞의 준비는 커밋된 상태다 — 모델 직전에 읽기 트랜잭션을 롤백한다(#275)
-    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
     lines = service.list_evidence(db_session, str(run.id))
     assert [(l.fact_key, l.wants, l.badge) for l in lines] == [
@@ -550,9 +554,9 @@ def test_create_run_keeps_a_legacy_chip_value_as_text_without_key(db_session, mo
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="음식점")
     _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["매워요"])
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", _no_plan_call)
+    monkeypatch.setattr(PLANNER, "plan_evidence", _no_plan_call)
 
-    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
     [line] = service.list_evidence(db_session, str(run.id))
     assert (line.text, line.chip_id, line.fact_key, line.wants, line.badge) == ("매워요", "매워요", None, None, "required")
@@ -564,9 +568,9 @@ def test_reaction_left_with_the_retired_shellfish_chip_filters_nothing(db_sessio
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="음식점")
     _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_shellfish"])
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", _no_plan_call)
+    monkeypatch.setattr(PLANNER, "plan_evidence", _no_plan_call)
 
-    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
     [line] = service.list_evidence(db_session, str(run.id))
     assert (line.chip_id, line.badge) == ("food_shellfish", "required")
@@ -579,9 +583,9 @@ def test_soft_chip_becomes_a_directed_requirement(db_session, monkeypatch):
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="음식점")
     _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_cramped", "food_spicy"])
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", _no_plan_call)
+    monkeypatch.setattr(PLANNER, "plan_evidence", _no_plan_call)
 
-    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
     assert flows._active_soft_requirements(db_session, run) == [("spacious", True), ("spicy_focused", False)]
 
@@ -637,7 +641,7 @@ def test_create_run_skips_live_pins_for_the_search_circle_but_keeps_their_reason
     _react(db_session, live_pin, user_id="user_1", type="against", reason_text="조개 알러지")
 
     db_session.commit()  # 요청 앞의 준비는 커밋된 상태다 — 모델 직전에 읽기 트랜잭션을 롤백한다(#275)
-    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
     assert [line.text for line in service.list_evidence(db_session, str(run.id))] == ["조개 알러지"]
     (region,) = service.list_regions(db_session, str(run.id))
@@ -662,7 +666,7 @@ def test_create_run_with_only_live_pins_has_no_anchor_so_not_ready(db_session):
     _react(db_session, live_pin, user_id="user_1", type="like")
 
     with pytest.raises(AppError) as exc_info:
-        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
     assert exc_info.value.code == "NOT_READY"
 
 
@@ -673,7 +677,7 @@ def test_create_run_raises_retry_limit_when_already_exhausted(db_session):
     _make_run(db_session, map_id="map_1", requested_by="user_1", category="음식점", attempt_no=5)
 
     with pytest.raises(AppError) as exc_info:
-        flows.create_run(db_session, map_id="map_1", category="카페", requested_by="user_1")  # 카테고리 무관(#31)
+        flows.create_run(db_session, map_id="map_1", category="카페", requested_by="user_1", evidence_planner=PLANNER)  # 카테고리 무관(#31)
     assert exc_info.value.code == "RETRY_LIMIT"
 
 
@@ -703,7 +707,7 @@ def test_patch_evidence_toggle_own_line_succeeds(db_session):
 
     result = flows.patch_evidence(
         db_session, run_id=str(run.id), principal=principal,
-        toggles=[(str(line.id), False)], adds=[],
+        toggles=[(str(line.id), False)], adds=[], evidence_planner=PLANNER,
     )
     assert result[0].is_active is False
 
@@ -717,7 +721,7 @@ def test_patch_evidence_toggle_other_users_line_is_forbidden(db_session):
     principal = Principal(user_id="user_2", map_id="map_1", role="member")
 
     with pytest.raises(AppError) as exc_info:
-        flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[(str(line.id), False)], adds=[])
+        flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[(str(line.id), False)], adds=[], evidence_planner=PLANNER)
     assert exc_info.value.code == "FORBIDDEN"
 
 
@@ -726,7 +730,7 @@ def test_patch_evidence_add_creates_manual_reference_line(db_session):
     principal = Principal(user_id="user_1", map_id="map_1", role="member")
 
     db_session.commit()  # 요청 앞의 준비는 커밋된 상태다 — 모델 직전에 읽기 트랜잭션을 롤백한다(#275)
-    result = flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["주차 필요해요"])
+    result = flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["주차 필요해요"], evidence_planner=PLANNER)
     assert len(result) == 1
     assert result[0].text == "주차 필요해요"
     assert result[0].badge == "reference"
@@ -1042,10 +1046,10 @@ def test_create_run_leaves_no_run_row_when_planning_fails(db_session, monkeypatc
     def boom(_lines):
         raise RuntimeError("model down")
 
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", boom)
+    monkeypatch.setattr(PLANNER, "plan_evidence", boom)
     db_session.commit()  # 준비는 커밋된 상태 — 모델 직전 롤백(#275) 뒤에도 실패 시 run 행이 없음을 본다
     with pytest.raises(RuntimeError):
-        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
     assert db_session.execute(select(func.count()).select_from(RecommendRun)).scalar_one() == 0
 
@@ -1055,15 +1059,15 @@ def test_create_run_rechecks_retry_limit_after_planning(db_session, monkeypatch)
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="음식점")
     _react(db_session, pin, user_id="user_1", type="against", reason_text="너무 매워요")
-    real_plan = flows.llm_service.plan_evidence
+    real_plan = PLANNER.plan_evidence
 
     def plan_while_other_request_hits_limit(lines):
         _make_run(db_session, map_id="map_1", requested_by="user_1", category="카페", attempt_no=5)
         return real_plan(lines)
 
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", plan_while_other_request_hits_limit)
+    monkeypatch.setattr(PLANNER, "plan_evidence", plan_while_other_request_hits_limit)
     with pytest.raises(AppError) as exc_info:
-        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
     assert exc_info.value.code == "RETRY_LIMIT"
     assert db_session.execute(
         select(func.count()).select_from(RecommendRun).where(RecommendRun.category == "음식점")
@@ -1395,12 +1399,12 @@ def test_plus_manual_line_goes_through_plan_evidence_and_keeps_reference_badge(d
         sent.extend(raw)
         return [[PlannedLine(**{**r, "fact_key": "spicy_focused", "wants": False})] for r in raw]
 
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", lambda raw: planner(raw))
+    monkeypatch.setattr(PLANNER, "plan_evidence", lambda raw: planner(raw))
     run = _make_run(db_session, status="collecting_evidence")
     principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
 
     db_session.commit()  # 요청 앞의 준비는 커밋된 상태다 — 모델 직전에 읽기 트랜잭션을 롤백한다(#275)
-    flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["매운 건 못 먹어요"])
+    flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["매운 건 못 먹어요"], evidence_planner=PLANNER)
 
     assert [r["source"] for r in sent] == ["manual"]
     [line] = service.list_evidence(db_session, str(run.id))
@@ -1412,12 +1416,12 @@ def test_plus_manual_line_planner_failure_leaves_no_line(db_session, monkeypatch
     def boom(raw):
         raise RuntimeError("②가 죽었다")
 
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", boom)
+    monkeypatch.setattr(PLANNER, "plan_evidence", boom)
     run = _make_run(db_session, status="collecting_evidence")
     principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
     db_session.commit()
     with pytest.raises(RuntimeError):
-        flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["x"])
+        flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["x"], evidence_planner=PLANNER)
     assert service.list_evidence(db_session, str(run.id)) == []
 
 
@@ -1428,14 +1432,14 @@ def test_create_run_holds_no_transaction_while_the_model_is_called(db_session, m
     _react(db_session, pin, user_id="user_1", type="against", reason_text="너무 매워요")
     db_session.commit()
     seen = []
-    real_plan = flows.llm_service.plan_evidence
+    real_plan = PLANNER.plan_evidence
 
     def spy(lines):
         seen.append(db_session.in_transaction())
         return real_plan(lines)
 
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", spy)
-    flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    monkeypatch.setattr(PLANNER, "plan_evidence", spy)
+    flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
     assert seen == [False]
 
 
@@ -1458,8 +1462,8 @@ def test_patch_evidence_holds_no_transaction_while_the_model_is_called(db_sessio
         db_session.rollback()
         return [[] for _ in raw]
 
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", spy)
-    flows.patch_evidence(db_session, run_id=run_id, principal=principal, toggles=[(line_id, False)], adds=["x"])
+    monkeypatch.setattr(PLANNER, "plan_evidence", spy)
+    flows.patch_evidence(db_session, run_id=run_id, principal=principal, toggles=[(line_id, False)], adds=["x"], evidence_planner=PLANNER)
     assert seen == [False, True]   # 모델 호출 시점엔 트랜잭션 없음, 토글은 아직 안 쓰였다
     assert service.list_evidence(db_session, run_id)[0].is_active is False  # 모델 뒤에 쓰였다
 
@@ -1478,9 +1482,9 @@ def test_patch_evidence_model_failure_leaves_toggles_unapplied(db_session, monke
     def boom(raw):
         raise RuntimeError("②가 죽었다")
 
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", boom)
+    monkeypatch.setattr(PLANNER, "plan_evidence", boom)
     with pytest.raises(RuntimeError):
-        flows.patch_evidence(db_session, run_id=run_id, principal=principal, toggles=[(line_id, False)], adds=["x"])
+        flows.patch_evidence(db_session, run_id=run_id, principal=principal, toggles=[(line_id, False)], adds=["x"], evidence_planner=PLANNER)
     db_session.rollback()  # session_scope가 하는 일
     lines = service.list_evidence(db_session, run_id)
     assert len(lines) == 1 and lines[0].is_active is True
@@ -1491,6 +1495,8 @@ def test_patch_evidence_model_failure_leaves_toggles_unapplied(db_session, monke
 def _planner_with_conditions(monkeypatch, conditions_by_text, *, radius_by_text=None):
     """② 대역 — 모델 응답(글마다 조건 목록·반경)만 지어 넣고, 줄 나누기는 llm의 진짜 merge_planned가 한다.
     그래서 recommend에 저장된 결과가 constraints.md #419 규칙(조건마다 줄, 같은 키 하나로, 반경은 첫 줄) 그대로인지 본다."""
+    from llm import api as llm_api
+    from llm import service as llm_service
     from llm.schemas import PlannedCondition, PlannedReason, PlanningOutput
 
     radius_by_text = radius_by_text or {}
@@ -1503,9 +1509,9 @@ def _planner_with_conditions(monkeypatch, conditions_by_text, *, radius_by_text=
             )
             for i, r in enumerate(raw)
         ])
-        return flows.llm_service.merge_planned(raw, output)
+        return llm_service.merge_planned(raw, output)
 
-    monkeypatch.setattr(flows.llm_service, "get_evidence_planner", lambda: planner)
+    monkeypatch.setattr(PLANNER, "plan_evidence", lambda raw: llm_api.plan_evidence(raw, planner=planner))
 
 
 def _lines_by_author(db_session, run):
@@ -1530,7 +1536,7 @@ def test_create_run_splits_a_reason_into_one_line_per_condition_then_the_chips(d
     }, radius_by_text={"한식 말고 고기 먹고 싶어요": 800})
 
     db_session.commit()  # 요청 앞의 준비는 커밋된 상태다 — 모델 직전에 읽기 트랜잭션을 롤백한다(#275)
-    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
     assert _lines_by_author(db_session, run) == {
         "user_1": [
@@ -1553,12 +1559,12 @@ def test_split_lines_are_turned_off_one_condition_at_a_time(db_session, monkeypa
     _react(db_session, pin, user_id="user_1", type="against", reason_text="한식 말고 고기 먹고 싶어요")
     _planner_with_conditions(monkeypatch, {"한식 말고 고기 먹고 싶어요": [("cuisine_korean", False), ("cuisine_bbq", True)]})
     db_session.commit()  # 요청 앞의 준비는 커밋된 상태다 — 모델 직전에 읽기 트랜잭션을 롤백한다(#275)
-    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
     principal = Principal(user_id="user_1", map_id="map_1", role="member")
     korean, bbq = flows.list_evidence(db_session, run_id=str(run.id), principal=principal)
     assert korean.text == bbq.text and korean.fact_label != bbq.fact_label
 
-    result = flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[(korean.id, False)], adds=[])
+    result = flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[(korean.id, False)], adds=[], evidence_planner=PLANNER)
 
     # 순서는 보지 않는다 — 한 트랜잭션에서 넣은 줄은 created_at이 같아 UPDATE 뒤 순서가 바뀔 수 있다(루트 보고).
     assert {e.fact_key: e.is_active for e in result} == {"cuisine_korean": False, "cuisine_bbq": True}
@@ -1578,6 +1584,7 @@ def test_plus_manual_text_with_several_conditions_adds_a_reference_line_per_cond
     flows.patch_evidence(
         db_session, run_id=str(run.id), principal=principal, toggles=[],
         adds=["매운 거랑 회 둘 다 별로예요", "주차 필요해요"],
+        evidence_planner=PLANNER,
     )
 
     assert _lines_by_author(db_session, run) == {"user_1": [
