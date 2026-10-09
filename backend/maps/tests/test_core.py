@@ -205,7 +205,9 @@ def test_member_left_and_map_deleted_event_shapes():
     assert (deleted.channel, deleted.type, deleted.payload) == ("public", "map.deleted", {"map_id": "m1"})
 
 
-@pytest.mark.parametrize("count, blocked", [(9, False), (10, True), (11, True)])
+@pytest.mark.parametrize(
+    "count, blocked", [(core.MAP_LIMIT - 1, False), (core.MAP_LIMIT, True), (core.MAP_LIMIT + 1, True)]
+)
 def test_check_map_limit(count, blocked):
     if not blocked:
         core.check_map_limit(count)
@@ -213,4 +215,4 @@ def test_check_map_limit(count, blocked):
     with pytest.raises(AppError) as exc_info:
         core.check_map_limit(count)
     assert exc_info.value.code == "MAP_LIMIT"
-    assert exc_info.value.detail == {"limit": 10, "count": count}
+    assert exc_info.value.detail == {"limit": core.MAP_LIMIT, "count": count}
