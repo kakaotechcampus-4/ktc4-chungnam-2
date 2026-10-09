@@ -2,6 +2,50 @@
 
 `backend/pins/for_Root.md`(#16·#17)와 같은 형식.
 
+## [최신, 2026-10-10] 이슈 #272 — author 범위에 `run` 추가, AUTHOR_CONSTRAINED_ACTIONS 제거 (동작 변화 없음)
+
+"요청한 본인만" 규칙을 코드 분기(`AUTHOR_CONSTRAINED_ACTIONS`)가 아니라 정책 선언(author 역할)으로
+옮긴 정리다. 권한 판정 결과는 바뀌지 않는다.
+
+- `docs/permissions.md`(이번 PR 한정 수정 허용): author scope에 `run: own`, `recommend.manage`·
+  `recommend.publish`를 member → author 액션으로 이동, `candidate.view_private` 삭제, "(아래 author
+  참고)" 문구(manage·publish 줄)와 하단 표의 `AUTHOR_CONSTRAINED_ACTIONS` 언급 정리. `recommend.
+  evidence` 줄의 "(아래 author 참고)"는 개별 줄 비활성화(`evidence.disable`)가 실제로 author라
+  여전히 참이어서 남겼다.
+- `authz/policy.py`: `ResourceType`에 `run`, POLICY 갱신, `AUTHOR_CONSTRAINED_ACTIONS` 삭제,
+  `recommend.manage`·`recommend.evidence`의 대상 타입 `map` → `run`, `candidate.view_private` 삭제.
+- `authz/core.py`: 3단계 분기 삭제(author 역할은 `author_id == user_id`일 때만 부여되므로 같은
+  효과), docstring 정리.
+- `recommend/loaders.py::load_run`이 `Resource(type="run", ...)`을 만든다. `pins/api.py` 주석 정리.
+  **범위를 살짝 넘은 것**: 삭제된 이름을 가리키던 주석 4곳(`recommend/core.py`·`flows.py`·`router.py`·
+  `tests/test_flows.py`)도 한 줄씩 고쳤다(주석만, 로직 아님).
+- 테스트: `candidate.view_private` 테스트를 `recommend.publish`(owner 비요청자 거부)로 대체, "남의
+  run은 member·owner 모두 manage 불가"·run 기준 evidence 개방·map 타입 혼동 거부 테스트 추가.
+
+**"동작 변화 없음"의 근거**
+1. 기존 권한 테스트 그대로 통과 — `authz/tests`(`test_can`·`test_mapping_15_1`·`test_permissions`·
+   `test_guard`·`test_policy_drift` 포함), `recommend/tests/test_router.py::test_other_members_cannot_
+   operate_someone_elses_run_execution` 등.
+2. 구/신 `can()` 전수 비교: 역할(3) × author_id(3) × 액션(전부 + 미지 2) × 리소스 타입(6) = 954개 조합
+   불일치 0. 유일한 의도된 차이는 `recommend.manage`·`evidence`의 타입이 map → run으로 바뀐 것
+   (loader가 함께 바뀌므로 구 map ↔ 신 run으로 대응시켜 비교, 대응 안 되는 18개는 제외).
+
+**확인이 필요한 것**
+- **이 작업 디렉토리는 git 저장소가 아니다**(상위 포함 `.git` 없음). 그래서 브랜치
+  `refactor/authz-author-run-272` 생성·커밋·PR, `gh issue view 272`(이슈 본문 확인)를 못 했다.
+  이슈 본문 대신 붙여넣어 주신 지시 + 현재 코드 이름으로 진행했다. git 작업은 실제 클론에서 해야 한다.
+- **`backend/maps/core.py:63`에 stray 문자가 있다**: `if not (-180 <= region.lng <= 180):c` — 그
+  모듈 import가 `IndentationError`로 죽어 저장소 전체 `pytest`가 수집 단계에서 깨지고(8 errors),
+  `test_rule_a_static`도 파일을 파싱하다 실패한다. #272와 무관한 기존 문제이고 maps 소관이라 **고치지
+  않았다.** 검증은 복사본에서 그 한 글자만 고쳐 돌렸다(아래). maps 담당이 정리해야 한다.
+
+**검증** — 프로젝트를 복사해(`.env` 없이, 복사본에서만 `maps/core.py` 오타 수정) 전체 `pytest -q`:
+→ **619 passed, 1 skipped**(skip은 places #34 미착수). 같은 실행에서 shortlist 테스트 1건이 setup 단계
+에러를 한 번 냈으나(`test_new_item_after_reorder_goes_last`, DB 경합으로 추정 — 그 직전 전체 실행은 해당
+테스트 포함 통과) 해당 파일 단독 재실행은 27 passed. 원본 트리에서는 위 `maps/core.py` 문제 때문에
+저장소 전체 `pytest`를 그대로는 돌릴 수 없다(수정 전·후 동일, #272 이전부터). `test_policy_drift`(정책↔문서
+일치)·`test_rule_a_static` 포함 `authz/tests` 전부 통과.
+
 ## 구현 범위
 
 - `can(user, action, resource) -> bool` 판정 엔진 + `permissions_for(user, resource) -> Permissions`

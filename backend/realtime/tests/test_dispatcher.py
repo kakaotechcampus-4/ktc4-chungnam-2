@@ -29,7 +29,7 @@ def event_loop_policy_row():
 
 def test_public_subscription_wants_only_public(event_loop_policy_row):
     Row = event_loop_policy_row
-    sub = Subscription(channel="public", user_id=None)
+    sub = Subscription(channel="public", user_id="u1")
     assert sub.wants(Row(1, "map1", "public", "pin.created", {})) is True
     assert sub.wants(Row(2, "map1", "private", "pin.created", {}, recipient_user_id="u1")) is False
 
@@ -47,15 +47,12 @@ async def test_tick_never_leaks_private_event_to_public_subscriber(event_loop_po
     """가장 중요한 테스트: private 이벤트가 public 구독자 큐에 들어가지 않는다."""
     Row = event_loop_policy_row
     d = Dispatcher()
-    public_sub = d.subscribe("map1", channel="public")
+    public_sub = d.subscribe("map1", channel="public", user_id="u1")
     private_sub = d.subscribe("map1", channel="private", user_id="u1")
     other_private_sub = d.subscribe("map1", channel="private", user_id="u2")
 
     rows = [Row(1, "map1", "private", "pin.created", {"secret": True}, recipient_user_id="u1")]
-    for row in rows:
-        for sub in d._subscribers.get(row.map_id, []):
-            if sub.wants(row):
-                sub.queue.put_nowait(row)
+    d._deliver(rows)
 
     assert public_sub.queue.empty()
     assert other_private_sub.queue.empty()
@@ -66,14 +63,14 @@ async def test_tick_never_leaks_private_event_to_public_subscriber(event_loop_po
 
 def test_unsubscribe_twice_is_noop():
     d = Dispatcher()
-    sub = d.subscribe("map1", channel="public")
+    sub = d.subscribe("map1", channel="public", user_id="u1")
     d.unsubscribe("map1", sub)
     d.unsubscribe("map1", sub)   # 두 번째 호출이 예외를 내면 안 된다
 
 
 def test_unsubscribe_unknown_map_is_noop():
     d = Dispatcher()
-    sub = Subscription(channel="public", user_id=None)
+    sub = Subscription(channel="public", user_id="u1")
     d.unsubscribe("no-such-map", sub)   # KeyError 없이 조용히 넘어간다
 
 

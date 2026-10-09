@@ -37,7 +37,7 @@ def test_counts_members_with_opinion_counts_distinct_current_members(app_client,
     pin_a = _insert_pin(db_session, place_id="m_a")
     pin_b = _insert_pin(db_session, place_id="m_b")
     _react(app_client, pin_a, "user_1", {"type": "like"})
-    _react(app_client, pin_b, "user_1", {"type": "neutral"})   # 같은 사람이 두 핀에 — 한 명
+    _react(app_client, pin_b, "user_1", {"type": "like"})   # 같은 사람이 두 핀에 — 한 명
     _react(app_client, pin_a, "user_2", {"type": "against", "reason_text": "멀어요"})
 
     body = app_client.get("/maps/map_1/counts", cookies=_auth()).json()
@@ -124,18 +124,35 @@ def test_reaction_accepts_category_and_common_chips(app_client, db_session):
     assert resp.json()["reason_chip_ids"] == ["food_spicy", "common_far"]
 
 
-def test_chip_only_against_enters_evidence_as_label_sentence_and_legacy_values_survive(db_session):
-    pin = _insert_pin(db_session, place_id="chip_ev")
+def test_reasoned_reactions_return_text_and_chips_separately(db_session):
+    """#412 — 칩은 글로 바꾸지 않고 칩마다 키·방향을 표대로 돌려준다. 글이 있어도 칩을 버리지 않는다."""
+    chip_only = _insert_pin(db_session, place_id="chip_ev")
+    both = _insert_pin(db_session, place_id="chip_both")
+    text_only = _insert_pin(db_session, place_id="chip_text")
     legacy = _insert_pin(db_session, place_id="chip_legacy")
     db_session.add_all([
-        ReactionRow(pin_id=pin.id, user_id="user_2", type="against", reason_chip_ids=["food_spicy", "common_far"]),
+        ReactionRow(pin_id=chip_only.id, user_id="user_2", type="against", reason_chip_ids=["food_spicy", "common_far"]),
+        ReactionRow(pin_id=both.id, user_id="user_2", type="against",
+                    reason_text="조개 알러지", reason_chip_ids=["food_spicy", "food_cramped"]),
+        ReactionRow(pin_id=text_only.id, user_id="user_2", type="against", reason_text="멀어요"),
         ReactionRow(pin_id=legacy.id, user_id="user_2", type="against", reason_chip_ids=["매워요"]),   # 옛 값
     ])
     db_session.commit()
 
     rows = {r["pin_id"]: r for r in pins_api.list_reasoned_reactions(db_session, map_id="map_1", category="음식점")}
-    assert rows[str(pin.id)]["reason_text"] == "매워요, 너무 멀어요"
-    assert rows[str(legacy.id)]["reason_text"] == "매워요"
+    spicy = {"chip_id": "food_spicy", "label": "매워요", "fact_key": "spicy_focused", "wants": False}
+
+    assert rows[str(chip_only.id)]["reason_text"] is None
+    assert rows[str(chip_only.id)]["chips"] == [
+        spicy, {"chip_id": "common_far", "label": "너무 멀어요", "fact_key": None, "wants": None},
+    ]
+    assert rows[str(both.id)]["reason_text"] == "조개 알러지"
+    assert rows[str(both.id)]["reason_chip_ids"] == ["food_spicy", "food_cramped"]
+    assert rows[str(both.id)]["chips"] == [
+        spicy, {"chip_id": "food_cramped", "label": "좁아요", "fact_key": "spacious", "wants": True},
+    ]
+    assert rows[str(text_only.id)]["chips"] == []
+    assert rows[str(legacy.id)]["chips"] == [{"chip_id": "매워요", "label": "매워요", "fact_key": None, "wants": None}]
 
 
 # ---- count_public_pins_by_map (#313이 쓴다) ----

@@ -3,7 +3,8 @@ contracts/mocks/handlers/places.ts의 SEED_PLACES와 같은 장소다(바꾸면 
 
 from __future__ import annotations
 
-from places.sources.base import RawPlace, distance_m
+from common.geo import haversine_distance_m
+from places.sources.base import RawPlace
 
 
 def _p(n: int, name: str, lat: float, lng: float, category: str, address: str, with_url: bool) -> RawPlace:
@@ -23,5 +24,5 @@ SAMPLE_PLACES: tuple[RawPlace, ...] = (
 def search_samples(query: str, lat: float | None, lng: float | None, limit: int) -> list[RawPlace]:
     found = [p for p in SAMPLE_PLACES if query in p.name]
     if lat is not None and lng is not None:
-        found.sort(key=lambda p: distance_m(lat, lng, p.lat, p.lng))
+        found.sort(key=lambda p: haversine_distance_m(lat, lng, p.lat, p.lng))
     return found[:limit]

@@ -240,7 +240,7 @@ def test_create_pin_recovers_from_real_db_constraint_violation(db_session, monke
     from authz.core import Principal
     from common.errors import AppError
     from pins import service
-    from pins.schemas import PinCreateRequest
+    from pins.schemas import PinCreateSearch
 
     existing = _insert_pin(db_session, place_id=fake_places.place_id("seongsu-kalguksu"))
 
@@ -248,7 +248,7 @@ def test_create_pin_recovers_from_real_db_constraint_violation(db_session, monke
     monkeypatch.setattr(service, "_find_existing_pin_id", lambda db, map_id, place_id: None)
 
     principal = Principal(user_id="user_1", map_id="map_1", role="member")
-    req = PinCreateRequest(**KALGUKSU)
+    req = PinCreateSearch(**KALGUKSU)
 
     try:
         service.create_pin(db_session, "map_1", principal, req)
@@ -261,24 +261,8 @@ def test_create_pin_recovers_from_real_db_constraint_violation(db_session, monke
     assert len(rows) == 1
 
 
-def test_list_pins_hides_other_users_private_pin(app_client, db_session):
-    """가드레일 1 — 남이 요청한 비공개 AI 후보는 목록에 나오면 안 된다."""
-    _insert_pin(db_session, created_by="stranger", visibility="private", place_id="secret")
-    resp = app_client.get("/maps/map_1/pins", cookies=_auth("user_1"))
-    assert resp.status_code == 200
-    assert resp.json() == []
-
-
-def test_list_pins_shows_own_private_pin(app_client, db_session):
-    _insert_pin(db_session, created_by="user_1", visibility="private", place_id="my_secret")
-    resp = app_client.get("/maps/map_1/pins", cookies=_auth("user_1"))
-    assert resp.status_code == 200
-    assert len(resp.json()) == 1
-
-
-def test_list_pins_hides_soft_deleted_other_users_private_pin(app_client, db_session):
-    """AND/OR 괄호 회귀 테스트 — 삭제된 남의 비공개 핀이 새어나오면 안 된다."""
-    _insert_pin(db_session, created_by="stranger", visibility="private", place_id="deleted_secret", deleted=True)
+def test_list_pins_hides_soft_deleted_pin(app_client, db_session):
+    _insert_pin(db_session, created_by="stranger", place_id="deleted_pin", deleted=True)
     resp = app_client.get("/maps/map_1/pins", cookies=_auth("user_1"))
     assert resp.status_code == 200
     assert resp.json() == []
@@ -405,6 +389,14 @@ def test_put_reaction_against_without_reason_is_422(app_client, db_session):
     assert resp.json()["code"] == "EVIDENCE_REQUIRED"
 
 
+def test_put_reaction_neutral_is_422_validation_error(app_client, db_session):
+    """#360 — △ 조율 필요(neutral)는 없어졌다."""
+    row = _insert_pin(db_session, created_by="user_1", place_id="react_neutral")
+    resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "neutral"}, cookies=_auth("user_2"))
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+
+
 def test_put_reaction_against_with_whitespace_reason_is_422(app_client, db_session):
     row = _insert_pin(db_session, created_by="user_1", place_id="react_ws")
     resp = app_client.put(
@@ -501,37 +493,6 @@ def test_put_reaction_non_member_is_404(app_client, db_session):
     assert resp.json()["code"] == "NOT_FOUND"
 
 
-def test_put_reaction_on_other_users_private_pin_is_404_regardless_of_membership(app_client, db_session):
-    """가드레일 1 — 비공개 접근 차단이 구성원 확인보다 먼저다(pins/loaders.py::load_pin이
-    authz.guard보다 먼저 실행된다). 구성원이어도 남의 비공개 핀엔 못 붙는다."""
-    row = _insert_pin(db_session, created_by="user_1", visibility="private", place_id="react_private")
-
-    resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "AI_PIN_PRIVATE"
-
-    app.dependency_overrides[get_membership_gateway] = _deny_membership
-    try:
-        resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
-    finally:
-        del app.dependency_overrides[get_membership_gateway]
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "AI_PIN_PRIVATE"
-
-
-def test_delete_reaction_on_other_users_private_pin_is_404(app_client, db_session):
-    row = _insert_pin(db_session, created_by="user_1", visibility="private", place_id="react_private_del")
-    resp = app_client.delete(f"/pins/{row.id}/reaction", cookies=_auth("user_2"))
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "AI_PIN_PRIVATE"
-
-
-def test_put_reaction_on_own_private_pin_succeeds(app_client, db_session):
-    row = _insert_pin(db_session, created_by="user_1", visibility="private", place_id="react_own_private")
-    resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_1"))
-    assert resp.status_code == 200
-
-
 def test_put_reaction_publishes_event_for_public_pin(app_client, db_session):
     row = _insert_pin(db_session, created_by="user_1", place_id="react_event")
     resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_2"))
@@ -541,17 +502,9 @@ def test_put_reaction_publishes_event_for_public_pin(app_client, db_session):
     assert len(events) == 1
     assert events[0].channel == "public"
     assert events[0].payload == {
-        "pin_id": str(row.id), "reaction_summary": {"like": 1, "neutral": 0, "against": 0},
+        "pin_id": str(row.id), "reaction_summary": {"like": 1, "against": 0},
         "user_id": "user_2", "display_name": "user_2", "type": "like",
     }
-
-
-def test_put_reaction_on_own_private_pin_emits_no_event(app_client, db_session):
-    row = _insert_pin(db_session, created_by="user_1", visibility="private", place_id="react_private_event")
-    resp = app_client.put(f"/pins/{row.id}/reaction", json={"type": "like"}, cookies=_auth("user_1"))
-    assert resp.status_code == 200
-
-    assert _events(db_session, type="reaction.changed") == []
 
 
 def test_delete_reaction_emits_event_only_when_row_existed(app_client, db_session):
@@ -593,23 +546,10 @@ def test_counts_counts_seeded_pins_by_category_and_kind(app_client, db_session):
     assert body["by_kind"] == {"일반": 1, "AI추천": 1, "확정": 1}
 
 
-def test_counts_excludes_other_users_private_pins_but_includes_own(app_client, db_session):
-    """가드레일 1 — 남의 비공개 후보는 개수에도 새면 안 된다. 본인 것은 센다."""
-    _insert_pin(db_session, kind="AI추천", visibility="private", created_by="stranger", place_id="p_other")
-    _insert_pin(db_session, kind="AI추천", visibility="private", created_by="user_1", place_id="p_mine")
-    _insert_pin(db_session, kind="일반", place_id="p_public", created_by="stranger")
-
-    mine = app_client.get("/maps/map_1/counts", cookies=_auth("user_1")).json()
-    assert mine["by_kind"] == {"일반": 1, "AI추천": 1, "확정": 0}
-
-    theirs = app_client.get("/maps/map_1/counts", cookies=_auth("user_2")).json()
-    assert theirs["by_kind"] == {"일반": 1, "AI추천": 0, "확정": 0}
-
-
-def test_counts_matches_list_pins_visibility(app_client, db_session):
-    _insert_pin(db_session, kind="AI추천", visibility="private", created_by="stranger", place_id="v1")
+def test_counts_matches_list_pins(app_client, db_session):
+    _insert_pin(db_session, kind="AI추천", created_by="stranger", place_id="v1")
     _insert_pin(db_session, kind="일반", place_id="v2")
-    _insert_pin(db_session, kind="AI추천", visibility="private", place_id="v3", created_by="user_1")
+    _insert_pin(db_session, kind="AI추천", place_id="v3", created_by="user_1")
     listed = app_client.get("/maps/map_1/pins", cookies=_auth("user_1")).json()
     counted = app_client.get("/maps/map_1/counts", cookies=_auth("user_1")).json()
     assert sum(counted["by_kind"].values()) == len(listed)
@@ -631,38 +571,14 @@ def _like(db_session, pin_row, user_id):
     db_session.commit()
 
 
-def test_list_liked_pins_excludes_other_users_private_pin(db_session):
-    """가드레일 1 — 타인의 비공개 후보에 ♥가 있어도 요청자의 선호 프로필에 안 들어간다."""
-    from pins import api as pins_api
-
-    other_private = _insert_pin(db_session, created_by="user_2", visibility="private", place_id="lk_other_priv",
-                                checks=[{"fact_key": "quiet"}])
-    public = _insert_pin(db_session, created_by="user_2", visibility="public", place_id="lk_public")
-    _like(db_session, other_private, "user_2")
-    _like(db_session, public, "user_2")
-
-    result = pins_api.list_liked_pins(db_session, map_id="map_1", category="음식점", requested_by="user_1")
-
-    assert len(result) == 1  # 공개 핀 하나뿐
-
-
-def test_list_liked_pins_includes_own_private_pin(db_session):
-    from pins import api as pins_api
-
-    own_private = _insert_pin(db_session, created_by="user_1", visibility="private", place_id="lk_own_priv",
-                              checks=[{"fact_key": "quiet"}])
-    _like(db_session, own_private, "user_1")
-
-    result = pins_api.list_liked_pins(db_session, map_id="map_1", category="음식점", requested_by="user_1")
-
-    assert result == [{"place_id": "lk_own_priv", "member_ids": {"user_1"}}]
-
-
 def test_deleted_pin_reasons_still_reach_the_evidence_but_not_the_readiness_count(db_session):
     """#243 — 구성원 누구나 핀을 지울 수 있어서(#25), 지워진 핀에 남긴 알러지 사유가 근거에서 빠지면 안 된다(가드레일 8).
     준비 판정(몇 명이 반응했나)은 삭제 핀을 세지 않는다 — 사유(이력)와 현재 반응 수는 다른 질문이다."""
     from pins import api as pins_api
 
+    from pins.tests.test_author_display_369 import _make_map
+
+    _make_map(db_session, "map_1", {"user_1": "owner", "user_2": "member"})
     gone = _insert_pin(db_session, place_id="rs_gone", deleted=True)
     alive = _insert_pin(db_session, place_id="rs_alive")
     db_session.add(ReactionRow(pin_id=gone.id, user_id="user_2", type="against", reason_text="조개 알러지"))
@@ -671,4 +587,30 @@ def test_deleted_pin_reasons_still_reach_the_evidence_but_not_the_readiness_coun
 
     reasons = pins_api.list_reasoned_reactions(db_session, map_id="map_1", category="음식점")
     assert [(r["user_id"], r["reason_text"]) for r in reasons] == [("user_2", "조개 알러지")]
-    assert pins_api.count_reacted_users(db_session, map_id="map_1", category="음식점") == 1
+    assert pins_api.count_opinion_pins(db_session, map_id="map_1", category="음식점") == 1
+
+
+def test_count_opinion_pins_counts_pins_not_people_and_skips_left_and_withdrawn_members(db_session):
+    """#388 — 의견 핀 수: 한 핀에 의견이 여럿이어도 1, 나간 사람·탈퇴자의 반응만 있는 핀은 세지 않는다."""
+    from datetime import datetime, timezone
+
+    from auth.models import User
+    from auth.testing import ensure_users
+    from pins import api as pins_api
+    from pins.tests.test_author_display_369 import _make_map
+
+    _make_map(db_session, "map_1", {"user_1": "owner", "user_2": "member", "user_3": "member"})
+    ensure_users(db_session, "user_3")
+    shared = _insert_pin(db_session, place_id="op_shared")
+    left_only = _insert_pin(db_session, place_id="op_left")
+    withdrawn_only = _insert_pin(db_session, place_id="op_withdrawn")
+    db_session.add_all([
+        ReactionRow(pin_id=shared.id, user_id="user_1", type="like"),
+        ReactionRow(pin_id=shared.id, user_id="user_2", type="against", reason_text="멀어요"),
+        ReactionRow(pin_id=left_only.id, user_id="gone_user", type="like"),
+        ReactionRow(pin_id=withdrawn_only.id, user_id="user_3", type="like"),
+    ])
+    db_session.query(User).filter(User.id == "user_3").update({"deleted_at": datetime.now(timezone.utc)})
+    db_session.commit()
+
+    assert pins_api.count_opinion_pins(db_session, map_id="map_1", category="음식점") == 1

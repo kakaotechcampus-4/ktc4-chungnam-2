@@ -50,17 +50,18 @@ def _all_rows_text(db_session) -> dict[str, list[str]]:
 
 
 def test_no_kakao_value_is_stored_logged_or_sent_to_the_model(members, place_ids, kakao_wired, monkeypatch, caplog, db_session):
-    import llm.service as llm_service
+    from integration.real_places_fixtures import plan_with
+    from llm import service as llm_service
 
     a, b, map_id = members
     sent_to_model: list[str] = []
-    inner = llm_service.get_evidence_planner()
+    inner = llm_service.passthrough_planner
 
     def spying_planner(raw_reasons):
         sent_to_model.append(json.dumps(list(raw_reasons), ensure_ascii=False, default=str))
         return inner(raw_reasons)
 
-    monkeypatch.setattr(llm_service, "get_evidence_planner", lambda: spying_planner)
+    plan_with(monkeypatch, spying_planner)
     caplog.set_level(logging.DEBUG)
 
     # 1) 검색 — 화면 표시용이라 응답에는 카카오 값이 있어도 된다(저장만 안 된다)

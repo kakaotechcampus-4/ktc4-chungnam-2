@@ -263,3 +263,26 @@ def test_bump_attempt_no_increments(db_session):
     new_value = service.bump_attempt_no(db_session, run)
     assert new_value == 2
     assert run.attempt_no == 2
+
+
+def _evidence_dicts(texts):
+    return [{"author_id": "user_1", "source": "reaction", "text": t, "badge": "preferred"} for t in texts]
+
+
+def test_list_evidence_keeps_insertion_order_within_one_transaction(db_session):
+    # 한 트랜잭션이라 created_at이 모두 같고 id는 무작위 UUID — seq가 순서를 정한다(#428).
+    run = _make_run(db_session)
+    texts = [f"줄{i:02d}" for i in range(20)]
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=_evidence_dicts(texts))
+
+    assert [e.text for e in service.list_evidence(db_session, str(run.id))] == texts
+    assert [e.text for e in service.list_active_evidence(db_session, run.id)] == texts
+
+
+def test_list_active_evidence_skips_inactive_but_keeps_order(db_session):
+    run = _make_run(db_session)
+    texts = [f"줄{i:02d}" for i in range(10)]
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=_evidence_dicts(texts))
+    service.set_evidence_active(db_session, service.list_evidence(db_session, str(run.id))[3].id, False)
+
+    assert [e.text for e in service.list_active_evidence(db_session, run.id)] == texts[:3] + texts[4:]

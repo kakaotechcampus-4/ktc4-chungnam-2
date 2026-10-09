@@ -22,13 +22,15 @@
 
 | type | 페이로드 | 발생 시점 |
 |---|---|---|
-| `pin.created` | `Pin` (api-spec.yaml) | 핀 생성 직후. `visibility=private`인 핀은 이 채널에 보내지 않는다 |
+| `pin.created` | `Pin` (api-spec.yaml) | 핀 생성 직후. v1은 private 핀 행이 없어 모든 핀이 이 채널로 나간다(비공개 후보는 핀이 아니라 개인 채널 `run.candidates_ready`로만 온다). 실시간 핀(`source=live`, #382)은 `lat`·`lng`·`place_name` 없이 `kakao_place_id`·`search_query`·`memo`만 실린다 — 받은 화면이 그 자리에서 위치를 다시 찾는다 |
 | `pin.published` | `Pin` | 「지도에 올리기」 실행 시 (5-5-1) |
 | `pin.deleted` | `{ pin_id }` | 핀 삭제 |
-| `reaction.changed` | `{ pin_id, reaction_summary, user_id, display_name, type }` | 반응 등록/수정/삭제. `user_id`·`display_name`은 그 반응을 남긴(지운) 구성원, `type`은 `like`·`neutral`·`against`이고 삭제면 `null`이다(2026-10-04, FE 요청 — 「지우님이 반대 의견을 남겼어요」). 반응 내용(사유)은 싣지 않는다 |
+| `reaction.changed` | `{ pin_id, reaction_summary, user_id, display_name, type }` | 반응 등록/수정/삭제. `user_id`·`display_name`은 그 반응을 남긴(지운) 구성원, `type`은 `like`·`against`이고 삭제면 `null`이다(2026-10-04, FE 요청 — 「지우님이 반대 의견을 남겼어요」). 반응 내용(사유)은 싣지 않는다 |
 | `shortlist.changed` | `{ item: ShortlistItem, action: 'added'\|'removed'\|'reordered' }` | 확정 리스트 변경. `reordered`는 수동 정렬 (#30) |
 | `route.recalculated` | `Route[]` | **「동선 짜주기」 실행 시** (#30, `POST /maps/{mapId}/route`). 확정 리스트 변경만으로는 발행하지 않는다 |
 | `member.joined` | `Member` | 초대 수락 |
+| `member.left` | `{ map_id, user_id, new_owner_user_id \| null }` | 구성원이 지도에서 나감(#369). **방장이 계정을 탈퇴해 그 지도의 방장이 위임된 경우에도 보낸다**(`user_id`는 탈퇴한 사람, 2026-10-07 결정). 방장이 나가거나 탈퇴해 위임됐으면 `new_owner_user_id`에 새 방장, 아니면 null. 탈퇴했는데 넘길 사람이 없어 지도가 삭제되면 이 이벤트 대신 `map.deleted`만 보낸다. 받은 FE는 핀 목록(작성자 표시 포함), 핀 참여율, `FilterCounts`, readiness를 다시 불러온다. 나간 사람의 반응 삭제마다 따로 이벤트를 보내지 않는다 |
+| `map.deleted` | `{ map_id }` | 방장이 지도를 삭제함(#369). 삭제와 같은 트랜잭션에 기록된다. realtime은 이미 연결된 구독자에게 이 이벤트를 보낸 뒤 연결을 닫는다(삭제된 지도는 새 구독이 404라 이 순서가 아니면 마지막 이벤트가 전달되지 않는다). 받은 FE는 내 지도 목록으로 돌아간다 |
 | `member.presence` | `{ user_id, online }` | 접속 상태 변화 — **v1 서버는 발행하지 않는다**(아래 「v1에서 발행하지 않는 이벤트」) |
 
 ### 개인 채널
@@ -57,6 +59,19 @@
   "data": { "...": "..." }
 }
 ```
+
+## 구독을 끊는 경우 (#369)
+
+SSE 구독 권한(구성원인가)은 **구독을 시작할 때 한 번만** 본다. 그 뒤로는 지도 번호만 보고 이벤트를 보내므로, 구성원이 아니게 된 사람의 연결은 서버가 직접 끊어야 한다. 끊을 때도 **그 이벤트를 먼저 보내고 닫는다.** 받은 쪽이 왜 끊겼는지 알 수 있게 하기 위해서다.
+
+| 이벤트 | 보낸 뒤 닫는 연결 |
+|---|---|
+| `map.deleted` | 그 지도의 모든 구독(전체 채널, 개인 채널) |
+| `member.left` | 그 지도에서 `user_id`(나간 사람, 또는 탈퇴해 방장이 넘어간 사람)의 구독(전체 채널, 개인 채널). 다른 구성원의 연결은 그대로 둔다 |
+
+- 그래서 전체 채널 구독도 누가 구독했는지(`user_id`)를 기억해야 한다. 지금은 개인 채널만 기억한다.
+- 닫힌 뒤 같은 사람이 다시 구독하면 구독 시작 검사에서 404다(삭제된 지도, 또는 구성원이 아님). 다시 초대를 수락하면 새로 구독할 수 있다.
+- 탈퇴했지만 방장이 아니었던 지도의 연결은 이 표에 없다. 그 지도에는 이벤트가 나가지 않는다(탈퇴 처리는 반응과 근거 줄만 지운다). 세션이 무효가 되므로 다음 재연결에서 401로 끊긴다.
 
 ## 전달 보장
 

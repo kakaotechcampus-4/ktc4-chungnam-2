@@ -5,8 +5,8 @@
 funnel_counts/widen_radius/check_retry_limit + 이들을 뒷받침하는 원(Circle) 계산.
 
 멤버십·작성자(author) 판정은 여기 두지 않는다 — authz.resolve_principal(gateway 호출, I/O)와
-authz.can()이 이미 그 판정을 갖고 있다(authz/policy.py::AUTHOR_CONSTRAINED_ACTIONS에
-recommend.publish가 등록됨). 이 파일에 남는 건 run/candidate/evidence/region 자체의 상태
+authz.can()이 이미 그 판정을 갖고 있다(authz/policy.py의 author.actions에
+recommend.publish가 있다). 이 파일에 남는 건 run/candidate/evidence/region 자체의 상태
 판정과 순수 계산뿐이다.
 """
 
@@ -42,25 +42,22 @@ def check_run_ready(run: RecommendRun) -> None:
         raise AppError("NOT_READY")
 
 
-def required_count(member_count: int) -> int:
-    """ceil(N/2) — docs/api-spec.yaml Readiness.required_count. N=현재 참여 중인(지도 구성원)
-    인원 수로 확정(#32, 2026-09-23) — 호출부(maps.api.count_members)가 그 값을 넘긴다.
-    member_count<=0은 지도가 생성 시점부터 항상 최소 1명(만든 사람)을 구성원으로 두어 실제
-    경로에서 도달하지 않는 방어 코드다."""
-    if member_count <= 0:
-        return 0
-    return math.ceil(member_count / 2)
+REQUIRED_OPINION_PINS = 1  # #360 — 카테고리마다 ♥/🚫 의견이 달린 핀 1곳. 구성원 수에 비례하던 ceil(N/2)는 폐기
 
 
-def check_readiness(answered_count: int, member_count: int) -> dict:
-    """5-4 추천 버튼 활성화 판정. api-spec.yaml Readiness와 같은 모양의 dict를 돌려준다."""
-    required = required_count(member_count)
-    return {"ready": answered_count >= required, "answered_count": answered_count, "required_count": required}
+def check_readiness(answered_count: int) -> dict:
+    """5-4 추천 버튼 활성화 판정. api-spec.yaml Readiness와 같은 모양의 dict를 돌려준다.
+    answered_count는 그 카테고리의 의견 핀 수(pins.api.count_opinion_pins)."""
+    return {
+        "ready": answered_count >= REQUIRED_OPINION_PINS,
+        "answered_count": answered_count,
+        "required_count": REQUIRED_OPINION_PINS,
+    }
 
 
 def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> list[dict]:
     """② 사유 → 실격/선호/반경 구조화 이후, 근거 리스트 하나로 병합한다 — 실제 구조화(모델
-    호출)는 llm.service.plan_evidence가 하고(service.py에서 호출, 여기는 그 결과를 받기만
+    호출)는 llm.api.plan_evidence가 하고(flows.py가 Gateway로 호출, 여기는 그 결과를 받기만
     한다) 이 함수는 순수 병합/정렬만 한다.
 
     reaction_lines: badge='required'(반대) 등 반응에서 파생된 근거(source='reaction').
@@ -70,6 +67,20 @@ def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> l
     유래 근거를 먼저, 수동 추가를 뒤에 — "-"로 뺄 수 있는 자기 근거를 찾기 쉽게 원 작성
     순서를 보존한다)."""
     return [*reaction_lines, *manual_lines]
+
+
+def demote_wanted_place_identity(lines: Sequence[dict], category: str) -> list[dict]:
+    """docs/constraints.md "🚫 사유 안의 음식 종류 '원함'은 선호다"(#422): required이면서 wants=true이고 키가
+    가게의 정체(음식점 cuisine_*)인 줄은 배지를 preferred로 내린다. wants=false·다른 키·다른 배지는 그대로다.
+    글 줄·칩 줄 모두 같은 규칙이라 ②가 낸 줄과 칩 줄을 합친 뒤에 한 번 건다. 원본은 바꾸지 않는다."""
+    return [
+        {**line, "badge": "preferred"}
+        if line.get("badge") == "required"
+        and line.get("wants") is True
+        and constraints.is_place_identity_key(category, line.get("fact_key"))
+        else line
+        for line in lines
+    ]
 
 
 def circles_all_overlap(circles: list[Circle]) -> bool:
@@ -149,12 +160,9 @@ def condition_label(fact_key: str, *, satisfied: bool, wants: bool | None = None
     return f"{name} 아님" if wants else f"{name} 해당"
 
 
-def _check_label(fact_key: str, *, known: bool, value, passes: bool) -> str:
-    name = constraints.FACT_LABELS.get(fact_key, fact_key)
+def _check_label(fact_key: str, *, known: bool, passes: bool) -> str:
     if not known:
-        return f"{name} 확인 필요"
-    if fact_key in constraints.VALUE_COMPARISON_UNSUPPORTED:
-        return constraints.PRICE_BUCKET_LABELS.get(str(value), f"{name} {value}")
+        return f"{constraints.FACT_LABELS.get(fact_key, fact_key)} 확인 필요"
     # 선호(soft) 체크의 passed는 라벨 참/거짓 그대로라 "원함" 쪽으로 읽는다. 실격(hard)은 passed=통과 여부.
     wants = True if fact_key in constraints.SOFT_FACT_KEYS else None
     return condition_label(fact_key, satisfied=passes, wants=wants)
@@ -165,12 +173,13 @@ def build_check(fact_key: str, unknown_policy: str, *, known: bool, value, passe
     고정한다(가드레일 8: "판정 불확실은 조건 종류에 따라 다르게 처리한다").
 
     - known=False & unknown_policy='exclude' → passed=False(실격), needs_check=False(불확실
-      해서 뺀 것이지 "확인해 달라"는 배지가 아니다 — 안전 조건이므로 절대 통과시키지 않는다).
+      해서 뺀 것이지 "확인해 달라"는 배지가 아니다). 지금 레지스트리에 exclude인 키는 없다(#425 — 알러지
+      같은 안전 조건은 서비스가 판단하지 않는다). 새로 넣으려면 루트 결정이 먼저다.
     - known=False & unknown_policy='pass'(+needs_check) → passed=True, needs_check=True.
     - known=True → passed는 실제 값 기반 통과 여부(호출부가 계산해 넘긴다), needs_check=False.
     label은 어느 조건인지 보이는 사람 말이다(`condition_label`) — 값 문자열("False")을 그대로 쓰지 않는다.
     """
-    label = _check_label(fact_key, known=known, value=value, passes=passes)
+    label = _check_label(fact_key, known=known, passes=passes)
     if not known:
         if unknown_policy == "exclude":
             return Check(fact_key=fact_key, label=label, passed=False, confidence="unknown", needs_check=False)
@@ -180,8 +189,8 @@ def build_check(fact_key: str, unknown_policy: str, *, known: bool, value, passe
 
 def resolve_label(labels: Sequence[FactLabel], fact_key: str) -> tuple[bool, Any]:
     """place_facts 라벨에서 fact_key 하나의 (known 여부, 값). 라벨이 없거나 confidence가 unknown이거나
-    known인데 값이 비어 있으면 unknown으로 본다 — 값 없는 known을 통과 쪽으로 읽지 않는다(안전 조건은
-    unknown_policy=exclude라 build_check가 후보를 내린다, 가드레일 8)."""
+    known인데 값이 비어 있으면 unknown으로 본다 — 값 없는 known을 통과 쪽으로 읽지 않는다(모름은
+    build_check가 unknown_policy대로 처리한다, 가드레일 8)."""
     for label in labels:
         if label.fact_key == fact_key:
             known = label.confidence == "known" and label.value is not None
@@ -233,8 +242,8 @@ def _violates_soft_requirement(checks: Sequence[Check], fact_key: str, wants: bo
 def checks_to_show(checks: Sequence[Check], wanted_fact_keys: Collection[str]) -> list[Check]:
     """후보 저장·응답·게시(pins 복사)에 남길 체크(#216, 가드레일 5). hard 체크는 전부, soft 체크는
     사람이 원한 키(`wanted_fact_keys`)일 때만 — known 여부와 무관하다(원한 키가 unknown이면
-    needs_check로 남는다). 아무도 말하지 않은 soft는 known이어도 싣지 않는다: cuisine_* 10개처럼
-    한 곳당 9개가 거짓인 키가 실패 체크로 줄줄이 보이고, 모름은 「확인 필요」만 늘린다.
+    needs_check로 남는다). 아무도 말하지 않은 soft는 known이어도 싣지 않는다: cuisine_*처럼
+    한 곳당 대부분이 거짓인 키가 실패 체크로 줄줄이 보이고, 모름은 「확인 필요」만 늘린다.
     점수 계산은 이 함수를 거치지 않은 전체 체크를 쓴다."""
     return [
         check for check in checks
@@ -280,6 +289,12 @@ def check_retry_limit(attempt_no: int) -> None:
 # ============================================================================
 
 
+# 지지·반대 한 사람의 점수 — docs/constraints.md "점수"(#414). 직접 쓴 선호 사유(wants=true/false)의 작성자는 3점,
+# ♥로만 나온 지지·반대는 1점. 한 사람이 ♥도 하고 같은 키를 직접 쓰면 3점이다(더하지 않는다). 3은 시작값이다.
+WRITTEN_PREFERENCE_POINTS = 3
+HEART_PREFERENCE_POINTS = 1
+
+
 @dataclass(frozen=True)
 class HeartedPlace:
     """♥ 반응을 받은 핀 하나 — 그 핀의 라벨(checks)과 ♥를 누른 구성원 user_id 집합.
@@ -302,10 +317,35 @@ class ScoredCandidate:
     lng: float
 
 
+def filter_heart_signals(hearted_places: Sequence[HeartedPlace], category: str) -> list[HeartedPlace]:
+    """0단계 — ♥ 핀 라벨 중 선호 신호로 쓸 것만 남긴다(docs/constraints.md "♥에서 선호로 쓰는 라벨", #414).
+
+    'unused' 키는 뺀다. 'two_or_more' 키는 known+참인 ♥ 핀이 `HEART_SIGNAL_MIN_TRUE_PLACES`곳 미만이면 그 키를
+    참·거짓 모두 뺀다(신호가 없으면 반대 신호도 없다). 직접 쓴 선호 사유는 여기를 거치지 않는다. 걸러진 목록을
+    기준·점수·충족 집계·이유에 똑같이 넘겨야 ♥ 신호가 한 곳에서만 빠지는 일이 없다."""
+    true_places: dict[str, int] = {}
+    for place in hearted_places:
+        for check in place.checks:
+            if check.confidence == "known" and check.passed:
+                true_places[check.fact_key] = true_places.get(check.fact_key, 0) + 1
+
+    def keep(fact_key: str) -> bool:
+        use = constraints.heart_signal_use(category, fact_key)
+        if use == "unused":
+            return False
+        if use == "two_or_more":
+            return true_places.get(fact_key, 0) >= constraints.HEART_SIGNAL_MIN_TRUE_PLACES
+        return True
+
+    return [
+        HeartedPlace(checks=[c for c in place.checks if keep(c.fact_key)], member_ids=place.member_ids)
+        for place in hearted_places
+    ]
+
+
 def build_preference_criteria(
     hearted_places: Sequence[HeartedPlace],
     *,
-    excluded_fact_keys: frozenset[str],
     disqualifying_fact_keys: Sequence[str],
     preferred_authors: Mapping[str, frozenset[str]],
 ) -> dict[str, bool]:
@@ -313,15 +353,14 @@ def build_preference_criteria(
 
     ① ♥ 받은 핀들의 라벨(checks)을 전부 모은다 — confidence='known'인 것만(②와 별개로,
        조사 안 된 라벨은 애초에 신호가 없다).
-    ② 참/거짓으로 답할 수 없는 라벨(가격대·수용 인원, `excluded_fact_keys` — 정본은
-       constraints.VALUE_COMPARISON_UNSUPPORTED)은 뺀다.
+    ② 참/거짓으로 답할 수 없는 라벨은 뺀다 — 소프트 키만 쓰므로 따로 거를 키가 없다(가격대는 #423에서 뺐다).
     ③ ♥ 받은 "장소" 개수(사람 수가 아니다)로 값이 갈리면 많은 쪽을 택한다. 정확히 반반이면
        —이슈 본문이 이 경우를 정하지 않아 이 세션이 임시로 정함(for_Root.md 보고)— 신호가
        없다고 보고 그 라벨 자체를 기준에서 뺀다.
     ④ 이번 run에서 활성 실격 사유로 이미 쓰인 라벨(`disqualifying_fact_keys`)은 뺀다 — 통과한
        후보 전부가 이미 같은 값이라 점수 차이를 못 만든다.
     ⑤ 구성원이 직접 쓴 선호 사유의 라벨(`preferred_authors`의 키 — fact_key → 그 사유를 쓴
-       구성원들)은 True로 추가한다(②·④ 제외 대상이면 마찬가지로 뺀다) — ③의 다수결 결과보다
+       구성원들)은 True로 추가한다(④ 제외 대상이면 마찬가지로 뺀다) — ③의 다수결 결과보다
        우선한다(명시적 선호이므로).
 
     소프트 키(`constraints.SOFT_FACT_KEYS`)만 쓴다. 하드 체크의 passed는 "실격 아님"이라 라벨
@@ -336,7 +375,7 @@ def build_preference_criteria(
         for check in place.checks:
             if check.fact_key not in constraints.SOFT_FACT_KEYS:
                 continue
-            if check.fact_key in excluded_fact_keys or check.fact_key in disqualifying_fact_keys:
+            if check.fact_key in disqualifying_fact_keys:
                 continue
             if check.confidence != "known":
                 continue
@@ -353,7 +392,7 @@ def build_preference_criteria(
     for fact_key in preferred_authors:
         if fact_key not in constraints.SOFT_FACT_KEYS:
             continue
-        if fact_key in excluded_fact_keys or fact_key in disqualifying_fact_keys:
+        if fact_key in disqualifying_fact_keys:
             continue
         criteria[fact_key] = True  # ⑤ — 명시적 선호가 ③의 다수결보다 우선한다
 
@@ -368,7 +407,8 @@ def _member_support(
     """fact_key마다 (지지 구성원 집합, 반대 구성원 집합) — 지지는 그 값을 True로 가진 곳에 ♥한
     구성원 + 그 fact_key를 선호 사유로 직접 쓴 구성원(♥ 이력이 없어도 명시적 선호는 지지다),
     반대는 False로 가진 곳에 ♥한 구성원. "구성원 단위로 센다"(한 사람이 같은 값의 장소 여러
-    곳에 ♥해도, ♥하고 사유도 써도 1명)를 집합으로 자연스럽게 보장한다. 소프트 키만 쓴다."""
+    곳에 ♥해도, ♥하고 사유도 써도 1명)를 집합으로 자연스럽게 보장한다. 소프트 키만 쓴다.
+    사람마다 몇 점인지(직접 씀 3, ♥ 1)는 `score_candidates`가 정한다 — 여기는 누가 지지·반대인지만 센다."""
     supporting: dict[str, set[str]] = {}
     opposing: dict[str, set[str]] = {}
     for place in hearted_places:
@@ -407,11 +447,15 @@ def score_candidates(
     """2단계 — 후보마다 점수 매기기(이슈 #112).
 
     criteria[fact_key] is True이고 후보 자신도 그 라벨이 known+True일 때만("양쪽 다 참일 때만")
-    점수를 준다. 더하는 값은 (그 라벨=True인 곳에 ♥한 구성원 수 − False인 곳에 ♥한 구성원 수).
+    점수를 준다. 더하는 값은 (지지 점수 − 반대 점수)다. 지지·반대 구성원 한 사람이 직접 쓴 사유의
+    작성자면 `WRITTEN_PREFERENCE_POINTS`, ♥로만 나왔으면 `HEART_PREFERENCE_POINTS`다(#414).
     조사 안 된(unknown) 라벨은 0점 — 감점도 없다.
 
     `avoided_authors`(fact_key → "있는 곳은 피하고 싶다"고 선호로 쓴 구성원, #231)는 그 키를 가진 후보에서
-    그 사람 수만큼 깎는다. 기준(criteria)이 그 키를 True로 두지 않았어도 깎는다(피하는 사람이 있으니까)."""
+    한 사람당 `WRITTEN_PREFERENCE_POINTS`씩 깎는다. 기준(criteria)이 그 키를 True로 두지 않았어도 깎는다(피하는
+    사람이 있으니까)."""
+    preferred_authors = preferred_authors or {}
+    avoided_authors = avoided_authors or {}
     support = _member_support(hearted_places, preferred_authors, avoided_authors)
     empty: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset())
     scores: dict[str, int] = {}
@@ -422,11 +466,17 @@ def score_candidates(
                 continue
             if criteria.get(check.fact_key) is True:
                 supporting, opposing = support.get(check.fact_key, empty)
-                total += len(supporting) - len(opposing)
-            elif check.fact_key in (avoided_authors or {}):
-                total -= len(avoided_authors[check.fact_key])
+                total += _points(supporting, preferred_authors.get(check.fact_key, frozenset()))
+                total -= _points(opposing, avoided_authors.get(check.fact_key, frozenset()))
+            elif check.fact_key in avoided_authors:
+                total -= WRITTEN_PREFERENCE_POINTS * len(avoided_authors[check.fact_key])
         scores[place_id] = total
     return scores
+
+
+def _points(members: frozenset[str], writers: frozenset[str]) -> int:
+    """구성원 집합의 점수 — 같은 방향으로 직접 쓴 사람은 3점, 나머지(♥만)는 1점. 한 사람은 한 번만 센다."""
+    return sum(WRITTEN_PREFERENCE_POINTS if member in writers else HEART_PREFERENCE_POINTS for member in members)
 
 
 def build_member_fulfillment(
@@ -476,15 +526,13 @@ def build_reason(
     """Candidate.reason — 실제로 통과한 체크와 충족한 선호 라벨에서 조립한 한 줄(가드레일 5).
     모델을 부르지 않는다. 두 종류만 말한다: 1) 이번 run의 활성 실격 조건 중 known으로 통과한
     것 2) 선호 기준(criteria) 중 이 후보가 known+참인 것(+ 몇 명이 충족했는지). 표시 이름이
-    없는 키와 값 비교를 못 하는 키(price_bucket)는 말하지 않는다 — 안 본 것을 통과했다고 하지
-    않기 위해서다. 말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지
+    없는 키는 말하지 않는다 — 안 본 것을 통과했다고 하지 않기 위해서다. 말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지
     않는다)."""
     known_passed = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
     disqualifier_labels = [
         constraints.PASSED_LABELS[c.fact_key]
         for c in candidate_checks
         if c.fact_key in constraints.HARD_REGISTRY
-        and c.fact_key not in constraints.VALUE_COMPARISON_UNSUPPORTED
         and c.fact_key in constraints.PASSED_LABELS
         and c.confidence == "known" and c.passed
     ]

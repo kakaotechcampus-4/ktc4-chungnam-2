@@ -4,9 +4,9 @@
 세 겹으로 지킨다.
 1. 문서↔코드: docs/constraints.md 표의 `unknown_policy`와 recommend/constraints.py 레지스트리가 어긋나면 실패.
    (값 변경은 루트만 — 코드만 바꾸거나 문서만 바꾸면 여기서 잡힌다.)
-2. 안전 조건 고정: 재료·알러지·매운맛·기름진 메뉴는 "모르면 제거"(exclude)여야 한다. 누가 pass로 바꾸면 실패.
-3. 파이프라인: 안전 조건이 켜진 run에서 라벨이 unknown인 후보는 결과에 절대 나오지 않는다(가드레일 7·8).
-   취향 조건(pass + needs_check)은 반대로 통과하되 needs_check 배지가 붙어야 한다.
+2. "모르면 제거"(exclude) 조건은 없다: 알러지 같은 안전 조건은 서비스가 판단하지 않는다(#425). 누가 exclude 키를 새로 넣으면 실패한다
+   (넣으려면 결정이 먼저다 — 모름을 빼면 후보가 0곳이 되기 쉽다).
+3. 파이프라인: 취향 조건(pass + needs_check)은 라벨이 모름이어도 통과하되 needs_check 배지가 붙어야 한다.
 """
 
 import re
@@ -22,9 +22,8 @@ from recommend.models import EvidenceLine
 
 CONSTRAINTS_MD = Path(__file__).resolve().parents[2] / "docs" / "constraints.md"
 
-# 안전 조건 — 틀리면 "못 먹는 걸 추천하는 사고"(docs/constraints.md "왜 unknown_policy가 조건마다 다른가").
-# 이 집합은 의도적으로 하드코딩이다: 레지스트리에서 계산하면 레지스트리를 바꾸는 순간 테스트도 같이 바뀐다.
-SAFETY_KEYS = frozenset({"contains_shellfish", "spicy_focused", "oily_focused"})
+# 안전 조건(모르면 제거) 키는 없다 — 알러지는 서비스가 판단하지 않는다(#425). 의도적으로 하드코딩한 빈 집합이다.
+SAFETY_KEYS: frozenset[str] = frozenset()
 
 
 def _doc_policies() -> dict[str, str]:
@@ -60,20 +59,12 @@ def test_every_condition_in_constraints_md_is_in_the_registry():
     assert not missing, f"constraints.md에 있는데 레지스트리에 없는 조건: {missing}"
 
 
-def test_safety_conditions_are_exclude_and_nothing_else_is():
+def test_no_condition_excludes_unknown_labels():
     exclude_keys = {k for k, s in constraints.HARD_REGISTRY.items() if s.unknown_policy == "exclude"}
     assert exclude_keys == SAFETY_KEYS, (
-        "안전 조건(exclude) 집합이 바뀌었다 — 안전 조건을 pass로 내리면 사고 위험, "
-        f"새로 exclude를 늘리면 후보가 과하게 줄어든다. 코드={sorted(exclude_keys)} 기대={sorted(SAFETY_KEYS)}"
+        "모르면 제거(exclude) 조건이 생겼다 — 알러지 같은 안전 조건은 서비스가 판단하지 않기로 했다(#425). "
+        f"새로 넣으려면 결정이 먼저다. 코드={sorted(exclude_keys)}"
     )
-
-
-@pytest.mark.parametrize("key", sorted(SAFETY_KEYS))
-def test_unknown_safety_condition_disqualifies_the_candidate(key):
-    check = build_check(key, constraints.HARD_REGISTRY[key].unknown_policy, known=False, value=None, passes=True)
-    assert check.passed is False and check.confidence == "unknown"
-    assert check.needs_check is False   # "확인해 달라"가 아니라 그냥 뺀 것
-    assert apply_disqualifier_filters([[check]]) == [False]
 
 
 @pytest.mark.parametrize("key", sorted(k for k, s in constraints.HARD_REGISTRY.items() if s.unknown_policy == "pass"))
@@ -85,14 +76,14 @@ def test_unknown_taste_condition_passes_with_needs_check_badge(key):
 
 def test_one_failed_check_disqualifies_even_if_the_rest_pass():
     """가드레일 9의 조건판 — 하나라도 불통과면 후보 전체 탈락."""
-    ok = build_check("price_bucket", "pass", known=False, value=None, passes=True)
-    bad = build_check("spicy_focused", "exclude", known=False, value=None, passes=True)
+    ok = build_check("is_crowded_large", "pass", known=False, value=None, passes=True)   # price_bucket은 #423에서 뺐다
+    bad = build_check("is_crowded_large", "pass", known=True, value=True, passes=False)   # 라벨이 참이라 실격
     assert apply_disqualifier_filters([[ok, bad], [ok]]) == [False, True]
 
 
 # ---------------------------------------------------------------- 파이프라인(실제 앱 + DB) ----
 
-def _start_run_with_active_condition(a, b, db_session, fact_key: str, pin_body) -> str:
+def _start_run_with_active_condition(a, b, db_session, fact_key: str, pin_body, wants: bool | None = None) -> str:
     """골든 패스와 같은 준비 뒤, 지정한 fact_key를 '꼭 지켜야 하는 조건'으로 켠 run을 만들어 execute까지 돌린다."""
     map_id = a.post("/maps", json={"title": "t", "start_date": "2026-11-01", "end_date": "2026-11-03",
                                    "region": {"label": "부산", "lat": 35.1796, "lng": 129.0756}}).json()["id"]
@@ -112,7 +103,7 @@ def _start_run_with_active_condition(a, b, db_session, fact_key: str, pin_body) 
     run_id = run.json()["id"]
     db_session.add(EvidenceLine(
         id=uuid.uuid4(), run_id=uuid.UUID(run_id), author_id="user_a", source="manual",
-        text=f"{fact_key} 조건", badge="required", fact_key=fact_key, is_active=True,
+        text=f"{fact_key} 조건", badge="required", fact_key=fact_key, wants=wants, is_active=True,
     ))
     db_session.commit()
     assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
@@ -130,25 +121,14 @@ def clients(app_client, two_users):
     b.close()
 
 
-@pytest.mark.parametrize("key", sorted(SAFETY_KEYS & set(constraints.hard_fact_keys_for("음식점"))))
-def test_pipeline_never_recommends_a_place_whose_safety_label_is_unknown(clients, db_session, key, pin_body):
-    a, b = clients
-    run_id = _start_run_with_active_condition(a, b, db_session, key, pin_body)
-    result = a.get(f"/runs/{run_id}/result")
-    # dev 장소 정보는 라벨이 전부 unknown이다 → 안전 조건이 켜져 있으면 단 한 곳도 통과하면 안 된다.
-    if result.status_code == 200:
-        assert result.json()["candidates"] == [], f"{key}가 unknown인데 후보가 나왔다 — 실격 위반"
-    else:
-        assert result.status_code == 404 and result.json()["code"] == "NO_RESULTS"
-
-
 def test_pipeline_keeps_unknown_taste_candidates_but_flags_them(clients, db_session, pin_body):
     a, b = clients
-    run_id = _start_run_with_active_condition(a, b, db_session, "price_bucket", pin_body)
+    # 음식점에서 모름이면 통과 + 확인 필요인 조건: 취향 키 required, wants=true(주차가 꼭 돼야 해). price_bucket은 #423에서 뺐다.
+    run_id = _start_run_with_active_condition(a, b, db_session, "parking_available", pin_body, wants=True)
     result = a.get(f"/runs/{run_id}/result")
     assert result.status_code == 200
     candidates = result.json()["candidates"]
     assert candidates, "취향 조건(pass + needs_check)이 unknown이라고 후보를 지우면 안 된다"
     for candidate in candidates:
-        flagged = [c for c in candidate["checks"] if c["fact_key"] == "price_bucket"]
+        flagged = [c for c in candidate["checks"] if c["fact_key"] == "parking_available"]
         assert flagged and all(c["needs_check"] for c in flagged)

@@ -7,7 +7,9 @@ import type { components } from "../src/types/api";
 
 type Schemas = components["schemas"];
 export type Pin = Schemas["Pin"];
-export type MapEntity = Schemas["Map"];
+// 저장하는 지도 필드. permissions·next_owner는 요청자 기준 계산값이라 응답할 때 붙인다(handlers/maps.ts, #369).
+/** `created_by`는 목 서버 내부 값이다(스펙의 Map에는 없다) — `created_by_me`를 계산하는 데만 쓰고 응답에서는 뺀다. */
+export type MapEntity = Omit<Schemas["Map"], "permissions" | "next_owner" | "my_role" | "created_by_me"> & { created_by?: string };
 export type MapCreateRequest = Schemas["MapCreateRequest"];
 export type MapRegion = Schemas["MapRegion"];
 export type Member = Schemas["Member"];
@@ -44,7 +46,7 @@ export interface StoreState {
   evidenceLines: Record<string, EvidenceLine[]>; // runId -> lines
   regions: Record<string, Region[]>; // runId -> regions
   runs: Record<string, RecommendRun>; // runId -> run
-  runRequestedBy: Record<string, string>; // runId -> user_id (5-5-1 비공개 판정에 사용)
+  runRequestedBy: Record<string, string>; // runId -> user_id (run 요청자 기록)
   candidates: Record<string, Candidate[]>; // runId -> candidates
   shortlist: Record<string, ShortlistItem[]>; // mapId -> items
   routes: Record<string, Route[]>; // mapId -> 마지막으로 계산된 동선 (#30, POST로만 갱신)

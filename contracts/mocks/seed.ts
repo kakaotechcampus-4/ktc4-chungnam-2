@@ -11,7 +11,7 @@ export function buildBaseState(): StoreState {
   const mapId = "map_1";
 
   const users: StoreState["users"] = {
-    [ME_USER_ID]: { id: ME_USER_ID, display_name: "황경(나)" },
+    [ME_USER_ID]: { id: ME_USER_ID, display_name: "황경" },
     u_2: { id: "u_2", display_name: "박서영" },
     u_3: { id: "u_3", display_name: "김도현" },
     u_4: { id: "u_4", display_name: "이유빈" },
@@ -19,7 +19,7 @@ export function buildBaseState(): StoreState {
 
   const members: StoreState["members"] = {
     [mapId]: [
-      { user_id: ME_USER_ID, role: "owner", display_name: "황경(나)", online: true },
+      { user_id: ME_USER_ID, role: "owner", display_name: "황경", online: true },
       { user_id: "u_2", role: "member", display_name: "박서영", online: true },
       { user_id: "u_3", role: "member", display_name: "김도현", online: false },
       { user_id: "u_4", role: "member", display_name: "이유빈", online: false },
@@ -34,6 +34,7 @@ export function buildBaseState(): StoreState {
       end_date: "2026-10-12",
       member_count: 4,
       pin_count: 3,
+      created_by: ME_USER_ID,
       confirmed_count: 0,
     },
   };
@@ -58,7 +59,7 @@ export function buildBaseState(): StoreState {
       created_at: minutesAgo(180),
       checks: [],
       source_run_id: null,
-      reaction_summary: { like: 1, neutral: 0, against: 1 },
+      reaction_summary: { like: 1, against: 1 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     },
     [pinFood2]: {
@@ -71,11 +72,11 @@ export function buildBaseState(): StoreState {
       lng: 126.5254,
       place_name: "우진해장국",
       created_by: ME_USER_ID,
-      created_by_display_name: "황경(나)",
+      created_by_display_name: "황경",
       created_at: minutesAgo(50),
       checks: [],
       source_run_id: null,
-      reaction_summary: { like: 1, neutral: 0, against: 1 },
+      reaction_summary: { like: 1, against: 1 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     },
     [pinCafe1]: {
@@ -92,7 +93,7 @@ export function buildBaseState(): StoreState {
       created_at: minutesAgo(10),
       checks: [],
       source_run_id: null,
-      reaction_summary: { like: 1, neutral: 0, against: 0 },
+      reaction_summary: { like: 1, against: 0 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
     },
   };
@@ -139,7 +140,7 @@ export function buildEvidenceLines(runId: string) {
     {
       id: nextId("evi"),
       author_id: ME_USER_ID,
-      author_display_name: "황경(나)",
+      author_display_name: "황경",
       text: "매워요",
       badge: "required" as const,
       fact_key: "spicy_focused",
@@ -153,8 +154,8 @@ export function buildEvidenceLines(runId: string) {
       author_display_name: "김도현",
       text: "비싸요",
       badge: "required" as const,
-      fact_key: "price_bucket",
-      fact_label: "가격대",
+      fact_key: null, // 가격 라벨은 뺐다(#423). "비싸요"는 키 없는 근거 줄
+      fact_label: null,
       is_active: true,
       permissions: { can_disable: false },
     },
@@ -204,45 +205,51 @@ export function buildCandidates(regionLabel: string) {
     {
       id: nextId("cand"),
       place_name: "올레국수",
+      lat: 33.4996,
+      lng: 126.5312,
       region_label: regionLabel,
       rank: 1,
       checks: [
         { fact_key: "spicy_focused", label: "매운맛 전문 아님", passed: true, confidence: "known" as const, needs_check: false },
-        { fact_key: "price_bucket", label: "1인 12,000원", passed: true, confidence: "known" as const, needs_check: false },
+        { fact_key: "parking_available", label: "주차 가능", passed: true, confidence: "known" as const, needs_check: false },
       ],
       visibility: "private" as const,
       published_pin_id: null,
-      reason: "매운 음식을 피하는 조건을 지키면서 1인 예산 안에 들어요",
+      reason: "매운 음식을 피하는 조건을 지키고 주차도 돼요",
       member_fulfillment: { satisfied: 2, total: 2 },
       permissions: { can_publish: true },
     },
     {
       id: nextId("cand"),
       place_name: "제주보말칼국수",
+      lat: 33.5072,
+      lng: 126.5219,
       region_label: regionLabel,
       rank: 2,
       checks: [
         { fact_key: "spicy_focused", label: "매운맛 전문 아님", passed: true, confidence: "known" as const, needs_check: false },
-        { fact_key: "price_bucket", label: "가격대 확인 필요", passed: true, confidence: "unknown" as const, needs_check: true },
+        { fact_key: "parking_available", label: "주차 확인 필요", passed: true, confidence: "unknown" as const, needs_check: true },
       ],
       visibility: "private" as const,
       published_pin_id: null,
-      reason: "매운맛 조건은 지키지만 가격대는 확인이 필요해요",
+      reason: "매운맛 조건은 지키지만 주차는 확인이 필요해요",
       member_fulfillment: { satisfied: 1, total: 2 },
       permissions: { can_publish: true },
     },
     {
       id: nextId("cand"),
       place_name: "고기국수 명가",
+      lat: 33.4891,
+      lng: 126.4983,
       region_label: regionLabel,
       rank: 3,
       checks: [
         { fact_key: "spicy_focused", label: "매운맛 전문 아님", passed: true, confidence: "known" as const, needs_check: false },
-        { fact_key: "price_bucket", label: "1인 9,000원", passed: true, confidence: "known" as const, needs_check: false },
+        { fact_key: "parking_available", label: "주차 가능", passed: true, confidence: "known" as const, needs_check: false },
       ],
       visibility: "private" as const,
       published_pin_id: null,
-      reason: "매운 음식을 피하는 조건을 지키고 예산도 맞아요",
+      reason: "매운 음식을 피하는 조건을 지키고 주차도 돼요",
       member_fulfillment: { satisfied: 2, total: 2 },
       permissions: { can_publish: true },
     },

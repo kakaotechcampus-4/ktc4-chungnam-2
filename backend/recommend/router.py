@@ -13,7 +13,7 @@ docs/api-spec.yaml의 recommend 태그 엔드포인트 전체(#108 + PR #71 publ
   제한한다(evidence.disable, author-constrained).
 - run 하위 실행계(regions/execute/result/widen/retry) — recommend/loaders.py::load_run +
   require_with_principal("recommend.manage", load_run). mapId가 경로에 없어(runId만) 위 둘을
-  못 쓴다. recommend.manage는 run.requested_by 본인만 통과한다(AUTHOR_CONSTRAINED_ACTIONS) —
+  못 쓴다. recommend.manage는 run.requested_by 본인만 통과한다(author.actions) —
   가드레일1("대안은 요청한 사람에게만 먼저 보인다") 위반 방지(루트 수정, 2026-09-23 —
   Antigravity 검수로 발견: 이전엔 recommend.request를 재사용해서 아무 구성원이나 남의 run
   결과를 조회·조작할 수 있었다). evidence를 여기서 뺀 이유는 위 항목 참고.
@@ -32,9 +32,9 @@ from authz.guard import require_map_member, require_on_map, require_with_princip
 from authz.ports import MembershipGateway
 from pins.schemas import Pin
 from recommend import flows
-from recommend.deps import DbSession, PlaceFactsGatewayDep, PlaceSearchGatewayDep
+from recommend.deps import DbSession, EvidencePlanGatewayDep, PlaceFactsGatewayDep, PlaceSearchGatewayDep
 from recommend.loaders import load_run
-from recommend.ports import PlaceFactsGateway, PlaceSearchGateway
+from recommend.ports import EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
 from recommend.schemas import (
     EvidenceLine,
     EvidencePatchRequest,
@@ -67,8 +67,11 @@ def get_readiness(mapId: str = Path(...), _principal: Principal = RecommendForMa
 
 
 @router.post("/maps/{mapId}/runs", response_model=RecommendRunResponse, status_code=202)
-def post_run(body: RunCreateRequest, mapId: str = Path(...), principal: Principal = RunToCreate, db: Session = DbSession):
-    run = flows.create_run(db, map_id=mapId, category=body.category, requested_by=principal.user_id)
+def post_run(body: RunCreateRequest, mapId: str = Path(...), principal: Principal = RunToCreate, db: Session = DbSession,
+             evidence_planner: EvidencePlanGateway = EvidencePlanGatewayDep):
+    run = flows.create_run(
+        db, map_id=mapId, category=body.category, requested_by=principal.user_id, evidence_planner=evidence_planner,
+    )
     return _run_response(run)
 
 
@@ -79,12 +82,16 @@ def get_evidence(gated=EvidenceGate, db: Session = DbSession):
 
 
 @router.patch("/runs/{runId}/evidence", response_model=list[EvidenceLine], response_model_exclude_none=True)
-def patch_evidence(body: EvidencePatchRequest | None = None, gated=EvidenceGate, db: Session = DbSession):
+def patch_evidence(
+    body: EvidencePatchRequest | None = None, gated=EvidenceGate, db: Session = DbSession,
+    evidence_planner: EvidencePlanGateway = EvidencePlanGatewayDep,
+):
     body = body or EvidencePatchRequest()  # 스펙: requestBody는 선택
     run, principal = gated
     return flows.patch_evidence(
         db, run_id=str(run.id), principal=principal,
         toggles=[(t.id, t.is_active) for t in body.toggle], adds=[a.text for a in body.add],
+        evidence_planner=evidence_planner,
     )
 
 

@@ -7,6 +7,8 @@ model·messages·response_format 외에는 넘기지 않는다.
 """
 
 import json
+import logging
+import time
 from typing import Any, Mapping, Optional, Sequence
 
 from openai import OpenAI
@@ -20,6 +22,8 @@ from llm.schemas import PlanningOutput
 _TIMEOUT_SECONDS = 15
 _MAX_RETRIES = 0
 
+log = logging.getLogger("pingo.llm")
+
 _client: Optional[OpenAI] = None
 
 
@@ -29,6 +33,14 @@ class LlmCallError(RuntimeError):
 
 def make_client() -> OpenAI:
     if not settings.elice_ml_api_base_url or not settings.elice_ml_api_key:
+        # 키 이름만 남긴다 — 값(또는 URL)은 로그에 넣지 않는다.
+        missing = [
+            name for name, value in (
+                ("ELICE_ML_API_BASE_URL", settings.elice_ml_api_base_url),
+                ("ELICE_ML_API_KEY", settings.elice_ml_api_key),
+            ) if not value
+        ]
+        log.error("LLM 설정 누락: %s", ", ".join(missing))
         raise LlmCallError("ELICE_ML_API_BASE_URL / ELICE_ML_API_KEY가 설정되지 않았다")
     return OpenAI(
         base_url=settings.elice_ml_api_base_url,
@@ -47,17 +59,43 @@ def get_client() -> OpenAI:
     return _client
 
 
+def _payload_line(index: int, reason: Mapping[str, Any]) -> dict[str, Any]:
+    line: dict[str, Any] = {"index": index, "text": reason["text"], "badge": reason["badge"]}
+    # fact_key는 칩에서 이미 정해진 줄에만 보낸다. null을 보내면 모델이 "이미 정해진 값"으로 읽고
+    # 키를 붙여야 할 사유에도 null을 돌려준다(#410). 칩 키는 merge_planned가 raw로 지킨다.
+    if reason.get("fact_key") is not None:
+        line["fact_key"] = reason["fact_key"]
+    return line
+
+
 def _user_payload(reasons: Sequence[Mapping[str, Any]]) -> str:
-    return json.dumps(
-        [
-            {"index": i, "text": r["text"], "badge": r["badge"], "fact_key": r.get("fact_key")}
-            for i, r in enumerate(reasons)
-        ],
-        ensure_ascii=False,
-    )
+    return json.dumps([_payload_line(i, r) for i, r in enumerate(reasons)], ensure_ascii=False)
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
+
+
+def _failure_fields(exc: BaseException) -> str:
+    """실패 로그에 남길 수 있는 필드만 뽑는다 — 예외 문자열(str(exc))은 응답 본문·키 조각을 품을 수 있어 쓰지 않는다."""
+    parts = [f"exc={type(exc).__name__}"]
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        parts.append(f"status_code={status_code}")
+    request_id = getattr(exc, "request_id", None)
+    if request_id:
+        parts.append(f"request_id={request_id}")
+    completion = getattr(exc, "completion", None)  # LengthFinishReasonError — 상한에 걸려 잘린 응답
+    if completion is not None:
+        usage = getattr(completion, "usage", None)
+        choices = getattr(completion, "choices", None) or []
+        parts.append(f"completion_tokens={getattr(usage, 'completion_tokens', None)}")
+        parts.append(f"finish_reason={getattr(choices[0], 'finish_reason', None) if choices else None}")
+    return " ".join(parts)
 
 
 def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]]) -> PlanningOutput:
+    started = time.monotonic()
     try:
         completion = client.chat.completions.parse(
             model=settings.llm_model,
@@ -69,9 +107,22 @@ def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]]) -> PlanningO
         )
         message = completion.choices[0].message
     except Exception as exc:  # noqa: BLE001 — 예상 못 한 예외도 원인 타입만 남기고 같은 실패로 올린다
+        log.warning(
+            "사유 구조화 호출 실패: model=%s batch=%d %s elapsed_ms=%d",
+            settings.llm_model, len(reasons), _failure_fields(exc), _elapsed_ms(started),
+        )
         raise LlmCallError(f"사유 구조화 호출 실패: {type(exc).__name__}") from exc
     if getattr(message, "refusal", None):
+        # 거절 문구(refusal 본문)는 모델 응답이라 남기지 않는다.
+        log.warning("사유 구조화 거절: model=%s batch=%d elapsed_ms=%d", settings.llm_model, len(reasons), _elapsed_ms(started))
         raise LlmCallError("모델이 사유 구조화를 거절했다")
     if message.parsed is None:
+        log.warning("사유 구조화 빈 응답: model=%s batch=%d elapsed_ms=%d", settings.llm_model, len(reasons), _elapsed_ms(started))
         raise LlmCallError("구조화 응답이 비어 있다")
+    usage = getattr(completion, "usage", None)
+    log.info(
+        "사유 구조화 성공: model=%s batch=%d elapsed_ms=%d prompt_tokens=%s completion_tokens=%s",
+        settings.llm_model, len(reasons), _elapsed_ms(started),
+        getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None),
+    )
     return message.parsed

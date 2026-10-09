@@ -21,16 +21,24 @@ maps(
   region_label NULL, region_center geography(Point) NULL,   -- 9/28 #22 변경(PR #132, 루트 검증
                                                              -- 후 승인): 지역 검색(선택). 둘 다
                                                              -- 있거나 둘 다 없음
-  created_by, created_at
+  created_by, created_at,              -- created_by는 "만든 사람" 기록일 뿐 방장 판단에 쓰지 않는다(#369, 방장 정본은 memberships.role)
+  deleted_at timestamptz null          -- #369: 방장이 삭제하면 찍는다(soft delete). 찍히면 모든 조회 경로에서 없는 지도(404)로 보인다.
+                                       --   #431(2026-10-10): 삭제한 지 30일이 지나면 정리 작업(`python -m maps.purge`)이 지도와 딸린 데이터를 실제로 지운다. v1에는 복구 기능이 없다.
+                                       --   → docs/architecture.md 「지도 삭제와 정리」
 )
   CHECK (end_date >= start_date)   -- 9/4 결정 #22: 여행 제목 + 시작일·종료일. day_count는 폐기
   CHECK ((region_label IS NULL) = (region_center IS NULL))
 
 memberships(
   id, map_id, user_id, role('member'|'owner'),   -- authz 참고. color는 9/4 결정 #26으로 폐기(구성원 구분에 색 불필요)
+                                                 -- #369: role이 방장 판단의 정본이다. 방장이 나가면 joined_at이 가장 빠른
+                                                 --   구성원(탈퇴자 제외, 같으면 id 순)에게 위임된다
   joined_at
 )
   unique(map_id, user_id)
+  unique(map_id) where role = 'owner'   -- #369: 지도당 방장은 최대 1명. 위임은 한 트랜잭션에서 강등 후 승격
+  -- 나가기(#369)는 이 행을 지운다. 다시 초대를 수락하면 새 행과 새 joined_at이 생겨 순서 맨 뒤로 간다.
+  -- 탈퇴자의 행은 핀 작성자 표시용으로 남는다(#245).
 
 invites(
   token, map_id, created_by, expires_at, used_count
@@ -46,11 +54,15 @@ pins(
   id, map_id, category('음식점'|'카페'|'숙소'|'관광지'|'기타'),  -- 정의는 backend/common/categories.py(#280). v1 핀은 음식점·카페·관광지만
   kind('일반'|'AI추천'|'확정'),        -- 확정이 나머지 둘을 덮어쓴다(5-2)
   origin('direct'|'ai'),               -- kind와 별개. 원래 태생은 안 바뀐다(4절: 반대 많아도 모양 불변)
-  place_id references places(id),      -- 2026-10-01 결정(#191): v1의 핀은 모두 자체 DB 장소를 가리킨다.
+  place_id null references places(id), -- 2026-10-01 결정(#191): 자체 DB 핀(source='db')은 자체 DB 장소를 가리킨다.
                                         -- 이름은 places.name에서 가져온다 — 핀에 따로 저장하지 않는다(place_name 컬럼은 없앤다).
-                                        -- 카카오 응답의 이름·좌표는 저장하지 않는다. 자체 DB에 없는 장소는 핀으로 만들 수 없다(PLACE_NOT_SUPPORTED).
-  geom geography(Point,4326),          -- 매칭된 places.geom의 복사(자체 데이터). 사용자가 카카오 지도에서 지정한 좌표는 저장하지 않는다
-  visibility('public'|'private'),      -- 5-5-1: AI 후보는 private로 시작
+                                        -- 카카오 응답의 이름·좌표는 저장하지 않는다. #382: source='live'(실시간 핀)는 place_id가 NULL이다.
+  source('db'|'live'),                 -- #382. live = 자체 DB에 없는 장소를 사람이 남긴 핀. AI 핀(origin='ai')은 항상 db
+  kakao_place_id null,                 -- #382 live만. 저장이 허용된 유일한 카카오 값. 화면이 위치를 다시 찾는 열쇠
+  search_query null,                   -- #382 live만. 사용자가 친 검색어(사용자 입력). 화면이 이 검색어로 카카오 키워드 검색을 다시 한다
+  memo null,                           -- #382 live만. 사용자가 남긴 한마디(최대 200자)
+  geom null geography(Point,4326),     -- 매칭된 places.geom의 복사(자체 데이터). 사용자가 카카오 지도에서 지정한 좌표와 카카오 응답 좌표는 저장하지 않는다. live 핀은 NULL
+  visibility('public'|'private'),      -- v1은 항상 public. 이 값으로 분기하지 않는다(#273). 비공개 AI 후보는 pins가 아니라 candidates 행이고, 게시할 때 처음부터 public 핀으로 만든다. 칸은 마이그레이션 때문에 남기고, Pin 스키마를 크게 바꿀 때 같이 지운다
   source_run_id null,                  -- #57 결정: recommend_runs.id를 게시 시점에 한 번만
                                         -- 써넣는 불투명 참조값(추적·표시용). FK 제약은 걸지 않고
                                         -- pins는 이 값을 절대 다시 읽어 recommend를 조회하지
@@ -63,9 +75,12 @@ pins(
   created_by, created_at, deleted_at
 )
   unique(map_id, place_id) where deleted_at is null   -- 중복 핀 판정(가드레일 6). 판정 기준은 #33(보류)에서 별도 확정
+  unique(map_id, kakao_place_id) where deleted_at is null and kakao_place_id is not null   -- #382 live 핀 중복
+  check (source = 'db' and place_id is not null and geom is not null
+      or source = 'live' and place_id is null and geom is null and kakao_place_id is not null and search_query is not null)
 
 reactions(
-  id, pin_id, user_id, type('like'|'neutral'|'against'),  -- ♥/△/🚫. '?'미확인은 행 없음으로 표현
+  id, pin_id, user_id, type('like'|'against'),  -- ♥/🚫. '?'미확인은 행 없음으로 표현. 2026-10-07(#360) △ 조율 필요(neutral)를 없앴다 — 마이그레이션이 neutral 행을 지운다
   reason_text, reason_chip_ids jsonb,   -- 반대는 reason 필수(가드레일 3). 숙소 핀엔 행이 생기지 않는다(#154). 작성자 탈퇴 시 삭제(#155)
   created_at, updated_at
 )
@@ -143,7 +158,7 @@ places(
 
 place_facts(
   place_id references places(id),
-  fact_key,                             -- 'contains_shellfish' | 'spicy_focused' | 'price_bucket' | ...
+  fact_key,                             -- 'spicy_focused' | 'cuisine_korean' | 'parking_available' | ... (price_bucket은 #423, contains_shellfish는 #425에서 뺐다)
                                          -- constraints.md의 라벨링 대상만 저장: 실격 6개 + 선호 조건
                                          -- is_open/within_radius는 코드 판정이라 여기 없다(실시간 조회·좌표 계산)
   value,                                 -- boolean/enum, jsonb로 통일 저장
@@ -168,7 +183,7 @@ place_facts(
 > | `source` | O | `permit` 또는 `tourapi` (`places.source`) |
 > | `source_id` | O | 그 데이터셋의 관리번호/콘텐츠 ID (`places.source_id`) — `(source, source_id)`로 장소를 찾는다 |
 > | `fact_key` | O | `docs/constraints.md`에 있는 키만. 모르는 키가 있으면 적재 스크립트가 그 줄을 건너뛰고 건수를 보고한다 |
-> | `value` | △ | boolean 키는 `true`/`false`, `price_bucket`은 `low`/`mid`/`high`. `confidence=unknown`이면 비운다 |
+> | `value` | △ | `true`/`false`. `confidence=unknown`이면 비운다. 등록되지 않은 키(예: #423에서 뺀 `price_bucket`)는 적재 스크립트가 건너뛴다 |
 > | `confidence` | O | `known` 또는 `unknown` — 확인하지 않은 값은 `unknown` |
 > | `labeled_at` | X | ISO 날짜. 없으면 적재 시각 |
 > | `evidence` | X | 근거 원문(`place_facts.evidence`). 있으면 그대로 저장한다 |
@@ -176,11 +191,11 @@ place_facts(
 >
 > **음식점 납품본은 JSON이다**(`restaurant_seoul_curated_labels.json`, #203): 장소마다 `place_id`(`rest_<인허가 관리번호>`)와 `labels{fact_key: {value, evidence, source}}`가 있다. 적재 스크립트가 이를 위 CSV 형식으로 변환해 읽는다(`place_id`에서 `rest_`를 떼면 `source_id`, `source`는 `permit`). `value`가 문자열 `"true"/"false"/"unknown"`으로 온다. `unknown`은 `confidence=unknown`으로 옮긴다.
 >
-> 같은 `(source, source_id, fact_key)`가 여럿이면 마지막 줄이 이긴다(경고). 적재는 멱등 upsert(`primary key(place_id, fact_key)`)라 파일을 다시 올려도 안전하다. 파일에 없는 장소·키는 건드리지 않는다. 원본 가격 숫자는 이 파일에 넣지 않는다(`price_bucket`만).
+> 같은 `(source, source_id, fact_key)`가 여럿이면 마지막 줄이 이긴다(경고). 적재는 멱등 upsert(`primary key(place_id, fact_key)`)라 파일을 다시 올려도 안전하다. 파일에 없는 장소·키는 건드리지 않는다. 원본 가격 숫자는 이 파일에 넣지 않는다(가격 라벨은 #423에서 뺐다).
 
 **`place_facts`는 캐시가 아니다.** TTL로 만료시키지 않는다 — 원본이 따로 없는 1차 데이터이기 때문이다(멘토: "자체 DB 구축이 곧 해자"). 가게 정보가 실제로 바뀌었다고 판단되면 `labeled_at` 기준으로 재라벨링 잡을 새로 돌려 **덮어쓴다**(버전 갱신이지 캐시 무효화가 아니다).
 
-`price_bucket`처럼 압축된 값만 저장하고 원본 가격 숫자는 저장하지 않는다(architecture.md 2절, 차원 압축).
+압축된 판정값만 저장하고 원본 숫자(가격 등)는 저장하지 않는다(architecture.md 2절, 차원 압축). 가격 라벨은 v1에서 뺐다(#423).
 
 ---
 
@@ -223,11 +238,15 @@ evidence_lines(
   text, chip_id null,
   badge('required'|'preferred'|'reference'),  -- 꼭/선호/참고
   fact_key null,                        -- 실격/선호 조건에 매핑되면 채움
+                                         --   한 행은 조건 하나다. 사유 글 하나에 조건이 여럿이면 같은 text로 여러 행이 된다(#419). 칩은 칩마다 한 행(#412)
   wants boolean null,                   -- 방향(#228): 이 특징이 있는 장소를 원하는가. true=원함, false=원하지 않음, null=모름.
                                          --   fact_key가 null이면 null. hard 키는 방향이 고정(있으면 실격)이라 wants를 보지 않는다. docs/constraints.md "사유의 방향"
   circle_anchor_pin_id null, circle_radius_m null,  -- 반경 사유(5-6-1)
   is_active boolean default true,       -- '-'로 뺀 상태
-  created_at
+  created_at,
+  seq bigint generated always as identity  -- 넣은 순서(#428). 근거 줄은 ORDER BY created_at, seq로 읽는다.
+                                         --   created_at은 트랜잭션 시작 시각(now())이라 run 생성 때 한 번에 넣은 줄끼리 같다 — seq가 없으면
+                                         --   "한 반응의 글 줄 다음에 칩 줄"(#412, #419) 같은 순서가 보장되지 않는다. 응답에는 넣지 않는다
 )
 
 regions(
@@ -306,7 +325,7 @@ event_log(
 ## 열린 항목 (결정 이슈로 별도 확정 — 이 문서는 자리만 잡음)
 
 - 중복 핀 "같은 곳" 판정 기준 (source_id 동일 / 좌표 반경 N m / 이름 유사도) — #33, 보류
-- N(구성원 수)의 정의 — #32, "온라인 구성원 현재 수"로 답은 나왔으나 ceil(N/2) 임계값 자체를 없앨지는 코멘트 상 아직 불명확
+- ~~N(구성원 수)의 정의~~ — 2026-10-07 해소(#360): 추천 열림은 ♥/🚫 의견이 달린 핀 1개 이상이라 임계값 N이 없고, 핀 참여율의 분모는 지도 전체 구성원 수다
 - 재시도 상한의 집계 단위(#31), 제안·거절 이력의 단위(#42) — 아래 "팀이 결정한 것" 참고(2026-09-22 확정)
 
 ## 9/4 회의로 해결된 것 (docs 반영 완료)
@@ -321,7 +340,7 @@ event_log(
 - **`pins.source_run_id`/`checks` 스키마** — #57. 둘 다 추가하는 쪽으로 확정: `source_run_id`는
   게시 시점 1회성 불투명 참조(추적·표시용, FK 없음, pins가 다시 읽지 않음), `checks`는 게시
   시점에 candidate에서 복사(가드레일 5). 위 `pins` 테이블에 반영. 이유: `source_run_id`는 이미
-  목 서버(`contracts/mocks`)가 private 판정에 쓰고 있어 없애면 FE 쪽 재작업이 필요하고,
+  목 서버(`contracts/mocks`)가 쓰고 있어 없애면 FE 쪽 재작업이 필요하고,
   `candidates.lat/lng` 비정규화와 같은 논리로 "1회성 복사"는 "실시간 모듈 간 조회 금지" 원칙과
   충돌하지 않는다.
 - **`Candidate.permissions` 필드 추가 여부** — #64. 추가하는 쪽으로 확정: 이미 있는 공용

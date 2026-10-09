@@ -1,5 +1,7 @@
 """자체 장소 DB — 적재(upsert, 멱등, 폐업 갱신)와 6개 공개 함수의 실제 구현. 실제 PostgreSQL+PostGIS."""
 
+import csv
+import json
 import uuid
 from pathlib import Path
 
@@ -190,6 +192,29 @@ def test_find_candidates_many_returns_the_same_set_as_find_candidates(db_session
     assert [c.name for c in many[3]] == ["식당"]
 
 
+def test_candidates_carry_the_db_distance_and_kakao_only_ones_have_none(db_session):
+    """pick_match가 파이썬으로 거리를 다시 재지 않도록 두 조회 모두 ST_Distance를 Candidate에 싣는다(#381)."""
+    _place_at(db_session, "near", 40, 90, name="가까운 카페")
+    _place_at(db_session, "far-linked", 5000, 0, name="멀리 연결된 카페", kakao_place_id="k-far")
+    hint = _hint("x", *ORIGIN, "카페", kakao_place_id="k-far")
+
+    one = repository.find_candidates(db_session, hint.lat, hint.lng, hint.category, hint.kakao_place_id)
+    many = repository.find_candidates_many(db_session, [hint])[0]
+
+    for got in (one, many):
+        by_name = {c.name: c for c in got}
+        assert by_name["가까운 카페"].distance_m == pytest.approx(40, abs=0.01)   # 타원체 기준 — ST_Project와 같은 잣대
+        assert by_name["멀리 연결된 카페"].distance_m is None
+
+
+def test_same_name_pick_uses_db_distance_end_to_end(db_session):
+    _place_at(db_session, "a", 200, 0, name="같은 이름 카페")
+    _place_at(db_session, "b", 20, 90, name="같은 이름 카페")
+    m = api.match_place(_hint("같은 이름 카페", *ORIGIN, "카페"), db=db_session)
+    assert m is not None and (m.lat, m.lng) != (0, 0)
+    assert round(m.lng, 4) != round(ORIGIN[1], 4) and abs(m.lat - ORIGIN[0]) < 0.0001   # 동쪽 20m 쪽이 골라진다
+
+
 def test_find_candidates_many_is_one_query_with_bounded_rows(db_session):
     from sqlalchemy import event
 
@@ -329,8 +354,7 @@ def test_search_nearby_own_returns_coordinates(loaded):
 def test_get_facts_returns_labels_as_stored_including_unknown(loaded):
     pid = _pid(loaded, "permit", "P001")
     by_key = {f.fact_key: f for f in api.get_facts([pid], db=loaded)[pid]}
-    assert by_key["contains_shellfish"].value is True and by_key["contains_shellfish"].confidence == "known"
-    assert by_key["price_bucket"].value == "mid"
+    assert by_key["cuisine_korean"].value is True and by_key["cuisine_korean"].confidence == "known"
     assert by_key["oily_focused"].confidence == "unknown" and by_key["oily_focused"].value is None
     assert by_key["spicy_focused"].value is True   # 같은 키가 둘이면 마지막 줄
 
@@ -349,7 +373,7 @@ def test_get_facts_without_labels_is_empty_list_for_every_requested_id(loaded):
 
 
 def test_labels_for_missing_places_and_bad_rows_are_not_loaded(loaded):
-    assert loaded.scalar(select(func.count()).select_from(PlaceFact)) == 9   # 파일 17줄 → 해석 가능 10(중복 1 합침 포함) → 장소 없는 NOPE 1줄 제외
+    assert loaded.scalar(select(func.count()).select_from(PlaceFact)) == 7   # 파일 15줄 → 해석 가능 8(중복 1 합침 포함, contains_peanut은 #425로 건너뜀) → 장소 없는 NOPE 1줄 제외
     pid = uuid.UUID(_pid(loaded, "permit", "P001"))
     keys = set(loaded.scalars(select(PlaceFact.fact_key).where(PlaceFact.place_id == pid)))
     assert "made_up_key" not in keys and "is_open" not in keys
@@ -357,9 +381,9 @@ def test_labels_for_missing_places_and_bad_rows_are_not_loaded(loaded):
 
 def test_relabel_overwrites_and_keeps_one_row(loaded):
     pid = uuid.UUID(_pid(loaded, "permit", "P001"))
-    row = ingest.LabelRow("permit", "P001", "contains_shellfish", False, "known", 3, None)
+    row = ingest.LabelRow("permit", "P001", "cuisine_korean", False, "known", 3, None)
     repository.upsert_facts(loaded, [row])
-    values = loaded.scalars(select(PlaceFact.value).where(PlaceFact.place_id == pid, PlaceFact.fact_key == "contains_shellfish")).all()
+    values = loaded.scalars(select(PlaceFact.value).where(PlaceFact.place_id == pid, PlaceFact.fact_key == "cuisine_korean")).all()
     assert values == [False]
 
 
@@ -382,7 +406,27 @@ def test_cli_dry_run_writes_nothing(db_session, capsys):
 def test_cli_reports_skip_reasons(db_session, capsys):
     load.main(["labels", "--file", str(FIX / "labels.csv"), "--dry-run"], session_factory=lambda: _NoCloseSession(db_session))
     out = capsys.readouterr().out
-    assert "모르는 fact_key: made_up_key" in out and "원본 가격 숫자 거부" in out
+    assert "모르는 fact_key: made_up_key" in out
+
+
+def test_cli_tourapi_loads_types_12_14_38_with_labels(db_session, tmp_path, capsys):
+    items = [
+        {"contentid": "1", "contenttypeid": "12", "title": "경복궁", "addr1": "서울특별시 종로구 사직로 161", "mapx": "126.977", "mapy": "37.5796"},
+        {"contentid": "2", "contenttypeid": "14", "title": "국립중앙박물관", "addr1": "서울특별시 용산구 서빙고로 137", "mapx": "126.9804", "mapy": "37.5239"},
+        {"contentid": "3", "contenttypeid": "38", "title": "광장시장", "addr1": "서울특별시 종로구 창경궁로 88", "mapx": "126.9996", "mapy": "37.5700"},
+        {"contentid": "4", "contenttypeid": "32", "title": "호텔", "addr1": "서울특별시 중구 소공로 1", "mapx": "126.98", "mapy": "37.56"},
+        {"contentid": "5", "contenttypeid": "12", "title": "좌표 잘못", "addr1": "서울특별시 관악구 관악로 173", "mapx": "127.709322", "mapy": "37.470571"},
+    ]
+    places_file = tmp_path / "tour.json"
+    places_file.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    labels_file = tmp_path / "labels.csv"
+    header = next(csv.reader((FIX / "labels.csv").open(encoding="utf-8-sig")))
+    labels_file.write_text(",".join(header) + "\n", encoding="utf-8")
+    rc = load.main(["tourapi", "--file", str(places_file), "--labels", str(labels_file)], session_factory=lambda: _NoCloseSession(db_session))
+    out = capsys.readouterr().out
+    assert rc == 0 and "[contenttypeid 14] 받음 1 / 건너뜀 0" in out and "서울 밖 좌표: 1" in out
+    rows = db_session.execute(select(Place.source_id, Place.category).where(Place.source == "tourapi").order_by(Place.source_id)).all()
+    assert rows == [("1", "관광지"), ("2", "관광지"), ("3", "관광지")]
 
 
 def test_cli_missing_file_exits_2(capsys):
@@ -413,7 +457,7 @@ class _NoCloseSession:
 CURATED_CSV = FIX / "restaurant_curated_sample.csv"
 CURATED_LABELS = FIX / "restaurant_curated_labels.json"
 _MINI_KEYS = ["cuisine_korean", "cuisine_chinese", "spacious", "long_established", "franchise", "spicy_focused",
-              "oily_focused", "price_bucket", "contains_shellfish", "wait_short", "pet_friendly", "quiet"]
+              "oily_focused", "wait_short", "pet_friendly", "quiet"]
 
 
 @pytest.fixture()
@@ -451,9 +495,9 @@ def test_restaurant_labels_store_value_confidence_evidence_and_source(db_session
     by_key = {f.fact_key: f for f in db_session.scalars(select(PlaceFact).where(PlaceFact.place_id == uuid.UUID(pid)))}
     assert by_key["spicy_focused"].value is True and by_key["spicy_focused"].confidence == "known"
     assert by_key["spicy_focused"].evidence == "가게 이름 '짬뽕'" and by_key["spicy_focused"].label_source == "menu_keyword"
-    assert by_key["price_bucket"].value == "low" and by_key["price_bucket"].source_layer == 2
+    assert by_key["spicy_focused"].source_layer == 3
     assert by_key["cuisine_chinese"].value is False
-    for key in ("contains_shellfish", "wait_short", "pet_friendly"):
+    for key in ("wait_short", "pet_friendly"):
         assert by_key[key].confidence == "unknown" and by_key[key].evidence is None and by_key[key].label_source is None
 
 
@@ -471,7 +515,7 @@ def test_restaurant_load_skips_bad_label_rows_but_keeps_the_good_ones(db_session
     _restaurants(db_session, mini_constraints)
     pid = uuid.UUID(_pid(db_session, "permit", "R003"))
     keys = set(db_session.scalars(select(PlaceFact.fact_key).where(PlaceFact.place_id == pid)))
-    assert keys == {"long_established"}   # made_up_key·가격 숫자·quiet=maybe는 건너뜀
+    assert keys == {"long_established"}   # made_up_key·quiet=maybe는 건너뜀
 
 
 def test_restaurant_load_is_idempotent_and_reupload_replaces_evidence(db_session, mini_constraints):
@@ -497,12 +541,12 @@ def test_restaurant_labels_command_alone_attaches_to_already_loaded_places(db_se
 
 def test_restaurant_labels_with_unregistered_keys_are_reported_not_loaded(db_session, tmp_path):
     old = tmp_path / "old.md"
-    old.write_text("| `fact_key` | 종류 |\n|---|---|\n| `spicy_focused` | hard |\n| `price_bucket` | hard |\n", encoding="utf-8")
+    old.write_text("| `fact_key` | 종류 |\n|---|---|\n| `spicy_focused` | hard |\n", encoding="utf-8")
     lines = load.load_restaurants(db_session, CURATED_CSV, labels=CURATED_LABELS, constraints=old, exclude_bars=False)
     assert any("모르는 fact_key: cuisine_korean" in l for l in lines)
     keys = set(db_session.scalars(select(PlaceFact.fact_key)))
     assert "cuisine_korean" not in keys and "spicy_focused" in keys
-    assert keys <= {"spicy_focused", "price_bucket", "contains_shellfish"}   # contains_* 재료 태그는 접두 규칙으로 항상 허용
+    assert keys <= {"spicy_focused"}   # 표에 없는 키는 접두와 상관없이 모두 건너뛴다(#425로 contains_* 접두 규칙 삭제)
 
 
 def test_cli_restaurants_dry_run_with_labels_writes_nothing(db_session, mini_constraints, capsys):
@@ -563,13 +607,13 @@ def test_cafe_labels_json_and_csv_paths_give_the_same_result(db_session):
     db_session.execute(PlaceFact.__table__.delete())
     load.load_labels(db_session, CAFE_LABELS_CSV, constraints=CONSTRAINTS, encoding=None)
     via_csv = _fact_rows(db_session)
-    assert via_json == via_csv and len(via_json) == 7
+    assert via_json == via_csv and len(via_json) == 6
     assert next(r for r in via_json if r[:2] == ("C001", "quiet"))[2:4] == (None, "unknown")   # unknown은 값 없이 그대로 보인다
 
 
 def test_cafes_command_accepts_labels_csv_too(db_session):
     lines = _cafes(db_session, labels=CAFE_LABELS_CSV)
-    assert len(_fact_rows(db_session)) == 7
+    assert len(_fact_rows(db_session)) == 6
     assert any("장소를 못 찾아 건너뜀 1" in l for l in lines)   # C404: 장소 없는 라벨
 
 

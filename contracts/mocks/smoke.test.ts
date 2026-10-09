@@ -2,6 +2,7 @@ import { afterAll, beforeAll, afterEach, describe, expect, it } from "vitest";
 import { server } from "./node";
 import { resetScenario } from "./scenarios";
 import { store } from "./store";
+import { MAP_LIMIT } from "./handlers/maps";
 
 const BASE = "https://api.pingo.example.com";
 
@@ -64,7 +65,7 @@ describe("기획안 6절 핵심 시나리오 — happy path", () => {
     expect(result.candidates.length).toBe(3);
     expect(result.candidates[0].visibility).toBe("private");
 
-    // 아직 게시 전이므로 다른 사람에게는 안 보인다 (visibility=private, source_run_id로 판정)
+    // 아직 게시 전이므로 후보는 핀 목록에 없다(후보는 candidates, 핀이 아니다)
     const pinsBeforePublish = await fetch(`${BASE}/maps/map_1/pins`).then((r) => r.json());
     expect(pinsBeforePublish.length).toBe(3);
 
@@ -163,6 +164,57 @@ describe("에러 시나리오", () => {
     });
     expect(res2.status).toBe(409);
   });
+
+  it("#382 실시간 핀: 카카오 장소 ID·검색어·메모만 받고 이름·좌표는 없다. 같은 장소는 409", async () => {
+    const body = { source: "live", category: "음식점", kakao_place_id: "kakao:live-1", search_query: "성수 곱창", memo: "여기 곱창 맛있대" };
+    const res = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify(body) });
+    expect(res.status).toBe(201);
+    const pin = await res.json();
+    expect(pin.source).toBe("live");
+    expect(pin.kakao_place_id).toBe("kakao:live-1");
+    expect(pin.search_query).toBe("성수 곱창");
+    expect(pin.memo).toBe("여기 곱창 맛있대");
+    expect(pin.lat).toBeUndefined();
+    expect(pin.lng).toBeUndefined();
+    expect(pin.place_name).toBeUndefined();
+    const dup = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify(body) });
+    expect(dup.status).toBe(409);
+    // 반응은 자체 DB 핀과 똑같이 된다
+    const react = await fetch(`${BASE}/pins/${pin.id}/reaction`, { method: "PUT", body: JSON.stringify({ type: "like" }) });
+    expect(react.status).toBe(200);
+  });
+
+  it("#382 자체 DB에 없는 장소는 검색에서 pinnable:false, search 로는 422, live 로는 핀이 된다", async () => {
+    const items = await fetch(`${BASE}/places/search?q=${encodeURIComponent("곱창")}`).then((r) => r.json());
+    expect(items[0]).toMatchObject({ place_id: "kakao:mock-6", pinnable: false });
+    const asSearch = await fetch(`${BASE}/maps/map_1/pins`, {
+      method: "POST",
+      body: JSON.stringify({ category: "음식점", source: "search", place_id: "kakao:mock-6", place_name: "성수 노포 곱창", lat: 37.5445, lng: 127.0557 }),
+    });
+    expect(asSearch.status).toBe(422);
+    expect((await asSearch.json()).code).toBe("PLACE_NOT_SUPPORTED");
+    const asLive = await fetch(`${BASE}/maps/map_1/pins`, {
+      method: "POST",
+      body: JSON.stringify({ source: "live", category: "음식점", kakao_place_id: "kakao:mock-6", search_query: "곱창" }),
+    });
+    expect(asLive.status).toBe(201);
+  });
+
+  it("#382 실시간 핀은 필수 값이 빠지거나 숙소·기타면 422", async () => {
+    const noQuery = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify({ source: "live", category: "음식점", kakao_place_id: "kakao:live-2" }) });
+    expect(noQuery.status).toBe(422);
+    const lodging = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify({ source: "live", category: "숙소", kakao_place_id: "kakao:live-3", search_query: "호텔" }) });
+    expect(lodging.status).toBe(422);
+  });
+
+  it("#382 좌표가 없는 실시간 핀은 동선에서 빠진다", async () => {
+    const make = async (id: string) =>
+      (await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify({ source: "live", category: "음식점", kakao_place_id: id, search_query: "곱창" }) })).json();
+    const live = await make("kakao:live-4");
+    await fetch(`${BASE}/maps/map_1/shortlist`, { method: "POST", body: JSON.stringify({ pin_id: live.id }) });
+    const routes = await fetch(`${BASE}/maps/map_1/route`, { method: "POST" }).then((r) => r.json());
+    expect(routes.flatMap((r: { ordered_pin_ids: string[] }) => r.ordered_pin_ids)).not.toContain(live.id);
+  });
 });
 
 describe("#139 — 외부 지도 SDK 요청은 목 서버가 가로채지 않는다", () => {
@@ -175,6 +227,64 @@ describe("#139 — 외부 지도 SDK 요청은 목 서버가 가로채지 않는
     }
     expect(body).not.toContain('"code":"NOT_FOUND"');
   }, 15000);
+});
+
+describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
+  const me = () => store.members["map_1"]?.find((m) => m.user_id === "u_me");
+
+  it("지도 응답에 요청자 기준 permissions가 붙고, 상세에서만 next_owner가 온다", async () => {
+    const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true });
+    expect(detail.next_owner.user_id).toBe("u_2");
+    const list = await (await fetch(`${BASE}/maps`)).json();
+    expect(list[0].permissions.can_delete).toBe(true);
+    expect(list[0].next_owner).toBeUndefined();
+  });
+
+  it("방장이 나가면 다음 사람이 방장이 되고 member.left에 실린다", async () => {
+    const before = store.eventLog.length;
+    expect((await fetch(`${BASE}/maps/map_1/members/me`, { method: "DELETE" })).status).toBe(204);
+    expect(me()).toBeUndefined();
+    expect(store.members["map_1"].find((m) => m.user_id === "u_2")?.role).toBe("owner");
+    const ev = store.eventLog.slice(before).find((e) => e.type === "member.left");
+    expect(ev?.data).toMatchObject({ user_id: "u_me", new_owner_user_id: "u_2" });
+  });
+
+  it("넘길 사람이 없는 방장은 409 OWNER_CANNOT_LEAVE, can_leave=false", async () => {
+    store.members["map_1"] = store.members["map_1"].filter((m) => m.user_id === "u_me");
+    const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false });
+    const r = await fetch(`${BASE}/maps/map_1/members/me`, { method: "DELETE" });
+    expect(r.status).toBe(409);
+    expect((await r.json()).code).toBe("OWNER_CANNOT_LEAVE");
+  });
+
+  it("방장이 아니면 삭제 403, 방장이 삭제하면 지도와 초대 토큰이 404", async () => {
+    me()!.role = "member";
+    expect((await fetch(`${BASE}/maps/map_1`, { method: "DELETE" })).status).toBe(403);
+    me()!.role = "owner";
+    const invite = await (await fetch(`${BASE}/maps/map_1/invite`, { method: "POST" })).json();
+    expect((await fetch(`${BASE}/maps/map_1`, { method: "DELETE" })).status).toBe(204);
+    expect((await fetch(`${BASE}/maps/map_1`)).status).toBe(404);
+    expect((await (await fetch(`${BASE}/invites/${invite.token}/accept`, { method: "POST" })).json()).code).toBe("INVITE_NOT_FOUND");
+    expect(await (await fetch(`${BASE}/maps`)).json()).toEqual([]);
+  });
+});
+
+describe("#369 — 내 지도 상한(#433에서 20개)", () => {
+  const create = () =>
+    fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "상한 시험", start_date: "2026-11-01", end_date: "2026-11-02" }) });
+
+  it("내 지도가 상한이면 만들기가 409 MAP_LIMIT, 하나 지우면 다시 된다", async () => {
+    expect(MAP_LIMIT).toBe(20);
+    while ((await (await fetch(`${BASE}/maps`)).json()).length < MAP_LIMIT) expect((await create()).status).toBe(201);
+    const r = await create();
+    expect(r.status).toBe(409);
+    expect(await r.json()).toMatchObject({ code: "MAP_LIMIT", detail: { limit: MAP_LIMIT, count: MAP_LIMIT } });
+    const [last] = await (await fetch(`${BASE}/maps`)).json();
+    expect((await fetch(`${BASE}/maps/${last.id}`, { method: "DELETE" })).status).toBe(204);
+    expect((await create()).status).toBe(201);
+  });
 });
 
 describe("#22·#24 — 내 지도 목록 + 지도 생성 지역(선택)", () => {
@@ -495,5 +605,60 @@ describe("FE 요청 필드 6건과 반대 사유 칩 (2026-10-04, #60)", () => {
     expect(put).toMatchObject({ user_id: "u_me", type: "like" });
     expect(typeof put.display_name).toBe("string");
     expect(del.type).toBeNull();
+  });
+});
+
+describe("#360 — 반응은 ♥/🚫 둘뿐, 추천은 ♥/🚫 의견이 달린 핀 1개부터 열린다", () => {
+  it("△(neutral) 반응은 422 VALIDATION_ERROR", async () => {
+    const res = await fetch(`${BASE}/pins/pin_1/reaction`, { method: "PUT", body: JSON.stringify({ type: "neutral" }) });
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("VALIDATION_ERROR");
+  });
+
+  it("핀의 reaction_summary에는 like·against만 있다", async () => {
+    const pins = await fetch(`${BASE}/maps/map_1/pins`).then((r) => r.json());
+    for (const p of pins) expect(Object.keys(p.reaction_summary).sort()).toEqual(["against", "like"]);
+  });
+
+  it("준비 판정: 의견이 달린 핀 수 ≥ 1, required_count는 항상 1이고 구성원 수와 무관하다(혼자여도 같다)", async () => {
+    store.members["map_1"] = store.members["map_1"].filter((m) => m.user_id === "u_me"); // 혼자
+    const r = await fetch(`${BASE}/maps/map_1/recommend/readiness`).then((x) => x.json());
+    expect(r["음식점"]).toMatchObject({ ready: true, required_count: 1 });
+    expect(r["음식점"].answered_count).toBeGreaterThanOrEqual(1);
+    expect(r["관광지"]).toMatchObject({ ready: false, answered_count: 0, required_count: 1 });
+  });
+
+  it("의견 핀이 없는 카테고리로 run을 만들면 409 NOT_READY", async () => {
+    const res = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "관광지" }) });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("NOT_READY");
+  });
+});
+
+describe("#340·회의 14번 — 지도 목록 구분과 후보 좌표", () => {
+  it("내가 만든 지도는 my_role=owner, created_by_me=true", async () => {
+    const maps = await fetch(`${BASE}/maps`).then((r) => r.json());
+    expect(maps[0]).toMatchObject({ my_role: "owner", created_by_me: true });
+    expect(maps[0].created_by).toBeUndefined(); // 목 서버 내부 값은 응답에 새지 않는다
+  });
+
+  it("방장을 넘기고 나면 my_role과 created_by_me가 달라질 수 있다(내가 만들었지만 이제 방장이 아님)", async () => {
+    const m = store.members["map_1"];
+    m.find((x) => x.user_id === "u_me")!.role = "member";
+    m.find((x) => x.user_id === "u_2")!.role = "owner";
+    const one = await fetch(`${BASE}/maps/map_1`).then((r) => r.json());
+    expect(one).toMatchObject({ my_role: "member", created_by_me: true });
+  });
+
+  it("추천 후보에는 자체 DB 장소의 좌표가 있다", async () => {
+    const run = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점" }) }).then((r) => r.json());
+    await fetch(`${BASE}/runs/${run.id}/regions/confirm`, { method: "POST", body: JSON.stringify({ region_labels: ["제주시 권역"] }) }).catch(() => undefined);
+    const exec = await fetch(`${BASE}/runs/${run.id}/execute`, { method: "POST" });
+    expect(exec.ok).toBe(true);
+    const result = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    for (const c of result.candidates) {
+      expect(typeof c.lat).toBe("number");
+      expect(typeof c.lng).toBe("number");
+    }
   });
 });

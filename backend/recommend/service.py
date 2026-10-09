@@ -1,6 +1,6 @@
 """
 얇은 I/O 셸 — 이 모듈이 소유한 테이블(recommend_runs/candidates/evidence_lines/regions/
-exclusions)만 건드린다(docs/code-quality.md). 다른 모듈 접근(pins.api/authz/llm.service/
+exclusions)만 건드린다(docs/code-quality.md). 다른 모듈 접근(pins.api/authz/llm.api(Gateway)/
 recommend.ports 게이트웨이)은 이 파일에 두지 않는다 — flows.py가 한다(모듈 자체 관례,
 flows.py 모듈 docstring 참고). event_log 기록만 예외다 — architecture.md 1.1절이 "모든
 모듈이 record_event로 쓰는" event_log를 "다른 모듈의 테이블"로 세지 않는다고 명시한다.
@@ -89,14 +89,16 @@ def link_published_pin(db: Session, *, candidate_id: str, pin_id: str) -> None:
 def list_evidence(db: Session, run_id: str) -> list[EvidenceLine]:
     run_uuid = uuid.UUID(run_id)
     rows = db.execute(
-        select(EvidenceLine).where(EvidenceLine.run_id == run_uuid).order_by(EvidenceLine.created_at)
+        select(EvidenceLine).where(EvidenceLine.run_id == run_uuid).order_by(EvidenceLine.created_at, EvidenceLine.seq)
     ).scalars().all()
     return list(rows)
 
 
 def list_active_evidence(db: Session, run_id: uuid.UUID) -> list[EvidenceLine]:
     rows = db.execute(
-        select(EvidenceLine).where(EvidenceLine.run_id == run_id, EvidenceLine.is_active.is_(True))
+        select(EvidenceLine)
+        .where(EvidenceLine.run_id == run_id, EvidenceLine.is_active.is_(True))
+        .order_by(EvidenceLine.created_at, EvidenceLine.seq)
     ).scalars().all()
     return list(rows)
 
@@ -210,11 +212,23 @@ def delete_evidence_lines_by_author(db: Session, *, user_id: str) -> int:
     return result.rowcount
 
 
+def delete_evidence_lines_by_author_in_map(db: Session, *, user_id: str, map_id: str) -> int:
+    """지도 나가기(#369) — 이 사용자가 그 지도의 run에 쓴 근거 줄만 지운다."""
+    run_ids_on_map = select(RecommendRun.id).where(RecommendRun.map_id == map_id)
+    result = db.execute(
+        delete(EvidenceLine).where(EvidenceLine.author_id == user_id, EvidenceLine.run_id.in_(run_ids_on_map))
+    )
+    db.flush()
+    return result.rowcount
+
+
 def replace_unpublished_candidates(db: Session, *, run_id: uuid.UUID, candidates_data: list[dict]) -> list[Candidate]:
     """실행/재시도/반경넓히기가 후보 집합을 다시 채울 때 쓴다. 이미 게시된(published_pin_id
     not null) 후보는 지우지 않는다 — 공개된 핀의 출처 기록이라 사라지면 안 된다."""
     db.execute(delete(Candidate).where(Candidate.run_id == run_id, Candidate.published_pin_id.is_(None)))
-    rows = [Candidate(run_id=run_id, **data) for data in candidates_data]
+    # 남은 게시 후보의 순위 뒤에 이어 붙인다 — 새 후보가 1부터 다시 시작하면 순위가 겹친다.
+    kept_max_rank = db.execute(select(func.max(Candidate.rank)).where(Candidate.run_id == run_id)).scalar() or 0
+    rows = [Candidate(run_id=run_id, **{**data, "rank": data["rank"] + kept_max_rank}) for data in candidates_data]
     db.add_all(rows)
     db.flush()
     return rows
@@ -248,3 +262,19 @@ def list_excluded_place_ids(db: Session, *, map_id: str, requested_by: str) -> s
         select(Exclusion.place_id).where(Exclusion.map_id == map_id, Exclusion.requested_by == requested_by)
     ).scalars().all()
     return set(rows)
+
+
+def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+    """지도 정리(#431) — 이 지도들의 추천 기록을 지운다. 테이블 이름 → 지운 행 수. 자식(근거 줄·후보·지역·
+    제외)부터 지우고 run을 마지막에 지운다(전부 recommend_runs를 참조, 후보는 지역도 참조해서 지역보다 먼저)."""
+    names = ["evidence_lines", "candidates", "regions", "exclusions", "recommend_runs"]
+    if not map_ids:
+        return dict.fromkeys(names, 0)
+    run_ids = select(RecommendRun.id).where(RecommendRun.map_id.in_(map_ids))
+    return {
+        "evidence_lines": db.execute(delete(EvidenceLine).where(EvidenceLine.run_id.in_(run_ids))).rowcount,
+        "candidates": db.execute(delete(Candidate).where(Candidate.run_id.in_(run_ids))).rowcount,
+        "regions": db.execute(delete(Region).where(Region.run_id.in_(run_ids))).rowcount,
+        "exclusions": db.execute(delete(Exclusion).where(Exclusion.map_id.in_(map_ids))).rowcount,
+        "recommend_runs": db.execute(delete(RecommendRun).where(RecommendRun.map_id.in_(map_ids))).rowcount,
+    }

@@ -141,23 +141,6 @@ def test_unmark_confirmed_restores_kind_from_origin_direct(db_session):
     assert mutation.pin.kind == "일반"
 
 
-def test_get_pin_for_viewer_returns_own_private_pin(db_session):
-    row = _insert_pin(db_session, visibility="private", created_by="user_1")
-    result = api.get_pin_for_viewer(db_session, pin_id=str(row.id), viewer_id="user_1")
-    assert result.id == row.id
-
-
-def test_get_pin_for_viewer_other_users_private_pin_is_404(db_session):
-    from common.errors import AppError
-
-    row = _insert_pin(db_session, visibility="private", created_by="user_1")
-    try:
-        api.get_pin_for_viewer(db_session, pin_id=str(row.id), viewer_id="user_2")
-        raise AssertionError("AI_PIN_PRIVATE가 발생했어야 한다")
-    except AppError as exc:
-        assert exc.code == "AI_PIN_PRIVATE"
-
-
 def test_get_pin_response_for_viewer_fills_lat_lng_and_reaction_summary(db_session):
     """shortlist.flows가 ShortlistItem.pin 조립에 쓰는 함수 — service.list_pins과 같은 모양의
     Pin(lat/lng·reaction_summary·permissions 전부 채워짐)을 돌려주는지(for_Root.md 보고)."""
@@ -188,19 +171,6 @@ def test_get_pin_response_for_viewer_returns_checks(db_session):
     principal = Principal(user_id="user_1", map_id="map_1", role="member")
     pin = api.get_pin_response_for_viewer(db_session, pin_id=str(row.id), viewer_id="user_1", principal=principal)
     assert pin.checks == [Check(**c) for c in _SAMPLE_CHECKS]
-
-
-def test_get_pin_response_for_viewer_other_users_private_pin_is_404(db_session):
-    from authz.core import Principal
-    from common.errors import AppError
-
-    row = _insert_pin(db_session, visibility="private", created_by="user_1")
-    principal = Principal(user_id="user_2", map_id="map_1", role="member")
-    try:
-        api.get_pin_response_for_viewer(db_session, pin_id=str(row.id), viewer_id="user_2", principal=principal)
-        raise AssertionError("AI_PIN_PRIVATE가 발생했어야 한다")
-    except AppError as exc:
-        assert exc.code == "AI_PIN_PRIVATE"
 
 
 def test_create_ai_pin_event_not_recorded_until_caller_calls_record_event(db_session):
