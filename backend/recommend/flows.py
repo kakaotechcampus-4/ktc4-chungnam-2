@@ -1,5 +1,5 @@
 """
-recommend의 기능 실행 함수 전체 — 다른 모듈 접근(pins.api/maps.api/llm.service/authz/
+recommend의 기능 실행 함수 전체 — 다른 모듈 접근(pins.api/maps.api/llm.api(Gateway)/authz/
 recommend.ports 게이트웨이)은 전부 이 파일에 둔다(이 모듈 자체 관례 — service.py는 recommend
 소유 테이블만, core.py는 순수 판정만). 커밋하지 않는다(common/database.py get_db가 요청당
 한 번 커밋한다).
@@ -53,13 +53,12 @@ from authz.schemas import Permissions
 from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
-from llm import service as llm_service
 from pins import api as pins_api
 from pins.schemas import Pin
 from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
 from recommend.models import RecommendRun
-from recommend.ports import Circle, PlaceFactsGateway, PlaceSearchGateway
+from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
 from recommend.schemas import Check
 
 
@@ -227,10 +226,12 @@ def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: 
     }
 
 
-def create_run(db: Session, *, map_id: str, category: str, requested_by: str) -> RecommendRun:
+def create_run(
+    db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
+) -> RecommendRun:
     """POST /maps/{mapId}/runs — run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
     안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 재시도 상한(#31) 3) run INSERT
-    4) 반응 → 근거 구조화(글은 llm.plan_evidence, 칩은 코드 #412) 5) run INSERT → evidence_lines INSERT 6) 기본값
+    4) 반응 → 근거 구조화(글은 llm.api.plan_evidence, 칩은 코드 #412) 5) run INSERT → evidence_lines INSERT 6) 기본값
     지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
     트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다."""
     readiness = core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
@@ -245,7 +246,7 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str) ->
     text_inputs = [_evidence_from_reaction(r) for r in raw_reactions if r["reason_text"] is not None]
     if text_inputs:
         db.rollback()  # 모델을 기다리는 동안 읽기 트랜잭션이 연결을 잡고 있지 않게 한다(#275). 저장이 아니라 연결 반환이다.
-    planned = llm_service.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
+    planned = evidence_planner.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
     reaction_lines = _reaction_evidence_lines(raw_reactions, [[line.model_dump() for line in group] for group in planned])
     merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422
 
@@ -282,7 +283,7 @@ def list_evidence(db: Session, *, run_id: str, principal: Principal) -> list[sch
 
 def patch_evidence(
     db: Session, *, run_id: str, principal: Principal,
-    toggles: list[tuple[str, bool]], adds: list[str],
+    toggles: list[tuple[str, bool]], adds: list[str], evidence_planner: EvidencePlanGateway,
 ) -> list[schemas.EvidenceLine]:
     """PATCH /runs/{runId}/evidence (5-5). '-'는 author 본인만(evidence.disable, author-
     constrained) — 권한 없는 토글이 섞여 있으면 요청 전체를 403으로 거절한다(api-spec.yaml이
@@ -305,7 +306,7 @@ def patch_evidence(
     planned: list = []
     if adds:
         db.rollback()  # 읽기 트랜잭션을 끝내 연결을 돌려준다(#275). 저장이 아니다.
-        planned = llm_service.plan_evidence([
+        planned = evidence_planner.plan_evidence([
             {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "reference", "fact_key": None}
             for text in adds
         ])

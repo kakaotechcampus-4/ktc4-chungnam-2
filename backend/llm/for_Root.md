@@ -17,7 +17,7 @@
 recommend에서 고칠 곳(검증용으로 적용해 보고 되돌림):
 - `flows.create_run`: `[[line.model_dump() for line in group] for group in planned]`, `_reaction_evidence_lines`는 `lines.extend(next(planned))`
 - `flows.patch_evidence`: 묶음 안 줄마다 `add_manual_evidence(text=line.text, ...)`
-- `get_evidence_planner`/`plan_evidence`를 바꿔 끼우는 테스트 대역은 묶음을 돌려주게: `integration/real_places_fixtures.py`, `test_kakao_no_store_e2e.py`, `test_reason_chips_412.py`, `test_safety_reason_rules.py`, `test_planner_wants_end_to_end.py`, `recommend/tests/test_flows.py`
+- ② 테스트 대역(`recommend.deps.get_evidence_plan_gateway` 자리, #219 — 통합 테스트는 `real_places_fixtures.plan_with`, flows 테스트는 `PLANNER`)은 묶음을 돌려주게: `integration/real_places_fixtures.py`, `test_kakao_no_store_e2e.py`, `test_reason_chips_412.py`, `test_safety_reason_rules.py`, `test_planner_wants_end_to_end.py`, `recommend/tests/test_flows.py`
 
 ## 모델 응답 스키마
 

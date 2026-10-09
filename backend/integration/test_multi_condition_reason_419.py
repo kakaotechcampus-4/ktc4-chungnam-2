@@ -8,7 +8,7 @@
 import pytest
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
-    PLACES, _pin, members, own_db, place_ids, real_client,
+    PLACES, _pin, plan_with, members, own_db, place_ids, real_client,
 )
 
 TWO_CONDITIONS = "한식 말고, 매운 것도 싫어요"
@@ -17,7 +17,6 @@ TWO_CONDITIONS = "한식 말고, 매운 것도 싫어요"
 @pytest.fixture()
 def two_condition_planner(monkeypatch):
     """② 대역 — TWO_CONDITIONS는 조건 두 개(한식 피함, 매운맛 피함), 나머지 글은 조건 없음. 입력 글마다 줄 묶음을 돌려준다."""
-    import llm.service as llm_service
     from llm.schemas import EvidenceLine
 
     def planner(raw_reasons):
@@ -30,7 +29,7 @@ def two_condition_planner(monkeypatch):
                 out.append([EvidenceLine(**{**reason, "fact_key": None, "wants": None})])
         return out
 
-    monkeypatch.setattr(llm_service, "get_evidence_planner", lambda: planner)
+    plan_with(monkeypatch, planner)
     return planner
 
 
