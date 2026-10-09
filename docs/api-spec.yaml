@@ -236,7 +236,9 @@ paths:
   /maps/{mapId}/members:
     get:
       tags: [maps]
-      summary: 구성원 목록 (color, online) — 5절 "구성원 배지 + 목록"
+      summary: |
+        구성원 목록 (color, online) — 5절 "구성원 배지 + 목록". **지금 구성원만** 돌려준다 — 나간 사람과 탈퇴한 사람은 없다.
+        그래서 이 목록의 길이는 `Map.member_count`와 항상 같다(#439, 멘토 리뷰 PR #380).
       parameters: [ { $ref: "#/components/parameters/MapId" } ]
       responses:
         "200":
@@ -941,7 +943,7 @@ components:
         start_date: { type: string, format: date, description: "여행 시작일 (#22)" }
         end_date: { type: string, format: date, description: "여행 종료일 (#22)" }
         region: { $ref: "#/components/schemas/MapRegion" }
-        member_count: { type: integer }
+        member_count: { type: integer, description: "지금 구성원 수 — 나간 사람과 탈퇴한 사람은 세지 않는다. GET /maps/{mapId}/members의 길이와 같다 (#439)" }
         pin_count: { type: integer, minimum: 0, description: "지도에 올라와 있는(삭제되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청)" }
         confirmed_count: { type: integer }
         my_role: { type: string, enum: [owner, member], description: "요청자의 지금 역할(memberships.role). 위임되면 바뀐다. 내 지도 목록의 방장 배지용 (2026-10-07, 회의). 서버가 채우기 시작하면 필수로 올린다" }
