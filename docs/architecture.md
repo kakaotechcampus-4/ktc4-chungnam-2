@@ -258,7 +258,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 ### `PlaceSource` 어댑터 (v1에서는 카카오 실시간 검색 하나)
 
-`backend/places`의 `PlaceSource` 어댑터는 **카카오 실시간 검색(표시용)**에만 쓴다. `NaverPlaceSource`·`GooglePlaceSource`는 코드에 남아 있지만 켜지 않는다(`PLACES_SOURCES=kakao`, #188에서 기본값을 이렇게 바꾼다). 자체 DB의 적재와 검색은 어댑터가 아니라 `places` 모듈의 적재 스크립트와 DB 쿼리가 맡는다(#189).
+`backend/places`의 `PlaceSource` 어댑터는 **카카오 실시간 검색(표시용)**에만 쓴다. `NaverPlaceSource`는 코드에 남아 있지만 켜지 않는다(`PLACES_SOURCES=kakao`, #188에서 기본값을 이렇게 바꾼다). 구글 소스(`GooglePlaceSource`)는 쓰지 않아 #423 작업 중에 지웠다. 자체 DB의 적재와 검색은 어댑터가 아니라 `places` 모듈의 적재 스크립트와 DB 쿼리가 맡는다(#189).
 
 ### `places` 공개 함수 계약 (v1, #189·#190·#195가 공유)
 
