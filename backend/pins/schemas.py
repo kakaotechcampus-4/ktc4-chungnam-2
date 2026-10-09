@@ -2,7 +2,7 @@
 docs/api-spec.yaml의 pins 태그 스키마와 1:1로 맞춘다.
 Pin의 place_name은 생성 요청(PinCreateRequest.place_name)에서 그대로 저장한다(루트 결정,
 2026-09-23). checks는 게시(pins.api.create_ai_pin) 시점에 candidate.checks를 그대로 복사해
-채운다(#57/#124 결정, 가드레일 5). price_bucket/created_by_display_name/source_run_id는
+채운다(#57/#124 결정, 가드레일 5). created_by_display_name/source_run_id는
 여전히 places/auth/recommend 모듈 연동이 더 필요해 채울 수 없다 — Optional로 두고 라우터에서
 response_model_exclude_none으로 생략한다.
 
@@ -20,7 +20,6 @@ from common import categories
 
 Category = Literal[categories.all_categories()]  # 스펙의 Category(common/categories.py, #280)
 PinKind = Literal["일반", "AI추천", "확정"]
-PriceBucket = Literal["low", "mid", "high"]
 LabelConfidence = Literal["known", "unknown"]
 ReactionKind = Literal["like", "against"]
 PinSource = Literal["link", "search", "coordinate"]   # PinCreateSearch.source — 실시간 핀은 PinCreateLive
@@ -119,7 +118,6 @@ class Pin(BaseModel):
     created_by: str
     created_by_display_name: str | None = None
     created_at: datetime | None = None   # 지도에 올라온 시각(AI 추천 핀은 「지도에 올리기」 시각) — 서버가 채우면 항상 있다
-    price_bucket: PriceBucket | None = None
     checks: list[Check] | None = None
     source_run_id: str | None = None
     reason: str | None = None
@@ -142,7 +140,7 @@ class Pin(BaseModel):
 
 
 class ReasonChip(BaseModel):
-    """반대 사유 칩(#60). fact_key가 없으면(「공통」 칩) 응답에서 생략한다 — 라우터의 response_model_exclude_none.
+    """반대 사유 칩(#60). fact_key가 없으면(「공통」 칩, 가격 칩 #423) 응답에서 생략한다 — 라우터의 response_model_exclude_none.
     wants(docs/constraints.md 칩 표의 방향, #412)는 서버가 근거 줄을 만들 때만 쓰고 응답에는 내보내지 않는다
     (api-spec.yaml ReasonChip에 없다)."""
 

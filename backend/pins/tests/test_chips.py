@@ -15,6 +15,11 @@ WANTS = {"true": True, "false": False, NONE: None}   # 표에 다른 값이 있�
 Row = tuple[str, str, str, str | None, bool | None]   # id, label, 카테고리, fact_key, wants
 
 
+def _key_or_none(cell: str) -> str | None:
+    """「(없음)」, 「(없음, #423)」처럼 이유가 붙은 빈칸도 키 없음이다."""
+    return None if re.fullmatch(r"\(없음(, [^)]*)?\)", cell) else cell
+
+
 def _doc_table() -> list[Row]:
     text = CONSTRAINTS.read_text(encoding="utf-8")
     section = text.split("## 반대 사유 칩 (v1)", 1)[1].split("\n## ", 1)[0]
@@ -23,7 +28,7 @@ def _doc_table() -> list[Row]:
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if len(cells) == 5 and re.fullmatch(r"[a-z]+_[a-z_]+", cells[0]):
             chip_id, label, category, fact_key, wants = cells
-            rows.append((chip_id, label, category, None if fact_key == NONE else fact_key, WANTS[wants]))
+            rows.append((chip_id, label, category, _key_or_none(fact_key), WANTS[wants]))
     return rows
 
 
@@ -84,3 +89,13 @@ def test_evidence_chips_fill_key_and_direction_from_the_table_and_keep_legacy_va
         {"chip_id": "common_far", "label": "너무 멀어요", "fact_key": None, "wants": None},
         {"chip_id": "매워요", "label": "매워요", "fact_key": None, "wants": None},   # 옛 값은 깨지지 않고 글로
     ]
+
+
+def test_price_chips_stay_but_carry_no_key():
+    """#423 — 가격 칩은 남기고 키만 뗐다. 근거 줄은 키 없음(「너무 멀어요」와 같다), Pin에도 price_bucket이 없다."""
+    from pins.schemas import Pin
+
+    for chip_id in ("food_expensive", "cafe_expensive", "sight_expensive"):
+        chip = chips.chip_for(chip_id)
+        assert chip is not None and chip.fact_key is None and chip.wants is None, chip_id
+    assert "price_bucket" not in Pin.model_fields
