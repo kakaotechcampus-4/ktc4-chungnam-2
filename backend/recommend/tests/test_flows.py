@@ -210,7 +210,7 @@ def test_publish_candidate_non_member_is_not_found(db_session):
 
 
 def test_publish_candidate_non_author_member_gets_404_ai_pin_private(db_session):
-    """recommend.publish는 candidate.requested_by 본인만 가능(authz/policy.py AUTHOR_CONSTRAINED_ACTIONS).
+    """recommend.publish는 candidate.requested_by 본인만 가능(authz/policy.py author.actions).
     같은 지도 구성원이라도 본인이 아니면 남의 비공개 후보의 존재를 숨겨 404 AI_PIN_PRIVATE다(#255, 가드레일 1)."""
     run = _make_run(db_session, requested_by="user_1")
     candidate = _make_candidate(db_session, run)

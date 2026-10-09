@@ -23,22 +23,22 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     - recommend.evidence       # run 하위 근거(조회·토글·추가) — 구성원 누구나(#32 결정: "근거
                                 # 목록은 구성원별로 한 줄씩 따로 뜬다", 최종기획안 5-5). 개별
                                 # 줄 비활성화만 그 줄 작성자 본인 제한(아래 author 참고)
-    - recommend.manage         # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
-                                # 단, run.requested_by 본인만(아래 author 참고). 가드레일1: 대안은
-                                # 요청한 사람에게만 먼저 보인다 — 게시 전 run은 본인 것만 조작·열람
-    - recommend.publish        # 「지도에 올리기」 — 단, candidate.requested_by 본인만(아래 author 참고)
     - invite.create            # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
     - map.leave                # 지도 나가기(#369). 방장도 member라 이 액션을 갖는다. 넘길 사람이 없는
                                 # 방장을 막는 건 역할이 아니라 지도 상태라 여기 넣지 않고 maps 코어가 판정한다(409 OWNER_CANNOT_LEAVE)
     - route.recalculate        # 동선 재계산(5-10) — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
 
-author:                       # evidence_line 또는 candidate를 만든 당사자에게 얹히는 추가 범위
+author:                       # evidence_line·candidate·run을 만든 당사자에게 얹히는 추가 범위
   scope:
     evidence_line: own         # 자기가 쓴 줄만
-    candidate: own              # 자기가 요청한 run의 비공개 후보만
+    candidate: own              # 자기가 요청한 run의 후보만
+    run: own                    # 자기가 요청한 run만
   actions:
     - evidence.disable          # '-'로 빼기 — "자기가 쓴 것만" (5-5)
-    - candidate.view_private     # 게시 전 비공개 후보 열람 (5-5-1)
+    - recommend.manage          # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
+                                 # run.requested_by 본인만. 가드레일1: 대안은 요청한 사람에게만
+                                 # 먼저 보인다 — 게시 전 run은 본인 것만 조작·열람
+    - recommend.publish         # 「지도에 올리기」 — candidate.requested_by 본인만
 
 owner:                        # 방장. 처음엔 지도 생성자, 위임되면 바뀐다(#369). 판단 정본은 memberships.role
                               # (maps.created_by는 "만든 사람" 기록일 뿐 방장 판단에 쓰지 않는다). member 전체 + 아래 추가
@@ -50,7 +50,7 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
     - map.delete                # 지도 삭제(#369). 방장만. soft delete라 모든 구성원에게서 사라진다
 ```
 
-역할은 배타적이지 않고 누적된다 — 한 사용자는 `member` + (자기 evidence에 한해) `author` + (자기 지도에 한해) `owner`를 동시에 가질 수 있다. 판정은 "이 액션이 이 리소스의 scope 안에 있는가"로 계산한다.
+역할은 배타적이지 않고 누적된다 — 한 사용자는 `member` + (자기 evidence·candidate·run에 한해) `author` + (자기 지도에 한해) `owner`를 동시에 가질 수 있다. 판정은 "이 액션이 이 리소스의 scope 안에 있는가"로 계산한다.
 
 ## API 계약과의 연결
 
@@ -91,7 +91,7 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 | 초대 링크 발급 — 구성원 누구나 (#4) | `member.actions: [invite.create]` |
 | 동선 재계산 — 구성원 누구나 (#103) | `member.actions: [route.recalculate]` |
 | AI 추천 run 근거 조회·토글·추가 — 구성원 누구나 (#108, #32, 최종기획안 5-5) | `member.actions: [recommend.evidence]` (개별 줄 비활성화만 `author.actions: [evidence.disable]`) |
-| AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `member.actions: [recommend.manage]` + `AUTHOR_CONSTRAINED_ACTIONS` |
+| AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `author.scope.run: own`, `author.actions: [recommend.manage]` |
 
 ## v2 확장 지점
 
