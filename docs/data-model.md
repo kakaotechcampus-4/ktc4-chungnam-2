@@ -242,7 +242,10 @@ evidence_lines(
                                          --   fact_key가 null이면 null. hard 키는 방향이 고정(있으면 실격)이라 wants를 보지 않는다. docs/constraints.md "사유의 방향"
   circle_anchor_pin_id null, circle_radius_m null,  -- 반경 사유(5-6-1)
   is_active boolean default true,       -- '-'로 뺀 상태
-  created_at
+  created_at,
+  seq bigint generated always as identity  -- 넣은 순서(#428). 근거 줄은 ORDER BY created_at, seq로 읽는다.
+                                         --   created_at은 트랜잭션 시작 시각(now())이라 run 생성 때 한 번에 넣은 줄끼리 같다 — seq가 없으면
+                                         --   "한 반응의 글 줄 다음에 칩 줄"(#412, #419) 같은 순서가 보장되지 않는다. 응답에는 넣지 않는다
 )
 
 regions(
