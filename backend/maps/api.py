@@ -55,6 +55,13 @@ def count_members(db: Session, map_id: str) -> int:
     return service.member_count(db, map_id)
 
 
+def lock_member_maps(db: Session, user_id: str) -> list[str]:
+    """탈퇴(auth.service.withdraw_user)가 맨 먼저 부른다(#435, docs/architecture.md "동시성: 지도 행
+    잠금으로 줄을 세운다"). 이 사용자가 속한 삭제되지 않은 지도 행을 지도 id 순서로 FOR UPDATE 잠그고
+    그 id를 돌려준다. 나가기·지도 삭제와 같은 행을 잠가 줄을 선다. 커밋하지 않는다."""
+    return service.lock_member_maps(db, user_id=user_id)
+
+
 def transfer_or_delete_owned_maps(db: Session, user_id: str) -> None:
     """탈퇴(auth.service.withdraw_user)가 부른다(#369 10번). 이 사용자가 방장인 지도마다
     joined_at이 가장 빠른 구성원(탈퇴자 제외)에게 방장을 넘기고, 넘길 사람이 없으면 지도를
