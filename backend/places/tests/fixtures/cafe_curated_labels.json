@@ -28,11 +28,6 @@
     "value": "true",
     "evidence": "인허가 업태 '제과점영업'",
     "source": "license_business_type"
-   },
-   "price_bucket": {
-    "value": "mid",
-    "evidence": "가상 근거",
-    "source": "goodprice"
    }
   }
  },

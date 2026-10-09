@@ -14,7 +14,7 @@ _CATEGORY_CHIPS: dict[str, tuple[ReasonChip, ...]] = {
     "음식점": (
         ReasonChip(id="food_spicy", label="매워요", fact_key="spicy_focused", wants=False),
         ReasonChip(id="food_oily", label="느끼해요", fact_key="oily_focused", wants=False),
-        ReasonChip(id="food_expensive", label="비싸요", fact_key="price_bucket", wants=False),
+        ReasonChip(id="food_expensive", label="비싸요"),
         ReasonChip(id="food_wait", label="웨이팅이 길어요", fact_key="wait_short", wants=True),
         ReasonChip(id="food_cramped", label="좁아요", fact_key="spacious", wants=True),
         ReasonChip(id="food_shellfish", label="갑각류 알러지가 있어요", fact_key="contains_shellfish", wants=False),
@@ -23,11 +23,11 @@ _CATEGORY_CHIPS: dict[str, tuple[ReasonChip, ...]] = {
         ReasonChip(id="cafe_crowded", label="너무 붐벼요", fact_key="is_crowded_large", wants=False),
         ReasonChip(id="cafe_noisy", label="시끄러워요", fact_key="quiet", wants=True),
         ReasonChip(id="cafe_seat", label="자리가 불편해요", fact_key="comfortable_seat", wants=True),
-        ReasonChip(id="cafe_expensive", label="비싸요", fact_key="price_bucket", wants=False),
+        ReasonChip(id="cafe_expensive", label="비싸요"),
     ),
     "관광지": (
         ReasonChip(id="sight_inaccessible", label="휠체어·유모차로 가기 힘들어요", fact_key="accessible", wants=True),
-        ReasonChip(id="sight_expensive", label="입장료가 비싸요", fact_key="price_bucket", wants=False),
+        ReasonChip(id="sight_expensive", label="입장료가 비싸요"),
         ReasonChip(id="sight_noisy", label="시끄러워요", fact_key="quiet", wants=True),
     ),
     COMMON: (

@@ -14,9 +14,8 @@ from llm.service import label_place, plan_evidence, rank_candidates
 ALL_FACT_KEYS = get_args(FactKey)
 
 # fact_key별로 "정보가 있을 때" known으로 판정되어야 할 표본값. 레지스트리 전체(FactKey)를 덮는다 —
-# price_bucket만 수치가 아닌 버킷 문자열이고 나머지는 참/거짓이다.
+# 모든 키가 참/거짓이다(버킷 문자열이던 price_bucket은 #423에서 뺐다).
 SAMPLE_VALUE_BY_FACT_KEY: dict[FactKey, object] = {key: True for key in ALL_FACT_KEYS}
-SAMPLE_VALUE_BY_FACT_KEY["price_bucket"] = "mid"
 SAMPLE_VALUE_BY_FACT_KEY["spicy_focused"] = False
 SAMPLE_VALUE_BY_FACT_KEY["cuisine_korean"] = False
 
@@ -69,7 +68,7 @@ class TestLabelPlaceUnknownBoundary:
     def test_partial_information_place_mixes_known_and_unknown(self):
         # 정보가 일부만 있는 실제 시나리오: 있는 것만 known, 나머지는 unknown이어야 한다.
         place_raw_facts = {"contains_shellfish": True}
-        fact_keys = ["contains_shellfish", "spicy_focused", "price_bucket"]
+        fact_keys = ["contains_shellfish", "spicy_focused", "pet_friendly"]
 
         labels = label_place(place_raw_facts, fact_keys)
 
@@ -77,8 +76,8 @@ class TestLabelPlaceUnknownBoundary:
         assert by_key["contains_shellfish"].confidence == "known"
         assert by_key["spicy_focused"].confidence == "unknown"
         assert by_key["spicy_focused"].value is None
-        assert by_key["price_bucket"].confidence == "unknown"
-        assert by_key["price_bucket"].value is None
+        assert by_key["pet_friendly"].confidence == "unknown"
+        assert by_key["pet_friendly"].value is None
 
 
 class TestLabelPlaceEvidenceCrossCheck:

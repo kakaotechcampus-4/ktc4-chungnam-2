@@ -139,7 +139,7 @@ def test_publish_candidate_copies_candidate_checks_to_pin(db_session):
     checks = [
         {"fact_key": "contains_shellfish", "label": "조개류 포함", "passed": True,
          "confidence": "known", "needs_check": False},
-        {"fact_key": "price_bucket", "label": "가격대", "passed": True,
+        {"fact_key": "parking_available", "label": "주차 가능 확인 필요", "passed": True,
          "confidence": "unknown", "needs_check": True},
     ]
     candidate = _make_candidate(db_session, run, checks=checks)
@@ -557,29 +557,35 @@ def test_soft_chip_becomes_a_directed_requirement(db_session, monkeypatch):
     assert flows._active_soft_requirements(db_session, run) == [("spacious", True), ("spicy_focused", False)]
 
 
-_ALL_CHIP_IDS = {
-    "음식점": ["food_spicy", "food_oily", "food_expensive", "food_wait", "food_cramped", "food_shellfish"],
-    "카페": ["cafe_crowded", "cafe_noisy", "cafe_seat", "cafe_expensive"],
-    "관광지": ["sight_inaccessible", "sight_expensive", "sight_noisy"],
+_KEYED_CHIP_IDS = {
+    "음식점": ["food_spicy", "food_oily", "food_wait", "food_cramped", "food_shellfish"],
+    "카페": ["cafe_crowded", "cafe_noisy", "cafe_seat"],
+    "관광지": ["sight_inaccessible", "sight_noisy"],
+}
+# 키 없는 칩 — 「공통」 칩, 그리고 #423에서 키를 뗀 가격 칩(칩은 남는다)
+_KEYLESS_CHIP_IDS = {
+    "음식점": ["food_expensive"],
+    "카페": ["cafe_expensive"],
+    "관광지": ["sight_expensive"],
 }
 
 
-@pytest.mark.parametrize("category", list(_ALL_CHIP_IDS))
+@pytest.mark.parametrize("category", list(_KEYED_CHIP_IDS))
 def test_every_chip_key_is_one_the_filter_knows(db_session, category):
     """#412 — 칩 줄은 ②를 거치지 않아 모델 스키마 검증을 안 받는다. 칩 표(docs/constraints.md)의 키가 그 카테고리의
-    레지스트리에 있고 방향이 있어야 실격·선호가 켜진다. 「공통」 칩은 키·방향이 둘 다 없다."""
+    레지스트리에 있고 방향이 있어야 실격·선호가 켜진다. 「공통」 칩과 가격 칩(#423)은 키·방향이 둘 다 없다."""
     pin = _make_pin(db_session, category=category)
     _react(db_session, pin, user_id="user_1", type="against",
-           reason_chip_ids=[*_ALL_CHIP_IDS[category], "common_not_my_taste", "common_far"])
+           reason_chip_ids=[*_KEYED_CHIP_IDS[category], *_KEYLESS_CHIP_IDS[category], "common_not_my_taste", "common_far"])
 
     [reaction] = pins_api.list_reasoned_reactions(db_session, map_id="map_1", category=category)
 
     applicable = {*constraints.hard_fact_keys_for(category), *constraints.soft_fact_keys_for(category)}
     keyed = [chip for chip in reaction["chips"] if chip["fact_key"] is not None]
-    assert [chip["chip_id"] for chip in keyed] == _ALL_CHIP_IDS[category]
+    assert [chip["chip_id"] for chip in keyed] == _KEYED_CHIP_IDS[category]
     assert all(chip["fact_key"] in applicable and chip["wants"] is not None for chip in keyed)
     assert [(c["chip_id"], c["wants"]) for c in reaction["chips"] if c["fact_key"] is None] == [
-        ("common_not_my_taste", None), ("common_far", None),
+        *((chip_id, None) for chip_id in _KEYLESS_CHIP_IDS[category]), ("common_not_my_taste", None), ("common_far", None),
     ]
 
 
@@ -1234,9 +1240,9 @@ def _line(author, badge, fact_key, wants, text="사유"):
     return {"author_id": author, "source": "reaction", "text": text, "badge": badge, "fact_key": fact_key, "wants": wants}
 
 
-def _execute_with_lines(db_session, lines, facts_by_place):
+def _execute_with_lines(db_session, lines, facts_by_place, *, category="음식점"):
     """wants를 직접 심은 근거 줄로 파이프라인을 돌린다(②의 wants 생성은 llm 쪽 이슈)."""
-    run = _make_run(db_session, status="collecting_evidence")
+    run = _make_run(db_session, status="collecting_evidence", category=category)
     _make_region(db_session, run, radius_m=1000)
     service.add_reaction_evidence(db_session, run_id=run.id, lines=lines)
     places = [PlaceStub(place_id=pid, lat=35.0005, lng=129.0005) for pid in facts_by_place]
@@ -1329,19 +1335,16 @@ def test_spicy_and_oily_preferred_wants_false_is_a_penalty_not_a_disqualifier(db
         assert candidates["hot"].rank > candidates["mild"].rank, key
 
 
-def test_price_bucket_check_label_uses_the_run_category(db_session):
-    """#379 — 관광지 run의 price_bucket low는 "무료 입장", 음식점 run은 "착한가격업소"로 말한다."""
-    for category, expected in (("관광지", "무료 입장"), ("음식점", "착한가격업소")):
-        run = _make_run(db_session, status="collecting_evidence", category=category)
-        _make_region(db_session, run, radius_m=1000)
-        service.add_reaction_evidence(db_session, run_id=run.id, lines=[_line("user_1", "required", "price_bucket", False)])
-        flows.execute_run(
-            db_session, run_id=str(run.id), place_search=_FakePlaceSearch([PlaceStub(place_id="p", lat=35.0005, lng=129.0005)]),
-            place_facts=_FakePlaceFacts({"p": {"price_bucket": "low"}}),
+def test_price_reason_is_a_keyless_line_and_a_leftover_price_label_is_ignored(db_session):
+    """#423 — "비싸요"는 키 없는 근거 줄이라 아무것도 거르지 않는다. 시연 DB에 price_bucket 라벨 행이 남아 있어도
+    레지스트리에 없는 키라 체크로 붙지 않는다(관광지 「입장료가 비싸요」도 같다)."""
+    for category, text in (("음식점", "비싸요"), ("관광지", "입장료가 비싸요")):
+        candidates, funnel = _execute_with_lines(
+            db_session, [_line("user_1", "required", None, None, text=text)], {"p": {"price_bucket": "high"}},
+            category=category,
         )
-        (candidate,) = service.list_candidates(db_session, str(run.id))
-        check = next(c for c in candidate.checks if c["fact_key"] == "price_bucket")
-        assert check["label"] == expected, category
+        assert set(candidates) == {"p"} and funnel["실격 조건 제거"] == 0, category
+        assert all(c["fact_key"] != "price_bucket" for c in candidates["p"].checks), category
 
 
 def test_hard_key_preferred_and_reference_disqualify_only_when_wants_false(db_session):

@@ -6,7 +6,7 @@
 
 3개 어댑터 + 폴백 + pins/recommend real 슬롯 구현·단위 테스트 완료(`backend` 전체 666 passed, 3 skipped=live).
 `PLACES_MODE=real`로 서버 기동 시 3개 슬롯이 real로 채워지는 것도 테스트로 고정했다.
-**카카오는 2026-09-30 실호출 관찰을 마쳤다(3절). 네이버·구글은 v1에서 끄므로 미관찰.**
+**카카오는 2026-09-30 실호출 관찰을 마쳤다(3절). 네이버는 v1에서 끄므로 미관찰. 구글 소스는 #423에서 지웠다.**
 
 ## 2. 구현 구조 (`backend/places/`)
 
@@ -15,32 +15,30 @@
 | `sources/base.py` | `RawPlace`, `PlaceSource` 프로토콜, 같은 장소 판정(이름+200m) |
 | `sources/kakao.py` | 카테고리 검색(FD6/CE7/AD5/AT4, 반경 ≤20km, 최대 2페이지), 키워드 검색으로 전화 보완 |
 | `sources/naver.py` | 지역 검색(키워드만·최대 5건). nearby는 "카테고리 키워드 검색 후 반경 필터"뿐이라 약하다 |
-| `sources/google.py` | searchNearby(풀) / searchText(보완). FieldMask 필수, 재시도 없음, 프로세스당 호출 상한 |
-| `fallback.py` | 순수 판단: 검색 폴백(카카오→네이버→구글), 보완(비어 있는 필드만 하위 소스에 묻는다) |
+| `fallback.py` | 순수 판단: 검색 폴백(카카오→네이버), 보완(비어 있는 필드만 하위 소스에 묻는다) |
 | `http.py` | 타임아웃 3초·재시도 1회(타임아웃/429/5xx만)·소스별 호출 횟수 로그(`places.call ...`) |
 | `cache.py` | 메모리 TTL 캐시(`PLACES_CACHE_TTL_S`, 0이면 끔). DB 저장 없음 |
 | `service.py`, `api.py` | 게이트웨이 본체와 공개 접점(`search_nearby`, `get_raw_facts`, `resolve_place`, `call_counts`) |
 
-- **검색 풀은 카카오 한 번**(폴백 시 다음 소스). **가격·평점·영업시간 보완은 `get_raw_facts`에서 장소당 1회, 구글로만** 한다 — 풀 검색에는 과금 큰 필드를 안 붙인다.
+- **검색 풀은 카카오 한 번**(폴백 시 다음 소스).
 - 보완 시 이미 채워진 필드는 다시 묻지 않고, 하위 소스가 못 주는 필드뿐이면 호출 자체를 안 한다(테스트로 고정).
-- 구글 안전장치: FieldMask에 필요한 그룹만, `priceRange`(가격 숫자)는 요청하지 않고 `priceLevel` 열거값만, 재시도 0, `PLACES_GOOGLE_MAX_CALLS`(기본 100) 초과 시 호출 차단, 장소당 보완 시도 1회(못 채워도 반복 안 함).
-- `place_id`는 `"<소스>:<소스 내 id>"`(예: `kakao:1234`, `google:ChIJ…`). 네이버는 id가 없어 이름+좌표 해시(12자)를 쓴다 — **#33 중복 판정 기준과 맞물리는 부분이라 확정이 필요하다**(같은 가게가 소스가 달라 다른 place_id를 갖는다).
-- `get_raw_facts`가 돌려주는 키: `name, category, address, place_url, phone, rating, rating_count, price_level(열거값), opening_hours(요일 문자열)` — 값이 있는 것만. `fact_key`·`unknown_policy`는 건드리지 않았다.
+- `place_id`는 `"<소스>:<소스 내 id>"`(예: `kakao:1234`). 네이버는 id가 없어 이름+좌표 해시(12자)를 쓴다 — **#33 중복 판정 기준과 맞물리는 부분이라 확정이 필요하다**(같은 가게가 소스가 달라 다른 place_id를 갖는다).
+- `get_raw_facts`는 #188 이후 항상 빈 값이다(지도 API 응답을 추천·모델로 넘기지 않는다). `fact_key`·`unknown_policy`는 건드리지 않았다.
 
 ### 설정 (모두 `common/settings.py`, `.env.example`에 주석 처리로 안내)
-`KAKAO_REST_API_KEY`(없으면 `KAKAO_CLIENT_ID`), `NAVER_SEARCH_CLIENT_ID/SECRET`, `GOOGLE_PLACES_API_KEY`(→ PR #173),
-`PLACES_SOURCES`(순서=폴백 순서, 예 `kakao,naver`로 구글 차단), `PLACES_CACHE_TTL_S`, `PLACES_HTTP_TIMEOUT_S`, `PLACES_HTTP_RETRIES`, `PLACES_GOOGLE_MAX_CALLS`.
+`KAKAO_REST_API_KEY`(없으면 `KAKAO_CLIENT_ID`), `NAVER_SEARCH_CLIENT_ID/SECRET`,
+`PLACES_SOURCES`(순서=폴백 순서), `PLACES_HTTP_TIMEOUT_S`, `PLACES_HTTP_RETRIES`.
 
 ## 3. 관찰 기록 — 카카오 (2026-09-30 실호출)
 
-v1은 카카오만(`PLACES_SOURCES=kakao`). 네이버·구글은 켤 때 같은 방식으로 관찰한다(아래 표는 미관찰 유지).
+v1은 카카오만(`PLACES_SOURCES=kakao`). 네이버는 켤 때 같은 방식으로 관찰한다(아래 표는 미관찰 유지).
 실호출은 성수동(37.5445, 127.0561) 기준 category 4회·keyword 1회·잘못된 키 1회, 총 6회 + `pytest -m live` 1회.
 
 ### 3-1. 실측 (직접 호출한 결과)
 
 | 항목 | 관찰 |
 |---|---|
-| 응답 필드(문서 1건) | `id, place_name, category_name, category_group_code, category_group_name, phone, address_name, road_address_name, x(경도), y(위도), place_url, distance` — 12개. **가격·평점·영업시간·메뉴·사진 없음** |
+| 응답 필드(문서 1건) | `id, place_name, category_name, category_group_code, category_group_name, phone, address_name, road_address_name, x(경도), y(위도), place_url, distance` — 12개. **평점·영업시간·메뉴·사진 없음** |
 | `phone` | 빈 문자열인 가게가 있다(어묵나라 `""`, 웅칼 `""`) — 전화 없음 ≠ 오류 |
 | meta | `total_count`(반경 안 전체, 453) / `pageable_count`(실제 볼 수 있는 수, **45**) / `is_end` / `same_name` |
 | 페이지 | 15건씩 3페이지 = **최대 45건**. 4페이지를 요청해도 400이 아니라 200 + `is_end=true` + 15건이 오는데, 3페이지와 같은 내용으로 보인다(첫 문서 distance 196) → 우리 코드는 `is_end`에서 멈추므로 중복 수집은 없다 |
@@ -67,13 +65,13 @@ v1은 카카오만(`PLACES_SOURCES=kakao`). 네이버·구글은 켤 때 같은 
 - #53 코멘트가 인용한 "제5조 23호·31호"와 이번에 읽힌 번호(20호·30호)가 다르다. 약관 개정으로 번호가 밀렸거나 요약 오류일 수 있다 — 원문 확인 시 같이 볼 것.
 - 해석(내 의견, 결정 아님): 20호는 "사용자 환경 개선 목적이면 캐시는 허용"으로 읽히는 문구라, **현재의 메모리 TTL 캐시(검색 직후 라벨링 용도)는 이 조항과 충돌 가능성이 낮다.** 반면 영구 저장·`place_facts` 적재(B 파트)가 "사용자 환경 개선" 범위인지는 이 문구만으로 판단할 수 없다 — 카카오에 직접 문의가 필요하다(#53 체크리스트). 30호(복제·제공)는 서버에서 모은 데이터를 여러 사용자에게 재제공하는 것과 관련될 수 있다.
 
-### 3-3. 네이버·구글 — 미관찰 (켤 때)
+### 3-3. 네이버 — 미관찰 (켤 때)
 
-| 항목 | 네이버 지역검색 | 구글 Places(New) |
-|---|---|---|
-| 응답 필드·한도·과금·약관 | 미관찰 | 미관찰 |
+| 항목 | 네이버 지역검색 |
+|---|---|
+| 응답 필드·한도·과금·약관 | 미관찰 |
 
-코드를 짜며 세운 가정(검증 안 됨): 네이버는 좌표 검색이 없고 5건 상한이라 nearby 풀로 약하다 / 구글은 FieldMask에 rating·priceLevel·openingHours를 넣으면 상위 SKU로 과금된다. 결정 근거로 쓰지 말 것.
+코드를 짜며 세운 가정(검증 안 됨): 네이버는 좌표 검색이 없고 5건 상한이라 nearby 풀로 약하다. 결정 근거로 쓰지 말 것.
 
 ## 4. 루트에 요청·확인할 것
 
@@ -101,7 +99,7 @@ v1은 카카오만(`PLACES_SOURCES=kakao`). 네이버·구글은 켤 때 같은 
 - 결과는 기존 `TTLCache`에만 담는다(영구 저장 없음). `resolve`(source=search)는 캐시에 place_id가 있고 echo 좌표가 캐시 좌표와 200m 넘게 다르면 422로 거절, 캐시에 없으면(만료) 지금처럼 echo 좌표를 쓴다.
 - `PLACES_MODE=dev`(기본)는 카카오를 부르지 않고 고정 샘플 5곳(이름 부분 일치, 거리순)을 돌려준다. `contracts/mocks/handlers/places.ts`의 seed와 같은 장소 — **둘 중 하나를 바꾸면 둘 다 바꿔야 한다.**
 - 설정 `PLACES_SEARCH_PER_MIN`(기본 30, 0 이하면 끔): `common/settings.py`, `.env.example`.
-- `NameSearchable` 프로토콜로 이름 검색 지원 소스만 고른다 — 네이버·구글 코드는 건드리지 않았다(켤 때 `search_by_name`을 구현하면 폴백에 자동 참여).
+- `NameSearchable` 프로토콜로 이름 검색 지원 소스만 고른다 — 네이버 코드는 건드리지 않았다(켤 때 `search_by_name`을 구현하면 폴백에 자동 참여).
 
 ## 한계·주의 (루트 확인)
 1. **호출 상한은 인메모리**다: 프로세스 재시작 시 초기화되고, 인스턴스가 여러 개(Cloud Run 다중)면 인스턴스마다 따로 센다 — 실효 상한은 `분당 30 × 인스턴스 수`까지 늘 수 있다. 카카오 일 쿼터(100,000건)를 지키는 용도로는 충분하지만 엄밀한 전역 상한은 아니다. 공개 배포 전에 Redis(`REDIS_URL`은 이미 있다) 등으로 옮길지 결정이 필요하다.
@@ -126,7 +124,7 @@ v1은 카카오만(`PLACES_SOURCES=kakao`). 네이버·구글은 켤 때 같은 
 
 ## 바뀐 것
 - `places/cache.py`(`TTLCache`) 삭제. `PlaceService`는 소스 목록 말고 어떤 상태도 갖지 않는다(`vars(svc) == {"_sources"}`를 테스트로 고정).
-- `get_raw_facts`는 **항상 `{}`**. recommend→llm 경로에 지도 API 원자료가 닿지 않는다 — 빈 값이면 `llm.label_place`가 전부 unknown으로 응답하고 recommend가 `unknown_policy`로 처리한다. 보완용 `fallback.enrich`는 코드에 남지만 서비스가 부르지 않는다(네이버·구글을 켤 때 다시 결정).
+- `get_raw_facts`는 **항상 `{}`**. recommend→llm 경로에 지도 API 원자료가 닿지 않는다 — 빈 값이면 `llm.label_place`가 전부 unknown으로 응답하고 recommend가 `unknown_policy`로 처리한다. 보완용 `fallback.enrich`는 코드에 남지만 서비스가 부르지 않는다(네이버를 켤 때 다시 결정).
 - `GET /places/search`·`search_nearby`는 결과를 응답으로만 돌려주고 즉시 버린다. `remember_and_convert` 제거(`to_result`로 대체). dev 샘플 검색은 `PlaceService`를 만들지도 않는다.
 - `resolve`는 캐시를 쓰지 않는다. `source=search`도 echo된 `place_id`·`lat`·`lng`를 그대로 쓰고, 200m 캐시 대조는 없앴다. **좌표가 없으면 422**(이전에는 방금 검색한 캐시에서 채웠다).
 - `PLACES_SOURCES` 기본값 `kakao` 하나(`common/settings.py`, `.env.example`). `PLACES_CACHE_TTL_S`(`places_cache_ttl_s`) 설정 삭제.
@@ -180,7 +178,7 @@ PR 1(#197)에서 고정한 6개 공개 함수를 실제로 구현했다. 이 브
 | 폐업 | 영업상태가 폐업·휴업·취소/말소/만료/정지/중지면 **새로 넣지 않는다.** 이미 있던 장소가 폐업으로 바뀌어 오면 `status='closed'`로만 갱신(검색·매칭·추천에서 빠진다, 이미 핀이 가리키는 장소는 `get_places`로 계속 조회). 목록에 없는 상태("준비중" 등)는 건너뛰고 보고 |
 | 업태 대응 | 카페: 카페·까페·커피숍·다방·전통찻집·라이브카페·제과점영업·아이스크림·키즈카페·커피전문점. 음식점: 한식·중식·일식·양식·분식·경양식·김밥(도시락)·패스트푸드·뷔페식·식육(숯불구이)·외국음식전문점·냉면집·횟집·복어취급·탕류(보신용)·통닭(치킨)·호프/통닭·기타·일반조리판매. **유흥·주점류(감성주점, 정종/대포집/소주방 등)는 일부러 뺐다.** 표에 없는 업태는 상위 10개를 경고로 보여 준다 — **데이터 담당과 대응표 확정이 필요하다** |
 | TourAPI | `contenttypeid` 12(관광지)·14(문화시설)·38(쇼핑, 납품 파일은 시장만)을 받고 모두 `category=관광지`로 둔다(#379). 32(숙박)와 그 밖의 유형은 받지 않고 유형별 받은/건너뛴 수를 보고한다. 좌표가 서울 범위 밖이면 "서울 밖 좌표"로 건너뛴다. 서울(`areacode=1` 또는 주소 "서울")만. `mapx`=경도, `mapy`=위도(WGS84). **파일 입력(`--file`, API 응답 JSON 또는 item 배열)만 구현했다 — API를 직접 호출하는 수집기는 없다**(서비스키·엔드포인트 확인이 필요해서 보류) |
-| 라벨 파일 | 형식은 architecture.md/data-model.md(#196) 그대로. 허용 `fact_key`는 **`docs/constraints.md` 표의 첫 열에서 읽는다**(코드에 목록을 복제하지 않는다. `is_open`·`within_radius`는 제외) + `contains_*` 접두 재료 태그. 모르는 키·잘못된 값은 건너뛰고 건수 보고, 같은 키가 여럿이면 마지막 줄(경고), 멱등 upsert, 파일에 없는 키는 건드리지 않음. `price_bucket`이 low/mid/high가 아니면(예: 12000) 거부한다 — 원본 가격 숫자는 저장하지 않는다. `source_layer`: price_bucket=2, 나머지=3. `unknown`이면 `value`는 SQL NULL(JSON null 아님) |
+| 라벨 파일 | 형식은 architecture.md/data-model.md(#196) 그대로. 허용 `fact_key`는 **`docs/constraints.md` 표의 첫 열에서 읽는다**(코드에 목록을 복제하지 않는다. `is_open`·`within_radius`는 제외) + `contains_*` 접두 재료 태그. 모르는 키·잘못된 값은 건너뛰고 건수 보고, 같은 키가 여럿이면 마지막 줄(경고), 멱등 upsert, 파일에 없는 키는 건드리지 않음. 값은 참/거짓만 받는다 — 원본 숫자는 저장되지 않는다. `source_layer`는 3. `unknown`이면 `value`는 SQL NULL(JSON null 아님) |
 | 인허가×TourAPI 합치기 | **구현하지 않았다.** 인허가는 음식점·카페, TourAPI는 관광지라 분류가 겹치지 않는다. 같은 장소가 두 소스에 중복될 만한 경우(관광지로 분류된 카페 등)가 실데이터에서 보이면 그때 규칙을 정한다 |
 | 재적재 | `kakao_*` 컬럼은 건드리지 않는다. `(source, source_id)`로 upsert |
 

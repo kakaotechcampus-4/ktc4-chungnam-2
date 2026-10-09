@@ -352,12 +352,7 @@ def _active_soft_requirements(db: Session, run: RecommendRun) -> list[tuple[str,
     })
 
 
-def _passes_hard_check(fact_key: str, value) -> bool:
-    if fact_key in constraints.VALUE_COMPARISON_UNSUPPORTED:
-        # price_bucket — evidence_lines에 사용자 기준값을 담을 컬럼이 없어(스키마
-        # 갭, recommend/for_Root.md) 실제 비교를 할 수 없다. known이어도 항상 통과시키고
-        # Check로만 노출한다(정보 제공, 실격 판정 아님).
-        return True
+def _passes_hard_check(value) -> bool:
     return not bool(value)  # contains_shellfish/is_crowded_large — "있으면 실격"류
 
 
@@ -409,10 +404,9 @@ def _run_pipeline(
         checks = [is_open_check]
         for fact_key in active_hard_keys:
             known, value = core.resolve_label(labels, fact_key)
-            passes = _passes_hard_check(fact_key, value) if known else True
+            passes = _passes_hard_check(value) if known else True
             checks.append(core.build_check(
                 fact_key, constraints.HARD_REGISTRY[fact_key].unknown_policy, known=known, value=value, passes=passes,
-                category=run.category,
             ))
         # #112 1단계 입력 — 선호(soft) 라벨도 같이 붙인다. unknown_policy는 표 그대로 "pass"
         # 고정(constraints.md — 순위에서 중립 처리). passed는 hard 체크처럼 "실격 아님"이 아니라
@@ -451,7 +445,6 @@ def _run_pipeline(
     ], run.category)
     criteria = core.build_preference_criteria(
         hearted_places,
-        excluded_fact_keys=constraints.VALUE_COMPARISON_UNSUPPORTED,
         disqualifying_fact_keys=[*active_hard_keys, *{fact_key for fact_key, _wants in soft_requirements}],
         preferred_authors=preferred_authors_frozen,
     )

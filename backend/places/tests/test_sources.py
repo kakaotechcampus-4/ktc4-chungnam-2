@@ -1,13 +1,10 @@
-"""3개 어댑터 — 요청 모양(헤더·파라미터·FieldMask)과 응답 파싱. 네트워크 없음."""
-
-import json
+"""어댑터(카카오·네이버) — 요청 모양(헤더·파라미터)과 응답 파싱. 네트워크 없음."""
 
 import httpx
 import pytest
 
 from places.http import SourceError
 from places.sources.base import RawPlace
-from places.sources.google import GooglePlaceSource
 from places.sources.kakao import KakaoPlaceSource
 from places.sources.naver import NaverPlaceSource
 from places.tests.helpers import KAKAO_DOC, json_response, make_http
@@ -93,60 +90,3 @@ def test_naver_filters_by_radius():
 def test_naver_needs_both_credentials():
     http, _, _ = make_http(json_response({}))
     assert not NaverPlaceSource(http, "id", "").is_configured()
-
-
-# ---- 구글 ----
-
-GOOGLE_PLACE = {"id": "ChIJabc", "displayName": {"text": "성수 칼국수"},
-                "location": {"latitude": 37.5445, "longitude": 127.0561}, "types": ["restaurant"],
-                "formattedAddress": "서울", "googleMapsUri": "https://maps.google.com/?cid=1"}
-
-
-def test_google_nearby_sends_field_mask_and_key_header():
-    http, stats, seen = make_http(json_response({"places": [GOOGLE_PLACE]}))
-    found = GooglePlaceSource(http, stats, "G-KEY").search_nearby(category="음식점", lat=37.5, lng=127.0, radius_m=800)
-    assert found[0].place_id == "google:ChIJabc" and found[0].category == "음식점"
-    req = seen[0]
-    assert req.headers["X-Goog-Api-Key"] == "G-KEY"
-    assert "places.rating" not in req.headers["X-Goog-FieldMask"]     # 검색 풀에는 과금 큰 필드를 안 붙인다
-    assert json.loads(req.content)["includedTypes"] == ["restaurant"]
-
-
-def test_google_fill_requests_only_wanted_fields_and_maps_values():
-    body = {"places": [{**GOOGLE_PLACE, "rating": 4.4, "userRatingCount": 120, "priceLevel": "PRICE_LEVEL_MODERATE"}]}
-    http, stats, seen = make_http(json_response(body))
-    got = GooglePlaceSource(http, stats, "k").fill(PLACE, frozenset({"rating", "price_level"}))
-    mask = seen[0].headers["X-Goog-FieldMask"]
-    assert "places.rating" in mask and "places.priceLevel" in mask
-    assert "regularOpeningHours" not in mask and "nationalPhoneNumber" not in mask
-    assert got["rating"] == 4.4 and got["rating_count"] == 120 and got["price_level"] == "MODERATE"
-    assert "priceRange" not in mask   # 가격 숫자는 요청하지 않는다
-
-
-def test_google_fill_ignores_different_place():
-    other = {**GOOGLE_PLACE, "displayName": {"text": "완전 다른 가게"}, "rating": 5.0}
-    http, stats, _ = make_http(json_response({"places": [other]}))
-    assert GooglePlaceSource(http, stats, "k").fill(PLACE, frozenset({"rating"})) == {}
-
-
-def test_google_fill_with_nothing_it_provides_makes_no_call():
-    http, stats, seen = make_http(json_response({}))
-    assert GooglePlaceSource(http, stats, "k").fill(PLACE, frozenset()) == {}
-    assert seen == []
-
-
-def test_google_call_cap_stops_further_calls():
-    http, stats, seen = make_http(json_response({"places": []}))
-    g = GooglePlaceSource(http, stats, "k", max_calls=2)
-    g.search_nearby(category="음식점", lat=1, lng=2, radius_m=10)
-    g.search_nearby(category="음식점", lat=1, lng=2, radius_m=10)
-    with pytest.raises(SourceError, match="상한"):
-        g.search_nearby(category="음식점", lat=1, lng=2, radius_m=10)
-    assert len(seen) == 2
-
-
-def test_google_never_retries_even_on_server_error():
-    http, stats, seen = make_http(json_response({}, status=503), retries=3)
-    with pytest.raises(SourceError):
-        GooglePlaceSource(http, stats, "k").search_nearby(category="음식점", lat=1, lng=2, radius_m=10)
-    assert len(seen) == 1 and stats.count("google") == 1

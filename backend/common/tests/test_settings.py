@@ -222,10 +222,10 @@ def test_from_env_kakao_rest_key_falls_back_to_client_id(monkeypatch):
 
 def test_from_env_places_keys_default_to_empty(monkeypatch):
     monkeypatch.setenv("PINGO_ENV", "dev")
-    for name in ("NAVER_SEARCH_CLIENT_ID", "NAVER_SEARCH_CLIENT_SECRET", "GOOGLE_PLACES_API_KEY"):
+    for name in ("NAVER_SEARCH_CLIENT_ID", "NAVER_SEARCH_CLIENT_SECRET"):
         monkeypatch.delenv(name, raising=False)
     s = Settings.from_env()
-    assert (s.naver_search_client_id, s.naver_search_client_secret, s.google_places_api_key) == ("", "", "")
+    assert (s.naver_search_client_id, s.naver_search_client_secret) == ("", "")
 
 
 def test_from_env_without_pingo_env_is_prod(monkeypatch):

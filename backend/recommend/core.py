@@ -146,20 +146,15 @@ def condition_label(fact_key: str, *, satisfied: bool, wants: bool | None = None
     return f"{name} 아님" if wants else f"{name} 해당"
 
 
-def _check_label(fact_key: str, *, known: bool, value, passes: bool, category: str | None = None) -> str:
-    name = constraints.FACT_LABELS.get(fact_key, fact_key)
+def _check_label(fact_key: str, *, known: bool, passes: bool) -> str:
     if not known:
-        return f"{name} 확인 필요"
-    if fact_key in constraints.VALUE_COMPARISON_UNSUPPORTED:
-        return constraints.price_bucket_label(value, category) or f"{name} {value}"
+        return f"{constraints.FACT_LABELS.get(fact_key, fact_key)} 확인 필요"
     # 선호(soft) 체크의 passed는 라벨 참/거짓 그대로라 "원함" 쪽으로 읽는다. 실격(hard)은 passed=통과 여부.
     wants = True if fact_key in constraints.SOFT_FACT_KEYS else None
     return condition_label(fact_key, satisfied=passes, wants=wants)
 
 
-def build_check(
-    fact_key: str, unknown_policy: str, *, known: bool, value, passes: bool, category: str | None = None,
-) -> Check:
+def build_check(fact_key: str, unknown_policy: str, *, known: bool, value, passes: bool) -> Check:
     """docs/constraints.md 조건 하나에 대한 Check 조립 — unknown_policy 분기를 여기 한 곳에
     고정한다(가드레일 8: "판정 불확실은 조건 종류에 따라 다르게 처리한다").
 
@@ -168,9 +163,8 @@ def build_check(
     - known=False & unknown_policy='pass'(+needs_check) → passed=True, needs_check=True.
     - known=True → passed는 실제 값 기반 통과 여부(호출부가 계산해 넘긴다), needs_check=False.
     label은 어느 조건인지 보이는 사람 말이다(`condition_label`) — 값 문자열("False")을 그대로 쓰지 않는다.
-    category는 값 문구가 카테고리마다 다른 키(price_bucket)에만 쓴다. 모르면(None) 기본 문구다.
     """
-    label = _check_label(fact_key, known=known, value=value, passes=passes, category=category)
+    label = _check_label(fact_key, known=known, passes=passes)
     if not known:
         if unknown_policy == "exclude":
             return Check(fact_key=fact_key, label=label, passed=False, confidence="unknown", needs_check=False)
@@ -337,7 +331,6 @@ def filter_heart_signals(hearted_places: Sequence[HeartedPlace], category: str) 
 def build_preference_criteria(
     hearted_places: Sequence[HeartedPlace],
     *,
-    excluded_fact_keys: frozenset[str],
     disqualifying_fact_keys: Sequence[str],
     preferred_authors: Mapping[str, frozenset[str]],
 ) -> dict[str, bool]:
@@ -345,15 +338,14 @@ def build_preference_criteria(
 
     ① ♥ 받은 핀들의 라벨(checks)을 전부 모은다 — confidence='known'인 것만(②와 별개로,
        조사 안 된 라벨은 애초에 신호가 없다).
-    ② 참/거짓으로 답할 수 없는 라벨(가격대·수용 인원, `excluded_fact_keys` — 정본은
-       constraints.VALUE_COMPARISON_UNSUPPORTED)은 뺀다.
+    ② 참/거짓으로 답할 수 없는 라벨은 뺀다 — 소프트 키만 쓰므로 따로 거를 키가 없다(가격대는 #423에서 뺐다).
     ③ ♥ 받은 "장소" 개수(사람 수가 아니다)로 값이 갈리면 많은 쪽을 택한다. 정확히 반반이면
        —이슈 본문이 이 경우를 정하지 않아 이 세션이 임시로 정함(for_Root.md 보고)— 신호가
        없다고 보고 그 라벨 자체를 기준에서 뺀다.
     ④ 이번 run에서 활성 실격 사유로 이미 쓰인 라벨(`disqualifying_fact_keys`)은 뺀다 — 통과한
        후보 전부가 이미 같은 값이라 점수 차이를 못 만든다.
     ⑤ 구성원이 직접 쓴 선호 사유의 라벨(`preferred_authors`의 키 — fact_key → 그 사유를 쓴
-       구성원들)은 True로 추가한다(②·④ 제외 대상이면 마찬가지로 뺀다) — ③의 다수결 결과보다
+       구성원들)은 True로 추가한다(④ 제외 대상이면 마찬가지로 뺀다) — ③의 다수결 결과보다
        우선한다(명시적 선호이므로).
 
     소프트 키(`constraints.SOFT_FACT_KEYS`)만 쓴다. 하드 체크의 passed는 "실격 아님"이라 라벨
@@ -368,7 +360,7 @@ def build_preference_criteria(
         for check in place.checks:
             if check.fact_key not in constraints.SOFT_FACT_KEYS:
                 continue
-            if check.fact_key in excluded_fact_keys or check.fact_key in disqualifying_fact_keys:
+            if check.fact_key in disqualifying_fact_keys:
                 continue
             if check.confidence != "known":
                 continue
@@ -385,7 +377,7 @@ def build_preference_criteria(
     for fact_key in preferred_authors:
         if fact_key not in constraints.SOFT_FACT_KEYS:
             continue
-        if fact_key in excluded_fact_keys or fact_key in disqualifying_fact_keys:
+        if fact_key in disqualifying_fact_keys:
             continue
         criteria[fact_key] = True  # ⑤ — 명시적 선호가 ③의 다수결보다 우선한다
 
@@ -519,15 +511,13 @@ def build_reason(
     """Candidate.reason — 실제로 통과한 체크와 충족한 선호 라벨에서 조립한 한 줄(가드레일 5).
     모델을 부르지 않는다. 두 종류만 말한다: 1) 이번 run의 활성 실격 조건 중 known으로 통과한
     것 2) 선호 기준(criteria) 중 이 후보가 known+참인 것(+ 몇 명이 충족했는지). 표시 이름이
-    없는 키와 값 비교를 못 하는 키(price_bucket)는 말하지 않는다 — 안 본 것을 통과했다고 하지
-    않기 위해서다. 말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지
+    없는 키는 말하지 않는다 — 안 본 것을 통과했다고 하지 않기 위해서다. 말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지
     않는다)."""
     known_passed = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
     disqualifier_labels = [
         constraints.PASSED_LABELS[c.fact_key]
         for c in candidate_checks
         if c.fact_key in constraints.HARD_REGISTRY
-        and c.fact_key not in constraints.VALUE_COMPARISON_UNSUPPORTED
         and c.fact_key in constraints.PASSED_LABELS
         and c.confidence == "known" and c.passed
     ]

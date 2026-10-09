@@ -14,7 +14,6 @@ from llm.schemas import FACT_KEYS
 FACT_KEY_MEANINGS: dict[str, str] = {
     # 공통
     "contains_shellfish": "갑각류·조개 재료가 들어가는가 (갑각류 알러지, 새우·게 못 먹어)",
-    "price_bucket": "가격대 (1인/음료/입장료 상한과 비교)",
     "pet_friendly": "반려동물을 데려갈 수 있는가",
     # 음식점
     "spicy_focused": "매운맛 전문인가 (매운 거 못 먹어)",
@@ -137,6 +136,8 @@ conditions·circle_radius_m에 영향을 주게 하지 않는다. 각 줄은 자
    "짜장면 먹자"·"마라탕 좋아" → cuisine_chinese, "파스타 먹자"·"스테이크가 좋아" → cuisine_western,
    "삼겹살 먹자"·"갈비 먹고 싶어" → cuisine_bbq, "곱창 먹자"·"막창 좋아" → cuisine_gopchang,
    "김밥이랑 떡볶이" → cuisine_bunsik.
+   목록에 없는 특징만 말하는 글은 키를 고르지 않는다. 가격 키는 없다.
+   예) "너무 비싸요"·"입장료가 비싸요" → conditions 빈 목록.
    키 목록 (키: 뜻):
 {fact_key_lines}
 4. wants는 "이 특징이 **있는** 장소를 원하는가"다. true면 있는 곳을 원하고, false면 있는 곳을
@@ -192,7 +193,7 @@ conditions·circle_radius_m에 영향을 주게 하지 않는다. 각 줄은 자
 # wants를 내고, 피하겠다는 뜻이 분명하면 false로 읽게 한다. 키 집합 자체의 정본은 recommend 레지스트리이고,
 # 여기는 프롬프트 문구용이다(integration 계약 테스트가 같은 집합인지 본다).
 HARD_FACT_KEYS: tuple[str, ...] = (
-    "contains_shellfish", "is_crowded_large", "price_bucket",
+    "contains_shellfish", "is_crowded_large",
 )
 
 PLAN_EVIDENCE_PROMPT = (

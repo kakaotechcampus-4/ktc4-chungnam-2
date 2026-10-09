@@ -10,5 +10,7 @@
   {"text": "삼겹살이나 갈비 먹고 싶어요", "badge": "preferred", "conditions": [["cuisine_bbq", true]], "note": "같은 키 — 하나"},
   {"text": "회 못 먹어요", "badge": "required", "conditions": [["cuisine_raw_fish", false]], "note": "contains_shellfish를 덧붙이지 않는다"},
   {"text": "새우 알러지라서 새우 들어간 건 안 돼요", "badge": "required", "conditions": [["contains_shellfish", false]], "note": "이유를 덧붙인 조건 하나"},
-  {"text": "그냥 별로예요", "badge": "preferred", "conditions": [], "note": "조건 없음 — 키 없는 줄 하나"}
+  {"text": "그냥 별로예요", "badge": "preferred", "conditions": [], "note": "조건 없음 — 키 없는 줄 하나"},
+  {"text": "너무 비싸요", "badge": "preferred", "conditions": [], "note": "가격 키는 없다(#423) — 키 없는 줄 하나"},
+  {"text": "입장료가 비싸요", "badge": "preferred", "conditions": [], "note": "관광지 가격도 키 없음(#423)"}
 ]
