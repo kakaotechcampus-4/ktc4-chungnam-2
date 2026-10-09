@@ -38,6 +38,7 @@ guard.py 안에서만 일어난다). "멤버십/작성자 확인이 멱등 경�
 `create_ai_pin`이 그걸 쓰도록 고쳐서 이 우회를 지웠다 — `mutation.event`를 그대로 쓴다.
 """
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -242,6 +243,8 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str) ->
     raw_reactions = pins_api.list_reasoned_reactions(db, map_id=map_id, category=category)
     # ②에는 사람이 쓴 글만 보낸다(#412) — 칩은 키·방향이 정해져 있어 코드가 줄을 만든다. 글이 없으면 ② 호출도 없다.
     text_inputs = [_evidence_from_reaction(r) for r in raw_reactions if r["reason_text"] is not None]
+    if text_inputs:
+        db.rollback()  # 모델을 기다리는 동안 읽기 트랜잭션이 연결을 잡고 있지 않게 한다(#275). 저장이 아니라 연결 반환이다.
     planned = llm_service.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
     reaction_lines = _reaction_evidence_lines(raw_reactions, [[line.model_dump() for line in group] for group in planned])
     merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422
@@ -285,26 +288,34 @@ def patch_evidence(
     constrained) — 권한 없는 토글이 섞여 있으면 요청 전체를 403으로 거절한다(api-spec.yaml이
     이 엔드포인트에 Forbidden을 명시함 — "버튼이 애초에 disabled였어야 했다"는 신호)."""
     run = service.get_run_or_404(db, run_id)
+    run_uuid = run.id
+    # 읽기(존재·권한 검사) → 롤백 → 모델 → 쓰기 순서다(#275). 모델을 기다리는 동안 트랜잭션도 연결도 잡지 않는다.
+    validated: list[tuple[uuid.UUID, bool]] = []
     for evidence_id, is_active in toggles:
         line = service.get_evidence_or_none(db, evidence_id)
-        if line is None or line.run_id != run.id:
+        if line is None or line.run_id != run_uuid:
             raise AppError("NOT_FOUND")
         resource = Resource(type="evidence_line", map_id=principal.map_id, author_id=line.author_id)
         if not can(principal, "evidence.disable", resource):
             raise AppError("FORBIDDEN")
-        service.set_evidence_active(db, line.id, is_active)
+        validated.append((line.id, is_active))
     # 「+」로 추가한 줄도 ②를 거쳐 fact_key·wants를 붙인다(#254) — 근거 줄에 "한식 제외"처럼 해석한 조건이
-    # 보인다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다).
+    # 보인다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다 — 모델이 쓰기보다 먼저라 행이 안 남는다).
     # 글 하나에 조건이 여럿이면 같은 글로 조건마다 줄 하나다(#419).
+    planned: list = []
     if adds:
+        db.rollback()  # 읽기 트랜잭션을 끝내 연결을 돌려준다(#275). 저장이 아니다.
         planned = llm_service.plan_evidence([
             {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "reference", "fact_key": None}
             for text in adds
         ])
+    for line_id, is_active in validated:
+        service.set_evidence_active(db, line_id, is_active)
+    if adds:
         for text, group in zip(adds, planned):
             for line in group:
                 service.add_manual_evidence(
-                    db, run_id=run.id, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
+                    db, run_id=run_uuid, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
                 )
     return [_evidence_response(line, principal) for line in service.list_evidence(db, run_id)]
 

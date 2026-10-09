@@ -51,6 +51,12 @@ Alembic 히스토리는 저장소 전체에 하나다. 모듈마다 별도 체�
   돌리면 서로의 테이블을 지워 무작위로 실패한다** — 동시에 돌릴 땐 터미널마다 `PINGO_TEST_DB`를 다르게 준다
   (예: `PINGO_TEST_DB=pingo_test_pins python -m pytest pins`, PowerShell은 `$env:PINGO_TEST_DB="pingo_test_pins"`)
 
+## 모델 호출과 트랜잭션
+
+"커밋은 `session_scope` 한 곳"은 그대로다. 예외 한 줄: 모델을 부르기 직전에는 읽기 트랜잭션을 롤백해
+DB 연결을 돌려준다(롤백은 저장이 아니다) — 순서는 읽기 → 롤백 → 모델 → 쓰기, 쓰기는 모델 뒤에 모은다
+(`docs/architecture.md` 1.3절, #275).
+
 ## 코드 품질
 
 `docs/code-quality.md` 참고 — 기능형 코어/명령형 셸 분리는 여기 전체에 적용된다.
