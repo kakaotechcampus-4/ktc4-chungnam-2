@@ -5,8 +5,8 @@
 funnel_counts/widen_radius/check_retry_limit + 이들을 뒷받침하는 원(Circle) 계산.
 
 멤버십·작성자(author) 판정은 여기 두지 않는다 — authz.resolve_principal(gateway 호출, I/O)와
-authz.can()이 이미 그 판정을 갖고 있다(authz/policy.py::AUTHOR_CONSTRAINED_ACTIONS에
-recommend.publish가 등록됨). 이 파일에 남는 건 run/candidate/evidence/region 자체의 상태
+authz.can()이 이미 그 판정을 갖고 있다(authz/policy.py의 author.actions에
+recommend.publish가 있다). 이 파일에 남는 건 run/candidate/evidence/region 자체의 상태
 판정과 순수 계산뿐이다.
 """
 

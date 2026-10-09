@@ -20,7 +20,7 @@ real 모드면 places.api의 자체 DB 함수가 채운다(#190 — 모델 호�
   - 구성원이지만 그 액션이 롤에 없음 → **403 FORBIDDEN** (docs/permissions.md는 404/403 두
     값만 규정한다 — 계획의 "AI_PIN_PRIVATE"는 이 문서보다 먼저 쓰인 추측이었다. `recommend.
     publish`는 `candidate.requested_by`(=run.requested_by) 본인만 가능하도록
-    authz/policy.py::AUTHOR_CONSTRAINED_ACTIONS에 이미 등록돼 있어 본인이 아니면 403이 된다)
+    authz/policy.py의 author.actions에만 있어 본인이 아니면 403이 된다)
 authz/tests/test_rule_a_static.py가 "resolve_principal은 authz.guard 밖에서 직접 호출하지
 않는다"(Rule A)를 정적으로 강제한다 — 그래서 여기서 `authz.service.resolve_principal`/
 `authz.core.can`을 직접 부르지 않고, `authz.guard.require(action, loader)`가 반환하는

@@ -56,7 +56,8 @@ def create_ai_pin(
     PlaceSource)로 INSERT 전에 검증한다. 없으면 NULL.
 
     permissions 계산에 쓸 Principal이 없어(호출자가 아직 없다) 게시자 본인을 map의 member로
-    간주해 구성한다 — 게시(recommend.publish)는 이미 member 액션이라 이 전제가 깨질 일이 없다.
+    간주해 구성한다 — 게시(recommend.publish)는 구성원만 할 수 있어(비구성원은 can()이 먼저
+    거른다) 이 전제가 깨질 일이 없다.
     recommend가 실제로 붙을 때 자신이 이미 resolve한 Principal을 넘기도록 바꾸는 편이 더
     정확하다(for_Root.md에 남김)."""
     principal = Principal(user_id=created_by, map_id=map_id, role="member")

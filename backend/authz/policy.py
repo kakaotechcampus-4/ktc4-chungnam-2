@@ -13,7 +13,7 @@ from typing import Literal, Mapping
 Role = Literal["member", "owner"]  # memberships.role — DB에는 이 둘만 있다. author는 저장되지 않고
 # evidence_lines.author_id / recommend_runs.requested_by로부터 리소스별로 파생된다.
 
-ResourceType = Literal["map", "pin", "evidence_line", "candidate", "shortlist_item"]
+ResourceType = Literal["map", "pin", "evidence_line", "candidate", "run", "shortlist_item"]
 
 
 @dataclass(frozen=True)
@@ -37,13 +37,9 @@ POLICY: Mapping[str, RoleSpec] = {
                 "recommend.request",
                 "recommend.evidence",  # 근거 조회·토글·추가 — 지도 구성원 누구나(#32 결정,
                                         # 2026-09-23: "근거 목록은 구성원별로 한 줄씩 따로 뜬다",
-                                        # 최종기획안 5-5). run.requested_by 본인 제한 없음 —
-                                        # AUTHOR_CONSTRAINED_ACTIONS에 없다. 개별 근거 줄
-                                        # 비활성화(evidence.disable)는 그 줄 작성자 본인만(author).
-                "recommend.manage",  # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
-                                      # 단, run.requested_by 본인만(가드레일1) —
-                                      # AUTHOR_CONSTRAINED_ACTIONS 참고
-                "recommend.publish",  # 단, candidate.requested_by 본인만 — AUTHOR_CONSTRAINED_ACTIONS 참고
+                                        # 최종기획안 5-5). run.requested_by 본인 제한 없음.
+                                        # 개별 근거 줄 비활성화(evidence.disable)는 그 줄
+                                        # 작성자 본인만(author).
                 "invite.create",  # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
                 "map.leave",  # 지도 나가기(#369). 넘길 사람이 없는 방장 차단은 역할이 아니라 지도 상태라
                                # 여기 넣지 않고 maps/core.py가 판정한다(409 OWNER_CANNOT_LEAVE)
@@ -52,11 +48,13 @@ POLICY: Mapping[str, RoleSpec] = {
         ),
     ),
     "author": RoleSpec(
-        scope={"evidence_line": "own", "candidate": "own"},
+        scope={"evidence_line": "own", "candidate": "own", "run": "own"},
         actions=frozenset(
             {
                 "evidence.disable",  # '-'로 빼기 — "자기가 쓴 것만" (5-5)
-                "candidate.view_private",  # 게시 전 비공개 후보 열람 (5-5-1)
+                "recommend.manage",  # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
+                                      # run.requested_by 본인만(가드레일1)
+                "recommend.publish",  # 「지도에 올리기」 — candidate.requested_by 본인만
             }
         ),
     ),
@@ -71,11 +69,6 @@ POLICY: Mapping[str, RoleSpec] = {
         ),
     ),
 }
-
-# permissions.md 23행 주석: recommend.publish는 member.actions에 있지만
-# "단, candidate.requested_by 본인만(아래 author 참고)". 표(actions 목록)가 아니라 산문 주석에만
-# 있는 제약이라 여기 명시적으로 격리해둔다 — for_Root.md에 "표로 승격 필요"로 보고.
-AUTHOR_CONSTRAINED_ACTIONS: frozenset[str] = frozenset({"recommend.publish", "recommend.manage"})
 
 # permissions.md에는 액션이 어떤 리소스 종류에 쓰이는지가 없다 — 없으면
 # can(user, "recommend.publish", Resource(type="pin", ...))처럼 액션과 무관한 리소스 종류에 대해
@@ -95,10 +88,9 @@ ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "evidence.add": frozenset({"map"}),
     "evidence.disable": frozenset({"evidence_line"}),
     "recommend.request": frozenset({"map"}),
-    "recommend.evidence": frozenset({"map"}),  # recommend/loaders.py::load_run이 Resource(type="map", ...)로 채운다
-    "recommend.manage": frozenset({"map"}),  # recommend/loaders.py::load_run이 Resource(type="map", ...)로 채운다
+    "recommend.evidence": frozenset({"run"}),  # recommend/loaders.py::load_run이 Resource(type="run", ...)로 채운다
+    "recommend.manage": frozenset({"run"}),  # recommend/loaders.py::load_run이 Resource(type="run", ...)로 채운다
     "recommend.publish": frozenset({"candidate"}),
-    "candidate.view_private": frozenset({"candidate"}),
     "member.kick": frozenset({"map"}),
     "map.settings.edit": frozenset({"map"}),
     "map.delete": frozenset({"map"}),
