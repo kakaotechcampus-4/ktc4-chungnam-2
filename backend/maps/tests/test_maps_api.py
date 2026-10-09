@@ -305,7 +305,7 @@ def _withdraw(db_session, user_id):
     db_session.commit()
 
 
-def test_withdrawn_member_is_excluded_from_member_count_but_kept_in_members(app_client, db_session):
+def test_withdrawn_member_is_excluded_from_member_count_and_members(app_client, db_session):
     from maps.api import count_members
 
     map_id = app_client.post("/maps", json=_create_body(), cookies=_auth("user_1")).json()["id"]
@@ -316,5 +316,7 @@ def test_withdrawn_member_is_excluded_from_member_count_but_kept_in_members(app_
     listed = app_client.get("/maps", cookies=_auth("user_1")).json()
     assert [m["member_count"] for m in listed if m["id"] == map_id] == [1]
     assert count_members(db_session, map_id) == 1
-    # 구성원 목록엔 남는다 — 핀 작성자 표기용(#155)
-    assert len(app_client.get(f"/maps/{map_id}/members", cookies=_auth("user_1")).json()) == 2
+    # 구성원 목록도 탈퇴자를 뺀다(#439) — 길이가 member_count와 같다
+    members = app_client.get(f"/maps/{map_id}/members", cookies=_auth("user_1")).json()
+    assert [m["user_id"] for m in members] == ["user_1"]
+    assert len(members) == app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()["member_count"]
