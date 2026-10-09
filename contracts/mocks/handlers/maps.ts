@@ -6,11 +6,11 @@ import { apiError, getMapOr404 } from "../util";
 const pinCount = (mapId: string) => Object.values(store.pins).filter((p) => p.map_id === mapId && p.visibility === "public").length;
 const withPinCount = <T extends { id: string }>(map: T) => ({ ...map, pin_count: pinCount(map.id) });
 
-/** 내 지도 상한(#369). 만들거나 참여한 지도 합산 — 목 서버는 삭제·나간 지도를 이미 지우므로 지금 속한 지도만 센다. */
-export const MAP_LIMIT = 10;
+/** 내 지도 상한(#369, #433에서 10→20). 만들거나 참여한 지도 합산 — 목 서버는 삭제·나간 지도를 이미 지우므로 지금 속한 지도만 센다. */
+export const MAP_LIMIT = 20;
 const myMapCount = () => Object.keys(store.maps).filter((id) => (store.members[id] ?? []).some((m) => m.user_id === ME_USER_ID)).length;
 const mapLimitError = () =>
-  apiError(409, "MAP_LIMIT", "지도는 10개까지 만들거나 참여할 수 있어요. 지도를 나가거나 삭제한 뒤 다시 시도해 주세요", { limit: MAP_LIMIT, count: myMapCount() });
+  apiError(409, "MAP_LIMIT", `지도는 ${MAP_LIMIT}개까지 만들거나 참여할 수 있어요. 지도를 나가거나 삭제한 뒤 다시 시도해 주세요`, { limit: MAP_LIMIT, count: myMapCount() });
 
 /** 방장이 나가면 방장이 될 사람(#369). 목 서버의 구성원 배열은 들어온 순서라 나 다음 첫 사람이다(탈퇴자 개념은 없다). */
 const successorOf = (mapId: string) => (store.members[mapId] ?? []).find((m) => m.user_id !== ME_USER_ID) ?? null;

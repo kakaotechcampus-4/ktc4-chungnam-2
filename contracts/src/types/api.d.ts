@@ -260,7 +260,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** 지도 생성. 생성 시 seeding 잡을 트리거한다 (architecture.md 3절). 내 지도(만들거나 참여한 지도, 삭제·나간 지도 제외)가 이미 10개면 409 MAP_LIMIT (#369) */
+        /** 지도 생성. 생성 시 seeding 잡을 트리거한다 (architecture.md 3절). 내 지도(만들거나 참여한 지도, 삭제·나간 지도 제외)가 이미 20개면 409 MAP_LIMIT (#369, */
         post: {
             parameters: {
                 query?: never;
@@ -490,7 +490,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 초대 수락. 로그인 전 접근 시 처리 방식은 결정 이슈 미결 (#15 분리분). 내 지도가 이미 10개면 409 MAP_LIMIT(#369). 이미 구성원인 지도의 초대를 다시 수락하는 경우는 새로 참여하는 게 아니라 막지 않는다 */
+        /** 초대 수락. 로그인 전 접근 시 처리 방식은 결정 이슈 미결 (#15 분리분). 내 지도가 이미 20개면 409 MAP_LIMIT(#369, */
         post: {
             parameters: {
                 query?: never;
@@ -2352,7 +2352,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 내 지도가 이미 10개다 — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다 (MAP_LIMIT, */
+        /** @description 내 지도가 이미 20개다(#433에서 10→20) — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다 (MAP_LIMIT, */
         MapLimit: {
             headers: {
                 [name: string]: unknown;
