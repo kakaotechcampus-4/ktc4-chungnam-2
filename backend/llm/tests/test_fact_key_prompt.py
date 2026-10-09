@@ -45,6 +45,15 @@ class TestPromptListIsBuiltFromFactKey:
         with pytest.raises(ValidationError):
             EvidenceLine(source="manual", text="4인 이상", badge="required", fact_key="capacity_min")
 
+    def test_retired_price_bucket_is_gone(self):
+        # 가격 라벨은 v1에서 뺐다(#423). "비싸요"는 키 없는 줄이 된다.
+        assert "price_bucket" not in FACT_KEYS
+        assert "price_bucket" not in HARD_FACT_KEYS
+        assert "price_bucket" not in prompts.PLAN_EVIDENCE_PROMPT
+        assert '"너무 비싸요"·"입장료가 비싸요" → conditions 빈 목록' in prompts.PLAN_EVIDENCE_PROMPT
+        with pytest.raises(ValidationError):
+            PlannedCondition(fact_key="price_bucket", wants=False)
+
     def test_missing_meaning_fails_loudly(self):
         with pytest.raises(KeyError, match="cuisine_raw_fish"):
             prompts._render_fact_key_lines(("quiet", "cuisine_raw_fish"), {"quiet": "조용한가"})

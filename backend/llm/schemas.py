@@ -24,7 +24,6 @@ from pydantic import BaseModel, model_validator
 FactKey = Literal[
     # 공통
     "contains_shellfish",
-    "price_bucket",
     "pet_friendly",
     # 음식점
     "spicy_focused",
