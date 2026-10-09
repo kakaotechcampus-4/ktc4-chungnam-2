@@ -270,7 +270,6 @@ def _tourapi_skip_reason(item: Mapping[str, Any], content_type: str, seoul_only:
 
 # ---------------------------------------------------------------- 라벨 파일 (place_facts)
 
-PRICE_BUCKETS = frozenset({"low", "mid", "high"})
 NOT_LABELS = frozenset({"is_open", "within_radius"})   # 코드 판정이라 place_facts에 없다 (constraints.md)
 _KEY_ROW = re.compile(r"^\|\s*`([a-z][a-z0-9_]*)`")
 
@@ -291,9 +290,9 @@ class LabelRow:
     source: str
     source_id: str
     fact_key: str
-    value: Any                       # True/False/'low'/'mid'/'high'/None(unknown)
+    value: Any                       # True/False/None(unknown)
     confidence: str                  # known | unknown
-    source_layer: int                # price_bucket은 2(차원 압축), 나머지 3
+    source_layer: int                # 라벨 파일은 3 (가격대 price_bucket=2는 #423에서 뺐다)
     labeled_at: datetime | None
     evidence: str | None = None      # 근거 원문(place_facts.evidence, #203) — 가드레일 5의 "이유·출처"에 쓴다
     label_source: str | None = None  # 근거의 종류(license_business_type, 모범음식점 …)
@@ -323,13 +322,8 @@ def parse_label_rows(rows: Iterable[Mapping[str, Any]], allowed: frozenset[str])
             continue
         if confidence == "unknown":
             value: Any = None
-        elif key == "price_bucket":
-            if raw_value not in PRICE_BUCKETS:   # 원본 가격 숫자가 들어오면 저장하지 않는다
-                report.skip("price_bucket은 low/mid/high만(원본 가격 숫자 거부)")
-                continue
-            value = raw_value
         else:
-            value = _parse_bool(raw_value)
+            value = _parse_bool(raw_value)   # 참/거짓만 — 원본 가격 같은 숫자는 저장되지 않는다
             if value is None:
                 report.skip("known인데 value가 true/false가 아님")
                 continue
@@ -345,7 +339,7 @@ def parse_label_rows(rows: Iterable[Mapping[str, Any]], allowed: frozenset[str])
         if ident in latest:
             duplicates += 1
         latest[ident] = LabelRow(
-            source, source_id, key, value, confidence, 2 if key == "price_bucket" else 3, labeled_at,
+            source, source_id, key, value, confidence, 3, labeled_at,
             _pick(row, ("evidence",)) or None, _pick(row, ("label_source",)) or None,
         )
     if duplicates:

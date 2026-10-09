@@ -67,7 +67,6 @@ def _sample_facts() -> dict[str, list[FactLabel]]:
         sample_id("seongsu-kalguksu"): [
             FactLabel("contains_shellfish", True, "known"),
             FactLabel("spicy_focused", False, "known"),
-            FactLabel("price_bucket", "mid", "known"),
             FactLabel("oily_focused", None, "unknown"),
         ],
         sample_id("seongsu-cafe-a"): [
