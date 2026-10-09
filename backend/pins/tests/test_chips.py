@@ -91,6 +91,15 @@ def test_evidence_chips_fill_key_and_direction_from_the_table_and_keep_legacy_va
     ]
 
 
+def test_shellfish_chip_is_gone_but_old_reactions_keep_its_label():
+    """#425 — 새 반응에서는 못 고르고(422), 이미 남긴 반응은 id가 아니라 이름표로 보이며 키는 없다(거르지 않는다)."""
+    assert chips.chip_for("food_shellfish") is None
+    assert "food_shellfish" in chips.unknown_chip_ids("음식점", ["food_shellfish"])
+    assert chips.evidence_chips(["food_shellfish"]) == [
+        {"chip_id": "food_shellfish", "label": "갑각류 알러지가 있어요", "fact_key": None, "wants": None},
+    ]
+
+
 def test_price_chips_stay_but_carry_no_key():
     """#423 — 가격 칩은 남기고 키만 뗐다. 근거 줄은 키 없음(「너무 멀어요」와 같다), Pin에도 price_bucket이 없다."""
     from pins.schemas import Pin

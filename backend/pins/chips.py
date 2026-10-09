@@ -17,7 +17,6 @@ _CATEGORY_CHIPS: dict[str, tuple[ReasonChip, ...]] = {
         ReasonChip(id="food_expensive", label="비싸요"),
         ReasonChip(id="food_wait", label="웨이팅이 길어요", fact_key="wait_short", wants=True),
         ReasonChip(id="food_cramped", label="좁아요", fact_key="spacious", wants=True),
-        ReasonChip(id="food_shellfish", label="갑각류 알러지가 있어요", fact_key="contains_shellfish", wants=False),
     ),
     "카페": (
         ReasonChip(id="cafe_crowded", label="너무 붐벼요", fact_key="is_crowded_large", wants=False),
@@ -36,8 +35,11 @@ _CATEGORY_CHIPS: dict[str, tuple[ReasonChip, ...]] = {
     ),
 }
 
+# 뺀 칩의 이름표(#425). 새 반응에서는 고를 수 없지만(chips_for에 없다), 이미 남긴 반응이 근거 화면에 id 그대로 보이지 않게 한다.
+_RETIRED_LABELS: dict[str, str] = {"food_shellfish": "갑각류 알러지가 있어요"}
 
-def category_chips() -> dict[str, tuple[ReasonChip, ...]]:
+
+def category_chips()-> dict[str, tuple[ReasonChip, ...]]:
     """표의 카테고리 열 → 칩. 「공통」 키를 포함한다(문서 대조 테스트용)."""
     return dict(_CATEGORY_CHIPS)
 
@@ -60,12 +62,13 @@ def chip_for(chip_id: str) -> ReasonChip | None:
 
 def evidence_chips(chip_ids: list[str]) -> list[dict]:
     """반응에 남긴 칩 id → 근거 줄 재료(#412). 칩 하나당 하나, 키와 방향은 표 그대로라 ②를 거치지 않는다.
-    옛 값(이름 그대로 저장된 것, #312 전)은 그 값을 글로 쓰고 키·방향 없이 둔다 — 「공통」 칩과 같다."""
+    옛 값(이름 그대로 저장된 것, #312 전)은 그 값을 글로 쓰고, 뺀 칩은 이름표를 쓴다. 둘 다 키·방향 없이 둔다 — 「공통」 칩과 같다."""
     resolved = []
     for chip_id in chip_ids:
         chip = chip_for(chip_id)
         if chip is None:
-            resolved.append({"chip_id": chip_id, "label": chip_id, "fact_key": None, "wants": None})
+            label = _RETIRED_LABELS.get(chip_id, chip_id)
+            resolved.append({"chip_id": chip_id, "label": label, "fact_key": None, "wants": None})
         else:
             resolved.append({"chip_id": chip.id, "label": chip.label, "fact_key": chip.fact_key, "wants": chip.wants})
     return resolved
