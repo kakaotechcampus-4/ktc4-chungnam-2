@@ -520,6 +520,28 @@ def test_create_run_sends_only_the_written_text_to_the_model_and_keeps_the_chips
     ]
 
 
+def test_create_run_demotes_wanted_cuisine_from_a_against_reason_to_preferred(db_session, monkeypatch):
+    """#422 — "한식 말고 고기 먹고 싶어요"(🚫): 한식 피함은 required, 고기구이 원함은 preferred로 저장된다."""
+    from llm.schemas import EvidenceLine
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="against", reason_text="한식 말고 고기 먹고 싶어요")
+    text = "한식 말고 고기 먹고 싶어요"
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", lambda raw: [[
+        EvidenceLine(author_id="user_1", source="reaction", text=text, badge="required", fact_key="cuisine_korean", wants=False),
+        EvidenceLine(author_id="user_1", source="reaction", text=text, badge="required", fact_key="cuisine_bbq", wants=True),
+    ]])
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    lines = service.list_evidence(db_session, str(run.id))
+    assert [(l.fact_key, l.wants, l.badge) for l in lines] == [
+        ("cuisine_korean", False, "required"),
+        ("cuisine_bbq", True, "preferred"),
+    ]
+    assert flows._active_soft_requirements(db_session, run) == [("cuisine_korean", False)]
+
+
 def test_create_run_keeps_a_legacy_chip_value_as_text_without_key(db_session, monkeypatch):
     """#412 — #312 전에 이름 그대로 저장된 옛 값은 그 값을 글로 쓰고 키·방향 없이 둔다(② 호출 없음)."""
     _make_members(db_session, user_ids=["user_1"])
@@ -1439,16 +1461,15 @@ def test_create_run_splits_a_reason_into_one_line_per_condition_then_the_chips(d
     assert _lines_by_author(db_session, run) == {
         "user_1": [
             ("한식 말고 고기 먹고 싶어요", None, "cuisine_korean", False, "required", 800),
-            ("한식 말고 고기 먹고 싶어요", None, "cuisine_bbq", True, "required", None),
+            ("한식 말고 고기 먹고 싶어요", None, "cuisine_bbq", True, "preferred", None),   # #422 — 🚫 안의 음식 종류 "원함"은 선호
             ("느끼해요", "food_oily", "oily_focused", False, "required", None),
         ],
         "user_2": [("고기 좋아요, 고기가 최고", None, "cuisine_bbq", True, "preferred", None)],
         "user_3": [("그냥 별로예요", None, None, None, "required", None)],
     }
     # 거르기는 줄 단위 그대로다 — 나뉜 두 조건이 각각 켜진다(전에는 하나가 조용히 사라졌다).
-    assert flows._active_soft_requirements(db_session, run) == [
-        ("cuisine_bbq", True), ("cuisine_korean", False), ("oily_focused", False),
-    ]
+    # 고기구이 원함은 #422로 선호가 되어 실격 조건이 아니다.
+    assert flows._active_soft_requirements(db_session, run) == [("cuisine_korean", False), ("oily_focused", False)]
 
 
 def test_split_lines_are_turned_off_one_condition_at_a_time(db_session, monkeypatch):
@@ -1466,7 +1487,7 @@ def test_split_lines_are_turned_off_one_condition_at_a_time(db_session, monkeypa
 
     # 순서는 보지 않는다 — 한 트랜잭션에서 넣은 줄은 created_at이 같아 UPDATE 뒤 순서가 바뀔 수 있다(루트 보고).
     assert {e.fact_key: e.is_active for e in result} == {"cuisine_korean": False, "cuisine_bbq": True}
-    assert flows._active_soft_requirements(db_session, run) == [("cuisine_bbq", True)]
+    assert flows._active_soft_requirements(db_session, run) == []   # 남은 고기구이 줄은 #422로 선호라 실격이 아니다
 
 
 def test_plus_manual_text_with_several_conditions_adds_a_reference_line_per_condition(db_session, monkeypatch):

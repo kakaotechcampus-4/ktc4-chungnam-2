@@ -244,7 +244,7 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str) ->
     text_inputs = [_evidence_from_reaction(r) for r in raw_reactions if r["reason_text"] is not None]
     planned = llm_service.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
     reaction_lines = _reaction_evidence_lines(raw_reactions, [[line.model_dump() for line in group] for group in planned])
-    merged = core.assemble_evidence(reaction_lines, [])
+    merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422
 
     # LLM 대기 중 같은 사용자의 동시 요청이 상한(#31)에 도달시켰을 수 있다 — INSERT 직전에 다시 읽어
     # 경합 구간을 수 ms로 줄인다(첫 검사는 모델을 부르기 전에 막는 빠른 실패용).

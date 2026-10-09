@@ -46,6 +46,50 @@ def test_assemble_evidence_preserves_reaction_then_manual_order():
     assert core.assemble_evidence(reaction, manual) == [{"text": "a"}, {"text": "b"}]
 
 
+# ---------- demote_wanted_place_identity (#422) ----------
+
+def _line(badge, fact_key, wants):
+    return {"text": "사유", "badge": badge, "fact_key": fact_key, "wants": wants}
+
+
+def test_demote_lowers_required_wanted_cuisine_to_preferred():
+    (line,) = core.demote_wanted_place_identity([_line("required", "cuisine_bbq", True)], "음식점")
+    assert line["badge"] == "preferred"
+
+
+@pytest.mark.parametrize("line", [
+    _line("required", "cuisine_korean", False),   # 피함은 그대로 required
+    _line("required", "parking_available", True), # 필요 조건은 그대로
+    _line("required", "spacious", True),          # 칩 「좁아요」
+    _line("required", "quiet", True),
+    _line("required", "cuisine_bbq", None),       # 방향 모름
+    _line("required", None, None),
+    _line("preferred", "cuisine_bbq", True),
+    _line("reference", "cuisine_bbq", True),
+])
+def test_demote_leaves_every_other_line_alone(line):
+    assert core.demote_wanted_place_identity([line], "음식점") == [line]
+
+
+def test_demote_only_applies_to_restaurant_identity_table():
+    line = _line("required", "cuisine_bbq", True)
+    assert core.demote_wanted_place_identity([line], "카페") == [line]
+    assert core.demote_wanted_place_identity([_line("required", "quiet", True)], "카페") == [_line("required", "quiet", True)]
+
+
+def test_demote_covers_chip_lines_and_does_not_mutate_input():
+    chip_line = {"text": "고기가 먹고 싶어요", "chip_id": "x", "badge": "required", "fact_key": "cuisine_bbq", "wants": True}
+    original = dict(chip_line)
+    (result,) = core.demote_wanted_place_identity([chip_line], "음식점")
+    assert result["badge"] == "preferred" and result["chip_id"] == "x"
+    assert chip_line == original
+
+
+def test_demote_keeps_the_mixed_reason_split_korean_required_bbq_preferred():
+    lines = [_line("required", "cuisine_korean", False), _line("required", "cuisine_bbq", True)]
+    assert [l["badge"] for l in core.demote_wanted_place_identity(lines, "음식점")] == ["required", "preferred"]
+
+
 # ---------- circles_all_overlap / region_signature / merge_circles ----------
 
 def test_circles_all_overlap_true_for_zero_or_one_circle():
