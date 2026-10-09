@@ -124,17 +124,35 @@ class EvidenceLine(BaseModel):
 
     @model_validator(mode="after")
     def _wants_needs_fact_key(self) -> "EvidenceLine":
-        # 방향은 키가 있을 때만 의미가 있다. 모델이 키 없이 wants를 채워 와도 예외로 ② 전체를 무너뜨리지
-        # 않고 버린다(merge_planned도 같은 정리를 한다).
+        # 방향은 키가 있을 때만 의미가 있다. 키 없이 wants가 들어와도 예외로 ② 전체를 무너뜨리지 않고 버린다.
         if self.fact_key is None:
             self.wants = None
         return self
 
 
-class PlanningOutput(BaseModel):
-    """② 사유 → 실격/선호/반경 구조화 출력."""
+class PlannedCondition(BaseModel):
+    """② 응답 — 사유 글에서 읽은 조건 하나(키와 방향). 근거 줄 하나가 된다(#419)."""
 
-    evidence_lines: list[EvidenceLine]
+    fact_key: FactKey
+    wants: Optional[bool] = None
+
+
+class PlannedReason(BaseModel):
+    """② 응답 — 입력 글 한 줄에 대한 결과. index·text는 입력과 맞는지 대조하는 데만 쓴다.
+
+    conditions는 0개 이상이다 — 비면 키 없는 줄 하나, 여럿이면 조건마다 줄 하나(#419).
+    badge·author 같은 나머지 필드는 받지 않는다 — 모델이 바꿀 수 없는 값이라 에코할 이유가 없다."""
+
+    index: int
+    text: str
+    conditions: list[PlannedCondition]
+    circle_radius_m: Optional[int] = None
+
+
+class PlanningOutput(BaseModel):
+    """② 사유 → 실격/선호/반경 구조화 출력. 입력 글마다 PlannedReason 하나."""
+
+    reasons: list[PlannedReason]
 
 
 class PlaceFactLabel(BaseModel):

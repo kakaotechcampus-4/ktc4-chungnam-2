@@ -45,7 +45,7 @@ def safety_planner(monkeypatch):
                 key, wants = "spicy_focused", False   # 취향 키(#378) — 방향은 wants가 정한다
             else:
                 key, wants = None, None
-            out.append(EvidenceLine(**{**reason, "fact_key": key, "wants": wants}))
+            out.append([EvidenceLine(**{**reason, "fact_key": key, "wants": wants})])
         return out
 
     monkeypatch.setattr(llm_service, "get_evidence_planner", lambda: planner)

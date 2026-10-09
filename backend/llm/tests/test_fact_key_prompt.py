@@ -16,7 +16,15 @@ from pydantic import ValidationError
 
 from llm import prompts, service
 from llm.client import call_planner
-from llm.schemas import FACT_KEYS, EvidenceLine, FactKey, PlanningOutput
+from llm.schemas import FACT_KEYS, EvidenceLine, FactKey, PlannedCondition, PlannedReason, PlanningOutput
+
+
+def _output(*reasons):
+    """(text, [(fact_key, wants), ...]) 쌍마다 응답 원소 하나 — index는 위치."""
+    return PlanningOutput(reasons=[
+        PlannedReason(index=i, text=text, conditions=[PlannedCondition(fact_key=k, wants=w) for k, w in conditions])
+        for i, (text, conditions) in enumerate(reasons)
+    ])
 
 
 class TestPromptListIsBuiltFromFactKey:
@@ -54,10 +62,7 @@ class _FakeClient:
     """모델이 낸 fact_key를 그대로 돌려주는 대역 — 사람 말 → 키 대응을 모델이 맞췄다고 가정한다."""
 
     def __init__(self, fact_keys):
-        output = PlanningOutput(evidence_lines=[
-            EvidenceLine(source="reaction", text=text, badge=badge, fact_key=key)
-            for text, badge, key in fact_keys
-        ])
+        output = _output(*[(text, [(key, None)] if key else []) for text, _badge, key in fact_keys])
         message = SimpleNamespace(parsed=output, refusal=None)
         self.chat = SimpleNamespace(completions=SimpleNamespace(
             parse=lambda **_: SimpleNamespace(choices=[SimpleNamespace(message=message)])))
@@ -80,7 +85,7 @@ def _reason(text, badge):
 def test_human_phrase_maps_to_registry_key(text, badge, expected):
     client = _FakeClient([(text, badge, expected)])
 
-    [line] = service._model_planner(client, [_reason(text, badge)])
+    [[line]] = service._model_planner(client, [_reason(text, badge)])
 
     assert line.fact_key == expected
     assert line.badge == badge  # 방향(원함/반대)은 badge가 정한다 — 키는 그대로
@@ -89,7 +94,7 @@ def test_human_phrase_maps_to_registry_key(text, badge, expected):
 def test_unrelated_phrase_stays_null():
     client = _FakeClient([("그냥 별로예요", "preferred", None)])
 
-    [line] = service._model_planner(client, [_reason("그냥 별로예요", "preferred")])
+    [[line]] = service._model_planner(client, [_reason("그냥 별로예요", "preferred")])
 
     assert line.fact_key is None
 
@@ -97,6 +102,8 @@ def test_unrelated_phrase_stays_null():
 def test_model_cannot_emit_key_outside_registry():
     with pytest.raises(ValidationError):
         EvidenceLine(source="reaction", text="x", badge="preferred", fact_key="cuisine_pizza")
+    with pytest.raises(ValidationError):
+        PlannedCondition(fact_key="cuisine_pizza", wants=True)
 
 
 # ── 방향(wants) — #230 ──────────────────────────────────────────────────────
@@ -114,11 +121,12 @@ class TestWantsSchema:
         line = EvidenceLine(source="reaction", text="x", badge="preferred", wants=True)
         assert (line.fact_key, line.wants) == (None, None)
 
-    def test_model_output_with_null_key_and_wants_does_not_raise(self):
-        out = PlanningOutput.model_validate(
-            {"evidence_lines": [{"source": "reaction", "text": "x", "badge": "preferred", "fact_key": None, "wants": True}]}
-        )
-        assert out.evidence_lines[0].wants is None
+    def test_model_output_condition_needs_a_key(self):
+        # 키 없는 조건은 스키마가 받지 않는다 — "조건 없음"은 빈 conditions로 낸다(#419).
+        with pytest.raises(ValidationError):
+            PlanningOutput.model_validate(
+                {"reasons": [{"index": 0, "text": "x", "conditions": [{"fact_key": None, "wants": True}]}]}
+            )
 
     def test_wants_defaults_to_none(self):
         assert EvidenceLine(source="reaction", text="x", badge="preferred", fact_key="quiet").wants is None
@@ -129,30 +137,26 @@ class TestWantsSchema:
 
 class TestWantsMerge:
     def test_model_wants_is_taken_when_input_has_none(self):
-        planned = EvidenceLine(source="reaction", text="한식 말고", badge="required", fact_key="cuisine_korean", wants=False)
+        output = _output(("한식 말고", [("cuisine_korean", False)]))
 
-        [line] = service.merge_planned([_reason("한식 말고", "required")], PlanningOutput(evidence_lines=[planned]))
+        [[line]] = service.merge_planned([_reason("한식 말고", "required")], output)
 
         assert (line.fact_key, line.wants) == ("cuisine_korean", False)
 
     def test_input_wants_is_not_overwritten_by_model(self):
         raw = {**_reason("한식 먹자", "preferred"), "fact_key": "cuisine_korean", "wants": True}
-        planned = EvidenceLine(source="reaction", text="한식 먹자", badge="preferred", fact_key="cuisine_korean", wants=False)
 
-        [line] = service.merge_planned([raw], PlanningOutput(evidence_lines=[planned]))
+        [[line]] = service.merge_planned([raw], _output(("한식 먹자", [("cuisine_korean", False)])))
 
         assert line.wants is True
 
     def test_wants_without_key_is_dropped(self):
         raw = {**_reason("그냥", "preferred"), "wants": False}
-        [line] = service.merge_planned([raw], PlanningOutput(evidence_lines=[
-            EvidenceLine(source="reaction", text="그냥", badge="preferred")]))
+        [[line]] = service.merge_planned([raw], _output(("그냥", [])))
         assert (line.fact_key, line.wants) == (None, None)
 
     def test_unknown_direction_stays_null(self):
-        planned = EvidenceLine(source="reaction", text="한식", badge="preferred", fact_key="cuisine_korean")
-
-        [line] = service.merge_planned([_reason("한식", "preferred")], PlanningOutput(evidence_lines=[planned]))
+        [[line]] = service.merge_planned([_reason("한식", "preferred")], _output(("한식", [("cuisine_korean", None)])))
 
         assert line.wants is None
 
@@ -214,15 +218,15 @@ import unicodedata
 
 class TestTextEchoNormalization:
     def _merge(self, echoed: str):
-        planned = EvidenceLine(source="reaction", text=echoed, badge="required", fact_key="cuisine_korean", wants=False)
-        return service.merge_planned([_reason("한식 말고 다른 거", "required")], PlanningOutput(evidence_lines=[planned]))
+        output = _output((echoed, [("cuisine_korean", False)]))
+        return service.merge_planned([_reason("한식 말고 다른 거", "required")], output)
 
     def test_nfd_echo_is_accepted_and_result_keeps_input_text(self):
-        [line] = self._merge(unicodedata.normalize("NFD", "한식 말고 다른 거"))
+        [[line]] = self._merge(unicodedata.normalize("NFD", "한식 말고 다른 거"))
         assert line.text == "한식 말고 다른 거" and line.fact_key == "cuisine_korean"
 
     def test_zero_width_and_spacing_differences_are_accepted(self):
-        [line] = self._merge("한식\u200b 말고\u00a0 다른\n거")
+        [[line]] = self._merge("한식\u200b 말고\u00a0 다른\n거")
         assert line.text == "한식 말고 다른 거"
 
     def test_different_text_is_still_rejected(self):
@@ -283,3 +287,49 @@ class TestPromptDescribesOmittedKey:
         prompt = prompts.PLAN_EVIDENCE_PROMPT
         assert '"새우 빼고 시키면 괜찮아요" → contains_shellfish, wants=null' in prompt
         assert '"새우 빼고 주문하면 돼서 상관없어요" → contains_shellfish, wants=null' in prompt
+
+
+# ── 글 하나에 조건 여럿 — #419 ───────────────────────────────────────────────
+
+MULTI_KEY_CASES = json.loads((Path(__file__).parent / "fixtures" / "multi_key_cases.json").read_text(encoding="utf-8"))
+
+
+class TestMultiConditionPrompt:
+    def test_output_is_one_reason_per_input_with_a_condition_list(self):
+        prompt = prompts.PLAN_EVIDENCE_PROMPT
+        assert "reasons는 입력과 같은 개수, 같은 순서" in prompt
+        assert "index는 입력 index를 그대로" in prompt
+        assert "조건이 하나도 없으면 conditions는 빈 목록" in prompt
+
+    def test_prompt_gives_multi_condition_examples(self):
+        prompt = prompts.PLAN_EVIDENCE_PROMPT
+        assert '"한식 말고 고기 먹고 싶어요" → cuisine_korean, wants=false / cuisine_bbq, wants=true' in prompt
+        assert '"매운 거랑 해산물 둘 다 안 돼요" → spicy_focused, wants=false / contains_shellfish, wants=false' in prompt
+
+    def test_prompt_says_not_to_split_a_single_condition(self):
+        prompt = prompts.PLAN_EVIDENCE_PROMPT
+        assert "조건이 하나인 글은 나누지 않는다" in prompt
+        assert '"회 못 먹어요" → cuisine_raw_fish, wants=false (하나' in prompt
+        assert "같은 fact_key를 두 번 넣지 않는다" in prompt
+
+    def test_radius_is_one_per_text(self):
+        assert "조건이 여럿이어도 글 하나에 하나다" in prompts.PLAN_EVIDENCE_PROMPT
+
+    def test_prompt_no_longer_asks_to_echo_badge_or_source(self):
+        prompt = prompts.PLAN_EVIDENCE_PROMPT
+        assert "evidence_lines" not in prompt
+        assert "source는 입력 그대로" not in prompt
+
+
+class TestMultiKeyFixtures:
+    """실제 Luna에 먹일 #419 평가셋(test_plan_evidence_live)이 규칙에 맞는지만 본다."""
+
+    @pytest.mark.parametrize("case", MULTI_KEY_CASES, ids=[c["text"] for c in MULTI_KEY_CASES])
+    def test_case_is_valid(self, case):
+        conditions = [PlannedCondition(fact_key=k, wants=w) for k, w in case["conditions"]]
+        assert len({c.fact_key for c in conditions}) == len(conditions)  # 같은 키 두 번 없음
+
+    def test_covers_split_single_and_empty(self):
+        sizes = {len(c["conditions"]) for c in MULTI_KEY_CASES}
+        assert {0, 1, 2} <= sizes
+        assert any(k in HARD_FACT_KEYS for c in MULTI_KEY_CASES if len(c["conditions"]) > 1 for k, _ in c["conditions"])

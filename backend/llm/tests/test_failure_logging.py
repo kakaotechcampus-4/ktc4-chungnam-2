@@ -14,7 +14,7 @@ from common.settings import settings
 from llm import client as llm_client
 from llm import service
 from llm.client import LlmCallError, call_planner
-from llm.schemas import EvidenceLine, PlanningOutput
+from llm.schemas import EvidenceLine, PlannedReason, PlanningOutput
 from llm.service import PlanEvidenceFailed, plan_evidence
 
 SECRET_REASON = "비밀사유-갑각류알러지-홍길동"
@@ -87,7 +87,7 @@ def test_refusal_and_empty_response_are_warned_without_their_content(caplog):
 
 
 def test_success_is_logged_at_info_with_tokens(caplog):
-    parsed = PlanningOutput(evidence_lines=[EvidenceLine(source="reaction", text=SECRET_REASON, badge="required")])
+    parsed = PlanningOutput(reasons=[PlannedReason(index=0, text=SECRET_REASON, conditions=[])])
     client = FakeClient(parsed=parsed, usage=SimpleNamespace(prompt_tokens=120, completion_tokens=45))
 
     with caplog.at_level(logging.INFO, logger="pingo.llm"):
@@ -143,7 +143,7 @@ class TestServiceFailureSummary:
         _assert_clean(caplog)
 
     def test_value_error_from_merge_is_summarized_by_class_name(self, caplog):
-        parsed = PlanningOutput(evidence_lines=[])  # 개수 불일치 — merge_planned가 ValueError
+        parsed = PlanningOutput(reasons=[])  # 개수 불일치 — merge_planned가 ValueError
 
         with caplog.at_level(logging.INFO, logger="pingo.llm"), pytest.raises(PlanEvidenceFailed) as exc:
             plan_evidence([_reason()], planner=partial(service._model_planner, FakeClient(parsed=parsed)))

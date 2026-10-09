@@ -87,7 +87,7 @@ def fake_planner(monkeypatch):
         out = []
         for reason in raw_reasons:
             key, wants = next((v for k, v in mapping.items() if k in reason["text"]), (None, None))
-            out.append(EvidenceLine(**{**reason, "fact_key": key, "wants": wants if key else None}))
+            out.append([EvidenceLine(**{**reason, "fact_key": key, "wants": wants if key else None})])
         return out
 
     monkeypatch.setattr(llm_service, "get_evidence_planner", lambda: planner)

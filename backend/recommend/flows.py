@@ -183,14 +183,15 @@ def _evidence_from_chip(reaction: dict, chip: dict) -> dict:
     }
 
 
-def _reaction_evidence_lines(raw_reactions: list[dict], planned_texts: list[dict]) -> list[dict]:
+def _reaction_evidence_lines(raw_reactions: list[dict], planned_groups: list[list[dict]]) -> list[dict]:
     """반응마다 글 줄(②를 거친 것, 있을 때만) 다음에 칩 줄을 붙인다(#412) — 한 사람이 한 반응에 남긴 줄이
-    붙어 있어야 「−」로 뺄 자기 근거를 찾기 쉽다. planned_texts는 글이 있는 반응 순서 그대로의 ② 결과다."""
-    planned = iter(planned_texts)
+    붙어 있어야 「−」로 뺄 자기 근거를 찾기 쉽다. planned_groups는 글이 있는 반응 순서 그대로의 ② 결과이고,
+    글 하나가 조건마다 줄 하나로 나뉜 묶음이다(#419) — 묶음 안 줄들이 모두 그 반응의 칩 줄보다 앞에 온다."""
+    planned = iter(planned_groups)
     lines: list[dict] = []
     for reaction in raw_reactions:
         if reaction["reason_text"] is not None:
-            lines.append(next(planned))
+            lines.extend(next(planned))
         lines.extend(_evidence_from_chip(reaction, chip) for chip in reaction["chips"])
     return lines
 
@@ -242,7 +243,7 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str) ->
     # ②에는 사람이 쓴 글만 보낸다(#412) — 칩은 키·방향이 정해져 있어 코드가 줄을 만든다. 글이 없으면 ② 호출도 없다.
     text_inputs = [_evidence_from_reaction(r) for r in raw_reactions if r["reason_text"] is not None]
     planned = llm_service.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
-    reaction_lines = _reaction_evidence_lines(raw_reactions, [line.model_dump() for line in planned])
+    reaction_lines = _reaction_evidence_lines(raw_reactions, [[line.model_dump() for line in group] for group in planned])
     merged = core.assemble_evidence(reaction_lines, [])
 
     # LLM 대기 중 같은 사용자의 동시 요청이 상한(#31)에 도달시켰을 수 있다 — INSERT 직전에 다시 읽어
@@ -294,15 +295,17 @@ def patch_evidence(
         service.set_evidence_active(db, line.id, is_active)
     # 「+」로 추가한 줄도 ②를 거쳐 fact_key·wants를 붙인다(#254) — 안전 사유("조개 알러지")가 reference로만 남아
     # 실격이 안 켜지는 걸 막는다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다).
+    # 글 하나에 조건이 여럿이면 같은 글로 조건마다 줄 하나다(#419).
     if adds:
         planned = llm_service.plan_evidence([
             {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "reference", "fact_key": None}
             for text in adds
         ])
-        for text, line in zip(adds, planned):
-            service.add_manual_evidence(
-                db, run_id=run.id, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
-            )
+        for text, group in zip(adds, planned):
+            for line in group:
+                service.add_manual_evidence(
+                    db, run_id=run.id, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
+                )
     return [_evidence_response(line, principal) for line in service.list_evidence(db, run_id)]
 
 

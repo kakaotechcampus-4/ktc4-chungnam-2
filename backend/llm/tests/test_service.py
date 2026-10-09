@@ -217,7 +217,7 @@ class TestPlanEvidence:
             }
         ]
 
-        [evidence] = plan_evidence(raw)
+        [[evidence]] = plan_evidence(raw)
 
         assert isinstance(evidence, EvidenceLine)
         assert evidence.badge == "required"
@@ -228,7 +228,7 @@ class TestPlanEvidence:
         # v1 스텁이 값을 지어내면 안 된다.
         raw = [{"source": "manual", "text": "그냥 여기 가고 싶어요", "badge": "reference"}]
 
-        [evidence] = plan_evidence(raw)
+        [[evidence]] = plan_evidence(raw)
 
         assert evidence.fact_key is None
 
