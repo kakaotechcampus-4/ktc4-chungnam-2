@@ -262,3 +262,19 @@ def list_excluded_place_ids(db: Session, *, map_id: str, requested_by: str) -> s
         select(Exclusion.place_id).where(Exclusion.map_id == map_id, Exclusion.requested_by == requested_by)
     ).scalars().all()
     return set(rows)
+
+
+def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+    """지도 정리(#431) — 이 지도들의 추천 기록을 지운다. 테이블 이름 → 지운 행 수. 자식(근거 줄·후보·지역·
+    제외)부터 지우고 run을 마지막에 지운다(전부 recommend_runs를 참조, 후보는 지역도 참조해서 지역보다 먼저)."""
+    names = ["evidence_lines", "candidates", "regions", "exclusions", "recommend_runs"]
+    if not map_ids:
+        return dict.fromkeys(names, 0)
+    run_ids = select(RecommendRun.id).where(RecommendRun.map_id.in_(map_ids))
+    return {
+        "evidence_lines": db.execute(delete(EvidenceLine).where(EvidenceLine.run_id.in_(run_ids))).rowcount,
+        "candidates": db.execute(delete(Candidate).where(Candidate.run_id.in_(run_ids))).rowcount,
+        "regions": db.execute(delete(Region).where(Region.run_id.in_(run_ids))).rowcount,
+        "exclusions": db.execute(delete(Exclusion).where(Exclusion.map_id.in_(map_ids))).rowcount,
+        "recommend_runs": db.execute(delete(RecommendRun).where(RecommendRun.map_id.in_(map_ids))).rowcount,
+    }

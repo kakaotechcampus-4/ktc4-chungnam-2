@@ -359,3 +359,9 @@ def delete_reactions_by_user_in_map(db: Session, *, user_id: str, map_id: str) -
         delete(ReactionRow).where(ReactionRow.user_id == user_id, ReactionRow.pin_id.in_(pin_ids_on_map))
     )
     return result.rowcount
+
+
+def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+    """지도 정리(maps.purge, #431)가 부른다 — 이 지도들의 reactions·pins만 지우고 테이블 이름 → 지운 행 수를
+    돌려준다. shortlist_items가 핀을 참조하므로 shortlist.api.purge_map_data를 먼저 불러야 한다. 커밋하지 않는다."""
+    return service.purge_map_data(db, map_ids=map_ids)

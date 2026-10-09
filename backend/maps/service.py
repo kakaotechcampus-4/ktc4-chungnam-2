@@ -393,3 +393,20 @@ def transfer_or_delete_owned_maps(db: Session, *, user_id: str) -> None:
         else:
             transfer_owner(db, map_id=map_id, from_user_id=user_id, to_user_id=successor)
             record_event(db, core.member_left_event(map_id, user_id, successor))
+
+
+def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+    """지도 정리(#431) — 이 지도들의 초대·멤버십·지도 행을 지운다. 테이블 이름 → 지운 행 수.
+    둘 다 maps를 참조해서 지도 행은 마지막이다. 삭제된 지도(deleted_at)인지는 호출부(maps.purge)가 가린다."""
+    if not map_ids:
+        return {"invites": 0, "memberships": 0, "maps": 0}
+    live = db.execute(
+        select(MapRow.id).where(MapRow.id.in_(map_ids), MapRow.deleted_at.is_(None))
+    ).scalars().all()
+    if live:  # 되돌릴 수 없는 작업이라 호출부가 틀려도 살아 있는 지도는 지우지 않는다
+        raise ValueError(f"삭제되지 않은 지도는 정리할 수 없다: {sorted(live)}")
+    return {
+        "invites": db.execute(delete(InviteRow).where(InviteRow.map_id.in_(map_ids))).rowcount,
+        "memberships": db.execute(delete(MembershipRow).where(MembershipRow.map_id.in_(map_ids))).rowcount,
+        "maps": db.execute(delete(MapRow).where(MapRow.id.in_(map_ids))).rowcount,
+    }
