@@ -110,20 +110,6 @@ def test_is_duplicate_non_matching_place_id_is_not_duplicate():
     assert core.is_duplicate({"p1"}, "p2") is False
 
 
-# --- is_visible_to (가드레일 1) -----------------------------------------------
-
-def test_is_visible_to_public_visible_to_stranger():
-    assert core.is_visible_to("public", "owner", "stranger") is True
-
-
-def test_is_visible_to_private_visible_to_owner():
-    assert core.is_visible_to("private", "owner", "owner") is True
-
-
-def test_is_visible_to_private_hidden_from_stranger():
-    assert core.is_visible_to("private", "owner", "stranger") is False
-
-
 # --- kind_after_unconfirm -------------------------------------------------------
 
 def test_kind_after_unconfirm_ai_origin_returns_ai_recommended():
@@ -157,7 +143,7 @@ def test_to_pin_response_non_member_gets_all_false():
     assert pin.permissions.can_delete is False
 
 
-# --- 이벤트 조립 (가드레일 1: private는 전체 채널로 나가지 않는다) --------------------
+# --- 이벤트 조립 --------------------
 
 def test_pin_created_event_public_pin_emits_to_public_channel():
     event = core.pin_created_event(_pin(visibility="public"))
@@ -169,21 +155,13 @@ def test_pin_created_event_public_pin_emits_to_public_channel():
     assert event.recipient_user_id is None
 
 
-def test_pin_created_event_private_pin_emits_nothing():
-    assert core.pin_created_event(_pin(visibility="private")) is None
-
-
 def test_pin_deleted_event_payload_is_pin_id_only():
-    event = core.pin_deleted_event("pin_1", "map_1", visibility="public")
+    event = core.pin_deleted_event("pin_1", "map_1")
     assert event is not None
     assert event.map_id == "map_1"
     assert event.channel == "public"
     assert event.type == "pin.deleted"
     assert event.payload == {"pin_id": "pin_1"}
-
-
-def test_pin_deleted_event_private_pin_emits_nothing():
-    assert core.pin_deleted_event("pin_1", "map_1", visibility="private") is None
 
 
 # --- validate_reaction (가드레일 3) --------------------------------------------
@@ -244,7 +222,7 @@ def test_validate_reaction_like_never_requires_reason():
 
 def test_reaction_changed_event_public_pin_emits_envelope():
     summary = ReactionSummary(like=1, against=2)
-    event = core.reaction_changed_event("pin_1", "map_1", "public", summary, "user_2", "민수", "against")
+    event = core.reaction_changed_event("pin_1", "map_1", summary, "user_2", "민수", "against")
     assert event is not None
     assert event.map_id == "map_1"
     assert event.channel == "public"
@@ -256,14 +234,9 @@ def test_reaction_changed_event_public_pin_emits_envelope():
 
 
 def test_reaction_changed_event_delete_has_null_type_and_never_carries_reasons():
-    event = core.reaction_changed_event("pin_1", "map_1", "public", ReactionSummary(), "user_2", "민수", None)
+    event = core.reaction_changed_event("pin_1", "map_1", ReactionSummary(), "user_2", "민수", None)
     assert event.payload["type"] is None
     assert not {"reason_text", "reason_chip_ids", "my_reaction"} & set(event.payload)
-
-
-def test_reaction_changed_event_private_pin_emits_nothing():
-    event = core.reaction_changed_event("pin_1", "map_1", "private", ReactionSummary(), "user_2", "민수", "like")
-    assert event is None
 
 
 # --- #369 핀 작성자 표시 ---

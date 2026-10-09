@@ -12,15 +12,8 @@ const actor = (mapId: string) => ({
 });
 
 function visiblePins(mapId: string): Pin[] {
-  return Object.values(store.pins).filter((p) => {
-    if (p.map_id !== mapId) return false;
-    if (p.visibility === "private") {
-      // 5-5-1: 요청한 사람에게만 보인다. 목 서버는 항상 ME_USER_ID로 요청한다고 가정한다.
-      const runId = p.source_run_id ?? undefined;
-      return runId ? store.runRequestedBy[runId] === ME_USER_ID : false;
-    }
-    return true;
-  });
+  // v1은 private 핀 행이 없다(비공개 후보는 candidates, docs/data-model.md) — visibility로 거르지 않는다.
+  return Object.values(store.pins).filter((p) => p.map_id === mapId);
 }
 
 export const pinsHandlers = [
@@ -142,7 +135,7 @@ export const pinsHandlers = [
     (pin as any)._place_id = own.place_id;
     store.pins[pinId] = pin;
     store.reactions[pinId] = [];
-    emitEvent(mapId, "public", "pin.created", pin); // docs/events.md — private 핀은 여기 안 온다(지금 목 서버는 항상 public으로만 생성)
+    emitEvent(mapId, "public", "pin.created", pin);
     return HttpResponse.json(pin, { status: 201 });
   }),
 

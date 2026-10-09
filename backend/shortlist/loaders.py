@@ -39,10 +39,6 @@ def load_pin_for_confirm(
     pin_row = pins_api.get_pin_for_viewer(db, pin_id=body.pin_id, viewer_id=user.user_id)
     if pin_row.map_id != mapId:
         raise AppError("NOT_FOUND")  # Rule B — 경로/바디 불일치는 authz를 부르기 전에 끝낸다
-    if pin_row.visibility == "private":
-        # 가드레일 1 — 본인 소유 비공개 AI 후보도 「지도에 올리기」 없이 곧장 전체 공개
-        # 확정 리스트로 승격시킬 수 없다(for_Root.md 별도 보고).
-        raise AppError("AI_PIN_PRIVATE")
     return LoadedPinForConfirm(
         resource=Resource(type="pin", map_id=pin_row.map_id, author_id=pin_row.created_by, kind=pin_row.kind),
         obj=pin_row,

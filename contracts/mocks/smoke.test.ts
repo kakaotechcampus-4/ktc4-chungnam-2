@@ -65,7 +65,7 @@ describe("기획안 6절 핵심 시나리오 — happy path", () => {
     expect(result.candidates.length).toBe(3);
     expect(result.candidates[0].visibility).toBe("private");
 
-    // 아직 게시 전이므로 다른 사람에게는 안 보인다 (visibility=private, source_run_id로 판정)
+    // 아직 게시 전이므로 후보는 핀 목록에 없다(후보는 candidates, 핀이 아니다)
     const pinsBeforePublish = await fetch(`${BASE}/maps/map_1/pins`).then((r) => r.json());
     expect(pinsBeforePublish.length).toBe(3);
 

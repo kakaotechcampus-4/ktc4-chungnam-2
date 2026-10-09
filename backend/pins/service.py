@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import get_args
 
 from geoalchemy2 import Geometry
-from sqlalchemy import and_, cast, delete, func, or_, select, update
+from sqlalchemy import and_, cast, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -48,25 +48,20 @@ def _lat_lng_columns():
     return func.ST_Y(geom_as_geometry).label("lat"), func.ST_X(geom_as_geometry).label("lng")
 
 
-def _visible_pins_clause(map_id: str, viewer_id: str):
-    """그 지도에서 viewer에게 보이는 핀의 단일 판정 — list_pins와 count_pins가 같이 쓴다
-    (목록과 집계가 어긋나면 비공개 후보 개수가 새거나 배지 숫자가 목록과 달라진다, 가드레일 1).
-    괄호를 명시한다 — AND가 OR보다 우선순위가 높아, 괄호 없이 이어붙이면 삭제된
-    (deleted_at NOT NULL) 남의 비공개 핀까지 새어나온다."""
-    return and_(
-        PinRow.map_id == map_id,
-        PinRow.deleted_at.is_(None),
-        or_(PinRow.visibility == "public", PinRow.created_by == viewer_id),
-    )
+def _visible_pins_clause(map_id: str):
+    """그 지도에서 보이는 핀의 단일 판정 — list_pins와 count_pins가 같이 쓴다(목록과 집계가
+    어긋나면 배지 숫자가 목록과 달라진다). v1은 private 핀 행이 없어(비공개 후보는 candidates 행,
+    docs/data-model.md) visibility로 거르지 않는다."""
+    return and_(PinRow.map_id == map_id, PinRow.deleted_at.is_(None))
 
 
-def _count_members_with_opinion(db: Session, map_id: str, viewer_id: str) -> int:
+def _count_members_with_opinion(db: Session, map_id: str) -> int:
     """이 지도의 보이는 핀 중 하나에든 ♥·🚫를 남긴 서로 다른 현재 구성원 수. 삭제된 핀의 반응은 세지 않고
-    (「삭제된 핀은 세지 않는다」), 탈퇴한 사용자는 뺀다. 가시성 판정은 목록·집계와 같다(가드레일 1)."""
+    (「삭제된 핀은 세지 않는다」), 탈퇴한 사용자는 뺀다. 보이는 핀의 판정은 목록·집계와 같다."""
     user_ids = db.execute(
         select(ReactionRow.user_id)
         .join(PinRow, PinRow.id == ReactionRow.pin_id)
-        .where(_visible_pins_clause(map_id, viewer_id))
+        .where(_visible_pins_clause(map_id))
         .distinct()
     ).scalars().all()
     return len(set(user_ids) - auth_api.withdrawn_user_ids(db, user_ids))
@@ -80,7 +75,7 @@ def count_pins(db: Session, map_id: str, principal: Principal, members_total: in
     by_kind = {k: 0 for k in get_args(PinKind)}
     rows = db.execute(
         select(PinRow.category, PinRow.kind, func.count())
-        .where(_visible_pins_clause(map_id, principal.user_id))
+        .where(_visible_pins_clause(map_id))
         .group_by(PinRow.category, PinRow.kind)
     ).all()
     for category, kind, n in rows:
@@ -88,14 +83,12 @@ def count_pins(db: Session, map_id: str, principal: Principal, members_total: in
         by_kind[kind] += n
     return FilterCounts(
         by_category=by_category, by_kind=by_kind, members_total=members_total,
-        members_with_opinion=_count_members_with_opinion(db, map_id, principal.user_id),
+        members_with_opinion=_count_members_with_opinion(db, map_id),
     )
 
 
 def get_pin_or_404(db: Session, pin_id: str) -> PinRow:
-    """삭제되지 않은 핀을 id로 조회한다. 없으면 404 NOT_FOUND — 이 함수는 private 여부는
-    보지 않는다(그건 존재 확인과 다른 질문이라 호출자가 따로 판단한다 — pins/loaders.py::load_pin,
-    pins/api.py::get_pin_for_viewer)."""
+    """삭제되지 않은 핀을 id로 조회한다. 없으면 404 NOT_FOUND."""
     try:
         pin_uuid = uuid.UUID(pin_id)
     except ValueError:
@@ -155,7 +148,7 @@ def list_pins(
             func.coalesce(reaction_counts.c.against, 0).label("against_count"),
         )
         .outerjoin(reaction_counts, reaction_counts.c.pin_id == PinRow.id)
-        .where(_visible_pins_clause(map_id, principal.user_id))
+        .where(_visible_pins_clause(map_id))
     )
     if category:
         query = query.where(PinRow.category == category)
@@ -434,7 +427,7 @@ def delete_pin(db: Session, pin: PinRow) -> None:
         # (delete_reaction의 "실제로 지워졌을 때만 발행" 패턴과 동일한 원칙).
         return
 
-    record_event(db, core.pin_deleted_event(str(pin.id), pin.map_id, pin.visibility))
+    record_event(db, core.pin_deleted_event(str(pin.id), pin.map_id))
 
 
 def _reaction_counts_for_pin(db: Session, pin_id: uuid.UUID) -> core.ReactionCounts:
@@ -477,7 +470,7 @@ def set_reaction(db: Session, pin: PinRow, viewer_id: str, req: ReactionRequest)
     summary = ReactionSummary(like=counts.like, against=counts.against)
     display_name = auth_api.display_names(db, [viewer_id]).get(viewer_id)
     record_event(db, core.reaction_changed_event(
-        str(pin.id), pin.map_id, pin.visibility, summary, viewer_id, display_name, req.type,
+        str(pin.id), pin.map_id, summary, viewer_id, display_name, req.type,
     ))
 
     return Reaction(
@@ -501,7 +494,7 @@ def delete_reaction(db: Session, pin: PinRow, viewer_id: str) -> None:
     summary = ReactionSummary(like=counts.like, against=counts.against)
     display_name = auth_api.display_names(db, [viewer_id]).get(viewer_id)
     record_event(db, core.reaction_changed_event(
-        str(pin.id), pin.map_id, pin.visibility, summary, viewer_id, display_name, None,
+        str(pin.id), pin.map_id, summary, viewer_id, display_name, None,
     ))
 
 
