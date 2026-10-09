@@ -90,6 +90,8 @@ export const pinsHandlers = [
         visibility: "public",
         source: "live",
         kakao_place_id: body.kakao_place_id,
+        // #445 — 카카오 장소 페이지 링크. 저장하지 않고 장소 ID로 만든다(백엔드 pins/core.py::kakao_place_url과 같은 규칙)
+        ...(body.kakao_place_id.startsWith("kakao:") ? { place_url: `https://place.map.kakao.com/${body.kakao_place_id.slice("kakao:".length)}` } : {}),
         search_query: body.search_query.trim(),
         ...(body.memo ? { memo: body.memo } : {}),
         created_by: ME_USER_ID,
