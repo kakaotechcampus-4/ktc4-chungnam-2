@@ -120,6 +120,21 @@ def test_withdraw_user_sets_deleted_at(db_session):
     assert withdrawn.deleted_at is not None
 
 
+def test_withdraw_user_locks_member_maps_before_anything_else(db_session, monkeypatch):
+    db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
+    db_session.flush()
+    calls = []
+    monkeypatch.setattr(service.maps_api, "lock_member_maps", lambda db, user_id: calls.append(("lock", user_id)) or [])
+    monkeypatch.setattr(service.maps_api, "transfer_or_delete_owned_maps", lambda db, user_id: calls.append(("transfer", user_id)))
+    monkeypatch.setattr(service.pins_api, "delete_reactions_by_user", lambda db, user_id: calls.append(("reactions", user_id)))
+    monkeypatch.setattr(service.recommend_api, "delete_evidence_lines_by_author", lambda db, user_id: calls.append(("evidence", user_id)))
+
+    service.withdraw_user(db_session, user_id="user_1")
+
+    assert [name for name, _ in calls] == ["lock", "transfer", "reactions", "evidence"]
+    assert all(uid == "user_1" for _, uid in calls)
+
+
 def test_revoke_sessions_sets_sessions_valid_after(db_session):
     db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
     db_session.flush()

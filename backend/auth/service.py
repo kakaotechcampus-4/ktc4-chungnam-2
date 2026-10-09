@@ -170,7 +170,11 @@ def withdraw_user(db: Session, *, user_id: str) -> User:
 
     반응·근거 줄·멤버십은 다른 모듈 테이블이라 각 모듈의 공개 함수(api.py)로만 바꾼다. 핀·확정 리스트
     항목은 남고, 작성자 표시는 auth.api.display_names가 "탈퇴한 구성원"으로 내려준다.
-    모든 쓰기는 같은 트랜잭션이라 중간에 실패하면 함께 롤백된다."""
+    모든 쓰기는 같은 트랜잭션이라 중간에 실패하면 함께 롤백된다.
+
+    맨 먼저 속한 지도 행을 id 순서로 잠근다(#435) — 같은 지도의 나가기·양도와 줄을 세워 서로 어긋난
+    상태를 보지 않게 하고, 순서가 고정이라 교착도 없다."""
+    maps_api.lock_member_maps(db, user_id)
     row = get_active_user_or_401(db, user_id=user_id)
     maps_api.transfer_or_delete_owned_maps(db, user_id)
     pins_api.delete_reactions_by_user(db, user_id=user_id)
