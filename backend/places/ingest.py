@@ -280,11 +280,6 @@ def allowed_fact_keys_from_constraints(markdown: str) -> frozenset[str]:
     return frozenset(keys - NOT_LABELS)
 
 
-def is_allowed_fact_key(key: str, allowed: frozenset[str]) -> bool:
-    # constraints.md의 "contains_shellfish 등 재료 태그" — 재료 태그는 contains_ 접두로 늘어난다.
-    return key in allowed or (key.startswith("contains_") and key not in NOT_LABELS)
-
-
 @dataclass(frozen=True)
 class LabelRow:
     source: str
@@ -314,7 +309,7 @@ def parse_label_rows(rows: Iterable[Mapping[str, Any]], allowed: frozenset[str])
         if source not in ("permit", "tourapi") or not source_id:
             report.skip("source/source_id 이상")
             continue
-        if not is_allowed_fact_key(key, allowed):
+        if key not in allowed:
             report.skip(f"모르는 fact_key: {key or '(비어 있음)'}")
             continue
         if confidence not in ("known", "unknown"):

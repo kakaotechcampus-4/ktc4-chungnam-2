@@ -4,15 +4,18 @@ from recommend import constraints
 
 
 def test_hard_fact_keys_for_restricts_by_category():
-    assert constraints.hard_fact_keys_for("음식점") == ["contains_shellfish"]
-    assert constraints.hard_fact_keys_for("카페") == sorted(["contains_shellfish", "is_crowded_large"])
-    assert constraints.hard_fact_keys_for("관광지") == sorted(["contains_shellfish", "is_crowded_large"])
+    assert constraints.hard_fact_keys_for("음식점") == []
+    assert constraints.hard_fact_keys_for("카페") == ["is_crowded_large"]
+    assert constraints.hard_fact_keys_for("관광지") == ["is_crowded_large"]
 
 
-def test_safety_fact_keys_have_exclude_unknown_policy():
-    """가드레일8 — 안전 조건은 unknown이면 절대 통과시키지 않는다."""
-    assert constraints.HARD_REGISTRY["contains_shellfish"].unknown_policy == "exclude"
-    assert {k for k, s in constraints.HARD_REGISTRY.items() if s.unknown_policy == "exclude"} == {"contains_shellfish"}
+def test_allergy_is_not_a_condition_and_nothing_excludes_unknown():
+    """#425 — 알러지 같은 안전 조건은 서비스가 판단하지 않는다. 갑각류 키가 어디에도 없고, 모르면 빼는(exclude) 키도 없다."""
+    assert "contains_shellfish" not in constraints.HARD_REGISTRY
+    assert "contains_shellfish" not in constraints.SOFT_FACT_KEYS
+    assert "contains_shellfish" not in constraints.PASSED_LABELS
+    assert "contains_shellfish" not in constraints.FACT_LABELS
+    assert {k for k, s in constraints.HARD_REGISTRY.items() if s.unknown_policy == "exclude"} == set()
 
 
 def test_spicy_and_oily_are_soft_taste_keys_not_safety():
@@ -66,7 +69,7 @@ def test_soft_registry_covers_the_doc_categories_and_is_all_pass():
     assert {"wait_short", "spacious", "long_established", "parking_available", "vegetarian_friendly", "franchise"} <= restaurant
     assert len([k for k in restaurant if k.startswith("cuisine_")]) == 11  # cuisine_gopchang(#417)
     sight = set(constraints.soft_fact_keys_for("관광지"))
-    assert len(sight) + len(constraints.hard_fact_keys_for("관광지")) - 1 == 36  # contains_shellfish는 공통 hard
+    assert len(sight) + len(constraints.hard_fact_keys_for("관광지")) == 36
     assert "winter_spot" in sight and "cuisine_korean" not in sight
     assert set(constraints.soft_fact_keys_for("카페")) == {
         "quiet", "comfortable_seat", "local_flavor", "pet_friendly", "accessible",      # 기존 + 관광지 키를 카페에도(#263)

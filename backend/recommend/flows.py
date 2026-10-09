@@ -244,7 +244,7 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str) ->
     text_inputs = [_evidence_from_reaction(r) for r in raw_reactions if r["reason_text"] is not None]
     planned = llm_service.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
     reaction_lines = _reaction_evidence_lines(raw_reactions, [[line.model_dump() for line in group] for group in planned])
-    merged = core.assemble_evidence(reaction_lines, [])
+    merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422
 
     # LLM 대기 중 같은 사용자의 동시 요청이 상한(#31)에 도달시켰을 수 있다 — INSERT 직전에 다시 읽어
     # 경합 구간을 수 ms로 줄인다(첫 검사는 모델을 부르기 전에 막는 빠른 실패용).
@@ -293,8 +293,8 @@ def patch_evidence(
         if not can(principal, "evidence.disable", resource):
             raise AppError("FORBIDDEN")
         service.set_evidence_active(db, line.id, is_active)
-    # 「+」로 추가한 줄도 ②를 거쳐 fact_key·wants를 붙인다(#254) — 안전 사유("조개 알러지")가 reference로만 남아
-    # 실격이 안 켜지는 걸 막는다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다).
+    # 「+」로 추가한 줄도 ②를 거쳐 fact_key·wants를 붙인다(#254) — 근거 줄에 "한식 제외"처럼 해석한 조건이
+    # 보인다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다).
     # 글 하나에 조건이 여럿이면 같은 글로 조건마다 줄 하나다(#419).
     if adds:
         planned = llm_service.plan_evidence([
@@ -328,17 +328,13 @@ def confirm_regions(db: Session, *, run_id: str, accept_union: bool) -> list[sch
 
 
 def _active_hard_fact_keys(db: Session, run: RecommendRun) -> list[str]:
-    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: is_active=True인 evidence_line 중 fact_key가
-    매핑된 hard 키를 "안전 조건 사유는 배지와 무관하게 실격이다" 판정표대로 켠다(#254). required는 wants가
-    true가 아니면(false·null) 켜고, preferred·reference는 wants=false일 때만 켠다. 켜진 키는 라벨이 참이든
-    모름이든 제외한다(안전 조건, 가드레일 8). 카테고리에 안 맞는 fact_key는 애초에 제외."""
+    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: is_active=True인 evidence_line 중
+    badge='required'로 hard 키가 매핑된 것만 켠다(누구도 문제 제기 안 한 조건은 검사하지 않는다). hard 키는
+    방향이 고정이라("있으면 실격") wants를 보지 않는다. ♥·「+」 사유로도 켜던 안전 조건 규칙(D11, #254)은
+    안전 조건 키와 함께 없앴다(#425). 카테고리에 안 맞는 fact_key는 애초에 제외."""
     lines = service.list_active_evidence(db, run.id)
     applicable = set(constraints.hard_fact_keys_for(run.category))
-    active = {
-        line.fact_key for line in lines
-        if line.fact_key is not None
-        and (line.wants is not True if line.badge == "required" else line.wants is False)
-    }
+    active = {line.fact_key for line in lines if line.badge == "required" and line.fact_key is not None}
     return sorted(active & applicable)
 
 
@@ -353,7 +349,7 @@ def _active_soft_requirements(db: Session, run: RecommendRun) -> list[tuple[str,
 
 
 def _passes_hard_check(value) -> bool:
-    return not bool(value)  # contains_shellfish/is_crowded_large — "있으면 실격"류
+    return not bool(value)  # is_crowded_large — "있으면 실격"류
 
 
 def _run_pipeline(

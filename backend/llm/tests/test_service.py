@@ -57,9 +57,9 @@ class TestLabelPlaceUnknownBoundary:
 
     def test_unknown_when_raw_fact_is_none(self):
         # 키는 있지만 값이 None인 경우(예: 수집 실패)도 known으로 오인하면 안 된다.
-        place_raw_facts = {"contains_shellfish": None}
+        place_raw_facts = {"cuisine_japanese": None}
 
-        [label] = label_place(place_raw_facts, ["contains_shellfish"])
+        [label] = label_place(place_raw_facts, ["cuisine_japanese"])
 
         assert label.confidence == "unknown"
         assert label.value is None
@@ -67,13 +67,13 @@ class TestLabelPlaceUnknownBoundary:
 
     def test_partial_information_place_mixes_known_and_unknown(self):
         # 정보가 일부만 있는 실제 시나리오: 있는 것만 known, 나머지는 unknown이어야 한다.
-        place_raw_facts = {"contains_shellfish": True}
-        fact_keys = ["contains_shellfish", "spicy_focused", "pet_friendly"]
+        place_raw_facts = {"cuisine_japanese": True}
+        fact_keys = ["cuisine_japanese", "spicy_focused", "pet_friendly"]
 
         labels = label_place(place_raw_facts, fact_keys)
 
         by_key = {label.fact_key: label for label in labels}
-        assert by_key["contains_shellfish"].confidence == "known"
+        assert by_key["cuisine_japanese"].confidence == "known"
         assert by_key["spicy_focused"].confidence == "unknown"
         assert by_key["spicy_focused"].value is None
         assert by_key["pet_friendly"].confidence == "unknown"
@@ -84,12 +84,12 @@ class TestLabelPlaceEvidenceCrossCheck:
     """evidence가 원자료에 실제로 있는지 대조 — 지어낸 근거는 unknown으로 강등한다."""
 
     def test_fabricated_evidence_downgrades_to_unknown(self):
-        place_raw_facts = {"contains_shellfish": True, "menu_text": "삼겹살 전문점"}
+        place_raw_facts = {"cuisine_japanese": True, "menu_text": "삼겹살 전문점"}
 
         [label] = label_place(
             place_raw_facts,
-            ["contains_shellfish"],
-            evidence_by_fact_key={"contains_shellfish": "메뉴에 새우가 있다"},
+            ["cuisine_japanese"],
+            evidence_by_fact_key={"cuisine_japanese": "메뉴에 새우가 있다"},
         )
 
         assert label.confidence == "unknown"
@@ -97,12 +97,12 @@ class TestLabelPlaceEvidenceCrossCheck:
         assert label.evidence is None
 
     def test_evidence_found_in_raw_text_stays_known(self):
-        place_raw_facts = {"contains_shellfish": True, "menu_text": "새우튀김 정식"}
+        place_raw_facts = {"cuisine_japanese": True, "menu_text": "새우튀김 정식"}
 
         [label] = label_place(
             place_raw_facts,
-            ["contains_shellfish"],
-            evidence_by_fact_key={"contains_shellfish": "새우튀김"},
+            ["cuisine_japanese"],
+            evidence_by_fact_key={"cuisine_japanese": "새우튀김"},
         )
 
         assert label.confidence == "known"
@@ -112,14 +112,14 @@ class TestLabelPlaceEvidenceCrossCheck:
     def test_evidence_matches_nested_raw_value(self):
         # 리뷰 텍스트처럼 리스트 안에 중첩된 문자열도 대조 대상이어야 한다.
         place_raw_facts = {
-            "contains_shellfish": True,
+            "cuisine_japanese": True,
             "reviews": ["맛있어요", "새우가 신선해요"],
         }
 
         [label] = label_place(
             place_raw_facts,
-            ["contains_shellfish"],
-            evidence_by_fact_key={"contains_shellfish": "새우가 신선"},
+            ["cuisine_japanese"],
+            evidence_by_fact_key={"cuisine_japanese": "새우가 신선"},
         )
 
         assert label.confidence == "known"
@@ -129,12 +129,12 @@ class TestLabelPlaceEvidenceCrossCheck:
         # evidence=""이면 "" in text가 파이썬에서 항상 True라서 대조가 무력화되는 버그 재현.
         # evidence가 아예 없는 것(None)과 동일하게 취급해 known을 유지하면 안 되고 unknown으로
         # 강등되어야 한다(pins/core.py validate_reaction의 공백 처리와 동일 원칙).
-        place_raw_facts = {"contains_shellfish": True, "menu_text": "삼겹살 전문점"}
+        place_raw_facts = {"cuisine_japanese": True, "menu_text": "삼겹살 전문점"}
 
         [label] = label_place(
             place_raw_facts,
-            ["contains_shellfish"],
-            evidence_by_fact_key={"contains_shellfish": ""},
+            ["cuisine_japanese"],
+            evidence_by_fact_key={"cuisine_japanese": ""},
         )
 
         assert label.confidence == "unknown"
@@ -143,12 +143,12 @@ class TestLabelPlaceEvidenceCrossCheck:
 
     def test_whitespace_only_evidence_downgrades_to_unknown(self):
         # 공백만 있는 evidence도 "" 취급과 동일해야 한다(strip() 기준).
-        place_raw_facts = {"contains_shellfish": True, "menu_text": "삼겹살 전문점"}
+        place_raw_facts = {"cuisine_japanese": True, "menu_text": "삼겹살 전문점"}
 
         [label] = label_place(
             place_raw_facts,
-            ["contains_shellfish"],
-            evidence_by_fact_key={"contains_shellfish": "   "},
+            ["cuisine_japanese"],
+            evidence_by_fact_key={"cuisine_japanese": "   "},
         )
 
         assert label.confidence == "unknown"
@@ -157,9 +157,9 @@ class TestLabelPlaceEvidenceCrossCheck:
 
     def test_no_evidence_supplied_keeps_previous_known_behavior(self):
         # evidence_by_fact_key를 아예 안 주면 기존 스텁 동작(evidence=None)과 같아야 한다.
-        place_raw_facts = {"contains_shellfish": True}
+        place_raw_facts = {"cuisine_japanese": True}
 
-        [label] = label_place(place_raw_facts, ["contains_shellfish"])
+        [label] = label_place(place_raw_facts, ["cuisine_japanese"])
 
         assert label.confidence == "known"
         assert label.evidence is None
@@ -170,24 +170,24 @@ class TestPlaceFactLabelSchemaGuardsAgainstFabrication:
 
     def test_unknown_with_value_is_rejected(self):
         with pytest.raises(ValidationError):
-            PlaceFactLabel(fact_key="contains_shellfish", value=True, confidence="unknown")
+            PlaceFactLabel(fact_key="cuisine_japanese", value=True, confidence="unknown")
 
     def test_known_without_value_is_rejected(self):
         with pytest.raises(ValidationError):
-            PlaceFactLabel(fact_key="contains_shellfish", confidence="known")
+            PlaceFactLabel(fact_key="cuisine_japanese", confidence="known")
 
     def test_unknown_with_evidence_is_rejected(self):
         # value는 비워도 evidence만 채우는 식으로 근거를 지어내는 것도 막는다.
         with pytest.raises(ValidationError):
             PlaceFactLabel(
-                fact_key="contains_shellfish",
+                fact_key="cuisine_japanese",
                 confidence="unknown",
                 evidence="메뉴판에 새우가 보인다",
             )
 
     def test_known_with_evidence_is_allowed(self):
         label = PlaceFactLabel(
-            fact_key="contains_shellfish",
+            fact_key="cuisine_japanese",
             value=True,
             confidence="known",
             evidence="메뉴판에 새우가 보인다",
@@ -197,7 +197,7 @@ class TestPlaceFactLabelSchemaGuardsAgainstFabrication:
 
     def test_known_without_evidence_is_allowed(self):
         # evidence는 known이어도 선택이다 — 반드시 채울 필요는 없다.
-        label = PlaceFactLabel(fact_key="contains_shellfish", value=True, confidence="known")
+        label = PlaceFactLabel(fact_key="cuisine_japanese", value=True, confidence="known")
 
         assert label.evidence is None
 
@@ -209,10 +209,10 @@ class TestPlanEvidence:
         raw = [
             {
                 "source": "reaction",
-                "text": "갑각류 알러지 있어요",
-                "chip_id": "chip_shellfish",
+                "text": "매운 거 못 먹어요",
+                "chip_id": "chip_spicy",
                 "badge": "required",
-                "fact_key": "contains_shellfish",
+                "fact_key": "spicy_focused",
             }
         ]
 
@@ -220,7 +220,7 @@ class TestPlanEvidence:
 
         assert isinstance(evidence, EvidenceLine)
         assert evidence.badge == "required"
-        assert evidence.fact_key == "contains_shellfish"
+        assert evidence.fact_key == "spicy_focused"
 
     def test_freeform_reason_without_fact_key_stays_unclassified(self):
         # 자유 텍스트에서 fact_key를 추론하는 건 실제 모델 연동 이후 단계 —

@@ -137,7 +137,7 @@ def test_publish_candidate_copies_candidate_checks_to_pin(db_session):
     PostgreSQL로 왕복 확인한다."""
     run = _make_run(db_session)
     checks = [
-        {"fact_key": "contains_shellfish", "label": "조개류 포함", "passed": True,
+        {"fact_key": "is_crowded_large", "label": "붐비는 대형 장소 아님", "passed": True,
          "confidence": "known", "needs_check": False},
         {"fact_key": "parking_available", "label": "주차 가능 확인 필요", "passed": True,
          "confidence": "unknown", "needs_check": True},
@@ -172,7 +172,7 @@ def test_publish_candidate_keeps_human_readable_check_labels(db_session):
     run = _make_run(db_session)
     built = [
         core.build_check("is_open", "pass", known=False, value=None, passes=True),
-        core.build_check("contains_shellfish", "exclude", known=True, value=False, passes=True),
+        core.build_check("is_crowded_large", "pass", known=True, value=False, passes=True),
         core.build_check("cuisine_korean", "pass", known=True, value=True, passes=True),
         core.build_check("quiet", "pass", known=False, value=None, passes=True),
     ]
@@ -190,7 +190,7 @@ def test_publish_candidate_keeps_human_readable_check_labels(db_session):
         db_session, pin_id=str(pin.id), viewer_id="user_1", principal=principal,
     )
     assert [c.label for c in response.checks] == [
-        "영업 여부 확인 필요", "갑각류 없음", "한식", "조용한 곳 확인 필요",
+        "영업 여부 확인 필요", "붐비는 대형 장소 아님", "한식", "조용한 곳 확인 필요",
     ]
 
 
@@ -520,6 +520,28 @@ def test_create_run_sends_only_the_written_text_to_the_model_and_keeps_the_chips
     ]
 
 
+def test_create_run_demotes_wanted_cuisine_from_a_against_reason_to_preferred(db_session, monkeypatch):
+    """#422 — "한식 말고 고기 먹고 싶어요"(🚫): 한식 피함은 required, 고기구이 원함은 preferred로 저장된다."""
+    from llm.schemas import EvidenceLine
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="against", reason_text="한식 말고 고기 먹고 싶어요")
+    text = "한식 말고 고기 먹고 싶어요"
+    monkeypatch.setattr(flows.llm_service, "plan_evidence", lambda raw: [[
+        EvidenceLine(author_id="user_1", source="reaction", text=text, badge="required", fact_key="cuisine_korean", wants=False),
+        EvidenceLine(author_id="user_1", source="reaction", text=text, badge="required", fact_key="cuisine_bbq", wants=True),
+    ]])
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
+
+    lines = service.list_evidence(db_session, str(run.id))
+    assert [(l.fact_key, l.wants, l.badge) for l in lines] == [
+        ("cuisine_korean", False, "required"),
+        ("cuisine_bbq", True, "preferred"),
+    ]
+    assert flows._active_soft_requirements(db_session, run) == [("cuisine_korean", False)]
+
+
 def test_create_run_keeps_a_legacy_chip_value_as_text_without_key(db_session, monkeypatch):
     """#412 — #312 전에 이름 그대로 저장된 옛 값은 그 값을 글로 쓰고 키·방향 없이 둔다(② 호출 없음)."""
     _make_members(db_session, user_ids=["user_1"])
@@ -533,8 +555,9 @@ def test_create_run_keeps_a_legacy_chip_value_as_text_without_key(db_session, mo
     assert (line.text, line.chip_id, line.fact_key, line.wants, line.badge) == ("매워요", "매워요", None, None, "required")
 
 
-def test_shellfish_chip_turns_on_the_safety_condition_without_the_model(db_session, monkeypatch):
-    """#412 — 안전 조건 칩(갑각류)은 모델 없이 contains_shellfish 실격을 켠다(가드레일 8)."""
+def test_reaction_left_with_the_retired_shellfish_chip_filters_nothing(db_session, monkeypatch):
+    """#425 — 「갑각류 알러지가 있어요」 칩은 뺐다. 그 전에 이 칩으로 남긴 반응은 근거 줄로만 남고 아무것도 켜지 않는다
+    (알러지는 서비스가 판단하지 않는다)."""
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="음식점")
     _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_shellfish"])
@@ -542,7 +565,10 @@ def test_shellfish_chip_turns_on_the_safety_condition_without_the_model(db_sessi
 
     run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1")
 
-    assert flows._active_hard_fact_keys(db_session, run) == ["contains_shellfish"]
+    [line] = service.list_evidence(db_session, str(run.id))
+    assert (line.chip_id, line.badge) == ("food_shellfish", "required")
+    assert flows._active_hard_fact_keys(db_session, run) == []
+    assert flows._active_soft_requirements(db_session, run) == []
 
 
 def test_soft_chip_becomes_a_directed_requirement(db_session, monkeypatch):
@@ -558,7 +584,7 @@ def test_soft_chip_becomes_a_directed_requirement(db_session, monkeypatch):
 
 
 _KEYED_CHIP_IDS = {
-    "음식점": ["food_spicy", "food_oily", "food_wait", "food_cramped", "food_shellfish"],
+    "음식점": ["food_spicy", "food_oily", "food_wait", "food_cramped"],   # food_shellfish는 #425에서 뺐다
     "카페": ["cafe_crowded", "cafe_noisy", "cafe_seat"],
     "관광지": ["sight_inaccessible", "sight_noisy"],
 }
@@ -758,30 +784,30 @@ def _make_region(db_session, run, *, center_lat=35.0, center_lng=129.0, radius_m
 
 
 def test_execute_run_full_funnel_removes_out_of_radius_disqualified_and_excluded(db_session):
-    run = _make_run(db_session, status="collecting_evidence")
+    run = _make_run(db_session, status="collecting_evidence", category="카페")
     _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
     service.add_reaction_evidence(db_session, run_id=run.id, lines=[
-        {"author_id": "user_1", "source": "reaction", "text": "매운거 빼주세요",
-         "badge": "required", "fact_key": "contains_shellfish"},
+        {"author_id": "user_1", "source": "reaction", "text": "너무 붐벼요",
+         "badge": "required", "fact_key": "is_crowded_large"},
     ])
     service.add_exclusions(
-        db_session, map_id="map_1", category="음식점", place_ids=["excluded_place"],
+        db_session, map_id="map_1", category="카페", place_ids=["excluded_place"],
         reason="proposed", run_id=run.id, requested_by="user_1",
     )
 
     places = [
         PlaceStub(place_id="ok_place", lat=35.0005, lng=129.0005),       # 반경 안, 실격 아님(known) → 통과
-        PlaceStub(place_id="spicy_place", lat=35.0005, lng=129.0006),    # 반경 안, 갑각류(known) → 실격
+        PlaceStub(place_id="crowded_place", lat=35.0005, lng=129.0006),  # 반경 안, 붐비는 대형(known) → 실격
         PlaceStub(place_id="far_place", lat=40.0, lng=135.0),            # 반경 밖 → 제거
         PlaceStub(place_id="excluded_place", lat=35.0004, lng=129.0004),  # 반경 안, 실격 아님(known), 제외목록 → 제거
     ]
     place_search = _FakePlaceSearch(places)
-    # contains_shellfish는 unknown_policy=exclude(가드레일8) — known 값을 명시해야 실격이 "매움" 하나로만
-    # 갈린다. facts에 없는 far_place는 반경 필터에서 이미 빠져 라벨링 자체를 안 받는다.
+    # known 값을 명시해 실격이 "붐빔" 하나로만 갈리게 한다. facts에 없는 far_place는 반경 필터에서 이미 빠져
+    # 라벨링 자체를 안 받는다.
     place_facts = _FakePlaceFacts({
-        "ok_place": {"contains_shellfish": False},
-        "spicy_place": {"contains_shellfish": True},
-        "excluded_place": {"contains_shellfish": False},
+        "ok_place": {"is_crowded_large": False},
+        "crowded_place": {"is_crowded_large": True},
+        "excluded_place": {"is_crowded_large": False},
     })
 
     updated = flows.execute_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
@@ -883,40 +909,32 @@ def test_execute_run_twice_with_dismissal_is_idempotent(db_session):
     assert db_session.execute(select(func.count()).select_from(Exclusion)).scalar_one() == 1
 
 
-def test_execute_run_unknown_safety_fact_is_excluded_not_needs_check(db_session):
-    """가드레일8 — 안전 조건(contains_shellfish)이 unknown이면 pass+needs_check가 아니라 제거된다."""
-    run = _make_run(db_session, status="collecting_evidence")
-    _make_region(db_session, run, radius_m=1000)
-    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
-        {"author_id": "user_1", "source": "reaction", "text": "매운거 빼주세요",
-         "badge": "required", "fact_key": "contains_shellfish"},
-    ])
-    places = [PlaceStub(place_id="unknown_place", lat=35.0005, lng=129.0005)]
-    place_search = _FakePlaceSearch(places)
-    place_facts = _FakePlaceFacts({})  # contains_shellfish 원자료 없음 → unknown
-
-    flows.execute_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
-
-    candidates = service.list_candidates(db_session, str(run.id))
-    assert candidates == []  # exclude 정책 — unknown인데 통과시키지 않는다
+def test_execute_run_allergy_reason_filters_nothing(db_session):
+    """#425 — 알러지 같은 안전 조건은 서비스가 판단하지 않는다. 알러지 사유는 키 없는 근거 줄이라 라벨이
+    모름인 곳도 빼지 않는다(전에는 안전 조건이라 모름도 빼서 어느 동네든 0곳이었다). 갑각류 체크도 붙지 않는다."""
+    candidates, funnel = _execute_with_lines(
+        db_session, [_line("user_1", "required", None, None, text="갑각류 알러지가 있어요")], {"unknown_place": {}},
+    )
+    assert set(candidates) == {"unknown_place"} and funnel["실격 조건 제거"] == 0
+    assert all(c["fact_key"] != "contains_shellfish" for c in candidates["unknown_place"].checks)
 
 
 def test_execute_run_keeps_candidate_whose_unwanted_soft_label_is_false(db_session):
     """#208 — 아무도 조용한 곳을 원하지 않았어도 quiet=False 장소가 실격되던 버그. soft 라벨은
-    실격 판정에 쓰이지 않으므로 후보에 남고, hard contains_shellfish=True인 장소만 여전히 실격이다."""
-    run = _make_run(db_session, status="collecting_evidence")
+    실격 판정에 쓰이지 않으므로 후보에 남고, hard is_crowded_large=True인 장소만 여전히 실격이다."""
+    run = _make_run(db_session, status="collecting_evidence", category="카페")
     _make_region(db_session, run, radius_m=1000)
     service.add_reaction_evidence(db_session, run_id=run.id, lines=[
-        {"author_id": "user_1", "source": "reaction", "text": "매운거 빼주세요",
-         "badge": "required", "fact_key": "contains_shellfish"},
+        {"author_id": "user_1", "source": "reaction", "text": "너무 붐벼요",
+         "badge": "required", "fact_key": "is_crowded_large"},
     ])
     places = [
         PlaceStub(place_id="noisy_place", lat=35.0005, lng=129.0005),
-        PlaceStub(place_id="spicy_place", lat=35.0005, lng=129.0006),
+        PlaceStub(place_id="crowded_place", lat=35.0005, lng=129.0006),
     ]
     place_facts = _FakePlaceFacts({
-        "noisy_place": {"contains_shellfish": False, "quiet": False, "wait_short": False},
-        "spicy_place": {"contains_shellfish": True, "quiet": False},
+        "noisy_place": {"is_crowded_large": False, "quiet": False, "comfortable_seat": False},
+        "crowded_place": {"is_crowded_large": True, "quiet": False},
     })
 
     updated = flows.execute_run(
@@ -952,13 +970,12 @@ def test_execute_run_keeps_restaurants_whose_cuisine_labels_are_mostly_false(db_
 
 
 def _run_with_wanted_and_unwanted_soft_keys(db_session):
-    """음식점 run — hard contains_shellfish 활성, 선호 사유 wait_short(unknown), ♥ 핀 기준 cuisine_japanese.
-    라벨: contains_shellfish·franchise 거짓 known, cuisine_japanese 참 known, 나머지 soft는 unknown.
+    """음식점 run — 선호 사유 wait_short(unknown), ♥ 핀 기준 cuisine_japanese. 음식점에는 라벨 실격 키가 없다(#425).
+    라벨: franchise 거짓 known, cuisine_japanese 참 known, 나머지 soft는 unknown.
     ♥ 핀 기준은 음식점에서 ♥ 한 곳으로도 쓰이는 업태 키다(#414 — 주차 같은 편의 키는 ♥에서 쓰지 않는다)."""
     run = _make_run(db_session, status="collecting_evidence")
     _make_region(db_session, run, radius_m=1000)
     service.add_reaction_evidence(db_session, run_id=run.id, lines=[
-        {"author_id": "user_1", "source": "reaction", "text": "매운거 빼주세요", "badge": "required", "fact_key": "contains_shellfish"},
         {"author_id": "user_2", "source": "reaction", "text": "대기 짧았으면", "badge": "preferred", "fact_key": "wait_short"},
     ])
     liked = _make_pin(db_session, lat=35.0008, lng=129.0008)
@@ -966,7 +983,7 @@ def _run_with_wanted_and_unwanted_soft_keys(db_session):
     places = [PlaceStub(place_id="cand", lat=35.0005, lng=129.0005)]
     # ♥ 핀의 라벨은 places(place_facts)에서 읽는다(#247) — 핀에 복사된 checks가 아니다.
     facts = _FakePlaceFacts({
-        "cand": {"contains_shellfish": False, "franchise": False, "cuisine_japanese": True},
+        "cand": {"franchise": False, "cuisine_japanese": True},
         liked.place_id: {"cuisine_japanese": True},
     })
     flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
@@ -984,7 +1001,7 @@ def test_execute_run_checks_omit_unwanted_unknown_soft_keys(db_session):
     assert "franchise" not in by_key  # 원하지 않은 known(거짓)도 싣지 않는다
     assert by_key["wait_short"]["needs_check"] is True and by_key["wait_short"]["confidence"] == "unknown"  # 활성 근거 줄
     assert by_key["cuisine_japanese"]["confidence"] == "known"  # ♥ 핀 기준(known)
-    assert by_key["contains_shellfish"]["passed"] is True and "is_open" in by_key  # hard 그대로
+    assert "is_open" in by_key  # hard(코드 판정) 그대로
 
 
 def test_execute_run_unwanted_unknown_soft_checks_still_feed_scoring(db_session):
@@ -1139,10 +1156,10 @@ def test_widen_run_without_regions_raises_not_ready(db_session):
 # ---------- #158 Candidate 가드레일5 필드 ----------
 
 def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session):
-    run = _make_run(db_session, status="collecting_evidence")
+    run = _make_run(db_session, status="collecting_evidence", category="카페")
     _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
     service.add_reaction_evidence(db_session, run_id=run.id, lines=[
-        {"author_id": "user_1", "source": "reaction", "text": "매운거 빼주세요", "badge": "required", "fact_key": "contains_shellfish"},
+        {"author_id": "user_1", "source": "reaction", "text": "너무 붐벼요", "badge": "required", "fact_key": "is_crowded_large"},
         {"author_id": "user_2", "source": "reaction", "text": "조용했으면", "badge": "preferred", "fact_key": "quiet", "wants": True},
     ])
     source = {"provider": "kakao", "url": "https://place.map.kakao.com/1"}
@@ -1151,22 +1168,22 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
         PlaceStub(place_id="bare", lat=35.0006, lng=129.0006),
     ]
     facts = _FakePlaceFacts({
-        "sourced": {"contains_shellfish": False, "quiet": True},
-        "bare": {"contains_shellfish": False},
+        "sourced": {"is_crowded_large": False, "quiet": True},
+        "bare": {"is_crowded_large": False},
     })
 
     flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
 
     by_place = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
     sourced, bare = by_place["sourced"], by_place["bare"]
-    assert sourced.reason == "실격 조건 통과: 갑각류 없음 · 선호 충족: 조용함 (1/1명)"
-    # user_1은 실격 사유(매운거 빼주세요)를 냈고 후보가 통과했으니 충족(#255). 이유 문장의 (1/1명)은 선호 구성원만 센다.
+    assert sourced.reason == "실격 조건 통과: 붐비는 대형 장소 아님 · 선호 충족: 조용함 (1/1명)"
+    # user_1은 실격 사유(너무 붐벼요)를 냈고 후보가 통과했으니 충족(#255). 이유 문장의 (1/1명)은 선호 구성원만 센다.
     assert sourced.member_fulfillment == {"satisfied": 2, "total": 2, "by_member": [
         {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": True},
     ]}
     assert sourced.place_source == source
     # 조용함을 모르는 후보 — 구성원은 집계 대상이지만 충족으로 세지 않고, 안 본 것을 이유로 들지 않는다.
-    assert bare.reason == "실격 조건 통과: 갑각류 없음"
+    assert bare.reason == "실격 조건 통과: 붐비는 대형 장소 아님"
     assert bare.member_fulfillment == {"satisfied": 1, "total": 2, "by_member": [
         {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": False},
     ]}
@@ -1294,22 +1311,17 @@ def test_required_soft_with_null_wants_has_no_effect(db_session):
     assert set(candidates) == {"korean"} and funnel["실격 조건 제거"] == 0
 
 
-def test_hard_key_required_with_wants_true_is_not_a_disqualifier(db_session):
-    """#254 판정표 — required + wants=true("갑각류 좋아하는데…")는 실격이 아니다. 아무것도 켜지지 않는다."""
-    candidates, funnel = _execute_with_lines(
-        db_session, [_line("user_1", "required", "contains_shellfish", True)],
-        {"shell": {"contains_shellfish": True}, "clean": {"contains_shellfish": False}, "unknown_place": {}},
-    )
-    assert set(candidates) == {"shell", "clean", "unknown_place"} and funnel["실격 조건 제거"] == 0
-
-
-def test_hard_key_required_with_wants_false_or_null_disqualifies_true_and_unknown(db_session):
-    for wants in (False, None):
+def test_hard_key_required_disqualifies_only_known_true_whatever_wants_says(db_session):
+    """hard 키는 방향이 고정이라("있으면 실격") required면 wants와 무관하게 켜진다(constraints.md "사유의 방향").
+    unknown_policy=pass라 모름은 통과 + needs_check다(#425 뒤로 exclude 키는 없다)."""
+    facts = {"crowded": {"is_crowded_large": True}, "calm": {"is_crowded_large": False}, "unknown_place": {}}
+    for wants in (False, None, True):
         candidates, funnel = _execute_with_lines(
-            db_session, [_line("user_1", "required", "contains_shellfish", wants)],
-            {"shell": {"contains_shellfish": True}, "clean": {"contains_shellfish": False}, "unknown_place": {}},
+            db_session, [_line("user_1", "required", "is_crowded_large", wants)], facts, category="카페",
         )
-        assert set(candidates) == {"clean"} and funnel["실격 조건 제거"] == 2, wants
+        assert set(candidates) == {"calm", "unknown_place"} and funnel["실격 조건 제거"] == 1, wants
+        check = next(c for c in candidates["unknown_place"].checks if c["fact_key"] == "is_crowded_large")
+        assert check["passed"] is True and check["needs_check"] is True, wants
 
 
 def test_spicy_and_oily_required_wants_false_disqualify_only_known_true_and_unknown_passes(db_session):
@@ -1347,21 +1359,22 @@ def test_price_reason_is_a_keyless_line_and_a_leftover_price_label_is_ignored(db
         assert all(c["fact_key"] != "price_bucket" for c in candidates["p"].checks), category
 
 
-def test_hard_key_preferred_and_reference_disqualify_only_when_wants_false(db_session):
-    """△·♥·「+」 — "저 조개 알러지"(wants=false)는 배지와 무관하게 실격(참·모름 모두), true·null은 효과 없음."""
-    facts = {"shell": {"contains_shellfish": True}, "clean": {"contains_shellfish": False}, "unknown_place": {}}
+def test_hard_key_preferred_and_reference_never_disqualify(db_session):
+    """♥·「+」로 남긴 hard 키 사유는 실격을 켜지 않는다. 배지와 무관하게 실격이던 안전 조건 규칙(D11, #254)은
+    #425에서 안전 조건 키와 함께 없앴다."""
+    facts = {"crowded": {"is_crowded_large": True}, "calm": {"is_crowded_large": False}, "unknown_place": {}}
     for badge in ("preferred", "reference"):
-        candidates, funnel = _execute_with_lines(db_session, [_line("user_1", badge, "contains_shellfish", False)], facts)
-        assert set(candidates) == {"clean"} and funnel["실격 조건 제거"] == 2, badge
-        for wants in (True, None):
-            candidates, funnel = _execute_with_lines(db_session, [_line("user_1", badge, "contains_shellfish", wants)], facts)
+        for wants in (False, True, None):
+            candidates, funnel = _execute_with_lines(
+                db_session, [_line("user_1", badge, "is_crowded_large", wants)], facts, category="카페",
+            )
             assert set(candidates) == set(facts) and funnel["실격 조건 제거"] == 0, (badge, wants)
 
 
-def test_inactive_safety_reason_is_not_applied(db_session):
-    run = _make_run(db_session, status="collecting_evidence")
+def test_inactive_hard_reason_is_not_applied(db_session):
+    run = _make_run(db_session, status="collecting_evidence", category="카페")
     service.add_reaction_evidence(db_session, run_id=run.id, lines=[
-        {**_line("user_1", "preferred", "contains_shellfish", False), "is_active": False},
+        {**_line("user_1", "required", "is_crowded_large", False), "is_active": False},
     ])
     assert flows._active_hard_fact_keys(db_session, run) == []
 
@@ -1374,18 +1387,18 @@ def test_plus_manual_line_goes_through_plan_evidence_and_keeps_reference_badge(d
 
     def planner(raw):
         sent.extend(raw)
-        return [[PlannedLine(**{**r, "fact_key": "contains_shellfish", "wants": False})] for r in raw]
+        return [[PlannedLine(**{**r, "fact_key": "spicy_focused", "wants": False})] for r in raw]
 
     monkeypatch.setattr(flows.llm_service, "plan_evidence", lambda raw: planner(raw))
     run = _make_run(db_session, status="collecting_evidence")
     principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
 
-    flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["저 조개 알러지 있어요"])
+    flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["매운 건 못 먹어요"])
 
     assert [r["source"] for r in sent] == ["manual"]
     [line] = service.list_evidence(db_session, str(run.id))
-    assert (line.badge, line.fact_key, line.wants) == ("reference", "contains_shellfish", False)
-    assert flows._active_hard_fact_keys(db_session, run) == ["contains_shellfish"]
+    assert (line.badge, line.fact_key, line.wants) == ("reference", "spicy_focused", False)
+    assert flows._active_soft_requirements(db_session, run) == []   # reference는 실격을 켜지 않는다
 
 
 def test_plus_manual_line_planner_failure_leaves_no_line(db_session, monkeypatch):
@@ -1448,16 +1461,15 @@ def test_create_run_splits_a_reason_into_one_line_per_condition_then_the_chips(d
     assert _lines_by_author(db_session, run) == {
         "user_1": [
             ("한식 말고 고기 먹고 싶어요", None, "cuisine_korean", False, "required", 800),
-            ("한식 말고 고기 먹고 싶어요", None, "cuisine_bbq", True, "required", None),
+            ("한식 말고 고기 먹고 싶어요", None, "cuisine_bbq", True, "preferred", None),   # #422 — 🚫 안의 음식 종류 "원함"은 선호
             ("느끼해요", "food_oily", "oily_focused", False, "required", None),
         ],
         "user_2": [("고기 좋아요, 고기가 최고", None, "cuisine_bbq", True, "preferred", None)],
         "user_3": [("그냥 별로예요", None, None, None, "required", None)],
     }
     # 거르기는 줄 단위 그대로다 — 나뉜 두 조건이 각각 켜진다(전에는 하나가 조용히 사라졌다).
-    assert flows._active_soft_requirements(db_session, run) == [
-        ("cuisine_bbq", True), ("cuisine_korean", False), ("oily_focused", False),
-    ]
+    # 고기구이 원함은 #422로 선호가 되어 실격 조건이 아니다.
+    assert flows._active_soft_requirements(db_session, run) == [("cuisine_korean", False), ("oily_focused", False)]
 
 
 def test_split_lines_are_turned_off_one_condition_at_a_time(db_session, monkeypatch):
@@ -1475,29 +1487,28 @@ def test_split_lines_are_turned_off_one_condition_at_a_time(db_session, monkeypa
 
     # 순서는 보지 않는다 — 한 트랜잭션에서 넣은 줄은 created_at이 같아 UPDATE 뒤 순서가 바뀔 수 있다(루트 보고).
     assert {e.fact_key: e.is_active for e in result} == {"cuisine_korean": False, "cuisine_bbq": True}
-    assert flows._active_soft_requirements(db_session, run) == [("cuisine_bbq", True)]
+    assert flows._active_soft_requirements(db_session, run) == []   # 남은 고기구이 줄은 #422로 선호라 실격이 아니다
 
 
 def test_plus_manual_text_with_several_conditions_adds_a_reference_line_per_condition(db_session, monkeypatch):
-    """#419 — 「+」 글도 같다. "매운 거랑 해산물 둘 다 안 돼요"에서 해산물(안전 조건)이 빠지지 않고 실격을 켠다.
+    """#419 — 「+」 글도 같다. "매운 거랑 회 둘 다 별로예요"는 조건마다 reference 줄 하나다.
     여러 글을 한 번에 더하면 글 순서대로, 글마다 조건 줄들이 붙는다."""
     _planner_with_conditions(monkeypatch, {
-        "매운 거랑 해산물 둘 다 안 돼요": [("spicy_focused", False), ("contains_shellfish", False)],
+        "매운 거랑 회 둘 다 별로예요": [("spicy_focused", False), ("cuisine_raw_fish", False)],
     })
     run = _make_run(db_session, status="collecting_evidence")
     principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
 
     flows.patch_evidence(
         db_session, run_id=str(run.id), principal=principal, toggles=[],
-        adds=["매운 거랑 해산물 둘 다 안 돼요", "주차 필요해요"],
+        adds=["매운 거랑 회 둘 다 별로예요", "주차 필요해요"],
     )
 
     assert _lines_by_author(db_session, run) == {"user_1": [
-        ("매운 거랑 해산물 둘 다 안 돼요", None, "spicy_focused", False, "reference", None),
-        ("매운 거랑 해산물 둘 다 안 돼요", None, "contains_shellfish", False, "reference", None),
+        ("매운 거랑 회 둘 다 별로예요", None, "spicy_focused", False, "reference", None),
+        ("매운 거랑 회 둘 다 별로예요", None, "cuisine_raw_fish", False, "reference", None),
         ("주차 필요해요", None, None, None, "reference", None),
     ]}
-    assert flows._active_hard_fact_keys(db_session, run) == ["contains_shellfish"]
 
 
 def test_preferred_wants_false_subtracts_and_wants_null_has_no_effect(db_session):

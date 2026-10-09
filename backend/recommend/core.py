@@ -69,6 +69,20 @@ def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> l
     return [*reaction_lines, *manual_lines]
 
 
+def demote_wanted_place_identity(lines: Sequence[dict], category: str) -> list[dict]:
+    """docs/constraints.md "🚫 사유 안의 음식 종류 '원함'은 선호다"(#422): required이면서 wants=true이고 키가
+    가게의 정체(음식점 cuisine_*)인 줄은 배지를 preferred로 내린다. wants=false·다른 키·다른 배지는 그대로다.
+    글 줄·칩 줄 모두 같은 규칙이라 ②가 낸 줄과 칩 줄을 합친 뒤에 한 번 건다. 원본은 바꾸지 않는다."""
+    return [
+        {**line, "badge": "preferred"}
+        if line.get("badge") == "required"
+        and line.get("wants") is True
+        and constraints.is_place_identity_key(category, line.get("fact_key"))
+        else line
+        for line in lines
+    ]
+
+
 def circles_all_overlap(circles: list[Circle]) -> bool:
     """모든 원 쌍이 겹치면 하나의 지역으로 병합 가능(자동 확인 — 5-6-1 "사람이 쓴 반경 사유
     끼리 안 겹칠 때만" region/confirm 호출이 실제로 필요해진다). 0~1개는 겹칠 대상이 없으므로
@@ -159,7 +173,8 @@ def build_check(fact_key: str, unknown_policy: str, *, known: bool, value, passe
     고정한다(가드레일 8: "판정 불확실은 조건 종류에 따라 다르게 처리한다").
 
     - known=False & unknown_policy='exclude' → passed=False(실격), needs_check=False(불확실
-      해서 뺀 것이지 "확인해 달라"는 배지가 아니다 — 안전 조건이므로 절대 통과시키지 않는다).
+      해서 뺀 것이지 "확인해 달라"는 배지가 아니다). 지금 레지스트리에 exclude인 키는 없다(#425 — 알러지
+      같은 안전 조건은 서비스가 판단하지 않는다). 새로 넣으려면 루트 결정이 먼저다.
     - known=False & unknown_policy='pass'(+needs_check) → passed=True, needs_check=True.
     - known=True → passed는 실제 값 기반 통과 여부(호출부가 계산해 넘긴다), needs_check=False.
     label은 어느 조건인지 보이는 사람 말이다(`condition_label`) — 값 문자열("False")을 그대로 쓰지 않는다.
@@ -174,8 +189,8 @@ def build_check(fact_key: str, unknown_policy: str, *, known: bool, value, passe
 
 def resolve_label(labels: Sequence[FactLabel], fact_key: str) -> tuple[bool, Any]:
     """place_facts 라벨에서 fact_key 하나의 (known 여부, 값). 라벨이 없거나 confidence가 unknown이거나
-    known인데 값이 비어 있으면 unknown으로 본다 — 값 없는 known을 통과 쪽으로 읽지 않는다(안전 조건은
-    unknown_policy=exclude라 build_check가 후보를 내린다, 가드레일 8)."""
+    known인데 값이 비어 있으면 unknown으로 본다 — 값 없는 known을 통과 쪽으로 읽지 않는다(모름은
+    build_check가 unknown_policy대로 처리한다, 가드레일 8)."""
     for label in labels:
         if label.fact_key == fact_key:
             known = label.confidence == "known" and label.value is not None

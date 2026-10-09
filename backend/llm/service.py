@@ -20,7 +20,6 @@ from common.adapters import select
 from common.errors import AppError
 from common.settings import settings
 from llm.client import LlmCallError, call_planner, get_client
-from llm.prompts import HARD_FACT_KEYS
 from llm.schemas import (
     EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, RankedCandidate,
 )
@@ -77,8 +76,7 @@ def _normalize(text: str) -> str:
 
 def _merge_conditions(conditions: Sequence[PlannedCondition]) -> list[tuple[str, Optional[bool]]]:
     """같은 키가 한 글에서 여러 번 나오면 하나로 합친다(#419). 순서는 처음 나온 순서다.
-    방향이 엇갈리면(true와 false) 어느 쪽인지 지어내지 않고 null이다 — 단 안전 키는 false가 하나라도
-    있으면 false다(피하겠다는 뜻을 놓치면 못 먹는 걸 권한다, 가드레일 8)."""
+    방향이 엇갈리면(true와 false) 어느 쪽인지 지어내지 않고 null이다."""
     directions: dict[str, set[bool]] = {}
     for condition in conditions:
         seen = directions.setdefault(condition.fact_key, set())
@@ -89,7 +87,7 @@ def _merge_conditions(conditions: Sequence[PlannedCondition]) -> list[tuple[str,
         if len(seen) == 1:
             wants: Optional[bool] = next(iter(seen))
         else:
-            wants = False if key in HARD_FACT_KEYS and False in seen else None
+            wants = None
         merged.append((key, wants))
     return merged
 

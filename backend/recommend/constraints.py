@@ -26,9 +26,9 @@ class ConstraintSpec:
     unknown_policy: UnknownPolicy
 
 
-# 실격(hard) 조건 — 5-6 3단계에서 순회 대상.
+# 실격(hard) 조건 — 5-6 3단계에서 순회 대상. 알러지 같은 안전 조건(contains_shellfish, unknown_policy=exclude)은
+# 서비스가 판단하지 않기로 해서 뺐다(#425) — 지금 exclude인 키는 없다.
 HARD_REGISTRY: dict[str, ConstraintSpec] = {
-    "contains_shellfish": ConstraintSpec("contains_shellfish", _ALL_CATEGORIES, "hard", "exclude"),
     "is_crowded_large": ConstraintSpec("is_crowded_large", frozenset({"카페", "관광지"}), "hard", "pass"),
 }
 
@@ -98,12 +98,16 @@ def heart_signal_use(category: str, fact_key: str) -> HeartSignalUse:
     return HEART_SIGNAL_BY_CATEGORY.get(category, {}).get(fact_key, "use")
 
 
+def is_place_identity_key(category: str, fact_key: str | None) -> bool:
+    """표에 "use"로 적힌 키 = "가게의 정체"(음식점 cuisine_*, #422). heart_signal_use와 달리 표에 없는 키는 아니다."""
+    return fact_key is not None and HEART_SIGNAL_BY_CATEGORY.get(category, {}).get(fact_key) == "use"
+
+
 # 추천 이유(Candidate.reason) 한 줄에 쓰는 표시 이름 — fact_key를 사용자 문장으로 옮긴다. 값이
 # 아니라 "통과/충족했을 때 뭐라고 말하나"이다. 이 표에 없는 키는 이유에서 조용히 빠지므로
 # (가드레일 5는 근거가 있는 것만 말하라는 뜻 — 이름 없는 키를 날것으로 노출하지 않는다)
 # 레지스트리에 키를 추가할 때(#171) 여기도 같이 채운다. test_constraints.py가 빠진 키를 잡는다.
 PASSED_LABELS: dict[str, str] = {
-    "contains_shellfish": "갑각류 없음",
     "spicy_focused": "매운맛 전문점",       # 취향 키(#378) — 선호 충족 문장이라 "그렇다"는 쪽이다(피한 쪽은 "<이름> 제외")
     "oily_focused": "기름진 메뉴 위주",
     "is_crowded_large": "붐비는 대형 장소 아님",
@@ -169,7 +173,6 @@ PASSED_LABELS: dict[str, str] = {
 # PASSED_LABELS(서술형 "조용함")와 뜻이 달라 별도 표다. 레지스트리의 모든 키가 여기 있어야 하고
 # test_constraints.py가 빠진 키(30자 초과 포함)를 잡는다.
 FACT_LABELS: dict[str, str] = {
-    "contains_shellfish": "갑각류",
     "spicy_focused": "매운맛 전문",
     "oily_focused": "기름진 메뉴 위주",
     "is_open": "영업 여부",  # 레지스트리 밖(코드 판정)이지만 체크가 붙는다 — 모름 문장에 이름이 필요하다

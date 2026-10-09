@@ -13,7 +13,6 @@ const BY_CATEGORY: Record<string, ReasonChip[]> = {
     { id: "food_expensive", label: "비싸요" }, // 가격 라벨은 뺐다(#423)
     { id: "food_wait", label: "웨이팅이 길어요", fact_key: "wait_short" },
     { id: "food_cramped", label: "좁아요", fact_key: "spacious" },
-    { id: "food_shellfish", label: "갑각류 알러지가 있어요", fact_key: "contains_shellfish" },
   ],
   카페: [
     { id: "cafe_crowded", label: "너무 붐벼요", fact_key: "is_crowded_large" },
