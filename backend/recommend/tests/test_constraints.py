@@ -73,10 +73,23 @@ def test_soft_registry_covers_the_doc_categories_and_is_all_pass():
     assert "winter_spot" in sight and "cuisine_korean" not in sight
     assert set(constraints.soft_fact_keys_for("카페")) == {
         "quiet", "comfortable_seat", "local_flavor", "pet_friendly", "accessible",      # 기존 + 관광지 키를 카페에도(#263)
-        "bakery", "serves_alcohol", "open_late",                                         # 카페 전용(#263)
+        "bakery", "serves_alcohol", "open_late",                                         # 카페 전용(#263), 뒤의 둘은 음식점에도(#461)
         "spacious", "long_established", "vegetarian_friendly", "franchise",             # 음식점 키를 카페에도(#263)
     }
     assert "pet_friendly" in restaurant and "pet_friendly" in sight
+
+
+def test_late_and_alcohol_are_restaurant_and_cafe_soft_keys_with_category_free_names():
+    """#461 — open_late·serves_alcohol은 음식점에도 soft(pass)로 적용되고, 이름에 "카페"가 없다."""
+    for key in ("open_late", "serves_alcohol"):
+        assert constraints.SOFT_REGISTRY[key].categories == frozenset({"음식점", "카페"})
+        assert constraints.SOFT_REGISTRY[key].unknown_policy == "pass"
+        assert key in constraints.soft_fact_keys_for("음식점")
+        assert constraints.heart_signal_use("음식점", key) == "unused"
+        assert constraints.heart_signal_use("카페", key) == "use"
+        assert "카페" not in constraints.PASSED_LABELS[key]
+        assert "카페" not in constraints.FACT_LABELS[key]
+    assert constraints.PASSED_LABELS["serves_alcohol"] == "술도 파는 곳"
 
 
 def test_heart_signal_table_classifies_every_restaurant_soft_key():
@@ -86,7 +99,10 @@ def test_heart_signal_table_classifies_every_restaurant_soft_key():
     by_use = {use: {k for k, v in table.items() if v == use} for use in ("use", "two_or_more", "unused")}
     assert by_use["use"] == {k for k in table if k.startswith("cuisine_")} and len(by_use["use"]) == 11
     assert by_use["two_or_more"] == {"spicy_focused", "oily_focused", "long_established", "vegetarian_friendly"}
-    assert by_use["unused"] == {"franchise", "spacious", "parking_available", "pet_friendly", "wait_short"}
+    assert by_use["unused"] == {
+        "franchise", "spacious", "parking_available", "pet_friendly", "wait_short",
+        "open_late", "serves_alcohol",   # #461
+    }
     assert constraints.heart_signal_use("음식점", "cuisine_gopchang") == "use"   # 가게의 정체(#417)
     assert constraints.HEART_SIGNAL_MIN_TRUE_PLACES == 2
 
