@@ -66,6 +66,16 @@ class TestPromptListIsBuiltFromFactKey:
         assert '"삼겹살 먹자"·"갈비 먹고 싶어" → cuisine_bbq' in prompts.PLAN_EVIDENCE_PROMPT
         assert '"곱창 먹자"·"막창 좋아" → cuisine_gopchang' in prompts.PLAN_EVIDENCE_PROMPT
 
+    def test_alcohol_and_late_meanings_are_category_free(self):
+        # 음식점도 같은 키를 쓴다(#461) — 뜻이 "카페"에 묶이면 식당 사유를 못 잡는다
+        for key in ("serves_alcohol", "open_late"):
+            head = prompts.FACT_KEY_MEANINGS[key].split(" — ")[0]
+            assert "카페" not in head
+
+    def test_prompt_gives_restaurant_alcohol_and_late_examples(self):
+        assert '"술 한잔할 수 있는 곳" → serves_alcohol' in prompts.PLAN_EVIDENCE_PROMPT
+        assert '"늦게까지 하는 식당" → open_late' in prompts.PLAN_EVIDENCE_PROMPT
+
 
 class _FakeClient:
     """모델이 낸 fact_key를 그대로 돌려주는 대역 — 사람 말 → 키 대응을 모델이 맞췄다고 가정한다."""
@@ -88,6 +98,8 @@ def _reason(text, badge):
     ("곱창 먹자", "preferred", "cuisine_gopchang"),
     ("주차 되는 곳", "preferred", "parking_available"),
     ("강아지랑 갈 수 있는 곳", "preferred", "pet_friendly"),
+    ("술 한잔할 수 있는 곳", "preferred", "serves_alcohol"),
+    ("늦게까지 하는 식당", "preferred", "open_late"),
     ("야경 보고 싶어", "preferred", "night_view"),
     ("아이 데리고 가요", "preferred", "kid_friendly"),
 ])
