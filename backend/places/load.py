@@ -1,7 +1,7 @@
 """자체 장소 DB 적재 스크립트 (#189). 사용법:
 
     python -m places.load permit  --file 서울_일반음식점.csv [--crs EPSG:5174] [--encoding cp949] [--dry-run]
-    python -m places.load tourapi --file tourapi_items.json [--dry-run]
+    python -m places.load tourapi --file tourapi_items.json [--labels labels.csv|.json] [--constraints ...] [--dry-run]
     python -m places.load labels  --file labels.csv [--constraints ../docs/constraints.md] [--dry-run]
     python -m places.load restaurants --file restaurant_seoul_curated.csv [--labels restaurant_seoul_curated_labels.json]
                                       [--exclude-bars] [--constraints ...] [--dry-run]
@@ -52,11 +52,17 @@ def load_permit(db: Session, path: Path, *, crs: str, encoding: str | None, seou
     ]
 
 
-def load_tourapi(db: Session, path: Path, *, seoul_only: bool = True) -> list[str]:
+def load_tourapi(
+    db: Session, path: Path, *, seoul_only: bool = True, labels: Path | None = None, constraints: Path = DEFAULT_CONSTRAINTS
+) -> list[str]:
+    """관광지·문화시설·시장(contenttypeid 12·14·38). 라벨 파일이 주어지면 장소 다음에 같은 트랜잭션으로 넣는다."""
     items = ingest.extract_tourapi_items(json.loads(path.read_text(encoding="utf-8")))
     rows, report = ingest.parse_tourapi_items(items, seoul_only=seoul_only)
     result = repository.upsert_places(db, rows)
-    return report.lines() + [f"DB: 신규 {result.inserted}, 갱신 {result.updated}"]
+    lines = report.lines() + [f"DB: 신규 {result.inserted}, 갱신 {result.updated}"]
+    if labels is not None:
+        lines = ["[장소]"] + lines + ["[라벨]"] + _load_label_file(db, labels, constraints=constraints)
+    return lines
 
 
 def load_labels(db: Session, path: Path, *, constraints: Path, encoding: str | None) -> list[str]:
@@ -129,9 +135,9 @@ def main(argv: list[str] | None = None, *, session_factory: Callable[[], Session
         if name == "permit":
             p.add_argument("--crs", default=ingest.DEFAULT_PERMIT_CRS, help="좌표계(기본 EPSG:5174). 위경도 값은 자동으로 그대로 쓴다")
             p.add_argument("--all-regions", action="store_true", help="서울 필터를 끈다(테스트용)")
-        if name in ("labels", "restaurants", "cafes", "restaurant-labels"):
+        if name in ("labels", "restaurants", "cafes", "restaurant-labels", "tourapi"):
             p.add_argument("--constraints", type=Path, default=DEFAULT_CONSTRAINTS)
-        if name in ("restaurants", "cafes"):
+        if name in ("restaurants", "cafes", "tourapi"):
             p.add_argument("--labels", type=Path, default=None, help="라벨 JSON 또는 CSV — 있으면 장소 다음에 같은 트랜잭션으로 적재")
         if name == "restaurants":
             p.add_argument("--exclude-bars", action="store_true", help="유흥·주점류(정종/대포집/소주방, 감성주점) 제외 — 루트 결정 대기")
@@ -150,7 +156,10 @@ def main(argv: list[str] | None = None, *, session_factory: Callable[[], Session
         if args.command == "permit":
             lines = load_permit(db, args.file, crs=args.crs, encoding=args.encoding, seoul_only=not args.all_regions)
         elif args.command == "tourapi":
-            lines = load_tourapi(db, args.file)
+            if args.labels is not None and not args.labels.is_file():
+                print(f"파일이 없다: {args.labels}", file=sys.stderr)
+                return 2
+            lines = load_tourapi(db, args.file, labels=args.labels, constraints=args.constraints)
         elif args.command == "restaurants":
             if args.labels is not None and not args.labels.is_file():
                 print(f"파일이 없다: {args.labels}", file=sys.stderr)

@@ -41,9 +41,10 @@ def test_wants_direction_flows_from_planner_to_result_on_real_places(members, pl
     candidates = result.json()["candidates"]
     names = [c["place_name"] for c in sorted(candidates, key=lambda c: c["rank"])]
 
-    # K·S는 이미 지도에 핀이 있어 후보에서 빠진다(가드레일 6). U는 매운맛 라벨이 없어 안전 조건이 제외한다.
-    # 남는 R·B·C 중 횟집이 "회 좋아해"(preferred, wants=true)로 1위, 한식 말고(wants=false)는 셋 다 한식이 아니라 통과.
-    assert set(names) == {"성수 횟집", "성수 분식집", "성수 조개구이"}, names
+    # K·S는 이미 지도에 핀이 있어 후보에서 빠진다(가드레일 6). U는 매운맛 라벨이 없지만 취향 조건이라 모름은 통과한다(#378).
+    # 남는 R·B·C·U 중 횟집이 "회 좋아해"(preferred, wants=true)로 1위, 한식 말고(wants=false)는 넷 다 한식이 아니라 통과.
+    # 후보는 3곳까지 고른다(select_top_candidates) — 통과한 4곳 중 3곳이다.
+    assert len(names) == 3 and set(names) <= {"성수 횟집", "성수 분식집", "성수 조개구이", "성수 이름모를집"}, names
     assert names[0] == "성수 횟집"
     for c in candidates:
         uuid.UUID(c["id"])

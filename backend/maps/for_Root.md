@@ -1,3 +1,63 @@
+# backend/maps → 루트 보고 (#369 2단계 auth 세션이 maps 파일을 고친 내역, 2026-10-07)
+
+auth 세션이 아래 2절의 "탈퇴 위임에는 이벤트를 내지 않는다"를 루트 결정(007fc55)대로 바꿨다.
+- `maps/service.py::transfer_or_delete_owned_maps`: 위임한 지도마다 `record_event(db, core.member_left_event(map_id, user_id, successor))`
+  한 줄 추가(`user_id`=탈퇴자, `new_owner_user_id`=후임). 넘길 사람이 없어 삭제하는 지도는 지금처럼 `map.deleted`만 나간다. docstring 갱신.
+- `maps/api.py::transfer_or_delete_owned_maps`: docstring만 갱신.
+- `maps/tests/test_delete_leave_api.py::test_withdrawing_owner_hands_over_or_deletes`: 위임한 지도에 `member.left` 하나(페이로드 확인)와
+  `map.deleted` 없음, 삭제한 지도에 `member.left` 없음을 추가로 확인한다.
+- 탈퇴자의 반응·근거 줄은 탈퇴 경로(`withdraw_user`)가 전 지도에서 지우므로, 이 이벤트는 나가기와 달리 멤버십 행을 지우지 않는다(#245).
+
+---
+
+# backend/maps → 루트 보고 (#369 2단계 maps 몫 — 지도 삭제·나가기·방장 위임)
+
+브랜치 `docs/map-delete-leave-369`. 마이그레이션 `0021_maps_delete_leave`(`maps.deleted_at`,
+`uq_memberships_one_owner_per_map` = `memberships(map_id) WHERE role='owner'`, 로컬 DB에서 `upgrade → downgrade -1 → upgrade` 확인).
+내 지도 10개 상한(62ccd92)도 같이 했다(5절). maps 테스트 104개(이번에 늘어난 것 20개, 기존 84개), `integration` 103 passed. 백엔드 전체 실패 6개는 전부 재시도 상한 테스트로 루트의 로컬 시연용
+`ATTEMPT_LIMIT=100` 때문이다(깨끗한 브랜치 head에서는 recommend 206 passed). 로컬 `.env`가 `PLACES_MODE=real`·`LLM_MODE=real`이면
+integration 9개가 브랜치 head에서도 실패해서, `PLACES_MODE=dev LLM_MODE=dev`로 돌렸다.
+
+## 1. 다른 모듈 파일을 고친 내역 (모두 추가만, 기존 함수는 그대로)
+- `authz/policy.py`: `map.leave`(member), `map.delete`(owner), `ACTION_RESOURCE_TYPES`에 둘 다 `map`. 라우터가
+  `require_on_map("map.delete"/"map.leave")`를 쓰려면 필요했다. `test_policy_drift` 3개가 이걸로 통과한다.
+- `authz/schemas.py`: `Permissions.can_leave`.
+- `common/errors.py`: `OWNER_CANNOT_LEAVE`(409), `MAP_LIMIT`(409). `test_catalog_matches_docs`가 통과한다.
+- `pins/api.py`: `delete_reactions_by_user_in_map(db, *, user_id, map_id)` 추가.
+- `recommend/api.py`, `recommend/service.py`: `delete_evidence_lines_by_author_in_map(db, *, user_id, map_id)` 추가. run과 후보는 건드리지 않는다.
+- `integration/test_response_contract.py`: `test_map_leave_and_delete_match_the_openapi_spec`(204·403·409·404). `test_spec_route_coverage.py`의 `KNOWN_MISSING` 두 줄 삭제.
+
+## 2. 설계와 다르게 하거나 남겨 둔 것
+- **Map의 permissions는 authz가 아니라 `maps/core.py::map_permissions`가 만든다.** 역할 부분은 `authz.can`(`map.delete`, `map.leave`)에 묻고,
+  넘길 사람이 있는지(지도 상태)는 maps가 판정한다. `authz.core.permissions_for`에 map 빌더를 넣으려면 `Resource`에 후임 유무를 실어야 해서 그대로 두었다.
+  authz 세션이 `permissions_for`로 옮길지 정하면 된다.
+- **`DbMembershipGateway.is_member`는 없다.** 설계 문서는 `is_member`·`get_role`을 말하지만 `get_role` 하나만 있어서(`pins/ports.py`도 없다) 그쪽에만 삭제 필터를 넣었다.
+  새 메서드는 `current_member_ids(map_id) -> set[str]`(탈퇴자 행 포함, 삭제된 지도는 빈 집합). pins가 작성자 표시에 쓰려면 `pins/ports.py`(또는 해당 Protocol)에 이 시그니처를 추가한다.
+- **탈퇴 위임에는 이벤트를 내지 않는다.** `docs/events.md`에 방장 변경 이벤트가 없다. 넘길 사람이 없어 지도를 삭제하는 경우만 `map.deleted`가 나간다.
+  연결된 FE의 구성원 목록 role은 다시 불러올 때까지 옛 값이다. 필요하면 이벤트를 정해 달라.
+- `next_owner`는 후임의 users 행이 없으면(이름을 못 구하면) 생략한다. 이름을 지어내지 않는다.
+- 지도 삭제는 잠금 뒤에 방장 여부를 다시 확인하지 않는다(가드가 이미 봤다). 나가기는 잠근 뒤 멤버십을 다시 읽고, 그사이 나갔으면 404다.
+- 초대 수락은 maps 행을 잠그지 않는다. 삭제와 동시에 수락되면 삭제된 지도에 멤버십이 하나 더 생길 수 있지만 보이지 않는다.
+
+## 3. 확인이 필요한 것
+- **인덱스 생성 전 데이터**: 로컬 dev DB(`0020`)에 방장 2명 지도 0개. 마이그레이션은 있으면 지도 id를 담아 실패한다(자동으로 고치지 않는다). 공유 DB는 확인하지 못했다.
+- **auth**: `auth/service.py::withdraw_user`에서 `maps.api.transfer_or_delete_owned_maps(db, user_id)`를 불러야 한다(아직 안 부른다). 탈퇴자 멤버십 행은 지우지 않고 member로 강등만 한다.
+- **pins**: `created_by_display_name` 판정(탈퇴 먼저, 그다음 `current_member_ids`)은 아직 없다.
+- **realtime**: 삭제된 지도는 게이트웨이가 404를 주므로 새 SSE 구독은 막힌다. 이미 연결된 구독자에게 `map.deleted`를 보낸 뒤 닫는 순서는 realtime 몫이다.
+- **동시성**: 두 세션이 동시에 나가는 테스트는 만들지 않았다. `SELECT ... FOR UPDATE`로 잠그고, 잠근 뒤 멤버십을 다시 읽는 순서만 코드로 보장한다.
+  방장 2명은 부분 유니크 인덱스가 막는다(`test_two_owners_on_one_map_is_impossible`).
+
+## 5. 내 지도 10개 상한 (62ccd92)
+- 상한은 `maps/core.py::MAP_LIMIT = 10` 한 곳이고, 판정은 `core.check_map_limit(count)`가 한다(`AppError("MAP_LIMIT", detail={"limit", "count"})`).
+- 세는 기준은 `service._my_map_count`다. `list_maps`와 같이 내 멤버십이 있고 삭제되지 않은 지도를 센다. 나간 지도는 행이 없어 자연히 빠진다.
+- `create_map`은 입력을 검증한 뒤 센다(입력이 잘못됐으면 422가 409보다 먼저다). `accept_invite`는 토큰 확인(404/410) → 이미 구성원인지 → 아니면 상한 순서로 본다. 재수락은 막지 않는다.
+- 한 사용자가 수락 두 건을 동시에 보내면 10개를 넘을 수 있다. 사용자 단위 잠금이 없어서다. 화면 흐름상 일어나기 어려워 막지 않았다.
+
+## 4. 복잡도
+예상 4(이슈 전체). maps 몫 실제 3.
+
+---
+
 # backend/maps → 루트 보고 (#137 — memberships.user_id 인덱스)
 
 `ix_memberships_user_id` 추가 완료(`alembic/versions/0012_memberships_user_id_index.py`).

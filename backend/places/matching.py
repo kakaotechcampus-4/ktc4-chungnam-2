@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -14,7 +15,6 @@ from typing import Sequence
 
 from common import categories
 from places.schemas import PlaceHint, PlaceMatch
-from places.sources.base import distance_m
 
 OWN_CATEGORIES = categories.pinnable()   # 자체 DB가 담는 분류(common/categories.py, #191·#280)
 MAX_RADIUS_M = 300.0     # 힌트 좌표에서 이 거리 안의 후보만 본다 — 판정은 후보를 주는 쪽(DB의 ST_DWithin)이 한다
@@ -37,6 +37,7 @@ class Candidate:
     lng: float
     category: str
     kakao_place_id: str | None = None
+    distance_m: float | None = None   # 힌트 좌표까지 DB가 잰 ST_Distance. 카카오 ID로만 붙은 후보는 None(반경 밖일 수 있다)
 
 
 def normalize_name(name: str) -> str:
@@ -69,7 +70,8 @@ def pick_match(hint: PlaceHint, candidates: Sequence[Candidate]) -> PlaceMatch |
     for c in candidates:
         if c.category != hint.category:
             continue
-        dist = distance_m(hint.lat, hint.lng, c.lat, c.lng)   # 동명 점포 구분용 상대 거리 — 반경 판정이 아니다
+        # 동명 점포 구분용 상대 거리 — DB 값을 그대로 쓴다. None(카카오 ID로만 붙은 후보)은 가장 먼 것으로 본다
+        dist = c.distance_m if c.distance_m is not None else math.inf
         score = name_score(hint.name, c.name)
         if score >= NAME_MIN_SCORE:
             scored.append((score, dist, c))

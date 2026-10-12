@@ -14,7 +14,7 @@ fact_key가 unknown이 된다(architecture.md 3절 — 라벨 없이도 unknown_
 get_facts)에만 위임한다. 요청 중 모델 호출도 카카오 원자료도 이 경로에 없다.
 """
 
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from fastapi import Depends
 from sqlalchemy.orm import Session
@@ -22,9 +22,10 @@ from sqlalchemy.orm import Session
 from common.adapters import select
 from common.database import get_db_session
 from common.settings import settings
+from llm import api as llm_api
 from places import api as places_api
 from places.schemas import Area, FactLabel
-from recommend.ports import Circle, PlaceFactsGateway, PlaceSearchGateway, PlaceStub
+from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway, PlaceStub
 
 
 class DevPlaceSearchGateway:
@@ -120,6 +121,35 @@ get_place_facts_gateway = select(
 )
 
 
+class DevEvidencePlanGateway:
+    """입력을 EvidenceLine으로 검증만 하고 통과시킨다 — 모델을 부르지 않는다(LLM_MODE=dev)."""
+
+    def plan_evidence(self, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[llm_api.EvidenceLine]]:
+        return llm_api.plan_evidence(raw_reasons, planner=llm_api.passthrough_planner)
+
+
+class RealEvidencePlanGateway:
+    """Luna를 실제로 부른다(LLM_MODE=real, #116). 모델 호출은 ② 이 한 곳뿐이다."""
+
+    def plan_evidence(self, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[llm_api.EvidenceLine]]:
+        return llm_api.plan_evidence(raw_reasons, planner=llm_api.real_evidence_planner)
+
+
+def _dev_evidence_plan_gateway() -> EvidencePlanGateway:
+    return DevEvidencePlanGateway()
+
+
+def _real_evidence_plan_gateway() -> EvidencePlanGateway:
+    return RealEvidencePlanGateway()
+
+
+get_evidence_plan_gateway = select(
+    "recommend.EvidencePlanGateway", settings.llm_mode,
+    {"dev": _dev_evidence_plan_gateway, "real": _real_evidence_plan_gateway}, "#116",
+)
+
+
 DbSession = Depends(get_db_session)
 PlaceSearchGatewayDep = Depends(get_place_search_gateway)
 PlaceFactsGatewayDep = Depends(get_place_facts_gateway)
+EvidencePlanGatewayDep = Depends(get_evidence_plan_gateway)

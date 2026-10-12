@@ -21,13 +21,14 @@ import authz.deps
 import common.events  # noqa: F401
 import maps.models  # noqa: F401
 import pins.models  # noqa: F401 — shortlist_items.pin_id가 pins.id를 FK로 참조한다
+import recommend.models  # noqa: F401 — 지도 나가기(#369)가 그 지도의 근거 줄을 지운다
 import shortlist.models  # noqa: F401 — maps.service가 shortlist.api를 부르면서 필요해짐
 from auth.testing import ensure_users
 from common.database import Base, session_scope
 from maps.api import DbMembershipGateway
 
 # 이 모듈 테스트가 쿠키로 로그인시키는 사용자 id 전부
-TEST_USER_IDS = ("user_1", "user_2", "outsider", "user_lonely")
+TEST_USER_IDS = ("user_1", "user_2", "user_3", "outsider", "user_lonely")
 
 BASE_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://pingo:pingo@localhost:5432/pingo")
 

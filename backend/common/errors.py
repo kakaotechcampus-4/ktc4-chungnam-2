@@ -31,6 +31,8 @@ CATALOG: dict[str, tuple[int, str]] = {
     "WIDEN_LIMIT": (409, "반경을 더 넓힐 수 없습니다"),
     "REACTION_NOT_ALLOWED": (422, "이 핀에는 반응을 남길 수 없습니다"),
     "INVITE_NOT_FOUND": (404, "유효하지 않은 초대 링크입니다"),
+    "MAP_LIMIT": (409, "내 지도가 이미 상한에 도달했습니다"),
+    "OWNER_CANNOT_LEAVE": (409, "넘길 사람이 없는 방장은 나갈 수 없습니다"),
     "INVITE_EXPIRED": (410, "만료된 초대 링크입니다"),
     "PLACE_NOT_SUPPORTED": (422, "아직 지원하지 않는 장소입니다"),
     "RATE_LIMITED": (429, "요청이 너무 잦습니다"),
@@ -89,6 +91,11 @@ def register_error_handlers(app) -> None:
 
     @app.exception_handler(AppError)
     async def _app_error(_request, exc: AppError):
+        if exc.status >= 500:
+            # 서버 쪽 실패는 응답 본문 말고 콘솔에도 남긴다(#390). 코드·stage만 — detail 전체나 message는
+            # 사용자 입력을 품을 수 있어 넣지 않는다.
+            stage = exc.detail.get("stage") if isinstance(exc.detail, dict) else None
+            logger.warning("AppError %s status=%s stage=%s", exc.code, exc.status, stage)
         return error_response(exc.code, exc.message, exc.detail)
 
     @app.exception_handler(RequestValidationError)

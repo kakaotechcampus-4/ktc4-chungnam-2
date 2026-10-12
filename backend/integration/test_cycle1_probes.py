@@ -98,18 +98,18 @@ def test_withdrawn_member_does_not_raise_the_readiness_bar(members, place_ids):
 
 # ───────────────────────── 삭제된 핀의 사유 ─────────────────────────
 
-def test_safety_reason_survives_deleting_its_pin(members, place_ids, fake_planner):
-    """누가 핀을 지워도(구성원 누구나 삭제 가능) 다른 사람의 알러지 사유가 사라져 위험한 추천이 나가면 안 된다."""
+def test_reason_survives_deleting_its_pin(members, place_ids, fake_planner):
+    """누가 핀을 지워도(구성원 누구나 삭제 가능) 다른 사람이 남긴 사유가 근거에서 사라지면 안 된다(#243)."""
     a, b, map_id = members
     k = _pin(a, map_id, "K", place_ids)
     s = _pin(a, map_id, "S", place_ids)
-    assert b.put(f"/pins/{k}/reaction", json={"type": "against", "reason_text": "조개 알러지"}).status_code == 200
+    assert b.put(f"/pins/{k}/reaction", json={"type": "against", "reason_text": "너무 매워요"}).status_code == 200
     assert a.put(f"/pins/{s}/reaction", json={"type": "like"}).status_code == 200      # 준비 판정은 통과시킨다
     assert a.delete(f"/pins/{k}").status_code == 204
     run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
     assert run.status_code == 202, run.text
     keys = {e["fact_key"] for e in a.get(f"/runs/{run.json()['id']}/evidence").json()}
-    assert "contains_shellfish" in keys, "삭제된 핀에 남겨 둔 알러지 사유가 근거에서 사라졌다"
+    assert "spicy_focused" in keys, "삭제된 핀에 남겨 둔 사유가 근거에서 사라졌다"
 
 
 # ───────────────────────── 입력 제한·선택 본문 ─────────────────────────

@@ -53,7 +53,9 @@ def get_pins(
     db: Session = DbSession,
 ):
     return service.list_pins(
-        db, map_id=mapId, principal=principal, category=category, kind=kind, created_by=created_by,
+        db, map_id=mapId, principal=principal,
+        current_member_ids=maps_api.DbMembershipGateway(db).current_member_ids(mapId),
+        category=category, kind=kind, created_by=created_by,
     )
 
 

@@ -52,7 +52,9 @@ async def test_public_events_replays_then_streams_live_event(db_session):
     after_seq = old.seq
 
     request = _FakeRequest()
-    response = await public_events(request=request, mapId="int-map", last_event_id=str(after_seq))
+    response = await public_events(
+        request=request, mapId="int-map", user=CurrentUser(user_id="user-a"), last_event_id=str(after_seq)
+    )
     agen = response.body_iterator
 
     # 실시간 tail에 새 이벤트가 하나 들어올 것 — subscribe 이후에 넣어야 구독자가 받는다.

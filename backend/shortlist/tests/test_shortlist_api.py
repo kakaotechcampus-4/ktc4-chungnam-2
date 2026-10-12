@@ -97,22 +97,6 @@ def test_confirm_pin_nonexistent_pin_is_404(app_client):
     assert resp.json()["code"] == "NOT_FOUND"
 
 
-def test_confirm_other_users_private_pin_is_404_ai_pin_private(app_client, db_session):
-    pin = _insert_pin(db_session, created_by="user_1", visibility="private", kind="AI추천", origin="ai")
-    resp = app_client.post("/maps/map_1/shortlist", json={"pin_id": str(pin.id)}, cookies=_auth("user_2"))
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "AI_PIN_PRIVATE"
-
-
-def test_confirm_own_private_pin_is_blocked_guardrail_1(app_client, db_session):
-    """가드레일 1 — 본인 소유 비공개 AI 후보도 「지도에 올리기」 없이 곧장 확정 리스트(전체
-    공개)로 승격시킬 수 없다(flows.py 참고, for_Root.md에 별도 보고)."""
-    pin = _insert_pin(db_session, created_by="user_1", visibility="private", kind="AI추천", origin="ai")
-    resp = app_client.post("/maps/map_1/shortlist", json={"pin_id": str(pin.id)}, cookies=_auth("user_1"))
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "AI_PIN_PRIVATE"
-
-
 def test_confirm_pin_non_member_is_404(app_client, db_session):
     pin = _insert_pin(db_session)
     app.dependency_overrides[get_membership_gateway] = _deny_membership

@@ -12,13 +12,13 @@ from pydantic import ValidationError
 from authz.core import Principal
 from common.errors import AppError
 from pins import core
-from pins.schemas import Pin, PinCreateRequest, ReactionSummary
+from pins.schemas import Pin, PinCreateSearch, ReactionSummary
 
 
-def _req(**kwargs) -> PinCreateRequest:
+def _req(**kwargs) -> PinCreateSearch:
     base = {"category": "음식점", "place_id": "kakao:1", "place_name": "성수 칼국수", "lat": 37.54, "lng": 127.05}
     base.update(kwargs)
-    return PinCreateRequest(**base)
+    return PinCreateSearch(**base)
 
 
 def _principal(role: str | None = "member") -> Principal:
@@ -70,7 +70,7 @@ def test_create_request_requires_all_hint_fields():
         base = {"category": "음식점", "place_id": "kakao:1", "place_name": "x", "lat": 37.5, "lng": 127.0}
         del base[missing]
         with pytest.raises(ValidationError):
-            PinCreateRequest(**base)
+            PinCreateSearch(**base)
 
 
 @pytest.mark.parametrize("lat,lng", [(91, 127), (-91, 127), (37, 181), (37, -181)])
@@ -110,20 +110,6 @@ def test_is_duplicate_non_matching_place_id_is_not_duplicate():
     assert core.is_duplicate({"p1"}, "p2") is False
 
 
-# --- is_visible_to (가드레일 1) -----------------------------------------------
-
-def test_is_visible_to_public_visible_to_stranger():
-    assert core.is_visible_to("public", "owner", "stranger") is True
-
-
-def test_is_visible_to_private_visible_to_owner():
-    assert core.is_visible_to("private", "owner", "owner") is True
-
-
-def test_is_visible_to_private_hidden_from_stranger():
-    assert core.is_visible_to("private", "owner", "stranger") is False
-
-
 # --- kind_after_unconfirm -------------------------------------------------------
 
 def test_kind_after_unconfirm_ai_origin_returns_ai_recommended():
@@ -157,7 +143,7 @@ def test_to_pin_response_non_member_gets_all_false():
     assert pin.permissions.can_delete is False
 
 
-# --- 이벤트 조립 (가드레일 1: private는 전체 채널로 나가지 않는다) --------------------
+# --- 이벤트 조립 --------------------
 
 def test_pin_created_event_public_pin_emits_to_public_channel():
     event = core.pin_created_event(_pin(visibility="public"))
@@ -169,21 +155,13 @@ def test_pin_created_event_public_pin_emits_to_public_channel():
     assert event.recipient_user_id is None
 
 
-def test_pin_created_event_private_pin_emits_nothing():
-    assert core.pin_created_event(_pin(visibility="private")) is None
-
-
 def test_pin_deleted_event_payload_is_pin_id_only():
-    event = core.pin_deleted_event("pin_1", "map_1", visibility="public")
+    event = core.pin_deleted_event("pin_1", "map_1")
     assert event is not None
     assert event.map_id == "map_1"
     assert event.channel == "public"
     assert event.type == "pin.deleted"
     assert event.payload == {"pin_id": "pin_1"}
-
-
-def test_pin_deleted_event_private_pin_emits_nothing():
-    assert core.pin_deleted_event("pin_1", "map_1", visibility="private") is None
 
 
 # --- validate_reaction (가드레일 3) --------------------------------------------
@@ -236,32 +214,49 @@ def test_reason_content_strips_and_rejects_invisible_only():
     assert core.reason_content("​") is None
 
 
-@pytest.mark.parametrize("reaction_type", ["like", "neutral"])
-def test_validate_reaction_like_neutral_never_require_reason(reaction_type):
-    core.validate_reaction(reaction_type, None, None)
+def test_validate_reaction_like_never_requires_reason():
+    core.validate_reaction("like", None, None)
 
 
 # --- reaction_changed_event (가드레일 1) ---------------------------------------
 
 def test_reaction_changed_event_public_pin_emits_envelope():
-    summary = ReactionSummary(like=1, neutral=0, against=2)
-    event = core.reaction_changed_event("pin_1", "map_1", "public", summary, "user_2", "민수", "against")
+    summary = ReactionSummary(like=1, against=2)
+    event = core.reaction_changed_event("pin_1", "map_1", summary, "user_2", "민수", "against")
     assert event is not None
     assert event.map_id == "map_1"
     assert event.channel == "public"
     assert event.type == "reaction.changed"
     assert event.payload == {
-        "pin_id": "pin_1", "reaction_summary": {"like": 1, "neutral": 0, "against": 2},
+        "pin_id": "pin_1", "reaction_summary": {"like": 1, "against": 2},
         "user_id": "user_2", "display_name": "민수", "type": "against",
     }
 
 
 def test_reaction_changed_event_delete_has_null_type_and_never_carries_reasons():
-    event = core.reaction_changed_event("pin_1", "map_1", "public", ReactionSummary(), "user_2", "민수", None)
+    event = core.reaction_changed_event("pin_1", "map_1", ReactionSummary(), "user_2", "민수", None)
     assert event.payload["type"] is None
     assert not {"reason_text", "reason_chip_ids", "my_reaction"} & set(event.payload)
 
 
-def test_reaction_changed_event_private_pin_emits_nothing():
-    event = core.reaction_changed_event("pin_1", "map_1", "private", ReactionSummary(), "user_2", "민수", "like")
-    assert event is None
+# --- #369 핀 작성자 표시 ---
+
+def test_author_display_name_withdrawn_wins_over_membership():
+    """탈퇴자는 멤버십 행이 남아 현재 구성원으로 잡힌다(#245) — 그래도 '탈퇴한 구성원'이 먼저다."""
+    assert core.author_display_name("철수", is_withdrawn=True, is_current_member=True) == "탈퇴한 구성원"
+    assert core.author_display_name("철수", is_withdrawn=True, is_current_member=False) == "탈퇴한 구성원"
+
+
+def test_author_display_name_left_member():
+    assert core.author_display_name("철수", is_withdrawn=False, is_current_member=False) == "나간 구성원"
+
+
+def test_author_display_name_current_member_keeps_real_name():
+    assert core.author_display_name("철수", is_withdrawn=False, is_current_member=True) == "철수"
+    assert core.author_display_name(None, is_withdrawn=False, is_current_member=True) is None
+
+
+def test_withdrawn_author_name_matches_auth():
+    from auth.api import WITHDRAWN_DISPLAY_NAME
+
+    assert core.WITHDRAWN_AUTHOR_NAME == WITHDRAWN_DISPLAY_NAME

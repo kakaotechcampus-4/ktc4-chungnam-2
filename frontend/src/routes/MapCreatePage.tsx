@@ -1,102 +1,150 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router'
-import type { components } from '@pingo/contracts/src/types/api'
+import { ChevronDown, ChevronLeft, X } from 'lucide-react'
 
-import { api, ApiError } from '@/api'
+import ErrorText from '@/ErrorText'
+import { createMapErrorMessage, type MapRegion } from '@/features/maps/model'
+import { useCreateMapMutation } from '@/features/maps/queries'
+import RegionPicker from '@/features/maps/RegionPicker'
 
-type MapInfo = components['schemas']['Map']
-type MapCreateRequest = components['schemas']['MapCreateRequest']
+const TITLE_MAX = 100
 
 /**
- * 지도 생성 폼 (#22) — 여행 제목 + 시작일·종료일.
- * 지역 검색(필수 아님)은 스펙 반영(#136) 뒤에 붙인다.
+ * 지도 만들기 (#22, Figma 1절). 제목·날짜는 필수, 지역은 선택(시·도 목록).
+ * 빈 칸이 있거나 종료일이 시작일보다 앞서면 버튼이 꺼진다. 당일치기는 같은 날을 넣는다.
  */
 export default function MapCreatePage() {
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
+  const create = useCreateMapMutation()
+  const [title, setTitle] = useState('')
+  const [region, setRegion] = useState<MapRegion | null>(null)
   const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [pickingRegion, setPickingRegion] = useState(false)
 
-  const create = useMutation({
-    mutationFn: (body: MapCreateRequest) =>
-      api<MapInfo>('/maps', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: (map) => {
-      void queryClient.invalidateQueries({ queryKey: ['maps'] })
-      navigate(`/maps/${map.id}`, { replace: true })
-    },
-  })
+  // ISO 날짜 문자열은 사전순 비교가 곧 날짜 비교다.
+  const dateError = Boolean(startDate && endDate && endDate < startDate)
+  const ready = title.trim() !== '' && startDate !== '' && endDate !== '' && !dateError
 
-  function submit(e: React.FormEvent<HTMLFormElement>) {
+  function submit(e: React.FormEvent) {
     e.preventDefault()
-    const form = new FormData(e.currentTarget)
-    create.mutate({
-      title: String(form.get('title')).trim(),
-      start_date: String(form.get('start_date')),
-      end_date: String(form.get('end_date')),
-    })
+    if (!ready) return
+    create.mutate(
+      { title: title.trim(), start_date: startDate, end_date: endDate, ...(region ? { region } : {}) },
+      // 방장 온보딩(Figma 3절)은 지도 화면이 이 표시를 보고 띄운다.
+      { onSuccess: (map) => navigate(`/maps/${map.id}?onboarding=owner`, { replace: true }) },
+    )
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4 p-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">새 지도</h1>
-        <Link to="/" className="text-sm text-muted-foreground">
-          취소
+    <form onSubmit={submit} className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6 pt-4">
+      <header className="mb-6 flex items-center gap-3">
+        <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-sm">
+          <ChevronLeft size={20} />
         </Link>
-      </div>
+        <h1 className="text-2xl font-bold text-ink-900">새 지도</h1>
+      </header>
 
-      <label className="block space-y-1">
-        <span className="text-sm">여행 제목</span>
-        <input
-          name="title"
-          required
-          maxLength={100}
-          placeholder="예: 부산 1박 2일"
-          className="w-full rounded-md border px-3 py-2 text-sm"
-        />
-      </label>
+      <Field label="여행 제목">
+        <div className="flex items-center gap-2 rounded-xl border border-ink-300 bg-white px-3 py-3 focus-within:border-brand-600">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={TITLE_MAX}
+            placeholder="예: 부산 1박 2일"
+            className="min-w-0 flex-1 bg-transparent outline-none"
+          />
+          {title && <ClearButton label="제목 지우기" onClick={() => setTitle('')} />}
+          {title && <span className="text-xs text-ink-500">{title.length}/{TITLE_MAX}</span>}
+        </div>
+      </Field>
+
+      <Field as="div" label={<>지역 <span className="font-normal text-ink-500">(선택)</span></>}>
+        <div className="flex items-center gap-2 rounded-xl border border-ink-300 bg-white px-3 py-3">
+          <button type="button" onClick={() => setPickingRegion(true)} className="min-w-0 flex-1 text-left">
+            {region ? region.label : <span className="text-ink-500">시·도 선택</span>}
+          </button>
+          {region ? (
+            <ClearButton label="지역 지우기" onClick={() => setRegion(null)} />
+          ) : (
+            <ChevronDown size={18} className="text-ink-400" aria-hidden="true" />
+          )}
+        </div>
+        <p className="mt-1.5 text-xs text-ink-500">고르면 그 지역 장소 정보를 미리 준비해요</p>
+      </Field>
 
       <div className="grid grid-cols-2 gap-2">
-        <label className="block space-y-1">
-          <span className="text-sm">시작일</span>
+        <Field label="시작일">
           <input
             type="date"
-            name="start_date"
-            required
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
-            className="w-full rounded-md border px-3 py-2 text-sm"
+            className="w-full rounded-xl border border-ink-300 bg-white px-3 py-3"
           />
-        </label>
-        <label className="block space-y-1">
-          <span className="text-sm">종료일</span>
-          {/* 종료일은 시작일 이후여야 한다(스펙 MapCreateRequest.end_date). 브라우저가 막는다. */}
+        </Field>
+        <Field label="종료일">
           <input
             type="date"
-            name="end_date"
-            required
+            value={endDate}
             min={startDate || undefined}
-            className="w-full rounded-md border px-3 py-2 text-sm"
+            onChange={(e) => setEndDate(e.target.value)}
+            aria-invalid={dateError}
+            aria-describedby={dateError ? 'date-error' : undefined}
+            // 입력 오류는 빨강이 아니라 주의색이다 — 빨강은 파괴적 동작 전용(colors.md 6절).
+            className={`w-full rounded-xl border bg-white px-3 py-3 ${dateError ? 'border-[var(--warn-line)]' : 'border-ink-300'}`}
           />
-        </label>
+        </Field>
       </div>
-
-      {create.error && (
-        <p className="text-sm text-destructive">
-          지도를 만들지 못했어요
-          {create.error instanceof ApiError && (
-            <span className="ml-1 font-mono text-xs">({create.error.code})</span>
-          )}
+      {dateError && (
+        <p id="date-error" className="-mt-2 text-sm text-[var(--warn-text)]">
+          종료일은 시작일과 같거나 뒤여야 해요
         </p>
       )}
 
+      {create.error && <ErrorText message={createMapErrorMessage(create.error)} error={create.error} />}
+
       <button
         type="submit"
-        disabled={create.isPending}
-        className="w-full rounded-md bg-primary py-2 text-sm text-primary-foreground disabled:opacity-50"
+        disabled={!ready || create.isPending}
+        className="btn-primary mt-auto py-3.5"
       >
         {create.isPending ? '만드는 중…' : '지도 만들기'}
       </button>
+
+      {pickingRegion && (
+        <RegionPicker
+          value={region}
+          onClose={() => setPickingRegion(false)}
+          onDone={(next) => {
+            setRegion(next)
+            setPickingRegion(false)
+          }}
+        />
+      )}
     </form>
+  )
+}
+
+/** 입력칸 하나면 label 로 묶고, 버튼이 여럿이면(지역) div 로 둔다 — label 안에 버튼 여럿은 눌림이 엉킨다. */
+function Field({ label, as: Tag = 'label', children }: { label: React.ReactNode; as?: 'label' | 'div'; children: React.ReactNode }) {
+  return (
+    <Tag className="mb-5 block">
+      <span className="mb-1.5 block text-sm font-semibold text-ink-900">{label}</span>
+      {children}
+    </Tag>
+  )
+}
+
+/** 입력칸에 글자가 있을 때만 붙는 ✕(Figma 규칙). */
+function ClearButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onClick}
+      className="flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-300 text-white"
+    >
+      <X size={12} />
+    </button>
   )
 }

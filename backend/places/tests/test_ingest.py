@@ -160,7 +160,7 @@ def test_tourapi_keeps_only_seoul_tourist_spots(tour):
 def test_tourapi_does_not_take_lodging(tour):
     _, report = tour
     assert report.skipped["숙박은 받지 않는다"] == 1
-    assert report.skipped["관광지(contenttypeid=12) 아님"] == 1   # 음식점(39)
+    assert report.skipped["관광지·문화시설·쇼핑(contenttypeid=12·14·38) 아님"] == 1   # 음식점(39)
 
 
 def test_tourapi_mapx_is_lng_and_mapy_is_lat(tour):
@@ -176,6 +176,30 @@ def test_tourapi_skips_other_regions_missing_coords_and_missing_title(tour):
 def test_tourapi_address_joins_addr1_and_addr2(tour):
     rows, _ = tour
     assert rows[1].address == "서울특별시 종로구 사직로 161 (세종로)"
+
+
+def _tour_item(ctype: str, cid: str, *, mapx: str = "126.9770", mapy: str = "37.5796", addr: str = "서울특별시 종로구 사직로 161") -> dict:
+    return {"contentid": cid, "contenttypeid": ctype, "title": f"장소{cid}", "addr1": addr, "mapx": mapx, "mapy": mapy, "areacode": ""}
+
+
+def test_tourapi_takes_tourist_spot_culture_and_market_as_tourist_category():
+    rows, report = ingest.parse_tourapi_items([_tour_item("12", "1"), _tour_item("14", "2"), _tour_item("38", "3"), _tour_item("32", "4")])
+    assert [r.source_id for r in rows] == ["1", "2", "3"]
+    assert {r.category for r in rows} == {"관광지"}
+    assert report.skipped["숙박은 받지 않는다"] == 1
+    assert report.accepted_by_type == {"12": 1, "14": 1, "38": 1} and report.skipped_by_type == {"32": 1}
+    assert "  [contenttypeid 14] 받음 1 / 건너뜀 0" in report.lines()
+    assert "  [contenttypeid 32] 받음 0 / 건너뜀 1" in report.lines()
+
+
+def test_tourapi_skips_coords_outside_seoul_even_with_seoul_address():
+    wrong = _tour_item("12", "128933", mapx="127.709322", mapy="37.470571", addr="서울특별시 관악구 관악로 173")
+    rows, report = ingest.parse_tourapi_items([wrong, _tour_item("12", "1")])
+    assert [r.source_id for r in rows] == ["1"]
+    assert report.skipped["서울 밖 좌표"] == 1
+    assert "  - 서울 밖 좌표: 1" in report.lines()
+    kept, _ = ingest.parse_tourapi_items([wrong], seoul_only=False)
+    assert [r.source_id for r in kept] == ["128933"]
 
 
 def test_extract_tourapi_items_shapes():
@@ -196,15 +220,15 @@ def labels():
 
 def test_allowed_keys_come_from_constraints_md_without_code_judged_ones(labels):
     allowed, _, _ = labels
-    assert {"spicy_focused", "price_bucket", "quiet", "good_view", "contains_shellfish"} <= allowed
+    assert {"spicy_focused", "quiet", "good_view", "cuisine_korean"} <= allowed
     assert "is_open" not in allowed and "within_radius" not in allowed
 
 
 def test_label_rows_known_unknown_and_layers(labels):
     _, rows, _ = labels
     by_key = {(r.source_id, r.fact_key): r for r in rows}
-    assert by_key[("P001", "contains_shellfish")].value is True
-    assert by_key[("P001", "price_bucket")].value == "mid" and by_key[("P001", "price_bucket")].source_layer == 2
+    assert by_key[("P001", "cuisine_korean")].value is True
+    assert by_key[("P001", "cuisine_korean")].source_layer == 3
     unknown = by_key[("P001", "oily_focused")]
     assert unknown.confidence == "unknown" and unknown.value is None
     assert by_key[("T100", "good_view")].value is True   # TRUE도 받는다
@@ -218,15 +242,11 @@ def test_unknown_fact_keys_are_skipped_and_counted(labels):
     assert all(r.fact_key != "made_up_key" for r in rows)
 
 
-def test_contains_prefix_keys_are_allowed_even_if_not_listed(labels):
-    _, rows, _ = labels
-    assert any(r.fact_key == "contains_peanut" for r in rows)
-
-
-def test_raw_price_numbers_are_rejected(labels):
+def test_contains_prefix_keys_are_not_allowed_unless_listed(labels):
+    """#425: 재료 태그 접두 규칙을 없앴다. constraints.md 표에 없으면 contains_*도 건너뛴다."""
     _, rows, report = labels
-    assert report.skipped["price_bucket은 low/mid/high만(원본 가격 숫자 거부)"] == 1
-    assert all(r.value != "12000" for r in rows)
+    assert report.skipped["모르는 fact_key: contains_peanut"] == 1
+    assert all(not r.fact_key.startswith("contains_") for r in rows)
 
 
 def test_bad_boolean_bad_confidence_bad_source_are_skipped(labels):
@@ -314,7 +334,7 @@ def test_curated_bom_header_is_read():
 
 NEW_KEYS = frozenset({
     "cuisine_korean", "cuisine_chinese", "spacious", "long_established", "franchise", "spicy_focused", "oily_focused",
-    "price_bucket", "contains_shellfish", "wait_short", "pet_friendly", "quiet",
+    "wait_short", "pet_friendly", "quiet",
 })
 
 
@@ -333,8 +353,7 @@ def test_string_values_become_bool_and_unknown_has_no_value(curated_labels):
     rows, _ = curated_labels
     by = {(r.source_id, r.fact_key): r for r in rows}
     assert by[("R001", "cuisine_korean")].value is True and by[("R001", "cuisine_chinese")].value is False
-    assert by[("R001", "price_bucket")].value == "low" and by[("R001", "price_bucket")].source_layer == 2
-    unknown = by[("R001", "contains_shellfish")]
+    unknown = by[("R001", "wait_short")]
     assert (unknown.confidence, unknown.value) == ("unknown", None)
     assert by[("R001", "wait_short")].confidence == "unknown" and by[("R001", "pet_friendly")].confidence == "unknown"
 
@@ -344,14 +363,13 @@ def test_evidence_and_label_source_are_carried(curated_labels):
     by = {(r.source_id, r.fact_key): r for r in rows}
     assert by[("R001", "spicy_focused")].evidence == "가게 이름 '짬뽕'"
     assert by[("R001", "spicy_focused")].label_source == "menu_keyword"
-    assert by[("R001", "contains_shellfish")].evidence is None   # 근거 없는 unknown
+    assert by[("R001", "wait_short")].evidence is None   # 근거 없는 unknown
 
 
 def test_unregistered_keys_wrong_values_and_bad_ids_are_skipped_and_counted(curated_labels):
     rows, report = curated_labels
     assert report.skipped["모르는 fact_key: made_up_key"] == 1
     assert report.skipped["모르는 fact_key: long_established"] == 0   # NEW_KEYS에 있으니 통과
-    assert report.skipped["price_bucket은 low/mid/high만(원본 가격 숫자 거부)"] == 1
     assert report.skipped["known인데 value가 true/false가 아님"] == 1   # quiet=maybe
     assert report.skipped["source/source_id 이상"] == 1                # weird_R001
     assert all(r.fact_key != "made_up_key" for r in rows)
@@ -360,7 +378,7 @@ def test_unregistered_keys_wrong_values_and_bad_ids_are_skipped_and_counted(cura
 def test_keys_missing_from_constraints_are_reported_as_unregistered():
     """#206 머지 전 상태(신규 15개 미등록)를 흉내 낸다 — 건너뛰고 키별로 센다."""
     entries = json.loads((FIX / "restaurant_curated_labels.json").read_text(encoding="utf-8"))
-    old = frozenset({"spicy_focused", "oily_focused", "price_bucket", "contains_shellfish", "wait_short", "pet_friendly"})
+    old = frozenset({"spicy_focused", "oily_focused", "wait_short", "pet_friendly"})
     rows, report = ingest.parse_label_rows(ingest.curated_labels_to_rows(entries), old)
     assert report.skipped["모르는 fact_key: cuisine_korean"] == 3   # R001, R007, R404, weird_R001은 id 이상보다 키 검사가 먼저
     assert all(r.fact_key in old for r in rows)

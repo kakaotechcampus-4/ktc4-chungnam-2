@@ -128,6 +128,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     map_id = created.json()["id"]
     assert a.get("/maps").status_code == 200
     assert a.get(f"/maps/{map_id}").status_code == 200
+    assert (created.json()["my_role"], created.json()["created_by_me"]) == ("owner", True)  # #391
 
     invite = a.post(f"/maps/{map_id}/invite")
     assert invite.status_code == 201
@@ -174,6 +175,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert result.status_code == 200
     candidates = result.json()["candidates"]
     assert candidates
+    assert all(isinstance(c["lat"], float) and isinstance(c["lng"], float) for c in candidates)  # #391
     assert a.post(f"/candidates/{candidates[0]['id']}/publish").status_code == 200
 
     for pid in pin_ids[:2]:
@@ -272,6 +274,60 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
 
     # 탈퇴 — 반응은 지워지고 핀은 남는다
     assert b.post("/auth/withdraw").status_code == 204
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
+def test_map_leave_and_delete_match_the_openapi_spec(clients):
+    """지도 나가기·삭제(#369) — 성공 204와 에러 봉투(구성원의 삭제 403, 넘길 사람 없는 방장의 나가기 409, 삭제 뒤 404)."""
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "강릉", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+
+    assert b.delete(f"/maps/{map_id}").status_code == 403
+    assert b.delete(f"/maps/{map_id}/members/me").status_code == 204
+    assert a.delete(f"/maps/{map_id}/members/me").status_code == 409     # 혼자 남은 방장
+    assert a.delete(f"/maps/{map_id}").status_code == 204
+    assert a.get(f"/maps/{map_id}").status_code == 404
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
+def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
+    """실시간 핀(#386, 스펙 PinCreateLive) — 응답에 좌표·이름이 없어도 Pin 스키마에 맞고, 목록·확정 항목·동선까지 같다."""
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "성수", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+
+    live = {"source": "live", "category": "음식점", "kakao_place_id": "kakao:555", "search_query": "성수 곱창", "memo": "맛있대"}
+    created = a.post(f"/maps/{map_id}/pins", json=live)
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["source"] == "live" and not {"lat", "lng", "place_name"} & set(body)   # 좌표·이름 없음
+    live_id = body["id"]
+    db_id = a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-kalguksu")).json()["id"]
+
+    dup = a.post(f"/maps/{map_id}/pins", json=live)
+    assert dup.status_code == 409 and dup.json()["detail"]["pin_id"] == live_id      # PIN_DUPLICATE
+    assert a.post(f"/maps/{map_id}/pins", json={**live, "kakao_place_id": "kakao:556", "category": "숙소"}).status_code == 422
+    assert a.post(f"/maps/{map_id}/pins", json={**live, "kakao_place_id": "kakao:557", "lat": 37.5}).status_code == 422
+
+    listed = a.get(f"/maps/{map_id}/pins").json()
+    assert {p["id"] for p in listed} == {live_id, db_id}
+    assert b.put(f"/pins/{live_id}/reaction", json={"type": "like"}).status_code == 200
+
+    for pin_id in (live_id, db_id):
+        assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pin_id}).status_code == 201
+    shortlist = a.get(f"/maps/{map_id}/shortlist").json()
+    assert {item["pin"]["id"] for item in shortlist} == {live_id, db_id}            # 확정 리스트에는 남는다
+    routes = a.post(f"/maps/{map_id}/route")
+    assert routes.status_code == 200
+    ordered = [pin_id for route in routes.json() for pin_id in route["ordered_pin_ids"]]
+    assert live_id not in ordered                                                     # 동선에서는 빠진다
 
     unique = list(dict.fromkeys(problems))
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)

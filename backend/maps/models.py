@@ -57,6 +57,9 @@ class Map(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # 방장이 지도를 삭제하면 찍는다(soft delete, #369). 찍힌 지도는 get_map_or_404·
+    # DbMembershipGateway·list_maps·초대 조회가 모두 없는 지도로 답한다. 실제 파기는 범위 밖.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint("end_date >= start_date", name="ck_maps_date_order"),
@@ -85,6 +88,12 @@ class Membership(Base):
         # map_id 단독 조회(_member_count·list_members)는 그 복합 인덱스로 이미 충분해 건드리지
         # 않는다.
         Index("ix_memberships_user_id", "user_id"),
+        # 지도당 방장은 최대 1명(#369). 방장 판단의 정본은 role이다(maps.created_by가 아니다).
+        # 위임은 한 트랜잭션에서 강등을 먼저, 승격을 나중에 한다 — 이 인덱스는 문장마다 검사된다.
+        Index(
+            "uq_memberships_one_owner_per_map", "map_id",
+            unique=True, postgresql_where=text("role = 'owner'"),
+        ),
     )
 
 

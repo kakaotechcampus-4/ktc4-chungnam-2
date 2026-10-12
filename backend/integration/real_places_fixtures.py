@@ -27,8 +27,7 @@ PLACES = {
     "R": ("성수 횟집", 37.5449, 127.0558, {"cuisine_korean": False, "cuisine_raw_fish": True, "spicy_focused": False}),
     "B": ("성수 분식집", 37.5441, 127.0566, {"cuisine_korean": False, "cuisine_raw_fish": False, "spicy_focused": False}),
     "S": ("성수 매운집", 37.5443, 127.0554, {"cuisine_korean": False, "cuisine_raw_fish": False, "spicy_focused": True}),
-    "C": ("성수 조개구이", 37.5451, 127.0569, {"cuisine_korean": False, "cuisine_raw_fish": False, "spicy_focused": False,
-                                            "contains_shellfish": True}),
+    "C": ("성수 조개구이", 37.5451, 127.0569, {"cuisine_korean": False, "cuisine_raw_fish": False, "spicy_focused": False}),
     "U": ("성수 이름모를집", 37.5439, 127.0560, {}),
 }
 
@@ -70,27 +69,38 @@ def real_client(db_session, own_db, monkeypatch):
     app.dependency_overrides.clear()
 
 
+def plan_with(monkeypatch, planner):
+    """② 대역을 recommend의 EvidencePlanGateway 자리에 끼운다(#219) — 대역은 입력 글마다 줄 묶음을 돌려주는 함수다.
+    llm.api.plan_evidence를 거치므로 검증·실패 변환(PlanEvidenceFailed)은 실제와 같다. 테스트가 끝나면 원복된다."""
+    from llm import api as llm_api
+    from recommend.deps import get_evidence_plan_gateway
+
+    class _Gateway:
+        def plan_evidence(self, raw_reasons):
+            return llm_api.plan_evidence(raw_reasons, planner=planner)
+
+    monkeypatch.setitem(app.dependency_overrides, get_evidence_plan_gateway, lambda: _Gateway())
+
+
 @pytest.fixture()
 def fake_planner(monkeypatch):
     """② 대역 — 사유 문구로 fact_key·wants를 낸다(진짜 Luna 대신). 방향을 모르는 말은 null."""
-    import llm.service as llm_service
     from llm.schemas import EvidenceLine
 
     mapping = {
         "한식 말고": ("cuisine_korean", False),
         "회 좋아해": ("cuisine_raw_fish", True),
-        "너무 매워요": ("spicy_focused", None),     # hard 키 — 방향 고정
-        "조개 알러지": ("contains_shellfish", None),
+        "너무 매워요": ("spicy_focused", False),    # 취향 키(#378) — "피하겠다"는 방향
     }
 
     def planner(raw_reasons):
         out = []
         for reason in raw_reasons:
             key, wants = next((v for k, v in mapping.items() if k in reason["text"]), (None, None))
-            out.append(EvidenceLine(**{**reason, "fact_key": key, "wants": wants if key else None}))
+            out.append([EvidenceLine(**{**reason, "fact_key": key, "wants": wants if key else None})])
         return out
 
-    monkeypatch.setattr(llm_service, "get_evidence_planner", lambda: planner)
+    plan_with(monkeypatch, planner)
     return planner
 
 

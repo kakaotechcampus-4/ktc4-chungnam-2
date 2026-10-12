@@ -8,11 +8,12 @@ from sqlalchemy import func, select
 
 from common.database import SessionLocal
 from common.events import EventLog
-from realtime.core import advance
+from realtime.core import advance, close_after
 
 POLL_INTERVAL = 0.5
 
-# 종료 신호 — 구독 큐에 이 값이 들어오면 SSE 제너레이터는 스스로 빠져나온다.
+# 종료 신호 — 구독 큐에 이 값이 들어오면 SSE 제너레이터는 스스로 빠져나온다(서버 종료, 또는
+# map.deleted·member.left 뒤 구독 끊기 — docs/events.md "구독을 끊는 경우").
 # 큐에 행이 아닌 값을 섞는 대신 모듈 전용 sentinel 하나만 쓴다(router가 `is CLOSED`로 비교).
 CLOSED = object()
 
@@ -20,11 +21,11 @@ CLOSED = object()
 @dataclass(frozen=True)
 class Subscription:
     """구독 하나가 무엇을 받을 자격이 있는지 — 이 조건을 큐에 넣는 시점에 검사한다.
-    channel="public"이면 user_id는 의미 없다(전체 공개). channel="private"이면 user_id와
-    행의 recipient_user_id가 일치할 때만 받는다."""
+    channel="private"이면 user_id와 행의 recipient_user_id가 일치할 때만 받는다. user_id는 전체
+    채널에서도 기억한다 — 받을 자격이 아니라 member.left 뒤 누구의 구독을 닫을지 가리는 데 쓴다."""
 
     channel: str            # "public" | "private"
-    user_id: str | None     # channel="private"일 때만 사용
+    user_id: str            # 구독한 사람(두 채널 모두)
     queue: "asyncio.Queue" = field(default_factory=asyncio.Queue)
 
     def wants(self, row: EventLog) -> bool:
@@ -55,7 +56,7 @@ class Dispatcher:
         with SessionLocal() as db:
             self._last_seen = db.execute(select(func.coalesce(func.max(EventLog.seq), 0))).scalar_one()
 
-    def subscribe(self, map_id: str, *, channel: str, user_id: str | None = None) -> Subscription:
+    def subscribe(self, map_id: str, *, channel: str, user_id: str) -> Subscription:
         sub = Subscription(channel=channel, user_id=user_id)
         self._subscribers.setdefault(map_id, []).append(sub)
         if self._closing:
@@ -126,10 +127,22 @@ class Dispatcher:
         emit, self._last_seen, self._gap_since = advance(
             self._last_seen, rows, datetime.now(timezone.utc), self._gap_since
         )
-        for row in emit:
-            for sub in self._subscribers.get(row.map_id, []):
+        self._deliver(emit)
+
+    def _deliver(self, rows) -> None:
+        """행마다 받을 구독에 넣고, 그 행이 구독을 끊는 행이면 해당 구독에 CLOSED를 넣는다.
+        이벤트가 CLOSED보다 먼저 큐에 들어가야 받은 쪽이 왜 끊겼는지 안다(docs/events.md)."""
+        for row in rows:
+            subs = list(self._subscribers.get(row.map_id, []))
+            for sub in subs:
                 if sub.wants(row):
                     sub.queue.put_nowait(row)
+            scope = close_after(row)
+            if scope is None:
+                continue
+            for sub in subs:
+                if scope.covers(sub.user_id):
+                    sub.queue.put_nowait(CLOSED)
 
 
 dispatcher = Dispatcher()

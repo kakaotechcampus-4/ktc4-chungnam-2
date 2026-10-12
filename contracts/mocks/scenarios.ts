@@ -54,7 +54,7 @@ function buildRegionConflict(): StoreState {
     {
       id: nextId("evi"),
       author_id: ME_USER_ID,
-      author_display_name: "황경(나)",
+      author_display_name: "황경",
       text: "해운대 기준 도보 5분",
       badge: "required",
       fact_key: "within_radius",

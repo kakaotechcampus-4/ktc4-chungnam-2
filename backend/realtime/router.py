@@ -44,6 +44,7 @@ def _sse_control_event(type_: str) -> str:
 async def public_events(
     request: Request,
     mapId: str = Path(...),
+    user: CurrentUser = Depends(get_current_user),
     last_event_id: str | None = Header(None, alias="Last-Event-ID"),
 ):
     after_seq = _parse_last_event_id(last_event_id)
@@ -58,11 +59,12 @@ async def public_events(
                 yield _sse_control_event("replay_truncated")
             for row in result.rows:
                 yield _sse_format(row)
-        sub = dispatcher.subscribe(mapId, channel="public")
+        # 전체 채널도 누가 구독했는지 남긴다 — member.left 뒤 그 사람의 구독만 닫기 위해서.
+        sub = dispatcher.subscribe(mapId, channel="public", user_id=user.user_id)
         try:
             while not await request.is_disconnected():
                 row = await sub.queue.get()
-                if row is CLOSED:   # 서버 종료 — 대기를 풀고 스스로 빠져나온다
+                if row is CLOSED:   # 서버 종료, 또는 지도 삭제·나가기 뒤 끊기 — 스스로 빠져나온다
                     break
                 yield _sse_format(row)   # Subscription.wants()가 이미 dispatcher._tick에서 걸러줌
         finally:
@@ -78,7 +80,7 @@ async def private_events(
     user: CurrentUser = Depends(get_current_user),
     last_event_id: str | None = Header(None, alias="Last-Event-ID"),
 ):
-    """개인 채널 — public_events와 같은 구조, channel="private"·user_id만 다르다."""
+    """개인 채널 — public_events와 같은 구조, channel="private"과 재전송의 수신자 필터만 다르다."""
     after_seq = _parse_last_event_id(last_event_id)
 
     async def gen():

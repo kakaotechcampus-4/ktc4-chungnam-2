@@ -26,12 +26,9 @@ class ConstraintSpec:
     unknown_policy: UnknownPolicy
 
 
-# 실격(hard) 조건 — 5-6 3단계에서 순회 대상.
+# 실격(hard) 조건 — 5-6 3단계에서 순회 대상. 알러지 같은 안전 조건(contains_shellfish, unknown_policy=exclude)은
+# 서비스가 판단하지 않기로 해서 뺐다(#425) — 지금 exclude인 키는 없다.
 HARD_REGISTRY: dict[str, ConstraintSpec] = {
-    "contains_shellfish": ConstraintSpec("contains_shellfish", _ALL_CATEGORIES, "hard", "exclude"),
-    "spicy_focused": ConstraintSpec("spicy_focused", frozenset({"음식점"}), "hard", "exclude"),
-    "oily_focused": ConstraintSpec("oily_focused", frozenset({"음식점"}), "hard", "exclude"),
-    "price_bucket": ConstraintSpec("price_bucket", _ALL_CATEGORIES, "hard", "pass"),
     "is_crowded_large": ConstraintSpec("is_crowded_large", frozenset({"카페", "관광지"}), "hard", "pass"),
 }
 
@@ -48,9 +45,10 @@ _SOFT_KEYS_BY_CATEGORY: dict[str, frozenset[str]] = {
     "pet_friendly": _ALL_CATEGORIES,
     # 음식점 (#203)
     **{key: _RESTAURANT for key in (
-        "wait_short",
+        "wait_short", "spicy_focused", "oily_focused",   # 매운맛·기름진 메뉴는 안전이 아니라 취향이다(#378)
         "cuisine_korean", "cuisine_chinese", "cuisine_japanese", "cuisine_western", "cuisine_bunsik",
-        "cuisine_chicken_pub", "cuisine_bbq", "cuisine_foreign", "cuisine_raw_fish", "cuisine_buffet",
+        "cuisine_chicken_pub", "cuisine_bbq", "cuisine_gopchang", "cuisine_foreign", "cuisine_raw_fish",
+        "cuisine_buffet",
         "parking_available",
     )},
     # 음식점·카페 공통 (#203, #263)
@@ -75,13 +73,34 @@ SOFT_REGISTRY: dict[str, ConstraintSpec] = {
 }
 SOFT_FACT_KEYS: frozenset[str] = frozenset(SOFT_REGISTRY)
 
-# 값 기반 비교(가격 상한 등)를 판정하려면 "사용자가 명시한 기준값"이 필요한데,
-# docs/data-model.md의 evidence_lines 스키마엔 그 기준값을 담을 컬럼이 없다(badge/fact_key/
-# text/circle_*뿐 — 자유 텍스트 text 안에 숫자가 있어도 구조화된 값이 아니다). 이 세션은
-# 그래서 price_bucket을 "known이면 표시만 하고 항상 통과시킨다"로 좁혀 구현했다 —
-# 실제 상한 비교는 evidence_lines에 값 컬럼이 추가되거나 llm의 구조화 출력에 임계값이 실리는
-# 결정이 나야 가능하다(recommend/for_Root.md에 루트 결정 필요 항목으로 보고).
-VALUE_COMPARISON_UNSUPPORTED: frozenset[str] = frozenset({"price_bucket"})
+# ♥ 핀 라벨을 선호 신호로 쓰는 방법 — docs/constraints.md "♥에서 선호로 쓰는 라벨 (음식점)" 표 그대로(#414).
+# 직접 쓴 선호 사유에는 적용하지 않는다(♥ 핀 라벨에서 나온 신호만 거른다). 표에 없는 카테고리·키는 "use"다.
+HeartSignalUse = Literal["use", "two_or_more", "unused"]
+HEART_SIGNAL_MIN_TRUE_PLACES = 2  # '2곳 이상' — 그 라벨이 참인 ♥ 핀 수. 시작값(시험으로 조정)
+HEART_SIGNAL_BY_CATEGORY: dict[str, dict[str, HeartSignalUse]] = {
+    "음식점": {
+        **{key: "use" for key in (   # 가게의 정체(무엇을 파는 곳인가)
+            "cuisine_korean", "cuisine_chinese", "cuisine_japanese", "cuisine_western", "cuisine_bunsik",
+            "cuisine_chicken_pub", "cuisine_bbq", "cuisine_gopchang", "cuisine_foreign", "cuisine_raw_fish",
+            "cuisine_buffet",
+        )},
+        **{key: "two_or_more" for key in (   # 스타일(취향일 수도, 우연일 수도)
+            "spicy_focused", "oily_focused", "long_established", "vegetarian_friendly",
+        )},
+        **{key: "unused" for key in (   # 편의, 조건(필요하면 말로 남기는 것)
+            "franchise", "spacious", "parking_available", "pet_friendly", "wait_short",
+        )},
+    },
+}
+
+
+def heart_signal_use(category: str, fact_key: str) -> HeartSignalUse:
+    return HEART_SIGNAL_BY_CATEGORY.get(category, {}).get(fact_key, "use")
+
+
+def is_place_identity_key(category: str, fact_key: str | None) -> bool:
+    """표에 "use"로 적힌 키 = "가게의 정체"(음식점 cuisine_*, #422). heart_signal_use와 달리 표에 없는 키는 아니다."""
+    return fact_key is not None and HEART_SIGNAL_BY_CATEGORY.get(category, {}).get(fact_key) == "use"
 
 
 # 추천 이유(Candidate.reason) 한 줄에 쓰는 표시 이름 — fact_key를 사용자 문장으로 옮긴다. 값이
@@ -89,9 +108,8 @@ VALUE_COMPARISON_UNSUPPORTED: frozenset[str] = frozenset({"price_bucket"})
 # (가드레일 5는 근거가 있는 것만 말하라는 뜻 — 이름 없는 키를 날것으로 노출하지 않는다)
 # 레지스트리에 키를 추가할 때(#171) 여기도 같이 채운다. test_constraints.py가 빠진 키를 잡는다.
 PASSED_LABELS: dict[str, str] = {
-    "contains_shellfish": "갑각류 없음",
-    "spicy_focused": "매운맛 전문점 아님",
-    "oily_focused": "기름진 메뉴 위주 아님",
+    "spicy_focused": "매운맛 전문점",       # 취향 키(#378) — 선호 충족 문장이라 "그렇다"는 쪽이다(피한 쪽은 "<이름> 제외")
+    "oily_focused": "기름진 메뉴 위주",
     "is_crowded_large": "붐비는 대형 장소 아님",
     "wait_short": "대기가 짧음",
     "quiet": "조용함",
@@ -105,6 +123,7 @@ PASSED_LABELS: dict[str, str] = {
     "cuisine_bunsik": "분식",
     "cuisine_chicken_pub": "호프·치킨",
     "cuisine_bbq": "고기구이",
+    "cuisine_gopchang": "곱창·막창",
     "cuisine_foreign": "외국음식 전문점",
     "cuisine_raw_fish": "횟집",
     "cuisine_buffet": "뷔페",
@@ -154,10 +173,8 @@ PASSED_LABELS: dict[str, str] = {
 # PASSED_LABELS(서술형 "조용함")와 뜻이 달라 별도 표다. 레지스트리의 모든 키가 여기 있어야 하고
 # test_constraints.py가 빠진 키(30자 초과 포함)를 잡는다.
 FACT_LABELS: dict[str, str] = {
-    "contains_shellfish": "갑각류",
     "spicy_focused": "매운맛 전문",
     "oily_focused": "기름진 메뉴 위주",
-    "price_bucket": "가격대",
     "is_open": "영업 여부",  # 레지스트리 밖(코드 판정)이지만 체크가 붙는다 — 모름 문장에 이름이 필요하다
     "is_crowded_large": "붐비는 대형 장소",
     "wait_short": "대기가 짧은 곳",
@@ -172,6 +189,7 @@ FACT_LABELS: dict[str, str] = {
     "cuisine_bunsik": "분식",
     "cuisine_chicken_pub": "호프·치킨",
     "cuisine_bbq": "고기구이",
+    "cuisine_gopchang": "곱창·막창",
     "cuisine_foreign": "외국음식",
     "cuisine_raw_fish": "횟집",
     "cuisine_buffet": "뷔페",
@@ -215,11 +233,6 @@ FACT_LABELS: dict[str, str] = {
     "water_play": "물놀이",
     "winter_spot": "겨울 명소",
 }
-
-
-# price_bucket은 참/거짓이 아니라 값이다 — 체크 라벨에 값을 문장으로 녹인다. 값 정본은 docs/constraints.md
-# (착한가격업소 지정만 `low`). 표에 없는 값은 "가격대 <값>"으로 말한다.
-PRICE_BUCKET_LABELS: dict[str, str] = {"low": "착한가격업소"}
 
 
 def hard_fact_keys_for(category: str) -> list[str]:

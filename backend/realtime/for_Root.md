@@ -1,3 +1,32 @@
+# 루트 리뷰 가이드 — backend/realtime (#369 구독 끊기)
+
+## 구현 범위
+
+- `docs/events.md` "구독을 끊는 경우" 그대로: `map.deleted`를 보낸 뒤 그 지도의 모든 구독(전체·개인), `member.left`를 보낸 뒤 payload `user_id`의 그 지도 구독(전체·개인)을 닫는다. 이벤트를 큐에 먼저 넣고 그다음 기존 `CLOSED` 센티널을 넣는다.
+- 판단은 `core.close_after(row) -> CloseScope | None`(순수 함수). `CloseScope(map_id, user_id=None)`이면 지도 전체, `user_id`가 있으면 그 사람만. `member.left`에 `user_id`가 없으면 아무것도 닫지 않는다(지도 전체로 넓히지 않는다).
+- `dispatcher._tick`은 조회 → `advance` → `_deliver(emit)`. `_deliver`는 행마다 받을 구독에 넣고, `close_after`가 가리키는 구독에 `CLOSED`를 넣는다. 같은 tick에서 `member.left` 뒤에 온 행은 `CLOSED` 뒤에 쌓여 나간 사람에게 전달되지 않는다.
+- 전체 채널 구독도 `user_id`를 기억한다. `Subscription.user_id`와 `Dispatcher.subscribe(user_id=)`가 필수가 됐고, `public_events`가 `get_current_user`를 받는다. 받을 자격(`wants`)은 바뀌지 않았다.
+- 변경 파일: `realtime/core.py`, `realtime/dispatcher.py`, `realtime/router.py`, `realtime/tests/` (다른 모듈 파일 없음)
+
+## 테스트 (`tests/test_close_on_leave.py`, `tests/test_core.py`)
+
+- 삭제: 그 지도의 전체 구독은 `map.deleted`를 받은 뒤 끝나고, 개인 구독은 끝나기만 한다. 다른 지도 구독은 그대로
+- 나가기·탈퇴 위임(`new_owner_user_id` null/후임, parametrize): 나간 사람의 전체 구독은 `member.left`를 받은 뒤 끝나고 개인 구독도 끝난다. 남은 구성원은 `member.left`를 받고 이후 전체·개인 이벤트도 계속 받는다. 나간 사람의 다른 지도 구독은 그대로
+- 같은 tick에서 `member.left` 다음 행은 나간 사람에게 안 간다
+- 닫힌 뒤 재구독(`/events`, `/events/me`)은 404 — 멤버십은 `FakeMembership`으로 "나간 뒤" 상태를 준다. 실제 maps 행으로 나가기 → 재구독 404까지 보는 건 `integration/`(루트) 몫으로 남긴다
+- 닫는 단계를 빼면 새 테스트가 실패하는 것을 확인했다
+
+## 검증 (PINGO_TEST_DB=pingo_test_rt369)
+
+- `python -m pytest realtime -q` → 39 passed
+- `python -m pytest -q` (backend 전체) → 1422 passed, 1 xfailed, 7 deselected
+
+## 남겨 둔 점
+
+- 나간 사람이 다시 초대를 수락하고 새로 구독한 직후, 폴러가 아직 처리하지 않은 예전 `member.left`가 그 새 구독을 닫을 수 있다(폴링 0.5초 안의 일). 닫힌 뒤 EventSource가 재연결하면 구성원이라 200으로 다시 붙으므로 그대로 둔다.
+
+---
+
 # 루트 리뷰 가이드 — backend/realtime (#130 서버 종료 처리)
 
 ## 구현 범위

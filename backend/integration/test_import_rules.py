@@ -1,7 +1,7 @@
 """
 모듈 간 import 규칙 계약 테스트 (docs/architecture.md 1절 "모듈 간 import 규칙", 멘토 리뷰 PR #152).
 
-규칙이 문서에만 있으면 세션이 바뀔 때마다 어긴다(recommend가 llm.service를 직접 부른 게 그 사례). 정적 검사라
+규칙이 문서에만 있으면 세션이 바뀔 때마다 어긴다(recommend가 llm.service를 직접 부른 게 그 사례, #219에서 고침). 정적 검사라
 DB 없이 돌고, 어긴 import를 CI가 바로 잡는다.
 
 - 수평 레이어(common·auth·authz)는 어디서든 직접 import 가능.
@@ -23,7 +23,6 @@ SKIP_DIRS = {"tests", "integration", "alembic", "__pycache__", ".venv", "venv"}
 
 # (importing 파일, 가져온 모듈) -> 사유. 비어 가는 것이 정상이다.
 KNOWN_VIOLATIONS: dict[tuple[str, str], str] = {
-    ("recommend/flows.py", "llm.service"): "llm/api.py를 열고 recommend는 Gateway로 받는다 — #219",
 }
 
 

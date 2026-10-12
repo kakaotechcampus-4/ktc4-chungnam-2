@@ -1,5 +1,5 @@
 """
-recommend의 기능 실행 함수 전체 — 다른 모듈 접근(pins.api/maps.api/llm.service/authz/
+recommend의 기능 실행 함수 전체 — 다른 모듈 접근(pins.api/maps.api/llm.api(Gateway)/authz/
 recommend.ports 게이트웨이)은 전부 이 파일에 둔다(이 모듈 자체 관례 — service.py는 recommend
 소유 테이블만, core.py는 순수 판정만). 커밋하지 않는다(common/database.py get_db가 요청당
 한 번 커밋한다).
@@ -20,7 +20,7 @@ real 모드면 places.api의 자체 DB 함수가 채운다(#190 — 모델 호�
   - 구성원이지만 그 액션이 롤에 없음 → **403 FORBIDDEN** (docs/permissions.md는 404/403 두
     값만 규정한다 — 계획의 "AI_PIN_PRIVATE"는 이 문서보다 먼저 쓰인 추측이었다. `recommend.
     publish`는 `candidate.requested_by`(=run.requested_by) 본인만 가능하도록
-    authz/policy.py::AUTHOR_CONSTRAINED_ACTIONS에 이미 등록돼 있어 본인이 아니면 403이 된다)
+    authz/policy.py의 author.actions에만 있어 본인이 아니면 403이 된다)
 authz/tests/test_rule_a_static.py가 "resolve_principal은 authz.guard 밖에서 직접 호출하지
 않는다"(Rule A)를 정적으로 강제한다 — 그래서 여기서 `authz.service.resolve_principal`/
 `authz.core.can`을 직접 부르지 않고, `authz.guard.require(action, loader)`가 반환하는
@@ -38,6 +38,7 @@ guard.py 안에서만 일어난다). "멤버십/작성자 확인이 멱등 경�
 `create_ai_pin`이 그걸 쓰도록 고쳐서 이 우회를 지웠다 — `mutation.event`를 그대로 쓴다.
 """
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -52,14 +53,12 @@ from authz.schemas import Permissions
 from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
-from llm import service as llm_service
-from maps import api as maps_api
 from pins import api as pins_api
 from pins.schemas import Pin
 from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
 from recommend.models import RecommendRun
-from recommend.ports import Circle, PlaceFactsGateway, PlaceSearchGateway
+from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
 from recommend.schemas import Check
 
 
@@ -108,8 +107,8 @@ def publish_candidate(
 
     if candidate.published_pin_id is not None:  #    멱등 빠른 경로 — run 상태와 무관하게 항상 통한다
         return _published_pin_response(db, pin_id=str(candidate.published_pin_id), requester_id=requester_id, run=run)
-        #    200, 이벤트 없음. get_pin_response_for_viewer가 NOT_FOUND/AI_PIN_PRIVATE를 던지면(핀이 그
-        #    사이 삭제됐거나 비공개로 바뀐 극단적 경우) 그대로 전파한다 — 정직한 실패가 낫다.
+        #    200, 이벤트 없음. get_pin_response_for_viewer가 NOT_FOUND를 던지면(핀이 그
+        #    사이 삭제된 극단적 경우) 그대로 전파한다 — 정직한 실패가 낫다.
 
     core.check_run_ready(run)  # 4) 409 NOT_READY
 
@@ -147,23 +146,19 @@ DEFAULT_REGION_RADIUS_M = core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MI
 
 
 def get_readiness(db: Session, *, map_id: str) -> dict[str, dict]:
-    """GET /maps/{mapId}/recommend/readiness (5-4). N=이 지도의 현재 구성원 수로 확정
-    (#32, 2026-09-23, maps.api.count_members)."""
-    member_count = maps_api.count_members(db, map_id)
+    """GET /maps/{mapId}/recommend/readiness (5-4). 카테고리마다 ♥/🚫 의견이 달린 핀이 1곳 이상이면 열린다
+    (#360 — 구성원 수와 무관, 혼자 쓰는 지도도 같다)."""
     return {
-        category: core.check_readiness(
-            pins_api.count_reacted_users(db, map_id=map_id, category=category), member_count
-        )
+        category: core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
         for category in CATEGORIES
     }
 
 
 def _evidence_from_reaction(reaction: dict) -> dict:
-    """반응 하나를 llm.schemas.EvidenceLine 생성 가능한 dict로 — 실제 ②(사유 구조화, 모델
-    확정 #12 전) 없이는 자유 텍스트에서 fact_key를 안전하게 추론할 수 없어 fact_key는 항상
-    None으로 둔다(값을 지어내지 않는다는 llm/CLAUDE.md 원칙과 같은 이유 — 실격 조건은 확실할
-    때만 활성화되어야 한다). badge만 반응 종류로 잠정 매핑한다: 🚫(against)는 반드시 사유가
-    있고(가드레일3) 실격 성격이 강해 required, ♥/△는 preferred로 낮춘다."""
+    """반응에 사람이 쓴 글(reason_text)을 llm.schemas.EvidenceLine 생성 가능한 dict로 — ②에 보낼 입력이다.
+    fact_key는 None으로 두고 ②가 채운다(값을 지어내지 않는다 — 실격 조건은 확실할 때만 켜져야 한다).
+    badge는 반응 종류로 정한다: 🚫(against)는 반드시 사유가 있고(가드레일3) 실격 성격이 강해 required,
+    ♥는 preferred로 낮춘다. 칩은 여기로 오지 않는다 — `_evidence_from_chip`(#412)."""
     return {
         "author_id": reaction["user_id"],
         "source": "reaction",
@@ -171,6 +166,34 @@ def _evidence_from_reaction(reaction: dict) -> dict:
         "badge": "required" if reaction["type"] == "against" else "preferred",
         "fact_key": None,
     }
+
+
+def _evidence_from_chip(reaction: dict, chip: dict) -> dict:
+    """반응에 고른 칩 하나 → 근거 줄 하나(#412). 키와 방향은 docs/constraints.md 칩 표 그대로(pins.api가
+    채워 준다)라 ②를 거치지 않는다. 칩은 🚫에만 있고 고른 순간 뜻이 정해지므로 배지는 required, 글은 칩 label이다.
+    키 없는 칩(「공통」·옛 값)도 줄은 만든다 — 반대한 구성원으로 센다(#255)."""
+    return {
+        "author_id": reaction["user_id"],
+        "source": "reaction",
+        "text": chip["label"],
+        "chip_id": chip["chip_id"],
+        "badge": "required",
+        "fact_key": chip["fact_key"],
+        "wants": chip["wants"],
+    }
+
+
+def _reaction_evidence_lines(raw_reactions: list[dict], planned_groups: list[list[dict]]) -> list[dict]:
+    """반응마다 글 줄(②를 거친 것, 있을 때만) 다음에 칩 줄을 붙인다(#412) — 한 사람이 한 반응에 남긴 줄이
+    붙어 있어야 「−」로 뺄 자기 근거를 찾기 쉽다. planned_groups는 글이 있는 반응 순서 그대로의 ② 결과이고,
+    글 하나가 조건마다 줄 하나로 나뉜 묶음이다(#419) — 묶음 안 줄들이 모두 그 반응의 칩 줄보다 앞에 온다."""
+    planned = iter(planned_groups)
+    lines: list[dict] = []
+    for reaction in raw_reactions:
+        if reaction["reason_text"] is not None:
+            lines.extend(next(planned))
+        lines.extend(_evidence_from_chip(reaction, chip) for chip in reaction["chips"])
+    return lines
 
 
 def _default_circle_and_anchors(db: Session, *, map_id: str, category: str) -> tuple[Circle, list[tuple[float, float]]]:
@@ -203,16 +226,15 @@ def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: 
     }
 
 
-def create_run(db: Session, *, map_id: str, category: str, requested_by: str) -> RecommendRun:
+def create_run(
+    db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
+) -> RecommendRun:
     """POST /maps/{mapId}/runs — run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
     안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 재시도 상한(#31) 3) run INSERT
-    4) 반응 → 근거 구조화(llm.plan_evidence) 5) run INSERT → evidence_lines INSERT 6) 기본값
+    4) 반응 → 근거 구조화(글은 llm.api.plan_evidence, 칩은 코드 #412) 5) run INSERT → evidence_lines INSERT 6) 기본값
     지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
     트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다."""
-    readiness = core.check_readiness(
-        pins_api.count_reacted_users(db, map_id=map_id, category=category),
-        maps_api.count_members(db, map_id),
-    )
+    readiness = core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
 
@@ -220,9 +242,13 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str) ->
     core.check_retry_limit(current_max)  # #31 — 카테고리 무관 개인 단위 카운터가 이미 상한이면 새 run도 막는다
 
     raw_reactions = pins_api.list_reasoned_reactions(db, map_id=map_id, category=category)
-    reaction_lines = [_evidence_from_reaction(r) for r in raw_reactions]
-    planned = llm_service.plan_evidence(reaction_lines)  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
-    merged = core.assemble_evidence([line.model_dump() for line in planned], [])
+    # ②에는 사람이 쓴 글만 보낸다(#412) — 칩은 키·방향이 정해져 있어 코드가 줄을 만든다. 글이 없으면 ② 호출도 없다.
+    text_inputs = [_evidence_from_reaction(r) for r in raw_reactions if r["reason_text"] is not None]
+    if text_inputs:
+        db.rollback()  # 모델을 기다리는 동안 읽기 트랜잭션이 연결을 잡고 있지 않게 한다(#275). 저장이 아니라 연결 반환이다.
+    planned = evidence_planner.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
+    reaction_lines = _reaction_evidence_lines(raw_reactions, [[line.model_dump() for line in group] for group in planned])
+    merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422
 
     # LLM 대기 중 같은 사용자의 동시 요청이 상한(#31)에 도달시켰을 수 있다 — INSERT 직전에 다시 읽어
     # 경합 구간을 수 ms로 줄인다(첫 검사는 모델을 부르기 전에 막는 빠른 실패용).
@@ -257,31 +283,41 @@ def list_evidence(db: Session, *, run_id: str, principal: Principal) -> list[sch
 
 def patch_evidence(
     db: Session, *, run_id: str, principal: Principal,
-    toggles: list[tuple[str, bool]], adds: list[str],
+    toggles: list[tuple[str, bool]], adds: list[str], evidence_planner: EvidencePlanGateway,
 ) -> list[schemas.EvidenceLine]:
     """PATCH /runs/{runId}/evidence (5-5). '-'는 author 본인만(evidence.disable, author-
     constrained) — 권한 없는 토글이 섞여 있으면 요청 전체를 403으로 거절한다(api-spec.yaml이
     이 엔드포인트에 Forbidden을 명시함 — "버튼이 애초에 disabled였어야 했다"는 신호)."""
     run = service.get_run_or_404(db, run_id)
+    run_uuid = run.id
+    # 읽기(존재·권한 검사) → 롤백 → 모델 → 쓰기 순서다(#275). 모델을 기다리는 동안 트랜잭션도 연결도 잡지 않는다.
+    validated: list[tuple[uuid.UUID, bool]] = []
     for evidence_id, is_active in toggles:
         line = service.get_evidence_or_none(db, evidence_id)
-        if line is None or line.run_id != run.id:
+        if line is None or line.run_id != run_uuid:
             raise AppError("NOT_FOUND")
         resource = Resource(type="evidence_line", map_id=principal.map_id, author_id=line.author_id)
         if not can(principal, "evidence.disable", resource):
             raise AppError("FORBIDDEN")
-        service.set_evidence_active(db, line.id, is_active)
-    # 「+」로 추가한 줄도 ②를 거쳐 fact_key·wants를 붙인다(#254) — 안전 사유("조개 알러지")가 reference로만 남아
-    # 실격이 안 켜지는 걸 막는다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다).
+        validated.append((line.id, is_active))
+    # 「+」로 추가한 줄도 ②를 거쳐 fact_key·wants를 붙인다(#254) — 근거 줄에 "한식 제외"처럼 해석한 조건이
+    # 보인다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다 — 모델이 쓰기보다 먼저라 행이 안 남는다).
+    # 글 하나에 조건이 여럿이면 같은 글로 조건마다 줄 하나다(#419).
+    planned: list = []
     if adds:
-        planned = llm_service.plan_evidence([
+        db.rollback()  # 읽기 트랜잭션을 끝내 연결을 돌려준다(#275). 저장이 아니다.
+        planned = evidence_planner.plan_evidence([
             {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "reference", "fact_key": None}
             for text in adds
         ])
-        for text, line in zip(adds, planned):
-            service.add_manual_evidence(
-                db, run_id=run.id, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
-            )
+    for line_id, is_active in validated:
+        service.set_evidence_active(db, line_id, is_active)
+    if adds:
+        for text, group in zip(adds, planned):
+            for line in group:
+                service.add_manual_evidence(
+                    db, run_id=run_uuid, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
+                )
     return [_evidence_response(line, principal) for line in service.list_evidence(db, run_id)]
 
 
@@ -304,17 +340,13 @@ def confirm_regions(db: Session, *, run_id: str, accept_union: bool) -> list[sch
 
 
 def _active_hard_fact_keys(db: Session, run: RecommendRun) -> list[str]:
-    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: is_active=True인 evidence_line 중 fact_key가
-    매핑된 hard 키를 "안전 조건 사유는 배지와 무관하게 실격이다" 판정표대로 켠다(#254). required는 wants가
-    true가 아니면(false·null) 켜고, preferred·reference는 wants=false일 때만 켠다. 켜진 키는 라벨이 참이든
-    모름이든 제외한다(안전 조건, 가드레일 8). 카테고리에 안 맞는 fact_key는 애초에 제외."""
+    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: is_active=True인 evidence_line 중
+    badge='required'로 hard 키가 매핑된 것만 켠다(누구도 문제 제기 안 한 조건은 검사하지 않는다). hard 키는
+    방향이 고정이라("있으면 실격") wants를 보지 않는다. ♥·「+」 사유로도 켜던 안전 조건 규칙(D11, #254)은
+    안전 조건 키와 함께 없앴다(#425). 카테고리에 안 맞는 fact_key는 애초에 제외."""
     lines = service.list_active_evidence(db, run.id)
     applicable = set(constraints.hard_fact_keys_for(run.category))
-    active = {
-        line.fact_key for line in lines
-        if line.fact_key is not None
-        and (line.wants is not True if line.badge == "required" else line.wants is False)
-    }
+    active = {line.fact_key for line in lines if line.badge == "required" and line.fact_key is not None}
     return sorted(active & applicable)
 
 
@@ -328,13 +360,8 @@ def _active_soft_requirements(db: Session, run: RecommendRun) -> list[tuple[str,
     })
 
 
-def _passes_hard_check(fact_key: str, value) -> bool:
-    if fact_key in constraints.VALUE_COMPARISON_UNSUPPORTED:
-        # price_bucket — evidence_lines에 사용자 기준값을 담을 컬럼이 없어(스키마
-        # 갭, recommend/for_Root.md) 실제 비교를 할 수 없다. known이어도 항상 통과시키고
-        # Check로만 노출한다(정보 제공, 실격 판정 아님).
-        return True
-    return not bool(value)  # contains_shellfish/spicy_focused/oily_focused/is_crowded_large — "있으면 실격"류
+def _passes_hard_check(value) -> bool:
+    return not bool(value)  # is_crowded_large — "있으면 실격"류
 
 
 def _run_pipeline(
@@ -385,7 +412,7 @@ def _run_pipeline(
         checks = [is_open_check]
         for fact_key in active_hard_keys:
             known, value = core.resolve_label(labels, fact_key)
-            passes = _passes_hard_check(fact_key, value) if known else True
+            passes = _passes_hard_check(value) if known else True
             checks.append(core.build_check(
                 fact_key, constraints.HARD_REGISTRY[fact_key].unknown_policy, known=known, value=value, passes=passes,
             ))
@@ -415,16 +442,17 @@ def _run_pipeline(
     # ♥ 핀의 라벨은 핀에 복사된 checks가 아니라 places의 place_facts에서 읽는다(#247) — 직접 찍은 핀도 같은
     # 라벨을 갖는다. known인 soft 라벨만 선호 신호가 된다(모름은 0점, 감점도 없다). 배치 조회 한 번.
     liked_facts = place_facts.get_facts([entry["place_id"] for entry in liked_pins]) if liked_pins else {}
-    hearted_places = [
+    # 음식점은 ♥를 누른 이유로 보기 어려운 라벨(체인점·주차 등)을 여기서 한 번 거른다(#414). 걸러진 목록을 기준·점수·충족
+    # 집계·이유에 똑같이 쓴다 — 직접 쓴 선호 사유(preferred_authors)는 거르지 않는다.
+    hearted_places = core.filter_heart_signals([
         core.HeartedPlace(
             checks=core.label_checks(liked_facts.get(entry["place_id"], [])),
             member_ids=frozenset(entry["member_ids"]),
         )
         for entry in liked_pins
-    ]
+    ], run.category)
     criteria = core.build_preference_criteria(
         hearted_places,
-        excluded_fact_keys=constraints.VALUE_COMPARISON_UNSUPPORTED,
         disqualifying_fact_keys=[*active_hard_keys, *{fact_key for fact_key, _wants in soft_requirements}],
         preferred_authors=preferred_authors_frozen,
     )
@@ -616,6 +644,7 @@ def _candidate_response(
     already_published = candidate.published_pin_id is not None
     return schemas.Candidate(
         id=str(candidate.id), place_name=place_names.get(candidate.place_id), region_label=region_labels.get(candidate.region_id),
+        lat=candidate.lat, lng=candidate.lng,
         rank=candidate.rank, checks=[Check(**c) for c in candidate.checks],
         reason=candidate.reason,
         member_fulfillment=candidate.member_fulfillment or None,  # {} = 집계 없음 → 필드 생략

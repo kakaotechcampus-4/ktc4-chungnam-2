@@ -50,5 +50,5 @@ def test_non_json_body_is_a_source_error():
 
 def test_stats_snapshot_counts_per_source():
     stats = CallStats()
-    stats.incr("kakao"); stats.incr("kakao"); stats.incr("google")
-    assert stats.snapshot() == {"kakao": 2, "google": 1}
+    stats.incr("kakao"); stats.incr("kakao"); stats.incr("naver")
+    assert stats.snapshot() == {"kakao": 2, "naver": 1}

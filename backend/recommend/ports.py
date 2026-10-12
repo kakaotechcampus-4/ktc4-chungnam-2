@@ -7,6 +7,7 @@ recommend가 다른 모듈에 대해 갖는 의존을 프로토콜로 좁혀둔�
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
+from llm.schemas import EvidenceLine
 from places.schemas import FactLabel
 
 
@@ -50,3 +51,11 @@ class PlaceFactsGateway(Protocol):
     인터페이스 어디에도 없다."""
 
     def get_facts(self, place_ids: Sequence[str]) -> Mapping[str, Sequence[FactLabel]]: ...
+
+
+class EvidencePlanGateway(Protocol):
+    """② 사유 구조화(요청 중 유일한 모델 호출). 실제 모드는 llm.api.plan_evidence에 Luna 플래너를 물려 위임하고,
+    dev 모드는 입력을 검증만 하고 통과시키는 스텁이다(#219). 입력 글마다 근거 줄 묶음 하나를 같은 순서로 돌려주고,
+    실패하면 PlanEvidenceFailed를 올린다 — 빈 결과로 삼키지 않는다."""
+
+    def plan_evidence(self, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[EvidenceLine]]: ...

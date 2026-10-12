@@ -17,7 +17,7 @@ from authz.core import Principal
 from common.errors import AppError
 from pins import service
 from places.schemas import PlaceMatch
-from pins.schemas import PinCreateRequest
+from pins.schemas import PinCreateSearch
 
 
 class _FakeOrig(Exception):
@@ -41,8 +41,8 @@ def _principal() -> Principal:
     return Principal(user_id="user_1", map_id="map_1", role="member")
 
 
-def _req() -> PinCreateRequest:
-    return PinCreateRequest(category="음식점", place_id="kakao:1", place_name="성수 칼국수", lat=35.1, lng=129.0)
+def _req() -> PinCreateSearch:
+    return PinCreateSearch(category="음식점", place_id="kakao:1", place_name="성수 칼국수", lat=35.1, lng=129.0)
 
 
 def _matching_place():

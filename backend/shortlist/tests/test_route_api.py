@@ -94,6 +94,41 @@ def test_post_route_computes_single_region_for_nearby_pins(app_client, db_sessio
     assert routes[0]["total_distance_m"] > 0
 
 
+def test_post_route_leaves_out_live_pins_but_keeps_them_in_the_shortlist(app_client, db_session):
+    """#386 — 좌표가 없는 실시간 핀은 동선 계산에서 빠지고, 확정 리스트에는 남는다."""
+    pin_a = _insert_confirmed_pin(db_session, lat=35.1580, lng=129.0590)
+    pin_b = _insert_confirmed_pin(db_session, lat=35.1590, lng=129.0600)
+    live = PinRow(
+        id=uuid.uuid4(), map_id="map_1", category="음식점", kind="일반", origin="direct", source="live",
+        kakao_place_id="kakao:live", search_query="q", visibility="public", created_by="user_1",
+    )
+    db_session.add(live)
+    db_session.commit()
+    for pin in (pin_a, live, pin_b):
+        _confirm(app_client, pin)
+
+    routes = app_client.post("/maps/map_1/route", cookies=_auth()).json()
+    assert [set(r["ordered_pin_ids"]) for r in routes] == [{str(pin_a.id), str(pin_b.id)}]
+
+    listed = app_client.get("/maps/map_1/shortlist", cookies=_auth()).json()
+    live_item = next(item for item in listed if item["pin"]["id"] == str(live.id))
+    assert live_item["pin"]["source"] == "live" and "lat" not in live_item["pin"]
+    assert app_client.get("/maps/map_1/route", cookies=_auth()).json() == routes
+
+
+def test_post_route_with_only_live_pins_returns_empty_list(app_client, db_session):
+    live = PinRow(
+        id=uuid.uuid4(), map_id="map_1", category="음식점", kind="일반", origin="direct", source="live",
+        kakao_place_id="kakao:only", search_query="q", visibility="public", created_by="user_1",
+    )
+    db_session.add(live)
+    db_session.commit()
+    _confirm(app_client, live)
+
+    resp = app_client.post("/maps/map_1/route", cookies=_auth())
+    assert resp.status_code == 200 and resp.json() == []
+
+
 def test_post_route_splits_far_apart_pins_into_separate_regions(app_client, db_session):
     """완료 정의 — 8km 이상 떨어진 두 클러스터는 별도 동선(Route)이 된다."""
     near_a1 = _insert_confirmed_pin(db_session, lat=35.1580, lng=129.0590)

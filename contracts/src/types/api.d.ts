@@ -238,7 +238,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절) */
+        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절). 삭제된 지도와 내가 나간 지도는 빠진다 (#369). 목록의 Map에는 next_owner를 채우지 않는다. 이 목록의 지도는 최대 10개다(만들거나 참여한 지도 합산, */
         get: {
             parameters: {
                 query?: never;
@@ -260,7 +260,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** 지도 생성. 생성 시 seeding 잡을 트리거한다 (architecture.md 3절) */
+        /** 지도 생성. 생성 시 seeding 잡을 트리거한다 (architecture.md 3절). 내 지도(만들거나 참여한 지도, 삭제·나간 지도 제외)가 이미 20개면 409 MAP_LIMIT (#369, */
         post: {
             parameters: {
                 query?: never;
@@ -283,6 +283,7 @@ export interface paths {
                         "application/json": components["schemas"]["Map"];
                     };
                 };
+                409: components["responses"]["MapLimit"];
             };
         };
         delete?: never;
@@ -298,7 +299,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 지도 상세 조회 */
+        /** 지도 상세 조회. 삭제된 지도는 404 (#369). 상세에서만 next_owner를 채운다 */
         get: {
             parameters: {
                 query?: never;
@@ -324,7 +325,75 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * 지도 삭제 — 방장만 (#369, docs/permissions.md map.delete). soft delete라 모든 구성원에게서 사라진다.
+         *     이후 이 지도와 지도에 딸린 모든 경로, 이 지도의 초대 토큰은 404다. 전체 채널에 map.deleted를 보낸다(docs/events.md).
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 삭제됨 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/members/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 지도 나가기 — 구성원 누구나 (#369, docs/permissions.md map.leave). 내 멤버십을 지우고, 내가 이 지도에 남긴 반응과
+         *     근거 줄만 지운다. 핀, 확정 리스트 항목, 초대 링크, 추천 run과 후보는 남는다. 내가 찍은 핀의 작성자는 '나간 구성원'으로 보인다.
+         *     방장이 나가면 joined_at이 가장 빠른 구성원(탈퇴자 제외)에게 방장이 넘어간다. 넘길 사람이 없으면 409 OWNER_CANNOT_LEAVE.
+         *     전체 채널에 member.left를 보낸다(docs/events.md). 경로를 members/me로 둔 것은 v2 강퇴(#8)가 members/{userId}를 쓰기 위해서다.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 나감 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["OwnerCannotLeave"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -421,7 +490,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 초대 수락. 로그인 전 접근 시 처리 방식은 결정 이슈 미결 (#15 분리분) */
+        /** 초대 수락. 로그인 전 접근 시 처리 방식은 결정 이슈 미결 (#15 분리분). 내 지도가 이미 20개면 409 MAP_LIMIT(#369, */
         post: {
             parameters: {
                 query?: never;
@@ -444,6 +513,7 @@ export interface paths {
                 };
                 401: components["responses"]["Unauthorized"];
                 404: components["responses"]["InviteNotFound"];
+                409: components["responses"]["MapLimit"];
                 410: components["responses"]["InviteExpired"];
             };
         };
@@ -460,7 +530,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 구성원 목록 (color, online) — 5절 "구성원 배지 + 목록" */
+        /**
+         * 구성원 목록 (color, online) — 5절 "구성원 배지 + 목록". **지금 구성원만** 돌려준다 — 나간 사람과 탈퇴한 사람은 없다.
+         *     그래서 이 목록의 길이는 `Map.member_count`와 항상 같다(#439, 멘토 리뷰 PR #380).
+         */
         get: {
             parameters: {
                 query?: never;
@@ -602,7 +675,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 핀 목록. 보는 사람 기준 필터링 — visibility=private인 남의 후보는 내려주지 않는다 (5-5-1) */
+        /** 핀 목록. 지도의 삭제되지 않은 핀 전부 (비공개 후보는 핀이 아니라 후보라 여기 없다, 5-5-1) */
         get: {
             parameters: {
                 query?: {
@@ -632,12 +705,20 @@ export interface paths {
         };
         put?: never;
         /**
-         * 핀 생성 (#191, 2026-10-01 결정). **v1의 핀은 모두 자체 DB 장소(`places`)를 가리킨다.** 경로는 하나다 — `source: search`:
-         *     GET /places/search 결과를 골라 `place_id`·`place_name`·`lat`·`lng`·`category`를 그대로 보내면, 서버가 **그것과 같은 자체 DB 장소를 한 건 찾아**
+         * 핀 생성 (#191, 2026-10-01 결정, #382로 확장). 경로는 둘이다.
+         *
+         *     **`source: search`(자체 DB 장소)**: GET /places/search 결과를 골라 `place_id`·`place_name`·`lat`·`lng`·`category`를 그대로 보내면, 서버가 **그것과 같은 자체 DB 장소를 한 건 찾아**
          *     그 장소의 이름·좌표만 핀에 쓴다. 요청의 `place_id`(카카오 장소 ID)·`place_name`·`lat`·`lng`는 **매칭 힌트일 뿐 저장하지 않는다**
-         *     (카카오 장소 ID와 `place_url`만 매칭된 자체 DB 장소에 함께 기록된다). 짝이 되는 자체 DB 장소가 없으면 핀을 만들지 않고
-         *     422 `PLACE_NOT_SUPPORTED`("아직 지원하지 않는 장소예요")다. 응답의 `category`는 장소의 분류이며, 요청 `category`가 다르면 422 `VALIDATION_ERROR`.
-         *     자체 DB는 음식점·카페·관광지만 담는다(TourAPI 숙박은 받지 않는다, 2026-10-01) — 검색 결과가 숙소·기타여도 핀을 만들 수 없고 422 `PLACE_NOT_SUPPORTED`다.
+         *     (카카오 장소 ID와 `place_url`만 매칭된 자체 DB 장소에 함께 기록된다). 짝이 되는 자체 DB 장소가 없으면 이 경로는 422 `PLACE_NOT_SUPPORTED`다 —
+         *     화면은 이때 아래 `live`로 다시 보내 「그래도 핀 남기기」를 열 수 있다. 응답의 `category`는 장소의 분류이며, 요청 `category`가 다르면 422 `VALIDATION_ERROR`.
+         *     자체 DB는 음식점·카페·관광지만 담는다(TourAPI 숙박은 받지 않는다, 2026-10-01).
+         *
+         *     **`source: live`(실시간 핀, #382)**: 자체 DB에 없는 장소를 사람이 핀으로 남긴다. 서버는 **카카오 장소 ID(`kakao_place_id`), 사용자가 친 검색어(`search_query`),
+         *     사용자가 쓴 메모(`memo`), 카테고리**만 저장하고 **이름·좌표는 저장하지 않는다**(카카오 응답의 이름·좌표·주소는 저장 불가, #53). 화면은 지도를 열 때마다
+         *     카카오 JS SDK 키워드 검색으로 `search_query`를 다시 찾고 결과 중 장소 ID가 같은 것의 이름·좌표를 그 자리에서만 쓴다(서버로 보내지 않는다). 응답 `Pin`에는 `lat`·`lng`·`place_name`이 없다.
+         *     같은 지도에서 같은 `kakao_place_id`의 핀이 이미 있으면 409 `PIN_DUPLICATE`다. 숙소·기타 카테고리는 live로도 만들 수 없다(422 `VALIDATION_ERROR`).
+         *     live 핀은 반응·사유·필터·확정 리스트·삭제는 되지만 장소 정보·조건별 체크가 없고, AI 후보와 추천 검색 범위 기준점이 될 수 없으며, 서버가 좌표를 모르므로 동선 계산에서 빠진다(확정 리스트 항목의 `pin.source`가 live인 것 — FE가 "위치를 몰라 동선에서 빠졌어요"를 안내한다).
+         *
          *     `source: coordinate`(지도 길게 눌러 찍기)와 `source: link`는 v1에서 받지 않는다(422 `VALIDATION_ERROR`) — 카카오 지도에서 사용자가 지정한 좌표는 저장할 수 없다.
          */
         post: {
@@ -1450,7 +1531,7 @@ export interface paths {
         /**
          * 마지막으로 계산된 동선 조회 (5-10). 순수 계산, 모델 미사용.
          *     확정 핀이 여러 지역에 걸치면 지역별로 여러 동선을 반환한다.
-         *     한 번도 계산하지 않았으면 빈 배열.
+         *     한 번도 계산하지 않았으면 빈 배열. 좌표가 없는 실시간 핀(`Pin.source=live`, #382)은 계산에서 빠지고 `ordered_pin_ids`에 들어가지 않는다.
          */
         get: {
             parameters: {
@@ -1516,7 +1597,7 @@ export interface paths {
         };
         /**
          * 전체 채널 SSE. 지도의 모든 구성원이 구독한다.
-         *     visibility=private인 핀·후보는 이 채널로 절대 내려가지 않는다 (5-5-1, 가드레일 1).
+         *     비공개 후보는 이 채널로 절대 내려가지 않는다 — 후보는 개인 채널(`/events/me`)로만 온다 (5-5-1, 가드레일 1).
          */
         get: {
             parameters: {
@@ -1639,7 +1720,10 @@ export interface components {
             can_remove_from_shortlist?: boolean;
             /** @description evidence_line 전용: 자기가 쓴 것만 true */
             can_disable?: boolean;
+            /** @description pin: 핀 삭제. map: 지도 삭제, 방장만 true (#369) */
             can_delete?: boolean;
+            /** @description map 전용: 지도 나가기. 넘길 사람이 없는 방장은 false (#369) */
+            can_leave?: boolean;
             /** @description candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64) */
             can_publish?: boolean;
         };
@@ -1653,6 +1737,10 @@ export interface components {
         };
         Map: {
             id: string;
+            /** @description 요청자 기준. map 응답은 can_delete(방장만), can_leave(넘길 사람이 없는 방장은 false)만 쓴다 (#369) */
+            permissions: components["schemas"]["Permissions"];
+            /** @description 요청자가 방장이고 넘길 사람이 있을 때만 채운다. 나가기 확인 창("나가면 ○○님이 방장이 돼요")용. 탈퇴자 건너뛰기를 FE가 다시 계산하지 않게 서버가 정한다. 상세(GET /maps/{mapId})에서만 채우고 목록에서는 생략한다 (#369) */
+            next_owner?: components["schemas"]["NextOwner"] | null;
             title: string;
             /**
              * Format: date
@@ -1665,10 +1753,23 @@ export interface components {
              */
             end_date: string;
             region?: components["schemas"]["MapRegion"];
+            /** @description 지금 구성원 수 — 나간 사람과 탈퇴한 사람은 세지 않는다. GET /maps/{mapId}/members의 길이와 같다 (#439) */
             member_count: number;
             /** @description 지도에 올라와 있는(삭제되지 않은) 핀 수 — 내 지도 목록 「핀 12개」 표시용. 본인의 비공개 후보는 핀이 아니라 세지 않는다 (2026-10-04, FE 요청) */
             pin_count: number;
             confirmed_count?: number;
+            /**
+             * @description 요청자의 지금 역할(memberships.role). 위임되면 바뀐다. 내 지도 목록의 방장 배지용 (2026-10-07, 회의). 서버가 채우기 시작하면 필수로 올린다
+             * @enum {string}
+             */
+            my_role?: "owner" | "member";
+            /** @description 내가 이 지도를 만들었는가(maps.created_by == 나). 내 지도 목록의 「내가 만든 지도」와 「초대받은 지도」를 가르는 값이다. 방장이 위임되면 my_role과 달라질 수 있다 — 만든 사람이 나가도 값은 바뀌지 않는다. 서버가 채우기 시작하면 필수로 올린다 */
+            created_by_me?: boolean;
+        };
+        /** @description 방장이 나가면 방장이 될 사람 (#369) */
+        NextOwner: {
+            user_id: string;
+            display_name: string;
         };
         /** @description 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다 */
         InviteSummary: {
@@ -1694,7 +1795,7 @@ export interface components {
         Member: {
             user_id: string;
             /**
-             * @description owner = 지도를 만든 사람(방장), 나머지는 member. 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)
+             * @description owner = 방장, 나머지는 member. memberships.role 기준이라 방장이 나가 위임되면 바뀐다(지도를 만든 사람과 다를 수 있다, #369). 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)
              * @enum {string}
              */
             role: "owner" | "member";
@@ -1727,10 +1828,25 @@ export interface components {
             lat: number;
             lng: number;
         };
-        PinCreateRequest: {
+        /** @description `source`로 갈린다 — 생략하면 search(자체 DB 장소), `live`면 실시간 핀(#382) */
+        PinCreateRequest: components["schemas"]["PinCreateSearch"] | components["schemas"]["PinCreateLive"];
+        /** @description #382 실시간 핀 — 자체 DB에 없는 장소. 이름·좌표는 받지도 저장하지도 않는다 */
+        PinCreateLive: {
+            /** @enum {string} */
+            source: "live";
+            /** @description 음식점·카페·관광지만. 숙소·기타는 422 VALIDATION_ERROR */
+            category: components["schemas"]["Category"];
+            /** @description GET /places/search 결과의 place_id(예 kakao:1234)를 그대로. 저장이 허용된 유일한 카카오 값(#53). 같은 지도에서 같으면 409 PIN_DUPLICATE */
+            kakao_place_id: string;
+            /** @description 사용자가 장소 검색창에 친 검색어(사용자 입력이라 저장 가능). 화면이 지도를 열 때마다 이 검색어로 카카오 키워드 검색을 다시 해서 kakao_place_id를 찾는다 */
+            search_query: string;
+            /** @description 선택. 핀을 찍은 사람이 남기는 한마디(예 "여기 곱창 맛있대"). 사용자 입력 */
+            memo?: string;
+        };
+        PinCreateSearch: {
             category: components["schemas"]["Category"];
             /**
-             * @description v1은 search만. coordinate·link는 값만 남겨 둔 것(v2 확장용)이며 보내면 422 (#191·#147) — 생략하면 search
+             * @description search 경로(자체 DB 장소). coordinate·link는 값만 남겨 둔 것(v2 확장용)이며 보내면 422 (#191·#147) — 생략하면 search. 실시간 핀은 PinCreateLive(source=live)
              * @default search
              * @enum {string}
              */
@@ -1758,14 +1874,9 @@ export interface components {
             category?: components["schemas"]["Category"];
             address?: string;
             place_source?: components["schemas"]["PlaceSource"];
-            /** @description 자체 DB에 짝이 있어 핀으로 만들 수 있는가(서버가 자체 DB를 읽기만 해서 계산, 카카오 ID를 기록하지 않는다). false면 FE는 이 결과를 흐리게 보이고 "아직 지원하지 않는 장소예요"를 미리 안내한다. 없으면 true로 본다(자체 DB 연결 전) */
+            /** @description 자체 DB에 짝이 있어 `source: search`로 핀을 만들 수 있는가(서버가 자체 DB를 읽기만 해서 계산, 카카오 ID를 기록하지 않는다). false여도 `source: live`(#382)로 「그래도 핀 남기기」를 열 수 있다 — FE는 이 결과에 "장소 정보가 없는 핀이에요"를 안내한다. 없으면 true로 본다(자체 DB 연결 전) */
             pinnable?: boolean;
         };
-        /**
-         * @description docs/constraints.md 차원 압축 결과. 원본 가격 숫자는 API로 노출하지 않는다
-         * @enum {string}
-         */
-        PriceBucket: "low" | "mid" | "high";
         /** @enum {string} */
         LabelConfidence: "known" | "unknown";
         /** @description 가드레일 5 "조건별 충족 체크" */
@@ -1782,11 +1893,27 @@ export interface components {
             map_id: string;
             category: components["schemas"]["Category"];
             kind: components["schemas"]["PinKind"];
-            /** @enum {string} */
+            /**
+             * @description v1은 항상 public. 이 값으로 분기하지 않는다 — 비공개 후보는 핀이 아니라 Candidate다(#273). 다음에 Pin 스키마를 크게 바꿀 때 같이 지운다
+             * @enum {string}
+             */
             visibility: "public" | "private";
-            lat: number;
-            lng: number;
-            /** @description 자체 DB 장소의 이름 (#191). 핀에 따로 저장하지 않고 장소에서 가져온다 */
+            /** @description 자체 DB 장소의 좌표. **live 핀에는 없다**(#382) — 그 핀의 위치는 화면이 kakao_place_id로 실시간에 찾는다 */
+            lat?: number;
+            /** @description lat과 같다. live 핀에는 없다 */
+            lng?: number;
+            /**
+             * @description db = 자체 DB 장소를 가리키는 핀, live = 실시간 핀(#382, PinCreateLive). 없으면 db로 본다 — 서버가 채우기 시작하면 필수로 바꾼다. (`default`를 쓰지 않는다: 타입 생성기가 필수로 바꿔 버린다)
+             * @enum {string}
+             */
+            source?: "db" | "live";
+            /** @description live 핀의 메모(작성자가 남긴 한마디). 없을 수 있다 */
+            memo?: string;
+            /** @description live 핀만 — 카카오 장소 ID. 화면이 위치를 다시 찾는 열쇠다 */
+            kakao_place_id?: string;
+            /** @description live 핀만 — 핀을 찍을 때 사용자가 친 검색어. 화면이 `kakao_place_id`를 이 검색어로 다시 찾는다 */
+            search_query?: string;
+            /** @description 자체 DB 장소의 이름 (#191). 핀에 따로 저장하지 않고 장소에서 가져온다. live 핀에는 없다(#382) — 화면이 실시간 검색 결과에서 읽는다 */
             place_name?: string;
             /** @description 매칭된 카카오 장소 페이지 링크(저장 허용). **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 매칭된 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 필드를 생략한다 */
             place_url?: string;
@@ -1797,9 +1924,8 @@ export interface components {
              * @description 핀이 지도에 올라온 시각. AI 추천 핀은 「지도에 올리기」를 누른 시각이다. 「최근 추가 순」 정렬, 「최근 핀으로 이동」, 「10분 전」 표시용 (2026-10-04, FE 요청)
              */
             created_at: string;
-            /** @description 핀 상세에서 '누가 찍었는지' 표시용 (#26) */
+            /** @description 핀 상세에서 '누가 찍었는지' 표시용 (#26). 작성자가 탈퇴했으면 '탈퇴한 구성원', 탈퇴하지 않았는데 이 지도에서 나갔으면 '나간 구성원', 아니면 실명. 조회할 때 계산하고 다시 들어오면 실명으로 돌아간다 (#369) */
             created_by_display_name?: string;
-            price_bucket?: components["schemas"]["PriceBucket"];
             /** @description 게시된 AI 추천 핀도 상세에서 계속 노출한다 (가드레일 5) */
             checks?: components["schemas"]["Check"][];
             source_run_id?: string | null;
@@ -1811,14 +1937,16 @@ export interface components {
             my_reaction?: null | components["schemas"]["Reaction"];
             reaction_summary: {
                 like: number;
-                neutral: number;
                 against: number;
             };
             permissions: components["schemas"]["Permissions"];
         };
         ReactionRequest: {
-            /** @enum {string} */
-            type: "like" | "neutral" | "against";
+            /**
+             * @description ♥ 좋음 / 🚫 반대. 2026-10-07(#360)에 neutral(△ 조율 필요)을 없앴다 — 보내면 422 VALIDATION_ERROR
+             * @enum {string}
+             */
+            type: "like" | "against";
             reason_text?: string;
             /** @description GET /categories/{category}/reason-chips가 준 칩의 id. 그 핀의 카테고리 목록에 없는 id는 422 VALIDATION_ERROR (2026-10-04, #60). 반대(against)에서만 보낸다 */
             reason_chip_ids?: string[];
@@ -1827,7 +1955,7 @@ export interface components {
             pin_id: string;
             user_id: string;
             /** @enum {string} */
-            type: "like" | "neutral" | "against";
+            type: "like" | "against";
             reason_text?: string;
             /** @description 반대 사유 칩 id (ReasonChip.id) */
             reason_chip_ids?: string[];
@@ -1840,11 +1968,11 @@ export interface components {
             id: string;
             /** @description 화면에 보이는 이름(예: 매워요) */
             label: string;
-            /** @description 이 칩이 뜻하는 조건의 fact_key. 있을 때만. v1에서는 힌트일 뿐이다 — 서버는 칩 label을 사유 문장으로 ②에 넘기는 기존 경로를 그대로 쓴다 */
+            /** @description 이 칩이 뜻하는 조건의 fact_key. 있을 때만. 추천 근거를 만들 때 서버가 칩 하나당 근거 줄 하나를 만들고 이 키와 표의 방향(wants)을 코드로 채운다. 모델(②)을 거치지 않는다(#412) */
             fact_key?: string;
         };
         FilterCounts: {
-            /** @description 이 지도의 핀에 ♥·△·🚫 반응을 하나라도 남긴 구성원 수. 「2/4명이 의견을 남겼어요」의 2. 탈퇴한 구성원은 세지 않는다 (2026-10-04, FE 요청) */
+            /** @description 이 지도의 핀에 ♥·🚫 반응을 하나라도 남긴 구성원 수. 「2/4명이 의견을 남겼어요」의 2. 탈퇴한 구성원은 세지 않는다 (2026-10-04, FE 요청) */
             members_with_opinion: number;
             /** @description 현재 구성원 수(= Map.member_count). 「2/4명」의 4 */
             members_total: number;
@@ -1856,9 +1984,11 @@ export interface components {
             };
         };
         Readiness: {
+            /** @description answered_count >= required_count (2026-10-07, #360) */
             ready?: boolean;
+            /** @description 그 카테고리에서 ♥ 또는 🚫 의견이 달린 핀의 수. 삭제된 핀·나간 구성원·탈퇴자의 반응은 세지 않는다. 혼자 쓰는 지도도 똑같다 */
             answered_count?: number;
-            /** @description ceil(N/2). N의 정의는 결정 이슈 미결 */
+            /** @description 항상 1. 구성원 수에 비례하던 ceil(N/2)는 폐기했다(#360). 필드를 남긴 것은 FE 호환(「의견 핀 0/1」 표기)용이다 */
             required_count?: number;
         };
         EvidenceLine: {
@@ -1929,6 +2059,10 @@ export interface components {
         Candidate: {
             id: string;
             place_name?: string;
+            /** @description 자체 DB 장소의 좌표(자체 데이터라 저장·노출 가능, #190). 게시 전 나만 보는 점선 핀을 지도에 그리는 데 쓴다 (#340, 최종기획안 5-5-1). 서버가 채우기 시작하면 필수로 올린다 */
+            lat?: number;
+            /** @description lat과 같다 */
+            lng?: number;
             /** @description 5-6-1 지역별 안배 태그 */
             region_label?: string;
             rank: number;
@@ -2009,7 +2143,6 @@ export interface components {
                 pin_id: string;
                 reaction_summary: {
                     like?: number;
-                    neutral?: number;
                     against?: number;
                 };
             };
@@ -2109,8 +2242,8 @@ export interface components {
             };
         };
         /**
-         * @description 핀을 만들 수 없다. 응답 본문의 `code`로 분기한다 — `PLACE_NOT_SUPPORTED`(짝이 되는 자체 DB 장소가 없음, 숙소·기타 포함),
-         *     `VALIDATION_ERROR`(필수 힌트 누락, `source`가 coordinate·link, 요청 `category`가 장소의 분류와 다름)
+         * @description 핀을 만들 수 없다. 응답 본문의 `code`로 분기한다 — `PLACE_NOT_SUPPORTED`(`source: search`인데 짝이 되는 자체 DB 장소가 없음 — 화면은 `source: live`로 다시 보낼 수 있다, #382),
+         *     `VALIDATION_ERROR`(필수 힌트 누락, `source`가 coordinate·link, 요청 `category`가 장소의 분류와 다름, live에 숙소·기타 카테고리)
          */
         PlaceNotSupported: {
             headers: {
@@ -2138,7 +2271,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 없거나 잘못된 초대 토큰 (INVITE_NOT_FOUND) */
+        /** @description 없거나 잘못된 초대 토큰 (INVITE_NOT_FOUND). 삭제된 지도의 토큰도 같다 (#369) */
         InviteNotFound: {
             headers: {
                 [name: string]: unknown;
@@ -2183,7 +2316,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 비공개 AI 후보에 요청자 본인이 아닌 사람이 접근 (5절 "비공개 AI 핀 접근 시 안내") */
+        /** @description 「지도에 올리기」 전용 — 구성원이어도 요청자가 아닌 사람이 남의 후보를 게시하려 함. 후보의 존재를 숨기려고 404 `AI_PIN_PRIVATE`로 답한다. 후보가 없거나 비구성원이면 404 `NOT_FOUND` (5절 "비공개 AI 핀 접근 시 안내") */
         AiPinPrivate: {
             headers: {
                 [name: string]: unknown;
@@ -2192,7 +2325,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 추천 준비 미달 — 해당 카테고리에 의견 남긴 핀이 기준 미달 (5-4, "핀 1/2 · 1개 더 필요") */
+        /** @description 추천 준비 미달 — 해당 카테고리에 ♥/🚫 의견이 달린 핀이 하나도 없다 (5-4, 2026-10-07 */
         NotReady: {
             headers: {
                 [name: string]: unknown;
@@ -2216,8 +2349,27 @@ export interface components {
         /**
          * @description 존재하지 않거나(리소스 없음), 요청자가 그 지도의 구성원이 아님 (docs/permissions.md
          *     "권한을 어디서 강제하는가" — 비구성원에게 존재 여부 자체를 흘리지 않는다).
+         *     삭제된 지도(#369)와 그 지도에 딸린 모든 리소스도 404다.
          */
         NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 내 지도가 이미 20개다(#433에서 10→20) — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다 (MAP_LIMIT, */
+        MapLimit: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 넘길 사람이 없는 방장은 나갈 수 없다 — 혼자이거나 남은 사람이 전부 탈퇴자 (OWNER_CANNOT_LEAVE, */
+        OwnerCannotLeave: {
             headers: {
                 [name: string]: unknown;
             };

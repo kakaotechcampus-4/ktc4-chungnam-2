@@ -24,11 +24,13 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Enum,
     Float,
     ForeignKey,
+    Identity,
     Integer,
     String,
     Text,
@@ -117,6 +119,9 @@ class EvidenceLine(Base):
     circle_radius_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # #428: 넣은 순서. created_at은 한 트랜잭션 안에서 모두 같고 id는 무작위라 순서를 못 정한다 —
+    # 읽을 땐 ORDER BY created_at, seq. 서버가 채우며 API 응답에는 넣지 않는다(마이그레이션 0024).
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False)
 
 
 class Region(Base):

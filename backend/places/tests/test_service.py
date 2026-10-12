@@ -44,7 +44,7 @@ def test_raw_facts_is_empty_after_name_search_too():
 
 
 def test_raw_facts_never_calls_any_source_to_enrich():
-    g = FakeSource("google", provides={"rating"}, nearby=[place("google")])
+    g = FakeSource("naver", provides={"rating"}, nearby=[place("naver")])
     svc = _svc(FakeSource("kakao", nearby=[place(**MARK)]), g)
     svc.search_nearby("음식점", AREA)
     svc.get_raw_facts("kakao:1")

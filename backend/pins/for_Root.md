@@ -43,8 +43,7 @@
 **아직 못 채우는 필드**
 6. `place_name`·`created_by_display_name`은 **해결됨**(루트, 2026-09-23:
    `PinCreateRequest.place_name` 추가 + `pins.place_name` 컬럼 신설(0009 마이그레이션),
-   `auth.api.display_names` 배선). `price_bucket`은 여전히 `places`(#34) 전엔 채울 수 없어
-   응답에서 생략된다.
+   `auth.api.display_names` 배선). `price_bucket`은 #423에서 `Pin`에서 뺐다.
 
 **설계상 남겨둔 비대칭**
 7. `create_pin`은 멤버십을 권한 계산에만 쓰고 생성 자체를 막지 않는다(`delete_pin`·반응 엔드포인트는 403으로 막음). `create_pin`도 같은 기준으로 맞출지 확인 필요.
@@ -208,3 +207,25 @@
 **검증**: `PINGO_TEST_DB=pingo_test_pins python -m pytest`(backend 전체) **939 passed, 6 deselected(live), 실패 0**.
 
 **복잡도**: 예상 3/5 · **실제 소요**: 4/5(테스트 이동 범위가 예상보다 컸다 — integration 4개 파일).
+
+---
+
+# backend/pins → 루트 보고 (#369 2단계 pins 몫 — 핀 작성자 "나간 구성원")
+
+브랜치 `docs/map-delete-leave-369`. 다른 모듈 파일은 고치지 않았다.
+
+## 한 것
+- 판정은 `pins/core.py::author_display_name`(순수 함수). 탈퇴 먼저 → 현재 구성원이 아니면 "나간 구성원" → 실명. 핀 행에는 아무것도 쓰지 않는다.
+- `pins/service.py::author_display_names(db, author_ids, current_member_ids)`가 작성자 id 배치로 계산한다(`auth.api.display_names`, `auth.api.withdrawn_user_ids` 각 1회).
+- 현재 구성원 집합은 `maps.api.DbMembershipGateway(db).current_member_ids(map_id)`를 지도당 한 번 부른다.
+  - 목록 `GET /maps/{id}/pins`: 라우터가 구해 `service.list_pins(current_member_ids=...)`로 넘긴다(`count_members`를 넘기는 것과 같은 방식).
+  - 단건 `pins.api.get_pin_response_for_viewer`(shortlist·recommend가 씀): 그 핀의 지도로 같은 판정.
+  - 핀 생성(`create_pin`)과 AI 핀 게시(`api.publish_*`)는 그대로 실명이다. 작성자가 방금 가드를 통과한 요청자라 탈퇴·나감일 수 없다.
+- 테스트: `pins/tests/test_core.py`(판정 4개, 탈퇴 문구가 `auth.api.WITHDRAWN_DISPLAY_NAME`과 같은지), `pins/tests/test_author_display_369.py`(실명·나감·탈퇴, 나간 뒤 탈퇴, 재참여 시 실명 복귀, 다른 지도는 그대로, 핀 1개와 5개의 쿼리 수가 같음). pins 186 passed, 백엔드 전체 1411 passed(xfail 1, live 7 제외).
+
+## 설계와 다른 것
+- 설계 문서는 `pins/ports.py`의 `MembershipGateway` 프로토콜에 메서드를 추가하라고 했지만 그 파일이 없다. 새 프로토콜을 만들지 않고 `maps.api.DbMembershipGateway`를 직접 쓴다(pins/router.py가 이미 `maps.api`를 쓴다). `authz/ports.py` docstring의 "pins/ports.py의 MembershipGateway" 언급은 낡았다(authz 소관이라 두었다).
+- 탈퇴 판정에 쿼리 하나(`withdrawn_user_ids`)가 더 든다. `display_names`가 탈퇴자 이름을 이미 가리지만, 그 문자열로 탈퇴 여부를 역추론하지 않으려고 따로 묻는다.
+
+## 복잡도
+예상 2, 실제 2.
