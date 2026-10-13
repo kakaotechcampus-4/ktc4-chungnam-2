@@ -6,6 +6,27 @@
 
 - **스키마 변경 없음.** `GET /places/search`는 카카오가 준 후보 안에서 `pinnable=true`(자체 DB에 짝이 있는 장소)를 앞으로 올려 돌려준다. 각 묶음 안의 순서는 카카오 순서 그대로이고, `pinnable`을 못 구했으면(생략) 원래 순서다. `limit`은 정렬 뒤에 적용한다. 호환 영향 없음.
 
+## 2026-10-13, V2 지도 생명주기: 지도 수정·초대 링크 관리·방장 넘기기 (#465, #467, #468)
+
+스펙이 먼저다. 백엔드 구현은 각 이슈에서 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 바로 쓸 수 있다.
+
+- **추가 엔드포인트**
+  - `PATCH /maps/{mapId}` — 제목·날짜·지역 수정, 방장만(403), 보낸 필드만 바꾼다, 검증 실패 422. 응답은 `Map`.
+  - `POST /maps/{mapId}/owner {user_id}` — 방장 직접 넘기기, 방장만. 대상이 구성원이 아니거나 탈퇴했거나 나 자신이면 422 `OWNER_TARGET_INVALID`. 응답은 요청자(이제 구성원) 기준 `Map`.
+  - `GET /maps/{mapId}/invites` — 유효한 초대 링크 목록, 방장만. `Invite`에 `created_at`·`created_by_display_name`·`used_count`가 붙는다.
+  - `DELETE /invites/{token}` — 링크 끄기, 방장만, 멱등(204).
+- **바뀐 동작**
+  - `POST /maps/{mapId}/invite`는 **내가 만든 유효한 링크가 있으면 그것을 200으로 돌려준다**(새로 만들면 201). 남이 만든 링크는 재사용하지 않는다. FE는 `useInviteQuery`의 캐시 한 개를 그대로 써도 되고, 201/200을 구분할 필요는 없다.
+  - 초대 요약·수락의 410은 이제 `INVITE_EXPIRED`와 **`INVITE_REVOKED`** 두 코드다. 코드로 문구를 가른다.
+- **스키마**
+  - `Permissions.can_edit`(map 전용, 방장만 true).
+  - `MapUpdateRequest`, `OwnerTransferRequest` 추가.
+- **이벤트(전체 채널)**: `map.updated {map_id, title, start_date, end_date, region?}`, `owner.changed {map_id, from_user_id, to_user_id}`. `owner.changed`는 `member.left`가 아니다 — 두 사람 모두 지도에 남아 SSE 구독이 끊기지 않는다.
+- **스펙 보강**: `PublicEvent`에 events.md에는 있었는데 스키마가 없던 `member.left`·`map.deleted`를 채웠다(동작 변화 없음).
+- **권한**: 새 액션 `invite.revoke`(목록 보기·끄기), `owner.transfer`, 기존 `map.settings.edit` 사용 시작. 모두 owner 전용. `authz/policy.py`·`schemas.py`를 같은 PR에서 맞췄다.
+- **FE 할 일:** #479(휴지통은 후순위라 제외), #480(지도·핀 수정), #481(초대 링크 관리·방장 넘기기). 목 서버에서 먼저 붙일 수 있다.
+- 지도 삭제 복구(#464)는 후순위라 이번 묶음에 넣지 않았다.
+
 ## 2026-10-10 (세 번째), v1에 없는 private 핀 분기 정리 (#273)
 
 - **API 스키마는 그대로다.** `Pin.visibility`와 `pins.visibility` 칸은 남기되 "v1은 항상 public, 이 값으로 분기하지 않는다"로 설명을 바꿨다. 비공개 후보는 `candidates` 행이고, 게시할 때 처음부터 public 핀이 된다. 계약 타입은 설명만 바뀌어 다시 만들었다.

@@ -353,7 +353,48 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * 지도 제목·날짜·지역 수정 — 방장만 (#465, docs/permissions.md map.settings.edit). 보낸 필드만 바꾼다(부분 수정).
+         *     검증은 생성과 같다(제목 1~100자, 종료일은 시작일 이후, 지역은 label·lat·lng 함께). 둘 중 하나만 보내도 합친 결과로 검사한다.
+         *     지역을 지우는 것은 지원하지 않는다(바꾸기만). 이미 실행된 추천 결과는 건드리지 않는다. 전체 채널에 map.updated를 보낸다(docs/events.md).
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MapUpdateRequest"];
+                };
+            };
+            responses: {
+                /** @description 수정됨. 요청자 기준 Map */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Map"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/maps/{mapId}/members/me": {
@@ -399,6 +440,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/{mapId}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 방장 직접 넘기기 — 방장만 (#468, docs/permissions.md owner.transfer). 대상은 지금 구성원이고 탈퇴하지 않았으며 나 자신이 아니어야 한다.
+         *     넘긴 뒤 나는 member가 되고 지도에 남는다(나가기가 아니다). 전체 채널에 owner.changed를 보낸다(docs/events.md).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["OwnerTransferRequest"];
+                };
+            };
+            responses: {
+                /** @description 넘김. 요청자(이제 구성원) 기준 Map */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Map"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                422: components["responses"]["OwnerTargetInvalid"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/invite": {
         parameters: {
             query?: never;
@@ -408,7 +497,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 초대 링크 발급 — 구성원 누구나 (#4, docs/permissions.md invite.create) */
+        /**
+         * 초대 링크 발급 — 구성원 누구나 (#4, docs/permissions.md invite.create).
+         *     **내가 이 지도에 만든 링크 중 아직 유효한(끄지 않았고 만료 전인) 것이 있으면 새로 만들지 않고 그것을 돌려준다**(#467, 멘토 리뷰의 토큰 증가 방지).
+         *     그 경우도 응답은 201이 아니라 200이다. 남이 만든 링크는 재사용하지 않는다.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -420,7 +513,16 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description OK */
+                /** @description 내가 만든 유효한 링크가 이미 있어 그것을 돌려줌 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Invite"];
+                    };
+                };
+                /** @description 새로 만듦 */
                 201: {
                     headers: {
                         [name: string]: unknown;
@@ -432,6 +534,46 @@ export interface paths {
                 404: components["responses"]["NotFound"];
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 지도의 유효한 초대 링크 목록 — 방장만 (#467, docs/permissions.md invite.revoke). 끈 링크와 만료된 링크는 빠진다. 만든 시각 최신순 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 없으면 빈 배열 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Invite"][];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -470,12 +612,37 @@ export interface paths {
                     };
                 };
                 404: components["responses"]["InviteNotFound"];
-                410: components["responses"]["InviteExpired"];
+                410: components["responses"]["InviteGone"];
             };
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * 초대 링크 끄기 — 그 지도의 방장만 (#467, docs/permissions.md invite.revoke). 이미 끈 링크를 다시 꺼도 204다(멱등).
+         *     끈 뒤에는 요약 조회·수락이 410 INVITE_REVOKED다. 이미 참여한 사람은 그대로 남는다.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 꺼짐 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["InviteNotFound"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -514,7 +681,7 @@ export interface paths {
                 401: components["responses"]["Unauthorized"];
                 404: components["responses"]["InviteNotFound"];
                 409: components["responses"]["MapLimit"];
-                410: components["responses"]["InviteExpired"];
+                410: components["responses"]["InviteGone"];
             };
         };
         delete?: never;
@@ -1727,6 +1894,8 @@ export interface components {
             can_leave?: boolean;
             /** @description candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64) */
             can_publish?: boolean;
+            /** @description map 전용: 지도 제목·날짜·지역 수정(map.settings.edit), 방장만 true (#465) */
+            can_edit?: boolean;
         };
         User: {
             id: string;
@@ -1738,7 +1907,7 @@ export interface components {
         };
         Map: {
             id: string;
-            /** @description 요청자 기준. map 응답은 can_delete(방장만), can_leave(넘길 사람이 없는 방장은 false)만 쓴다 (#369) */
+            /** @description 요청자 기준. map 응답은 can_delete(방장만), can_leave(넘길 사람이 없는 방장은 false), can_edit(방장만)를 쓴다 (#369, #465) */
             permissions: components["schemas"]["Permissions"];
             /** @description 요청자가 방장이고 넘길 사람이 있을 때만 채운다. 나가기 확인 창("나가면 ○○님이 방장이 돼요")용. 탈퇴자 건너뛰기를 FE가 다시 계산하지 않게 서버가 정한다. 상세(GET /maps/{mapId})에서만 채우고 목록에서는 생략한다 (#369) */
             next_owner?: components["schemas"]["NextOwner"] | null;
@@ -1792,6 +1961,15 @@ export interface components {
             url: string;
             /** Format: date-time */
             expires_at: string;
+            /**
+             * Format: date-time
+             * @description 만든 시각. 목록(GET /maps/{mapId}/invites)에서 채운다 (#467)
+             */
+            created_at?: string;
+            /** @description 만든 사람. 탈퇴했으면 '탈퇴한 구성원'. 목록에서 채운다 (#467) */
+            created_by_display_name?: string;
+            /** @description 이 링크로 참여한 횟수. 목록에서 채운다 (#467) */
+            used_count?: number;
         };
         Member: {
             user_id: string;
@@ -1817,6 +1995,22 @@ export interface components {
              */
             end_date: string;
             region?: components["schemas"]["MapRegion"];
+        };
+        /** @description 지도 수정 (#465). 보낸 필드만 바꾼다. 빈 객체는 422. region은 바꾸기만 되고 지우지 못한다 */
+        MapUpdateRequest: {
+            title?: string;
+            /** Format: date */
+            start_date?: string;
+            /**
+             * Format: date
+             * @description 합친 결과가 start_date와 같거나 그 이후여야 한다
+             */
+            end_date?: string;
+            region?: components["schemas"]["MapRegion"];
+        };
+        OwnerTransferRequest: {
+            /** @description 새 방장이 될 지금 구성원 (#468) */
+            user_id: string;
         };
         /**
          * @description 지도 만들기의 지역 검색 결과 (#22, 2026-09-28 변경 — PR #132 제안, 루트 검증 후 승인).
@@ -2117,7 +2311,7 @@ export interface components {
             event: string;
         };
         /** @description 전체 채널 이벤트 (docs/events.md). event 값으로 data 타입이 갈린다 */
-        PublicEvent: components["schemas"]["EvtPinCreated"] | components["schemas"]["EvtPinPublished"] | components["schemas"]["EvtPinDeleted"] | components["schemas"]["EvtReactionChanged"] | components["schemas"]["EvtShortlistChanged"] | components["schemas"]["EvtRouteRecalculated"] | components["schemas"]["EvtMemberJoined"] | components["schemas"]["EvtMemberPresence"];
+        PublicEvent: components["schemas"]["EvtPinCreated"] | components["schemas"]["EvtPinPublished"] | components["schemas"]["EvtPinDeleted"] | components["schemas"]["EvtReactionChanged"] | components["schemas"]["EvtShortlistChanged"] | components["schemas"]["EvtRouteRecalculated"] | components["schemas"]["EvtMemberJoined"] | components["schemas"]["EvtMemberLeft"] | components["schemas"]["EvtMapDeleted"] | components["schemas"]["EvtMapUpdated"] | components["schemas"]["EvtOwnerChanged"] | components["schemas"]["EvtMemberPresence"];
         /** @description 개인 채널 이벤트 (docs/events.md, 5-5-1) */
         PrivateEvent: components["schemas"]["EvtRunProgress"] | components["schemas"]["EvtRunCandidatesReady"] | components["schemas"]["EvtRunFailed"];
         EvtPinCreated: components["schemas"]["SseEnvelope"] & {
@@ -2169,6 +2363,44 @@ export interface components {
             /** @constant */
             event: "member.joined";
             data: components["schemas"]["Member"];
+        };
+        EvtMemberLeft: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "member.left";
+            data: {
+                map_id: string;
+                user_id: string;
+                new_owner_user_id: string | null;
+            };
+        };
+        EvtMapDeleted: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "map.deleted";
+            data: {
+                map_id: string;
+            };
+        };
+        EvtMapUpdated: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "map.updated";
+            data: {
+                map_id: string;
+                title: string;
+                /** Format: date */
+                start_date: string;
+                /** Format: date */
+                end_date: string;
+                region?: components["schemas"]["MapRegion"];
+            };
+        };
+        EvtOwnerChanged: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "owner.changed";
+            data: {
+                map_id: string;
+                from_user_id: string;
+                to_user_id: string;
+            };
         };
         EvtMemberPresence: components["schemas"]["SseEnvelope"] & {
             /** @constant */
@@ -2283,6 +2515,24 @@ export interface components {
         };
         /** @description 만료된 초대 토큰 (INVITE_EXPIRED) */
         InviteExpired: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 쓸 수 없는 초대 토큰 — 만료됐다(INVITE_EXPIRED) 또는 방장이 껐다(INVITE_REVOKED, */
+        InviteGone: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 방장을 넘길 수 없는 대상 (OWNER_TARGET_INVALID) — 지금 구성원이 아니거나 탈퇴했거나 나 자신 (#468) */
+        OwnerTargetInvalid: {
             headers: {
                 [name: string]: unknown;
             };

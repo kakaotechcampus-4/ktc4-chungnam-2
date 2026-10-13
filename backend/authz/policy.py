@@ -65,6 +65,8 @@ POLICY: Mapping[str, RoleSpec] = {
                 "member.kick",  # v2, #8
                 "map.settings.edit",
                 "map.delete",  # 지도 삭제(#369). 방장만, soft delete
+                "invite.revoke",  # 초대 링크 목록·끄기(#467). 방장만
+                "owner.transfer",  # 방장 직접 넘기기(#468). 방장만
             }
         ),
     ),
@@ -96,5 +98,7 @@ ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "map.delete": frozenset({"map"}),
     "map.leave": frozenset({"map"}),
     "invite.create": frozenset({"map"}),
+    "invite.revoke": frozenset({"map"}),
+    "owner.transfer": frozenset({"map"}),
     "route.recalculate": frozenset({"map"}),
 }
