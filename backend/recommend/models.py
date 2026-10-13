@@ -31,11 +31,13 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -74,6 +76,11 @@ class RecommendRun(Base):
     default_radius_walk_min: Mapped[int] = mapped_column(Integer, nullable=False, default=15, server_default="15")
     last_funnel: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # 지난 추천 기록(#469) — 마이그레이션 0028과 같다.
+    __table_args__ = (
+        Index("ix_recommend_runs_map_requester_created", "map_id", "requested_by", text("created_at DESC")),
+    )
 
 
 class Candidate(Base):

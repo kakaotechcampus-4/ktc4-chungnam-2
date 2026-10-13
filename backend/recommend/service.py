@@ -27,6 +27,35 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str, at
     return run
 
 
+def list_runs_for_requester(
+    db: Session, *, map_id: str, requested_by: str, category: str | None, limit: int,
+) -> list[tuple[RecommendRun, int, int]]:
+    """지난 추천 기록(#469) — (run, 후보 수, 게시 수). **requested_by가 본인인 run만**(가드레일 1). created_at 내림차순.
+    후보·게시 수는 한 쿼리에서 집계한다(N+1 금지). 후보 수는 done이 아니면 0이다 — 진행 중·실패 run의 후보는 보여 주지 않는다."""
+    counts = (
+        select(
+            Candidate.run_id.label("run_id"),
+            func.count().label("candidate_count"),
+            func.count(Candidate.published_pin_id).label("published_count"),
+        )
+        .group_by(Candidate.run_id)
+        .subquery()
+    )
+    query = (
+        select(RecommendRun, func.coalesce(counts.c.candidate_count, 0), func.coalesce(counts.c.published_count, 0))
+        .outerjoin(counts, counts.c.run_id == RecommendRun.id)
+        .where(RecommendRun.map_id == map_id, RecommendRun.requested_by == requested_by)
+        .order_by(RecommendRun.created_at.desc(), RecommendRun.id.desc())
+        .limit(limit)
+    )
+    if category is not None:
+        query = query.where(RecommendRun.category == category)
+    return [
+        (run, candidate_count if run.status == "done" else 0, published_count)
+        for run, candidate_count, published_count in db.execute(query).all()
+    ]
+
+
 def max_attempt_no_for_requester(db: Session, *, map_id: str, requested_by: str) -> int:
     """#31 확정: 개인 단위, 카테고리 무관 — 이 사람이 이 지도에서 만든 모든 run(카테고리
     무관)의 attempt_no 중 최댓값. run이 하나도 없으면 0."""
