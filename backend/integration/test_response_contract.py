@@ -30,7 +30,6 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("PATCH", "/pins/{pinId}"): "#466 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/places/from-link"): "#474 구현 PR이 골든 패스에 넣고 지운다",
-    ("GET", "/maps/{mapId}/runs"): "#469 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/maps/{mapId}/shortlist/export"): "#471 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
@@ -186,6 +185,9 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert candidates
     assert all(isinstance(c["lat"], float) and isinstance(c["lng"], float) for c in candidates)  # #391
     assert a.post(f"/candidates/{candidates[0]['id']}/publish").status_code == 200
+    history = a.get(f"/maps/{map_id}/runs")                                                          # 지난 추천 기록(#469)
+    assert history.status_code == 200 and [h["id"] for h in history.json()] == [run_id]
+    assert history.json()[0]["published_count"] == 1
 
     for pid in pin_ids[:2]:
         assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pid}).status_code in (200, 201)
