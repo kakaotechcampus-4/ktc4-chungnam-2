@@ -393,6 +393,66 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/ReasonChip" }
 
+  /places/nearest:
+    get:
+      tags: [places]
+      summary: |
+        지도를 눌러 핀 — 누른 자리에서 가장 가까운 **자체 DB 장소** (#473, 2026-10-13 결정). 반경 100m 안의 핀으로 만들 수 있는 장소(자체 DB)를
+        가까운 순 최대 5곳 돌려준다. 카카오 응답을 쓰지 않는다. **누른 좌표(lat·lng)는 저장도 로깅도 하지 않는다**(카카오 약관, #53) — 이 요청에서 쓰고 버린다.
+        고른 장소는 `POST /maps/{mapId}/pins`의 `source: search`로 만든다(결과의 place_id·place_name·lat·lng·category를 그대로 보낸다 — 자체 DB 장소의
+        id가 매칭 힌트로 통해야 한다). 결과가 없으면 빈 배열 — 지어내지 않는다(가드레일 2). 화면은 이때 「검색으로 남기기」를 안내한다.
+        로그인만 필요하다. 사용자당 호출 상한이 있다(초과 시 429 RATE_LIMITED, GET /places/search와 같은 상한을 쓴다).
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema: { type: number, minimum: -90, maximum: 90 }
+        - name: lng
+          in: query
+          required: true
+          schema: { type: number, minimum: -180, maximum: 180 }
+        - name: category
+          in: query
+          description: "있으면 그 분류만. 음식점·카페·관광지"
+          schema: { $ref: "#/components/schemas/Category" }
+      responses:
+        "200":
+          description: OK. 모두 pinnable=true. 없으면 빈 배열
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 5
+                items: { $ref: "#/components/schemas/PlaceSearchResult" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /places/from-link:
+    post:
+      tags: [places]
+      summary: |
+        지도 링크 해석 (#474, #134 결정 2026-10-13: 구글맵 + 카카오맵, 네이버·인스타·블로그 제외). 사용자가 붙여넣은 링크에서 장소를 알아낼 단서만 돌려주며
+        **핀을 만들지 않고 아무것도 저장하지 않는다**. 핀은 아래 안내대로 기존 `POST /maps/{mapId}/pins`로 만든다. 모델을 쓰지 않는다(코드 해석).
+        - **구글맵**(`google.com/maps/place/이름/@위도,경도`, `maps.app.goo.gl`·`goo.gl/maps` 단축 링크): 링크에 든 이름(`name_hint`)과 좌표로 반경 100m 안
+          자체 DB 장소(`matches`, 가까운 순 최대 5)를 찾는다. 있으면 그것으로 `source: search` 핀. 없으면 화면이 `name_hint`로 GET /places/search를 열어 이어 간다.
+        - **카카오맵**(`place.map.kakao.com/{id}`, `map.kakao.com/?itemId={id}`, `kko.to` 단축 링크): 장소 ID(`kakao_place_id`)만 뽑는다. 카카오 응답을 가져오지 않으므로
+          이름·좌표는 모른다. 자체 DB에 그 카카오 ID로 매칭된 장소가 있으면 `matches`에 담고, 없으면 `needs_search_query=true` — 화면이 사용자에게 장소 이름(검색어)을 직접
+          입력받아 `source: live`(kakao_place_id + search_query)로 핀을 남긴다.
+        단축 링크는 서버가 리다이렉트를 따라가 해석한다(허용 호스트만, 리다이렉트 상한·타임아웃·사설 IP 차단, SSRF 방어). 응답에 링크 안의 좌표를 싣지 않는다(`name_hint`만).
+        로그인만 필요하다. 사용자당 호출 상한이 있다(429 RATE_LIMITED).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LinkParseRequest" }
+      responses:
+        "200":
+          description: 해석됨
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LinkParseResult" }
+        "422": { description: "LINK_NOT_SUPPORTED(허용 호스트가 아니거나 형식을 모름 — 네이버·인스타·블로그 포함) 또는 LINK_UNRESOLVED(단축 링크를 열지 못했거나 링크에서 장소를 못 찾음)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /maps/{mapId}/pins:
     get:
       tags: [pins]
@@ -464,6 +524,29 @@ paths:
               schema: { $ref: "#/components/schemas/FilterCounts" }
 
   /pins/{pinId}:
+    patch:
+      tags: [pins]
+      summary: |
+        핀 메모·분류 수정 — 그 핀을 찍은 사람만 (#466, docs/permissions.md pin.edit). 보낸 필드만 바꾼다. 요청자별 가능 여부는 Pin.permissions.can_edit.
+        - `memo`: 모든 핀. 빈 문자열이면 지운다. 200자 이하.
+        - `category`: **live 핀만**(#382), 음식점·카페·관광지만. 자체 DB 핀의 분류는 장소가 정하므로 보내면 422. 이미 반응이 하나라도 있는 핀은 분류를 바꿀 수 없다(422) — 추천 준비 판정과 반응 칩이 분류별이라 의견이 엉킨다.
+        - **AI 추천 핀(kind=AI추천)과 확정 핀은 수정할 수 없다**(403, can_edit=false). 근거·체크·장소 값은 어떤 핀에서도 바꿀 수 없다. `kakao_place_id`·`search_query`도 바꿀 수 없다(다른 장소는 새 핀으로).
+        전체 채널에 pin.updated(Pin)를 보낸다(docs/events.md).
+      parameters: [ { $ref: "#/components/parameters/PinId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PinUpdateRequest" }
+      responses:
+        "200":
+          description: 수정됨. 요청자 기준 Pin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Pin" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — 빈 객체, 메모 200자 초과, db 핀의 분류 변경, 반응이 있는 핀의 분류 변경, 숙소·기타", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       tags: [pins]
       summary: 핀 삭제 — 지도 구성원 누구나 (#25, 9/4 결정). 요청자별 가능 여부는 Pin.permissions.can_delete
@@ -1001,7 +1084,7 @@ components:
         can_delete: { type: boolean, description: "pin: 핀 삭제. map: 지도 삭제, 방장만 true (#369)" }
         can_leave: { type: boolean, description: "map 전용: 지도 나가기. 넘길 사람이 없는 방장은 false (#369)" }
         can_publish: { type: boolean, description: "candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64)" }
-        can_edit: { type: boolean, description: "map 전용: 지도 제목·날짜·지역 수정(map.settings.edit), 방장만 true (#465)" }
+        can_edit: { type: boolean, description: "map: 지도 제목·날짜·지역 수정(map.settings.edit), 방장만 true (#465). pin: 핀 메모·분류 수정(pin.edit), 그 핀을 찍은 사람만 true이고 AI 추천·확정 핀은 false (#466)" }
 
     User:
       type: object
@@ -1128,6 +1211,37 @@ components:
         - $ref: "#/components/schemas/PinCreateSearch"
         - $ref: "#/components/schemas/PinCreateLive"
 
+    PinUpdateRequest:
+      type: object
+      description: 핀 수정 (#466). 보낸 필드만 바꾼다. 빈 객체는 422
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        memo: { type: string, maxLength: 200, description: "빈 문자열이면 메모를 지운다" }
+        category: { $ref: "#/components/schemas/Category", description: "live 핀만, 반응이 없을 때만 (PATCH /pins/{pinId} 설명 참고)" }
+
+    LinkParseRequest:
+      type: object
+      required: [url]
+      additionalProperties: false
+      properties:
+        url: { type: string, minLength: 1, maxLength: 2000, description: "사용자가 붙여넣은 지도 링크. http(s)만" }
+
+    LinkParseResult:
+      type: object
+      description: 링크에서 읽은 단서 (#474). 저장되지 않는다
+      required: [provider, matches, needs_search_query]
+      properties:
+        provider: { type: string, enum: [google, kakao] }
+        name_hint: { type: string, maxLength: 100, description: "구글 링크에 든 장소 이름(사용자가 붙인 링크의 값). 화면이 GET /places/search로 이어 가는 데 쓴다. 카카오 링크에는 없다" }
+        kakao_place_id: { type: string, maxLength: 100, description: "카카오 링크에서 뽑은 장소 ID(예 kakao:1234). 저장이 허용된 유일한 카카오 값 — live 핀의 kakao_place_id로 그대로 쓴다" }
+        matches:
+          type: array
+          maxItems: 5
+          items: { $ref: "#/components/schemas/PlaceSearchResult" }
+          description: "핀으로 만들 수 있는 자체 DB 장소(pinnable=true). 없으면 빈 배열 — 지어내지 않는다(가드레일 2)"
+        needs_search_query: { type: boolean, description: "true면 matches가 비었고 화면이 사용자에게 검색어(장소 이름)를 입력받아 live 핀으로 남겨야 한다. 카카오 링크에서 자체 DB 짝이 없을 때" }
+
     PinCreateLive:
       type: object
       description: "#382 실시간 핀 — 자체 DB에 없는 장소. 이름·좌표는 받지도 저장하지도 않는다"
@@ -1199,7 +1313,7 @@ components:
         lat: { type: number, minimum: -90, maximum: 90, description: "자체 DB 장소의 좌표. **live 핀에는 없다**(#382) — 그 핀의 위치는 화면이 kakao_place_id로 실시간에 찾는다" }
         lng: { type: number, minimum: -180, maximum: 180, description: "lat과 같다. live 핀에는 없다" }
         source: { type: string, enum: [db, live], description: "db = 자체 DB 장소를 가리키는 핀, live = 실시간 핀(#382, PinCreateLive). 없으면 db로 본다 — 서버가 채우기 시작하면 필수로 바꾼다. (`default`를 쓰지 않는다: 타입 생성기가 필수로 바꿔 버린다)" }
-        memo: { type: string, maxLength: 200, description: "live 핀의 메모(작성자가 남긴 한마디). 없을 수 있다" }
+        memo: { type: string, maxLength: 200, description: "핀의 메모(작성자가 남긴 한마디). live 핀은 만들 때, 모든 핀은 PATCH /pins/{pinId}로 쓴다(#466). 없을 수 있다" }
         kakao_place_id: { type: string, maxLength: 100, description: "live 핀만 — 카카오 장소 ID. 화면이 위치를 다시 찾는 열쇠다" }
         search_query: { type: string, maxLength: 100, description: "live 핀만 — 핀을 찍을 때 사용자가 친 검색어. 화면이 `kakao_place_id`를 이 검색어로 다시 찾는다" }
         place_name: { type: string, maxLength: 100, description: "자체 DB 장소의 이름 (#191). 핀에 따로 저장하지 않고 장소에서 가져온다. live 핀에는 없다(#382) — 화면이 실시간 검색 결과에서 읽는다" }
@@ -1448,6 +1562,7 @@ components:
         - $ref: "#/components/schemas/EvtPinCreated"
         - $ref: "#/components/schemas/EvtPinPublished"
         - $ref: "#/components/schemas/EvtPinDeleted"
+        - $ref: "#/components/schemas/EvtPinUpdated"
         - $ref: "#/components/schemas/EvtReactionChanged"
         - $ref: "#/components/schemas/EvtShortlistChanged"
         - $ref: "#/components/schemas/EvtRouteRecalculated"
@@ -1481,6 +1596,15 @@ components:
           required: [event, data]
           properties:
             event: { const: "pin.published" }
+            data: { $ref: "#/components/schemas/Pin" }
+
+    EvtPinUpdated:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "pin.updated" }
             data: { $ref: "#/components/schemas/Pin" }
 
     EvtPinDeleted:
