@@ -30,6 +30,12 @@ class MapCreateRequest(BaseModel):
     region: MapRegion | None = None
 
 
+class OwnerTransferRequest(BaseModel):
+    """POST /maps/{mapId}/owner(#468) — 새 방장이 될 지금 구성원."""
+
+    user_id: str
+
+
 class NextOwner(BaseModel):
     """방장이 나가면 방장이 될 사람(#369) — 나가기 확인 창 "나가면 ○○님이 방장이 돼요"용."""
 
