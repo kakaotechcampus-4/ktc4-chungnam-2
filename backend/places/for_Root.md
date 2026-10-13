@@ -254,4 +254,12 @@ PR 1(#197)에서 고정한 6개 공개 함수를 실제로 구현했다. 이 브
   - 동명 점포 모호 거절은 유지하고, 주소가 같다고 확인된 후보가 이기면 모호하지 않다. 카카오 ID로 이미 짝지어진 장소는 주소를 보지 않는다. 분류가 같은 후보만 본다.
   - 주소는 비교에만 쓴다 — 저장·로깅하지 않는다(#53).
 - **측정**: `python -m places.scripts.measure_match_rate [--queries 200] [--out rates.json]` — 지역×업종 200개 검색어(고정)로 장소 검색을 돌려 pinnable 비율을 [주소 보조 전/후]로 낸다. 출력은 건수·비율뿐이다. `KAKAO_REST_API_KEY`(환경변수)와 `PLACES_MODE=prod`가 필요하다. **측정 결과(적재 전 DB / 후 DB 비교 표)는 후속 커밋으로 이 절에 추가한다.**
-- **루트에 요청 — 아직 켜지 않았다**: 검색 라우터(`_fill_pinnable`)는 주소를 넘기지 않는다. 지금 켜면 검색은 pinnable=true인데 핀 생성(`PinCreateSearch`에 주소가 없음)은 `PLACE_NOT_SUPPORTED`가 되어 어긋난다. 켜려면 ① `docs/api-spec.yaml`의 `PinCreateSearch`에 선택 필드 `address`(검색 결과의 address를 그대로, 저장하지 않는 힌트) 추가 + `CHANGELOG-api.md`, ② pins가 `PlaceHint(address=...)`로 넘기고, ③ `places/router.py`의 `_fill_pinnable`이 `r.address`를 넘긴다. 이 세 가지를 같이 해야 한다.
+- **루트에 요청 — 아직 켜지 않았다**: 검색 라우터(`_fill_pinnable`)는 주소를 넘기지 않는다. 지금 켜면 검색은 pinnable=true인데 핀 생성(`PinCreateSearch`에 주소가 없음)은 `PLACE_NOT_SUPPORTED`가 되어 어긋난다. 아래 3개를 **같은 시점에** 켜야 한다(순서: 1 → 2 → 3).
+
+| # | 항목 | 담당 | 내용 |
+|---|---|---|---|
+| 1 | 스펙 `PinCreateSearch.address` | 루트 | `docs/api-spec.yaml`의 `PinCreateSearch`에 선택 필드 `address`(maxLength 200, 검색 결과의 address를 그대로 되돌려 보내는 **저장하지 않는 매칭 힌트**) 추가, `CHANGELOG-api.md`에 먼저 기록, `contracts/` 타입 재생성, FE에 통보. 필수가 아니라 선택이라 기존 호출은 그대로 동작한다 |
+| 2 | pins 전달 | pins | `pins/schemas.py::PinCreateSearch`에 `address: str \| None = Field(default=None, max_length=200)`, `pins/service.py::_create_db_pin`이 `PlaceHint(..., address=req.address)`로 넘긴다. 주소는 저장·로깅하지 않는다(핀 행·감사 로그·예외 메시지에 넣지 않는다) |
+| 3 | 검색 라우터 연결 | places | `places/router.py::_fill_pinnable`의 `PlaceHint`에 `r.address`를 추가한다(한 줄). 1·2가 머지된 뒤에 켠다 — 이 세션이 맡는다. 측정 스크립트는 이미 주소 있음/없음을 나눠 잰다 |
+
+  FE는 핀 생성 요청에 검색 결과의 `address`를 함께 보내야 효과가 있다(보내지 않으면 지금과 같다 — 이름 규칙만 쓴다).
