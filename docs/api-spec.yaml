@@ -154,6 +154,27 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Map" }
         "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [maps]
+      summary: |
+        지도 제목·날짜·지역 수정 — 방장만 (#465, docs/permissions.md map.settings.edit). 보낸 필드만 바꾼다(부분 수정).
+        검증은 생성과 같다(제목 1~100자, 종료일은 시작일 이후, 지역은 label·lat·lng 함께). 둘 중 하나만 보내도 합친 결과로 검사한다.
+        지역을 지우는 것은 지원하지 않는다(바꾸기만). 이미 실행된 추천 결과는 건드리지 않는다. 전체 채널에 map.updated를 보낸다(docs/events.md).
+      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MapUpdateRequest" }
+      responses:
+        "200":
+          description: 수정됨. 요청자 기준 Map
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Map" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       tags: [maps]
       summary: |
@@ -179,17 +200,63 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/OwnerCannotLeave" }
 
+  /maps/{mapId}/owner:
+    post:
+      tags: [maps]
+      summary: |
+        방장 직접 넘기기 — 방장만 (#468, docs/permissions.md owner.transfer). 대상은 지금 구성원이고 탈퇴하지 않았으며 나 자신이 아니어야 한다.
+        넘긴 뒤 나는 member가 되고 지도에 남는다(나가기가 아니다). 전체 채널에 owner.changed를 보낸다(docs/events.md).
+      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OwnerTransferRequest" }
+      responses:
+        "200":
+          description: 넘김. 요청자(이제 구성원) 기준 Map
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Map" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/OwnerTargetInvalid" }
+
   /maps/{mapId}/invite:
     post:
       tags: [maps]
-      summary: 초대 링크 발급 — 구성원 누구나 (#4, docs/permissions.md invite.create)
+      summary: |
+        초대 링크 발급 — 구성원 누구나 (#4, docs/permissions.md invite.create).
+        **내가 이 지도에 만든 링크 중 아직 유효한(끄지 않았고 만료 전인) 것이 있으면 새로 만들지 않고 그것을 돌려준다**(#467, 멘토 리뷰의 토큰 증가 방지).
+        그 경우도 응답은 201이 아니라 200이다. 남이 만든 링크는 재사용하지 않는다.
       parameters: [ { $ref: "#/components/parameters/MapId" } ]
       responses:
-        "201":
-          description: OK
+        "200":
+          description: 내가 만든 유효한 링크가 이미 있어 그것을 돌려줌
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Invite" }
+        "201":
+          description: 새로 만듦
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invite" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /maps/{mapId}/invites:
+    get:
+      tags: [maps]
+      summary: 지도의 유효한 초대 링크 목록 — 방장만 (#467, docs/permissions.md invite.revoke). 끈 링크와 만료된 링크는 빠진다. 만든 시각 최신순
+      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      responses:
+        "200":
+          description: OK. 없으면 빈 배열
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Invite" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /invites/{token}:
@@ -211,7 +278,21 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/InviteSummary" }
         "404": { $ref: "#/components/responses/InviteNotFound" }
-        "410": { $ref: "#/components/responses/InviteExpired" }
+        "410": { $ref: "#/components/responses/InviteGone" }
+    delete:
+      tags: [maps]
+      summary: |
+        초대 링크 끄기 — 그 지도의 방장만 (#467, docs/permissions.md invite.revoke). 이미 끈 링크를 다시 꺼도 204다(멱등).
+        끈 뒤에는 요약 조회·수락이 410 INVITE_REVOKED다. 이미 참여한 사람은 그대로 남는다.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: 꺼짐 }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InviteNotFound" }
 
   /invites/{token}/accept:
     post:
@@ -231,7 +312,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/InviteNotFound" }
         "409": { $ref: "#/components/responses/MapLimit" }
-        "410": { $ref: "#/components/responses/InviteExpired" }
+        "410": { $ref: "#/components/responses/InviteGone" }
 
   /maps/{mapId}/members:
     get:
@@ -811,6 +892,16 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    InviteGone:
+      description: 쓸 수 없는 초대 토큰 — 만료됐다(INVITE_EXPIRED) 또는 방장이 껐다(INVITE_REVOKED, #467). 코드로 구분한다
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    OwnerTargetInvalid:
+      description: 방장을 넘길 수 없는 대상 (OWNER_TARGET_INVALID) — 지금 구성원이 아니거나 탈퇴했거나 나 자신 (#468)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     WidenLimit:
       description: 기본값 원이 이미 상한(도보 30분) — 더 넓힐 수 없음 (WIDEN_LIMIT). 「근거 고치기」/「직접 찍기」로 안내
       content:
@@ -909,6 +1000,7 @@ components:
         can_delete: { type: boolean, description: "pin: 핀 삭제. map: 지도 삭제, 방장만 true (#369)" }
         can_leave: { type: boolean, description: "map 전용: 지도 나가기. 넘길 사람이 없는 방장은 false (#369)" }
         can_publish: { type: boolean, description: "candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64)" }
+        can_edit: { type: boolean, description: "map 전용: 지도 제목·날짜·지역 수정(map.settings.edit), 방장만 true (#465)" }
 
     User:
       type: object
@@ -933,7 +1025,7 @@ components:
         id: { type: string }
         permissions:
           $ref: "#/components/schemas/Permissions"
-          description: "요청자 기준. map 응답은 can_delete(방장만), can_leave(넘길 사람이 없는 방장은 false)만 쓴다 (#369)"
+          description: "요청자 기준. map 응답은 can_delete(방장만), can_leave(넘길 사람이 없는 방장은 false), can_edit(방장만)를 쓴다 (#369, #465)"
         next_owner:
           description: "요청자가 방장이고 넘길 사람이 있을 때만 채운다. 나가기 확인 창(\"나가면 ○○님이 방장이 돼요\")용. 탈퇴자 건너뛰기를 FE가 다시 계산하지 않게 서버가 정한다. 상세(GET /maps/{mapId})에서만 채우고 목록에서는 생략한다 (#369)"
           oneOf:
@@ -977,6 +1069,9 @@ components:
         token: { type: string }
         url: { type: string }
         expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time, description: "만든 시각. 목록(GET /maps/{mapId}/invites)에서 채운다 (#467)" }
+        created_by_display_name: { type: string, maxLength: 50, description: "만든 사람. 탈퇴했으면 '탈퇴한 구성원'. 목록에서 채운다 (#467)" }
+        used_count: { type: integer, minimum: 0, description: "이 링크로 참여한 횟수. 목록에서 채운다 (#467)" }
 
     Member:
       type: object
@@ -997,6 +1092,22 @@ components:
         start_date: { type: string, format: date, description: "여행 시작일 (#22)" }
         end_date: { type: string, format: date, description: "여행 종료일 (#22). start_date와 같거나 그 이후여야 한다(당일치기는 같은 날)" }
         region: { $ref: "#/components/schemas/MapRegion" }
+
+    MapUpdateRequest:
+      type: object
+      description: 지도 수정 (#465). 보낸 필드만 바꾼다. 빈 객체는 422. region은 바꾸기만 되고 지우지 못한다
+      minProperties: 1
+      properties:
+        title: { type: string, minLength: 1, maxLength: 100 }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date, description: "합친 결과가 start_date와 같거나 그 이후여야 한다" }
+        region: { $ref: "#/components/schemas/MapRegion" }
+
+    OwnerTransferRequest:
+      type: object
+      required: [user_id]
+      properties:
+        user_id: { type: string, description: "새 방장이 될 지금 구성원 (#468)" }
 
     MapRegion:
       type: object
@@ -1340,6 +1451,10 @@ components:
         - $ref: "#/components/schemas/EvtShortlistChanged"
         - $ref: "#/components/schemas/EvtRouteRecalculated"
         - $ref: "#/components/schemas/EvtMemberJoined"
+        - $ref: "#/components/schemas/EvtMemberLeft"
+        - $ref: "#/components/schemas/EvtMapDeleted"
+        - $ref: "#/components/schemas/EvtMapUpdated"
+        - $ref: "#/components/schemas/EvtOwnerChanged"
         - $ref: "#/components/schemas/EvtMemberPresence"
 
     PrivateEvent:
@@ -1431,6 +1546,68 @@ components:
           properties:
             event: { const: "member.joined" }
             data: { $ref: "#/components/schemas/Member" }
+
+    EvtMemberLeft:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "member.left" }
+            data:
+              type: object
+              required: [map_id, user_id, new_owner_user_id]
+              properties:
+                map_id: { type: string }
+                user_id: { type: string }
+                new_owner_user_id: { type: [string, "null"] }
+
+    EvtMapDeleted:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          properties:
+            event: { const: "map.deleted" }
+            data:
+              type: object
+              required: [map_id]
+              properties:
+                map_id: { type: string }
+
+    EvtMapUpdated:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          description: "수정 직후 값. 요청자와 무관한 필드만 싣는다(permissions 등 요청자 기준 값은 없다) — 받은 FE는 지도 상세를 다시 불러와도 된다 (#465)"
+          properties:
+            event: { const: "map.updated" }
+            data:
+              type: object
+              required: [map_id, title, start_date, end_date]
+              properties:
+                map_id: { type: string }
+                title: { type: string, maxLength: 100 }
+                start_date: { type: string, format: date }
+                end_date: { type: string, format: date }
+                region: { $ref: "#/components/schemas/MapRegion" }
+
+    EvtOwnerChanged:
+      allOf:
+        - $ref: "#/components/schemas/SseEnvelope"
+        - type: object
+          required: [event, data]
+          description: "방장을 직접 넘겼다 (#468). member.left와 달리 두 사람 모두 지도에 남아 SSE 구독이 끊기지 않는다"
+          properties:
+            event: { const: "owner.changed" }
+            data:
+              type: object
+              required: [map_id, from_user_id, to_user_id]
+              properties:
+                map_id: { type: string }
+                from_user_id: { type: string }
+                to_user_id: { type: string }
 
     EvtMemberPresence:
       allOf:

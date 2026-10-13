@@ -234,7 +234,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
 
   it("지도 응답에 요청자 기준 permissions가 붙고, 상세에서만 next_owner가 온다", async () => {
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
-    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true });
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true, can_edit: true });
     expect(detail.next_owner.user_id).toBe("u_2");
     const list = await (await fetch(`${BASE}/maps`)).json();
     expect(list[0].permissions.can_delete).toBe(true);
@@ -253,7 +253,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
   it("넘길 사람이 없는 방장은 409 OWNER_CANNOT_LEAVE, can_leave=false", async () => {
     store.members["map_1"] = store.members["map_1"].filter((m) => m.user_id === "u_me");
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
-    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false });
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false, can_edit: true });
     const r = await fetch(`${BASE}/maps/map_1/members/me`, { method: "DELETE" });
     expect(r.status).toBe(409);
     expect((await r.json()).code).toBe("OWNER_CANNOT_LEAVE");
@@ -268,6 +268,79 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
     expect((await fetch(`${BASE}/maps/map_1`)).status).toBe(404);
     expect((await (await fetch(`${BASE}/invites/${invite.token}/accept`, { method: "POST" })).json()).code).toBe("INVITE_NOT_FOUND");
     expect(await (await fetch(`${BASE}/maps`)).json()).toEqual([]);
+  });
+});
+
+describe("#465·#467·#468 — 지도 수정, 초대 링크 관리, 방장 넘기기", () => {
+  const me = () => store.members["map_1"]?.find((m) => m.user_id === "u_me");
+  const send = (path: string, method: string, body?: unknown) =>
+    fetch(`${BASE}${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+
+  it("PATCH /maps/{id}: 보낸 필드만 바꾸고 map.updated를 보낸다. 방장이 아니면 403, 날짜 역전·빈 객체는 422", async () => {
+    const before = store.eventLog.length;
+    const r = await send("/maps/map_1", "PATCH", { title: "새 제목" });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.title).toBe("새 제목");
+    expect(body.permissions.can_edit).toBe(true);
+    const ev = store.eventLog.slice(before).find((e) => e.type === "map.updated");
+    expect(ev?.data).toMatchObject({ map_id: "map_1", title: "새 제목" });
+
+    expect((await send("/maps/map_1", "PATCH", { end_date: "2000-01-01" })).status).toBe(422);
+    expect((await send("/maps/map_1", "PATCH", {})).status).toBe(422);
+    me()!.role = "member";
+    expect((await send("/maps/map_1", "PATCH", { title: "x" })).status).toBe(403);
+  });
+
+  it("방장 넘기기: 나는 구성원으로 남고 owner.changed가 간다. 나 자신·비구성원은 422 OWNER_TARGET_INVALID, 구성원은 403", async () => {
+    const before = store.eventLog.length;
+    expect((await send("/maps/map_1/owner", "POST", { user_id: "u_me" })).status).toBe(422);
+    const bad = await send("/maps/map_1/owner", "POST", { user_id: "nobody" });
+    expect(bad.status).toBe(422);
+    expect((await bad.json()).code).toBe("OWNER_TARGET_INVALID");
+
+    const ok = await send("/maps/map_1/owner", "POST", { user_id: "u_2" });
+    expect(ok.status).toBe(200);
+    const map = await ok.json();
+    expect(map.my_role).toBe("member");
+    expect(map.permissions.can_edit).toBe(false);
+    expect(me()?.role).toBe("member");
+    expect(store.members["map_1"].find((m) => m.user_id === "u_2")?.role).toBe("owner");
+    const ev = store.eventLog.slice(before).find((e) => e.type === "owner.changed");
+    expect(ev?.data).toEqual({ map_id: "map_1", from_user_id: "u_me", to_user_id: "u_2" });
+    expect((await send("/maps/map_1/owner", "POST", { user_id: "u_me" })).status).toBe(403);
+  });
+
+  it("초대 링크: 내 유효한 링크는 재사용(200), 목록에 보이고, 끄면 목록에서 빠지며 요약·수락이 410 INVITE_REVOKED", async () => {
+    const first = await send("/maps/map_1/invite", "POST");
+    expect(first.status).toBe(201);
+    const { token } = await first.json();
+    const again = await send("/maps/map_1/invite", "POST");
+    expect(again.status).toBe(200);
+    expect((await again.json()).token).toBe(token);
+
+    const list = await (await fetch(`${BASE}/maps/map_1/invites`)).json();
+    expect(list.map((i: { token: string }) => i.token)).toEqual([token]);
+    expect(list[0]).toMatchObject({ used_count: 0 });
+
+    expect((await send(`/invites/${token}`, "DELETE")).status).toBe(204);
+    expect((await send(`/invites/${token}`, "DELETE")).status).toBe(204); // 멱등
+    expect(await (await fetch(`${BASE}/maps/map_1/invites`)).json()).toEqual([]);
+    for (const r of [await fetch(`${BASE}/invites/${token}`), await send(`/invites/${token}/accept`, "POST")]) {
+      expect(r.status).toBe(410);
+      expect((await r.json()).code).toBe("INVITE_REVOKED");
+    }
+    expect((await send("/invites/nope", "DELETE")).status).toBe(404);
+
+    const fresh = await (await send("/maps/map_1/invite", "POST")).json();
+    expect(fresh.token).not.toBe(token); // 끈 링크는 재사용하지 않는다
+  });
+
+  it("방장이 아니면 초대 링크 목록·끄기가 403", async () => {
+    const { token } = await (await send("/maps/map_1/invite", "POST")).json();
+    me()!.role = "member";
+    expect((await fetch(`${BASE}/maps/map_1/invites`)).status).toBe(403);
+    expect((await send(`/invites/${token}`, "DELETE")).status).toBe(403);
   });
 });
 
