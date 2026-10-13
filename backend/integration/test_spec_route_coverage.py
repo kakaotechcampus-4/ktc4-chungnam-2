@@ -29,6 +29,8 @@ KNOWN_MISSING: dict[tuple[str, str], str] = {
     ("patch", "/pins/{}"): "#466 핀 메모·분류 수정",
     ("get", "/places/nearest"): "#473 지도를 눌러 핀 — 가까운 자체 DB 장소",
     ("post", "/places/from-link"): "#474 지도 링크 해석",
+    ("get", "/maps/{}/runs"): "#469 지난 추천 기록",
+    ("get", "/maps/{}/shortlist/export"): "#471 확정 리스트 내보내기",
 }
 
 # 스펙에 없어도 되는 라우트(운영/문서용).

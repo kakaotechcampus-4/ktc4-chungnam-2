@@ -30,6 +30,8 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("PATCH", "/pins/{pinId}"): "#466 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/places/from-link"): "#474 구현 PR이 골든 패스에 넣고 지운다",
+    ("GET", "/maps/{mapId}/runs"): "#469 구현 PR이 골든 패스에 넣고 지운다",
+    ("GET", "/maps/{mapId}/shortlist/export"): "#471 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
