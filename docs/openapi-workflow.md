@@ -57,6 +57,9 @@ python -m alembic upgrade head        # 마이그레이션 체인이 head 하나
 # 자체 장소 DB 적재(한 번, 약 4분) — 파일은 저장소 밖에 둔다(.gitignore). 안 하면 검색·핀·추천이 모두 빈다
 python -m places.load restaurants --file <restaurant_seoul_curated.csv> --labels <restaurant_seoul_curated_labels.json> --dry-run   # 리포트 확인 후 --dry-run을 뺀다
 python -m places.load cafes --file <cafe_seoul_curated.csv> --labels <cafe_seoul_curated_labels.json|.csv> --dry-run          # 카페(분류 '카페'). 업태는 가리지 않는다. 좌표 없는 행은 건너뛰고, 이미 음식점 등 다른 분류로 있는 관리번호는 분류를 바꾸지 않고 건너뛰며 건수를 보고한다
+# (선택) 인허가 커버리지 확장(#499) — 윈도에서는 먼저 `PYTHONUTF8=1`(안 하면 리포트 출력에서 죽는다). 파일 3개 다음 라벨 파일. `분류` 열이 있으면 업태 대응표보다 우선한다. 이미 다른 분류로 있는 관리번호는 건너뛴다
+python -m places.load permit --file <permit_N.csv> --encoding cp949 --dry-run     # 3개 파일 각각
+python -m places.load restaurant-labels --file <permit_cover_labels.json>
 python -m uvicorn main:asgi_app --port 8000
 ```
 `backend/.env`에 채울 값 (**localhost로 통일** — `127.0.0.1`과 섞으면 쿠키가 안 붙는다):
