@@ -243,3 +243,15 @@ PR 1(#197)에서 고정한 6개 공개 함수를 실제로 구현했다. 이 브
 - **로컬 pingo_demo 적재**: 백업 `C:\Users\user\Desktop\pingo_demo_before499.dump`(pg_dump -Fc). 되돌리기: `pg_restore --clean -d pingo_demo`. 적재 후 숫자는 아래.
   - 첫 시도에서 라벨 단계 중 Docker가 내려가 DB 연결이 끊겼다(장소 3파일은 커밋 완료, 라벨은 롤백). DB 복구 후 장소 104,003 · 라벨 256,698을 확인하고 라벨만 다시 적재해 성공했다.
   - pingo_demo 결과: 장소 104,003(음식점 80,323 / 카페 23,680, 신규 음식점 68,480 / 카페 23,147), 라벨 968,996(upsert 713,186, 못 찾아 건너뜀 7,468). 정예 category·kakao_place_id 변경 0, 정예 라벨 삭제 0, 값이 바뀐 라벨 1건(`franchise` unknown → known). 검증 DB와 같은 숫자다.
+
+---
+
+# #500 매처 주소 보조 매칭 + 매칭률 측정 (2026-10-13)
+
+- **규칙**(`matching.py`, 순수 함수 — DB 구현과 `FakePlaces`가 같은 `pick_match`를 쓴다): `PlaceHint.address`(선택)와 `Candidate.address`(자체 DB)를 도로명(`성수이로 100`) 또는 지번(`성수동2가 300-1`)으로 줄여 비교한다(시·구·층·괄호·`로 12길` 띄어쓰기 정리). 결과는 같음 / 다름 / 비교 불가(한쪽이 없거나 도로명 vs 지번, 본번만 같고 한쪽에 부번이 없음).
+  - **다름** → 그 후보는 다른 점포라 뺀다(같은 이름의 다른 지점을 거절). **비교 불가** → 이름 규칙 그대로(기존 동작).
+  - **같음** + 이름 점수 0.5 이상 → 이름이 0.8에 못 미쳐도 같은 곳으로 본다. 단 이름만으로 충분한 후보(0.8↑)가 있으면 그쪽을 쓰고 이름이 모자란 후보는 보지 않는다.
+  - 동명 점포 모호 거절은 유지하고, 주소가 같다고 확인된 후보가 이기면 모호하지 않다. 카카오 ID로 이미 짝지어진 장소는 주소를 보지 않는다. 분류가 같은 후보만 본다.
+  - 주소는 비교에만 쓴다 — 저장·로깅하지 않는다(#53).
+- **측정**: `python -m places.scripts.measure_match_rate [--queries 200] [--out rates.json]` — 지역×업종 200개 검색어(고정)로 장소 검색을 돌려 pinnable 비율을 [주소 보조 전/후]로 낸다. 출력은 건수·비율뿐이다. `KAKAO_REST_API_KEY`(환경변수)와 `PLACES_MODE=prod`가 필요하다. **측정 결과(적재 전 DB / 후 DB 비교 표)는 후속 커밋으로 이 절에 추가한다.**
+- **루트에 요청 — 아직 켜지 않았다**: 검색 라우터(`_fill_pinnable`)는 주소를 넘기지 않는다. 지금 켜면 검색은 pinnable=true인데 핀 생성(`PinCreateSearch`에 주소가 없음)은 `PLACE_NOT_SUPPORTED`가 되어 어긋난다. 켜려면 ① `docs/api-spec.yaml`의 `PinCreateSearch`에 선택 필드 `address`(검색 결과의 address를 그대로, 저장하지 않는 힌트) 추가 + `CHANGELOG-api.md`, ② pins가 `PlaceHint(address=...)`로 넘기고, ③ `places/router.py`의 `_fill_pinnable`이 `r.address`를 넘긴다. 이 세 가지를 같이 해야 한다.
