@@ -29,7 +29,6 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("PATCH", "/pins/{pinId}"): "#466 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/places/from-link"): "#474 구현 PR이 골든 패스에 넣고 지운다",
-    ("GET", "/maps/{mapId}/shortlist/export"): "#471 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
@@ -197,6 +196,17 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.put(f"/maps/{map_id}/shortlist/order", json={"item_ids": list(reversed(item_ids))}).status_code == 200
     assert a.post(f"/maps/{map_id}/route").status_code in (200, 201)
     assert a.get(f"/maps/{map_id}/route").status_code == 200
+
+    # 내보내기(#471)는 JSON이 아니라 파일 — 본문 검증 대신 형식·헤더를 직접 확인한다
+    export_txt = a.get(f"/maps/{map_id}/shortlist/export")
+    assert export_txt.status_code == 200 and export_txt.headers["content-type"].startswith("text/plain")
+    assert export_txt.headers["content-disposition"].startswith("attachment")
+    export_csv = a.get(f"/maps/{map_id}/shortlist/export", params={"format": "csv"})
+    assert export_csv.status_code == 200 and export_csv.headers["content-type"].startswith("text/csv")
+    assert export_csv.content.startswith("\ufeff순서,".encode())
+    assert len(export_csv.text.splitlines()) == 1 + len(item_ids)
+    assert a.get(f"/maps/{map_id}/shortlist/export", params={"format": "pdf"}).status_code == 422
+    assert b.get(f"/maps/{map_id}/shortlist/export").status_code == 200
 
     assert a.delete(f"/pins/{pin_ids[0]}/reaction").status_code == 204
     assert a.post("/auth/logout").status_code == 204
