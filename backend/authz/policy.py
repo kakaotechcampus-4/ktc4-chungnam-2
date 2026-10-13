@@ -48,13 +48,14 @@ POLICY: Mapping[str, RoleSpec] = {
         ),
     ),
     "author": RoleSpec(
-        scope={"evidence_line": "own", "candidate": "own", "run": "own"},
+        scope={"evidence_line": "own", "candidate": "own", "run": "own", "pin": "own"},
         actions=frozenset(
             {
                 "evidence.disable",  # '-'로 빼기 — "자기가 쓴 것만" (5-5)
                 "recommend.manage",  # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
                                       # run.requested_by 본인만(가드레일1)
                 "recommend.publish",  # 「지도에 올리기」 — candidate.requested_by 본인만
+                "pin.edit",  # 핀 메모·분류 수정(#466) — 찍은 사람만. AI 추천·확정 핀 제외는 pins 코어가 판정
             }
         ),
     ),
@@ -81,6 +82,7 @@ ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "pin.delete": frozenset({"pin"}),
     "pin.react": frozenset({"pin"}),
     "pin.revert": frozenset({"pin"}),
+    "pin.edit": frozenset({"pin"}),
     # add의 대상은 pin이다 — POST /maps/{mapId}/shortlist의 본문이 {pin_id}.
     "shortlist.add": frozenset({"pin"}),
     # remove만 두 종류를 받는다. 실행 경로는 DELETE /shortlist/{itemId}(shortlist_item)이지만,
