@@ -24,8 +24,6 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 KNOWN_MISSING: dict[tuple[str, str], str] = {
     ("patch", "/maps/{}"): "#465 지도 제목·날짜·지역 수정",
     ("post", "/maps/{}/owner"): "#468 방장 직접 넘기기",
-    ("get", "/maps/{}/invites"): "#467 초대 링크 목록",
-    ("delete", "/invites/{}"): "#467 초대 링크 끄기",
 }
 
 # 스펙에 없어도 되는 라우트(운영/문서용).

@@ -63,6 +63,10 @@ class Invite(BaseModel):
     token: str
     url: str
     expires_at: datetime
+    # 아래 셋은 목록(GET /maps/{mapId}/invites)에서만 채운다(#467).
+    created_at: datetime | None = None
+    created_by_display_name: str | None = Field(default=None, max_length=50)
+    used_count: int | None = Field(default=None, ge=0)
 
 
 class InviteSummary(BaseModel):

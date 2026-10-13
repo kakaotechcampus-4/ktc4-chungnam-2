@@ -25,8 +25,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("PATCH", "/maps/{mapId}"): "#465 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
-    ("GET", "/maps/{mapId}/invites"): "#467 구현 PR이 골든 패스에 넣고 지운다",
-    ("DELETE", "/invites/{token}"): "#467 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
@@ -137,6 +135,15 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     invite = a.post(f"/maps/{map_id}/invite")
     assert invite.status_code == 201
     assert b.post(f"/invites/{invite.json()['token']}/accept").status_code == 200
+    assert a.post(f"/maps/{map_id}/invite").status_code == 200   # 내 유효한 링크 재사용(#467)
+    assert a.get(f"/maps/{map_id}/invites").status_code == 200
+    assert b.get(f"/maps/{map_id}/invites").status_code == 403
+    extra = b.post(f"/maps/{map_id}/invite")   # 구성원이 만든 링크는 따로 생긴다
+    assert extra.status_code == 201
+    assert a.delete(f"/invites/{extra.json()['token']}").status_code == 204
+    assert a.delete(f"/invites/{extra.json()['token']}").status_code == 204   # 멱등
+    assert a.get(f"/invites/{extra.json()['token']}").status_code == 410      # INVITE_REVOKED
+    assert a.delete("/invites/no-such-token").status_code == 404
     assert a.get(f"/maps/{map_id}/members").status_code == 200
 
     # 이름 검색(#180) — 결과 스키마 검증 + 0건(빈 배열) + 에러 봉투 422

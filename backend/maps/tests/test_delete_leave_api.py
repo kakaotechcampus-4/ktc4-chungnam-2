@@ -42,7 +42,7 @@ def _create_map(app_client, user_id="user_1", title="부산 여행"):
 
 def _invite_token(app_client, map_id, user_id="user_1"):
     resp = app_client.post(f"/maps/{map_id}/invite", cookies=_auth(user_id))
-    assert resp.status_code == 201, resp.text
+    assert resp.status_code in (200, 201), resp.text  # 내가 만든 유효한 링크가 있으면 200으로 재사용한다(#467)
     return resp.json()["token"]
 
 
