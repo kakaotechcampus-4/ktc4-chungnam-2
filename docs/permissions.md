@@ -33,12 +33,14 @@ author:                       # evidence_line·candidate·run을 만든 당사�
     evidence_line: own         # 자기가 쓴 줄만
     candidate: own              # 자기가 요청한 run의 후보만
     run: own                    # 자기가 요청한 run만
+    pin: own                    # 자기가 찍은 핀만(#466)
   actions:
     - evidence.disable          # '-'로 빼기 — "자기가 쓴 것만" (5-5)
     - recommend.manage          # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
                                  # run.requested_by 본인만. 가드레일1: 대안은 요청한 사람에게만
                                  # 먼저 보인다 — 게시 전 run은 본인 것만 조작·열람
     - recommend.publish         # 「지도에 올리기」 — candidate.requested_by 본인만
+    - pin.edit                  # 핀 메모·분류 수정(#466) — 핀을 찍은 사람만. AI 추천·확정 핀 제외는 역할이 아니라 핀 상태라 pins 코어가 판정한다
 
 owner:                        # 방장. 처음엔 지도 생성자, 위임되면 바뀐다(#369). 판단 정본은 memberships.role
                               # (maps.created_by는 "만든 사람" 기록일 뿐 방장 판단에 쓰지 않는다). member 전체 + 아래 추가
@@ -90,6 +92,7 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 | 근거 리스트에서 항목 빼기 — 자기가 쓴 것만 | `author.scope.evidence_line: own`, `author.actions: [evidence.disable]` |
 | 핀 되돌리기 — 구성원 누구나 | `member.actions: [pin.revert]` |
 | 반경 조정 — 별도 권한 불필요 | 반경 사유도 `evidence_line`이므로 위 규칙을 그대로 상속. 별도 액션 없음 |
+| 핀 메모·분류 수정 — 찍은 사람만 (#466) | `author.scope.pin: own`, `author.actions: [pin.edit]`, 응답 `permissions.can_edit` |
 | 초대 링크 발급 — 구성원 누구나 (#4) | `member.actions: [invite.create]` |
 | 지도 제목·날짜·지역 수정 — 방장만 (#465) | `owner.actions: [map.settings.edit]`, 응답 `permissions.can_edit` |
 | 초대 링크 목록·끄기 — 방장만 (#467) | `owner.actions: [invite.revoke]` |

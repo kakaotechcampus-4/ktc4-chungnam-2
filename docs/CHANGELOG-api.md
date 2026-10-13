@@ -2,6 +2,23 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-13 (두 번째), V2 핀: 핀 수정·지도를 눌러 핀·링크 해석 (#466, #473, #474)
+
+스펙이 먼저다. 구현은 이슈별로 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다.
+
+- **`PATCH /pins/{pinId}`** (#466) — 핀을 찍은 사람만. `memo`(모든 핀, 빈 문자열이면 지움)와 `category`(live 핀만, 반응이 없을 때만). AI 추천·확정 핀은 수정 불가(403). 응답은 `Pin`. `Pin.permissions.can_edit`을 쓴다.
+- **`GET /places/nearest?lat&lng&category`** (#473) — 반경 100m 안 자체 DB 장소를 가까운 순 최대 5곳. 모두 `pinnable=true`. 고르면 `source: search`로 핀을 만든다. 누른 좌표는 저장·로깅하지 않는다.
+- **`POST /places/from-link {url}`** (#474) — 구글맵·카카오맵 링크를 해석해 `LinkParseResult`를 준다. **핀을 만들지 않는다.** 구글: `matches`(자체 DB 짝)나 `name_hint`로 검색을 이어 간다. 카카오: `kakao_place_id`만 뽑고, 자체 DB 짝이 없으면 `needs_search_query=true` — 사용자에게 장소 이름을 입력받아 `source: live`로 만든다. 네이버·인스타·블로그는 422 `LINK_NOT_SUPPORTED`.
+  - 설계 변경: 이슈 #474는 `POST /maps/{id}/pins/from-link`였으나, 링크 해석과 핀 생성을 나눠 새 저장 값 없이 기존 두 생성 경로를 그대로 쓴다. 카톡 일괄 파싱(#9)도 이 해석기를 재사용한다.
+- **이벤트**: `pin.updated`(페이로드 `Pin`, `pin.created`와 같은 모양).
+- **권한**: 새 액션 `pin.edit`(author 범위 `pin: own`). `Permissions.can_edit`이 핀에도 쓰인다. `authz/policy.py`를 같은 PR에서 맞췄다.
+- **에러 코드**: `LINK_NOT_SUPPORTED`, `LINK_UNRESOLVED`(둘 다 422). `common/errors.py` CATALOG도 함께 맞췄다.
+- **FE 할 일:** #480(핀 수정), #486(지도 눌러 핀), #487(링크 붙여넣기). 목 서버에서 먼저 붙일 수 있다. 목 서버 마법 링크: `https://maps.app.goo.gl/fail`은 422 `LINK_UNRESOLVED`.
+
+## 2026-10-13, 장소 검색에서 자체 DB 장소를 앞으로 (#488)
+
+- **스키마 변경 없음.** `GET /places/search`는 카카오가 준 후보 안에서 `pinnable=true`(자체 DB에 짝이 있는 장소)를 앞으로 올려 돌려준다. 각 묶음 안의 순서는 카카오 순서 그대로이고, `pinnable`을 못 구했으면(생략) 원래 순서다. `limit`은 정렬 뒤에 적용한다. 호환 영향 없음.
+
 ## 2026-10-13, V2 지도 생명주기: 지도 수정·초대 링크 관리·방장 넘기기 (#465, #467, #468)
 
 스펙이 먼저다. 백엔드 구현은 각 이슈에서 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 바로 쓸 수 있다.

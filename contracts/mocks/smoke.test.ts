@@ -344,6 +344,74 @@ describe("#465·#467·#468 — 지도 수정, 초대 링크 관리, 방장 넘�
   });
 });
 
+describe("#466·#473·#474 — 핀 수정, 지도를 눌러 핀, 링크 해석", () => {
+  const send = (path: string, method: string, body?: unknown) =>
+    fetch(`${BASE}${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const liveBody = { source: "live", category: "음식점", kakao_place_id: "kakao:live-9", search_query: "삼겹살" };
+
+  it("PATCH /pins: 메모를 바꾸고 지우며 pin.updated를 보낸다. 빈 객체·200자 초과는 422", async () => {
+    const pin = await (await send("/maps/map_1/pins", "POST", liveBody)).json();
+    expect(pin.permissions.can_edit).toBe(true);
+    const before = store.eventLog.length;
+    const r = await send(`/pins/${pin.id}`, "PATCH", { memo: "곱창 맛있대" });
+    expect(r.status).toBe(200);
+    expect((await r.json()).memo).toBe("곱창 맛있대");
+    expect(store.eventLog.slice(before).find((e) => e.type === "pin.updated")?.data).toMatchObject({ id: pin.id, memo: "곱창 맛있대" });
+
+    expect((await (await send(`/pins/${pin.id}`, "PATCH", { memo: "" })).json()).memo).toBeUndefined();
+    expect((await send(`/pins/${pin.id}`, "PATCH", {})).status).toBe(422);
+    expect((await send(`/pins/${pin.id}`, "PATCH", { memo: "가".repeat(201) })).status).toBe(422);
+  });
+
+  it("PATCH /pins: 분류는 live 핀이고 반응이 없을 때만, 숙소는 422", async () => {
+    const pin = await (await send("/maps/map_1/pins", "POST", liveBody)).json();
+    expect((await send(`/pins/${pin.id}`, "PATCH", { category: "숙소" })).status).toBe(422);
+    const ok = await send(`/pins/${pin.id}`, "PATCH", { category: "카페" });
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).category).toBe("카페");
+    expect((await send(`/pins/${pin.id}/reaction`, "PUT", { type: "like" })).status).toBe(200);
+    expect((await send(`/pins/${pin.id}`, "PATCH", { category: "음식점" })).status).toBe(422);
+    const dbPin = (await (await fetch(`${BASE}/maps/map_1/pins`)).json()).find((p: { source?: string; created_by: string }) => p.source !== "live" && p.created_by === "u_me");
+    expect((await send(`/pins/${dbPin.id}`, "PATCH", { category: "카페" })).status).toBe(422); // 자체 DB 핀의 분류는 장소가 정한다
+  });
+
+  it("PATCH /pins: 남이 찍은 핀은 403, 없는 핀은 404", async () => {
+    const others = (await (await fetch(`${BASE}/maps/map_1/pins`)).json()).find((p: { created_by: string }) => p.created_by !== "u_me");
+    expect(others.permissions.can_edit).toBe(false);
+    expect((await send(`/pins/${others.id}`, "PATCH", { memo: "x" })).status).toBe(403);
+    expect((await send("/pins/nope", "PATCH", { memo: "x" })).status).toBe(404);
+  });
+
+  it("GET /places/nearest: 100m 안 자체 DB 장소만 가까운 순, 없으면 빈 배열, lat·lng 없으면 422", async () => {
+    const near = await (await fetch(`${BASE}/places/nearest?lat=35.1631&lng=129.1639`)).json();
+    expect(near.map((p: { place_name: string }) => p.place_name)).toEqual(["해운대 밀면"]);
+    expect(near.every((p: { pinnable: boolean }) => p.pinnable)).toBe(true);
+    expect(await (await fetch(`${BASE}/places/nearest?lat=35.1631&lng=129.1639&category=카페`)).json()).toEqual([]);
+    expect(await (await fetch(`${BASE}/places/nearest?lat=37.5&lng=127.0`)).json()).toEqual([]);
+    expect((await fetch(`${BASE}/places/nearest?lat=35.1`)).status).toBe(422);
+    // 자체 DB에 없는 곳(kakao:mock-6)은 가까워도 나오지 않는다
+    expect(await (await fetch(`${BASE}/places/nearest?lat=37.5445&lng=127.0557`)).json()).toEqual([]);
+  });
+
+  it("POST /places/from-link: 구글은 이름·자체 DB 짝, 카카오는 장소 ID만(짝 없으면 검색어 필요), 그 밖은 422", async () => {
+    const g = await (await send("/places/from-link", "POST", { url: "https://www.google.com/maps/place/해운대+밀면/@35.1631,129.1639,17z" })).json();
+    expect(g).toMatchObject({ provider: "google", name_hint: "해운대 밀면", needs_search_query: false });
+    expect(g.matches.map((p: { place_id: string }) => p.place_id)).toEqual(["kakao:mock-1"]);
+    expect(g.lat).toBeUndefined(); // 링크 안의 좌표는 돌려주지 않는다
+
+    const own = await (await send("/places/from-link", "POST", { url: "https://place.map.kakao.com/mock-1" })).json();
+    expect(own).toMatchObject({ provider: "kakao", kakao_place_id: "kakao:mock-1", needs_search_query: false });
+    const outside = await (await send("/places/from-link", "POST", { url: "https://place.map.kakao.com/mock-6" })).json();
+    expect(outside).toMatchObject({ provider: "kakao", kakao_place_id: "kakao:mock-6", matches: [], needs_search_query: true });
+
+    const naver = await send("/places/from-link", "POST", { url: "https://map.naver.com/p/entry/place/123" });
+    expect(naver.status).toBe(422);
+    expect((await naver.json()).code).toBe("LINK_NOT_SUPPORTED");
+    expect((await (await send("/places/from-link", "POST", { url: "https://maps.app.goo.gl/fail" })).json()).code).toBe("LINK_UNRESOLVED");
+    expect((await (await send("/places/from-link", "POST", { url: "not a url" })).json()).code).toBe("LINK_NOT_SUPPORTED");
+  });
+});
+
 describe("#369 — 내 지도 상한(#433에서 20개)", () => {
   const create = () =>
     fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "상한 시험", start_date: "2026-11-01", end_date: "2026-11-02" }) });

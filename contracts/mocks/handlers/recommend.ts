@@ -188,7 +188,7 @@ export const recommendHandlers = [
       checks: cand.checks, // 가드레일 5: 게시 후에도 근거를 그대로 유지
       source_run_id: runId,
       reaction_summary: { like: 0, against: 0 },
-      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: false },
     };
     store.pins[pinId] = pin;
     store.reactions[pinId] = [];
