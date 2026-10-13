@@ -394,23 +394,34 @@ def cafes():
 
 def test_cafe_rows_are_loaded_as_cafe_category_permit_source_with_given_coordinates(cafes):
     by_id, _ = cafes
-    assert set(by_id) == {f"C00{i}" for i in range(1, 9)}   # 업태 8종 8곳
+    assert set(by_id) == {f"C00{i}" for i in range(1, 9)} | {"C010", "C011"}   # 업태를 가리지 않는다(북카페 C010, 빈 업태 C011 포함)
     assert {r.category for r in by_id.values()} == {"카페"} and {r.source for r in by_id.values()} == {"permit"}
     assert {r.status for r in by_id.values()} == {"open"}
     assert (by_id["C001"].lat, by_id["C001"].lng) == (37.5446, 127.0562)
 
 
-def test_cafe_unknown_business_types_and_missing_coordinates_are_skipped_and_counted(cafes):
+def test_cafe_missing_coordinates_and_non_seoul_are_skipped_and_counted(cafes):
     by_id, report = cafes
     assert report.skipped["좌표 없음"] == 1 and "C009" not in by_id
-    assert report.skipped["모르는 업태: 북카페"] == 1 and "C010" not in by_id
-    assert report.skipped["모르는 업태: (비어 있음)"] == 1 and "C011" not in by_id
     assert report.skipped["서울 아님(또는 주소 없음)"] == 1 and "C012" not in by_id
-    assert report.read == 12 and report.accepted == 8 and sum(report.skipped.values()) == 4
+    assert report.read == 12 and report.accepted == 10 and sum(report.skipped.values()) == 2
 
 
-def test_cafe_type_table_has_the_eight_delivered_types():
-    assert ingest.CURATED_CAFE_TYPES == {"커피숍", "제과점영업", "까페", "다방", "전통찻집", "라이브카페", "키즈카페", "떡카페"}
+def test_cafe_empty_business_type_is_loaded_with_a_warning(cafes):
+    by_id, report = cafes
+    assert "C011" in by_id
+    assert any("업태가 비어 있는 행" in w and "C011" in w for w in report.warnings)
+
+
+def test_cafe_exclude_bars_flag_drops_bar_types():
+    rows = [
+        {"관리번호": "B1", "사업장명": "주점", "업태": "감성주점", "도로명주소": "서울특별시 중구 가상로 1", "위도": "37.56", "경도": "126.98"},
+        {"관리번호": "B2", "사업장명": "카페", "업태": "커피숍", "도로명주소": "서울특별시 중구 가상로 2", "위도": "37.56", "경도": "126.98"},
+    ]
+    kept, _ = ingest.parse_cafe_rows(rows)
+    dropped, report = ingest.parse_cafe_rows(rows, exclude_bars=True)
+    assert [r.source_id for r in kept] == ["B1", "B2"] and [r.source_id for r in dropped] == ["B2"]
+    assert report.skipped["유흥·주점류 제외(--exclude-bars): 감성주점"] == 1
 
 
 def test_restaurant_parser_is_unchanged_by_the_cafe_option():
