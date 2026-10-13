@@ -412,6 +412,63 @@ describe("#466·#473·#474 — 핀 수정, 지도를 눌러 핀, 링크 해석",
   });
 });
 
+describe("#469·#471 — 지난 추천 기록, 확정 리스트 내보내기", () => {
+  const send = (path: string, method: string, body?: unknown) =>
+    fetch(`${BASE}${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+
+  it("GET /maps/{id}/runs: 내가 만든 run만 최근순, 분류 필터·limit, 진행 중 run의 결과는 409 RUN_NOT_FINISHED", async () => {
+    expect(await (await fetch(`${BASE}/maps/map_1/runs`)).json()).toEqual([]);
+    const first = await (await send("/maps/map_1/runs", "POST", { category: "음식점" })).json();
+    await new Promise((r) => setTimeout(r, 5));
+    const second = await (await send("/maps/map_1/runs", "POST", { category: "음식점" })).json();
+    store.runRequestedBy["run_other"] = "u_2"; // 남이 요청한 run — 목록에 없어야 한다(가드레일 1)
+    store.runs["run_other"] = { id: "run_other", map_id: "map_1", category: "음식점", status: "done", attempt_no: 1 };
+
+    const list = await (await fetch(`${BASE}/maps/map_1/runs`)).json();
+    expect(list.map((r: { id: string }) => r.id)).toEqual([second.id, first.id]);
+    expect(list[0]).toMatchObject({ map_id: "map_1", category: "음식점", status: "collecting_evidence", candidate_count: 0, published_count: 0 });
+    expect(typeof list[0].created_at).toBe("string");
+    expect(await (await fetch(`${BASE}/maps/map_1/runs?category=카페`)).json()).toEqual([]);
+    expect((await fetch(`${BASE}/maps/map_1/runs?limit=1`).then((r) => r.json())).length).toBe(1);
+    expect((await fetch(`${BASE}/maps/map_1/runs?limit=99`)).status).toBe(422);
+    expect((await fetch(`${BASE}/maps/nope/runs`)).status).toBe(404);
+
+    const notDone = await fetch(`${BASE}/runs/${first.id}/result`);
+    expect(notDone.status).toBe(409);
+    expect((await notDone.json()).code).toBe("RUN_NOT_FINISHED");
+  });
+
+  it("GET /maps/{id}/shortlist/export: txt는 확정 순서대로, csv는 BOM + 머리글, live 핀은 검색어 + 이름 확인 필요", async () => {
+    const live = await (await send("/maps/map_1/pins", "POST", { source: "live", category: "음식점", kakao_place_id: "kakao:live-7", search_query: "삼겹살", memo: "여기, 맛있대" })).json();
+    expect((await send("/maps/map_1/shortlist", "POST", { pin_id: live.id })).status).toBe(201);
+
+    const txt = await fetch(`${BASE}/maps/map_1/shortlist/export`);
+    expect(txt.status).toBe(200);
+    expect(txt.headers.get("content-type")).toContain("text/plain");
+    expect(txt.headers.get("content-disposition")).toContain("attachment");
+    const lines = (await txt.text()).trim().split("\n");
+    expect(lines.at(-1)).toContain("삼겹살 (이름 확인 필요)");
+    expect(lines.at(-1)).toContain("https://place.map.kakao.com/live-7");
+
+    const csv = await fetch(`${BASE}/maps/map_1/shortlist/export?format=csv`);
+    expect(csv.headers.get("content-type")).toContain("text/csv");
+    const bytes = new Uint8Array(await csv.clone().arrayBuffer());
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]); // 엑셀에서 한글이 깨지지 않게 UTF-8 BOM (fetch의 text()는 BOM을 벗기므로 바이트로 본다)
+    const body = await csv.text();
+    expect(body.split(/\r?\n/)[0]).toBe("순서,이름,분류,링크,메모");
+    expect(body).toContain('"여기, 맛있대"'); // 쉼표가 든 칸은 따옴표로 감싼다
+
+    expect((await fetch(`${BASE}/maps/map_1/shortlist/export?format=pdf`)).status).toBe(422);
+    expect((await fetch(`${BASE}/maps/nope/shortlist/export`)).status).toBe(404);
+  });
+
+  it("확정 리스트가 비어 있으면 csv는 머리글만, txt는 안내 한 줄", async () => {
+    store.shortlist["map_1"] = [];
+    expect(await (await fetch(`${BASE}/maps/map_1/shortlist/export`)).text()).toBe("확정한 장소가 아직 없어요\n");
+    expect((await (await fetch(`${BASE}/maps/map_1/shortlist/export?format=csv`)).text()).trim().split("\r\n").length).toBe(1);
+  });
+});
+
 describe("#369 — 내 지도 상한(#433에서 20개)", () => {
   const create = () =>
     fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "상한 시험", start_date: "2026-11-01", end_date: "2026-11-02" }) });

@@ -2,6 +2,16 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-13 (세 번째), V2 기록·내보내기: 지난 추천 기록·확정 리스트 내보내기 (#469, #471)
+
+스펙이 먼저다. 구현은 이슈별로 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다.
+
+- **`GET /maps/{mapId}/runs?category&limit`** (#469) — **내가 요청한 run만**(가드레일 1) 최근순. 항목은 `RunSummary`(id·category·status·attempt_no·created_at·candidate_count·published_count). 결과는 기존 `GET /runs/{runId}/result`로 다시 연다. 결과는 마지막 시도의 후보만 남아 있다.
+- **`GET /runs/{runId}/result`가 409 `RUN_NOT_FINISHED`를 낸다** — status가 done이 아닌 run. 기존 FE 흐름(추천 실행 뒤 `run.candidates_ready`를 받고 조회)은 영향이 없다. 지난 기록에서 진행 중·실패한 run을 열 때만 만난다.
+- **`GET /maps/{mapId}/shortlist/export?format=txt|csv`** (#471) — 구성원 누구나. 확정 순서대로 순서·이름·분류·카카오 링크·메모. live 핀은 이름 대신 검색어 + "(이름 확인 필요)". CSV는 UTF-8 BOM. 응답은 JSON이 아니라 파일이다(`text/plain`·`text/csv`, `Content-Disposition: attachment`).
+- **에러 코드**: `RUN_NOT_FINISHED`(409). `common/errors.py` CATALOG도 함께 맞췄다.
+- **FE 할 일:** #482(지난 추천 기록), #484(내보내기). 목 서버에서 먼저 붙일 수 있다.
+
 ## 2026-10-13 (두 번째), V2 핀: 핀 수정·지도를 눌러 핀·링크 해석 (#466, #473, #474)
 
 스펙이 먼저다. 구현은 이슈별로 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다.

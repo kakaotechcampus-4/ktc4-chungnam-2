@@ -1308,7 +1308,39 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * 지난 추천 기록 — **내가 요청한 run만** (#469, 가드레일 1: 대안은 요청한 사람에게만 보인다). 다른 구성원의 run은 이 목록에 없다. 최근 요청순.
+         *     항목을 누르면 기존 `GET /runs/{runId}/result`로 결과를 다시 연다(그 run을 요청한 본인만, 아니면 403). 결과는 **마지막 시도**의 후보만 남아 있다
+         *     (반경 넓히기·다시 추천 때 게시하지 않은 이전 후보는 교체된다). 지도 구성원이 아니면 404.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 있으면 그 분류의 run만 */
+                    category?: components["schemas"]["RecommendCategory"];
+                    /** @description 가져올 개수. 기본 20, 최대 50 */
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 없으면 빈 배열 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunSummary"][];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
         put?: never;
         /** run 생성 — 근거 조립 시작 (①②) */
         post: {
@@ -1535,6 +1567,15 @@ export interface paths {
                 };
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NoResults"];
+                /** @description 아직 끝나지 않았거나 실패한 run (RUN_NOT_FINISHED, #469) — status가 done일 때만 결과가 있다. 지난 추천 기록에서 여는 run에 쓴다 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
                 500: components["responses"]["RecommendFailed"];
             };
         };
@@ -1778,6 +1819,65 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/shortlist/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 확정 리스트 내보내기 — 구성원 누구나 (#471). 확정 순서(`visit_order`, 없으면 추가한 순서)대로 한 줄씩 담은 텍스트(`txt`) 또는 CSV(`csv`)를 내려준다.
+         *     열은 순서·이름·분류·카카오 링크·메모다. **실시간 핀(live)은 이름을 저장하지 않으므로**(#53) 이름 칸에 검색어를 쓰고 이름 뒤에 "(이름 확인 필요)"를 붙이며,
+         *     링크 칸에는 `place.map.kakao.com/<id>` 링크를 넣는다. 자체 DB 핀은 장소 이름과 장소 페이지 링크를 쓴다. 좌표는 내보내지 않는다.
+         *     CSV는 엑셀에서 한글이 깨지지 않게 UTF-8 BOM으로 시작한다. 확정 리스트가 비어 있으면 CSV는 머리글만, txt는 안내 한 줄이다.
+         *     공개 공유 링크는 이 범위 밖이다.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 기본 txt */
+                    format?: "txt" | "csv";
+                };
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 파일 내용. Content-Disposition 헤더(attachment)로 내려준다 — 응답은 JSON이 아니다 */
+                200: {
+                    headers: {
+                        "Content-Disposition"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": string;
+                        "text/csv": string;
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                /** @description format이 txt·csv가 아님 (VALIDATION_ERROR) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2403,6 +2503,25 @@ export interface components {
             attempt_no: number;
             /** @description 기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (기본 15, 상한 30) */
             default_radius_walk_min?: number;
+        };
+        /** @description 지난 추천 기록 한 건 (#469). 내가 요청한 run만 온다 */
+        RunSummary: {
+            id: string;
+            map_id: string;
+            category: components["schemas"]["RecommendCategory"];
+            /** @enum {string} */
+            status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
+            /** @description 지금까지의 시도 횟수(반경 넓히기·다시 추천 포함) */
+            attempt_no: number;
+            /**
+             * Format: date-time
+             * @description run을 만든 시각. 목록은 이 값의 내림차순
+             */
+            created_at: string;
+            /** @description 마지막 시도의 후보 수. done이 아니면 0 */
+            candidate_count: number;
+            /** @description 그 run에서 「지도에 올리기」로 게시한 후보 수 */
+            published_count: number;
         };
         /** @description 구성원 충족 집계 (가드레일 5). 게시 뒤에도 유지된다 */
         MemberFulfillment: {
