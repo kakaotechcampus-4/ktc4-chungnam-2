@@ -23,7 +23,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
-    ("PATCH", "/maps/{mapId}"): "#465 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/maps/{mapId}/invites"): "#467 구현 PR이 골든 패스에 넣고 지운다",
     ("DELETE", "/invites/{token}"): "#467 구현 PR이 골든 패스에 넣고 지운다",
@@ -132,6 +131,8 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     map_id = created.json()["id"]
     assert a.get("/maps").status_code == 200
     assert a.get(f"/maps/{map_id}").status_code == 200
+    assert a.patch(f"/maps/{map_id}", json={"title": "부산 가을 여행"}).status_code == 200   # #465
+    assert a.patch(f"/maps/{map_id}", json={}).status_code == 422
     assert (created.json()["my_role"], created.json()["created_by_me"]) == ("owner", True)  # #391
 
     invite = a.post(f"/maps/{map_id}/invite")

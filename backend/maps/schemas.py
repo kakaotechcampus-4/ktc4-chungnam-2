@@ -8,7 +8,7 @@ None으로 둔다. 라우터가 response_model_exclude_none=True를 쓰므로 �
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from authz.schemas import Permissions
 
@@ -28,6 +28,23 @@ class MapCreateRequest(BaseModel):
     start_date: date
     end_date: date
     region: MapRegion | None = None
+
+
+class MapUpdateRequest(BaseModel):
+    """PATCH /maps/{mapId}(#465) — 보낸 필드만 바꾼다. 값을 안 보낸 필드는 None이다. 빈 객체와
+    명시적 null은 422다(null로 region을 지우는 건 지원하지 않는다 — 바꾸기만)."""
+
+    title: str | None = Field(default=None, max_length=100)
+    start_date: date | None = None
+    end_date: date | None = None
+    region: MapRegion | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_value(self):
+        sent = {name: getattr(self, name) for name in self.model_fields_set}
+        if not sent or any(value is None for value in sent.values()):
+            raise ValueError("바꿀 필드를 하나 이상 보내야 하고 값은 null일 수 없습니다")
+        return self
 
 
 class NextOwner(BaseModel):

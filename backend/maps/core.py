@@ -90,6 +90,27 @@ def validate_map_create(
     )
 
 
+def validate_map_update(
+    current: MapRecord,
+    *,
+    title: str | None,
+    start_date: date | None,
+    end_date: date | None,
+    region: MapRegion | None,
+) -> NewMap:
+    """PATCH(#465) — 보낸 필드(None이 아닌 것)를 기존 값에 합친 결과를 생성과 같은 규칙으로 검사한다.
+    종료일만 보내도 기존 시작일과 비교한다. region은 바꾸기만 된다 — 안 보내면 기존 값을 그대로 둔다."""
+    current_region = None
+    if current.region_label is not None:
+        current_region = MapRegion(label=current.region_label, lat=current.region_lat, lng=current.region_lng)
+    return validate_map_create(
+        current.title if title is None else title,
+        current.start_date if start_date is None else start_date,
+        current.end_date if end_date is None else end_date,
+        current_region if region is None else region,
+    )
+
+
 def check_map_limit(my_map_count: int) -> None:
     """지도를 만들거나 새로 참여하기 전에 부른다. 이미 MAP_LIMIT개면 409 MAP_LIMIT(detail: limit, count)."""
     if my_map_count >= MAP_LIMIT:
@@ -183,6 +204,7 @@ def map_permissions(principal: Principal, successor: str | None) -> Permissions:
     return Permissions(
         can_delete=can(principal, "map.delete", resource),
         can_leave=can(principal, "map.leave", resource) and can_leave(principal.role, successor),
+        can_edit=can(principal, "map.settings.edit", resource),
     )
 
 
@@ -254,6 +276,20 @@ def member_joined_event(map_id: str, member: Member) -> Event:
 def map_deleted_event(map_id: str) -> Event:
     """docs/events.md map.deleted — public 채널. 삭제와 같은 트랜잭션에 기록한다(#369)."""
     return Event(map_id=map_id, channel="public", type="map.deleted", payload={"map_id": map_id})
+
+
+def map_updated_event(map_id: str, updated: NewMap) -> Event:
+    """docs/events.md map.updated — public 채널(#465). 요청자 기준 값(permissions)은 싣지 않는다.
+    region이 없는 지도는 키 자체를 뺀다."""
+    payload = {
+        "map_id": map_id,
+        "title": updated.title,
+        "start_date": updated.start_date.isoformat(),
+        "end_date": updated.end_date.isoformat(),
+    }
+    if updated.region is not None:
+        payload["region"] = updated.region.model_dump()
+    return Event(map_id=map_id, channel="public", type="map.updated", payload=payload)
 
 
 def member_left_event(map_id: str, user_id: str, new_owner_user_id: str | None) -> Event:
