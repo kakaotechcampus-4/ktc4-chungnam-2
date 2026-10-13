@@ -103,6 +103,7 @@ PERMIT_ALIASES = {
     "status": ("영업상태명", "TRDSTATENM"),
     "detail_status": ("상세영업상태명", "DTLSTATENM"),
     "type": ("업태구분명", "UPTAENM"),
+    "category": ("분류",),   # 선택 열 — 있으면 업태 대응표보다 우선한다(#499, 카카오 기준 업종으로 정리된 커버리지 파일)
     "road_address": ("도로명전체주소", "RDNWHLADDR"),
     "lot_address": ("소재지전체주소", "SITEWHLADDR"),
     "phone": ("소재지전화", "SITETEL"),
@@ -162,7 +163,7 @@ def parse_permit_rows(
         if status is None:
             report.skip(f"알 수 없는 영업상태: {f['status'] or f['detail_status'] or '(비어 있음)'}")
             continue
-        category = map_permit_category(f["type"])
+        category = f["category"] if f["category"] in ("카페", "음식점") else map_permit_category(f["type"])
         if category is None:
             types_without_mapping[f["type"] or "(비어 있음)"] += 1
             report.skip("업태 대응표에 없음")
