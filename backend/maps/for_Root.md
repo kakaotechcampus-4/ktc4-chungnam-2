@@ -252,3 +252,22 @@ fallback·타 라우트 인증 유지. `KNOWN_MISSING`에서 `("get", "/invites/
 - **#245**: `Map.member_count`(단건·`GET /maps` 목록)와 `maps.api.count_members`(준비 판정 N)가 탈퇴자를 뺀다. 구성원 목록(`GET /members`)은 핀 작성자 표기용(#155)으로 그대로 둔다.
   - **다른 모듈 파일 수정 보고**: 탈퇴 여부를 알 공개 함수가 없어 `auth/api.py`에 읽기 전용 `withdrawn_user_ids(db, user_ids) -> set[str]`을 **추가**했다(기존 함수 불변). 원칙상 auth 담당에게 요청해야 하나 이슈가 "auth 탈퇴 연쇄 확인"을 명시해 최소 추가로 처리 — 마음에 안 들면 이 함수만 auth PR로 옮기면 된다.
   - **recommend 경계값(루트 확인)**: 구성원이 전부 탈퇴하면 N=0이고 `recommend.core.required_count(0)`은 0 → `ready=True`. 이슈 문구("반응 가능 인원이 없으면 준비 판정이 안 걸린다")와 다르다. 도달 경로가 "마지막 구성원 탈퇴"뿐이라(요청할 사람이 없음) 손대지 않았다. 바꾸려면 recommend 담당 몫.
+
+---
+
+## #465 — PATCH /maps/{mapId} 지도 수정 (2026-10-13)
+
+**구현**: 보낸 필드만 바꾼다. `core.validate_map_update`가 기존 값에 합친 결과를 `validate_map_create`로 검사한다
+(종료일만 보내도 기존 시작일과 비교). region은 바꾸기만, 지우기 없음(명시적 null은 422). 빈 객체·null 값은
+`MapUpdateRequest`의 model_validator가 422로 막는다. 방장만(`require_on_map("map.settings.edit")`, 구성원 403,
+비구성원·삭제된 지도 404). 지도 행을 `FOR UPDATE`로 잠가 동시 수정이 줄을 선다. `map.updated`를 수정과
+같은 트랜잭션에 기록하고 payload는 요청자 무관 필드(map_id·title·날짜·region?)만 싣는다.
+`Permissions.can_edit`는 `core.map_permissions`가 `map.settings.edit` 판정으로 채운다(방장 true, 구성원 false).
+응답은 `_map_response`(요청자 기준 Map, 방장이라 `next_owner` 포함).
+
+**기존 테스트 수정**: `permissions`를 dict로 통째 비교하던 `test_core.py`·`test_delete_leave_api.py`에 `can_edit`을 더했다.
+**통합**: `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 PATCH 항목 제거, 골든 패스·권한 행렬(`_endpoints`)에 호출 추가,
+구성원 403 테스트 추가.
+
+**루트 확인 사항 없음.** 스펙·권한 모델은 그대로 따랐다. (참고: realtime 테스트 4건은 이 PR과 무관하게 develop에서도 실패한다.)
+복잡도 예상 2 / 실제 2.
