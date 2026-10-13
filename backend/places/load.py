@@ -46,10 +46,13 @@ def read_csv_rows(path: Path, encoding: str | None = None) -> list[dict[str, str
 def load_permit(db: Session, path: Path, *, crs: str, encoding: str | None, seoul_only: bool = True) -> list[str]:
     rows, report = ingest.parse_permit_rows(read_csv_rows(path, encoding), crs=crs, seoul_only=seoul_only)
     result = repository.upsert_places(db, rows)
-    return report.lines() + [
+    lines = report.lines() + [
         f"DB: 신규 {result.inserted}, 갱신 {result.updated}, 폐업으로 변경 {result.closed_marked}, "
         f"폐업(신규라 적재 안 함) {result.closed_ignored}"
     ]
+    if result.category_kept:
+        lines.append(f"  ! 다른 분류로 이미 있음 {result.category_kept}행 — 분류를 바꾸지 않고 건너뛰었다")
+    return lines
 
 
 def _place_db_lines(result: repository.PlaceUpsertResult) -> list[str]:

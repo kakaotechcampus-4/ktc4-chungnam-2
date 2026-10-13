@@ -435,3 +435,39 @@ def test_label_json_reads_both_rest_and_cafe_prefixes():
                {"place_id": "other_X", "labels": {"quiet": {"value": "true"}}}]
     got = [(r["source"], r["source_id"]) for r in ingest.curated_labels_to_rows(entries)]
     assert got == [("permit", "R1"), ("permit", "3000000-101-1995-02376"), ("", "")]
+
+
+# ---- 인허가 '분류' 열(#499) ----
+
+def _permit_row(source_id, type_, category=None, x="204888.1178", y="449139.2331"):
+    row = {"관리번호": source_id, "사업장명": f"가게{source_id}", "영업상태명": "영업/정상", "업태구분명": type_,
+           "도로명전체주소": "서울특별시 성동구 아차산로 1", "좌표정보(X)": x, "좌표정보(Y)": y}
+    if category is not None:
+        row["분류"] = category
+    return row
+
+
+def test_category_column_takes_priority_over_business_type():
+    rows, _ = ingest.parse_permit_rows([_permit_row("A1", "커피숍", "음식점"), _permit_row("A2", "한식", "카페")])
+    assert {r.source_id: r.category for r in rows} == {"A1": "음식점", "A2": "카페"}
+
+
+def test_category_column_rescues_types_missing_from_the_table():
+    rows, report = ingest.parse_permit_rows([_permit_row("B1", "중국식", "음식점")])
+    assert [r.category for r in rows] == ["음식점"] and not report.skipped
+
+
+@pytest.mark.parametrize("raw", [None, "", "관광지", "숙소"])
+def test_missing_or_odd_category_falls_back_to_business_type(raw):
+    rows, _ = ingest.parse_permit_rows([_permit_row("C1", "커피숍", raw), _permit_row("C2", "한식", raw)])
+    assert {r.source_id: r.category for r in rows} == {"C1": "카페", "C2": "음식점"}
+
+
+def test_odd_category_with_unmapped_type_is_still_skipped():
+    rows, report = ingest.parse_permit_rows([_permit_row("D1", "감성주점", "관광지")])
+    assert rows == [] and report.skipped["업태 대응표에 없음"] == 1
+
+
+def test_rows_without_coordinates_are_skipped_even_with_category_column():
+    rows, report = ingest.parse_permit_rows([_permit_row("E1", "한식", "음식점", x="", y="")])
+    assert rows == [] and report.skipped["좌표 없음"] == 1
