@@ -580,12 +580,12 @@ def _fact_rows(db):
     )
 
 
-def test_cafes_load_as_cafe_category_and_skip_unknown_types_and_missing_coordinates(db_session):
+def test_cafes_load_as_cafe_category_for_any_type_and_skip_missing_coordinates(db_session):
     lines = _cafes(db_session)
     rows = db_session.execute(select(Place)).scalars().all()
-    assert len(rows) == 8 and {p.category for p in rows} == {"카페"} and {p.source for p in rows} == {"permit"}
-    assert {p.source_id for p in rows} == {f"C00{i}" for i in range(1, 9)}
-    assert any("모르는 업태: 북카페: 1" in l for l in lines) and any("좌표 없음: 1" in l for l in lines)
+    assert len(rows) == 10 and {p.category for p in rows} == {"카페"} and {p.source for p in rows} == {"permit"}
+    assert {p.source_id for p in rows} == {f"C00{i}" for i in range(1, 9)} | {"C010", "C011"}
+    assert any("좌표 없음: 1" in l for l in lines) and not any("모르는 업태" in l for l in lines)
     near = api.search_nearby_own("카페", [Area(37.5446, 127.0562, 100)], db=db_session)
     assert len(near) == 1   # 카페 분류로 반경 검색에 잡힌다
     assert api.search_nearby_own("음식점", [Area(37.5446, 127.0562, 100)], db=db_session) == []
@@ -595,9 +595,9 @@ def test_cafes_load_is_idempotent(db_session):
     _cafes(db_session, labels=CAFE_LABELS_JSON)
     places, facts = (db_session.scalar(select(func.count()).select_from(t)) for t in (Place, PlaceFact))
     lines = _cafes(db_session, labels=CAFE_LABELS_JSON)
-    assert db_session.scalar(select(func.count()).select_from(Place)) == places == 8
+    assert db_session.scalar(select(func.count()).select_from(Place)) == places == 10
     assert db_session.scalar(select(func.count()).select_from(PlaceFact)) == facts
-    assert any("신규 0, 갱신 8" in l for l in lines)
+    assert any("신규 0, 갱신 10" in l for l in lines)
 
 
 def test_cafe_labels_json_and_csv_paths_give_the_same_result(db_session):
@@ -615,6 +615,18 @@ def test_cafes_command_accepts_labels_csv_too(db_session):
     lines = _cafes(db_session, labels=CAFE_LABELS_CSV)
     assert len(_fact_rows(db_session)) == 6
     assert any("장소를 못 찾아 건너뜀 1" in l for l in lines)   # C404: 장소 없는 라벨
+
+
+def test_cafes_do_not_overwrite_the_category_of_an_existing_place(db_session):
+    """새 카페 파일의 관리번호가 이미 음식점으로 있으면 분류를 바꾸지 않고 건너뛰며 경고한다(#463)."""
+    db_session.add(Place(source="permit", source_id="C001", name="기존 식당", category="음식점", status="open",
+                         geom=repository._point(37.5446, 127.0562)))
+    db_session.flush()
+    lines = _cafes(db_session)
+    kept = db_session.execute(select(Place).where(Place.source_id == "C001")).scalar_one()
+    assert kept.category == "음식점" and kept.name == "기존 식당"
+    assert db_session.scalar(select(func.count()).select_from(Place)) == 10
+    assert any("다른 분류로 이미 있음 1행" in l for l in lines) and any("신규 9, 갱신 0" in l for l in lines)
 
 
 def test_cafes_cli_dry_run_writes_nothing(db_session, capsys):

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import pytest
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
-    PLACES, _pin, members, own_db, place_ids, real_client,
+    PLACES, _pin, plan_with, members, own_db, place_ids, real_client,
 )
 from places import repository
 from places.ingest import LabelRow, PlaceRow
@@ -24,7 +24,6 @@ GRILL = "성수 갈빗집"
 @pytest.fixture()
 def korean_no_grill_planner(monkeypatch):
     """② 대역 — REASON은 조건 두 개(한식 피함, 고기구이 원함), 나머지 글은 조건 없음. 입력 글마다 줄 묶음."""
-    import llm.service as llm_service
     from llm.schemas import EvidenceLine
 
     def planner(raw_reasons):
@@ -37,7 +36,7 @@ def korean_no_grill_planner(monkeypatch):
                 out.append([EvidenceLine(**{**reason, "fact_key": None, "wants": None})])
         return out
 
-    monkeypatch.setattr(llm_service, "get_evidence_planner", lambda: planner)
+    plan_with(monkeypatch, planner)
 
 
 def _label(db, facts_by_sid):

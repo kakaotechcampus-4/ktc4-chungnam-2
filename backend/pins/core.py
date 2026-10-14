@@ -97,11 +97,6 @@ def is_duplicate(existing_place_ids: set[str], place_id: str | None) -> bool:
     return place_id in existing_place_ids
 
 
-def is_visible_to(visibility: str, created_by: str, viewer_id: str) -> bool:
-    """가드레일 1의 단일 판정 지점 — public이거나 본인이 만든 핀만 보인다."""
-    return visibility == "public" or created_by == viewer_id
-
-
 def kind_after_unconfirm(origin: str) -> str:
     """확정 리스트에서 뺄 때 되돌릴 kind — 저장하지 않고 origin에서 파생한다
     (docs/data-model.md: kind가 바뀌는 유일한 경로는 확정 추가/제외, origin은 불변).
@@ -192,28 +187,19 @@ def _public_pin_payload(pin: Pin) -> dict:
     return pin.model_dump(mode="json", exclude_none=True, exclude={"my_reaction"})
 
 
-def pin_created_event(pin: Pin) -> Event | None:
-    """docs/events.md pin.created. visibility='private'이면 발행하지 않는다(가드레일 1) —
-    private 후보가 전체 채널로 새는 순간 「지도에 올리기」 전에 팀 전체가 보게 된다."""
-    if pin.visibility == "private":
-        return None
+def pin_created_event(pin: Pin) -> Event:
+    """docs/events.md pin.created."""
     return Event(map_id=pin.map_id, channel="public", type="pin.created", payload=_public_pin_payload(pin))
 
 
-def pin_published_event(pin: Pin) -> Event | None:
+def pin_published_event(pin: Pin) -> Event:
     """docs/events.md pin.published — recommend의 「지도에 올리기」 전용(pin_created_event와
-    페이로드는 같고 type만 다르다). 게시는 항상 public이라 private 분기는 없다(api.create_ai_pin이
-    이미 visibility='public'으로 INSERT함) — 그래도 방어적으로 같은 체크를 유지한다."""
-    if pin.visibility == "private":
-        return None
+    페이로드는 같고 type만 다르다)."""
     return Event(map_id=pin.map_id, channel="public", type="pin.published", payload=_public_pin_payload(pin))
 
 
-def pin_deleted_event(pin_id: str, map_id: str, visibility: str) -> Event | None:
-    """docs/events.md pin.deleted — 페이로드는 {pin_id}뿐이다. pin.created와 마찬가지로
-    private 핀의 삭제 사실도 전체 채널로 새면 안 된다."""
-    if visibility == "private":
-        return None
+def pin_deleted_event(pin_id: str, map_id: str) -> Event:
+    """docs/events.md pin.deleted — 페이로드는 {pin_id}뿐이다."""
     return Event(map_id=map_id, channel="public", type="pin.deleted", payload={"pin_id": pin_id})
 
 
@@ -260,17 +246,14 @@ def validate_chip_ids(category: str, reason_chip_ids: list[str] | None) -> None:
 def reaction_changed_event(
     pin_id: str,
     map_id: str,
-    visibility: str,
     reaction_summary: ReactionSummary,
     user_id: str,
     display_name: str | None,
     reaction_type: str | None,
-) -> Event | None:
+) -> Event:
     """docs/events.md reaction.changed — 페이로드는 {pin_id, reaction_summary, user_id, display_name, type}.
     type은 삭제면 None이다. 사유(reason_text·칩)와 my_reaction은 싣지 않는다 — 전체 채널이라 구독자 전원이
-    본다. pin.created/pin.deleted와 같은 이유로 private 핀의 반응 변화도 새면 안 된다(가드레일 1)."""
-    if visibility == "private":
-        return None
+    본다."""
     return Event(
         map_id=map_id, channel="public", type="reaction.changed",
         payload={

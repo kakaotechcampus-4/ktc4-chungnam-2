@@ -222,7 +222,7 @@ class TestMultipleConditions:
             PlannedCondition(fact_key=key, wants=True)
 
     def test_passthrough_planner_returns_one_group_per_input(self):
-        groups = service._passthrough_planner([_reason(text="a"), _reason(text="b", fact_key="quiet")])
+        groups = service.passthrough_planner([_reason(text="a"), _reason(text="b", fact_key="quiet")])
 
         assert [_keys(g) for g in groups] == [[(None, None)], [("quiet", None)]]
 
@@ -409,10 +409,8 @@ class TestMakeClient:
     def test_real_planner_with_missing_config_raises_plan_failed(self, monkeypatch):
         monkeypatch.setattr(llm_client, "settings", SimpleNamespace(elice_ml_api_base_url="http://x", elice_ml_api_key="", llm_model="m"))
 
-        monkeypatch.setattr(service, "get_evidence_planner", service._real_evidence_planner)
-
         with pytest.raises(PlanEvidenceFailed):
-            plan_evidence([_reason()])
+            plan_evidence([_reason()], planner=service.real_evidence_planner)
 
     def test_call_planner_passes_indexed_payload(self):
         client = FakeClient(parsed=_output(_planned()))

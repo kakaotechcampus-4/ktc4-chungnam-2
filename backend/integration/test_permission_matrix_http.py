@@ -51,7 +51,10 @@ def _endpoints(w):
     return [
         ("GET map", "GET", f"/maps/{m}", None),
         ("GET members", "GET", f"/maps/{m}/members", None),
+        ("PATCH map", "PATCH", f"/maps/{m}", {"title": "새 제목"}),
         ("POST invite", "POST", f"/maps/{m}/invite", None),
+        ("GET invites", "GET", f"/maps/{m}/invites", None),
+        ("DELETE invite", "DELETE", f"/invites/{w['token']}", None),
         ("GET counts", "GET", f"/maps/{m}/counts", None),
         ("GET pins", "GET", f"/maps/{m}/pins", None),
         ("POST pin", "POST", f"/maps/{m}/pins", w["new_pin"]),
@@ -140,3 +143,23 @@ def test_control_member_reads_every_get_endpoint(world):
     bad = [f"{n}: {world['a'].get(p).status_code}" for n, p in reads if world["a"].get(p).status_code != 200]
     assert not bad, bad
     assert len(reads) >= 8
+
+
+def test_only_the_owner_can_list_and_revoke_invite_links(world):
+    """초대 링크 목록·끄기(#467, invite.revoke)는 방장만 — 구성원은 403이고 링크는 그대로 켜져 있다."""
+    a, b, m, token = world["a"], world["b"], world["map"], world["token"]
+    assert b.get(f"/maps/{m}/invites").status_code == 403
+    assert b.delete(f"/invites/{token}").status_code == 403
+    assert a.get(f"/invites/{token}").status_code == 200
+    assert a.get(f"/maps/{m}/invites").status_code == 200
+    assert a.delete(f"/invites/{token}").status_code == 204
+    assert a.get(f"/invites/{token}").status_code == 410
+
+
+def test_only_the_owner_can_edit_the_map(world):
+    """지도 수정(#465, map.settings.edit)은 방장만 — 구성원은 403이고 아무것도 바뀌지 않는다."""
+    a, b, m = world["a"], world["b"], world["map"]
+    assert b.patch(f"/maps/{m}", json={"title": "b가 바꿈"}).status_code == 403
+    assert a.get(f"/maps/{m}").json()["title"] != "b가 바꿈"
+    assert b.get(f"/maps/{m}").json()["permissions"]["can_edit"] is False
+    assert a.patch(f"/maps/{m}", json={"title": "a가 바꿈"}).status_code == 200

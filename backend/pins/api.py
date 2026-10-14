@@ -56,7 +56,8 @@ def create_ai_pin(
     PlaceSource)로 INSERT 전에 검증한다. 없으면 NULL.
 
     permissions 계산에 쓸 Principal이 없어(호출자가 아직 없다) 게시자 본인을 map의 member로
-    간주해 구성한다 — 게시(recommend.publish)는 이미 member 액션이라 이 전제가 깨질 일이 없다.
+    간주해 구성한다 — 게시(recommend.publish)는 구성원만 할 수 있어(비구성원은 can()이 먼저
+    거른다) 이 전제가 깨질 일이 없다.
     recommend가 실제로 붙을 때 자신이 이미 resolve한 Principal을 넘기도록 바꾸는 편이 더
     정확하다(for_Root.md에 남김)."""
     principal = Principal(user_id=created_by, map_id=map_id, role="member")
@@ -145,12 +146,9 @@ def unmark_confirmed(db: Session, *, pin_id: str, map_id: str) -> PinMutation:
 
 
 def get_pin_for_viewer(db: Session, *, pin_id: str, viewer_id: str) -> PinRow:
-    """존재·가시성 확인. 없으면 404 NOT_FOUND, 남의 private 핀은 404 AI_PIN_PRIVATE
-    (둘 다 404라 호출자 입장에서 구분할 필요가 없다 — 존재를 흘리지 않는다는 원칙은 동일)."""
-    pin_row = service.get_pin_or_404(db, pin_id)
-    if pin_row.visibility == "private" and pin_row.created_by != viewer_id:
-        raise AppError("AI_PIN_PRIVATE")
-    return pin_row
+    """존재 확인. 없으면 404 NOT_FOUND. viewer_id는 호출부 호환을 위해 남긴다(v1은 private 핀이 없어
+    보는 사람에 따라 달라지지 않는다)."""
+    return service.get_pin_or_404(db, pin_id)
 
 
 def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, principal: Principal) -> Pin:
@@ -301,16 +299,13 @@ def list_liked_pins(db: Session, *, map_id: str, category: str, requested_by: st
     받은 것의 place_id와, 그 핀에 ♥를 누른 서로 다른 user_id 집합(`member_ids`)을 핀 하나당 한 항목으로
     돌려준다. 라벨은 pins가 알 필요 없다 — recommend가 place_id로 places의 라벨을 직접 읽는다.
 
-    가드레일 1 — requested_by(이번 run의 요청자)에게 보이는 핀만 포함한다(공개 핀 + 본인의 비공개
-    핀, `service.list_pins`의 가시성 판정과 같다). 안 그러면 다른 구성원의 비공개 AI 후보에 붙은
-    ♥가 요청자의 선호 프로필에 섞여 남의 비공개 후보가 순위에 영향을 준다."""
+    v1은 private 핀 행이 없어 requested_by로 거르지 않는다(호출부 호환을 위해 인자만 남긴다)."""
     rows = db.execute(
         select(PinRow.id, PinRow.place_id, ReactionRow.user_id)
         .select_from(PinRow)
         .join(ReactionRow, ReactionRow.pin_id == PinRow.id)
         .where(
             PinRow.map_id == map_id, PinRow.category == category, PinRow.deleted_at.is_(None),
-            or_(PinRow.visibility == "public", PinRow.created_by == requested_by),
             ReactionRow.type == "like",
             PinRow.place_id.is_not(None),   # live 핀(#382)은 장소 라벨이 없어 선호 신호가 못 된다
         )
@@ -359,3 +354,9 @@ def delete_reactions_by_user_in_map(db: Session, *, user_id: str, map_id: str) -
         delete(ReactionRow).where(ReactionRow.user_id == user_id, ReactionRow.pin_id.in_(pin_ids_on_map))
     )
     return result.rowcount
+
+
+def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+    """지도 정리(maps.purge, #431)가 부른다 — 이 지도들의 reactions·pins만 지우고 테이블 이름 → 지운 행 수를
+    돌려준다. shortlist_items가 핀을 참조하므로 shortlist.api.purge_map_data를 먼저 불러야 한다. 커밋하지 않는다."""
+    return service.purge_map_data(db, map_ids=map_ids)

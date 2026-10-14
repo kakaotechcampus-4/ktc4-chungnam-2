@@ -1,7 +1,7 @@
 """backend/llm 비즈니스 로직 — 모델 호출 3곳(plan_evidence/label_place/rank_candidates).
 
-② plan_evidence는 LLM_MODE=real일 때 Luna를 실제로 부른다(#116). LLM_MODE=dev면 기존
-스텁(입력을 스키마로 검증·통과)이다. ③-a-1 label_place, ③-b rank_candidates는 아직 고정 응답
+② plan_evidence는 넘겨받은 planner로 부른다 — real_evidence_planner는 Luna를 실제로 부르고(#116), 기존
+passthrough_planner는 입력을 스키마로 검증·통과하는 스텁이다(LLM_MODE로 고르는 곳은 recommend/deps.py, #219). ③-a-1 label_place, ③-b rank_candidates는 아직 고정 응답
 스텁이다(backend/llm/CLAUDE.md "우선순위" 절) — 시그니처는 최종 형태(입력=구조화 가능한 값,
 출력=schemas.py 스키마)로 미리 맞춰둔다.
 
@@ -13,12 +13,9 @@
 import logging
 import re
 import unicodedata
-from functools import partial
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from common.adapters import select
 from common.errors import AppError
-from common.settings import settings
 from llm.client import LlmCallError, call_planner, get_client
 from llm.schemas import (
     EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, RankedCandidate,
@@ -149,7 +146,7 @@ def merge_planned(
     return groups
 
 
-def _passthrough_planner(raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[EvidenceLine]]:
+def passthrough_planner(raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[EvidenceLine]]:
     return [[EvidenceLine(**reason)] for reason in raw_reasons]
 
 
@@ -159,7 +156,7 @@ PLAN_BATCH_SIZE = 10
 
 
 def _model_planner(client: Any, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[EvidenceLine]]:
-    _passthrough_planner(raw_reasons)  # 입력 shape부터 검증 — 깨진 입력으로 모델을 부르지 않는다
+    passthrough_planner(raw_reasons)  # 입력 shape부터 검증 — 깨진 입력으로 모델을 부르지 않는다
     groups: list[list[EvidenceLine]] = []
     for start in range(0, len(raw_reasons), PLAN_BATCH_SIZE):
         batch = raw_reasons[start:start + PLAN_BATCH_SIZE]
@@ -169,35 +166,28 @@ def _model_planner(client: Any, raw_reasons: Sequence[Mapping[str, Any]]) -> lis
     return groups
 
 
-def _dev_evidence_planner() -> EvidencePlanner:
-    return _passthrough_planner
-
-
-def _real_evidence_planner() -> EvidencePlanner:
-    return partial(_model_planner, get_client())
-
-
-get_evidence_planner = select(
-    "llm.EvidencePlanner", settings.llm_mode,
-    {"dev": _dev_evidence_planner, "real": _real_evidence_planner}, "#116",
-)
+def real_evidence_planner(raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[EvidenceLine]]:
+    """LLM_MODE=real의 ② — Luna를 부른다. 클라이언트는 호출 때 만든다(설정이 비면 LlmCallError →
+    plan_evidence가 PlanEvidenceFailed로 바꾼다). dev는 passthrough_planner다 — 고르는 곳은 recommend/deps.py."""
+    return _model_planner(get_client(), raw_reasons)
 
 
 def plan_evidence(
-    raw_reasons: Sequence[Mapping[str, Any]], *, planner: Optional[EvidencePlanner] = None
+    raw_reasons: Sequence[Mapping[str, Any]], *, planner: EvidencePlanner
 ) -> list[list[EvidenceLine]]:
     """② 사유 → 실격/선호/반경 구조화.
 
     raw_reasons: recommend가 모은 reaction/manual 원문(EvidenceLine 필드와 동일 shape의 dict).
     반환: 입력 글마다 근거 줄 묶음 하나 — 바깥 리스트는 입력과 개수·순서가 같고(i번째 묶음 = i번째 입력),
     묶음마다 1줄 이상이다. 글 하나에 조건이 여럿이면 묶음 안에 조건마다 줄이 하나씩 있다(#419).
-    planner를 안 넘기면 LLM_MODE로 고른 구현을 쓴다(dev=검증·통과 스텁, real=Luna 호출).
+    planner는 호출하는 쪽이 넘긴다(dev=passthrough_planner 검증·통과 스텁, real=real_evidence_planner Luna 호출).
+    LLM_MODE로 고르는 일은 recommend/deps.py가 한다(#219).
     호출·검증이 실패하면 PlanEvidenceFailed — 빈 결과로 바꿔 삼키지 않는다.
     """
     if not raw_reasons:
         return []
     try:
-        return (planner or get_evidence_planner())(raw_reasons)
+        return planner(raw_reasons)
     except (LlmCallError, ValueError) as exc:
         # pydantic.ValidationError는 ValueError의 하위 클래스다(입력 dict가 스키마에 안 맞는 경우 포함).
         # str(exc)는 응답에 넣지 않는다 — ValidationError 문자열에는 입력값(사용자 사유 원문)이 들어 있다(#390).
