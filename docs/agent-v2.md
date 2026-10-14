@@ -605,14 +605,18 @@ def run_tick(now: datetime) -> None:
     service.daily_cleanup_if_due(now)    # 하루 한 번: agent_runs 30일 초과분 삭제
 ```
 
+event_log를 읽는 곳은 realtime뿐이다(data-model.md common 절). 그래서 claim_maps는 event_log를 조인하지 않고 두 단계로 나눈다(2026-10-15 개정).
+
+1. `realtime.api.latest_seq_by_map(db)`로 지도별 가장 큰 seq와 그 이벤트의 created_at을 받는다(event_log 보존 24시간 안의 지도만). 커서 행이 없는 지도는 이때 upsert한다.
+2. 아래 SQL로 lease를 잡는다. `:changed`는 1단계 결과 중 `max_seq > last_seen_seq`인 지도다.
+
 ```sql
 -- service.claim_maps (개념 SQL)
 SELECT c.map_id FROM agent_cursors c
 LEFT JOIN agent_settings s ON s.map_id = c.map_id   -- agent 소유 테이블
 WHERE coalesce(s.enabled, true)
   AND (c.lease_until IS NULL OR c.lease_until < :now)
-  AND ( c.last_seen_seq < (SELECT max(seq) FROM event_log e WHERE e.map_id = c.map_id)
-        OR c.next_check_at <= :now )
+  AND ( c.map_id = ANY(:changed) OR c.next_check_at <= :now )
 ORDER BY c.next_check_at NULLS LAST
 LIMIT :limit
 FOR UPDATE OF c SKIP LOCKED;
@@ -621,7 +625,7 @@ FOR UPDATE OF c SKIP LOCKED;
 
 maps 테이블은 agent 소유가 아니므로 조인하지 않는다. 여행 종료와 지도 삭제(`maps.deleted_at`, #369) 판정은 observe_map이 스냅샷에서 한다(12.4의 2단계 직후). 끝난 지도는 커서만 올리고 next_check_at을 null로 둔 채 끝낸다. 그러면 새 이벤트가 올 때만 다시 잡히고, 그때도 바로 끝난다.
 
-agent_cursors 행은 지도 생성 시가 아니라 첫 이벤트를 본 시점에 만든다(초안). 행이 없는 지도는 event_log에서 찾아 upsert한다.
+agent_cursors 행은 지도 생성 시가 아니라 첫 이벤트를 본 시점에 만든다(초안). 행이 없는 지도는 1단계 결과로 upsert한다.
 
 ### 12.3 개입 정책
 
@@ -671,7 +675,7 @@ def observe_map(map_id: str, now: datetime) -> None:
 
     if snap.map.deleted or snap.today > snap.map.end_date:   # 삭제된 지도(#369) 또는 여행 종료: 관찰하지 않는다
         with session_scope() as db:
-            service.advance_cursor(db, map_id, snap.visible_seqs, next_check_at=None)
+            service.advance_cursor(db, map_id, snap.latest_seq, next_check_at=None)
         return
 
     # 3. 탐지와 활성 제안 무효화 판단 (순수)
@@ -707,7 +711,10 @@ def observe_map(map_id: str, now: datetime) -> None:
         service.insert_run(db, map_id, snap, signals, blocked, priority_log, tool_log, outcome)
         if sug and not AGENT_SHADOW_MODE:
             record_event(db, agent_suggested_event(sug))
-        service.advance_cursor(db, map_id, snap.visible_seqs, next_check_at=core.next_check_at(snap, signals, hist, now, th))
+        nca = core.next_check_at(snap, signals, hist, now, th)
+        if core.has_recent_event(snap.latest_event_at, now):   # 12.5 보완: 늦은 커밋을 다음 tick에 한 번 더 본다
+            nca = now if nca is None else min(nca, now)
+        service.advance_cursor(db, map_id, snap.latest_seq, next_check_at=nca)
 
     # 8. 요약 (별도 흐름, 별도 트랜잭션)
     update_summary(map_id, snap, hist, now)
@@ -719,21 +726,17 @@ def observe_map(map_id: str, now: datetime) -> None:
 
 커서는 "이 지도는 event_log seq 몇 번까지 확인했다"를 적은 책갈피다. 메모리가 아니라 `agent_cursors`에 둔다. 배포나 오류로 프로세스가 다시 떠도 값이 남고, 인스턴스가 여러 개여도 하나다. 커서는 제안 저장과 같은 트랜잭션에서 올려서, 저장은 실패했는데 커서만 넘어가는 일이 없게 한다.
 
-seq는 커밋 순서와 다를 수 있다(events.md 4번). `realtime/core.py::advance`와 같은 원리로 빈자리 없는 앞부분까지만 올리되, 2초 대기 대신 tick 간격을 쓴다. 직전 tick에서도 있던 구멍은 롤백으로 보고 건너뛴다.
+**커서는 "본 것 중 가장 큰 seq"다(2026-10-15 개정).** 10/2 판은 realtime처럼 지도별로 seq가 빈자리 없이 이어지는지 보고 구멍에서 멈췄다. 그런데 event_log seq는 모든 지도가 함께 쓰는 번호라, 지도 하나의 seq에는 다른 지도 몫의 빈 번호가 늘 있다. 그대로 두면 그 빈 번호를 커밋 순서 구멍(events.md 4번)으로 착각해 tick마다 하나씩만 넘어가고, 그동안 지도가 계속 "새 이벤트 있음"으로 잡힌다(#522 realtime 보고).
+
+- 관찰이 끝나면 `last_seen_seq`를 스냅샷 시점의 가장 큰 seq로 올린다. 구멍은 추적하지 않는다.
+- 놓칠 수 있는 것: 더 작은 seq를 받은 트랜잭션이 관찰 뒤에 커밋되면 그 이벤트로는 관찰이 시작되지 않는다. 상태는 늘 도메인 테이블에서 읽으므로 데이터를 잃지는 않고, 다음 이벤트나 시간 점검 때 반영된다. realtime도 2초 넘게 늦은 커밋은 건너뛴다.
+- 보완: 관찰할 때 그 지도의 가장 최근 이벤트가 `RECENT_EVENT_GRACE`(2초) 안에 생겼으면, 커서는 그대로 올리되 `next_check_at`을 지금으로 당겨 다음 tick에 한 번 더 관찰한다. 그사이 늦게 커밋된 이벤트도 그 관찰에 들어간다. 상태를 더 두지 않는 조건 한 줄이다.
 
 ```python
-def advance_cursor_value(last_seen: int, visible: list[int], prev_gap: int | None) -> tuple[int, int | None]:
-    expected = last_seen + 1
-    for seq in sorted(s for s in visible if s > last_seen):
-        if seq == expected:
-            expected += 1
-            continue
-        if prev_gap is not None and prev_gap == expected:   # 직전 tick에서 본 구멍
-            expected = seq + 1
-            continue
-        return expected - 1, expected                         # 여기서 멈추고 구멍을 기록
-    return expected - 1, None
-# 반환값: (새 last_seen_seq, 새 gap_seq)
+RECENT_EVENT_GRACE = timedelta(seconds=2)   # realtime/core.py GRACE와 같은 값
+
+def has_recent_event(latest_event_at: datetime | None, now: datetime) -> bool:
+    return latest_event_at is not None and now - latest_event_at < RECENT_EVENT_GRACE
 ```
 
 lease는 12.2의 SQL이 잡고, 관찰이 끝나면 `release_lease`가 비운다. 프로세스가 중간에 죽어도 `LEASE_SEC` 뒤에는 다른 실행이 가져갈 수 있다.
@@ -756,7 +759,7 @@ lease는 12.2의 SQL이 잡고, 관찰이 끝나면 `release_lease`가 비운다
 - 공개 데이터만 담는다: maps(삭제 여부 포함), memberships, 삭제되지 않은 핀, 반응과 사유(삭제된 핀의 사유 포함, 8절), shortlist_items. 모두 다른 모듈의 `api.py`로 읽는다.
 - run은 카테고리별 마지막 생성 시각만 담는다(`has_run_since`용). 후보와 근거는 담지 않는다.
 - 구성원 별칭(m1, m2 …)을 여기서 매긴다.
-- `visible_seqs`: 이 지도의 event_log 중 커서 이후 보이는 seq 목록.
+- `latest_seq`, `latest_event_at`: 이 지도의 가장 큰 seq와 그 이벤트의 created_at(`realtime.api.latest_seq_by_map`, 12.5).
 - event_log는 "바뀐 게 있는가"와 커서 계산에만 쓴다. 상태는 도메인 테이블에서 읽는다.
 
 ### 12.8 상태 재확인
@@ -793,7 +796,7 @@ CREATE TABLE agent_settings (
 CREATE TABLE agent_cursors (
   map_id            text PRIMARY KEY,
   last_seen_seq     bigint NOT NULL DEFAULT 0,
-  gap_seq           bigint NULL,          -- 직전 tick에서 멈춘 구멍 (12.5)
+  -- gap_seq: 10/2 판의 구멍 추적용. 12.5 개정으로 쓰지 않는다. 0029에 이미 있어 #515 마이그레이션에서 지운다
   last_observed_at  timestamptz NULL,
   next_check_at     timestamptz NULL,     -- 시간 기준이 가장 먼저 만료될 시각
   lease_until       timestamptz NULL
@@ -991,7 +994,7 @@ FE는 슬롯을 다루지 않는다. 서버가 렌더한 문장을 그대로 보
 6. 정책: fingerprint 중복, 백오프 2, 6, 24시간과 수락 초기화와 만료 미포함, no_reaction 하루 1회, 모델 상한(구성원 수 × 4, KST 자정), 상한 도달 시 코드 유형 통과와 fallback_order.
 7. 상태 재확인: 모델 호출 중 그 핀이 확정되거나 반응이 바뀌면 stale로 저장하지 않는다.
 8. 활성 제안 1개: 동시에 두 관찰이 저장해도 active는 하나다(부분 유니크 인덱스).
-9. 커서: 구멍을 처음 보면 멈추고 gap_seq를 기록, 다음 tick에 같은 구멍이면 건너뜀. 저장 트랜잭션이 롤백되면 커서도 그대로.
+9. 커서: 관찰 뒤 last_seen_seq가 스냅샷 시점의 가장 큰 seq가 된다. 다른 지도 몫의 빈 번호가 있어도 다음 tick에 다시 잡히지 않는다. 가장 최근 이벤트가 2초 안이면 next_check_at이 지금으로 당겨진다. 저장 트랜잭션이 롤백되면 커서도 그대로.
 10. lease: 동시에 두 run_tick이 돌아도 같은 지도는 한 번만 관찰한다.
 11. 세션: llm 스텁이 호출되는 동안 열린 DB 세션이 없다.
 12. 권한: 비구성원 404. advice는 요청자가 아니면 403. accept와 dismiss 경합 시 두 번째는 409.
@@ -1017,7 +1020,7 @@ AI 담당
 - [ ] #513 `backend/agent` 골격, deps.py(Gateway), models.py와 마이그레이션 (13절 7개 테이블, 지금 head 다음 번호)
 - [ ] #511 pins.api에 반응 표 조회 함수 추가 (pins 모듈 규칙을 따른다). 사유 조회는 기존 `list_reasoned_reactions`를 쓴다
 - [ ] #512 maps.api에 지도 행 잠금과 삭제 확인 함수(`lock_map_if_alive`) 추가, 지도 정리와 탈퇴에 agent 연결 (maps, auth 담당 리뷰)
-- [ ] #522 스냅샷과 커서용 읽기 함수: maps(지도와 구성원), shortlist(확정 항목), recommend(카테고리별 마지막 run 시각), pins(사유 조회에 reaction_id와 updated_at), realtime(event_log seq)
+- [ ] #522 스냅샷과 커서용 읽기 함수: maps(지도와 구성원), shortlist(확정 항목), recommend(카테고리별 마지막 run 시각), pins(사유 조회에 reaction_id와 updated_at), realtime(`latest_seq_by_map`, 12.5)
 - [ ] #514 snapshot.py, core.py의 탐지기 4종, 기준 시간, fingerprint와 evidence_hash, check_policy
 - [ ] #515 run_tick, observe_map(모델 단계는 건너뜀), 개발용 반복 작업(`AGENT_LOOP_IN_PROCESS`)
 - [ ] 커서, lease, agent_runs 기록, 정리 작업, `purge_map_data`, `delete_by_user`와 각 정리 흐름에 연결
