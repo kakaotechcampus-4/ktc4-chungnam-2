@@ -460,6 +460,15 @@ def lock_member_maps(db: Session, *, user_id: str) -> list[str]:
     ).scalars().all())
 
 
+def lock_map_if_alive(db: Session, *, map_id: str) -> bool:
+    """지도 행을 FOR UPDATE로 잠그고 삭제되지 않았으면 True(#512). 삭제된 지도도 행은 잠근다 — 잠근 뒤에
+    deleted_at을 봐야 삭제와 줄을 선 결과다. 지도가 없으면 False. 커밋하지 않는다(잠금은 트랜잭션 끝까지)."""
+    deleted_at = db.execute(
+        select(MapRow.deleted_at).where(MapRow.id == map_id).with_for_update()
+    ).one_or_none()
+    return deleted_at is not None and deleted_at[0] is None
+
+
 def transfer_or_delete_owned_maps(db: Session, *, user_id: str) -> None:
     """탈퇴(#369 10번) — 방장인 지도마다 후임에게 넘기고, 넘길 사람이 없으면 지도를 삭제한다.
     탈퇴자의 멤버십 행은 핀 작성자 표시용으로 남긴다(#245) — 강등만 하고 지우지 않는다.
