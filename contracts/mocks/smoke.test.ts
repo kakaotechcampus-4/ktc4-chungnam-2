@@ -177,6 +177,7 @@ describe("에러 시나리오", () => {
     expect(pin.lat).toBeUndefined();
     expect(pin.lng).toBeUndefined();
     expect(pin.place_name).toBeUndefined();
+    expect(pin.place_url).toBe("https://place.map.kakao.com/live-1");   // #445 — 실시간 핀도 카카오 장소 페이지 링크
     const dup = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify(body) });
     expect(dup.status).toBe(409);
     // 반응은 자체 DB 핀과 똑같이 된다
