@@ -60,7 +60,7 @@ export function buildBaseState(): StoreState {
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, against: 1 },
-      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: false },
     },
     [pinFood2]: {
       id: pinFood2,
@@ -77,7 +77,7 @@ export function buildBaseState(): StoreState {
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, against: 1 },
-      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: true },
     },
     [pinCafe1]: {
       id: pinCafe1,
@@ -94,7 +94,7 @@ export function buildBaseState(): StoreState {
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, against: 0 },
-      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: false },
     },
   };
 

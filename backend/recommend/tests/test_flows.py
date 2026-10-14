@@ -1700,3 +1700,77 @@ def test_restaurant_heart_convenience_labels_do_not_outrank_a_written_preference
     assert candidates["sushi"].reason == "선호 충족: 일식 (1/1명)"
     assert "선호 충족" not in candidates["buffet"].reason
     assert "franchise" not in {c["fact_key"] for c in candidates["buffet"].checks}  # ♥에서 빠진 키는 응답 체크에도 없다
+
+
+# ---------- #469 — 지난 추천 기록 ----------
+
+def _dt(day):
+    return datetime(2026, 10, day, tzinfo=timezone.utc)
+
+
+def _history(db_session, *, user="user_1", category=None, limit=20, map_id="map_1"):
+    return flows.list_runs(db_session, map_id=map_id, requested_by=user, category=category, limit=limit)
+
+
+def test_run_history_lists_only_my_runs_newest_first(db_session):
+    """가드레일 1 — 남의 run은 어떤 경우에도 목록에 없다. 다른 지도의 run도 없다."""
+    old = _make_run(db_session, requested_by="user_1", created_at=_dt(1))
+    new = _make_run(db_session, requested_by="user_1", created_at=_dt(3))
+    _make_run(db_session, requested_by="user_2", created_at=_dt(2))
+    _make_run(db_session, requested_by="user_1", map_id="map_other", created_at=_dt(4))
+
+    assert [h.id for h in _history(db_session)] == [str(new.id), str(old.id)]
+    assert [h.id for h in _history(db_session, user="user_2")] != []
+    assert all(h.id not in {str(new.id), str(old.id)} for h in _history(db_session, user="user_2"))
+    assert _history(db_session, user="user_3") == []
+
+
+def test_run_history_filters_by_category_and_limit(db_session):
+    _make_run(db_session, category="음식점", created_at=_dt(1))
+    cafe = _make_run(db_session, category="카페", created_at=_dt(2))
+    last = _make_run(db_session, category="음식점", created_at=_dt(3))
+
+    assert [h.id for h in _history(db_session, category="카페")] == [str(cafe.id)]
+    assert [h.id for h in _history(db_session, limit=1)] == [str(last.id)]
+
+
+def test_run_history_counts_candidates_and_published_in_one_pass(db_session):
+    done = _make_run(db_session, status="done", created_at=_dt(3))
+    for rank in (1, 2, 3):
+        _make_candidate(db_session, done, rank=rank, published_pin_id=uuid.uuid4() if rank == 1 else None)
+    running = _make_run(db_session, status="executing", created_at=_dt(2))
+    _make_candidate(db_session, running, rank=1)
+    _make_run(db_session, status="done", created_at=_dt(1))   # 후보 없는 done — 0/0
+
+    summaries = {h.id: h for h in _history(db_session)}
+    assert (summaries[str(done.id)].candidate_count, summaries[str(done.id)].published_count) == (3, 1)
+    assert (summaries[str(running.id)].candidate_count, summaries[str(running.id)].published_count) == (0, 0)  # done이 아니면 0
+    assert sorted((h.candidate_count, h.published_count) for h in summaries.values()) == [(0, 0), (0, 0), (3, 1)]
+    assert summaries[str(done.id)].attempt_no == 1 and summaries[str(done.id)].map_id == "map_1"
+
+
+def test_run_history_does_not_query_per_run(db_session):
+    from sqlalchemy import event
+
+    for day in range(1, 6):
+        run = _make_run(db_session, created_at=_dt(day))
+        _make_candidate(db_session, run)
+    statements = []
+    engine = db_session.get_bind()
+    listener = lambda conn, cursor, statement, *args: statements.append(statement)  # noqa: E731
+    event.listen(engine, "before_cursor_execute", listener)
+    try:
+        assert len(_history(db_session)) == 5
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+    assert len([s for s in statements if s.lstrip().upper().startswith("SELECT")]) == 1
+
+
+@pytest.mark.parametrize("status", ["collecting_evidence", "awaiting_region_confirm", "executing", "failed"])
+def test_get_result_before_done_is_409_run_not_finished(db_session, status):
+    run = _make_run(db_session, status=status)
+    _make_candidate(db_session, run)
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    with pytest.raises(AppError) as error:
+        flows.get_result(db_session, run_id=str(run.id), principal=principal, place_search=_FakePlaceSearch([]))
+    assert error.value.code == "RUN_NOT_FINISHED"

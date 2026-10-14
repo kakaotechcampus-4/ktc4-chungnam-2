@@ -50,7 +50,7 @@ export interface StoreState {
   candidates: Record<string, Candidate[]>; // runId -> candidates
   shortlist: Record<string, ShortlistItem[]>; // mapId -> items
   routes: Record<string, Route[]>; // mapId -> 마지막으로 계산된 동선 (#30, POST로만 갱신)
-  invites: Record<string, { mapId: string; expires_at: string }>; // token -> invite
+  invites: Record<string, { mapId: string; expires_at: string; created_at?: string; created_by?: string; revoked?: boolean; used_count?: number }>; // token -> invite (#467)
   eventLog: EventLogEntry[]; // realtime.ts SSE 핸들러가 폴링하는 대상
 }
 

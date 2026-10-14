@@ -116,3 +116,74 @@ def test_reorder_mismatch_reports_missing_unknown_duplicated():
     assert core.reorder_mismatch(["a", "b"], ["a"]) == {"duplicated": [], "missing": ["b"], "unknown": []}
     assert core.reorder_mismatch(["a"], ["a", "x"])["unknown"] == ["x"]
     assert core.reorder_mismatch(["a", "b"], ["a", "a", "b"])["duplicated"] == ["a"]
+
+
+# --- 확정 리스트 내보내기(#471) ---
+
+def _export_pin(**overrides):
+    from pins.schemas import Pin
+
+    return Pin(**{**_pin(), **overrides})
+
+
+def _live_pin(**overrides):
+    live = {"source": "live", "lat": None, "lng": None, "kakao_place_id": "kakao:555", "search_query": "성수 곱창", "memo": "맛있대"}
+    return _export_pin(**{**live, **overrides})
+
+
+def test_to_export_row_db_pin_uses_place_name_and_url_without_coordinates():
+    row = core.to_export_row(1, _export_pin(place_name="성수 칼국수", place_url="https://place.map.kakao.com/1", memo="웨이팅"))
+
+    assert row == core.ExportRow(1, "성수 칼국수", "음식점", "https://place.map.kakao.com/1", "웨이팅")
+
+
+def test_to_export_row_live_pin_uses_search_query_with_name_check_suffix_and_kakao_link():
+    row = core.to_export_row(2, _live_pin())
+
+    assert row.name == "성수 곱창 (이름 확인 필요)"
+    assert row.link == "https://place.map.kakao.com/555"
+    assert row.memo == "맛있대"
+
+
+def test_to_export_row_live_pin_link_is_percent_encoded():
+    assert core.to_export_row(1, _live_pin(kakao_place_id="a/b c")).link == "https://place.map.kakao.com/a%2Fb%20c"
+
+
+def test_render_csv_starts_with_bom_uses_crlf_and_escapes_cells():
+    rows = [core.ExportRow(1, 'A, "B"', "음식점", "https://x", "줄1\n줄2")]
+
+    out = core.render_csv(rows)
+
+    assert out == '﻿순서,이름,분류,링크,메모\r\n1,"A, ""B""",음식점,https://x,"줄1\n줄2"\r\n'
+
+
+def test_render_csv_prefixes_formula_cells_with_apostrophe():
+    rows = [core.ExportRow(1, "=SUM(A1)", "음식점", "", "-1 @a +b")]
+
+    assert core.render_csv(rows).splitlines()[1] == "1,'=SUM(A1),음식점,,'-1 @a +b"
+
+
+def test_render_csv_empty_list_is_header_only():
+    assert core.render_csv([]) == "﻿순서,이름,분류,링크,메모\r\n"
+
+
+def test_render_txt_one_line_per_place_with_link_and_memo():
+    rows = [
+        core.ExportRow(1, "성수 칼국수", "음식점", "https://p/1", "웨이팅\n길다"),
+        core.ExportRow(2, "성수 곱창 (이름 확인 필요)", "음식점", "", ""),
+    ]
+
+    assert core.render_txt(rows) == (
+        "1. 성수 칼국수 (음식점) https://p/1 — 웨이팅 길다\n"
+        "2. 성수 곱창 (이름 확인 필요) (음식점)\n"
+    )
+
+
+def test_render_txt_empty_list_is_one_notice_line():
+    assert core.render_txt([]) == "확정한 장소가 아직 없어요\n"
+
+
+def test_export_content_disposition_percent_encodes_and_strips_control_chars():
+    out = core.export_content_disposition("부산\r\n여행/\"1\"", "csv")
+
+    assert out == "attachment; filename=\"shortlist.csv\"; filename*=UTF-8''%EB%B6%80%EC%82%B0%EC%97%AC%ED%96%891.csv"

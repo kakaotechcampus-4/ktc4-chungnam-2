@@ -33,12 +33,14 @@ author:                       # evidence_line·candidate·run을 만든 당사�
     evidence_line: own         # 자기가 쓴 줄만
     candidate: own              # 자기가 요청한 run의 후보만
     run: own                    # 자기가 요청한 run만
+    pin: own                    # 자기가 찍은 핀만(#466)
   actions:
     - evidence.disable          # '-'로 빼기 — "자기가 쓴 것만" (5-5)
     - recommend.manage          # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
                                  # run.requested_by 본인만. 가드레일1: 대안은 요청한 사람에게만
                                  # 먼저 보인다 — 게시 전 run은 본인 것만 조작·열람
     - recommend.publish         # 「지도에 올리기」 — candidate.requested_by 본인만
+    - pin.edit                  # 핀 메모·분류 수정(#466) — 핀을 찍은 사람만. AI 추천·확정 핀 제외는 역할이 아니라 핀 상태라 pins 코어가 판정한다
 
 owner:                        # 방장. 처음엔 지도 생성자, 위임되면 바뀐다(#369). 판단 정본은 memberships.role
                               # (maps.created_by는 "만든 사람" 기록일 뿐 방장 판단에 쓰지 않는다). member 전체 + 아래 추가
@@ -48,6 +50,8 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
     - member.kick               # v2, #8
     - map.settings.edit
     - map.delete                # 지도 삭제(#369). 방장만. soft delete라 모든 구성원에게서 사라진다
+    - invite.revoke             # 초대 링크 목록 보기·끄기(#467). 방장만. 발급(invite.create)은 구성원 누구나
+    - owner.transfer            # 방장 직접 넘기기(#468). 방장만
 ```
 
 역할은 배타적이지 않고 누적된다 — 한 사용자는 `member` + (자기 evidence·candidate·run에 한해) `author` + (자기 지도에 한해) `owner`를 동시에 가질 수 있다. 판정은 "이 액션이 이 리소스의 scope 안에 있는가"로 계산한다.
@@ -88,14 +92,18 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 | 근거 리스트에서 항목 빼기 — 자기가 쓴 것만 | `author.scope.evidence_line: own`, `author.actions: [evidence.disable]` |
 | 핀 되돌리기 — 구성원 누구나 | `member.actions: [pin.revert]` |
 | 반경 조정 — 별도 권한 불필요 | 반경 사유도 `evidence_line`이므로 위 규칙을 그대로 상속. 별도 액션 없음 |
+| 핀 메모·분류 수정 — 찍은 사람만 (#466) | `author.scope.pin: own`, `author.actions: [pin.edit]`, 응답 `permissions.can_edit` |
 | 초대 링크 발급 — 구성원 누구나 (#4) | `member.actions: [invite.create]` |
+| 지도 제목·날짜·지역 수정 — 방장만 (#465) | `owner.actions: [map.settings.edit]`, 응답 `permissions.can_edit` |
+| 초대 링크 목록·끄기 — 방장만 (#467) | `owner.actions: [invite.revoke]` |
+| 방장 직접 넘기기 — 방장만 (#468) | `owner.actions: [owner.transfer]` |
 | 동선 재계산 — 구성원 누구나 (#103) | `member.actions: [route.recalculate]` |
 | AI 추천 run 근거 조회·토글·추가 — 구성원 누구나 (#108, #32, 최종기획안 5-5) | `member.actions: [recommend.evidence]` (개별 줄 비활성화만 `author.actions: [evidence.disable]`) |
 | AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `author.scope.run: own`, `author.actions: [recommend.manage]` |
 
 ## v2 확장 지점
 
-`owner.actions`에 `member.kick`이 이미 자리를 잡아뒀다 — #8 구현 시 `authz`에 액션 하나만 추가하면 되고 다른 모듈은 건드리지 않는다. 이게 멘토가 말한 "역할 추가가 쉽다"의 실제 이득이다.
+`owner.actions`에 `member.kick`이 이미 자리를 잡아뒀다(`invite.revoke`·`owner.transfer`는 #467·#468에서 같은 방식으로 더했다) — #8 구현 시 `authz`에 액션 하나만 추가하면 되고 다른 모듈은 건드리지 않는다. 이게 멘토가 말한 "역할 추가가 쉽다"의 실제 이득이다.
 
 ## 권한을 어디서 강제하는가
 

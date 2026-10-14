@@ -394,23 +394,34 @@ def cafes():
 
 def test_cafe_rows_are_loaded_as_cafe_category_permit_source_with_given_coordinates(cafes):
     by_id, _ = cafes
-    assert set(by_id) == {f"C00{i}" for i in range(1, 9)}   # 업태 8종 8곳
+    assert set(by_id) == {f"C00{i}" for i in range(1, 9)} | {"C010", "C011"}   # 업태를 가리지 않는다(북카페 C010, 빈 업태 C011 포함)
     assert {r.category for r in by_id.values()} == {"카페"} and {r.source for r in by_id.values()} == {"permit"}
     assert {r.status for r in by_id.values()} == {"open"}
     assert (by_id["C001"].lat, by_id["C001"].lng) == (37.5446, 127.0562)
 
 
-def test_cafe_unknown_business_types_and_missing_coordinates_are_skipped_and_counted(cafes):
+def test_cafe_missing_coordinates_and_non_seoul_are_skipped_and_counted(cafes):
     by_id, report = cafes
     assert report.skipped["좌표 없음"] == 1 and "C009" not in by_id
-    assert report.skipped["모르는 업태: 북카페"] == 1 and "C010" not in by_id
-    assert report.skipped["모르는 업태: (비어 있음)"] == 1 and "C011" not in by_id
     assert report.skipped["서울 아님(또는 주소 없음)"] == 1 and "C012" not in by_id
-    assert report.read == 12 and report.accepted == 8 and sum(report.skipped.values()) == 4
+    assert report.read == 12 and report.accepted == 10 and sum(report.skipped.values()) == 2
 
 
-def test_cafe_type_table_has_the_eight_delivered_types():
-    assert ingest.CURATED_CAFE_TYPES == {"커피숍", "제과점영업", "까페", "다방", "전통찻집", "라이브카페", "키즈카페", "떡카페"}
+def test_cafe_empty_business_type_is_loaded_with_a_warning(cafes):
+    by_id, report = cafes
+    assert "C011" in by_id
+    assert any("업태가 비어 있는 행" in w and "C011" in w for w in report.warnings)
+
+
+def test_cafe_exclude_bars_flag_drops_bar_types():
+    rows = [
+        {"관리번호": "B1", "사업장명": "주점", "업태": "감성주점", "도로명주소": "서울특별시 중구 가상로 1", "위도": "37.56", "경도": "126.98"},
+        {"관리번호": "B2", "사업장명": "카페", "업태": "커피숍", "도로명주소": "서울특별시 중구 가상로 2", "위도": "37.56", "경도": "126.98"},
+    ]
+    kept, _ = ingest.parse_cafe_rows(rows)
+    dropped, report = ingest.parse_cafe_rows(rows, exclude_bars=True)
+    assert [r.source_id for r in kept] == ["B1", "B2"] and [r.source_id for r in dropped] == ["B2"]
+    assert report.skipped["유흥·주점류 제외(--exclude-bars): 감성주점"] == 1
 
 
 def test_restaurant_parser_is_unchanged_by_the_cafe_option():
@@ -424,3 +435,39 @@ def test_label_json_reads_both_rest_and_cafe_prefixes():
                {"place_id": "other_X", "labels": {"quiet": {"value": "true"}}}]
     got = [(r["source"], r["source_id"]) for r in ingest.curated_labels_to_rows(entries)]
     assert got == [("permit", "R1"), ("permit", "3000000-101-1995-02376"), ("", "")]
+
+
+# ---- 인허가 '분류' 열(#499) ----
+
+def _permit_row(source_id, type_, category=None, x="204888.1178", y="449139.2331"):
+    row = {"관리번호": source_id, "사업장명": f"가게{source_id}", "영업상태명": "영업/정상", "업태구분명": type_,
+           "도로명전체주소": "서울특별시 성동구 아차산로 1", "좌표정보(X)": x, "좌표정보(Y)": y}
+    if category is not None:
+        row["분류"] = category
+    return row
+
+
+def test_category_column_takes_priority_over_business_type():
+    rows, _ = ingest.parse_permit_rows([_permit_row("A1", "커피숍", "음식점"), _permit_row("A2", "한식", "카페")])
+    assert {r.source_id: r.category for r in rows} == {"A1": "음식점", "A2": "카페"}
+
+
+def test_category_column_rescues_types_missing_from_the_table():
+    rows, report = ingest.parse_permit_rows([_permit_row("B1", "중국식", "음식점")])
+    assert [r.category for r in rows] == ["음식점"] and not report.skipped
+
+
+@pytest.mark.parametrize("raw", [None, "", "관광지", "숙소"])
+def test_missing_or_odd_category_falls_back_to_business_type(raw):
+    rows, _ = ingest.parse_permit_rows([_permit_row("C1", "커피숍", raw), _permit_row("C2", "한식", raw)])
+    assert {r.source_id: r.category for r in rows} == {"C1": "카페", "C2": "음식점"}
+
+
+def test_odd_category_with_unmapped_type_is_still_skipped():
+    rows, report = ingest.parse_permit_rows([_permit_row("D1", "감성주점", "관광지")])
+    assert rows == [] and report.skipped["업태 대응표에 없음"] == 1
+
+
+def test_rows_without_coordinates_are_skipped_even_with_category_column():
+    rows, report = ingest.parse_permit_rows([_permit_row("E1", "한식", "음식점", x="", y="")])
+    assert rows == [] and report.skipped["좌표 없음"] == 1

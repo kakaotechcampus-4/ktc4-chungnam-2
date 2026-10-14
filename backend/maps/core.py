@@ -13,7 +13,7 @@ from authz.policy import Role
 from authz.schemas import Permissions
 from common.errors import AppError
 from common.events import Event
-from maps.schemas import InviteSummary, Map, MapRegion, Member, NextOwner
+from maps.schemas import Invite, InviteSummary, Map, MapRegion, Member, NextOwner
 
 WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 
@@ -61,6 +61,18 @@ class MembershipEntry:
     joined_at: datetime
 
 
+@dataclass(frozen=True)
+class InviteRecord:
+    """invites 행에서 목록·재사용 판정에 필요한 값만 추린 것(#467)."""
+
+    token: str
+    created_by: str
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+    used_count: int
+
+
 def validate_map_create(
     title: str, start_date: date, end_date: date, region: MapRegion | None = None
 ) -> NewMap:
@@ -90,6 +102,27 @@ def validate_map_create(
     )
 
 
+def validate_map_update(
+    current: MapRecord,
+    *,
+    title: str | None,
+    start_date: date | None,
+    end_date: date | None,
+    region: MapRegion | None,
+) -> NewMap:
+    """PATCH(#465) — 보낸 필드(None이 아닌 것)를 기존 값에 합친 결과를 생성과 같은 규칙으로 검사한다.
+    종료일만 보내도 기존 시작일과 비교한다. region은 바꾸기만 된다 — 안 보내면 기존 값을 그대로 둔다."""
+    current_region = None
+    if current.region_label is not None:
+        current_region = MapRegion(label=current.region_label, lat=current.region_lat, lng=current.region_lng)
+    return validate_map_create(
+        current.title if title is None else title,
+        current.start_date if start_date is None else start_date,
+        current.end_date if end_date is None else end_date,
+        current_region if region is None else region,
+    )
+
+
 def check_map_limit(my_map_count: int) -> None:
     """지도를 만들거나 새로 참여하기 전에 부른다. 이미 MAP_LIMIT개면 409 MAP_LIMIT(detail: limit, count)."""
     if my_map_count >= MAP_LIMIT:
@@ -102,14 +135,63 @@ def invite_expires_at(now: datetime) -> datetime:
     return now + INVITE_TTL
 
 
-def check_invite_acceptable(expires_at: datetime, now: datetime) -> None:
-    """만료된 초대는 410 INVITE_EXPIRED(#159, 없는 토큰의 404 INVITE_NOT_FOUND와 구분한다 —
-    수락 화면이 "새 링크를 요청하세요"를 안내해야 해서 계약이 둘을 나눴다). 조회(GET)와
+def check_invite_acceptable(
+    expires_at: datetime, now: datetime, revoked_at: datetime | None = None
+) -> None:
+    """방장이 끈 초대는 410 INVITE_REVOKED(#467), 만료된 초대는 410 INVITE_EXPIRED(#159, 없는 토큰의
+    404 INVITE_NOT_FOUND와 구분한다 — 수락 화면이 "새 링크를 요청하세요"를 안내해야 해서 계약이 둘을
+    나눴다). 끈 링크가 만료까지 지났어도 끈 쪽이 먼저다 — 방장의 의사가 더 구체적인 사유다. 조회(GET)와
     수락(POST)이 같은 판정을 쓴다."""
     if expires_at.tzinfo is None or now.tzinfo is None:
         raise ValueError("expires_at·now는 모두 timezone-aware여야 합니다")
+    if revoked_at is not None:
+        raise AppError("INVITE_REVOKED")
     if now >= expires_at:
         raise AppError("INVITE_EXPIRED")
+
+
+def is_invite_live(invite: InviteRecord, now: datetime) -> bool:
+    """끄지 않았고 만료 전이다 — 목록과 재사용이 같은 기준을 쓴다."""
+    return invite.revoked_at is None and now < invite.expires_at
+
+
+def live_invites_newest_first(invites: Iterable[InviteRecord], now: datetime) -> list[InviteRecord]:
+    """GET /maps/{mapId}/invites(#467) — 유효한 링크만, 만든 시각 최신순. 같은 시각이면 토큰 순(결정적)."""
+    return sorted(
+        (i for i in invites if is_invite_live(i, now)), key=lambda i: (i.created_at, i.token), reverse=True
+    )
+
+
+def pick_reusable_invite(
+    invites: Iterable[InviteRecord], user_id: str, now: datetime
+) -> InviteRecord | None:
+    """POST /maps/{mapId}/invite(#467) — 내가 만든 유효한 링크 중 가장 최근 것. 남이 만든 링크는 재사용하지
+    않는다(끄는 권한과 "누가 만든 링크인지" 표시가 어긋난다). 없으면 None — 호출부가 새로 만든다."""
+    live = live_invites_newest_first((i for i in invites if i.created_by == user_id), now)
+    return live[0] if live else None
+
+
+def check_invite_revocable(principal: Principal) -> None:
+    """DELETE /invites/{token}(#467) — 토큰만으론 지도를 알 수 없어 라우터 가드를 못 쓴다. 그 지도의 구성원이
+    아니면 토큰의 존재를 흘리지 않도록 없는 토큰(404)과 같게, 구성원인데 방장이 아니면 403이다."""
+    if principal.role is None:
+        raise AppError("INVITE_NOT_FOUND")
+    if not can(principal, "invite.revoke", Resource(type="map", map_id=principal.map_id)):
+        raise AppError("FORBIDDEN")
+
+
+def to_invite(
+    invite: InviteRecord, *, url: str, created_by_display_name: str | None = None, detailed: bool = False
+) -> Invite:
+    """발급 응답은 token·url·expires_at만, 목록(detailed)은 만든 시각·만든 사람·사용 횟수까지 싣는다.
+    만든 사람 이름을 못 구하면(users 행이 없음) '탈퇴한 구성원'(스펙 Invite)."""
+    if not detailed:
+        return Invite(token=invite.token, url=url, expires_at=invite.expires_at)
+    return Invite(
+        token=invite.token, url=url, expires_at=invite.expires_at, created_at=invite.created_at,
+        created_by_display_name=created_by_display_name or WITHDRAWN_MEMBER_NAME,
+        used_count=invite.used_count,
+    )
 
 
 def to_invite_summary(
@@ -183,6 +265,7 @@ def map_permissions(principal: Principal, successor: str | None) -> Permissions:
     return Permissions(
         can_delete=can(principal, "map.delete", resource),
         can_leave=can(principal, "map.leave", resource) and can_leave(principal.role, successor),
+        can_edit=can(principal, "map.settings.edit", resource),
     )
 
 
@@ -254,6 +337,20 @@ def member_joined_event(map_id: str, member: Member) -> Event:
 def map_deleted_event(map_id: str) -> Event:
     """docs/events.md map.deleted — public 채널. 삭제와 같은 트랜잭션에 기록한다(#369)."""
     return Event(map_id=map_id, channel="public", type="map.deleted", payload={"map_id": map_id})
+
+
+def map_updated_event(map_id: str, updated: NewMap) -> Event:
+    """docs/events.md map.updated — public 채널(#465). 요청자 기준 값(permissions)은 싣지 않는다.
+    region이 없는 지도는 키 자체를 뺀다."""
+    payload = {
+        "map_id": map_id,
+        "title": updated.title,
+        "start_date": updated.start_date.isoformat(),
+        "end_date": updated.end_date.isoformat(),
+    }
+    if updated.region is not None:
+        payload["region"] = updated.region.model_dump()
+    return Event(map_id=map_id, channel="public", type="map.updated", payload=payload)
 
 
 def member_left_event(map_id: str, user_id: str, new_owner_user_id: str | None) -> Event:

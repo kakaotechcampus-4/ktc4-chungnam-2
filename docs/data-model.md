@@ -41,7 +41,8 @@ memberships(
   -- 탈퇴자의 행은 핀 작성자 표시용으로 남는다(#245).
 
 invites(
-  token, map_id, created_by, expires_at, used_count
+  token, map_id, created_by, expires_at, used_count,
+  created_at, revoked_at            -- revoked_at: 방장이 끈 시각(NULL이면 켜짐, #467). map_id 인덱스
 )
 ```
 

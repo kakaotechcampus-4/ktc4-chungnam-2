@@ -2,10 +2,58 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
-## 2026-10-11, 늦게까지 영업·술 판매를 음식점 조건으로도 쓴다 (#461)
+## 2026-10-15, 늦게까지 영업·술 판매를 음식점 조건으로도 쓴다 (#461)
 
 - **API 스키마는 그대로다.** 음식점 추천에서 `open_late`(밤 10시 이후까지 여는가), `serves_alcohol`(술도 파는 곳)이 조건 체크(`Candidate.checks`)와 근거 줄의 `fact_key`로 나올 수 있다. 전에는 카페에서만 썼다.
 - "늦게까지 하는 데로", "술 한잔할 수 있는 곳" 같은 사유가 음식점 추천에 반영된다. ♥한 가게의 이 두 라벨은 선호로 쓰지 않는다(직접 쓴 사유로만).
+
+## 2026-10-13 (세 번째), V2 기록·내보내기: 지난 추천 기록·확정 리스트 내보내기 (#469, #471)
+
+스펙이 먼저다. 구현은 이슈별로 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다.
+
+- **`GET /maps/{mapId}/runs?category&limit`** (#469) — **내가 요청한 run만**(가드레일 1) 최근순. 항목은 `RunSummary`(id·category·status·attempt_no·created_at·candidate_count·published_count). 결과는 기존 `GET /runs/{runId}/result`로 다시 연다. 결과는 마지막 시도의 후보만 남아 있다.
+- **`GET /runs/{runId}/result`가 409 `RUN_NOT_FINISHED`를 낸다** — status가 done이 아닌 run. 기존 FE 흐름(추천 실행 뒤 `run.candidates_ready`를 받고 조회)은 영향이 없다. 지난 기록에서 진행 중·실패한 run을 열 때만 만난다.
+- **`GET /maps/{mapId}/shortlist/export?format=txt|csv`** (#471) — 구성원 누구나. 확정 순서대로 순서·이름·분류·카카오 링크·메모. live 핀은 이름 대신 검색어 + "(이름 확인 필요)". CSV는 UTF-8 BOM. 응답은 JSON이 아니라 파일이다(`text/plain`·`text/csv`, `Content-Disposition: attachment`).
+- **에러 코드**: `RUN_NOT_FINISHED`(409). `common/errors.py` CATALOG도 함께 맞췄다.
+- **FE 할 일:** #482(지난 추천 기록), #484(내보내기). 목 서버에서 먼저 붙일 수 있다.
+
+## 2026-10-13 (두 번째), V2 핀: 핀 수정·지도를 눌러 핀·링크 해석 (#466, #473, #474)
+
+스펙이 먼저다. 구현은 이슈별로 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다.
+
+- **`PATCH /pins/{pinId}`** (#466) — 핀을 찍은 사람만. `memo`(모든 핀, 빈 문자열이면 지움)와 `category`(live 핀만, 반응이 없을 때만). AI 추천·확정 핀은 수정 불가(403). 응답은 `Pin`. `Pin.permissions.can_edit`을 쓴다.
+- **`GET /places/nearest?lat&lng&category`** (#473) — 반경 100m 안 자체 DB 장소를 가까운 순 최대 5곳. 모두 `pinnable=true`. 고르면 `source: search`로 핀을 만든다. 누른 좌표는 저장·로깅하지 않는다.
+- **`POST /places/from-link {url}`** (#474) — 구글맵·카카오맵 링크를 해석해 `LinkParseResult`를 준다. **핀을 만들지 않는다.** 구글: `matches`(자체 DB 짝)나 `name_hint`로 검색을 이어 간다. 카카오: `kakao_place_id`만 뽑고, 자체 DB 짝이 없으면 `needs_search_query=true` — 사용자에게 장소 이름을 입력받아 `source: live`로 만든다. 네이버·인스타·블로그는 422 `LINK_NOT_SUPPORTED`.
+  - 설계 변경: 이슈 #474는 `POST /maps/{id}/pins/from-link`였으나, 링크 해석과 핀 생성을 나눠 새 저장 값 없이 기존 두 생성 경로를 그대로 쓴다. 카톡 일괄 파싱(#9)도 이 해석기를 재사용한다.
+- **이벤트**: `pin.updated`(페이로드 `Pin`, `pin.created`와 같은 모양).
+- **권한**: 새 액션 `pin.edit`(author 범위 `pin: own`). `Permissions.can_edit`이 핀에도 쓰인다. `authz/policy.py`를 같은 PR에서 맞췄다.
+- **에러 코드**: `LINK_NOT_SUPPORTED`, `LINK_UNRESOLVED`(둘 다 422). `common/errors.py` CATALOG도 함께 맞췄다.
+- **FE 할 일:** #480(핀 수정), #486(지도 눌러 핀), #487(링크 붙여넣기). 목 서버에서 먼저 붙일 수 있다. 목 서버 마법 링크: `https://maps.app.goo.gl/fail`은 422 `LINK_UNRESOLVED`.
+
+## 2026-10-13, 장소 검색에서 자체 DB 장소를 앞으로 (#488)
+
+- **스키마 변경 없음.** `GET /places/search`는 카카오가 준 후보 안에서 `pinnable=true`(자체 DB에 짝이 있는 장소)를 앞으로 올려 돌려준다. 각 묶음 안의 순서는 카카오 순서 그대로이고, `pinnable`을 못 구했으면(생략) 원래 순서다. `limit`은 정렬 뒤에 적용한다. 호환 영향 없음.
+
+## 2026-10-13, V2 지도 생명주기: 지도 수정·초대 링크 관리·방장 넘기기 (#465, #467, #468)
+
+스펙이 먼저다. 백엔드 구현은 각 이슈에서 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 바로 쓸 수 있다.
+
+- **추가 엔드포인트**
+  - `PATCH /maps/{mapId}` — 제목·날짜·지역 수정, 방장만(403), 보낸 필드만 바꾼다, 검증 실패 422. 응답은 `Map`.
+  - `POST /maps/{mapId}/owner {user_id}` — 방장 직접 넘기기, 방장만. 대상이 구성원이 아니거나 탈퇴했거나 나 자신이면 422 `OWNER_TARGET_INVALID`. 응답은 요청자(이제 구성원) 기준 `Map`.
+  - `GET /maps/{mapId}/invites` — 유효한 초대 링크 목록, 방장만. `Invite`에 `created_at`·`created_by_display_name`·`used_count`가 붙는다.
+  - `DELETE /invites/{token}` — 링크 끄기, 방장만, 멱등(204).
+- **바뀐 동작**
+  - `POST /maps/{mapId}/invite`는 **내가 만든 유효한 링크가 있으면 그것을 200으로 돌려준다**(새로 만들면 201). 남이 만든 링크는 재사용하지 않는다. FE는 `useInviteQuery`의 캐시 한 개를 그대로 써도 되고, 201/200을 구분할 필요는 없다.
+  - 초대 요약·수락의 410은 이제 `INVITE_EXPIRED`와 **`INVITE_REVOKED`** 두 코드다. 코드로 문구를 가른다.
+- **스키마**
+  - `Permissions.can_edit`(map 전용, 방장만 true).
+  - `MapUpdateRequest`, `OwnerTransferRequest` 추가.
+- **이벤트(전체 채널)**: `map.updated {map_id, title, start_date, end_date, region?}`, `owner.changed {map_id, from_user_id, to_user_id}`. `owner.changed`는 `member.left`가 아니다 — 두 사람 모두 지도에 남아 SSE 구독이 끊기지 않는다.
+- **스펙 보강**: `PublicEvent`에 events.md에는 있었는데 스키마가 없던 `member.left`·`map.deleted`를 채웠다(동작 변화 없음).
+- **권한**: 새 액션 `invite.revoke`(목록 보기·끄기), `owner.transfer`, 기존 `map.settings.edit` 사용 시작. 모두 owner 전용. `authz/policy.py`·`schemas.py`를 같은 PR에서 맞췄다.
+- **FE 할 일:** #479(휴지통은 후순위라 제외), #480(지도·핀 수정), #481(초대 링크 관리·방장 넘기기). 목 서버에서 먼저 붙일 수 있다.
+- 지도 삭제 복구(#464)는 후순위라 이번 묶음에 넣지 않았다.
 
 ## 2026-10-10 (세 번째), v1에 없는 private 핀 분기 정리 (#273)
 
