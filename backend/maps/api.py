@@ -62,6 +62,13 @@ def lock_member_maps(db: Session, user_id: str) -> list[str]:
     return service.lock_member_maps(db, user_id=user_id)
 
 
+def lock_map_if_alive(db: Session, map_id: str) -> bool:
+    """agent가 모델 호출 뒤 저장 트랜잭션 맨 앞에서 부른다(docs/agent-v2.md 12.4, #512). 지도 행을 FOR UPDATE로
+    잠그고(lock_member_maps와 같은 방식, docs/architecture.md "동시성: 지도 행 잠금으로 줄을 세운다", #435)
+    삭제되지 않았으면 True. 삭제된 지도와 없는 지도는 False — 호출부는 아무것도 쓰지 않는다. 커밋하지 않는다."""
+    return service.lock_map_if_alive(db, map_id=map_id)
+
+
 def transfer_or_delete_owned_maps(db: Session, user_id: str) -> None:
     """탈퇴(auth.service.withdraw_user)가 부른다(#369 10번). 이 사용자가 방장인 지도마다
     joined_at이 가장 빠른 구성원(탈퇴자 제외)에게 방장을 넘기고, 넘길 사람이 없으면 지도를
