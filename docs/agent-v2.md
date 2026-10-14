@@ -55,7 +55,8 @@
 10. 모델 출력 검증이 실패하면 재요청하지 않고 침묵한다.
 11. 제안과 요약 문구에 구성원 이름을 쓰지 않는다. 모델에는 이름 대신 관찰 단위 별칭(m1, m2 …)을 준다. 실격 사유는 개수로만 보여준다. 알러지 사유는 원문을 인용하지 않는다.
 12. 사유의 키와 방향을 정하는 곳은 ② 하나다. 에이전트 모델은 키나 방향을 따로 내지 않고, ② 결과를 claim으로 가리키기만 한다(8.1).
-13. llm 품질을 기다리지 않는다. 스키마에 맞는 고정 응답 스텁으로 오케스트레이션, API, 이벤트를 먼저 통합한다(recommend 모듈과 같은 관례).
+13. **agent 테이블에는 사유 원문을 저장하지 않는다**(2026-10-15 결정). 사유는 `reaction_id`로만 가리키고, 원문이 필요한 문장은 응답과 이벤트를 만들 때 pins에서 읽어 렌더한다. 반응이 지워지면(탈퇴 #155, 지도 나가기 #369, 반응 삭제) 그 인용은 저절로 사라진다. 탈퇴할 때 agent에서 지울 곳을 계속 늘리지 않기 위한 원칙이다. 12.9, 13절 참고.
+14. llm 품질을 기다리지 않는다. 스키마에 맞는 고정 응답 스텁으로 오케스트레이션, API, 이벤트를 먼저 통합한다(recommend 모듈과 같은 관례).
 
 ## 3. 용어
 
@@ -448,7 +449,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 - 구성원은 관찰 단위 별칭(m1, m2 …)으로만 나온다. 별칭과 user_id 대응은 agent 코드만 안다.
 - 오류는 구조화해서 돌려준다: NOT_FOUND, LIMIT_EXCEEDED.
 - 사유 텍스트는 사용자가 쓴 데이터다. 프롬프트에서 지시로 취급하지 않는다고 명시한다.
-- agent가 call_id를 매기고 입력, 결과, 소요 시간을 `agent_runs.tool_calls`에 남긴다.
+- agent가 call_id를 매기고 입력, 결과, 소요 시간을 `agent_runs.tool_calls`에 남긴다. 결과 안의 사유 글은 남기지 않고 `reaction_id`와 글자 수로 바꿔 남긴다(2절 13번). 모델에 보내는 결과에는 글이 그대로 들어간다. 저장할 때만 바꾼다.
 - 구현은 `agent/tools.py`에 두고, 각 도구는 다른 모듈의 `api.py`를 감싸기만 한다.
 
 | 도구 | 시그니처와 반환 | 출처 |
@@ -565,7 +566,7 @@ class RunAdviceOutput(BaseModel):
 | 2. 진단 성립 | signal_id와 diagnosis가 이번 관찰의 1순위 신호와 같은가 | 침묵 (invalid_claims) |
 | 3. claim 대조 | count는 스냅샷에서 같은 지표를 다시 계산해 비교. quote는 공백 정규화 후 해당 reaction 원문에 포함되는지. ref는 이 지도의 공개 데이터에 존재하는지. tool_result는 이번 관찰 도구 로그의 call_id와 path 값이 같은지 | 실패한 claim 제거 |
 | 4. 구조 대조 | 요약의 요청 문장이 가리키는 reaction이 vague_fixable 칸에 있는지(not_filtered 사유에 구체화 요청을 붙이지 않았는지) | 해당 문장 제거 |
-| 5. 문장 | basis에 제거된 claim이 있는 문장. 슬롯 밖 숫자(정규식 `\d`). 구성원 표시 이름 포함. 금지 표현(FORBIDDEN_PHRASES) | 문장 제거 |
+| 5. 문장 | basis에 제거된 claim이 있는 문장. 슬롯 밖 숫자(정규식 `\d`). 구성원 표시 이름 포함. 금지 표현(FORBIDDEN_PHRASES). 슬롯 밖에서 사유 원문을 옮겨 쓴 문장(입력 사유와 공백을 뺀 연속 8글자 이상 일치, 초안) | 문장 제거 |
 | 6. 행동 | 유형별 허용 목록에 있는지. open_recommend의 category가 `categories.recommendable()`인지. open_evidence가 가리키는 근거 줄이 run 요청자 본인 줄인지(9절). basis가 유효한지 | 행동 제거 |
 | 7. 성립 판정 | 유형의 필수 claim이 남았는지(split: 해당 핀 like와 against count). 문장이나 행동이 하나 이상 남았는지 | 침묵 (invalid_claims) |
 
@@ -574,7 +575,9 @@ class RunAdviceOutput(BaseModel):
 FORBIDDEN_PHRASES = ("확정하세요", "확정해", "결정하세요", "여기로 가세요", "여기로 정하세요")
 ```
 
-렌더: `core.render(lines, verified_claims, snapshot)`이 `{cN.value}`를 검증된 값으로, `{cN}`(quote)을 DB 원문으로 바꾼다. 알러지 사유(8절 not_filtered)를 가리키는 quote는 렌더하지 않고 그 문장을 뺀다. 저장과 이벤트에는 렌더 결과 `{text, is_guess}`와 원본 슬롯 문장을 함께 둔다.
+렌더: `core.render(lines, verified_claims, reasons)`가 `{cN.value}`를 검증된 값으로, `{cN}`(quote)을 그 반응의 지금 원문으로 바꾼다. 알러지 사유(8절 not_filtered)를 가리키는 quote는 렌더하지 않고 그 문장을 뺀다. 인용한 반응이 이미 지워졌으면 그 문장을 뺀다.
+
+저장과 렌더 시점(2절 13번): 테이블에는 슬롯 문장과 검증을 통과한 claim만 저장한다. QuoteClaim의 `text`(대조용)는 검증 뒤 버리고 `reaction_id`만 남긴다. 렌더는 `GET /maps/{mapId}/agent` 응답과 `agent.suggested` 이벤트를 만들 때 한다. 이벤트 페이로드에는 렌더된 문장이 들어가지만 event_log는 24시간만 보존되므로(events.md) 허용한다.
 
 한계: 문장의 의미 자체는 코드로 검증하지 못한다. "♥ 세 명 모두 분위기를 좋아한다"처럼 개수와 의미를 섞은 주장은 걸러지지 않는다. 수치는 슬롯으로만 쓰게 하고, 의미 주장은 is_guess로 표시하게 하고, 나머지는 평가셋으로 잡는다.
 
@@ -770,7 +773,7 @@ seq 비교로 하지 않는 이유는 seq에 커밋 순서 구멍이 생길 수 
 - `decided_within_24h`: 하루 한 번 정리 때, 생성 후 24시간이 지난 제안에 대해 그 카테고리에 확정이 생겼는지 계산해 채운다.
 - 보존: 하루 한 번 `agent_runs`의 30일 초과분을 지운다.
 - 지도 정리: 삭제한 지 30일이 지난 지도를 지우는 작업(`python -m maps.purge`, #431)이 모듈마다 `purge_map_data`를 부른다. agent도 `agent.api.purge_map_data`를 열어 agent_* 7개 테이블의 그 지도 행을 지운다.
-- 탈퇴: 반응과 근거 줄은 탈퇴 때 실제로 지운다(#155). agent에는 사유 원문이 남는 곳이 있다(`agent_runs.tool_calls`, `agent_reason_summaries.summary`). 그래서 `agent.api.delete_by_user`를 열어, 탈퇴 흐름에서 그 사람의 반응을 가리키는 항목을 지우고 그 사람이 남긴 열람 기록을 지운다. 요약은 다음 관찰에서 다시 만든다.
+- 탈퇴: 반응과 근거 줄은 탈퇴 때 실제로 지운다(#155). agent 테이블에는 사유 원문이 없으므로(2절 13번) 반응이 지워지면 인용도 렌더되지 않는다. `agent.api.delete_by_user(db, *, user_id, map_ids)`(#513)는 그 사람의 열람 기록을 지우고, 안전장치로 map_ids 지도의 요약을 지우고 agent_runs의 tool_calls와 verification을 비운다. 탈퇴 흐름이 `maps.api.lock_member_maps`로 잡은 지도 목록을 넘긴다(#512). 요약은 다음 관찰에서 다시 만든다.
 - 지도 나가기(#369): 나간 사람의 반응이 지워지므로 활성 제안의 evidence_hash가 바뀌고, 다음 관찰에서 superseded가 된다. 따로 처리하지 않는다.
 
 ## 13. 데이터 모델
@@ -834,9 +837,9 @@ CREATE TABLE agent_suggestions (
   fingerprint         text NOT NULL,
   evidence_hash       text NOT NULL,
   title               text NOT NULL,      -- 렌더 결과
-  claims              jsonb NOT NULL,     -- 검증 통과분
+  claims              jsonb NOT NULL,     -- 검증 통과분. quote는 reaction_id만(원문 없음, 2절 13번)
   analysis            jsonb NULL,         -- split의 충돌 지점 등
-  advice              jsonb NOT NULL,     -- [{text, is_guess, source}] 렌더 결과와 슬롯 원문
+  advice              jsonb NOT NULL,     -- [{slot_text, is_guess}] 슬롯 문장만. 렌더 결과는 저장하지 않는다
   actions             jsonb NOT NULL,     -- [{index, type, label, params}]
   status              text NOT NULL,      -- active | accepted | dismissed | expired | superseded
   shadow              boolean NOT NULL DEFAULT false,
@@ -862,7 +865,7 @@ CREATE TABLE agent_suggestion_views (
 CREATE TABLE agent_reason_summaries (
   map_id                   text NOT NULL,
   category                 text NOT NULL,
-  summary                  jsonb NOT NULL,   -- 4칸 항목의 렌더 결과와 근거 reaction_id
+  summary                  jsonb NOT NULL,   -- 다섯 칸의 키, 개수, 근거 reaction_id, 서버 문구. 사유 원문 없음
   based_on_reaction_count  integer NOT NULL,
   run_id                   uuid NULL,
   updated_at               timestamptz NOT NULL DEFAULT now(),
@@ -874,8 +877,8 @@ CREATE TABLE agent_run_advice (
   run_id        uuid PRIMARY KEY,           -- recommend_runs.id. 모듈 경계라 FK 없음
   map_id        text NOT NULL,
   kind          text NULL,
-  claims        jsonb NOT NULL,
-  advice        jsonb NOT NULL,
+  claims        jsonb NOT NULL,             -- quote는 reaction_id만
+  advice        jsonb NOT NULL,             -- 슬롯 문장만
   actions       jsonb NOT NULL,
   agent_run_id  uuid NULL,
   created_at    timestamptz NOT NULL DEFAULT now()
@@ -995,7 +998,7 @@ FE는 슬롯을 다루지 않는다. 서버가 렌더한 문장을 그대로 보
 13. 추천 막힘 조언: 같은 run에 동시 요청이 와도 생성은 한 번이고 같은 결과를 돌려준다.
 14. 여행 종료와 지도 삭제: end_date 다음 날부터 관찰하지 않고 outcome=trip_ended로 끝난다. 삭제된 지도는 outcome=map_deleted로 끝나고, 모델 호출 중 삭제되면 저장 단계에서 아무것도 쓰지 않는다.
 15. shadow: `AGENT_SHADOW_MODE=True`면 제안이 저장되지만 이벤트가 없고 GET 응답에 나오지 않는다.
-16. 정리: `purge_map_data`가 그 지도의 agent_* 행을 모두 지운다. `delete_by_user` 뒤에 그 사람의 사유 원문이 agent_runs와 요약에 남지 않는다.
+16. 정리와 원문: `purge_map_data`가 그 지도의 agent_* 행을 모두 지운다. 픽스처 반응의 글이 관찰과 요약과 조언을 거친 뒤 어떤 agent_* 행의 직렬화에도 들어 있지 않다(2절 13번). 반응을 지우면 그 인용 문장이 응답에서 빠진다. 모델 문장이 슬롯 밖에서 사유를 옮겨 쓰면 문장이 제거된다.
 17. 요약 칸 나누기: #422 규칙으로 선호가 된 음식 종류 "원함"이 must_keep에 들어가지 않는다. 같은 사람이 같은 키를 두 번 말해도 1명으로 센다.
 
 ## 18. 마일스톤과 작업 목록

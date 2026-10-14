@@ -301,6 +301,7 @@ exclusions(
 
 > v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 7개 테이블만 쓰고, 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.
 > `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다. 지도 정리(#431)는 `agent.api.purge_map_data`, 탈퇴(#155)는 `agent.api.delete_by_user`가 맡는다.
+> **agent 테이블에는 사유 원문을 저장하지 않는다**(2026-10-15). 사유는 `reaction_id`로만 가리키고, 인용 문장은 응답과 이벤트를 만들 때 pins에서 읽어 렌더한다. 반응이 지워지면 인용도 사라진다(docs/agent-v2.md 2절 13번).
 
 ```
 agent_settings(                       -- 지도별 모드. 행이 없으면 켜짐(기본값)
@@ -319,7 +320,7 @@ agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 
   snapshot_at null, snapshot_seq null,
   signals jsonb, blocked jsonb, priority jsonb null,
   policy_version null, prompt_version null, model null, used_model boolean,
-  tool_calls jsonb,                   -- 도구 입력과 결과. 사유 원문이 들어갈 수 있어 탈퇴 시 그 사람 항목을 지운다
+  tool_calls jsonb,                   -- 도구 입력과 결과. 사유 글은 reaction_id와 글자 수로 바꿔 남긴다
   verification jsonb null, tokens_in, tokens_out,
   outcome('no_signal'|'blocked'|'silent'|'unknown'|'invalid_schema'|'invalid_claims'|'stale'
           |'suggested'|'summarized'|'advised'|'trip_ended'|'map_deleted'),
@@ -331,7 +332,7 @@ agent_suggestions(                    -- 바텀시트의 지도 제안
   id uuid, map_id, run_id null references agent_runs on delete set null,
   diagnosis('stall'|'split'|'no_reaction'|'category_gap'), category null, pin_id null,
   fingerprint, evidence_hash,         -- 중복 금지(유형+카테고리+근거 id), 상태 재확인(근거 id+반응 종류+updated_at)
-  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 렌더 결과(api-spec AgentSuggestion)와 검증 통과 claim
+  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id만). 렌더는 응답 때
   status('active'|'accepted'|'dismissed'|'expired'|'superseded'),
   shadow boolean default false,       -- true면 저장만 하고 화면과 이벤트에 내지 않는다
   created_at, expires_at,             -- 24시간
@@ -347,7 +348,7 @@ agent_suggestion_views(               -- 사용자별 열람. 버튼의 점(has_
 )
 
 agent_reason_summaries(               -- 우리 조건 요약. 카테고리마다 최신본 하나를 덮어쓴다
-  map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸과 근거 reaction_id
+  map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸(키, 개수, 서버 문구)과 근거 reaction_id. 사유 원문 없음
   based_on_reaction_count, run_id null, updated_at,
   primary key(map_id, category)
 )
