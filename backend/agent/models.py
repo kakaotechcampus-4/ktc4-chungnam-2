@@ -39,13 +39,13 @@ class AgentSettings(Base):
 
 
 class AgentCursor(Base):
-    """책갈피, 다음 시간 점검 시각, 중복 실행 방지 자리표. 관찰 흐름만 쓴다(명세 12.5)."""
+    """책갈피, 다음 시간 점검 시각, 중복 실행 방지 자리표. 관찰 흐름만 쓴다(명세 12.5).
+    last_seen_seq는 본 것 중 가장 큰 event_log seq다(#525) — 구멍은 추적하지 않는다(gap_seq는 0030에서 지웠다)."""
 
     __tablename__ = "agent_cursors"
 
     map_id: Mapped[str] = mapped_column(String, primary_key=True)
     last_seen_seq: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
-    gap_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # 직전 tick에서 멈춘 구멍
     last_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

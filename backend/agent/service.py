@@ -1,12 +1,22 @@
 """agent_* 테이블 읽기와 쓰기. 커밋하지 않는다(커밋은 호출부의 session_scope 한 곳).
 
-M0(#513)은 정리 두 가지만 있다 — 지도 정리(`purge_map_data`)와 탈퇴(`delete_by_user`). 관찰 흐름이 쓰는 함수
-(claim_maps, insert_run, insert_suggestion 등)는 #515에서 더한다.
+- 정리: 지도 정리(`purge_map_data`), 탈퇴(`delete_by_user`) — #513
+- 관찰 흐름(#515, 명세 12.2~12.5, 12.9): 지도 고르기와 lease(`claim_maps`, `release_lease`), 커서(`advance_cursor`),
+  이력(`load_history`), 제안 상태(`expire_suggestions`, `supersede`, `insert_suggestion`), 기록(`insert_run`),
+  보존 정리(`delete_old_runs`)
+
+다른 모듈 테이블은 읽지도 쓰지도 않는다. event_log는 `realtime.api.latest_seq_by_map`으로만 본다(12.2).
 """
 
-from sqlalchemy import delete, func, null, select, update
+import uuid
+from datetime import datetime, timedelta
+
+from sqlalchemy import delete, func, null, or_, select, text, true, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from agent import core
+from agent.constants import AGENT_RUNS_RETENTION_DAYS, LEASE_SEC, SUGGESTION_TTL
 from agent.models import (
     AgentCursor,
     AgentReasonSummary,
@@ -16,6 +26,9 @@ from agent.models import (
     AgentSuggestion,
     AgentSuggestionView,
 )
+from realtime import api as realtime_api
+
+MODEL_RUN_TRIGGERS = ("activity", "time", "summary")   # 모델 사용 상한이 세는 trigger(12.3)
 
 PURGE_TABLES = (
     "agent_suggestion_views", "agent_suggestions", "agent_run_advice", "agent_reason_summaries",
@@ -76,3 +89,158 @@ def delete_by_user(db: Session, *, user_id: str, map_ids: list[str]) -> dict[str
         .values(tool_calls=[], verification=null())
     ).rowcount
     return counts
+
+
+# ---------------------------------------------------------------- 지도 고르기와 lease (12.2, 12.5)
+
+def claim_maps(db: Session, now: datetime, *, limit: int) -> list[tuple[str, str]]:
+    """관찰할 지도를 골라 lease를 잡는다. (map_id, trigger) 목록 — 새 이벤트로 잡혔으면 activity, 시간 점검으로
+    잡혔으면 time. 호출부가 바로 커밋해야 lease가 다른 실행에 보인다.
+
+    1. `realtime.api.latest_seq_by_map`으로 지도별 가장 큰 seq를 받는다. 커서 행이 없는 지도는 여기서 만든다
+       (ON CONFLICT DO NOTHING — 동시에 두 실행이 만들어도 하나). 커서보다 큰 seq가 있으면 바뀐 지도다.
+    2. agent_cursors만 FOR UPDATE SKIP LOCKED로 잠그고 lease_until을 올린다. maps와 event_log는 조인하지 않는다.
+       모드가 꺼진 지도(agent_settings.enabled=false)는 고르지 않는다. 행이 없으면 켜짐이다."""
+    latest = realtime_api.latest_seq_by_map(db)
+    seen: dict[str, int] = dict(
+        db.execute(select(AgentCursor.map_id, AgentCursor.last_seen_seq).where(AgentCursor.map_id.in_(latest))).all()
+    ) if latest else {}
+    missing = sorted(set(latest) - set(seen))   # 정렬해서 넣는다 — 두 실행이 같은 순서로 기다려 교착이 없다
+    if missing:
+        db.execute(
+            pg_insert(AgentCursor).values([{"map_id": m} for m in missing]).on_conflict_do_nothing(
+                index_elements=[AgentCursor.map_id]
+            )
+        )
+    changed = {m for m, (seq, _) in latest.items() if seq > seen.get(m, 0)}
+
+    map_ids = db.execute(
+        select(AgentCursor.map_id)
+        .outerjoin(AgentSettings, AgentSettings.map_id == AgentCursor.map_id)
+        .where(
+            func.coalesce(AgentSettings.enabled, true()),
+            or_(AgentCursor.lease_until.is_(None), AgentCursor.lease_until < now),
+            or_(AgentCursor.map_id.in_(changed), AgentCursor.next_check_at <= now),
+        )
+        .order_by(AgentCursor.next_check_at.asc().nulls_last(), AgentCursor.map_id)
+        .limit(limit)
+        .with_for_update(of=AgentCursor, skip_locked=True)
+    ).scalars().all()
+    if map_ids:
+        db.execute(
+            update(AgentCursor).where(AgentCursor.map_id.in_(map_ids))
+            .values(lease_until=now + timedelta(seconds=LEASE_SEC))
+        )
+    return [(m, "activity" if m in changed else "time") for m in map_ids]
+
+
+def release_lease(db: Session, map_id: str) -> None:
+    db.execute(update(AgentCursor).where(AgentCursor.map_id == map_id).values(lease_until=None))
+
+
+def advance_cursor(
+    db: Session, map_id: str, seq: int | None, *, next_check_at: datetime | None, observed_at: datetime,
+) -> None:
+    """커서 = 본 것 중 가장 큰 seq(#525). 뒤로 가지 않는다 — seq가 없거나(보존 24시간 안에 이벤트 없음) 더 작으면
+    그대로 둔다. 구멍은 추적하지 않는다. 행이 없으면(지도 정리가 먼저 지움) 아무것도 하지 않는다."""
+    last_seen = AgentCursor.last_seen_seq if seq is None else func.greatest(AgentCursor.last_seen_seq, seq)
+    db.execute(
+        update(AgentCursor).where(AgentCursor.map_id == map_id)
+        .values(last_seen_seq=last_seen, next_check_at=next_check_at, last_observed_at=observed_at)
+    )
+
+
+# ---------------------------------------------------------------- 이력 (12.3)
+
+def load_history(db: Session, map_id: str, now: datetime) -> core.History:
+    """정책이 보는 이 지도의 제안 이력(최신순)과 오늘(KST 자정 이후) 모델을 쓴 관찰 수."""
+    rows = db.execute(
+        select(AgentSuggestion).where(AgentSuggestion.map_id == map_id)
+        .order_by(AgentSuggestion.created_at.desc(), AgentSuggestion.id)
+    ).scalars().all()
+    model_runs_today = db.execute(
+        select(func.count()).select_from(AgentRun).where(
+            AgentRun.map_id == map_id,
+            AgentRun.used_model.is_(True),
+            AgentRun.trigger.in_(MODEL_RUN_TRIGGERS),
+            AgentRun.started_at >= core.kst_day_start(now),
+        )
+    ).scalar_one()
+    return core.History(
+        suggestions=tuple(
+            core.PastSuggestion(
+                id=str(r.id), diagnosis=r.diagnosis, category=r.category, fingerprint=r.fingerprint,
+                status=r.status, created_at=r.created_at, resolved_at=r.resolved_at, expires_at=r.expires_at,
+                evidence_hash=r.evidence_hash,
+            )
+            for r in rows
+        ),
+        model_runs_today=model_runs_today,
+    )
+
+
+# ---------------------------------------------------------------- 제안 상태 (12.4, 12.9)
+
+def expire_suggestions(db: Session, map_id: str, now: datetime) -> list[str]:
+    """expires_at이 지난 활성 제안을 expired로. 바꾼 id 목록(agent.resolved는 M1에서 이 목록으로 낸다)."""
+    return [str(i) for i in db.execute(
+        update(AgentSuggestion)
+        .where(AgentSuggestion.map_id == map_id, AgentSuggestion.status == "active", AgentSuggestion.expires_at < now)
+        .values(status="expired", resolved_at=now)
+        .returning(AgentSuggestion.id)
+    ).scalars().all()]
+
+
+def supersede(db: Session, suggestion_ids: list[str], now: datetime) -> list[str]:
+    """신호가 사라졌거나 근거가 바뀐 활성 제안을 superseded로. 그새 사람이 처리했으면(active가 아니면) 두고, 바꾼
+    id만 돌려준다."""
+    if not suggestion_ids:
+        return []
+    return [str(i) for i in db.execute(
+        update(AgentSuggestion)
+        .where(AgentSuggestion.id.in_(suggestion_ids), AgentSuggestion.status == "active")
+        .values(status="superseded", resolved_at=now)
+        .returning(AgentSuggestion.id)
+    ).scalars().all()]
+
+
+def insert_suggestion(
+    db: Session, *, map_id: str, run_id: uuid.UUID, signal: core.Signal, now: datetime, shadow: bool,
+) -> uuid.UUID | None:
+    """활성 제안 하나를 넣는다. 이미 활성 제안이 있으면 넣지 않고 None(ON CONFLICT (map_id) WHERE
+    status='active' DO NOTHING — 부분 유니크 인덱스가 지도당 하나를 지킨다, 17절 8번).
+
+    M0은 렌더하지 않는다 — 제목, 문장, 버튼은 비워 두고(M1) 유형, 카테고리, 핀, fingerprint, evidence_hash만 남긴다.
+    사유 글은 어디에도 넣지 않는다(명세 2절 13번)."""
+    return db.execute(
+        pg_insert(AgentSuggestion)
+        .values(
+            id=uuid.uuid4(), map_id=map_id, run_id=run_id, diagnosis=signal.diagnosis, category=signal.category,
+            pin_id=uuid.UUID(signal.pin_id) if signal.pin_id else None, fingerprint=signal.fingerprint,
+            evidence_hash=signal.evidence_hash, title="", claims=[], analysis=None, advice=[], actions=[],
+            status="active", shadow=shadow, created_at=now, expires_at=now + SUGGESTION_TTL,
+        )
+        .on_conflict_do_nothing(index_elements=[AgentSuggestion.map_id], index_where=text("status = 'active'"))
+        .returning(AgentSuggestion.id)
+    ).scalar_one_or_none()
+
+
+# ---------------------------------------------------------------- 기록과 보존 (12.4, 12.9)
+
+def insert_run(db: Session, **fields) -> uuid.UUID:
+    """관찰 한 번의 기록. 칸은 models.AgentRun 그대로 받는다."""
+    row = AgentRun(id=uuid.uuid4(), **fields)
+    db.add(row)
+    db.flush()
+    return row.id
+
+
+def set_run_outcome(db: Session, run_id: uuid.UUID, outcome: str, *, blocked: list[dict]) -> None:
+    """제안을 넣으려다 활성 제안에 막힌 관찰(동시 저장)의 결과를 고친다."""
+    db.execute(update(AgentRun).where(AgentRun.id == run_id).values(outcome=outcome, blocked=blocked))
+
+
+def delete_old_runs(db: Session, now: datetime) -> int:
+    """보존 기한(30일)이 지난 agent_runs를 지운다. 제안의 run_id는 FK ON DELETE SET NULL로 비워진다."""
+    cutoff = now - timedelta(days=AGENT_RUNS_RETENTION_DAYS)
+    return db.execute(delete(AgentRun).where(AgentRun.started_at < cutoff)).rowcount

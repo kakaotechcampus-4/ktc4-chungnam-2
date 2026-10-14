@@ -296,6 +296,7 @@ class PastSuggestion:
     created_at: datetime
     resolved_at: datetime | None = None
     expires_at: datetime | None = None
+    evidence_hash: str | None = None   # 활성 제안의 무효화 판단(find_superseded)에 쓴다
 
 
 @dataclass(frozen=True)
@@ -454,3 +455,50 @@ def next_check_at(snap: Snapshot, history: History, now: datetime, th: timedelta
         candidates.append(active.expires_at)
     future = [t for t in candidates if t > now]
     return min(future) if future else None
+
+
+# ---------------------------------------------------------------- 관찰 흐름의 판단 (12.4, 12.5, 12.8)
+
+RECENT_EVENT_GRACE = timedelta(seconds=2)   # realtime/core.py GRACE와 같은 값
+
+
+def has_recent_event(latest_event_at: datetime | None, now: datetime) -> bool:
+    """가장 최근 이벤트가 2초 안이면 True — 그보다 작은 seq가 늦게 커밋될 수 있어 다음 tick에 한 번 더 본다(12.5)."""
+    return latest_event_at is not None and now - latest_event_at < RECENT_EVENT_GRACE
+
+
+def find_superseded(active: PastSuggestion | None, signals: Sequence[Signal]) -> list[str]:
+    """활성 제안을 무효화할지(12.9). 같은 fingerprint의 신호가 사라졌거나 evidence_hash가 바뀌었으면 그 id 하나."""
+    if active is None:
+        return []
+    if any(s.fingerprint == active.fingerprint and s.evidence_hash == active.evidence_hash for s in signals):
+        return []
+    return [active.id]
+
+
+def recheck(signal: Signal, snap: Snapshot, now: datetime, th: timedelta) -> bool:
+    """상태 재확인(12.8). 저장 직전에 다시 읽은 사본으로 같은 탐지기를 돌려, 같은 fingerprint와 evidence_hash의
+    신호가 아직 있으면 True. seq를 비교하지 않는다(커밋 순서 구멍과 무관하게 실제 값을 본다)."""
+    return any(
+        s.fingerprint == signal.fingerprint and s.evidence_hash == signal.evidence_hash
+        for s in detect_all(snap, now, th)
+    )
+
+
+def choose_top(passed: Sequence[Signal], policy: PriorityPolicy) -> tuple[Signal | None, dict[str, Any] | None]:
+    """1순위 신호와 agent_runs.priority 기록(7절). M0은 모델을 부르지 않아 늘 fallback_order다(model_order 없음).
+    M1에서 신호가 2개 이상이면 llm.agent_prioritize와 apply_priority_rules로 바뀐다."""
+    if not passed:
+        return None, None
+    order = fallback_order(passed, policy)
+    log = {"model_order": None, "final_order": [s.id for s in order], "corrections": [], "reused": False}
+    return order[0], log
+
+
+def signal_record(sig: Signal) -> dict[str, Any]:
+    """agent_runs.signals 한 칸. 근거는 id로만 담고 사유 글은 없다(명세 2절 13번)."""
+    return {
+        "id": sig.id, "diagnosis": sig.diagnosis, "category": sig.category, "pin_id": sig.pin_id,
+        "evidence_ids": list(sig.evidence_ids), "features": dict(sig.features),
+        "fingerprint": sig.fingerprint, "evidence_hash": sig.evidence_hash,
+    }

@@ -6,7 +6,8 @@
 - 사유 글(`Reason.text`)은 공개 데이터라 사본에는 담지만(모델 입력과 검증용, M1), Signal과 agent 테이블에는 넣지
   않는다(명세 2절 13번).
 - 구성원 별칭(m1, m2 …)을 여기서 매긴다. joined_at 순이다.
-- `latest_seq`, `latest_event_at`은 #515에서 `realtime.api.latest_seq_by_map`으로 채운다(12.5). 지금은 None이다.
+- `latest_seq`, `latest_event_at`은 `realtime.api.latest_seq_by_map`으로 같은 트랜잭션에서 채운다(12.5, #515).
+  event_log 보존(24시간) 안에 이 지도 이벤트가 없으면 None이다. 커서 계산에만 쓰고 상태는 도메인 테이블에서 읽는다.
 
 데이터 모양(dataclass)도 여기 둔다. core.py는 이 모양만 알고 DB는 모른다.
 """
@@ -20,6 +21,7 @@ from agent import core
 from common import categories
 from maps import api as maps_api
 from pins import api as pins_api
+from realtime import api as realtime_api
 from recommend import api as recommend_api
 from shortlist import api as shortlist_api
 
@@ -110,8 +112,8 @@ class Snapshot:
     shortlist: tuple[ShortlistItem, ...] = ()
     last_run_at: dict[str, datetime] = field(default_factory=dict)   # 카테고리 → 마지막 run 시각. has_run_since로만
     actions: tuple[Action, ...] = ()
-    latest_seq: int | None = None          # #515
-    latest_event_at: datetime | None = None   # #515
+    latest_seq: int | None = None          # 이 지도의 가장 큰 event_log seq(12.5)
+    latest_event_at: datetime | None = None   # 그 이벤트의 created_at
 
     def __post_init__(self):
         object.__setattr__(self, "_pins_by_id", {p.pin_id: p for p in self.pins})
@@ -155,8 +157,9 @@ def build(db: Session, map_id: str, now: datetime) -> Snapshot | None:
         map_id=found["map_id"], start_date=found["start_date"], end_date=found["end_date"], deleted=found["deleted"],
     )
     today = core.kst_date(now)
+    latest_seq, latest_event_at = realtime_api.latest_seq_by_map(db).get(map_id, (None, None))
     if map_info.deleted:
-        return Snapshot(map=map_info, today=today)
+        return Snapshot(map=map_info, today=today, latest_seq=latest_seq, latest_event_at=latest_event_at)
 
     members = tuple(
         Member(user_id=m["user_id"], alias=f"m{i}", joined_at=m["joined_at"])
@@ -201,7 +204,7 @@ def build(db: Session, map_id: str, now: datetime) -> Snapshot | None:
     return Snapshot(
         map=map_info, today=today, members=members, pins=pins, reactions=reactions, reasons=reasons,
         shortlist=shortlist, last_run_at=recommend_api.last_run_at_by_category(db, map_id=map_id),
-        actions=derive_actions(pins, reactions, shortlist),
+        actions=derive_actions(pins, reactions, shortlist), latest_seq=latest_seq, latest_event_at=latest_event_at,
     )
 
 

@@ -14,6 +14,7 @@ from agent import snapshot
 from auth.models import User
 from auth.testing import ensure_users
 from maps.models import Map, Membership
+from common.events import EventLog
 from pins.models import Pin, Reaction
 from recommend.models import Candidate, EvidenceLine, Exclusion, RecommendRun
 from shortlist.models import ShortlistItem
@@ -143,7 +144,7 @@ def test_pins_reactions_shortlist_and_actions(db_session):
         ("pin", "u1", "음식점"), ("pin", "u2", "카페"), ("reaction", "u2", "음식점"), ("shortlist", "u3", "카페"),
     ]
     assert snap.action_times == sorted(snap.action_times)
-    assert snap.latest_seq is None and snap.latest_event_at is None   # #515에서 채운다
+    assert snap.latest_seq is None and snap.latest_event_at is None   # 이 지도 이벤트가 없다
 
 
 def test_reasons_include_deleted_pins_with_alias_and_chips(db_session):
@@ -183,3 +184,16 @@ def test_deleted_map_has_only_map_info(db_session):
 
 def test_missing_map_is_none(db_session):
     assert snapshot.build(db_session, "no_such_map", NOW) is None
+
+
+def test_latest_seq_is_this_maps_largest_event(db_session):
+    """커서용 — 이 지도의 가장 큰 event_log seq와 그 시각(12.5). 다른 지도 이벤트는 보지 않는다."""
+    map_id, other = _map(db_session), _map(db_session)
+    rows = [EventLog(map_id=m, channel="public", type="pin.created", payload={}) for m in (map_id, map_id, other)]
+    db_session.add_all(rows)
+    db_session.flush()
+
+    snap = snapshot.build(db_session, map_id, NOW)
+
+    assert snap.latest_seq == rows[1].seq
+    assert snap.latest_event_at == rows[1].created_at
