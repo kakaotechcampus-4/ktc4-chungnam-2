@@ -224,7 +224,7 @@ def test_owner_leaving_hands_over_to_earliest_joined_non_withdrawn_member(app_cl
 
     detail = app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()
     assert detail["next_owner"] == {"user_id": "user_3", "display_name": "user_3"}
-    assert detail["permissions"] == {"can_delete": True, "can_leave": True}
+    assert detail["permissions"] == {"can_delete": True, "can_leave": True, "can_edit": True}
 
     assert app_client.delete(f"/maps/{map_id}/members/me", cookies=_auth("user_1")).status_code == 204
 
@@ -235,7 +235,7 @@ def test_owner_leaving_hands_over_to_earliest_joined_non_withdrawn_member(app_cl
     assert event.payload == {"map_id": map_id, "user_id": "user_1", "new_owner_user_id": "user_3"}
 
     new_owner_view = app_client.get(f"/maps/{map_id}", cookies=_auth("user_3")).json()
-    assert new_owner_view["permissions"] == {"can_delete": True, "can_leave": True}
+    assert new_owner_view["permissions"] == {"can_delete": True, "can_leave": True, "can_edit": True}
     assert new_owner_view["next_owner"]["user_id"] == "user_lonely"
 
 
@@ -280,7 +280,7 @@ def test_owner_without_successor_cannot_leave(app_client, db_session, others_wit
         _withdraw(db_session, "user_2")
 
     detail = app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()
-    assert detail["permissions"] == {"can_delete": True, "can_leave": False}
+    assert detail["permissions"] == {"can_delete": True, "can_leave": False, "can_edit": True}
     assert "next_owner" not in detail
 
     resp = app_client.delete(f"/maps/{map_id}/members/me", cookies=_auth("user_1"))
@@ -296,15 +296,15 @@ def test_permissions_on_every_map_response(app_client):
     created = app_client.post(
         "/maps", json={"title": "x", "start_date": "2026-10-10", "end_date": "2026-10-10"}, cookies=_auth("user_1")
     ).json()
-    assert created["permissions"] == {"can_delete": True, "can_leave": False}
+    assert created["permissions"] == {"can_delete": True, "can_leave": False, "can_edit": True}
     accepted = app_client.post(f"/invites/{token}/accept", cookies=_auth("user_2")).json()
-    assert accepted["permissions"] == {"can_delete": False, "can_leave": True}
+    assert accepted["permissions"] == {"can_delete": False, "can_leave": True, "can_edit": False}
 
     listed = {m["id"]: m for m in app_client.get("/maps", cookies=_auth("user_1")).json()}
-    assert listed[map_id]["permissions"] == {"can_delete": True, "can_leave": True}
+    assert listed[map_id]["permissions"] == {"can_delete": True, "can_leave": True, "can_edit": True}
     assert all("next_owner" not in m for m in listed.values())   # 목록에서는 생략
     member_view = app_client.get(f"/maps/{map_id}", cookies=_auth("user_2")).json()
-    assert member_view["permissions"] == {"can_delete": False, "can_leave": True}
+    assert member_view["permissions"] == {"can_delete": False, "can_leave": True, "can_edit": False}
     assert "next_owner" not in member_view
 
 

@@ -23,7 +23,7 @@ from authz.guard import require_map_member, require_on_map
 from common.settings import settings
 from maps import flows, service
 from maps.deps import DbSession
-from maps.schemas import Invite, InviteSummary, Map, Member, MapCreateRequest
+from maps.schemas import Invite, InviteSummary, Map, Member, MapCreateRequest, MapUpdateRequest
 
 router = APIRouter(tags=["maps"], dependencies=[Depends(get_current_user)])
 # 라우터 단위 의존성은 개별 라우트에서 뺄 수 없다 — 로그인 없이 호출되는 GET /invites/{token}(#23,
@@ -38,6 +38,7 @@ MembersForMap = Depends(require_map_member())
 # 쓰는 안은 기각했다 — 무관한 액션 이름 뒤에 정책 결정을 숨기게 된다.
 MapForInvite = Depends(require_map_member())
 InvitesToManage = Depends(require_on_map("invite.revoke"))  # 방장만 — 구성원 403(#467)
+MapToEdit = Depends(require_on_map("map.settings.edit"))  # 방장만 — 구성원 403(#465)
 MapToDelete = Depends(require_on_map("map.delete"))  # 방장만 — 구성원 403, 비구성원·삭제된 지도 404
 MapToLeave = Depends(require_on_map("map.leave"))  # 넘길 사람이 없는 방장 409는 maps.core가 판정
 
@@ -66,6 +67,16 @@ def get_map(
     db=DbSession,
 ):
     return service.get_map_response(db, map_id=mapId, viewer_id=principal.user_id)
+
+
+@router.patch("/maps/{mapId}", response_model=Map, response_model_exclude_none=True)
+def patch_map(
+    body: MapUpdateRequest,
+    mapId: str = Path(...),
+    principal: Principal = MapToEdit,
+    db=DbSession,
+):
+    return service.update_map(db, map_id=mapId, req=body, viewer_id=principal.user_id)
 
 
 @router.delete("/maps/{mapId}", status_code=204)

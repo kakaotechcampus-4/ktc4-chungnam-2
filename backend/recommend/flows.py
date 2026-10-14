@@ -145,6 +145,21 @@ CATEGORIES: tuple[str, ...] = categories.recommendable()  # common/categories.py
 DEFAULT_REGION_RADIUS_M = core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)  # 15분 * 80m/분 = 1200m
 
 
+def list_runs(
+    db: Session, *, map_id: str, requested_by: str, category: str | None, limit: int,
+) -> list[schemas.RunSummary]:
+    """GET /maps/{mapId}/runs (#469) — 내가 요청한 run만, 최근순. 남의 run은 어떤 경로로도 섞이지 않는다."""
+    return [
+        schemas.RunSummary(
+            id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
+            created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
+        )
+        for run, candidate_count, published_count in service.list_runs_for_requester(
+            db, map_id=map_id, requested_by=requested_by, category=category, limit=limit,
+        )
+    ]
+
+
 def get_readiness(db: Session, *, map_id: str) -> dict[str, dict]:
     """GET /maps/{mapId}/recommend/readiness (5-4). 카테고리마다 ♥/🚫 의견이 달린 핀이 1곳 이상이면 열린다
     (#360 — 구성원 수와 무관, 혼자 쓰는 지도도 같다)."""
@@ -663,6 +678,8 @@ def get_result(
     """GET /runs/{runId}/result — funnel은 마지막 execute/widen/retry가 저장해둔 값을 그대로
     쓴다(재계산하지 않는다 — GET은 부작용도, 외부 게이트웨이 의존도 없어야 한다)."""
     run = service.get_run_or_404(db, run_id)
+    if run.status != "done":
+        raise AppError("RUN_NOT_FINISHED", detail={"status": run.status})  # #469 — 결과는 done일 때만 있다
     regions = service.list_regions(db, run_id)
     region_labels = {r.id: r.label for r in regions}
     candidates = service.list_candidates(db, run_id)

@@ -20,7 +20,7 @@ from maps import core
 from maps.models import Invite as InviteRow
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
-from maps.schemas import Invite, InviteSummary, Map, MapCreateRequest, Member
+from maps.schemas import Invite, InviteSummary, Map, MapCreateRequest, MapUpdateRequest, Member
 from pins import api as pins_api
 from shortlist import api as shortlist_api
 
@@ -159,6 +159,25 @@ def create_map(db: Session, *, req: MapCreateRequest, creator_id: str) -> Map:
     db.flush()
 
     return _map_response(db, map_row, viewer_id=creator_id)
+
+
+def update_map(db: Session, *, map_id: str, req: MapUpdateRequest, viewer_id: str) -> Map:
+    """지도 수정(#465). 방장인지는 라우터의 require_on_map("map.settings.edit")가 이미 봤다. 지도 행을
+    잠가 같은 지도의 동시 수정이 합친 값 위에서 줄을 서게 하고, map.updated를 같은 트랜잭션에 기록한다."""
+    map_row = get_map_or_404(db, map_id, for_update=True)
+    updated = core.validate_map_update(
+        _map_record(db, map_row),
+        title=req.title, start_date=req.start_date, end_date=req.end_date, region=req.region,
+    )
+    map_row.title = updated.title
+    map_row.start_date = updated.start_date
+    map_row.end_date = updated.end_date
+    if req.region is not None:
+        map_row.region_label = updated.region.label
+        map_row.region_center = func.ST_SetSRID(func.ST_MakePoint(updated.region.lng, updated.region.lat), 4326)
+    db.flush()
+    record_event(db, core.map_updated_event(map_id, updated))
+    return _map_response(db, map_row, viewer_id=viewer_id, with_next_owner=True)
 
 
 def get_map_response(db: Session, *, map_id: str, viewer_id: str) -> Map:

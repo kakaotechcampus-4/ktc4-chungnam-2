@@ -255,6 +255,23 @@ fallback·타 라우트 인증 유지. `KNOWN_MISSING`에서 `("get", "/invites/
 
 ---
 
+## #465 — PATCH /maps/{mapId} 지도 수정 (2026-10-13)
+
+**구현**: 보낸 필드만 바꾼다. `core.validate_map_update`가 기존 값에 합친 결과를 `validate_map_create`로 검사한다
+(종료일만 보내도 기존 시작일과 비교). region은 바꾸기만, 지우기 없음(명시적 null은 422). 빈 객체·null 값은
+`MapUpdateRequest`의 model_validator가 422로 막는다. 방장만(`require_on_map("map.settings.edit")`, 구성원 403,
+비구성원·삭제된 지도 404). 지도 행을 `FOR UPDATE`로 잠가 동시 수정이 줄을 선다. `map.updated`를 수정과
+같은 트랜잭션에 기록하고 payload는 요청자 무관 필드(map_id·title·날짜·region?)만 싣는다.
+`Permissions.can_edit`는 `core.map_permissions`가 `map.settings.edit` 판정으로 채운다(방장 true, 구성원 false).
+응답은 `_map_response`(요청자 기준 Map, 방장이라 `next_owner` 포함).
+
+**기존 테스트 수정**: `permissions`를 dict로 통째 비교하던 `test_core.py`·`test_delete_leave_api.py`에 `can_edit`을 더했다.
+**통합**: `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 PATCH 항목 제거, 골든 패스·권한 행렬(`_endpoints`)에 호출 추가,
+구성원 403 테스트 추가.
+
+**루트 확인 사항 없음.** 스펙·권한 모델은 그대로 따랐다. (참고: realtime 테스트 4건은 이 PR과 무관하게 develop에서도 실패한다.)
+복잡도 예상 2 / 실제 2.
+
 ## #467 — 초대 링크 목록·끄기·재사용 (2026-10-13)
 
 **구현**
