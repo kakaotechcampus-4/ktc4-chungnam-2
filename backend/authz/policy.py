@@ -44,6 +44,8 @@ POLICY: Mapping[str, RoleSpec] = {
                 "map.leave",  # 지도 나가기(#369). 넘길 사람이 없는 방장 차단은 역할이 아니라 지도 상태라
                                # 여기 넣지 않고 maps/core.py가 판정한다(409 OWNER_CANNOT_LEAVE)
                 "route.recalculate",  # 동선 재계산 — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
+                "agent.toggle",  # 계획 보조 에이전트 모드 켜고 끄기(v2, docs/agent-v2.md)
+                "agent.suggestion.resolve",  # 지도 제안 수락·닫기(v2). 지도 단위
             }
         ),
     ),
@@ -103,4 +105,7 @@ ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "invite.revoke": frozenset({"map"}),
     "owner.transfer": frozenset({"map"}),
     "route.recalculate": frozenset({"map"}),
+    # 제안은 지도에 딸린다 — 제안 id로 지도를 찾아 Resource(type="map", ...)으로 판정한다(agent 모듈의 loader)
+    "agent.toggle": frozenset({"map"}),
+    "agent.suggestion.resolve": frozenset({"map"}),
 }

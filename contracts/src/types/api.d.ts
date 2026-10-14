@@ -1674,6 +1674,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{runId}/advice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 추천 막힘 조언 (v2, docs/agent-v2.md 9절) — 그 run을 요청한 본인만(recommend.manage). 실서버 구현 전(KNOWN_MISSING).
+         *     결과가 3곳 미만이거나 같은 카테고리 run을 3번 이상 만든 완료 run에서, 더 많이 추천받는 방법을 알려 준다(반경 넓히기, 실격 조건 확인, 애매한 사유 고치기, 후보 소진 안내).
+         *     run당 한 번만 만들고 저장한다 — 같은 run을 다시 열면 같은 조언이다. 대상이 아니거나 낼 조언이 없으면 204.
+         *     FE는 깔때기를 먼저 보여 준 뒤 부르고, 기다리는 동안 조언 자리만 둔다(16.5). 버튼은 widen_radius, open_evidence 두 종류뿐이다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    runId: components["parameters"]["RunId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 조언 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunAdvice"];
+                    };
+                };
+                /** @description 대상이 아니거나 낼 조언이 없음 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/candidates/{candidateId}/publish": {
         parameters: {
             query?: never;
@@ -1999,6 +2051,232 @@ export interface paths {
                         "application/json": components["schemas"]["Route"][];
                     };
                 };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 「핑고 AI 조언」 바텀시트 상태 — 구성원 누구나 (docs/agent-v2.md 14절). 모드, 지금 제안(지도당 0개 또는 1개), 미열람 여부, 카테고리별 우리 조건 요약.
+         *     문장은 모두 서버가 렌더한 것이다. FE는 슬롯이나 숫자를 다루지 않고 그대로 보여 준다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentState"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/agent/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 모드 켜고 끄기 — 구성원 누구나 (docs/permissions.md agent.toggle). 지도 단위이고 기본값은 켜짐이다.
+         *     끄면 지금 제안을 무효화(superseded)한다. 전체 채널에 agent.settings_changed를 보낸다(끄면서 제안이 있었으면 agent.resolved도).
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AgentSettingsRequest"];
+                };
+            };
+            responses: {
+                /** @description 바뀐 설정 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentSettings"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/suggestions/{suggestionId}/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 열람 기록 — 구성원 누구나. 시트를 열어 제안이 화면에 보였을 때 부른다. 사람마다 한 번 기록되고(멱등) 버튼의 점(has_unseen)이 꺼진다.
+         *     이벤트는 없다. 이미 처리된 제안도 204다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    suggestionId: components["parameters"]["SuggestionId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 기록함 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/suggestions/{suggestionId}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 제안의 버튼 하나를 누름 — 구성원 누구나 (agent.suggestion.resolve). 서버는 제안을 accepted로 바꾸고 그 버튼의 동작 설명(`AgentAction`)을 돌려준다.
+         *     **서버는 그 동작을 대신 실행하지 않는다.** FE가 응답의 action을 손으로 할 때와 같은 API로 실행한다(docs/agent-v2.md 16.3).
+         *     이미 다른 사람이 처리했으면 409 SUGGESTION_RESOLVED — FE는 `GET /maps/{mapId}/agent`를 다시 받는다. 전체 채널에 agent.resolved를 보낸다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    suggestionId: components["parameters"]["SuggestionId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AgentAcceptRequest"];
+                };
+            };
+            responses: {
+                /** @description 수락함. FE가 실행할 동작 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentAcceptResponse"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["SuggestionResolved"];
+                /** @description action_index가 그 제안의 버튼 범위 밖 (VALIDATION_ERROR) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/suggestions/{suggestionId}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 제안 닫기 — 구성원 누구나 (agent.suggestion.resolve). 지도 단위라 모두에게서 닫힌다. 같은 종류 제안은 한동안(2, 6, 24시간) 다시 나오지 않는다.
+         *     이미 처리됐으면 409 SUGGESTION_RESOLVED. 전체 채널에 agent.resolved를 보낸다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    suggestionId: components["parameters"]["SuggestionId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 닫음 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["SuggestionResolved"];
             };
         };
         delete?: never;
@@ -2595,6 +2873,155 @@ export interface components {
                 approx_minutes: number;
             }[];
         };
+        /**
+         * @description 제안 종류. stall=반대 후 정체, split=의견 갈림, no_reaction=아직 확인되지 않은 핀, category_gap=확정 리스트에 빠진 카테고리 (docs/agent-v2.md 6절)
+         * @enum {string}
+         */
+        AgentDiagnosis: "stall" | "split" | "no_reaction" | "category_gap";
+        /** @description 서버가 렌더한 문장 한 줄. is_guess=false는 확인된 사실(「확인된 것」), true는 추정(「AI 조언」, 화면에 '추정' 표시) */
+        AgentAdviceLine: {
+            text: string;
+            is_guess: boolean;
+        };
+        /**
+         * @description 버튼 하나. 사람이 원래 하던 동작으로만 이어진다(확정, 삭제, 반응 변경, 근거 줄 빼기는 없다). FE가 하는 일은 docs/agent-v2.md 16.3 표.
+         *     open_recommend → AI 추천 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/runs`. show_pins → 지도 탭 필터. search_place → 장소 검색 시트.
+         *     open_route → 리스트 탭 동선. widen_radius → 기존 반경 넓히기. open_evidence → 근거 확인 화면.
+         */
+        AgentAction: {
+            /** @description accept 요청의 action_index */
+            index: number;
+            /** @enum {string} */
+            type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence";
+            /** @description 버튼 문구(서버 렌더). 예: "음식점 추천 받기", "미확인 핀 보기" */
+            label: string;
+            /** @description type마다 쓰는 것만 채운다 */
+            params: {
+                category?: components["schemas"]["Category"];
+                /** @description show_pins: 보여 줄 핀 */
+                pin_ids?: string[];
+                /** @description show_pins: 내가 아직 반응하지 않은 핀만 */
+                unseen_only?: boolean;
+                /** @description widen_radius, open_evidence: 대상 run */
+                run_id?: string;
+                /** @description open_evidence: 강조할 근거 줄. 요청자 본인이 쓴 줄만 들어간다(근거 줄 빼기는 쓴 사람만, docs/permissions.md) */
+                evidence_line_ids?: string[];
+            };
+        };
+        /** @description 의견 갈림의 충돌 지점 하나. 이름 대신 ♥ 쪽 / 🚫 쪽으로 보여 준다. 문구는 서버 렌더 */
+        AgentConflictAxis: {
+            /** @description 예: "조용한 곳" */
+            label: string;
+            /** @description ♥ 쪽. 예: "원함 2" */
+            like_side: string | null;
+            /** @description 🚫 쪽. 예: "원하지 않음 1" */
+            against_side: string | null;
+        };
+        /** @description split 제안에만 붙는다. 충돌 종류는 코드가 ②의 키와 방향으로 정한다(docs/agent-v2.md 6.3) */
+        AgentAnalysis: {
+            /**
+             * @description same_axis=같은 특징을 두고 방향이 반대, different_axes=서로 다른 특징, unclear=한쪽에 키 있는 사유가 없음
+             * @enum {string}
+             */
+            conflict_type: "same_axis" | "different_axes" | "unclear";
+            axes: components["schemas"]["AgentConflictAxis"][];
+        };
+        /** @description 지도 제안. 지도당 동시에 하나. 전체 공개이고 개인 제안은 없다. 누가 수락하거나 닫았는지는 싣지 않는다 */
+        AgentSuggestion: {
+            id: string;
+            diagnosis: components["schemas"]["AgentDiagnosis"];
+            category: components["schemas"]["Category"] | null;
+            /** @description 서버 렌더. 예: "확정 리스트에 카페가 아직 없어요" */
+            title: string;
+            analysis?: components["schemas"]["AgentAnalysis"] | null;
+            advice: components["schemas"]["AgentAdviceLine"][];
+            actions: components["schemas"]["AgentAction"][];
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description 만들고 24시간 뒤. 지나면 만료(agent.resolved, status=expired)
+             */
+            expires_at: string;
+        };
+        AgentSummaryItem: {
+            fact_key?: string | null;
+            /** @description 서버 렌더. 예: "매운 곳 제외", "조용한 곳 원함" */
+            label: string;
+            /** @description 그 조건을 말한 구성원 수. 한 사람이 여러 번 말해도 1 */
+            member_count: number;
+        };
+        AgentSplitPref: {
+            fact_key?: string;
+            /** @description 예: "조용함" */
+            label: string;
+            want_count: number;
+            avoid_count: number;
+        };
+        /**
+         * @description 우리 조건 요약 — 카테고리마다 하나, 다섯 칸 (docs/agent-v2.md 8절). 칸 나누기와 개수는 코드가 ②의 키와 방향으로 한다. 구성원 이름은 없고 개수만 있다.
+         *     「이 조건으로 {category} 추천 받기」 버튼은 category가 RecommendCategory일 때만 보인다(누르면 accept 없이 바로 open_recommend).
+         */
+        AgentSummary: {
+            category: components["schemas"]["Category"];
+            /** @description 지키려는 조건(실격 조건) */
+            must_keep: components["schemas"]["AgentSummaryItem"][];
+            /** @description 2명 이상이 같은 방향으로 말한 선호 */
+            common_prefs: components["schemas"]["AgentSummaryItem"][];
+            /** @description 같은 특징에 원함과 피함이 함께 있는 선호 */
+            split_prefs: components["schemas"]["AgentSplitPref"][];
+            /** @description 칸 이름 「더 적어 주면 반영돼요」. 키 없는 사유 중 고쳐 쓰면 추천에 반영될 수 있는 것 */
+            vague_fixable: {
+                count: number;
+                /** @description 구체화 요청 문장(서버 렌더). 예: "거리 조건은 '숙소에서 걸어서 10분'처럼 적어 주세요" */
+                requests: string[];
+            };
+            /** @description 칸 이름 「추천이 거르지 않아요」. 알러지 사유(#425)와 가격 칩(#423). 원문은 싣지 않는다 */
+            not_filtered: {
+                count: number;
+                /** @description 고정 안내. 예: "알러지 같은 조건은 추천이 거르지 않아요. 가게에 직접 확인해 주세요." */
+                notices: string[];
+            };
+            /** Format: date-time */
+            updated_at: string;
+        };
+        AgentSettings: {
+            enabled: boolean;
+            /** @description 마지막으로 바꾼 구성원의 user_id. 한 번도 바꾸지 않았으면(기본값 켜짐) null */
+            updated_by?: string | null;
+            /** Format: date-time */
+            updated_at?: string | null;
+        };
+        AgentSettingsRequest: {
+            enabled: boolean;
+        };
+        AgentState: {
+            settings: components["schemas"]["AgentSettings"];
+            /** @description 지금 제안. 없으면 null. 모드가 꺼져 있으면 항상 null */
+            active_suggestion: components["schemas"]["AgentSuggestion"] | null;
+            /** @description 지금 제안이 있고 요청자가 아직 열람하지 않았으면 true — 버튼의 점. 요약 갱신에는 점을 켜지 않는다 */
+            has_unseen: boolean;
+            /** @description 요약이 만들어진 카테고리만 */
+            summaries: components["schemas"]["AgentSummary"][];
+        };
+        AgentAcceptRequest: {
+            action_index: number;
+        };
+        AgentAcceptResponse: {
+            action: components["schemas"]["AgentAction"];
+        };
+        /** @description 추천 막힘 조언 (docs/agent-v2.md 9절). 요청자에게만 보인다. 다른 구성원이 쓴 실격 조건 때문이면 버튼 없이 사실 문장만 있다(이름은 쓰지 않는다) */
+        RunAdvice: {
+            run_id: string;
+            /**
+             * @description radius=반경 밖에서 많이 빠짐, soft_relax=실격 조건이 많이 거름, vague_reason=키 없는 근거가 있음, exhausted=이미 제안·거절한 곳으로 소진
+             * @enum {string}
+             */
+            kind: "radius" | "soft_relax" | "vague_reason" | "exhausted";
+            advice: components["schemas"]["AgentAdviceLine"][];
+            /** @description widen_radius, open_evidence만 */
+            actions: components["schemas"]["AgentAction"][];
+        };
         /** @description 모든 SSE 이벤트의 공통 봉투. id는 event_log.seq와 같고 SSE의 id: 필드로 전송된다 */
         SseEnvelope: {
             /**
@@ -2605,7 +3032,7 @@ export interface components {
             event: string;
         };
         /** @description 전체 채널 이벤트 (docs/events.md). event 값으로 data 타입이 갈린다 */
-        PublicEvent: components["schemas"]["EvtPinCreated"] | components["schemas"]["EvtPinPublished"] | components["schemas"]["EvtPinDeleted"] | components["schemas"]["EvtPinUpdated"] | components["schemas"]["EvtReactionChanged"] | components["schemas"]["EvtShortlistChanged"] | components["schemas"]["EvtRouteRecalculated"] | components["schemas"]["EvtMemberJoined"] | components["schemas"]["EvtMemberLeft"] | components["schemas"]["EvtMapDeleted"] | components["schemas"]["EvtMapUpdated"] | components["schemas"]["EvtOwnerChanged"] | components["schemas"]["EvtMemberPresence"];
+        PublicEvent: components["schemas"]["EvtPinCreated"] | components["schemas"]["EvtPinPublished"] | components["schemas"]["EvtPinDeleted"] | components["schemas"]["EvtPinUpdated"] | components["schemas"]["EvtReactionChanged"] | components["schemas"]["EvtShortlistChanged"] | components["schemas"]["EvtRouteRecalculated"] | components["schemas"]["EvtMemberJoined"] | components["schemas"]["EvtMemberLeft"] | components["schemas"]["EvtMapDeleted"] | components["schemas"]["EvtMapUpdated"] | components["schemas"]["EvtOwnerChanged"] | components["schemas"]["EvtAgentSuggested"] | components["schemas"]["EvtAgentResolved"] | components["schemas"]["EvtAgentSummaryUpdated"] | components["schemas"]["EvtAgentSettingsChanged"] | components["schemas"]["EvtMemberPresence"];
         /** @description 개인 채널 이벤트 (docs/events.md, 5-5-1) */
         PrivateEvent: components["schemas"]["EvtRunProgress"] | components["schemas"]["EvtRunCandidatesReady"] | components["schemas"]["EvtRunFailed"];
         EvtPinCreated: components["schemas"]["SseEnvelope"] & {
@@ -2699,6 +3126,35 @@ export interface components {
                 map_id: string;
                 from_user_id: string;
                 to_user_id: string;
+            };
+        };
+        EvtAgentSuggested: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "agent.suggested";
+            data: components["schemas"]["AgentSuggestion"];
+        };
+        EvtAgentResolved: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "agent.resolved";
+            data: {
+                suggestion_id: string;
+                /** @enum {string} */
+                status: "accepted" | "dismissed" | "expired" | "superseded";
+                /** @description accepted일 때 누른 버튼의 AgentAction.type, 그 밖에는 null */
+                resolved_action_type: string | null;
+            };
+        };
+        EvtAgentSummaryUpdated: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "agent.summary_updated";
+            data: components["schemas"]["AgentSummary"];
+        };
+        EvtAgentSettingsChanged: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "agent.settings_changed";
+            data: {
+                enabled: boolean;
+                updated_by: string;
             };
         };
         EvtMemberPresence: components["schemas"]["SseEnvelope"] & {
@@ -2839,6 +3295,15 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description 이미 처리된 지도 제안 (SUGGESTION_RESOLVED, v2) — 다른 구성원이 먼저 수락하거나 닫았거나, 만료 또는 무효화됨. `GET /maps/{mapId}/agent`를 다시 받는다 */
+        SuggestionResolved: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description 기본값 원이 이미 상한(도보 30분) — 더 넓힐 수 없음 (WIDEN_LIMIT). 「근거 고치기」/「직접 찍기」로 안내 */
         WidenLimit: {
             headers: {
@@ -2951,6 +3416,7 @@ export interface components {
         PinId: string;
         RunId: string;
         CandidateId: string;
+        SuggestionId: string;
         /**
          * @description 브라우저 EventSource가 재연결 시 자동으로 보낸다. 이 seq 이후 이벤트만 재전송한다.
          *     event_log 보존기간을 넘긴 값이면 REST 재조회로 폴백한다 (docs/events.md).

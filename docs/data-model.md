@@ -297,6 +297,69 @@ exclusions(
 
 ---
 
+## agent (v2 계획 보조 에이전트, docs/agent-v2.md 13절, #510)
+
+> v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 7개 테이블만 쓰고, 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.
+> `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다. 지도 정리(#431)는 `agent.api.purge_map_data`, 탈퇴(#155)는 `agent.api.delete_by_user`가 맡는다.
+
+```
+agent_settings(                       -- 지도별 모드. 행이 없으면 켜짐(기본값)
+  map_id primary key, enabled boolean, updated_by, updated_at
+)
+
+agent_cursors(                        -- 관찰 흐름만 쓴다. 지도별 책갈피와 다음 점검 시각, 중복 실행 방지 자리표
+  map_id primary key,
+  last_seen_seq bigint default 0,     -- event_log에서 확인한 seq (커밋 순서 구멍은 gap_seq로 한 tick 기다린다)
+  gap_seq bigint null, last_observed_at null, next_check_at null, lease_until null
+)
+
+agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 끝나도 남긴다. 30일 보존
+  id uuid, map_id, started_at, finished_at null,
+  trigger('activity'|'time'|'summary'|'run_advice'),
+  snapshot_at null, snapshot_seq null,
+  signals jsonb, blocked jsonb, priority jsonb null,
+  policy_version null, prompt_version null, model null, used_model boolean,
+  tool_calls jsonb,                   -- 도구 입력과 결과. 사유 원문이 들어갈 수 있어 탈퇴 시 그 사람 항목을 지운다
+  verification jsonb null, tokens_in, tokens_out,
+  outcome('no_signal'|'blocked'|'silent'|'unknown'|'invalid_schema'|'invalid_claims'|'stale'
+          |'suggested'|'summarized'|'advised'|'trip_ended'|'map_deleted'),
+  outcome_detail jsonb null
+)
+  index(map_id, started_at)
+
+agent_suggestions(                    -- 바텀시트의 지도 제안
+  id uuid, map_id, run_id null references agent_runs on delete set null,
+  diagnosis('stall'|'split'|'no_reaction'|'category_gap'), category null, pin_id null,
+  fingerprint, evidence_hash,         -- 중복 금지(유형+카테고리+근거 id), 상태 재확인(근거 id+반응 종류+updated_at)
+  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 렌더 결과(api-spec AgentSuggestion)와 검증 통과 claim
+  status('active'|'accepted'|'dismissed'|'expired'|'superseded'),
+  shadow boolean default false,       -- true면 저장만 하고 화면과 이벤트에 내지 않는다
+  created_at, expires_at,             -- 24시간
+  resolved_by null,                   -- 기록만. 화면과 이벤트에 싣지 않는다
+  resolved_at null, resolved_action jsonb null, decided_within_24h boolean null
+)
+  unique(map_id) where status = 'active'   -- 지도당 활성 제안 하나
+  index(map_id, fingerprint)
+
+agent_suggestion_views(               -- 사용자별 열람. 버튼의 점(has_unseen)
+  suggestion_id references agent_suggestions on delete cascade, user_id, viewed_at,
+  primary key(suggestion_id, user_id)
+)
+
+agent_reason_summaries(               -- 우리 조건 요약. 카테고리마다 최신본 하나를 덮어쓴다
+  map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸과 근거 reaction_id
+  based_on_reaction_count, run_id null, updated_at,
+  primary key(map_id, category)
+)
+
+agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조언이 없어도 빈 값으로 저장해 다시 만들지 않는다
+  run_id primary key,                 -- recommend_runs.id. 모듈 경계라 FK 없음
+  map_id, kind null, claims jsonb, advice jsonb, actions jsonb, agent_run_id null, created_at
+)
+```
+
+---
+
 ## common (모든 모듈이 쓰고 realtime만 읽는다)
 
 ```
