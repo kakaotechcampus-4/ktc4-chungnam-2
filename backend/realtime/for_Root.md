@@ -1,14 +1,12 @@
-# 루트 보고 — backend/realtime (#522 agent 커서용 visible_seqs)
+# 루트 보고 — backend/realtime (#522 agent용 latest_seq_by_map)
 
 ## 추가한 것
 
-- `realtime.api.visible_seqs(db, *, map_id, after_seq) -> list[int]`: 그 지도의 event_log seq 중 after_seq보다 큰 것, 오름차순. 전체·개인 채널을 모두 담고 seq 번호만 돌려준다(type·payload·수신자는 내보내지 않는다). 읽기 전용, 커밋하지 않는다. 보존기간(24시간) 필터는 걸지 않았다.
+- `realtime.api.latest_seq_by_map(db) -> dict[str, tuple[int, datetime]]`: 지도 id → (가장 큰 event_log seq, 그 행의 created_at). 전체·개인 채널을 모두 보고, 보존 24시간 안의 행만 센다(`service.RETENTION`, replay와 같은 기준). 이벤트가 없는 지도는 키가 없다. map_id로 묶는 쿼리 한 번이고, type·payload·수신자는 내보내지 않는다. 읽기 전용, 커밋하지 않는다. 처음 연 `visible_seqs`는 지웠다.
 
-## 확인 요청 — agent 커서(docs/agent-v2.md 12.5, #515)와 seq 구멍
+## 확인 요청 — agent 커서와 seq 구멍
 
-- `event_log.seq`는 bigserial 하나를 **모든 지도가 함께 쓴다**. 그래서 한 지도의 seq 목록에는 다른 지도 몫의 번호가 늘 빠져 있다(예: 지도 A는 5, 9, 12). realtime 디스패처는 지도 구분 없이 전체 로그를 폴링해서 이 문제가 없다.
-- 명세 12.5 `advance_cursor_value`는 `last_seen + 1`부터 빈자리 없이 이어지는지를 보고, 직전 tick에 본 구멍 하나만 건너뛴다. 지도 하나의 목록에 그대로 쓰면 다른 지도 몫의 빈 번호를 커밋 순서 구멍으로 보고, tick마다 구멍 하나씩만 넘어간다. 그동안 "커서 뒤에 새 seq가 있다"가 계속 참이라 활동 트리거도 매번 켜질 수 있다.
-- realtime 함수는 이슈 계약대로 두었다. 커서 계산을 어떻게 맞출지(예: 커밋 순서 구멍 판단을 지도별이 아니라 전체 seq 기준으로 하거나, 커서를 "본 것 중 최대 seq"로 두고 늦게 커밋된 행만 다음 tick에 한 번 더 보는 식)는 agent(#515)와 명세 쪽 결정이라 여기서 정하지 않았다.
+- #525로 해결(커서 = 본 것 중 가장 큰 seq).
 
 ---
 
