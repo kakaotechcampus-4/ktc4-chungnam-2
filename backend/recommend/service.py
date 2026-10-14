@@ -293,6 +293,16 @@ def list_excluded_place_ids(db: Session, *, map_id: str, requested_by: str) -> s
     return set(rows)
 
 
+def last_run_at_by_category(db: Session, *, map_id: str) -> dict[str, datetime]:
+    """카테고리 → 그 카테고리 가장 최근 run의 created_at(#522). run이 없는 카테고리는 키가 없다."""
+    rows = db.execute(
+        select(RecommendRun.category, func.max(RecommendRun.created_at))
+        .where(RecommendRun.map_id == map_id)
+        .group_by(RecommendRun.category)
+    ).all()
+    return {category: created_at for category, created_at in rows}
+
+
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(#431) — 이 지도들의 추천 기록을 지운다. 테이블 이름 → 지운 행 수. 자식(근거 줄·후보·지역·
     제외)부터 지우고 run을 마지막에 지운다(전부 recommend_runs를 참조, 후보는 지역도 참조해서 지역보다 먼저)."""

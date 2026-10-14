@@ -37,6 +37,12 @@ def remove_for_deleted_pin(db: Session, *, map_id: str, pin_id: str, principal: 
         flows.unconfirm_pin(db, item_row=item_row, principal=principal)
 
 
+def list_items_for_agent(db: Session, *, map_id: str) -> list[dict]:
+    """agent 스냅샷(docs/agent-v2.md 12.7, #522)이 부른다 — `[{pin_id, added_by, added_at}]`, added_at 순.
+    count_confirmed와 같은 기준(map_id만)이라 소프트 삭제된 핀의 항목도 그대로 담는다. 읽기 전용, 커밋하지 않는다."""
+    return service.list_items_for_agent(db, map_id=map_id)
+
+
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(maps.purge, #431)가 부른다 — 이 지도들의 shortlist_items·routes만 지우고 테이블 이름 →
     지운 행 수를 돌려준다. 핀(pins)보다 먼저 불러야 한다(shortlist_items.pin_id가 pins를 참조). 커밋하지 않는다."""

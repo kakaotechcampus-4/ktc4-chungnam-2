@@ -432,6 +432,30 @@ def remove_membership(db: Session, *, map_id: str, user_id: str) -> None:
     )
 
 
+def get_map_for_agent(db: Session, *, map_id: str) -> dict | None:
+    """agent 스냅샷용(#522). 삭제된 지도도 행이 있으면 돌려준다 — agent가 deleted로 관찰을 멈춘다.
+    구성원은 member_count와 같은 기준(탈퇴자 제외, 나간 사람은 행이 없다)이고 joined_at 순이다.
+    삭제된 지도는 구성원을 읽지 않고 빈 목록이다."""
+    row = db.execute(
+        select(MapRow.id, MapRow.start_date, MapRow.end_date, MapRow.deleted_at).where(MapRow.id == map_id)
+    ).one_or_none()
+    if row is None:
+        return None
+    deleted = row.deleted_at is not None
+    members = []
+    if not deleted:
+        roster, withdrawn = roster_of(db, map_id)
+        members = [
+            {"user_id": m.user_id, "joined_at": m.joined_at}
+            for m in sorted(roster, key=lambda m: (m.joined_at, m.user_id))
+            if m.user_id not in withdrawn
+        ]
+    return {
+        "map_id": row.id, "start_date": row.start_date, "end_date": row.end_date,
+        "deleted": deleted, "members": members,
+    }
+
+
 def _owned_map_ids(db: Session, *, user_id: str) -> list[str]:
     """이 사용자가 방장인 삭제되지 않은 지도. id 순 — 여러 지도를 차례로 잠글 때 순서를 고정해
     교착을 피한다."""
