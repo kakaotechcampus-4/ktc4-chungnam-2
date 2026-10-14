@@ -13,6 +13,14 @@ import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
 import agent.models  # noqa: F401 — Base.metadata에 agent_* 테이블을 등록시키기 위한 것
+# 스냅샷 테스트(test_snapshot.py)가 다른 모듈 테이블에 픽스처를 넣고 그 모듈의 api.py로 읽는다(#514)
+import auth.models  # noqa: F401
+import common.events  # noqa: F401
+import maps.models  # noqa: F401
+import pins.models  # noqa: F401
+import places.models  # noqa: F401
+import recommend.models  # noqa: F401
+import shortlist.models  # noqa: F401
 from common.database import Base
 
 BASE_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://pingo:pingo@localhost:5432/pingo")
@@ -50,6 +58,9 @@ def test_engine():
         )
 
     engine = sa.create_engine(test_url)
+    with engine.connect() as conn:
+        conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS postgis"))   # pins.geom
+        conn.commit()
     Base.metadata.create_all(bind=engine)
 
     yield engine

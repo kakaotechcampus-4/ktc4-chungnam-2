@@ -62,3 +62,47 @@ M0을 막지는 않아서 구현은 끝냈다. M1에서 사유 원문을 실제�
 - 상태값(trigger, outcome, diagnosis, status)은 명세대로 text이고 CHECK 제약은 두지 않았다. 허용 값은 `models.py`의 튜플에 있다
 - 마이그레이션 테스트는 `<PINGO_TEST_DB>_agent_mig` DB를 새로 만들어 0001부터 head까지 올리고 지운다. alembic.ini를 넘기면
   env.py의 `fileConfig`가 기존 로거를 꺼서 같은 실행의 caplog 테스트가 깨지므로 ini 없이 Config를 만든다
+
+---
+
+# 루트 보고 — backend/agent (#514, M0-2 스냅샷·탐지기·정책)
+
+## 구현 범위
+
+- `snapshot.py`: `build(db, map_id, now) -> Snapshot | None`. maps·pins·shortlist·recommend의 `api.py`만 부른다. 세션과
+  격리 수준은 받기만 한다(#515가 정한다). `latest_seq`·`latest_event_at`은 None(#515)
+- `core.py`(순수): 기준 시간, 탐지기 4종과 `detect_all`, `make_signal`·`fingerprint`·`evidence_hash`, `check_policy`,
+  `dismissal_streak`·`backoff_until`, `model_cap_reached`, `kst_date`·`kst_day_start`, `fallback_order`, `next_check_at`,
+  `parse_policy`·`load_policy`
+- `priority_policy.yaml`: 명세 7절 초안 그대로
+- 테스트 75개(17절 1, 4, 5, 6번과 스냅샷 조립). agent 95개, 백엔드 전체 1789개 통과
+- 하지 않은 것: run_tick, observe_map, 커서, lease, 저장(#515). compare_reasons와 충돌 종류(M1 도구). 다른 모듈 파일 수정 없음
+
+## 명세와 다르게 한 것
+
+1. **`build`가 None을 돌려줄 수 있다.** 지도 행이 없으면(정리까지 끝남) None. #515는 map_deleted와 같이 다루면 된다.
+   삭제된 지도는 지도 정보만 담고 나머지는 비운 Snapshot이다(어차피 바로 끝난다)
+2. **KST는 고정 +9시간.** `zoneinfo("Asia/Seoul")`는 Windows에서 tzdata 패키지가 있어야 하는데 requirements에 없다.
+   한국은 서머타임이 없어 같은 값이다. `DAY_BOUNDARY_TZ` 상수는 그대로 두었다
+3. **`next_check_at(snap, history, now, th)`** — 명세의 `signals` 인자를 뺐다. 후보를 스냅샷에서 다시 계산하고, 이미
+   지난 시각은 빼서(지금 신호로 이미 잡힌다) 미래 시각 중 가장 이른 것만 돌려준다
+4. **features의 `recent_dismissals`는 `check_policy`가 채운다.** 탐지기는 이력을 모르므로 0으로 두고, 정책을 통과한
+   신호에만 연속 닫힘 수를 넣는다
+5. **`affected_members` 정의(명세에 없음)**: stall은 🚫를 남긴 사람 수, split은 그 핀에 반응한 사람 수, no_reaction은
+   조건에 걸린 구성원 수, category_gap은 구성원 수
+6. **핀 근거의 evidence_hash 재료**: 반응은 (reaction_id, like/against, updated_at). no_reaction은 (pin_id, "pin",
+   created_at), category_gap은 (pin_id, "confirmed", added_at). 시각은 UTC로 맞춰 해시한다
+7. **확정 항목은 삭제되지 않은 핀의 것만 담는다.** `list_items_for_agent`는 삭제된 핀의 항목도 주지만, 확정 핀을 지우면
+   항목도 빠지고(#235) 6절이 "삭제되지 않은 핀 기준"이라 걸렀다
+8. **`check_policy`는 신호 하나에 이유 하나만 남긴다**(12.3 순서에서 처음 걸린 것). 활성 제안이 있으면 전부 active_exists
+9. 정책 이력 타입 `core.PastSuggestion`·`core.History`(suggestions 최신순, model_runs_today)를 core에 두었다. #515의
+   `service.load_history`가 이 모양으로 채운다. model_runs_today는 `started_at >= core.kst_day_start(now)`로 센다
+
+## 테스트 환경
+
+- `agent/tests/conftest.py`가 다른 모듈 models를 import하고 postgis 확장을 만든다(스냅샷 테스트가 pins·maps·recommend·
+  shortlist 행을 넣는다). integration/conftest.py와 같은 방식이다
+
+## 읽기 함수 요청
+
+없음. #522로 연 함수로 충분했다. `list_reasoned_reactions`는 카테고리가 필수라 관찰 대상 카테고리마다 한 번씩(지금 3번) 부른다.
