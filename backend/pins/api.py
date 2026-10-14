@@ -264,6 +264,8 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
     글과 칩은 따로 돌려준다(#412) — 둘 다 남긴 반응은 둘 다 근거다. `reason_text`는 사람이 쓴 글
     그대로(없으면 None)이고 ②에 보낼 것이다. `chips`는 칩 하나당 하나(`chip_id`·`label`·`fact_key`·
     `wants`, docs/constraints.md 칩 표대로)이고 ②를 거치지 않는다. `reason_chip_ids`는 저장된 값 그대로다.
+    `reaction_id`·`updated_at`은 agent 스냅샷이 사유를 가리키고 최근 반응 시각을 보는 데 쓴다(#522) — 키를
+    더하기만 했고 recommend는 쓰지 않는다.
 
     소프트 삭제된 핀의 반응도 **포함한다**(#243) — 사유는 사람이 한 말이라 핀이 지워져도 사라지면 안 된다.
     구성원 누구나 핀을 지울 수 있어서(#25), 안 그러면 한 명이 b의 "조개 알러지" 핀을 지우는 것만으로 안전
@@ -272,8 +274,8 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
     `list_disliked_place_ids`도 삭제 핀을 포함한다."""
     rows = db.execute(
         select(
-            ReactionRow.pin_id, ReactionRow.user_id, ReactionRow.type,
-            ReactionRow.reason_text, ReactionRow.reason_chip_ids,
+            ReactionRow.id, ReactionRow.pin_id, ReactionRow.user_id, ReactionRow.type,
+            ReactionRow.reason_text, ReactionRow.reason_chip_ids, ReactionRow.updated_at,
         )
         .select_from(ReactionRow)
         .join(PinRow, PinRow.id == ReactionRow.pin_id)
@@ -283,13 +285,13 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
         )
     ).all()
     reasoned = []
-    for pin_id, user_id, reaction_type, reason_text, reason_chip_ids in rows:
+    for reaction_id, pin_id, user_id, reaction_type, reason_text, reason_chip_ids, updated_at in rows:
         if reason_text is None and not reason_chip_ids:
             continue
         reasoned.append({
-            "pin_id": str(pin_id), "user_id": user_id, "type": reaction_type,
+            "reaction_id": str(reaction_id), "pin_id": str(pin_id), "user_id": user_id, "type": reaction_type,
             "reason_text": reason_text, "reason_chip_ids": reason_chip_ids,
-            "chips": chips.evidence_chips(reason_chip_ids or []),
+            "chips": chips.evidence_chips(reason_chip_ids or []), "updated_at": updated_at,
         })
     return reasoned
 
