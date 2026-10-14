@@ -95,6 +95,8 @@ export function ResultsBody({
         </span>
         <span className="font-bold text-brand-600">어떻게 골랐나요 ›</span>
       </button>
+      {/* 알러지는 거르지 않는다 — 데이터로 보장할 수 없어서 사유와 상관없이 항상 안내한다(#425) */}
+      <p className="text-xs text-ink-500">알러지가 있다면 가게에 직접 확인해 주세요</p>
       <ol className="space-y-3 pb-[100px]">
         {result.candidates.map((c) => (
           <li key={c.id}>
