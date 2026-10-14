@@ -42,6 +42,7 @@ class PlaceHint:
     lat: float
     lng: float
     category: str
+    address: str | None = None   # 선택 — 이름 유사도를 보완하는 비교용(#500). 비교에만 쓰고 저장·로깅하지 않는다(#53)
 
 
 @dataclass(frozen=True)
