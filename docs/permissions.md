@@ -14,7 +14,7 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
   actions:
     - pin.create
     - pin.delete               # "구성원 누구나" (9/4 결정 #25)
-    - pin.react               # ♥/△/🚫 등록·수정
+    - pin.react               # ♥/🚫 등록·수정
     - pin.revert               # 반응으로 바뀐 상태 되돌리기 — "누구나" (15-1)
     - shortlist.add
     - shortlist.remove         # "구성원 누구나" (5-3, 15-1)
@@ -23,22 +23,24 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     - recommend.evidence       # run 하위 근거(조회·토글·추가) — 구성원 누구나(#32 결정: "근거
                                 # 목록은 구성원별로 한 줄씩 따로 뜬다", 최종기획안 5-5). 개별
                                 # 줄 비활성화만 그 줄 작성자 본인 제한(아래 author 참고)
-    - recommend.manage         # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
-                                # 단, run.requested_by 본인만(아래 author 참고). 가드레일1: 대안은
-                                # 요청한 사람에게만 먼저 보인다 — 게시 전 run은 본인 것만 조작·열람
-    - recommend.publish        # 「지도에 올리기」 — 단, candidate.requested_by 본인만(아래 author 참고)
     - invite.create            # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
     - map.leave                # 지도 나가기(#369). 방장도 member라 이 액션을 갖는다. 넘길 사람이 없는
                                 # 방장을 막는 건 역할이 아니라 지도 상태라 여기 넣지 않고 maps 코어가 판정한다(409 OWNER_CANNOT_LEAVE)
     - route.recalculate        # 동선 재계산(5-10) — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
 
-author:                       # evidence_line 또는 candidate를 만든 당사자에게 얹히는 추가 범위
+author:                       # evidence_line·candidate·run을 만든 당사자에게 얹히는 추가 범위
   scope:
     evidence_line: own         # 자기가 쓴 줄만
-    candidate: own              # 자기가 요청한 run의 비공개 후보만
+    candidate: own              # 자기가 요청한 run의 후보만
+    run: own                    # 자기가 요청한 run만
+    pin: own                    # 자기가 찍은 핀만(#466)
   actions:
     - evidence.disable          # '-'로 빼기 — "자기가 쓴 것만" (5-5)
-    - candidate.view_private     # 게시 전 비공개 후보 열람 (5-5-1)
+    - recommend.manage          # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
+                                 # run.requested_by 본인만. 가드레일1: 대안은 요청한 사람에게만
+                                 # 먼저 보인다 — 게시 전 run은 본인 것만 조작·열람
+    - recommend.publish         # 「지도에 올리기」 — candidate.requested_by 본인만
+    - pin.edit                  # 핀 메모·분류 수정(#466) — 핀을 찍은 사람만. AI 추천·확정 핀 제외는 역할이 아니라 핀 상태라 pins 코어가 판정한다
 
 owner:                        # 방장. 처음엔 지도 생성자, 위임되면 바뀐다(#369). 판단 정본은 memberships.role
                               # (maps.created_by는 "만든 사람" 기록일 뿐 방장 판단에 쓰지 않는다). member 전체 + 아래 추가
@@ -48,9 +50,11 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
     - member.kick               # v2, #8
     - map.settings.edit
     - map.delete                # 지도 삭제(#369). 방장만. soft delete라 모든 구성원에게서 사라진다
+    - invite.revoke             # 초대 링크 목록 보기·끄기(#467). 방장만. 발급(invite.create)은 구성원 누구나
+    - owner.transfer            # 방장 직접 넘기기(#468). 방장만
 ```
 
-역할은 배타적이지 않고 누적된다 — 한 사용자는 `member` + (자기 evidence에 한해) `author` + (자기 지도에 한해) `owner`를 동시에 가질 수 있다. 판정은 "이 액션이 이 리소스의 scope 안에 있는가"로 계산한다.
+역할은 배타적이지 않고 누적된다 — 한 사용자는 `member` + (자기 evidence·candidate·run에 한해) `author` + (자기 지도에 한해) `owner`를 동시에 가질 수 있다. 판정은 "이 액션이 이 리소스의 scope 안에 있는가"로 계산한다.
 
 ## API 계약과의 연결
 
@@ -88,14 +92,18 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 | 근거 리스트에서 항목 빼기 — 자기가 쓴 것만 | `author.scope.evidence_line: own`, `author.actions: [evidence.disable]` |
 | 핀 되돌리기 — 구성원 누구나 | `member.actions: [pin.revert]` |
 | 반경 조정 — 별도 권한 불필요 | 반경 사유도 `evidence_line`이므로 위 규칙을 그대로 상속. 별도 액션 없음 |
+| 핀 메모·분류 수정 — 찍은 사람만 (#466) | `author.scope.pin: own`, `author.actions: [pin.edit]`, 응답 `permissions.can_edit` |
 | 초대 링크 발급 — 구성원 누구나 (#4) | `member.actions: [invite.create]` |
+| 지도 제목·날짜·지역 수정 — 방장만 (#465) | `owner.actions: [map.settings.edit]`, 응답 `permissions.can_edit` |
+| 초대 링크 목록·끄기 — 방장만 (#467) | `owner.actions: [invite.revoke]` |
+| 방장 직접 넘기기 — 방장만 (#468) | `owner.actions: [owner.transfer]` |
 | 동선 재계산 — 구성원 누구나 (#103) | `member.actions: [route.recalculate]` |
 | AI 추천 run 근거 조회·토글·추가 — 구성원 누구나 (#108, #32, 최종기획안 5-5) | `member.actions: [recommend.evidence]` (개별 줄 비활성화만 `author.actions: [evidence.disable]`) |
-| AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `member.actions: [recommend.manage]` + `AUTHOR_CONSTRAINED_ACTIONS` |
+| AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `author.scope.run: own`, `author.actions: [recommend.manage]` |
 
 ## v2 확장 지점
 
-`owner.actions`에 `member.kick`이 이미 자리를 잡아뒀다 — #8 구현 시 `authz`에 액션 하나만 추가하면 되고 다른 모듈은 건드리지 않는다. 이게 멘토가 말한 "역할 추가가 쉽다"의 실제 이득이다.
+`owner.actions`에 `member.kick`이 이미 자리를 잡아뒀다(`invite.revoke`·`owner.transfer`는 #467·#468에서 같은 방식으로 더했다) — #8 구현 시 `authz`에 액션 하나만 추가하면 되고 다른 모듈은 건드리지 않는다. 이게 멘토가 말한 "역할 추가가 쉽다"의 실제 이득이다.
 
 ## 권한을 어디서 강제하는가
 
@@ -131,7 +139,7 @@ def require_map_member() -> Depends:
 
 ## 숙소·기타 핀의 반응 게이팅 (#154 결정, #280 갱신)
 
-숙소와 기타는 반응(♥/△/🚫)을 받지 않는 카테고리다. v1에서는 둘 다 자체 장소 DB에 없어 핀으로 만들 수 없고(#191),
+숙소와 기타는 반응(♥/🚫)을 받지 않는 카테고리다. v1에서는 둘 다 자체 장소 DB에 없어 핀으로 만들 수 없고(#191),
 값은 스키마 호환으로만 남는다 — v1에 숙소·기타는 없다. 다시 살리는 방법은 v2에서 검토한다(#281).
 확정 리스트 게이팅(#65)과 같은 방식으로 **역할이 아니라 리소스 상태**로 반전한다:
 
@@ -153,12 +161,12 @@ def require_map_member() -> Depends:
    항목이라 "추가"가 의미 없다. `can_remove_from_shortlist`만 `can(user, "shortlist.remove",
    resource)`를 따른다. `shortlist/core.py::to_shortlist_item_response`가 이 규칙을 그대로
    써서 응답을 조립하며 통과 확인됨(29 tests).
-3. **비공개 AI 후보(visibility=private)는 확정 리스트로 직접 승격할 수 없다** — 소유자 본인이
-   자기 비공개 후보를 열람하는 것과, 그 핀을 그대로 확정 리스트(항상 전체 공개)에 올리는 것은
-   다른 문제다. 후자를 허용하면 「지도에 올리기」를 거치지 않고 비공개 AI 후보가 공개로
-   새는 셈이라 최종기획안 7절 가드레일 1을 어긴다. `resource.kind`에는 visibility 정보가 없어
-   authz 레이어(permissions 필드)에서는 이 판정이 불가능하므로, **`shortlist/loaders.py::
-   load_pin_for_confirm`이 pins 레이어에서 `visibility=="private"`이면 `AI_PIN_PRIVATE`로
-   막는다** — permissions 객체가 아니라 요청 처리 자체를 거부하는 방식으로 정본 확정.
+3. **비공개 AI 후보는 확정 리스트로 직접 승격할 수 없다** — 비공개 후보는 핀이 아니라
+   `candidates` 행이고(v1은 `pins.visibility='private'` 행을 만들지 않는다, #273), 확정 리스트는
+   핀 id만 받는다. 후보는 「지도에 올리기」로 처음부터 public 핀이 된 뒤에야 확정할 수 있어
+   가드레일 1이 구조로 지켜진다. 그래서 `shortlist/loaders.py::load_pin_for_confirm`에는
+   별도 private 검사가 없다. 후보 열람·게시를 요청자 본인으로 막는 곳은 세 곳이다:
+   `GET /runs/{id}/result`(`recommend.manage`), 개인 채널 `run.candidates_ready`,
+   `POST /candidates/{id}/publish`의 404 `AI_PIN_PRIVATE`.
 
 세 규칙 모두 코드와 이 문서 사이에 더 이상 갭이 없다.

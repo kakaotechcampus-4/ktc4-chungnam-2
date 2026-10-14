@@ -27,21 +27,15 @@ def test_check_run_ready_raises_not_ready_when_not_done(status):
     assert exc_info.value.code == "NOT_READY"
 
 
-# ---------- required_count / check_readiness ----------
+# ---------- check_readiness ----------
 
-@pytest.mark.parametrize("member_count,expected", [(0, 0), (1, 1), (2, 1), (3, 2), (4, 2), (5, 3)])
-def test_required_count_is_ceil_half(member_count, expected):
-    assert core.required_count(member_count) == expected
-
-
-def test_check_readiness_ready_when_answered_meets_required():
-    result = core.check_readiness(answered_count=2, member_count=3)
-    assert result == {"ready": True, "answered_count": 2, "required_count": 2}
+def test_check_readiness_ready_from_one_opinion_pin():
+    assert core.check_readiness(answered_count=1) == {"ready": True, "answered_count": 1, "required_count": 1}
+    assert core.check_readiness(answered_count=5) == {"ready": True, "answered_count": 5, "required_count": 1}
 
 
-def test_check_readiness_not_ready_when_answered_below_required():
-    result = core.check_readiness(answered_count=1, member_count=4)
-    assert result == {"ready": False, "answered_count": 1, "required_count": 2}
+def test_check_readiness_not_ready_without_opinion_pin():
+    assert core.check_readiness(answered_count=0) == {"ready": False, "answered_count": 0, "required_count": 1}
 
 
 # ---------- assemble_evidence ----------
@@ -50,6 +44,50 @@ def test_assemble_evidence_preserves_reaction_then_manual_order():
     reaction = [{"text": "a"}]
     manual = [{"text": "b"}]
     assert core.assemble_evidence(reaction, manual) == [{"text": "a"}, {"text": "b"}]
+
+
+# ---------- demote_wanted_place_identity (#422) ----------
+
+def _line(badge, fact_key, wants):
+    return {"text": "사유", "badge": badge, "fact_key": fact_key, "wants": wants}
+
+
+def test_demote_lowers_required_wanted_cuisine_to_preferred():
+    (line,) = core.demote_wanted_place_identity([_line("required", "cuisine_bbq", True)], "음식점")
+    assert line["badge"] == "preferred"
+
+
+@pytest.mark.parametrize("line", [
+    _line("required", "cuisine_korean", False),   # 피함은 그대로 required
+    _line("required", "parking_available", True), # 필요 조건은 그대로
+    _line("required", "spacious", True),          # 칩 「좁아요」
+    _line("required", "quiet", True),
+    _line("required", "cuisine_bbq", None),       # 방향 모름
+    _line("required", None, None),
+    _line("preferred", "cuisine_bbq", True),
+    _line("reference", "cuisine_bbq", True),
+])
+def test_demote_leaves_every_other_line_alone(line):
+    assert core.demote_wanted_place_identity([line], "음식점") == [line]
+
+
+def test_demote_only_applies_to_restaurant_identity_table():
+    line = _line("required", "cuisine_bbq", True)
+    assert core.demote_wanted_place_identity([line], "카페") == [line]
+    assert core.demote_wanted_place_identity([_line("required", "quiet", True)], "카페") == [_line("required", "quiet", True)]
+
+
+def test_demote_covers_chip_lines_and_does_not_mutate_input():
+    chip_line = {"text": "고기가 먹고 싶어요", "chip_id": "x", "badge": "required", "fact_key": "cuisine_bbq", "wants": True}
+    original = dict(chip_line)
+    (result,) = core.demote_wanted_place_identity([chip_line], "음식점")
+    assert result["badge"] == "preferred" and result["chip_id"] == "x"
+    assert chip_line == original
+
+
+def test_demote_keeps_the_mixed_reason_split_korean_required_bbq_preferred():
+    lines = [_line("required", "cuisine_korean", False), _line("required", "cuisine_bbq", True)]
+    assert [l["badge"] for l in core.demote_wanted_place_identity(lines, "음식점")] == ["required", "preferred"]
 
 
 # ---------- circles_all_overlap / region_signature / merge_circles ----------
@@ -135,37 +173,37 @@ def test_is_within_any_region_false_when_empty():
 # ---------- build_check ----------
 
 def test_build_check_unknown_exclude_policy_fails_without_needs_check():
-    check = core.build_check("contains_shellfish", "exclude", known=False, value=None, passes=False)
+    # 레지스트리에 exclude 키는 없지만(#425) 분기 자체는 정책 값만 보고 정한다.
+    check = core.build_check("is_crowded_large", "exclude", known=False, value=None, passes=False)
     assert check.passed is False
     assert check.confidence == "unknown"
     assert check.needs_check is False
 
 
 def test_build_check_unknown_pass_policy_passes_with_needs_check():
-    check = core.build_check("price_bucket", "pass", known=False, value=None, passes=False)
+    check = core.build_check("is_crowded_large", "pass", known=False, value=None, passes=False)
     assert check.passed is True
     assert check.confidence == "unknown"
     assert check.needs_check is True
 
 
 def test_build_check_known_value_uses_given_passes():
-    check = core.build_check("contains_shellfish", "exclude", known=True, value=True, passes=False)
+    check = core.build_check("is_crowded_large", "pass", known=True, value=True, passes=False)
     assert check.passed is False
     assert check.confidence == "known"
     assert check.needs_check is False
 
 
 @pytest.mark.parametrize("fact_key, policy, known, value, passes, label", [
-    ("spicy_focused", "exclude", True, False, True, "매운맛 전문점 아님"),   # 통과한 실격
-    ("spicy_focused", "exclude", True, True, False, "매운맛 전문 해당"),     # 탈락한 실격 — 걸린 이유
-    ("spicy_focused", "exclude", False, None, True, "매운맛 전문 확인 필요"),
-    ("contains_shellfish", "exclude", False, None, False, "갑각류 확인 필요"),  # 안전 조건 모름 → 실격이어도 이름이 보인다
+    ("is_crowded_large", "pass", True, False, True, "붐비는 대형 장소 아님"),   # 통과한 실격
+    ("is_crowded_large", "pass", True, True, False, "붐비는 대형 장소 해당"),   # 탈락한 실격 — 걸린 이유
+    ("spicy_focused", "pass", True, True, True, "매운맛 전문점"),            # 취향 키(#378) — 참인 선호
+    ("spicy_focused", "pass", False, None, True, "매운맛 전문 확인 필요"),   # 취향 키 모름 → 통과 + 확인 필요
+    ("is_crowded_large", "exclude", False, None, False, "붐비는 대형 장소 확인 필요"),  # exclude 모름 → 실격이어도 이름이 보인다
     ("cuisine_korean", "pass", True, True, True, "한식"),                    # 참인 선호
     ("quiet", "pass", True, False, False, "조용한 곳 아님"),                  # 거짓인 선호
     ("quiet", "pass", False, None, True, "조용한 곳 확인 필요"),
-    ("price_bucket", "pass", True, "low", True, "착한가격업소"),             # 값을 문장에 녹인다
-    ("price_bucket", "pass", True, "mid", True, "가격대 mid"),
-    ("price_bucket", "pass", False, None, True, "가격대 확인 필요"),
+    ("is_crowded_large", "pass", False, None, True, "붐비는 대형 장소 확인 필요"),
     ("is_open", "pass", False, None, True, "영업 여부 확인 필요"),
 ])
 def test_build_check_label_is_human_readable(fact_key, policy, known, value, passes, label):
@@ -196,9 +234,9 @@ def test_apply_disqualifier_filters_fails_candidate_with_any_failing_check():
 
 def test_apply_disqualifier_filters_ignores_soft_checks_even_when_not_passed():
     """#208 — soft 라벨의 passed는 라벨의 참/거짓값이다. quiet=False(passed=False)여도 실격이 아니다."""
-    hard_ok = core.build_check("spicy_focused", "exclude", known=True, value=False, passes=True)
+    hard_ok = core.build_check("is_crowded_large", "pass", known=True, value=False, passes=True)
     soft_false = core.build_check("quiet", "pass", known=True, value=False, passes=False)
-    hard_fail = core.build_check("spicy_focused", "exclude", known=True, value=True, passes=False)
+    hard_fail = core.build_check("is_crowded_large", "pass", known=True, value=True, passes=False)
     result = core.apply_disqualifier_filters([[hard_ok, soft_false], [hard_fail, soft_false], [soft_false]])
     assert result == [True, False, True]
 
@@ -252,7 +290,7 @@ def test_build_preference_criteria_takes_majority_value_when_places_disagree():
         _place(_check("quiet", passed=False)),
     ]
     criteria = core.build_preference_criteria(
-        places, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={},
+        places, disqualifying_fact_keys=[], preferred_authors={},
     )
     assert criteria == {"quiet": True}
 
@@ -260,7 +298,7 @@ def test_build_preference_criteria_takes_majority_value_when_places_disagree():
 def test_build_preference_criteria_excludes_fact_key_on_exact_tie():
     places = [_place(_check("quiet", passed=True)), _place(_check("quiet", passed=False))]
     criteria = core.build_preference_criteria(
-        places, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={},
+        places, disqualifying_fact_keys=[], preferred_authors={},
     )
     assert "quiet" not in criteria
 
@@ -268,31 +306,23 @@ def test_build_preference_criteria_excludes_fact_key_on_exact_tie():
 def test_build_preference_criteria_ignores_unknown_confidence():
     places = [_place(_check("quiet", passed=True, confidence="unknown"))]
     criteria = core.build_preference_criteria(
-        places, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={},
-    )
-    assert criteria == {}
-
-
-def test_build_preference_criteria_excludes_value_comparison_unsupported_fact_keys():
-    places = [_place(_check("price_bucket", passed=True))]
-    criteria = core.build_preference_criteria(
-        places, excluded_fact_keys=frozenset({"price_bucket"}), disqualifying_fact_keys=[], preferred_authors={},
+        places, disqualifying_fact_keys=[], preferred_authors={},
     )
     assert criteria == {}
 
 
 def test_build_preference_criteria_excludes_active_disqualifying_fact_keys():
     # 모든 통과 후보가 이미 같은 값이라 점수 차이를 못 만드는 라벨 — 실격 사유로 등록된 것.
-    places = [_place(_check("contains_shellfish", passed=False), _check("quiet", passed=True))]
+    places = [_place(_check("is_crowded_large", passed=False), _check("quiet", passed=True))]
     criteria = core.build_preference_criteria(
-        places, excluded_fact_keys=frozenset(), disqualifying_fact_keys=["contains_shellfish"], preferred_authors={},
+        places, disqualifying_fact_keys=["is_crowded_large"], preferred_authors={},
     )
     assert criteria == {"quiet": True}
 
 
 def test_build_preference_criteria_adds_explicit_preference_as_true():
     criteria = core.build_preference_criteria(
-        [], excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={"local_flavor": frozenset({"u1"})},
+        [], disqualifying_fact_keys=[], preferred_authors={"local_flavor": frozenset({"u1"})},
     )
     assert criteria == {"local_flavor": True}
 
@@ -300,16 +330,16 @@ def test_build_preference_criteria_adds_explicit_preference_as_true():
 def test_build_preference_criteria_explicit_preference_overrides_tie():
     places = [_place(_check("quiet", passed=True)), _place(_check("quiet", passed=False))]
     criteria = core.build_preference_criteria(
-        places, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={"quiet": frozenset({"u1"})},
+        places, disqualifying_fact_keys=[], preferred_authors={"quiet": frozenset({"u1"})},
     )
     assert criteria == {"quiet": True}
 
 
 def test_build_preference_criteria_uses_only_soft_fact_keys():
     # 하드 체크의 passed는 "실격 아님"이라 라벨 값과 뜻이 다르다 — 소프트 키만 신호로 쓴다.
-    places = [_place(_check("contains_shellfish", passed=True), _check("quiet", passed=True))]
+    places = [_place(_check("is_crowded_large", passed=True), _check("quiet", passed=True))]
     criteria = core.build_preference_criteria(
-        places, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[],
+        places, disqualifying_fact_keys=[],
         preferred_authors={"is_open": frozenset({"u1"})},
     )
     assert criteria == {"quiet": True}
@@ -322,21 +352,22 @@ def test_score_candidates_counts_preference_author_as_supporter_without_heart():
     criteria = {"quiet": True}
     candidates = {"p1": [_check("quiet", passed=True)]}
     authors = {"quiet": frozenset({"u1"})}
-    assert core.score_candidates(candidates, [], criteria, authors) == {"p1": 1}
+    assert core.score_candidates(candidates, [], criteria, authors) == {"p1": 3}
 
 
 def test_score_candidates_counts_author_who_also_hearted_once():
+    # #414 — u1은 ♥도 하고 직접 썼으니 3점(4점이 아니다), u2는 ♥만 해서 1점.
     criteria = {"quiet": True}
     hearted = [_place(_check("quiet", passed=True), members=frozenset({"u1", "u2"}))]
     candidates = {"p1": [_check("quiet", passed=True)]}
     authors = {"quiet": frozenset({"u1"})}
-    assert core.score_candidates(candidates, hearted, criteria, authors) == {"p1": 2}
+    assert core.score_candidates(candidates, hearted, criteria, authors) == {"p1": 3 + 1}
 
 
 def test_score_candidates_ignores_non_soft_fact_keys_in_hearted_checks():
-    criteria = {"contains_shellfish": True}
-    hearted = [_place(_check("contains_shellfish", passed=True))]
-    candidates = {"p1": [_check("contains_shellfish", passed=True)]}
+    criteria = {"is_crowded_large": True}
+    hearted = [_place(_check("is_crowded_large", passed=True))]
+    candidates = {"p1": [_check("is_crowded_large", passed=True)]}
     assert core.score_candidates(candidates, hearted, criteria) == {"p1": 0}
 
 def test_score_candidates_scores_only_when_both_sides_are_true():
@@ -402,7 +433,7 @@ def test_unwanted_soft_keys_never_change_the_score():
 
     hearted = [_place(*labels("cuisine_korean"), _check("spacious", passed=False), members=frozenset({"u1"}))]
     criteria = core.build_preference_criteria(
-        hearted, excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={},
+        hearted, disqualifying_fact_keys=[], preferred_authors={},
     )
     assert criteria["cuisine_korean"] is True
     assert not any(criteria[key] for key in cuisines if key != "cuisine_korean")
@@ -419,7 +450,7 @@ def test_soft_keys_nobody_wants_score_zero_for_every_candidate():
     """아무도 ♥하지 않고 선호 사유도 없으면 criteria가 비어 모든 후보가 0점이다(키가 몇 개든)."""
     candidates = {"p1": [_check(key, passed=True) for key in sorted(constraints.SOFT_FACT_KEYS)]}
     criteria = core.build_preference_criteria(
-        [], excluded_fact_keys=frozenset(), disqualifying_fact_keys=[], preferred_authors={},
+        [], disqualifying_fact_keys=[], preferred_authors={},
     )
     assert criteria == {}
     assert core.score_candidates(candidates, [], criteria) == {"p1": 0}
@@ -427,8 +458,8 @@ def test_soft_keys_nobody_wants_score_zero_for_every_candidate():
 
 def test_checks_to_show_keeps_hard_and_only_wanted_soft_checks():
     """#216 — hard는 그대로, soft는 원한 키만(known 여부 무관). 원하지 않은 known·unknown soft는 없다."""
-    hard_unknown = core.build_check("price_bucket", "pass", known=False, value=None, passes=True)
-    hard_known = core.build_check("spicy_focused", "exclude", known=True, value=False, passes=True)
+    hard_unknown = core.build_check("is_crowded_large", "pass", known=False, value=None, passes=True)
+    hard_known = core.build_check("is_open", "pass", known=True, value=True, passes=True)
     unwanted_known = core.build_check("cuisine_chinese", "pass", known=True, value=False, passes=False)
     unwanted_unknown = core.build_check("franchise", "pass", known=False, value=None, passes=False)
     wanted_known = core.build_check("cuisine_korean", "pass", known=True, value=True, passes=True)
@@ -437,7 +468,7 @@ def test_checks_to_show_keeps_hard_and_only_wanted_soft_checks():
 
     shown = core.checks_to_show(checks, {"cuisine_korean", "wait_short"})
 
-    assert [c.fact_key for c in shown] == ["price_bucket", "spicy_focused", "cuisine_korean", "wait_short"]
+    assert [c.fact_key for c in shown] == ["is_crowded_large", "is_open", "cuisine_korean", "wait_short"]
     assert shown[-1].needs_check is True  # 원한 키는 unknown이어도 「확인 필요」로 남는다
     assert shown[2].confidence == "known"  # 원한 키는 known이어도 남는다
 
@@ -499,39 +530,34 @@ def test_preference_author_is_not_offset_by_their_own_opposing_heart():
     authors = {"quiet": frozenset({"u1"})}
     candidates = {"p1": [_check("quiet", passed=True)]}
     scores = core.score_candidates(candidates, hearted, {"quiet": True}, authors)
-    assert scores == {"p1": 1}
+    assert scores == {"p1": 3}
 
 
 def test_opposing_heart_of_another_member_still_offsets_preference_author():
     hearted = [_place(_check("quiet", passed=False), members=frozenset({"u1", "u2"}))]
     authors = {"quiet": frozenset({"u1"})}
     candidates = {"p1": [_check("quiet", passed=True)]}
-    # 지지 {u1}, 반대 {u2}(u1은 작성자라 빠진다) → 1 - 1
-    assert core.score_candidates(candidates, hearted, {"quiet": True}, authors) == {"p1": 0}
+    # 지지 {u1}(직접 씀 3), 반대 {u2}(♥ 1, u1은 작성자라 빠진다) → 3 - 1
+    assert core.score_candidates(candidates, hearted, {"quiet": True}, authors) == {"p1": 3 - 1}
 
 
 # ---------- build_reason ----------
 
 def test_build_reason_lists_passed_disqualifiers_and_met_preferences_with_member_count():
-    checks = [_check("spicy_focused", passed=True), _check("quiet", passed=True)]
+    checks = [_check("is_crowded_large", passed=True), _check("quiet", passed=True)]
     fulfillment = {"satisfied": 1, "total": 2, "by_member": []}
     reason = core.build_reason(checks, {"quiet": True}, fulfillment)
-    assert reason == "실격 조건 통과: 매운맛 전문점 아님 · 선호 충족: 조용함 (1/2명)"
+    assert reason == "실격 조건 통과: 붐비는 대형 장소 아님 · 선호 충족: 조용함 (1/2명)"
 
 
 def test_build_reason_does_not_claim_unknown_or_failed_checks():
     checks = [
-        _check("spicy_focused", passed=True, confidence="unknown"),
+        _check("is_crowded_large", passed=True, confidence="unknown"),
         _check("quiet", passed=False),
         _check("local_flavor", passed=True, confidence="unknown"),
     ]
     reason = core.build_reason(checks, {"quiet": True, "local_flavor": True}, {"satisfied": 0, "total": 1})
-    assert "매운맛" not in reason and "조용함" not in reason and "지역색" not in reason
-
-
-def test_build_reason_skips_price_bucket_which_is_never_actually_compared():
-    reason = core.build_reason([_check("price_bucket", passed=True)], {}, {"satisfied": 0, "total": 0})
-    assert "price_bucket" not in reason and "가격" not in reason
+    assert "붐비는" not in reason and "조용함" not in reason and "지역색" not in reason
 
 
 def test_build_reason_falls_back_to_selection_process_when_nothing_to_cite():
@@ -658,7 +684,7 @@ def test_soft_checks_without_requirement_never_disqualify():
 def test_avoided_authors_subtract_from_a_place_with_the_true_label():
     checks = {"a": [_label_check("cuisine_korean", value=True)], "b": [_label_check("cuisine_korean", value=False)]}
     scores = core.score_candidates(checks, [], {}, {}, {"cuisine_korean": frozenset({"user_1", "user_2"})})
-    assert scores == {"a": -2, "b": 0}
+    assert scores == {"a": -3 * 2, "b": 0}  # 피하겠다고 직접 쓴 사람당 −3(#414)
 
 
 def test_member_fulfillment_counts_disqualifier_authors_as_satisfied():
@@ -676,3 +702,93 @@ def test_member_fulfillment_disqualifier_author_with_unmet_preference_is_not_sat
     )
     assert result["total"] == 2 and result["satisfied"] == 1
     assert {e["user_id"]: e["satisfied"] for e in result["by_member"]} == {"u1": False, "u2": True}
+
+
+# ---------- #414 — ♥ 신호 거르기(음식점)와 직접 쓴 사유 3점 ----------
+
+def _keys(places):
+    return [sorted(c.fact_key for c in place.checks) for place in places]
+
+
+def test_filter_heart_signals_drops_restaurant_convenience_keys():
+    """'쓰지 않음' 키(체인점·넓음·주차·반려동물·웨이팅)는 ♥ 핀에서 참이든 거짓이든 뺀다."""
+    unused = ["franchise", "spacious", "parking_available", "pet_friendly", "wait_short"]
+    hearted = [_place(_check("cuisine_japanese"), *[_check(k) for k in unused], _check("franchise", passed=False))]
+    assert _keys(core.filter_heart_signals(hearted, "음식점")) == [["cuisine_japanese"]]
+
+
+def test_filter_heart_signals_keeps_cuisine_from_a_single_place():
+    hearted = [_place(_check("cuisine_raw_fish"), _check("cuisine_korean", passed=False))]
+    assert _keys(core.filter_heart_signals(hearted, "음식점")) == [["cuisine_korean", "cuisine_raw_fish"]]
+
+
+def test_filter_heart_signals_style_key_needs_two_true_places():
+    """'2곳 이상' 키는 참인 ♥ 핀이 1곳이면 참·거짓 모두 빠지고, 2곳이면 참·거짓 모두 남는다(다수결은 그다음)."""
+    one = [_place(_check("spicy_focused")), _place(_check("spicy_focused", passed=False))]
+    assert _keys(core.filter_heart_signals(one, "음식점")) == [[], []]
+
+    two = [
+        _place(_check("spicy_focused")), _place(_check("spicy_focused")), _place(_check("spicy_focused", passed=False)),
+    ]
+    assert _keys(core.filter_heart_signals(two, "음식점")) == [["spicy_focused"]] * 3
+
+
+def test_filter_heart_signals_style_key_ignores_unknown_true_labels():
+    hearted = [_place(_check("oily_focused")), _place(_check("oily_focused", confidence="unknown"))]
+    assert _keys(core.filter_heart_signals(hearted, "음식점")) == [[], []]
+
+
+def test_filter_heart_signals_counts_places_not_members():
+    """한 곳에 두 사람이 ♥해도 1곳이다 — 우연을 거르는 기준은 사람 수가 아니라 가게 수다."""
+    hearted = [_place(_check("long_established"), members=frozenset({"u1", "u2"}))]
+    assert _keys(core.filter_heart_signals(hearted, "음식점")) == [[]]
+
+
+def test_filter_heart_signals_leaves_cafe_unchanged():
+    """카페·관광지는 아직 나누지 않았다 — 같은 키(franchise·spacious)도 그대로 쓴다."""
+    hearted = [_place(_check("franchise"), _check("spacious"), _check("quiet"), members=frozenset({"u1", "u2"}))]
+    assert core.filter_heart_signals(hearted, "카페") == hearted
+
+
+def test_written_preference_for_an_unused_key_still_counts_but_hearts_do_not():
+    """'쓰지 않음' 키도 직접 쓰면 그대로 쓴다(3점). ♥만 한 사람은 그 키를 지지한 것으로 세지 않는다."""
+    hearted = core.filter_heart_signals([_place(_check("franchise"), members=frozenset({"u2"}))], "음식점")
+    authors = {"franchise": frozenset({"u1"})}
+    criteria = core.build_preference_criteria(
+        hearted, disqualifying_fact_keys=[], preferred_authors=authors,
+    )
+    assert criteria == {"franchise": True}
+    assert core.score_candidates({"p1": [_check("franchise")]}, hearted, criteria, authors) == {"p1": 3}
+
+
+def test_member_who_hearted_and_wrote_avoid_counts_minus_three_once():
+    """♥한 곳이 조용했어도 "조용한 곳은 피하고 싶다"고 직접 쓰면 반대 3점이다(−1−3이 아니다)."""
+    hearted = [_place(_check("quiet"), members=frozenset({"u2"}))]
+    preferred, avoided = {"quiet": frozenset({"u1"})}, {"quiet": frozenset({"u2"})}
+    scores = core.score_candidates({"p1": [_check("quiet")]}, hearted, {"quiet": True}, preferred, avoided)
+    assert scores == {"p1": 3 - 3}
+
+
+def test_written_preference_outweighs_other_heart_labels():
+    """2026-10-08 명동 시험 — "초밥 좋아해요"를 직접 썼고 ♥ 핀은 일식+체인점+기름진 메뉴+주차+넓음이었다.
+    걸러진 ♥ 신호로는 일식만 남아, 초밥집이 체인 뷔페보다 위다."""
+    raw = [_place(
+        _check("cuisine_japanese"), _check("franchise"), _check("oily_focused"),
+        _check("parking_available"), _check("spacious"), members=frozenset({"u1"}),
+    )]
+    hearted = core.filter_heart_signals(raw, "음식점")
+    authors = {"cuisine_japanese": frozenset({"u1"})}
+    criteria = core.build_preference_criteria(
+        hearted, disqualifying_fact_keys=[], preferred_authors=authors,
+    )
+    assert criteria == {"cuisine_japanese": True}
+
+    candidates = {
+        "sushi": [_check("cuisine_japanese")],
+        "buffet": [_check("cuisine_buffet"), _check("franchise"), _check("oily_focused"),
+                   _check("parking_available"), _check("spacious")],
+    }
+    assert core.score_candidates(candidates, hearted, criteria, authors) == {"sushi": 3, "buffet": 0}
+
+    fulfillment = core.build_member_fulfillment(candidates["buffet"], hearted, criteria, authors)
+    assert core.build_reason(candidates["buffet"], criteria, fulfillment) == "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"

@@ -47,6 +47,11 @@ def recommendable() -> tuple[str, ...]:
     return tuple(rule.name for rule in RULES if rule.recommendable)
 
 
+def is_pinnable(category: str) -> bool:
+    """없는 카테고리면 KeyError(is_reactable과 같다)."""
+    return _BY_NAME[category].pinnable
+
+
 def is_reactable(category: str) -> bool:
     """없는 카테고리면 KeyError — 스키마와 DB enum이 막으므로 여기 오면 정의가 어긋난 것이다."""
     return _BY_NAME[category].reactable

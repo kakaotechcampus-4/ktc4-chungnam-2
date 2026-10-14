@@ -7,6 +7,16 @@ import os
 # 항상 test여야 한다.
 os.environ["PINGO_ENV"] = "test"
 
+# 테스트 결과가 개발자 머신 상태(backend/.env, 셸에 남은 *_MODE)에 따라 달라지면 안 된다(#370) — CI와 같아야 한다.
+# - 어댑터 모드는 dev로 강제한다. real을 쓰는 테스트는 monkeypatch로 직접 정한다.
+# - backend/.env는 읽지 않는다(settings가 PINGO_LOAD_DOTENV=0이면 건너뛴다). 설정 테스트는 monkeypatch.delenv로
+#   "아무것도 정하지 않은 상태"를 직접 만든다.
+# - 예외: 실제 외부 API를 부르는 live 테스트는 .env의 키가 필요하다 — `PINGO_TEST_DOTENV=1 python -m pytest -m live ...`
+os.environ["PLACES_MODE"] = "dev"
+os.environ["LLM_MODE"] = "dev"
+if os.environ.get("PINGO_TEST_DOTENV") != "1":
+    os.environ["PINGO_LOAD_DOTENV"] = "0"
+
 
 # ---- 새 DB에서도 postgis가 먼저 켜져 있게 한다 ----
 # 전체 테스트 공통 준비 — pingo_test DB와 postgis 익스텐션이 **테스트 순서와 무관하게** 먼저 있게 한다.
@@ -55,7 +65,7 @@ def _ensure_test_db_with_postgis():
 
 
 # ---- live 마커: 실제 외부 API를 부르는 테스트는 기본 실행에서 뺀다 ----
-# 돌리려면 `python -m pytest -m live places` (키가 .env에 있어야 하고, 구글 등은 과금된다).
+# 돌리려면 `PINGO_TEST_DOTENV=1 python -m pytest -m live places` (키가 .env에 있어야 하고, 구글 등은 과금된다).
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "live: 실제 외부 API를 호출한다(과금·키 필요). -m live 로만 실행된다")

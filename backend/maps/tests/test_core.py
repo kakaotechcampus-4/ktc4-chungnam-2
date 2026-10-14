@@ -84,18 +84,18 @@ def test_build_invite_url_has_no_double_slash(base):
 
 def test_map_response_omits_confirmed_count_when_unknown():
     """0을 보내면 '확정 3개인 지도가 0개로 보이는' 거짓말이 된다 — 키 자체가 없어야 한다."""
-    record = core.MapRecord(id="m1", title="부산", start_date=date(2026, 10, 10), end_date=date(2026, 10, 12))
+    record = core.MapRecord(id="m1", title="부산", start_date=date(2026, 10, 10), end_date=date(2026, 10, 12), created_by="u1")
     response = core.to_map_response(
-        record, member_count=1, pin_count=0, confirmed_count=None, permissions=Permissions()
+        record, member_count=1, pin_count=0, confirmed_count=None, permissions=Permissions(), my_role="owner", viewer_id="u1"
     )
     dumped = response.model_dump(exclude_none=True)
     assert "confirmed_count" not in dumped
 
 
 def test_map_response_includes_confirmed_count_when_known():
-    record = core.MapRecord(id="m1", title="부산", start_date=date(2026, 10, 10), end_date=date(2026, 10, 12))
+    record = core.MapRecord(id="m1", title="부산", start_date=date(2026, 10, 10), end_date=date(2026, 10, 12), created_by="u1")
     response = core.to_map_response(
-        record, member_count=1, pin_count=0, confirmed_count=3, permissions=Permissions()
+        record, member_count=1, pin_count=0, confirmed_count=3, permissions=Permissions(), my_role="owner", viewer_id="u1"
     )
     assert response.model_dump(exclude_none=True)["confirmed_count"] == 3
 
@@ -177,9 +177,9 @@ def test_owner_successor_is_only_computed_for_the_owner():
 @pytest.mark.parametrize(
     "role, successor, expected",
     [
-        ("owner", "next", {"can_delete": True, "can_leave": True}),
-        ("owner", None, {"can_delete": True, "can_leave": False}),
-        ("member", None, {"can_delete": False, "can_leave": True}),
+        ("owner", "next", {"can_delete": True, "can_leave": True, "can_edit": True}),
+        ("owner", None, {"can_delete": True, "can_leave": False, "can_edit": True}),
+        ("member", None, {"can_delete": False, "can_leave": True, "can_edit": False}),
     ],
 )
 def test_map_permissions(role, successor, expected):
@@ -205,7 +205,9 @@ def test_member_left_and_map_deleted_event_shapes():
     assert (deleted.channel, deleted.type, deleted.payload) == ("public", "map.deleted", {"map_id": "m1"})
 
 
-@pytest.mark.parametrize("count, blocked", [(9, False), (10, True), (11, True)])
+@pytest.mark.parametrize(
+    "count, blocked", [(core.MAP_LIMIT - 1, False), (core.MAP_LIMIT, True), (core.MAP_LIMIT + 1, True)]
+)
 def test_check_map_limit(count, blocked):
     if not blocked:
         core.check_map_limit(count)
@@ -213,4 +215,4 @@ def test_check_map_limit(count, blocked):
     with pytest.raises(AppError) as exc_info:
         core.check_map_limit(count)
     assert exc_info.value.code == "MAP_LIMIT"
-    assert exc_info.value.detail == {"limit": 10, "count": count}
+    assert exc_info.value.detail == {"limit": core.MAP_LIMIT, "count": count}

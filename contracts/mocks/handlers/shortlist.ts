@@ -9,7 +9,34 @@ function haversineApproxMeters(a: { lat: number; lng: number }, b: { lat: number
   return Math.sqrt(dLat * dLat + dLng * dLng);
 }
 
+const csvCell = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+
+/** 확정 리스트 한 줄(#471). live 핀은 이름을 모르므로 검색어 + "(이름 확인 필요)", 링크는 카카오 장소 페이지. */
+function exportRow(i: ShortlistItem, n: number) {
+  const pin = i.pin;
+  const live = pin.source === "live";
+  const name = live ? `${pin.search_query ?? ""} (이름 확인 필요)` : (pin.place_name ?? "");
+  const link = live && pin.kakao_place_id ? `https://place.map.kakao.com/${pin.kakao_place_id.replace(/^kakao:/, "")}` : (pin.place_url ?? "");
+  return [String(n), name, pin.category, link, pin.memo ?? ""];
+}
+
 export const shortlistHandlers = [
+  // #471 확정 리스트 내보내기 — 확정 순서대로. 응답은 JSON이 아니라 파일이다.
+  http.get("*/maps/:mapId/shortlist/export", ({ params, request }) => {
+    const mapId = params.mapId as string;
+    if (!store.maps[mapId]) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    const format = new URL(request.url).searchParams.get("format") ?? "txt";
+    if (format !== "txt" && format !== "csv") return apiError(422, "VALIDATION_ERROR", "format은 txt 또는 csv");
+    const items = [...(store.shortlist[mapId] ?? [])].sort((a, b) => (a.visit_order ?? 1e9) - (b.visit_order ?? 1e9));
+    const rows = items.map((i, idx) => exportRow(i, idx + 1));
+    if (format === "csv") {
+      const body = "\uFEFF" + [["순서", "이름", "분류", "링크", "메모"], ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
+      return new HttpResponse(body, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": "attachment; filename*=UTF-8''shortlist.csv" } });
+    }
+    const body = rows.length === 0 ? "확정한 장소가 아직 없어요\n" : rows.map((r) => `${r[0]}. ${r[1]} (${r[2]})${r[3] ? ` ${r[3]}` : ""}${r[4] ? ` — ${r[4]}` : ""}`).join("\n") + "\n";
+    return new HttpResponse(body, { headers: { "Content-Type": "text/plain; charset=utf-8", "Content-Disposition": "attachment; filename*=UTF-8''shortlist.txt" } });
+  }),
+
   http.get("*/maps/:mapId/shortlist", ({ params }) => {
     const mapId = params.mapId as string;
     const items = store.shortlist[mapId] ?? [];
@@ -77,9 +104,12 @@ export const shortlistHandlers = [
 ];
 
 function calculateRoutes(items: ShortlistItem[]): Route[] {
-  if (items.length < 2) return [];
   // 5-10: 최근접 이웃 기반 순수 계산. 지역 클러스터링은 목 서버에서 단일 지역으로 단순화한다.
-  const pins = items.map((i) => i.pin).filter(Boolean) as NonNullable<(typeof items)[number]["pin"]>[];
+  // #382: 좌표가 없는 실시간 핀(source=live)은 서버가 위치를 몰라 동선에서 빠진다.
+  const pins = items
+    .map((i) => i.pin)
+    .filter((p): p is NonNullable<typeof p> => !!p && p.lat !== undefined && p.lng !== undefined);
+  if (pins.length < 2) return [];
   const legs: Route["legs"] = [];
   let total = 0;
   for (let i = 0; i < pins.length - 1; i++) {

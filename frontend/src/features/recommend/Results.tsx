@@ -4,6 +4,7 @@ import { MessageSquare, RotateCw, Users } from 'lucide-react'
 import { ApiError } from '@/api'
 import type { MemberView } from '@/features/maps/model'
 import { showToast } from '@/features/shell/toast'
+import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
 
 import { useAiStore } from './aiStore'
@@ -178,8 +179,8 @@ function PublishButton({ mapId, run, c, filled = false }: { mapId: string; run: 
       }
       className={
         filled
-          ? 'w-full rounded-xl bg-brand-600 py-3.5 font-bold text-white disabled:opacity-50'
-          : 'rounded-lg border-[1.5px] border-brand-600 bg-white px-3 py-1.5 text-sm font-bold text-brand-600 disabled:opacity-50'
+          ? 'btn-primary w-full py-3.5'
+          : 'btn-outline rounded-md px-3 py-1.5 text-sm'
       }
     >
       {publish.isPending ? '올리는 중…' : '지도에 올리기'}
@@ -306,10 +307,10 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
     <div className="space-y-3">
       <FunnelTable funnel={funnel} left={0} />
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={() => setAsking(true)} disabled={widen.isPending} className="rounded-xl bg-brand-600 py-3 font-bold text-white disabled:opacity-50">
+        <button type="button" onClick={() => setAsking(true)} disabled={widen.isPending} className="btn-primary py-3">
           반경 넓히기
         </button>
-        <button type="button" onClick={onFixEvidence} className="rounded-xl border border-brand-600 py-3 font-semibold text-brand-600">
+        <button type="button" onClick={onFixEvidence} className="btn-outline py-3">
           근거 고치기
         </button>
       </div>
@@ -318,10 +319,10 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
       </button>
 
       {asking && (
-        <div role="alertdialog" aria-modal="true" aria-label="반경 넓히기 확인" className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-6">
-          <div className="w-full max-w-sm space-y-2 rounded-2xl bg-white p-5">
-            <p className="text-lg font-bold text-ink-900">기본 반경만 넓혀서 다시 찾을까요?</p>
-            <dl className="space-y-1 rounded-lg bg-ink-50 p-3 text-sm">
+        <ConfirmDialog
+          title="기본 반경만 넓혀서 다시 찾을까요?"
+          detail={
+            <dl className="space-y-1">
               <div className="flex gap-2">
                 <dt className="text-ink-500">넓혀요</dt>
                 <dd className="font-semibold text-ink-900">
@@ -333,26 +334,17 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
                 <dd className="font-semibold text-ink-900">사람이 직접 정한 반경 조건</dd>
               </div>
             </dl>
-            <p className="text-sm text-ink-600">사람이 직접 정한 반경은 넓히지 않아요. 더 멀리 찾고 싶으면 그 사유를 고쳐 주세요.</p>
-            <p className="text-xs text-ink-500">꼭 지켜야 하는 조건도 그대로 적용돼요.</p>
-            <div className="grid grid-cols-2 gap-2 pt-2">
-              <button type="button" onClick={() => setAsking(false)} className="rounded-lg border border-ink-300 py-2.5 text-sm font-semibold">
-                취소
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  // 진행 중 → 결과/실패/상한 안내는 요청 훅이 맡는다(#349).
-                  widen.mutate(run, { onSettled: () => setAsking(false) })
-                }
-                disabled={widen.isPending}
-                className="rounded-lg bg-brand-600 py-2.5 text-sm font-bold text-white disabled:opacity-50"
-              >
-                {widen.isPending ? '다시 찾는 중…' : '넓혀서 다시 찾기'}
-              </button>
-            </div>
-          </div>
-        </div>
+          }
+          body="사람이 직접 정한 반경은 넓히지 않아요. 더 멀리 찾고 싶으면 그 사유를 고쳐 주세요."
+          note="꼭 지켜야 하는 조건도 그대로 적용돼요."
+          ok={widen.isPending ? '다시 찾는 중…' : '넓혀서 다시 찾기'}
+          pending={widen.isPending}
+          onCancel={() => setAsking(false)}
+          onOk={() =>
+            // 진행 중 → 결과/실패/상한 안내는 요청 훅이 맡는다(#349).
+            widen.mutate(run, { onSettled: () => setAsking(false) })
+          }
+        />
       )}
     </div>
   )
@@ -372,7 +364,7 @@ export function Failed({ mapId, run }: { mapId: string; run: RecommendRunDto }) 
         disabled={execute.isPending}
         // 다시 '진행 중'으로 간다. 또 실패하면 이 화면으로, 다른 오류는 토스트로(요청 훅, #349).
         onClick={() => execute.mutate(run)}
-        className="w-full rounded-xl border-[1.5px] border-brand-600 py-3 font-bold text-brand-600 disabled:opacity-50"
+        className="btn-outline w-full py-3"
       >
         {execute.isPending ? '다시 찾는 중…' : '다시 시도'}
       </button>
@@ -390,10 +382,10 @@ export function RetryLimit({ onBack }: { onBack: () => void }) {
         <li>검색창에서 직접 찾아 찍을 수도 있어요</li>
       </ul>
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={onBack} className="rounded-xl border border-brand-600 py-3 font-semibold text-brand-600">
+        <button type="button" onClick={onBack} className="btn-outline py-3">
           후보 다시 보기
         </button>
-        <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="rounded-xl border border-brand-600 py-3 font-semibold text-brand-600">
+        <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-outline py-3">
           직접 찍기
         </button>
       </div>

@@ -49,12 +49,17 @@ class DbMembershipGateway:
 
 
 def count_members(db: Session, map_id: str) -> int:
-    """recommend readiness(5-4)가 ceil(N/2)의 N으로 쓴다(recommend/#108). N="이 지도에
-    현재 참여 중인 인원 수"로 확정(#32, 2026-09-23) — maps가 소유한 함수라 여기 추가했다
-    (get_coordinates_for_pins를 pins가 shortlist를 위해 추가한 것과 같은 선례).
-    탈퇴한 구성원은 센 N에서 뺀다(#245) — 반응할 수 없는 사람이 ceil(N/2)를 부풀리지 않게.
+    """이 지도에 현재 참여 중인 인원 수(Map.member_count, FilterCounts.members_total). 추천 준비 판정은
+    더 이상 쓰지 않는다(#360 — 의견 핀 1곳이면 열린다). 탈퇴한 구성원은 뺀다(#245).
     나간 구성원은 멤버십 행이 지워져 자연히 빠진다(#369)."""
     return service.member_count(db, map_id)
+
+
+def lock_member_maps(db: Session, user_id: str) -> list[str]:
+    """탈퇴(auth.service.withdraw_user)가 맨 먼저 부른다(#435, docs/architecture.md "동시성: 지도 행
+    잠금으로 줄을 세운다"). 이 사용자가 속한 삭제되지 않은 지도 행을 지도 id 순서로 FOR UPDATE 잠그고
+    그 id를 돌려준다. 나가기·지도 삭제와 같은 행을 잠가 줄을 선다. 커밋하지 않는다."""
+    return service.lock_member_maps(db, user_id=user_id)
 
 
 def transfer_or_delete_owned_maps(db: Session, user_id: str) -> None:
@@ -63,3 +68,9 @@ def transfer_or_delete_owned_maps(db: Session, user_id: str) -> None:
     삭제한다(map.deleted 발행). 위임한 지도에는 member.left를 발행한다(new_owner_user_id=후임).
     탈퇴자의 멤버십 행은 지우지 않는다(#245). 커밋하지 않는다."""
     service.transfer_or_delete_owned_maps(db, user_id=user_id)
+
+
+def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+    """지도 정리(maps.purge, #431) — 이 지도들의 invites·memberships·maps만 지우고 테이블 이름 → 지운 행 수를
+    돌려준다. 삭제되지 않은(deleted_at이 없는) 지도가 섞여 있으면 ValueError. 커밋하지 않는다."""
+    return service.purge_map_data(db, map_ids=map_ids)

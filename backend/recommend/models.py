@@ -24,16 +24,20 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Enum,
     Float,
     ForeignKey,
+    Identity,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -72,6 +76,11 @@ class RecommendRun(Base):
     default_radius_walk_min: Mapped[int] = mapped_column(Integer, nullable=False, default=15, server_default="15")
     last_funnel: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # 지난 추천 기록(#469) — 마이그레이션 0028과 같다.
+    __table_args__ = (
+        Index("ix_recommend_runs_map_requester_created", "map_id", "requested_by", text("created_at DESC")),
+    )
 
 
 class Candidate(Base):
@@ -117,6 +126,9 @@ class EvidenceLine(Base):
     circle_radius_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # #428: 넣은 순서. created_at은 한 트랜잭션 안에서 모두 같고 id는 무작위라 순서를 못 정한다 —
+    # 읽을 땐 ORDER BY created_at, seq. 서버가 채우며 API 응답에는 넣지 않는다(마이그레이션 0024).
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False)
 
 
 class Region(Base):

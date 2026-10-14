@@ -23,6 +23,12 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
+    ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
+    ("GET", "/maps/{mapId}/invites"): "#467 구현 PR이 골든 패스에 넣고 지운다",
+    ("DELETE", "/invites/{token}"): "#467 구현 PR이 골든 패스에 넣고 지운다",
+    ("PATCH", "/pins/{pinId}"): "#466 구현 PR이 골든 패스에 넣고 지운다",
+    ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/places/from-link"): "#474 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
@@ -128,6 +134,9 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     map_id = created.json()["id"]
     assert a.get("/maps").status_code == 200
     assert a.get(f"/maps/{map_id}").status_code == 200
+    assert a.patch(f"/maps/{map_id}", json={"title": "부산 가을 여행"}).status_code == 200   # #465
+    assert a.patch(f"/maps/{map_id}", json={}).status_code == 422
+    assert (created.json()["my_role"], created.json()["created_by_me"]) == ("owner", True)  # #391
 
     invite = a.post(f"/maps/{map_id}/invite")
     assert invite.status_code == 201
@@ -174,7 +183,11 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert result.status_code == 200
     candidates = result.json()["candidates"]
     assert candidates
+    assert all(isinstance(c["lat"], float) and isinstance(c["lng"], float) for c in candidates)  # #391
     assert a.post(f"/candidates/{candidates[0]['id']}/publish").status_code == 200
+    history = a.get(f"/maps/{map_id}/runs")                                                          # 지난 추천 기록(#469)
+    assert history.status_code == 200 and [h["id"] for h in history.json()] == [run_id]
+    assert history.json()[0]["published_count"] == 1
 
     for pid in pin_ids[:2]:
         assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pid}).status_code in (200, 201)
@@ -183,6 +196,17 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.put(f"/maps/{map_id}/shortlist/order", json={"item_ids": list(reversed(item_ids))}).status_code == 200
     assert a.post(f"/maps/{map_id}/route").status_code in (200, 201)
     assert a.get(f"/maps/{map_id}/route").status_code == 200
+
+    # 내보내기(#471)는 JSON이 아니라 파일 — 본문 검증 대신 형식·헤더를 직접 확인한다
+    export_txt = a.get(f"/maps/{map_id}/shortlist/export")
+    assert export_txt.status_code == 200 and export_txt.headers["content-type"].startswith("text/plain")
+    assert export_txt.headers["content-disposition"].startswith("attachment")
+    export_csv = a.get(f"/maps/{map_id}/shortlist/export", params={"format": "csv"})
+    assert export_csv.status_code == 200 and export_csv.headers["content-type"].startswith("text/csv")
+    assert export_csv.content.startswith("\ufeff순서,".encode())
+    assert len(export_csv.text.splitlines()) == 1 + len(item_ids)
+    assert a.get(f"/maps/{map_id}/shortlist/export", params={"format": "pdf"}).status_code == 422
+    assert b.get(f"/maps/{map_id}/shortlist/export").status_code == 200
 
     assert a.delete(f"/pins/{pin_ids[0]}/reaction").status_code == 204
     assert a.post("/auth/logout").status_code == 204
@@ -289,6 +313,43 @@ def test_map_leave_and_delete_match_the_openapi_spec(clients):
     assert a.delete(f"/maps/{map_id}/members/me").status_code == 409     # 혼자 남은 방장
     assert a.delete(f"/maps/{map_id}").status_code == 204
     assert a.get(f"/maps/{map_id}").status_code == 404
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
+def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
+    """실시간 핀(#386, 스펙 PinCreateLive) — 응답에 좌표·이름이 없어도 Pin 스키마에 맞고, 목록·확정 항목·동선까지 같다."""
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "성수", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+
+    live = {"source": "live", "category": "음식점", "kakao_place_id": "kakao:555", "search_query": "성수 곱창", "memo": "맛있대"}
+    created = a.post(f"/maps/{map_id}/pins", json=live)
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["source"] == "live" and not {"lat", "lng", "place_name"} & set(body)   # 좌표·이름 없음
+    live_id = body["id"]
+    db_id = a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-kalguksu")).json()["id"]
+
+    dup = a.post(f"/maps/{map_id}/pins", json=live)
+    assert dup.status_code == 409 and dup.json()["detail"]["pin_id"] == live_id      # PIN_DUPLICATE
+    assert a.post(f"/maps/{map_id}/pins", json={**live, "kakao_place_id": "kakao:556", "category": "숙소"}).status_code == 422
+    assert a.post(f"/maps/{map_id}/pins", json={**live, "kakao_place_id": "kakao:557", "lat": 37.5}).status_code == 422
+
+    listed = a.get(f"/maps/{map_id}/pins").json()
+    assert {p["id"] for p in listed} == {live_id, db_id}
+    assert b.put(f"/pins/{live_id}/reaction", json={"type": "like"}).status_code == 200
+
+    for pin_id in (live_id, db_id):
+        assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pin_id}).status_code == 201
+    shortlist = a.get(f"/maps/{map_id}/shortlist").json()
+    assert {item["pin"]["id"] for item in shortlist} == {live_id, db_id}            # 확정 리스트에는 남는다
+    routes = a.post(f"/maps/{map_id}/route")
+    assert routes.status_code == 200
+    ordered = [pin_id for route in routes.json() for pin_id in route["ordered_pin_ids"]]
+    assert live_id not in ordered                                                     # 동선에서는 빠진다
 
     unique = list(dict.fromkeys(problems))
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)

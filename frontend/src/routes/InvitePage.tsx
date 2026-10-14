@@ -77,7 +77,7 @@ export default function InvitePage() {
               type="button"
               onClick={join}
               disabled={accept.isPending}
-              className="w-full rounded-xl bg-brand-600 py-3.5 font-semibold text-white disabled:opacity-50"
+              className="btn-primary w-full py-3.5"
             >
               {accept.isPending ? '참여하는 중…' : '참여하기'}
             </button>
@@ -116,7 +116,7 @@ function InviteBroken({ expired }: { expired: boolean }) {
         <p className="font-semibold text-ink-900">{expired ? '초대 링크가 만료됐어요' : '유효하지 않은 초대 링크예요'}</p>
         <p className="mt-1 text-sm text-ink-500">초대한 친구에게 새 링크를 받아주세요</p>
       </div>
-      <Link to="/" className="rounded-xl bg-brand-600 py-3.5 text-center font-semibold text-white">
+      <Link to="/" className="btn-primary py-3.5 text-center">
         내 지도로
       </Link>
     </div>

@@ -31,13 +31,15 @@ def test_non_member_everything_false():
 
 def test_non_member_who_is_author_still_denied():
     """author는 member 위에 얹히는 추가 범위지 독립 역할이 아니다(permissions.md 25·41행).
-    비구성원이 우연히 author_id와 일치한다고 evidence.disable·candidate.view_private가
-    열리면 그건 권한 상승이다."""
+    비구성원이 우연히 author_id와 일치한다고 evidence.disable·recommend.publish·
+    recommend.manage가 열리면 그건 권한 상승이다."""
     user = _principal(role=None, user_id="user_9")
     evidence = _resource("evidence_line", author_id="user_9")
     candidate = _resource("candidate", author_id="user_9")
+    run = _resource("run", author_id="user_9")
     assert can(user, "evidence.disable", evidence) is False
-    assert can(user, "candidate.view_private", candidate) is False
+    assert can(user, "recommend.publish", candidate) is False
+    assert can(user, "recommend.manage", run) is False
 
 
 # --- 교차 지도 차단 ---
@@ -157,11 +159,46 @@ def test_recommend_publish_requires_being_the_requester():
     assert can(other_member, "recommend.publish", candidate) is False
 
 
-def test_candidate_view_private_author_only_even_for_owner():
-    """owner.actions에 candidate.view_private가 없다 — 지도 생성자라고 남의 비공개 후보를
-    보면 가드레일 1(비공개 후보 유출 금지) 위반이다."""
+def test_recommend_publish_denied_for_owner_who_is_not_the_requester():
+    """owner.actions에 recommend.publish가 없다 — 지도 생성자라고 남의 후보를 게시하면
+    가드레일 1(대안은 요청한 사람에게만 먼저 보인다) 위반이다."""
     owner = _principal(role="owner", user_id="owner_1")
-    requester = _principal(role="member", user_id="user_1")
     candidate = _resource("candidate", author_id="user_1")
-    assert can(requester, "candidate.view_private", candidate) is True
-    assert can(owner, "candidate.view_private", candidate) is False
+    assert can(owner, "recommend.publish", candidate) is False
+
+
+def test_recommend_manage_run_requester_only_member_and_owner_both_denied():
+    """남의 run은 member·owner 모두 recommend.manage 불가(가드레일 1). 요청한 본인만 가능 —
+    그 본인이 owner여도 마찬가지로 author 역할로 통과한다."""
+    run = _resource("run", author_id="user_1")
+    requester = _principal(role="member", user_id="user_1")
+    other_member = _principal(role="member", user_id="user_2")
+    other_owner = _principal(role="owner", user_id="owner_1")
+    owner_requester = _principal(role="owner", user_id="user_1")
+    assert can(requester, "recommend.manage", run) is True
+    assert can(owner_requester, "recommend.manage", run) is True
+    assert can(other_member, "recommend.manage", run) is False
+    assert can(other_owner, "recommend.manage", run) is False
+
+
+def test_recommend_manage_denied_when_run_has_no_author():
+    """author_id가 비면 author 역할이 부여되지 않아 아무도 통과하지 못한다 — 요청자 정보가 없는
+    run을 구성원이 조작하게 두지 않는다."""
+    member = _principal(role="member", user_id="user_1")
+    assert can(member, "recommend.manage", _resource("run", author_id=None)) is False
+
+
+def test_recommend_evidence_open_to_any_member_on_run():
+    """#32 결정 — 근거 조회·토글·추가는 요청자가 아니어도 구성원 누구나. run 기준이다."""
+    run = _resource("run", author_id="user_1")
+    other_member = _principal(role="member", user_id="user_2")
+    non_member = _principal(role=None, user_id="user_2")
+    assert can(other_member, "recommend.evidence", run) is True
+    assert can(non_member, "recommend.evidence", run) is False
+
+
+@pytest.mark.parametrize("action", ["recommend.manage", "recommend.evidence"])
+def test_run_actions_not_valid_for_map_resource(action):
+    """load_run이 Resource(type="run")을 만든다 — 예전처럼 map으로 물으면 타입 혼동으로 False."""
+    requester = _principal(role="member", user_id="user_1")
+    assert can(requester, action, _resource("map", author_id="user_1")) is False

@@ -4,6 +4,7 @@ shortlist와 같은 재사용 원칙) — 이 모듈은 candidate 전용 permiss
 채울 때도 authz.core.can()을 그대로 부른다(recommend/service.py 참고).
 """
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -42,6 +43,18 @@ class RecommendRun(BaseModel):
     status: RunStatus
     attempt_no: int
     default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한 30
+
+
+class RunSummary(BaseModel):
+    """GET /maps/{mapId}/runs 한 건(#469) — 내가 요청한 run만 온다."""
+    id: str
+    map_id: str
+    category: Category
+    status: RunStatus
+    attempt_no: int
+    created_at: datetime
+    candidate_count: int = Field(ge=0)  # 마지막 시도의 후보 수. done이 아니면 0
+    published_count: int = Field(ge=0)  # 그 run에서 게시한 후보 수
 
 
 class EvidenceLine(BaseModel):
@@ -103,6 +116,9 @@ class Candidate(BaseModel):
     id: str
     place_name: str | None = None  # places 없어 못 채움
     region_label: str | None = None
+    # 자체 DB 장소의 좌표(candidates.lat/lng, #391) — 「지도에 올리기」 전에도 지도에 그릴 수 있게.
+    lat: float | None = None
+    lng: float | None = None
     rank: int
     checks: list[Check]
     reason: str | None = None

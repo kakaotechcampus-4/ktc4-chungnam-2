@@ -18,6 +18,7 @@ from auth.testing import session_cookie
 from common.events import EventLog
 from maps import api as maps_api
 from maps.api import DbMembershipGateway
+from maps.core import MAP_LIMIT
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
 from pins.models import Pin as PinRow
@@ -223,7 +224,7 @@ def test_owner_leaving_hands_over_to_earliest_joined_non_withdrawn_member(app_cl
 
     detail = app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()
     assert detail["next_owner"] == {"user_id": "user_3", "display_name": "user_3"}
-    assert detail["permissions"] == {"can_delete": True, "can_leave": True}
+    assert detail["permissions"] == {"can_delete": True, "can_leave": True, "can_edit": True}
 
     assert app_client.delete(f"/maps/{map_id}/members/me", cookies=_auth("user_1")).status_code == 204
 
@@ -234,7 +235,7 @@ def test_owner_leaving_hands_over_to_earliest_joined_non_withdrawn_member(app_cl
     assert event.payload == {"map_id": map_id, "user_id": "user_1", "new_owner_user_id": "user_3"}
 
     new_owner_view = app_client.get(f"/maps/{map_id}", cookies=_auth("user_3")).json()
-    assert new_owner_view["permissions"] == {"can_delete": True, "can_leave": True}
+    assert new_owner_view["permissions"] == {"can_delete": True, "can_leave": True, "can_edit": True}
     assert new_owner_view["next_owner"]["user_id"] == "user_lonely"
 
 
@@ -279,7 +280,7 @@ def test_owner_without_successor_cannot_leave(app_client, db_session, others_wit
         _withdraw(db_session, "user_2")
 
     detail = app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()
-    assert detail["permissions"] == {"can_delete": True, "can_leave": False}
+    assert detail["permissions"] == {"can_delete": True, "can_leave": False, "can_edit": True}
     assert "next_owner" not in detail
 
     resp = app_client.delete(f"/maps/{map_id}/members/me", cookies=_auth("user_1"))
@@ -295,15 +296,15 @@ def test_permissions_on_every_map_response(app_client):
     created = app_client.post(
         "/maps", json={"title": "x", "start_date": "2026-10-10", "end_date": "2026-10-10"}, cookies=_auth("user_1")
     ).json()
-    assert created["permissions"] == {"can_delete": True, "can_leave": False}
+    assert created["permissions"] == {"can_delete": True, "can_leave": False, "can_edit": True}
     accepted = app_client.post(f"/invites/{token}/accept", cookies=_auth("user_2")).json()
-    assert accepted["permissions"] == {"can_delete": False, "can_leave": True}
+    assert accepted["permissions"] == {"can_delete": False, "can_leave": True, "can_edit": False}
 
     listed = {m["id"]: m for m in app_client.get("/maps", cookies=_auth("user_1")).json()}
-    assert listed[map_id]["permissions"] == {"can_delete": True, "can_leave": True}
+    assert listed[map_id]["permissions"] == {"can_delete": True, "can_leave": True, "can_edit": True}
     assert all("next_owner" not in m for m in listed.values())   # 목록에서는 생략
     member_view = app_client.get(f"/maps/{map_id}", cookies=_auth("user_2")).json()
-    assert member_view["permissions"] == {"can_delete": False, "can_leave": True}
+    assert member_view["permissions"] == {"can_delete": False, "can_leave": True, "can_edit": False}
     assert "next_owner" not in member_view
 
 
@@ -328,21 +329,21 @@ def test_withdrawing_owner_hands_over_or_deletes(app_client, db_session):
     assert _events(db_session, shared, "map.deleted") == []
 
 
-# --- 내 지도 10개 상한 ------------------------------------------------------------------
+# --- 내 지도 MAP_LIMIT개 상한 ------------------------------------------------------------------
 
 
 def _fill_to_limit(app_client, user_id="user_2"):
-    return [_create_map(app_client, user_id=user_id, title=f"지도 {i}") for i in range(10)]
+    return [_create_map(app_client, user_id=user_id, title=f"지도 {i}") for i in range(MAP_LIMIT)]
 
 
-def test_creating_an_eleventh_map_is_409(app_client):
+def test_creating_a_map_over_the_limit_is_409(app_client):
     own = _fill_to_limit(app_client)
     resp = app_client.post(
         "/maps", json={"title": "하나 더", "start_date": "2026-10-10", "end_date": "2026-10-12"}, cookies=_auth("user_2")
     )
     assert resp.status_code == 409
     assert resp.json()["code"] == "MAP_LIMIT"
-    assert resp.json()["detail"] == {"limit": 10, "count": 10}
+    assert resp.json()["detail"] == {"limit": MAP_LIMIT, "count": MAP_LIMIT}
     assert len(app_client.get("/maps", cookies=_auth("user_2")).json()) == len(own)
 
 
@@ -350,7 +351,7 @@ def test_accepting_a_new_invite_at_the_limit_is_409_but_rejoin_is_allowed(app_cl
     joined = _create_map(app_client, user_id="user_1", title="이미 참여")
     token_joined = _invite_token(app_client, joined)
     assert app_client.post(f"/invites/{token_joined}/accept", cookies=_auth("user_2")).status_code == 200
-    for i in range(9):
+    for i in range(MAP_LIMIT - 1):
         _create_map(app_client, user_id="user_2", title=f"지도 {i}")
 
     other = _create_map(app_client, user_id="user_1", title="새 초대")

@@ -8,7 +8,7 @@ None으로 둔다. 라우터가 response_model_exclude_none=True를 쓰므로 �
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from authz.schemas import Permissions
 
@@ -30,6 +30,23 @@ class MapCreateRequest(BaseModel):
     region: MapRegion | None = None
 
 
+class MapUpdateRequest(BaseModel):
+    """PATCH /maps/{mapId}(#465) — 보낸 필드만 바꾼다. 값을 안 보낸 필드는 None이다. 빈 객체와
+    명시적 null은 422다(null로 region을 지우는 건 지원하지 않는다 — 바꾸기만)."""
+
+    title: str | None = Field(default=None, max_length=100)
+    start_date: date | None = None
+    end_date: date | None = None
+    region: MapRegion | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_value(self):
+        sent = {name: getattr(self, name) for name in self.model_fields_set}
+        if not sent or any(value is None for value in sent.values()):
+            raise ValueError("바꿀 필드를 하나 이상 보내야 하고 값은 null일 수 없습니다")
+        return self
+
+
 class NextOwner(BaseModel):
     """방장이 나가면 방장이 될 사람(#369) — 나가기 확인 창 "나가면 ○○님이 방장이 돼요"용."""
 
@@ -41,6 +58,10 @@ class Map(BaseModel):
     id: str
     # 요청자 기준. map은 can_delete(방장만)·can_leave(넘길 사람이 없는 방장은 false)만 채운다(#369).
     permissions: Permissions
+    # 요청자의 지금 역할(memberships.role) — 방장을 위임하면 바뀐다. 내 지도 목록의 방장 배지용(#391).
+    my_role: Literal["owner", "member"] | None = None
+    # maps.created_by == 요청자 — 만든 사람 기록이라 위임돼도 안 바뀐다(my_role과 달라질 수 있다, #391).
+    created_by_me: bool | None = None
     # 요청자가 방장이고 넘길 사람이 있을 때만, 상세(GET /maps/{mapId})에서만 채운다(#369).
     next_owner: NextOwner | None = None
     title: str

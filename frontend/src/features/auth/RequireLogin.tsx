@@ -27,7 +27,7 @@ export default function RequireLogin() {
 
 const STEPS = [
   '가고 싶은 곳을 핀으로 찍어요',
-  <>♥ 좋음 · △ 조율 필요 · <AgainstMark /> 반대로 의견을 남겨요</>,
+  <>♥ 좋음 · <AgainstMark /> 반대로 의견을 남겨요</>,
   '반대가 있으면 AI가 대안을 찾아줘요',
 ]
 

@@ -97,12 +97,12 @@ def test_d21_oversized_place_id_is_rejected(members, place_ids):
 
 def test_d25_planner_output_with_decomposed_hangul_is_accepted():
     """모델이 같은 글자를 자모 분리형(NFD)으로 돌려줘도(눈에 같아 보인다) ②가 통째로 실패하면 run 생성이 막힌다."""
-    from llm.schemas import EvidenceLine, PlanningOutput
+    from llm.schemas import PlannedCondition, PlannedReason, PlanningOutput
     from llm.service import merge_planned
 
     raw = [{"author_id": "u1", "source": "reaction", "text": "한식 말고 다른 거", "badge": "required"}]
     echoed = unicodedata.normalize("NFD", raw[0]["text"])
-    output = PlanningOutput(evidence_lines=[EvidenceLine(source="reaction", text=echoed, badge="required",
-                                                         author_id="u1", fact_key="cuisine_korean", wants=False)])
-    merged = merge_planned(raw, output)
-    assert merged[0].text == raw[0]["text"] and merged[0].fact_key == "cuisine_korean"
+    output = PlanningOutput(reasons=[PlannedReason(index=0, text=echoed, conditions=[
+        PlannedCondition(fact_key="cuisine_korean", wants=False)])])
+    [[line]] = merge_planned(raw, output)
+    assert line.text == raw[0]["text"] and line.fact_key == "cuisine_korean"

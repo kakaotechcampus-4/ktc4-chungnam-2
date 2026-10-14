@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
+import { useEnrichPin } from '@/features/map/livePlaces'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMembersQuery } from '@/features/maps/queries'
 import { useShell } from '@/features/shell/shellContext'
@@ -20,7 +21,7 @@ import {
 import { useRouteStore } from '@/features/shortlist/routeStore'
 import ShortlistList from '@/features/shortlist/ShortlistList'
 import { josa } from '@/ui/josa'
-import Pingo from '@/ui/Pingo'
+import EmptyState from '@/ui/EmptyState'
 
 /** 확정된 장소 탭(Figma 7절). 동선은 순서만 — 몇 시에 어디는 정하지 않는다(범위 밖). */
 export default function ShortlistTab() {
@@ -36,7 +37,12 @@ export default function ShortlistTab() {
   const add = useAddToShortlistMutation(mapId)
   const reorder = useReorderShortlistMutation(mapId)
   const [params, setParams] = useSearchParams()
-  const items = shortlist.data ?? []
+  const enrich = useEnrichPin()
+  // 확정 리스트 항목의 핀은 핀 목록 밖에서 온다 — 실시간 핀(#382)의 이름·좌표를 같은 값으로 얹는다.
+  const items = (shortlist.data ?? []).map((i) => ({ ...i, pin: enrich(i.pin) }))
+  // 서버는 좌표를 모르는 실시간 핀을 동선에서 뺀다 — 동선 계산 대상은 그 밖의 항목이다.
+  const routable = items.filter((i) => i.pin.source !== 'live').length
+  const hasLive = routable < items.length
   const openPin = pins.find((p) => p.id === params.get('pin'))
 
   const setOpenPin = (pinId: string | null) => {
@@ -50,14 +56,13 @@ export default function ShortlistTab() {
   // 서버는 스스로 다시 계산하지 않는다(#30) — 켜 둔 사람의 화면이 다시 부른다.
   // 항목 구성(id 목록)과 토글이 바뀔 때만 다시 계산한다 — 순서만 바꾼 건 동선과 무관하다(#30).
   const itemKey = items.map((i) => i.id).sort().join(',')
-  const count = items.length
   const { mutate: recalc } = calc
   useEffect(() => {
-    if (routeOn && count >= 2) recalc()
-  }, [routeOn, itemKey, count, recalc])
+    if (routeOn && routable >= 2) recalc()
+  }, [routeOn, itemKey, routable, recalc])
 
   function toggleRoute() {
-    if (!routeOn && items.length < 2) return showToast('2곳부터 동선을 보여 줘요')
+    if (!routeOn && routable < 2) return showToast(hasLive ? '위치를 아는 장소가 2곳부터 동선을 보여 줘요' : '2곳부터 동선을 보여 줘요')
     setRouteOn(!routeOn)
   }
 
@@ -116,19 +121,20 @@ export default function ShortlistTab() {
     >
       {shortlist.error && <ErrorText message="확정 리스트를 불러오지 못했어요" error={shortlist.error} />}
       {calc.error && <ErrorText message="동선을 계산하지 못했어요" error={calc.error} />}
+      {routeOn && hasLive && <p className="text-xs text-ink-500">장소 정보가 없는 핀은 위치를 몰라 동선에서 빠졌어요</p>}
       {shortlist.data?.length === 0 && (
-        <div className="flex flex-col items-center py-6 text-center">
-          <Pingo size={48} />
-          <p className="mt-3 font-semibold text-ink-900">아직 확정된 장소가 없어요</p>
-          <p className="mt-1 text-sm text-ink-500">
-            마킹된 장소에서 「확정 리스트에 넣기」를 누르면 여기 모여요.
-            <br />
-            2곳 이상이면 동선도 볼 수 있어요
-          </p>
-          <Link to={`/maps/${mapId}`} className="mt-4 rounded-lg border border-brand-600 px-4 py-2 text-sm font-semibold text-brand-600">
-            마킹된 장소 보러 가기
-          </Link>
-        </div>
+        <EmptyState
+          title="아직 확정된 장소가 없어요"
+          action={
+            <Link to={`/maps/${mapId}`} className="btn-outline px-4 py-2 text-sm">
+              마킹된 장소 보러 가기
+            </Link>
+          }
+        >
+          마킹된 장소에서 「확정 리스트에 넣기」를 누르면 여기 모여요.
+          <br />
+          2곳 이상이면 동선도 볼 수 있어요
+        </EmptyState>
       )}
       {items.length > 0 && (
         <ShortlistList

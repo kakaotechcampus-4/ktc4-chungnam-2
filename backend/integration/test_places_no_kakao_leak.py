@@ -58,7 +58,9 @@ def test_kakao_values_never_reach_llm_or_db_through_a_recommend_run(db_session, 
     """#190 — 실행 경로는 자체 DB만 읽는다. 카카오 어댑터(표식이 든 값)가 wired돼 있어도 recommend가 그쪽을
     부르지 않고, 모델 호출은 ②(plan_evidence)뿐이며 그 인자에도 표식이 없다. label_place는 아예 안 불린다."""
     seen_by_llm: list[str] = []
-    real_plan = flows.llm_service.plan_evidence
+    from llm import service as llm_service
+
+    real_plan = llm_service.plan_evidence
 
     def spy_plan(lines, *args, **kwargs):
         seen_by_llm.append(json.dumps([lines, args, kwargs], ensure_ascii=False, default=str))
@@ -66,8 +68,8 @@ def test_kakao_values_never_reach_llm_or_db_through_a_recommend_run(db_session, 
 
     label_calls: list[tuple] = []
     kakao_calls: list[str] = []
-    monkeypatch.setattr(flows.llm_service, "plan_evidence", spy_plan)
-    monkeypatch.setattr(flows.llm_service, "label_place", lambda *a, **k: label_calls.append((a, k)) or [])
+    monkeypatch.setattr(llm_service, "plan_evidence", spy_plan)
+    monkeypatch.setattr("llm.service.label_place", lambda *a, **k: label_calls.append((a, k)) or [])
     _forbid_kakao_paths(monkeypatch, kakao_calls)
 
     run = _make_run(db_session, status="collecting_evidence")

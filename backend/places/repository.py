@@ -50,10 +50,11 @@ class PlaceUpsertResult:
     updated: int
     closed_marked: int      # 이미 있던 장소를 폐업으로 바꾼 수
     closed_ignored: int     # 없던 폐업 장소(신규로 넣지 않는다)
+    category_kept: int = 0  # 이미 다른 분류로 있어 건너뛴 수 — 분류를 덮어쓰지 않는다(#463)
 
 
 def upsert_places(db: Session, rows: Sequence[PlaceRow]) -> PlaceUpsertResult:
-    inserted = updated = closed_marked = closed_ignored = 0
+    inserted = updated = closed_marked = closed_ignored = category_kept = 0
     for chunk in _chunks(list(rows)):
         keys = {(r.source, r.source_id) for r in chunk}
         existing = {
@@ -72,6 +73,9 @@ def upsert_places(db: Session, rows: Sequence[PlaceRow]) -> PlaceUpsertResult:
                     place.status = "closed"
                     closed_marked += 1
                 continue
+            if place is not None and place.category != r.category:
+                category_kept += 1   # 같은 (source, source_id)가 다른 분류 파일에도 있다 — 음식점을 카페로 덮어쓰지 않는다
+                continue
             if place is None:
                 place = Place(source=r.source, source_id=r.source_id)
                 db.add(place)
@@ -82,7 +86,7 @@ def upsert_places(db: Session, rows: Sequence[PlaceRow]) -> PlaceUpsertResult:
             place.name, place.category, place.address, place.phone = r.name, r.category, r.address, r.phone
             place.geom, place.status = _point(r.lat, r.lng), "open"   # kakao_* 는 건드리지 않는다
         db.flush()
-    return PlaceUpsertResult(inserted, updated, closed_marked, closed_ignored)
+    return PlaceUpsertResult(inserted, updated, closed_marked, closed_ignored, category_kept)
 
 
 @dataclass(frozen=True)
@@ -130,7 +134,8 @@ def find_candidates(db: Session, hint_lat: float, hint_lng: float, category: str
     lat, lng = _lat_lng()
     point = _geog(hint_lat, hint_lng)
     near = db.execute(
-        select(Place.id, Place.name, Place.category, Place.kakao_place_id, lat, lng)
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, lat, lng,
+               func.ST_Distance(Place.geom, point).label("dist"))
         .where(Place.status == "open", Place.category == category,
                func.ST_DWithin(Place.geom, point, matching.MAX_RADIUS_M))
         .order_by(func.ST_Distance(Place.geom, point))
@@ -140,10 +145,11 @@ def find_candidates(db: Session, hint_lat: float, hint_lng: float, category: str
     if kakao_place_id:
         have = {r.id for r in rows}
         rows += [r for r in db.execute(
-            select(Place.id, Place.name, Place.category, Place.kakao_place_id, lat, lng)
+            select(Place.id, Place.name, Place.category, Place.kakao_place_id, lat, lng,
+                   cast(null(), Float).label("dist"))   # 반경 밖일 수 있어 거리를 재지 않는다
             .where(Place.status == "open", Place.kakao_place_id == kakao_place_id)
         ).all() if r.id not in have]
-    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id) for r in rows]
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist) for r in rows]
 
 
 def find_candidates_many(db: Session, hints: Sequence[PlaceHint]) -> list[list[Candidate]]:
@@ -192,7 +198,7 @@ def find_candidates_many(db: Session, hints: Sequence[PlaceHint]) -> list[list[C
         have = {r.id for r in picked}
         if h.kakao_place_id:
             picked += [r for r in by_kakao_id.get(h.kakao_place_id, []) if r.id not in have]
-        out.append([Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id) for r in picked])
+        out.append([Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist) for r in picked])
     return out
 
 

@@ -27,6 +27,8 @@ class Report:
     accepted: int = 0
     skipped: Counter = field(default_factory=Counter)
     warnings: list[str] = field(default_factory=list)
+    accepted_by_type: Counter = field(default_factory=Counter)   # TourAPI contenttypeid별 (parse_tourapi_items만 채운다)
+    skipped_by_type: Counter = field(default_factory=Counter)
 
     def skip(self, reason: str) -> None:
         self.skipped[reason] += 1
@@ -34,6 +36,8 @@ class Report:
     def lines(self) -> list[str]:
         out = [f"읽음 {self.read}행 → 적재 대상 {self.accepted}행, 건너뜀 {sum(self.skipped.values())}행"]
         out += [f"  - {reason}: {n}" for reason, n in self.skipped.most_common()]
+        for ctype in sorted(set(self.accepted_by_type) | set(self.skipped_by_type)):
+            out.append(f"  [contenttypeid {ctype or '(없음)'}] 받음 {self.accepted_by_type[ctype]} / 건너뜀 {self.skipped_by_type[ctype]}")
         out += [f"  ! {w}" for w in self.warnings]
         return out
 
@@ -99,6 +103,7 @@ PERMIT_ALIASES = {
     "status": ("영업상태명", "TRDSTATENM"),
     "detail_status": ("상세영업상태명", "DTLSTATENM"),
     "type": ("업태구분명", "UPTAENM"),
+    "category": ("분류",),   # 선택 열 — 있으면 업태 대응표보다 우선한다(#499, 카카오 기준 업종으로 정리된 커버리지 파일)
     "road_address": ("도로명전체주소", "RDNWHLADDR"),
     "lot_address": ("소재지전체주소", "SITEWHLADDR"),
     "phone": ("소재지전화", "SITETEL"),
@@ -158,7 +163,7 @@ def parse_permit_rows(
         if status is None:
             report.skip(f"알 수 없는 영업상태: {f['status'] or f['detail_status'] or '(비어 있음)'}")
             continue
-        category = map_permit_category(f["type"])
+        category = f["category"] if f["category"] in ("카페", "음식점") else map_permit_category(f["type"])
         if category is None:
             types_without_mapping[f["type"] or "(비어 있음)"] += 1
             report.skip("업태 대응표에 없음")
@@ -188,9 +193,17 @@ def parse_permit_rows(
 
 # ---------------------------------------------------------------- TourAPI (관광지)
 
-TOURAPI_TOURIST_SPOT = "12"
+# 관광지(12)·문화시설(14)·쇼핑(38, 납품 파일에는 시장만)은 모두 category '관광지'로 둔다(#379).
+TOURAPI_PLACE_TYPES = frozenset({"12", "14", "38"})
 TOURAPI_LODGING = "32"
 TOURAPI_SEOUL_AREA = "1"
+# 서울 행정구역을 감싸는 상자. 주소는 서울인데 좌표가 다른 곳으로 찍힌 항목(예: 경도 127.709)을 거른다.
+SEOUL_LAT = (37.41, 37.72)
+SEOUL_LNG = (126.73, 127.19)
+
+
+def in_seoul(lat: float, lng: float) -> bool:
+    return SEOUL_LAT[0] <= lat <= SEOUL_LAT[1] and SEOUL_LNG[0] <= lng <= SEOUL_LNG[1]
 
 
 def extract_tourapi_items(payload: Any) -> list[dict]:
@@ -216,35 +229,48 @@ def parse_tourapi_items(items: Iterable[Mapping[str, Any]], *, seoul_only: bool 
     for item in items:
         report.read += 1
         content_type = str(item.get("contenttypeid", "")).strip()
-        if content_type == TOURAPI_LODGING:
-            report.skip("숙박은 받지 않는다")
+        reason = _tourapi_skip_reason(item, content_type, seoul_only)
+        if reason:
+            report.skip(reason)
+            report.skipped_by_type[content_type] += 1
             continue
-        if content_type != TOURAPI_TOURIST_SPOT:
-            report.skip("관광지(contenttypeid=12) 아님")
-            continue
-        source_id, name = str(item.get("contentid", "")).strip(), str(item.get("title", "")).strip()
-        if not source_id or not name:
-            report.skip("contentid 또는 title 없음")
-            continue
-        address = " ".join(p for p in (str(item.get("addr1", "")).strip(), str(item.get("addr2", "")).strip()) if p)
-        if seoul_only and str(item.get("areacode", "")).strip() != TOURAPI_SEOUL_AREA and not address.startswith("서울"):
-            report.skip("서울 아님")
-            continue
+        address = _tourapi_address(item)
         lng, lat = _to_float(str(item.get("mapx", ""))), _to_float(str(item.get("mapy", "")))
-        if lat is None or lng is None or (lat == 0 and lng == 0):
-            report.skip("좌표 없음")
-            continue
-        if not in_korea(lat, lng):
-            report.skip("좌표가 한국 범위 밖")
-            continue
-        out.append(PlaceRow("tourapi", source_id, name, "관광지", address or None, str(item.get("tel", "")).strip() or None, lat, lng, "open"))
+        out.append(PlaceRow(
+            "tourapi", str(item["contentid"]).strip(), str(item["title"]).strip(), "관광지", address or None,
+            str(item.get("tel", "")).strip() or None, lat, lng, "open",
+        ))
         report.accepted += 1
+        report.accepted_by_type[content_type] += 1
     return out, report
+
+
+def _tourapi_address(item: Mapping[str, Any]) -> str:
+    return " ".join(p for p in (str(item.get("addr1", "")).strip(), str(item.get("addr2", "")).strip()) if p)
+
+
+def _tourapi_skip_reason(item: Mapping[str, Any], content_type: str, seoul_only: bool) -> str | None:
+    """받을 수 없는 항목이면 그 이유, 받으면 None."""
+    if content_type == TOURAPI_LODGING:
+        return "숙박은 받지 않는다"
+    if content_type not in TOURAPI_PLACE_TYPES:
+        return "관광지·문화시설·쇼핑(contenttypeid=12·14·38) 아님"
+    if not str(item.get("contentid", "")).strip() or not str(item.get("title", "")).strip():
+        return "contentid 또는 title 없음"
+    if seoul_only and str(item.get("areacode", "")).strip() != TOURAPI_SEOUL_AREA and not _tourapi_address(item).startswith("서울"):
+        return "서울 아님"
+    lng, lat = _to_float(str(item.get("mapx", ""))), _to_float(str(item.get("mapy", "")))
+    if lat is None or lng is None or (lat == 0 and lng == 0):
+        return "좌표 없음"
+    if not in_korea(lat, lng):
+        return "좌표가 한국 범위 밖"
+    if seoul_only and not in_seoul(lat, lng):
+        return "서울 밖 좌표"
+    return None
 
 
 # ---------------------------------------------------------------- 라벨 파일 (place_facts)
 
-PRICE_BUCKETS = frozenset({"low", "mid", "high"})
 NOT_LABELS = frozenset({"is_open", "within_radius"})   # 코드 판정이라 place_facts에 없다 (constraints.md)
 _KEY_ROW = re.compile(r"^\|\s*`([a-z][a-z0-9_]*)`")
 
@@ -255,19 +281,14 @@ def allowed_fact_keys_from_constraints(markdown: str) -> frozenset[str]:
     return frozenset(keys - NOT_LABELS)
 
 
-def is_allowed_fact_key(key: str, allowed: frozenset[str]) -> bool:
-    # constraints.md의 "contains_shellfish 등 재료 태그" — 재료 태그는 contains_ 접두로 늘어난다.
-    return key in allowed or (key.startswith("contains_") and key not in NOT_LABELS)
-
-
 @dataclass(frozen=True)
 class LabelRow:
     source: str
     source_id: str
     fact_key: str
-    value: Any                       # True/False/'low'/'mid'/'high'/None(unknown)
+    value: Any                       # True/False/None(unknown)
     confidence: str                  # known | unknown
-    source_layer: int                # price_bucket은 2(차원 압축), 나머지 3
+    source_layer: int                # 라벨 파일은 3
     labeled_at: datetime | None
     evidence: str | None = None      # 근거 원문(place_facts.evidence, #203) — 가드레일 5의 "이유·출처"에 쓴다
     label_source: str | None = None  # 근거의 종류(license_business_type, 모범음식점 …)
@@ -289,7 +310,7 @@ def parse_label_rows(rows: Iterable[Mapping[str, Any]], allowed: frozenset[str])
         if source not in ("permit", "tourapi") or not source_id:
             report.skip("source/source_id 이상")
             continue
-        if not is_allowed_fact_key(key, allowed):
+        if key not in allowed:
             report.skip(f"모르는 fact_key: {key or '(비어 있음)'}")
             continue
         if confidence not in ("known", "unknown"):
@@ -297,13 +318,8 @@ def parse_label_rows(rows: Iterable[Mapping[str, Any]], allowed: frozenset[str])
             continue
         if confidence == "unknown":
             value: Any = None
-        elif key == "price_bucket":
-            if raw_value not in PRICE_BUCKETS:   # 원본 가격 숫자가 들어오면 저장하지 않는다
-                report.skip("price_bucket은 low/mid/high만(원본 가격 숫자 거부)")
-                continue
-            value = raw_value
         else:
-            value = _parse_bool(raw_value)
+            value = _parse_bool(raw_value)   # 참/거짓만 — 원본 숫자는 저장되지 않는다
             if value is None:
                 report.skip("known인데 value가 true/false가 아님")
                 continue
@@ -319,7 +335,7 @@ def parse_label_rows(rows: Iterable[Mapping[str, Any]], allowed: frozenset[str])
         if ident in latest:
             duplicates += 1
         latest[ident] = LabelRow(
-            source, source_id, key, value, confidence, 2 if key == "price_bucket" else 3, labeled_at,
+            source, source_id, key, value, confidence, 3, labeled_at,
             _pick(row, ("evidence",)) or None, _pick(row, ("label_source",)) or None,
         )
     if duplicates:
@@ -346,15 +362,11 @@ CURATED_ALIASES = {
 BAR_TYPES = frozenset({"정종/대포집/소주방", "감성주점"})
 
 
-# 카페 납품본(cafe_seoul_curated.csv, #266)의 업태 8종 — 전부 분류 '카페'. 대응표에 없는 업태는 건너뛰고 건수를 보고한다.
-CURATED_CAFE_TYPES = frozenset({"커피숍", "제과점영업", "까페", "다방", "전통찻집", "라이브카페", "키즈카페", "떡카페"})
-
-
 def parse_curated_rows(
     rows: Iterable[Mapping[str, Any]], *, exclude_bars: bool = False, seoul_only: bool = True,
-    category: str = "음식점", allowed_types: frozenset[str] | None = None,
+    category: str = "음식점",
 ) -> tuple[list[PlaceRow], Report]:
-    """allowed_types를 주면 그 업태만 적재하고 나머지(빈 업태 포함)는 '모르는 업태'로 건너뛴다. 안 주면 업태를 가리지 않는다."""
+    """업태를 가리지 않고 서울·좌표가 있는 행을 모두 category로 적재한다(업태가 비면 경고)."""
     report = Report()
     out: list[PlaceRow] = []
     seen_bars = 0
@@ -372,9 +384,6 @@ def parse_curated_rows(
             if exclude_bars:
                 report.skip(f"유흥·주점류 제외(--exclude-bars): {f['type']}")
                 continue
-        if allowed_types is not None and f["type"] not in allowed_types:
-            report.skip(f"모르는 업태: {f['type'] or '(비어 있음)'}")
-            continue
         lat, lng = _to_float(f["lat"]), _to_float(f["lng"])
         if lat is None or lng is None:
             report.skip("좌표 없음")
@@ -392,9 +401,11 @@ def parse_curated_rows(
     return out, report
 
 
-def parse_cafe_rows(rows: Iterable[Mapping[str, Any]], *, seoul_only: bool = True) -> tuple[list[PlaceRow], Report]:
-    """카페 납품본: 분류 '카페', source='permit', source_id=관리번호. 업태 8종 밖·좌표 없는 행은 건너뛰고 센다."""
-    return parse_curated_rows(rows, seoul_only=seoul_only, category="카페", allowed_types=CURATED_CAFE_TYPES)
+def parse_cafe_rows(
+    rows: Iterable[Mapping[str, Any]], *, exclude_bars: bool = False, seoul_only: bool = True
+) -> tuple[list[PlaceRow], Report]:
+    """카페 납품본: 분류 '카페', source='permit', source_id=관리번호. 업태는 가리지 않는다(#463). 좌표 없는 행은 건너뛰고 센다."""
+    return parse_curated_rows(rows, exclude_bars=exclude_bars, seoul_only=seoul_only, category="카페")
 
 
 CURATED_PLACE_ID_PREFIXES = ("rest_", "cafe_")   # 음식점·카페 납품본 라벨 JSON의 place_id 접두어(CSV 쪽은 접두어가 이미 없다)

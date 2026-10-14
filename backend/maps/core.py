@@ -18,7 +18,7 @@ from maps.schemas import InviteSummary, Map, MapRegion, Member, NextOwner
 WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 
 # 내 지도 상한(#369 15번) — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다.
-MAP_LIMIT = 10
+MAP_LIMIT = 20
 
 # 목서버(contracts/mocks/handlers/maps.ts:33)와 동일한 7일 — 정본이 없다(maps/for_Root.md 보고).
 INVITE_TTL = timedelta(days=7)
@@ -45,6 +45,7 @@ class MapRecord:
     title: str
     start_date: date
     end_date: date
+    created_by: str
     region_label: str | None = None
     region_lat: float | None = None
     region_lng: float | None = None
@@ -86,6 +87,27 @@ def validate_map_create(
 
     return NewMap(
         title=normalized_title, start_date=start_date, end_date=end_date, region=normalized_region
+    )
+
+
+def validate_map_update(
+    current: MapRecord,
+    *,
+    title: str | None,
+    start_date: date | None,
+    end_date: date | None,
+    region: MapRegion | None,
+) -> NewMap:
+    """PATCH(#465) — 보낸 필드(None이 아닌 것)를 기존 값에 합친 결과를 생성과 같은 규칙으로 검사한다.
+    종료일만 보내도 기존 시작일과 비교한다. region은 바꾸기만 된다 — 안 보내면 기존 값을 그대로 둔다."""
+    current_region = None
+    if current.region_label is not None:
+        current_region = MapRegion(label=current.region_label, lat=current.region_lat, lng=current.region_lng)
+    return validate_map_create(
+        current.title if title is None else title,
+        current.start_date if start_date is None else start_date,
+        current.end_date if end_date is None else end_date,
+        current_region if region is None else region,
     )
 
 
@@ -182,6 +204,7 @@ def map_permissions(principal: Principal, successor: str | None) -> Permissions:
     return Permissions(
         can_delete=can(principal, "map.delete", resource),
         can_leave=can(principal, "map.leave", resource) and can_leave(principal.role, successor),
+        can_edit=can(principal, "map.settings.edit", resource),
     )
 
 
@@ -200,6 +223,8 @@ def to_map_response(
     pin_count: int,
     confirmed_count: int | None,
     permissions: Permissions,
+    my_role: Role | None,
+    viewer_id: str,
     next_owner: NextOwner | None = None,
 ) -> Map:
     """confirmed_count는 shortlist_items 개수 — shortlist.api.count_confirmed로 채운다(루트,
@@ -222,6 +247,8 @@ def to_map_response(
         pin_count=pin_count,
         confirmed_count=confirmed_count,
         permissions=permissions,
+        my_role=my_role,
+        created_by_me=record.created_by == viewer_id,
         next_owner=next_owner,
     )
 
@@ -249,6 +276,20 @@ def member_joined_event(map_id: str, member: Member) -> Event:
 def map_deleted_event(map_id: str) -> Event:
     """docs/events.md map.deleted — public 채널. 삭제와 같은 트랜잭션에 기록한다(#369)."""
     return Event(map_id=map_id, channel="public", type="map.deleted", payload={"map_id": map_id})
+
+
+def map_updated_event(map_id: str, updated: NewMap) -> Event:
+    """docs/events.md map.updated — public 채널(#465). 요청자 기준 값(permissions)은 싣지 않는다.
+    region이 없는 지도는 키 자체를 뺀다."""
+    payload = {
+        "map_id": map_id,
+        "title": updated.title,
+        "start_date": updated.start_date.isoformat(),
+        "end_date": updated.end_date.isoformat(),
+    }
+    if updated.region is not None:
+        payload["region"] = updated.region.model_dump()
+    return Event(map_id=map_id, channel="public", type="map.updated", payload=payload)
 
 
 def member_left_event(map_id: str, user_id: str, new_owner_user_id: str | None) -> Event:

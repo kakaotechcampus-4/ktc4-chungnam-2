@@ -51,6 +51,7 @@ def _endpoints(w):
     return [
         ("GET map", "GET", f"/maps/{m}", None),
         ("GET members", "GET", f"/maps/{m}/members", None),
+        ("PATCH map", "PATCH", f"/maps/{m}", {"title": "새 제목"}),
         ("POST invite", "POST", f"/maps/{m}/invite", None),
         ("GET counts", "GET", f"/maps/{m}/counts", None),
         ("GET pins", "GET", f"/maps/{m}/pins", None),
@@ -140,3 +141,12 @@ def test_control_member_reads_every_get_endpoint(world):
     bad = [f"{n}: {world['a'].get(p).status_code}" for n, p in reads if world["a"].get(p).status_code != 200]
     assert not bad, bad
     assert len(reads) >= 8
+
+
+def test_only_the_owner_can_edit_the_map(world):
+    """지도 수정(#465, map.settings.edit)은 방장만 — 구성원은 403이고 아무것도 바뀌지 않는다."""
+    a, b, m = world["a"], world["b"], world["map"]
+    assert b.patch(f"/maps/{m}", json={"title": "b가 바꿈"}).status_code == 403
+    assert a.get(f"/maps/{m}").json()["title"] != "b가 바꿈"
+    assert b.get(f"/maps/{m}").json()["permissions"]["can_edit"] is False
+    assert a.patch(f"/maps/{m}", json={"title": "a가 바꿈"}).status_code == 200

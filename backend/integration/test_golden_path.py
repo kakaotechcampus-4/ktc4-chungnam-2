@@ -90,6 +90,9 @@ def test_map_invite_pins_reactions_recommend_publish_shortlist_route(clients, pi
     assert len(a.get(f"/runs/{run_id}/evidence").json()) >= 2
     assert b.get(f"/runs/{run_id}/evidence").status_code == 200
     assert b.get(f"/runs/{run_id}/result").status_code == 403
+    # 끝나지 않은 run의 결과는 409 RUN_NOT_FINISHED(#469)
+    not_finished = a.get(f"/runs/{run_id}/result")
+    assert (not_finished.status_code, not_finished.json()["code"]) == (409, "RUN_NOT_FINISHED")
     assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     result = a.get(f"/runs/{run_id}/result")
@@ -102,9 +105,34 @@ def test_map_invite_pins_reactions_recommend_publish_shortlist_route(clients, pi
     assert r.status_code == 200, r.text
     assert r.json().get("checks"), "게시된 뒤에도 checks가 붙어 있어야 한다"
 
+    # 지난 추천 기록(#469) — 내 run만 보인다. 남(b)의 run은 내 목록에 없고, b의 목록에도 내 run이 없다(가드레일 1)
+    b_run_id = b.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    history = a.get(f"/maps/{map_id}/runs")
+    assert history.status_code == 200, history.text
+    assert [h["id"] for h in history.json()] == [run_id]
+    mine = history.json()[0]
+    assert (mine["status"], mine["category"]) == ("done", "음식점")
+    assert mine["candidate_count"] == len(cands) and mine["published_count"] == 1
+    b_history = b.get(f"/maps/{map_id}/runs")
+    assert [h["id"] for h in b_history.json()] == [b_run_id]
+    assert b_history.json()[0]["candidate_count"] == 0   # done이 아니면 0
+    assert a.get(f"/maps/{map_id}/runs?category=카페").json() == []
+    assert len(a.get(f"/maps/{map_id}/runs?limit=1").json()) == 1
+
     # 확정 리스트 → 동선 → confirmed_count
     for pid in pin_ids[:2]:
         assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pid}).status_code in (200, 201)
     assert a.post(f"/maps/{map_id}/route").status_code in (200, 201)
     assert len(a.get(f"/maps/{map_id}/route").json()) >= 1
     assert a.get(f"/maps/{map_id}").json()["confirmed_count"] == 2
+
+
+def test_run_history_is_404_for_non_members_and_validates_limit(clients):
+    """#469 — 구성원이 아니면 404(지도 존재를 알리지 않는다), limit은 1~50."""
+    a, b, _ = clients
+    map_id = a.post("/maps", json={"title": "t", "start_date": "2026-11-01", "end_date": "2026-11-03", "region": REGION}).json()["id"]
+    assert b.get(f"/maps/{map_id}/runs").status_code == 404
+    assert a.get(f"/maps/{map_id}/runs").json() == []
+    assert a.get(f"/maps/{map_id}/runs?limit=0").status_code == 422
+    assert a.get(f"/maps/{map_id}/runs?limit=51").status_code == 422
+    assert a.get(f"/maps/{map_id}/runs?category=없는분류").status_code == 422

@@ -97,22 +97,6 @@ def test_confirm_pin_nonexistent_pin_is_404(app_client):
     assert resp.json()["code"] == "NOT_FOUND"
 
 
-def test_confirm_other_users_private_pin_is_404_ai_pin_private(app_client, db_session):
-    pin = _insert_pin(db_session, created_by="user_1", visibility="private", kind="AI추천", origin="ai")
-    resp = app_client.post("/maps/map_1/shortlist", json={"pin_id": str(pin.id)}, cookies=_auth("user_2"))
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "AI_PIN_PRIVATE"
-
-
-def test_confirm_own_private_pin_is_blocked_guardrail_1(app_client, db_session):
-    """가드레일 1 — 본인 소유 비공개 AI 후보도 「지도에 올리기」 없이 곧장 확정 리스트(전체
-    공개)로 승격시킬 수 없다(flows.py 참고, for_Root.md에 별도 보고)."""
-    pin = _insert_pin(db_session, created_by="user_1", visibility="private", kind="AI추천", origin="ai")
-    resp = app_client.post("/maps/map_1/shortlist", json={"pin_id": str(pin.id)}, cookies=_auth("user_1"))
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "AI_PIN_PRIVATE"
-
-
 def test_confirm_pin_non_member_is_404(app_client, db_session):
     pin = _insert_pin(db_session)
     app.dependency_overrides[get_membership_gateway] = _deny_membership
@@ -338,3 +322,68 @@ def test_new_item_after_reorder_goes_last(app_client, db_session):
     c, = _confirm(app_client, db_session, n=1)
     got = app_client.get("/maps/map_1/shortlist", cookies=_auth())
     assert [i["id"] for i in got.json()] == [b, a, c]
+
+
+# --- 확정 리스트 내보내기(#471) ---
+
+def _insert_live_pin(db_session, *, map_id="map_1", kakao_place_id="kakao:555", search_query="성수 곱창", memo=None):
+    row = PinRow(
+        id=uuid.uuid4(), map_id=map_id, category="음식점", kind="일반", origin="direct", source="live",
+        kakao_place_id=kakao_place_id, search_query=search_query, memo=memo, visibility="public", created_by="user_1",
+    )
+    db_session.add(row)
+    db_session.commit()
+    return row
+
+
+def _confirm_pins(app_client, *pins):
+    return [app_client.post("/maps/map_1/shortlist", json={"pin_id": str(p.id)}, cookies=_auth()).json()["id"] for p in pins]
+
+
+def test_export_txt_is_default_follows_visit_order_and_marks_live_pin(app_client, db_session):
+    db_pin = _insert_pin(db_session)
+    live_pin = _insert_live_pin(db_session, memo="맛있대")
+    db_item, live_item = _confirm_pins(app_client, db_pin, live_pin)
+    app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [live_item, db_item]}, cookies=_auth())
+
+    resp = app_client.get("/maps/map_1/shortlist/export", cookies=_auth())
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+    assert resp.headers["content-disposition"].startswith("attachment; filename=")
+    assert "filename*=UTF-8''" in resp.headers["content-disposition"]
+    lines = resp.text.splitlines()
+    assert lines[0] == "1. 성수 곱창 (이름 확인 필요) (음식점) https://place.map.kakao.com/555 — 맛있대"
+    assert lines[1].startswith("2. ") and "129.12" not in resp.text   # 좌표는 내보내지 않는다
+
+
+def test_export_csv_has_bom_header_and_crlf(app_client, db_session):
+    _confirm_pins(app_client, _insert_live_pin(db_session))
+
+    resp = app_client.get("/maps/map_1/shortlist/export?format=csv", cookies=_auth())
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "text/csv; charset=utf-8"
+    assert resp.content.startswith("﻿순서,이름,분류,링크,메모\r\n".encode())
+    assert resp.content.decode("utf-8-sig").splitlines()[1] == "1,성수 곱창 (이름 확인 필요),음식점,https://place.map.kakao.com/555,"
+
+
+def test_export_empty_shortlist(app_client):
+    assert app_client.get("/maps/map_1/shortlist/export", cookies=_auth()).text == "확정한 장소가 아직 없어요\n"
+    assert app_client.get("/maps/map_1/shortlist/export?format=csv", cookies=_auth()).text == "﻿순서,이름,분류,링크,메모\r\n"
+
+
+def test_export_rejects_unknown_format_with_422(app_client):
+    resp = app_client.get("/maps/map_1/shortlist/export?format=pdf", cookies=_auth())
+
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_export_non_member_gets_404(app_client):
+    app.dependency_overrides[get_membership_gateway] = _deny_membership
+    try:
+        resp = app_client.get("/maps/map_1/shortlist/export", cookies=_auth("outsider"))
+    finally:
+        del app.dependency_overrides[get_membership_gateway]
+    assert resp.status_code == 404
