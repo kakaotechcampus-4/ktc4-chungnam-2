@@ -23,7 +23,6 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
     ("patch", "/maps/{}"): "#465 지도 제목·날짜·지역 수정",
-    ("post", "/maps/{}/owner"): "#468 방장 직접 넘기기",
     ("get", "/maps/{}/invites"): "#467 초대 링크 목록",
     ("delete", "/invites/{}"): "#467 초대 링크 끄기",
 }

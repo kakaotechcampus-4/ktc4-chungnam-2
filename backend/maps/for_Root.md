@@ -252,3 +252,24 @@ fallback·타 라우트 인증 유지. `KNOWN_MISSING`에서 `("get", "/invites/
 - **#245**: `Map.member_count`(단건·`GET /maps` 목록)와 `maps.api.count_members`(준비 판정 N)가 탈퇴자를 뺀다. 구성원 목록(`GET /members`)은 핀 작성자 표기용(#155)으로 그대로 둔다.
   - **다른 모듈 파일 수정 보고**: 탈퇴 여부를 알 공개 함수가 없어 `auth/api.py`에 읽기 전용 `withdrawn_user_ids(db, user_ids) -> set[str]`을 **추가**했다(기존 함수 불변). 원칙상 auth 담당에게 요청해야 하나 이슈가 "auth 탈퇴 연쇄 확인"을 명시해 최소 추가로 처리 — 마음에 안 들면 이 함수만 auth PR로 옮기면 된다.
   - **recommend 경계값(루트 확인)**: 구성원이 전부 탈퇴하면 N=0이고 `recommend.core.required_count(0)`은 0 → `ready=True`. 이슈 문구("반응 가능 인원이 없으면 준비 판정이 안 걸린다")와 다르다. 도달 경로가 "마지막 구성원 탈퇴"뿐이라(요청할 사람이 없음) 손대지 않았다. 바꾸려면 recommend 담당 몫.
+
+---
+
+## #468 — POST /maps/{mapId}/owner 방장 직접 넘기기 (2026-10-13)
+
+**구현**: 방장만(`require_on_map("owner.transfer")`, 구성원 403, 비구성원·삭제된 지도 404). `service.hand_over_owner`가 지도 행을
+먼저 `FOR UPDATE`로 잠그고 멤버십을 다시 읽는다 — 나가기·탈퇴·다른 위임과 줄을 서므로, 그 사이 방장이 바뀌었으면(요청자가
+더는 방장이 아님) 403, 대상이 나갔으면 422다. 대상 검증은 `core.check_owner_target`: 지금 구성원 + 탈퇴자 아님 + 나 자신 아님,
+아니면 422 `OWNER_TARGET_INVALID`(구성원이 아닌 사람과 없는 사용자를 구분하지 않는다). 승격·강등은 기존 `service.transfer_owner`를
+재사용한다(강등 먼저). 나는 member로 남고(나가기 아님), `owner.changed {map_id, from_user_id, to_user_id}`를 같은 트랜잭션에
+기록한다 — `member.left`는 쓰지 않는다. 응답은 요청자(이제 구성원) 기준 `Map`(`my_role: member`, `can_delete: false`).
+`common/errors.py` CATALOG에 `INVITE_REVOKED`·`OWNER_TARGET_INVALID`를 함께 넣었다(`test_catalog_matches_docs` 때문, #467 PR과 동일한 줄).
+**통합**: `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 제거, 골든 패스(구성원 403·자기 자신 422·넘기고 되받기)·권한 행렬(`_endpoints`)에
+호출 추가, 방장 전용 테스트 추가.
+
+**루트 확인 요청 — 스펙 모순(구현에는 영향 없음)**: `docs/events.md`의 「구독을 끊는 경우」 표에 `map.updated`, `owner.changed` 행이
+"그 지도의 모든 구독을 보낸 뒤 닫는다"로 들어가 있다. 그런데 같은 문서의 `owner.changed` 설명과 `docs/CHANGELOG-api.md`는
+"두 사람 모두 지도에 남아 SSE 구독이 끊기지 않는다"고 한다(`member.left`를 재사용하지 않는 이유 자체가 닫히는 것을 피하려는 것).
+수정 이벤트도 구독을 닫을 이유가 없다. 표의 그 행은 실수로 보인다 — 현재 `realtime/core.py`는 `map.deleted`·`member.left`만 닫으므로
+구현은 "닫지 않음"으로 동작한다. 표를 고칠지, 정말 닫는 게 의도면 realtime 담당에게 요청해야 한다.
+복잡도 예상 2 / 실제 2.

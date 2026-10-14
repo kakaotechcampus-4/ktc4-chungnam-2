@@ -344,6 +344,21 @@ def transfer_owner(db: Session, *, map_id: str, from_user_id: str, to_user_id: s
     )
 
 
+def hand_over_owner(db: Session, *, map_id: str, from_user_id: str, to_user_id: str) -> Map:
+    """방장 직접 넘기기(#468). 방장인지는 라우터의 require_on_map("owner.transfer")가 이미 봤지만, 지도 행을
+    잠근 뒤 멤버십을 다시 읽어 확인한다 — 나가기·탈퇴·다른 위임과 줄을 서서, 그 사이 방장이 바뀌었거나 대상이
+    나갔어도 이미 나간 사람에게 방장이 넘어가지 않는다(#369 13번). 나는 member로 남는다(나가기가 아니다).
+    owner.changed는 같은 트랜잭션에 기록한다. 응답은 요청자(이제 구성원) 기준 Map."""
+    get_map_or_404(db, map_id, for_update=True)
+    roster, withdrawn = roster_of(db, map_id)
+    if core.role_in(roster, from_user_id) != "owner":
+        raise AppError("FORBIDDEN")  # 잠그기 전에 다른 요청이 이미 방장을 바꿨다
+    core.check_owner_target(roster, withdrawn, from_user_id, to_user_id)
+    transfer_owner(db, map_id=map_id, from_user_id=from_user_id, to_user_id=to_user_id)
+    record_event(db, core.owner_changed_event(map_id, from_user_id, to_user_id))
+    return get_map_response(db, map_id=map_id, viewer_id=from_user_id)
+
+
 def remove_membership(db: Session, *, map_id: str, user_id: str) -> None:
     """나가기는 행을 지운다(#369 7번). 다시 수락하면 새 행·새 joined_at으로 순서 맨 뒤에 선다."""
     db.execute(
