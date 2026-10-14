@@ -4,6 +4,9 @@ import { apiError } from "../util";
 import { buildCandidates, buildEvidenceLines, buildRegions } from "../seed";
 import { RECOMMEND_CATEGORIES } from "../categories";
 
+/** run을 만든 시각 — 지난 추천 기록(#469)의 created_at. 목 서버 메모리에만 있다. */
+const runCreatedAt: Record<string, string> = {};
+
 // 2026-10-07(#360): 카테고리에 ♥/🚫 의견이 달린 핀이 1개 이상이면 열린다. 구성원 수와 무관 — 혼자 쓰는 지도도 같다.
 const REQUIRED_OPINION_PINS = 1;
 
@@ -41,6 +44,30 @@ export const recommendHandlers = [
     return HttpResponse.json(result);
   }),
 
+  // #469 지난 추천 기록 — 내가 요청한 run만(가드레일 1), 최근순. 결과는 GET /runs/{id}/result로 다시 연다.
+  http.get("*/maps/:mapId/runs", ({ params, request }) => {
+    const mapId = params.mapId as string;
+    if (!store.maps[mapId]) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    const url = new URL(request.url);
+    const category = url.searchParams.get("category");
+    const limit = Number(url.searchParams.get("limit") ?? 20);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) return apiError(422, "VALIDATION_ERROR", "limit은 1~50");
+    const list = Object.values(store.runs)
+      .filter((r) => r.map_id === mapId && store.runRequestedBy[r.id] === ME_USER_ID && (!category || r.category === category))
+      .map((r) => ({
+        id: r.id,
+        map_id: r.map_id,
+        category: r.category,
+        status: r.status,
+        attempt_no: r.attempt_no,
+        created_at: runCreatedAt[r.id] ?? new Date(0).toISOString(),
+        candidate_count: r.status === "done" ? (store.candidates[r.id] ?? []).length : 0,
+        published_count: Object.values(store.pins).filter((p) => p.source_run_id === r.id).length,
+      }))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return HttpResponse.json(list.slice(0, limit));
+  }),
+
   http.post("*/maps/:mapId/runs", async ({ params, request }) => {
     const mapId = params.mapId as string;
     const body = (await request.json()) as { category: string };
@@ -55,6 +82,7 @@ export const recommendHandlers = [
     const runId = nextId("run");
     store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1 };
     store.runRequestedBy[runId] = ME_USER_ID;
+    runCreatedAt[runId] = new Date().toISOString();
     // ② 사유 → 실격/선호/반경 구조화 (목 서버에서는 시드 데이터로 대체 — 실제 구조화는 backend/llm 담당)
     store.evidenceLines[runId] = buildEvidenceLines(runId);
     store.regions[runId] = buildRegions();
@@ -123,6 +151,7 @@ export const recommendHandlers = [
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
+    if (run.status !== "done") return apiError(409, "RUN_NOT_FINISHED", "아직 끝나지 않았거나 실패한 추천이에요", { status: run.status }); // #469
     const candidates = store.candidates[runId] ?? [];
     const funnel = [
       { label: "카테고리 후보 풀", removed_count: 0 },
@@ -170,7 +199,7 @@ export const recommendHandlers = [
   http.post("*/candidates/:candidateId/publish", ({ params }) => {
     const candidateId = params.candidateId as string;
     const found = findCandidateRun(candidateId);
-    if (!found) return apiError(404, "AI_PIN_PRIVATE", "비공개 AI 후보를 찾을 수 없습니다");
+    if (!found) return apiError(404, "NOT_FOUND", "후보를 찾을 수 없습니다");
     const { runId, cand } = found;
     const run = store.runs[runId];
     const pinId = nextId("pin");
@@ -188,7 +217,7 @@ export const recommendHandlers = [
       checks: cand.checks, // 가드레일 5: 게시 후에도 근거를 그대로 유지
       source_run_id: runId,
       reaction_summary: { like: 0, against: 0 },
-      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: false },
     };
     store.pins[pinId] = pin;
     store.reactions[pinId] = [];

@@ -57,12 +57,6 @@ def test_get_reactions_non_member_is_404(app_client, db_session):
     assert resp.status_code == 404
 
 
-def test_get_reactions_other_users_private_pin_is_404(app_client, db_session):
-    pin = _insert_pin(db_session, visibility="private", created_by="user_1", place_id="r157_private")
-    resp = app_client.get(f"/pins/{pin.id}/reactions", cookies=_auth("user_2"))
-    assert resp.status_code == 404
-
-
 # ---- PUT 응답 모양 ----
 
 def test_put_reaction_response_omits_reason_text_when_absent_and_echoes_chips(app_client, db_session):

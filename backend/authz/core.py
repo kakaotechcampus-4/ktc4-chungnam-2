@@ -9,7 +9,7 @@
 
 from dataclasses import dataclass
 
-from authz.policy import ACTION_RESOURCE_TYPES, AUTHOR_CONSTRAINED_ACTIONS, POLICY, ResourceType, Role
+from authz.policy import ACTION_RESOURCE_TYPES, POLICY, ResourceType, Role
 from authz.schemas import Permissions
 from common import categories
 
@@ -48,8 +48,9 @@ def can(user: Principal, action: str, resource: Resource) -> bool:
        "얹히는 추가 범위"로, 41행이 역할 누적으로 정의하므로 member 위에만 얹힌다 — 독립된
        역할이 아니다.
     2. 액션-리소스 종류 결합이 안 맞으면 False (recommend.publish를 pin에 묻는 등 타입 혼동 차단).
-    3. AUTHOR_CONSTRAINED_ACTIONS(recommend.publish)인데 작성자 본인이 아니면 False.
-    4~5. member/author/owner 중 부여된 역할들을 계산하고, 그중 하나라도 액션+범위를 통과시키면 True.
+    3. member/author/owner 중 부여된 역할들을 계산하고, 그중 하나라도 액션+범위를 통과시키면 True.
+       recommend.publish·recommend.manage처럼 "요청한 본인만" 가능한 액션은 author.actions에만 있어서,
+       resource.author_id == user_id라 author 역할이 부여될 때만 통과한다 — 별도 분기가 없다.
     """
     if user.map_id != resource.map_id:
         # 전제: Principal은 항상 리소스에서 읽은 map_id로만 만들어진다(Rule A,
@@ -67,9 +68,6 @@ def can(user: Principal, action: str, resource: Resource) -> bool:
 
     valid_types = ACTION_RESOURCE_TYPES.get(action)
     if valid_types is None or resource.type not in valid_types:
-        return False
-
-    if action in AUTHOR_CONSTRAINED_ACTIONS and resource.author_id != user.user_id:
         return False
 
     granted_roles: list[str] = ["member"]

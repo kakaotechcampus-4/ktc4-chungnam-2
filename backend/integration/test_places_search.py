@@ -86,6 +86,55 @@ def test_pinnable_is_omitted_when_the_own_db_cannot_be_read(client, monkeypatch,
     assert "해운대" not in caplog.text and "OperationalError" in caplog.text   # 로그엔 예외 타입만(카카오 값 금지)
 
 
+def _results(*ids):
+    from places.schemas import PlaceSearchResult
+
+    return [PlaceSearchResult(place_id=pid, place_name=pid, lat=37.5, lng=127.0, category="음식점") for pid in ids]
+
+
+def _search_with_flags(client, monkeypatch, flags, *, limit=None):
+    """카카오 쪽 결과 순서가 flags(place_id → pinnable)의 삽입 순서인 검색 하나를 돌린다."""
+    seen = {}
+
+    def fake_search(q, near, lim):
+        seen["limit"] = lim
+        return _results(*flags)
+
+    monkeypatch.setattr(places_api, "search_by_name", fake_search)
+    monkeypatch.setattr(places_api, "pinnable_flags", lambda hints, **kw: [flags[h.kakao_place_id] for h in hints])
+    params = {"q": "성수"} | ({"limit": limit} if limit else {})
+    return [r["place_id"] for r in client.get("/places/search", params=params).json()], seen["limit"]
+
+
+def test_own_db_places_come_first_and_keep_kakao_order_within_each_group(client, monkeypatch):
+    ids, _ = _search_with_flags(client, monkeypatch, {"k1": False, "o1": True, "k2": False, "o2": True, "k3": False})
+    assert ids == ["o1", "o2", "k1", "k2", "k3"]
+
+
+def test_fetches_15_from_kakao_then_cuts_to_limit_after_sorting(client, monkeypatch):
+    flags = {f"k{i}": False for i in range(1, 13)} | {"o1": True}   # 자체 DB 장소가 13번째라도 limit=3에서 살아남는다
+    ids, fetched = _search_with_flags(client, monkeypatch, flags, limit=3)
+    assert fetched == 15 and ids == ["o1", "k1", "k2"]
+
+
+def test_default_limit_is_still_applied_to_the_response(client, monkeypatch):
+    ids, _ = _search_with_flags(client, monkeypatch, {f"k{i}": False for i in range(1, 16)})
+    assert len(ids) == 10
+
+
+def test_order_is_untouched_when_pinnable_could_not_be_computed(client, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    monkeypatch.setattr(places_api, "search_by_name", lambda q, near, lim: _results("k1", "o1", "k2"))
+
+    def boom(hints, **kw):
+        raise OperationalError("select", {}, Exception("db down"))
+
+    monkeypatch.setattr(places_api, "pinnable_flags", boom)
+    found = client.get("/places/search", params={"q": "성수"}).json()
+    assert [r["place_id"] for r in found] == ["k1", "o1", "k2"] and all("pinnable" not in r for r in found)
+
+
 def test_partial_match_and_distance_order(client):
     r = client.get("/places/search", params={"q": "해운대", "lat": 35.1587, "lng": 129.1604})
     assert [p["place_name"] for p in r.json()] == ["해운대 바다 카페", "해운대 밀면"]

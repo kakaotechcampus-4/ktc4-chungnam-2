@@ -5,8 +5,8 @@
 funnel_counts/widen_radius/check_retry_limit + 이들을 뒷받침하는 원(Circle) 계산.
 
 멤버십·작성자(author) 판정은 여기 두지 않는다 — authz.resolve_principal(gateway 호출, I/O)와
-authz.can()이 이미 그 판정을 갖고 있다(authz/policy.py::AUTHOR_CONSTRAINED_ACTIONS에
-recommend.publish가 등록됨). 이 파일에 남는 건 run/candidate/evidence/region 자체의 상태
+authz.can()이 이미 그 판정을 갖고 있다(authz/policy.py의 author.actions에
+recommend.publish가 있다). 이 파일에 남는 건 run/candidate/evidence/region 자체의 상태
 판정과 순수 계산뿐이다.
 """
 
@@ -57,7 +57,7 @@ def check_readiness(answered_count: int) -> dict:
 
 def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> list[dict]:
     """② 사유 → 실격/선호/반경 구조화 이후, 근거 리스트 하나로 병합한다 — 실제 구조화(모델
-    호출)는 llm.service.plan_evidence가 하고(service.py에서 호출, 여기는 그 결과를 받기만
+    호출)는 llm.api.plan_evidence가 하고(flows.py가 Gateway로 호출, 여기는 그 결과를 받기만
     한다) 이 함수는 순수 병합/정렬만 한다.
 
     reaction_lines: badge='required'(반대) 등 반응에서 파생된 근거(source='reaction').

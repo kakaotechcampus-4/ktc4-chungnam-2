@@ -27,7 +27,7 @@ SEONGSU = dict(center_lat=37.5445, center_lng=127.0561, radius_m=1000)
 @pytest.fixture()
 def no_label_place(monkeypatch):
     calls: list[tuple] = []
-    monkeypatch.setattr(flows.llm_service, "label_place", lambda *a, **k: calls.append((a, k)) or [])
+    monkeypatch.setattr("llm.service.label_place", lambda *a, **k: calls.append((a, k)) or [])
     return calls
 
 

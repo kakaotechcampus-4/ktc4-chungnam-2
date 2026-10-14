@@ -60,6 +60,21 @@ def reorder_shortlist(db, *, map_id: str, item_ids: list[str], principal) -> lis
     return items
 
 
+def export_shortlist(db, *, map_id: str, principal, fmt: str) -> tuple[str, str, str]:
+    """GET /maps/{mapId}/shortlist/export(#471) — (본문, media_type, Content-Disposition). 읽기만 하고
+    확정 순서(service.list_items)대로 pins.api로 핀을 받아 core의 순수 함수로 직렬화한다."""
+    rows = []
+    for order, item in enumerate(service.list_items(db, map_id=map_id), start=1):
+        pin = pins_api.get_pin_response_for_viewer(
+            db, pin_id=str(item.pin_id), viewer_id=principal.user_id, principal=principal,
+        )
+        rows.append(core.to_export_row(order, pin))
+    disposition = core.export_content_disposition("확정 리스트", fmt)
+    if fmt == "csv":
+        return core.render_csv(rows), "text/csv; charset=utf-8", disposition
+    return core.render_txt(rows), "text/plain; charset=utf-8", disposition
+
+
 def recalculate_route(db, *, map_id: str) -> list[Route]:
     """「동선 짜주기」(POST /maps/{mapId}/route, #103) — 수동 트리거로만 호출된다
     (shortlist/CLAUDE.md "책임"). 확정 리스트(add_order 순)의 핀 좌표를 pins.api를 통해서만
