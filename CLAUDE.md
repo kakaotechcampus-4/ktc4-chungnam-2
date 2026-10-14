@@ -74,6 +74,7 @@ v1에서 요청 중 모델 호출은 **② 사유 구조화 하나**다(GPT-6 Lu
 | `docs/design/colors.md` | 색 결정 이유(값 정본은 `frontend/src/styles/tokens.css`) |
 | `frontend/DESIGN.md` | 화면 디자인 규칙 — 글자·반경·컴포넌트·지도 핀·지도 버튼·토스트, Do/Don't(Impeccable 스킬이 읽음) |
 | `frontend/PRODUCT.md` | 제품 요약 — 사용자·제약·말투·접근성 기준(정본은 기획안, Impeccable 스킬이 읽음) |
+| `docs/agent-v2.md` | v2 계획 보조 에이전트 구현 명세 — 탐지, 제안, 우리 조건 요약, 추천 막힘 조언. 모델 호출 추가는 결정 이슈 #509 |
 | `docs/execution-order.md` | 이슈 실행 순서 초안 |
 | `docs/team-setup-guide.md` | 팀원용 설치·실행 설명서 — 도구 설치·키 넣기(`.env`)·데이터 넣기·켜기·막혔을 때(비개발자용) |
 | `docs/demo-guide.md` | 팀 시연 따라 하기 — 준비·켜기·시연 대본·문제 해결(비개발자용, localhost) |

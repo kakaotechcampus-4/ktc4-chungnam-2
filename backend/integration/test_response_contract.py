@@ -27,6 +27,12 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("PATCH", "/pins/{pinId}"): "#466 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/places/from-link"): "#474 구현 PR이 골든 패스에 넣고 지운다",
+    ("GET", "/maps/{mapId}/agent"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
+    ("PUT", "/maps/{mapId}/agent/settings"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/agent/suggestions/{suggestionId}/view"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/agent/suggestions/{suggestionId}/accept"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/agent/suggestions/{suggestionId}/dismiss"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
+    ("GET", "/runs/{runId}/advice"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
@@ -383,6 +389,7 @@ def test_the_validator_actually_rejects_a_wrong_shape():
 # 생성되는 FE 타입이 전부 optional이 된다(멘토 리뷰, PR #152). 의도적으로 비워 둔 스키마는 이유와 함께 여기에 둔다.
 NO_REQUIRED_OK: dict[str, str] = {
     "Permissions": "맥락마다 쓰는 필드가 다르다(can_disable은 근거 줄 전용, can_publish는 후보 전용) — 필드별로 선택",
+    "AgentAction.params": "버튼 종류(type)마다 쓰는 필드가 다르다(category는 추천과 검색, pin_ids는 핀 보기, run_id는 반경과 근거) — 필드별로 선택 (#510)",
 }
 
 

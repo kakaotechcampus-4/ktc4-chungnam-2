@@ -27,6 +27,8 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     - map.leave                # 지도 나가기(#369). 방장도 member라 이 액션을 갖는다. 넘길 사람이 없는
                                 # 방장을 막는 건 역할이 아니라 지도 상태라 여기 넣지 않고 maps 코어가 판정한다(409 OWNER_CANNOT_LEAVE)
     - route.recalculate        # 동선 재계산(5-10) — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
+    - agent.toggle             # 계획 보조 에이전트 모드 켜고 끄기(v2, docs/agent-v2.md). 구성원 누구나
+    - agent.suggestion.resolve # 지도 제안 수락·닫기(v2). 구성원 누구나, 지도 단위로 모두에게서 닫힌다
 
 author:                       # evidence_line·candidate·run을 만든 당사자에게 얹히는 추가 범위
   scope:
@@ -98,6 +100,9 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 | 초대 링크 목록·끄기 — 방장만 (#467) | `owner.actions: [invite.revoke]` |
 | 방장 직접 넘기기 — 방장만 (#468) | `owner.actions: [owner.transfer]` |
 | 동선 재계산 — 구성원 누구나 (#103) | `member.actions: [route.recalculate]` |
+| 계획 보조 에이전트 모드 켜고 끄기 — 구성원 누구나 (v2, #510) | `member.actions: [agent.toggle]` |
+| 지도 제안 수락·닫기 — 구성원 누구나 (v2, #510) | `member.actions: [agent.suggestion.resolve]`. 열람 기록과 상태 조회는 구성원이면 되고 별도 액션이 없다 |
+| 추천 막힘 조언 조회 — 요청한 본인만 (v2, #510) | 기존 `author.actions: [recommend.manage]`를 쓴다(run 결과 조회와 같은 범위) |
 | AI 추천 run 근거 조회·토글·추가 — 구성원 누구나 (#108, #32, 최종기획안 5-5) | `member.actions: [recommend.evidence]` (개별 줄 비활성화만 `author.actions: [evidence.disable]`) |
 | AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `author.scope.run: own`, `author.actions: [recommend.manage]` |
 

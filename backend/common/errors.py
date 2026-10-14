@@ -36,6 +36,7 @@ CATALOG: dict[str, tuple[int, str]] = {
     "INVITE_EXPIRED": (410, "만료된 초대 링크입니다"),
     "INVITE_REVOKED": (410, "방장이 끈 초대 링크입니다"),
     "RUN_NOT_FINISHED": (409, "아직 끝나지 않았거나 실패한 추천입니다"),
+    "SUGGESTION_RESOLVED": (409, "이미 처리된 제안입니다"),
     "LINK_NOT_SUPPORTED": (422, "지원하지 않는 지도 링크입니다"),
     "LINK_UNRESOLVED": (422, "링크에서 장소를 찾지 못했습니다"),
     "OWNER_TARGET_INVALID": (422, "방장을 넘길 수 없는 대상입니다"),
