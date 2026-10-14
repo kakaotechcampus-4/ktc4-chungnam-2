@@ -15,7 +15,7 @@ import { useConfirmRegionsMutation, useEvidenceQuery, useExecuteRunMutation, use
 
 /**
  * 근거 확인(Figma 6절, 최종기획안 5-5). 모델이 사유를 어떻게 읽었는지 보여 주고 사람이 고치게 한다.
- * - 꼭 지켜야 하는 조건: 구성원별 줄. 내 것만 × 로 뺀다(빼기 전에 한 번 묻는다 — 알레르기처럼 틀리면 안 되는 조건일 수 있다)
+ * - 꼭 지켜야 하는 조건: 구성원별 줄. 내 것만 × 로 뺀다(빼기 전에 한 번 묻는다)
  * - 가능하면 맞춰주세요: 해시태그로 합친다. 내 몫이 든 태그에만 ×
  * - 지금까지 나온 의견에서: 원문 인용
  * 제약을 AI가 임의로 완화하지 않는다(가드레일 4) — 빼는 건 언제나 사람이다.
@@ -190,7 +190,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
       {askRemove && (
         <ConfirmDialog
           title="꼭 지켜야 하는 조건을 뺄까요?"
-          body={`‘${evidenceLabel(askRemove)}’을(를) 빼면 이번 추천에서 이 조건으로 거르지 않아요. 알레르기처럼 한 번 틀리면 안 되는 조건이라면 그대로 두세요.`}
+          body={`‘${evidenceLabel(askRemove)}’을(를) 빼면 이번 추천에서 이 조건으로 거르지 않아요.`}
           note="내가 쓴 조건만 뺄 수 있어요. 다른 구성원의 조건은 그대로 남아요."
           cancel="그대로 두기"
           ok="빼기"
