@@ -24,8 +24,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
-    ("GET", "/maps/{mapId}/invites"): "#467 구현 PR이 골든 패스에 넣고 지운다",
-    ("DELETE", "/invites/{token}"): "#467 구현 PR이 골든 패스에 넣고 지운다",
     ("PATCH", "/pins/{pinId}"): "#466 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/places/from-link"): "#474 구현 PR이 골든 패스에 넣고 지운다",
@@ -141,6 +139,15 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     invite = a.post(f"/maps/{map_id}/invite")
     assert invite.status_code == 201
     assert b.post(f"/invites/{invite.json()['token']}/accept").status_code == 200
+    assert a.post(f"/maps/{map_id}/invite").status_code == 200   # 내 유효한 링크 재사용(#467)
+    assert a.get(f"/maps/{map_id}/invites").status_code == 200
+    assert b.get(f"/maps/{map_id}/invites").status_code == 403
+    extra = b.post(f"/maps/{map_id}/invite")   # 구성원이 만든 링크는 따로 생긴다
+    assert extra.status_code == 201
+    assert a.delete(f"/invites/{extra.json()['token']}").status_code == 204
+    assert a.delete(f"/invites/{extra.json()['token']}").status_code == 204   # 멱등
+    assert a.get(f"/invites/{extra.json()['token']}").status_code == 410      # INVITE_REVOKED
+    assert a.delete("/invites/no-such-token").status_code == 404
     assert a.get(f"/maps/{map_id}/members").status_code == 200
 
     # 이름 검색(#180) — 결과 스키마 검증 + 0건(빈 배열) + 에러 봉투 422
