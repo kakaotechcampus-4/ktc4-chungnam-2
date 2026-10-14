@@ -317,6 +317,43 @@ def list_liked_pins(db: Session, *, map_id: str, category: str, requested_by: st
     return list(grouped.values())
 
 
+def list_reaction_matrix(db: Session, *, map_id: str, category: str | None = None) -> list[dict]:
+    """agent(v2)의 get_reaction_matrix(docs/agent-v2.md 10절)가 쓴다 — 의견 갈림(6.3)·반응 공백(6.4) 탐지의
+    원자료. 삭제되지 않은 공개 핀마다 핀 정보와 그 핀에 달린 반응 목록을 한 항목으로 돌려준다. category가
+    None이면 지도 전체다.
+
+    반응이 없는 핀도 `reactions=[]`로 넣는다(반응 공백 탐지가 쓴다). 반응은 ♥/🚫 두 가지뿐이고(#360) 미확인은
+    행이 없다 — 반응하지 않은 구성원은 목록에 없다. 나간 사람·탈퇴자의 반응은 그때 지워져(#369, #155) 따로
+    거르지 않는다. 핀 이름은 넣지 않는다 — db 핀은 place_id로 places에서, live 핀(#382)은 search_query로
+    agent가 정한다. 핀과 반응은 쿼리 한 번(LEFT JOIN)으로 읽고, 같은 입력이면 같은 순서로 돌려준다."""
+    conditions = [PinRow.map_id == map_id, PinRow.deleted_at.is_(None), PinRow.visibility == "public"]
+    if category is not None:
+        conditions.append(PinRow.category == category)
+    rows = db.execute(
+        select(
+            PinRow.id, PinRow.category, PinRow.source, PinRow.place_id, PinRow.search_query,
+            PinRow.created_by, PinRow.created_at,
+            ReactionRow.id, ReactionRow.user_id, ReactionRow.type, ReactionRow.updated_at,
+        )
+        .select_from(PinRow)
+        .outerjoin(ReactionRow, ReactionRow.pin_id == PinRow.id)
+        .where(*conditions)
+        .order_by(PinRow.created_at, PinRow.id, ReactionRow.updated_at, ReactionRow.id)
+    ).all()
+    matrix: dict[str, dict] = {}
+    for (pin_id, pin_category, source, place_id, search_query, created_by, created_at,
+         reaction_id, user_id, reaction_type, updated_at) in rows:
+        entry = matrix.setdefault(str(pin_id), {
+            "pin_id": str(pin_id), "category": pin_category, "source": source, "place_id": place_id,
+            "search_query": search_query, "created_by": created_by, "created_at": created_at, "reactions": [],
+        })
+        if reaction_id is not None:   # LEFT JOIN — 반응이 없는 핀은 반응 칸이 전부 NULL인 행 하나다
+            entry["reactions"].append({
+                "reaction_id": str(reaction_id), "user_id": user_id, "type": reaction_type, "updated_at": updated_at,
+            })
+    return list(matrix.values())
+
+
 def get_coordinates_for_pins(db: Session, pin_ids: list[str]) -> dict[str, tuple[float, float]]:
     """좌표만 필요한 벌크 조회 — shortlist의 동선 계산(5-10, #103)이 쓴다. 가시성 판정은 하지
     않는다: 확정 리스트(shortlist_items)에 들어간 핀은 가드레일 1(`shortlist/loaders.py::
