@@ -12,15 +12,8 @@ const actor = (mapId: string) => ({
 });
 
 function visiblePins(mapId: string): Pin[] {
-  return Object.values(store.pins).filter((p) => {
-    if (p.map_id !== mapId) return false;
-    if (p.visibility === "private") {
-      // 5-5-1: 요청한 사람에게만 보인다. 목 서버는 항상 ME_USER_ID로 요청한다고 가정한다.
-      const runId = p.source_run_id ?? undefined;
-      return runId ? store.runRequestedBy[runId] === ME_USER_ID : false;
-    }
-    return true;
-  });
+  // v1은 private 핀 행이 없다(비공개 후보는 candidates, docs/data-model.md) — visibility로 거르지 않는다.
+  return Object.values(store.pins).filter((p) => p.map_id === mapId);
 }
 
 export const pinsHandlers = [
@@ -98,7 +91,7 @@ export const pinsHandlers = [
         checks: [],
         source_run_id: null,
         reaction_summary: { like: 0, against: 0 },
-        permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+        permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: true },
       };
       store.pins[liveId] = livePin;
       store.reactions[liveId] = [];
@@ -137,12 +130,12 @@ export const pinsHandlers = [
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 0, against: 0 },
-      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: true },
     };
     (pin as any)._place_id = own.place_id;
     store.pins[pinId] = pin;
     store.reactions[pinId] = [];
-    emitEvent(mapId, "public", "pin.created", pin); // docs/events.md — private 핀은 여기 안 온다(지금 목 서버는 항상 public으로만 생성)
+    emitEvent(mapId, "public", "pin.created", pin);
     return HttpResponse.json(pin, { status: 201 });
   }),
 
@@ -168,6 +161,30 @@ export const pinsHandlers = [
 
   // #60: 반대 사유 칩 — 고정 목록(docs/constraints.md「반대 사유 칩」)
   http.get("*/categories/:category/reason-chips", ({ params }) => HttpResponse.json(chipsFor(decodeURIComponent(params.category as string)))),
+
+  // #466 핀 수정 — 찍은 사람만. memo는 모든 핀, category는 live 핀만(반응이 없을 때만). AI 추천·확정 핀은 403.
+  http.patch("*/pins/:pinId", async ({ params, request }) => {
+    const pinId = params.pinId as string;
+    const pin = store.pins[pinId];
+    if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    if (pin.created_by !== ME_USER_ID || pin.kind !== "일반") return apiError(403, "FORBIDDEN", "이 핀은 수정할 수 없어요");
+    const body = (await request.json()) as { memo?: string; category?: Pin["category"] };
+    if (Object.keys(body).length === 0) return apiError(422, "VALIDATION_ERROR", "바꿀 값이 없어요");
+    if (body.memo !== undefined && body.memo.length > 200) return apiError(422, "VALIDATION_ERROR", "메모는 200자까지예요");
+    if (body.category !== undefined) {
+      if (pin.source !== "live") return apiError(422, "VALIDATION_ERROR", "자체 DB 핀의 분류는 바꿀 수 없어요");
+      if (!CATEGORY_RULES[body.category].pinnable) return apiError(422, "VALIDATION_ERROR", `${body.category} 핀은 만들 수 없어요`);
+      if ((store.reactions[pinId] ?? []).length > 0) return apiError(422, "VALIDATION_ERROR", "의견이 이미 있는 핀은 분류를 바꿀 수 없어요");
+      pin.category = body.category;
+    }
+    if (body.memo !== undefined) {
+      if (body.memo === "") delete pin.memo;
+      else pin.memo = body.memo;
+    }
+    pin.permissions = pinPermissions(pin);
+    emitEvent(pin.map_id, "public", "pin.updated", pin);
+    return HttpResponse.json(pin);
+  }),
 
   http.delete("*/pins/:pinId", ({ params }) => {
     const pinId = params.pinId as string;

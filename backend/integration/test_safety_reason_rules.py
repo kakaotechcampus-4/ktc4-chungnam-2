@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import pytest
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
-    PLACES, _pin, members, own_db, place_ids, real_client,
+    PLACES, _pin, plan_with, members, own_db, place_ids, real_client,
 )
 from places import repository
 from places.ingest import LabelRow, PlaceRow
@@ -28,7 +28,6 @@ def _extra_place(db, sid, name, lat, lng, facts):
 @pytest.fixture()
 def safety_planner(monkeypatch):
     """② 대역 — 매운맛 사유의 방향을 낸다: 좋아한다는 true, 질색·너무 맵다는 false."""
-    import llm.service as llm_service
     from llm.schemas import EvidenceLine
 
     def planner(raw_reasons):
@@ -44,7 +43,7 @@ def safety_planner(monkeypatch):
             out.append([EvidenceLine(**{**reason, "fact_key": key, "wants": wants})])
         return out
 
-    monkeypatch.setattr(llm_service, "get_evidence_planner", lambda: planner)
+    plan_with(monkeypatch, planner)
 
 
 def _candidates(a, map_id):

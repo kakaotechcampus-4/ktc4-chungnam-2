@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["places"])
 
 _MAX_QUERY_LEN = 50
+_FETCH_LIMIT = 15   # limit(최대 15)과 같다 — 카카오에서 이만큼 받아 정렬한 뒤 limit으로 자른다(#488)
 
 
 @router.get("/places/search", response_model=list[PlaceSearchResult], response_model_exclude_none=True)
@@ -38,9 +39,17 @@ def search_places(
         raise AppError("VALIDATION_ERROR", "lat과 lng는 함께 보내야 합니다")
     api.check_search_rate(user.user_id)
     near = (lat, lng) if lat is not None and lng is not None else None
-    results = api.search_by_name(query, near, limit)
+    results = api.search_by_name(query, near, _FETCH_LIMIT)
     _fill_pinnable(results, db)
-    return results
+    return _own_db_first(results)[:limit]
+
+
+def _own_db_first(results: list[PlaceSearchResult]) -> list[PlaceSearchResult]:
+    """자체 DB 짝이 있는 결과(pinnable=true)를 앞으로 올린다(#488). 그룹 안은 카카오가 준 순서 그대로(안정 정렬).
+    카카오가 준 후보 안에서만 고르고, pinnable 계산이 생략됐으면(None이 하나라도) 원래 순서를 둔다."""
+    if any(r.pinnable is None for r in results):
+        return results
+    return sorted(results, key=lambda r: not r.pinnable)
 
 
 def _fill_pinnable(results: list[PlaceSearchResult], db: Session) -> None:

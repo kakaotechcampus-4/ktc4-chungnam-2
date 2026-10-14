@@ -1,5 +1,5 @@
 """
-recommend의 기능 실행 함수 전체 — 다른 모듈 접근(pins.api/maps.api/llm.service/authz/
+recommend의 기능 실행 함수 전체 — 다른 모듈 접근(pins.api/maps.api/llm.api(Gateway)/authz/
 recommend.ports 게이트웨이)은 전부 이 파일에 둔다(이 모듈 자체 관례 — service.py는 recommend
 소유 테이블만, core.py는 순수 판정만). 커밋하지 않는다(common/database.py get_db가 요청당
 한 번 커밋한다).
@@ -20,7 +20,7 @@ real 모드면 places.api의 자체 DB 함수가 채운다(#190 — 모델 호�
   - 구성원이지만 그 액션이 롤에 없음 → **403 FORBIDDEN** (docs/permissions.md는 404/403 두
     값만 규정한다 — 계획의 "AI_PIN_PRIVATE"는 이 문서보다 먼저 쓰인 추측이었다. `recommend.
     publish`는 `candidate.requested_by`(=run.requested_by) 본인만 가능하도록
-    authz/policy.py::AUTHOR_CONSTRAINED_ACTIONS에 이미 등록돼 있어 본인이 아니면 403이 된다)
+    authz/policy.py의 author.actions에만 있어 본인이 아니면 403이 된다)
 authz/tests/test_rule_a_static.py가 "resolve_principal은 authz.guard 밖에서 직접 호출하지
 않는다"(Rule A)를 정적으로 강제한다 — 그래서 여기서 `authz.service.resolve_principal`/
 `authz.core.can`을 직접 부르지 않고, `authz.guard.require(action, loader)`가 반환하는
@@ -38,6 +38,7 @@ guard.py 안에서만 일어난다). "멤버십/작성자 확인이 멱등 경�
 `create_ai_pin`이 그걸 쓰도록 고쳐서 이 우회를 지웠다 — `mutation.event`를 그대로 쓴다.
 """
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -52,13 +53,12 @@ from authz.schemas import Permissions
 from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
-from llm import service as llm_service
 from pins import api as pins_api
 from pins.schemas import Pin
 from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
 from recommend.models import RecommendRun
-from recommend.ports import Circle, PlaceFactsGateway, PlaceSearchGateway
+from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
 from recommend.schemas import Check
 
 
@@ -107,8 +107,8 @@ def publish_candidate(
 
     if candidate.published_pin_id is not None:  #    멱등 빠른 경로 — run 상태와 무관하게 항상 통한다
         return _published_pin_response(db, pin_id=str(candidate.published_pin_id), requester_id=requester_id, run=run)
-        #    200, 이벤트 없음. get_pin_response_for_viewer가 NOT_FOUND/AI_PIN_PRIVATE를 던지면(핀이 그
-        #    사이 삭제됐거나 비공개로 바뀐 극단적 경우) 그대로 전파한다 — 정직한 실패가 낫다.
+        #    200, 이벤트 없음. get_pin_response_for_viewer가 NOT_FOUND를 던지면(핀이 그
+        #    사이 삭제된 극단적 경우) 그대로 전파한다 — 정직한 실패가 낫다.
 
     core.check_run_ready(run)  # 4) 409 NOT_READY
 
@@ -143,6 +143,21 @@ CATEGORIES: tuple[str, ...] = categories.recommendable()  # common/categories.py
 # 검증 중 발견: 이전 버전은 이 스펙을 못 찾고 2000m(약 25분)를 임의로 썼었다. 계산식으로
 # 두면 나중에 WALKING_SPEED_M_PER_MIN이 바뀌어도 같이 맞다.
 DEFAULT_REGION_RADIUS_M = core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)  # 15분 * 80m/분 = 1200m
+
+
+def list_runs(
+    db: Session, *, map_id: str, requested_by: str, category: str | None, limit: int,
+) -> list[schemas.RunSummary]:
+    """GET /maps/{mapId}/runs (#469) — 내가 요청한 run만, 최근순. 남의 run은 어떤 경로로도 섞이지 않는다."""
+    return [
+        schemas.RunSummary(
+            id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
+            created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
+        )
+        for run, candidate_count, published_count in service.list_runs_for_requester(
+            db, map_id=map_id, requested_by=requested_by, category=category, limit=limit,
+        )
+    ]
 
 
 def get_readiness(db: Session, *, map_id: str) -> dict[str, dict]:
@@ -226,10 +241,12 @@ def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: 
     }
 
 
-def create_run(db: Session, *, map_id: str, category: str, requested_by: str) -> RecommendRun:
+def create_run(
+    db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
+) -> RecommendRun:
     """POST /maps/{mapId}/runs — run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
     안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 재시도 상한(#31) 3) run INSERT
-    4) 반응 → 근거 구조화(글은 llm.plan_evidence, 칩은 코드 #412) 5) run INSERT → evidence_lines INSERT 6) 기본값
+    4) 반응 → 근거 구조화(글은 llm.api.plan_evidence, 칩은 코드 #412) 5) run INSERT → evidence_lines INSERT 6) 기본값
     지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
     트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다."""
     readiness = core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
@@ -242,7 +259,9 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str) ->
     raw_reactions = pins_api.list_reasoned_reactions(db, map_id=map_id, category=category)
     # ②에는 사람이 쓴 글만 보낸다(#412) — 칩은 키·방향이 정해져 있어 코드가 줄을 만든다. 글이 없으면 ② 호출도 없다.
     text_inputs = [_evidence_from_reaction(r) for r in raw_reactions if r["reason_text"] is not None]
-    planned = llm_service.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
+    if text_inputs:
+        db.rollback()  # 모델을 기다리는 동안 읽기 트랜잭션이 연결을 잡고 있지 않게 한다(#275). 저장이 아니라 연결 반환이다.
+    planned = evidence_planner.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
     reaction_lines = _reaction_evidence_lines(raw_reactions, [[line.model_dump() for line in group] for group in planned])
     merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422
 
@@ -279,32 +298,40 @@ def list_evidence(db: Session, *, run_id: str, principal: Principal) -> list[sch
 
 def patch_evidence(
     db: Session, *, run_id: str, principal: Principal,
-    toggles: list[tuple[str, bool]], adds: list[str],
+    toggles: list[tuple[str, bool]], adds: list[str], evidence_planner: EvidencePlanGateway,
 ) -> list[schemas.EvidenceLine]:
     """PATCH /runs/{runId}/evidence (5-5). '-'는 author 본인만(evidence.disable, author-
     constrained) — 권한 없는 토글이 섞여 있으면 요청 전체를 403으로 거절한다(api-spec.yaml이
     이 엔드포인트에 Forbidden을 명시함 — "버튼이 애초에 disabled였어야 했다"는 신호)."""
     run = service.get_run_or_404(db, run_id)
+    run_uuid = run.id
+    # 읽기(존재·권한 검사) → 롤백 → 모델 → 쓰기 순서다(#275). 모델을 기다리는 동안 트랜잭션도 연결도 잡지 않는다.
+    validated: list[tuple[uuid.UUID, bool]] = []
     for evidence_id, is_active in toggles:
         line = service.get_evidence_or_none(db, evidence_id)
-        if line is None or line.run_id != run.id:
+        if line is None or line.run_id != run_uuid:
             raise AppError("NOT_FOUND")
         resource = Resource(type="evidence_line", map_id=principal.map_id, author_id=line.author_id)
         if not can(principal, "evidence.disable", resource):
             raise AppError("FORBIDDEN")
-        service.set_evidence_active(db, line.id, is_active)
+        validated.append((line.id, is_active))
     # 「+」로 추가한 줄도 ②를 거쳐 fact_key·wants를 붙인다(#254) — 근거 줄에 "한식 제외"처럼 해석한 조건이
-    # 보인다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다).
+    # 보인다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다 — 모델이 쓰기보다 먼저라 행이 안 남는다).
     # 글 하나에 조건이 여럿이면 같은 글로 조건마다 줄 하나다(#419).
+    planned: list = []
     if adds:
-        planned = llm_service.plan_evidence([
+        db.rollback()  # 읽기 트랜잭션을 끝내 연결을 돌려준다(#275). 저장이 아니다.
+        planned = evidence_planner.plan_evidence([
             {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "reference", "fact_key": None}
             for text in adds
         ])
+    for line_id, is_active in validated:
+        service.set_evidence_active(db, line_id, is_active)
+    if adds:
         for text, group in zip(adds, planned):
             for line in group:
                 service.add_manual_evidence(
-                    db, run_id=run.id, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
+                    db, run_id=run_uuid, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
                 )
     return [_evidence_response(line, principal) for line in service.list_evidence(db, run_id)]
 
@@ -651,6 +678,8 @@ def get_result(
     """GET /runs/{runId}/result — funnel은 마지막 execute/widen/retry가 저장해둔 값을 그대로
     쓴다(재계산하지 않는다 — GET은 부작용도, 외부 게이트웨이 의존도 없어야 한다)."""
     run = service.get_run_or_404(db, run_id)
+    if run.status != "done":
+        raise AppError("RUN_NOT_FINISHED", detail={"status": run.status})  # #469 — 결과는 done일 때만 있다
     regions = service.list_regions(db, run_id)
     region_labels = {r.id: r.label for r in regions}
     candidates = service.list_candidates(db, run_id)

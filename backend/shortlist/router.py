@@ -12,7 +12,9 @@ authz.guard 밖에서 부르지 않는다(authz/tests/test_rule_a_static.py) —
 쓴다 — 이유는 아래 RouteForMap 주석 참고.
 """
 
-from fastapi import APIRouter, Depends, Path
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Path, Query, Response
 from sqlalchemy.orm import Session
 
 from auth.deps import get_current_user
@@ -66,6 +68,18 @@ def get_shortlist(
 def post_shortlist(confirmed=PinToConfirm, db: Session = DbSession):
     pin_row, principal = confirmed
     return flows.confirm_pin(db, pin_row=pin_row, principal=principal)
+
+
+@router.get("/maps/{mapId}/shortlist/export")
+def get_shortlist_export(
+    mapId: str = Path(...),
+    format: Literal["txt", "csv"] = Query("txt"),
+    principal: Principal = ShortlistForMap,
+    db: Session = DbSession,
+):
+    """응답은 JSON이 아니라 파일(text/plain·text/csv + attachment). format이 그 밖이면 422(VALIDATION_ERROR)."""
+    content, media_type, disposition = flows.export_shortlist(db, map_id=mapId, principal=principal, fmt=format)
+    return Response(content=content, media_type=media_type, headers={"Content-Disposition": disposition})
 
 
 @router.put("/maps/{mapId}/shortlist/order", response_model=list[ShortlistItem], response_model_exclude_none=True)

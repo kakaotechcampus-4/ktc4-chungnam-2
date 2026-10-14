@@ -1,8 +1,29 @@
 # 루트 리뷰 가이드 — backend/recommend
 
 `backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 네 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#190" 절이 최신, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
+작업을 누적해서 담는다 — 아래 "#469" 절이 최신, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
 전체, 가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+
+---
+
+# #469 — 지난 추천 기록
+
+## 구현
+
+- `GET /maps/{mapId}/runs?category&limit` — `require_map_member()`(비구성원 404). **`requested_by == 나`인 run만**(가드레일 1), `created_at` 내림차순,
+  limit 기본 20·최대 50(범위 밖 422), category 필터(없는 분류 422). 항목은 `RunSummary`(스펙 그대로).
+- `candidate_count`/`published_count`는 `service.list_runs_for_requester` 한 쿼리에서 `candidates`를 run별로 집계해 outer join한다(N+1 없음,
+  테스트가 SELECT 1회를 확인). `candidate_count`는 status가 `done`이 아니면 0, `published_count`는 상태와 무관하게 센다.
+- `GET /runs/{runId}/result`: status가 `done`이 아니면 409 `RUN_NOT_FINISHED`(검사가 `NO_RESULTS`보다 먼저). 기존 흐름(execute 뒤 조회)은 `execute_run`이
+  `done`으로 끝내므로 영향이 없다 — 골든 패스·계약 테스트가 그대로 통과한다.
+- 마이그레이션 `0028_recommend_runs_history_idx`: `recommend_runs (map_id, requested_by, created_at DESC)` 인덱스. **down_revision은 작성 시점 develop head인
+  `0024_evidence_lines_seq`다.** `0025_invite_revoke`(미병합 브랜치)가 먼저 머지되면 그 뒤로 down_revision을 옮겨야 head가 하나로 유지된다(머지 순서 확인 필요).
+- `KNOWN_MISSING`(test_spec_route_coverage)·`KNOWN_UNCOVERED`(test_response_contract)에서 `GET /maps/{}/runs`를 지웠고, 골든 패스에 내 run만 보이는지·남의 run이
+  안 보이는지를 넣었다.
+
+## 루트에 알릴 것
+
+- 같은 테스트 DB를 쓰는 pytest를 동시에 돌리면 `DROP TABLE` 데드락이 난다(이번에도 한 번 겪음) — `PINGO_TEST_DB`를 세션마다 다르게 준다.
 
 ---
 

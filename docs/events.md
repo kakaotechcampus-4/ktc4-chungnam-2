@@ -22,15 +22,18 @@
 
 | type | 페이로드 | 발생 시점 |
 |---|---|---|
-| `pin.created` | `Pin` (api-spec.yaml) | 핀 생성 직후. `visibility=private`인 핀은 이 채널에 보내지 않는다. 실시간 핀(`source=live`, #382)은 `lat`·`lng`·`place_name` 없이 `kakao_place_id`·`search_query`·`memo`만 실린다 — 받은 화면이 그 자리에서 위치를 다시 찾는다 |
+| `pin.created` | `Pin` (api-spec.yaml) | 핀 생성 직후. v1은 private 핀 행이 없어 모든 핀이 이 채널로 나간다(비공개 후보는 핀이 아니라 개인 채널 `run.candidates_ready`로만 온다). 실시간 핀(`source=live`, #382)은 `lat`·`lng`·`place_name` 없이 `kakao_place_id`·`search_query`·`memo`만 실린다 — 받은 화면이 그 자리에서 위치를 다시 찾는다 |
 | `pin.published` | `Pin` | 「지도에 올리기」 실행 시 (5-5-1) |
 | `pin.deleted` | `{ pin_id }` | 핀 삭제 |
+| `pin.updated` | `Pin` | 핀을 찍은 사람이 메모·분류를 고침(#466). `pin.created`와 같은 모양이다. 받은 FE는 그 핀을 갈아끼우고, 분류가 바뀌었으면 `FilterCounts`·readiness를 다시 불러온다 |
 | `reaction.changed` | `{ pin_id, reaction_summary, user_id, display_name, type }` | 반응 등록/수정/삭제. `user_id`·`display_name`은 그 반응을 남긴(지운) 구성원, `type`은 `like`·`against`이고 삭제면 `null`이다(2026-10-04, FE 요청 — 「지우님이 반대 의견을 남겼어요」). 반응 내용(사유)은 싣지 않는다 |
 | `shortlist.changed` | `{ item: ShortlistItem, action: 'added'\|'removed'\|'reordered' }` | 확정 리스트 변경. `reordered`는 수동 정렬 (#30) |
 | `route.recalculated` | `Route[]` | **「동선 짜주기」 실행 시** (#30, `POST /maps/{mapId}/route`). 확정 리스트 변경만으로는 발행하지 않는다 |
 | `member.joined` | `Member` | 초대 수락 |
 | `member.left` | `{ map_id, user_id, new_owner_user_id \| null }` | 구성원이 지도에서 나감(#369). **방장이 계정을 탈퇴해 그 지도의 방장이 위임된 경우에도 보낸다**(`user_id`는 탈퇴한 사람, 2026-10-07 결정). 방장이 나가거나 탈퇴해 위임됐으면 `new_owner_user_id`에 새 방장, 아니면 null. 탈퇴했는데 넘길 사람이 없어 지도가 삭제되면 이 이벤트 대신 `map.deleted`만 보낸다. 받은 FE는 핀 목록(작성자 표시 포함), 핀 참여율, `FilterCounts`, readiness를 다시 불러온다. 나간 사람의 반응 삭제마다 따로 이벤트를 보내지 않는다 |
 | `map.deleted` | `{ map_id }` | 방장이 지도를 삭제함(#369). 삭제와 같은 트랜잭션에 기록된다. realtime은 이미 연결된 구독자에게 이 이벤트를 보낸 뒤 연결을 닫는다(삭제된 지도는 새 구독이 404라 이 순서가 아니면 마지막 이벤트가 전달되지 않는다). 받은 FE는 내 지도 목록으로 돌아간다 |
+| `map.updated` | `{ map_id, title, start_date, end_date, region? }` | 방장이 지도 제목·날짜·지역을 고침(#465). 수정과 같은 트랜잭션에 기록된다. 요청자 기준 값(`permissions` 등)은 싣지 않는다. 받은 FE는 지도 상세 캐시를 갱신한다 |
+| `owner.changed` | `{ map_id, from_user_id, to_user_id }` | 방장이 직접 방장을 넘김(#468). 두 사람 모두 지도에 남는다 — **`member.left`를 재사용하지 않는다**(나간 것으로 오해해 SSE를 닫는다). 받은 FE는 지도 상세·구성원 목록(`role`)을 다시 불러온다 |
 | `member.presence` | `{ user_id, online }` | 접속 상태 변화 — **v1 서버는 발행하지 않는다**(아래 「v1에서 발행하지 않는 이벤트」) |
 
 ### 개인 채널
@@ -57,13 +60,16 @@ FE는 이벤트를 받으면 아래 표대로 화면 데이터를 다시 받는�
 | 이벤트 | 다시 받을 것 |
 |---|---|
 | `pin.created`, `pin.published` | 핀 목록(페이로드로 갱신), `GET /maps/{mapId}/counts` |
+| `pin.updated` | 핀 목록의 그 핀(페이로드로 갱신). 분류가 바뀌었으면 `GET /maps/{mapId}/counts`, `GET /maps/{mapId}/recommend/readiness` (#466) |
 | `pin.deleted` | 핀 목록(페이로드로 갱신), `GET /maps/{mapId}/counts`, `GET /maps/{mapId}/recommend/readiness` |
 | `reaction.changed` | 핀 목록의 그 핀(페이로드로 갱신), `GET /maps/{mapId}/counts`, `GET /pins/{pinId}/reactions`(열려 있으면), `GET /maps/{mapId}/recommend/readiness` |
 | `member.joined` | `GET /maps/{mapId}`, `GET /maps/{mapId}/members` |
-| `member.left` | `GET /maps/{mapId}/pins`, `GET /maps/{mapId}/counts`, `GET /maps/{mapId}`, `GET /maps/{mapId}/members`, 추천(준비 상태 포함) |
+| `member.left` | `GET /maps/{mapId}/pins`, `GET /maps/{mapId}/counts`, `GET /maps/{mapId}`, `GET /maps/{mapId}/members`, `GET /maps/{mapId}/recommend/readiness` |
+| `owner.changed` | `GET /maps/{mapId}`, `GET /maps/{mapId}/members`(방장 표시, #468) |
+| `map.updated` | 지도 상세(페이로드로 갱신), `GET /maps`(내 지도 목록의 제목과 날짜, #465) |
 | `map.deleted` | 지도 화면을 닫고 내 지도 목록(`GET /maps`)으로 |
 | `shortlist.changed` | `GET /maps/{mapId}/shortlist`, `GET /maps/{mapId}/pins`(확정 핀 표시) |
-| `route.recalculated` | `GET /maps/{mapId}/shortlist`(동선 포함) |
+| `route.recalculated` | 동선(페이로드 `Route[]`로 갱신, 또는 `GET /maps/{mapId}/route`) |
 
 - 추천 준비 상태는 "♥나 🚫 의견이 달린 핀 1개"(#360)라 의견 하나, 핀 하나로 바뀐다. 그래서 반응과 핀 삭제에도 다시 받는다.
 - 개인 채널의 `run.candidates_ready`는 결과 조회(`GET /runs/{id}/result`)가 정본이라 이 표와 상관없다(위 "v1에서 발행하지 않는 이벤트").
@@ -85,6 +91,7 @@ SSE 구독 권한(구성원인가)은 **구독을 시작할 때 한 번만** 본
 | 이벤트 | 보낸 뒤 닫는 연결 |
 |---|---|
 | `map.deleted` | 그 지도의 모든 구독(전체 채널, 개인 채널) |
+| `map.updated`, `owner.changed` | 그 지도의 모든 구독(전체 채널, 개인 채널) |
 | `member.left` | 그 지도에서 `user_id`(나간 사람, 또는 탈퇴해 방장이 넘어간 사람)의 구독(전체 채널, 개인 채널). 다른 구성원의 연결은 그대로 둔다 |
 
 - 그래서 전체 채널 구독도 누가 구독했는지(`user_id`)를 기억해야 한다. 지금은 개인 채널만 기억한다.
