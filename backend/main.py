@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
+from agent import loop as agent_loop
 from common.adapters import format_assembly
 from common.database import engine
 from common.errors import register_error_handlers
@@ -38,9 +39,11 @@ async def lifespan(_app: FastAPI):
     # 반드시 이 순서로: 이미 있는 event_log까지 따라잡은 뒤(동기, 한 번) 폴링 루프를 시작한다.
     dispatcher.initialize_last_seen()
     task = asyncio.create_task(dispatcher.run_forever())
+    agent_loop.start()   # AGENT_LOOP_IN_PROCESS=True(개발)일 때만 관찰 반복 작업을 띄운다(docs/agent-v2.md 12.1)
     try:
         yield
     finally:
+        await agent_loop.stop(SHUTDOWN_TIMEOUT)   # dispatcher 정지 전에 agent 관찰 작업의 정지를 기다린다
         # 종료 순서: dispatcher 정지 → SSE 정리 → 연결 풀 닫기(#130).
         # 취소하지 않고 정지 신호로 멈춰, 스레드에서 도는 _tick이 끝난 뒤에야 풀을 닫는다.
         dispatcher.request_stop()
@@ -72,6 +75,7 @@ from auth.router import public_router as auth_public_router  # noqa: E402
 from auth.router import router as auth_router  # noqa: E402
 from maps.router import public_router as maps_public_router  # noqa: E402
 from maps.router import router as maps_router  # noqa: E402
+from notifications.router import router as notifications_router  # noqa: E402
 from pins.router import router as pins_router  # noqa: E402
 from places.router import router as places_router  # noqa: E402
 from realtime.router import router as realtime_router  # noqa: E402
@@ -82,6 +86,7 @@ app.include_router(auth_public_router)
 app.include_router(auth_router)
 app.include_router(maps_public_router)
 app.include_router(maps_router)
+app.include_router(notifications_router)
 app.include_router(pins_router)
 app.include_router(places_router)
 app.include_router(recommend_router)

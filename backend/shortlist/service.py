@@ -153,6 +153,16 @@ def list_routes(db: Session, *, map_id: str) -> list[RouteRow]:
     )
 
 
+def list_items_for_agent(db: Session, *, map_id: str) -> list[dict]:
+    """agent 스냅샷용(#522) — 확정 항목의 핀·추가한 사람·시각만. added_at 순(같으면 id 순)."""
+    rows = db.execute(
+        select(ShortlistItemRow.pin_id, ShortlistItemRow.added_by, ShortlistItemRow.added_at)
+        .where(ShortlistItemRow.map_id == map_id)
+        .order_by(ShortlistItemRow.added_at, ShortlistItemRow.id)
+    ).all()
+    return [{"pin_id": str(pin_id), "added_by": added_by, "added_at": added_at} for pin_id, added_by, added_at in rows]
+
+
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(#431) — 이 지도들의 확정 항목과 동선을 지운다. 테이블 이름 → 지운 행 수."""
     if not map_ids:

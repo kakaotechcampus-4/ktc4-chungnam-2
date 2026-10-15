@@ -22,9 +22,14 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
-    ("patch", "/maps/{}"): "#465 지도 제목·날짜·지역 수정",
-    ("get", "/maps/{}/invites"): "#467 초대 링크 목록",
-    ("delete", "/invites/{}"): "#467 초대 링크 끄기",
+    ("post", "/feedback"): "#10 서비스 피드백",
+    ("post", "/pins/{}/resolve"): "#501 실시간 핀 승격",
+    ("get", "/maps/{}/agent"): "#510 agent v2 계약 — M0, M1에서 구현",
+    ("put", "/maps/{}/agent/settings"): "#510 agent v2",
+    ("post", "/agent/suggestions/{}/view"): "#510 agent v2",
+    ("post", "/agent/suggestions/{}/accept"): "#510 agent v2",
+    ("post", "/agent/suggestions/{}/dismiss"): "#510 agent v2",
+    ("get", "/runs/{}/advice"): "#510 agent v2 추천 막힘 조언 — M2",
 }
 
 # 스펙에 없어도 되는 라우트(운영/문서용).

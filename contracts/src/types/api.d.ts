@@ -743,6 +743,7 @@ export interface paths {
          * 장소 이름 검색 (#180, #147 — v1 핀 입력 경로 ①). 검색바에서 이름을 치면 후보를 돌려주고, 사용자가 하나를 골라
          *     `POST /maps/{mapId}/pins`(source: search)로 핀을 만든다. 결과는 서버 DB에 저장하지 않는다(메모리 캐시만, #53).
          *     **결과는 화면에 보여 주기만 하고 서버는 저장하지 않는다**(카카오 약관, #53) — 핀을 만들 때 "매칭 힌트"로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는다(POST /maps/{mapId}/pins).
+         *     결과에서 자체 DB 장소(`pinnable=true`)가 먼저 오고, 각 묶음 안은 카카오가 준 순서 그대로다.
          *     결과가 0개면 빈 배열 그대로다 — 지어내서 채우지 않는다 (가드레일 2). 로그인만 필요하고 지도 구성원 여부는 보지 않는다.
          *     지도 API가 모두 실패하면 503 PLACES_UNAVAILABLE. 외부 지도 API의 일일 쿼터를 지키려고 사용자당 호출 상한이 있다(초과 시 429 RATE_LIMITED, 상한 값은 서버 설정 — 기본 분당 30회). FE는 입력 debounce 300ms 이상으로 부르고 Enter/선택 시점에만 부르는 걸 권한다.
          */
@@ -829,6 +830,115 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/places/nearest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 지도를 눌러 핀 — 누른 자리에서 가장 가까운 **자체 DB 장소** (#473, 2026-10-13 결정). 반경 100m 안의 핀으로 만들 수 있는 장소(자체 DB)를
+         *     가까운 순 최대 5곳 돌려준다. 카카오 응답을 쓰지 않는다. **누른 좌표(lat·lng)는 저장도 로깅도 하지 않는다**(카카오 약관, #53) — 이 요청에서 쓰고 버린다.
+         *     고른 장소는 `POST /maps/{mapId}/pins`의 `source: search`로 만든다(결과의 place_id·place_name·lat·lng·category를 그대로 보낸다 — 자체 DB 장소의
+         *     id가 매칭 힌트로 통해야 한다). 결과가 없으면 빈 배열 — 지어내지 않는다(가드레일 2). 화면은 이때 「검색으로 남기기」를 안내한다.
+         *     로그인만 필요하다. 사용자당 호출 상한이 있다(초과 시 429 RATE_LIMITED, GET /places/search와 같은 상한을 쓴다).
+         */
+        get: {
+            parameters: {
+                query: {
+                    lat: number;
+                    lng: number;
+                    /** @description 있으면 그 분류만. 음식점·카페·관광지 */
+                    category?: components["schemas"]["Category"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 모두 pinnable=true. 없으면 빈 배열 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PlaceSearchResult"][];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+                503: components["responses"]["PlacesUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/places/from-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 지도 링크 해석 (#474, #134 결정 2026-10-13: 구글맵 + 카카오맵, 네이버·인스타·블로그 제외). 사용자가 붙여넣은 링크에서 장소를 알아낼 단서만 돌려주며
+         *     **핀을 만들지 않고 아무것도 저장하지 않는다**. 핀은 아래 안내대로 기존 `POST /maps/{mapId}/pins`로 만든다. 모델을 쓰지 않는다(코드 해석).
+         *     - **구글맵**(`google.com/maps/place/이름/@위도,경도`, `maps.app.goo.gl`·`goo.gl/maps` 단축 링크): 링크에 든 이름(`name_hint`)과 좌표로 반경 100m 안
+         *       자체 DB 장소(`matches`, 가까운 순 최대 5)를 찾는다. 있으면 그것으로 `source: search` 핀. 없으면 화면이 `name_hint`로 GET /places/search를 열어 이어 간다.
+         *     - **카카오맵**(`place.map.kakao.com/{id}`, `map.kakao.com/?itemId={id}`, `kko.to` 단축 링크): 장소 ID(`kakao_place_id`)만 뽑는다. 카카오 응답을 가져오지 않으므로
+         *       이름·좌표는 모른다. 자체 DB에 그 카카오 ID로 매칭된 장소가 있으면 `matches`에 담고, 없으면 `needs_search_query=true` — 화면이 사용자에게 장소 이름(검색어)을 직접
+         *       입력받아 `source: live`(kakao_place_id + search_query)로 핀을 남긴다.
+         *     단축 링크는 서버가 리다이렉트를 따라가 해석한다(허용 호스트만, 리다이렉트 상한·타임아웃·사설 IP 차단, SSRF 방어). 응답에 링크 안의 좌표를 싣지 않는다(`name_hint`만).
+         *     로그인만 필요하다. 사용자당 호출 상한이 있다(429 RATE_LIMITED).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LinkParseRequest"];
+                };
+            };
+            responses: {
+                /** @description 해석됨 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LinkParseResult"];
+                    };
+                };
+                /** @description LINK_NOT_SUPPORTED(허용 호스트가 아니거나 형식을 모름 — 네이버·인스타·블로그 포함) 또는 LINK_UNRESOLVED(단축 링크를 열지 못했거나 링크에서 장소를 못 찾음) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -991,6 +1101,354 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        /**
+         * 핀 메모·분류 수정 — 그 핀을 찍은 사람만 (#466, docs/permissions.md pin.edit). 보낸 필드만 바꾼다. 요청자별 가능 여부는 Pin.permissions.can_edit.
+         *     - `memo`: 모든 핀. 빈 문자열이면 지운다. 200자 이하.
+         *     - `category`: **live 핀만**(#382), 음식점·카페·관광지만. 자체 DB 핀의 분류는 장소가 정하므로 보내면 422. 이미 반응이 하나라도 있는 핀은 분류를 바꿀 수 없다(422) — 추천 준비 판정과 반응 칩이 분류별이라 의견이 엉킨다.
+         *     - **AI 추천 핀(kind=AI추천)과 확정 핀은 수정할 수 없다**(403, can_edit=false). 근거·체크·장소 값은 어떤 핀에서도 바꿀 수 없다. `kakao_place_id`·`search_query`도 바꿀 수 없다(다른 장소는 새 핀으로).
+         *     전체 채널에 pin.updated(Pin)를 보낸다(docs/events.md).
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    pinId: components["parameters"]["PinId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PinUpdateRequest"];
+                };
+            };
+            responses: {
+                /** @description 수정됨. 요청자 기준 Pin */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Pin"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — 빈 객체, 메모 200자 초과, db 핀의 분류 변경, 반응이 있는 핀의 분류 변경, 숙소·기타 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/pins/{pinId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 실시간 핀 승격 — 자체 DB에 짝이 있으면 live 핀을 자체 DB 핀으로 바꾼다 (#501). 지도 구성원 누구나(`pin.resolve`).
+         *     화면이 카카오 SDK로 그 핀의 이름·좌표를 찾았을 때(`kakao_place_id`로 다시 찾은 결과) **그 값을 매칭 힌트로만** 보낸다. 서버는 `POST /maps/{mapId}/pins`(source=search)와 같은 규칙(반경·이름 유사도·주소 보조·분류 일치, 모호하면 거절)으로 자체 DB 장소를 찾는다.
+         *     - **짝이 있으면**: 핀이 `source: db`가 되고 `place_id`가 채워진다(`Pin.place_name`·`lat`·`lng`·`place_url`을 장소에서 가져온다). `kakao_place_id`·`search_query`는 지운다. **반응·사유·확정 리스트 항목·핀 id는 그대로 유지**된다. 전체 채널에 `pin.updated(Pin)`를 보낸다.
+         *     - **짝이 없으면**: 200 + 핀 그대로(`source: live` 유지). 이벤트도 없다. 화면은 데이터가 늘어난 뒤 다시 시도할 수 있다.
+         *     - **이미 자체 DB 핀이면** 아무것도 하지 않고 200으로 핀을 그대로 돌려준다(화면이 호출을 아끼려 거르지만 호출해도 안전).
+         *     - **같은 지도에 그 장소의 핀이 이미 있으면** 409 `PIN_DUPLICATE`(`detail.pin_id` = 이미 있는 핀). 자동 병합은 하지 않는다 — 두 핀의 반응·사유가 엉키므로 사람이 한쪽을 지운다.
+         *     - AI 추천·확정 핀은 live가 아니므로 항상 변화 없이 200이다. 분류는 핀의 `category`를 쓴다(본문에 없다).
+         *     - **힌트(`place_name`·`lat`·`lng`·`address`)는 저장하지도 로깅하지도 않는다**(카카오 약관). 응답에도 싣지 않는다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    pinId: components["parameters"]["PinId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PinResolveRequest"];
+                };
+            };
+            responses: {
+                /** @description 승격됐거나(source=db) 변화 없음(source=live). 요청자 기준 Pin */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Pin"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                /** @description PIN_DUPLICATE — 그 장소의 핀이 이 지도에 이미 있다 (detail.pin_id) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description 검증 실패 (VALIDATION_ERROR) — 이름·좌표 누락, 범위 밖 좌표 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 내 알림함 (#470) — 최근순. 로그인만 필요하다(지도 구성원 여부와 무관, 나간 지도의 알림도 남아 있다).
+         *     알림은 이벤트를 만든 **같은 트랜잭션**에서 수신자별로 기록된다. 내가 한 일의 알림은 나에게 만들지 않는다(자기 핀에 자기가 ♥를 남겨도 알림 없음).
+         *     끈 종류(`GET /me/notification-prefs`)는 만들 때 거른다. 90일이 지난 알림은 삭제된다(#168 정리 작업).
+         *     실시간 푸시는 없다 — FE는 앱을 열 때, 포커스가 돌아올 때, 알림함을 열 때 이 API를 부른다. `unread_count`로 종 모양 배지를 그린다.
+         *     알림 문장(`message`)은 서버가 만든다. **반대 사유 원문·핀 메모는 싣지 않는다.**
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    /** @description 이전 응답의 `next_before`를 그대로 — 그보다 오래된 알림을 준다 */
+                    before?: string;
+                    unread_only?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationList"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — limit 범위 밖 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/notifications/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 알림 읽음 처리 (#470) — `ids`를 주면 그 알림만, 생략하면 내 알림 전부. 멱등이다(이미 읽은 것·남의 알림 id·없는 id는 조용히 무시한다 — 존재를 알리지 않는다). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["NotificationReadRequest"];
+                };
+            };
+            responses: {
+                /** @description 처리됨 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — ids가 100개 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/notification-prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 알림 설정 (#470) — 알림 종류 전부를 항상 돌려준다. 저장된 행이 없는 종류는 켜짐(기본값) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationPrefs"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        /**
+         * 알림 설정 바꾸기 (#470) — 보낸 종류만 바꾸고 나머지는 둔다. 응답은 바뀐 뒤의 전체 설정.
+         *     끈다고 이미 쌓인 알림이 지워지지는 않는다. 앞으로 만들지 않을 뿐이다.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["NotificationPrefsUpdate"];
+                };
+            };
+            responses: {
+                /** @description 바뀐 뒤의 전체 설정 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationPrefs"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — 모르는 종류, 빈 목록 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 서비스 피드백 보내기 (#10, v2) — 로그인한 사용자 누구나. 저장만 하고 답장·알림은 없다.
+         *     사용자당 호출 상한이 있다(초과 시 429 RATE_LIMITED, 서버 설정 — 기본 시간당 10건).
+         *     내용은 사용자 입력이라 저장할 수 있다. 계정을 탈퇴하면 작성자 연결은 끊고 내용은 남긴다(운영 개선용).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["FeedbackRequest"];
+                };
+            };
+            responses: {
+                /** @description 저장됨 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FeedbackReceipt"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — 공백뿐인 내용, 1000자 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+            };
+        };
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1156,7 +1614,39 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * 지난 추천 기록 — **내가 요청한 run만** (#469, 가드레일 1: 대안은 요청한 사람에게만 보인다). 다른 구성원의 run은 이 목록에 없다. 최근 요청순.
+         *     항목을 누르면 기존 `GET /runs/{runId}/result`로 결과를 다시 연다(그 run을 요청한 본인만, 아니면 403). 결과는 **마지막 시도**의 후보만 남아 있다
+         *     (반경 넓히기·다시 추천 때 게시하지 않은 이전 후보는 교체된다). 지도 구성원이 아니면 404.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 있으면 그 분류의 run만 */
+                    category?: components["schemas"]["RecommendCategory"];
+                    /** @description 가져올 개수. 기본 20, 최대 50 */
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 없으면 빈 배열 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunSummary"][];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
         put?: never;
         /** run 생성 — 근거 조립 시작 (①②) */
         post: {
@@ -1383,6 +1873,15 @@ export interface paths {
                 };
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NoResults"];
+                /** @description 아직 끝나지 않았거나 실패한 run (RUN_NOT_FINISHED, #469) — status가 done일 때만 결과가 있다. 지난 추천 기록에서 여는 run에 쓴다 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
                 500: components["responses"]["RecommendFailed"];
             };
         };
@@ -1475,6 +1974,58 @@ export interface paths {
                 429: components["responses"]["RetryLimit"];
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{runId}/advice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 추천 막힘 조언 (v2, docs/agent-v2.md 9절) — 그 run을 요청한 본인만(recommend.manage). 실서버 구현 전(KNOWN_MISSING).
+         *     결과가 3곳 미만이거나 같은 카테고리 run을 3번 이상 만든 완료 run에서, 더 많이 추천받는 방법을 알려 준다(반경 넓히기, 실격 조건 확인, 애매한 사유 고치기, 후보 소진 안내).
+         *     run당 한 번만 만들고 저장한다 — 같은 run을 다시 열면 같은 조언이다. 대상이 아니거나 낼 조언이 없으면 204.
+         *     FE는 깔때기를 먼저 보여 준 뒤 부르고, 기다리는 동안 조언 자리만 둔다(16.5). 버튼은 widen_radius, open_evidence 두 종류뿐이다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    runId: components["parameters"]["RunId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 조언 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunAdvice"];
+                    };
+                };
+                /** @description 대상이 아니거나 낼 조언이 없음 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1631,6 +2182,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/{mapId}/shortlist/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 확정 리스트 내보내기 — 구성원 누구나 (#471). 확정 순서(`visit_order`, 없으면 추가한 순서)대로 한 줄씩 담은 텍스트(`txt`) 또는 CSV(`csv`)를 내려준다.
+         *     열은 순서·이름·분류·카카오 링크·메모다. **실시간 핀(live)은 이름을 저장하지 않으므로**(#53) 이름 칸에 검색어를 쓰고 이름 뒤에 "(이름 확인 필요)"를 붙이며,
+         *     링크 칸에는 `place.map.kakao.com/<id>` 링크를 넣는다. 자체 DB 핀은 장소 이름과 장소 페이지 링크를 쓴다. 좌표는 내보내지 않는다.
+         *     CSV는 엑셀에서 한글이 깨지지 않게 UTF-8 BOM으로 시작한다. 확정 리스트가 비어 있으면 CSV는 머리글만, txt는 안내 한 줄이다.
+         *     공개 공유 링크는 이 범위 밖이다.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 기본 txt */
+                    format?: "txt" | "csv";
+                };
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 파일 내용. Content-Disposition 헤더(attachment)로 내려준다 — 응답은 JSON이 아니다 */
+                200: {
+                    headers: {
+                        "Content-Disposition"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": string;
+                        "text/csv": string;
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                /** @description format이 txt·csv가 아님 (VALIDATION_ERROR) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/shortlist/order": {
         parameters: {
             query?: never;
@@ -1747,6 +2357,232 @@ export interface paths {
                         "application/json": components["schemas"]["Route"][];
                     };
                 };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 「핑고 AI 조언」 바텀시트 상태 — 구성원 누구나 (docs/agent-v2.md 14절). 모드, 지금 제안(지도당 0개 또는 1개), 미열람 여부, 카테고리별 우리 조건 요약.
+         *     문장은 모두 서버가 렌더한 것이다. FE는 슬롯이나 숫자를 다루지 않고 그대로 보여 준다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentState"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/agent/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 모드 켜고 끄기 — 구성원 누구나 (docs/permissions.md agent.toggle). 지도 단위이고 기본값은 켜짐이다.
+         *     끄면 지금 제안을 무효화(superseded)한다. 전체 채널에 agent.settings_changed를 보낸다(끄면서 제안이 있었으면 agent.resolved도).
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AgentSettingsRequest"];
+                };
+            };
+            responses: {
+                /** @description 바뀐 설정 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentSettings"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/suggestions/{suggestionId}/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 열람 기록 — 구성원 누구나. 시트를 열어 제안이 화면에 보였을 때 부른다. 사람마다 한 번 기록되고(멱등) 버튼의 점(has_unseen)이 꺼진다.
+         *     이벤트는 없다. 이미 처리된 제안도 204다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    suggestionId: components["parameters"]["SuggestionId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 기록함 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/suggestions/{suggestionId}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 제안의 버튼 하나를 누름 — 구성원 누구나 (agent.suggestion.resolve). 서버는 제안을 accepted로 바꾸고 그 버튼의 동작 설명(`AgentAction`)을 돌려준다.
+         *     **서버는 그 동작을 대신 실행하지 않는다.** FE가 응답의 action을 손으로 할 때와 같은 API로 실행한다(docs/agent-v2.md 16.3).
+         *     이미 다른 사람이 처리했으면 409 SUGGESTION_RESOLVED — FE는 `GET /maps/{mapId}/agent`를 다시 받는다. 전체 채널에 agent.resolved를 보낸다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    suggestionId: components["parameters"]["SuggestionId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AgentAcceptRequest"];
+                };
+            };
+            responses: {
+                /** @description 수락함. FE가 실행할 동작 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentAcceptResponse"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["SuggestionResolved"];
+                /** @description action_index가 그 제안의 버튼 범위 밖 (VALIDATION_ERROR) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/suggestions/{suggestionId}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 제안 닫기 — 구성원 누구나 (agent.suggestion.resolve). 지도 단위라 모두에게서 닫힌다. 같은 종류 제안은 한동안(2, 6, 24시간) 다시 나오지 않는다.
+         *     이미 처리됐으면 409 SUGGESTION_RESOLVED. 전체 채널에 agent.resolved를 보낸다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    suggestionId: components["parameters"]["SuggestionId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 닫음 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["SuggestionResolved"];
             };
         };
         delete?: never;
@@ -1893,7 +2729,7 @@ export interface components {
             can_leave?: boolean;
             /** @description candidate 전용: recommend.publish — candidate.requested_by 본인만 true (#64) */
             can_publish?: boolean;
-            /** @description map 전용: 지도 제목·날짜·지역 수정(map.settings.edit), 방장만 true (#465) */
+            /** @description map: 지도 제목·날짜·지역 수정(map.settings.edit), 방장만 true (#465). pin: 핀 메모·분류 수정(pin.edit), 그 핀을 찍은 사람만 true이고 AI 추천·확정 핀은 false (#466) */
             can_edit?: boolean;
         };
         User: {
@@ -2024,6 +2860,103 @@ export interface components {
         };
         /** @description `source`로 갈린다 — 생략하면 search(자체 DB 장소), `live`면 실시간 핀(#382) */
         PinCreateRequest: components["schemas"]["PinCreateSearch"] | components["schemas"]["PinCreateLive"];
+        /** @description 핀 수정 (#466). 보낸 필드만 바꾼다. 빈 객체는 422 */
+        PinUpdateRequest: {
+            /** @description 빈 문자열이면 메모를 지운다 */
+            memo?: string;
+            /** @description live 핀만, 반응이 없을 때만 (PATCH /pins/{pinId} 설명 참고) */
+            category?: components["schemas"]["Category"];
+        };
+        /** @description 실시간 핀 승격의 매칭 힌트 (#501). 전부 저장하지도 로깅하지도 않는다 */
+        PinResolveRequest: {
+            /** @description 화면이 kakao_place_id로 다시 찾은 장소 이름(카카오 응답 그대로). 매칭 힌트 */
+            place_name: string;
+            /** @description 같은 검색 결과의 좌표. 매칭 힌트 */
+            lat: number;
+            lng: number;
+            /** @description 선택. 같은 검색 결과의 주소. 이름이 비슷한 점포를 가를 때만 쓰는 보조 힌트 */
+            address?: string;
+        };
+        /**
+         * @description 알림 종류 (#470). `pin_reaction` 내 핀에 반응이 달림, `member_joined` 내 지도에 새 구성원(방장에게만),
+         *     `owner_changed` 내가 방장이 됨(직접 넘김·위임 모두), `map_deleted` 내가 속한 지도가 삭제됨,
+         *     `my_ai_pin_published` 내가 요청한 AI 추천이 지도에 올라감(다른 구성원이 「지도에 올리기」를 눌렀을 때).
+         *     지도 복구(#464)·강퇴(#8)는 그 기능이 들어올 때 종류를 더한다.
+         * @enum {string}
+         */
+        NotificationType: "pin_reaction" | "member_joined" | "owner_changed" | "map_deleted" | "my_ai_pin_published";
+        Notification: {
+            id: string;
+            type: components["schemas"]["NotificationType"];
+            /** @description 알림이 난 지도. 삭제된 지도이면 이동할 수 없다 — FE가 `map_deleted`는 누르면 내 지도 목록으로 보낸다 */
+            map_id: string;
+            /** @description 알림을 만들 때의 지도 제목(그 뒤에 바뀌어도 그대로). 지도 삭제 알림을 위해 남겨 둔다 */
+            map_title?: string;
+            /** @description `pin_reaction`, `my_ai_pin_published`만 — 누르면 그 핀으로 이동. 그 핀이 지워졌으면 FE가 404를 받아 조용히 지도로만 이동한다 */
+            pin_id?: string;
+            /** @description 서버가 만든 문장. 예 "지우님이 내 핀에 ♥를 남겼어요". 반대 사유·메모는 싣지 않는다 */
+            message: string;
+            /** Format: date-time */
+            created_at: string;
+            read: boolean;
+        };
+        NotificationList: {
+            items: components["schemas"]["Notification"][];
+            /** @description 전체 안 읽은 알림 수(페이지와 무관). 99를 넘으면 FE가 99+로 그린다 */
+            unread_count: number;
+            /** @description 더 오래된 알림이 있을 때만. 다음 요청의 `before`로 쓴다 */
+            next_before?: string;
+        };
+        NotificationReadRequest: {
+            /** @description 생략하면 전부 읽음 처리 */
+            ids?: string[];
+        };
+        NotificationPref: {
+            type: components["schemas"]["NotificationType"];
+            enabled: boolean;
+        };
+        NotificationPrefs: {
+            /** @description 알림 종류 전부, `NotificationType` 선언 순서 */
+            prefs: components["schemas"]["NotificationPref"][];
+        };
+        NotificationPrefsUpdate: {
+            /** @description 바꿀 종류만. 같은 종류가 두 번 있으면 뒤의 것 */
+            prefs: components["schemas"]["NotificationPref"][];
+        };
+        FeedbackRequest: {
+            /** @description 앞뒤 공백을 지운 뒤 비어 있으면 422 */
+            message: string;
+            /**
+             * @description 버그 / 아이디어 / 기타
+             * @default other
+             * @enum {string}
+             */
+            category: "bug" | "idea" | "other";
+            /** @description 선택. 피드백을 남길 때 보고 있던 지도(맥락용). 구성원 여부는 검사하지 않고 값은 그대로 저장한다 */
+            map_id?: string;
+        };
+        FeedbackReceipt: {
+            id: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        LinkParseRequest: {
+            /** @description 사용자가 붙여넣은 지도 링크. http(s)만 */
+            url: string;
+        };
+        /** @description 링크에서 읽은 단서 (#474). 저장되지 않는다 */
+        LinkParseResult: {
+            /** @enum {string} */
+            provider: "google" | "kakao";
+            /** @description 구글 링크에 든 장소 이름(사용자가 붙인 링크의 값). 화면이 GET /places/search로 이어 가는 데 쓴다. 카카오 링크에는 없다 */
+            name_hint?: string;
+            /** @description 카카오 링크에서 뽑은 장소 ID(예 kakao:1234). 저장이 허용된 유일한 카카오 값 — live 핀의 kakao_place_id로 그대로 쓴다 */
+            kakao_place_id?: string;
+            /** @description 핀으로 만들 수 있는 자체 DB 장소(pinnable=true). 없으면 빈 배열 — 지어내지 않는다(가드레일 2) */
+            matches: components["schemas"]["PlaceSearchResult"][];
+            /** @description true면 matches가 비었고 화면이 사용자에게 검색어(장소 이름)를 입력받아 live 핀으로 남겨야 한다. 카카오 링크에서 자체 DB 짝이 없을 때 */
+            needs_search_query: boolean;
+        };
         /** @description #382 실시간 핀 — 자체 DB에 없는 장소. 이름·좌표는 받지도 저장하지도 않는다 */
         PinCreateLive: {
             /** @enum {string} */
@@ -2055,6 +2988,8 @@ export interface components {
             lat: number;
             /** @description 매칭 힌트 — 검색 결과의 좌표를 그대로. 저장하지 않는다 */
             lng: number;
+            /** @description 선택, 매칭 힌트 — 검색 결과의 address를 그대로. 이름이 비슷한 점포를 가르는 보조 판단에만 쓰고 저장·로깅하지 않는다(#500, #501). 없어도 된다 */
+            address?: string;
         };
         /** @description GET /places/search 한 건 — **화면 표시용이며 서버에 저장되지 않는다**. 핀을 만들 때 place_id·place_name·lat·lng·category를 그대로 POST /maps/{mapId}/pins로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는 매칭 힌트로 쓴다 */
         PlaceSearchResult: {
@@ -2101,7 +3036,7 @@ export interface components {
              * @enum {string}
              */
             source?: "db" | "live";
-            /** @description live 핀의 메모(작성자가 남긴 한마디). 없을 수 있다 */
+            /** @description 핀의 메모(작성자가 남긴 한마디). live 핀은 만들 때, 모든 핀은 PATCH /pins/{pinId}로 쓴다(#466). 없을 수 있다 */
             memo?: string;
             /** @description live 핀만 — 카카오 장소 ID. 화면이 위치를 다시 찾는 열쇠다 */
             kakao_place_id?: string;
@@ -2109,7 +3044,7 @@ export interface components {
             search_query?: string;
             /** @description 자체 DB 장소의 이름 (#191). 핀에 따로 저장하지 않고 장소에서 가져온다. live 핀에는 없다(#382) — 화면이 실시간 검색 결과에서 읽는다 */
             place_name?: string;
-            /** @description 매칭된 카카오 장소 페이지 링크(저장 허용). **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 매칭된 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 필드를 생략한다 */
+            /** @description 카카오 장소 페이지 링크. **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 자체 DB 핀은 매칭된 장소에 기록된 URL(저장 허용), 실시간 핀(source=live)은 kakao_place_id로 응답 때 만든다(저장하지 않음, #445). 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 필드를 생략한다 */
             place_url?: string;
             /** @description 핀을 찍은 구성원의 user_id (#26) */
             created_by: string;
@@ -2228,6 +3163,25 @@ export interface components {
             /** @description 기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (기본 15, 상한 30) */
             default_radius_walk_min?: number;
         };
+        /** @description 지난 추천 기록 한 건 (#469). 내가 요청한 run만 온다 */
+        RunSummary: {
+            id: string;
+            map_id: string;
+            category: components["schemas"]["RecommendCategory"];
+            /** @enum {string} */
+            status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
+            /** @description 지금까지의 시도 횟수(반경 넓히기·다시 추천 포함) */
+            attempt_no: number;
+            /**
+             * Format: date-time
+             * @description run을 만든 시각. 목록은 이 값의 내림차순
+             */
+            created_at: string;
+            /** @description 마지막 시도의 후보 수. done이 아니면 0 */
+            candidate_count: number;
+            /** @description 그 run에서 「지도에 올리기」로 게시한 후보 수 */
+            published_count: number;
+        };
         /** @description 구성원 충족 집계 (가드레일 5). 게시 뒤에도 유지된다 */
         MemberFulfillment: {
             /** @description 이 후보가 자기 조건을 만족시키는 구성원 수 */
@@ -2300,6 +3254,155 @@ export interface components {
                 approx_minutes: number;
             }[];
         };
+        /**
+         * @description 제안 종류. stall=반대 후 정체, split=의견 갈림, no_reaction=아직 확인되지 않은 핀, category_gap=확정 리스트에 빠진 카테고리 (docs/agent-v2.md 6절)
+         * @enum {string}
+         */
+        AgentDiagnosis: "stall" | "split" | "no_reaction" | "category_gap";
+        /** @description 서버가 렌더한 문장 한 줄. is_guess=false는 확인된 사실(「확인된 것」), true는 추정(「AI 조언」, 화면에 '추정' 표시) */
+        AgentAdviceLine: {
+            text: string;
+            is_guess: boolean;
+        };
+        /**
+         * @description 버튼 하나. 사람이 원래 하던 동작으로만 이어진다(확정, 삭제, 반응 변경, 근거 줄 빼기는 없다). FE가 하는 일은 docs/agent-v2.md 16.3 표.
+         *     open_recommend → AI 추천 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/runs`. show_pins → 지도 탭 필터. search_place → 장소 검색 시트.
+         *     open_route → 리스트 탭 동선. widen_radius → 기존 반경 넓히기. open_evidence → 근거 확인 화면.
+         */
+        AgentAction: {
+            /** @description accept 요청의 action_index */
+            index: number;
+            /** @enum {string} */
+            type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence";
+            /** @description 버튼 문구(서버 렌더). 예: "음식점 추천 받기", "미확인 핀 보기" */
+            label: string;
+            /** @description type마다 쓰는 것만 채운다 */
+            params: {
+                category?: components["schemas"]["Category"];
+                /** @description show_pins: 보여 줄 핀 */
+                pin_ids?: string[];
+                /** @description show_pins: 내가 아직 반응하지 않은 핀만 */
+                unseen_only?: boolean;
+                /** @description widen_radius, open_evidence: 대상 run */
+                run_id?: string;
+                /** @description open_evidence: 강조할 근거 줄. 요청자 본인이 쓴 줄만 들어간다(근거 줄 빼기는 쓴 사람만, docs/permissions.md) */
+                evidence_line_ids?: string[];
+            };
+        };
+        /** @description 의견 갈림의 충돌 지점 하나. 이름 대신 ♥ 쪽 / 🚫 쪽으로 보여 준다. 문구는 서버 렌더 */
+        AgentConflictAxis: {
+            /** @description 예: "조용한 곳" */
+            label: string;
+            /** @description ♥ 쪽. 예: "원함 2" */
+            like_side: string | null;
+            /** @description 🚫 쪽. 예: "원하지 않음 1" */
+            against_side: string | null;
+        };
+        /** @description split 제안에만 붙는다. 충돌 종류는 코드가 ②의 키와 방향으로 정한다(docs/agent-v2.md 6.3) */
+        AgentAnalysis: {
+            /**
+             * @description same_axis=같은 특징을 두고 방향이 반대, different_axes=서로 다른 특징, unclear=한쪽에 키 있는 사유가 없음
+             * @enum {string}
+             */
+            conflict_type: "same_axis" | "different_axes" | "unclear";
+            axes: components["schemas"]["AgentConflictAxis"][];
+        };
+        /** @description 지도 제안. 지도당 동시에 하나. 전체 공개이고 개인 제안은 없다. 누가 수락하거나 닫았는지는 싣지 않는다 */
+        AgentSuggestion: {
+            id: string;
+            diagnosis: components["schemas"]["AgentDiagnosis"];
+            category: components["schemas"]["Category"] | null;
+            /** @description 서버 렌더. 예: "확정 리스트에 카페가 아직 없어요" */
+            title: string;
+            analysis?: components["schemas"]["AgentAnalysis"] | null;
+            advice: components["schemas"]["AgentAdviceLine"][];
+            actions: components["schemas"]["AgentAction"][];
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description 만들고 24시간 뒤. 지나면 만료(agent.resolved, status=expired)
+             */
+            expires_at: string;
+        };
+        AgentSummaryItem: {
+            fact_key?: string | null;
+            /** @description 서버 렌더. 예: "매운 곳 제외", "조용한 곳 원함" */
+            label: string;
+            /** @description 그 조건을 말한 구성원 수. 한 사람이 여러 번 말해도 1 */
+            member_count: number;
+        };
+        AgentSplitPref: {
+            fact_key?: string;
+            /** @description 예: "조용함" */
+            label: string;
+            want_count: number;
+            avoid_count: number;
+        };
+        /**
+         * @description 우리 조건 요약 — 카테고리마다 하나, 다섯 칸 (docs/agent-v2.md 8절). 칸 나누기와 개수는 코드가 ②의 키와 방향으로 한다. 구성원 이름은 없고 개수만 있다.
+         *     「이 조건으로 {category} 추천 받기」 버튼은 category가 RecommendCategory일 때만 보인다(누르면 accept 없이 바로 open_recommend).
+         */
+        AgentSummary: {
+            category: components["schemas"]["Category"];
+            /** @description 지키려는 조건(실격 조건) */
+            must_keep: components["schemas"]["AgentSummaryItem"][];
+            /** @description 2명 이상이 같은 방향으로 말한 선호 */
+            common_prefs: components["schemas"]["AgentSummaryItem"][];
+            /** @description 같은 특징에 원함과 피함이 함께 있는 선호 */
+            split_prefs: components["schemas"]["AgentSplitPref"][];
+            /** @description 칸 이름 「더 적어 주면 반영돼요」. 키 없는 사유 중 고쳐 쓰면 추천에 반영될 수 있는 것 */
+            vague_fixable: {
+                count: number;
+                /** @description 구체화 요청 문장(서버 렌더). 예: "거리 조건은 '숙소에서 걸어서 10분'처럼 적어 주세요" */
+                requests: string[];
+            };
+            /** @description 칸 이름 「추천이 거르지 않아요」. 알러지 사유(#425)와 가격 칩(#423). 원문은 싣지 않는다 */
+            not_filtered: {
+                count: number;
+                /** @description 고정 안내. 예: "알러지 같은 조건은 추천이 거르지 않아요. 가게에 직접 확인해 주세요." */
+                notices: string[];
+            };
+            /** Format: date-time */
+            updated_at: string;
+        };
+        AgentSettings: {
+            enabled: boolean;
+            /** @description 마지막으로 바꾼 구성원의 user_id. 한 번도 바꾸지 않았으면(기본값 켜짐) null */
+            updated_by?: string | null;
+            /** Format: date-time */
+            updated_at?: string | null;
+        };
+        AgentSettingsRequest: {
+            enabled: boolean;
+        };
+        AgentState: {
+            settings: components["schemas"]["AgentSettings"];
+            /** @description 지금 제안. 없으면 null. 모드가 꺼져 있으면 항상 null */
+            active_suggestion: components["schemas"]["AgentSuggestion"] | null;
+            /** @description 지금 제안이 있고 요청자가 아직 열람하지 않았으면 true — 버튼의 점. 요약 갱신에는 점을 켜지 않는다 */
+            has_unseen: boolean;
+            /** @description 요약이 만들어진 카테고리만 */
+            summaries: components["schemas"]["AgentSummary"][];
+        };
+        AgentAcceptRequest: {
+            action_index: number;
+        };
+        AgentAcceptResponse: {
+            action: components["schemas"]["AgentAction"];
+        };
+        /** @description 추천 막힘 조언 (docs/agent-v2.md 9절). 요청자에게만 보인다. 다른 구성원이 쓴 실격 조건 때문이면 버튼 없이 사실 문장만 있다(이름은 쓰지 않는다) */
+        RunAdvice: {
+            run_id: string;
+            /**
+             * @description radius=반경 밖에서 많이 빠짐, soft_relax=실격 조건이 많이 거름, vague_reason=키 없는 근거가 있음, exhausted=이미 제안·거절한 곳으로 소진
+             * @enum {string}
+             */
+            kind: "radius" | "soft_relax" | "vague_reason" | "exhausted";
+            advice: components["schemas"]["AgentAdviceLine"][];
+            /** @description widen_radius, open_evidence만 */
+            actions: components["schemas"]["AgentAction"][];
+        };
         /** @description 모든 SSE 이벤트의 공통 봉투. id는 event_log.seq와 같고 SSE의 id: 필드로 전송된다 */
         SseEnvelope: {
             /**
@@ -2310,7 +3413,7 @@ export interface components {
             event: string;
         };
         /** @description 전체 채널 이벤트 (docs/events.md). event 값으로 data 타입이 갈린다 */
-        PublicEvent: components["schemas"]["EvtPinCreated"] | components["schemas"]["EvtPinPublished"] | components["schemas"]["EvtPinDeleted"] | components["schemas"]["EvtReactionChanged"] | components["schemas"]["EvtShortlistChanged"] | components["schemas"]["EvtRouteRecalculated"] | components["schemas"]["EvtMemberJoined"] | components["schemas"]["EvtMemberLeft"] | components["schemas"]["EvtMapDeleted"] | components["schemas"]["EvtMapUpdated"] | components["schemas"]["EvtOwnerChanged"] | components["schemas"]["EvtMemberPresence"];
+        PublicEvent: components["schemas"]["EvtPinCreated"] | components["schemas"]["EvtPinPublished"] | components["schemas"]["EvtPinDeleted"] | components["schemas"]["EvtPinUpdated"] | components["schemas"]["EvtReactionChanged"] | components["schemas"]["EvtShortlistChanged"] | components["schemas"]["EvtRouteRecalculated"] | components["schemas"]["EvtMemberJoined"] | components["schemas"]["EvtMemberLeft"] | components["schemas"]["EvtMapDeleted"] | components["schemas"]["EvtMapUpdated"] | components["schemas"]["EvtOwnerChanged"] | components["schemas"]["EvtAgentSuggested"] | components["schemas"]["EvtAgentResolved"] | components["schemas"]["EvtAgentSummaryUpdated"] | components["schemas"]["EvtAgentSettingsChanged"] | components["schemas"]["EvtMemberPresence"];
         /** @description 개인 채널 이벤트 (docs/events.md, 5-5-1) */
         PrivateEvent: components["schemas"]["EvtRunProgress"] | components["schemas"]["EvtRunCandidatesReady"] | components["schemas"]["EvtRunFailed"];
         EvtPinCreated: components["schemas"]["SseEnvelope"] & {
@@ -2321,6 +3424,11 @@ export interface components {
         EvtPinPublished: components["schemas"]["SseEnvelope"] & {
             /** @constant */
             event: "pin.published";
+            data: components["schemas"]["Pin"];
+        };
+        EvtPinUpdated: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "pin.updated";
             data: components["schemas"]["Pin"];
         };
         EvtPinDeleted: components["schemas"]["SseEnvelope"] & {
@@ -2399,6 +3507,35 @@ export interface components {
                 map_id: string;
                 from_user_id: string;
                 to_user_id: string;
+            };
+        };
+        EvtAgentSuggested: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "agent.suggested";
+            data: components["schemas"]["AgentSuggestion"];
+        };
+        EvtAgentResolved: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "agent.resolved";
+            data: {
+                suggestion_id: string;
+                /** @enum {string} */
+                status: "accepted" | "dismissed" | "expired" | "superseded";
+                /** @description accepted일 때 누른 버튼의 AgentAction.type, 그 밖에는 null */
+                resolved_action_type: string | null;
+            };
+        };
+        EvtAgentSummaryUpdated: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "agent.summary_updated";
+            data: components["schemas"]["AgentSummary"];
+        };
+        EvtAgentSettingsChanged: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "agent.settings_changed";
+            data: {
+                enabled: boolean;
+                updated_by: string;
             };
         };
         EvtMemberPresence: components["schemas"]["SseEnvelope"] & {
@@ -2539,6 +3676,15 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description 이미 처리된 지도 제안 (SUGGESTION_RESOLVED, v2) — 다른 구성원이 먼저 수락하거나 닫았거나, 만료 또는 무효화됨. `GET /maps/{mapId}/agent`를 다시 받는다 */
+        SuggestionResolved: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description 기본값 원이 이미 상한(도보 30분) — 더 넓힐 수 없음 (WIDEN_LIMIT). 「근거 고치기」/「직접 찍기」로 안내 */
         WidenLimit: {
             headers: {
@@ -2651,6 +3797,7 @@ export interface components {
         PinId: string;
         RunId: string;
         CandidateId: string;
+        SuggestionId: string;
         /**
          * @description 브라우저 EventSource가 재연결 시 자동으로 보낸다. 이 seq 이후 이벤트만 재전송한다.
          *     event_log 보존기간을 넘긴 값이면 REST 재조회로 폴백한다 (docs/events.md).

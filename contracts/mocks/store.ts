@@ -22,6 +22,18 @@ export type ShortlistItem = Schemas["ShortlistItem"];
 export type Route = Schemas["Route"];
 export type Invite = Schemas["Invite"];
 export type User = Schemas["User"];
+export type AgentSettings = Schemas["AgentSettings"];
+export type AgentSuggestion = Schemas["AgentSuggestion"];
+export type AgentSummary = Schemas["AgentSummary"];
+export type RunAdvice = Schemas["RunAdvice"];
+
+/** v2 계획 보조 에이전트 제안(docs/agent-v2.md). status와 열람자는 서버 내부 값이라 응답에 싣지 않는다. */
+export interface AgentSuggestionEntity {
+  map_id: string;
+  suggestion: AgentSuggestion;
+  status: "active" | "accepted" | "dismissed" | "expired" | "superseded";
+  viewed_by: string[];
+}
 
 /** 목 서버에서 "나"로 취급하는 사용자. 기획안 6절 시나리오의 요청자다. */
 export const ME_USER_ID = "u_me";
@@ -52,6 +64,13 @@ export interface StoreState {
   routes: Record<string, Route[]>; // mapId -> 마지막으로 계산된 동선 (#30, POST로만 갱신)
   invites: Record<string, { mapId: string; expires_at: string; created_at?: string; created_by?: string; revoked?: boolean; used_count?: number }>; // token -> invite (#467)
   eventLog: EventLogEntry[]; // realtime.ts SSE 핸들러가 폴링하는 대상
+  agentSettings: Record<string, AgentSettings>; // mapId -> 모드. 없으면 켜짐(기본값)
+  agentSuggestions: Record<string, AgentSuggestionEntity>; // suggestionId -> 제안
+  agentSummaries: Record<string, AgentSummary[]>; // mapId -> 카테고리별 우리 조건 요약
+  runAdvice: Record<string, RunAdvice | null>; // runId -> 추천 막힘 조언. null이면 204
+  notifications: Schemas["Notification"][]; // 내 알림함(#470) — 목 서버는 단일 사용자라 나만 있다
+  notificationPrefs: Record<string, boolean>; // 알림 종류 -> 켜짐. 없으면 켜짐
+  feedback: { id: string; user_id: string; message: string; category: string; map_id?: string; created_at: string }[]; // #10
 }
 
 function emptyState(): StoreState {
@@ -71,6 +90,13 @@ function emptyState(): StoreState {
     routes: {},
     invites: {},
     eventLog: [],
+    agentSettings: {},
+    agentSuggestions: {},
+    agentSummaries: {},
+    runAdvice: {},
+    notifications: [],
+    notificationPrefs: {},
+    feedback: [],
   };
 }
 

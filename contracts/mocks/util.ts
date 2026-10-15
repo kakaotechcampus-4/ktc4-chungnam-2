@@ -19,6 +19,7 @@ export function pinPermissions(pin: Pin) {
     can_add_to_shortlist: pin.kind !== "확정",
     can_remove_from_shortlist: pin.kind === "확정",
     can_delete: true, // #25: 구성원 누구나
+    can_edit: pin.created_by === ME_USER_ID && pin.kind === "일반", // #466 pin.edit: 찍은 사람만, AI 추천·확정 핀은 제외
   };
 }
 

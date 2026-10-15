@@ -13,6 +13,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from agent import api as agent_api
 from auth import core
 from auth.models import User
 from common.errors import AppError
@@ -173,12 +174,16 @@ def withdraw_user(db: Session, *, user_id: str) -> User:
     모든 쓰기는 같은 트랜잭션이라 중간에 실패하면 함께 롤백된다.
 
     맨 먼저 속한 지도 행을 id 순서로 잠근다(#435) — 같은 지도의 나가기·양도와 줄을 세워 서로 어긋난
-    상태를 보지 않게 하고, 순서가 고정이라 교착도 없다."""
-    maps_api.lock_member_maps(db, user_id)
+    상태를 보지 않게 하고, 순서가 고정이라 교착도 없다.
+
+    잠근 지도 목록은 agent 정리에 그대로 넘긴다(#512) — 그 사람의 열람 기록과 그 지도들의 요약을 지운다
+    (docs/agent-v2.md 12.9)."""
+    map_ids = maps_api.lock_member_maps(db, user_id)
     row = get_active_user_or_401(db, user_id=user_id)
     maps_api.transfer_or_delete_owned_maps(db, user_id)
     pins_api.delete_reactions_by_user(db, user_id=user_id)
     recommend_api.delete_evidence_lines_by_author(db, user_id=user_id)
+    agent_api.delete_by_user(db, user_id=user_id, map_ids=map_ids)
     row.deleted_at = datetime.now(timezone.utc)
     db.flush()
     return row

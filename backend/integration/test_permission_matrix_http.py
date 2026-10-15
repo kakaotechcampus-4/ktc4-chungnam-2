@@ -52,10 +52,15 @@ def _endpoints(w):
         ("GET map", "GET", f"/maps/{m}", None),
         ("GET members", "GET", f"/maps/{m}/members", None),
         ("POST owner", "POST", f"/maps/{m}/owner", {"user_id": "user_b"}),
+
+        ("PATCH map", "PATCH", f"/maps/{m}", {"title": "새 제목"}),
         ("POST invite", "POST", f"/maps/{m}/invite", None),
+        ("GET invites", "GET", f"/maps/{m}/invites", None),
+        ("DELETE invite", "DELETE", f"/invites/{w['token']}", None),
         ("GET counts", "GET", f"/maps/{m}/counts", None),
         ("GET pins", "GET", f"/maps/{m}/pins", None),
         ("POST pin", "POST", f"/maps/{m}/pins", w["new_pin"]),
+        ("PATCH pin", "PATCH", f"/pins/{pin}", {"memo": "고침"}),
         ("DELETE pin", "DELETE", f"/pins/{pin}", None),
         ("PUT reaction", "PUT", f"/pins/{pin}/reaction", {"type": "like"}),
         ("DELETE reaction", "DELETE", f"/pins/{pin}/reaction", None),
@@ -151,3 +156,35 @@ def test_only_the_owner_can_hand_over_ownership(world):
     assert a.post(f"/maps/{m}/owner", json={"user_id": "user_b"}).status_code == 200
     assert a.get(f"/maps/{m}").json()["my_role"] == "member"
     assert b.get(f"/maps/{m}").json()["my_role"] == "owner"
+
+def test_pin_edit_is_author_only_and_never_for_ai_pins(world):
+    """핀 수정(#466, pin.edit) — 구성원이어도 남의 핀은 403이고, 게시된 AI 추천 핀은 그 핀을 올린 사람도 못 고친다."""
+    a, b, p = world["a"], world["b"], world["pin"]
+    assert b.patch(f"/pins/{p}", json={"memo": "b가 고침"}).status_code == 403
+    assert a.patch(f"/pins/{p}", json={"memo": "a가 고침"}).status_code == 403
+    for client in (a, b):
+        shown = next(x for x in client.get(f"/maps/{world['map']}/pins").json() if x["id"] == p)
+        assert shown["permissions"]["can_edit"] is False and shown["kind"] in ("AI추천", "확정")
+    mine = a.post(f"/maps/{world['map']}/pins", json=world["new_pin"]).json()["id"]
+    assert a.patch(f"/pins/{mine}", json={"memo": "내 핀"}).status_code == 200
+    assert b.patch(f"/pins/{mine}", json={"memo": "남의 핀"}).status_code == 403
+
+
+def test_only_the_owner_can_list_and_revoke_invite_links(world):
+    """초대 링크 목록·끄기(#467, invite.revoke)는 방장만 — 구성원은 403이고 링크는 그대로 켜져 있다."""
+    a, b, m, token = world["a"], world["b"], world["map"], world["token"]
+    assert b.get(f"/maps/{m}/invites").status_code == 403
+    assert b.delete(f"/invites/{token}").status_code == 403
+    assert a.get(f"/invites/{token}").status_code == 200
+    assert a.get(f"/maps/{m}/invites").status_code == 200
+    assert a.delete(f"/invites/{token}").status_code == 204
+    assert a.get(f"/invites/{token}").status_code == 410
+
+
+def test_only_the_owner_can_edit_the_map(world):
+    """지도 수정(#465, map.settings.edit)은 방장만 — 구성원은 403이고 아무것도 바뀌지 않는다."""
+    a, b, m = world["a"], world["b"], world["map"]
+    assert b.patch(f"/maps/{m}", json={"title": "b가 바꿈"}).status_code == 403
+    assert a.get(f"/maps/{m}").json()["title"] != "b가 바꿈"
+    assert b.get(f"/maps/{m}").json()["permissions"]["can_edit"] is False
+    assert a.patch(f"/maps/{m}", json={"title": "a가 바꿈"}).status_code == 200

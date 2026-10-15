@@ -14,9 +14,11 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
+import agent.models  # noqa: F401 — 지도 정리·탈퇴가 agent_* 테이블도 지운다(#512)
 import auth.models  # noqa: F401
 import common.events  # noqa: F401
 import maps.models  # noqa: F401
+import notifications.models  # noqa: F401
 import pins.models  # noqa: F401
 import places.models  # noqa: F401 — pins가 get_places(db)로 이름·URL을 읽고, recommend 통합 테스트가 자체 장소 DB를 쓴다
 import recommend.models  # noqa: F401
