@@ -25,6 +25,7 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
     ("PATCH", "/pins/{pinId}"): "#466 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/pins/{pinId}/resolve"): "#501 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/places/from-link"): "#474 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/maps/{mapId}/agent"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
