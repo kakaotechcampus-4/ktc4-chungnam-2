@@ -112,7 +112,7 @@ from datetime import timedelta
 TICK_INTERVAL_SEC = 300            # tick 주기
 LEASE_SEC = 180                    # 관찰 lease
 TICK_MAX_MAPS = 10                 # tick당 처리 지도 수 (초안, 측정 후 조정)
-AGENT_SHADOW_MODE = True           # True면 제안을 저장하되 화면과 이벤트로 내보내지 않는다
+SHADOW_DIAGNOSES = MODEL_TYPES     # 이 유형의 제안은 저장만 하고 화면과 이벤트로 내보내지 않는다. 코드 유형은 #531부터 노출, 모델 유형은 #534에서 뺀다
 AGENT_LOOP_IN_PROCESS = settings.agent_loop_in_process   # 환경 변수 AGENT_LOOP_IN_PROCESS=1로 켠다. 기본 꺼짐 (12.1)
 
 PER_MEMBER_DAILY_MODEL_USES = 4    # 개인 단위 값. 지도 상한 = 구성원 수 × 이 값
@@ -342,7 +342,7 @@ features = {
 ```
 
 ```yaml
-# backend/agent/priority_policy.yaml (초안. AI 담당이 작성하고 PM이 승인)
+# backend/agent/priority_policy.yaml (version 1, 2026-10-15 PM 승인. 변경은 PR + PM 승인)
 version: 1
 principles:            # 프롬프트에 그대로 들어간다
   - 여러 구성원에게 영향을 주는 신호를 먼저 푼다.
@@ -637,6 +637,8 @@ agent_cursors 행은 지도 생성 시가 아니라 첫 이벤트를 본 시점�
 4. no_reaction은 오늘 이미 냈으면 거른다(blocked: daily_limit).
 5. 모델 사용 상한에 도달했으면 모델 유형을 거른다(blocked: model_cap). 코드 유형은 통과하고, 우선순위는 fallback_order로 정한다.
 
+저장 단계에서 하나 더 거른다: 저장 트랜잭션이 지도 행을 잠근 뒤 모드를 다시 보고, 그사이 꺼졌으면 넣지 않는다(blocked: mode_off, #531). 모드 끄기(`PUT .../agent/settings`)도 같은 지도 행을 잠가 줄을 선다.
+
 ```python
 def backoff_until(history: list[Suggestion], diagnosis: str, category: str | None) -> datetime | None:
     streak, last_dismissed_at = 0, None
@@ -699,7 +701,7 @@ def observe_map(map_id: str, now: datetime) -> None:
         tool_log = ctx.log
         draft = core.verify_diagnosis(out, top, snap, tool_log)     # 실패면 None
     elif top and top.diagnosis in CODE_TYPES:
-        draft = core.render_template(top, snap)
+        draft = core.render_template(top)                # 슬롯 문장과 참조만. 핀 이름은 렌더 때 읽는다(#531)
 
     # 7. 저장 (짧은 쓰기 트랜잭션)
     with session_scope() as db:
@@ -709,9 +711,11 @@ def observe_map(map_id: str, now: datetime) -> None:
             draft = None                                  # outcome = stale
         service.supersede(db, supersede_ids)              # + agent.resolved
         run = service.insert_run(db, map_id, snap, signals, blocked, priority_log, tool_log, outcome)   # 제안이 run_id를 가리키므로 먼저
-        sug = service.insert_suggestion(db, draft, run, shadow=AGENT_SHADOW_MODE) if draft else None
+        if not settings_enabled(db, map_id): ...          # 잠근 뒤 모드 재확인. 꺼졌으면 blocked(mode_off)
+        shadow = top.diagnosis in SHADOW_DIAGNOSES
+        sug = service.insert_suggestion(db, draft, run, shadow=shadow) if draft else None
         # insert는 ON CONFLICT (map_id) WHERE status='active' DO NOTHING. 안 들어가면 그 run의 outcome을 blocked(active_exists)로 고친다
-        if sug and not AGENT_SHADOW_MODE:
+        if sug and not shadow:
             record_event(db, agent_suggested_event(sug))
         nca = core.next_check_at(snap, hist, now, th)    # 방금 넣은 제안의 expires_at도 후보에 넣는다
         if core.has_recent_event(snap.latest_event_at, now):   # 12.5 보완: 늦은 커밋을 다음 tick에 한 번 더 본다
@@ -843,7 +847,7 @@ CREATE TABLE agent_suggestions (
   pin_id              uuid NULL,
   fingerprint         text NOT NULL,
   evidence_hash       text NOT NULL,
-  title               text NOT NULL,      -- 렌더 결과
+  title               text NOT NULL,      -- 슬롯 문장. 렌더는 응답과 이벤트를 만들 때(#531)
   claims              jsonb NOT NULL,     -- 검증 통과분. quote는 reaction_id만(원문 없음, 2절 13번)
   analysis            jsonb NULL,         -- split의 충돌 지점 등
   advice              jsonb NOT NULL,     -- [{slot_text, is_guess}] 슬롯 문장만. 렌더 결과는 저장하지 않는다
@@ -915,7 +919,7 @@ CREATE TABLE agent_run_advice (
 
 ## 15. 이벤트
 
-전체 채널에 4종을 추가한다. 개인 채널 타입은 없다. `docs/events.md`, api-spec.yaml의 Evt* 스키마, PublicEvent oneOf에 반영했다(#510, EvtAgentSuggested 등). 모든 이벤트는 상태 변경과 같은 트랜잭션에서 `common.events.record_event`로 기록한다. `AGENT_SHADOW_MODE`에서는 내지 않는다.
+전체 채널에 4종을 추가한다. 개인 채널 타입은 없다. `docs/events.md`, api-spec.yaml의 Evt* 스키마, PublicEvent oneOf에 반영했다(#510, EvtAgentSuggested 등). 모든 이벤트는 상태 변경과 같은 트랜잭션에서 `common.events.record_event`로 기록한다. shadow 제안(`SHADOW_DIAGNOSES` 유형)은 내지 않는다. 코드 유형은 #531부터 발행한다.
 
 | type | 언제 | 페이로드 |
 | --- | --- | --- |
@@ -1004,7 +1008,7 @@ FE는 슬롯을 다루지 않는다. 서버가 렌더한 문장을 그대로 보
 12. 권한: 비구성원 404. advice는 요청자가 아니면 403. accept와 dismiss 경합 시 두 번째는 409.
 13. 추천 막힘 조언: 같은 run에 동시 요청이 와도 생성은 한 번이고 같은 결과를 돌려준다.
 14. 여행 종료와 지도 삭제: end_date 다음 날부터 관찰하지 않고 outcome=trip_ended로 끝난다. 삭제된 지도는 outcome=map_deleted로 끝나고, 모델 호출 중 삭제되면 저장 단계에서 아무것도 쓰지 않는다.
-15. shadow: `AGENT_SHADOW_MODE=True`면 제안이 저장되지만 이벤트가 없고 GET 응답에 나오지 않는다.
+15. shadow: `SHADOW_DIAGNOSES`에 든 유형의 제안은 저장되지만 이벤트가 없고 GET 응답에 나오지 않으며 view, accept, dismiss는 404다.
 16. 정리와 원문: `purge_map_data`가 그 지도의 agent_* 행을 모두 지운다. 픽스처 반응의 글이 관찰과 요약과 조언을 거친 뒤 어떤 agent_* 행의 직렬화에도 들어 있지 않다(2절 13번). 반응을 지우면 그 인용 문장이 응답에서 빠진다. 모델 문장이 슬롯 밖에서 사유를 옮겨 쓰면 문장이 제거된다.
 17. 요약 칸 나누기: #422 규칙으로 선호가 된 음식 종류 "원함"이 must_keep에 들어가지 않는다. 같은 사람이 같은 키를 두 번 말해도 1명으로 센다.
 
@@ -1038,7 +1042,7 @@ FE 담당
 
 ### M1: 지도 제안 (코드 유형 + 모델 진단 + 우선순위 + 화면)
 
-통과 조건: 모델 호출 추가 결정(#509, 완료), 새 이벤트 타입 4종과 API가 정본 문서에 반영됨(#510, 완료), priority_policy.yaml 초안을 PM이 승인
+통과 조건: 모델 호출 추가 결정(#509, 완료), 새 이벤트 타입 4종과 API가 정본 문서에 반영됨(#510, 완료), priority_policy.yaml을 PM이 승인(2026-10-15, 완료)
 
 이슈는 디렉토리와 선행 관계로 나눴다(2026-10-15). 코드 유형(no_reaction, category_gap)을 먼저 화면까지 내고, 모델 유형은 평가 뒤에 노출한다.
 

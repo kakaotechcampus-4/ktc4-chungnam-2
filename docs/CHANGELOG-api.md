@@ -2,6 +2,14 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-15 (여섯 번째), 계획 보조 에이전트 엔드포인트 실서버 연결 (#531)
+
+- **스키마 변경 없음.** #510에서 올린 agent 엔드포인트 5개(`GET /maps/{mapId}/agent`, `PUT .../agent/settings`, `POST /agent/suggestions/{id}/view|accept|dismiss`)가 실서버에 생겼다. `GET /runs/{runId}/advice`는 아직 없다(M2).
+- 지금 실서버가 내는 제안은 코드 유형 두 가지다: 반응 공백("아직 확인되지 않은 핀이 n개 있어요"), 카테고리 공백("확정 리스트에 카페가 아직 없어요"). 모델 유형(정체, 갈림)은 평가가 끝날 때까지(#534) 응답과 이벤트에 나오지 않는다. 요약(`summaries`)은 M2 전까지 빈 목록이다.
+- 동작 메모: view는 이미 처리된 제안도 204. accept의 범위 밖 `action_index`는 422(`detail: {action_index, actions}`). 만료 시각이 지난 제안은 GET에서 null이고 accept와 dismiss는 409 `SUGGESTION_RESOLVED`. 같은 값의 PUT settings는 이벤트를 내지 않는다.
+- 이벤트: `agent.suggested`, `agent.resolved`, `agent.settings_changed` 발행 시작.
+- **FE 할 일:** #516, #536을 실서버에 붙일 수 있다.
+
 ## 2026-10-15 (네 번째), 실시간 핀 승격과 주소 힌트 (#501)
 
 스펙이 먼저다. 구현은 pins·places 세션이 따로 하며, 그 전까지 `POST /pins/{pinId}/resolve`는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다.
