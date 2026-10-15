@@ -52,6 +52,7 @@ export const mapsHandlers = [
     const body = (await request.json()) as {
       title: string; start_date: string; end_date: string; region?: MapRegion;
     };
+    if (store.users[ME_USER_ID]?.is_guest) return apiError(403, "GUEST_NOT_ALLOWED", "지도를 만들려면 카카오로 로그인해 주세요"); // #472
     if (myMapCount() >= MAP_LIMIT) return mapLimitError();
     const mapId = nextId("map");
     store.maps[mapId] = {
