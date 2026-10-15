@@ -23,10 +23,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
-    ("GET", "/me/notifications"): "#470 구현 PR이 골든 패스에 넣고 지운다",
-    ("POST", "/me/notifications/read"): "#470 구현 PR이 골든 패스에 넣고 지운다",
-    ("GET", "/me/notification-prefs"): "#470 구현 PR이 골든 패스에 넣고 지운다",
-    ("PUT", "/me/notification-prefs"): "#470 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/feedback"): "#10 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/pins/{pinId}/resolve"): "#501 구현 PR이 골든 패스에 넣고 지운다",
@@ -385,6 +381,56 @@ def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
     assert routes.status_code == 200
     ordered = [pin_id for route in routes.json() for pin_id in route["ordered_pin_ids"]]
     assert live_id not in ordered                                                     # 동선에서는 빠진다
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
+def test_notification_responses_match_the_openapi_spec(clients, db_session):
+    """알림함·알림 설정(#470) — 다른 모듈의 호출 연결은 아직 없으므로 notify를 직접 불러 알림을 만든다.
+    행위자 본인 제외와 꺼 둔 종류 거르기, 읽음 처리, 페이지 넘기기까지 응답이 Notification·NotificationList 스키마에 맞는다."""
+    from notifications import api as notifications_api
+
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "성수", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    empty = a.get("/me/notifications")
+    assert empty.status_code == 200 and empty.json() == {"items": [], "unread_count": 0}
+
+    def notify(user_id, type, actor_id, **kwargs):
+        return notifications_api.notify(
+            db_session, user_id=user_id, type=type, map_id=map_id, map_title="성수", actor_id=actor_id,
+            message=notifications_api.compose_message(type, actor_name="영희"), **kwargs)
+
+    assert notify("user_a", "pin_reaction", "user_b", pin_id="pin_1") is not None
+    assert notify("user_a", "member_joined", "user_b") is not None
+    assert notify("user_a", "pin_reaction", "user_a", pin_id="pin_1") is None        # 내가 한 일은 나에게 없다
+    assert notify("user_b", "owner_changed", None) is not None
+
+    listed = a.get("/me/notifications", params={"limit": 1})
+    assert listed.status_code == 200
+    body = listed.json()
+    assert body["unread_count"] == 2 and len(body["items"]) == 1 and body["next_before"]
+    assert body["items"][0]["type"] == "member_joined" and body["items"][0]["read"] is False
+    older = a.get("/me/notifications", params={"limit": 1, "before": body["next_before"]}).json()
+    assert older["items"][0]["type"] == "pin_reaction" and older["items"][0]["pin_id"] == "pin_1"
+    assert "next_before" not in older
+    assert a.get("/me/notifications", params={"limit": 0}).status_code == 422
+    assert a.get("/me/notifications", params={"before": "nope"}).status_code == 422
+
+    assert a.post("/me/notifications/read", json={"ids": [body["items"][0]["id"]]}).status_code == 204
+    assert a.get("/me/notifications", params={"unread_only": True}).json()["unread_count"] == 1
+    assert a.post("/me/notifications/read", json={"ids": ["x"] * 101}).status_code == 422
+    assert b.get("/me/notifications").json()["unread_count"] == 1                    # 남의 알림은 읽히지 않는다
+    assert a.post("/me/notifications/read").status_code == 204                       # 생략하면 전부
+    assert a.get("/me/notifications").json()["unread_count"] == 0
+
+    prefs = a.get("/me/notification-prefs")
+    assert prefs.status_code == 200 and all(p["enabled"] for p in prefs.json()["prefs"])
+    off = a.put("/me/notification-prefs", json={"prefs": [{"type": "pin_reaction", "enabled": False}]})
+    assert off.status_code == 200 and off.json()["prefs"][0] == {"type": "pin_reaction", "enabled": False}
+    assert a.put("/me/notification-prefs", json={"prefs": []}).status_code == 422
+    assert notify("user_a", "pin_reaction", "user_b", pin_id="pin_1") is None        # 끈 종류는 만들지 않는다
+    assert a.get("/me/notifications").json()["unread_count"] == 0
 
     unique = list(dict.fromkeys(problems))
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
