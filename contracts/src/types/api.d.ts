@@ -874,6 +874,7 @@ export interface paths {
                     };
                 };
                 429: components["responses"]["RateLimited"];
+                503: components["responses"]["PlacesUnavailable"];
             };
         };
         put?: never;

@@ -67,6 +67,12 @@
 - **에러 코드**: `RUN_NOT_FINISHED`(409). `common/errors.py` CATALOG도 함께 맞췄다.
 - **FE 할 일:** #482(지난 추천 기록), #484(내보내기). 목 서버에서 먼저 붙일 수 있다.
 
+## 2026-10-15 (네 번째), `GET /places/nearest` 구현에 맞춘 보정 (#473)
+
+- 응답에 `503 PLACES_UNAVAILABLE`을 추가했다(자체 DB를 못 읽을 때 — `GET /places/search`와 같다). 그 외 계약은 그대로다.
+- 결과의 `place_id`는 `own:<자체 DB 장소 UUID>`, `place_source.provider`는 `permit`·`tourapi`, `place_source.url`은 없다. 그대로 `POST /maps/{mapId}/pins`의 `source: search`로 보내면 된다(`own:` ID는 카카오 ID로 기록되지 않는다).
+- 호출 상한은 `GET /places/search`와 같은 사용자별 버킷을 쓴다. 누른 좌표는 uvicorn 접근 로그의 쿼리스트링에서도 지운다.
+
 ## 2026-10-13 (두 번째), V2 핀: 핀 수정·지도를 눌러 핀·링크 해석 (#466, #473, #474)
 
 스펙이 먼저다. 구현은 이슈별로 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다.

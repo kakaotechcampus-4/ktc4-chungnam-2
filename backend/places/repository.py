@@ -45,6 +45,17 @@ def _chunks(items: Sequence, size: int = _CHUNK):
 # ------------------------------------------------------------------ 적재 (load 스크립트)
 
 @dataclass(frozen=True)
+class NearestRow:
+    place_id: str
+    name: str
+    category: str
+    address: str | None
+    source: str
+    lat: float
+    lng: float
+
+
+@dataclass(frozen=True)
 class PlaceUpsertResult:
     inserted: int
     updated: int
@@ -259,6 +270,28 @@ def search_nearby_own(db: Session, category: str, areas: Sequence[Area]) -> list
         select(Place.id, lat, lng).where(Place.status == "open", Place.category == category, or_(*circles))
     ).all()
     return [PlaceRef(str(r.id), r.lat, r.lng) for r in rows]
+
+
+def find_nearest(db: Session, lat: float, lng: float, category: str | None, radius_m: float, limit: int) -> list[NearestRow]:
+    """누른 좌표 반경 안의 영업 중 장소를 가까운 순으로. ST_DWithin이 GiST 인덱스(idx_places_geom)를 탄다.
+    좌표는 쿼리 파라미터로만 쓰고 어디에도 남기지 않는다(#473)."""
+    rows = db.execute(_nearest_stmt(lat, lng, category, radius_m, limit)).all()
+    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng) for r in rows]
+
+
+def _nearest_stmt(lat: float, lng: float, category: str | None, radius_m: float, limit: int):
+    point = _geog(lat, lng)
+    p_lat, p_lng = _lat_lng()
+    stmt = (
+        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng,
+               func.ST_Distance(Place.geom, point).label("dist"))
+        .where(Place.status == "open", func.ST_DWithin(Place.geom, point, radius_m))
+        .order_by(func.ST_Distance(Place.geom, point), Place.id)
+        .limit(limit)
+    )
+    if category is not None:
+        stmt = stmt.where(Place.category == category)
+    return stmt
 
 
 def get_facts(db: Session, place_ids: Sequence[str]) -> dict[str, list[FactLabel]]:

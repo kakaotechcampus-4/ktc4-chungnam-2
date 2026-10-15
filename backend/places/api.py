@@ -19,7 +19,7 @@ from places.ratelimit import SlidingWindowLimiter
 from places.samples import search_samples
 from places.matching import Candidate
 from places.schemas import (
-    Area, FactLabel, LinkParseResult, PlaceHint, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult, ResolvedCoords,
+    Area, FactLabel, LinkParseResult, PlaceHint, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult, PlaceSourceInfo, ResolvedCoords,
 )
 from places.service import PlaceService, to_result
 from places.sources.base import PlaceSource
@@ -135,6 +135,34 @@ def pinnable_flags(hints: Sequence[PlaceHint], *, db: Session | None = None) -> 
     for i, cands in zip(own, candidates):
         flags[i] = matching.pick_match(hints[i], cands) is not None
     return flags
+
+
+NEAREST_RADIUS_M = 100.0   # GET /places/nearest 반경(#473)
+NEAREST_MAX = 5
+_NEAREST_FETCH = 10        # pinnable이 아닌 곳을 걸러 내도 NEAREST_MAX를 채우도록 조금 더 읽는다
+
+
+def nearest_own_places(lat: float, lng: float, category: str | None, *, db: Session | None = None) -> list[PlaceSearchResult]:
+    """누른 좌표 100m 안의 자체 DB 장소를 가까운 순 최대 5곳. 핀으로 만들 수 있는(pinnable) 곳만, 없으면 빈 배열.
+    카카오 값을 쓰지 않고 좌표를 저장·로깅하지 않는다. 읽기 전용."""
+    if category is not None and category not in matching.OWN_CATEGORIES:
+        return []   # 숙소·기타는 자체 DB에 없다
+    with _session(db) as s:
+        rows = repository.find_nearest(s, lat, lng, category, NEAREST_RADIUS_M, _NEAREST_FETCH)
+        if not rows:
+            return []
+        # 핀 생성이 같은 힌트(자기 이름·좌표)로 match_place를 부르므로, 거기서 거절될 곳(동명 점포 등)은 미리 뺀다
+        hints = [PlaceHint(f"own:{r.place_id}", r.name, r.lat, r.lng, r.category) for r in rows]
+        candidates = repository.find_candidates_many(s, hints)
+    flags = [matching.pick_match(h, c) is not None for h, c in zip(hints, candidates)]
+    return [
+        PlaceSearchResult(
+            place_id=f"own:{r.place_id}", place_name=r.name[:100], lat=r.lat, lng=r.lng, category=r.category,
+            address=r.address[:200] if r.address else None,
+            place_source=PlaceSourceInfo(provider=r.source), pinnable=True,
+        )
+        for r, ok in zip(rows, flags) if ok
+    ][:NEAREST_MAX]
 
 
 def get_places(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceInfo]:

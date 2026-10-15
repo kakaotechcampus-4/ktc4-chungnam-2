@@ -431,6 +431,7 @@ paths:
                 maxItems: 5
                 items: { $ref: "#/components/schemas/PlaceSearchResult" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/PlacesUnavailable" }
 
   /places/from-link:
     post:
