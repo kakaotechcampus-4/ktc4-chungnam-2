@@ -305,3 +305,7 @@ fallback·타 라우트 인증 유지. `KNOWN_MISSING`에서 `("get", "/invites/
 **통합**: `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 두 항목 제거, 골든 패스·권한 행렬에 호출과 방장 전용 테스트 추가.
 
 **루트 확인 사항 없음.** 복잡도 예상 2 / 실제 2.
+
+## auth가 추가한 api 함수 2개 (#472, 루트 승인)
+
+`maps/api.py`에 `check_invite(db, token)`(수락 가능 여부만 확인, 404·410)·`accept_invite(db, *, token, user_id) -> Map`(`service.accept_invite` 위임)을 auth가 추가했다 — `POST /auth/guest`가 쓴다. 로직은 service에 그대로 있다.

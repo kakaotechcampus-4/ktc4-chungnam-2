@@ -116,3 +116,11 @@ def display_name_from_kakao_profile(profile: dict) -> str:
     if nickname:
         return nickname
     return f"user_{profile['id']}"
+
+
+GUEST_LIMIT_PER_INVITE = 10   # 초대 토큰 하나로 만들 수 있는 게스트 수(#472)
+LAST_SEEN_REFRESH_SECONDS = 60 * 60 * 24   # last_seen_at은 하루 한 번만 갱신한다
+
+
+def should_refresh_last_seen(last_seen_at: datetime | None, now: datetime) -> bool:
+    return last_seen_at is None or (now - last_seen_at).total_seconds() >= LAST_SEEN_REFRESH_SECONDS

@@ -18,6 +18,7 @@ from authz.policy import Role
 from maps import service
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
+from maps.schemas import Map
 
 
 class DbMembershipGateway:
@@ -94,3 +95,16 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(maps.purge, #431) — 이 지도들의 invites·memberships·maps만 지우고 테이블 이름 → 지운 행 수를
     돌려준다. 삭제되지 않은(deleted_at이 없는) 지도가 섞여 있으면 ValueError. 커밋하지 않는다."""
     return service.purge_map_data(db, map_ids=map_ids)
+
+
+def check_invite(db: Session, token: str) -> None:
+    """초대 토큰이 지금 수락 가능한지만 확인한다(#472, auth가 추가한 위임) — 없거나 삭제된 지도의 토큰은 404
+    INVITE_NOT_FOUND, 끈 링크는 410 INVITE_REVOKED, 만료는 410 INVITE_EXPIRED. 쓰기 없음. 게스트 계정을 만들기
+    전에 부른다(GUEST_LIMIT 409보다 이 404·410이 먼저)."""
+    service._acceptable_invite_or_raise(db, token)
+
+
+def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
+    """POST /invites/{token}/accept와 같은 흐름(#472, auth가 추가한 위임) — 구성원 가입, used_count, member.joined
+    이벤트, 방장 알림까지 한 트랜잭션. 커밋은 호출자가 한다."""
+    return service.accept_invite(db, token=token, user_id=user_id)

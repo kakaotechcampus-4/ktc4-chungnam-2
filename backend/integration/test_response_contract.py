@@ -23,7 +23,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
-    ("POST", "/auth/guest"): "#472 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/runs/{runId}/advice"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
@@ -255,6 +254,12 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert anon_client.get("/maps").status_code == 401
     assert b.get(f"/maps/{map_id}").status_code == 404          # 비구성원은 존재를 모른다
     assert b.post(f"/invites/{token}/accept").status_code == 200
+
+    # 게스트 참여(#472) — 로그인 없이 이름만으로 같은 초대에 들어간다. 에러 봉투도 함께 본다
+    guest = anon_client.post("/auth/guest", json={"display_name": "손님", "invite_token": token})
+    assert guest.status_code == 201 and guest.json()["user"]["is_guest"] is True
+    assert anon_client.post("/auth/guest", json={"display_name": "손님", "invite_token": "no-such-token"}).status_code == 404
+    assert anon_client.post("/auth/guest", json={"display_name": " ", "invite_token": token}).status_code == 422
 
     # 이름 수정(계정 단위)
     assert a.patch("/auth/me", json={"display_name": "철수2"}).status_code == 200
