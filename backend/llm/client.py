@@ -13,13 +13,18 @@
 import json
 import logging
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Mapping, Optional, Sequence
 
 from openai import APITimeoutError, OpenAI
 
 from common.settings import settings
-from llm.prompts import AGENT_PRIORITIZE_PROMPT, PLAN_EVIDENCE_PROMPT
-from llm.schemas import AgentFailureReason, DiagnosisOutput, PlanningOutput, PriorityOutput
+from llm.prompts import (
+    AGENT_DIAGNOSE_PROMPT_VERSION, AGENT_PRIORITIZE_PROMPT, AGENT_PRIORITIZE_PROMPT_VERSION, PLAN_EVIDENCE_PROMPT,
+)
+from llm.schemas import AgentFailureReason, AgentUsage, DiagnosisOutput, PlanningOutput, PriorityOutput
 
 # POST /runs 요청 안에서 동기로 도는 호출이라 길게 기다리지 않는다. 재시도도 안 한다 —
 # 실패하면 어차피 RECOMMEND_FAILED이고, 재시도는 요청 지연만 두 배로 만든다.
@@ -149,14 +154,47 @@ def _agent_failure_reason(exc: BaseException) -> AgentFailureReason:
     return "call_failed"
 
 
-def _agent_parse(client: Any, *, what: str, context: str, **kwargs: Any) -> Any:
+# agent 호출 한 번의 사용량 모으기(#564). service.agent_prioritize·agent_diagnose가 metering()으로 열고, 그 안의 왕복마다
+# _agent_parse가 더한다. planner 시그니처를 바꾸지 않고 모으려고 컨텍스트 변수를 쓴다(스텁 planner는 닿지 않아 0이다).
+_usage_meter: ContextVar[Optional[AgentUsage]] = ContextVar("agent_usage_meter", default=None)
+
+
+@contextmanager
+def metering() -> Iterator[AgentUsage]:
+    """이 블록 안의 에이전트 왕복 사용량을 내준 AgentUsage에 더한다. 블록이 예외로 끝나도 그때까지 더한 값은 남는다."""
+    usage = AgentUsage()
+    token = _usage_meter.set(usage)
+    try:
+        yield usage
+    finally:
+        _usage_meter.reset(token)
+
+
+def _meter_request(prompt_version: str) -> None:
+    usage = _usage_meter.get()
+    if usage is not None:
+        usage.model = settings.llm_model
+        usage.prompt_version = prompt_version
+
+
+def _meter_response(completion: Any) -> None:
+    usage = _usage_meter.get()
+    counts = getattr(completion, "usage", None)
+    if usage is not None and counts is not None:
+        usage.tokens_in += getattr(counts, "prompt_tokens", None) or 0
+        usage.tokens_out += getattr(counts, "completion_tokens", None) or 0
+
+
+def _agent_parse(client: Any, *, what: str, context: str, prompt_version: str, **kwargs: Any) -> Any:
     """에이전트 호출 한 번(chat.completions.parse). 응답 message를 돌려준다 — parsed가 있거나 도구 호출이 있다.
 
     로그는 ②와 같은 규칙이다(#390): 실패는 모델명·예외 클래스·status_code·request_id·소요 ms만, 성공은 토큰 수만 남긴다.
-    입력(신호, 사유)과 응답 본문은 남기지 않는다."""
+    입력(신호, 사유)과 응답 본문은 남기지 않는다. 사용량은 응답이 오면 거절·빈 응답이어도 더한다(#564)."""
     started = time.monotonic()
+    _meter_request(prompt_version)
     try:
         completion = client.chat.completions.parse(model=settings.llm_model, **kwargs)
+        _meter_response(completion)
         message = completion.choices[0].message
     except Exception as exc:  # noqa: BLE001 — 예상 못 한 예외도 원인 타입만 남기고 같은 실패로 올린다
         log.warning(
@@ -185,7 +223,7 @@ def call_agent_priority(
     """신호 순위 한 번. 신호와 원칙은 JSON 문자열로만 넘긴다(프롬프트에 섞지 않는다)."""
     payload = json.dumps({"principles": list(principles), "signals": list(signals)}, ensure_ascii=False, default=str)
     message = _agent_parse(
-        client, what="에이전트 우선순위", context=f"signals={len(signals)}",
+        client, what="에이전트 우선순위", context=f"signals={len(signals)}", prompt_version=AGENT_PRIORITIZE_PROMPT_VERSION,
         messages=[
             {"role": "system", "content": AGENT_PRIORITIZE_PROMPT},
             {"role": "user", "content": payload},
@@ -206,6 +244,7 @@ def call_agent_diagnosis_turn(
     세는 편이 단순하다. 엘리스 API는 이 값을 받는다(2026-10-15 확인)."""
     return _agent_parse(
         client, what="에이전트 진단", context=f"turn={turn} tool_choice={tool_choice}",
+        prompt_version=AGENT_DIAGNOSE_PROMPT_VERSION,
         messages=list(messages),
         tools=list(tools),
         tool_choice=tool_choice,
