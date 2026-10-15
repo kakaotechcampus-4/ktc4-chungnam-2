@@ -34,7 +34,9 @@ import는 `from notifications import api as notifications_api`만 쓴다(models�
 `message`는 이 함수로 만든다. 문장 틀에 넣을 수 있는 값이 행위자 이름·지도 제목·반응 종류(`like`·`dislike`)뿐이라
 **반대 사유 원문과 핀 메모가 알림함에 새지 않는다.** 직접 문장을 쓰지 않는다. 행위자 이름은 `auth.api.display_names`로 얻는다.
 
-### 호출 연결 — 각 모듈 세션이 따로 건다 (이 PR에서는 하지 않았다)
+### 호출 연결 — 연결 완료(루트, #470 후속)
+
+연결됨: `pin_reaction`(pins `set_reaction`, 작성자가 아직 구성원이고 탈퇴하지 않았을 때만), `member_joined`·`owner_changed`·`map_deleted`(maps 초대 수락·직접 넘기기·나가기·탈퇴 위임·지도 삭제), 탈퇴 시 `delete_by_user`(auth). 반응 종류 값은 API와 같은 `like`·`against`다(`dislike`도 받는다). **`my_ai_pin_published`는 연결하지 않았다** — 「지도에 올리기」는 요청자만 누를 수 있어 올린 사람이 늘 요청자 본인이고 본인 알림은 만들지 않으므로 지금 생길 일이 없다(타입은 스펙에 남겨 둔다). 통합 테스트는 `integration/test_notification_wiring.py`. 아래 표는 설계 당시 기록이다.
 
 | 종류 | 부르는 곳 | 수신자 | actor_id | 비고 |
 |---|---|---|---|---|

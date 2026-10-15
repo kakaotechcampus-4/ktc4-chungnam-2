@@ -55,6 +55,11 @@ def count_members(db: Session, map_id: str) -> int:
     return service.member_count(db, map_id)
 
 
+def get_map_title(db: Session, map_id: str) -> str | None:
+    """지도 제목(없거나 삭제된 지도는 None). 읽기 전용 — 알림 문장·확정 리스트 내보내기 파일명이 쓴다."""
+    return service.get_map_title(db, map_id=map_id)
+
+
 def get_map_for_agent(db: Session, map_id: str) -> dict | None:
     """agent 스냅샷(docs/agent-v2.md 12.7, #522)이 부른다. 읽기 전용, 커밋하지 않는다.
     `{map_id, start_date, end_date, deleted: bool, members: [{user_id, joined_at}]}`. 구성원은 지금 구성원만

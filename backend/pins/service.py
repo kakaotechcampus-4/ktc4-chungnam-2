@@ -19,6 +19,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import api as auth_api
+from maps import api as maps_api
+from notifications import api as notifications_api
 from places import api as places_api
 from places.schemas import PlaceHint, PlaceInfo
 from authz.core import Principal
@@ -543,6 +545,22 @@ def _reaction_counts_for_pin(db: Session, pin_id: uuid.UUID) -> core.ReactionCou
     return core.ReactionCounts(like=row.like, against=row.against)
 
 
+def _notify_pin_author(db: Session, *, pin: PinRow, actor_id: str, actor_name: str | None, reaction: str) -> None:
+    """내 핀에 반응이 달렸다는 알림(#470). 핀 작성자가 아직 이 지도의 구성원이고 탈퇴하지 않았을 때만 쓴다 —
+    나간·탈퇴한 사람의 알림함에 새 줄을 만들지 않는다. 문장에는 반응 종류만 들어가고 사유·메모는 넣지 않는다.
+    본인 반응과 끈 종류는 notify가 거른다."""
+    author = pin.created_by
+    if author == actor_id or author not in maps_api.DbMembershipGateway(db).current_member_ids(pin.map_id):
+        return
+    if author in auth_api.withdrawn_user_ids(db, [author]):
+        return
+    notifications_api.notify(
+        db, user_id=author, type="pin_reaction", map_id=pin.map_id, map_title=maps_api.get_map_title(db, pin.map_id),
+        message=notifications_api.compose_message("pin_reaction", actor_name=actor_name, reaction=reaction),
+        pin_id=str(pin.id), actor_id=actor_id,
+    )
+
+
 def set_reaction(db: Session, pin: PinRow, viewer_id: str, req: ReactionRequest) -> Reaction:
     core.validate_reactable(pin.category)
     core.validate_reaction(req.type, req.reason_text, req.reason_chip_ids)
@@ -575,6 +593,7 @@ def set_reaction(db: Session, pin: PinRow, viewer_id: str, req: ReactionRequest)
     record_event(db, core.reaction_changed_event(
         str(pin.id), pin.map_id, summary, viewer_id, display_name, req.type,
     ))
+    _notify_pin_author(db, pin=pin, actor_id=viewer_id, actor_name=display_name, reaction=req.type)
 
     return Reaction(
         pin_id=str(pin.id), user_id=viewer_id, type=req.type,

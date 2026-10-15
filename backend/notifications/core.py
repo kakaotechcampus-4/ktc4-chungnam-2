@@ -19,12 +19,12 @@ DEFAULT_ACTOR = "구성원"
 
 # 문장은 서버가 만든다. 반대 사유 원문·핀 메모를 받는 자리를 일부러 두지 않는다 — 문장 틀에 넣을 수 있는 값은
 # 행위자 이름·지도 제목·반응 종류뿐이다.
-_REACTION_PHRASES = {"like": "♥를", "dislike": "🚫 반대를"}
+_REACTION_PHRASES = {"like": "♥를", "against": "🚫 반대를", "dislike": "🚫 반대를"}   # 반응 API의 값은 like·against
 
 
 def compose_message(type: str, *, actor_name: str | None = None, map_title: str | None = None,
                     reaction: str | None = None) -> str:
-    """알림 문장. `reaction`은 pin_reaction에서만 쓰며 "like"·"dislike" 외의 값은 일반 문장으로 돌린다."""
+    """알림 문장. `reaction`은 pin_reaction에서만 쓰며 "like"·"against"("dislike"도 받는다) 외의 값은 일반 문장으로 돌린다."""
     actor = (actor_name or "").strip() or DEFAULT_ACTOR
     if type == "pin_reaction":
         phrase = _REACTION_PHRASES.get(reaction or "", "반응을")
