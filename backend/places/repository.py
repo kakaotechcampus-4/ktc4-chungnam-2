@@ -113,6 +113,8 @@ def upsert_places(db: Session, rows: Sequence[PlaceRow], *, existing_mode: str =
                 category_changed += place.category != r.category
             place.name, place.category, place.address, place.phone = r.name, r.category, r.address, r.phone
             place.geom, place.status = _point(r.lat, r.lng), "open"   # kakao_* 는 건드리지 않는다
+            if existing_mode == "overwrite":
+                place.curated = True   # 정예 적재가 켠다. 커버리지(keep)·재계산은 끄지 않는다 — 한 번 true면 유지(#561 후속)
         db.flush()
     return PlaceUpsertResult(inserted, updated, closed_marked, closed_ignored, category_kept, existing_kept, name_changed, category_changed)
 
@@ -307,20 +309,14 @@ class RecomputeResult:
 def recompute_can_recommend(db: Session, *, dry_run: bool = False) -> RecomputeResult:
     """전체 장소의 can_recommend를 core 규칙으로 다시 계산해 바뀐 행만 갱신한다. 멱등. 커밋하지 않는다.
 
-    정예 여부는 "출처(label_source)가 없는 라벨 행이 하나라도 있는가"로 가른다 — 정예 납품본은 근거 없는 unknown 행을
-    항상 담고, 인허가 커버리지 라벨은 근거 없으면 넣지 않는다(#499). 정예 파일 소속 15,181곳과 양방향 차이 0으로 확인했다
-    (places/for_Root.md). 폐업 장소도 계산한다(다시 열릴 때 값이 맞도록)."""
+    정예 여부는 places.curated다(`--authoritative` 적재가 켠다). 폐업 장소도 계산한다(다시 열릴 때 값이 맞도록)."""
     agg = (
-        select(
-            PlaceFact.place_id,
-            func.count().filter(PlaceFact.confidence == "known").label("known"),
-            func.bool_or(PlaceFact.label_source.is_(None)).label("curated"),
-        )
+        select(PlaceFact.place_id, func.count().filter(PlaceFact.confidence == "known").label("known"))
         .group_by(PlaceFact.place_id)
         .subquery()
     )
     rows = db.execute(
-        select(Place.id, Place.category, Place.can_recommend, func.coalesce(agg.c.known, 0), func.coalesce(agg.c.curated, False))
+        select(Place.id, Place.category, Place.can_recommend, func.coalesce(agg.c.known, 0), Place.curated)
         .outerjoin(agg, agg.c.place_id == Place.id)
     ).all()
     counts: dict[tuple[str, bool], int] = {}

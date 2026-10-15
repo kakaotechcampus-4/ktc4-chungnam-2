@@ -36,15 +36,13 @@ def test_thresholds_live_in_one_constant(monkeypatch):
 # ---- DB 헬퍼 ----
 
 def _place(db, name, category="음식점", status="open", dlat=0.0, labels=0, curated=False):
-    """labels: 확정 라벨 수. curated면 출처 없는 unknown 행을 하나 더 넣는다(정예 납품본의 모양)."""
-    p = Place(source="permit", source_id=uuid.uuid4().hex, name=name, category=category, status=status,
+    """labels: 확정 라벨 수. curated면 places.curated를 켠다(정예 적재가 켜는 값)."""
+    p = Place(source="permit", source_id=uuid.uuid4().hex, name=name, category=category, status=status, curated=curated,
               geom=f"SRID=4326;POINT({LNG} {LAT + dlat})")
     db.add(p)
     db.flush()
     for i in range(labels):
         db.add(PlaceFact(place_id=p.id, fact_key=f"k{i}", value=True, confidence="known", source_layer=3, label_source="license_area"))
-    if curated:
-        db.add(PlaceFact(place_id=p.id, fact_key="unk", value=None, confidence="unknown", source_layer=3, label_source=None))
     db.flush()
     return p
 
@@ -68,7 +66,7 @@ def test_recompute_applies_thresholds_and_reports_counts_per_category(db_session
 
 
 def test_curated_rows_are_true_even_without_enough_known_labels(db_session):
-    """정예 납품본은 확정 라벨이 적어도 true — 출처 없는 라벨 행(근거 없는 unknown)으로 알아본다."""
+    """정예(places.curated)는 확정 라벨이 적어도 true."""
     curated = _place(db_session, "정예", labels=1, curated=True)
     coverage = _place(db_session, "커버리지", labels=1)
     repository.recompute_can_recommend(db_session)
@@ -162,3 +160,20 @@ def test_load_recomputes_at_the_end(db_session, capsys):
                      session_factory=lambda: db_session) == 0
     out = capsys.readouterr().out
     assert "[can_recommend]" in out and "합계:" in out
+
+
+def test_label_without_source_no_longer_means_curated(db_session):
+    """예전 휴리스틱(출처 NULL 라벨 = 정예)은 마이그레이션 되메우기에서만 쓴다 — 재계산은 places.curated만 본다."""
+    p = _place(db_session, "커버리지", labels=1)
+    db_session.add(PlaceFact(place_id=p.id, fact_key="unk", value=None, confidence="unknown", source_layer=3, label_source=None))
+    db_session.flush()
+    repository.recompute_can_recommend(db_session)
+    assert _flag(db_session, p) is False
+
+
+def test_recompute_never_turns_curated_off(db_session):
+    p = _place(db_session, "정예", curated=True)
+    repository.recompute_can_recommend(db_session)
+    repository.recompute_can_recommend(db_session)
+    db_session.expire_all()
+    assert db_session.get(Place, p.id).curated is True and db_session.get(Place, p.id).can_recommend is True
