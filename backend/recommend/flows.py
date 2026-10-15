@@ -55,6 +55,7 @@ from common.errors import AppError
 from common.events import Event, record_event
 from pins import api as pins_api
 from pins.schemas import Pin
+from places import api as places_api
 from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
 from recommend.models import RecommendRun
@@ -565,7 +566,9 @@ def _excluded_place_ids(db: Session, run: RecommendRun) -> set[str]:
        뒤에도 거절 이력이 남도록 pins가 삭제된 핀까지 돌려준다. add_exclusions는 이미 있는
        조합을 건너뛰므로 여러 번 불러도 안전하다(이미 proposed인 곳은 그대로 둔다).
     3) 이미 이 지도에 있는 핀(수동이든 게시된 것이든) — 안 빼면 게시하려는 순간 pins.unique(map_id,
-       place_id)에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정, 2026-09-23)."""
+       place_id)에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정, 2026-09-23).
+    4) 이 지도의 실시간 핀이 가리키는 가게(#569) — 실시간 핀은 place_id가 없고 카카오 ID만 있어 3)에 안 잡힌다.
+       그 카카오 ID로 매칭된 자체 DB 장소를 찾아 합친다. 깔때기에서는 「이미 제안·거절됨」에 같이 센다."""
     service.add_exclusions(
         db, map_id=run.map_id, category=run.category,
         place_ids=pins_api.list_disliked_place_ids(
@@ -573,9 +576,14 @@ def _excluded_place_ids(db: Session, run: RecommendRun) -> set[str]:
         ),
         reason="dismissed", run_id=run.id, requested_by=run.requested_by,
     )
+    live_pin_place_ids = {
+        candidate.place_id
+        for kakao_id in pins_api.list_live_kakao_place_ids(db, map_id=run.map_id)
+        for candidate in places_api.own_places_by_kakao_id(kakao_id, db=db)
+    }
     return service.list_excluded_place_ids(
         db, map_id=run.map_id, requested_by=run.requested_by,
-    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id)
+    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id) | live_pin_place_ids
 
 
 def execute_run(
