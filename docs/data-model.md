@@ -150,11 +150,16 @@ places(
   name, category('음식점'|'카페'|'관광지'), address, phone,
   geom geography(Point,4326),          -- 인허가 좌표계가 위경도가 아니면 변환해 넣는다. 좌표가 없는 행은 적재하지 않는다
   status('open'|'closed'),             -- 인허가 영업 상태. closed는 검색·추천에서 제외
+  curated boolean not null default false,
+                                        -- 정예(사람이 직접 조사·납품한 데이터)인가(2026-10-16). `--authoritative` 적재가 켠다.
+                                        -- 이름·분류·라벨을 인허가 커버리지가 덮지 못하게 하고 can_recommend 판정의 기준이다.
+                                        -- 한 번 true가 되면 커버리지 적재가 끄지 않는다. 처음 채울 때는 "출처(label_source)가 NULL인
+                                        -- 라벨 행을 가진 장소 = 정예"로 되메운다(places/for_Root.md #can_recommend 조사 결과).
   can_recommend boolean not null default false,
                                         -- AI 추천 후보 풀에 들어가도 되는 장소인가(2026-10-15 결정, 구현은 places).
                                         -- 직접 찍은 핀·검색·링크에는 영향이 없다 — 추천 후보를 고를 때만 쓴다.
                                         -- 규칙(재계산 가능한 값이다, 사람이 손으로 정하지 않는다):
-                                        --   정예 파일(--authoritative)로 적재된 행은 true.
+                                        --   정예 행(curated=true)은 true.
                                         --   그 밖에는 카테고리별 확정(known) 라벨 수가 임계 이상이면 true
                                         --   (시작값: 음식점 5개, 카페 3개 — pingo_demo 분포로 조정, 결정은 루트).
                                         --   관광지는 true. 유흥·주점류도 같은 규칙을 쓴다(제외하지 않는다).
