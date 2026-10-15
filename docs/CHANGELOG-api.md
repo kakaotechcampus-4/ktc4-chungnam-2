@@ -10,6 +10,16 @@
 - 이벤트: `agent.suggested`, `agent.resolved`, `agent.settings_changed` 발행 시작.
 - **FE 할 일:** #516, #536을 실서버에 붙일 수 있다.
 
+## 2026-10-15 (여섯 번째), 추천 상한 10회와 추천 가능 장소 (#31, 신규)
+
+스펙이 먼저다. 구현은 recommend(상한·후보 풀)와 places(`can_recommend`)가 따로 한다.
+
+- **재시도 상한 5 → 10회.** 단위는 그대로다 — 지도 안에서 구성원 각자(카테고리 무관, 새 추천·다시 추천 모두 1씩), 팀 합산 상한은 없다. 다른 사람의 시도에는 영향이 없다. 반경 넓히기(4회)는 별개다. 개인이 받은 추천은 그 사람만 보고, 「지도에 올리기」를 눌러야 모두에게 보이는 것도 그대로다.
+- **`RecommendRun.attempt_limit`, `RunSummary.attempt_limit`(선택)** — 상한을 응답으로 내려 준다. `429 RETRY_LIMIT`의 `detail`에도 `attempt_limit`. FE는 숫자를 하드코딩하지 말고 「n/10」을 이 값으로 그린다.
+- **깔때기에 단계 하나 추가**: 「추천 가능 아님 제거」(「영업 종료 제거」 다음). 라벨이 적어 추천 풀에서 빠진 장소 수다. 응답 구조는 그대로(`label`, `removed_count`).
+- **`places.can_recommend`**(docs/data-model.md, docs/constraints.md): 추천 후보 풀에만 쓰는 bool. 직접 찍은 핀·검색에는 영향이 없다. API 응답 필드는 없다.
+- **FE 할 일**: 추천 화면에 「n/10」 표시와 상한 도달 안내(문구는 `RETRY_LIMIT` 메시지 대신 `attempt_limit`으로), 깔때기 표에 새 단계가 보이는지 확인. 목 서버가 같은 규칙이다.
+
 ## 2026-10-15 (네 번째), 실시간 핀 승격과 주소 힌트 (#501)
 
 스펙이 먼저다. 구현은 pins·places 세션이 따로 하며, 그 전까지 `POST /pins/{pinId}/resolve`는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다.

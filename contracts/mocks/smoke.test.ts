@@ -122,14 +122,16 @@ describe("에러 시나리오", () => {
     const body = await res.json();
     expect(body.code).toBe("NO_RESULTS");
     expect(body.detail.funnel.length).toBeGreaterThan(0);
+    expect(body.detail.funnel.map((f: { label: string }) => f.label)).toContain("추천 가능 아님 제거");
   });
 
-  it("retry-limit — 5회 초과 시 429 RETRY_LIMIT", async () => {
+  it("retry-limit — 10회 초과 시 429 RETRY_LIMIT(detail에 attempt_limit)", async () => {
     resetScenario("retry-limit");
     const res = await fetch(`${BASE}/runs/run_retry_limit/retry`, { method: "POST" });
     expect(res.status).toBe(429);
     const body = await res.json();
     expect(body.code).toBe("RETRY_LIMIT");
+    expect(body.detail).toMatchObject({ attempt_no: 10, attempt_limit: 10 });
   });
 
   it("region-conflict — 확인 없이 confirm하면 409 REGION_CONFLICT", async () => {
