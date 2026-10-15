@@ -323,7 +323,7 @@ agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 
   policy_version null, prompt_version null, model null, used_model boolean,
   tool_calls jsonb,                   -- 도구 입력과 결과. 사유 글은 reaction_id와 글자 수로 바꿔 남긴다
   verification jsonb null, tokens_in, tokens_out,
-  outcome('no_signal'|'blocked'|'silent'|'unknown'|'invalid_schema'|'invalid_claims'|'stale'
+  outcome('no_signal'|'blocked'|'silent'|'unknown'|'invalid_schema'|'invalid_claims'|'model_failed'|'stale'
           |'suggested'|'summarized'|'advised'|'trip_ended'|'map_deleted'),
   outcome_detail jsonb null
 )
