@@ -310,15 +310,34 @@ def test_model_cap_skips_priority_model_and_blocks_model_types(world, monkeypatc
 
     assert gateway.calls == []
     run = world.one(AgentRun, map_id=map_id)
-    assert (run.priority["source"], run.priority["fallback_reason"], run.used_model) == ("fallback", "model_cap", False)
+    # 상한이면 모델 유형은 정책(12.3)에서 막혀 코드 유형만 남는다 — 우선순위는 code_only로 부르지 않는다(#534)
+    assert (run.priority["source"], run.priority["fallback_reason"], run.used_model) == ("fallback", "code_only", False)
+
+
+def silent(inp, call_tool):
+    return DiagnosisOutput(decision="silent", diagnosis=inp["diagnosis"], signal_id=inp["signal_id"],
+                           claims=[], advice=[], actions=[])
+
+
+def test_code_only_signals_skip_priority_model(world):
+    """통과한 신호가 코드 유형뿐이면 우선순위 모델을 부르지 않고 fallback_order(루트 결정, #534)."""
+    map_id = world.gap_map()   # 코드 유형 신호 둘
+    world.event(map_id)
+    gateway = FakeGateway()
+
+    assert observe(world, map_id, gateway) == "suggested"
+
+    assert gateway.calls == []
+    run = world.one(AgentRun, map_id=map_id)
+    assert (run.priority["source"], run.priority["fallback_reason"], run.used_model) == ("fallback", "code_only", False)
+    assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (None, None, 0, 0)
 
 
 def test_priority_failure_falls_back(world):
-    map_id = world.gap_map()
-    world.event(map_id)
-    gateway = FakeGateway(prioritize=lambda signals: AgentCallFailed(reason="timeout", detail="x"))
+    map_id, _, _, _ = _split_map(world)   # 모델 유형 둘(split, stall)
+    gateway = FakeGateway(diagnose=silent, prioritize=lambda signals: AgentCallFailed(reason="timeout", detail="x"))
 
-    assert observe(world, map_id, gateway) == "suggested"
+    assert observe(world, map_id, gateway) == "silent"
 
     run = world.one(AgentRun, map_id=map_id)
     assert (run.priority["source"], run.priority["fallback_reason"], run.used_model) == ("fallback", "timeout", True)
@@ -359,15 +378,15 @@ def test_failed_diagnosis_still_records_usage_spent(world):
     assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v1", 500, 80)
 
 
-def test_failed_priority_usage_is_recorded_without_diagnosis(world):
-    map_id = world.gap_map()   # 코드 유형 둘 — 진단은 부르지 않는다
-    world.event(map_id)
+def test_failed_priority_usage_is_recorded(world):
+    map_id, _, _, _ = _split_map(world)   # 진단 대역은 사용량 0이라 우선순위 사용량만 남는다
     gateway = FakeGateway(
+        diagnose=silent,
         prioritize=lambda signals: AgentCallFailed(reason="invalid_schema", detail="x"),
         priority_usage=AgentUsage(model=LUNA, prompt_version="prioritize-v1", tokens_in=70, tokens_out=0),
     )
 
-    assert observe(world, map_id, gateway) == "suggested"
+    assert observe(world, map_id, gateway) == "silent"
 
     run = world.one(AgentRun, map_id=map_id)
     assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "prioritize-v1", 70, 0)
@@ -379,7 +398,7 @@ def test_stub_and_code_only_runs_leave_usage_empty(world):
     world.event(gap_map)
 
     observe(world, stall_map, deps.FixedAgentLlmGateway())
-    observe(world, gap_map, FakeGateway())   # 상한 안이라 우선순위는 부르지만 대역의 사용량은 0
+    observe(world, gap_map, FakeGateway())   # 코드 유형만이라 우선순위도 부르지 않는다(#534)
 
     for map_id in (stall_map, gap_map):
         run = world.one(AgentRun, map_id=map_id)

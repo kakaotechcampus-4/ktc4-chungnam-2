@@ -7,8 +7,8 @@
 - 커밋은 `common.database.session_scope` 한 곳이다. 세션은 `session_factory`로 받는다(기본 SessionLocal, 테스트가
   테스트 DB로 바꾼다 — maps/purge.py와 같은 방식).
 
-**M1-2(#533) 범위**: 통과한 신호가 2개 이상이면 우선순위를 모델에 묻고(llm.agent_prioritize, 직전과 같으면 재사용,
-상한이나 실패면 fallback_order) core.choose_top이 정책으로 보정한다. 1순위가 코드 유형(no_reaction, category_gap)이면
+**M1-2(#533) 범위**: 통과한 신호가 2개 이상이고 모델 유형이 있으면 우선순위를 모델에 묻고(llm.agent_prioritize, 직전과
+같으면 재사용, 상한이나 실패면 fallback_order. 코드 유형만이면 부르지 않고 fallback_order, #534) core.choose_top이 정책으로 보정한다. 1순위가 코드 유형(no_reaction, category_gap)이면
 템플릿 초안(core.render_template), 모델 유형(stall, split)이면 진단(llm.agent_diagnose, 도구는 tools.py)을 부르고
 core.verify_diagnosis를 통과한 것만 초안이 된다. 모델은 Gateway(deps.py)가 고른다 — dev는 고정 응답 스텁이다. 한
 관찰에서 우선순위와 진단을 둘 다 불러도 모델 사용은 1회다(used_model, 3절). shadow는 유형별이다
@@ -169,7 +169,8 @@ def observe_map(
     # 4. 정책 사전 검사 (순수)
     passed, blocked = core.check_policy(signals, hist, snap, now, superseding=superseding)
 
-    # 5. 우선순위 — 2개 이상이면 모델(세션 없음, 12.6). 직전과 같으면 재사용, 상한이면 fallback_order
+    # 5. 우선순위 — 2개 이상이고 모델 유형이 있으면 모델(세션 없음, 12.6). 코드 유형만이면 부르지 않는다(#534).
+    #    직전과 같으면 재사용, 상한이면 fallback_order
     policy = core.load_policy()
     mode = core.priority_mode(
         passed, hist.last_priority, cap_reached=core.model_cap_reached(hist.model_runs_today, snap.member_count),

@@ -244,7 +244,8 @@ def test_diagnosis_input_has_ids_and_features_only():
 
     assert split["pin_id"] == "p1" and split["reaction_ids"] == ["r1", "r2", "r3"]
     assert split["comparison"] == comparison and split["category"] == "음식점"
-    assert stall["against_reaction_ids"] == ["r3"] and "pin_id" not in stall
+    assert split["place_id"] == "place_p1" and split["counts"] == {"like": 2, "against": 1}   # 필수 claim 값(#534)
+    assert stall["against_reaction_ids"] == ["r3"] and stall["against_pin_ids"] == ["p1"] and "pin_id" not in stall
     dumped = json.dumps([split, stall], ensure_ascii=False, default=str)
     for leaked in ("u1", "u2", "u3", LIKE_TEXT, AGAINST_TEXT, "last_run"):
         assert leaked not in dumped

@@ -509,10 +509,12 @@ def recheck(signal: Signal, snap: Snapshot, now: datetime, th: timedelta) -> boo
 
 
 def priority_input(signals: Sequence[Signal], policy: PriorityPolicy) -> list[dict[str, Any]]:
-    """llm.agent_prioritize에 넘길 신호(7절). 근거 id도 사유 글도 넣지 않는다 — 유형, 카테고리, 특징값뿐이다.
-    fallback_order 순서로 넘긴다 — 고정 응답 스텁(받은 순서 그대로)이 모델 없는 순위와 같아진다."""
+    """llm.agent_prioritize에 넘길 신호(7절). 근거 id도 사유 글도 넣지 않는다 — 유형, 카테고리, 특징값과 유형의
+    weight(정책의 기본 가중치, 7절 "모델 참고값")뿐이다. fallback_order 순서로 넘긴다 — 고정 응답 스텁(받은 순서
+    그대로)이 모델 없는 순위와 같아지고, 모델도 이 순서를 기본으로 본다(#534)."""
     return [
-        {"id": s.id, "diagnosis": s.diagnosis, "category": s.category, "features": dict(s.features)}
+        {"id": s.id, "diagnosis": s.diagnosis, "category": s.category, "weight": policy.weights[s.diagnosis],
+         "features": dict(s.features)}
         for s in fallback_order(signals, policy)
     ]
 
@@ -551,12 +553,15 @@ def apply_priority_rules(
 
 
 def priority_mode(passed: Sequence[Signal], previous: Mapping[str, Any] | None, *, cap_reached: bool) -> str:
-    """순위를 어떻게 정할지(7절 1~3번). none(신호 없음) | single(1개, 부르지 않음) | reused(직전 관찰과 fingerprint
-    집합이 같고 직전 순위가 모델에서 나옴) | model_cap(상한, fallback_order) | model(llm.agent_prioritize를 부른다)."""
+    """순위를 어떻게 정할지(7절 1~3번). none(신호 없음) | single(1개, 부르지 않음) | code_only(모델 유형이 없음, 부르지
+    않고 fallback_order — 루트 결정 #534) | reused(직전 관찰과 fingerprint 집합이 같고 직전 순위가 모델에서 나옴) |
+    model_cap(상한, fallback_order) | model(llm.agent_prioritize를 부른다)."""
     if not passed:
         return "none"
     if len(passed) == 1:
         return "single"
+    if not any(s.diagnosis in MODEL_TYPES for s in passed):
+        return "code_only"
     if _reusable(passed, previous):
         return "reused"
     if cap_reached:
@@ -595,7 +600,7 @@ def choose_top(
     - model: model_out(PriorityOutput)의 순서를 apply_priority_rules로 보정한다. model_out이 PriorityOutput이 아니면
       (AgentCallFailed: 호출 실패, 타임아웃, 스키마 실패) fallback_order로 정하고 그 이유를 남긴다
     - reused: 직전 관찰의 순서(fingerprint)를 그대로 쓴다
-    - single, model_cap, fallback: fallback_order
+    - single, code_only, model_cap, fallback: fallback_order. code_only와 model_cap은 source=fallback에 그 이유를 남긴다
     기록: source(어떻게 정했나), model_order, final_order, fingerprints(final_order 순서 — 다음 관찰의 재사용 판단),
     corrections, reused, fallback_reason. 사유 글은 없다."""
     if not passed:
@@ -611,8 +616,8 @@ def choose_top(
         order = fallback_order(passed, policy)
         if mode == "model":
             source, fallback_reason = "fallback", getattr(model_out, "reason", "invalid_schema")
-        elif mode == "model_cap":
-            source, fallback_reason = "fallback", "model_cap"
+        elif mode in ("model_cap", "code_only"):
+            source, fallback_reason = "fallback", mode
     log = {
         "source": source, "model_order": model_order, "final_order": [s.id for s in order],
         "fingerprints": [s.fingerprint for s in order], "corrections": corrections, "reused": mode == "reused",
@@ -713,7 +718,9 @@ def render_template(sig: Signal) -> Draft:
 def diagnosis_input(top: Signal, snap: Snapshot, comparison: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """llm.agent_diagnose에 넘길 1순위 신호. 모델에는 JSON 문자열로 그대로 간다 — 공개 데이터만 넣는다(명세 2절 2번).
     run의 존재(has_run_since)와 구성원 user_id는 넣지 않는다. 사유 글도 넣지 않는다(모델이 get_reasons로 읽는다).
-    stall은 카테고리와 🚫 반응 id, split은 핀 id와 반응 id, compare_reasons 결과(충돌 종류는 코드가 정한다, 6.3)."""
+    stall은 카테고리와 🚫 반응 id, 🚫가 달린 핀 id. split은 핀 id, place_id(실시간 핀은 None), 반응 id, 그 핀의 ♥·🚫
+    수(counts — split 필수 claim의 값), compare_reasons 결과(충돌 종류는 코드가 정한다, 6.3). 핀 id와 수, place_id를
+    넣는 것은 모델이 그것을 알려고 도구를 한 번 더 부르지 않게 하려는 것이다(#534)."""
     f = top.features
     out: dict[str, Any] = {
         "signal_id": top.id, "diagnosis": top.diagnosis, "category": top.category,
@@ -723,9 +730,14 @@ def diagnosis_input(top: Signal, snap: Snapshot, comparison: Mapping[str, Any] |
     }
     if top.diagnosis == "stall":
         out["against_reaction_ids"] = list(top.evidence_ids)
+        out["against_pin_ids"] = sorted({r.pin_id for r in snap.reactions if r.reaction_id in set(top.evidence_ids)})
     elif top.diagnosis == "split":
+        pin = snap.pin(top.pin_id)
+        reactions = snap.reactions_of(top.pin_id)
         out["pin_id"] = top.pin_id
+        out["place_id"] = pin.place_id if pin is not None else None
         out["reaction_ids"] = list(top.evidence_ids)
+        out["counts"] = {t: sum(r.type == t for r in reactions) for t in ("like", "against")}
         out["comparison"] = comparison
     return out
 

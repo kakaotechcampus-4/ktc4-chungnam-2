@@ -406,3 +406,31 @@ advice는 `[{"slot_text": "{c2}", "is_guess": false}, ...]`, claims는 `[{"id":"
   머지되면 이 PR의 diff에는 #564 커밋만 남는다
 - 테스트: agent 272개 → 280개(새로 8개: test_flows_model 5, test_core_priority 2, test_tools 1). 고친 것: test_tools의 허용
   목록 테스트(사본이 없음을 본다), test_schemas의 Fixed Gateway와 test_flows_model의 FakeGateway(AgentReply를 돌려준다)
+
+---
+
+# 루트 보고 — backend/agent (#534, M1-3 평가에 맞춘 입력과 우선순위 호출 조건)
+
+평가 결과와 노출 판단 근거는 `llm/for_Root.md` #534 절에 있다. 여기는 agent 코드에서 바뀐 것만 적는다.
+
+## 바뀐 것
+
+1. **코드 유형만이면 우선순위 모델을 부르지 않는다(루트 결정).** `core.priority_mode`에 `code_only`를 더했다. 통과한 신호가 2개
+   이상이어도 stall, split이 없으면 fallback_order로 정한다. 기록은 `priority.source="fallback"`, `fallback_reason="code_only"`,
+   `used_model=false`, 사용량 칸은 비어 있다. 판단 순서: none → single → code_only → reused → model_cap → model
+   - 영향: 상한에 걸리면 모델 유형이 정책(12.3)에서 먼저 막혀 코드 유형만 남으므로, 흐름에서 `model_cap` 모드는 더 나오지 않고
+     `code_only`로 기록된다(`priority_mode`의 model_cap 분기는 남겨 두었다)
+   - 테스트 고친 것: test_flows(코드 유형 지도는 used_model=false, source fallback), test_flows_model(우선순위 실패와 사용량 테스트를
+     모델 유형 지도로 옮김, 상한 테스트의 fallback_reason), test_core_priority(code_only 4개)
+2. **우선순위 입력에 `weight`**(정책 weights, 명세 7절 "모델 참고값"). `priority_input`의 신호 칸이 id, diagnosis, category,
+   weight, features다
+3. **진단 입력에 칸 추가**(`core.diagnosis_input`): stall은 `against_pin_ids`(🚫가 달린 핀, show_pins 근거), split은
+   `place_id`(실시간 핀은 null, get_place_facts용)와 `counts`({like, against}, split 필수 claim 값). 모두 공개 데이터다. 사유 글은
+   여전히 넣지 않는다(테스트로 고정)
+
+## 루트 확인 요청
+
+1. 명세 7절 1~3번에 "통과한 신호에 모델 유형이 없으면 부르지 않고 fallback_order(source=fallback, fallback_reason=code_only)"
+2. 명세 6.2, 6.3 또는 12.4의 진단 입력 설명에 위 3번 칸
+3. `SHADOW_DIAGNOSES`는 그대로 `MODEL_TYPES`다. 노출 전에 llm/for_Root.md #534의 1번(렌더된 인용에 지시문이 보임)을 정해 주면
+   좋겠다 — 렌더 결과에 금지 표현 검사를 거는 쪽이면 agent에서 바로 할 수 있다

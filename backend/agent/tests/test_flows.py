@@ -68,12 +68,13 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
     assert [c["value"] for c in sug.claims] == [2, 0]
     assert sug.expires_at == world.now + constants.SUGGESTION_TTL
     run = world.one(AgentRun, map_id=map_id)
-    # 신호가 둘이라 우선순위를 모델(dev는 고정 응답 스텁)에 물었다 — 모델 사용 1회(#533)
-    assert (run.outcome, run.trigger, run.snapshot_seq, run.used_model) == ("suggested", "activity", seq, True)
+    # 신호가 둘이지만 코드 유형만이라 우선순위 모델을 부르지 않는다 — 모델 사용 없음(#534)
+    assert (run.outcome, run.trigger, run.snapshot_seq, run.used_model) == ("suggested", "activity", seq, False)
     assert sug.run_id == run.id
     assert [s["diagnosis"] for s in run.signals] == ["category_gap", "category_gap"]
-    assert run.priority["final_order"] == ["s1", "s2"] and run.priority["model_order"] == ["s1", "s2"]
-    assert run.priority["source"] == "model" and run.tool_calls == [] and run.verification is None
+    assert run.priority["final_order"] == ["s1", "s2"] and run.priority["model_order"] is None
+    assert (run.priority["source"], run.priority["fallback_reason"]) == ("fallback", "code_only")
+    assert run.tool_calls == [] and run.verification is None
     [(type_, payload)] = world.agent_events(map_id)
     assert type_ == "agent.suggested"
     assert AgentSuggestionSchema.model_validate(payload).id == str(sug.id)
