@@ -158,7 +158,7 @@ def advance_cursor(
 # ---------------------------------------------------------------- 이력 (12.3)
 
 def load_history(db: Session, map_id: str, now: datetime) -> core.History:
-    """정책이 보는 이 지도의 제안 이력(최신순)과 오늘(KST 자정 이후) 모델을 쓴 관찰 수."""
+    """정책이 보는 이 지도의 제안 이력(최신순), 오늘(KST 자정 이후) 모델을 쓴 관찰 수, 직전 관찰의 순위."""
     rows = db.execute(
         select(AgentSuggestion).where(AgentSuggestion.map_id == map_id)
         .order_by(AgentSuggestion.created_at.desc(), AgentSuggestion.id)
@@ -171,6 +171,11 @@ def load_history(db: Session, map_id: str, now: datetime) -> core.History:
             AgentRun.started_at >= core.kst_day_start(now),
         )
     ).scalar_one()
+    # 직전 관찰의 순위(7절 2번 재사용). summary·run_advice 행은 순위를 정하지 않아 보지 않는다
+    last_priority = db.execute(
+        select(AgentRun.priority).where(AgentRun.map_id == map_id, AgentRun.trigger.in_(("activity", "time")))
+        .order_by(AgentRun.started_at.desc(), AgentRun.finished_at.desc().nulls_last()).limit(1)
+    ).scalar_one_or_none()
     return core.History(
         suggestions=tuple(
             core.PastSuggestion(
@@ -181,6 +186,7 @@ def load_history(db: Session, map_id: str, now: datetime) -> core.History:
             for r in rows
         ),
         model_runs_today=model_runs_today,
+        last_priority=last_priority,
     )
 
 
@@ -240,7 +246,7 @@ def insert_suggestion(
         .values(
             id=uuid.uuid4(), map_id=map_id, run_id=run_id, diagnosis=signal.diagnosis, category=signal.category,
             pin_id=uuid.UUID(signal.pin_id) if signal.pin_id else None, fingerprint=signal.fingerprint,
-            evidence_hash=signal.evidence_hash, title=draft.title, claims=draft.claims, analysis=None,
+            evidence_hash=signal.evidence_hash, title=draft.title, claims=draft.claims, analysis=draft.analysis,
             advice=draft.advice, actions=draft.actions,
             status="active", shadow=shadow, created_at=now, expires_at=now + SUGGESTION_TTL,
         )

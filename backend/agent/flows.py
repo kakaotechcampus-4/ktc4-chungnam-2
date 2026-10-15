@@ -2,13 +2,17 @@
 지키며, 판단은 core(순수)에, 읽기와 쓰기는 snapshot과 service에 맡긴다.
 
 - 요청 세션(get_db) 밖에서 돈다(12.6). 트랜잭션을 짧게 셋으로 나눈다 — ① 만료 정리 ② 스냅샷 읽기(REPEATABLE
-  READ) ③ 재확인과 저장. 모델을 부를 M1에서도 ②와 ③ 사이에는 세션이 없다.
+  READ) ③ 재확인과 저장. 모델 호출(우선순위, 진단)은 ②와 ③ 사이에 하고 그동안 세션이 없다. 도구는 자기 읽기 세션을
+  짧게 열고 닫는다(tools.py).
 - 커밋은 `common.database.session_scope` 한 곳이다. 세션은 `session_factory`로 받는다(기본 SessionLocal, 테스트가
   테스트 DB로 바꾼다 — maps/purge.py와 같은 방식).
 
-**M1-1(#531) 범위**: 모델 단계는 아직 건너뛴다. 1순위가 코드 유형(no_reaction, category_gap)이면 템플릿 초안
-(core.render_template)을 저장하고, 모델 유형(stall, split)이면 침묵(outcome=silent)으로 기록한다. 우선순위는 늘
-fallback_order다. shadow는 유형별이다(constants.SHADOW_DIAGNOSES) — shadow가 아닌 제안만 이벤트를 낸다: 저장
+**M1-2(#533) 범위**: 통과한 신호가 2개 이상이면 우선순위를 모델에 묻고(llm.agent_prioritize, 직전과 같으면 재사용,
+상한이나 실패면 fallback_order) core.choose_top이 정책으로 보정한다. 1순위가 코드 유형(no_reaction, category_gap)이면
+템플릿 초안(core.render_template), 모델 유형(stall, split)이면 진단(llm.agent_diagnose, 도구는 tools.py)을 부르고
+core.verify_diagnosis를 통과한 것만 초안이 된다. 모델은 Gateway(deps.py)가 고른다 — dev는 고정 응답 스텁이다. 한
+관찰에서 우선순위와 진단을 둘 다 불러도 모델 사용은 1회다(used_model, 3절). shadow는 유형별이다
+(constants.SHADOW_DIAGNOSES — 모델 유형은 #534까지 shadow) — shadow가 아닌 제안만 이벤트를 낸다: 저장
 (agent.suggested), 만료와 무효화(agent.resolved). 우리 조건 요약(8절)은 M2다.
 
 화면 요청(명세 14절)도 여기 있다 — `get_state`, `change_settings`, `view`, `accept`, `dismiss`. 요청 세션(get_db) 안에서
@@ -19,7 +23,10 @@ outcome(agent_runs.outcome)
 - trip_ended: 여행 마지막 날(end_date)이 KST로 지남. 위와 같다
 - no_signal: 탐지된 신호 없음
 - blocked: 신호는 있지만 모두 정책에 막힘(12.3), 또는 저장하려는데 다른 관찰이 먼저 활성 제안을 넣음
-- silent: 1순위가 모델 유형이라 아직 제안을 만들지 않음(outcome_detail.skipped = "model_step", M1-2 #533 전까지)
+- silent, unknown: 진단 모델이 침묵을 골랐다(decision). outcome_detail에 signal_id, diagnosis, decision
+- invalid_schema: 진단 응답이 스키마에 맞지 않음(AgentCallFailed reason=invalid_schema). 재요청하지 않는다
+- model_failed: 진단 호출 실패나 타임아웃(AgentCallFailed reason=call_failed|timeout). 이유는 outcome_detail
+- invalid_claims: 검증(11.2) 2단계(신호 불일치)나 7단계(성립 실패)에서 떨어짐. 내역은 verification
 - stale: 저장 직전 재확인(12.8)에서 신호가 사라졌거나 근거가 바뀜
 - suggested: 제안을 저장함(shadow 유형이면 shadow=True)
 저장 트랜잭션 맨 앞에서 지도가 삭제된 것을 보면(모델 호출 중 삭제 대역) 아무것도 쓰지 않는다 — agent_runs 행도 없다.
@@ -29,20 +36,22 @@ import logging
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from agent import core, service, snapshot
-from agent.constants import CODE_TYPES, MODEL_TYPES, SUGGESTION_TTL, TICK_MAX_MAPS
+from agent import core, deps, service, snapshot, tools
+from agent.constants import CODE_TYPES, SUGGESTION_TTL, TICK_MAX_MAPS
 from agent.models import AgentSuggestion as SuggestionRow
-from agent.schemas import AgentAcceptResponse, AgentSettings, AgentState, AgentSuggestion
+from agent.schemas import AgentAcceptResponse, AgentCallFailed, AgentSettings, AgentState, AgentSuggestion
+from auth import api as auth_api
 from common import categories
 from common.database import SessionLocal, session_scope
 from common.errors import AppError
 from common.events import record_event
+from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
 from places import api as places_api
@@ -72,14 +81,17 @@ def _snapshot_read(factory: SessionFactory) -> Iterator[Session]:
 
 # ---------------------------------------------------------------- tick (12.2)
 
-def run_tick(now: datetime, *, session_factory: SessionFactory = SessionLocal) -> list[str]:
+def run_tick(
+    now: datetime, *, session_factory: SessionFactory = SessionLocal, gateway: deps.AgentLlmGateway | None = None,
+) -> list[str]:
     """지도를 골라(lease) 하나씩 관찰한다. 한 지도가 실패해도 다른 지도는 계속하고, lease는 늘 푼다. 관찰한
-    map_id 목록을 돌려준다."""
+    map_id 목록을 돌려준다. gateway가 없으면 deps.get_llm_gateway()(LLM_MODE로 고른 것)."""
+    gateway = gateway or deps.get_llm_gateway()
     with _write(session_factory) as db:
         claims = service.claim_maps(db, now, limit=TICK_MAX_MAPS)
     for map_id, trigger in claims:
         try:
-            observe_map(map_id, now, trigger=trigger, session_factory=session_factory)
+            observe_map(map_id, now, trigger=trigger, session_factory=session_factory, gateway=gateway)
         except Exception:
             log.exception("agent observe_map 실패 map_id=%s", map_id)
         finally:
@@ -116,10 +128,12 @@ def daily_cleanup_if_due(now: datetime, *, session_factory: SessionFactory = Ses
 
 def observe_map(
     map_id: str, now: datetime, *, trigger: str = "activity", session_factory: SessionFactory = SessionLocal,
+    gateway: deps.AgentLlmGateway | None = None,
 ) -> str | None:
     """지도 하나를 관찰하고 agent_runs에 남긴 outcome을 돌려준다. 저장 단계에서 지도가 삭제된 것을 보면 아무것도
     쓰지 않고 None(머리말의 outcome 목록)."""
     started = time.monotonic()
+    gateway = gateway or deps.get_llm_gateway()
 
     def run_fields(snap: snapshot.Snapshot | None, outcome: str, **extra: Any) -> dict[str, Any]:
         return {
@@ -136,6 +150,8 @@ def observe_map(
     with _snapshot_read(session_factory) as db:
         snap = snapshot.build(db, map_id, now)
         hist = service.load_history(db, map_id, now)
+        # 검증(11.2 5단계)이 문장에서 찾는 표시 이름. 모델에는 가지 않는다
+        names = list(auth_api.display_names(db, [m.user_id for m in snap.members]).values()) if snap else []
 
     ended = _ended(snap)
     if ended is not None:   # 끝난 지도는 관찰하지 않는다. 새 이벤트가 와야 다시 잡히고, 그때도 바로 끝난다
@@ -149,15 +165,23 @@ def observe_map(
     signals = core.detect_all(snap, now, th)
     superseding = core.find_superseded(hist.active, signals)
 
-    # 4. 정책 사전 검사, 5. 우선순위 (순수. M0은 fallback_order)
+    # 4. 정책 사전 검사 (순수)
     passed, blocked = core.check_policy(signals, hist, snap, now, superseding=superseding)
-    policy = core.load_policy()
-    top, priority = core.choose_top(passed, policy)
 
-    # 6. 초안 — 코드 유형은 템플릿. 모델 유형이 1순위면 모델 단계(M1-2)를 건너뛰어 침묵한다
-    chosen = top if top is not None and top.diagnosis in CODE_TYPES else None
-    draft = core.render_template(chosen) if chosen is not None else None
-    outcome, detail = _planned_outcome(signals, top)
+    # 5. 우선순위 — 2개 이상이면 모델(세션 없음, 12.6). 직전과 같으면 재사용, 상한이면 fallback_order
+    policy = core.load_policy()
+    mode = core.priority_mode(
+        passed, hist.last_priority, cap_reached=core.model_cap_reached(hist.model_runs_today, snap.member_count),
+    )
+    model_out = gateway.prioritize(core.priority_input(passed, policy), policy.principles) if mode == "model" else None
+    top, priority = core.choose_top(passed, policy, mode=mode, model_out=model_out, previous=hist.last_priority)
+
+    # 6. 초안 — 코드 유형은 템플릿, 모델 유형은 진단과 검증(세션 없음, 도구만 짧게 읽는다)
+    step = _draft(map_id, top, snap, names, now, session_factory, gateway) if top is not None else _Step(None)
+    chosen = top if step.draft is not None else None
+    draft = step.draft
+    outcome, detail = _planned_outcome(signals, top, step)
+    used_model = mode == "model" or step.used_model
 
     # 7. 재확인과 저장 (짧은 쓰기 트랜잭션). 이벤트도 같은 트랜잭션
     with _write(session_factory) as db:
@@ -174,6 +198,7 @@ def observe_map(
         run_id = service.insert_run(db, **run_fields(
             snap, outcome, signals=[core.signal_record(s) for s in signals], blocked=blocked_rows,
             priority=priority, policy_version=str(policy.version), outcome_detail=detail,
+            used_model=used_model, tool_calls=step.tool_calls, verification=step.verification,
         ))
         new_expires_at = None
         if chosen is not None:
@@ -204,14 +229,62 @@ def _ended(snap: snapshot.Snapshot | None) -> str | None:
     return None
 
 
-def _planned_outcome(signals: list[core.Signal], top: core.Signal | None) -> tuple[str, dict[str, Any] | None]:
+@dataclass(frozen=True)
+class _Step:
+    """6단계 결과. outcome이 None이면 초안이 있다(suggested) — 코드 유형이거나 검증을 통과한 진단."""
+    draft: core.Draft | None
+    outcome: str | None = None
+    detail: dict[str, Any] | None = None
+    used_model: bool = False
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    verification: dict[str, Any] | None = None
+
+
+def _draft(
+    map_id: str, top: core.Signal, snap: snapshot.Snapshot, names: list[str], now: datetime,
+    session_factory: SessionFactory, gateway: deps.AgentLlmGateway,
+) -> _Step:
+    """제안 초안(12.4 6단계). 코드 유형은 템플릿. 모델 유형은 진단을 부른다 — split은 충돌 종류(compare_reasons, 코드)를
+    먼저 계산해 입력에 넣는다. 실패(AgentCallFailed)와 검증 실패는 재요청하지 않고 침묵한다(2절 10번)."""
+    if top.diagnosis in CODE_TYPES:
+        return _Step(core.render_template(top))
+    ctx = tools.ToolContext(
+        map_id=map_id, snap=snap, allowed=tools.ALLOWED_TOOLS[top.diagnosis], session_factory=session_factory,
+        structure=gateway.structure, now=now,
+    )
+    comparison = _comparison(ctx, top)
+    out = gateway.diagnose(core.diagnosis_input(top, snap, comparison), tool_runner=ctx.run)
+    which = {"signal_id": top.id, "diagnosis": top.diagnosis}
+    if isinstance(out, AgentCallFailed):
+        return _Step(None, core.failed_outcome(out.reason), which | {"reason": out.reason, "detail": out.detail},
+                     used_model=True, tool_calls=ctx.calls)
+    verified = core.verify_diagnosis(out, top, snap, ctx.results, member_names=names, comparison=comparison)
+    outcome = None if verified.draft is not None else verified.outcome
+    return _Step(verified.draft, outcome, None if outcome is None else which | {"decision": out.decision},
+                 used_model=True, tool_calls=ctx.calls, verification=verified.record)
+
+
+def _comparison(ctx: tools.ToolContext, top: core.Signal) -> dict[str, Any] | None:
+    """split의 충돌 종류(6.3). ②가 실패하면 없이 진단한다(모델은 compare_reasons 도구로 다시 볼 수 있다)."""
+    if top.diagnosis != "split":
+        return None
+    try:
+        return tools.comparison(ctx, pin_id=top.pin_id)
+    except llm_api.PlanEvidenceFailed:
+        log.warning("agent compare_reasons 실패(②) map_id=%s", ctx.map_id)
+        return None
+
+
+def _planned_outcome(
+    signals: list[core.Signal], top: core.Signal | None, step: _Step,
+) -> tuple[str, dict[str, Any] | None]:
     """저장 단계 전의 outcome. 저장에서 stale이나 blocked(동시 저장)로 바뀔 수 있다."""
     if not signals:
         return "no_signal", None
     if top is None:
         return "blocked", None
-    if top.diagnosis in MODEL_TYPES:
-        return "silent", {"skipped": "model_step", "signal_id": top.id, "diagnosis": top.diagnosis}
+    if step.outcome is not None:
+        return step.outcome, step.detail
     return "suggested", None
 
 

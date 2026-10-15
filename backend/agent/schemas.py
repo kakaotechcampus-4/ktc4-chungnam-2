@@ -3,16 +3,30 @@
 
 1. API 스키마 — docs/api-spec.yaml의 Agent*·RunAdvice와 1:1. FE는 서버가 렌더한 문장만 받는다. claims, 슬롯 원문,
    fingerprint, resolved_by 같은 서버 내부 값은 여기 없다(명세 14절).
-2. 모델 출력 스키마 — 명세 11.1. llm 쪽 agent 함수의 구조화 출력 스키마이자 deps.py 고정 응답 스텁의 반환 타입이다.
-   모델은 숫자를 문장에 직접 쓰지 않고 claim을 슬롯({c1.value}, {c3})으로 가리킨다. 검증과 렌더는 core.py(M1)가 한다.
+2. 모델 출력 스키마 — 명세 11.1. 정의는 llm/schemas.py에 있고 여기서는 가져다 쓴다(#533). 모델은 숫자를 문장에
+   직접 쓰지 않고 claim을 슬롯({c1.value}, {c3})으로 가리킨다. 검증과 렌더는 core.py가 한다.
 """
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_serializer
 
 from common import categories
+from llm.schemas import (  # noqa: F401 — 모델 출력 스키마(11.1)의 정본을 다시 연다. 아래 "모델 출력 스키마" 절
+    Action,
+    AdviceLine,
+    AgentCallFailed,
+    AgentDecision as Decision,
+    Claim,
+    CountClaim,
+    DiagnosisOutput,
+    PriorityItem,
+    PriorityOutput,
+    QuoteClaim,
+    RefClaim,
+    ToolClaim,
+)
 
 Category = Literal[categories.all_categories()]  # 스펙의 Category(common/categories.py, #280)
 
@@ -139,77 +153,9 @@ class RunAdvice(BaseModel):
 
 
 # ---------- 모델 출력 스키마 (명세 11.1) ----------
-
-Decision = Literal["suggest", "silent", "unknown"]
-
-
-class CountClaim(BaseModel):
-    id: str  # c1, c2 ...
-    kind: Literal["count"]
-    subject: Literal["pin", "category", "map"]
-    subject_id: str | None  # pin_id 또는 카테고리 이름, map이면 None
-    metric: Literal["like", "against", "unseen", "confirmed", "pins"]  # 반응은 2종 (#360)
-    value: int
-
-
-class QuoteClaim(BaseModel):
-    id: str
-    kind: Literal["quote"]
-    reaction_id: str
-    text: str  # 대조용. 화면에는 DB 원문을 렌더한다
-
-
-class RefClaim(BaseModel):
-    id: str
-    kind: Literal["ref"]
-    object: Literal["pin", "reaction", "place"]
-    ref_id: str
-
-
-class ToolClaim(BaseModel):
-    id: str
-    kind: Literal["tool_result"]
-    call_id: str  # agent가 매긴 도구 호출 id
-    path: str  # 결과 안의 경로. 예: "after"
-    value: int | float | str | bool
-
-
-Claim = Annotated[CountClaim | QuoteClaim | RefClaim | ToolClaim, Field(discriminator="kind")]
-
-
-class AdviceLine(BaseModel):
-    text: str  # 슬롯 {c1.value}, {c3}만 허용. 숫자 직접 금지
-    basis: list[str]  # claim id
-    is_guess: bool
-
-
-class Action(BaseModel):
-    type: ActionType
-    category: str | None = None
-    pin_ids: list[str] | None = None
-    basis: list[str]
-
-
-# Stance와 모델이 내던 Conflict는 없다(2026-10-15). 키와 방향은 ②가, 충돌 종류는 코드가 정한다(명세 6.3, 8.1).
-
-
-class DiagnosisOutput(BaseModel):
-    decision: Decision
-    diagnosis: Literal["stall", "split"]
-    signal_id: str
-    claims: list[Claim]
-    advice: list[AdviceLine]
-    actions: list[Action]
-
-
-class PriorityItem(BaseModel):
-    signal_id: str
-    reason: str
-
-
-class PriorityOutput(BaseModel):
-    order: list[PriorityItem]
-
+# 정의는 llm/schemas.py 한 곳이다(#532). 사본을 두면 Gateway 반환 타입이 어긋나서 agent는 가져다 쓴다(다른 모듈 schemas.py
+# 직접 import는 허용, #113). Claim에는 discriminator가 없다 — 엘리스 API가 구조화 출력의 oneOf를 거절한다(#532).
+# SummaryOutput과 RunAdviceOutput은 llm 함수가 M2에서 생겨 아직 여기 있다. 그때 llm/schemas.py로 옮긴다.
 
 class SummaryOutput(BaseModel):
     """칸 나누기와 개수는 코드가 한다(명세 8절). 모델은 vague_fixable 사유에 붙일 구체화 요청 문장만 쓴다."""
