@@ -152,7 +152,7 @@ def list_runs(
     return [
         schemas.RunSummary(
             id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
-            created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
+            attempt_limit=core.ATTEMPT_LIMIT, created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
         )
         for run, candidate_count, published_count in service.list_runs_for_requester(
             db, map_id=map_id, requested_by=requested_by, category=category, limit=limit,
@@ -400,6 +400,11 @@ def _run_pipeline(
     is_open_check = core.build_check("is_open", "pass", known=False, value=None, passes=True)
     removed_open = 0  # dev 스텁은 실시간 영업시간 조회가 없어 항상 unknown+needs_check — 결코 제거하지 않는다
 
+    # 추천 가능 아님 제거 — 영업 종료 다음 단계. 모두 빠져 0개여도 0개로 보여 준다(반경·기준을 완화하지 않는다).
+    recommendable = [p for p in within_radius if p.can_recommend]
+    removed_not_recommendable = len(within_radius) - len(recommendable)
+    within_radius = recommendable
+
     active_hard_keys = _active_hard_fact_keys(db, run)
     active_lines = service.list_active_evidence(db, run.id)
     soft_requirements = _active_soft_requirements(db, run)
@@ -526,6 +531,7 @@ def _run_pipeline(
         ("카테고리 후보 풀", 0),
         ("반경 밖 제거", removed_radius),
         ("영업 종료 제거", removed_open),
+        ("추천 가능 아님 제거", removed_not_recommendable),
         ("실격 조건 제거", removed_disqualify),
         ("이미 제안·거절됨", removed_exclusions),
         ("상위 3곳 선정", removed_ranking),

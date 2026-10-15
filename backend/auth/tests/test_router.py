@@ -393,7 +393,7 @@ def test_me_returns_current_user(app_client, db_session):
     _seed_user(db_session, user_id="user_1", display_name="철수")
     resp = app_client.get("/auth/me", cookies=session_cookie("user_1"))
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"id": "user_1", "display_name": "철수"}
+    assert resp.json() == {"id": "user_1", "display_name": "철수", "is_guest": False}
 
 
 def test_me_without_cookie_is_401(app_client):
@@ -411,7 +411,7 @@ def test_patch_me_updates_display_name(app_client, db_session):
     _seed_user(db_session, user_id="user_1", display_name="철수")
     resp = app_client.patch("/auth/me", json={"display_name": "  새이름 "}, cookies=session_cookie("user_1"))
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"id": "user_1", "display_name": "새이름"}
+    assert resp.json() == {"id": "user_1", "display_name": "새이름", "is_guest": False}
 
     assert app_client.get("/auth/me", cookies=session_cookie("user_1")).json()["display_name"] == "새이름"
 
@@ -541,3 +541,11 @@ def test_missing_cookie_via_real_asgi_app_returns_envelope():
     response = TestClient(asgi_app).get("/auth/me")
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHORIZED"
+
+
+def test_get_me_reports_is_guest(app_client, db_session):
+    db_session.add(User(id="g1", provider="guest", provider_user_id="pg1", display_name="손님", is_guest=True))
+    db_session.flush()
+    assert app_client.get("/auth/me", cookies=session_cookie("g1")).json()["is_guest"] is True
+    _seed_user(db_session, user_id="k1", display_name="철수")
+    assert app_client.get("/auth/me", cookies=session_cookie("k1")).json()["is_guest"] is False

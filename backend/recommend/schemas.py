@@ -42,6 +42,7 @@ class RecommendRun(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
+    attempt_limit: int  # 한 사람이 한 지도에서 받을 수 있는 횟수 상한(core.ATTEMPT_LIMIT)
     default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한 30
 
 
@@ -52,6 +53,7 @@ class RunSummary(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
+    attempt_limit: int  # RecommendRun.attempt_limit과 같다
     created_at: datetime
     candidate_count: int = Field(ge=0)  # 마지막 시도의 후보 수. done이 아니면 0
     published_count: int = Field(ge=0)  # 그 run에서 게시한 후보 수
