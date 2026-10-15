@@ -431,6 +431,7 @@ paths:
                 maxItems: 5
                 items: { $ref: "#/components/schemas/PlaceSearchResult" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/PlacesUnavailable" }
 
   /places/from-link:
     post:
@@ -558,6 +559,35 @@ paths:
       summary: 핀 삭제 — 지도 구성원 누구나 (#25, 9/4 결정). 요청자별 가능 여부는 Pin.permissions.can_delete
       parameters: [ { $ref: "#/components/parameters/PinId" } ]
       responses: { "204": { description: 삭제됨 } }
+
+  /pins/{pinId}/resolve:
+    post:
+      tags: [pins]
+      summary: |
+        실시간 핀 승격 — 자체 DB에 짝이 있으면 live 핀을 자체 DB 핀으로 바꾼다 (#501). 지도 구성원 누구나(`pin.resolve`).
+        화면이 카카오 SDK로 그 핀의 이름·좌표를 찾았을 때(`kakao_place_id`로 다시 찾은 결과) **그 값을 매칭 힌트로만** 보낸다. 서버는 `POST /maps/{mapId}/pins`(source=search)와 같은 규칙(반경·이름 유사도·주소 보조·분류 일치, 모호하면 거절)으로 자체 DB 장소를 찾는다.
+        - **짝이 있으면**: 핀이 `source: db`가 되고 `place_id`가 채워진다(`Pin.place_name`·`lat`·`lng`·`place_url`을 장소에서 가져온다). `kakao_place_id`·`search_query`는 지운다. **반응·사유·확정 리스트 항목·핀 id는 그대로 유지**된다. 전체 채널에 `pin.updated(Pin)`를 보낸다.
+        - **짝이 없으면**: 200 + 핀 그대로(`source: live` 유지). 이벤트도 없다. 화면은 데이터가 늘어난 뒤 다시 시도할 수 있다.
+        - **이미 자체 DB 핀이면** 아무것도 하지 않고 200으로 핀을 그대로 돌려준다(화면이 호출을 아끼려 거르지만 호출해도 안전).
+        - **같은 지도에 그 장소의 핀이 이미 있으면** 409 `PIN_DUPLICATE`(`detail.pin_id` = 이미 있는 핀). 자동 병합은 하지 않는다 — 두 핀의 반응·사유가 엉키므로 사람이 한쪽을 지운다.
+        - AI 추천·확정 핀은 live가 아니므로 항상 변화 없이 200이다. 분류는 핀의 `category`를 쓴다(본문에 없다).
+        - **힌트(`place_name`·`lat`·`lng`·`address`)는 저장하지도 로깅하지도 않는다**(카카오 약관). 응답에도 싣지 않는다.
+      parameters: [ { $ref: "#/components/parameters/PinId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PinResolveRequest" }
+      responses:
+        "200":
+          description: 승격됐거나(source=db) 변화 없음(source=live). 요청자 기준 Pin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Pin" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "PIN_DUPLICATE — 그 장소의 핀이 이 지도에 이미 있다 (detail.pin_id)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — 이름·좌표 누락, 범위 밖 좌표", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   # ---------- notifications / feedback (v2) ----------
   /me/notifications:
@@ -1479,6 +1509,17 @@ components:
         memo: { type: string, maxLength: 200, description: "빈 문자열이면 메모를 지운다" }
         category: { $ref: "#/components/schemas/Category", description: "live 핀만, 반응이 없을 때만 (PATCH /pins/{pinId} 설명 참고)" }
 
+    PinResolveRequest:
+      type: object
+      description: "실시간 핀 승격의 매칭 힌트 (#501). 전부 저장하지도 로깅하지도 않는다"
+      required: [place_name, lat, lng]
+      additionalProperties: false
+      properties:
+        place_name: { type: string, minLength: 1, maxLength: 100, description: "화면이 kakao_place_id로 다시 찾은 장소 이름(카카오 응답 그대로). 매칭 힌트" }
+        lat: { type: number, minimum: -90, maximum: 90, description: "같은 검색 결과의 좌표. 매칭 힌트" }
+        lng: { type: number, minimum: -180, maximum: 180 }
+        address: { type: string, maxLength: 200, description: "선택. 같은 검색 결과의 주소. 이름이 비슷한 점포를 가를 때만 쓰는 보조 힌트" }
+
     NotificationType:
       type: string
       enum: [pin_reaction, member_joined, owner_changed, map_deleted, my_ai_pin_published]
@@ -1598,6 +1639,7 @@ components:
         # pins/core.py::validate_create가 이미 검증하는 범위를 그대로 옮김(멘토 리뷰 대응).
         lat: { type: number, minimum: -90, maximum: 90, description: "매칭 힌트 — 검색 결과의 좌표를 그대로. 저장하지 않는다(핀 좌표는 자체 DB 장소의 좌표)" }
         lng: { type: number, minimum: -180, maximum: 180, description: "매칭 힌트 — 검색 결과의 좌표를 그대로. 저장하지 않는다" }
+        address: { type: string, maxLength: 200, description: "선택, 매칭 힌트 — 검색 결과의 address를 그대로. 이름이 비슷한 점포를 가르는 보조 판단에만 쓰고 저장·로깅하지 않는다(#500, #501). 없어도 된다" }
 
     PlaceSearchResult:
       type: object

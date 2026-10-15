@@ -3,8 +3,8 @@
 user_id는 FK 없이 NULL 허용이다(탈퇴하면 NULL로 끊고 내용은 남긴다). map_id도 FK 없이 검사 없이 저장한다.
 docs/data-model.md notifications / feedback 절 참고.
 
-Revision ID: 0031_feedback
-Revises: 0030_agent_cursor_drop_gap_seq
+Revision ID: 0032_feedback
+Revises: 0031_notifications
 Create Date: 2026-10-15
 
 """
@@ -14,8 +14,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0031_feedback"
-down_revision: Union[str, None] = "0030_agent_cursor_drop_gap_seq"
+revision: str = "0032_feedback"
+down_revision: Union[str, None] = "0031_notifications"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

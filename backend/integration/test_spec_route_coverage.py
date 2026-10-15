@@ -22,14 +22,8 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
-    ("get", "/me/notifications"): "#470 알림함",
-    ("post", "/me/notifications/read"): "#470 알림함",
-    ("get", "/me/notification-prefs"): "#470 알림 설정",
-    ("put", "/me/notification-prefs"): "#470 알림 설정",
     ("post", "/maps/{}/owner"): "#468 방장 직접 넘기기",
-    ("patch", "/pins/{}"): "#466 핀 메모·분류 수정",
-    ("get", "/places/nearest"): "#473 지도를 눌러 핀 — 가까운 자체 DB 장소",
-    ("post", "/places/from-link"): "#474 지도 링크 해석",
+    ("post", "/pins/{}/resolve"): "#501 실시간 핀 승격",
     ("get", "/maps/{}/agent"): "#510 agent v2 계약 — M0, M1에서 구현",
     ("put", "/maps/{}/agent/settings"): "#510 agent v2",
     ("post", "/agent/suggestions/{}/view"): "#510 agent v2",

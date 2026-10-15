@@ -383,6 +383,41 @@ describe("#466·#473·#474 — 핀 수정, 지도를 눌러 핀, 링크 해석",
     expect((await send("/pins/nope", "PATCH", { memo: "x" })).status).toBe(404);
   });
 
+  it("POST /pins/{id}/resolve: 짝이 있으면 live 핀이 db 핀이 되고 반응·id는 유지, pin.updated, 힌트는 저장 안 함", async () => {
+    const live = await (await send("/maps/map_1/pins", "POST", { source: "live", category: "카페", kakao_place_id: "kakao:live-2", search_query: "바다 카페" })).json();
+    expect((await send(`/pins/${live.id}/reaction`, "PUT", { type: "like" })).status).toBe(200);
+    const before = store.eventLog.length;
+    const r = await send(`/pins/${live.id}/resolve`, "POST", { place_name: "해운대 바다 카페", lat: 35.1587, lng: 129.1604, address: "부산 해운대구 중동" });
+    expect(r.status).toBe(200);
+    const pin = await r.json();
+    expect(pin).toMatchObject({ id: live.id, source: "db", place_name: "해운대 바다 카페", category: "카페" });
+    expect(pin.kakao_place_id).toBeUndefined();
+    expect(pin.search_query).toBeUndefined();
+    expect(pin.reaction_summary.like).toBe(1); // 반응 유지
+    expect(store.eventLog.slice(before).find((e) => e.type === "pin.updated")?.data).toMatchObject({ id: live.id, source: "db" });
+    expect(JSON.stringify(pin)).not.toContain("부산 해운대구 중동"); // 힌트(주소)는 응답·저장에 없다
+    // 이미 db 핀이면 변화 없음 200
+    expect((await (await send(`/pins/${live.id}/resolve`, "POST", { place_name: "아무거나", lat: 1, lng: 1 })).json()).source).toBe("db");
+  });
+
+  it("POST /pins/{id}/resolve: 짝이 없으면 200 + live 그대로(이벤트 없음), 같은 장소 핀이 이미 있으면 409, 힌트 누락은 422", async () => {
+    const live = await (await send("/maps/map_1/pins", "POST", { source: "live", category: "음식점", kakao_place_id: "kakao:mock-6", search_query: "곱창" })).json();
+    const before = store.eventLog.length;
+    const none = await send(`/pins/${live.id}/resolve`, "POST", { place_name: "성수 노포 곱창", lat: 37.5445, lng: 127.0557 });
+    expect(none.status).toBe(200);
+    expect((await none.json()).source).toBe("live");
+    expect(store.eventLog.slice(before).some((e) => e.type === "pin.updated")).toBe(false);
+
+    const dupLive = await (await send("/maps/map_1/pins", "POST", { source: "live", category: "음식점", kakao_place_id: "kakao:live-3", search_query: "밀면" })).json();
+    const dbPin = await (await send("/maps/map_1/pins", "POST", { category: "음식점", place_id: "kakao:mock-1", place_name: "해운대 밀면", lat: 35.1631, lng: 129.1639 })).json();
+    const dup = await send(`/pins/${dupLive.id}/resolve`, "POST", { place_name: "해운대 밀면", lat: 35.1631, lng: 129.1639 });
+    expect(dup.status).toBe(409);
+    expect((await dup.json()).detail.pin_id).toBe(dbPin.id);
+
+    expect((await send(`/pins/${live.id}/resolve`, "POST", { lat: 1, lng: 1 })).status).toBe(422);
+    expect((await send("/pins/nope/resolve", "POST", { place_name: "x", lat: 1, lng: 1 })).status).toBe(404);
+  });
+
   it("GET /places/nearest: 100m 안 자체 DB 장소만 가까운 순, 없으면 빈 배열, lat·lng 없으면 422", async () => {
     const near = await (await fetch(`${BASE}/places/nearest?lat=35.1631&lng=129.1639`)).json();
     expect(near.map((p: { place_name: string }) => p.place_name)).toEqual(["해운대 밀면"]);

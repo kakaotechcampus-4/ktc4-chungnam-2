@@ -36,6 +36,7 @@ from pins.schemas import (
     PinCreateRequest,
     PinCreateSearch,
     PinKind,
+    PinUpdateRequest,
     Reaction,
     ReactionRequest,
     ReactionSummary,
@@ -415,6 +416,39 @@ def _create_live_pin(db: Session, map_id: str, principal: Principal, req: PinCre
     pin = core.to_pin_response(record, principal)
     record_event(db, core.pin_created_event(pin))
     return pin
+
+
+def _author_pin_response(db: Session, pin_row: PinRow, principal: Principal) -> Pin:
+    """수정 응답 — 요청자(=방금 pin.edit 가드를 통과한 작성자)가 보는 Pin. 작성자는 현재 구성원이라
+    탈퇴·나감 판정(#369)이 필요 없어 실명 그대로 쓴다(create와 같다)."""
+    lat_col, lng_col = _lat_lng_columns()
+    lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()
+    record = record_from_row(
+        pin_row, lat=lat, lng=lng, reaction_counts=_reaction_counts_for_pin(db, pin_row.id),
+        created_by_display_name=auth_api.display_names(db, [pin_row.created_by]).get(pin_row.created_by),
+        my_reaction=my_reactions_for_pins(db, [pin_row.id], principal.user_id).get(pin_row.id),
+        place=places_api.get_places([pin_row.place_id], db=db).get(pin_row.place_id) if pin_row.place_id else None,
+    )
+    return core.to_pin_response(record, principal)
+
+
+def update_pin(db: Session, pin: PinRow, principal: Principal, req: PinUpdateRequest) -> Pin:
+    """PATCH /pins/{pinId}(#466) — 메모·분류만 바꾼다. 장소·근거·종류 필드는 이 함수가 건드리지 않는다.
+    수정과 pin.updated 이벤트는 같은 트랜잭션에 기록된다."""
+    reaction_count = db.execute(
+        select(func.count()).select_from(ReactionRow).where(ReactionRow.pin_id == pin.id)
+    ).scalar_one()
+    core.validate_update(kind=pin.kind, source=pin.source, reaction_count=reaction_count, req=req)
+
+    if "memo" in req.model_fields_set:
+        pin.memo = core.reason_content(req.memo)   # 빈 문자열·공백뿐이면 지운다(만들 때와 같은 기준)
+    if "category" in req.model_fields_set:
+        pin.category = req.category
+    db.flush()
+
+    updated = _author_pin_response(db, pin, principal)
+    record_event(db, core.pin_updated_event(updated))
+    return updated
 
 
 def delete_pin(db: Session, pin: PinRow) -> None:
