@@ -33,6 +33,8 @@ CATALOG: dict[str, tuple[int, str]] = {
     "INVITE_NOT_FOUND": (404, "유효하지 않은 초대 링크입니다"),
     "MAP_LIMIT": (409, "내 지도가 이미 상한에 도달했습니다"),
     "OWNER_CANNOT_LEAVE": (409, "넘길 사람이 없는 방장은 나갈 수 없습니다"),
+    "GUEST_NOT_ALLOWED": (403, "게스트는 할 수 없는 일입니다"),
+    "GUEST_LIMIT": (409, "이 초대 링크로 만들 수 있는 게스트 수를 넘었습니다"),
     "INVITE_EXPIRED": (410, "만료된 초대 링크입니다"),
     "INVITE_REVOKED": (410, "방장이 끈 초대 링크입니다"),
     "RUN_NOT_FINISHED": (409, "아직 끝나지 않았거나 실패한 추천입니다"),

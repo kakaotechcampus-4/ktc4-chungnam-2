@@ -10,6 +10,18 @@
 - 이벤트: `agent.suggested`, `agent.resolved`, `agent.settings_changed` 발행 시작.
 - **FE 할 일:** #516, #536을 실서버에 붙일 수 있다.
 
+## 2026-10-15 (일곱 번째), 게스트 참여 (#472)
+
+스펙이 먼저다. 구현은 auth(계정·세션)·maps(지도 만들기 제한·후임 판정)가 한다. 그 전까지 `POST /auth/guest`는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다. **설계 결정은 루트 추천안이다**(사용자 변경 가능).
+
+- **`POST /auth/guest {display_name, invite_token}`** → 201 `{user, map}` + 세션 쿠키. 로그인 전에 부르고, 계정 생성과 초대 수락이 **한 요청**이다. 만료·꺼진 토큰은 초대 수락과 같은 에러(404·410), 초대 토큰 하나당 게스트 10명(409 `GUEST_LIMIT`), 호출 상한(429).
+- **`User.is_guest`**(선택, 없으면 false). 게스트는 `POST /maps`가 403 **`GUEST_NOT_ALLOWED`**(새 코드)다. 방장이 될 수 없다(후임에서 빠지고, 직접 넘기기는 422 `OWNER_TARGET_INVALID`). 그 밖의 구성원 행동과 상한(추천 10회 등)은 일반 구성원과 같다.
+- **세션 30일, 90일 미사용 게스트는 정리**(#168). 탈퇴·삭제 규칙은 일반 사용자와 같다.
+- **카카오 계정으로 합치기(claim)는 이 PR에 없다.** 합치는 규칙이 pins·maps·recommend·notifications에 걸쳐 별도 이슈로 나눈다.
+- **권한**: 새 롤·액션 없음(`docs/permissions.md` 게스트 절).
+- **DB**: `docs/data-model.md` users에 `is_guest`, `guest_invite_token`, `last_seen_at`. 마이그레이션은 구현 PR이 head 다음 번호로.
+- **FE 할 일(#485)**: 초대 요약 화면에 「이름만 입력하고 들어가기」, 입력 → `POST /auth/guest` → 응답의 `map`으로 이동. 게스트는 「새 지도 만들기」를 숨기고 카카오 로그인을 안내한다. 목 서버 시나리오 `guest`로 게스트 화면을 먼저 만들 수 있다.
+
 ## 2026-10-15 (여섯 번째), 추천 상한 10회와 추천 가능 장소 (#31, 신규)
 
 스펙이 먼저다. 구현은 recommend(상한·후보 풀)와 places(`can_recommend`)가 따로 한다.

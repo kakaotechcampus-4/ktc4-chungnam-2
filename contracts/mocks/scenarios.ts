@@ -5,7 +5,7 @@
 import { ME_USER_ID, nextId, resetIdCounter, resetStore, type StoreState } from "./store";
 import { buildBaseState, buildCandidates, buildEvidenceLines, buildRegions, SEED_MAP_ID } from "./seed";
 
-export type ScenarioName = "empty" | "happy-path" | "no-results" | "retry-limit" | "region-conflict";
+export type ScenarioName = "empty" | "happy-path" | "no-results" | "retry-limit" | "region-conflict" | "guest";
 
 /** 6절 "핀이 하나도 없음" 화면 — 지도만 있고 핀은 0개 */
 function buildEmpty(): StoreState {
@@ -79,12 +79,20 @@ function buildRegionConflict(): StoreState {
   return state;
 }
 
+/** #472 — 내가 게스트다. 지도 만들기는 403 GUEST_NOT_ALLOWED, 나머지 구성원 행동은 그대로 */
+function buildGuest(): StoreState {
+  const state = buildBaseState();
+  state.users[ME_USER_ID] = { ...state.users[ME_USER_ID], is_guest: true };
+  return state;
+}
+
 const BUILDERS: Record<ScenarioName, () => StoreState> = {
   empty: buildEmpty,
   "happy-path": buildHappyPath,
   "no-results": buildNoResults,
   "retry-limit": buildRetryLimit,
   "region-conflict": buildRegionConflict,
+  guest: buildGuest,
 };
 
 export function resetScenario(name: ScenarioName) {
