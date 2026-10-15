@@ -71,6 +71,7 @@ def health():
 
 
 # 모듈 담당자가 router.py를 만들면 여기 등록한다. docs/api-spec.yaml 태그 = 모듈 단위.
+from agent.router import router as agent_router  # noqa: E402
 from auth.router import public_router as auth_public_router  # noqa: E402
 from auth.router import router as auth_router  # noqa: E402
 from feedback.router import router as feedback_router  # noqa: E402
@@ -94,6 +95,7 @@ app.include_router(feedback_router)
 app.include_router(recommend_router)
 app.include_router(shortlist_router)
 app.include_router(realtime_router)
+app.include_router(agent_router)
 
 # CORS는 add_middleware가 아니라 앱을 "바깥에서" 감싼다.
 # add_middleware로 넣으면 CORS가 ServerErrorMiddleware 안쪽이 돼서 500 응답에 CORS 헤더가

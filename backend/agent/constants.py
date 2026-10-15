@@ -11,7 +11,6 @@ from common.settings import settings
 TICK_INTERVAL_SEC = 300            # tick 주기
 LEASE_SEC = 180                    # 관찰 lease
 TICK_MAX_MAPS = 10                 # tick당 처리 지도 수 (초안, 측정 후 조정)
-AGENT_SHADOW_MODE = True           # True면 제안을 저장하되 화면과 이벤트로 내보내지 않는다
 AGENT_LOOP_IN_PROCESS = settings.agent_loop_in_process   # 환경 변수 AGENT_LOOP_IN_PROCESS(기본 꺼짐, 12.1)
 
 PER_MEMBER_DAILY_MODEL_USES = 4    # 개인 단위 값. 지도 상한 = 구성원 수 × 이 값
@@ -50,6 +49,9 @@ AGENT_RUNS_RETENTION_DAYS = 30
 
 MODEL_TYPES = ("stall", "split")
 CODE_TYPES = ("no_reaction", "category_gap")
+# shadow는 유형별이다(#531). 이 유형의 제안은 저장하되 화면과 이벤트로 내보내지 않는다. 명세 5절의 AGENT_SHADOW_MODE(bool)를
+# 대신한다. 코드 유형은 M1-1(#531)부터 노출하고, 모델 유형은 평가 뒤(#534)에 이 목록에서 뺀다
+SHADOW_DIAGNOSES = MODEL_TYPES
 
 # 요약의 키 없는 사유 나누기 (8절). 값은 docs/constraints.md 칩 표를 따른다
 NOT_FILTERED_CHIP_IDS = ("food_expensive", "cafe_expensive", "sight_expensive")   # 가격 키 없음 (#423)

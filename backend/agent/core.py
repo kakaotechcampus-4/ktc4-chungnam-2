@@ -3,6 +3,7 @@
 - 기준 시간(명세 6.1), 탐지기 4종(6.2~6.5), 신호(Signal)와 해시(3절)
 - 개입 정책(12.3), 대체 순위(7절), 다음 점검 시각(12.4)
 - 우선순위 정책 파일(`priority_policy.yaml`) 로더 — 파일 읽기 한 곳만 I/O다
+- 코드 유형 템플릿(6.4, 6.5)과 렌더(11절 끝 "저장과 렌더 시점"), 이벤트 페이로드(15절) — #531
 
 입력은 `agent.snapshot.Snapshot`(관찰 한 번의 사본)과 `History`(이 지도의 제안 이력, #515가 채운다)다.
 Signal과 features에는 사유 글을 넣지 않는다 — 근거는 reaction_id와 pin_id로만 가리킨다(명세 2절 13번).
@@ -12,8 +13,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -39,12 +41,24 @@ from agent.constants import (
     RHYTHM_DEFAULT_BASE,
     RHYTHM_MIN_EVENTS,
     RHYTHM_WINDOW_EVENTS,
+    SAFETY_WORDS,
+    SHADOW_DIAGNOSES,
     STALL_ACTIVE_MEMBERS,
     TIME_MAX,
     TIME_MIN,
     TIME_MULTIPLIER,
 )
+from agent.schemas import (
+    AgentAction,
+    AgentAdviceLine,
+    AgentSettings,
+    AgentState,
+    AgentSuggestion,
+    CountClaim,
+    RefClaim,
+)
 from common import categories
+from common.events import Event
 
 if TYPE_CHECKING:
     from agent.snapshot import Reaction, Snapshot
@@ -312,7 +326,7 @@ class History:
 @dataclass(frozen=True)
 class Blocked:
     signal_id: str
-    reason: str   # active_exists | duplicate | backoff | daily_limit | model_cap
+    reason: str   # active_exists | duplicate | backoff | daily_limit | model_cap | mode_off(저장 직전 모드가 꺼짐, #531)
 
 
 CLOSED_BY_PEOPLE = ("accepted", "dismissed", "expired")   # superseded는 사람이 내린 판단이 아니라 다시 낼 수 있다
@@ -502,3 +516,191 @@ def signal_record(sig: Signal) -> dict[str, Any]:
         "evidence_ids": list(sig.evidence_ids), "features": dict(sig.features),
         "fingerprint": sig.fingerprint, "evidence_hash": sig.evidence_hash,
     }
+
+
+# ---------------------------------------------------------------- 노출 (#531)
+
+def is_shadow(diagnosis: str) -> bool:
+    """이 유형의 제안을 저장만 하고 화면과 이벤트로 내보내지 않는가(constants.SHADOW_DIAGNOSES)."""
+    return diagnosis in SHADOW_DIAGNOSES
+
+
+# ---------------------------------------------------------------- 코드 유형 템플릿 (6.4, 6.5)
+
+@dataclass(frozen=True)
+class Draft:
+    """저장할 제안 초안 — agent_suggestions의 title, claims, advice, actions 칸 그대로(명세 11절 끝, 13절).
+
+    title과 advice는 슬롯 문장이다. `{cN.value}`는 count claim의 값, `{cN}`은 핀 ref면 핀 이름, quote면 그 반응의
+    지금 사유 글로 렌더 때 채운다. 핀 이름과 사유 글은 저장하지 않는다(명세 2절 13번). actions의 label과 params에는
+    슬롯이 없다(카테고리 이름과 id뿐)."""
+    title: str
+    claims: list[dict[str, Any]]
+    advice: list[dict[str, Any]]    # [{slot_text, is_guess}]
+    actions: list[dict[str, Any]]   # [{index, type, label, params}] — AgentAction 직렬화
+
+
+def _subject_particle(word: str) -> str:
+    """주격 조사 — 마지막 글자에 받침이 있으면 '이', 없으면 '가'(음식점이, 카페가, 관광지가)."""
+    last = word[-1] if word else ""
+    if "가" <= last <= "힣" and (ord(last) - ord("가")) % 28:
+        return "이"
+    return "가"
+
+
+def _actions(*specs: tuple[str, str, Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        AgentAction(index=i, type=type_, label=label, params=params).model_dump(mode="json")
+        for i, (type_, label, params) in enumerate(specs)
+    ]
+
+
+def _no_reaction_draft(sig: Signal) -> Draft:
+    """반응 공백(6.4). 제목 "아직 확인되지 않은 핀이 {n}개 있어요", 확인된 것은 핀 이름 한 줄씩, 버튼 "미확인 핀 보기".
+    누가 확인하지 않았는지는 쓰지 않는다. 핀 이름은 ref claim으로 가리키고 렌더 때 정한다."""
+    pin_ids = list(sig.evidence_ids)
+    refs = [RefClaim(id=f"c{i}", kind="ref", object="pin", ref_id=pid) for i, pid in enumerate(pin_ids, start=2)]
+    count = CountClaim(id="c1", kind="count", subject="map", subject_id=None, metric="unseen", value=len(pin_ids))
+    return Draft(
+        title="아직 확인되지 않은 핀이 {c1.value}개 있어요",
+        claims=[c.model_dump() for c in (count, *refs)],
+        advice=[{"slot_text": f"{{{r.id}}}", "is_guess": False} for r in refs],
+        actions=_actions(("show_pins", "미확인 핀 보기", {"pin_ids": pin_ids})),
+    )
+
+
+def _category_gap_draft(sig: Signal) -> Draft:
+    """카테고리 공백(6.5). 제목 "확정 리스트에 {category}가 아직 없어요", 확인된 것 "확정 {n}곳 중 {category} 0곳".
+    버튼은 추천 대상이면 추천 받기와 핀 보기, 아니면 검색과 핀 보기(숙소가 다시 핀이 될 때 쓴다)."""
+    c = sig.category
+    confirmed = CountClaim(id="c1", kind="count", subject="map", subject_id=None, metric="confirmed",
+                           value=len(sig.evidence_ids))
+    in_category = CountClaim(id="c2", kind="count", subject="category", subject_id=c, metric="confirmed", value=0)
+    first = ("open_recommend", f"{c} 추천 받기") if c in categories.recommendable() else ("search_place", f"{c} 검색")
+    return Draft(
+        title=f"확정 리스트에 {c}{_subject_particle(c)} 아직 없어요",
+        claims=[confirmed.model_dump(), in_category.model_dump()],
+        advice=[{"slot_text": f"확정 {{c1.value}}곳 중 {c} {{c2.value}}곳", "is_guess": False}],
+        actions=_actions((*first, {"category": c}), ("show_pins", f"{c} 핀 보기", {"category": c})),
+    )
+
+
+_TEMPLATES = {"no_reaction": _no_reaction_draft, "category_gap": _category_gap_draft}
+
+
+def render_template(sig: Signal) -> Draft:
+    """코드 유형 신호의 초안. 신호만으로 정해진다(개수는 근거 id 수, 이름은 렌더 때). 모델 유형은 ValueError."""
+    if sig.diagnosis not in _TEMPLATES:
+        raise ValueError(f"{sig.diagnosis}는 템플릿 유형이 아니다 — 모델 유형은 진단(M1-2)이 초안을 만든다")
+    return _TEMPLATES[sig.diagnosis](sig)
+
+
+# ---------------------------------------------------------------- 렌더 (11절 끝 "저장과 렌더 시점")
+
+_SLOT = re.compile(r"\{(c\d+)(\.value)?\}")
+
+
+@dataclass(frozen=True)
+class RenderRefs:
+    """렌더 때 읽은 지금 상태. 없는 키 = 지워졌다 → 그 키를 가리키는 문장을 뺀다."""
+    pin_names: Mapping[str, str]   # 삭제되지 않은 핀 → 이름(db 핀은 장소 이름, 실시간 핀은 검색어)
+    reaction_texts: Mapping[str, str] = field(default_factory=dict)   # 지금 있는 반응 → 사유 글
+
+
+def referenced_pin_ids(claims: Sequence[Mapping[str, Any]]) -> list[str]:
+    return [c["ref_id"] for c in claims if c.get("kind") == "ref" and c.get("object") == "pin"]
+
+
+def quoted_reaction_ids(claims: Sequence[Mapping[str, Any]]) -> list[str]:
+    return [c["reaction_id"] for c in claims if c.get("kind") == "quote"]
+
+
+def _slot_value(claim: Mapping[str, Any] | None, value_slot: bool, refs: RenderRefs) -> str | None:
+    if claim is None:
+        return None
+    kind = claim.get("kind")
+    if value_slot:
+        return str(claim["value"]) if kind in ("count", "tool_result") else None
+    if kind == "ref" and claim.get("object") == "pin":
+        return refs.pin_names.get(claim["ref_id"])
+    if kind == "quote":
+        text = refs.reaction_texts.get(claim["reaction_id"])
+        if text is None or any(w in text for w in SAFETY_WORDS):   # 알러지 사유는 인용하지 않는다(8절, 11.2)
+            return None
+        return text
+    return None
+
+
+def render_text(slot_text: str, claims: Mapping[str, Mapping[str, Any]], refs: RenderRefs) -> str | None:
+    """슬롯을 채운다. 채울 수 없는 슬롯(없는 claim, 지워진 핀이나 반응, 알러지 인용)이 하나라도 있으면 None — 그
+    문장은 뺀다."""
+    missing = False
+
+    def fill(m: re.Match) -> str:
+        nonlocal missing
+        value = _slot_value(claims.get(m.group(1)), m.group(2) is not None, refs)
+        if value is None:
+            missing = True
+            return ""
+        return value
+
+    rendered = _SLOT.sub(fill, slot_text)
+    return None if missing else rendered
+
+
+def render_suggestion(sug: Any, refs: RenderRefs) -> AgentSuggestion | None:
+    """agent_suggestions 한 행 → API·이벤트의 AgentSuggestion. 서버 내부 값(claims, 슬롯 원문, fingerprint,
+    resolved_by)은 싣지 않는다(명세 14절). 제목을 채울 수 없으면 None(보여 줄 제안이 없다)."""
+    claims = {c["id"]: c for c in sug.claims}
+    title = render_text(sug.title, claims, refs)
+    if title is None:
+        return None
+    advice = []
+    for line in sug.advice:
+        text = render_text(line["slot_text"], claims, refs)
+        if text is not None:
+            advice.append(AgentAdviceLine(text=text, is_guess=line["is_guess"]))
+    return AgentSuggestion(
+        id=str(sug.id), diagnosis=sug.diagnosis, category=sug.category, title=title, analysis=sug.analysis,
+        advice=advice, actions=[AgentAction.model_validate(a) for a in sug.actions],
+        created_at=sug.created_at, expires_at=sug.expires_at,
+    )
+
+
+def action_at(actions: Sequence[Mapping[str, Any]], index: int) -> AgentAction | None:
+    """accept의 action_index가 가리키는 버튼. 범위 밖이면 None(422)."""
+    found = next((a for a in actions if a["index"] == index), None)
+    return None if found is None else AgentAction.model_validate(found)
+
+
+# ---------------------------------------------------------------- 응답 조립 (14절)
+
+def settings_view(row: Any | None) -> AgentSettings:
+    """agent_settings 행 → AgentSettings. 행이 없으면 기본값 켜짐, 바꾼 사람 없음."""
+    if row is None:
+        return AgentSettings(enabled=True, updated_by=None, updated_at=None)
+    return AgentSettings(enabled=row.enabled, updated_by=row.updated_by, updated_at=row.updated_at)
+
+
+def agent_state(settings: AgentSettings, active: AgentSuggestion | None, *, viewed: bool) -> AgentState:
+    """모드가 꺼져 있으면 제안은 늘 null이고 점도 없다. 요약은 M2 전까지 빈 목록."""
+    shown = active if settings.enabled else None
+    return AgentState(settings=settings, active_suggestion=shown, has_unseen=shown is not None and not viewed,
+                      summaries=[])
+
+
+# ---------------------------------------------------------------- 이벤트 (15절)
+
+def suggested_event(map_id: str, suggestion: AgentSuggestion) -> Event:
+    return Event(map_id=map_id, channel="public", type="agent.suggested", payload=suggestion.model_dump(mode="json"))
+
+
+def resolved_event(map_id: str, suggestion_id: str, status: str, action_type: str | None = None) -> Event:
+    """누가 처리했는지(resolved_by)는 싣지 않는다(15절)."""
+    return Event(map_id=map_id, channel="public", type="agent.resolved",
+                 payload={"suggestion_id": suggestion_id, "status": status, "resolved_action_type": action_type})
+
+
+def settings_changed_event(map_id: str, enabled: bool, updated_by: str) -> Event:
+    return Event(map_id=map_id, channel="public", type="agent.settings_changed",
+                 payload={"enabled": enabled, "updated_by": updated_by})

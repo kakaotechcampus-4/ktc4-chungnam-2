@@ -6,18 +6,22 @@
 - 커밋은 `common.database.session_scope` 한 곳이다. 세션은 `session_factory`로 받는다(기본 SessionLocal, 테스트가
   테스트 DB로 바꾼다 — maps/purge.py와 같은 방식).
 
-**M0(#515) 범위**: 모델 단계와 렌더를 건너뛴다. 1순위가 코드 유형(no_reaction, category_gap)이면 렌더 없는 초안을
-저장하고, 모델 유형(stall, split)이면 침묵(outcome=silent)으로 기록한다. 우선순위는 늘 fallback_order다. 이벤트는
-내지 않는다(agent.suggested, agent.resolved는 M1. shadow면 그때도 내지 않는다). 우리 조건 요약(8절)도 M1 이후다.
+**M1-1(#531) 범위**: 모델 단계는 아직 건너뛴다. 1순위가 코드 유형(no_reaction, category_gap)이면 템플릿 초안
+(core.render_template)을 저장하고, 모델 유형(stall, split)이면 침묵(outcome=silent)으로 기록한다. 우선순위는 늘
+fallback_order다. shadow는 유형별이다(constants.SHADOW_DIAGNOSES) — shadow가 아닌 제안만 이벤트를 낸다: 저장
+(agent.suggested), 만료와 무효화(agent.resolved). 우리 조건 요약(8절)은 M2다.
+
+화면 요청(명세 14절)도 여기 있다 — `get_state`, `change_settings`, `view`, `accept`, `dismiss`. 요청 세션(get_db) 안에서
+돌고 커밋은 그 세션이 한다. 이벤트는 같은 트랜잭션에 `record_event`로 남긴다. 권한은 router가 authz.guard로 끝낸 뒤다.
 
 outcome(agent_runs.outcome)
 - map_deleted: 지도가 삭제됐거나(#369) 정리까지 끝나 없음. 커서만 올리고 next_check_at은 비운다
 - trip_ended: 여행 마지막 날(end_date)이 KST로 지남. 위와 같다
 - no_signal: 탐지된 신호 없음
 - blocked: 신호는 있지만 모두 정책에 막힘(12.3), 또는 저장하려는데 다른 관찰이 먼저 활성 제안을 넣음
-- silent: 1순위가 모델 유형이라 M0에서는 제안을 만들지 않음(outcome_detail.skipped = "model_step")
+- silent: 1순위가 모델 유형이라 아직 제안을 만들지 않음(outcome_detail.skipped = "model_step", M1-2 #533 전까지)
 - stale: 저장 직전 재확인(12.8)에서 신호가 사라졌거나 근거가 바뀜
-- suggested: 제안을 저장함(shadow면 shadow=True)
+- suggested: 제안을 저장함(shadow 유형이면 shadow=True)
 저장 트랜잭션 맨 앞에서 지도가 삭제된 것을 보면(모델 호출 중 삭제 대역) 아무것도 쓰지 않는다 — agent_runs 행도 없다.
 """
 
@@ -31,10 +35,17 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from agent import constants, core, service, snapshot
+from agent import core, service, snapshot
 from agent.constants import CODE_TYPES, MODEL_TYPES, SUGGESTION_TTL, TICK_MAX_MAPS
+from agent.models import AgentSuggestion as SuggestionRow
+from agent.schemas import AgentAcceptResponse, AgentSettings, AgentState, AgentSuggestion
+from common import categories
 from common.database import SessionLocal, session_scope
+from common.errors import AppError
+from common.events import record_event
 from maps import api as maps_api
+from pins import api as pins_api
+from places import api as places_api
 
 log = logging.getLogger("pingo.agent")
 
@@ -117,9 +128,9 @@ def observe_map(
             "used_model": False, "outcome": outcome, **extra,
         }
 
-    # 1. 만료 정리 (짧은 쓰기). agent.resolved는 M1
+    # 1. 만료 정리 (짧은 쓰기) + agent.resolved
     with _write(session_factory) as db:
-        service.expire_suggestions(db, map_id, now)
+        _announce_resolved(db, map_id, service.expire_suggestions(db, map_id, now), "expired")
 
     # 2. 스냅샷과 이력 (짧은 읽기, REPEATABLE READ). 여기서 세션을 닫는다
     with _snapshot_read(session_factory) as db:
@@ -143,34 +154,41 @@ def observe_map(
     policy = core.load_policy()
     top, priority = core.choose_top(passed, policy)
 
-    # 6. 초안 — M0은 렌더 없이 신호 그대로. 모델 유형이 1순위면 모델 단계를 건너뛰어 침묵한다
-    draft = top if top is not None and top.diagnosis in CODE_TYPES else None
+    # 6. 초안 — 코드 유형은 템플릿. 모델 유형이 1순위면 모델 단계(M1-2)를 건너뛰어 침묵한다
+    chosen = top if top is not None and top.diagnosis in CODE_TYPES else None
+    draft = core.render_template(chosen) if chosen is not None else None
     outcome, detail = _planned_outcome(signals, top)
 
-    # 7. 재확인과 저장 (짧은 쓰기 트랜잭션)
+    # 7. 재확인과 저장 (짧은 쓰기 트랜잭션). 이벤트도 같은 트랜잭션
     with _write(session_factory) as db:
         if not maps_api.lock_map_if_alive(db, map_id):   # 지도 행 잠금 + 삭제 확인(#435, #512)
             return None                                   # 관찰 중 지도가 삭제됐다. 아무것도 쓰지 않는다
-        if draft is not None and not _still_there(db, draft, map_id, now, th):
-            draft, outcome = None, "stale"
-        service.supersede(db, superseding, now)
+        if chosen is not None and not _still_there(db, chosen, map_id, now, th):
+            chosen, draft, outcome = None, None, "stale"
+        mode_off = chosen is not None and not core.settings_view(service.get_settings(db, map_id)).enabled
+        if mode_off:   # 관찰 중 모드가 꺼졌다. change_settings도 지도 행을 잠가서 둘은 줄을 선다
+            blocked.append(core.Blocked(chosen.id, "mode_off"))
+            chosen, draft, outcome = None, None, "blocked"
+        _announce_resolved(db, map_id, service.supersede(db, superseding, now), "superseded")
         blocked_rows = [asdict(b) for b in blocked]
         run_id = service.insert_run(db, **run_fields(
             snap, outcome, signals=[core.signal_record(s) for s in signals], blocked=blocked_rows,
             priority=priority, policy_version=str(policy.version), outcome_detail=detail,
         ))
         new_expires_at = None
-        if draft is not None:
+        if chosen is not None:
+            shadow = core.is_shadow(chosen.diagnosis)
             inserted = service.insert_suggestion(
-                db, map_id=map_id, run_id=run_id, signal=draft, now=now, shadow=constants.AGENT_SHADOW_MODE,
+                db, map_id=map_id, run_id=run_id, signal=chosen, draft=draft, now=now, shadow=shadow,
             )
             if inserted is None:   # 다른 관찰이 먼저 활성 제안을 넣었다(부분 유니크 인덱스)
                 outcome = "blocked"
-                blocked_rows.append(asdict(core.Blocked(draft.id, "active_exists")))
+                blocked_rows.append(asdict(core.Blocked(chosen.id, "active_exists")))
                 service.set_run_outcome(db, run_id, outcome, blocked=blocked_rows)
             else:
                 new_expires_at = now + SUGGESTION_TTL
-        # M1: shadow가 아니면 여기서 record_event(agent.suggested, agent.resolved)
+                if not shadow:
+                    _announce_suggested(db, map_id, inserted)
         service.advance_cursor(
             db, map_id, snap.latest_seq, next_check_at=_next_check(snap, hist, now, th, new_expires_at),
             observed_at=now,
@@ -197,11 +215,120 @@ def _planned_outcome(signals: list[core.Signal], top: core.Signal | None) -> tup
     return "suggested", None
 
 
+def _announce_resolved(db: Session, map_id: str, changed: service.Changed, status: str) -> None:
+    """상태를 바꾼 제안 중 shadow가 아닌 것만 agent.resolved를 낸다(15절)."""
+    for suggestion_id, shadow in changed:
+        if not shadow:
+            record_event(db, core.resolved_event(map_id, suggestion_id, status))
+
+
+def _announce_suggested(db: Session, map_id: str, suggestion_id) -> None:
+    """방금 넣은 제안을 렌더해 agent.suggested로 낸다. 렌더는 같은 트랜잭션의 지금 상태로 한다(11절 끝)."""
+    row = db.get(SuggestionRow, suggestion_id)
+    rendered = _render(db, row)
+    if rendered is not None:
+        record_event(db, core.suggested_event(map_id, rendered))
+
+
 def _still_there(db: Session, draft: core.Signal, map_id: str, now: datetime, th: timedelta) -> bool:
     """상태 재확인(12.8) — 저장 트랜잭션 안에서 다시 읽은 사본으로 같은 탐지기를 돌린다. 기준 시간은 관찰 때 값을
     그대로 쓴다(재확인 사이에 기준이 움직여 신호가 깜빡이지 않게)."""
     fresh = snapshot.build(db, map_id, now)
     return fresh is not None and core.recheck(draft, fresh, now, th)
+
+
+# ---------------------------------------------------------------- 렌더 (11절 끝)
+
+def _render(db: Session, row: SuggestionRow) -> AgentSuggestion | None:
+    """저장된 슬롯 문장을 지금 상태로 렌더한다. 핀 이름과 사유 글은 여기서만 읽는다(명세 2절 13번)."""
+    pin_ids = set(core.referenced_pin_ids(row.claims))
+    refs = core.RenderRefs(
+        pin_names=_pin_names(db, row.map_id, pin_ids) if pin_ids else {},
+        reaction_texts=_reaction_texts(db, row.map_id, row.category) if core.quoted_reaction_ids(row.claims) else {},
+    )
+    return core.render_suggestion(row, refs)
+
+
+def _pin_names(db: Session, map_id: str, pin_ids: set[str]) -> dict[str, str]:
+    """삭제되지 않은 공개 핀의 이름 — db 핀은 장소 이름(places), 실시간 핀은 사용자가 친 검색어(#382). 지워졌거나
+    이름을 찾지 못한 핀은 빠진다(그 핀을 가리키는 문장은 렌더에서 빠진다)."""
+    pins = [p for p in pins_api.list_reaction_matrix(db, map_id=map_id) if p["pin_id"] in pin_ids]
+    places = places_api.get_places([p["place_id"] for p in pins if p["source"] != "live" and p["place_id"]], db=db)
+    names = {}
+    for p in pins:
+        info = places.get(p["place_id"]) if p["source"] != "live" else None
+        name = p["search_query"] if p["source"] == "live" else (info.name if info else None)
+        if name:
+            names[p["pin_id"]] = name
+    return names
+
+
+def _reaction_texts(db: Session, map_id: str, category: str | None) -> dict[str, str]:
+    """지금 있는 반응의 사유 글(quote 렌더용). 코드 유형은 quote가 없어 M1-2(#533) 진단부터 쓴다."""
+    texts = {}
+    for c in [category] if category else categories.pinnable():
+        for r in pins_api.list_reasoned_reactions(db, map_id=map_id, category=c):
+            if r["reason_text"]:
+                texts[r["reaction_id"]] = r["reason_text"]
+    return texts
+
+
+# ---------------------------------------------------------------- 화면 요청 (14절)
+
+def get_state(db: Session, *, map_id: str, user_id: str, now: datetime) -> AgentState:
+    """GET /maps/{mapId}/agent. 지금 제안은 shadow가 아니고 만료 전인 활성 제안을 렌더한 것. 모드가 꺼져 있으면 null."""
+    settings = core.settings_view(service.get_settings(db, map_id))
+    row = service.active_suggestion(db, map_id, now) if settings.enabled else None
+    active = _render(db, row) if row is not None else None
+    viewed = active is not None and service.has_viewed(db, row.id, user_id)
+    return core.agent_state(settings, active, viewed=viewed)
+
+
+def change_settings(db: Session, *, map_id: str, enabled: bool, user_id: str, now: datetime) -> AgentSettings:
+    """PUT /maps/{mapId}/agent/settings. 끄면 활성 제안을 superseded로(agent.resolved), 켜면 다음 tick에 관찰하도록
+    커서를 당긴다(12.9). 둘 다 agent.settings_changed. 지금과 같은 값이면 쓰지도 알리지도 않는다.
+
+    지도 행을 먼저 잠가 관찰의 저장 트랜잭션(observe_map 7단계도 지도 행을 잠근다)과 줄을 세운다 — 관찰이 끝난 뒤
+    끄면 방금 넣은 제안도 superseded가 되고, 끈 뒤에 관찰이 저장하러 오면 모드를 보고 넣지 않는다."""
+    if not maps_api.lock_map_if_alive(db, map_id):
+        raise AppError("NOT_FOUND")
+    current = core.settings_view(service.get_settings(db, map_id))
+    if current.enabled == enabled:
+        return current
+    service.save_settings(db, map_id=map_id, enabled=enabled, user_id=user_id, now=now)
+    if enabled:
+        service.wake_cursor(db, map_id, now)
+    else:
+        _announce_resolved(db, map_id, service.supersede_active(db, map_id, now), "superseded")
+    record_event(db, core.settings_changed_event(map_id, enabled, user_id))
+    return AgentSettings(enabled=enabled, updated_by=user_id, updated_at=now)
+
+
+def view(db: Session, *, row: SuggestionRow, user_id: str, now: datetime) -> None:
+    """POST /agent/suggestions/{id}/view. 사람마다 한 번(멱등). 이미 처리된 제안도 기록한다. 이벤트 없음."""
+    service.record_view(db, row.id, user_id, now)
+
+
+def accept(db: Session, *, row: SuggestionRow, action_index: int, user_id: str, now: datetime) -> AgentAcceptResponse:
+    """POST /agent/suggestions/{id}/accept. 버튼 범위 밖이면 422, 이미 처리됐거나 만료 시각이 지났으면 409.
+    서버는 그 버튼의 동작을 실행하지 않고 설명(AgentAction)만 돌려준다(16.3)."""
+    action = core.action_at(row.actions, action_index)
+    if action is None:
+        raise AppError("VALIDATION_ERROR", detail={"action_index": action_index, "actions": len(row.actions)})
+    resolved = service.resolve_suggestion(
+        db, row.id, status="accepted", user_id=user_id, now=now, action={"index": action.index, "type": action.type},
+    )
+    if not resolved:
+        raise AppError("SUGGESTION_RESOLVED")
+    record_event(db, core.resolved_event(row.map_id, str(row.id), "accepted", action.type))
+    return AgentAcceptResponse(action=action)
+
+
+def dismiss(db: Session, *, row: SuggestionRow, user_id: str, now: datetime) -> None:
+    """POST /agent/suggestions/{id}/dismiss. 지도 단위로 모두에게서 닫힌다. 이미 처리됐으면 409."""
+    if not service.resolve_suggestion(db, row.id, status="dismissed", user_id=user_id, now=now):
+        raise AppError("SUGGESTION_RESOLVED")
+    record_event(db, core.resolved_event(row.map_id, str(row.id), "dismissed"))
 
 
 def _next_check(

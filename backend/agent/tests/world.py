@@ -19,6 +19,7 @@ from auth.testing import ensure_users
 from common.events import EventLog
 from maps.models import Map, Membership
 from pins.models import Pin, Reaction
+from places.schemas import PlaceInfo
 from shortlist.models import ShortlistItem
 
 
@@ -55,16 +56,36 @@ class World:
             self.user_ids.update(uids)
             return row.id
 
-    def pin(self, map_id: str, *, category: str = "음식점", by: str = "u1", hours_ago: float = 100) -> str:
+    def pin(self, map_id: str, *, category: str = "음식점", by: str = "u1", hours_ago: float = 100,
+            place_id: str | None = None) -> str:
         with self.factory() as db:
             row = Pin(
                 id=uuid.uuid4(), map_id=map_id, category=category, kind="일반", origin="direct",
-                place_id=f"place_{uuid.uuid4().hex[:8]}", geom=func.ST_SetSRID(func.ST_MakePoint(127.0, 37.5), 4326),
+                place_id=place_id or f"place_{uuid.uuid4().hex[:8]}",
+                geom=func.ST_SetSRID(func.ST_MakePoint(127.0, 37.5), 4326),
                 visibility="public", created_by=self.uid(by), created_at=self.now - timedelta(hours=hours_ago),
             )
             db.add(row)
             db.commit()
             return str(row.id)
+
+    def live_pin(self, map_id: str, query: str, *, category: str = "음식점", by: str = "u1",
+                 hours_ago: float = 100) -> str:
+        """실시간 핀(#382) — 자체 DB 장소가 없고 사용자가 친 검색어만 있다."""
+        with self.factory() as db:
+            row = Pin(
+                id=uuid.uuid4(), map_id=map_id, category=category, kind="일반", origin="direct", source="live",
+                kakao_place_id=f"kakao:{uuid.uuid4().hex[:8]}", search_query=query, visibility="public",
+                created_by=self.uid(by), created_at=self.now - timedelta(hours=hours_ago),
+            )
+            db.add(row)
+            db.commit()
+            return str(row.id)
+
+    def delete_pin(self, pin_id: str) -> None:
+        with self.factory() as db:
+            db.get(Pin, uuid.UUID(pin_id)).deleted_at = self.now
+            db.commit()
 
     def react(self, pin_id: str, user: str, type_: str, *, hours_ago: float, text: str | None = None) -> str:
         with self.factory() as db:
@@ -100,6 +121,14 @@ class World:
             self.confirm(map_id, self.pin(map_id, category="음식점"))
         return map_id
 
+    def unseen_map(self, *pins: tuple[str, str], **kw) -> tuple[str, list[str]]:
+        """반응 공백(6.4)만 있는 지도 — u1이 100시간 전에 찍은 핀에 아무도 반응하지 않았다. pins는 (종류, 값):
+        ("db", place_id) 또는 ("live", 검색어). (map_id, 핀 id 목록)."""
+        map_id = self.map(**kw)
+        ids = [self.live_pin(map_id, value) if kind == "live" else self.pin(map_id, place_id=value)
+               for kind, value in pins]
+        return map_id, ids
+
     # ------------------------------------------------------------ 읽기
 
     def rows(self, model, **where):
@@ -120,6 +149,13 @@ class World:
                 select(func.count()).select_from(EventLog).where(EventLog.map_id.in_(self.map_ids))
             ).scalar_one()
 
+    def agent_events(self, map_id: str) -> list[tuple[str, dict]]:
+        """그 지도의 agent.* 이벤트 (type, payload), seq 순."""
+        with self.factory() as db:
+            return [(r.type, r.payload) for r in db.execute(
+                select(EventLog).where(EventLog.map_id == map_id, EventLog.type.like("agent.%")).order_by(EventLog.seq)
+            ).scalars().all()]
+
     # ------------------------------------------------------------ 정리
 
     def cleanup(self) -> None:
@@ -136,6 +172,13 @@ class World:
             db.execute(delete(Map).where(Map.id.in_(ids)))
             db.execute(delete(User).where(User.id.in_(self.user_ids)))
             db.commit()
+
+
+def fake_places(names: dict[str, str]):
+    """places.api.get_places 대역 — place_id → 장소 이름. 없는 id는 빠진다(진짜와 같다)."""
+    def get_places(place_ids, *, db=None):
+        return {pid: PlaceInfo(pid, names[pid], 37.5, 127.0, "음식점", None, None) for pid in place_ids if pid in names}
+    return get_places
 
 
 def real_now() -> datetime:
