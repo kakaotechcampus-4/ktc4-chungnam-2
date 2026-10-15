@@ -410,7 +410,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 - `structure_reasons`는 ②를 그대로 부른다. 입력은 반응의 글이고, 반환은 반응 하나당 근거 줄 여러 개(`{fact_key, wants, badge}`)다. 조건이 여럿인 글은 줄이 나뉜다(#419).
 - 칩은 ②를 부르지 않는다. `list_reasoned_reactions`가 돌려주는 칩 정보(키, 방향)를 그대로 쓴다(#412).
 - ♥ 반응의 글은 배지 preferred, 🚫 반응의 글은 required로 ②에 넣는다. 추천이 근거 줄을 만들 때와 같은 방식이다.
-- 🚫 사유 안의 음식 종류 "원함"을 선호로 내리는 규칙(#422)은 recommend의 `core.demote_wanted_place_identity`를 `recommend/api.py`로 열어 같은 함수를 쓴다. agent에 같은 규칙을 다시 쓰지 않는다.
+- 🚫 사유 안의 음식 종류 "원함"을 선호로 내리는 규칙(#422)은 `recommend.api.demote_wanted_place_identity`(#564에서 공개)를 그대로 쓴다. agent에 같은 규칙을 다시 쓰지 않는다.
 - 추천 run의 근거 줄은 run마다 따로 저장되고 반응 id와 연결돼 있지 않아 그대로 가져다 쓸 수 없다. 그래서 에이전트가 ②를 따로 부르고, (reaction_id, updated_at)으로 결과를 캐시한다.
 - ②는 같은 글도 호출마다 결과가 조금 다를 수 있다(이 모델은 temperature=0을 지원하지 않는다). 그래서 추천 run이 읽은 방향과 요약이 읽은 방향이 드물게 다를 수 있다. 캐시를 두면 같은 지도 안에서는 결과가 고정된다.
 - 10/2 판의 "② 정확도 20건 확인 후 처리 방식 결정"은 #410, #419 실제 모델 시험으로 대신한다.
@@ -841,12 +841,12 @@ CREATE TABLE agent_runs (
   blocked         jsonb NOT NULL DEFAULT '[]',   -- [{signal_id, reason}]
   priority        jsonb NULL,             -- model_order, final_order, corrections, reused
   policy_version  text NULL,
-  prompt_version  text NULL,
+  prompt_version  text NULL,             -- 우선순위와 진단을 둘 다 부르면 "prioritize-v1+diagnose-v1"처럼 잇는다. model도 같다(#564)
   model           text NULL,
   used_model      boolean NOT NULL DEFAULT false,
   tool_calls      jsonb NOT NULL DEFAULT '[]',
   verification    jsonb NULL,
-  tokens_in       integer NOT NULL DEFAULT 0,
+  tokens_in       integer NOT NULL DEFAULT 0,   -- 한 관찰의 모델 왕복 전부의 합. 실패한 호출도 그때까지 쓴 양을 센다(#564)
   tokens_out      integer NOT NULL DEFAULT 0,
   outcome         text NOT NULL,          -- 아래 목록
   outcome_detail  jsonb NULL
@@ -1083,7 +1083,7 @@ FE 담당
 
 ### M2: 우리 조건 요약 + 추천 막힘 조언 + 수치 조정
 
-통과 조건: recommend.api에 run 조회 함수(get_recent_runs, get_run_funnel, get_run_evidence용), 근거 줄 단위 읽기 전용 시뮬레이션 함수, #422 분류 함수(`demote_wanted_place_identity`) 공개
+통과 조건: recommend.api에 run 조회 함수(get_recent_runs, get_run_funnel, get_run_evidence용), 근거 줄 단위 읽기 전용 시뮬레이션 함수 공개. #422 분류 함수와 키 표시 이름은 #564에서 공개됨
 
 AI 담당
 
