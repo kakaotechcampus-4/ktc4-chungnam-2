@@ -1,37 +1,42 @@
 """
 의존성 배선 — llm 쪽 agent 함수를 실제 모델로 부를지 고정 응답 스텁으로 대신할지 여기서 고른다(docs/agent-v2.md 2절 7번,
-recommend/deps.py와 같은 방식). llm은 요청만 받고, 고르는 것은 받는 쪽인 agent다.
+recommend/deps.py와 같은 방식). llm은 요청만 받고, 고르는 것은 받는 쪽인 agent다. 고르는 방법은 llm.api 함수에 넘기는
+planner다(#532): dev는 fixed planner, real은 real planner.
 
-**M1-1(#531) 상태**: `select("agent.LlmGateway", settings.llm_mode, ...)`로 등록한다(#513에서 미룬 것). router.py가
-이 파일을 import하므로 main.py가 뜰 때 포트가 기동 로그(format_assembly)에 오른다.
-
-- dev: 고정 응답 스텁. 모델을 부르지 않는다. 우선순위는 받은 순서 그대로, 나머지는 전부 silent다. 지어낸 문장이나
-  숫자가 화면에 나갈 길이 없다(명세 2절 10번 "검증 실패면 침묵"과 같은 쪽으로 기운다).
-- real: llm.api의 agent 함수(agent_prioritize, agent_diagnose …)를 부를 자리다. 그 함수는 #532에서 생긴다. 그 전까지
-  부르면 NotImplementedError다. `real`을 None으로 두지 않은 이유: 로컬 .env가 LLM_MODE=real(② 실제 모델)이면
-  select()가 import 시점에 ConfigError를 내 서버가 뜨지 않는다. M1-1의 관찰과 화면 요청은 Gateway를 부르지 않는다
-  (코드 유형만 내고 모델 유형은 모델 단계를 건너뛴다).
-- 입력 모양(`core.diagnosis_input` 등)은 M1-2(#533)에서 정해진다. 그때 Mapping을 구체 타입으로 바꾼다.
+- prioritize, diagnose(#533): `llm.api.agent_prioritize`, `agent_diagnose`. 실패는 예외가 아니라 `AgentCallFailed`로 온다.
+  dev 스텁은 우선순위를 받은 순서 그대로 돌려주고, 진단은 get_reasons를 한 번 부른 뒤 늘 silent다 — 지어낸 문장이나 숫자가
+  화면에 나갈 길이 없다(명세 2절 10번).
+- structure(#533): structure_reasons 도구가 쓰는 ②(`llm.api.plan_evidence`). dev는 입력을 그대로 돌려주는 스텁이라 글에
+  키가 붙지 않는다. 실패는 `PlanEvidenceFailed`(예외)다 — 도구가 오류 결과로 바꾼다.
+- summarize, advise_run: llm 함수가 M2에서 생긴다. real은 그 전까지 부르면 NotImplementedError다.
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
 from fastapi import Depends
 
-from agent.schemas import DiagnosisOutput, PriorityItem, PriorityOutput, RunAdviceOutput, SummaryOutput
+from agent.schemas import AgentCallFailed, DiagnosisOutput, PriorityOutput, RunAdviceOutput, SummaryOutput
 from common.adapters import select
 from common.database import get_db_session
 from common.settings import settings
+from llm import api as llm_api
 
-# 도구 콜백: (도구 이름, 인자) -> 결과. agent가 llm에 넘기고, 실행과 tool_calls 기록은 agent(tools.py, M1)가 한다.
-ToolRunner = Callable[[str, Mapping[str, Any]], Mapping[str, Any]]
+# 도구 콜백: (call_id, 도구 이름, 인자) -> 결과. call_id(t1, t2 …)는 llm이 매긴다(#532). 실행과 tool_calls 기록은
+# agent(tools.py)가 한다.
+ToolRunner = llm_api.ToolRunner
 
 
 class AgentLlmGateway(Protocol):
-    def prioritize(self, signals: Sequence[Mapping[str, Any]], principles: Sequence[str]) -> PriorityOutput: ...
+    def prioritize(
+        self, signals: Sequence[Mapping[str, Any]], principles: Sequence[str],
+    ) -> PriorityOutput | AgentCallFailed: ...
 
-    def diagnose(self, diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner) -> DiagnosisOutput: ...
+    def diagnose(
+        self, diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner,
+    ) -> DiagnosisOutput | AgentCallFailed: ...
+
+    def structure(self, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[llm_api.EvidenceLine]]: ...
 
     def summarize(self, summary_input: Mapping[str, Any]) -> SummaryOutput: ...
 
@@ -39,16 +44,21 @@ class AgentLlmGateway(Protocol):
 
 
 class FixedAgentLlmGateway:
-    """고정 응답 스텁 — 모델을 부르지 않고 도구도 쓰지 않는다. 출력은 스키마 검증을 통과하는 최소 응답이다."""
+    """고정 응답 스텁 — 모델을 부르지 않는다. llm.api 함수에 fixed planner를 넘겨 오케스트레이션(도구 콜백, 실패 처리)은
+    실제와 같은 길로 지나간다."""
 
-    def prioritize(self, signals: Sequence[Mapping[str, Any]], principles: Sequence[str]) -> PriorityOutput:
-        return PriorityOutput(order=[PriorityItem(signal_id=s["id"], reason="고정 응답") for s in signals])
+    def prioritize(
+        self, signals: Sequence[Mapping[str, Any]], principles: Sequence[str],
+    ) -> PriorityOutput | AgentCallFailed:
+        return llm_api.agent_prioritize(signals, principles, planner=llm_api.fixed_priority_planner)
 
-    def diagnose(self, diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner) -> DiagnosisOutput:
-        return DiagnosisOutput(
-            decision="silent", diagnosis=diagnosis_input["diagnosis"], signal_id=diagnosis_input["signal_id"],
-            claims=[], advice=[], actions=[],
-        )
+    def diagnose(
+        self, diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner,
+    ) -> DiagnosisOutput | AgentCallFailed:
+        return llm_api.agent_diagnose(diagnosis_input, tool_runner=tool_runner, planner=llm_api.fixed_diagnosis_planner)
+
+    def structure(self, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[llm_api.EvidenceLine]]:
+        return llm_api.plan_evidence(raw_reasons, planner=llm_api.passthrough_planner)
 
     def summarize(self, summary_input: Mapping[str, Any]) -> SummaryOutput:
         return SummaryOutput(decision="silent", claims=[], requests=[])
@@ -59,23 +69,27 @@ class FixedAgentLlmGateway:
 
 
 class RealAgentLlmGateway:
-    """llm.api의 agent 함수로 실제 모델을 부를 자리(#532). 함수가 생기기 전에는 부르면 바로 실패한다 — 고정 응답으로
-    조용히 대신하지 않는다(real이라고 떴는데 스텁이 도는 일이 없게)."""
+    """실제 모델(gpt-6-luna). summarize와 advise_run은 llm 함수가 M2에서 생긴다 — 그 전에는 부르면 바로 실패한다
+    (real이라고 떴는데 스텁이 도는 일이 없게)."""
 
-    def _missing(self):
-        raise NotImplementedError("llm.api의 agent 함수가 아직 없다(#532)")
+    def prioritize(
+        self, signals: Sequence[Mapping[str, Any]], principles: Sequence[str],
+    ) -> PriorityOutput | AgentCallFailed:
+        return llm_api.agent_prioritize(signals, principles, planner=llm_api.real_priority_planner)
 
-    def prioritize(self, signals: Sequence[Mapping[str, Any]], principles: Sequence[str]) -> PriorityOutput:
-        self._missing()
+    def diagnose(
+        self, diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner,
+    ) -> DiagnosisOutput | AgentCallFailed:
+        return llm_api.agent_diagnose(diagnosis_input, tool_runner=tool_runner, planner=llm_api.real_diagnosis_planner)
 
-    def diagnose(self, diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner) -> DiagnosisOutput:
-        self._missing()
+    def structure(self, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[llm_api.EvidenceLine]]:
+        return llm_api.plan_evidence(raw_reasons, planner=llm_api.real_evidence_planner)
 
     def summarize(self, summary_input: Mapping[str, Any]) -> SummaryOutput:
-        self._missing()
+        raise NotImplementedError("llm.api.agent_summarize가 아직 없다(M2)")
 
     def advise_run(self, advice_input: Mapping[str, Any], *, tool_runner: ToolRunner) -> RunAdviceOutput:
-        self._missing()
+        raise NotImplementedError("llm.api.agent_advise_run이 아직 없다(M2)")
 
 
 def _fixed_agent_llm_gateway() -> AgentLlmGateway:

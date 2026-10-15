@@ -4,6 +4,7 @@
 - 개입 정책(12.3), 대체 순위(7절), 다음 점검 시각(12.4)
 - 우선순위 정책 파일(`priority_policy.yaml`) 로더 — 파일 읽기 한 곳만 I/O다
 - 코드 유형 템플릿(6.4, 6.5)과 렌더(11절 끝 "저장과 렌더 시점"), 이벤트 페이로드(15절) — #531
+- 우선순위의 모델 경로와 보정(7절), 진단 입력(12.4 6단계), 충돌 종류(6.3), 모델 출력 검증(11.2) — #533
 
 입력은 `agent.snapshot.Snapshot`(관찰 한 번의 사본)과 `History`(이 지도의 제안 이력, #515가 채운다)다.
 Signal과 features에는 사유 글을 넣지 않는다 — 근거는 reaction_id와 pin_id로만 가리킨다(명세 2절 13번).
@@ -51,11 +52,17 @@ from agent.constants import (
 from agent.schemas import (
     AgentAction,
     AgentAdviceLine,
+    AgentAnalysis,
+    AgentConflictAxis,
     AgentSettings,
     AgentState,
     AgentSuggestion,
     CountClaim,
+    DiagnosisOutput,
+    PriorityOutput,
+    QuoteClaim,
     RefClaim,
+    ToolClaim,
 )
 from common import categories
 from common.events import Event
@@ -317,6 +324,7 @@ class PastSuggestion:
 class History:
     suggestions: tuple[PastSuggestion, ...] = ()   # 이 지도, 최신순(created_at 내림차순)
     model_runs_today: int = 0   # KST 자정 이후 used_model=true이고 trigger in (activity, time, summary)인 agent_runs 수
+    last_priority: Mapping[str, Any] | None = None   # 직전 관찰(activity, time)의 agent_runs.priority. 순위 재사용(7절 2번)
 
     @property
     def active(self) -> PastSuggestion | None:
@@ -499,13 +507,101 @@ def recheck(signal: Signal, snap: Snapshot, now: datetime, th: timedelta) -> boo
     )
 
 
-def choose_top(passed: Sequence[Signal], policy: PriorityPolicy) -> tuple[Signal | None, dict[str, Any] | None]:
-    """1순위 신호와 agent_runs.priority 기록(7절). M0은 모델을 부르지 않아 늘 fallback_order다(model_order 없음).
-    M1에서 신호가 2개 이상이면 llm.agent_prioritize와 apply_priority_rules로 바뀐다."""
+def priority_input(signals: Sequence[Signal], policy: PriorityPolicy) -> list[dict[str, Any]]:
+    """llm.agent_prioritize에 넘길 신호(7절). 근거 id도 사유 글도 넣지 않는다 — 유형, 카테고리, 특징값뿐이다.
+    fallback_order 순서로 넘긴다 — 고정 응답 스텁(받은 순서 그대로)이 모델 없는 순위와 같아진다."""
+    return [
+        {"id": s.id, "diagnosis": s.diagnosis, "category": s.category, "features": dict(s.features)}
+        for s in fallback_order(signals, policy)
+    ]
+
+
+def apply_priority_rules(
+    model_order: Sequence[str], signals: Sequence[Signal], policy: PriorityPolicy,
+) -> tuple[list[Signal], list[dict[str, Any]]]:
+    """모델 순서를 정책으로 보정한다(7절). (최종 순서, 보정 기록).
+
+    1. 모르는 id는 버린다(unknown_id). 2. 같은 id가 또 나오면 뒤의 것을 버린다(duplicate). 3. 빠진 신호는
+    fallback_order 순서로 뒤에 붙인다(missing). 4. always_first 유형을 앞으로(always_first). 5. 1순위가 never_first
+    유형이면 그렇지 않은 첫 신호를 앞으로(never_first)."""
+    by_id = {s.id: s for s in signals}
+    order: list[Signal] = []
+    corrections: list[dict[str, Any]] = []
+    for sid in model_order:
+        if sid not in by_id:
+            corrections.append({"type": "unknown_id", "signal_id": sid})
+        elif by_id[sid] in order:
+            corrections.append({"type": "duplicate", "signal_id": sid})
+        else:
+            order.append(by_id[sid])
+    for sig in fallback_order([s for s in signals if s not in order], policy):
+        corrections.append({"type": "missing", "signal_id": sig.id})
+        order.append(sig)
+    first = [s for s in order if s.diagnosis in policy.always_first]
+    if first and order[:len(first)] != first:
+        order = first + [s for s in order if s not in first]
+        corrections.append({"type": "always_first", "signal_ids": [s.id for s in first]})
+    if order and order[0].diagnosis in policy.never_first:
+        allowed = next((s for s in order if s.diagnosis not in policy.never_first), None)
+        if allowed is not None:
+            order = [allowed] + [s for s in order if s is not allowed]
+            corrections.append({"type": "never_first", "signal_id": allowed.id})
+    return order, corrections
+
+
+def priority_mode(passed: Sequence[Signal], previous: Mapping[str, Any] | None, *, cap_reached: bool) -> str:
+    """순위를 어떻게 정할지(7절 1~3번). none(신호 없음) | single(1개, 부르지 않음) | reused(직전 관찰과 fingerprint
+    집합이 같고 직전 순위가 모델에서 나옴) | model_cap(상한, fallback_order) | model(llm.agent_prioritize를 부른다)."""
+    if not passed:
+        return "none"
+    if len(passed) == 1:
+        return "single"
+    if _reusable(passed, previous):
+        return "reused"
+    if cap_reached:
+        return "model_cap"
+    return "model"
+
+
+def _reusable(passed: Sequence[Signal], previous: Mapping[str, Any] | None) -> bool:
+    if not previous or previous.get("source") not in ("model", "reused"):
+        return False
+    fingerprints = previous.get("fingerprints") or []
+    return len(fingerprints) == len(passed) and set(fingerprints) == {s.fingerprint for s in passed}
+
+
+def choose_top(
+    passed: Sequence[Signal], policy: PriorityPolicy, *, mode: str = "fallback", model_out: Any = None,
+    previous: Mapping[str, Any] | None = None,
+) -> tuple[Signal | None, dict[str, Any] | None]:
+    """1순위 신호와 agent_runs.priority 기록(7절). mode는 priority_mode의 결과다(기본 fallback은 모델 없이 정한다).
+
+    - model: model_out(PriorityOutput)의 순서를 apply_priority_rules로 보정한다. model_out이 PriorityOutput이 아니면
+      (AgentCallFailed: 호출 실패, 타임아웃, 스키마 실패) fallback_order로 정하고 그 이유를 남긴다
+    - reused: 직전 관찰의 순서(fingerprint)를 그대로 쓴다
+    - single, model_cap, fallback: fallback_order
+    기록: source(어떻게 정했나), model_order, final_order, fingerprints(final_order 순서 — 다음 관찰의 재사용 판단),
+    corrections, reused, fallback_reason. 사유 글은 없다."""
     if not passed:
         return None, None
-    order = fallback_order(passed, policy)
-    log = {"model_order": None, "final_order": [s.id for s in order], "corrections": [], "reused": False}
+    model_order, corrections, fallback_reason, source = None, [], None, mode
+    if mode == "model" and isinstance(model_out, PriorityOutput):
+        model_order = [item.signal_id for item in model_out.order]
+        order, corrections = apply_priority_rules(model_order, passed, policy)
+    elif mode == "reused":
+        rank = {fp: i for i, fp in enumerate(previous["fingerprints"])}
+        order = sorted(passed, key=lambda s: rank[s.fingerprint])
+    else:
+        order = fallback_order(passed, policy)
+        if mode == "model":
+            source, fallback_reason = "fallback", getattr(model_out, "reason", "invalid_schema")
+        elif mode == "model_cap":
+            source, fallback_reason = "fallback", "model_cap"
+    log = {
+        "source": source, "model_order": model_order, "final_order": [s.id for s in order],
+        "fingerprints": [s.fingerprint for s in order], "corrections": corrections, "reused": mode == "reused",
+        "fallback_reason": fallback_reason,
+    }
     return order[0], log
 
 
@@ -538,6 +634,7 @@ class Draft:
     claims: list[dict[str, Any]]
     advice: list[dict[str, Any]]    # [{slot_text, is_guess}]
     actions: list[dict[str, Any]]   # [{index, type, label, params}] — AgentAction 직렬화
+    analysis: dict[str, Any] | None = None   # split: compare_reasons 결과(키와 reaction_id만, 사유 글 없음)
 
 
 def _subject_particle(word: str) -> str:
@@ -595,16 +692,372 @@ def render_template(sig: Signal) -> Draft:
     return _TEMPLATES[sig.diagnosis](sig)
 
 
+# ---------------------------------------------------------------- 모델 진단 입력 (6.2, 6.3, 10절)
+
+def diagnosis_input(top: Signal, snap: Snapshot, comparison: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """llm.agent_diagnose에 넘길 1순위 신호. 모델에는 JSON 문자열로 그대로 간다 — 공개 데이터만 넣는다(명세 2절 2번).
+    run의 존재(has_run_since)와 구성원 user_id는 넣지 않는다. 사유 글도 넣지 않는다(모델이 get_reasons로 읽는다).
+    stall은 카테고리와 🚫 반응 id, split은 핀 id와 반응 id, compare_reasons 결과(충돌 종류는 코드가 정한다, 6.3)."""
+    f = top.features
+    out: dict[str, Any] = {
+        "signal_id": top.id, "diagnosis": top.diagnosis, "category": top.category,
+        "trigger": f.get("trigger"), "affected_members": f.get("affected_members"), "dday": f.get("dday"),
+        "elapsed_ratio": f.get("elapsed_ratio"), "recent_dismissals": f.get("recent_dismissals"),
+        "member_count": snap.member_count,
+    }
+    if top.diagnosis == "stall":
+        out["against_reaction_ids"] = list(top.evidence_ids)
+    elif top.diagnosis == "split":
+        out["pin_id"] = top.pin_id
+        out["reaction_ids"] = list(top.evidence_ids)
+        out["comparison"] = comparison
+    return out
+
+
+# ---------------------------------------------------------------- 충돌 종류 (6.3)
+
+def compare_reasons(reasons: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """♥ 쪽과 🚫 쪽 사유를 키별로 모으고 충돌 종류를 정한다(6.3). 입력은 structure_reasons 모양
+    `[{reaction_id, type, lines: [{fact_key, wants, badge}]}]`(키와 방향은 ②와 칩 표가 정한 것).
+
+    - keys: `[{fact_key, want: [{reaction_id, side}], avoid: [...]}]` — wants=true면 want, false면 avoid, null이면 어느
+      쪽에도 넣지 않는다. side는 like(♥) 또는 against(🚫)
+    - conflict_type
+      - unclear: 한쪽이라도 키 있는 사유가 없다
+      - same_axis: 같은 키를 두고 ♥ 쪽과 🚫 쪽 방향이 반대다(♥ quiet 원함 / 🚫 quiet 피함)
+      - different_axes: 양쪽 키가 겹치지 않는다
+      - 그 밖(같은 키인데 방향이 같거나 모름. 예: ♥ "조용해서 좋아요"와 🚫 칩 「시끄러워요」는 둘 다 quiet 원함이다 —
+        취향이 아니라 이 가게가 조용한지를 두고 갈렸다)은 6.3 표에 없어 unclear로 둔다(for_Root.md #533)"""
+    sides: dict[str, dict[str, set[bool | None]]] = {"like": {}, "against": {}}
+    entries: dict[str, dict[str, list[dict[str, str]]]] = {}
+    for r in reasons:
+        side = sides.get(r["type"])
+        if side is None:
+            continue
+        for line in r["lines"]:
+            key, wants = line.get("fact_key"), line.get("wants")
+            if key is None:
+                continue
+            side.setdefault(key, set()).add(wants)
+            if wants is not None:
+                bucket = entries.setdefault(key, {"want": [], "avoid": []})["want" if wants else "avoid"]
+                ref = {"reaction_id": r["reaction_id"], "side": r["type"]}
+                if ref not in bucket:
+                    bucket.append(ref)
+    like, against = sides["like"], sides["against"]
+    shared = set(like) & set(against)
+    if not like or not against:
+        conflict = "unclear"
+    elif any(_opposite(like[k], against[k]) for k in shared):
+        conflict = "same_axis"
+    elif not shared:
+        conflict = "different_axes"
+    else:
+        conflict = "unclear"
+    keys = [
+        {"fact_key": k, "want": sorted(v["want"], key=_ref_key), "avoid": sorted(v["avoid"], key=_ref_key)}
+        for k, v in sorted(entries.items())
+    ]
+    return {"conflict_type": conflict, "keys": keys}
+
+
+def _opposite(like_wants: set[bool | None], against_wants: set[bool | None]) -> bool:
+    """♥ 쪽이 원하고 🚫 쪽이 피하거나, 그 반대인가."""
+    return (True in like_wants and False in against_wants) or (False in like_wants and True in against_wants)
+
+
+def _ref_key(ref: Mapping[str, str]) -> tuple[str, str]:
+    return ref["side"], ref["reaction_id"]
+
+
+def render_analysis(analysis: Mapping[str, Any] | None, fact_labels: Mapping[str, str]) -> AgentAnalysis | None:
+    """저장된 compare_reasons 결과 → API의 AgentAnalysis. 축 이름은 키의 표시 이름이고, 이름을 모르는 키는 날것으로
+    내지 않고 뺀다(추천 이유와 같은 규칙). 양쪽은 "원함 2", "원하지 않음 1"처럼 사람 수만."""
+    if not analysis:
+        return None
+    axes = []
+    for k in analysis.get("keys", []):
+        label = fact_labels.get(k["fact_key"])
+        if label is None:
+            continue
+        axes.append(AgentConflictAxis(
+            label=label, like_side=_side_text(k, "like"), against_side=_side_text(k, "against"),
+        ))
+    return AgentAnalysis(conflict_type=analysis["conflict_type"], axes=axes)
+
+
+def _side_text(key: Mapping[str, Any], side: str) -> str | None:
+    want = sum(r["side"] == side for r in key["want"])
+    avoid = sum(r["side"] == side for r in key["avoid"])
+    parts = ([f"원함 {want}"] if want else []) + ([f"원하지 않음 {avoid}"] if avoid else [])
+    return " / ".join(parts) or None
+
+
+# ---------------------------------------------------------------- 모델 진단 검증 (11.2)
+
+# 6절 표의 유형별 허용 행동
+MODEL_ACTIONS = {"stall": ("open_recommend", "search_place", "show_pins"), "split": ("open_recommend", "show_pins")}
+# 초안. 확정이나 결정을 지시하는 표현을 막는다(11.2). 공백을 뺀 문장과 비교한다
+FORBIDDEN_PHRASES = ("확정하세요", "확정해", "결정하세요", "여기로 가세요", "여기로 정하세요")
+COPY_MIN_CHARS = 8   # 슬롯 밖에서 사유 원문과 공백을 뺀 연속 8글자 이상이 같으면 옮겨 쓴 것으로 본다(초안)
+LINE_MAX_CHARS = 300   # AgentAdviceLine.text 상한
+
+_CLAIM_ID = re.compile(r"c\d+")
+_ALIAS = re.compile(r"(?<![A-Za-z0-9])m\d+(?![0-9])")
+_SPACES = re.compile(r"\s+")
+_SLOT = re.compile(r"\{(c\d+)(\.value)?\}")   # {cN.value}는 값, {cN}은 인용이나 참조(렌더도 같은 규칙)
+
+# 모델 유형 제목 — 모델 출력에는 제목이 없어 코드가 정한다(카테고리 이름뿐, 숫자와 인용 없음)
+_MODEL_TITLES = {
+    "stall": lambda c: f"{c} 후보가 반대 의견 뒤로 멈춰 있어요",
+    "split": lambda c: "의견이 갈린 핀이 있어요",
+}
+
+
+@dataclass(frozen=True)
+class Verified:
+    """verify_diagnosis 결과. outcome: suggested | silent | unknown | invalid_claims. record는 agent_runs.verification
+    — 단계별 통과와 실패 내역이고, claim id와 이유만 담는다(사유 글 없음)."""
+    outcome: str
+    draft: Draft | None
+    record: dict[str, Any]
+
+
+def failed_outcome(reason: str) -> str:
+    """AgentCallFailed.reason → agent_runs.outcome. 스키마 실패는 invalid_schema, 호출 실패와 타임아웃은 model_failed
+    (data-model.md, #532). 어느 쪽도 재요청하지 않는다."""
+    return "invalid_schema" if reason == "invalid_schema" else "model_failed"
+
+
+def _normalize(text: str) -> str:
+    return _SPACES.sub(" ", text).strip()
+
+
+def _squash(text: str) -> str:
+    return _SPACES.sub("", text)
+
+
+def count_metric(snap: Snapshot, subject: str, subject_id: str | None, metric: str) -> int | None:
+    """count claim을 스냅샷에서 다시 센다(11.2 3단계). 대상이 없으면 None(claim 제거).
+    pin: like·against는 그 핀의 반응 수, unseen은 핀을 찍지 않은 구성원 중 반응하지 않은 사람 수, confirmed는 0/1,
+    pins는 1. category와 map은 그 범위 핀들의 합이고, unseen은 반응하지 않은 구성원이 한 명이라도 있는 핀 수다."""
+    if subject == "pin":
+        found = snap.pin(subject_id) if subject_id else None
+        pins = [found] if found is not None else None
+    elif subject == "category":
+        pins = [p for p in snap.pins if p.category == subject_id] if subject_id in categories.pinnable() else None
+    else:
+        pins = list(snap.pins) if subject_id is None else None
+    if pins is None:
+        return None
+    if metric in ("like", "against"):
+        return sum(r.type == metric for p in pins for r in snap.reactions_of(p.pin_id))
+    if metric == "confirmed":
+        return sum(snap.is_confirmed(p.pin_id) for p in pins)
+    if metric == "pins":
+        return len(pins)
+    unseen = [
+        sum(m.user_id != p.created_by and not snap.has_reaction(m.user_id, p.pin_id) for m in snap.members)
+        for p in pins
+    ]
+    return unseen[0] if subject == "pin" else sum(n > 0 for n in unseen)
+
+
+def resolve_path(result: Any, path: str) -> tuple[bool, Any]:
+    """도구 결과 안의 경로("ready", "pins.0.reactions.m1"). 숫자 조각은 목록 위치다. (찾았나, 값)."""
+    current = result
+    for part in path.split("."):
+        if isinstance(current, Mapping) and part in current:
+            current = current[part]
+        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
+            current = current[int(part)]
+        else:
+            return False, None
+    return True, current
+
+
+def _same_value(actual: Any, claimed: Any) -> bool:
+    if isinstance(actual, bool) or isinstance(claimed, bool):   # True == 1을 같다고 보지 않는다
+        return type(actual) is bool and type(claimed) is bool and actual == claimed
+    if isinstance(actual, (int, float)) and isinstance(claimed, (int, float)):
+        return actual == claimed
+    return type(actual) is type(claimed) and actual == claimed
+
+
+def _check_claim(claim: Any, snap: Snapshot, tool_results: Mapping[str, Any]) -> str | None:
+    """claim 하나를 대조한다(11.2 3단계). 통과면 None, 아니면 이유."""
+    if isinstance(claim, CountClaim):
+        actual = count_metric(snap, claim.subject, claim.subject_id, claim.metric)
+        return None if actual is not None and actual == claim.value else "count_mismatch"
+    if isinstance(claim, QuoteClaim):
+        reason = next((r for r in snap.reasons if r.reaction_id == claim.reaction_id), None)
+        quote = _normalize(claim.text)
+        if reason is None or not reason.text or not quote or quote not in _normalize(reason.text):
+            return "quote_not_found"
+        return None
+    if isinstance(claim, RefClaim):
+        if claim.object == "pin":
+            found = snap.pin(claim.ref_id) is not None
+        elif claim.object == "reaction":
+            found = any(r.reaction_id == claim.ref_id for r in (*snap.reactions, *snap.reasons))
+        else:
+            found = any(p.place_id == claim.ref_id for p in snap.pins)
+        return None if found else "ref_not_found"
+    if isinstance(claim, ToolClaim):
+        if claim.call_id not in tool_results:
+            return "tool_call_not_found"
+        found, actual = resolve_path(tool_results[claim.call_id], claim.path)
+        return None if found and _same_value(actual, claim.value) else "tool_mismatch"
+    return "unknown_kind"
+
+
+def _verify_claims(out: DiagnosisOutput, snap: Snapshot, tool_results: Mapping[str, Any]):
+    kept: dict[str, Any] = {}
+    removed: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for claim in out.claims:
+        if not _CLAIM_ID.fullmatch(claim.id):
+            reason = "bad_id"
+        elif claim.id in seen:
+            reason = "duplicate_id"
+        else:
+            reason = _check_claim(claim, snap, tool_results)
+        seen.add(claim.id)
+        if reason is None:
+            kept[claim.id] = claim
+        else:
+            removed.append({"id": claim.id, "reason": reason})
+            kept.pop(claim.id, None)   # 같은 id가 또 오면 앞의 것도 믿지 않는다
+    return kept, removed
+
+
+def _check_line(
+    text: str, basis: Sequence[str], kept: Mapping[str, Any], reason_texts: Sequence[str], names: Sequence[str],
+) -> str | None:
+    """문장 하나(11.2 5단계). 통과면 None, 아니면 이유."""
+    if any(b not in kept for b in basis):
+        return "basis"
+    for m in _SLOT.finditer(text):
+        claim = kept.get(m.group(1))
+        if claim is None:
+            return "slot"
+        if (m.group(2) is not None) != isinstance(claim, (CountClaim, ToolClaim)):
+            return "slot"   # {cN.value}는 count와 tool_result, {cN}은 quote와 ref만
+    bare = _SLOT.sub("", text)
+    squashed = _squash(bare)
+    if not squashed or len(text) > LINE_MAX_CHARS:
+        return "empty_or_long"
+    if "{" in bare or "}" in bare:
+        return "slot"
+    if any(name in text for name in names) or _ALIAS.search(text):
+        return "member_name"   # 별칭(m3)에는 숫자가 있어 숫자 검사보다 먼저 본다
+    if re.search(r"\d", bare):
+        return "digit"
+    if any(_squash(p) in squashed for p in FORBIDDEN_PHRASES):
+        return "forbidden"
+    windows = {squashed[i:i + COPY_MIN_CHARS] for i in range(len(squashed) - COPY_MIN_CHARS + 1)}
+    if any(w in source for source in reason_texts for w in windows):
+        return "copied"
+    return None
+
+
+def _model_action(
+    action: Any, top: Signal, snap: Snapshot, kept: Mapping[str, Any],
+) -> tuple[tuple[str, str, dict[str, Any]] | None, str | None]:
+    """행동 하나(11.2 6단계) → ((type, label, params), None) 또는 (None, 이유). 버튼 이름은 코드가 정한다."""
+    if action.type not in MODEL_ACTIONS[top.diagnosis]:
+        return None, "type"
+    if not action.basis or any(b not in kept for b in action.basis):
+        return None, "basis"
+    if action.type == "show_pins" and action.pin_ids:
+        if any(snap.pin(pid) is None for pid in action.pin_ids):
+            return None, "pin"
+        return ("show_pins", "핀 보기", {"pin_ids": list(dict.fromkeys(action.pin_ids))}), None
+    c = action.category or top.category
+    if c not in categories.pinnable() or (action.type == "open_recommend" and c not in categories.recommendable()):
+        return None, "category"
+    label = {"open_recommend": f"{c} 추천 받기", "search_place": f"{c} 검색", "show_pins": f"{c} 핀 보기"}[action.type]
+    return (action.type, label, {"category": c}), None
+
+
+def _stored_claim(claim: Any) -> dict[str, Any]:
+    """저장할 claim. quote의 text(대조용)는 버리고 reaction_id만 남긴다(명세 2절 13번, 11.2 끝)."""
+    data = claim.model_dump()
+    if isinstance(claim, QuoteClaim):
+        data.pop("text")
+    return data
+
+
+def verify_diagnosis(
+    out: DiagnosisOutput, top: Signal, snap: Snapshot, tool_results: Mapping[str, Any], *,
+    member_names: Iterable[str] = (), comparison: Mapping[str, Any] | None = None,
+) -> Verified:
+    """모델 진단 출력 검증(11.2). 스키마(1단계)는 llm이 이미 봤다 — 여기 오는 것은 DiagnosisOutput이다.
+
+    1 decision이 silent·unknown이면 그대로 침묵 2 signal_id와 diagnosis가 1순위 신호와 같은가 3 claim 대조(실패한
+    claim 제거) 4 구조 대조(요약 전용이라 진단은 건너뛴다) 5 문장(제거된 claim을 가리킴, 슬롯 밖 숫자, 구성원 이름이나
+    별칭, 금지 표현, 슬롯 밖 사유 원문 옮겨 쓰기) 6 행동(유형별 허용, 추천 대상 카테고리, basis) 7 성립(split은 그 핀의
+    like·against count, 문장이나 행동이 하나 이상). 2단계나 7단계에서 실패하면 invalid_claims로 침묵한다.
+
+    tool_results: 이번 관찰의 도구 결과(call_id → 모델에 준 결과 그대로). member_names: 구성원 표시 이름(두 글자
+    이상만 본다 — 한 글자 이름은 보통 낱말과 겹친다)."""
+    record: dict[str, Any] = {"decision": out.decision}
+    if out.decision != "suggest":
+        return Verified(out.decision, None, record)
+    record["signal"] = out.signal_id == top.id and out.diagnosis == top.diagnosis
+    if not record["signal"]:
+        return Verified("invalid_claims", None, record | {"failed_step": 2})
+
+    kept, removed = _verify_claims(out, snap, tool_results)
+    record["claims"] = {"kept": list(kept), "removed": removed}
+    record["structure"] = "skipped"
+
+    names = [n for n in member_names if n and len(n) >= 2]
+    reason_texts = [_squash(r.text) for r in snap.reasons if r.text]
+    advice, removed_lines = [], []
+    for i, line in enumerate(out.advice):
+        reason = _check_line(line.text, line.basis, kept, reason_texts, names)
+        if reason is None:
+            advice.append({"slot_text": line.text, "is_guess": line.is_guess})
+        else:
+            removed_lines.append({"index": i, "reason": reason})
+    record["lines"] = {"kept": len(advice), "removed": removed_lines}
+
+    specs, removed_actions = [], []
+    for i, action in enumerate(out.actions):
+        spec, reason = _model_action(action, top, snap, kept)
+        if reason is not None:
+            removed_actions.append({"index": i, "reason": reason})
+        elif spec not in specs:
+            specs.append(spec)
+    record["actions"] = {"kept": len(specs), "removed": removed_actions}
+
+    required = top.diagnosis != "split" or all(
+        any(isinstance(c, CountClaim) and c.subject == "pin" and c.subject_id == top.pin_id and c.metric == m
+            for c in kept.values())
+        for m in ("like", "against")
+    )
+    record["established"] = required and bool(advice or specs)
+    if not record["established"]:
+        return Verified("invalid_claims", None, record | {"failed_step": 7})
+    draft = Draft(
+        title=_MODEL_TITLES[top.diagnosis](top.category),
+        claims=[_stored_claim(c) for c in kept.values()],
+        advice=advice,
+        actions=_actions(*specs),
+        analysis=dict(comparison) if top.diagnosis == "split" and comparison else None,
+    )
+    return Verified("suggested", draft, record)
+
+
 # ---------------------------------------------------------------- 렌더 (11절 끝 "저장과 렌더 시점")
-
-_SLOT = re.compile(r"\{(c\d+)(\.value)?\}")
-
 
 @dataclass(frozen=True)
 class RenderRefs:
     """렌더 때 읽은 지금 상태. 없는 키 = 지워졌다 → 그 키를 가리키는 문장을 뺀다."""
     pin_names: Mapping[str, str]   # 삭제되지 않은 핀 → 이름(db 핀은 장소 이름, 실시간 핀은 검색어)
     reaction_texts: Mapping[str, str] = field(default_factory=dict)   # 지금 있는 반응 → 사유 글
+    fact_labels: Mapping[str, str] = field(default_factory=dict)   # 키 → 표시 이름(split 분석의 축 이름)
 
 
 def referenced_pin_ids(claims: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -661,7 +1114,8 @@ def render_suggestion(sug: Any, refs: RenderRefs) -> AgentSuggestion | None:
         if text is not None:
             advice.append(AgentAdviceLine(text=text, is_guess=line["is_guess"]))
     return AgentSuggestion(
-        id=str(sug.id), diagnosis=sug.diagnosis, category=sug.category, title=title, analysis=sug.analysis,
+        id=str(sug.id), diagnosis=sug.diagnosis, category=sug.category, title=title,
+        analysis=render_analysis(sug.analysis, refs.fact_labels),
         advice=advice, actions=[AgentAction.model_validate(a) for a in sug.actions],
         created_at=sug.created_at, expires_at=sug.expires_at,
     )

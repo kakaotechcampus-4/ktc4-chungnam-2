@@ -68,10 +68,12 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
     assert [c["value"] for c in sug.claims] == [2, 0]
     assert sug.expires_at == world.now + constants.SUGGESTION_TTL
     run = world.one(AgentRun, map_id=map_id)
-    assert (run.outcome, run.trigger, run.snapshot_seq, run.used_model) == ("suggested", "activity", seq, False)
+    # 신호가 둘이라 우선순위를 모델(dev는 고정 응답 스텁)에 물었다 — 모델 사용 1회(#533)
+    assert (run.outcome, run.trigger, run.snapshot_seq, run.used_model) == ("suggested", "activity", seq, True)
     assert sug.run_id == run.id
     assert [s["diagnosis"] for s in run.signals] == ["category_gap", "category_gap"]
-    assert run.priority["final_order"] == ["s1", "s2"] and run.priority["model_order"] is None
+    assert run.priority["final_order"] == ["s1", "s2"] and run.priority["model_order"] == ["s1", "s2"]
+    assert run.priority["source"] == "model" and run.tool_calls == [] and run.verification is None
     [(type_, payload)] = world.agent_events(map_id)
     assert type_ == "agent.suggested"
     assert AgentSuggestionSchema.model_validate(payload).id == str(sug.id)
@@ -538,7 +540,8 @@ def test_map_deleted_during_observation_writes_nothing(world, monkeypatch):
 
 def test_no_agent_row_contains_reason_text(world, factory):
     """사유가 달린 ♥와 🚫가 있는 지도를 관찰한 뒤 agent_* 어느 행의 직렬화에도 사유 글이 없다. 정체(stall)가
-    1순위라 M0은 모델 단계를 건너뛰어 silent로 남는다."""
+    1순위라 진단 스텁이 get_reasons를 부르고(결과에 사유 글이 있다) silent로 끝난다 — 도구 기록에는 글 대신 글자 수만
+    남는다(10절, 2절 13번)."""
     map_id = world.gap_map()
     food = world.pin(map_id, category="음식점", by="u1")
     cafe = world.pin(map_id, category="카페", by="u1")
@@ -550,8 +553,12 @@ def test_no_agent_row_contains_reason_text(world, factory):
 
     run = world.one(AgentRun, map_id=map_id)
     assert run.outcome == "silent"
-    assert run.outcome_detail == {"skipped": "model_step", "signal_id": "s1", "diagnosis": "stall"}
+    assert run.outcome_detail == {"signal_id": "s1", "diagnosis": "stall", "decision": "silent"}
     assert against in run.signals[0]["evidence_ids"]   # 근거는 reaction_id로만
+    [call] = run.tool_calls
+    assert call["name"] == "get_reasons" and call["call_id"] == "t1"
+    [reason] = [r for r in call["result"]["reasons"] if r["reaction_id"] == against]
+    assert reason["text_len"] == len(SECRET_AGAINST) and "text" not in reason
     with factory() as db:
         for table in ("agent_runs", "agent_suggestions", "agent_cursors", "agent_suggestion_views",
                       "agent_reason_summaries", "agent_run_advice", "agent_settings"):
