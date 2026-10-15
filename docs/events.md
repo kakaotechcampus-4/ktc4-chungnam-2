@@ -35,7 +35,7 @@
 | `map.updated` | `{ map_id, title, start_date, end_date, region? }` | 방장이 지도 제목·날짜·지역을 고침(#465). 수정과 같은 트랜잭션에 기록된다. 요청자 기준 값(`permissions` 등)은 싣지 않는다. 받은 FE는 지도 상세 캐시를 갱신한다 |
 | `owner.changed` | `{ map_id, from_user_id, to_user_id }` | 방장이 직접 방장을 넘김(#468). 두 사람 모두 지도에 남는다 — **`member.left`를 재사용하지 않는다**(나간 것으로 오해해 SSE를 닫는다). 받은 FE는 지도 상세·구성원 목록(`role`)을 다시 불러온다 |
 | `member.presence` | `{ user_id, online }` | 접속 상태 변화 — **v1 서버는 발행하지 않는다**(아래 「v1에서 발행하지 않는 이벤트」) |
-| `agent.suggested` | `AgentSuggestion` (api-spec.yaml) | v2 계획 보조 에이전트가 지도 제안을 저장함(docs/agent-v2.md 15절). 지도당 동시에 하나. shadow 기간(`AGENT_SHADOW_MODE`)에는 발행하지 않는다 |
+| `agent.suggested` | `AgentSuggestion` (api-spec.yaml) | v2 계획 보조 에이전트가 지도 제안을 저장함(docs/agent-v2.md 15절). 지도당 동시에 하나. shadow 유형(모델 진단 정체, 갈림)은 평가가 끝날 때까지(#534) 발행하지 않는다 |
 | `agent.resolved` | `{ suggestion_id, status, resolved_action_type }` | 제안이 끝남: 수락(accepted), 닫기(dismissed), 만료(expired), 무효화(superseded). 누가 처리했는지는 싣지 않는다 |
 | `agent.summary_updated` | `AgentSummary` | 우리 조건 요약 갱신. 점이나 알림을 켜지 않는다 |
 | `agent.settings_changed` | `{ enabled, updated_by }` | 구성원이 에이전트 모드를 켜거나 끔. 끄면서 제안이 있었으면 그 제안의 `agent.resolved`(superseded)도 함께 나간다 |
@@ -55,7 +55,7 @@
   - **실패**는 실행 요청의 HTTP 응답(500 `RECOMMEND_FAILED`, 상한이면 429 `RETRY_LIMIT` 등)으로 받는다. 이벤트를 기다리지 않는다.
   - 단계별 진행을 실시간으로 보여 주려면 실행을 백그라운드로 옮겨야 한다(v2 검토).
 - **`member.presence`**: 접속 상태 추적이 없다. `Member.online`은 비어 온다 — 접속 점은 그리지 않는다.
-- **`agent.*` 4종**: v2 계획 보조 에이전트(docs/agent-v2.md, #510)의 이벤트다. 계약만 먼저 올렸고 서버 구현 전이라 아직 발행되지 않는다. 목 서버는 보낸다. 구현 뒤에도 shadow 기간에는 발행하지 않는다.
+- **`agent.*`**: v2 계획 보조 에이전트(docs/agent-v2.md)의 이벤트다. #531부터 코드 유형 제안(반응 공백, 카테고리 공백)의 `agent.suggested`, `agent.resolved`, `agent.settings_changed`가 발행된다. 모델 유형(정체, 갈림)은 #534까지 shadow라 발행되지 않고, `agent.summary_updated`는 M2부터다.
 - **FE는 이 이벤트들을 받아도 되지만 의존하지 않는다.** 결과는 항상 `GET /runs/{id}/result`가 정본이다(`done`이 될 때까지 2초 간격 조회).
 
 ## 이벤트별로 화면이 다시 받을 것 (#449)

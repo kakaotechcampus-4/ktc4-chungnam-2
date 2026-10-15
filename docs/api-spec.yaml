@@ -29,7 +29,7 @@ tags:
   - name: feedback
     description: 서비스 피드백(#10, v2). 저장만 한다
   - name: agent
-    description: v2 계획 보조 에이전트(docs/agent-v2.md). 지도를 관찰해 막힌 곳에 제안을 내지만 아무것도 직접 실행하지 않는다. 실서버 구현 전
+    description: v2 계획 보조 에이전트(docs/agent-v2.md). 지도를 관찰해 막힌 곳에 제안을 내지만 아무것도 직접 실행하지 않는다. 엔드포인트 5개는 #531에서 구현(코드 유형 제안부터 노출), 추천 막힘 조언은 M2
 
 paths:
   # ---------- auth ----------
@@ -1073,7 +1073,7 @@ paths:
                 items: { $ref: "#/components/schemas/Route" }
 
   # ---------- agent (v2 계획 보조 에이전트, docs/agent-v2.md) ----------
-  # 실서버 구현 전(KNOWN_MISSING). 목 서버는 지금 쓸 수 있다. 에이전트는 아무것도 직접 실행하지 않는다 — 버튼은 사람이 원래 하던 동작의 지름길이다.
+  # #531에서 구현. 모델 유형 제안(정체, 갈림)은 #534까지 shadow라 응답에 나오지 않는다. 에이전트는 아무것도 직접 실행하지 않는다 — 버튼은 사람이 원래 하던 동작의 지름길이다.
   /maps/{mapId}/agent:
     get:
       tags: [agent]
