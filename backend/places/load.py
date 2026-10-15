@@ -32,6 +32,7 @@ from typing import Callable, Iterator
 from sqlalchemy.orm import Session
 
 from places import ingest, repository
+from places.scripts import recompute_can_recommend as recompute_cli
 
 _ENCODINGS = ("utf-8-sig", "cp949")   # 인허가 CSV는 cp949(EUC-KR)인 경우가 많다
 DEFAULT_CONSTRAINTS = Path(__file__).resolve().parents[2] / "docs" / "constraints.md"
@@ -212,6 +213,8 @@ def main(argv: list[str] | None = None, *, session_factory: Callable[[], Session
             lines = _load_curated_labels(db, args.file, constraints=args.constraints, overwrite=args.overwrite)
         else:
             lines = load_labels(db, args.file, constraints=args.constraints, encoding=args.encoding)
+        # 적재 끝에 can_recommend를 같은 트랜잭션에서 다시 계산한다(멱등, dry-run이면 같이 롤백)
+        lines += recompute_cli.report_lines(repository.recompute_can_recommend(db), dry_run=False)
         if args.dry_run:
             db.rollback()
             lines.append("(dry-run — DB에 쓰지 않았다)")

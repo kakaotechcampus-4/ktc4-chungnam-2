@@ -10,11 +10,11 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from geoalchemy2 import Geography, Geometry, WKTElement
-from sqlalchemy import Float, cast, func, literal, null, or_, select, union_all
+from sqlalchemy import Float, cast, func, literal, null, or_, select, union_all, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from places import matching
+from places import core, matching
 from places.ingest import LabelRow, PlaceRow
 from places.matching import Candidate
 from places.models import Place, PlaceFact
@@ -293,9 +293,49 @@ def search_nearby_own(db: Session, category: str, areas: Sequence[Area]) -> list
     lat, lng = _lat_lng()
     circles = [func.ST_DWithin(Place.geom, _geog(a.lat, a.lng), a.radius_m) for a in areas]
     rows = db.execute(
-        select(Place.id, lat, lng).where(Place.status == "open", Place.category == category, or_(*circles))
+        select(Place.id, lat, lng, Place.can_recommend).where(Place.status == "open", Place.category == category, or_(*circles))
     ).all()
-    return [PlaceRef(str(r.id), r.lat, r.lng) for r in rows]
+    return [PlaceRef(str(r.id), r.lat, r.lng, r.can_recommend) for r in rows]
+
+
+@dataclass(frozen=True)
+class RecomputeResult:
+    counts: dict[tuple[str, bool], int]   # (분류, can_recommend) → 장소 수, 계산한 새 값 기준
+    changed: int                          # 값이 바뀐 장소 수(dry_run이면 바뀔 수)
+
+
+def recompute_can_recommend(db: Session, *, dry_run: bool = False) -> RecomputeResult:
+    """전체 장소의 can_recommend를 core 규칙으로 다시 계산해 바뀐 행만 갱신한다. 멱등. 커밋하지 않는다.
+
+    정예 여부는 "출처(label_source)가 없는 라벨 행이 하나라도 있는가"로 가른다 — 정예 납품본은 근거 없는 unknown 행을
+    항상 담고, 인허가 커버리지 라벨은 근거 없으면 넣지 않는다(#499). 정예 파일 소속 15,181곳과 양방향 차이 0으로 확인했다
+    (places/for_Root.md). 폐업 장소도 계산한다(다시 열릴 때 값이 맞도록)."""
+    agg = (
+        select(
+            PlaceFact.place_id,
+            func.count().filter(PlaceFact.confidence == "known").label("known"),
+            func.bool_or(PlaceFact.label_source.is_(None)).label("curated"),
+        )
+        .group_by(PlaceFact.place_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(Place.id, Place.category, Place.can_recommend, func.coalesce(agg.c.known, 0), func.coalesce(agg.c.curated, False))
+        .outerjoin(agg, agg.c.place_id == Place.id)
+    ).all()
+    counts: dict[tuple[str, bool], int] = {}
+    to_true: list[uuid.UUID] = []
+    to_false: list[uuid.UUID] = []
+    for pid, category, current, known, curated in rows:
+        new = core.can_recommend(category, known, curated=curated)
+        counts[(category, new)] = counts.get((category, new), 0) + 1
+        if new != current:
+            (to_true if new else to_false).append(pid)
+    if not dry_run:
+        for ids, value in ((to_true, True), (to_false, False)):
+            for chunk in _chunks(ids):
+                db.execute(update(Place).where(Place.id.in_(chunk)).values(can_recommend=value))
+    return RecomputeResult(counts, len(to_true) + len(to_false))
 
 
 def find_nearest(db: Session, lat: float, lng: float, category: str | None, radius_m: float, limit: int) -> list[NearestRow]:

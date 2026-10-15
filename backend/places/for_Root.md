@@ -328,3 +328,27 @@ PR 1(#197)에서 고정한 6개 공개 함수를 실제로 구현했다. 이 브
 - **스펙 보정**: `503 PLACES_UNAVAILABLE` 응답 추가(`docs/api-spec.yaml`, `CHANGELOG-api.md` 2026-10-15 네 번째). 그 외 계약 변경 없음.
 - **테스트**: `integration/test_places_nearest.py` 17개(반경·정렬·최대 5·분류·폐업 제외·pinnable 거절 제외·422·401·429 공유 버킷·503 좌표 비노출·로그/저장 없음·접근 로그 필터·GiST 계획). `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 항목 삭제, 골든 패스(`test_response_contract.py`)에 nearest 호출 추가. `integration`·`places`·`common` 472 통과.
 - **FE 참고**: 목 서버(`contracts/mocks`)의 nearest는 `kakao:` 형식 ID를 쓴다. 실서버는 `own:<uuid>`이고 불투명 값으로 그대로 보내면 된다.
+
+
+---
+
+# places.can_recommend 구현 (2026-10-15)
+
+- **구현**: 마이그레이션 `0033_places_can_recommend`(not null default false, down_revision `0032_feedback`, 단일 head), 판정 규칙 `places/core.py`(순수 함수 `can_recommend(category, known_label_count, *, curated)`, 임계는 같은 파일 상수 `KNOWN_LABEL_THRESHOLDS = {"음식점": 5, "카페": 3}`·`ALWAYS_RECOMMENDABLE = {"관광지"}` 한 곳), 재계산 `repository.recompute_can_recommend`와 `python -m places.scripts.recompute_can_recommend [--dry-run]`(분류별 true/false·바뀐 수 보고, 멱등), `places.load`는 적재 끝에 같은 함수를 같은 트랜잭션에서 자동 재계산하고 건수를 출력한다(dry-run이면 같이 롤백). `PlaceRef.can_recommend: bool = True`(기본값이라 기존 호출자 그대로)를 `search_nearby_own`만 실제 값으로 채운다. 검색·핀 생성 매칭·nearest·링크 해석은 읽지 않는다(테스트로 고정).
+- **정예 판별 기준 — 조사 결과**: `places.source`는 모두 `permit`이라 못 가르고, **`label_source`로도 못 가른다**. 인허가 커버리지 라벨이 정예와 같은 출처 표기(`license_*`, `franchise_brands` 등)를 쓰고, 정예 12,376곳 중 4,710곳은 확정 라벨이 전부 `license_*` 계열이다(`pingo_before499` 기준). 대신 **"출처(`label_source`)가 NULL인 라벨 행을 하나라도 가진 장소 = 정예"**가 정확히 맞는다 — 정예 납품본은 근거 없는 `unknown` 행을 항상 담고, 커버리지 라벨은 "근거 없으면 넣지 않는다"(permit README)라 NULL 행이 없다. 검증: 정예 파일 소속 집합(기존 정예 12,376 + 신규 음식점·카페·관광지 파일 = 15,181곳)과 pingo_demo의 NULL 라벨 보유 장소 15,181곳이 **양방향 차이 0**.
+  - **취약점(결정 요청)**: 이 기준은 "납품본이 근거 없는 unknown 행을 담는다"는 데이터 관례에 기댄다. 납품 형식이 바뀌면 조용히 어긋난다. 확실히 하려면 `places`에 정예 표시 컬럼(예: `curated boolean`)을 두고 `--authoritative` 적재가 켜는 방식이 낫다 — 스펙에 없어서 이 PR에는 넣지 않았다. 원하면 스펙을 먼저 고친 뒤 후속으로 한다.
+- **인덱스를 더하지 않았다**: 후보 검색은 기존 GiST(`idx_places_geom`)로 반경을 먼저 거르고 `category`·`status`·`can_recommend`는 그 결과에 얹는 조건이다. `can_recommend`는 약 86%가 true인 불리언이라 부분 인덱스의 이득이 없다. 추천 후보 검색 계획이 느려지면 그때 `WHERE can_recommend AND status='open'` 부분 GiST를 검토한다.
+- **⚠ 마이그레이션만으로는 값이 안 채워진다**: 기존 행은 모두 false다. 적용한 뒤 `recompute_can_recommend`를 한 번 돌려야 추천 후보가 생긴다(안 돌리면 후보 풀이 비어 「추천 가능 아님 제거」 단계가 전부를 뺀다). 배포 절차에 넣어야 한다.
+- **재계산 결과(pingo_demo의 복사본 `pingo_cr507`, 임계 음식점 5·카페 3, 멱등 확인: 두 번째 실행 바뀐 장소 0)**:
+
+| 분류 | true | false |
+|---|---|---|
+| 음식점 | 66,926 | 13,339 |
+| 카페 | 23,855 | 1,313 |
+| 관광지 | 723 | 0 |
+| 합계 | 91,504 | 14,652 |
+
+  정예 15,181곳은 전부 true(false 0). 임계 이상인데 false인 장소 0. false인 음식점의 확정 라벨 수는 0개 13곳·1개 9,636·2개 3,618·3개 72(임계 5 미만 전부). 루트가 준 참고 분포와 맞는다.
+- **⚠ pingo_demo 마이그레이션 적용 — 아직 안 했고, 알릴 것이 있다**: pingo_demo의 `alembic_version`이 **`0020_evidence_wants`**다. 0033을 적용하면 0021~0032까지 열두 단계가 함께 올라간다(테이블 18개 → 28개, agent·notifications·feedback 등 새 테이블 추가). 복사본에서는 오류 없이 head(`0033_places_can_recommend`)까지 올라갔다. 기존 데이터를 바꾸는 단계가 있는지는 단계별로 확인하지 않았다. pingo_demo를 바꾸는 작업이라 사용자 확인을 받은 뒤에 한다. 백업 `C:\Users\user\Desktop\pingo_demo_before507.dump`(#507 적재 직전 상태)는 그대로 있으나, **#507 장소 적재 이후의 pingo_demo는 이 백업에 없다** — 적용 직전에 새로 백업을 뜬다.
+- **커버리지 새 라벨 750개(restaurant-labels 단계)**: 하지 않았다(메모리). 해당 라벨이 들어가면 일부 커버리지 장소의 확정 라벨 수가 늘어 can_recommend 건수가 소폭 달라질 수 있다 — 적재 끝의 자동 재계산이 반영한다.
+- **테스트**: `places/tests/test_can_recommend.py`(규칙 파라미터화·임계 상수·재계산 임계/정예 보존/멱등/라벨 변화 양방향/dry-run/폐업 포함/스크립트/적재 자동 재계산·PlaceRef 필드와 기본값·검색·nearest 무관) + `test_can_recommend_migration.py`(단일 head·up/down·기존 행 false·모델 일치). `places`·`integration`·`common` 609 통과.
