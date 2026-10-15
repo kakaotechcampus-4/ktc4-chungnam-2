@@ -275,6 +275,34 @@ def _find_existing_pin_id(db: Session, map_id: str, place_id: str) -> str | None
     return str(row[0]) if row else None
 
 
+def list_live_kakao_place_ids(db: Session, map_id: str) -> list[str]:
+    """이 지도의 실시간 핀(#382)이 가리키는 카카오 장소 ID(순서는 보장하지 않는다). 이름·좌표·메모는 담지 않는다."""
+    return list(db.execute(
+        select(PinRow.kakao_place_id)
+        .where(PinRow.map_id == map_id, PinRow.deleted_at.is_(None), PinRow.source == "live", PinRow.kakao_place_id.is_not(None))
+    ).scalars().all())
+
+
+def _find_live_pin_for_place(
+    db: Session, map_id: str, place_id: str, *, hint_kakao_id: str | None = None, exclude_pin_id: uuid.UUID | None = None,
+) -> str | None:
+    """자체 DB 장소 place_id와 같은 가게를 이미 가리키는 이 지도의 실시간 핀 id(#569). 기준은 카카오 장소 ID뿐이다 —
+    요청 힌트의 카카오 ID가 그 핀의 것이거나, 그 핀의 카카오 ID가 기록된 자체 DB 장소가 place_id일 때. 이름·좌표는 보지 않는다."""
+    query = select(PinRow.id, PinRow.kakao_place_id).where(
+        PinRow.map_id == map_id, PinRow.deleted_at.is_(None), PinRow.source == "live", PinRow.kakao_place_id.is_not(None),
+    ).order_by(PinRow.created_at, PinRow.id)
+    if exclude_pin_id is not None:
+        query = query.where(PinRow.id != exclude_pin_id)
+    rows = db.execute(query).all()
+    for pin_id, kakao_id in rows:
+        if kakao_id == hint_kakao_id:
+            return str(pin_id)
+    for pin_id, kakao_id in rows:
+        if any(c.place_id == place_id for c in places_api.own_places_by_kakao_id(kakao_id, db=db)):
+            return str(pin_id)
+    return None
+
+
 def create_pin(
     db: Session,
     map_id: str,
@@ -332,6 +360,9 @@ def _create_db_pin(
     existing_place_ids = {match.place_id} if existing_id is not None else set()
     if core.is_duplicate(existing_place_ids, match.place_id):
         raise AppError("PIN_DUPLICATE", detail={"pin_id": existing_id})
+    live_id = _find_live_pin_for_place(db, map_id, match.place_id, hint_kakao_id=req.place_id)   # 같은 가게의 실시간 핀(#569)
+    if live_id is not None:
+        raise AppError("PIN_DUPLICATE", detail={"pin_id": live_id})
 
     pin_row = PinRow(
         map_id=map_id,
@@ -392,6 +423,10 @@ def _create_live_pin(db: Session, map_id: str, principal: Principal, req: PinCre
     existing_id = _find_existing_live_pin_id(db, map_id, req.kakao_place_id)
     if existing_id is not None:
         raise AppError("PIN_DUPLICATE", detail={"pin_id": existing_id})
+    for place in places_api.own_places_by_kakao_id(req.kakao_place_id, db=db):   # 같은 가게의 자체 DB 핀(#569)
+        db_pin_id = _find_existing_pin_id(db, map_id, place.place_id)
+        if db_pin_id is not None:
+            raise AppError("PIN_DUPLICATE", detail={"pin_id": db_pin_id})
 
     pin_row = PinRow(
         map_id=map_id,
@@ -489,6 +524,9 @@ def resolve_pin(
     existing_id = _find_existing_pin_id(db, pin.map_id, match.place_id)
     if existing_id is not None:
         raise AppError("PIN_DUPLICATE", detail={"pin_id": existing_id})
+    other_live_id = _find_live_pin_for_place(db, pin.map_id, match.place_id, exclude_pin_id=pin.id)   # 같은 가게의 다른 실시간 핀(#569)
+    if other_live_id is not None:
+        raise AppError("PIN_DUPLICATE", detail={"pin_id": other_live_id})
 
     kakao_place_id = pin.kakao_place_id
     pin.source = "db"

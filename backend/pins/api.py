@@ -233,6 +233,12 @@ def list_place_ids_on_map(db: Session, *, map_id: str) -> set[str]:
     return set(rows)
 
 
+def list_live_kakao_place_ids(db: Session, *, map_id: str) -> list[str]:
+    """recommend의 「이미 지도에 있는 장소 빼기」(#569)가 쓴다 — 이 지도의 실시간 핀이 가리키는 카카오 장소 ID.
+    live 핀은 place_id가 없어 list_place_ids_on_map에 안 잡힌다. 이름·좌표·메모는 돌려주지 않는다(ID만)."""
+    return service.list_live_kakao_place_ids(db, map_id)
+
+
 def list_disliked_place_ids(db: Session, *, user_id: str, map_id: str, category: str) -> list[str]:
     """recommend의 가드레일 6(#119) — 이 사용자가 이 지도의 이 카테고리에서 🚫(against) 반응을
     남긴 핀들의 place_id(중복 없이, 정렬). recommend가 exclusions.reason='dismissed'로 쌓는다.
