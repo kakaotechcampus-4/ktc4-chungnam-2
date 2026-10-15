@@ -127,6 +127,12 @@ export function buildBaseState(): StoreState {
     invites: {},
     eventLog: [],
     ...buildAgentState(mapId),
+    notifications: [
+      { id: "ntf_1", type: "pin_reaction", map_id: mapId, map_title: "제주도 여행", pin_id: "pin_1", message: "지우님이 내 핀에 ♥를 남겼어요", created_at: "2026-10-14T09:00:00Z", read: false },
+      { id: "ntf_2", type: "member_joined", map_id: mapId, map_title: "제주도 여행", message: "민수님이 지도에 들어왔어요", created_at: "2026-10-13T09:00:00Z", read: true },
+    ],
+    notificationPrefs: {},
+    feedback: [],
   };
 }
 

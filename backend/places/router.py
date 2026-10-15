@@ -1,4 +1,4 @@
-"""docs/api-spec.yaml의 places 태그 — GET /places/search (#180).
+"""docs/api-spec.yaml의 places 태그 — GET /places/search (#180), POST /places/from-link (#474).
 
 로그인만 필요하고 지도 구성원 여부는 보지 않는다. 검증(422) → 호출 상한(429) → 검색(503) 순서다.
 """
@@ -7,6 +7,7 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -16,11 +17,16 @@ from common.database import get_db_session
 from common.errors import AppError
 from common import categories
 from places import api, logguard
-from places.schemas import PlaceHint, PlaceSearchResult
+from places.schemas import LinkParseResult, PlaceHint, PlaceSearchResult
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["places"])
 logguard.install()   # /places/nearest의 좌표가 uvicorn 접근 로그에 남지 않게 한다(#473)
+
+class LinkParseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    url: str = Field(min_length=1, max_length=2000)
+
 
 _MAX_QUERY_LEN = 50
 _FETCH_LIMIT = 15   # limit(최대 15)과 같다 — 카카오에서 이만큼 받아 정렬한 뒤 limit으로 자른다(#488)
@@ -62,6 +68,17 @@ def nearest_places(
     except SQLAlchemyError as exc:
         logger.warning("nearest 조회 실패(%s)", type(exc).__name__)   # 타입만 — SQL 파라미터에 좌표가 실린다
         raise AppError("PLACES_UNAVAILABLE") from None
+
+
+@router.post("/places/from-link", response_model=LinkParseResult, response_model_exclude_none=True)
+def parse_link(
+    body: LinkParseRequest,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    """지도 링크 해석(#474) — 422 → 429 → 해석. 핀을 만들지 않고 아무것도 저장하지 않는다."""
+    api.check_link_rate(user.user_id)
+    return api.parse_link(body.url, db=db)
 
 
 def _own_db_first(results: list[PlaceSearchResult]) -> list[PlaceSearchResult]:
