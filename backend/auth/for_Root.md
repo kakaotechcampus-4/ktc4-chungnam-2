@@ -373,3 +373,15 @@ get_place_gateway`, `authz/deps.py::get_membership_gateway`와 같은 패턴). `
 - **지도 만들기 차단(`POST /maps` → 403 `GUEST_NOT_ALLOWED`)**: 라우터에서 `user.is_guest`를 본다. `CurrentUser.is_guest: bool = False`는 세션 인증(`auth.deps.get_current_user`)이 users 행에서 채운다. 기본값이라 `CurrentUser(user_id=...)`를 직접 만드는 기존 코드·테스트는 그대로다(그 경우 게스트가 아닌 것으로 본다).
 - **후임 판정·방장 넘기기 대상 검사**: `auth.api.guest_user_ids(db, user_ids) -> set[str]`. `withdrawn_user_ids`와 같은 배치 조회(빈 입력은 쿼리 없이 빈 집합, users 행 없는 id는 게스트가 아님). 후보 id 목록을 한 번에 넘겨 `candidates - guest_user_ids(...) - withdrawn_user_ids(...)`로 거른다.
 - `GET /auth/me`·`PATCH /auth/me` 응답에 `is_guest`(bool)를 항상 포함한다.
+
+## #472 PR 2 — POST /auth/guest (2026-10-16)
+
+스펙·docs는 건드리지 않았다. 구현: `auth/router.py::post_guest`(public_router, `security: []`), `auth/service.py::join_as_guest`·`purge_inactive_guests`, `auth.api.purge_inactive_guests(db, now, older_than_days=90)`.
+
+- 흐름(한 트랜잭션): IP 상한 → 이름 검증(422) → `maps.api.check_invite`(404·410) → 토큰 단위 advisory lock → 게스트 수 확인(409 `GUEST_LIMIT`, `users.guest_invite_token`으로 셈, 탈퇴한 게스트도 센다) → users 행 생성(`provider='guest'`, 임의 `provider_user_id`) → `maps.api.accept_invite`(member.joined·방장 알림 포함) → 세션 쿠키(카카오 로그인과 같은 쿠키, 30일) → 201 `{user, map}`.
+- 상한: 토큰당 게스트 10명, IP당 시간당 10회(성공·실패 모두 셈, `common.ratelimit`, 인메모리라 인스턴스마다). IP는 `request.client.host`다 — Cloud Run 앞단에서 프록시 주소로 보이면 uvicorn `--proxy-headers`/`forwarded_allow_ips` 설정이 필요한지 루트 확인.
+- `last_seen_at`: 게스트의 세션 인증 때 하루 한 번만 갱신(`auth/deps.py`). 일반 사용자는 쓰지 않는다.
+- 정리: `purge_inactive_guests`는 `last_seen_at`(없으면 `created_at`)이 90일 지난 게스트를 `withdraw_user`로 지운다(일반 탈퇴와 같은 연쇄, soft delete). 호출 연결은 #168. 탈퇴한 게스트의 알림 삭제·멤버십 유지는 `integration/test_guest_join.py`로 확인.
+- 로그에는 쿠키·초대 토큰·이름을 남기지 않는다(새 로그 없음).
+- **maps 몫(이 PR에서 하지 않음)**: `POST /maps`의 게스트 403 `GUEST_NOT_ALLOWED`, 후임 판정·방장 넘기기 대상(422 `OWNER_TARGET_INVALID`)에서 `auth.api.guest_user_ids`를 쓰는 것.
+- `maps/api.py`에 위임 함수 2개 추가(루트 승인): `check_invite`, `accept_invite`. maps 로직(service·core·router)은 건드리지 않았다.

@@ -8,7 +8,9 @@ UserResponse는 반대로 계약용이다 — api-spec.yaml의 User 스키마(id
 from dataclasses import dataclass
 from typing import Annotated
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints
+
+from maps.schemas import Map
 
 
 @dataclass(frozen=True)
@@ -33,3 +35,19 @@ class UserUpdateRequest(BaseModel):
     걷어낸 뒤 길이를 재므로 공백만 든 값은 빈 값과 같이 422가 된다."""
 
     display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+
+
+class GuestJoinRequest(BaseModel):
+    """POST /auth/guest 요청 — api-spec.yaml의 GuestJoinRequest. 앞뒤 공백을 걷은 뒤 1~50자."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+    invite_token: str
+
+
+class GuestJoinResult(BaseModel):
+    """POST /auth/guest 201 응답 — user와 방금 들어간 지도."""
+
+    user: UserResponse
+    map: Map

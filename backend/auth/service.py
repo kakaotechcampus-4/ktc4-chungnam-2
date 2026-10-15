@@ -6,10 +6,11 @@ auth/core.py(순수 함수)에 있다(docs/code-quality.md 기능형 코어/명�
 (pins/api.py와 같은 규약).
 """
 
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,7 @@ from auth import core
 from auth.models import User
 from common.errors import AppError
 from common.settings import settings
+from maps.schemas import Map
 from feedback import api as feedback_api
 from maps import api as maps_api
 from notifications import api as notifications_api
@@ -191,3 +193,36 @@ def withdraw_user(db: Session, *, user_id: str) -> User:
     row.deleted_at = datetime.now(timezone.utc)
     db.flush()
     return row
+
+
+def join_as_guest(db: Session, *, display_name: str, invite_token: str) -> tuple[User, Map]:
+    """게스트 계정을 만들고 초대 토큰의 지도에 구성원으로 넣는다(#472) — 한 트랜잭션, 커밋은 호출자.
+    순서: 토큰 검증(404·410) → 게스트 수 확인(409) → 계정 생성 → 지도 가입. 어느 단계든 실패하면 같이 롤백된다.
+    같은 토큰의 동시 호출이 상한을 넘기지 않게 토큰 단위 advisory lock을 잡는다."""
+    maps_api.check_invite(db, invite_token)
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"guest_invite:{invite_token}"})
+    issued = db.execute(select(func.count()).select_from(User).where(User.guest_invite_token == invite_token)).scalar_one()
+    if issued >= core.GUEST_LIMIT_PER_INVITE:
+        raise AppError("GUEST_LIMIT")
+    row = User(
+        provider="guest", provider_user_id=secrets.token_urlsafe(24), display_name=display_name,
+        is_guest=True, guest_invite_token=invite_token, last_seen_at=datetime.now(timezone.utc),
+    )
+    db.add(row)
+    db.flush()
+    return row, maps_api.accept_invite(db, token=invite_token, user_id=row.id)
+
+
+def purge_inactive_guests(db: Session, *, now: datetime, older_than_days: int) -> int:
+    """마지막으로 쓴 지 older_than_days일이 지난 게스트를 일반 탈퇴와 같은 규칙으로 지운다(withdraw_user).
+    last_seen_at이 없으면 created_at 기준. 이미 탈퇴한 계정은 건너뛴다. 지운 수를 돌려준다."""
+    cutoff = now - timedelta(days=older_than_days)
+    ids = db.execute(
+        select(User.id).where(
+            User.is_guest.is_(True), User.deleted_at.is_(None),
+            func.coalesce(User.last_seen_at, User.created_at) < cutoff,
+        ).order_by(User.id)
+    ).scalars().all()
+    for user_id in ids:
+        withdraw_user(db, user_id=user_id)
+    return len(ids)
