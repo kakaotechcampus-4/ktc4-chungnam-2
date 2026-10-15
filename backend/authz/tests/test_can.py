@@ -202,3 +202,18 @@ def test_run_actions_not_valid_for_map_resource(action):
     """load_run이 Resource(type="run")을 만든다 — 예전처럼 map으로 물으면 타입 혼동으로 False."""
     requester = _principal(role="member", user_id="user_1")
     assert can(requester, action, _resource("map", author_id="user_1")) is False
+
+
+# --- pin.resolve (#501) ---
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+def test_any_member_can_resolve_a_live_pin_not_only_its_author(role):
+    """실시간 핀 승격은 구성원 누구나 — 찍은 사람이 아니어도 된다(pin.edit과 다르다)."""
+    user = _principal(role=role, user_id="user_2")
+    assert can(user, "pin.resolve", _resource("pin", author_id="user_1", kind="일반")) is True
+
+
+def test_non_member_cannot_resolve_even_as_the_pin_author():
+    user = _principal(role=None, user_id="user_1")
+    assert can(user, "pin.resolve", _resource("pin", author_id="user_1", kind="일반")) is False

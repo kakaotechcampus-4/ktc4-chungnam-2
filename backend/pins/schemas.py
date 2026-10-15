@@ -82,11 +82,23 @@ class PinCreateSearch(BaseModel):
     place_name: str = Field(max_length=100)
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
+    address: str | None = Field(default=None, max_length=200)   # 선택 — 이름이 비슷한 점포를 가르는 보조 힌트(#501). 저장·로깅하지 않는다
 
 
 # 스펙 PinCreateRequest = oneOf(PinCreateSearch, PinCreateLive). source로 갈린다 — live는 extra=forbid라
 # 이름·좌표가 섞이면 live에서 떨어지고, search는 source=live를 받지 않아 둘 다 실패한다(422).
 PinCreateRequest = PinCreateLive | PinCreateSearch
+
+
+class PinResolveRequest(BaseModel):
+    """실시간 핀 승격(#501, 스펙 PinResolveRequest)의 매칭 힌트 — 전부 저장하지도 로깅하지도 않는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    place_name: str = Field(min_length=1, max_length=100)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    address: str | None = Field(default=None, max_length=200)
 
 
 class PinUpdateRequest(BaseModel):

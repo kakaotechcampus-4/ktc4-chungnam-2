@@ -36,6 +36,7 @@ from pins.schemas import (
     PinCreateRequest,
     PinCreateSearch,
     PinKind,
+    PinResolveRequest,
     PinUpdateRequest,
     Reaction,
     ReactionRequest,
@@ -317,7 +318,8 @@ def _create_db_pin(
     core.validate_create(req)
 
     match = places_api.match_place(
-        PlaceHint(kakao_place_id=req.place_id, name=req.place_name, lat=req.lat, lng=req.lng, category=req.category),
+        PlaceHint(kakao_place_id=req.place_id, name=req.place_name, lat=req.lat, lng=req.lng, category=req.category,
+                  address=req.address),
         db=db,
     )
     if match is None:
@@ -449,6 +451,66 @@ def update_pin(db: Session, pin: PinRow, principal: Principal, req: PinUpdateReq
     updated = _author_pin_response(db, pin, principal)
     record_event(db, core.pin_updated_event(updated))
     return updated
+
+
+def _viewer_pin_response(db: Session, pin_row: PinRow, principal: Principal, current_member_ids: set[str]) -> Pin:
+    """요청자가 보는 Pin 한 건 — 작성자 표시(#369)·내 반응을 목록과 같은 규칙으로 채운다."""
+    lat_col, lng_col = _lat_lng_columns()
+    lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()
+    record = record_from_row(
+        pin_row, lat=lat, lng=lng, reaction_counts=_reaction_counts_for_pin(db, pin_row.id),
+        created_by_display_name=author_display_names(db, [pin_row.created_by], current_member_ids)[pin_row.created_by],
+        my_reaction=my_reactions_for_pins(db, [pin_row.id], principal.user_id).get(pin_row.id),
+        place=places_api.get_places([pin_row.place_id], db=db).get(pin_row.place_id) if pin_row.place_id else None,
+    )
+    return core.to_pin_response(record, principal)
+
+
+def resolve_pin(
+    db: Session, pin: PinRow, principal: Principal, current_member_ids: set[str], req: PinResolveRequest,
+) -> Pin:
+    """POST /pins/{pinId}/resolve(#501) — 실시간 핀을 자체 DB 핀으로 승격한다. live·일반 핀만 대상이고, 짝이 없거나
+    이미 db·AI·확정 핀이면 아무것도 바꾸지 않는다(이벤트도 없음). 핀 id·반응·사유·확정 항목은 그대로 둔다.
+    힌트(이름·좌표·주소)는 매칭에만 쓰고 저장·로깅하지 않는다. 같은 지도에 그 장소 핀이 이미 있으면 409(자동 병합 금지)."""
+    if pin.source != "live" or pin.kind != "일반":
+        return _viewer_pin_response(db, pin, principal, current_member_ids)
+
+    match = places_api.match_place(
+        PlaceHint(kakao_place_id=pin.kakao_place_id, name=req.place_name, lat=req.lat, lng=req.lng,
+                  category=pin.category, address=req.address),
+        db=db,
+    )
+    if match is None:
+        return _viewer_pin_response(db, pin, principal, current_member_ids)
+    core.validate_category_matches(pin.category, match.category)
+
+    existing_id = _find_existing_pin_id(db, pin.map_id, match.place_id)
+    if existing_id is not None:
+        raise AppError("PIN_DUPLICATE", detail={"pin_id": existing_id})
+
+    kakao_place_id = pin.kakao_place_id
+    pin.source = "db"
+    pin.place_id = match.place_id
+    pin.geom = func.ST_SetSRID(func.ST_MakePoint(match.lng, match.lat), 4326)
+    pin.kakao_place_id = None
+    pin.search_query = None
+    try:
+        with db.begin_nested():
+            db.flush()
+    except IntegrityError as exc:
+        db.rollback()   # _flush_pin_row와 같은 사정 — SAVEPOINT 뒤에도 세션은 되돌려야 쓸 수 있다
+        if getattr(exc.orig, "pgcode", None) == "23505" and "uq_pins_map_place" in str(exc.orig):
+            raise AppError("PIN_DUPLICATE", detail={"pin_id": _find_existing_pin_id(db, pin.map_id, match.place_id)}) from exc
+        raise
+
+    # 핀 생성과 같다 — 승격이 확정된 뒤에만 카카오 ID·URL을 자체 DB 장소에 기록한다(같은 트랜잭션)
+    kakao_url = core.kakao_place_url(kakao_place_id) if kakao_place_id else None
+    if kakao_url is not None:
+        places_api.record_kakao_match(match.place_id, kakao_place_id, kakao_url, db=db)
+
+    resolved = _viewer_pin_response(db, pin, principal, current_member_ids)
+    record_event(db, core.pin_updated_event(resolved))
+    return resolved
 
 
 def delete_pin(db: Session, pin: PinRow) -> None:
