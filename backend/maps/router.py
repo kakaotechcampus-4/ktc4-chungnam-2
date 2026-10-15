@@ -58,7 +58,7 @@ def post_map(
     user: CurrentUser = Depends(get_current_user),
     db=DbSession,
 ):
-    return service.create_map(db, req=body, creator_id=user.user_id)
+    return service.create_map(db, req=body, creator_id=user.user_id, creator_is_guest=user.is_guest)
 
 
 @router.get("/maps/{mapId}", response_model=Map, response_model_exclude_none=True)

@@ -28,7 +28,7 @@ from common.database import Base, session_scope
 from maps.api import DbMembershipGateway
 
 # 이 모듈 테스트가 쿠키로 로그인시키는 사용자 id 전부
-TEST_USER_IDS = ("user_1", "user_2", "user_3", "outsider", "user_lonely")
+TEST_USER_IDS = ("user_1", "user_2", "user_3", "outsider", "user_lonely", "user_guest")
 
 BASE_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://pingo:pingo@localhost:5432/pingo")
 

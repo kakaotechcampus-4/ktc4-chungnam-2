@@ -220,13 +220,20 @@ def build_invite_url(base_url: str, token: str) -> str:
     return f"{base_url.rstrip('/')}/invites/{token}"
 
 
+def check_can_create_map(is_guest: bool) -> None:
+    """게스트는 지도를 만들 수 없다(#472) — 403 GUEST_NOT_ALLOWED. 지도 수 상한 검사보다 먼저 부른다."""
+    if is_guest:
+        raise AppError("GUEST_NOT_ALLOWED")
+
+
 def pick_successor(
-    memberships: Iterable[MembershipEntry], withdrawn: set[str], leaving_user_id: str
+    memberships: Iterable[MembershipEntry], withdrawn: set[str], leaving_user_id: str, *, guests: set[str]
 ) -> str | None:
-    """방장이 빠질 때 방장이 될 사람(#369 확정 3번, 구현 결정 8번). 나가는 사람과 탈퇴자를 빼고
-    joined_at이 가장 빠른 구성원, 같으면 memberships.id 순. 넘길 사람이 없으면 None."""
+    """방장이 빠질 때 방장이 될 사람(#369 확정 3번, 구현 결정 8번). 나가는 사람·탈퇴자·게스트(#472, 게스트는
+    방장이 될 수 없다)를 빼고 joined_at이 가장 빠른 구성원, 같으면 memberships.id 순. 넘길 사람이 없으면 None."""
     candidates = [
-        m for m in memberships if m.user_id != leaving_user_id and m.user_id not in withdrawn
+        m for m in memberships
+        if m.user_id != leaving_user_id and m.user_id not in withdrawn and m.user_id not in guests
     ]
     if not candidates:
         return None
@@ -238,12 +245,12 @@ def role_in(roster: Iterable[MembershipEntry], user_id: str) -> Role | None:
 
 
 def owner_successor(
-    principal: Principal, roster: Iterable[MembershipEntry], withdrawn: set[str]
+    principal: Principal, roster: Iterable[MembershipEntry], withdrawn: set[str], *, guests: set[str]
 ) -> str | None:
     """요청자가 방장일 때만 후임을 계산한다 — 구성원이 나갈 때는 위임이 없다."""
     if principal.role != "owner":
         return None
-    return pick_successor(roster, withdrawn, principal.user_id)
+    return pick_successor(roster, withdrawn, principal.user_id, guests=guests)
 
 
 def can_leave(role: Role | None, successor: str | None) -> bool:
@@ -254,12 +261,12 @@ def can_leave(role: Role | None, successor: str | None) -> bool:
 
 
 def check_owner_target(
-    roster: Iterable[MembershipEntry], withdrawn: set[str], from_user_id: str, to_user_id: str
+    roster: Iterable[MembershipEntry], withdrawn: set[str], from_user_id: str, to_user_id: str, *, guests: set[str]
 ) -> None:
-    """방장 직접 넘기기(#468)의 대상 검증. 지금 구성원이고, 탈퇴하지 않았고, 나 자신이 아니어야 한다 —
+    """방장 직접 넘기기(#468)의 대상 검증. 지금 구성원이고, 탈퇴하지 않았고, 게스트(#472)가 아니고, 나 자신이 아니어야 한다 —
     아니면 422 OWNER_TARGET_INVALID. 구성원이 아닌 사람과 없는 사용자를 구분하지 않는다(존재를 흘리지 않는다)."""
     member_ids = {m.user_id for m in roster}
-    if to_user_id == from_user_id or to_user_id not in member_ids or to_user_id in withdrawn:
+    if to_user_id == from_user_id or to_user_id not in member_ids or to_user_id in withdrawn or to_user_id in guests:
         raise AppError("OWNER_TARGET_INVALID")
 
 

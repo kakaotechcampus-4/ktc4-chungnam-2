@@ -23,7 +23,7 @@ def leave_map(db: Session, *, map_id: str, user_id: str) -> None:
     role = core.role_in(roster, user_id)
     if role is None:
         raise AppError("NOT_FOUND")  # 잠그는 사이 이미 나갔다
-    new_owner = core.pick_successor(roster, withdrawn, user_id) if role == "owner" else None
+    new_owner = core.pick_successor(roster, withdrawn, user_id, guests=service.guest_ids_of(db, roster)) if role == "owner" else None
     core.check_leave_allowed(role, new_owner)
 
     pins_api.delete_reactions_by_user_in_map(db, user_id=user_id, map_id=map_id)
