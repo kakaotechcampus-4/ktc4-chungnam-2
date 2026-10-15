@@ -89,6 +89,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/guest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 게스트로 참여 — 이름만 입력하는 임시 계정 (#472, v2). 로그인 전에 호출하고, 초대 토큰으로 **그 지도에 바로 들어간다**(계정 생성과 초대 수락이 한 요청이다).
+         *     응답에 세션 쿠키가 실린다(카카오 로그인과 같은 httpOnly 쿠키). 이미 로그인한 상태면 호출하지 않는다.
+         *     - 게스트는 `User.is_guest=true`다. 지도를 **만들 수 없다**(`POST /maps` → 403 `GUEST_NOT_ALLOWED`). 방장이 될 수도 없다(나가기·탈퇴 위임의 후임으로 뽑히지 않고, 직접 넘기기 대상이면 422 `OWNER_TARGET_INVALID`).
+         *     - 그 밖의 구성원 행동(핀·반응·추천·확정 리스트·초대 수락)은 일반 구성원과 같고 **같은 상한**이 걸린다(추천 10회 등).
+         *     - 어뷰즈 방어: 초대 토큰 하나로 만들 수 있는 게스트는 최대 10명(초과 시 409 `GUEST_LIMIT`), IP·시간당 호출 상한(429 `RATE_LIMITED`).
+         *     - 만료·꺼진 초대 토큰은 초대 수락과 같은 에러(404 `INVITE_NOT_FOUND`, 410 `INVITE_EXPIRED`·`INVITE_REVOKED`). 그 지도가 이미 20개 상한이면 해당 없음(게스트는 새 계정이라 0개에서 시작).
+         *     - 세션은 30일, 90일 동안 쓰지 않은 게스트 계정은 정리 작업(#168)이 지운다. 탈퇴·삭제 규칙은 일반 사용자와 같다.
+         *     - **카카오 계정으로 합치기(claim)는 이 스펙에 없다** — 별도 이슈로 나눈다(합치는 규칙이 모듈 여럿에 걸친다).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["GuestJoinRequest"];
+                };
+            };
+            responses: {
+                /** @description 게스트 계정을 만들고 지도에 들어갔다. `Set-Cookie`로 세션 발급 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GuestJoinResult"];
+                    };
+                };
+                404: components["responses"]["InviteNotFound"];
+                /** @description GUEST_LIMIT — 이 초대 링크로 만들 수 있는 게스트 수(10)를 넘었다 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                410: components["responses"]["InviteGone"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — 이름이 비었거나 50자 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/me": {
         parameters: {
             query?: never;
@@ -657,7 +727,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 초대 수락. 로그인 전 접근 시 처리 방식은 결정 이슈 미결 (#15 분리분). 내 지도가 이미 20개면 409 MAP_LIMIT(#369, */
+        /** 초대 수락. 로그인 전 접근 시 처리 방식은 결정 이슈 미결 (#15 분리분). 이름만 입력해 들어가려면 POST /auth/guest(#472). 내 지도가 이미 20개면 409 MAP_LIMIT(#369, */
         post: {
             parameters: {
                 query?: never;
@@ -2735,6 +2805,19 @@ export interface components {
         User: {
             id: string;
             display_name: string;
+            /** @description 게스트(이름만 입력한 임시 계정, #472)면 true. 없으면 false로 본다. 게스트는 지도를 만들 수 없다(POST /maps 403 GUEST_NOT_ALLOWED) */
+            is_guest?: boolean;
+        };
+        GuestJoinRequest: {
+            /** @description 게스트로 보일 이름. 앞뒤 공백을 지운 뒤 비어 있으면 422 */
+            display_name: string;
+            /** @description 들어갈 지도의 초대 토큰(GET /invites/{token}으로 요약을 본 그 토큰) */
+            invite_token: string;
+        };
+        GuestJoinResult: {
+            user: components["schemas"]["User"];
+            /** @description 방금 들어간 지도(POST /invites/{token}/accept의 응답과 같다) */
+            map: components["schemas"]["Map"];
         };
         UserUpdateRequest: {
             /** @description 계정 단위 표시 이름 (2026-09-30 결정) */

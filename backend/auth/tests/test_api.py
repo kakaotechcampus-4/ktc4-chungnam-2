@@ -25,3 +25,12 @@ def test_display_names_masks_withdrawn_users(db_session):
     result = api.display_names(db_session, ["user_1"])
 
     assert result == {"user_1": "탈퇴한 구성원"}
+
+
+def test_guest_user_ids_picks_only_guests_in_one_batch(db_session):
+    db_session.add(User(id="k1", provider="kakao", provider_user_id="pk1", display_name="철수"))
+    db_session.add(User(id="g1", provider="guest", provider_user_id="pg1", display_name="손님", is_guest=True))
+    db_session.flush()
+
+    assert api.guest_user_ids(db_session, ["k1", "g1", "no-such-user"]) == {"g1"}
+    assert api.guest_user_ids(db_session, []) == set()

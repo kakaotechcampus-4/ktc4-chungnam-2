@@ -507,6 +507,45 @@ describe("#469·#471 — 지난 추천 기록, 확정 리스트 내보내기", (
   });
 });
 
+describe("#472 — 게스트 참여", () => {
+  const send = (path: string, method: string, body?: unknown) =>
+    fetch(`${BASE}${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+
+  it("POST /auth/guest: 이름만으로 지도에 들어가 201, 이름이 비면 422, 모르는 토큰은 404", async () => {
+    const { token } = await (await send("/maps/map_1/invite", "POST")).json();
+    const before = store.members["map_1"].length;
+    const r = await send("/auth/guest", "POST", { display_name: "  손님  ", invite_token: token });
+    expect(r.status).toBe(201);
+    const body = await r.json();
+    expect(body.user).toMatchObject({ display_name: "손님", is_guest: true });
+    expect(body.user.guest_invite_token).toBeUndefined(); // 서버 내부 값은 응답에 없다
+    expect(body.map.id).toBe("map_1");
+    expect(store.members["map_1"].length).toBe(before + 1);
+    expect((await send("/auth/guest", "POST", { display_name: "   ", invite_token: token })).status).toBe(422);
+    expect((await send("/auth/guest", "POST", { display_name: "손님", invite_token: "nope" })).status).toBe(404);
+  });
+
+  it("POST /auth/guest: 꺼진 토큰은 410, 토큰 하나당 게스트 10명 넘으면 409 GUEST_LIMIT", async () => {
+    const { token } = await (await send("/maps/map_1/invite", "POST")).json();
+    for (let i = 0; i < 10; i++) expect((await send("/auth/guest", "POST", { display_name: `g${i}`, invite_token: token })).status).toBe(201);
+    const over = await send("/auth/guest", "POST", { display_name: "넘침", invite_token: token });
+    expect(over.status).toBe(409);
+    expect((await over.json()).code).toBe("GUEST_LIMIT");
+    store.invites[token].revoked = true;
+    expect((await send("/auth/guest", "POST", { display_name: "x", invite_token: token })).status).toBe(410);
+  });
+
+  it("게스트 시나리오: 지도 만들기는 403 GUEST_NOT_ALLOWED, 그 밖의 구성원 행동은 된다", async () => {
+    resetScenario("guest");
+    expect((await (await fetch(`${BASE}/auth/me`)).json()).is_guest).toBe(true);
+    const make = await send("/maps", "POST", { title: "새 지도", start_date: "2026-11-01", end_date: "2026-11-02" });
+    expect(make.status).toBe(403);
+    expect((await make.json()).code).toBe("GUEST_NOT_ALLOWED");
+    expect((await fetch(`${BASE}/maps/map_1/pins`)).status).toBe(200);
+    resetScenario("happy-path");
+  });
+});
+
 describe("#470·#10 — 알림함·알림 설정, 서비스 피드백", () => {
   const send = (path: string, method: string, body?: unknown) =>
     fetch(`${BASE}${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });

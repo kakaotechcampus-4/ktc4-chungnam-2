@@ -20,6 +20,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
+import maps.models  # noqa: F401 — 내보내기 파일 이름이 maps.api.get_map_title로 지도 제목을 읽는다
 import auth.models  # noqa: F401 — pins.api(get_pin_response_for_viewer)가 auth.api를 부른다
 import common.events  # noqa: F401 — event_log 테이블 등록
 import pins.models  # noqa: F401 — shortlist_items.pin_id FK 대상 + 테스트가 직접 핀을 심는다

@@ -1,5 +1,15 @@
 # 루트 리뷰 가이드 — backend/shortlist (PR #71 멘토 리뷰 대응)
 
+## [보고, 2026-10-16] #508 내보내기 링크·파일 이름 후속 (#471)
+
+- live 핀 링크: 내보내기가 따로 만들던 링크를 없애고 `pins.api`가 돌려준 `Pin.place_url`을 그대로 쓴다(없으면 빈 칸, #445).
+  이름이 없는 live 핀은 그대로 `검색어 (이름 확인 필요)`.
+- 파일 이름: `maps.api.get_map_title(db, map_id)`로만 읽는다(None이면 기존 `확정 리스트`). `core.export_basename`이 개행·탭을 공백으로 접고
+  경로 문자(`/ \ : * ? " < > |`)·제어/서식 문자를 빼고 앞뒤 공백·점을 정리해 50자로 자른다(비면 기본 이름). 형식은 `<제목> 확정 리스트.<ext>`.
+  `Content-Disposition`은 `filename*=UTF-8''<퍼센트 인코딩>` + ASCII fallback `filename`(한글만이면 `shortlist`) — 이름에 개행·따옴표가 없어 헤더 인젝션 불가.
+- 반응·반대 사유·좌표는 여전히 내보내지 않는다(`ExportRow` 필드로 고정, 단위 테스트). 스펙 변경 없음.
+- 테스트: `shortlist/tests/conftest.py`가 `maps.models`를 import해 지도 행을 심는다(제목 읽기용).
+
 ## [보고, 2026-10-13] #471 `GET /maps/{mapId}/shortlist/export` 구현
 
 상태: 코드·테스트 완료, 브랜치 `feat/shortlist-export-471`(PR 대상 develop).
@@ -17,7 +27,7 @@
   (텍스트 응답이라 스키마 검증 대신 content-type·attachment·BOM·줄 수를 직접 확인).
 
 ### 루트 판단이 필요한 것
-1. **파일 이름에 지도 제목을 쓰지 않았다.** `maps/api.py`에 지도 제목을 읽는 함수가 없고, 다른 모듈의 `service.py`·`models.py`는
+1. (#508에서 해소) **파일 이름에 지도 제목을 쓰지 않았다.** `maps/api.py`에 지도 제목을 읽는 함수가 없고, 다른 모듈의 `service.py`·`models.py`는
    가져올 수 없다. 지금은 고정 이름 `확정 리스트.<ext>`다. 제목을 쓰려면 `maps.api.get_map_title(db, map_id) -> str` 같은 함수가
    필요하다 — maps 담당에게 요청해 달라. 붙일 때는 `core.export_content_disposition(basename, ext)`에 제목만 넘기면 된다
    (제어문자 제거·퍼센트 인코딩은 이미 한다).

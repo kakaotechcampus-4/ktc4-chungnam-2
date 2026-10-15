@@ -94,3 +94,15 @@ def test_missing_cookie_via_http_returns_envelope():
     response = TestClient(app).get("/protected")
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHORIZED"
+
+
+def test_resolver_fills_is_guest_from_users_row(db_session):
+    db_session.add(User(id="k1", provider="kakao", provider_user_id="pk1", display_name="철수"))
+    db_session.add(User(id="g1", provider="guest", provider_user_id="pg1", display_name="손님", is_guest=True))
+    db_session.flush()
+
+    def token(uid):
+        return core.create_session_token(uid, secret=settings.session_secret, issued_at=int(time.time()))
+
+    assert get_current_user(session=token("k1"), db=db_session).is_guest is False
+    assert get_current_user(session=token("g1"), db=db_session).is_guest is True
