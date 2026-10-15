@@ -4,6 +4,9 @@ import { apiError } from "../util";
 import { buildCandidates, buildEvidenceLines, buildRegions } from "../seed";
 import { RECOMMEND_CATEGORIES } from "../categories";
 
+/** 한 사람이 한 지도에서 추천을 받을 수 있는 횟수(#31, 2026-10-15 5→10). 서버가 attempt_limit으로 내려 준다. */
+export const ATTEMPT_LIMIT = 10;
+
 /** run을 만든 시각 — 지난 추천 기록(#469)의 created_at. 목 서버 메모리에만 있다. */
 const runCreatedAt: Record<string, string> = {};
 
@@ -60,6 +63,7 @@ export const recommendHandlers = [
         category: r.category,
         status: r.status,
         attempt_no: r.attempt_no,
+        attempt_limit: ATTEMPT_LIMIT,
         created_at: runCreatedAt[r.id] ?? new Date(0).toISOString(),
         candidate_count: r.status === "done" ? (store.candidates[r.id] ?? []).length : 0,
         published_count: Object.values(store.pins).filter((p) => p.source_run_id === r.id).length,
@@ -86,7 +90,7 @@ export const recommendHandlers = [
     // ② 사유 → 실격/선호/반경 구조화 (목 서버에서는 시드 데이터로 대체 — 실제 구조화는 backend/llm 담당)
     store.evidenceLines[runId] = buildEvidenceLines(runId);
     store.regions[runId] = buildRegions();
-    return HttpResponse.json(store.runs[runId], { status: 202 });
+    return HttpResponse.json({ ...store.runs[runId], attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
   http.get("*/runs/:runId/evidence", ({ params }) => {
@@ -144,7 +148,7 @@ export const recommendHandlers = [
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
     ensureCandidates(runId);
     run.status = "done";
-    return HttpResponse.json(run, { status: 202 });
+    return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
   http.get("*/runs/:runId/result", ({ params }) => {
@@ -157,6 +161,7 @@ export const recommendHandlers = [
       { label: "카테고리 후보 풀", removed_count: 0 },
       { label: "반경 밖 제거", removed_count: 3 },
       { label: "영업 종료 제거", removed_count: 1 },
+      { label: "추천 가능 아님 제거", removed_count: 2 }, // 라벨이 적어 추천 풀에서 빠진 장소(places.can_recommend=false, 2026-10-15)
       { label: "실격 조건 제거", removed_count: candidates.length === 0 ? 8 : 3 },
       { label: "이미 제안·거절됨", removed_count: 1 },
     ];
@@ -178,22 +183,22 @@ export const recommendHandlers = [
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
     store.candidates[runId] = buildCandidates(regionLabel);
     run.status = "done";
-    return HttpResponse.json(run, { status: 202 });
+    return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
   http.post("*/runs/:runId/retry", ({ params }) => {
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
-    if ((run.attempt_no ?? 1) >= 5) {
-      return apiError(429, "RETRY_LIMIT", "5번까지만 찾습니다", { attempt_no: run.attempt_no });
+    if ((run.attempt_no ?? 1) >= ATTEMPT_LIMIT) {
+      return apiError(429, "RETRY_LIMIT", `${ATTEMPT_LIMIT}번까지만 찾습니다`, { attempt_no: run.attempt_no, attempt_limit: ATTEMPT_LIMIT });
     }
     run.attempt_no = (run.attempt_no ?? 1) + 1;
     run.status = "done";
     // 3절: 현재 뜬 대안 전체가 제외목록에 들어가고(목 서버는 별도 exclusions 컬렉션 없이 교체로 표현) 새로 채운다
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
     store.candidates[runId] = buildCandidates(regionLabel);
-    return HttpResponse.json(run, { status: 202 });
+    return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
   http.post("*/candidates/:candidateId/publish", ({ params }) => {

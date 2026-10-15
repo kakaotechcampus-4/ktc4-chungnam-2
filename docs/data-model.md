@@ -150,6 +150,15 @@ places(
   name, category('음식점'|'카페'|'관광지'), address, phone,
   geom geography(Point,4326),          -- 인허가 좌표계가 위경도가 아니면 변환해 넣는다. 좌표가 없는 행은 적재하지 않는다
   status('open'|'closed'),             -- 인허가 영업 상태. closed는 검색·추천에서 제외
+  can_recommend boolean not null default false,
+                                        -- AI 추천 후보 풀에 들어가도 되는 장소인가(2026-10-15 결정, 구현은 places).
+                                        -- 직접 찍은 핀·검색·링크에는 영향이 없다 — 추천 후보를 고를 때만 쓴다.
+                                        -- 규칙(재계산 가능한 값이다, 사람이 손으로 정하지 않는다):
+                                        --   정예 파일(--authoritative)로 적재된 행은 true.
+                                        --   그 밖에는 카테고리별 확정(known) 라벨 수가 임계 이상이면 true
+                                        --   (시작값: 음식점 5개, 카페 3개 — pingo_demo 분포로 조정, 결정은 루트).
+                                        --   관광지는 true. 유흥·주점류도 같은 규칙을 쓴다(제외하지 않는다).
+                                        -- 라벨이 늘거나 적재가 끝나면 places의 재계산 스크립트로 다시 계산한다.
   kakao_place_id null, kakao_place_url null, kakao_matched_at null,
                                         -- 사용자가 검색해서 고를 때 한 건씩 매칭한 결과. 허용 범위: 카카오 장소 ID·URL·확인 일자.
                                         -- 카카오 응답의 이름·주소·좌표는 저장하지 않는다(#53)
@@ -224,7 +233,7 @@ recommend_runs(
   attempt_no,                           -- #31 확정(2026-09-22, 황준영·itsmedoyun 합의): 개인
                                          -- (requested_by) 단위로 집계, 카테고리 구분 없음(그
                                          -- 사람이 이 지도에서 만든 모든 run이 카테고리 무관하게
-                                         -- 한 카운터를 공유), 상한 5회(기존 3회에서 상향). 한
+                                         -- 한 카운터를 공유), 상한 10회(3→5→10회, 2026-10-15: 지도 안에서 구성원 각자). 한
                                          -- 사람이 상한에 도달해도 다른 사람의 추천 시도에는
                                          -- 영향 없음.
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지

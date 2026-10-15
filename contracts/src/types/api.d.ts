@@ -1948,7 +1948,7 @@ export interface paths {
         put?: never;
         /**
          * 「다시 추천 받기」. 현재 뜬 대안 전체를 제외목록에 넣고 새로 찾는다 (3절, 루프가 닫힌다).
-         *     5회 상한 초과 시 429 RETRY_LIMIT (#31, 2026-09-22 확정). 응답의 attempt_no로 현재 몇 번째인지 노출한다.
+         *     10회 상한(지도 안에서 구성원 각자, 카테고리 무관) 초과 시 429 RETRY_LIMIT (#31, 2026-10-15 5→10회). 응답의 attempt_no와 attempt_limit으로 현재 몇 번째인지 노출한다.
          */
         post: {
             parameters: {
@@ -3159,7 +3159,10 @@ export interface components {
             category: components["schemas"]["RecommendCategory"];
             /** @enum {string} */
             status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
+            /** @description 이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 attempt_limit */
             attempt_no: number;
+            /** @description 한 사람이 한 지도에서 추천을 받을 수 있는 횟수 상한(2026-10-15부터 10). 서버가 채운다 — FE는 숫자를 하드코딩하지 말고 이 값으로 「n/10」을 그린다. 없으면 구버전 서버다 */
+            attempt_limit?: number;
             /** @description 기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (기본 15, 상한 30) */
             default_radius_walk_min?: number;
         };
@@ -3172,6 +3175,8 @@ export interface components {
             status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
             /** @description 지금까지의 시도 횟수(반경 넓히기·다시 추천 포함) */
             attempt_no: number;
+            /** @description 시도 횟수 상한(RecommendRun.attempt_limit과 같다) */
+            attempt_limit?: number;
             /**
              * Format: date-time
              * @description run을 만든 시각. 목록은 이 값의 내림차순
@@ -3227,7 +3232,7 @@ export interface components {
         };
         RecommendResult: {
             run_id: string;
-            /** @description 5-6 깔때기 표 */
+            /** @description 5-6 깔때기 표. 2026-10-15부터 「영업 종료 제거」 다음에 「추천 가능 아님 제거」 단계가 있다(places.can_recommend=false인 장소를 후보 풀에서 뺀 수, docs/data-model.md) */
             funnel: {
                 label: string;
                 removed_count: number;
@@ -3694,7 +3699,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 재시도 5회 초과 (6절 "재시도 5회 초과", */
+        /** @description 재시도 상한(지도 안 구성원 각자 10회) 초과 (6절, */
         RetryLimit: {
             headers: {
                 [name: string]: unknown;
