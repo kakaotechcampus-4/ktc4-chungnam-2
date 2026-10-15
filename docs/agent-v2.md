@@ -673,9 +673,11 @@ def observe_map(map_id: str, now: datetime) -> None:
         snap = snapshot.build(db, map_id, now)
         hist = service.load_history(db, map_id, now)
 
-    if snap.map.deleted or snap.today > snap.map.end_date:   # 삭제된 지도(#369) 또는 여행 종료: 관찰하지 않는다
+    if snap is None or snap.map.deleted or snap.today > snap.map.end_date:   # 정리됐거나 삭제된 지도(#369), 여행 종료
         with session_scope() as db:
-            service.advance_cursor(db, map_id, snap.latest_seq, next_check_at=None)
+            service.insert_run(db, map_id, ..., outcome="map_deleted" 또는 "trip_ended")   # shadow 측정용으로 기록은 남긴다
+            if snap is not None:                          # 정리된 지도(build가 None)는 커서 행도 없다
+                service.advance_cursor(db, map_id, snap.latest_seq, next_check_at=None)
         return
 
     # 3. 탐지와 활성 제안 무효화 판단 (순수)
@@ -703,15 +705,15 @@ def observe_map(map_id: str, now: datetime) -> None:
     with session_scope() as db:
         if not maps_api.lock_map_if_alive(db, map_id):    # 지도 행 잠금 + 삭제 확인 (architecture.md 1.1 동시성, #435)
             return                                        # 모델 호출 중 지도가 삭제됐다. 아무것도 쓰지 않는다
-        if draft and not core.recheck(draft, snapshot.load_evidence(db, draft)):
+        if draft and not core.recheck(draft, snapshot.build(db, map_id, now), th):   # 같은 트랜잭션에서 스냅샷을 다시 만들어 탐지기를 다시 돈다
             draft = None                                  # outcome = stale
         service.supersede(db, supersede_ids)              # + agent.resolved
-        sug = service.insert_suggestion(db, draft, shadow=AGENT_SHADOW_MODE) if draft else None
-        # insert는 ON CONFLICT (map_id) WHERE status='active' DO NOTHING. 안 들어가면 blocked: active_exists
-        service.insert_run(db, map_id, snap, signals, blocked, priority_log, tool_log, outcome)
+        run = service.insert_run(db, map_id, snap, signals, blocked, priority_log, tool_log, outcome)   # 제안이 run_id를 가리키므로 먼저
+        sug = service.insert_suggestion(db, draft, run, shadow=AGENT_SHADOW_MODE) if draft else None
+        # insert는 ON CONFLICT (map_id) WHERE status='active' DO NOTHING. 안 들어가면 그 run의 outcome을 blocked(active_exists)로 고친다
         if sug and not AGENT_SHADOW_MODE:
             record_event(db, agent_suggested_event(sug))
-        nca = core.next_check_at(snap, signals, hist, now, th)
+        nca = core.next_check_at(snap, hist, now, th)    # 방금 넣은 제안의 expires_at도 후보에 넣는다
         if core.has_recent_event(snap.latest_event_at, now):   # 12.5 보완: 늦은 커밋을 다음 tick에 한 번 더 본다
             nca = now if nca is None else min(nca, now)
         service.advance_cursor(db, map_id, snap.latest_seq, next_check_at=nca)
@@ -719,6 +721,8 @@ def observe_map(map_id: str, now: datetime) -> None:
     # 8. 요약 (별도 흐름, 별도 트랜잭션)
     update_summary(map_id, snap, hist, now)
 ```
+
+M0(#515) 구현에서 정한 것: 모델 유형이 1순위면 M0에서는 코드 유형으로 내려가지 않고 outcome=silent로 기록한다(M1과 같은 빈도를 shadow로 보려는 것). 제안의 created_at은 DB 시각이 아니라 관찰 시각(now)이라 하루 1회와 백오프가 같은 시계를 본다.
 
 `core.next_check_at`은 시간 기준이 가장 먼저 만료될 시각을 돌려준다. 후보는 전제를 만족한 정체 카테고리의 t0 + th, 갈림 후보 핀의 마지막 반응 + th, 반응 공백 대상 핀이 기준 시간에 도달하는 시각, 활성 제안의 expires_at이다. 후보가 없으면 null이다.
 
@@ -796,7 +800,7 @@ CREATE TABLE agent_settings (
 CREATE TABLE agent_cursors (
   map_id            text PRIMARY KEY,
   last_seen_seq     bigint NOT NULL DEFAULT 0,
-  -- gap_seq: 10/2 판의 구멍 추적용. 12.5 개정으로 쓰지 않는다. 0029에 이미 있어 #515 마이그레이션에서 지운다
+  -- gap_seq: 10/2 판의 구멍 추적용. 12.5 개정으로 0030에서 지웠다(#515)
   last_observed_at  timestamptz NULL,
   next_check_at     timestamptz NULL,     -- 시간 기준이 가장 먼저 만료될 시각
   lease_until       timestamptz NULL
@@ -1034,28 +1038,23 @@ FE 담당
 
 ### M1: 지도 제안 (코드 유형 + 모델 진단 + 우선순위 + 화면)
 
-통과 조건: 모델 호출 추가 결정(#509, 완료), 새 이벤트 타입 4종과 API가 정본 문서에 반영됨, priority_policy.yaml 초안을 PM이 승인
+통과 조건: 모델 호출 추가 결정(#509, 완료), 새 이벤트 타입 4종과 API가 정본 문서에 반영됨(#510, 완료), priority_policy.yaml 초안을 PM이 승인
+
+이슈는 디렉토리와 선행 관계로 나눴다(2026-10-15). 코드 유형(no_reaction, category_gap)을 먼저 화면까지 내고, 모델 유형은 평가 뒤에 노출한다.
 
 AI 담당
 
-- [ ] llm에 agent_prioritize, agent_diagnose(도구 콜백 포함) 추가하고 `llm/api.py`에서 연다. 먼저 고정 응답 스텁으로 통합
-- [ ] tools.py: get_map_overview, get_activity, get_reaction_matrix, get_reasons, structure_reasons, compare_reasons, get_place_facts, get_readiness
-- [ ] core.py: verify_diagnosis, render, render_template, apply_priority_rules, fallback_order, recheck, next_check_at
-- [ ] router.py: 14절의 agent 태그 엔드포인트와 `/internal/agent/tick`
-- [ ] 이벤트 4종 기록
-- [ ] Cloud Scheduler 잡, 서비스 계정, 내부 엔드포인트 인증, Cloud Run 요청 타임아웃 확인
-- [ ] 프롬프트 작성: 우선순위, 진단. 도구 설명문(언제 쓰고 언제 쓰지 않는지) 포함
-- [ ] 평가셋 20건: 지도 상태 픽스처와 기대 출력(순위, 충돌 종류, 조언 유형)
-- [ ] reasoning_effort none과 low 비교, run당 토큰 측정
-- [ ] shadow로 모델 진단을 먼저 돌려 검증 실패율과 토큰을 본 뒤 `AGENT_SHADOW_MODE=False`로 노출
-- [ ] 17절 테스트 2(진단 부분), 3, 7, 11, 12, 14, 15
+- [ ] #531 M1-1: 템플릿 렌더(render_template), 14절 엔드포인트 5개(router.py, main.py), 이벤트 4종 기록, Gateway `select()` 등록, 코드 유형 노출. 17절 12, 15
+- [ ] #530 recommend.api.get_readiness
+- [ ] #532 llm에 agent_prioritize, agent_diagnose(도구 콜백 포함) 추가하고 `llm/api.py`에서 연다. 먼저 고정 응답 스텁으로 통합
+- [ ] #533 M1-2: tools.py 8개, verify_diagnosis, claim 렌더, apply_priority_rules, observe_map 모델 단계. 17절 2(진단 부분), 3, 7, 11
+- [ ] #534 M1-3: 프롬프트(우선순위, 진단, 도구 설명문), 평가셋 20건, reasoning_effort 확인과 비교, run당 토큰, shadow 검증 실패율을 본 뒤 모델 유형 노출 결정
+- [ ] #535 M1-4: `/internal/agent/tick`과 배포 예약 실행(배포 환경 결정 #168 대기). 그 전에는 `AGENT_LOOP_IN_PROCESS=1`
 
 FE 담당
 
-- [ ] 버튼과 점(has_unseen), 바텀시트(16.2), 모드 스위치
-- [ ] view, accept, dismiss 호출과 409 처리
-- [ ] 행동 실행(16.3)과 "상황이 바뀌었어요" 처리
-- [ ] 이벤트 4종 처리(16.4)
+- [ ] #516 버튼과 점(has_unseen), 바텀시트(16.2), 모드 스위치
+- [ ] #536 view, accept, dismiss 호출과 409 처리, 행동 실행(16.3)과 "상황이 바뀌었어요" 처리, 이벤트 4종 처리(16.4)
 
 완료: 노출 후 유형별 열람률, 수락률, 닫기율을 볼 수 있다.
 
