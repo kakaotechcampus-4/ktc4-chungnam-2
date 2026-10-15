@@ -252,3 +252,14 @@
 - `PinCreateSearch.address`(선택, 200자)를 `PlaceHint.address`로 넘긴다. 생성·승격 모두 이름·좌표·주소 힌트는 DB·로그·응답·이벤트 어디에도 남기지 않는다(`test_hint_is_never_logged_or_stored`가 caplog·행·이벤트 페이로드를 확인).
 - 테스트: `pins/tests/test_pin_resolve_501.py`(11개), 통합 — `KNOWN_MISSING`·`KNOWN_UNCOVERED`의 resolve 삭제, 골든 패스(`test_live_pin_responses_match_the_openapi_spec`에 승격·409·변화 없음), permission matrix(401·404 순회 + 구성원 누구나 승격).
 - 복잡도 예상 3, 실제 3.
+
+## #569 — 실시간 핀과 자체 DB 핀의 교차 중복 방지 (#444 B안, pins 몫)
+
+- 기준은 카카오 장소 ID뿐이다(이름·좌표는 보지 않는다). 모두 409 `PIN_DUPLICATE`, `detail.pin_id`=이미 있는 핀, 자동 병합 없음. 스펙·응답 변경 없음.
+  - 생성 `source=search`: 매칭된 장소에 대해 `service._find_live_pin_for_place` — 요청 힌트의 `place_id`가 이 지도 live 핀의 `kakao_place_id`와 같거나, live 핀의 카카오 ID가 기록된 자체 DB 장소(`own_places_by_kakao_id`)가 매칭된 장소일 때.
+  - 생성 `source=live`: 요청 `kakao_place_id`가 기록된 자체 DB 장소의 핀이 이 지도에 있으면(기존 "같은 지도 같은 kakao_place_id" 검사는 그대로, 먼저 본다).
+  - 승격 `resolve`: 매칭된 장소에 대해 같은 helper로 **다른** live 핀(자기 제외)도 본다.
+- `PlaceInfo`·`PlaceMatch`에 카카오 ID가 없어서, "기록된 ID가 live 핀과 같은가"는 이 지도 live 핀마다 `own_places_by_kakao_id`를 부르는 방식으로 판정한다(live 핀 수만큼 쿼리 — 지도당 소수라 수용). 더 많아지면 places에 `PlaceMatch.kakao_place_id` 노출을 요청하겠다.
+- `pins.api.list_live_kakao_place_ids(db, *, map_id) -> list[str]` — 삭제되지 않은 live 핀의 카카오 ID만(오래된 순). recommend가 "이미 지도에 있는 장소 빼기"에 쓴다.
+- 알려진 한계: 이 검사는 DB 유니크 인덱스가 아니라 조회라, 같은 가게를 live·search로 동시에 만드는 경합은 막지 못한다.
+- 테스트: `pins/tests/test_pin_cross_duplicate_569.py`(9개). 복잡도 예상 2, 실제 2.
