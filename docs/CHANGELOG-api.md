@@ -2,6 +2,17 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-15 (네 번째), 실시간 핀 승격과 주소 힌트 (#501)
+
+스펙이 먼저다. 구현은 pins·places 세션이 따로 하며, 그 전까지 `POST /pins/{pinId}/resolve`는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다.
+
+- **`POST /pins/{pinId}/resolve`** — 실시간 핀(`source: live`)을 자체 DB 핀으로 승격한다. 본문 `PinResolveRequest {place_name, lat, lng, address?}`는 화면이 `kakao_place_id`로 다시 찾은 카카오 결과를 **매칭 힌트로만** 보낸다(저장·로깅·응답 모두 없음). 서버가 핀 생성(source=search)과 같은 규칙으로 짝을 찾는다. 짝이 있으면 `source: db`로 바뀌고 `place_id`·이름·좌표·링크가 장소에서 채워진다. **핀 id·반응·사유·확정 리스트 항목은 유지**. 짝이 없으면 200 + 변화 없음, 이미 DB 핀이어도 200 + 변화 없음. 같은 지도에 그 장소의 핀이 이미 있으면 409 `PIN_DUPLICATE`(`detail.pin_id`) — 자동 병합 없음. 지도 구성원 누구나.
+- **`PinCreateSearch.address`** (선택) — 검색 결과의 주소를 그대로. 이름이 비슷한 점포를 가르는 보조 힌트이며 저장·로깅하지 않는다. 안 보내도 지금처럼 동작한다.
+- **이벤트**: 승격하면 `pin.updated`(페이로드 `Pin`). 다시 받기 표에 "승격이면 마커·상세 같이 갱신"을 적었다.
+- **권한**: 새 member 액션 `pin.resolve`. `authz/policy.py`를 같은 PR에서 맞췄다.
+- **FE 할 일**: 화면이 live 핀의 이름·좌표를 `kakao_place_id`로 찾을 때마다(이미 `source: db`인 핀은 호출하지 않는다) 결과를 이 API로 보내고, 응답이 `db`면 핀을 갈아끼운다. 200 + live면 아무것도 바꾸지 않는다. 같은 호출을 반복하지 않게 핀마다 세션당 한 번만 시도한다. 검색 결과로 핀을 만들 때는 `PinCreateSearch.address`에 결과의 `address`를 함께 보낸다(#478과 함께).
+- **BE 할 일**: pins가 힌트를 `PlaceHint`에 넣어 `places.api.match_place`로 보낸다(저장·로깅 금지). places 라우터의 `_fill_pinnable`이 `r.address`를 쓰는 것은 pins 쪽이 병합된 뒤.
+
 ## 2026-10-15 (세 번째), V2 계획 보조 에이전트 계약 (#510)
 
 스펙이 먼저다. 명세는 `docs/agent-v2.md`. 구현은 agent 모듈 M0부터 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다. 모델 호출 추가는 결정 이슈 #509에서 정하고, M0은 모델 없이 shadow로 돈다.
