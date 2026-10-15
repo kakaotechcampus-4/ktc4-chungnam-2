@@ -274,3 +274,39 @@ PR 1(#197)에서 고정한 6개 공개 함수를 실제로 구현했다. 이 브
 | 3 | 검색 라우터 연결 | places | `places/router.py::_fill_pinnable`의 `PlaceHint`에 `r.address`를 추가한다(한 줄). 1·2가 머지된 뒤에 켠다 — 이 세션이 맡는다. 측정 스크립트는 이미 주소 있음/없음을 나눠 잰다 |
 
   FE는 핀 생성 요청에 검색 결과의 `address`를 함께 보내야 효과가 있다(보내지 않으면 지금과 같다 — 이름 규칙만 쓴다).
+
+
+---
+
+# #474 POST /places/from-link 구현 결과 (2026-10-15)
+
+스펙(`LinkParseRequest`/`LinkParseResult`, `LINK_NOT_SUPPORTED`·`LINK_UNRESOLVED`)대로 구현했다. 스펙·`common/errors.py`는 바꾸지 않았다. parse-only — 핀·DB 쓰기·모델 호출 없음.
+
+- **파일**: `linkparse.py`(순수 — 링크 읽기·도메인 허용목록), `linkfetch.py`(단축 링크 따라가기, SSRF 방어), `matching.pick_link_matches`(구글 짝 고르기), `api.parse_link`·`check_link_rate`·`own_places_near`·`own_places_by_kakao_id`, `router.py`(라우트), `schemas.LinkParseResult`, `testing.FakePlaces`에 대역 2개.
+- **허용 링크**: 구글(`google.com`·`google.co.kr`의 `/maps…`, `maps.app.goo.gl`, `goo.gl`)과 카카오(`place.map.kakao.com/{id}`, `map.kakao.com/?itemId={id}`, `kko.to`). 네이버·인스타·블로그·그 밖은 422 `LINK_NOT_SUPPORTED`. 지도 주소인데 장소가 없으면(구글 화면 위치·좌표만, 카카오 주소에 ID 없음) 422 `LINK_UNRESOLVED`.
+- **구글**: 이름(`/place/<이름>` 또는 `?q=`)은 `name_hint`로, 좌표는 `!3d!4d`(장소 핀)를 `@`(뷰포트)보다 먼저 써서 반경 100m 자체 DB 장소를 찾는다. **이름이 같은 곳으로 볼 만한(`NAME_MIN_SCORE` 0.8) 후보만** `matches`에 담는다(가까운 순 최대 5) — 스펙은 반경만 적었지만 같은 건물의 다른 가게가 핀 후보로 올라가지 않게 `match_place`와 같은 이름 기준을 더했다. 좌표 없는 링크(`?q=`)는 DB를 보지 않고 `name_hint`만 준다. `needs_search_query`는 항상 false.
+- **카카오**: `kakao_place_id`(`kakao:<id>`)만 뽑는다. 자체 DB에 그 ID가 기록된 장소가 있으면 `matches`, 없으면 `needs_search_query=true`. 카카오 API는 부르지 않는다.
+- **`matches[].place_id`**: 자체 DB 장소에 카카오 ID가 기록돼 있으면 그 값, 없으면 `own:<places.id>`. FE는 그대로 `POST /maps/{id}/pins`(`source: search`)에 되돌려 보내면 된다(이름·좌표는 자체 DB 값이라 `match_place`가 같은 장소를 찾는다). `own:` 값은 카카오 ID가 아니라서 핀 생성이 `kakao_*`로 기록하지 않는다. **스펙 `PlaceSearchResult.place_id` 설명에 `own:<id>` 형태 한 줄을 추가해 주세요**(루트).
+- **SSRF 방어**(`linkfetch.py`, 단축 호스트 `maps.app.goo.gl`·`goo.gl`·`kko.to`만 가져온다):
+  - http(s)만, 포트 80/443만, 사용자 정보(`user:pw@`) 거부, 호스트는 도메인 허용목록(정확히 같거나 하위 도메인 — `google.com.evil.com`·`evilgoogle.com`은 막힘).
+  - 리다이렉트는 직접 따라가고(최대 4회) **매 홉마다** 허용목록·포트·스킴을 다시 검사한다. 허용 밖으로 가면 요청을 보내지 않고 멈춘다.
+  - 매 홉 DNS를 풀어 **모든 주소가 공인 IP**(사설·루프백·링크로컬·CGNAT·예약·멀티캐스트·IPv4-매핑 IPv6 차단)일 때만 접속하고, 검사한 IP로 직접 접속한다(`Host`·SNI는 원래 호스트) — 검사 뒤 DNS가 바뀌는 rebinding을 막는다.
+  - 타임아웃 3초, 본문은 읽지 않는다(헤더의 `Location`만 보고 닫음 — 크기 제한이 따로 필요 없다). 이미 긴 지도 주소는 가져오지 않고 바로 읽는다. 환경 프록시는 쓰지 않는다(`trust_env=False`).
+  - 열지 못하면(허용 밖 이동·사설 IP·횟수 초과·타임아웃·리다이렉트 아님) 422 `LINK_UNRESOLVED`.
+- **로그·응답**: 링크 주소·이름·좌표를 로그에 남기지 않는다(`places.link provider=… matches=N`, 실패 시 사유 종류만). 응답에는 링크의 좌표를 싣지 않는다(`matches`의 좌표는 자체 DB 값). 테스트가 로그에 이름·좌표·ID·도메인이 없음을 고정한다.
+- **호출 상한**: `PLACES_SEARCH_PER_MIN`(기본 30)과 같은 값을 쓰되 `/places/search`와 **따로 센다**(`link_limiter`, 사용자당). 순서는 422(본문 형식) → 429 → 해석. 로그인 필요, 지도 구성원 여부는 보지 않는다.
+- **테스트**: `places/tests/test_link.py`(80개, DB·네트워크 없음 — 파서·SSRF·짝 찾기·로그·라우트), `test_own_db.py`(실제 DB 조회 3개), `integration/test_places_search.py`(링크 → 핀 생성 왕복, 429, 401), 골든 패스(`test_response_contract.py`)에 4호출 추가. `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 `/places/from-link`를 지웠다. backend 전체 1914 passed.
+- **실제 구글·카카오 단축 링크로는 아직 시험하지 못했다**(테스트는 `httpx.MockTransport`). 실서버 연동 점검에서 `maps.app.goo.gl/…`와 `kko.to/…` 실링크 한 개씩 확인이 필요하다 — 특히 단축 링크가 `consent.google.com` 같은 동의 화면으로 먼저 보내는 경우(이때는 `LINK_UNRESOLVED`로 떨어진다).
+
+---
+
+# #473 GET /places/nearest 구현 (2026-10-15)
+
+- **동작**: `lat`·`lng`(+`category`) 기준 100m 안의 자체 DB 장소(`status='open'`)를 가까운 순 최대 5곳. `ST_DWithin`(geography) + `ST_Distance` 정렬, `idx_places_geom`(GiST)을 탄다 — 계획 확인은 `integration/test_places_nearest.py::test_query_uses_the_gist_index`(작은 테이블은 순차 스캔이 이기므로 `enable_seqscan=off`로 계획만 본다). 숙소·기타는 빈 배열, 모르는 분류는 422.
+- **pinnable=true만**: 후보 10곳을 읽고, 핀 생성이 부를 `match_place`와 같은 규칙(`find_candidates_many` + `pick_match`, 자기 이름·좌표를 힌트로)으로 거절될 곳(같은 자리 동명 점포 등)을 뺀 뒤 5곳으로 자른다. 주소는 힌트에 넣지 않는다 — pins가 아직 주소를 안 넘긴다(#500 3개 항목이 켜지기 전 기준).
+- **응답**: `place_id`=`own:<places.id>`, `place_source.provider`=`permit`|`tourapi`(url 없음), `address`·`category`는 자체 DB 값. 카카오 값은 어디에도 없다. `own:` ID로 핀을 만들어도 `pins/core.kakao_place_url`이 `kakao:` 접두어만 URL로 바꾸므로 카카오 ID로 기록되지 않는다.
+- **가드레일 (#53)**: 누른 좌표는 저장·로깅하지 않는다. 쓰기 쿼리 없음. DB 오류는 예외 타입만 남기고 `503 PLACES_UNAVAILABLE`(SQL 파라미터에 좌표가 실린다). uvicorn 접근 로그는 요청 줄에 쿼리스트링을 찍으므로 `places/logguard.py`(`StripQueryFilter`, `router.py` 임포트 시 설치)가 `/places/nearest`의 쿼리를 `?[redacted]`로 바꾼다. **배포에서 접근 로그를 다른 프록시(Cloud Run 요청 로그 등)가 남기는 것은 이 필터 밖이다 — 운영 쪽 확인이 필요하다.**
+- **호출 상한**: `check_search_rate` 그대로 — `GET /places/search`와 같은 사용자별 버킷(분당 `PLACES_SEARCH_PER_MIN`, 기본 30)을 공유한다. 지도를 연달아 누르면 검색 상한을 같이 쓴다.
+- **스펙 보정**: `503 PLACES_UNAVAILABLE` 응답 추가(`docs/api-spec.yaml`, `CHANGELOG-api.md` 2026-10-15 네 번째). 그 외 계약 변경 없음.
+- **테스트**: `integration/test_places_nearest.py` 17개(반경·정렬·최대 5·분류·폐업 제외·pinnable 거절 제외·422·401·429 공유 버킷·503 좌표 비노출·로그/저장 없음·접근 로그 필터·GiST 계획). `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 항목 삭제, 골든 패스(`test_response_contract.py`)에 nearest 호출 추가. `integration`·`places`·`common` 472 통과.
+- **FE 참고**: 목 서버(`contracts/mocks`)의 nearest는 `kakao:` 형식 ID를 쓴다. 실서버는 `own:<uuid>`이고 불투명 값으로 그대로 보내면 된다.

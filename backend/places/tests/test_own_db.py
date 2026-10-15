@@ -633,3 +633,35 @@ def test_cafes_cli_dry_run_writes_nothing(db_session, capsys):
     rc = load.main(["cafes", "--file", str(CAFE_CSV), "--labels", str(CAFE_LABELS_JSON), "--dry-run"], session_factory=lambda: db_session)
     assert rc == 0 and "dry-run" in capsys.readouterr().out
     assert db_session.scalar(select(func.count()).select_from(Place)) == 0
+
+
+# ---- 지도 링크 해석(#474)의 자체 DB 조회 ----
+
+def test_link_lookup_finds_own_places_within_100m_closest_first(loaded):
+    near = api.own_places_near(37.5445, 127.0561, 100.0, 20, db=loaded)
+    assert near and near[0].name == "성수 칼국수"
+    assert [c.distance_m for c in near] == sorted(c.distance_m for c in near)
+    assert all(c.distance_m <= 100 for c in near)
+    assert api.own_places_near(37.5445, 127.0561, 100.0, 1, db=loaded)[0].place_id == near[0].place_id
+    assert api.own_places_near(35.0, 129.0, 100.0, 20, db=loaded) == []   # 서울 밖
+
+
+def test_link_lookup_by_kakao_id_sees_only_recorded_ids(loaded):
+    pid = _pid(loaded, "permit", "P001")
+    assert api.own_places_by_kakao_id("kakao:777", db=loaded) == []
+    api.record_kakao_match(pid, "kakao:777", "http://place.map.kakao.com/777", db=loaded)
+    [c] = api.own_places_by_kakao_id("kakao:777", db=loaded)
+    assert (c.place_id, c.kakao_place_id) == (pid, "kakao:777")
+
+
+def test_parse_link_end_to_end_on_the_real_db(loaded):
+    pid = _pid(loaded, "permit", "P001")
+    google = ("https://www.google.com/maps/place/%EC%84%B1%EC%88%98+%EC%B9%BC%EA%B5%AD%EC%88%98/@37.5440,127.0560,17z"
+              "/data=!8m2!3d37.5445!4d127.0561")
+    result = api.parse_link(google, db=loaded)
+    assert [m.place_name for m in result.matches] == ["성수 칼국수"] and result.matches[0].place_id == f"own:{pid}"
+
+    assert api.parse_link("https://place.map.kakao.com/777", db=loaded).needs_search_query is True
+    api.record_kakao_match(pid, "kakao:777", "http://place.map.kakao.com/777", db=loaded)
+    kakao = api.parse_link("https://place.map.kakao.com/777", db=loaded)
+    assert kakao.needs_search_query is False and kakao.matches[0].place_id == "kakao:777"

@@ -255,6 +255,25 @@ fallback·타 라우트 인증 유지. `KNOWN_MISSING`에서 `("get", "/invites/
 
 ---
 
+## #468 — POST /maps/{mapId}/owner 방장 직접 넘기기 (2026-10-13)
+
+**구현**: 방장만(`require_on_map("owner.transfer")`, 구성원 403, 비구성원·삭제된 지도 404). `service.hand_over_owner`가 지도 행을
+먼저 `FOR UPDATE`로 잠그고 멤버십을 다시 읽는다 — 나가기·탈퇴·다른 위임과 줄을 서므로, 그 사이 방장이 바뀌었으면(요청자가
+더는 방장이 아님) 403, 대상이 나갔으면 422다. 대상 검증은 `core.check_owner_target`: 지금 구성원 + 탈퇴자 아님 + 나 자신 아님,
+아니면 422 `OWNER_TARGET_INVALID`(구성원이 아닌 사람과 없는 사용자를 구분하지 않는다). 승격·강등은 기존 `service.transfer_owner`를
+재사용한다(강등 먼저). 나는 member로 남고(나가기 아님), `owner.changed {map_id, from_user_id, to_user_id}`를 같은 트랜잭션에
+기록한다 — `member.left`는 쓰지 않는다. 응답은 요청자(이제 구성원) 기준 `Map`(`my_role: member`, `can_delete: false`).
+`common/errors.py` CATALOG에 `INVITE_REVOKED`·`OWNER_TARGET_INVALID`를 함께 넣었다(`test_catalog_matches_docs` 때문, #467 PR과 동일한 줄).
+**통합**: `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 제거, 골든 패스(구성원 403·자기 자신 422·넘기고 되받기)·권한 행렬(`_endpoints`)에
+호출 추가, 방장 전용 테스트 추가.
+
+**루트 확인 요청 — 스펙 모순(구현에는 영향 없음)**: `docs/events.md`의 「구독을 끊는 경우」 표에 `map.updated`, `owner.changed` 행이
+"그 지도의 모든 구독을 보낸 뒤 닫는다"로 들어가 있다. 그런데 같은 문서의 `owner.changed` 설명과 `docs/CHANGELOG-api.md`는
+"두 사람 모두 지도에 남아 SSE 구독이 끊기지 않는다"고 한다(`member.left`를 재사용하지 않는 이유 자체가 닫히는 것을 피하려는 것).
+수정 이벤트도 구독을 닫을 이유가 없다. 표의 그 행은 실수로 보인다 — 현재 `realtime/core.py`는 `map.deleted`·`member.left`만 닫으므로
+구현은 "닫지 않음"으로 동작한다. 표를 고칠지, 정말 닫는 게 의도면 realtime 담당에게 요청해야 한다.
+복잡도 예상 2 / 실제 2.
+
 ## #465 — PATCH /maps/{mapId} 지도 수정 (2026-10-13)
 
 **구현**: 보낸 필드만 바꾼다. `core.validate_map_update`가 기존 값에 합친 결과를 `validate_map_create`로 검사한다

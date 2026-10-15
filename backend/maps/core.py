@@ -253,6 +253,16 @@ def can_leave(role: Role | None, successor: str | None) -> bool:
     return role != "owner" or successor is not None
 
 
+def check_owner_target(
+    roster: Iterable[MembershipEntry], withdrawn: set[str], from_user_id: str, to_user_id: str
+) -> None:
+    """방장 직접 넘기기(#468)의 대상 검증. 지금 구성원이고, 탈퇴하지 않았고, 나 자신이 아니어야 한다 —
+    아니면 422 OWNER_TARGET_INVALID. 구성원이 아닌 사람과 없는 사용자를 구분하지 않는다(존재를 흘리지 않는다)."""
+    member_ids = {m.user_id for m in roster}
+    if to_user_id == from_user_id or to_user_id not in member_ids or to_user_id in withdrawn:
+        raise AppError("OWNER_TARGET_INVALID")
+
+
 def check_leave_allowed(role: Role, successor: str | None) -> None:
     if not can_leave(role, successor):
         raise AppError("OWNER_CANNOT_LEAVE")
@@ -338,6 +348,16 @@ def map_deleted_event(map_id: str) -> Event:
     """docs/events.md map.deleted — public 채널. 삭제와 같은 트랜잭션에 기록한다(#369)."""
     return Event(map_id=map_id, channel="public", type="map.deleted", payload={"map_id": map_id})
 
+
+def owner_changed_event(map_id: str, from_user_id: str, to_user_id: str) -> Event:
+    """docs/events.md owner.changed — public 채널(#468). member.left를 재사용하지 않는다: 두 사람 모두
+    지도에 남아 있다."""
+    return Event(
+        map_id=map_id,
+        channel="public",
+        type="owner.changed",
+        payload={"map_id": map_id, "from_user_id": from_user_id, "to_user_id": to_user_id},
+    )
 
 def map_updated_event(map_id: str, updated: NewMap) -> Event:
     """docs/events.md map.updated — public 채널(#465). 요청자 기준 값(permissions)은 싣지 않는다.

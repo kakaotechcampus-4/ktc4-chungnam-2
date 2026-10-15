@@ -19,6 +19,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import api as auth_api
+from maps import api as maps_api
+from notifications import api as notifications_api
 from places import api as places_api
 from places.schemas import PlaceHint, PlaceInfo
 from authz.core import Principal
@@ -36,6 +38,8 @@ from pins.schemas import (
     PinCreateRequest,
     PinCreateSearch,
     PinKind,
+    PinResolveRequest,
+    PinUpdateRequest,
     Reaction,
     ReactionRequest,
     ReactionSummary,
@@ -316,7 +320,8 @@ def _create_db_pin(
     core.validate_create(req)
 
     match = places_api.match_place(
-        PlaceHint(kakao_place_id=req.place_id, name=req.place_name, lat=req.lat, lng=req.lng, category=req.category),
+        PlaceHint(kakao_place_id=req.place_id, name=req.place_name, lat=req.lat, lng=req.lng, category=req.category,
+                  address=req.address),
         db=db,
     )
     if match is None:
@@ -417,6 +422,99 @@ def _create_live_pin(db: Session, map_id: str, principal: Principal, req: PinCre
     return pin
 
 
+def _author_pin_response(db: Session, pin_row: PinRow, principal: Principal) -> Pin:
+    """수정 응답 — 요청자(=방금 pin.edit 가드를 통과한 작성자)가 보는 Pin. 작성자는 현재 구성원이라
+    탈퇴·나감 판정(#369)이 필요 없어 실명 그대로 쓴다(create와 같다)."""
+    lat_col, lng_col = _lat_lng_columns()
+    lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()
+    record = record_from_row(
+        pin_row, lat=lat, lng=lng, reaction_counts=_reaction_counts_for_pin(db, pin_row.id),
+        created_by_display_name=auth_api.display_names(db, [pin_row.created_by]).get(pin_row.created_by),
+        my_reaction=my_reactions_for_pins(db, [pin_row.id], principal.user_id).get(pin_row.id),
+        place=places_api.get_places([pin_row.place_id], db=db).get(pin_row.place_id) if pin_row.place_id else None,
+    )
+    return core.to_pin_response(record, principal)
+
+
+def update_pin(db: Session, pin: PinRow, principal: Principal, req: PinUpdateRequest) -> Pin:
+    """PATCH /pins/{pinId}(#466) — 메모·분류만 바꾼다. 장소·근거·종류 필드는 이 함수가 건드리지 않는다.
+    수정과 pin.updated 이벤트는 같은 트랜잭션에 기록된다."""
+    reaction_count = db.execute(
+        select(func.count()).select_from(ReactionRow).where(ReactionRow.pin_id == pin.id)
+    ).scalar_one()
+    core.validate_update(kind=pin.kind, source=pin.source, reaction_count=reaction_count, req=req)
+
+    if "memo" in req.model_fields_set:
+        pin.memo = core.reason_content(req.memo)   # 빈 문자열·공백뿐이면 지운다(만들 때와 같은 기준)
+    if "category" in req.model_fields_set:
+        pin.category = req.category
+    db.flush()
+
+    updated = _author_pin_response(db, pin, principal)
+    record_event(db, core.pin_updated_event(updated))
+    return updated
+
+
+def _viewer_pin_response(db: Session, pin_row: PinRow, principal: Principal, current_member_ids: set[str]) -> Pin:
+    """요청자가 보는 Pin 한 건 — 작성자 표시(#369)·내 반응을 목록과 같은 규칙으로 채운다."""
+    lat_col, lng_col = _lat_lng_columns()
+    lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()
+    record = record_from_row(
+        pin_row, lat=lat, lng=lng, reaction_counts=_reaction_counts_for_pin(db, pin_row.id),
+        created_by_display_name=author_display_names(db, [pin_row.created_by], current_member_ids)[pin_row.created_by],
+        my_reaction=my_reactions_for_pins(db, [pin_row.id], principal.user_id).get(pin_row.id),
+        place=places_api.get_places([pin_row.place_id], db=db).get(pin_row.place_id) if pin_row.place_id else None,
+    )
+    return core.to_pin_response(record, principal)
+
+
+def resolve_pin(
+    db: Session, pin: PinRow, principal: Principal, current_member_ids: set[str], req: PinResolveRequest,
+) -> Pin:
+    """POST /pins/{pinId}/resolve(#501) — 실시간 핀을 자체 DB 핀으로 승격한다. live·일반 핀만 대상이고, 짝이 없거나
+    이미 db·AI·확정 핀이면 아무것도 바꾸지 않는다(이벤트도 없음). 핀 id·반응·사유·확정 항목은 그대로 둔다.
+    힌트(이름·좌표·주소)는 매칭에만 쓰고 저장·로깅하지 않는다. 같은 지도에 그 장소 핀이 이미 있으면 409(자동 병합 금지)."""
+    if pin.source != "live" or pin.kind != "일반":
+        return _viewer_pin_response(db, pin, principal, current_member_ids)
+
+    match = places_api.match_place(
+        PlaceHint(kakao_place_id=pin.kakao_place_id, name=req.place_name, lat=req.lat, lng=req.lng,
+                  category=pin.category, address=req.address),
+        db=db,
+    )
+    if match is None:
+        return _viewer_pin_response(db, pin, principal, current_member_ids)
+    core.validate_category_matches(pin.category, match.category)
+
+    existing_id = _find_existing_pin_id(db, pin.map_id, match.place_id)
+    if existing_id is not None:
+        raise AppError("PIN_DUPLICATE", detail={"pin_id": existing_id})
+
+    kakao_place_id = pin.kakao_place_id
+    pin.source = "db"
+    pin.place_id = match.place_id
+    pin.geom = func.ST_SetSRID(func.ST_MakePoint(match.lng, match.lat), 4326)
+    pin.kakao_place_id = None
+    pin.search_query = None
+    try:
+        with db.begin_nested():
+            db.flush()
+    except IntegrityError as exc:
+        db.rollback()   # _flush_pin_row와 같은 사정 — SAVEPOINT 뒤에도 세션은 되돌려야 쓸 수 있다
+        if getattr(exc.orig, "pgcode", None) == "23505" and "uq_pins_map_place" in str(exc.orig):
+            raise AppError("PIN_DUPLICATE", detail={"pin_id": _find_existing_pin_id(db, pin.map_id, match.place_id)}) from exc
+        raise
+
+    # 핀 생성과 같다 — 승격이 확정된 뒤에만 카카오 ID·URL을 자체 DB 장소에 기록한다(같은 트랜잭션)
+    kakao_url = core.kakao_place_url(kakao_place_id) if kakao_place_id else None
+    if kakao_url is not None:
+        places_api.record_kakao_match(match.place_id, kakao_place_id, kakao_url, db=db)
+
+    resolved = _viewer_pin_response(db, pin, principal, current_member_ids)
+    record_event(db, core.pin_updated_event(resolved))
+    return resolved
+
+
 def delete_pin(db: Session, pin: PinRow) -> None:
     # 조건부 UPDATE — "확인 후 처리"(check-then-act, pin.deleted_at = ...; db.flush())는
     # 동시 삭제 요청 두 개가 둘 다 loader를 통과한 뒤 둘 다 UPDATE에 성공해 pin.deleted
@@ -445,6 +543,22 @@ def _reaction_counts_for_pin(db: Session, pin_id: uuid.UUID) -> core.ReactionCou
         ).where(ReactionRow.pin_id == pin_id)
     ).one()
     return core.ReactionCounts(like=row.like, against=row.against)
+
+
+def _notify_pin_author(db: Session, *, pin: PinRow, actor_id: str, actor_name: str | None, reaction: str) -> None:
+    """내 핀에 반응이 달렸다는 알림(#470). 핀 작성자가 아직 이 지도의 구성원이고 탈퇴하지 않았을 때만 쓴다 —
+    나간·탈퇴한 사람의 알림함에 새 줄을 만들지 않는다. 문장에는 반응 종류만 들어가고 사유·메모는 넣지 않는다.
+    본인 반응과 끈 종류는 notify가 거른다."""
+    author = pin.created_by
+    if author == actor_id or author not in maps_api.DbMembershipGateway(db).current_member_ids(pin.map_id):
+        return
+    if author in auth_api.withdrawn_user_ids(db, [author]):
+        return
+    notifications_api.notify(
+        db, user_id=author, type="pin_reaction", map_id=pin.map_id, map_title=maps_api.get_map_title(db, pin.map_id),
+        message=notifications_api.compose_message("pin_reaction", actor_name=actor_name, reaction=reaction),
+        pin_id=str(pin.id), actor_id=actor_id,
+    )
 
 
 def set_reaction(db: Session, pin: PinRow, viewer_id: str, req: ReactionRequest) -> Reaction:
@@ -479,6 +593,7 @@ def set_reaction(db: Session, pin: PinRow, viewer_id: str, req: ReactionRequest)
     record_event(db, core.reaction_changed_event(
         str(pin.id), pin.map_id, summary, viewer_id, display_name, req.type,
     ))
+    _notify_pin_author(db, pin=pin, actor_id=viewer_id, actor_name=display_name, reaction=req.type)
 
     return Reaction(
         pin_id=str(pin.id), user_id=viewer_id, type=req.type,

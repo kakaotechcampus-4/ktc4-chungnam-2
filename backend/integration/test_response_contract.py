@@ -23,10 +23,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
-    ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
-    ("PATCH", "/pins/{pinId}"): "#466 구현 PR이 골든 패스에 넣고 지운다",
-    ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
-    ("POST", "/places/from-link"): "#474 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/runs/{runId}/advice"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
@@ -150,11 +146,30 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.get(f"/invites/{extra.json()['token']}").status_code == 410      # INVITE_REVOKED
     assert a.delete("/invites/no-such-token").status_code == 404
     assert a.get(f"/maps/{map_id}/members").status_code == 200
+    # 방장 직접 넘기기(#468) — 구성원 403, 나 자신 422, 넘기고 되받는다(이후 단계는 a가 방장이라고 가정한다)
+    assert b.post(f"/maps/{map_id}/owner", json={"user_id": "user_b"}).status_code == 403
+    assert a.post(f"/maps/{map_id}/owner", json={"user_id": "user_a"}).status_code == 422
+    assert a.post(f"/maps/{map_id}/owner", json={"user_id": "user_b"}).status_code == 200
+    assert b.post(f"/maps/{map_id}/owner", json={"user_id": "user_a"}).status_code == 200
 
     # 이름 검색(#180) — 결과 스키마 검증 + 0건(빈 배열) + 에러 봉투 422
     assert a.get("/places/search", params={"q": "해운대", "lat": 35.16, "lng": 129.16}).status_code == 200
     assert a.get("/places/search", params={"q": "존재하지않는가게"}).json() == []
     assert a.get("/places/search", params={"q": ""}).status_code == 422
+
+    # 지도를 눌러 핀(#473) — 자체 DB가 비어 있으면 빈 배열(지어내지 않는다), 범위 밖·누락은 422
+    assert a.get("/places/nearest", params={"lat": 35.16, "lng": 129.16}).json() == []
+    assert a.get("/places/nearest", params={"lat": 35.16, "lng": 129.16, "category": "카페"}).status_code == 200
+    assert a.get("/places/nearest", params={"lat": 35.16}).status_code == 422
+    assert a.get("/places/nearest", params={"lat": 91, "lng": 129.16}).status_code == 422
+
+    # 지도 링크 해석(#474) — 구글(자체 DB 짝 있음)·카카오(짝 없음 → needs_search_query)·에러 봉투 422
+    google_link = "https://www.google.com/maps/place/%EC%84%B1%EC%88%98+%EC%B9%BC%EA%B5%AD%EC%88%98/@37.5440,127.0560,17z/data=!8m2!3d37.5445!4d127.0561"
+    found = a.post("/places/from-link", json={"url": google_link})
+    assert found.status_code == 200 and len(found.json()["matches"]) == 1
+    assert a.post("/places/from-link", json={"url": "https://place.map.kakao.com/1234567"}).json()["needs_search_query"] is True
+    assert a.post("/places/from-link", json={"url": "https://naver.me/abc"}).status_code == 422   # LINK_NOT_SUPPORTED
+    assert a.post("/places/from-link", json={"url": ""}).status_code == 422
 
     pin_ids = []
     for key in ("seongsu-kalguksu", "hongdae-ramen", "seongsu-cafe-a"):
@@ -309,6 +324,27 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
+def test_feedback_responses_match_the_openapi_spec(clients):
+    """서비스 피드백(#10) — 201 영수증과 422·401 에러 봉투, 시간당 상한 429."""
+    a, _b, problems = clients
+    assert a.post("/feedback", json={"message": "좋아요", "category": "idea"}).status_code == 201
+    assert a.post("/feedback", json={"message": "   "}).status_code == 422
+    assert a.post("/feedback", json={"message": "x" * 1001}).status_code == 422
+    from fastapi.testclient import TestClient
+    assert _Checked(TestClient(a._c.app), problems).post("/feedback", json={"message": "x"}).status_code == 401
+    from feedback import api as feedback_api
+    from common.ratelimit import SlidingWindowLimiter
+    feedback_api.submit_limiter = SlidingWindowLimiter(1, window_s=3600.0)
+    try:
+        assert a.post("/feedback", json={"message": "하나"}).status_code == 201
+        assert a.post("/feedback", json={"message": "둘"}).status_code == 429
+    finally:
+        feedback_api.submit_limiter = SlidingWindowLimiter(10, window_s=3600.0)
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
 def test_map_leave_and_delete_match_the_openapi_spec(clients):
     """지도 나가기·삭제(#369) — 성공 204와 에러 봉투(구성원의 삭제 403, 넘길 사람 없는 방장의 나가기 409, 삭제 뒤 404)."""
     a, b, problems = clients
@@ -346,9 +382,37 @@ def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
     assert a.post(f"/maps/{map_id}/pins", json={**live, "kakao_place_id": "kakao:556", "category": "숙소"}).status_code == 422
     assert a.post(f"/maps/{map_id}/pins", json={**live, "kakao_place_id": "kakao:557", "lat": 37.5}).status_code == 422
 
+    # 핀 수정(#466) — 찍은 사람만. live 핀은 반응이 없을 때 분류도, db 핀은 메모만
+    edited = a.patch(f"/pins/{live_id}", json={"memo": "웨이팅 길대", "category": "카페"})
+    assert edited.status_code == 200 and (edited.json()["memo"], edited.json()["category"]) == ("웨이팅 길대", "카페")
+    assert edited.json()["permissions"]["can_edit"] is True
+    assert a.patch(f"/pins/{live_id}", json={"category": "음식점"}).status_code == 200
+    assert a.patch(f"/pins/{db_id}", json={"memo": "점심에"}).status_code == 200
+    assert a.patch(f"/pins/{db_id}", json={"category": "카페"}).status_code == 422          # 장소가 정한다
+    assert b.patch(f"/pins/{live_id}", json={"memo": "남의 핀"}).status_code == 403
+    assert a.patch(f"/pins/{live_id}", json={}).status_code == 422
+
     listed = a.get(f"/maps/{map_id}/pins").json()
     assert {p["id"] for p in listed} == {live_id, db_id}
     assert b.put(f"/pins/{live_id}/reaction", json={"type": "like"}).status_code == 200
+
+    # 라이브 핀 승격(#501) — 구성원 누구나. 짝이 없으면 200 변화 없음, 이미 그 장소 핀이 있으면 409, 짝이 있으면 같은 id의 db 핀으로
+    bunsik = pin_body("seongsu-bunsik")
+    hint = {"place_name": bunsik["place_name"], "lat": bunsik["lat"], "lng": bunsik["lng"], "address": "서울 성동구 성수동"}
+    nowhere = b.post(f"/pins/{live_id}/resolve", json={"place_name": "없는 가게", "lat": 35.0, "lng": 129.0})
+    assert nowhere.status_code == 200 and nowhere.json()["source"] == "live"
+    kalguksu = pin_body("seongsu-kalguksu")
+    dup = b.post(f"/pins/{live_id}/resolve", json={"place_name": kalguksu["place_name"], "lat": kalguksu["lat"], "lng": kalguksu["lng"]})
+    assert dup.status_code == 409 and dup.json()["detail"]["pin_id"] == db_id
+    assert b.post(f"/pins/{live_id}/resolve", json={"place_name": "x", "lat": 95, "lng": 127}).status_code == 422
+    other = a.post(f"/maps/{map_id}/pins", json={**live, "kakao_place_id": "kakao:777"}).json()["id"]
+    assert b.put(f"/pins/{other}/reaction", json={"type": "like"}).status_code == 200
+    promoted = b.post(f"/pins/{other}/resolve", json=hint)
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["id"] == other and promoted.json()["source"] == "db" and promoted.json()["place_name"] == bunsik["place_name"]
+    assert promoted.json()["my_reaction"]["type"] == "like"                            # 반응은 그대로
+    assert b.post(f"/pins/{other}/resolve", json=hint).status_code == 200              # 이미 db 핀 — 변화 없음
+    assert b.delete(f"/pins/{other}").status_code == 204
 
     for pin_id in (live_id, db_id):
         assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pin_id}).status_code == 201
@@ -419,6 +483,53 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     assert off.status_code == 200 and off.json()["enabled"] is False and off.json()["updated_by"] == "user_b"
     assert a.get(f"/maps/{map_id}/agent").json()["settings"]["enabled"] is False
     assert a.put(f"/maps/{map_id}/agent/settings", json={"enabled": True}).json()["enabled"] is True
+
+
+def test_notification_responses_match_the_openapi_spec(clients, db_session):
+    """알림함·알림 설정(#470) — 다른 모듈의 호출 연결은 아직 없으므로 notify를 직접 불러 알림을 만든다.
+    행위자 본인 제외와 꺼 둔 종류 거르기, 읽음 처리, 페이지 넘기기까지 응답이 Notification·NotificationList 스키마에 맞는다."""
+    from notifications import api as notifications_api
+
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "성수", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    empty = a.get("/me/notifications")
+    assert empty.status_code == 200 and empty.json() == {"items": [], "unread_count": 0}
+
+    def notify(user_id, type, actor_id, **kwargs):
+        return notifications_api.notify(
+            db_session, user_id=user_id, type=type, map_id=map_id, map_title="성수", actor_id=actor_id,
+            message=notifications_api.compose_message(type, actor_name="영희"), **kwargs)
+
+    assert notify("user_a", "pin_reaction", "user_b", pin_id="pin_1") is not None
+    assert notify("user_a", "member_joined", "user_b") is not None
+    assert notify("user_a", "pin_reaction", "user_a", pin_id="pin_1") is None        # 내가 한 일은 나에게 없다
+    assert notify("user_b", "owner_changed", None) is not None
+
+    listed = a.get("/me/notifications", params={"limit": 1})
+    assert listed.status_code == 200
+    body = listed.json()
+    assert body["unread_count"] == 2 and len(body["items"]) == 1 and body["next_before"]
+    assert body["items"][0]["type"] == "member_joined" and body["items"][0]["read"] is False
+    older = a.get("/me/notifications", params={"limit": 1, "before": body["next_before"]}).json()
+    assert older["items"][0]["type"] == "pin_reaction" and older["items"][0]["pin_id"] == "pin_1"
+    assert "next_before" not in older
+    assert a.get("/me/notifications", params={"limit": 0}).status_code == 422
+    assert a.get("/me/notifications", params={"before": "nope"}).status_code == 422
+
+    assert a.post("/me/notifications/read", json={"ids": [body["items"][0]["id"]]}).status_code == 204
+    assert a.get("/me/notifications", params={"unread_only": True}).json()["unread_count"] == 1
+    assert a.post("/me/notifications/read", json={"ids": ["x"] * 101}).status_code == 422
+    assert b.get("/me/notifications").json()["unread_count"] == 1                    # 남의 알림은 읽히지 않는다
+    assert a.post("/me/notifications/read").status_code == 204                       # 생략하면 전부
+    assert a.get("/me/notifications").json()["unread_count"] == 0
+
+    prefs = a.get("/me/notification-prefs")
+    assert prefs.status_code == 200 and all(p["enabled"] for p in prefs.json()["prefs"])
+    off = a.put("/me/notification-prefs", json={"prefs": [{"type": "pin_reaction", "enabled": False}]})
+    assert off.status_code == 200 and off.json()["prefs"][0] == {"type": "pin_reaction", "enabled": False}
+    assert a.put("/me/notification-prefs", json={"prefs": []}).status_code == 422
+    assert notify("user_a", "pin_reaction", "user_b", pin_id="pin_1") is None        # 끈 종류는 만들지 않는다
+    assert a.get("/me/notifications").json()["unread_count"] == 0
 
     unique = list(dict.fromkeys(problems))
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)

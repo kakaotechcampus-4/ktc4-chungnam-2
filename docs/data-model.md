@@ -362,6 +362,36 @@ agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조�
 
 ---
 
+## notifications / feedback (v2, #470, #10)
+
+> v2. 계약만 먼저 올렸고 마이그레이션은 구현 PR이 그때의 head 다음 번호로 만든다(번호를 문서에 못 박지 않는다 — agent·maps 마이그레이션과 겹친다). 이슈 본문의 `0026`은 옛 초안이다.
+> notifications는 이 테이블들만 쓴다. 다른 모듈은 `notifications/api.py`의 `notify(db, ...)`만 부르고, **이벤트를 발행하는 같은 트랜잭션에서** 호출한다(event_log는 지도 단위이고 읽음 상태가 없어 알림함으로 못 쓴다).
+
+```
+notifications(                        -- 사용자별 알림함. 수신자마다 한 행
+  id, user_id, map_id,                -- map_id는 FK 없음(지도가 삭제돼도 알림은 남는다)
+  type,                               -- NotificationType 5종(api-spec)
+  map_title,                          -- 만들 때의 제목 스냅샷
+  pin_id nullable,                    -- pin_reaction·my_ai_pin_published만. FK 없음
+  message,                            -- 서버가 만든 문장. 반대 사유·메모는 넣지 않는다
+  created_at, read_at nullable,
+  index (user_id, created_at desc), index (user_id) where read_at is null
+)
+notification_prefs(                   -- 행이 없으면 켜짐(기본값)
+  user_id, type, enabled, primary key (user_id, type)
+)
+feedback(                             -- 서비스 피드백. 저장만 한다
+  id, user_id nullable,               -- 탈퇴하면 NULL로 끊고 내용은 남긴다
+  category,                           -- bug | idea | other
+  message,                            -- 1~1000자, 앞뒤 공백 제거
+  map_id nullable, created_at
+)
+```
+
+규칙: 행위자 본인에게는 알림을 만들지 않는다. `notification_prefs`에서 끈 종류는 만들 때 거른다(이미 쌓인 알림은 지우지 않는다). 90일이 지난 알림은 정리 작업(#168)이 지운다. 계정 탈퇴(#155)는 `notifications.api.delete_by_user`가 그 사용자의 알림·설정을 지우고, 지도 정리(#431)는 map_id가 같은 알림을 지우지 않는다(남은 구성원의 알림함에 `map_deleted`가 보여야 한다).
+
+---
+
 ## common (모든 모듈이 쓰고 realtime만 읽는다)
 
 ```

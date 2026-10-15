@@ -24,7 +24,7 @@ from agent.models import (
 from agent.tests.conftest import BASE_DATABASE_URL, TEST_DB_NAME, replace_dbname
 
 BACKEND = Path(__file__).resolve().parents[2]
-REVISION = "0030_agent_cursor_drop_gap_seq"   # head
+REVISION = "0030_agent_cursor_drop_gap_seq"   # agent 마지막 마이그레이션(뒤에 다른 모듈 것이 붙어도 된다)
 TABLES_REVISION = "0029_agent_tables"
 PREVIOUS = "0025_invite_revoke"
 MODELS = (AgentSettings, AgentCursor, AgentRun, AgentSuggestion, AgentSuggestionView, AgentReasonSummary, AgentRunAdvice)
@@ -64,10 +64,12 @@ def _tables(engine) -> set[str]:
     return set(sa.inspect(engine).get_table_names())
 
 
-def test_head_is_agent_tables():
+def test_chain_has_one_head_and_contains_agent_revisions():
     from alembic.script import ScriptDirectory
 
-    assert ScriptDirectory.from_config(_config()).get_heads() == [REVISION]
+    script = ScriptDirectory.from_config(_config())
+    assert len(script.get_heads()) == 1                          # 체인은 하나다
+    assert REVISION in {r.revision for r in script.walk_revisions()}   # 뒤에 다른 모듈 마이그레이션이 붙어도 된다
 
 
 def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_url):

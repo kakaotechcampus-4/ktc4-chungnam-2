@@ -21,6 +21,7 @@ from maps.models import Invite as InviteRow
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
 from maps.schemas import Invite, InviteSummary, Map, MapCreateRequest, MapUpdateRequest, Member
+from notifications import api as notifications_api
 from pins import api as pins_api
 from shortlist import api as shortlist_api
 
@@ -86,6 +87,21 @@ def get_map_or_404(db: Session, map_id: str, *, for_update: bool = False) -> Map
     if row is None:
         raise AppError("NOT_FOUND")
     return row
+
+
+def get_map_title(db: Session, *, map_id: str) -> str | None:
+    """지도 제목. 없거나 삭제된 지도는 None — 알림 문장·내보내기 파일명이 쓴다."""
+    return db.execute(
+        select(MapRow.title).where(MapRow.id == map_id, MapRow.deleted_at.is_(None))
+    ).scalar_one_or_none()
+
+
+def notify_owner_changed(db: Session, *, map_row: MapRow, new_owner_id: str, actor_id: str) -> None:
+    """새 방장에게 owner_changed 알림(#470). 직접 넘기기·나가기·탈퇴 위임이 같은 트랜잭션에서 부른다."""
+    notifications_api.notify(
+        db, user_id=new_owner_id, type="owner_changed", map_id=str(map_row.id), map_title=map_row.title,
+        message=notifications_api.compose_message("owner_changed"), actor_id=actor_id,
+    )
 
 
 def _map_record(db: Session, map_row: MapRow) -> core.MapRecord:
@@ -374,6 +390,13 @@ def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
         # 방금 넣은 행은 언제나 member다(위 insert). maps.created_by로 판정하지 않는다(#369 11번).
         member = core.to_member_response(user_id, role="member", display_name=name, online=None)
         record_event(db, core.member_joined_event(invite_row.map_id, member))
+        roster, _ = roster_of(db, invite_row.map_id)
+        owner_id = next((m.user_id for m in roster if m.role == "owner"), None)
+        if owner_id is not None:   # 방장에게만(#470). 방장 본인이 자기 링크로 들어오는 경우는 notify가 거른다
+            notifications_api.notify(
+                db, user_id=owner_id, type="member_joined", map_id=invite_row.map_id, map_title=map_row.title,
+                message=notifications_api.compose_message("member_joined", actor_name=name), actor_id=user_id,
+            )
     return _map_response(db, map_row, viewer_id=user_id)
 
 
@@ -395,13 +418,23 @@ def list_members(db: Session, *, map_id: str) -> list[Member]:
     ]
 
 
-def delete_map(db: Session, *, map_id: str) -> None:
+def delete_map(db: Session, *, map_id: str, actor_id: str | None = None) -> None:
     """soft delete(#369 5번). 방장인지는 라우터의 require_on_map("map.delete")가 이미 봤다.
-    map.deleted는 같은 트랜잭션에 기록한다 — 커밋되면 삭제와 이벤트가 함께 보인다."""
+    map.deleted는 같은 트랜잭션에 기록한다 — 커밋되면 삭제와 이벤트가 함께 보인다.
+    삭제한 사람(actor_id)을 뺀 남은 구성원에게 map_deleted 알림을 쓴다(#470). 탈퇴자는 받지 않는다."""
     map_row = get_map_or_404(db, map_id, for_update=True)
     map_row.deleted_at = datetime.now(timezone.utc)
     db.flush()
     record_event(db, core.map_deleted_event(map_id))
+    roster, withdrawn = roster_of(db, map_id)
+    message = notifications_api.compose_message("map_deleted", map_title=map_row.title)
+    for member in roster:
+        if member.user_id in withdrawn:
+            continue
+        notifications_api.notify(
+            db, user_id=member.user_id, type="map_deleted", map_id=map_id, map_title=map_row.title,
+            message=message, actor_id=actor_id,
+        )
 
 
 def roster_of(db: Session, map_id: str) -> tuple[list[core.MembershipEntry], set[str]]:
@@ -423,6 +456,22 @@ def transfer_owner(db: Session, *, map_id: str, from_user_id: str, to_user_id: s
         .where(MembershipRow.map_id == map_id, MembershipRow.user_id == to_user_id)
         .values(role="owner")
     )
+
+
+def hand_over_owner(db: Session, *, map_id: str, from_user_id: str, to_user_id: str) -> Map:
+    """방장 직접 넘기기(#468). 방장인지는 라우터의 require_on_map("owner.transfer")가 이미 봤지만, 지도 행을
+    잠근 뒤 멤버십을 다시 읽어 확인한다 — 나가기·탈퇴·다른 위임과 줄을 서서, 그 사이 방장이 바뀌었거나 대상이
+    나갔어도 이미 나간 사람에게 방장이 넘어가지 않는다(#369 13번). 나는 member로 남는다(나가기가 아니다).
+    owner.changed는 같은 트랜잭션에 기록한다. 응답은 요청자(이제 구성원) 기준 Map."""
+    map_row = get_map_or_404(db, map_id, for_update=True)
+    roster, withdrawn = roster_of(db, map_id)
+    if core.role_in(roster, from_user_id) != "owner":
+        raise AppError("FORBIDDEN")  # 잠그기 전에 다른 요청이 이미 방장을 바꿨다
+    core.check_owner_target(roster, withdrawn, from_user_id, to_user_id)
+    transfer_owner(db, map_id=map_id, from_user_id=from_user_id, to_user_id=to_user_id)
+    record_event(db, core.owner_changed_event(map_id, from_user_id, to_user_id))
+    notify_owner_changed(db, map_row=map_row, new_owner_id=to_user_id, actor_id=from_user_id)
+    return get_map_response(db, map_id=map_id, viewer_id=from_user_id)
 
 
 def remove_membership(db: Session, *, map_id: str, user_id: str) -> None:
@@ -499,16 +548,17 @@ def transfer_or_delete_owned_maps(db: Session, *, user_id: str) -> None:
     위임한 지도에는 member.left(user_id=탈퇴자, new_owner_user_id=후임)를, 삭제한 지도에는 map.deleted만
     남긴다(docs/events.md, 2026-10-07 결정)."""
     for map_id in _owned_map_ids(db, user_id=user_id):
-        get_map_or_404(db, map_id, for_update=True)
+        map_row = get_map_or_404(db, map_id, for_update=True)
         roster, withdrawn = roster_of(db, map_id)
         if core.role_in(roster, user_id) != "owner":
             continue  # 잠그기 전에 다른 요청이 이미 넘겼다
         successor = core.pick_successor(roster, withdrawn, user_id)
         if successor is None:
-            delete_map(db, map_id=map_id)
+            delete_map(db, map_id=map_id, actor_id=user_id)   # 탈퇴자는 아직 withdrawn에 없어 actor로 거른다
         else:
             transfer_owner(db, map_id=map_id, from_user_id=user_id, to_user_id=successor)
             record_event(db, core.member_left_event(map_id, user_id, successor))
+            notify_owner_changed(db, map_row=map_row, new_owner_id=successor, actor_id=user_id)
 
 
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
