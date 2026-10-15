@@ -106,6 +106,23 @@ def _search_with_flags(client, monkeypatch, flags, *, limit=None):
     return [r["place_id"] for r in client.get("/places/search", params=params).json()], seen["limit"]
 
 
+def test_search_result_address_is_passed_to_the_matcher_hint_and_never_logged(client, monkeypatch, caplog):
+    """검색 결과의 address가 pinnable 계산의 힌트로 넘어가고(#500), 그 값이 로그에 남지 않는다(#53)."""
+    from places.schemas import PlaceSearchResult
+
+    secret_address = "서울 성동구 비밀로 12-34"
+    seen = []
+    monkeypatch.setattr(places_api, "search_by_name", lambda q, near, lim: [
+        PlaceSearchResult(place_id="k1", place_name="성수 칼국수", lat=37.5, lng=127.0, category="음식점", address=secret_address),
+        PlaceSearchResult(place_id="k2", place_name="주소 없는 곳", lat=37.5, lng=127.0, category="음식점"),
+    ])
+    monkeypatch.setattr(places_api, "pinnable_flags", lambda hints, **kw: seen.extend(hints) or [True] * len(hints))
+    with caplog.at_level("DEBUG"):
+        assert client.get("/places/search", params={"q": "성수"}).status_code == 200
+    assert [h.address for h in seen] == [secret_address, None]
+    assert secret_address not in caplog.text
+
+
 def test_own_db_places_come_first_and_keep_kakao_order_within_each_group(client, monkeypatch):
     ids, _ = _search_with_flags(client, monkeypatch, {"k1": False, "o1": True, "k2": False, "o2": True, "k3": False})
     assert ids == ["o1", "o2", "k1", "k2", "k3"]
