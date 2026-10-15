@@ -11,6 +11,7 @@ shortlist_items 쓰기를 조립한다.
 
 from common.events import record_event
 from common.geo import Point
+from maps import api as maps_api
 from pins import api as pins_api
 from shortlist import core, routing, service
 from shortlist.schemas import Route, ShortlistItem
@@ -69,7 +70,7 @@ def export_shortlist(db, *, map_id: str, principal, fmt: str) -> tuple[str, str,
             db, pin_id=str(item.pin_id), viewer_id=principal.user_id, principal=principal,
         )
         rows.append(core.to_export_row(order, pin))
-    disposition = core.export_content_disposition("확정 리스트", fmt)
+    disposition = core.export_content_disposition(maps_api.get_map_title(db, map_id), fmt)
     if fmt == "csv":
         return core.render_csv(rows), "text/csv; charset=utf-8", disposition
     return core.render_txt(rows), "text/plain; charset=utf-8", disposition
