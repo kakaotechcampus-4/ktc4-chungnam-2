@@ -4,6 +4,42 @@
 
 ---
 
+# #564 — agent 호출이 사용량을 함께 돌려준다, DIAGNOSIS_TOOLS 공개
+
+## 바뀐 계약 (`llm/api.py`, agent가 맞췄다)
+
+```python
+agent_prioritize(signals, principles, *, planner) -> AgentReply[PriorityOutput]
+agent_diagnose(diagnosis_input, *, tool_runner, planner) -> AgentReply[DiagnosisOutput]
+
+@dataclass(frozen=True)
+class AgentReply(Generic[T]):
+    result: T | AgentCallFailed
+    usage: AgentUsage
+
+class AgentUsage(BaseModel):          # agent_runs의 같은 이름 칸
+    model: str | None = None          # settings.llm_model ("gpt-6-luna")
+    prompt_version: str | None = None # prompts.AGENT_PRIORITIZE_PROMPT_VERSION "prioritize-v1" / AGENT_DIAGNOSE_PROMPT_VERSION "diagnose-v1"
+    tokens_in: int = 0                # 응답 usage.prompt_tokens의 합
+    tokens_out: int = 0               # 응답 usage.completion_tokens의 합
+
+DIAGNOSIS_TOOLS: dict[str, tuple[str, ...]]   # prompts.DIAGNOSIS_TOOLS 그대로(사본 아님)
+```
+
+- 진단은 도구 왕복마다 요청이 하나라 그 전부의 합이다. 실패(`result`가 AgentCallFailed)여도 그때까지 온 응답의 사용량이 담긴다.
+- model, prompt_version은 요청을 보내면 찬다(응답 전에 타임아웃이 나도). 고정 응답 스텁과 요청 전 실패(설정 누락)는 None, 0.
+- 거절(refusal)과 빈 응답도 응답이 왔으니 토큰을 센다. SDK가 응답 스키마 검증에 실패한 왕복은 사용량을 넘겨주지 않아 빠진다.
+- 모으는 방법: `client.metering()`(컨텍스트 변수)을 agent_prioritize·agent_diagnose가 열고 `_agent_parse`가 왕복마다 더한다.
+  planner 시그니처는 그대로다. ②(plan_evidence)는 블록 밖이라 어디에도 더해지지 않는다.
+- prompt_version은 프롬프트 글이나 도구 설명을 바꿀 때 올린다(#534가 버전별로 run을 나눠 본다).
+
+## 확인하지 못한 것
+
+- 실호출(`pytest -m live llm/tests/test_agent_live.py`)은 테스트 설정에 엘리스 키가 없어 skip됐다. usage가 실제 응답에 오는지
+  (tokens_in > 0) 단언을 그 테스트에 넣어 두었다.
+
+---
+
 # #532 — agent_prioritize, agent_diagnose (v2 에이전트 M1)
 
 ## 연 것 (`llm/api.py`)
