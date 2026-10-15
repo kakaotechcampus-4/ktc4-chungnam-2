@@ -23,7 +23,7 @@ from recommend.models import RecommendRun
 from recommend.ports import Circle
 from recommend.schemas import Check
 
-ATTEMPT_LIMIT = 5  # docs/data-model.md #31 확정: 개인 단위, 카테고리 무관, 상한 5회
+ATTEMPT_LIMIT = 10  # #31: 지도 안에서 구성원 각자, 카테고리 무관, 팀 합산 상한 없음. 5→10회 상향(2026-10-15, #558)
 # 반경 넓히기 상수 — docs/constraints.md "반경 넓히기 상수" 절 그대로(조정 가능한 상수, 바꿀
 # 때 루트에게 알린다). 기본값 원은 도보 15분에서 시작해 한 번에 5분씩, 30분까지.
 DEFAULT_RADIUS_WALK_MIN = 15
@@ -275,10 +275,10 @@ def funnel_counts(stage_removed: list[tuple[str, int]]) -> list[dict]:
 
 
 def check_retry_limit(attempt_no: int) -> None:
-    """재시도 상한(#31: 개인 단위, 카테고리 무관, 상한 5회). attempt_no는 다음 시도를 실행하기
-    *전* 현재까지의 시도 횟수 — 이미 상한에 도달했으면(이번이 6번째가 될 것이므로) 429."""
+    """재시도 상한(#31: 개인 단위, 카테고리 무관, 상한 ATTEMPT_LIMIT회). attempt_no는 다음 시도를 실행하기
+    *전* 현재까지의 시도 횟수 — 이미 상한에 도달했으면 429. detail에 상한도 싣는다(FE가 숫자를 하드코딩하지 않는다)."""
     if attempt_no >= ATTEMPT_LIMIT:
-        raise AppError("RETRY_LIMIT", detail={"attempt_no": attempt_no})
+        raise AppError("RETRY_LIMIT", detail={"attempt_no": attempt_no, "attempt_limit": ATTEMPT_LIMIT})
 
 
 # ============================================================================
