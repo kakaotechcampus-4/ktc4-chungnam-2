@@ -12,7 +12,7 @@ pins.models::Pin.created_by 등 — 전부 "users(id) — auth 도착 시 FK" �
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, String, UniqueConstraint, false, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from common.database import Base
@@ -35,6 +35,11 @@ class User(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # 로그아웃 시각 — 이 시각 이전에 발급된 세션 토큰은 무효(무상태 토큰을 서버에서 폐기하는 유일한 수단).
     sessions_valid_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # 게스트(이름만 입력한 임시 계정, #472). provider='guest'. 토큰 하나당 10명 상한을 guest_invite_token으로 센다.
+    is_guest: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    guest_invite_token: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("provider", "provider_user_id", name="uq_users_provider_identity"),

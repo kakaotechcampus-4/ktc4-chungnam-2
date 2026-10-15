@@ -121,16 +121,20 @@ def get_kakao_callback(
     return redirect
 
 
+def _user_response(row) -> UserResponse:
+    return UserResponse(id=row.id, display_name=row.display_name, is_guest=row.is_guest)
+
+
 @router.get("/me", response_model=UserResponse)
 def get_me(user: CurrentUser = Depends(get_current_user), db: Session = DbSession):
     row = service.get_active_user_or_401(db, user_id=user.user_id)
-    return UserResponse(id=row.id, display_name=row.display_name)
+    return _user_response(row)
 
 
 @router.patch("/me", response_model=UserResponse)
 def patch_me(body: UserUpdateRequest, user: CurrentUser = Depends(get_current_user), db: Session = DbSession):
     row = service.update_display_name(db, user_id=user.user_id, display_name=body.display_name)
-    return UserResponse(id=row.id, display_name=row.display_name)
+    return _user_response(row)
 
 
 @router.post("/logout", status_code=204)

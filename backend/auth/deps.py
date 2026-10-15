@@ -47,7 +47,7 @@ def get_current_user(
     row = service.get_active_user_or_401(db, user_id=claims.user_id)
     if core.is_revoked(claims.issued_at, row.sessions_valid_after):
         raise AppError("UNAUTHORIZED", "로그인이 필요합니다")
-    return CurrentUser(user_id=claims.user_id)
+    return CurrentUser(user_id=claims.user_id, is_guest=row.is_guest)
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
