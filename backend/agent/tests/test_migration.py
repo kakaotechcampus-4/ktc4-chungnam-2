@@ -1,4 +1,5 @@
-"""마이그레이션 0029_agent_tables up/down — 빈 DB에 head까지 올리고, 0025로 내렸다가 다시 올린다.
+"""마이그레이션 0029_agent_tables, 0030_agent_cursor_drop_gap_seq up/down — 빈 DB에 head까지 올리고, 0025로 내렸다가
+다시 올린다.
 
 다른 테스트와 테이블을 섞지 않도록 `<PINGO_TEST_DB>_agent_mig` DB를 따로 만들고 끝나면 지운다.
 models.py와 마이그레이션이 어긋나지 않았는지도 여기서 본다(컬럼 이름, 부분 유니크 인덱스).
@@ -23,7 +24,8 @@ from agent.models import (
 from agent.tests.conftest import BASE_DATABASE_URL, TEST_DB_NAME, replace_dbname
 
 BACKEND = Path(__file__).resolve().parents[2]
-REVISION = "0029_agent_tables"
+REVISION = "0030_agent_cursor_drop_gap_seq"   # head
+TABLES_REVISION = "0029_agent_tables"
 PREVIOUS = "0025_invite_revoke"
 MODELS = (AgentSettings, AgentCursor, AgentRun, AgentSuggestion, AgentSuggestionView, AgentReasonSummary, AgentRunAdvice)
 TABLES = {m.__tablename__ for m in MODELS}
@@ -99,6 +101,10 @@ def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_u
             conn.execute(insert, {"status": "active"})
         with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:
             conn.execute(insert, {"status": "active"})
+
+        # 0030만 내리면 gap_seq가 빈 칸으로 돌아온다(#525 전 모양)
+        command.downgrade(cfg, TABLES_REVISION)
+        assert "gap_seq" in {c["name"] for c in sa.inspect(engine).get_columns("agent_cursors")}
 
         command.downgrade(cfg, PREVIOUS)
         assert not (TABLES & _tables(engine))

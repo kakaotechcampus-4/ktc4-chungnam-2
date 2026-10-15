@@ -106,3 +106,60 @@ M0을 막지는 않아서 구현은 끝냈다. M1에서 사유 원문을 실제�
 ## 읽기 함수 요청
 
 없음. #522로 연 함수로 충분했다. `list_reasoned_reactions`는 카테고리가 필수라 관찰 대상 카테고리마다 한 번씩(지금 3번) 부른다.
+
+---
+
+# 루트 보고 — backend/agent (#515, M0-3 관찰 루프)
+
+## 구현 범위
+
+- 마이그레이션 `0030_agent_cursor_drop_gap_seq` (down: `0029_agent_tables`). agent_cursors.gap_seq 삭제(#525)
+- `service.py`: claim_maps, release_lease, advance_cursor, load_history, expire_suggestions, supersede, insert_suggestion,
+  insert_run, set_run_outcome, delete_old_runs
+- `flows.py`: run_tick, observe_map, daily_cleanup_if_due. `loop.py`: 개발용 반복 작업 start/stop
+- `core.py`: has_recent_event, find_superseded, recheck, choose_top, signal_record. `PastSuggestion.evidence_hash` 추가
+- `snapshot.build`가 `latest_seq`, `latest_event_at`을 채운다(`realtime.api.latest_seq_by_map`, 같은 REPEATABLE READ 트랜잭션)
+- `main.py` lifespan: import 1줄, `agent_loop.start()` 1줄, `await agent_loop.stop(SHUTDOWN_TIMEOUT)` 1줄(dispatcher 정지 앞).
+  `AGENT_LOOP_IN_PROCESS=False`(기본)면 아무것도 띄우지 않는다
+- 테스트: agent 131개(새로 36개), 백엔드 전체 1825개 통과
+
+## outcome이 남는 경우
+
+| outcome | 언제 |
+| --- | --- |
+| map_deleted | 지도가 삭제됐거나(#369) 행이 없음(build가 None). 커서만 올리고 next_check_at은 null |
+| trip_ended | KST 오늘 > end_date. 위와 같다(마지막 날까지는 관찰) |
+| no_signal | 탐지된 신호 없음 |
+| blocked | 신호가 모두 정책에 막힘, 또는 저장 때 다른 관찰이 먼저 활성 제안을 넣음(active_exists) |
+| silent | 1순위가 모델 유형(stall, split). M0은 모델 단계를 건너뛴다. outcome_detail `{"skipped": "model_step", ...}` |
+| stale | 저장 직전 재확인에서 신호가 사라졌거나 evidence_hash가 바뀜 |
+| suggested | 코드 유형 초안 저장. 제목·문장·버튼은 빈 값(M1 렌더), shadow=AGENT_SHADOW_MODE |
+
+저장 트랜잭션 맨 앞 `lock_map_if_alive`가 False면 agent_runs 행도 남기지 않는다(커서도 그대로).
+
+## 명세와 다르게 한 것
+
+1. `claim_maps(db, now, *, limit)` — service 규칙대로 db를 받고 커밋은 flows가 한다. (map_id, trigger)를 돌려준다
+   (바뀐 지도면 activity, next_check_at으로 잡혔으면 time)
+2. `daily_cleanup_if_due`는 flows에 두었다. "오늘 했나"를 프로세스 메모리(KST 날짜)에 두어서다. 인스턴스가 여럿이면
+   하루 몇 번 돌 수 있지만 지우기만 해서 결과는 같다. service는 `delete_old_runs`. `decided_within_24h` 채우기는 하지 않았다(M1 지표)
+3. M0 1순위: fallback_order의 1순위가 모델 유형이면 코드 유형으로 내려가지 않고 silent로 남긴다. M1과 같은 빈도를
+   shadow로 보려는 것이다. 유형별 발동 빈도는 agent_runs.signals에 모든 신호가 남아 있어 그대로 셀 수 있다
+4. 저장 순서: insert_run을 insert_suggestion보다 먼저 한다(제안의 run_id FK). 제안이 충돌하면 그 run의 outcome을
+   blocked로 고친다(set_run_outcome)
+5. 재확인: `snapshot.load_evidence` 대신 저장 트랜잭션 안에서 `snapshot.build`를 다시 부르고 `core.recheck`가
+   detect_all을 다시 돈다. 기준 시간은 관찰 때 값을 쓴다
+6. map_deleted와 trip_ended도 agent_runs 행을 남긴다(명세 의사코드는 커서만). shadow 로그에서 끝난 지도가 얼마나
+   잡히는지 보려고. 정리된 지도(build None)는 커서 행이 없어 커서는 건드리지 않는다
+7. next_check_at 후보에 방금 넣은 제안의 expires_at을 더했다(이력에는 아직 없어서)
+8. 제안 created_at은 DB now()가 아니라 관찰 시각(now)이다. no_reaction 하루 1회와 백오프가 같은 시계를 본다
+9. shadow를 꺼도 M0은 이벤트를 내지 않는다(agent.suggested, agent.resolved는 M1). 그 자리에 주석만 두었다
+
+## 루트 확인 요청
+
+1. `docs/data-model.md` 315행, `docs/agent-v2.md` 13절의 gap_seq 주석 → "0030에서 지웠다"로 갱신
+2. `docs/agent-v2.md` 12.4 의사코드에 위 4~7번(run 먼저, build 재호출, 끝난 지도도 run 기록)을 반영할지
+3. `AGENT_LOOP_IN_PROCESS`는 명세대로 상수라 개발자가 켜려면 constants.py를 고쳐야 한다. 환경 변수로 받으려면
+   `common/settings.py`에 칸이 필요해서 손대지 않았다
+4. 비용 메모: 관찰 한 번마다 `latest_seq_by_map`(24시간 전 지도 DISTINCT ON)을 한 번 더 부른다(claim 1번 + 지도마다
+   1번, 초안이 있으면 재확인에서 1번 더). tick당 최대 21번이다. 측정해 보고 무거우면 realtime에 지도 하나용 함수를 요청한다
