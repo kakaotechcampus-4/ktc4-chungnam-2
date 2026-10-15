@@ -20,6 +20,8 @@ from common.events import EventLog
 from maps.models import Map, Membership
 from pins.models import Pin, Reaction
 from places.schemas import PlaceInfo
+from recommend import api as recommend_api
+from recommend.models import Candidate, EvidenceLine, Exclusion, RecommendRun
 from shortlist.models import ShortlistItem
 
 
@@ -87,13 +89,43 @@ class World:
             db.get(Pin, uuid.UUID(pin_id)).deleted_at = self.now
             db.commit()
 
-    def react(self, pin_id: str, user: str, type_: str, *, hours_ago: float, text: str | None = None) -> str:
+    def react(self, pin_id: str, user: str, type_: str, *, hours_ago: float, text: str | None = None,
+              chips: list[str] | None = None) -> str:
         with self.factory() as db:
             row = Reaction(id=uuid.uuid4(), pin_id=uuid.UUID(pin_id), user_id=self.uid(user), type=type_,
-                           reason_text=text, updated_at=self.now - timedelta(hours=hours_ago))
+                           reason_text=text, reason_chip_ids=chips, updated_at=self.now - timedelta(hours=hours_ago))
             db.add(row)
             db.commit()
             return str(row.id)
+
+    def touch_reaction(self, reaction_id: str, *, hours_ago: float = 0, text: str | None = None) -> None:
+        """반응을 고친다(사유를 바꾸면 updated_at이 바뀐다)."""
+        with self.factory() as db:
+            row = db.get(Reaction, uuid.UUID(reaction_id))
+            row.updated_at = self.now - timedelta(hours=hours_ago)
+            if text is not None:
+                row.reason_text = text
+            db.commit()
+
+    def private_run(self, map_id: str, *, requester: str = "u3", secret: str = "비밀") -> list[str]:
+        """남의 run과 그 후보, 근거 줄, 제외 목록(비공개 데이터, 명세 2절 2번). 어디에도 나오면 안 되는 id와 글."""
+        with self.factory() as db:
+            run = RecommendRun(map_id=map_id, category="카페", requested_by=self.uid(requester), status="done",
+                               created_at=self.now - timedelta(days=5))
+            db.add(run)
+            db.flush()
+            rows = [
+                Candidate(run_id=run.id, place_id="secret_place_candidate", lat=37.5, lng=127.0, rank=1,
+                          reason=f"{secret}_후보이유"),
+                EvidenceLine(run_id=run.id, author_id=self.uid(requester), source="manual",
+                             text=f"{secret}_근거줄", badge="required"),
+                Exclusion(map_id=map_id, category="카페", place_id="secret_place_excluded", reason="dismissed",
+                          run_id=run.id, requested_by=self.uid(requester)),
+            ]
+            db.add_all(rows)
+            db.commit()
+            return [str(run.id), *(str(r.id) for r in rows), "secret_place_candidate", "secret_place_excluded",
+                    f"{secret}_후보이유", f"{secret}_근거줄"]
 
     def confirm(self, map_id: str, pin_id: str, *, by: str = "u1", hours_ago: float = 50) -> None:
         with self.factory() as db:
@@ -164,6 +196,7 @@ class World:
         ids = self.map_ids
         with self.factory() as db:
             agent_api.purge_map_data(db, map_ids=ids)
+            recommend_api.purge_map_data(db, map_ids=ids)
             db.execute(delete(ShortlistItem).where(ShortlistItem.map_id.in_(ids)))
             db.execute(delete(Reaction).where(Reaction.pin_id.in_(select(Pin.id).where(Pin.map_id.in_(ids)))))
             db.execute(delete(Pin).where(Pin.map_id.in_(ids)))

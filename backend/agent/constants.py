@@ -39,8 +39,8 @@ BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS = 3   # 또는 같은 사람이 같은 카테
 # 재시도 상한(attempt_no)은 개인 단위, 카테고리 무관, 5회다(#31). attempt_no로 세면 다른 카테고리 시도가 섞이고,
 # 4회면 1회밖에 남지 않는다. 그래서 같은 카테고리 run 수를 따로 센다(GET /maps/{mapId}/runs의 기록, #469).
 
-DIAGNOSIS_MAX_TOOL_CALLS = 5
-STRUCTURE_REASONS_MAX_CALLS = 1
+# 진단 1회의 도구 상한(DIAGNOSIS_MAX_TOOL_CALLS 5, STRUCTURE_REASONS_MAX_CALLS 1)은 llm이 강제한다(llm.prompts, #532).
+# 같은 값을 여기 두면 둘이 어긋날 수 있어 두지 않는다(#533)
 TOOL_RESULT_MAX_ITEMS = 30         # 초안
 
 BACKOFF_HOURS = (2, 6, 24)         # 연속 닫힘 1회, 2회, 3회 이상

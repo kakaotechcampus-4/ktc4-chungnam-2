@@ -240,3 +240,135 @@ advice는 `[{"slot_text": "{c2}", "is_guess": false}, ...]`, claims는 `[{"id":"
 4. `docs/api-spec.yaml` agent 태그 설명과 951행 주석의 "실서버 구현 전(KNOWN_MISSING)" → 5개 경로 구현됨(advice만 M2)
 5. FE(#516, #536)에 알릴 것: 실서버에서 코드 유형 제안이 나온다. view는 이미 처리된 제안도 204, accept 범위 밖 422,
    만료 시각이 지난 제안은 GET에서 null이고 accept·dismiss 409
+
+
+---
+
+# 루트 보고 — backend/agent (#533, M1-2 도구, 검증, 우선순위 보정, 모델 단계 연결)
+
+## 구현 범위
+
+- llm과 맞추기(#532 보고대로)
+  - `deps.py`: `ToolRunner = llm.api.ToolRunner`(call_id, name, args). Gateway의 prioritize와 diagnose는 `... | AgentCallFailed`를
+    돌려준다. Fixed는 fixed planner, Real은 real planner를 `llm.api.agent_*`에 넘긴다. structure_reasons가 쓸 ②도 Gateway에
+    `structure(raw_reasons)`로 두었다(Fixed는 passthrough_planner, Real은 real_evidence_planner)
+  - `schemas.py`: 11.1 사본(CountClaim … PriorityOutput)을 지우고 `llm.schemas`에서 가져온다. SummaryOutput과 RunAdviceOutput은
+    llm 함수가 M2라 agent에 남겼다(llm의 Claim, AdviceLine, Action을 쓴다)
+  - `constants.py`: `DIAGNOSIS_MAX_TOOL_CALLS`, `STRUCTURE_REASONS_MAX_CALLS`를 지웠다(강제는 llm)
+- `tools.py`: 도구 8개, `ToolContext.run`(tool_runner), 기록용 `redact`, ② 결과 캐시 `StructureCache`
+- `core.py`: `priority_input`, `apply_priority_rules`, `priority_mode`, `choose_top`의 모델 경로, `diagnosis_input`,
+  `compare_reasons`(6.3), `render_analysis`, `verify_diagnosis`(11.2, `count_metric`, `resolve_path`), `failed_outcome`
+- `flows.observe_map`: 5단계(우선순위 모델), 6단계(진단과 검증). Gateway는 인자로 받고 없으면 `deps.get_llm_gateway()`
+- `models.RUN_OUTCOMES`에 `model_failed`(data-model.md에는 #532에서 이미 있다. CHECK 제약이 없어 마이그레이션 없음)
+- `service.load_history`: 직전 관찰(activity, time)의 `priority`를 `History.last_priority`로
+- 테스트: agent 169개 → 272개(새로 103개: test_core_verify 44, test_core_priority 29, test_tools 15, test_flows_model 15).
+  기존 3개 고침(choose_top 기록 모양, gap 두 개 지도의 used_model, 스텁 진단의 outcome_detail과 도구 기록)
+
+## 도구별 반환 예시
+
+인자는 llm/for_Root.md(#532) 표대로 받고 map_id는 agent가 채운다. 목록은 상위 30개와 `total`. 구성원은 별칭만.
+
+| 도구 | 반환 |
+| --- | --- |
+| get_map_overview `{}` | `{dday: 30, member_count: 3, categories: [{category: "음식점", pins: 1, confirmed: 0}, …], last_activity_at: "…"}` |
+| get_activity `{since}` | `{since, counts: {pin: 0, reaction: 2, shortlist: 0}, distinct_actors: 2, median_gap_minutes: 300.0}`. since가 null이면 24시간 전 |
+| get_reaction_matrix `{category}` | `{category, members: ["m1","m2","m3"], pins: [{pin_id, name: "성수 칼국수", reactions: {m1: "like", m2: "like", m3: "against"}}], total}`. 실시간 핀 name은 검색어, null은 미확인 |
+| get_reasons `{pin_ids, category, types}` | `{reasons: [{reaction_id, pin_id, category, type, text, chips: [{chip_id, label, fact_key, wants}], member_alias: "m3", updated_at}], total}`. 최근 것부터, 삭제된 핀의 사유 포함 |
+| structure_reasons `{reaction_ids}` | `{reasons: [{reaction_id, type, lines: [{fact_key: "parking_available", wants: true, badge: "required"}, {fact_key: "spacious", wants: true, badge: "required"}]}], total, not_found: [...]}`. 글은 ②, 칩은 칩 표 |
+| compare_reasons `{pin_id, category}` | `{pin_id, category, conflict_type: "same_axis", keys: [{fact_key: "spacious", want: [{reaction_id, side: "against"}], avoid: [{reaction_id, side: "like"}]}], total}` |
+| get_place_facts `{place_ids, fact_keys}` | `{facts: [{place_id, fact_key: "quiet", value: true, confidence: "known"}, {…, value: null, confidence: "unknown"}], total, not_found: ["pl_elsewhere"]}` |
+| get_readiness `{category}` | `{category: "음식점", ready: true, answered_count: 2, required_count: 1}` |
+
+오류: 유형에 허용되지 않은 도구나 없는 대상(카테고리, 지도)은 `{"error": "NOT_FOUND"}`, ②가 실패하면 `{"error": "UNAVAILABLE"}`.
+
+기록(agent_runs.tool_calls): `[{call_id: "t1", name, args, result, ms}]`. result 안에서 `reaction_id`와 같이 있는 `text`는
+`text_len`(글자 수)로 바뀐다. 모델에 준 원래 결과는 `ToolContext.results`에 메모리로만 두고 검증(tool_result claim)에 쓴다.
+
+## outcome 매핑 (6단계)
+
+| 상황 | outcome | outcome_detail | verification |
+| --- | --- | --- | --- |
+| AgentCallFailed reason=invalid_schema | invalid_schema | `{signal_id, diagnosis, reason, detail}` | null |
+| AgentCallFailed reason=timeout, call_failed | model_failed | 같음(detail은 예외 클래스명) | null |
+| decision=silent, unknown | silent, unknown | `{signal_id, diagnosis, decision}` | `{decision}` |
+| 검증 2단계(신호 불일치), 7단계(성립 실패) | invalid_claims | `{signal_id, diagnosis, decision: "suggest"}` | 단계별 내역과 `failed_step` |
+| 검증 통과 | suggested(모델 유형은 shadow=true, 이벤트 없음) | null | 단계별 내역 |
+| 통과 뒤 저장 직전 재확인 실패 | stale | | |
+
+`used_model`은 우선순위나 진단을 부른 관찰이면 true다(호출이 실패해도). 한 관찰에서 둘 다 불러도 행 하나라 1회다.
+`ToolRunnerError`(agent 도구 쪽 버그)는 잡지 않는다 — observe_map이 실패하고 run_tick이 로그를 남긴다(agent_runs 행 없음).
+
+## 검증 단계별 테스트 수 (test_core_verify.py, 매개변수 포함)
+
+| 단계 | 테스트 | 내용 |
+| --- | --- | --- |
+| 통과 | 2 | split(quote text를 버림, analysis), stall(count 없이 성립) |
+| 1 decision | 2 | silent, unknown |
+| 2 진단 성립 | 2 | signal_id, diagnosis가 다름 |
+| 3 claim 대조 | 11 | 지어낸 count(→ 7단계 invalid_claims), 원문에 없는 quote, 사유 글 없는 반응 quote, 없는 ref, tool 값 다름(True와 1), 없는 path, 없는 call_id, 없는 핀 count, 잘못된 id, 목록 경로와 category·map·unseen 통과, 같은 id 두 번 |
+| 4 구조 대조 | 0 | 요약 전용(진단은 `structure: "skipped"`) |
+| 5 문장 | 16 | 슬롯 밖 숫자 2, 표시 이름, 별칭, 금지 표현 2(공백 무시), 슬롯 밖 원문 옮겨 쓰기 2, 없는 claim 슬롯, 슬롯 종류 2, 깨진 슬롯, 없는 basis, 빈 문장, 제거된 claim을 가리킴, 한 글자 이름은 보지 않음 |
+| 6 행동 | 7 | split에 search_place, open_evidence, 숙소 open_recommend, 빈 basis, 없는 basis, 없는 핀 show_pins, 중복 제거와 버튼 이름 |
+| 7 성립 | 2 | 남은 것 없음, 행동만으로 성립 |
+
+그 밖: 진단 입력(비공개 데이터, user_id, 사유 글 없음) 1, failed_outcome 1. 관찰 흐름(test_flows_model.py)에서 outcome 매핑 7,
+17절 7번(핀 확정, 반응 수정) 2, 17절 11번 1, 모델 사용 1회와 순위 재사용 1, 상한과 우선순위 실패 2, 저장된 행에 사유 글 없음
+(shadow 제안 저장 테스트 안).
+
+## 명세와 다르게 한 것 (또는 명세에 없어 정한 것)
+
+1. **모델 유형 제목은 코드 문구다.** DiagnosisOutput에 제목 칸이 없다. stall "{카테고리} 후보가 반대 의견 뒤로 멈춰 있어요",
+   split "의견이 갈린 핀이 있어요". 버튼 이름도 모델 Action에 label이 없어 코드가 정한다(코드 유형과 같은 문구, pin_ids
+   show_pins는 "핀 보기")
+2. **우선순위 입력은 fallback_order 순서로 넘긴다.** 고정 응답 스텁이 받은 순서 그대로라, 이렇게 해야 dev에서도 M1-1과 같은
+   1순위가 나온다(그대로 넘기면 탐지 순서라 no_reaction이 category_gap보다 앞에 왔다)
+3. **순위 재사용 조건**: 직전 관찰(activity, time 중 최신 행)의 priority.source가 model이나 reused이고 fingerprint 집합이 같을 때.
+   직전이 fallback(실패, 상한)이면 재사용하지 않는다. 재사용은 상한보다 먼저 본다(부르지 않으니까).
+   priority 기록에 `source`(single|model|reused|fallback), `fingerprints`(final_order 순서), `fallback_reason`을 더했다
+4. **apply_priority_rules 보정 순서**: 모르는 id 버림 → 중복 버림 → 빠진 신호를 fallback_order로 뒤에 → always_first 앞으로 →
+   1순위가 never_first면 아닌 첫 신호를 앞으로. corrections에 type별로 남긴다
+5. **compare_reasons에서 같은 키, 같은 방향은 unclear.** 6.3 표에 없는 경우다. 예: ♥ "조용해서 좋아요"(quiet 원함)와 🚫 칩
+   「시끄러워요」(quiet 원함) — 취향이 갈린 게 아니라 이 가게가 조용한지를 두고 갈렸다. 방향이 null인 줄은 키 있는 사유로
+   세지만 want, avoid 어느 쪽에도 넣지 않는다
+6. **split 진단 입력의 comparison은 진단 전에 코드가 계산한다**(② 호출 포함). 이 계산은 tool_calls에 남지 않고 llm 도구
+   상한에도 세지 않는다. 같은 캐시를 채우므로 뒤의 structure_reasons는 대부분 캐시에서 나온다. ②가 실패하면 comparison 없이
+   진단한다
+7. **get_readiness 반환**은 명세의 `{ready, reason}`이 아니라 recommend.api(#530) 모양 `{category, ready, answered_count,
+   required_count}`다
+8. **도구 오류 UNAVAILABLE**(②실패)을 더했다. 10절은 NOT_FOUND, LIMIT_EXCEEDED만 적었다
+9. **get_place_facts는 이 지도 핀의 place_id만** 본다. 나머지는 not_found. fact_keys를 줬는데 라벨이 없으면 unknown 행을 만든다
+10. **count claim의 unseen**: pin은 그 핀을 찍지 않은 구성원 중 반응하지 않은 사람 수, category와 map은 그런 사람이 한 명이라도
+    있는 핀 수. like, against, confirmed, pins는 그 범위의 합
+11. **검증 5단계 세부**: 별칭(m1)도 이름으로 보고 뺀다. 표시 이름은 두 글자 이상만 본다(한 글자는 보통 낱말과 겹친다). 이름
+    검사를 숫자 검사보다 먼저 한다(별칭에 숫자가 있다). 금지 표현과 옮겨 쓰기는 공백을 빼고 비교한다. 300자 넘는 문장도 뺀다.
+    표시 이름은 스냅샷 세션에서 `auth.api.display_names`로 읽고 모델에는 보내지 않는다
+12. **검증 3, 6단계 세부**: 같은 claim id가 두 번 오면 둘 다 버린다. show_pins의 pin_ids는 스냅샷의 핀이어야 한다. 행동의
+    카테고리가 비면 신호의 카테고리. 같은 행동은 하나만
+13. **analysis 저장 모양은 compare_reasons 결과 그대로**(conflict_type, keys와 reaction_id. 사유 글 없음). API의 AgentAnalysis는
+    렌더 때 `render_analysis`가 만든다. 축 이름 표가 없어 지금은 이름 모르는 키를 빼서 axes가 빈다(아래 요청 2)
+14. **② 캐시는 프로세스 메모리**(LRU 4096개, 값은 키와 방향뿐). DB에 두려면 agent 테이블이 하나 더 필요해서 하지 않았다.
+    인스턴스가 여럿이면 인스턴스마다 따로라 같은 지도에서 드물게 방향이 다를 수 있다
+15. **유형별 허용 목록을 agent에도 둔다**(`tools.ALLOWED_TOOLS`). `llm.prompts`는 api.py가 아니라 가져오지 않았다. 둘이 같은지는
+    test_tools.py가 본다(아래 요청 3)
+16. **agent_runs.model, prompt_version, tokens_in/out은 비워 둔다.** llm 함수가 돌려주지 않는다
+
+## 루트 확인·요청
+
+1. **recommend.api에 #422 분류 함수가 없다**(`demote_wanted_place_identity`). 그래서 structure_reasons는 🚫 글의 음식 종류
+   "원함"도 required 그대로 돌려준다. 진단은 badge를 판단에 쓰지 않아 지금은 영향이 없고, M2 요약(must_keep) 전에 필요하다.
+   요청 시그니처 제안: `recommend.api.demote_wanted_place_identity(category, lines) -> lines`(lines는 {fact_key, wants, badge})
+2. **키 표시 이름 공개 요청**: split 분석의 축 이름("조용한 곳")에 `recommend/constraints.py`의 `FACT_LABELS`가 필요하다.
+   `recommend.api.fact_labels() -> dict[str, str]` 정도. #534에서 모델 유형을 노출하기 전에 필요하다
+3. **llm.api에 DIAGNOSIS_TOOLS를 열면** agent의 사본(`tools.ALLOWED_TOOLS`)을 지울 수 있다
+4. `common/tests/test_adapter_assembly.py`의 `MISSING_REAL["agent.LlmGateway"] = "#532"`: prioritize, diagnose, structure는 real이
+   생겼고 summarize, advise_run만 남았다. 값을 M2 이슈 번호로 바꿀지(다른 모듈 파일이라 손대지 않았다. 테스트는 포트 집합만
+   봐서 그대로 통과한다)
+5. **비용 메모**: 통과한 신호가 2개 이상이면 코드 유형끼리여도 우선순위 모델을 부른다(7절대로). 카테고리 공백 둘만 있는
+   지도도 모델 사용 1회를 쓴다. 코드 유형만 있을 때는 fallback으로 충분한지 #534에서 정하면 좋겠다
+6. 명세 갱신 필요
+   - 5절: `DIAGNOSIS_MAX_TOOL_CALLS`, `STRUCTURE_REASONS_MAX_CALLS`를 agent에서 지웠다
+   - 6.3 표: 같은 키 같은 방향 → unclear(위 5번)
+   - 7절: 입력 순서(fallback_order), 재사용 조건, priority 기록 칸(위 2, 3, 4번)
+   - 10절: get_readiness 반환, UNAVAILABLE, get_place_facts 범위(위 7, 8, 9번)
+   - 11.2: 모델 유형 제목과 버튼 이름은 코드(위 1번), 단계 세부(위 11, 12번)
+   - 12.4 6단계 의사코드: comparison을 먼저 계산, gateway 인자, outcome 매핑 표
