@@ -141,7 +141,7 @@ BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS = 3   # 또는 같은 사람이 같은 카테
 # 재시도 상한(attempt_no)은 개인 단위, 카테고리 무관, 5회다(#31). attempt_no로 세면 다른 카테고리 시도가 섞이고,
 # 4회면 1회밖에 남지 않는다. 그래서 같은 카테고리 run 수를 따로 센다(GET /maps/{mapId}/runs의 기록, #469).
 
-DIAGNOSIS_MAX_TOOL_CALLS = 5
+DIAGNOSIS_MAX_TOOL_CALLS = 5       # 강제는 llm이 한다(llm.prompts, #532). agent는 같은 값을 문서로만 든다
 STRUCTURE_REASONS_MAX_CALLS = 1
 TOOL_RESULT_MAX_ITEMS = 30         # 초안
 
@@ -438,7 +438,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 
 ## 10. 도구
 
-모델은 유형별로 허용된 읽기 전용 도구만 쓴다. 진단 1회당 호출은 `DIAGNOSIS_MAX_TOOL_CALLS`(5)회, 그중 structure_reasons는 `STRUCTURE_REASONS_MAX_CALLS`(1)회까지다. 도구 호출 한 번은 모델 왕복 한 번이 더 생긴다는 뜻이라 횟수에 상한을 둔다.
+모델은 유형별로 허용된 읽기 전용 도구만 쓴다. 진단 1회당 호출은 `DIAGNOSIS_MAX_TOOL_CALLS`(5)회, 그중 structure_reasons는 `STRUCTURE_REASONS_MAX_CALLS`(1)회까지다. 도구 호출 한 번은 모델 왕복 한 번이 더 생긴다는 뜻이라 횟수에 상한을 둔다. 상한은 llm이 강제한다: 넘는 호출은 실행하지 않고 `LIMIT_EXCEEDED`, 유형에 없는 도구는 `NOT_FOUND`를 도구 결과로 돌려주고, 상한을 다 쓰면 도구 없이 답하게 한다(#532). 그래서 진단 1회의 모델 요청은 많아야 6번이다.
 
 공통 규칙:
 
@@ -449,7 +449,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 - 구성원은 관찰 단위 별칭(m1, m2 …)으로만 나온다. 별칭과 user_id 대응은 agent 코드만 안다.
 - 오류는 구조화해서 돌려준다: NOT_FOUND, LIMIT_EXCEEDED.
 - 사유 텍스트는 사용자가 쓴 데이터다. 프롬프트에서 지시로 취급하지 않는다고 명시한다.
-- agent가 call_id를 매기고 입력, 결과, 소요 시간을 `agent_runs.tool_calls`에 남긴다. 결과 안의 사유 글은 남기지 않고 `reaction_id`와 글자 수로 바꿔 남긴다(2절 13번). 모델에 보내는 결과에는 글이 그대로 들어간다. 저장할 때만 바꾼다.
+- call_id(t1, t2 …)는 llm이 매겨 `tool_runner(call_id, name, args)`로 넘긴다. 모델이 ToolClaim에 그 번호를 쓰려면 도구 결과에 번호가 함께 있어야 하기 때문이다(#532). agent는 받은 call_id로 입력, 결과, 소요 시간을 `agent_runs.tool_calls`에 남긴다. 결과 안의 사유 글은 남기지 않고 `reaction_id`와 글자 수로 바꿔 남긴다(2절 13번). 모델에 보내는 결과에는 글이 그대로 들어간다. 저장할 때만 바꾼다.
 - 구현은 `agent/tools.py`에 두고, 각 도구는 다른 모듈의 `api.py`를 감싸기만 한다.
 
 | 도구 | 시그니처와 반환 | 출처 |
@@ -514,7 +514,9 @@ class ToolClaim(BaseModel):
     path: str                    # 결과 안의 경로. 예: "after"
     value: int | float | str | bool
 
-Claim = Annotated[CountClaim | QuoteClaim | RefClaim | ToolClaim, Field(discriminator="kind")]
+Claim = CountClaim | QuoteClaim | RefClaim | ToolClaim
+# discriminator를 걸지 않는다. 걸면 JSON 스키마가 oneOf가 되는데 엘리스 API가 구조화 출력에서 oneOf를 거절한다(#532).
+# kind가 클래스마다 다른 Literal이라 검증 결과는 같다. 정의는 llm/schemas.py 한 곳이고 agent는 그것을 가져다 쓴다
 
 class AdviceLine(BaseModel):
     text: str                    # 슬롯 {c1.value}, {c3}만 허용. 숫자 직접 금지
@@ -834,8 +836,9 @@ CREATE TABLE agent_runs (
   outcome_detail  jsonb NULL
 );
 CREATE INDEX ix_agent_runs_map_started ON agent_runs (map_id, started_at);
--- outcome: no_signal | blocked | silent | unknown | invalid_schema | invalid_claims
+-- outcome: no_signal | blocked | silent | unknown | invalid_schema | invalid_claims | model_failed
 --          | stale | suggested | summarized | advised | trip_ended | map_deleted
+-- model_failed: 모델 호출 실패나 타임아웃(AgentCallFailed, #532). 이유는 outcome_detail. 재요청하지 않고 침묵한다
 
 -- 바텀시트에 뜨는 지도 제안
 CREATE TABLE agent_suggestions (
@@ -1091,10 +1094,11 @@ FE 담당
 ## 19. 측정 후 정할 것
 
 - 서비스 전체 일일 상한: 크레딧 잔량과 run당 토큰 측정값으로 정한다. 정하기 전까지는 지도 상한만 적용한다.
-- reasoning_effort: 우선순위 호출과 진단 호출 각각에 none과 low 중 무엇을 쓸지. 먼저 gpt-6-luna(엘리스 API)가 이 옵션을 받는지 확인한다. temperature=0은 받지 않는 것으로 확인됐다.
+- reasoning_effort: 진단 호출은 none으로 고정이다. 엘리스 API의 chat.completions는 도구 호출을 reasoning_effort=none일 때만 받는다(기본값과 low는 400, #532 확인). low가 필요하면 /v1/responses로 옮겨야 한다(확인 안 함). 도구가 없는 우선순위 호출만 none과 low를 비교한다(#534). temperature=0은 받지 않는다.
 - 요약의 모델 호출: 칸 나누기와 개수가 코드로 옮겨져, 모델은 구체화 요청 문장만 쓴다. 고정 문구 몇 개로 충분하면 agent_summarize를 없애고 모델 호출을 3종으로 줄인다. shadow 기간에 고정 문구와 모델 문장을 비교해 정한다.
 - 처리량: `TICK_MAX_MAPS`와 동시 처리 수. 진단 소요 시간과 요청 타임아웃을 보고 정한다.
-- 병렬 도구 호출: 엘리스 API에서 지원하는지 확인한 뒤 `DIAGNOSIS_MAX_TOOL_CALLS`를 다시 본다.
+- 병렬 도구 호출: 지금은 끈다(`parallel_tool_calls=False`, #532에서 동작 확인). 켰을 때의 이득은 #534에서 본다.
+- 처리량 참고: live 시험에서 우선순위와 진단(요청 4번)을 합쳐 약 18초였다(#532). 요청 타임아웃은 15초다.
 
 멘토 리뷰에 가져갈 것: 커서와 lease, 저장 트랜잭션 경계, 개발용 반복 작업의 상주 상태.
 
