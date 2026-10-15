@@ -507,6 +507,60 @@ describe("#469·#471 — 지난 추천 기록, 확정 리스트 내보내기", (
   });
 });
 
+describe("#9 — 카톡 대화에서 뽑은 링크 미리보기·핀 일괄 생성", () => {
+  const send = (path: string, method: string, body?: unknown) =>
+    fetch(`${BASE}${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const googleLink = (name: string) => `https://www.google.com/maps/place/${encodeURIComponent(name)}/@35.16,129.16,17z`;
+
+  it("link-preview: 구글(이름)·카카오(ID)는 장소를 찾고, 네이버는 LINK_NOT_SUPPORTED, 항목마다 따로 결과", async () => {
+    const r = await send("/maps/map_1/pins/link-preview", "POST", {
+      urls: [googleLink("해운대 밀면"), "https://place.map.kakao.com/mock-2", "https://map.naver.com/p/entry/place/1", "https://place.map.kakao.com/mock-6", googleLink("없는 가게")],
+    });
+    expect(r.status).toBe(200);
+    const { items } = await r.json();
+    expect(items.map((i: { index: number }) => i.index)).toEqual([0, 1, 2, 3, 4]);
+    expect(items[0]).toMatchObject({ status: "ok", result: { provider: "google", name_hint: "해운대 밀면" } });
+    expect(items[0].result.matches[0].place_name).toBe("해운대 밀면");
+    expect(items[1].result.matches[0].place_name).toBe("해운대 바다 카페");
+    expect(items[2]).toMatchObject({ status: "error", error_code: "LINK_NOT_SUPPORTED" });
+    expect(items[3].result).toMatchObject({ needs_search_query: true, kakao_place_id: "kakao:mock-6", matches: [] }); // 자체 DB에 없다
+    expect(items[4].result.matches).toEqual([]); // 구글 링크인데 짝 없음 — 화면이 name_hint로 검색을 잇는다
+    // 링크의 좌표·원문은 돌려주지 않는다(matches의 좌표는 자체 DB 장소의 값)
+    for (const item of items) expect(item).not.toHaveProperty("url");
+    for (const item of items.filter((i: { result?: object }) => i.result)) { expect(item.result).not.toHaveProperty("lat"); expect(item.result).not.toHaveProperty("lng"); }
+  });
+
+  it("link-preview: 이미 지도에 있는 장소는 already_pinned_pin_id, 빈 목록·10개 초과·없는 지도는 에러", async () => {
+    const pin = await (await send("/maps/map_1/pins", "POST", { category: "음식점", place_id: "kakao:mock-1", place_name: "해운대 밀면", lat: 35.1631, lng: 129.1639 })).json();
+    const { items } = await (await send("/maps/map_1/pins/link-preview", "POST", { urls: [googleLink("해운대 밀면")] })).json();
+    expect(items[0].already_pinned_pin_id).toBe(pin.id);
+    expect((await send("/maps/map_1/pins/link-preview", "POST", { urls: [] })).status).toBe(422);
+    expect((await send("/maps/map_1/pins/link-preview", "POST", { urls: Array.from({ length: 11 }, () => googleLink("x")) })).status).toBe(422);
+    expect((await send("/maps/nope/pins/link-preview", "POST", { urls: [googleLink("x")] })).status).toBe(404);
+  });
+
+  it("bulk: 항목마다 따로 — 만들어짐·중복·거절이 섞여도 200, 만들어진 핀마다 pin.created", async () => {
+    const before = store.eventLog.length;
+    const r = await send("/maps/map_1/pins/bulk", "POST", {
+      pins: [
+        { category: "카페", place_id: "kakao:mock-2", place_name: "해운대 바다 카페", lat: 35.1587, lng: 129.1604 },
+        { category: "카페", place_id: "kakao:mock-2", place_name: "해운대 바다 카페", lat: 35.1587, lng: 129.1604 }, // 같은 요청 안의 중복
+        { category: "숙소", place_id: "kakao:mock-4", place_name: "광안리 게스트하우스", lat: 35.1547, lng: 129.1191 },
+        { source: "live", category: "음식점", kakao_place_id: "kakao:live-bulk", search_query: "곱창" },
+      ],
+    });
+    expect(r.status).toBe(200);
+    const { results } = await r.json();
+    expect(results.map((x: { status: string }) => x.status)).toEqual(["created", "duplicate", "rejected", "created"]);
+    expect(results[0].pin.place_name).toBe("해운대 바다 카페");
+    expect(results[1].error).toMatchObject({ code: "PIN_DUPLICATE", detail: { pin_id: results[0].pin.id } });
+    expect(results[2].error.code).toBe("PLACE_NOT_SUPPORTED");
+    expect(store.eventLog.slice(before).filter((e) => e.type === "pin.created")).toHaveLength(2);
+    expect((await send("/maps/map_1/pins/bulk", "POST", { pins: [] })).status).toBe(422);
+    expect((await send("/maps/map_1/pins/bulk", "POST", { pins: Array.from({ length: 31 }, () => ({})) })).status).toBe(422);
+  });
+});
+
 describe("#472 — 게스트 참여", () => {
   const send = (path: string, method: string, body?: unknown) =>
     fetch(`${BASE}${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });

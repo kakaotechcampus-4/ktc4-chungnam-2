@@ -23,6 +23,8 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
+    ("POST", "/maps/{mapId}/pins/link-preview"): "#9 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/maps/{mapId}/pins/bulk"): "#9 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/runs/{runId}/advice"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",

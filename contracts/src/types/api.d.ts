@@ -1102,6 +1102,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/{mapId}/pins/link-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 카톡 대화에서 뽑은 지도 링크 미리보기 (#9, 기획안 5-9, v2). **쓰기 없음** — 링크마다 해석(`POST /places/from-link`와 같은 규칙)하고, 그 장소가 **이 지도에 이미 있는지**를 붙여 돌려준다.
+         *     **대화 내용은 서버로 보내지 않는다.** 화면이 붙여넣은 텍스트를 브라우저 안에서 정규식으로 스캔해 구글맵·카카오맵 링크만 뽑아 URL만 보낸다(네이버·인스타·블로그·그 밖은 항목이 `LINK_NOT_SUPPORTED`).
+         *     한 번에 **최대 10개**다 — 화면이 50개까지 10개씩 나눠 보내며 진행을 보여 준다. 단축 링크 해제가 느릴 수 있어 서버가 병렬로 처리하고 요청 마감(약 15초)을 넘긴 항목은 `LINK_UNRESOLVED`로 둔다.
+         *     항목마다 결과가 따로 온다(`items[i]`, `index`는 요청 `urls`의 순서) — 일부가 실패해도 요청은 200이다. 요청 형식 오류(빈 목록, 10개 초과, 2000자 초과)만 422.
+         *     - `result.matches`가 있으면 그 장소로 `source: search` 핀(`bulk` 또는 `POST /maps/{mapId}/pins`). 없으면 구글 링크는 `result.name_hint`로 GET /places/search를 이어 가고, 카카오 링크는 `result.needs_search_query`(사용자가 이름을 입력해 `source: live`).
+         *     - `already_pinned_pin_id`가 있으면 이미 지도에 있는 곳이다(자체 DB 핀이든 실시간 핀이든, #569와 같은 기준). 화면은 목록에서 빼고 "이미 있음"으로 보여 준다(가드레일 6).
+         *     응답에 링크의 좌표·원문 URL을 싣지 않고 서버도 남기지 않는다. 지도 구성원 누구나(`pin.create`, 게스트 포함). 사용자당 URL 수 기준 호출 상한이 있다(초과 시 429 `RATE_LIMITED`, 기본 분당 60개).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LinkPreviewRequest"];
+                };
+            };
+            responses: {
+                /** @description 항목별 결과(일부가 실패해도 200) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LinkPreviewResult"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — urls가 비었거나 10개 초과, 한 URL이 2000자 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/pins/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 핀 일괄 생성 (#9, 기획안 5-9, v2) — 미리보기 목록에서 사람이 고른 것을 한꺼번에 찍는다. 항목은 `POST /maps/{mapId}/pins`의 요청(`PinCreateRequest`, search 또는 live)과 **같다**.
+         *     **항목마다 따로 처리**한다 — 일부가 중복·거절이어도 나머지는 만들어진다. 항목 하나의 규칙은 핀 생성과 같다(`PIN_DUPLICATE` 교차 중복 포함, `PLACE_NOT_SUPPORTED`, `VALIDATION_ERROR` 등을 항목의 `error.code`로 돌려준다).
+         *     한 번에 **최대 30개**. 만들어진 핀마다 `pin.created` 이벤트를 보낸다. 같은 요청 안에서 같은 장소가 두 번 오면 뒤의 것이 `duplicate`다. 요청 형식 오류(빈 목록, 30개 초과)만 422다.
+         *     지도 구성원 누구나(`pin.create`).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BulkPinRequest"];
+                };
+            };
+            responses: {
+                /** @description 항목별 결과 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BulkPinResult"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — pins가 비었거나 30개 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/counts": {
         parameters: {
             query?: never;
@@ -3039,6 +3159,58 @@ export interface components {
             matches: components["schemas"]["PlaceSearchResult"][];
             /** @description true면 matches가 비었고 화면이 사용자에게 검색어(장소 이름)를 입력받아 live 핀으로 남겨야 한다. 카카오 링크에서 자체 DB 짝이 없을 때 */
             needs_search_query: boolean;
+        };
+        LinkPreviewRequest: {
+            /** @description 화면이 대화 텍스트에서 정규식으로 뽑은 지도 링크(구글맵·카카오맵). 대화 원문은 보내지 않는다 */
+            urls: string[];
+        };
+        LinkPreviewItem: {
+            /** @description 요청 `urls`의 순서(0부터) */
+            index: number;
+            /** @enum {string} */
+            status: "ok" | "error";
+            /** @description status=ok일 때. `POST /places/from-link`의 응답과 같다 */
+            result?: components["schemas"]["LinkParseResult"];
+            /**
+             * @description status=error일 때. 마감을 넘긴 항목도 LINK_UNRESOLVED
+             * @enum {string}
+             */
+            error_code?: "LINK_NOT_SUPPORTED" | "LINK_UNRESOLVED";
+            /** @description 그 장소가 이 지도에 이미 있으면 그 핀의 id. 화면이 목록에서 빼고 「이미 있음」으로 보여 준다(가드레일 6) */
+            already_pinned_pin_id?: string;
+        };
+        LinkPreviewResult: {
+            /** @description 요청 urls와 같은 개수, 같은 순서 */
+            items: components["schemas"]["LinkPreviewItem"][];
+        };
+        BulkPinRequest: {
+            /** @description POST /maps/{mapId}/pins의 요청 본문과 같은 항목 */
+            pins: components["schemas"]["PinCreateRequest"][];
+        };
+        BulkPinItemResult: {
+            /** @description 요청 `pins`의 순서(0부터) */
+            index: number;
+            /**
+             * @description created = 핀이 만들어짐, duplicate = 이미 지도에 있는 장소(PIN_DUPLICATE), rejected = 그 밖의 거절
+             * @enum {string}
+             */
+            status: "created" | "duplicate" | "rejected";
+            /** @description status=created일 때 요청자 기준 Pin */
+            pin?: components["schemas"]["Pin"];
+            /** @description status가 duplicate·rejected일 때. 핀 생성 하나가 낼 에러와 같다 */
+            error?: {
+                /** @description PIN_DUPLICATE, PLACE_NOT_SUPPORTED, VALIDATION_ERROR 등(docs/errors.md) */
+                code: string;
+                message?: string;
+                /** @description PIN_DUPLICATE면 pin_id(이미 있는 핀) */
+                detail?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        BulkPinResult: {
+            /** @description 요청 pins와 같은 개수, 같은 순서 */
+            results: components["schemas"]["BulkPinItemResult"][];
         };
         /** @description #382 실시간 핀 — 자체 DB에 없는 장소. 이름·좌표는 받지도 저장하지도 않는다 */
         PinCreateLive: {
