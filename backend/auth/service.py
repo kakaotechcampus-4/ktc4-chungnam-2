@@ -20,6 +20,7 @@ from common.errors import AppError
 from common.settings import settings
 from feedback import api as feedback_api
 from maps import api as maps_api
+from notifications import api as notifications_api
 from pins import api as pins_api
 from recommend import api as recommend_api
 
@@ -186,6 +187,7 @@ def withdraw_user(db: Session, *, user_id: str) -> User:
     recommend_api.delete_evidence_lines_by_author(db, user_id=user_id)
     agent_api.delete_by_user(db, user_id=user_id, map_ids=map_ids)
     feedback_api.anonymize_by_user(db, user_id=user_id)
+    notifications_api.delete_by_user(db, user_id=user_id)
     row.deleted_at = datetime.now(timezone.utc)
     db.flush()
     return row

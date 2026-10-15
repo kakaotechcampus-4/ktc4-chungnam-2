@@ -83,10 +83,10 @@ def patch_map(
 @router.delete("/maps/{mapId}", status_code=204)
 def delete_map(
     mapId: str = Path(...),
-    _principal: Principal = MapToDelete,
+    principal: Principal = MapToDelete,
     db=DbSession,
 ):
-    service.delete_map(db, map_id=mapId)
+    service.delete_map(db, map_id=mapId, actor_id=principal.user_id)
 
 
 @router.post("/maps/{mapId}/owner", response_model=Map, response_model_exclude_none=True)
