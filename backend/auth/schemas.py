@@ -17,6 +17,7 @@ class CurrentUser:
     (display_name, session_id) 호출부 시그니처가 바뀌지 않게 객체로 둔다."""
 
     user_id: str
+    is_guest: bool = False   # users 행에서 채운다(#472). 기본값이라 CurrentUser(user_id=...) 호출부는 그대로 동작한다
 
 
 class UserResponse(BaseModel):
@@ -24,6 +25,7 @@ class UserResponse(BaseModel):
 
     id: str
     display_name: str
+    is_guest: bool = False   # 스펙 User.is_guest — 항상 내려 보낸다(없으면 false로 보는 쪽도 호환)
 
 
 class UserUpdateRequest(BaseModel):

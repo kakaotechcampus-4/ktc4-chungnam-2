@@ -365,3 +365,11 @@ get_place_gateway`, `authz/deps.py::get_membership_gateway`와 같은 패턴). `
 - 기존 쿼리가 있는 진입점 주소는 보존하고 같은 이름의 `login_error`만 대체한다.
 - `/me`의 "이중 조회"는 같은 요청 세션의 identity map에서 나와 SQL이 한 번만 나간다(`get_db_session` 캐시) — 바꾸지 않았다.
 - FE: `login_error` 값별 안내는 FE 몫이다. 목 서버(`contracts/mocks/handlers/auth.ts`)가 실패 경로를 흉내 내는지는 루트 확인.
+
+## #472 PR 1 — 게스트 기반 (2026-10-16) — maps가 부르는 법
+
+스펙·docs는 건드리지 않았다. 마이그레이션 `0035_users_guest`(head): `users.is_guest`(not null, 기본 false)·`guest_invite_token`(인덱스)·`last_seen_at`. `provider`는 text라 `'guest'` 값에 DDL이 필요 없다.
+
+- **지도 만들기 차단(`POST /maps` → 403 `GUEST_NOT_ALLOWED`)**: 라우터에서 `user.is_guest`를 본다. `CurrentUser.is_guest: bool = False`는 세션 인증(`auth.deps.get_current_user`)이 users 행에서 채운다. 기본값이라 `CurrentUser(user_id=...)`를 직접 만드는 기존 코드·테스트는 그대로다(그 경우 게스트가 아닌 것으로 본다).
+- **후임 판정·방장 넘기기 대상 검사**: `auth.api.guest_user_ids(db, user_ids) -> set[str]`. `withdrawn_user_ids`와 같은 배치 조회(빈 입력은 쿼리 없이 빈 집합, users 행 없는 id는 게스트가 아님). 후보 id 목록을 한 번에 넘겨 `candidates - guest_user_ids(...) - withdrawn_user_ids(...)`로 거른다.
+- `GET /auth/me`·`PATCH /auth/me` 응답에 `is_guest`(bool)를 항상 포함한다.
