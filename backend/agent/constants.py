@@ -6,11 +6,13 @@
 
 from datetime import timedelta
 
+from common.settings import settings
+
 TICK_INTERVAL_SEC = 300            # tick 주기
 LEASE_SEC = 180                    # 관찰 lease
 TICK_MAX_MAPS = 10                 # tick당 처리 지도 수 (초안, 측정 후 조정)
 AGENT_SHADOW_MODE = True           # True면 제안을 저장하되 화면과 이벤트로 내보내지 않는다
-AGENT_LOOP_IN_PROCESS = False      # 개발 환경에서만 True (12.1)
+AGENT_LOOP_IN_PROCESS = settings.agent_loop_in_process   # 환경 변수 AGENT_LOOP_IN_PROCESS(기본 꺼짐, 12.1)
 
 PER_MEMBER_DAILY_MODEL_USES = 4    # 개인 단위 값. 지도 상한 = 구성원 수 × 이 값
 DAY_BOUNDARY_TZ = "Asia/Seoul"     # 하루 = KST 자정에 초기화

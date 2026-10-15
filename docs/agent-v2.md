@@ -113,7 +113,7 @@ TICK_INTERVAL_SEC = 300            # tick 주기
 LEASE_SEC = 180                    # 관찰 lease
 TICK_MAX_MAPS = 10                 # tick당 처리 지도 수 (초안, 측정 후 조정)
 AGENT_SHADOW_MODE = True           # True면 제안을 저장하되 화면과 이벤트로 내보내지 않는다
-AGENT_LOOP_IN_PROCESS = False      # 개발 환경에서만 True (12.1)
+AGENT_LOOP_IN_PROCESS = settings.agent_loop_in_process   # 환경 변수 AGENT_LOOP_IN_PROCESS=1로 켠다. 기본 꺼짐 (12.1)
 
 PER_MEMBER_DAILY_MODEL_USES = 4    # 개인 단위 값. 지도 상한 = 구성원 수 × 이 값
 DAY_BOUNDARY_TZ = "Asia/Seoul"     # 하루 = KST 자정에 초기화
@@ -587,7 +587,7 @@ FORBIDDEN_PHRASES = ("확정하세요", "확정해", "결정하세요", "여기�
 
 관찰 로직은 `flows.run_tick(now)` 하나다. 트리거는 이 함수를 부르기만 한다.
 
-- 개발: `AGENT_LOOP_IN_PROCESS=True`이면 lifespan에서 `TICK_INTERVAL_SEC`마다 `run_tick`을 부르는 반복 작업을 띄운다. 개발 환경에서만 상주 상태가 하나 늘어난다. 종료 순서(#130)에 이 작업의 정지 대기를 넣는다.
+- 개발과 시연: 환경 변수 `AGENT_LOOP_IN_PROCESS=1`(`common/settings.py`, 기본 꺼짐)이면 lifespan에서 `TICK_INTERVAL_SEC`마다 `run_tick`을 부르는 반복 작업을 띄운다. 개발 환경에서만 상주 상태가 하나 늘어난다. 종료 순서(#130)에 이 작업의 정지 대기를 넣는다.
 - 배포: Cloud Scheduler가 5분마다 `POST /internal/agent/tick`을 호출한다. 서비스 계정 OIDC 토큰으로 인증한다(초안). 요청 타임아웃 안에 끝나도록 tick당 `TICK_MAX_MAPS`개만 처리하고 나머지는 다음 tick으로 넘긴다.
 
 ### 12.2 run_tick
