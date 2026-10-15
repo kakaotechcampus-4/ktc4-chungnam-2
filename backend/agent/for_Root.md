@@ -372,3 +372,37 @@ advice는 `[{"slot_text": "{c2}", "is_guess": false}, ...]`, claims는 `[{"id":"
    - 10절: get_readiness 반환, UNAVAILABLE, get_place_facts 범위(위 7, 8, 9번)
    - 11.2: 모델 유형 제목과 버튼 이름은 코드(위 1번), 단계 세부(위 11, 12번)
    - 12.4 6단계 의사코드: comparison을 먼저 계산, gateway 인자, outcome 매핑 표
+
+---
+
+# 루트 보고 — backend/agent (#564, #534 선행: 키 이름, #422 분류, 도구 목록, 사용량 연결)
+
+## 연결한 것
+
+| #533 요청·공백 | 지금 |
+| --- | --- |
+| 요청 1 #422 분류 | `tools._structured`가 글 줄과 칩 줄을 합친 뒤 반응마다 `recommend.api.demote_wanted_place_identity(category, lines)`. 🚫 글의 음식 종류 "원함"은 structure_reasons에서 preferred로 나온다 |
+| 요청 2 축 이름 | `flows._render`가 분석이 있는 제안이면 `RenderRefs.fact_labels = recommend.api.fact_labels()`. 렌더 규칙(이름 모르는 키는 뺀다)은 그대로다 |
+| 요청 3 허용 목록 사본 | `tools.ALLOWED_TOOLS`를 지웠다. `flows._draft`가 `llm.api.DIAGNOSIS_TOOLS[유형]`을 ToolContext.allowed로 넘긴다 |
+| 구현 메모 16 사용량 | Gateway의 prioritize·diagnose가 `AgentReply(result, usage)`를 돌려준다. `core.model_usage(usages)`가 agent_runs의 model, prompt_version, tokens_in, tokens_out을 만든다 |
+
+## agent_runs 사용량 칸
+
+- 우선순위와 진단을 둘 다 부른 관찰: 토큰은 합, model과 prompt_version은 겹치지 않게 부른 순서대로 "+"로 잇는다.
+  예: `model="gpt-6-luna"`, `prompt_version="prioritize-v1+diagnose-v1"`, `tokens_in=1020`, `tokens_out=230`
+- 하나만 부른 관찰은 그 값 그대로(`"diagnose-v1"`). 모델을 부르지 않은 관찰(순위 재사용, 상한, 신호 하나 + 코드 유형)과 고정
+  응답 스텁은 NULL, 0
+- 실패한 호출(model_failed, invalid_schema, 우선순위 fallback)도 그때까지 쓴 사용량을 남긴다
+
+## 명세에 적으면 좋은 것(문서는 고치지 않았다)
+
+1. `docs/agent-v2.md` 13절 agent_runs의 `prompt_version`, `model`: 둘 다 부른 관찰은 "+"로 잇는다는 한 줄. 지금 명세는 칸만 있다
+2. `docs/agent-v2.md` 8.1(405행), 18절(1069행)의 #422 공개 항목: 이번에 열렸다. 18절 통과 조건의 run 조회 함수와 시뮬레이션
+   함수는 이 이슈 범위가 아니라 그대로 남아 있다
+
+## 브랜치
+
+- #533(PR #563)이 develop에 아직 없어서 이 브랜치에 `origin/feat/agent-model-step-533`을 merge한 뒤 연결했다. #563이 먼저
+  머지되면 이 PR의 diff에는 #564 커밋만 남는다
+- 테스트: agent 272개 → 280개(새로 8개: test_flows_model 5, test_core_priority 2, test_tools 1). 고친 것: test_tools의 허용
+  목록 테스트(사본이 없음을 본다), test_schemas의 Fixed Gateway와 test_flows_model의 FakeGateway(AgentReply를 돌려준다)

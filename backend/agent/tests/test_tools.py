@@ -56,7 +56,7 @@ def _ctx(world, map_id, *, diagnosis="split", structure=None, cache=None):
     with world.factory() as db:
         snap = snapshot.build(db, map_id, world.now)
     return tools.ToolContext(
-        map_id=map_id, snap=snap, allowed=tuple(tools.TOOLS) if diagnosis is None else tools.ALLOWED_TOOLS[diagnosis],
+        map_id=map_id, snap=snap, allowed=tuple(tools.TOOLS) if diagnosis is None else llm_api.DIAGNOSIS_TOOLS[diagnosis],
         session_factory=world.factory, structure=structure or Structurer(), now=world.now,
         cache=cache or tools.StructureCache(),
     )
@@ -77,9 +77,11 @@ def split_map(world, monkeypatch):
 
 # ---------------------------------------------------------------- 허용 목록, 오류
 
-def test_allowed_tools_match_llm_list():
-    assert tools.ALLOWED_TOOLS == llm_prompts.DIAGNOSIS_TOOLS
+def test_tools_cover_llm_specs_and_agent_keeps_no_copy_of_the_allowed_list():
+    # 유형별 허용 목록은 llm.api.DIAGNOSIS_TOOLS 한 곳이다(#564) — agent에 사본이 없다
+    assert not hasattr(tools, "ALLOWED_TOOLS")
     assert set(tools.TOOLS) == set(llm_prompts.AGENT_TOOL_SPECS) | {"get_activity"}
+    assert all(name in tools.TOOLS for names in llm_api.DIAGNOSIS_TOOLS.values() for name in names)
 
 
 def test_tool_outside_diagnosis_list_is_not_found(world, split_map):
@@ -171,6 +173,25 @@ def test_structure_reasons_uses_planner_for_text_and_chip_table_for_chips(world,
             {"fact_key": None, "wants": None, "badge": "preferred"}]},
     ]
     assert structure.calls == [[AGAINST_TEXT, LIKE_TEXT]]   # 한 번에 모아서
+
+
+def test_structure_reasons_demotes_wanted_cuisine_in_against_text(world):
+    """#422(recommend와 같은 규칙, #564): 🚫 글의 음식 종류 "원함"은 preferred로 내려간다. 피함과 다른 키는 그대로다."""
+    map_id = world.map()
+    pin_id = world.pin(map_id, hours_ago=100)
+    against = world.react(pin_id, "u2", "against", hours_ago=20, text="고기 먹고 싶어요, 매운 건 싫어요")
+    structure = Structurer({"고기 먹고 싶어요, 매운 건 싫어요": [
+        ("cuisine_bbq", True), ("cuisine_korean", False), ("parking_available", True),
+    ]})
+    ctx = _ctx(world, map_id, structure=structure)
+
+    [reason] = ctx.run("t1", "structure_reasons", {"reaction_ids": [against]})["reasons"]
+
+    assert reason["lines"] == [
+        {"fact_key": "cuisine_bbq", "wants": True, "badge": "preferred"},       # 가게의 정체 원함 → 선호
+        {"fact_key": "cuisine_korean", "wants": False, "badge": "required"},    # 피함은 그대로
+        {"fact_key": "parking_available", "wants": True, "badge": "required"},  # 정체가 아닌 키는 그대로
+    ]
 
 
 def test_structure_cache_by_reaction_and_updated_at(world, split_map):

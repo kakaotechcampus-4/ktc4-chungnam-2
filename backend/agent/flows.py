@@ -45,7 +45,7 @@ from sqlalchemy.orm import Session
 from agent import core, deps, service, snapshot, tools
 from agent.constants import CODE_TYPES, SUGGESTION_TTL, TICK_MAX_MAPS
 from agent.models import AgentSuggestion as SuggestionRow
-from agent.schemas import AgentAcceptResponse, AgentCallFailed, AgentSettings, AgentState, AgentSuggestion
+from agent.schemas import AgentAcceptResponse, AgentCallFailed, AgentSettings, AgentState, AgentSuggestion, AgentUsage
 from auth import api as auth_api
 from common import categories
 from common.database import SessionLocal, session_scope
@@ -55,6 +55,7 @@ from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
 from places import api as places_api
+from recommend import api as recommend_api
 
 log = logging.getLogger("pingo.agent")
 
@@ -173,7 +174,8 @@ def observe_map(
     mode = core.priority_mode(
         passed, hist.last_priority, cap_reached=core.model_cap_reached(hist.model_runs_today, snap.member_count),
     )
-    model_out = gateway.prioritize(core.priority_input(passed, policy), policy.principles) if mode == "model" else None
+    priority_reply = gateway.prioritize(core.priority_input(passed, policy), policy.principles) if mode == "model" else None
+    model_out = priority_reply.result if priority_reply is not None else None
     top, priority = core.choose_top(passed, policy, mode=mode, model_out=model_out, previous=hist.last_priority)
 
     # 6. 초안 — 코드 유형은 템플릿, 모델 유형은 진단과 검증(세션 없음, 도구만 짧게 읽는다)
@@ -182,6 +184,7 @@ def observe_map(
     draft = step.draft
     outcome, detail = _planned_outcome(signals, top, step)
     used_model = mode == "model" or step.used_model
+    usages = [r.usage for r in (priority_reply, step) if r is not None and r.usage is not None]   # 둘 다 불렀으면 합(#564)
 
     # 7. 재확인과 저장 (짧은 쓰기 트랜잭션). 이벤트도 같은 트랜잭션
     with _write(session_factory) as db:
@@ -199,6 +202,7 @@ def observe_map(
             snap, outcome, signals=[core.signal_record(s) for s in signals], blocked=blocked_rows,
             priority=priority, policy_version=str(policy.version), outcome_detail=detail,
             used_model=used_model, tool_calls=step.tool_calls, verification=step.verification,
+            **core.model_usage(usages),
         ))
         new_expires_at = None
         if chosen is not None:
@@ -238,6 +242,7 @@ class _Step:
     used_model: bool = False
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     verification: dict[str, Any] | None = None
+    usage: AgentUsage | None = None   # 진단 호출의 사용량(#564). 코드 유형은 None
 
 
 def _draft(
@@ -249,19 +254,20 @@ def _draft(
     if top.diagnosis in CODE_TYPES:
         return _Step(core.render_template(top))
     ctx = tools.ToolContext(
-        map_id=map_id, snap=snap, allowed=tools.ALLOWED_TOOLS[top.diagnosis], session_factory=session_factory,
+        map_id=map_id, snap=snap, allowed=llm_api.DIAGNOSIS_TOOLS[top.diagnosis], session_factory=session_factory,
         structure=gateway.structure, now=now,
     )
     comparison = _comparison(ctx, top)
-    out = gateway.diagnose(core.diagnosis_input(top, snap, comparison), tool_runner=ctx.run)
+    reply = gateway.diagnose(core.diagnosis_input(top, snap, comparison), tool_runner=ctx.run)
+    out = reply.result
     which = {"signal_id": top.id, "diagnosis": top.diagnosis}
     if isinstance(out, AgentCallFailed):
         return _Step(None, core.failed_outcome(out.reason), which | {"reason": out.reason, "detail": out.detail},
-                     used_model=True, tool_calls=ctx.calls)
+                     used_model=True, tool_calls=ctx.calls, usage=reply.usage)
     verified = core.verify_diagnosis(out, top, snap, ctx.results, member_names=names, comparison=comparison)
     outcome = None if verified.draft is not None else verified.outcome
     return _Step(verified.draft, outcome, None if outcome is None else which | {"decision": out.decision},
-                 used_model=True, tool_calls=ctx.calls, verification=verified.record)
+                 used_model=True, tool_calls=ctx.calls, verification=verified.record, usage=reply.usage)
 
 
 def _comparison(ctx: tools.ToolContext, top: core.Signal) -> dict[str, Any] | None:
@@ -313,11 +319,13 @@ def _still_there(db: Session, draft: core.Signal, map_id: str, now: datetime, th
 # ---------------------------------------------------------------- 렌더 (11절 끝)
 
 def _render(db: Session, row: SuggestionRow) -> AgentSuggestion | None:
-    """저장된 슬롯 문장을 지금 상태로 렌더한다. 핀 이름과 사유 글은 여기서만 읽는다(명세 2절 13번)."""
+    """저장된 슬롯 문장을 지금 상태로 렌더한다. 핀 이름과 사유 글은 여기서만 읽는다(명세 2절 13번). split 분석의 축
+    이름은 recommend의 키 표시 이름이다(#564)."""
     pin_ids = set(core.referenced_pin_ids(row.claims))
     refs = core.RenderRefs(
         pin_names=_pin_names(db, row.map_id, pin_ids) if pin_ids else {},
         reaction_texts=_reaction_texts(db, row.map_id, row.category) if core.quoted_reaction_ids(row.claims) else {},
+        fact_labels=recommend_api.fact_labels() if row.analysis else {},
     )
     return core.render_suggestion(row, refs)
 

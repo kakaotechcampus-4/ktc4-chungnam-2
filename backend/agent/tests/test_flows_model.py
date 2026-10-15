@@ -13,10 +13,11 @@ from sqlalchemy.orm import sessionmaker
 
 from agent import deps, flows, tools
 from agent.models import AgentRun, AgentSuggestion
-from agent.schemas import AgentCallFailed, DiagnosisOutput, PriorityItem, PriorityOutput
+from agent.schemas import AgentCallFailed, AgentReply, AgentUsage, DiagnosisOutput, PriorityItem, PriorityOutput
 from agent.tests.world import World, fake_places, real_now
 from llm import api as llm_api
 from places import api as places_api
+from recommend import api as recommend_api
 
 LIKE_TEXT = "분위기가 아늑해서 오래 있기 좋아요"
 AGAINST_TEXT = "주차할 곳이 전혀 없어서 힘들어요"
@@ -40,10 +41,12 @@ def world(factory, monkeypatch):
 class FakeGateway:
     """Gateway 대역. diagnose는 llm.agent_diagnose처럼 call_id를 매겨 tool_runner를 부를 수 있게 call_tool을 넘긴다."""
 
-    def __init__(self, diagnose=None, prioritize=None, on_call=None):
+    def __init__(self, diagnose=None, prioritize=None, on_call=None, priority_usage=None, diagnosis_usage=None):
         self._diagnose = diagnose
         self._prioritize = prioritize
         self.on_call = on_call or (lambda what: None)
+        self._priority_usage = priority_usage or AgentUsage()
+        self._diagnosis_usage = diagnosis_usage or AgentUsage()
         self.calls: list[str] = []
         self.inputs: list[dict] = []
 
@@ -51,8 +54,9 @@ class FakeGateway:
         self.calls.append("prioritize")
         self.on_call("prioritize")
         if self._prioritize:
-            return self._prioritize(signals)
-        return PriorityOutput(order=[PriorityItem(signal_id=s["id"], reason="r") for s in signals])
+            return AgentReply(self._prioritize(signals), self._priority_usage)
+        return AgentReply(PriorityOutput(order=[PriorityItem(signal_id=s["id"], reason="r") for s in signals]),
+                          self._priority_usage)
 
     def diagnose(self, diagnosis_input, *, tool_runner):
         self.calls.append("diagnose")
@@ -66,7 +70,7 @@ class FakeGateway:
 
         out = self._diagnose(diagnosis_input, call_tool) if self._diagnose else None
         self.on_call("diagnose_done")
-        return out
+        return AgentReply(out, self._diagnosis_usage)
 
     def structure(self, raw):
         return llm_api.plan_evidence(raw, planner=llm_api.passthrough_planner)
@@ -318,3 +322,85 @@ def test_priority_failure_falls_back(world):
 
     run = world.one(AgentRun, map_id=map_id)
     assert (run.priority["source"], run.priority["fallback_reason"], run.used_model) == ("fallback", "timeout", True)
+
+
+# ---------------------------------------------------------------- 사용량과 축 이름 (#564)
+
+LUNA = "gpt-6-luna"
+
+
+def test_usage_of_priority_and_diagnosis_is_summed_into_the_run(world):
+    map_id, _, _, _ = _split_map(world)
+    gateway = FakeGateway(
+        diagnose=good_split, prioritize=split_first,
+        priority_usage=AgentUsage(model=LUNA, prompt_version="prioritize-v1", tokens_in=120, tokens_out=30),
+        diagnosis_usage=AgentUsage(model=LUNA, prompt_version="diagnose-v1", tokens_in=900, tokens_out=200),
+    )
+
+    assert observe(world, map_id, gateway) == "suggested"
+
+    run = world.one(AgentRun, map_id=map_id)
+    assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (
+        LUNA, "prioritize-v1+diagnose-v1", 1020, 230,
+    )
+
+
+def test_failed_diagnosis_still_records_usage_spent(world):
+    map_id, _, _ = _stall_map(world)
+    failed = AgentCallFailed(reason="timeout", detail="LlmCallError(APITimeoutError)")
+    gateway = FakeGateway(
+        diagnose=lambda inp, call: failed,
+        diagnosis_usage=AgentUsage(model=LUNA, prompt_version="diagnose-v1", tokens_in=500, tokens_out=80),
+    )
+
+    assert observe(world, map_id, gateway) == "model_failed"
+
+    run = world.one(AgentRun, map_id=map_id)
+    assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v1", 500, 80)
+
+
+def test_failed_priority_usage_is_recorded_without_diagnosis(world):
+    map_id = world.gap_map()   # 코드 유형 둘 — 진단은 부르지 않는다
+    world.event(map_id)
+    gateway = FakeGateway(
+        prioritize=lambda signals: AgentCallFailed(reason="invalid_schema", detail="x"),
+        priority_usage=AgentUsage(model=LUNA, prompt_version="prioritize-v1", tokens_in=70, tokens_out=0),
+    )
+
+    assert observe(world, map_id, gateway) == "suggested"
+
+    run = world.one(AgentRun, map_id=map_id)
+    assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "prioritize-v1", 70, 0)
+
+
+def test_stub_and_code_only_runs_leave_usage_empty(world):
+    stall_map, _, _ = _stall_map(world)
+    gap_map = world.gap_map()
+    world.event(gap_map)
+
+    observe(world, stall_map, deps.FixedAgentLlmGateway())
+    observe(world, gap_map, FakeGateway())   # 상한 안이라 우선순위는 부르지만 대역의 사용량은 0
+
+    for map_id in (stall_map, gap_map):
+        run = world.one(AgentRun, map_id=map_id)
+        assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (None, None, 0, 0)
+
+
+def test_split_analysis_axis_names_come_from_recommend_labels(world):
+    """축 이름은 recommend.api.fact_labels(#564). 🚫 칩 「좁아요」(spacious 원함)가 축 "넓은 곳" 쪽 이름으로 렌더된다."""
+    map_id = world.map()
+    pin_id = world.pin(map_id, hours_ago=100)
+    world.react(pin_id, "u1", "like", hours_ago=30, text=LIKE_TEXT)
+    world.react(pin_id, "u2", "like", hours_ago=25)
+    world.react(pin_id, "u3", "against", hours_ago=20, text=AGAINST_TEXT, chips=["food_cramped"])
+    world.event(map_id)
+
+    assert observe(world, map_id, FakeGateway(diagnose=good_split, prioritize=split_first)) == "suggested"
+
+    with world.factory() as db:
+        row = db.query(AgentSuggestion).filter_by(map_id=map_id).one()
+        assert [k["fact_key"] for k in row.analysis["keys"]] == ["spacious"]
+        rendered = flows._render(db, row)
+    [axis] = rendered.analysis.axes
+    assert axis.label == recommend_api.fact_labels()["spacious"]
+    assert (axis.like_side, axis.against_side) == (None, "원함 1")
