@@ -1,4 +1,4 @@
-# 우선순위 정책 (docs/agent-v2.md 7절 초안 그대로). AI 담당이 작성하고 PM이 승인한다. 변경은 PR + PM 승인.
+# 우선순위 정책 (docs/agent-v2.md 7절). version 1은 2026-10-15 PM 승인. 변경은 PR + PM 승인.
 # 로더는 agent/core.py의 load_policy. weights에는 diagnosis 4종이 모두 있어야 한다.
 version: 1
 principles:            # 프롬프트에 그대로 들어간다

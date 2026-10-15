@@ -342,7 +342,7 @@ features = {
 ```
 
 ```yaml
-# backend/agent/priority_policy.yaml (초안. AI 담당이 작성하고 PM이 승인)
+# backend/agent/priority_policy.yaml (version 1, 2026-10-15 PM 승인. 변경은 PR + PM 승인)
 version: 1
 principles:            # 프롬프트에 그대로 들어간다
   - 여러 구성원에게 영향을 주는 신호를 먼저 푼다.
@@ -1042,7 +1042,7 @@ FE 담당
 
 ### M1: 지도 제안 (코드 유형 + 모델 진단 + 우선순위 + 화면)
 
-통과 조건: 모델 호출 추가 결정(#509, 완료), 새 이벤트 타입 4종과 API가 정본 문서에 반영됨(#510, 완료), priority_policy.yaml 초안을 PM이 승인
+통과 조건: 모델 호출 추가 결정(#509, 완료), 새 이벤트 타입 4종과 API가 정본 문서에 반영됨(#510, 완료), priority_policy.yaml을 PM이 승인(2026-10-15, 완료)
 
 이슈는 디렉토리와 선행 관계로 나눴다(2026-10-15). 코드 유형(no_reaction, category_gap)을 먼저 화면까지 내고, 모델 유형은 평가 뒤에 노출한다.
 
