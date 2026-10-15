@@ -15,10 +15,13 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
-from agent import constants, flows, service
+from agent import constants, core, flows, service
 from agent.models import AgentCursor, AgentRun, AgentSettings, AgentSuggestion
-from agent.tests.world import World, real_now
+from agent.schemas import AgentSuggestion as AgentSuggestionSchema
+from agent.tests import rows
+from agent.tests.world import World, fake_places, real_now
 from maps import api as maps_api
+from places import api as places_api
 
 SECRET = "비밀사유_창가자리가좋아요"
 SECRET_AGAINST = "비밀사유_너무시끄러워요"
@@ -51,38 +54,143 @@ def _cursor(world, map_id) -> AgentCursor:
 
 # ---------------------------------------------------------------- 기본 흐름, shadow (15)
 
-def test_tick_saves_code_type_draft_as_shadow_and_emits_no_event(world):
+def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
+    """코드 유형은 shadow가 아니다(#531). 슬롯 문장과 claim으로 저장하고, 같은 트랜잭션에 렌더한 agent.suggested를 낸다."""
     map_id = world.gap_map()
     seq = world.event(map_id)
-    events_before = world.count_events()
 
     assert map_id in tick(world)
 
     sug = world.one(AgentSuggestion, map_id=map_id)
-    assert (sug.diagnosis, sug.category, sug.status, sug.shadow) == ("category_gap", "카페", "active", True)
-    assert (sug.title, sug.claims, sug.advice, sug.actions) == ("", [], [], [])   # 렌더는 M1
+    assert (sug.diagnosis, sug.category, sug.status, sug.shadow) == ("category_gap", "카페", "active", False)
+    assert sug.title == "확정 리스트에 카페가 아직 없어요"
+    assert sug.advice == [{"slot_text": "확정 {c1.value}곳 중 카페 {c2.value}곳", "is_guess": False}]
+    assert [c["value"] for c in sug.claims] == [2, 0]
     assert sug.expires_at == world.now + constants.SUGGESTION_TTL
     run = world.one(AgentRun, map_id=map_id)
     assert (run.outcome, run.trigger, run.snapshot_seq, run.used_model) == ("suggested", "activity", seq, False)
     assert sug.run_id == run.id
     assert [s["diagnosis"] for s in run.signals] == ["category_gap", "category_gap"]
     assert run.priority["final_order"] == ["s1", "s2"] and run.priority["model_order"] is None
-    assert world.count_events() == events_before   # shadow — agent 이벤트 없음
+    [(type_, payload)] = world.agent_events(map_id)
+    assert type_ == "agent.suggested"
+    assert AgentSuggestionSchema.model_validate(payload).id == str(sug.id)
+    assert payload["advice"] == [{"text": "확정 2곳 중 카페 0곳", "is_guess": False}]
+    assert payload["actions"] == [
+        {"index": 0, "type": "open_recommend", "label": "카페 추천 받기", "params": {"category": "카페"}},
+        {"index": 1, "type": "show_pins", "label": "카페 핀 보기", "params": {"category": "카페"}},
+    ]
+    assert not {"claims", "fingerprint", "evidence_hash", "resolved_by", "shadow"} & set(payload)   # 서버 내부 값
     cur = _cursor(world, map_id)
     assert (cur.last_seen_seq, cur.lease_until, cur.next_check_at) == (seq, None, sug.expires_at)
 
 
-def test_shadow_off_still_emits_nothing_in_m0(world, monkeypatch):
-    """shadow를 꺼도 M0은 이벤트를 내지 않는다(agent.suggested는 M1). 제안은 shadow=False로 저장된다."""
-    monkeypatch.setattr(constants, "AGENT_SHADOW_MODE", False)
+def test_shadow_diagnosis_is_saved_without_events(world, monkeypatch):
+    """17절 15번 — shadow 유형의 제안은 저장되지만 이벤트가 없다. M1-1에서 모델 유형은 초안까지 가지 않으므로 코드
+    유형을 shadow 목록에 넣어 저장 경로를 본다."""
+    monkeypatch.setattr(core, "SHADOW_DIAGNOSES", constants.CODE_TYPES)
     map_id = world.gap_map()
     world.event(map_id)
-    events_before = world.count_events()
 
     tick(world)
 
-    assert world.one(AgentSuggestion, map_id=map_id).shadow is False
-    assert world.count_events() == events_before
+    assert world.one(AgentSuggestion, map_id=map_id).shadow is True
+    assert world.agent_events(map_id) == []
+
+
+def test_model_types_stay_shadow():
+    assert constants.SHADOW_DIAGNOSES == constants.MODEL_TYPES
+    assert [core.is_shadow(d) for d in ("stall", "split", "no_reaction", "category_gap")] == [True, True, False, False]
+
+
+def test_no_reaction_suggestion_renders_pin_names(world, monkeypatch):
+    """반응 공백(6.4) — 핀 이름은 저장하지 않고 이벤트를 만들 때 렌더한다. db 핀은 장소 이름, 실시간 핀은 검색어."""
+    monkeypatch.setattr(places_api, "get_places", fake_places({"pl_a": "성수 칼국수"}))
+    map_id, (db_pin, live_pin, _) = world.unseen_map(("db", "pl_a"), ("live", "성수 곱창"), ("db", "pl_b"))
+    world.event(map_id)
+
+    tick(world)
+
+    sug = world.one(AgentSuggestion, map_id=map_id)
+    assert sug.diagnosis == "no_reaction" and sug.title == "아직 확인되지 않은 핀이 {c1.value}개 있어요"
+    assert "성수 칼국수" not in json.dumps(sug.advice + sug.claims, ensure_ascii=False)   # 이름은 저장하지 않는다
+    [(_, payload)] = world.agent_events(map_id)
+    assert payload["title"] == "아직 확인되지 않은 핀이 3개 있어요"
+    # 장소 이름을 찾지 못한 핀(pl_b)은 지어내지 않고 줄을 뺀다
+    assert sorted(line["text"] for line in payload["advice"]) == ["성수 곱창", "성수 칼국수"]
+    [action] = payload["actions"]
+    assert (action["type"], action["label"]) == ("show_pins", "미확인 핀 보기")
+    assert db_pin in action["params"]["pin_ids"] and live_pin in action["params"]["pin_ids"]
+
+
+def test_expired_and_superseded_announce_agent_resolved(world):
+    """만료와 무효화도 agent.resolved를 낸다(15절). 누가 처리했는지는 싣지 않는다."""
+    map_id = world.gap_map()
+    world.event(map_id)
+    tick(world)
+    first = world.one(AgentSuggestion, map_id=map_id)
+
+    world.confirm(map_id, world.pin(map_id, category="음식점"))   # 근거가 바뀐다 → superseded
+    world.event(map_id)
+    tick(world, after=timedelta(minutes=5))
+    second = next(s for s in world.rows(AgentSuggestion, map_id=map_id) if s.status == "active")
+
+    world.event(map_id)
+    tick(world, after=constants.SUGGESTION_TTL + timedelta(minutes=10))   # 두 번째가 만료된다
+
+    resolved = [p for t, p in world.agent_events(map_id) if t == "agent.resolved"]
+    assert {"suggestion_id": str(first.id), "status": "superseded", "resolved_action_type": None} in resolved
+    assert {"suggestion_id": str(second.id), "status": "expired", "resolved_action_type": None} in resolved
+
+
+def test_shadow_suggestion_expires_without_event(world, factory):
+    map_id = world.map()
+    with factory() as db:
+        rows.suggestion(db, map_id, shadow=True, expires_at=world.now - timedelta(minutes=1))
+        db.commit()
+    world.event(map_id)
+
+    tick(world)
+
+    assert world.one(AgentSuggestion, map_id=map_id).status == "expired"
+    assert world.agent_events(map_id) == []
+
+
+def test_own_event_reclaims_once_then_settles(world):
+    """agent.suggested도 event_log seq를 올려 다음 tick에 그 지도를 한 번 더 관찰한다. 그 관찰은 활성 제안에 막혀
+    (blocked) 이벤트를 내지 않으므로 그다음 tick에는 다시 잡히지 않는다."""
+    map_id = world.gap_map()
+    world.event(map_id)
+    tick(world)
+
+    assert map_id in tick(world, after=timedelta(minutes=5))
+    assert map_id not in tick(world, after=timedelta(minutes=10))
+    outcomes = [r.outcome for r in sorted(world.rows(AgentRun, map_id=map_id), key=lambda r: r.started_at)]
+    assert outcomes == ["suggested", "blocked"]
+    assert [t for t, _ in world.agent_events(map_id)] == ["agent.suggested"]
+
+
+def test_mode_turned_off_during_observation_saves_nothing(world, monkeypatch):
+    """관찰(읽기) 뒤 저장 전에 모드가 꺼지면 제안을 넣지 않는다 — blocked(mode_off). 모드 변경도 지도 행을 잠가
+    저장과 줄을 선다."""
+    map_id = world.gap_map()
+    world.event(map_id)
+    real_lock = maps_api.lock_map_if_alive
+
+    def turn_off_then_lock(db, mid):
+        with world.factory() as other:
+            other.add(AgentSettings(map_id=map_id, enabled=False, updated_by=world.uid("u2")))
+            other.commit()
+        return real_lock(db, mid)
+
+    monkeypatch.setattr(maps_api, "lock_map_if_alive", turn_off_then_lock)
+
+    observe(world, map_id)
+
+    run = world.one(AgentRun, map_id=map_id)
+    assert run.outcome == "blocked" and {"signal_id": "s1", "reason": "mode_off"} in run.blocked
+    assert world.rows(AgentSuggestion, map_id=map_id) == []
+    assert world.agent_events(map_id) == []
 
 
 def test_active_suggestion_blocks_until_superseded(world):
@@ -198,20 +306,20 @@ def test_two_concurrent_saves_leave_one_active(world, monkeypatch):
 
 def test_insert_suggestion_conflict_returns_none(world):
     """부분 유니크 인덱스 — 커밋 전 활성 제안이 있으면 두 번째 insert는 기다렸다가 아무것도 넣지 않는다."""
-    from agent import core
-
     map_id = world.map()
     sig = core.make_signal("category_gap", category="카페", evidence=[("p1", "confirmed", world.now)], features={})
+    draft = core.render_template(sig)
     with world.factory() as a:
         run_a = service.insert_run(a, map_id=map_id, started_at=world.now, trigger="time", outcome="suggested")
-        assert service.insert_suggestion(a, map_id=map_id, run_id=run_a, signal=sig, now=world.now, shadow=True)
+        assert service.insert_suggestion(
+            a, map_id=map_id, run_id=run_a, signal=sig, draft=draft, now=world.now, shadow=True)
         result = []
 
         def second():
             with world.factory() as b:
                 run_b = service.insert_run(b, map_id=map_id, started_at=world.now, trigger="time", outcome="x")
                 result.append(service.insert_suggestion(
-                    b, map_id=map_id, run_id=run_b, signal=sig, now=world.now, shadow=True))
+                    b, map_id=map_id, run_id=run_b, signal=sig, draft=draft, now=world.now, shadow=True))
                 b.commit()
 
         t = threading.Thread(target=second)
@@ -229,8 +337,9 @@ def test_insert_suggestion_conflict_returns_none(world):
 
 def test_cursor_is_max_seq_and_gaps_from_other_maps_do_not_reclaim(world):
     """다른 지도 이벤트가 사이사이 끼어 이 지도의 seq에 빈 번호가 있어도, 관찰 뒤 커서는 가장 큰 seq이고 다음 tick에
-    다시 잡히지 않는다(#525)."""
-    a, b = world.gap_map(), world.gap_map()
+    다시 잡히지 않는다(#525). 신호가 없는 지도를 쓴다 — 제안이 나오면 agent.suggested가 seq를 올려 한 번 더 잡힌다
+    (test_own_event_reclaims_once_then_settles)."""
+    a, b = world.map(), world.map()
     world.event(a)
     world.event(b)
     world.event(a)
@@ -257,8 +366,9 @@ def test_new_event_reclaims_with_activity_trigger(world):
 
 
 def test_recent_event_pulls_next_check_to_now(world):
-    """가장 최근 이벤트가 2초 안이면 next_check_at = 지금. 다음 tick에 한 번 더 관찰한다(12.5 보완)."""
-    map_id = world.gap_map()
+    """가장 최근 이벤트가 2초 안이면 next_check_at = 지금. 다음 tick에 한 번 더 관찰한다(12.5 보완). 신호가 없는
+    지도라 agent 이벤트도 없다."""
+    map_id = world.map()
     world.event(map_id, seconds_ago=1)
 
     tick(world)

@@ -102,10 +102,10 @@ class AgentSuggestion(Base):
     pin_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     fingerprint: Mapped[str] = mapped_column(String, nullable=False)
     evidence_hash: Mapped[str] = mapped_column(String, nullable=False)
-    title: Mapped[str] = mapped_column(String, nullable=False)  # 렌더 결과
+    title: Mapped[str] = mapped_column(String, nullable=False)  # 슬롯 문장. 렌더는 응답과 이벤트 때(#531)
     claims: Mapped[list] = mapped_column(JSONB, nullable=False)  # 검증 통과분
     analysis: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # split의 충돌 지점 등
-    advice: Mapped[list] = mapped_column(JSONB, nullable=False)  # [{text, is_guess, source}]
+    advice: Mapped[list] = mapped_column(JSONB, nullable=False)  # [{slot_text, is_guess}] 슬롯 문장만
     actions: Mapped[list] = mapped_column(JSONB, nullable=False)  # [{index, type, label, params}]
     status: Mapped[str] = mapped_column(String, nullable=False)  # SUGGESTION_STATUSES
     shadow: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
