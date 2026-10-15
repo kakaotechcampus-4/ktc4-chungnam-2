@@ -128,6 +128,7 @@ class Settings:
     places_http_timeout_s: float = 3.0
     places_http_retries: int = 1         # 타임아웃·429·5xx에만.
     places_search_per_min: int = 30      # GET /places/search 사용자당 분당 상한(#180). 0 이하면 끈다.
+    pins_link_preview_per_min: int = 60  # POST /maps/{mapId}/pins/link-preview 사용자당 분당 URL 수 상한(#577). 0 이하면 끈다.
     feedback_per_hour: int = 10          # POST /feedback 사용자당 시간당 상한(#10). 0 이하면 끈다.
     # v2 계획 보조 에이전트의 관찰 반복 작업을 이 프로세스 안에서 띄울지(AGENT_LOOP_IN_PROCESS, docs/agent-v2.md 12.1).
     # 기본 꺼짐 — 켜면 lifespan이 5분마다 관찰을 돈다. shadow 로그를 모을 개발·시연 서버에서만 켠다.
@@ -211,6 +212,7 @@ class Settings:
             places_http_timeout_s=_float("PLACES_HTTP_TIMEOUT_S", 3.0),
             places_http_retries=_int("PLACES_HTTP_RETRIES", 1),
             places_search_per_min=_int("PLACES_SEARCH_PER_MIN", 30),
+            pins_link_preview_per_min=_int("PINS_LINK_PREVIEW_PER_MIN", 60),
             feedback_per_hour=_int("FEEDBACK_PER_HOUR", 10),
             agent_loop_in_process=_env("AGENT_LOOP_IN_PROCESS", "0").lower() in ("1", "true"),
             frontend_base_url=frontend_base_url,

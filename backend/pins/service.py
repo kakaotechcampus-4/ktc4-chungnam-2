@@ -308,18 +308,21 @@ def create_pin(
     map_id: str,
     principal: Principal,
     req: PinCreateRequest,
+    *,
+    isolated: bool = False,
 ) -> Pin:
-    """POST /maps/{mapId}/pins — source로 갈린다. live는 자체 DB 없이 카카오 장소 ID·검색어·메모로 만든다(#382)."""
+    """POST /maps/{mapId}/pins — source로 갈린다. live는 자체 DB 없이 카카오 장소 ID·검색어·메모로 만든다(#382).
+    isolated=True(일괄 생성 #577)는 호출자가 이 호출을 SAVEPOINT로 감싼 경우다 — 실패해도 세션 전체를 롤백하지 않는다."""
     if isinstance(req, PinCreateLive):
-        return _create_live_pin(db, map_id, principal, req)
-    return _create_db_pin(db, map_id, principal, req)
+        return _create_live_pin(db, map_id, principal, req, isolated=isolated)
+    return _create_db_pin(db, map_id, principal, req, isolated=isolated)
 
 
-def _flush_pin_row(db: Session, pin_row: PinRow, *, duplicate_index: str, find_existing) -> None:
+def _flush_pin_row(db: Session, pin_row: PinRow, *, duplicate_index: str, find_existing, isolated: bool = False) -> None:
     """INSERT를 SAVEPOINT 안에서 flush한다. 부분 유니크(duplicate_index) 위반만 409 PIN_DUPLICATE로 바꾼다."""
-    db.add(pin_row)
     try:
         with db.begin_nested():   # SAVEPOINT — 실패해도 바깥 트랜잭션은 살아 있다
+            db.add(pin_row)   # 안에서 add해야 INSERT 실패가 이 SAVEPOINT 안에서 난다(begin_nested 진입 때의 autoflush는 보호받지 못한다)
             db.flush()
     except IntegrityError as exc:
         # begin_nested()가 SAVEPOINT까지는 롤백해도 Session 자체는 "deactive" 상태로 남는다 —
@@ -327,7 +330,8 @@ def _flush_pin_row(db: Session, pin_row: PinRow, *, duplicate_index: str, find_e
         # 죽는다). db.rollback()을 명시적으로 불러야 세션이 다시 쓸 수 있는 상태가 되고,
         # 이전에 커밋된 데이터는 그대로 남는다(같은 방식으로 검증). 원래(#16) 코드의
         # db.rollback()을 지우지 않고 begin_nested()와 함께 쓴다.
-        db.rollback()
+        if not isolated:   # 일괄 생성은 앞 항목을 지키려고 바깥 SAVEPOINT 하나만 되돌린다(호출자 몫)
+            db.rollback()
         # 부분 유니크 위반일 때만 409로 바꾼다 — 그 외 무결성 오류를
         # 조용히 삼키면 실패를 감추는 코드가 된다(docs/code-quality.md). psycopg2 예외의
         # pgcode가 SQLSTATE — 23505 = unique_violation.
@@ -342,6 +346,8 @@ def _create_db_pin(
     map_id: str,
     principal: Principal,
     req: PinCreateSearch,
+    *,
+    isolated: bool = False,
 ) -> Pin:
     """검색 결과를 골라 핀을 만든다(#195). 요청의 place_id·place_name·lat·lng는 같은 자체 DB 장소를 찾는
     힌트일 뿐 저장하지 않는다 — 핀의 장소·좌표는 매칭된 places 행에서 온다."""
@@ -377,7 +383,7 @@ def _create_db_pin(
     )
     _flush_pin_row(
         db, pin_row, duplicate_index="uq_pins_map_place",
-        find_existing=lambda: _find_existing_pin_id(db, map_id, match.place_id),
+        find_existing=lambda: _find_existing_pin_id(db, map_id, match.place_id), isolated=isolated,
     )
 
     # 핀이 만들어진 뒤에만 카카오 ID·URL을 기록한다(같은 트랜잭션) — 중복·실패한 요청이 자체 DB를 건드리지 않게.
@@ -415,7 +421,7 @@ def _find_existing_live_pin_id(db: Session, map_id: str, kakao_place_id: str) ->
     return str(row[0]) if row else None
 
 
-def _create_live_pin(db: Session, map_id: str, principal: Principal, req: PinCreateLive) -> Pin:
+def _create_live_pin(db: Session, map_id: str, principal: Principal, req: PinCreateLive, *, isolated: bool = False) -> Pin:
     """실시간 핀(#382) — 카카오 장소 ID·검색어·메모·분류만 저장한다. 이름·좌표는 요청에 없고(스키마가 거부) 어디에도
     남기지 않는다. place_id·geom은 NULL이라 자체 DB 매칭·카카오 기록(record_kakao_match)도 하지 않는다."""
     core.validate_live_create(req)
@@ -444,7 +450,7 @@ def _create_live_pin(db: Session, map_id: str, principal: Principal, req: PinCre
     )
     _flush_pin_row(
         db, pin_row, duplicate_index="uq_pins_map_kakao_place",
-        find_existing=lambda: _find_existing_live_pin_id(db, map_id, req.kakao_place_id),
+        find_existing=lambda: _find_existing_live_pin_id(db, map_id, req.kakao_place_id), isolated=isolated,
     )
 
     display_name = auth_api.display_names(db, [pin_row.created_by]).get(pin_row.created_by)
