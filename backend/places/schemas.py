@@ -88,7 +88,7 @@ class ResolvedCoords:
 # ---- GET /places/search 응답 (docs/api-spec.yaml PlaceSearchResult, #180) ----
 
 class PlaceSourceInfo(BaseModel):
-    provider: Literal["kakao", "naver", "google"]
+    provider: Literal["kakao", "naver", "google", "permit", "tourapi"]
     url: str | None = None
 
 

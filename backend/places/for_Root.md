@@ -274,3 +274,17 @@ PR 1(#197)에서 고정한 6개 공개 함수를 실제로 구현했다. 이 브
 | 3 | 검색 라우터 연결 | places | `places/router.py::_fill_pinnable`의 `PlaceHint`에 `r.address`를 추가한다(한 줄). 1·2가 머지된 뒤에 켠다 — 이 세션이 맡는다. 측정 스크립트는 이미 주소 있음/없음을 나눠 잰다 |
 
   FE는 핀 생성 요청에 검색 결과의 `address`를 함께 보내야 효과가 있다(보내지 않으면 지금과 같다 — 이름 규칙만 쓴다).
+
+
+---
+
+# #473 GET /places/nearest 구현 (2026-10-15)
+
+- **동작**: `lat`·`lng`(+`category`) 기준 100m 안의 자체 DB 장소(`status='open'`)를 가까운 순 최대 5곳. `ST_DWithin`(geography) + `ST_Distance` 정렬, `idx_places_geom`(GiST)을 탄다 — 계획 확인은 `integration/test_places_nearest.py::test_query_uses_the_gist_index`(작은 테이블은 순차 스캔이 이기므로 `enable_seqscan=off`로 계획만 본다). 숙소·기타는 빈 배열, 모르는 분류는 422.
+- **pinnable=true만**: 후보 10곳을 읽고, 핀 생성이 부를 `match_place`와 같은 규칙(`find_candidates_many` + `pick_match`, 자기 이름·좌표를 힌트로)으로 거절될 곳(같은 자리 동명 점포 등)을 뺀 뒤 5곳으로 자른다. 주소는 힌트에 넣지 않는다 — pins가 아직 주소를 안 넘긴다(#500 3개 항목이 켜지기 전 기준).
+- **응답**: `place_id`=`own:<places.id>`, `place_source.provider`=`permit`|`tourapi`(url 없음), `address`·`category`는 자체 DB 값. 카카오 값은 어디에도 없다. `own:` ID로 핀을 만들어도 `pins/core.kakao_place_url`이 `kakao:` 접두어만 URL로 바꾸므로 카카오 ID로 기록되지 않는다.
+- **가드레일 (#53)**: 누른 좌표는 저장·로깅하지 않는다. 쓰기 쿼리 없음. DB 오류는 예외 타입만 남기고 `503 PLACES_UNAVAILABLE`(SQL 파라미터에 좌표가 실린다). uvicorn 접근 로그는 요청 줄에 쿼리스트링을 찍으므로 `places/logguard.py`(`StripQueryFilter`, `router.py` 임포트 시 설치)가 `/places/nearest`의 쿼리를 `?[redacted]`로 바꾼다. **배포에서 접근 로그를 다른 프록시(Cloud Run 요청 로그 등)가 남기는 것은 이 필터 밖이다 — 운영 쪽 확인이 필요하다.**
+- **호출 상한**: `check_search_rate` 그대로 — `GET /places/search`와 같은 사용자별 버킷(분당 `PLACES_SEARCH_PER_MIN`, 기본 30)을 공유한다. 지도를 연달아 누르면 검색 상한을 같이 쓴다.
+- **스펙 보정**: `503 PLACES_UNAVAILABLE` 응답 추가(`docs/api-spec.yaml`, `CHANGELOG-api.md` 2026-10-15 네 번째). 그 외 계약 변경 없음.
+- **테스트**: `integration/test_places_nearest.py` 17개(반경·정렬·최대 5·분류·폐업 제외·pinnable 거절 제외·422·401·429 공유 버킷·503 좌표 비노출·로그/저장 없음·접근 로그 필터·GiST 계획). `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 항목 삭제, 골든 패스(`test_response_contract.py`)에 nearest 호출 추가. `integration`·`places`·`common` 472 통과.
+- **FE 참고**: 목 서버(`contracts/mocks`)의 nearest는 `kakao:` 형식 ID를 쓴다. 실서버는 `own:<uuid>`이고 불투명 값으로 그대로 보내면 된다.

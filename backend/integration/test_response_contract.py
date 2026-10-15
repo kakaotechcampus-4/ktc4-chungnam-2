@@ -25,7 +25,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
     ("PATCH", "/pins/{pinId}"): "#466 구현 PR이 골든 패스에 넣고 지운다",
-    ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/places/from-link"): "#474 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/maps/{mapId}/agent"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("PUT", "/maps/{mapId}/agent/settings"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
@@ -160,6 +159,12 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.get("/places/search", params={"q": "해운대", "lat": 35.16, "lng": 129.16}).status_code == 200
     assert a.get("/places/search", params={"q": "존재하지않는가게"}).json() == []
     assert a.get("/places/search", params={"q": ""}).status_code == 422
+
+    # 지도를 눌러 핀(#473) — 자체 DB가 비어 있으면 빈 배열(지어내지 않는다), 범위 밖·누락은 422
+    assert a.get("/places/nearest", params={"lat": 35.16, "lng": 129.16}).json() == []
+    assert a.get("/places/nearest", params={"lat": 35.16, "lng": 129.16, "category": "카페"}).status_code == 200
+    assert a.get("/places/nearest", params={"lat": 35.16}).status_code == 422
+    assert a.get("/places/nearest", params={"lat": 91, "lng": 129.16}).status_code == 422
 
     pin_ids = []
     for key in ("seongsu-kalguksu", "hongdae-ramen", "seongsu-cafe-a"):
