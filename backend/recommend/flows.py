@@ -163,10 +163,13 @@ def list_runs(
 def get_readiness(db: Session, *, map_id: str) -> dict[str, dict]:
     """GET /maps/{mapId}/recommend/readiness (5-4). 카테고리마다 ♥/🚫 의견이 달린 핀이 1곳 이상이면 열린다
     (#360 — 구성원 수와 무관, 혼자 쓰는 지도도 같다)."""
-    return {
-        category: core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
-        for category in CATEGORIES
-    }
+    return {category: readiness_for_category(db, map_id=map_id, category=category) for category in CATEGORIES}
+
+
+def readiness_for_category(db: Session, *, map_id: str, category: str) -> dict:
+    """카테고리 하나의 준비 판정(⓪) — 라우터(get_readiness), create_run, recommend.api.get_readiness(#530)가
+    모두 이 함수를 쓴다. 계산을 한 곳에만 둔다."""
+    return core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
 
 
 def _evidence_from_reaction(reaction: dict) -> dict:
@@ -249,7 +252,7 @@ def create_run(
     4) 반응 → 근거 구조화(글은 llm.api.plan_evidence, 칩은 코드 #412) 5) run INSERT → evidence_lines INSERT 6) 기본값
     지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
     트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다."""
-    readiness = core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
+    readiness = readiness_for_category(db, map_id=map_id, category=category)
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
 
