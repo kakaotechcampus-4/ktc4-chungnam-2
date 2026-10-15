@@ -22,11 +22,6 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
-    ("get", "/maps/{}/agent"): "#510 agent v2 계약 — M0, M1에서 구현",
-    ("put", "/maps/{}/agent/settings"): "#510 agent v2",
-    ("post", "/agent/suggestions/{}/view"): "#510 agent v2",
-    ("post", "/agent/suggestions/{}/accept"): "#510 agent v2",
-    ("post", "/agent/suggestions/{}/dismiss"): "#510 agent v2",
     ("get", "/runs/{}/advice"): "#510 agent v2 추천 막힘 조언 — M2",
 }
 

@@ -23,11 +23,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
-    ("GET", "/maps/{mapId}/agent"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
-    ("PUT", "/maps/{mapId}/agent/settings"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
-    ("POST", "/agent/suggestions/{suggestionId}/view"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
-    ("POST", "/agent/suggestions/{suggestionId}/accept"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
-    ("POST", "/agent/suggestions/{suggestionId}/dismiss"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/runs/{runId}/advice"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
@@ -430,6 +425,64 @@ def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
 
     unique = list(dict.fromkeys(problems))
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
+def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
+    """v2 계획 보조 에이전트(#531) — 바텀시트 상태, 열람, 수락(422·409 포함), 닫기, 모드 끄고 켜기. 제안은 관찰 흐름의
+    저장 단계(스냅샷 → 탐지 → 템플릿 → 저장)를 이 테스트 세션에서 그대로 밟아 만든다(observe_map은 자기 세션을 연다)."""
+    from datetime import datetime, timedelta, timezone
+
+    from agent import core, service, snapshot
+
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "여수", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    assert b.get(f"/maps/{map_id}/agent").status_code == 404                     # 비구성원은 존재를 모른다
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+
+    empty = a.get(f"/maps/{map_id}/agent")
+    assert empty.status_code == 200
+    assert empty.json() == {"settings": {"enabled": True, "updated_by": None, "updated_at": None},
+                            "active_suggestion": None, "has_unseen": False, "summaries": []}
+
+    for key in ("seongsu-kalguksu", "seongsu-bunsik"):   # 음식점만 2곳 확정 → 카페·관광지 공백(6.5)
+        pin_id = a.post(f"/maps/{map_id}/pins", json=pin_body(key)).json()["id"]
+        assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pin_id}).status_code == 201
+
+    def suggest(category: str) -> str:
+        now = datetime.now(timezone.utc)
+        snap = snapshot.build(db_session, map_id, now)
+        sig = next(s for s in core.detect_all(snap, now, timedelta(hours=1))
+                   if s.diagnosis == "category_gap" and s.category == category)
+        sid = service.insert_suggestion(db_session, map_id=map_id, run_id=None, signal=sig,
+                                        draft=core.render_template(sig), now=now, shadow=False)
+        db_session.commit()
+        return str(sid)
+
+    first = suggest("카페")
+    state = a.get(f"/maps/{map_id}/agent").json()
+    assert state["active_suggestion"]["title"] == "확정 리스트에 카페가 아직 없어요" and state["has_unseen"] is True
+    assert a.post(f"/agent/suggestions/{first}/view").status_code == 204
+    assert a.post(f"/agent/suggestions/{first}/view").status_code == 204          # 멱등
+    assert a.get(f"/maps/{map_id}/agent").json()["has_unseen"] is False
+    assert b.get(f"/maps/{map_id}/agent").json()["has_unseen"] is True             # 사람마다
+    assert a.post("/agent/suggestions/no-such-id/view").status_code == 404
+    assert a.post(f"/agent/suggestions/{first}/accept", json={"action_index": 9}).status_code == 422
+    accepted = a.post(f"/agent/suggestions/{first}/accept", json={"action_index": 0})
+    assert accepted.status_code == 200
+    assert accepted.json()["action"] == {"index": 0, "type": "open_recommend", "label": "카페 추천 받기",
+                                         "params": {"category": "카페"}}
+    assert b.post(f"/agent/suggestions/{first}/accept", json={"action_index": 0}).status_code == 409
+    assert b.post(f"/agent/suggestions/{first}/dismiss").status_code == 409
+
+    second = suggest("관광지")
+    assert b.post(f"/agent/suggestions/{second}/dismiss").status_code == 204
+    assert a.get(f"/maps/{map_id}/agent").json()["active_suggestion"] is None
+
+    off = b.put(f"/maps/{map_id}/agent/settings", json={"enabled": False})
+    assert off.status_code == 200 and off.json()["enabled"] is False and off.json()["updated_by"] == "user_b"
+    assert a.get(f"/maps/{map_id}/agent").json()["settings"]["enabled"] is False
+    assert a.put(f"/maps/{map_id}/agent/settings", json={"enabled": True}).json()["enabled"] is True
 
 
 def test_notification_responses_match_the_openapi_spec(clients, db_session):

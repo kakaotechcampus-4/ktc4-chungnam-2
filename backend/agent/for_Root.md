@@ -163,3 +163,80 @@ M0을 막지는 않아서 구현은 끝냈다. M1에서 사유 원문을 실제�
    `common/settings.py`에 칸이 필요해서 손대지 않았다
 4. 비용 메모: 관찰 한 번마다 `latest_seq_by_map`(24시간 전 지도 DISTINCT ON)을 한 번 더 부른다(claim 1번 + 지도마다
    1번, 초안이 있으면 재확인에서 1번 더). tick당 최대 21번이다. 측정해 보고 무거우면 realtime에 지도 하나용 함수를 요청한다
+
+---
+
+# 루트 보고 — backend/agent (#531, M1-1 코드 유형 제안을 화면까지)
+
+## 구현 범위
+
+- shadow를 유형별로: `constants.AGENT_SHADOW_MODE`(bool)를 지우고 `SHADOW_DIAGNOSES = MODEL_TYPES`. 코드 유형은
+  shadow=False로 저장하고 이벤트를 낸다. 모델 유형은 #534에서 이 목록에서 뺀다
+- `core.render_template(signal) -> Draft`(6.4, 6.5), `core.render_suggestion`(슬롯 채우기), 이벤트 페이로드 3종,
+  `core.agent_state`, `core.settings_view`
+- `router.py`(5개 경로), `loaders.py`(제안 id → 지도 Resource), main.py에 `include_router` 1줄과 import 1줄
+- `deps.py`: `select("agent.LlmGateway", settings.llm_mode, ...)` 등록
+- 이벤트(같은 트랜잭션, `record_event`), 전부 shadow가 아닌 제안만
+
+| 이벤트 | 내는 곳 |
+| --- | --- |
+| agent.suggested | `flows.observe_map` 7단계, `insert_suggestion`이 넣은 뒤 같은 트랜잭션에서 렌더 |
+| agent.resolved(expired) | `flows.observe_map` 1단계 `expire_suggestions` |
+| agent.resolved(superseded) | `observe_map` 7단계 `supersede`, `change_settings`(끌 때) `supersede_active` |
+| agent.resolved(accepted, 버튼 type) | `flows.accept` |
+| agent.resolved(dismissed) | `flows.dismiss` |
+| agent.settings_changed | `flows.change_settings`. 끌 때는 agent.resolved 다음에 낸다 |
+
+- 테스트: agent 169개(새로 38개: test_core_render, test_router, test_flows 추가분), 백엔드 전체 1870개 통과
+- integration: `KNOWN_MISSING`, `KNOWN_UNCOVERED`에서 5개 경로를 지우고 `test_agent_endpoints_match_the_openapi_spec`를
+  넣었다. `/runs/{runId}/advice`는 M2라 그대로
+
+## 템플릿 문구 최종본
+
+| 유형 | 제목 | 확인된 것(is_guess=false) | 버튼 |
+| --- | --- | --- | --- |
+| no_reaction | 아직 확인되지 않은 핀이 {n}개 있어요 | 핀 이름 한 줄씩(db 핀은 장소 이름, 실시간 핀은 검색어) | 미확인 핀 보기(show_pins, `pin_ids`) |
+| category_gap | 확정 리스트에 {category}가 아직 없어요(받침이면 "이": 음식점이) | 확정 {n}곳 중 {category} 0곳 | {category} 추천 받기(open_recommend) + {category} 핀 보기(show_pins). 추천 대상이 아니면 첫 버튼이 {category} 검색(search_place) |
+
+저장 모양: title과 advice는 슬롯 문장(`{c1.value}`, `{c2}`), claims는 count claim과 핀 ref claim. 예 — no_reaction의
+advice는 `[{"slot_text": "{c2}", "is_guess": false}, ...]`, claims는 `[{"id":"c1","kind":"count","metric":"unseen",...},
+{"id":"c2","kind":"ref","object":"pin","ref_id":"<pin_id>"}, ...]`. 핀 이름은 저장하지 않는다.
+
+## 명세나 계약과 다르게 한 것
+
+1. **`render_template(signal)`** — 명세 12.4는 `(top, snap)`. 코드 유형은 신호의 근거 id 수와 카테고리만으로 정해지고
+   이름은 렌더 때 읽어서 스냅샷이 필요 없다
+2. **title도 슬롯 문장으로 저장한다.** data-model.md("슬롯 문장과 검증 통과 claim. 렌더는 응답 때")를 따랐다. 명세 13절
+   SQL 주석과 models.py 주석은 "렌더 결과"였다(models.py는 고쳤다)
+3. **no_reaction 제목의 n은 저장 때 값이다.** 핀이 지워져 이름 줄이 빠져도 n은 그대로다. 다음 관찰에서 evidence_hash가
+   바뀌어 superseded가 되므로 길어야 한 tick이다. 장소 이름을 찾지 못한 db 핀도 지어내지 않고 줄을 뺀다
+4. **show_pins에 `unseen_only`를 넣지 않았다.** 그 핀들은 "누군가" 확인하지 않은 핀이라 보는 사람 기준 미확인과 다르다.
+   `pin_ids`만 준다. 버튼 params의 pin_ids는 지워진 핀을 걸러 내지 않는다(문장만 뺀다)
+5. **만료 시각이 지난 활성 제안**: 관찰이 expired로 바꾸기 전에도 GET은 null, accept·dismiss는 409(가드 UPDATE에
+   `expires_at > now`). agent.resolved(expired)는 다음 관찰이 낸다
+6. **같은 값의 PUT settings**는 쓰지도 이벤트를 내지도 않고 지금 값을 200으로 돌려준다
+7. **모드 끄기와 관찰 저장의 경합**: `change_settings`가 `maps.api.lock_map_if_alive`로 지도 행을 먼저 잠그고, 관찰 저장
+   트랜잭션은 잠근 뒤 모드를 다시 본다. 꺼져 있으면 넣지 않고 outcome=blocked, 이유 `mode_off`(12.3 목록에 없는 새 값)
+8. **view의 가드**: permissions.md에 열람 액션이 없어 `require_with_principal("agent.suggestion.resolve", ...)`로
+   멤버십을 본다(pins의 PinToRead가 pin.react를 빌리는 것과 같은 사정). 구성원 누구나 가진 액션이라 결과는 같다
+9. **422 detail**: `{"action_index": 9, "actions": 2}`
+10. **Gateway real 구현**: llm.api의 agent 함수가 #532 전이라 `RealAgentLlmGateway`는 부르면 NotImplementedError다.
+    real을 None으로 두면 로컬 .env의 `LLM_MODE=real`에서 select()가 import 때 ConfigError를 내 서버가 뜨지 않는다. M1-1은
+    Gateway를 부르지 않는다
+11. **다른 모듈 파일 수정 1건**: `common/tests/test_adapter_assembly.py`의 `MISSING_REAL`에 `"agent.LlmGateway": "#532"`
+    한 줄. 그 테스트는 등록된 포트 집합과 이 목록이 같아야 통과해서, select() 등록과 테스트 통과를 함께 하려면 피할 수 없다
+12. **agent 자기 이벤트로 한 번 더 관찰한다.** agent.suggested·resolved도 event_log seq를 올려 다음 tick에 그 지도가
+    activity로 다시 잡힌다. 그 관찰은 활성 제안에 막혀(blocked) 이벤트를 내지 않으므로 거기서 멈춘다(테스트로 고정).
+    커서를 자기 이벤트 seq까지 올리면 그 사이 늦게 커밋된 사용자 이벤트를 놓칠 수 있어 그렇게 하지 않았다. 비용이 문제면
+    realtime에 "agent.* 제외 최대 seq"를 요청하는 쪽이 맞다
+
+## 루트 확인 요청 (문서 갱신)
+
+1. `docs/agent-v2.md` 5절 `AGENT_SHADOW_MODE` → `SHADOW_DIAGNOSES`, 12.4 의사코드(shadow 판단, render_template 인자,
+   모드 재확인), 13절 title 주석, 15절 마지막 문장, 17절 15번
+2. `docs/agent-v2.md` 12.3 blocked 이유에 `mode_off` 추가
+3. `docs/events.md` 38행 "shadow 기간(`AGENT_SHADOW_MODE`)", 58행 "서버 구현 전이라 아직 발행되지 않는다" → 코드 유형은
+   #531부터 발행, 모델 유형은 #534까지 shadow
+4. `docs/api-spec.yaml` agent 태그 설명과 951행 주석의 "실서버 구현 전(KNOWN_MISSING)" → 5개 경로 구현됨(advice만 M2)
+5. FE(#516, #536)에 알릴 것: 실서버에서 코드 유형 제안이 나온다. view는 이미 처리된 제안도 204, accept 범위 밖 422,
+   만료 시각이 지난 제안은 GET에서 null이고 accept·dismiss 409

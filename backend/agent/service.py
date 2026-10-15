@@ -4,6 +4,11 @@
 - 관찰 흐름(#515, 명세 12.2~12.5, 12.9): 지도 고르기와 lease(`claim_maps`, `release_lease`), 커서(`advance_cursor`),
   이력(`load_history`), 제안 상태(`expire_suggestions`, `supersede`, `insert_suggestion`), 기록(`insert_run`),
   보존 정리(`delete_old_runs`)
+- 화면 요청(#531, 명세 14절): 모드(`get_settings`, `save_settings`, `wake_cursor`), 지금 제안(`get_suggestion`,
+  `active_suggestion`), 열람(`has_viewed`, `record_view`), 수락과 닫기(`resolve_suggestion` — status='active'일 때만
+  바꾸는 가드 UPDATE), 모드 끄기(`supersede_active`)
+
+제안 상태를 바꾸는 함수는 (id, shadow) 목록을 돌려준다. agent.resolved는 shadow가 아닌 것만 낸다(호출부).
 
 다른 모듈 테이블은 읽지도 쓰지도 않는다. event_log는 `realtime.api.latest_seq_by_map`으로만 본다(12.2).
 """
@@ -181,43 +186,62 @@ def load_history(db: Session, map_id: str, now: datetime) -> core.History:
 
 # ---------------------------------------------------------------- 제안 상태 (12.4, 12.9)
 
-def expire_suggestions(db: Session, map_id: str, now: datetime) -> list[str]:
-    """expires_at이 지난 활성 제안을 expired로. 바꾼 id 목록(agent.resolved는 M1에서 이 목록으로 낸다)."""
-    return [str(i) for i in db.execute(
+Changed = list[tuple[str, bool]]   # 상태를 바꾼 제안의 (id, shadow)
+
+
+def _changed(result) -> Changed:
+    return [(str(i), shadow) for i, shadow in result.all()]
+
+
+def expire_suggestions(db: Session, map_id: str, now: datetime) -> Changed:
+    """expires_at이 지난 활성 제안을 expired로."""
+    return _changed(db.execute(
         update(AgentSuggestion)
         .where(AgentSuggestion.map_id == map_id, AgentSuggestion.status == "active", AgentSuggestion.expires_at < now)
         .values(status="expired", resolved_at=now)
-        .returning(AgentSuggestion.id)
-    ).scalars().all()]
+        .returning(AgentSuggestion.id, AgentSuggestion.shadow)
+    ))
 
 
-def supersede(db: Session, suggestion_ids: list[str], now: datetime) -> list[str]:
+def supersede(db: Session, suggestion_ids: list[str], now: datetime) -> Changed:
     """신호가 사라졌거나 근거가 바뀐 활성 제안을 superseded로. 그새 사람이 처리했으면(active가 아니면) 두고, 바꾼
-    id만 돌려준다."""
+    것만 돌려준다."""
     if not suggestion_ids:
         return []
-    return [str(i) for i in db.execute(
+    return _changed(db.execute(
         update(AgentSuggestion)
         .where(AgentSuggestion.id.in_(suggestion_ids), AgentSuggestion.status == "active")
         .values(status="superseded", resolved_at=now)
-        .returning(AgentSuggestion.id)
-    ).scalars().all()]
+        .returning(AgentSuggestion.id, AgentSuggestion.shadow)
+    ))
+
+
+def supersede_active(db: Session, map_id: str, now: datetime) -> Changed:
+    """모드를 끄면 그 지도의 활성 제안(shadow 포함)을 superseded로(명세 12.9)."""
+    return _changed(db.execute(
+        update(AgentSuggestion)
+        .where(AgentSuggestion.map_id == map_id, AgentSuggestion.status == "active")
+        .values(status="superseded", resolved_at=now)
+        .returning(AgentSuggestion.id, AgentSuggestion.shadow)
+    ))
 
 
 def insert_suggestion(
-    db: Session, *, map_id: str, run_id: uuid.UUID, signal: core.Signal, now: datetime, shadow: bool,
+    db: Session, *, map_id: str, run_id: uuid.UUID, signal: core.Signal, draft: core.Draft, now: datetime,
+    shadow: bool,
 ) -> uuid.UUID | None:
     """활성 제안 하나를 넣는다. 이미 활성 제안이 있으면 넣지 않고 None(ON CONFLICT (map_id) WHERE
     status='active' DO NOTHING — 부분 유니크 인덱스가 지도당 하나를 지킨다, 17절 8번).
 
-    M0은 렌더하지 않는다 — 제목, 문장, 버튼은 비워 두고(M1) 유형, 카테고리, 핀, fingerprint, evidence_hash만 남긴다.
-    사유 글은 어디에도 넣지 않는다(명세 2절 13번)."""
+    제목, 문장, 버튼은 초안(core.Draft)의 슬롯 문장과 claim 그대로 넣는다. 핀 이름과 사유 글은 어디에도 넣지 않는다
+    (명세 2절 13번) — 렌더는 응답과 이벤트를 만들 때 한다."""
     return db.execute(
         pg_insert(AgentSuggestion)
         .values(
             id=uuid.uuid4(), map_id=map_id, run_id=run_id, diagnosis=signal.diagnosis, category=signal.category,
             pin_id=uuid.UUID(signal.pin_id) if signal.pin_id else None, fingerprint=signal.fingerprint,
-            evidence_hash=signal.evidence_hash, title="", claims=[], analysis=None, advice=[], actions=[],
+            evidence_hash=signal.evidence_hash, title=draft.title, claims=draft.claims, analysis=None,
+            advice=draft.advice, actions=draft.actions,
             status="active", shadow=shadow, created_at=now, expires_at=now + SUGGESTION_TTL,
         )
         .on_conflict_do_nothing(index_elements=[AgentSuggestion.map_id], index_where=text("status = 'active'"))
@@ -244,3 +268,73 @@ def delete_old_runs(db: Session, now: datetime) -> int:
     """보존 기한(30일)이 지난 agent_runs를 지운다. 제안의 run_id는 FK ON DELETE SET NULL로 비워진다."""
     cutoff = now - timedelta(days=AGENT_RUNS_RETENTION_DAYS)
     return db.execute(delete(AgentRun).where(AgentRun.started_at < cutoff)).rowcount
+
+
+# ---------------------------------------------------------------- 화면 요청 (14절)
+
+def get_settings(db: Session, map_id: str) -> AgentSettings | None:
+    return db.get(AgentSettings, map_id)
+
+
+def save_settings(db: Session, *, map_id: str, enabled: bool, user_id: str, now: datetime) -> None:
+    """모드 행을 덮어쓴다(없으면 만든다). 동시에 두 사람이 바꾸면 늦게 커밋한 쪽이 남는다."""
+    db.execute(
+        pg_insert(AgentSettings)
+        .values(map_id=map_id, enabled=enabled, updated_by=user_id, updated_at=now)
+        .on_conflict_do_update(
+            index_elements=[AgentSettings.map_id], set_={"enabled": enabled, "updated_by": user_id, "updated_at": now},
+        )
+    )
+
+
+def wake_cursor(db: Session, map_id: str, now: datetime) -> None:
+    """모드를 다시 켜면 다음 tick에 관찰하도록 next_check_at을 지금으로(12.9). 커서 행이 없으면 만든다."""
+    db.execute(
+        pg_insert(AgentCursor).values(map_id=map_id, next_check_at=now)
+        .on_conflict_do_update(index_elements=[AgentCursor.map_id], set_={"next_check_at": now})
+    )
+
+
+def get_suggestion(db: Session, suggestion_id: str) -> AgentSuggestion | None:
+    try:
+        key = uuid.UUID(suggestion_id)
+    except ValueError:
+        return None
+    return db.get(AgentSuggestion, key)
+
+
+def active_suggestion(db: Session, map_id: str, now: datetime) -> AgentSuggestion | None:
+    """화면에 보일 지금 제안 — active이고 shadow가 아니고 만료 시각 전. 만료 처리는 관찰이 하지만(12.9) 그 전에도
+    지난 제안은 보이지 않는다."""
+    return db.execute(
+        select(AgentSuggestion).where(
+            AgentSuggestion.map_id == map_id, AgentSuggestion.status == "active",
+            AgentSuggestion.shadow.is_(False), AgentSuggestion.expires_at > now,
+        )
+    ).scalar_one_or_none()
+
+
+def has_viewed(db: Session, suggestion_id: uuid.UUID, user_id: str) -> bool:
+    return db.get(AgentSuggestionView, (suggestion_id, user_id)) is not None
+
+
+def record_view(db: Session, suggestion_id: uuid.UUID, user_id: str, now: datetime) -> None:
+    """사람마다 한 번(멱등). 첫 열람 시각을 남긴다."""
+    db.execute(
+        pg_insert(AgentSuggestionView).values(suggestion_id=suggestion_id, user_id=user_id, viewed_at=now)
+        .on_conflict_do_nothing(index_elements=[AgentSuggestionView.suggestion_id, AgentSuggestionView.user_id])
+    )
+
+
+def resolve_suggestion(
+    db: Session, suggestion_id: uuid.UUID, *, status: str, user_id: str, now: datetime, action: dict | None = None,
+) -> bool:
+    """수락(accepted)과 닫기(dismissed). status='active'이고 만료 전일 때만 바꾸는 가드 UPDATE — 두 사람이 동시에
+    누르면 늦은 쪽은 앞 트랜잭션을 기다린 뒤 조건을 다시 보고 0행이 된다. 바꿨으면 True."""
+    return db.execute(
+        update(AgentSuggestion)
+        .where(AgentSuggestion.id == suggestion_id, AgentSuggestion.status == "active",
+               AgentSuggestion.expires_at > now)
+        .values(status=status, resolved_by=user_id, resolved_at=now, resolved_action=action)
+        .returning(AgentSuggestion.id)
+    ).first() is not None
