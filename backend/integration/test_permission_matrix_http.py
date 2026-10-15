@@ -59,6 +59,7 @@ def _endpoints(w):
         ("GET pins", "GET", f"/maps/{m}/pins", None),
         ("POST pin", "POST", f"/maps/{m}/pins", w["new_pin"]),
         ("PATCH pin", "PATCH", f"/pins/{pin}", {"memo": "고침"}),
+        ("POST pin resolve", "POST", f"/pins/{pin}/resolve", {"place_name": "성수 칼국수", "lat": 37.5445, "lng": 127.0561}),
         ("DELETE pin", "DELETE", f"/pins/{pin}", None),
         ("PUT reaction", "PUT", f"/pins/{pin}/reaction", {"type": "like"}),
         ("DELETE reaction", "DELETE", f"/pins/{pin}/reaction", None),
@@ -168,6 +169,18 @@ def test_only_the_owner_can_list_and_revoke_invite_links(world):
     assert a.get(f"/maps/{m}/invites").status_code == 200
     assert a.delete(f"/invites/{token}").status_code == 204
     assert a.get(f"/invites/{token}").status_code == 410
+
+
+def test_any_member_can_resolve_a_live_pin_but_outsiders_cannot(world):
+    """라이브 핀 승격(#501, pin.resolve) — 찍은 사람이 아니어도 구성원이면 되고, 비구성원은 404다. 짝이 없으면 아무것도 바뀌지 않는다."""
+    a, b, c, m = world["a"], world["b"], world["c"], world["map"]
+    live = a.post(f"/maps/{m}/pins", json={"source": "live", "category": "음식점", "kakao_place_id": "kakao:L1", "search_query": "곱창"}).json()["id"]
+    hint = {"place_name": "어딘가", "lat": 35.0, "lng": 129.0}
+    assert c.post(f"/pins/{live}/resolve", json=hint).status_code == 404
+    assert world["anon"].post(f"/pins/{live}/resolve", json=hint).status_code == 401
+    for client in (a, b):
+        r = client.post(f"/pins/{live}/resolve", json=hint)
+        assert r.status_code == 200 and r.json()["source"] == "live"
 
 
 def test_only_the_owner_can_edit_the_map(world):

@@ -24,7 +24,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
-    ("POST", "/pins/{pinId}/resolve"): "#501 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/maps/{mapId}/agent"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("PUT", "/maps/{mapId}/agent/settings"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/agent/suggestions/{suggestionId}/view"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
@@ -397,6 +396,24 @@ def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
     listed = a.get(f"/maps/{map_id}/pins").json()
     assert {p["id"] for p in listed} == {live_id, db_id}
     assert b.put(f"/pins/{live_id}/reaction", json={"type": "like"}).status_code == 200
+
+    # 라이브 핀 승격(#501) — 구성원 누구나. 짝이 없으면 200 변화 없음, 이미 그 장소 핀이 있으면 409, 짝이 있으면 같은 id의 db 핀으로
+    bunsik = pin_body("seongsu-bunsik")
+    hint = {"place_name": bunsik["place_name"], "lat": bunsik["lat"], "lng": bunsik["lng"], "address": "서울 성동구 성수동"}
+    nowhere = b.post(f"/pins/{live_id}/resolve", json={"place_name": "없는 가게", "lat": 35.0, "lng": 129.0})
+    assert nowhere.status_code == 200 and nowhere.json()["source"] == "live"
+    kalguksu = pin_body("seongsu-kalguksu")
+    dup = b.post(f"/pins/{live_id}/resolve", json={"place_name": kalguksu["place_name"], "lat": kalguksu["lat"], "lng": kalguksu["lng"]})
+    assert dup.status_code == 409 and dup.json()["detail"]["pin_id"] == db_id
+    assert b.post(f"/pins/{live_id}/resolve", json={"place_name": "x", "lat": 95, "lng": 127}).status_code == 422
+    other = a.post(f"/maps/{map_id}/pins", json={**live, "kakao_place_id": "kakao:777"}).json()["id"]
+    assert b.put(f"/pins/{other}/reaction", json={"type": "like"}).status_code == 200
+    promoted = b.post(f"/pins/{other}/resolve", json=hint)
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["id"] == other and promoted.json()["source"] == "db" and promoted.json()["place_name"] == bunsik["place_name"]
+    assert promoted.json()["my_reaction"]["type"] == "like"                            # 반응은 그대로
+    assert b.post(f"/pins/{other}/resolve", json=hint).status_code == 200              # 이미 db 핀 — 변화 없음
+    assert b.delete(f"/pins/{other}").status_code == 204
 
     for pin_id in (live_id, db_id):
         assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pin_id}).status_code == 201

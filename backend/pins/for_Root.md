@@ -240,3 +240,15 @@
 - 알려진 한계: 반응 수 확인과 UPDATE 사이에 다른 구성원이 반응하면 분류가 바뀐 채 반응이 붙을 수 있다(`set_reaction`이 핀 행을 잠그지 않는다). 핀 행 잠금을 양쪽에 넣을지는 필요해지면 결정.
 - 테스트: `pins/tests/test_pin_edit_466.py`(32개), 통합 — `KNOWN_MISSING`·`KNOWN_UNCOVERED`의 `PATCH /pins/{pinId}` 삭제, 골든 패스(`test_live_pin_responses_match_the_openapi_spec`)와 permission matrix(401·404 순회 + `test_pin_edit_is_author_only_and_never_for_ai_pins`)에 호출 추가.
 - 복잡도 예상 2, 실제 2.
+
+## #501 — 실시간 핀 승격 (POST /pins/{pinId}/resolve) + 핀 생성 address 힌트
+
+- 라우터: `require_with_principal("pin.resolve", load_pin)` — 구성원 누구나(찍은 사람이 아니어도), 비구성원 404. 스펙·`authz` 정책은 #537에서 이미 들어와 있어 바꾸지 않았다(`authz/tests/test_can.py`에 pin.resolve 판정만 추가).
+- `service.resolve_pin`: **source=live이고 kind=일반인 핀만** 대상이다. db 핀·AI 추천·확정 핀(확정 항목이 된 live 핀 포함)은 200으로 현재 Pin을 그대로 주고 이벤트도 없다. 확정된 live 핀은 승격되지 않는다는 뜻이니, 원하는 동작이 아니면 알려 달라.
+- 매칭: 핀의 `category`·`kakao_place_id`와 body의 `place_name`·`lat`·`lng`·`address`로 `PlaceHint`를 만들어 `places.api.match_place`. 짝이 없으면 200 변화 없음·이벤트 없음.
+- 짝이 있으면 **같은 트랜잭션**에서 `source=db`, `place_id`·`geom`(매칭된 places 행의 좌표) 채움, `kakao_place_id`·`search_query` NULL(`ck_pins_source_fields` 충족), 핀 id·memo·반응·사유·확정 항목 유지, `pin.updated`(`my_reaction` 제외). 핀 생성과 똑같이 승격이 확정된 뒤 `record_kakao_match`로 자체 DB 장소에 카카오 ID·URL을 기록한다(핀에는 남기지 않는다).
+- 같은 지도에 그 장소 핀이 이미 있으면 409 `PIN_DUPLICATE`(`detail.pin_id`=기존 핀). 자동 병합 없음 — live 핀은 그대로 남는다. 사전 조회가 놓친 동시 요청은 `uq_pins_map_place` 위반을 같은 409로 바꾼다.
+- 응답 Pin은 목록과 같은 규칙으로 조립한다(`_viewer_pin_response`: 작성자 표시 #369, 요청자의 `my_reaction`).
+- `PinCreateSearch.address`(선택, 200자)를 `PlaceHint.address`로 넘긴다. 생성·승격 모두 이름·좌표·주소 힌트는 DB·로그·응답·이벤트 어디에도 남기지 않는다(`test_hint_is_never_logged_or_stored`가 caplog·행·이벤트 페이로드를 확인).
+- 테스트: `pins/tests/test_pin_resolve_501.py`(11개), 통합 — `KNOWN_MISSING`·`KNOWN_UNCOVERED`의 resolve 삭제, 골든 패스(`test_live_pin_responses_match_the_openapi_spec`에 승격·409·변화 없음), permission matrix(401·404 순회 + 구성원 누구나 승격).
+- 복잡도 예상 3, 실제 3.
