@@ -94,7 +94,8 @@ def _fill_pinnable(results: list[PlaceSearchResult], db: Session) -> None:
     자체 DB를 못 읽으면 검색은 살리고 pinnable만 생략한다(스펙상 optional, FE는 true로 본다)."""
     if not results:
         return
-    hints = [PlaceHint(r.place_id, r.place_name, r.lat, r.lng, r.category or "") for r in results]
+    # 주소는 이름이 비슷한 점포를 가르는 보조 비교에만 쓴다(#500) — 저장·로깅하지 않는다
+    hints = [PlaceHint(r.place_id, r.place_name, r.lat, r.lng, r.category or "", address=r.address) for r in results]
     try:
         flags = api.pinnable_flags(hints, db=db)
     except SQLAlchemyError as exc:
