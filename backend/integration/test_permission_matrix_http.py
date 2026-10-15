@@ -51,11 +51,17 @@ def _endpoints(w):
     return [
         ("GET map", "GET", f"/maps/{m}", None),
         ("GET members", "GET", f"/maps/{m}/members", None),
+        ("POST owner", "POST", f"/maps/{m}/owner", {"user_id": "user_b"}),
+
         ("PATCH map", "PATCH", f"/maps/{m}", {"title": "새 제목"}),
         ("POST invite", "POST", f"/maps/{m}/invite", None),
+        ("GET invites", "GET", f"/maps/{m}/invites", None),
+        ("DELETE invite", "DELETE", f"/invites/{w['token']}", None),
         ("GET counts", "GET", f"/maps/{m}/counts", None),
         ("GET pins", "GET", f"/maps/{m}/pins", None),
         ("POST pin", "POST", f"/maps/{m}/pins", w["new_pin"]),
+        ("PATCH pin", "PATCH", f"/pins/{pin}", {"memo": "고침"}),
+        ("POST pin resolve", "POST", f"/pins/{pin}/resolve", {"place_name": "성수 칼국수", "lat": 37.5445, "lng": 127.0561}),
         ("DELETE pin", "DELETE", f"/pins/{pin}", None),
         ("PUT reaction", "PUT", f"/pins/{pin}/reaction", {"type": "like"}),
         ("DELETE reaction", "DELETE", f"/pins/{pin}/reaction", None),
@@ -141,6 +147,51 @@ def test_control_member_reads_every_get_endpoint(world):
     bad = [f"{n}: {world['a'].get(p).status_code}" for n, p in reads if world["a"].get(p).status_code != 200]
     assert not bad, bad
     assert len(reads) >= 8
+
+
+def test_only_the_owner_can_hand_over_ownership(world):
+    """방장 직접 넘기기(#468, owner.transfer)는 방장만 — 구성원은 403이고 방장은 그대로다."""
+    a, b, m = world["a"], world["b"], world["map"]
+    assert b.post(f"/maps/{m}/owner", json={"user_id": "user_b"}).status_code == 403
+    assert a.get(f"/maps/{m}").json()["my_role"] == "owner"
+    assert a.post(f"/maps/{m}/owner", json={"user_id": "user_b"}).status_code == 200
+    assert a.get(f"/maps/{m}").json()["my_role"] == "member"
+    assert b.get(f"/maps/{m}").json()["my_role"] == "owner"
+
+def test_pin_edit_is_author_only_and_never_for_ai_pins(world):
+    """핀 수정(#466, pin.edit) — 구성원이어도 남의 핀은 403이고, 게시된 AI 추천 핀은 그 핀을 올린 사람도 못 고친다."""
+    a, b, p = world["a"], world["b"], world["pin"]
+    assert b.patch(f"/pins/{p}", json={"memo": "b가 고침"}).status_code == 403
+    assert a.patch(f"/pins/{p}", json={"memo": "a가 고침"}).status_code == 403
+    for client in (a, b):
+        shown = next(x for x in client.get(f"/maps/{world['map']}/pins").json() if x["id"] == p)
+        assert shown["permissions"]["can_edit"] is False and shown["kind"] in ("AI추천", "확정")
+    mine = a.post(f"/maps/{world['map']}/pins", json=world["new_pin"]).json()["id"]
+    assert a.patch(f"/pins/{mine}", json={"memo": "내 핀"}).status_code == 200
+    assert b.patch(f"/pins/{mine}", json={"memo": "남의 핀"}).status_code == 403
+
+
+def test_only_the_owner_can_list_and_revoke_invite_links(world):
+    """초대 링크 목록·끄기(#467, invite.revoke)는 방장만 — 구성원은 403이고 링크는 그대로 켜져 있다."""
+    a, b, m, token = world["a"], world["b"], world["map"], world["token"]
+    assert b.get(f"/maps/{m}/invites").status_code == 403
+    assert b.delete(f"/invites/{token}").status_code == 403
+    assert a.get(f"/invites/{token}").status_code == 200
+    assert a.get(f"/maps/{m}/invites").status_code == 200
+    assert a.delete(f"/invites/{token}").status_code == 204
+    assert a.get(f"/invites/{token}").status_code == 410
+
+
+def test_any_member_can_resolve_a_live_pin_but_outsiders_cannot(world):
+    """라이브 핀 승격(#501, pin.resolve) — 찍은 사람이 아니어도 구성원이면 되고, 비구성원은 404다. 짝이 없으면 아무것도 바뀌지 않는다."""
+    a, b, c, m = world["a"], world["b"], world["c"], world["map"]
+    live = a.post(f"/maps/{m}/pins", json={"source": "live", "category": "음식점", "kakao_place_id": "kakao:L1", "search_query": "곱창"}).json()["id"]
+    hint = {"place_name": "어딘가", "lat": 35.0, "lng": 129.0}
+    assert c.post(f"/pins/{live}/resolve", json=hint).status_code == 404
+    assert world["anon"].post(f"/pins/{live}/resolve", json=hint).status_code == 401
+    for client in (a, b):
+        r = client.post(f"/pins/{live}/resolve", json=hint)
+        assert r.status_code == 200 and r.json()["source"] == "live"
 
 
 def test_only_the_owner_can_edit_the_map(world):

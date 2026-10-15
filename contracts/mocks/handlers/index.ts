@@ -1,6 +1,8 @@
 import { http, passthrough } from "msw";
+import { agentHandlers } from "./agent";
 import { authHandlers } from "./auth";
 import { mapsHandlers } from "./maps";
+import { meHandlers } from "./me";
 import { pinsHandlers } from "./pins";
 import { placesHandlers } from "./places";
 import { realtimeHandlers } from "./realtime";
@@ -20,7 +22,7 @@ const externalPassthrough = http.all(
   () => passthrough(),
 );
 
-/** docs/api-spec.yaml 31개 경로 전부를 커버하는 핸들러 모음(realtime SSE 2개, GET /maps 포함) */
+/** docs/api-spec.yaml의 경로 전부를 커버하는 핸들러 모음(realtime SSE 2개, GET /maps, v2 agent 포함) */
 export const handlers = [
   externalPassthrough,
   ...authHandlers,
@@ -30,4 +32,6 @@ export const handlers = [
   ...recommendHandlers,
   ...shortlistHandlers,
   ...realtimeHandlers,
+  ...agentHandlers,
+  ...meHandlers,
 ];

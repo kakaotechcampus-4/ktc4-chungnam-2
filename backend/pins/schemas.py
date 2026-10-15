@@ -13,7 +13,7 @@ authz가 소유한다(#56 이관, mentor-review-plan.md). pins는 authz의 것�
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from authz.schemas import Permissions
 from common import categories
@@ -82,11 +82,40 @@ class PinCreateSearch(BaseModel):
     place_name: str = Field(max_length=100)
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
+    address: str | None = Field(default=None, max_length=200)   # 선택 — 이름이 비슷한 점포를 가르는 보조 힌트(#501). 저장·로깅하지 않는다
 
 
 # 스펙 PinCreateRequest = oneOf(PinCreateSearch, PinCreateLive). source로 갈린다 — live는 extra=forbid라
 # 이름·좌표가 섞이면 live에서 떨어지고, search는 source=live를 받지 않아 둘 다 실패한다(422).
 PinCreateRequest = PinCreateLive | PinCreateSearch
+
+
+class PinResolveRequest(BaseModel):
+    """실시간 핀 승격(#501, 스펙 PinResolveRequest)의 매칭 힌트 — 전부 저장하지도 로깅하지도 않는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    place_name: str = Field(min_length=1, max_length=100)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    address: str | None = Field(default=None, max_length=200)
+
+
+class PinUpdateRequest(BaseModel):
+    """핀 수정(#466, 스펙 PinUpdateRequest) — 보낸 필드만 바꾼다. 빈 객체는 422. 그 밖의 필드(장소·근거 등)는 받지 않는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    memo: str | None = Field(default=None, max_length=200)   # 빈 문자열이면 지운다
+    category: Category | None = None   # live 핀만, 반응이 없을 때만 — core.validate_update
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self):
+        if not self.model_fields_set:
+            raise ValueError("수정할 필드(memo, category)가 하나는 있어야 해요")
+        if any(getattr(self, name) is None for name in self.model_fields_set):
+            raise ValueError("memo와 category는 null일 수 없어요 — 메모는 빈 문자열로 지운다")
+        return self
 
 
 class Reaction(BaseModel):

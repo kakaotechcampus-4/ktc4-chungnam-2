@@ -13,7 +13,7 @@ from authz.policy import Role
 from authz.schemas import Permissions
 from common.errors import AppError
 from common.events import Event
-from maps.schemas import InviteSummary, Map, MapRegion, Member, NextOwner
+from maps.schemas import Invite, InviteSummary, Map, MapRegion, Member, NextOwner
 
 WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 
@@ -59,6 +59,18 @@ class MembershipEntry:
     user_id: str
     role: Role
     joined_at: datetime
+
+
+@dataclass(frozen=True)
+class InviteRecord:
+    """invites 행에서 목록·재사용 판정에 필요한 값만 추린 것(#467)."""
+
+    token: str
+    created_by: str
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+    used_count: int
 
 
 def validate_map_create(
@@ -123,14 +135,63 @@ def invite_expires_at(now: datetime) -> datetime:
     return now + INVITE_TTL
 
 
-def check_invite_acceptable(expires_at: datetime, now: datetime) -> None:
-    """만료된 초대는 410 INVITE_EXPIRED(#159, 없는 토큰의 404 INVITE_NOT_FOUND와 구분한다 —
-    수락 화면이 "새 링크를 요청하세요"를 안내해야 해서 계약이 둘을 나눴다). 조회(GET)와
+def check_invite_acceptable(
+    expires_at: datetime, now: datetime, revoked_at: datetime | None = None
+) -> None:
+    """방장이 끈 초대는 410 INVITE_REVOKED(#467), 만료된 초대는 410 INVITE_EXPIRED(#159, 없는 토큰의
+    404 INVITE_NOT_FOUND와 구분한다 — 수락 화면이 "새 링크를 요청하세요"를 안내해야 해서 계약이 둘을
+    나눴다). 끈 링크가 만료까지 지났어도 끈 쪽이 먼저다 — 방장의 의사가 더 구체적인 사유다. 조회(GET)와
     수락(POST)이 같은 판정을 쓴다."""
     if expires_at.tzinfo is None or now.tzinfo is None:
         raise ValueError("expires_at·now는 모두 timezone-aware여야 합니다")
+    if revoked_at is not None:
+        raise AppError("INVITE_REVOKED")
     if now >= expires_at:
         raise AppError("INVITE_EXPIRED")
+
+
+def is_invite_live(invite: InviteRecord, now: datetime) -> bool:
+    """끄지 않았고 만료 전이다 — 목록과 재사용이 같은 기준을 쓴다."""
+    return invite.revoked_at is None and now < invite.expires_at
+
+
+def live_invites_newest_first(invites: Iterable[InviteRecord], now: datetime) -> list[InviteRecord]:
+    """GET /maps/{mapId}/invites(#467) — 유효한 링크만, 만든 시각 최신순. 같은 시각이면 토큰 순(결정적)."""
+    return sorted(
+        (i for i in invites if is_invite_live(i, now)), key=lambda i: (i.created_at, i.token), reverse=True
+    )
+
+
+def pick_reusable_invite(
+    invites: Iterable[InviteRecord], user_id: str, now: datetime
+) -> InviteRecord | None:
+    """POST /maps/{mapId}/invite(#467) — 내가 만든 유효한 링크 중 가장 최근 것. 남이 만든 링크는 재사용하지
+    않는다(끄는 권한과 "누가 만든 링크인지" 표시가 어긋난다). 없으면 None — 호출부가 새로 만든다."""
+    live = live_invites_newest_first((i for i in invites if i.created_by == user_id), now)
+    return live[0] if live else None
+
+
+def check_invite_revocable(principal: Principal) -> None:
+    """DELETE /invites/{token}(#467) — 토큰만으론 지도를 알 수 없어 라우터 가드를 못 쓴다. 그 지도의 구성원이
+    아니면 토큰의 존재를 흘리지 않도록 없는 토큰(404)과 같게, 구성원인데 방장이 아니면 403이다."""
+    if principal.role is None:
+        raise AppError("INVITE_NOT_FOUND")
+    if not can(principal, "invite.revoke", Resource(type="map", map_id=principal.map_id)):
+        raise AppError("FORBIDDEN")
+
+
+def to_invite(
+    invite: InviteRecord, *, url: str, created_by_display_name: str | None = None, detailed: bool = False
+) -> Invite:
+    """발급 응답은 token·url·expires_at만, 목록(detailed)은 만든 시각·만든 사람·사용 횟수까지 싣는다.
+    만든 사람 이름을 못 구하면(users 행이 없음) '탈퇴한 구성원'(스펙 Invite)."""
+    if not detailed:
+        return Invite(token=invite.token, url=url, expires_at=invite.expires_at)
+    return Invite(
+        token=invite.token, url=url, expires_at=invite.expires_at, created_at=invite.created_at,
+        created_by_display_name=created_by_display_name or WITHDRAWN_MEMBER_NAME,
+        used_count=invite.used_count,
+    )
 
 
 def to_invite_summary(
@@ -190,6 +251,16 @@ def can_leave(role: Role | None, successor: str | None) -> bool:
     if role is None:
         return False
     return role != "owner" or successor is not None
+
+
+def check_owner_target(
+    roster: Iterable[MembershipEntry], withdrawn: set[str], from_user_id: str, to_user_id: str
+) -> None:
+    """방장 직접 넘기기(#468)의 대상 검증. 지금 구성원이고, 탈퇴하지 않았고, 나 자신이 아니어야 한다 —
+    아니면 422 OWNER_TARGET_INVALID. 구성원이 아닌 사람과 없는 사용자를 구분하지 않는다(존재를 흘리지 않는다)."""
+    member_ids = {m.user_id for m in roster}
+    if to_user_id == from_user_id or to_user_id not in member_ids or to_user_id in withdrawn:
+        raise AppError("OWNER_TARGET_INVALID")
 
 
 def check_leave_allowed(role: Role, successor: str | None) -> None:
@@ -277,6 +348,16 @@ def map_deleted_event(map_id: str) -> Event:
     """docs/events.md map.deleted — public 채널. 삭제와 같은 트랜잭션에 기록한다(#369)."""
     return Event(map_id=map_id, channel="public", type="map.deleted", payload={"map_id": map_id})
 
+
+def owner_changed_event(map_id: str, from_user_id: str, to_user_id: str) -> Event:
+    """docs/events.md owner.changed — public 채널(#468). member.left를 재사용하지 않는다: 두 사람 모두
+    지도에 남아 있다."""
+    return Event(
+        map_id=map_id,
+        channel="public",
+        type="owner.changed",
+        payload={"map_id": map_id, "from_user_id": from_user_id, "to_user_id": to_user_id},
+    )
 
 def map_updated_event(map_id: str, updated: NewMap) -> Event:
     """docs/events.md map.updated — public 채널(#465). 요청자 기준 값(permissions)은 싣지 않는다.

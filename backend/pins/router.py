@@ -21,7 +21,7 @@ from pins.deps import DbSession
 from pins.loaders import load_pin
 from pins.models import Pin as PinRow
 from pins.schemas import (
-    Category, FilterCounts, Pin, PinCreateRequest, PinKind, Reaction, ReactionRequest, ReasonChip,
+    Category, FilterCounts, Pin, PinCreateRequest, PinKind, PinResolveRequest, PinUpdateRequest, Reaction, ReactionRequest, ReasonChip,
 )
 from shortlist import api as shortlist_api
 
@@ -29,6 +29,8 @@ router = APIRouter(tags=["pins"], dependencies=[Depends(get_current_user)])
 
 PinsForMap = Depends(require_map_member())          # GET — 조회는 액션이 아니라 멤버십만
 PinToCreate = Depends(require_on_map("pin.create"))  # POST — 생성은 실제 액션 판정
+PinToEdit = Depends(require_with_principal("pin.edit", load_pin))   # PATCH — 찍은 사람만(AI 추천·확정 제외는 service)
+PinToResolve = Depends(require_with_principal("pin.resolve", load_pin))   # POST resolve — 구성원 누구나(#501)
 PinToDelete = Depends(require_with_principal("pin.delete", load_pin))
 PinForReaction = Depends(require("pin.react", load_pin))
 PinForRevert = Depends(require("pin.revert", load_pin))
@@ -83,6 +85,29 @@ def post_pin(
     db: Session = DbSession,
 ):
     return service.create_pin(db, map_id=mapId, principal=principal, req=body)
+
+
+@router.patch("/pins/{pinId}", response_model=Pin, response_model_exclude_none=True)
+def patch_pin(
+    body: PinUpdateRequest,
+    editable=PinToEdit,
+    db: Session = DbSession,
+):
+    pin, principal = editable
+    return service.update_pin(db, pin=pin, principal=principal, req=body)
+
+
+@router.post("/pins/{pinId}/resolve", response_model=Pin, response_model_exclude_none=True)
+def resolve_pin(
+    body: PinResolveRequest,
+    resolvable=PinToResolve,
+    db: Session = DbSession,
+):
+    pin, principal = resolvable
+    return service.resolve_pin(
+        db, pin=pin, principal=principal, req=body,
+        current_member_ids=maps_api.DbMembershipGateway(db).current_member_ids(pin.map_id),
+    )
 
 
 @router.delete("/pins/{pinId}", status_code=204)

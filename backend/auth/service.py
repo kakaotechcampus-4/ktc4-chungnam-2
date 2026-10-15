@@ -13,10 +13,12 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from agent import api as agent_api
 from auth import core
 from auth.models import User
 from common.errors import AppError
 from common.settings import settings
+from feedback import api as feedback_api
 from maps import api as maps_api
 from pins import api as pins_api
 from recommend import api as recommend_api
@@ -163,7 +165,7 @@ def revoke_sessions(db: Session, *, user_id: str) -> None:
 
 
 def withdraw_user(db: Session, *, user_id: str) -> User:
-    """탈퇴 처리(12절, #155) — users 행은 soft delete, 그 사람의 반응·근거 줄은 삭제한다.
+    """탈퇴 처리(12절, #155) — users 행은 soft delete, 그 사람의 반응·근거 줄은 삭제하고 피드백은 작성자 연결만 끊는다(#10).
 
     방장인 지도는 먼저 후임에게 넘기고, 넘길 사람이 없으면 지도를 삭제한다(#369 10번). 탈퇴자의
     멤버십 행은 남는다(#245) — 핀 작성자 표시에 쓴다.
@@ -173,12 +175,17 @@ def withdraw_user(db: Session, *, user_id: str) -> User:
     모든 쓰기는 같은 트랜잭션이라 중간에 실패하면 함께 롤백된다.
 
     맨 먼저 속한 지도 행을 id 순서로 잠근다(#435) — 같은 지도의 나가기·양도와 줄을 세워 서로 어긋난
-    상태를 보지 않게 하고, 순서가 고정이라 교착도 없다."""
-    maps_api.lock_member_maps(db, user_id)
+    상태를 보지 않게 하고, 순서가 고정이라 교착도 없다.
+
+    잠근 지도 목록은 agent 정리에 그대로 넘긴다(#512) — 그 사람의 열람 기록과 그 지도들의 요약을 지운다
+    (docs/agent-v2.md 12.9)."""
+    map_ids = maps_api.lock_member_maps(db, user_id)
     row = get_active_user_or_401(db, user_id=user_id)
     maps_api.transfer_or_delete_owned_maps(db, user_id)
     pins_api.delete_reactions_by_user(db, user_id=user_id)
     recommend_api.delete_evidence_lines_by_author(db, user_id=user_id)
+    agent_api.delete_by_user(db, user_id=user_id, map_ids=map_ids)
+    feedback_api.anonymize_by_user(db, user_id=user_id)
     row.deleted_at = datetime.now(timezone.utc)
     db.flush()
     return row

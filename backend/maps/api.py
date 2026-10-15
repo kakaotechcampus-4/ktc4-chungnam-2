@@ -55,11 +55,26 @@ def count_members(db: Session, map_id: str) -> int:
     return service.member_count(db, map_id)
 
 
+def get_map_for_agent(db: Session, map_id: str) -> dict | None:
+    """agent 스냅샷(docs/agent-v2.md 12.7, #522)이 부른다. 읽기 전용, 커밋하지 않는다.
+    `{map_id, start_date, end_date, deleted: bool, members: [{user_id, joined_at}]}`. 구성원은 지금 구성원만
+    (탈퇴자 제외, `count_members`와 같은 기준), joined_at 순. 지도가 없으면 None, 삭제된 지도는 deleted=True에
+    members 빈 목록."""
+    return service.get_map_for_agent(db, map_id=map_id)
+
+
 def lock_member_maps(db: Session, user_id: str) -> list[str]:
     """탈퇴(auth.service.withdraw_user)가 맨 먼저 부른다(#435, docs/architecture.md "동시성: 지도 행
     잠금으로 줄을 세운다"). 이 사용자가 속한 삭제되지 않은 지도 행을 지도 id 순서로 FOR UPDATE 잠그고
     그 id를 돌려준다. 나가기·지도 삭제와 같은 행을 잠가 줄을 선다. 커밋하지 않는다."""
     return service.lock_member_maps(db, user_id=user_id)
+
+
+def lock_map_if_alive(db: Session, map_id: str) -> bool:
+    """agent가 모델 호출 뒤 저장 트랜잭션 맨 앞에서 부른다(docs/agent-v2.md 12.4, #512). 지도 행을 FOR UPDATE로
+    잠그고(lock_member_maps와 같은 방식, docs/architecture.md "동시성: 지도 행 잠금으로 줄을 세운다", #435)
+    삭제되지 않았으면 True. 삭제된 지도와 없는 지도는 False — 호출부는 아무것도 쓰지 않는다. 커밋하지 않는다."""
+    return service.lock_map_if_alive(db, map_id=map_id)
 
 
 def transfer_or_delete_owned_maps(db: Session, user_id: str) -> None:

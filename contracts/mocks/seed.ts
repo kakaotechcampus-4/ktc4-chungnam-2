@@ -126,6 +126,13 @@ export function buildBaseState(): StoreState {
     routes: {},
     invites: {},
     eventLog: [],
+    ...buildAgentState(mapId),
+    notifications: [
+      { id: "ntf_1", type: "pin_reaction", map_id: mapId, map_title: "제주도 여행", pin_id: "pin_1", message: "지우님이 내 핀에 ♥를 남겼어요", created_at: "2026-10-14T09:00:00Z", read: false },
+      { id: "ntf_2", type: "member_joined", map_id: mapId, map_title: "제주도 여행", message: "민수님이 지도에 들어왔어요", created_at: "2026-10-13T09:00:00Z", read: true },
+    ],
+    notificationPrefs: {},
+    feedback: [],
   };
 }
 
@@ -254,4 +261,51 @@ export function buildCandidates(regionLabel: string) {
       permissions: { can_publish: true },
     },
   ];
+}
+
+/**
+ * v2 계획 보조 에이전트 시드(docs/agent-v2.md, #510). 지도 제안 하나(확정 리스트에 카페가 없음)와 음식점 우리 조건 요약 하나.
+ * 문장은 실서버처럼 서버 렌더 결과를 그대로 둔다 — FE는 숫자나 슬롯을 다루지 않는다.
+ */
+export const SEED_SUGGESTION_ID = "sug_1";
+export function buildAgentState(mapId: string): Pick<StoreState, "agentSettings" | "agentSuggestions" | "agentSummaries" | "runAdvice"> {
+  const now = new Date("2026-10-15T09:00:00+09:00");
+  return {
+    agentSettings: {},
+    agentSuggestions: {
+      [SEED_SUGGESTION_ID]: {
+        map_id: mapId,
+        status: "active",
+        viewed_by: [],
+        suggestion: {
+          id: SEED_SUGGESTION_ID,
+          diagnosis: "category_gap",
+          category: "카페",
+          title: "확정 리스트에 카페가 아직 없어요",
+          analysis: null,
+          advice: [{ text: "확정 2곳 중 카페 0곳", is_guess: false }],
+          actions: [
+            { index: 0, type: "open_recommend", label: "카페 추천 받기", params: { category: "카페" } },
+            { index: 1, type: "show_pins", label: "카페 핀 보기", params: { category: "카페" } },
+          ],
+          created_at: now.toISOString(),
+          expires_at: new Date(now.getTime() + 24 * 3600 * 1000).toISOString(),
+        },
+      },
+    },
+    agentSummaries: {
+      [mapId]: [
+        {
+          category: "음식점",
+          must_keep: [{ fact_key: "spicy_focused", label: "매운 곳 제외", member_count: 1 }],
+          common_prefs: [{ fact_key: "cuisine_raw_fish", label: "횟집 원함", member_count: 2 }],
+          split_prefs: [{ fact_key: "franchise", label: "체인점", want_count: 1, avoid_count: 1 }],
+          vague_fixable: { count: 1, requests: ["어떤 점이 별로였는지 적어 주시면 추천에 반영돼요"] },
+          not_filtered: { count: 1, notices: ["알러지 같은 조건은 추천이 거르지 않아요. 가게에 직접 확인해 주세요."] },
+          updated_at: now.toISOString(),
+        },
+      ],
+    },
+    runAdvice: {},
+  };
 }

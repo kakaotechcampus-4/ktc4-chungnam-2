@@ -83,6 +83,8 @@ export const pinsHandlers = [
         visibility: "public",
         source: "live",
         kakao_place_id: body.kakao_place_id,
+        // #445 — 카카오 장소 페이지 링크. 저장하지 않고 장소 ID로 만든다(백엔드 pins/core.py::kakao_place_url과 같은 규칙)
+        ...(body.kakao_place_id.startsWith("kakao:") ? { place_url: `https://place.map.kakao.com/${body.kakao_place_id.slice("kakao:".length)}` } : {}),
         search_query: body.search_query.trim(),
         ...(body.memo ? { memo: body.memo } : {}),
         created_by: ME_USER_ID,
@@ -181,6 +183,33 @@ export const pinsHandlers = [
       if (body.memo === "") delete pin.memo;
       else pin.memo = body.memo;
     }
+    pin.permissions = pinPermissions(pin);
+    emitEvent(pin.map_id, "public", "pin.updated", pin);
+    return HttpResponse.json(pin);
+  }),
+
+  // #501 실시간 핀 승격 — 힌트(이름·좌표·주소)는 저장하지 않는다. 목 서버는 같은 분류의 시드 장소와 이름이 같으면 짝으로 본다.
+  http.post("*/pins/:pinId/resolve", async ({ params, request }) => {
+    const pinId = params.pinId as string;
+    const pin = store.pins[pinId];
+    if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    const body = (await request.json()) as { place_name?: string; lat?: number; lng?: number; address?: string };
+    if (!body.place_name?.trim() || typeof body.lat !== "number" || typeof body.lng !== "number" || Math.abs(body.lat) > 90 || Math.abs(body.lng) > 180) {
+      return apiError(422, "VALIDATION_ERROR", "이름과 좌표가 필요해요");
+    }
+    if (pin.source !== "live") return HttpResponse.json(pin); // 이미 자체 DB 핀 · AI 추천·확정 핀 — 변화 없음
+    const own = SEED_PLACES.find((p) => p.place_name === body.place_name!.trim() && p.category === pin.category && !NOT_IN_OWN_DB.has(p.place_id));
+    if (!own) return HttpResponse.json(pin); // 짝 없음 — 변화 없음
+    const dup = Object.values(store.pins).find((p) => p.id !== pinId && p.map_id === pin.map_id && (p as any)._place_id === own.place_id);
+    if (dup) return apiError(409, "PIN_DUPLICATE", "이미 지도에 있는 장소예요", { pin_id: dup.id });
+    pin.source = "db";
+    pin.lat = own.lat;
+    pin.lng = own.lng;
+    pin.place_name = own.place_name;
+    if (own.place_source?.url) pin.place_url = own.place_source.url;
+    delete pin.kakao_place_id;
+    delete pin.search_query;
+    (pin as any)._place_id = own.place_id;
     pin.permissions = pinPermissions(pin);
     emitEvent(pin.map_id, "public", "pin.updated", pin);
     return HttpResponse.json(pin);

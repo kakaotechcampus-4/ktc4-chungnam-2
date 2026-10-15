@@ -230,25 +230,87 @@ def list_maps(db: Session, *, user_id: str) -> list[Map]:
     return responses
 
 
-def create_invite(db: Session, *, map_id: str, creator_id: str, base_url: str) -> Invite:
-    """base_url은 router가 만든 값을 그대로 받는다 — settings.frontend_base_url이 있으면
+def _invite_record(row: InviteRow) -> core.InviteRecord:
+    return core.InviteRecord(
+        token=row.token, created_by=row.created_by, created_at=row.created_at,
+        expires_at=row.expires_at, revoked_at=row.revoked_at, used_count=row.used_count,
+    )
+
+
+def _live_invite_rows(db: Session, map_id: str, now: datetime) -> list[InviteRow]:
+    """끄지 않았고 만료 전인 이 지도의 링크 — 목록과 재사용이 쓴다. 끈·만료된 행은 쿼리에서 거른다."""
+    return list(db.execute(
+        select(InviteRow).where(
+            InviteRow.map_id == map_id, InviteRow.revoked_at.is_(None), InviteRow.expires_at > now
+        )
+    ).scalars().all())
+
+
+def create_invite(db: Session, *, map_id: str, creator_id: str, base_url: str) -> tuple[Invite, bool]:
+    """(링크, 새로 만들었는가). 내가 이 지도에 만든 유효한 링크가 있으면 새로 만들지 않고 그것을 돌려준다(#467,
+    토큰이 계속 늘지 않게). 남이 만든 링크는 재사용하지 않는다. 호출부가 새로 만들었으면 201, 재사용이면 200.
+
+    base_url은 router가 만든 값을 그대로 받는다 — settings.frontend_base_url이 있으면
     그 값(FE 오리진, 루트 확정 2026-09-23 — maps/for_Root.md 항목 6 해결), 없으면 예전처럼
     request.base_url(백엔드 자신의 주소). 결과 URL은 `/invites/{token}` 경로를 프론트의
     "초대 수락 화면"(#4 잔여 항목)이 받아서 POST /invites/{token}/accept를 호출하는 걸
     전제로 한다."""
-    token = secrets.token_urlsafe(INVITE_TOKEN_BYTES)
     now = datetime.now(timezone.utc)
+    reusable = core.pick_reusable_invite(
+        (_invite_record(row) for row in _live_invite_rows(db, map_id, now)), creator_id, now
+    )
+    if reusable is not None:
+        return core.to_invite(reusable, url=core.build_invite_url(base_url, reusable.token)), False
+
+    token = secrets.token_urlsafe(INVITE_TOKEN_BYTES)
     expires_at = core.invite_expires_at(now)
 
     invite_row = InviteRow(token=token, map_id=map_id, created_by=creator_id, expires_at=expires_at)
     db.add(invite_row)
     db.flush()
 
-    return Invite(token=token, url=core.build_invite_url(base_url, token), expires_at=expires_at)
+    return Invite(token=token, url=core.build_invite_url(base_url, token), expires_at=expires_at), True
+
+
+def list_invites(db: Session, *, map_id: str, base_url: str) -> list[Invite]:
+    """유효한 초대 링크, 만든 시각 최신순(#467). 방장인지는 라우터의 require_on_map("invite.revoke")가 봤다.
+    만든 사람 이름은 배치 조회한다(auth.api.display_names — 탈퇴자는 '탈퇴한 구성원'으로 이미 가려서 준다)."""
+    now = datetime.now(timezone.utc)
+    records = core.live_invites_newest_first(
+        (_invite_record(row) for row in _live_invite_rows(db, map_id, now)), now
+    )
+    names = auth_api.display_names(db, list({r.created_by for r in records}))
+    return [
+        core.to_invite(
+            r, url=core.build_invite_url(base_url, r.token),
+            created_by_display_name=names.get(r.created_by), detailed=True,
+        )
+        for r in records
+    ]
+
+
+def revoke_invite(db: Session, *, token: str, user_id: str) -> None:
+    """링크 끄기(#467). 토큰이 없거나 삭제된 지도의 것이면 404, 그 지도의 구성원이 아니어도 404(존재를 흘리지
+    않는다), 구성원인데 방장이 아니면 403. 이미 끈 링크는 아무것도 바꾸지 않고 통과한다(멱등 204) — 처음 끈
+    시각을 덮어쓰지 않는다. 이미 참여한 사람은 그대로 남는다."""
+    invite_row = db.execute(
+        select(InviteRow)
+        .join(MapRow, MapRow.id == InviteRow.map_id)
+        .where(InviteRow.token == token, MapRow.deleted_at.is_(None))
+    ).scalar_one_or_none()
+    if invite_row is None:
+        raise AppError("INVITE_NOT_FOUND")
+    roster, _withdrawn = roster_of(db, invite_row.map_id)
+    core.check_invite_revocable(
+        Principal(user_id=user_id, map_id=invite_row.map_id, role=core.role_in(roster, user_id))
+    )
+    if invite_row.revoked_at is None:
+        invite_row.revoked_at = datetime.now(timezone.utc)
+        db.flush()
 
 
 def _acceptable_invite_or_raise(db: Session, token: str) -> InviteRow:
-    """없으면 404 INVITE_NOT_FOUND, 만료면 410 INVITE_EXPIRED — 조회와 수락이 공유한다.
+    """없으면 404 INVITE_NOT_FOUND, 끈 링크는 410 INVITE_REVOKED, 만료면 410 INVITE_EXPIRED — 조회와 수락이 공유한다.
     삭제된 지도(#369)의 토큰은 없는 토큰과 같다 — 만료 여부보다 먼저 404다."""
     invite_row = db.execute(
         select(InviteRow)
@@ -257,7 +319,7 @@ def _acceptable_invite_or_raise(db: Session, token: str) -> InviteRow:
     ).scalar_one_or_none()
     if invite_row is None:
         raise AppError("INVITE_NOT_FOUND")
-    core.check_invite_acceptable(invite_row.expires_at, datetime.now(timezone.utc))
+    core.check_invite_acceptable(invite_row.expires_at, datetime.now(timezone.utc), invite_row.revoked_at)
     return invite_row
 
 
@@ -363,11 +425,50 @@ def transfer_owner(db: Session, *, map_id: str, from_user_id: str, to_user_id: s
     )
 
 
+def hand_over_owner(db: Session, *, map_id: str, from_user_id: str, to_user_id: str) -> Map:
+    """방장 직접 넘기기(#468). 방장인지는 라우터의 require_on_map("owner.transfer")가 이미 봤지만, 지도 행을
+    잠근 뒤 멤버십을 다시 읽어 확인한다 — 나가기·탈퇴·다른 위임과 줄을 서서, 그 사이 방장이 바뀌었거나 대상이
+    나갔어도 이미 나간 사람에게 방장이 넘어가지 않는다(#369 13번). 나는 member로 남는다(나가기가 아니다).
+    owner.changed는 같은 트랜잭션에 기록한다. 응답은 요청자(이제 구성원) 기준 Map."""
+    get_map_or_404(db, map_id, for_update=True)
+    roster, withdrawn = roster_of(db, map_id)
+    if core.role_in(roster, from_user_id) != "owner":
+        raise AppError("FORBIDDEN")  # 잠그기 전에 다른 요청이 이미 방장을 바꿨다
+    core.check_owner_target(roster, withdrawn, from_user_id, to_user_id)
+    transfer_owner(db, map_id=map_id, from_user_id=from_user_id, to_user_id=to_user_id)
+    record_event(db, core.owner_changed_event(map_id, from_user_id, to_user_id))
+    return get_map_response(db, map_id=map_id, viewer_id=from_user_id)
+
+
 def remove_membership(db: Session, *, map_id: str, user_id: str) -> None:
     """나가기는 행을 지운다(#369 7번). 다시 수락하면 새 행·새 joined_at으로 순서 맨 뒤에 선다."""
     db.execute(
         delete(MembershipRow).where(MembershipRow.map_id == map_id, MembershipRow.user_id == user_id)
     )
+
+
+def get_map_for_agent(db: Session, *, map_id: str) -> dict | None:
+    """agent 스냅샷용(#522). 삭제된 지도도 행이 있으면 돌려준다 — agent가 deleted로 관찰을 멈춘다.
+    구성원은 member_count와 같은 기준(탈퇴자 제외, 나간 사람은 행이 없다)이고 joined_at 순이다.
+    삭제된 지도는 구성원을 읽지 않고 빈 목록이다."""
+    row = db.execute(
+        select(MapRow.id, MapRow.start_date, MapRow.end_date, MapRow.deleted_at).where(MapRow.id == map_id)
+    ).one_or_none()
+    if row is None:
+        return None
+    deleted = row.deleted_at is not None
+    members = []
+    if not deleted:
+        roster, withdrawn = roster_of(db, map_id)
+        members = [
+            {"user_id": m.user_id, "joined_at": m.joined_at}
+            for m in sorted(roster, key=lambda m: (m.joined_at, m.user_id))
+            if m.user_id not in withdrawn
+        ]
+    return {
+        "map_id": row.id, "start_date": row.start_date, "end_date": row.end_date,
+        "deleted": deleted, "members": members,
+    }
 
 
 def _owned_map_ids(db: Session, *, user_id: str) -> list[str]:
@@ -396,6 +497,15 @@ def lock_member_maps(db: Session, *, user_id: str) -> list[str]:
         .order_by(MapRow.id)
         .with_for_update()
     ).scalars().all())
+
+
+def lock_map_if_alive(db: Session, *, map_id: str) -> bool:
+    """지도 행을 FOR UPDATE로 잠그고 삭제되지 않았으면 True(#512). 삭제된 지도도 행은 잠근다 — 잠근 뒤에
+    deleted_at을 봐야 삭제와 줄을 선 결과다. 지도가 없으면 False. 커밋하지 않는다(잠금은 트랜잭션 끝까지)."""
+    deleted_at = db.execute(
+        select(MapRow.deleted_at).where(MapRow.id == map_id).with_for_update()
+    ).one_or_none()
+    return deleted_at is not None and deleted_at[0] is None
 
 
 def transfer_or_delete_owned_maps(db: Session, *, user_id: str) -> None:

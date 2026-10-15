@@ -177,6 +177,7 @@ describe("에러 시나리오", () => {
     expect(pin.lat).toBeUndefined();
     expect(pin.lng).toBeUndefined();
     expect(pin.place_name).toBeUndefined();
+    expect(pin.place_url).toBe("https://place.map.kakao.com/live-1");   // #445 — 실시간 핀도 카카오 장소 페이지 링크
     const dup = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify(body) });
     expect(dup.status).toBe(409);
     // 반응은 자체 DB 핀과 똑같이 된다
@@ -382,6 +383,41 @@ describe("#466·#473·#474 — 핀 수정, 지도를 눌러 핀, 링크 해석",
     expect((await send("/pins/nope", "PATCH", { memo: "x" })).status).toBe(404);
   });
 
+  it("POST /pins/{id}/resolve: 짝이 있으면 live 핀이 db 핀이 되고 반응·id는 유지, pin.updated, 힌트는 저장 안 함", async () => {
+    const live = await (await send("/maps/map_1/pins", "POST", { source: "live", category: "카페", kakao_place_id: "kakao:live-2", search_query: "바다 카페" })).json();
+    expect((await send(`/pins/${live.id}/reaction`, "PUT", { type: "like" })).status).toBe(200);
+    const before = store.eventLog.length;
+    const r = await send(`/pins/${live.id}/resolve`, "POST", { place_name: "해운대 바다 카페", lat: 35.1587, lng: 129.1604, address: "부산 해운대구 중동" });
+    expect(r.status).toBe(200);
+    const pin = await r.json();
+    expect(pin).toMatchObject({ id: live.id, source: "db", place_name: "해운대 바다 카페", category: "카페" });
+    expect(pin.kakao_place_id).toBeUndefined();
+    expect(pin.search_query).toBeUndefined();
+    expect(pin.reaction_summary.like).toBe(1); // 반응 유지
+    expect(store.eventLog.slice(before).find((e) => e.type === "pin.updated")?.data).toMatchObject({ id: live.id, source: "db" });
+    expect(JSON.stringify(pin)).not.toContain("부산 해운대구 중동"); // 힌트(주소)는 응답·저장에 없다
+    // 이미 db 핀이면 변화 없음 200
+    expect((await (await send(`/pins/${live.id}/resolve`, "POST", { place_name: "아무거나", lat: 1, lng: 1 })).json()).source).toBe("db");
+  });
+
+  it("POST /pins/{id}/resolve: 짝이 없으면 200 + live 그대로(이벤트 없음), 같은 장소 핀이 이미 있으면 409, 힌트 누락은 422", async () => {
+    const live = await (await send("/maps/map_1/pins", "POST", { source: "live", category: "음식점", kakao_place_id: "kakao:mock-6", search_query: "곱창" })).json();
+    const before = store.eventLog.length;
+    const none = await send(`/pins/${live.id}/resolve`, "POST", { place_name: "성수 노포 곱창", lat: 37.5445, lng: 127.0557 });
+    expect(none.status).toBe(200);
+    expect((await none.json()).source).toBe("live");
+    expect(store.eventLog.slice(before).some((e) => e.type === "pin.updated")).toBe(false);
+
+    const dupLive = await (await send("/maps/map_1/pins", "POST", { source: "live", category: "음식점", kakao_place_id: "kakao:live-3", search_query: "밀면" })).json();
+    const dbPin = await (await send("/maps/map_1/pins", "POST", { category: "음식점", place_id: "kakao:mock-1", place_name: "해운대 밀면", lat: 35.1631, lng: 129.1639 })).json();
+    const dup = await send(`/pins/${dupLive.id}/resolve`, "POST", { place_name: "해운대 밀면", lat: 35.1631, lng: 129.1639 });
+    expect(dup.status).toBe(409);
+    expect((await dup.json()).detail.pin_id).toBe(dbPin.id);
+
+    expect((await send(`/pins/${live.id}/resolve`, "POST", { lat: 1, lng: 1 })).status).toBe(422);
+    expect((await send("/pins/nope/resolve", "POST", { place_name: "x", lat: 1, lng: 1 })).status).toBe(404);
+  });
+
   it("GET /places/nearest: 100m 안 자체 DB 장소만 가까운 순, 없으면 빈 배열, lat·lng 없으면 422", async () => {
     const near = await (await fetch(`${BASE}/places/nearest?lat=35.1631&lng=129.1639`)).json();
     expect(near.map((p: { place_name: string }) => p.place_name)).toEqual(["해운대 밀면"]);
@@ -466,6 +502,58 @@ describe("#469·#471 — 지난 추천 기록, 확정 리스트 내보내기", (
     store.shortlist["map_1"] = [];
     expect(await (await fetch(`${BASE}/maps/map_1/shortlist/export`)).text()).toBe("확정한 장소가 아직 없어요\n");
     expect((await (await fetch(`${BASE}/maps/map_1/shortlist/export?format=csv`)).text()).trim().split("\r\n").length).toBe(1);
+  });
+});
+
+describe("#470·#10 — 알림함·알림 설정, 서비스 피드백", () => {
+  const send = (path: string, method: string, body?: unknown) =>
+    fetch(`${BASE}${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+
+  it("GET /me/notifications: 최근순, unread_count는 전체 기준, limit·before 커서, unread_only", async () => {
+    const all = await (await fetch(`${BASE}/me/notifications`)).json();
+    expect(all.items.map((n: { id: string }) => n.id)).toEqual(["ntf_1", "ntf_2"]);
+    expect(all.unread_count).toBe(1);
+    expect(all.next_before).toBeUndefined();
+    const first = await (await fetch(`${BASE}/me/notifications?limit=1`)).json();
+    expect(first.items).toHaveLength(1);
+    expect(first.next_before).toBe("ntf_1");
+    const next = await (await fetch(`${BASE}/me/notifications?limit=1&before=${first.next_before}`)).json();
+    expect(next.items.map((n: { id: string }) => n.id)).toEqual(["ntf_2"]);
+    expect(next.next_before).toBeUndefined();
+    expect((await (await fetch(`${BASE}/me/notifications?unread_only=true`)).json()).items).toHaveLength(1);
+    expect((await fetch(`${BASE}/me/notifications?limit=0`)).status).toBe(422);
+  });
+
+  it("POST /me/notifications/read: ids만 읽음, 모르는 id는 무시, 생략하면 전부, 100개 초과는 422", async () => {
+    expect((await send("/me/notifications/read", "POST", { ids: ["ntf_1", "ntf_nope"] })).status).toBe(204);
+    expect((await (await fetch(`${BASE}/me/notifications`)).json()).unread_count).toBe(0);
+    store.notifications[1].read = false;
+    expect((await send("/me/notifications/read", "POST")).status).toBe(204);
+    expect(store.notifications.every((n) => n.read)).toBe(true);
+    expect((await send("/me/notifications/read", "POST", { ids: Array.from({ length: 101 }, (_, i) => `n${i}`) })).status).toBe(422);
+  });
+
+  it("알림 설정: 종류 전부를 돌려주고 보낸 것만 바꾼다, 모르는 종류·빈 목록은 422", async () => {
+    const prefs = await (await fetch(`${BASE}/me/notification-prefs`)).json();
+    expect(prefs.prefs.map((p: { type: string }) => p.type)).toEqual(["pin_reaction", "member_joined", "owner_changed", "map_deleted", "my_ai_pin_published"]);
+    expect(prefs.prefs.every((p: { enabled: boolean }) => p.enabled)).toBe(true);
+    const put = await (await send("/me/notification-prefs", "PUT", { prefs: [{ type: "pin_reaction", enabled: false }] })).json();
+    expect(put.prefs.find((p: { type: string }) => p.type === "pin_reaction").enabled).toBe(false);
+    expect(put.prefs.find((p: { type: string }) => p.type === "member_joined").enabled).toBe(true);
+    expect((await send("/me/notification-prefs", "PUT", { prefs: [{ type: "weekly_digest", enabled: true }] })).status).toBe(422);
+    expect((await send("/me/notification-prefs", "PUT", { prefs: [] })).status).toBe(422);
+  });
+
+  it("POST /feedback: 201 + id, 공백뿐이면 422, 1000자 초과 422, 시간당 상한은 429", async () => {
+    const ok = await send("/feedback", "POST", { message: "  지도가 느려요  ", category: "bug", map_id: "map_1" });
+    expect(ok.status).toBe(201);
+    expect(typeof (await ok.json()).id).toBe("string");
+    expect(store.feedback[0]).toMatchObject({ message: "지도가 느려요", category: "bug" }); // 앞뒤 공백 제거
+    expect((await send("/feedback", "POST", { message: "   " })).status).toBe(422);
+    expect((await send("/feedback", "POST", { message: "가".repeat(1001) })).status).toBe(422);
+    expect((await send("/feedback", "POST", { message: "x", category: "praise" })).status).toBe(422);
+    for (let i = 0; i < 9; i++) await send("/feedback", "POST", { message: `m${i}` });
+    expect((await send("/feedback", "POST", { message: "넘침" })).status).toBe(429);
   });
 });
 
@@ -858,5 +946,67 @@ describe("#340·회의 14번 — 지도 목록 구분과 후보 좌표", () => {
       expect(typeof c.lat).toBe("number");
       expect(typeof c.lng).toBe("number");
     }
+  });
+});
+
+describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
+  it("바텀시트 상태: 기본 켜짐, 시드 제안 하나와 음식점 요약, 열람 전이라 점이 켜져 있다", async () => {
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(state.settings).toMatchObject({ enabled: true, updated_by: null });
+    expect(state.active_suggestion).toMatchObject({ id: "sug_1", diagnosis: "category_gap", category: "카페" });
+    expect(state.has_unseen).toBe(true);
+    expect(state.summaries[0].category).toBe("음식점");
+    expect(state.summaries[0].not_filtered.notices[0]).toContain("가게에 직접 확인");
+    expect(state.active_suggestion.claims).toBeUndefined(); // 서버 내부 값은 싣지 않는다
+  });
+
+  it("열람하면 점이 꺼지고, 열람은 멱등이다", async () => {
+    for (let i = 0; i < 2; i++) {
+      const r = await fetch(`${BASE}/agent/suggestions/sug_1/view`, { method: "POST" });
+      expect(r.status).toBe(204);
+    }
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(state.has_unseen).toBe(false);
+  });
+
+  it("수락은 동작 설명만 돌려주고 agent.resolved를 낸다. 두 번째 처리는 409 SUGGESTION_RESOLVED", async () => {
+    const res = await fetch(`${BASE}/agent/suggestions/sug_1/accept`, { method: "POST", body: JSON.stringify({ action_index: 0 }) });
+    expect(res.status).toBe(200);
+    expect((await res.json()).action).toMatchObject({ type: "open_recommend", params: { category: "카페" } });
+    const ev = store.eventLog.at(-1)!;
+    expect(ev).toMatchObject({ type: "agent.resolved", channel: "public", data: { suggestion_id: "sug_1", status: "accepted", resolved_action_type: "open_recommend" } });
+    const again = await fetch(`${BASE}/agent/suggestions/sug_1/dismiss`, { method: "POST" });
+    expect(again.status).toBe(409);
+    expect((await again.json()).code).toBe("SUGGESTION_RESOLVED");
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(state.active_suggestion).toBeNull();
+  });
+
+  it("범위 밖 action_index는 422", async () => {
+    const res = await fetch(`${BASE}/agent/suggestions/sug_1/accept`, { method: "POST", body: JSON.stringify({ action_index: 9 }) });
+    expect(res.status).toBe(422);
+  });
+
+  it("모드를 끄면 지금 제안이 무효화되고 settings_changed가 나간다", async () => {
+    const res = await fetch(`${BASE}/maps/map_1/agent/settings`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+    expect(await res.json()).toMatchObject({ enabled: false, updated_by: "u_me" });
+    const types = store.eventLog.slice(-2).map((e) => e.type);
+    expect(types).toEqual(["agent.resolved", "agent.settings_changed"]);
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(state.active_suggestion).toBeNull();
+    expect(state.has_unseen).toBe(false);
+  });
+
+  it("추천 막힘 조언: 결과가 적은 내 run은 200, 대상이 아니면 204, 남의 run은 403", async () => {
+    resetScenario("no-results");
+    const mine = await fetch(`${BASE}/runs/run_no_results/advice`);
+    expect(mine.status).toBe(200);
+    expect(await mine.json()).toMatchObject({ kind: "radius", actions: [{ type: "widen_radius" }] });
+
+    store.runAdvice["run_no_results"] = null;
+    expect((await fetch(`${BASE}/runs/run_no_results/advice`)).status).toBe(204);
+
+    store.runRequestedBy["run_no_results"] = "u_2";
+    expect((await fetch(`${BASE}/runs/run_no_results/advice`)).status).toBe(403);
   });
 });

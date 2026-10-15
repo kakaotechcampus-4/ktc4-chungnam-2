@@ -372,7 +372,7 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
   )
 }
 
-/** 하단 탭의 AI. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 핑고, 활성만 파랑 채움 + 흰 핑고(#299). */
+/** 하단 탭의 AI. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 핑고, 활성만 파랑 채움 + 핑고(#299). */
 function AiTabLink({ to, label }: { to: string; label: string }) {
   return (
     <NavLink
@@ -388,7 +388,7 @@ function AiTabLink({ to, label }: { to: string; label: string }) {
               isActive ? 'bg-brand-600' : 'border-2 border-brand-300 bg-white'
             }`}
           >
-            <Pingo size={30} onFill={isActive} />
+            <Pingo size={30} />
           </span>
           {label}
         </>

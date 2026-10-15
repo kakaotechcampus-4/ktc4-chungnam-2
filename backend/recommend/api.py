@@ -3,6 +3,8 @@
 변경은 그 모듈의 api.py만). 커밋하지 않는다(common/database.py get_db가 요청당 한 번 커밋).
 """
 
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 
 from recommend import service
@@ -16,6 +18,13 @@ def delete_evidence_lines_by_author(db: Session, *, user_id: str) -> int:
 def delete_evidence_lines_by_author_in_map(db: Session, *, user_id: str, map_id: str) -> int:
     """지도 나가기용(maps, #369) — `user_id`가 그 지도의 run에 쓴 근거 줄만 지운다. run과 후보는 남긴다."""
     return service.delete_evidence_lines_by_author_in_map(db, user_id=user_id, map_id=map_id)
+
+
+def last_run_at_by_category(db: Session, *, map_id: str) -> dict[str, datetime]:
+    """agent 스냅샷(docs/agent-v2.md 12.7, #522)이 부른다 — 카테고리 → 그 지도에서 가장 최근 run의 created_at.
+    run이 없는 카테고리는 키가 없다. **후보, 근거, 요청자는 돌려주지 않는다** — run은 요청자만 보는 비공개 데이터라
+    agent는 "그 뒤에 run이 있었나"만 본다(명세 2절 2번). 읽기 전용, 커밋하지 않는다."""
+    return service.last_run_at_by_category(db, map_id=map_id)
 
 
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:

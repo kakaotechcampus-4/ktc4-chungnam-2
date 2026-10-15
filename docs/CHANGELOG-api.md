@@ -2,6 +2,61 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-15 (네 번째), 실시간 핀 승격과 주소 힌트 (#501)
+
+스펙이 먼저다. 구현은 pins·places 세션이 따로 하며, 그 전까지 `POST /pins/{pinId}/resolve`는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다.
+
+- **`POST /pins/{pinId}/resolve`** — 실시간 핀(`source: live`)을 자체 DB 핀으로 승격한다. 본문 `PinResolveRequest {place_name, lat, lng, address?}`는 화면이 `kakao_place_id`로 다시 찾은 카카오 결과를 **매칭 힌트로만** 보낸다(저장·로깅·응답 모두 없음). 서버가 핀 생성(source=search)과 같은 규칙으로 짝을 찾는다. 짝이 있으면 `source: db`로 바뀌고 `place_id`·이름·좌표·링크가 장소에서 채워진다. **핀 id·반응·사유·확정 리스트 항목은 유지**. 짝이 없으면 200 + 변화 없음, 이미 DB 핀이어도 200 + 변화 없음. 같은 지도에 그 장소의 핀이 이미 있으면 409 `PIN_DUPLICATE`(`detail.pin_id`) — 자동 병합 없음. 지도 구성원 누구나.
+- **`PinCreateSearch.address`** (선택) — 검색 결과의 주소를 그대로. 이름이 비슷한 점포를 가르는 보조 힌트이며 저장·로깅하지 않는다. 안 보내도 지금처럼 동작한다.
+- **이벤트**: 승격하면 `pin.updated`(페이로드 `Pin`). 다시 받기 표에 "승격이면 마커·상세 같이 갱신"을 적었다.
+- **권한**: 새 member 액션 `pin.resolve`. `authz/policy.py`를 같은 PR에서 맞췄다.
+- **FE 할 일**: 화면이 live 핀의 이름·좌표를 `kakao_place_id`로 찾을 때마다(이미 `source: db`인 핀은 호출하지 않는다) 결과를 이 API로 보내고, 응답이 `db`면 핀을 갈아끼운다. 200 + live면 아무것도 바꾸지 않는다. 같은 호출을 반복하지 않게 핀마다 세션당 한 번만 시도한다. 검색 결과로 핀을 만들 때는 `PinCreateSearch.address`에 결과의 `address`를 함께 보낸다(#478과 함께).
+- **BE 할 일**: pins가 힌트를 `PlaceHint`에 넣어 `places.api.match_place`로 보낸다(저장·로깅 금지). places 라우터의 `_fill_pinnable`이 `r.address`를 쓰는 것은 pins 쪽이 병합된 뒤.
+## 2026-10-15 (다섯 번째), V2 알림함과 서비스 피드백 (#470, #10)
+
+스펙이 먼저다. 구현은 notifications 모듈(신설)과 feedback이 따로 하며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다.
+
+- **알림함 (notifications 태그)**: 앱 안 알림만 있다. 푸시·이메일은 없다.
+  - `GET /me/notifications?limit&before&unread_only` — 최근순 `NotificationList {items, unread_count, next_before?}`. `unread_count`는 페이지와 무관한 전체 수. 로그인만 필요하다(나간 지도의 알림도 남는다).
+  - `POST /me/notifications/read {ids?}` — `ids`를 주면 그 알림만, 생략하면 전부. 멱등이고 모르는 id는 조용히 무시한다. 204.
+  - `GET /me/notification-prefs`, `PUT /me/notification-prefs {prefs:[{type,enabled}]}` — 종류는 `pin_reaction`(내 핀에 반응), `member_joined`(내 지도에 새 구성원, 방장만), `owner_changed`(내가 방장이 됨), `map_deleted`(내 지도가 삭제됨), `my_ai_pin_published`(내가 요청한 AI 추천이 올라감). 행이 없으면 켜짐. 끈 종류는 만들 때 거른다.
+  - `Notification {id, type, map_id, map_title?, pin_id?, message, created_at, read}` — `message`는 서버 문장이고 **반대 사유 원문·메모는 싣지 않는다**. 내가 한 일의 알림은 나에게 만들지 않는다.
+- **피드백 (feedback 태그)**: `POST /feedback {message, category?, map_id?}` → 201 `{id, created_at}`. 사용자당 상한이 있다(429 `RATE_LIMITED`). 저장만 한다.
+- **실시간은 없다**: 알림에는 SSE 이벤트를 새로 만들지 않았다(`docs/events.md` 변경 없음). FE는 앱을 열 때·포커스가 돌아올 때·알림함을 열 때 불러온다.
+- **권한**: 새 액션 없음 — `/me/*`와 `/feedback`은 로그인만 본다.
+- **DB**: `docs/data-model.md`에 `notifications`, `notification_prefs`, `feedback` 절. 마이그레이션은 구현 PR이 head 다음 번호로 만든다.
+- **BE 할 일(알림 만들기)**: 반응(pins)·새 구성원·방장 변경·지도 삭제(maps)·AI 핀 게시(recommend)가 이벤트를 쓰는 같은 트랜잭션에서 `notifications.api.notify`를 부른다. 그 모듈 변경은 notifications 모듈이 선 뒤 각 모듈 PR이 따로 건다.
+- **FE 할 일**: 종 모양 배지·알림함·설정 화면, 상단바 피드백 바텀시트. 목 서버로 먼저 시작할 수 있다.
+
+## 2026-10-15 (세 번째), V2 계획 보조 에이전트 계약 (#510)
+
+스펙이 먼저다. 명세는 `docs/agent-v2.md`. 구현은 agent 모듈 M0부터 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다. 모델 호출 추가는 결정 이슈 #509에서 정하고, M0은 모델 없이 shadow로 돈다.
+
+- **엔드포인트 (agent 태그)**
+  - `GET /maps/{mapId}/agent` — 바텀시트 상태 `AgentState`(모드, 지금 제안, 미열람 점, 카테고리별 우리 조건 요약). 구성원 누구나.
+  - `PUT /maps/{mapId}/agent/settings {enabled}` — 모드 켜고 끄기, 구성원 누구나(`agent.toggle`). 응답 `AgentSettings`.
+  - `POST /agent/suggestions/{suggestionId}/view` — 열람 기록(204, 멱등, 이벤트 없음).
+  - `POST /agent/suggestions/{suggestionId}/accept {action_index}` — 버튼 하나 수락. 응답 `{action}`은 FE가 손으로 할 때와 같은 API로 실행할 동작이다. 서버는 대신 실행하지 않는다.
+  - `POST /agent/suggestions/{suggestionId}/dismiss` — 닫기(204). 지도 단위로 모두에게서 닫힌다.
+- **엔드포인트 (recommend 태그)**: `GET /runs/{runId}/advice` — 추천 막힘 조언 `RunAdvice`, 요청한 본인만. 대상이 아니거나 조언이 없으면 204.
+- **스키마**: `AgentState`, `AgentSettings`, `AgentSuggestion`, `AgentAction`, `AgentAdviceLine`, `AgentAnalysis`, `AgentSummary` 등. 문장은 모두 서버 렌더이고 FE는 숫자나 슬롯을 다루지 않는다.
+- **이벤트(전체 채널)**: `agent.suggested`, `agent.resolved`, `agent.summary_updated`, `agent.settings_changed`. 다시 받기 표도 갱신했다.
+- **권한**: 새 액션 `agent.toggle`, `agent.suggestion.resolve`(member). 조언은 기존 `recommend.manage`. `authz/policy.py`를 같은 PR에서 맞췄다.
+- **에러 코드**: `SUGGESTION_RESOLVED`(409) — 이미 처리된 제안. `common/errors.py` CATALOG도 맞췄다.
+- **DB**: `docs/data-model.md` agent 절에 테이블 7개. 마이그레이션은 M0에서.
+- **FE 할 일**: 버튼, 점, 바텀시트 골격을 목 서버로 먼저 시작할 수 있다(M0 FE 이슈).
+
+## 2026-10-15 (두 번째), 실시간 핀에도 카카오 장소 페이지 링크 (#445)
+
+- **API 스키마는 그대로다.** 실시간 핀(`source: live`)도 `Pin.place_url`이 채워진다. 카카오 장소 ID로 응답 때 만들고 저장하지 않는다. 전에는 자체 DB 핀만 있었다.
+- **FE:** 핀 상세에서 종류와 상관없이 `place_url`이 있으면 "카카오맵에서 보기"를 외부 브라우저로 연다(앱 안 WebView 금지, 카카오 약관).
+- 장소를 `place_id` 하나로 가리키는 큰 정리(#444, #446)의 1단계다.
+
+## 2026-10-15, 늦게까지 영업·술 판매를 음식점 조건으로도 쓴다 (#461)
+
+- **API 스키마는 그대로다.** 음식점 추천에서 `open_late`(밤 10시 이후까지 여는가), `serves_alcohol`(술도 파는 곳)이 조건 체크(`Candidate.checks`)와 근거 줄의 `fact_key`로 나올 수 있다. 전에는 카페에서만 썼다.
+- "늦게까지 하는 데로", "술 한잔할 수 있는 곳" 같은 사유가 음식점 추천에 반영된다. ♥한 가게의 이 두 라벨은 선호로 쓰지 않는다(직접 쓴 사유로만).
+
 ## 2026-10-13 (세 번째), V2 기록·내보내기: 지난 추천 기록·확정 리스트 내보내기 (#469, #471)
 
 스펙이 먼저다. 구현은 이슈별로 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다.
@@ -11,6 +66,12 @@
 - **`GET /maps/{mapId}/shortlist/export?format=txt|csv`** (#471) — 구성원 누구나. 확정 순서대로 순서·이름·분류·카카오 링크·메모. live 핀은 이름 대신 검색어 + "(이름 확인 필요)". CSV는 UTF-8 BOM. 응답은 JSON이 아니라 파일이다(`text/plain`·`text/csv`, `Content-Disposition: attachment`).
 - **에러 코드**: `RUN_NOT_FINISHED`(409). `common/errors.py` CATALOG도 함께 맞췄다.
 - **FE 할 일:** #482(지난 추천 기록), #484(내보내기). 목 서버에서 먼저 붙일 수 있다.
+
+## 2026-10-15 (네 번째), `GET /places/nearest` 구현에 맞춘 보정 (#473)
+
+- 응답에 `503 PLACES_UNAVAILABLE`을 추가했다(자체 DB를 못 읽을 때 — `GET /places/search`와 같다). 그 외 계약은 그대로다.
+- 결과의 `place_id`는 `own:<자체 DB 장소 UUID>`, `place_source.provider`는 `permit`·`tourapi`, `place_source.url`은 없다. 그대로 `POST /maps/{mapId}/pins`의 `source: search`로 보내면 된다(`own:` ID는 카카오 ID로 기록되지 않는다).
+- 호출 상한은 `GET /places/search`와 같은 사용자별 버킷을 쓴다. 누른 좌표는 uvicorn 접근 로그의 쿼리스트링에서도 지운다.
 
 ## 2026-10-13 (두 번째), V2 핀: 핀 수정·지도를 눌러 핀·링크 해석 (#466, #473, #474)
 
