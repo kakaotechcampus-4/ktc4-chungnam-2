@@ -7,7 +7,12 @@
                                       [--exclude-bars] [--constraints ...] [--dry-run]
     python -m places.load cafes   --file cafe_seoul_curated.csv [--labels cafe_seoul_curated_labels.json|.csv]
                                   [--exclude-bars] [--constraints ...] [--dry-run]
-    python -m places.load restaurant-labels --file restaurant_seoul_curated_labels.json [--constraints ...] [--dry-run]
+    python -m places.load restaurant-labels --file restaurant_seoul_curated_labels.json [--overwrite] [--constraints ...] [--dry-run]
+
+- 정예 우선(#507): `restaurants`·`cafes`·`tourapi`에 `--authoritative`를 주면 같은 (source, source_id)의 이름·분류·주소·좌표를 파일 값으로
+  갱신한다(분류가 달라도). 정예 라벨은 원래 파일 값이 같은 (장소, fact_key)를 덮는다.
+  `permit`(인허가 커버리지)은 이미 있는 장소의 이름·분류·좌표를 건드리지 않고 신규 행만 넣는다. `restaurant-labels`는 기본이 커버리지용 —
+  이미 있는 (장소, fact_key) 라벨을 건드리지 않고 없는 키만 넣는다(`--overwrite`면 덮는다). 적재 순서: 정예 → 커버리지.
 
 - 서울만. 인허가는 폐업을 새로 넣지 않고(이미 있는 장소가 폐업으로 바뀌면 status만 갱신), 좌표가 없는 행·업태
   대응표에 없는 행은 건너뛴다. 건너뛴 이유는 건수로 보고한다.
@@ -45,44 +50,55 @@ def read_csv_rows(path: Path, encoding: str | None = None) -> list[dict[str, str
 
 def load_permit(db: Session, path: Path, *, crs: str, encoding: str | None, seoul_only: bool = True) -> list[str]:
     rows, report = ingest.parse_permit_rows(read_csv_rows(path, encoding), crs=crs, seoul_only=seoul_only)
-    result = repository.upsert_places(db, rows)
-    lines = report.lines() + [
-        f"DB: 신규 {result.inserted}, 갱신 {result.updated}, 폐업으로 변경 {result.closed_marked}, "
-        f"폐업(신규라 적재 안 함) {result.closed_ignored}"
+    result = repository.upsert_places(db, rows, existing_mode="keep")   # 인허가 커버리지는 이미 있는 장소를 건드리지 않는다(#507)
+    return report.lines() + _place_db_lines(result) + [
+        f"DB: 폐업으로 변경 {result.closed_marked}, 폐업(신규라 적재 안 함) {result.closed_ignored}"
     ]
-    if result.category_kept:
-        lines.append(f"  ! 다른 분류로 이미 있음 {result.category_kept}행 — 분류를 바꾸지 않고 건너뛰었다")
-    return lines
 
 
 def _place_db_lines(result: repository.PlaceUpsertResult) -> list[str]:
     lines = [f"DB: 신규 {result.inserted}, 갱신 {result.updated}"]
+    if result.updated:
+        lines.append(f"  갱신 중 이름 바뀜 {result.name_changed}, 분류 바뀜 {result.category_changed}")
+    if result.existing_kept:
+        lines.append(f"  이미 있어 건드리지 않음 {result.existing_kept}행(이름·분류·좌표 유지)")
     if result.category_kept:
         lines.append(f"  ! 다른 분류로 이미 있음 {result.category_kept}행 — 분류를 바꾸지 않고 건너뛰었다")
     return lines
 
 
+def _existing_mode(authoritative: bool) -> str:
+    """정예 파일(--authoritative)은 같은 (source, source_id)의 이름·분류를 파일 값으로 덮는다(#507)."""
+    return "overwrite" if authoritative else "refresh"
+
+
 def load_tourapi(
-    db: Session, path: Path, *, seoul_only: bool = True, labels: Path | None = None, constraints: Path = DEFAULT_CONSTRAINTS
+    db: Session, path: Path, *, seoul_only: bool = True, labels: Path | None = None, constraints: Path = DEFAULT_CONSTRAINTS,
+    authoritative: bool = False,
 ) -> list[str]:
     """관광지·문화시설·시장(contenttypeid 12·14·38). 라벨 파일이 주어지면 장소 다음에 같은 트랜잭션으로 넣는다."""
     items = ingest.extract_tourapi_items(json.loads(path.read_text(encoding="utf-8")))
     rows, report = ingest.parse_tourapi_items(items, seoul_only=seoul_only)
-    result = repository.upsert_places(db, rows)
+    result = repository.upsert_places(db, rows, existing_mode=_existing_mode(authoritative))
     lines = report.lines() + _place_db_lines(result)
     if labels is not None:
         lines = ["[장소]"] + lines + ["[라벨]"] + _load_label_file(db, labels, constraints=constraints)
     return lines
 
 
-def load_labels(db: Session, path: Path, *, constraints: Path, encoding: str | None) -> list[str]:
+def _label_db_line(result: repository.FactUpsertResult) -> str:
+    skipped = f"장소를 못 찾아 건너뜀 {result.place_not_found}" if result.place_not_found else "장소 못 찾음 0"
+    kept = f", 이미 있어 건드리지 않음 {result.kept}" if result.kept else ""
+    return f"DB: place_facts upsert {result.upserted}{kept}, {skipped}"
+
+
+def load_labels(db: Session, path: Path, *, constraints: Path, encoding: str | None, overwrite: bool = True) -> list[str]:
     allowed = ingest.allowed_fact_keys_from_constraints(constraints.read_text(encoding="utf-8"))
     if not allowed:
         raise ValueError(f"{constraints}: fact_key를 하나도 읽지 못했다 — 경로 확인")
     labels, report = ingest.parse_label_rows(read_csv_rows(path, encoding), allowed)
-    result = repository.upsert_facts(db, labels)
-    skipped = f"장소를 못 찾아 건너뜀 {result.place_not_found}" if result.place_not_found else "장소 못 찾음 0"
-    return report.lines() + [f"DB: place_facts upsert {result.upserted}, {skipped}"]
+    result = repository.upsert_facts(db, labels, overwrite=overwrite)
+    return report.lines() + [_label_db_line(result)]
 
 
 def _read_curated_labels(path: Path) -> list[dict]:
@@ -92,14 +108,13 @@ def _read_curated_labels(path: Path) -> list[dict]:
     return data
 
 
-def _load_curated_labels(db: Session, path: Path, *, constraints: Path) -> list[str]:
+def _load_curated_labels(db: Session, path: Path, *, constraints: Path, overwrite: bool = True) -> list[str]:
     allowed = ingest.allowed_fact_keys_from_constraints(constraints.read_text(encoding="utf-8"))
     if not allowed:
         raise ValueError(f"{constraints}: fact_key를 하나도 읽지 못했다 — 경로 확인")
     labels, report = ingest.parse_label_rows(ingest.curated_labels_to_rows(_read_curated_labels(path)), allowed)
-    result = repository.upsert_facts(db, labels)
-    skipped = f"장소를 못 찾아 건너뜀 {result.place_not_found}" if result.place_not_found else "장소 못 찾음 0"
-    return report.lines() + [f"DB: place_facts upsert {result.upserted}, {skipped}"]
+    result = repository.upsert_facts(db, labels, overwrite=overwrite)
+    return report.lines() + [_label_db_line(result)]
 
 
 def _load_label_file(db: Session, path: Path, *, constraints: Path, encoding: str | None = None) -> list[str]:
@@ -110,11 +125,12 @@ def _load_label_file(db: Session, path: Path, *, constraints: Path, encoding: st
 
 
 def load_cafes(
-    db: Session, path: Path, *, labels: Path | None, constraints: Path, exclude_bars: bool = False, encoding: str | None = None
+    db: Session, path: Path, *, labels: Path | None, constraints: Path, exclude_bars: bool = False, encoding: str | None = None,
+    authoritative: bool = False,
 ) -> list[str]:
     """카페 납품본: 장소 CSV(분류 카페)를 먼저 넣고(같은 트랜잭션) 라벨 JSON/CSV가 주어지면 이어서 넣는다."""
     rows, report = ingest.parse_cafe_rows(read_csv_rows(path, encoding), exclude_bars=exclude_bars)
-    result = repository.upsert_places(db, rows)
+    result = repository.upsert_places(db, rows, existing_mode=_existing_mode(authoritative))
     lines = ["[장소]"] + report.lines() + _place_db_lines(result)
     if labels is not None:
         lines += ["[라벨]"] + _load_label_file(db, labels, constraints=constraints, encoding=encoding)
@@ -122,11 +138,12 @@ def load_cafes(
 
 
 def load_restaurants(
-    db: Session, path: Path, *, labels: Path | None, constraints: Path, exclude_bars: bool, encoding: str | None = None
+    db: Session, path: Path, *, labels: Path | None, constraints: Path, exclude_bars: bool, encoding: str | None = None,
+    authoritative: bool = False,
 ) -> list[str]:
     """음식점 납품본: 장소 CSV를 먼저 넣고(같은 트랜잭션) 라벨 JSON이 주어지면 이어서 넣는다."""
     rows, report = ingest.parse_curated_rows(read_csv_rows(path, encoding), exclude_bars=exclude_bars)
-    result = repository.upsert_places(db, rows)
+    result = repository.upsert_places(db, rows, existing_mode=_existing_mode(authoritative))
     lines = ["[장소]"] + report.lines() + _place_db_lines(result)
     if labels is not None:
         lines += ["[라벨]"] + _load_label_file(db, labels, constraints=constraints, encoding=encoding)
@@ -149,6 +166,12 @@ def main(argv: list[str] | None = None, *, session_factory: Callable[[], Session
             p.add_argument("--constraints", type=Path, default=DEFAULT_CONSTRAINTS)
         if name in ("restaurants", "cafes", "tourapi"):
             p.add_argument("--labels", type=Path, default=None, help="라벨 JSON 또는 CSV — 있으면 장소 다음에 같은 트랜잭션으로 적재")
+        if name in ("restaurants", "cafes", "tourapi"):
+            p.add_argument("--authoritative", action="store_true",
+                           help="정예 파일 — 같은 (source, source_id)의 이름·분류·주소·좌표를 파일 값으로 갱신한다(분류가 달라도, #507). 라벨은 원래 파일 값이 이긴다")
+        if name == "restaurant-labels":
+            p.add_argument("--overwrite", action="store_true",
+                           help="이미 있는 (장소, fact_key) 라벨도 파일 값으로 덮는다. 기본은 인허가 커버리지용 — 있는 라벨은 건드리지 않고 없는 키만 넣는다(#507)")
         if name in ("restaurants", "cafes"):
             p.add_argument("--exclude-bars", action="store_true", help="유흥·주점류(정종/대포집/소주방, 감성주점) 제외 — 루트 결정 대기")
     args = parser.parse_args(argv)
@@ -169,21 +192,24 @@ def main(argv: list[str] | None = None, *, session_factory: Callable[[], Session
             if args.labels is not None and not args.labels.is_file():
                 print(f"파일이 없다: {args.labels}", file=sys.stderr)
                 return 2
-            lines = load_tourapi(db, args.file, labels=args.labels, constraints=args.constraints)
+            lines = load_tourapi(db, args.file, labels=args.labels, constraints=args.constraints,
+                                 authoritative=args.authoritative)
         elif args.command == "restaurants":
             if args.labels is not None and not args.labels.is_file():
                 print(f"파일이 없다: {args.labels}", file=sys.stderr)
                 return 2
             lines = load_restaurants(db, args.file, labels=args.labels, constraints=args.constraints,
-                                     exclude_bars=args.exclude_bars, encoding=args.encoding)
+                                     exclude_bars=args.exclude_bars, encoding=args.encoding,
+                                     authoritative=args.authoritative)
         elif args.command == "cafes":
             if args.labels is not None and not args.labels.is_file():
                 print(f"파일이 없다: {args.labels}", file=sys.stderr)
                 return 2
             lines = load_cafes(db, args.file, labels=args.labels, constraints=args.constraints,
-                              exclude_bars=args.exclude_bars, encoding=args.encoding)
+                              exclude_bars=args.exclude_bars, encoding=args.encoding,
+                              authoritative=args.authoritative)
         elif args.command == "restaurant-labels":
-            lines = _load_curated_labels(db, args.file, constraints=args.constraints)
+            lines = _load_curated_labels(db, args.file, constraints=args.constraints, overwrite=args.overwrite)
         else:
             lines = load_labels(db, args.file, constraints=args.constraints, encoding=args.encoding)
         if args.dry_run:
