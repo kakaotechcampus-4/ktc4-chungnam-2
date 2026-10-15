@@ -130,5 +130,17 @@ def pick_match(hint: PlaceHint, candidates: Sequence[Candidate]) -> PlaceMatch |
     return _match(best)
 
 
+LINK_MATCH_RADIUS_M = 100.0   # 구글 링크 좌표에서 이 거리 안의 자체 DB 장소만 본다(#474)
+LINK_MAX_MATCHES = 5
+
+
+def pick_link_matches(name_hint: str, candidates: Sequence[Candidate]) -> list[Candidate]:
+    """구글 링크의 이름과 같은 곳으로 볼 만한 후보만, 가까운 순 최대 LINK_MAX_MATCHES. 이름이 안 맞으면 버린다 —
+    같은 건물의 다른 가게를 내밀지 않는다. 반경은 후보를 주는 쪽(DB)이 판정했다."""
+    kept = [c for c in candidates if c.category in OWN_CATEGORIES and name_score(name_hint, c.name) >= NAME_MIN_SCORE]
+    kept.sort(key=lambda c: (c.distance_m if c.distance_m is not None else math.inf, c.place_id))
+    return kept[:LINK_MAX_MATCHES]
+
+
 def _match(c: Candidate) -> PlaceMatch:
     return PlaceMatch(place_id=c.place_id, name=c.name, lat=c.lat, lng=c.lng, category=c.category)

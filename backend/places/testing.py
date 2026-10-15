@@ -128,16 +128,28 @@ class FakePlaces:
     def get_facts(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, list[FactLabel]]:
         return {pid: list(self.facts.get(pid, [])) for pid in place_ids}   # 라벨이 없으면 빈 리스트
 
+    def own_places_near(self, lat: float, lng: float, radius_m: float, limit: int, *, db: Session | None = None) -> list[Candidate]:
+        near = sorted(
+            (r for r in self.rows if r.status == "open" and haversine_distance_m(lat, lng, r.lat, r.lng) <= radius_m),
+            key=lambda r: haversine_distance_m(lat, lng, r.lat, r.lng),
+        )[:limit]
+        return [Candidate(r.place_id, r.name, r.lat, r.lng, r.category, r.kakao_place_id,
+                          haversine_distance_m(lat, lng, r.lat, r.lng), r.address) for r in near]
+
+    def own_places_by_kakao_id(self, kakao_place_id: str, *, db: Session | None = None) -> list[Candidate]:
+        return [self._candidate(r, None) for r in self.rows if r.status == "open" and r.kakao_place_id == kakao_place_id]
+
     # ---- 편의 ----
 
     def place_id(self, key: str) -> str:
         return sample_id(key)
 
     def install(self, monkeypatch) -> "FakePlaces":
-        """places.api의 6개 공개 함수를 이 대역으로 바꾼다(pytest monkeypatch)."""
+        """places.api의 공개 함수(링크 해석용 2개 포함)를 이 대역으로 바꾼다(pytest monkeypatch)."""
         from places import api
 
-        for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "get_facts"):
+        for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "get_facts",
+                     "own_places_near", "own_places_by_kakao_id"):
             monkeypatch.setattr(api, name, getattr(self, name))
         return self
 

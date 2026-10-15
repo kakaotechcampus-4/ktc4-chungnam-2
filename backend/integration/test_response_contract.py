@@ -23,9 +23,14 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
+    ("GET", "/me/notifications"): "#470 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/me/notifications/read"): "#470 구현 PR이 골든 패스에 넣고 지운다",
+    ("GET", "/me/notification-prefs"): "#470 구현 PR이 골든 패스에 넣고 지운다",
+    ("PUT", "/me/notification-prefs"): "#470 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/feedback"): "#10 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/pins/{pinId}/resolve"): "#501 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
-    ("POST", "/places/from-link"): "#474 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/maps/{mapId}/agent"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("PUT", "/maps/{mapId}/agent/settings"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/agent/suggestions/{suggestionId}/view"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
@@ -159,6 +164,14 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.get("/places/search", params={"q": "해운대", "lat": 35.16, "lng": 129.16}).status_code == 200
     assert a.get("/places/search", params={"q": "존재하지않는가게"}).json() == []
     assert a.get("/places/search", params={"q": ""}).status_code == 422
+
+    # 지도 링크 해석(#474) — 구글(자체 DB 짝 있음)·카카오(짝 없음 → needs_search_query)·에러 봉투 422
+    google_link = "https://www.google.com/maps/place/%EC%84%B1%EC%88%98+%EC%B9%BC%EA%B5%AD%EC%88%98/@37.5440,127.0560,17z/data=!8m2!3d37.5445!4d127.0561"
+    found = a.post("/places/from-link", json={"url": google_link})
+    assert found.status_code == 200 and len(found.json()["matches"]) == 1
+    assert a.post("/places/from-link", json={"url": "https://place.map.kakao.com/1234567"}).json()["needs_search_query"] is True
+    assert a.post("/places/from-link", json={"url": "https://naver.me/abc"}).status_code == 422   # LINK_NOT_SUPPORTED
+    assert a.post("/places/from-link", json={"url": ""}).status_code == 422
 
     pin_ids = []
     for key in ("seongsu-kalguksu", "hongdae-ramen", "seongsu-cafe-a"):

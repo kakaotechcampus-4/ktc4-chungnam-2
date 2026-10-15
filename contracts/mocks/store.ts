@@ -68,6 +68,9 @@ export interface StoreState {
   agentSuggestions: Record<string, AgentSuggestionEntity>; // suggestionId -> 제안
   agentSummaries: Record<string, AgentSummary[]>; // mapId -> 카테고리별 우리 조건 요약
   runAdvice: Record<string, RunAdvice | null>; // runId -> 추천 막힘 조언. null이면 204
+  notifications: Schemas["Notification"][]; // 내 알림함(#470) — 목 서버는 단일 사용자라 나만 있다
+  notificationPrefs: Record<string, boolean>; // 알림 종류 -> 켜짐. 없으면 켜짐
+  feedback: { id: string; user_id: string; message: string; category: string; map_id?: string; created_at: string }[]; // #10
 }
 
 function emptyState(): StoreState {
@@ -91,6 +94,9 @@ function emptyState(): StoreState {
     agentSuggestions: {},
     agentSummaries: {},
     runAdvice: {},
+    notifications: [],
+    notificationPrefs: {},
+    feedback: [],
   };
 }
 

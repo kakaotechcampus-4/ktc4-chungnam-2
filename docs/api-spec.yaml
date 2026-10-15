@@ -24,6 +24,10 @@ tags:
   - name: shortlist
   - name: realtime
     description: 서버→클라이언트 SSE 채널. 이벤트 페이로드의 정본은 docs/events.md
+  - name: notifications
+    description: 앱 안 알림함과 알림 설정(#470). 푸시·이메일은 없다 — 화면이 열릴 때와 알림함을 열 때 불러온다
+  - name: feedback
+    description: 서비스 피드백(#10, v2). 저장만 한다
   - name: agent
     description: v2 계획 보조 에이전트(docs/agent-v2.md). 지도를 관찰해 막힌 곳에 제안을 내지만 아무것도 직접 실행하지 않는다. 실서버 구현 전
 
@@ -554,6 +558,125 @@ paths:
       summary: 핀 삭제 — 지도 구성원 누구나 (#25, 9/4 결정). 요청자별 가능 여부는 Pin.permissions.can_delete
       parameters: [ { $ref: "#/components/parameters/PinId" } ]
       responses: { "204": { description: 삭제됨 } }
+
+  /pins/{pinId}/resolve:
+    post:
+      tags: [pins]
+      summary: |
+        실시간 핀 승격 — 자체 DB에 짝이 있으면 live 핀을 자체 DB 핀으로 바꾼다 (#501). 지도 구성원 누구나(`pin.resolve`).
+        화면이 카카오 SDK로 그 핀의 이름·좌표를 찾았을 때(`kakao_place_id`로 다시 찾은 결과) **그 값을 매칭 힌트로만** 보낸다. 서버는 `POST /maps/{mapId}/pins`(source=search)와 같은 규칙(반경·이름 유사도·주소 보조·분류 일치, 모호하면 거절)으로 자체 DB 장소를 찾는다.
+        - **짝이 있으면**: 핀이 `source: db`가 되고 `place_id`가 채워진다(`Pin.place_name`·`lat`·`lng`·`place_url`을 장소에서 가져온다). `kakao_place_id`·`search_query`는 지운다. **반응·사유·확정 리스트 항목·핀 id는 그대로 유지**된다. 전체 채널에 `pin.updated(Pin)`를 보낸다.
+        - **짝이 없으면**: 200 + 핀 그대로(`source: live` 유지). 이벤트도 없다. 화면은 데이터가 늘어난 뒤 다시 시도할 수 있다.
+        - **이미 자체 DB 핀이면** 아무것도 하지 않고 200으로 핀을 그대로 돌려준다(화면이 호출을 아끼려 거르지만 호출해도 안전).
+        - **같은 지도에 그 장소의 핀이 이미 있으면** 409 `PIN_DUPLICATE`(`detail.pin_id` = 이미 있는 핀). 자동 병합은 하지 않는다 — 두 핀의 반응·사유가 엉키므로 사람이 한쪽을 지운다.
+        - AI 추천·확정 핀은 live가 아니므로 항상 변화 없이 200이다. 분류는 핀의 `category`를 쓴다(본문에 없다).
+        - **힌트(`place_name`·`lat`·`lng`·`address`)는 저장하지도 로깅하지도 않는다**(카카오 약관). 응답에도 싣지 않는다.
+      parameters: [ { $ref: "#/components/parameters/PinId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PinResolveRequest" }
+      responses:
+        "200":
+          description: 승격됐거나(source=db) 변화 없음(source=live). 요청자 기준 Pin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Pin" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "PIN_DUPLICATE — 그 장소의 핀이 이 지도에 이미 있다 (detail.pin_id)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — 이름·좌표 누락, 범위 밖 좌표", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  # ---------- notifications / feedback (v2) ----------
+  /me/notifications:
+    get:
+      tags: [notifications]
+      summary: |
+        내 알림함 (#470) — 최근순. 로그인만 필요하다(지도 구성원 여부와 무관, 나간 지도의 알림도 남아 있다).
+        알림은 이벤트를 만든 **같은 트랜잭션**에서 수신자별로 기록된다. 내가 한 일의 알림은 나에게 만들지 않는다(자기 핀에 자기가 ♥를 남겨도 알림 없음).
+        끈 종류(`GET /me/notification-prefs`)는 만들 때 거른다. 90일이 지난 알림은 삭제된다(#168 정리 작업).
+        실시간 푸시는 없다 — FE는 앱을 열 때, 포커스가 돌아올 때, 알림함을 열 때 이 API를 부른다. `unread_count`로 종 모양 배지를 그린다.
+        알림 문장(`message`)은 서버가 만든다. **반대 사유 원문·핀 메모는 싣지 않는다.**
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: before, in: query, required: false, schema: { type: string }, description: "이전 응답의 `next_before`를 그대로 — 그보다 오래된 알림을 준다" }
+        - { name: unread_only, in: query, required: false, schema: { type: boolean, default: false } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — limit 범위 밖", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /me/notifications/read:
+    post:
+      tags: [notifications]
+      summary: |
+        알림 읽음 처리 (#470) — `ids`를 주면 그 알림만, 생략하면 내 알림 전부. 멱등이다(이미 읽은 것·남의 알림 id·없는 id는 조용히 무시한다 — 존재를 알리지 않는다).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationReadRequest" }
+      responses:
+        "204": { description: 처리됨 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — ids가 100개 초과", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /me/notification-prefs:
+    get:
+      tags: [notifications]
+      summary: 알림 설정 (#470) — 알림 종류 전부를 항상 돌려준다. 저장된 행이 없는 종류는 켜짐(기본값)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationPrefs" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [notifications]
+      summary: |
+        알림 설정 바꾸기 (#470) — 보낸 종류만 바꾸고 나머지는 둔다. 응답은 바뀐 뒤의 전체 설정.
+        끈다고 이미 쌓인 알림이 지워지지는 않는다. 앞으로 만들지 않을 뿐이다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationPrefsUpdate" }
+      responses:
+        "200":
+          description: 바뀐 뒤의 전체 설정
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationPrefs" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — 모르는 종류, 빈 목록", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /feedback:
+    post:
+      tags: [feedback]
+      summary: |
+        서비스 피드백 보내기 (#10, v2) — 로그인한 사용자 누구나. 저장만 하고 답장·알림은 없다.
+        사용자당 호출 상한이 있다(초과 시 429 RATE_LIMITED, 서버 설정 — 기본 시간당 10건).
+        내용은 사용자 입력이라 저장할 수 있다. 계정을 탈퇴하면 작성자 연결은 끊고 내용은 남긴다(운영 개선용).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FeedbackRequest" }
+      responses:
+        "201":
+          description: 저장됨
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedbackReceipt" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — 공백뿐인 내용, 1000자 초과", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /pins/{pinId}/reaction:
     put:
@@ -1385,6 +1508,89 @@ components:
         memo: { type: string, maxLength: 200, description: "빈 문자열이면 메모를 지운다" }
         category: { $ref: "#/components/schemas/Category", description: "live 핀만, 반응이 없을 때만 (PATCH /pins/{pinId} 설명 참고)" }
 
+    PinResolveRequest:
+      type: object
+      description: "실시간 핀 승격의 매칭 힌트 (#501). 전부 저장하지도 로깅하지도 않는다"
+      required: [place_name, lat, lng]
+      additionalProperties: false
+      properties:
+        place_name: { type: string, minLength: 1, maxLength: 100, description: "화면이 kakao_place_id로 다시 찾은 장소 이름(카카오 응답 그대로). 매칭 힌트" }
+        lat: { type: number, minimum: -90, maximum: 90, description: "같은 검색 결과의 좌표. 매칭 힌트" }
+        lng: { type: number, minimum: -180, maximum: 180 }
+        address: { type: string, maxLength: 200, description: "선택. 같은 검색 결과의 주소. 이름이 비슷한 점포를 가를 때만 쓰는 보조 힌트" }
+
+    NotificationType:
+      type: string
+      enum: [pin_reaction, member_joined, owner_changed, map_deleted, my_ai_pin_published]
+      description: |
+        알림 종류 (#470). `pin_reaction` 내 핀에 반응이 달림, `member_joined` 내 지도에 새 구성원(방장에게만),
+        `owner_changed` 내가 방장이 됨(직접 넘김·위임 모두), `map_deleted` 내가 속한 지도가 삭제됨,
+        `my_ai_pin_published` 내가 요청한 AI 추천이 지도에 올라감(다른 구성원이 「지도에 올리기」를 눌렀을 때).
+        지도 복구(#464)·강퇴(#8)는 그 기능이 들어올 때 종류를 더한다.
+
+    Notification:
+      type: object
+      required: [id, type, map_id, message, created_at, read]
+      properties:
+        id: { type: string }
+        type: { $ref: "#/components/schemas/NotificationType" }
+        map_id: { type: string, description: "알림이 난 지도. 삭제된 지도이면 이동할 수 없다 — FE가 `map_deleted`는 누르면 내 지도 목록으로 보낸다" }
+        map_title: { type: string, maxLength: 100, description: "알림을 만들 때의 지도 제목(그 뒤에 바뀌어도 그대로). 지도 삭제 알림을 위해 남겨 둔다" }
+        pin_id: { type: string, description: "`pin_reaction`, `my_ai_pin_published`만 — 누르면 그 핀으로 이동. 그 핀이 지워졌으면 FE가 404를 받아 조용히 지도로만 이동한다" }
+        message: { type: string, maxLength: 200, description: "서버가 만든 문장. 예 \"지우님이 내 핀에 ♥를 남겼어요\". 반대 사유·메모는 싣지 않는다" }
+        created_at: { type: string, format: date-time }
+        read: { type: boolean }
+
+    NotificationList:
+      type: object
+      required: [items, unread_count]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Notification" } }
+        unread_count: { type: integer, minimum: 0, description: "전체 안 읽은 알림 수(페이지와 무관). 99를 넘으면 FE가 99+로 그린다" }
+        next_before: { type: string, description: "더 오래된 알림이 있을 때만. 다음 요청의 `before`로 쓴다" }
+
+    NotificationReadRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        ids: { type: array, maxItems: 100, items: { type: string }, description: "생략하면 전부 읽음 처리" }
+
+    NotificationPref:
+      type: object
+      required: [type, enabled]
+      properties:
+        type: { $ref: "#/components/schemas/NotificationType" }
+        enabled: { type: boolean }
+
+    NotificationPrefs:
+      type: object
+      required: [prefs]
+      properties:
+        prefs: { type: array, items: { $ref: "#/components/schemas/NotificationPref" }, description: "알림 종류 전부, `NotificationType` 선언 순서" }
+
+    NotificationPrefsUpdate:
+      type: object
+      required: [prefs]
+      additionalProperties: false
+      properties:
+        prefs: { type: array, minItems: 1, items: { $ref: "#/components/schemas/NotificationPref" }, description: "바꿀 종류만. 같은 종류가 두 번 있으면 뒤의 것" }
+
+    FeedbackRequest:
+      type: object
+      required: [message]
+      additionalProperties: false
+      properties:
+        message: { type: string, minLength: 1, maxLength: 1000, description: "앞뒤 공백을 지운 뒤 비어 있으면 422" }
+        category: { type: string, enum: [bug, idea, other], default: other, description: "버그 / 아이디어 / 기타" }
+        map_id: { type: string, description: "선택. 피드백을 남길 때 보고 있던 지도(맥락용). 구성원 여부는 검사하지 않고 값은 그대로 저장한다" }
+
+    FeedbackReceipt:
+      type: object
+      required: [id, created_at]
+      properties:
+        id: { type: string }
+        created_at: { type: string, format: date-time }
+
     LinkParseRequest:
       type: object
       required: [url]
@@ -1432,6 +1638,7 @@ components:
         # pins/core.py::validate_create가 이미 검증하는 범위를 그대로 옮김(멘토 리뷰 대응).
         lat: { type: number, minimum: -90, maximum: 90, description: "매칭 힌트 — 검색 결과의 좌표를 그대로. 저장하지 않는다(핀 좌표는 자체 DB 장소의 좌표)" }
         lng: { type: number, minimum: -180, maximum: 180, description: "매칭 힌트 — 검색 결과의 좌표를 그대로. 저장하지 않는다" }
+        address: { type: string, maxLength: 200, description: "선택, 매칭 힌트 — 검색 결과의 address를 그대로. 이름이 비슷한 점포를 가르는 보조 판단에만 쓰고 저장·로깅하지 않는다(#500, #501). 없어도 된다" }
 
     PlaceSearchResult:
       type: object
