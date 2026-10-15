@@ -2,6 +2,22 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-15 (다섯 번째), V2 알림함과 서비스 피드백 (#470, #10)
+
+스펙이 먼저다. 구현은 notifications 모듈(신설)과 feedback이 따로 하며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다.
+
+- **알림함 (notifications 태그)**: 앱 안 알림만 있다. 푸시·이메일은 없다.
+  - `GET /me/notifications?limit&before&unread_only` — 최근순 `NotificationList {items, unread_count, next_before?}`. `unread_count`는 페이지와 무관한 전체 수. 로그인만 필요하다(나간 지도의 알림도 남는다).
+  - `POST /me/notifications/read {ids?}` — `ids`를 주면 그 알림만, 생략하면 전부. 멱등이고 모르는 id는 조용히 무시한다. 204.
+  - `GET /me/notification-prefs`, `PUT /me/notification-prefs {prefs:[{type,enabled}]}` — 종류는 `pin_reaction`(내 핀에 반응), `member_joined`(내 지도에 새 구성원, 방장만), `owner_changed`(내가 방장이 됨), `map_deleted`(내 지도가 삭제됨), `my_ai_pin_published`(내가 요청한 AI 추천이 올라감). 행이 없으면 켜짐. 끈 종류는 만들 때 거른다.
+  - `Notification {id, type, map_id, map_title?, pin_id?, message, created_at, read}` — `message`는 서버 문장이고 **반대 사유 원문·메모는 싣지 않는다**. 내가 한 일의 알림은 나에게 만들지 않는다.
+- **피드백 (feedback 태그)**: `POST /feedback {message, category?, map_id?}` → 201 `{id, created_at}`. 사용자당 상한이 있다(429 `RATE_LIMITED`). 저장만 한다.
+- **실시간은 없다**: 알림에는 SSE 이벤트를 새로 만들지 않았다(`docs/events.md` 변경 없음). FE는 앱을 열 때·포커스가 돌아올 때·알림함을 열 때 불러온다.
+- **권한**: 새 액션 없음 — `/me/*`와 `/feedback`은 로그인만 본다.
+- **DB**: `docs/data-model.md`에 `notifications`, `notification_prefs`, `feedback` 절. 마이그레이션은 구현 PR이 head 다음 번호로 만든다.
+- **BE 할 일(알림 만들기)**: 반응(pins)·새 구성원·방장 변경·지도 삭제(maps)·AI 핀 게시(recommend)가 이벤트를 쓰는 같은 트랜잭션에서 `notifications.api.notify`를 부른다. 그 모듈 변경은 notifications 모듈이 선 뒤 각 모듈 PR이 따로 건다.
+- **FE 할 일**: 종 모양 배지·알림함·설정 화면, 상단바 피드백 바텀시트. 목 서버로 먼저 시작할 수 있다.
+
 ## 2026-10-15 (세 번째), V2 계획 보조 에이전트 계약 (#510)
 
 스펙이 먼저다. 명세는 `docs/agent-v2.md`. 구현은 agent 모듈 M0부터 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다. 모델 호출 추가는 결정 이슈 #509에서 정하고, M0은 모델 없이 shadow로 돈다.

@@ -1148,6 +1148,240 @@ export interface paths {
         };
         trace?: never;
     };
+    "/me/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 내 알림함 (#470) — 최근순. 로그인만 필요하다(지도 구성원 여부와 무관, 나간 지도의 알림도 남아 있다).
+         *     알림은 이벤트를 만든 **같은 트랜잭션**에서 수신자별로 기록된다. 내가 한 일의 알림은 나에게 만들지 않는다(자기 핀에 자기가 ♥를 남겨도 알림 없음).
+         *     끈 종류(`GET /me/notification-prefs`)는 만들 때 거른다. 90일이 지난 알림은 삭제된다(#168 정리 작업).
+         *     실시간 푸시는 없다 — FE는 앱을 열 때, 포커스가 돌아올 때, 알림함을 열 때 이 API를 부른다. `unread_count`로 종 모양 배지를 그린다.
+         *     알림 문장(`message`)은 서버가 만든다. **반대 사유 원문·핀 메모는 싣지 않는다.**
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    /** @description 이전 응답의 `next_before`를 그대로 — 그보다 오래된 알림을 준다 */
+                    before?: string;
+                    unread_only?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationList"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — limit 범위 밖 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/notifications/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 알림 읽음 처리 (#470) — `ids`를 주면 그 알림만, 생략하면 내 알림 전부. 멱등이다(이미 읽은 것·남의 알림 id·없는 id는 조용히 무시한다 — 존재를 알리지 않는다). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["NotificationReadRequest"];
+                };
+            };
+            responses: {
+                /** @description 처리됨 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — ids가 100개 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/notification-prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 알림 설정 (#470) — 알림 종류 전부를 항상 돌려준다. 저장된 행이 없는 종류는 켜짐(기본값) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationPrefs"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        /**
+         * 알림 설정 바꾸기 (#470) — 보낸 종류만 바꾸고 나머지는 둔다. 응답은 바뀐 뒤의 전체 설정.
+         *     끈다고 이미 쌓인 알림이 지워지지는 않는다. 앞으로 만들지 않을 뿐이다.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["NotificationPrefsUpdate"];
+                };
+            };
+            responses: {
+                /** @description 바뀐 뒤의 전체 설정 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationPrefs"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — 모르는 종류, 빈 목록 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 서비스 피드백 보내기 (#10, v2) — 로그인한 사용자 누구나. 저장만 하고 답장·알림은 없다.
+         *     사용자당 호출 상한이 있다(초과 시 429 RATE_LIMITED, 서버 설정 — 기본 시간당 10건).
+         *     내용은 사용자 입력이라 저장할 수 있다. 계정을 탈퇴하면 작성자 연결은 끊고 내용은 남긴다(운영 개선용).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["FeedbackRequest"];
+                };
+            };
+            responses: {
+                /** @description 저장됨 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FeedbackReceipt"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — 공백뿐인 내용, 1000자 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pins/{pinId}/reaction": {
         parameters: {
             query?: never;
@@ -2560,6 +2794,69 @@ export interface components {
             memo?: string;
             /** @description live 핀만, 반응이 없을 때만 (PATCH /pins/{pinId} 설명 참고) */
             category?: components["schemas"]["Category"];
+        };
+        /**
+         * @description 알림 종류 (#470). `pin_reaction` 내 핀에 반응이 달림, `member_joined` 내 지도에 새 구성원(방장에게만),
+         *     `owner_changed` 내가 방장이 됨(직접 넘김·위임 모두), `map_deleted` 내가 속한 지도가 삭제됨,
+         *     `my_ai_pin_published` 내가 요청한 AI 추천이 지도에 올라감(다른 구성원이 「지도에 올리기」를 눌렀을 때).
+         *     지도 복구(#464)·강퇴(#8)는 그 기능이 들어올 때 종류를 더한다.
+         * @enum {string}
+         */
+        NotificationType: "pin_reaction" | "member_joined" | "owner_changed" | "map_deleted" | "my_ai_pin_published";
+        Notification: {
+            id: string;
+            type: components["schemas"]["NotificationType"];
+            /** @description 알림이 난 지도. 삭제된 지도이면 이동할 수 없다 — FE가 `map_deleted`는 누르면 내 지도 목록으로 보낸다 */
+            map_id: string;
+            /** @description 알림을 만들 때의 지도 제목(그 뒤에 바뀌어도 그대로). 지도 삭제 알림을 위해 남겨 둔다 */
+            map_title?: string;
+            /** @description `pin_reaction`, `my_ai_pin_published`만 — 누르면 그 핀으로 이동. 그 핀이 지워졌으면 FE가 404를 받아 조용히 지도로만 이동한다 */
+            pin_id?: string;
+            /** @description 서버가 만든 문장. 예 "지우님이 내 핀에 ♥를 남겼어요". 반대 사유·메모는 싣지 않는다 */
+            message: string;
+            /** Format: date-time */
+            created_at: string;
+            read: boolean;
+        };
+        NotificationList: {
+            items: components["schemas"]["Notification"][];
+            /** @description 전체 안 읽은 알림 수(페이지와 무관). 99를 넘으면 FE가 99+로 그린다 */
+            unread_count: number;
+            /** @description 더 오래된 알림이 있을 때만. 다음 요청의 `before`로 쓴다 */
+            next_before?: string;
+        };
+        NotificationReadRequest: {
+            /** @description 생략하면 전부 읽음 처리 */
+            ids?: string[];
+        };
+        NotificationPref: {
+            type: components["schemas"]["NotificationType"];
+            enabled: boolean;
+        };
+        NotificationPrefs: {
+            /** @description 알림 종류 전부, `NotificationType` 선언 순서 */
+            prefs: components["schemas"]["NotificationPref"][];
+        };
+        NotificationPrefsUpdate: {
+            /** @description 바꿀 종류만. 같은 종류가 두 번 있으면 뒤의 것 */
+            prefs: components["schemas"]["NotificationPref"][];
+        };
+        FeedbackRequest: {
+            /** @description 앞뒤 공백을 지운 뒤 비어 있으면 422 */
+            message: string;
+            /**
+             * @description 버그 / 아이디어 / 기타
+             * @default other
+             * @enum {string}
+             */
+            category: "bug" | "idea" | "other";
+            /** @description 선택. 피드백을 남길 때 보고 있던 지도(맥락용). 구성원 여부는 검사하지 않고 값은 그대로 저장한다 */
+            map_id?: string;
+        };
+        FeedbackReceipt: {
+            id: string;
+            /** Format: date-time */
+            created_at: string;
         };
         LinkParseRequest: {
             /** @description 사용자가 붙여넣은 지도 링크. http(s)만 */

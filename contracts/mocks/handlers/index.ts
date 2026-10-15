@@ -2,6 +2,7 @@ import { http, passthrough } from "msw";
 import { agentHandlers } from "./agent";
 import { authHandlers } from "./auth";
 import { mapsHandlers } from "./maps";
+import { meHandlers } from "./me";
 import { pinsHandlers } from "./pins";
 import { placesHandlers } from "./places";
 import { realtimeHandlers } from "./realtime";
@@ -32,4 +33,5 @@ export const handlers = [
   ...shortlistHandlers,
   ...realtimeHandlers,
   ...agentHandlers,
+  ...meHandlers,
 ];
