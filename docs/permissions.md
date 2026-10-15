@@ -15,6 +15,7 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     - pin.create
     - pin.delete               # "구성원 누구나" (9/4 결정 #25)
     - pin.react               # ♥/🚫 등록·수정
+    - pin.resolve             # 실시간 핀을 자체 DB 핀으로 승격(#501) — 구성원 누구나. 힌트는 저장하지 않는다
     - pin.revert               # 반응으로 바뀐 상태 되돌리기 — "누구나" (15-1)
     - shortlist.add
     - shortlist.remove         # "구성원 누구나" (5-3, 15-1)
@@ -91,6 +92,7 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 |---|---|
 | 확정 리스트 추가·제외 — 구성원 누구나 | `member.actions: [shortlist.add, shortlist.remove]` |
 | 핀 삭제 — 구성원 누구나 (9/4 결정 #25) | `member.actions: [pin.delete]` |
+| 실시간 핀 승격 — 구성원 누구나 (#501) | `member.actions: [pin.resolve]` |
 | 근거 리스트에서 항목 빼기 — 자기가 쓴 것만 | `author.scope.evidence_line: own`, `author.actions: [evidence.disable]` |
 | 핀 되돌리기 — 구성원 누구나 | `member.actions: [pin.revert]` |
 | 반경 조정 — 별도 권한 불필요 | 반경 사유도 `evidence_line`이므로 위 규칙을 그대로 상속. 별도 액션 없음 |
