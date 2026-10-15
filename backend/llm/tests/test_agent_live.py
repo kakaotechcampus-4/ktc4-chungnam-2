@@ -53,17 +53,20 @@ def _runner(calls):
 
 
 def test_prioritize_schema_is_accepted():
-    out = service.agent_prioritize(SIGNALS, PRINCIPLES, planner=service.real_priority_planner)
+    reply = service.agent_prioritize(SIGNALS, PRINCIPLES, planner=service.real_priority_planner)
+    out = reply.result
 
-    print("\n[live] prioritize:", out)
+    print("\n[live] prioritize:", out, reply.usage)
     assert isinstance(out, PriorityOutput), out
+    assert reply.usage.tokens_in > 0 and reply.usage.tokens_out > 0  # 엘리스 응답에 usage가 온다(#564)
 
 
 def test_diagnose_tool_conversation_ends_in_schema():
     calls = []
-    out = service.agent_diagnose(STALL, tool_runner=_runner(calls), planner=service.real_diagnosis_planner)
+    reply = service.agent_diagnose(STALL, tool_runner=_runner(calls), planner=service.real_diagnosis_planner)
+    out = reply.result
 
     print("\n[live] tool calls:", [(c[0], c[1]) for c in calls])
-    print("[live] diagnose:", out)
+    print("[live] diagnose:", out, reply.usage)
     assert isinstance(out, DiagnosisOutput), out
     assert out.signal_id == "s2" and out.diagnosis == "stall"

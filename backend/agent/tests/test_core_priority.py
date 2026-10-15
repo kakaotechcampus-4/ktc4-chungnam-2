@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from agent import core
-from agent.schemas import AgentCallFailed, PriorityItem, PriorityOutput
+from agent.schemas import AgentCallFailed, AgentUsage, PriorityItem, PriorityOutput
 from agent.tests.snaps import NOW
 
 POLICY = core.parse_policy({
@@ -171,3 +171,20 @@ def test_render_analysis_uses_labels_and_skips_unknown_keys():
     assert rendered.conflict_type == "same_axis"
     assert [(a.label, a.like_side, a.against_side) for a in rendered.axes] == [("조용한 곳", "원함 2", "원하지 않음 1")]
     assert core.render_analysis(None, {}) is None
+
+
+# ---------------------------------------------------------------- 사용량 합치기 (#564)
+
+def test_model_usage_sums_tokens_and_joins_distinct_names_in_call_order():
+    priority = AgentUsage(model="gpt-6-luna", prompt_version="prioritize-v1", tokens_in=100, tokens_out=10)
+    diagnosis = AgentUsage(model="gpt-6-luna", prompt_version="diagnose-v1", tokens_in=300, tokens_out=40)
+
+    assert core.model_usage([priority, diagnosis]) == {
+        "model": "gpt-6-luna", "prompt_version": "prioritize-v1+diagnose-v1", "tokens_in": 400, "tokens_out": 50,
+    }
+
+
+def test_model_usage_without_calls_or_with_stubs_is_empty():
+    empty = {"model": None, "prompt_version": None, "tokens_in": 0, "tokens_out": 0}
+    assert core.model_usage([]) == empty
+    assert core.model_usage([AgentUsage(), AgentUsage()]) == empty

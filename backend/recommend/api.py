@@ -3,12 +3,13 @@
 변경은 그 모듈의 api.py만). 커밋하지 않는다(common/database.py get_db가 요청당 한 번 커밋).
 """
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from common import categories
-from recommend import flows, service
+from recommend import constraints, core, flows, service
 
 
 def delete_evidence_lines_by_author(db: Session, *, user_id: str) -> int:
@@ -36,6 +37,18 @@ def get_readiness(db: Session, *, map_id: str, category: str) -> dict:
     if category not in categories.recommendable():
         raise ValueError(f"추천 대상이 아닌 카테고리: {category}")
     return flows.readiness_for_category(db, map_id=map_id, category=category)
+
+
+def fact_labels() -> dict[str, str]:
+    """agent 의견 갈림 분석의 축 이름(docs/agent-v2.md 6.3, #564)이 부른다 — fact_key → 근거 줄에 그리는 표시 이름
+    ("quiet" → "조용한 곳"). `constraints.FACT_LABELS`의 사본이라 고쳐도 원본에 영향이 없다."""
+    return dict(constraints.FACT_LABELS)
+
+
+def demote_wanted_place_identity(category: str, lines: Sequence[dict]) -> list[dict]:
+    """agent structure_reasons(docs/agent-v2.md 10절, #564)가 부른다 — 추천 근거 조립과 같은 #422 규칙(🚫 사유 안의
+    음식 종류 "원함"은 preferred). lines는 `{fact_key, wants, badge}`(다른 키는 그대로 둔다). 원본은 바꾸지 않는다."""
+    return core.demote_wanted_place_identity(lines, category)
 
 
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:

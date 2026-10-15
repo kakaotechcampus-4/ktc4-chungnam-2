@@ -19,13 +19,13 @@ from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
 
 from common.errors import AppError
 from llm.client import (
-    LlmCallError, call_agent_diagnosis_turn, call_agent_priority, call_planner, get_client,
+    LlmCallError, call_agent_diagnosis_turn, call_agent_priority, call_planner, get_client, metering,
 )
 from llm.prompts import (
     AGENT_DIAGNOSE_PROMPT, DIAGNOSIS_MAX_TOOL_CALLS, DIAGNOSIS_TOOLS, STRUCTURE_REASONS_MAX_CALLS, diagnosis_tools,
 )
 from llm.schemas import (
-    AgentCallFailed, DiagnosisOutput, EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason,
+    AgentCallFailed, AgentReply, DiagnosisOutput, EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason,
     PlanningOutput, PriorityItem, PriorityOutput, RankedCandidate,
 )
 
@@ -346,18 +346,20 @@ def real_priority_planner(signals: Sequence[Mapping[str, Any]], principles: Sequ
 
 def agent_prioritize(
     signals: Sequence[Mapping[str, Any]], principles: Sequence[str], *, planner: PriorityPlanner
-) -> Union[PriorityOutput, AgentCallFailed]:
+) -> AgentReply[PriorityOutput]:
     """신호 순위(명세 7절). signals는 agent가 만든 신호 dict(id, diagnosis, category, features), principles는
     priority_policy.yaml의 원칙 문장이다. 신호가 1개일 때 부르지 않는 것, 정책 규칙 보정(apply_priority_rules), 실패 시
     fallback_order는 agent가 한다. 순서가 입력 신호와 맞는지(빠짐, 중복, 모르는 id)도 agent의 보정이 본다.
 
-    실패(호출 실패, 타임아웃, 스키마 검증 실패)는 재요청하지 않고 AgentCallFailed로 돌려준다."""
-    if not signals:
-        return PriorityOutput(order=[])
-    try:
-        return planner(signals, principles)
-    except (LlmCallError, ValueError) as exc:
-        return _failed("agent_prioritize", exc, f"signals={len(signals)}")
+    결과(PriorityOutput 또는 AgentCallFailed)와 사용량(AgentUsage, #564)을 함께 돌려준다. 실패(호출 실패, 타임아웃, 스키마
+    검증 실패)는 재요청하지 않고 AgentCallFailed로 돌려준다."""
+    with metering() as usage:
+        if not signals:
+            return AgentReply(PriorityOutput(order=[]), usage)
+        try:
+            return AgentReply(planner(signals, principles), usage)
+        except (LlmCallError, ValueError) as exc:
+            return AgentReply(_failed("agent_prioritize", exc, f"signals={len(signals)}"), usage)
 
 
 def fixed_diagnosis_planner(diagnosis_input: Mapping[str, Any], call_tool: ToolCaller) -> DiagnosisOutput:
@@ -425,7 +427,7 @@ def real_diagnosis_planner(diagnosis_input: Mapping[str, Any], call_tool: ToolCa
 
 def agent_diagnose(
     diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner, planner: DiagnosisPlanner
-) -> Union[DiagnosisOutput, AgentCallFailed]:
+) -> AgentReply[DiagnosisOutput]:
     """모델 유형(stall, split) 진단(명세 6.2, 6.3, 11절).
 
     diagnosis_input: agent의 core.diagnosis_input(#533)이 만든 공개 데이터만의 dict. 적어도 signal_id, diagnosis(stall|split)가
@@ -434,15 +436,17 @@ def agent_diagnose(
     그중 structure_reasons는 STRUCTURE_REASONS_MAX_CALLS(1)회까지 실행하고, 넘는 호출은 실행하지 않고 LIMIT_EXCEEDED를,
     유형에 허용되지 않은 도구는 NOT_FOUND를 도구 결과로 돌려준다. tool_runner의 예외는 ToolRunnerError로 그대로 올라간다.
 
-    실패(호출 실패, 타임아웃, 스키마 검증 실패)는 재요청하지 않고 AgentCallFailed로 돌려준다. signal_id·diagnosis가 입력과
-    같은지, claim과 문장과 행동은 agent의 verify_diagnosis가 본다(명세 11.2)."""
+    결과(DiagnosisOutput 또는 AgentCallFailed)와 사용량(AgentUsage, #564. 도구 왕복 전부의 합)을 함께 돌려준다. 실패(호출
+    실패, 타임아웃, 스키마 검증 실패)는 재요청하지 않고 AgentCallFailed로 돌려준다. signal_id·diagnosis가 입력과 같은지,
+    claim과 문장과 행동은 agent의 verify_diagnosis가 본다(명세 11.2)."""
     diagnosis = diagnosis_input["diagnosis"]
     if diagnosis not in DIAGNOSIS_TOOLS:
         raise ValueError(f"진단 유형이 아니다: {diagnosis}")  # agent 쪽 오류 — 모델 실패가 아니다
     budget = _ToolBudget(diagnosis, tool_runner)
-    try:
-        output = planner(diagnosis_input, budget)
-    except (LlmCallError, ValueError) as exc:
-        return _failed("agent_diagnose", exc, f"diagnosis={diagnosis} tools_used={budget.used}")
+    with metering() as usage:
+        try:
+            output = planner(diagnosis_input, budget)
+        except (LlmCallError, ValueError) as exc:
+            return AgentReply(_failed("agent_diagnose", exc, f"diagnosis={diagnosis} tools_used={budget.used}"), usage)
     log.info("agent_diagnose 완료: diagnosis=%s decision=%s tools_used=%d", diagnosis, output.decision, budget.used)
-    return output
+    return AgentReply(output, usage)

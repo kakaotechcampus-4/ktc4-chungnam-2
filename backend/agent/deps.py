@@ -3,7 +3,8 @@
 recommend/deps.py와 같은 방식). llm은 요청만 받고, 고르는 것은 받는 쪽인 agent다. 고르는 방법은 llm.api 함수에 넘기는
 planner다(#532): dev는 fixed planner, real은 real planner.
 
-- prioritize, diagnose(#533): `llm.api.agent_prioritize`, `agent_diagnose`. 실패는 예외가 아니라 `AgentCallFailed`로 온다.
+- prioritize, diagnose(#533): `llm.api.agent_prioritize`, `agent_diagnose`. 결과와 사용량을 `AgentReply(result, usage)`로
+  돌려준다(#564). 실패는 예외가 아니라 result의 `AgentCallFailed`로 온다.
   dev 스텁은 우선순위를 받은 순서 그대로 돌려주고, 진단은 get_reasons를 한 번 부른 뒤 늘 silent다 — 지어낸 문장이나 숫자가
   화면에 나갈 길이 없다(명세 2절 10번).
 - structure(#533): structure_reasons 도구가 쓰는 ②(`llm.api.plan_evidence`). dev는 입력을 그대로 돌려주는 스텁이라 글에
@@ -16,7 +17,7 @@ from typing import Any, Protocol
 
 from fastapi import Depends
 
-from agent.schemas import AgentCallFailed, DiagnosisOutput, PriorityOutput, RunAdviceOutput, SummaryOutput
+from agent.schemas import AgentReply, DiagnosisOutput, PriorityOutput, RunAdviceOutput, SummaryOutput
 from common.adapters import select
 from common.database import get_db_session
 from common.settings import settings
@@ -30,11 +31,11 @@ ToolRunner = llm_api.ToolRunner
 class AgentLlmGateway(Protocol):
     def prioritize(
         self, signals: Sequence[Mapping[str, Any]], principles: Sequence[str],
-    ) -> PriorityOutput | AgentCallFailed: ...
+    ) -> AgentReply[PriorityOutput]: ...
 
     def diagnose(
         self, diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner,
-    ) -> DiagnosisOutput | AgentCallFailed: ...
+    ) -> AgentReply[DiagnosisOutput]: ...
 
     def structure(self, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[llm_api.EvidenceLine]]: ...
 
@@ -49,12 +50,12 @@ class FixedAgentLlmGateway:
 
     def prioritize(
         self, signals: Sequence[Mapping[str, Any]], principles: Sequence[str],
-    ) -> PriorityOutput | AgentCallFailed:
+    ) -> AgentReply[PriorityOutput]:
         return llm_api.agent_prioritize(signals, principles, planner=llm_api.fixed_priority_planner)
 
     def diagnose(
         self, diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner,
-    ) -> DiagnosisOutput | AgentCallFailed:
+    ) -> AgentReply[DiagnosisOutput]:
         return llm_api.agent_diagnose(diagnosis_input, tool_runner=tool_runner, planner=llm_api.fixed_diagnosis_planner)
 
     def structure(self, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[llm_api.EvidenceLine]]:
@@ -74,12 +75,12 @@ class RealAgentLlmGateway:
 
     def prioritize(
         self, signals: Sequence[Mapping[str, Any]], principles: Sequence[str],
-    ) -> PriorityOutput | AgentCallFailed:
+    ) -> AgentReply[PriorityOutput]:
         return llm_api.agent_prioritize(signals, principles, planner=llm_api.real_priority_planner)
 
     def diagnose(
         self, diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner,
-    ) -> DiagnosisOutput | AgentCallFailed:
+    ) -> AgentReply[DiagnosisOutput]:
         return llm_api.agent_diagnose(diagnosis_input, tool_runner=tool_runner, planner=llm_api.real_diagnosis_planner)
 
     def structure(self, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[llm_api.EvidenceLine]]:

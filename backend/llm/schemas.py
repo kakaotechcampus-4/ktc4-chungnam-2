@@ -9,11 +9,12 @@
   ②    PlanningOutput (사유 → 실격/선호/반경 구조화)
   ③-a-1 PlaceFactLabel (장소 라벨링)
   ③-b   RankedCandidate (선호 순위)
-  v2 에이전트 PriorityOutput, DiagnosisOutput, AgentCallFailed (docs/agent-v2.md 11.1, #532)
+  v2 에이전트 PriorityOutput, DiagnosisOutput, AgentCallFailed (docs/agent-v2.md 11.1, #532), AgentUsage·AgentReply(#564)
 """
 
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Optional, Union, get_args
+from typing import Generic, Literal, Optional, TypeVar, Union, get_args
 
 from pydantic import BaseModel, model_validator
 
@@ -277,3 +278,27 @@ class AgentCallFailed(BaseModel):
 
     reason: AgentFailureReason
     detail: str
+
+
+class AgentUsage(BaseModel):
+    """agent 호출 한 번(agent_prioritize 또는 agent_diagnose)이 쓴 모델 사용량(#564). agent가 agent_runs의 model,
+    prompt_version, tokens_in, tokens_out에 채운다. 토큰은 그 호출 안의 모든 왕복의 합이다(진단은 도구 왕복마다 한 번).
+
+    모델에 요청을 보냈으면 model과 prompt_version이 찬다(응답 전에 실패해도). 고정 응답 스텁이나 요청 전에 실패한 호출
+    (설정 누락)은 None과 0이다. 응답 안에서 스키마 검증이 실패한 왕복은 SDK가 사용량을 넘기지 않아 토큰에 들어가지 않는다."""
+
+    model: Optional[str] = None
+    prompt_version: Optional[str] = None
+    tokens_in: int = 0
+    tokens_out: int = 0
+
+
+AgentResultT = TypeVar("AgentResultT")
+
+
+@dataclass(frozen=True)
+class AgentReply(Generic[AgentResultT]):
+    """agent 호출의 결과와 사용량. 실패(AgentCallFailed)여도 usage에는 그때까지 쓴 사용량이 있다(#564)."""
+
+    result: Union[AgentResultT, AgentCallFailed]
+    usage: AgentUsage

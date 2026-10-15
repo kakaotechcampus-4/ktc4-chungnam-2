@@ -41,13 +41,6 @@ from shortlist import api as shortlist_api
 NOT_FOUND = {"error": "NOT_FOUND"}
 UNAVAILABLE = {"error": "UNAVAILABLE"}
 
-# 유형별 허용 도구(10절). llm.prompts.DIAGNOSIS_TOOLS와 같아야 한다(test_tools.py가 본다) — 모델에는 llm 쪽 목록만
-# 보이고, 여기서 한 번 더 막는다. 같은 값을 두 곳에 두는 이유는 for_Root.md(#533) 참고
-ALLOWED_TOOLS: dict[str, tuple[str, ...]] = {
-    "stall": ("get_map_overview", "get_reasons", "structure_reasons", "get_readiness"),
-    "split": ("get_reaction_matrix", "get_reasons", "structure_reasons", "compare_reasons", "get_place_facts"),
-}
-
 ACTIVITY_DEFAULT_WINDOW = timedelta(hours=24)   # get_activity의 since가 없을 때(초안)
 
 Structurer = Callable[[Sequence[Mapping[str, Any]]], list[list[llm_api.EvidenceLine]]]
@@ -88,7 +81,8 @@ STRUCTURE_CACHE = StructureCache()
 
 @dataclass
 class ToolContext:
-    """관찰 한 번의 도구 실행 창구. `run`을 llm.agent_diagnose의 tool_runner로 넘긴다."""
+    """관찰 한 번의 도구 실행 창구. `run`을 llm.agent_diagnose의 tool_runner로 넘긴다. allowed는 유형별 허용 도구
+    `llm.api.DIAGNOSIS_TOOLS[유형]`(10절, #564) — 모델에는 llm이 이 목록만 보이고, 여기서 한 번 더 막는다."""
     map_id: str
     snap: Snapshot
     allowed: tuple[str, ...]
@@ -264,6 +258,7 @@ def get_reasons(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
 def _structured(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """반응마다 근거 줄 [{fact_key, wants, badge}] (8.1). 글은 ②로(캐시에 없을 때만, 한 번에 모아서), 칩은 칩 표 그대로.
     ♥ 글은 preferred, 🚫 글은 required로 넣는다 — 추천이 근거 줄을 만들 때와 같다. 칩은 🚫에만 있어 required.
+    글 줄과 칩 줄을 합친 뒤 추천과 같은 #422 규칙(🚫 사유 안의 음식 종류 "원함"은 preferred)을 recommend.api로 건다(#564).
     ②가 실패하면 llm.api.PlanEvidenceFailed가 그대로 올라간다."""
     def key(r: Mapping[str, Any]) -> tuple[str, str]:
         return r["reaction_id"], _iso(r["updated_at"])
@@ -283,6 +278,7 @@ def _structured(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[dic
     for r in rows:
         lines = [dict(line) for line in ctx.cache.get(key(r)) or ()] if r["reason_text"] else []
         lines += [{"fact_key": c["fact_key"], "wants": c["wants"], "badge": "required"} for c in r["chips"]]
+        lines = recommend_api.demote_wanted_place_identity(r["category"], lines)
         out.append({"reaction_id": r["reaction_id"], "type": r["type"], "lines": lines})
     return out
 

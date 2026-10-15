@@ -57,6 +57,7 @@ from agent.schemas import (
     AgentSettings,
     AgentState,
     AgentSuggestion,
+    AgentUsage,
     CountClaim,
     DiagnosisOutput,
     PriorityOutput,
@@ -568,6 +569,21 @@ def _reusable(passed: Sequence[Signal], previous: Mapping[str, Any] | None) -> b
         return False
     fingerprints = previous.get("fingerprints") or []
     return len(fingerprints) == len(passed) and set(fingerprints) == {s.fingerprint for s in passed}
+
+
+def model_usage(usages: Sequence[AgentUsage]) -> dict[str, Any]:
+    """agent_runs의 model, prompt_version, tokens_in, tokens_out(#564). 한 관찰에서 우선순위와 진단을 둘 다 불렀으면
+    합이다 — 토큰은 더하고, 모델과 프롬프트 버전은 겹치지 않게 부른 순서대로 "+"로 잇는다("prioritize-v1+diagnose-v1").
+    아무것도 부르지 않았거나 고정 응답 스텁이면 None과 0이다."""
+    def joined(values: Iterable[str | None]) -> str | None:
+        return "+".join(dict.fromkeys(v for v in values if v)) or None
+
+    return {
+        "model": joined(u.model for u in usages),
+        "prompt_version": joined(u.prompt_version for u in usages),
+        "tokens_in": sum(u.tokens_in for u in usages),
+        "tokens_out": sum(u.tokens_out for u in usages),
+    }
 
 
 def choose_top(
