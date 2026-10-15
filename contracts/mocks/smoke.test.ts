@@ -505,6 +505,58 @@ describe("#469·#471 — 지난 추천 기록, 확정 리스트 내보내기", (
   });
 });
 
+describe("#470·#10 — 알림함·알림 설정, 서비스 피드백", () => {
+  const send = (path: string, method: string, body?: unknown) =>
+    fetch(`${BASE}${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+
+  it("GET /me/notifications: 최근순, unread_count는 전체 기준, limit·before 커서, unread_only", async () => {
+    const all = await (await fetch(`${BASE}/me/notifications`)).json();
+    expect(all.items.map((n: { id: string }) => n.id)).toEqual(["ntf_1", "ntf_2"]);
+    expect(all.unread_count).toBe(1);
+    expect(all.next_before).toBeUndefined();
+    const first = await (await fetch(`${BASE}/me/notifications?limit=1`)).json();
+    expect(first.items).toHaveLength(1);
+    expect(first.next_before).toBe("ntf_1");
+    const next = await (await fetch(`${BASE}/me/notifications?limit=1&before=${first.next_before}`)).json();
+    expect(next.items.map((n: { id: string }) => n.id)).toEqual(["ntf_2"]);
+    expect(next.next_before).toBeUndefined();
+    expect((await (await fetch(`${BASE}/me/notifications?unread_only=true`)).json()).items).toHaveLength(1);
+    expect((await fetch(`${BASE}/me/notifications?limit=0`)).status).toBe(422);
+  });
+
+  it("POST /me/notifications/read: ids만 읽음, 모르는 id는 무시, 생략하면 전부, 100개 초과는 422", async () => {
+    expect((await send("/me/notifications/read", "POST", { ids: ["ntf_1", "ntf_nope"] })).status).toBe(204);
+    expect((await (await fetch(`${BASE}/me/notifications`)).json()).unread_count).toBe(0);
+    store.notifications[1].read = false;
+    expect((await send("/me/notifications/read", "POST")).status).toBe(204);
+    expect(store.notifications.every((n) => n.read)).toBe(true);
+    expect((await send("/me/notifications/read", "POST", { ids: Array.from({ length: 101 }, (_, i) => `n${i}`) })).status).toBe(422);
+  });
+
+  it("알림 설정: 종류 전부를 돌려주고 보낸 것만 바꾼다, 모르는 종류·빈 목록은 422", async () => {
+    const prefs = await (await fetch(`${BASE}/me/notification-prefs`)).json();
+    expect(prefs.prefs.map((p: { type: string }) => p.type)).toEqual(["pin_reaction", "member_joined", "owner_changed", "map_deleted", "my_ai_pin_published"]);
+    expect(prefs.prefs.every((p: { enabled: boolean }) => p.enabled)).toBe(true);
+    const put = await (await send("/me/notification-prefs", "PUT", { prefs: [{ type: "pin_reaction", enabled: false }] })).json();
+    expect(put.prefs.find((p: { type: string }) => p.type === "pin_reaction").enabled).toBe(false);
+    expect(put.prefs.find((p: { type: string }) => p.type === "member_joined").enabled).toBe(true);
+    expect((await send("/me/notification-prefs", "PUT", { prefs: [{ type: "weekly_digest", enabled: true }] })).status).toBe(422);
+    expect((await send("/me/notification-prefs", "PUT", { prefs: [] })).status).toBe(422);
+  });
+
+  it("POST /feedback: 201 + id, 공백뿐이면 422, 1000자 초과 422, 시간당 상한은 429", async () => {
+    const ok = await send("/feedback", "POST", { message: "  지도가 느려요  ", category: "bug", map_id: "map_1" });
+    expect(ok.status).toBe(201);
+    expect(typeof (await ok.json()).id).toBe("string");
+    expect(store.feedback[0]).toMatchObject({ message: "지도가 느려요", category: "bug" }); // 앞뒤 공백 제거
+    expect((await send("/feedback", "POST", { message: "   " })).status).toBe(422);
+    expect((await send("/feedback", "POST", { message: "가".repeat(1001) })).status).toBe(422);
+    expect((await send("/feedback", "POST", { message: "x", category: "praise" })).status).toBe(422);
+    for (let i = 0; i < 9; i++) await send("/feedback", "POST", { message: `m${i}` });
+    expect((await send("/feedback", "POST", { message: "넘침" })).status).toBe(429);
+  });
+});
+
 describe("#369 — 내 지도 상한(#433에서 20개)", () => {
   const create = () =>
     fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "상한 시험", start_date: "2026-11-01", end_date: "2026-11-02" }) });

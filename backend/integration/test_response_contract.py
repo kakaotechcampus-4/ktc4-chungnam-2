@@ -23,6 +23,11 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
+    ("GET", "/me/notifications"): "#470 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/me/notifications/read"): "#470 구현 PR이 골든 패스에 넣고 지운다",
+    ("GET", "/me/notification-prefs"): "#470 구현 PR이 골든 패스에 넣고 지운다",
+    ("PUT", "/me/notification-prefs"): "#470 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/feedback"): "#10 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
     ("PATCH", "/pins/{pinId}"): "#466 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/pins/{pinId}/resolve"): "#501 구현 PR이 골든 패스에 넣고 지운다",
