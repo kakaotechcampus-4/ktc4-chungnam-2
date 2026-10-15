@@ -312,7 +312,7 @@ agent_cursors(                        -- 관찰 흐름만 쓴다. 지도별 책�
   map_id primary key,
   last_seen_seq bigint default 0,     -- 관찰 때 본 가장 큰 event_log seq(구멍은 추적하지 않는다, agent-v2.md 12.5)
   last_observed_at null, next_check_at null, lease_until null
-                                      -- gap_seq는 0029에 있으나 쓰지 않는다. #515 마이그레이션에서 지운다
+                                      -- gap_seq는 0030에서 지웠다(#515)
 )
 
 agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 끝나도 남긴다. 30일 보존

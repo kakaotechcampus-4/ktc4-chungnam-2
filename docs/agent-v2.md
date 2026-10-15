@@ -673,9 +673,11 @@ def observe_map(map_id: str, now: datetime) -> None:
         snap = snapshot.build(db, map_id, now)
         hist = service.load_history(db, map_id, now)
 
-    if snap.map.deleted or snap.today > snap.map.end_date:   # 삭제된 지도(#369) 또는 여행 종료: 관찰하지 않는다
+    if snap is None or snap.map.deleted or snap.today > snap.map.end_date:   # 정리됐거나 삭제된 지도(#369), 여행 종료
         with session_scope() as db:
-            service.advance_cursor(db, map_id, snap.latest_seq, next_check_at=None)
+            service.insert_run(db, map_id, ..., outcome="map_deleted" 또는 "trip_ended")   # shadow 측정용으로 기록은 남긴다
+            if snap is not None:                          # 정리된 지도(build가 None)는 커서 행도 없다
+                service.advance_cursor(db, map_id, snap.latest_seq, next_check_at=None)
         return
 
     # 3. 탐지와 활성 제안 무효화 판단 (순수)
@@ -703,15 +705,15 @@ def observe_map(map_id: str, now: datetime) -> None:
     with session_scope() as db:
         if not maps_api.lock_map_if_alive(db, map_id):    # 지도 행 잠금 + 삭제 확인 (architecture.md 1.1 동시성, #435)
             return                                        # 모델 호출 중 지도가 삭제됐다. 아무것도 쓰지 않는다
-        if draft and not core.recheck(draft, snapshot.load_evidence(db, draft)):
+        if draft and not core.recheck(draft, snapshot.build(db, map_id, now), th):   # 같은 트랜잭션에서 스냅샷을 다시 만들어 탐지기를 다시 돈다
             draft = None                                  # outcome = stale
         service.supersede(db, supersede_ids)              # + agent.resolved
-        sug = service.insert_suggestion(db, draft, shadow=AGENT_SHADOW_MODE) if draft else None
-        # insert는 ON CONFLICT (map_id) WHERE status='active' DO NOTHING. 안 들어가면 blocked: active_exists
-        service.insert_run(db, map_id, snap, signals, blocked, priority_log, tool_log, outcome)
+        run = service.insert_run(db, map_id, snap, signals, blocked, priority_log, tool_log, outcome)   # 제안이 run_id를 가리키므로 먼저
+        sug = service.insert_suggestion(db, draft, run, shadow=AGENT_SHADOW_MODE) if draft else None
+        # insert는 ON CONFLICT (map_id) WHERE status='active' DO NOTHING. 안 들어가면 그 run의 outcome을 blocked(active_exists)로 고친다
         if sug and not AGENT_SHADOW_MODE:
             record_event(db, agent_suggested_event(sug))
-        nca = core.next_check_at(snap, signals, hist, now, th)
+        nca = core.next_check_at(snap, hist, now, th)    # 방금 넣은 제안의 expires_at도 후보에 넣는다
         if core.has_recent_event(snap.latest_event_at, now):   # 12.5 보완: 늦은 커밋을 다음 tick에 한 번 더 본다
             nca = now if nca is None else min(nca, now)
         service.advance_cursor(db, map_id, snap.latest_seq, next_check_at=nca)
@@ -719,6 +721,8 @@ def observe_map(map_id: str, now: datetime) -> None:
     # 8. 요약 (별도 흐름, 별도 트랜잭션)
     update_summary(map_id, snap, hist, now)
 ```
+
+M0(#515) 구현에서 정한 것: 모델 유형이 1순위면 M0에서는 코드 유형으로 내려가지 않고 outcome=silent로 기록한다(M1과 같은 빈도를 shadow로 보려는 것). 제안의 created_at은 DB 시각이 아니라 관찰 시각(now)이라 하루 1회와 백오프가 같은 시계를 본다.
 
 `core.next_check_at`은 시간 기준이 가장 먼저 만료될 시각을 돌려준다. 후보는 전제를 만족한 정체 카테고리의 t0 + th, 갈림 후보 핀의 마지막 반응 + th, 반응 공백 대상 핀이 기준 시간에 도달하는 시각, 활성 제안의 expires_at이다. 후보가 없으면 null이다.
 
@@ -796,7 +800,7 @@ CREATE TABLE agent_settings (
 CREATE TABLE agent_cursors (
   map_id            text PRIMARY KEY,
   last_seen_seq     bigint NOT NULL DEFAULT 0,
-  -- gap_seq: 10/2 판의 구멍 추적용. 12.5 개정으로 쓰지 않는다. 0029에 이미 있어 #515 마이그레이션에서 지운다
+  -- gap_seq: 10/2 판의 구멍 추적용. 12.5 개정으로 0030에서 지웠다(#515)
   last_observed_at  timestamptz NULL,
   next_check_at     timestamptz NULL,     -- 시간 기준이 가장 먼저 만료될 시각
   lease_until       timestamptz NULL
