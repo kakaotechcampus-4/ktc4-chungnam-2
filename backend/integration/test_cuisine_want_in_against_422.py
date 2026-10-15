@@ -9,11 +9,13 @@
 from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy import update
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
     PLACES, _pin, plan_with, members, own_db, place_ids, real_client,
 )
 from places import repository
+from places.models import Place
 from places.ingest import LabelRow, PlaceRow
 
 NOW = datetime(2026, 10, 9, tzinfo=timezone.utc)
@@ -63,6 +65,8 @@ def test_wanted_cuisine_in_an_against_reason_is_a_preference_and_ranks_the_grill
 ):
     a, b, map_id = members
     repository.upsert_places(db_session, [PlaceRow("permit", "G", GRILL, "음식점", "서울 성동구 G", None, 37.5444, 127.0562, "open")])
+    db_session.flush()
+    db_session.execute(update(Place).where(Place.source_id == "G").values(can_recommend=True))  # 후보 풀에 들어가게(#558)
     _label(db_session, {"G": {"cuisine_bbq": True, "cuisine_korean": False}})
 
     lines, result = _run_with_reason(a, b, map_id, place_ids)
