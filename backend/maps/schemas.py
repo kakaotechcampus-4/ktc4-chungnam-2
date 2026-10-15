@@ -30,6 +30,11 @@ class MapCreateRequest(BaseModel):
     region: MapRegion | None = None
 
 
+class OwnerTransferRequest(BaseModel):
+    """POST /maps/{mapId}/owner(#468) — 새 방장이 될 지금 구성원."""
+
+    user_id: str
+
 class MapUpdateRequest(BaseModel):
     """PATCH /maps/{mapId}(#465) — 보낸 필드만 바꾼다. 값을 안 보낸 필드는 None이다. 빈 객체와
     명시적 null은 422다(null로 region을 지우는 건 지원하지 않는다 — 바꾸기만)."""
