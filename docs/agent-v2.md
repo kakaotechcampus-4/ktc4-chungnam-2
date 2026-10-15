@@ -140,8 +140,7 @@ BLOCKED_RUN_MAX_RESULTS = 3        # 결과가 이 값 미만이면 추천 막�
 BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS = 3   # 또는 같은 사람이 같은 카테고리 run을 이 값 이상 만들었으면 (초안)
 # 재시도 상한(attempt_no)은 개인 단위, 카테고리 무관, 10회다(#31, 2026-10-15 5→10회). attempt_no로 세면 다른 카테고리 시도가 섞인다. 그래서 같은 카테고리 run 수를 따로 센다(GET /maps/{mapId}/runs의 기록, #469).
 
-DIAGNOSIS_MAX_TOOL_CALLS = 5       # 강제는 llm이 한다(llm.prompts, #532). agent는 같은 값을 문서로만 든다
-STRUCTURE_REASONS_MAX_CALLS = 1
+# 진단 도구 상한(1회당 5회, structure_reasons 1회)은 llm이 강제한다(llm.prompts, #532). agent 상수에서는 지웠다(#533)
 TOOL_RESULT_MAX_ITEMS = 30         # 초안
 
 BACKOFF_HOURS = (2, 6, 24)         # 연속 닫힘 1회, 2회, 3회 이상
@@ -274,6 +273,9 @@ def detect_split(s: Snapshot, now: datetime, th: timedelta) -> list[Signal]:
 | same_axis | 같은 특징을 두고 방향이 반대다 | ♥ "조용해서 좋아요"(quiet, 원함) / 🚫 "너무 조용해서 심심해요"(quiet, 피함) |
 | different_axes | 서로 다른 특징을 말한다 | ♥ "분위기 좋아요"(키 없음) / 🚫 "주차가 안 돼요"(parking_available, 원함) |
 | unclear | 한쪽이라도 키 있는 사유가 없다 | 🚫 칩 「취향이 아니에요」만 있음 |
+| unclear | 같은 키에 같은 방향이다(#533) | ♥ "조용해서 좋아요"(quiet 원함) / 🚫 칩 「시끄러워요」(quiet 원함). 취향이 갈린 게 아니라 이 가게가 조용한지를 두고 갈렸다 |
+
+방향이 없는(wants=null) 줄은 키 있는 사유로 세지만 원함, 피함 어느 쪽에도 넣지 않는다. split 진단 입력의 비교 결과는 모델을 부르기 전에 코드가 계산한다(② 호출 포함, 도구 기록과 상한에 세지 않는다). ②가 실패하면 비교 결과 없이 진단한다.
 
 10/2 판에서는 모델이 방향(Stance)과 충돌 종류를 직접 냈다. ②가 방향을 내게 되면서(#228) 같은 계산을 코드로 할 수 있게 됐고, 루트 원칙("새 기능은 먼저 코드로 되는지 묻는다")에 따라 코드로 옮겼다. 모델은 충돌 종류를 받아 조언 문장과 행동만 고른다. different_axes면 양쪽을 만족하는 조건 조합을 조언에 넣고 open_recommend로 잇는다. 화면에는 이름 대신 "♥ 쪽 / 🚫 쪽"으로 표시한다.
 
@@ -357,7 +359,13 @@ weights:               # 대체 정렬 기준이자 모델 참고값
   no_reaction: 1
 ```
 
-`agent_runs.priority`에 model_order, final_order, corrections, reused를 남긴다.
+`agent_runs.priority`에 model_order, final_order, corrections, source(single, model, reused, fallback), fingerprints, fallback_reason을 남긴다.
+
+M1-2(#533) 구현에서 정한 것:
+
+- 모델에는 신호를 fallback_order 순서로 넘긴다. 고정 응답 스텁이 받은 순서를 그대로 돌려줘서, dev에서도 코드 규칙과 같은 1순위가 나오게 하려는 것이다.
+- 재사용: 직전 관찰의 순위가 모델이나 재사용에서 나왔고 신호 fingerprint 집합이 같을 때만 다시 쓴다. 직전이 fallback이면 재사용하지 않는다. 재사용은 상한 검사보다 먼저 본다.
+- 보정 순서: 모르는 id 버림, 중복 버림, 빠진 신호를 fallback_order로 뒤에 붙임, always_first를 앞으로, 1순위가 never_first면 아닌 첫 신호를 앞으로. corrections에 종류별로 남긴다.
 
 ## 8. 우리 조건 요약
 
@@ -402,7 +410,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 - `structure_reasons`는 ②를 그대로 부른다. 입력은 반응의 글이고, 반환은 반응 하나당 근거 줄 여러 개(`{fact_key, wants, badge}`)다. 조건이 여럿인 글은 줄이 나뉜다(#419).
 - 칩은 ②를 부르지 않는다. `list_reasoned_reactions`가 돌려주는 칩 정보(키, 방향)를 그대로 쓴다(#412).
 - ♥ 반응의 글은 배지 preferred, 🚫 반응의 글은 required로 ②에 넣는다. 추천이 근거 줄을 만들 때와 같은 방식이다.
-- 🚫 사유 안의 음식 종류 "원함"을 선호로 내리는 규칙(#422)은 recommend의 `core.demote_wanted_place_identity`를 `recommend/api.py`로 열어 같은 함수를 쓴다. agent에 같은 규칙을 다시 쓰지 않는다.
+- 🚫 사유 안의 음식 종류 "원함"을 선호로 내리는 규칙(#422)은 `recommend.api.demote_wanted_place_identity`(#564에서 공개)를 그대로 쓴다. agent에 같은 규칙을 다시 쓰지 않는다.
 - 추천 run의 근거 줄은 run마다 따로 저장되고 반응 id와 연결돼 있지 않아 그대로 가져다 쓸 수 없다. 그래서 에이전트가 ②를 따로 부르고, (reaction_id, updated_at)으로 결과를 캐시한다.
 - ②는 같은 글도 호출마다 결과가 조금 다를 수 있다(이 모델은 temperature=0을 지원하지 않는다). 그래서 추천 run이 읽은 방향과 요약이 읽은 방향이 드물게 다를 수 있다. 캐시를 두면 같은 지도 안에서는 결과가 고정된다.
 - 10/2 판의 "② 정확도 20건 확인 후 처리 방식 결정"은 #410, #419 실제 모델 시험으로 대신한다.
@@ -437,7 +445,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 
 ## 10. 도구
 
-모델은 유형별로 허용된 읽기 전용 도구만 쓴다. 진단 1회당 호출은 `DIAGNOSIS_MAX_TOOL_CALLS`(5)회, 그중 structure_reasons는 `STRUCTURE_REASONS_MAX_CALLS`(1)회까지다. 도구 호출 한 번은 모델 왕복 한 번이 더 생긴다는 뜻이라 횟수에 상한을 둔다. 상한은 llm이 강제한다: 넘는 호출은 실행하지 않고 `LIMIT_EXCEEDED`, 유형에 없는 도구는 `NOT_FOUND`를 도구 결과로 돌려주고, 상한을 다 쓰면 도구 없이 답하게 한다(#532). 그래서 진단 1회의 모델 요청은 많아야 6번이다.
+모델은 유형별로 허용된 읽기 전용 도구만 쓴다. 진단 1회당 호출은 5회, 그중 structure_reasons는 1회까지다(상수는 `llm.prompts`). 도구 호출 한 번은 모델 왕복 한 번이 더 생긴다는 뜻이라 횟수에 상한을 둔다. 상한은 llm이 강제한다: 넘는 호출은 실행하지 않고 `LIMIT_EXCEEDED`, 유형에 없는 도구는 `NOT_FOUND`를 도구 결과로 돌려주고, 상한을 다 쓰면 도구 없이 답하게 한다(#532). 그래서 진단 1회의 모델 요청은 많아야 6번이다.
 
 공통 규칙:
 
@@ -446,7 +454,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 - 결과는 상위 `TOOL_RESULT_MAX_ITEMS`개와 총계로 자른다.
 - unknown은 unknown 그대로 돌려준다. 같은 입력이면 같은 출력을 낸다.
 - 구성원은 관찰 단위 별칭(m1, m2 …)으로만 나온다. 별칭과 user_id 대응은 agent 코드만 안다.
-- 오류는 구조화해서 돌려준다: NOT_FOUND, LIMIT_EXCEEDED.
+- 오류는 구조화해서 돌려준다: NOT_FOUND, LIMIT_EXCEEDED, UNAVAILABLE(② 실패로 structure_reasons를 못 함, #533).
 - 사유 텍스트는 사용자가 쓴 데이터다. 프롬프트에서 지시로 취급하지 않는다고 명시한다.
 - call_id(t1, t2 …)는 llm이 매겨 `tool_runner(call_id, name, args)`로 넘긴다. 모델이 ToolClaim에 그 번호를 쓰려면 도구 결과에 번호가 함께 있어야 하기 때문이다(#532). agent는 받은 call_id로 입력, 결과, 소요 시간을 `agent_runs.tool_calls`에 남긴다. 결과 안의 사유 글은 남기지 않고 `reaction_id`와 글자 수로 바꿔 남긴다(2절 13번). 모델에 보내는 결과에는 글이 그대로 들어간다. 저장할 때만 바꾼다.
 - 구현은 `agent/tools.py`에 두고, 각 도구는 다른 모듈의 `api.py`를 감싸기만 한다.
@@ -459,8 +467,8 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 | get_reasons | `(map_id, pin_ids 또는 category, types?)` → [{reaction_id, pin_id, type, text, chips[{chip_id, label, fact_key, wants}], member_alias, updated_at}] | pins.api `list_reasoned_reactions` |
 | structure_reasons | `(reaction_ids)` → [{reaction_id, lines[{fact_key 또는 null, wants 또는 null, badge}]}]. 글은 ②, 칩은 칩 표 그대로 | llm.api ② 재사용, (reaction_id, updated_at) 캐시 |
 | compare_reasons | `(map_id, pin_id 또는 category)` → [{fact_key, want[], avoid[]}] (♥, 🚫 구분이 붙은 reaction_id 목록)와 충돌 종류 | 코드 계산 |
-| get_place_facts | `(place_ids, fact_keys?)` → [{place_id, fact_key, value 또는 null, confidence}]. 실시간 핀은 place_id가 없어 대상이 아니다 | places.api |
-| get_readiness | `(map_id, category)` → {ready, reason} | recommend.api |
+| get_place_facts | `(place_ids, fact_keys?)` → [{place_id, fact_key, value 또는 null, confidence}]. 이 지도 핀의 place_id만 본다(나머지는 not_found). fact_keys를 줬는데 라벨이 없으면 unknown 행. 실시간 핀은 place_id가 없어 대상이 아니다 | places.api |
+| get_readiness | `(map_id, category)` → {category, ready, answered_count, required_count} | recommend.api(#530) |
 | get_recent_runs | `(run_id)` → 같은 요청자의 같은 카테고리 최근 run [{run_id, status, result_count, created_at}] | recommend.api (#469 기록 조회 재사용), 추천 막힘 전용 |
 | get_run_funnel | `(run_id)` → [{label, removed_count}] | recommend.api, 추천 막힘 전용 |
 | get_run_evidence | `(run_id)` → [{line_id, text, badge, fact_key 또는 null, wants 또는 null, is_active, is_requester_own}] | recommend.api, 추천 막힘 전용 |
@@ -579,6 +587,15 @@ FORBIDDEN_PHRASES = ("확정하세요", "확정해", "결정하세요", "여기�
 렌더: `core.render(lines, verified_claims, reasons)`가 `{cN.value}`를 검증된 값으로, `{cN}`(quote)을 그 반응의 지금 원문으로 바꾼다. 알러지 사유(8절 not_filtered)를 가리키는 quote는 렌더하지 않고 그 문장을 뺀다. 인용한 반응이 이미 지워졌으면 그 문장을 뺀다.
 
 저장과 렌더 시점(2절 13번): 테이블에는 슬롯 문장과 검증을 통과한 claim만 저장한다. QuoteClaim의 `text`(대조용)는 검증 뒤 버리고 `reaction_id`만 남긴다. 렌더는 `GET /maps/{mapId}/agent` 응답과 `agent.suggested` 이벤트를 만들 때 한다. 이벤트 페이로드에는 렌더된 문장이 들어가지만 event_log는 24시간만 보존되므로(events.md) 허용한다.
+
+M1-2(#533) 구현에서 정한 것:
+
+- 모델 유형 제안의 제목과 버튼 이름은 코드 문구다. DiagnosisOutput에 제목과 label 칸이 없다. 정체는 "{카테고리} 후보가 반대 의견 뒤로 멈춰 있어요", 갈림은 "의견이 갈린 핀이 있어요". 버튼 이름은 코드 유형과 같은 문구(핀만 고른 show_pins는 "핀 보기").
+- 5단계: 별칭(m1)도 이름으로 보고 뺀다. 표시 이름은 두 글자 이상만 본다. 이름 검사를 숫자 검사보다 먼저 한다(별칭에 숫자가 있다). 금지 표현과 옮겨 쓰기는 공백을 빼고 비교한다. 300자가 넘는 문장도 뺀다. 표시 이름은 스냅샷 때 읽고 모델에는 보내지 않는다.
+- 3, 6단계: 같은 claim id가 두 번 오면 둘 다 버린다. show_pins의 pin_ids는 스냅샷에 있는 핀이어야 한다. 행동 카테고리가 비면 신호의 카테고리를 쓴다. 같은 행동은 하나만 남긴다.
+- count claim의 unseen: 핀이면 그 핀을 찍지 않은 구성원 중 반응하지 않은 사람 수, 카테고리와 지도면 그런 사람이 한 명이라도 있는 핀 수.
+- analysis는 compare_reasons 결과(충돌 종류, 키, reaction_id)로 저장하고, 화면 모양(AgentAnalysis)은 렌더 때 만든다.
+- 모델 결과의 outcome: 호출 실패와 타임아웃은 model_failed, 스키마 실패는 invalid_schema, 검증 실패는 invalid_claims, 그 밖에는 silent, unknown, suggested.
 
 한계: 문장의 의미 자체는 코드로 검증하지 못한다. "♥ 세 명 모두 분위기를 좋아한다"처럼 개수와 의미를 섞은 주장은 걸러지지 않는다. 수치는 슬롯으로만 쓰게 하고, 의미 주장은 is_guess로 표시하게 하고, 나머지는 평가셋으로 잡는다.
 
@@ -824,12 +841,12 @@ CREATE TABLE agent_runs (
   blocked         jsonb NOT NULL DEFAULT '[]',   -- [{signal_id, reason}]
   priority        jsonb NULL,             -- model_order, final_order, corrections, reused
   policy_version  text NULL,
-  prompt_version  text NULL,
+  prompt_version  text NULL,             -- 우선순위와 진단을 둘 다 부르면 "prioritize-v1+diagnose-v1"처럼 잇는다. model도 같다(#564)
   model           text NULL,
   used_model      boolean NOT NULL DEFAULT false,
   tool_calls      jsonb NOT NULL DEFAULT '[]',
   verification    jsonb NULL,
-  tokens_in       integer NOT NULL DEFAULT 0,
+  tokens_in       integer NOT NULL DEFAULT 0,   -- 한 관찰의 모델 왕복 전부의 합. 실패한 호출도 그때까지 쓴 양을 센다(#564)
   tokens_out      integer NOT NULL DEFAULT 0,
   outcome         text NOT NULL,          -- 아래 목록
   outcome_detail  jsonb NULL
@@ -1066,7 +1083,7 @@ FE 담당
 
 ### M2: 우리 조건 요약 + 추천 막힘 조언 + 수치 조정
 
-통과 조건: recommend.api에 run 조회 함수(get_recent_runs, get_run_funnel, get_run_evidence용), 근거 줄 단위 읽기 전용 시뮬레이션 함수, #422 분류 함수(`demote_wanted_place_identity`) 공개
+통과 조건: recommend.api에 run 조회 함수(get_recent_runs, get_run_funnel, get_run_evidence용), 근거 줄 단위 읽기 전용 시뮬레이션 함수 공개. #422 분류 함수와 키 표시 이름은 #564에서 공개됨
 
 AI 담당
 
@@ -1113,7 +1130,7 @@ FE 담당
 | CATEGORY_GAP_MIN_CONFIRMED | 닫기 비율 | agent_suggestions |
 | BLOCKED_RUN_* | 조언 후 재시도 결과 수 | agent_run_advice + recommend_runs |
 | SUMMARY_NEW_REASONS | 갱신 전후 요약 변화량 | agent_reason_summaries |
-| DIAGNOSIS_MAX_TOOL_CALLS | 호출 분포, 상한 도달 run의 검증 실패율 | agent_runs.tool_calls, verification |
+| 진단 도구 상한(llm.prompts) | 호출 분포, 상한 도달 run의 검증 실패율 | agent_runs.tool_calls, verification |
 | BACKOFF_HOURS | 백오프 후 같은 유형의 수락률 | agent_suggestions |
 | SUGGESTION_TTL | 만료 비율, 미열람 비율 | agent_suggestions, agent_suggestion_views |
 | TICK_INTERVAL_SEC, LEASE_SEC | 관찰 소요 시간 | agent_runs.started_at, finished_at |

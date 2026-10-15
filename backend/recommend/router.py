@@ -31,7 +31,7 @@ from authz.deps import MembershipGatewayDep
 from authz.guard import require_map_member, require_on_map, require_with_principal
 from authz.ports import MembershipGateway
 from pins.schemas import Pin
-from recommend import flows
+from recommend import core, flows
 from recommend.deps import DbSession, EvidencePlanGatewayDep, PlaceFactsGatewayDep, PlaceSearchGatewayDep
 from recommend.loaders import load_run
 from recommend.ports import EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
@@ -59,6 +59,7 @@ EvidenceGate = Depends(require_with_principal("recommend.evidence", load_run))
 def _run_response(run) -> RecommendRunResponse:
     return RecommendRunResponse(
         id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
+        attempt_limit=core.ATTEMPT_LIMIT,
         default_radius_walk_min=run.default_radius_walk_min,
     )
 

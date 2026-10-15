@@ -102,15 +102,25 @@ def test_fixed_gateway_is_selected_and_never_suggests():
     gateway = get_llm_gateway()
     assert isinstance(gateway, FixedAgentLlmGateway)
 
-    def no_tools(name, args):  # 스텁은 도구를 부르지 않는다
+    calls = []
+
+    def runner(call_id, name, args):  # 진단 스텁은 get_reasons를 한 번 부르고 결과는 보지 않는다(#532)
+        calls.append((call_id, name, args))
+        return {"reasons": [], "total": 0}
+
+    def no_tools(call_id, name, args):
         raise AssertionError(f"도구 호출: {name}")
 
     priority = gateway.prioritize([{"id": "s2"}, {"id": "s1"}], ["원칙"])
     assert [i.signal_id for i in priority.order] == ["s2", "s1"]
 
-    diagnosis = gateway.diagnose({"diagnosis": "stall", "signal_id": "s1"}, tool_runner=no_tools)
+    diagnosis = gateway.diagnose({"diagnosis": "stall", "signal_id": "s1", "category": "음식점"}, tool_runner=runner)
     assert isinstance(diagnosis, DiagnosisOutput)
     assert (diagnosis.decision, diagnosis.signal_id, diagnosis.advice, diagnosis.actions) == ("silent", "s1", [], [])
+    assert calls == [("t1", "get_reasons", {"pin_ids": None, "category": "음식점", "types": None})]
+
+    [[line]] = gateway.structure([{"source": "reaction", "text": "조용해서 좋아요", "badge": "preferred"}])
+    assert (line.fact_key, line.badge) == (None, "preferred")   # dev ②는 입력 그대로 — 키를 지어내지 않는다
 
     assert gateway.summarize({}).decision == "silent"
     advice = gateway.advise_run({}, tool_runner=no_tools)

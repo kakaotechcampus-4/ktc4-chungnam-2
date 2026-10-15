@@ -18,7 +18,7 @@ from common.database import Base
 
 RUN_TRIGGERS = ("activity", "time", "summary", "run_advice")
 RUN_OUTCOMES = (
-    "no_signal", "blocked", "silent", "unknown", "invalid_schema", "invalid_claims",
+    "no_signal", "blocked", "silent", "unknown", "invalid_schema", "invalid_claims", "model_failed",
     "stale", "suggested", "summarized", "advised", "trip_ended", "map_deleted",
 )
 DIAGNOSES = ("stall", "split", "no_reaction", "category_gap")

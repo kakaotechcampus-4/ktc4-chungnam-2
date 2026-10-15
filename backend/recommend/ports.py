@@ -30,6 +30,8 @@ class PlaceStub:
     # 가드레일5 출처 — {"provider": "kakao"|"naver"|"google"|"permit"|"tourapi", "url"?: str}. places(#14)가 실구현되면
     # 채운다. dev 스텁은 출처가 없으므로 None(없는 출처를 지어내지 않는다).
     source: Mapping[str, Any] | None = None
+    # places.can_recommend — false면 후보 풀에서 뺀다(constraints.md「추천 가능」). dev 스텁은 항상 True.
+    can_recommend: bool = True
 
 
 class PlaceSearchGateway(Protocol):
