@@ -1038,28 +1038,23 @@ FE 담당
 
 ### M1: 지도 제안 (코드 유형 + 모델 진단 + 우선순위 + 화면)
 
-통과 조건: 모델 호출 추가 결정(#509, 완료), 새 이벤트 타입 4종과 API가 정본 문서에 반영됨, priority_policy.yaml 초안을 PM이 승인
+통과 조건: 모델 호출 추가 결정(#509, 완료), 새 이벤트 타입 4종과 API가 정본 문서에 반영됨(#510, 완료), priority_policy.yaml 초안을 PM이 승인
+
+이슈는 디렉토리와 선행 관계로 나눴다(2026-10-15). 코드 유형(no_reaction, category_gap)을 먼저 화면까지 내고, 모델 유형은 평가 뒤에 노출한다.
 
 AI 담당
 
-- [ ] llm에 agent_prioritize, agent_diagnose(도구 콜백 포함) 추가하고 `llm/api.py`에서 연다. 먼저 고정 응답 스텁으로 통합
-- [ ] tools.py: get_map_overview, get_activity, get_reaction_matrix, get_reasons, structure_reasons, compare_reasons, get_place_facts, get_readiness
-- [ ] core.py: verify_diagnosis, render, render_template, apply_priority_rules, fallback_order, recheck, next_check_at
-- [ ] router.py: 14절의 agent 태그 엔드포인트와 `/internal/agent/tick`
-- [ ] 이벤트 4종 기록
-- [ ] Cloud Scheduler 잡, 서비스 계정, 내부 엔드포인트 인증, Cloud Run 요청 타임아웃 확인
-- [ ] 프롬프트 작성: 우선순위, 진단. 도구 설명문(언제 쓰고 언제 쓰지 않는지) 포함
-- [ ] 평가셋 20건: 지도 상태 픽스처와 기대 출력(순위, 충돌 종류, 조언 유형)
-- [ ] reasoning_effort none과 low 비교, run당 토큰 측정
-- [ ] shadow로 모델 진단을 먼저 돌려 검증 실패율과 토큰을 본 뒤 `AGENT_SHADOW_MODE=False`로 노출
-- [ ] 17절 테스트 2(진단 부분), 3, 7, 11, 12, 14, 15
+- [ ] #531 M1-1: 템플릿 렌더(render_template), 14절 엔드포인트 5개(router.py, main.py), 이벤트 4종 기록, Gateway `select()` 등록, 코드 유형 노출. 17절 12, 15
+- [ ] #530 recommend.api.get_readiness
+- [ ] #532 llm에 agent_prioritize, agent_diagnose(도구 콜백 포함) 추가하고 `llm/api.py`에서 연다. 먼저 고정 응답 스텁으로 통합
+- [ ] #533 M1-2: tools.py 8개, verify_diagnosis, claim 렌더, apply_priority_rules, observe_map 모델 단계. 17절 2(진단 부분), 3, 7, 11
+- [ ] #534 M1-3: 프롬프트(우선순위, 진단, 도구 설명문), 평가셋 20건, reasoning_effort 확인과 비교, run당 토큰, shadow 검증 실패율을 본 뒤 모델 유형 노출 결정
+- [ ] #535 M1-4: `/internal/agent/tick`과 배포 예약 실행(배포 환경 결정 #168 대기). 그 전에는 `AGENT_LOOP_IN_PROCESS=1`
 
 FE 담당
 
-- [ ] 버튼과 점(has_unseen), 바텀시트(16.2), 모드 스위치
-- [ ] view, accept, dismiss 호출과 409 처리
-- [ ] 행동 실행(16.3)과 "상황이 바뀌었어요" 처리
-- [ ] 이벤트 4종 처리(16.4)
+- [ ] #516 버튼과 점(has_unseen), 바텀시트(16.2), 모드 스위치
+- [ ] #536 view, accept, dismiss 호출과 409 처리, 행동 실행(16.3)과 "상황이 바뀌었어요" 처리, 이벤트 4종 처리(16.4)
 
 완료: 노출 후 유형별 열람률, 수락률, 닫기율을 볼 수 있다.
 
