@@ -229,3 +229,14 @@
 
 ## 복잡도
 예상 2, 실제 2.
+
+## #466 — 핀 메모·분류 수정 (PATCH /pins/{pinId}, pin.updated)
+
+- 라우터: `require_with_principal("pin.edit", load_pin)` — 비구성원 404, 구성원이지만 찍은 사람이 아니면 403. 스펙·권한 모델·`authz`는 바꾸지 않았다(policy.py의 `pin.edit`을 그대로 씀).
+- **kind 게이팅은 pins 코어**(`core.can_edit_pin`): `can(pin.edit)` and `kind == "일반"`. AI 추천·확정 핀은 찍은 사람도 403이고 `Pin.permissions.can_edit=false`. `to_pin_response`가 `permissions_for` 결과에 `can_edit`을 덮어 채운다(`authz.core`는 pin의 `can_edit`을 계산하지 않는다 — 계산은 pins가 한다).
+- `core.validate_update`: 403(kind)을 먼저 보고, 그다음 category — live 핀만, 음식점·카페·관광지만, 반응이 하나라도 있으면 422. 같은 값을 다시 보내도 반응이 있으면 422(스펙 문구 그대로).
+- `PinUpdateRequest`: `extra=forbid`, 빈 객체·`null` 값 422. memo는 `reason_content`로 다듬어 공백·빈 문자열이면 지운다(생성 때와 같은 기준). 그 밖의 컬럼(source_run_id·checks·reason·member_fulfillment·place_source·kind·origin·place_id·geom·visibility·kakao_place_id·search_query)은 `update_pin`이 건드리지 않고, 테스트가 컬럼 전체를 비교한다.
+- `pin.updated`(`core.pin_updated_event`, `pin.created`와 같은 Pin 모양, `my_reaction` 제외)를 수정과 같은 트랜잭션에 기록한다. 거절된 요청은 기록하지 않는다.
+- 알려진 한계: 반응 수 확인과 UPDATE 사이에 다른 구성원이 반응하면 분류가 바뀐 채 반응이 붙을 수 있다(`set_reaction`이 핀 행을 잠그지 않는다). 핀 행 잠금을 양쪽에 넣을지는 필요해지면 결정.
+- 테스트: `pins/tests/test_pin_edit_466.py`(32개), 통합 — `KNOWN_MISSING`·`KNOWN_UNCOVERED`의 `PATCH /pins/{pinId}` 삭제, 골든 패스(`test_live_pin_responses_match_the_openapi_spec`)와 permission matrix(401·404 순회 + `test_pin_edit_is_author_only_and_never_for_ai_pins`)에 호출 추가.
+- 복잡도 예상 2, 실제 2.

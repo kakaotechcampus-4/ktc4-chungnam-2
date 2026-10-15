@@ -58,6 +58,7 @@ def _endpoints(w):
         ("GET counts", "GET", f"/maps/{m}/counts", None),
         ("GET pins", "GET", f"/maps/{m}/pins", None),
         ("POST pin", "POST", f"/maps/{m}/pins", w["new_pin"]),
+        ("PATCH pin", "PATCH", f"/pins/{pin}", {"memo": "고침"}),
         ("DELETE pin", "DELETE", f"/pins/{pin}", None),
         ("PUT reaction", "PUT", f"/pins/{pin}/reaction", {"type": "like"}),
         ("DELETE reaction", "DELETE", f"/pins/{pin}/reaction", None),
@@ -143,6 +144,19 @@ def test_control_member_reads_every_get_endpoint(world):
     bad = [f"{n}: {world['a'].get(p).status_code}" for n, p in reads if world["a"].get(p).status_code != 200]
     assert not bad, bad
     assert len(reads) >= 8
+
+
+def test_pin_edit_is_author_only_and_never_for_ai_pins(world):
+    """핀 수정(#466, pin.edit) — 구성원이어도 남의 핀은 403이고, 게시된 AI 추천 핀은 그 핀을 올린 사람도 못 고친다."""
+    a, b, p = world["a"], world["b"], world["pin"]
+    assert b.patch(f"/pins/{p}", json={"memo": "b가 고침"}).status_code == 403
+    assert a.patch(f"/pins/{p}", json={"memo": "a가 고침"}).status_code == 403
+    for client in (a, b):
+        shown = next(x for x in client.get(f"/maps/{world['map']}/pins").json() if x["id"] == p)
+        assert shown["permissions"]["can_edit"] is False and shown["kind"] in ("AI추천", "확정")
+    mine = a.post(f"/maps/{world['map']}/pins", json=world["new_pin"]).json()["id"]
+    assert a.patch(f"/pins/{mine}", json={"memo": "내 핀"}).status_code == 200
+    assert b.patch(f"/pins/{mine}", json={"memo": "남의 핀"}).status_code == 403
 
 
 def test_only_the_owner_can_list_and_revoke_invite_links(world):

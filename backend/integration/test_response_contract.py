@@ -29,7 +29,6 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("PUT", "/me/notification-prefs"): "#470 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/feedback"): "#10 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
-    ("PATCH", "/pins/{pinId}"): "#466 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/pins/{pinId}/resolve"): "#501 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/maps/{mapId}/agent"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
@@ -363,6 +362,16 @@ def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
     assert dup.status_code == 409 and dup.json()["detail"]["pin_id"] == live_id      # PIN_DUPLICATE
     assert a.post(f"/maps/{map_id}/pins", json={**live, "kakao_place_id": "kakao:556", "category": "숙소"}).status_code == 422
     assert a.post(f"/maps/{map_id}/pins", json={**live, "kakao_place_id": "kakao:557", "lat": 37.5}).status_code == 422
+
+    # 핀 수정(#466) — 찍은 사람만. live 핀은 반응이 없을 때 분류도, db 핀은 메모만
+    edited = a.patch(f"/pins/{live_id}", json={"memo": "웨이팅 길대", "category": "카페"})
+    assert edited.status_code == 200 and (edited.json()["memo"], edited.json()["category"]) == ("웨이팅 길대", "카페")
+    assert edited.json()["permissions"]["can_edit"] is True
+    assert a.patch(f"/pins/{live_id}", json={"category": "음식점"}).status_code == 200
+    assert a.patch(f"/pins/{db_id}", json={"memo": "점심에"}).status_code == 200
+    assert a.patch(f"/pins/{db_id}", json={"category": "카페"}).status_code == 422          # 장소가 정한다
+    assert b.patch(f"/pins/{live_id}", json={"memo": "남의 핀"}).status_code == 403
+    assert a.patch(f"/pins/{live_id}", json={}).status_code == 422
 
     listed = a.get(f"/maps/{map_id}/pins").json()
     assert {p["id"] for p in listed} == {live_id, db_id}
