@@ -336,7 +336,7 @@ PR 1(#197)에서 고정한 6개 공개 함수를 실제로 구현했다. 이 브
 
 - **구현**: 마이그레이션 `0033_places_can_recommend`(not null default false, down_revision `0032_feedback`, 단일 head), 판정 규칙 `places/core.py`(순수 함수 `can_recommend(category, known_label_count, *, curated)`, 임계는 같은 파일 상수 `KNOWN_LABEL_THRESHOLDS = {"음식점": 5, "카페": 3}`·`ALWAYS_RECOMMENDABLE = {"관광지"}` 한 곳), 재계산 `repository.recompute_can_recommend`와 `python -m places.scripts.recompute_can_recommend [--dry-run]`(분류별 true/false·바뀐 수 보고, 멱등), `places.load`는 적재 끝에 같은 함수를 같은 트랜잭션에서 자동 재계산하고 건수를 출력한다(dry-run이면 같이 롤백). `PlaceRef.can_recommend: bool = True`(기본값이라 기존 호출자 그대로)를 `search_nearby_own`만 실제 값으로 채운다. 검색·핀 생성 매칭·nearest·링크 해석은 읽지 않는다(테스트로 고정).
 - **정예 판별 기준 — 조사 결과**: `places.source`는 모두 `permit`이라 못 가르고, **`label_source`로도 못 가른다**. 인허가 커버리지 라벨이 정예와 같은 출처 표기(`license_*`, `franchise_brands` 등)를 쓰고, 정예 12,376곳 중 4,710곳은 확정 라벨이 전부 `license_*` 계열이다(`pingo_before499` 기준). 대신 **"출처(`label_source`)가 NULL인 라벨 행을 하나라도 가진 장소 = 정예"**가 정확히 맞는다 — 정예 납품본은 근거 없는 `unknown` 행을 항상 담고, 커버리지 라벨은 "근거 없으면 넣지 않는다"(permit README)라 NULL 행이 없다. 검증: 정예 파일 소속 집합(기존 정예 12,376 + 신규 음식점·카페·관광지 파일 = 15,181곳)과 pingo_demo의 NULL 라벨 보유 장소 15,181곳이 **양방향 차이 0**.
-  - **취약점(결정 요청)**: 이 기준은 "납품본이 근거 없는 unknown 행을 담는다"는 데이터 관례에 기댄다. 납품 형식이 바뀌면 조용히 어긋난다. 확실히 하려면 `places`에 정예 표시 컬럼(예: `curated boolean`)을 두고 `--authoritative` 적재가 켜는 방식이 낫다 — 스펙에 없어서 이 PR에는 넣지 않았다. 원하면 스펙을 먼저 고친 뒤 후속으로 한다.
+  - **취약점: 해결됨(2026-10-16, `places.curated` 컬럼 — 아래 「places.curated」 절).** 이 항목의 기준(출처 NULL 라벨 행)은 0034 마이그레이션이 과거 적재분을 한 번 되메울 때만 쓰고, 이후 정예 판별은 `--authoritative` 적재가 켜는 `places.curated`다.
 - **인덱스를 더하지 않았다**: 후보 검색은 기존 GiST(`idx_places_geom`)로 반경을 먼저 거르고 `category`·`status`·`can_recommend`는 그 결과에 얹는 조건이다. `can_recommend`는 약 86%가 true인 불리언이라 부분 인덱스의 이득이 없다. 추천 후보 검색 계획이 느려지면 그때 `WHERE can_recommend AND status='open'` 부분 GiST를 검토한다.
 - **⚠ 마이그레이션만으로는 값이 안 채워진다**: 기존 행은 모두 false다. 적용한 뒤 `recompute_can_recommend`를 한 번 돌려야 추천 후보가 생긴다(안 돌리면 후보 풀이 비어 「추천 가능 아님 제거」 단계가 전부를 뺀다). 배포 절차에 넣어야 한다.
 - **재계산 결과(pingo_demo의 복사본 `pingo_cr507`, 임계 음식점 5·카페 3, 멱등 확인: 두 번째 실행 바뀐 장소 0)**:
@@ -352,3 +352,39 @@ PR 1(#197)에서 고정한 6개 공개 함수를 실제로 구현했다. 이 브
 - **⚠ pingo_demo 마이그레이션 적용 — 아직 안 했고, 알릴 것이 있다**: pingo_demo의 `alembic_version`이 **`0020_evidence_wants`**다. 0033을 적용하면 0021~0032까지 열두 단계가 함께 올라간다(테이블 18개 → 28개, agent·notifications·feedback 등 새 테이블 추가). 복사본에서는 오류 없이 head(`0033_places_can_recommend`)까지 올라갔다. 기존 데이터를 바꾸는 단계가 있는지는 단계별로 확인하지 않았다. pingo_demo를 바꾸는 작업이라 사용자 확인을 받은 뒤에 한다. 백업 `C:\Users\user\Desktop\pingo_demo_before507.dump`(#507 적재 직전 상태)는 그대로 있으나, **#507 장소 적재 이후의 pingo_demo는 이 백업에 없다** — 적용 직전에 새로 백업을 뜬다.
 - **커버리지 새 라벨 750개(restaurant-labels 단계)**: 하지 않았다(메모리). 해당 라벨이 들어가면 일부 커버리지 장소의 확정 라벨 수가 늘어 can_recommend 건수가 소폭 달라질 수 있다 — 적재 끝의 자동 재계산이 반영한다.
 - **테스트**: `places/tests/test_can_recommend.py`(규칙 파라미터화·임계 상수·재계산 임계/정예 보존/멱등/라벨 변화 양방향/dry-run/폐업 포함/스크립트/적재 자동 재계산·PlaceRef 필드와 기본값·검색·nearest 무관) + `test_can_recommend_migration.py`(단일 head·up/down·기존 행 false·모델 일치). `places`·`integration`·`common` 609 통과.
+
+
+---
+
+# places.curated — 정예 표시 컬럼 (2026-10-16)
+
+- **구현**: 마이그레이션 `0034_places_curated`(`curated boolean not null default false`, down_revision `0033_places_can_recommend`, 단일 head). **되메우기는 이 마이그레이션 안에서 휴리스틱("출처(`label_source`)가 NULL인 라벨 행을 가진 장소 = 정예")으로 한 번만** 채운다. 그 뒤로는 휴리스틱을 쓰지 않는다. down은 컬럼 삭제.
+- **로더**: `--authoritative` 적재(`existing_mode="overwrite"`)가 같은 (source, source_id)의 `curated`를 true로 켠다. 이미 있던 커버리지 장소를 정예가 덮을 때도, 신규 정예 행도 true다. 커버리지(`permit`, `keep`)와 기본(`refresh`) 적재, 재계산은 `curated`를 끄지도 켜지도 않는다(한 번 true면 유지). 폐업 처리도 `curated`를 건드리지 않는다.
+- **`recompute_can_recommend`**: 정예 판별을 라벨 NULL 휴리스틱에서 `places.curated`로 교체했다(라벨 집계 쿼리는 확정 라벨 수만 센다).
+- **결과가 #561 보고와 같다(복사본 `pingo_cur507` = 현재 pingo_demo에서 새로 뜸, 0021~0034 적용 뒤 재계산)**: 음식점 66,926 / 13,339, 카페 23,855 / 1,313, 관광지 723 / 0(true / false), 합계 91,504 / 14,652. `curated=true` 15,181곳이 전부 `can_recommend=true`(예외 0). 두 번째 실행에서 바뀐 장소 0(멱등). 불일치 없음.
+- **#561 조사 결과의 취약점 항목: 해결됨.** 정예 판별이 더는 "납품본에 근거 없는 unknown 행이 있다"는 데이터 관례에 기대지 않는다. 납품 형식이 바뀌어도 `--authoritative`로 적재하면 정예로 표시된다. 휴리스틱은 0034 되메우기에만 남는다(과거 적재분 한 번).
+- **테스트**: `test_curated_flag.py`(적재가 켬·신규 정예 행·커버리지/refresh/폐업/재계산이 끄지 않음·기본 false), `test_curated_migration.py`(단일 head·되메우기 한 번(NULL 라벨만 true)·up/down·모델 일치), `test_can_recommend.py`를 `curated` 컬럼 기준으로 갱신(NULL 라벨이 더는 정예 신호가 아님·재계산이 정예를 끄지 않음). `places`·`common`·`integration` 중 통합 계약 테스트 몇 개가 실패하는데 **develop 원본에서도 같은 계열이 실패한다**(알림·피드백·협업 계약 테스트, 실행마다 실패 조합이 달라짐 — 이 PR과 무관한 기존 불안정, 별도 확인 필요).
+
+## pingo_demo 마이그레이션 단계별 조사 (0020 → 0034, 14단계)
+
+pingo_demo는 `alembic_version=0020_evidence_wants`다. 단계별로 `upgrade()`를 읽고, **현재 pingo_demo의 복사본에 실제로 올려서** 기존 테이블 행 수를 비교했다(오류 없이 head `0034_places_curated`까지 올라감).
+
+| 단계 | 내용 | 기존 행 영향 |
+|---|---|---|
+| 0021_maps_delete_leave | `maps.deleted_at` 추가, `memberships` 방장 1명 유일 인덱스 | 값 변경 없음. **방장이 2명 이상인 지도가 있으면 RuntimeError로 중단**(지금 데이터는 해당 없음, 복사본 통과) |
+| **0022_reaction_two_state** | **`DELETE FROM reactions WHERE type='neutral'`** 후 enum을 like·against 둘로 교체 | **기존 행을 지운다.** pingo_demo reactions 20행 중 neutral 6행(like 9·against 5는 남음)이 삭제된다. downgrade로도 지운 행은 돌아오지 않는다. 지운 사람의 사유는 evidence_lines에 남는다고 마이그레이션 주석에 적혀 있다 |
+| 0023_pins_live | `pins`에 source(기본 'db')·kakao_place_id·search_query·memo 추가, `place_id`·`geom` NOT NULL 해제, 체크 제약·유일 인덱스 | 값 삭제 없음. 기존 28핀은 전부 `source='db'`로 채워진다. 체크 제약이 기존 행에 통과함을 복사본에서 확인 |
+| 0024_evidence_lines_seq | `evidence_lines`에 identity `seq` 추가 | 테이블 재작성, 기존 30행에 1~30이 매겨진다. 값 삭제 없음 |
+| 0028_recommend_runs_history_idx | 인덱스 추가 | 없음 |
+| 0025_invite_revoke | `invites`에 revoked_at·created_at(기본 now()) 추가, 인덱스 | **기존 9개 초대의 created_at이 전부 적용 시각 한 값이 된다**(원래 생성 시각을 알 수 없음). 삭제는 없음 |
+| 0029_agent_tables | agent 테이블 7개 CREATE | 없음(새 테이블) |
+| 0030_agent_cursor_drop_gap_seq | `agent_cursors.gap_seq` 컬럼 삭제 | 0029에서 방금 만든 빈 테이블의 컬럼이라 영향 없음 |
+| 0031_notifications | notifications·notification_prefs CREATE | 없음 |
+| 0032_feedback | feedback CREATE | 없음 |
+| 0033_places_can_recommend | `places.can_recommend` 추가(기본 false) | 값 변경 없음(재계산 전까지 전부 false) |
+| 0034_places_curated | `places.curated` 추가 + 휴리스틱 되메우기 UPDATE | places의 새 컬럼만 채운다. 기존 컬럼 불변 |
+
+- **요약**: CREATE TABLE·ADD COLUMN·인덱스가 대부분이고, **기존 행을 건드리는 것은 두 곳**이다. ① 0022가 reactions의 neutral 6행(20행 중)을 **삭제**한다. ② 0025가 invites 9행의 created_at을 적용 시각으로 채운다. 그 외에 0021은 방장 중복이 있으면 적용이 중단된다(지금은 해당 없음).
+- **복사본 실측**: 적용 전후 행 수가 같은 테이블은 candidates 12·event_log 70·evidence_lines 30·exclusions 0·invites 9·maps 6·memberships 15·pins 28·place_facts 1,027,876·places 106,156·recommend_runs 11·regions 11·routes 2·shortlist_items 6·users 7. **reactions만 20 → 14**로 줄었다.
+- **참고**: 조사 중 pingo_demo의 `place_facts`가 1,027,876행(커버리지 라벨 새 키 750개 포함, 장소 106,156)이다 — #507 보고에 "미완료"로 적은 상태(1,027,126)와 다르다. 누군가 커버리지 라벨 단계를 마친 것으로 보이며 이 세션은 하지 않았다. 지금 복사본·재계산 숫자는 그 상태 기준이다.
+- **pingo_demo에는 적용하지 않았다.** 적용 여부는 루트가 백업(pg_dump) 후 정한다. 적용하면 reactions 6행이 사라지므로, 그 행이 시연 데이터에 필요하면 먼저 따로 보관해야 한다. 백업은 적용 직전에 새로 떠야 한다(`pingo_demo_before507.dump`는 #507 적재 이전 상태).
