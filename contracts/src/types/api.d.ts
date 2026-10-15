@@ -1148,6 +1148,77 @@ export interface paths {
         };
         trace?: never;
     };
+    "/pins/{pinId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 실시간 핀 승격 — 자체 DB에 짝이 있으면 live 핀을 자체 DB 핀으로 바꾼다 (#501). 지도 구성원 누구나(`pin.resolve`).
+         *     화면이 카카오 SDK로 그 핀의 이름·좌표를 찾았을 때(`kakao_place_id`로 다시 찾은 결과) **그 값을 매칭 힌트로만** 보낸다. 서버는 `POST /maps/{mapId}/pins`(source=search)와 같은 규칙(반경·이름 유사도·주소 보조·분류 일치, 모호하면 거절)으로 자체 DB 장소를 찾는다.
+         *     - **짝이 있으면**: 핀이 `source: db`가 되고 `place_id`가 채워진다(`Pin.place_name`·`lat`·`lng`·`place_url`을 장소에서 가져온다). `kakao_place_id`·`search_query`는 지운다. **반응·사유·확정 리스트 항목·핀 id는 그대로 유지**된다. 전체 채널에 `pin.updated(Pin)`를 보낸다.
+         *     - **짝이 없으면**: 200 + 핀 그대로(`source: live` 유지). 이벤트도 없다. 화면은 데이터가 늘어난 뒤 다시 시도할 수 있다.
+         *     - **이미 자체 DB 핀이면** 아무것도 하지 않고 200으로 핀을 그대로 돌려준다(화면이 호출을 아끼려 거르지만 호출해도 안전).
+         *     - **같은 지도에 그 장소의 핀이 이미 있으면** 409 `PIN_DUPLICATE`(`detail.pin_id` = 이미 있는 핀). 자동 병합은 하지 않는다 — 두 핀의 반응·사유가 엉키므로 사람이 한쪽을 지운다.
+         *     - AI 추천·확정 핀은 live가 아니므로 항상 변화 없이 200이다. 분류는 핀의 `category`를 쓴다(본문에 없다).
+         *     - **힌트(`place_name`·`lat`·`lng`·`address`)는 저장하지도 로깅하지도 않는다**(카카오 약관). 응답에도 싣지 않는다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    pinId: components["parameters"]["PinId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PinResolveRequest"];
+                };
+            };
+            responses: {
+                /** @description 승격됐거나(source=db) 변화 없음(source=live). 요청자 기준 Pin */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Pin"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                /** @description PIN_DUPLICATE — 그 장소의 핀이 이 지도에 이미 있다 (detail.pin_id) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description 검증 실패 (VALIDATION_ERROR) — 이름·좌표 누락, 범위 밖 좌표 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me/notifications": {
         parameters: {
             query?: never;
@@ -2795,6 +2866,16 @@ export interface components {
             /** @description live 핀만, 반응이 없을 때만 (PATCH /pins/{pinId} 설명 참고) */
             category?: components["schemas"]["Category"];
         };
+        /** @description 실시간 핀 승격의 매칭 힌트 (#501). 전부 저장하지도 로깅하지도 않는다 */
+        PinResolveRequest: {
+            /** @description 화면이 kakao_place_id로 다시 찾은 장소 이름(카카오 응답 그대로). 매칭 힌트 */
+            place_name: string;
+            /** @description 같은 검색 결과의 좌표. 매칭 힌트 */
+            lat: number;
+            lng: number;
+            /** @description 선택. 같은 검색 결과의 주소. 이름이 비슷한 점포를 가를 때만 쓰는 보조 힌트 */
+            address?: string;
+        };
         /**
          * @description 알림 종류 (#470). `pin_reaction` 내 핀에 반응이 달림, `member_joined` 내 지도에 새 구성원(방장에게만),
          *     `owner_changed` 내가 방장이 됨(직접 넘김·위임 모두), `map_deleted` 내가 속한 지도가 삭제됨,
@@ -2906,6 +2987,8 @@ export interface components {
             lat: number;
             /** @description 매칭 힌트 — 검색 결과의 좌표를 그대로. 저장하지 않는다 */
             lng: number;
+            /** @description 선택, 매칭 힌트 — 검색 결과의 address를 그대로. 이름이 비슷한 점포를 가르는 보조 판단에만 쓰고 저장·로깅하지 않는다(#500, #501). 없어도 된다 */
+            address?: string;
         };
         /** @description GET /places/search 한 건 — **화면 표시용이며 서버에 저장되지 않는다**. 핀을 만들 때 place_id·place_name·lat·lng·category를 그대로 POST /maps/{mapId}/pins로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는 매칭 힌트로 쓴다 */
         PlaceSearchResult: {

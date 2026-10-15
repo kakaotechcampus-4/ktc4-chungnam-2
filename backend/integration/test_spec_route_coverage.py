@@ -29,6 +29,7 @@ KNOWN_MISSING: dict[tuple[str, str], str] = {
     ("post", "/feedback"): "#10 서비스 피드백",
     ("post", "/maps/{}/owner"): "#468 방장 직접 넘기기",
     ("patch", "/pins/{}"): "#466 핀 메모·분류 수정",
+    ("post", "/pins/{}/resolve"): "#501 실시간 핀 승격",
     ("get", "/places/nearest"): "#473 지도를 눌러 핀 — 가까운 자체 DB 장소",
     ("post", "/places/from-link"): "#474 지도 링크 해석",
     ("get", "/maps/{}/agent"): "#510 agent v2 계약 — M0, M1에서 구현",

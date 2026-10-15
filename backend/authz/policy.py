@@ -30,6 +30,7 @@ POLICY: Mapping[str, RoleSpec] = {
                 "pin.create",
                 "pin.delete",  # "구성원 누구나" (9/4 결정 #25)
                 "pin.react",
+                "pin.resolve",  # 실시간 핀 승격(#501)
                 "pin.revert",
                 "shortlist.add",
                 "shortlist.remove",  # "구성원 누구나" (5-3, 15-1)
@@ -83,6 +84,7 @@ ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "pin.create": frozenset({"map"}),
     "pin.delete": frozenset({"pin"}),
     "pin.react": frozenset({"pin"}),
+    "pin.resolve": frozenset({"pin"}),
     "pin.revert": frozenset({"pin"}),
     "pin.edit": frozenset({"pin"}),
     # add의 대상은 pin이다 — POST /maps/{mapId}/shortlist의 본문이 {pin_id}.
