@@ -10,6 +10,16 @@
 - 이벤트: `agent.suggested`, `agent.resolved`, `agent.settings_changed` 발행 시작.
 - **FE 할 일:** #516, #536을 실서버에 붙일 수 있다.
 
+## 2026-10-16, 카톡 대화 내보내기로 일괄 핀 찍기 (#9, 기획안 5-9)
+
+스펙이 먼저다. 구현은 pins가 한다. 그 전까지 아래 엔드포인트 2개는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다.
+
+- **`POST /maps/{mapId}/pins/link-preview`** `{urls: string[≤10]}` → `{items:[{index, status:'ok'|'error', result?: LinkParseResult, error_code?, already_pinned_pin_id?}]}`. 쓰기 없음. 링크마다 `POST /places/from-link`와 같은 해석을 하고 **이미 지도에 있는 장소인지**를 붙인다. 항목마다 따로 성공·실패(요청은 200). 사용자당 URL 수 기준 분당 60(429 `RATE_LIMITED`).
+- **`POST /maps/{mapId}/pins/bulk`** `{pins: PinCreateRequest[≤30]}` → `{results:[{index, status:'created'|'duplicate'|'rejected', pin?, error?:{code,message?,detail?}}]}`. 항목은 핀 생성과 같은 요청이고 규칙도 같다. 항목마다 따로 처리(일부만 성공해도 나머지는 만들어진다), 핀마다 `pin.created`.
+- **대화 내용은 서버로 가지 않는다.** 화면이 붙여넣은 텍스트를 **브라우저 안에서** 정규식으로 스캔해 구글맵·카카오맵 링크만 뽑고(네이버·인스타·블로그는 안 잡는다, #134), 텍스트는 즉시 버린다. 서버는 URL만 본다. 모델 호출 없음.
+- **권한**: 새 액션 없음(`pin.create`, 게스트 포함 구성원 누구나). **에러 코드**: 새 코드 없음(기존 `LINK_*`·`PIN_DUPLICATE`·`PLACE_NOT_SUPPORTED`를 항목별 코드로).
+- **FE 할 일**: 붙여넣기 → 브라우저 추출(최대 50개, 중복 제거) → 10개씩 미리보기 호출·진행 표시 → 목록(「찾음」「이미 있음」「이름으로 찾기」「실패」) → 선택 → 일괄 생성 → 결과 요약. 링크 하나 붙여넣기(#487)와 같은 컴포넌트를 쓴다. 구글 링크에 자체 DB 짝이 없으면 `result.name_hint`로 기존 이름 검색 흐름을 한 건씩 이어 간다(카카오 검색을 자동으로 돌리지 않는다).
+
 ## 2026-10-15 (일곱 번째), 게스트 참여 (#472)
 
 스펙이 먼저다. 구현은 auth(계정·세션)·maps(지도 만들기 제한·후임 판정)가 한다. 그 전까지 `POST /auth/guest`는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다. **설계 결정은 루트 추천안이다**(사용자 변경 가능).
