@@ -27,7 +27,6 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("POST", "/me/notifications/read"): "#470 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/me/notification-prefs"): "#470 구현 PR이 골든 패스에 넣고 지운다",
     ("PUT", "/me/notification-prefs"): "#470 구현 PR이 골든 패스에 넣고 지운다",
-    ("POST", "/feedback"): "#10 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
     ("PATCH", "/pins/{pinId}"): "#466 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
@@ -314,6 +313,27 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
 
     # 탈퇴 — 반응은 지워지고 핀은 남는다
     assert b.post("/auth/withdraw").status_code == 204
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
+def test_feedback_responses_match_the_openapi_spec(clients):
+    """서비스 피드백(#10) — 201 영수증과 422·401 에러 봉투, 시간당 상한 429."""
+    a, _b, problems = clients
+    assert a.post("/feedback", json={"message": "좋아요", "category": "idea"}).status_code == 201
+    assert a.post("/feedback", json={"message": "   "}).status_code == 422
+    assert a.post("/feedback", json={"message": "x" * 1001}).status_code == 422
+    from fastapi.testclient import TestClient
+    assert _Checked(TestClient(a._c.app), problems).post("/feedback", json={"message": "x"}).status_code == 401
+    from feedback import api as feedback_api
+    from common.ratelimit import SlidingWindowLimiter
+    feedback_api.submit_limiter = SlidingWindowLimiter(1, window_s=3600.0)
+    try:
+        assert a.post("/feedback", json={"message": "하나"}).status_code == 201
+        assert a.post("/feedback", json={"message": "둘"}).status_code == 429
+    finally:
+        feedback_api.submit_limiter = SlidingWindowLimiter(10, window_s=3600.0)
 
     unique = list(dict.fromkeys(problems))
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)

@@ -26,7 +26,6 @@ KNOWN_MISSING: dict[tuple[str, str], str] = {
     ("post", "/me/notifications/read"): "#470 알림함",
     ("get", "/me/notification-prefs"): "#470 알림 설정",
     ("put", "/me/notification-prefs"): "#470 알림 설정",
-    ("post", "/feedback"): "#10 서비스 피드백",
     ("post", "/maps/{}/owner"): "#468 방장 직접 넘기기",
     ("patch", "/pins/{}"): "#466 핀 메모·분류 수정",
     ("get", "/places/nearest"): "#473 지도를 눌러 핀 — 가까운 자체 DB 장소",

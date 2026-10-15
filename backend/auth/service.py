@@ -18,6 +18,7 @@ from auth import core
 from auth.models import User
 from common.errors import AppError
 from common.settings import settings
+from feedback import api as feedback_api
 from maps import api as maps_api
 from pins import api as pins_api
 from recommend import api as recommend_api
@@ -164,7 +165,7 @@ def revoke_sessions(db: Session, *, user_id: str) -> None:
 
 
 def withdraw_user(db: Session, *, user_id: str) -> User:
-    """탈퇴 처리(12절, #155) — users 행은 soft delete, 그 사람의 반응·근거 줄은 삭제한다.
+    """탈퇴 처리(12절, #155) — users 행은 soft delete, 그 사람의 반응·근거 줄은 삭제하고 피드백은 작성자 연결만 끊는다(#10).
 
     방장인 지도는 먼저 후임에게 넘기고, 넘길 사람이 없으면 지도를 삭제한다(#369 10번). 탈퇴자의
     멤버십 행은 남는다(#245) — 핀 작성자 표시에 쓴다.
@@ -184,6 +185,7 @@ def withdraw_user(db: Session, *, user_id: str) -> User:
     pins_api.delete_reactions_by_user(db, user_id=user_id)
     recommend_api.delete_evidence_lines_by_author(db, user_id=user_id)
     agent_api.delete_by_user(db, user_id=user_id, map_ids=map_ids)
+    feedback_api.anonymize_by_user(db, user_id=user_id)
     row.deleted_at = datetime.now(timezone.utc)
     db.flush()
     return row
