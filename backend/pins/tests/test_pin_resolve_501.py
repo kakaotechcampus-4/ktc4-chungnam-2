@@ -87,11 +87,11 @@ def test_confirmed_live_pin_is_not_promoted(app_client, db_session):
 
 def test_existing_pin_for_that_place_is_409_and_nothing_merges(app_client, db_session):
     existing = app_client.post("/maps/map_1/pins", json=KALGUKSU, cookies=_auth()).json()
-    live = _live(app_client)
+    live = _live(app_client, kakao_place_id="kakao:OTHER")   # 같은 카카오 ID면 생성 단계에서 막힌다(#569)
     resp = _resolve(app_client, live["id"])
     assert resp.status_code == 409 and resp.json()["detail"]["pin_id"] == existing["id"]
     row = _row(db_session, live["id"])
-    assert row.source == "live" and row.kakao_place_id == "kakao:1001" and row.deleted_at is None
+    assert row.source == "live" and row.kakao_place_id == "kakao:OTHER" and row.deleted_at is None
     assert _events(db_session, type="pin.updated") == []
 
 

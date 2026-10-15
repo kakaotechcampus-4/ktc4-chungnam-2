@@ -276,11 +276,10 @@ def _find_existing_pin_id(db: Session, map_id: str, place_id: str) -> str | None
 
 
 def list_live_kakao_place_ids(db: Session, map_id: str) -> list[str]:
-    """이 지도의 실시간 핀(#382)이 가리키는 카카오 장소 ID — 오래된 핀부터. 이름·좌표·메모는 담지 않는다."""
+    """이 지도의 실시간 핀(#382)이 가리키는 카카오 장소 ID(순서는 보장하지 않는다). 이름·좌표·메모는 담지 않는다."""
     return list(db.execute(
         select(PinRow.kakao_place_id)
         .where(PinRow.map_id == map_id, PinRow.deleted_at.is_(None), PinRow.source == "live", PinRow.kakao_place_id.is_not(None))
-        .order_by(PinRow.created_at, PinRow.id)
     ).scalars().all())
 
 

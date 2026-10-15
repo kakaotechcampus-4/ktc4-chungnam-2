@@ -260,6 +260,6 @@
   - 생성 `source=live`: 요청 `kakao_place_id`가 기록된 자체 DB 장소의 핀이 이 지도에 있으면(기존 "같은 지도 같은 kakao_place_id" 검사는 그대로, 먼저 본다).
   - 승격 `resolve`: 매칭된 장소에 대해 같은 helper로 **다른** live 핀(자기 제외)도 본다.
 - `PlaceInfo`·`PlaceMatch`에 카카오 ID가 없어서, "기록된 ID가 live 핀과 같은가"는 이 지도 live 핀마다 `own_places_by_kakao_id`를 부르는 방식으로 판정한다(live 핀 수만큼 쿼리 — 지도당 소수라 수용). 더 많아지면 places에 `PlaceMatch.kakao_place_id` 노출을 요청하겠다.
-- `pins.api.list_live_kakao_place_ids(db, *, map_id) -> list[str]` — 삭제되지 않은 live 핀의 카카오 ID만(오래된 순). recommend가 "이미 지도에 있는 장소 빼기"에 쓴다.
+- `pins.api.list_live_kakao_place_ids(db, *, map_id) -> list[str]` — 삭제되지 않은 live 핀의 카카오 ID만(순서 보장 없음). recommend가 "이미 지도에 있는 장소 빼기"에 쓴다.
 - 알려진 한계: 이 검사는 DB 유니크 인덱스가 아니라 조회라, 같은 가게를 live·search로 동시에 만드는 경합은 막지 못한다.
 - 테스트: `pins/tests/test_pin_cross_duplicate_569.py`(9개). 복잡도 예상 2, 실제 2.

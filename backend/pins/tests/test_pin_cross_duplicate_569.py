@@ -87,6 +87,6 @@ def test_list_live_kakao_place_ids_returns_only_ids_of_live_pins_on_the_map(app_
         created_by="user_1", kakao_place_id="kakao:9009", search_query="다른 지도",
     ))
     db_session.commit()
-    assert pins_api.list_live_kakao_place_ids(db_session, map_id="map_1") == ["kakao:1001", "kakao:2002"]
+    assert sorted(pins_api.list_live_kakao_place_ids(db_session, map_id="map_1")) == ["kakao:1001", "kakao:2002"]
     assert pins_api.list_live_kakao_place_ids(db_session, map_id="map_2") == ["kakao:9009"]
     assert pins_api.list_live_kakao_place_ids(db_session, map_id="map_none") == []
