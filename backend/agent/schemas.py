@@ -18,6 +18,8 @@ from llm.schemas import (  # noqa: F401 — 모델 출력 스키마(11.1)의 정
     AdviceLine,
     AgentCallFailed,
     AgentDecision as Decision,
+    AgentReply,
+    AgentUsage,
     Claim,
     CountClaim,
     DiagnosisOutput,
