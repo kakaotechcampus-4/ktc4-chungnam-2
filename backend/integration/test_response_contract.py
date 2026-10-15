@@ -23,7 +23,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
-    ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/pins/{pinId}/resolve"): "#501 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/maps/{mapId}/agent"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("PUT", "/maps/{mapId}/agent/settings"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
@@ -153,6 +152,11 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.get(f"/invites/{extra.json()['token']}").status_code == 410      # INVITE_REVOKED
     assert a.delete("/invites/no-such-token").status_code == 404
     assert a.get(f"/maps/{map_id}/members").status_code == 200
+    # 방장 직접 넘기기(#468) — 구성원 403, 나 자신 422, 넘기고 되받는다(이후 단계는 a가 방장이라고 가정한다)
+    assert b.post(f"/maps/{map_id}/owner", json={"user_id": "user_b"}).status_code == 403
+    assert a.post(f"/maps/{map_id}/owner", json={"user_id": "user_a"}).status_code == 422
+    assert a.post(f"/maps/{map_id}/owner", json={"user_id": "user_b"}).status_code == 200
+    assert b.post(f"/maps/{map_id}/owner", json={"user_id": "user_a"}).status_code == 200
 
     # 이름 검색(#180) — 결과 스키마 검증 + 0건(빈 배열) + 에러 봉투 422
     assert a.get("/places/search", params={"q": "해운대", "lat": 35.16, "lng": 129.16}).status_code == 200

@@ -51,6 +51,8 @@ def _endpoints(w):
     return [
         ("GET map", "GET", f"/maps/{m}", None),
         ("GET members", "GET", f"/maps/{m}/members", None),
+        ("POST owner", "POST", f"/maps/{m}/owner", {"user_id": "user_b"}),
+
         ("PATCH map", "PATCH", f"/maps/{m}", {"title": "새 제목"}),
         ("POST invite", "POST", f"/maps/{m}/invite", None),
         ("GET invites", "GET", f"/maps/{m}/invites", None),
@@ -145,6 +147,15 @@ def test_control_member_reads_every_get_endpoint(world):
     assert not bad, bad
     assert len(reads) >= 8
 
+
+def test_only_the_owner_can_hand_over_ownership(world):
+    """방장 직접 넘기기(#468, owner.transfer)는 방장만 — 구성원은 403이고 방장은 그대로다."""
+    a, b, m = world["a"], world["b"], world["map"]
+    assert b.post(f"/maps/{m}/owner", json={"user_id": "user_b"}).status_code == 403
+    assert a.get(f"/maps/{m}").json()["my_role"] == "owner"
+    assert a.post(f"/maps/{m}/owner", json={"user_id": "user_b"}).status_code == 200
+    assert a.get(f"/maps/{m}").json()["my_role"] == "member"
+    assert b.get(f"/maps/{m}").json()["my_role"] == "owner"
 
 def test_pin_edit_is_author_only_and_never_for_ai_pins(world):
     """핀 수정(#466, pin.edit) — 구성원이어도 남의 핀은 403이고, 게시된 AI 추천 핀은 그 핀을 올린 사람도 못 고친다."""
