@@ -11,7 +11,10 @@ DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). 실시간 보조: Redis
 
 ```
 users(
-  id, provider('kakao'), provider_user_id, display_name,
+  id, provider('kakao'|'guest'), provider_user_id, display_name,
+  is_guest boolean not null default false,   -- v2 #472: 이름만 입력한 임시 계정. provider='guest', provider_user_id는 임의 값(재사용 안 함)
+  guest_invite_token null,                   -- 게스트를 만든 초대 토큰. 토큰 하나당 게스트 10명 상한(GUEST_LIMIT)을 이 열로 센다
+  last_seen_at timestamptz null,             -- 게스트 정리 기준: 90일 쓰지 않으면 정리 작업(#168)이 지운다. 세션을 쓸 때 하루 한 번 갱신
   created_at, deleted_at            -- 탈퇴 시 users만 soft delete. 반응·근거 줄은 hard delete, 핀은 유지하고 작성자는 '탈퇴한 구성원'으로 표시 (12절, #155)
   sessions_valid_after timestamptz null   -- 로그아웃 시각. 이 시각 이전(같은 초 포함)에 발급된 세션 토큰은 무효, NULL이면 전부 유효 (#129)
 )
