@@ -4,6 +4,74 @@
 
 ---
 
+# #532 — agent_prioritize, agent_diagnose (v2 에이전트 M1)
+
+## 연 것 (`llm/api.py`)
+
+```python
+agent_prioritize(signals, principles, *, planner) -> PriorityOutput | AgentCallFailed
+agent_diagnose(diagnosis_input, *, tool_runner, planner) -> DiagnosisOutput | AgentCallFailed
+# planner: fixed_priority_planner / real_priority_planner, fixed_diagnosis_planner / real_diagnosis_planner
+# ToolRunner = Callable[[call_id, name, args], result]
+```
+
+- 실패(호출 실패, 타임아웃, 스키마 검증 실패)는 재요청 없이 `AgentCallFailed(reason=invalid_schema|timeout|call_failed, detail=예외 클래스명)`.
+  예외로 올리지 않는다. 예외는 두 가지뿐이다: 진단 유형이 아닌 입력(ValueError, agent 쪽 오류), tool_runner가 낸 예외(ToolRunnerError로 감싸 그대로).
+- 스텁: 우선순위는 받은 순서 그대로. 진단은 get_reasons를 한 번 부르고 늘 silent(지어낸 문장이 나갈 길이 없다).
+- 도구 상한: 진단 1회당 실행 5회, structure_reasons 1회. 넘는 호출은 실행하지 않고 `{"error": "LIMIT_EXCEEDED"}`, 유형에 없는
+  도구는 `{"error": "NOT_FOUND"}`를 도구 결과로 준다. 실행한 호출만 센다. 상한을 다 쓰거나 6번째 요청이면 `tool_choice="none"`이라
+  모델 요청은 많아야 6번이다. "none"인데도 도구를 부르면 call_failed.
+- 도구 결과는 모델에 `{"call_id": "t1", "result": <tool_runner 반환값>}`로 준다. ToolClaim.path는 result 안의 경로다(예: "ready").
+
+## 엘리스 API 도구 호출 확인 (2026-10-15, gpt-6-luna)
+
+| 요청 | 결과 |
+|---|---|
+| tools + tool_choice(auto, required, 특정 함수), 기본 reasoning_effort | **400** "Function tools with reasoning_effort are not supported for gpt-6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'" |
+| 같은 요청 + reasoning_effort="low" | 400 (같은 메시지) |
+| 같은 요청 + reasoning_effort="none" | 통과. auto, required, 특정 함수, none 모두. tool_call id·이름·strict 인자 정상 |
+| parallel_tool_calls=False | 통과 |
+| 도구 결과를 돌려준 뒤 parse(response_format) + tools | 통과. 구조화 응답이 parsed로 온다 |
+| 도구 없이 reasoning_effort="low" / "none" | 통과 |
+| response_format에 oneOf(discriminated union) | **400** "'oneOf' is not permitted" |
+
+live 테스트(`llm/tests/test_agent_live.py`, `-m live`) 2개 통과: 우선순위 1회, 진단은 도구 3회(get_reasons, structure_reasons,
+get_readiness) 뒤 스키마에 맞는 suggest. 품질 평가는 아니다(#534).
+
+## 루트가 알아야 할 것
+
+1. **진단은 reasoning_effort="none"으로 고정된다.** chat.completions로 도구를 쓰려면 none뿐이다. 명세 19절 "진단 호출에 none과 low
+   중 무엇을"은 chat.completions에서는 선택지가 없다. low가 필요하면 `/v1/responses`로 옮겨야 한다(확인하지 않음). 우선순위 호출은
+   도구가 없어 ②처럼 넘기지 않았다(none과 low 비교는 #534). 명세 19절 갱신 필요
+2. **Claim에 discriminator를 걸지 않았다.** 명세 11.1의 `Annotated[..., Field(discriminator="kind")]`는 JSON 스키마가 oneOf가 돼
+   엘리스가 거절한다. 일반 Union(anyOf)으로 바꿨다. 데이터 모양은 같고 kind가 클래스마다 다른 Literal이라 검증 결과도 같다.
+   명세 11.1 코드와 agent/schemas.py(#513)의 Claim도 같이 바꿔야 한다
+3. **call_id를 llm이 매긴다.** 명세 10절은 "agent가 call_id를 매기고"인데, 모델이 ToolClaim에 call_id를 쓰려면 도구 결과에 그 값이
+   있어야 해서 llm이 t1, t2 …를 매겨 `tool_runner(call_id, name, args)`로 넘긴다(#532 지시대로). agent는 받은 call_id로 기록한다.
+   명세 10절 문구 갱신 필요
+
+## #533(agent)이 맞출 것
+
+- `agent/deps.py`: `ToolRunner`를 `(call_id, name, args)`로, Gateway Protocol의 반환을 `... | AgentCallFailed`로. Real Gateway는
+  `llm.api.agent_*`에 real planner를, Fixed Gateway는 fixed planner를 넘기면 된다
+- `agent/schemas.py`의 11.1 모델 출력 클래스(CountClaim … PriorityOutput)는 `llm.schemas`와 같은 정의다. 둘이 따로 있으면 Gateway
+  반환 타입이 어긋나므로 agent가 `llm.schemas`에서 가져가고 자기 사본을 지운다(다른 모듈 schemas.py 직접 import는 허용)
+- `AgentCallFailed.reason` → `agent_runs.outcome`: invalid_schema는 그대로. timeout, call_failed는 지금 RUN_OUTCOMES에 맞는 값이 없다
+  (silent로 둘지, data-model에 값을 더할지 #533에서 정한다)
+- `core.diagnosis_input`은 적어도 `signal_id`, `diagnosis`, stall은 `category`, split은 `pin_id`를 넣는다(스텁이 쓴다). 모델에는
+  JSON 문자열로 그대로 간다 — 비공개 데이터를 넣지 않는 것은 agent 책임(명세 2절 2번)
+- `tools.py`가 받을 인자(모델이 고르는 칸, map_id 없음, 선택 칸은 null로 온다): get_map_overview `{}`, get_reasons
+  `{pin_ids, category, types}`, structure_reasons `{reaction_ids}`, get_readiness `{category}`, get_reaction_matrix `{category}`,
+  compare_reasons `{pin_id, category}`, get_place_facts `{place_ids, fact_keys}`. 유형별 허용 목록은 `llm.prompts.DIAGNOSIS_TOOLS`
+- 상한 상수는 `llm.prompts`에 있고 llm이 강제한다. `agent/constants.py`의 `DIAGNOSIS_MAX_TOOL_CALLS`, `STRUCTURE_REASONS_MAX_CALLS`는
+  쓰이지 않게 된다(지울지 #533에서)
+- PriorityOutput 순서가 입력 신호와 맞는지(빠짐, 중복, 모르는 id)는 llm이 보지 않는다. apply_priority_rules가 본다
+- 시간: 요청마다 타임아웃 15초(②와 같은 클라이언트), 진단은 많아야 6번 요청이다. live에서 한 왕복이 1~3초, 우선순위와
+  진단(요청 4번)을 합쳐 약 18초였다.
+  TICK_MAX_MAPS(19절) 정할 때 참고
+
+---
+
 # #419 — ②가 글 하나에서 조건을 여러 개 낸다
 
 ## 바뀐 계약 (recommend가 맞춰야 한다)
