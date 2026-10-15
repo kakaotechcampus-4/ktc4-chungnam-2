@@ -1,9 +1,13 @@
-"""② 사유 구조화의 모델 호출 — 네트워크에 닿는 얇은 셸.
+"""모델 호출 — 네트워크에 닿는 얇은 셸. ② 사유 구조화와 v2 에이전트 호출(#532)이 여기서 나간다.
 
 엘리스 ML API(OpenAI 호환)를 쓴다. 지원하지 않는 요청 파라미터는 400으로 거절되므로(기획안 13절)
-model·messages·response_format 외에는 넘기지 않는다.
+②는 model·messages·response_format 외에는 넘기지 않는다.
 여기서는 호출과 응답 검증까지만 한다 — 결과를 어떻게 합칠지는 service.merge_planned(순수 함수)가 한다.
 실패는 전부 LlmCallError 하나로 올린다. 조용히 빈 결과로 바꾸지 않는다(가드레일 4·8).
+
+에이전트 진단은 도구를 쓴다. gpt-6-luna는 chat.completions에서 도구를 reasoning_effort="none"일 때만 받는다(그 밖의 값은
+400 "Function tools with reasoning_effort are not supported", 2026-10-15 확인). 그래서 진단 호출만 reasoning_effort="none"을
+넘긴다. 우선순위 호출은 도구가 없어 ②와 같이 넘기지 않는다(none과 low 비교는 #534).
 """
 
 import json
@@ -11,11 +15,11 @@ import logging
 import time
 from typing import Any, Mapping, Optional, Sequence
 
-from openai import OpenAI
+from openai import APITimeoutError, OpenAI
 
 from common.settings import settings
-from llm.prompts import PLAN_EVIDENCE_PROMPT
-from llm.schemas import PlanningOutput
+from llm.prompts import AGENT_PRIORITIZE_PROMPT, PLAN_EVIDENCE_PROMPT
+from llm.schemas import AgentFailureReason, DiagnosisOutput, PlanningOutput, PriorityOutput
 
 # POST /runs 요청 안에서 동기로 도는 호출이라 길게 기다리지 않는다. 재시도도 안 한다 —
 # 실패하면 어차피 RECOMMEND_FAILED이고, 재시도는 요청 지연만 두 배로 만든다.
@@ -28,7 +32,13 @@ _client: Optional[OpenAI] = None
 
 
 class LlmCallError(RuntimeError):
-    """모델 호출 실패·응답 검증 실패. 메시지에 키·요청 본문을 넣지 않는다."""
+    """모델 호출 실패·응답 검증 실패. 메시지에 키·요청 본문을 넣지 않는다.
+
+    reason은 에이전트 호출이 실패 결과(AgentCallFailed)로 바꿀 때 쓰는 분류다. ②는 쓰지 않는다."""
+
+    def __init__(self, message: str, *, reason: AgentFailureReason = "call_failed"):
+        super().__init__(message)
+        self.reason = reason
 
 
 def make_client() -> OpenAI:
@@ -126,3 +136,80 @@ def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]]) -> PlanningO
         getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None),
     )
     return message.parsed
+
+
+# ---------- v2 계획 보조 에이전트 (#532) ----------
+
+
+def _agent_failure_reason(exc: BaseException) -> AgentFailureReason:
+    if isinstance(exc, APITimeoutError):
+        return "timeout"
+    if isinstance(exc, ValueError):  # parse가 응답을 스키마로 검증하다 낸 ValidationError(ValueError의 하위), JSON 깨짐
+        return "invalid_schema"
+    return "call_failed"
+
+
+def _agent_parse(client: Any, *, what: str, context: str, **kwargs: Any) -> Any:
+    """에이전트 호출 한 번(chat.completions.parse). 응답 message를 돌려준다 — parsed가 있거나 도구 호출이 있다.
+
+    로그는 ②와 같은 규칙이다(#390): 실패는 모델명·예외 클래스·status_code·request_id·소요 ms만, 성공은 토큰 수만 남긴다.
+    입력(신호, 사유)과 응답 본문은 남기지 않는다."""
+    started = time.monotonic()
+    try:
+        completion = client.chat.completions.parse(model=settings.llm_model, **kwargs)
+        message = completion.choices[0].message
+    except Exception as exc:  # noqa: BLE001 — 예상 못 한 예외도 원인 타입만 남기고 같은 실패로 올린다
+        log.warning(
+            "%s 호출 실패: model=%s %s %s elapsed_ms=%d",
+            what, settings.llm_model, context, _failure_fields(exc), _elapsed_ms(started),
+        )
+        raise LlmCallError(f"{what} 호출 실패: {type(exc).__name__}", reason=_agent_failure_reason(exc)) from exc
+    if getattr(message, "refusal", None):
+        log.warning("%s 거절: model=%s %s elapsed_ms=%d", what, settings.llm_model, context, _elapsed_ms(started))
+        raise LlmCallError(f"모델이 {what}을 거절했다")
+    if message.parsed is None and not getattr(message, "tool_calls", None):
+        log.warning("%s 빈 응답: model=%s %s elapsed_ms=%d", what, settings.llm_model, context, _elapsed_ms(started))
+        raise LlmCallError("구조화 응답이 비어 있다", reason="invalid_schema")
+    usage = getattr(completion, "usage", None)
+    log.info(
+        "%s 성공: model=%s %s elapsed_ms=%d prompt_tokens=%s completion_tokens=%s",
+        what, settings.llm_model, context, _elapsed_ms(started),
+        getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None),
+    )
+    return message
+
+
+def call_agent_priority(
+    client: Any, signals: Sequence[Mapping[str, Any]], principles: Sequence[str]
+) -> PriorityOutput:
+    """신호 순위 한 번. 신호와 원칙은 JSON 문자열로만 넘긴다(프롬프트에 섞지 않는다)."""
+    payload = json.dumps({"principles": list(principles), "signals": list(signals)}, ensure_ascii=False, default=str)
+    message = _agent_parse(
+        client, what="에이전트 우선순위", context=f"signals={len(signals)}",
+        messages=[
+            {"role": "system", "content": AGENT_PRIORITIZE_PROMPT},
+            {"role": "user", "content": payload},
+        ],
+        response_format=PriorityOutput,
+    )
+    if message.parsed is None:  # 도구를 주지 않았는데 도구 호출만 왔다
+        raise LlmCallError("우선순위 응답이 비어 있다", reason="invalid_schema")
+    return message.parsed
+
+
+def call_agent_diagnosis_turn(
+    client: Any, messages: Sequence[Mapping[str, Any]], *, tools: Sequence[Mapping[str, Any]], tool_choice: str, turn: int
+) -> Any:
+    """진단 대화의 한 왕복. 모델이 도구를 부르면 message.tool_calls가, 답하면 message.parsed(DiagnosisOutput)가 있다.
+
+    parallel_tool_calls=False: 병렬 도구 호출은 strict 인자 스키마가 보장되지 않는다(OpenAI 문서). 상한도 한 번에 하나씩
+    세는 편이 단순하다. 엘리스 API는 이 값을 받는다(2026-10-15 확인)."""
+    return _agent_parse(
+        client, what="에이전트 진단", context=f"turn={turn} tool_choice={tool_choice}",
+        messages=list(messages),
+        tools=list(tools),
+        tool_choice=tool_choice,
+        parallel_tool_calls=False,
+        reasoning_effort="none",
+        response_format=DiagnosisOutput,
+    )

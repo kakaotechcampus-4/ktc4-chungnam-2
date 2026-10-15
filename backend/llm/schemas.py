@@ -5,10 +5,11 @@
 - docs/constraints.md `fact_key` 레지스트리 (값 변경은 루트만 — 여기서 새 fact_key를 만들지 않는다)
 - docs/api-spec.yaml `LabelConfidence`(known/unknown)와 1:1
 
-모델 호출 3곳(backend/llm/CLAUDE.md)에 대응하는 스키마만 담는다:
+모델 호출(backend/llm/CLAUDE.md)에 대응하는 스키마만 담는다:
   ②    PlanningOutput (사유 → 실격/선호/반경 구조화)
   ③-a-1 PlaceFactLabel (장소 라벨링)
   ③-b   RankedCandidate (선호 순위)
+  v2 에이전트 PriorityOutput, DiagnosisOutput, AgentCallFailed (docs/agent-v2.md 11.1, #532)
 """
 
 from datetime import datetime
@@ -184,3 +185,95 @@ class RankedCandidate(BaseModel):
     place_id: str
     rank: int
     member_comment: Optional[str] = None  # 근거 없으면 None (5-7-1) — 지어내지 않는다
+
+
+# ---------- v2 계획 보조 에이전트 — 모델 출력 (docs/agent-v2.md 11.1, #532) ----------
+# agent_prioritize·agent_diagnose의 구조화 출력 스키마다. agent/schemas.py(#513)의 같은 이름 클래스와 필드가 같다 —
+# 하나로 합치는 일(agent가 여기서 가져가기)은 #533이 한다. 모델은 숫자를 문장에 직접 쓰지 않고 claim을 슬롯({c1.value},
+# {c3})으로 가리킨다. 검증과 렌더는 agent의 core가 한다(명세 11.2) — 여기서는 스키마 검증까지만이다.
+# Stance와 모델이 내던 Conflict는 없다(2026-10-15). 키와 방향은 ②가, 충돌 종류는 코드가 정한다(명세 6.3, 8.1).
+
+AgentDecision = Literal["suggest", "silent", "unknown"]
+AgentActionType = Literal["open_recommend", "show_pins", "search_place", "open_route", "widen_radius", "open_evidence"]
+
+
+class CountClaim(BaseModel):
+    id: str  # c1, c2 ...
+    kind: Literal["count"]
+    subject: Literal["pin", "category", "map"]
+    subject_id: Optional[str]  # pin_id 또는 카테고리 이름, map이면 None
+    metric: Literal["like", "against", "unseen", "confirmed", "pins"]  # 반응은 2종 (#360)
+    value: int
+
+
+class QuoteClaim(BaseModel):
+    id: str
+    kind: Literal["quote"]
+    reaction_id: str
+    text: str  # 대조용. 화면에는 DB 원문을 렌더한다
+
+
+class RefClaim(BaseModel):
+    id: str
+    kind: Literal["ref"]
+    object: Literal["pin", "reaction", "place"]
+    ref_id: str
+
+
+class ToolClaim(BaseModel):
+    id: str
+    kind: Literal["tool_result"]
+    call_id: str  # 도구 호출 id(t1, t2 …). agent_diagnose가 매겨 tool_runner와 모델에 같은 값을 준다
+    path: str  # 결과 안의 경로. 예: "after"
+    value: Union[int, float, str, bool]
+
+
+# discriminator를 걸지 않는다 — 걸면 JSON 스키마가 oneOf가 되고, 엘리스 API strict 구조화 출력은 oneOf를 400으로 거절한다
+# ("'oneOf' is not permitted", 2026-10-15 확인). 일반 Union은 anyOf라 받는다. kind가 클래스마다 다른 Literal이라 검증 결과는 같다.
+Claim = Union[CountClaim, QuoteClaim, RefClaim, ToolClaim]
+
+
+class AdviceLine(BaseModel):
+    text: str  # 슬롯 {c1.value}, {c3}만 허용. 숫자 직접 금지
+    basis: list[str]  # claim id
+    is_guess: bool  # 추정 문장이면 True
+
+
+class Action(BaseModel):
+    type: AgentActionType
+    category: Optional[str] = None
+    pin_ids: Optional[list[str]] = None
+    basis: list[str]
+
+
+class DiagnosisOutput(BaseModel):
+    decision: AgentDecision
+    diagnosis: Literal["stall", "split"]
+    signal_id: str
+    claims: list[Claim]
+    advice: list[AdviceLine]
+    actions: list[Action]
+
+
+class PriorityItem(BaseModel):
+    signal_id: str
+    reason: str
+
+
+class PriorityOutput(BaseModel):
+    order: list[PriorityItem]
+
+
+AgentFailureReason = Literal["invalid_schema", "timeout", "call_failed"]
+
+
+class AgentCallFailed(BaseModel):
+    """agent 호출이 실패했다는 결과. 재요청하지 않고 이것을 돌려준다 — agent가 침묵이나 fallback_order로 처리한다
+    (명세 2절 10번, 7절 3번). 예외로 올리지 않는 이유: 백그라운드 관찰에서는 실패가 정상 경로의 하나다.
+
+    reason: invalid_schema(응답이 스키마에 맞지 않음, 빈 응답, 도구 인자 깨짐), timeout, call_failed(그 밖의 호출 실패·거절,
+    도구 상한을 넘긴 뒤에도 도구를 부름). detail은 예외 클래스명과 고정 문구만이다 — 사유 원문·응답 본문은 넣지 않는다(#390).
+    """
+
+    reason: AgentFailureReason
+    detail: str
