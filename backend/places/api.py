@@ -12,13 +12,14 @@ from sqlalchemy.orm import Session
 
 from common.database import SessionLocal
 from common.settings import settings
-from places import matching, repository
+from places import linkfetch, linkparse, matching, repository
 from places.http import CallStats, SourceHttp
 from common.errors import AppError
 from places.ratelimit import SlidingWindowLimiter
 from places.samples import search_samples
+from places.matching import Candidate
 from places.schemas import (
-    Area, FactLabel, PlaceHint, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult, ResolvedCoords,
+    Area, FactLabel, LinkParseResult, PlaceHint, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult, ResolvedCoords,
 )
 from places.service import PlaceService, to_result
 from places.sources.base import PlaceSource
@@ -28,6 +29,7 @@ from places.sources.naver import NaverPlaceSource
 log = logging.getLogger("pingo.places")
 _STATS = CallStats()
 search_limiter = SlidingWindowLimiter(settings.places_search_per_min)   # 사용자당 분당 상한, 인메모리
+link_limiter = SlidingWindowLimiter(settings.places_search_per_min)     # POST /places/from-link — 검색과 같은 상한, 따로 센다(#474)
 
 
 def call_counts() -> dict[str, int]:
@@ -153,3 +155,71 @@ def get_facts(place_ids: Sequence[str], *, db: Session | None = None) -> dict[st
     """place_facts의 fact_key·value·confidence를 그대로. 라벨이 없으면 빈 리스트. unknown_policy는 호출하는 쪽이 적용한다."""
     with _session(db) as s:
         return repository.get_facts(s, place_ids)
+
+
+# ---- 지도 링크 해석 (POST /places/from-link, #474) ----
+# parse-only: 아무것도 저장하지 않는다. 링크의 좌표·이름은 자체 DB를 찾는 데만 쓰고 응답·로그에 싣지 않는다.
+
+def check_link_rate(user_id: str) -> None:
+    if not link_limiter.allow(user_id):
+        raise AppError("RATE_LIMITED")
+
+
+@lru_cache(maxsize=1)
+def _link_client() -> httpx.Client:
+    return linkfetch.make_client()
+
+
+def own_places_near(lat: float, lng: float, radius_m: float, limit: int, *, db: Session | None = None) -> list[Candidate]:
+    """좌표 반경 안의 영업 중 자체 DB 장소(가까운 순). 읽기 전용."""
+    with _session(db) as s:
+        return repository.find_nearby_own(s, lat, lng, radius_m, limit)
+
+
+def own_places_by_kakao_id(kakao_place_id: str, *, db: Session | None = None) -> list[Candidate]:
+    """이미 이 카카오 장소 ID로 매칭된 영업 중 자체 DB 장소. 읽기 전용."""
+    with _session(db) as s:
+        return repository.find_by_kakao_place_id(s, kakao_place_id)
+
+
+def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
+    """구글맵·카카오맵 링크 → 단서. 허용 호스트가 아니면 LINK_NOT_SUPPORTED, 단축 링크를 못 열었거나 장소를 못 찾으면 LINK_UNRESOLVED."""
+    parts = linkparse.split_url(url)
+    final = parts.geturl()
+    shortened = linkparse.is_short_host((parts.hostname or "").lower().rstrip("."))
+    if shortened:
+        try:
+            final = linkfetch.follow_short_link(final, client=_link_client())
+        except linkfetch.LinkFetchError as exc:
+            log.info("places.link 단축 링크 해석 실패: %s", exc)   # 링크 주소는 남기지 않는다
+            raise AppError("LINK_UNRESOLVED") from exc
+    parsed = linkparse.parse_resolved(final)
+    if parsed is None:
+        raise AppError("LINK_UNRESOLVED" if shortened else "LINK_NOT_SUPPORTED")
+
+    if parsed.provider == "kakao":
+        found = own_places_by_kakao_id(parsed.kakao_place_id, db=db)[: matching.LINK_MAX_MATCHES]
+        result = LinkParseResult(
+            provider="kakao", kakao_place_id=parsed.kakao_place_id,
+            matches=[_to_link_match(c) for c in found], needs_search_query=not found,
+        )
+    else:
+        found = []
+        if parsed.lat is not None and parsed.lng is not None:
+            near = own_places_near(parsed.lat, parsed.lng, matching.LINK_MATCH_RADIUS_M, matching.MAX_CANDIDATES, db=db)
+            found = matching.pick_link_matches(parsed.name_hint, near)
+        result = LinkParseResult(
+            provider="google", name_hint=parsed.name_hint,
+            matches=[_to_link_match(c) for c in found], needs_search_query=False,
+        )
+    log.info("places.link provider=%s matches=%d", result.provider, len(result.matches))
+    return result
+
+
+def _to_link_match(c: Candidate) -> PlaceSearchResult:
+    """핀 생성 요청에 그대로 되돌려 보낼 모양. place_id는 기록된 카카오 ID가 있으면 그것, 없으면 `own:<id>`(카카오 ID로 기록되지 않는다)."""
+    return PlaceSearchResult(
+        place_id=c.kakao_place_id or f"own:{c.place_id}",
+        place_name=c.name[:100], lat=c.lat, lng=c.lng, category=c.category,
+        address=c.address[:200] if c.address else None, pinnable=True,
+    )
