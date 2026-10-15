@@ -24,10 +24,14 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("POST", "/maps/{mapId}/owner"): "#468 구현 PR이 골든 패스에 넣고 지운다",
-    ("GET", "/maps/{mapId}/invites"): "#467 구현 PR이 골든 패스에 넣고 지운다",
-    ("DELETE", "/invites/{token}"): "#467 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/places/nearest"): "#473 구현 PR이 골든 패스에 넣고 지운다",
     ("POST", "/places/from-link"): "#474 구현 PR이 골든 패스에 넣고 지운다",
+    ("GET", "/maps/{mapId}/agent"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
+    ("PUT", "/maps/{mapId}/agent/settings"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/agent/suggestions/{suggestionId}/view"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/agent/suggestions/{suggestionId}/accept"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
+    ("POST", "/agent/suggestions/{suggestionId}/dismiss"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
+    ("GET", "/runs/{runId}/advice"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
@@ -140,6 +144,15 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     invite = a.post(f"/maps/{map_id}/invite")
     assert invite.status_code == 201
     assert b.post(f"/invites/{invite.json()['token']}/accept").status_code == 200
+    assert a.post(f"/maps/{map_id}/invite").status_code == 200   # 내 유효한 링크 재사용(#467)
+    assert a.get(f"/maps/{map_id}/invites").status_code == 200
+    assert b.get(f"/maps/{map_id}/invites").status_code == 403
+    extra = b.post(f"/maps/{map_id}/invite")   # 구성원이 만든 링크는 따로 생긴다
+    assert extra.status_code == 201
+    assert a.delete(f"/invites/{extra.json()['token']}").status_code == 204
+    assert a.delete(f"/invites/{extra.json()['token']}").status_code == 204   # 멱등
+    assert a.get(f"/invites/{extra.json()['token']}").status_code == 410      # INVITE_REVOKED
+    assert a.delete("/invites/no-such-token").status_code == 404
     assert a.get(f"/maps/{map_id}/members").status_code == 200
 
     # 이름 검색(#180) — 결과 스키마 검증 + 0건(빈 배열) + 에러 봉투 422
@@ -385,6 +398,7 @@ def test_the_validator_actually_rejects_a_wrong_shape():
 # 생성되는 FE 타입이 전부 optional이 된다(멘토 리뷰, PR #152). 의도적으로 비워 둔 스키마는 이유와 함께 여기에 둔다.
 NO_REQUIRED_OK: dict[str, str] = {
     "Permissions": "맥락마다 쓰는 필드가 다르다(can_disable은 근거 줄 전용, can_publish는 후보 전용) — 필드별로 선택",
+    "AgentAction.params": "버튼 종류(type)마다 쓰는 필드가 다르다(category는 추천과 검색, pin_ids는 핀 보기, run_id는 반경과 근거) — 필드별로 선택 (#510)",
 }
 
 

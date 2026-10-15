@@ -14,7 +14,7 @@ authz/guard.py::require_on_map·require_map_member가 이 이름을 하드코딩
 2026-09-28, #24).
 """
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path, Request, Response
 
 from auth.deps import get_current_user
 from auth.schemas import CurrentUser
@@ -37,6 +37,7 @@ MembersForMap = Depends(require_map_member())
 # 한 줄로 교체한다(maps/for_Root.md 항목 4). require_on_map("map.settings.edit")를 빌려
 # 쓰는 안은 기각했다 — 무관한 액션 이름 뒤에 정책 결정을 숨기게 된다.
 MapForInvite = Depends(require_map_member())
+InvitesToManage = Depends(require_on_map("invite.revoke"))  # 방장만 — 구성원 403(#467)
 MapToEdit = Depends(require_on_map("map.settings.edit"))  # 방장만 — 구성원 403(#465)
 MapToDelete = Depends(require_on_map("map.delete"))  # 방장만 — 구성원 403, 비구성원·삭제된 지도 404
 MapToLeave = Depends(require_on_map("map.leave"))  # 넘길 사람이 없는 방장 409는 maps.core가 판정
@@ -101,6 +102,7 @@ def leave_map(
 )
 def post_invite(
     request: Request,
+    response: Response,
     mapId: str = Path(...),
     _principal: Principal = MapForInvite,
     user: CurrentUser = Depends(get_current_user),
@@ -110,7 +112,31 @@ def post_invite(
     # 항목 6 해결). 못 정했을 때만(dev에서 지워버린 극단적 경우) 예전처럼 백엔드 자신의 주소로
     # 대체한다 — accept가 POST 전용 API라 그 경로는 여전히 브라우저로 바로 열리지 않는다.
     base_url = settings.frontend_base_url or str(request.base_url)
-    return service.create_invite(db, map_id=mapId, creator_id=user.user_id, base_url=base_url)
+    invite, created = service.create_invite(db, map_id=mapId, creator_id=user.user_id, base_url=base_url)
+    if not created:
+        response.status_code = 200  # 내가 만든 유효한 링크를 그대로 돌려줬다(#467)
+    return invite
+
+
+@router.get("/maps/{mapId}/invites", response_model=list[Invite], response_model_exclude_none=True)
+def get_invites(
+    request: Request,
+    mapId: str = Path(...),
+    _principal: Principal = InvitesToManage,
+    db=DbSession,
+):
+    base_url = settings.frontend_base_url or str(request.base_url)
+    return service.list_invites(db, map_id=mapId, base_url=base_url)
+
+
+@router.delete("/invites/{token}", status_code=204)
+def delete_invite(
+    token: str = Path(...),
+    user: CurrentUser = Depends(get_current_user),
+    db=DbSession,
+):
+    # 토큰만으로는 지도를 알 수 없어 require_on_map을 못 쓴다 — 방장 판정은 service.revoke_invite가 한다.
+    service.revoke_invite(db, token=token, user_id=user.user_id)
 
 
 @public_router.get("/invites/{token}", response_model=InviteSummary)

@@ -53,8 +53,10 @@ _SOFT_KEYS_BY_CATEGORY: dict[str, frozenset[str]] = {
     )},
     # 음식점·카페 공통 (#203, #263)
     **{key: _RESTAURANT_AND_CAFE for key in ("spacious", "long_established", "vegetarian_friendly", "franchise")},
+    # 음식점·카페 공통 — 카페에서 먼저 썼고(#263) 음식점에도 연다(#461)
+    **{key: _RESTAURANT_AND_CAFE for key in ("serves_alcohol", "open_late")},
     # 카페 전용 (#263)
-    **{key: _CAFE for key in ("bakery", "serves_alcohol", "open_late")},
+    "bakery": _CAFE,
     # 카페·관광지 공통
     **{key: _CAFE_AND_SIGHT for key in ("quiet", "comfortable_seat", "local_flavor", "accessible")},   # accessible: 관광지 키를 카페에도(#263)
     # 관광지 (#122) — 성격·공간·자연·활동·동반·계절
@@ -89,6 +91,7 @@ HEART_SIGNAL_BY_CATEGORY: dict[str, dict[str, HeartSignalUse]] = {
         )},
         **{key: "unused" for key in (   # 편의, 조건(필요하면 말로 남기는 것)
             "franchise", "spacious", "parking_available", "pet_friendly", "wait_short",
+            "open_late", "serves_alcohol",   # 일반음식점 대부분이 술을 팔고 늦게 여는 것도 ♥의 이유로 보기 어렵다(#461)
         )},
     },
 }
@@ -160,7 +163,7 @@ PASSED_LABELS: dict[str, str] = {
     "kid_friendly": "아이를 데려가기 좋음",
     "accessible": "휠체어·유모차로 다닐 수 있음",
     "bakery": "빵·디저트가 중심인 카페",
-    "serves_alcohol": "술도 파는 카페",
+    "serves_alcohol": "술도 파는 곳",
     "open_late": "밤늦게까지 여는 곳",
     "cherry_blossom": "벚꽃 명소",
     "autumn_foliage": "단풍 명소",

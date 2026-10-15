@@ -177,6 +177,7 @@ describe("에러 시나리오", () => {
     expect(pin.lat).toBeUndefined();
     expect(pin.lng).toBeUndefined();
     expect(pin.place_name).toBeUndefined();
+    expect(pin.place_url).toBe("https://place.map.kakao.com/live-1");   // #445 — 실시간 핀도 카카오 장소 페이지 링크
     const dup = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify(body) });
     expect(dup.status).toBe(409);
     // 반응은 자체 DB 핀과 똑같이 된다
@@ -858,5 +859,67 @@ describe("#340·회의 14번 — 지도 목록 구분과 후보 좌표", () => {
       expect(typeof c.lat).toBe("number");
       expect(typeof c.lng).toBe("number");
     }
+  });
+});
+
+describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
+  it("바텀시트 상태: 기본 켜짐, 시드 제안 하나와 음식점 요약, 열람 전이라 점이 켜져 있다", async () => {
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(state.settings).toMatchObject({ enabled: true, updated_by: null });
+    expect(state.active_suggestion).toMatchObject({ id: "sug_1", diagnosis: "category_gap", category: "카페" });
+    expect(state.has_unseen).toBe(true);
+    expect(state.summaries[0].category).toBe("음식점");
+    expect(state.summaries[0].not_filtered.notices[0]).toContain("가게에 직접 확인");
+    expect(state.active_suggestion.claims).toBeUndefined(); // 서버 내부 값은 싣지 않는다
+  });
+
+  it("열람하면 점이 꺼지고, 열람은 멱등이다", async () => {
+    for (let i = 0; i < 2; i++) {
+      const r = await fetch(`${BASE}/agent/suggestions/sug_1/view`, { method: "POST" });
+      expect(r.status).toBe(204);
+    }
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(state.has_unseen).toBe(false);
+  });
+
+  it("수락은 동작 설명만 돌려주고 agent.resolved를 낸다. 두 번째 처리는 409 SUGGESTION_RESOLVED", async () => {
+    const res = await fetch(`${BASE}/agent/suggestions/sug_1/accept`, { method: "POST", body: JSON.stringify({ action_index: 0 }) });
+    expect(res.status).toBe(200);
+    expect((await res.json()).action).toMatchObject({ type: "open_recommend", params: { category: "카페" } });
+    const ev = store.eventLog.at(-1)!;
+    expect(ev).toMatchObject({ type: "agent.resolved", channel: "public", data: { suggestion_id: "sug_1", status: "accepted", resolved_action_type: "open_recommend" } });
+    const again = await fetch(`${BASE}/agent/suggestions/sug_1/dismiss`, { method: "POST" });
+    expect(again.status).toBe(409);
+    expect((await again.json()).code).toBe("SUGGESTION_RESOLVED");
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(state.active_suggestion).toBeNull();
+  });
+
+  it("범위 밖 action_index는 422", async () => {
+    const res = await fetch(`${BASE}/agent/suggestions/sug_1/accept`, { method: "POST", body: JSON.stringify({ action_index: 9 }) });
+    expect(res.status).toBe(422);
+  });
+
+  it("모드를 끄면 지금 제안이 무효화되고 settings_changed가 나간다", async () => {
+    const res = await fetch(`${BASE}/maps/map_1/agent/settings`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+    expect(await res.json()).toMatchObject({ enabled: false, updated_by: "u_me" });
+    const types = store.eventLog.slice(-2).map((e) => e.type);
+    expect(types).toEqual(["agent.resolved", "agent.settings_changed"]);
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(state.active_suggestion).toBeNull();
+    expect(state.has_unseen).toBe(false);
+  });
+
+  it("추천 막힘 조언: 결과가 적은 내 run은 200, 대상이 아니면 204, 남의 run은 403", async () => {
+    resetScenario("no-results");
+    const mine = await fetch(`${BASE}/runs/run_no_results/advice`);
+    expect(mine.status).toBe(200);
+    expect(await mine.json()).toMatchObject({ kind: "radius", actions: [{ type: "widen_radius" }] });
+
+    store.runAdvice["run_no_results"] = null;
+    expect((await fetch(`${BASE}/runs/run_no_results/advice`)).status).toBe(204);
+
+    store.runRequestedBy["run_no_results"] = "u_2";
+    expect((await fetch(`${BASE}/runs/run_no_results/advice`)).status).toBe(403);
   });
 });

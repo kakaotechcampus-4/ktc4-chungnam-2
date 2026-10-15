@@ -2,6 +2,35 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-15 (세 번째), V2 계획 보조 에이전트 계약 (#510)
+
+스펙이 먼저다. 명세는 `docs/agent-v2.md`. 구현은 agent 모듈 M0부터 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다. 모델 호출 추가는 결정 이슈 #509에서 정하고, M0은 모델 없이 shadow로 돈다.
+
+- **엔드포인트 (agent 태그)**
+  - `GET /maps/{mapId}/agent` — 바텀시트 상태 `AgentState`(모드, 지금 제안, 미열람 점, 카테고리별 우리 조건 요약). 구성원 누구나.
+  - `PUT /maps/{mapId}/agent/settings {enabled}` — 모드 켜고 끄기, 구성원 누구나(`agent.toggle`). 응답 `AgentSettings`.
+  - `POST /agent/suggestions/{suggestionId}/view` — 열람 기록(204, 멱등, 이벤트 없음).
+  - `POST /agent/suggestions/{suggestionId}/accept {action_index}` — 버튼 하나 수락. 응답 `{action}`은 FE가 손으로 할 때와 같은 API로 실행할 동작이다. 서버는 대신 실행하지 않는다.
+  - `POST /agent/suggestions/{suggestionId}/dismiss` — 닫기(204). 지도 단위로 모두에게서 닫힌다.
+- **엔드포인트 (recommend 태그)**: `GET /runs/{runId}/advice` — 추천 막힘 조언 `RunAdvice`, 요청한 본인만. 대상이 아니거나 조언이 없으면 204.
+- **스키마**: `AgentState`, `AgentSettings`, `AgentSuggestion`, `AgentAction`, `AgentAdviceLine`, `AgentAnalysis`, `AgentSummary` 등. 문장은 모두 서버 렌더이고 FE는 숫자나 슬롯을 다루지 않는다.
+- **이벤트(전체 채널)**: `agent.suggested`, `agent.resolved`, `agent.summary_updated`, `agent.settings_changed`. 다시 받기 표도 갱신했다.
+- **권한**: 새 액션 `agent.toggle`, `agent.suggestion.resolve`(member). 조언은 기존 `recommend.manage`. `authz/policy.py`를 같은 PR에서 맞췄다.
+- **에러 코드**: `SUGGESTION_RESOLVED`(409) — 이미 처리된 제안. `common/errors.py` CATALOG도 맞췄다.
+- **DB**: `docs/data-model.md` agent 절에 테이블 7개. 마이그레이션은 M0에서.
+- **FE 할 일**: 버튼, 점, 바텀시트 골격을 목 서버로 먼저 시작할 수 있다(M0 FE 이슈).
+
+## 2026-10-15 (두 번째), 실시간 핀에도 카카오 장소 페이지 링크 (#445)
+
+- **API 스키마는 그대로다.** 실시간 핀(`source: live`)도 `Pin.place_url`이 채워진다. 카카오 장소 ID로 응답 때 만들고 저장하지 않는다. 전에는 자체 DB 핀만 있었다.
+- **FE:** 핀 상세에서 종류와 상관없이 `place_url`이 있으면 "카카오맵에서 보기"를 외부 브라우저로 연다(앱 안 WebView 금지, 카카오 약관).
+- 장소를 `place_id` 하나로 가리키는 큰 정리(#444, #446)의 1단계다.
+
+## 2026-10-15, 늦게까지 영업·술 판매를 음식점 조건으로도 쓴다 (#461)
+
+- **API 스키마는 그대로다.** 음식점 추천에서 `open_late`(밤 10시 이후까지 여는가), `serves_alcohol`(술도 파는 곳)이 조건 체크(`Candidate.checks`)와 근거 줄의 `fact_key`로 나올 수 있다. 전에는 카페에서만 썼다.
+- "늦게까지 하는 데로", "술 한잔할 수 있는 곳" 같은 사유가 음식점 추천에 반영된다. ♥한 가게의 이 두 라벨은 선호로 쓰지 않는다(직접 쓴 사유로만).
+
 ## 2026-10-13 (세 번째), V2 기록·내보내기: 지난 추천 기록·확정 리스트 내보내기 (#469, #471)
 
 스펙이 먼저다. 구현은 이슈별로 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다.

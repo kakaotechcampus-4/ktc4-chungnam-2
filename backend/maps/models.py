@@ -106,3 +106,10 @@ class Invite(Base):
     created_by: Mapped[str] = mapped_column(String, nullable=False)  # users(id) — auth 도착 시 FK
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # 방장이 링크를 끈 시각(#467). 켜져 있으면 NULL. 끈 링크는 요약·수락이 410 INVITE_REVOKED다.
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (Index("ix_invites_map_id", "map_id"),)  # 지도별 목록·내 링크 재사용 조회
