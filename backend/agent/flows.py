@@ -2,17 +2,16 @@
 지키며, 판단은 core(순수)에, 읽기와 쓰기는 snapshot과 service에 맡긴다.
 
 - 요청 세션(get_db) 밖에서 돈다(12.6). 트랜잭션을 짧게 셋으로 나눈다 — ① 만료 정리 ② 스냅샷 읽기(REPEATABLE
-  READ) ③ 재확인과 저장. 모델 호출(우선순위, 진단)은 ②와 ③ 사이에 하고 그동안 세션이 없다. 도구는 자기 읽기 세션을
+  READ) ③ 재확인과 저장. 모델 호출(진단)은 ②와 ③ 사이에 하고 그동안 세션이 없다. 도구는 자기 읽기 세션을
   짧게 열고 닫는다(tools.py).
 - 커밋은 `common.database.session_scope` 한 곳이다. 세션은 `session_factory`로 받는다(기본 SessionLocal, 테스트가
   테스트 DB로 바꾼다 — maps/purge.py와 같은 방식).
 
-**M1-2(#533) 범위**: 통과한 신호가 2개 이상이고 모델 유형이 있으면 우선순위를 모델에 묻고(llm.agent_prioritize, 직전과
-같으면 재사용, 상한이나 실패면 fallback_order. 코드 유형만이면 부르지 않고 fallback_order, #534) core.choose_top이 정책으로 보정한다. 1순위가 코드 유형(no_reaction, category_gap)이면
-템플릿 초안(core.render_template), 모델 유형(stall, split)이면 진단(llm.agent_diagnose, 도구는 tools.py)을 부르고
-core.verify_diagnosis를 통과한 것만 초안이 된다. 모델은 Gateway(deps.py)가 고른다 — dev는 고정 응답 스텁이다. 한
-관찰에서 우선순위와 진단을 둘 다 불러도 모델 사용은 1회다(used_model, 3절). shadow는 유형별이다
-(constants.SHADOW_DIAGNOSES — 모델 유형은 #534까지 shadow) — shadow가 아닌 제안만 이벤트를 낸다: 저장
+**M1 범위(#533, #582)**: 우선순위는 코드 규칙이다(core.choose_top, 7절) — 모델을 부르지 않는다. 1순위가 코드 유형
+(no_reaction, category_gap)이면 템플릿 초안(core.render_template), 모델 유형(stall, split)이면 진단(llm.agent_diagnose,
+도구는 tools.py)을 부르고 core.verify_diagnosis를 통과한 것만 초안이 된다. 모델은 Gateway(deps.py)가 고른다 — dev는
+고정 응답 스텁이다. 모델 사용 1회(used_model, 3절)는 진단을 부른 관찰이다. shadow는 유형별이다
+(constants.SHADOW_DIAGNOSES — #582부터 비어 있어 모든 유형이 나간다) — shadow가 아닌 제안만 이벤트를 낸다: 저장
 (agent.suggested), 만료와 무효화(agent.resolved). 우리 조건 요약(8절)은 M2다.
 
 화면 요청(명세 14절)도 여기 있다 — `get_state`, `change_settings`, `view`, `accept`, `dismiss`. 요청 세션(get_db) 안에서
@@ -169,23 +168,16 @@ def observe_map(
     # 4. 정책 사전 검사 (순수)
     passed, blocked = core.check_policy(signals, hist, snap, now, superseding=superseding)
 
-    # 5. 우선순위 — 2개 이상이고 모델 유형이 있으면 모델(세션 없음, 12.6). 코드 유형만이면 부르지 않는다(#534).
-    #    직전과 같으면 재사용, 상한이면 fallback_order
+    # 5. 우선순위 — 코드 규칙(7절, #582). 모델을 부르지 않는다
     policy = core.load_policy()
-    mode = core.priority_mode(
-        passed, hist.last_priority, cap_reached=core.model_cap_reached(hist.model_runs_today, snap.member_count),
-    )
-    priority_reply = gateway.prioritize(core.priority_input(passed, policy), policy.principles) if mode == "model" else None
-    model_out = priority_reply.result if priority_reply is not None else None
-    top, priority = core.choose_top(passed, policy, mode=mode, model_out=model_out, previous=hist.last_priority)
+    top, priority = core.choose_top(passed, policy)
 
     # 6. 초안 — 코드 유형은 템플릿, 모델 유형은 진단과 검증(세션 없음, 도구만 짧게 읽는다)
     step = _draft(map_id, top, snap, names, now, session_factory, gateway) if top is not None else _Step(None)
     chosen = top if step.draft is not None else None
     draft = step.draft
     outcome, detail = _planned_outcome(signals, top, step)
-    used_model = mode == "model" or step.used_model
-    usages = [r.usage for r in (priority_reply, step) if r is not None and r.usage is not None]   # 둘 다 불렀으면 합(#564)
+    usages = [step.usage] if step.usage is not None else []
 
     # 7. 재확인과 저장 (짧은 쓰기 트랜잭션). 이벤트도 같은 트랜잭션
     with _write(session_factory) as db:
@@ -202,7 +194,7 @@ def observe_map(
         run_id = service.insert_run(db, **run_fields(
             snap, outcome, signals=[core.signal_record(s) for s in signals], blocked=blocked_rows,
             priority=priority, policy_version=str(policy.version), outcome_detail=detail,
-            used_model=used_model, tool_calls=step.tool_calls, verification=step.verification,
+            used_model=step.used_model, tool_calls=step.tool_calls, verification=step.verification,
             **core.model_usage(usages),
         ))
         new_expires_at = None

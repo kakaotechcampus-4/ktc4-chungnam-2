@@ -1,10 +1,10 @@
 """계획 보조 에이전트의 판단 — 순수 함수만 둔다. DB를 모르고 시각은 인자로 받는다(docs/code-quality.md 기능형 코어).
 
 - 기준 시간(명세 6.1), 탐지기 4종(6.2~6.5), 신호(Signal)와 해시(3절)
-- 개입 정책(12.3), 대체 순위(7절), 다음 점검 시각(12.4)
+- 개입 정책(12.3), 우선순위 코드 규칙(7절, #582), 다음 점검 시각(12.4)
 - 우선순위 정책 파일(`priority_policy.yaml`) 로더 — 파일 읽기 한 곳만 I/O다
 - 코드 유형 템플릿(6.4, 6.5)과 렌더(11절 끝 "저장과 렌더 시점"), 이벤트 페이로드(15절) — #531
-- 우선순위의 모델 경로와 보정(7절), 진단 입력(12.4 6단계), 충돌 종류(6.3), 모델 출력 검증(11.2) — #533
+- 진단 입력(12.4 6단계), 충돌 종류(6.3), 모델 출력 검증(11.2) — #533
 
 입력은 `agent.snapshot.Snapshot`(관찰 한 번의 사본)과 `History`(이 지도의 제안 이력, #515가 채운다)다.
 Signal과 features에는 사유 글을 넣지 않는다 — 근거는 reaction_id와 pin_id로만 가리킨다(명세 2절 13번).
@@ -60,7 +60,6 @@ from agent.schemas import (
     AgentUsage,
     CountClaim,
     DiagnosisOutput,
-    PriorityOutput,
     QuoteClaim,
     RefClaim,
     ToolClaim,
@@ -324,8 +323,7 @@ class PastSuggestion:
 @dataclass(frozen=True)
 class History:
     suggestions: tuple[PastSuggestion, ...] = ()   # 이 지도, 최신순(created_at 내림차순)
-    model_runs_today: int = 0   # KST 자정 이후 used_model=true이고 trigger in (activity, time, summary)인 agent_runs 수
-    last_priority: Mapping[str, Any] | None = None   # 직전 관찰(activity, time)의 agent_runs.priority. 순위 재사용(7절 2번)
+    model_runs_today: int = 0   # KST 자정 이후 used_model=true(진단을 부름)이고 trigger in (activity, time, summary)인 agent_runs 수
 
     @property
     def active(self) -> PastSuggestion | None:
@@ -406,7 +404,7 @@ def check_policy(
     return passed, blocked
 
 
-# ---------------------------------------------------------------- 우선순위 정책 (7절)
+# ---------------------------------------------------------------- 우선순위 정책과 코드 규칙 (7절)
 
 POLICY_PATH = Path(__file__).with_name("priority_policy.yaml")
 
@@ -414,27 +412,35 @@ POLICY_PATH = Path(__file__).with_name("priority_policy.yaml")
 @dataclass(frozen=True)
 class PriorityPolicy:
     version: int
-    principles: tuple[str, ...]
+    urgent_dday: int
     never_first: tuple[str, ...]
     always_first: tuple[str, ...]
     weights: Mapping[str, int]
 
 
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def parse_policy(raw: Mapping[str, Any]) -> PriorityPolicy:
-    """weights에 diagnosis 4종이 모두 있어야 하고, rules에는 아는 diagnosis만 올 수 있다. 어긋나면 ValueError."""
+    """weights에 diagnosis 4종이 모두 있어야 하고, rules에는 정수 urgent_dday와 아는 diagnosis만 올 수 있다. 어긋나면
+    ValueError."""
     weights = dict(raw.get("weights") or {})
     if set(weights) != set(DIAGNOSES):
         raise ValueError(f"priority_policy weights는 {sorted(DIAGNOSES)}를 모두 가져야 한다: {sorted(weights)}")
-    if not all(isinstance(w, int) and not isinstance(w, bool) for w in weights.values()):
+    if not all(_is_int(w) for w in weights.values()):
         raise ValueError(f"priority_policy weights는 정수여야 한다: {weights}")
     rules = raw.get("rules") or {}
+    urgent_dday = rules.get("urgent_dday")
+    if not _is_int(urgent_dday):
+        raise ValueError(f"priority_policy rules.urgent_dday는 정수여야 한다: {urgent_dday!r}")
     never_first = tuple(rules.get("never_first") or ())
     always_first = tuple(rules.get("always_first") or ())
     unknown = set(never_first + always_first) - set(DIAGNOSES)
     if unknown:
         raise ValueError(f"priority_policy rules에 모르는 diagnosis: {sorted(unknown)}")
     return PriorityPolicy(
-        version=int(raw["version"]), principles=tuple(raw.get("principles") or ()),
+        version=int(raw["version"]), urgent_dday=urgent_dday,
         never_first=never_first, always_first=always_first, weights=weights,
     )
 
@@ -445,13 +451,58 @@ def load_policy(path: Path = POLICY_PATH) -> PriorityPolicy:
         return parse_policy(yaml.safe_load(f))
 
 
+def rank_signals(signals: Sequence[Signal], policy: PriorityPolicy) -> tuple[list[Signal], list[str]]:
+    """코드 규칙으로 정한 순위와 기본 순서를 바꾼 규칙 이름들(7절, #582). 기본 순서는 weights 내림차순(같으면 탐지
+    순서)이고, 아래 규칙을 차례로 얹어 순서가 바뀐 규칙만 rule_hits에 남긴다(바뀐 차례대로).
+
+    - 같은 weight 안에서: recent_dismissals가 0인 신호 먼저(recent_dismissals) → affected_members 내림차순
+      (affected_members) → elapsed_ratio 내림차순, 없으면 뒤(elapsed_ratio). 앞 기준이 같을 때만 다음 기준을 본다
+    - urgent_dday: 출발이 urgent_dday일 이내(여행 중 포함)면 category_gap을 맨 앞으로
+    - always_first: 그 유형을 맨 앞으로. never_first: 1순위가 그 유형이면 아닌 첫 신호를 앞으로
+
+    결과는 7절의 순서(urgent_dday → weights → 같은 weight의 기준 → always_first, never_first)와 같다 — 맨 앞으로
+    옮기기는 안정 정렬이라 옮긴 신호끼리도, 남은 신호끼리도 앞 단계의 순서를 지킨다."""
+    def weight(s: Signal) -> int:
+        return -policy.weights[s.diagnosis]
+
+    def dismissed(s: Signal) -> bool:
+        return (s.features.get("recent_dismissals") or 0) > 0
+
+    def affected(s: Signal) -> int:
+        return -(s.features.get("affected_members") or 0)
+
+    def elapsed(s: Signal) -> tuple[bool, float]:
+        ratio = s.features.get("elapsed_ratio")
+        return ratio is None, -(ratio or 0.0)
+
+    def urgent_gap(s: Signal) -> bool:
+        dday = s.features.get("dday")
+        return s.diagnosis == "category_gap" and dday is not None and dday <= policy.urgent_dday
+
+    order, hits = sorted(signals, key=weight), []
+
+    def step(rule: str, new_order: list[Signal]) -> None:
+        nonlocal order
+        if new_order != order:
+            hits.append(rule)
+        order = new_order
+
+    keys = [weight]
+    for rule, key in (("recent_dismissals", dismissed), ("affected_members", affected), ("elapsed_ratio", elapsed)):
+        keys.append(key)
+        step(rule, sorted(order, key=lambda s, ks=tuple(keys): tuple(k(s) for k in ks)))
+    step("urgent_dday", sorted(order, key=lambda s: not urgent_gap(s)))
+    step("always_first", sorted(order, key=lambda s: s.diagnosis not in policy.always_first))
+    if order and order[0].diagnosis in policy.never_first:
+        allowed = next((s for s in order if s.diagnosis not in policy.never_first), None)
+        if allowed is not None:
+            step("never_first", [allowed] + [s for s in order if s is not allowed])
+    return order, hits
+
+
 def fallback_order(signals: Sequence[Signal], policy: PriorityPolicy) -> list[Signal]:
-    """모델 없이 정하는 순위(7절 3번): weights 내림차순, 동점이면 elapsed_ratio 내림차순(없으면 뒤), 그래도 같으면
-    탐지 순서."""
-    def key(sig: Signal):
-        ratio = sig.features.get("elapsed_ratio")
-        return (-policy.weights[sig.diagnosis], ratio is None, -(ratio or 0.0))
-    return sorted(signals, key=key)
+    """코드 규칙으로 정한 순위(7절). 규칙은 rank_signals."""
+    return rank_signals(signals, policy)[0]
 
 
 # ---------------------------------------------------------------- 다음 점검 시각 (12.4)
@@ -508,77 +559,9 @@ def recheck(signal: Signal, snap: Snapshot, now: datetime, th: timedelta) -> boo
     )
 
 
-def priority_input(signals: Sequence[Signal], policy: PriorityPolicy) -> list[dict[str, Any]]:
-    """llm.agent_prioritize에 넘길 신호(7절). 근거 id도 사유 글도 넣지 않는다 — 유형, 카테고리, 특징값과 유형의
-    weight(정책의 기본 가중치, 7절 "모델 참고값")뿐이다. fallback_order 순서로 넘긴다 — 고정 응답 스텁(받은 순서
-    그대로)이 모델 없는 순위와 같아지고, 모델도 이 순서를 기본으로 본다(#534)."""
-    return [
-        {"id": s.id, "diagnosis": s.diagnosis, "category": s.category, "weight": policy.weights[s.diagnosis],
-         "features": dict(s.features)}
-        for s in fallback_order(signals, policy)
-    ]
-
-
-def apply_priority_rules(
-    model_order: Sequence[str], signals: Sequence[Signal], policy: PriorityPolicy,
-) -> tuple[list[Signal], list[dict[str, Any]]]:
-    """모델 순서를 정책으로 보정한다(7절). (최종 순서, 보정 기록).
-
-    1. 모르는 id는 버린다(unknown_id). 2. 같은 id가 또 나오면 뒤의 것을 버린다(duplicate). 3. 빠진 신호는
-    fallback_order 순서로 뒤에 붙인다(missing). 4. always_first 유형을 앞으로(always_first). 5. 1순위가 never_first
-    유형이면 그렇지 않은 첫 신호를 앞으로(never_first)."""
-    by_id = {s.id: s for s in signals}
-    order: list[Signal] = []
-    corrections: list[dict[str, Any]] = []
-    for sid in model_order:
-        if sid not in by_id:
-            corrections.append({"type": "unknown_id", "signal_id": sid})
-        elif by_id[sid] in order:
-            corrections.append({"type": "duplicate", "signal_id": sid})
-        else:
-            order.append(by_id[sid])
-    for sig in fallback_order([s for s in signals if s not in order], policy):
-        corrections.append({"type": "missing", "signal_id": sig.id})
-        order.append(sig)
-    first = [s for s in order if s.diagnosis in policy.always_first]
-    if first and order[:len(first)] != first:
-        order = first + [s for s in order if s not in first]
-        corrections.append({"type": "always_first", "signal_ids": [s.id for s in first]})
-    if order and order[0].diagnosis in policy.never_first:
-        allowed = next((s for s in order if s.diagnosis not in policy.never_first), None)
-        if allowed is not None:
-            order = [allowed] + [s for s in order if s is not allowed]
-            corrections.append({"type": "never_first", "signal_id": allowed.id})
-    return order, corrections
-
-
-def priority_mode(passed: Sequence[Signal], previous: Mapping[str, Any] | None, *, cap_reached: bool) -> str:
-    """순위를 어떻게 정할지(7절 1~3번). none(신호 없음) | single(1개, 부르지 않음) | code_only(모델 유형이 없음, 부르지
-    않고 fallback_order — 루트 결정 #534) | reused(직전 관찰과 fingerprint 집합이 같고 직전 순위가 모델에서 나옴) |
-    model_cap(상한, fallback_order) | model(llm.agent_prioritize를 부른다)."""
-    if not passed:
-        return "none"
-    if len(passed) == 1:
-        return "single"
-    if not any(s.diagnosis in MODEL_TYPES for s in passed):
-        return "code_only"
-    if _reusable(passed, previous):
-        return "reused"
-    if cap_reached:
-        return "model_cap"
-    return "model"
-
-
-def _reusable(passed: Sequence[Signal], previous: Mapping[str, Any] | None) -> bool:
-    if not previous or previous.get("source") not in ("model", "reused"):
-        return False
-    fingerprints = previous.get("fingerprints") or []
-    return len(fingerprints) == len(passed) and set(fingerprints) == {s.fingerprint for s in passed}
-
-
 def model_usage(usages: Sequence[AgentUsage]) -> dict[str, Any]:
-    """agent_runs의 model, prompt_version, tokens_in, tokens_out(#564). 한 관찰에서 우선순위와 진단을 둘 다 불렀으면
-    합이다 — 토큰은 더하고, 모델과 프롬프트 버전은 겹치지 않게 부른 순서대로 "+"로 잇는다("prioritize-v1+diagnose-v1").
+    """agent_runs의 model, prompt_version, tokens_in, tokens_out(#564). 관찰에서 모델을 부르는 곳은 진단 하나다(우선순위는
+    코드 규칙, #582). 여러 호출이 오면 토큰은 더하고, 모델과 프롬프트 버전은 겹치지 않게 부른 순서대로 "+"로 잇는다.
     아무것도 부르지 않았거나 고정 응답 스텁이면 None과 0이다."""
     def joined(values: Iterable[str | None]) -> str | None:
         return "+".join(dict.fromkeys(v for v in values if v)) or None
@@ -591,37 +574,17 @@ def model_usage(usages: Sequence[AgentUsage]) -> dict[str, Any]:
     }
 
 
-def choose_top(
-    passed: Sequence[Signal], policy: PriorityPolicy, *, mode: str = "fallback", model_out: Any = None,
-    previous: Mapping[str, Any] | None = None,
-) -> tuple[Signal | None, dict[str, Any] | None]:
-    """1순위 신호와 agent_runs.priority 기록(7절). mode는 priority_mode의 결과다(기본 fallback은 모델 없이 정한다).
+def choose_top(passed: Sequence[Signal], policy: PriorityPolicy) -> tuple[Signal | None, dict[str, Any] | None]:
+    """1순위 신호와 agent_runs.priority 기록(7절, #582). 순위는 코드 규칙(rank_signals)만 쓴다 — 모델을 부르지 않는다.
 
-    - model: model_out(PriorityOutput)의 순서를 apply_priority_rules로 보정한다. model_out이 PriorityOutput이 아니면
-      (AgentCallFailed: 호출 실패, 타임아웃, 스키마 실패) fallback_order로 정하고 그 이유를 남긴다
-    - reused: 직전 관찰의 순서(fingerprint)를 그대로 쓴다
-    - single, code_only, model_cap, fallback: fallback_order. code_only와 model_cap은 source=fallback에 그 이유를 남긴다
-    기록: source(어떻게 정했나), model_order, final_order, fingerprints(final_order 순서 — 다음 관찰의 재사용 판단),
-    corrections, reused, fallback_reason. 사유 글은 없다."""
+    기록: source(single: 신호 하나, rules: 2개 이상을 규칙으로 정함), final_order, fingerprints(final_order 순서),
+    rule_hits(기본 순서를 바꾼 규칙). 사유 글은 없다."""
     if not passed:
         return None, None
-    model_order, corrections, fallback_reason, source = None, [], None, mode
-    if mode == "model" and isinstance(model_out, PriorityOutput):
-        model_order = [item.signal_id for item in model_out.order]
-        order, corrections = apply_priority_rules(model_order, passed, policy)
-    elif mode == "reused":
-        rank = {fp: i for i, fp in enumerate(previous["fingerprints"])}
-        order = sorted(passed, key=lambda s: rank[s.fingerprint])
-    else:
-        order = fallback_order(passed, policy)
-        if mode == "model":
-            source, fallback_reason = "fallback", getattr(model_out, "reason", "invalid_schema")
-        elif mode in ("model_cap", "code_only"):
-            source, fallback_reason = "fallback", mode
+    order, rule_hits = rank_signals(passed, policy)
     log = {
-        "source": source, "model_order": model_order, "final_order": [s.id for s in order],
-        "fingerprints": [s.fingerprint for s in order], "corrections": corrections, "reused": mode == "reused",
-        "fallback_reason": fallback_reason,
+        "source": "single" if len(passed) == 1 else "rules", "final_order": [s.id for s in order],
+        "fingerprints": [s.fingerprint for s in order], "rule_hits": rule_hits,
     }
     return order[0], log
 

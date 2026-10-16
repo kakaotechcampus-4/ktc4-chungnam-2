@@ -60,9 +60,8 @@ def test_choose_top_uses_fallback_order_and_logs_it():
     top, log = core.choose_top([gap, stall], POLICY)
 
     assert top.id == "s2"
-    assert log == {"source": "fallback", "model_order": None, "final_order": ["s2", "s1"],
-                   "fingerprints": [stall.fingerprint, gap.fingerprint], "corrections": [], "reused": False,
-                   "fallback_reason": None}
+    assert log == {"source": "rules", "final_order": ["s2", "s1"],
+                   "fingerprints": [stall.fingerprint, gap.fingerprint], "rule_hits": []}
     assert core.choose_top([], POLICY) == (None, None)
 
 

@@ -445,3 +445,56 @@ advice는 `[{"slot_text": "{c2}", "is_guess": false}, ...]`, claims는 `[{"id":"
   정하세요)으로는 "확정하라고"가 걸리지 않는다. 검증 5단계(모델이 쓴 슬롯 문장)에도 같은 목록이 걸린다
 - 문장이 다 빠지고 행동도 없으면 그 제안에는 제목과 버튼만 남는다(지금 렌더 규칙 그대로)
 - 테스트: test_core_render 1개(인용으로 들어온 명령형, 공백 무시, 나머지 문장은 남음), test_core_verify 1개(명령형)
+
+
+---
+
+# 루트 보고 — backend/agent (#582, M1 마무리: 모델 유형 노출, 우선순위 코드 규칙, TICK_MAX_MAPS 6)
+
+명세 5절, 7절(version 2), 12.4 5단계대로 했다. 명세와 다르게 한 것은 없다. 명세가 정하지 않아 정한 것만 아래에 적는다.
+
+## 바뀐 것
+
+1. **우선순위는 코드 규칙만**(`core.rank_signals`, `fallback_order`는 그 순서만 돌려준다). `choose_top(passed, policy)`가 순서와
+   기록을 낸다. 관찰은 모델을 부르지 않는다 — Gateway(`deps.AgentLlmGateway`, Fixed, Real)에서 `prioritize`를 지웠다
+2. **priority 기록**: `{source, final_order, fingerprints, rule_hits}`. source는 `single`(신호 하나) 또는 `rules`(2개 이상)
+3. **모델 사용 1회 = 진단을 부른 관찰**. `used_model`은 진단을 불렀을 때만 true다. 그래서 신호가 여럿이어도 1순위가 코드
+   유형이면(예: 출발 임박이라 카테고리 공백이 먼저) used_model=false이고 상한에 세지 않는다
+4. `priority_policy.yaml` version 2(명세 7절 그대로). 로더는 `rules.urgent_dday`(정수, bool 거절)를 필수로 읽고 principles는 읽지 않는다
+5. `SHADOW_DIAGNOSES = ()`, `TICK_MAX_MAPS = 6`
+
+## 지운 것
+
+`core.priority_mode`, `_reusable`, `apply_priority_rules`, `priority_input`, `PriorityPolicy.principles`, `History.last_priority`와
+`service.load_history`의 직전 순위 조회, `flows`의 우선순위 모델 호출·사용량 합치기, `deps`의 `prioritize` 3곳, `agent/schemas.py`의
+`PriorityItem`·`PriorityOutput` 재수출. priority 기록의 `model_order`, `corrections`, `reused`, `fallback_reason` 칸
+
+## 명세에 없어 정한 것
+
+- **rule_hits 모양**: 규칙 이름 목록, 순서를 바꾼 차례대로. 이름은 `recent_dismissals`, `affected_members`, `elapsed_ratio`,
+  `urgent_dday`, `always_first`, `never_first`. 기본 순서는 weights 내림차순(같으면 탐지 순서)이다
+- **적용 차례**: 같은 weight의 기준 셋을 먼저 얹고(앞 기준이 같을 때만 다음 기준) → urgent_dday → always_first → never_first.
+  맨 앞으로 옮기기는 안정 정렬이라 7절 번호 순서(urgent_dday → weights → 같은 weight 기준 → always/never)와 결과가 같다.
+  rule_hits에는 이 적용 차례로 남는다(예: 평가셋 e12는 `["affected_members", "urgent_dday"]`)
+- **urgent_dday**: `dday <= urgent_dday`(여행 중인 0 이하 포함)인 category_gap을 앞으로. 옮긴 공백끼리는 앞 단계 순서를 지킨다
+- **always_first가 urgent_dday보다 뒤에 적용**된다(7절 4번). always_first 유형이 있으면 출발 임박이어도 그 유형이 1순위다
+- features에 칸이 없으면 기본값(영향 인원 0, 닫힘 0, elapsed_ratio·dday 없음)으로 본다. 운영 신호는 탐지기가 모두 채운다
+
+## 테스트
+
+- 규칙별(test_core_priority.py 33개): 기본 순서, 출발 임박(D-30, D-4, D-3, D-0, 여행 중), 임박한 공백 여럿, 같은 weight의 영향
+  인원, weight를 넘지 않음, elapsed_ratio(없으면 뒤), 연속 닫힘(같은 weight에서만 뒤로, 영향 인원보다 먼저), always_first,
+  always_first와 urgent_dday, never_first, 대안 없는 never_first, 빈 features, choose_top 기록(rules, single, 없음). 정책 파일과
+  로더 검증(test_core_policy.py)
+- 흐름(test_flows_model.py): Gateway에 prioritize 없음, 모델 유형 둘이 통과해도 진단만 부름, 출발 임박이면 진단 없이
+  카테고리 공백(used_model=false, 상한 0회) / 출발이 멀면 진단 1회, 관찰마다 진단 1회씩 셈, 상한이면 모델 유형만 막힘, 갈림과
+  정체 제안이 `GET /maps/{mapId}/agent`와 agent.suggested에 같은 렌더로 나감(갈림은 analysis 축 이름 포함), 사용량은 진단 것만
+- test_flows.py: 모든 유형 노출, TICK_MAX_MAPS 6. 코드 유형 관찰의 priority 기록
+
+## 루트 확인 요청 (문서는 고치지 않았다)
+
+1. 명세 13절 agent_runs의 `priority jsonb` 주석이 아직 `model_order, final_order, corrections, reused`다 → `source, final_order,
+   fingerprints, rule_hits`(agent/models.py 주석은 고쳤다. 컬럼은 jsonb 그대로라 마이그레이션 없음)
+2. `common/tests/test_adapter_assembly.py` 16번째 줄의 설명 문자열이 "prioritize, diagnose는 real이 있다"다. 테스트는 통과한다
+   (문자열만). 다른 모듈 파일이라 고치지 않았다 → "diagnose는 real이 있다"
+3. 명세 7절에 rule_hits 모양과 위 적용 차례를 한 줄 적으면 좋다

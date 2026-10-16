@@ -68,12 +68,12 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
     assert [c["value"] for c in sug.claims] == [2, 0]
     assert sug.expires_at == world.now + constants.SUGGESTION_TTL
     run = world.one(AgentRun, map_id=map_id)
-    # 신호가 둘이지만 코드 유형만이라 우선순위 모델을 부르지 않는다 — 모델 사용 없음(#534)
+    # 신호가 둘이지만 순위는 코드 규칙이고 진단도 없다 — 모델 사용 없음(#582)
     assert (run.outcome, run.trigger, run.snapshot_seq, run.used_model) == ("suggested", "activity", seq, False)
     assert sug.run_id == run.id
     assert [s["diagnosis"] for s in run.signals] == ["category_gap", "category_gap"]
-    assert run.priority["final_order"] == ["s1", "s2"] and run.priority["model_order"] is None
-    assert (run.priority["source"], run.priority["fallback_reason"]) == ("fallback", "code_only")
+    assert run.priority == {"source": "rules", "final_order": ["s1", "s2"],
+                            "fingerprints": [s["fingerprint"] for s in run.signals], "rule_hits": []}
     assert run.tool_calls == [] and run.verification is None
     [(type_, payload)] = world.agent_events(map_id)
     assert type_ == "agent.suggested"
@@ -89,8 +89,8 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
 
 
 def test_shadow_diagnosis_is_saved_without_events(world, monkeypatch):
-    """17절 15번 — shadow 유형의 제안은 저장되지만 이벤트가 없다. M1-1에서 모델 유형은 초안까지 가지 않으므로 코드
-    유형을 shadow 목록에 넣어 저장 경로를 본다."""
+    """17절 15번 — shadow 유형의 제안은 저장되지만 이벤트가 없다. #582부터 shadow 목록이 비어 있어 코드 유형을 넣어
+    저장 경로를 본다."""
     monkeypatch.setattr(core, "SHADOW_DIAGNOSES", constants.CODE_TYPES)
     map_id = world.gap_map()
     world.event(map_id)
@@ -101,9 +101,15 @@ def test_shadow_diagnosis_is_saved_without_events(world, monkeypatch):
     assert world.agent_events(map_id) == []
 
 
-def test_model_types_stay_shadow():
-    assert constants.SHADOW_DIAGNOSES == constants.MODEL_TYPES
-    assert [core.is_shadow(d) for d in ("stall", "split", "no_reaction", "category_gap")] == [True, True, False, False]
+def test_all_types_are_exposed():
+    """모델 유형도 #534 평가 뒤 노출한다(#582)."""
+    assert constants.SHADOW_DIAGNOSES == ()
+    assert [core.is_shadow(d) for d in ("stall", "split", "no_reaction", "category_gap")] == [False] * 4
+
+
+def test_tick_max_maps_is_six():
+    """관찰 최악 약 16초(#534) × 10이 lease 180초에 가까워 6으로(#582)."""
+    assert constants.TICK_MAX_MAPS == 6
 
 
 def test_no_reaction_suggestion_renders_pin_names(world, monkeypatch):

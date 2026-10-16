@@ -23,8 +23,6 @@ from llm.schemas import (  # noqa: F401 — 모델 출력 스키마(11.1)의 정
     Claim,
     CountClaim,
     DiagnosisOutput,
-    PriorityItem,
-    PriorityOutput,
     QuoteClaim,
     RefClaim,
     ToolClaim,

@@ -179,9 +179,10 @@ def test_first_matching_reason_wins():
     assert _check([sig], *history, runs_today=99) == ([], {"s1": "duplicate"})
 
 
-# ---------------------------------------------------------------- 대체 순위와 정책 파일 (7절)
+# ---------------------------------------------------------------- 코드 규칙 순위와 정책 파일 (7절)
 
 def test_fallback_order_weights_then_elapsed_ratio():
+    """영향 인원과 닫힘이 같으면 weights 다음은 elapsed_ratio다. 규칙별 테스트는 test_core_priority.py."""
     signals = [
         _sig("no_reaction", None, evidence=("p1",), sid="s1"),
         _sig("category_gap", "카페", sid="s2"),
@@ -198,19 +199,24 @@ def test_fallback_order_weights_then_elapsed_ratio():
 def test_policy_file_matches_spec_draft():
     policy = core.load_policy()
 
-    assert policy.version == 1
+    assert policy.version == 2
     assert dict(policy.weights) == {"stall": 3, "split": 3, "category_gap": 2, "no_reaction": 1}
-    assert (policy.never_first, policy.always_first) == ((), ())
-    assert len(policy.principles) == 3
+    assert (policy.urgent_dday, policy.never_first, policy.always_first) == (3, (), ())
+    assert not hasattr(policy, "principles")   # version 2에서 지웠다(#582)
 
 
-def test_policy_rejects_missing_weight_or_unknown_rule():
-    base = {"version": 1, "principles": [], "rules": {},
+@pytest.mark.parametrize("change", [
+    {"weights": {"stall": 3}},
+    {"rules": {"urgent_dday": 3, "never_first": ["route"]}},
+    {"rules": {}},                              # urgent_dday 없음
+    {"rules": {"urgent_dday": "3"}},
+    {"rules": {"urgent_dday": True}},
+])
+def test_policy_rejects_missing_weight_unknown_rule_or_bad_urgent_dday(change):
+    base = {"version": 2, "rules": {"urgent_dday": 3},
             "weights": {"stall": 3, "split": 3, "category_gap": 2, "no_reaction": 1}}
     with pytest.raises(ValueError):
-        core.parse_policy({**base, "weights": {"stall": 3}})
-    with pytest.raises(ValueError):
-        core.parse_policy({**base, "rules": {"never_first": ["route"]}})
+        core.parse_policy({**base, **change})
 
 
 # ---------------------------------------------------------------- 다음 점검 시각 (12.4)
