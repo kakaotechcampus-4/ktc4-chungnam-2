@@ -1,4 +1,5 @@
-"""모델 도구(docs/agent-v2.md 10절). 진단 모델이 llm을 거쳐 부르는 읽기 전용 함수들이다.
+"""모델 도구(docs/agent-v2.md 10절). 진단 모델과 추천 막힘 조언 모델(#587, 맨 아래 절)이 llm을 거쳐 부르는 읽기
+전용 함수들이다.
 
 공통 규칙(10절)
 - 읽기 전용이다. 각 도구는 짧은 읽기 세션을 열고 닫는다 — 모델 호출 중에는 세션을 들고 있지 않는다(12.6).
@@ -31,6 +32,7 @@ from agent import core
 from agent.constants import TOOL_RESULT_MAX_ITEMS
 from agent.snapshot import Snapshot
 from common import categories
+from common.errors import AppError
 from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
@@ -100,32 +102,45 @@ class ToolContext:
         started = time.monotonic()
         tool = TOOLS.get(name) if name in self.allowed else None
         result = NOT_FOUND if tool is None else tool(self, args)
-        self.results[call_id] = result
-        self.calls.append({
-            "call_id": call_id, "name": name, "args": dict(args), "result": redact(result),
-            "ms": int((time.monotonic() - started) * 1000),
-        })
+        _record(self, call_id, name, args, result, started)
         return result
 
-    @contextmanager
-    def read(self) -> Iterator[Session]:
-        """짧은 읽기 세션. 쓰지 않으므로 롤백으로 닫는다."""
-        with self.session_factory() as db:
-            try:
-                yield db
-            finally:
-                db.rollback()
+    def read(self):
+        return _read(self.session_factory)
+
+
+@contextmanager
+def _read(session_factory: Callable[[], Session]) -> Iterator[Session]:
+    """짧은 읽기 세션. 쓰지 않으므로 롤백으로 닫는다."""
+    with session_factory() as db:
+        try:
+            yield db
+        finally:
+            db.rollback()
+
+
+def _record(ctx: Any, call_id: str, name: str, args: Mapping[str, Any], result: Any, started: float, **extra: Any) -> None:
+    """도구 실행 한 번을 남긴다 — 검증용 원래 결과(results, 메모리)와 저장용 기록(calls, 글 대신 글자 수)."""
+    ctx.results[call_id] = result
+    ctx.calls.append({
+        "call_id": call_id, "name": name, "args": dict(args), "result": redact(result),
+        "ms": int((time.monotonic() - started) * 1000), **extra,
+    })
+
+
+_TEXT_OWNERS = ("reaction_id", "line_id")   # 이 칸과 함께 있는 text는 사람이 쓴 글(사유, 근거 줄)이다
 
 
 def redact(result: Any) -> Any:
-    """저장용 사본 — 사유 글(reaction_id와 함께 있는 text)을 글자 수로 바꾼다(2절 13번). 칩 이름(label)은 칩 표의
-    고정 문구라 남긴다."""
+    """저장용 사본 — 사유 글과 근거 글(reaction_id나 line_id와 함께 있는 text)을 글자 수로 바꾼다(2절 13번). 칩 이름과 조건
+    이름(label)은 코드의 고정 문구라 남긴다."""
     if isinstance(result, list):
         return [redact(v) for v in result]
     if not isinstance(result, Mapping):
         return result
-    out = {k: redact(v) for k, v in result.items() if not ("reaction_id" in result and k == "text")}
-    if "reaction_id" in result and "text" in result:
+    owned = any(k in result for k in _TEXT_OWNERS)
+    out = {k: redact(v) for k, v in result.items() if not (owned and k == "text")}
+    if owned and "text" in result:
         out["text_len"] = len(result["text"] or "")
     return out
 
@@ -389,4 +404,99 @@ TOOLS: dict[str, Callable[[ToolContext, Mapping[str, Any]], Any]] = {
     "compare_reasons": compare_reasons,
     "get_place_facts": get_place_facts,
     "get_readiness": get_readiness,
+}
+
+
+# ---------------------------------------------------------------- 추천 막힘 조언 전용 (9절, 10절, #587)
+# 그 run의 요청자에게 그 run의 데이터만 다룬다(2절 2번의 예외). run은 모델이 고르지 않고 여기서 채운다 — 인자는 비었거나
+# simulate_filter의 두 칸뿐이다. 근거 줄의 쓴 사람은 "본인"과 "다른 구성원"으로만 나간다(core.advice_evidence).
+
+@dataclass
+class RunToolContext:
+    """조언 한 번의 도구 실행 창구. `run`을 llm.agent_advise_run의 tool_runner로 넘긴다. 허용 도구는 RUN_TOOLS(llm의
+    RUN_ADVICE_TOOLS와 같은 넷)이고 llm도 같은 목록으로 막는다. meta는 recommend.api.get_run_meta(반경과 상한을 본다)."""
+    run_id: str
+    requester_id: str
+    meta: Mapping[str, Any]
+    session_factory: Callable[[], Session]
+    fact_labels: Mapping[str, str]
+    calls: list[dict[str, Any]] = field(default_factory=list)
+    results: dict[str, Any] = field(default_factory=dict)
+    names: dict[str, str] = field(default_factory=dict)   # call_id → 도구 이름(검증이 claim의 출처를 본다)
+
+    def run(self, call_id: str, name: str, args: Mapping[str, Any]) -> Any:
+        started = time.monotonic()
+        tool = RUN_TOOLS.get(name)
+        result = NOT_FOUND if tool is None else tool(self, args)
+        self.names[call_id] = name
+        _record(self, call_id, name, args, result, started)
+        return result
+
+    def prefetch(self, call_id: str, name: str) -> Any:
+        """모델을 부르기 전에 코드가 도구를 한 번 돌려 입력에 넣는다(깔때기, core.PREFETCH_CALL_ID). 기록에도 남긴다."""
+        started = time.monotonic()
+        result = RUN_TOOLS[name](self, {})
+        self.names[call_id] = name
+        _record(self, call_id, name, {}, result, started, prefetched=True)
+        return result
+
+    def read(self):
+        return _read(self.session_factory)
+
+
+def get_recent_runs(ctx: RunToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
+    """같은 요청자의 같은 카테고리 최근 run [{run_id, status, result_count, created_at, this_run}] — recommend.api 그대로(#469)."""
+    with ctx.read() as db:
+        recent = recommend_api.get_recent_runs(db, run_id=ctx.run_id)
+    return _top(core.recent_runs_view(recent, ctx.run_id), "runs")
+
+
+def get_run_funnel(ctx: RunToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
+    """그 run의 마지막 실행 깔때기와 결과 수, passed(core.funnel_view)."""
+    with ctx.read() as db:
+        funnel = recommend_api.get_run_funnel(db, run_id=ctx.run_id)
+    return core.funnel_view(ctx.meta["result_count"], funnel)
+
+
+def get_run_evidence(ctx: RunToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
+    """그 run의 근거 줄(비활성 포함). 쓴 사람은 본인/다른 구성원, 조건 이름(label), 종류(kind). 줄 순서는 근거 줄 정본 순서라
+    같은 run이면 같은 lines.N이다."""
+    with ctx.read() as db:
+        lines = recommend_api.get_run_evidence(db, run_id=ctx.run_id)
+    return _top(core.advice_evidence(lines, ctx.requester_id, ctx.fact_labels), "lines")
+
+
+def _radius_factor(value: Any) -> tuple[bool, float | None]:
+    if value is None:
+        return True, None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not value > 0:
+        return False, None
+    return True, float(value)
+
+
+def simulate_filter(ctx: RunToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
+    """입력만 바꿔 다시 거른 결과(core.simulate_view: before, after, gained, within_widen_limit). 필터는 recommend.api의 읽기
+    전용 시뮬레이션이 돌린다(다시 구현하지 않는다, 10절). 배율이 0 이하이거나 숫자가 아니면, 그 run의 근거 줄이 아닌 id면
+    NOT_FOUND. 반경 상한을 넘는 배율도 결과는 주되 within_widen_limit=false다 — 그 결과를 가리키는 claim은 검증에서 빠진다."""
+    ok, factor = _radius_factor(args.get("radius_factor"))
+    line_ids = args.get("disable_line_ids") or []
+    if not ok or not isinstance(line_ids, list) or not all(isinstance(i, str) for i in line_ids):
+        return NOT_FOUND
+    line_ids = list(dict.fromkeys(line_ids))
+    with ctx.read() as db:
+        try:
+            raw = recommend_api.simulate_filter(db, run_id=ctx.run_id, radius_factor=factor, disable_line_ids=line_ids)
+        except AppError:
+            return NOT_FOUND
+    return core.simulate_view(
+        raw, radius_factor=factor, disable_line_ids=line_ids, walk_min=ctx.meta["default_radius_walk_min"],
+        limit_walk_min=ctx.meta["widen_limit_walk_min"],
+    )
+
+
+RUN_TOOLS: dict[str, Callable[[RunToolContext, Mapping[str, Any]], Any]] = {
+    "get_recent_runs": get_recent_runs,
+    "get_run_funnel": get_run_funnel,
+    "get_run_evidence": get_run_evidence,
+    "simulate_filter": simulate_filter,
 }

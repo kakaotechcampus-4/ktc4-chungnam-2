@@ -605,3 +605,104 @@ advice는 `[{"slot_text": "{c2}", "is_guess": false}, ...]`, claims는 `[{"id":"
 6. hard 키 목록이 필요하면(위 3번) `recommend.api.hard_fact_keys(category)` 정도를 열어 주면 wants=null인 hard 키 줄을 must_keep
    "제외"로 옮길 수 있다. 지금은 영향이 작아 요청만 남긴다
 7. `deps.AgentLlmGateway.summarize`와 `SummaryOutput`은 남겨 두었다(쓰지 않음). #588에서 모델 문장이 필요 없다고 정하면 지운다
+
+---
+
+# 루트 보고 — backend/agent (#587, M2-2 추천 막힘 조언: GET /runs/{runId}/advice)
+
+run 요청자 한 명에게 그 run의 데이터로만 조언한다(명세 2절 2번의 예외). 대상 판정, 근거 줄 표시, 검증, 렌더는 core(순수), 도구 4개는
+tools(recommend.api를 감싼다), 순서와 세션은 flows. 모델은 llm.agent_advise_run(#587 llm 절)이고 Gateway가 고른다(dev는 늘 silent).
+
+## 구현 범위
+
+- `core.py` 추천 막힘 조언 절: `run_advice_target`, `same_category_runs`, `radius_limits`·`within_widen_limit`, `funnel_view`,
+  `simulate_view`, `recent_runs_view`, `evidence_kind`·`advice_evidence`, `advice_input`, `verify_run_advice`(+ AdviceContext,
+  AdviceDraft, VerifiedAdvice), `render_run_advice`
+- `tools.py`: `RunToolContext`와 도구 4개 `get_recent_runs`·`get_run_funnel`·`get_run_evidence`·`simulate_filter`(`RUN_TOOLS`). 기록
+  함수(`_record`)와 읽기 세션(`_read`)을 진단 도구와 같이 쓰게 뺐다. `redact`는 line_id와 함께 있는 text(근거 글)도 글자 수로 바꾼다
+- `service.py`: `get_run_advice`, `insert_run_advice`(ON CONFLICT (run_id) DO NOTHING). `insert_run`이 id를 받을 수 있게 했다
+- `flows.py`: `advise_run`(읽기 → 대상 판정 → 모델, 세션 없음 → 쓰기). `api.py`: `advise_run(run_id, requester_id, *, session_factory)`
+- `deps.py`: Gateway.advise_run이 `AgentReply[RunAdviceOutput]`를 돌려준다. dev는 `fixed_advice_planner`, real은 `real_advice_planner`
+- `schemas.py`: RunAdviceOutput은 llm/schemas.py로 옮겼다(정의 한 곳). 마이그레이션 없음(agent_run_advice 칸 그대로)
+
+## 대상 판정 (core.run_advice_target)
+
+`status == "done"` 이고 (`result_count < BLOCKED_RUN_MAX_RESULTS(3)` 또는 `같은 카테고리 run 수 >= BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS(3)`).
+
+- result_count는 `recommend.api.get_run_meta`의 후보 수(상위 3곳 뒤라 최대 3, done이 아니면 0)
+- 같은 카테고리 run 수는 같은 요청자, 같은 지도, 같은 카테고리 run 중 **이 run까지(created_at 이하)** 만든 수다(이 run 포함). 나중에 만든
+  run은 세지 않는다 — 같은 run의 대상 여부가 나중에 바뀌지 않게. get_recent_runs 기본 10개로 그 사람 run을 다 받는다(재시도 상한 10, #31)
+- 대상이 아니면 아무것도 쓰지 않고 None(204). 진행 중인 run은 끝난 뒤 다시 부르면 그때 판정한다
+
+## 저장 모양 (agent_run_advice)
+
+```json
+{"run_id": "…", "map_id": "…", "kind": "soft_relax", "agent_run_id": "…",
+ "claims": [{"id": "c1", "kind": "tool_result", "call_id": "t2", "path": "gained", "value": 1},
+            {"id": "c2", "kind": "tool_result", "call_id": "t1", "path": "lines.1.label", "value": "넓은 곳 원함"}],
+ "advice": [{"slot_text": "「{c2.value}」 조건을 끄면 {c1.value}곳이 더 남아요", "is_guess": false}],
+ "actions": [{"index": 0, "type": "open_evidence", "label": "근거 확인에서 빼 보기",
+              "params": {"run_id": "…", "evidence_line_ids": ["<본인 줄 id>"]}}]}
+```
+
+- 슬롯 문장, 검증을 통과한 tool_result claim, 버튼만. 근거 글, user_id, 이름은 없다. 근거 줄은 line_id로만 가리킨다
+- 침묵, 실패, 검증 실패도 `kind=null, claims=[], advice=[], actions=[]`로 저장해 다시 만들지 않는다(GET은 204)
+- agent_runs 한 행: trigger=run_advice, used_model=true, tool_calls(깔때기 t0 포함, 근거 글은 text_len), verification,
+  model·prompt_version·tokens, outcome_detail `{run_id, stored, decision, kind}` 또는 `{run_id, stored, reason, detail}`
+- outcome: 조언을 만들면 advised, 그 밖에는 silent, unknown, invalid_schema, model_failed(호출 실패, 타임아웃), invalid_claims
+- 지도 모델 사용 상한에 세지 않는다(service.MODEL_RUN_TRIGGERS에 run_advice가 없다, 9절)
+
+## 명세와 다르게 한 것 (또는 명세에 없어 정한 것)
+
+1. **조언의 claim은 tool_result만 쓴다.** count(핀 지표), quote(reaction_id), ref는 run 조언에 맞지 않아 kind로 뺀다. 숫자와 조건
+   이름은 도구 결과의 값으로만 나온다. **근거 글을 가리키는 경로(…​.text)는 claim으로 쓸 수 없다**(text_path) — 렌더하면 원문이
+   응답에 나가기 때문이다. 결과적으로 근거 글은 응답과 저장 어디에도 없다
+2. **open_evidence의 근거 줄은 basis claim에서 정한다.** Action에 줄 id 칸이 없어서, basis가 가리키는 simulate_filter 호출의
+   disable_line_ids 또는 get_run_evidence의 `lines.N.…` 줄을 모은다. 그 줄이 모두 요청자 본인 줄이어야 버튼이 남고, 남의 줄이 하나라도
+   섞이면 버튼을 뺀다(not_own_line). 문장은 따로 검사해 이름 없이 남는다. params는 `{run_id, evidence_line_ids}`(api-spec AgentAction)
+3. **반경 상한**: 도구 결과에 `within_widen_limit`(지금 도보 분 × 배율 ≤ 30분)을 싣고, 상한을 넘는 시뮬레이션을 가리키는 claim은 뺀다
+   (radius_over_limit) → 그 claim에 기대는 문장과 widen_radius 버튼이 같이 빠진다. 이미 30분이면(max_radius_factor ≤ 1) widen_radius를
+   뺀다(radius_limit). 배율 1 이하 시뮬레이션은 "넓힌 것"이 아니라 radius 종류의 필수 claim이 되지 못한다
+4. **종류별 버튼과 성립(7단계)**: radius는 widen_radius, soft_relax·vague_reason은 open_evidence, exhausted는 없음. 필수 claim은
+   radius=넓힌 시뮬레이션, soft_relax=줄을 끈 시뮬레이션, vague_reason=get_run_evidence, exhausted=깔때기. 없으면 invalid_claims
+5. **깔때기를 미리 읽어 입력에 넣는다**(call_id `t0`, 도구 결과와 같은 모양). 모델이 get_run_funnel을 부르지 않고도 claim을 쓸 수 있다.
+   llm이 매기는 t1, t2 …와 겹치지 않고, 상한(5회)에도 세지 않는다. tool_calls에 `prefetched: true`로 남는다
+6. **gained와 passed**: result_count는 최대 3이라 비교는 `passed = result_count + 「상위 3곳 선정」 탈락`으로 한다. simulate_filter 결과에
+   `gained = after.passed − before.passed`를 코드가 계산해 싣는다(모델이 빼기를 하지 않게). 「상위 3곳 선정」 라벨 문자열에 기댄다
+   (`core.FUNNEL_TOP_STAGE`) — recommend가 라벨을 바꾸면 passed가 result_count로 떨어진다
+7. **get_run_evidence의 줄 모양**(10절 표와 다름): `{line_id, author: "본인"|"다른 구성원", badge, fact_key, wants, label, is_active,
+   kind, text}`. label은 `"{FACT_LABELS} 원함|제외"`(요약과 같은 말, 방향 없으면 이름만), kind는 condition(키 있음) / not_filtered(키 없고
+   「비싸요」 칩이거나 알러지 낱말) / vague(그 밖의 키 없는 줄). not_filtered 줄은 text를 싣지 않는다. 칩을 가르려고 recommend.api
+   get_run_evidence에 chip_id를 더했다(recommend #587 절)
+8. **버튼 문구**: widen_radius "반경 넓히기", soft_relax의 open_evidence "근거 확인에서 빼 보기"(9절 그대로), vague_reason의
+   open_evidence "근거 확인하기"
+9. **"동시 요청에도 생성 1회"는 저장 1회다.** 같은 run에 동시에 두 요청이 오면 둘 다 "저장된 것 없음"을 보고 모델을 각각 부를 수 있다.
+   저장은 ON CONFLICT로 먼저 커밋한 하나만 남고, 늦은 쪽은 그 행을 다시 읽어 같은 결과를 돌려준다(agent_runs에는 둘 다 남고 늦은 쪽은
+   stored=false). 모델 호출까지 한 번으로 막으려면 "만드는 중" 자리표 행이 필요한데 agent_run_advice에 상태 칸이 없고(kind=null은 침묵과
+   구별되지 않는다) 연결을 잡는 잠금은 12.6에 어긋나 하지 않았다. 같은 사람이 같은 run을 동시에 여는 경우라 비용은 작다
+10. **requester 재확인**: agent.api.advise_run도 run의 requested_by와 requester_id를 비교해 FORBIDDEN을 낸다(라우터가 이미 막지만
+    agent.api를 다른 곳에서 부를 때를 위해)
+11. **import 고리**: agent.api는 탈퇴(auth.service)와 recommend.flows가 불러오는 입구라, advise_run 안에서만 agent.flows를 불러온다
+    (맨 위에서 불러오면 agent.flows → recommend.api → recommend.flows → agent.api 고리가 생긴다)
+
+## 테스트
+
+- agent 335개 → 396개(새로 61개). 백엔드 전체 2608 passed, 8 deselected, 1 xfailed
+- test_core_advice.py 44개: 대상 판정 표, 이 run까지만 세는 run 수, 반경 배율(15·20·25·30·35분), passed, 근거 줄 종류(hard 키 방향
+  없음, 가격 칩, 알러지 글, 「너무 멀어요」), 본인/다른 구성원 표시와 user_id 없음, 입력에 사람·run·지도 없음, **soft_relax 본인 줄만
+  버튼(17절 2)**, 본인·남의 줄 섞이면 버튼 제거, vague_reason 버튼, **상한 넘는 widen_radius 제거**, 이미 상한이면 제거, claim 종류와
+  text 경로와 값 대조, 문장 5종(숫자, 이름, 옮겨 쓰기, 금지 표현, basis), 종류별 버튼, exhausted 필수 claim, 침묵, 저장에 글·이름 없음, 렌더
+- test_flows_advice.py 17개(실제 DB, 실제 recommend.api 시뮬레이션, llm 도구 왕복): soft_relax 끝까지(응답·저장·agent_runs 어디에도
+  근거 글, 이름, user_id 없음), agent_runs 기록과 지도 상한 미포함, 모델 입력, 상한 넘는 반경 제거, 상한에 닿은 run, **두 번째 요청은
+  모델 없이 같은 결과**, **동시 두 요청에 저장 1행·같은 결과(17절 13)**, 대상 아님(결과 3곳, 같은 카테고리 run 2개, 실행 전)은 아무것도
+  안 씀, 세 번째 run은 대상, dev 스텁 silent는 빈 조언 저장 후 다시 안 부름, 타임아웃도 같음, 요청자 아님 FORBIDDEN·없는 run NOT_FOUND,
+  **모델 호출 중 열린 연결 0(17절 11)**, 라우터 404·403·204, **라우터 200이 api-spec RunAdvice와 맞고 요청 세션도 모델 호출 전에 연결을
+  돌려줌**(라우터의 롤백을 지우면 이 테스트가 실패하는 것을 확인했다)
+
+## 루트 확인 요청 (문서는 고치지 않았다)
+
+1. 명세 9절: 대상 판정의 "같은 카테고리 run 3회"가 이 run까지라는 것, 저장 1회의 뜻(위 9번), outcome 목록(advised 외 5가지)
+2. 명세 10절 표: get_run_evidence 반환 모양(위 7번), simulate_filter 반환에 gained·passed·within_widen_limit, 입력의 깔때기 t0
+3. 명세 11.2: 조언은 tool_result claim만, text 경로 금지, open_evidence 줄을 basis에서 정하는 방법, 상한 넘는 claim 제거, 종류별 필수 claim
+4. api-spec RunAdvice 설명에 "근거 글은 응답에 없다"를 적을지(지금 FE는 근거 글이 올 거라 기대할 이유가 없어 선택)
+5. #588: 프롬프트 advise-v1은 초안이고 평가셋이 없다. 깔때기 라벨 문자열 의존(위 6번)을 recommend가 단계 코드로 주면 더 단단하다

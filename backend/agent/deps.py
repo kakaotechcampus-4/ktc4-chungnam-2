@@ -9,7 +9,9 @@ planner다(#532): dev는 fixed planner, real은 real planner.
 - structure(#533): structure_reasons 도구가 쓰는 ②(`llm.api.plan_evidence`). dev는 입력을 그대로 돌려주는 스텁이라 글에
   키가 붙지 않는다. 실패는 `PlanEvidenceFailed`(예외)다 — 도구가 오류 결과로 바꾼다.
 - summarize: 우리 조건 요약은 고정 문구라(2026-10-16 결정, #586) flows가 부르지 않는다. 맞춤 문장이 필요한지는 #588에서
-  다시 본다. advise_run은 llm 함수가 M2(#587)에서 생긴다. real은 그 전까지 부르면 NotImplementedError다.
+  다시 본다. real은 부르면 NotImplementedError다.
+- advise_run(#587): `llm.api.agent_advise_run`. 진단과 같이 `AgentReply`를 돌려주고 실패는 result의 `AgentCallFailed`다. dev
+  스텁은 get_run_evidence를 한 번 부른 뒤 늘 silent다 — 조언은 빈 값으로 저장되고 GET은 204다.
 """
 
 from collections.abc import Mapping, Sequence
@@ -37,7 +39,9 @@ class AgentLlmGateway(Protocol):
 
     def summarize(self, summary_input: Mapping[str, Any]) -> SummaryOutput: ...
 
-    def advise_run(self, advice_input: Mapping[str, Any], *, tool_runner: ToolRunner) -> RunAdviceOutput: ...
+    def advise_run(
+        self, advice_input: Mapping[str, Any], *, tool_runner: ToolRunner,
+    ) -> AgentReply[RunAdviceOutput]: ...
 
 
 class FixedAgentLlmGateway:
@@ -55,14 +59,15 @@ class FixedAgentLlmGateway:
     def summarize(self, summary_input: Mapping[str, Any]) -> SummaryOutput:
         return SummaryOutput(decision="silent", claims=[], requests=[])
 
-    def advise_run(self, advice_input: Mapping[str, Any], *, tool_runner: ToolRunner) -> RunAdviceOutput:
-        # silent이면 kind는 쓰이지 않는다. 스키마가 값을 요구해서 행동이 없는 exhausted를 넣는다
-        return RunAdviceOutput(decision="silent", kind="exhausted", claims=[], advice=[], actions=[])
+    def advise_run(
+        self, advice_input: Mapping[str, Any], *, tool_runner: ToolRunner,
+    ) -> AgentReply[RunAdviceOutput]:
+        return llm_api.agent_advise_run(advice_input, tool_runner=tool_runner, planner=llm_api.fixed_advice_planner)
 
 
 class RealAgentLlmGateway:
-    """실제 모델(gpt-6-luna). summarize와 advise_run은 llm 함수가 M2에서 생긴다 — 그 전에는 부르면 바로 실패한다
-    (real이라고 떴는데 스텁이 도는 일이 없게)."""
+    """실제 모델(gpt-6-luna). summarize는 고정 문구라 llm 함수가 없다 — 부르면 바로 실패한다(real이라고 떴는데 스텁이 도는
+    일이 없게)."""
 
     def diagnose(
         self, diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner,
@@ -73,10 +78,12 @@ class RealAgentLlmGateway:
         return llm_api.plan_evidence(raw_reasons, planner=llm_api.real_evidence_planner)
 
     def summarize(self, summary_input: Mapping[str, Any]) -> SummaryOutput:
-        raise NotImplementedError("llm.api.agent_summarize가 아직 없다(M2)")
+        raise NotImplementedError("llm.api.agent_summarize가 없다 — 요약 문장은 고정 문구다(2026-10-16, #588에서 재검토)")
 
-    def advise_run(self, advice_input: Mapping[str, Any], *, tool_runner: ToolRunner) -> RunAdviceOutput:
-        raise NotImplementedError("llm.api.agent_advise_run이 아직 없다(M2)")
+    def advise_run(
+        self, advice_input: Mapping[str, Any], *, tool_runner: ToolRunner,
+    ) -> AgentReply[RunAdviceOutput]:
+        return llm_api.agent_advise_run(advice_input, tool_runner=tool_runner, planner=llm_api.real_advice_planner)
 
 
 def _fixed_agent_llm_gateway() -> AgentLlmGateway:
