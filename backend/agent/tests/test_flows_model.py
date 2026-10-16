@@ -1,4 +1,4 @@
-"""관찰의 모델 단계(명세 12.4 5, 6단계, #533) — 우선순위, 진단, 검증, outcome, 모델 사용 집계.
+"""관찰의 모델 단계(명세 12.4 5, 6단계, #533, #582) — 코드 규칙 우선순위, 진단, 검증, outcome, 모델 사용 집계, 노출.
 
 17절 2(진단 부분), 7(모델 호출 중 상태가 바뀌면 stale), 11(Gateway 호출 중 열린 DB 세션 없음), 2절 13번(저장된 행에 사유
 글 없음). Gateway는 이 파일의 대역(FakeGateway)이다 — 고정 응답 스텁(deps.FixedAgentLlmGateway)은 silent만 내서 저장
@@ -7,14 +7,20 @@
 
 import json
 
+from datetime import timedelta
+
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from agent import deps, flows, tools
 from agent.models import AgentRun, AgentSuggestion
-from agent.schemas import AgentCallFailed, AgentReply, AgentUsage, DiagnosisOutput, PriorityItem, PriorityOutput
+from agent.schemas import AgentCallFailed, AgentReply, AgentUsage, DiagnosisOutput
+from agent.schemas import AgentSuggestion as AgentSuggestionSchema
 from agent.tests.world import World, fake_places, real_now
+from auth.testing import session_cookie
+from common.database import get_db_session, session_scope
 from llm import api as llm_api
 from places import api as places_api
 from recommend import api as recommend_api
@@ -39,24 +45,21 @@ def world(factory, monkeypatch):
 
 
 class FakeGateway:
-    """Gateway 대역. diagnose는 llm.agent_diagnose처럼 call_id를 매겨 tool_runner를 부를 수 있게 call_tool을 넘긴다."""
+    """Gateway 대역. diagnose는 llm.agent_diagnose처럼 call_id를 매겨 tool_runner를 부를 수 있게 call_tool을 넘긴다.
+    Gateway에 없는 이름(예: 지운 prioritize, #582)을 찾으면 그 이름을 calls에 남기고 실패한다."""
 
-    def __init__(self, diagnose=None, prioritize=None, on_call=None, priority_usage=None, diagnosis_usage=None):
+    def __init__(self, diagnose=None, on_call=None, diagnosis_usage=None):
         self._diagnose = diagnose
-        self._prioritize = prioritize
         self.on_call = on_call or (lambda what: None)
-        self._priority_usage = priority_usage or AgentUsage()
         self._diagnosis_usage = diagnosis_usage or AgentUsage()
         self.calls: list[str] = []
         self.inputs: list[dict] = []
 
-    def prioritize(self, signals, principles):
-        self.calls.append("prioritize")
-        self.on_call("prioritize")
-        if self._prioritize:
-            return AgentReply(self._prioritize(signals), self._priority_usage)
-        return AgentReply(PriorityOutput(order=[PriorityItem(signal_id=s["id"], reason="r") for s in signals]),
-                          self._priority_usage)
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        self.calls.append(name)
+        raise AttributeError(f"Gateway에 없는 호출: {name}")
 
     def diagnose(self, diagnosis_input, *, tool_runner):
         self.calls.append("diagnose")
@@ -100,11 +103,6 @@ def _stall_map(world):
     return map_id, pin_id, against
 
 
-def split_first(signals):
-    order = sorted(signals, key=lambda s: s["diagnosis"] != "split")
-    return PriorityOutput(order=[PriorityItem(signal_id=s["id"], reason="r") for s in order])
-
-
 def good_split(inp, call_tool):
     """도구로 사유를 읽고 검증을 통과하는 진단을 낸다."""
     reasons = call_tool("get_reasons", {"pin_ids": [inp["pin_id"]], "category": None, "types": None})
@@ -144,28 +142,32 @@ def _dump_agent_rows(factory) -> str:
         ], ensure_ascii=False)
 
 
-# ---------------------------------------------------------------- 진단 → shadow 제안 (17절 2번 진단 부분)
+# ---------------------------------------------------------------- 진단 → 제안 (17절 2번 진단 부분)
 
-def test_split_diagnosis_is_verified_and_saved_as_shadow(world, factory):
+def test_split_diagnosis_is_verified_and_saved(world, factory):
     map_id, pin_id, like, against = _split_map(world)
-    gateway = FakeGateway(diagnose=good_split, prioritize=split_first)
+    gateway = FakeGateway(diagnose=good_split)
 
     assert observe(world, map_id, gateway) == "suggested"
 
-    assert gateway.calls == ["prioritize", "diagnose"]
+    assert gateway.calls == ["diagnose"]   # 우선순위 모델은 없다(#582)
     [inp] = gateway.inputs
     assert inp["pin_id"] == pin_id and inp["comparison"]["conflict_type"] == "unclear"   # dev ②는 키를 안 붙인다
     sug = world.one(AgentSuggestion, map_id=map_id)
-    assert (sug.diagnosis, sug.shadow, sug.title, sug.pin_id is not None) == ("split", True, "의견이 갈린 핀이 있어요", True)
+    assert (sug.diagnosis, sug.shadow, sug.title, sug.pin_id is not None) == ("split", False, "의견이 갈린 핀이 있어요", True)
     assert {"id": "c3", "kind": "quote", "reaction_id": against} in sug.claims   # 인용은 id만
     assert sug.analysis == inp["comparison"]
     assert sug.actions == [{"index": 0, "type": "open_recommend", "label": "음식점 추천 받기",
                             "params": {"category": "음식점"}}]
     run = world.one(AgentRun, map_id=map_id)
-    assert (run.outcome, run.used_model, run.priority["source"]) == ("suggested", True, "model")
+    assert (run.outcome, run.used_model, run.priority["source"]) == ("suggested", True, "rules")
+    # 정체(영향 1명)가 먼저 탐지됐지만 같은 weight에서 영향 인원이 많은 갈림(3명)이 1순위다
+    assert [s["diagnosis"] for s in run.signals] == ["stall", "split"]
+    assert (run.priority["final_order"], run.priority["rule_hits"]) == (["s2", "s1"], ["affected_members"])
     assert run.verification["established"] is True and run.verification["claims"]["removed"] == []
     assert [c["name"] for c in run.tool_calls] == ["get_reasons"]
-    assert world.agent_events(map_id) == []   # 모델 유형은 shadow — 이벤트 없음(#534까지)
+    [(type_, payload)] = world.agent_events(map_id)   # 모델 유형도 노출(#582)
+    assert (type_, payload["id"], payload["diagnosis"]) == ("agent.suggested", str(sug.id), "split")
     dumped = _dump_agent_rows(factory)
     assert LIKE_TEXT not in dumped and AGAINST_TEXT not in dumped and AGAINST_TEXT[:8] not in dumped
 
@@ -176,7 +178,7 @@ def test_stall_diagnosis_uses_readiness_tool(world):
     assert observe(world, map_id, FakeGateway(diagnose=good_stall)) == "suggested"
 
     sug = world.one(AgentSuggestion, map_id=map_id)
-    assert (sug.diagnosis, sug.category, sug.shadow) == ("stall", "음식점", True)
+    assert (sug.diagnosis, sug.category, sug.shadow) == ("stall", "음식점", False)
     run = world.one(AgentRun, map_id=map_id)
     assert run.priority["source"] == "single" and run.used_model is True   # 진단만 불러도 1회
     assert run.tool_calls[0]["name"] == "get_readiness" and run.tool_calls[0]["result"]["ready"] is True
@@ -247,7 +249,7 @@ def test_pin_confirmed_during_diagnosis_makes_it_stale(world):
         if what == "diagnose":
             world.confirm(map_id, pin_id, hours_ago=0)   # 다른 연결에서 커밋
 
-    gateway = FakeGateway(diagnose=good_split, prioritize=split_first, on_call=confirm_during)
+    gateway = FakeGateway(diagnose=good_split, on_call=confirm_during)
 
     assert observe(world, map_id, gateway) == "stale"
     assert world.rows(AgentSuggestion, map_id=map_id) == []
@@ -274,44 +276,93 @@ def test_no_db_connection_is_held_while_model_is_called(world, test_engine):
     def check(what):
         held[what] = test_engine.pool.checkedout()
 
-    gateway = FakeGateway(diagnose=good_split, prioritize=split_first, on_call=check)
+    gateway = FakeGateway(diagnose=good_split, on_call=check)
 
     assert observe(world, map_id, gateway) == "suggested"
-    assert held == {"prioritize": 0, "diagnose": 0, "diagnose_done": 0}   # 도구가 연 세션도 닫혔다
+    assert held == {"diagnose": 0, "diagnose_done": 0}   # 도구가 연 세션도 닫혔다
 
 
-# ---------------------------------------------------------------- 모델 사용 1회, 순위 재사용과 상한 (3절, 7절)
+# ---------------------------------------------------------------- 우선순위는 모델을 부르지 않는다 (7절, #582)
 
-def test_prioritize_and_diagnose_count_as_one_model_use_and_order_is_reused(world):
+def test_gateway_has_no_priority_call():
+    for gateway in (deps.AgentLlmGateway, deps.FixedAgentLlmGateway, deps.RealAgentLlmGateway):
+        assert not hasattr(gateway, "prioritize")
+
+
+def test_observation_with_several_model_signals_never_asks_for_priority(world):
+    """모델 유형 둘(정체, 갈림)이 함께 통과해도 순위는 코드 규칙이다. Gateway에는 진단만 간다."""
     map_id, _, _, _ = _split_map(world)
-    gateway = FakeGateway(diagnose=lambda inp, call: DiagnosisOutput(
-        decision="silent", diagnosis=inp["diagnosis"], signal_id=inp["signal_id"], claims=[], advice=[], actions=[]))
+    gateway = FakeGateway(diagnose=silent)
 
-    observe(world, map_id, gateway)
-    observe(world, map_id, gateway)
+    assert observe(world, map_id, gateway) == "silent"
 
-    assert gateway.calls == ["prioritize", "diagnose", "diagnose"]   # 두 번째는 직전 순위를 다시 쓴다
-    # 두 관찰의 started_at이 같아(world.now) 시각으로 순서를 가르지 않고 source로 찾는다
-    runs = {r.priority["source"]: r for r in world.rows(AgentRun, map_id=map_id)}
-    assert set(runs) == {"model", "reused"}
-    assert runs["model"].used_model and runs["reused"].used_model
-    assert runs["reused"].priority["final_order"] == runs["model"].priority["final_order"]
-    with world.factory() as db:
-        assert flows.service.load_history(db, map_id, world.now).model_runs_today == 2   # 관찰마다 1회
+    assert gateway.calls == ["diagnose"]
+    run = world.one(AgentRun, map_id=map_id)
+    assert set(run.priority) == {"source", "final_order", "fingerprints", "rule_hits"}
+    assert run.priority["source"] == "rules"
 
 
-def test_model_cap_skips_priority_model_and_blocks_model_types(world, monkeypatch):
-    map_id = world.gap_map()   # 코드 유형 신호 둘
+# ---------------------------------------------------------------- 모델 사용 1회는 진단만 센다 (3절, 12.3)
+
+def _gap_and_stall_map(world, *, days_to_start):
+    """확정 2곳(음식점)으로 카테고리 공백 둘(카페, 관광지)과 카페 반대 후 정체가 함께 있는 지도."""
+    map_id = world.gap_map(start=world.today + timedelta(days=days_to_start))
+    cafe = world.pin(map_id, category="카페", hours_ago=100)
+    world.react(cafe, "u2", "against", hours_ago=20, text=AGAINST_TEXT)
     world.event(map_id)
+    return map_id
+
+
+def _model_runs_today(world, map_id):
+    with world.factory() as db:
+        return flows.service.load_history(db, map_id, world.now).model_runs_today
+
+
+def test_model_use_counts_only_diagnosis(world):
+    """출발 임박이면 카테고리 공백이 1순위라 진단을 부르지 않는다 — 모델 유형 신호가 있어도 모델 사용 0회. 출발이
+    멀면 정체가 1순위라 진단 1회. 우선순위는 어느 쪽이든 세지 않는다."""
+    near = _gap_and_stall_map(world, days_to_start=2)
+    far = _gap_and_stall_map(world, days_to_start=30)
+    gateway = FakeGateway(diagnose=silent)
+
+    assert observe(world, near, gateway) == "suggested"
+    assert gateway.calls == []
+    run = world.one(AgentRun, map_id=near)
+    assert (run.used_model, run.priority["rule_hits"]) == (False, ["urgent_dday"])
+    assert world.one(AgentSuggestion, map_id=near).diagnosis == "category_gap"
+    assert _model_runs_today(world, near) == 0
+
+    assert observe(world, far, gateway) == "silent"
+    assert gateway.calls == ["diagnose"]
+    run = world.one(AgentRun, map_id=far)
+    assert (run.used_model, run.priority["source"], run.priority["rule_hits"]) == (True, "rules", [])
+    assert _model_runs_today(world, far) == 1
+
+
+def test_each_diagnosis_counts_once(world):
+    map_id, _, _, _ = _split_map(world)
+    gateway = FakeGateway(diagnose=silent)
+
+    observe(world, map_id, gateway)
+    observe(world, map_id, gateway)
+
+    assert gateway.calls == ["diagnose", "diagnose"]
+    assert [r.used_model for r in world.rows(AgentRun, map_id=map_id)] == [True, True]
+    assert _model_runs_today(world, map_id) == 2   # 관찰마다 1회
+
+
+def test_model_cap_blocks_model_types_and_code_types_go_on(world, monkeypatch):
+    map_id = _gap_and_stall_map(world, days_to_start=30)
     monkeypatch.setattr(flows.core, "PER_MEMBER_DAILY_MODEL_USES", 0)   # 상한 0 — 이미 도달
-    gateway = FakeGateway()
+    gateway = FakeGateway(diagnose=silent)
 
     assert observe(world, map_id, gateway) == "suggested"
 
     assert gateway.calls == []
     run = world.one(AgentRun, map_id=map_id)
-    # 상한이면 모델 유형은 정책(12.3)에서 막혀 코드 유형만 남는다 — 우선순위는 code_only로 부르지 않는다(#534)
-    assert (run.priority["source"], run.priority["fallback_reason"], run.used_model) == ("fallback", "code_only", False)
+    assert [b["reason"] for b in run.blocked] == ["model_cap"]
+    assert (run.used_model, run.priority["source"]) == (False, "rules")
+    assert world.one(AgentSuggestion, map_id=map_id).diagnosis == "category_gap"
 
 
 def silent(inp, call_tool):
@@ -319,8 +370,7 @@ def silent(inp, call_tool):
                            claims=[], advice=[], actions=[])
 
 
-def test_code_only_signals_skip_priority_model(world):
-    """통과한 신호가 코드 유형뿐이면 우선순위 모델을 부르지 않고 fallback_order(루트 결정, #534)."""
+def test_code_only_signals_do_not_use_model(world):
     map_id = world.gap_map()   # 코드 유형 신호 둘
     world.event(map_id)
     gateway = FakeGateway()
@@ -329,18 +379,8 @@ def test_code_only_signals_skip_priority_model(world):
 
     assert gateway.calls == []
     run = world.one(AgentRun, map_id=map_id)
-    assert (run.priority["source"], run.priority["fallback_reason"], run.used_model) == ("fallback", "code_only", False)
+    assert (run.priority["source"], run.used_model) == ("rules", False)
     assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (None, None, 0, 0)
-
-
-def test_priority_failure_falls_back(world):
-    map_id, _, _, _ = _split_map(world)   # 모델 유형 둘(split, stall)
-    gateway = FakeGateway(diagnose=silent, prioritize=lambda signals: AgentCallFailed(reason="timeout", detail="x"))
-
-    assert observe(world, map_id, gateway) == "silent"
-
-    run = world.one(AgentRun, map_id=map_id)
-    assert (run.priority["source"], run.priority["fallback_reason"], run.used_model) == ("fallback", "timeout", True)
 
 
 # ---------------------------------------------------------------- 사용량과 축 이름 (#564)
@@ -348,20 +388,17 @@ def test_priority_failure_falls_back(world):
 LUNA = "gpt-6-luna"
 
 
-def test_usage_of_priority_and_diagnosis_is_summed_into_the_run(world):
+def test_diagnosis_usage_is_recorded_in_the_run(world):
     map_id, _, _, _ = _split_map(world)
     gateway = FakeGateway(
-        diagnose=good_split, prioritize=split_first,
-        priority_usage=AgentUsage(model=LUNA, prompt_version="prioritize-v1", tokens_in=120, tokens_out=30),
-        diagnosis_usage=AgentUsage(model=LUNA, prompt_version="diagnose-v1", tokens_in=900, tokens_out=200),
+        diagnose=good_split,
+        diagnosis_usage=AgentUsage(model=LUNA, prompt_version="diagnose-v2", tokens_in=900, tokens_out=200),
     )
 
     assert observe(world, map_id, gateway) == "suggested"
 
     run = world.one(AgentRun, map_id=map_id)
-    assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (
-        LUNA, "prioritize-v1+diagnose-v1", 1020, 230,
-    )
+    assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v2", 900, 200)
 
 
 def test_failed_diagnosis_still_records_usage_spent(world):
@@ -378,27 +415,13 @@ def test_failed_diagnosis_still_records_usage_spent(world):
     assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v1", 500, 80)
 
 
-def test_failed_priority_usage_is_recorded(world):
-    map_id, _, _, _ = _split_map(world)   # 진단 대역은 사용량 0이라 우선순위 사용량만 남는다
-    gateway = FakeGateway(
-        diagnose=silent,
-        prioritize=lambda signals: AgentCallFailed(reason="invalid_schema", detail="x"),
-        priority_usage=AgentUsage(model=LUNA, prompt_version="prioritize-v1", tokens_in=70, tokens_out=0),
-    )
-
-    assert observe(world, map_id, gateway) == "silent"
-
-    run = world.one(AgentRun, map_id=map_id)
-    assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "prioritize-v1", 70, 0)
-
-
 def test_stub_and_code_only_runs_leave_usage_empty(world):
     stall_map, _, _ = _stall_map(world)
     gap_map = world.gap_map()
     world.event(gap_map)
 
     observe(world, stall_map, deps.FixedAgentLlmGateway())
-    observe(world, gap_map, FakeGateway())   # 코드 유형만이라 우선순위도 부르지 않는다(#534)
+    observe(world, gap_map, FakeGateway())
 
     for map_id in (stall_map, gap_map):
         run = world.one(AgentRun, map_id=map_id)
@@ -414,7 +437,7 @@ def test_split_analysis_axis_names_come_from_recommend_labels(world):
     world.react(pin_id, "u3", "against", hours_ago=20, text=AGAINST_TEXT, chips=["food_cramped"])
     world.event(map_id)
 
-    assert observe(world, map_id, FakeGateway(diagnose=good_split, prioritize=split_first)) == "suggested"
+    assert observe(world, map_id, FakeGateway(diagnose=good_split)) == "suggested"
 
     with world.factory() as db:
         row = db.query(AgentSuggestion).filter_by(map_id=map_id).one()
@@ -423,3 +446,65 @@ def test_split_analysis_axis_names_come_from_recommend_labels(world):
     [axis] = rendered.analysis.axes
     assert axis.label == recommend_api.fact_labels()["spacious"]
     assert (axis.like_side, axis.against_side) == (None, "원함 1")
+
+
+# ---------------------------------------------------------------- 노출: GET과 agent.suggested (#582)
+
+@pytest.fixture()
+def client(world):
+    """사용자 이름을 받아 그 사람의 TestClient를 돌려준다(test_router.py와 같은 방식)."""
+    from main import app
+
+    def _db():
+        with world.factory() as db, session_scope(db) as s:
+            yield s
+
+    app.dependency_overrides[get_db_session] = _db
+    made = []
+
+    def as_user(name: str) -> TestClient:
+        c = TestClient(app, cookies=session_cookie(world.uid(name)))
+        made.append(c)
+        return c
+
+    yield as_user
+    for c in made:
+        c.close()
+    app.dependency_overrides.pop(get_db_session, None)
+
+
+def test_split_suggestion_reaches_get_and_agent_suggested_with_analysis(world, client):
+    map_id = world.map()
+    pin_id = world.pin(map_id, hours_ago=100)
+    world.react(pin_id, "u1", "like", hours_ago=30, text=LIKE_TEXT)
+    world.react(pin_id, "u2", "like", hours_ago=25)
+    world.react(pin_id, "u3", "against", hours_ago=20, text=AGAINST_TEXT, chips=["food_cramped"])
+    world.event(map_id)
+
+    assert observe(world, map_id, FakeGateway(diagnose=good_split)) == "suggested"
+
+    [(type_, payload)] = world.agent_events(map_id)
+    assert type_ == "agent.suggested"
+    event = AgentSuggestionSchema.model_validate(payload)
+    assert (event.diagnosis, event.category) == ("split", "음식점")
+    assert event.analysis is not None and [a.label for a in event.analysis.axes] == [
+        recommend_api.fact_labels()["spacious"]]
+    state = client("u2").get(f"/maps/{map_id}/agent")
+    assert state.status_code == 200
+    active = state.json()["active_suggestion"]
+    assert active == payload   # 응답과 이벤트는 같은 렌더(11절 끝)
+    assert active["analysis"]["conflict_type"] == event.analysis.conflict_type
+    assert state.json()["has_unseen"] is True
+
+
+def test_stall_suggestion_reaches_get_and_agent_suggested(world, client):
+    map_id, _, _ = _stall_map(world)
+
+    assert observe(world, map_id, FakeGateway(diagnose=good_stall)) == "suggested"
+
+    [(type_, payload)] = world.agent_events(map_id)
+    assert (type_, payload["diagnosis"], payload["category"]) == ("agent.suggested", "stall", "음식점")
+    assert payload["analysis"] is None
+    assert [a["type"] for a in payload["actions"]] == ["open_recommend"]
+    active = client("u1").get(f"/maps/{map_id}/agent").json()["active_suggestion"]
+    assert active == payload

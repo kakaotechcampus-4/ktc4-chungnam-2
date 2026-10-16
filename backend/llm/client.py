@@ -7,7 +7,7 @@
 
 에이전트 진단은 도구를 쓴다. gpt-6-luna는 chat.completions에서 도구를 reasoning_effort="none"일 때만 받는다(그 밖의 값은
 400 "Function tools with reasoning_effort are not supported", 2026-10-15 확인). 그래서 진단 호출만 reasoning_effort="none"을
-넘긴다. 우선순위 호출은 도구가 없어 none과 low 모두 받고, #534 평가로 none을 쓴다(service.AGENT_PRIORITIZE_REASONING_EFFORT).
+넘긴다. 신호 순위 호출(agent_prioritize)은 #582에서 지웠다 — 순위는 agent의 코드 규칙이다.
 """
 
 import json
@@ -21,10 +21,8 @@ from typing import Any, Mapping, Optional, Sequence
 from openai import APITimeoutError, OpenAI
 
 from common.settings import settings
-from llm.prompts import (
-    AGENT_DIAGNOSE_PROMPT_VERSION, AGENT_PRIORITIZE_PROMPT, AGENT_PRIORITIZE_PROMPT_VERSION, PLAN_EVIDENCE_PROMPT,
-)
-from llm.schemas import AgentFailureReason, AgentUsage, DiagnosisOutput, PlanningOutput, PriorityOutput
+from llm.prompts import AGENT_DIAGNOSE_PROMPT_VERSION, PLAN_EVIDENCE_PROMPT
+from llm.schemas import AgentFailureReason, AgentUsage, DiagnosisOutput, PlanningOutput
 
 # POST /runs 요청 안에서 동기로 도는 호출이라 길게 기다리지 않는다. 재시도도 안 한다 —
 # 실패하면 어차피 RECOMMEND_FAILED이고, 재시도는 요청 지연만 두 배로 만든다.
@@ -154,7 +152,7 @@ def _agent_failure_reason(exc: BaseException) -> AgentFailureReason:
     return "call_failed"
 
 
-# agent 호출 한 번의 사용량 모으기(#564). service.agent_prioritize·agent_diagnose가 metering()으로 열고, 그 안의 왕복마다
+# agent 호출 한 번의 사용량 모으기(#564). service.agent_diagnose가 metering()으로 열고, 그 안의 왕복마다
 # _agent_parse가 더한다. planner 시그니처를 바꾸지 않고 모으려고 컨텍스트 변수를 쓴다(스텁 planner는 닿지 않아 0이다).
 _usage_meter: ContextVar[Optional[AgentUsage]] = ContextVar("agent_usage_meter", default=None)
 
@@ -215,30 +213,6 @@ def _agent_parse(client: Any, *, what: str, context: str, prompt_version: str, *
         getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None),
     )
     return message
-
-
-def call_agent_priority(
-    client: Any, signals: Sequence[Mapping[str, Any]], principles: Sequence[str], *,
-    reasoning_effort: Optional[str] = None,
-) -> PriorityOutput:
-    """신호 순위 한 번. 신호와 원칙은 JSON 문자열로만 넘긴다(프롬프트에 섞지 않는다).
-
-    reasoning_effort: None이면 요청에 넣지 않는다(모델 기본값). 도구가 없어 none, low 모두 받는다(#532). 실제 경로의 값은
-    service.real_priority_planner가 정한다(#534 평가)."""
-    payload = json.dumps({"principles": list(principles), "signals": list(signals)}, ensure_ascii=False, default=str)
-    extra = {"reasoning_effort": reasoning_effort} if reasoning_effort is not None else {}
-    message = _agent_parse(
-        client, what="에이전트 우선순위", context=f"signals={len(signals)}", prompt_version=AGENT_PRIORITIZE_PROMPT_VERSION,
-        messages=[
-            {"role": "system", "content": AGENT_PRIORITIZE_PROMPT},
-            {"role": "user", "content": payload},
-        ],
-        response_format=PriorityOutput,
-        **extra,
-    )
-    if message.parsed is None:  # 도구를 주지 않았는데 도구 호출만 왔다
-        raise LlmCallError("우선순위 응답이 비어 있다", reason="invalid_schema")
-    return message.parsed
 
 
 def call_agent_diagnosis_turn(

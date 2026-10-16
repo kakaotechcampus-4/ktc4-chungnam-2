@@ -70,7 +70,7 @@ class AgentRun(Base):
     blocked: Mapped[list] = mapped_column(  # [{signal_id, reason}]
         JSONB, nullable=False, default=list, server_default=_EMPTY_JSON_LIST
     )
-    priority: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # model_order, final_order, corrections, reused
+    priority: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # source, final_order, fingerprints, rule_hits (#582)
     policy_version: Mapped[str | None] = mapped_column(String, nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(String, nullable=True)
     model: Mapped[str | None] = mapped_column(String, nullable=True)

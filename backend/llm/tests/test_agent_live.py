@@ -1,6 +1,6 @@
 """v2 에이전트 호출(#532) 실호출 확인 — 엘리스 ML API에 실제로 요청한다. 품질 평가가 아니라 계약 확인이다(평가는 #534).
 
-확인하는 것: PriorityOutput·DiagnosisOutput 구조화 출력(strict)과 도구 인자 스키마(strict, null 허용 칸)가 400 없이 받아지고,
+확인하는 것: DiagnosisOutput 구조화 출력(strict)과 도구 인자 스키마(strict, null 허용 칸)가 400 없이 받아지고,
 진단 대화가 도구 콜백을 거쳐 스키마에 맞는 답으로 끝나는지.
 기본 실행에서는 제외된다(pytest.ini의 addopts `-m "not live"`). 돌릴 때:
     PINGO_TEST_DB=pingo_test_llm pytest -m live llm/tests/test_agent_live.py -v -s
@@ -10,7 +10,7 @@ import pytest
 
 from common.settings import settings
 from llm import service
-from llm.schemas import DiagnosisOutput, PriorityOutput
+from llm.schemas import DiagnosisOutput
 
 pytestmark = [
     pytest.mark.live,
@@ -20,17 +20,6 @@ pytestmark = [
     ),
 ]
 
-SIGNALS = [
-    {"id": "s1", "diagnosis": "no_reaction", "category": None,
-     "features": {"affected_members": 1, "elapsed_ratio": 1.2, "dday": 20, "recent_dismissals": 0, "trigger": None}},
-    {"id": "s2", "diagnosis": "stall", "category": "음식점",
-     "features": {"affected_members": 3, "elapsed_ratio": 2.0, "dday": 5, "recent_dismissals": 0, "trigger": "time"}},
-]
-PRINCIPLES = [
-    "여러 구성원에게 영향을 주는 신호를 먼저 푼다.",
-    "출발이 가까울수록 확정 리스트 공백을 앞으로 둔다.",
-    "의견을 낸 뒤 멈춘 상황(정체, 갈림)을 단순 미확인보다 먼저 둔다.",
-]
 STALL = {"signal_id": "s2", "diagnosis": "stall", "category": "음식점", "against_pin_ids": ["p1", "p2"]}
 
 
@@ -50,15 +39,6 @@ def _runner(calls):
             return {"dday": 5, "member_count": 3, "categories": {"음식점": {"pins": 2, "confirmed": 0}}}
         return {"error": "NOT_FOUND"}
     return run
-
-
-def test_prioritize_schema_is_accepted():
-    reply = service.agent_prioritize(SIGNALS, PRINCIPLES, planner=service.real_priority_planner)
-    out = reply.result
-
-    print("\n[live] prioritize:", out, reply.usage)
-    assert isinstance(out, PriorityOutput), out
-    assert reply.usage.tokens_in > 0 and reply.usage.tokens_out > 0  # 엘리스 응답에 usage가 온다(#564)
 
 
 def test_diagnose_tool_conversation_ends_in_schema():
