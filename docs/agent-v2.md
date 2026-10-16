@@ -384,9 +384,9 @@ version 1의 principles(프롬프트용 원칙 3개)는 모델 호출이 없어�
 
 | section | 뜻 | 어떤 줄이 들어가나 | 화면 표기 |
 | --- | --- | --- | --- |
-| must_keep | 지키려는 조건 (실격 조건) | 배지 required이고 키가 있는 줄. #422 규칙으로 선호로 내려간 음식 종류 "원함"은 빼고 common_prefs나 split_prefs로 간다 | "매운 곳 제외 (1명)"처럼 개수만 |
+| must_keep | 지키려는 조건 (실격 조건) | 배지 required이고 키가 있는 줄. #422 규칙으로 선호로 내려간 음식 종류 "원함"은 빼고 common_prefs나 split_prefs로 간다 | "매운맛 전문 제외 (1명)"처럼 개수만 |
 | common_prefs | 겹치는 선호 | 배지 preferred이고 같은 키, 같은 방향을 2명 이상이 남긴 줄 | "조용한 곳 원함 (3명)" |
-| split_prefs | 서로 갈리는 선호 | 같은 키에 원함과 피함이 함께 있는 줄 | "조용함: 원함 2 / 원하지 않음 1" |
+| split_prefs | 서로 갈리는 선호 | 같은 키에 원함과 피함이 함께 있는 줄 | "조용한 곳: 원함 2 / 원하지 않음 1" |
 | vague_fixable | 더 적어 주면 반영될 수 있는 사유 | 키 없는 줄 중 아래 not_filtered가 아닌 것 | 칸 이름 "더 적어 주면 반영돼요", 사유 수와 구체화 요청 문장 |
 | not_filtered | 추천이 거르지 않는 사유 | 칩 `NOT_FILTERED_CHIP_IDS`, 또는 글에 `SAFETY_WORDS`가 든 줄 | 칸 이름 "추천이 거르지 않아요", 개수와 고정 안내만 |
 
@@ -437,7 +437,9 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 | vague_reason | 근거 중 키 없는 줄이 있음(8절의 not_filtered 줄은 빼고 센다). 예시 문장을 함께 낸다 | 본인 줄이면 open_evidence, 남의 줄이면 없음 |
 | exhausted | 중복제외 단계 탈락이 많음. 가드레일 6 때문에 완화할 수 없으므로 사실만 안내 | 없음 |
 
-**soft_relax (실격 조건 때문에 많이 빠졌을 때).** 10/2 판은 "unknown_policy가 pass인 hard 키"를 기준으로 했다. 지금 hard 키는 `is_crowded_large` 하나뿐이고, 실격 대부분은 🚫 사유에서 나온 취향 키와 방향(#228)이 만든다. 예를 들어 "너무 매워요"는 매운맛 전문(라벨 참)을 빼고, 칩 「좁아요」는 좁은 곳(라벨 거짓)을 뺀다. 그래서 기준을 "실격 조건 근거 줄이 후보를 많이 걸렀음"으로 바꿨다(2026-10-15 결정).
+**soft_relax (실격 조건 때문에 많이 빠졌을 때).** 계산 메모(#585): run의 `result_count`는 상위 3곳 선정 뒤의 수라 최대 3이다. "끄면 몇 곳이 더 남는가"는 `simulate_filter`의 before와 after 깔때기에서 「실격 조건 제거」 차이로 본다. before는 다시 계산한 값이라 같은 호출의 before, after끼리만 비교한다.
+
+ 10/2 판은 "unknown_policy가 pass인 hard 키"를 기준으로 했다. 지금 hard 키는 `is_crowded_large` 하나뿐이고, 실격 대부분은 🚫 사유에서 나온 취향 키와 방향(#228)이 만든다. 예를 들어 "너무 매워요"는 매운맛 전문(라벨 참)을 빼고, 칩 「좁아요」는 좁은 곳(라벨 거짓)을 뺀다. 그래서 기준을 "실격 조건 근거 줄이 후보를 많이 걸렀음"으로 바꿨다(2026-10-15 결정).
 
 - 근거 줄마다 simulate_filter로 "이 줄을 끄면 몇 곳이 더 남는가"를 계산하고, 많이 늘어나는 줄부터 조언한다.
 - 근거 줄 빼기(`−`)는 그 줄을 쓴 사람만 할 수 있다(permissions의 `evidence.disable`). 그래서 줄을 쓴 사람이 run 요청자 본인이면 「근거 확인에서 빼 보기」(open_evidence) 버튼을 준다. 다른 구성원이 쓴 줄이면 "「매운 곳 제외」 조건 때문에 14곳이 빠졌어요"라는 사실 문장만 내고 버튼은 주지 않는다. 문장에 그 구성원의 이름은 쓰지 않는다.
@@ -473,7 +475,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 | get_readiness | `(map_id, category)` → {category, ready, answered_count, required_count} | recommend.api(#530) |
 | get_recent_runs | `(run_id)` → 같은 요청자의 같은 카테고리 최근 run [{run_id, status, result_count, created_at}] | recommend.api (#469 기록 조회 재사용), 추천 막힘 전용 |
 | get_run_funnel | `(run_id)` → [{label, removed_count}] | recommend.api, 추천 막힘 전용 |
-| get_run_evidence | `(run_id)` → [{line_id, text, badge, fact_key 또는 null, wants 또는 null, is_active, is_requester_own}] | recommend.api, 추천 막힘 전용 |
+| get_run_evidence | `(run_id)` → [{line_id, text, badge, fact_key 또는 null, wants 또는 null, is_active, author_id}]. 요청자 본인 줄인지는 agent가 run의 requested_by와 비교한다(#585) | recommend.api, 추천 막힘 전용 |
 | simulate_filter | `(run_id, change{radius_factor?, disable_line_ids?})` → {before, after} | recommend.api, 실제 필터 함수 재사용 |
 | get_shortlist | `(map_id)` → [{pin_id, category, visit_order}] | shortlist.api |
 | get_route | `(map_id)` → [{region_label, ordered_pin_ids, total_distance_m}] 또는 null | shortlist.api |
