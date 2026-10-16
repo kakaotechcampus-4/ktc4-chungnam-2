@@ -52,8 +52,8 @@ def demote_wanted_place_identity(category: str, lines: Sequence[dict]) -> list[d
     return core.demote_wanted_place_identity(lines, category)
 
 
-# ---- 추천 막힘 조언 전용(docs/agent-v2.md 9절, 10절, #585) ----
-# run은 요청자만 보는 비공개 데이터다(명세 2절 2번). 아래 네 함수는 권한을 판정하지 않는다 — agent가 run 요청자가
+# ---- 추천 막힘 조언 전용(docs/agent-v2.md 9절, 10절, #585, #587) ----
+# run은 요청자만 보는 비공개 데이터다(명세 2절 2번). 아래 다섯 함수는 권한을 판정하지 않는다 — agent가 run 요청자가
 # 조언을 여는 사람인지 확인한 뒤 그 사람에게 그 run의 데이터로만 부른다. 없는 run은 AppError NOT_FOUND. 읽기 전용,
 # 커밋하지 않는다.
 
@@ -71,6 +71,20 @@ def get_recent_runs(db: Session, *, run_id: str, limit: int = 10) -> list[dict]:
     ]
 
 
+def get_run_meta(db: Session, *, run_id: str) -> dict:
+    """그 run 자신의 정보 `{run_id, map_id, category, requested_by, status, result_count, created_at,
+    default_radius_walk_min, widen_limit_walk_min}`(#587). agent가 조언 대상인지(완료, 결과 수)와 요청자 본인인지,
+    반경 넓히기 상한(도보 30분, core.WIDEN_LIMIT_MIN)을 넘는 배율인지 본다. result_count는 get_recent_runs와 같은 기준(후보 수,
+    done이 아니면 0). 권한 판정 없음(위 주석)."""
+    run = service.get_run_or_404(db, run_id)
+    candidate_count = len(service.list_candidates(db, str(run.id))) if run.status == "done" else 0
+    return {
+        "run_id": str(run.id), "map_id": run.map_id, "category": run.category, "requested_by": run.requested_by,
+        "status": run.status, "result_count": candidate_count, "created_at": run.created_at,
+        "default_radius_walk_min": run.default_radius_walk_min, "widen_limit_walk_min": core.WIDEN_LIMIT_MIN,
+    }
+
+
 def get_run_funnel(db: Session, *, run_id: str) -> list[dict]:
     """마지막 실행(execute/widen/retry)이 저장한 깔때기 `[{label, removed_count}]`(recommend_runs.last_funnel) 그대로 —
     「추천 가능 아님 제거」(#558) 단계도 저장된 대로 들어 있다. 실행 전이면 []. 사본이라 고쳐도 행에 영향이 없다.
@@ -80,13 +94,14 @@ def get_run_funnel(db: Session, *, run_id: str) -> list[dict]:
 
 
 def get_run_evidence(db: Session, *, run_id: str) -> list[dict]:
-    """그 run의 근거 줄 전부(비활성 포함) `[{line_id, text, badge, fact_key, wants, is_active, author_id}]`, 근거 줄
-    정본 순서(created_at, seq). 요청자 본인 줄인지는 agent가 author_id로 판단한다. 권한 판정 없음(위 주석)."""
+    """그 run의 근거 줄 전부(비활성 포함) `[{line_id, text, badge, fact_key, wants, is_active, author_id, chip_id}]`, 근거
+    줄 정본 순서(created_at, seq). 요청자 본인 줄인지는 agent가 author_id로 판단한다. chip_id(칩에서 나온 줄만, 아니면 None)는
+    agent가 키 없는 줄 중 「비싸요」처럼 추천이 거르지 않는 줄을 가르는 데 쓴다(#587). 권한 판정 없음(위 주석)."""
     run = service.get_run_or_404(db, run_id)
     return [
         {
             "line_id": str(line.id), "text": line.text, "badge": line.badge, "fact_key": line.fact_key,
-            "wants": line.wants, "is_active": line.is_active, "author_id": line.author_id,
+            "wants": line.wants, "is_active": line.is_active, "author_id": line.author_id, "chip_id": line.chip_id,
         }
         for line in service.list_evidence(db, str(run.id))
     ]

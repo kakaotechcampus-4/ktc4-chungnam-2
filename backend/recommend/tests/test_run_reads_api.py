@@ -80,7 +80,7 @@ def _scenario(db_session):
     ))
     service.add_reaction_evidence(db_session, run_id=run.id, lines=[
         _line("user_2", "required", "is_crowded_large", None, "너무 붐벼요"),
-        _line("user_1", "required", "spacious", True, "좁아요"),
+        _line("user_1", "required", "spacious", True, "좁아요", chip_id="cafe_narrow"),
         _line("user_1", "preferred", "quiet", True, "조용한 곳", is_active=False),
     ])
     service.add_exclusions(
@@ -176,7 +176,7 @@ def test_get_recent_runs_respects_limit(db_session):
 
 
 def test_run_reads_raise_not_found_for_unknown_run(db_session):
-    for read in (api.get_recent_runs, api.get_run_funnel, api.get_run_evidence, api.simulate_filter):
+    for read in (api.get_run_meta, api.get_recent_runs, api.get_run_funnel, api.get_run_evidence, api.simulate_filter):
         with pytest.raises(AppError) as exc:
             read(db_session, run_id=str(uuid.uuid4()))
         assert exc.value.code == "NOT_FOUND"
@@ -208,12 +208,30 @@ def test_get_run_evidence_returns_every_line_in_canonical_order(db_session):
 
     assert evidence == [
         {"line_id": lines["너무 붐벼요"], "text": "너무 붐벼요", "badge": "required", "fact_key": "is_crowded_large",
-         "wants": None, "is_active": True, "author_id": "user_2"},
+         "wants": None, "is_active": True, "author_id": "user_2", "chip_id": None},
         {"line_id": lines["좁아요"], "text": "좁아요", "badge": "required", "fact_key": "spacious",
-         "wants": True, "is_active": True, "author_id": "user_1"},
+         "wants": True, "is_active": True, "author_id": "user_1", "chip_id": "cafe_narrow"},
         {"line_id": lines["조용한 곳"], "text": "조용한 곳", "badge": "preferred", "fact_key": "quiet",
-         "wants": True, "is_active": False, "author_id": "user_1"},
+         "wants": True, "is_active": False, "author_id": "user_1", "chip_id": None},
     ]
+
+
+# ---------- get_run_meta (#587) ----------
+
+
+def test_get_run_meta_tells_who_where_and_how_far(db_session):
+    run, _ = _scenario(db_session)
+    before = api.get_run_meta(db_session, run_id=str(run.id))
+
+    flows.execute_run(db_session, run_id=str(run.id), **_gateways())
+    after = api.get_run_meta(db_session, run_id=str(run.id))
+
+    assert before == {
+        "run_id": str(run.id), "map_id": "map_1", "category": "카페", "requested_by": "user_1",
+        "status": "collecting_evidence", "result_count": 0, "created_at": run.created_at,
+        "default_radius_walk_min": 15, "widen_limit_walk_min": 30,
+    }
+    assert (after["status"], after["result_count"]) == ("done", 1)
 
 
 # ---------- simulate_filter ----------
