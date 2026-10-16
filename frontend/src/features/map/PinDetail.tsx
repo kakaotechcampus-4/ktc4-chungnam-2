@@ -127,7 +127,7 @@ export function PinDetailBody({
           {/* 사진·주소·전화는 핀 응답에 없다(카카오 응답 저장 금지, #53) — 자세한 정보는 카카오맵 새 창으로. */}
           {pin.place_url && (
             <a href={pin.place_url} target="_blank" rel="noopener noreferrer" className="hit-44 ml-auto inline-flex items-center gap-0.5 font-bold text-brand-600">
-              카카오맵 <ExternalLink size={12} aria-hidden="true" />
+              카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
             </a>
           )}
         </p>
