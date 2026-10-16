@@ -254,6 +254,7 @@ components:
 | 시트·모달 제목 | `SheetTitle` (20/700) | `ui/SheetTitle` |
 | 시트 안 이전 화면 | `BackButton` 「‹ 마킹된 장소」 | `ui/BackButton` |
 | 비어 있을 때 | `EmptyState` (회색 면 아이콘 + 제목 + 설명 + 다음 행동) | `ui/EmptyState` |
+| 이유를 알리는 안내(결과 위) | `Notice` (ink-100 면 + warn-line 아이콘 + ink-700 글자 + 다음 행동 버튼) | `ui/Notice` |
 | 불러오는 중 | `CardSkeleton` (글자 「불러오는 중…」 대신 카드 자리) | `ui/CardSkeleton` |
 | 확인 창 | `ConfirmDialog` (`danger`면 마지막 버튼이 빨강) | `ui/ConfirmDialog` |
 | 아래에서 올라오는 모달 | `ModalSheet` | `features/shell/ModalSheet` |
