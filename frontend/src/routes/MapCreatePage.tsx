@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { ChevronDown, ChevronLeft, X } from 'lucide-react'
+import { ChevronDown, ChevronLeft } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { createMapErrorMessage, type MapRegion } from '@/features/maps/model'
 import { useCreateMapMutation } from '@/features/maps/queries'
 import RegionPicker from '@/features/maps/RegionPicker'
+import TextField, { ClearButton } from '@/ui/TextField'
 
 const TITLE_MAX = 100
 
@@ -39,35 +40,25 @@ export default function MapCreatePage() {
   return (
     <form onSubmit={submit} className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6 pt-4">
       <header className="mb-6 flex items-center gap-3">
-        <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-sm">
+        <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-float">
           <ChevronLeft size={20} />
         </Link>
         <h1 className="text-2xl font-bold text-ink-900">새 지도</h1>
       </header>
 
       <Field label="여행 제목">
-        <div className="flex items-center gap-2 rounded-xl border border-ink-300 bg-white px-3 py-3 focus-within:border-brand-600">
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            maxLength={TITLE_MAX}
-            placeholder="예: 부산 1박 2일"
-            className="min-w-0 flex-1 bg-transparent outline-none"
-          />
-          {title && <ClearButton label="제목 지우기" onClick={() => setTitle('')} />}
-          {title && <span className="text-xs text-ink-500">{title.length}/{TITLE_MAX}</span>}
-        </div>
+        <TextField value={title} onChange={setTitle} maxLength={TITLE_MAX} placeholder="예: 부산 1박 2일" clearLabel="제목 지우기" />
       </Field>
 
       <Field as="div" label={<>지역 <span className="font-normal text-ink-500">(선택)</span></>}>
-        <div className="flex items-center gap-2 rounded-xl border border-ink-300 bg-white px-3 py-3">
+        <div className="field">
           <button type="button" onClick={() => setPickingRegion(true)} className="min-w-0 flex-1 text-left">
             {region ? region.label : <span className="text-ink-500">시·도 선택</span>}
           </button>
           {region ? (
             <ClearButton label="지역 지우기" onClick={() => setRegion(null)} />
           ) : (
-            <ChevronDown size={18} className="text-ink-400" aria-hidden="true" />
+            <ChevronDown size={16} className="text-ink-500" aria-hidden="true" />
           )}
         </div>
         <p className="mt-1.5 text-xs text-ink-500">고르면 그 지역 장소 정보를 미리 준비해요</p>
@@ -79,7 +70,7 @@ export default function MapCreatePage() {
             type="date"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
-            className="w-full rounded-xl border border-ink-300 bg-white px-3 py-3"
+            className="field w-full"
           />
         </Field>
         <Field label="종료일">
@@ -91,7 +82,7 @@ export default function MapCreatePage() {
             aria-invalid={dateError}
             aria-describedby={dateError ? 'date-error' : undefined}
             // 입력 오류는 빨강이 아니라 주의색이다 — 빨강은 파괴적 동작 전용(colors.md 6절).
-            className={`w-full rounded-xl border bg-white px-3 py-3 ${dateError ? 'border-[var(--warn-line)]' : 'border-ink-300'}`}
+            className="field w-full"
           />
         </Field>
       </div>
@@ -106,7 +97,7 @@ export default function MapCreatePage() {
       <button
         type="submit"
         disabled={!ready || create.isPending}
-        className="btn-primary mt-auto py-3.5"
+        className="btn-primary btn-lg mt-auto"
       >
         {create.isPending ? '만드는 중…' : '지도 만들기'}
       </button>
@@ -132,19 +123,5 @@ function Field({ label, as: Tag = 'label', children }: { label: React.ReactNode;
       <span className="mb-1.5 block text-sm font-semibold text-ink-900">{label}</span>
       {children}
     </Tag>
-  )
-}
-
-/** 입력칸에 글자가 있을 때만 붙는 ✕(Figma 규칙). */
-function ClearButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      className="flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-300 text-white"
-    >
-      <X size={12} />
-    </button>
   )
 }

@@ -7,9 +7,9 @@ export default function KakaoButton({ retry = false }: { retry?: boolean }) {
   return (
     <a
       href={kakaoLoginUrl()}
-      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#FEE500] py-3.5 font-semibold text-black/85"
+      className="btn-lg w-full rounded-xl bg-[#FEE500] font-semibold text-black/85"
     >
-      <MessageCircle size={18} fill="currentColor" aria-hidden="true" /> {retry ? '카카오로 다시 시도하기' : '카카오로 시작하기'}
+      <MessageCircle size={20} fill="currentColor" aria-hidden="true" /> {retry ? '카카오로 다시 시도하기' : '카카오로 시작하기'}
     </a>
   )
 }

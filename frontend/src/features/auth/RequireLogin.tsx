@@ -67,8 +67,9 @@ function LoginScreen() {
         ))}
       </ol>
       <div className="mt-auto space-y-3 text-center">
+        {/* 빨강은 핀·🚫·되돌릴 수 없는 동작 전용이라(영역 분리 규칙) 로그인 실패는 주의색이다. */}
         {loginError && (
-          <p role="alert" className="rounded-xl border border-[var(--bad-line)] bg-[var(--bad-bg)] px-3 py-2.5 text-sm font-semibold text-[var(--bad-text)]">
+          <p role="alert" className="rounded-xl border border-[var(--warn-line)] bg-[var(--warn-bg)] px-3 py-2.5 text-sm font-semibold text-[var(--warn-text)]">
             {loginError}
           </p>
         )}

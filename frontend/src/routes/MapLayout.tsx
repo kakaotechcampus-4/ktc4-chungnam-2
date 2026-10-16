@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, Outlet, useMatch, useNavigate, useParams } from 'react-router'
-import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Users, X, type LucideIcon } from 'lucide-react'
+import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Users, type LucideIcon } from 'lucide-react'
 
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { usePinSelection } from '@/features/map/usePinSelection'
@@ -26,6 +26,7 @@ import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import Pingo from '@/ui/Pingo'
+import { ClearButton } from '@/ui/TextField'
 
 /** 넓은 화면 패널이 미끄러지는 시간. 패널·덧칠의 `duration-300` 과 같은 값이다. */
 const PANEL_SLIDE_MS = 300
@@ -238,13 +239,13 @@ export default function MapLayout() {
               className={
                 desktop
                   ? 'hit-44 flex size-8 shrink-0 items-center justify-center rounded-full text-ink-900 hover:bg-ink-100'
-                  : 'pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-white text-ink-900 shadow-md'
+                  : 'pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-white text-ink-900 shadow-float'
               }
             >
               <ChevronLeft size={20} />
             </Link>
             {/* 넓은 화면은 지도 위가 아니라 자리가 있어서 지도 제목을 같이 둔다(#338 목표 레이아웃). */}
-            {desktop && <h1 className="min-w-0 flex-1 truncate text-[1.0625rem] font-bold text-ink-900">{mapInfo?.title}</h1>}
+            {desktop && <h1 className="min-w-0 flex-1 truncate text-title font-bold text-ink-900">{mapInfo?.title}</h1>}
             {/* 내 이니셜 원은 계정 버튼처럼 읽혀서, 구성원 아이콘 + 인원 수로 "이 지도의 정보·구성원"임을 보인다(#351). */}
             <button
               type="button"
@@ -253,7 +254,7 @@ export default function MapLayout() {
               className={
                 desktop
                   ? 'hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 text-sm font-bold text-brand-600'
-                  : 'pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-md'
+                  : 'pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-float'
               }
             >
               <Users size={16} aria-hidden="true" />
@@ -267,7 +268,7 @@ export default function MapLayout() {
             role="search"
             inert={!desktop && mapMoving}
             onSubmit={submitSearch}
-            className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-white px-4 py-3 ${desktop ? '' : 'shadow-md transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
+            className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-white px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
               search.query ? 'border-brand-600' : 'border-ink-200'
             }${desktop ? '' : ` ${fade}`}`}
           >
@@ -280,13 +281,9 @@ export default function MapLayout() {
               maxLength={50}
               placeholder="장소 검색하기"
               aria-label="장소 검색"
-              className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-ink-500 [&::-webkit-search-cancel-button]:hidden"
+              className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-ink-500 [&::-webkit-search-cancel-button]:hidden"
             />
-            {searchText && (
-              <button type="button" aria-label="검색어 지우기" onClick={clearSearch} className="hit-44 flex size-5 items-center justify-center rounded-full bg-ink-300 text-white">
-                <X size={12} />
-              </button>
-            )}
+            {searchText && <ClearButton label="검색어 지우기" onClick={clearSearch} />}
             <button type="submit" aria-label="검색" className="hit-44 text-brand-600">
               <Search size={20} />
             </button>
@@ -295,6 +292,7 @@ export default function MapLayout() {
             <CategoryChips
               value={filters.category}
               onChange={(c) => setFilter('category', c)}
+              floating
               className={`pointer-events-auto -mx-4 px-4 pb-1 transition-opacity ${fade}`}
             />
           )}
@@ -329,6 +327,7 @@ export default function MapLayout() {
               <CategoryChips
                 value={filters.category}
                 onChange={(c) => setFilter('category', c)}
+                floating
                 // 마우스로는 옆으로 밀기 어렵고 가로 스크롤바가 지도를 가려서, 좁으면 줄을 바꾼다.
                 className={`pointer-events-auto max-w-full flex-wrap transition-opacity ${fade}`}
               />
@@ -363,7 +362,7 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
       to={to}
       end={end}
       className={({ isActive }) =>
-        `flex flex-col items-center gap-0.5 pb-2 text-[0.6875rem] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
+        `flex flex-col items-center gap-0.5 pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
       }
     >
       {icon}
@@ -378,13 +377,13 @@ function AiTabLink({ to, label }: { to: string; label: string }) {
     <NavLink
       to={to}
       className={({ isActive }) =>
-        `flex flex-col items-center gap-0.5 pb-2 text-[0.6875rem] font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
+        `flex flex-col items-center gap-0.5 pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
       }
     >
       {({ isActive }) => (
         <>
           <span
-            className={`flex size-12 items-center justify-center rounded-full shadow-md ${
+            className={`flex size-12 items-center justify-center rounded-full shadow-float ${
               isActive ? 'bg-brand-600' : 'border-2 border-brand-300 bg-white'
             }`}
           >
@@ -416,7 +415,7 @@ function TabRail({ mapId, raised }: { mapId: string; raised: boolean }) {
           to={`/maps/${mapId}${tab.path}`}
           end={tab.end}
           label={tab.label}
-          icon={tab.Icon ? <tab.Icon size={22} /> : <Pingo size={26} />}
+          icon={tab.Icon ? <tab.Icon size={24} /> : <Pingo size={28} />}
         />
       ))}
     </nav>
@@ -441,7 +440,7 @@ function RailTab({ to, end = false, label, icon }: { to: string; end?: boolean; 
         useSheetStore.getState().setPanelOpen(true)
       }}
       className={({ isActive }) =>
-        `flex flex-col items-center gap-1 rounded-xl py-2.5 text-[0.6875rem] font-medium break-keep ${
+        `flex flex-col items-center gap-1 rounded-xl py-2.5 text-label font-medium break-keep ${
           isActive ? 'bg-brand-50 text-brand-600' : 'text-ink-500 hover:bg-ink-50 hover:text-ink-700'
         }`
       }
@@ -467,7 +466,7 @@ function PanelToggle({ open, onToggle }: { open: boolean; onToggle: () => void }
       onClick={onToggle}
       className="pointer-events-auto absolute left-0 top-1/2 flex h-14 w-11 -translate-y-1/2 items-center"
     >
-      <span className="flex h-12 w-6 items-center justify-center rounded-r-lg border border-l-0 border-ink-200 bg-white text-ink-600 shadow-md">
+      <span className="flex h-12 w-6 items-center justify-center rounded-r-lg border border-l-0 border-ink-200 bg-white text-ink-600 shadow-float">
         {open ? <ChevronsLeft size={16} aria-hidden="true" /> : <ChevronsRight size={16} aria-hidden="true" />}
       </span>
     </button>

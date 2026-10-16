@@ -68,16 +68,16 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
       style={desktop ? undefined : { bottom: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
     >
       <header className="flex items-center gap-2 border-b border-ink-100 px-4 py-3">
-        <button type="button" aria-label="추천 그만두기" onClick={() => setRun(mapId, undefined)} className="text-ink-900">
-          <ChevronLeft size={22} />
+        <button type="button" aria-label="추천 그만두기" onClick={() => setRun(mapId, undefined)} className="hit-44 text-ink-900">
+          <ChevronLeft size={20} />
         </button>
-        <h1 className="text-lg font-bold text-ink-900">{run.category} 추천받기</h1>
+        <h1 className="text-title font-bold text-ink-900">{run.category} 추천받기</h1>
       </header>
 
       <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4">
-        <div className="rounded-2xl border border-brand-300 bg-[var(--pingo-bg)] p-4">
+        <div className="rounded-xl border border-brand-300 bg-[var(--pingo-bg)] p-4">
           <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--pingo-text)]">
-            <span className="rounded bg-brand-600 px-1.5 text-[0.6875rem] text-white">AI</span> AI가 정리한 조건
+            <span className="tag tag-ai">AI</span> AI가 정리한 조건
           </p>
           <p className="mt-1 font-bold text-ink-900">이 조건으로 추천해도 될까요?</p>
           <p className="mt-1 text-xs text-ink-500">지금까지 남긴 의견을 이렇게 정리했어요.</p>
@@ -93,12 +93,12 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
               <div key={line.id} className="flex items-center gap-3 rounded-xl border border-ink-200 p-3">
                 <Ban size={16} className="shrink-0 text-[var(--bad-line)]" aria-hidden="true" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-[0.6875rem] text-ink-500">{line.author_display_name} · 반대 조건</p>
+                  <p className="text-label text-ink-500">{line.author_display_name} · 반대 조건</p>
                   <p className="font-bold text-ink-900">{evidenceLabel(line)}</p>
                 </div>
                 {line.permissions.can_disable && (
-                  <button type="button" aria-label={`${evidenceLabel(line)} 빼기`} onClick={() => setAskRemove(line)} className="text-ink-400">
-                    <X size={18} />
+                  <button type="button" aria-label={`${evidenceLabel(line)} 빼기`} onClick={() => setAskRemove(line)} className="hit-44 text-ink-500">
+                    <X size={16} />
                   </button>
                 )}
               </div>
@@ -115,7 +115,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
                 <span key={tag} className="flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-sm font-semibold text-brand-700">
                   #{tag}
                   {mine && (
-                    <button type="button" aria-label={`#${tag} 빼기`} onClick={() => toggle(mine, false)}>
+                    <button type="button" aria-label={`#${tag} 빼기`} onClick={() => toggle(mine, false)} className="hit-44">
                       <X size={14} />
                     </button>
                   )}
@@ -130,7 +130,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
             <h2 className="text-sm font-bold text-ink-900">지금까지 나온 의견에서</h2>
             {groups.reference.map((line) => (
               <blockquote key={line.id} className="rounded-xl bg-ink-50 p-3 text-sm text-ink-700">
-                <p className="text-[0.6875rem] text-ink-500">{line.author_display_name}</p>“{line.text}”
+                <p className="text-label text-ink-500">{line.author_display_name}</p>“{line.text}”
               </blockquote>
             ))}
           </section>
@@ -150,7 +150,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
                   onError: () => showToast('조건을 더하지 못했어요'),
                 })
             }}
-            className="flex gap-2"
+            className="field"
           >
             <input
               value={draft}
@@ -159,14 +159,14 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
               autoFocus
               aria-label="조건 더하기"
               placeholder="예: 비 오면 실내로 가고 싶어요"
-              className="min-w-0 flex-1 rounded-xl border border-ink-300 px-3 py-2 text-sm"
+              className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-ink-500"
             />
-            <button type="submit" disabled={patch.isPending} className="btn-outline px-3 text-sm">
+            <button type="submit" disabled={patch.isPending} className="btn-link shrink-0 text-sm">
               더하기
             </button>
           </form>
         ) : (
-          <button type="button" onClick={() => setAdding(true)} className="mx-auto block text-sm text-brand-600">
+          <button type="button" onClick={() => setAdding(true)} className="btn-link mx-auto flex text-sm">
             조건 수정
           </button>
         )}
@@ -179,10 +179,10 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
       {/* 이 화면은 시트가 없어서 토스트를 아래 버튼 줄 위에 띄운다. 넓은 화면은 지도 영역 토스트 하나만 쓴다. */}
       <div className="relative grid grid-cols-2 gap-2 border-t border-ink-100 p-4">
         {!desktop && <Toaster controlsVisible={false} />}
-        <button type="button" onClick={() => setRun(mapId, undefined)} className="rounded-xl border border-ink-300 py-3 font-semibold text-ink-900">
+        <button type="button" onClick={() => setRun(mapId, undefined)} className="btn-neutral btn-lg">
           취소
         </button>
-        <button type="button" disabled={busy || evidence.isPending} onClick={() => start(false)} className="btn-primary py-3">
+        <button type="button" disabled={busy || evidence.isPending} onClick={() => start(false)} className="btn-primary btn-lg">
           {busy ? '찾기 시작하는 중…' : '네, 추천해주세요'}
         </button>
       </div>
