@@ -280,3 +280,16 @@ def test_main_quiets_http_client_loggers():
 
     assert logging.getLogger("httpx").level == logging.WARNING
     assert logging.getLogger("httpcore").level == logging.WARNING
+
+
+def test_agent_loop_is_off_by_default(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    monkeypatch.delenv("AGENT_LOOP_IN_PROCESS", raising=False)
+    assert Settings.from_env().agent_loop_in_process is False
+
+
+@pytest.mark.parametrize("raw, expected", [("1", True), ("true", True), ("TRUE", True), ("0", False), ("no", False)])
+def test_agent_loop_reads_env(monkeypatch, raw, expected):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    monkeypatch.setenv("AGENT_LOOP_IN_PROCESS", raw)
+    assert Settings.from_env().agent_loop_in_process is expected

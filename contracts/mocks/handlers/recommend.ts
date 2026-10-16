@@ -4,6 +4,12 @@ import { apiError } from "../util";
 import { buildCandidates, buildEvidenceLines, buildRegions } from "../seed";
 import { RECOMMEND_CATEGORIES } from "../categories";
 
+/** 한 사람이 한 지도에서 추천을 받을 수 있는 횟수(#31, 2026-10-15 5→10). 서버가 attempt_limit으로 내려 준다. */
+export const ATTEMPT_LIMIT = 10;
+
+/** run을 만든 시각 — 지난 추천 기록(#469)의 created_at. 목 서버 메모리에만 있다. */
+const runCreatedAt: Record<string, string> = {};
+
 // 2026-10-07(#360): 카테고리에 ♥/🚫 의견이 달린 핀이 1개 이상이면 열린다. 구성원 수와 무관 — 혼자 쓰는 지도도 같다.
 const REQUIRED_OPINION_PINS = 1;
 
@@ -41,6 +47,31 @@ export const recommendHandlers = [
     return HttpResponse.json(result);
   }),
 
+  // #469 지난 추천 기록 — 내가 요청한 run만(가드레일 1), 최근순. 결과는 GET /runs/{id}/result로 다시 연다.
+  http.get("*/maps/:mapId/runs", ({ params, request }) => {
+    const mapId = params.mapId as string;
+    if (!store.maps[mapId]) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    const url = new URL(request.url);
+    const category = url.searchParams.get("category");
+    const limit = Number(url.searchParams.get("limit") ?? 20);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) return apiError(422, "VALIDATION_ERROR", "limit은 1~50");
+    const list = Object.values(store.runs)
+      .filter((r) => r.map_id === mapId && store.runRequestedBy[r.id] === ME_USER_ID && (!category || r.category === category))
+      .map((r) => ({
+        id: r.id,
+        map_id: r.map_id,
+        category: r.category,
+        status: r.status,
+        attempt_no: r.attempt_no,
+        attempt_limit: ATTEMPT_LIMIT,
+        created_at: runCreatedAt[r.id] ?? new Date(0).toISOString(),
+        candidate_count: r.status === "done" ? (store.candidates[r.id] ?? []).length : 0,
+        published_count: Object.values(store.pins).filter((p) => p.source_run_id === r.id).length,
+      }))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return HttpResponse.json(list.slice(0, limit));
+  }),
+
   http.post("*/maps/:mapId/runs", async ({ params, request }) => {
     const mapId = params.mapId as string;
     const body = (await request.json()) as { category: string };
@@ -55,10 +86,11 @@ export const recommendHandlers = [
     const runId = nextId("run");
     store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1 };
     store.runRequestedBy[runId] = ME_USER_ID;
+    runCreatedAt[runId] = new Date().toISOString();
     // ② 사유 → 실격/선호/반경 구조화 (목 서버에서는 시드 데이터로 대체 — 실제 구조화는 backend/llm 담당)
     store.evidenceLines[runId] = buildEvidenceLines(runId);
     store.regions[runId] = buildRegions();
-    return HttpResponse.json(store.runs[runId], { status: 202 });
+    return HttpResponse.json({ ...store.runs[runId], attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
   http.get("*/runs/:runId/evidence", ({ params }) => {
@@ -116,18 +148,20 @@ export const recommendHandlers = [
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
     ensureCandidates(runId);
     run.status = "done";
-    return HttpResponse.json(run, { status: 202 });
+    return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
   http.get("*/runs/:runId/result", ({ params }) => {
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
+    if (run.status !== "done") return apiError(409, "RUN_NOT_FINISHED", "아직 끝나지 않았거나 실패한 추천이에요", { status: run.status }); // #469
     const candidates = store.candidates[runId] ?? [];
     const funnel = [
       { label: "카테고리 후보 풀", removed_count: 0 },
       { label: "반경 밖 제거", removed_count: 3 },
       { label: "영업 종료 제거", removed_count: 1 },
+      { label: "추천 가능 아님 제거", removed_count: 2 }, // 라벨이 적어 추천 풀에서 빠진 장소(places.can_recommend=false, 2026-10-15)
       { label: "실격 조건 제거", removed_count: candidates.length === 0 ? 8 : 3 },
       { label: "이미 제안·거절됨", removed_count: 1 },
     ];
@@ -149,22 +183,22 @@ export const recommendHandlers = [
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
     store.candidates[runId] = buildCandidates(regionLabel);
     run.status = "done";
-    return HttpResponse.json(run, { status: 202 });
+    return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
   http.post("*/runs/:runId/retry", ({ params }) => {
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
-    if ((run.attempt_no ?? 1) >= 5) {
-      return apiError(429, "RETRY_LIMIT", "5번까지만 찾습니다", { attempt_no: run.attempt_no });
+    if ((run.attempt_no ?? 1) >= ATTEMPT_LIMIT) {
+      return apiError(429, "RETRY_LIMIT", `${ATTEMPT_LIMIT}번까지만 찾습니다`, { attempt_no: run.attempt_no, attempt_limit: ATTEMPT_LIMIT });
     }
     run.attempt_no = (run.attempt_no ?? 1) + 1;
     run.status = "done";
     // 3절: 현재 뜬 대안 전체가 제외목록에 들어가고(목 서버는 별도 exclusions 컬렉션 없이 교체로 표현) 새로 채운다
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
     store.candidates[runId] = buildCandidates(regionLabel);
-    return HttpResponse.json(run, { status: 202 });
+    return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
   http.post("*/candidates/:candidateId/publish", ({ params }) => {
@@ -188,7 +222,7 @@ export const recommendHandlers = [
       checks: cand.checks, // 가드레일 5: 게시 후에도 근거를 그대로 유지
       source_run_id: runId,
       reaction_summary: { like: 0, against: 0 },
-      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: false },
     };
     store.pins[pinId] = pin;
     store.reactions[pinId] = [];

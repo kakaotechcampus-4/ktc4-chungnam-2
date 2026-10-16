@@ -18,6 +18,7 @@ from authz.policy import Role
 from maps import service
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
+from maps.schemas import Map
 
 
 class DbMembershipGateway:
@@ -55,11 +56,31 @@ def count_members(db: Session, map_id: str) -> int:
     return service.member_count(db, map_id)
 
 
+def get_map_title(db: Session, map_id: str) -> str | None:
+    """지도 제목(없거나 삭제된 지도는 None). 읽기 전용 — 알림 문장·확정 리스트 내보내기 파일명이 쓴다."""
+    return service.get_map_title(db, map_id=map_id)
+
+
+def get_map_for_agent(db: Session, map_id: str) -> dict | None:
+    """agent 스냅샷(docs/agent-v2.md 12.7, #522)이 부른다. 읽기 전용, 커밋하지 않는다.
+    `{map_id, start_date, end_date, deleted: bool, members: [{user_id, joined_at}]}`. 구성원은 지금 구성원만
+    (탈퇴자 제외, `count_members`와 같은 기준), joined_at 순. 지도가 없으면 None, 삭제된 지도는 deleted=True에
+    members 빈 목록."""
+    return service.get_map_for_agent(db, map_id=map_id)
+
+
 def lock_member_maps(db: Session, user_id: str) -> list[str]:
     """탈퇴(auth.service.withdraw_user)가 맨 먼저 부른다(#435, docs/architecture.md "동시성: 지도 행
     잠금으로 줄을 세운다"). 이 사용자가 속한 삭제되지 않은 지도 행을 지도 id 순서로 FOR UPDATE 잠그고
     그 id를 돌려준다. 나가기·지도 삭제와 같은 행을 잠가 줄을 선다. 커밋하지 않는다."""
     return service.lock_member_maps(db, user_id=user_id)
+
+
+def lock_map_if_alive(db: Session, map_id: str) -> bool:
+    """agent가 모델 호출 뒤 저장 트랜잭션 맨 앞에서 부른다(docs/agent-v2.md 12.4, #512). 지도 행을 FOR UPDATE로
+    잠그고(lock_member_maps와 같은 방식, docs/architecture.md "동시성: 지도 행 잠금으로 줄을 세운다", #435)
+    삭제되지 않았으면 True. 삭제된 지도와 없는 지도는 False — 호출부는 아무것도 쓰지 않는다. 커밋하지 않는다."""
+    return service.lock_map_if_alive(db, map_id=map_id)
 
 
 def transfer_or_delete_owned_maps(db: Session, user_id: str) -> None:
@@ -74,3 +95,16 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(maps.purge, #431) — 이 지도들의 invites·memberships·maps만 지우고 테이블 이름 → 지운 행 수를
     돌려준다. 삭제되지 않은(deleted_at이 없는) 지도가 섞여 있으면 ValueError. 커밋하지 않는다."""
     return service.purge_map_data(db, map_ids=map_ids)
+
+
+def check_invite(db: Session, token: str) -> None:
+    """초대 토큰이 지금 수락 가능한지만 확인한다(#472, auth가 추가한 위임) — 없거나 삭제된 지도의 토큰은 404
+    INVITE_NOT_FOUND, 끈 링크는 410 INVITE_REVOKED, 만료는 410 INVITE_EXPIRED. 쓰기 없음. 게스트 계정을 만들기
+    전에 부른다(GUEST_LIMIT 409보다 이 404·410이 먼저)."""
+    service._acceptable_invite_or_raise(db, token)
+
+
+def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
+    """POST /invites/{token}/accept와 같은 흐름(#472, auth가 추가한 위임) — 구성원 가입, used_count, member.joined
+    이벤트, 방장 알림까지 한 트랜잭션. 커밋은 호출자가 한다."""
+    return service.accept_invite(db, token=token, user_id=user_id)

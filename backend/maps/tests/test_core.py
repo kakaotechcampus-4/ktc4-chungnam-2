@@ -135,24 +135,24 @@ def _entry(user_id, *, role="member", minutes=0, id_=None):
 
 def test_pick_successor_is_earliest_joined_other_than_leaver():
     roster = [_entry("owner", role="owner"), _entry("late", minutes=20), _entry("early", minutes=10)]
-    assert core.pick_successor(roster, set(), "owner") == "early"
+    assert core.pick_successor(roster, set(), "owner", guests=set()) == "early"
 
 
 def test_pick_successor_skips_withdrawn_members():
     roster = [_entry("owner", role="owner"), _entry("gone", minutes=1), _entry("next", minutes=2)]
-    assert core.pick_successor(roster, {"gone"}, "owner") == "next"
+    assert core.pick_successor(roster, {"gone"}, "owner", guests=set()) == "next"
 
 
 def test_pick_successor_breaks_joined_at_tie_by_membership_id():
     low, high = uuid.UUID(int=1), uuid.UUID(int=2)
     roster = [_entry("owner", role="owner"), _entry("b", minutes=5, id_=high), _entry("a", minutes=5, id_=low)]
-    assert core.pick_successor(roster, set(), "owner") == "a"
+    assert core.pick_successor(roster, set(), "owner", guests=set()) == "a"
 
 
 @pytest.mark.parametrize("others, withdrawn", [([], set()), (["gone"], {"gone"})])
 def test_pick_successor_is_none_when_nobody_can_take_over(others, withdrawn):
     roster = [_entry("owner", role="owner")] + [_entry(u, minutes=1) for u in others]
-    assert core.pick_successor(roster, withdrawn, "owner") is None
+    assert core.pick_successor(roster, withdrawn, "owner", guests=set()) is None
 
 
 def test_owner_without_successor_cannot_leave():
@@ -170,16 +170,16 @@ def test_owner_successor_is_only_computed_for_the_owner():
     roster = [_entry("owner", role="owner"), _entry("m", minutes=1)]
     member = Principal(user_id="m", map_id="m1", role="member")
     owner = Principal(user_id="owner", map_id="m1", role="owner")
-    assert core.owner_successor(member, roster, set()) is None
-    assert core.owner_successor(owner, roster, set()) == "m"
+    assert core.owner_successor(member, roster, set(), guests=set()) is None
+    assert core.owner_successor(owner, roster, set(), guests=set()) == "m"
 
 
 @pytest.mark.parametrize(
     "role, successor, expected",
     [
-        ("owner", "next", {"can_delete": True, "can_leave": True}),
-        ("owner", None, {"can_delete": True, "can_leave": False}),
-        ("member", None, {"can_delete": False, "can_leave": True}),
+        ("owner", "next", {"can_delete": True, "can_leave": True, "can_edit": True}),
+        ("owner", None, {"can_delete": True, "can_leave": False, "can_edit": True}),
+        ("member", None, {"can_delete": False, "can_leave": True, "can_edit": False}),
     ],
 )
 def test_map_permissions(role, successor, expected):
@@ -216,3 +216,29 @@ def test_check_map_limit(count, blocked):
         core.check_map_limit(count)
     assert exc_info.value.code == "MAP_LIMIT"
     assert exc_info.value.detail == {"limit": core.MAP_LIMIT, "count": count}
+
+
+# --- #472 게스트 제한 ---
+
+
+def test_pick_successor_skips_guests():
+    roster = [_entry("owner", role="owner"), _entry("guest", minutes=1), _entry("next", minutes=2)]
+    assert core.pick_successor(roster, set(), "owner", guests={"guest"}) == "next"
+
+
+def test_pick_successor_is_none_when_everyone_left_is_a_guest():
+    roster = [_entry("owner", role="owner"), _entry("g1", minutes=1), _entry("g2", minutes=2)]
+    assert core.pick_successor(roster, set(), "owner", guests={"g1", "g2"}) is None
+
+
+def test_owner_successor_excludes_guests_and_leaves_the_owner_unable_to_leave():
+    roster = [_entry("owner", role="owner"), _entry("g", minutes=1)]
+    owner = Principal(user_id="owner", map_id="m1", role="owner")
+    assert core.owner_successor(owner, roster, set(), guests={"g"}) is None
+
+
+def test_guest_cannot_create_a_map():
+    core.check_can_create_map(False)
+    with pytest.raises(AppError) as exc_info:
+        core.check_can_create_map(True)
+    assert exc_info.value.code == "GUEST_NOT_ALLOWED"

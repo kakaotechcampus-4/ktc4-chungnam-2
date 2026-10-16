@@ -1,4 +1,5 @@
-"""backend/llm 비즈니스 로직 — 모델 호출 3곳(plan_evidence/label_place/rank_candidates).
+"""backend/llm 비즈니스 로직 — 모델 호출 3곳(plan_evidence/label_place/rank_candidates)과 v2 에이전트 호출
+(agent_prioritize/agent_diagnose, #532 — 맨 아래 절).
 
 ② plan_evidence는 넘겨받은 planner로 부른다 — real_evidence_planner는 Luna를 실제로 부르고(#116), 기존
 passthrough_planner는 입력을 스키마로 검증·통과하는 스텁이다(LLM_MODE로 고르는 곳은 recommend/deps.py, #219). ③-a-1 label_place, ③-b rank_candidates는 아직 고정 응답
@@ -10,15 +11,22 @@ passthrough_planner는 입력을 스키마로 검증·통과하는 스텁이다(
 책임이 아니다 — recommend가 한다(가드레일 7).
 """
 
+import json
 import logging
 import re
 import unicodedata
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
 
 from common.errors import AppError
-from llm.client import LlmCallError, call_planner, get_client
+from llm.client import (
+    LlmCallError, call_agent_diagnosis_turn, call_agent_priority, call_planner, get_client, metering,
+)
+from llm.prompts import (
+    AGENT_DIAGNOSE_PROMPT, DIAGNOSIS_MAX_TOOL_CALLS, DIAGNOSIS_TOOLS, STRUCTURE_REASONS_MAX_CALLS, diagnosis_tools,
+)
 from llm.schemas import (
-    EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, RankedCandidate,
+    AgentCallFailed, AgentReply, DiagnosisOutput, EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason,
+    PlanningOutput, PriorityItem, PriorityOutput, RankedCandidate,
 )
 
 log = logging.getLogger("pingo.llm")
@@ -257,3 +265,188 @@ def rank_candidates(candidate_place_ids: Sequence[str]) -> list[RankedCandidate]
         RankedCandidate(place_id=place_id, rank=index + 1, member_comment=None)
         for index, place_id in enumerate(candidate_place_ids)
     ]
+
+
+# ---------- v2 계획 보조 에이전트 (docs/agent-v2.md 7, 10, 11절, #532) ----------
+# agent가 백그라운드 관찰에서 부른다. planner는 ②처럼 부르는 쪽이 넘긴다 — 고정 응답 스텁과 실제 모델 중 무엇을 쓸지는
+# agent/deps.py의 Gateway가 고른다(명세 2절 7번). 모델 출력 검증(claim 대조, 문장, 행동)은 agent의 core가 하고, 여기서는
+# 스키마 검증까지만 한다. 실패하면 재요청하지 않고 AgentCallFailed를 돌려준다(명세 2절 10번).
+
+# agent가 넘기는 도구 실행 콜백: (call_id, 도구 이름, 인자) -> 결과. 결과는 JSON으로 바꿀 수 있는 값이어야 한다.
+# 실행, 지도 채우기(map_id), tool_calls 기록은 agent(tools.py, #533)가 한다. call_id는 이 모듈이 t1, t2 … 로 매긴다.
+ToolRunner = Callable[[str, str, Mapping[str, Any]], Any]
+
+
+class ToolCaller(Protocol):
+    """planner가 도구를 부르는 창구 — 상한을 지키고 call_id를 매겨 tool_runner로 넘긴다(_ToolBudget)."""
+
+    @property
+    def exhausted(self) -> bool: ...
+
+    def __call__(self, name: str, args: Mapping[str, Any]) -> dict[str, Any]: ...
+
+
+PriorityPlanner = Callable[[Sequence[Mapping[str, Any]], Sequence[str]], PriorityOutput]
+DiagnosisPlanner = Callable[[Mapping[str, Any], ToolCaller], DiagnosisOutput]
+
+
+class ToolRunnerError(RuntimeError):
+    """agent의 tool_runner가 예외를 냈다. 모델 실패가 아니라 agent 쪽 오류라 실패 결과로 바꾸지 않고 그대로 올린다
+    (tool_runner의 ValueError가 스키마 실패로 잘못 분류돼 묻히지 않게 감싼다)."""
+
+
+class _ToolBudget:
+    """진단 1회의 도구 상한(명세 10절). 넘는 호출과 허용되지 않은 도구는 tool_runner를 부르지 않고 오류를 결과로 돌려준다
+    — 모델은 그 결과를 보고 답을 내면 된다. 실행한 호출만 상한에 센다(오류로 돌려준 호출은 실행하지 않았다)."""
+
+    def __init__(self, diagnosis: str, tool_runner: ToolRunner):
+        self._allowed = DIAGNOSIS_TOOLS[diagnosis]
+        self._tool_runner = tool_runner
+        self.used = 0
+        self._structure_used = 0
+
+    @property
+    def exhausted(self) -> bool:
+        return self.used >= DIAGNOSIS_MAX_TOOL_CALLS
+
+    def __call__(self, name: str, args: Mapping[str, Any]) -> dict[str, Any]:
+        if name not in self._allowed:
+            return {"error": "NOT_FOUND"}
+        is_structure = name == "structure_reasons"
+        if self.exhausted or (is_structure and self._structure_used >= STRUCTURE_REASONS_MAX_CALLS):
+            return {"error": "LIMIT_EXCEEDED"}
+        self.used += 1
+        self._structure_used += is_structure
+        call_id = f"t{self.used}"
+        try:
+            result = self._tool_runner(call_id, name, dict(args))
+        except Exception as exc:
+            raise ToolRunnerError(f"tool_runner 실패: {name} {type(exc).__name__}") from exc
+        return {"call_id": call_id, "result": result}
+
+
+def _failed(what: str, exc: Exception, context: str) -> AgentCallFailed:
+    """실패를 결과로 바꾼다. detail과 로그에는 예외 클래스명만 쓴다 — str(ValidationError)에는 응답 본문이 들어 있다(#390)."""
+    reason = exc.reason if isinstance(exc, LlmCallError) else "invalid_schema"
+    cause = exc.__cause__ or exc
+    detail = f"{type(exc).__name__}({type(cause).__name__})"
+    log.warning("%s 실패: reason=%s %s %s", what, reason, detail, context)
+    return AgentCallFailed(reason=reason, detail=detail)
+
+
+def fixed_priority_planner(signals: Sequence[Mapping[str, Any]], principles: Sequence[str]) -> PriorityOutput:
+    """고정 응답 스텁 — 받은 순서 그대로. 모델을 부르지 않는다."""
+    return PriorityOutput(order=[PriorityItem(signal_id=signal["id"], reason="고정 응답") for signal in signals])
+
+
+def real_priority_planner(signals: Sequence[Mapping[str, Any]], principles: Sequence[str]) -> PriorityOutput:
+    """실제 모델(gpt-6-luna). 클라이언트는 호출 때 만든다 — 설정이 비면 LlmCallError(call_failed)."""
+    return call_agent_priority(get_client(), signals, principles)
+
+
+def agent_prioritize(
+    signals: Sequence[Mapping[str, Any]], principles: Sequence[str], *, planner: PriorityPlanner
+) -> AgentReply[PriorityOutput]:
+    """신호 순위(명세 7절). signals는 agent가 만든 신호 dict(id, diagnosis, category, features), principles는
+    priority_policy.yaml의 원칙 문장이다. 신호가 1개일 때 부르지 않는 것, 정책 규칙 보정(apply_priority_rules), 실패 시
+    fallback_order는 agent가 한다. 순서가 입력 신호와 맞는지(빠짐, 중복, 모르는 id)도 agent의 보정이 본다.
+
+    결과(PriorityOutput 또는 AgentCallFailed)와 사용량(AgentUsage, #564)을 함께 돌려준다. 실패(호출 실패, 타임아웃, 스키마
+    검증 실패)는 재요청하지 않고 AgentCallFailed로 돌려준다."""
+    with metering() as usage:
+        if not signals:
+            return AgentReply(PriorityOutput(order=[]), usage)
+        try:
+            return AgentReply(planner(signals, principles), usage)
+        except (LlmCallError, ValueError) as exc:
+            return AgentReply(_failed("agent_prioritize", exc, f"signals={len(signals)}"), usage)
+
+
+def fixed_diagnosis_planner(diagnosis_input: Mapping[str, Any], call_tool: ToolCaller) -> DiagnosisOutput:
+    """고정 응답 스텁 — 도구를 한 번 부르고(get_reasons. 콜백과 call_id 경로를 통합에서 지나가게) 늘 silent로 답한다.
+    지어낸 문장이나 숫자가 화면으로 나갈 길이 없다(명세 2절 10번과 같은 쪽). 도구 결과는 보지 않는다."""
+    diagnosis = diagnosis_input["diagnosis"]
+    if diagnosis == "split":
+        pin_id = diagnosis_input.get("pin_id")
+        call_tool("get_reasons", {"pin_ids": [pin_id] if pin_id else None, "category": None, "types": None})
+    else:
+        call_tool("get_reasons", {"pin_ids": None, "category": diagnosis_input.get("category"), "types": None})
+    return DiagnosisOutput(
+        decision="silent", diagnosis=diagnosis, signal_id=diagnosis_input["signal_id"], claims=[], advice=[], actions=[],
+    )
+
+
+def _assistant_tool_message(message: Any) -> dict[str, Any]:
+    """모델의 도구 호출 응답을 다음 요청의 대화에 되돌려 넣을 모양으로."""
+    return {
+        "role": "assistant",
+        "content": message.content,
+        "tool_calls": [
+            {"id": call.id, "type": "function",
+             "function": {"name": call.function.name, "arguments": call.function.arguments}}
+            for call in message.tool_calls
+        ],
+    }
+
+
+def _model_diagnosis_planner(client: Any, diagnosis_input: Mapping[str, Any], call_tool: ToolCaller) -> DiagnosisOutput:
+    """도구 호출 대화. 상한을 다 썼거나 마지막 왕복이면 tool_choice="none"으로 답을 받는다 — 요청은 많아야
+    DIAGNOSIS_MAX_TOOL_CALLS + 1번이다. "none"인데도 도구를 부르면 실패(call_failed), 도구 인자 JSON이 깨지면
+    ValueError(invalid_schema)다. 어떤 실패도 다시 묻지 않는다."""
+    tools = diagnosis_tools(diagnosis_input["diagnosis"])
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": AGENT_DIAGNOSE_PROMPT},
+        {"role": "user", "content": json.dumps(dict(diagnosis_input), ensure_ascii=False, default=str)},
+    ]
+    for turn in range(DIAGNOSIS_MAX_TOOL_CALLS + 1):
+        tools_open = turn < DIAGNOSIS_MAX_TOOL_CALLS and not call_tool.exhausted
+        message = call_agent_diagnosis_turn(
+            client, messages, tools=tools, tool_choice="auto" if tools_open else "none", turn=turn,
+        )
+        if not message.tool_calls:
+            return message.parsed
+        if not tools_open:
+            raise LlmCallError("도구를 닫은 뒤에도 도구를 불렀다")
+        messages.append(_assistant_tool_message(message))
+        for call in message.tool_calls:
+            args = json.loads(call.function.arguments or "{}")
+            if not isinstance(args, dict):
+                raise ValueError("도구 인자가 객체가 아니다")
+            result = call_tool(call.function.name, args)
+            messages.append({
+                "role": "tool", "tool_call_id": call.id,
+                "content": json.dumps(result, ensure_ascii=False, default=str),
+            })
+    raise LlmCallError("도구 왕복 상한을 넘겼다")  # 마지막 왕복은 늘 "none"이라 오지 않는다
+
+
+def real_diagnosis_planner(diagnosis_input: Mapping[str, Any], call_tool: ToolCaller) -> DiagnosisOutput:
+    """실제 모델(gpt-6-luna, 도구 호출). 클라이언트는 호출 때 만든다 — 설정이 비면 LlmCallError(call_failed)."""
+    return _model_diagnosis_planner(get_client(), diagnosis_input, call_tool)
+
+
+def agent_diagnose(
+    diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner, planner: DiagnosisPlanner
+) -> AgentReply[DiagnosisOutput]:
+    """모델 유형(stall, split) 진단(명세 6.2, 6.3, 11절).
+
+    diagnosis_input: agent의 core.diagnosis_input(#533)이 만든 공개 데이터만의 dict. 적어도 signal_id, diagnosis(stall|split)가
+    있고, stall은 category, split은 pin_id가 있다. 모델에는 JSON 문자열로만 넘긴다.
+    tool_runner: 도구 실행 콜백. 이 함수가 call_id(t1, t2 …)를 매겨 부른다. 진단 1회당 DIAGNOSIS_MAX_TOOL_CALLS(5)회,
+    그중 structure_reasons는 STRUCTURE_REASONS_MAX_CALLS(1)회까지 실행하고, 넘는 호출은 실행하지 않고 LIMIT_EXCEEDED를,
+    유형에 허용되지 않은 도구는 NOT_FOUND를 도구 결과로 돌려준다. tool_runner의 예외는 ToolRunnerError로 그대로 올라간다.
+
+    결과(DiagnosisOutput 또는 AgentCallFailed)와 사용량(AgentUsage, #564. 도구 왕복 전부의 합)을 함께 돌려준다. 실패(호출
+    실패, 타임아웃, 스키마 검증 실패)는 재요청하지 않고 AgentCallFailed로 돌려준다. signal_id·diagnosis가 입력과 같은지,
+    claim과 문장과 행동은 agent의 verify_diagnosis가 본다(명세 11.2)."""
+    diagnosis = diagnosis_input["diagnosis"]
+    if diagnosis not in DIAGNOSIS_TOOLS:
+        raise ValueError(f"진단 유형이 아니다: {diagnosis}")  # agent 쪽 오류 — 모델 실패가 아니다
+    budget = _ToolBudget(diagnosis, tool_runner)
+    with metering() as usage:
+        try:
+            output = planner(diagnosis_input, budget)
+        except (LlmCallError, ValueError) as exc:
+            return AgentReply(_failed("agent_diagnose", exc, f"diagnosis={diagnosis} tools_used={budget.used}"), usage)
+    log.info("agent_diagnose 완료: diagnosis=%s decision=%s tools_used=%d", diagnosis, output.decision, budget.used)
+    return AgentReply(output, usage)

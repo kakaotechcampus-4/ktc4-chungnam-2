@@ -14,6 +14,7 @@
 """
 
 import time
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import Cookie, Depends
@@ -47,7 +48,11 @@ def get_current_user(
     row = service.get_active_user_or_401(db, user_id=claims.user_id)
     if core.is_revoked(claims.issued_at, row.sessions_valid_after):
         raise AppError("UNAUTHORIZED", "로그인이 필요합니다")
-    return CurrentUser(user_id=claims.user_id)
+    if row.is_guest:   # 정리 기준(#472) — 하루 한 번만 쓴다
+        now = datetime.now(timezone.utc)
+        if core.should_refresh_last_seen(row.last_seen_at, now):
+            row.last_seen_at = now
+    return CurrentUser(user_id=claims.user_id, is_guest=row.is_guest)
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]

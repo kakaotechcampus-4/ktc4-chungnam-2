@@ -35,6 +35,20 @@ def replay(db: Session, map_id: str, after_seq: int, channel: str) -> ReplayResu
     return ReplayResult(rows=list(rows), truncated=truncated)
 
 
+def latest_seq_by_map(db: Session) -> dict[str, tuple[int, datetime]]:
+    """지도별 가장 큰 event_log seq와 그 행의 created_at(#522, 커서 개정 #525). 보존기간(replay와 같은
+    cutoff) 안의 행만, 두 채널 모두 본다. 쿼리 한 번 — map_id마다 seq가 가장 큰 행 하나(DISTINCT ON).
+    번호와 시각만 돌려주고 type·payload·수신자는 내보내지 않는다."""
+    cutoff = datetime.now(timezone.utc) - RETENTION
+    rows = db.execute(
+        select(EventLog.map_id, EventLog.seq, EventLog.created_at)
+        .where(EventLog.created_at >= cutoff)
+        .distinct(EventLog.map_id)
+        .order_by(EventLog.map_id, EventLog.seq.desc())
+    ).all()
+    return {map_id: (seq, created_at) for map_id, seq, created_at in rows}
+
+
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(#431) — 이 지도들의 이벤트 로그를 지운다. 테이블 이름 → 지운 행 수."""
     if not map_ids:

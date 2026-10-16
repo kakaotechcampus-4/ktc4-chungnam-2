@@ -253,16 +253,17 @@ def test_funnel_counts_maps_pairs_to_dicts():
 
 # ---------- check_retry_limit ----------
 
-@pytest.mark.parametrize("attempt_no", [0, 1, 4])
+@pytest.mark.parametrize("attempt_no", [0, 1, 9])
 def test_check_retry_limit_passes_below_limit(attempt_no):
     core.check_retry_limit(attempt_no)  # 예외 없이 통과
 
 
-@pytest.mark.parametrize("attempt_no", [5, 6])
+@pytest.mark.parametrize("attempt_no", [10, 11])
 def test_check_retry_limit_raises_at_or_above_limit(attempt_no):
     with pytest.raises(AppError) as exc_info:
         core.check_retry_limit(attempt_no)
     assert exc_info.value.code == "RETRY_LIMIT"
+    assert exc_info.value.detail == {"attempt_no": attempt_no, "attempt_limit": 10}
 
 
 # ============================================================================

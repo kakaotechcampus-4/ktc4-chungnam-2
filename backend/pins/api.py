@@ -233,6 +233,12 @@ def list_place_ids_on_map(db: Session, *, map_id: str) -> set[str]:
     return set(rows)
 
 
+def list_live_kakao_place_ids(db: Session, *, map_id: str) -> list[str]:
+    """recommend의 「이미 지도에 있는 장소 빼기」(#569)가 쓴다 — 이 지도의 실시간 핀이 가리키는 카카오 장소 ID.
+    live 핀은 place_id가 없어 list_place_ids_on_map에 안 잡힌다. 이름·좌표·메모는 돌려주지 않는다(ID만)."""
+    return service.list_live_kakao_place_ids(db, map_id)
+
+
 def list_disliked_place_ids(db: Session, *, user_id: str, map_id: str, category: str) -> list[str]:
     """recommend의 가드레일 6(#119) — 이 사용자가 이 지도의 이 카테고리에서 🚫(against) 반응을
     남긴 핀들의 place_id(중복 없이, 정렬). recommend가 exclusions.reason='dismissed'로 쌓는다.
@@ -264,6 +270,8 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
     글과 칩은 따로 돌려준다(#412) — 둘 다 남긴 반응은 둘 다 근거다. `reason_text`는 사람이 쓴 글
     그대로(없으면 None)이고 ②에 보낼 것이다. `chips`는 칩 하나당 하나(`chip_id`·`label`·`fact_key`·
     `wants`, docs/constraints.md 칩 표대로)이고 ②를 거치지 않는다. `reason_chip_ids`는 저장된 값 그대로다.
+    `reaction_id`·`updated_at`은 agent 스냅샷이 사유를 가리키고 최근 반응 시각을 보는 데 쓴다(#522) — 키를
+    더하기만 했고 recommend는 쓰지 않는다.
 
     소프트 삭제된 핀의 반응도 **포함한다**(#243) — 사유는 사람이 한 말이라 핀이 지워져도 사라지면 안 된다.
     구성원 누구나 핀을 지울 수 있어서(#25), 안 그러면 한 명이 b의 "조개 알러지" 핀을 지우는 것만으로 안전
@@ -272,8 +280,8 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
     `list_disliked_place_ids`도 삭제 핀을 포함한다."""
     rows = db.execute(
         select(
-            ReactionRow.pin_id, ReactionRow.user_id, ReactionRow.type,
-            ReactionRow.reason_text, ReactionRow.reason_chip_ids,
+            ReactionRow.id, ReactionRow.pin_id, ReactionRow.user_id, ReactionRow.type,
+            ReactionRow.reason_text, ReactionRow.reason_chip_ids, ReactionRow.updated_at,
         )
         .select_from(ReactionRow)
         .join(PinRow, PinRow.id == ReactionRow.pin_id)
@@ -283,13 +291,13 @@ def list_reasoned_reactions(db: Session, *, map_id: str, category: str) -> list[
         )
     ).all()
     reasoned = []
-    for pin_id, user_id, reaction_type, reason_text, reason_chip_ids in rows:
+    for reaction_id, pin_id, user_id, reaction_type, reason_text, reason_chip_ids, updated_at in rows:
         if reason_text is None and not reason_chip_ids:
             continue
         reasoned.append({
-            "pin_id": str(pin_id), "user_id": user_id, "type": reaction_type,
+            "reaction_id": str(reaction_id), "pin_id": str(pin_id), "user_id": user_id, "type": reaction_type,
             "reason_text": reason_text, "reason_chip_ids": reason_chip_ids,
-            "chips": chips.evidence_chips(reason_chip_ids or []),
+            "chips": chips.evidence_chips(reason_chip_ids or []), "updated_at": updated_at,
         })
     return reasoned
 
@@ -315,6 +323,43 @@ def list_liked_pins(db: Session, *, map_id: str, category: str, requested_by: st
         entry = grouped.setdefault(str(pin_id), {"place_id": place_id, "member_ids": set()})
         entry["member_ids"].add(user_id)
     return list(grouped.values())
+
+
+def list_reaction_matrix(db: Session, *, map_id: str, category: str | None = None) -> list[dict]:
+    """agent(v2)의 get_reaction_matrix(docs/agent-v2.md 10절)가 쓴다 — 의견 갈림(6.3)·반응 공백(6.4) 탐지의
+    원자료. 삭제되지 않은 공개 핀마다 핀 정보와 그 핀에 달린 반응 목록을 한 항목으로 돌려준다. category가
+    None이면 지도 전체다.
+
+    반응이 없는 핀도 `reactions=[]`로 넣는다(반응 공백 탐지가 쓴다). 반응은 ♥/🚫 두 가지뿐이고(#360) 미확인은
+    행이 없다 — 반응하지 않은 구성원은 목록에 없다. 나간 사람·탈퇴자의 반응은 그때 지워져(#369, #155) 따로
+    거르지 않는다. 핀 이름은 넣지 않는다 — db 핀은 place_id로 places에서, live 핀(#382)은 search_query로
+    agent가 정한다. 핀과 반응은 쿼리 한 번(LEFT JOIN)으로 읽고, 같은 입력이면 같은 순서로 돌려준다."""
+    conditions = [PinRow.map_id == map_id, PinRow.deleted_at.is_(None), PinRow.visibility == "public"]
+    if category is not None:
+        conditions.append(PinRow.category == category)
+    rows = db.execute(
+        select(
+            PinRow.id, PinRow.category, PinRow.source, PinRow.place_id, PinRow.search_query,
+            PinRow.created_by, PinRow.created_at,
+            ReactionRow.id, ReactionRow.user_id, ReactionRow.type, ReactionRow.updated_at,
+        )
+        .select_from(PinRow)
+        .outerjoin(ReactionRow, ReactionRow.pin_id == PinRow.id)
+        .where(*conditions)
+        .order_by(PinRow.created_at, PinRow.id, ReactionRow.updated_at, ReactionRow.id)
+    ).all()
+    matrix: dict[str, dict] = {}
+    for (pin_id, pin_category, source, place_id, search_query, created_by, created_at,
+         reaction_id, user_id, reaction_type, updated_at) in rows:
+        entry = matrix.setdefault(str(pin_id), {
+            "pin_id": str(pin_id), "category": pin_category, "source": source, "place_id": place_id,
+            "search_query": search_query, "created_by": created_by, "created_at": created_at, "reactions": [],
+        })
+        if reaction_id is not None:   # LEFT JOIN — 반응이 없는 핀은 반응 칸이 전부 NULL인 행 하나다
+            entry["reactions"].append({
+                "reaction_id": str(reaction_id), "user_id": user_id, "type": reaction_type, "updated_at": updated_at,
+            })
+    return list(matrix.values())
 
 
 def get_coordinates_for_pins(db: Session, pin_ids: list[str]) -> dict[str, tuple[float, float]]:

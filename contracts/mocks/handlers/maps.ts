@@ -25,9 +25,16 @@ function toMapResponse(map: MapEntity, { detail = false } = {}) {
     ...withPinCount(rest),
     my_role: owner ? ("owner" as const) : ("member" as const),
     created_by_me: createdBy === ME_USER_ID, // #340·회의 14번: 만든 사람이 위임해도 값은 그대로다(my_role과 달라질 수 있다)
-    permissions: { can_delete: owner, can_leave: !owner || next !== null },
+    permissions: { can_delete: owner, can_leave: !owner || next !== null, can_edit: owner },
     ...(detail && next ? { next_owner: { user_id: next.user_id!, display_name: next.display_name ?? "" } } : {}),
   };
+}
+
+/** 쓸 수 없는 초대 토큰이면 응답을 돌려준다(#467). 끈 링크는 410 INVITE_REVOKED, 만료는 410 INVITE_EXPIRED. */
+function inviteGone(invite: { expires_at: string; revoked?: boolean }) {
+  if (invite.revoked) return apiError(410, "INVITE_REVOKED", "방장이 이 초대 링크를 껐어요. 새 링크를 요청하세요");
+  if (new Date(invite.expires_at).getTime() < Date.now()) return apiError(410, "INVITE_EXPIRED", "초대 링크가 만료됐어요");
+  return null;
 }
 
 export const mapsHandlers = [
@@ -45,6 +52,7 @@ export const mapsHandlers = [
     const body = (await request.json()) as {
       title: string; start_date: string; end_date: string; region?: MapRegion;
     };
+    if (store.users[ME_USER_ID]?.is_guest) return apiError(403, "GUEST_NOT_ALLOWED", "지도를 만들려면 카카오로 로그인해 주세요"); // #472
     if (myMapCount() >= MAP_LIMIT) return mapLimitError();
     const mapId = nextId("map");
     store.maps[mapId] = {
@@ -69,6 +77,42 @@ export const mapsHandlers = [
   http.get("*/maps/:mapId", ({ params }) => {
     const map = getMapOr404(params.mapId as string);
     if (!map) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    return HttpResponse.json(toMapResponse(map, { detail: true }));
+  }),
+
+  // #465 지도 수정 — 방장만. 보낸 필드만 바꾸고, 합친 결과로 검증한다. 지역은 바꾸기만 된다.
+  http.patch("*/maps/:mapId", async ({ params, request }) => {
+    const mapId = params.mapId as string;
+    const map = getMapOr404(mapId);
+    if (!map || !(store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    if (!isOwner(mapId)) return apiError(403, "FORBIDDEN", "방장만 지도를 수정할 수 있어요");
+    const body = (await request.json()) as { title?: string; start_date?: string; end_date?: string; region?: MapRegion };
+    const title = body.title ?? map.title;
+    const start = body.start_date ?? map.start_date;
+    const end = body.end_date ?? map.end_date;
+    if (Object.keys(body).length === 0 || title.trim().length < 1 || title.length > 100 || end < start) {
+      return apiError(422, "VALIDATION_ERROR", "지도 수정 값이 올바르지 않아요");
+    }
+    Object.assign(map, { title, start_date: start, end_date: end, ...(body.region ? { region: body.region } : {}) });
+    emitEvent(mapId, "public", "map.updated", {
+      map_id: mapId, title, start_date: start, end_date: end, ...(map.region ? { region: map.region } : {}),
+    });
+    return HttpResponse.json(toMapResponse(map, { detail: true }));
+  }),
+
+  // #468 방장 직접 넘기기 — 방장만. 대상은 지금 구성원이고 나 자신이 아니다. 나는 구성원으로 남는다.
+  http.post("*/maps/:mapId/owner", async ({ params, request }) => {
+    const mapId = params.mapId as string;
+    const map = getMapOr404(mapId);
+    const members = store.members[mapId] ?? [];
+    if (!map || !members.some((m) => m.user_id === ME_USER_ID)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    if (!isOwner(mapId)) return apiError(403, "FORBIDDEN", "방장만 방장을 넘길 수 있어요");
+    const { user_id: to } = (await request.json()) as { user_id: string };
+    const target = members.find((m) => m.user_id === to);
+    if (!target || to === ME_USER_ID) return apiError(422, "OWNER_TARGET_INVALID", "방장을 넘길 수 없는 사람이에요");
+    members.forEach((m) => { if (m.user_id === ME_USER_ID) m.role = "member"; });
+    target.role = "owner";
+    emitEvent(mapId, "public", "owner.changed", { map_id: mapId, from_user_id: ME_USER_ID, to_user_id: to });
     return HttpResponse.json(toMapResponse(map, { detail: true }));
   }),
 
@@ -110,17 +154,52 @@ export const mapsHandlers = [
   http.post("*/maps/:mapId/invite", ({ params }) => {
     const mapId = params.mapId as string;
     if (!getMapOr404(mapId)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    // #467: 내가 만든 유효한 링크가 있으면 새로 만들지 않고 그것을 돌려준다(남이 만든 링크는 재사용하지 않는다)
+    const [reusable] = Object.entries(store.invites).filter(([, i]) => i.mapId === mapId && i.created_by === ME_USER_ID && !inviteGone(i));
+    if (reusable) {
+      const [rtoken, r] = reusable;
+      return HttpResponse.json({ token: rtoken, url: `https://pingo.example.com/invites/${rtoken}`, expires_at: r.expires_at }, { status: 200 });
+    }
     const token = nextId("invite");
     const expires_at = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
-    store.invites[token] = { mapId, expires_at };
+    store.invites[token] = { mapId, expires_at, created_at: new Date().toISOString(), created_by: ME_USER_ID, used_count: 0 };
     return HttpResponse.json({ token, url: `https://pingo.example.com/invites/${token}`, expires_at }, { status: 201 });
+  }),
+
+  // #467 초대 링크 목록 — 방장만. 끈 링크·만료 링크는 빠진다. 최신순
+  http.get("*/maps/:mapId/invites", ({ params }) => {
+    const mapId = params.mapId as string;
+    if (!getMapOr404(mapId) || !(store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    if (!isOwner(mapId)) return apiError(403, "FORBIDDEN", "방장만 초대 링크를 관리할 수 있어요");
+    const list = Object.entries(store.invites)
+      .filter(([, i]) => i.mapId === mapId && !inviteGone(i))
+      .map(([token, i]) => ({
+        token,
+        url: `https://pingo.example.com/invites/${token}`,
+        expires_at: i.expires_at,
+        created_at: i.created_at ?? i.expires_at,
+        created_by_display_name: store.users[i.created_by ?? ME_USER_ID]?.display_name ?? "나",
+        used_count: i.used_count ?? 0,
+      }))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return HttpResponse.json(list);
+  }),
+
+  // #467 초대 링크 끄기 — 그 지도의 방장만. 이미 꺼도 204(멱등)
+  http.delete("*/invites/:token", ({ params }) => {
+    const invite = store.invites[params.token as string];
+    if (!invite || !getMapOr404(invite.mapId)) return apiError(404, "INVITE_NOT_FOUND", "유효하지 않은 초대 링크예요");
+    if (!isOwner(invite.mapId)) return apiError(403, "FORBIDDEN", "방장만 초대 링크를 끌 수 있어요");
+    invite.revoked = true;
+    return new HttpResponse(null, { status: 204 });
   }),
 
   // 초대 요약 — 로그인 없이 호출 가능(#23). 지도 내용은 주지 않는다
   http.get("*/invites/:token", ({ params }) => {
     const invite = store.invites[params.token as string];
     if (!invite) return apiError(404, "INVITE_NOT_FOUND", "유효하지 않은 초대 링크예요");
-    if (new Date(invite.expires_at).getTime() < Date.now()) return apiError(410, "INVITE_EXPIRED", "초대 링크가 만료됐어요");
+    const gone = inviteGone(invite);
+    if (gone) return gone;
     const map = getMapOr404(invite.mapId);
     if (!map) return apiError(404, "INVITE_NOT_FOUND", "유효하지 않은 초대 링크예요");
     return HttpResponse.json({
@@ -137,7 +216,8 @@ export const mapsHandlers = [
   http.post("*/invites/:token/accept", ({ params }) => {
     const invite = store.invites[params.token as string];
     if (!invite) return apiError(404, "INVITE_NOT_FOUND", "유효하지 않은 초대 링크예요");
-    if (new Date(invite.expires_at).getTime() < Date.now()) return apiError(410, "INVITE_EXPIRED", "초대 링크가 만료됐어요");
+    const gone = inviteGone(invite);
+    if (gone) return gone;
     const map = getMapOr404(invite.mapId);
     if (!map) return apiError(404, "INVITE_NOT_FOUND", "유효하지 않은 초대 링크예요"); // 삭제된 지도의 토큰(#369)
     const members = store.members[invite.mapId] ?? (store.members[invite.mapId] = []);
@@ -145,6 +225,7 @@ export const mapsHandlers = [
       if (myMapCount() >= MAP_LIMIT) return mapLimitError(); // 이미 구성원이면 새 참여가 아니라 막지 않는다
       members.push({ user_id: ME_USER_ID, role: "member", display_name: store.users[ME_USER_ID]?.display_name ?? "나", online: true });
       map.member_count = members.length;
+      invite.used_count = (invite.used_count ?? 0) + 1;
     }
     return HttpResponse.json(toMapResponse(map));
   }),

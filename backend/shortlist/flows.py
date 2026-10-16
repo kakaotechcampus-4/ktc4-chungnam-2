@@ -11,6 +11,7 @@ shortlist_items 쓰기를 조립한다.
 
 from common.events import record_event
 from common.geo import Point
+from maps import api as maps_api
 from pins import api as pins_api
 from shortlist import core, routing, service
 from shortlist.schemas import Route, ShortlistItem
@@ -58,6 +59,21 @@ def reorder_shortlist(db, *, map_id: str, item_ids: list[str], principal) -> lis
     for item in items:
         record_event(db, core.shortlist_changed_event(item, "reordered"))
     return items
+
+
+def export_shortlist(db, *, map_id: str, principal, fmt: str) -> tuple[str, str, str]:
+    """GET /maps/{mapId}/shortlist/export(#471) — (본문, media_type, Content-Disposition). 읽기만 하고
+    확정 순서(service.list_items)대로 pins.api로 핀을 받아 core의 순수 함수로 직렬화한다."""
+    rows = []
+    for order, item in enumerate(service.list_items(db, map_id=map_id), start=1):
+        pin = pins_api.get_pin_response_for_viewer(
+            db, pin_id=str(item.pin_id), viewer_id=principal.user_id, principal=principal,
+        )
+        rows.append(core.to_export_row(order, pin))
+    disposition = core.export_content_disposition(maps_api.get_map_title(db, map_id), fmt)
+    if fmt == "csv":
+        return core.render_csv(rows), "text/csv; charset=utf-8", disposition
+    return core.render_txt(rows), "text/plain; charset=utf-8", disposition
 
 
 def recalculate_route(db, *, map_id: str) -> list[Route]:

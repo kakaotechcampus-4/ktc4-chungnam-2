@@ -2,6 +2,10 @@
 기능형 코어 — 순수 함수만 둔다(docs/code-quality.md). DB·시간·전역상태를 건드리지 않는다.
 """
 
+import unicodedata
+from dataclasses import dataclass
+from urllib.parse import quote
+
 from authz.core import Principal, Resource, permissions_for
 from common.events import Event
 from pins import api as pins_api
@@ -51,6 +55,87 @@ def reorder_mismatch(current_ids: list[str], requested_ids: list[str]) -> dict |
         "missing": sorted(current - requested),
         "unknown": sorted(requested - current),
     }
+
+
+EXPORT_HEADER = ("순서", "이름", "분류", "링크", "메모")
+EXPORT_EMPTY_TXT = "확정한 장소가 아직 없어요\n"
+LIVE_NAME_SUFFIX = " (이름 확인 필요)"
+EXPORT_DEFAULT_NAME = "확정 리스트"
+EXPORT_TITLE_MAX = 50
+_FILENAME_FORBIDDEN = frozenset("/\\:*?\"<>|")
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")   # 엑셀이 수식으로 읽는 첫 글자(수식 주입 방지)
+
+
+@dataclass(frozen=True)
+class ExportRow:
+    order: int
+    name: str
+    category: str
+    link: str
+    memo: str
+
+
+def to_export_row(order: int, pin: Pin) -> ExportRow:
+    """확정 항목 하나를 내보내기 한 줄로. 좌표·반응·반대 사유는 담지 않는다. 링크는 핀 응답의 place_url 그대로(없으면 빈 칸) —
+    live 핀(#445)도 같다. live 핀은 이름을 저장하지 않으므로(#53) 이름 칸에 검색어 + "(이름 확인 필요)"다."""
+    if pin.source == "live":
+        name = (pin.search_query or "") + LIVE_NAME_SUFFIX
+    else:
+        name = pin.place_name or ""
+    return ExportRow(order=order, name=name, category=pin.category, link=pin.place_url or "", memo=pin.memo or "")
+
+
+def _csv_cell(value: str) -> str:
+    """RFC 4180 — 쉼표·따옴표·개행이 있으면 따옴표로 감싸고 안의 따옴표는 두 번 쓴다. 수식으로 읽힐 첫 글자는 작은따옴표를 앞에 붙인다."""
+    if value.startswith(_FORMULA_PREFIXES):
+        value = "'" + value
+    if any(ch in value for ch in ',"\r\n'):
+        return '"' + value.replace('"', '""') + '"'
+    return value
+
+
+def render_csv(rows: list[ExportRow]) -> str:
+    """UTF-8 BOM(엑셀 한글) + CRLF. 빈 목록이면 머리글만."""
+    lines = [EXPORT_HEADER, *[(str(r.order), r.name, r.category, r.link, r.memo) for r in rows]]
+    return "﻿" + "".join(",".join(_csv_cell(cell) for cell in line) + "\r\n" for line in lines)
+
+
+def render_txt(rows: list[ExportRow]) -> str:
+    """한 장소 한 줄 — `1. 이름 (분류) 링크 — 메모`. 칸 안의 개행은 공백으로 접어 한 줄을 지킨다."""
+    if not rows:
+        return EXPORT_EMPTY_TXT
+
+    def one_line(text: str) -> str:
+        return " ".join(text.split())
+
+    lines = []
+    for r in rows:
+        line = f"{r.order}. {one_line(r.name)} ({r.category})"
+        if r.link:
+            line += f" {r.link}"
+        if r.memo:
+            line += f" — {one_line(r.memo)}"
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def export_basename(title: str | None) -> str:
+    """파일 이름의 본문(확장자 제외). 지도 제목에서 경로 문자·제어/서식 문자(개행 포함)를 빼고 공백을 접은 뒤
+    앞뒤 공백·점을 정리하고 길이를 자른다. 제목이 없거나 정리 뒤 비면 기본 이름."""
+    spaced = "".join(" " if ch.isspace() else ch for ch in (title or ""))   # 개행·탭도 먼저 공백으로 — 단어가 붙지 않게
+    cleaned = "".join(
+        ch for ch in spaced if ch not in _FILENAME_FORBIDDEN and unicodedata.category(ch) not in ("Cc", "Cf", "Zl", "Zp")
+    )
+    cleaned = " ".join(cleaned.split())[:EXPORT_TITLE_MAX].strip(" .")
+    return f"{cleaned} {EXPORT_DEFAULT_NAME}" if cleaned else EXPORT_DEFAULT_NAME
+
+
+def export_content_disposition(title: str | None, ext: str) -> str:
+    """RFC 5987 `filename*=UTF-8''<퍼센트 인코딩>` + 구형용 ASCII `filename`. 이름에서 개행·따옴표를 이미 뺐고
+    인코딩 값은 `%XX`뿐이라 헤더 인젝션이 불가능하다. ASCII 이름은 한글 등을 버리고 남는 게 없으면 `shortlist`다."""
+    name = export_basename(title)
+    ascii_name = "".join(ch for ch in name if ch.isascii()).strip(" .") or "shortlist"
+    return f"attachment; filename=\"{ascii_name}.{ext}\"; filename*=UTF-8''{quote(f'{name}.{ext}', safe='')}"
 
 
 def to_route_response(row) -> Route:

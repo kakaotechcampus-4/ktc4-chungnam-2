@@ -6,18 +6,23 @@ auth/core.py(순수 함수)에 있다(docs/code-quality.md 기능형 코어/명�
 (pins/api.py와 같은 규약).
 """
 
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from agent import api as agent_api
 from auth import core
 from auth.models import User
 from common.errors import AppError
 from common.settings import settings
+from maps.schemas import Map
+from feedback import api as feedback_api
 from maps import api as maps_api
+from notifications import api as notifications_api
 from pins import api as pins_api
 from recommend import api as recommend_api
 
@@ -163,7 +168,7 @@ def revoke_sessions(db: Session, *, user_id: str) -> None:
 
 
 def withdraw_user(db: Session, *, user_id: str) -> User:
-    """탈퇴 처리(12절, #155) — users 행은 soft delete, 그 사람의 반응·근거 줄은 삭제한다.
+    """탈퇴 처리(12절, #155) — users 행은 soft delete, 그 사람의 반응·근거 줄은 삭제하고 피드백은 작성자 연결만 끊는다(#10).
 
     방장인 지도는 먼저 후임에게 넘기고, 넘길 사람이 없으면 지도를 삭제한다(#369 10번). 탈퇴자의
     멤버십 행은 남는다(#245) — 핀 작성자 표시에 쓴다.
@@ -173,12 +178,51 @@ def withdraw_user(db: Session, *, user_id: str) -> User:
     모든 쓰기는 같은 트랜잭션이라 중간에 실패하면 함께 롤백된다.
 
     맨 먼저 속한 지도 행을 id 순서로 잠근다(#435) — 같은 지도의 나가기·양도와 줄을 세워 서로 어긋난
-    상태를 보지 않게 하고, 순서가 고정이라 교착도 없다."""
-    maps_api.lock_member_maps(db, user_id)
+    상태를 보지 않게 하고, 순서가 고정이라 교착도 없다.
+
+    잠근 지도 목록은 agent 정리에 그대로 넘긴다(#512) — 그 사람의 열람 기록과 그 지도들의 요약을 지운다
+    (docs/agent-v2.md 12.9)."""
+    map_ids = maps_api.lock_member_maps(db, user_id)
     row = get_active_user_or_401(db, user_id=user_id)
     maps_api.transfer_or_delete_owned_maps(db, user_id)
     pins_api.delete_reactions_by_user(db, user_id=user_id)
     recommend_api.delete_evidence_lines_by_author(db, user_id=user_id)
+    agent_api.delete_by_user(db, user_id=user_id, map_ids=map_ids)
+    feedback_api.anonymize_by_user(db, user_id=user_id)
+    notifications_api.delete_by_user(db, user_id=user_id)
     row.deleted_at = datetime.now(timezone.utc)
     db.flush()
     return row
+
+
+def join_as_guest(db: Session, *, display_name: str, invite_token: str) -> tuple[User, Map]:
+    """게스트 계정을 만들고 초대 토큰의 지도에 구성원으로 넣는다(#472) — 한 트랜잭션, 커밋은 호출자.
+    순서: 토큰 검증(404·410) → 게스트 수 확인(409) → 계정 생성 → 지도 가입. 어느 단계든 실패하면 같이 롤백된다.
+    같은 토큰의 동시 호출이 상한을 넘기지 않게 토큰 단위 advisory lock을 잡는다."""
+    maps_api.check_invite(db, invite_token)
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"guest_invite:{invite_token}"})
+    issued = db.execute(select(func.count()).select_from(User).where(User.guest_invite_token == invite_token)).scalar_one()
+    if issued >= core.GUEST_LIMIT_PER_INVITE:
+        raise AppError("GUEST_LIMIT")
+    row = User(
+        provider="guest", provider_user_id=secrets.token_urlsafe(24), display_name=display_name,
+        is_guest=True, guest_invite_token=invite_token, last_seen_at=datetime.now(timezone.utc),
+    )
+    db.add(row)
+    db.flush()
+    return row, maps_api.accept_invite(db, token=invite_token, user_id=row.id)
+
+
+def purge_inactive_guests(db: Session, *, now: datetime, older_than_days: int) -> int:
+    """마지막으로 쓴 지 older_than_days일이 지난 게스트를 일반 탈퇴와 같은 규칙으로 지운다(withdraw_user).
+    last_seen_at이 없으면 created_at 기준. 이미 탈퇴한 계정은 건너뛴다. 지운 수를 돌려준다."""
+    cutoff = now - timedelta(days=older_than_days)
+    ids = db.execute(
+        select(User.id).where(
+            User.is_guest.is_(True), User.deleted_at.is_(None),
+            func.coalesce(User.last_seen_at, User.created_at) < cutoff,
+        ).order_by(User.id)
+    ).scalars().all()
+    for user_id in ids:
+        withdraw_user(db, user_id=user_id)
+    return len(ids)

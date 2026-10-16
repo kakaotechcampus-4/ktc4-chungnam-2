@@ -60,11 +60,13 @@ def test_create_invite_returns_201_with_working_token(app_client, db_session):
     assert row.used_count == 0
 
 
-def test_create_invite_twice_gives_distinct_tokens(app_client):
+def test_create_invite_twice_reuses_my_live_link(app_client):
+    """내가 만든 유효한 링크가 있으면 새로 만들지 않는다(#467) — 자세한 경우는 test_invite_links_api.py."""
     map_body = _create_map(app_client)
-    first = app_client.post(f"/maps/{map_body['id']}/invite", cookies=_auth("user_1")).json()
-    second = app_client.post(f"/maps/{map_body['id']}/invite", cookies=_auth("user_1")).json()
-    assert first["token"] != second["token"]
+    first = app_client.post(f"/maps/{map_body['id']}/invite", cookies=_auth("user_1"))
+    second = app_client.post(f"/maps/{map_body['id']}/invite", cookies=_auth("user_1"))
+    assert (first.status_code, second.status_code) == (201, 200)
+    assert first.json()["token"] == second.json()["token"]
 
 
 def test_create_invite_as_non_member_is_404(app_client):

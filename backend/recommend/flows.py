@@ -55,6 +55,7 @@ from common.errors import AppError
 from common.events import Event, record_event
 from pins import api as pins_api
 from pins.schemas import Pin
+from places import api as places_api
 from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
 from recommend.models import RecommendRun
@@ -145,13 +146,31 @@ CATEGORIES: tuple[str, ...] = categories.recommendable()  # common/categories.py
 DEFAULT_REGION_RADIUS_M = core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)  # 15분 * 80m/분 = 1200m
 
 
+def list_runs(
+    db: Session, *, map_id: str, requested_by: str, category: str | None, limit: int,
+) -> list[schemas.RunSummary]:
+    """GET /maps/{mapId}/runs (#469) — 내가 요청한 run만, 최근순. 남의 run은 어떤 경로로도 섞이지 않는다."""
+    return [
+        schemas.RunSummary(
+            id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
+            attempt_limit=core.ATTEMPT_LIMIT, created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
+        )
+        for run, candidate_count, published_count in service.list_runs_for_requester(
+            db, map_id=map_id, requested_by=requested_by, category=category, limit=limit,
+        )
+    ]
+
+
 def get_readiness(db: Session, *, map_id: str) -> dict[str, dict]:
     """GET /maps/{mapId}/recommend/readiness (5-4). 카테고리마다 ♥/🚫 의견이 달린 핀이 1곳 이상이면 열린다
     (#360 — 구성원 수와 무관, 혼자 쓰는 지도도 같다)."""
-    return {
-        category: core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
-        for category in CATEGORIES
-    }
+    return {category: readiness_for_category(db, map_id=map_id, category=category) for category in CATEGORIES}
+
+
+def readiness_for_category(db: Session, *, map_id: str, category: str) -> dict:
+    """카테고리 하나의 준비 판정(⓪) — 라우터(get_readiness), create_run, recommend.api.get_readiness(#530)가
+    모두 이 함수를 쓴다. 계산을 한 곳에만 둔다."""
+    return core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
 
 
 def _evidence_from_reaction(reaction: dict) -> dict:
@@ -234,7 +253,7 @@ def create_run(
     4) 반응 → 근거 구조화(글은 llm.api.plan_evidence, 칩은 코드 #412) 5) run INSERT → evidence_lines INSERT 6) 기본값
     지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
     트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다."""
-    readiness = core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
+    readiness = readiness_for_category(db, map_id=map_id, category=category)
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
 
@@ -382,6 +401,11 @@ def _run_pipeline(
     is_open_check = core.build_check("is_open", "pass", known=False, value=None, passes=True)
     removed_open = 0  # dev 스텁은 실시간 영업시간 조회가 없어 항상 unknown+needs_check — 결코 제거하지 않는다
 
+    # 추천 가능 아님 제거 — 영업 종료 다음 단계. 모두 빠져 0개여도 0개로 보여 준다(반경·기준을 완화하지 않는다).
+    recommendable = [p for p in within_radius if p.can_recommend]
+    removed_not_recommendable = len(within_radius) - len(recommendable)
+    within_radius = recommendable
+
     active_hard_keys = _active_hard_fact_keys(db, run)
     active_lines = service.list_active_evidence(db, run.id)
     soft_requirements = _active_soft_requirements(db, run)
@@ -508,6 +532,7 @@ def _run_pipeline(
         ("카테고리 후보 풀", 0),
         ("반경 밖 제거", removed_radius),
         ("영업 종료 제거", removed_open),
+        ("추천 가능 아님 제거", removed_not_recommendable),
         ("실격 조건 제거", removed_disqualify),
         ("이미 제안·거절됨", removed_exclusions),
         ("상위 3곳 선정", removed_ranking),
@@ -541,7 +566,9 @@ def _excluded_place_ids(db: Session, run: RecommendRun) -> set[str]:
        뒤에도 거절 이력이 남도록 pins가 삭제된 핀까지 돌려준다. add_exclusions는 이미 있는
        조합을 건너뛰므로 여러 번 불러도 안전하다(이미 proposed인 곳은 그대로 둔다).
     3) 이미 이 지도에 있는 핀(수동이든 게시된 것이든) — 안 빼면 게시하려는 순간 pins.unique(map_id,
-       place_id)에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정, 2026-09-23)."""
+       place_id)에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정, 2026-09-23).
+    4) 이 지도의 실시간 핀이 가리키는 가게(#569) — 실시간 핀은 place_id가 없고 카카오 ID만 있어 3)에 안 잡힌다.
+       그 카카오 ID로 매칭된 자체 DB 장소를 찾아 합친다. 깔때기에서는 「이미 제안·거절됨」에 같이 센다."""
     service.add_exclusions(
         db, map_id=run.map_id, category=run.category,
         place_ids=pins_api.list_disliked_place_ids(
@@ -549,9 +576,14 @@ def _excluded_place_ids(db: Session, run: RecommendRun) -> set[str]:
         ),
         reason="dismissed", run_id=run.id, requested_by=run.requested_by,
     )
+    live_pin_place_ids = {
+        candidate.place_id
+        for kakao_id in pins_api.list_live_kakao_place_ids(db, map_id=run.map_id)
+        for candidate in places_api.own_places_by_kakao_id(kakao_id, db=db)
+    }
     return service.list_excluded_place_ids(
         db, map_id=run.map_id, requested_by=run.requested_by,
-    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id)
+    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id) | live_pin_place_ids
 
 
 def execute_run(
@@ -663,6 +695,8 @@ def get_result(
     """GET /runs/{runId}/result — funnel은 마지막 execute/widen/retry가 저장해둔 값을 그대로
     쓴다(재계산하지 않는다 — GET은 부작용도, 외부 게이트웨이 의존도 없어야 한다)."""
     run = service.get_run_or_404(db, run_id)
+    if run.status != "done":
+        raise AppError("RUN_NOT_FINISHED", detail={"status": run.status})  # #469 — 결과는 done일 때만 있다
     regions = service.list_regions(db, run_id)
     region_labels = {r.id: r.label for r in regions}
     candidates = service.list_candidates(db, run_id)

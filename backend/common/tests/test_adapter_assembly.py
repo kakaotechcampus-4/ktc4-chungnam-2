@@ -13,6 +13,7 @@ MISSING_REAL = {
     "recommend.PlaceSearchGateway": "#14",
     "recommend.PlaceFactsGateway": "#14",
     "recommend.EvidencePlanGateway": "#116",
+    "agent.LlmGateway": "M2 — prioritize, diagnose는 real이 있다(#532, #533). summarize, advise_run이 남았다",
 }
 # 주의: "authz.MembershipGateway"는 여기 없다(issue #89) — maps.api.DbMembershipGateway가
 # 유일한 구현이 되면서 authz/deps.py가 select()를 완전히 그만 썼다. dev 스텁도 함께 제거됐다.

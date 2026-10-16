@@ -11,7 +11,10 @@ DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). 실시간 보조: Redis
 
 ```
 users(
-  id, provider('kakao'), provider_user_id, display_name,
+  id, provider('kakao'|'guest'), provider_user_id, display_name,
+  is_guest boolean not null default false,   -- v2 #472: 이름만 입력한 임시 계정. provider='guest', provider_user_id는 임의 값(재사용 안 함)
+  guest_invite_token null,                   -- 게스트를 만든 초대 토큰. 토큰 하나당 게스트 10명 상한(GUEST_LIMIT)을 이 열로 센다
+  last_seen_at timestamptz null,             -- 게스트 정리 기준: 90일 쓰지 않으면 정리 작업(#168)이 지운다. 세션을 쓸 때 하루 한 번 갱신
   created_at, deleted_at            -- 탈퇴 시 users만 soft delete. 반응·근거 줄은 hard delete, 핀은 유지하고 작성자는 '탈퇴한 구성원'으로 표시 (12절, #155)
   sessions_valid_after timestamptz null   -- 로그아웃 시각. 이 시각 이전(같은 초 포함)에 발급된 세션 토큰은 무효, NULL이면 전부 유효 (#129)
 )
@@ -41,7 +44,8 @@ memberships(
   -- 탈퇴자의 행은 핀 작성자 표시용으로 남는다(#245).
 
 invites(
-  token, map_id, created_by, expires_at, used_count
+  token, map_id, created_by, expires_at, used_count,
+  created_at, revoked_at            -- revoked_at: 방장이 끈 시각(NULL이면 켜짐, #467). map_id 인덱스
 )
 ```
 
@@ -149,6 +153,20 @@ places(
   name, category('음식점'|'카페'|'관광지'), address, phone,
   geom geography(Point,4326),          -- 인허가 좌표계가 위경도가 아니면 변환해 넣는다. 좌표가 없는 행은 적재하지 않는다
   status('open'|'closed'),             -- 인허가 영업 상태. closed는 검색·추천에서 제외
+  curated boolean not null default false,
+                                        -- 정예(사람이 직접 조사·납품한 데이터)인가(2026-10-16). `--authoritative` 적재가 켠다.
+                                        -- 이름·분류·라벨을 인허가 커버리지가 덮지 못하게 하고 can_recommend 판정의 기준이다.
+                                        -- 한 번 true가 되면 커버리지 적재가 끄지 않는다. 처음 채울 때는 "출처(label_source)가 NULL인
+                                        -- 라벨 행을 가진 장소 = 정예"로 되메운다(places/for_Root.md #can_recommend 조사 결과).
+  can_recommend boolean not null default false,
+                                        -- AI 추천 후보 풀에 들어가도 되는 장소인가(2026-10-15 결정, 구현은 places).
+                                        -- 직접 찍은 핀·검색·링크에는 영향이 없다 — 추천 후보를 고를 때만 쓴다.
+                                        -- 규칙(재계산 가능한 값이다, 사람이 손으로 정하지 않는다):
+                                        --   정예 행(curated=true)은 true.
+                                        --   그 밖에는 카테고리별 확정(known) 라벨 수가 임계 이상이면 true
+                                        --   (시작값: 음식점 5개, 카페 3개 — pingo_demo 분포로 조정, 결정은 루트).
+                                        --   관광지는 true. 유흥·주점류도 같은 규칙을 쓴다(제외하지 않는다).
+                                        -- 라벨이 늘거나 적재가 끝나면 places의 재계산 스크립트로 다시 계산한다.
   kakao_place_id null, kakao_place_url null, kakao_matched_at null,
                                         -- 사용자가 검색해서 고를 때 한 건씩 매칭한 결과. 허용 범위: 카카오 장소 ID·URL·확인 일자.
                                         -- 카카오 응답의 이름·주소·좌표는 저장하지 않는다(#53)
@@ -223,7 +241,7 @@ recommend_runs(
   attempt_no,                           -- #31 확정(2026-09-22, 황준영·itsmedoyun 합의): 개인
                                          -- (requested_by) 단위로 집계, 카테고리 구분 없음(그
                                          -- 사람이 이 지도에서 만든 모든 run이 카테고리 무관하게
-                                         -- 한 카운터를 공유), 상한 5회(기존 3회에서 상향). 한
+                                         -- 한 카운터를 공유), 상한 10회(3→5→10회, 2026-10-15: 지도 안에서 구성원 각자). 한
                                          -- 사람이 상한에 도달해도 다른 사람의 추천 시도에는
                                          -- 영향 없음.
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
@@ -293,6 +311,101 @@ exclusions(
   -- 곳도 B의 추천에는 그대로 뜬다. 조회 시 반드시 requested_by = 현재 사용자로 필터링한다
   -- (map_id만으로 걸러진 예전 설계를 그대로 두면 다른 사람의 거절이 새어 들어간다).
 ```
+
+---
+
+## agent (v2 계획 보조 에이전트, docs/agent-v2.md 13절, #510)
+
+> v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 7개 테이블만 쓰고, 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.
+> `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다. 지도 정리(#431)는 `agent.api.purge_map_data`, 탈퇴(#155)는 `agent.api.delete_by_user`가 맡는다.
+> **agent 테이블에는 사유 원문을 저장하지 않는다**(2026-10-15). 사유는 `reaction_id`로만 가리키고, 인용 문장은 응답과 이벤트를 만들 때 pins에서 읽어 렌더한다. 반응이 지워지면 인용도 사라진다(docs/agent-v2.md 2절 13번).
+
+```
+agent_settings(                       -- 지도별 모드. 행이 없으면 켜짐(기본값)
+  map_id primary key, enabled boolean, updated_by, updated_at
+)
+
+agent_cursors(                        -- 관찰 흐름만 쓴다. 지도별 책갈피와 다음 점검 시각, 중복 실행 방지 자리표
+  map_id primary key,
+  last_seen_seq bigint default 0,     -- 관찰 때 본 가장 큰 event_log seq(구멍은 추적하지 않는다, agent-v2.md 12.5)
+  last_observed_at null, next_check_at null, lease_until null
+                                      -- gap_seq는 0030에서 지웠다(#515)
+)
+
+agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 끝나도 남긴다. 30일 보존
+  id uuid, map_id, started_at, finished_at null,
+  trigger('activity'|'time'|'summary'|'run_advice'),
+  snapshot_at null, snapshot_seq null,
+  signals jsonb, blocked jsonb, priority jsonb null,
+  policy_version null, prompt_version null, model null, used_model boolean,
+  tool_calls jsonb,                   -- 도구 입력과 결과. 사유 글은 reaction_id와 글자 수로 바꿔 남긴다
+  verification jsonb null, tokens_in, tokens_out,
+  outcome('no_signal'|'blocked'|'silent'|'unknown'|'invalid_schema'|'invalid_claims'|'model_failed'|'stale'
+          |'suggested'|'summarized'|'advised'|'trip_ended'|'map_deleted'),
+  outcome_detail jsonb null
+)
+  index(map_id, started_at)
+
+agent_suggestions(                    -- 바텀시트의 지도 제안
+  id uuid, map_id, run_id null references agent_runs on delete set null,
+  diagnosis('stall'|'split'|'no_reaction'|'category_gap'), category null, pin_id null,
+  fingerprint, evidence_hash,         -- 중복 금지(유형+카테고리+근거 id), 상태 재확인(근거 id+반응 종류+updated_at)
+  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id만). 렌더는 응답 때
+  status('active'|'accepted'|'dismissed'|'expired'|'superseded'),
+  shadow boolean default false,       -- true면 저장만 하고 화면과 이벤트에 내지 않는다
+  created_at, expires_at,             -- 24시간
+  resolved_by null,                   -- 기록만. 화면과 이벤트에 싣지 않는다
+  resolved_at null, resolved_action jsonb null, decided_within_24h boolean null
+)
+  unique(map_id) where status = 'active'   -- 지도당 활성 제안 하나
+  index(map_id, fingerprint)
+
+agent_suggestion_views(               -- 사용자별 열람. 버튼의 점(has_unseen)
+  suggestion_id references agent_suggestions on delete cascade, user_id, viewed_at,
+  primary key(suggestion_id, user_id)
+)
+
+agent_reason_summaries(               -- 우리 조건 요약. 카테고리마다 최신본 하나를 덮어쓴다
+  map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸(키, 개수, 서버 문구)과 근거 reaction_id. 사유 원문 없음
+  based_on_reaction_count, run_id null, updated_at,
+  primary key(map_id, category)
+)
+
+agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조언이 없어도 빈 값으로 저장해 다시 만들지 않는다
+  run_id primary key,                 -- recommend_runs.id. 모듈 경계라 FK 없음
+  map_id, kind null, claims jsonb, advice jsonb, actions jsonb, agent_run_id null, created_at
+)
+```
+
+---
+
+## notifications / feedback (v2, #470, #10)
+
+> v2. 계약만 먼저 올렸고 마이그레이션은 구현 PR이 그때의 head 다음 번호로 만든다(번호를 문서에 못 박지 않는다 — agent·maps 마이그레이션과 겹친다). 이슈 본문의 `0026`은 옛 초안이다.
+> notifications는 이 테이블들만 쓴다. 다른 모듈은 `notifications/api.py`의 `notify(db, ...)`만 부르고, **이벤트를 발행하는 같은 트랜잭션에서** 호출한다(event_log는 지도 단위이고 읽음 상태가 없어 알림함으로 못 쓴다).
+
+```
+notifications(                        -- 사용자별 알림함. 수신자마다 한 행
+  id, user_id, map_id,                -- map_id는 FK 없음(지도가 삭제돼도 알림은 남는다)
+  type,                               -- NotificationType 5종(api-spec)
+  map_title,                          -- 만들 때의 제목 스냅샷
+  pin_id nullable,                    -- pin_reaction·my_ai_pin_published만. FK 없음
+  message,                            -- 서버가 만든 문장. 반대 사유·메모는 넣지 않는다
+  created_at, read_at nullable,
+  index (user_id, created_at desc), index (user_id) where read_at is null
+)
+notification_prefs(                   -- 행이 없으면 켜짐(기본값)
+  user_id, type, enabled, primary key (user_id, type)
+)
+feedback(                             -- 서비스 피드백. 저장만 한다
+  id, user_id nullable,               -- 탈퇴하면 NULL로 끊고 내용은 남긴다
+  category,                           -- bug | idea | other
+  message,                            -- 1~1000자, 앞뒤 공백 제거
+  map_id nullable, created_at
+)
+```
+
+규칙: 행위자 본인에게는 알림을 만들지 않는다. `notification_prefs`에서 끈 종류는 만들 때 거른다(이미 쌓인 알림은 지우지 않는다). 90일이 지난 알림은 정리 작업(#168)이 지운다. 계정 탈퇴(#155)는 `notifications.api.delete_by_user`가 그 사용자의 알림·설정을 지우고, 지도 정리(#431)는 map_id가 같은 알림을 지우지 않는다(남은 구성원의 알림함에 `map_deleted`가 보여야 한다).
 
 ---
 

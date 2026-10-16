@@ -1,3 +1,15 @@
+# 루트 보고 — backend/realtime (#522 agent용 latest_seq_by_map)
+
+## 추가한 것
+
+- `realtime.api.latest_seq_by_map(db) -> dict[str, tuple[int, datetime]]`: 지도 id → (가장 큰 event_log seq, 그 행의 created_at). 전체·개인 채널을 모두 보고, 보존 24시간 안의 행만 센다(`service.RETENTION`, replay와 같은 기준). 이벤트가 없는 지도는 키가 없다. map_id로 묶는 쿼리 한 번이고, type·payload·수신자는 내보내지 않는다. 읽기 전용, 커밋하지 않는다. 처음 연 `visible_seqs`는 지웠다.
+
+## 확인 요청 — agent 커서와 seq 구멍
+
+- #525로 해결(커서 = 본 것 중 가장 큰 seq).
+
+---
+
 # 루트 리뷰 가이드 — backend/realtime (#369 구독 끊기)
 
 ## 구현 범위

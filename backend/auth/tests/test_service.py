@@ -120,6 +120,21 @@ def test_withdraw_user_sets_deleted_at(db_session):
     assert withdrawn.deleted_at is not None
 
 
+def test_withdraw_user_detaches_feedback_author_but_keeps_content(db_session):
+    from feedback import service as feedback_service
+    from feedback.models import Feedback
+
+    db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
+    db_session.flush()
+    row = feedback_service.submit(db_session, user_id="user_1", message="의견", category="idea", map_id=None)
+
+    service.withdraw_user(db_session, user_id="user_1")
+
+    db_session.expire_all()
+    saved = db_session.get(Feedback, row.id)
+    assert saved.user_id is None and saved.message == "의견"
+
+
 def test_withdraw_user_locks_member_maps_before_anything_else(db_session, monkeypatch):
     db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
     db_session.flush()

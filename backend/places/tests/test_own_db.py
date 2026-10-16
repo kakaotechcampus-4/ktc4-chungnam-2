@@ -580,12 +580,12 @@ def _fact_rows(db):
     )
 
 
-def test_cafes_load_as_cafe_category_and_skip_unknown_types_and_missing_coordinates(db_session):
+def test_cafes_load_as_cafe_category_for_any_type_and_skip_missing_coordinates(db_session):
     lines = _cafes(db_session)
     rows = db_session.execute(select(Place)).scalars().all()
-    assert len(rows) == 8 and {p.category for p in rows} == {"카페"} and {p.source for p in rows} == {"permit"}
-    assert {p.source_id for p in rows} == {f"C00{i}" for i in range(1, 9)}
-    assert any("모르는 업태: 북카페: 1" in l for l in lines) and any("좌표 없음: 1" in l for l in lines)
+    assert len(rows) == 10 and {p.category for p in rows} == {"카페"} and {p.source for p in rows} == {"permit"}
+    assert {p.source_id for p in rows} == {f"C00{i}" for i in range(1, 9)} | {"C010", "C011"}
+    assert any("좌표 없음: 1" in l for l in lines) and not any("모르는 업태" in l for l in lines)
     near = api.search_nearby_own("카페", [Area(37.5446, 127.0562, 100)], db=db_session)
     assert len(near) == 1   # 카페 분류로 반경 검색에 잡힌다
     assert api.search_nearby_own("음식점", [Area(37.5446, 127.0562, 100)], db=db_session) == []
@@ -595,9 +595,9 @@ def test_cafes_load_is_idempotent(db_session):
     _cafes(db_session, labels=CAFE_LABELS_JSON)
     places, facts = (db_session.scalar(select(func.count()).select_from(t)) for t in (Place, PlaceFact))
     lines = _cafes(db_session, labels=CAFE_LABELS_JSON)
-    assert db_session.scalar(select(func.count()).select_from(Place)) == places == 8
+    assert db_session.scalar(select(func.count()).select_from(Place)) == places == 10
     assert db_session.scalar(select(func.count()).select_from(PlaceFact)) == facts
-    assert any("신규 0, 갱신 8" in l for l in lines)
+    assert any("신규 0, 갱신 10" in l for l in lines)
 
 
 def test_cafe_labels_json_and_csv_paths_give_the_same_result(db_session):
@@ -617,7 +617,51 @@ def test_cafes_command_accepts_labels_csv_too(db_session):
     assert any("장소를 못 찾아 건너뜀 1" in l for l in lines)   # C404: 장소 없는 라벨
 
 
+def test_cafes_do_not_overwrite_the_category_of_an_existing_place(db_session):
+    """새 카페 파일의 관리번호가 이미 음식점으로 있으면 분류를 바꾸지 않고 건너뛰며 경고한다(#463)."""
+    db_session.add(Place(source="permit", source_id="C001", name="기존 식당", category="음식점", status="open",
+                         geom=repository._point(37.5446, 127.0562)))
+    db_session.flush()
+    lines = _cafes(db_session)
+    kept = db_session.execute(select(Place).where(Place.source_id == "C001")).scalar_one()
+    assert kept.category == "음식점" and kept.name == "기존 식당"
+    assert db_session.scalar(select(func.count()).select_from(Place)) == 10
+    assert any("다른 분류로 이미 있음 1행" in l for l in lines) and any("신규 9, 갱신 0" in l for l in lines)
+
+
 def test_cafes_cli_dry_run_writes_nothing(db_session, capsys):
     rc = load.main(["cafes", "--file", str(CAFE_CSV), "--labels", str(CAFE_LABELS_JSON), "--dry-run"], session_factory=lambda: db_session)
     assert rc == 0 and "dry-run" in capsys.readouterr().out
     assert db_session.scalar(select(func.count()).select_from(Place)) == 0
+
+
+# ---- 지도 링크 해석(#474)의 자체 DB 조회 ----
+
+def test_link_lookup_finds_own_places_within_100m_closest_first(loaded):
+    near = api.own_places_near(37.5445, 127.0561, 100.0, 20, db=loaded)
+    assert near and near[0].name == "성수 칼국수"
+    assert [c.distance_m for c in near] == sorted(c.distance_m for c in near)
+    assert all(c.distance_m <= 100 for c in near)
+    assert api.own_places_near(37.5445, 127.0561, 100.0, 1, db=loaded)[0].place_id == near[0].place_id
+    assert api.own_places_near(35.0, 129.0, 100.0, 20, db=loaded) == []   # 서울 밖
+
+
+def test_link_lookup_by_kakao_id_sees_only_recorded_ids(loaded):
+    pid = _pid(loaded, "permit", "P001")
+    assert api.own_places_by_kakao_id("kakao:777", db=loaded) == []
+    api.record_kakao_match(pid, "kakao:777", "http://place.map.kakao.com/777", db=loaded)
+    [c] = api.own_places_by_kakao_id("kakao:777", db=loaded)
+    assert (c.place_id, c.kakao_place_id) == (pid, "kakao:777")
+
+
+def test_parse_link_end_to_end_on_the_real_db(loaded):
+    pid = _pid(loaded, "permit", "P001")
+    google = ("https://www.google.com/maps/place/%EC%84%B1%EC%88%98+%EC%B9%BC%EA%B5%AD%EC%88%98/@37.5440,127.0560,17z"
+              "/data=!8m2!3d37.5445!4d127.0561")
+    result = api.parse_link(google, db=loaded)
+    assert [m.place_name for m in result.matches] == ["성수 칼국수"] and result.matches[0].place_id == f"own:{pid}"
+
+    assert api.parse_link("https://place.map.kakao.com/777", db=loaded).needs_search_query is True
+    api.record_kakao_match(pid, "kakao:777", "http://place.map.kakao.com/777", db=loaded)
+    kakao = api.parse_link("https://place.map.kakao.com/777", db=loaded)
+    assert kakao.needs_search_query is False and kakao.matches[0].place_id == "kakao:777"

@@ -77,16 +77,25 @@ export function toMapView(map: MapDto): MapView {
 const INVITE_ERROR_MESSAGES: Record<string, string> = {
   INVITE_NOT_FOUND: '유효하지 않은 초대 링크예요',
   INVITE_EXPIRED: '초대 링크가 만료됐어요. 초대한 분께 새 링크를 요청하세요',
-  MAP_LIMIT: '지도는 10개까지 만들거나 참여할 수 있어요. 다른 지도를 나가거나 삭제한 뒤 다시 시도해 주세요',
 }
 
-/** 지도 만들기 실패 문구. 10개를 넘으면 409 MAP_LIMIT(#369). */
+/** 내 지도 상한(#433에서 10→20). 서버 값과 맞춘다 — 409 MAP_LIMIT 응답의 detail.limit이 있으면 그쪽을 쓴다. */
+export const MAP_LIMIT = 20
+
+function mapLimitMessage(err: ApiError): string {
+  const limit = typeof err.detail?.limit === 'number' ? err.detail.limit : MAP_LIMIT
+  return `지도는 ${limit}개까지 만들거나 참여할 수 있어요. 다른 지도를 나가거나 삭제한 뒤 다시 시도해 주세요`
+}
+
+/** 지도 만들기 실패 문구. 상한을 넘으면 409 MAP_LIMIT(#369). */
 export function createMapErrorMessage(err: unknown): string {
-  return err instanceof ApiError && err.code === 'MAP_LIMIT' ? INVITE_ERROR_MESSAGES.MAP_LIMIT : '지도를 만들지 못했어요'
+  return err instanceof ApiError && err.code === 'MAP_LIMIT' ? mapLimitMessage(err) : '지도를 만들지 못했어요'
 }
 
 export function inviteErrorMessage(err: unknown): string {
-  return (err instanceof ApiError && INVITE_ERROR_MESSAGES[err.code]) || '참여하지 못했어요'
+  if (!(err instanceof ApiError)) return '참여하지 못했어요'
+  if (err.code === 'MAP_LIMIT') return mapLimitMessage(err)
+  return INVITE_ERROR_MESSAGES[err.code] ?? '참여하지 못했어요'
 }
 
 export type InviteView = { title: string; dates: string; memberCount: number; pinCount: number; inviter: string }
