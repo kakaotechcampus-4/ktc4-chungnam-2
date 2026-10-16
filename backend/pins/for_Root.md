@@ -263,3 +263,15 @@
 - `pins.api.list_live_kakao_place_ids(db, *, map_id) -> list[str]` — 삭제되지 않은 live 핀의 카카오 ID만(순서 보장 없음). recommend가 "이미 지도에 있는 장소 빼기"에 쓴다.
 - 알려진 한계: 이 검사는 DB 유니크 인덱스가 아니라 조회라, 같은 가게를 live·search로 동시에 만드는 경합은 막지 못한다.
 - 테스트: `pins/tests/test_pin_cross_duplicate_569.py`(9개). 복잡도 예상 2, 실제 2.
+
+## #577 — 카톡 대화 링크 일괄 핀 찍기 (POST /maps/{mapId}/pins/link-preview, /pins/bulk)
+
+- 새 모듈 `pins/link_import.py`(미리보기·일괄 생성). 라우터는 `require_on_map("pin.create")` — 구성원(게스트 포함) 누구나, 비구성원 404. 스펙·권한·에러 코드 변경 없음.
+- **link-preview**: `parse_link(url, db=None)`을 `ThreadPoolExecutor(5)`로 병렬 실행, 마감 `PREVIEW_DEADLINE_S=15`초(넘기면 그 항목 `LINK_UNRESOLVED`, 스레드는 기다리지 않고 결과를 버린다). `AppError`(LINK_NOT_SUPPORTED·LINK_UNRESOLVED)는 그 코드로, 그 밖의 예외는 타입만 로그에 남기고 `LINK_UNRESOLVED`. 쓰기 없음.
+- `already_pinned_pin_id`: matches의 `own:<uuid>`는 그 장소 핀, 기록된 카카오 ID는 `own_places_by_kakao_id`로 장소를 찾아 핀 조회, 거기에 #569의 `service._find_live_pin_for_place`를 그대로 쓰고, 마지막으로 링크의 `kakao_place_id`가 이 지도 live 핀이면 그 핀. 같은 요청 안 중복 링크는 그대로 둔다.
+- 호출 상한: 사용자당 URL 수 기준 분당 60(`PINS_LINK_PREVIEW_PER_MIN`, 0 이하면 끔). 위해 `common.ratelimit.SlidingWindowLimiter.allow(key, cost=1)`에 `cost`를 더했다(상한을 넘으면 하나도 세지 않는다 — 거절된 요청은 소비하지 않음). 순서는 422 → 404 → 429 → 해석.
+- 로그에는 개수만 남긴다(URL·좌표·이름 없음, 테스트로 caplog 확인). 응답에 URL 필드 없음.
+- **bulk**: 항목을 `TypeAdapter(PinCreateRequest)`로 **항목마다** 검증한다(한 항목의 형식 오류가 요청 전체 422가 되지 않고 그 항목만 `rejected`/`VALIDATION_ERROR`; 스펙 `BulkPinRequest.pins`의 항목 스키마를 느슨히 읽은 것이다). 항목마다 `db.begin_nested()`로 감싸 `service.create_pin(..., isolated=True)`를 부르고 `AppError`는 results에 담는다(`PIN_DUPLICATE`→duplicate, 나머지→rejected). 같은 요청 안 같은 장소는 앞 항목이 flush돼 있어 뒤의 것이 duplicate. 커밋은 요청 끝 한 번, 핀마다 `pin.created`.
+- **`_flush_pin_row` 수정**: `db.add`를 `begin_nested()` 안으로 옮겼다. 전에는 add 뒤에 `begin_nested()`로 들어가며 그 진입 시점의 autoflush가 INSERT를 실행해, 유니크 위반이 SAVEPOINT 밖에서 나고 바깥 트랜잭션까지 닫혔다(그래서 `db.rollback()`이 필요했다). `isolated=True`(일괄)일 때만 `db.rollback()`을 건너뛴다 — 단건 생성의 동작은 그대로다. 동시 요청 경합(사전 조회가 놓친 중복)이 앞 항목을 지우지 않는 걸 `test_race_on_unique_index_rolls_back_only_that_item`이 확인한다.
+- 알려진 한계: 미리보기 응답 시간은 가장 느린 링크(최대 15초)에 묶이고, 마감을 넘긴 해석 스레드는 끝날 때까지 백그라운드에서 돈다(자체 세션이라 요청과 무관하게 닫힌다). `parse_link`가 스레드 안전하다는 건 places 쪽 전제다(`_link_client`가 lru_cache 공유 httpx 클라이언트).
+- 테스트: `pins/tests/test_link_import_577.py`(22개), 통합 — `KNOWN_MISSING`·`KNOWN_UNCOVERED` 삭제, 골든 패스(미리보기·일괄), 권한 행렬(401·404 순회)에 두 엔드포인트 추가. 복잡도 예상 3, 실제 3.

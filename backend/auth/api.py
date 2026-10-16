@@ -4,6 +4,7 @@
 """
 
 from collections.abc import Sequence
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -42,3 +43,11 @@ def guest_user_ids(db: Session, user_ids: Sequence[str]) -> set[str]:
         return set()
     rows = db.execute(select(User.id).where(User.id.in_(user_ids), User.is_guest.is_(True))).scalars().all()
     return set(rows)
+
+
+def purge_inactive_guests(db: Session, now: datetime, older_than_days: int = 90) -> int:
+    """90일(기본) 쓰지 않은 게스트 계정을 정리한다(#472) — 탈퇴와 같은 규칙(반응·근거·알림 삭제, 핀은 남고
+    작성자는 '탈퇴한 구성원'). 지운 수를 돌려준다. 커밋하지 않는다. 호출 연결(정리 명령)은 #168."""
+    from auth import service   # 지연 import — maps.service가 auth.api를 import해 순환이 된다
+
+    return service.purge_inactive_guests(db, now=now, older_than_days=older_than_days)

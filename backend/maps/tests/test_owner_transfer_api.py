@@ -125,8 +125,8 @@ def _entry(user_id, role="member"):
 
 def test_check_owner_target_rules():
     roster = [_entry("a", "owner"), _entry("b"), _entry("c")]
-    check_owner_target(roster, set(), "a", "b")  # 통과
+    check_owner_target(roster, set(), "a", "b", guests=set())  # 통과
     for target, withdrawn in (("a", set()), ("zzz", set()), ("c", {"c"})):
         with pytest.raises(AppError) as err:
-            check_owner_target(roster, withdrawn, "a", target)
+            check_owner_target(roster, withdrawn, "a", target, guests=set())
         assert err.value.code == "OWNER_TARGET_INVALID"

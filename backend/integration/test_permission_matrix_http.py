@@ -61,6 +61,8 @@ def _endpoints(w):
         ("GET pins", "GET", f"/maps/{m}/pins", None),
         ("POST pin", "POST", f"/maps/{m}/pins", w["new_pin"]),
         ("PATCH pin", "PATCH", f"/pins/{pin}", {"memo": "고침"}),
+        ("POST link-preview", "POST", f"/maps/{m}/pins/link-preview", {"urls": ["https://naver.me/abc"]}),
+        ("POST pins bulk", "POST", f"/maps/{m}/pins/bulk", {"pins": [w["new_pin"]]}),
         ("POST pin resolve", "POST", f"/pins/{pin}/resolve", {"place_name": "성수 칼국수", "lat": 37.5445, "lng": 127.0561}),
         ("DELETE pin", "DELETE", f"/pins/{pin}", None),
         ("PUT reaction", "PUT", f"/pins/{pin}/reaction", {"type": "like"}),

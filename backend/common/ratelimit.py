@@ -18,8 +18,8 @@ class SlidingWindowLimiter:
         self._hits: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
 
-    def allow(self, key: str) -> bool:
-        """허용이면 이번 호출을 세고 True. 상한을 넘으면 세지 않고 False. limit<=0이면 항상 True."""
+    def allow(self, key: str, cost: int = 1) -> bool:
+        """허용이면 이번 호출(cost번으로 센다)을 세고 True. 상한을 넘으면 하나도 세지 않고 False. limit<=0이면 항상 True."""
         if self._limit <= 0:
             return True
         now = self._clock()
@@ -29,9 +29,9 @@ class SlidingWindowLimiter:
             hits = self._hits.setdefault(key, deque())
             while hits and now - hits[0] >= self._window:
                 hits.popleft()
-            if len(hits) >= self._limit:
+            if len(hits) + cost > self._limit:
                 return False
-            hits.append(now)
+            hits.extend([now] * cost)
             return True
 
     def _prune(self, now: float) -> None:

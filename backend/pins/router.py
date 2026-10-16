@@ -16,12 +16,12 @@ from auth.schemas import CurrentUser
 from authz.core import Principal
 from authz.guard import require, require_map_member, require_on_map, require_with_principal
 from maps import api as maps_api
-from pins import chips, service
+from pins import chips, link_import, service
 from pins.deps import DbSession
 from pins.loaders import load_pin
 from pins.models import Pin as PinRow
 from pins.schemas import (
-    Category, FilterCounts, Pin, PinCreateRequest, PinKind, PinResolveRequest, PinUpdateRequest, Reaction, ReactionRequest, ReasonChip,
+    Category, FilterCounts, Pin, PinCreateRequest, BulkPinRequest, BulkPinResult, LinkPreviewRequest, LinkPreviewResult, PinKind, PinResolveRequest, PinUpdateRequest, Reaction, ReactionRequest, ReasonChip,
 )
 from shortlist import api as shortlist_api
 
@@ -85,6 +85,28 @@ def post_pin(
     db: Session = DbSession,
 ):
     return service.create_pin(db, map_id=mapId, principal=principal, req=body)
+
+
+@router.post("/maps/{mapId}/pins/link-preview", response_model=LinkPreviewResult, response_model_exclude_none=True)
+def post_link_preview(
+    body: LinkPreviewRequest,
+    mapId: str = Path(...),
+    principal: Principal = PinToCreate,
+    db: Session = DbSession,
+):
+    """422 → 404(비구성원) → 429 → 해석. 쓰기 없음."""
+    link_import.check_link_preview_rate(principal.user_id, len(body.urls))
+    return link_import.preview_links(db, mapId, body.urls)
+
+
+@router.post("/maps/{mapId}/pins/bulk", response_model=BulkPinResult, response_model_exclude_none=True)
+def post_pins_bulk(
+    body: BulkPinRequest,
+    mapId: str = Path(...),
+    principal: Principal = PinToCreate,
+    db: Session = DbSession,
+):
+    return link_import.bulk_create_pins(db, mapId, principal, body.pins)
 
 
 @router.patch("/pins/{pinId}", response_model=Pin, response_model_exclude_none=True)

@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_valid
 
 from authz.schemas import Permissions
 from common import categories
+from places.schemas import LinkParseResult
 
 Category = Literal[categories.all_categories()]  # 스펙의 Category(common/categories.py, #280)
 PinKind = Literal["일반", "AI추천", "확정"]
@@ -88,6 +89,51 @@ class PinCreateSearch(BaseModel):
 # 스펙 PinCreateRequest = oneOf(PinCreateSearch, PinCreateLive). source로 갈린다 — live는 extra=forbid라
 # 이름·좌표가 섞이면 live에서 떨어지고, search는 source=live를 받지 않아 둘 다 실패한다(422).
 PinCreateRequest = PinCreateLive | PinCreateSearch
+
+
+class LinkPreviewRequest(BaseModel):
+    """카톡 대화에서 화면이 뽑은 지도 링크(#577, 스펙 LinkPreviewRequest) — URL만 받는다. 대화 원문은 서버로 오지 않는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    urls: list[Annotated[str, Field(min_length=1, max_length=2000)]] = Field(min_length=1, max_length=10)
+
+
+class LinkPreviewItem(BaseModel):
+    index: int
+    status: Literal["ok", "error"]
+    result: LinkParseResult | None = None
+    error_code: Literal["LINK_NOT_SUPPORTED", "LINK_UNRESOLVED"] | None = None
+    already_pinned_pin_id: str | None = None
+
+
+class LinkPreviewResult(BaseModel):
+    items: list[LinkPreviewItem]
+
+
+class BulkPinRequest(BaseModel):
+    """핀 일괄 생성(#577, 스펙 BulkPinRequest). 항목은 항목마다 따로 검증한다 — 하나가 틀려도 나머지는 처리된다(그 항목은 rejected)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pins: list[dict] = Field(min_length=1, max_length=30)
+
+
+class BulkPinError(BaseModel):
+    code: str
+    message: str | None = None
+    detail: dict | None = None
+
+
+class BulkPinItemResult(BaseModel):
+    index: int
+    status: Literal["created", "duplicate", "rejected"]
+    pin: "Pin | None" = None
+    error: BulkPinError | None = None
+
+
+class BulkPinResult(BaseModel):
+    results: list[BulkPinItemResult]
 
 
 class PinResolveRequest(BaseModel):

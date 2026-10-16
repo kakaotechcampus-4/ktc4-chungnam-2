@@ -52,6 +52,16 @@ def _rosters(db: Session, map_ids: list[str]) -> tuple[Rosters, set[str]]:
     return rosters, withdrawn
 
 
+def _guest_ids(db: Session, rosters: Rosters) -> set[str]:
+    """후임 판정에서 뺄 게스트(#472) — 구성원 수·목록에는 영향이 없어 withdrawn과 따로 둔다. 배치 한 번."""
+    user_ids = list({m.user_id for roster in rosters.values() for m in roster})
+    return auth_api.guest_user_ids(db, user_ids)
+
+
+def guest_ids_of(db: Session, roster: list[core.MembershipEntry]) -> set[str]:
+    return _guest_ids(db, {"": roster})
+
+
 def _active_count(roster: list[core.MembershipEntry], withdrawn: set[str]) -> int:
     """탈퇴하지 않은 구성원 수(#245) — Map.member_count와 recommend 준비 판정 N이 쓴다.
     구성원 목록(list_members)도 같은 기준으로 탈퇴자를 뺀다(#439)."""
@@ -121,7 +131,7 @@ def _map_response(db: Session, map_row: MapRow, *, viewer_id: str, with_next_own
     rosters, withdrawn = _rosters(db, [map_row.id])
     roster = rosters[map_row.id]
     principal = Principal(user_id=viewer_id, map_id=map_row.id, role=core.role_in(roster, viewer_id))
-    successor = core.owner_successor(principal, roster, withdrawn)
+    successor = core.owner_successor(principal, roster, withdrawn, guests=_guest_ids(db, rosters))
     next_owner = None
     if with_next_owner and successor is not None:
         successor_name = auth_api.display_names(db, [successor]).get(successor)
@@ -148,7 +158,7 @@ def _my_map_count(db: Session, user_id: str) -> int:
     ).scalar_one()
 
 
-def create_map(db: Session, *, req: MapCreateRequest, creator_id: str) -> Map:
+def create_map(db: Session, *, req: MapCreateRequest, creator_id: str, creator_is_guest: bool = False) -> Map:
     """maps 행 + owner 멤버십 행을 같은 트랜잭션에 만든다. 멤버십이 빠지면 생성자가 자기
     지도의 비구성원이 되어 이후 모든 요청이 404가 된다 — 테스트가 DB를 직접 확인한다.
 
@@ -156,6 +166,7 @@ def create_map(db: Session, *, req: MapCreateRequest, creator_id: str) -> Map:
     "첫 핀 좌표로 확정"한다고 정의하는데, 이 시점엔 핀이 0개라 region을 채울 방법이 없다
     (maps/CLAUDE.md 완료 정의와의 모순 — maps/for_Root.md 항목 2로 보고). 로그만 찍는 no-op
     훅은 완료 정의 체크박스만 채우는 가짜 구현이라 만들지 않는다."""
+    core.check_can_create_map(creator_is_guest)
     new_map = core.validate_map_create(req.title, req.start_date, req.end_date, req.region)
     core.check_map_limit(_my_map_count(db, creator_id))
 
@@ -224,12 +235,13 @@ def list_maps(db: Session, *, user_id: str) -> list[Map]:
 
     map_ids = [map_row.id for map_row, _, _ in rows]
     rosters, withdrawn = _rosters(db, map_ids)
+    guests = _guest_ids(db, rosters)
     pin_counts = _pin_counts(db, map_ids)
     responses = []
     for map_row, region_lat, region_lng in rows:
         roster = rosters[map_row.id]
         principal = Principal(user_id=user_id, map_id=map_row.id, role=core.role_in(roster, user_id))
-        successor = core.owner_successor(principal, roster, withdrawn)
+        successor = core.owner_successor(principal, roster, withdrawn, guests=guests)
         responses.append(core.to_map_response(
             core.MapRecord(
                 id=map_row.id, title=map_row.title, start_date=map_row.start_date,
@@ -467,7 +479,7 @@ def hand_over_owner(db: Session, *, map_id: str, from_user_id: str, to_user_id: 
     roster, withdrawn = roster_of(db, map_id)
     if core.role_in(roster, from_user_id) != "owner":
         raise AppError("FORBIDDEN")  # 잠그기 전에 다른 요청이 이미 방장을 바꿨다
-    core.check_owner_target(roster, withdrawn, from_user_id, to_user_id)
+    core.check_owner_target(roster, withdrawn, from_user_id, to_user_id, guests=guest_ids_of(db, roster))
     transfer_owner(db, map_id=map_id, from_user_id=from_user_id, to_user_id=to_user_id)
     record_event(db, core.owner_changed_event(map_id, from_user_id, to_user_id))
     notify_owner_changed(db, map_row=map_row, new_owner_id=to_user_id, actor_id=from_user_id)
@@ -552,7 +564,7 @@ def transfer_or_delete_owned_maps(db: Session, *, user_id: str) -> None:
         roster, withdrawn = roster_of(db, map_id)
         if core.role_in(roster, user_id) != "owner":
             continue  # 잠그기 전에 다른 요청이 이미 넘겼다
-        successor = core.pick_successor(roster, withdrawn, user_id)
+        successor = core.pick_successor(roster, withdrawn, user_id, guests=guest_ids_of(db, roster))
         if successor is None:
             delete_map(db, map_id=map_id, actor_id=user_id)   # 탈퇴자는 아직 withdrawn에 없어 actor로 거른다
         else:

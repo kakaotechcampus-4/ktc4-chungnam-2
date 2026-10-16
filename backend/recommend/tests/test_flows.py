@@ -1330,6 +1330,67 @@ def test_execute_run_with_only_not_recommendable_places_shows_zero_results(db_se
     assert {e["label"]: e["removed_count"] for e in updated.last_funnel}["추천 가능 아님 제거"] == 1
 
 
+# ---------- #569 — 실시간 핀이 가리키는 가게는 후보에서 뺀다 ----------
+
+class _KakaoMatch:
+    def __init__(self, place_id):
+        self.place_id = place_id
+
+
+def _fake_own_places(monkeypatch, mapping):
+    """카카오 ID → 자체 DB place_id 목록. 부른 카카오 ID를 돌려줘 호출 여부를 본다."""
+    calls = []
+
+    def fake(kakao_id, *, db=None):
+        calls.append(kakao_id)
+        return [_KakaoMatch(pid) for pid in mapping.get(kakao_id, [])]
+
+    monkeypatch.setattr(flows.places_api, "own_places_by_kakao_id", fake)
+    return calls
+
+
+def _execute_with_pool(db_session):
+    run = _make_run(db_session, status="collecting_evidence", category="음식점")
+    _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
+    places = [
+        PlaceStub(place_id="live_place", lat=35.0005, lng=129.0005),
+        PlaceStub(place_id="other_place", lat=35.0004, lng=129.0004),
+    ]
+    updated = flows.execute_run(
+        db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts(),
+    )
+    ids = {c.place_id for c in service.list_candidates(db_session, str(run.id))}
+    return ids, {e["label"]: e["removed_count"] for e in updated.last_funnel}
+
+
+def test_place_marked_by_a_live_pin_is_not_recommended_and_counts_in_the_excluded_step(db_session, monkeypatch):
+    _make_live_pin(db_session, kakao_place_id="kakao:live1")
+    _fake_own_places(monkeypatch, {"kakao:live1": ["live_place"]})
+
+    ids, funnel = _execute_with_pool(db_session)
+
+    assert ids == {"other_place"}
+    assert funnel["이미 제안·거절됨"] == 1
+
+
+def test_live_pin_on_another_map_does_not_exclude(db_session, monkeypatch):
+    _make_live_pin(db_session, map_id="map_other", kakao_place_id="kakao:live1")
+    calls = _fake_own_places(monkeypatch, {"kakao:live1": ["live_place"]})
+
+    ids, funnel = _execute_with_pool(db_session)
+
+    assert ids == {"live_place", "other_place"} and funnel["이미 제안·거절됨"] == 0
+    assert calls == []
+
+
+def test_without_live_pins_nothing_is_looked_up(db_session, monkeypatch):
+    calls = _fake_own_places(monkeypatch, {})
+
+    ids, _funnel = _execute_with_pool(db_session)
+
+    assert ids == {"live_place", "other_place"} and calls == []
+
+
 # ---------- #231 — 사유의 방향(wants) ----------
 
 def _line(author, badge, fact_key, wants, text="사유"):

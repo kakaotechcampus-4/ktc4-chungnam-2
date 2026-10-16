@@ -305,3 +305,13 @@ fallback·타 라우트 인증 유지. `KNOWN_MISSING`에서 `("get", "/invites/
 **통합**: `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 두 항목 제거, 골든 패스·권한 행렬에 호출과 방장 전용 테스트 추가.
 
 **루트 확인 사항 없음.** 복잡도 예상 2 / 실제 2.
+
+## auth가 추가한 api 함수 2개 (#472, 루트 승인)
+
+`maps/api.py`에 `check_invite(db, token)`(수락 가능 여부만 확인, 404·410)·`accept_invite(db, *, token, user_id) -> Map`(`service.accept_invite` 위임)을 auth가 추가했다 — `POST /auth/guest`가 쓴다. 로직은 service에 그대로 있다.
+
+## #472 — 게스트 제한 (2026-10-16)
+
+**구현**: `POST /maps`는 게스트면 403 `GUEST_NOT_ALLOWED`(MAP_LIMIT·입력 검증보다 먼저, `core.check_can_create_map`). `pick_successor`·`owner_successor`·`check_owner_target`에 keyword-only `guests`를 더했다 — 호출부(service·flows)가 `auth.api.guest_user_ids`로 구한 집합을 넘기고 core는 순수 함수다. `withdrawn`과 합치지 않았다: withdrawn은 구성원 수·목록에도 쓰이는데 게스트는 구성원 수에 그대로 센다. 게스트 집합은 목록(GET /maps)에서도 배치 한 번이다. 남은 사람이 게스트뿐이면 나가기 409 `OWNER_CANNOT_LEAVE`, 탈퇴는 지도 삭제, 직접 넘기기 대상이 게스트면 422 `OWNER_TARGET_INVALID`. 그 밖의 구성원 행동은 막지 않았다.
+**테스트**: 게스트 계정은 users.is_guest를 직접 켠다(`maps/tests/test_guest_limits.py`). 기존 호출부 시그니처 변경에 맞춰 test_core·test_owner_transfer_api를 고쳤다.
+**루트 확인 사항 없음.** 복잡도 예상 2 / 실제 2.

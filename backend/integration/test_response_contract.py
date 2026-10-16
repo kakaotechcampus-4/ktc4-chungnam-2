@@ -23,7 +23,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
-    ("POST", "/auth/guest"): "#472 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/runs/{runId}/advice"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
@@ -256,6 +255,12 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert b.get(f"/maps/{map_id}").status_code == 404          # 비구성원은 존재를 모른다
     assert b.post(f"/invites/{token}/accept").status_code == 200
 
+    # 게스트 참여(#472) — 로그인 없이 이름만으로 같은 초대에 들어간다. 에러 봉투도 함께 본다
+    guest = anon_client.post("/auth/guest", json={"display_name": "손님", "invite_token": token})
+    assert guest.status_code == 201 and guest.json()["user"]["is_guest"] is True
+    assert anon_client.post("/auth/guest", json={"display_name": "손님", "invite_token": "no-such-token"}).status_code == 404
+    assert anon_client.post("/auth/guest", json={"display_name": " ", "invite_token": token}).status_code == 422
+
     # 이름 수정(계정 단위)
     assert a.patch("/auth/me", json={"display_name": "철수2"}).status_code == 200
     assert a.patch("/auth/me", json={"display_name": ""}).status_code == 422
@@ -414,6 +419,23 @@ def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
     assert promoted.json()["my_reaction"]["type"] == "like"                            # 반응은 그대로
     assert b.post(f"/pins/{other}/resolve", json=hint).status_code == 200              # 이미 db 핀 — 변화 없음
     assert b.delete(f"/pins/{other}").status_code == 204
+
+    # 카톡 대화 링크 일괄 핀 찍기(#577) — 미리보기(이미 있음·지원 안 함·짝 없음, 일부 실패해도 200)와 일괄 생성(created·duplicate·rejected)
+    preview = a.post(f"/maps/{map_id}/pins/link-preview", json={"urls": [
+        "https://place.map.kakao.com/555", "https://naver.me/abc", "https://place.map.kakao.com/1234567"]})
+    assert preview.status_code == 200, preview.text
+    items = preview.json()["items"]
+    assert [i["status"] for i in items] == ["ok", "error", "ok"] and items[1]["error_code"] == "LINK_NOT_SUPPORTED"
+    assert items[0]["already_pinned_pin_id"] == live_id and "already_pinned_pin_id" not in items[2]
+    assert a.post(f"/maps/{map_id}/pins/link-preview", json={"urls": []}).status_code == 422
+    ramen = pin_body("hongdae-ramen")
+    bulk = a.post(f"/maps/{map_id}/pins/bulk", json={"pins": [pin_body("seongsu-kalguksu"), ramen, {"category": "음식점"}]})
+    assert bulk.status_code == 200, bulk.text
+    results = bulk.json()["results"]
+    assert [r["status"] for r in results] == ["duplicate", "created", "rejected"]
+    assert results[0]["error"]["detail"]["pin_id"] == db_id and results[1]["pin"]["place_name"] == ramen["place_name"]
+    assert a.post(f"/maps/{map_id}/pins/bulk", json={"pins": []}).status_code == 422
+    assert a.delete(f"/pins/{results[1]['pin']['id']}").status_code == 204
 
     for pin_id in (live_id, db_id):
         assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pin_id}).status_code == 201

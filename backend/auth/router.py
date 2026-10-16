@@ -16,14 +16,15 @@ import logging
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from fastapi import APIRouter, Cookie, Depends, Query, Response
+from fastapi import APIRouter, Cookie, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 from starlette.responses import RedirectResponse
 
 from auth import core, service
 from auth.deps import DbSession, get_current_user
-from auth.schemas import CurrentUser, UserResponse, UserUpdateRequest
+from auth.schemas import CurrentUser, GuestJoinRequest, GuestJoinResult, UserResponse, UserUpdateRequest
 from common.errors import AppError
+from common.ratelimit import SlidingWindowLimiter
 from common.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,10 @@ SESSION_COOKIE = "session"
 STATE_COOKIE = "kakao_oauth_state"
 # 콜백(/auth/kakao/callback)에만 실리면 되므로 경로를 좁힌다. 지울 때도 같은 경로여야 지워진다.
 STATE_COOKIE_PATH = "/auth/kakao"
+
+# IP당 시간당 게스트 가입 시도 상한(인메모리, 인스턴스마다 센다). 성공·실패 모두 센다.
+GUEST_JOIN_PER_HOUR = 10
+guest_join_limiter = SlidingWindowLimiter(GUEST_JOIN_PER_HOUR, window_s=3600.0)
 
 public_router = APIRouter(prefix="/auth", tags=["auth"])
 router = APIRouter(prefix="/auth", tags=["auth"], dependencies=[Depends(get_current_user)])
@@ -119,6 +124,18 @@ def get_kakao_callback(
     redirect = _login_redirect()
     _set_session_cookie(redirect, user.id)
     return redirect
+
+
+@public_router.post("/guest", response_model=GuestJoinResult, response_model_exclude_none=True, status_code=201)
+def post_guest(body: GuestJoinRequest, request: Request, response: Response, db: Session = DbSession):
+    """이름만 입력해 초대받은 지도에 들어간다(#472) — 로그인 전 호출. 계정 생성·지도 가입·세션 쿠키가 한 요청이다.
+    쿠키·초대 토큰·이름은 로그에 남기지 않는다."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not guest_join_limiter.allow(client_ip):
+        raise AppError("RATE_LIMITED")
+    row, map_ = service.join_as_guest(db, display_name=body.display_name, invite_token=body.invite_token)
+    _set_session_cookie(response, row.id)
+    return GuestJoinResult(user=_user_response(row), map=map_)
 
 
 def _user_response(row) -> UserResponse:
