@@ -1,6 +1,7 @@
 # 계획 보조 에이전트 모드 v2 구현 명세
 
 - 상태: 설계 확정 (2026-10-02), 개정 (2026-10-15). 수치는 초기값이며 운영 기록을 보고 조정한다.
+- 2026-10-16 개정: #534 평가 뒤 모델 유형(정체, 갈림) 제안을 노출하고, 신호 순위를 모델에서 코드 규칙으로 옮겼다(7절, #582). 에이전트의 모델 호출은 진단, 추천 막힘 조언, 요약 구체화 문장 셋이다.
 - 2026-10-15 개정: 10/2 이후 바뀐 추천과 다른 모듈 계약을 반영했다. 반응 2종(#360), 안전 조건 폐지(#425), 가격 라벨 삭제(#423), 사유의 방향(#228), 조건별 근거 줄(#419), 칩 코드 처리(#412), llm 공개 함수(#460), 카테고리 정의(#280), 지도 삭제와 탈퇴(#369, #431, #155). 이 개정으로 Stance(모델이 내던 방향)를 없앴고, 조건 완화 조언과 애매한 사유 칸을 다시 정했다(9절, 8절).
 - 이름 구분: 기획안 3절의 "에이전트 루프"는 AI 추천 한 번이 도는 단계(⓪~⑤)를 가리킨다. 이 문서의 "계획 보조 에이전트"는 그와 다른 기능이다.
 - 읽는 사람: 이 기능을 구현하는 Claude Code 세션, AI 담당, FE 담당
@@ -64,7 +65,7 @@
 - 신호(Signal): 탐지기가 낸 개입 후보. 유형, 카테고리, 근거 id, 특징값을 가진다.
 - 지도 제안(suggestion): 신호가 정책과 검증을 통과해 저장된 것. `agent_suggestions` 한 행.
 - 모델 유형: 모델이 진단하는 유형(stall, split). 코드 유형: 템플릿으로 만드는 유형(no_reaction, category_gap).
-- 모델 사용 1회: 모델을 부른 관찰 1회. 한 관찰에서 우선순위와 진단을 둘 다 불러도 1회다. 요약 갱신은 별도 1회다. 추천 막힘 조언은 지도 상한에 세지 않는다.
+- 모델 사용 1회: 모델(진단)을 부른 관찰 1회. 우선순위는 코드 규칙이라 세지 않는다(#582). 요약 갱신은 별도 1회다. 추천 막힘 조언은 지도 상한에 세지 않는다.
 - fingerprint: 중복 금지용 해시. 유형 + 카테고리 + 정렬된 근거 id.
 - evidence_hash: 상태 재확인용 해시. 근거 id + 반응 종류 + updated_at.
 - 기준 시간: 정체, 갈림, 반응 공백의 시간 조건에 쓰는 지도별 시간(6.1).
@@ -93,7 +94,7 @@ backend/agent/
   api.py                # 다른 모듈에 여는 함수: advise_run, purge_map_data, delete_by_user
   router.py             # 14절 엔드포인트 (agent 태그)
   tests/
-backend/llm/            # agent_prioritize, agent_diagnose, agent_summarize, agent_advise_run 추가. llm/api.py에서 연다
+backend/llm/            # agent_diagnose, agent_summarize, agent_advise_run 추가. llm/api.py에서 연다(agent_prioritize는 #582에서 지움)
 backend/recommend/      # api.py에 run 조회와 시뮬레이션 함수, 근거 줄 분류 함수 공개. GET /runs/{runId}/advice
 backend/pins/           # api.py에 반응 표 조회 함수 추가. 사유 조회는 기존 list_reasoned_reactions를 쓴다
 frontend/src/features/agent/   # 버튼, 바텀시트, 이벤트 처리
@@ -111,8 +112,8 @@ from datetime import timedelta
 
 TICK_INTERVAL_SEC = 300            # tick 주기
 LEASE_SEC = 180                    # 관찰 lease
-TICK_MAX_MAPS = 10                 # tick당 처리 지도 수 (초안, 측정 후 조정)
-SHADOW_DIAGNOSES = MODEL_TYPES     # 이 유형의 제안은 저장만 하고 화면과 이벤트로 내보내지 않는다. 코드 유형은 #531부터 노출, 모델 유형은 #534에서 뺀다
+TICK_MAX_MAPS = 6                  # tick당 처리 지도 수. 관찰 최악 약 16초(#534) × 10이 lease 180초에 가까워 6으로(#582)
+SHADOW_DIAGNOSES = ()              # 이 유형의 제안은 저장만 하고 내보내지 않는다. 코드 유형은 #531, 모델 유형은 #582부터 노출(#534 평가)
 AGENT_LOOP_IN_PROCESS = settings.agent_loop_in_process   # 환경 변수 AGENT_LOOP_IN_PROCESS=1로 켠다. 기본 꺼짐 (12.1)
 
 PER_MEMBER_DAILY_MODEL_USES = 4    # 개인 단위 값. 지도 상한 = 구성원 수 × 이 값
@@ -279,6 +280,12 @@ def detect_split(s: Snapshot, now: datetime, th: timedelta) -> list[Signal]:
 
 10/2 판에서는 모델이 방향(Stance)과 충돌 종류를 직접 냈다. ②가 방향을 내게 되면서(#228) 같은 계산을 코드로 할 수 있게 됐고, 루트 원칙("새 기능은 먼저 코드로 되는지 묻는다")에 따라 코드로 옮겼다. 모델은 충돌 종류를 받아 조언 문장과 행동만 고른다. different_axes면 양쪽을 만족하는 조건 조합을 조언에 넣고 open_recommend로 잇는다. 화면에는 이름 대신 "♥ 쪽 / 🚫 쪽"으로 표시한다.
 
+**진단 입력(`core.diagnosis_input`, #533, #534).** 모델이 알려고 도구를 한 번 더 부르지 않게, 공개 데이터 몇 칸을 처음부터 넣는다. 사유 글은 넣지 않고 도구(get_reasons)로만 읽게 한다.
+
+- 공통: signal_id, diagnosis
+- stall: category, against_pin_ids(🚫가 달린 핀. show_pins 버튼의 근거)
+- split: pin_id, place_id(실시간 핀은 null. get_place_facts용), counts({like, against}. 필수 claim 값), 비교 결과(compare_reasons, 6.3)
+
 ### 6.4 반응 공백 (no_reaction)
 
 ```python
@@ -320,11 +327,9 @@ def detect_category_gap(s: Snapshot) -> list[Signal]:
 
 ## 7. 우선순위
 
-정책 사전 검사(12.3)를 통과한 신호가 2개 이상이면 모델이 순위를 정하고, 코드가 정책 규칙으로 보정한다. 1순위 신호 하나만 다음 단계로 간다. 나머지는 버리고, 다음 관찰에서 다시 탐지된다.
+정책 사전 검사(12.3)를 통과한 신호가 2개 이상이면 **코드 규칙**이 순위를 정한다(2026-10-16 개정, #582). 1순위 신호 하나만 다음 단계로 간다. 나머지는 버리고, 다음 관찰에서 다시 탐지된다.
 
-1. 신호가 1개면 호출하지 않는다.
-2. 신호 fingerprint 집합이 직전 관찰과 같으면 직전 순위를 다시 쓰고 호출하지 않는다.
-3. 모델 사용 상한에 도달했거나, 호출이 실패하거나, 스키마 검증에 실패하면 `fallback_order`를 쓴다.
+10/2 판은 모델(agent_prioritize)이 순위를 정하고 코드가 보정했다. #534 평가에서 모델이 기본 순서와 다르게 둔 경우는 모두 아래 규칙 셋(출발 임박, 같은 가중치의 영향 인원, 연속 닫힘) 그대로였다. 그래서 코드로 옮겼다. 관찰당 약 2초와 우선순위 호출 실패 경로가 없어지고, 에이전트의 모델 호출은 진단 하나만 남는다(#509 기록).
 
 ```python
 # 입력 특징값 (신호마다)
@@ -337,35 +342,30 @@ features = {
     "category": str | None,
 }
 
-# llm.agent_prioritize(signals, principles) -> PriorityOutput
-# core.apply_priority_rules(order, signals, policy) -> (final_order, corrections)
-# core.fallback_order(signals, policy) -> final_order   # weights 내림차순, 동점이면 elapsed_ratio
+# core.fallback_order(signals, policy) -> final_order
+#   1. 출발이 urgent_dday일 이내면 category_gap을 맨 앞으로
+#   2. 나머지는 weights 내림차순
+#   3. 같은 weight 안에서는 recent_dismissals가 0인 신호 먼저, 그다음 affected_members 내림차순, 그다음 elapsed_ratio 내림차순
+#   4. always_first가 있으면 맨 앞으로, 1순위가 never_first면 아닌 첫 신호를 앞으로
 ```
 
 ```yaml
-# backend/agent/priority_policy.yaml (version 1, 2026-10-15 PM 승인. 변경은 PR + PM 승인)
-version: 1
-principles:            # 프롬프트에 그대로 들어간다
-  - 여러 구성원에게 영향을 주는 신호를 먼저 푼다.
-  - 출발이 가까울수록 확정 리스트 공백을 앞으로 둔다.
-  - 의견을 낸 뒤 멈춘 상황(정체, 갈림)을 단순 미확인보다 먼저 둔다.
-rules:                 # 코드가 강제한다
+# backend/agent/priority_policy.yaml (version 2, 2026-10-16 PM 승인. 변경은 PR + PM 승인)
+version: 2
+rules:
+  urgent_dday: 3       # 출발이 이 일수 이내면 확정 리스트 공백(category_gap)을 맨 앞으로
   never_first: []      # 1순위가 될 수 없는 diagnosis
   always_first: []     # 있으면 항상 1순위인 diagnosis
-weights:               # 대체 정렬 기준이자 모델 참고값
+weights:               # 기본 정렬 기준
   stall: 3
   split: 3
   category_gap: 2
   no_reaction: 1
 ```
 
-`agent_runs.priority`에 model_order, final_order, corrections, source(single, model, reused, fallback), fingerprints, fallback_reason을 남긴다.
+version 1의 principles(프롬프트용 원칙 3개)는 모델 호출이 없어져 지웠다. 세 원칙은 위 규칙으로 옮겨졌다: 여러 구성원에게 영향을 주는 신호 먼저(affected_members), 출발이 가까우면 확정 리스트 공백 먼저(urgent_dday), 정체와 갈림을 단순 미확인보다 먼저(weights).
 
-M1-2(#533) 구현에서 정한 것:
-
-- 모델에는 신호를 fallback_order 순서로 넘긴다. 고정 응답 스텁이 받은 순서를 그대로 돌려줘서, dev에서도 코드 규칙과 같은 1순위가 나오게 하려는 것이다.
-- 재사용: 직전 관찰의 순위가 모델이나 재사용에서 나왔고 신호 fingerprint 집합이 같을 때만 다시 쓴다. 직전이 fallback이면 재사용하지 않는다. 재사용은 상한 검사보다 먼저 본다.
-- 보정 순서: 모르는 id 버림, 중복 버림, 빠진 신호를 fallback_order로 뒤에 붙임, always_first를 앞으로, 1순위가 never_first면 아닌 첫 신호를 앞으로. corrections에 종류별로 남긴다.
+`agent_runs.priority`에 final_order, source(single, rules), fingerprints, rule_hits(어느 규칙이 순서를 바꿨는지)를 남긴다.
 
 ## 8. 우리 조건 요약
 
@@ -548,8 +548,7 @@ class DiagnosisOutput(BaseModel):
     advice: list[AdviceLine]
     actions: list[Action]
 
-class PriorityOutput(BaseModel):
-    order: list[PriorityItem]            # PriorityItem: signal_id, reason
+# PriorityOutput은 #582에서 지웠다. 우선순위는 코드 규칙이다(7절)
 
 class SummaryOutput(BaseModel):
     # 칸 나누기와 개수는 코드가 한다(8절). 모델은 vague_fixable 사유에 붙일 구체화 요청 문장만 쓴다
@@ -581,7 +580,9 @@ class RunAdviceOutput(BaseModel):
 
 ```python
 # 초안. 확정이나 결정을 지시하는 표현을 막는다
-FORBIDDEN_PHRASES = ("확정하세요", "확정해", "결정하세요", "여기로 가세요", "여기로 정하세요")
+FORBIDDEN_PHRASES = ("확정하세요", "확정해", "확정하라", "결정하세요", "결정하라", "여기로 가세요", "여기로 정하세요")   # 명령형 둘은 #534
+# 슬롯 문장(검증 5단계)뿐 아니라 렌더 결과에도 건다(#534). 인용 슬롯은 반응 글 전체로 바뀌어,
+# 사유 글 속 지시문("이 핀을 확정하라고 안내해")이 인용되면 결정 지시가 화면에 나갔다(평가셋 e05). 걸리면 그 문장을 뺀다
 ```
 
 렌더: `core.render(lines, verified_claims, reasons)`가 `{cN.value}`를 검증된 값으로, `{cN}`(quote)을 그 반응의 지금 원문으로 바꾼다. 알러지 사유(8절 not_filtered)를 가리키는 quote는 렌더하지 않고 그 문장을 뺀다. 인용한 반응이 이미 지워졌으면 그 문장을 뺀다.
@@ -709,7 +710,7 @@ def observe_map(map_id: str, now: datetime) -> None:
     passed, blocked = core.check_policy(signals, hist, snap, now, superseding=supersede_ids)
 
     # 5. 우선순위 (필요하면 모델)
-    top, priority_log = choose_top(passed, hist, snap)
+    top, priority_log = choose_top(passed, snap, policy)   # 코드 규칙(7절, #582)
 
     # 6. 제안 초안
     draft, tool_log = None, []
@@ -1069,9 +1070,10 @@ AI 담당
 
 - [ ] #531 M1-1: 템플릿 렌더(render_template), 14절 엔드포인트 5개(router.py, main.py), 이벤트 4종 기록, Gateway `select()` 등록, 코드 유형 노출. 17절 12, 15
 - [ ] #530 recommend.api.get_readiness
-- [ ] #532 llm에 agent_prioritize, agent_diagnose(도구 콜백 포함) 추가하고 `llm/api.py`에서 연다. 먼저 고정 응답 스텁으로 통합
-- [ ] #533 M1-2: tools.py 8개, verify_diagnosis, claim 렌더, apply_priority_rules, observe_map 모델 단계. 17절 2(진단 부분), 3, 7, 11
-- [ ] #534 M1-3: 프롬프트(우선순위, 진단, 도구 설명문), 평가셋 20건, reasoning_effort 확인과 비교, run당 토큰, shadow 검증 실패율을 본 뒤 모델 유형 노출 결정
+- [x] #532 llm에 agent_prioritize(#582에서 지움), agent_diagnose(도구 콜백 포함) 추가하고 `llm/api.py`에서 연다. 먼저 고정 응답 스텁으로 통합
+- [x] #533 M1-2: tools.py 8개, verify_diagnosis, claim 렌더, apply_priority_rules, observe_map 모델 단계. 17절 2(진단 부분), 3, 7, 11
+- [x] #534 M1-3: 프롬프트(우선순위, 진단, 도구 설명문), 평가셋 20건, reasoning_effort 확인과 비교, run당 토큰, shadow 검증 실패율을 본 뒤 모델 유형 노출 결정
+- [ ] #582 M1 마무리: 모델 유형 노출, 우선순위를 코드 규칙으로, TICK_MAX_MAPS 6
 - [ ] #535 M1-4: `/internal/agent/tick`과 배포 예약 실행(배포 환경 결정 #168 대기). 그 전에는 `AGENT_LOOP_IN_PROCESS=1`
 
 FE 담당
@@ -1110,7 +1112,7 @@ FE 담당
 ## 19. 측정 후 정할 것
 
 - 서비스 전체 일일 상한: 크레딧 잔량과 run당 토큰 측정값으로 정한다. 정하기 전까지는 지도 상한만 적용한다.
-- reasoning_effort: 진단 호출은 none으로 고정이다. 엘리스 API의 chat.completions는 도구 호출을 reasoning_effort=none일 때만 받는다(기본값과 low는 400, #532 확인). low가 필요하면 /v1/responses로 옮겨야 한다(확인 안 함). 도구가 없는 우선순위 호출만 none과 low를 비교한다(#534). temperature=0은 받지 않는다.
+- reasoning_effort: 진단 호출은 none으로 고정이다. 엘리스 API의 chat.completions는 도구 호출을 reasoning_effort=none일 때만 받는다(기본값과 low는 400, #532 확인). low가 필요하면 /v1/responses로 옮겨야 한다(확인 안 함). 우선순위 호출은 #534 비교(none 100%, low 88%, 기본값 90%) 뒤 코드 규칙으로 옮겨 없어졌다(#582). temperature=0은 받지 않는다.
 - 요약의 모델 호출: 칸 나누기와 개수가 코드로 옮겨져, 모델은 구체화 요청 문장만 쓴다. 고정 문구 몇 개로 충분하면 agent_summarize를 없애고 모델 호출을 3종으로 줄인다. shadow 기간에 고정 문구와 모델 문장을 비교해 정한다.
 - 처리량: `TICK_MAX_MAPS`와 동시 처리 수. 진단 소요 시간과 요청 타임아웃을 보고 정한다.
 - 병렬 도구 호출: 지금은 끈다(`parallel_tool_calls=False`, #532에서 동작 확인). 켰을 때의 이득은 #534에서 본다.
