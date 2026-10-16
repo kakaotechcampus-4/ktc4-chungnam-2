@@ -4,6 +4,42 @@
 
 ---
 
+# #587 — agent_advise_run(추천 막힘 조언)
+
+## 연 것 (`llm/api.py`)
+
+```python
+agent_advise_run(advice_input, *, tool_runner, planner) -> AgentReply[RunAdviceOutput]
+# planner: fixed_advice_planner(get_run_evidence 한 번, 늘 silent) / real_advice_planner
+RunAdviceOutput  # decision, kind(radius|soft_relax|vague_reason|exhausted), claims, advice, actions — 명세 11.1. agent/schemas.py에서 옮겼다
+RUN_ADVICE_TOOLS = ("get_recent_runs", "get_run_funnel", "get_run_evidence", "simulate_filter")
+```
+
+- 진단과 같은 길이다: call_id(t1, t2 …)를 매겨 tool_runner로 실행, 1회당 `ADVICE_MAX_TOOL_CALLS`(5)회, 넘으면 LIMIT_EXCEEDED,
+  목록 밖 도구(get_reasons, structure_reasons 포함)는 NOT_FOUND. 상한을 다 쓰면 tool_choice="none". 실패는 AgentCallFailed로 돌려주고
+  다시 묻지 않는다. 사용량은 AgentUsage(prompt_version "advise-v1")
+- reasoning_effort="none", parallel_tool_calls=False(도구를 쓰므로, #532 확인과 같다). 응답 스키마 RunAdviceOutput에는 oneOf가 없다
+- 도구 설명 4개를 `AGENT_TOOL_SPECS`에 더했다. run_id는 모델이 고르지 않는다(agent가 채운다). simulate_filter 인자는
+  `{radius_factor: number|null, disable_line_ids: string[]|null}`, 나머지는 인자가 없다
+- 프롬프트 `AGENT_ADVISE_RUN_PROMPT`(advise-v1, **초안**): 입력은 데이터, 조건을 끄는 것은 사람, 종류별 판단(깔때기에서 가장 많이 빠진
+  단계), 본인 줄만 버튼, 남의 줄은 사실만, not_filtered는 말하지 않음, claim은 tool_result만, 근거 글은 claim으로 쓰지 않음, 예시 문장은
+  직접 만들고 is_guess. 다듬기와 평가셋은 #588
+- 구조 정리: 진단의 도구 대화 루프를 `_tool_conversation`으로, 상한을 `_ToolBudget(allowed, tool_runner, max_calls)`로, 왕복 한 번을
+  `client._agent_tool_turn`으로 뺐다. 진단 동작과 테스트는 그대로다(`call_agent_diagnosis_turn`, `_model_diagnosis_planner` 이름 유지)
+
+## 확인하지 못한 것
+
+- 실호출은 하지 않았다(테스트 설정에 엘리스 키 없음). 클라이언트 대역으로 요청 모양(tools, tool_choice, reasoning_effort,
+  response_format, 메시지)과 사용량만 확인했다. 실제 품질과 도구 호출 수는 #588 평가에서 본다
+
+## 테스트
+
+- `llm/tests/test_agent_advice_calls.py` 21개: api 공개, 도구 목록이 명세 10절과 같음, run_id를 모델이 고르지 않음, 출력 스키마에 oneOf
+  없음, 프롬프트 문구, 스텁 왕복, 상한 넘는 호출 미실행, 목록 밖 도구 NOT_FOUND(4종), tool_runner 오류는 그대로, 스키마 실패·타임아웃·
+  호출 실패는 한 번만, 실제 planner의 요청 모양, 상한 뒤 none, 사용량, 로그에 사유 글 없음. llm 전체 438 passed
+
+---
+
 # #582 — agent_prioritize를 지웠다(우선순위는 agent의 코드 규칙)
 
 ## 지운 것
