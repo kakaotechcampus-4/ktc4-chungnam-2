@@ -10,13 +10,14 @@
   ③-a-1 PlaceFactLabel (장소 라벨링)
   ③-b   RankedCandidate (선호 순위)
   v2 에이전트 PriorityOutput, DiagnosisOutput, AgentCallFailed (docs/agent-v2.md 11.1, #532), AgentUsage·AgentReply(#564)
+  v2 동선 에이전트 CourseTurn (drafts/agent-route-v2.md 11.1, #334)
 """
 
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Generic, Literal, Optional, TypeVar, Union, get_args
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 # docs/constraints.md `fact_key` 레지스트리와 같다 — backend/integration/test_llm_fact_key_contract.py가
 # 양방향으로 강제한다(문서에만 키를 넣으면 CI 실패). 새 키는 루트가 문서에 먼저 넣고, 여기와
@@ -302,3 +303,95 @@ class AgentReply(Generic[AgentResultT]):
 
     result: Union[AgentResultT, AgentCallFailed]
     usage: AgentUsage
+
+
+# ---- v2 동선 에이전트 턴 (#334, drafts/agent-route-v2.md 7·11절) ----
+# 모델은 턴마다 도구 하나를 고른다. 매개변수는 전부 별칭(p1, d1, t1)이다 — 좌표·날짜·장소 id는 모델이 만들 수 없다.
+# agent/course가 이 스키마를 그대로 쓴다(agent.course.schemas). discriminator를 걸지 않는다(위 Claim과 같은 이유, oneOf 금지).
+# 클래스마다 type·tool이 다른 Literal이고 extra="forbid"라 Union 검증 결과는 discriminator와 같다.
+
+
+class _CourseStrict(BaseModel):
+    # 모르는 필드가 오면 실패시킨다 — 모델이 스키마 밖 값을 끼워 넣어도 조용히 버리지 않는다.
+    model_config = ConfigDict(extra="forbid")
+
+
+class CourseSwap(_CourseStrict):
+    """두 장소의 자리를 바꾼다. 같은 날 안이든 다른 날 사이든 된다."""
+    type: Literal["swap"]
+    a: str
+    b: str
+
+
+class CourseMoveDay(_CourseStrict):
+    """장소를 다른 날로 옮긴다(이월). position이 null이면 코드가 그날 이동이 가장 짧은 자리에 넣는다."""
+    type: Literal["move_day"]
+    place: str
+    to_day: str
+    position: Optional[int] = None
+
+
+class CourseReorderDay(_CourseStrict):
+    """그날의 장소 순서를 통째로 정한다. 그날 장소의 완전한 순열이어야 한다."""
+    type: Literal["reorder_day"]
+    day: str
+    places: list[str]
+
+
+CourseMove = Union[CourseSwap, CourseMoveDay, CourseReorderDay]
+
+
+class CourseGetOpeningHours(_CourseStrict):
+    tool: Literal["get_opening_hours"]
+    place: str
+
+
+class CourseFindOpenDays(_CourseStrict):
+    tool: Literal["find_open_days"]
+    place: str
+
+
+class CourseEstimateTravel(_CourseStrict):
+    tool: Literal["estimate_travel"]
+    from_place: str
+    to_place: str
+
+
+class CourseTryMove(_CourseStrict):
+    tool: Literal["try_move"]
+    move: CourseMove
+
+
+class CourseCommitMove(_CourseStrict):
+    tool: Literal["commit_move"]
+    trial_id: str
+
+
+class CourseRevert(_CourseStrict):
+    tool: Literal["revert"]
+    to_step: int
+
+
+class CourseFinish(_CourseStrict):
+    tool: Literal["finish"]
+    reason_code: Literal["solved", "no_progress", "budget"]
+
+
+CourseToolCall = Union[
+    CourseGetOpeningHours, CourseFindOpenDays, CourseEstimateTravel, CourseTryMove, CourseCommitMove, CourseRevert,
+    CourseFinish,
+]
+
+
+class CoursePlanStep(_CourseStrict):
+    step: int
+    intent: str
+
+
+class CourseTurn(_CourseStrict):
+    """모델 호출 한 번의 출력. 생각·계획·교훈은 상태를 바꾸지 않는다 — 상태는 action(도구)으로만 바뀐다.
+    계획 길이 상한(5단계)은 strict 스키마에 maxItems를 넣지 않고 agent가 자른다."""
+    thought: str
+    plan: list[CoursePlanStep] = []
+    lesson: Optional[str] = None
+    action: CourseToolCall

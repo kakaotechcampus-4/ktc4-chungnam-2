@@ -22,9 +22,10 @@ from openai import APITimeoutError, OpenAI
 
 from common.settings import settings
 from llm.prompts import (
-    AGENT_DIAGNOSE_PROMPT_VERSION, AGENT_PRIORITIZE_PROMPT, AGENT_PRIORITIZE_PROMPT_VERSION, PLAN_EVIDENCE_PROMPT,
+    AGENT_DIAGNOSE_PROMPT_VERSION, AGENT_PRIORITIZE_PROMPT, AGENT_PRIORITIZE_PROMPT_VERSION, COURSE_TURN_PROMPT,
+    COURSE_TURN_PROMPT_VERSION, PLAN_EVIDENCE_PROMPT,
 )
-from llm.schemas import AgentFailureReason, AgentUsage, DiagnosisOutput, PlanningOutput, PriorityOutput
+from llm.schemas import AgentFailureReason, AgentUsage, CourseTurn, DiagnosisOutput, PlanningOutput, PriorityOutput
 
 # POST /runs 요청 안에서 동기로 도는 호출이라 길게 기다리지 않는다. 재시도도 안 한다 —
 # 실패하면 어차피 RECOMMEND_FAILED이고, 재시도는 요청 지연만 두 배로 만든다.
@@ -252,3 +253,19 @@ def call_agent_diagnosis_turn(
         reasoning_effort="none",
         response_format=DiagnosisOutput,
     )
+
+
+def call_course_turn(client: Any, turn_input: Mapping[str, Any], *, turn: int) -> CourseTurn:
+    """동선 에이전트 턴 한 번(#334). 도구를 tools로 주지 않고 CourseTurn.action으로 받는다 — 그래서 reasoning_effort를
+    넘기지 않는다(우선순위 호출과 같다). 입력은 JSON 문자열로만 넘긴다(프롬프트에 섞지 않는다)."""
+    message = _agent_parse(
+        client, what="동선 에이전트 턴", context=f"turn={turn}", prompt_version=COURSE_TURN_PROMPT_VERSION,
+        messages=[
+            {"role": "system", "content": COURSE_TURN_PROMPT},
+            {"role": "user", "content": json.dumps(dict(turn_input), ensure_ascii=False, default=str)},
+        ],
+        response_format=CourseTurn,
+    )
+    if message.parsed is None:  # 도구를 주지 않았는데 도구 호출만 왔다
+        raise LlmCallError("동선 에이전트 턴 응답이 비어 있다", reason="invalid_schema")
+    return message.parsed

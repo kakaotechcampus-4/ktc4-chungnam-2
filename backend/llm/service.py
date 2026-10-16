@@ -1,5 +1,5 @@
 """backend/llm 비즈니스 로직 — 모델 호출 3곳(plan_evidence/label_place/rank_candidates)과 v2 에이전트 호출
-(agent_prioritize/agent_diagnose, #532 — 맨 아래 절).
+(agent_prioritize/agent_diagnose, #532), v2 동선 에이전트 턴(agent_course_turn, #334 — 맨 아래 절).
 
 ② plan_evidence는 넘겨받은 planner로 부른다 — real_evidence_planner는 Luna를 실제로 부르고(#116), 기존
 passthrough_planner는 입력을 스키마로 검증·통과하는 스텁이다(LLM_MODE로 고르는 곳은 recommend/deps.py, #219). ③-a-1 label_place, ③-b rank_candidates는 아직 고정 응답
@@ -19,13 +19,13 @@ from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
 
 from common.errors import AppError
 from llm.client import (
-    LlmCallError, call_agent_diagnosis_turn, call_agent_priority, call_planner, get_client, metering,
+    LlmCallError, call_agent_diagnosis_turn, call_agent_priority, call_course_turn, call_planner, get_client, metering,
 )
 from llm.prompts import (
     AGENT_DIAGNOSE_PROMPT, DIAGNOSIS_MAX_TOOL_CALLS, DIAGNOSIS_TOOLS, STRUCTURE_REASONS_MAX_CALLS, diagnosis_tools,
 )
 from llm.schemas import (
-    AgentCallFailed, AgentReply, DiagnosisOutput, EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason,
+    AgentCallFailed, AgentReply, CourseTurn, DiagnosisOutput, EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason,
     PlanningOutput, PriorityItem, PriorityOutput, RankedCandidate,
 )
 
@@ -450,3 +450,28 @@ def agent_diagnose(
             return AgentReply(_failed("agent_diagnose", exc, f"diagnosis={diagnosis} tools_used={budget.used}"), usage)
     log.info("agent_diagnose 완료: diagnosis=%s decision=%s tools_used=%d", diagnosis, output.decision, budget.used)
     return AgentReply(output, usage)
+
+
+# ---- v2 동선 에이전트 턴 (#334) ----
+
+# 턴 입력(agent.course.loop.turn_input이 만든 별칭만의 dict) → 다음 행동 하나.
+CourseTurnPlanner = Callable[[Mapping[str, Any]], CourseTurn]
+
+
+def real_course_turn_planner(turn_input: Mapping[str, Any]) -> CourseTurn:
+    """실제 모델(gpt-6-luna). 클라이언트는 호출 때 만든다 — 설정이 비면 LlmCallError(call_failed)."""
+    return call_course_turn(get_client(), turn_input, turn=turn_input.get("turn", 0))
+
+
+def agent_course_turn(turn_input: Mapping[str, Any], *, planner: CourseTurnPlanner) -> AgentReply[CourseTurn]:
+    """동선 에이전트의 한 턴(drafts/agent-route-v2.md 11.1). 고정 응답 스텁은 없다 — 모델 자리가 비면 agent의 코드
+    기준선이 대신 돈다(agent/course/baseline.py).
+
+    결과(CourseTurn 또는 AgentCallFailed)와 사용량을 함께 돌려준다. 실패(호출 실패, 타임아웃, 스키마 검증 실패)는
+    재요청하지 않고 AgentCallFailed로 돌려준다 — 그 턴은 agent가 기준선으로 대신한다. 별칭이 실제로 있는지, 수리가
+    합법인지, 생각 문장을 내보내도 되는지는 agent의 core·tools가 본다."""
+    with metering() as usage:
+        try:
+            return AgentReply(planner(turn_input), usage)
+        except (LlmCallError, ValueError) as exc:
+            return AgentReply(_failed("agent_course_turn", exc, f"turn={turn_input.get('turn', 0)}"), usage)

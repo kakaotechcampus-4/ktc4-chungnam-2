@@ -13,7 +13,9 @@ from typing import Any, Callable, Optional
 from pydantic import ValidationError
 
 from agent.course import baseline, core, tools
-from agent.course.constants import LESSONS_KEEP, MAX_INVALID_TURNS, MAX_TURNS, RUN_TIMEOUT_SEC, TOOL_LIMITS
+from agent.course.constants import (
+    LESSONS_KEEP, MAX_INVALID_TURNS, MAX_TURNS, PLAN_MAX_STEPS, RUN_TIMEOUT_SEC, TOOL_LIMITS,
+)
 from agent.course.ports import OpeningHoursGateway
 from agent.course.schemas import AgentTurn, Finish
 from agent.course.state import State
@@ -51,11 +53,12 @@ class RunResult:
     baseline_turns: int
 
 
-def turn_input(state: State, last: Optional[ToolResult], turns_left: int) -> dict[str, Any]:
+def turn_input(state: State, last: Optional[ToolResult], turn: int) -> dict[str, Any]:
     """모델에 보내는 한 턴의 입력(명세 11.1). 매 턴 상태로 새로 만든다 — 대화 기록을 쌓지 않는다.
     별칭만 넣는다: pin_id, place_id, 좌표, 장소 이름, 구성원 이름은 넣지 않는다(명세 3절 5번)."""
     trip = state.trip
     return {
+        "turn": turn,
         "goal": "하드 위반을 0으로, 그다음 부드러운 목표를 좋게",
         "mode": "B",
         "days": [
@@ -85,7 +88,7 @@ def turn_input(state: State, last: Optional[ToolResult], turns_left: int) -> dic
         "lessons": list(state.lessons),
         "last_result": last.as_input() if last else None,
         "budget": {
-            "turns_left": turns_left,
+            "turns_left": MAX_TURNS - turn + 1,
             **{f"{tool}_left": limit - state.tool_counts.get(tool, 0) for tool, limit in TOOL_LIMITS.items()},
         },
     }
@@ -121,13 +124,13 @@ def run_loop(
         thought = problem = None
         if driver == "model":
             try:
-                agent_turn = decide(turn_input(state, last, MAX_TURNS - turn + 1))
+                agent_turn = decide(turn_input(state, last, turn))
                 call, by = agent_turn.action, "model"
                 invalid_streak = 0
                 problem = core.thought_problem(state.trip, agent_turn.thought)
                 thought = None if problem else core.render_thought(state.trip, agent_turn.thought)
                 lessons = state.lessons + ((agent_turn.lesson,) if agent_turn.lesson else ())
-                state = replace(state, plan=tuple(s.intent for s in agent_turn.plan), lessons=lessons[-LESSONS_KEEP:])
+                state = replace(state, plan=tuple(s.intent for s in agent_turn.plan[:PLAN_MAX_STEPS]), lessons=lessons[-LESSONS_KEEP:])
             except MODEL_FAILURES:
                 invalid_streak += 1
                 if invalid_streak >= MAX_INVALID_TURNS:
