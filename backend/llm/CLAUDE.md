@@ -17,7 +17,8 @@
 - planner는 ②처럼 부르는 쪽이 넘긴다. 스텁 `fixed_priority_planner`(받은 순서 그대로), `fixed_diagnosis_planner`(get_reasons를 한 번 부르고 늘 silent), 실제 `real_priority_planner`, `real_diagnosis_planner`.
 - 실패(호출 실패, 타임아웃, 스키마 검증 실패)는 예외가 아니라 `AgentCallFailed(reason, detail)`로 돌려준다. 다시 묻지 않는다. 여기서는 스키마 검증까지만 하고, claim·문장·행동 검증은 agent의 core가 한다.
 - 도구는 agent가 넘기는 `tool_runner(call_id, name, args)`로만 실행한다. call_id(t1, t2 …)는 이 모듈이 매긴다. 진단 1회당 5회, 그중 structure_reasons 1회(`prompts.DIAGNOSIS_MAX_TOOL_CALLS`, `STRUCTURE_REASONS_MAX_CALLS`)를 넘는 호출은 실행하지 않고 `LIMIT_EXCEEDED`를, 유형에 없는 도구는 `NOT_FOUND`를 도구 결과로 돌려준다. 상한을 다 쓰면 `tool_choice="none"`으로 답을 받는다. 도구 설명과 유형별 허용 목록은 `prompts.AGENT_TOOL_SPECS`, `DIAGNOSIS_TOOLS`이고, map_id는 모델이 고르지 않는다(agent가 채운다).
-- gpt-6-luna는 chat.completions에서 도구를 `reasoning_effort="none"`일 때만 받는다(2026-10-15 확인). 진단 호출만 none을 넘긴다.
+- gpt-6-luna는 chat.completions에서 도구를 `reasoning_effort="none"`일 때만 받는다(2026-10-15 확인). 진단 호출은 none 고정, 우선순위 호출도 평가 결과 none이다(#534, `service.AGENT_PRIORITIZE_REASONING_EFFORT`).
+- 평가셋은 `llm/tests/eval_agent/`(지도 상태 20건, 지어낸 사유 글만). 프롬프트를 바꾸면 `python -m llm.tests.eval_agent.run_eval`로 다시 재고 `prompt_version`을 올린다. 결과(`results/`)는 커밋하지 않는다.
 - 엘리스 strict 구조화 출력은 `oneOf`를 거절한다. 출력 스키마에 discriminator를 걸지 않는다(`schemas.Claim`).
 
 ## 하지 않는 것

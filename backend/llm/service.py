@@ -339,9 +339,14 @@ def fixed_priority_planner(signals: Sequence[Mapping[str, Any]], principles: Seq
     return PriorityOutput(order=[PriorityItem(signal_id=signal["id"], reason="고정 응답") for signal in signals])
 
 
+# 우선순위 호출의 reasoning_effort(#534). 평가셋 8건 × 5회에서 none이 1순위 일치 100%, low 88%, 기본값(넘기지 않음) 90%였고
+# none이 가장 빠르고 싸다(호출당 약 2.1초, 추론 토큰 0). 진단은 도구 때문에 늘 none이다(#532).
+AGENT_PRIORITIZE_REASONING_EFFORT = "none"
+
+
 def real_priority_planner(signals: Sequence[Mapping[str, Any]], principles: Sequence[str]) -> PriorityOutput:
     """실제 모델(gpt-6-luna). 클라이언트는 호출 때 만든다 — 설정이 비면 LlmCallError(call_failed)."""
-    return call_agent_priority(get_client(), signals, principles)
+    return call_agent_priority(get_client(), signals, principles, reasoning_effort=AGENT_PRIORITIZE_REASONING_EFFORT)
 
 
 def agent_prioritize(

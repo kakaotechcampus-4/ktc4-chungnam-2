@@ -80,6 +80,9 @@ def _previous(signals, source="model"):
 @pytest.mark.parametrize("passed, previous, cap, mode", [
     ([], None, False, "none"),
     ([GAP], None, False, "single"),
+    ([GAP, UNSEEN], None, False, "code_only"),                         # 모델 유형이 없으면 부르지 않는다(#534)
+    ([GAP, UNSEEN], None, True, "code_only"),
+    ([GAP, UNSEEN], _previous([GAP, UNSEEN]), False, "code_only"),
     ([GAP, STALL], None, False, "model"),
     ([GAP, STALL], None, True, "model_cap"),
     ([GAP, STALL], _previous([STALL, GAP]), True, "reused"),            # 같은 집합이면 상한이어도 재사용
@@ -120,11 +123,19 @@ def test_choose_top_reuses_previous_order_and_cap_falls_back():
     assert (top.id, log["source"], log["fallback_reason"]) == ("s3", "fallback", "model_cap")
 
 
+def test_choose_top_code_only_uses_fallback_order():
+    top, log = core.choose_top([UNSEEN, GAP], POLICY, mode="code_only")
+
+    assert (top.id, log["source"], log["fallback_reason"], log["model_order"]) == ("s1", "fallback", "code_only", None)
+    assert log["final_order"] == ["s1", "s2"]
+
+
 def test_priority_input_is_in_fallback_order_without_evidence():
     signals = core.priority_input([GAP, UNSEEN, STALL], POLICY)
 
     assert [s["id"] for s in signals] == ["s3", "s1", "s2"]
-    assert set(signals[0]) == {"id", "diagnosis", "category", "features"}
+    assert set(signals[0]) == {"id", "diagnosis", "category", "weight", "features"}
+    assert [s["weight"] for s in signals] == [3, 2, 1]   # 정책 weights — 모델 참고값(7절, #534)
 
 
 # ---------------------------------------------------------------- 충돌 종류 (6.3, 17절 4번)

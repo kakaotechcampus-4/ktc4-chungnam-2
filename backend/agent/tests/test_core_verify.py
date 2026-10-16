@@ -164,6 +164,7 @@ def test_duplicate_claim_id_drops_both():
     ({"text": "m3은 반대했어요", "basis": [], "is_guess": True}, "member_name"),             # 별칭
     ({"text": "이 핀으로 확정 하세요", "basis": [], "is_guess": True}, "forbidden"),         # 금지 표현(공백 무시)
     ({"text": "여기로 가세요", "basis": [], "is_guess": True}, "forbidden"),
+    ({"text": "다들 이 핀으로 결정하라고 해요", "basis": [], "is_guess": True}, "forbidden"),    # 명령형(#534)
     ({"text": "주차할 곳이 전혀 없다고 해요", "basis": [], "is_guess": True}, "copied"),     # 슬롯 밖 원문 옮겨 쓰기
     ({"text": "분위기가아늑해서 좋대요", "basis": [], "is_guess": True}, "copied"),
     ({"text": "{c9.value}명이 반대해요", "basis": [], "is_guess": False}, "slot"),           # 없는 claim 슬롯
@@ -244,7 +245,8 @@ def test_diagnosis_input_has_ids_and_features_only():
 
     assert split["pin_id"] == "p1" and split["reaction_ids"] == ["r1", "r2", "r3"]
     assert split["comparison"] == comparison and split["category"] == "음식점"
-    assert stall["against_reaction_ids"] == ["r3"] and "pin_id" not in stall
+    assert split["place_id"] == "place_p1" and split["counts"] == {"like": 2, "against": 1}   # 필수 claim 값(#534)
+    assert stall["against_reaction_ids"] == ["r3"] and stall["against_pin_ids"] == ["p1"] and "pin_id" not in stall
     dumped = json.dumps([split, stall], ensure_ascii=False, default=str)
     for leaked in ("u1", "u2", "u3", LIKE_TEXT, AGAINST_TEXT, "last_run"):
         assert leaked not in dumped
