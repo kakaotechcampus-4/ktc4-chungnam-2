@@ -3,6 +3,9 @@
 17절 2(진단 부분), 7(모델 호출 중 상태가 바뀌면 stale), 11(Gateway 호출 중 열린 DB 세션 없음), 2절 13번(저장된 행에 사유
 글 없음). Gateway는 이 파일의 대역(FakeGateway)이다 — 고정 응답 스텁(deps.FixedAgentLlmGateway)은 silent만 내서 저장
 경로를 지나가지 않는다. 스텁 경로는 test_flows.py의 test_no_agent_row_contains_reason_text가 본다.
+
+사유가 있는 지도는 관찰 끝에 요약 관찰(trigger=summary, #586)도 한 행 남긴다 — 여기서는 지도 관찰 행(trigger=activity)만
+본다. 요약은 test_flows_summary.py가 본다.
 """
 
 import json
@@ -83,6 +86,11 @@ def observe(world, map_id, gateway):
     return flows.observe_map(map_id, world.now, session_factory=world.factory, gateway=gateway)
 
 
+def suggestion_events(world, map_id):
+    """제안 이벤트만 — 사유가 있는 지도는 관찰 끝에 요약도 갱신해 agent.summary_updated가 함께 나간다(#586)."""
+    return [e for e in world.agent_events(map_id) if e[0] != "agent.summary_updated"]
+
+
 def _split_map(world):
     """의견 갈림(전원 응답) + 반대 후 정체가 함께 있는 지도. 음식점 핀 하나에 u1 ♥(글), u2 ♥, u3 🚫(글)."""
     map_id = world.map()
@@ -159,14 +167,14 @@ def test_split_diagnosis_is_verified_and_saved(world, factory):
     assert sug.analysis == inp["comparison"]
     assert sug.actions == [{"index": 0, "type": "open_recommend", "label": "음식점 추천 받기",
                             "params": {"category": "음식점"}}]
-    run = world.one(AgentRun, map_id=map_id)
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert (run.outcome, run.used_model, run.priority["source"]) == ("suggested", True, "rules")
     # 정체(영향 1명)가 먼저 탐지됐지만 같은 weight에서 영향 인원이 많은 갈림(3명)이 1순위다
     assert [s["diagnosis"] for s in run.signals] == ["stall", "split"]
     assert (run.priority["final_order"], run.priority["rule_hits"]) == (["s2", "s1"], ["affected_members"])
     assert run.verification["established"] is True and run.verification["claims"]["removed"] == []
     assert [c["name"] for c in run.tool_calls] == ["get_reasons"]
-    [(type_, payload)] = world.agent_events(map_id)   # 모델 유형도 노출(#582)
+    [(type_, payload)] = suggestion_events(world, map_id)   # 모델 유형도 노출(#582)
     assert (type_, payload["id"], payload["diagnosis"]) == ("agent.suggested", str(sug.id), "split")
     dumped = _dump_agent_rows(factory)
     assert LIKE_TEXT not in dumped and AGAINST_TEXT not in dumped and AGAINST_TEXT[:8] not in dumped
@@ -179,7 +187,7 @@ def test_stall_diagnosis_uses_readiness_tool(world):
 
     sug = world.one(AgentSuggestion, map_id=map_id)
     assert (sug.diagnosis, sug.category, sug.shadow) == ("stall", "음식점", False)
-    run = world.one(AgentRun, map_id=map_id)
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert run.priority["source"] == "single" and run.used_model is True   # 진단만 불러도 1회
     assert run.tool_calls[0]["name"] == "get_readiness" and run.tool_calls[0]["result"]["ready"] is True
 
@@ -196,7 +204,7 @@ def test_failed_call_is_silent_with_reason(world, failed, outcome):
 
     assert observe(world, map_id, FakeGateway(diagnose=lambda inp, call: failed)) == outcome
 
-    run = world.one(AgentRun, map_id=map_id)
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert run.outcome_detail == {"signal_id": "s1", "diagnosis": "stall", "reason": failed.reason,
                                   "detail": failed.detail}
     assert run.used_model is True and run.verification is None
@@ -212,7 +220,7 @@ def test_model_silence_is_recorded(world, decision):
                                advice=[], actions=[])
 
     assert observe(world, map_id, FakeGateway(diagnose=silent)) == decision
-    assert world.one(AgentRun, map_id=map_id).verification == {"decision": decision}
+    assert world.one(AgentRun, map_id=map_id, trigger="activity").verification == {"decision": decision}
 
 
 def test_failed_verification_is_invalid_claims(world):
@@ -225,7 +233,7 @@ def test_failed_verification_is_invalid_claims(world):
 
     assert observe(world, map_id, FakeGateway(diagnose=made_up)) == "invalid_claims"
 
-    run = world.one(AgentRun, map_id=map_id)
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert run.verification["claims"]["removed"] == [{"id": "c1", "reason": "tool_mismatch"}]
     assert run.verification["failed_step"] == 7
     assert run.outcome_detail == {"signal_id": "s1", "diagnosis": "stall", "decision": "suggest"}
@@ -236,7 +244,7 @@ def test_fixed_gateway_reads_reasons_and_stays_silent(world):
 
     assert observe(world, map_id, deps.FixedAgentLlmGateway()) == "silent"
 
-    run = world.one(AgentRun, map_id=map_id)
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert [c["name"] for c in run.tool_calls] == ["get_reasons"] and run.used_model is True
 
 
@@ -253,7 +261,7 @@ def test_pin_confirmed_during_diagnosis_makes_it_stale(world):
 
     assert observe(world, map_id, gateway) == "stale"
     assert world.rows(AgentSuggestion, map_id=map_id) == []
-    assert world.one(AgentRun, map_id=map_id).used_model is True
+    assert world.one(AgentRun, map_id=map_id, trigger="activity").used_model is True
 
 
 def test_reaction_changed_during_diagnosis_makes_it_stale(world):
@@ -297,7 +305,7 @@ def test_observation_with_several_model_signals_never_asks_for_priority(world):
     assert observe(world, map_id, gateway) == "silent"
 
     assert gateway.calls == ["diagnose"]
-    run = world.one(AgentRun, map_id=map_id)
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert set(run.priority) == {"source", "final_order", "fingerprints", "rule_hits"}
     assert run.priority["source"] == "rules"
 
@@ -327,14 +335,14 @@ def test_model_use_counts_only_diagnosis(world):
 
     assert observe(world, near, gateway) == "suggested"
     assert gateway.calls == []
-    run = world.one(AgentRun, map_id=near)
+    run = world.one(AgentRun, map_id=near, trigger="activity")
     assert (run.used_model, run.priority["rule_hits"]) == (False, ["urgent_dday"])
     assert world.one(AgentSuggestion, map_id=near).diagnosis == "category_gap"
     assert _model_runs_today(world, near) == 0
 
     assert observe(world, far, gateway) == "silent"
     assert gateway.calls == ["diagnose"]
-    run = world.one(AgentRun, map_id=far)
+    run = world.one(AgentRun, map_id=far, trigger="activity")
     assert (run.used_model, run.priority["source"], run.priority["rule_hits"]) == (True, "rules", [])
     assert _model_runs_today(world, far) == 1
 
@@ -347,7 +355,7 @@ def test_each_diagnosis_counts_once(world):
     observe(world, map_id, gateway)
 
     assert gateway.calls == ["diagnose", "diagnose"]
-    assert [r.used_model for r in world.rows(AgentRun, map_id=map_id)] == [True, True]
+    assert [r.used_model for r in world.rows(AgentRun, map_id=map_id, trigger="activity")] == [True, True]
     assert _model_runs_today(world, map_id) == 2   # 관찰마다 1회
 
 
@@ -359,7 +367,7 @@ def test_model_cap_blocks_model_types_and_code_types_go_on(world, monkeypatch):
     assert observe(world, map_id, gateway) == "suggested"
 
     assert gateway.calls == []
-    run = world.one(AgentRun, map_id=map_id)
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert [b["reason"] for b in run.blocked] == ["model_cap"]
     assert (run.used_model, run.priority["source"]) == (False, "rules")
     assert world.one(AgentSuggestion, map_id=map_id).diagnosis == "category_gap"
@@ -378,7 +386,7 @@ def test_code_only_signals_do_not_use_model(world):
     assert observe(world, map_id, gateway) == "suggested"
 
     assert gateway.calls == []
-    run = world.one(AgentRun, map_id=map_id)
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert (run.priority["source"], run.used_model) == ("rules", False)
     assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (None, None, 0, 0)
 
@@ -397,7 +405,7 @@ def test_diagnosis_usage_is_recorded_in_the_run(world):
 
     assert observe(world, map_id, gateway) == "suggested"
 
-    run = world.one(AgentRun, map_id=map_id)
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v2", 900, 200)
 
 
@@ -411,7 +419,7 @@ def test_failed_diagnosis_still_records_usage_spent(world):
 
     assert observe(world, map_id, gateway) == "model_failed"
 
-    run = world.one(AgentRun, map_id=map_id)
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v1", 500, 80)
 
 
@@ -424,7 +432,7 @@ def test_stub_and_code_only_runs_leave_usage_empty(world):
     observe(world, gap_map, FakeGateway())
 
     for map_id in (stall_map, gap_map):
-        run = world.one(AgentRun, map_id=map_id)
+        run = world.one(AgentRun, map_id=map_id, trigger="activity")
         assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (None, None, 0, 0)
 
 
@@ -483,7 +491,7 @@ def test_split_suggestion_reaches_get_and_agent_suggested_with_analysis(world, c
 
     assert observe(world, map_id, FakeGateway(diagnose=good_split)) == "suggested"
 
-    [(type_, payload)] = world.agent_events(map_id)
+    [(type_, payload)] = suggestion_events(world, map_id)
     assert type_ == "agent.suggested"
     event = AgentSuggestionSchema.model_validate(payload)
     assert (event.diagnosis, event.category) == ("split", "음식점")
@@ -502,7 +510,7 @@ def test_stall_suggestion_reaches_get_and_agent_suggested(world, client):
 
     assert observe(world, map_id, FakeGateway(diagnose=good_stall)) == "suggested"
 
-    [(type_, payload)] = world.agent_events(map_id)
+    [(type_, payload)] = suggestion_events(world, map_id)
     assert (type_, payload["diagnosis"], payload["category"]) == ("agent.suggested", "stall", "음식점")
     assert payload["analysis"] is None
     assert [a["type"] for a in payload["actions"]] == ["open_recommend"]

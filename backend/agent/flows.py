@@ -12,7 +12,11 @@
 도구는 tools.py)을 부르고 core.verify_diagnosis를 통과한 것만 초안이 된다. 모델은 Gateway(deps.py)가 고른다 — dev는
 고정 응답 스텁이다. 모델 사용 1회(used_model, 3절)는 진단을 부른 관찰이다. shadow는 유형별이다
 (constants.SHADOW_DIAGNOSES — #582부터 비어 있어 모든 유형이 나간다) — shadow가 아닌 제안만 이벤트를 낸다: 저장
-(agent.suggested), 만료와 무효화(agent.resolved). 우리 조건 요약(8절)은 M2다.
+(agent.suggested), 만료와 무효화(agent.resolved).
+
+**우리 조건 요약(8절, #586)**: 관찰 끝(12.4 8단계)에서 `update_summary`가 카테고리 하나를 갱신한다. 지도 제안과 별도
+트랜잭션, 별도 agent_runs 행(trigger=summary, outcome=summarized)이다. 칸 나누기는 core, 근거 줄은 tools(②와 #422),
+문구는 고정이라 모델 사용으로 세지 않는다(used_model=false). 갱신하면 같은 트랜잭션에 agent.summary_updated를 낸다.
 
 화면 요청(명세 14절)도 여기 있다 — `get_state`, `change_settings`, `view`, `accept`, `dismiss`. 요청 세션(get_db) 안에서
 돌고 커밋은 그 세션이 한다. 이벤트는 같은 트랜잭션에 `record_event`로 남긴다. 권한은 router가 authz.guard로 끝낸 뒤다.
@@ -28,6 +32,9 @@ outcome(agent_runs.outcome)
 - invalid_claims: 검증(11.2) 2단계(신호 불일치)나 7단계(성립 실패)에서 떨어짐. 내역은 verification
 - stale: 저장 직전 재확인(12.8)에서 신호가 사라졌거나 근거가 바뀜
 - suggested: 제안을 저장함(shadow 유형이면 shadow=True)
+요약 관찰(trigger=summary)의 outcome
+- summarized: 그 카테고리 요약을 덮어씀. outcome_detail은 {category}
+- model_failed: ②(사유 구조화)가 실패해 요약을 만들지 못함. 요약은 그대로 두고 다음 관찰에서 다시 본다
 저장 트랜잭션 맨 앞에서 지도가 삭제된 것을 보면(모델 호출 중 삭제 대역) 아무것도 쓰지 않는다 — agent_runs 행도 없다.
 """
 
@@ -44,7 +51,15 @@ from sqlalchemy.orm import Session
 from agent import core, deps, service, snapshot, tools
 from agent.constants import CODE_TYPES, SUGGESTION_TTL, TICK_MAX_MAPS
 from agent.models import AgentSuggestion as SuggestionRow
-from agent.schemas import AgentAcceptResponse, AgentCallFailed, AgentSettings, AgentState, AgentSuggestion, AgentUsage
+from agent.schemas import (
+    AgentAcceptResponse,
+    AgentCallFailed,
+    AgentSettings,
+    AgentState,
+    AgentSuggestion,
+    AgentSummary,
+    AgentUsage,
+)
 from auth import api as auth_api
 from common import categories
 from common.database import SessionLocal, session_scope
@@ -215,6 +230,9 @@ def observe_map(
             db, map_id, snap.latest_seq, next_check_at=_next_check(snap, hist, now, th, new_expires_at),
             observed_at=now,
         )
+
+    # 8. 요약 (별도 흐름, 별도 트랜잭션)
+    update_summary(map_id, snap, hist, now, session_factory=session_factory, gateway=gateway)
     return outcome
 
 
@@ -309,6 +327,59 @@ def _still_there(db: Session, draft: core.Signal, map_id: str, now: datetime, th
     return fresh is not None and core.recheck(draft, fresh, now, th)
 
 
+# ---------------------------------------------------------------- 우리 조건 요약 (8절, 12.4 8단계)
+
+def update_summary(
+    map_id: str, snap: snapshot.Snapshot, hist: core.History, now: datetime, *,
+    session_factory: SessionFactory = SessionLocal, gateway: deps.AgentLlmGateway | None = None,
+) -> str | None:
+    """갱신할 카테고리가 있으면 하나만 다시 만든다(core.pick_summary — 새 사유 3개, 새 구성원의 첫 반응, 사라진 사유).
+    남은 카테고리가 있으면 커서를 지금으로 당겨 다음 tick에 이어 간다. agent_runs에 남긴 outcome을 돌려주고, 갱신할
+    것이 없거나 저장 단계에서 지도가 삭제된 것을 보면 None.
+
+    읽기는 도구처럼 짧은 세션으로 하고(사유는 pins에서 다시 읽는다 — 삭제된 핀의 사유 포함), ②는 세션 없이 부른다(12.6).
+    저장은 지도 제안과 별도 트랜잭션이다. 문구가 고정이라 모델 사용 상한을 보지 않고 used_model=false로 남긴다."""
+    category, more = core.pick_summary(snap, hist.summaries)
+    if category is None:
+        return None
+    started = time.monotonic()
+    gateway = gateway or deps.get_llm_gateway()
+    ctx = tools.ToolContext(map_id=map_id, snap=snap, allowed=(), session_factory=session_factory,
+                            structure=gateway.structure, now=now)
+    try:
+        stored, outcome, detail = core.summarize_reasons(tools.summary_reasons(ctx, category)), "summarized", None
+    except llm_api.PlanEvidenceFailed as exc:
+        log.warning("agent 요약 실패(②) map_id=%s category=%s", map_id, category)
+        stored, outcome, detail = None, "model_failed", {"reason": "structure_failed", "detail": type(exc).__name__}
+
+    with _write(session_factory) as db:
+        if not maps_api.lock_map_if_alive(db, map_id):   # 그새 지도가 삭제됐다. 아무것도 쓰지 않는다
+            return None
+        run_id = service.insert_run(
+            db, map_id=map_id, started_at=now, finished_at=now + timedelta(seconds=time.monotonic() - started),
+            trigger="summary", snapshot_at=now, snapshot_seq=snap.latest_seq, used_model=False, outcome=outcome,
+            outcome_detail={"category": category} | (detail or {}),
+        )
+        if stored is not None:
+            service.upsert_summary(db, map_id=map_id, category=category, summary=stored, run_id=run_id, now=now)
+            rendered = core.render_summary(category, stored, now, recommend_api.fact_labels())
+            record_event(db, core.summary_updated_event(map_id, rendered))
+            if more:
+                service.wake_cursor(db, map_id, now)
+    return outcome
+
+
+def _summaries(db: Session, map_id: str) -> list[AgentSummary]:
+    """저장된 요약을 렌더한다(카테고리는 categories.pinnable() 순서). 키 이름은 지금의 recommend 표시 이름이다."""
+    rows = service.list_summaries(db, map_id)
+    if not rows:
+        return []
+    labels = recommend_api.fact_labels()
+    order = {c: i for i, c in enumerate(categories.all_categories())}
+    return [core.render_summary(r.category, r.summary, r.updated_at, labels)
+            for r in sorted(rows, key=lambda r: order.get(r.category, len(order)))]
+
+
 # ---------------------------------------------------------------- 렌더 (11절 끝)
 
 def _render(db: Session, row: SuggestionRow) -> AgentSuggestion | None:
@@ -350,12 +421,13 @@ def _reaction_texts(db: Session, map_id: str, category: str | None) -> dict[str,
 # ---------------------------------------------------------------- 화면 요청 (14절)
 
 def get_state(db: Session, *, map_id: str, user_id: str, now: datetime) -> AgentState:
-    """GET /maps/{mapId}/agent. 지금 제안은 shadow가 아니고 만료 전인 활성 제안을 렌더한 것. 모드가 꺼져 있으면 null."""
+    """GET /maps/{mapId}/agent. 지금 제안은 shadow가 아니고 만료 전인 활성 제안을 렌더한 것. 모드가 꺼져 있으면 null.
+    요약은 만들어진 카테고리만(8절)."""
     settings = core.settings_view(service.get_settings(db, map_id))
     row = service.active_suggestion(db, map_id, now) if settings.enabled else None
     active = _render(db, row) if row is not None else None
     viewed = active is not None and service.has_viewed(db, row.id, user_id)
-    return core.agent_state(settings, active, viewed=viewed)
+    return core.agent_state(settings, active, viewed=viewed, summaries=_summaries(db, map_id))
 
 
 def change_settings(db: Session, *, map_id: str, enabled: bool, user_id: str, now: datetime) -> AgentSettings:

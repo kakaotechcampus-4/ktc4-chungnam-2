@@ -7,6 +7,8 @@
 - 화면 요청(#531, 명세 14절): 모드(`get_settings`, `save_settings`, `wake_cursor`), 지금 제안(`get_suggestion`,
   `active_suggestion`), 열람(`has_viewed`, `record_view`), 수락과 닫기(`resolve_suggestion` — status='active'일 때만
   바꾸는 가드 UPDATE), 모드 끄기(`supersede_active`)
+- 우리 조건 요약(#586, 명세 8절, 13절): 덮어쓰기(`upsert_summary`), 읽기(`list_summaries`). 갱신 판단이 보는 요약
+  메타는 `load_history`가 함께 읽는다
 
 제안 상태를 바꾸는 함수는 (id, shadow) 목록을 돌려준다. agent.resolved는 shadow가 아닌 것만 낸다(호출부).
 
@@ -158,7 +160,8 @@ def advance_cursor(
 # ---------------------------------------------------------------- 이력 (12.3)
 
 def load_history(db: Session, map_id: str, now: datetime) -> core.History:
-    """정책이 보는 이 지도의 제안 이력(최신순)과 오늘(KST 자정 이후) 모델을 쓴 관찰 수."""
+    """정책이 보는 이 지도의 제안 이력(최신순)과 오늘(KST 자정 이후) 모델을 쓴 관찰 수, 요약 갱신 판단이 보는 카테고리
+    요약 메타(8절, #586)."""
     rows = db.execute(
         select(AgentSuggestion).where(AgentSuggestion.map_id == map_id)
         .order_by(AgentSuggestion.created_at.desc(), AgentSuggestion.id)
@@ -181,6 +184,7 @@ def load_history(db: Session, map_id: str, now: datetime) -> core.History:
             for r in rows
         ),
         model_runs_today=model_runs_today,
+        summaries=tuple(core.summary_meta(r.category, r.summary, r.updated_at) for r in list_summaries(db, map_id)),
     )
 
 
@@ -338,3 +342,24 @@ def resolve_suggestion(
         .values(status=status, resolved_by=user_id, resolved_at=now, resolved_action=action)
         .returning(AgentSuggestion.id)
     ).first() is not None
+
+
+# ---------------------------------------------------------------- 우리 조건 요약 (8절, 13절)
+
+def upsert_summary(
+    db: Session, *, map_id: str, category: str, summary: dict, run_id: uuid.UUID, now: datetime,
+) -> None:
+    """카테고리마다 최신본 하나만 덮어쓴다. summary는 core.summarize_reasons의 모양 그대로 — 키, 개수, reaction_id,
+    문구 종류만 있고 사유 글과 구성원은 없다(명세 2절 13번). based_on_reaction_count는 그 요약이 본 사유 있는 반응 수."""
+    values = {"summary": summary, "based_on_reaction_count": len(summary["reaction_ids"]), "run_id": run_id,
+              "updated_at": now}
+    db.execute(
+        pg_insert(AgentReasonSummary).values(map_id=map_id, category=category, **values)
+        .on_conflict_do_update(index_elements=[AgentReasonSummary.map_id, AgentReasonSummary.category], set_=values)
+    )
+
+
+def list_summaries(db: Session, map_id: str) -> list[AgentReasonSummary]:
+    return list(db.execute(
+        select(AgentReasonSummary).where(AgentReasonSummary.map_id == map_id).order_by(AgentReasonSummary.category)
+    ).scalars().all())
