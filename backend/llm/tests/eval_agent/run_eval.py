@@ -1,12 +1,12 @@
-"""agent 평가(#534) — 평가셋(cases.json)을 실제 모델(gpt-6-luna, 엘리스 ML API)로 N번씩 돌려 표를 낸다.
+"""agent 진단 평가(#534) — 평가셋(cases.json)을 실제 모델(gpt-6-luna, 엘리스 ML API)로 N번씩 돌려 표를 낸다.
 
     cd backend
-    python -m llm.tests.eval_agent.run_eval                 # 20건 × 5회, 우선순위는 effort none/low/default
-    python -m llm.tests.eval_agent.run_eval --runs 1 --cases e08_split_diff_axes_vs_stall --efforts low
+    python -m llm.tests.eval_agent.run_eval                 # target이 있는 케이스 × 5회
+    python -m llm.tests.eval_agent.run_eval --runs 1 --cases e08_split_diff_axes_vs_stall
 
 - 키는 backend/.env의 ELICE_ML_API_BASE_URL, ELICE_ML_API_KEY(settings)로만 읽는다. 키와 URL을 출력하거나 파일에 쓰지 않는다.
-- 우선순위: 모델 우선순위를 부르는 케이스(priority_mode=model)만, reasoning_effort마다 따로 돈다. 진단: target이 있는 케이스.
-  진단은 reasoning_effort=none 고정이다(도구 호출 제약, #532).
+- 진단: target이 있는 케이스. reasoning_effort=none 고정이다(도구 호출 제약, #532). 우선순위는 #582부터 모델이 아니라 코드
+  규칙이라 여기서 돌지 않는다 — 기대값은 test_eval_cases.py가 core.fallback_order로 본다.
 - 결과는 results/(커밋하지 않는다, .gitignore)에 JSON(호출마다 원본)과 Markdown(요약표)으로 남긴다. 사유 글은 평가셋의
   지어낸 예시뿐이다.
 - 모델 출력 검증은 운영과 같은 agent.core.verify_diagnosis다. "검증 통과"는 decision=suggest였던 호출 중 초안이 남은 비율이다.
@@ -29,8 +29,8 @@ from agent import core
 from common.settings import settings
 from llm import client as llm_client
 from llm import service
-from llm.prompts import AGENT_DIAGNOSE_PROMPT_VERSION, AGENT_PRIORITIZE_PROMPT_VERSION, DIAGNOSIS_TOOLS
-from llm.schemas import AgentCallFailed, PriorityOutput
+from llm.prompts import AGENT_DIAGNOSE_PROMPT_VERSION, DIAGNOSIS_TOOLS
+from llm.schemas import AgentCallFailed
 from llm.tests.eval_agent import fixtures as fx
 
 RESULTS_DIR = Path(__file__).with_name("results")
@@ -93,37 +93,6 @@ def _totals(requests: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- 한 번 돌리기
-
-def run_priority(case: dict[str, Any], effort: str, run: int) -> dict[str, Any]:
-    world = fx.build(case)
-    passed, _ = world.passed()
-    policy = core.load_policy()
-    signals = core.priority_input(passed, policy)
-    key_of = {s.id: fx.signal_key(s) for s in passed}
-    _local.requests = []
-    started = time.monotonic()
-
-    def planner(sigs, principles):
-        return llm_client.call_agent_priority(
-            llm_client.get_client(), sigs, principles, reasoning_effort=None if effort == "default" else effort,
-        )
-
-    reply = service.agent_prioritize(signals, policy.principles, planner=planner)
-    ms = _ms(started)
-    top, log = core.choose_top(passed, policy, mode="model", model_out=reply.result)
-    out = reply.result
-    row = {
-        "case": case["id"], "effort": effort, "run": run, "ms": ms, **_totals(_local.requests),
-        "ok": isinstance(out, PriorityOutput),
-        "failure": None if isinstance(out, PriorityOutput) else out.reason,
-        "model_order": [key_of.get(i.signal_id, i.signal_id) for i in out.order] if isinstance(out, PriorityOutput) else None,
-        "reasons": [i.reason for i in out.order] if isinstance(out, PriorityOutput) else None,
-        "top": fx.signal_key(top), "fallback_top": fx.signal_key(core.fallback_order(passed, policy)[0]),
-        "corrections": [c["type"] for c in log["corrections"]],
-    }
-    row["match"] = row["top"] in case["expect"]["priority_top"]
-    return row
-
 
 def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     world = fx.build(case)
@@ -192,42 +161,14 @@ def _p(values: list[float], q: float) -> float:
     return ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))]
 
 
-def summarize(cases: list[dict[str, Any]], prio: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
-    lines = [f"# agent 평가 — {datetime.now().isoformat(timespec='seconds')}",
-             "", f"모델 {settings.llm_model}, 프롬프트 {AGENT_PRIORITIZE_PROMPT_VERSION} / {AGENT_DIAGNOSE_PROMPT_VERSION}", ""]
-
-    if prio:
-        lines += ["## 우선순위 (reasoning_effort별)", "",
-                  "| effort | 호출 | 스키마 통과 | 1순위 일치 | fallback 1순위와 같음 | 보정 발생 | 입력 토큰 | 출력 토큰(추론) | 평균 ms | p90 ms | 호출당 원 |",
-                  "|---|---|---|---|---|---|---|---|---|---|---|"]
-        for effort in dict.fromkeys(r["effort"] for r in prio):
-            rows = [r for r in prio if r["effort"] == effort]
-            lines.append(
-                f"| {effort} | {len(rows)} | {_pct(sum(r['ok'] for r in rows), len(rows))} "
-                f"| {_pct(sum(r['match'] for r in rows), len(rows))} "
-                f"| {_pct(sum(r['top'] == r['fallback_top'] for r in rows), len(rows))} "
-                f"| {_pct(sum(bool(r['corrections']) for r in rows), len(rows))} "
-                f"| {_avg([r['in'] for r in rows]):.0f} | {_avg([r['out'] for r in rows]):.0f}({_avg([r['reasoning'] for r in rows]):.0f}) "
-                f"| {_avg([r['ms'] for r in rows]):.0f} | {_p([r['ms'] for r in rows], 0.9):.0f} | {_avg([r['won'] for r in rows]):.3f} |")
-        lines += ["", "케이스별 1순위 일치(effort별)", "", "| 케이스 | 기대 | fallback | " +
-                  " | ".join(dict.fromkeys(r["effort"] for r in prio)) + " |",
-                  "|---|---|---|" + "---|" * len(dict.fromkeys(r["effort"] for r in prio))]
-        by_case = defaultdict(list)
-        for r in prio:
-            by_case[r["case"]].append(r)
-        expect = {c["id"]: c["expect"] for c in cases}
-        for cid, rows in by_case.items():
-            cells = []
-            for effort in dict.fromkeys(r["effort"] for r in prio):
-                er = [r for r in rows if r["effort"] == effort]
-                tops = Counter(r["top"] for r in er)
-                cells.append(f"{sum(r['match'] for r in er)}/{len(er)} " + ", ".join(f"{k}×{v}" for k, v in tops.items()))
-            lines.append(f"| {cid} | {'/'.join(expect[cid]['priority_top'])} | {rows[0]['fallback_top']} | " + " | ".join(cells) + " |")
+def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
+    lines = [f"# agent 진단 평가 — {datetime.now().isoformat(timespec='seconds')}",
+             "", f"모델 {settings.llm_model}, 프롬프트 {AGENT_DIAGNOSE_PROMPT_VERSION}", ""]
 
     if diag:
         suggest_rows = [r for r in diag if r.get("decision") == "suggest"]
         passed = [r for r in suggest_rows if r["outcome"] == "suggested"]
-        lines += ["", "## 진단 (reasoning_effort=none 고정)", "",
+        lines += ["## 진단 (reasoning_effort=none 고정)", "",
                   "| 지표 | 값 |", "|---|---|",
                   f"| 호출 | {len(diag)} |",
                   f"| 호출 실패(model_failed, invalid_schema) | {_pct(sum(r['outcome'] in ('model_failed', 'invalid_schema') for r in diag), len(diag))} |",
@@ -281,18 +222,15 @@ def summarize(cases: list[dict[str, Any]], prio: list[dict[str, Any]], diag: lis
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--runs", type=int, default=5)
-    parser.add_argument("--efforts", default="none,low,default")
     parser.add_argument("--cases", default="")
     parser.add_argument("--workers", type=int, default=6)
-    parser.add_argument("--skip-priority", action="store_true")
-    parser.add_argument("--skip-diagnosis", action="store_true")
     parser.add_argument("--tag", default="")
     parser.add_argument("--summarize", default="", help="저장된 결과 JSON으로 요약만 다시 낸다(모델을 부르지 않는다)")
     args = parser.parse_args()
 
     if args.summarize:
         saved = json.loads(Path(args.summarize).read_text(encoding="utf-8"))
-        report = summarize(fx.load_cases(), saved["priority"], saved["diagnosis"])
+        report = summarize(fx.load_cases(), saved["diagnosis"])
         Path(args.summarize).with_suffix(".md").write_text(report, encoding="utf-8")
         print(report)
         return 0
@@ -306,37 +244,29 @@ def main() -> int:
     if args.cases:
         wanted = set(args.cases.split(","))
         cases = [c for c in cases if c["id"] in wanted]
-    jobs = []
-    if not args.skip_priority:
-        for c in cases:
-            if c["expect"]["priority_mode"] == "model":
-                for effort in args.efforts.split(","):
-                    jobs += [("p", c, effort, i) for i in range(args.runs)]
-    if not args.skip_diagnosis:
-        jobs += [("d", c, None, i) for c in cases if c["expect"]["target"] for i in range(args.runs)]
+    jobs = [(c, i) for c in cases if c["expect"]["target"] for i in range(args.runs)]
 
     started = time.monotonic()
 
     def go(job):
-        kind, case, effort, i = job
+        case, i = job
         try:
-            return kind, (run_priority(case, effort, i) if kind == "p" else run_diagnosis(case, i))
+            return run_diagnosis(case, i)
         except Exception as exc:  # noqa: BLE001 — 평가 도구. 한 건이 실패해도 나머지를 본다
-            return kind, {"case": case["id"], "effort": effort, "run": i, "crash": type(exc).__name__}
+            return {"case": case["id"], "run": i, "crash": type(exc).__name__}
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         done = list(pool.map(go, jobs))
-    prio = [r for k, r in done if k == "p" and "crash" not in r]
-    diag = [r for k, r in done if k == "d" and "crash" not in r]
-    crashes = [r for _, r in done if "crash" in r]
+    diag = [r for r in done if "crash" not in r]
+    crashes = [r for r in done if "crash" in r]
 
     RESULTS_DIR.mkdir(exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     name = f"{stamp}-{AGENT_DIAGNOSE_PROMPT_VERSION}{('-' + args.tag) if args.tag else ''}"
     (RESULTS_DIR / f"{name}.json").write_text(
-        json.dumps({"priority": prio, "diagnosis": diag, "crashes": crashes}, ensure_ascii=False, indent=1, default=str),
+        json.dumps({"diagnosis": diag, "crashes": crashes}, ensure_ascii=False, indent=1, default=str),
         encoding="utf-8")
-    report = summarize(cases, prio, diag)
+    report = summarize(cases, diag)
     report += f"\n총 {len(jobs)}건, 크래시 {len(crashes)}, 걸린 시간 {time.monotonic() - started:.0f}초\n"
     (RESULTS_DIR / f"{name}.md").write_text(report, encoding="utf-8")
     print(report)

@@ -4,6 +4,44 @@
 
 ---
 
+# #582 — agent_prioritize를 지웠다(우선순위는 agent의 코드 규칙)
+
+## 지운 것
+
+- `service`: `agent_prioritize`, `PriorityPlanner`, `fixed_priority_planner`, `real_priority_planner`, `AGENT_PRIORITIZE_REASONING_EFFORT`
+- `client`: `call_agent_priority`. `prompts`: `AGENT_PRIORITIZE_PROMPT`, `AGENT_PRIORITIZE_PROMPT_VERSION`. `schemas`: `PriorityItem`, `PriorityOutput`
+- `api.py`에서 위 이름들. 머리말과 `backend/llm/CLAUDE.md`(에이전트 호출 목록에서 빼고 "#582에서 코드 규칙으로 옮김")
+- 진단 프롬프트는 글자 하나 바꾸지 않았다(`diagnose-v2` 그대로). `_AGENT_DATA_RULE`은 진단이 쓴다
+
+## 평가셋 (`llm/tests/eval_agent/`)
+
+- `cases.json`: `priority_mode`(single, model, code_only) → `priority_source`(single, rules). 신호가 둘 이상인 9건에 기대
+  `rule_hits`를 적었다. e18(코드 유형만)에 기대 1순위(카테고리 공백 둘 중 하나)를 넣었다
+- `test_eval_cases.py`: 우선순위 케이스를 `core.fallback_order` 기대값 테스트로 옮겼다(1순위, rule_hits, choose_top 기록이
+  fallback_order와 같은지, #534에서 모델이 기본 순서를 바꾼 5건만 규칙도 바꾸는지)
+- `run_eval.py`: 진단만 돈다(`--efforts`, `--skip-priority`, `--skip-diagnosis` 지움). 결과 JSON은 `{diagnosis, crashes}`
+
+| 케이스 | 기대 1순위 | 규칙 1순위 | rule_hits |
+|---|---|---|---|
+| e02 | stall:카페 | stall:카페 | — |
+| e06 | stall:음식점 | stall:음식점 | — (출발 30일 전) |
+| e07 | category_gap | category_gap:음식점 | urgent_dday |
+| e08 | split:p3 | split:p3 | affected_members |
+| e10 | split:c1 | split:c1 | — |
+| e12 | category_gap | category_gap:카페 | affected_members, urgent_dday |
+| e18 | category_gap | category_gap:카페 | — |
+| e19 | split:c1 | split:c1 | recent_dismissals |
+| e20 | split:p1 | split:p1 | affected_members |
+
+9건 모두 기대와 같다. #534에서 모델이 기본 순서와 다르게 둔 5건(e07, e08, e12, e19, e20)은 규칙도 기본 순서를 바꾸고, 나머지
+4건은 바꾸지 않는다.
+
+## 확인
+
+- `pytest llm`(live 제외) 396개 통과, 평가셋 오프라인 43개 포함. live는 돌리지 않았다(`test_agent_live.py`의 우선순위 1개를 지워 진단 1개만 남음)
+
+---
+
 # #534 — agent 프롬프트 v2, 평가셋 20건, 토큰과 시간, 모델 유형 노출 근거
 
 ## 프롬프트 버전

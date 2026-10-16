@@ -1,5 +1,5 @@
 """backend/llm 비즈니스 로직 — 모델 호출 3곳(plan_evidence/label_place/rank_candidates)과 v2 에이전트 호출
-(agent_prioritize/agent_diagnose, #532 — 맨 아래 절).
+(agent_diagnose, #532 — 맨 아래 절. 신호 순위는 #582에서 agent의 코드 규칙으로 옮겼다).
 
 ② plan_evidence는 넘겨받은 planner로 부른다 — real_evidence_planner는 Luna를 실제로 부르고(#116), 기존
 passthrough_planner는 입력을 스키마로 검증·통과하는 스텁이다(LLM_MODE로 고르는 곳은 recommend/deps.py, #219). ③-a-1 label_place, ③-b rank_candidates는 아직 고정 응답
@@ -19,14 +19,14 @@ from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
 
 from common.errors import AppError
 from llm.client import (
-    LlmCallError, call_agent_diagnosis_turn, call_agent_priority, call_planner, get_client, metering,
+    LlmCallError, call_agent_diagnosis_turn, call_planner, get_client, metering,
 )
 from llm.prompts import (
     AGENT_DIAGNOSE_PROMPT, DIAGNOSIS_MAX_TOOL_CALLS, DIAGNOSIS_TOOLS, STRUCTURE_REASONS_MAX_CALLS, diagnosis_tools,
 )
 from llm.schemas import (
     AgentCallFailed, AgentReply, DiagnosisOutput, EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason,
-    PlanningOutput, PriorityItem, PriorityOutput, RankedCandidate,
+    PlanningOutput, RankedCandidate,
 )
 
 log = logging.getLogger("pingo.llm")
@@ -286,7 +286,6 @@ class ToolCaller(Protocol):
     def __call__(self, name: str, args: Mapping[str, Any]) -> dict[str, Any]: ...
 
 
-PriorityPlanner = Callable[[Sequence[Mapping[str, Any]], Sequence[str]], PriorityOutput]
 DiagnosisPlanner = Callable[[Mapping[str, Any], ToolCaller], DiagnosisOutput]
 
 
@@ -332,39 +331,6 @@ def _failed(what: str, exc: Exception, context: str) -> AgentCallFailed:
     detail = f"{type(exc).__name__}({type(cause).__name__})"
     log.warning("%s 실패: reason=%s %s %s", what, reason, detail, context)
     return AgentCallFailed(reason=reason, detail=detail)
-
-
-def fixed_priority_planner(signals: Sequence[Mapping[str, Any]], principles: Sequence[str]) -> PriorityOutput:
-    """고정 응답 스텁 — 받은 순서 그대로. 모델을 부르지 않는다."""
-    return PriorityOutput(order=[PriorityItem(signal_id=signal["id"], reason="고정 응답") for signal in signals])
-
-
-# 우선순위 호출의 reasoning_effort(#534). 평가셋 8건 × 5회에서 none이 1순위 일치 100%, low 88%, 기본값(넘기지 않음) 90%였고
-# none이 가장 빠르고 싸다(호출당 약 2.1초, 추론 토큰 0). 진단은 도구 때문에 늘 none이다(#532).
-AGENT_PRIORITIZE_REASONING_EFFORT = "none"
-
-
-def real_priority_planner(signals: Sequence[Mapping[str, Any]], principles: Sequence[str]) -> PriorityOutput:
-    """실제 모델(gpt-6-luna). 클라이언트는 호출 때 만든다 — 설정이 비면 LlmCallError(call_failed)."""
-    return call_agent_priority(get_client(), signals, principles, reasoning_effort=AGENT_PRIORITIZE_REASONING_EFFORT)
-
-
-def agent_prioritize(
-    signals: Sequence[Mapping[str, Any]], principles: Sequence[str], *, planner: PriorityPlanner
-) -> AgentReply[PriorityOutput]:
-    """신호 순위(명세 7절). signals는 agent가 만든 신호 dict(id, diagnosis, category, features), principles는
-    priority_policy.yaml의 원칙 문장이다. 신호가 1개일 때 부르지 않는 것, 정책 규칙 보정(apply_priority_rules), 실패 시
-    fallback_order는 agent가 한다. 순서가 입력 신호와 맞는지(빠짐, 중복, 모르는 id)도 agent의 보정이 본다.
-
-    결과(PriorityOutput 또는 AgentCallFailed)와 사용량(AgentUsage, #564)을 함께 돌려준다. 실패(호출 실패, 타임아웃, 스키마
-    검증 실패)는 재요청하지 않고 AgentCallFailed로 돌려준다."""
-    with metering() as usage:
-        if not signals:
-            return AgentReply(PriorityOutput(order=[]), usage)
-        try:
-            return AgentReply(planner(signals, principles), usage)
-        except (LlmCallError, ValueError) as exc:
-            return AgentReply(_failed("agent_prioritize", exc, f"signals={len(signals)}"), usage)
 
 
 def fixed_diagnosis_planner(diagnosis_input: Mapping[str, Any], call_tool: ToolCaller) -> DiagnosisOutput:
