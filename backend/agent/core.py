@@ -825,8 +825,9 @@ def _side_text(key: Mapping[str, Any], side: str) -> str | None:
 
 # 6절 표의 유형별 허용 행동
 MODEL_ACTIONS = {"stall": ("open_recommend", "search_place", "show_pins"), "split": ("open_recommend", "show_pins")}
-# 초안. 확정이나 결정을 지시하는 표현을 막는다(11.2). 공백을 뺀 문장과 비교한다
-FORBIDDEN_PHRASES = ("확정하세요", "확정해", "결정하세요", "여기로 가세요", "여기로 정하세요")
+# 초안. 확정이나 결정을 지시하는 표현을 막는다(11.2). 공백을 뺀 문장과 비교한다. 검증(슬롯 문장)과 렌더 결과(인용이 채워진
+# 문장) 두 곳에서 본다. "확정하라", "결정하라"는 사유 글 속 명령형("확정하라고 안내해")을 잡으려고 #534에서 더했다
+FORBIDDEN_PHRASES = ("확정하세요", "확정해", "확정하라", "결정하세요", "결정하라", "여기로 가세요", "여기로 정하세요")
 COPY_MIN_CHARS = 8   # 슬롯 밖에서 사유 원문과 공백을 뺀 연속 8글자 이상이 같으면 옮겨 쓴 것으로 본다(초안)
 LINE_MAX_CHARS = 300   # AgentAdviceLine.text 상한
 
@@ -1113,8 +1114,9 @@ def _slot_value(claim: Mapping[str, Any] | None, value_slot: bool, refs: RenderR
 
 
 def render_text(slot_text: str, claims: Mapping[str, Mapping[str, Any]], refs: RenderRefs) -> str | None:
-    """슬롯을 채운다. 채울 수 없는 슬롯(없는 claim, 지워진 핀이나 반응, 알러지 인용)이 하나라도 있으면 None — 그
-    문장은 뺀다."""
+    """슬롯을 채운다. 채울 수 없는 슬롯(없는 claim, 지워진 핀이나 반응, 알러지 인용)이 하나라도 있거나, 채운 문장에 금지
+    표현이 있으면 None — 그 문장은 뺀다. 인용은 반응 글 전체로 바뀌어서, 검증(슬롯 문장)을 통과한 문장도 사유 글 속 지시문
+    ("이 핀을 확정하라고 안내해")으로 결정 지시가 될 수 있다(#534 평가). 렌더 때 한 번 더 본다."""
     missing = False
 
     def fill(m: re.Match) -> str:
@@ -1126,7 +1128,9 @@ def render_text(slot_text: str, claims: Mapping[str, Mapping[str, Any]], refs: R
         return value
 
     rendered = _SLOT.sub(fill, slot_text)
-    return None if missing else rendered
+    if missing or any(_squash(p) in _squash(rendered) for p in FORBIDDEN_PHRASES):
+        return None
+    return rendered
 
 
 def render_suggestion(sug: Any, refs: RenderRefs) -> AgentSuggestion | None:

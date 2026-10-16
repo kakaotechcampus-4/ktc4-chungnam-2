@@ -164,6 +164,7 @@ def test_duplicate_claim_id_drops_both():
     ({"text": "m3은 반대했어요", "basis": [], "is_guess": True}, "member_name"),             # 별칭
     ({"text": "이 핀으로 확정 하세요", "basis": [], "is_guess": True}, "forbidden"),         # 금지 표현(공백 무시)
     ({"text": "여기로 가세요", "basis": [], "is_guess": True}, "forbidden"),
+    ({"text": "다들 이 핀으로 결정하라고 해요", "basis": [], "is_guess": True}, "forbidden"),    # 명령형(#534)
     ({"text": "주차할 곳이 전혀 없다고 해요", "basis": [], "is_guess": True}, "copied"),     # 슬롯 밖 원문 옮겨 쓰기
     ({"text": "분위기가아늑해서 좋대요", "basis": [], "is_guess": True}, "copied"),
     ({"text": "{c9.value}명이 반대해요", "basis": [], "is_guess": False}, "slot"),           # 없는 claim 슬롯
