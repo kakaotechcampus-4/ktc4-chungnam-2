@@ -1,8 +1,39 @@
 # 루트 리뷰 가이드 — backend/recommend
 
 `backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 네 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#569" 절이 최신, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
+작업을 누적해서 담는다 — 아래 "#585" 절이 최신, 그 아래 "#569" 절, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
 전체, 가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+
+---
+
+# #585 — 추천 막힘 조언용 run 조회 3종과 읽기 전용 시뮬레이션
+
+## 구현
+
+- `recommend.api`에 `get_recent_runs`·`get_run_funnel`·`get_run_evidence`·`simulate_filter`. 네 함수 모두 권한을 판정하지 않는다(agent가 run 요청자를
+  확인한 뒤 부른다, docstring에 적음). 없는 run은 `AppError NOT_FOUND`. 라우터·스펙 변경 없음.
+- `_run_pipeline`이 지역(`_PipelineRegion`, regions 행의 사본)과 활성 근거 줄을 인자로 받는다. 읽는 곳은 `_pipeline_inputs` 하나이고, 시뮬레이션만
+  반경 배율과 끌 줄을 넘긴다. 필터 순서·실격 규칙·깔때기 라벨은 그대로다. execute/widen/retry는 `_pipeline_inputs(db, run)`로 지금과 같은 입력을 넘긴다.
+- `_excluded_place_ids(record_dismissed=False)`: 🚫한 곳을 `exclusions`에 쌓지 않고 집합에만 합친다. 결과 집합은 실행 때와 같다(가드레일 6).
+- 테스트 `tests/test_run_reads_api.py`(15개): execute_run 깔때기·후보 고정, before = 실제 실행 결과, 줄 하나 끄면 그 실격만 풀림, 반경 배율 2배면 반경
+  단계 탈락 감소, 제안·거절한 곳은 계속 빠짐, 호출 전후 recommend 테이블 전부와 event_log가 같음(실행 전·후 두 경우).
+
+## 루트에 알릴 것
+
+- **`docs/agent-v2.md` 10절 표와 다르다**: `get_run_evidence`는 표의 `is_requester_own` 대신 이슈 #585대로 `author_id`를 돌려준다(agent가 run의
+  requested_by와 비교). 표를 고칠지 루트가 정한다.
+- **`result_count`는 상위 3곳 선정 뒤의 수라 최대 3이다.** soft_relax의 "끄면 몇 곳이 더 남는가"는 깔때기의 「실격 조건 제거」 차이(또는
+  `result_count` + 「상위 3곳 선정」 removed_count = 필터 통과 수)로 계산해야 한다. 통과 수 필드가 따로 필요하면 요청해 달라.
+- **before는 다시 계산한 값이다**(last_funnel을 그대로 쓰지 않는다). 실행 뒤 지도에 핀이 생기거나 🚫가 달리면 마지막 실행 결과와 달라질 수 있다. 차이는
+  같은 호출의 before/after로만 비교하는 것이 맞다. 저장된 마지막 실행은 `get_run_funnel`.
+- `simulate_filter`에 선택 인자 `place_search`, `place_facts`를 더했다(생략하면 `recommend.deps`가 고른 실행과 같은 Gateway). 테스트와 agent 스텁 주입용이다.
+- 입력 검증: 그 run의 근거 줄이 아닌 id(형식 오류 포함)는 `NOT_FOUND`, `radius_factor <= 0`은 `ValueError`. 배율 상한은 없다 — 반경 넓히기 상한(30분,
+  `WIDEN_LIMIT`)을 넘는 배율 조언을 내지 않는 건 agent 몫이다. 배율은 모든 지역 원에 곱한다(v1은 원 하나).
+- dev 스텁(`DevPlaceSearchGateway`)은 원 중심 150m 안에 고정 6곳만 만들어서 반경 배율을 바꿔도 결과가 같다. 반경 조언은 real 모드에서만 의미가 있다.
+- 시간: 로컬 PostgreSQL, 가짜 Gateway와 dev 스텁 모두 1회 약 25ms(파이프라인 2번, execute_run 1회는 약 29ms). real 모드는 여기에 장소 검색·라벨 조회가
+  2번씩 더 붙는다. soft_relax가 줄마다 부르면 줄 수만큼 before를 다시 계산한다 — 느려지면 여러 변경을 한 번에 받는 함수를 따로 연다.
+- 백엔드 전체 테스트에서 `agent/tests/test_flows.py::test_daily_cleanup_deletes_old_runs_once_a_day` 하나가 실패한다. 이번 변경을 뺀 develop 상태에서도
+  똑같이 실패해서 이번 작업과는 무관하다(agent 코드라 손대지 않았다).
 
 ---
 
