@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { MessageSquare, RotateCw, Users } from 'lucide-react'
 
 import { ApiError } from '@/api'
@@ -70,6 +70,9 @@ export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; r
   )
 }
 
+/** 결과를 이미 보여 준 실행. 후보 상세에서 목록으로 돌아올 때는 다시 나타나지 않게 한다(#595). */
+const shownRuns = new Set<string>()
+
 /** 결과 목록(Figma 'AI 결과 탭'). 카드마다 이유·조건별 체크·구성원 충족·출처가 붙는다(가드레일 5). */
 export function ResultsBody({
   mapId,
@@ -87,8 +90,12 @@ export function ResultsBody({
   onHow: () => void
 }) {
   const removed = result.funnel.reduce((sum, f) => sum + f.removed_count, 0)
+  const [enter] = useState(() => !shownRuns.has(run.id))
+  useEffect(() => {
+    shownRuns.add(run.id)
+  }, [run.id])
   return (
-    <div className="space-y-3">
+    <div className={`space-y-3 ${enter ? 'enter-fade' : ''}`}>
       <button type="button" onClick={onHow} className="flex w-full justify-between rounded-lg bg-ink-50 px-3 py-2 text-xs text-ink-700">
         <span>
           조건으로 {removed}곳 걸러냄 → 추천 {result.candidates.length}곳

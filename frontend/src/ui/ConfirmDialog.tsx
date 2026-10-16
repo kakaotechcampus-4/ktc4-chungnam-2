@@ -42,9 +42,9 @@ export default function ConfirmDialog({
   return (
     <AlertDialog.Root open onOpenChange={(open) => !open && onCancel()}>
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className="fixed inset-0 z-50 bg-scrim" />
+        <AlertDialog.Overlay className="enter-fade fixed inset-0 z-50 bg-scrim" />
         <AlertDialog.Content className="fixed inset-0 z-50 flex items-center justify-center p-6 outline-none">
-          <div className="w-full max-w-sm space-y-2 rounded-2xl bg-white p-5">
+          <div className="enter-pop w-full max-w-sm space-y-2 rounded-2xl bg-white p-5">
             <AlertDialog.Title className="text-lg font-bold text-ink-900">{title}</AlertDialog.Title>
             {detail && <div className="rounded-lg bg-ink-50 p-3 text-sm">{detail}</div>}
             <AlertDialog.Description className="text-sm text-ink-600">{body}</AlertDialog.Description>

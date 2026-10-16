@@ -175,6 +175,42 @@
     }
 }
 
+/* 등장 효과(DESIGN.md「움직임」, #595). 나타날 때 한 번만 움직인다. 곡선은 Tailwind ease-out 과 같다. */
+@layer components {
+    .enter-fade {
+        animation: enter-fade 200ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .enter-pop {
+        animation: enter-pop 200ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .enter-drop {
+        animation: enter-drop 200ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .enter-sheet {
+        animation: enter-sheet 300ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .enter-fade,
+        .enter-pop,
+        .enter-drop,
+        .enter-sheet {
+            animation: none;
+        }
+    }
+}
+@keyframes enter-fade {
+    from { opacity: 0; }
+}
+@keyframes enter-pop {
+    from { opacity: 0; transform: scale(0.95); }
+}
+@keyframes enter-drop {
+    from { opacity: 0; transform: translateY(-8px); }
+}
+@keyframes enter-sheet {
+    from { transform: translateY(100%); }
+}
+
 /* 키보드 포커스는 불투명 2px(3:1 이상). shadcn 기본 outline-ring/50 은 흰 바탕에서 1.98:1이라 안 보였다(#299). */
 @layer base {
     /* base 층에 둬서 outline-none 을 준 곳(검색 input 등 — 틀이 대신 표시)은 그대로 꺼진다. */

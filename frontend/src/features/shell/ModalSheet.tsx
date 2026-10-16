@@ -32,7 +32,7 @@ export default function ModalSheet({
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-scrim" />
+        <Dialog.Overlay className="enter-fade fixed inset-0 z-50 bg-scrim" />
         {/* 내용 틀이 화면 전체라 빈 곳을 누르면 딤을 누른 것으로 본다. */}
         <Dialog.Content
           aria-describedby={undefined}
@@ -49,7 +49,7 @@ export default function ModalSheet({
           {/* 넓은 화면에선 왼쪽 영역(탭 줄 + 패널, PANEL_W)과 같은 폭으로 뜬다 — 값은 layout.ts 한 곳에서 온다. */}
           <div
             style={{ '--panel-w': `${PANEL_W}px` } as CSSProperties}
-            className="absolute inset-x-0 bottom-0 md:right-auto md:w-[var(--panel-w)]"
+            className="enter-sheet absolute inset-x-0 bottom-0 md:right-auto md:w-[var(--panel-w)]"
             onClick={(e) => e.stopPropagation()}
           >
             <Toaster controlsVisible={false} />
