@@ -367,6 +367,8 @@ version 1의 principles(프롬프트용 원칙 3개)는 모델 호출이 없어�
 
 `agent_runs.priority`에 final_order, source(single, rules), fingerprints, rule_hits(어느 규칙이 순서를 바꿨는지)를 남긴다.
 
+구현에서 정한 것(#582): rule_hits는 순서를 바꾼 규칙 이름 목록이다(recent_dismissals, affected_members, elapsed_ratio, urgent_dday, always_first, never_first). 적용은 같은 weight 기준 셋(앞 기준이 같을 때만 다음 기준) → urgent_dday → always_first → never_first 차례이고, 맨 앞으로 옮기기는 안정 정렬이라 위 번호 순서와 결과가 같다. urgent_dday는 `dday <= 3`(여행 중 포함)인 category_gap에 걸린다. always_first 유형이 있으면 출발 임박이어도 그 유형이 1순위다.
+
 ## 8. 우리 조건 요약
 
 카테고리마다 새 사유가 3개 쌓이거나(`SUMMARY_NEW_REASONS`) 새 구성원이 지도에서 첫 반응을 남기면, 모델이 그 카테고리의 조건 요약을 갱신한다. 갱신 한 번은 모델 사용 1회로 센다. 요약은 바텀시트에 항상 있고 점이나 알림은 없다.
@@ -424,7 +426,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 - 대상이 아니면 204. 저장된 조언이 있으면 그대로 200. 없으면 생성해 저장하고 200.
 - run당 1회: `agent_run_advice`에 `INSERT ... ON CONFLICT (run_id) DO NOTHING` 후 저장된 행을 돌려준다. 모델이 silent여도 빈 advice로 저장해 다시 생성하지 않는다.
 - 세션: 이 엔드포인트는 요청 단위 세션(get_db)을 쓰지 않는다. 조회와 저장을 짧은 세션으로 나눈다. `realtime/dispatcher.py`가 재전송 조회에 SessionLocal을 짧게 쓰는 것과 같은 이유다.
-- 지도 모델 사용 상한에는 세지 않는다. run당 1회라 개인 재시도 상한(5회) 안에 묶인다. 서비스 전체 상한은 적용한다.
+- 지도 모델 사용 상한에는 세지 않는다. run당 1회라 개인 재시도 상한(10회, #31) 안에 묶인다. 서비스 전체 상한은 적용한다.
 
 조언 종류는 다음과 같다.
 
@@ -840,7 +842,7 @@ CREATE TABLE agent_runs (
   snapshot_seq    bigint NULL,
   signals         jsonb NOT NULL DEFAULT '[]',
   blocked         jsonb NOT NULL DEFAULT '[]',   -- [{signal_id, reason}]
-  priority        jsonb NULL,             -- model_order, final_order, corrections, reused
+  priority        jsonb NULL,             -- source(single|rules), final_order, fingerprints, rule_hits (#582)
   policy_version  text NULL,
   prompt_version  text NULL,             -- 우선순위와 진단을 둘 다 부르면 "prioritize-v1+diagnose-v1"처럼 잇는다. model도 같다(#564)
   model           text NULL,
@@ -1073,7 +1075,7 @@ AI 담당
 - [x] #532 llm에 agent_prioritize(#582에서 지움), agent_diagnose(도구 콜백 포함) 추가하고 `llm/api.py`에서 연다. 먼저 고정 응답 스텁으로 통합
 - [x] #533 M1-2: tools.py 8개, verify_diagnosis, claim 렌더, apply_priority_rules, observe_map 모델 단계. 17절 2(진단 부분), 3, 7, 11
 - [x] #534 M1-3: 프롬프트(우선순위, 진단, 도구 설명문), 평가셋 20건, reasoning_effort 확인과 비교, run당 토큰, shadow 검증 실패율을 본 뒤 모델 유형 노출 결정
-- [ ] #582 M1 마무리: 모델 유형 노출, 우선순위를 코드 규칙으로, TICK_MAX_MAPS 6
+- [x] #582 M1 마무리: 모델 유형 노출, 우선순위를 코드 규칙으로, TICK_MAX_MAPS 6
 - [ ] #535 M1-4: `/internal/agent/tick`과 배포 예약 실행(배포 환경 결정 #168 대기). 그 전에는 `AGENT_LOOP_IN_PROCESS=1`
 
 FE 담당
@@ -1085,23 +1087,20 @@ FE 담당
 
 ### M2: 우리 조건 요약 + 추천 막힘 조언 + 수치 조정
 
-통과 조건: recommend.api에 run 조회 함수(get_recent_runs, get_run_funnel, get_run_evidence용), 근거 줄 단위 읽기 전용 시뮬레이션 함수 공개. #422 분류 함수와 키 표시 이름은 #564에서 공개됨
+통과 조건: recommend.api에 run 조회 함수(get_recent_runs, get_run_funnel, get_run_evidence용), 근거 줄 단위 읽기 전용 시뮬레이션 함수 공개(#585). #422 분류 함수와 키 표시 이름은 #564에서 공개됨
+
+이슈는 2026-10-16에 나눴다. 요약은 #585 없이 시작할 수 있다.
 
 AI 담당
 
-- [ ] recommend.api 함수 추가 (recommend 모듈 규칙과 "넘지 말 것"을 따른다. 필터 순서를 바꾸지 않는다)
-- [ ] 요약 칸 나누기(8절, 코드)와 `NOT_FILTERED_CHIP_IDS`, `SAFETY_WORDS`
-- [ ] llm에 agent_advise_run 추가. agent_summarize는 19절 판단 뒤에 추가하거나 고정 문구로 대신한다
-- [ ] flows.update_summary, agent.api.advise_run, `GET /runs/{runId}/advice`
-- [ ] tools.py: get_recent_runs, get_run_funnel, get_run_evidence, simulate_filter
-- [ ] 프롬프트 작성: 요약, 추천 막힘 조언
-- [ ] 운영 기록으로 5절 수치 조정 (20절 기준)
-- [ ] 17절 테스트 2(조건 완화와 키 없는 사유), 13, 17
+- [ ] #585 recommend.api: get_recent_runs, get_run_funnel(추천 가능 장소 단계 포함, #558), get_run_evidence, simulate_filter(필터 순서를 다시 구현하지 않는다)
+- [ ] #586 M2-1 우리 조건 요약: flows.update_summary, 칸 나누기(8절, 코드), `NOT_FILTERED_CHIP_IDS`, `SAFETY_WORDS`, 구체화 문장은 고정 문구로 시작, agent.summary_updated. 17절 2(키 없는 사유), 17
+- [ ] #587 M2-2 추천 막힘 조언: llm agent_advise_run, 도구 4종, agent.api.advise_run, `GET /runs/{runId}/advice`(recommend 라우터). 17절 2(조건 완화), 13
+- [ ] #588 M2-3 평가와 수치 조정: 조언 프롬프트와 평가셋, 요약 문장에 모델이 필요한지 판단, 운영 기록으로 5절 수치 점검(20절)
 
 FE 담당
 
-- [ ] 바텀시트의 우리 조건 요약 탭
-- [ ] AI 추천 결과 화면의 조언 영역(16.5)
+- [ ] #589 바텀시트의 우리 조건 요약 탭, AI 추천 결과 화면의 조언 영역(16.5)
 
 완료: decided_within_24h와 조언 후 재시도 결과 수를 볼 수 있다.
 
