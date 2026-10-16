@@ -130,13 +130,14 @@ class AgentSuggestionView(Base):
 
 
 class AgentReasonSummary(Base):
-    """우리 조건 요약. 카테고리마다 최신본 하나만 덮어쓴다. `summary`에 사유 원문이 들어갈 수 있다."""
+    """우리 조건 요약. 카테고리마다 최신본 하나만 덮어쓴다. `summary`에는 사유 원문과 구성원이 없다(명세 2절 13번, #586) —
+    키, 개수, 근거 reaction_id, 고정 문구 종류만. 탈퇴 때 `api.delete_by_user`가 안전장치로 그 지도 요약을 지운다."""
 
     __tablename__ = "agent_reason_summaries"
 
     map_id: Mapped[str] = mapped_column(String, primary_key=True)
     category: Mapped[str] = mapped_column(String, primary_key=True)
-    summary: Mapped[dict] = mapped_column(JSONB, nullable=False)  # 다섯 칸의 렌더 결과와 근거 reaction_id
+    summary: Mapped[dict] = mapped_column(JSONB, nullable=False)  # core.summarize_reasons 모양. 렌더는 응답과 이벤트 때
     based_on_reaction_count: Mapped[int] = mapped_column(Integer, nullable=False)
     run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

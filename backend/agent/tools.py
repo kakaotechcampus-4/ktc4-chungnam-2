@@ -255,11 +255,12 @@ def get_reasons(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
     return _top(reasons, "reasons")
 
 
-def _structured(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """반응마다 근거 줄 [{fact_key, wants, badge}] (8.1). 글은 ②로(캐시에 없을 때만, 한 번에 모아서), 칩은 칩 표 그대로.
-    ♥ 글은 preferred, 🚫 글은 required로 넣는다 — 추천이 근거 줄을 만들 때와 같다. 칩은 🚫에만 있어 required.
+def _lines(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[list[dict[str, Any]]]:
+    """반응마다 근거 줄 [{fact_key, wants, badge, source, …}] (8.1). 글은 ②로(캐시에 없을 때만, 한 번에 모아서), 칩은 칩 표
+    그대로. ♥ 글은 preferred, 🚫 글은 required로 넣는다 — 추천이 근거 줄을 만들 때와 같다. 칩은 🚫에만 있어 required.
     글 줄과 칩 줄을 합친 뒤 추천과 같은 #422 규칙(🚫 사유 안의 음식 종류 "원함"은 preferred)을 recommend.api로 건다(#564).
-    ②가 실패하면 llm.api.PlanEvidenceFailed가 그대로 올라간다."""
+    줄마다 출처(source: text|chip)를 붙이고 칩 줄에는 chip_id와 label(칩 표의 고정 이름)도 붙인다 — 요약의 키 없는 사유
+    나누기(8절)가 쓴다. ②가 실패하면 llm.api.PlanEvidenceFailed가 그대로 올라간다."""
     def key(r: Mapping[str, Any]) -> tuple[str, str]:
         return r["reaction_id"], _iso(r["updated_at"])
 
@@ -276,11 +277,35 @@ def _structured(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[dic
             ))
     out = []
     for r in rows:
-        lines = [dict(line) for line in ctx.cache.get(key(r)) or ()] if r["reason_text"] else []
-        lines += [{"fact_key": c["fact_key"], "wants": c["wants"], "badge": "required"} for c in r["chips"]]
-        lines = recommend_api.demote_wanted_place_identity(r["category"], lines)
-        out.append({"reaction_id": r["reaction_id"], "type": r["type"], "lines": lines})
+        lines = [dict(line, source="text") for line in ctx.cache.get(key(r)) or ()] if r["reason_text"] else []
+        lines += [{"fact_key": c["fact_key"], "wants": c["wants"], "badge": "required", "source": "chip",
+                   "chip_id": c["chip_id"], "label": c["label"]} for c in r["chips"]]
+        out.append(recommend_api.demote_wanted_place_identity(r["category"], lines))
     return out
+
+
+_LINE_KEYS = ("fact_key", "wants", "badge")   # structure_reasons 도구가 모델에 주는 줄의 칸
+
+
+def _structured(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """structure_reasons와 compare_reasons의 모양 — 반응마다 {reaction_id, type, lines[{fact_key, wants, badge}]}."""
+    return [
+        {"reaction_id": r["reaction_id"], "type": r["type"],
+         "lines": [{k: line[k] for k in _LINE_KEYS} for line in lines]}
+        for r, lines in zip(rows, _lines(ctx, rows), strict=True)
+    ]
+
+
+def summary_reasons(ctx: ToolContext, category: str) -> list[dict[str, Any]]:
+    """우리 조건 요약(8절)의 입력 — 그 카테고리의 사유 있는 반응 전부(삭제된 핀의 사유 포함, 추천과 같은 기준)와 출처 붙은
+    근거 줄. 모델 도구가 아니라 상위 30개로 자르지 않는다. [{reaction_id, member, text, lines}]. member(user_id)와
+    text는 core.summarize_reasons가 사람 수와 알러지 낱말을 보는 데만 쓰고 저장하지 않는다. ②가 실패하면
+    PlanEvidenceFailed."""
+    rows = _reasoned(ctx, category=category)
+    return [
+        {"reaction_id": r["reaction_id"], "member": r["user_id"], "text": r["reason_text"], "lines": lines}
+        for r, lines in zip(rows, _lines(ctx, rows), strict=True)
+    ]
 
 
 def structure_reasons(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:

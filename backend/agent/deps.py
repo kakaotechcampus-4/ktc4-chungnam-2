@@ -8,7 +8,8 @@ planner다(#532): dev는 fixed planner, real은 real planner.
   화면에 나갈 길이 없다(명세 2절 10번). 우선순위는 모델이 아니라 코드 규칙이라(core.fallback_order, #582) 여기 없다.
 - structure(#533): structure_reasons 도구가 쓰는 ②(`llm.api.plan_evidence`). dev는 입력을 그대로 돌려주는 스텁이라 글에
   키가 붙지 않는다. 실패는 `PlanEvidenceFailed`(예외)다 — 도구가 오류 결과로 바꾼다.
-- summarize, advise_run: llm 함수가 M2에서 생긴다. real은 그 전까지 부르면 NotImplementedError다.
+- summarize: 우리 조건 요약은 고정 문구라(2026-10-16 결정, #586) flows가 부르지 않는다. 맞춤 문장이 필요한지는 #588에서
+  다시 본다. advise_run은 llm 함수가 M2(#587)에서 생긴다. real은 그 전까지 부르면 NotImplementedError다.
 """
 
 from collections.abc import Mapping, Sequence

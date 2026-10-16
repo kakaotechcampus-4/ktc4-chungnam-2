@@ -5,6 +5,7 @@
 - 우선순위 정책 파일(`priority_policy.yaml`) 로더 — 파일 읽기 한 곳만 I/O다
 - 코드 유형 템플릿(6.4, 6.5)과 렌더(11절 끝 "저장과 렌더 시점"), 이벤트 페이로드(15절) — #531
 - 진단 입력(12.4 6단계), 충돌 종류(6.3), 모델 출력 검증(11.2) — #533
+- 우리 조건 요약(8절): 갱신 판단, 다섯 칸 나누기, 고정 문구 렌더 — #586
 
 입력은 `agent.snapshot.Snapshot`(관찰 한 번의 사본)과 `History`(이 지도의 제안 이력, #515가 채운다)다.
 Signal과 features에는 사유 글을 넣지 않는다 — 근거는 reaction_id와 pin_id로만 가리킨다(명세 2절 13번).
@@ -36,6 +37,7 @@ from agent.constants import (
     DDAY_MID,
     MODEL_TYPES,
     NO_REACTION_DAILY_LIMIT,
+    NOT_FILTERED_CHIP_IDS,
     NO_REACTION_MIN_TARGET_PINS,
     NO_REACTION_UNSEEN_RATIO,
     PER_MEMBER_DAILY_MODEL_USES,
@@ -45,6 +47,7 @@ from agent.constants import (
     SAFETY_WORDS,
     SHADOW_DIAGNOSES,
     STALL_ACTIVE_MEMBERS,
+    SUMMARY_NEW_REASONS,
     TIME_MAX,
     TIME_MIN,
     TIME_MULTIPLIER,
@@ -54,10 +57,15 @@ from agent.schemas import (
     AgentAdviceLine,
     AgentAnalysis,
     AgentConflictAxis,
+    AgentNotFiltered,
     AgentSettings,
+    AgentSplitPref,
     AgentState,
     AgentSuggestion,
+    AgentSummary,
+    AgentSummaryItem,
     AgentUsage,
+    AgentVagueFixable,
     CountClaim,
     DiagnosisOutput,
     QuoteClaim,
@@ -321,9 +329,18 @@ class PastSuggestion:
 
 
 @dataclass(frozen=True)
+class SummaryMeta:
+    """이 지도의 카테고리 요약 한 건에서 갱신 판단(8절)이 보는 것 — 요약을 만들 때 본 사유 있는 반응 id와 갱신 시각."""
+    category: str
+    reaction_ids: frozenset[str]
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
 class History:
     suggestions: tuple[PastSuggestion, ...] = ()   # 이 지도, 최신순(created_at 내림차순)
     model_runs_today: int = 0   # KST 자정 이후 used_model=true(진단을 부름)이고 trigger in (activity, time, summary)인 agent_runs 수
+    summaries: tuple[SummaryMeta, ...] = ()   # 이 지도의 카테고리 요약(#586)
 
     @property
     def active(self) -> PastSuggestion | None:
@@ -1122,6 +1139,208 @@ def action_at(actions: Sequence[Mapping[str, Any]], index: int) -> AgentAction |
     return None if found is None else AgentAction.model_validate(found)
 
 
+# ---------------------------------------------------------------- 우리 조건 요약 (8절, #586)
+# 칸 나누기와 개수는 코드다. 근거는 ②가 낸 근거 줄(키, 방향, 배지)이고 #422 분류는 tools가 이미 건 뒤다. 구체화 요청과
+# 안내는 고정 문구다(2026-10-16 결정 — 모델 없음). 저장 모양에는 키, 개수, reaction_id, 문구 종류만 둔다 — 사유 글과
+# 구성원(user_id, 이름, 별칭)은 넣지 않는다(2절 11번, 13번). 키 이름과 문구는 응답과 이벤트를 만들 때 렌더한다.
+
+FAR_CHIP_ID = "common_far"   # 「너무 멀어요」 — 키가 없어 vague_fixable, 거리 문구를 붙인다(8절 3번)
+COMMON_PREF_MIN_MEMBERS = 2   # common_prefs: 같은 키, 같은 방향을 2명 이상
+SUMMARY_REQUESTS = {   # vague_fixable 구체화 요청(고정 문구). 저장에는 종류(키)만 둔다
+    "general": "어떤 점이 별로였는지 적어 주시면 추천에 반영돼요",
+    "far": "거리 조건은 '숙소에서 걸어서 10분'처럼 적어 주세요",
+}
+SUMMARY_NOTICES = {   # not_filtered 고정 안내. 알러지 문구는 추천 결과 화면 안내(#425)와 같은 말이다
+    "allergy": "알러지 같은 조건은 추천이 거르지 않아요. 가게에 직접 확인해 주세요.",
+    "price": "가격은 아직 추천 조건에 없어요.",
+}
+
+
+def _first_reactions(snap: Snapshot) -> dict[str, tuple[datetime, str]]:
+    """구성원 → 이 지도에서 가장 이른 반응의 (시각, 카테고리). 삭제된 핀의 반응은 사유가 있는 것만 보인다(별칭으로
+    구성원을 찾는다). 반응 행에는 만든 시각이 없어 updated_at으로 본다 — 고친 반응은 고친 시각이다."""
+    user_of = {m.alias: m.user_id for m in snap.members}
+    acts = [(r.user_id, r.updated_at, snap.pin(r.pin_id).category) for r in snap.reactions if snap.pin(r.pin_id)]
+    acts += [(user_of[r.alias], r.updated_at, r.category) for r in snap.reasons if r.pin_deleted and r.alias in user_of]
+    first: dict[str, tuple[datetime, str]] = {}
+    for user, at, category in sorted(acts, key=lambda a: a[1]):
+        first.setdefault(user, (at, category))
+    return first
+
+
+def newcomer_reacted(snap: Snapshot, category: str, since: datetime | None) -> bool:
+    """since 뒤에 첫 반응을 남긴 구성원이 있고 그 반응이 이 카테고리인가(8절 "새 구성원이 지도에서 첫 반응"). since가
+    없으면(요약이 아직 없으면) 첫 반응이 이 카테고리인 구성원이 있는가."""
+    return any(c == category and (since is None or at > since) for at, c in _first_reactions(snap).values())
+
+
+def summary_changes(snap: Snapshot, category: str, meta: SummaryMeta | None) -> int | None:
+    """그 카테고리 요약을 갱신해야 하면 바뀐 사유 수(새로 생긴 것 + 사라진 것), 아니면 None.
+
+    - 새 사유가 SUMMARY_NEW_REASONS(3)개 이상. 새 사유 = 지금 사유 있는 반응 중 지난 요약이 보지 않은 것 — 지운 반응이
+      없으면 명세의 "지금 수 - based_on_reaction_count"와 같고, 지운 반응이 있어도 새 사유를 놓치지 않는다.
+    - 새 구성원이 지도에서 첫 반응을 이 카테고리에 남김(newcomer_reacted).
+    - 지난 요약이 본 사유가 사라짐(반응 삭제, 지도 나가기 #369, 사유 지움). 지운 사람의 몫이 개수에 남지 않게 한다.
+    요약이 없는 카테고리는 사유 있는 반응이 하나라도 있어야 만든다."""
+    current = {r.reaction_id for r in snap.reasons if r.category == category}
+    if meta is None and not current:
+        return None
+    known = meta.reaction_ids if meta is not None else frozenset()
+    new, gone = current - known, known - current
+    since = meta.updated_at if meta is not None else None
+    if len(new) >= SUMMARY_NEW_REASONS or gone or newcomer_reacted(snap, category, since):
+        return len(new) + len(gone)
+    return None
+
+
+def pick_summary(snap: Snapshot, metas: Sequence[SummaryMeta]) -> tuple[str | None, bool]:
+    """이번 관찰에서 갱신할 카테고리 하나(8절, 초안)와 그 밖에 갱신할 카테고리가 더 있는지. 바뀐 사유가 가장 많은 것,
+    같으면 categories.pinnable() 순서."""
+    by_category = {m.category: m for m in metas}
+    due = [(c, n) for c in categories.pinnable() if (n := summary_changes(snap, c, by_category.get(c))) is not None]
+    if not due:
+        return None, False
+    return max(due, key=lambda d: d[1])[0], len(due) > 1
+
+
+def _has_safety_word(text: str | None) -> bool:
+    return bool(text) and any(w in text for w in SAFETY_WORDS)
+
+
+def _keyless_kind(line: Mapping[str, Any], text: str | None) -> tuple[str, str] | None:
+    """키 없는 줄(또는 방향 없는 줄) → (칸, 문구 종류). 칸에 넣지 않을 줄이면 None(8절 키 없는 사유 나누기).
+
+    1. 칩은 id로 가른다: 「비싸요」 3종은 not_filtered(가격), 「너무 멀어요」는 vague_fixable(거리). 키 없는 칩의 이름에
+       알러지 낱말이 있으면(뺀 칩 「갑각류 알러지가 있어요」, #425) not_filtered(알러지). 나머지 칩은 vague_fixable.
+    2. 글에서 나온 키 없는 줄: 글에 SAFETY_WORDS가 있으면 None(그 글은 반응 단위로 알러지 칸에 이미 들어갔다), 아니면
+       vague_fixable.
+    3. 키는 있는데 방향이 없는 줄(wants=null)은 추천이 쓰지 않는다(constraints.md "wants가 null — 효과 없음"). 다시 적으면
+       반영될 수 있어 vague_fixable로 둔다."""
+    if line.get("source") == "chip":
+        chip_id = line.get("chip_id")
+        if chip_id in NOT_FILTERED_CHIP_IDS:
+            return "not_filtered", "price"
+        if chip_id == FAR_CHIP_ID:
+            return "vague_fixable", "far"
+        if line.get("fact_key") is None and _has_safety_word(line.get("label")):
+            return "not_filtered", "allergy"
+        return "vague_fixable", "general"
+    if line.get("fact_key") is None and _has_safety_word(text):
+        return None
+    return "vague_fixable", "general"
+
+
+def _item(key: tuple[str, bool], members: Mapping[str, set[str]]) -> dict[str, Any]:
+    return {"fact_key": key[0], "wants": key[1], "member_count": len(members),
+            "reaction_ids": sorted(set().union(*members.values()))}
+
+
+def _by_count(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(items, key=lambda i: (-i["member_count"], i["fact_key"], not i["wants"]))
+
+
+def summarize_reasons(reasons: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """한 카테고리의 사유 있는 반응 → 저장할 다섯 칸(agent_reason_summaries.summary).
+
+    reasons의 항목은 {reaction_id, member, text, lines}. member는 사람을 가르는 값(같은 사람 같은 키는 1명)일 뿐 저장하지
+    않는다. text는 알러지 낱말을 보는 데만 쓰고 저장하지 않는다. lines는 tools.summary_reasons가 낸 근거 줄
+    [{fact_key, wants, badge, source(text|chip), chip_id, label}] — #422 분류(음식 종류 "원함"은 preferred)는 이미 걸렸다.
+
+    - must_keep: 배지 required이고 키와 방향이 있는 줄. 키와 방향마다 사람 수
+    - split_prefs: 배지 preferred이고 같은 키에 원함과 피함이 함께 있는 키. 원함 사람 수, 피함 사람 수
+    - common_prefs: 배지 preferred이고 같은 키, 같은 방향을 2명 이상(갈린 키는 split_prefs에만 둔다)
+    - vague_fixable, not_filtered: 키 없는 사유(_keyless_kind). 개수는 반응 수, 문구는 종류만
+    - reaction_ids: 이 요약이 본 사유 있는 반응 전부(다음 갱신 판단의 기준, summary_changes)"""
+    must: dict[tuple[str, bool], dict[str, set[str]]] = {}
+    prefs: dict[tuple[str, bool], dict[str, set[str]]] = {}
+    keyless = {"vague_fixable": {"general": set(), "far": set()}, "not_filtered": {"allergy": set(), "price": set()}}
+    for r in reasons:
+        rid, member, text = r["reaction_id"], r["member"], r.get("text")
+        if _has_safety_word(text):
+            keyless["not_filtered"]["allergy"].add(rid)
+        text_lines = [line for line in r["lines"] if line.get("source") != "chip"]
+        if text and not text_lines and not _has_safety_word(text):   # ②가 줄을 내지 않은 글 — 키 없는 글과 같다
+            keyless["vague_fixable"]["general"].add(rid)
+        for line in r["lines"]:
+            key, wants, badge = line.get("fact_key"), line.get("wants"), line.get("badge")
+            if key is not None and wants is not None:
+                bucket = must if badge == "required" else prefs if badge == "preferred" else None
+                if bucket is not None:
+                    bucket.setdefault((key, wants), {}).setdefault(member, set()).add(rid)
+                continue
+            kind = _keyless_kind(line, text)
+            if kind is not None:
+                keyless[kind[0]][kind[1]].add(rid)
+
+    split_keys = sorted({k for k, w in prefs if (k, not w) in prefs})
+    split = sorted(
+        (
+            {"fact_key": k, "want_count": len(prefs[(k, True)]), "avoid_count": len(prefs[(k, False)]),
+             "want_reaction_ids": sorted(set().union(*prefs[(k, True)].values())),
+             "avoid_reaction_ids": sorted(set().union(*prefs[(k, False)].values()))}
+            for k in split_keys
+        ),
+        key=lambda i: (-(i["want_count"] + i["avoid_count"]), i["fact_key"]),
+    )
+
+    def section(name: str) -> dict[str, Any]:
+        kinds = keyless[name]
+        ids = sorted(set().union(*kinds.values()))
+        field_name = "requests" if name == "vague_fixable" else "notices"
+        return {"count": len(ids), "reaction_ids": ids, field_name: [k for k, v in kinds.items() if v]}
+
+    return {
+        "must_keep": _by_count([_item(k, m) for k, m in must.items()]),
+        "common_prefs": _by_count([
+            _item(k, m) for k, m in prefs.items() if k[0] not in split_keys and len(m) >= COMMON_PREF_MIN_MEMBERS
+        ]),
+        "split_prefs": split,
+        "vague_fixable": section("vague_fixable"),
+        "not_filtered": section("not_filtered"),
+        "reaction_ids": sorted({r["reaction_id"] for r in reasons}),
+    }
+
+
+def summary_meta(category: str, summary: Mapping[str, Any], updated_at: datetime) -> SummaryMeta:
+    return SummaryMeta(category=category, reaction_ids=frozenset(summary.get("reaction_ids", ())), updated_at=updated_at)
+
+
+def render_summary(
+    category: str, summary: Mapping[str, Any], updated_at: datetime, fact_labels: Mapping[str, str],
+) -> AgentSummary:
+    """저장된 다섯 칸 → API·이벤트의 AgentSummary. 이름은 개수만, 알러지 원문은 없다(2절 11번). 키 이름은
+    recommend.api.fact_labels(근거 줄과 같은 이름)에 방향을 붙인다 — "매운맛 전문 제외", "조용한 곳 원함". 이름 모르는
+    키는 뺀다(render_analysis와 같은 규칙)."""
+    def item(i: Mapping[str, Any]) -> AgentSummaryItem | None:
+        name = fact_labels.get(i["fact_key"])
+        if name is None:
+            return None
+        return AgentSummaryItem(fact_key=i["fact_key"], label=f"{name} {'원함' if i['wants'] else '제외'}",
+                                member_count=i["member_count"])
+
+    def items(name: str) -> list[AgentSummaryItem]:
+        return [x for x in (item(i) for i in summary.get(name, ())) if x is not None]
+
+    vague, unfiltered = summary.get("vague_fixable", {}), summary.get("not_filtered", {})
+    return AgentSummary(
+        category=category,
+        must_keep=items("must_keep"),
+        common_prefs=items("common_prefs"),
+        split_prefs=[
+            AgentSplitPref(fact_key=s["fact_key"], label=fact_labels[s["fact_key"]], want_count=s["want_count"],
+                           avoid_count=s["avoid_count"])
+            for s in summary.get("split_prefs", ()) if s["fact_key"] in fact_labels
+        ],
+        vague_fixable=AgentVagueFixable(
+            count=vague.get("count", 0), requests=[SUMMARY_REQUESTS[k] for k in vague.get("requests", ())],
+        ),
+        not_filtered=AgentNotFiltered(
+            count=unfiltered.get("count", 0), notices=[SUMMARY_NOTICES[k] for k in unfiltered.get("notices", ())],
+        ),
+        updated_at=updated_at,
+    )
+
+
 # ---------------------------------------------------------------- 응답 조립 (14절)
 
 def settings_view(row: Any | None) -> AgentSettings:
@@ -1131,11 +1350,14 @@ def settings_view(row: Any | None) -> AgentSettings:
     return AgentSettings(enabled=row.enabled, updated_by=row.updated_by, updated_at=row.updated_at)
 
 
-def agent_state(settings: AgentSettings, active: AgentSuggestion | None, *, viewed: bool) -> AgentState:
-    """모드가 꺼져 있으면 제안은 늘 null이고 점도 없다. 요약은 M2 전까지 빈 목록."""
+def agent_state(
+    settings: AgentSettings, active: AgentSuggestion | None, *, viewed: bool, summaries: Sequence[AgentSummary] = (),
+) -> AgentState:
+    """모드가 꺼져 있으면 제안은 늘 null이고 점도 없다. 요약은 모드와 상관없이 만들어진 카테고리만 싣는다(api-spec
+    AgentState.summaries — 끄면 관찰이 멈춰 더 갱신되지 않을 뿐이다)."""
     shown = active if settings.enabled else None
     return AgentState(settings=settings, active_suggestion=shown, has_unseen=shown is not None and not viewed,
-                      summaries=[])
+                      summaries=list(summaries))
 
 
 # ---------------------------------------------------------------- 이벤트 (15절)
@@ -1153,3 +1375,8 @@ def resolved_event(map_id: str, suggestion_id: str, status: str, action_type: st
 def settings_changed_event(map_id: str, enabled: bool, updated_by: str) -> Event:
     return Event(map_id=map_id, channel="public", type="agent.settings_changed",
                  payload={"enabled": enabled, "updated_by": updated_by})
+
+
+def summary_updated_event(map_id: str, summary: AgentSummary) -> Event:
+    """점이나 알림은 켜지 않는다(15절) — FE는 그 카테고리 요약만 갈아끼운다."""
+    return Event(map_id=map_id, channel="public", type="agent.summary_updated", payload=summary.model_dump(mode="json"))

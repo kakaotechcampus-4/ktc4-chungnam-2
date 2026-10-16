@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from agent import constants, core, flows, service
-from agent.models import AgentCursor, AgentRun, AgentSettings, AgentSuggestion
+from agent.models import AgentCursor, AgentReasonSummary, AgentRun, AgentSettings, AgentSuggestion
 from agent.schemas import AgentSuggestion as AgentSuggestionSchema
 from agent.tests import rows
 from agent.tests.world import World, fake_places, real_now
@@ -548,7 +548,7 @@ def test_map_deleted_during_observation_writes_nothing(world, monkeypatch):
 def test_no_agent_row_contains_reason_text(world, factory):
     """사유가 달린 ♥와 🚫가 있는 지도를 관찰한 뒤 agent_* 어느 행의 직렬화에도 사유 글이 없다. 정체(stall)가
     1순위라 진단 스텁이 get_reasons를 부르고(결과에 사유 글이 있다) silent로 끝난다 — 도구 기록에는 글 대신 글자 수만
-    남는다(10절, 2절 13번)."""
+    남는다(10절, 2절 13번). 관찰 끝에 요약도 만든다(#586, 17절 16번 — 요약을 거친 뒤에도 글이 없다)."""
     map_id = world.gap_map()
     food = world.pin(map_id, category="음식점", by="u1")
     cafe = world.pin(map_id, category="카페", by="u1")
@@ -558,7 +558,9 @@ def test_no_agent_row_contains_reason_text(world, factory):
 
     tick(world)
 
-    run = world.one(AgentRun, map_id=map_id)
+    assert world.one(AgentRun, map_id=map_id, trigger="summary").outcome == "summarized"
+    assert world.rows(AgentReasonSummary, map_id=map_id)
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert run.outcome == "silent"
     assert run.outcome_detail == {"signal_id": "s1", "diagnosis": "stall", "decision": "silent"}
     assert against in run.signals[0]["evidence_ids"]   # 근거는 reaction_id로만
