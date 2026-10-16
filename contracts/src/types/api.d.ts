@@ -3587,7 +3587,7 @@ export interface components {
         };
         AgentSummaryItem: {
             fact_key?: string | null;
-            /** @description 서버 렌더. 예: "매운 곳 제외", "조용한 곳 원함" */
+            /** @description 서버 렌더. 키 표시 이름(근거 줄과 같은 이름)에 방향을 붙인다. 예: "매운맛 전문 제외", "조용한 곳 원함" */
             label: string;
             /** @description 그 조건을 말한 구성원 수. 한 사람이 여러 번 말해도 1 */
             member_count: number;

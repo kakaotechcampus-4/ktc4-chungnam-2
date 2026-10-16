@@ -1,7 +1,7 @@
 # 계획 보조 에이전트 모드 v2 구현 명세
 
 - 상태: 설계 확정 (2026-10-02), 개정 (2026-10-15). 수치는 초기값이며 운영 기록을 보고 조정한다.
-- 2026-10-16 개정: #534 평가 뒤 모델 유형(정체, 갈림) 제안을 노출하고, 신호 순위를 모델에서 코드 규칙으로 옮겼다(7절, #582). 에이전트의 모델 호출은 진단, 추천 막힘 조언, 요약 구체화 문장 셋이다.
+- 2026-10-16 개정: #534 평가 뒤 모델 유형(정체, 갈림) 제안을 노출하고, 신호 순위를 모델에서 코드 규칙으로 옮겼다(7절, #582). 에이전트의 모델 호출은 진단과 추천 막힘 조언 둘이다(요약 문장은 고정 문구, 2026-10-16).
 - 2026-10-15 개정: 10/2 이후 바뀐 추천과 다른 모듈 계약을 반영했다. 반응 2종(#360), 안전 조건 폐지(#425), 가격 라벨 삭제(#423), 사유의 방향(#228), 조건별 근거 줄(#419), 칩 코드 처리(#412), llm 공개 함수(#460), 카테고리 정의(#280), 지도 삭제와 탈퇴(#369, #431, #155). 이 개정으로 Stance(모델이 내던 방향)를 없앴고, 조건 완화 조언과 애매한 사유 칸을 다시 정했다(9절, 8절).
 - 이름 구분: 기획안 3절의 "에이전트 루프"는 AI 추천 한 번이 도는 단계(⓪~⑤)를 가리킨다. 이 문서의 "계획 보조 에이전트"는 그와 다른 기능이다.
 - 읽는 사람: 이 기능을 구현하는 Claude Code 세션, AI 담당, FE 담당
@@ -94,7 +94,7 @@ backend/agent/
   api.py                # 다른 모듈에 여는 함수: advise_run, purge_map_data, delete_by_user
   router.py             # 14절 엔드포인트 (agent 태그)
   tests/
-backend/llm/            # agent_diagnose, agent_summarize, agent_advise_run 추가. llm/api.py에서 연다(agent_prioritize는 #582에서 지움)
+backend/llm/            # agent_diagnose, agent_advise_run 추가. llm/api.py에서 연다(agent_prioritize는 #582에서 지움, 요약은 고정 문구라 모델 함수 없음)
 backend/recommend/      # api.py에 run 조회와 시뮬레이션 함수, 근거 줄 분류 함수 공개. GET /runs/{runId}/advice
 backend/pins/           # api.py에 반응 표 조회 함수 추가. 사유 조회는 기존 list_reasoned_reactions를 쓴다
 frontend/src/features/agent/   # 버튼, 바텀시트, 이벤트 처리
@@ -371,12 +371,12 @@ version 1의 principles(프롬프트용 원칙 3개)는 모델 호출이 없어�
 
 ## 8. 우리 조건 요약
 
-카테고리마다 새 사유가 3개 쌓이거나(`SUMMARY_NEW_REASONS`) 새 구성원이 지도에서 첫 반응을 남기면, 모델이 그 카테고리의 조건 요약을 갱신한다. 갱신 한 번은 모델 사용 1회로 센다. 요약은 바텀시트에 항상 있고 점이나 알림은 없다.
+카테고리마다 새 사유가 3개 쌓이거나(`SUMMARY_NEW_REASONS`) 새 구성원이 지도에서 첫 반응을 남기면, 모델이 그 카테고리의 조건 요약을 갱신한다. 요약 갱신은 모델을 부르지 않아 모델 사용으로 세지 않는다(고정 문구, 2026-10-16). 요약은 바텀시트에 항상 있고 점이나 알림은 없다.
 
 - 사유가 있는 반응: reason_text가 있거나 reason_chip_ids가 비어 있지 않은 반응. `pins.api.list_reasoned_reactions`가 이미 이 기준으로 돌려준다(글과 칩을 따로, #412).
 - 삭제된 핀의 사유도 넣는다. 추천이 삭제된 핀의 사유를 계속 쓰므로(#243) 요약도 같은 기준을 따라야 둘이 어긋나지 않는다.
 - 새 사유 수: 현재 그 카테고리의 사유 있는 반응 수 - `agent_reason_summaries.based_on_reaction_count`
-- 흐름: `flows.update_summary` → 도구(get_reasons, structure_reasons, compare_reasons) → 칸 나누기(코드) → `llm.agent_summarize` → 검증(11절) → upsert → `agent.summary_updated`
+- 흐름: `flows.update_summary` → 도구(get_reasons, structure_reasons, compare_reasons) → 칸 나누기(코드) → 구체화 요청 문장(고정 문구) → upsert → `agent.summary_updated`. 모델을 부르지 않는다
 - 쓰기는 지도 제안과 별도 트랜잭션, 별도 `agent_runs` 행(trigger=summary)이다.
 - 지도 모델 사용 상한에 도달했으면 갱신하지 않고 다음 날로 미룬다. 한 관찰에서는 카테고리 하나만 갱신한다(초안).
 
@@ -384,9 +384,9 @@ version 1의 principles(프롬프트용 원칙 3개)는 모델 호출이 없어�
 
 | section | 뜻 | 어떤 줄이 들어가나 | 화면 표기 |
 | --- | --- | --- | --- |
-| must_keep | 지키려는 조건 (실격 조건) | 배지 required이고 키가 있는 줄. #422 규칙으로 선호로 내려간 음식 종류 "원함"은 빼고 common_prefs나 split_prefs로 간다 | "매운 곳 제외 (1명)"처럼 개수만 |
+| must_keep | 지키려는 조건 (실격 조건) | 배지 required이고 키가 있는 줄. #422 규칙으로 선호로 내려간 음식 종류 "원함"은 빼고 common_prefs나 split_prefs로 간다 | "매운맛 전문 제외 (1명)"처럼 개수만 |
 | common_prefs | 겹치는 선호 | 배지 preferred이고 같은 키, 같은 방향을 2명 이상이 남긴 줄 | "조용한 곳 원함 (3명)" |
-| split_prefs | 서로 갈리는 선호 | 같은 키에 원함과 피함이 함께 있는 줄 | "조용함: 원함 2 / 원하지 않음 1" |
+| split_prefs | 서로 갈리는 선호 | 같은 키에 원함과 피함이 함께 있는 줄 | "조용한 곳: 원함 2 / 원하지 않음 1" |
 | vague_fixable | 더 적어 주면 반영될 수 있는 사유 | 키 없는 줄 중 아래 not_filtered가 아닌 것 | 칸 이름 "더 적어 주면 반영돼요", 사유 수와 구체화 요청 문장 |
 | not_filtered | 추천이 거르지 않는 사유 | 칩 `NOT_FILTERED_CHIP_IDS`, 또는 글에 `SAFETY_WORDS`가 든 줄 | 칸 이름 "추천이 거르지 않아요", 개수와 고정 안내만 |
 
@@ -401,7 +401,7 @@ version 1의 principles(프롬프트용 원칙 3개)는 모델 호출이 없어�
 
 not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 있으면 "알러지 같은 조건은 추천이 거르지 않아요. 가게에 직접 확인해 주세요."를 보여 준다. 추천 결과 화면 안내(#425)와 같은 말이다. 가격 칩이 있으면 "가격은 아직 추천 조건에 없어요."를 보여 준다. 두 칸 모두 개수만 보여 주고, 알러지 원문은 인용하지 않는다(2절 11번).
 
-칸 나누기와 개수 세기가 모두 코드라, `agent_summarize` 모델이 할 일은 vague_fixable 사유에 붙일 구체화 요청 문장 정도만 남는다. 고정 문구로 충분하면 요약에서 모델 호출을 없앨 수 있다(19절).
+**구체화 요청 문장은 고정 문구다(2026-10-16 결정).** 칸 나누기와 개수 세기가 모두 코드라, 모델이 할 일은 vague_fixable 사유에 붙일 안내 문장 정도만 남았다. 이 안내는 대부분 "더 구체적으로 적어 주세요" 수준이라 미리 써 둔 문장으로 낸다. 예: 일반 "어떤 점이 별로였는지 적어 주시면 추천에 반영돼요", 칩 「너무 멀어요」 "거리 조건은 '숙소에서 걸어서 10분'처럼 적어 주세요". 그래서 요약 갱신은 모델 사용으로 세지 않는다. 사유에 맞춘 문장이 필요한지는 #588에서 실제 기록을 보고 다시 판단한다.
 
 각 칸의 개수는 코드가 reaction_id로 센다. 한 사람이 같은 키를 여러 번 말해도 1명이다. 버튼 "이 조건으로 {category} 추천 받기"(open_recommend)는 추천 대상 카테고리에서만 보인다. 실제 근거 조립은 기존 ②와 근거 확인 단계가 그대로 한다.
 
@@ -437,7 +437,9 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 | vague_reason | 근거 중 키 없는 줄이 있음(8절의 not_filtered 줄은 빼고 센다). 예시 문장을 함께 낸다 | 본인 줄이면 open_evidence, 남의 줄이면 없음 |
 | exhausted | 중복제외 단계 탈락이 많음. 가드레일 6 때문에 완화할 수 없으므로 사실만 안내 | 없음 |
 
-**soft_relax (실격 조건 때문에 많이 빠졌을 때).** 10/2 판은 "unknown_policy가 pass인 hard 키"를 기준으로 했다. 지금 hard 키는 `is_crowded_large` 하나뿐이고, 실격 대부분은 🚫 사유에서 나온 취향 키와 방향(#228)이 만든다. 예를 들어 "너무 매워요"는 매운맛 전문(라벨 참)을 빼고, 칩 「좁아요」는 좁은 곳(라벨 거짓)을 뺀다. 그래서 기준을 "실격 조건 근거 줄이 후보를 많이 걸렀음"으로 바꿨다(2026-10-15 결정).
+**soft_relax (실격 조건 때문에 많이 빠졌을 때).** 계산 메모(#585): run의 `result_count`는 상위 3곳 선정 뒤의 수라 최대 3이다. "끄면 몇 곳이 더 남는가"는 `simulate_filter`의 before와 after 깔때기에서 「실격 조건 제거」 차이로 본다. before는 다시 계산한 값이라 같은 호출의 before, after끼리만 비교한다.
+
+ 10/2 판은 "unknown_policy가 pass인 hard 키"를 기준으로 했다. 지금 hard 키는 `is_crowded_large` 하나뿐이고, 실격 대부분은 🚫 사유에서 나온 취향 키와 방향(#228)이 만든다. 예를 들어 "너무 매워요"는 매운맛 전문(라벨 참)을 빼고, 칩 「좁아요」는 좁은 곳(라벨 거짓)을 뺀다. 그래서 기준을 "실격 조건 근거 줄이 후보를 많이 걸렀음"으로 바꿨다(2026-10-15 결정).
 
 - 근거 줄마다 simulate_filter로 "이 줄을 끄면 몇 곳이 더 남는가"를 계산하고, 많이 늘어나는 줄부터 조언한다.
 - 근거 줄 빼기(`−`)는 그 줄을 쓴 사람만 할 수 있다(permissions의 `evidence.disable`). 그래서 줄을 쓴 사람이 run 요청자 본인이면 「근거 확인에서 빼 보기」(open_evidence) 버튼을 준다. 다른 구성원이 쓴 줄이면 "「매운 곳 제외」 조건 때문에 14곳이 빠졌어요"라는 사실 문장만 내고 버튼은 주지 않는다. 문장에 그 구성원의 이름은 쓰지 않는다.
@@ -473,7 +475,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 | get_readiness | `(map_id, category)` → {category, ready, answered_count, required_count} | recommend.api(#530) |
 | get_recent_runs | `(run_id)` → 같은 요청자의 같은 카테고리 최근 run [{run_id, status, result_count, created_at}] | recommend.api (#469 기록 조회 재사용), 추천 막힘 전용 |
 | get_run_funnel | `(run_id)` → [{label, removed_count}] | recommend.api, 추천 막힘 전용 |
-| get_run_evidence | `(run_id)` → [{line_id, text, badge, fact_key 또는 null, wants 또는 null, is_active, is_requester_own}] | recommend.api, 추천 막힘 전용 |
+| get_run_evidence | `(run_id)` → [{line_id, text, badge, fact_key 또는 null, wants 또는 null, is_active, author_id}]. 요청자 본인 줄인지는 agent가 run의 requested_by와 비교한다(#585) | recommend.api, 추천 막힘 전용 |
 | simulate_filter | `(run_id, change{radius_factor?, disable_line_ids?})` → {before, after} | recommend.api, 실제 필터 함수 재사용 |
 | get_shortlist | `(map_id)` → [{pin_id, category, visit_order}] | shortlist.api |
 | get_route | `(map_id)` → [{region_label, ordered_pin_ids, total_distance_m}] 또는 null | shortlist.api |
@@ -552,11 +554,7 @@ class DiagnosisOutput(BaseModel):
 
 # PriorityOutput은 #582에서 지웠다. 우선순위는 코드 규칙이다(7절)
 
-class SummaryOutput(BaseModel):
-    # 칸 나누기와 개수는 코드가 한다(8절). 모델은 vague_fixable 사유에 붙일 구체화 요청 문장만 쓴다
-    decision: Literal["suggest", "silent", "unknown"]
-    claims: list[Claim]                  # 요청 문장이 가리키는 reaction (RefClaim)
-    requests: list[AdviceLine]
+# SummaryOutput은 두지 않는다. 요약의 구체화 문장은 고정 문구다(8절, 2026-10-16). #588에서 모델이 필요하다고 보면 그때 정의한다
 
 class RunAdviceOutput(BaseModel):
     decision: Literal["suggest", "silent", "unknown"]
@@ -1016,7 +1014,7 @@ FE는 슬롯을 다루지 않는다. 서버가 렌더한 문장을 그대로 보
 
 `core.py`가 순수 함수라 대부분은 지도 상태 픽스처를 넣고 기대 신호와 정책 결과를 확인하는 단위 테스트로 짠다. llm은 스키마에 맞는 스텁으로 대신한다.
 
-1. **비공개 데이터 유출 금지 (가장 중요한 테스트).** DB에 남의 run, 후보, run의 근거 줄, 제외 목록을 넣고 다음을 확인한다: 스냅샷에 없음, 모든 지도 제안용 도구 결과에 없음, `diagnosis_input`과 `summarize_input` 직렬화 결과에 그 id와 텍스트가 없음.
+1. **비공개 데이터 유출 금지 (가장 중요한 테스트).** DB에 남의 run, 후보, run의 근거 줄, 제외 목록을 넣고 다음을 확인한다: 스냅샷에 없음, 모든 지도 제안용 도구 결과에 없음, `diagnosis_input` 직렬화 결과에 그 id와 텍스트가 없음.
 2. 조건 완화와 키 없는 사유: soft_relax에서 run 요청자 본인 줄에만 open_evidence가 붙고, 남의 줄을 가리키는 open_evidence는 검증에서 제거된다. 알러지 낱말이 든 사유와 「비싸요」 칩은 not_filtered 칸으로 가고, 구체화 요청 문장이 붙으면 제거되며, 원문이 렌더되지 않는다. 「너무 멀어요」는 vague_fixable로 간다.
 3. 검증: 지어낸 count → claim 제거 → 필수 claim 없음 → invalid_claims. 원문에 없는 quote 제거. 슬롯 밖 숫자 문장 제거. 구성원 표시 이름이 든 문장 제거. 허용되지 않은 행동 제거. FORBIDDEN_PHRASES 문장 제거.
 4. 탐지기 경계: 유형마다 성립 직전과 직후 픽스처. 정체는 활동 기준만, 시간 기준만, 둘 다인 경우. 갈림은 ♥1:🚫3 불성립, 전원 응답 즉시. 충돌 종류는 같은 키 반대 방향이면 same_axis, 다른 키면 different_axes, 키 있는 사유가 한쪽에 없으면 unclear. 반응 공백은 자기 핀 제외, 합류 시각 기준. 카테고리 공백은 핀을 만들 수 없는 카테고리(숙소, 기타) 제외.
@@ -1112,7 +1110,7 @@ FE 담당
 
 - 서비스 전체 일일 상한: 크레딧 잔량과 run당 토큰 측정값으로 정한다. 정하기 전까지는 지도 상한만 적용한다.
 - reasoning_effort: 진단 호출은 none으로 고정이다. 엘리스 API의 chat.completions는 도구 호출을 reasoning_effort=none일 때만 받는다(기본값과 low는 400, #532 확인). low가 필요하면 /v1/responses로 옮겨야 한다(확인 안 함). 우선순위 호출은 #534 비교(none 100%, low 88%, 기본값 90%) 뒤 코드 규칙으로 옮겨 없어졌다(#582). temperature=0은 받지 않는다.
-- 요약의 모델 호출: 칸 나누기와 개수가 코드로 옮겨져, 모델은 구체화 요청 문장만 쓴다. 고정 문구 몇 개로 충분하면 agent_summarize를 없애고 모델 호출을 3종으로 줄인다. shadow 기간에 고정 문구와 모델 문장을 비교해 정한다.
+- 요약의 모델 호출: 고정 문구로 정했다(2026-10-16). 맞춤 문장이 필요한지는 #588에서 운영 기록을 보고 판단한다.
 - 처리량: `TICK_MAX_MAPS`와 동시 처리 수. 진단 소요 시간과 요청 타임아웃을 보고 정한다.
 - 병렬 도구 호출: 지금은 끈다(`parallel_tool_calls=False`, #532에서 동작 확인). 켰을 때의 이득은 #534에서 본다.
 - 처리량 참고: live 시험에서 우선순위와 진단(요청 4번)을 합쳐 약 18초였다(#532). 요청 타임아웃은 15초다.
