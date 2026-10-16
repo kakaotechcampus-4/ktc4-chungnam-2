@@ -14,13 +14,13 @@ fact_key가 unknown이 된다(architecture.md 3절 — 라벨 없이도 unknown_
 get_facts)에만 위임한다. 요청 중 모델 호출도 카카오 원자료도 이 경로에 없다.
 """
 
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from common.adapters import select
-from common.database import get_db_session
+from common.database import SessionLocal, get_db_session
 from common.settings import settings
 from llm import api as llm_api
 from places import api as places_api
@@ -149,7 +149,14 @@ get_evidence_plan_gateway = select(
 )
 
 
+def get_session_factory() -> Callable[[], Session]:
+    """요청 단위 세션(get_db) 대신 짧은 세션을 여러 번 여는 엔드포인트가 쓴다 — `GET /runs/{runId}/advice`는 모델을 부르는
+    동안 연결을 잡지 않게 조회와 저장을 나눠 연다(docs/agent-v2.md 9절, #587). 테스트는 이 의존성을 테스트 DB로 바꾼다."""
+    return SessionLocal
+
+
 DbSession = Depends(get_db_session)
+SessionFactoryDep = Depends(get_session_factory)
 PlaceSearchGatewayDep = Depends(get_place_search_gateway)
 PlaceFactsGatewayDep = Depends(get_place_facts_gateway)
 EvidencePlanGatewayDep = Depends(get_evidence_plan_gateway)

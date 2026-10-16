@@ -11,7 +11,7 @@ docs/api-spec.yaml의 recommend 태그 엔드포인트 전체(#108 + PR #71 publ
   2026-09-23: "근거 목록은 구성원별로 한 줄씩 따로 뜬다" — 최종기획안 5-5, 협업적 열람·추가가
   맞다). 개별 근거 줄 비활성화만 그 줄 작성자 본인으로 flows.patch_evidence 내부에서 별도
   제한한다(evidence.disable, author-constrained).
-- run 하위 실행계(regions/execute/result/widen/retry) — recommend/loaders.py::load_run +
+- run 하위 실행계(regions/execute/result/widen/retry, 추천 막힘 조언 advice) — recommend/loaders.py::load_run +
   require_with_principal("recommend.manage", load_run). mapId가 경로에 없어(runId만) 위 둘을
   못 쓴다. recommend.manage는 run.requested_by 본인만 통과한다(author.actions) —
   가드레일1("대안은 요청한 사람에게만 먼저 보인다") 위반 방지(루트 수정, 2026-09-23 —
@@ -21,9 +21,12 @@ docs/api-spec.yaml의 recommend 태그 엔드포인트 전체(#108 + PR #71 publ
   authz.guard.require()를 직접 호출한다(PR #71 결정, Rule A 대응 — flows.py 모듈 docstring 참고).
 """
 
-from fastapi import APIRouter, Depends, Path, Query
+from typing import Callable
+
+from fastapi import APIRouter, Depends, Path, Query, Response
 from sqlalchemy.orm import Session
 
+from agent.schemas import RunAdvice
 from auth.deps import get_current_user
 from auth.schemas import CurrentUser
 from authz.core import Principal
@@ -32,7 +35,9 @@ from authz.guard import require_map_member, require_on_map, require_with_princip
 from authz.ports import MembershipGateway
 from pins.schemas import Pin
 from recommend import core, flows
-from recommend.deps import DbSession, EvidencePlanGatewayDep, PlaceFactsGatewayDep, PlaceSearchGatewayDep
+from recommend.deps import (
+    DbSession, EvidencePlanGatewayDep, PlaceFactsGatewayDep, PlaceSearchGatewayDep, SessionFactoryDep,
+)
 from recommend.loaders import load_run
 from recommend.ports import EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
 from recommend.schemas import (
@@ -148,6 +153,20 @@ def post_retry(
     run, _principal = gated
     updated = flows.retry_run(db, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
     return _run_response(updated)
+
+
+@router.get("/runs/{runId}/advice", response_model=RunAdvice, responses={204: {"description": "대상이 아니거나 낼 조언이 없음"}})
+def get_advice(gated=RunGate, db: Session = DbSession, session_factory: Callable[[], Session] = SessionFactoryDep):
+    """추천 막힘 조언(docs/agent-v2.md 9절, #587). 권한은 다른 실행계와 같은 RunGate(recommend.manage — 그 run의 요청자만,
+    비구성원 404, 요청자가 아니면 403)다. 인증과 권한 확인은 요청 세션으로 끝내고, 그 읽기 트랜잭션을 롤백해 연결을 돌려준
+    뒤(#275 — 저장이 아니다) 조언은 짧은 세션으로 만든다. 모델을 부르는 동안 요청 세션이 연결을 잡지 않는다."""
+    run, principal = gated
+    run_id = str(run.id)
+    db.rollback()
+    advice = flows.run_advice(run_id=run_id, requester_id=principal.user_id, session_factory=session_factory)
+    if advice is None:
+        return Response(status_code=204)
+    return advice
 
 
 @router.post("/candidates/{candidateId}/publish", response_model=Pin, response_model_exclude_none=True)

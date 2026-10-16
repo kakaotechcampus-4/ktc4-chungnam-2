@@ -1,8 +1,39 @@
 # 루트 리뷰 가이드 — backend/recommend
 
 `backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 네 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#585" 절이 최신, 그 아래 "#569" 절, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
+작업을 누적해서 담는다 — 아래 "#587" 절이 최신, 그 아래 "#585" 절, "#569" 절, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
 전체, 가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+
+---
+
+# #587 — GET /runs/{runId}/advice(추천 막힘 조언)와 run 정보 조회
+
+조언 자체(대상 판정, 모델, 검증, 저장)는 agent가 한다. recommend는 엔드포인트와 run 읽기 함수만 더했다.
+
+## 구현
+
+- `router.py` `GET /runs/{runId}/advice`(recommend 태그, response_model=agent.schemas.RunAdvice): 권한은 다른 실행계와 같은 `RunGate`
+  (recommend.manage — 비구성원 404, 요청자가 아니면 403). 대상이 아니거나 낼 조언이 없으면 204
+- **세션**: 인증(get_current_user)과 권한(RunGate)은 요청 세션으로 끝내고, run_id와 user_id를 꺼낸 뒤 그 읽기 트랜잭션을
+  `db.rollback()`해 연결을 돌려준다(#275와 같은 방식, 저장이 아니다). 조언은 `flows.run_advice` → `agent.api.advise_run`이 짧은 세션을
+  따로 열어 만든다(읽기 → 모델, 세션 없음 → 쓰기와 커밋). 모델을 부르는 동안 요청 세션이 연결을 잡지 않는다(테스트로 확인 — 롤백을
+  지우면 실패한다)
+- `deps.get_session_factory`(`SessionFactoryDep`): 짧은 세션을 여는 팩토리. 기본 SessionLocal, 테스트가 테스트 DB로 바꾼다
+- `api.get_run_meta(db, *, run_id)`: `{run_id, map_id, category, requested_by, status, result_count, created_at,
+  default_radius_walk_min, widen_limit_walk_min}`. agent가 대상 판정(완료, 결과 수), 요청자 확인, 반경 상한(core.WIDEN_LIMIT_MIN)에
+  쓴다. result_count는 get_recent_runs와 같은 기준(후보 수, done이 아니면 0). 권한 판정 없음
+- `api.get_run_evidence`에 `chip_id`를 더했다(키 없는 줄 중 「비싸요」 칩을 agent가 not_filtered로 가르려고). 다른 칸은 그대로다
+- `flows.run_advice(*, run_id, requester_id, session_factory)`: agent.api.advise_run으로 넘기기만 한다(명세 9절의
+  router → flows → agent.api 경로)
+
+## 루트에 알릴 것
+
+- **recommend → agent 의존이 하나 생겼다**(flows.run_advice → agent.api, router → agent.schemas.RunAdvice). agent는 recommend.api를 읽으므로
+  두 모듈이 서로를 가리킨다. 고리를 피하려고 agent.api는 advise_run 안에서만 agent.flows를 불러온다. 명세 9절이 정한 경로라 그대로 두었다.
+  docs/architecture.md 의존 표에 recommend → agent(api, schemas)를 더할지 루트가 정한다
+- 필터 규칙, 깔때기, 스펙은 바꾸지 않았다. 계약 테스트의 KNOWN_MISSING·KNOWN_UNCOVERED에서 이 경로를 지우고 골든 패스(403, 204)와
+  `test_run_advice_matches_the_openapi_spec`(같은 카테고리 run 3개 → 200, RunAdvice 스키마 검증, 다시 열어도 같음)에 넣었다
+- `tests/test_run_reads_api.py`: get_run_meta 테스트, 없는 run NOT_FOUND 목록에 get_run_meta, get_run_evidence 기대값에 chip_id
 
 ---
 
