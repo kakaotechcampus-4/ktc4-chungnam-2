@@ -261,7 +261,12 @@ export default function MapLayout() {
               </Link>
             )}
             {/* 넓은 화면은 지도 위가 아니라 자리가 있어서 지도 제목을 같이 둔다(#338). 제목을 누르면 다른 지도로 바로 옮긴다. */}
-            {desktop && <MapSwitcher mapId={mapId} title={mapInfo?.title} />}
+            {/* 제목이 메뉴 버튼이 돼도 화면 제목(h1)은 남긴다 — 스크린리더가 제목으로 찾아간다. */}
+            {desktop && (
+              <h1 className="flex min-w-0 flex-1">
+                <MapSwitcher mapId={mapId} title={mapInfo?.title} />
+              </h1>
+            )}
             {/* 내 이니셜 원은 계정 버튼처럼 읽혀서, 구성원 아이콘 + 인원 수로 "이 지도의 정보·구성원"임을 보인다(#351). */}
             {/* 넓은 화면은 바닥 시트 대신 버튼 아래 메뉴로 연다 — 패널 옆 바닥 시트는 끌리지도 않는 손잡이만 남았다. */}
             {desktop ? (

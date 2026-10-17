@@ -6,7 +6,7 @@ import ErrorText from '@/ErrorText'
 import { readPendingInvite } from '@/features/auth/pendingInvite'
 import { useMeQuery } from '@/features/auth/queries'
 import AccountSheet, { AccountMenu } from '@/features/maps/AccountSheet'
-import { MAP_LIMIT, type MapView } from '@/features/maps/model'
+import type { MapView } from '@/features/maps/model'
 import { useMapsQuery } from '@/features/maps/queries'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
@@ -36,7 +36,7 @@ export default function MapListPage() {
         <header className="mb-4 flex items-center justify-between gap-4 md:mb-8">
           <div className="min-w-0">
             <h1 className="text-2xl font-bold text-ink-900">내 지도</h1>
-            {desktop && maps && <p className="mt-1 text-sm text-ink-500">지도 {maps.length}/{MAP_LIMIT}개</p>}
+            {desktop && maps && <p className="mt-1 text-sm text-ink-500">지도 {maps.length}개</p>}
           </div>
           {desktop ? (
             <div className="flex shrink-0 items-center gap-3">

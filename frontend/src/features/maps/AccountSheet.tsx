@@ -9,7 +9,7 @@ import MenuPopover from '@/features/shell/MenuPopover'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
 
-import { MAP_LIMIT, type MapView } from './model'
+import type { MapView } from './model'
 import { useCreateInviteMutation } from './queries'
 
 type Confirm = 'logout' | 'withdraw' | null
@@ -85,7 +85,7 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
         </span>
         <div>
           <p className="text-lg font-bold text-ink-900">{me?.display_name}</p>
-          <p className="text-xs text-ink-500">카카오로 로그인됨 · 지도 {maps.length}/{MAP_LIMIT}개</p>
+          <p className="text-xs text-ink-500">카카오로 로그인됨 · 지도 {maps.length}개</p>
         </div>
       </div>
 
