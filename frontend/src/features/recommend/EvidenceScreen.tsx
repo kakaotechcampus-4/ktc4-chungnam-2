@@ -4,6 +4,7 @@ import { Ban, ChevronLeft, X } from 'lucide-react'
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { TAB_BAR_H } from '@/features/shell/layout'
+import { usePanelBack } from '@/features/shell/panelBack'
 import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
@@ -33,6 +34,8 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
   const groups = groupEvidence(evidence.data ?? [])
   const busy = confirm.isPending
   const desktop = useIsDesktop()
+  // 넓은 화면은 이 화면 머리의 ‹ 대신 패널 헤더 ‹ 가 추천을 그만두고 AI 추천으로 돌아간다.
+  usePanelBack('AI 추천', () => setRun(mapId, undefined), desktop)
 
   function toggle(line: EvidenceLineDto, active: boolean) {
     patch.mutate(
@@ -68,9 +71,11 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
       style={desktop ? undefined : { bottom: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
     >
       <header className="flex items-center gap-2 border-b border-ink-100 px-4 py-3">
-        <button type="button" aria-label="추천 그만두기" onClick={() => setRun(mapId, undefined)} className="text-ink-900">
-          <ChevronLeft size={22} />
-        </button>
+        {!desktop && (
+          <button type="button" aria-label="추천 그만두기" onClick={() => setRun(mapId, undefined)} className="text-ink-900">
+            <ChevronLeft size={22} />
+          </button>
+        )}
         <h1 className="text-lg font-bold text-ink-900">{run.category} 추천받기</h1>
       </header>
 
