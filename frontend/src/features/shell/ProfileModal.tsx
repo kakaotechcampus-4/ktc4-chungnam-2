@@ -26,6 +26,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
   return (
     <ModalSheet
       label="지도 정보"
+      align="panel"
       onClose={onClose}
       overlay={
         <>
