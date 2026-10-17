@@ -8,7 +8,7 @@ import { useMeQuery } from '@/features/auth/queries'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
 
-import { MAP_LIMIT, type MapView } from './model'
+import type { MapView } from './model'
 import { useCreateInviteMutation } from './queries'
 
 /**
@@ -54,7 +54,7 @@ export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClo
         </span>
         <div>
           <p className="text-lg font-bold text-ink-900">{me?.display_name}</p>
-          <p className="text-xs text-ink-500">카카오로 로그인됨 · 지도 {maps.length}/{MAP_LIMIT}개</p>
+          <p className="text-xs text-ink-500">카카오로 로그인됨 · 지도 {maps.length}개</p>
         </div>
       </div>
 
