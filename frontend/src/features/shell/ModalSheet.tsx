@@ -14,12 +14,15 @@ export default function ModalSheet({
   onClose,
   children,
   overlay,
+  align = 'center',
 }: {
   label: string
   onClose: () => void
   children: ReactNode
   /** 시트 위에 다시 뜨는 확인 창 같은 것. */
   overlay?: ReactNode
+  /** 넓은 화면에서 붙을 자리. 지도 화면은 왼쪽 패널(`panel`), 입구 화면은 가운데 단(`center`)에 맞춘다. */
+  align?: 'center' | 'panel'
 }) {
   const sheetRef = useRef<HTMLElement>(null)
 
@@ -46,10 +49,10 @@ export default function ModalSheet({
           className="fixed inset-0 z-50 outline-none"
         >
           <Dialog.Title className="sr-only">{label}</Dialog.Title>
-          {/* 넓은 화면에선 왼쪽 영역(탭 줄 + 패널, PANEL_W)과 같은 폭으로 뜬다 — 값은 layout.ts 한 곳에서 온다. */}
+          {/* 폭은 PANEL_W(480px)를 넘지 않는다. 지도 화면은 왼쪽 패널(탭 줄 + 패널) 자리, 입구 화면은 같은 폭의 가운데 단 아래에 뜬다. */}
           <div
             style={{ '--panel-w': `${PANEL_W}px` } as CSSProperties}
-            className="absolute inset-x-0 bottom-0 md:right-auto md:w-[var(--panel-w)]"
+            className={`absolute inset-x-0 bottom-0 ${align === 'panel' ? 'md:right-auto md:w-[var(--panel-w)]' : 'mx-auto max-w-[var(--panel-w)]'}`}
             onClick={(e) => e.stopPropagation()}
           >
             <Toaster controlsVisible={false} />
