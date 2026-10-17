@@ -20,7 +20,7 @@ import { useSearchStore } from '@/features/search/searchStore'
 import { PANEL_W, RAIL_W, TAB_BAR_H } from '@/features/shell/layout'
 import MapControls, { type ControlKey } from '@/features/shell/MapControls'
 import { backAriaLabel, usePanelBackStore } from '@/features/shell/panelBack'
-import ProfileModal from '@/features/shell/ProfileModal'
+import ProfileModal, { ProfileMenu } from '@/features/shell/ProfileModal'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import type { ShellContext } from '@/features/shell/shellContext'
 import { ConnectionBanner } from '@/features/shell/TabSheet'
@@ -263,19 +263,32 @@ export default function MapLayout() {
             {/* 넓은 화면은 지도 위가 아니라 자리가 있어서 지도 제목을 같이 둔다(#338). 제목을 누르면 다른 지도로 바로 옮긴다. */}
             {desktop && <MapSwitcher mapId={mapId} title={mapInfo?.title} />}
             {/* 내 이니셜 원은 계정 버튼처럼 읽혀서, 구성원 아이콘 + 인원 수로 "이 지도의 정보·구성원"임을 보인다(#351). */}
-            <button
-              type="button"
-              aria-label={`지도 정보와 구성원 · ${memberCount}명`}
-              onClick={() => openProfile(true)}
-              className={
-                desktop
-                  ? 'hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 text-sm font-bold text-brand-600'
-                  : 'pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-md'
-              }
-            >
-              <Users size={16} aria-hidden="true" />
-              {memberCount > 0 && memberCount}
-            </button>
+            {/* 넓은 화면은 바닥 시트 대신 버튼 아래 메뉴로 연다 — 패널 옆 바닥 시트는 끌리지도 않는 손잡이만 남았다. */}
+            {desktop ? (
+              <ProfileMenu
+                mapId={mapId}
+                trigger={
+                  <button
+                    type="button"
+                    aria-label={`지도 정보와 구성원 · ${memberCount}명`}
+                    className="hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 text-sm font-bold text-brand-600 hover:bg-ink-50 data-[state=open]:border-brand-600 data-[state=open]:bg-brand-50"
+                  >
+                    <Users size={16} aria-hidden="true" />
+                    {memberCount > 0 && memberCount}
+                  </button>
+                }
+              />
+            ) : (
+              <button
+                type="button"
+                aria-label={`지도 정보와 구성원 · ${memberCount}명`}
+                onClick={() => openProfile(true)}
+                className="pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-md"
+              >
+                <Users size={16} aria-hidden="true" />
+                {memberCount > 0 && memberCount}
+              </button>
+            )}
           </div>
           {/* 지도 위에는 검색창만 둔다(FE 회의). 지도를 끄는 동안엔 지도에 집중하게 흐려진다. 검색 동작은 #293. */}
           {/* 검색 결과는 화면에 보여 주기만 한다(#53). Enter 나 돋보기를 눌렀을 때만 부른다(호출 상한, api-spec). */}
@@ -358,7 +371,7 @@ export default function MapLayout() {
         </div>
       )}
 
-      {profileOpen && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
+      {profileOpen && !desktop && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
     </>
   )
 }

@@ -1,7 +1,6 @@
-import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { Dialog } from 'radix-ui'
 
-import { PANEL_W } from './layout'
 import Toaster from './Toaster'
 
 /**
@@ -46,18 +45,21 @@ export default function ModalSheet({
           className="fixed inset-0 z-50 outline-none"
         >
           <Dialog.Title className="sr-only">{label}</Dialog.Title>
-          {/* 넓은 화면에선 왼쪽 영역(탭 줄 + 패널, PANEL_W)과 같은 폭으로 뜬다 — 값은 layout.ts 한 곳에서 온다. */}
-          <div
-            style={{ '--panel-w': `${PANEL_W}px` } as CSSProperties}
-            className="absolute inset-x-0 bottom-0 md:right-auto md:w-[var(--panel-w)]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Toaster controlsVisible={false} />
-            {/* 홈 표시줄이 있으면 그만큼, 없으면 16px. */}
-            <section ref={sheetRef} tabIndex={-1} className="max-h-[90dvh] overflow-y-auto rounded-t-2xl bg-white px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2 outline-none">
-              <div className="mx-auto mb-4 h-1 w-12 rounded-full bg-ink-300" aria-hidden="true" />
-              {children}
-            </section>
+          {/* 넓은 화면에선 바닥 시트가 아니라 화면 가운데 창이다 — 끌 수 없는 손잡이를 달지 않는다. */}
+          {/* 계정·지도 정보는 넓은 화면에서 이 창 대신 버튼 아래 메뉴(MenuPopover)를 쓴다. */}
+          <div className="absolute inset-x-0 bottom-0 md:pointer-events-none md:inset-0 md:flex md:items-center md:justify-center md:p-6">
+            <div className="relative md:pointer-events-auto md:w-full md:max-w-[440px]" onClick={(e) => e.stopPropagation()}>
+              <Toaster controlsVisible={false} />
+              {/* 홈 표시줄이 있으면 그만큼, 없으면 16px. */}
+              <section
+                ref={sheetRef}
+                tabIndex={-1}
+                className="max-h-[90dvh] overflow-y-auto rounded-t-2xl bg-white px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2 outline-none md:max-h-[85dvh] md:rounded-2xl md:p-5"
+              >
+                <div className="mx-auto mb-4 h-1 w-12 rounded-full bg-ink-300 md:hidden" aria-hidden="true" />
+                {children}
+              </section>
+            </div>
           </div>
           {overlay && <div onClick={(e) => e.stopPropagation()}>{overlay}</div>}
         </Dialog.Content>

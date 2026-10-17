@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { Popover } from 'radix-ui'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import WithdrawConfirm from '@/features/auth/WithdrawConfirm'
 import { useMeQuery } from '@/features/auth/queries'
+import MenuPopover from '@/features/shell/MenuPopover'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
 
@@ -27,38 +27,26 @@ export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClo
   )
 }
 
-/**
- * 넓은 화면의 계정 메뉴 — 화면 바닥 시트 대신 계정 버튼 바로 아래에 붙는다.
- * 확인 창이 떠 있는 동안은 메뉴를 닫지 않는다(모바일 시트 위에 확인 창이 뜨는 것과 같게). 취소하면 메뉴로 돌아온다.
- */
+/** 넓은 화면의 계정 메뉴 — 화면 바닥 시트 대신 계정 버튼 바로 아래에 붙는다. */
 export function AccountMenu({ maps, initial }: { maps: MapView[]; initial?: string }) {
   const [confirm, setConfirm] = useState<Confirm>(null)
-  const keepOpen = (e: Event) => {
-    if (confirm) e.preventDefault()
-  }
   return (
-    <Popover.Root>
-      <Popover.Trigger
-        aria-label="계정"
-        className="hit-44 flex size-9 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-white outline-offset-2 focus-visible:outline-2 focus-visible:outline-[var(--line-focus)]"
-      >
-        {initial}
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
+    <MenuPopover
+      label="계정"
+      holdOpen={confirm !== null}
+      overlay={<AccountConfirm which={confirm} onCancel={() => setConfirm(null)} />}
+      trigger={
+        <button
+          type="button"
           aria-label="계정"
-          align="end"
-          sideOffset={8}
-          collisionPadding={16}
-          onInteractOutside={keepOpen}
-          onFocusOutside={keepOpen}
-          className="z-50 max-h-[var(--radix-popover-content-available-height)] w-[22rem] overflow-y-auto rounded-2xl border border-ink-200 bg-white p-4 shadow-md outline-none"
+          className="hit-44 flex size-9 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-white outline-offset-2 focus-visible:outline-2 focus-visible:outline-[var(--line-focus)]"
         >
-          <AccountBody maps={maps} onConfirm={setConfirm} />
-        </Popover.Content>
-      </Popover.Portal>
-      <AccountConfirm which={confirm} onCancel={() => setConfirm(null)} />
-    </Popover.Root>
+          {initial}
+        </button>
+      }
+    >
+      <AccountBody maps={maps} onConfirm={setConfirm} />
+    </MenuPopover>
   )
 }
 
