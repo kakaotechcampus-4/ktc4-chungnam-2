@@ -80,11 +80,11 @@ function LoginScreen() {
           <KakaoButton retry={Boolean(loginError)} />
           <div className="space-y-1 text-xs leading-relaxed text-ink-500">
             <p>카카오 표시 이름만 받아요</p>
-            {/* 한 줄에 다 넣으면 393px에서 「봐요」만 따로 떨어져서 줄을 직접 나눈다. */}
+            {/* 한 줄에 다 넣으면 393px에서 끝말만 따로 떨어져서 줄을 직접 나눈다. 법적 고지라 이 줄만 「~됩니다」체다. */}
             <p>
               로그인하면 <LegalLink to="/terms">이용약관</LegalLink>과 <LegalLink to="/privacy">개인정보처리방침</LegalLink>에
               <br />
-              동의하는 것으로 봐요
+              동의하는 것으로 간주됩니다
             </p>
           </div>
         </div>
