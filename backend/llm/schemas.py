@@ -9,8 +9,8 @@
   ②    PlanningOutput (사유 → 실격/선호/반경 구조화)
   ③-a-1 PlaceFactLabel (장소 라벨링)
   ③-b   RankedCandidate (선호 순위)
-  v2 에이전트 DiagnosisOutput, AgentCallFailed (docs/agent-v2.md 11.1, #532), AgentUsage·AgentReply(#564).
-       PriorityOutput은 #582에서 지웠다(우선순위는 agent의 코드 규칙)
+  v2 에이전트 DiagnosisOutput, AgentCallFailed (docs/agent-v2.md 11.1, #532), AgentUsage·AgentReply(#564),
+       RunAdviceOutput(#587). PriorityOutput은 #582에서 지웠다(우선순위는 agent의 코드 규칙)
 """
 
 from dataclasses import dataclass
@@ -257,6 +257,19 @@ class DiagnosisOutput(BaseModel):
     actions: list[Action]
 
 
+RunAdviceKind = Literal["radius", "soft_relax", "vague_reason", "exhausted"]
+
+
+class RunAdviceOutput(BaseModel):
+    """추천 막힘 조언(명세 9절, 11.1, #587). 행동은 widen_radius, open_evidence만 허용된다 — 종류별 허용과 근거 줄이 요청자
+    본인 줄인지는 agent의 verify_run_advice가 본다. silent여도 kind는 스키마가 요구한다(쓰이지 않는다)."""
+    decision: AgentDecision
+    kind: RunAdviceKind
+    claims: list[Claim]
+    advice: list[AdviceLine]
+    actions: list[Action]
+
+
 AgentFailureReason = Literal["invalid_schema", "timeout", "call_failed"]
 
 
@@ -273,7 +286,7 @@ class AgentCallFailed(BaseModel):
 
 
 class AgentUsage(BaseModel):
-    """agent 호출 한 번(agent_diagnose)이 쓴 모델 사용량(#564). agent가 agent_runs의 model,
+    """agent 호출 한 번(agent_diagnose, agent_advise_run)이 쓴 모델 사용량(#564). agent가 agent_runs의 model,
     prompt_version, tokens_in, tokens_out에 채운다. 토큰은 그 호출 안의 모든 왕복의 합이다(진단은 도구 왕복마다 한 번).
 
     모델에 요청을 보냈으면 model과 prompt_version이 찬다(응답 전에 실패해도). 고정 응답 스텁이나 요청 전에 실패한 호출

@@ -80,7 +80,10 @@ def split_map(world, monkeypatch):
 def test_tools_cover_llm_specs_and_agent_keeps_no_copy_of_the_allowed_list():
     # 유형별 허용 목록은 llm.api.DIAGNOSIS_TOOLS 한 곳이다(#564) — agent에 사본이 없다
     assert not hasattr(tools, "ALLOWED_TOOLS")
-    assert set(tools.TOOLS) == set(llm_prompts.AGENT_TOOL_SPECS) | {"get_activity"}
+    # 지도 도구와 추천 막힘 전용 도구(#587)를 합치면 llm이 모델에 보이는 도구 설명 전부다
+    assert set(tools.TOOLS) | set(tools.RUN_TOOLS) == set(llm_prompts.AGENT_TOOL_SPECS) | {"get_activity"}
+    assert set(tools.RUN_TOOLS) == set(llm_api.RUN_ADVICE_TOOLS)
+    assert set(tools.TOOLS).isdisjoint(tools.RUN_TOOLS)   # 지도 관찰은 비공개 run 도구를 부를 수 없다(2절 2번)
     assert all(name in tools.TOOLS for names in llm_api.DIAGNOSIS_TOOLS.values() for name in names)
 
 
