@@ -8,7 +8,6 @@ import json
 from datetime import timedelta
 
 import pytest
-from sqlalchemy.orm import sessionmaker
 
 from agent import core, snapshot, tools
 from agent.tests.world import World, fake_places, real_now
@@ -19,11 +18,6 @@ from places.schemas import FactLabel
 
 LIKE_TEXT = "분위기가 아늑해서 좋아요"
 AGAINST_TEXT = "주차할 곳이 없어요"
-
-
-@pytest.fixture()
-def factory(test_engine):
-    return sessionmaker(bind=test_engine, autoflush=False)
 
 
 @pytest.fixture()

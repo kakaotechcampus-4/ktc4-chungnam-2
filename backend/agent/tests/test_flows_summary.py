@@ -21,7 +21,6 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 from sqlalchemy import delete, text
-from sqlalchemy.orm import sessionmaker
 
 from agent import core, deps, flows, tools
 from agent.models import AgentCursor, AgentReasonSummary, AgentRun
@@ -68,11 +67,6 @@ class KeyedGateway(deps.FixedAgentLlmGateway):
             or [llm_api.EvidenceLine(source="reaction", text=r["text"], badge=r["badge"])]
             for r in raw
         ]
-
-
-@pytest.fixture()
-def factory(test_engine):
-    return sessionmaker(bind=test_engine, autoflush=False)
 
 
 @pytest.fixture()

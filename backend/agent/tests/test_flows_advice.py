@@ -18,7 +18,6 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 from sqlalchemy import select
-from sqlalchemy.orm import sessionmaker
 
 from agent import deps, flows, service
 from agent.models import AgentRun, AgentRunAdvice
@@ -75,11 +74,6 @@ class FakePlaceSearch:
 class FakePlaceFacts:
     def get_facts(self, place_ids):
         return {pid: [FactLabel(k, v, "known") for k, v in FACTS.get(pid, {}).items()] for pid in place_ids}
-
-
-@pytest.fixture()
-def factory(test_engine):
-    return sessionmaker(bind=test_engine, autoflush=False)
 
 
 @pytest.fixture()
