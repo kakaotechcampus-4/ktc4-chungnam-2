@@ -18,7 +18,7 @@
 트랜잭션, 별도 agent_runs 행(trigger=summary, outcome=summarized)이다. 칸 나누기는 core, 근거 줄은 tools(②와 #422),
 문구는 고정이라 모델 사용으로 세지 않는다(used_model=false). 갱신하면 같은 트랜잭션에 agent.summary_updated를 낸다.
 
-**추천 막힘 조언(9절, #587)**: `advise_run`. AI 추천 결과 화면의 `GET /runs/{runId}/advice`가 agent.api로 부른다. 관찰과
+**추천 막힘 조언(9절, #587)**: `advise_run`. AI 추천 결과 화면의 `GET /runs/{runId}/advice`(agent/router.py)가 부른다. 관찰과
 따로 돌고(요청 안), 읽기 → 모델(세션 없음) → 쓰기를 짧은 세션으로 나눈다. run당 한 번 저장한다(trigger=run_advice).
 
 화면 요청(명세 14절)도 여기 있다 — `get_state`, `change_settings`, `view`, `accept`, `dismiss`. 요청 세션(get_db) 안에서
@@ -509,7 +509,7 @@ def advise_run(
     run_id: str, requester_id: str, *, now: datetime | None = None, session_factory: SessionFactory = SessionLocal,
     gateway: deps.AgentLlmGateway | None = None,
 ) -> RunAdvice | None:
-    """GET /runs/{runId}/advice가 부른다(agent.api.advise_run). 그 run의 요청자에게 그 run의 데이터로만 조언한다(2절 2번 예외).
+    """GET /runs/{runId}/advice(agent/router.py)가 부른다. 그 run의 요청자에게 그 run의 데이터로만 조언한다(2절 2번 예외).
 
     1. 짧은 읽기: run(없으면 NOT_FOUND, 요청자가 아니면 FORBIDDEN), 저장된 조언(있으면 그대로 렌더해 돌려준다), 대상 판정
        재료(같은 카테고리 run), 검증 재료(근거 줄, 구성원 표시 이름 — 모델에는 가지 않는다).

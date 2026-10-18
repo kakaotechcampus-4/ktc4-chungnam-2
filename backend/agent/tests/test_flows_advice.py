@@ -426,7 +426,7 @@ def client(world, monkeypatch):
             yield s
 
     app.dependency_overrides[get_db_session] = _db
-    app.dependency_overrides[recommend_deps.get_session_factory] = lambda: world.factory
+    app.dependency_overrides[deps.get_session_factory] = lambda: world.factory
     made = []
 
     def as_user(name: str) -> TestClient:
@@ -438,7 +438,7 @@ def client(world, monkeypatch):
     for c in made:
         c.close()
     app.dependency_overrides.pop(get_db_session, None)
-    app.dependency_overrides.pop(recommend_deps.get_session_factory, None)
+    app.dependency_overrides.pop(deps.get_session_factory, None)
 
 
 def _spec_errors(name: str, body) -> list[str]:

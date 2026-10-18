@@ -116,13 +116,12 @@ def advice_sessions(app_client, db_session, monkeypatch):
     from contextlib import contextmanager
 
     from agent import deps as agent_deps
-    from recommend.deps import get_session_factory
 
     @contextmanager
     def same_session():
         yield db_session
 
-    app_client.app.dependency_overrides[get_session_factory] = lambda: same_session
+    app_client.app.dependency_overrides[agent_deps.get_session_factory] = lambda: same_session
     monkeypatch.setattr(agent_deps, "get_llm_gateway", agent_deps.FixedAgentLlmGateway)
     return monkeypatch
 

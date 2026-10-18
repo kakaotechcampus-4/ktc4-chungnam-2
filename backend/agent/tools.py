@@ -454,8 +454,7 @@ def get_recent_runs(ctx: RunToolContext, args: Mapping[str, Any]) -> dict[str, A
 def get_run_funnel(ctx: RunToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
     """그 run의 마지막 실행 깔때기와 결과 수, passed(core.funnel_view)."""
     with ctx.read() as db:
-        funnel = recommend_api.get_run_funnel(db, run_id=ctx.run_id)
-    return core.funnel_view(ctx.meta["result_count"], funnel)
+        return core.funnel_view(recommend_api.get_run_funnel(db, run_id=ctx.run_id))
 
 
 def get_run_evidence(ctx: RunToolContext, args: Mapping[str, Any]) -> dict[str, Any]:

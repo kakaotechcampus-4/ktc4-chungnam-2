@@ -621,7 +621,9 @@ tools(recommend.api를 감싼다), 순서와 세션은 flows. 모델은 llm.agen
 - `tools.py`: `RunToolContext`와 도구 4개 `get_recent_runs`·`get_run_funnel`·`get_run_evidence`·`simulate_filter`(`RUN_TOOLS`). 기록
   함수(`_record`)와 읽기 세션(`_read`)을 진단 도구와 같이 쓰게 뺐다. `redact`는 line_id와 함께 있는 text(근거 글)도 글자 수로 바꾼다
 - `service.py`: `get_run_advice`, `insert_run_advice`(ON CONFLICT (run_id) DO NOTHING). `insert_run`이 id를 받을 수 있게 했다
-- `flows.py`: `advise_run`(읽기 → 대상 판정 → 모델, 세션 없음 → 쓰기). `api.py`: `advise_run(run_id, requester_id, *, session_factory)`
+- `flows.py`: `advise_run`(읽기 → 대상 판정 → 모델, 세션 없음 → 쓰기)
+- `router.py`: `GET /runs/{runId}/advice`(아래 "후속 수정 1"). `loaders.py`: `load_run`(recommend.api.get_run_meta로 읽는다).
+  `deps.py`: `get_session_factory`(`SessionFactoryDep`, 짧은 세션 팩토리 — 테스트가 테스트 DB로 바꾼다)
 - `deps.py`: Gateway.advise_run이 `AgentReply[RunAdviceOutput]`를 돌려준다. dev는 `fixed_advice_planner`, real은 `real_advice_planner`
 - `schemas.py`: RunAdviceOutput은 llm/schemas.py로 옮겼다(정의 한 곳). 마이그레이션 없음(agent_run_advice 칸 그대로)
 
@@ -667,9 +669,9 @@ tools(recommend.api를 감싼다), 순서와 세션은 flows. 모델은 llm.agen
    radius=넓힌 시뮬레이션, soft_relax=줄을 끈 시뮬레이션, vague_reason=get_run_evidence, exhausted=깔때기. 없으면 invalid_claims
 5. **깔때기를 미리 읽어 입력에 넣는다**(call_id `t0`, 도구 결과와 같은 모양). 모델이 get_run_funnel을 부르지 않고도 claim을 쓸 수 있다.
    llm이 매기는 t1, t2 …와 겹치지 않고, 상한(5회)에도 세지 않는다. tool_calls에 `prefetched: true`로 남는다
-6. **gained와 passed**: result_count는 최대 3이라 비교는 `passed = result_count + 「상위 3곳 선정」 탈락`으로 한다. simulate_filter 결과에
-   `gained = after.passed − before.passed`를 코드가 계산해 싣는다(모델이 빼기를 하지 않게). 「상위 3곳 선정」 라벨 문자열에 기댄다
-   (`core.FUNNEL_TOP_STAGE`) — recommend가 라벨을 바꾸면 passed가 result_count로 떨어진다
+6. **gained와 passed**: result_count는 최대 3이라 비교는 passed(필터를 모두 통과한 곳, 상위 3곳을 고르기 전)로 한다. passed는
+   recommend.api가 숫자 칸으로 주는 `passed_count` 그대로다(get_run_funnel, simulate_filter의 before·after — 아래 "후속 수정 2").
+   simulate_filter 결과에 `gained = after.passed − before.passed`를 코드가 계산해 싣는다(모델이 빼기를 하지 않게)
 7. **get_run_evidence의 줄 모양**(10절 표와 다름): `{line_id, author: "본인"|"다른 구성원", badge, fact_key, wants, label, is_active,
    kind, text}`. label은 `"{FACT_LABELS} 원함|제외"`(요약과 같은 말, 방향 없으면 이름만), kind는 condition(키 있음) / not_filtered(키 없고
    「비싸요」 칩이거나 알러지 낱말) / vague(그 밖의 키 없는 줄). not_filtered 줄은 text를 싣지 않는다. 칩을 가르려고 recommend.api
@@ -680,10 +682,9 @@ tools(recommend.api를 감싼다), 순서와 세션은 flows. 모델은 llm.agen
    저장은 ON CONFLICT로 먼저 커밋한 하나만 남고, 늦은 쪽은 그 행을 다시 읽어 같은 결과를 돌려준다(agent_runs에는 둘 다 남고 늦은 쪽은
    stored=false). 모델 호출까지 한 번으로 막으려면 "만드는 중" 자리표 행이 필요한데 agent_run_advice에 상태 칸이 없고(kind=null은 침묵과
    구별되지 않는다) 연결을 잡는 잠금은 12.6에 어긋나 하지 않았다. 같은 사람이 같은 run을 동시에 여는 경우라 비용은 작다
-10. **requester 재확인**: agent.api.advise_run도 run의 requested_by와 requester_id를 비교해 FORBIDDEN을 낸다(라우터가 이미 막지만
-    agent.api를 다른 곳에서 부를 때를 위해)
-11. **import 고리**: agent.api는 탈퇴(auth.service)와 recommend.flows가 불러오는 입구라, advise_run 안에서만 agent.flows를 불러온다
-    (맨 위에서 불러오면 agent.flows → recommend.api → recommend.flows → agent.api 고리가 생긴다)
+10. **requester 재확인**: flows.advise_run도 run의 requested_by와 requester_id를 비교해 FORBIDDEN을 낸다(라우터가 이미 막지만
+    flows를 다른 곳에서 부를 때를 위해)
+11. **import 방향**: agent → recommend.api 한 방향이다(아래 "후속 수정 1"). agent.api에는 advise_run이 없다 — 부르는 다른 모듈이 없다
 
 ## 테스트
 
@@ -705,4 +706,17 @@ tools(recommend.api를 감싼다), 순서와 세션은 flows. 모델은 llm.agen
 2. 명세 10절 표: get_run_evidence 반환 모양(위 7번), simulate_filter 반환에 gained·passed·within_widen_limit, 입력의 깔때기 t0
 3. 명세 11.2: 조언은 tool_result claim만, text 경로 금지, open_evidence 줄을 basis에서 정하는 방법, 상한 넘는 claim 제거, 종류별 필수 claim
 4. api-spec RunAdvice 설명에 "근거 글은 응답에 없다"를 적을지(지금 FE는 근거 글이 올 거라 기대할 이유가 없어 선택)
-5. #588: 프롬프트 advise-v1은 초안이고 평가셋이 없다. 깔때기 라벨 문자열 의존(위 6번)을 recommend가 단계 코드로 주면 더 단단하다
+5. #588: 프롬프트 advise-v1은 초안이고 평가셋이 없다
+
+## 후속 수정 (루트 리뷰, 2026-10-18)
+
+1. **라우터를 agent로 옮겼다 — recommend → agent import 0개.** `GET /runs/{runId}/advice`는 agent/router.py에 있다(api-spec의 recommend
+   태그는 문서 분류라 그대로). 권한은 전과 같다: `require_with_principal("recommend.manage", agent.loaders.load_run)` — 로더가
+   `recommend.api.get_run_meta`로 run을 읽어 `Resource(type="run", map_id, author_id=requested_by)`를 만들고, authz가 지도 구성원 확인
+   (비구성원 404)과 recommend.manage 판정(요청자 본인만, 아니면 403)을 한다. recommend의 loaders·router·models는 가져오지 않는다.
+   요청 세션은 권한 확인 뒤 롤백하고 flows.advise_run이 `agent.deps.get_session_factory`로 짧은 세션을 연다(전과 같음).
+   recommend의 `flows.run_advice`, `deps.get_session_factory`, 라우터의 조언 경로는 지웠다. agent.api.advise_run과 그 안의 지연 import도
+   지웠다(agent.api는 탈퇴와 지도 정리의 입구로만 남는다)
+2. **passed는 recommend의 passed_count를 쓴다.** `core.FUNNEL_TOP_STAGE`와 라벨 비교를 지웠다. `core.funnel_view(outcome)`이
+   `{result_count, funnel, passed_count}`를 받아 도구 결과의 `passed`로 옮긴다(도구 결과 모양과 프롬프트는 그대로). 테스트: 마지막 단계
+   라벨을 바꿔도 passed와 gained가 같다(test_core_advice.py)

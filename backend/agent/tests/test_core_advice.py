@@ -16,11 +16,11 @@ RUN = "run-1"
 OWN, OTHER, VAGUE = "line-own", "line-other", "line-vague"
 OWN_TEXT, OTHER_TEXT = "좁아서 다리를 펼 수가 없었어요", "사람이 너무 많아서 정신없었어요"
 NAMES = ["김철수", "이영희"]
-FUNNEL = core.funnel_view(1, [
+FUNNEL = core.funnel_view({"result_count": 1, "passed_count": 1, "funnel": [
     {"label": "카테고리 후보 풀", "removed_count": 0}, {"label": "반경 밖 제거", "removed_count": 4},
     {"label": "실격 조건 제거", "removed_count": 9}, {"label": "이미 제안·거절됨", "removed_count": 2},
     {"label": "상위 3곳 선정", "removed_count": 0},
-])
+]})
 LINES = core.advice_evidence([
     {"line_id": OWN, "author_id": "u1", "text": OWN_TEXT, "badge": "required", "fact_key": "spacious", "wants": True,
      "is_active": True, "chip_id": None},
@@ -98,9 +98,19 @@ def test_radius_limits(walk, factor):
     assert core.radius_limits(walk, 30) == {"walk_min": walk, "max_walk_min": 30, "max_radius_factor": factor}
 
 
-def test_funnel_passed_adds_the_top_three_cut():
-    view = core.funnel_view(3, [{"label": "실격 조건 제거", "removed_count": 4}, {"label": "상위 3곳 선정", "removed_count": 5}])
-    assert (view["result_count"], view["passed"]) == (3, 8)
+@pytest.mark.parametrize("top_label", ["상위 3곳 선정", "추천 3곳 고르기"])
+def test_passed_and_gained_come_from_passed_count_not_the_stage_label(top_label):
+    """passed는 recommend가 센 passed_count 그대로다 — 깔때기 라벨 문구가 바뀌어도 passed와 gained가 같다(#587)."""
+    def outcome(removed_at_top, passed_count):
+        funnel = [{"label": "실격 조건 제거", "removed_count": 4}, {"label": top_label, "removed_count": removed_at_top}]
+        return {"result_count": 3, "funnel": funnel, "passed_count": passed_count}
+
+    view = core.funnel_view(outcome(5, 8))
+    sim = core.simulate_view({"before": outcome(5, 8), "after": outcome(7, 10)}, radius_factor=None,
+                             disable_line_ids=[OWN], walk_min=15, limit_walk_min=30)
+
+    assert (view["result_count"], view["passed"], view["funnel"][-1]["label"]) == (3, 8, top_label)
+    assert (sim["before"]["passed"], sim["after"]["passed"], sim["gained"]) == (8, 10, 2)
 
 
 # ---------------------------------------------------------------- 근거 줄 (10절 get_run_evidence)

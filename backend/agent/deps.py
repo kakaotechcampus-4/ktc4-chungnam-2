@@ -14,14 +14,15 @@ planner다(#532): dev는 fixed planner, real은 real planner.
   스텁은 get_run_evidence를 한 번 부른 뒤 늘 silent다 — 조언은 빈 값으로 저장되고 GET은 204다.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from fastapi import Depends
+from sqlalchemy.orm import Session
 
 from agent.schemas import AgentReply, DiagnosisOutput, RunAdviceOutput, SummaryOutput
 from common.adapters import select
-from common.database import get_db_session
+from common.database import SessionLocal, get_db_session
 from common.settings import settings
 from llm import api as llm_api
 
@@ -100,5 +101,12 @@ get_llm_gateway = select(
 )
 
 
+def get_session_factory() -> Callable[[], Session]:
+    """요청 단위 세션(get_db) 대신 짧은 세션을 여러 번 여는 엔드포인트가 쓴다 — `GET /runs/{runId}/advice`는 모델을 부르는
+    동안 연결을 잡지 않게 조회와 저장을 나눠 연다(docs/agent-v2.md 9절, 12.6, #587). 테스트는 이 의존성을 테스트 DB로 바꾼다."""
+    return SessionLocal
+
+
 DbSession = Depends(get_db_session)
 LlmGatewayDep = Depends(get_llm_gateway)
+SessionFactoryDep = Depends(get_session_factory)

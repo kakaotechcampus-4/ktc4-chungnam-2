@@ -1355,7 +1355,6 @@ def render_summary(
 
 ADVICE_SELF, ADVICE_OTHER = "본인", "다른 구성원"   # 근거 줄을 쓴 사람. 이름과 user_id는 모델에 가지 않는다
 PREFETCH_CALL_ID = "t0"   # 미리 읽어 입력에 넣는 깔때기의 call_id. llm이 매기는 t1, t2 …와 겹치지 않는다
-FUNNEL_TOP_STAGE = "상위 3곳 선정"   # recommend 깔때기의 마지막 단계. 결과 수 + 이 단계 탈락 = 필터를 통과한 곳(#585)
 RUN_ADVICE_ACTIONS: dict[str, tuple[str, ...]] = {   # 9절 표의 종류별 버튼
     "radius": ("widen_radius",), "soft_relax": ("open_evidence",), "vague_reason": ("open_evidence",), "exhausted": (),
 }
@@ -1391,16 +1390,14 @@ def within_widen_limit(radius_factor: float | None, walk_min: int, limit_walk_mi
     return radius_factor is None or walk_min * radius_factor <= limit_walk_min + 1e-9
 
 
-def _passed(result_count: int, funnel: Sequence[Mapping[str, Any]]) -> int:
-    return result_count + next((e["removed_count"] for e in funnel if e["label"] == FUNNEL_TOP_STAGE), 0)
-
-
-def funnel_view(result_count: int, funnel: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """깔때기 도구 결과: 결과 수(최대 3), 단계별 탈락, passed(필터를 모두 통과한 곳 — 상위 3곳을 고르기 전)."""
+def funnel_view(outcome: Mapping[str, Any]) -> dict[str, Any]:
+    """깔때기 도구 결과: 결과 수(최대 3), 단계별 탈락, passed(필터를 모두 통과한 곳 — 상위 3곳을 고르기 전). outcome은
+    recommend.api.get_run_funnel 또는 simulate_filter의 before·after `{result_count, funnel, passed_count}`다. passed는
+    recommend가 센 passed_count 그대로다 — 깔때기 라벨 글자로 셈하지 않는다(#587)."""
     return {
-        "result_count": result_count,
-        "funnel": [{"label": e["label"], "removed_count": e["removed_count"]} for e in funnel],
-        "passed": _passed(result_count, funnel),
+        "result_count": outcome["result_count"],
+        "funnel": [{"label": e["label"], "removed_count": e["removed_count"]} for e in outcome["funnel"]],
+        "passed": outcome["passed_count"],
     }
 
 
@@ -1410,10 +1407,7 @@ def simulate_view(
 ) -> dict[str, Any]:
     """simulate_filter 도구 결과. 결과 수는 상위 3곳 뒤라 최대 3이어서 비교는 passed로 한다 — gained = after.passed −
     before.passed(같은 호출의 before와 after끼리, #585). within_widen_limit이 거짓인 결과를 가리키는 claim은 검증에서 빠진다."""
-    def side(outcome: Mapping[str, Any]) -> dict[str, Any]:
-        return funnel_view(outcome["result_count"], outcome["funnel"])
-
-    before, after = side(raw["before"]), side(raw["after"])
+    before, after = funnel_view(raw["before"]), funnel_view(raw["after"])
     return {
         "radius_factor": radius_factor, "disable_line_ids": list(disable_line_ids),
         "within_widen_limit": within_widen_limit(radius_factor, walk_min, limit_walk_min),
