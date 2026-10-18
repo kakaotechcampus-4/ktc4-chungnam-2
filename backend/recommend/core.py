@@ -268,10 +268,19 @@ def to_satisfaction_checks(checks: Sequence[Check], directions: Mapping[str, boo
     return shown
 
 
+RANKING_STAGE = "상위 3곳 선정"  # 깔때기의 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다
+
+
 def funnel_counts(stage_removed: list[tuple[str, int]]) -> list[dict]:
     """5-6 깔때기 표 — (라벨, 이번 단계에서 제거된 수) 쌍의 리스트를 api-spec.yaml
     FunnelEntry 모양으로 그대로 옮긴다."""
     return [{"label": label, "removed_count": removed} for label, removed in stage_removed]
+
+
+def passed_count(result_count: int, funnel: Sequence[Mapping[str, Any]]) -> int:
+    """필터를 모두 통과한 곳의 수 — 상위 3곳을 고르기 전(#587). 결과 수 + RANKING_STAGE 단계 탈락. 결과 수는 최대 3이라
+    "조건을 바꾸면 몇 곳이 더 남나"는 이 수로 비교한다. 단계 라벨은 이 모듈이 정하고 읽으므로 밖에서 라벨 글자를 볼 일이 없다."""
+    return result_count + sum(e["removed_count"] for e in funnel if e["label"] == RANKING_STAGE)
 
 
 def check_retry_limit(attempt_no: int) -> None:

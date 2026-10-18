@@ -77,20 +77,23 @@ def get_run_meta(db: Session, *, run_id: str) -> dict:
     반경 넓히기 상한(도보 30분, core.WIDEN_LIMIT_MIN)을 넘는 배율인지 본다. result_count는 get_recent_runs와 같은 기준(후보 수,
     done이 아니면 0). 권한 판정 없음(위 주석)."""
     run = service.get_run_or_404(db, run_id)
-    candidate_count = len(service.list_candidates(db, str(run.id))) if run.status == "done" else 0
     return {
         "run_id": str(run.id), "map_id": run.map_id, "category": run.category, "requested_by": run.requested_by,
-        "status": run.status, "result_count": candidate_count, "created_at": run.created_at,
+        "status": run.status, "result_count": _result_count(db, run), "created_at": run.created_at,
         "default_radius_walk_min": run.default_radius_walk_min, "widen_limit_walk_min": core.WIDEN_LIMIT_MIN,
     }
 
 
-def get_run_funnel(db: Session, *, run_id: str) -> list[dict]:
-    """마지막 실행(execute/widen/retry)이 저장한 깔때기 `[{label, removed_count}]`(recommend_runs.last_funnel) 그대로 —
-    「추천 가능 아님 제거」(#558) 단계도 저장된 대로 들어 있다. 실행 전이면 []. 사본이라 고쳐도 행에 영향이 없다.
-    권한 판정 없음(위 주석)."""
+def get_run_funnel(db: Session, *, run_id: str) -> dict:
+    """마지막 실행(execute/widen/retry)의 `{result_count, funnel, passed_count}` — simulate_filter의 before·after와 같은 모양.
+    funnel은 저장한 깔때기 `[{label, removed_count}]`(recommend_runs.last_funnel) 그대로이고 「추천 가능 아님 제거」(#558) 단계도
+    저장된 대로 들어 있다. result_count는 get_run_meta와 같은 기준(후보 수, done이 아니면 0), passed_count는 필터를 모두
+    통과한 곳의 수(상위 3곳을 고르기 전, core.passed_count, #587). 실행 전이면 funnel []·0·0. 사본이라 고쳐도 행에 영향이
+    없다. 권한 판정 없음(위 주석)."""
     run = service.get_run_or_404(db, run_id)
-    return [{"label": entry["label"], "removed_count": entry["removed_count"]} for entry in run.last_funnel or []]
+    funnel = [{"label": entry["label"], "removed_count": entry["removed_count"]} for entry in run.last_funnel or []]
+    result_count = _result_count(db, run)
+    return {"result_count": result_count, "funnel": funnel, "passed_count": core.passed_count(result_count, funnel)}
 
 
 def get_run_evidence(db: Session, *, run_id: str) -> list[dict]:
@@ -112,7 +115,8 @@ def simulate_filter(
     place_search: PlaceSearchGateway | None = None, place_facts: PlaceFactsGateway | None = None,
 ) -> dict:
     """실격 필터를 입력만 바꿔 다시 돌린다(flows.simulate_filter — 필터를 다시 구현하지 않는다). `{before, after}`,
-    각각 `{result_count, funnel[{label, removed_count}]}`. before는 지금 저장된 지역·활성 근거 줄로 다시 돌린 값이라
+    각각 `{result_count, funnel[{label, removed_count}], passed_count}`. passed_count는 필터를 모두 통과한 곳의 수(상위 3곳을
+    고르기 전, #587)라 결과 수(최대 3)와 달리 조건을 바꾼 효과를 그대로 비교할 수 있다. before는 지금 저장된 지역·활성 근거 줄로 다시 돌린 값이라
     그 사이 바뀐 것이 없으면 마지막 실행 결과와 같다. after는 지역 반경에 radius_factor를 곱하고 disable_line_ids를
     비활성으로 본다. 이미 제안·거절한 곳은 실행 때와 같이 뺀다(가드레일 6). 라벨을 모르는 가게는 실행 때처럼
     통과라 실격 숫자는 라벨이 확실한 가게만 센다.
@@ -125,6 +129,10 @@ def simulate_filter(
         place_search=place_search or deps.get_place_search_gateway(),
         place_facts=place_facts or deps.get_place_facts_gateway(),
     )
+
+
+def _result_count(db: Session, run) -> int:
+    return len(service.list_candidates(db, str(run.id))) if run.status == "done" else 0
 
 
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:

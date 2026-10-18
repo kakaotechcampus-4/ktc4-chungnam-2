@@ -41,12 +41,10 @@ guard.py 안에서만 일어난다). "멤버십/작성자 확인이 멱등 경�
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Collection, Mapping, Sequence
+from typing import Any, Collection, Mapping, Sequence
 
 from sqlalchemy.orm import Session
 
-from agent import api as agent_api
-from agent.schemas import RunAdvice
 from auth.schemas import CurrentUser
 from authz.core import Principal, Resource, can
 from authz.guard import require
@@ -572,7 +570,7 @@ def _run_pipeline(
         ("추천 가능 아님 제거", removed_not_recommendable),
         ("실격 조건 제거", removed_disqualify),
         ("이미 제안·거절됨", removed_exclusions),
-        ("상위 3곳 선정", removed_ranking),
+        (core.RANKING_STAGE, removed_ranking),
     ])
     return candidates_data, funnel
 
@@ -734,18 +732,12 @@ def simulate_filter(
             db, run, regions=regions, active_lines=active_lines,
             place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
         )
-        return {"result_count": len(candidates_data), "funnel": funnel}
+        return {
+            "result_count": len(candidates_data), "funnel": funnel,
+            "passed_count": core.passed_count(len(candidates_data), funnel),
+        }
 
     return {"before": outcome(), "after": outcome(radius_factor=radius_factor, disable_line_ids=disabled)}
-
-
-def run_advice(*, run_id: str, requester_id: str, session_factory: Callable[[], Session]) -> RunAdvice | None:
-    """GET /runs/{runId}/advice — 추천 막힘 조언(docs/agent-v2.md 9절, #587). 조언은 agent가 만든다(대상 판정, 모델,
-    검증, run당 1회 저장). 여기서는 넘기기만 한다. 대상이 아니거나 낼 조언이 없으면 None(204).
-
-    요청 단위 세션을 쓰지 않는다 — 모델을 부르는 동안 연결을 잡지 않게 agent가 session_factory로 조회와 저장을 짧은
-    세션으로 나눠 연다(명세 9절, 12.6). 권한(recommend.manage)은 라우터가 이미 봤다."""
-    return agent_api.advise_run(run_id, requester_id, session_factory=session_factory)
 
 
 def _candidate_response(

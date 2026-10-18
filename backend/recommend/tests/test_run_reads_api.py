@@ -12,7 +12,7 @@ from common.events import EventLog
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
 from places.schemas import FactLabel
-from recommend import api, deps, flows, service
+from recommend import api, core, deps, flows, service
 from recommend.models import Candidate, EvidenceLine, Exclusion, RecommendRun, Region
 from recommend.ports import PlaceStub
 
@@ -187,15 +187,63 @@ def test_run_reads_raise_not_found_for_unknown_run(db_session):
 
 def test_get_run_funnel_returns_the_last_execution_including_the_can_recommend_step(db_session):
     run, _ = _scenario(db_session)
-    assert api.get_run_funnel(db_session, run_id=str(run.id)) == []  # 실행 전
+    assert api.get_run_funnel(db_session, run_id=str(run.id)) == {"result_count": 0, "funnel": [], "passed_count": 0}  # 실행 전
 
     flows.execute_run(db_session, run_id=str(run.id), **_gateways())
-    funnel = api.get_run_funnel(db_session, run_id=str(run.id))
+    result = api.get_run_funnel(db_session, run_id=str(run.id))
+    funnel = result["funnel"]
 
+    assert (result["result_count"], result["passed_count"]) == (1, 1)
     assert funnel == run.last_funnel
     assert _removed(funnel)["추천 가능 아님 제거"] == 1
     funnel[0]["removed_count"] = 99
     assert run.last_funnel[0]["removed_count"] == 0  # 사본
+
+
+# ---------- passed_count (#587) ----------
+# 필터를 모두 통과한 곳의 수(상위 3곳을 고르기 전). 아래 판은 _scenario에 조건을 모두 통과하는 곳 넷을 더해 통과가 다섯(ok와
+# ok2~ok5)이고 결과는 3곳이다. 「좁아요」를 끄면 narrow가 풀려 여섯이 된다.
+
+MORE = [PlaceStub(place_id=f"ok{i}", lat=35.0003, lng=129.0004) for i in range(2, 6)]
+PASSING = {"ok", *(p.place_id for p in MORE)}
+
+
+def _gateways_with_more():
+    return {
+        "place_search": _FakePlaceSearch(PLACES + MORE),
+        "place_facts": _FakePlaceFacts({**FACTS, **{p.place_id: FACTS["ok"] for p in MORE}}),
+    }
+
+
+def _passed_counts(db_session, run, lines):
+    flows.execute_run(db_session, run_id=str(run.id), **_gateways_with_more())
+    stored = api.get_run_funnel(db_session, run_id=str(run.id))
+    sim = api.simulate_filter(db_session, run_id=str(run.id), disable_line_ids=[lines["좁아요"]], **_gateways_with_more())
+    return stored, sim
+
+
+def test_passed_count_is_the_number_that_passed_every_filter_before_the_top_three(db_session):
+    run, lines = _scenario(db_session)
+
+    stored, sim = _passed_counts(db_session, run, lines)
+
+    assert len(service.list_candidates(db_session, str(run.id))) == 3   # 결과는 3곳에서 잘린다
+    assert (stored["result_count"], stored["passed_count"]) == (3, len(PASSING))
+    assert sim["before"]["passed_count"] == len(PASSING)
+    assert (sim["after"]["result_count"], sim["after"]["passed_count"]) == (3, len(PASSING) + 1)   # narrow가 풀린다
+
+
+def test_passed_count_does_not_depend_on_the_stage_label(db_session, monkeypatch):
+    """깔때기 라벨 문구를 바꿔도 통과 수는 같다 — 라벨을 정하는 곳과 세는 곳이 recommend 한 곳이다."""
+    monkeypatch.setattr(core, "RANKING_STAGE", "추천 3곳 고르기")
+    run, lines = _scenario(db_session)
+
+    stored, sim = _passed_counts(db_session, run, lines)
+
+    assert stored["funnel"][-1]["label"] == "추천 3곳 고르기"
+    assert (stored["passed_count"], sim["before"]["passed_count"], sim["after"]["passed_count"]) == (
+        len(PASSING), len(PASSING), len(PASSING) + 1,
+    )
 
 
 # ---------- get_run_evidence ----------
@@ -244,7 +292,7 @@ def test_simulate_before_equals_the_actual_execution(db_session):
     result = api.simulate_filter(db_session, run_id=str(run.id), **_gateways())
 
     assert result["before"] == {
-        "result_count": len(service.list_candidates(db_session, str(run.id))), "funnel": run.last_funnel,
+        "result_count": len(service.list_candidates(db_session, str(run.id))), "funnel": run.last_funnel, "passed_count": 1,
     }
     assert result["after"] == result["before"]  # 바꾼 것이 없으면 같다
 
