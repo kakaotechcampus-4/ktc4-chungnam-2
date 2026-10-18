@@ -17,6 +17,7 @@ from sqlalchemy.orm import sessionmaker
 import agent.models  # noqa: F401 — 지도 정리·탈퇴가 agent_* 테이블도 지운다(#512)
 import auth.models  # noqa: F401
 import common.events  # noqa: F401
+import feedback.models  # noqa: F401 — 탈퇴가 feedback.user_id를 비우고, 계약 테스트가 피드백 응답을 본다(#10)
 import maps.models  # noqa: F401
 import notifications.models  # noqa: F401
 import pins.models  # noqa: F401
