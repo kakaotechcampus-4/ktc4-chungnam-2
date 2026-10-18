@@ -10,6 +10,7 @@ import { useLivePinResolver } from '@/features/map/livePlaces'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMapEvents } from '@/features/map/realtime'
 import { usePinFilters } from '@/features/map/usePinFilters'
+import MapSwitcher from '@/features/maps/MapSwitcher'
 import { useMapQuery } from '@/features/maps/queries'
 import { usePlaceSearchQuery } from '@/features/search/queries'
 import { toRouteDrawings } from '@/features/shortlist/model'
@@ -18,7 +19,8 @@ import { useRouteStore } from '@/features/shortlist/routeStore'
 import { useSearchStore } from '@/features/search/searchStore'
 import { PANEL_W, RAIL_W, TAB_BAR_H } from '@/features/shell/layout'
 import MapControls, { type ControlKey } from '@/features/shell/MapControls'
-import ProfileModal from '@/features/shell/ProfileModal'
+import { backAriaLabel, usePanelBackStore } from '@/features/shell/panelBack'
+import ProfileModal, { ProfileMenu } from '@/features/shell/ProfileModal'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import type { ShellContext } from '@/features/shell/shellContext'
 import { ConnectionBanner } from '@/features/shell/TabSheet'
@@ -107,6 +109,10 @@ export default function MapLayout() {
   const controller = useRef<MapController | null>(null)
   const [activeControl, setActiveControl] = useState<ControlKey | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
+  const panelBack = usePanelBackStore((s) => s.back)
+
+  // 검색은 지도 하나 안의 잠깐 작업이다. 지도를 떠나면(다른 지도로 바꿔도) 닫는다 — 다음 지도에 이전 검색 결과가 남지 않게.
+  useEffect(() => () => useSearchStore.getState().close(), [])
 
   const openProfile = (open: boolean) => {
     setProfileOpen(open)
@@ -232,33 +238,62 @@ export default function MapLayout() {
           className={desktop ? 'shrink-0 space-y-3 px-4 pb-1 pt-3' : 'pointer-events-none fixed inset-x-0 top-0 z-20 space-y-2 px-4 pt-3'}
         >
           <div className={desktop ? 'flex items-center gap-2' : 'flex items-center justify-between'}>
-            <Link
-              to="/"
-              aria-label="내 지도 목록으로"
-              className={
-                desktop
-                  ? 'hit-44 flex size-8 shrink-0 items-center justify-center rounded-full text-ink-900 hover:bg-ink-100'
-                  : 'pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-white text-ink-900 shadow-md'
-              }
-            >
-              <ChevronLeft size={20} />
-            </Link>
-            {/* 넓은 화면은 지도 위가 아니라 자리가 있어서 지도 제목을 같이 둔다(#338 목표 레이아웃). */}
-            {desktop && <h1 className="min-w-0 flex-1 truncate text-[1.0625rem] font-bold text-ink-900">{mapInfo?.title}</h1>}
+            {desktop ? (
+              // 넓은 화면의 ‹ 는 패널 안 이전 화면(핀 상세 → 목록 등)이다. 돌아갈 곳이 없으면 없다 — 지도 밖으로는 제목 메뉴로 나간다.
+              panelBack && (
+                <button
+                  type="button"
+                  onClick={panelBack.onBack}
+                  aria-label={backAriaLabel(panelBack.label)}
+                  title={`‹ ${panelBack.label}`}
+                  className="hit-44 flex size-8 shrink-0 items-center justify-center rounded-full text-ink-900 hover:bg-ink-100"
+                >
+                  <ChevronLeft size={20} />
+                </button>
+              )
+            ) : (
+              <Link
+                to="/"
+                aria-label="내 지도 목록으로"
+                className="pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-white text-ink-900 shadow-md"
+              >
+                <ChevronLeft size={20} />
+              </Link>
+            )}
+            {/* 넓은 화면은 지도 위가 아니라 자리가 있어서 지도 제목을 같이 둔다(#338). 제목을 누르면 다른 지도로 바로 옮긴다. */}
+            {/* 제목이 메뉴 버튼이 돼도 화면 제목(h1)은 남긴다 — 스크린리더가 제목으로 찾아간다. */}
+            {desktop && (
+              <h1 className="flex min-w-0 flex-1">
+                <MapSwitcher mapId={mapId} title={mapInfo?.title} />
+              </h1>
+            )}
             {/* 내 이니셜 원은 계정 버튼처럼 읽혀서, 구성원 아이콘 + 인원 수로 "이 지도의 정보·구성원"임을 보인다(#351). */}
-            <button
-              type="button"
-              aria-label={`지도 정보와 구성원 · ${memberCount}명`}
-              onClick={() => openProfile(true)}
-              className={
-                desktop
-                  ? 'hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 text-sm font-bold text-brand-600'
-                  : 'pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-md'
-              }
-            >
-              <Users size={16} aria-hidden="true" />
-              {memberCount > 0 && memberCount}
-            </button>
+            {/* 넓은 화면은 바닥 시트 대신 버튼 아래 메뉴로 연다 — 패널 옆 바닥 시트는 끌리지도 않는 손잡이만 남았다. */}
+            {desktop ? (
+              <ProfileMenu
+                mapId={mapId}
+                trigger={
+                  <button
+                    type="button"
+                    aria-label={`지도 정보와 구성원 · ${memberCount}명`}
+                    className="hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 text-sm font-bold text-brand-600 hover:bg-ink-50 data-[state=open]:border-brand-600 data-[state=open]:bg-brand-50"
+                  >
+                    <Users size={16} aria-hidden="true" />
+                    {memberCount > 0 && memberCount}
+                  </button>
+                }
+              />
+            ) : (
+              <button
+                type="button"
+                aria-label={`지도 정보와 구성원 · ${memberCount}명`}
+                onClick={() => openProfile(true)}
+                className="pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-md"
+              >
+                <Users size={16} aria-hidden="true" />
+                {memberCount > 0 && memberCount}
+              </button>
+            )}
           </div>
           {/* 지도 위에는 검색창만 둔다(FE 회의). 지도를 끄는 동안엔 지도에 집중하게 흐려진다. 검색 동작은 #293. */}
           {/* 검색 결과는 화면에 보여 주기만 한다(#53). Enter 나 돋보기를 눌렀을 때만 부른다(호출 상한, api-spec). */}
@@ -341,7 +376,7 @@ export default function MapLayout() {
         </div>
       )}
 
-      {profileOpen && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
+      {profileOpen && !desktop && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
     </>
   )
 }

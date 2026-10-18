@@ -5,6 +5,7 @@ import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import type { MemberView } from '@/features/maps/model'
 import { useMeQuery } from '@/features/auth/queries'
+import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation } from '@/features/shortlist/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
@@ -28,7 +29,10 @@ const PROMPT: Record<ReactionType, { title: string; placeholder: string }> = {
   against: { title: '왜 별로인가요? (필수)', placeholder: '예: 지난번 여행 때 가봤어요' },
 }
 
-/** 제목 줄(시트 끌기 영역). 「‹ 마킹된 장소」(확정 탭에선 「‹ 확정된 장소」)는 시트 안 이전 화면 — 좌상단 ‹(내 지도 목록)와 다르다. */
+/**
+ * 제목 줄(시트 끌기 영역). 「‹ 마킹된 장소」(확정 탭에선 「‹ 확정된 장소」)는 시트 안 이전 화면 — 모바일 좌상단 ‹(내 지도 목록)와 다르다.
+ * 넓은 화면은 이 ‹ 가 패널 헤더 ‹ 로 옮겨 간다(PanelBackLink).
+ */
 export function PinDetailHeader({
   pin,
   mapId,
@@ -45,9 +49,7 @@ export function PinDetailHeader({
 
   return (
     <div>
-      <button type="button" onClick={onBack} className="hit-44 mb-2 text-[0.8125rem] font-medium text-ink-500">
-        ‹ {backLabel}
-      </button>
+      <PanelBackLink label={backLabel} onBack={onBack} />
       <div className="flex items-center justify-between gap-2">
         <h2 className="truncate text-[1.375rem] font-bold text-ink-900">{pin.place_name ?? '이름 없는 장소'}</h2>
         {confirmed ? (
