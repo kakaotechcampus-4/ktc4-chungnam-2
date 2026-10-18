@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
@@ -8,37 +8,57 @@ import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
 import { DeleteMapConfirm, LeaveMapConfirm } from '@/features/maps/MapLifecycle'
 import { useShareInvite } from '@/features/maps/useShareInvite'
 
+import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
 
+type Confirm = 'logout' | 'leave' | 'delete' | null
+
 /**
- * 프로필 모달(Figma 8절). 탭 시트가 아니라 모달이다 — 탭 시트 자리에 띄우면 켜진 탭과 내용이 어긋난다.
+ * 프로필 모달(Figma 8절, 모바일). 탭 시트가 아니라 모달이다 — 탭 시트 자리에 띄우면 켜진 탭과 내용이 어긋난다.
  * 검정 32% 딤이 지도·상단 버튼·하단 바까지 덮고, 시트는 화면 바닥에 붙는다.
- * 강퇴는 v2라 버튼이 없다.
+ * 넓은 화면은 같은 내용을 패널 헤더 구성원 버튼 아래 메뉴로 연다(ProfileMenu). 강퇴는 v2라 버튼이 없다.
  */
 export default function ProfileModal({ mapId, onClose }: { mapId: string; onClose: () => void }) {
+  const [confirm, setConfirm] = useState<Confirm>(null)
+  return (
+    <ModalSheet label="지도 정보" onClose={onClose} overlay={<ProfileConfirm mapId={mapId} which={confirm} onCancel={() => setConfirm(null)} />}>
+      <ProfileBody mapId={mapId} onConfirm={setConfirm} />
+    </ModalSheet>
+  )
+}
+
+/** 넓은 화면의 지도 정보 — 바닥 시트(끌 수 없는 손잡이가 달린) 대신 구성원 버튼 바로 아래에 붙는다. */
+export function ProfileMenu({ mapId, trigger }: { mapId: string; trigger: ReactNode }) {
+  const [confirm, setConfirm] = useState<Confirm>(null)
+  return (
+    <MenuPopover
+      label="지도 정보"
+      trigger={trigger}
+      holdOpen={confirm !== null}
+      overlay={<ProfileConfirm mapId={mapId} which={confirm} onCancel={() => setConfirm(null)} />}
+    >
+      <ProfileBody mapId={mapId} onConfirm={setConfirm} />
+    </MenuPopover>
+  )
+}
+
+function ProfileConfirm({ mapId, which, onCancel }: { mapId: string; which: Confirm; onCancel: () => void }) {
+  const map = useMapQuery(mapId).data
+  if (which === 'logout') return <LogoutConfirm onCancel={onCancel} />
+  if (which === 'leave') return <LeaveMapConfirm mapId={mapId} nextOwnerName={map?.nextOwnerName} onCancel={onCancel} />
+  if (which === 'delete' && map) return <DeleteMapConfirm mapId={mapId} title={map.title} onCancel={onCancel} />
+  return null
+}
+
+/** 지도 정보 시트·메뉴 공통 내용 — 초대 링크, 구성원, 나가기·삭제, 계정. */
+function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: Confirm) => void }) {
   const map = useMapQuery(mapId)
   const members = useMembersQuery(mapId)
   const { url, error: inviteError, copied, copy, share } = useShareInvite(mapId)
   const me = useMeQuery()
-  const [confirmLogout, setConfirmLogout] = useState(false)
-  const [lifecycle, setLifecycle] = useState<'leave' | 'delete' | null>(null)
 
   return (
-    <ModalSheet
-      label="지도 정보"
-      onClose={onClose}
-      overlay={
-        <>
-          {confirmLogout && <LogoutConfirm onCancel={() => setConfirmLogout(false)} />}
-          {lifecycle === 'leave' && (
-            <LeaveMapConfirm mapId={mapId} nextOwnerName={map.data?.nextOwnerName} onCancel={() => setLifecycle(null)} />
-          )}
-          {lifecycle === 'delete' && map.data && (
-            <DeleteMapConfirm mapId={mapId} title={map.data.title} onCancel={() => setLifecycle(null)} />
-          )}
-        </>
-      }
-    >
+    <>
       {map.data && (
         <header className="mb-4">
           <h2 className="text-xl font-bold text-ink-900">{map.data.title}</h2>
@@ -87,7 +107,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
         <div className="mt-6 flex gap-2 border-t border-ink-200 pt-4">
           {/* 넘길 사람이 없는 방장은 나갈 수 없다 — 나가기 자리에 이유를 적고 삭제를 안내한다. */}
           {map.data.canLeave ? (
-            <button type="button" onClick={() => setLifecycle('leave')} className="flex-1 rounded-lg border border-ink-300 py-2.5 text-sm font-semibold text-ink-900">
+            <button type="button" onClick={() => onConfirm('leave')} className="flex-1 rounded-lg border border-ink-300 py-2.5 text-sm font-semibold text-ink-900">
               지도 나가기
             </button>
           ) : (
@@ -96,7 +116,7 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
           {map.data.canDelete && (
             <button
               type="button"
-              onClick={() => setLifecycle('delete')}
+              onClick={() => onConfirm('delete')}
               className="flex-1 rounded-lg border border-[var(--action-danger)] py-2.5 text-sm font-semibold text-[var(--action-danger)]"
             >
               지도 삭제
@@ -112,12 +132,12 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
         </div>
         <button
           type="button"
-          onClick={() => setConfirmLogout(true)}
+          onClick={() => onConfirm('logout')}
           className="rounded-lg border border-ink-300 px-3 py-1.5 text-sm font-semibold text-ink-900"
         >
           로그아웃
         </button>
       </div>
-    </ModalSheet>
+    </>
   )
 }

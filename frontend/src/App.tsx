@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router'
+import { BrowserRouter, Route, Routes, useParams } from 'react-router'
 
 import { USE_MOCK } from '@/api'
 import ScenarioSwitcher from '@/dev/ScenarioSwitcher'
@@ -28,7 +28,7 @@ export default function App() {
           {/* 로그인 직후 진입점 = 내 지도 목록 (#24) */}
           <Route path="/" element={<MapListPage />} />
           <Route path="/maps/new" element={<MapCreatePage />} />
-          <Route path="/maps/:mapId" element={<MapLayout />}>
+          <Route path="/maps/:mapId" element={<MapRoute />}>
             <Route index element={<MapTab />} />
             <Route path="recommend" element={<RecommendTab />} />
             <Route path="shortlist" element={<ShortlistTab />} />
@@ -37,4 +37,13 @@ export default function App() {
       </Routes>
     </BrowserRouter>
   )
+}
+
+/**
+ * 지도를 바꾸면(패널 제목 메뉴) 지도 화면을 새로 띄운다 — 목록을 거쳐 들어온 것과 같게.
+ * 같은 화면을 다시 쓰면 앞 지도의 검색어·패널 안 화면이 다음 지도에 남는다.
+ */
+function MapRoute() {
+  const { mapId } = useParams()
+  return <MapLayout key={mapId} />
 }
