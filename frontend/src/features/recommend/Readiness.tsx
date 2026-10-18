@@ -129,12 +129,13 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
       <div className="mt-2 h-1.5 rounded-full bg-ink-200">
         <div className={`h-full rounded-full ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`} style={{ width: `${pct}%` }} />
       </div>
-      <p className="mt-1.5 flex justify-between text-[0.6875rem] font-semibold text-ink-700">
+      <p className="mt-1.5 flex justify-between gap-1 text-[0.6875rem] font-semibold text-ink-700">
         {/* 센 것은 사람이 아니라 의견이 달린 핀이다(#360). 「4/1」처럼 분자가 분모를 넘으면 뜻이 헷갈려서 두 숫자를 따로 적는다(#344). */}
-        <span>
-          의견 핀 {card.answered}곳 · 필요 {card.required}곳
+        {/* 360px 폭(태블릿 패널·작은 휴대폰)에서 「✓ 완/료」로 끊기지 않게 상태는 줄이지 않고, 왼쪽은 낱말 단위로 바꾼다(#603). */}
+        <span className="break-keep">
+          의견 핀 {card.answered}곳 · <span className="whitespace-nowrap">필요 {card.required}곳</span>
         </span>
-        <span className={card.ready ? 'text-[var(--good-text)]' : 'text-[var(--warn-text)]'}>{card.ready ? '✓ 완료' : `${short}곳 더 필요`}</span>
+        <span className={`shrink-0 ${card.ready ? 'text-[var(--good-text)]' : 'text-[var(--warn-text)]'}`}>{card.ready ? '✓ 완료' : `${short}곳 더 필요`}</span>
       </p>
     </button>
   )

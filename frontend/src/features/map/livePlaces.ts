@@ -28,18 +28,15 @@ export const useLivePlaceStore = create<Store>((set) => ({
 
 export type LocationState = 'found' | 'missing' | 'loading'
 
-export const kakaoPlaceUrl = (kakaoPlaceId: string | undefined) =>
-  kakaoPlaceId ? `https://place.map.kakao.com/${kakaoPlaceId.replace(/^kakao:/, '')}` : undefined
-
 export const isLive = (pin: Pin) => pin.source === 'live'
 
 /** 실시간 핀에 찾은 이름·좌표를 얹는다. 못 찾았거나 찾는 중이면 이름은 검색어, 좌표는 없는 채로 둔다. */
 export function withLivePlace(pin: Pin, places: Record<string, LivePlaceState>): Pin {
   if (!isLive(pin)) return pin
   const found = places[pin.id]
-  const base = { ...pin, place_url: kakaoPlaceUrl(pin.kakao_place_id) }
-  if (found && found !== 'missing') return { ...base, place_name: found.name, lat: found.lat, lng: found.lng }
-  return { ...base, place_name: pin.search_query }
+  // 카카오 장소 페이지 링크(place_url)는 서버가 장소 ID로 만들어 준다(#445).
+  if (found && found !== 'missing') return { ...pin, place_name: found.name, lat: found.lat, lng: found.lng }
+  return { ...pin, place_name: pin.search_query }
 }
 
 export function locationState(pin: Pin, places: Record<string, LivePlaceState>): LocationState {

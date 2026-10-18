@@ -26,7 +26,7 @@ import type { ShellContext } from '@/features/shell/shellContext'
 import { ConnectionBanner } from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
-import { useIsDesktop } from '@/features/shell/useIsDesktop'
+import { useIsDesktop, useIsPc } from '@/features/shell/useIsDesktop'
 import Pingo from '@/ui/Pingo'
 
 /** 넓은 화면 패널이 미끄러지는 시간. 패널·덧칠의 `duration-300` 과 같은 값이다. */
@@ -37,6 +37,7 @@ const PANEL_SLIDE_MS = 300
  * 지도는 여기 한 번만 만든다 — 탭마다 만들면 탭을 바꿀 때마다 지도가 다시 뜬다.
  *
  * 넓은 화면(768px 이상, #338)은 왼쪽 480px(세로 탭 줄 72 + 높이 전체 내용 패널 408: 헤더·검색·탭 내용) + 오른쪽 지도 영역이다.
+ * 태블릿(768~1023px)은 내용 패널만 360으로 좁다(#603).
  * 칩·연결 띠·지도 버튼·토스트는 지도 영역에 둔다. 패널과 모바일은 같은 트리를 쓰고 틀의 클래스만 바꾼다 —
  * 768px 경계를 넘나들어도 탭 내용(쓰던 의견 등)이 다시 마운트되지 않게.
  */
@@ -49,6 +50,7 @@ export default function MapLayout() {
   const memberCount = mapInfo?.memberCount ?? 0
   useLivePinResolver(allPins, mapInfo?.regionCenter)
   const desktop = useIsDesktop()
+  const panelW = useIsPc() ? PANEL_W.pc : PANEL_W.tablet
   const panelOpen = useSheetStore((s) => s.panelOpen)
   const setPanelOpen = useSheetStore((s) => s.setPanelOpen)
   const { filters, setFilter } = usePinFilters()
@@ -193,9 +195,9 @@ export default function MapLayout() {
     return () => window.clearTimeout(t)
   }, [panelOpen])
   // 넓은 화면의 지도 영역 왼쪽 끝 — 패널을 접어도 탭 줄은 남는다.
-  const mapLeft = desktop ? (panelSettled ? PANEL_W : RAIL_W) : 0
+  const mapLeft = desktop ? (panelSettled ? panelW : RAIL_W) : 0
   // 지도 위 덧칠(칩·« 손잡이)은 패널 가장자리를 따라 같이 미끄러진다.
-  const overlayLeft = panelOpen ? PANEL_W : RAIL_W
+  const overlayLeft = panelOpen ? panelW : RAIL_W
 
   return (
     <>
@@ -223,7 +225,7 @@ export default function MapLayout() {
       <div
         id="map-panel"
         inert={desktop && !panelOpen}
-        style={desktop ? { left: panelOpen ? RAIL_W : RAIL_W - (PANEL_W - RAIL_W), width: PANEL_W - RAIL_W } : undefined}
+        style={desktop ? { left: panelOpen ? RAIL_W : RAIL_W - (panelW - RAIL_W), width: panelW - RAIL_W } : undefined}
         className={
           desktop
             ? `fixed inset-y-0 z-30 flex flex-col border-r border-ink-200 bg-white transition-[left,visibility] duration-300 ease-out motion-reduce:transition-none ${
@@ -365,7 +367,8 @@ export default function MapLayout() {
                 value={filters.category}
                 onChange={(c) => setFilter('category', c)}
                 // 마우스로는 옆으로 밀기 어렵고 가로 스크롤바가 지도를 가려서, 좁으면 줄을 바꾼다.
-                className={`pointer-events-auto max-w-full flex-wrap transition-opacity ${fade}`}
+                // 터치(태블릿)는 모바일처럼 옆으로 민다 — 좁은 지도 위에서 칩이 두세 줄로 쌓이지 않게(#603).
+                className={`pointer-events-auto max-w-full pointer-fine:flex-wrap transition-opacity ${fade}`}
               />
             )}
             {connection.state !== 'open' && <ConnectionBanner floating state={connection.state} onReconnect={connection.reconnect} />}
