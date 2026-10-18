@@ -13,7 +13,6 @@ from datetime import timedelta
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.orm import sessionmaker
 
 from agent import constants, core, flows, service
 from agent.models import AgentCursor, AgentReasonSummary, AgentRun, AgentSettings, AgentSuggestion
@@ -25,11 +24,6 @@ from places import api as places_api
 
 SECRET = "비밀사유_창가자리가좋아요"
 SECRET_AGAINST = "비밀사유_너무시끄러워요"
-
-
-@pytest.fixture()
-def factory(test_engine):
-    return sessionmaker(bind=test_engine, autoflush=False)
 
 
 @pytest.fixture()
@@ -579,8 +573,8 @@ def test_no_agent_row_contains_reason_text(world, factory):
 
 # ---------------------------------------------------------------- 보존 정리 (12.9)
 
-def test_daily_cleanup_deletes_old_runs_once_a_day(world, monkeypatch):
-    monkeypatch.setattr(flows, "_cleanup_done_on", None)
+def test_daily_cleanup_deletes_old_runs_once_a_day(world):
+    # flows._cleanup_done_on은 conftest의 autouse 픽스처가 테스트마다 None으로 되돌린다
     map_id = world.map()
     with world.factory() as db:
         old = service.insert_run(db, map_id=map_id, started_at=world.now - timedelta(days=31), trigger="time",
