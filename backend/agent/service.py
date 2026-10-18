@@ -3,7 +3,7 @@
 - 정리: 지도 정리(`purge_map_data`), 탈퇴(`delete_by_user`) — #513
 - 관찰 흐름(#515, 명세 12.2~12.5, 12.9): 지도 고르기와 lease(`claim_maps`, `release_lease`), 커서(`advance_cursor`),
   이력(`load_history`), 제안 상태(`expire_suggestions`, `supersede`, `insert_suggestion`), 기록(`insert_run`),
-  보존 정리(`delete_old_runs`)
+  보존 정리(`delete_old_runs`), 제안 뒤 24시간 안 확정(`list_undecided_map_ids`, `list_undecided`, `set_decided` — #613)
 - 화면 요청(#531, 명세 14절): 모드(`get_settings`, `save_settings`, `wake_cursor`), 지금 제안(`get_suggestion`,
   `active_suggestion`), 열람(`has_viewed`, `record_view`), 수락과 닫기(`resolve_suggestion` — status='active'일 때만
   바꾸는 가드 UPDATE), 모드 끄기(`supersede_active`)
@@ -273,6 +273,45 @@ def delete_old_runs(db: Session, now: datetime) -> int:
     """보존 기한(30일)이 지난 agent_runs를 지운다. 제안의 run_id는 FK ON DELETE SET NULL로 비워진다."""
     cutoff = now - timedelta(days=AGENT_RUNS_RETENTION_DAYS)
     return db.execute(delete(AgentRun).where(AgentRun.started_at < cutoff)).rowcount
+
+
+def _undecided(created_before: datetime):
+    return (AgentSuggestion.decided_within_24h.is_(None), AgentSuggestion.created_at < created_before)
+
+
+def list_undecided_map_ids(db: Session, *, created_before: datetime) -> list[str]:
+    """decided_within_24h가 비었고 created_before보다 먼저 만든 제안이 있는 지도(12.9, #613). shadow와 상태는 보지 않는다."""
+    return list(db.execute(
+        select(AgentSuggestion.map_id).where(*_undecided(created_before)).distinct().order_by(AgentSuggestion.map_id)
+    ).scalars())
+
+
+def list_undecided(db: Session, *, map_id: str, created_before: datetime) -> list[core.DecisionTarget]:
+    rows = db.execute(
+        select(AgentSuggestion).where(AgentSuggestion.map_id == map_id, *_undecided(created_before))
+        .order_by(AgentSuggestion.created_at, AgentSuggestion.id)
+    ).scalars()
+    return [
+        core.DecisionTarget(id=r.id, diagnosis=r.diagnosis, category=r.category,
+                            pin_id=str(r.pin_id) if r.pin_id else None, claims=r.claims, actions=r.actions,
+                            created_at=r.created_at)
+        for r in rows
+    ]
+
+
+def set_decided(db: Session, decisions: dict[uuid.UUID, bool]) -> int:
+    """decided_within_24h를 채운다. 이미 채운 행은 건드리지 않는다(동시에 두 인스턴스가 정리해도 먼저 쓴 값이 남는다).
+    채운 행 수."""
+    filled = 0
+    for value in (True, False):
+        ids = [i for i, v in decisions.items() if v is value]
+        if ids:
+            filled += db.execute(
+                update(AgentSuggestion)
+                .where(AgentSuggestion.id.in_(ids), AgentSuggestion.decided_within_24h.is_(None))
+                .values(decided_within_24h=value)
+            ).rowcount
+    return filled
 
 
 # ---------------------------------------------------------------- 화면 요청 (14절)
