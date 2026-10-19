@@ -36,7 +36,7 @@ export function OnboardingHeader({ kind, mapTitle }: { kind: OnboardingKind; map
         </span>
         <p className="text-xs font-semibold text-[var(--pingo-text)]">핑고</p>
         <h2 className="truncate text-title font-bold text-ink-900">{title}</h2>
-        <p className="text-xs text-ink-500">{kind === 'owner' ? '이렇게 시작해 보세요' : '이렇게 함께해요'}</p>
+        <p className="text-xs text-ink-600">{kind === 'owner' ? '이렇게 시작해 보세요' : '이렇게 함께해요'}</p>
       </div>
     </div>
   )
