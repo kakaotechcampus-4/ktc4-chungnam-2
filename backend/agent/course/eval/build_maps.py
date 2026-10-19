@@ -22,6 +22,7 @@ from agent.course.rest_days import known_weekdays, merge_sources, parse_rest_day
 
 MONDAY_START = date(2026, 11, 2)     # 월요일 시작 — 월요일 휴관 관광지가 걸리는 지도
 FRIDAY_START = date(2026, 11, 6)     # 금요일 시작 — 일요일 휴무가 걸리는 지도
+TOURIST = "관광지"
 REST_COLUMNS = ("tour_쉬는날", "착한가격_휴무일", "용산구관광거리_휴무일")
 
 
@@ -130,7 +131,7 @@ def build_all(records: Sequence[Record], count: int, seed: int = 334) -> list[di
     by_gu: dict[str, list[Record]] = defaultdict(list)
     for r in records:
         by_gu[r.gu].append(r)
-    gus = sorted(g for g, rs in by_gu.items() if g and sum(r.category == "관광지" for r in rs) >= 6)
+    gus = sorted(g for g, rs in by_gu.items() if g and sum(r.category == TOURIST for r in rs) >= 6)
     maps: list[dict[str, Any]] = []
     attempt = 0
     while len(maps) < count and attempt < count * 10 and gus:
