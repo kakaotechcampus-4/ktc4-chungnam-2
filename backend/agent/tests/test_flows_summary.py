@@ -249,7 +249,10 @@ def test_two_new_reasons_wait_and_third_updates(world):
 
     assert len(summary_runs(world, map_id)) == 2
     row = world.one(AgentReasonSummary, map_id=map_id)
-    assert (row.based_on_reaction_count, len(row.summary["must_keep"])) == (4, 4)
+    assert row.based_on_reaction_count == 4
+    # 원함 칩 「웨이팅이 길어요」·「좁아요」는 preferred(#617)라 must_keep에 없고, u1 혼자라 common_prefs(2명 이상)에도 없다
+    assert sorted(i["fact_key"] for i in row.summary["must_keep"]) == ["oily_focused", "spicy_focused"]
+    assert row.summary["common_prefs"] == []
     assert len(summary_events(world, map_id)) == 2
 
 
@@ -300,7 +303,9 @@ def test_one_category_per_observation_and_cursor_pulled_for_the_rest(world):
 
     assert [r.outcome_detail["category"] for r in summary_runs(world, map_id)] == ["음식점", "카페"]
     cafe = world.one(AgentReasonSummary, map_id=map_id, category="카페")
-    assert cafe.summary["must_keep"][0]["fact_key"] == "quiet"
+    # 「시끄러워요」(quiet 원함)는 preferred(#617)라 must_keep에 없고, u2 혼자라 common_prefs(2명 이상)에도 없다
+    assert len(cafe.summary["reaction_ids"]) == 1
+    assert (cafe.summary["must_keep"], cafe.summary["common_prefs"]) == ([], [])
     assert len(summary_events(world, map_id)) == 2
 
 
