@@ -52,7 +52,8 @@ export function PinDetailHeader({
   return (
     <div>
       <PanelBackLink label={backLabel} onBack={onBack} />
-      <div className="flex items-center justify-between gap-2">
+      {/* 자리가 없으면(긴 이름·큰 글자) 확정 버튼이 제목 아래 줄로 내려간다(#406). */}
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
         <SheetTitle>{pin.place_name ?? '이름 없는 장소'}</SheetTitle>
         {confirmed ? (
           <span className="btn-confirm btn-sm">

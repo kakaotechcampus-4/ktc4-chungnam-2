@@ -17,7 +17,7 @@ export function AiHeader({ title, sub }: { title: string; sub: string }) {
           <span className="tag tag-ai">AI</span>
           {title}
         </p>
-        <p className="text-xs text-ink-500">{sub}</p>
+        <p className="text-xs text-ink-600">{sub}</p>
       </div>
     </div>
   )
@@ -112,15 +112,14 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
       aria-pressed={selected}
       onClick={onPick}
       className={`rounded-xl border-[1.5px] p-3 text-left ${wide ? 'col-span-2' : ''} ${
-        selected ? 'border-brand-600 bg-brand-50' : card.ready ? 'border-[var(--good-line)] bg-white' : 'border-[var(--warn-line)] bg-[var(--warn-bg)]'
+        selected ? 'border-brand-600 bg-brand-50' : card.ready ? 'border-[var(--good-line)] bg-white' : 'border-[var(--warn-line)] bg-white'
       }`}
     >
       <p className="flex items-start justify-between gap-1 font-bold text-ink-900">
         {/* 상태는 태그 하나에 담는다. 흰 글자 + 주의 선 색(3.5:1)은 작은 글자 기준(4.5:1)에 못 미쳐서 바탕·글자 세트로 칠한다. */}
         <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
           {card.category}
-          {/* 준비 미달 칸은 바탕이 주의 면이라 태그만 흰 바탕으로 띄운다. */}
-          <span className={`tag ${card.ready ? 'tag-good' : 'tag-warn bg-white'}`}>{card.ready ? '준비 완료' : `${short}곳 더 필요`}</span>
+          <span className={`tag ${card.ready ? 'tag-good' : 'tag-warn'}`}>{card.ready ? '준비 완료' : `${short}곳 더 필요`}</span>
         </span>
         {selected && <Check size={16} className="text-brand-600" aria-label="선택됨" />}
       </p>
