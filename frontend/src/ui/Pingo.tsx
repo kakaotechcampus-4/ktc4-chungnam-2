@@ -8,8 +8,9 @@ import { useId } from 'react'
  * - default 기본·안내 · wave 정리를 마침(시안 「결정했어요!」) · happy 추천 완료(JUMP)
  * - thinking AI가 결과를 찾는 중(THINKING) · walk 응답을 기다리는 로딩(WALK CYCLE, PingoLoading)
  * - sorry 결과 없음(NO SUGGESTION) · error 실패(ERROR) · alert 의견 부족·주의(「Color Variation」 ALERT, 모자만 분홍)
+ * - fly 로그인 화면의 첫인상 — 망토를 두르고 지도 위를 날아간다(시안에 없는 자세라 기본형을 기울여 만들었다)
  */
-export type PingoMood = 'default' | 'wave' | 'happy' | 'thinking' | 'walk' | 'sorry' | 'error' | 'alert'
+export type PingoMood = 'default' | 'wave' | 'happy' | 'thinking' | 'walk' | 'sorry' | 'error' | 'alert' | 'fly'
 
 const BODY = 'M32 16C43 16 49 23.5 49.5 33C50 38 51.5 42 51 46C50 53 42 57 32 57C22 57 14 53 13 46C12.5 42 14 38 14.5 33C15 23.5 21 16 32 16Z'
 const LINE = { stroke: 'var(--pingo-outline)', strokeWidth: 1.3 }
@@ -26,11 +27,18 @@ const ARMS: Record<PingoMood, [Arm, Arm]> = {
   happy: [[11, 39, 4.5, 5.5, 0], [53, 39, 4.5, 5.5, 0]],
   sorry: [[13.5, 30, 3.4, 7.5, -12], [49, 45, 4.5, 5, 0]],
   thinking: [[13.5, 43, 3.6, 7.5, 15], [41, 45.5, 5.5, 3.4, -15]],
+  // 앞팔은 주먹을 앞으로 뻗고(슈퍼맨), 뒷팔은 몸에 붙여 뒤로 넘긴다.
+  fly: [[14, 45, 3.4, 7.5, 25], [52, 21, 3.4, 8, 25]],
 }
+
+/** 날 때만 몸을 앞으로 기울이고 망토·바람 줄이 붙어서 그림 틀을 넓힌다. */
+const FLY_BOX = '-26 0 96 70'
+const CAPE = 'M47 30C47 48 30 61 4 66Q1 61-6 63Q-5 57-13 57Q-9 51-16 47C-4 45 8 39 17 30Z'
 
 export default function Pingo({ size = 40, mood = 'default', peek = false }: { size?: number; mood?: PingoMood; peek?: boolean }) {
   const clip = useId()
   // 시안 「BOTTOM NAVIGATION」: 상자 윗변에 손을 걸치고 고개만 내민다. 눈 아래에서 자른다.
+  const fly = mood === 'fly'
   const h = peek ? 44 : 64
   const cap = mood === 'alert' ? 'var(--pingo-alert)' : 'var(--pingo-body)'
   const [left, right] = ARMS[mood]
@@ -39,17 +47,20 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
     <ellipse cx={cx} cy={cy} rx={rx} ry={ry} transform={`rotate(${r} ${cx} ${cy})`} fill="white" {...LINE} />
   )
   // 찾는 중엔 제자리에서 들썩이고, 추천 완료엔 한 번 뛰고, 로딩엔 뒤뚱뒤뚱 걷는다. 움직임 줄이기 설정이면 멈춘다.
-  const motion = mood === 'thinking' ? 'motion-safe:animate-pingo-bob' : mood === 'happy' ? 'motion-safe:animate-pingo-hop' : ''
+  const motion = mood === 'thinking' || fly ? 'motion-safe:animate-pingo-bob' : mood === 'happy' ? 'motion-safe:animate-pingo-hop' : ''
   const walk = mood === 'walk'
 
   return (
     <svg
-      width={size}
-      height={(size * h) / 64}
-      viewBox={`0 0 64 ${h}`}
+      width={fly ? (size * 88) / 64 : size}
+      height={fly ? (size * 68) / 64 : (size * h) / 64}
+      viewBox={fly ? FLY_BOX : `0 0 64 ${h}`}
       aria-hidden="true"
       className={`shrink-0 ${motion}`}
     >
+      {fly && <path d="M-24 18H-10M-25 30H-14M-22 42H-12" stroke="var(--brand-300)" strokeWidth="2" strokeLinecap="round" />}
+      <g transform={fly ? 'rotate(40 32 36)' : undefined}>
+      {fly && <path d={CAPE} fill="var(--brand-600)" className="motion-safe:animate-pingo-flutter" style={{ transformOrigin: '24px 34px' }} />}
       {!peek && (
         <>
           {/* 걸을 땐 두 발을 번갈아 든다(반 박자 차이). 든 발은 몸 뒤로 숨는다. */}
@@ -83,6 +94,7 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
         {mood === 'sorry' && (
           <path d="M44 18.5C45.5 20.5 46.3 21.8 46.3 22.8A2.3 2.3 0 0 1 41.7 22.8C41.7 21.8 42.5 20.5 44 18.5Z" fill="white" {...LINE} />
         )}
+      </g>
       </g>
     </svg>
   )
