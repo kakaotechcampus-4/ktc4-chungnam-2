@@ -4,6 +4,8 @@ import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { createMarkerLayer, type MarkerLayer } from './markerLayer'
 import { isDesktopNow } from '@/features/shell/useIsDesktop'
 import type { RouteDrawing } from '@/features/shortlist/model'
+import Pingo from '@/ui/Pingo'
+import PingoLoading from '@/ui/PingoLoading'
 
 import { isPlaced, type Pin } from './model'
 
@@ -222,6 +224,7 @@ export default function MapCanvas({
         <div className="absolute inset-x-0 top-32 flex flex-col items-center gap-1 px-4 text-center">
           {error ? (
             <>
+              <Pingo size={48} mood="error" />
               <p className="text-sm text-warn-text">지도를 불러오지 못했어요</p>
               <p className="text-xs text-ink-500">
                 {error instanceof KakaoMapKeyMissingError
@@ -231,7 +234,7 @@ export default function MapCanvas({
               <p className="text-xs text-ink-500">핀 {pins.length}개는 아래 목록에 그대로 있어요</p>
             </>
           ) : (
-            <p className="text-sm text-ink-500">지도를 불러오는 중…</p>
+            <PingoLoading label="지도를 불러오는 중…" />
           )}
         </div>
       )}

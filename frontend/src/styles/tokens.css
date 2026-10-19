@@ -57,6 +57,8 @@
   --pingo-bg:   var(--brand-50);
   --pingo-line: var(--brand-300);
   --pingo-text: var(--brand-700);
+  --pingo-outline: var(--ink-300); /* 평면 핑고 외곽선. brand-50 면 위에서도 몸이 묻히지 않게 */
+  --pingo-alert: #DC6A6A;          /* 핑고 ALERT 모자·핀(시안 Alert Pink). 핑고 그림 전용 */
 
   /* ── 핀 · 지도 위 전용 ───────────────── */
   --pin-stroke:     #D02A2A;

@@ -308,7 +308,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절). 삭제된 지도와 내가 나간 지도는 빠진다 (#369). 목록의 Map에는 next_owner를 채우지 않는다. 이 목록의 지도는 최대 10개다(만들거나 참여한 지도 합산, */
+        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절). 삭제된 지도와 내가 나간 지도는 빠진다 (#369). 목록의 Map에는 next_owner를 채우지 않는다. 지도 상한은 응답의 `limit`으로 내려 준다(#623). 화면은 상한 숫자를 들고 있지 않는다 */
         get: {
             parameters: {
                 query?: never;
@@ -318,13 +318,13 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description OK. 속한 지도가 없으면 빈 배열 */
+                /** @description OK. 속한 지도가 없으면 items는 빈 배열 */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["Map"][];
+                        "application/json": components["schemas"]["MapList"];
                     };
                 };
             };
@@ -3018,6 +3018,12 @@ export interface components {
             role: "owner" | "member";
             display_name?: string;
             online?: boolean;
+        };
+        /** @description 내 지도 목록과 상한(#623). 2026-10-19 전에는 Map 배열이었다 */
+        MapList: {
+            items: components["schemas"]["Map"][];
+            /** @description 만들거나 참여할 수 있는 지도 수 상한(만든 지도와 참여한 지도 합산, 삭제한 지도와 나간 지도는 세지 않음, #369). 화면은 이 값으로 "n / limit"을 그리고, items 수가 limit이면 「새 지도」를 막는다. 409 MAP_LIMIT의 detail.limit과 같은 값이다 */
+            limit: number;
         };
         MapCreateRequest: {
             /** @description 여행 제목 (#22) */

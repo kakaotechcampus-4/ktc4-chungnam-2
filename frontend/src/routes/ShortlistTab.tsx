@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { ExternalLink, Star } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
@@ -126,7 +126,6 @@ export default function ShortlistTab() {
       {routeOn && route.data && <DirectionsLinks routes={route.data} pins={pins} />}
       {shortlist.data?.length === 0 && (
         <EmptyState
-          icon={Star}
           title="아직 확정된 장소가 없어요"
           action={
             <Link to={`/maps/${mapId}`} className="btn-outline btn-md">

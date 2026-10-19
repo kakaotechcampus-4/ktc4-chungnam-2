@@ -81,6 +81,14 @@ class Map(BaseModel):
     confirmed_count: int | None = None
 
 
+class MapList(BaseModel):
+    """GET /maps(#623) — 내 지도 목록과 상한. 2026-10-19 전에는 Map 배열이었다."""
+
+    items: list[Map]
+    # maps/core.py::MAP_LIMIT — 409 MAP_LIMIT의 detail.limit과 같은 값이다.
+    limit: int
+
+
 class Invite(BaseModel):
     token: str
     url: str
