@@ -70,24 +70,27 @@ function LoginScreen() {
         <p className="mt-1 font-semibold text-ink-900">같이 갈 곳을 한 지도에 모아요</p>
         <LoginHero />
 
-        <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500">3초면 시작해요. 카카오에서는 표시 이름만 받아요</p>
+        <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500">3초면 시작! 카카오에서 이름을 받아서 활용해요</p>
         {/* 빨강은 핀·🚫·되돌릴 수 없는 동작 전용이라(영역 분리 규칙) 로그인 실패는 주의색이다. */}
         {loginError && (
           <p role="alert" className="mt-3 rounded-xl border border-[var(--warn-line)] bg-[var(--warn-bg)] px-3 py-2.5 text-center text-sm font-semibold text-[var(--warn-text)]">
             {loginError}
           </p>
         )}
+        {/* 카카오가 주 입구라 큰 버튼, 게스트는 한 단계 작은 버튼이다. */}
         <div className="mt-3 space-y-2">
           <KakaoButton retry={Boolean(loginError)} />
-          <button type="button" onClick={() => setSheet('guest')} className="btn-neutral btn-lg w-full">
-            <UserRound size={20} aria-hidden="true" /> 게스트로 시작하기
+          <button type="button" onClick={() => setSheet('guest')} className="btn-neutral btn-md w-full">
+            <UserRound size={16} aria-hidden="true" /> 게스트로 시작하기
             {/* 360px 아래에선 버튼 글자가 두 줄로 깨져서 덧말을 뺀다. */}
-            <span className="text-sm font-normal text-ink-500 max-[359px]:hidden">· 이름만 입력</span>
+            <span className="font-normal text-ink-500 max-[359px]:hidden">
+              · <span className="underline underline-offset-2">이름 입력</span>
+            </span>
           </button>
         </div>
 
         <section className="mt-8 border-t border-ink-200 pt-6">
-          <h2 className="text-center text-sm font-bold text-ink-900">로그인하면 이런 걸 할 수 있어요</h2>
+          <h2 className="text-center text-sm font-bold text-ink-900">핑고핑고에서 누릴 수 있는 기능이에요</h2>
           <ul className="mt-4 space-y-3">
             {FEATURES.map((feature, i) => (
               <li key={i} className="flex items-center gap-3 text-sm text-ink-700">
@@ -118,7 +121,7 @@ function LoginScreen() {
 /** 지도 그림 위로 망토 두른 핑고가 날아간다. 장식이라 그림 둘 다 스크린 리더에서 숨는다. */
 function LoginHero() {
   return (
-    <div className="relative mt-10">
+    <div className="relative mt-16">
       <MapIllustration />
       {/* 지도에 떨어진 그림자 — 핑고가 지도 위에 떠 있다는 걸 보여 준다. */}
       <div className="absolute left-[44%] top-[44%] h-2.5 w-20 rounded-full bg-ink-300/60 blur-[2px]" />
@@ -158,6 +161,8 @@ function GuestSheet({ onClose }: { onClose: () => void }) {
 const TERMS = [
   { to: '/terms', title: '핑고핑고 이용약관' },
   { to: '/privacy', title: '핑고핑고 개인정보처리방침' },
+  // 「내 위치」 버튼이 기기 위치를 쓴다(서버로 보내지는 않음).
+  { to: '/location-terms', title: '핑고핑고 위치기반서비스 이용약관' },
 ]
 
 /** 약관 동의 줄의 「이용약관」이 여는 목록. 문서 하나하나는 따로 연다(#602). */
