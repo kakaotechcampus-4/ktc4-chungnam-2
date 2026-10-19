@@ -59,76 +59,81 @@ export function PinFilterBar({
   const countBy = (userId: string) => pins.filter((p) => p.created_by === userId).length
   return (
     <div className="mt-2 flex flex-wrap gap-2">
-      <Pill label="올린 사람">
-        <select
-          aria-label="올린 사람"
-          value={filters.createdBy ?? ''}
-          onChange={(e) => onChange('by', e.target.value || null)}
-          className="appearance-none bg-transparent pr-4 font-semibold text-ink-900 outline-none focus-visible:outline-2"
-        >
-          <option value="">전체 · {pins.length}곳</option>
-          {members.map((m) => (
-            <option key={m.userId} value={m.userId}>
-              {m.name}
-              {m.isMe ? ' (나)' : ''} · {countBy(m.userId)}곳
-            </option>
-          ))}
-        </select>
-      </Pill>
-      <Pill label="종류">
-        <select
-          aria-label="종류"
-          value={filters.kind ?? ''}
-          onChange={(e) => onChange('kind', e.target.value || null)}
-          className="appearance-none bg-transparent pr-4 font-semibold text-ink-900 outline-none focus-visible:outline-2"
-        >
-          <option value="">전체</option>
-          {KINDS.map((k) => (
-            <option key={k} value={k}>
-              {k === 'AI추천' ? 'AI 추천' : k}
-            </option>
-          ))}
-        </select>
-      </Pill>
-      <Pill label="의견">
-        <select
-          aria-label="의견"
-          value={filters.opinion ?? ''}
-          onChange={(e) => onChange('opinion', e.target.value || null)}
-          className="appearance-none bg-transparent pr-4 font-semibold text-ink-900 outline-none focus-visible:outline-2"
-        >
-          <option value="">전체</option>
-          {(Object.keys(OPINIONS) as PinOpinion[]).map((key) => (
-            <option key={key} value={key}>
-              {OPINIONS[key]}
-            </option>
-          ))}
-        </select>
-      </Pill>
-      <Pill>
-        <select
-          aria-label="정렬"
-          value={filters.sort}
-          onChange={(e) => onChange('sort', e.target.value === 'most' ? null : e.target.value)}
-          className="appearance-none bg-transparent pr-4 font-semibold text-ink-900 outline-none focus-visible:outline-2"
-        >
-          {(Object.keys(SORTS) as PinSort[]).map((key) => (
-            <option key={key} value={key}>
-              {SORTS[key]}
-            </option>
-          ))}
-        </select>
-      </Pill>
+      <FilterSelect
+        label="올린 사람"
+        value={filters.createdBy ?? ''}
+        onChange={(v) => onChange('by', v || null)}
+        options={[
+          { value: '', label: `전체 · ${pins.length}곳` },
+          ...members.map((m) => ({ value: m.userId, label: `${m.name}${m.isMe ? ' (나)' : ''} · ${countBy(m.userId)}곳` })),
+        ]}
+      />
+      <FilterSelect
+        label="종류"
+        value={filters.kind ?? ''}
+        onChange={(v) => onChange('kind', v || null)}
+        options={[{ value: '', label: '전체' }, ...KINDS.map((k) => ({ value: k, label: k === 'AI추천' ? 'AI 추천' : k }))]}
+      />
+      <FilterSelect
+        label="의견"
+        value={filters.opinion ?? ''}
+        onChange={(v) => onChange('opinion', v || null)}
+        options={[{ value: '', label: '전체' }, ...(Object.keys(OPINIONS) as PinOpinion[]).map((key) => ({ value: key, label: OPINIONS[key] }))]}
+      />
+      <FilterSelect
+        ariaLabel="정렬"
+        value={filters.sort}
+        onChange={(v) => onChange('sort', v === 'most' ? null : v)}
+        options={(Object.keys(SORTS) as PinSort[]).map((key) => ({ value: key, label: SORTS[key] }))}
+      />
     </div>
   )
 }
 
-function Pill({ label, children }: { label?: string; children: React.ReactNode }) {
+/**
+ * 필터 드롭다운 한 칸. 보이는 건 「라벨 값 ▾」 글자이고, 그 위에 투명한 select 를 칸 전체(위아래로 넓힌 44px 포함)에 겹친다.
+ * 칸 어디를 눌러도 select 가 눌린다 — 넓힌 영역(::before)이 select 를 덮으면 label 만 눌려 목록이 안 열리고,
+ * 모바일에서는 시트 제목 줄이 그 누름을 끌기·접기로 받아 시트가 접혔다(#600).
+ */
+function FilterSelect({
+  label,
+  ariaLabel = label,
+  value,
+  options,
+  onChange,
+}: {
+  /** 칸 앞에 붙는 회색 글자. 정렬처럼 값만으로 읽히면 없다. */
+  label?: string
+  ariaLabel?: string
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (value: string) => void
+}) {
+  const current = options.find((o) => o.value === value) ?? options[0]
   return (
-    <label className="hit-y-44 relative flex h-8 items-center gap-1 whitespace-nowrap rounded-md border border-ink-200 bg-white px-2.5 text-xs">
-      {label && <span className="text-ink-500">{label}</span>}
-      {children}
+    <div className="relative flex h-8 items-center gap-1 whitespace-nowrap rounded-md border border-ink-200 bg-white pl-2.5 pr-6 text-xs has-[select:focus-visible]:outline-2 has-[select:focus-visible]:outline-offset-2 has-[select:focus-visible]:outline-[var(--line-focus)]">
+      {/* 읽어 주는 건 select(이름 + 고른 값)가 맡는다 — 보이는 글자는 스크린리더에서 뺀다. */}
+      {label && (
+        <span aria-hidden="true" className="text-ink-500">
+          {label}
+        </span>
+      )}
+      <span aria-hidden="true" className="font-semibold text-ink-900">
+        {current?.label}
+      </span>
       <ChevronDown size={12} className="pointer-events-none absolute right-2 text-ink-500" aria-hidden="true" />
-    </label>
+      <select
+        aria-label={ariaLabel}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="absolute inset-x-0 -inset-y-1.5 cursor-pointer appearance-none opacity-0"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </div>
   )
 }
