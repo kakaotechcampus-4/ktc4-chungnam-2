@@ -189,6 +189,12 @@
     .enter-sheet {
         animation: enter-sheet 300ms cubic-bezier(0, 0, 0.2, 1);
     }
+    /* 넓은 화면의 모달 시트는 가운데 창이라(#600) 아래에서 올라오지 않고 확인 창처럼 나타난다. */
+    @media (width >= 48rem) {
+        .enter-sheet {
+            animation: enter-pop 200ms cubic-bezier(0, 0, 0.2, 1);
+        }
+    }
     @media (prefers-reduced-motion: reduce) {
         .enter-fade,
         .enter-pop,
