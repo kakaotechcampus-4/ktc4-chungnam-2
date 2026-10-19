@@ -3,8 +3,8 @@ import { MessageSquare, RotateCw, Users } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import type { MemberView } from '@/features/maps/model'
+import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
-import BackButton from '@/ui/BackButton'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
@@ -28,12 +28,10 @@ const MARK = { pass: '✓', check: '?', fail: '✗' } as const
 
 const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이버지도', google: '구글맵', permit: '인허가 공공데이터', tourapi: '한국관광공사' }
 
-/** 시트 안 이전 화면(Figma '‹ AI 추천'). 결과에서 빠져나와 준비 판정으로 돌아간다. */
+/** 시트 안 이전 화면(Figma '‹ AI 추천'). 결과에서 빠져나와 준비 판정으로 돌아간다. 넓은 화면은 패널 헤더 ‹ 다. */
 export function BackToReadiness({ mapId }: { mapId: string }) {
   const setRun = useAiStore((s) => s.setRun)
-  return (
-    <BackButton label="AI 추천" onClick={() => setRun(mapId, undefined)} />
-  )
+  return <PanelBackLink label="AI 추천" onBack={() => setRun(mapId, undefined)} />
 }
 
 /** 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 「↻ 다시 추천 · N번 남음」. */
@@ -203,8 +201,8 @@ export function CandidateDetail({
   return (
     <div className="space-y-3">
       <div className="flex items-start justify-between text-body">
-        <BackButton label={`추천 결과 ${count}곳`} onClick={onBack} />
-        <span className="text-ink-500">{c.visibility === 'published' ? '모두에게 보여요' : '나에게만 보여요'}</span>
+        <PanelBackLink label={`추천 결과 ${count}곳`} onBack={onBack} />
+        <span className="ml-auto text-ink-500">{c.visibility === 'published' ? '모두에게 보여요' : '나에게만 보여요'}</span>
       </div>
       <div>
         <SheetTitle as="h3">{c.place_name}</SheetTitle>
@@ -251,7 +249,7 @@ export function CandidateDetail({
 export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; count: number; onBack: () => void }) {
   return (
     <div className="space-y-3">
-      <BackButton label={`추천 결과 ${count}곳`} onClick={onBack} />
+      <PanelBackLink label={`추천 결과 ${count}곳`} onBack={onBack} />
       <SheetTitle as="h3">이렇게 {count}곳을 골랐어요</SheetTitle>
       <FunnelTable funnel={funnel} left={count} />
       <section className="text-body text-ink-600">

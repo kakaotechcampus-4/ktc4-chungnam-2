@@ -128,8 +128,9 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
         <div className={`h-full rounded-full ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`} style={{ width: `${pct}%` }} />
       </div>
       {/* 센 것은 사람이 아니라 의견이 달린 핀이다(#360). 「4/1」처럼 분자가 분모를 넘으면 뜻이 헷갈려서 두 숫자를 따로 적는다(#344). */}
-      <p className="mt-1.5 text-label font-semibold text-ink-700">
-        의견 핀 {card.answered}곳 · 필요 {card.required}곳
+      {/* 360px 폭(태블릿 패널·작은 휴대폰)에서 줄이 어색하게 끊기지 않게 낱말 단위로 바꾼다(#603). 상태는 위 태그에 있다. */}
+      <p className="mt-1.5 break-keep text-label font-semibold text-ink-700">
+        의견 핀 {card.answered}곳 · <span className="whitespace-nowrap">필요 {card.required}곳</span>
       </p>
     </button>
   )

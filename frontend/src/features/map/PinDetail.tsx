@@ -5,11 +5,11 @@ import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import type { MemberView } from '@/features/maps/model'
 import { useMeQuery } from '@/features/auth/queries'
+import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation } from '@/features/shortlist/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import AgainstMark from '@/ui/AgainstMark'
-import BackButton from '@/ui/BackButton'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
@@ -31,7 +31,10 @@ const PROMPT: Record<ReactionType, { title: string; placeholder: string }> = {
   against: { title: '왜 별로인가요? (필수)', placeholder: '예: 지난번 여행 때 가봤어요' },
 }
 
-/** 제목 줄(시트 끌기 영역). 「‹ 마킹된 장소」(확정 탭에선 「‹ 확정된 장소」)는 시트 안 이전 화면 — 좌상단 ‹(내 지도 목록)와 다르다. */
+/**
+ * 제목 줄(시트 끌기 영역). 「‹ 마킹된 장소」(확정 탭에선 「‹ 확정된 장소」)는 시트 안 이전 화면 — 모바일 좌상단 ‹(내 지도 목록)와 다르다.
+ * 넓은 화면은 이 ‹ 가 패널 헤더 ‹ 로 옮겨 간다(PanelBackLink).
+ */
 export function PinDetailHeader({
   pin,
   mapId,
@@ -48,7 +51,7 @@ export function PinDetailHeader({
 
   return (
     <div>
-      <BackButton label={backLabel} onClick={onBack} />
+      <PanelBackLink label={backLabel} onBack={onBack} />
       <div className="flex items-center justify-between gap-2">
         <SheetTitle>{pin.place_name ?? '이름 없는 장소'}</SheetTitle>
         {confirmed ? (
@@ -128,7 +131,7 @@ export function PinDetailBody({
           {/* 사진·주소·전화는 핀 응답에 없다(카카오 응답 저장 금지, #53) — 자세한 정보는 카카오맵 새 창으로. */}
           {pin.place_url && (
             <a href={pin.place_url} target="_blank" rel="noopener noreferrer" className="btn-link ml-auto">
-              카카오맵 <ExternalLink size={12} aria-hidden="true" />
+              카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
             </a>
           )}
         </p>

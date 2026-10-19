@@ -421,7 +421,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 
 결과가 3곳 미만이거나(`BLOCKED_RUN_MAX_RESULTS`) 같은 사람이 같은 카테고리 run을 3회 이상 만든(`BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS`) 완료 run의 결과 화면에, 더 많이 추천받는 방법을 메시지로 보여준다. 지도 제안이 아니라 AI 추천 탭의 기능이다.
 
-- 엔드포인트: `GET /runs/{runId}/advice`, recommend 태그. `recommend/router.py` → `recommend/flows.py` → `agent.api.advise_run(run_id)`.
+- 엔드포인트: `GET /runs/{runId}/advice`, api-spec의 recommend 태그. 코드는 `agent/router.py` → `agent/flows.advise_run`이다(#587). recommend 라우터에 두면 recommend와 agent가 서로를 import하게 돼서 옮겼다. 권한은 `recommend.api.get_run_meta`로 run을 읽어 authz가 판정한다. agent만 recommend.api를 쓰는 한 방향이다.
 - 권한: 비구성원 404, run 요청자가 아니면 403.
 - 대상이 아니면 204. 저장된 조언이 있으면 그대로 200. 없으면 생성해 저장하고 200.
 - run당 1회: `agent_run_advice`에 `INSERT ... ON CONFLICT (run_id) DO NOTHING` 후 저장된 행을 돌려준다. 모델이 silent여도 빈 advice로 저장해 다시 생성하지 않는다.
@@ -474,9 +474,9 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 | get_place_facts | `(place_ids, fact_keys?)` → [{place_id, fact_key, value 또는 null, confidence}]. 이 지도 핀의 place_id만 본다(나머지는 not_found). fact_keys를 줬는데 라벨이 없으면 unknown 행. 실시간 핀은 place_id가 없어 대상이 아니다 | places.api |
 | get_readiness | `(map_id, category)` → {category, ready, answered_count, required_count} | recommend.api(#530) |
 | get_recent_runs | `(run_id)` → 같은 요청자의 같은 카테고리 최근 run [{run_id, status, result_count, created_at}] | recommend.api (#469 기록 조회 재사용), 추천 막힘 전용 |
-| get_run_funnel | `(run_id)` → [{label, removed_count}] | recommend.api, 추천 막힘 전용 |
+| get_run_funnel | `(run_id)` → {result_count, funnel[{label, removed_count}], passed_count} | recommend.api, 추천 막힘 전용 |
 | get_run_evidence | `(run_id)` → [{line_id, text, badge, fact_key 또는 null, wants 또는 null, is_active, author_id}]. 요청자 본인 줄인지는 agent가 run의 requested_by와 비교한다(#585) | recommend.api, 추천 막힘 전용 |
-| simulate_filter | `(run_id, change{radius_factor?, disable_line_ids?})` → {before, after} | recommend.api, 실제 필터 함수 재사용 |
+| simulate_filter | `(run_id, change{radius_factor?, disable_line_ids?})` → {before, after, gained}. before와 after는 {result_count, funnel, passed_count}. passed_count는 필터를 모두 통과한 곳의 수(상위 3곳을 고르기 전), gained는 after − before를 코드가 계산(#587) | recommend.api, 실제 필터 함수 재사용 |
 | get_shortlist | `(map_id)` → [{pin_id, category, visit_order}] | shortlist.api |
 | get_route | `(map_id)` → [{region_label, ordered_pin_ids, total_distance_m}] 또는 null | shortlist.api |
 
@@ -929,7 +929,7 @@ CREATE TABLE agent_run_advice (
 | `POST /agent/suggestions/{id}/view` | 열람 기록. agent_suggestion_views upsert | 구성원. 204, 이벤트 없음 |
 | `POST /agent/suggestions/{id}/accept` | `{action_index}`. status='active'일 때만 바꾸는 가드 UPDATE | 구성원 (agent.suggestion.resolve). 200 `{action}`, 이미 처리됐으면 409 SUGGESTION_RESOLVED |
 | `POST /agent/suggestions/{id}/dismiss` | 닫기. 지도 단위로 모두에게서 닫힘 | 구성원 (agent.suggestion.resolve). 204, 이미 처리됐으면 409 |
-| `GET /runs/{runId}/advice` | 추천 막힘 조언 (recommend 태그, 9절) | run 요청자만. 200, 대상 아니면 204 |
+| `GET /runs/{runId}/advice` | 추천 막힘 조언 (api-spec recommend 태그, 코드는 agent/router.py, 9절) | run 요청자만. 200, 대상 아니거나 조언 없음 204 |
 | `POST /internal/agent/tick` | 배포용 tick | 내부 인증만. 202. FE 계약이 아니라 api-spec에 넣지 않는다. 라우트 커버리지 테스트의 `NOT_IN_SPEC`에 더한다 |
 
 - has_unseen: 활성 제안이 있고, 요청자의 agent_suggestion_views 행이 없으면 true.
@@ -1026,7 +1026,7 @@ FE는 슬롯을 다루지 않는다. 서버가 렌더한 문장을 그대로 보
 10. lease: 동시에 두 run_tick이 돌아도 같은 지도는 한 번만 관찰한다.
 11. 세션: llm 스텁이 호출되는 동안 열린 DB 세션이 없다.
 12. 권한: 비구성원 404. advice는 요청자가 아니면 403. accept와 dismiss 경합 시 두 번째는 409.
-13. 추천 막힘 조언: 같은 run에 동시 요청이 와도 생성은 한 번이고 같은 결과를 돌려준다.
+13. 추천 막힘 조언: 같은 run에 동시 요청이 와도 저장은 한 번이고 두 요청 모두 같은 결과를 돌려준다. 모델은 두 번 불릴 수 있다(막으려면 "만드는 중" 상태 칸이 필요해 하지 않았다, #587).
 14. 여행 종료와 지도 삭제: end_date 다음 날부터 관찰하지 않고 outcome=trip_ended로 끝난다. 삭제된 지도는 outcome=map_deleted로 끝나고, 모델 호출 중 삭제되면 저장 단계에서 아무것도 쓰지 않는다.
 15. shadow: `SHADOW_DIAGNOSES`에 든 유형의 제안은 저장되지만 이벤트가 없고 GET 응답에 나오지 않으며 view, accept, dismiss는 404다.
 16. 정리와 원문: `purge_map_data`가 그 지도의 agent_* 행을 모두 지운다. 픽스처 반응의 글이 관찰과 요약과 조언을 거친 뒤 어떤 agent_* 행의 직렬화에도 들어 있지 않다(2절 13번). 반응을 지우면 그 인용 문장이 응답에서 빠진다. 모델 문장이 슬롯 밖에서 사유를 옮겨 쓰면 문장이 제거된다.
@@ -1091,9 +1091,9 @@ FE 담당
 
 AI 담당
 
-- [ ] #585 recommend.api: get_recent_runs, get_run_funnel(추천 가능 장소 단계 포함, #558), get_run_evidence, simulate_filter(필터 순서를 다시 구현하지 않는다)
-- [ ] #586 M2-1 우리 조건 요약: flows.update_summary, 칸 나누기(8절, 코드), `NOT_FILTERED_CHIP_IDS`, `SAFETY_WORDS`, 구체화 문장은 고정 문구로 시작, agent.summary_updated. 17절 2(키 없는 사유), 17
-- [ ] #587 M2-2 추천 막힘 조언: llm agent_advise_run, 도구 4종, agent.api.advise_run, `GET /runs/{runId}/advice`(recommend 라우터). 17절 2(조건 완화), 13
+- [x] #585 recommend.api: get_recent_runs, get_run_funnel(추천 가능 장소 단계 포함, #558), get_run_evidence, simulate_filter(필터 순서를 다시 구현하지 않는다)
+- [x] #586 M2-1 우리 조건 요약: flows.update_summary, 칸 나누기(8절, 코드), `NOT_FILTERED_CHIP_IDS`, `SAFETY_WORDS`, 구체화 문장은 고정 문구로 시작, agent.summary_updated. 17절 2(키 없는 사유), 17
+- [x] #587 M2-2 추천 막힘 조언: llm agent_advise_run, 도구 4종, agent.api.advise_run, `GET /runs/{runId}/advice`(recommend 라우터). 17절 2(조건 완화), 13
 - [ ] #588 M2-3 평가와 수치 조정: 조언 프롬프트와 평가셋, 요약 문장에 모델이 필요한지 판단, 운영 기록으로 5절 수치 점검(20절)
 
 FE 담당

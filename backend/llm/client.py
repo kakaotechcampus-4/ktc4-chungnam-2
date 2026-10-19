@@ -5,9 +5,9 @@
 여기서는 호출과 응답 검증까지만 한다 — 결과를 어떻게 합칠지는 service.merge_planned(순수 함수)가 한다.
 실패는 전부 LlmCallError 하나로 올린다. 조용히 빈 결과로 바꾸지 않는다(가드레일 4·8).
 
-에이전트 진단은 도구를 쓴다. gpt-6-luna는 chat.completions에서 도구를 reasoning_effort="none"일 때만 받는다(그 밖의 값은
-400 "Function tools with reasoning_effort are not supported", 2026-10-15 확인). 그래서 진단 호출만 reasoning_effort="none"을
-넘긴다. 신호 순위 호출(agent_prioritize)은 #582에서 지웠다 — 순위는 agent의 코드 규칙이다.
+에이전트 진단과 추천 막힘 조언(#587)은 도구를 쓴다. gpt-6-luna는 chat.completions에서 도구를 reasoning_effort="none"일 때만
+받는다(그 밖의 값은 400 "Function tools with reasoning_effort are not supported", 2026-10-15 확인). 그래서 이 두 호출은
+reasoning_effort="none"을 넘긴다. 신호 순위 호출(agent_prioritize)은 #582에서 지웠다 — 순위는 agent의 코드 규칙이다.
 """
 
 import json
@@ -21,8 +21,8 @@ from typing import Any, Mapping, Optional, Sequence
 from openai import APITimeoutError, OpenAI
 
 from common.settings import settings
-from llm.prompts import AGENT_DIAGNOSE_PROMPT_VERSION, PLAN_EVIDENCE_PROMPT
-from llm.schemas import AgentFailureReason, AgentUsage, DiagnosisOutput, PlanningOutput
+from llm.prompts import AGENT_ADVISE_RUN_PROMPT_VERSION, AGENT_DIAGNOSE_PROMPT_VERSION, PLAN_EVIDENCE_PROMPT
+from llm.schemas import AgentFailureReason, AgentUsage, DiagnosisOutput, PlanningOutput, RunAdviceOutput
 
 # POST /runs 요청 안에서 동기로 도는 호출이라 길게 기다리지 않는다. 재시도도 안 한다 —
 # 실패하면 어차피 RECOMMEND_FAILED이고, 재시도는 요청 지연만 두 배로 만든다.
@@ -215,20 +215,42 @@ def _agent_parse(client: Any, *, what: str, context: str, prompt_version: str, *
     return message
 
 
-def call_agent_diagnosis_turn(
-    client: Any, messages: Sequence[Mapping[str, Any]], *, tools: Sequence[Mapping[str, Any]], tool_choice: str, turn: int
+def _agent_tool_turn(
+    client: Any, messages: Sequence[Mapping[str, Any]], *, tools: Sequence[Mapping[str, Any]], tool_choice: str, turn: int,
+    what: str, prompt_version: str, response_format: type,
 ) -> Any:
-    """진단 대화의 한 왕복. 모델이 도구를 부르면 message.tool_calls가, 답하면 message.parsed(DiagnosisOutput)가 있다.
+    """도구를 쓰는 에이전트 대화의 한 왕복. 모델이 도구를 부르면 message.tool_calls가, 답하면 message.parsed가 있다.
 
+    reasoning_effort="none": gpt-6-luna는 chat.completions에서 도구를 이 값일 때만 받는다(#532).
     parallel_tool_calls=False: 병렬 도구 호출은 strict 인자 스키마가 보장되지 않는다(OpenAI 문서). 상한도 한 번에 하나씩
     세는 편이 단순하다. 엘리스 API는 이 값을 받는다(2026-10-15 확인)."""
     return _agent_parse(
-        client, what="에이전트 진단", context=f"turn={turn} tool_choice={tool_choice}",
-        prompt_version=AGENT_DIAGNOSE_PROMPT_VERSION,
+        client, what=what, context=f"turn={turn} tool_choice={tool_choice}",
+        prompt_version=prompt_version,
         messages=list(messages),
         tools=list(tools),
         tool_choice=tool_choice,
         parallel_tool_calls=False,
         reasoning_effort="none",
-        response_format=DiagnosisOutput,
+        response_format=response_format,
+    )
+
+
+def call_agent_diagnosis_turn(
+    client: Any, messages: Sequence[Mapping[str, Any]], *, tools: Sequence[Mapping[str, Any]], tool_choice: str, turn: int
+) -> Any:
+    """진단 대화의 한 왕복. 답은 message.parsed(DiagnosisOutput)."""
+    return _agent_tool_turn(
+        client, messages, tools=tools, tool_choice=tool_choice, turn=turn,
+        what="에이전트 진단", prompt_version=AGENT_DIAGNOSE_PROMPT_VERSION, response_format=DiagnosisOutput,
+    )
+
+
+def call_agent_advice_turn(
+    client: Any, messages: Sequence[Mapping[str, Any]], *, tools: Sequence[Mapping[str, Any]], tool_choice: str, turn: int
+) -> Any:
+    """추천 막힘 조언 대화의 한 왕복(#587). 답은 message.parsed(RunAdviceOutput)."""
+    return _agent_tool_turn(
+        client, messages, tools=tools, tool_choice=tool_choice, turn=turn,
+        what="추천 막힘 조언", prompt_version=AGENT_ADVISE_RUN_PROMPT_VERSION, response_format=RunAdviceOutput,
     )

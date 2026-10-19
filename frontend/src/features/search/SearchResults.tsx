@@ -7,8 +7,8 @@ import { useLivePlaceStore } from '@/features/map/livePlaces'
 import type { Pin } from '@/features/map/model'
 import { useCreatePinMutation } from '@/features/map/queries'
 import { usePinSelection } from '@/features/map/usePinSelection'
+import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
-import BackButton from '@/ui/BackButton'
 import EmptyState from '@/ui/EmptyState'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
@@ -110,7 +110,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   if (selected) {
     return (
       <div className="space-y-3">
-        <BackButton label={`검색 결과 ${results.length}곳`} onClick={() => select(null)} />
+        <PanelBackLink label={`검색 결과 ${results.length}곳`} onBack={() => select(null)} />
         <div>
           <SheetTitle as="h3">{selected.name}</SheetTitle>
           <p className="text-body text-ink-600">{selected.meta}</p>

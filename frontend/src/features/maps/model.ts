@@ -79,12 +79,10 @@ const INVITE_ERROR_MESSAGES: Record<string, string> = {
   INVITE_EXPIRED: '초대 링크가 만료됐어요. 초대한 분께 새 링크를 요청하세요',
 }
 
-/** 내 지도 상한(#433에서 10→20). 서버 값과 맞춘다 — 409 MAP_LIMIT 응답의 detail.limit이 있으면 그쪽을 쓴다. */
-export const MAP_LIMIT = 20
-
+/** 상한 숫자는 화면이 들고 있지 않는다 — 409 MAP_LIMIT 응답의 detail.limit만 쓴다(멘토 리뷰 #380). */
 function mapLimitMessage(err: ApiError): string {
-  const limit = typeof err.detail?.limit === 'number' ? err.detail.limit : MAP_LIMIT
-  return `지도는 ${limit}개까지 만들거나 참여할 수 있어요. 다른 지도를 나가거나 삭제한 뒤 다시 시도해 주세요`
+  const limit = typeof err.detail?.limit === 'number' ? `${err.detail.limit}개까지` : '정해진 개수까지'
+  return `지도는 ${limit} 만들거나 참여할 수 있어요. 다른 지도를 나가거나 삭제한 뒤 다시 시도해 주세요`
 }
 
 /** 지도 만들기 실패 문구. 상한을 넘으면 409 MAP_LIMIT(#369). */

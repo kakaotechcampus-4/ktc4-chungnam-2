@@ -5,23 +5,63 @@ import ErrorText from '@/ErrorText'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import WithdrawConfirm from '@/features/auth/WithdrawConfirm'
 import { useMeQuery } from '@/features/auth/queries'
+import MenuPopover from '@/features/shell/MenuPopover'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
 import Avatar from '@/ui/Avatar'
 
-import { MAP_LIMIT, type MapView } from './model'
+import type { MapView } from './model'
 import { useCreateInviteMutation } from './queries'
 
+type Confirm = 'logout' | 'withdraw' | null
+
 /**
- * 내 지도 목록의 계정 시트(Figma 1절). 지도마다 초대 링크가 따로라 줄마다 복사 버튼을 둔다.
+ * 내 지도 목록의 계정 시트(Figma 1절, 모바일). 넓은 화면은 같은 내용을 계정 버튼 아래 메뉴로 연다(AccountMenu).
  * 회원 탈퇴는 로그아웃 아래 글자 버튼으로 둔다(#155) — 눈에 잘 띄는 자리에 두지 않는다.
  */
 export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClose: () => void }) {
+  const [confirm, setConfirm] = useState<Confirm>(null)
+  return (
+    <ModalSheet label="계정" onClose={onClose} overlay={<AccountConfirm which={confirm} onCancel={() => setConfirm(null)} />}>
+      <AccountBody maps={maps} onConfirm={setConfirm} />
+    </ModalSheet>
+  )
+}
+
+/** 넓은 화면의 계정 메뉴 — 화면 바닥 시트 대신 계정 버튼 바로 아래에 붙는다. */
+export function AccountMenu({ maps, name }: { maps: MapView[]; name?: string }) {
+  const [confirm, setConfirm] = useState<Confirm>(null)
+  return (
+    <MenuPopover
+      label="계정"
+      holdOpen={confirm !== null}
+      overlay={<AccountConfirm which={confirm} onCancel={() => setConfirm(null)} />}
+      trigger={
+        <button
+          type="button"
+          aria-label="계정"
+          className="hit-44 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-[var(--line-focus)]"
+        >
+          <Avatar name={name} />
+        </button>
+      }
+    >
+      <AccountBody maps={maps} onConfirm={setConfirm} />
+    </MenuPopover>
+  )
+}
+
+function AccountConfirm({ which, onCancel }: { which: Confirm; onCancel: () => void }) {
+  if (which === 'logout') return <LogoutConfirm onCancel={onCancel} />
+  if (which === 'withdraw') return <WithdrawConfirm onCancel={onCancel} />
+  return null
+}
+
+/** 계정 시트·메뉴 공통 내용. 지도마다 초대 링크가 따로라 줄마다 복사 버튼을 둔다. */
+function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: Confirm) => void }) {
   const me = useMeQuery().data
   const invite = useCreateInviteMutation()
   const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [confirmLogout, setConfirmLogout] = useState(false)
-  const [confirmWithdraw, setConfirmWithdraw] = useState(false)
 
   function copyLink(map: MapView) {
     invite.mutate(map.id, {
@@ -39,21 +79,12 @@ export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClo
   }
 
   return (
-    <ModalSheet
-      label="계정"
-      onClose={onClose}
-      overlay={
-        <>
-          {confirmLogout && <LogoutConfirm onCancel={() => setConfirmLogout(false)} />}
-          {confirmWithdraw && <WithdrawConfirm onCancel={() => setConfirmWithdraw(false)} />}
-        </>
-      }
-    >
+    <>
       <div className="mb-5 flex items-center gap-3">
         <Avatar name={me?.display_name} size={44} />
         <div>
           <p className="text-xl font-bold text-ink-900">{me?.display_name}</p>
-          <p className="text-xs text-ink-500">카카오로 로그인됨 · 지도 {maps.length}/{MAP_LIMIT}개</p>
+          <p className="text-xs text-ink-500">카카오로 로그인됨 · 지도 {maps.length}개</p>
         </div>
       </div>
 
@@ -82,14 +113,14 @@ export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClo
 
       <button
         type="button"
-        onClick={() => setConfirmLogout(true)}
+        onClick={() => onConfirm('logout')}
         className="btn-neutral btn-md mt-5 w-full"
       >
         로그아웃
       </button>
-      <button type="button" onClick={() => setConfirmWithdraw(true)} className="btn-text mt-2 w-full text-center text-xs underline">
+      <button type="button" onClick={() => onConfirm('withdraw')} className="btn-text mt-2 w-full text-center text-xs underline">
         회원 탈퇴
       </button>
-    </ModalSheet>
+    </>
   )
 }

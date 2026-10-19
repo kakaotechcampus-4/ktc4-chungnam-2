@@ -570,7 +570,7 @@ def _run_pipeline(
         ("추천 가능 아님 제거", removed_not_recommendable),
         ("실격 조건 제거", removed_disqualify),
         ("이미 제안·거절됨", removed_exclusions),
-        ("상위 3곳 선정", removed_ranking),
+        (core.RANKING_STAGE, removed_ranking),
     ])
     return candidates_data, funnel
 
@@ -732,7 +732,10 @@ def simulate_filter(
             db, run, regions=regions, active_lines=active_lines,
             place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
         )
-        return {"result_count": len(candidates_data), "funnel": funnel}
+        return {
+            "result_count": len(candidates_data), "funnel": funnel,
+            "passed_count": core.passed_count(len(candidates_data), funnel),
+        }
 
     return {"before": outcome(), "after": outcome(radius_factor=radius_factor, disable_line_ids=disabled)}
 
