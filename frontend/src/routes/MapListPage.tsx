@@ -42,7 +42,7 @@ export default function MapListPage() {
         <header className="mb-4 flex items-center justify-between gap-4 md:mb-8">
           <div className="min-w-0">
             <h1 className="text-2xl font-bold text-ink-900">내 지도</h1>
-            <MapCount list={list} loading={isPending} hint={desktop && full ? { id: limitHintId } : undefined} />
+            <MapCount list={list} hintId={full ? limitHintId : undefined} />
           </div>
           {desktop ? (
             <div className="flex shrink-0 items-center gap-3">
@@ -85,16 +85,7 @@ export default function MapListPage() {
         )}
 
         {/* 모바일은 엄지가 닿는 바닥에 붙는다. 넓은 화면은 헤더 오른쪽에 있다. */}
-        {!desktop && (
-          <div className="sticky bottom-6 mt-4">
-            {full && (
-              <p id={limitHintId} className="mb-2 rounded-xl border border-ink-200 bg-white px-3 py-2 text-center text-xs text-ink-600">
-                {MAP_LIMIT_HINT}
-              </p>
-            )}
-            <NewMapLink className="btn-lg w-full" blockedBy={full ? limitHintId : undefined} />
-          </div>
-        )}
+        {!desktop && <NewMapLink className="btn-lg sticky bottom-6 mt-4" blockedBy={full ? limitHintId : undefined} />}
       </div>
 
       {accountOpen && !desktop && <AccountSheet maps={maps ?? []} onClose={() => setAccountOpen(false)} />}
@@ -109,20 +100,18 @@ export default function MapListPage() {
 }
 
 /**
- * "지도 n / 상한". 받기 전에도 같은 높이의 자리를 잡아 둬서 값이 들어올 때 아래 목록이 밀리지 않게 한다(CLS).
- * 넓은 화면은 상한일 때 안내를 이 줄 끝에 붙인다 — 줄을 새로 늘리지 않으려고. 모바일 안내는 바닥 버튼 위에 있다.
+ * "지도 n / 상한". 받기 전에도 min-h-5 로 줄 높이를 잡아 둬서 값이 들어올 때 아래 목록이 밀리지 않는다(CLS).
+ * 상한일 때 안내는 모바일·넓은 화면 모두 이 줄 끝에 붙인다 — 바닥에 따로 두면 컴포넌트 목록에 없는 상자가 필요하다.
  */
-function MapCount({ list, loading, hint }: { list?: MapListView; loading: boolean; hint?: { id: string } }) {
+function MapCount({ list, hintId }: { list?: MapListView; hintId?: string }) {
   return (
     <p className="mt-1 min-h-5 text-sm text-ink-500">
-      {list ? (
+      {list && (
         <>
           지도 <span aria-hidden="true">{list.items.length} / {list.limit}</span>
           <span className="sr-only">{list.limit}개 중 {list.items.length}개</span>
-          {hint && <> · <span id={hint.id}>{MAP_LIMIT_HINT}</span></>}
+          {hintId && <> · <span id={hintId}>{MAP_LIMIT_HINT}</span></>}
         </>
-      ) : (
-        loading && <span aria-hidden="true" className="inline-block h-5 w-20 animate-pulse rounded bg-ink-100 align-top" />
       )}
     </p>
   )
@@ -138,7 +127,7 @@ function NewMapLink({ className, blockedBy }: { className: string; blockedBy?: s
       <Plus size={18} aria-hidden="true" /> 새 지도 만들기
     </>
   )
-  const look = `btn-primary ${className}`   // 정렬과 간격은 크기 클래스(btn-md, btn-lg)가 맡는다(#626)
+  const look = `btn-primary ${className}` // 정렬과 간격은 크기 클래스(btn-md, btn-lg)가 맡는다(#626)
   if (blockedBy) {
     return (
       <button type="button" disabled aria-describedby={blockedBy} className={look}>
