@@ -17,12 +17,15 @@ export default function ModalSheet({
   onClose,
   children,
   overlay,
+  fullWidth = false,
 }: {
   label: string
   onClose: () => void
   children: ReactNode
   /** 시트 위에 다시 뜨는 확인 창 같은 것. */
   overlay?: ReactNode
+  /** 좁은 화면에서 화면 폭을 다 쓴다. 지도 화면은 뒤의 지도 시트가 전체 폭이라 맞춘다. 입구 화면은 본문 단처럼 480px까지다(#605). */
+  fullWidth?: boolean
 }) {
   const sheetRef = useRef<HTMLElement>(null)
   const [closing, setClosing] = useState(false)
@@ -70,7 +73,9 @@ export default function ModalSheet({
           <Dialog.Title className="sr-only">{label}</Dialog.Title>
           {/* 넓은 화면에선 바닥 시트가 아니라 화면 가운데 창이다 — 끌 수 없는 손잡이를 달지 않는다. */}
           {/* 계정·지도 정보는 넓은 화면에서 이 창 대신 버튼 아래 메뉴(MenuPopover)를 쓴다. */}
-          <div className="absolute inset-x-0 bottom-0 md:pointer-events-none md:inset-0 md:flex md:items-center md:justify-center md:p-6">
+          <div
+            className={`absolute inset-x-0 bottom-0 mx-auto ${fullWidth ? '' : 'max-w-[480px]'} md:pointer-events-none md:inset-0 md:flex md:max-w-none md:items-center md:justify-center md:p-6`}
+          >
             <div
               style={sheetStyle}
               className={`enter-sheet relative md:pointer-events-auto md:w-full md:max-w-[440px] ${
