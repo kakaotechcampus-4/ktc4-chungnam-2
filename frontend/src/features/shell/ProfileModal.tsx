@@ -7,6 +7,7 @@ import { useMeQuery } from '@/features/auth/queries'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
 import { DeleteMapConfirm, LeaveMapConfirm } from '@/features/maps/MapLifecycle'
 import { useShareInvite } from '@/features/maps/useShareInvite'
+import Avatar from '@/ui/Avatar'
 
 import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
@@ -73,32 +74,30 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
         type="button"
         onClick={() => void share()}
         disabled={!url}
-        className="btn-primary flex w-full items-center justify-center gap-2 py-3"
+        className="btn-primary btn-lg w-full"
       >
-        <Share size={18} aria-hidden="true" /> 초대 링크 공유하기
+        <Share size={20} aria-hidden="true" /> 초대 링크 공유하기
       </button>
-      <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-ink-100 px-3 py-2.5 text-sm">
+      <div className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-ink-100 px-3 py-2.5 text-sm">
         <span className="truncate text-ink-600">{url ?? '링크를 만드는 중…'}</span>
-        <button type="button" onClick={() => void copy()} disabled={!url} className="hit-44 shrink-0 font-semibold text-brand-600">
+        <button type="button" onClick={() => void copy()} disabled={!url} className="btn-link shrink-0">
           {copied ? '✓ 복사됨' : '복사'}
         </button>
       </div>
       {inviteError && <ErrorText message="초대 링크를 만들지 못했어요" error={inviteError} />}
 
-      <h3 className="mb-2 mt-6 font-semibold text-ink-900">구성원</h3>
+      <h3 className="mb-2 mt-6 text-sm font-bold text-ink-900">구성원</h3>
       {members.error && <ErrorText message="구성원을 불러오지 못했어요" error={members.error} />}
       <ul className="space-y-3">
         {members.data?.map((m) => (
           <li key={m.userId} className="flex items-center gap-3">
             {/* 구성원별 색 구분은 없다(#26) — 아바타는 회색 면 하나로 통일. */}
-            <span className="flex size-8 items-center justify-center rounded-full bg-ink-100 text-sm font-semibold text-ink-700">
-              {m.initial}
-            </span>
+            <Avatar name={m.initial} />
             <span className="text-ink-900">
               {m.name}
               {m.isMe && <span className="ml-1 text-ink-500">(나)</span>}
             </span>
-            {m.isOwner && <span className="rounded-md bg-ink-100 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-ink-600">방장</span>}
+            {m.isOwner && <span className="tag tag-neutral">방장</span>}
           </li>
         ))}
       </ul>
@@ -107,7 +106,7 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
         <div className="mt-6 flex gap-2 border-t border-ink-200 pt-4">
           {/* 넘길 사람이 없는 방장은 나갈 수 없다 — 나가기 자리에 이유를 적고 삭제를 안내한다. */}
           {map.data.canLeave ? (
-            <button type="button" onClick={() => onConfirm('leave')} className="flex-1 rounded-lg border border-ink-300 py-2.5 text-sm font-semibold text-ink-900">
+            <button type="button" onClick={() => onConfirm('leave')} className="btn-neutral btn-md flex-1">
               지도 나가기
             </button>
           ) : (
@@ -117,7 +116,7 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
             <button
               type="button"
               onClick={() => onConfirm('delete')}
-              className="flex-1 rounded-lg border border-[var(--action-danger)] py-2.5 text-sm font-semibold text-[var(--action-danger)]"
+              className="btn-danger-outline btn-md flex-1"
             >
               지도 삭제
             </button>
@@ -127,13 +126,13 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
 
       <div className="mt-4 flex items-center justify-between border-t border-ink-200 pt-4">
         <div>
-          <p className="text-sm font-semibold text-ink-900">계정</p>
+          <p className="text-sm font-bold text-ink-900">계정</p>
           <p className="text-xs text-ink-500">카카오로 로그인됨 · {me.data?.display_name}</p>
         </div>
         <button
           type="button"
           onClick={() => onConfirm('logout')}
-          className="rounded-lg border border-ink-300 px-3 py-1.5 text-sm font-semibold text-ink-900"
+          className="btn-neutral btn-sm"
         >
           로그아웃
         </button>

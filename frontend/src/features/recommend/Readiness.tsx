@@ -10,14 +10,14 @@ import { useCreateRunMutation, useReadinessQuery } from './queries'
 /** AI 탭 시트 머리글 — 화자는 핑고(colors.md 4절 3층). */
 export function AiHeader({ title, sub }: { title: string; sub: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl bg-[var(--pingo-bg)] p-3">
+    <div className="flex items-center gap-3 rounded-xl bg-[var(--pingo-bg)] p-3">
       <Pingo size={36} />
       <div className="min-w-0">
         <p className="flex items-center gap-1.5 font-bold text-ink-900">
-          <span className="rounded bg-brand-600 px-1.5 text-[0.6875rem] text-white">AI</span>
+          <span className="tag tag-ai">AI</span>
           {title}
         </p>
-        <p className="text-xs text-ink-500">{sub}</p>
+        <p className="text-xs text-ink-600">{sub}</p>
       </div>
     </div>
   )
@@ -84,9 +84,9 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           />
         ))}
       </div>
-      <p className="text-[0.6875rem] text-ink-500">* 카테고리마다 좋음·반대 의견이 달린 핀이 1곳 이상이면 추천을 받을 수 있어요.</p>
+      <p className="text-label text-ink-500">* 카테고리마다 좋음·반대 의견이 달린 핀이 1곳 이상이면 추천을 받을 수 있어요.</p>
       {/* 사유가 곧 추천 조건이 된다(②) — 의견이 많을수록 거르고 고를 근거가 늘어난다. */}
-      <p className="text-[0.6875rem] text-ink-500">* 핀에 의견을 많이 남길수록 추천이 더 정확해져요.</p>
+      <p className="text-label text-ink-500">* 핀에 의견을 많이 남길수록 추천이 더 정확해져요.</p>
       {/* run 을 만들 때 AI가 사유를 조건으로 정리한다(②) — 5~12초 걸린다(백엔드 안내). 그동안 진행을 보인다. */}
       {create.isPending && <ProgressBody steps={COLLECT_STEPS} />}
       {create.error && <ErrorText message={runErrorMessage(create.error)} error={create.error} />}
@@ -94,7 +94,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
         type="button"
         disabled={!chosen || create.isPending}
         onClick={() => chosen && create.mutate(chosen)}
-        className="btn-primary w-full py-3.5"
+        className="btn-primary btn-lg w-full"
       >
         {create.isPending ? '조건을 모으는 중…' : chosen ? `${chosen} 추천받기` : '아직 추천할 수 있는 곳이 없어요'}
       </button>
@@ -112,30 +112,24 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
       aria-pressed={selected}
       onClick={onPick}
       className={`rounded-xl border-[1.5px] p-3 text-left ${wide ? 'col-span-2' : ''} ${
-        selected ? 'border-brand-600 bg-brand-50' : card.ready ? 'border-[var(--good-line)] bg-white' : 'border-[var(--warn-line)] bg-[var(--warn-bg)]'
+        selected ? 'border-brand-600 bg-brand-50' : card.ready ? 'border-[var(--good-line)] bg-white' : 'border-[var(--warn-line)] bg-white'
       }`}
     >
-      <p className="flex items-center justify-between font-bold text-ink-900">
-        <span className="flex items-center gap-1.5">
+      <p className="flex items-start justify-between gap-1 font-bold text-ink-900">
+        {/* 상태는 태그 하나에 담는다. 흰 글자 + 주의 선 색(3.5:1)은 작은 글자 기준(4.5:1)에 못 미쳐서 바탕·글자 세트로 칠한다. */}
+        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
           {card.category}
-          <span
-            className={`rounded px-1.5 text-[0.625rem] text-white ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`}
-          >
-            {card.ready ? '준비 완료' : '추가 필요'}
-          </span>
+          <span className={`tag ${card.ready ? 'tag-good' : 'tag-warn'}`}>{card.ready ? '준비 완료' : `${short}곳 더 필요`}</span>
         </span>
         {selected && <Check size={16} className="text-brand-600" aria-label="선택됨" />}
       </p>
       <div className="mt-2 h-1.5 rounded-full bg-ink-200">
         <div className={`h-full rounded-full ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`} style={{ width: `${pct}%` }} />
       </div>
-      <p className="mt-1.5 flex justify-between gap-1 text-[0.6875rem] font-semibold text-ink-700">
-        {/* 센 것은 사람이 아니라 의견이 달린 핀이다(#360). 「4/1」처럼 분자가 분모를 넘으면 뜻이 헷갈려서 두 숫자를 따로 적는다(#344). */}
-        {/* 360px 폭(태블릿 패널·작은 휴대폰)에서 「✓ 완/료」로 끊기지 않게 상태는 줄이지 않고, 왼쪽은 낱말 단위로 바꾼다(#603). */}
-        <span className="break-keep">
-          의견 핀 {card.answered}곳 · <span className="whitespace-nowrap">필요 {card.required}곳</span>
-        </span>
-        <span className={`shrink-0 ${card.ready ? 'text-[var(--good-text)]' : 'text-[var(--warn-text)]'}`}>{card.ready ? '✓ 완료' : `${short}곳 더 필요`}</span>
+      {/* 센 것은 사람이 아니라 의견이 달린 핀이다(#360). 「4/1」처럼 분자가 분모를 넘으면 뜻이 헷갈려서 두 숫자를 따로 적는다(#344). */}
+      {/* 360px 폭(태블릿 패널·작은 휴대폰)에서 줄이 어색하게 끊기지 않게 낱말 단위로 바꾼다(#603). 상태는 위 태그에 있다. */}
+      <p className="mt-1.5 break-keep text-label font-semibold text-ink-700">
+        의견 핀 {card.answered}곳 · <span className="whitespace-nowrap">필요 {card.required}곳</span>
       </p>
     </button>
   )

@@ -77,7 +77,7 @@ export function ConnectionBanner({
   return (
     <div
       role="status"
-      className={`flex items-center gap-2 bg-ink-100 px-4 py-1.5 text-xs font-medium text-ink-700 ${floating ? 'pointer-events-auto rounded-xl shadow-md' : 'rounded-t-2xl'}`}
+      className={`flex items-center gap-2 bg-ink-100 px-4 py-1.5 text-xs font-medium text-ink-700 ${floating ? 'pointer-events-auto rounded-xl shadow-float' : 'rounded-t-2xl'}`}
     >
       <TriangleAlert size={14} className="shrink-0 text-[var(--warn-line)]" aria-hidden="true" />
       {state === 'reconnecting' ? (

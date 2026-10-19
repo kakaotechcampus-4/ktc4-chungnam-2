@@ -10,6 +10,9 @@ import { MAP_LIMIT_HINT, type MapListView, type MapView } from '@/features/maps/
 import { useMapsQuery } from '@/features/maps/queries'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
+import Avatar from '@/ui/Avatar'
+import CardSkeleton from '@/ui/CardSkeleton'
+import EmptyState from '@/ui/EmptyState'
 
 /**
  * 로그인 직후 진입점 — 내 지도 목록 (#24, Figma 1절). 빈 목록은 AI와 관계없는 화면이라 핑고를 넣지 않는다.
@@ -27,7 +30,6 @@ export default function MapListPage() {
   const me = useMeQuery().data
   const desktop = useIsDesktop()
   const [accountOpen, setAccountOpen] = useState(false)
-  const initial = me?.display_name?.slice(0, 1)
 
   const invited = (maps ?? []).filter((m) => m.createdByMe === false)
   const mine = (maps ?? []).filter((m) => m.createdByMe !== false)
@@ -44,31 +46,29 @@ export default function MapListPage() {
           </div>
           {desktop ? (
             <div className="flex shrink-0 items-center gap-3">
-              <NewMapLink className="px-4 py-2.5 text-sm" blockedBy={full ? limitHintId : undefined} />
-              <AccountMenu maps={maps ?? []} initial={initial} />
+              <NewMapLink className="btn-md" blockedBy={full ? limitHintId : undefined} />
+              <AccountMenu maps={maps ?? []} name={me?.display_name} />
             </div>
           ) : (
             <button
               type="button"
               aria-label="계정"
               onClick={() => setAccountOpen(true)}
-              className="hit-44 flex size-8 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-white"
+              className="hit-44 rounded-full"
             >
-              {initial}
+              <Avatar name={me?.display_name} />
             </button>
           )}
         </header>
 
-        {isPending && <p className="text-sm text-ink-500">지도를 불러오는 중…</p>}
+        {isPending && <CardSkeleton count={2} />}
         {error && <ErrorText message="지도를 불러오지 못했어요" error={error} />}
 
         {maps?.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center text-center md:flex-none md:rounded-2xl md:border md:border-dashed md:border-ink-300 md:py-24">
-            <span className="mb-3 flex size-16 items-center justify-center rounded-2xl bg-ink-100 text-ink-400">
-              <MapIcon size={28} aria-hidden="true" />
-            </span>
-            <p className="font-semibold text-ink-900">아직 만든 지도가 없어요</p>
-            <p className="mt-1 text-sm text-ink-500">지도를 만들고 친구를 초대해 보세요</p>
+          <div className="flex flex-1 flex-col justify-center md:flex-none md:rounded-2xl md:border md:border-dashed md:border-ink-300 md:py-18">
+            <EmptyState icon={MapIcon} title="아직 만든 지도가 없어요">
+              지도를 만들고 친구를 초대해 보세요
+            </EmptyState>
           </div>
         ) : (
           <div className="flex-1 space-y-5 md:space-y-10">
@@ -92,7 +92,7 @@ export default function MapListPage() {
                 {MAP_LIMIT_HINT}
               </p>
             )}
-            <NewMapLink className="w-full py-3.5" blockedBy={full ? limitHintId : undefined} />
+            <NewMapLink className="btn-lg w-full" blockedBy={full ? limitHintId : undefined} />
           </div>
         )}
       </div>
@@ -138,7 +138,7 @@ function NewMapLink({ className, blockedBy }: { className: string; blockedBy?: s
       <Plus size={18} aria-hidden="true" /> 새 지도 만들기
     </>
   )
-  const look = `btn-primary flex items-center justify-center gap-1 ${className}`
+  const look = `btn-primary ${className}`   // 정렬과 간격은 크기 클래스(btn-md, btn-lg)가 맡는다(#626)
   if (blockedBy) {
     return (
       <button type="button" disabled aria-describedby={blockedBy} className={look}>
@@ -157,25 +157,25 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
   return (
     <section className="space-y-3">
       {title && (
-        <h2 className="text-sm font-semibold text-ink-600">
+        <h2 className="text-sm font-bold text-ink-900">
           {title}
           {/* 넓은 화면은 한눈에 여러 줄이 보여서 몇 개인지 같이 적는다. */}
           <span className="ml-1 hidden font-normal text-ink-500 md:inline">{maps.length}</span>
         </h2>
       )}
-      {maps.length === 0 && empty && <p className="rounded-2xl bg-white p-4 text-sm text-ink-500">{empty}</p>}
+      {maps.length === 0 && empty && <p className="rounded-xl bg-white p-4 text-sm text-ink-500">{empty}</p>}
       <ul className="space-y-3 md:grid md:grid-cols-2 md:gap-4 md:space-y-0 lg:grid-cols-3">
         {maps.map((map) => (
           <li key={map.id}>
             <Link
               to={`/maps/${map.id}`}
-              className="block h-full rounded-2xl border border-ink-200 bg-white p-4 transition-colors md:p-5 md:hover:border-brand-300"
+              className="block h-full rounded-xl border border-ink-200 bg-white p-4 transition-colors md:p-5 md:hover:border-brand-300"
             >
               <p className="flex items-center gap-2">
-                <span className="truncate text-lg font-bold text-ink-900">{map.title}</span>
-                {map.isOwner && <span className="shrink-0 rounded-md bg-brand-50 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-brand-600">방장</span>}
+                <span className="truncate text-title font-bold text-ink-900">{map.title}</span>
+                {map.isOwner && <span className="tag tag-neutral">방장</span>}
                 {map.region && (
-                  <span className="shrink-0 rounded-md bg-ink-100 px-1.5 py-0.5 text-[0.6875rem] text-ink-500">{map.region}</span>
+                  <span className="tag tag-neutral">{map.region}</span>
                 )}
               </p>
               <p className="mt-1 text-sm text-ink-500">{map.summary}</p>

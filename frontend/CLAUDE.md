@@ -41,6 +41,10 @@ React는 UI 상태(선택된 핀, 필터 값 등)만 갖는다.
 접근성 기준은 WCAG 2.2 AA + 터치 44×44px(`frontend/PRODUCT.md`). Figma는 참고안이다 — 더 나은 안은 근거를 붙여 제안하고,
 정해지면 DESIGN.md와 Figma를 같이 고친다. 색 값은 `src/styles/tokens.css`만 쓴다.
 
+**디자인 컴포넌트를 먼저 쓴다.** UI는 반드시 DESIGN.md 「컴포넌트 목록」의 부품(`src/index.css`의 btn-·chip·tag·field,
+`src/ui/`)으로 만든다. 맞는 부품이 없으면 화면에서 클래스를 새로 짜지 않는다. 부품을 먼저 만들어 목록에 올리고,
+그 부품으로 화면을 만든다. 버튼 크기는 `btn-lg`/`md`/`sm` 중 하나이고, 글자 크기는 DESIGN.md 여덟 단계 밖으로 쓰지 않는다.
+
 ## 코드 품질
 
 `docs/code-quality.md` 참고. 이 쪽은 "요청받은 범위만 건드렸는가"·"에러를 조용히 삼키지 않는가"가

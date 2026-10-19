@@ -29,7 +29,7 @@ export default function MapSwitcher({ mapId, title }: { mapId: string; title?: s
         aria-label={title ? `${title} · 다른 지도로 바꾸기` : '다른 지도로 바꾸기'}
         className="group -ml-1.5 flex h-9 min-w-0 flex-1 items-center gap-1 rounded-lg px-1.5 text-left outline-none hover:bg-ink-100 focus-visible:outline-2 focus-visible:outline-[var(--line-focus)] data-[state=open]:bg-ink-100"
       >
-        <span className="truncate text-[1.0625rem] font-bold text-ink-900">{title}</span>
+        <span className="truncate text-title font-bold text-ink-900">{title}</span>
         <ChevronDown size={16} aria-hidden="true" className="shrink-0 text-ink-500 transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none" />
       </DropdownMenu.Trigger>
 
@@ -37,7 +37,7 @@ export default function MapSwitcher({ mapId, title }: { mapId: string; title?: s
         <DropdownMenu.Content
           align="start"
           sideOffset={6}
-          className="z-50 max-h-[min(480px,var(--radix-dropdown-menu-content-available-height))] w-[var(--radix-dropdown-menu-trigger-width)] min-w-64 overflow-y-auto rounded-xl border border-ink-200 bg-white p-1.5 shadow-md"
+          className="z-50 max-h-[min(480px,var(--radix-dropdown-menu-content-available-height))] w-[var(--radix-dropdown-menu-trigger-width)] min-w-64 overflow-y-auto rounded-xl border border-ink-200 bg-white p-1.5 shadow-float"
         >
           <DropdownMenu.Label className="px-2.5 pb-1 pt-1.5 text-xs text-ink-500">내 지도</DropdownMenu.Label>
           {maps.isPending && <p className="px-2.5 py-2 text-sm text-ink-500">불러오는 중…</p>}
@@ -51,7 +51,7 @@ export default function MapSwitcher({ mapId, title }: { mapId: string; title?: s
             {maps.data?.items.map((map) => (
               <DropdownMenu.RadioItem key={map.id} value={map.id} className={ITEM}>
                 <span className="min-w-0 flex-1 truncate font-medium text-ink-900">{map.title}</span>
-                {map.region && <span className="shrink-0 rounded-md bg-ink-100 px-1.5 py-0.5 text-[0.6875rem] text-ink-500">{map.region}</span>}
+                {map.region && <span className="tag tag-neutral">{map.region}</span>}
                 {/* 체크 자리를 늘 비워 둬서 지금 지도만 줄 끝이 들쭉날쭉하지 않게 한다. */}
                 <span className="flex size-4 shrink-0 items-center justify-center">
                   <DropdownMenu.ItemIndicator>

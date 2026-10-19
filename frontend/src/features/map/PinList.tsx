@@ -62,7 +62,7 @@ function PinCard({ card, onSelect }: { card: PinCardView; onSelect: () => void }
             <span
               key={type}
               aria-hidden="true"
-              className={`flex items-center gap-0.5 ${mine ? `rounded-md border px-1.5 font-semibold ${r.chip}` : ''}`}
+              className={`flex items-center gap-0.5 ${mine ? `rounded-sm border px-1.5 font-semibold ${r.chip}` : ''}`}
             >
               <span className={mine ? '' : r.color}>{r.mark}</span>
               <span className={mine ? '' : 'text-ink-700'}>
@@ -80,19 +80,4 @@ function PinCard({ card, onSelect }: { card: PinCardView; onSelect: () => void }
 function summaryLabel(card: PinCardView) {
   const parts = ORDER.map((t) => `${REACTION[t].label} ${card.counts[t]}`)
   return `${parts.join(', ')}${card.mine ? `, 내 의견 ${REACTION[card.mine].label}` : ', 아직 의견 없음'}`
-}
-
-/** 불러오는 중(Figma '불러오는 중') — 카드 모양 자리만 먼저 보여준다. */
-export function PinListSkeleton() {
-  return (
-    <ul className="space-y-2.5" aria-hidden="true">
-      {[0, 1, 2].map((i) => (
-        <li key={i} className="animate-pulse space-y-2 rounded-xl border border-ink-200 p-3.5">
-          <div className="h-4 w-2/3 rounded bg-ink-100" />
-          <div className="h-3 w-1/2 rounded bg-ink-100" />
-          <div className="h-3 w-1/3 rounded bg-ink-100" />
-        </li>
-      ))}
-    </ul>
-  )
 }

@@ -7,14 +7,17 @@ import { FILTER_CATEGORIES, KINDS, OPINIONS, SORTS, type Pin, type PinFilters, t
 /**
  * 카테고리 칩 줄(Figma 마킹 탭). 2단계까지는 지도 위 검색창 아래, 3단계에서는 시트 제목 아래에 놓인다.
  * 선택 상태는 채우지 않고 연한 배경 + 테두리(colors.md 6절 — 채움 버튼은 한 화면에 하나).
+ * 그림자는 지도 위에 떠 있을 때(`floating`)만 — 시트 안 틀에는 그림자를 넣지 않는다(DESIGN.md).
  */
 export function CategoryChips({
   value,
   onChange,
+  floating = false,
   className = '',
 }: {
   value: PinFilters['category']
   onChange: (category: string | null) => void
+  floating?: boolean
   className?: string
 }) {
   const chips: { key: string | null; label: string }[] = [{ key: null, label: '전체' }, ...FILTER_CATEGORIES.map((c) => ({ key: c, label: c }))]
@@ -28,9 +31,7 @@ export function CategoryChips({
             type="button"
             aria-pressed={on}
             onClick={() => onChange(chip.key)}
-            className={`hit-y-44 shrink-0 rounded-full border px-3.5 py-1.5 text-sm shadow-sm ${
-              on ? 'border-brand-600 bg-brand-100 font-semibold text-brand-700' : 'border-ink-200 bg-white text-ink-700'
-            }`}
+            className={`chip ${floating ? 'shadow-float' : ''}`}
           >
             {chip.label}
           </button>
@@ -124,7 +125,7 @@ export function PinFilterBar({
 
 function Pill({ label, children }: { label?: string; children: React.ReactNode }) {
   return (
-    <label className="hit-y-44 relative flex min-h-8 items-center gap-1 whitespace-nowrap rounded-lg border border-ink-200 bg-white px-2.5 py-1 text-xs">
+    <label className="hit-y-44 relative flex h-8 items-center gap-1 whitespace-nowrap rounded-md border border-ink-200 bg-white px-2.5 text-xs">
       {label && <span className="text-ink-500">{label}</span>}
       {children}
       <ChevronDown size={12} className="pointer-events-none absolute right-2 text-ink-500" aria-hidden="true" />
