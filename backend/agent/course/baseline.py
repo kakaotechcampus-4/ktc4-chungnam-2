@@ -87,7 +87,7 @@ def next_action(state: State) -> ToolCall:
 def _soft_key(trip, course) -> tuple[float, ...]:
     s = core.soft_scores(trip, course)
     return (
-        s["meal_spacing"] + s["meal_per_day"],
+        s["meal_spacing"] + s["meal_per_day"] + s["cafe_spacing"],
         -(s["cafe_after_meal"] or 0.0),
         -(s["night_last"] or 0.0),
         s["mono_category_days"] + (s["no_tour_days"] or 0),

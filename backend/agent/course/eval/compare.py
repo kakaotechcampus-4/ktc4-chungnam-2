@@ -97,6 +97,7 @@ def aggregate(results: Sequence[Mapping[str, Score]]) -> dict[str, dict[str, Opt
             "no_tour_days": _mean([s.soft["no_tour_days"] for s in rows]),
             "day_balance": _mean([s.soft["day_balance"] for s in rows]),
             "meal_per_day": _mean([s.soft["meal_per_day"] for s in rows]),
+            "cafe_spacing": _mean([s.soft["cafe_spacing"] for s in rows]),
             "travel_total": _mean([s.soft["travel_total"] for s in rows]),
             "turns": _mean([s.turns for s in rows]),
         }

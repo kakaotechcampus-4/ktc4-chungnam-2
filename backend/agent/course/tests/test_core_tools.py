@@ -91,6 +91,13 @@ class TestSoft:
         assert s["mono_category_days"] == 0    # 한 곳뿐인 셋째 날은 세지 않는다
         assert s["no_tour_days"] == 1          # 둘째 날(p3·p4·p5)에 관광지가 없다
 
+    def test_cafe_spacing_counts_consecutive_cafes(self):
+        t = trip()
+        assert core.soft_scores(t, (("p2", "p5"), ("p1", "p3"), ("p4", "p6")))["cafe_spacing"] == 1
+        assert core.soft_scores(t, (("p2", "p1", "p5"), ("p3",), ("p4", "p6")))["cafe_spacing"] == 0
+        # 위치 고르기도 카페가 붙는 자리를 피한다: 카페 p2를 [p5(카페), p1]에 넣으면 p5 바로 앞·뒤(0·1)는 피한다
+        assert core.best_position(t, ("p5", "p1"), "p2") == 2
+
     def test_mono_category_days_boundary(self):
         t = trip()
         # 둘 이상이 한 카테고리: 센다. 둘 이상이어도 섞이면 안 센다. 한 곳뿐이면 안 센다

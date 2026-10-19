@@ -247,7 +247,11 @@ def hard_score(violations: Sequence[Violation]) -> tuple[int, int]:
 def _meal_cost(cat: Mapping[str, str], day: Sequence[str]) -> int:
     """한 날의 식사 쏠림 — 식당이 연달아 붙은 쌍 + 하루 식당 상한 초과 수."""
     meals = [cat[p] == MEAL_CATEGORY for p in day]
-    return sum(a and b for a, b in zip(meals, meals[1:])) + max(0, sum(meals) - MEALS_PER_DAY_MAX)
+    return sum(a and b for a, b in zip(meals, meals[1:])) + max(0, sum(meals) - MEALS_PER_DAY_MAX) + _cafe_pairs(cat, day)
+
+
+def _cafe_pairs(cat: Mapping[str, str], day: Sequence[str]) -> int:
+    return sum(cat[a] == CAFE_CATEGORY and cat[b] == CAFE_CATEGORY for a, b in zip(day, day[1:]))
 
 
 def soft_scores(trip: Trip, course: Course) -> dict[str, Optional[float]]:
@@ -258,6 +262,7 @@ def soft_scores(trip: Trip, course: Course) -> dict[str, Optional[float]]:
     )
     meal_excess = sum(max(0, sum(cat[p] == MEAL_CATEGORY for p in day) - MEALS_PER_DAY_MAX) for day in course)
 
+    cafe_pairs = sum(_cafe_pairs(cat, day) for day in course)
     cafes = [(day, i) for day in course for i, p in enumerate(day) if cat[p] == CAFE_CATEGORY]
     cafe_after_meal = (
         sum(i > 0 and cat[day[i - 1]] == MEAL_CATEGORY for day, i in cafes) / len(cafes) if cafes else None
@@ -276,6 +281,7 @@ def soft_scores(trip: Trip, course: Course) -> dict[str, Optional[float]]:
     return {
         "meal_spacing": meal_pairs,
         "meal_per_day": meal_excess,
+        "cafe_spacing": cafe_pairs,
         "cafe_after_meal": cafe_after_meal,
         "night_last": night_last,
         "mono_category_days": mono_days,
@@ -309,7 +315,7 @@ def _check_lock(trip: Trip, locks: Mapping[str, str], place: str, to_day_index: 
 
 
 def best_position(trip: Trip, day: Sequence[str], place: str) -> int:
-    """식당이 연달아 붙거나 하루 식당 상한을 넘는 자리를 피하고, 같으면 그날 이동 합계가 가장 짧은 자리. 동점이면 앞자리."""
+    """식당이나 카페가 연달아 붙거나 하루 식당 상한을 넘는 자리를 피하고, 같으면 그날 이동 합계가 가장 짧은 자리. 동점이면 앞자리."""
     cat = {p.alias: p.category for p in trip.places}
 
     def key(k: int) -> tuple[int, int, int]:

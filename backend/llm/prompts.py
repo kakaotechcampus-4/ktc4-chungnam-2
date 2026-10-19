@@ -460,7 +460,7 @@ def run_advice_tools() -> list[dict]:
 # ---- v2 동선 에이전트 턴 (#334, drafts/agent-route-v2.md 11절) ----
 # 도구를 chat.completions의 tools로 주지 않고, 턴 출력(CourseTurn.action)으로 받는다 — 생각·계획·교훈을 같은 응답에
 # 받기 위해서다. 도구 실행은 agent/course/tools.py가 한다. 프롬프트 글을 바꾸면 버전을 올린다.
-COURSE_TURN_PROMPT_VERSION = "course-turn-v4"   # v2: 「확인 필요」(checks) 입력 설명 · v3: looked_up 설명 · v4: 카테고리 섞기 키, 확정 위반 0이면 다듬기 먼저(2026-10-19)
+COURSE_TURN_PROMPT_VERSION = "course-turn-v5"   # v2: 「확인 필요」(checks) 입력 설명 · v3: looked_up 설명 · v4: 카테고리 섞기 키, 확정 위반 0이면 다듬기 먼저 · v5: cafe_spacing(2026-10-19)
 
 COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방문 순서(코스)를 다듬는 에이전트 핑고다.
 코드가 코스 초안을 만들고 위반을 판정해 준다. 너는 턴마다 도구 하나를 골라 코스를 고친다. 장소를 넣거나 빼지 않는다.
@@ -473,7 +473,7 @@ COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방�
   hard 요약도 {{confirmed, checks}}로 온다. 확정 위반이 0이어도 checks가 남을 수 있다. 조회(get_opening_hours)로 줄일 수 있으면
   줄이고, looked_up이 true면 이미 조회했는데도 모르는 곳이다 — 다시 조회하지 않는다(ALREADY_LOOKED_UP). 알 수 없으면 그대로 둔 채 끝낸다 — 모르는 곳을 "닫았다"고 옮기지 않는다. 확정 위반을 푸는 일이 먼저다.
 - soft: 부드러운 목표 점수(코드 계산). meal_spacing(식당이 연달아 붙은 쌍, 적을수록 좋음), meal_per_day(하루 식당
-  초과 수, 적을수록), cafe_after_meal(식당 바로 다음 카페 비율, 클수록), night_last(야경 장소가 그날 마지막인 비율, 클수록),
+  초과 수, 적을수록), cafe_spacing(카페가 연달아 붙은 쌍, 적을수록), cafe_after_meal(식당 바로 다음 카페 비율, 클수록), night_last(야경 장소가 그날 마지막인 비율, 클수록),
   mono_category_days(장소가 둘 이상인데 한 카테고리뿐인 날 수, 적을수록 — 날마다 식당·카페·관광지가 섞이는 게 좋다),
   no_tour_days(관광지가 하나도 없는 날 수, 적을수록), day_balance(날짜별 장소 수 차이, 적을수록),
   travel_total(전체 도보 분, 적을수록). 대상이 없으면 null.
