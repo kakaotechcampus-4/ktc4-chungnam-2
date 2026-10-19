@@ -47,8 +47,9 @@ def fact_labels() -> dict[str, str]:
 
 
 def demote_wanted_place_identity(category: str, lines: Sequence[dict]) -> list[dict]:
-    """agent structure_reasons(docs/agent-v2.md 10절, #564)가 부른다 — 추천 근거 조립과 같은 #422 규칙(🚫 사유 안의
-    음식 종류 "원함"은 preferred). lines는 `{fact_key, wants, badge}`(다른 키는 그대로 둔다). 원본은 바꾸지 않는다."""
+    """agent structure_reasons(docs/agent-v2.md 10절, #564)가 부른다 — 추천 근거 조립과 같은 #422·#617 규칙(🚫 사유
+    안의 원함은 preferred: 글은 음식 종류만, 칩은 sight_inaccessible 말고 전부). lines는 `{fact_key, wants, badge}`에
+    칩 줄이면 `chip_id`(다른 키는 그대로 둔다). 원본은 바꾸지 않는다."""
     return core.demote_wanted_place_identity(lines, category)
 
 
