@@ -127,6 +127,7 @@ export function buildBaseState(): StoreState {
     invites: {},
     eventLog: [],
     ...buildAgentState(mapId),
+    ...buildAdsState(),
     notifications: [
       { id: "ntf_1", type: "pin_reaction", map_id: mapId, map_title: "제주도 여행", pin_id: "pin_1", message: "지우님이 내 핀에 ♥를 남겼어요", created_at: "2026-10-14T09:00:00Z", read: false },
       { id: "ntf_2", type: "member_joined", map_id: mapId, map_title: "제주도 여행", message: "민수님이 지도에 들어왔어요", created_at: "2026-10-13T09:00:00Z", read: true },
@@ -307,5 +308,21 @@ export function buildAgentState(mapId: string): Pick<StoreState, "agentSettings"
       ],
     },
     runAdvice: {},
+  };
+}
+
+/**
+ * 추천 탭 광고 시드(docs/ads.md, #642). 제주 시드 지도 근처 카페 둘, 음식점 하나, 반경 밖 카페 하나.
+ * 문구와 사진은 없다(범위 밖). 장소 정보는 실서버처럼 자체 DB 행 모양이다.
+ */
+export function buildAdsState(): Pick<StoreState, "ads" | "adStats"> {
+  return {
+    ads: [
+      { ad_id: "ad_1", on_map: false, place: { place_id: "place_ad_cafe_1", name: "바다정원 카페", category: "카페", address: "제주시 탑동로 11", lat: 33.5146, lng: 126.5236, place_url: "https://place.map.kakao.com/100001" } },
+      { ad_id: "ad_2", on_map: false, place: { place_id: "place_ad_cafe_2", name: "돌담 로스터리", category: "카페", address: "제주시 관덕로 8", lat: 33.5124, lng: 126.5226, place_url: null } },
+      { ad_id: "ad_3", on_map: false, place: { place_id: "place_ad_food_1", name: "한라 국수", category: "음식점", address: "제주시 중앙로 25", lat: 33.5106, lng: 126.5274, place_url: "https://place.map.kakao.com/100003" } },
+      { ad_id: "ad_far", on_map: false, place: { place_id: "place_ad_far", name: "서귀포 끝 카페", category: "카페", address: "서귀포시 남원읍", lat: 33.2797, lng: 126.7183, place_url: null } },
+    ],
+    adStats: {},
   };
 }
