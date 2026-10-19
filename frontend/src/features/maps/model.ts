@@ -3,6 +3,7 @@ import type { components } from '@pingo/contracts/src/types/api'
 import { ApiError } from '@/api'
 
 export type MapDto = components['schemas']['Map']
+export type MapListDto = components['schemas']['MapList']
 export type MapCreateRequest = components['schemas']['MapCreateRequest']
 export type MemberDto = components['schemas']['Member']
 export type InviteDto = components['schemas']['Invite']
@@ -71,6 +72,18 @@ export function toMapView(map: MapDto): MapView {
     isOwner: map.my_role === 'owner',
     summary: `${formatTripDates(map.start_date, map.end_date)} · 구성원 ${map.member_count}명 · 핀 ${map.pin_count}개`,
   }
+}
+
+/** 내 지도 목록과 상한(#623). 상한은 서버가 내려 준 값만 쓴다. */
+export type MapListView = {
+  items: MapView[]
+  limit: number
+  /** 상한까지 찼다 — 「새 지도」를 막는다. */
+  full: boolean
+}
+
+export function toMapListView(list: MapListDto): MapListView {
+  return { items: list.items.map(toMapView), limit: list.limit, full: list.items.length >= list.limit }
 }
 
 /** 초대 수락 실패 문구. 코드와 문구는 docs/errors.md 표를 따른다. */

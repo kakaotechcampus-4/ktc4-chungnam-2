@@ -42,7 +42,7 @@ export default function MapSwitcher({ mapId, title }: { mapId: string; title?: s
           )}
           {/* Radix 는 이미 체크된 지금 지도를 눌러도 부른다 — 그대로 두면 탭이 마킹 탭으로 바뀌고 뒤로가기 기록이 쌓인다. */}
           <DropdownMenu.RadioGroup value={mapId} onValueChange={(id) => id !== mapId && navigate(`/maps/${id}`)}>
-            {maps.data?.map((map) => (
+            {maps.data?.items.map((map) => (
               <DropdownMenu.RadioItem key={map.id} value={map.id} className={ITEM}>
                 <span className="min-w-0 flex-1 truncate font-medium text-ink-900">{map.title}</span>
                 {map.region && <span className="shrink-0 rounded-md bg-ink-100 px-1.5 py-0.5 text-[0.6875rem] text-ink-500">{map.region}</span>}
