@@ -86,6 +86,9 @@ export function toMapListView(list: MapListDto): MapListView {
   return { items: list.items.map(toMapView), limit: list.limit, full: list.items.length >= list.limit }
 }
 
+/** 상한이라 「새 지도 만들기」를 막았을 때 곁에 두는 안내(지도 목록, PC 지도 바꾸기 메뉴). */
+export const MAP_LIMIT_HINT = '다른 지도를 나가거나 삭제하면 다시 만들 수 있어요'
+
 /** 초대 수락 실패 문구. 코드와 문구는 docs/errors.md 표를 따른다. */
 const INVITE_ERROR_MESSAGES: Record<string, string> = {
   INVITE_NOT_FOUND: '유효하지 않은 초대 링크예요',

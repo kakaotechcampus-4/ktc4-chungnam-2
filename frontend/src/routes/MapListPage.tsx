@@ -6,7 +6,7 @@ import ErrorText from '@/ErrorText'
 import { readPendingInvite } from '@/features/auth/pendingInvite'
 import { useMeQuery } from '@/features/auth/queries'
 import AccountSheet, { AccountMenu } from '@/features/maps/AccountSheet'
-import type { MapListView, MapView } from '@/features/maps/model'
+import { MAP_LIMIT_HINT, type MapListView, type MapView } from '@/features/maps/model'
 import { useMapsQuery } from '@/features/maps/queries'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
@@ -89,7 +89,7 @@ export default function MapListPage() {
           <div className="sticky bottom-6 mt-4">
             {full && (
               <p id={limitHintId} className="mb-2 rounded-xl border border-ink-200 bg-white px-3 py-2 text-center text-xs text-ink-600">
-                {LIMIT_HINT}
+                {MAP_LIMIT_HINT}
               </p>
             )}
             <NewMapLink className="w-full py-3.5" blockedBy={full ? limitHintId : undefined} />
@@ -108,8 +108,6 @@ export default function MapListPage() {
   )
 }
 
-const LIMIT_HINT = '다른 지도를 나가거나 삭제하면 다시 만들 수 있어요'
-
 /**
  * "지도 n / 상한". 받기 전에도 같은 높이의 자리를 잡아 둬서 값이 들어올 때 아래 목록이 밀리지 않게 한다(CLS).
  * 넓은 화면은 상한일 때 안내를 이 줄 끝에 붙인다 — 줄을 새로 늘리지 않으려고. 모바일 안내는 바닥 버튼 위에 있다.
@@ -121,7 +119,7 @@ function MapCount({ list, loading, hint }: { list?: MapListView; loading: boolea
         <>
           지도 <span aria-hidden="true">{list.items.length} / {list.limit}</span>
           <span className="sr-only">{list.limit}개 중 {list.items.length}개</span>
-          {hint && <> · <span id={hint.id}>{LIMIT_HINT}</span></>}
+          {hint && <> · <span id={hint.id}>{MAP_LIMIT_HINT}</span></>}
         </>
       ) : (
         loading && <span aria-hidden="true" className="inline-block h-5 w-20 animate-pulse rounded bg-ink-100 align-top" />
