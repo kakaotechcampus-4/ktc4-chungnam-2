@@ -26,6 +26,8 @@ export type AgentSettings = Schemas["AgentSettings"];
 export type AgentSuggestion = Schemas["AgentSuggestion"];
 export type AgentSummary = Schemas["AgentSummary"];
 export type RunAdvice = Schemas["RunAdvice"];
+/** 추천 탭 광고(docs/ads.md, #642). on_map은 응답 때 계산한다. */
+export type Ad = Schemas["Ad"];
 
 /** v2 계획 보조 에이전트 제안(docs/agent-v2.md). status와 열람자는 서버 내부 값이라 응답에 싣지 않는다. */
 export interface AgentSuggestionEntity {
@@ -68,6 +70,8 @@ export interface StoreState {
   agentSuggestions: Record<string, AgentSuggestionEntity>; // suggestionId -> 제안
   agentSummaries: Record<string, AgentSummary[]>; // mapId -> 카테고리별 우리 조건 요약
   runAdvice: Record<string, RunAdvice | null>; // runId -> 추천 막힘 조언. null이면 204
+  ads: Ad[]; // 진행 중인 광고(#642, 목 서버는 기간과 active를 따지지 않는다)
+  adStats: Record<string, { served: number; clicks: number }>; // ad_id -> 집계(확인용, 응답에 싣지 않는다)
   notifications: Schemas["Notification"][]; // 내 알림함(#470) — 목 서버는 단일 사용자라 나만 있다
   notificationPrefs: Record<string, boolean>; // 알림 종류 -> 켜짐. 없으면 켜짐
   feedback: { id: string; user_id: string; message: string; category: string; map_id?: string; created_at: string }[]; // #10
@@ -94,6 +98,8 @@ function emptyState(): StoreState {
     agentSuggestions: {},
     agentSummaries: {},
     runAdvice: {},
+    ads: [],
+    adStats: {},
     notifications: [],
     notificationPrefs: {},
     feedback: [],

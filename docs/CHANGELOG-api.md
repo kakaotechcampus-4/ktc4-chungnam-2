@@ -2,6 +2,18 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-19 (네 번째), 추천 탭 광고 (#642)
+
+스펙이 먼저다. 명세는 `docs/ads.md`. 구현은 이슈별로 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다.
+
+- **`GET /maps/{mapId}/ads?category&lat&lng`** — 추천 탭 하단 광고 최대 2개(`AdList`). 구성원 누구나. 응답에 실린 광고마다 노출 수를 올리므로 미리 불러오지 않는다(탭을 열 때와 카테고리를 바꿀 때만). category가 없으면 추천 대상 전체.
+- **`POST /ads/{adId}/clicks {map_id}`** — 클릭 기록(204). 실패해도 사용자에게 알리지 않는다.
+- **스키마**: `AdList`, `Ad`(ad_id, place, on_map), `AdPlace`(place_id, name, category, address, lat, lng, place_url), `AdClickRequest`.
+- 광고는 추천 후보와 순위에 들어가지 않고, 반응과 실격 필터를 거치지 않는다. 광고 칸에는 이유, 충족 체크, 구성원 충족 집계를 붙이지 않는다.
+- **지도에 올리기**: 새 경로 없이 `POST /maps/{mapId}/pins`(source: search)에 `place`의 place_id, name, lat, lng, category를 그대로 보낸다(#473과 같은 경로). 광고 흔적은 핀에 남지 않는다.
+- 권한: 새 액션 없음(구성원 확인만). 에러 코드: 새 코드 없음(422 VALIDATION_ERROR, 404 NOT_FOUND). SSE 이벤트 없음.
+- **FE 할 일:** 추천 탭 하단 광고 영역(광고 배지, 「카카오맵에서 보기」, 「지도에 올리기」, on_map이면 「이미 지도에 있어요」), 탭 열 때 한 번 조회, 새 추천 결과와 겹치면 그 칸 숨김, 클릭 기록. 광고가 0개면 영역을 그리지 않는다.
+
 ## 2026-10-19 (세 번째), 지도 목록 응답에 상한을 함께 (#623) — 호환이 깨짐
 
 - **`GET /maps` 응답이 `Map[]`에서 `MapList {items: Map[], limit}`으로 바뀐다.** 계약, 백엔드, FE를 한 PR(#623)에서 같이 바꾼다.

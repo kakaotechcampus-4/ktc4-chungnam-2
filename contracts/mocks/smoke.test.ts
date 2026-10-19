@@ -1113,3 +1113,44 @@ describe("#623 지도 목록에 상한을 함께", () => {
     expect(body.limit).toBe(MAP_LIMIT);
   });
 });
+
+describe("#642 추천 탭 광고 — 목 서버 계약", () => {
+  const JEJU = "lat=33.4996&lng=126.5312";
+
+  it("카테고리와 반경으로 최대 2개를 고르고, 응답에 실린 광고만 노출 수가 오른다", async () => {
+    const res = await fetch(`${BASE}/maps/map_1/ads?category=카페&${JEJU}`);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    const { ads } = await res.json();
+    expect(ads.map((a: { ad_id: string }) => a.ad_id)).toEqual(["ad_1", "ad_2"]); // 반경 밖 ad_far, 음식점 ad_3은 빠짐
+    expect(ads[0].place).toMatchObject({ place_id: "place_ad_cafe_1", category: "카페", lat: 33.5146 });
+    expect(ads[0].memo).toBeUndefined();
+    expect(store.adStats["ad_1"].served).toBe(1);
+    expect(store.adStats["ad_3"]).toBeUndefined();
+  });
+
+  it("카테고리가 없으면 추천 대상 전체에서 고른다", async () => {
+    const { ads } = await (await fetch(`${BASE}/maps/map_1/ads?${JEJU}`)).json();
+    expect(ads.length).toBe(2);
+  });
+
+  it("추천 대상이 아닌 카테고리나 좌표가 없으면 422, 비구성원 지도면 404", async () => {
+    expect((await fetch(`${BASE}/maps/map_1/ads?category=숙소&${JEJU}`)).status).toBe(422);
+    expect((await fetch(`${BASE}/maps/map_1/ads?category=카페`)).status).toBe(422);
+    expect((await fetch(`${BASE}/maps/no_such_map/ads?${JEJU}`)).status).toBe(404);
+  });
+
+  it("같은 장소의 핀이 이미 있으면 on_map=true", async () => {
+    const pin = Object.values(store.pins).find((p) => p.map_id === "map_1")!;
+    pin.place_name = "바다정원 카페";
+    const { ads } = await (await fetch(`${BASE}/maps/map_1/ads?category=카페&${JEJU}`)).json();
+    expect(ads.find((a: { ad_id: string }) => a.ad_id === "ad_1").on_map).toBe(true);
+  });
+
+  it("클릭 기록은 204, 없는 광고는 404, map_id가 없으면 422", async () => {
+    const ok = await fetch(`${BASE}/ads/ad_1/clicks`, { method: "POST", body: JSON.stringify({ map_id: "map_1" }) });
+    expect(ok.status).toBe(204);
+    expect(store.adStats["ad_1"].clicks).toBe(1);
+    expect((await fetch(`${BASE}/ads/nope/clicks`, { method: "POST", body: JSON.stringify({ map_id: "map_1" }) })).status).toBe(404);
+    expect((await fetch(`${BASE}/ads/ad_1/clicks`, { method: "POST", body: JSON.stringify({}) })).status).toBe(422);
+  });
+});

@@ -2555,6 +2555,119 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/{mapId}/ads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 추천 탭 하단 광고 — 구성원 누구나(새 권한 액션 없음). 화면 중심에서 반경 안의 진행 중인 광고를 최대 2개 고른다(코드, 모델 없음).
+         *     요청자의 이 지도 최신 추천 결과에 있는 장소는 뺀다. 광고는 반응과 실격 필터를 거치지 않고, 추천 후보와 순위에 들어가지 않는다(docs/ads.md 2절).
+         *     **응답에 실린 광고마다 노출(served_count)을 1 올린다.** 그래서 미리 불러오기를 하지 않고, 탭을 열 때와 카테고리를 바꿀 때만 부른다.
+         *     카테고리가 없으면 추천 대상 카테고리 전체에서 고른다. 광고 장소를 지도에 올릴 때는 place의 place_id, name, lat, lng, category를 그대로 `POST /maps/{mapId}/pins`(source: search)로 보낸다
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description 추천 대상 카테고리 중 하나. 없으면 전체 */
+                    category?: components["schemas"]["RecommendCategory"];
+                    /** @description 탭을 연 순간의 지도 화면 중심 */
+                    lat: number;
+                    lng: number;
+                };
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 광고가 없으면 ads는 빈 배열이고 화면은 광고 영역을 그리지 않는다. 응답은 캐시하지 않는다(Cache-Control no-store) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AdList"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                /** @description category가 추천 대상이 아니거나 lat, lng가 범위 밖(VALIDATION_ERROR) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ads/{adId}/clicks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 광고 클릭 기록 — 그 지도의 구성원(새 권한 액션 없음). 광고 칸에서 「카카오맵에서 보기」나 「지도에 올리기」를 누르면 보낸다.
+         *     본문의 map_id는 권한 확인에만 쓰고 저장하지 않는다(집계는 광고별 날짜별 수만). 기간이 끝났거나 내린 광고도 행이 있으면 센다.
+         *     실패해도 화면은 사용자에게 알리지 않는다
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    adId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AdClickRequest"];
+                };
+            };
+            responses: {
+                /** @description 기록함 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+                /** @description 본문 형식 오류(VALIDATION_ERROR) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/agent": {
         parameters: {
             query?: never;
@@ -3519,6 +3632,32 @@ export interface components {
                 distance_m: number;
                 approx_minutes: number;
             }[];
+        };
+        /** @description 광고 장소. 자체 DB(places) 행에서만 읽는다(#53). 「지도에 올리기」 매칭 힌트로 place_id, name, lat, lng, category를 그대로 쓴다 */
+        AdPlace: {
+            /** @description 자체 DB 장소 id. POST /maps/{mapId}/pins의 place_id 힌트로 그대로 보낸다(#473과 같은 경로) */
+            place_id: string;
+            name: string;
+            category: components["schemas"]["RecommendCategory"];
+            address?: string | null;
+            lat: number;
+            lng: number;
+            /** @description places에 기록된 카카오 장소 링크. 있으면 「카카오맵에서 보기」를 새 창으로 연다(앱 안 WebView 금지). 없으면 그 버튼을 숨긴다 */
+            place_url?: string | null;
+        };
+        /** @description 광고 칸 하나. 이유, 조건별 충족 체크, 구성원 충족 집계는 없다(광고는 필터를 거치지 않는다, docs/ads.md 2절 4번). 계약 메모와 집계 값은 내보내지 않는다 */
+        Ad: {
+            ad_id: string;
+            place: components["schemas"]["AdPlace"];
+            /** @description 이 지도에 같은 장소의 핀이 이미 있다(같은 place_id의 db 핀, 또는 같은 카카오 장소 ID의 실시간 핀). true면 「지도에 올리기」 대신 비활성 「이미 지도에 있어요」 */
+            on_map: boolean;
+        };
+        AdList: {
+            ads: components["schemas"]["Ad"][];
+        };
+        AdClickRequest: {
+            /** @description 권한 확인용. 저장하지 않는다 */
+            map_id: string;
         };
         /**
          * @description 제안 종류. stall=반대 후 정체, split=의견 갈림, no_reaction=아직 확인되지 않은 핀, category_gap=확정 리스트에 빠진 카테고리 (docs/agent-v2.md 6절)
