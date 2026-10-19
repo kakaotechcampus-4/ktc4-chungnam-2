@@ -7,6 +7,7 @@ import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
+import SheetTitle from '@/ui/SheetTitle'
 
 import { useAiStore } from './aiStore'
 import {
@@ -22,11 +23,7 @@ import {
 import { useExecuteRunMutation, usePublishMutation, useRetryMutation, useWidenMutation } from './queries'
 import { AiHeader } from './Readiness'
 
-const TONE = {
-  pass: 'bg-[var(--good-bg)] text-[var(--good-text)]',
-  check: 'bg-[var(--warn-bg)] text-[var(--warn-text)]',
-  fail: 'bg-[var(--bad-bg)] text-[var(--bad-text)]',
-} as const
+const TONE = { pass: 'tag-good', check: 'tag-warn', fail: 'tag-bad' } as const
 const MARK = { pass: '✓', check: '?', fail: '✗' } as const
 
 const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이버지도', google: '구글맵', permit: '인허가 공공데이터', tourapi: '한국관광공사' }
@@ -86,7 +83,7 @@ export function ResultsBody({
   const removed = result.funnel.reduce((sum, f) => sum + f.removed_count, 0)
   return (
     <div className="space-y-3">
-      <button type="button" onClick={onHow} className="flex w-full justify-between rounded-lg bg-ink-50 px-3 py-2 text-xs text-ink-700">
+      <button type="button" onClick={onHow} className="flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
         <span>
           조건으로 {removed}곳 걸러냄 → 추천 {result.candidates.length}곳
         </span>
@@ -107,13 +104,13 @@ export function ResultsBody({
 
 function CandidateCard({ mapId, run, c, members, onOpen }: { mapId: string; run: RecommendRunDto; c: CandidateDto; members: MemberView[]; onOpen: () => void }) {
   return (
-    <article className="space-y-2 rounded-2xl border-[1.5px] border-brand-300 bg-brand-50 p-3.5">
+    <article className="space-y-2 rounded-xl border-[1.5px] border-brand-300 bg-brand-50 p-3.5">
       <header className="flex items-center gap-2">
         <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-[var(--bad-line)] text-xs font-bold text-[var(--bad-line)]">
           {c.rank}
         </span>
-        <h3 className="min-w-0 flex-1 truncate text-lg font-bold text-ink-900">{c.place_name}</h3>
-        {c.region_label && <span className="shrink-0 rounded-md border border-brand-300 bg-white px-1.5 text-[0.6875rem] text-brand-700">{c.region_label} 기준</span>}
+        <h3 className="min-w-0 flex-1 truncate text-title font-bold text-ink-900">{c.place_name}</h3>
+        {c.region_label && <span className="tag border border-brand-300 bg-white text-brand-700">{c.region_label} 기준</span>}
       </header>
       <p className="text-xs text-ink-500">{run.category}</p>
       <Reason text={c.reason} />
@@ -124,7 +121,7 @@ function CandidateCard({ mapId, run, c, members, onOpen }: { mapId: string; run:
       </p>
       <div className="flex items-center justify-between">
         <PublishButton mapId={mapId} run={run} c={c} />
-        <button type="button" onClick={onOpen} className="text-xs text-ink-500">
+        <button type="button" onClick={onOpen} className="btn-text text-xs">
           자세히 ›
         </button>
       </div>
@@ -135,7 +132,7 @@ function CandidateCard({ mapId, run, c, members, onOpen }: { mapId: string; run:
 
 function Reason({ text }: { text: string }) {
   return (
-    <p className="flex gap-2 rounded-lg border border-brand-300 bg-white p-2.5 text-[0.8125rem] text-ink-900">
+    <p className="flex gap-2 rounded-xl border border-brand-300 bg-white p-2.5 text-body text-ink-900">
       <MessageSquare size={14} className="mt-0.5 shrink-0 text-ink-500" aria-hidden="true" />
       {text}
     </p>
@@ -146,7 +143,7 @@ function Checks({ c }: { c: CandidateDto }) {
   return (
     <ul className="flex flex-wrap gap-1.5">
       {toChecks(c).map((k) => (
-        <li key={k.label} className={`rounded-md px-2 py-0.5 text-xs font-semibold ${TONE[k.tone]}`}>
+        <li key={k.label} className={`tag ${TONE[k.tone]}`}>
           {MARK[k.tone]} {k.label}
           {k.tone === 'check' && ' (확인 필요)'}
         </li>
@@ -159,7 +156,7 @@ function Checks({ c }: { c: CandidateDto }) {
 function PublishButton({ mapId, run, c, filled = false }: { mapId: string; run: RecommendRunDto; c: CandidateDto; filled?: boolean }) {
   const publish = usePublishMutation(mapId, run)
   if (c.visibility === 'published') {
-    return <span className="rounded-lg bg-[var(--good-bg)] px-3 py-1.5 text-xs font-bold text-[var(--good-text)]">✓ 지도에 올렸어요 · 모두에게 보여요</span>
+    return <span className="tag tag-good">✓ 지도에 올렸어요 · 모두에게 보여요</span>
   }
   if (!c.permissions.can_publish) return null
   return (
@@ -177,9 +174,7 @@ function PublishButton({ mapId, run, c, filled = false }: { mapId: string; run: 
         })
       }
       className={
-        filled
-          ? 'btn-primary w-full py-3.5'
-          : 'btn-outline rounded-md px-3 py-1.5 text-sm'
+        filled ? 'btn-primary btn-lg w-full' : 'btn-outline btn-sm'
       }
     >
       {publish.isPending ? '올리는 중…' : '지도에 올리기'}
@@ -205,13 +200,13 @@ export function CandidateDetail({
 }) {
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between text-[0.8125rem]">
-        <PanelBackLink label={`추천 결과 ${count}곳`} onBack={onBack} className="hit-44" />
+      <div className="flex items-start justify-between text-body">
+        <PanelBackLink label={`추천 결과 ${count}곳`} onBack={onBack} />
         <span className="ml-auto text-ink-500">{c.visibility === 'published' ? '모두에게 보여요' : '나에게만 보여요'}</span>
       </div>
       <div>
-        <h3 className="text-[1.375rem] font-bold text-ink-900">{c.place_name}</h3>
-        <p className="text-[0.8125rem] text-ink-600">
+        <SheetTitle as="h3">{c.place_name}</SheetTitle>
+        <p className="text-body text-ink-600">
           {run.category}
           {c.region_label && ` · ${c.region_label} 기준`} · {c.rank}순위
         </p>
@@ -219,7 +214,7 @@ export function CandidateDetail({
       <Reason text={c.reason} />
       <section>
         <h4 className="mb-1 text-sm font-bold text-ink-900">조건별 충족</h4>
-        <ul className="space-y-0.5 text-[0.8125rem]">
+        <ul className="space-y-0.5 text-body">
           {toChecks(c).map((k) => (
             <li key={k.label} className={k.tone === 'pass' ? 'text-[var(--good-text)]' : k.tone === 'check' ? 'text-[var(--warn-text)]' : 'text-[var(--bad-text)]'}>
               {MARK[k.tone]} {k.label}
@@ -232,9 +227,9 @@ export function CandidateDetail({
         <h4 className="text-sm font-bold text-ink-900">
           구성원 충족 {c.member_fulfillment.total}명 중 {c.member_fulfillment.satisfied}명
         </h4>
-        <p className="text-[0.8125rem] text-ink-600">{fulfillmentLine(c, members)}</p>
+        <p className="text-body text-ink-600">{fulfillmentLine(c, members)}</p>
       </section>
-      <p className="text-[0.6875rem] text-ink-500">
+      <p className="text-label text-ink-500">
         출처 · {PROVIDER[c.place_source?.provider ?? ''] ?? '확인 안 됨'}
         {c.place_source?.url && (
           <>
@@ -254,11 +249,11 @@ export function CandidateDetail({
 export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; count: number; onBack: () => void }) {
   return (
     <div className="space-y-3">
-      <PanelBackLink label={`추천 결과 ${count}곳`} onBack={onBack} className="hit-44" />
-      <h3 className="text-xl font-bold text-ink-900">이렇게 {count}곳을 골랐어요</h3>
+      <PanelBackLink label={`추천 결과 ${count}곳`} onBack={onBack} />
+      <SheetTitle as="h3">이렇게 {count}곳을 골랐어요</SheetTitle>
       <FunnelTable funnel={funnel} left={count} />
-      <section className="text-[0.8125rem] text-ink-600">
-        <h4 className="mb-1 font-bold text-ink-900">순위는 이렇게 정했어요</h4>
+      <section className="text-body text-ink-600">
+        <h4 className="mb-1 text-sm font-bold text-ink-900">순위는 이렇게 정했어요</h4>
         <ul className="list-inside list-disc space-y-0.5">
           <li>가능하면 맞춰 달라는 조건에 맞는 개수로 점수를 매겼어요</li>
           <li>지역마다 1위를 먼저 뽑고 남은 자리를 채웠어요</li>
@@ -271,7 +266,7 @@ export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; coun
 
 function FunnelTable({ funnel, left }: { funnel: FunnelRow[]; left: number }) {
   return (
-    <table className="w-full rounded-xl bg-brand-50 text-[0.8125rem]">
+    <table className="w-full rounded-xl bg-brand-50 text-body">
       <tbody>
         {funnel.map((f) => (
           <tr key={f.label} className="border-b border-brand-100">
@@ -302,14 +297,14 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
     <div className="space-y-3">
       <FunnelTable funnel={funnel} left={0} />
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={() => setAsking(true)} disabled={widen.isPending} className="btn-primary py-3">
+        <button type="button" onClick={() => setAsking(true)} disabled={widen.isPending} className="btn-primary btn-lg">
           반경 넓히기
         </button>
-        <button type="button" onClick={onFixEvidence} className="btn-outline py-3">
+        <button type="button" onClick={onFixEvidence} className="btn-outline btn-lg">
           근거 고치기
         </button>
       </div>
-      <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="text-sm font-semibold text-brand-600">
+      <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-link text-sm">
         직접 찍기 — 검색창에서 찾아보기
       </button>
 
@@ -359,7 +354,7 @@ export function Failed({ mapId, run }: { mapId: string; run: RecommendRunDto }) 
         disabled={execute.isPending}
         // 다시 '진행 중'으로 간다. 또 실패하면 이 화면으로, 다른 오류는 토스트로(요청 훅, #349).
         onClick={() => execute.mutate(run)}
-        className="btn-outline w-full py-3"
+        className="btn-outline btn-lg w-full"
       >
         {execute.isPending ? '다시 찾는 중…' : '다시 시도'}
       </button>
@@ -377,10 +372,10 @@ export function RetryLimit({ onBack }: { onBack: () => void }) {
         <li>검색창에서 직접 찾아 찍을 수도 있어요</li>
       </ul>
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={onBack} className="btn-outline py-3">
+        <button type="button" onClick={onBack} className="btn-outline btn-lg">
           후보 다시 보기
         </button>
-        <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-outline py-3">
+        <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-outline btn-lg">
           직접 찍기
         </button>
       </div>

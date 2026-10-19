@@ -8,6 +8,7 @@ import { useMeQuery } from '@/features/auth/queries'
 import MenuPopover from '@/features/shell/MenuPopover'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
+import Avatar from '@/ui/Avatar'
 
 import type { MapView } from './model'
 import { useCreateInviteMutation } from './queries'
@@ -28,7 +29,7 @@ export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClo
 }
 
 /** 넓은 화면의 계정 메뉴 — 화면 바닥 시트 대신 계정 버튼 바로 아래에 붙는다. */
-export function AccountMenu({ maps, initial }: { maps: MapView[]; initial?: string }) {
+export function AccountMenu({ maps, name }: { maps: MapView[]; name?: string }) {
   const [confirm, setConfirm] = useState<Confirm>(null)
   return (
     <MenuPopover
@@ -39,9 +40,9 @@ export function AccountMenu({ maps, initial }: { maps: MapView[]; initial?: stri
         <button
           type="button"
           aria-label="계정"
-          className="hit-44 flex size-9 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-white outline-offset-2 focus-visible:outline-2 focus-visible:outline-[var(--line-focus)]"
+          className="hit-44 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-[var(--line-focus)]"
         >
-          {initial}
+          <Avatar name={name} />
         </button>
       }
     >
@@ -80,30 +81,28 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
   return (
     <>
       <div className="mb-5 flex items-center gap-3">
-        <span className="flex size-11 items-center justify-center rounded-full bg-brand-600 text-lg font-bold text-white">
-          {me?.display_name?.slice(0, 1)}
-        </span>
+        <Avatar name={me?.display_name} size={44} />
         <div>
-          <p className="text-lg font-bold text-ink-900">{me?.display_name}</p>
+          <p className="text-xl font-bold text-ink-900">{me?.display_name}</p>
           <p className="text-xs text-ink-500">카카오로 로그인됨 · 지도 {maps.length}개</p>
         </div>
       </div>
 
       {maps.length > 0 && (
         <>
-          <h2 className="font-semibold text-ink-900">지도 초대 링크</h2>
+          <h2 className="text-sm font-bold text-ink-900">지도 초대 링크</h2>
           <p className="mb-2 text-xs text-ink-500">지도마다 링크가 따로 있어요. 복사해서 단톡방에 보내 주세요</p>
           <ul className="space-y-2">
             {maps.map((map) => (
-              <li key={map.id} className="flex items-center justify-between gap-2 rounded-lg bg-ink-50 px-3 py-2.5">
+              <li key={map.id} className="flex items-center justify-between gap-2 rounded-xl bg-ink-50 px-3 py-2.5">
                 <span className="truncate text-sm text-ink-900">{map.title}</span>
                 <button
                   type="button"
                   onClick={() => copyLink(map)}
                   disabled={invite.isPending && invite.variables === map.id}
-                  className="btn-outline hit-44 flex shrink-0 items-center gap-1 rounded-md px-2.5 py-1 text-xs"
+                  className="btn-outline btn-sm"
                 >
-                  {copiedId === map.id ? '✓ 복사됨' : <><Share size={12} aria-hidden="true" /> 링크 복사</>}
+                  {copiedId === map.id ? '✓ 복사됨' : <><Share size={14} aria-hidden="true" /> 링크 복사</>}
                 </button>
               </li>
             ))}
@@ -115,11 +114,11 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
       <button
         type="button"
         onClick={() => onConfirm('logout')}
-        className="mt-5 w-full rounded-xl border border-ink-300 py-3 font-semibold text-ink-900"
+        className="btn-neutral btn-md mt-5 w-full"
       >
         로그아웃
       </button>
-      <button type="button" onClick={() => onConfirm('withdraw')} className="hit-44 mt-2 w-full text-center text-xs text-ink-500 underline">
+      <button type="button" onClick={() => onConfirm('withdraw')} className="btn-text mt-2 w-full text-center text-xs underline">
         회원 탈퇴
       </button>
     </>

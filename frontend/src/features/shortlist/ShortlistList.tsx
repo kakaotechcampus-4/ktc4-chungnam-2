@@ -40,7 +40,7 @@ export default function ShortlistList({
             <button
               type="button"
               aria-label={`${item.pin.place_name} 순서 바꾸기 (위·아래 화살표)`}
-              className="cursor-grab touch-none p-1 text-ink-400"
+              className="-my-2 -mr-2 flex size-11 shrink-0 cursor-grab touch-none items-center justify-center text-ink-400"
               onPointerDown={(e) => {
                 startY.current = e.clientY
                 setDrag({ index: i, dy: 0 })
@@ -57,7 +57,7 @@ export default function ShortlistList({
                 if (e.key === 'ArrowDown' && i < items.length - 1) onReorder(i, i + 1)
               }}
             >
-              <GripVertical size={18} />
+              <GripVertical size={20} aria-hidden="true" />
             </button>
           }
         />
@@ -107,7 +107,7 @@ function SwipeRow({
           x === 0 && !swiping ? 'invisible' : ''
         }`}
       >
-        <Trash2 size={18} aria-hidden="true" /> 빼기
+        <Trash2 size={20} aria-hidden="true" /> 빼기
       </button>
       {/* 줄 자체도 둥글게 — 네모 테두리를 둥근 li 가 잘라 모서리 테두리가 끊겨 보였다. */}
       <div
@@ -153,7 +153,7 @@ function SwipeRow({
           </p>
         </div>
         {item.permissions.can_remove_from_shortlist && (
-          <button type="button" onClick={onRemove} className="shrink-0 text-xs text-ink-500">
+          <button type="button" onClick={onRemove} className="btn-text shrink-0 text-xs">
             확정 해제
           </button>
         )}

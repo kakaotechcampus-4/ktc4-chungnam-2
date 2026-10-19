@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { ExternalLink, X } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
@@ -11,6 +11,8 @@ import { useAddToShortlistMutation } from '@/features/shortlist/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import AgainstMark from '@/ui/AgainstMark'
 import { josa } from '@/ui/josa'
+import SheetTitle from '@/ui/SheetTitle'
+import TextField from '@/ui/TextField'
 
 import { isLive, locationState, useLivePlaceStore } from './livePlaces'
 import { asReactionType, participants, toOpinions, type OpinionView, type Pin, type ReactionDto, type ReactionType, type ReasonChip } from './model'
@@ -51,9 +53,9 @@ export function PinDetailHeader({
     <div>
       <PanelBackLink label={backLabel} onBack={onBack} />
       <div className="flex items-center justify-between gap-2">
-        <h2 className="truncate text-[1.375rem] font-bold text-ink-900">{pin.place_name ?? '이름 없는 장소'}</h2>
+        <SheetTitle>{pin.place_name ?? '이름 없는 장소'}</SheetTitle>
         {confirmed ? (
-          <span className="shrink-0 rounded-md border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)]">
+          <span className="btn-confirm btn-sm">
             ✓ 확정됨
           </span>
         ) : (
@@ -71,7 +73,7 @@ export function PinDetailHeader({
                   onError: () => showToast('확정 리스트에 넣지 못했어요'),
                 })
               }
-              className="shrink-0 rounded-md border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] px-2.5 py-1.5 text-xs font-bold text-[var(--pin-confirmed-mark)] disabled:opacity-50"
+              className="btn-confirm btn-sm"
             >
               ★ 확정 리스트에 넣기
             </button>
@@ -90,7 +92,7 @@ function LiveInfo({ pin }: { pin: Pin }) {
   const places = useLivePlaceStore((s) => s.places)
   const state = locationState(pin, places)
   return (
-    <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-[0.8125rem]">
+    <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-body">
       <p className="font-semibold text-ink-900">장소 정보가 없는 핀이에요</p>
       <p className="text-ink-600">우리 장소 데이터에 없는 곳이라 조건 확인·AI 추천·동선에는 쓰이지 않아요. 의견은 그대로 남길 수 있어요.</p>
       {pin.memo && <p className="text-ink-900">“{pin.memo}”</p>}
@@ -123,12 +125,12 @@ export function PinDetailBody({
   return (
     <div className="space-y-4">
       <div className="space-y-1">
-        <p className="flex flex-wrap items-center gap-x-1 text-[0.8125rem] text-ink-600">
+        <p className="flex flex-wrap items-center gap-x-1 text-body text-ink-600">
           {pin.category}
           <span className="text-ink-500">· {pin.created_by === myId ? '내가 찍은 핀' : `${pin.created_by_display_name ?? '탈퇴한 구성원'}님이 찍은 핀`}</span>
           {/* 사진·주소·전화는 핀 응답에 없다(카카오 응답 저장 금지, #53) — 자세한 정보는 카카오맵 새 창으로. */}
           {pin.place_url && (
-            <a href={pin.place_url} target="_blank" rel="noopener noreferrer" className="hit-44 ml-auto inline-flex items-center gap-0.5 font-bold text-brand-600">
+            <a href={pin.place_url} target="_blank" rel="noopener noreferrer" className="btn-link ml-auto">
               카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
             </a>
           )}
@@ -140,7 +142,7 @@ export function PinDetailBody({
             {participants(pin)}/{memberCount}명이 의견을 남겼어요
           </p>
         )}
-        <div className="flex flex-wrap items-center gap-3 border-y border-ink-200 py-2 text-[0.8125rem]">
+        <div className="flex flex-wrap items-center gap-3 border-y border-ink-200 py-2 text-body">
           {TYPES.map((t) => (
             <span
               key={t}
@@ -188,7 +190,7 @@ function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
   const name = pin.place_name ?? '이 핀'
   return (
     <div className="border-t border-ink-200 pt-3 text-center">
-      <button type="button" onClick={() => setAsking(true)} className="hit-44 text-[0.8125rem] font-medium text-ink-500 underline">
+      <button type="button" onClick={() => setAsking(true)} className="btn-text text-body underline">
         핀 삭제
       </button>
       {asking && (
@@ -225,7 +227,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
     <section className="space-y-2.5">
       {split.length > 0 && (
         <>
-          <h3 className="text-[0.9375rem] font-bold text-ink-900">갈린 의견 {split.length}</h3>
+          <h3 className="text-sm font-bold text-ink-900">갈린 의견 {split.length}</h3>
           <ul className="divide-y divide-ink-200 overflow-hidden rounded-xl bg-ink-50">
             {split.map((o) => (
               <OpinionRow key={o.userId} o={o} name={nameOf(o)} />
@@ -235,12 +237,12 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
       )}
       {likes.length > 0 && (
         <div>
-          <div className="flex items-center justify-between text-[0.8125rem]">
+          <div className="flex items-center justify-between text-body">
             <p className="font-medium text-ink-900">
               <span style={{ color: R.like.line }}>♥</span> {likes.map(nameOf).join(' · ')} 좋아해요
             </p>
             {likes.some((l) => l.chips.length || l.text) && (
-              <button type="button" onClick={() => setShowLikes((v) => !v)} className="hit-44 text-xs font-medium text-ink-500">
+              <button type="button" onClick={() => setShowLikes((v) => !v)} className="btn-text text-xs">
                 {showLikes ? '접기 ▴' : '펼치기 ▾'}
               </button>
             )}
@@ -255,7 +257,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
         </div>
       )}
       {unknown.some((m) => !m.isMe) && (
-        <p className="text-[0.8125rem] text-ink-500">
+        <p className="text-body text-ink-500">
           ? 아직 안 남겼어요 · {unknown.filter((m) => !m.isMe).map((m) => m.name).join(' · ')}
         </p>
       )}
@@ -266,14 +268,14 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
 function OpinionRow({ o, name }: { o: OpinionView; name: string }) {
   return (
     <li className="space-y-1 px-3 py-2.5">
-      <p className="flex flex-wrap items-center gap-1.5 text-[0.8125rem]">
-        <span className="rounded-lg px-1.5 py-px text-xs font-bold" style={{ background: R[o.type].bg, color: R[o.type].text }}>
+      <p className="flex flex-wrap items-center gap-1.5 text-body">
+        <span className="tag" style={{ background: R[o.type].bg, color: R[o.type].text }}>
           {R[o.type].mark} {R[o.type].label}
         </span>
         <span className="font-medium text-ink-900">{name}</span>
         {o.chips.length > 0 && <span className="font-bold text-ink-900">· {o.chips.join(' · ')}</span>}
       </p>
-      {o.text && <p className="text-[0.8125rem] text-ink-600">“{o.text}”</p>}
+      {o.text && <p className="text-body text-ink-600">“{o.text}”</p>}
     </li>
   )
 }
@@ -340,9 +342,9 @@ function MyOpinion({
   return (
     <section className="space-y-2.5">
       <div className="flex items-center justify-between">
-        <h3 className="text-[0.9375rem] font-bold text-ink-900">내 의견 선택</h3>
+        <h3 className="text-sm font-bold text-ink-900">내 의견 선택</h3>
         {saved && (
-          <button type="button" onClick={cancel} disabled={react.isPending} className="hit-44 text-[0.8125rem] font-medium text-ink-500 underline">
+          <button type="button" onClick={cancel} disabled={react.isPending} className="btn-text text-body underline">
             의견 취소
           </button>
         )}
@@ -358,7 +360,7 @@ function MyOpinion({
               aria-checked={on}
               onClick={() => setType(t)}
               className="flex flex-col items-center gap-0.5 rounded-xl border py-2"
-              style={on ? { background: R[t].bg, borderColor: R[t].line } : { background: '#fff', borderColor: 'var(--ink-200)' }}
+              style={on ? { background: R[t].bg, borderColor: R[t].line } : { background: 'var(--surface-card)', borderColor: 'var(--ink-200)' }}
             >
               <span style={{ color: R[t].line }}>{R[t].mark}</span>
               <span className="text-xs font-bold" style={{ color: on ? R[t].text : 'var(--ink-600)' }}>
@@ -371,9 +373,9 @@ function MyOpinion({
 
       {type && (
         <div className="space-y-2">
-          <p className="text-[0.8125rem] font-bold text-ink-900">{PROMPT[type].title}</p>
+          <p className="text-body font-bold text-ink-900">{PROMPT[type].title}</p>
           {type === 'against' && chipOptions.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-2">
               {chipOptions.map((chip) => {
                 const on = chips.includes(chip.id)
                 return (
@@ -382,9 +384,7 @@ function MyOpinion({
                     type="button"
                     aria-pressed={on}
                     onClick={() => setChips((cs) => (on ? cs.filter((c) => c !== chip.id) : [...cs, chip.id]))}
-                    className={`rounded-full border px-3 py-1.5 text-[0.8125rem] ${
-                      on ? 'border-[var(--bad-line)] bg-[var(--bad-bg)] font-bold text-[var(--bad-text)]' : 'border-ink-300 bg-white font-medium text-ink-700'
-                    }`}
+                    className="chip chip-against"
                   >
                     {chip.label}
                   </button>
@@ -393,25 +393,15 @@ function MyOpinion({
             </div>
           )}
           {type === 'against' && chipsError && <ErrorText message="사유 칩을 불러오지 못했어요 — 글로 적어 주세요" error={chipsError} />}
-          <div className="flex items-center gap-2 rounded-xl border-[1.5px] border-ink-300 bg-white py-3 pl-3.5 pr-3 focus-within:border-[var(--line-focus)]">
-            <input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              maxLength={TEXT_MAX}
-              placeholder={PROMPT[type].placeholder}
-              aria-label={PROMPT[type].title}
-              className="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none"
-            />
-            {text && (
-              <button type="button" aria-label="사유 지우기" onClick={() => setText('')} className="hit-44 flex size-[18px] items-center justify-center rounded-full bg-ink-300 text-white">
-                <X size={10} />
-              </button>
-            )}
-            <span className="text-[0.6875rem] text-ink-500">
-              {text.length}/{TEXT_MAX}
-            </span>
-          </div>
-          {type === 'against' && <p className="text-[0.6875rem] text-ink-500">자세히 적을수록 더 정확한 추천을 받을 수 있어요</p>}
+          <TextField
+            value={text}
+            onChange={setText}
+            maxLength={TEXT_MAX}
+            placeholder={PROMPT[type].placeholder}
+            label={PROMPT[type].title}
+            clearLabel="사유 지우기"
+          />
+          {type === 'against' && <p className="text-label text-ink-500">자세히 적을수록 더 정확한 추천을 받을 수 있어요</p>}
         </div>
       )}
 
@@ -419,7 +409,7 @@ function MyOpinion({
         type="button"
         onClick={submit}
         disabled={!type || missingReason || react.isPending}
-        className="btn-primary w-full py-2.5 text-sm"
+        className="btn-primary btn-md w-full"
       >
         {react.isPending ? '등록하는 중…' : '의견 등록'}
       </button>
