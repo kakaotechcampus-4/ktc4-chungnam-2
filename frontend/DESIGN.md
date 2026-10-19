@@ -277,6 +277,7 @@ components:
 | 버튼 | `btn-{primary·outline·neutral·confirm·danger·danger-outline}` + `btn-{lg·md·sm}` | `index.css` |
 | 글자 버튼·링크 | `btn-text` · `btn-link` | `index.css` |
 | 누르는 알약(필터·선택) | `chip` (+ `chip-against`), 카테고리 줄은 `CategoryChips` | `index.css` · `features/map/PinFilterControls` |
+| 필터 드롭다운 | `FilterSelect` (「라벨 값 ▾」, 칸 전체가 select · 폭은 가장 긴 선택지) | `features/map/PinFilterControls` |
 | 짧은 표시 | `tag` + `tag-{neutral·ai·good·warn·bad}` | `index.css` |
 | 입력칸 | `TextField`(✕·글자 수 포함) · `ClearButton`, 그 밖의 입력은 `field` 틀 | `ui/TextField` · `index.css` |
 | 시트·모달 제목 | `SheetTitle` (20/700) | `ui/SheetTitle` |

@@ -118,8 +118,14 @@ function FilterSelect({
           {label}
         </span>
       )}
-      <span aria-hidden="true" className="font-semibold text-ink-900">
-        {current?.label}
+      {/* 선택지 글자를 모두 한 자리에 겹쳐 두고 고른 것만 보인다 — 칸 폭이 가장 긴 선택지로 고정돼서,
+          값을 바꿔도 칸 폭이 그대로고 옆 칸이 다음 줄로 밀리지 않는다(기본 select 와 같은 폭 규칙). */}
+      <span aria-hidden="true" className="grid font-semibold text-ink-900">
+        {options.map((o) => (
+          <span key={o.value} className={`col-start-1 row-start-1 ${o.value === current?.value ? '' : 'invisible'}`}>
+            {o.label}
+          </span>
+        ))}
       </span>
       <ChevronDown size={12} className="pointer-events-none absolute right-2 text-ink-500" aria-hidden="true" />
       <select
