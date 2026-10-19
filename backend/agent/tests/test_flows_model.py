@@ -15,7 +15,6 @@ from datetime import timedelta
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
-from sqlalchemy.orm import sessionmaker
 
 from agent import deps, flows, tools
 from agent.models import AgentRun, AgentSuggestion
@@ -30,11 +29,6 @@ from recommend import api as recommend_api
 
 LIKE_TEXT = "분위기가 아늑해서 오래 있기 좋아요"
 AGAINST_TEXT = "주차할 곳이 전혀 없어서 힘들어요"
-
-
-@pytest.fixture()
-def factory(test_engine):
-    return sessionmaker(bind=test_engine, autoflush=False)
 
 
 @pytest.fixture()

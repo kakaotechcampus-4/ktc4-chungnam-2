@@ -3,6 +3,7 @@ import { MessageSquare, RotateCw, Users } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import type { MemberView } from '@/features/maps/model'
+import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
@@ -30,14 +31,10 @@ const MARK = { pass: '✓', check: '?', fail: '✗' } as const
 
 const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이버지도', google: '구글맵', permit: '인허가 공공데이터', tourapi: '한국관광공사' }
 
-/** 시트 안 이전 화면(Figma '‹ AI 추천'). 결과에서 빠져나와 준비 판정으로 돌아간다. */
+/** 시트 안 이전 화면(Figma '‹ AI 추천'). 결과에서 빠져나와 준비 판정으로 돌아간다. 넓은 화면은 패널 헤더 ‹ 다. */
 export function BackToReadiness({ mapId }: { mapId: string }) {
   const setRun = useAiStore((s) => s.setRun)
-  return (
-    <button type="button" onClick={() => setRun(mapId, undefined)} className="hit-44 mb-2 text-[0.8125rem] font-medium text-ink-500">
-      ‹ AI 추천
-    </button>
-  )
+  return <PanelBackLink label="AI 추천" onBack={() => setRun(mapId, undefined)} />
 }
 
 /** 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 「↻ 다시 추천 · N번 남음」. */
@@ -215,11 +212,9 @@ export function CandidateDetail({
 }) {
   return (
     <div className="space-y-3">
-      <div className="flex justify-between text-[0.8125rem]">
-        <button type="button" onClick={onBack} className="font-medium text-ink-500">
-          ‹ 추천 결과 {count}곳
-        </button>
-        <span className="text-ink-500">{c.visibility === 'published' ? '모두에게 보여요' : '나에게만 보여요'}</span>
+      <div className="flex items-center justify-between text-[0.8125rem]">
+        <PanelBackLink label={`추천 결과 ${count}곳`} onBack={onBack} className="hit-44" />
+        <span className="ml-auto text-ink-500">{c.visibility === 'published' ? '모두에게 보여요' : '나에게만 보여요'}</span>
       </div>
       <div>
         <h3 className="text-[1.375rem] font-bold text-ink-900">{c.place_name}</h3>
@@ -266,9 +261,7 @@ export function CandidateDetail({
 export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; count: number; onBack: () => void }) {
   return (
     <div className="space-y-3">
-      <button type="button" onClick={onBack} className="hit-44 text-[0.8125rem] font-medium text-ink-500">
-        ‹ 추천 결과 {count}곳
-      </button>
+      <PanelBackLink label={`추천 결과 ${count}곳`} onBack={onBack} className="hit-44" />
       <h3 className="text-xl font-bold text-ink-900">이렇게 {count}곳을 골랐어요</h3>
       <FunnelTable funnel={funnel} left={count} />
       <section className="text-[0.8125rem] text-ink-600">

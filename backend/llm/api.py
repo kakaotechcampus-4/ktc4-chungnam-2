@@ -5,26 +5,31 @@
   실패는 재요청하지 않고 AgentCallFailed로 돌려준다(docs/agent-v2.md 2절 10번).
   AgentReply(result, usage)를 돌려준다 — usage(AgentUsage)는 agent_runs의 model, prompt_version, tokens_in/out(#564).
   DIAGNOSIS_TOOLS(진단 유형 → 허용 도구 이름)는 agent의 tool_runner가 한 번 더 막을 때 쓴다(#564).
+  agent_advise_run(추천 막힘 조언, #587): 진단과 같은 도구 왕복이고 도구는 추천 막힘 전용 4개(RUN_ADVICE_TOOLS)다.
   신호 순위(agent_prioritize)는 #582에서 지웠다 — agent의 코드 규칙(core.fallback_order)이다.
-  agent_summarize·agent_advise_run은 M2에서 연다.
+  요약의 구체화 문장은 고정 문구라 모델 함수가 없다(2026-10-16, #588에서 재검토).
 
 고정 응답 스텁(dev)과 실제 모델(real) 중 무엇을 쓸지는 이 모듈이 아니라 받는 쪽의 Gateway(recommend/deps.py,
 agent/deps.py)가 planner 인자로 고른다.
 """
 
-from llm.prompts import DIAGNOSIS_TOOLS
-from llm.schemas import AgentCallFailed, AgentReply, AgentUsage, DiagnosisOutput, EvidenceLine
+from llm.prompts import DIAGNOSIS_TOOLS, RUN_ADVICE_TOOLS
+from llm.schemas import AgentCallFailed, AgentReply, AgentUsage, DiagnosisOutput, EvidenceLine, RunAdviceOutput
 from llm.service import (
+    AdvicePlanner,
     DiagnosisPlanner,
     EvidencePlanner,
     PlanEvidenceFailed,
     ToolCaller,
     ToolRunner,
     ToolRunnerError,
+    agent_advise_run,
     agent_diagnose,
+    fixed_advice_planner,
     fixed_diagnosis_planner,
     passthrough_planner,
     plan_evidence,
+    real_advice_planner,
     real_diagnosis_planner,
     real_evidence_planner,
 )
@@ -35,4 +40,6 @@ __all__ = [
     "AgentCallFailed", "AgentReply", "AgentUsage", "DiagnosisOutput", "DIAGNOSIS_TOOLS",
     "DiagnosisPlanner", "ToolCaller", "ToolRunner", "ToolRunnerError",
     "agent_diagnose", "fixed_diagnosis_planner", "real_diagnosis_planner",
+    "RunAdviceOutput", "RUN_ADVICE_TOOLS", "AdvicePlanner",
+    "agent_advise_run", "fixed_advice_planner", "real_advice_planner",
 ]

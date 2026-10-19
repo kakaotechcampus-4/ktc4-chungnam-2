@@ -1,8 +1,44 @@
 # 루트 리뷰 가이드 — backend/recommend
 
 `backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 네 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#585" 절이 최신, 그 아래 "#569" 절, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
+작업을 누적해서 담는다 — 아래 "#587" 절이 최신, 그 아래 "#585" 절, "#569" 절, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
 전체, 가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+
+---
+
+# #587 — 추천 막힘 조언용 run 정보 조회와 passed_count
+
+조언 자체(대상 판정, 모델, 검증, 저장)와 `GET /runs/{runId}/advice` 라우터는 agent에 있다. recommend는 run 읽기 함수만 더했고
+agent를 import하지 않는다(루트 리뷰 후속 수정, 2026-10-18 — 아래 "후속 수정").
+
+## 후속 수정 (루트 리뷰, 2026-10-18)
+
+- **라우터를 agent로 옮겼다.** 처음에는 recommend 라우터 → `flows.run_advice` → `agent.api.advise_run`이었고 recommend와 agent가 서로를
+  import했다. 지금은 agent/router.py가 `recommend.api.get_run_meta`와 authz로 권한을 보고 agent.flows를 바로 부른다. recommend의
+  `router.get_advice`, `flows.run_advice`, `deps.get_session_factory`(SessionFactoryDep)를 지웠다 — router·deps·flows의 import는 develop과
+  같다. recommend → agent import 0개
+- **passed_count**: `api.get_run_funnel`은 `{result_count, funnel, passed_count}`를, `api.simulate_filter`의 before·after는
+  `{result_count, funnel, passed_count}`를 돌려준다. passed_count는 필터를 모두 통과한 곳의 수(상위 3곳을 고르기 전)이고
+  `core.passed_count(result_count, funnel)` = 결과 수 + `core.RANKING_STAGE` 단계 탈락이다. 단계 라벨을 정하는 곳(`_run_pipeline`)과
+  세는 곳이 같은 상수를 써서 라벨 문구를 바꿔도 셈이 그대로다. 깔때기 라벨과 화면 문구, 필터 규칙은 바꾸지 않았다.
+  get_run_funnel의 result_count는 get_run_meta와 같은 기준(후보 수, done이 아니면 0)이라 이전 시도에서 게시된 후보가 남은 run은 그만큼
+  passed_count도 크게 나온다(전과 같은 기준, 바꾸지 않았다)
+- 테스트(`tests/test_run_reads_api.py`): 통과 다섯 곳·결과 3곳 판에서 passed_count가 저장 깔때기와 시뮬레이션 모두 5, 「좁아요」를 끄면 6.
+  `core.RANKING_STAGE`를 다른 문구로 바꿔도 같은 값
+
+## 구현
+
+- `api.get_run_meta(db, *, run_id)`: `{run_id, map_id, category, requested_by, status, result_count, created_at,
+  default_radius_walk_min, widen_limit_walk_min}`. agent가 대상 판정(완료, 결과 수), 요청자 확인, 반경 상한(core.WIDEN_LIMIT_MIN)에
+  쓴다. result_count는 get_recent_runs와 같은 기준(후보 수, done이 아니면 0). 권한 판정 없음
+- `api.get_run_evidence`에 `chip_id`를 더했다(키 없는 줄 중 「비싸요」 칩을 agent가 not_filtered로 가르려고). 다른 칸은 그대로다
+
+## 루트에 알릴 것
+
+- 명세 9절의 경로(recommend router → flows → agent.api)와 달리 라우터가 agent에 있다(위 후속 수정). 명세 문구는 고치지 않았다
+- 필터 규칙, 깔때기, 스펙은 바꾸지 않았다. 계약 테스트의 KNOWN_MISSING·KNOWN_UNCOVERED에서 이 경로를 지우고 골든 패스(403, 204)와
+  `test_run_advice_matches_the_openapi_spec`(같은 카테고리 run 3개 → 200, RunAdvice 스키마 검증, 다시 열어도 같음)에 넣었다
+- `tests/test_run_reads_api.py`: get_run_meta 테스트, 없는 run NOT_FOUND 목록에 get_run_meta, get_run_evidence 기대값에 chip_id
 
 ---
 

@@ -9,6 +9,7 @@
   바꾸는 가드 UPDATE), 모드 끄기(`supersede_active`)
 - 우리 조건 요약(#586, 명세 8절, 13절): 덮어쓰기(`upsert_summary`), 읽기(`list_summaries`). 갱신 판단이 보는 요약
   메타는 `load_history`가 함께 읽는다
+- 추천 막힘 조언(#587, 명세 9절, 13절): run당 1행(`insert_run_advice` — ON CONFLICT (run_id) DO NOTHING), 읽기(`get_run_advice`)
 
 제안 상태를 바꾸는 함수는 (id, shadow) 목록을 돌려준다. agent.resolved는 shadow가 아닌 것만 낸다(호출부).
 
@@ -256,8 +257,8 @@ def insert_suggestion(
 # ---------------------------------------------------------------- 기록과 보존 (12.4, 12.9)
 
 def insert_run(db: Session, **fields) -> uuid.UUID:
-    """관찰 한 번의 기록. 칸은 models.AgentRun 그대로 받는다."""
-    row = AgentRun(id=uuid.uuid4(), **fields)
+    """관찰 한 번의 기록. 칸은 models.AgentRun 그대로 받는다. id를 주지 않으면 새로 만든다(조언은 먼저 정한 id를 쓴다)."""
+    row = AgentRun(**({"id": uuid.uuid4()} | fields))
     db.add(row)
     db.flush()
     return row.id
@@ -363,3 +364,28 @@ def list_summaries(db: Session, map_id: str) -> list[AgentReasonSummary]:
     return list(db.execute(
         select(AgentReasonSummary).where(AgentReasonSummary.map_id == map_id).order_by(AgentReasonSummary.category)
     ).scalars().all())
+
+
+# ---------------------------------------------------------------- 추천 막힘 조언 (9절, 13절)
+
+def get_run_advice(db: Session, run_id: str) -> AgentRunAdvice | None:
+    try:
+        key = uuid.UUID(run_id)
+    except ValueError:
+        return None
+    return db.get(AgentRunAdvice, key, populate_existing=True)
+
+
+def insert_run_advice(
+    db: Session, *, run_id: str, map_id: str, draft: core.AdviceDraft, agent_run_id: uuid.UUID, now: datetime,
+) -> bool:
+    """run당 한 행(명세 9절). 이미 있으면 넣지 않고 False — INSERT ... ON CONFLICT (run_id) DO NOTHING이라 같은 run에 동시에
+    두 요청이 와도 먼저 커밋한 하나만 남는다. 빈 조언(kind 없음)도 넣어 다시 만들지 않는다. 저장은 슬롯 문장, 검증을 통과한
+    tool_result claim, 버튼(근거 줄은 line_id만)뿐이다 — 근거 글과 구성원은 없다(명세 2절 13번)."""
+    return db.execute(
+        pg_insert(AgentRunAdvice)
+        .values(run_id=uuid.UUID(run_id), map_id=map_id, kind=draft.kind, claims=draft.claims, advice=draft.advice,
+                actions=draft.actions, agent_run_id=agent_run_id, created_at=now)
+        .on_conflict_do_nothing(index_elements=[AgentRunAdvice.run_id])
+        .returning(AgentRunAdvice.run_id)
+    ).scalar_one_or_none() is not None

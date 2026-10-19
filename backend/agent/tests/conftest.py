@@ -12,7 +12,16 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
-import agent.models  # noqa: F401 — Base.metadata에 agent_* 테이블을 등록시키기 위한 것
+from agent import flows
+from agent.models import (
+    AgentCursor,
+    AgentReasonSummary,
+    AgentRun,
+    AgentRunAdvice,
+    AgentSettings,
+    AgentSuggestion,
+    AgentSuggestionView,
+)
 # 스냅샷 테스트(test_snapshot.py)가 다른 모듈 테이블에 픽스처를 넣고 그 모듈의 api.py로 읽는다(#514)
 import auth.models  # noqa: F401
 import common.events  # noqa: F401
@@ -81,3 +90,30 @@ def db_session(test_engine):
     session.close()
     outer.rollback()
     connection.close()
+
+
+# FK 순서(열람 → 제안 → 나머지)
+AGENT_TABLES = (
+    AgentSuggestionView, AgentSuggestion, AgentRunAdvice, AgentReasonSummary, AgentRun, AgentCursor, AgentSettings,
+)
+
+
+@pytest.fixture()
+def factory(test_engine):
+    """실제로 커밋하는 테스트용 sessionmaker(world.py). 끝나면 agent_* 7개 테이블을 통째로 비운다(#594).
+
+    world.cleanup은 자기 지도 행만 지우는데, run_tick은 event_log에 남은 다른 지도(예: 다른 모듈 테스트가 커밋하고
+    남긴 map_race)도 잡아 관찰하고 agent_runs, agent_cursors를 커밋한다. 그 행이 뒤 테스트에 남지 않게 한다.
+    agent_* 테이블은 agent 테스트만 쓰므로 통째로 비워도 다른 모듈 테스트에 영향이 없다."""
+    yield sessionmaker(bind=test_engine, autoflush=False)
+
+    with test_engine.begin() as conn:
+        for model in AGENT_TABLES:
+            conn.execute(sa.delete(model))
+
+
+@pytest.fixture(autouse=True)
+def _reset_daily_cleanup(monkeypatch):
+    """하루 한 번 정리했는지(flows._cleanup_done_on)는 프로세스 메모리라 앞선 테스트의 run_tick이 오늘로 바꿔 둔다.
+    테스트마다 처음 상태로 되돌린다(#594)."""
+    monkeypatch.setattr(flows, "_cleanup_done_on", None)
