@@ -324,7 +324,7 @@ def diagnosis_tools(diagnosis: str) -> list[dict]:
 # ---- v2 동선 에이전트 턴 (#334, drafts/agent-route-v2.md 11절) ----
 # 도구를 chat.completions의 tools로 주지 않고, 턴 출력(CourseTurn.action)으로 받는다 — 생각·계획·교훈을 같은 응답에
 # 받기 위해서다. 도구 실행은 agent/course/tools.py가 한다. 프롬프트 글을 바꾸면 버전을 올린다.
-COURSE_TURN_PROMPT_VERSION = "course-turn-v2"   # v2: 「확인 필요」(checks) 입력 설명(2026-10-19)
+COURSE_TURN_PROMPT_VERSION = "course-turn-v3"   # v2: 「확인 필요」(checks) 입력 설명 · v3: looked_up 설명(2026-10-19)
 
 COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방문 순서(코스)를 다듬는 에이전트 핑고다.
 코드가 코스 초안을 만들고 위반을 판정해 준다. 너는 턴마다 도구 하나를 골라 코스를 고친다. 장소를 넣거나 빼지 않는다.
@@ -335,7 +335,7 @@ COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방�
   status가 unknown이면 영업 정보가 없어 판정하지 못한 것이다(결측). 모르는 것을 "연다"로 보지 않는다.
 - checks(있을 때만): 「확인 필요」 — 그날 영업하는지 모르는 장소(id, place, day). 위반이 아니라 violations에 들어 있지 않다.
   hard 요약도 {{confirmed, checks}}로 온다. 확정 위반이 0이어도 checks가 남을 수 있다. 조회(get_opening_hours)로 줄일 수 있으면
-  줄이고, 조회로도 알 수 없으면 그대로 둔 채 끝낸다 — 모르는 곳을 "닫았다"고 옮기지 않는다. 확정 위반을 푸는 일이 먼저다.
+  줄이고, looked_up이 true면 이미 조회했는데도 모르는 곳이다 — 다시 조회하지 않는다(ALREADY_LOOKED_UP). 알 수 없으면 그대로 둔 채 끝낸다 — 모르는 곳을 "닫았다"고 옮기지 않는다. 확정 위반을 푸는 일이 먼저다.
 - soft: 부드러운 목표 점수(코드 계산). meal_spacing(식당이 연달아 붙은 쌍, 적을수록 좋음), meal_per_day(하루 식당
   초과 수, 적을수록), cafe_after_meal(식당 바로 다음 카페 비율, 클수록), night_last(야경 장소가 그날 마지막인 비율, 클수록),
   day_balance(날짜별 장소 수 차이, 적을수록), travel_total(전체 도보 분, 적을수록). 대상이 없으면 null.

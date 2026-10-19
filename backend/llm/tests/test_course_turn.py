@@ -117,5 +117,5 @@ def test_public_api():
 
 
 def test_프롬프트_v2는_checks_입력을_설명한다():
-    assert COURSE_TURN_PROMPT_VERSION == "course-turn-v2"
+    assert COURSE_TURN_PROMPT_VERSION == "course-turn-v3"
     assert "checks" in COURSE_TURN_PROMPT and "확인 필요" in COURSE_TURN_PROMPT

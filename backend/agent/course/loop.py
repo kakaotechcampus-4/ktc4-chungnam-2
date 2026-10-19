@@ -76,7 +76,7 @@ def turn_input(state: State, last: Optional[ToolResult], turn: int) -> dict[str,
             {"id": v.id, "kind": v.kind, "status": v.status, "places": list(v.places), **dict(v.detail)}
             for v in state.violations
         ],
-        **({"checks": [{"id": v.id, "place": v.places[0], "day": v.day}
+        **({"checks": [{"id": v.id, "place": v.places[0], "day": v.day, "looked_up": v.places[0] in state.looked_up}
                        for v in core.find_checks(trip, state.course, state.hours)]}
            if trip.unknown_hours == "check" else {}),
         "soft": core.soft_scores(trip, state.course),

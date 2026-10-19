@@ -26,8 +26,8 @@ def test_확인필요_모드의_모델_입력은_checks를_따로_보인다():
     state = initial_state(check_trip(), KNOWN_HOURS, COURSE)
     inp = loop.turn_input(state, None, 1)
     assert inp["violations"] == []
-    assert inp["checks"] == [{"id": "closed:p4:d2", "place": "p4", "day": "d2"},
-                             {"id": "closed:p5:d2", "place": "p5", "day": "d2"}]
+    assert inp["checks"] == [{"id": "closed:p4:d2", "place": "p4", "day": "d2", "looked_up": False},
+                             {"id": "closed:p5:d2", "place": "p5", "day": "d2", "looked_up": False}]
     assert "checks" not in loop.turn_input(initial_state(trip(), KNOWN_HOURS, COURSE), None, 1)   # 기본 모드는 그대로
 
 
@@ -81,3 +81,14 @@ def test_동선에_남은_장소가_둘보다_적으면_trip이_없다():
 def test_장소_id만_있고_좌표가_없어도_제외():
     built = build_trip([pin(1), pin(2, lat=None, lng=None), pin(3)], (MON,))
     assert [e.pin_id for e in built.excluded] == ["pin-2"]
+
+
+def test_이미_조회한_곳은_횟수를_쓰지_않고_거절():
+    from agent.course import tools
+    from agent.course.schemas import GetOpeningHours
+    state = initial_state(check_trip(), KNOWN_HOURS, COURSE)
+    call = GetOpeningHours(tool="get_opening_hours", place="p5")
+    state, first = tools.execute(call, state, _NobodyKnows())
+    state2, second = tools.execute(call, state, _NobodyKnows())
+    assert first.ok and not second.ok and second.error == "ALREADY_LOOKED_UP"
+    assert state2.tool_counts["get_opening_hours"] == 1

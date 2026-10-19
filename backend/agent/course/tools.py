@@ -30,7 +30,7 @@ class ToolResult:
     tool: str
     ok: bool
     data: Optional[Mapping[str, Any]] = None
-    error: Optional[str] = None       # INVALID_ID | INVALID_MOVE | LOCKED | WORSENS_HARD | LIMIT_EXCEEDED | NO_SUCH_TRIAL
+    error: Optional[str] = None       # INVALID_ID | INVALID_MOVE | ALREADY_LOOKED_UP | LOCKED | WORSENS_HARD | LIMIT_EXCEEDED | NO_SUCH_TRIAL
     message: Optional[str] = None
 
     def as_input(self) -> dict[str, Any]:
@@ -54,6 +54,9 @@ def _hard(state: State, course: core.Course, violations) -> dict[str, int]:
 
 def execute(call: ToolCall, state: State, hours_gateway: OpeningHoursGateway) -> tuple[State, ToolResult]:
     tool = call.tool
+    if isinstance(call, GetOpeningHours) and call.place in state.looked_up:
+        # 이미 조회한 곳을 다시 조회해도 새로 아는 게 없다. 횟수도 쓰지 않고 돌려보낸다(실호출에서 모델이 되풀이했다)
+        return state, _fail(tool, "ALREADY_LOOKED_UP", f"{call.place}는 이미 조회했다 — 조회로 알 수 없는 곳이다")
     limit = TOOL_LIMITS.get(tool)
     if limit is not None and state.tool_counts.get(tool, 0) >= limit:
         return state, _fail(tool, "LIMIT_EXCEEDED", f"{tool}는 이번 코스에서 {limit}번까지 쓸 수 있다")
