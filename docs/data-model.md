@@ -314,6 +314,35 @@ exclusions(
 
 ---
 
+## ads (추천 탭 광고, docs/ads.md 6절, #642)
+
+> 광고는 자체 DB(places)에 이미 있는 장소만 가리킨다. ads 모듈이 두 테이블을 소유하고, places는 `places.api`로만 읽는다(#113). 집계에는 user_id, map_id를 넣지 않는다.
+
+```
+ads(
+  id uuid primary key,
+  place_id text not null,              -- places.id. 모듈 경계라 FK 없음(등록 스크립트가 존재와 status=open을 검증)
+  starts_at timestamptz not null,
+  ends_at timestamptz not null,        -- 이 시각은 포함하지 않는다
+  active boolean not null default true,-- 기간과 별개로 즉시 내리는 스위치
+  memo text null,                      -- 광고주, 계약 메모(내부용, 응답에 내보내지 않음)
+  created_at, updated_at
+)
+  check (starts_at < ends_at)
+  unique(place_id) where active        -- 같은 장소에 active 광고는 하나(제안)
+
+ad_daily_stats(
+  ad_id uuid not null references ads(id),
+  stat_date date not null,             -- Asia/Seoul 기준 날짜
+  served_count integer not null default 0,   -- 광고 조회 응답에 실린 횟수(화면 노출이 아니다, docs/ads.md 9절)
+  click_count integer not null default 0,
+  primary key(ad_id, stat_date)
+)
+  -- 증가는 INSERT ... ON CONFLICT (ad_id, stat_date) DO UPDATE SET 칸 = 칸 + 1
+```
+
+---
+
 ## agent (v2 계획 보조 에이전트, docs/agent-v2.md 13절, #510)
 
 > v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 7개 테이블만 쓰고, 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.

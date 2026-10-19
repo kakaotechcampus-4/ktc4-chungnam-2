@@ -1,4 +1,5 @@
 import { http, passthrough } from "msw";
+import { adsHandlers } from "./ads";
 import { agentHandlers } from "./agent";
 import { authHandlers } from "./auth";
 import { mapsHandlers } from "./maps";
@@ -33,5 +34,6 @@ export const handlers = [
   ...shortlistHandlers,
   ...realtimeHandlers,
   ...agentHandlers,
+  ...adsHandlers,
   ...meHandlers,
 ];

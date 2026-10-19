@@ -140,12 +140,17 @@
     }
 }
 /* 보이는 원은 32px 그대로 두고 누르는 영역만 44px로 넓힌다(PRODUCT.md 접근성 — 터치 44px). */
+/* 보이는 크기와 상관없이 누르는 영역을 가운데 기준 최소 44×44로 맞춘다. 사방 6px만 넓히면 20px 버튼이 32px에 그쳤다(#406). */
 @utility hit-44 {
     position: relative;
     &::before {
         content: '';
         position: absolute;
-        inset: -6px;
+        top: 50%;
+        left: 50%;
+        width: max(100%, 44px);
+        height: max(100%, 44px);
+        transform: translate(-50%, -50%);
     }
 }
 
@@ -155,7 +160,11 @@
     &::before {
         content: '';
         position: absolute;
-        inset: -6px 0;
+        left: 0;
+        right: 0;
+        top: 50%;
+        height: max(100%, 44px);
+        transform: translateY(-50%);
     }
 }
 
@@ -164,8 +173,42 @@
     padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* 버튼 모양(DESIGN.md Buttons). 색·테두리·반경·굵기·비활성만 정하고, 크기와 여백은 쓰는 곳에서 준다.
-   components 층이라 쓰는 곳의 유틸리티(bg-[var(--action-danger)] 등)가 이긴다(#359). */
+/* 글자 단계·그림자(DESIGN.md Typography · Elevation). Tailwind 기본에 없는 단계만 이름을 붙인다.
+   24 text-2xl · 20 text-xl · 17 text-title · 16 text-base · 14 text-sm · 13 text-body · 12 text-xs · 11 text-label.
+   text-lg(18)·text-[…] 같은 단계 밖 크기는 쓰지 않는다. */
+@theme {
+    --text-title: 1.0625rem;
+    --text-body: 0.8125rem;
+    --text-label: 0.6875rem;
+    /* 지도 위에 떠 있는 것(지도 버튼·검색창·상단 원·칩)과 바텀시트 윗변. 목록·카드에는 그림자가 없다. */
+    --shadow-float: 0 2px 8px rgba(20, 22, 31, 0.12);
+    --shadow-sheet: 0 -2px 12px rgba(20, 22, 31, 0.08);
+    /* 핑고 움직임(Pingo.tsx). 찾는 중엔 들썩이고, 추천 완료엔 한 번 뛰고, 로딩엔 뒤뚱뒤뚱 걷는다(몸 기우뚱 + 발 번갈아). */
+    --animate-pingo-bob: pingo-bob 1.2s ease-in-out infinite;
+    --animate-pingo-hop: pingo-hop 500ms ease-out 1;
+    --animate-pingo-waddle: pingo-waddle 600ms ease-in-out infinite;
+    --animate-pingo-step: pingo-step 600ms ease-in-out infinite;
+    @keyframes pingo-bob {
+        50% { transform: translateY(-2px) rotate(-3deg); }
+    }
+    @keyframes pingo-hop {
+        40% { transform: translateY(-5px); }
+    }
+    @keyframes pingo-waddle {
+        0%, 100% { transform: rotate(-7deg); }
+        50% { transform: rotate(7deg); }
+    }
+    @keyframes pingo-step {
+        0%, 100% { transform: translateY(-3px); }
+        50% { transform: translateY(0); }
+    }
+}
+
+/* 디자인 컴포넌트(DESIGN.md 「컴포넌트 목록」). 화면에서는 이 클래스와 src/ui/ 부품만 조합한다.
+   - 버튼 = 색 하나(btn-primary·outline·neutral·confirm·danger·danger-outline) + 크기 하나(btn-lg·md·sm).
+     높이·글자 크기·반경을 그 자리에서 덧쓰지 않는다. 폭(w-full 등)과 바깥 여백만 쓰는 곳에서 준다.
+   - 글자 버튼은 btn-text(조용한 회색) · btn-link(파랑 동작) — 누르는 영역 44px 포함.
+   components 층이라 크기 클래스가 색 클래스의 반경을 이긴다(btn-sm 은 8). */
 @layer components {
     .btn-primary {
         @apply rounded-xl bg-brand-600 font-bold text-white disabled:bg-ink-100 disabled:text-ink-400;
@@ -173,10 +216,131 @@
     .btn-outline {
         @apply rounded-xl border border-brand-600 bg-white font-bold text-brand-600 disabled:border-ink-300 disabled:text-ink-400;
     }
+    /* 취소·로그아웃·나가기 같은 중립 동작. */
+    .btn-neutral {
+        @apply rounded-xl border border-ink-300 bg-white font-bold text-ink-900 disabled:text-ink-400;
+    }
+    /* 「★ 확정 리스트에 넣기」 전용(확정 골드). 상태 표시 「✓ 확정됨」도 같은 모양으로 둬서 바뀔 때 자리가 안 움직인다. */
+    .btn-confirm {
+        @apply rounded-xl border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] font-bold text-[var(--pin-confirmed-mark)] disabled:opacity-50;
+    }
+    /* 되돌릴 수 없는 동작만 빨강이다. 확인 창의 마지막 버튼은 채움, 그 창을 여는 버튼은 외곽선. */
+    .btn-danger {
+        @apply rounded-xl bg-[var(--action-danger)] font-bold text-white disabled:bg-ink-100 disabled:text-ink-400;
+    }
+    .btn-danger-outline {
+        @apply rounded-xl border border-[var(--action-danger)] bg-white font-bold text-[var(--action-danger)];
+    }
+
+    /* 크기. lg = 화면·시트 맨 아래 주 버튼 줄(52), md = 확인 창·내용 중간·빈 화면(44), sm = 카드·줄 안(32 + 누르는 영역 44). */
+    .btn-lg {
+        @apply inline-flex h-13 items-center justify-center gap-1.5 px-4 text-base;
+    }
+    .btn-md {
+        @apply inline-flex h-11 items-center justify-center gap-1.5 px-4 text-sm;
+    }
+    .btn-sm {
+        @apply hit-y-44 inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-md px-3 text-sm;
+    }
+
+    .btn-text {
+        @apply hit-44 font-medium text-ink-500 disabled:opacity-50;
+    }
+    .btn-link {
+        @apply hit-44 inline-flex items-center gap-0.5 font-bold text-brand-600 disabled:opacity-50;
+    }
+
+    /* 태그 — 누를 수 없는 짧은 표시(방장·지역·AI·준비 완료·조건 체크). 반경 6, 12/600. 색은 tag-* 하나. */
+    .tag {
+        @apply inline-flex shrink-0 items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-semibold;
+    }
+    .tag-neutral {
+        @apply bg-ink-100 text-ink-600;
+    }
+    .tag-ai {
+        @apply bg-brand-600 text-white;
+    }
+    .tag-good {
+        @apply bg-[var(--good-bg)] text-[var(--good-text)];
+    }
+    .tag-warn {
+        @apply bg-[var(--warn-bg)] text-[var(--warn-text)];
+    }
+    .tag-bad {
+        @apply bg-[var(--bad-bg)] text-[var(--bad-text)];
+    }
+
+    /* 칩 — 누르는 알약(카테고리·지역·사유·동선 보기). 켜짐은 aria-pressed 로 정하고 채우지 않는다.
+       반대 사유는 chip-against 를 더해 켜짐을 반대 세트로 칠한다(#299 — 파랑으로 켜지 않는다). */
+    .chip {
+        @apply hit-y-44 inline-flex shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-3 py-1.5 text-body text-ink-700 disabled:bg-ink-50 disabled:text-ink-500;
+        &[aria-pressed='true'] {
+            @apply border-brand-600 bg-brand-100 font-semibold text-brand-700;
+        }
+    }
+    .chip-against[aria-pressed='true'] {
+        @apply border-[var(--bad-line)] bg-[var(--bad-bg)] font-bold text-[var(--bad-text)];
+    }
+
+    /* 입력칸 틀 — 안에 input 하나와 ✕·글자 수·동작 글자를 둔다. 글자는 16px(아이폰이 확대하지 않는 크기). */
+    .field {
+        @apply flex min-h-12 items-center gap-2 rounded-xl border border-ink-300 bg-white px-3.5 text-base focus-within:border-[var(--line-focus)] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--line-focus)];
+        &[aria-invalid='true'] {
+            @apply border-[var(--warn-line)];
+        }
+    }
+}
+
+/* 등장 효과(DESIGN.md「움직임」, #595). 나타날 때 한 번만 움직인다. 곡선은 Tailwind ease-out 과 같다. */
+@layer components {
+    .enter-fade {
+        animation: enter-fade 200ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .enter-pop {
+        animation: enter-pop 200ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .enter-drop {
+        animation: enter-drop 200ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .enter-sheet {
+        animation: enter-sheet 300ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    /* 넓은 화면의 모달 시트는 가운데 창이라(#600) 아래에서 올라오지 않고 확인 창처럼 나타난다. */
+    @media (width >= 48rem) {
+        .enter-sheet {
+            animation: enter-pop 200ms cubic-bezier(0, 0, 0.2, 1);
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .enter-fade,
+        .enter-pop,
+        .enter-drop,
+        .enter-sheet {
+            animation: none;
+        }
+    }
+}
+@keyframes enter-fade {
+    from { opacity: 0; }
+}
+@keyframes enter-pop {
+    from { opacity: 0; transform: scale(0.95); }
+}
+@keyframes enter-drop {
+    from { opacity: 0; transform: translateY(-8px); }
+}
+@keyframes enter-sheet {
+    from { transform: translateY(100%); }
 }
 
 /* 키보드 포커스는 불투명 2px(3:1 이상). shadcn 기본 outline-ring/50 은 흰 바탕에서 1.98:1이라 안 보였다(#299). */
 @layer base {
+    /* 안내문 기본색(Tailwind: 글자색 50%)은 3.4:1이라 읽히지 않는다. ink-500(약 5:1)으로(#406). */
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--ink-500);
+        opacity: 1;
+    }
     /* base 층에 둬서 outline-none 을 준 곳(검색 input 등 — 틀이 대신 표시)은 그대로 꺼진다. */
     :focus-visible {
         outline: 2px solid var(--line-focus);

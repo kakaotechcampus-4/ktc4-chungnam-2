@@ -6,7 +6,7 @@ export default function EmptyMap() {
     <EmptyState
       title="아직 아무도 핀을 찍지 않았어요"
       action={
-        <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-outline px-4 py-2 text-sm">
+        <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-outline btn-md">
           장소 검색하기
         </button>
       }

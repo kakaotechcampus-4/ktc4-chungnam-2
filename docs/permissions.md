@@ -112,6 +112,7 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 | 계획 보조 에이전트 모드 켜고 끄기 — 구성원 누구나 (v2, #510) | `member.actions: [agent.toggle]` |
 | 지도 제안 수락·닫기 — 구성원 누구나 (v2, #510) | `member.actions: [agent.suggestion.resolve]`. 열람 기록과 상태 조회는 구성원이면 되고 별도 액션이 없다 |
 | 추천 막힘 조언 조회 — 요청한 본인만 (v2, #510) | 기존 `author.actions: [recommend.manage]`를 쓴다(run 결과 조회와 같은 범위) |
+| 추천 탭 광고 조회, 광고 클릭 기록 — 구성원 누구나 (#642, docs/ads.md) | 새 액션 없음. 조회 전용 GET과 같이 지도 구성원 확인(`require_map_member`)만 한다. 클릭 기록은 집계 증가뿐이라 도메인 액션으로 보지 않는다 |
 | AI 추천 run 근거 조회·토글·추가 — 구성원 누구나 (#108, #32, 최종기획안 5-5) | `member.actions: [recommend.evidence]` (개별 줄 비활성화만 `author.actions: [evidence.disable]`) |
 | AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `author.scope.run: own`, `author.actions: [recommend.manage]` |
 
