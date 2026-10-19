@@ -300,6 +300,25 @@ def search_nearby_own(db: Session, category: str, areas: Sequence[Area]) -> list
     return [PlaceRef(str(r.id), r.lat, r.lng, r.can_recommend) for r in rows]
 
 
+def get_ad_places(db: Session, place_ids: Sequence[str], center: tuple[float, float], radius_m: float,
+                  categories: Sequence[str]) -> list[dict]:
+    """광고용(docs/ads.md 6절). 주어진 ID 중 영업 중·분류 일치·중심 반경 안인 장소. 반경은 idx_places_geom을 탄다."""
+    ids = [u for u in (_uuid_or_none(p) for p in place_ids) if u is not None]
+    if not ids or not categories:
+        return []
+    lat, lng = _lat_lng()
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.address, lat, lng, Place.kakao_place_id, Place.kakao_place_url)
+        .where(Place.id.in_(ids), Place.status == "open", Place.category.in_(list(categories)),
+               func.ST_DWithin(Place.geom, _geog(*center), radius_m))
+    ).all()
+    return [
+        {"id": str(r.id), "name": r.name, "category": r.category, "address": r.address, "lat": r.lat, "lng": r.lng,
+         "kakao_place_id": r.kakao_place_id, "kakao_place_url": r.kakao_place_url}
+        for r in rows
+    ]
+
+
 @dataclass(frozen=True)
 class RecomputeResult:
     counts: dict[tuple[str, bool], int]   # (분류, can_recommend) → 장소 수, 계산한 새 값 기준

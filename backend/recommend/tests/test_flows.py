@@ -483,7 +483,8 @@ def _no_plan_call(raw):
 
 
 def test_create_run_turns_each_chip_into_its_own_evidence_line_without_calling_the_model(db_session, monkeypatch):
-    """#412 — 칩만 남긴 🚫는 ② 호출 없이 칩 하나당 줄 하나. 키·방향은 칩 표 그대로, 배지 required, 글은 label."""
+    """#412 — 칩만 남긴 🚫는 ② 호출 없이 칩 하나당 줄 하나. 키·방향은 칩 표 그대로, 배지 required, 글은 label.
+    원함 칩(「좁아요」)은 #617로 preferred로 내려 저장된다."""
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="음식점")
     _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_spicy", "food_cramped"])
@@ -494,7 +495,7 @@ def test_create_run_turns_each_chip_into_its_own_evidence_line_without_calling_t
     lines = service.list_evidence(db_session, str(run.id))
     assert [(l.text, l.chip_id, l.fact_key, l.wants, l.badge, l.source, l.author_id) for l in lines] == [
         ("매워요", "food_spicy", "spicy_focused", False, "required", "reaction", "user_1"),
-        ("좁아요", "food_cramped", "spacious", True, "required", "reaction", "user_1"),
+        ("좁아요", "food_cramped", "spacious", True, "preferred", "reaction", "user_1"),
     ]
 
 
@@ -578,8 +579,9 @@ def test_reaction_left_with_the_retired_shellfish_chip_filters_nothing(db_sessio
     assert flows._active_soft_requirements(db_session, run) == []
 
 
-def test_soft_chip_becomes_a_directed_requirement(db_session, monkeypatch):
-    """#412 — 「좁아요」는 넓은 곳을 원한다(spacious, wants=true). required라 #231 방향 실격으로 켜진다."""
+def test_soft_chip_becomes_a_directed_requirement_only_when_it_avoids(db_session, monkeypatch):
+    """#412, #617 — 「매워요」(spicy_focused 피함)는 required라 #231 방향 실격으로 켜진다. 「좁아요」(spacious 원함)는
+    preferred로 내려가 실격 조건이 아니다."""
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="음식점")
     _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_cramped", "food_spicy"])
@@ -587,7 +589,72 @@ def test_soft_chip_becomes_a_directed_requirement(db_session, monkeypatch):
 
     run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
-    assert flows._active_soft_requirements(db_session, run) == [("spacious", True), ("spicy_focused", False)]
+    assert flows._active_soft_requirements(db_session, run) == [("spicy_focused", False)]
+
+
+def _run_from_reactions(db_session, monkeypatch, *, category, reactions, facts_by_place, planned=None):
+    """반응 → create_run(근거 조립, #617 배지 내리기 포함) → execute_run. 후보 place_id를 rank 순으로, 깔때기와 함께 돌려준다.
+    planned는 글 반응의 ② 결과(없으면 ② 호출이 없어야 한다). 후보는 🚫 핀 옆에 facts_by_place 순서대로 놓는다."""
+    _make_members(db_session, user_ids=sorted({user for user, *_ in reactions}))
+    pin = _make_pin(db_session, category=category, lat=35.1, lng=129.0)
+    for user_id, reason_text, chip_ids in reactions:
+        _react(db_session, pin, user_id=user_id, type="against", reason_text=reason_text, reason_chip_ids=chip_ids)
+    monkeypatch.setattr(PLANNER, "plan_evidence", (lambda raw: planned) if planned else _no_plan_call)
+    db_session.commit()  # 요청 앞의 준비는 커밋된 상태다(#275)
+
+    run = flows.create_run(db_session, map_id="map_1", category=category, requested_by="user_1", evidence_planner=PLANNER)
+    places = [PlaceStub(place_id=pid, lat=35.1 + 0.0001 * (i + 1), lng=129.0) for i, pid in enumerate(facts_by_place)]
+    updated = flows.execute_run(
+        db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts(facts_by_place),
+    )
+    ranked = [c.place_id for c in sorted(service.list_candidates(db_session, str(run.id)), key=lambda c: c.rank)]
+    funnel = {entry["label"]: entry["removed_count"] for entry in updated.last_funnel}
+    return ranked, funnel
+
+
+def test_cramped_chip_does_not_disqualify_small_restaurants_and_ranks_spacious_first(db_session, monkeypatch):
+    """#617 — 「좁아요」만 있는 run: 넓지 않은 음식점도 후보에 남고(실격 0), 넓은 곳이 점수로 위에 온다.
+    좁은 곳을 🚫 핀에 더 가깝게 놓아 거리 대신 점수가 순서를 정했음을 본다."""
+    ranked, funnel = _run_from_reactions(
+        db_session, monkeypatch, category="음식점", reactions=[("user_1", None, ["food_cramped"])],
+        facts_by_place={"narrow": {"spacious": False}, "spacious": {"spacious": True}},
+    )
+    assert ranked == ["spacious", "narrow"]
+    assert funnel["실격 조건 제거"] == 0
+
+
+def test_inaccessible_chip_still_disqualifies(db_session, monkeypatch):
+    """#617 예외 — 「휠체어·유모차로 가기 힘들어요」(accessible 원함)는 필요 조건이라 required 그대로, 접근 불가는 실격이다."""
+    ranked, funnel = _run_from_reactions(
+        db_session, monkeypatch, category="관광지", reactions=[("user_1", None, ["sight_inaccessible"])],
+        facts_by_place={"stairs": {"accessible": False}, "ramp": {"accessible": True}},
+    )
+    assert ranked == ["ramp"]
+    assert funnel["실격 조건 제거"] == 1
+
+
+def test_spicy_chip_still_disqualifies(db_session, monkeypatch):
+    """#617 — 피함 칩 「매워요」는 그대로 required라 매운맛 전문은 실격이다."""
+    ranked, funnel = _run_from_reactions(
+        db_session, monkeypatch, category="음식점", reactions=[("user_1", None, ["food_spicy"])],
+        facts_by_place={"spicy": {"spicy_focused": True}, "mild": {"spicy_focused": False}},
+    )
+    assert ranked == ["mild"]
+    assert funnel["실격 조건 제거"] == 1
+
+
+def test_written_wanted_parking_stays_required(db_session, monkeypatch):
+    """#422 그대로 — 글 "주차 돼야 해요"(원함)는 칩이 아니고 음식 종류도 아니라 required, 주차 안 되는 곳은 실격이다."""
+    from llm.schemas import EvidenceLine
+    text = "주차 돼야 해요"
+    ranked, funnel = _run_from_reactions(
+        db_session, monkeypatch, category="음식점", reactions=[("user_1", text, None)],
+        facts_by_place={"no_parking": {"parking_available": False}, "parking": {"parking_available": True}},
+        planned=[[EvidenceLine(author_id="user_1", source="reaction", text=text, badge="required",
+                               fact_key="parking_available", wants=True)]],
+    )
+    assert ranked == ["parking"]
+    assert funnel["실격 조건 제거"] == 1
 
 
 _KEYED_CHIP_IDS = {
@@ -1198,6 +1265,79 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
         {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": False},
     ]}
     assert bare.place_source is None  # 출처를 못 얻으면 지어내지 않는다
+
+
+def _run_with_mixed_against_reasons(db_session):
+    """#620 — 알러지 글(user_1), 키 없는 칩(user_2), 매운맛 피함(user_3), 매운맛 피함 + 조용함 선호(user_4).
+    "mild"는 매운맛 known 거짓, "unknown_spicy"는 매운맛 라벨이 없다(통과 + 확인 필요). 둘 다 조용하다."""
+    run = _make_run(db_session, status="collecting_evidence", category="음식점")
+    _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "조개 알러지 있어요", "badge": "required"},
+        {"author_id": "user_2", "source": "reaction", "text": "취향이 아니에요", "chip_id": "common_not_my_taste",
+         "badge": "required"},
+        {"author_id": "user_3", "source": "reaction", "text": "너무 매워요", "badge": "required",
+         "fact_key": "spicy_focused", "wants": False},
+        {"author_id": "user_4", "source": "reaction", "text": "매운 건 싫어", "badge": "required",
+         "fact_key": "spicy_focused", "wants": False},
+        {"author_id": "user_4", "source": "reaction", "text": "조용했으면", "badge": "preferred",
+         "fact_key": "quiet", "wants": True},
+    ])
+    places = [
+        PlaceStub(place_id="mild", lat=35.0005, lng=129.0005),
+        PlaceStub(place_id="unknown_spicy", lat=35.0006, lng=129.0006),
+    ]
+    facts = _FakePlaceFacts({"mild": {"spicy_focused": False, "quiet": True}, "unknown_spicy": {"quiet": True}})
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
+    return run, {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+
+
+def test_member_fulfillment_counts_only_checked_conditions(db_session):
+    """#620 — 키 없는 반대(알러지 글, 「취향이 아니에요」)만 남긴 구성원은 total에 없다. 매운맛 피함은 라벨 known 거짓이면
+    충족, 모름이면 미충족이다. 반대와 선호를 둘 다 가진 구성원(user_4)은 둘 다 충족해야 충족이다."""
+    _run, by_place = _run_with_mixed_against_reasons(db_session)
+    assert by_place["mild"].member_fulfillment == {"satisfied": 2, "total": 2, "by_member": [
+        {"user_id": "user_3", "satisfied": True}, {"user_id": "user_4", "satisfied": True},
+    ]}
+    assert by_place["unknown_spicy"].member_fulfillment == {"satisfied": 0, "total": 2, "by_member": [
+        {"user_id": "user_3", "satisfied": False}, {"user_id": "user_4", "satisfied": False},
+    ]}
+
+
+def test_member_fulfillment_preference_only_run_is_unchanged(db_session):
+    """반대 사유가 없는 run은 전과 같다 — 선호 조건을 전부 known+참으로 충족한 구성원만 센다."""
+    run = _make_run(db_session, status="collecting_evidence", category="카페")
+    _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_2", "source": "reaction", "text": "조용했으면", "badge": "preferred", "fact_key": "quiet", "wants": True},
+    ])
+    places = [PlaceStub(place_id="quiet", lat=35.0005, lng=129.0005), PlaceStub(place_id="unknown", lat=35.0006, lng=129.0006)]
+    flows.execute_run(
+        db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places),
+        place_facts=_FakePlaceFacts({"quiet": {"quiet": True}}),
+    )
+    by_place = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+    assert by_place["quiet"].member_fulfillment == {"satisfied": 1, "total": 1, "by_member": [
+        {"user_id": "user_2", "satisfied": True},
+    ]}
+    assert by_place["unknown"].member_fulfillment["satisfied"] == 0 and by_place["unknown"].member_fulfillment["total"] == 1
+
+
+def test_publish_candidate_copies_checked_member_fulfillment(db_session):
+    """게시된 핀은 candidate의 집계(#620 기준)를 그대로 복사한다 — 게시 뒤에도 같은 숫자다(가드레일 5)."""
+    run, by_place = _run_with_mixed_against_reasons(db_session)
+    candidate = by_place["unknown_spicy"]
+    pin = flows.publish_candidate(
+        db_session, candidate_id=str(candidate.id), requester_id="user_1",
+        membership=_membership(run.map_id, "user_1"),
+    )
+    db_session.expire_all()
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    response = pins_api.get_pin_response_for_viewer(
+        db_session, pin_id=str(pin.id), viewer_id="user_1", principal=principal,
+    )
+    assert response.member_fulfillment.model_dump(exclude_none=True) == candidate.member_fulfillment
+    assert (response.member_fulfillment.satisfied, response.member_fulfillment.total) == (0, 2)
 
 
 def test_get_result_exposes_reason_member_fulfillment_and_place_source(db_session):

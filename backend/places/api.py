@@ -179,6 +179,14 @@ def search_nearby_own(category: str, areas: Sequence[Area], *, db: Session | Non
         return repository.search_nearby_own(s, category, areas)
 
 
+def get_ad_places(db: Session, *, place_ids: Sequence[str], center: tuple[float, float], radius_m: float,
+                  categories: Sequence[str]) -> list[dict]:
+    """추천 탭 광고용(docs/ads.md 5·6절, #645). 주어진 place_id 중 status=open, category in categories,
+    center(lat, lng)에서 radius_m 안인 장소만 {id, name, category, address, lat, lng, kakao_place_id, kakao_place_url}로.
+    없는 ID·형식이 틀린 ID는 빠진다. 읽기 전용, 커밋하지 않는다."""
+    return repository.get_ad_places(db, place_ids, center, radius_m, categories)
+
+
 def get_facts(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, list[FactLabel]]:
     """place_facts의 fact_key·value·confidence를 그대로. 라벨이 없으면 빈 리스트. unknown_policy는 호출하는 쪽이 적용한다."""
     with _session(db) as s:

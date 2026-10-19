@@ -1,7 +1,7 @@
 """계획 보조 에이전트의 판단 — 순수 함수만 둔다. DB를 모르고 시각은 인자로 받는다(docs/code-quality.md 기능형 코어).
 
 - 기준 시간(명세 6.1), 탐지기 4종(6.2~6.5), 신호(Signal)와 해시(3절)
-- 개입 정책(12.3), 우선순위 코드 규칙(7절, #582), 다음 점검 시각(12.4)
+- 개입 정책(12.3), 우선순위 코드 규칙(7절, #582), 다음 점검 시각(12.4), 제안 뒤 24시간 안 확정 판정(12.9, #613)
 - 우선순위 정책 파일(`priority_policy.yaml`) 로더 — 파일 읽기 한 곳만 I/O다
 - 코드 유형 템플릿(6.4, 6.5)과 렌더(11절 끝 "저장과 렌더 시점"), 이벤트 페이로드(15절) — #531
 - 진단 입력(12.4 6단계), 충돌 종류(6.3), 모델 출력 검증(11.2) — #533
@@ -39,6 +39,7 @@ from agent.constants import (
     DDAY_FACTOR_NEAR,
     DDAY_FAR,
     DDAY_MID,
+    DECIDED_WINDOW,
     MODEL_TYPES,
     NO_REACTION_DAILY_LIMIT,
     NOT_FILTERED_CHIP_IDS,
@@ -619,6 +620,53 @@ def signal_record(sig: Signal) -> dict[str, Any]:
         "evidence_ids": list(sig.evidence_ids), "features": dict(sig.features),
         "fingerprint": sig.fingerprint, "evidence_hash": sig.evidence_hash,
     }
+
+
+# ---------------------------------------------------------------- 제안 뒤 24시간 안 확정 (12.9, #613)
+
+CATEGORY_DECIDED = ("category_gap", "stall")   # 제안 카테고리의 핀이 확정되면 참. 나머지는 가리킨 핀으로 본다
+
+
+@dataclass(frozen=True)
+class Confirmation:
+    """확정 항목 하나. category는 핀의 지금 분류(#466) — 분류를 읽지 못한 핀(삭제된 핀 등)은 None."""
+    pin_id: str
+    category: str | None
+    added_at: datetime
+
+
+@dataclass(frozen=True)
+class DecisionTarget:
+    """decided_within_24h를 채울 제안 — agent_suggestions에서 판정에 쓰는 칸만."""
+    id: Any
+    diagnosis: str
+    category: str | None
+    pin_id: str | None
+    claims: Sequence[Mapping[str, Any]]
+    actions: Sequence[Mapping[str, Any]]
+    created_at: datetime
+
+
+def pointed_pin_ids(target: DecisionTarget) -> frozenset[str]:
+    """제안이 가리킨 핀. split은 pin_id, no_reaction은 핀 ref claim과 show_pins 버튼의 pin_ids(근거 id 그대로, 6.4)."""
+    if target.diagnosis == "split":
+        return frozenset([target.pin_id] if target.pin_id else [])
+    shown = (pid for a in target.actions if a.get("type") == "show_pins" for pid in a.get("params", {}).get("pin_ids", []))
+    return frozenset(referenced_pin_ids(target.claims)) | frozenset(shown)
+
+
+def decided_within_24h(target: DecisionTarget, confirmations: Iterable[Confirmation]) -> bool:
+    """제안 created_at부터 DECIDED_WINDOW(24시간) 안에(양 끝 포함) 확정된 항목이 있는가. category_gap과 stall은 제안
+    카테고리의 핀, split과 no_reaction은 제안이 가리킨 핀이 확정됐는지 본다. 확정 항목은 지금 남은 것이라 삭제된 핀의
+    항목도 들어오면 센다(분류를 모르면 카테고리 유형에서는 세지 못한다)."""
+    end = target.created_at + DECIDED_WINDOW
+    in_window = [c for c in confirmations if target.created_at <= c.added_at <= end]
+    if target.diagnosis in CATEGORY_DECIDED:
+        return target.category is not None and any(c.category == target.category for c in in_window)
+    if target.diagnosis in ("split", "no_reaction"):
+        pins = pointed_pin_ids(target)
+        return any(c.pin_id in pins for c in in_window)
+    raise ValueError(f"알 수 없는 diagnosis: {target.diagnosis}")
 
 
 # ---------------------------------------------------------------- 노출 (#531)
