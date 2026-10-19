@@ -239,6 +239,12 @@ def list_live_kakao_place_ids(db: Session, *, map_id: str) -> list[str]:
     return service.list_live_kakao_place_ids(db, map_id)
 
 
+def list_live_kakao_ids_on_map(db: Session, *, map_id: str) -> set[str]:
+    """추천 탭 광고의 「이미 지도에 있어요」(docs/ads.md 5절 4번, #647)가 쓴다 — 이 지도의 삭제되지 않은 실시간 핀
+    (source=live)의 kakao_place_id. 조회 범위는 list_live_kakao_place_ids와 같고 집합으로 돌려준다. 읽기 전용."""
+    return set(service.list_live_kakao_place_ids(db, map_id))
+
+
 def list_disliked_place_ids(db: Session, *, user_id: str, map_id: str, category: str) -> list[str]:
     """recommend의 가드레일 6(#119) — 이 사용자가 이 지도의 이 카테고리에서 🚫(against) 반응을
     남긴 핀들의 place_id(중복 없이, 정렬). recommend가 exclusions.reason='dismissed'로 쌓는다.
