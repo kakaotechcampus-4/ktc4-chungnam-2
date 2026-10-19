@@ -10,6 +10,7 @@ import MapIllustration from '@/ui/MapIllustration'
 import Pingo from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
 import SheetTitle from '@/ui/SheetTitle'
+import Wordmark from '@/ui/Wordmark'
 
 import { isUnauthorized } from './api'
 import KakaoButton from './KakaoButton'
@@ -66,7 +67,9 @@ function LoginScreen() {
   return (
     <div className="min-h-dvh bg-white md:flex md:items-center md:justify-center md:bg-ink-50 md:px-5 md:py-10">
       <main className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col px-5 pb-6 pt-14 md:mx-0 md:min-h-0 md:max-w-[400px] md:rounded-2xl md:border md:border-ink-200 md:bg-white md:px-8 md:py-10">
-        <h1 className="text-3xl font-extrabold text-brand-600">핑고핑고</h1>
+        <h1>
+          <Wordmark className="h-10 w-auto" />
+        </h1>
         <p className="mt-1 font-semibold text-ink-900">같이 갈 곳을 한 지도에 모아요</p>
         <LoginHero />
 
