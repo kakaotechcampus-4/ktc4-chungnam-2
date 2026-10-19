@@ -140,12 +140,17 @@
     }
 }
 /* 보이는 원은 32px 그대로 두고 누르는 영역만 44px로 넓힌다(PRODUCT.md 접근성 — 터치 44px). */
+/* 보이는 크기와 상관없이 누르는 영역을 가운데 기준 최소 44×44로 맞춘다. 사방 6px만 넓히면 20px 버튼이 32px에 그쳤다(#406). */
 @utility hit-44 {
     position: relative;
     &::before {
         content: '';
         position: absolute;
-        inset: -6px;
+        top: 50%;
+        left: 50%;
+        width: max(100%, 44px);
+        height: max(100%, 44px);
+        transform: translate(-50%, -50%);
     }
 }
 
@@ -155,7 +160,11 @@
     &::before {
         content: '';
         position: absolute;
-        inset: -6px 0;
+        left: 0;
+        right: 0;
+        top: 50%;
+        height: max(100%, 44px);
+        transform: translateY(-50%);
     }
 }
 
@@ -265,6 +274,12 @@
 
 /* 키보드 포커스는 불투명 2px(3:1 이상). shadcn 기본 outline-ring/50 은 흰 바탕에서 1.98:1이라 안 보였다(#299). */
 @layer base {
+    /* 안내문 기본색(Tailwind: 글자색 50%)은 3.4:1이라 읽히지 않는다. ink-500(약 5:1)으로(#406). */
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--ink-500);
+        opacity: 1;
+    }
     /* base 층에 둬서 outline-none 을 준 곳(검색 input 등 — 틀이 대신 표시)은 그대로 꺼진다. */
     :focus-visible {
         outline: 2px solid var(--line-focus);
