@@ -188,6 +188,7 @@
     --animate-pingo-hop: pingo-hop 500ms ease-out 1;
     --animate-pingo-waddle: pingo-waddle 600ms ease-in-out infinite;
     --animate-pingo-step: pingo-step 600ms ease-in-out infinite;
+    --animate-pingo-flutter: pingo-flutter 700ms ease-in-out infinite;
     @keyframes pingo-bob {
         50% { transform: translateY(-2px) rotate(-3deg); }
     }
@@ -197,6 +198,10 @@
     @keyframes pingo-waddle {
         0%, 100% { transform: rotate(-7deg); }
         50% { transform: rotate(7deg); }
+    }
+    /* 날 때 망토 끝이 바람에 펄럭인다(목 쪽은 고정). */
+    @keyframes pingo-flutter {
+        50% { transform: scaleX(0.92) skewY(4deg); }
     }
     @keyframes pingo-step {
         0%, 100% { transform: translateY(-3px); }
