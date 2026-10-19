@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, Navigate } from 'react-router'
-import { Map as MapIcon, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { readPendingInvite } from '@/features/auth/pendingInvite'
@@ -15,7 +15,7 @@ import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
 
 /**
- * 로그인 직후 진입점 — 내 지도 목록 (#24, Figma 1절). 빈 목록은 AI와 관계없는 화면이라 핑고를 넣지 않는다.
+ * 로그인 직후 진입점 — 내 지도 목록 (#24, Figma 1절).
  * 넓은 화면(768px 이상)은 가운데 좁은 띠 대신 넓은 틀에 카드를 격자로 깔고, 「새 지도 만들기」는 헤더 오른쪽,
  * 계정은 바닥 시트 대신 계정 버튼 아래 메뉴다. 지도에 들어간 뒤 다른 지도로 옮기는 건 패널 제목 메뉴가 맡는다.
  */
@@ -62,7 +62,7 @@ export default function MapListPage() {
 
         {maps?.length === 0 ? (
           <div className="flex flex-1 flex-col justify-center md:flex-none md:rounded-2xl md:border md:border-dashed md:border-ink-300 md:py-18">
-            <EmptyState icon={MapIcon} title="아직 만든 지도가 없어요">
+            <EmptyState title="아직 만든 지도가 없어요">
               지도를 만들고 친구를 초대해 보세요
             </EmptyState>
           </div>

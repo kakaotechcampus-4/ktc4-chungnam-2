@@ -4,6 +4,7 @@ import { Link, Outlet, useSearchParams } from 'react-router'
 import ErrorText from '@/ErrorText'
 import AgainstMark from '@/ui/AgainstMark'
 import MapIllustration from '@/ui/MapIllustration'
+import PingoLoading from '@/ui/PingoLoading'
 
 import { isUnauthorized } from './api'
 import KakaoButton from './KakaoButton'
@@ -13,7 +14,7 @@ import { useMeQuery } from './queries'
 export default function RequireLogin() {
   const { isPending, error } = useMeQuery()
 
-  if (isPending) return <p className="p-4 text-sm text-ink-500">확인하는 중…</p>
+  if (isPending) return <PingoLoading label="로그인 상태를 확인하는 중…" className="min-h-dvh justify-center" />
   if (isUnauthorized(error)) return <LoginScreen />
   if (error) {
     return (

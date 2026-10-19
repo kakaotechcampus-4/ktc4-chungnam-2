@@ -174,6 +174,25 @@
     /* 지도 위에 떠 있는 것(지도 버튼·검색창·상단 원·칩)과 바텀시트 윗변. 목록·카드에는 그림자가 없다. */
     --shadow-float: 0 2px 8px rgba(20, 22, 31, 0.12);
     --shadow-sheet: 0 -2px 12px rgba(20, 22, 31, 0.08);
+    /* 핑고 움직임(Pingo.tsx). 찾는 중엔 들썩이고, 추천 완료엔 한 번 뛰고, 로딩엔 뒤뚱뒤뚱 걷는다(몸 기우뚱 + 발 번갈아). */
+    --animate-pingo-bob: pingo-bob 1.2s ease-in-out infinite;
+    --animate-pingo-hop: pingo-hop 500ms ease-out 1;
+    --animate-pingo-waddle: pingo-waddle 600ms ease-in-out infinite;
+    --animate-pingo-step: pingo-step 600ms ease-in-out infinite;
+    @keyframes pingo-bob {
+        50% { transform: translateY(-2px) rotate(-3deg); }
+    }
+    @keyframes pingo-hop {
+        40% { transform: translateY(-5px); }
+    }
+    @keyframes pingo-waddle {
+        0%, 100% { transform: rotate(-7deg); }
+        50% { transform: rotate(7deg); }
+    }
+    @keyframes pingo-step {
+        0%, 100% { transform: translateY(-3px); }
+        50% { transform: translateY(0); }
+    }
 }
 
 /* 디자인 컴포넌트(DESIGN.md 「컴포넌트 목록」). 화면에서는 이 클래스와 src/ui/ 부품만 조합한다.

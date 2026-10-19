@@ -27,7 +27,7 @@ import { ConnectionBanner } from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop, useIsPc } from '@/features/shell/useIsDesktop'
-import Pingo from '@/ui/Pingo'
+import { PingoMark } from '@/ui/Pingo'
 import { ClearButton } from '@/ui/TextField'
 
 /** 넓은 화면 패널이 미끄러지는 시간. 패널·덧칠의 `duration-300` 과 같은 값이다. */
@@ -385,7 +385,7 @@ export default function MapLayout() {
 
 /**
  * 최종기획안 4절 — 탭은 이 3개로 고정, 라벨도 고정 용어(9절). 하단 탭과 넓은 화면 탭 줄이 이 표 하나를 쓴다.
- * AI 는 선 아이콘 대신 핑고가 말한다(Icon 없음).
+ * AI 는 선 아이콘 대신 핑고 얼굴(PingoMark)이다(Icon 없음).
  */
 const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | null }[] = [
   { path: '', end: true, label: '마킹된 장소', Icon: MapPin },
@@ -409,7 +409,7 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
   )
 }
 
-/** 하단 탭의 AI. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 핑고, 활성만 파랑 채움 + 핑고(#299). */
+/** 하단 탭의 AI. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 파란 핑고 얼굴, 활성만 파랑 채움 + 흰 얼굴(#299). */
 function AiTabLink({ to, label }: { to: string; label: string }) {
   return (
     <NavLink
@@ -425,7 +425,7 @@ function AiTabLink({ to, label }: { to: string; label: string }) {
               isActive ? 'bg-brand-600' : 'border-2 border-brand-300 bg-white'
             }`}
           >
-            <Pingo size={30} />
+            <PingoMark size={30} tone={isActive ? 'white' : 'blue'} />
           </span>
           {label}
         </>
@@ -453,7 +453,7 @@ function TabRail({ mapId, raised }: { mapId: string; raised: boolean }) {
           to={`/maps/${mapId}${tab.path}`}
           end={tab.end}
           label={tab.label}
-          icon={tab.Icon ? <tab.Icon size={24} /> : <Pingo size={28} />}
+          icon={tab.Icon ? <tab.Icon size={24} /> : <PingoMark size={28} />}
         />
       ))}
     </nav>

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
-import { SlidersHorizontal } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import CardSkeleton from '@/ui/CardSkeleton'
@@ -145,7 +144,6 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
   const what = [who && `${who}님이 올린`, category].filter(Boolean).join(' ')
   return (
     <EmptyState
-      icon={SlidersHorizontal}
       title="필터에 걸리는 핀이 없어요"
       action={
         <button type="button" onClick={onClear} className="btn-outline btn-md">

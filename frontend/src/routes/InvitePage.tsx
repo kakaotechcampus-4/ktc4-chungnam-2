@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { ChevronLeft, Link2Off } from 'lucide-react'
+import { ChevronLeft } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { isUnauthorized } from '@/features/auth/api'
@@ -10,6 +10,7 @@ import { useMeQuery } from '@/features/auth/queries'
 import { inviteErrorMessage, inviteProblem, type InviteView } from '@/features/maps/model'
 import { useAcceptInviteMutation, useInviteSummaryQuery } from '@/features/maps/queries'
 import EmptyState from '@/ui/EmptyState'
+import PingoLoading from '@/ui/PingoLoading'
 import MapIllustration from '@/ui/MapIllustration'
 
 /**
@@ -33,7 +34,7 @@ export default function InvitePage() {
   const problem = inviteProblem(summary.error)
   if (problem) return <InviteBroken expired={problem === 'expired'} />
 
-  if (me.isPending || summary.isPending) return <p className="p-4 text-sm text-ink-500">확인하는 중…</p>
+  if (me.isPending || summary.isPending) return <PingoLoading label="초대를 확인하는 중…" className="min-h-dvh justify-center" />
 
   if (me.error && !needsLogin) {
     return (
@@ -111,7 +112,7 @@ function InviteBroken({ expired }: { expired: boolean }) {
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6">
       <div className="flex flex-1 flex-col justify-center">
-        <EmptyState icon={Link2Off} title={expired ? '초대 링크가 만료됐어요' : '유효하지 않은 초대 링크예요'}>
+        <EmptyState mood="sorry" title={expired ? '초대 링크가 만료됐어요' : '유효하지 않은 초대 링크예요'}>
           초대한 친구에게 새 링크를 받아주세요
         </EmptyState>
       </div>
