@@ -38,8 +38,9 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
   const arm = ([cx, cy, rx, ry, r]: Arm) => (
     <ellipse cx={cx} cy={cy} rx={rx} ry={ry} transform={`rotate(${r} ${cx} ${cy})`} fill="white" {...LINE} />
   )
-  // 찾는 중엔 제자리에서 들썩이고, 추천 완료엔 한 번 뛰고, 로딩엔 뒤뚱뒤뚱 걷는다. 움직임 줄이기 설정이면 멈춘다.
-  const motion = mood === 'thinking' ? 'motion-safe:animate-pingo-bob' : mood === 'happy' ? 'motion-safe:animate-pingo-hop' : ''
+  // 움직임은 상태를 알릴 때만(DESIGN.md Motion 「핑고 예외」) — 찾는 중엔 제자리에서 들썩이고, 로딩엔 뒤뚱뒤뚱 걷는다.
+  // 추천 완료에 뛰던 것은 꾸밈이라 뺐다. 움직임 줄이기 설정이면 멈춘다.
+  const motion = mood === 'thinking' ? 'motion-safe:animate-pingo-bob' : ''
   const walk = mood === 'walk'
 
   return (
