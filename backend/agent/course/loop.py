@@ -76,11 +76,14 @@ def turn_input(state: State, last: Optional[ToolResult], turn: int) -> dict[str,
             {"id": v.id, "kind": v.kind, "status": v.status, "places": list(v.places), **dict(v.detail)}
             for v in state.violations
         ],
+        **({"checks": [{"id": v.id, "place": v.places[0], "day": v.day}
+                       for v in core.find_checks(trip, state.course, state.hours)]}
+           if trip.unknown_hours == "check" else {}),
         "soft": core.soft_scores(trip, state.course),
         "locks": [{"place": p, "day": d} for p, d in sorted(state.locks.items())],
         "live_trials": [
             {"trial_id": t.trial_id, "move": t.move.model_dump(),
-             "hard": dict(zip(("confirmed", "unknown"), core.hard_score(t.violations)))}
+             "hard": core.hard_summary(trip, state.hours, t.course, t.violations)}
             for t in state.trials
         ],
         "history_steps": len(state.history),
@@ -153,7 +156,9 @@ def run_loop(
             break
 
     return RunResult(
-        outcome=core.outcome(best[1], timed_out=timed_out),
+        outcome=core.outcome(
+            best[1], timed_out=timed_out, checks=len(core.find_checks(state.trip, best[0], state.hours)),
+        ),
         best_course=best[0],
         best_violations=best[1],
         soft=core.soft_scores(state.trip, best[0]),

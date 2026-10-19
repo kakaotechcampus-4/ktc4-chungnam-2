@@ -31,7 +31,7 @@ class Scenario:
     gateway: FixtureOpeningHours                       # 조회 도구가 돌려주는 진짜 값(place_id = source_id)
 
 
-def scenario_from_map(m: Mapping[str, Any]) -> Scenario:
+def scenario_from_map(m: Mapping[str, Any], unknown_hours: str = "violation") -> Scenario:
     places = tuple(
         Place(p["alias"], f"pin-{p['alias']}", p["source_id"], p["name"], p["category"], p["lat"], p["lng"], frozenset(p["labels"]))
         for p in m["places"]
@@ -40,6 +40,7 @@ def scenario_from_map(m: Mapping[str, Any]) -> Scenario:
         places=places,
         days=tuple(date.fromisoformat(d) for d in m["days"]),
         member_constraints=tuple(MemberConstraint(**c) for c in m["member_constraints"]),
+        unknown_hours=unknown_hours,   # type: ignore[arg-type]
     )
     truth = {p["alias"]: {int(wd): s for wd, s in p["hours"].items()} for p in m["places"]}
     start = {p["alias"]: truth[p["alias"]] for p in m["places"] if p["known_at_start"]}
@@ -113,6 +114,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     ap.add_argument("--data", type=Path, default=Path(__file__).parent / "data")
     ap.add_argument("--model", action="store_true", help=f"실모델 에이전트도 돌린다(지도 {MODEL_MAP_CAP}개 이하)")
     ap.add_argument("--max-maps", type=int, default=None)
+    ap.add_argument("--unknown-as-check", action="store_true", help="휴무 모름을 위반 대신 「확인 필요」로 둔다")
     args = ap.parse_args(argv)
 
     maps = load_maps(args.data)
@@ -126,7 +128,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     elif args.max_maps:
         maps = maps[: args.max_maps]
 
-    results = [run_variants(scenario_from_map(m), decide) for m in maps]
+    results = [run_variants(scenario_from_map(m, "check" if args.unknown_as_check else "violation"), decide) for m in maps]
     print(format_table(aggregate(results), len(maps)))
     if decide is not None:
         print(f"모델 토큰(in, out) = {decide.tokens}, 실패 = {len(decide.failures)}")

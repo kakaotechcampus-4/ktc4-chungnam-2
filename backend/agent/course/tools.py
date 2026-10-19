@@ -48,9 +48,8 @@ def _fail(tool: str, code: str, message: str) -> ToolResult:
     return ToolResult(tool, ok=False, error=code, message=message)
 
 
-def _hard(violations) -> dict[str, int]:
-    confirmed, unknown = core.hard_score(violations)
-    return {"confirmed": confirmed, "unknown": unknown}
+def _hard(state: State, course: core.Course, violations) -> dict[str, int]:
+    return core.hard_summary(state.trip, state.hours, course, violations)
 
 
 def execute(call: ToolCall, state: State, hours_gateway: OpeningHoursGateway) -> tuple[State, ToolResult]:
@@ -88,7 +87,7 @@ def _get_opening_hours(call: GetOpeningHours, state: State, gateway: OpeningHour
         return state, _fail(call.tool, "INVALID_ID", f"{call.place}는 없는 장소다")
     place = state.trip.place(call.place)
     found = gateway.get_opening_hours([place.place_id]).get(place.place_id)
-    unknown_before = core.hard_score(state.violations)[1]
+    unknown_before = len(core.find_checks(state.trip, state.course, state.hours))
     # 조회 결과에 없는 요일은 이전 값을 그대로 둔다. 모르는 값으로 아는 값을 덮지 않는다.
     merged = {**state.hours.get(call.place, {}), **{wd: s for wd, s in (found or {}).items() if s != "unknown"}}
     new_state = with_hours(replace(state, looked_up=state.looked_up | {call.place}), {**state.hours, call.place: merged})
@@ -96,8 +95,8 @@ def _get_opening_hours(call: GetOpeningHours, state: State, gateway: OpeningHour
     return new_state, ToolResult(call.tool, ok=True, data={
         "place": call.place,
         "days": days,
-        "resolved_unknown": unknown_before - core.hard_score(new_state.violations)[1],
-        "hard": _hard(new_state.violations),
+        "resolved_unknown": unknown_before - len(core.find_checks(new_state.trip, new_state.course, new_state.hours)),
+        "hard": _hard(new_state, new_state.course, new_state.violations),
     })
 
 
@@ -115,8 +114,8 @@ def _try_move(call: TryMove, state: State) -> tuple[State, ToolResult]:
     after_ids = {v.id for v in violations}
     return replace(state, trials=(*state.trials, trial), trial_seq=state.trial_seq + 1), ToolResult(call.tool, ok=True, data={
         "trial_id": trial.trial_id,
-        "hard_before": _hard(state.violations),
-        "hard_after": _hard(violations),
+        "hard_before": _hard(state, state.course, state.violations),
+        "hard_after": _hard(state, course, violations),
         "soft_before": core.soft_scores(state.trip, state.course),
         "soft_after": core.soft_scores(state.trip, course),
         "resolved": sorted(before_ids - after_ids),
@@ -135,7 +134,7 @@ def _commit(call: CommitMove, state: State) -> tuple[State, ToolResult]:
     # 채택하면 남은 시험은 버린다 — 이전 코스 위에서 만든 시험이라 지금 코스에 맞지 않는다.
     new_state = replace(state, course=trial.course, violations=trial.violations, trials=(),
                         history=(*state.history, Commit(step, trial.course)))
-    return new_state, ToolResult(call.tool, ok=True, data={"step": step, "hard": _hard(new_state.violations)})
+    return new_state, ToolResult(call.tool, ok=True, data={"step": step, "hard": _hard(new_state, new_state.course, new_state.violations)})
 
 
 def _revert(call: Revert, state: State) -> tuple[State, ToolResult]:
@@ -145,4 +144,4 @@ def _revert(call: Revert, state: State) -> tuple[State, ToolResult]:
     step = len(state.history)
     new_state = replace(state, course=course, violations=core.find_violations(state.trip, course, state.hours),
                         trials=(), history=(*state.history, Commit(step, course)))
-    return new_state, ToolResult(call.tool, ok=True, data={"step": step, "hard": _hard(new_state.violations)})
+    return new_state, ToolResult(call.tool, ok=True, data={"step": step, "hard": _hard(new_state, new_state.course, new_state.violations)})

@@ -58,8 +58,8 @@ def _best_move(state: State) -> Optional[Move]:
 
 def next_action(state: State) -> ToolCall:
     # 1. 모르는 영업시간부터 조회한다
-    unknown = [v.places[0] for v in state.violations
-               if v.kind == "closed" and v.status == "unknown" and v.places[0] not in state.looked_up]
+    unknown = [v.places[0] for v in core.find_checks(state.trip, state.course, state.hours)
+               if v.places[0] not in state.looked_up]
     if unknown and _left(state, "get_opening_hours"):
         return GetOpeningHours(tool="get_opening_hours", place=unknown[0])
 

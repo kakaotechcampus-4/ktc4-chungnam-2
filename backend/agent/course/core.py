@@ -62,6 +62,9 @@ class Trip:
     places: tuple[Place, ...]
     days: tuple[date, ...]
     member_constraints: tuple[MemberConstraint, ...] = ()
+    # 휴무를 모르는 장소를 위반 목록에 넣을지("violation"), 위반 밖 「확인 필요」 목록으로 따로 둘지("check").
+    # 확인 필요는 위반이 아니라 하드 점수·채택 거부에 영향이 없고, 결과 판정(solved_with_checks)에만 남는다.
+    unknown_hours: Literal["violation", "check"] = "violation"
     _by_alias: dict[str, Place] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -171,6 +174,8 @@ def find_violations(trip: Trip, course: Course, hours: Hours) -> tuple[Violation
         d, da = trip.days[i], day_alias(i)
         for p in day:
             status = status_on(hours, p, d)
+            if status == "unknown" and trip.unknown_hours == "check":
+                continue                                  # find_checks가 따로 돌려준다
             if status != "open":
                 out.append(Violation(
                     f"closed:{p}:{da}", "closed", "confirmed" if status == "closed" else "unknown", da, (p,),
@@ -193,6 +198,24 @@ def find_violations(trip: Trip, course: Course, hours: Hours) -> tuple[Violation
                     f"member:{da}", "member", "confirmed", da, tuple(day), {"minutes": total, "limit": c.value},
                 ))
     return tuple(out)
+
+
+def find_checks(trip: Trip, course: Course, hours: Hours) -> tuple[Violation, ...]:
+    """「확인 필요」 — 그날 영업하는지 모르는 장소. unknown_hours 설정과 상관없이 늘 같은 결과다."""
+    return tuple(
+        Violation(f"closed:{p}:{day_alias(i)}", "closed", "unknown", day_alias(i), (p,))
+        for i, day in enumerate(course)
+        for p in day
+        if status_on(hours, p, trip.days[i]) == "unknown"
+    )
+
+
+def hard_summary(trip: Trip, hours: Hours, course: Course, violations: Sequence[Violation]) -> dict[str, int]:
+    """모델과 도구 결과에 보이는 하드 요약. 위반 모드는 {confirmed, unknown}, 확인 필요 모드는 {confirmed, checks}."""
+    confirmed, unknown = hard_score(violations)
+    if trip.unknown_hours == "check":
+        return {"confirmed": confirmed, "checks": len(find_checks(trip, course, hours))}
+    return {"confirmed": confirmed, "unknown": unknown}
 
 
 def hard_score(violations: Sequence[Violation]) -> tuple[int, int]:
@@ -359,8 +382,9 @@ def render_thought(trip: Trip, text: str) -> str:
 
 # ---- 결과 판정 (명세 11.3) ----
 
-def outcome(best_violations: Sequence[Violation], *, timed_out: bool) -> str:
+def outcome(best_violations: Sequence[Violation], *, timed_out: bool, checks: int = 0) -> str:
+    """checks = 남은 「확인 필요」 수. 위반 모드에서는 위반 속 unknown과 같은 것이라 둘 중 하나만 있어도 확인이 남은 것이다."""
     confirmed, unknown = hard_score(best_violations)
     if confirmed == 0:
-        return "solved" if unknown == 0 else "solved_with_checks"
+        return "solved" if unknown == 0 and checks == 0 else "solved_with_checks"
     return "timeout" if timed_out else "unresolved"
