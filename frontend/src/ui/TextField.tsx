@@ -50,7 +50,7 @@ export function ClearButton({ label, onClick }: { label: string; onClick: () => 
       type="button"
       aria-label={label}
       onClick={onClick}
-      className="hit-44 flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-300 text-white"
+      className="hit-44 flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-500 text-white"
     >
       <X size={12} aria-hidden="true" />
     </button>

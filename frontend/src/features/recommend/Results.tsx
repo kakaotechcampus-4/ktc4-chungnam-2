@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ExternalLink, MessageSquare, RotateCw, Users } from 'lucide-react'
 
 import { ApiError } from '@/api'
@@ -30,6 +30,15 @@ const MARK = { pass: '✓', check: '?', fail: '✗' } as const
 
 const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이버지도', google: '구글맵', permit: '인허가 공공데이터', tourapi: '한국관광공사' }
 
+/**
+ * 출처는 항상 붙는다(가드레일 5). 장소는 자체 DB에서만 오므로(#53) 제공처를 모르면 「확인 안 됨」 대신 그 사실을 적는다.
+ * 모르는 제공처 코드가 오면 코드를 그대로 보인다 — 지어내지 않는다(#406).
+ */
+function sourceLabel(c: CandidateDto): string {
+  const p = c.place_source?.provider
+  return (p && PROVIDER[p]) ?? p ?? '핑고 장소 DB'
+}
+
 /** 시트 안 이전 화면(Figma '‹ AI 추천'). 결과에서 빠져나와 준비 판정으로 돌아간다. 넓은 화면은 패널 헤더 ‹ 다. */
 export function BackToReadiness({ mapId }: { mapId: string }) {
   const setRun = useAiStore((s) => s.setRun)
@@ -45,7 +54,7 @@ export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; r
       <BackToReadiness mapId={mapId} />
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <AiHeader title={`${run.category} 대안 ${count}곳을 찾았어요`} sub="나에게만 보여요 · 올린 곳만 모두에게 보여요" />
+          <AiHeader title={`${run.category} 대안 ${count}곳을 찾았어요`} sub="나에게만 보여요 · 올린 곳만 모두에게 보여요" mood="happy" />
         </div>
         <button
           type="button"
@@ -66,6 +75,9 @@ export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; r
   )
 }
 
+/** 결과를 이미 보여 준 실행. 후보 상세에서 목록으로 돌아올 때는 다시 나타나지 않게 한다(#595). */
+const shownRuns = new Set<string>()
+
 /** 결과 목록(Figma 'AI 결과 탭'). 카드마다 이유·조건별 체크·구성원 충족·출처가 붙는다(가드레일 5). */
 export function ResultsBody({
   mapId,
@@ -82,8 +94,12 @@ export function ResultsBody({
 }) {
   const removed = result.funnel.reduce((sum, f) => sum + f.removed_count, 0)
   const missing = missingWants(result.candidates, useEvidenceQuery(run.id).data ?? [])
+  const [enter] = useState(() => !shownRuns.has(run.id))
+  useEffect(() => {
+    shownRuns.add(run.id)
+  }, [run.id])
   return (
-    <div className="space-y-3">
+    <div className={`space-y-3 ${enter ? 'enter-fade' : ''}`}>
       <button type="button" onClick={onHow} className="flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
         <span>
           조건으로 {removed}곳 걸러냄 → 추천 {result.candidates.length}곳
@@ -113,18 +129,18 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
   return (
     <article className="space-y-2 rounded-xl border-[1.5px] border-brand-300 bg-brand-50 p-3.5">
       <header className="flex items-center gap-2">
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-[var(--bad-line)] text-xs font-bold text-[var(--bad-line)]">
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
           {c.rank}
         </span>
         <h3 className="min-w-0 flex-1 truncate text-title font-bold text-ink-900">{c.place_name}</h3>
         {c.region_label && <span className="tag border border-brand-300 bg-white text-brand-700">{c.region_label} 기준</span>}
       </header>
-      <p className="text-xs text-ink-500">{run.category}</p>
+      <p className="text-xs text-ink-600">{run.category}</p>
       <Reason text={c.reason} />
       <Checks c={c} />
       <p className="flex items-center gap-1.5 text-xs font-bold text-brand-700">
         <Users size={14} aria-hidden="true" /> {c.member_fulfillment.total}명 중 {c.member_fulfillment.satisfied}명 조건 충족
-        <span className="ml-auto font-normal text-ink-500">출처 · {PROVIDER[c.place_source?.provider ?? ''] ?? '확인 안 됨'}</span>
+        <span className="ml-auto font-normal text-ink-600">출처 · {sourceLabel(c)}</span>
       </p>
       <p className="text-xs text-ink-600">{fulfillmentLine(c, members)}</p>
       <div className="flex items-center justify-between">
@@ -155,7 +171,8 @@ function Checks({ c }: { c: CandidateDto }) {
       {toChecks(c).map((k) => (
         <li key={k.label} className={`tag ${TONE[k.tone]}`}>
           {MARK[k.tone]} {k.label}
-          {k.tone === 'check' && ' (확인 필요)'}
+          {/* 라벨에 이미 「확인」이 들어 있으면 겹쳐 쓰지 않는다(「가격대 확인 필요 (확인 필요)」, #406). */}
+          {k.tone === 'check' && !k.label.includes('확인') && ' (확인 필요)'}
         </li>
       ))}
     </ul>

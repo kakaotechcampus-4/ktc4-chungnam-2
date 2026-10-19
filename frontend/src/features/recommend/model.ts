@@ -1,6 +1,7 @@
 import type { components } from '@pingo/contracts/src/types/api'
 
 import { ApiError } from '@/api'
+import { josa } from '@/ui/josa'
 
 export type RecommendCategory = components['schemas']['RecommendCategory']
 export type ReadinessDto = components['schemas']['Readiness']
@@ -112,7 +113,7 @@ export function fulfillmentLine(c: CandidateDto, members: { userId: string; name
   return [
     ok.length && (no.length ? `${ok.join('·')} 통과` : `조건을 건 ${ok.join('·')} 모두 통과`),
     no.length && `${no.join('·')} 미충족`,
-    none.length && `${none.join('·')}은(는) 건 조건 없음`,
+    none.length && `${none.join('·')}${josa(none[none.length - 1], '은', '는')} 건 조건 없음`,
   ]
     .filter(Boolean)
     .join(' · ')

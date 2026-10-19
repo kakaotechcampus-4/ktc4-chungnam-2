@@ -221,7 +221,7 @@ def test_other_maps_of_the_same_users_survive_with_their_members_and_pins(world,
     a, _ = clients
     _run(db_session, "--older-than-days", "30")
 
-    assert {m["id"] for m in a.get("/maps").json()} == {world["live"]}
+    assert {m["id"] for m in a.get("/maps").json()["items"]} == {world["live"]}
     assert a.get(f"/maps/{world['live']}/pins").status_code == 200
     assert len(a.get(f"/maps/{world['live']}/members").json()) == 2
     assert db_session.get(User, "user_a") is not None

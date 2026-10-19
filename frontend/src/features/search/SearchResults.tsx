@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ExternalLink, SearchX } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
@@ -86,8 +86,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   if (results.length === 0) {
     return (
       // 다음 행동을 하나 둔다 — 검색어를 지우고 바로 다시 입력하게(#351).
-      <EmptyState
-        icon={SearchX}
+      <EmptyState mood="sorry"
         title="찾는 장소가 없어요"
         action={
           <button

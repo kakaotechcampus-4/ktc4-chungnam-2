@@ -21,9 +21,11 @@ from auth.schemas import CurrentUser
 from authz.core import Principal
 from authz.guard import require_map_member, require_on_map
 from common.settings import settings
-from maps import flows, service
+from maps import core, flows, service
 from maps.deps import DbSession
-from maps.schemas import Invite, InviteSummary, Map, Member, MapCreateRequest, MapUpdateRequest, OwnerTransferRequest
+from maps.schemas import (
+    Invite, InviteSummary, Map, MapCreateRequest, MapList, MapUpdateRequest, Member, OwnerTransferRequest,
+)
 
 router = APIRouter(tags=["maps"], dependencies=[Depends(get_current_user)])
 # 라우터 단위 의존성은 개별 라우트에서 뺄 수 없다 — 로그인 없이 호출되는 GET /invites/{token}(#23,
@@ -44,12 +46,13 @@ MapToDelete = Depends(require_on_map("map.delete"))  # 방장만 — 구성원 4
 MapToLeave = Depends(require_on_map("map.leave"))  # 넘길 사람이 없는 방장 409는 maps.core가 판정
 
 
-@router.get("/maps", response_model=list[Map], response_model_exclude_none=True)
+@router.get("/maps", response_model=MapList, response_model_exclude_none=True)
 def get_maps(
     user: CurrentUser = Depends(get_current_user),
     db=DbSession,
 ):
-    return service.list_maps(db, user_id=user.user_id)
+    # 상한을 함께 내려 화면이 "n / limit"을 그리고 상한이면 「새 지도」를 미리 막는다(#623).
+    return MapList(items=service.list_maps(db, user_id=user.user_id), limit=core.MAP_LIMIT)
 
 
 @router.post("/maps", response_model=Map, response_model_exclude_none=True, status_code=201)

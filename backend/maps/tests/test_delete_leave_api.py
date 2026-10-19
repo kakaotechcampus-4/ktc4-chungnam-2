@@ -118,7 +118,7 @@ def test_owner_deletes_map_and_it_disappears_for_every_member(app_client, db_ses
     assert resp.content == b""
 
     for user_id in ("user_1", "user_2"):
-        assert map_id not in [m["id"] for m in app_client.get("/maps", cookies=_auth(user_id)).json()]
+        assert map_id not in [m["id"] for m in app_client.get("/maps", cookies=_auth(user_id)).json()["items"]]
         assert app_client.get(f"/maps/{map_id}", cookies=_auth(user_id)).status_code == 404
         assert app_client.get(f"/maps/{map_id}/pins", cookies=_auth(user_id)).status_code == 404
         assert app_client.get(f"/maps/{map_id}/members", cookies=_auth(user_id)).status_code == 404
@@ -184,7 +184,7 @@ def test_member_leaves_and_only_their_reactions_and_evidence_on_that_map_go(app_
     assert db_session.get(PinRow, pin_by_leaver).deleted_at is None    # 핀도 남는다
 
     assert app_client.get(f"/maps/{map_id}", cookies=_auth("user_2")).status_code == 404
-    assert map_id not in [m["id"] for m in app_client.get("/maps", cookies=_auth("user_2")).json()]
+    assert map_id not in [m["id"] for m in app_client.get("/maps", cookies=_auth("user_2")).json()["items"]]
     assert app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()["member_count"] == 1
     assert maps_api.count_members(db_session, map_id) == 1
 
@@ -300,7 +300,7 @@ def test_permissions_on_every_map_response(app_client):
     accepted = app_client.post(f"/invites/{token}/accept", cookies=_auth("user_2")).json()
     assert accepted["permissions"] == {"can_delete": False, "can_leave": True, "can_edit": False}
 
-    listed = {m["id"]: m for m in app_client.get("/maps", cookies=_auth("user_1")).json()}
+    listed = {m["id"]: m for m in app_client.get("/maps", cookies=_auth("user_1")).json()["items"]}
     assert listed[map_id]["permissions"] == {"can_delete": True, "can_leave": True, "can_edit": True}
     assert all("next_owner" not in m for m in listed.values())   # 목록에서는 생략
     member_view = app_client.get(f"/maps/{map_id}", cookies=_auth("user_2")).json()
@@ -344,7 +344,7 @@ def test_creating_a_map_over_the_limit_is_409(app_client):
     assert resp.status_code == 409
     assert resp.json()["code"] == "MAP_LIMIT"
     assert resp.json()["detail"] == {"limit": MAP_LIMIT, "count": MAP_LIMIT}
-    assert len(app_client.get("/maps", cookies=_auth("user_2")).json()) == len(own)
+    assert len(app_client.get("/maps", cookies=_auth("user_2")).json()["items"]) == len(own)
 
 
 def test_accepting_a_new_invite_at_the_limit_is_409_but_rejoin_is_allowed(app_client):

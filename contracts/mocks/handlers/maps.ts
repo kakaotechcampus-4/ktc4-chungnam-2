@@ -45,7 +45,7 @@ export const mapsHandlers = [
       .filter(([mapId]) => (store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID))
       .map(([, map]) => toMapResponse(map))
       .reverse();
-    return HttpResponse.json(mine);
+    return HttpResponse.json({ items: mine, limit: MAP_LIMIT }); // #623: 목록과 상한을 함께
   }),
 
   http.post("*/maps", async ({ request }) => {
