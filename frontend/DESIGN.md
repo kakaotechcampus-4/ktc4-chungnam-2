@@ -45,6 +45,9 @@ typography:
     fontSize: "16px"
     fontWeight: 700
   item-title:
+    fontSize: "16px"
+    fontWeight: 700
+  section-title:
     fontSize: "14px"
     fontWeight: 700
   body:
@@ -76,15 +79,26 @@ components:
     textColor: "#FFFFFF"
     typography: "{typography.button}"
     rounded: "{rounded.button}"
-    padding: "14px 16px"
+    height: "52px"
   button-outline:
     backgroundColor: "#FFFFFF"
     textColor: "{colors.brand-600}"
+    rounded: "{rounded.button}"
+  button-neutral:
+    backgroundColor: "#FFFFFF"
+    textColor: "{colors.ink-900}"
     rounded: "{rounded.button}"
   button-confirm:
     backgroundColor: "{colors.confirmed-gold-bg}"
     textColor: "{colors.confirmed-mark}"
     rounded: "{rounded.control}"
+  tag:
+    rounded: "{rounded.tag}"
+    typography: "{typography.caption}"
+  input:
+    backgroundColor: "#FFFFFF"
+    rounded: "{rounded.card}"
+    height: "48px"
   chip-selected:
     backgroundColor: "{colors.brand-100}"
     textColor: "{colors.brand-700}"
@@ -171,17 +185,24 @@ components:
 
 **글자 크기는 rem으로 쓴다.** `text-[13px]` 같은 px 고정값은 사용자가 글자를 키워도 커지지 않아 위계가 뒤집힌다(150% 확대 점검, #308). 아래 px는 기본 16px 기준 값이다.
 
-**Character:** 한 글꼴 가족 하나로 굵기 대비(700 / 500 / 400)만으로 위계를 만든다. 제목도 같은 가족을 쓴다.
+**Character:** 한 글꼴 가족 하나로 굵기 대비만으로 위계를 만든다. 제목도 같은 가족을 쓴다. 굵기는 700(제목·버튼) / 600(태그·켜진 칩·짧은 강조) / 500(탭 라벨·글자 버튼) / 400(본문) 네 단계다.
 
 ### Hierarchy
-- **Page title** (700, 24px): 입구 화면 제목(「내 지도」)이다.
-- **Sheet title** (700, 20px): 시트 머리(「마킹된 장소」), 모달 제목이다.
-- **Card title** (700, 17px): 지도 카드, AI 결과 머리다.
-- **Button** (700, 16px): 전폭 CTA다.
-- **Item title** (700, 14px): 핀 이름이다.
-- **Body** (400, 13px): 검색창, 칩, 이유 문장이다.
-- **Caption** (400, 12px): 부가정보, 참여 집계(「2/4명이 의견을 남겼어요」는 700)다.
-- **Label** (500, 11px): 탭 라벨, 반응 숫자, 작은 칩이다.
+단계마다 클래스가 하나다(`src/index.css` `@theme`). 이 여덟 단계 밖의 크기(`text-lg`, `text-[…]`)는 쓰지 않는다.
+
+| 단계 | 크기·굵기 | 클래스 | 쓰는 곳 |
+|---|---|---|---|
+| Page title | 24 / 700 | `text-2xl` | 입구 화면 제목(「내 지도」·「새 지도」) |
+| Sheet title | 20 / 700 | `text-xl` · `ui/SheetTitle` | 시트 머리(「마킹된 장소」), 핀 이름, 검색 결과 머리, 모달 시트 제목 |
+| Card title | 17 / 700 | `text-title` | 지도 카드·AI 후보 카드 이름, 확인 창 제목, 전체 화면 머리줄(근거 확인) |
+| Button · Item title | 16 / 700 | `text-base` | 전폭 버튼(btn-lg), 목록의 핀 이름 |
+| Section title | 14 / 700 | `text-sm font-bold` | 시트 안 구역 제목(「내 의견 선택」·「구성원」·「꼭 지켜야 하는 조건」) |
+| Body | 13 / 400 | `text-body` | 칩, 이유 문장, 메타 줄, 시트 안 뒤로가기 |
+| Caption | 12 / 400 | `text-xs` | 부가정보, 태그, 참여 집계(「2/4명이 의견을 남겼어요」는 700) |
+| Label | 11 / 500 | `text-label` | 탭 라벨, 글자 수, 작은 안내(＊ 줄) |
+
+- **입력칸은 16px다.** 아이폰 Safari는 16px보다 작은 입력칸에 포커스하면 화면을 확대해 지도 화면이 어긋난다. 검색창도 같다. 안내문(placeholder)은 ink-500이다.
+- **예외:** 로그인 화면 워드마크 「핑고핑고」(30 / 800, brand-600)만 단계 밖이다. 로고 자리라서다.
 
 ### Named Rules
 **Light 금지 규칙.** 300 굵기는 쓰지 않는다. 13px Light 회색 안내문은 읽히지 않는다.
@@ -207,16 +228,16 @@ components:
 목록과 카드는 평평하다. 테두리만 쓰고 그림자는 없다. 그림자는 지도 위에 떠 있는 것에만 준다. 기준색은 모두 잉크(rgba(20,22,31,α))다.
 
 ### Shadow Vocabulary
-- **떠 있는 컨트롤** (`0 2px 8px rgba(20,22,31,.12)`): 지도 버튼 묶음, 검색창이다.
-- **시트** (`0 -2px 12px rgba(20,22,31,.08)`): 바텀시트 윗변이다.
+- **떠 있는 컨트롤** (`shadow-float`, `0 2px 8px rgba(20,22,31,.12)`): 지도 버튼 묶음, 검색창, 상단 원 버튼, 지도 위 카테고리 칩, 하단 AI 원, 패널 손잡이다. Tailwind 기본 `shadow`·`shadow-sm`·`shadow-md`는 순수 검정이라 쓰지 않는다.
+- **시트** (`shadow-sheet`, `0 -2px 12px rgba(20,22,31,.08)`): 바텀시트 윗변이다.
 - **확정 핀** (`0 2px 4px rgba(0,0,0,.28)`): 흰 테두리 3px와 함께 바다 위 가시성을 맡는다. 빼지 않는다.
 
 **시트 안 그림자 금지 규칙.** 시트 안의 틀에는 그림자를 넣지 않는다. 시트를 올리면 회색 줄로 보인다.
 
 ## Shapes
 
-- **반경 단계:** 태그 6 → 컨트롤 8 → 카드·버튼·지도 버튼 12 → 시트 16 → 칩 알약이다. 코드는 `--radius-*`를 이 값으로 고정했다(#299).
-- 카드는 핀 항목·AI 카드·지도 카드 모두 12 하나다(Figma의 10·12·14 혼재를 모음).
+- **반경 단계:** 태그 6(`rounded-sm`) → 컨트롤·작은 버튼 8(`rounded-md`) → 카드·버튼·입력칸·지도 버튼 12(`rounded-xl`) → 시트·확인 창 16(`rounded-2xl`) → 칩 알약(`rounded-full`)이다. 코드는 `--radius-*`를 이 값으로 고정했다(#299). `rounded-lg`도 12지만 이름을 하나로 두려고 `rounded-xl`만 쓴다. 맨 `rounded`(4)는 쓰지 않는다.
+- 카드는 핀 항목·AI 카드·지도 카드·핑고 배너·초대 카드 모두 12 하나다(Figma의 10·12·14 혼재를 모음).
 - **아이콘을 담는 면:** 원이 아니라 둥근 사각형이다(지도 버튼). 상단 뒤로가기·프로필만 원이다.
 
 ## Motion
@@ -243,18 +264,61 @@ components:
 
 **상태 바뀜.** 위치·높이가 바뀌는 것(시트 단계, 패널 접기)은 등장 클래스가 아니라 `transition-[속성] duration-300 ease-out motion-reduce:transition-none`으로 옮긴다. 지도를 끄는 동안 사라지는 것은 위 "지도 집중 규칙"을 따른다.
 
+## 컴포넌트 목록
+
+**화면은 이 목록의 부품으로만 만든다.** 필요한 모양이 없으면 화면에서 클래스를 새로 짜지 않는다. 먼저 여기와 `src/index.css`(또는 `src/ui/`)에 부품을 만들고, 그 부품으로 화면을 만든다. 버튼 높이·카드 반경·글자 크기가 화면마다 달라지는 것을 막는 장치다(2026-10-17).
+
+| 필요한 것 | 쓰는 부품 | 위치 |
+|---|---|---|
+| 버튼 | `btn-{primary·outline·neutral·confirm·danger·danger-outline}` + `btn-{lg·md·sm}` | `index.css` |
+| 글자 버튼·링크 | `btn-text` · `btn-link` | `index.css` |
+| 누르는 알약(필터·선택) | `chip` (+ `chip-against`), 카테고리 줄은 `CategoryChips` | `index.css` · `features/map/PinFilterControls` |
+| 짧은 표시 | `tag` + `tag-{neutral·ai·good·warn·bad}` | `index.css` |
+| 입력칸 | `TextField`(✕·글자 수 포함) · `ClearButton`, 그 밖의 입력은 `field` 틀 | `ui/TextField` · `index.css` |
+| 시트·모달 제목 | `SheetTitle` (20/700) | `ui/SheetTitle` |
+| 시트 안 이전 화면 | `BackButton` 「‹ 마킹된 장소」 | `ui/BackButton` |
+| 비어 있을 때 | `EmptyState` (회색 면 아이콘 + 제목 + 설명 + 다음 행동) | `ui/EmptyState` |
+| 불러오는 중 | `CardSkeleton` (글자 「불러오는 중…」 대신 카드 자리) | `ui/CardSkeleton` |
+| 확인 창 | `ConfirmDialog` (`danger`면 마지막 버튼이 빨강) | `ui/ConfirmDialog` |
+| 아래에서 올라오는 모달 | `ModalSheet` | `features/shell/ModalSheet` |
+| 버튼 아래 메뉴(넓은 화면 계정·지도 정보) | `MenuPopover` (확인 창이 떠 있는 동안 열어 둠) | `features/shell/MenuPopover` |
+| 지도 바꾸기(넓은 화면 패널 제목) | `MapSwitcher` | `features/maps/MapSwitcher` |
+| 패널·시트 안 이전 화면(넓은 화면에선 패널 헤더 ‹ 로 옮김) | `PanelBackLink` (모바일은 `BackButton`) | `features/shell/PanelBackLink` |
+| 알림 | `showToast` (+ 「되돌리기」·「다시 시도」 동작) | `features/shell/toast` |
+| 사람 | `Avatar` (회색 면 + 첫 글자, 32·44) | `ui/Avatar` |
+| AI가 말하는 머리 | `AiHeader` (핑고 + `tag-ai`) | `features/recommend/Readiness` |
+| 반대 기호 | `AgainstMark` (lucide Ban) | `ui/AgainstMark` |
+
+- **아이콘:** lucide 선 아이콘만 쓴다. 크기는 12(11~12px 글자 옆) · 14(13px 글자 옆) · 16(14~16px 글자 옆·작은 버튼) · 20(지도 버튼·큰 버튼·단독 아이콘 버튼) · 24(탭) 다섯 단계다. 빈 화면 아이콘만 28이다.
+- **핑고(`ui/Pingo`)는 AI 자리에만 둔다.** 빈 화면·로딩·오류에는 넣지 않는다 — `EmptyState`는 회색 면 아이콘이다.
+
 ## Components
 
 ### Buttons
-- **Primary:** 채움 brand-600, 흰 글자 16/700, 반경 12. 화면당 하나다(「의견 등록」, 「지도 만들기」, 「초대 링크 공유하기」).
-- **Outline:** 흰 바탕 + brand-600 1px 테두리·글자, 반경 12(채움 버튼과 같음). 높이 34px 이하 작은 외곽선(「링크 복사」·카드 안 「지도에 올리기」·「핀 찍기」)은 12면 알약처럼 보여 칩과 헷갈리므로 컨트롤 반경 8(`rounded-md`)이다(#359). 「지도에 올리기」 등이다.
-- **Confirm:** 연골드 바탕 + 골드 테두리 + 갈색 글자 + ★, 반경 8(작은 버튼, `rounded-md`). 확정 리스트 넣기 전용이다(#359).
-- **Kakao:** 카카오 노랑 + 검정 글자. 「카카오로 시작하기」 한 곳뿐이다.
-- **코드:** 채움은 `btn-primary`, 외곽선은 `btn-outline` 클래스(`src/index.css`)를 붙이고 크기·여백만 그 자리에서 준다. 버튼마다 색·굵기를 다시 적지 않는다(#359).
+버튼은 **색 하나 + 크기 하나**다. 높이·글자 크기·반경을 그 자리에서 덧쓰지 않고, 폭(`w-full`·`flex-1`)과 바깥 여백만 준다.
 
-### Chips
-- **카테고리 칩:** 알약형이다. 선택하면 brand-100 + brand-600 테두리 + brand-700 글자이고, 기본은 흰 바탕 + ink-200 테두리 + ink-600 글자다.
-- **사유 칩:** 같은 모양이다. 반대 사유를 고르면 반대 세트(bad-bg + pin-red 테두리 + bad-text), 조율 사유를 고르면 주의 세트(warn-*)다. 파랑으로 켜지 않는다(#299).
+| 색 | 모양 | 쓰는 곳 |
+|---|---|---|
+| `btn-primary` | 채움 brand-600 + 흰 글자 | 화면당 하나(「의견 등록」·「지도 만들기」·「초대 링크 공유하기」) |
+| `btn-outline` | 흰 바탕 + brand-600 테두리·글자 | 두 번째 동작(「지도에 올리기」·「핀 찍기」·「근거 고치기」) |
+| `btn-neutral` | 흰 바탕 + ink-300 테두리 + ink-900 글자 | 취소·로그아웃·나가기·선택 안 함 |
+| `btn-confirm` | 연골드 + 골드 테두리 + 갈색 글자 + ★ | 「확정 리스트에 넣기」 전용. 「✓ 확정됨」 표시도 같은 모양 |
+| `btn-danger` | 채움 빨강 | 되돌릴 수 없는 동작의 확인 창 마지막 버튼(「삭제」·「나가기」) |
+| `btn-danger-outline` | 빨강 테두리·글자 | 그 확인 창을 여는 버튼(「지도 삭제」) |
+
+| 크기 | 높이 | 쓰는 곳 |
+|---|---|---|
+| `btn-lg` | 52 · 16/700 · 반경 12 | 화면·시트 맨 아래 주 버튼 줄(나란히 둘이어도 같다) |
+| `btn-md` | 44 · 14/700 · 반경 12 | 확인 창 버튼, 내용 중간 버튼(「의견 등록」), 빈 화면의 다음 행동 |
+| `btn-sm` | 32 · 14/700 · 반경 8 · 누르는 곳 44 | 카드·줄 안(「지도에 올리기」·「핀 찍기」·「링크 복사」·「로그아웃」). 12면 알약처럼 보여 칩과 헷갈려서 8이다(#359) |
+
+- **글자 버튼:** `btn-text`(조용한 회색 500 — 「닫기」·「핀 삭제」·「확정 해제」·「나중에 할게요」)와 `btn-link`(brand-600 700 — 「카카오맵에서 보기」·「복사」·「직접 찍기」). 둘 다 누르는 곳 44px이 들어 있다. 크기는 놓인 줄의 글자 크기를 따른다.
+- **Kakao:** 카카오 노랑 + 검정 글자, `btn-lg`. 「카카오로 시작하기」 한 곳뿐이다.
+
+### Chips · Tags
+- **칩(`chip`)** — 누르는 알약이다(카테고리·지역·사유·「동선 보기」). 13/400, 높이 32, 누르는 곳 44. 켜짐은 `aria-pressed`로 정한다: brand-100 + brand-600 테두리 + brand-700 글자 600. 기본은 흰 바탕 + ink-200 테두리 + ink-700 글자다. 그림자는 지도 위에 떠 있을 때만(`CategoryChips floating`) 준다.
+- **사유 칩:** 같은 모양에 `chip-against`를 더한다. 반대 사유를 고르면 반대 세트(bad-bg + pin-red 테두리 + bad-text)다. 파랑으로 켜지 않는다(#299).
+- **태그(`tag` + `tag-*`)** — 누를 수 없는 짧은 표시다. 12/600, 반경 6. `tag-neutral`(방장·지역) · `tag-ai`(AI) · `tag-good`/`tag-warn`/`tag-bad`(준비 완료·조건 체크). 흰 글자를 선 색(good-line·warn-line) 위에 얹지 않는다 — warn-line 위 흰 글자는 3.5:1이라 작은 글자 기준(4.5:1)에 못 미친다.
 
 ### Cards / Containers
 - **핀 항목:** 흰 바탕, ink-200 테두리, 반경 12, 안쪽 12다. 의견을 남긴 핀도 흰 바탕이다. 회색 면은 비활성처럼 읽힌다. 의견이 필요한 핀만 brand-600 1.5px 테두리 + 「의견 남기기」 칩이다(#299).
@@ -262,12 +326,12 @@ components:
 - **입구 카드:** 넓은 화면(768px 이상) 로그인 화면이다. 종이 배경 가운데 흰 바탕 + ink-200 테두리, 반경 16(시트와 같은 단계), 최대 폭 400, 안쪽 좌우 32·위아래 40이다. 지도 위가 아니라 그림자는 없다. 순서는 제목 → 소개 → 일러스트 → 카카오 버튼 → 구분선 → 쓰는 법이다. 휴대폰은 카드 없이 흰 화면 전체를 쓰고, 카카오 버튼은 엄지가 닿는 화면 아래에 둔다. 약관 동의 줄은 두 화면 모두 버튼 바로 아래 12/400 ink-500이고, 문서 이름만 brand-600 굵게 + 밑줄 링크다. 법적 고지라 이 줄만 「동의하는 것으로 간주됩니다」처럼 ~됩니다체로 쓴다(#602).
 
 ### Inputs / Fields
-- **입력칸:** 흰 바탕, ink-300 테두리, 반경 10, 높이 48이다. 글자가 있을 때만 오른쪽에 ✕가 보인다.
-- **오류:** warn-line 테두리 + warn-text 글자다.
+- **입력칸(`field` · `ui/TextField`):** 흰 바탕, ink-300 테두리, 반경 12, 높이 48, 글자 16이다. 글자가 있을 때만 오른쪽에 ✕(`ClearButton`)와 글자 수가 보인다. 포커스하면 테두리가 brand-500으로 바뀌고 2px 포커스 링이 붙는다. 날짜·여러 줄 입력도 같은 `field` 틀이다.
+- **오류:** `aria-invalid`를 켜면 warn-line 테두리가 되고, 문구는 warn-text다.
 
 ### Navigation
 - **하단 탭:** 74px + 홈 표시줄이다. 세 탭은 화면을 3등분한 칸의 가운데다. 좌우는 24px 선 아이콘 + 11/500 라벨(활성 brand-600, 비활성 ink-500)이다. 가운데는 AI 원(48px) + 「AI 추천」 라벨이다. 비활성은 흰 바탕 + brand-300 2px 테두리 + 핑고, 활성만 brand-600 채움 + 핑고다(핑고 그림은 그대로). AI는 핑고가 말한다는 규칙과 한 화면 한 채움을 함께 지킨다(#299).
-- **검색창:** 안내문은 13/400 ink-500(대비 약 5:1)이다. 지도를 끄는 동안 사라지고, 그동안은 눌리지 않는다.
+- **검색창:** 글자는 16/400(입력칸 규칙 — 아이폰 확대 방지), 안내문은 ink-500(대비 약 5:1)이다. 지도를 끄는 동안 사라지고, 그동안은 눌리지 않는다.
 - **상단:** 모바일 좌상단 ‹(흰 원)는 내 지도 목록이다. 넓은 화면 패널 헤더의 ‹ 는 패널 안 이전 화면이고, 지도 바꾸기는 지도 제목 메뉴다(Layout 절). 우상단은 지도 정보·구성원 버튼으로, 구성원 아이콘 + 인원 수를 보여 준다(이니셜 원은 계정처럼 읽혀서 바꿈, #351). 보이는 원은 32px, 누르는 영역은 44px이다.
 
 ### 지도 핀 (Signature)
@@ -297,6 +361,7 @@ components:
 ## Do's and Don'ts
 
 ### Do:
+- **Do** 화면을 만들기 전에 「컴포넌트 목록」을 먼저 본다. 맞는 부품이 없으면 부품부터 만들고 목록에 올린다.
 - **Do** 색은 역할 토큰(`--action-fill`, `--text-secondary`…)으로 부른다. 원시 값(`--brand-600`)을 컴포넌트에서 직접 부르지 않는다.
 - **Do** 반응은 기호 + 색 + 숫자로 보여 주고, 내 반응은 그 반응 색 칩에 "· 나"를 붙인다.
 - **Do** 상단 원형 버튼을 포함한 모든 터치 대상을 최소 44×44px로 잡는다. 보이는 원이 32px이면 히트 영역을 넓힌다.
@@ -308,4 +373,5 @@ components:
 - **Don't** "마킹됨" 배지, "내 선택: ○○" 배지, 범례 한 줄 설명을 넣지 않는다.
 - **Don't** 이모지(📅 💬 👥)를 아이콘 대신 쓰지 않는다. lucide(Calendar · MessageSquare · Users)를 쓴다. 🚫는 화면에서 lucide Ban(`ui/AgainstMark`)으로 그리고 뜻은 옆 글자 「반대」가 전한다. ♥ △ ?는 글자로 둔다.
 - **Don't** 통통 튀는 바운스·출렁이는 스프링, 목록 항목이 하나씩 순서대로 뜨는 효과, 반짝임·떠다니기 같은 꾸밈 움직임을 넣지 않는다. 탭 전환·♥/🚫 반응처럼 자주 누르는 동작에는 등장 효과를 걸지 않는다(#595).
+- **Don't** 버튼에 `py-3`·`text-sm`·`rounded-md`를 덧써서 크기를 바꾸지 않는다. 크기는 `btn-lg`/`md`/`sm` 중 하나다.
 - **Don't** 확정 해제를 빨강으로 칠하지 않는다. 일상 동작이라 중립 글자 버튼이다. 밀어서 나오는 「빼기」도 ink-600 바탕 + 흰 글자다(#299).
