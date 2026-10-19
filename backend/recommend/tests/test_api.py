@@ -64,6 +64,19 @@ def test_demote_wanted_place_identity_lowers_wanted_cuisine_only():
     assert lines[0]["badge"] == "required"  # 원본은 그대로
 
 
+def test_demote_wanted_place_identity_lowers_wanted_chips_but_not_accessibility():
+    """#617 — agent 요약도 같은 함수를 쓴다: 「좁아요」는 preferred(must_keep으로 가지 않는다), 접근성·피함 칩은 required."""
+    lines = [
+        {"fact_key": "spacious", "wants": True, "badge": "required", "chip_id": "food_cramped"},
+        {"fact_key": "spicy_focused", "wants": False, "badge": "required", "chip_id": "food_spicy"},
+        {"fact_key": "parking_available", "wants": True, "badge": "required"},
+    ]
+    assert [l["badge"] for l in api.demote_wanted_place_identity("음식점", lines)] == ["preferred", "required", "required"]
+
+    accessible = [{"fact_key": "accessible", "wants": True, "badge": "required", "chip_id": "sight_inaccessible"}]
+    assert api.demote_wanted_place_identity("관광지", accessible) == accessible
+
+
 def test_demote_wanted_place_identity_leaves_other_categories_alone():
     lines = [{"fact_key": "cuisine_bbq", "wants": True, "badge": "required"}]
     assert api.demote_wanted_place_identity("카페", lines) == lines

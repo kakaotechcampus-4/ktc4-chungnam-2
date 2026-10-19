@@ -69,18 +69,27 @@ def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> l
     return [*reaction_lines, *manual_lines]
 
 
+REQUIRED_WANTED_CHIP_IDS = frozenset({"sight_inaccessible"})  # #617 — 취향이 아니라 필요 조건이라 원함이어도 required
+
+
 def demote_wanted_place_identity(lines: Sequence[dict], category: str) -> list[dict]:
-    """docs/constraints.md "🚫 사유 안의 음식 종류 '원함'은 선호다"(#422): required이면서 wants=true이고 키가
-    가게의 정체(음식점 cuisine_*)인 줄은 배지를 preferred로 내린다. wants=false·다른 키·다른 배지는 그대로다.
-    글 줄·칩 줄 모두 같은 규칙이라 ②가 낸 줄과 칩 줄을 합친 뒤에 한 번 건다. 원본은 바꾸지 않는다."""
+    """docs/constraints.md "🚫 사유 안의 원함은 선호다"(#422, #617): required이면서 wants=true인 줄 중 아래는 배지를
+    preferred로 내린다. 글 줄은 키가 가게의 정체(음식점 cuisine_*)일 때만, 칩 줄(chip_id가 있음)은 전부 — 단
+    REQUIRED_WANTED_CHIP_IDS의 칩은 그대로다. wants=false·다른 배지·키 없는 칩은 그대로다.
+    ②가 낸 줄과 칩 줄을 합친 뒤에 한 번 건다. 원본은 바꾸지 않는다. 이름은 agent가 recommend.api로 불러 그대로 둔다."""
     return [
-        {**line, "badge": "preferred"}
-        if line.get("badge") == "required"
-        and line.get("wants") is True
-        and constraints.is_place_identity_key(category, line.get("fact_key"))
-        else line
+        {**line, "badge": "preferred"} if _demotes(line, category) else line
         for line in lines
     ]
+
+
+def _demotes(line: dict, category: str) -> bool:
+    if line.get("badge") != "required" or line.get("wants") is not True:
+        return False
+    chip_id = line.get("chip_id")
+    if chip_id:
+        return chip_id not in REQUIRED_WANTED_CHIP_IDS
+    return constraints.is_place_identity_key(category, line.get("fact_key"))
 
 
 def circles_all_overlap(circles: list[Circle]) -> bool:

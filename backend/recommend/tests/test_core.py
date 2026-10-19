@@ -46,7 +46,7 @@ def test_assemble_evidence_preserves_reaction_then_manual_order():
     assert core.assemble_evidence(reaction, manual) == [{"text": "a"}, {"text": "b"}]
 
 
-# ---------- demote_wanted_place_identity (#422) ----------
+# ---------- demote_wanted_place_identity (#422, #617) ----------
 
 def _line(badge, fact_key, wants):
     return {"text": "사유", "badge": badge, "fact_key": fact_key, "wants": wants}
@@ -60,7 +60,7 @@ def test_demote_lowers_required_wanted_cuisine_to_preferred():
 @pytest.mark.parametrize("line", [
     _line("required", "cuisine_korean", False),   # 피함은 그대로 required
     _line("required", "parking_available", True), # 필요 조건은 그대로
-    _line("required", "spacious", True),          # 칩 「좁아요」
+    _line("required", "spacious", True),          # 글 "넓은 곳이어야 해요" — 칩이 아니면 그대로
     _line("required", "quiet", True),
     _line("required", "cuisine_bbq", None),       # 방향 모름
     _line("required", None, None),
@@ -88,6 +88,36 @@ def test_demote_covers_chip_lines_and_does_not_mutate_input():
 def test_demote_keeps_the_mixed_reason_split_korean_required_bbq_preferred():
     lines = [_line("required", "cuisine_korean", False), _line("required", "cuisine_bbq", True)]
     assert [l["badge"] for l in core.demote_wanted_place_identity(lines, "음식점")] == ["required", "preferred"]
+
+
+def _chip(chip_id, fact_key, wants, badge="required"):
+    return {"text": "칩", "chip_id": chip_id, "badge": badge, "fact_key": fact_key, "wants": wants}
+
+
+@pytest.mark.parametrize("chip_id, fact_key, category", [
+    ("food_wait", "wait_short", "음식점"),
+    ("food_cramped", "spacious", "음식점"),
+    ("cafe_noisy", "quiet", "카페"),
+    ("cafe_seat", "comfortable_seat", "카페"),
+    ("sight_noisy", "quiet", "관광지"),
+])
+def test_demote_lowers_every_wanted_chip_to_preferred(chip_id, fact_key, category):
+    """#617 — 칩의 원함은 그 가게가 별로였던 이유라 지도 전체를 거르지 않는다. 카테고리·키와 무관하다."""
+    (line,) = core.demote_wanted_place_identity([_chip(chip_id, fact_key, True)], category)
+    assert line["badge"] == "preferred"
+
+
+@pytest.mark.parametrize("line", [
+    _chip("sight_inaccessible", "accessible", True),   # 접근성은 필요 조건이라 required(REQUIRED_WANTED_CHIP_IDS)
+    _chip("food_spicy", "spicy_focused", False),       # 피함 칩은 그대로
+    _chip("cafe_crowded", "is_crowded_large", False),
+    _chip("common_far", None, None),                   # 키 없는 칩
+    _chip("매워요", None, None),                        # 옛 값
+    _chip("food_cramped", "spacious", True, badge="preferred"),
+])
+def test_demote_leaves_avoid_keyless_and_accessibility_chips_alone(line):
+    assert core.demote_wanted_place_identity([line], "관광지") == [line]
+    assert "sight_inaccessible" in core.REQUIRED_WANTED_CHIP_IDS
 
 
 # ---------- circles_all_overlap / region_signature / merge_circles ----------

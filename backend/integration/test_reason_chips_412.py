@@ -58,7 +58,8 @@ def test_chips_and_text_become_one_line_each_and_only_text_goes_to_the_planner(m
     by_text = {line["text"]: line for line in lines}
     assert (by_text["매워요"]["fact_key"], by_text["매워요"]["wants"]) == ("spicy_focused", False)
     assert (by_text["좁아요"]["fact_key"], by_text["좁아요"]["wants"]) == ("spacious", True)
-    assert all(line["badge"] == "required" for line in lines)
+    # 원함 칩 「좁아요」만 preferred로 내려간다(#617). 글과 피함 칩은 required
+    assert [line["badge"] for line in lines] == ["required", "required", "preferred"], lines
     # 어느 칩에서 왔는지는 DB에만 남는다(응답 EvidenceLine에는 chip_id가 없다)
     assert _chip_ids(db_session, run_id) == {"food_spicy", "food_cramped", None}
 
