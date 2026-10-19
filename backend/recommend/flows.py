@@ -446,8 +446,19 @@ def _run_pipeline(
 
     active_hard_keys = _hard_fact_keys_from(active_lines, run.category)
     soft_requirements = _soft_requirements_from(active_lines)
-    # 반대 사유(활성 required)를 낸 구성원 — fact_key로 구조화됐든 아니든 충족 집계에 센다(#255).
-    disqualifier_authors = sorted({line.author_id for line in active_lines if line.badge == "required"})
+    # 구성원별 반대 조건 — 충족 집계에 센다(#255, #620). 이번 실행이 실제로 확인하는 키만 넣는다: 카테고리에 맞는 hard 키
+    # (방향 고정이라 wants=None)와 방향이 있는 soft 요구. 키 없는 줄(알러지 글, 「취향이 아니에요」)은 넣지 않는다.
+    disqualifier_conditions: dict[str, set[tuple[str, bool | None]]] = {}
+    for line in active_lines:
+        if line.badge != "required":
+            continue
+        if line.fact_key in active_hard_keys:
+            condition = (line.fact_key, None)
+        elif (line.fact_key, line.wants) in soft_requirements:
+            condition = (line.fact_key, line.wants)
+        else:
+            continue
+        disqualifier_conditions.setdefault(line.author_id, set()).add(condition)
     preferred_authors: dict[str, set[str]] = {}
     avoided_authors: dict[str, set[str]] = {}  # preferred + wants=false — 점수에서 반대 구성원(#231)
     for line in active_lines:
@@ -548,7 +559,7 @@ def _run_pipeline(
         place = places_by_id[place_id]
         checks = checks_by_place[place_id]
         fulfillment = core.build_member_fulfillment(
-            checks, hearted_places, criteria, preferred_authors_frozen, disqualifier_authors,
+            checks, hearted_places, criteria, preferred_authors_frozen, disqualifier_conditions,
         )
         # 이유 문장의 "(n/m명)"은 선호를 가진 구성원만 센다 — 실격 사유만 낸 사람을 선호 충족으로 부풀리지 않는다.
         preference_fulfillment = core.build_member_fulfillment(checks, hearted_places, criteria, preferred_authors_frozen)

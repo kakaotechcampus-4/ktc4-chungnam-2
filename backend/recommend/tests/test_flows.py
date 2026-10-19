@@ -1267,6 +1267,79 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
     assert bare.place_source is None  # 출처를 못 얻으면 지어내지 않는다
 
 
+def _run_with_mixed_against_reasons(db_session):
+    """#620 — 알러지 글(user_1), 키 없는 칩(user_2), 매운맛 피함(user_3), 매운맛 피함 + 조용함 선호(user_4).
+    "mild"는 매운맛 known 거짓, "unknown_spicy"는 매운맛 라벨이 없다(통과 + 확인 필요). 둘 다 조용하다."""
+    run = _make_run(db_session, status="collecting_evidence", category="음식점")
+    _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "조개 알러지 있어요", "badge": "required"},
+        {"author_id": "user_2", "source": "reaction", "text": "취향이 아니에요", "chip_id": "common_not_my_taste",
+         "badge": "required"},
+        {"author_id": "user_3", "source": "reaction", "text": "너무 매워요", "badge": "required",
+         "fact_key": "spicy_focused", "wants": False},
+        {"author_id": "user_4", "source": "reaction", "text": "매운 건 싫어", "badge": "required",
+         "fact_key": "spicy_focused", "wants": False},
+        {"author_id": "user_4", "source": "reaction", "text": "조용했으면", "badge": "preferred",
+         "fact_key": "quiet", "wants": True},
+    ])
+    places = [
+        PlaceStub(place_id="mild", lat=35.0005, lng=129.0005),
+        PlaceStub(place_id="unknown_spicy", lat=35.0006, lng=129.0006),
+    ]
+    facts = _FakePlaceFacts({"mild": {"spicy_focused": False, "quiet": True}, "unknown_spicy": {"quiet": True}})
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
+    return run, {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+
+
+def test_member_fulfillment_counts_only_checked_conditions(db_session):
+    """#620 — 키 없는 반대(알러지 글, 「취향이 아니에요」)만 남긴 구성원은 total에 없다. 매운맛 피함은 라벨 known 거짓이면
+    충족, 모름이면 미충족이다. 반대와 선호를 둘 다 가진 구성원(user_4)은 둘 다 충족해야 충족이다."""
+    _run, by_place = _run_with_mixed_against_reasons(db_session)
+    assert by_place["mild"].member_fulfillment == {"satisfied": 2, "total": 2, "by_member": [
+        {"user_id": "user_3", "satisfied": True}, {"user_id": "user_4", "satisfied": True},
+    ]}
+    assert by_place["unknown_spicy"].member_fulfillment == {"satisfied": 0, "total": 2, "by_member": [
+        {"user_id": "user_3", "satisfied": False}, {"user_id": "user_4", "satisfied": False},
+    ]}
+
+
+def test_member_fulfillment_preference_only_run_is_unchanged(db_session):
+    """반대 사유가 없는 run은 전과 같다 — 선호 조건을 전부 known+참으로 충족한 구성원만 센다."""
+    run = _make_run(db_session, status="collecting_evidence", category="카페")
+    _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_2", "source": "reaction", "text": "조용했으면", "badge": "preferred", "fact_key": "quiet", "wants": True},
+    ])
+    places = [PlaceStub(place_id="quiet", lat=35.0005, lng=129.0005), PlaceStub(place_id="unknown", lat=35.0006, lng=129.0006)]
+    flows.execute_run(
+        db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places),
+        place_facts=_FakePlaceFacts({"quiet": {"quiet": True}}),
+    )
+    by_place = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+    assert by_place["quiet"].member_fulfillment == {"satisfied": 1, "total": 1, "by_member": [
+        {"user_id": "user_2", "satisfied": True},
+    ]}
+    assert by_place["unknown"].member_fulfillment["satisfied"] == 0 and by_place["unknown"].member_fulfillment["total"] == 1
+
+
+def test_publish_candidate_copies_checked_member_fulfillment(db_session):
+    """게시된 핀은 candidate의 집계(#620 기준)를 그대로 복사한다 — 게시 뒤에도 같은 숫자다(가드레일 5)."""
+    run, by_place = _run_with_mixed_against_reasons(db_session)
+    candidate = by_place["unknown_spicy"]
+    pin = flows.publish_candidate(
+        db_session, candidate_id=str(candidate.id), requester_id="user_1",
+        membership=_membership(run.map_id, "user_1"),
+    )
+    db_session.expire_all()
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    response = pins_api.get_pin_response_for_viewer(
+        db_session, pin_id=str(pin.id), viewer_id="user_1", principal=principal,
+    )
+    assert response.member_fulfillment.model_dump(exclude_none=True) == candidate.member_fulfillment
+    assert (response.member_fulfillment.satisfied, response.member_fulfillment.total) == (0, 2)
+
+
 def test_get_result_exposes_reason_member_fulfillment_and_place_source(db_session):
     run = _make_run(db_session, status="done")
     _make_region(db_session, run)
