@@ -52,7 +52,7 @@ export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; r
       <BackToReadiness mapId={mapId} />
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <AiHeader title={`${run.category} 대안 ${count}곳을 찾았어요`} sub="나에게만 보여요 · 올린 곳만 모두에게 보여요" />
+          <AiHeader title={`${run.category} 대안 ${count}곳을 찾았어요`} sub="나에게만 보여요 · 올린 곳만 모두에게 보여요" mood="happy" />
         </div>
         <button
           type="button"

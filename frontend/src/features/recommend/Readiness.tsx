@@ -2,16 +2,17 @@ import { useEffect, useState } from 'react'
 import { Check } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
-import Pingo from '@/ui/Pingo'
+import Pingo, { type PingoMood } from '@/ui/Pingo'
+import PingoLoading from '@/ui/PingoLoading'
 
 import { runErrorMessage, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
 import { useCreateRunMutation, useReadinessQuery } from './queries'
 
-/** AI 탭 시트 머리글 — 화자는 핑고(colors.md 4절 3층). */
-export function AiHeader({ title, sub }: { title: string; sub: string }) {
+/** AI 탭 시트 머리글 — 핑고 + 「AI」 배지. 표정은 그 화면의 상황을 따른다(Pingo.tsx). */
+export function AiHeader({ title, sub, mood }: { title: string; sub: string; mood?: PingoMood }) {
   return (
     <div className="flex items-center gap-3 rounded-xl bg-[var(--pingo-bg)] p-3">
-      <Pingo size={36} />
+      <Pingo size={44} mood={mood} />
       <div className="min-w-0">
         <p className="flex items-center gap-1.5 font-bold text-ink-900">
           <span className="tag tag-ai">AI</span>
@@ -20,6 +21,17 @@ export function AiHeader({ title, sub }: { title: string; sub: string }) {
         <p className="text-xs text-ink-600">{sub}</p>
       </div>
     </div>
+  )
+}
+
+/** 준비 판정 머리글. 추천받을 수 있는 카테고리가 하나도 없으면 핑고가 「의견이 부족해요」로 알린다(시안 ALERT). */
+export function ReadinessHeader({ mapId }: { mapId: string }) {
+  const readiness = useReadinessQuery(mapId)
+  const short = readiness.data !== undefined && !toReadinessCards(readiness.data).some((c) => c.ready)
+  return short ? (
+    <AiHeader title="의견이 부족해요" sub="핀에 좋음·반대 의견이 모이면 추천할 수 있어요" mood="alert" />
+  ) : (
+    <AiHeader title="AI 추천" sub="준비된 카테고리를 골라 주세요" />
   )
 }
 
@@ -68,7 +80,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const [picked, setPicked] = useState<RecommendCategory | null>(null)
   const chosen = picked && cards.find((c) => c.category === picked)?.ready ? picked : firstReady
 
-  if (readiness.isPending) return <p className="text-sm text-ink-500">준비 상태를 확인하는 중…</p>
+  if (readiness.isPending) return <PingoLoading label="준비 상태를 확인하는 중…" />
   if (readiness.error) return <ErrorText message="추천 준비 상태를 불러오지 못했어요" error={readiness.error} />
 
   return (

@@ -1,12 +1,9 @@
-import { MapPin } from 'lucide-react'
-
 import EmptyState from '@/ui/EmptyState'
 
 /** 핀 0개(Figma 3절 '빈 지도', docs/errors.md MAP_EMPTY). v1 핀은 검색으로만 찍는다(#191). */
 export default function EmptyMap() {
   return (
     <EmptyState
-      icon={MapPin}
       title="아직 아무도 핀을 찍지 않았어요"
       action={
         <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-outline btn-md">
