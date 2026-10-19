@@ -30,7 +30,7 @@ def test_guest_cannot_create_a_map(app_client, db_session):
         cookies=_auth(GUEST),
     )
     assert (resp.status_code, resp.json()["code"]) == (403, "GUEST_NOT_ALLOWED")
-    assert app_client.get("/maps", cookies=_auth(GUEST)).json() == []
+    assert app_client.get("/maps", cookies=_auth(GUEST)).json()["items"] == []
 
 
 def test_guest_check_comes_before_the_map_limit(app_client, db_session):
@@ -41,7 +41,7 @@ def test_guest_check_comes_before_the_map_limit(app_client, db_session):
         cookies=_auth(GUEST),
     )
     assert (resp.status_code, resp.json()["code"]) == (403, "GUEST_NOT_ALLOWED")
-    assert len(app_client.get("/maps", cookies=_auth(GUEST)).json()) == MAP_LIMIT
+    assert len(app_client.get("/maps", cookies=_auth(GUEST)).json()["items"]) == MAP_LIMIT
 
 
 def test_guest_acts_as_a_regular_member_otherwise(app_client, db_session):
