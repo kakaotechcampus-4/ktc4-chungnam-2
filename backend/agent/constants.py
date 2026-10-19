@@ -46,6 +46,7 @@ TOOL_RESULT_MAX_ITEMS = 30         # 초안
 BACKOFF_HOURS = (2, 6, 24)         # 연속 닫힘 1회, 2회, 3회 이상
 SUGGESTION_TTL = timedelta(hours=24)
 AGENT_RUNS_RETENTION_DAYS = 30
+DECIDED_WINDOW = timedelta(hours=24)   # decided_within_24h의 24시간(12.9, 5절 밖). 제안 시각부터 이 안의 확정만 센다
 
 MODEL_TYPES = ("stall", "split")
 CODE_TYPES = ("no_reaction", "category_gap")

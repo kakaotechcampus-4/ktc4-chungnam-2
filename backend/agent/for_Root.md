@@ -720,3 +720,53 @@ tools(recommend.api를 감싼다), 순서와 세션은 flows. 모델은 llm.agen
 2. **passed는 recommend의 passed_count를 쓴다.** `core.FUNNEL_TOP_STAGE`와 라벨 비교를 지웠다. `core.funnel_view(outcome)`이
    `{result_count, funnel, passed_count}`를 받아 도구 결과의 `passed`로 옮긴다(도구 결과 모양과 프롬프트는 그대로). 테스트: 마지막 단계
    라벨을 바꿔도 passed와 gained가 같다(test_core_advice.py)
+
+---
+
+# 루트 보고 — backend/agent (#613, 제안 뒤 24시간 안 확정: decided_within_24h)
+
+하루 한 번 정리(`flows.daily_cleanup_if_due`)가 보존 정리 뒤에 `fill_decided_within_24h`를 부른다. 판정은 core(순수), 읽기와 쓰기는
+service, 다른 모듈 읽기와 트랜잭션은 flows. 마이그레이션 없음(칸은 0029에 있다).
+
+## 구현 범위
+
+- `constants.DECIDED_WINDOW = timedelta(hours=24)` — 칸 이름의 24시간(12.9). 5절 표에는 없다
+- `core.py`: `Confirmation`, `DecisionTarget`, `pointed_pin_ids`, `decided_within_24h`, `CATEGORY_DECIDED`
+- `service.py`: `list_undecided_map_ids`, `list_undecided`, `set_decided`(decided_within_24h IS NULL인 행만 UPDATE)
+- `flows.py`: `fill_decided_within_24h`, `_fill_decided_for_map`. 지도마다 짧은 쓰기 트랜잭션 하나, 한 지도가 실패해도 다음 지도는 계속
+
+## 판정 규칙 (core.decided_within_24h)
+
+- 대상: decided_within_24h IS NULL이고 created_at < now − 24시간. shadow와 상태(active 포함)는 보지 않는다. 한 번 채우면 다시 보지 않는다
+- 창: 제안 created_at ≤ 확정 added_at ≤ created_at + 24시간(양 끝 포함). 제안 전 확정은 세지 않는다
+- category_gap, stall: 창 안에 제안 category의 핀이 확정됐으면 참
+- split: 창 안에 제안 pin_id가 확정됐으면 참
+- no_reaction: 가리킨 핀 = ref claim의 ref_id ∪ show_pins 버튼의 pin_ids(근거 id 그대로). 그중 하나라도 창 안에 확정됐으면 참
+- 지도가 없거나 삭제됐으면(maps.api.get_map_for_agent가 None 또는 deleted) 판정하지 않고 NULL로 둔다
+
+## 다른 모듈에서 쓴 함수
+
+- `maps.api.get_map_for_agent(db, map_id)` — 지도 삭제 확인. 지도마다 1번
+- `shortlist.api.list_items_for_agent(db, *, map_id)` — 확정 항목(pin_id, added_at). 삭제된 핀의 항목도 담긴다. 지도마다 1번
+- `pins.api.list_reaction_matrix(db, *, map_id)` — 핀 카테고리. 그 지도에 category_gap이나 stall 제안이 있을 때만 1번
+
+## 루트 확인 요청 (문서는 고치지 않았다)
+
+1. **삭제된 핀의 카테고리를 읽을 함수가 없다.** `list_reaction_matrix`는 삭제되지 않은 공개 핀만 준다. 그래서 확정 항목이 남은 채
+   삭제된 핀은 split과 no_reaction(핀 id로 본다)에서는 세지만, category_gap과 stall(카테고리로 본다)에서는 세지 못한다. 세려면
+   pins에 `pins.api.get_pin_categories(db, *, map_id, pin_ids) -> dict[str, str]`(삭제된 핀, 비공개 핀 포함) 같은 함수가 필요하다.
+   다만 아래 2번 때문에 실제로 영향받는 경우는 드물다
+2. **판정은 정리할 때 남아 있는 확정 항목으로만 한다.** 확정한 핀을 지우면 확정 항목도 같이 지운다(`shortlist.api.remove_for_deleted_pin`,
+   #235). 확정 리스트에서 빼면 행이 지워진다. 그래서 24시간 안에 확정했다가 정리 전에 빼거나 핀을 지우면 거짓이 된다. 삭제된 핀의
+   항목이 남는 것은 그 순서를 거치지 않는 옛 행이나 경합 정도다. 뺀 확정까지 세려면 확정 기록이 필요하다(event_log는 24시간만 보존하고
+   정리는 하루 한 번이라 모자란다). 지표로 쓸 때 "정리 시점까지 남은 확정" 기준이라는 점을 명세 12.9에 적을지 정해 달라
+3. 명세 12.9 문장 "그 카테고리에 확정이 생겼는지"를 유형별 규칙(위 표, 특히 split과 no_reaction은 가리킨 핀)으로 바꿀지
+4. 대상 조회는 decided_within_24h IS NULL 조건으로 테이블을 훑는다. 인덱스는 넣지 않았다. 제안 수가 늘면 부분 인덱스
+   `(created_at) WHERE decided_within_24h IS NULL`을 검토한다
+
+## 테스트
+
+- test_core_decided.py 12개: 카테고리 유형 참·거짓, 분류 없는 핀, split은 그 핀만, no_reaction은 가리킨 핀 중 하나(ref와 버튼 둘 다),
+  경계(같은 시각 참, 24시간 정각 참, 24시간 1초 뒤 거짓, 제안 1초 전 거짓), 모르는 유형은 ValueError
+- test_flows.py 9개(실제 DB): 유형별 참·거짓 8건, 경계, 24시간 전은 그대로, 이미 채운 행 그대로, shadow·dismissed·active 채움, 삭제된 핀의
+  확정 셈(split, no_reaction), 삭제된 지도 건너뜀, 지도마다 다른 모듈 호출 1번(카테고리 유형이 없으면 핀은 안 읽음), daily_cleanup_if_due가 채움

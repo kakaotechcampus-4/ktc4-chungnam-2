@@ -53,7 +53,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from agent import core, deps, service, snapshot, tools
-from agent.constants import CODE_TYPES, SUGGESTION_TTL, TICK_MAX_MAPS
+from agent.constants import CODE_TYPES, DECIDED_WINDOW, SUGGESTION_TTL, TICK_MAX_MAPS
 from agent.models import AgentSuggestion as SuggestionRow
 from agent.schemas import (
     AgentAcceptResponse,
@@ -75,8 +75,9 @@ from maps import api as maps_api
 from pins import api as pins_api
 from places import api as places_api
 from recommend import api as recommend_api
+from shortlist import api as shortlist_api
 
-log = logging.getLogger("pingo.agent")
+log =logging.getLogger("pingo.agent")
 
 SessionFactory = Callable[[], Session]
 
@@ -141,17 +142,55 @@ _cleanup_done_on: date | None = None   # 이 프로세스가 보존 정리를 �
 
 
 def daily_cleanup_if_due(now: datetime, *, session_factory: SessionFactory = SessionLocal) -> bool:
-    """하루 한 번(KST) agent_runs 30일 초과분을 지운다(12.9). 했으면 True. 날짜는 프로세스 메모리에 둔다 — 인스턴스가
-    여럿이거나 다시 뜨면 하루에 몇 번 돌 수 있지만 지우는 일이라 결과는 같다."""
+    """하루 한 번(KST) 정리한다(12.9): agent_runs 30일 초과분을 지우고, 24시간 지난 제안의 decided_within_24h를 채운다.
+    했으면 True. 날짜는 프로세스 메모리에 둔다 — 인스턴스가 여럿이거나 다시 뜨면 하루에 몇 번 돌 수 있지만 지우기와
+    빈 칸 채우기라 결과는 같다."""
     global _cleanup_done_on
     today = core.kst_date(now)
     if _cleanup_done_on == today:
         return False
     with _write(session_factory) as db:
         deleted = service.delete_old_runs(db, now)
+    filled = fill_decided_within_24h(now, session_factory=session_factory)
     _cleanup_done_on = today
-    log.info("agent 보존 정리: agent_runs %d행 삭제", deleted)
+    log.info("agent 보존 정리: agent_runs %d행 삭제, decided_within_24h %d행 채움", deleted, filled)
     return True
+
+
+def fill_decided_within_24h(now: datetime, *, session_factory: SessionFactory = SessionLocal) -> int:
+    """만든 지 24시간이 넘었고 decided_within_24h가 빈 제안(shadow 포함, 상태 무관)을 채운다(12.9, #613). 채운 행 수.
+
+    지도마다 짧은 쓰기 트랜잭션 하나에서 다른 모듈을 한 번씩 읽고(지도, 확정 리스트, 카테고리 유형이 있으면 핀) 그 지도
+    제안을 한 번에 쓴다. 한 지도가 실패해도 다른 지도는 계속한다(그 지도는 다음 정리 때 다시 본다)."""
+    created_before = now - DECIDED_WINDOW
+    with _short_read(session_factory) as db:
+        map_ids = service.list_undecided_map_ids(db, created_before=created_before)
+    filled = 0
+    for map_id in map_ids:
+        try:
+            with _write(session_factory) as db:
+                filled += _fill_decided_for_map(db, map_id, created_before)
+        except Exception:
+            log.exception("agent decided_within_24h 채우기 실패 map_id=%s", map_id)
+    return filled
+
+
+def _fill_decided_for_map(db: Session, map_id: str, created_before: datetime) -> int:
+    found = maps_api.get_map_for_agent(db, map_id)
+    if found is None or found["deleted"]:   # 판정하지 않고 둔다. 삭제 30일 뒤 지도 정리가 지운다
+        return 0
+    targets = service.list_undecided(db, map_id=map_id, created_before=created_before)
+    if not targets:
+        return 0
+    category_of: dict[str, str] = {}
+    if any(t.diagnosis in core.CATEGORY_DECIDED for t in targets):
+        # 공개된 살아 있는 핀만 분류가 나온다. 삭제된 핀의 분류를 주는 pins.api 함수는 없다(for_Root.md #613)
+        category_of = {p["pin_id"]: p["category"] for p in pins_api.list_reaction_matrix(db, map_id=map_id)}
+    confirmations = [
+        core.Confirmation(pin_id=i["pin_id"], category=category_of.get(i["pin_id"]), added_at=i["added_at"])
+        for i in shortlist_api.list_items_for_agent(db, map_id=map_id)
+    ]
+    return service.set_decided(db, {t.id: core.decided_within_24h(t, confirmations) for t in targets})
 
 
 # ---------------------------------------------------------------- 관찰 (12.4)
