@@ -5,12 +5,11 @@ import ErrorText from '@/ErrorText'
 import { useMembersQuery } from '@/features/maps/queries'
 import { useAiStore } from '@/features/recommend/aiStore'
 import EvidenceScreen from '@/features/recommend/EvidenceScreen'
-import { noResultsFunnel, RETRY_MAX, type RecommendRunDto } from '@/features/recommend/model'
+import { attemptLimit, noResultsFunnel, type RecommendRunDto } from '@/features/recommend/model'
 import { useResultQuery } from '@/features/recommend/queries'
 import { AiHeader, ProgressBody, ReadinessBody, ReadinessHeader } from '@/features/recommend/Readiness'
 import {
   BackToReadiness,
-  CandidateDetail,
   Failed,
   HowPicked,
   NoResults,
@@ -34,7 +33,7 @@ export default function RecommendTab() {
   if (run && (run.status === 'collecting_evidence' || run.status === 'awaiting_region_confirm')) {
     return <EvidenceScreen mapId={mapId} run={run} />
   }
-  // 다시 추천·반경 넓히기마다 화면(후보 상세 등)을 처음부터 그린다.
+  // 다시 추천·반경 넓히기마다 화면(어떻게 골랐나요 등)을 처음부터 그린다.
   if (run) return <RunResult key={`${run.id}-${run.attempt_no}-${run.default_radius_walk_min ?? 0}`} mapId={mapId} run={run} />
 
   // 혼자 쓰는 지도도 같은 조건으로 추천을 받는다(2026-10-07, #360) — 구성원 수로 막지 않는다.
@@ -45,7 +44,7 @@ export default function RecommendTab() {
   )
 }
 
-type View = { kind: 'list' } | { kind: 'detail'; id: string } | { kind: 'how' } | { kind: 'limit' }
+type View = { kind: 'list' } | { kind: 'how' } | { kind: 'limit' }
 
 function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   const result = useResultQuery(run)
@@ -72,7 +71,8 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
     return tab(
       <>
         <BackToReadiness mapId={mapId} />
-        <AiHeader title={`${run.category}${josa(run.category, '은', '는')} ${RETRY_MAX}번까지만 찾아요`} sub={`이 지도에서 ${run.category} 추천을 ${RETRY_MAX}번 모두 받았어요`} />
+        {/* 상한은 사람마다, 카테고리와 상관없이 센다(#31). */}
+        <AiHeader title={`추천은 ${attemptLimit(run)}번까지만 받을 수 있어요`} sub={`이 지도에서 추천을 ${attemptLimit(run)}번 모두 받았어요`} />
       </>,
       <RetryLimit onBack={back} />,
     )
@@ -104,10 +104,6 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
 
   const data = result.data
   const count = data.candidates.length
-  if (view.kind === 'detail') {
-    const c = data.candidates.find((x) => x.id === view.id)
-    if (c) return tab(<AiHeader title="후보 상세" sub="나에게만 보여요" />, <CandidateDetail mapId={mapId} run={run} c={c} count={count} members={members} onBack={back} />)
-  }
   if (view.kind === 'how') {
     return tab(<AiHeader title="어떻게 골랐나요" sub="조건은 코드가 거르고, 순위도 규칙대로 정해요" />, <HowPicked funnel={data.funnel} count={count} onBack={back} />)
   }
@@ -118,7 +114,6 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
       run={run}
       result={data}
       members={members}
-      onOpen={(id) => setView({ kind: 'detail', id })}
       onHow={() => setView({ kind: 'how' })}
     />,
   )

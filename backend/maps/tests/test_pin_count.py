@@ -48,7 +48,7 @@ def test_get_map_and_list_show_pin_count_per_map(app_client, db_session):
     _insert_pin(db_session, b)
 
     assert app_client.get(f"/maps/{a}", cookies=_auth()).json()["pin_count"] == 3
-    listed = {m["id"]: m["pin_count"] for m in app_client.get("/maps", cookies=_auth()).json()}
+    listed = {m["id"]: m["pin_count"] for m in app_client.get("/maps", cookies=_auth()).json()["items"]}
     assert listed == {a: 3, b: 1}
 
 
