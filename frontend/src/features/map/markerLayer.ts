@@ -15,6 +15,12 @@ export interface MarkerLayer {
 
 type Placed = PlacedPin
 
+/**
+ * 방금 생긴 핀만 떨어지며 나타난다(#595). 처음 지도를 열 때·칩을 바꿀 때 나타나는 핀은 오래전에 생겨서 움직이지 않는다.
+ * ponytail: 기기 시계로 잰다 — 시계가 서버와 10초 넘게 어긋나면 효과가 안 날 뿐이다. 필요하면 sync 에 "새 핀 id"를 넘긴다.
+ */
+const FRESH_MS = 10_000
+
 /** 이 값이 그대로면 오버레이를 다시 만들 이유가 없다. */
 function signature(pin: Placed, ratio: number): string {
   return [pin.kind, pin.lat, pin.lng, pin.place_name, ratio].join('|')
@@ -36,6 +42,8 @@ export function createMarkerLayer(
   const signatures = new Map<string, string>()
   const names = new Map<string, string>()
   const elements = new Map<string, HTMLElement>()
+  /** 한 번 떨어진 핀. 의견이 달려 마커를 다시 그려도 또 떨어지지 않게 한다. */
+  const dropped = new Set<string>()
   let selected: string | null = null
 
   /** 지도 위에서 어느 핀을 보고 있는지 보이게 한다(#308). 다시 그려진 마커에도 다시 건다. */
@@ -87,6 +95,12 @@ export function createMarkerLayer(
 
         drop(pin.id)
         const el = createPinMarkerElement(pin, ratio, () => onSelect(pin.id))
+        if (!dropped.has(pin.id) && Math.abs(Date.now() - Date.parse(pin.created_at)) < FRESH_MS) {
+          dropped.add(pin.id)
+          el.classList.add('enter-drop')
+          // 지도가 마커를 다시 붙여도 재생되지 않게 끝나면 뗀다.
+          el.addEventListener('animationend', () => el.classList.remove('enter-drop'), { once: true })
+        }
         const overlay = new maps.CustomOverlay({
           position: new maps.LatLng(pin.lat, pin.lng),
           content: el,
