@@ -28,6 +28,9 @@ Decide = Callable[[dict[str, Any]], AgentTurn]
 # 그 밖의 예외(코드 버그)는 삼키지 않고 그대로 올린다(docs/code-quality.md "실패를 감추지 않는다").
 MODEL_FAILURES = (ValidationError, RuntimeError, TimeoutError)
 
+# 모델에게 새로 알려 주는 게 없는 오류. 이 오류가 나면 그 턴은 기준선이 대신 둔다. (그 밖의 오류는 메시지가 계획에 도움이 된다)
+UNUSABLE_ERRORS = ("ALREADY_LOOKED_UP", "LIMIT_EXCEEDED")
+
 
 @dataclass(frozen=True)
 class Step:
@@ -39,6 +42,7 @@ class Step:
     call: dict[str, Any]
     result: ToolResult
     repeated: bool = False     # 직전과 같은 호출이라 실행하지 않고 직전 결과를 돌려준 경우
+    substituted_for: Optional[dict[str, Any]] = None   # 모델의 호출이 쓸 수 없어 기준선이 대신한 경우 {"call", "error"}
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,12 @@ class RunResult:
     state: State
     model_turns: int
     baseline_turns: int
+
+
+def _open_closed(state: State, place: str) -> dict[str, list[str]]:
+    """코드가 이미 아는 영업 정보 — 모델이 find_open_days로 되묻지 않아도 된다. 둘 다 아닌 날은 모르는 날이다."""
+    days = core.open_days(state.trip, state.hours, place)
+    return {"open_days": days["open"], "closed_days": days["closed"]}
 
 
 def turn_input(state: State, last: Optional[ToolResult], turn: int) -> dict[str, Any]:
@@ -66,7 +76,8 @@ def turn_input(state: State, last: Optional[ToolResult], turn: int) -> dict[str,
                 "day": core.day_alias(i),
                 "weekday": "월화수목금토일"[d.weekday()],
                 "places": [
-                    {"place": p, "category": trip.place(p).category, "labels": sorted(trip.place(p).labels)}
+                    {"place": p, "category": trip.place(p).category, "labels": sorted(trip.place(p).labels),
+                     **_open_closed(state, p)}
                     for p in state.course[i]
                 ],
             }
@@ -144,13 +155,20 @@ def run_loop(
             call, by = policy(state), "baseline"
 
         call_dump = call.model_dump()
+        substituted = None
         if steps and steps[-1].call == call_dump and call.tool != "finish":
             # 같은 호출을 연달아 하면 실행하지 않고 직전 결과를 돌려준다 — 헛도는 루프 방지(명세 11.2).
             result, repeated = steps[-1].result, True
         else:
             state, result = tools.execute(call, state, hours)
             repeated = False
-        steps.append(Step(turn, by, thought, problem, call_dump, result, repeated))
+            if by == "model" and not result.ok and result.error in UNUSABLE_ERRORS:
+                # 정보 없는 거절로 턴을 버리지 않는다 — 그 턴은 기준선이 한 수를 둔다(실패한 호출은 상태를 안 바꿨다).
+                substituted = {"call": call_dump, "error": result.error}
+                call, by, thought, problem = policy(state), "baseline", None, None
+                call_dump = call.model_dump()
+                state, result = tools.execute(call, state, hours)
+        steps.append(Step(turn, by, thought, problem, call_dump, result, repeated, substituted))
         last = result
         best = _best(state, best)
         if isinstance(call, Finish):

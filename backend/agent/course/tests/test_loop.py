@@ -137,8 +137,8 @@ class TestLimits:
                 "tool": "estimate_travel", "from_place": "p1", "to_place": f"p{2 + turn_input['budget']['turns_left'] % 4}"}})
 
         result = loop.run_loop(start(), decide=wander, hours=TRUE_HOURS)
-        assert len(result.steps) == MAX_TURNS
-        assert result.outcome == "solved_with_checks"   # 아무것도 못 고쳤고 결측 2건이 남았다
+        assert len(result.steps) <= MAX_TURNS
+        assert result.outcome in ("solved", "solved_with_checks")   # 상한을 넘긴 호출은 기준선이 대신해 일을 이어 간다
 
     def test_timeout(self):
         ticks = iter([0.0, 1.0, 999.0])
@@ -147,8 +147,38 @@ class TestLimits:
         assert result.outcome == "solved_with_checks"
 
 
+class TestSubstitution:
+    def test_limit_exceeded_turn_is_taken_over_by_baseline_and_recorded(self):
+        def wander(turn_input):
+            return AgentTurn.model_validate({"thought": "둘러볼게요", "action": {
+                "tool": "estimate_travel", "from_place": "p1", "to_place": f"p{2 + turn_input['budget']['turns_left'] % 4}"}})
+
+        result = loop.run_loop(start(), decide=wander, hours=TRUE_HOURS)
+        subs = [s for s in result.steps if s.substituted_for]
+        assert subs and all(s.by == "baseline" and s.thought is None for s in subs)
+        assert subs[0].substituted_for["error"] == "LIMIT_EXCEEDED"
+        assert subs[0].substituted_for["call"]["tool"] == "estimate_travel"
+        assert subs[0].result.ok or subs[0].call["tool"] == "finish"      # 버려진 턴이 아니다
+
+    def test_repeat_lookup_returns_stored_answer_without_using_a_turn_substitution(self):
+        again = {"thought": "다시 볼게요", "action": {"tool": "find_open_days", "place": "p4"}}
+        other = {"thought": "다른 곳도요", "action": {"tool": "find_open_days", "place": "p5"}}
+        fin = {"thought": "끝", "action": {"tool": "finish", "reason_code": "budget"}}
+        result = loop.run_loop(start(), decide=scripted([again, other, again, fin]), hours=TRUE_HOURS)
+        third = result.steps[2]
+        assert third.result.ok and third.result.data["memo"] == "이미 조회한 결과" and not third.substituted_for
+        assert result.state.tool_counts["find_open_days"] == 2
+
+
 class TestTurnInputPrivacy:
     """모델 입력에는 별칭만 — pin_id, place_id, 좌표, 장소 이름이 없어야 한다(명세 3절 5번)."""
+
+    def test_places_carry_known_open_and_closed_days(self):
+        state = initial_state(trip(), {**KNOWN_HOURS, "p4": {1: "closed", 0: "open"}}, COURSE)
+        places = {p["place"]: p for d in loop.turn_input(state, None, 1)["days"] for p in d["places"]}
+        assert places["p1"]["open_days"] == ["d1", "d2", "d3"] and places["p1"]["closed_days"] == []
+        assert places["p4"]["open_days"] == ["d1"] and places["p4"]["closed_days"] == ["d2"]   # d3(수)는 모르는 날
+        assert places["p5"]["open_days"] == [] and places["p5"]["closed_days"] == []
 
     def test_no_ids_coordinates_or_names(self):
         decide = scripted(DIAGRAM_2)

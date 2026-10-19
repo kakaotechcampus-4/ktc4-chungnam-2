@@ -83,12 +83,12 @@ def test_장소_id만_있고_좌표가_없어도_제외():
     assert [e.pin_id for e in built.excluded] == ["pin-2"]
 
 
-def test_이미_조회한_곳은_횟수를_쓰지_않고_거절():
+def test_이미_조회한_곳은_횟수를_쓰지_않고_저장된_답을_돌려줌():
     from agent.course import tools
     from agent.course.schemas import GetOpeningHours
     state = initial_state(check_trip(), KNOWN_HOURS, COURSE)
     call = GetOpeningHours(tool="get_opening_hours", place="p5")
     state, first = tools.execute(call, state, _NobodyKnows())
     state2, second = tools.execute(call, state, _NobodyKnows())
-    assert first.ok and not second.ok and second.error == "ALREADY_LOOKED_UP"
+    assert first.ok and second.ok and second.data["memo"] == "이미 조회한 결과"
     assert state2.tool_counts["get_opening_hours"] == 1

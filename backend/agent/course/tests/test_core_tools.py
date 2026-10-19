@@ -212,20 +212,21 @@ class TestToolLimits:
         state = initial_state(trip(), KNOWN_HOURS, COURSE)
         assert state.looked_up == {"p1", "p2", "p3", "p6"}       # p4·p5는 모른다 — 조회할 수 있다
         _, r = tools.execute(GetOpeningHours(tool="get_opening_hours", place="p1"), state, TRUE_HOURS)
-        assert r.error == "ALREADY_LOOKED_UP"
+        assert r.ok and r.data["memo"] == "이미 조회한 결과" and r.data["days"] == {"d1": "open", "d2": "open", "d3": "open"}
+        assert state.tool_counts.get("get_opening_hours", 0) == 0
         state, r = tools.execute(GetOpeningHours(tool="get_opening_hours", place="p4"), state, TRUE_HOURS)
         assert r.ok
 
-    def test_find_open_days_twice_for_same_place_is_rejected(self):
+    def test_find_open_days_twice_returns_stored_answer(self):
         state = initial_state(trip(), OPEN, COURSE)
         call = FindOpenDays(tool="find_open_days", place="p1")
         state, first = tools.execute(call, state, TRUE_HOURS)
         assert first.ok
-        # 사이에 다른 호출이 끼어도(루프의 직전 호출 되풀이 방지를 피해도) 거절한다. 횟수는 쓰지 않는다
+        # 사이에 다른 호출이 끼어도 저장된 답을 돌려준다. 횟수는 쓰지 않는다
         state, _ = tools.execute(FindOpenDays(tool="find_open_days", place="p2"), state, TRUE_HOURS)
         used = state.tool_counts["find_open_days"]
         state, second = tools.execute(call, state, TRUE_HOURS)
-        assert not second.ok and second.error == "ALREADY_LOOKED_UP"
+        assert second.ok and second.data["memo"] == "이미 조회한 결과" and second.data["open"] == first.data["open"]
         assert state.tool_counts["find_open_days"] == used
 
 

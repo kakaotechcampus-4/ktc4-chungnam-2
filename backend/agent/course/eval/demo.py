@@ -97,6 +97,8 @@ def run(map_no: int, data: Path, use_model: bool, out=print) -> None:
     elapsed = time.monotonic() - started
     for s in result.steps:
         who = "핑고" if s.by == "model" else "기준선"
+        if s.substituted_for:
+            out(f"[{s.turn:>2}] (모델의 {describe_call(sc, s.substituted_for['call'])}가 {s.substituted_for['error']}라 기준선이 대신함)")
         out(f"[{s.turn:>2}] {who}: {s.thought or ('(표시하지 않는 문장: ' + str(s.thought_problem) + ')' if s.by == 'model' else '규칙에 따라 실행')}")
         out(f"       → {describe_call(sc, s.call)}  ⇒ {describe_result(s.result)}{'  (직전과 같은 호출)' if s.repeated else ''}")
 

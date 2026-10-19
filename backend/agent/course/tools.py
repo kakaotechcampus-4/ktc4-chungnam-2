@@ -48,19 +48,29 @@ def _fail(tool: str, code: str, message: str) -> ToolResult:
     return ToolResult(tool, ok=False, error=code, message=message)
 
 
+def _days_of(state: State, place: str) -> dict[str, str]:
+    return {core.day_alias(i): core.status_on(state.hours, place, d) for i, d in enumerate(state.trip.days)}
+
+
+def _cached(tool: str, place: str, state: State, data: Mapping[str, Any]) -> ToolResult:
+    return ToolResult(tool, ok=True, data={"place": place, **data, "memo": "이미 조회한 결과"})
+
+
 def _hard(state: State, course: core.Course, violations) -> dict[str, int]:
     return core.hard_summary(state.trip, state.hours, course, violations)
 
 
 def execute(call: ToolCall, state: State, hours_gateway: OpeningHoursGateway) -> tuple[State, ToolResult]:
     tool = call.tool
+    # 같은 정보를 다시 물으면 거절하지 않고 저장된 답을 돌려준다 — 모델은 매 턴 직전 결과만 보므로 이전 답을 잊고 되묻는다.
+    # 횟수는 쓰지 않는다. 서비스에서는 시작 스냅샷이 DB 휴무를 이미 담으므로 get_opening_hours가 새 정보를 줄 수 없다(같은 DB를 읽는다).
+    # 시작 때 휴무를 다 아는 곳은 state.initial_state가 처음부터 looked_up에 넣는다.
     if isinstance(call, GetOpeningHours) and call.place in state.looked_up:
-        # 이미 조회한 곳을 다시 조회해도 새로 아는 게 없다. 횟수도 쓰지 않고 돌려보낸다(실호출에서 모델이 되풀이했다)
-        # 서비스에서는 시작 스냅샷이 DB 휴무를 이미 담으므로 get_opening_hours가 새 정보를 줄 수 없다 — 그래도 한 번은 확인해 준다.
-        # 시작 때 휴무를 다 아는 곳은 state.initial_state가 처음부터 looked_up에 넣는다.
-        return state, _fail(tool, "ALREADY_LOOKED_UP", f"{call.place}는 이미 조회했거나 휴무를 이미 안다 — 조회로 더 알 수 없다")
-    if isinstance(call, FindOpenDays) and call.place in state.open_days_asked:
-        return state, _fail(tool, "ALREADY_LOOKED_UP", f"{call.place}의 영업하는 날은 이미 찾았다 — 같은 답이 나온다")
+        return state, _cached(tool, call.place, state, {
+            "days": _days_of(state, call.place), "resolved_unknown": 0, "hard": _hard(state, state.course, state.violations),
+        })
+    if isinstance(call, FindOpenDays) and call.place in state.open_days_asked and state.trip.has_place(call.place):
+        return state, _cached(tool, call.place, state, core.open_days(state.trip, state.hours, call.place))
     limit = TOOL_LIMITS.get(tool)
     if limit is not None and state.tool_counts.get(tool, 0) >= limit:
         return state, _fail(tool, "LIMIT_EXCEEDED", f"{tool}는 이번 코스에서 {limit}번까지 쓸 수 있다")
@@ -99,7 +109,7 @@ def _get_opening_hours(call: GetOpeningHours, state: State, gateway: OpeningHour
     # 조회 결과에 없는 요일은 이전 값을 그대로 둔다. 모르는 값으로 아는 값을 덮지 않는다.
     merged = {**state.hours.get(call.place, {}), **{wd: s for wd, s in (found or {}).items() if s != "unknown"}}
     new_state = with_hours(replace(state, looked_up=state.looked_up | {call.place}), {**state.hours, call.place: merged})
-    days = {core.day_alias(i): core.status_on(new_state.hours, call.place, d) for i, d in enumerate(state.trip.days)}
+    days = _days_of(new_state, call.place)
     return new_state, ToolResult(call.tool, ok=True, data={
         "place": call.place,
         "days": days,
