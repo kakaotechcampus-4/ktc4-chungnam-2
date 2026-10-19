@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Link, Navigate } from 'react-router'
 import { Map as MapIcon, Plus } from 'lucide-react'
 
@@ -6,7 +6,7 @@ import ErrorText from '@/ErrorText'
 import { readPendingInvite } from '@/features/auth/pendingInvite'
 import { useMeQuery } from '@/features/auth/queries'
 import AccountSheet, { AccountMenu } from '@/features/maps/AccountSheet'
-import type { MapView } from '@/features/maps/model'
+import { MAP_LIMIT_HINT, type MapListView, type MapView } from '@/features/maps/model'
 import { useMapsQuery } from '@/features/maps/queries'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
@@ -18,11 +18,15 @@ import EmptyState from '@/ui/EmptyState'
  * 로그인 직후 진입점 — 내 지도 목록 (#24, Figma 1절). 빈 목록은 AI와 관계없는 화면이라 핑고를 넣지 않는다.
  * 넓은 화면(768px 이상)은 가운데 좁은 띠 대신 넓은 틀에 카드를 격자로 깔고, 「새 지도 만들기」는 헤더 오른쪽,
  * 계정은 바닥 시트 대신 계정 버튼 아래 메뉴다. 지도에 들어간 뒤 다른 지도로 옮기는 건 패널 제목 메뉴가 맡는다.
+ * 제목 아래 "지도 n / 상한"의 상한은 목록 응답의 limit이고(#623), 상한까지 차면 「새 지도 만들기」를 막는다.
  */
 export default function MapListPage() {
   // 초대 링크로 들어와 로그인한 사람은 목록 대신 그 초대로 보낸다.
   const pendingInvite = readPendingInvite()
-  const { data: maps, isPending, error } = useMapsQuery()
+  const { data: list, isPending, error } = useMapsQuery()
+  const maps = list?.items
+  const full = list?.full === true
+  const limitHintId = useId()
   const me = useMeQuery().data
   const desktop = useIsDesktop()
   const [accountOpen, setAccountOpen] = useState(false)
@@ -38,11 +42,11 @@ export default function MapListPage() {
         <header className="mb-4 flex items-center justify-between gap-4 md:mb-8">
           <div className="min-w-0">
             <h1 className="text-2xl font-bold text-ink-900">내 지도</h1>
-            {desktop && maps && <p className="mt-1 text-sm text-ink-500">지도 {maps.length}개</p>}
+            <MapCount list={list} loading={isPending} hint={desktop && full ? { id: limitHintId } : undefined} />
           </div>
           {desktop ? (
             <div className="flex shrink-0 items-center gap-3">
-              <NewMapLink className="btn-md" />
+              <NewMapLink className="btn-md" blockedBy={full ? limitHintId : undefined} />
               <AccountMenu maps={maps ?? []} name={me?.display_name} />
             </div>
           ) : (
@@ -81,7 +85,16 @@ export default function MapListPage() {
         )}
 
         {/* 모바일은 엄지가 닿는 바닥에 붙는다. 넓은 화면은 헤더 오른쪽에 있다. */}
-        {!desktop && <NewMapLink className="btn-lg sticky bottom-6 mt-4" />}
+        {!desktop && (
+          <div className="sticky bottom-6 mt-4">
+            {full && (
+              <p id={limitHintId} className="mb-2 rounded-xl border border-ink-200 bg-white px-3 py-2 text-center text-xs text-ink-600">
+                {MAP_LIMIT_HINT}
+              </p>
+            )}
+            <NewMapLink className="btn-lg w-full" blockedBy={full ? limitHintId : undefined} />
+          </div>
+        )}
       </div>
 
       {accountOpen && !desktop && <AccountSheet maps={maps ?? []} onClose={() => setAccountOpen(false)} />}
@@ -95,11 +108,47 @@ export default function MapListPage() {
   )
 }
 
-/** 한 화면 한 채움 — 이 화면의 채움 버튼은 이것 하나다. */
-function NewMapLink({ className }: { className: string }) {
+/**
+ * "지도 n / 상한". 받기 전에도 같은 높이의 자리를 잡아 둬서 값이 들어올 때 아래 목록이 밀리지 않게 한다(CLS).
+ * 넓은 화면은 상한일 때 안내를 이 줄 끝에 붙인다 — 줄을 새로 늘리지 않으려고. 모바일 안내는 바닥 버튼 위에 있다.
+ */
+function MapCount({ list, loading, hint }: { list?: MapListView; loading: boolean; hint?: { id: string } }) {
   return (
-    <Link to="/maps/new" className={`btn-primary ${className}`}>
+    <p className="mt-1 min-h-5 text-sm text-ink-500">
+      {list ? (
+        <>
+          지도 <span aria-hidden="true">{list.items.length} / {list.limit}</span>
+          <span className="sr-only">{list.limit}개 중 {list.items.length}개</span>
+          {hint && <> · <span id={hint.id}>{MAP_LIMIT_HINT}</span></>}
+        </>
+      ) : (
+        loading && <span aria-hidden="true" className="inline-block h-5 w-20 animate-pulse rounded bg-ink-100 align-top" />
+      )}
+    </p>
+  )
+}
+
+/**
+ * 한 화면 한 채움 — 이 화면의 채움 버튼은 이것 하나다. 상한이면 막고 안내(blockedBy)를 읽게 한다.
+ * 막아도 /maps/new 로 바로 들어오는 길은 남아 있어서, 그때는 409 MAP_LIMIT 문구가 맡는다.
+ */
+function NewMapLink({ className, blockedBy }: { className: string; blockedBy?: string }) {
+  const body = (
+    <>
       <Plus size={18} aria-hidden="true" /> 새 지도 만들기
+    </>
+  )
+  const look = `btn-primary ${className}`   // 정렬과 간격은 크기 클래스(btn-md, btn-lg)가 맡는다(#626)
+  if (blockedBy) {
+    return (
+      <button type="button" disabled aria-describedby={blockedBy} className={look}>
+        {body}
+      </button>
+    )
+  }
+  return (
+    <Link to="/maps/new" className={look}>
+      {body}
     </Link>
   )
 }

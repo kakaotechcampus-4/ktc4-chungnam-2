@@ -1,8 +1,9 @@
 import { api } from '@/api'
 
-import type { InviteDto, InviteSummaryDto, MapCreateRequest, MapDto, MemberDto } from './model'
+import type { InviteDto, InviteSummaryDto, MapCreateRequest, MapDto, MapListDto, MemberDto } from './model'
 
-export const fetchMaps = () => api<MapDto[]>('/maps')
+/** 내 지도 목록과 상한(#623). 2026-10-19 전에는 Map 배열이었다. */
+export const fetchMaps = () => api<MapListDto>('/maps')
 
 export const createMap = (body: MapCreateRequest) =>
   api<MapDto>('/maps', { method: 'POST', body: JSON.stringify(body) })
