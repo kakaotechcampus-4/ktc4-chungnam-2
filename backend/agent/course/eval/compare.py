@@ -1,6 +1,6 @@
 """평가 지도에서 세 가지를 비교한다: 초안만 / 코드 기준선 / 에이전트(실모델, 선택).
 
-    cd backend && .venv/bin/python -m agent.course.eval.compare [--data agent/course/eval/data] [--model --max-maps 5]
+    cd backend && .venv/bin/python -m agent.course.eval.compare [--data agent/course/eval/data] [--model --max-maps 5] [--unknown-as-violation]
 
 세 코스 모두 **진짜 영업시간(지도의 hours 전체)** 으로 채점한다 — 에이전트가 조회로 알아낸 것만 아는 상태에서 짠 코스가
 실제로는 어떤지 본다. 실모델은 `--model`을 주고 지도를 5개 이하로 제한했을 때만 돈다(비용, 사용자 확인 뒤에 쓴다).
@@ -31,7 +31,7 @@ class Scenario:
     gateway: FixtureOpeningHours                       # 조회 도구가 돌려주는 진짜 값(place_id = source_id)
 
 
-def scenario_from_map(m: Mapping[str, Any], unknown_hours: str = "violation") -> Scenario:
+def scenario_from_map(m: Mapping[str, Any], unknown_hours: str = "check") -> Scenario:
     places = tuple(
         Place(p["alias"], f"pin-{p['alias']}", p["source_id"], p["name"], p["category"], p["lat"], p["lng"], frozenset(p["labels"]))
         for p in m["places"]
@@ -58,7 +58,8 @@ class Score:
 
 def score(sc: Scenario, course: Course, turns: int = 0) -> Score:
     violations = core.find_violations(sc.trip, course, sc.truth)
-    confirmed, unknown = core.hard_score(violations)
+    confirmed = core.hard_score(violations)[0]
+    unknown = len(core.find_checks(sc.trip, course, sc.truth))      # 진짜 영업시간으로도 모르는 곳(모드와 무관)
     return Score(confirmed, unknown, core.soft_scores(sc.trip, course), turns)
 
 
@@ -114,7 +115,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     ap.add_argument("--data", type=Path, default=Path(__file__).parent / "data")
     ap.add_argument("--model", action="store_true", help=f"실모델 에이전트도 돌린다(지도 {MODEL_MAP_CAP}개 이하)")
     ap.add_argument("--max-maps", type=int, default=None)
-    ap.add_argument("--unknown-as-check", action="store_true", help="휴무 모름을 위반 대신 「확인 필요」로 둔다")
+    ap.add_argument("--unknown-as-violation", action="store_true", help="휴무 모름을 위반으로 센다(기본은 「확인 필요」)")
     args = ap.parse_args(argv)
 
     maps = load_maps(args.data)
@@ -128,7 +129,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     elif args.max_maps:
         maps = maps[: args.max_maps]
 
-    results = [run_variants(scenario_from_map(m, "check" if args.unknown_as_check else "violation"), decide) for m in maps]
+    results = [run_variants(scenario_from_map(m, "violation" if args.unknown_as_violation else "check"), decide) for m in maps]
     print(format_table(aggregate(results), len(maps)))
     if decide is not None:
         print(f"모델 토큰(in, out) = {decide.tokens}, 실패 = {len(decide.failures)}")

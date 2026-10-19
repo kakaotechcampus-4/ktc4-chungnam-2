@@ -68,3 +68,15 @@ def test_모델_변형은_decide가_있을_때만_돈다():
     decide = lambda _input: AgentTurn(thought="마칩니다", plan=[], lesson=None, action=Finish(tool="finish", reason_code="no_progress"))
     out = compare.run_variants(compare.scenario_from_map(m), decide)
     assert set(out) == {"draft", "baseline", "agent"}
+
+
+def test_시작_스냅샷은_데이터에_휴무가_있는_곳만_안다():
+    for m in build_maps.build_all(fake_records(), 4):
+        for p in m["places"]:
+            has_data = any(s != "unknown" for s in p["hours"].values())
+            assert p["known_at_start"] == has_data
+
+
+def test_비교_기본은_확인필요_모드():
+    m = build_maps.build_all(fake_records(), 1)[0]
+    assert compare.scenario_from_map(m).trip.unknown_hours == "check"

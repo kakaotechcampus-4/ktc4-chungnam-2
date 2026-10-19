@@ -116,8 +116,9 @@ def build_map(idx: int, gu: str, records: Sequence[Record], rng: random.Random) 
     entries = [{
         "alias": f"p{i + 1}", "source_id": r.source_id, "name": r.name, "category": r.category,
         "lat": r.lat, "lng": r.lng, "labels": list(r.labels), "hours": {str(wd): s for wd, s in r.hours.items()},
-        # 시작 스냅샷이 이미 아는 곳 — 나머지는 조회 도구로만 안다. 끝까지 모르는 곳은 어느 쪽에도 없다
-        "known_at_start": r.hours_known and rng.random() < 0.5,
+        # 시작 스냅샷: 데이터에 휴무 정보가 있는 곳(읽힌 요일이 하나라도 있는 곳)은 처음부터 안다. 데이터에 없는 곳만 모른다 —
+        # 서비스에서 places가 휴무를 들고 있는 상황과 같다. 조회 도구는 스냅샷이 모르는 칸을 채운다(지도에 없으면 계속 모름)
+        "known_at_start": any(s != "unknown" for s in r.hours.values()),
     } for i, r in enumerate(places)]
     return {
         "id": f"map_{idx:02d}", "gu": gu, "days": [d.isoformat() for d in days], "places": entries,
