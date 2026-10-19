@@ -282,6 +282,7 @@ components:
 | 시트·모달 제목 | `SheetTitle` (20/700) | `ui/SheetTitle` |
 | 시트 안 이전 화면 | `BackButton` 「‹ 마킹된 장소」 | `ui/BackButton` |
 | 비어 있을 때 | `EmptyState` (핑고 + 제목 + 설명 + 다음 행동, 찾던 게 없으면 `mood="sorry"`) | `ui/EmptyState` |
+| 이유를 알리는 안내(결과 위) | `Notice` (ink-100 면 + warn-line 아이콘 + ink-700 글자 + 다음 행동 버튼) | `ui/Notice` |
 | 불러오는 중(모양을 아는 목록) | `CardSkeleton` (글자 「불러오는 중…」 대신 카드 자리) | `ui/CardSkeleton` |
 | 응답 기다림(무엇이 나올지 모름) | `PingoLoading` (1초 뒤 걷는 핑고 + 한 줄) | `ui/PingoLoading` |
 | 핑고 | `Pingo` (표정 `mood` · 고개 내밀기 `peek`) · 작은 아이콘 자리는 `PingoMark` | `ui/Pingo` |
