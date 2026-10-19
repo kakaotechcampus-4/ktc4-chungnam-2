@@ -800,7 +800,7 @@ seq 비교로 하지 않는 이유는 seq에 커밋 순서 구멍이 생길 수 
 - 만료: 관찰 시작 시 `expires_at < now`인 활성 제안을 expired로 바꾸고 agent.resolved를 낸다.
 - 무효화: 신호가 사라졌거나 evidence_hash가 바뀐 활성 제안은 superseded로 바꾼다. 신호가 남아 있으면 같은 관찰에서 새 제안이 나올 수 있다.
 - 모드를 끄면 활성 제안을 superseded로 바꾼다. 다시 켜면 `next_check_at = now`로 두어 다음 tick에 관찰한다.
-- `decided_within_24h`: 하루 한 번 정리 때, 생성 후 24시간이 지난 제안에 대해 그 카테고리에 확정이 생겼는지 계산해 채운다.
+- `decided_within_24h`: 하루 한 번 정리 때, 생성 후 24시간이 지난 제안에 대해 확정이 생겼는지 계산해 채운다(#613). category_gap과 stall은 그 카테고리의 핀, split은 그 핀, no_reaction은 제안이 가리킨 핀 중 하나가 제안 시각부터 24시간 안에 확정됐으면 참이다. **판정은 정리 시점까지 남아 있는 확정 항목 기준이다.** 24시간 안에 확정했다가 정리 전에 리스트에서 빼면 거짓으로 남는다. 확정 이력을 따로 두지 않아서이고, 결정을 도왔는지 대략 보는 지표라 이 오차는 받아들였다(2026-10-19).
 - 보존: 하루 한 번 `agent_runs`의 30일 초과분을 지운다.
 - 지도 정리: 삭제한 지 30일이 지난 지도를 지우는 작업(`python -m maps.purge`, #431)이 모듈마다 `purge_map_data`를 부른다. agent도 `agent.api.purge_map_data`를 열어 agent_* 7개 테이블의 그 지도 행을 지운다.
 - 탈퇴: 반응과 근거 줄은 탈퇴 때 실제로 지운다(#155). agent 테이블에는 사유 원문이 없으므로(2절 13번) 반응이 지워지면 인용도 렌더되지 않는다. `agent.api.delete_by_user(db, *, user_id, map_ids)`(#513)는 그 사람의 열람 기록을 지우고, 안전장치로 map_ids 지도의 요약을 지우고 agent_runs의 tool_calls와 verification을 비운다. 탈퇴 흐름이 `maps.api.lock_member_maps`로 잡은 지도 목록을 넘긴다(#512). 요약은 다음 관찰에서 다시 만든다.
