@@ -143,13 +143,30 @@ def _clusters(trip: Trip) -> list[list[Place]]:
 
 
 def draft_course(trip: Trip) -> Course:
-    """같은 입력이면 항상 같은 코스. 묶음은 쪼개지 않는다 — 쪼개는 건 수리(이월)의 몫이다.
-    큰 묶음부터, 지금 장소가 가장 적은 날(동점이면 앞 날짜)에 넣고, 하루 안은 최근접 이웃 순서다."""
+    """같은 입력이면 항상 같은 코스. 하루 장소 수는 올림(전체 ÷ 날짜 수)을 넘지 않는다.
+    큰 묶음부터 넣고, 묶음이 들어갈 날이 있으면 가장 적은 날(동점이면 앞 날짜)에 통째로 넣는다.
+    어느 날에도 안 들어가는 묶음만 가까운 순으로(최근접 이웃 순서) 잘라 가장 적은 날부터 채운다.
+    하루 안은 최근접 이웃 순서다."""
+    n_days = len(trip.days)
+    cap = -(-len(trip.places) // n_days)
     clusters = sorted(enumerate(_clusters(trip)), key=lambda ic: (-len(ic[1]), ic[0]))
     days: list[list[Place]] = [[] for _ in trip.days]
+
+    def lightest(candidates) -> int:
+        return min(candidates, key=lambda i: (len(days[i]), i))
+
     for _, cluster in clusters:
-        target = min(range(len(days)), key=lambda i: (len(days[i]), i))
-        days[target].extend(cluster)
+        fits = [i for i in range(n_days) if len(days[i]) + len(cluster) <= cap]
+        if fits:
+            days[lightest(fits)].extend(cluster)
+            continue
+        by_alias = {p.alias: p for p in cluster}
+        remaining = nearest_neighbor_order([Point(p.alias, p.lat, p.lng) for p in cluster])
+        while remaining:
+            target = lightest([i for i in range(n_days) if len(days[i]) < cap])
+            room = cap - len(days[target])
+            days[target].extend(by_alias[a] for a in remaining[:room])
+            remaining = remaining[room:]
     return tuple(
         tuple(nearest_neighbor_order([Point(p.alias, p.lat, p.lng) for p in day])) for day in days
     )

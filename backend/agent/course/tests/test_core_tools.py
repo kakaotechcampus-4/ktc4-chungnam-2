@@ -32,10 +32,17 @@ class TestDraft:
     def test_same_input_same_course(self):
         assert core.draft_course(trip()) == core.draft_course(trip())
 
-    def test_one_area_stays_on_one_day(self):
-        # 6곳이 전부 3km 안이라 한 묶음 — 쪼개지 않는다
+    def test_one_area_is_split_by_daily_cap(self):
+        # 6곳이 전부 3km 안이라 한 묶음이지만 하루 상한(6÷3일=2곳)을 넘으면 가까운 순으로 나눈다
         course = core.draft_course(trip())
-        assert sorted(len(d) for d in course) == [0, 0, 6]
+        assert sorted(len(d) for d in course) == [2, 2, 2]
+        assert sorted(p for d in course for p in d) == [f"p{i}" for i in range(1, 7)]
+
+    def test_daily_cap_rounds_up_and_small_clusters_stay_whole(self):
+        # 7곳 ÷ 3일 = 올림 3곳. 한 묶음(7곳)을 3·3·1로 자르되 하루 상한은 안 넘는다
+        seven = PLACES + (place("p7", "카페", 37.5688, 126.9795),)
+        course = core.draft_course(trip(places=seven))
+        assert max(len(d) for d in course) == 3 and sorted(len(d) for d in course) == [1, 3, 3]
 
     def test_far_areas_go_to_different_days(self):
         far = (place("q1", "관광지", 37.5665, 126.9780), place("q2", "카페", 37.5670, 126.9790),
