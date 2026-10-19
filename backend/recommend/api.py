@@ -30,6 +30,15 @@ def last_run_at_by_category(db: Session, *, map_id: str) -> dict[str, datetime]:
     return service.last_run_at_by_category(db, map_id=map_id)
 
 
+def latest_run_place_ids(db: Session, *, map_id: str, requested_by: str, category: str | None = None) -> set[str]:
+    """추천 탭 광고(docs/ads.md 5절 2번, #646)가 부른다 — 요청자의 이 지도 최신 run의 후보 place_id. category가 있으면
+    그 카테고리의 최신 run 하나, 없으면 카테고리마다 최신 run. 다른 구성원의 run은 보지 않는다. run이 없거나 추천 대상이
+    아닌 카테고리(숙소·기타 — run이 생길 수 없다)면 빈 집합. 권한은 보지 않는다. 읽기 전용, 커밋하지 않는다."""
+    if category is not None and category not in categories.recommendable():
+        return set()
+    return service.latest_run_place_ids(db, map_id=map_id, requested_by=requested_by, category=category)
+
+
 def get_readiness(db: Session, *, map_id: str, category: str) -> dict:
     """agent의 반대 후 정체 진단(docs/agent-v2.md 6.2, 10절 get_readiness, #530)이 부른다 — 그 카테고리가 추천
     준비(⓪)를 통과했나. `{ready, answered_count, required_count}`, `GET /maps/{mapId}/recommend/readiness`의 한
