@@ -1,130 +1,192 @@
-"""우선순위의 모델 경로와 보정(명세 7절), 충돌 종류(6.3) — 순수 함수(#533)."""
+"""우선순위 코드 규칙(명세 7절, #582), 충돌 종류(6.3) — 순수 함수."""
 
 from dataclasses import replace
 
 import pytest
 
 from agent import core
-from agent.schemas import AgentCallFailed, AgentUsage, PriorityItem, PriorityOutput
+from agent.schemas import AgentUsage
 from agent.tests.snaps import NOW
 
 POLICY = core.parse_policy({
-    "version": 1, "principles": ["원칙"], "rules": {},
+    "version": 2, "rules": {"urgent_dday": 3},
     "weights": {"stall": 3, "split": 3, "category_gap": 2, "no_reaction": 1},
 })
 
 
-def _sig(sid, diagnosis, category=None, ratio=None):
-    sig = core.make_signal(diagnosis, category=category, evidence=[(f"{sid}-e", "pin", NOW)],
-                           features={"elapsed_ratio": ratio})
+def _sig(sid, diagnosis, category=None, *, ratio=None, affected=1, dday=30, dismissals=0):
+    sig = core.make_signal(diagnosis, category=category, evidence=[(f"{sid}-e", "pin", NOW)], features={
+        "elapsed_ratio": ratio, "affected_members": affected, "dday": dday, "recent_dismissals": dismissals,
+    })
     return replace(sig, id=sid)
-
-
-GAP = _sig("s1", "category_gap", "카페")
-UNSEEN = _sig("s2", "no_reaction")
-STALL = _sig("s3", "stall", "음식점", ratio=2.0)
-
-
-def _order(*ids):
-    return PriorityOutput(order=[PriorityItem(signal_id=i, reason="이유") for i in ids])
 
 
 def _ids(signals):
     return [s.id for s in signals]
 
 
-# ---------------------------------------------------------------- apply_priority_rules
-
-def test_rules_keep_valid_model_order():
-    order, corrections = core.apply_priority_rules(["s2", "s1", "s3"], [GAP, UNSEEN, STALL], POLICY)
-
-    assert (_ids(order), corrections) == (["s2", "s1", "s3"], [])
+def _rank(*signals, policy=POLICY):
+    order, hits = core.rank_signals(list(signals), policy)
+    return _ids(order), hits
 
 
-def test_rules_drop_unknown_and_duplicate_and_append_missing_in_fallback_order():
-    order, corrections = core.apply_priority_rules(["s9", "s2", "s2"], [GAP, UNSEEN, STALL], POLICY)
+# ---------------------------------------------------------------- 기본 순서
 
-    assert _ids(order) == ["s2", "s3", "s1"]   # 빠진 s1, s3는 weights 순(stall 3 > gap 2)으로 뒤에
-    assert corrections == [
-        {"type": "unknown_id", "signal_id": "s9"}, {"type": "duplicate", "signal_id": "s2"},
-        {"type": "missing", "signal_id": "s3"}, {"type": "missing", "signal_id": "s1"},
-    ]
+def test_base_order_is_weights_then_detection_order_without_hits():
+    gap, unseen, stall, split = (_sig("s1", "category_gap", "카페"), _sig("s2", "no_reaction"),
+                                 _sig("s3", "stall", "음식점"), _sig("s4", "split", "카페"))
+
+    assert _rank(gap, unseen, stall, split) == (["s3", "s4", "s1", "s2"], [])
 
 
-def test_rules_apply_always_first_and_never_first():
-    policy = replace(POLICY, always_first=("category_gap",), never_first=())
-    order, corrections = core.apply_priority_rules(["s3", "s2", "s1"], [GAP, UNSEEN, STALL], policy)
-    assert _ids(order) == ["s1", "s3", "s2"]
-    assert corrections == [{"type": "always_first", "signal_ids": ["s1"]}]
+# ---------------------------------------------------------------- 출발 임박 (urgent_dday)
 
-    policy = replace(POLICY, never_first=("no_reaction",))
-    order, corrections = core.apply_priority_rules(["s2", "s3", "s1"], [GAP, UNSEEN, STALL], policy)
-    assert _ids(order) == ["s3", "s2", "s1"]
-    assert corrections == [{"type": "never_first", "signal_id": "s3"}]
+@pytest.mark.parametrize("dday, first, hits", [
+    (30, "s1", []),
+    (4, "s1", []),
+    (3, "s2", ["urgent_dday"]),     # 3일 이내부터
+    (0, "s2", ["urgent_dday"]),
+    (-1, "s2", ["urgent_dday"]),    # 여행 중
+])
+def test_urgent_dday_moves_category_gap_first(dday, first, hits):
+    stall = _sig("s1", "stall", "음식점", ratio=3.0, affected=3, dday=dday)
+    gap = _sig("s2", "category_gap", "카페", affected=3, dday=dday)
+
+    order, rule_hits = _rank(stall, gap)
+
+    assert (order[0], rule_hits) == (first, hits)
+
+
+def test_urgent_gaps_keep_their_order_and_the_rest_follows():
+    gap_cafe = _sig("s1", "category_gap", "카페", affected=3, dday=2)
+    gap_sight = _sig("s2", "category_gap", "관광지", affected=3, dday=2)
+    stall = _sig("s3", "stall", "음식점", ratio=2.0, dday=2)
+    unseen = _sig("s4", "no_reaction", affected=3, dday=2)
+
+    assert _rank(unseen, stall, gap_cafe, gap_sight) == (["s1", "s2", "s3", "s4"], ["urgent_dday"])
+
+
+# ---------------------------------------------------------------- 같은 weight: 영향 인원, 경과 비율
+
+def test_same_weight_more_affected_members_first():
+    stall = _sig("s1", "stall", "음식점", ratio=5.0, affected=1)
+    split = _sig("s2", "split", "음식점", ratio=1.0, affected=3)
+
+    assert _rank(stall, split) == (["s2", "s1"], ["affected_members"])
+
+
+def test_affected_members_does_not_cross_weights():
+    unseen = _sig("s1", "no_reaction", affected=4)
+    stall = _sig("s2", "stall", "음식점", affected=1)
+
+    assert _rank(unseen, stall) == (["s2", "s1"], [])
+
+
+def test_same_weight_and_affected_then_elapsed_ratio_with_none_last():
+    a = _sig("s1", "stall", "카페", ratio=None, affected=2)
+    b = _sig("s2", "split", "음식점", ratio=1.2, affected=2)
+    c = _sig("s3", "stall", "음식점", ratio=2.5, affected=2)
+
+    assert _rank(a, b, c) == (["s3", "s2", "s1"], ["elapsed_ratio"])
+
+
+# ---------------------------------------------------------------- 연속 닫힘 (recent_dismissals)
+
+def test_dismissed_signal_goes_after_undismissed_of_same_weight():
+    stall = _sig("s1", "stall", "음식점", ratio=4.0, affected=3, dismissals=2)
+    split = _sig("s2", "split", "카페", ratio=1.0, affected=2)
+
+    assert _rank(stall, split) == (["s2", "s1"], ["recent_dismissals"])
+
+
+def test_dismissed_signal_stays_ahead_of_lower_weight():
+    stall = _sig("s1", "stall", "음식점", dismissals=1)
+    gap = _sig("s2", "category_gap", "카페", affected=3)
+
+    assert _rank(gap, stall) == (["s1", "s2"], [])   # 같은 weight 안에서만 뒤로
+
+
+def test_dismissals_outrank_affected_members_and_both_hits_are_recorded():
+    a = _sig("s1", "stall", "음식점", affected=3, dismissals=1)
+    b = _sig("s2", "split", "카페", affected=1)
+    c = _sig("s3", "split", "음식점", affected=2)
+
+    assert _rank(a, b, c) == (["s3", "s2", "s1"], ["recent_dismissals", "affected_members"])
+
+
+# ---------------------------------------------------------------- always_first, never_first
+
+def test_always_first():
+    policy = replace(POLICY, always_first=("no_reaction",))
+    stall = _sig("s1", "stall", "음식점")
+    unseen = _sig("s2", "no_reaction")
+
+    assert _rank(stall, unseen, policy=policy) == (["s2", "s1"], ["always_first"])
+    assert _rank(unseen, policy=policy) == (["s2"], [])
+
+
+def test_always_first_beats_urgent_dday():
+    policy = replace(POLICY, always_first=("stall",))
+    stall = _sig("s1", "stall", "음식점", dday=1)
+    gap = _sig("s2", "category_gap", "카페", dday=1)
+
+    assert _rank(stall, gap, policy=policy) == (["s1", "s2"], ["urgent_dday", "always_first"])
+
+
+def test_never_first_promotes_first_allowed_signal():
+    policy = replace(POLICY, never_first=("stall", "split"))
+    stall = _sig("s1", "stall", "음식점")
+    split = _sig("s2", "split", "카페")
+    unseen = _sig("s3", "no_reaction")
+    gap = _sig("s4", "category_gap", "카페")
+
+    assert _rank(stall, split, unseen, gap, policy=policy) == (["s4", "s1", "s2", "s3"], ["never_first"])
 
 
 def test_never_first_without_alternative_keeps_order():
     policy = replace(POLICY, never_first=("no_reaction",))
 
-    order, corrections = core.apply_priority_rules(["s2"], [UNSEEN], policy)
-
-    assert (_ids(order), corrections) == (["s2"], [])
+    assert _rank(_sig("s1", "no_reaction"), policy=policy) == (["s1"], [])
 
 
-# ---------------------------------------------------------------- priority_mode, choose_top
+def test_signals_without_features_use_defaults():
+    """features가 비어도(테스트용 신호) 기본 순서로 정해진다 — 영향 인원 0, 닫힘 0, 경과 비율과 dday 없음."""
+    gap = replace(core.make_signal("category_gap", category="카페", evidence=[], features={}), id="s1")
+    stall = replace(core.make_signal("stall", category="음식점", evidence=[], features={}), id="s2")
 
-def _previous(signals, source="model"):
-    return {"source": source, "fingerprints": [s.fingerprint for s in signals]}
-
-
-@pytest.mark.parametrize("passed, previous, cap, mode", [
-    ([], None, False, "none"),
-    ([GAP], None, False, "single"),
-    ([GAP, STALL], None, False, "model"),
-    ([GAP, STALL], None, True, "model_cap"),
-    ([GAP, STALL], _previous([STALL, GAP]), True, "reused"),            # 같은 집합이면 상한이어도 재사용
-    ([GAP, STALL], _previous([STALL, GAP], "reused"), False, "reused"),
-    ([GAP, STALL], _previous([STALL, GAP], "fallback"), False, "model"),   # 직전이 모델 순위가 아니면 다시 묻는다
-    ([GAP, STALL], _previous([STALL, GAP, UNSEEN]), False, "model"),
-    ([GAP, STALL], _previous([STALL]), False, "model"),
-])
-def test_priority_mode(passed, previous, cap, mode):
-    assert core.priority_mode(passed, previous, cap_reached=cap) == mode
+    assert _rank(gap, stall) == (["s2", "s1"], [])
 
 
-def test_choose_top_uses_model_order_with_corrections():
-    top, log = core.choose_top([GAP, UNSEEN, STALL], POLICY, mode="model", model_out=_order("s2", "s9"))
+# ---------------------------------------------------------------- choose_top 기록
+
+def test_choose_top_records_rules_and_rule_hits():
+    stall = _sig("s1", "stall", "음식점", affected=1)
+    split = _sig("s2", "split", "음식점", affected=3)
+    unseen = _sig("s3", "no_reaction")
+
+    top, log = core.choose_top([stall, split, unseen], POLICY)
 
     assert top.id == "s2"
-    assert (log["source"], log["model_order"], log["final_order"]) == ("model", ["s2", "s9"], ["s2", "s3", "s1"])
-    assert log["fingerprints"] == [UNSEEN.fingerprint, STALL.fingerprint, GAP.fingerprint]
-    assert [c["type"] for c in log["corrections"]] == ["unknown_id", "missing", "missing"]
-    assert log["reused"] is False and log["fallback_reason"] is None
+    assert log == {
+        "source": "rules", "final_order": ["s2", "s1", "s3"],
+        "fingerprints": [split.fingerprint, stall.fingerprint, unseen.fingerprint], "rule_hits": ["affected_members"],
+    }
 
 
-@pytest.mark.parametrize("reason", ["invalid_schema", "timeout", "call_failed"])
-def test_choose_top_falls_back_when_model_failed(reason):
-    top, log = core.choose_top([GAP, STALL], POLICY, mode="model", model_out=AgentCallFailed(reason=reason, detail="X"))
+def test_choose_top_single_and_none():
+    stall = _sig("s1", "stall", "음식점")
 
-    assert top.id == "s3"
-    assert (log["source"], log["model_order"], log["fallback_reason"]) == ("fallback", None, reason)
+    top, log = core.choose_top([stall], POLICY)
 
-
-def test_choose_top_reuses_previous_order_and_cap_falls_back():
-    previous = _previous([GAP, STALL])
-
-    top, log = core.choose_top([STALL, GAP], POLICY, mode="reused", previous=previous)
-    assert (top.id, log["source"], log["reused"], log["final_order"]) == ("s1", "reused", True, ["s1", "s3"])
-
-    top, log = core.choose_top([GAP, STALL], POLICY, mode="model_cap")
-    assert (top.id, log["source"], log["fallback_reason"]) == ("s3", "fallback", "model_cap")
+    assert (top.id, log) == ("s1", {"source": "single", "final_order": ["s1"], "fingerprints": [stall.fingerprint],
+                                    "rule_hits": []})
+    assert core.choose_top([], POLICY) == (None, None)
 
 
-def test_priority_input_is_in_fallback_order_without_evidence():
-    signals = core.priority_input([GAP, UNSEEN, STALL], POLICY)
+def test_fallback_order_is_rank_signals_order():
+    signals = [_sig("s1", "category_gap", "카페", dday=1), _sig("s2", "stall", "음식점", dday=1)]
 
-    assert [s["id"] for s in signals] == ["s3", "s1", "s2"]
-    assert set(signals[0]) == {"id", "diagnosis", "category", "features"}
+    assert _ids(core.fallback_order(signals, POLICY)) == _ids(core.rank_signals(signals, POLICY)[0]) == ["s1", "s2"]
 
 
 # ---------------------------------------------------------------- 충돌 종류 (6.3, 17절 4번)
@@ -175,12 +237,11 @@ def test_render_analysis_uses_labels_and_skips_unknown_keys():
 
 # ---------------------------------------------------------------- 사용량 합치기 (#564)
 
-def test_model_usage_sums_tokens_and_joins_distinct_names_in_call_order():
-    priority = AgentUsage(model="gpt-6-luna", prompt_version="prioritize-v1", tokens_in=100, tokens_out=10)
-    diagnosis = AgentUsage(model="gpt-6-luna", prompt_version="diagnose-v1", tokens_in=300, tokens_out=40)
+def test_model_usage_is_the_diagnosis_call():
+    diagnosis = AgentUsage(model="gpt-6-luna", prompt_version="diagnose-v2", tokens_in=300, tokens_out=40)
 
-    assert core.model_usage([priority, diagnosis]) == {
-        "model": "gpt-6-luna", "prompt_version": "prioritize-v1+diagnose-v1", "tokens_in": 400, "tokens_out": 50,
+    assert core.model_usage([diagnosis]) == {
+        "model": "gpt-6-luna", "prompt_version": "diagnose-v2", "tokens_in": 300, "tokens_out": 40,
     }
 
 

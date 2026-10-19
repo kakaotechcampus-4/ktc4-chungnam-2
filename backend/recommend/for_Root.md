@@ -1,8 +1,75 @@
 # 루트 리뷰 가이드 — backend/recommend
 
 `backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 네 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#569" 절이 최신, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
+작업을 누적해서 담는다 — 아래 "#587" 절이 최신, 그 아래 "#585" 절, "#569" 절, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
 전체, 가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+
+---
+
+# #587 — 추천 막힘 조언용 run 정보 조회와 passed_count
+
+조언 자체(대상 판정, 모델, 검증, 저장)와 `GET /runs/{runId}/advice` 라우터는 agent에 있다. recommend는 run 읽기 함수만 더했고
+agent를 import하지 않는다(루트 리뷰 후속 수정, 2026-10-18 — 아래 "후속 수정").
+
+## 후속 수정 (루트 리뷰, 2026-10-18)
+
+- **라우터를 agent로 옮겼다.** 처음에는 recommend 라우터 → `flows.run_advice` → `agent.api.advise_run`이었고 recommend와 agent가 서로를
+  import했다. 지금은 agent/router.py가 `recommend.api.get_run_meta`와 authz로 권한을 보고 agent.flows를 바로 부른다. recommend의
+  `router.get_advice`, `flows.run_advice`, `deps.get_session_factory`(SessionFactoryDep)를 지웠다 — router·deps·flows의 import는 develop과
+  같다. recommend → agent import 0개
+- **passed_count**: `api.get_run_funnel`은 `{result_count, funnel, passed_count}`를, `api.simulate_filter`의 before·after는
+  `{result_count, funnel, passed_count}`를 돌려준다. passed_count는 필터를 모두 통과한 곳의 수(상위 3곳을 고르기 전)이고
+  `core.passed_count(result_count, funnel)` = 결과 수 + `core.RANKING_STAGE` 단계 탈락이다. 단계 라벨을 정하는 곳(`_run_pipeline`)과
+  세는 곳이 같은 상수를 써서 라벨 문구를 바꿔도 셈이 그대로다. 깔때기 라벨과 화면 문구, 필터 규칙은 바꾸지 않았다.
+  get_run_funnel의 result_count는 get_run_meta와 같은 기준(후보 수, done이 아니면 0)이라 이전 시도에서 게시된 후보가 남은 run은 그만큼
+  passed_count도 크게 나온다(전과 같은 기준, 바꾸지 않았다)
+- 테스트(`tests/test_run_reads_api.py`): 통과 다섯 곳·결과 3곳 판에서 passed_count가 저장 깔때기와 시뮬레이션 모두 5, 「좁아요」를 끄면 6.
+  `core.RANKING_STAGE`를 다른 문구로 바꿔도 같은 값
+
+## 구현
+
+- `api.get_run_meta(db, *, run_id)`: `{run_id, map_id, category, requested_by, status, result_count, created_at,
+  default_radius_walk_min, widen_limit_walk_min}`. agent가 대상 판정(완료, 결과 수), 요청자 확인, 반경 상한(core.WIDEN_LIMIT_MIN)에
+  쓴다. result_count는 get_recent_runs와 같은 기준(후보 수, done이 아니면 0). 권한 판정 없음
+- `api.get_run_evidence`에 `chip_id`를 더했다(키 없는 줄 중 「비싸요」 칩을 agent가 not_filtered로 가르려고). 다른 칸은 그대로다
+
+## 루트에 알릴 것
+
+- 명세 9절의 경로(recommend router → flows → agent.api)와 달리 라우터가 agent에 있다(위 후속 수정). 명세 문구는 고치지 않았다
+- 필터 규칙, 깔때기, 스펙은 바꾸지 않았다. 계약 테스트의 KNOWN_MISSING·KNOWN_UNCOVERED에서 이 경로를 지우고 골든 패스(403, 204)와
+  `test_run_advice_matches_the_openapi_spec`(같은 카테고리 run 3개 → 200, RunAdvice 스키마 검증, 다시 열어도 같음)에 넣었다
+- `tests/test_run_reads_api.py`: get_run_meta 테스트, 없는 run NOT_FOUND 목록에 get_run_meta, get_run_evidence 기대값에 chip_id
+
+---
+
+# #585 — 추천 막힘 조언용 run 조회 3종과 읽기 전용 시뮬레이션
+
+## 구현
+
+- `recommend.api`에 `get_recent_runs`·`get_run_funnel`·`get_run_evidence`·`simulate_filter`. 네 함수 모두 권한을 판정하지 않는다(agent가 run 요청자를
+  확인한 뒤 부른다, docstring에 적음). 없는 run은 `AppError NOT_FOUND`. 라우터·스펙 변경 없음.
+- `_run_pipeline`이 지역(`_PipelineRegion`, regions 행의 사본)과 활성 근거 줄을 인자로 받는다. 읽는 곳은 `_pipeline_inputs` 하나이고, 시뮬레이션만
+  반경 배율과 끌 줄을 넘긴다. 필터 순서·실격 규칙·깔때기 라벨은 그대로다. execute/widen/retry는 `_pipeline_inputs(db, run)`로 지금과 같은 입력을 넘긴다.
+- `_excluded_place_ids(record_dismissed=False)`: 🚫한 곳을 `exclusions`에 쌓지 않고 집합에만 합친다. 결과 집합은 실행 때와 같다(가드레일 6).
+- 테스트 `tests/test_run_reads_api.py`(15개): execute_run 깔때기·후보 고정, before = 실제 실행 결과, 줄 하나 끄면 그 실격만 풀림, 반경 배율 2배면 반경
+  단계 탈락 감소, 제안·거절한 곳은 계속 빠짐, 호출 전후 recommend 테이블 전부와 event_log가 같음(실행 전·후 두 경우).
+
+## 루트에 알릴 것
+
+- **`docs/agent-v2.md` 10절 표와 다르다**: `get_run_evidence`는 표의 `is_requester_own` 대신 이슈 #585대로 `author_id`를 돌려준다(agent가 run의
+  requested_by와 비교). 표를 고칠지 루트가 정한다.
+- **`result_count`는 상위 3곳 선정 뒤의 수라 최대 3이다.** soft_relax의 "끄면 몇 곳이 더 남는가"는 깔때기의 「실격 조건 제거」 차이(또는
+  `result_count` + 「상위 3곳 선정」 removed_count = 필터 통과 수)로 계산해야 한다. 통과 수 필드가 따로 필요하면 요청해 달라.
+- **before는 다시 계산한 값이다**(last_funnel을 그대로 쓰지 않는다). 실행 뒤 지도에 핀이 생기거나 🚫가 달리면 마지막 실행 결과와 달라질 수 있다. 차이는
+  같은 호출의 before/after로만 비교하는 것이 맞다. 저장된 마지막 실행은 `get_run_funnel`.
+- `simulate_filter`에 선택 인자 `place_search`, `place_facts`를 더했다(생략하면 `recommend.deps`가 고른 실행과 같은 Gateway). 테스트와 agent 스텁 주입용이다.
+- 입력 검증: 그 run의 근거 줄이 아닌 id(형식 오류 포함)는 `NOT_FOUND`, `radius_factor <= 0`은 `ValueError`. 배율 상한은 없다 — 반경 넓히기 상한(30분,
+  `WIDEN_LIMIT`)을 넘는 배율 조언을 내지 않는 건 agent 몫이다. 배율은 모든 지역 원에 곱한다(v1은 원 하나).
+- dev 스텁(`DevPlaceSearchGateway`)은 원 중심 150m 안에 고정 6곳만 만들어서 반경 배율을 바꿔도 결과가 같다. 반경 조언은 real 모드에서만 의미가 있다.
+- 시간: 로컬 PostgreSQL, 가짜 Gateway와 dev 스텁 모두 1회 약 25ms(파이프라인 2번, execute_run 1회는 약 29ms). real 모드는 여기에 장소 검색·라벨 조회가
+  2번씩 더 붙는다. soft_relax가 줄마다 부르면 줄 수만큼 before를 다시 계산한다 — 느려지면 여러 변경을 한 번에 받는 함수를 따로 연다.
+- 백엔드 전체 테스트에서 `agent/tests/test_flows.py::test_daily_cleanup_deletes_old_runs_once_a_day` 하나가 실패한다. 이번 변경을 뺀 develop 상태에서도
+  똑같이 실패해서 이번 작업과는 무관하다(agent 코드라 손대지 않았다).
 
 ---
 

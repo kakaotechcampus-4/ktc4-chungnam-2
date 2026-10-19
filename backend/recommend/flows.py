@@ -41,7 +41,7 @@ guard.py 안에서만 일어난다). "멤버십/작성자 확인이 멱등 경�
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Collection, Mapping, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -58,6 +58,7 @@ from pins.schemas import Pin
 from places import api as places_api
 from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
+from recommend.models import EvidenceLine as EvidenceLineRow
 from recommend.models import RecommendRun
 from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
 from recommend.schemas import Check
@@ -358,38 +359,75 @@ def confirm_regions(db: Session, *, run_id: str, accept_union: bool) -> list[sch
     return [_region_response(r) for r in service.list_regions(db, run_id)]
 
 
-def _active_hard_fact_keys(db: Session, run: RecommendRun) -> list[str]:
-    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: is_active=True인 evidence_line 중
+def _hard_fact_keys_from(lines: Sequence[EvidenceLineRow], category: str) -> list[str]:
+    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: 활성 evidence_line 중
     badge='required'로 hard 키가 매핑된 것만 켠다(누구도 문제 제기 안 한 조건은 검사하지 않는다). hard 키는
     방향이 고정이라("있으면 실격") wants를 보지 않는다. ♥·「+」 사유로도 켜던 안전 조건 규칙(D11, #254)은
     안전 조건 키와 함께 없앴다(#425). 카테고리에 안 맞는 fact_key는 애초에 제외."""
-    lines = service.list_active_evidence(db, run.id)
-    applicable = set(constraints.hard_fact_keys_for(run.category))
+    applicable = set(constraints.hard_fact_keys_for(category))
     active = {line.fact_key for line in lines if line.badge == "required" and line.fact_key is not None}
     return sorted(active & applicable)
 
 
-def _active_soft_requirements(db: Session, run: RecommendRun) -> list[tuple[str, bool]]:
+def _soft_requirements_from(lines: Sequence[EvidenceLineRow]) -> list[tuple[str, bool]]:
     """#231 — soft 키 중 `required` + `wants`가 true/false인 활성 사유를 (fact_key, wants)로 켠다. wants가
     null이거나 hard 키(방향 고정)면 여기 오지 않는다. 사람이 직접 밝힌 사유라 카테고리 기본 키에 없어도
     적용한다(선호 사유와 같다 — 아래 soft_keys가 그 키의 체크를 붙인다)."""
     return sorted({
-        (line.fact_key, line.wants) for line in service.list_active_evidence(db, run.id)
+        (line.fact_key, line.wants) for line in lines
         if line.badge == "required" and line.wants is not None and line.fact_key in constraints.SOFT_FACT_KEYS
     })
+
+
+def _active_hard_fact_keys(db: Session, run: RecommendRun) -> list[str]:
+    return _hard_fact_keys_from(service.list_active_evidence(db, run.id), run.category)
+
+
+def _active_soft_requirements(db: Session, run: RecommendRun) -> list[tuple[str, bool]]:
+    return _soft_requirements_from(service.list_active_evidence(db, run.id))
 
 
 def _passes_hard_check(value) -> bool:
     return not bool(value)  # is_crowded_large — "있으면 실격"류
 
 
+@dataclass(frozen=True)
+class _PipelineRegion:
+    """_run_pipeline이 읽는 지역 값. regions 행의 사본이라 반경을 바꿔도 DB에 쓰이지 않는다(시뮬레이션, #585)."""
+
+    id: uuid.UUID
+    label: str
+    center_lat: float
+    center_lng: float
+    radius_m: int
+    anchor_points: tuple[tuple[float, float], ...]
+
+
+def _pipeline_inputs(
+    db: Session, run: RecommendRun, *, radius_factor: float | None = None, disable_line_ids: frozenset[str] = frozenset(),
+) -> tuple[list[_PipelineRegion], list[EvidenceLineRow]]:
+    """저장된 지역과 활성 근거 줄을 _run_pipeline 입력으로 읽는다. 실행(execute/widen/retry)은 그대로 쓰고,
+    시뮬레이션(#585)만 반경 배율과 비활성으로 볼 줄을 준다 — 사본과 거른 목록이라 행은 바뀌지 않는다."""
+    regions = [
+        _PipelineRegion(
+            id=r.id, label=r.label, center_lat=r.center_lat, center_lng=r.center_lng,
+            radius_m=r.radius_m if radius_factor is None else round(r.radius_m * radius_factor),
+            anchor_points=tuple(tuple(point) for point in r.anchor_points),
+        )
+        for r in service.list_regions(db, str(run.id))
+    ]
+    active_lines = [line for line in service.list_active_evidence(db, run.id) if str(line.id) not in disable_line_ids]
+    return regions, active_lines
+
+
 def _run_pipeline(
     db: Session, run: RecommendRun, *,
+    regions: Sequence[_PipelineRegion], active_lines: Sequence[EvidenceLineRow],
     place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway, excluded_place_ids: set[str],
 ) -> tuple[list[dict], list[dict]]:
     """5-6 실격 필터 순서(반경→영업종료→실격조건→중복제외→정렬)를 그대로 지킨다
-    (recommend/CLAUDE.md "넘지 말 것" — 순서가 funnel 표의 의미를 결정한다)."""
-    regions = service.list_regions(db, str(run.id))
+    (recommend/CLAUDE.md "넘지 말 것" — 순서가 funnel 표의 의미를 결정한다). 지역과 활성 근거 줄은 인자로 받는다
+    (_pipeline_inputs, #585) — 이 함수는 DB에 쓰지 않아 시뮬레이션이 입력만 바꿔 그대로 다시 돌린다."""
     circles = [Circle(anchor_lat=r.center_lat, anchor_lng=r.center_lng, radius_m=r.radius_m) for r in regions]
     region_id = regions[0].id if regions else None
 
@@ -406,9 +444,8 @@ def _run_pipeline(
     removed_not_recommendable = len(within_radius) - len(recommendable)
     within_radius = recommendable
 
-    active_hard_keys = _active_hard_fact_keys(db, run)
-    active_lines = service.list_active_evidence(db, run.id)
-    soft_requirements = _active_soft_requirements(db, run)
+    active_hard_keys = _hard_fact_keys_from(active_lines, run.category)
+    soft_requirements = _soft_requirements_from(active_lines)
     # 반대 사유(활성 required)를 낸 구성원 — fact_key로 구조화됐든 아니든 충족 집계에 센다(#255).
     disqualifier_authors = sorted({line.author_id for line in active_lines if line.badge == "required"})
     preferred_authors: dict[str, set[str]] = {}
@@ -493,9 +530,7 @@ def _run_pipeline(
             if line.badge == badge and line.fact_key in constraints.SOFT_FACT_KEYS and line.wants is not None
         })
     region_label = regions[0].label if regions else ""
-    anchor_points_by_region = (
-        {region_label: [tuple(point) for point in regions[0].anchor_points]} if regions else {}
-    )
+    anchor_points_by_region = {region_label: list(regions[0].anchor_points)} if regions else {}
     scores = core.score_candidates(
         {p.place_id: checks_by_place[p.place_id] for p in after_exclusions}, hearted_places, criteria,
         preferred_authors_frozen, avoided_authors_frozen,
@@ -535,7 +570,7 @@ def _run_pipeline(
         ("추천 가능 아님 제거", removed_not_recommendable),
         ("실격 조건 제거", removed_disqualify),
         ("이미 제안·거절됨", removed_exclusions),
-        ("상위 3곳 선정", removed_ranking),
+        (core.RANKING_STAGE, removed_ranking),
     ])
     return candidates_data, funnel
 
@@ -559,23 +594,23 @@ def _candidates_ready_event(
                  payload=payload, recipient_user_id=run.requested_by)
 
 
-def _excluded_place_ids(db: Session, run: RecommendRun) -> set[str]:
+def _excluded_place_ids(db: Session, run: RecommendRun, *, record_dismissed: bool = True) -> set[str]:
     """후보에서 뺄 place_id 전부(가드레일 6). 세 갈래를 합친다:
     1) exclusions의 `proposed`(다시 추천 받기로 이미 제안한 곳)·`dismissed`
     2) 요청자가 🚫한 핀의 장소 — 이 호출에서 `dismissed`로 exclusions에 쌓는다(#119). 핀이 지워진
        뒤에도 거절 이력이 남도록 pins가 삭제된 핀까지 돌려준다. add_exclusions는 이미 있는
        조합을 건너뛰므로 여러 번 불러도 안전하다(이미 proposed인 곳은 그대로 둔다).
+       시뮬레이션(#585)은 record_dismissed=False로 쌓지 않고 집합에만 합친다 — 결과 집합은 같다.
     3) 이미 이 지도에 있는 핀(수동이든 게시된 것이든) — 안 빼면 게시하려는 순간 pins.unique(map_id,
        place_id)에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정, 2026-09-23).
     4) 이 지도의 실시간 핀이 가리키는 가게(#569) — 실시간 핀은 place_id가 없고 카카오 ID만 있어 3)에 안 잡힌다.
        그 카카오 ID로 매칭된 자체 DB 장소를 찾아 합친다. 깔때기에서는 「이미 제안·거절됨」에 같이 센다."""
-    service.add_exclusions(
-        db, map_id=run.map_id, category=run.category,
-        place_ids=pins_api.list_disliked_place_ids(
-            db, user_id=run.requested_by, map_id=run.map_id, category=run.category,
-        ),
-        reason="dismissed", run_id=run.id, requested_by=run.requested_by,
-    )
+    disliked = pins_api.list_disliked_place_ids(db, user_id=run.requested_by, map_id=run.map_id, category=run.category)
+    if record_dismissed:
+        service.add_exclusions(
+            db, map_id=run.map_id, category=run.category, place_ids=disliked,
+            reason="dismissed", run_id=run.id, requested_by=run.requested_by,
+        )
     live_pin_place_ids = {
         candidate.place_id
         for kakao_id in pins_api.list_live_kakao_place_ids(db, map_id=run.map_id)
@@ -583,7 +618,7 @@ def _excluded_place_ids(db: Session, run: RecommendRun) -> set[str]:
     }
     return service.list_excluded_place_ids(
         db, map_id=run.map_id, requested_by=run.requested_by,
-    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id) | live_pin_place_ids
+    ) | set(disliked) | pins_api.list_place_ids_on_map(db, map_id=run.map_id) | live_pin_place_ids
 
 
 def execute_run(
@@ -592,8 +627,10 @@ def execute_run(
     """POST /runs/{runId}/execute — 실격 필터(③-a-2) + 선호 순위(③-b) + 대안 반영(④)."""
     run = service.get_run_or_404(db, run_id)
     excluded = _excluded_place_ids(db, run)
+    regions, active_lines = _pipeline_inputs(db, run)
     candidates_data, funnel = _run_pipeline(
-        db, run, place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
+        db, run, regions=regions, active_lines=active_lines,
+        place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
     )
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
@@ -623,8 +660,10 @@ def widen_run(
 
     service.set_run_status(db, run, "executing")
     excluded = _excluded_place_ids(db, run)
+    regions, active_lines = _pipeline_inputs(db, run)
     candidates_data, funnel = _run_pipeline(
-        db, run, place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
+        db, run, regions=regions, active_lines=active_lines,
+        place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
     )
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
@@ -655,14 +694,50 @@ def retry_run(
     service.bump_attempt_no(db, run)
 
     excluded = _excluded_place_ids(db, run)
+    regions, active_lines = _pipeline_inputs(db, run)
     candidates_data, funnel = _run_pipeline(
-        db, run, place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
+        db, run, regions=regions, active_lines=active_lines,
+        place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
     )
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
     service.set_run_status(db, run, "done")
     record_event(db, _candidates_ready_event(db, run, candidates, place_search))
     return run
+
+
+def simulate_filter(
+    db: Session, *, run_id: str, radius_factor: float | None, disable_line_ids: Collection[str],
+    place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
+) -> dict:
+    """추천 막힘 조언(docs/agent-v2.md 9절, #585)의 "이 조건을 바꾸면 몇 곳이 남는가". 필터를 다시 구현하지 않고
+    _run_pipeline을 입력만 바꿔 두 번 돌린다 — before는 저장된 지역·활성 근거 줄 그대로, after는 반경에
+    radius_factor를 곱하고 disable_line_ids를 비활성으로 본다. 제외 목록(가드레일 6)은 실행 때와 같은 집합이다.
+    **쓰지 않는다**: run·후보·근거 줄·지역·제외 목록·last_funnel을 바꾸지 않고 이벤트도 남기지 않는다.
+    없는 run이나 그 run의 근거 줄이 아닌 id는 NOT_FOUND, radius_factor가 0 이하면 ValueError."""
+    if radius_factor is not None and not radius_factor > 0:
+        raise ValueError(f"radius_factor는 0보다 커야 한다: {radius_factor}")
+    run = service.get_run_or_404(db, run_id)
+    try:
+        disabled = frozenset(str(uuid.UUID(str(line_id))) for line_id in disable_line_ids)
+    except ValueError:
+        raise AppError("NOT_FOUND") from None
+    if not disabled <= {str(line.id) for line in service.list_evidence(db, str(run.id))}:
+        raise AppError("NOT_FOUND")
+    excluded = _excluded_place_ids(db, run, record_dismissed=False)
+
+    def outcome(**changes) -> dict:
+        regions, active_lines = _pipeline_inputs(db, run, **changes)
+        candidates_data, funnel = _run_pipeline(
+            db, run, regions=regions, active_lines=active_lines,
+            place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
+        )
+        return {
+            "result_count": len(candidates_data), "funnel": funnel,
+            "passed_count": core.passed_count(len(candidates_data), funnel),
+        }
+
+    return {"before": outcome(), "after": outcome(radius_factor=radius_factor, disable_line_ids=disabled)}
 
 
 def _candidate_response(

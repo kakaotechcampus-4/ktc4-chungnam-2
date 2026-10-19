@@ -2,18 +2,24 @@
 지키며, 판단은 core(순수)에, 읽기와 쓰기는 snapshot과 service에 맡긴다.
 
 - 요청 세션(get_db) 밖에서 돈다(12.6). 트랜잭션을 짧게 셋으로 나눈다 — ① 만료 정리 ② 스냅샷 읽기(REPEATABLE
-  READ) ③ 재확인과 저장. 모델 호출(우선순위, 진단)은 ②와 ③ 사이에 하고 그동안 세션이 없다. 도구는 자기 읽기 세션을
+  READ) ③ 재확인과 저장. 모델 호출(진단)은 ②와 ③ 사이에 하고 그동안 세션이 없다. 도구는 자기 읽기 세션을
   짧게 열고 닫는다(tools.py).
 - 커밋은 `common.database.session_scope` 한 곳이다. 세션은 `session_factory`로 받는다(기본 SessionLocal, 테스트가
   테스트 DB로 바꾼다 — maps/purge.py와 같은 방식).
 
-**M1-2(#533) 범위**: 통과한 신호가 2개 이상이면 우선순위를 모델에 묻고(llm.agent_prioritize, 직전과 같으면 재사용,
-상한이나 실패면 fallback_order) core.choose_top이 정책으로 보정한다. 1순위가 코드 유형(no_reaction, category_gap)이면
-템플릿 초안(core.render_template), 모델 유형(stall, split)이면 진단(llm.agent_diagnose, 도구는 tools.py)을 부르고
-core.verify_diagnosis를 통과한 것만 초안이 된다. 모델은 Gateway(deps.py)가 고른다 — dev는 고정 응답 스텁이다. 한
-관찰에서 우선순위와 진단을 둘 다 불러도 모델 사용은 1회다(used_model, 3절). shadow는 유형별이다
-(constants.SHADOW_DIAGNOSES — 모델 유형은 #534까지 shadow) — shadow가 아닌 제안만 이벤트를 낸다: 저장
-(agent.suggested), 만료와 무효화(agent.resolved). 우리 조건 요약(8절)은 M2다.
+**M1 범위(#533, #582)**: 우선순위는 코드 규칙이다(core.choose_top, 7절) — 모델을 부르지 않는다. 1순위가 코드 유형
+(no_reaction, category_gap)이면 템플릿 초안(core.render_template), 모델 유형(stall, split)이면 진단(llm.agent_diagnose,
+도구는 tools.py)을 부르고 core.verify_diagnosis를 통과한 것만 초안이 된다. 모델은 Gateway(deps.py)가 고른다 — dev는
+고정 응답 스텁이다. 모델 사용 1회(used_model, 3절)는 진단을 부른 관찰이다. shadow는 유형별이다
+(constants.SHADOW_DIAGNOSES — #582부터 비어 있어 모든 유형이 나간다) — shadow가 아닌 제안만 이벤트를 낸다: 저장
+(agent.suggested), 만료와 무효화(agent.resolved).
+
+**우리 조건 요약(8절, #586)**: 관찰 끝(12.4 8단계)에서 `update_summary`가 카테고리 하나를 갱신한다. 지도 제안과 별도
+트랜잭션, 별도 agent_runs 행(trigger=summary, outcome=summarized)이다. 칸 나누기는 core, 근거 줄은 tools(②와 #422),
+문구는 고정이라 모델 사용으로 세지 않는다(used_model=false). 갱신하면 같은 트랜잭션에 agent.summary_updated를 낸다.
+
+**추천 막힘 조언(9절, #587)**: `advise_run`. AI 추천 결과 화면의 `GET /runs/{runId}/advice`(agent/router.py)가 부른다. 관찰과
+따로 돌고(요청 안), 읽기 → 모델(세션 없음) → 쓰기를 짧은 세션으로 나눈다. run당 한 번 저장한다(trigger=run_advice).
 
 화면 요청(명세 14절)도 여기 있다 — `get_state`, `change_settings`, `view`, `accept`, `dismiss`. 요청 세션(get_db) 안에서
 돌고 커밋은 그 세션이 한다. 이벤트는 같은 트랜잭션에 `record_event`로 남긴다. 권한은 router가 authz.guard로 끝낸 뒤다.
@@ -29,15 +35,19 @@ outcome(agent_runs.outcome)
 - invalid_claims: 검증(11.2) 2단계(신호 불일치)나 7단계(성립 실패)에서 떨어짐. 내역은 verification
 - stale: 저장 직전 재확인(12.8)에서 신호가 사라졌거나 근거가 바뀜
 - suggested: 제안을 저장함(shadow 유형이면 shadow=True)
+요약 관찰(trigger=summary)의 outcome
+- summarized: 그 카테고리 요약을 덮어씀. outcome_detail은 {category}
+- model_failed: ②(사유 구조화)가 실패해 요약을 만들지 못함. 요약은 그대로 두고 다음 관찰에서 다시 본다
 저장 트랜잭션 맨 앞에서 지도가 삭제된 것을 보면(모델 호출 중 삭제 대역) 아무것도 쓰지 않는다 — agent_runs 행도 없다.
 """
 
 import logging
 import time
-from collections.abc import Callable, Iterator
+import uuid
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -45,7 +55,16 @@ from sqlalchemy.orm import Session
 from agent import core, deps, service, snapshot, tools
 from agent.constants import CODE_TYPES, SUGGESTION_TTL, TICK_MAX_MAPS
 from agent.models import AgentSuggestion as SuggestionRow
-from agent.schemas import AgentAcceptResponse, AgentCallFailed, AgentSettings, AgentState, AgentSuggestion, AgentUsage
+from agent.schemas import (
+    AgentAcceptResponse,
+    AgentCallFailed,
+    AgentSettings,
+    AgentState,
+    AgentSuggestion,
+    AgentSummary,
+    AgentUsage,
+    RunAdvice,
+)
 from auth import api as auth_api
 from common import categories
 from common.database import SessionLocal, session_scope
@@ -66,6 +85,16 @@ SessionFactory = Callable[[], Session]
 def _write(factory: SessionFactory) -> Iterator[Session]:
     with factory() as db, session_scope(db) as s:
         yield s
+
+
+@contextmanager
+def _short_read(factory: SessionFactory) -> Iterator[Session]:
+    """짧은 읽기 세션(12.6). 쓰지 않으므로 롤백으로 닫는다."""
+    with factory() as db:
+        try:
+            yield db
+        finally:
+            db.rollback()
 
 
 @contextmanager
@@ -169,22 +198,16 @@ def observe_map(
     # 4. 정책 사전 검사 (순수)
     passed, blocked = core.check_policy(signals, hist, snap, now, superseding=superseding)
 
-    # 5. 우선순위 — 2개 이상이면 모델(세션 없음, 12.6). 직전과 같으면 재사용, 상한이면 fallback_order
+    # 5. 우선순위 — 코드 규칙(7절, #582). 모델을 부르지 않는다
     policy = core.load_policy()
-    mode = core.priority_mode(
-        passed, hist.last_priority, cap_reached=core.model_cap_reached(hist.model_runs_today, snap.member_count),
-    )
-    priority_reply = gateway.prioritize(core.priority_input(passed, policy), policy.principles) if mode == "model" else None
-    model_out = priority_reply.result if priority_reply is not None else None
-    top, priority = core.choose_top(passed, policy, mode=mode, model_out=model_out, previous=hist.last_priority)
+    top, priority = core.choose_top(passed, policy)
 
     # 6. 초안 — 코드 유형은 템플릿, 모델 유형은 진단과 검증(세션 없음, 도구만 짧게 읽는다)
     step = _draft(map_id, top, snap, names, now, session_factory, gateway) if top is not None else _Step(None)
     chosen = top if step.draft is not None else None
     draft = step.draft
     outcome, detail = _planned_outcome(signals, top, step)
-    used_model = mode == "model" or step.used_model
-    usages = [r.usage for r in (priority_reply, step) if r is not None and r.usage is not None]   # 둘 다 불렀으면 합(#564)
+    usages = [step.usage] if step.usage is not None else []
 
     # 7. 재확인과 저장 (짧은 쓰기 트랜잭션). 이벤트도 같은 트랜잭션
     with _write(session_factory) as db:
@@ -201,7 +224,7 @@ def observe_map(
         run_id = service.insert_run(db, **run_fields(
             snap, outcome, signals=[core.signal_record(s) for s in signals], blocked=blocked_rows,
             priority=priority, policy_version=str(policy.version), outcome_detail=detail,
-            used_model=used_model, tool_calls=step.tool_calls, verification=step.verification,
+            used_model=step.used_model, tool_calls=step.tool_calls, verification=step.verification,
             **core.model_usage(usages),
         ))
         new_expires_at = None
@@ -222,6 +245,9 @@ def observe_map(
             db, map_id, snap.latest_seq, next_check_at=_next_check(snap, hist, now, th, new_expires_at),
             observed_at=now,
         )
+
+    # 8. 요약 (별도 흐름, 별도 트랜잭션)
+    update_summary(map_id, snap, hist, now, session_factory=session_factory, gateway=gateway)
     return outcome
 
 
@@ -316,6 +342,59 @@ def _still_there(db: Session, draft: core.Signal, map_id: str, now: datetime, th
     return fresh is not None and core.recheck(draft, fresh, now, th)
 
 
+# ---------------------------------------------------------------- 우리 조건 요약 (8절, 12.4 8단계)
+
+def update_summary(
+    map_id: str, snap: snapshot.Snapshot, hist: core.History, now: datetime, *,
+    session_factory: SessionFactory = SessionLocal, gateway: deps.AgentLlmGateway | None = None,
+) -> str | None:
+    """갱신할 카테고리가 있으면 하나만 다시 만든다(core.pick_summary — 새 사유 3개, 새 구성원의 첫 반응, 사라진 사유).
+    남은 카테고리가 있으면 커서를 지금으로 당겨 다음 tick에 이어 간다. agent_runs에 남긴 outcome을 돌려주고, 갱신할
+    것이 없거나 저장 단계에서 지도가 삭제된 것을 보면 None.
+
+    읽기는 도구처럼 짧은 세션으로 하고(사유는 pins에서 다시 읽는다 — 삭제된 핀의 사유 포함), ②는 세션 없이 부른다(12.6).
+    저장은 지도 제안과 별도 트랜잭션이다. 문구가 고정이라 모델 사용 상한을 보지 않고 used_model=false로 남긴다."""
+    category, more = core.pick_summary(snap, hist.summaries)
+    if category is None:
+        return None
+    started = time.monotonic()
+    gateway = gateway or deps.get_llm_gateway()
+    ctx = tools.ToolContext(map_id=map_id, snap=snap, allowed=(), session_factory=session_factory,
+                            structure=gateway.structure, now=now)
+    try:
+        stored, outcome, detail = core.summarize_reasons(tools.summary_reasons(ctx, category)), "summarized", None
+    except llm_api.PlanEvidenceFailed as exc:
+        log.warning("agent 요약 실패(②) map_id=%s category=%s", map_id, category)
+        stored, outcome, detail = None, "model_failed", {"reason": "structure_failed", "detail": type(exc).__name__}
+
+    with _write(session_factory) as db:
+        if not maps_api.lock_map_if_alive(db, map_id):   # 그새 지도가 삭제됐다. 아무것도 쓰지 않는다
+            return None
+        run_id = service.insert_run(
+            db, map_id=map_id, started_at=now, finished_at=now + timedelta(seconds=time.monotonic() - started),
+            trigger="summary", snapshot_at=now, snapshot_seq=snap.latest_seq, used_model=False, outcome=outcome,
+            outcome_detail={"category": category} | (detail or {}),
+        )
+        if stored is not None:
+            service.upsert_summary(db, map_id=map_id, category=category, summary=stored, run_id=run_id, now=now)
+            rendered = core.render_summary(category, stored, now, recommend_api.fact_labels())
+            record_event(db, core.summary_updated_event(map_id, rendered))
+            if more:
+                service.wake_cursor(db, map_id, now)
+    return outcome
+
+
+def _summaries(db: Session, map_id: str) -> list[AgentSummary]:
+    """저장된 요약을 렌더한다(카테고리는 categories.pinnable() 순서). 키 이름은 지금의 recommend 표시 이름이다."""
+    rows = service.list_summaries(db, map_id)
+    if not rows:
+        return []
+    labels = recommend_api.fact_labels()
+    order = {c: i for i, c in enumerate(categories.all_categories())}
+    return [core.render_summary(r.category, r.summary, r.updated_at, labels)
+            for r in sorted(rows, key=lambda r: order.get(r.category, len(order)))]
+
+
 # ---------------------------------------------------------------- 렌더 (11절 끝)
 
 def _render(db: Session, row: SuggestionRow) -> AgentSuggestion | None:
@@ -357,12 +436,13 @@ def _reaction_texts(db: Session, map_id: str, category: str | None) -> dict[str,
 # ---------------------------------------------------------------- 화면 요청 (14절)
 
 def get_state(db: Session, *, map_id: str, user_id: str, now: datetime) -> AgentState:
-    """GET /maps/{mapId}/agent. 지금 제안은 shadow가 아니고 만료 전인 활성 제안을 렌더한 것. 모드가 꺼져 있으면 null."""
+    """GET /maps/{mapId}/agent. 지금 제안은 shadow가 아니고 만료 전인 활성 제안을 렌더한 것. 모드가 꺼져 있으면 null.
+    요약은 만들어진 카테고리만(8절)."""
     settings = core.settings_view(service.get_settings(db, map_id))
     row = service.active_suggestion(db, map_id, now) if settings.enabled else None
     active = _render(db, row) if row is not None else None
     viewed = active is not None and service.has_viewed(db, row.id, user_id)
-    return core.agent_state(settings, active, viewed=viewed)
+    return core.agent_state(settings, active, viewed=viewed, summaries=_summaries(db, map_id))
 
 
 def change_settings(db: Session, *, map_id: str, enabled: bool, user_id: str, now: datetime) -> AgentSettings:
@@ -421,3 +501,79 @@ def _next_check(
     if core.has_recent_event(snap.latest_event_at, now):
         candidates.append(now)
     return min(candidates) if candidates else None
+
+
+# ---------------------------------------------------------------- 추천 막힘 조언 (9절, #587)
+
+def advise_run(
+    run_id: str, requester_id: str, *, now: datetime | None = None, session_factory: SessionFactory = SessionLocal,
+    gateway: deps.AgentLlmGateway | None = None,
+) -> RunAdvice | None:
+    """GET /runs/{runId}/advice(agent/router.py)가 부른다. 그 run의 요청자에게 그 run의 데이터로만 조언한다(2절 2번 예외).
+
+    1. 짧은 읽기: run(없으면 NOT_FOUND, 요청자가 아니면 FORBIDDEN), 저장된 조언(있으면 그대로 렌더해 돌려준다), 대상 판정
+       재료(같은 카테고리 run), 검증 재료(근거 줄, 구성원 표시 이름 — 모델에는 가지 않는다).
+    2. 대상이 아니면 None(204). 아무것도 쓰지 않는다 — 진행 중인 run은 끝난 뒤 다시 부르면 된다.
+    3. 모델(세션 없음, 12.6): 깔때기를 미리 읽어(t0) 입력에 넣고 Gateway를 부른다. 도구는 자기 세션을 짧게 연다.
+    4. 짧은 쓰기: agent_runs(trigger=run_advice) 한 행과 조언 한 행(ON CONFLICT (run_id) DO NOTHING). 같은 트랜잭션에서 저장된
+       행을 다시 읽어 렌더한다 — 같은 run에 동시에 두 요청이 와도 먼저 커밋한 조언 하나만 남고 둘 다 그것을 돌려준다.
+       침묵, 실패, 검증 실패도 빈 조언으로 저장해 다시 만들지 않는다.
+
+    지도 모델 사용 상한에는 세지 않는다(9절 — service.MODEL_RUN_TRIGGERS에 run_advice가 없다). outcome은 advised(조언을
+    만듦), silent, unknown, invalid_schema, model_failed, invalid_claims다."""
+    started = time.monotonic()
+    now = now or datetime.now(timezone.utc)
+
+    with _short_read(session_factory) as db:
+        meta = recommend_api.get_run_meta(db, run_id=run_id)
+        if meta["requested_by"] != requester_id:
+            raise AppError("FORBIDDEN")
+        stored = service.get_run_advice(db, run_id)
+        if stored is not None:
+            return core.render_run_advice(run_id, stored)
+        recent = recommend_api.get_recent_runs(db, run_id=run_id)
+        evidence = recommend_api.get_run_evidence(db, run_id=run_id)
+        found = maps_api.get_map_for_agent(db, meta["map_id"])
+        members = [m["user_id"] for m in found["members"]] if found else []
+        names = list(auth_api.display_names(db, members).values())
+
+    same_runs = core.same_category_runs(recent, meta["created_at"])
+    if not core.run_advice_target(meta["status"], meta["result_count"], same_runs):
+        return None
+
+    gateway = gateway or deps.get_llm_gateway()
+    ctx = tools.RunToolContext(
+        run_id=run_id, requester_id=requester_id, meta=meta, session_factory=session_factory,
+        fact_labels=recommend_api.fact_labels(),
+    )
+    funnel = ctx.prefetch(core.PREFETCH_CALL_ID, "get_run_funnel")
+    reply = gateway.advise_run(core.advice_input(meta, same_runs, funnel), tool_runner=ctx.run)
+    outcome, draft, verification, detail = _checked_advice(reply.result, ctx, evidence, names, meta)
+
+    with _write(session_factory) as db:
+        agent_run_id = uuid.uuid4()
+        inserted = service.insert_run_advice(
+            db, run_id=run_id, map_id=meta["map_id"], draft=draft, agent_run_id=agent_run_id, now=now,
+        )
+        service.insert_run(
+            db, id=agent_run_id, map_id=meta["map_id"], started_at=now,
+            finished_at=now + timedelta(seconds=time.monotonic() - started), trigger="run_advice", used_model=True,
+            tool_calls=ctx.calls, verification=verification, outcome=outcome,
+            outcome_detail={"run_id": run_id, "stored": inserted, **detail}, **core.model_usage([reply.usage]),
+        )
+        return core.render_run_advice(run_id, service.get_run_advice(db, run_id))
+
+
+def _checked_advice(
+    out: Any, ctx: tools.RunToolContext, evidence: list[dict[str, Any]], names: list[str], meta: Mapping[str, Any],
+) -> tuple[str, core.AdviceDraft, dict[str, Any] | None, dict[str, Any]]:
+    """모델 결과 → (outcome, 저장할 조언, verification, outcome_detail). 실패(AgentCallFailed)는 재요청하지 않고 빈 조언이다."""
+    if isinstance(out, AgentCallFailed):
+        return core.failed_outcome(out.reason), core.EMPTY_ADVICE, None, {"reason": out.reason, "detail": out.detail}
+    verified = core.verify_run_advice(out, core.AdviceContext(
+        run_id=ctx.run_id, tool_results=ctx.results, tool_names=ctx.names,
+        own_lines={line["line_id"]: line["author_id"] == ctx.requester_id for line in evidence},
+        evidence_texts=[line["text"] for line in evidence if line["text"]],
+        radius=core.radius_limits(meta["default_radius_walk_min"], meta["widen_limit_walk_min"]), member_names=names,
+    ))
+    return verified.outcome, verified.draft, verified.record, {"decision": out.decision, "kind": out.kind}

@@ -79,16 +79,6 @@ export function useMembersQuery(mapId: string) {
   })
 }
 
-/** 초대 링크는 열 때마다 새로 받지 않는다 — 프로필 모달을 여닫을 때마다 토큰이 늘어나지 않게. */
-export function useInviteQuery(mapId: string, enabled: boolean) {
-  return useQuery({
-    queryKey: ['maps', mapId, 'invite'],
-    queryFn: () => createInvite(mapId),
-    enabled,
-    staleTime: Infinity,
-  })
-}
-
 /** 초대 요약(C-1/C-2). 로그인 없이 부를 수 있다. 만료·없는 링크는 다시 물어도 같으니 재시도하지 않는다. */
 export function useInviteSummaryQuery(token: string) {
   return useQuery({

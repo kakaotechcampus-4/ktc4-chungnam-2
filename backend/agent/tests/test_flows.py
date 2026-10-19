@@ -13,10 +13,9 @@ from datetime import timedelta
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.orm import sessionmaker
 
 from agent import constants, core, flows, service
-from agent.models import AgentCursor, AgentRun, AgentSettings, AgentSuggestion
+from agent.models import AgentCursor, AgentReasonSummary, AgentRun, AgentSettings, AgentSuggestion
 from agent.schemas import AgentSuggestion as AgentSuggestionSchema
 from agent.tests import rows
 from agent.tests.world import World, fake_places, real_now
@@ -25,11 +24,6 @@ from places import api as places_api
 
 SECRET = "비밀사유_창가자리가좋아요"
 SECRET_AGAINST = "비밀사유_너무시끄러워요"
-
-
-@pytest.fixture()
-def factory(test_engine):
-    return sessionmaker(bind=test_engine, autoflush=False)
 
 
 @pytest.fixture()
@@ -68,12 +62,13 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
     assert [c["value"] for c in sug.claims] == [2, 0]
     assert sug.expires_at == world.now + constants.SUGGESTION_TTL
     run = world.one(AgentRun, map_id=map_id)
-    # 신호가 둘이라 우선순위를 모델(dev는 고정 응답 스텁)에 물었다 — 모델 사용 1회(#533)
-    assert (run.outcome, run.trigger, run.snapshot_seq, run.used_model) == ("suggested", "activity", seq, True)
+    # 신호가 둘이지만 순위는 코드 규칙이고 진단도 없다 — 모델 사용 없음(#582)
+    assert (run.outcome, run.trigger, run.snapshot_seq, run.used_model) == ("suggested", "activity", seq, False)
     assert sug.run_id == run.id
     assert [s["diagnosis"] for s in run.signals] == ["category_gap", "category_gap"]
-    assert run.priority["final_order"] == ["s1", "s2"] and run.priority["model_order"] == ["s1", "s2"]
-    assert run.priority["source"] == "model" and run.tool_calls == [] and run.verification is None
+    assert run.priority == {"source": "rules", "final_order": ["s1", "s2"],
+                            "fingerprints": [s["fingerprint"] for s in run.signals], "rule_hits": []}
+    assert run.tool_calls == [] and run.verification is None
     [(type_, payload)] = world.agent_events(map_id)
     assert type_ == "agent.suggested"
     assert AgentSuggestionSchema.model_validate(payload).id == str(sug.id)
@@ -88,8 +83,8 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
 
 
 def test_shadow_diagnosis_is_saved_without_events(world, monkeypatch):
-    """17절 15번 — shadow 유형의 제안은 저장되지만 이벤트가 없다. M1-1에서 모델 유형은 초안까지 가지 않으므로 코드
-    유형을 shadow 목록에 넣어 저장 경로를 본다."""
+    """17절 15번 — shadow 유형의 제안은 저장되지만 이벤트가 없다. #582부터 shadow 목록이 비어 있어 코드 유형을 넣어
+    저장 경로를 본다."""
     monkeypatch.setattr(core, "SHADOW_DIAGNOSES", constants.CODE_TYPES)
     map_id = world.gap_map()
     world.event(map_id)
@@ -100,9 +95,15 @@ def test_shadow_diagnosis_is_saved_without_events(world, monkeypatch):
     assert world.agent_events(map_id) == []
 
 
-def test_model_types_stay_shadow():
-    assert constants.SHADOW_DIAGNOSES == constants.MODEL_TYPES
-    assert [core.is_shadow(d) for d in ("stall", "split", "no_reaction", "category_gap")] == [True, True, False, False]
+def test_all_types_are_exposed():
+    """모델 유형도 #534 평가 뒤 노출한다(#582)."""
+    assert constants.SHADOW_DIAGNOSES == ()
+    assert [core.is_shadow(d) for d in ("stall", "split", "no_reaction", "category_gap")] == [False] * 4
+
+
+def test_tick_max_maps_is_six():
+    """관찰 최악 약 16초(#534) × 10이 lease 180초에 가까워 6으로(#582)."""
+    assert constants.TICK_MAX_MAPS == 6
 
 
 def test_no_reaction_suggestion_renders_pin_names(world, monkeypatch):
@@ -541,7 +542,7 @@ def test_map_deleted_during_observation_writes_nothing(world, monkeypatch):
 def test_no_agent_row_contains_reason_text(world, factory):
     """사유가 달린 ♥와 🚫가 있는 지도를 관찰한 뒤 agent_* 어느 행의 직렬화에도 사유 글이 없다. 정체(stall)가
     1순위라 진단 스텁이 get_reasons를 부르고(결과에 사유 글이 있다) silent로 끝난다 — 도구 기록에는 글 대신 글자 수만
-    남는다(10절, 2절 13번)."""
+    남는다(10절, 2절 13번). 관찰 끝에 요약도 만든다(#586, 17절 16번 — 요약을 거친 뒤에도 글이 없다)."""
     map_id = world.gap_map()
     food = world.pin(map_id, category="음식점", by="u1")
     cafe = world.pin(map_id, category="카페", by="u1")
@@ -551,7 +552,9 @@ def test_no_agent_row_contains_reason_text(world, factory):
 
     tick(world)
 
-    run = world.one(AgentRun, map_id=map_id)
+    assert world.one(AgentRun, map_id=map_id, trigger="summary").outcome == "summarized"
+    assert world.rows(AgentReasonSummary, map_id=map_id)
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert run.outcome == "silent"
     assert run.outcome_detail == {"signal_id": "s1", "diagnosis": "stall", "decision": "silent"}
     assert against in run.signals[0]["evidence_ids"]   # 근거는 reaction_id로만
@@ -570,8 +573,8 @@ def test_no_agent_row_contains_reason_text(world, factory):
 
 # ---------------------------------------------------------------- 보존 정리 (12.9)
 
-def test_daily_cleanup_deletes_old_runs_once_a_day(world, monkeypatch):
-    monkeypatch.setattr(flows, "_cleanup_done_on", None)
+def test_daily_cleanup_deletes_old_runs_once_a_day(world):
+    # flows._cleanup_done_on은 conftest의 autouse 픽스처가 테스트마다 None으로 되돌린다
     map_id = world.map()
     with world.factory() as db:
         old = service.insert_run(db, map_id=map_id, started_at=world.now - timedelta(days=31), trigger="time",

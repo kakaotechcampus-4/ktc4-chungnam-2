@@ -10,7 +10,6 @@ from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import sessionmaker
 
 from agent import core, service
 from agent.models import AgentCursor, AgentSettings, AgentSuggestion, AgentSuggestionView
@@ -18,11 +17,6 @@ from agent.tests.world import World, fake_places, real_now
 from auth.testing import session_cookie
 from common.database import get_db_session, session_scope
 from places import api as places_api
-
-
-@pytest.fixture()
-def factory(test_engine):
-    return sessionmaker(bind=test_engine, autoflush=False)
 
 
 @pytest.fixture()

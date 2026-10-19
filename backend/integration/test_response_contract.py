@@ -23,7 +23,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
-    ("GET", "/runs/{runId}/advice"): "#510 agent v2 — 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
@@ -111,6 +110,23 @@ def clients(app_client, two_users):
 
 
 @pytest.fixture()
+def advice_sessions(app_client, db_session, monkeypatch):
+    """GET /runs/{runId}/advice(#587)는 요청 세션 대신 짧은 세션을 따로 연다 — 그 세션도 이 테스트 트랜잭션(db_session)
+    안에서 열리게 한다. 모델 자리는 고정 응답 스텁(늘 silent)으로 둔다. 조언을 내는 대본은 테스트가 바꿔 끼운다."""
+    from contextlib import contextmanager
+
+    from agent import deps as agent_deps
+
+    @contextmanager
+    def same_session():
+        yield db_session
+
+    app_client.app.dependency_overrides[agent_deps.get_session_factory] = lambda: same_session
+    monkeypatch.setattr(agent_deps, "get_llm_gateway", agent_deps.FixedAgentLlmGateway)
+    return monkeypatch
+
+
+@pytest.fixture()
 def anon_client(app_client):
     from fastapi.testclient import TestClient
 
@@ -119,7 +135,7 @@ def anon_client(app_client):
     c.close()
 
 
-def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin_body):
+def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin_body, advice_sessions):
     a, b, problems = clients
     assert a.get("/auth/me").status_code == 200
 
@@ -211,6 +227,8 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     history = a.get(f"/maps/{map_id}/runs")                                                          # 지난 추천 기록(#469)
     assert history.status_code == 200 and [h["id"] for h in history.json()] == [run_id]
     assert history.json()[0]["published_count"] == 1
+    assert b.get(f"/runs/{run_id}/advice").status_code == 403                                       # 요청자만(#587)
+    assert a.get(f"/runs/{run_id}/advice").status_code == 204                                       # 낼 조언 없음
 
     for pid in pin_ids[:2]:
         assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pid}).status_code in (200, 201)
@@ -506,6 +524,49 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     assert off.status_code == 200 and off.json()["enabled"] is False and off.json()["updated_by"] == "user_b"
     assert a.get(f"/maps/{map_id}/agent").json()["settings"]["enabled"] is False
     assert a.put(f"/maps/{map_id}/agent/settings", json={"enabled": True}).json()["enabled"] is True
+
+
+def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions):
+    """추천 막힘 조언(#587) — 같은 카테고리 run이 3개가 되면 대상이다. 대상이 아닌 run은 204, 남의 run은 403, 대상 run은
+    RunAdvice(200). 모델 자리의 대본은 미리 읽은 깔때기(t0)의 값으로 사실 문장 하나를 쓴다."""
+    from agent import deps as agent_deps
+    from agent.schemas import AdviceLine, RunAdviceOutput, ToolClaim
+    from llm import api as llm_api
+
+    def facts_only(advice_input, call_tool):
+        passed = advice_input["funnel"]["result"]["passed"]
+        claim = ToolClaim(id="c1", kind="tool_result", call_id="t0", path="passed", value=passed)
+        line = AdviceLine(text="조건을 모두 통과한 곳은 {c1.value}곳이에요", basis=["c1"], is_guess=False)
+        return RunAdviceOutput(decision="suggest", kind="exhausted", claims=[claim], advice=[line], actions=[])
+
+    class Scripted(agent_deps.FixedAgentLlmGateway):
+        def advise_run(self, advice_input, *, tool_runner):
+            return llm_api.agent_advise_run(advice_input, tool_runner=tool_runner, planner=facts_only)
+
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "성수", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+    pin_ids = [a.post(f"/maps/{map_id}/pins", json=pin_body(key)).json()["id"]
+               for key in ("seongsu-kalguksu", "hongdae-ramen")]
+    for c in (a, b):
+        assert c.put(f"/pins/{pin_ids[0]}/reaction", json={"type": "like"}).status_code == 200
+        assert c.put(f"/pins/{pin_ids[1]}/reaction", json={"type": "against", "reason_text": "별로"}).status_code == 200
+
+    runs = [a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"] for _ in range(3)]
+    for run_id in (runs[0], runs[2]):
+        assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
+        assert a.post(f"/runs/{run_id}/execute").status_code == 202
+
+    assert a.get(f"/runs/{runs[1]}/advice").status_code == 204    # 아직 실행 전
+    assert b.get(f"/runs/{runs[2]}/advice").status_code == 403
+    advice_sessions.setattr(agent_deps, "get_llm_gateway", Scripted)
+    advice = a.get(f"/runs/{runs[2]}/advice")
+    assert advice.status_code == 200
+    assert advice.json()["run_id"] == runs[2] and advice.json()["kind"] == "exhausted"
+    assert advice.json()["advice"][0]["text"].startswith("조건을 모두 통과한 곳은 ")
+    assert a.get(f"/runs/{runs[2]}/advice").json() == advice.json()   # run당 한 번 — 다시 열어도 같다
+    assert not problems, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(problems)
 
 
 def test_notification_responses_match_the_openapi_spec(clients, db_session):

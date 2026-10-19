@@ -109,18 +109,12 @@ def test_fixed_gateway_is_selected_and_never_suggests():
         calls.append((call_id, name, args))
         return {"reasons": [], "total": 0}
 
-    def no_tools(call_id, name, args):
-        raise AssertionError(f"도구 호출: {name}")
-
-    priority_reply = gateway.prioritize([{"id": "s2"}, {"id": "s1"}], ["원칙"])
-    priority = priority_reply.result
-    assert [i.signal_id for i in priority.order] == ["s2", "s1"]
-
     diagnosis_reply = gateway.diagnose({"diagnosis": "stall", "signal_id": "s1", "category": "음식점"}, tool_runner=runner)
     diagnosis = diagnosis_reply.result
     assert isinstance(diagnosis, DiagnosisOutput)
     # 고정 응답 스텁은 모델을 부르지 않는다 — 사용량은 없음과 0(#564)
-    assert priority_reply.usage == diagnosis_reply.usage == AgentUsage()
+    assert diagnosis_reply.usage == AgentUsage()
+    assert not hasattr(gateway, "prioritize")   # 우선순위는 코드 규칙(#582)
     assert (diagnosis.decision, diagnosis.signal_id, diagnosis.advice, diagnosis.actions) == ("silent", "s1", [], [])
     assert calls == [("t1", "get_reasons", {"pin_ids": None, "category": "음식점", "types": None})]
 
@@ -128,5 +122,8 @@ def test_fixed_gateway_is_selected_and_never_suggests():
     assert (line.fact_key, line.badge) == (None, "preferred")   # dev ②는 입력 그대로 — 키를 지어내지 않는다
 
     assert gateway.summarize({}).decision == "silent"
-    advice = gateway.advise_run({}, tool_runner=no_tools)
-    assert (advice.decision, advice.actions) == ("silent", [])
+    calls.clear()
+    advice_reply = gateway.advise_run({}, tool_runner=runner)   # 조언 스텁은 근거 줄을 한 번 읽고 늘 silent(#587)
+    assert (advice_reply.result.decision, advice_reply.result.actions) == ("silent", [])
+    assert advice_reply.usage == AgentUsage()
+    assert calls == [("t1", "get_run_evidence", {})]

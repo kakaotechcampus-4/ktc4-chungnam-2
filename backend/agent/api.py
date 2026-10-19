@@ -1,6 +1,7 @@
 """
 다른 모듈이 agent에 요청하는 공개 함수(docs/architecture.md 1절 — 다른 모듈의 데이터 변경은 그 모듈의 api.py만).
-커밋하지 않는다. advise_run(추천 막힘 조언)은 M2에서 연다.
+커밋하지 않는다. 추천 막힘 조언(`GET /runs/{runId}/advice`, #587)은 다른 모듈이 부르지 않는다 — agent 라우터가 agent.flows를
+바로 부른다.
 
 연결(maps/purge.py의 PURGE_STEPS, auth/service.py의 withdraw_user)은 #512에서 한다.
 """

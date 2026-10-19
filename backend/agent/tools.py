@@ -1,4 +1,5 @@
-"""모델 도구(docs/agent-v2.md 10절). 진단 모델이 llm을 거쳐 부르는 읽기 전용 함수들이다.
+"""모델 도구(docs/agent-v2.md 10절). 진단 모델과 추천 막힘 조언 모델(#587, 맨 아래 절)이 llm을 거쳐 부르는 읽기
+전용 함수들이다.
 
 공통 규칙(10절)
 - 읽기 전용이다. 각 도구는 짧은 읽기 세션을 열고 닫는다 — 모델 호출 중에는 세션을 들고 있지 않는다(12.6).
@@ -31,6 +32,7 @@ from agent import core
 from agent.constants import TOOL_RESULT_MAX_ITEMS
 from agent.snapshot import Snapshot
 from common import categories
+from common.errors import AppError
 from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
@@ -100,32 +102,45 @@ class ToolContext:
         started = time.monotonic()
         tool = TOOLS.get(name) if name in self.allowed else None
         result = NOT_FOUND if tool is None else tool(self, args)
-        self.results[call_id] = result
-        self.calls.append({
-            "call_id": call_id, "name": name, "args": dict(args), "result": redact(result),
-            "ms": int((time.monotonic() - started) * 1000),
-        })
+        _record(self, call_id, name, args, result, started)
         return result
 
-    @contextmanager
-    def read(self) -> Iterator[Session]:
-        """짧은 읽기 세션. 쓰지 않으므로 롤백으로 닫는다."""
-        with self.session_factory() as db:
-            try:
-                yield db
-            finally:
-                db.rollback()
+    def read(self):
+        return _read(self.session_factory)
+
+
+@contextmanager
+def _read(session_factory: Callable[[], Session]) -> Iterator[Session]:
+    """짧은 읽기 세션. 쓰지 않으므로 롤백으로 닫는다."""
+    with session_factory() as db:
+        try:
+            yield db
+        finally:
+            db.rollback()
+
+
+def _record(ctx: Any, call_id: str, name: str, args: Mapping[str, Any], result: Any, started: float, **extra: Any) -> None:
+    """도구 실행 한 번을 남긴다 — 검증용 원래 결과(results, 메모리)와 저장용 기록(calls, 글 대신 글자 수)."""
+    ctx.results[call_id] = result
+    ctx.calls.append({
+        "call_id": call_id, "name": name, "args": dict(args), "result": redact(result),
+        "ms": int((time.monotonic() - started) * 1000), **extra,
+    })
+
+
+_TEXT_OWNERS = ("reaction_id", "line_id")   # 이 칸과 함께 있는 text는 사람이 쓴 글(사유, 근거 줄)이다
 
 
 def redact(result: Any) -> Any:
-    """저장용 사본 — 사유 글(reaction_id와 함께 있는 text)을 글자 수로 바꾼다(2절 13번). 칩 이름(label)은 칩 표의
-    고정 문구라 남긴다."""
+    """저장용 사본 — 사유 글과 근거 글(reaction_id나 line_id와 함께 있는 text)을 글자 수로 바꾼다(2절 13번). 칩 이름과 조건
+    이름(label)은 코드의 고정 문구라 남긴다."""
     if isinstance(result, list):
         return [redact(v) for v in result]
     if not isinstance(result, Mapping):
         return result
-    out = {k: redact(v) for k, v in result.items() if not ("reaction_id" in result and k == "text")}
-    if "reaction_id" in result and "text" in result:
+    owned = any(k in result for k in _TEXT_OWNERS)
+    out = {k: redact(v) for k, v in result.items() if not (owned and k == "text")}
+    if owned and "text" in result:
         out["text_len"] = len(result["text"] or "")
     return out
 
@@ -255,11 +270,12 @@ def get_reasons(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
     return _top(reasons, "reasons")
 
 
-def _structured(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """반응마다 근거 줄 [{fact_key, wants, badge}] (8.1). 글은 ②로(캐시에 없을 때만, 한 번에 모아서), 칩은 칩 표 그대로.
-    ♥ 글은 preferred, 🚫 글은 required로 넣는다 — 추천이 근거 줄을 만들 때와 같다. 칩은 🚫에만 있어 required.
+def _lines(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[list[dict[str, Any]]]:
+    """반응마다 근거 줄 [{fact_key, wants, badge, source, …}] (8.1). 글은 ②로(캐시에 없을 때만, 한 번에 모아서), 칩은 칩 표
+    그대로. ♥ 글은 preferred, 🚫 글은 required로 넣는다 — 추천이 근거 줄을 만들 때와 같다. 칩은 🚫에만 있어 required.
     글 줄과 칩 줄을 합친 뒤 추천과 같은 #422 규칙(🚫 사유 안의 음식 종류 "원함"은 preferred)을 recommend.api로 건다(#564).
-    ②가 실패하면 llm.api.PlanEvidenceFailed가 그대로 올라간다."""
+    줄마다 출처(source: text|chip)를 붙이고 칩 줄에는 chip_id와 label(칩 표의 고정 이름)도 붙인다 — 요약의 키 없는 사유
+    나누기(8절)가 쓴다. ②가 실패하면 llm.api.PlanEvidenceFailed가 그대로 올라간다."""
     def key(r: Mapping[str, Any]) -> tuple[str, str]:
         return r["reaction_id"], _iso(r["updated_at"])
 
@@ -276,11 +292,35 @@ def _structured(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[dic
             ))
     out = []
     for r in rows:
-        lines = [dict(line) for line in ctx.cache.get(key(r)) or ()] if r["reason_text"] else []
-        lines += [{"fact_key": c["fact_key"], "wants": c["wants"], "badge": "required"} for c in r["chips"]]
-        lines = recommend_api.demote_wanted_place_identity(r["category"], lines)
-        out.append({"reaction_id": r["reaction_id"], "type": r["type"], "lines": lines})
+        lines = [dict(line, source="text") for line in ctx.cache.get(key(r)) or ()] if r["reason_text"] else []
+        lines += [{"fact_key": c["fact_key"], "wants": c["wants"], "badge": "required", "source": "chip",
+                   "chip_id": c["chip_id"], "label": c["label"]} for c in r["chips"]]
+        out.append(recommend_api.demote_wanted_place_identity(r["category"], lines))
     return out
+
+
+_LINE_KEYS = ("fact_key", "wants", "badge")   # structure_reasons 도구가 모델에 주는 줄의 칸
+
+
+def _structured(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """structure_reasons와 compare_reasons의 모양 — 반응마다 {reaction_id, type, lines[{fact_key, wants, badge}]}."""
+    return [
+        {"reaction_id": r["reaction_id"], "type": r["type"],
+         "lines": [{k: line[k] for k in _LINE_KEYS} for line in lines]}
+        for r, lines in zip(rows, _lines(ctx, rows), strict=True)
+    ]
+
+
+def summary_reasons(ctx: ToolContext, category: str) -> list[dict[str, Any]]:
+    """우리 조건 요약(8절)의 입력 — 그 카테고리의 사유 있는 반응 전부(삭제된 핀의 사유 포함, 추천과 같은 기준)와 출처 붙은
+    근거 줄. 모델 도구가 아니라 상위 30개로 자르지 않는다. [{reaction_id, member, text, lines}]. member(user_id)와
+    text는 core.summarize_reasons가 사람 수와 알러지 낱말을 보는 데만 쓰고 저장하지 않는다. ②가 실패하면
+    PlanEvidenceFailed."""
+    rows = _reasoned(ctx, category=category)
+    return [
+        {"reaction_id": r["reaction_id"], "member": r["user_id"], "text": r["reason_text"], "lines": lines}
+        for r, lines in zip(rows, _lines(ctx, rows), strict=True)
+    ]
 
 
 def structure_reasons(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -364,4 +404,98 @@ TOOLS: dict[str, Callable[[ToolContext, Mapping[str, Any]], Any]] = {
     "compare_reasons": compare_reasons,
     "get_place_facts": get_place_facts,
     "get_readiness": get_readiness,
+}
+
+
+# ---------------------------------------------------------------- 추천 막힘 조언 전용 (9절, 10절, #587)
+# 그 run의 요청자에게 그 run의 데이터만 다룬다(2절 2번의 예외). run은 모델이 고르지 않고 여기서 채운다 — 인자는 비었거나
+# simulate_filter의 두 칸뿐이다. 근거 줄의 쓴 사람은 "본인"과 "다른 구성원"으로만 나간다(core.advice_evidence).
+
+@dataclass
+class RunToolContext:
+    """조언 한 번의 도구 실행 창구. `run`을 llm.agent_advise_run의 tool_runner로 넘긴다. 허용 도구는 RUN_TOOLS(llm의
+    RUN_ADVICE_TOOLS와 같은 넷)이고 llm도 같은 목록으로 막는다. meta는 recommend.api.get_run_meta(반경과 상한을 본다)."""
+    run_id: str
+    requester_id: str
+    meta: Mapping[str, Any]
+    session_factory: Callable[[], Session]
+    fact_labels: Mapping[str, str]
+    calls: list[dict[str, Any]] = field(default_factory=list)
+    results: dict[str, Any] = field(default_factory=dict)
+    names: dict[str, str] = field(default_factory=dict)   # call_id → 도구 이름(검증이 claim의 출처를 본다)
+
+    def run(self, call_id: str, name: str, args: Mapping[str, Any]) -> Any:
+        started = time.monotonic()
+        tool = RUN_TOOLS.get(name)
+        result = NOT_FOUND if tool is None else tool(self, args)
+        self.names[call_id] = name
+        _record(self, call_id, name, args, result, started)
+        return result
+
+    def prefetch(self, call_id: str, name: str) -> Any:
+        """모델을 부르기 전에 코드가 도구를 한 번 돌려 입력에 넣는다(깔때기, core.PREFETCH_CALL_ID). 기록에도 남긴다."""
+        started = time.monotonic()
+        result = RUN_TOOLS[name](self, {})
+        self.names[call_id] = name
+        _record(self, call_id, name, {}, result, started, prefetched=True)
+        return result
+
+    def read(self):
+        return _read(self.session_factory)
+
+
+def get_recent_runs(ctx: RunToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
+    """같은 요청자의 같은 카테고리 최근 run [{run_id, status, result_count, created_at, this_run}] — recommend.api 그대로(#469)."""
+    with ctx.read() as db:
+        recent = recommend_api.get_recent_runs(db, run_id=ctx.run_id)
+    return _top(core.recent_runs_view(recent, ctx.run_id), "runs")
+
+
+def get_run_funnel(ctx: RunToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
+    """그 run의 마지막 실행 깔때기와 결과 수, passed(core.funnel_view)."""
+    with ctx.read() as db:
+        return core.funnel_view(recommend_api.get_run_funnel(db, run_id=ctx.run_id))
+
+
+def get_run_evidence(ctx: RunToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
+    """그 run의 근거 줄(비활성 포함). 쓴 사람은 본인/다른 구성원, 조건 이름(label), 종류(kind). 줄 순서는 근거 줄 정본 순서라
+    같은 run이면 같은 lines.N이다."""
+    with ctx.read() as db:
+        lines = recommend_api.get_run_evidence(db, run_id=ctx.run_id)
+    return _top(core.advice_evidence(lines, ctx.requester_id, ctx.fact_labels), "lines")
+
+
+def _radius_factor(value: Any) -> tuple[bool, float | None]:
+    if value is None:
+        return True, None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not value > 0:
+        return False, None
+    return True, float(value)
+
+
+def simulate_filter(ctx: RunToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
+    """입력만 바꿔 다시 거른 결과(core.simulate_view: before, after, gained, within_widen_limit). 필터는 recommend.api의 읽기
+    전용 시뮬레이션이 돌린다(다시 구현하지 않는다, 10절). 배율이 0 이하이거나 숫자가 아니면, 그 run의 근거 줄이 아닌 id면
+    NOT_FOUND. 반경 상한을 넘는 배율도 결과는 주되 within_widen_limit=false다 — 그 결과를 가리키는 claim은 검증에서 빠진다."""
+    ok, factor = _radius_factor(args.get("radius_factor"))
+    line_ids = args.get("disable_line_ids") or []
+    if not ok or not isinstance(line_ids, list) or not all(isinstance(i, str) for i in line_ids):
+        return NOT_FOUND
+    line_ids = list(dict.fromkeys(line_ids))
+    with ctx.read() as db:
+        try:
+            raw = recommend_api.simulate_filter(db, run_id=ctx.run_id, radius_factor=factor, disable_line_ids=line_ids)
+        except AppError:
+            return NOT_FOUND
+    return core.simulate_view(
+        raw, radius_factor=factor, disable_line_ids=line_ids, walk_min=ctx.meta["default_radius_walk_min"],
+        limit_walk_min=ctx.meta["widen_limit_walk_min"],
+    )
+
+
+RUN_TOOLS: dict[str, Callable[[RunToolContext, Mapping[str, Any]], Any]] = {
+    "get_recent_runs": get_recent_runs,
+    "get_run_funnel": get_run_funnel,
+    "get_run_evidence": get_run_evidence,
+    "simulate_filter": simulate_filter,
 }
