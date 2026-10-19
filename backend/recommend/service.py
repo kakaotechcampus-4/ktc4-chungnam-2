@@ -303,6 +303,19 @@ def last_run_at_by_category(db: Session, *, map_id: str) -> dict[str, datetime]:
     return {category: created_at for category, created_at in rows}
 
 
+def latest_run_place_ids(db: Session, *, map_id: str, requested_by: str, category: str | None = None) -> set[str]:
+    """요청자의 이 지도 최신 run(카테고리마다 하나, category가 있으면 그것만)의 후보 place_id(#646)."""
+    latest = (
+        select(RecommendRun.id)
+        .where(RecommendRun.map_id == map_id, RecommendRun.requested_by == requested_by)
+        .distinct(RecommendRun.category)
+        .order_by(RecommendRun.category, RecommendRun.created_at.desc(), RecommendRun.id.desc())
+    )
+    if category is not None:
+        latest = latest.where(RecommendRun.category == category)
+    return set(db.execute(select(Candidate.place_id).where(Candidate.run_id.in_(latest))).scalars())
+
+
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(#431) — 이 지도들의 추천 기록을 지운다. 테이블 이름 → 지운 행 수. 자식(근거 줄·후보·지역·
     제외)부터 지우고 run을 마지막에 지운다(전부 recommend_runs를 참조, 후보는 지역도 참조해서 지역보다 먼저)."""
