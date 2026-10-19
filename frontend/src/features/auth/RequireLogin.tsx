@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, Outlet, useSearchParams } from 'react-router'
 
-import { ChevronRight, CircleCheck, UserRound } from 'lucide-react'
+import { ChevronRight, CircleCheck, MapPin, MessageSquareText, Sparkles, Star, UserRound } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import ModalSheet from '@/features/shell/ModalSheet'
-import AgainstMark from '@/ui/AgainstMark'
 import MapIllustration from '@/ui/MapIllustration'
 import Pingo from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
@@ -32,11 +31,12 @@ export default function RequireLogin() {
   return <Outlet />
 }
 
+/** 쓰는 순서대로 — 핀 찍기 → 의견 → AI 대안 → 확정. 아이콘이 각 기능을 가리켜서 같은 체크를 반복하지 않는다. */
 const FEATURES = [
-  '가고 싶은 곳을 핀으로 찍어요',
-  <>♥ 좋음 · <AgainstMark /> 반대로 의견을 남겨요</>,
-  '반대가 있으면 AI가 대안을 찾아줘요',
-  '정한 곳은 확정 리스트에 모아요',
+  { Icon: MapPin, text: '가고 싶은 곳을 핀으로 찍어요' },
+  { Icon: MessageSquareText, text: '좋음·반대로 의견을 남겨요' },
+  { Icon: Sparkles, text: '반대가 있으면 AI가 대안을 찾아줘요' },
+  { Icon: Star, text: '정한 곳은 확정 리스트에 모아요' },
 ]
 
 /**
@@ -95,10 +95,13 @@ function LoginScreen() {
         <section className="mt-8 border-t border-ink-200 pt-6">
           <h2 className="text-center text-sm font-bold text-ink-900">핑고핑고에서 누릴 수 있는 기능이에요</h2>
           <ul className="mt-4 space-y-3">
-            {FEATURES.map((feature, i) => (
-              <li key={i} className="flex items-center gap-3 text-sm text-ink-700">
-                <CircleCheck size={16} className="shrink-0 text-brand-600" aria-hidden="true" />
-                <span className="break-keep">{feature}</span>
+            {FEATURES.map(({ Icon, text }) => (
+              <li key={text} className="flex items-center gap-3 text-sm text-ink-700">
+                {/* 아이콘을 담는 면은 둥근 사각형(DESIGN.md Shapes). */}
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-brand-50 text-brand-600">
+                  <Icon size={16} aria-hidden="true" />
+                </span>
+                <span className="break-keep">{text}</span>
               </li>
             ))}
           </ul>

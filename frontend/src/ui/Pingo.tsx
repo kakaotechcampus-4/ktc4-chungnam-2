@@ -32,8 +32,10 @@ const ARMS: Record<PingoMood, [Arm, Arm]> = {
 }
 
 /** 날 때만 몸을 앞으로 기울이고 망토·바람 줄이 붙어서 그림 틀을 넓힌다. */
-const FLY_BOX = '-26 0 96 70'
+const FLY_BOX = { x: -26, y: 0, w: 100, h: 70 }
 const CAPE = 'M47 30C47 48 30 61 4 66Q1 61-6 63Q-5 57-13 57Q-9 51-16 47C-4 45 8 39 17 30Z'
+/** 날 때 앞 주먹에 쥔 지도 핀. 핀 끝이 주먹에 숨고, 몸 기울기(40°)를 거의 되돌려 화면에서는 앞으로 살짝 기운 채 선다. */
+const HELD_PIN = 'M12 2C7.6 2 4 5.6 4 10c0 6 8 20 8 20s8-14 8-20c0-4.4-3.6-8-8-8z'
 
 export default function Pingo({ size = 40, mood = 'default', peek = false }: { size?: number; mood?: PingoMood; peek?: boolean }) {
   const clip = useId()
@@ -42,7 +44,7 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
   const h = peek ? 44 : 64
   const cap = mood === 'alert' ? 'var(--pingo-alert)' : 'var(--pingo-body)'
   const [left, right] = ARMS[mood]
-  const front = mood === 'thinking'
+  const front = mood === 'thinking' || fly
   const arm = ([cx, cy, rx, ry, r]: Arm) => (
     <ellipse cx={cx} cy={cy} rx={rx} ry={ry} transform={`rotate(${r} ${cx} ${cy})`} fill="white" {...LINE} />
   )
@@ -52,9 +54,9 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
 
   return (
     <svg
-      width={fly ? (size * 88) / 64 : size}
-      height={fly ? (size * 68) / 64 : (size * h) / 64}
-      viewBox={fly ? FLY_BOX : `0 0 64 ${h}`}
+      width={fly ? (size * FLY_BOX.w) / 64 : size}
+      height={fly ? (size * FLY_BOX.h) / 64 : (size * h) / 64}
+      viewBox={fly ? `${FLY_BOX.x} ${FLY_BOX.y} ${FLY_BOX.w} ${FLY_BOX.h}` : `0 0 64 ${h}`}
       aria-hidden="true"
       className={`shrink-0 ${motion}`}
     >
@@ -89,7 +91,15 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
             <ellipse cx="48" cy="41" rx="6.5" ry="3.2" fill="white" {...LINE} />
           </>
         ) : (
-          front && arm(right)
+          <>
+            {fly && (
+              <g transform="translate(55 15) rotate(-28) scale(.8) translate(-12 -27)">
+                <path d={HELD_PIN} fill="var(--pin-fill-full)" stroke="var(--pin-stroke)" strokeWidth="2" />
+                <circle cx="12" cy="10" r="3.2" fill="white" />
+              </g>
+            )}
+            {front && arm(right)}
+          </>
         )}
         {mood === 'sorry' && (
           <path d="M44 18.5C45.5 20.5 46.3 21.8 46.3 22.8A2.3 2.3 0 0 1 41.7 22.8C41.7 21.8 42.5 20.5 44 18.5Z" fill="white" {...LINE} />
