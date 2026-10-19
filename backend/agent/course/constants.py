@@ -33,6 +33,7 @@ THOUGHT_MAX_CHARS = 120
 MEALS_PER_DAY_MAX = 2
 MEAL_CATEGORY = "음식점"
 CAFE_CATEGORY = "카페"
+TOUR_CATEGORY = "관광지"
 NIGHT_LABEL = "night_view"
 
 # 화면 문장에 쓰면 안 되는 표현(초안). 결정을 지시하는 말을 막는다.

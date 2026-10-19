@@ -11,6 +11,7 @@ from agent.course.ports import FixtureOpeningHours
 from agent.course.schemas import (
     CommitMove,
     EstimateTravel,
+    FindOpenDays,
     GetOpeningHours,
     MoveDay,
     ReorderDay,
@@ -19,7 +20,7 @@ from agent.course.schemas import (
     TryMove,
 )
 from agent.course.state import initial_state
-from agent.course.tests.fixtures import ALL_OPEN, COURSE, KNOWN_HOURS, MON, PLACES, TRUE_HOURS, place, trip
+from agent.course.tests.fixtures import ALL_OPEN, COURSE, KNOWN_HOURS, MON, PLACES, TRUE_HOURS, TUE, place, trip
 
 OPEN = {p.alias: ALL_OPEN for p in PLACES}
 
@@ -87,6 +88,22 @@ class TestSoft:
         assert s["cafe_after_meal"] == 0.5     # p5는 p4 다음, p2는 p1 다음
         assert s["night_last"] == 1.0          # p6이 셋째 날 마지막
         assert s["day_balance"] == 2
+        assert s["mono_category_days"] == 0    # 한 곳뿐인 셋째 날은 세지 않는다
+        assert s["no_tour_days"] == 1          # 둘째 날(p3·p4·p5)에 관광지가 없다
+
+    def test_mono_category_days_boundary(self):
+        t = trip()
+        # 둘 이상이 한 카테고리: 센다. 둘 이상이어도 섞이면 안 센다. 한 곳뿐이면 안 센다
+        assert core.soft_scores(t, (("p3", "p4"), ("p1", "p2"), ("p5", "p6")))["mono_category_days"] == 1
+        assert core.soft_scores(t, (("p3",), ("p1", "p2"), ("p4", "p5", "p6")))["mono_category_days"] == 0
+        assert core.soft_scores(t, (("p2", "p5"), ("p3", "p4"), ("p1", "p6")))["mono_category_days"] == 3
+
+    def test_no_tour_days_ignores_empty_days_and_none_without_tour(self):
+        t = trip()
+        assert core.soft_scores(t, (("p1", "p2", "p3", "p4", "p5", "p6"), (), ()))["no_tour_days"] == 0
+        assert core.soft_scores(t, (("p2", "p3"), ("p4", "p5"), ("p1", "p6")))["no_tour_days"] == 2
+        no_tour = trip(places=PLACES[1:5], days=(MON,))
+        assert core.soft_scores(no_tour, (("p2", "p3", "p4", "p5"),))["no_tour_days"] is None
 
     def test_none_when_no_target(self):
         s = core.soft_scores(trip(places=PLACES[:1], days=(MON,)), (("p1",),))
@@ -96,6 +113,19 @@ class TestSoft:
 class TestMoves:
     def setup_method(self):
         self.state = initial_state(trip(), OPEN, COURSE)
+
+    def test_move_day_position_avoids_meal_clumps(self):
+        # 첫째 날 [p3(식당), p1, p2]에 식당 p4를 넣는다. p3 바로 앞·뒤(자리 0·1)는 식당이 붙으니 피한다
+        course = (("p3", "p1", "p2"), ("p4",), ("p5", "p6"))
+        pos = core.best_position(trip(), ("p3", "p1", "p2"), "p4")
+        assert pos in (2, 3)
+        new = core.apply_move(trip(), course, MoveDay(type="move_day", place="p4", to_day="d1", position=None), {})
+        assert core.soft_scores(trip(), new)["meal_spacing"] == 0
+
+    def test_move_day_position_avoids_exceeding_daily_meals(self):
+        # 하루에 식당이 이미 둘이면 식당을 더 넣는 건 피할 수 없다 — 그래도 서로 붙지 않는 자리를 고른다
+        pos = core.best_position(trip(), ("p3", "p1", "p6"), "p4")
+        assert pos in (2, 3) and pos != 1
 
     def test_reorder_must_be_permutation(self):
         _, r = try_(self.state, ReorderDay(type="reorder_day", day="d2", places=["p3", "p4"]))
@@ -165,9 +195,31 @@ class TestToolLimits:
         assert r.error == "LIMIT_EXCEEDED"
 
     def test_lookup_never_overwrites_known_with_unknown(self):
+        # p4는 시작 때 모른다. 조회가 빈손이어도(None) 이미 아는 요일은 그대로다
+        hours = {**OPEN, "p4": {TUE.weekday(): "closed"}}
+        state = initial_state(trip(), hours, COURSE)
+        state, r = tools.execute(GetOpeningHours(tool="get_opening_hours", place="p4"), state, FixtureOpeningHours({}))
+        assert r.ok and state.hours["p4"] == {TUE.weekday(): "closed"}
+
+    def test_fully_known_place_is_looked_up_from_the_start(self):
+        state = initial_state(trip(), KNOWN_HOURS, COURSE)
+        assert state.looked_up == {"p1", "p2", "p3", "p6"}       # p4·p5는 모른다 — 조회할 수 있다
+        _, r = tools.execute(GetOpeningHours(tool="get_opening_hours", place="p1"), state, TRUE_HOURS)
+        assert r.error == "ALREADY_LOOKED_UP"
+        state, r = tools.execute(GetOpeningHours(tool="get_opening_hours", place="p4"), state, TRUE_HOURS)
+        assert r.ok
+
+    def test_find_open_days_twice_for_same_place_is_rejected(self):
         state = initial_state(trip(), OPEN, COURSE)
-        state, r = tools.execute(GetOpeningHours(tool="get_opening_hours", place="p1"), state, FixtureOpeningHours({}))
-        assert r.ok and state.hours["p1"] == ALL_OPEN
+        call = FindOpenDays(tool="find_open_days", place="p1")
+        state, first = tools.execute(call, state, TRUE_HOURS)
+        assert first.ok
+        # 사이에 다른 호출이 끼어도(루프의 직전 호출 되풀이 방지를 피해도) 거절한다. 횟수는 쓰지 않는다
+        state, _ = tools.execute(FindOpenDays(tool="find_open_days", place="p2"), state, TRUE_HOURS)
+        used = state.tool_counts["find_open_days"]
+        state, second = tools.execute(call, state, TRUE_HOURS)
+        assert not second.ok and second.error == "ALREADY_LOOKED_UP"
+        assert state.tool_counts["find_open_days"] == used
 
 
 class TestThought:

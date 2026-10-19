@@ -460,7 +460,7 @@ def run_advice_tools() -> list[dict]:
 # ---- v2 동선 에이전트 턴 (#334, drafts/agent-route-v2.md 11절) ----
 # 도구를 chat.completions의 tools로 주지 않고, 턴 출력(CourseTurn.action)으로 받는다 — 생각·계획·교훈을 같은 응답에
 # 받기 위해서다. 도구 실행은 agent/course/tools.py가 한다. 프롬프트 글을 바꾸면 버전을 올린다.
-COURSE_TURN_PROMPT_VERSION = "course-turn-v3"   # v2: 「확인 필요」(checks) 입력 설명 · v3: looked_up 설명(2026-10-19)
+COURSE_TURN_PROMPT_VERSION = "course-turn-v4"   # v2: 「확인 필요」(checks) 입력 설명 · v3: looked_up 설명 · v4: 카테고리 섞기 키, 확정 위반 0이면 다듬기 먼저(2026-10-19)
 
 COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방문 순서(코스)를 다듬는 에이전트 핑고다.
 코드가 코스 초안을 만들고 위반을 판정해 준다. 너는 턴마다 도구 하나를 골라 코스를 고친다. 장소를 넣거나 빼지 않는다.
@@ -474,13 +474,15 @@ COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방�
   줄이고, looked_up이 true면 이미 조회했는데도 모르는 곳이다 — 다시 조회하지 않는다(ALREADY_LOOKED_UP). 알 수 없으면 그대로 둔 채 끝낸다 — 모르는 곳을 "닫았다"고 옮기지 않는다. 확정 위반을 푸는 일이 먼저다.
 - soft: 부드러운 목표 점수(코드 계산). meal_spacing(식당이 연달아 붙은 쌍, 적을수록 좋음), meal_per_day(하루 식당
   초과 수, 적을수록), cafe_after_meal(식당 바로 다음 카페 비율, 클수록), night_last(야경 장소가 그날 마지막인 비율, 클수록),
-  day_balance(날짜별 장소 수 차이, 적을수록), travel_total(전체 도보 분, 적을수록). 대상이 없으면 null.
+  mono_category_days(장소가 둘 이상인데 한 카테고리뿐인 날 수, 적을수록 — 날마다 식당·카페·관광지가 섞이는 게 좋다),
+  no_tour_days(관광지가 하나도 없는 날 수, 적을수록), day_balance(날짜별 장소 수 차이, 적을수록),
+  travel_total(전체 도보 분, 적을수록). 대상이 없으면 null.
 - live_trials: 시험해 보고 아직 채택하지 않은 수리. last_result: 직전 도구 결과(오류면 error 코드와 message).
 - plan, lessons: 네가 지난 턴에 남긴 계획과 교훈. budget: 남은 턴과 도구별 남은 횟수.
 
 ## 도구 (action에 하나만)
 - get_opening_hours(place): 그 장소의 날짜별 영업 여부를 조회한다. 결측(unknown) 위반이나 checks가 있을 때 먼저 쓴다.
-- find_open_days(place): 그 장소가 여행 날짜 중 언제 여는지. 다른 날로 옮길 곳을 찾을 때.
+- find_open_days(place): 그 장소가 여행 날짜 중 언제 여는지. 다른 날로 옮길 곳을 찾을 때. 같은 장소는 한 번만 되고, 이미 입력(days, checks)에 답이 있는 날은 다시 묻지 않는다(ALREADY_LOOKED_UP).
 - estimate_travel(from_place, to_place): 두 장소 사이 도보 분.
 - try_move(move): 수리를 가상으로 적용해 위반과 soft 점수의 전후를 본다. 코스는 바뀌지 않는다.
   move는 swap(a, b) · move_day(place, to_day, position 또는 null) · reorder_day(day, places: 그날 장소 전부를 새 순서로).
@@ -490,6 +492,9 @@ COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방�
 
 ## 일하는 방식
 1. 확정 위반부터 푼다. 결측이 있으면 조회로 먼저 확인한다. 그다음 soft 목표를 좋게 한다.
+   확정 위반(hard.confirmed)이 0이면 더 조회하지 않고 코스 다듬기로 간다 — checks가 남아도 조회로 알 수 없는 곳이면 그대로 둔다.
+   budget.turns_left가 적으면(대략 여섯 턴 이하) 조회보다 다듬기(try_move, commit_move)를 먼저 한다.
+   다듬을 때는 mono_category_days와 no_tour_days가 0이 되도록 카테고리가 한쪽으로 몰린 날을 먼저 푼다(다른 날과 장소를 맞바꾸거나 옮긴다).
 2. 채택하기 전에 반드시 try_move로 시험하고, 결과가 나아졌을 때만 commit_move한다. 나아지지 않은 시험은 채택하지 않는다.
 3. soft 목표끼리 부딪히면 사람이 실제로 덜 불편한 쪽을 고른다. 예: 도보가 조금 늘어도 식당이 연달아 붙지 않는 편이 낫다.
 4. 오류가 오면 message를 읽고 다른 방법을 찾는다. 같은 호출을 되풀이하지 않는다.

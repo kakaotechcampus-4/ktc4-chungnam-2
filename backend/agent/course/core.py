@@ -24,6 +24,7 @@ from agent.course.constants import (
     MEALS_PER_DAY_MAX,
     NIGHT_LABEL,
     THOUGHT_MAX_CHARS,
+    TOUR_CATEGORY,
 )
 from agent.course.schemas import Move, MoveDay, ReorderDay, Swap
 from common.geo import Point, approx_walk_minutes, haversine_distance_m, nearest_neighbor_order
@@ -243,6 +244,12 @@ def hard_score(violations: Sequence[Violation]) -> tuple[int, int]:
 
 # ---- 부드러운 목표 (명세 8절, 범위 B) ----
 
+def _meal_cost(cat: Mapping[str, str], day: Sequence[str]) -> int:
+    """한 날의 식사 쏠림 — 식당이 연달아 붙은 쌍 + 하루 식당 상한 초과 수."""
+    meals = [cat[p] == MEAL_CATEGORY for p in day]
+    return sum(a and b for a, b in zip(meals, meals[1:])) + max(0, sum(meals) - MEALS_PER_DAY_MAX)
+
+
 def soft_scores(trip: Trip, course: Course) -> dict[str, Optional[float]]:
     """코드가 계산만 한다. 가중치로 합치지 않는다 — 절충은 모델이 판단한다. 대상이 없는 목표는 None."""
     cat = {p.alias: p.category for p in trip.places}
@@ -259,11 +266,20 @@ def soft_scores(trip: Trip, course: Course) -> dict[str, Optional[float]]:
     night_last = sum(day[-1] == p for day, p in night) / len(night) if night else None
 
     counts = [len(day) for day in course]
+    filled = [day for day in course if day]
+    # 카테고리 섞기: 장소가 둘 이상인데 한 카테고리뿐인 날 / 관광지가 하나도 없는 날(빈 날은 day_balance가 본다)
+    mono_days = sum(len(day) >= 2 and len({cat[p] for p in day}) == 1 for day in filled)
+    no_tour_days = (
+        sum(all(cat[p] != TOUR_CATEGORY for p in day) for day in filled)
+        if any(c == TOUR_CATEGORY for c in cat.values()) else None
+    )
     return {
         "meal_spacing": meal_pairs,
         "meal_per_day": meal_excess,
         "cafe_after_meal": cafe_after_meal,
         "night_last": night_last,
+        "mono_category_days": mono_days,
+        "no_tour_days": no_tour_days,
         "day_balance": max(counts) - min(counts),
         "travel_total": course_travel(trip, course),
     }
@@ -293,11 +309,14 @@ def _check_lock(trip: Trip, locks: Mapping[str, str], place: str, to_day_index: 
 
 
 def best_position(trip: Trip, day: Sequence[str], place: str) -> int:
-    """그날 이동 합계가 가장 짧아지는 자리. 동점이면 앞자리."""
-    return min(
-        range(len(day) + 1),
-        key=lambda k: (day_travel(trip, [*day[:k], place, *day[k:]]), k),
-    )
+    """식당이 연달아 붙거나 하루 식당 상한을 넘는 자리를 피하고, 같으면 그날 이동 합계가 가장 짧은 자리. 동점이면 앞자리."""
+    cat = {p.alias: p.category for p in trip.places}
+
+    def key(k: int) -> tuple[int, int, int]:
+        placed = [*day[:k], place, *day[k:]]
+        return _meal_cost(cat, placed), day_travel(trip, placed), k
+
+    return min(range(len(day) + 1), key=key)
 
 
 def apply_move(trip: Trip, course: Course, move: Move, locks: Mapping[str, str]) -> Course:

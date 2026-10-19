@@ -41,7 +41,8 @@ class State:
     trial_seq: int = 0
     locks: Mapping[str, str] = field(default_factory=dict)     # 장소 → 날짜 별칭 (사람이 정한 것, M2)
     tool_counts: Mapping[str, int] = field(default_factory=dict)
-    looked_up: frozenset[str] = frozenset()                    # 영업시간을 조회한 장소
+    looked_up: frozenset[str] = frozenset()                    # 영업시간 조회가 더는 새 정보를 못 주는 장소(조회했거나, 처음부터 다 안다)
+    open_days_asked: frozenset[str] = frozenset()              # find_open_days를 이미 부른 장소(같은 답이라 되풀이를 거절한다)
     plan: tuple[str, ...] = ()
     lessons: tuple[str, ...] = ()
 
@@ -53,8 +54,12 @@ def initial_state(trip: Trip, hours: Hours, course: Optional[Course] = None) -> 
     """course를 안 주면 초안 배치로 시작한다. 테스트는 정해진 코스로 시작할 수 있다."""
     course = course if course is not None else core.draft_course(trip)
     _check_course(trip, course)
+    # 여행 날짜 전부의 휴무를 이미 아는 장소는 get_opening_hours가 새로 알려 줄 게 없다 — 처음부터 조회 끝으로 둔다.
+    # 서비스에서는 시작 스냅샷이 DB의 휴무를 이미 담으므로, 스냅샷에 모르는 날이 남은 곳도 조회가 새 정보를 주지 못한다(같은 DB를 읽는다).
+    # 그 경우는 첫 조회가 확인해 주므로 여기서는 "다 아는 곳"만 표시한다.
+    known = frozenset(p.alias for p in trip.places if all(core.status_on(hours, p.alias, d) != "unknown" for d in trip.days))
     return State(
-        trip=trip, hours=hours, course=course,
+        trip=trip, hours=hours, course=course, looked_up=known,
         violations=core.find_violations(trip, course, hours),
         history=(Commit(0, course),),
     )

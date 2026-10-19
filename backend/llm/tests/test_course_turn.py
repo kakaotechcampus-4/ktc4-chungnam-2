@@ -117,5 +117,10 @@ def test_public_api():
 
 
 def test_프롬프트_v2는_checks_입력을_설명한다():
-    assert COURSE_TURN_PROMPT_VERSION == "course-turn-v3"
+    assert COURSE_TURN_PROMPT_VERSION == "course-turn-v4"
     assert "checks" in COURSE_TURN_PROMPT and "확인 필요" in COURSE_TURN_PROMPT
+
+
+def test_프롬프트_v4는_새_soft_키와_다듬기_우선_규칙을_담는다():
+    for word in ("mono_category_days", "no_tour_days", "turns_left", "확정 위반(hard.confirmed)이 0이면"):
+        assert word in COURSE_TURN_PROMPT

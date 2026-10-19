@@ -56,7 +56,11 @@ def execute(call: ToolCall, state: State, hours_gateway: OpeningHoursGateway) ->
     tool = call.tool
     if isinstance(call, GetOpeningHours) and call.place in state.looked_up:
         # 이미 조회한 곳을 다시 조회해도 새로 아는 게 없다. 횟수도 쓰지 않고 돌려보낸다(실호출에서 모델이 되풀이했다)
-        return state, _fail(tool, "ALREADY_LOOKED_UP", f"{call.place}는 이미 조회했다 — 조회로 알 수 없는 곳이다")
+        # 서비스에서는 시작 스냅샷이 DB 휴무를 이미 담으므로 get_opening_hours가 새 정보를 줄 수 없다 — 그래도 한 번은 확인해 준다.
+        # 시작 때 휴무를 다 아는 곳은 state.initial_state가 처음부터 looked_up에 넣는다.
+        return state, _fail(tool, "ALREADY_LOOKED_UP", f"{call.place}는 이미 조회했거나 휴무를 이미 안다 — 조회로 더 알 수 없다")
+    if isinstance(call, FindOpenDays) and call.place in state.open_days_asked:
+        return state, _fail(tool, "ALREADY_LOOKED_UP", f"{call.place}의 영업하는 날은 이미 찾았다 — 같은 답이 나온다")
     limit = TOOL_LIMITS.get(tool)
     if limit is not None and state.tool_counts.get(tool, 0) >= limit:
         return state, _fail(tool, "LIMIT_EXCEEDED", f"{tool}는 이번 코스에서 {limit}번까지 쓸 수 있다")
@@ -67,6 +71,7 @@ def execute(call: ToolCall, state: State, hours_gateway: OpeningHoursGateway) ->
     if isinstance(call, FindOpenDays):
         if not state.trip.has_place(call.place):
             return state, _fail(tool, "INVALID_ID", f"{call.place}는 없는 장소다")
+        state = replace(state, open_days_asked=state.open_days_asked | {call.place})
         return state, ToolResult(tool, ok=True, data={"place": call.place, **core.open_days(state.trip, state.hours, call.place)})
     if isinstance(call, EstimateTravel):
         for p in (call.from_place, call.to_place):
