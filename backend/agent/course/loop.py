@@ -109,6 +109,7 @@ def run_loop(
     *,
     decide: Optional[Decide],
     hours: OpeningHoursGateway,
+    policy: Callable[[State], Any] = baseline.next_action,   # 모델이 없거나 실패한 턴을 맡는 규칙(기본: 기준선, 평가는 강한 기준선)
     clock: Callable[[], float] = time.monotonic,
 ) -> RunResult:
     started = clock()
@@ -138,9 +139,9 @@ def run_loop(
                 invalid_streak += 1
                 if invalid_streak >= MAX_INVALID_TURNS:
                     driver = "baseline"   # 이후 모델을 부르지 않는다
-                call, by = baseline.next_action(state), "baseline"
+                call, by = policy(state), "baseline"
         else:
-            call, by = baseline.next_action(state), "baseline"
+            call, by = policy(state), "baseline"
 
         call_dump = call.model_dump()
         if steps and steps[-1].call == call_dump and call.tool != "finish":

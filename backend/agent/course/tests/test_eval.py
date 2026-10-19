@@ -55,7 +55,7 @@ def test_요약에는_장소_이름이_없다():
 def test_비교_실행기는_세_변형을_진짜_영업시간으로_채점한다():
     maps = build_maps.build_all(fake_records(), 4)
     results = [compare.run_variants(compare.scenario_from_map(m)) for m in maps]
-    assert all(set(r) == {"draft", "baseline"} for r in results)
+    assert all(set(r) == {"draft", "baseline", "strong"} for r in results)
     table = compare.aggregate(results)
     # 기준선은 조회로 휴무를 알아내 초안보다 확정 위반이 늘지 않는다
     assert table["baseline"]["hard_confirmed"] <= table["draft"]["hard_confirmed"]
@@ -67,7 +67,7 @@ def test_모델_변형은_decide가_있을_때만_돈다():
     m = build_maps.build_all(fake_records(), 1)[0]
     decide = lambda _input: AgentTurn(thought="마칩니다", plan=[], lesson=None, action=Finish(tool="finish", reason_code="no_progress"))
     out = compare.run_variants(compare.scenario_from_map(m), decide)
-    assert set(out) == {"draft", "baseline", "agent"}
+    assert set(out) == {"draft", "baseline", "strong", "agent"}
 
 
 def test_시작_스냅샷은_데이터에_휴무가_있는_곳만_안다():

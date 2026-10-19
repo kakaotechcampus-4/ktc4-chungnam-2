@@ -1,4 +1,4 @@
-"""평가 지도에서 세 가지를 비교한다: 초안만 / 코드 기준선 / 에이전트(실모델, 선택).
+"""평가 지도에서 세 가지를 비교한다: 초안만 / 코드 기준선 / 강한 기준선(기본 목표까지) / 에이전트(실모델, 선택).
 
     cd backend && .venv/bin/python -m agent.course.eval.compare [--data agent/course/eval/data] [--model --max-maps 5] [--unknown-as-violation]
 
@@ -15,7 +15,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from agent.course import core, loop
+from agent.course import baseline, core, loop
 from agent.course.core import Course, MemberConstraint, Place, Trip
 from agent.course.ports import FixtureOpeningHours
 from agent.course.state import initial_state
@@ -68,6 +68,9 @@ def run_variants(sc: Scenario, decide: Optional[Callable] = None) -> dict[str, S
     out = {"draft": score(sc, draft)}
     base = loop.run_loop(initial_state(sc.trip, sc.start_hours, draft), decide=None, hours=sc.gateway)
     out["baseline"] = score(sc, base.best_course, len(base.steps))
+    strong = loop.run_loop(initial_state(sc.trip, sc.start_hours, draft), decide=None, hours=sc.gateway,
+                           policy=baseline.next_action_strong)
+    out["strong"] = score(sc, strong.best_course, len(strong.steps))
     if decide is not None:
         agent = loop.run_loop(initial_state(sc.trip, sc.start_hours, draft), decide=decide, hours=sc.gateway)
         out["agent"] = score(sc, agent.best_course, len(agent.steps))

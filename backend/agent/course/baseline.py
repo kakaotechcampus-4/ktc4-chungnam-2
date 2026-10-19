@@ -78,3 +78,63 @@ def next_action(state: State) -> ToolCall:
 
     confirmed, _ = core.hard_score(state.violations)
     return Finish(tool="finish", reason_code="solved" if confirmed == 0 else "no_progress")
+
+
+# ---- 강한 기준선 ----
+# 위반을 먼저 줄이고, 위반이 없어지면 기본 목표(식당 연속·하루 식당 수·식사 후 카페·야경 마지막·날짜 균형)를 욕심껏 줄인다.
+# 같은 도구·같은 상한으로 움직인다. 모델이 있어야 하는 판단(사람의 말을 목표로 바꾸기, 목표끼리의 절충 설명)은 못 한다.
+
+def _soft_key(trip, course) -> tuple[float, ...]:
+    s = core.soft_scores(trip, course)
+    return (
+        s["meal_spacing"] + s["meal_per_day"],
+        -(s["cafe_after_meal"] or 0.0),
+        -(s["night_last"] or 0.0),
+        s["day_balance"],
+        s["travel_total"],
+    )
+
+
+def _strong_key(state: State, course: core.Course, violations) -> tuple:
+    return (*core.hard_score(violations), _soft_key(state.trip, course))
+
+
+def _strong_best_move(state: State) -> Optional[Move]:
+    places = [p.alias for p in state.trip.places]
+    n_days = len(state.trip.days)
+    candidates: list[Move] = []
+    for p in places:
+        frm, _ = core.locate(state.course, p)
+        candidates += [MoveDay(type="move_day", place=p, to_day=core.day_alias(i)) for i in range(n_days) if i != frm]
+        candidates += [Swap(type="swap", a=p, b=q) for q in places if q > p]
+    best: tuple[tuple, Optional[Move]] = (_strong_key(state, state.course, state.violations), None)
+    for move in candidates:
+        try:
+            course = core.apply_move(state.trip, state.course, move, state.locks)
+        except core.MoveError:
+            continue
+        key = _strong_key(state, course, core.find_violations(state.trip, course, state.hours))
+        if key < best[0]:
+            best = (key, move)
+    return best[1]
+
+
+def next_action_strong(state: State) -> ToolCall:
+    unknown = [v.places[0] for v in core.find_checks(state.trip, state.course, state.hours)
+               if v.places[0] not in state.looked_up]
+    if unknown and _left(state, "get_opening_hours"):
+        return GetOpeningHours(tool="get_opening_hours", place=unknown[0])
+
+    current = _strong_key(state, state.course, state.violations)
+    better = [t for t in state.trials if _strong_key(state, t.course, t.violations) < current]
+    if better:
+        best = min(better, key=lambda t: _strong_key(state, t.course, t.violations))
+        return CommitMove(tool="commit_move", trial_id=best.trial_id)
+
+    if _left(state, "try_move"):
+        move = _strong_best_move(state)
+        if move is not None:
+            return TryMove(tool="try_move", move=move)
+
+    confirmed, _ = core.hard_score(state.violations)
+    return Finish(tool="finish", reason_code="solved" if confirmed == 0 else "no_progress")

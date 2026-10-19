@@ -164,3 +164,17 @@ class TestTurnInputPrivacy:
     def test_input_validates_against_schema_errors_as_model_failure(self):
         with pytest.raises(ValidationError):
             AgentTurn.model_validate({"thought": "x", "action": {"tool": "finish", "reason_code": "solved"}, "extra": 1})
+
+
+def test_강한_기준선은_위반_뒤_기본_목표를_더_줄인다():
+    from agent.course import baseline
+    from agent.course.state import initial_state
+    from agent.course.tests.fixtures import COURSE, KNOWN_HOURS, TRUE_HOURS, trip
+
+    t = trip(unknown_hours="check")
+    plain = loop.run_loop(initial_state(t, KNOWN_HOURS, COURSE), decide=None, hours=TRUE_HOURS)
+    strong = loop.run_loop(initial_state(t, KNOWN_HOURS, COURSE), decide=None, hours=TRUE_HOURS, policy=baseline.next_action_strong)
+    assert strong.outcome == plain.outcome == "solved"
+    key = lambda r: (r.soft["meal_spacing"] + r.soft["meal_per_day"], -(r.soft["cafe_after_meal"] or 0))
+    assert key(strong) <= key(plain)
+    assert strong.model_turns == 0 and strong.baseline_turns >= plain.baseline_turns
