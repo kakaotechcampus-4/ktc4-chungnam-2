@@ -178,7 +178,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
           </form>
         ) : (
           <button type="button" onClick={() => setAdding(true)} className="btn-link mx-auto flex text-sm">
-            조건 수정
+            조건 더하기
           </button>
         )}
 

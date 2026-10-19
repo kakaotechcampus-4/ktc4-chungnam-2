@@ -28,6 +28,15 @@ const MARK = { pass: '✓', check: '?', fail: '✗' } as const
 
 const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이버지도', google: '구글맵', permit: '인허가 공공데이터', tourapi: '한국관광공사' }
 
+/**
+ * 출처는 항상 붙는다(가드레일 5). 장소는 자체 DB에서만 오므로(#53) 제공처를 모르면 「확인 안 됨」 대신 그 사실을 적는다.
+ * 모르는 제공처 코드가 오면 코드를 그대로 보인다 — 지어내지 않는다(#406).
+ */
+function sourceLabel(c: CandidateDto): string {
+  const p = c.place_source?.provider
+  return (p && PROVIDER[p]) ?? p ?? '핑고 장소 DB'
+}
+
 /** 시트 안 이전 화면(Figma '‹ AI 추천'). 결과에서 빠져나와 준비 판정으로 돌아간다. 넓은 화면은 패널 헤더 ‹ 다. */
 export function BackToReadiness({ mapId }: { mapId: string }) {
   const setRun = useAiStore((s) => s.setRun)
@@ -106,22 +115,22 @@ function CandidateCard({ mapId, run, c, members, onOpen }: { mapId: string; run:
   return (
     <article className="space-y-2 rounded-xl border-[1.5px] border-brand-300 bg-brand-50 p-3.5">
       <header className="flex items-center gap-2">
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-[var(--bad-line)] text-xs font-bold text-[var(--bad-line)]">
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
           {c.rank}
         </span>
         <h3 className="min-w-0 flex-1 truncate text-title font-bold text-ink-900">{c.place_name}</h3>
         {c.region_label && <span className="tag border border-brand-300 bg-white text-brand-700">{c.region_label} 기준</span>}
       </header>
-      <p className="text-xs text-ink-500">{run.category}</p>
+      <p className="text-xs text-ink-600">{run.category}</p>
       <Reason text={c.reason} />
       <Checks c={c} />
       <p className="flex items-center gap-1.5 text-xs font-bold text-brand-700">
         <Users size={14} aria-hidden="true" /> {c.member_fulfillment.total}명 중 {c.member_fulfillment.satisfied}명 조건 충족
-        <span className="ml-auto font-normal text-ink-500">출처 · {PROVIDER[c.place_source?.provider ?? ''] ?? '확인 안 됨'}</span>
+        <span className="ml-auto font-normal text-ink-600">출처 · {sourceLabel(c)}</span>
       </p>
       <div className="flex items-center justify-between">
         <PublishButton mapId={mapId} run={run} c={c} />
-        <button type="button" onClick={onOpen} className="btn-text text-xs">
+        <button type="button" onClick={onOpen} className="btn-text text-xs text-ink-600">
           자세히 ›
         </button>
       </div>
@@ -145,7 +154,8 @@ function Checks({ c }: { c: CandidateDto }) {
       {toChecks(c).map((k) => (
         <li key={k.label} className={`tag ${TONE[k.tone]}`}>
           {MARK[k.tone]} {k.label}
-          {k.tone === 'check' && ' (확인 필요)'}
+          {/* 라벨에 이미 「확인」이 들어 있으면 겹쳐 쓰지 않는다(「가격대 확인 필요 (확인 필요)」, #406). */}
+          {k.tone === 'check' && !k.label.includes('확인') && ' (확인 필요)'}
         </li>
       ))}
     </ul>
@@ -230,7 +240,7 @@ export function CandidateDetail({
         <p className="text-body text-ink-600">{fulfillmentLine(c, members)}</p>
       </section>
       <p className="text-label text-ink-500">
-        출처 · {PROVIDER[c.place_source?.provider ?? ''] ?? '확인 안 됨'}
+        출처 · {sourceLabel(c)}
         {c.place_source?.url && (
           <>
             {' · '}
