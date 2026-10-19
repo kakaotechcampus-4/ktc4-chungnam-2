@@ -35,7 +35,7 @@ export default function MenuPopover({
           collisionPadding={16}
           onInteractOutside={keepOpen}
           onFocusOutside={keepOpen}
-          className="z-50 max-h-[var(--radix-popover-content-available-height)] w-[22rem] overflow-y-auto rounded-2xl border border-ink-200 bg-white p-4 shadow-md outline-none"
+          className="z-50 max-h-[var(--radix-popover-content-available-height)] w-[22rem] overflow-y-auto rounded-2xl border border-ink-200 bg-white p-4 shadow-float outline-none"
         >
           {children}
         </Popover.Content>

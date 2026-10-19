@@ -13,7 +13,7 @@ export default function PinUnavailable({ onClose }: { onClose: () => void }) {
         <p className="font-medium text-ink-900">이 핀은 지금 볼 수 없어요</p>
         <p className="mt-1 text-xs text-ink-500">아직 지도에 올라오지 않은 AI 추천이거나, 지워진 핀이에요.</p>
       </div>
-      <button type="button" onClick={onClose} className="shrink-0 text-sm text-ink-500">
+      <button type="button" onClick={onClose} className="btn-text shrink-0 text-sm">
         닫기
       </button>
     </div>

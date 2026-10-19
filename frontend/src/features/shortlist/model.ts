@@ -48,3 +48,24 @@ export function toRouteDrawings(routes: RouteDto[], pins: Pin[]): RouteDrawing[]
     }),
   }))
 }
+
+/** 카카오맵 길찾기는 출발·도착 + 경유지 5곳까지 받는다(카카오맵 URL 규칙). */
+export const KAKAO_ROUTE_MAX = 7
+
+/**
+ * 동선 순서대로 카카오맵 길찾기(도보)를 여는 링크 — 지역마다 하나(트리플 「거리 → 길찾기」).
+ * 좌표·이름은 우리 핀 것이라 카카오 응답을 저장하는 게 아니다(#53). 앞 7곳만 담고, 2곳이 안 되면 없다.
+ * 이름의 , / 는 링크 구분자라 띄어쓰기로 바꾼다. 이동 수단은 카카오맵에서 바꿀 수 있다.
+ */
+export function kakaoDirectionsUrl(route: RouteDto, pins: Pin[]): string | null {
+  const stops = route.ordered_pin_ids.flatMap((id) => {
+    const p = pins.find((pin) => pin.id === id)
+    return p && isPlaced(p) ? [p] : []
+  })
+  if (stops.length < 2) return null
+  const path = stops
+    .slice(0, KAKAO_ROUTE_MAX)
+    .map((p) => `${encodeURIComponent((p.place_name ?? '장소').replace(/[,/]/g, ' '))},${p.lat},${p.lng}`)
+    .join('/')
+  return `https://map.kakao.com/link/by/walk/${path}`
+}

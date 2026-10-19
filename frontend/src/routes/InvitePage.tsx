@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { ChevronLeft, Link2Off } from 'lucide-react'
+import { ChevronLeft } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { isUnauthorized } from '@/features/auth/api'
@@ -9,6 +9,8 @@ import { clearPendingInvite, savePendingInvite } from '@/features/auth/pendingIn
 import { useMeQuery } from '@/features/auth/queries'
 import { inviteErrorMessage, inviteProblem, type InviteView } from '@/features/maps/model'
 import { useAcceptInviteMutation, useInviteSummaryQuery } from '@/features/maps/queries'
+import EmptyState from '@/ui/EmptyState'
+import PingoLoading from '@/ui/PingoLoading'
 import MapIllustration from '@/ui/MapIllustration'
 
 /**
@@ -32,7 +34,7 @@ export default function InvitePage() {
   const problem = inviteProblem(summary.error)
   if (problem) return <InviteBroken expired={problem === 'expired'} />
 
-  if (me.isPending || summary.isPending) return <p className="p-4 text-sm text-ink-500">확인하는 중…</p>
+  if (me.isPending || summary.isPending) return <PingoLoading label="초대를 확인하는 중…" className="min-h-dvh justify-center" />
 
   if (me.error && !needsLogin) {
     return (
@@ -50,7 +52,7 @@ export default function InvitePage() {
     <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6 pt-4">
       <div className="h-8">
         {loggedIn && (
-          <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-sm">
+          <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-float">
             <ChevronLeft size={20} />
           </Link>
         )}
@@ -77,7 +79,7 @@ export default function InvitePage() {
               type="button"
               onClick={join}
               disabled={accept.isPending}
-              className="btn-primary w-full py-3.5"
+              className="btn-primary btn-lg w-full"
             >
               {accept.isPending ? '참여하는 중…' : '참여하기'}
             </button>
@@ -93,7 +95,7 @@ function InviteCard({ invite }: { invite: InviteView }) {
   return (
     <>
       <p className="mb-3 text-center text-sm text-ink-500">{invite.inviter}님이 초대했어요</p>
-      <div className="rounded-2xl border border-ink-200 bg-white p-4 text-center">
+      <div className="rounded-xl border border-ink-200 bg-white p-4 text-center">
         <MapIllustration />
         <h1 className="mt-4 text-2xl font-bold text-ink-900">{invite.title}</h1>
         <p className="mt-1 text-sm text-ink-500">{invite.dates}</p>
@@ -109,14 +111,12 @@ function InviteCard({ invite }: { invite: InviteView }) {
 function InviteBroken({ expired }: { expired: boolean }) {
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6">
-      <div className="flex flex-1 flex-col items-center justify-center text-center">
-        <span className="mb-3 flex size-16 items-center justify-center rounded-2xl bg-ink-100 text-ink-500">
-          <Link2Off size={28} aria-hidden="true" />
-        </span>
-        <p className="font-semibold text-ink-900">{expired ? '초대 링크가 만료됐어요' : '유효하지 않은 초대 링크예요'}</p>
-        <p className="mt-1 text-sm text-ink-500">초대한 친구에게 새 링크를 받아주세요</p>
+      <div className="flex flex-1 flex-col justify-center">
+        <EmptyState mood="sorry" title={expired ? '초대 링크가 만료됐어요' : '유효하지 않은 초대 링크예요'}>
+          초대한 친구에게 새 링크를 받아주세요
+        </EmptyState>
       </div>
-      <Link to="/" className="btn-primary py-3.5 text-center">
+      <Link to="/" className="btn-primary btn-lg">
         내 지도로
       </Link>
     </div>

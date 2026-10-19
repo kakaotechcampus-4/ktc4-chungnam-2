@@ -9,7 +9,9 @@ import { useCreatePinMutation } from '@/features/map/queries'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
+import EmptyState from '@/ui/EmptyState'
 import { josa } from '@/ui/josa'
+import SheetTitle from '@/ui/SheetTitle'
 
 import { toSearchResult, type SearchResultView } from './model'
 import { searchErrorMessage, usePlaceSearchQuery } from './queries'
@@ -20,10 +22,10 @@ export function SearchResultsHeader({ count }: { count: number | null }) {
   const { query, close } = useSearchStore()
   return (
     <div className="flex items-center justify-between gap-2">
-      <h2 className="truncate text-lg font-bold text-ink-900">
+      <SheetTitle>
         ‘{query}’ 검색 결과{count !== null && ` ${count}곳`}
-      </h2>
-      <button type="button" onClick={close} className="hit-44 shrink-0 text-sm text-ink-500">
+      </SheetTitle>
+      <button type="button" onClick={close} className="btn-text shrink-0 text-sm">
         닫기
       </button>
     </div>
@@ -83,39 +85,42 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   if (search.error) return <ErrorText message={searchErrorMessage(search.error)} error={search.error} />
   if (results.length === 0) {
     return (
-      <div className="py-8 text-center">
-        <p className="font-semibold text-ink-900">찾는 장소가 없어요</p>
-        <p className="mt-1 text-sm text-ink-500">이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요</p>
-        {/* 다음 행동을 하나 둔다 — 검색어를 지우고 바로 다시 입력하게(#351). */}
-        <button
-          type="button"
-          onClick={() => {
-            close()
-            document.getElementById('place-search')?.focus()
-          }}
-          className="btn-outline mt-4 px-4 py-2.5 text-sm"
-        >
-          검색어 지우고 다시 찾기
-        </button>
-      </div>
+      // 다음 행동을 하나 둔다 — 검색어를 지우고 바로 다시 입력하게(#351).
+      <EmptyState mood="sorry"
+        title="찾는 장소가 없어요"
+        action={
+          <button
+            type="button"
+            onClick={() => {
+              close()
+              document.getElementById('place-search')?.focus()
+            }}
+            className="btn-outline btn-md"
+          >
+            검색어 지우고 다시 찾기
+          </button>
+        }
+      >
+        이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요
+      </EmptyState>
     )
   }
 
   if (selected) {
     return (
       <div className="space-y-3">
-        <PanelBackLink label={`검색 결과 ${results.length}곳`} onBack={() => select(null)} className="hit-44" />
+        <PanelBackLink label={`검색 결과 ${results.length}곳`} onBack={() => select(null)} />
         <div>
-          <h3 className="text-[1.375rem] font-bold text-ink-900">{selected.name}</h3>
-          <p className="text-[0.8125rem] text-ink-600">{selected.meta}</p>
-          {selected.far && <p className="text-[0.8125rem] font-semibold text-warn-text">지금 보는 곳에서 멀어요 — 같은 이름의 다른 지역 가게일 수 있어요</p>}
+          <SheetTitle as="h3">{selected.name}</SheetTitle>
+          <p className="text-body text-ink-600">{selected.meta}</p>
+          {selected.far && <p className="text-body font-semibold text-warn-text">지금 보는 곳에서 멀어요 — 같은 이름의 다른 지역 가게일 수 있어요</p>}
         </div>
         {/* 카카오 검색은 사진·영업시간을 주지 않는다 — 사진 없이 카카오맵으로 보낸다(Figma 장소 정보 출처). */}
         {(selected.address || selected.url) && (
-          <div className="space-y-2 rounded-xl bg-ink-50 p-3.5 text-[0.8125rem]">
+          <div className="space-y-2 rounded-xl bg-ink-50 p-3.5 text-body">
             {selected.address && <p className="text-ink-700">{selected.address}</p>}
             {selected.url && (
-              <a href={selected.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 font-bold text-brand-600">
+              <a href={selected.url} target="_blank" rel="noopener noreferrer" className="btn-link">
                 카카오맵에서 자세히 보기 <ExternalLink size={14} aria-hidden="true" />
               </a>
             )}
@@ -146,7 +151,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
             {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}
           </button>
           {r.canLeaveLive && !r.alreadyPinned ? (
-            <button type="button" onClick={() => select(r.id)} className="btn-outline shrink-0 rounded-md px-3 py-1.5 text-sm">
+            <button type="button" onClick={() => select(r.id)} className="btn-outline btn-sm">
               핀 남기기
             </button>
           ) : (
@@ -165,11 +170,11 @@ function LiveLeaveForm({ pending, onSubmit }: { pending: boolean; onSubmit: (mem
   const [memo, setMemo] = useState('')
   return (
     <div className="space-y-2.5">
-      <div className="rounded-xl bg-ink-50 p-3.5 text-[0.8125rem] text-ink-700">
+      <div className="rounded-xl bg-ink-50 p-3.5 text-body text-ink-700">
         <p className="font-semibold text-ink-900">우리 장소 데이터에 없는 곳이에요</p>
         <p className="mt-0.5">장소 정보와 조건 확인, AI 추천, 동선에는 쓰이지 않아요. 그래도 핀으로 남겨서 서로 의견을 나눌 수 있어요.</p>
       </div>
-      <label className="block text-[0.8125rem] font-bold text-ink-900" htmlFor="live-pin-memo">
+      <label className="block text-body font-bold text-ink-900" htmlFor="live-pin-memo">
         한마디 남기기 (선택)
       </label>
       <textarea
@@ -179,12 +184,12 @@ function LiveLeaveForm({ pending, onSubmit }: { pending: boolean; onSubmit: (mem
         onChange={(e) => setMemo(e.target.value)}
         placeholder="예: 여기 곱창 맛있대"
         rows={2}
-        className="w-full resize-none rounded-lg border border-ink-300 p-2.5 text-sm"
+        className="field w-full resize-none py-3"
       />
-      <p className="text-right text-[0.6875rem] text-ink-500">
+      <p className="text-right text-label text-ink-500">
         {memo.length}/{MEMO_MAX}
       </p>
-      <button type="button" onClick={() => onSubmit(memo)} disabled={pending} className="btn-primary w-full py-3">
+      <button type="button" onClick={() => onSubmit(memo)} disabled={pending} className="btn-primary btn-lg w-full">
         {pending ? '남기는 중…' : '그래도 핀 남기기'}
       </button>
     </div>
@@ -203,9 +208,7 @@ function PinItButton({ result, filled = false, pending, onPin }: { result: Searc
       onClick={onPin}
       disabled={pending}
       className={
-        filled
-          ? 'btn-primary w-full py-3'
-          : 'btn-outline shrink-0 rounded-md px-3 py-1.5 text-sm'
+        filled ? 'btn-primary btn-lg w-full' : 'btn-outline btn-sm'
       }
     >
       {pending ? '찍는 중…' : '핀 찍기'}
