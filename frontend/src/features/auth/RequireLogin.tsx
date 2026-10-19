@@ -58,7 +58,7 @@ function useLoginError(): string | null {
 
 /**
  * 로그인(랜딩) — 위에서부터 이름 → 날아가는 핑고 → 시작 버튼 둘 → 할 수 있는 일 → 약관 동의 줄.
- * 넓은 화면(768px 이상)은 종이 배경 가운데 입구 카드다(#602).
+ * 768px 이상은 종이 배경 가운데 입구 카드다(#602). 1024px 이상은 왼쪽에 이름·핑고를 크게, 오른쪽 카드에 나머지를 둔다.
  */
 function LoginScreen() {
   const loginError = useLoginError()
@@ -66,14 +66,19 @@ function LoginScreen() {
   const close = () => setSheet(null)
   return (
     <div className="min-h-dvh bg-white md:flex md:items-center md:justify-center md:bg-ink-50 md:px-5 md:py-10">
-      <main className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col px-5 pb-6 pt-14 md:mx-0 md:min-h-0 md:max-w-[400px] md:rounded-2xl md:border md:border-ink-200 md:bg-white md:px-8 md:py-10">
-        <h1>
-          <Wordmark className="h-10 w-auto" />
-        </h1>
-        <p className="mt-1 font-semibold text-ink-900">같이 갈 곳을 한 지도에 모아요</p>
-        <LoginHero />
+      {/* 1024px 이상에선 main 은 두 칸 틀이고, 입구 카드 모양은 오른쪽 칸이 넘겨받는다. */}
+      <main className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col px-5 pb-6 pt-14 md:mx-0 md:min-h-0 md:max-w-[400px] md:rounded-2xl md:border md:border-ink-200 md:bg-white md:px-8 md:py-10 lg:max-w-[960px] lg:flex-row lg:items-center lg:gap-16 lg:border-0 lg:bg-transparent lg:p-0">
+        <div className="lg:flex-1">
+          <h1>
+            <Wordmark className="h-10 w-auto lg:h-14" />
+          </h1>
+          <p className="mt-1 font-semibold text-ink-900 lg:mt-2 lg:text-lg">같이 갈 곳을 한 지도에 모아요</p>
+          <LoginHero />
+        </div>
 
-        <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500">3초면 시작! 카카오에서 이름을 받아서 활용해요</p>
+        <div className="flex flex-1 flex-col lg:max-w-[400px] lg:rounded-2xl lg:border lg:border-ink-200 lg:bg-white lg:px-8 lg:py-10">
+
+        <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500 lg:mt-0">3초면 시작! 카카오에서 이름을 받아서 활용해요</p>
         {/* 빨강은 핀·🚫·되돌릴 수 없는 동작 전용이라(영역 분리 규칙) 로그인 실패는 주의색이다. */}
         {loginError && (
           <p role="alert" className="mt-3 rounded-xl border border-[var(--warn-line)] bg-[var(--warn-bg)] px-3 py-2.5 text-center text-sm font-semibold text-[var(--warn-text)]">
@@ -116,6 +121,7 @@ function LoginScreen() {
           </button>
           에 동의하는 것으로 간주됩니다
         </p>
+        </div>
       </main>
 
       {sheet === 'guest' && <GuestSheet onClose={close} />}
@@ -131,7 +137,8 @@ function LoginHero() {
       <MapIllustration />
       {/* 지도에 떨어진 그림자 — 핑고가 지도 위에 떠 있다는 걸 보여 준다. */}
       <div className="absolute left-[44%] top-[44%] h-2.5 w-20 rounded-full bg-ink-300/60 blur-[2px]" />
-      <div className="absolute left-[34%] top-[-30%]">
+      {/* 넓은 화면에서 지도 그림이 커지는 만큼 핑고도 키운다(자리는 % 라 그대로). */}
+      <div className="absolute left-[34%] top-[-30%] origin-top-left lg:scale-[1.35]">
         <Pingo mood="fly" size={88} />
       </div>
     </div>
