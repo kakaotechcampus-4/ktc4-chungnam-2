@@ -1,7 +1,7 @@
 """추천 막힘 조언 호출(agent_advise_run, #587) — 스텁 왕복, 도구 상한과 허용 목록, 실패 처리, 실제 planner(클라이언트 대역), 사용량.
 
 진단(test_agent_calls.py)과 같은 길이라 같은 대역(FakeClient, Runner)을 쓴다. 다른 점만 본다: 도구는 추천 막힘 전용 4개이고
-structure_reasons가 없다, 응답 스키마는 RunAdviceOutput, 프롬프트 버전은 advise-v2, 대화 시간 예산은 ADVICE_TIME_BUDGET_SEC.
+structure_reasons가 없다, 응답 스키마는 RunAdviceOutput, 프롬프트 버전은 advise-v4, 대화 시간 예산은 ADVICE_TIME_BUDGET_SEC.
 """
 
 import json
@@ -74,7 +74,7 @@ class TestApi:
     def test_radius_simulates_one_button_press(self):
         # #677: 반경 넓히기 버튼은 한 번에 한 단계다. 상한까지의 배율로 시뮬레이션하면 agent 검증이 버튼을 뺀다(not_next_step)
         assert "radius_factor=next_radius_factor 값 그대로" in AGENT_ADVISE_RUN_PROMPT
-        assert "null이면 radius를 고르지 않는다" in AGENT_ADVISE_RUN_PROMPT
+        assert "null이면 radius를 고르지 않" in AGENT_ADVISE_RUN_PROMPT
         simulate = AGENT_TOOL_SPECS["simulate_filter"]["description"]
         assert "next_radius_factor" in simulate
         for text in (AGENT_ADVISE_RUN_PROMPT, simulate):
@@ -82,7 +82,7 @@ class TestApi:
 
     def test_prompt_version(self):
         # 프롬프트 글이나 도구 설명을 바꾸면 올린다(agent_runs.prompt_version으로 평가를 나눠 본다)
-        assert AGENT_ADVISE_RUN_PROMPT_VERSION == "advise-v2"
+        assert AGENT_ADVISE_RUN_PROMPT_VERSION == "advise-v4"
 
 
 class TestStubRoundTrip:

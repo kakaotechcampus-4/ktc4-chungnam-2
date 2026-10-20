@@ -15,12 +15,13 @@
 
 지금 열린 것(`llm/api.py`): `agent_diagnose(diagnosis_input, *, tool_runner, planner)`(#532), `agent_advise_run(advice_input, *, tool_runner, planner)`(#587).
 - planner는 ②처럼 부르는 쪽이 넘긴다. 스텁 `fixed_diagnosis_planner`(get_reasons를 한 번 부르고 늘 silent), `fixed_advice_planner`(get_run_evidence를 한 번 부르고 늘 silent), 실제 `real_diagnosis_planner`, `real_advice_planner`.
-- 추천 막힘 조언은 진단과 같은 도구 왕복이다. 도구는 추천 막힘 전용 4개(`prompts.RUN_ADVICE_TOOLS`), 1회당 `ADVICE_MAX_TOOL_CALLS`(5)회, 프롬프트는 `advise-v2`(반경은 버튼 한 번의 배율 `radius.next_radius_factor`로만 시뮬레이션, #677. 평가는 #588).
+- 추천 막힘 조언은 진단과 같은 도구 왕복이다. 도구는 추천 막힘 전용 4개(`prompts.RUN_ADVICE_TOOLS`), 1회당 `ADVICE_MAX_TOOL_CALLS`(5)회, 프롬프트는 `advise-v4`(반경은 버튼 한 번의 배율 `radius.next_radius_factor`로만 시뮬레이션 #677, 종류는 깔때기 순서와 `ADVICE_CLEAR_DROP` 기준으로 고르고 먼저 근거 줄을 읽는다 #588).
 - 도구 대화에는 시간 예산도 있다(#677): 왕복을 시작할 때 대화 시작부터 `DIAGNOSIS_TIME_BUDGET_SEC`(40초), `ADVICE_TIME_BUDGET_SEC`(25초, HTTP 요청 안)가 지났으면 그 왕복은 `tool_choice="none"`이다. 진행 중인 요청은 끊지 않는다. 시계는 `_model_*_planner(clock=)`로 바꾼다.
 - 실패(호출 실패, 타임아웃, 스키마 검증 실패)는 예외가 아니라 `AgentCallFailed(reason, detail)`로 돌려준다. 다시 묻지 않는다. 여기서는 스키마 검증까지만 하고, claim·문장·행동 검증은 agent의 core가 한다.
 - 도구는 agent가 넘기는 `tool_runner(call_id, name, args)`로만 실행한다. call_id(t1, t2 …)는 이 모듈이 매긴다. 진단 1회당 5회, 그중 structure_reasons 1회(`prompts.DIAGNOSIS_MAX_TOOL_CALLS`, `STRUCTURE_REASONS_MAX_CALLS`)를 넘는 호출은 실행하지 않고 `LIMIT_EXCEEDED`를, 유형에 없는 도구는 `NOT_FOUND`를 도구 결과로 돌려준다. 상한을 다 쓰면 `tool_choice="none"`으로 답을 받는다. 도구 설명과 유형별 허용 목록은 `prompts.AGENT_TOOL_SPECS`, `DIAGNOSIS_TOOLS`이고, map_id는 모델이 고르지 않는다(agent가 채운다).
 - gpt-6-luna는 chat.completions에서 도구를 `reasoning_effort="none"`일 때만 받는다(2026-10-15 확인). 진단과 조언 호출은 none 고정이다.
 - 평가셋은 `llm/tests/eval_agent/`(지도 상태 20건, 지어낸 사유 글만). 프롬프트를 바꾸면 `python -m llm.tests.eval_agent.run_eval`로 진단을 다시 재고 `prompt_version`을 올린다. 결과(`results/`)는 커밋하지 않는다. 우선순위 케이스는 모델 없이 `core.fallback_order` 기대값 테스트로 돈다(`test_eval_cases.py`, #582).
+- 조언 평가셋은 `cases_advice.json`(run 상태 23건, #588)이고 `run_eval --target advice`로 잰다. 도구는 운영 `RunToolContext`가 돌고 데이터만 케이스에서 읽는다(`fixtures_advice.py`). 평가셋이 지금 규칙(대상 판정, 줄 종류, 버튼 규칙)과 맞는지는 모델 없이 `test_eval_advice_cases.py`가 본다.
 - 엘리스 strict 구조화 출력은 `oneOf`를 거절한다. 출력 스키마에 discriminator를 걸지 않는다(`schemas.Claim`).
 
 ## 하지 않는 것
