@@ -5,7 +5,7 @@ shortlist/core.py로, pins 테이블을 건드리는 부분은 shortlist/flows.p
 
 import uuid
 
-from sqlalchemy import BigInteger, delete, func, select
+from sqlalchemy import BigInteger, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -171,3 +171,14 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
         "shortlist_items": db.execute(delete(ShortlistItemRow).where(ShortlistItemRow.map_id.in_(map_ids))).rowcount,
         "routes": db.execute(delete(RouteRow).where(RouteRow.map_id.in_(map_ids))).rowcount,
     }
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#560) — from_user가 추가한 확정 항목의 added_by를 to_user로 옮긴다. 테이블 이름 → 옮긴 행 수.
+    항목 순서(visit_order)·핀 id는 그대로다. 같은 id면 아무것도 하지 않는다."""
+    if from_user_id == to_user_id:
+        return {"shortlist_items": 0}
+    moved = db.execute(
+        update(ShortlistItemRow).where(ShortlistItemRow.added_by == from_user_id).values(added_by=to_user_id)
+    ).rowcount
+    return {"shortlist_items": moved}
