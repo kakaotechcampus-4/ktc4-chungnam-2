@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from agent import deps, flows, tools
-from agent.models import AgentRun, AgentSuggestion
+from agent.models import AgentCursor, AgentRun, AgentSuggestion
 from agent.schemas import AgentCallFailed, AgentReply, AgentUsage, DiagnosisOutput
 from agent.schemas import AgentSuggestion as AgentSuggestionSchema
 from agent.tests.world import World, fake_places, real_now
@@ -66,7 +66,13 @@ class FakeGateway:
 
         def call_tool(name, args):
             call_id = f"t{next(counter)}"
-            return {"call_id": call_id, "result": tool_runner(call_id, name, args)}
+            try:
+                result = tool_runner(call_id, name, args)
+            except Exception as exc:   # llm.agent_diagnose처럼 감싸 그때까지의 사용량을 붙여 올린다(#677)
+                error = llm_api.ToolRunnerError(f"tool_runner 실패: {name} {type(exc).__name__}")
+                error.usage = self._diagnosis_usage
+                raise error from exc
+            return {"call_id": call_id, "result": result}
 
         out = self._diagnose(diagnosis_input, call_tool) if self._diagnose else None
         self.on_call("diagnose_done")
@@ -428,6 +434,66 @@ def test_stub_and_code_only_runs_leave_usage_empty(world):
     for map_id in (stall_map, gap_map):
         run = world.one(AgentRun, map_id=map_id, trigger="activity")
         assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (None, None, 0, 0)
+
+
+# ---------------------------------------------------------------- 모델을 부른 뒤의 예외 (#677)
+
+def _failing_tool(*args, **kwargs):
+    raise RuntimeError(f"DB 오류 {AGAINST_TEXT}")
+
+
+def stall_then_failing_tool(inp, call_tool):
+    call_tool("get_reasons", {"pin_ids": None, "category": inp["category"], "types": None})
+    call_tool("get_readiness", {"category": inp["category"]})   # 여기서 예외
+    raise AssertionError("도구 예외 뒤로는 오지 않는다")
+
+
+def test_tool_error_after_the_model_call_is_recorded_and_counts_toward_the_cap(world, factory, monkeypatch):
+    """진단 중 도구가 예외를 내면 error 행에 used_model=true, 그때까지의 사용량, 글 대신 글자 수인 도구 기록을 남긴다 —
+    지도 상한에 센다. 같은 지도는 다음 tick에 다시 잡히지 않아 모델을 다시 부르지 않는다(#677)."""
+    map_id, _, _ = _stall_map(world)
+    monkeypatch.setitem(tools.TOOLS, "get_readiness", _failing_tool)
+    gateway = FakeGateway(
+        diagnose=stall_then_failing_tool,
+        diagnosis_usage=AgentUsage(model=LUNA, prompt_version="diagnose-v2", tokens_in=900, tokens_out=200),
+    )
+
+    assert map_id in flows.run_tick(world.now, session_factory=world.factory, gateway=gateway)
+
+    run = world.one(AgentRun, map_id=map_id)
+    assert (run.trigger, run.outcome, run.used_model) == ("activity", "error", True)
+    assert run.outcome_detail == {"stage": "model", "error": "ToolRunnerError"}
+    assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v2", 900, 200)
+    assert [c["name"] for c in run.tool_calls] == ["get_reasons"]
+    assert run.tool_calls[0]["result"]["reasons"][0]["text_len"] == len(AGAINST_TEXT)
+    assert AGAINST_TEXT not in _dump_agent_rows(factory)
+    assert _model_runs_today(world, map_id) == 1
+
+    assert map_id not in flows.run_tick(world.now + timedelta(minutes=5), session_factory=world.factory,
+                                        gateway=gateway)
+    assert gateway.calls == ["diagnose"]
+
+
+def test_failure_after_saving_does_not_count_the_diagnosis_twice(world, monkeypatch):
+    """요약 단계에서 실패하면 진단의 모델 사용은 이미 지도 관찰 행에 남았다 — error 행은 모델 사용 없이 남는다(#677)."""
+    map_id, _, _ = _stall_map(world)
+    monkeypatch.setattr(flows, "update_summary", _failing_tool)
+    gateway = FakeGateway(
+        diagnose=good_stall,
+        diagnosis_usage=AgentUsage(model=LUNA, prompt_version="diagnose-v2", tokens_in=900, tokens_out=200),
+    )
+
+    flows.run_tick(world.now, session_factory=world.factory, gateway=gateway)
+
+    runs = {r.outcome: r for r in world.rows(AgentRun, map_id=map_id)}
+    assert set(runs) == {"suggested", "error"}
+    assert (runs["suggested"].used_model, runs["suggested"].tokens_in) == (True, 900)
+    assert (runs["error"].used_model, runs["error"].model, runs["error"].tokens_in) == (False, None, 0)
+    assert runs["error"].outcome_detail == {"stage": "summary", "error": "RuntimeError"}
+    assert _model_runs_today(world, map_id) == 1
+    assert world.one(AgentSuggestion, map_id=map_id).status == "active"
+    # 한 관찰에 지도 관찰 행과 error 행이 함께 있어도 예외로 끝난 관찰 하나로 센다 — 30분 뒤
+    assert world.one(AgentCursor, map_id=map_id).next_check_at == world.now + timedelta(minutes=30)
 
 
 def test_split_analysis_axis_names_come_from_recommend_labels(world):

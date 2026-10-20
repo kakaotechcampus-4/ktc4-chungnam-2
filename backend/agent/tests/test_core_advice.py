@@ -37,22 +37,24 @@ def _sim(factor=None, lines=(), gained=3, within=True):
             "before": side, "after": {**side, "passed": 1 + gained}, "gained": gained}
 
 
+NEXT = 20 / 15   # 도보 15분에서 버튼 한 번(5분) 넓힌 배율(#677)
 RESULTS = {
     "t0": FUNNEL,
     "t1": {"lines": LINES, "total": 3},
     "t2": _sim(lines=[OWN], gained=5),
     "t3": _sim(lines=[OTHER], gained=4),
-    "t4": _sim(factor=2.0, gained=6),
+    "t4": _sim(factor=2.0, gained=6),                   # 상한(30분)까지
     "t5": _sim(factor=3.0, gained=9, within=False),
+    "t6": _sim(factor=NEXT, gained=2),                  # 버튼 한 번
 }
 NAMES_OF = {"t0": "get_run_funnel", "t1": "get_run_evidence", "t2": "simulate_filter", "t3": "simulate_filter",
-            "t4": "simulate_filter", "t5": "simulate_filter"}
+            "t4": "simulate_filter", "t5": "simulate_filter", "t6": "simulate_filter"}
 
 
 def _ctx(**over):
     fields = dict(
         run_id=RUN, tool_results=RESULTS, tool_names=NAMES_OF, own_lines={OWN: True, OTHER: False, VAGUE: True},
-        evidence_texts=[OWN_TEXT, OTHER_TEXT, "그냥 그래요"], radius=core.radius_limits(15, 30), member_names=NAMES,
+        evidence_texts=[OWN_TEXT, OTHER_TEXT, "그냥 그래요"], radius=core.radius_limits(15, 30, 5), member_names=NAMES,
     )
     return core.AdviceContext(**(fields | over))
 
@@ -93,9 +95,20 @@ def test_same_category_runs_counts_up_to_this_run_only():
     assert core.same_category_runs(recent, at) == 3   # 나중 run 둘은 세지 않는다
 
 
-@pytest.mark.parametrize("walk, factor", [(15, 2.0), (20, 1.5), (25, 1.2), (30, 1.0), (35, 0.85)])
-def test_radius_limits(walk, factor):
-    assert core.radius_limits(walk, 30) == {"walk_min": walk, "max_walk_min": 30, "max_radius_factor": factor}
+@pytest.mark.parametrize("walk, factor, next_factor", [
+    (15, 2.0, 20 / 15), (20, 1.5, 25 / 20), (25, 1.2, 30 / 25),
+    (28, 1.07, 30 / 28),   # 한 단계가 상한을 넘으면 상한까지
+    (30, 1.0, None), (35, 0.85, None),   # 이미 상한 — 버튼이 넓힐 수 없다
+])
+def test_radius_limits(walk, factor, next_factor):
+    assert core.radius_limits(walk, 30, 5) == {"walk_min": walk, "max_walk_min": 30, "max_radius_factor": factor,
+                                               "next_radius_factor": next_factor}
+
+
+def test_next_radius_factor_is_not_rounded():
+    """시뮬레이션 반경이 버튼 한 번 뒤의 반경과 같아야 한다(#677) — 1200m × 20/15는 반올림하면 1600m, 1.33이면 1596m다."""
+    factor = core.radius_limits(15, 30, 5)["next_radius_factor"]
+    assert factor == 20 / 15 and round(1200 * factor) == 20 * 80
 
 
 @pytest.mark.parametrize("top_label", ["상위 3곳 선정", "추천 3곳 고르기"])
@@ -143,11 +156,11 @@ def test_evidence_lines_show_only_self_or_other_member():
 
 def test_advice_input_has_funnel_as_call_t0_and_no_people():
     meta = {"category": "카페", "result_count": 1, "default_radius_walk_min": 20, "widen_limit_walk_min": 30,
-            "requested_by": "u1", "map_id": "m1", "run_id": RUN}
+            "widen_step_walk_min": 5, "requested_by": "u1", "map_id": "m1", "run_id": RUN}
     data = core.advice_input(meta, 2, FUNNEL)
 
     assert data["funnel"] == {"call_id": "t0", "result": FUNNEL}
-    assert data["radius"]["max_radius_factor"] == 1.5
+    assert (data["radius"]["max_radius_factor"], data["radius"]["next_radius_factor"]) == (1.5, 1.25)
     assert {"requested_by", "map_id", "run_id"}.isdisjoint(data)
 
 
@@ -208,7 +221,7 @@ def test_widen_radius_beyond_the_limit_is_removed():
 
 
 def test_widen_radius_within_the_limit_is_kept_and_over_limit_line_dropped():
-    advice = out("radius", [tc("c1", "t4", "gained", 6), tc("c2", "t5", "gained", 9)],
+    advice = out("radius", [tc("c1", "t6", "gained", 2), tc("c2", "t5", "gained", 9)],
                  [line("반경을 넓히면 {c1.value}곳이 더 나와요", "c1"), line("더 넓히면 {c2.value}곳이에요", "c2")],
                  [act("widen_radius", "c1"), act("widen_radius", "c2")])
 
@@ -218,11 +231,41 @@ def test_widen_radius_within_the_limit_is_kept_and_over_limit_line_dropped():
     assert [a["slot_text"] for a in v.draft.advice] == ["반경을 넓히면 {c1.value}곳이 더 나와요"]
 
 
+def test_widen_radius_button_only_for_the_one_press_simulation():
+    """버튼은 한 번에 5분만 넓힌다(#677). 상한까지 넓힌 숫자에는 버튼을 붙이지 않는다(not_next_step) — 문장은 사실이라 남는다."""
+    advice = out("radius", [tc("c1", "t4", "gained", 6), tc("c2", "t6", "gained", 2)],
+                 [line("끝까지 넓히면 {c1.value}곳이 더 나와요", "c1"), line("한 번 넓히면 {c2.value}곳이에요", "c2")],
+                 [act("widen_radius", "c1"), act("widen_radius", "c2")])
+
+    v = core.verify_run_advice(advice, _ctx())
+
+    assert v.record["actions"]["removed"] == [{"index": 0, "reason": "not_next_step"}]
+    assert v.draft.actions == [{"index": 0, "type": "widen_radius", "label": "반경 넓히기", "params": {"run_id": RUN}}]
+    assert len(v.draft.advice) == 2
+
+
+@pytest.mark.parametrize("factor, kept", [
+    (1.3333333333, True),    # 부동소수 오차 안
+    (1.33, False),           # 모델이 줄여 쓴 배율 — 1596m라 버튼 결과와 다르다
+    (1.5, False),
+])
+def test_widen_radius_needs_the_exact_next_factor(factor, kept):
+    results = RESULTS | {"t7": _sim(factor=factor, gained=2)}
+    names = NAMES_OF | {"t7": "simulate_filter"}
+    advice = out("radius", [tc("c1", "t7", "gained", 2)], [line("넓히면 {c1.value}곳이 더 나와요", "c1")],
+                 [act("widen_radius", "c1")])
+
+    v = core.verify_run_advice(advice, _ctx(tool_results=results, tool_names=names))
+
+    assert (len(v.draft.actions) == 1) is kept
+    assert v.record["actions"]["removed"] == ([] if kept else [{"index": 0, "reason": "not_next_step"}])
+
+
 def test_widen_radius_when_already_at_the_limit_is_removed():
     advice = out("radius", [tc("c1", "t4", "gained", 6)],
                  [line("반경을 넓히면 {c1.value}곳이 더 나와요", "c1")], [act("widen_radius", "c1")])
 
-    v = core.verify_run_advice(advice, _ctx(radius=core.radius_limits(30, 30)))
+    v = core.verify_run_advice(advice, _ctx(radius=core.radius_limits(30, 30, 5)))
 
     assert v.record["actions"]["removed"] == [{"index": 0, "reason": "radius_limit"}]
     assert v.draft.actions == []

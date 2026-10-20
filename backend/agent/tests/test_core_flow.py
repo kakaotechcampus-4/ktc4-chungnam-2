@@ -1,9 +1,10 @@
-"""관찰 흐름의 순수 판단(#515) — 최근 이벤트(12.5), 활성 제안 무효화(12.9), 상태 재확인(12.8), 1순위(7절)."""
+"""관찰 흐름의 순수 판단(#515) — 최근 이벤트(12.5), 관찰 실패 뒤 재시도 간격(#677), 활성 제안 무효화(12.9), 상태
+재확인(12.8), 1순위(7절)."""
 
 from dataclasses import replace
 from datetime import timedelta
 
-from agent import core
+from agent import constants, core
 from agent.tests.snaps import NOW, hours, item, pin, snap
 
 SEC = timedelta(seconds=1)
@@ -26,6 +27,16 @@ def test_has_recent_event_boundary():
     assert core.has_recent_event(NOW - SEC, NOW) is True
     assert core.has_recent_event(NOW - 2 * SEC, NOW) is False   # 2초 '안'만
     assert core.has_recent_event(None, NOW) is False
+
+
+def test_error_retry_waits_longer_with_each_consecutive_error():
+    """관찰이 예외로 끝난 지도는 연속 error 1회 30분, 2회 2시간, 3회부터 6시간 뒤에 다시 본다(#677)."""
+    assert [core.error_retry_at(NOW, n) - NOW for n in (1, 2, 3, 4, 10)] == [
+        timedelta(minutes=30), hours(2), hours(6), hours(6), hours(6)]
+
+
+def test_tick_budget_leaves_room_inside_the_lease():
+    assert constants.TICK_BUDGET_SEC == constants.LEASE_SEC - 30
 
 
 def test_find_superseded_keeps_active_while_signal_is_same():

@@ -26,8 +26,8 @@ from llm.prompts import (
     RUN_ADVICE_TOOLS, STRUCTURE_REASONS_MAX_CALLS, diagnosis_tools, run_advice_tools,
 )
 from llm.schemas import (
-    AgentCallFailed, AgentReply, DiagnosisOutput, EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason,
-    PlanningOutput, RankedCandidate, RunAdviceOutput,
+    AgentCallFailed, AgentReply, AgentUsage, DiagnosisOutput, EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition,
+    PlannedReason, PlanningOutput, RankedCandidate, RunAdviceOutput,
 )
 
 log = logging.getLogger("pingo.llm")
@@ -293,7 +293,12 @@ AdvicePlanner = Callable[[Mapping[str, Any], ToolCaller], RunAdviceOutput]
 
 class ToolRunnerError(RuntimeError):
     """agent의 tool_runner가 예외를 냈다. 모델 실패가 아니라 agent 쪽 오류라 실패 결과로 바꾸지 않고 그대로 올린다
-    (tool_runner의 ValueError가 스키마 실패로 잘못 분류돼 묻히지 않게 감싼다)."""
+    (tool_runner의 ValueError가 스키마 실패로 잘못 분류돼 묻히지 않게 감싼다).
+
+    usage: agent_diagnose와 agent_advise_run이 올리기 전에 그때까지 쓴 사용량을 붙인다 — agent가 실패 기록(outcome=error)에
+    남겨 지도 상한에 센다(#677)."""
+
+    usage: AgentUsage | None = None
 
 
 class _ToolBudget:
@@ -430,6 +435,9 @@ def agent_diagnose(
             output = planner(diagnosis_input, budget)
         except (LlmCallError, ValueError) as exc:
             return AgentReply(_failed("agent_diagnose", exc, f"diagnosis={diagnosis} tools_used={budget.used}"), usage)
+        except ToolRunnerError as exc:
+            exc.usage = usage
+            raise
     log.info("agent_diagnose 완료: diagnosis=%s decision=%s tools_used=%d", diagnosis, output.decision, budget.used)
     return AgentReply(output, usage)
 
@@ -476,5 +484,8 @@ def agent_advise_run(
             output = planner(advice_input, budget)
         except (LlmCallError, ValueError) as exc:
             return AgentReply(_failed("agent_advise_run", exc, f"tools_used={budget.used}"), usage)
+        except ToolRunnerError as exc:
+            exc.usage = usage
+            raise
     log.info("agent_advise_run 완료: decision=%s kind=%s tools_used=%d", output.decision, output.kind, budget.used)
     return AgentReply(output, usage)
