@@ -148,7 +148,7 @@ routes(
 ```
 places(
   id,
-  source('permit'|'tourapi'),          -- permit = 지방행정 인허가 공공데이터(음식점·카페), tourapi = 한국관광공사 TourAPI(관광지)
+  source('permit'|'tourapi'),          -- permit = 지방행정 인허가 공공데이터(음식점·카페), tourapi = 한국관광공사 TourAPI(관광지·문화시설·레포츠·시장, contenttypeid 12·14·28·38 → 분류 관광지)
   source_id,                            -- 그 데이터셋의 관리번호/콘텐츠 ID
   name, category('음식점'|'카페'|'관광지'), address, phone,
   geom geography(Point,4326),          -- 인허가 좌표계가 위경도가 아니면 변환해 넣는다. 좌표가 없는 행은 적재하지 않는다
