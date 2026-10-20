@@ -156,14 +156,19 @@ def soft_relax(advice_input, call_tool):
 
 
 def radius(advice_input, call_tool):
+    """상한 밖(3배), 상한까지, 버튼 한 번(next_radius_factor, #677) 셋을 시뮬레이션하고 셋 모두에 버튼을 붙인다."""
     over = call_tool("simulate_filter", {"radius_factor": 3.0, "disable_line_ids": None})
-    within = call_tool("simulate_filter", {"radius_factor": advice_input["radius"]["max_radius_factor"],
-                                           "disable_line_ids": None})
+    to_limit = call_tool("simulate_filter", {"radius_factor": advice_input["radius"]["max_radius_factor"],
+                                             "disable_line_ids": None})
+    one_press = call_tool("simulate_filter", {"radius_factor": advice_input["radius"]["next_radius_factor"],
+                                              "disable_line_ids": None})
     return RunAdviceOutput(
-        decision="suggest", kind="radius", claims=[tc("c1", over, "gained"), tc("c2", within, "gained")],
+        decision="suggest", kind="radius",
+        claims=[tc("c1", over, "gained"), tc("c2", to_limit, "gained"), tc("c3", one_press, "gained")],
         advice=[AdviceLine(text="반경을 끝까지 넓히면 {c2.value}곳이 더 나와요", basis=["c2"], is_guess=False),
                 AdviceLine(text="더 멀리 가면 {c1.value}곳이에요", basis=["c1"], is_guess=False)],
-        actions=[Action(type="widen_radius", basis=["c1"]), Action(type="widen_radius", basis=["c2"])],
+        actions=[Action(type="widen_radius", basis=["c1"]), Action(type="widen_radius", basis=["c2"]),
+                 Action(type="widen_radius", basis=["c3"])],
     )
 
 
@@ -274,7 +279,8 @@ def test_the_model_input_has_the_funnel_and_no_people(world, map_id):
 
     [sent] = gateway.inputs
     assert sent["funnel"]["call_id"] == "t0" and sent["result_count"] == 1
-    assert sent["radius"] == {"walk_min": 15, "max_walk_min": 30, "max_radius_factor": 2.0}
+    assert sent["radius"] == {"walk_min": 15, "max_walk_min": 30, "max_radius_factor": 2.0,
+                              "next_radius_factor": 20 / 15}
     assert all(s not in json.dumps(sent, ensure_ascii=False) for s in (*SECRETS, world.uid("u1"), map_id))
     assert [a.text for a in advice.advice] == ["이미 보여 드렸거나 거절한 곳이 1곳 빠졌어요"]
 
@@ -282,6 +288,8 @@ def test_the_model_input_has_the_funnel_and_no_people(world, map_id):
 # ---------------------------------------------------------------- 반경 상한 (가드레일 4)
 
 def test_widen_beyond_the_limit_is_dropped(world, map_id):
+    """상한 밖 시뮬레이션은 claim부터 빠지고, 상한까지 넓힌 숫자는 문장으로만 남는다 — 버튼은 한 번에 5분만 넓혀서 버튼은
+    한 번 넓힌 시뮬레이션에만 붙는다(#677)."""
     run_id = make_run(world, map_id)
 
     advice = advise(world, run_id, ScriptedGateway(radius))
@@ -292,6 +300,10 @@ def test_widen_beyond_the_limit_is_dropped(world, map_id):
     ]
     [row] = advice_runs(world, map_id)
     assert {"id": "c1", "reason": "radius_over_limit"} in row.verification["claims"]["removed"]
+    assert row.verification["actions"]["removed"] == [{"index": 0, "reason": "basis"},
+                                                      {"index": 1, "reason": "not_next_step"}]
+    [one_press] = [c for c in row.tool_calls if c["args"].get("radius_factor") == 20 / 15]
+    assert one_press["result"]["gained"] == 0   # 이 판은 원이 1000m라 × 20/15 = 1333m, 약 1500m의 far는 아직 밖이다
 
 
 def test_no_widen_when_the_run_is_already_at_the_limit(world, map_id):
@@ -386,6 +398,61 @@ def test_model_failure_is_stored_empty_without_retry(world, map_id):
     assert advise(world, run_id, ForbiddenGateway()) is None
 
 
+# ---------------------------------------------------------------- 우리 쪽 예외 (#677, 16.5)
+
+LUNA = "gpt-6-luna"
+
+
+def _boom(*args, **kwargs):
+    raise RuntimeError(f"예외 메시지 {OWN_TEXT}")
+
+
+class ToolFailingGateway(deps.FixedAgentLlmGateway):
+    """도구가 예외를 낸 llm처럼 — 그때까지 쓴 사용량을 붙인 ToolRunnerError를 올린다(llm.service.agent_advise_run)."""
+
+    def advise_run(self, advice_input, *, tool_runner):
+        exc = llm_api.ToolRunnerError("tool_runner 실패: simulate_filter OperationalError")
+        exc.usage = AgentUsage(model=LUNA, prompt_version="advise-v1", tokens_in=700, tokens_out=50)
+        raise exc
+
+
+@pytest.mark.parametrize("stage", ["prefetch", "model", "verify"])
+def test_exception_is_logged_as_error_and_the_next_request_tries_again(world, map_id, monkeypatch, stage):
+    """미리 읽기, 도구, 검증이 예외를 내면 error 행만 남기고 조언은 저장하지 않는다(None → 204). 다음 요청이 다시 만든다(16.5).
+    outcome_detail은 run과 단계와 예외 클래스 이름뿐이다 — 예외 메시지는 남기지 않는다."""
+    run_id = make_run(world, map_id)
+    target = {"prefetch": (recommend_api, "get_run_funnel"), "model": (recommend_api, "simulate_filter"),
+              "verify": (flows.core, "verify_run_advice")}[stage]
+    with monkeypatch.context() as m:
+        m.setattr(*target, _boom)
+        assert advise(world, run_id, ScriptedGateway(radius)) is None
+
+    assert advice_rows(world, run_id) == []
+    [row] = advice_runs(world, map_id)
+    assert (row.outcome, row.used_model) == ("error", stage != "prefetch")
+    error = "ToolRunnerError" if stage == "model" else "RuntimeError"   # 도구 예외는 llm이 감싸 올린다
+    assert row.outcome_detail == {"run_id": run_id, "stage": stage, "error": error}
+    assert "예외 메시지" not in _dump([row], "tool_calls", "outcome_detail")
+    assert OWN_TEXT not in _dump([row], "tool_calls", "outcome_detail")
+
+    again = advise(world, run_id, ScriptedGateway(radius))
+    assert again is not None and again.kind == "radius"
+    assert sorted(r.outcome for r in advice_runs(world, map_id)) == ["advised", "error"]
+
+
+def test_tool_error_keeps_the_usage_spent_so_far(world, map_id):
+    run_id = make_run(world, map_id)
+
+    assert advise(world, run_id, ToolFailingGateway()) is None
+
+    [row] = advice_runs(world, map_id)
+    assert (row.outcome, row.used_model) == ("error", True)
+    assert (row.model, row.prompt_version, row.tokens_in, row.tokens_out) == (LUNA, "advise-v1", 700, 50)
+    assert [c["name"] for c in row.tool_calls] == ["get_run_funnel"]   # 미리 읽은 깔때기(t0)
+    with world.factory() as db:
+        assert service.load_history(db, map_id, world.now).model_runs_today == 0   # 조언은 지도 상한에 세지 않는다(9절)
+
+
 def test_only_the_requester_and_only_existing_runs(world, map_id):
     run_id = make_run(world, map_id)
 
@@ -454,6 +521,19 @@ def test_router_permissions_and_204(world, map_id, client, places, monkeypatch):
     assert client("u1").get(f"/runs/{uuid.uuid4()}/advice").status_code == 404
     empty = client("u1").get(f"/runs/{not_target}/advice")
     assert (empty.status_code, empty.content) == (204, b"")
+
+
+def test_router_answers_204_not_500_when_the_advice_fails(world, map_id, client, monkeypatch):
+    """조언 실패는 추천 결과 화면을 깨지 않는다 — 204로 끝나고 저장하지 않아 다시 열면 다시 부른다(16.5, #677)."""
+    run_id = make_run(world, map_id)
+    monkeypatch.setattr(deps, "get_llm_gateway", lambda: ToolFailingGateway())
+
+    r = client("u1").get(f"/runs/{run_id}/advice")
+
+    assert (r.status_code, r.content) == (204, b"")
+    assert advice_rows(world, run_id) == []
+    monkeypatch.setattr(deps, "get_llm_gateway", lambda: ScriptedGateway(exhausted))
+    assert client("u1").get(f"/runs/{run_id}/advice").status_code == 200
 
 
 def test_router_returns_the_spec_shape_and_releases_the_request_session(world, map_id, client, test_engine,

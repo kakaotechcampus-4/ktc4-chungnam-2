@@ -83,14 +83,16 @@ def get_recent_runs(db: Session, *, run_id: str, limit: int = 10) -> list[dict]:
 
 def get_run_meta(db: Session, *, run_id: str) -> dict:
     """그 run 자신의 정보 `{run_id, map_id, category, requested_by, status, result_count, created_at,
-    default_radius_walk_min, widen_limit_walk_min}`(#587). agent가 조언 대상인지(완료, 결과 수)와 요청자 본인인지,
-    반경 넓히기 상한(도보 30분, core.WIDEN_LIMIT_MIN)을 넘는 배율인지 본다. result_count는 get_recent_runs와 같은 기준(후보 수,
-    done이 아니면 0). 권한 판정 없음(위 주석)."""
+    default_radius_walk_min, widen_limit_walk_min, widen_step_walk_min}`(#587). agent가 조언 대상인지(완료, 결과 수)와 요청자
+    본인인지, 반경 넓히기 상한(도보 30분, core.WIDEN_LIMIT_MIN)을 넘는 배율인지, 반경 넓히기 한 번(도보 5분,
+    core.WIDEN_STEP_MIN)이 몇 배율인지(#677) 본다. result_count는 get_recent_runs와 같은 기준(후보 수, done이 아니면 0).
+    권한 판정 없음(위 주석)."""
     run = service.get_run_or_404(db, run_id)
     return {
         "run_id": str(run.id), "map_id": run.map_id, "category": run.category, "requested_by": run.requested_by,
         "status": run.status, "result_count": _result_count(db, run), "created_at": run.created_at,
         "default_radius_walk_min": run.default_radius_walk_min, "widen_limit_walk_min": core.WIDEN_LIMIT_MIN,
+        "widen_step_walk_min": core.WIDEN_STEP_MIN,
     }
 
 
