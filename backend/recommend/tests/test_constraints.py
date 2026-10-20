@@ -1,6 +1,6 @@
 """docs/constraints.md 조건별 정의 표 전사(recommend/constraints.py)가 문서와 일치하는지."""
 
-from recommend import constraints
+from recommend import constraints, core
 
 
 def test_hard_fact_keys_for_restricts_by_category():
@@ -73,16 +73,26 @@ def test_soft_registry_covers_the_doc_categories_and_is_all_pass():
     assert "winter_spot" in sight and "cuisine_korean" not in sight
     assert set(constraints.soft_fact_keys_for("카페")) == {
         "quiet", "comfortable_seat", "local_flavor", "pet_friendly", "accessible",      # 기존 + 관광지 키를 카페에도(#263)
-        "bakery", "serves_alcohol", "open_late",                                         # 카페 전용(#263), 뒤의 둘은 음식점에도(#461)
+        "bakery", "open_late",                                                           # 카페 전용(#263), open_late는 음식점에도(#461)
         "spacious", "long_established", "vegetarian_friendly", "franchise",             # 음식점 키를 카페에도(#263)
     }
     assert "pet_friendly" in restaurant and "pet_friendly" in sight
 
 
-def test_late_and_alcohol_are_restaurant_and_cafe_soft_keys_with_category_free_names():
+def test_serves_alcohol_is_restaurant_only_and_cafe_falls_to_unknown_policy():
+    """#659 — 카페에서는 serves_alcohol을 쓰지 않는다. 카페 후보에 라벨이 없으니 모름이고, soft pass라 거르지 않는다."""
+    assert constraints.SOFT_REGISTRY["serves_alcohol"].categories == frozenset({"음식점"})
+    assert "serves_alcohol" not in constraints.soft_fact_keys_for("카페")
+    assert "serves_alcohol" in constraints.soft_fact_keys_for("음식점")
+    check = core.build_check("serves_alcohol", "pass", known=False, value=None, passes=False)
+    assert check.passed and check.needs_check and check.confidence == "unknown"
+    assert core.apply_disqualifier_filters([[check]], [("serves_alcohol", True)]) == [True]
+
+
+def test_late_and_alcohol_are_soft_keys_with_category_free_names():
     """#461 — open_late·serves_alcohol은 음식점에도 soft(pass)로 적용되고, 이름에 "카페"가 없다."""
+    assert constraints.SOFT_REGISTRY["open_late"].categories == frozenset({"음식점", "카페"})
     for key in ("open_late", "serves_alcohol"):
-        assert constraints.SOFT_REGISTRY[key].categories == frozenset({"음식점", "카페"})
         assert constraints.SOFT_REGISTRY[key].unknown_policy == "pass"
         assert key in constraints.soft_fact_keys_for("음식점")
         assert constraints.heart_signal_use("음식점", key) == "unused"
