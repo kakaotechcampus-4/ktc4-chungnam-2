@@ -50,6 +50,12 @@
 - 이벤트: `agent.suggested`, `agent.resolved`, `agent.settings_changed` 발행 시작.
 - **FE 할 일:** #516, #536을 실서버에 붙일 수 있다.
 
+## 2026-10-20, 카페의 `serves_alcohol` 폐기 (데이터 담당 요청)
+
+- **API 스키마는 그대로다.** 카페 납품 데이터에서 `serves_alcohol`을 뺐으므로 카페에서는 이 조건을 쓰지 않는다(`docs/constraints.md` 카페 절). 음식점의 `serves_alcohol`(#461)은 그대로다.
+- 카페에서 사용자가 "술" 조건을 말해도 후보를 거르지 않는다(라벨이 없는 조건 = `unknown_policy`). 이미 적재된 카페의 라벨 행은 지우지 않는다 — **`places.can_recommend` 판정과 건수는 바뀌지 않는다.**
+- BE: `recommend/constraints.py`의 `serves_alcohol` 적용 범위를 음식점 전용으로 줄인다(recommend 세션).
+
 ## 2026-10-16, 카톡 대화 내보내기로 일괄 핀 찍기 (#9, 기획안 5-9)
 
 스펙이 먼저다. 구현은 pins가 한다. 그 전까지 아래 엔드포인트 2개는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다.
