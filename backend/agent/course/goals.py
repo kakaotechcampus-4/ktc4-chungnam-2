@@ -297,3 +297,30 @@ def short_label(trip: Trip, goal: Goal, met: Optional[bool]) -> str:
         "daily_walk_low": ("덜 걸음", "많이 걸음"),
     }[goal.kind]
     return yes if met else no
+
+
+# ---- 쉬는 날에 걸린 목표 — 옮길 수 있는 날 찾기와 목표 고치기 ----
+
+CLOSURE_CODES = (PLACE_CLOSED_ON_DAY, NIGHT_PLACE_CLOSED_ON_DAY)
+
+
+def alternative_days(trip: Trip, hours, goal: Goal) -> list[str]:
+    """쉬는 날에 걸린 목표(place_on_day, night_end)를 옮길 수 있는 여행 날짜. 확실히 여는 날을 먼저 쓰고, 하나도 없으면 영업 여부를 모르는
+    날을 쓴다. 쉬는 날은 넣지 않는다. 날짜 순서대로다."""
+    def status(day_index: int) -> str:
+        d = trip.days[day_index]
+        if goal.kind == "place_on_day":
+            return core.status_on(hours, goal.places[0], d)
+        states = [core.status_on(hours, p.alias, d) for p in trip.places if NIGHT_LABEL in p.labels]
+        return "open" if "open" in states else ("unknown" if "unknown" in states else "closed")
+
+    statuses = {core.day_alias(i): status(i) for i in range(len(trip.days))}
+    for wanted in ("open", "unknown"):
+        days = [d for d, st in statuses.items() if st == wanted and d != goal.day]
+        if days:
+            return days
+    return []
+
+
+def retarget(goal: Goal, day: str) -> Goal:
+    return Goal(goal.kind, day, goal.places)

@@ -25,11 +25,12 @@ def render(
     trip: core.Trip, goals: Sequence[goals_mod.Goal], unmatched: Sequence[str], result: DirectResult,
     *, understood_by: str = MODEL,
 ) -> list[str]:
-    by_id = {g.id: g for g in goals}
+    by_id = {g.id: g for g in (*goals, *result.state.goals)}       # 질문의 답으로 바뀐 목표도 이름을 붙일 수 있게
     out = [_line("이해", understood_by, "이렇게 이해했어요: "
                  + (" · ".join(goals_mod.label(trip, g) for g in goals) or "요청 목표 없음")
                  + "".join(f" · 「{u}」는 그대로는 판단할 수 없어요" for u in unmatched))]
     optimized = 0
+    redo = False                            # 쉬는 날 질문에 답한 뒤 처음 짜는 optimize는 "다시 짜기"다
     reviewing = False                       # 직전 단계가 후보를 돌려줬다 — 이번 모델 생각은 그 결과의 점검이다
     for step in result.steps:
         tool = step.call.get("tool")
@@ -37,18 +38,20 @@ def render(
             out.append(_line("대행", CODE, f"모델의 {step.substituted_for['call'].get('tool')} 호출이 "
                              f"{step.substituted_for['error']}라 코드 규칙이 대신 {tool}을(를) 했어요"))
         if tool == "check_goals":
-            for check in result.checks:
-                out.append(_line("확인", CODE, goals_mod.check_sentence(trip, check, by_id[check["id"]])))
+            for sentence in step.result.data["sentences"]:
+                out.append(_line("확인", CODE, sentence))
             continue
         if step.thought:
-            stage = "짜기" if not reviewing and tool == "optimize" and optimized == 0 else (
+            stage = "다시 짜기" if redo and tool == "optimize" else "짜기" if not reviewing and tool == "optimize" and optimized == 0 else (
                 "재계획" if tool == "optimize" else "점검")
             out.append(_line(stage, f"{MODEL} → {CODE}" if tool == "optimize" else MODEL, step.thought))
         if tool == "optimize" and step.result.ok:
             optimized += 1
             reviewing = True
+            stage_name = "다시 짜기" if redo else "짜기"
+            redo = False
             for c in step.result.data["candidates"]:
-                out.append(_line("짜기", CODE, f"후보 {c['candidate_id']}: 지킴 {_kept_text(by_id, trip, c['kept'])} · "
+                out.append(_line(stage_name, CODE, f"후보 {c['candidate_id']}: 지킴 {_kept_text(by_id, trip, c['kept'])} · "
                                  f"못 지킴 {_kept_text(by_id, trip, c['gave_up'])} · 하루 최대 도보 {c['walk']['day_max']}분 · "
                                  f"확정 위반 {c['hard']['confirmed']}"))
         elif tool == "lock" and step.result.ok:
@@ -59,7 +62,13 @@ def render(
                 continue
             q = next(q for q in result.questions if q.question_id == step.result.data["question_id"])
             opener = f"코드가 열고 {MODEL}이 고름 → {PERSON}" if step.by == "model" else f"코드가 열음 → {PERSON}"
-            out.append(_line("질문", opener, f"{q.text} · 선택지 {' / '.join(q.options)} · 기본값 {q.default}(답이 없어 기본값으로 이어 가요)"))
+            if q.kind == "choose_day":
+                opener = f"코드가 열고 {MODEL}이 날짜를 제안 → {PERSON}" if step.by == "model" else f"코드가 열음 → {PERSON}"
+                out.append(_line("질문", opener, f"{q.text} · 선택지 {' / '.join(q.option_labels)} · 기본값 {q.option_labels[0]}({q.default_reason})"))
+                out.append(_line("답", CODE, f"답이 없어 기본값으로 이어 가요: {step.result.data['answer']}"))
+                redo = True
+            else:
+                out.append(_line("질문", opener, f"{q.text} · 선택지 {' / '.join(q.options)} · 기본값 {q.default}(답이 없어 기본값으로 이어 가요)"))
         elif tool == "finish" and step.result.ok:
             reviewing = False
             note = step.result.data.get("note")

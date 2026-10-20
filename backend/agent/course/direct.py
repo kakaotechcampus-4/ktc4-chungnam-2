@@ -37,6 +37,8 @@ class Question:
     options: tuple[str, ...]
     text: str
     default: str
+    option_labels: tuple[str, ...] = ()
+    default_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,14 @@ def candidate_summary(state: State, c: Candidate) -> dict[str, Any]:
     }
 
 
+def _must_ask(ds: DirectState) -> Optional[dict]:
+    if (pend := pending_closure(ds)) is not None:
+        return {"kind": "choose_day", "subject": pend["goal"].id, "closed_day": pend["goal"].day, "options": pend["days"]}
+    if (pair := ask_trigger(ds)) is not None:
+        return {"kind": "pick_course", "candidates": list(pair)}
+    return None
+
+
 def direct_input(ds: DirectState, last: Optional[ToolResult], turn: int, unmatched_count: int) -> dict[str, Any]:
     """지휘 턴 입력. 별칭과 점수만 넣는다 — 장소 이름, 좌표, id는 넣지 않는다."""
     state = ds.state
@@ -107,7 +117,7 @@ def direct_input(ds: DirectState, last: Optional[ToolResult], turn: int, unmatch
         "unmatched_count": unmatched_count,
         "goal_checks": list(ds.checks),
         "optimize_calls": ds.optimize_calls,
-        "must_ask": ({"kind": "pick_course", "candidates": list(pair)} if (pair := ask_trigger(ds)) else None),
+        "must_ask": _must_ask(ds),
         "candidates": [candidate_summary(state, c) for c in ds.candidates],
         "locks": [{"place": p, "day": d} for p, d in sorted(state.locks.items())],
         "asked": len(ds.questions),
@@ -123,6 +133,65 @@ def best_candidate(state: State, candidates: tuple[Candidate, ...], preferred: O
     """코드 규칙으로 가장 나은 후보: 강한 기준선의 사전식 비교(확정 위반 → 확인 필요 → 요청 목표 → 기본 목표). 동점이면 먼저 만든 후보."""
     key = lambda c: (baseline.strong_key(state, c.course, c.violations), c.candidate_id != preferred)
     return min(candidates, key=key)
+
+
+DROP = "drop"       # choose_day의 마지막 선택지: 그 목표는 빼기(기본값이 아니다 — 기본값은 늘 코드가 고른 여는 날이다)
+
+
+def pending_closure(ds: DirectState) -> Optional[dict]:
+    """check_goals가 "쉬는 날에 걸렸다"고 한 목표 중 아직 안 물었고 옮길 여는 날이 있는 첫 번째. 질문 상한 안에서만 있다.
+    옮길 날이 하나도 없으면 묻지 않는다(목표를 코드가 대신 빼지 않는다) — 이유는 확인 줄에 남는다."""
+    if len(ds.questions) >= ASK_MAX:
+        return None
+    asked = {q.subject for q in ds.questions if q.kind == "choose_day"}
+    by_id = {g.id: g for g in ds.state.goals}
+    for check in ds.checks:
+        goal = by_id.get(check["id"])
+        if goal is None or goal.id in asked or not set(check["reasons"]) & set(goals_mod.CLOSURE_CODES):
+            continue
+        days = goals_mod.alternative_days(ds.state.trip, ds.state.hours, goal)
+        if days:
+            return {"goal": goal, "check": check, "days": days}
+    return None
+
+
+def _closure_call(pend: dict) -> CourseAskRequester:
+    return CourseAskRequester(tool="ask_requester", kind="choose_day", subject=pend["goal"].id, options=list(pend["days"]))
+
+
+def _check_result(ds: DirectState) -> ToolResult:
+    by_id = {g.id: g for g in ds.state.goals}
+    return ToolResult("check_goals", ok=True, data={
+        "checks": list(ds.checks),
+        "sentences": [goals_mod.check_sentence(ds.state.trip, c, by_id[c["id"]]) for c in ds.checks],
+    })
+
+
+def _choose_day(ds: DirectState, pend: dict, options: list[str], proposed_by: str) -> tuple[DirectState, ToolResult]:
+    """쉬는 날에 걸린 목표를 물어보고, 답이 없으니 첫 선택지(기본값)로 목표를 고쳐 이어 간다. 장소를 빼지 않는다."""
+    state, goal, trip = ds.state, pend["goal"], ds.state.trip
+    default = options[0]
+    labels = tuple([core.day_label(trip, d) for d in options] + ["그 목표는 빼기"])
+    if goal.kind == "place_on_day":
+        name = trip.place(goal.places[0]).name
+        text = f"{name}은(는) {core.day_label(trip, goal.day)}에 쉬어요. {core.day_label(trip, default)}로 옮길까요?"
+        answer = f"{name}을(를) {core.day_label(trip, default)}에 두는 걸로 이어 가요"
+    else:
+        closed = [trip.place(p).name for p in pend["check"]["facts"]["night_closed_days"] if goal.day in pend["check"]["facts"]["night_closed_days"][p]]
+        text = f"{core.day_label(trip, goal.day)}엔 야경 장소 {', '.join(closed)}이(가) 쉬어요. 야경은 {core.day_label(trip, default)} 마지막으로 할까요?"
+        answer = f"야경 목표를 {core.day_label(trip, default)}로 바꿔 이어 가요"
+    reason = "쉬는 날엔 둘 수 없어서 여는 날을 기본값으로 했어요, " + ("모델이 제안한 날" if proposed_by == "model" else "코드가 고른 첫 여는 날")
+    question = Question(f"q{len(ds.questions) + 1}", "choose_day", goal.id, tuple([*options, DROP]), text, default, labels, reason)
+    new_goal = goals_mod.retarget(goal, default)
+    goals = tuple(dict.fromkeys(new_goal if g.id == goal.id else g for g in state.goals))
+    priority = tuple(new_goal.id if i == goal.id else i for i in state.priority)
+    new_state = replace(state, goals=goals, priority=priority)
+    checks = goals_mod.check_goals(trip, new_state.hours, goals)
+    ds = replace(ds, state=new_state, checks=checks, questions=(*ds.questions, question), candidates=(), preferred=None)
+    return ds, ToolResult("ask_requester", ok=True, data={
+        "question_id": question.question_id, "default": default, "note": "답을 받지 않고 기본 선택지로 이어 간다",
+        "answer": answer, "goal_before": goal.id, "goal_after": new_goal.id,
+    })
 
 
 def ask_trigger(ds: DirectState) -> Optional[tuple[str, str]]:
@@ -141,7 +210,7 @@ def ask_trigger(ds: DirectState) -> Optional[tuple[str, str]]:
     return (best.candidate_id, other.candidate_id) if other else None
 
 
-def execute(call, ds: DirectState, gateway: OpeningHoursGateway) -> tuple[DirectState, ToolResult]:
+def execute(call, ds: DirectState, gateway: OpeningHoursGateway, by: str = "model") -> tuple[DirectState, ToolResult]:
     state, tool = ds.state, call.tool
     if isinstance(call, CourseOptimize):
         ids = {g.id for g in state.goals}
@@ -170,7 +239,7 @@ def execute(call, ds: DirectState, gateway: OpeningHoursGateway) -> tuple[Direct
             tool, ok=True, data={"locks": [{"place": p, "day": d} for p, d in sorted(new_state.locks.items())]})
 
     if isinstance(call, CourseAskRequester):
-        return _ask(call, ds)
+        return _ask(call, ds, by)
 
     if isinstance(call, CourseDirectFinish):
         chosen = next((c for c in ds.candidates if c.candidate_id == call.candidate_id), None)
@@ -186,11 +255,18 @@ def execute(call, ds: DirectState, gateway: OpeningHoursGateway) -> tuple[Direct
     raise TypeError(f"실행할 수 없는 도구 {type(call).__name__}")
 
 
-def _ask(call: CourseAskRequester, ds: DirectState) -> tuple[DirectState, ToolResult]:
+def _ask(call: CourseAskRequester, ds: DirectState, by: str = "model") -> tuple[DirectState, ToolResult]:
     state, tool = ds.state, call.tool
     if len(ds.questions) >= ASK_MAX:
         return ds, _fail(tool, "LIMIT_EXCEEDED", f"질문은 이번 코스에서 {ASK_MAX}번까지다")
     qid = f"q{len(ds.questions) + 1}"
+    if call.kind == "choose_day":
+        pend = pending_closure(ds)
+        if pend is None or call.subject != pend["goal"].id:
+            return ds, _fail(tool, "INVALID_ID", "choose_day는 쉬는 날에 걸린 목표(must_ask.subject)를 subject로 줘야 한다")
+        if not call.options or len(set(call.options)) != len(call.options) or any(o not in pend["days"] for o in call.options):
+            return ds, _fail(tool, "INVALID_MOVE", "options는 그 목표를 옮길 수 있는 여는 날(must_ask.options)만, 첫 번째가 제안하는 날이어야 한다")
+        return _choose_day(ds, pend, list(call.options), by)
     if call.kind == "pick_course":
         ids = [c.candidate_id for c in ds.candidates]
         if len(call.options) < 2 or any(o not in ids for o in call.options) or len(set(call.options)) != len(call.options):
@@ -239,7 +315,7 @@ def run_direct(
     if state.goals:                                              # 첫 단계: 코드가 데이터 확인을 자동으로 부르고 결과를 모델 입력에 넣는다
         checks = goals_mod.check_goals(state.trip, state.hours, state.goals)
         ds = replace(ds, checks=checks)
-        last = ToolResult("check_goals", ok=True, data={"checks": list(checks)})
+        last = _check_result(ds)
         steps.append(DirectStep(0, "code", None, None, {"tool": "check_goals"}, last))
     use_model = decide is not None and bool(state.goals)       # 목표가 없으면 모델을 부르지 않는다
     finished = False
@@ -257,18 +333,30 @@ def run_direct(
                 call = None
         if call is None:
             call = _fallback_call(ds)
+        pend = pending_closure(ds)
+        if pend and not (isinstance(call, CourseAskRequester) and call.kind == "choose_day"):
+            # 쉬는 날에 걸린 목표는 짜기 전에 먼저 묻는다 — 모델이 다른 행동을 골라도 코드가 질문을 연다(여는 날 중 첫날이 기본값)
+            substituted = {"call": call.model_dump(), "error": "QUESTION_OPENED_BY_CODE"}
+            call, by, thought, problem = _closure_call(pend), "code", None, None
         pair = ask_trigger(ds) if isinstance(call, CourseDirectFinish) else None
         if pair:                                                 # 끝내려는데 물을 조건이 되어 있다 — 코드가 질문을 대신 연다
             substituted = {"call": call.model_dump(), "error": "QUESTION_OPENED_BY_CODE"}
             call, by, thought, problem = _ask_call(pair), "code", None, None
-        new_ds, result = execute(call, ds, hours)
-        if by == "model" and not result.ok and result.error in UNUSABLE_ERRORS:
+        new_ds, result = execute(call, ds, hours, by)
+        if pend and by == "model" and not result.ok:             # 모델이 낸 choose_day 질문이 틀렸다 — 코드가 대신 연다
+            substituted = {"call": call.model_dump(), "error": result.error}
+            call, by, thought, problem = _closure_call(pend), "code", None, None
+            new_ds, result = execute(call, ds, hours, by)
+        elif by == "model" and not result.ok and result.error in UNUSABLE_ERRORS:
             substituted = {"call": call.model_dump(), "error": result.error}
             call, by, thought, problem = _fallback_call(ds), "baseline", None, None
-            new_ds, result = execute(call, ds, hours)
+            new_ds, result = execute(call, ds, hours, by)
         ds = new_ds
         steps.append(DirectStep(turn, by, thought, problem, call.model_dump(), result, substituted))
         last = result
+        if isinstance(call, CourseAskRequester) and call.kind == "choose_day" and result.ok:
+            last = _check_result(ds)                             # 답으로 목표가 바뀌었다 — 코드가 다시 확인하고 그 결과를 모델에 준다
+            steps.append(DirectStep(turn, "code", None, None, {"tool": "check_goals"}, last))
         if isinstance(call, CourseDirectFinish) and result.ok:
             finished = True
             break
@@ -282,7 +370,7 @@ def run_direct(
     if not finished:                                            # 턴이 다 됐다 — 코드 규칙으로 고른다
         pair = ask_trigger(ds)
         if pair:
-            ds, result = execute(_ask_call(pair), ds, hours)
+            ds, result = execute(_ask_call(pair), ds, hours, "code")
             steps.append(DirectStep(len(steps), "code", None, None, _ask_call(pair).model_dump(), result,
                                     {"call": {"tool": "finish"}, "error": "QUESTION_OPENED_BY_CODE"}))
         if not ds.candidates:
