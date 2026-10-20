@@ -10,10 +10,12 @@ test_spec_route_coverage.py는 "경로가 있는가"만 본다. 프론트가 실
 
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 import yaml
+from sqlalchemy import text
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
@@ -581,10 +583,22 @@ def test_notification_responses_match_the_openapi_spec(clients, db_session):
     empty = a.get("/me/notifications")
     assert empty.status_code == 200 and empty.json() == {"items": [], "unread_count": 0}
 
+    made = []
+
     def notify(user_id, type, actor_id, **kwargs):
-        return notifications_api.notify(
+        created = notifications_api.notify(
             db_session, user_id=user_id, type=type, map_id=map_id, map_title="성수", actor_id=actor_id,
             message=notifications_api.compose_message(type, actor_name="영희"), **kwargs)
+        if created is not None:
+            # 연달아 만든 알림은 시계 해상도(Windows 약 15ms)에 따라 created_at이 같아져 최신순이 uuid로 갈린다(#614).
+            # 순서를 단정하려면 시각이 서로 달라야 하므로 만든 순서대로 1초씩 벌려 둔다.
+            made.append(created)
+            db_session.execute(
+                text("UPDATE notifications SET created_at = :at WHERE id = :id"),
+                {"at": datetime(2026, 12, 1, tzinfo=timezone.utc) + timedelta(seconds=len(made)), "id": created},
+            )
+            db_session.flush()
+        return created
 
     assert notify("user_a", "pin_reaction", "user_b", pin_id="pin_1") is not None
     assert notify("user_a", "member_joined", "user_b") is not None
