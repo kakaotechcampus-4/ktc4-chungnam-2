@@ -59,7 +59,7 @@ def _clear_state_cookie(response: Response) -> None:
 
 
 @public_router.get("/kakao/login")
-def get_kakao_login():
+def get_kakao_login(session: str | None = Cookie(default=None), db: Session = DbSession):
     """로그인 시작 — state를 만들어 서명한 HttpOnly 쿠키에 넣고 같은 값을 붙여 카카오 인가 화면으로 보낸다.
     콜백에서 이 쿠키와 대조하므로, 다른 브라우저에서 시작된 로그인의 콜백 링크는 통하지 않는다(로그인 CSRF)."""
     if not settings.kakao_client_id or not settings.kakao_redirect_uri:
@@ -74,7 +74,10 @@ def get_kakao_login():
     )
     redirect.set_cookie(
         STATE_COOKIE,
-        core.create_state_cookie_value(state, secret=settings.session_secret, issued_at=int(time.time())),
+        core.create_state_cookie_value(
+            state, secret=settings.session_secret, issued_at=int(time.time()),
+            guest_user_id=service.live_guest_id_for_session(db, session),
+        ),
         max_age=core.STATE_TTL_SECONDS,
         path=STATE_COOKIE_PATH,
         httponly=True,
@@ -84,13 +87,20 @@ def get_kakao_login():
     return redirect
 
 
-def _login_redirect(*, error: str | None = None) -> RedirectResponse:
-    """진입점으로 302. 실패면 `login_error`를 붙이고(주소에 있던 쿼리·조각은 보존), state 쿠키는 어느 쪽이든 지운다."""
+def _login_redirect(*, error: str | None = None, guest_merged: bool | None = None) -> RedirectResponse:
+    """진입점으로 302. 실패면 `login_error`, 게스트 전환이면 `guest_merged`를 붙이고(주소에 있던 쿼리·조각은 보존,
+    같은 이름의 값만 대체), state 쿠키는 어느 쪽이든 지운다."""
     url = settings.frontend_login_redirect_url
+    added = []
     if error is not None:
+        added.append(("login_error", error))
+    if guest_merged is not None:
+        added.append(("guest_merged", "true" if guest_merged else "false"))
+    if added:
         parts = urlsplit(url)
-        query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "login_error"]
-        url = urlunsplit(parts._replace(query=urlencode(query + [("login_error", error)])))
+        names = {k for k, _ in added}
+        query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k not in names]
+        url = urlunsplit(parts._replace(query=urlencode(query + added)))
     redirect = RedirectResponse(url=url, status_code=302)
     _clear_state_cookie(redirect)
     return redirect
@@ -108,7 +118,8 @@ def get_kakao_callback(
     실패는 진입점에 `?login_error=`로 알린다(cancelled·invalid_state·kakao_failed·server_error) — 실패를
     로그인 성공처럼 넘기지 않는다. state 검증이 먼저다: 위조된 요청에는 카카오를 부르지 않는다.
     성공이든 실패든 state 쿠키를 지워 같은 콜백 링크를 다시 쓸 수 없게 한다."""
-    if not core.verify_state(state_cookie, state, secret=settings.session_secret, now=int(time.time())):
+    state_claims = core.parse_state(state_cookie, state, secret=settings.session_secret, now=int(time.time()))
+    if state_claims is None:
         return _login_redirect(error="invalid_state")
     if error is not None or not code:
         return _login_redirect(error="cancelled")
@@ -121,7 +132,10 @@ def get_kakao_callback(
         logger.error("kakao login failed: %s", type(exc).__name__)   # 종류만 — 메시지에 토큰·프로필이 섞일 수 있다
         db.rollback()   # 실패한 요청이 만든 반쪽 상태를 커밋하지 않는다
         return _login_redirect(error="server_error")
-    redirect = _login_redirect()
+    guest_merged = None
+    if state_claims.guest_user_id:   # 게스트가 시작한 로그인 — 기록을 합친다. 실패해도 로그인은 성공이다(#560)
+        guest_merged = service.merge_guest_into(db, guest_user_id=state_claims.guest_user_id, to_user_id=user.id)
+    redirect = _login_redirect(guest_merged=guest_merged)
     _set_session_cookie(redirect, user.id)
     return redirect
 
