@@ -2,7 +2,7 @@
 
 ## #560 게스트 → 카카오 전환, 기록 합치기 (2026-10-20) — 루트 확인 요청
 
-스펙(`docs/api-spec.yaml`·`data-model.md`「게스트 합치기」)·마이그레이션 변경 없음. 새 엔드포인트 없음. 이 브랜치에는 스펙 PR(#657) 내용이 `origin/docs/guest-claim-560` merge로 들어 있다 — #657이 먼저 머지되면 diff에서 사라진다.
+스펙(`docs/api-spec.yaml`·`data-model.md`「게스트 합치기」)·마이그레이션 변경 없음. 새 엔드포인트 없음. 스펙 PR #657은 이미 develop에 머지돼 있다.
 
 - **로그인 시작**(`GET /auth/kakao/login`): 세션 쿠키가 지금 살아 있는 게스트(서명·만료·탈퇴·로그아웃 무효화 모두 `get_current_user`와 같은 판정)의 것이면 그 id를 state 쿠키에 함께 서명해 넣는다. `state.발급시각.게스트id.서명` — 게스트 id는 서명 대상이라 바꾸거나 떼거나 붙이면 `invalid_state`. 게스트가 아니면 기존 3단 형식 그대로. `core.parse_state`(→`StateClaims`)가 추가됐고 `verify_state`는 그 래퍼다.
 - **콜백**: state 검증 → 카카오 로그인 → state에 게스트 id가 있으면 `service.merge_guest_into`. 결과 `True/False`면 성공 리디렉션에 `guest_merged=true/false`, `None`이면 쿼리를 붙이지 않는다. 기존 `login_error` 처리·진입점 주소의 쿼리·조각 보존 규칙 그대로(같은 이름 `guest_merged`만 대체).
