@@ -21,7 +21,10 @@ SPEC_PATH = Path(__file__).resolve().parents[2] / "docs" / "api-spec.yaml"
 HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
-KNOWN_MISSING: dict[tuple[str, str], str] = {}
+KNOWN_MISSING: dict[tuple[str, str], str] = {
+    ("get", "/maps/{}/ads"): "#642 추천 탭 광고 — ads 모듈 구현 PR이 지운다",
+    ("post", "/ads/{}/clicks"): "#642 추천 탭 광고 — ads 모듈 구현 PR이 지운다",
+}
 
 # 스펙에 없어도 되는 라우트(운영/문서용).
 NOT_IN_SPEC = {"/health", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}

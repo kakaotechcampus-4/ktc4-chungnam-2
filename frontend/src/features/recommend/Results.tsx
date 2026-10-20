@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { MessageSquare, RotateCw, Users } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ExternalLink, MessageSquare, RotateCw, Users } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import type { MemberView } from '@/features/maps/model'
@@ -7,29 +7,37 @@ import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
+import Notice from '@/ui/Notice'
+import SheetTitle from '@/ui/SheetTitle'
 
 import { useAiStore } from './aiStore'
 import {
+  attemptLimit,
   fulfillmentLine,
+  missingWants,
   noResultsFunnel,
-  RETRY_MAX,
   toChecks,
   type CandidateDto,
   type FunnelRow,
   type RecommendResultDto,
   type RecommendRunDto,
 } from './model'
-import { useExecuteRunMutation, usePublishMutation, useRetryMutation, useWidenMutation } from './queries'
+import { useEvidenceQuery, useExecuteRunMutation, usePublishMutation, useRetryMutation, useWidenMutation } from './queries'
 import { AiHeader } from './Readiness'
 
-const TONE = {
-  pass: 'bg-[var(--good-bg)] text-[var(--good-text)]',
-  check: 'bg-[var(--warn-bg)] text-[var(--warn-text)]',
-  fail: 'bg-[var(--bad-bg)] text-[var(--bad-text)]',
-} as const
+const TONE = { pass: 'tag-good', check: 'tag-warn', fail: 'tag-bad' } as const
 const MARK = { pass: '✓', check: '?', fail: '✗' } as const
 
 const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이버지도', google: '구글맵', permit: '인허가 공공데이터', tourapi: '한국관광공사' }
+
+/**
+ * 출처는 항상 붙는다(가드레일 5). 장소는 자체 DB에서만 오므로(#53) 제공처를 모르면 「확인 안 됨」 대신 그 사실을 적는다.
+ * 모르는 제공처 코드가 오면 코드를 그대로 보인다 — 지어내지 않는다(#406).
+ */
+function sourceLabel(c: CandidateDto): string {
+  const p = c.place_source?.provider
+  return (p && PROVIDER[p]) ?? p ?? '핑고 장소 DB'
+}
 
 /** 시트 안 이전 화면(Figma '‹ AI 추천'). 결과에서 빠져나와 준비 판정으로 돌아간다. 넓은 화면은 패널 헤더 ‹ 다. */
 export function BackToReadiness({ mapId }: { mapId: string }) {
@@ -40,13 +48,13 @@ export function BackToReadiness({ mapId }: { mapId: string }) {
 /** 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 「↻ 다시 추천 · N번 남음」. */
 export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; run: RecommendRunDto; count: number; onLimit: () => void }) {
   const retry = useRetryMutation(mapId)
-  const left = Math.max(0, RETRY_MAX - run.attempt_no)
+  const left = Math.max(0, attemptLimit(run) - run.attempt_no)
   return (
     <div>
       <BackToReadiness mapId={mapId} />
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <AiHeader title={`${run.category} 대안 ${count}곳을 찾았어요`} sub="나에게만 보여요 · 올린 곳만 모두에게 보여요" />
+          <AiHeader title={`${run.category} 대안 ${count}곳을 찾았어요`} sub="나에게만 보여요 · 올린 곳만 모두에게 보여요" mood="happy" />
         </div>
         <button
           type="button"
@@ -67,26 +75,32 @@ export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; r
   )
 }
 
+/** 결과를 이미 보여 준 실행. 후보 상세에서 목록으로 돌아올 때는 다시 나타나지 않게 한다(#595). */
+const shownRuns = new Set<string>()
+
 /** 결과 목록(Figma 'AI 결과 탭'). 카드마다 이유·조건별 체크·구성원 충족·출처가 붙는다(가드레일 5). */
 export function ResultsBody({
   mapId,
   run,
   result,
   members,
-  onOpen,
   onHow,
 }: {
   mapId: string
   run: RecommendRunDto
   result: RecommendResultDto
   members: MemberView[]
-  onOpen: (candidateId: string) => void
   onHow: () => void
 }) {
   const removed = result.funnel.reduce((sum, f) => sum + f.removed_count, 0)
+  const missing = missingWants(result.candidates, useEvidenceQuery(run.id).data ?? [])
+  const [enter] = useState(() => !shownRuns.has(run.id))
+  useEffect(() => {
+    shownRuns.add(run.id)
+  }, [run.id])
   return (
-    <div className="space-y-3">
-      <button type="button" onClick={onHow} className="flex w-full justify-between rounded-lg bg-ink-50 px-3 py-2 text-xs text-ink-700">
+    <div className={`space-y-3 ${enter ? 'enter-fade' : ''}`}>
+      <button type="button" onClick={onHow} className="flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
         <span>
           조건으로 {removed}곳 걸러냄 → 추천 {result.candidates.length}곳
         </span>
@@ -94,10 +108,16 @@ export function ResultsBody({
       </button>
       {/* 알러지는 거르지 않는다 — 데이터로 보장할 수 없어서 사유와 상관없이 항상 안내한다(#425) */}
       <p className="text-xs text-ink-500">알러지가 있다면 가게에 직접 확인해 주세요</p>
+      {/* 원한 조건에 맞는 곳이 반경 안에 없으면 다른 곳만 보여 주지 않고 이유를 말한다. 넓히는 건 사람이다(가드레일 4). */}
+      {missing.length > 0 && (
+        <Notice action={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />}>
+          반경 안에서 ‘{missing.join('·')}’에 맞는 곳을 찾지 못해 다른 곳을 골랐어요. 반경을 넓혀 볼까요?
+        </Notice>
+      )}
       <ol className="space-y-3 pb-[100px]">
         {result.candidates.map((c) => (
           <li key={c.id}>
-            <CandidateCard mapId={mapId} run={run} c={c} members={members} onOpen={() => onOpen(c.id)} />
+            <CandidateCard mapId={mapId} run={run} c={c} members={members} />
           </li>
         ))}
       </ol>
@@ -105,37 +125,40 @@ export function ResultsBody({
   )
 }
 
-function CandidateCard({ mapId, run, c, members, onOpen }: { mapId: string; run: RecommendRunDto; c: CandidateDto; members: MemberView[]; onOpen: () => void }) {
+function CandidateCard({ mapId, run, c, members }: { mapId: string; run: RecommendRunDto; c: CandidateDto; members: MemberView[] }) {
   return (
-    <article className="space-y-2 rounded-2xl border-[1.5px] border-brand-300 bg-brand-50 p-3.5">
+    <article className="space-y-2 rounded-xl border-[1.5px] border-brand-300 bg-brand-50 p-3.5">
       <header className="flex items-center gap-2">
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-[var(--bad-line)] text-xs font-bold text-[var(--bad-line)]">
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
           {c.rank}
         </span>
-        <h3 className="min-w-0 flex-1 truncate text-lg font-bold text-ink-900">{c.place_name}</h3>
-        {c.region_label && <span className="shrink-0 rounded-md border border-brand-300 bg-white px-1.5 text-[0.6875rem] text-brand-700">{c.region_label} 기준</span>}
+        <h3 className="min-w-0 flex-1 truncate text-title font-bold text-ink-900">{c.place_name}</h3>
+        {c.region_label && <span className="tag border border-brand-300 bg-white text-brand-700">{c.region_label} 기준</span>}
       </header>
-      <p className="text-xs text-ink-500">{run.category}</p>
+      <p className="text-xs text-ink-600">{run.category}</p>
       <Reason text={c.reason} />
       <Checks c={c} />
       <p className="flex items-center gap-1.5 text-xs font-bold text-brand-700">
         <Users size={14} aria-hidden="true" /> {c.member_fulfillment.total}명 중 {c.member_fulfillment.satisfied}명 조건 충족
-        <span className="ml-auto font-normal text-ink-500">출처 · {PROVIDER[c.place_source?.provider ?? ''] ?? '확인 안 됨'}</span>
+        <span className="ml-auto font-normal text-ink-600">출처 · {sourceLabel(c)}</span>
       </p>
+      <p className="text-xs text-ink-600">{fulfillmentLine(c, members)}</p>
       <div className="flex items-center justify-between">
         <PublishButton mapId={mapId} run={run} c={c} />
-        <button type="button" onClick={onOpen} className="text-xs text-ink-500">
-          자세히 ›
-        </button>
+        {/* 사진·주소·영업시간은 카카오맵에서 본다 — 앱 안 WebView 금지(카카오 약관), 새 창으로. */}
+        {c.place_source?.url && (
+          <a href={c.place_source.url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
+            카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
+          </a>
+        )}
       </div>
-      <span className="sr-only">{fulfillmentLine(c, members)}</span>
     </article>
   )
 }
 
 function Reason({ text }: { text: string }) {
   return (
-    <p className="flex gap-2 rounded-lg border border-brand-300 bg-white p-2.5 text-[0.8125rem] text-ink-900">
+    <p className="flex gap-2 rounded-xl border border-brand-300 bg-white p-2.5 text-body text-ink-900">
       <MessageSquare size={14} className="mt-0.5 shrink-0 text-ink-500" aria-hidden="true" />
       {text}
     </p>
@@ -146,20 +169,21 @@ function Checks({ c }: { c: CandidateDto }) {
   return (
     <ul className="flex flex-wrap gap-1.5">
       {toChecks(c).map((k) => (
-        <li key={k.label} className={`rounded-md px-2 py-0.5 text-xs font-semibold ${TONE[k.tone]}`}>
+        <li key={k.label} className={`tag ${TONE[k.tone]}`}>
           {MARK[k.tone]} {k.label}
-          {k.tone === 'check' && ' (확인 필요)'}
+          {/* 라벨에 이미 「확인」이 들어 있으면 겹쳐 쓰지 않는다(「가격대 확인 필요 (확인 필요)」, #406). */}
+          {k.tone === 'check' && !k.label.includes('확인') && ' (확인 필요)'}
         </li>
       ))}
     </ul>
   )
 }
 
-/** 목록에선 외곽선, 상세에선 그 화면의 유일한 채움 버튼. 올린 뒤에는 "모두에게 보여요"로 바뀐다. */
-function PublishButton({ mapId, run, c, filled = false }: { mapId: string; run: RecommendRunDto; c: CandidateDto; filled?: boolean }) {
+/** 올린 뒤에는 "모두에게 보여요"로 바뀐다. */
+function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto; c: CandidateDto }) {
   const publish = usePublishMutation(mapId, run)
   if (c.visibility === 'published') {
-    return <span className="rounded-lg bg-[var(--good-bg)] px-3 py-1.5 text-xs font-bold text-[var(--good-text)]">✓ 지도에 올렸어요 · 모두에게 보여요</span>
+    return <span className="tag tag-good">✓ 지도에 올렸어요 · 모두에게 보여요</span>
   }
   if (!c.permissions.can_publish) return null
   return (
@@ -176,77 +200,10 @@ function PublishButton({ mapId, run, c, filled = false }: { mapId: string; run: 
             showToast(err instanceof ApiError && err.code === 'PIN_DUPLICATE' ? '이미 지도에 있는 장소예요' : '지도에 올리지 못했어요'),
         })
       }
-      className={
-        filled
-          ? 'btn-primary w-full py-3.5'
-          : 'btn-outline rounded-md px-3 py-1.5 text-sm'
-      }
+      className="btn-outline btn-sm"
     >
       {publish.isPending ? '올리는 중…' : '지도에 올리기'}
     </button>
-  )
-}
-
-/** 후보 상세(Figma '후보 상세'). */
-export function CandidateDetail({
-  mapId,
-  run,
-  c,
-  count,
-  members,
-  onBack,
-}: {
-  mapId: string
-  run: RecommendRunDto
-  c: CandidateDto
-  count: number
-  members: MemberView[]
-  onBack: () => void
-}) {
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between text-[0.8125rem]">
-        <PanelBackLink label={`추천 결과 ${count}곳`} onBack={onBack} className="hit-44" />
-        <span className="ml-auto text-ink-500">{c.visibility === 'published' ? '모두에게 보여요' : '나에게만 보여요'}</span>
-      </div>
-      <div>
-        <h3 className="text-[1.375rem] font-bold text-ink-900">{c.place_name}</h3>
-        <p className="text-[0.8125rem] text-ink-600">
-          {run.category}
-          {c.region_label && ` · ${c.region_label} 기준`} · {c.rank}순위
-        </p>
-      </div>
-      <Reason text={c.reason} />
-      <section>
-        <h4 className="mb-1 text-sm font-bold text-ink-900">조건별 충족</h4>
-        <ul className="space-y-0.5 text-[0.8125rem]">
-          {toChecks(c).map((k) => (
-            <li key={k.label} className={k.tone === 'pass' ? 'text-[var(--good-text)]' : k.tone === 'check' ? 'text-[var(--warn-text)]' : 'text-[var(--bad-text)]'}>
-              {MARK[k.tone]} {k.label}
-              {k.tone === 'check' && ' — 정보가 없어 확인이 필요해요'}
-            </li>
-          ))}
-        </ul>
-      </section>
-      <section>
-        <h4 className="text-sm font-bold text-ink-900">
-          구성원 충족 {c.member_fulfillment.total}명 중 {c.member_fulfillment.satisfied}명
-        </h4>
-        <p className="text-[0.8125rem] text-ink-600">{fulfillmentLine(c, members)}</p>
-      </section>
-      <p className="text-[0.6875rem] text-ink-500">
-        출처 · {PROVIDER[c.place_source?.provider ?? ''] ?? '확인 안 됨'}
-        {c.place_source?.url && (
-          <>
-            {' · '}
-            <a href={c.place_source.url} target="_blank" rel="noopener noreferrer" className="underline">
-              장소 정보 보기
-            </a>
-          </>
-        )}
-      </p>
-      <PublishButton mapId={mapId} run={run} c={c} filled />
-    </div>
   )
 }
 
@@ -254,11 +211,11 @@ export function CandidateDetail({
 export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; count: number; onBack: () => void }) {
   return (
     <div className="space-y-3">
-      <PanelBackLink label={`추천 결과 ${count}곳`} onBack={onBack} className="hit-44" />
-      <h3 className="text-xl font-bold text-ink-900">이렇게 {count}곳을 골랐어요</h3>
+      <PanelBackLink label={`추천 결과 ${count}곳`} onBack={onBack} />
+      <SheetTitle as="h3">이렇게 {count}곳을 골랐어요</SheetTitle>
       <FunnelTable funnel={funnel} left={count} />
-      <section className="text-[0.8125rem] text-ink-600">
-        <h4 className="mb-1 font-bold text-ink-900">순위는 이렇게 정했어요</h4>
+      <section className="text-body text-ink-600">
+        <h4 className="mb-1 text-sm font-bold text-ink-900">순위는 이렇게 정했어요</h4>
         <ul className="list-inside list-disc space-y-0.5">
           <li>가능하면 맞춰 달라는 조건에 맞는 개수로 점수를 매겼어요</li>
           <li>지역마다 1위를 먼저 뽑고 남은 자리를 채웠어요</li>
@@ -271,7 +228,7 @@ export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; coun
 
 function FunnelTable({ funnel, left }: { funnel: FunnelRow[]; left: number }) {
   return (
-    <table className="w-full rounded-xl bg-brand-50 text-[0.8125rem]">
+    <table className="w-full rounded-xl bg-brand-50 text-body">
       <tbody>
         {funnel.map((f) => (
           <tr key={f.label} className="border-b border-brand-100">
@@ -293,26 +250,33 @@ function FunnelTable({ funnel, left }: { funnel: FunnelRow[]; left: number }) {
  * 반경을 넓히는 건 사람이다(가드레일 4): 기본값 원만 넓히고, 사람이 쓴 반경은 그대로 둔다고 먼저 묻는다.
  */
 export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string; run: RecommendRunDto; error: unknown; onFixEvidence: () => void }) {
-  const widen = useWidenMutation(mapId)
-  const [asking, setAsking] = useState(false)
   const funnel = noResultsFunnel(error) ?? []
-  const now = run.default_radius_walk_min ?? 15
-
   return (
     <div className="space-y-3">
       <FunnelTable funnel={funnel} left={0} />
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={() => setAsking(true)} disabled={widen.isPending} className="btn-primary py-3">
-          반경 넓히기
-        </button>
-        <button type="button" onClick={onFixEvidence} className="btn-outline py-3">
+        <WidenButton mapId={mapId} run={run} className="btn-primary btn-lg" />
+        <button type="button" onClick={onFixEvidence} className="btn-outline btn-lg">
           근거 고치기
         </button>
       </div>
-      <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="text-sm font-semibold text-brand-600">
+      <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-link text-sm">
         직접 찍기 — 검색창에서 찾아보기
       </button>
+    </div>
+  )
+}
 
+/** 「반경 넓히기」 — 기본값 원만 넓히고, 사람이 쓴 반경은 그대로 둔다고 먼저 묻는다(가드레일 4). */
+function WidenButton({ mapId, run, className }: { mapId: string; run: RecommendRunDto; className: string }) {
+  const widen = useWidenMutation(mapId)
+  const [asking, setAsking] = useState(false)
+  const now = run.default_radius_walk_min ?? 15
+  return (
+    <>
+      <button type="button" onClick={() => setAsking(true)} disabled={widen.isPending} className={className}>
+        반경 넓히기
+      </button>
       {asking && (
         <ConfirmDialog
           title="기본 반경만 넓혀서 다시 찾을까요?"
@@ -341,7 +305,7 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
           }
         />
       )}
-    </div>
+    </>
   )
 }
 
@@ -359,7 +323,7 @@ export function Failed({ mapId, run }: { mapId: string; run: RecommendRunDto }) 
         disabled={execute.isPending}
         // 다시 '진행 중'으로 간다. 또 실패하면 이 화면으로, 다른 오류는 토스트로(요청 훅, #349).
         onClick={() => execute.mutate(run)}
-        className="btn-outline w-full py-3"
+        className="btn-outline btn-lg w-full"
       >
         {execute.isPending ? '다시 찾는 중…' : '다시 시도'}
       </button>
@@ -377,10 +341,10 @@ export function RetryLimit({ onBack }: { onBack: () => void }) {
         <li>검색창에서 직접 찾아 찍을 수도 있어요</li>
       </ul>
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={onBack} className="btn-outline py-3">
+        <button type="button" onClick={onBack} className="btn-outline btn-lg">
           후보 다시 보기
         </button>
-        <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-outline py-3">
+        <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-outline btn-lg">
           직접 찍기
         </button>
       </div>

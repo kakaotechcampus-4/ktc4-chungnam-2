@@ -46,7 +46,7 @@ def test_assemble_evidence_preserves_reaction_then_manual_order():
     assert core.assemble_evidence(reaction, manual) == [{"text": "a"}, {"text": "b"}]
 
 
-# ---------- demote_wanted_place_identity (#422) ----------
+# ---------- demote_wanted_place_identity (#422, #617) ----------
 
 def _line(badge, fact_key, wants):
     return {"text": "사유", "badge": badge, "fact_key": fact_key, "wants": wants}
@@ -60,7 +60,7 @@ def test_demote_lowers_required_wanted_cuisine_to_preferred():
 @pytest.mark.parametrize("line", [
     _line("required", "cuisine_korean", False),   # 피함은 그대로 required
     _line("required", "parking_available", True), # 필요 조건은 그대로
-    _line("required", "spacious", True),          # 칩 「좁아요」
+    _line("required", "spacious", True),          # 글 "넓은 곳이어야 해요" — 칩이 아니면 그대로
     _line("required", "quiet", True),
     _line("required", "cuisine_bbq", None),       # 방향 모름
     _line("required", None, None),
@@ -88,6 +88,36 @@ def test_demote_covers_chip_lines_and_does_not_mutate_input():
 def test_demote_keeps_the_mixed_reason_split_korean_required_bbq_preferred():
     lines = [_line("required", "cuisine_korean", False), _line("required", "cuisine_bbq", True)]
     assert [l["badge"] for l in core.demote_wanted_place_identity(lines, "음식점")] == ["required", "preferred"]
+
+
+def _chip(chip_id, fact_key, wants, badge="required"):
+    return {"text": "칩", "chip_id": chip_id, "badge": badge, "fact_key": fact_key, "wants": wants}
+
+
+@pytest.mark.parametrize("chip_id, fact_key, category", [
+    ("food_wait", "wait_short", "음식점"),
+    ("food_cramped", "spacious", "음식점"),
+    ("cafe_noisy", "quiet", "카페"),
+    ("cafe_seat", "comfortable_seat", "카페"),
+    ("sight_noisy", "quiet", "관광지"),
+])
+def test_demote_lowers_every_wanted_chip_to_preferred(chip_id, fact_key, category):
+    """#617 — 칩의 원함은 그 가게가 별로였던 이유라 지도 전체를 거르지 않는다. 카테고리·키와 무관하다."""
+    (line,) = core.demote_wanted_place_identity([_chip(chip_id, fact_key, True)], category)
+    assert line["badge"] == "preferred"
+
+
+@pytest.mark.parametrize("line", [
+    _chip("sight_inaccessible", "accessible", True),   # 접근성은 필요 조건이라 required(REQUIRED_WANTED_CHIP_IDS)
+    _chip("food_spicy", "spicy_focused", False),       # 피함 칩은 그대로
+    _chip("cafe_crowded", "is_crowded_large", False),
+    _chip("common_far", None, None),                   # 키 없는 칩
+    _chip("매워요", None, None),                        # 옛 값
+    _chip("food_cramped", "spacious", True, badge="preferred"),
+])
+def test_demote_leaves_avoid_keyless_and_accessibility_chips_alone(line):
+    assert core.demote_wanted_place_identity([line], "관광지") == [line]
+    assert "sight_inaccessible" in core.REQUIRED_WANTED_CHIP_IDS
 
 
 # ---------- circles_all_overlap / region_signature / merge_circles ----------
@@ -688,21 +718,51 @@ def test_avoided_authors_subtract_from_a_place_with_the_true_label():
     assert scores == {"a": -3 * 2, "b": 0}  # 피하겠다고 직접 쓴 사람당 −3(#414)
 
 
-def test_member_fulfillment_counts_disqualifier_authors_as_satisfied():
-    """#255 — 실격 사유를 낸 구성원도 total에 센다. 후보가 실격을 통과했으니 충족이고, 선호가 없어도 N명 중 N명이 남는다."""
-    result = core.build_member_fulfillment([_check("quiet", passed=True)], [], {}, disqualifier_authors=["u2", "u1"])
+def test_member_fulfillment_counts_keyed_disqualifier_known_pass_as_satisfied():
+    """#620 — 키 있는 반대 조건은 그 체크가 known이고 통과일 때만 충족이다. 선호가 없어도 집계된다."""
+    checks = [_check("is_crowded_large", passed=True), _label_check("spicy_focused", value=False)]
+    result = core.build_member_fulfillment(
+        checks, [], {}, disqualifier_conditions={"u2": {("spicy_focused", False)}, "u1": {("is_crowded_large", None)}},
+    )
     assert result == {"satisfied": 2, "total": 2, "by_member": [
         {"user_id": "u1", "satisfied": True}, {"user_id": "u2", "satisfied": True},
     ]}
 
 
-def test_member_fulfillment_disqualifier_author_with_unmet_preference_is_not_satisfied():
-    """선호 조건도 가진 구성원은 지금처럼 전부 충족해야 충족이다."""
+def test_member_fulfillment_unknown_label_on_disqualifier_is_not_satisfied():
+    """#620 — 매운맛 피함인데 라벨이 모름이면 실격 필터는 통과(확인 필요)지만 충족으로 세지 않는다. total에는 남는다."""
+    unknown = core.build_check("is_crowded_large", "pass", known=False, value=None, passes=True)
     result = core.build_member_fulfillment(
-        [_check("quiet", passed=False)], [], {"quiet": True}, {"quiet": frozenset({"u1"})}, disqualifier_authors=["u1", "u2"],
+        [_label_check("spicy_focused"), unknown], [], {},
+        disqualifier_conditions={"u1": {("spicy_focused", False)}, "u2": {("is_crowded_large", None)}},
     )
-    assert result["total"] == 2 and result["satisfied"] == 1
+    assert result["total"] == 2 and result["satisfied"] == 0
+
+
+def test_member_fulfillment_soft_disqualifier_follows_the_direction():
+    """방향은 근거 줄 표시와 같은 계산이다 — wants=true("조용한 곳이어야 해")는 라벨 참일 때만 충족."""
+    def satisfied(value):
+        return core.build_member_fulfillment(
+            [_label_check("quiet", value=value)], [], {}, disqualifier_conditions={"u1": {("quiet", True)}},
+        )["satisfied"]
+    assert (satisfied(True), satisfied(False)) == (1, 0)
+
+
+def test_member_fulfillment_drops_members_with_only_keyless_disqualifiers():
+    """#620 — 키 없는 반대(알러지 글, 「취향이 아니에요」)만 남긴 구성원은 확인한 것이 없어 total에서 빠진다."""
+    result = core.build_member_fulfillment([_check("quiet")], [], {}, disqualifier_conditions={"u1": set()})
+    assert result == {"satisfied": 0, "total": 0, "by_member": []}
+
+
+def test_member_fulfillment_member_with_both_needs_all_conditions_met():
+    """반대와 선호를 둘 다 가진 구성원은 모두 충족해야 충족이다."""
+    checks = [_check("quiet", passed=True), _label_check("spicy_focused")]  # 조용함 참, 매운맛 모름
+    result = core.build_member_fulfillment(
+        checks, [], {"quiet": True}, {"quiet": frozenset({"u1", "u2"})},
+        disqualifier_conditions={"u1": {("spicy_focused", False)}},
+    )
     assert {e["user_id"]: e["satisfied"] for e in result["by_member"]} == {"u1": False, "u2": True}
+    assert result["total"] == 2 and result["satisfied"] == 1
 
 
 # ---------- #414 — ♥ 신호 거르기(음식점)와 직접 쓴 사유 3점 ----------

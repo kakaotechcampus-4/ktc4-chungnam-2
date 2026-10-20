@@ -30,6 +30,15 @@ def last_run_at_by_category(db: Session, *, map_id: str) -> dict[str, datetime]:
     return service.last_run_at_by_category(db, map_id=map_id)
 
 
+def latest_run_place_ids(db: Session, *, map_id: str, requested_by: str, category: str | None = None) -> set[str]:
+    """추천 탭 광고(docs/ads.md 5절 2번, #646)가 부른다 — 요청자의 이 지도 최신 run의 후보 place_id. category가 있으면
+    그 카테고리의 최신 run 하나, 없으면 카테고리마다 최신 run. 다른 구성원의 run은 보지 않는다. run이 없거나 추천 대상이
+    아닌 카테고리(숙소·기타 — run이 생길 수 없다)면 빈 집합. 권한은 보지 않는다. 읽기 전용, 커밋하지 않는다."""
+    if category is not None and category not in categories.recommendable():
+        return set()
+    return service.latest_run_place_ids(db, map_id=map_id, requested_by=requested_by, category=category)
+
+
 def get_readiness(db: Session, *, map_id: str, category: str) -> dict:
     """agent의 반대 후 정체 진단(docs/agent-v2.md 6.2, 10절 get_readiness, #530)이 부른다 — 그 카테고리가 추천
     준비(⓪)를 통과했나. `{ready, answered_count, required_count}`, `GET /maps/{mapId}/recommend/readiness`의 한
@@ -47,8 +56,9 @@ def fact_labels() -> dict[str, str]:
 
 
 def demote_wanted_place_identity(category: str, lines: Sequence[dict]) -> list[dict]:
-    """agent structure_reasons(docs/agent-v2.md 10절, #564)가 부른다 — 추천 근거 조립과 같은 #422 규칙(🚫 사유 안의
-    음식 종류 "원함"은 preferred). lines는 `{fact_key, wants, badge}`(다른 키는 그대로 둔다). 원본은 바꾸지 않는다."""
+    """agent structure_reasons(docs/agent-v2.md 10절, #564)가 부른다 — 추천 근거 조립과 같은 #422·#617 규칙(🚫 사유
+    안의 원함은 preferred: 글은 음식 종류만, 칩은 sight_inaccessible 말고 전부). lines는 `{fact_key, wants, badge}`에
+    칩 줄이면 `chip_id`(다른 키는 그대로 둔다). 원본은 바꾸지 않는다."""
     return core.demote_wanted_place_identity(lines, category)
 
 

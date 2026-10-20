@@ -587,3 +587,150 @@ def test_daily_cleanup_deletes_old_runs_once_a_day(world):
     assert {r.id for r in world.rows(AgentRun, map_id=map_id)} == {recent}
     assert old not in {r.id for r in world.rows(AgentRun, map_id=map_id)}
     assert flows.daily_cleanup_if_due(world.now + timedelta(minutes=5), session_factory=world.factory) is False
+
+
+# ---------------------------------------------------------------- 제안 뒤 24시간 안 확정 (12.9, #613)
+
+def _suggest(world, map_id, diagnosis, *, hours_ago=30.0, category=None, pin_id=None, pin_ids=(), **kw) -> uuid.UUID:
+    """hours_ago 시간 전에 만든 지난 제안(활성은 지도당 하나라 기본 expired). no_reaction은 pin_ids를 ref와 버튼에 담는다."""
+    claims = [{"id": f"c{i}", "kind": "ref", "object": "pin", "ref_id": p} for i, p in enumerate(pin_ids, start=2)]
+    actions = [{"index": 0, "type": "show_pins", "label": "핀 보기", "params": {"pin_ids": list(pin_ids)}}] if pin_ids else []
+    with world.factory() as db:
+        row = rows.suggestion(db, map_id, diagnosis=diagnosis, category=category,
+                              pin_id=uuid.UUID(pin_id) if pin_id else None, claims=claims, actions=actions,
+                              created_at=world.now - timedelta(hours=hours_ago), **({"status": "expired"} | kw))
+        db.commit()
+        return row.id
+
+
+def _decided(world, suggestion_id):
+    return world.one(AgentSuggestion, id=suggestion_id).decided_within_24h
+
+
+def _fill(world):
+    return flows.fill_decided_within_24h(world.now, session_factory=world.factory)
+
+
+def test_decided_within_24h_per_diagnosis(world):
+    """제안 30시간 전, 확정은 제안 10시간 뒤(20시간 전). 유형마다 참 하나, 거짓 하나."""
+    map_id = world.map()
+    food, cafe, other = (world.pin(map_id, category=c) for c in ("음식점", "카페", "카페"))
+    unseen = world.pin(map_id, category="관광지")
+    world.confirm(map_id, food, hours_ago=20)
+    world.confirm(map_id, cafe, hours_ago=20)
+    cases = {
+        _suggest(world, map_id, "category_gap", category="카페"): True,
+        _suggest(world, map_id, "category_gap", category="관광지"): False,
+        _suggest(world, map_id, "stall", category="음식점"): True,
+        _suggest(world, map_id, "stall", category="관광지"): False,
+        _suggest(world, map_id, "split", category="카페", pin_id=cafe): True,
+        _suggest(world, map_id, "split", category="카페", pin_id=other): False,
+        _suggest(world, map_id, "no_reaction", pin_ids=(unseen, food)): True,
+        _suggest(world, map_id, "no_reaction", pin_ids=(unseen, other)): False,
+    }
+
+    assert _fill(world) == len(cases)
+    assert {sid: _decided(world, sid) for sid in cases} == cases
+
+
+def test_decided_within_24h_boundary(world):
+    """제안 50시간 전. 24시간 정각 확정은 참, 24시간 1초 뒤 확정은 거짓."""
+    map_id = world.map()
+    on_time, late = world.pin(map_id), world.pin(map_id)
+    world.confirm(map_id, on_time, hours_ago=26)
+    world.confirm(map_id, late, hours_ago=26 - 1 / 3600)
+    exact = _suggest(world, map_id, "split", hours_ago=50, pin_id=on_time)
+    over = _suggest(world, map_id, "split", hours_ago=50, pin_id=late)
+
+    _fill(world)
+
+    assert (_decided(world, exact), _decided(world, over)) == (True, False)
+
+
+def test_decided_within_24h_waits_until_24_hours_pass(world):
+    map_id = world.map()
+    young = _suggest(world, map_id, "category_gap", hours_ago=23, category="카페")
+
+    assert _fill(world) == 0
+    assert _decided(world, young) is None
+
+
+def test_decided_within_24h_keeps_filled_rows(world):
+    """한 번 채운 행은 다시 보지 않는다 — 지금 판정하면 참이어도 이미 쓴 거짓이 남는다."""
+    map_id = world.map()
+    pin = world.pin(map_id, category="카페")
+    world.confirm(map_id, pin, hours_ago=20)
+    done = _suggest(world, map_id, "category_gap", category="카페", decided_within_24h=False)
+
+    assert _fill(world) == 0
+    assert _decided(world, done) is False
+
+
+def test_decided_within_24h_fills_shadow_and_any_status(world):
+    map_id = world.map()
+    pin = world.pin(map_id, category="카페")
+    world.confirm(map_id, pin, hours_ago=20)
+    shadow = _suggest(world, map_id, "category_gap", category="카페", shadow=True)
+    dismissed = _suggest(world, map_id, "category_gap", category="카페", status="dismissed")
+    active = _suggest(world, map_id, "category_gap", category="음식점", status="active")
+
+    assert _fill(world) == 3
+    assert [_decided(world, s) for s in (shadow, dismissed, active)] == [True, True, False]
+
+
+def test_decided_within_24h_counts_confirmed_pin_deleted_later(world):
+    """확정 항목이 남은 채 삭제된 핀도 센다(핀을 가리키는 유형). 보통은 핀을 지울 때 확정 항목도 빠진다(#235)."""
+    map_id = world.map()
+    gone = world.pin(map_id, category="카페")
+    world.confirm(map_id, gone, hours_ago=20)
+    world.delete_pin(gone)
+    split = _suggest(world, map_id, "split", category="카페", pin_id=gone)
+    unseen = _suggest(world, map_id, "no_reaction", pin_ids=(gone,))
+
+    _fill(world)
+
+    assert (_decided(world, split), _decided(world, unseen)) == (True, True)
+
+
+def test_decided_within_24h_skips_deleted_map(world):
+    map_id = world.map()
+    pin = world.pin(map_id, category="카페")
+    world.confirm(map_id, pin, hours_ago=20)
+    sug = _suggest(world, map_id, "category_gap", category="카페")
+    world.delete_map(map_id)
+
+    assert _fill(world) == 0
+    assert _decided(world, sug) is None
+
+
+def test_decided_within_24h_reads_other_modules_once_per_map(world, monkeypatch):
+    calls = []
+
+    def counted(name, fn):
+        def wrapper(db, *args, **kw):
+            calls.append((name, kw.get("map_id", args[0] if args else None)))
+            return fn(db, *args, **kw)
+        return wrapper
+
+    monkeypatch.setattr(maps_api, "get_map_for_agent", counted("map", maps_api.get_map_for_agent))
+    monkeypatch.setattr(flows.shortlist_api, "list_items_for_agent",
+                        counted("shortlist", flows.shortlist_api.list_items_for_agent))
+    monkeypatch.setattr(flows.pins_api, "list_reaction_matrix", counted("pins", flows.pins_api.list_reaction_matrix))
+    first, second = world.map(), world.map()
+    for _ in range(3):
+        _suggest(world, first, "category_gap", category="카페")
+    _suggest(world, second, "split", pin_id=world.pin(second))   # 카테고리 유형이 없으면 핀은 읽지 않는다
+
+    assert _fill(world) == 4
+    assert sorted(calls) == sorted([("map", first), ("shortlist", first), ("pins", first),
+                                    ("map", second), ("shortlist", second)])
+
+
+def test_daily_cleanup_fills_decided_within_24h(world):
+    map_id = world.map()
+    pin = world.pin(map_id, category="카페")
+    world.confirm(map_id, pin, hours_ago=20)
+    sug = _suggest(world, map_id, "category_gap", category="카페")
+
+    assert flows.daily_cleanup_if_due(world.now, session_factory=world.factory) is True
+    assert _decided(world, sug) is True

@@ -28,12 +28,15 @@ export function OnboardingHeader({ kind, mapTitle }: { kind: OnboardingKind; map
       ? `${mapTitle}${josa(mapTitle, '을', '를')} 만들었어요`
       : `${mapTitle}에 참여했어요`
   return (
-    <div className="flex items-center gap-3 rounded-2xl bg-[var(--pingo-bg)] p-3">
-      <Pingo />
-      <div className="min-w-0">
+    // 안내·참여 요청 자리 — 핑고가 카드 윗변에 손을 걸치고 고개를 내민다(시안 「BOTTOM NAVIGATION」).
+    <div className="pt-10">
+      <div className="relative rounded-xl bg-[var(--pingo-bg)] p-3">
+        <span className="absolute -top-10 left-3">
+          <Pingo size={64} peek />
+        </span>
         <p className="text-xs font-semibold text-[var(--pingo-text)]">핑고</p>
-        <h2 className="truncate text-lg font-bold text-ink-900">{title}</h2>
-        <p className="text-xs text-ink-500">{kind === 'owner' ? '이렇게 시작해 보세요' : '이렇게 함께해요'}</p>
+        <h2 className="truncate text-title font-bold text-ink-900">{title}</h2>
+        <p className="text-xs text-ink-600">{kind === 'owner' ? '이렇게 시작해 보세요' : '이렇게 함께해요'}</p>
       </div>
     </div>
   )
@@ -55,7 +58,7 @@ export function OnboardingBody({ mapId, kind, onDone }: { mapId: string; kind: O
       {kind === 'owner' ? (
         <OwnerActions mapId={mapId} onDone={onDone} />
       ) : (
-        <button type="button" onClick={onDone} className="btn-primary mt-6 w-full py-3.5">
+        <button type="button" onClick={onDone} className="btn-primary btn-lg mt-6 w-full">
           알겠어요
         </button>
       )}
@@ -75,11 +78,11 @@ function OwnerActions({ mapId, onDone }: { mapId: string; onDone: () => void }) 
         type="button"
         onClick={() => void share()}
         disabled={!url}
-        className="btn-primary w-full py-3.5"
+        className="btn-primary btn-lg w-full"
       >
         {url ? '친구 초대하기' : '초대 링크를 만드는 중…'}
       </button>
-      <button type="button" onClick={onDone} className="w-full py-3 text-sm font-semibold text-ink-600">
+      <button type="button" onClick={onDone} className="btn-text btn-md w-full">
         나중에 할게요
       </button>
     </div>

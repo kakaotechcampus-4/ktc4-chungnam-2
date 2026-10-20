@@ -164,7 +164,7 @@ def test_structure_reasons_uses_planner_for_text_and_chip_table_for_chips(world,
     assert result["reasons"] == [
         {"reaction_id": split_map["against"], "type": "against", "lines": [
             {"fact_key": "parking_available", "wants": True, "badge": "required"},   # 글 → ②
-            {"fact_key": "spacious", "wants": True, "badge": "required"},            # 칩 → 칩 표 그대로
+            {"fact_key": "spacious", "wants": True, "badge": "preferred"},           # 칩 → 칩 표, 원함 칩은 preferred(#617)
         ]},
         {"reaction_id": split_map["like"], "type": "like", "lines": [
             {"fact_key": None, "wants": None, "badge": "preferred"}]},
