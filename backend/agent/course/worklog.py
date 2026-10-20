@@ -63,7 +63,7 @@ def render(
         elif tool == "finish" and step.result.ok:
             reviewing = False
             note = step.result.data.get("note")
-            out.append(_line("끝", step.by if step.by != "baseline" else CODE,
+            out.append(_line("끝", MODEL if step.by == "model" else CODE,
                              f"후보 {step.result.data['candidate_id']}로 끝내요" + (f" — {note}" if note else "")))
     met = [r.goal.id for r in result.goal_results if r.met is True]
     out.append(_line("결과", CODE, f"지킨 목표: {_kept_text(by_id, trip, met)} · 확정 위반 "
