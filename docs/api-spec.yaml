@@ -43,6 +43,8 @@ paths:
         로그인 CSRF를 막으려고 서버가 `state`를 만들어 서명한 httpOnly 쿠키(`kakao_oauth_state`, 경로 `/auth/kakao`, 10분)에 넣고
         같은 값을 붙여 카카오 인가 URL로 보낸다. 콜백이 그 쿠키와 `state`를 대조한다. 프론트는 카카오 인가 URL을 직접 만들지 않는다 —
         `${VITE_API_BASE_URL}/auth/kakao/login`으로 `window.location`을 옮기기만 한다(client_id·redirect_uri를 프론트가 알 필요가 없다).
+        **게스트가 카카오로 전환할 때(#560, 2026-10-20)**: 게스트 세션 쿠키가 붙은 채로 이 주소로 이동하면 서버가 그 게스트 계정을 서명한 state 쿠키에 함께 담는다
+        (프론트가 따로 할 일은 없다 — 게스트 화면의 「카카오로 계정 만들기」 버튼이 같은 주소로 이동하기만 하면 된다). 콜백이 카카오 로그인에 성공하면 **게스트 계정의 기록을 그 카카오 계정으로 합친다**(`docs/data-model.md`「게스트 합치기」).
       security: []  # 로그인 전 경로
       responses:
         "302": { description: "카카오 인가 화면(`https://kauth.kakao.com/oauth/authorize?...&state=...`)으로 리다이렉트. `Set-Cookie: kakao_oauth_state`" }
@@ -73,6 +75,7 @@ paths:
           description: |
             **성공이든 실패든 항상 302다** — 이 경로는 fetch가 아니라 브라우저 이동이라 JSON을 돌려주면 사용자가 그대로 본다(2026-10-04).
             성공: 진입점(`FRONTEND_LOGIN_REDIRECT_URL`)으로, 세션 쿠키와 함께.
+            **게스트 전환이었으면(#560)** 같은 주소에 쿼리 `guest_merged=true`(기록을 합쳤다) 또는 `guest_merged=false`(합치지 못했다 — 카카오 로그인은 성공했고 게스트 기록은 그대로 남아 있다. 사용자에게 알리고, 게스트 쿠키는 이미 카카오 세션으로 바뀌었으니 다시 합치지 않는다)를 붙인다. 게스트가 아닌 로그인에는 붙이지 않는다.
             실패: 같은 주소에 쿼리 `?login_error=<값>`을 붙여 돌려보내고 세션 쿠키는 만들지 않는다. state 쿠키는 성공·실패 모두 지운다.
             `login_error` 값: `cancelled`(사용자가 카카오 화면에서 취소), `invalid_state`(state 쿠키와 다르거나 없음 — 처음부터 다시), `kakao_failed`(카카오 토큰 교환·프로필 조회 실패), `server_error`(그 밖의 실패).
 

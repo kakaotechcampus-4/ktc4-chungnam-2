@@ -12,6 +12,12 @@ export const authHandlers = [
   }),
 
   http.get("*/auth/kakao/callback", () => {
+    // #560 게스트가 카카오로 전환하면 기록을 합치고 guest_merged=true로 돌려보낸다(목 서버는 내 계정이 게스트가 아니게 된다)
+    const me = store.users[ME_USER_ID];
+    if (me?.is_guest) {
+      me.is_guest = false;
+      return new HttpResponse(null, { status: 302, headers: { Location: "/?guest_merged=true" } });
+    }
     return new HttpResponse(null, { status: 302, headers: { Location: "/" } });
   }),
 
