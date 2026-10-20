@@ -1,6 +1,6 @@
 """평가 지도 하나를 진짜 모델로 돌려 과정을 보기 좋게 찍는다(시연용). 장소 이름은 화면에만 나오고 파일에 남기지 않는다.
 
-    cd backend && .venv/bin/python -m agent.course.eval.demo <지도 번호> [--no-model]
+    cd backend && .venv/bin/python -m agent.course.eval.demo <지도 번호> [--no-model] [--request "문장" | --requests 파일]
 
 지도 번호는 `eval/data/maps/map_NN.json`의 NN(짝수는 월요일 시작 — 월요일 휴관 관광지가 걸린다).
 모델 설정(ELICE_ML_API_*)은 backend/.env에서 읽는다. --no-model이면 코드 기준선으로만 돈다(0원).
@@ -117,13 +117,69 @@ def run(map_no: int, data: Path, use_model: bool, out=print) -> None:
     out(f"걸린 시간 {elapsed:.1f}초 · 모델 턴 {result.model_turns} · 기준선 턴 {result.baseline_turns}{tail}")
 
 
+def run_direct_demo(
+    map_no: int, data: Path, use_model: bool, request: Optional[str] = None, requests_file: Optional[Path] = None, out=print,
+) -> None:
+    """요청 한 줄 → 목표 세우기 → 지휘 루프(optimize·질문·끝)를 돌리고 작업 기록(8.3 표 모양)을 찍는다.
+    요청은 --request 문장이 먼저이고, 없으면 --requests 파일의 이 지도 문장이다. 모델 없이(--no-model)는 목표 세우기가 스텁이라
+    --requests 파일의 정답 목표를 대신 넣는다(그 줄에 "정답 주입(스텁)"으로 밝힌다) — 문장을 직접 줬으면 스텁은 목표를 만들지 않는다."""
+    from agent.course import direct, goals as goals_mod, worklog
+    from agent.course.constants import REQUEST_TEXT_MAX_CHARS
+    from agent.course.deps import DirectDecider, GoalSetter, ModelTurnFailed
+    from agent.course.eval.compare import gold_goals
+
+    m = json.loads((data / "maps" / f"map_{map_no:02d}.json").read_text(encoding="utf-8"))
+    sc = scenario_from_map(m)
+    req = None
+    if requests_file is not None:
+        req = next((r for r in json.loads(requests_file.read_text(encoding="utf-8")) if r["map_id"] == m["id"]), None)
+    text = (request or (req["request_text"] if req else "")).strip()[:REQUEST_TEXT_MAX_CHARS]
+    if not text:
+        raise SystemExit("요청 문장이 없다: --request 문장 또는 --requests 파일(이 지도의 줄)을 준다")
+
+    out(LINE)
+    out(f"지도 {m['id']} — {len(m['days'])}일, 장소 {len(m['places'])}곳")
+    out(f"요청: {text}")
+    out(LINE)
+    started = time.monotonic()
+    setter = decider = None
+    understood_by, unmatched = "모델", ()
+    if use_model:
+        from llm.api import real_course_direct_planner, real_course_goals_planner
+        setter, decider = GoalSetter(real_course_goals_planner), DirectDecider(real_course_direct_planner)
+        try:
+            verified = goals_mod.verify_goal_set(sc.trip, text, setter(goals_mod.goals_input(sc.trip, text)))
+            goals, unmatched = verified.goals, verified.unmatched
+        except ModelTurnFailed:
+            goals, unmatched, understood_by = (), (text,), "코드(목표 세우기 실패)"
+    elif req is not None and not request:
+        goals, unmatched, understood_by = gold_goals(sc, req), tuple(req["gold_unmatched"]), "정답 주입(스텁)"
+    else:
+        goals, unmatched, understood_by = (), (text,), "스텁"
+    draft = core.draft_course(sc.trip)
+    state = initial_state(sc.trip, sc.start_hours, draft, goals)
+    result = direct.run_direct(state, decide=decider, hours=sc.gateway, unmatched_count=len(unmatched))
+    out("\n".join(worklog.render(sc.trip, goals, unmatched, result, understood_by=understood_by)))
+    out(LINE)
+    out("▶ 최종 코스 (진짜 영업시간 기준 표시)")
+    out("\n".join(format_course(sc, result.course, sc.truth)))
+    elapsed = time.monotonic() - started
+    tail = f" · 모델 호출 {setter.calls + decider.calls} · 토큰 입력 {setter.tokens[0] + decider.tokens[0]:,} / 출력 {setter.tokens[1] + decider.tokens[1]:,}" if setter else ""
+    out(f"걸린 시간 {elapsed:.1f}초 · 지휘 모델 턴 {result.model_turns} · 질문 {len(result.questions)}{tail}")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("map_no", type=int)
     ap.add_argument("--data", type=Path, default=Path(__file__).parent / "data")
     ap.add_argument("--no-model", action="store_true")
+    ap.add_argument("--request", default=None, help="요청 한 줄을 직접 넣는다(지휘 루프 시연)")
+    ap.add_argument("--requests", type=Path, default=None, help="요청 문장 세트 파일 — 이 지도의 문장을 쓴다(지휘 루프 시연)")
     args = ap.parse_args(argv)
-    run(args.map_no, args.data, not args.no_model)
+    if args.request or args.requests:
+        run_direct_demo(args.map_no, args.data, not args.no_model, args.request, args.requests)
+    else:
+        run(args.map_no, args.data, not args.no_model)
 
 
 if __name__ == "__main__":

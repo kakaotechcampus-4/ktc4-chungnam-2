@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal, Optional, Sequence
 
@@ -111,17 +112,18 @@ def ordered(goals: Sequence[Goal], priority: Sequence[str] = ()) -> tuple[Goal, 
     return tuple(sorted(goals, key=lambda g: rank.get(g.id, len(rank))))      # sorted는 안정 정렬
 
 
-def key_part(trip: Trip, course: Course, goals: Sequence[Goal], priority: Sequence[str] = ()) -> tuple:
+def key_part(
+    trip: Trip, course: Course, goals: Sequence[Goal], priority: Sequence[str] = (), strict: bool = False,
+) -> tuple:
     """강한 기준선의 사전식 비교에 끼우는 부분: (충족하지 못한 목표 수, 우선순위순 미충족 표시, 우선순위순 간격).
+    strict=True면 수를 맨 뒤로 보내 (우선순위순 미충족 표시, 간격, 수) — 맨 앞 목표를 다른 목표보다 먼저 지키는 "집중" 후보를 만든다.
     판단할 수 없는 목표(met=None)는 못 이룬 것(간격 1)으로 센다 — 안 그러면 라벨 모르는 장소를 끌어들여 목표를 "판단 불가"로 만들어
     점수를 피하는 수가 이득이 된다. 목표가 없으면 빈 값이라 기존 비교와 같다."""
     results = [(r.met is True, 1.0 if r.met is None else r.gap)
                for r in evaluate_all(trip, course, ordered(goals, priority))]
-    return (
-        sum(not met for met, _ in results),
-        tuple(not met for met, _ in results),
-        tuple(round(gap, 4) for _, gap in results),
-    )
+    unmet = sum(not met for met, _ in results)
+    flags, gaps = tuple(not met for met, _ in results), tuple(round(gap, 4) for _, gap in results)
+    return (flags, gaps, unmet) if strict else (unmet, flags, gaps)
 
 
 def met_count(trip: Trip, course: Course, goals: Sequence[Goal]) -> tuple[int, int]:
@@ -198,3 +200,100 @@ def label(trip: Trip, goal: Goal) -> str:
         "place_on_day": f"{names[0] if names else ''}을(를) {day}에" if goal.kind == "place_on_day" else "",
         "together": f"{' · '.join(names)} 같은 날" if goal.kind == "together" else "",
     }[goal.kind]
+
+
+# ---- 데이터 확인 (check_goals, pivot 8.2절) ----
+# 코스를 짜기 전에 코드가 "이 리스트로 이 목표가 가능한가"를 확인한다. 라벨을 모르는 장소(labels 비어 있음)는 "라벨을 아는 장소 수"에서 뺀다.
+
+NO_NIGHT_PLACE = "NO_NIGHT_PLACE"
+NIGHT_PLACE_CLOSED_ON_DAY = "NIGHT_PLACE_CLOSED_ON_DAY"
+FEW_INDOOR = "FEW_INDOOR"
+PLACE_CLOSED_ON_DAY = "PLACE_CLOSED_ON_DAY"
+NO_COMMON_OPEN_DAY = "NO_COMMON_OPEN_DAY"
+LABELS_UNKNOWN = "LABELS_UNKNOWN"
+
+_CHECK_SENTENCES = {
+    NO_NIGHT_PLACE: "야경 명소가 이 리스트에 없어요",
+    NIGHT_PLACE_CLOSED_ON_DAY: "야경 명소가 그날 모두 쉬어요",
+    FEW_INDOOR: "실내 장소가 적어서 그날을 실내 위주로 채우기 어려워요",
+    PLACE_CLOSED_ON_DAY: "그 장소가 그날 쉬어요",
+    NO_COMMON_OPEN_DAY: "두 장소가 함께 영업하는 날이 없어요",
+    LABELS_UNKNOWN: "라벨을 아는 장소가 없어 판단할 수 없어요",
+}
+
+
+def _closed_days(trip: Trip, hours, place: str) -> list[str]:
+    return [core.day_alias(i) for i, d in enumerate(trip.days) if core.status_on(hours, place, d) == "closed"]
+
+
+def check_goal(trip: Trip, hours, goal: Goal) -> dict:
+    """{"id", "feasible": True/False/None, "reasons": [코드], "facts": {...}}. None은 데이터로 알 수 없다는 뜻이다."""
+    facts: dict = {}
+    reasons: list[str] = []
+    feasible: Optional[bool] = True
+    labeled = [p.alias for p in trip.places if p.labels]
+    if goal.kind == "night_end":
+        night = [p.alias for p in trip.places if NIGHT_LABEL in p.labels]
+        facts = {"night_places": len(night), "labeled_places": len(labeled),
+                 "night_closed_days": {p: _closed_days(trip, hours, p) for p in night if _closed_days(trip, hours, p)}}
+        if not labeled:
+            feasible, reasons = None, [LABELS_UNKNOWN]
+        elif not night:
+            feasible, reasons = False, [NO_NIGHT_PLACE]
+        elif all(goal.day in _closed_days(trip, hours, p) for p in night):
+            feasible, reasons = False, [NIGHT_PLACE_CLOSED_ON_DAY]
+    elif goal.kind == "day_indoor":
+        indoor = [p.alias for p in trip.places if INDOOR_LABEL in p.labels]
+        per_day = -(-len(trip.places) // len(trip.days))
+        need = math.ceil(INDOOR_MET_RATIO * per_day - 1e-9)                 # 하루 평균 장소 수의 70%를 올림
+        facts = {"indoor_places": len(indoor), "labeled_places": len(labeled), "needed": need,
+                 "indoor_closed_on_day": [p for p in indoor if goal.day in _closed_days(trip, hours, p)]}
+        if not labeled:
+            feasible, reasons = None, [LABELS_UNKNOWN]
+        elif len(indoor) - len(facts["indoor_closed_on_day"]) < need:
+            feasible, reasons = False, [FEW_INDOOR]
+    elif goal.kind == "place_on_day":
+        closed = goal.day in _closed_days(trip, hours, goal.places[0])
+        status = core.status_on(hours, goal.places[0], trip.days[core.day_index(trip, goal.day) or 0])
+        facts = {"place_closed_days": _closed_days(trip, hours, goal.places[0]), "status_on_day": status}
+        if closed:
+            feasible, reasons = False, [PLACE_CLOSED_ON_DAY]
+        elif status == "unknown":
+            feasible = None
+    elif goal.kind == "together":
+        a, b = goal.places
+        open_both = [core.day_alias(i) for i, d in enumerate(trip.days)
+                     if core.status_on(hours, a, d) != "closed" and core.status_on(hours, b, d) != "closed"]
+        facts = {"common_open_days": open_both}
+        if not open_both:
+            feasible, reasons = False, [NO_COMMON_OPEN_DAY]
+    else:                                                                # daily_walk_low, day_light: 데이터로 막히는 일이 없다
+        feasible = True
+    return {"id": goal.id, "feasible": feasible, "reasons": reasons, "facts": facts}
+
+
+def check_goals(trip: Trip, hours, goals: Sequence[Goal]) -> tuple[dict, ...]:
+    return tuple(check_goal(trip, hours, g) for g in goals)
+
+
+def check_sentence(trip: Trip, check: dict, goal: Goal) -> str:
+    """작업 기록의 "확인: …" 한 줄(코드 템플릿)."""
+    head = label(trip, goal)
+    if check["feasible"] is True:
+        return f"{head}: 가능해 보여요"
+    why = " · ".join(_CHECK_SENTENCES[r] for r in check["reasons"]) or "영업 여부를 몰라 확인이 필요해요"
+    return f"{head}: {why}"
+
+
+def short_label(trip: Trip, goal: Goal, met: Optional[bool]) -> str:
+    """질문 카드에서 후보마다 붙는 짧은 문구."""
+    names = [trip.place(p).name for p in goal.places]
+    yes, no = {
+        "night_end": ("야경 지킴", "야경 없음"),
+        "day_indoor": ("실내 위주", "실내 아님"),
+        "day_light": ("여유 있게", "빽빽함"),
+        "place_on_day": (f"{names[0] if names else ''} 방문", f"{names[0] if names else ''} 못 감"),
+        "together": ("같은 날", "다른 날"),
+        "daily_walk_low": ("덜 걸음", "많이 걸음"),
+    }[goal.kind]
+    return yes if met else no

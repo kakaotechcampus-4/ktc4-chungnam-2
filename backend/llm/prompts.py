@@ -547,7 +547,7 @@ COURSE_GOALS_PROMPT = f"""너는 여행 코스 요청 한 줄을 정해진 목�
 """.replace("{goals_max}", "4")
 
 # ---- 지휘 턴 (#334, pivot 3.2·3.4절) ----
-COURSE_DIRECT_PROMPT_VERSION = "course-direct-v2"   # v2: optimize를 두 번 넘게 불러도 목표가 다 안 지켜지면 finish 전에 묻는다(2026-10-20)
+COURSE_DIRECT_PROMPT_VERSION = "course-direct-v3"   # v2: 묻기 규칙 · v3: goal_checks(데이터 확인), 갈리는 후보(focus·kept·gave_up), 질문은 코드가 연다(2026-10-20)
 
 COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 짜는 에이전트 핑고다. 코스 계산은 코드의 optimize 도구가 한다. 너는 요청 목표를 보고
 도구를 부려 후보를 얻고, 결과를 점검하고, 필요하면 다시 계획하고, 사람에게 묻고, 마지막 후보를 고른다. 장소를 직접 옮기지 않는다.
@@ -555,8 +555,13 @@ COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 �
 ## 입력 (매 턴 새로 온다)
 - goals: 요청 목표. id(예: night_end:d1, daily_walk_low), kind, day, places.
 - unmatched_count: 목표로 못 바꾼 요청 조각 수.
+- goal_checks: 코드가 코스를 짜기 전에 확인한 결과. 목표마다 feasible(true/false/null)과 reasons(NO_NIGHT_PLACE 야경 장소 없음,
+  NIGHT_PLACE_CLOSED_ON_DAY 야경 장소가 그날 모두 쉼, FEW_INDOOR 실내 장소 부족, PLACE_CLOSED_ON_DAY 그 장소가 그날 쉼,
+  NO_COMMON_OPEN_DAY 함께 여는 날 없음, LABELS_UNKNOWN 라벨을 몰라 판단 불가), facts. feasible=false인 목표는 이 리스트로는 지킬 수 없다.
 - candidates: optimize가 돌려준 후보. candidate_id, hard({{confirmed, checks}}), goals(목표 id별 met true/false/null과 value), walk(day_max, total),
-  soft(기본 목표 점수). met이 null이면 라벨을 몰라 판단할 수 없다는 뜻이다. 아직 없으면 빈 목록이다.
+  soft(기본 목표 점수), focus(그 목표를 다른 목표보다 먼저 지킨 후보면 목표 id), kept(지킨 목표 id), gave_up(못 지킨 목표 id).
+  후보는 목표가 서로 갈리게 나온다(지키는 목표가 다른 후보끼리). met이 null이면 라벨을 몰라 판단할 수 없다는 뜻이다. 아직 없으면 빈 목록이다.
+- optimize_calls(지금까지 optimize를 부른 수), must_ask(null이 아니면 지금 요청자에게 물을 조건이 됐다는 뜻: kind와 보여줄 두 후보 candidates).
 - locks, asked(지금까지 한 질문 수), checks(영업 여부를 모르는 장소: place, day).
 - last_result: 직전 도구 결과(오류면 error와 message). budget.turns_left: 남은 턴.
 
@@ -574,11 +579,12 @@ COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 �
 3. 목표가 서로 부딪혀 후보마다 지키는 목표가 다르면: 요청 문장으로 더 중요한 쪽이 분명하면 그쪽을 앞에 두고 optimize를 다시 부르거나 그 후보를 고른다.
    분명하지 않으면 pick_course로 묻는다. 묻기 전에 같은 우선순위로 optimize를 다시 부르지 않는다.
 4. 모든 후보가 목표를 못 지켰으면 priority를 바꿔 한 번 더 부른다. 같은 결과가 반복되면 같은 호출을 되풀이하지 않는다.
-5. **묻고 끝낸다**: optimize를 두 번 넘게 불렀는데도 요청 목표가 다 지켜지지 않았고(met=true가 아닌 목표가 남음) 아직 묻지 않았다면,
-   finish 전에 ask_requester(pick_course)로 요청자에게 묻는다. options는 서로 다른 목표를 지키는 후보 둘이다
-   (예: 한 후보는 야경을 지키고 더 걷는다, 다른 후보는 덜 걷고 야경을 못 지킨다). 후보가 하나뿐이면 그 후보와 가장 다른 우선순위로
-   optimize를 한 번 더 불러 둘을 만든 뒤 묻는다. 질문은 답 없이 기본 선택지(첫 후보)로 이어 가니, 묻고 나면 바로 finish한다.
-   목표가 모두 지켜졌거나(met이 전부 true) 후보들이 부딪히지 않으면 묻지 않는다.
+5. **질문은 코드가 연다.** optimize를 두 번 이상 불렀고 요청 목표가 다 지켜지지 않았고 지키는 목표가 서로 다른 후보가 둘 이상이면 입력에
+   must_ask가 온다. 그때는 ask_requester(pick_course)로 must_ask.candidates의 두 후보를 options에 준다(문구는 코드가 만든다).
+   네가 finish를 골라도 코드가 질문을 대신 연다. 질문은 답 없이 기본 선택지(첫 후보)로 이어 가니, 물은 뒤에는 바로 finish한다.
+   must_ask가 null이면 묻지 않는다. 목표가 모두 지켜졌거나 후보가 부딪히지 않아도 묻지 않는다.
+   goal_checks에서 feasible=false인 목표는 optimize를 되풀이해도 지켜지지 않는다 — 그 목표 때문에 optimize를 더 부르지 않고,
+   생각(thought)에 지키지 못하는 이유를 한 문장으로 남기고 나머지 목표로 후보를 골라 끝낸다.
 6. 후보가 하나뿐이고 만족하면 바로 finish한다. 턴이 모자라면 finish한다.
 
 ## thought (화면에 그대로 보인다)

@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from agent.course import baseline, core, direct, goals as goals_mod, loop
+from agent.course import baseline, core, direct, goals as goals_mod, loop, worklog
 from agent.course.constants import REQUEST_TEXT_MAX_CHARS
 from agent.course.deps import ModelTurnFailed
 from agent.course.core import Course, MemberConstraint, Place, Trip
@@ -134,6 +134,7 @@ class RequestScore:
     tokens_in: int = 0
     tokens_out: int = 0
     failures: int = 0
+    worklog: tuple[str, ...] = ()       # 작업 기록(8.3 표 모양). 에이전트·정답 주입에만 있다
 
 
 def _goal_sig(g: goals_mod.Goal) -> tuple:
@@ -169,7 +170,9 @@ def run_request_variants(
                                  unmatched_count=unmatched)
 
     out["strong"] = request_score(sc, climb_with(()).course, gold)
-    out["strong_gold"] = request_score(sc, climb_with(gold).course, gold)
+    gold_run = climb_with(gold)
+    out["strong_gold"] = request_score(sc, gold_run.course, gold, worklog=tuple(worklog.render(
+        sc.trip, gold, req["gold_unmatched"], gold_run, understood_by="정답 주입")))
     if goal_setter is not None and decider is not None:
         started = clock()
         text = req["request_text"][:REQUEST_TEXT_MAX_CHARS]
@@ -183,6 +186,7 @@ def run_request_variants(
             sc, result.course, gold,
             goals_exact={_goal_sig(g) for g in verified.goals} == {_goal_sig(g) for g in gold},
             goals_trap_ok=(not verified.goals) if not gold else None,
+            worklog=tuple(worklog.render(sc.trip, verified.goals, verified.unmatched, result)),
             calls=goal_setter.calls + decider.calls, seconds=clock() - started,
             tokens_in=goal_setter.tokens[0] + decider.tokens[0], tokens_out=goal_setter.tokens[1] + decider.tokens[1],
             failures=len(goal_setter.failures) + len(decider.failures),
@@ -238,6 +242,14 @@ def _main_requests(args: argparse.Namespace) -> None:
             goal_setter, decider = GoalSetter(real_course_goals_planner), DirectDecider(real_course_direct_planner)
         results.append(run_request_variants(scenario_from_map(m), requests[m["id"]], goal_setter=goal_setter, decider=decider))
     print(format_table(aggregate_requests(results), len(maps)))
+    if args.detail:
+        for m, r in zip(maps, results):
+            req = requests[m["id"]]
+            print(f"\n{'=' * 60}\n{m['id']} ({req['kind']}) 요청: {req['request_text']}")
+            for variant in ("strong_gold", "agent"):
+                if variant in r and r[variant].worklog:
+                    print(f"-- {variant}")
+                    print("\n".join(r[variant].worklog))
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
@@ -247,6 +259,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     ap.add_argument("--max-maps", type=int, default=None)
     ap.add_argument("--requests", type=Path, default=None,
                     help="요청 문장 세트(requests.json). 주면 강한 기준선 / +정답 목표 / 에이전트(지휘)를 비교한다")
+    ap.add_argument("--detail", action="store_true", help="지도별 작업 기록(이해 → 확인 → 짜기 → … → 끝)도 찍는다. --requests에서만")
     ap.add_argument("--only", default=None, help="지도 id를 쉼표로(예: map_04,map_07). --requests에서만")
     ap.add_argument("--unknown-as-violation", action="store_true", help="휴무 모름을 위반으로 센다(기본은 「확인 필요」)")
     args = ap.parse_args(argv)

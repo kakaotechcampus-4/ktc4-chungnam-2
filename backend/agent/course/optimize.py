@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Mapping, Optional, Sequence
 
-from agent.course import baseline, core, tools
+from agent.course import baseline, core, goals as goals_mod, tools
 from agent.course.constants import CANDIDATES_MAX, CLIMB_MAX_STEPS, TOOL_LIMITS
 from agent.course.goals import Goal
 from agent.course.ports import OpeningHoursGateway
@@ -24,6 +24,7 @@ class Candidate:
     course: core.Course
     violations: tuple[core.Violation, ...]
     priority: tuple[str, ...]              # 이 후보를 만든 목표 순서
+    focus: Optional[str] = None            # 이 목표를 다른 목표보다 먼저 지킨 "집중" 후보(None이면 목표 수를 최대로 지킨 후보)
 
 
 def look_up_unknowns(state: State, gateway: OpeningHoursGateway) -> State:
@@ -65,33 +66,44 @@ def climb(state: State) -> State:
     return state
 
 
-def priority_orders(goals: Sequence[Goal], priority: Sequence[str]) -> list[tuple[str, ...]]:
-    """우선순위를 조금씩 달린 순서 최대 CANDIDATES_MAX개: 그대로, 뒤집기, 한 칸 돌리기. 목표가 하나면 하나뿐이다."""
+def base_order(goals: Sequence[Goal], priority: Sequence[str]) -> tuple[str, ...]:
     ids = [g.id for g in goals]
-    base = [i for i in priority if i in ids] + [i for i in ids if i not in priority]
-    orders = [tuple(base), tuple(reversed(base)), tuple(base[1:] + base[:1])]
-    out: list[tuple[str, ...]] = []
-    for o in orders:
-        if o not in out:
-            out.append(o)
-    return out[:CANDIDATES_MAX]
+    return tuple([i for i in priority if i in ids] + [i for i in ids if i not in priority])
+
+
+def focus_order(base: Sequence[str], goal_id: str) -> tuple[str, ...]:
+    """그 목표를 맨 앞에 두고 나머지는 원래 순서."""
+    return (goal_id, *[i for i in base if i != goal_id])
+
+
+def met_vector(state: State, course: core.Course) -> tuple:
+    return tuple(r.met for r in goals_mod.evaluate_all(state.trip, course, state.goals))
 
 
 def optimize(
     state: State, *, priority: Sequence[str] = (), locks: Optional[Mapping[str, str]] = None,
     gateway: OpeningHoursGateway,
 ) -> tuple[State, tuple[Candidate, ...]]:
-    """(조회와 고정을 반영한 상태, 후보 1~3개). 같은 코스는 합치고, 시작보다 확정 위반이 늘어난 코스는 내지 않는다.
+    """(조회와 고정을 반영한 상태, 후보 1~3개). 후보는 목표가 서로 갈리게 만든다: 우선순위대로 목표 수를 최대로 지키는 후보 하나와,
+    목표 하나를 맨 앞에 두고 다른 목표보다 먼저 지키는 "집중" 후보(우선순위 앞쪽 목표 순서로 최대 CANDIDATES_MAX-1개).
+    목표별 met 벡터가 같은 후보는 합치고(먼저 만든 쪽을 남김), 시작보다 확정 위반이 늘어난 코스는 내지 않는다.
     상태의 course는 시작 코스 그대로다(후보를 고르는 것은 지휘 쪽) — 단 조회·고정 반영은 상태에 남는다."""
     start = apply_locks(look_up_unknowns(state, gateway), locks or {})
     ceiling = core.hard_score(start.violations)[0]
+    base = base_order(start.goals, priority)
+    runs: list[tuple[tuple[str, ...], bool, Optional[str]]] = [(base, False, None)]
+    if len(start.goals) >= 2:
+        runs += [(focus_order(base, gid), True, gid) for gid in base[: CANDIDATES_MAX - 1]]
     out: list[Candidate] = []
-    for order in priority_orders(start.goals, priority):
-        done = climb(replace(start, priority=order))
-        if core.hard_score(done.violations)[0] > ceiling or any(c.course == done.course for c in out):
+    seen: set[tuple] = set()
+    for order, strict, focus in runs:
+        done = climb(replace(start, priority=order, strict_priority=strict))
+        vector = met_vector(start, done.course)
+        if core.hard_score(done.violations)[0] > ceiling or vector in seen:
             continue
-        out.append(Candidate(f"c{len(out) + 1}", done.course, done.violations, order))
-    if not out:                                   # 목표가 없거나 후보가 모두 걸러진 경우 — 시작 코스에서 한 번 올라간다
+        seen.add(vector)
+        out.append(Candidate(f"c{len(out) + 1}", done.course, done.violations, order, focus))
+    if not out:                                   # 후보가 모두 걸러진 경우 — 시작 코스에서 한 번 올라간다
         done = climb(start)
         out.append(Candidate("c1", done.course, done.violations, ()))
-    return replace(start, priority=tuple(priority)), tuple(out)
+    return replace(start, priority=tuple(priority), strict_priority=False), tuple(out)

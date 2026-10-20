@@ -98,7 +98,7 @@ def _soft_key(trip, course) -> tuple[float, ...]:
 
 def strong_key(state: State, course: core.Course, violations) -> tuple:
     # 확정 위반 → 확인 필요 → 요청 목표(충족 수, 우선순위순) → 기본 목표. 요청 목표가 없으면 이 자리는 빈 값이다
-    return (*core.hard_score(violations), goals_mod.key_part(state.trip, course, state.goals, state.priority),
+    return (*core.hard_score(violations), goals_mod.key_part(state.trip, course, state.goals, state.priority, state.strict_priority),
             _soft_key(state.trip, course))
 
 

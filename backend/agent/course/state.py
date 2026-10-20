@@ -46,6 +46,7 @@ class State:
     open_days_asked: frozenset[str] = frozenset()              # find_open_days를 이미 부른 장소(같은 답이라 되풀이를 거절한다)
     goals: tuple[Goal, ...] = ()                               # 요청 목표(명세 8.2). 강한 기준선의 비교에 들어간다
     priority: tuple[str, ...] = ()                             # 목표 id 순서(앞이 더 중요). 비면 goals 순서
+    strict_priority: bool = False                              # True면 맨 앞 목표를 목표 수보다 먼저 본다(집중 후보)
     plan: tuple[str, ...] = ()
     lessons: tuple[str, ...] = ()
 

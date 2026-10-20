@@ -42,7 +42,7 @@ class Question:
 @dataclass(frozen=True)
 class DirectStep:
     turn: int
-    by: str                                # model | baseline
+    by: str                                # model | baseline(코드 규칙 대행) | code(코드가 연 단계)
     thought: Optional[str]
     thought_problem: Optional[str]
     call: dict[str, Any]
@@ -55,7 +55,9 @@ class DirectState:
     state: State
     candidates: tuple[Candidate, ...] = ()
     questions: tuple[Question, ...] = ()
-    preferred: Optional[str] = None        # pick_course의 기본 선택지(모델이 끝내지 못했을 때 쓴다)
+    preferred: Optional[str] = None        # pick_course의 기본 선택지 — 답이 없으니 이 후보로 이어 간다
+    optimize_calls: int = 0
+    checks: tuple[dict, ...] = ()          # check_goals 결과(코드가 첫 단계에서 부른다)
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,7 @@ class DirectResult:
     questions: tuple[Question, ...]
     state: State
     model_turns: int
+    checks: tuple[dict, ...] = ()
 
 
 # ---- 입력과 요약 ----
@@ -86,7 +89,10 @@ def candidate_summary(state: State, c: Candidate) -> dict[str, Any]:
         "candidate_id": c.candidate_id,
         "priority": list(c.priority),
         "hard": core.hard_summary(trip, state.hours, c.course, c.violations),
+        "focus": c.focus,
         "goals": [{"id": r.goal.id, "met": r.met, "value": r.value} for r in goals_mod.evaluate_all(trip, c.course, state.goals)],
+        "kept": [r.goal.id for r in goals_mod.evaluate_all(trip, c.course, state.goals) if r.met is True],
+        "gave_up": [r.goal.id for r in goals_mod.evaluate_all(trip, c.course, state.goals) if r.met is not True],
         "walk": _walk(trip, c.course),
         "soft": core.soft_scores(trip, c.course),
     }
@@ -99,6 +105,9 @@ def direct_input(ds: DirectState, last: Optional[ToolResult], turn: int, unmatch
         "turn": turn,
         "goals": [{"id": g.id, "kind": g.kind, "day": g.day, "places": list(g.places)} for g in state.goals],
         "unmatched_count": unmatched_count,
+        "goal_checks": list(ds.checks),
+        "optimize_calls": ds.optimize_calls,
+        "must_ask": ({"kind": "pick_course", "candidates": list(pair)} if (pair := ask_trigger(ds)) else None),
         "candidates": [candidate_summary(state, c) for c in ds.candidates],
         "locks": [{"place": p, "day": d} for p, d in sorted(state.locks.items())],
         "asked": len(ds.questions),
@@ -116,6 +125,22 @@ def best_candidate(state: State, candidates: tuple[Candidate, ...], preferred: O
     return min(candidates, key=key)
 
 
+def ask_trigger(ds: DirectState) -> Optional[tuple[str, str]]:
+    """질문을 여는 조건(코드): optimize 2회 이상 + 요청 목표 미달 + 목표별 met가 서로 다른 후보 2개 이상. 맞으면 보여줄 두 후보 id.
+    첫 후보는 코드 규칙으로 가장 나은 후보(기본 선택지)이고, 둘째는 met 벡터가 그와 다른 첫 후보다. pick_course는 run당 한 번이다."""
+    if ds.optimize_calls < 2 or len(ds.candidates) < 2 or len(ds.questions) >= ASK_MAX:
+        return None
+    if any(q.kind == "pick_course" for q in ds.questions):
+        return None
+    state = ds.state
+    best = best_candidate(state, ds.candidates)
+    if all(r.met is True for r in goals_mod.evaluate_all(state.trip, best.course, state.goals)):
+        return None
+    vector = opt.met_vector(state, best.course)
+    other = next((c for c in ds.candidates if c is not best and opt.met_vector(state, c.course) != vector), None)
+    return (best.candidate_id, other.candidate_id) if other else None
+
+
 def execute(call, ds: DirectState, gateway: OpeningHoursGateway) -> tuple[DirectState, ToolResult]:
     state, tool = ds.state, call.tool
     if isinstance(call, CourseOptimize):
@@ -131,7 +156,7 @@ def execute(call, ds: DirectState, gateway: OpeningHoursGateway) -> tuple[Direct
                 return ds, _fail(tool, "LOCKED", f"{spec.place}는 {state.locks[spec.place]}에 고정돼 있다")
             locks[spec.place] = spec.day
         new_state, candidates = opt.optimize(state, priority=call.priority, locks=locks, gateway=gateway)
-        ds = replace(ds, state=new_state, candidates=candidates, preferred=None)
+        ds = replace(ds, state=new_state, candidates=candidates, preferred=None, optimize_calls=ds.optimize_calls + 1)
         return ds, ToolResult(tool, ok=True, data={"candidates": [candidate_summary(new_state, c) for c in candidates]})
 
     if isinstance(call, CourseLockCall):
@@ -154,6 +179,9 @@ def execute(call, ds: DirectState, gateway: OpeningHoursGateway) -> tuple[Direct
         least = min(core.hard_score(c.violations)[0] for c in ds.candidates)
         if core.hard_score(chosen.violations)[0] > least:
             return ds, _fail(tool, "WORSENS_HARD", "확정 위반이 더 적은 후보가 있다 — 그 후보를 고른다")
+        if ds.preferred is not None and chosen.candidate_id != ds.preferred:
+            # 질문에 답이 없어 기본 선택지로 이어 간다 — 모델이 다른 후보로 끝내려 해도 기본 선택지가 이긴다(요청자가 안 정한 것을 모델이 정하지 않는다)
+            return ds, ToolResult(tool, ok=True, data={"candidate_id": ds.preferred, "note": "질문에 답이 없어 기본 선택지로 끝냈다"})
         return ds, ToolResult(tool, ok=True, data={"candidate_id": chosen.candidate_id})
     raise TypeError(f"실행할 수 없는 도구 {type(call).__name__}")
 
@@ -168,13 +196,13 @@ def _ask(call: CourseAskRequester, ds: DirectState) -> tuple[DirectState, ToolRe
         if len(call.options) < 2 or any(o not in ids for o in call.options) or len(set(call.options)) != len(call.options):
             return ds, _fail(tool, "INVALID_MOVE", "pick_course는 지금 있는 후보 둘 이상을 options에 줘야 한다")
         lines = []
-        for cid in call.options:
-            summary = candidate_summary(state, next(c for c in ds.candidates if c.candidate_id == cid))
-            met = [r.goal for r in goals_mod.evaluate_all(state.trip, next(c for c in ds.candidates if c.candidate_id == cid).course, state.goals)
-                   if r.met]
-            lines.append(f"{cid}: " + (", ".join(goals_mod.label(state.trip, g) for g in met) or "지킨 목표 없음")
-                         + f" · 하루 최대 도보 {summary['walk']['day_max']}분")
-        question = Question(qid, call.kind, None, tuple(call.options), "둘 중 어떤 코스가 좋을까요? " + " / ".join(lines), call.options[0])
+        for letter, cid in zip("AB", call.options):
+            cand = next(c for c in ds.candidates if c.candidate_id == cid)
+            parts = [goals_mod.short_label(state.trip, r.goal, r.met is True)
+                     for r in goals_mod.evaluate_all(state.trip, cand.course, state.goals) if r.goal.kind != "daily_walk_low"]
+            parts.append(f"하루 최대 {_walk(state.trip, cand.course)['day_max']}분")
+            lines.append(f"{letter}: " + "·".join(parts))
+        question = Question(qid, call.kind, None, tuple(call.options), " / ".join(lines) + ". 어느 쪽?", call.options[0])
         ds = replace(ds, questions=(*ds.questions, question), preferred=question.default)
     else:
         checks = {v.places[0] for v in core.find_checks(state.trip, state.course, state.hours)}
@@ -191,6 +219,10 @@ def _ask(call: CourseAskRequester, ds: DirectState) -> tuple[DirectState, ToolRe
 
 # ---- 루프 ----
 
+def _ask_call(pair: tuple[str, str]) -> CourseAskRequester:
+    return CourseAskRequester(tool="ask_requester", kind="pick_course", subject=None, options=list(pair))
+
+
 def _fallback_call(ds: DirectState):
     state = ds.state
     if not ds.candidates:
@@ -204,6 +236,11 @@ def run_direct(
     ds = DirectState(state)
     steps: list[DirectStep] = []
     last: Optional[ToolResult] = None
+    if state.goals:                                              # 첫 단계: 코드가 데이터 확인을 자동으로 부르고 결과를 모델 입력에 넣는다
+        checks = goals_mod.check_goals(state.trip, state.hours, state.goals)
+        ds = replace(ds, checks=checks)
+        last = ToolResult("check_goals", ok=True, data={"checks": list(checks)})
+        steps.append(DirectStep(0, "code", None, None, {"tool": "check_goals"}, last))
     use_model = decide is not None and bool(state.goals)       # 목표가 없으면 모델을 부르지 않는다
     finished = False
 
@@ -220,6 +257,10 @@ def run_direct(
                 call = None
         if call is None:
             call = _fallback_call(ds)
+        pair = ask_trigger(ds) if isinstance(call, CourseDirectFinish) else None
+        if pair:                                                 # 끝내려는데 물을 조건이 되어 있다 — 코드가 질문을 대신 연다
+            substituted = {"call": call.model_dump(), "error": "QUESTION_OPENED_BY_CODE"}
+            call, by, thought, problem = _ask_call(pair), "code", None, None
         new_ds, result = execute(call, ds, hours)
         if by == "model" and not result.ok and result.error in UNUSABLE_ERRORS:
             substituted = {"call": call.model_dump(), "error": result.error}
@@ -239,12 +280,17 @@ def run_direct(
             break
 
     if not finished:                                            # 턴이 다 됐다 — 코드 규칙으로 고른다
+        pair = ask_trigger(ds)
+        if pair:
+            ds, result = execute(_ask_call(pair), ds, hours)
+            steps.append(DirectStep(len(steps), "code", None, None, _ask_call(pair).model_dump(), result,
+                                    {"call": {"tool": "finish"}, "error": "QUESTION_OPENED_BY_CODE"}))
         if not ds.candidates:
             ds, result = execute(_fallback_call(ds), ds, hours)
             steps.append(DirectStep(len(steps) + 1, "baseline", None, None,
                                     CourseOptimize(tool="optimize", priority=[], locks=[]).model_dump(), result))
     if finished:
-        chosen_id = steps[-1].call["candidate_id"]
+        chosen_id = steps[-1].result.data["candidate_id"]
         chosen = next(c for c in ds.candidates if c.candidate_id == chosen_id)
     else:
         chosen = best_candidate(ds.state, ds.candidates, ds.preferred)
@@ -254,5 +300,5 @@ def run_direct(
         chosen=chosen, course=chosen.course, violations=chosen.violations, soft=core.soft_scores(trip, chosen.course),
         goal_results=goals_mod.evaluate_all(trip, chosen.course, ds.state.goals), steps=tuple(steps),
         candidates=ds.candidates, questions=ds.questions, state=ds.state,
-        model_turns=sum(s.by == "model" for s in steps),
+        model_turns=sum(s.by == "model" for s in steps), checks=ds.checks,
     )

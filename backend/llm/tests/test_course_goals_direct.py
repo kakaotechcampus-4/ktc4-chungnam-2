@@ -111,8 +111,9 @@ class TestDirect:
     def test_prompt_describes_the_four_tools_and_the_rules(self):
         for word in ("optimize", "lock", "ask_requester", "finish", "pick_course", "ask_closed_day", "met", "turns_left"):
             assert word in COURSE_DIRECT_PROMPT
-        assert COURSE_DIRECT_PROMPT_VERSION == "course-direct-v2"
-        assert "pick_course" in COURSE_DIRECT_PROMPT and "두 번 넘게" in COURSE_DIRECT_PROMPT and "묻지 않는다" in COURSE_DIRECT_PROMPT
+        assert COURSE_DIRECT_PROMPT_VERSION == "course-direct-v3"
+        for word in ("goal_checks", "NO_NIGHT_PLACE", "must_ask", "optimize_calls", "kept", "gave_up", "focus", "코드가 연다", "묻지 않는다"):
+            assert word in COURSE_DIRECT_PROMPT
 
 
 def test_public_api():
