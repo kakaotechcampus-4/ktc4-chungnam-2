@@ -1,5 +1,25 @@
 # 루트 리뷰 가이드 — backend/auth
 
+## #560 게스트 → 카카오 전환, 기록 합치기 (2026-10-20) — 루트 확인 요청
+
+스펙(`docs/api-spec.yaml`·`data-model.md`「게스트 합치기」)·마이그레이션 변경 없음. 새 엔드포인트 없음. 스펙 PR #657은 이미 develop에 머지돼 있다.
+
+- **로그인 시작**(`GET /auth/kakao/login`): 세션 쿠키가 지금 살아 있는 게스트(서명·만료·탈퇴·로그아웃 무효화 모두 `get_current_user`와 같은 판정)의 것이면 그 id를 state 쿠키에 함께 서명해 넣는다. `state.발급시각.게스트id.서명` — 게스트 id는 서명 대상이라 바꾸거나 떼거나 붙이면 `invalid_state`. 게스트가 아니면 기존 3단 형식 그대로. `core.parse_state`(→`StateClaims`)가 추가됐고 `verify_state`는 그 래퍼다.
+- **콜백**: state 검증 → 카카오 로그인 → state에 게스트 id가 있으면 `service.merge_guest_into`. 결과 `True/False`면 성공 리디렉션에 `guest_merged=true/false`, `None`이면 쿼리를 붙이지 않는다. 기존 `login_error` 처리·진입점 주소의 쿼리·조각 보존 규칙 그대로(같은 이름 `guest_merged`만 대체).
+- **합치기**: 게스트 행을 `FOR UPDATE`로 잠그고 살아 있는 게스트인지 확인 → 세이브포인트 안에서 `MERGE_STEPS` 순서대로 `<module>.api.reassign_user(db, from_user_id=, to_user_id=)` → 마지막에 게스트 `deleted_at`. 어느 단계든 실패하면 세이브포인트만 롤백되고(카카오 사용자 생성은 유지) `guest_merged=false`, 로그는 `step=<이름> error=<예외 종류>`만.
+- **`None`(쿼리 없음)이 되는 경우**: 게스트 행이 없거나 게스트가 아니거나 이미 삭제됨(이미 합쳐진 id 포함), 게스트 id와 카카오 사용자 id가 같음. 스펙의 "게스트 전환이 아닌 로그인에는 붙이지 않는다"를 합칠 대상이 없는 경우로 읽었다. 게스트가 로그인 도중 정리(90일)돼 사라진 드문 경우에도 쿼리가 없다 — FE가 `false`로 안내하길 원하면 알려 달라(`merge_guest_into`의 `None` 한 줄).
+
+### 루트 확인 필요
+1. **지금 develop에는 어떤 모듈에도 `reassign_user`가 없다.** `MERGE_STEPS`는 이름과 모듈 `api`만 등록하고 호출 시점에 함수를 찾는다 — 없으면 `AttributeError`로 그 합치기가 실패(`guest_merged=false`, 게스트 기록 유지). 일부 모듈만 옮기고 게스트를 지우는 일을 막으려는 선택이다. 즉 6개 모듈(maps·pins·recommend·shortlist·notifications·feedback)이 모두 병합되기 전에는 실제 전환이 항상 `false`다. 각 모듈 PR이 들어오면 auth 쪽은 코드 변경이 필요 없다.
+2. **agent**: `data-model.md` 표에는 agent가 있지만 이번 지시의 목록에는 없어 `MERGE_STEPS`에 넣지 않았다. agent 담당이 `reassign_user`를 정하면 튜플 한 줄 추가.
+3. 순서: maps(멤버십) → pins → recommend → shortlist → notifications → feedback. 모듈 간 순서 의존이 있으면(예: recommend가 maps 멤버십을 본다) 알려 달라.
+4. 테스트는 `MERGE_STEPS`를 대역으로 바꿔 검증한다(`auth/tests/test_guest_merge.py`, `test_state_guest.py`). 실제 모듈이 합쳐진 뒤의 끝단 확인(`integration/`)은 각 모듈이 병합된 다음에 추가한다.
+- 검증: `PINGO_TEST_DB=pingo_test_auth560 PLACES_MODE=dev LLM_MODE=dev python -m pytest auth integration/test_guest_join.py` → 142 passed. 전체 실행은 888 passed, 1 failed(`integration/test_response_contract.py::test_notification_responses_match_the_openapi_spec`) — 그 파일만 따로 돌리면 변경 전·후 모두 통과해 순서 의존으로 보이며 이번 변경과 무관.
+- 복잡도: 예상 4, 실제 3.
+- 디스코드 "#560 착수합니다"는 CLI로 못 남겼다(사람이 남겨야 한다).
+
+---
+
 ## 이번 작업 (#369 2단계 auth 몫 — 방장 탈퇴 위임, 2026-10-07)
 
 - `auth/service.py::withdraw_user`가 맨 먼저 `maps.api.transfer_or_delete_owned_maps(db, user_id)`를 부른다. 방장인 지도마다

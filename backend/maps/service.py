@@ -588,3 +588,22 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
         "memberships": db.execute(delete(MembershipRow).where(MembershipRow.map_id.in_(map_ids))).rowcount,
         "maps": db.execute(delete(MapRow).where(MapRow.id.in_(map_ids))).rowcount,
     }
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#560) — from_user의 멤버십·초대 발급자 기록을 to_user로 옮긴다. 커밋은 호출자.
+    같은 지도에 to_user가 이미 구성원이면 from_user의 멤버십만 지운다(역할은 to_user 쪽 그대로).
+    지도 수 상한은 검사하지 않는다. 멱등 — 옮길 게 없으면 0이고, 같은 id면 아무것도 안 한다."""
+    if from_user_id == to_user_id:
+        return {"memberships": 0, "memberships_dropped": 0, "invites": 0}
+    already_in = select(MembershipRow.map_id).where(MembershipRow.user_id == to_user_id)
+    dropped = db.execute(
+        delete(MembershipRow).where(MembershipRow.user_id == from_user_id, MembershipRow.map_id.in_(already_in))
+    ).rowcount
+    moved = db.execute(
+        update(MembershipRow).where(MembershipRow.user_id == from_user_id).values(user_id=to_user_id)
+    ).rowcount
+    invites = db.execute(
+        update(InviteRow).where(InviteRow.created_by == from_user_id).values(created_by=to_user_id)
+    ).rowcount
+    return {"memberships": moved, "memberships_dropped": dropped, "invites": invites}

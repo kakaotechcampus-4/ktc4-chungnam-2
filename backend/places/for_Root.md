@@ -388,3 +388,27 @@ pingo_demo는 `alembic_version=0020_evidence_wants`다. 단계별로 `upgrade()`
 - **복사본 실측**: 적용 전후 행 수가 같은 테이블은 candidates 12·event_log 70·evidence_lines 30·exclusions 0·invites 9·maps 6·memberships 15·pins 28·place_facts 1,027,876·places 106,156·recommend_runs 11·regions 11·routes 2·shortlist_items 6·users 7. **reactions만 20 → 14**로 줄었다.
 - **참고**: 조사 중 pingo_demo의 `place_facts`가 1,027,876행(커버리지 라벨 새 키 750개 포함, 장소 106,156)이다 — #507 보고에 "미완료"로 적은 상태(1,027,126)와 다르다. 누군가 커버리지 라벨 단계를 마친 것으로 보이며 이 세션은 하지 않았다. 지금 복사본·재계산 숫자는 그 상태 기준이다.
 - **pingo_demo에는 적용하지 않았다.** 적용 여부는 루트가 백업(pg_dump) 후 정한다. 적용하면 reactions 6행이 사라지므로, 그 행이 시연 데이터에 필요하면 먼저 따로 보관해야 한다. 백업은 적용 직전에 새로 떠야 한다(`pingo_demo_before507.dump`는 #507 적재 이전 상태).
+
+
+# 적재 로더 3건 — 지역 해제·레포츠(28)·`--close-missing` (데이터 담당 요청, 2026-10-20)
+
+요청 출처는 데이터 담당이다(이슈 번호 없음). 마이그레이션 없음, `can_recommend` 판정 코드는 그대로다. 한 PR(브랜치 `feat/places-loader-region-leisure-close`)에 커밋 3개.
+
+## 1. `--all-regions` — permit·tourapi·cafes·restaurants
+- 켜면 서울 판정 세 곳(주소 "서울", TourAPI `areacode`, 서울 좌표 상자)을 모두 끈다. 기본은 서울만. 설명에서 "테스트용"을 지웠다.
+- 좌표 없음·(0,0)·위경도 범위 밖(한국 상자 밖)은 지역을 풀어도 계속 건너뛴다.
+- 보고: 적재 대상이 두 지역 이상이면 `[지역별 적재 대상] 서울 N, 부산 M …` 한 줄이 붙는다(서울만이면 안 붙는다). 시도명 앞 두 글자 기준이되 충청·전라·경상은 북·남이 갈리도록 `충북·경남`처럼 쓴다(앞 두 글자만 쓰면 둘이 합쳐진다).
+- 주의: 지금 DB의 `places`는 서울 가정으로 검색한다. 타 지역을 적재하면 서울 밖 좌표로도 후보가 잡히므로 서비스 쪽 영향은 적재 전에 루트가 판단한다.
+
+## 2. 관광지 레포츠(contenttypeid 28)
+- `TOURAPI_PLACE_TYPES`에 28 추가, 분류는 관광지. 건너뛰기 사유 문구는 `관광지·문화시설·레포츠·쇼핑(contenttypeid=12·14·28·38) 아님`. 로더 docstring·`docs/data-model.md` places 절의 한 줄 설명만 맞췄다(그 밖의 스펙은 안 바꿨다).
+
+## 3. `permit --close-missing` (기본 꺼짐)
+- 파일에 없는 장소를 `status='closed'`로 바꾼다(삭제·라벨 삭제 없음). 대상은 `source='permit'`·`curated=false`·`status='open'`뿐이다 — 정예와 tourapi는 닫지 않는다(UPDATE에도 같은 조건을 다시 건다).
+- 안전장치: ① `--file`을 여러 번(또는 디렉터리 → 안의 `*.csv`, 글롭) 받아 모두 읽은 뒤에만 닫고, 파일 하나면 거부(exit 2). ② 위 대상 한정. ③ `--dry-run`이 `DB: 파일에 없어 닫음 N행`을 보인다(롤백). ④ 파일에 다시 나온 기존 열린 비정예 인허가 장소가 그 장소의 30% 미만이면 거부(`--force`로만 우회) — 거부면 신규 적재도 하지 않는다. ⑤ 라벨은 그대로.
+- '파일에 있다'의 기준은 관리번호가 있는 모든 행이다. 좌표 없음·업태 미대응 등으로 건너뛰는 행도 '있다'로 센다(그런 장소를 닫지 않는다).
+- **되살리기 수정**: 확인해 보니 인허가 로더(`keep` 모드)는 이미 있는 장소를 통째로 건너뛰어, 닫힌 장소가 파일에 영업으로 다시 나와도 열리지 않았다(`refresh` 경로만 열었다). `keep`에서도 닫힌 장소는 `status`만 다시 열도록 했다(이름·분류·좌표는 그대로). 보고에 `되살림 N행`이 붙는다. 이전 동작에서 닫힌 채 남던 장소가 다음 인허가 적재 때 열린다는 점이 달라졌다.
+- 정예 우선 결정의 "갱신본에서 빠진 657행은 그대로 둔다"는 그대로다 — 옵션을 안 주면 아무것도 닫히지 않는다.
+
+## 테스트
+`places/tests/test_ingest.py`(지역 해제·28·`region_of`·닫기 계획), `places/tests/test_load_regions_close.py`(옵션 전달·닫기 대상·안전장치·dry-run·되살리기). places 전체 406 통과. `test_link.py` 3건은 `authz.guard`↔`auth.deps` 순환 import로 이 변경과 무관하게 실패한다(`python -c "import authz.guard"` 단독 재현).

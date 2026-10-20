@@ -668,3 +668,7 @@ recommend 소스+테스트 전부 통과(마이그레이션 파일의 `Union`/`S
 5. (이관) **pins/for_Root.md가 남긴 "create_ai_pin의 Principal 구성"** — 이번엔 실제로
    `Principal`을 만들 필요가 없어(3번 항목 참고, authz.guard.require가 알아서 처리) 이
    결정은 여전히 미룰 수 있었다 — 참고로만 남김.
+
+## #659 (2026-10-20)
+
+- llm 프롬프트에 카페 예시 있음: `llm/prompts.py:42` serves_alcohol 설명의 "카페인데 맥주도 되는 곳". 이번 PR에서는 건드리지 않았다.

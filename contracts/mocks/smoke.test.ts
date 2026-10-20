@@ -589,6 +589,17 @@ describe("#472 — 게스트 참여", () => {
     expect((await send("/auth/guest", "POST", { display_name: "x", invite_token: token })).status).toBe(410);
   });
 
+  it("게스트가 카카오로 전환하면(콜백) guest_merged=true로 돌아오고 더는 게스트가 아니다", async () => {
+    resetScenario("guest");
+    const res = await fetch(`${BASE}/auth/kakao/callback?code=x&state=y`, { redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/?guest_merged=true");
+    expect((await (await fetch(`${BASE}/auth/me`)).json()).is_guest).toBe(false);
+    const again = await fetch(`${BASE}/auth/kakao/callback?code=x&state=y`, { redirect: "manual" });
+    expect(again.headers.get("location")).toBe("/"); // 게스트가 아니면 쿼리가 붙지 않는다
+    resetScenario("happy-path");
+  });
+
   it("게스트 시나리오: 지도 만들기는 403 GUEST_NOT_ALLOWED, 그 밖의 구성원 행동은 된다", async () => {
     resetScenario("guest");
     expect((await (await fetch(`${BASE}/auth/me`)).json()).is_guest).toBe(true);
