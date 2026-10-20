@@ -125,9 +125,15 @@ def key_part(trip: Trip, course: Course, goals: Sequence[Goal], priority: Sequen
 
 
 def met_count(trip: Trip, course: Course, goals: Sequence[Goal]) -> tuple[int, int]:
-    """(충족한 목표 수, 판단할 수 있는 목표 수)."""
-    results = [r for r in evaluate_all(trip, course, goals) if r.met is not None]
-    return sum(bool(r.met) for r in results), len(results)
+    """(충족한 목표 수, 목표 수). 판단할 수 없는 목표(met=None)도 분모에 넣고 못 이룬 것으로 센다 — 안 그러면 방식마다 분모가
+    달라져 비교가 흐려지고, 라벨 모르는 장소로 목표를 피하는 코스가 유리해진다(key_part와 같은 규칙). 몇 개가 판단 불가인지는
+    undecidable_count로 따로 본다."""
+    results = evaluate_all(trip, course, goals)
+    return sum(r.met is True for r in results), len(results)
+
+
+def undecidable_count(trip: Trip, course: Course, goals: Sequence[Goal]) -> int:
+    return sum(r.met is None for r in evaluate_all(trip, course, goals))
 
 
 def truncate(goals: Sequence[Goal]) -> tuple[Goal, ...]:

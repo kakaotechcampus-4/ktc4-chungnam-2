@@ -105,6 +105,22 @@ class TestScores:
         assert G.evaluate(tr, (("p1",), ("p2", "p3")), Goal("together", None, ("p1", "p2"))).met is False
 
 
+class TestMetCount:
+    def test_undecidable_goals_stay_in_the_denominator_as_unmet(self):
+        tr = t(A("p1", ("night_view",)), A("p2"), A("p3", OUT))
+        goals = [Goal("night_end", "d1"), Goal("daily_walk_low")]
+        # 첫날 마지막이 라벨 모르는 p2 → 야경은 판단 불가, 도보는 충족
+        course = (("p1", "p2"), ("p3",))
+        assert G.met_count(tr, course, goals) == (1, 2)
+        assert G.undecidable_count(tr, course, goals) == 1
+        # 코스가 달라도 분모는 목표 수로 같다 — 방식끼리 같은 분모로 비교된다
+        assert G.met_count(tr, (("p2", "p1"), ("p3",)), goals) == (2, 2)
+        assert G.met_count(tr, (("p3", "p2"), ("p1",)), goals)[1] == 2
+
+    def test_no_goals_is_zero_over_zero(self):
+        assert G.met_count(t(A("p1")), (("p1",), ()), []) == (0, 0)
+
+
 class TestKeyPart:
     def setup_method(self):
         self.tr = t(A("p1", ("night_view",)), A("p2", OUT), A("p3", OUT), A("p4", OUT))

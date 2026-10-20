@@ -125,7 +125,8 @@ def load_maps(data_dir: Path) -> list[dict[str, Any]]:
 class RequestScore:
     score: Score
     gold_met: int                       # 정답 목표 중 최종 코스가 지킨 수(판단할 수 없는 목표는 뺀다)
-    gold_total: int                     # 판단할 수 있는 정답 목표 수
+    gold_total: int                     # 정답 목표 수(판단 불가 목표도 분모에 들어가고 못 이룬 것으로 센다)
+    gold_undecidable: int = 0           # 그중 라벨을 몰라 판단할 수 없었던 수(따로 보고)
     goals_exact: Optional[bool] = None  # 에이전트만: 만든 목표가 정답과 종류·매개변수까지 일치
     goals_trap_ok: Optional[bool] = None  # 에이전트만: 정답이 목표 0개인 지도에서 0개를 냈다
     calls: int = 0
@@ -151,7 +152,7 @@ def gold_goals(sc: Scenario, req: Mapping[str, Any]) -> tuple[goals_mod.Goal, ..
 
 def request_score(sc: Scenario, course: Course, gold: Sequence[goals_mod.Goal], **extra: Any) -> RequestScore:
     met, total = goals_mod.met_count(sc.trip, course, gold)
-    return RequestScore(score(sc, course), met, total, **extra)
+    return RequestScore(score(sc, course), met, total, goals_mod.undecidable_count(sc.trip, course, gold), **extra)
 
 
 def run_request_variants(
@@ -193,11 +194,12 @@ def aggregate_requests(results: Sequence[Mapping[str, RequestScore]]) -> dict[st
     table: dict[str, dict[str, Optional[float]]] = {}
     for variant in results[0]:
         rows = [r[variant] for r in results]
-        judged = [r for r in rows if r.gold_total]
+        judged = [r for r in rows if r.gold_total]      # 정답 목표가 있는 지도만(함정 지도는 분모가 0)
         exact = [r.goals_exact for r in rows if r.goals_exact is not None]
         trap = [r.goals_trap_ok for r in rows if r.goals_trap_ok is not None]
         table[variant] = {
             "goal_met": _mean([r.gold_met / r.gold_total for r in judged]),
+            "undecidable": sum(r.gold_undecidable for r in rows),
             "hard_solved": sum(r.score.hard_confirmed == 0 for r in rows) / len(rows),
             "hard_confirmed": _mean([r.score.hard_confirmed for r in rows]),
             "cafe_after_meal": _mean([r.score.soft["cafe_after_meal"] for r in rows]),
