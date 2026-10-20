@@ -29,3 +29,11 @@ def anonymize_by_user(db: Session, *, user_id: str) -> int:
     """탈퇴(#155) — 작성자 연결만 끊고 내용은 남긴다. 바꾼 행 수."""
     result = db.execute(update(Feedback).where(Feedback.user_id == user_id).values(user_id=None))
     return result.rowcount
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#560) — from_user의 피드백을 to_user로 옮긴다. 이미 NULL인 행은 건드리지 않는다. 테이블 → 옮긴 행 수."""
+    if from_user_id == to_user_id:
+        return {"feedback": 0}
+    result = db.execute(update(Feedback).where(Feedback.user_id == from_user_id).values(user_id=to_user_id))
+    return {"feedback": result.rowcount}
