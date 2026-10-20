@@ -29,6 +29,11 @@ class Report:
     warnings: list[str] = field(default_factory=list)
     accepted_by_type: Counter = field(default_factory=Counter)   # TourAPI contenttypeid별 (parse_tourapi_items만 채운다)
     skipped_by_type: Counter = field(default_factory=Counter)
+    accepted_by_region: Counter = field(default_factory=Counter)   # 시도명 앞 두 글자별 (--all-regions로 여러 지역을 받을 때 한 줄로 보인다)
+
+    def accept(self, address: str | None) -> None:
+        self.accepted += 1
+        self.accepted_by_region[region_of(address)] += 1
 
     def skip(self, reason: str) -> None:
         self.skipped[reason] += 1
@@ -38,6 +43,8 @@ class Report:
         out += [f"  - {reason}: {n}" for reason, n in self.skipped.most_common()]
         for ctype in sorted(set(self.accepted_by_type) | set(self.skipped_by_type)):
             out.append(f"  [contenttypeid {ctype or '(없음)'}] 받음 {self.accepted_by_type[ctype]} / 건너뜀 {self.skipped_by_type[ctype]}")
+        if len(self.accepted_by_region) > 1:
+            out.append("  [지역별 적재 대상] " + ", ".join(f"{r} {n}" for r, n in self.accepted_by_region.most_common()))
         out += [f"  ! {w}" for w in self.warnings]
         return out
 
@@ -53,6 +60,19 @@ class PlaceRow:
     lat: float
     lng: float
     status: str            # 'open' | 'closed'
+
+
+_SPLIT_PROVINCES = frozenset({"충청", "전라", "경상"})   # 북도·남도가 앞 두 글자로는 갈리지 않는다
+
+
+def region_of(address: str | None) -> str:
+    """주소 맨 앞 시도명을 두 글자로 줄인다(서울특별시→서울). 충청·전라·경상은 북·남까지 본다(경상북도→경북)."""
+    head = (address or "").strip()
+    if not head:
+        return "(주소 없음)"
+    if head[:2] in _SPLIT_PROVINCES and len(head) > 2 and head[2] in "북남":
+        return head[0] + head[2]
+    return head[:2]
 
 
 def _norm_key(key: str) -> str:
@@ -181,7 +201,7 @@ def parse_permit_rows(
             report.skip("좌표가 한국 범위 밖(좌표계 확인)")
             continue
         out.append(PlaceRow("permit", f["source_id"], f["name"], category, address or None, f["phone"] or None, lat, lng, status))
-        report.accepted += 1
+        report.accept(address)
     if types_without_mapping:
         top = ", ".join(f"{t}({n})" for t, n in types_without_mapping.most_common(10))
         report.warnings.append(f"대응표에 없는 업태(상위): {top}")
@@ -191,10 +211,39 @@ def parse_permit_rows(
     return out, report
 
 
+def permit_source_ids(rows: Iterable[Mapping[str, Any]]) -> set[str]:
+    """파일에 관리번호가 있는 모든 행의 id. 건너뛴 행(좌표 없음·업태 미대응·폐업 등)도 '파일에 있다'로 센다 — 닫기 판단용."""
+    return {i for row in rows if (i := _pick(row, PERMIT_ALIASES["source_id"]))}
+
+
+CLOSE_MISSING_MIN_RATIO = 0.3   # 기존 열린 인허가 장소 중 파일에 다시 나온 비율이 이보다 낮으면 실수로 본다
+
+
+@dataclass(frozen=True)
+class ClosePlan:
+    to_close: frozenset[str]
+    candidates: int         # 닫을 수 있는 기존 장소 수(source='permit', 정예 아님, 열림)
+    found_in_file: int      # 그중 파일에 나온 수
+    refused: str | None     # 거부 사유. None이면 진행해도 된다
+
+
+def plan_close_missing(open_ids: set[str], seen_ids: set[str], *, force: bool = False) -> ClosePlan:
+    """닫을 장소 = 열린 비정예 인허가 장소 중 파일에 없는 것. 파일이 기존 장소를 너무 적게 담았으면(30% 미만) 거부한다(--force로만 우회)."""
+    found = len(open_ids & seen_ids)
+    to_close = frozenset(open_ids - seen_ids)
+    refused = None
+    if open_ids and found < len(open_ids) * CLOSE_MISSING_MIN_RATIO and not force:
+        refused = (
+            f"파일에 다시 나온 기존 장소가 {found}/{len(open_ids)}곳({found / len(open_ids):.0%})뿐이라 "
+            f"{len(to_close)}곳을 닫지 않는다 — 파일을 모두 줬는지 확인하고, 정말 맞으면 --force"
+        )
+    return ClosePlan(to_close, len(open_ids), found, refused)
+
+
 # ---------------------------------------------------------------- TourAPI (관광지)
 
-# 관광지(12)·문화시설(14)·쇼핑(38, 납품 파일에는 시장만)은 모두 category '관광지'로 둔다(#379).
-TOURAPI_PLACE_TYPES = frozenset({"12", "14", "38"})
+# 관광지(12)·문화시설(14)·레포츠(28)·쇼핑(38, 납품 파일에는 시장만)은 모두 category '관광지'로 둔다(#379).
+TOURAPI_PLACE_TYPES = frozenset({"12", "14", "28", "38"})
 TOURAPI_LODGING = "32"
 TOURAPI_SEOUL_AREA = "1"
 # 서울 행정구역을 감싸는 상자. 주소는 서울인데 좌표가 다른 곳으로 찍힌 항목(예: 경도 127.709)을 거른다.
@@ -240,7 +289,7 @@ def parse_tourapi_items(items: Iterable[Mapping[str, Any]], *, seoul_only: bool 
             "tourapi", str(item["contentid"]).strip(), str(item["title"]).strip(), "관광지", address or None,
             str(item.get("tel", "")).strip() or None, lat, lng, "open",
         ))
-        report.accepted += 1
+        report.accept(address)
         report.accepted_by_type[content_type] += 1
     return out, report
 
@@ -254,7 +303,7 @@ def _tourapi_skip_reason(item: Mapping[str, Any], content_type: str, seoul_only:
     if content_type == TOURAPI_LODGING:
         return "숙박은 받지 않는다"
     if content_type not in TOURAPI_PLACE_TYPES:
-        return "관광지·문화시설·쇼핑(contenttypeid=12·14·38) 아님"
+        return "관광지·문화시설·레포츠·쇼핑(contenttypeid=12·14·28·38) 아님"
     if not str(item.get("contentid", "")).strip() or not str(item.get("title", "")).strip():
         return "contentid 또는 title 없음"
     if seoul_only and str(item.get("areacode", "")).strip() != TOURAPI_SEOUL_AREA and not _tourapi_address(item).startswith("서울"):
@@ -394,7 +443,7 @@ def parse_curated_rows(
         if not f["type"]:
             report.warnings.append(f"업태가 비어 있는 행을 {category}로 적재했다: {f['source_id']}")
         out.append(PlaceRow("permit", f["source_id"], f["name"], category, f["address"] or None, f["phone"] or None, lat, lng, "open"))
-        report.accepted += 1
+        report.accept(f["address"])
     if seen_bars:
         verb = "제외했다" if exclude_bars else "그대로 적재 대상에 포함했다"
         report.warnings.append(f"유흥·주점류 업태(정종/대포집/소주방, 감성주점) {seen_bars}행을 {verb} — 루트 결정 대기")
