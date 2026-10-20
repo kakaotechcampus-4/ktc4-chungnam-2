@@ -149,3 +149,10 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(maps.purge, #431)가 부른다 — 이 지도들의 evidence_lines·candidates·regions·exclusions·
     recommend_runs만 지우고 테이블 이름 → 지운 행 수를 돌려준다. 커밋하지 않는다."""
     return service.purge_map_data(db, map_ids=map_ids)
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#560)가 부른다 — from_user의 추천 기록(run 요청자·근거 줄 작성자·제외 요청자)을 to_user로 옮기고
+    테이블 이름 → 옮긴 행 수를 돌려준다. 제외가 (지도, 장소)로 겹치면 from_user 것을 지운다. 멱등이고 같은 id면
+    아무것도 하지 않는다. 커밋하지 않는다."""
+    return service.reassign_user(db, from_user_id=from_user_id, to_user_id=to_user_id)
