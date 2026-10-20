@@ -119,3 +119,10 @@ def purge_deleted_maps(db: Session, *, now: datetime, older_than_days: int) -> d
 
     map_count, counts = purge.purge(db, now=now, older_than_days=older_than_days)
     return {"deleted_maps": map_count, **counts}
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#560, auth가 부른다) — from_user의 멤버십·초대 발급자를 to_user로 옮긴다. 같은 지도에 to_user가
+    이미 구성원이면 from_user 쪽만 지운다. 지도 수 상한은 보지 않는다. 멱등, 커밋은 호출자.
+    키: memberships(옮김)·memberships_dropped(충돌로 지움)·invites."""
+    return service.reassign_user(db, from_user_id=from_user_id, to_user_id=to_user_id)
