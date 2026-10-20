@@ -574,11 +574,10 @@ def test_opposing_heart_of_another_member_still_offsets_preference_author():
 
 # ---------- build_reason ----------
 
-def test_build_reason_lists_passed_disqualifiers_and_met_preferences_with_member_count():
+def test_build_reason_lists_passed_disqualifiers_and_met_preferences():
     checks = [_check("is_crowded_large", passed=True), _check("quiet", passed=True)]
-    fulfillment = {"satisfied": 1, "total": 2, "by_member": []}
-    reason = core.build_reason(checks, {"quiet": True}, fulfillment)
-    assert reason == "실격 조건 통과: 붐비는 대형 장소 아님 · 선호 충족: 조용함 (1/2명)"
+    reason = core.build_reason(checks, {"quiet": True})
+    assert reason == "실격 조건 통과: 붐비는 대형 장소 아님 · 선호 충족: 조용함"
 
 
 def test_build_reason_does_not_claim_unknown_or_failed_checks():
@@ -587,13 +586,31 @@ def test_build_reason_does_not_claim_unknown_or_failed_checks():
         _check("quiet", passed=False),
         _check("local_flavor", passed=True, confidence="unknown"),
     ]
-    reason = core.build_reason(checks, {"quiet": True, "local_flavor": True}, {"satisfied": 0, "total": 1})
+    reason = core.build_reason(checks, {"quiet": True, "local_flavor": True})
     assert "붐비는" not in reason and "조용함" not in reason and "지역색" not in reason
 
 
 def test_build_reason_falls_back_to_selection_process_when_nothing_to_cite():
-    reason = core.build_reason([], {}, {"satisfied": 0, "total": 0})
+    reason = core.build_reason([], {})
     assert reason == "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
+
+
+def test_reason_does_not_print_a_member_count_that_contradicts_the_label_631():
+    """#631 — 한 구성원이 양식·조용함을 원했고 후보가 양식인데 조용한지는 모르면, 구성원은 충족(0/1)이 아니다.
+    이유 문장은 "선호 충족: 양식"만 말하고 인원은 카드의 member_fulfillment가 말한다 — 같은 문장에 (0/1명)이 없다."""
+    hearted = [
+        _place(_check("cuisine_western", passed=True), members=frozenset({"u1"})),
+        _place(_check("quiet", passed=True), members=frozenset({"u1"})),
+    ]
+    criteria = {"cuisine_western": True, "quiet": True}
+    candidate = [_check("cuisine_western", passed=True), _check("quiet", passed=True, confidence="unknown")]
+
+    fulfillment = core.build_member_fulfillment(candidate, hearted, criteria)
+    reason = core.build_reason(candidate, criteria)
+
+    assert (fulfillment["satisfied"], fulfillment["total"]) == (0, 1)
+    assert reason == "선호 충족: 양식"
+    assert "명)" not in reason
 
 
 # ---------- select_top_candidates ----------
@@ -852,4 +869,4 @@ def test_written_preference_outweighs_other_heart_labels():
     assert core.score_candidates(candidates, hearted, criteria, authors) == {"sushi": 3, "buffet": 0}
 
     fulfillment = core.build_member_fulfillment(candidates["buffet"], hearted, criteria, authors)
-    assert core.build_reason(candidates["buffet"], criteria, fulfillment) == "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
+    assert core.build_reason(candidates["buffet"], criteria) == "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"

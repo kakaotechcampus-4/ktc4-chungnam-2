@@ -552,13 +552,12 @@ def build_member_fulfillment(
     }
 
 
-def build_reason(
-    candidate_checks: Sequence[Check], criteria: Mapping[str, bool], member_fulfillment: Mapping,
-) -> str:
+def build_reason(candidate_checks: Sequence[Check], criteria: Mapping[str, bool]) -> str:
     """Candidate.reason — 실제로 통과한 체크와 충족한 선호 라벨에서 조립한 한 줄(가드레일 5).
     모델을 부르지 않는다. 두 종류만 말한다: 1) 이번 run의 활성 실격 조건 중 known으로 통과한
-    것 2) 선호 기준(criteria) 중 이 후보가 known+참인 것(+ 몇 명이 충족했는지). 표시 이름이
-    없는 키는 말하지 않는다 — 안 본 것을 통과했다고 하지 않기 위해서다. 말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지
+    것 2) 선호 기준(criteria) 중 이 후보가 known+참인 것. 몇 명이 충족했는지는 말하지 않는다 — 구성원은 자기 조건을
+    전부 충족해야 세는데 이 줄은 하나라도 맞는 라벨을 나열해서 "충족: 양식 (0/1명)"처럼 어긋난다(#631). 인원은
+    카드의 member_fulfillment가 따로 보여 준다. 표시 이름이 없는 키는 말하지 않는다 — 안 본 것을 통과했다고 하지 않기 위해서다. 말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지
     않는다)."""
     known_passed = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
     disqualifier_labels = [
@@ -578,11 +577,7 @@ def build_reason(
     if disqualifier_labels:
         parts.append("실격 조건 통과: " + ", ".join(disqualifier_labels))
     if preference_labels:
-        text = "선호 충족: " + ", ".join(preference_labels)
-        total = member_fulfillment.get("total", 0)
-        if total:
-            text += f" ({member_fulfillment.get('satisfied', 0)}/{total}명)"
-        parts.append(text)
+        parts.append("선호 충족: " + ", ".join(preference_labels))
     return " · ".join(parts) if parts else "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
 
 
