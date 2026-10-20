@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from pydantic import TypeAdapter
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -405,6 +405,26 @@ def delete_reactions_by_user_in_map(db: Session, *, user_id: str, map_id: str) -
         delete(ReactionRow).where(ReactionRow.user_id == user_id, ReactionRow.pin_id.in_(pin_ids_on_map))
     )
     return result.rowcount
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(auth, #560)가 부른다 — 게스트의 핀 작성자·반응을 카카오 계정으로 옮기고
+    테이블 이름 → 옮긴 행 수를 돌려준다. 커밋하지 않는다.
+    같은 핀에 to_user의 반응이 이미 있으면(uq_reactions_pin_user) 게스트의 반응을 지운다 — 카카오 쪽 값이 이긴다.
+    반응 집계·이벤트는 만들지 않는다(합치기는 조용히). 두 번 불러도 안전하고, 두 id가 같으면 아무것도 하지 않는다."""
+    if from_user_id == to_user_id:
+        return {"pins": 0, "reactions": 0}
+    pins_moved = db.execute(
+        update(PinRow).where(PinRow.created_by == from_user_id).values(created_by=to_user_id)
+    ).rowcount
+    pins_already_reacted = select(ReactionRow.pin_id).where(ReactionRow.user_id == to_user_id)
+    db.execute(
+        delete(ReactionRow).where(ReactionRow.user_id == from_user_id, ReactionRow.pin_id.in_(pins_already_reacted))
+    )
+    reactions_moved = db.execute(
+        update(ReactionRow).where(ReactionRow.user_id == from_user_id).values(user_id=to_user_id)
+    ).rowcount
+    return {"pins": pins_moved, "reactions": reactions_moved}
 
 
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
