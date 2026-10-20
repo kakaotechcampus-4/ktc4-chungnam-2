@@ -9,6 +9,7 @@ from typing import Optional, Sequence
 
 from agent.course import core, goals as goals_mod
 from agent.course.direct import DirectResult
+from agent.course.korean import attach
 
 MODEL, CODE, PERSON = "모델", "코드", "사람"
 
@@ -36,7 +37,7 @@ def render(
         tool = step.call.get("tool")
         if step.substituted_for and step.substituted_for["error"] != "QUESTION_OPENED_BY_CODE":
             out.append(_line("대행", CODE, f"모델의 {step.substituted_for['call'].get('tool')} 호출이 "
-                             f"{step.substituted_for['error']}라 코드 규칙이 대신 {tool}을(를) 했어요"))
+                             f"{step.substituted_for['error']}라 코드 규칙이 대신 {attach(tool, '을/를')} 했어요"))
         if tool == "check_goals":
             for sentence in step.result.data["sentences"]:
                 out.append(_line("확인", CODE, sentence))

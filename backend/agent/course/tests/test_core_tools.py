@@ -246,4 +246,4 @@ class TestThought:
         assert core.thought_problem(self.trip, text) == problem
 
     def test_render(self):
-        assert core.render_thought(self.trip, "{p4}는 {d2}에 쉬어요") == "장소P4이름는 둘째 날 (화)에 쉬어요"
+        assert core.render_thought(self.trip, "{p4}는 {d2}에 쉬어요") == "장소P4이름은 둘째 날 (화)에 쉬어요"

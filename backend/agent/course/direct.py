@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from agent.course import baseline, core, goals as goals_mod, optimize as opt
 from agent.course.constants import ASK_MAX, DIRECT_MAX_TURNS
+from agent.course.korean import attach
 from agent.course.optimize import Candidate
 from agent.course.ports import OpeningHoursGateway
 from agent.course.state import State
@@ -174,11 +175,11 @@ def _choose_day(ds: DirectState, pend: dict, options: list[str], proposed_by: st
     labels = tuple([core.day_label(trip, d) for d in options] + ["그 목표는 빼기"])
     if goal.kind == "place_on_day":
         name = trip.place(goal.places[0]).name
-        text = f"{name}은(는) {core.day_label(trip, goal.day)}에 쉬어요. {core.day_label(trip, default)}로 옮길까요?"
-        answer = f"{name}을(를) {core.day_label(trip, default)}에 두는 걸로 이어 가요"
+        text = f"{attach(name, '은/는')} {core.day_label(trip, goal.day)}에 쉬어요. {attach(core.day_label(trip, default), '으로/로')} 옮길까요?"
+        answer = f"{attach(name, '을/를')} {core.day_label(trip, default)}에 두는 걸로 이어 가요"
     else:
         closed = [trip.place(p).name for p in pend["check"]["facts"]["night_closed_days"] if goal.day in pend["check"]["facts"]["night_closed_days"][p]]
-        text = f"{core.day_label(trip, goal.day)}엔 야경 장소 {', '.join(closed)}이(가) 쉬어요. 야경은 {core.day_label(trip, default)} 마지막으로 할까요?"
+        text = f"{core.day_label(trip, goal.day)}엔 야경 장소 {attach(', '.join(closed), '이/가')} 쉬어요. 야경은 {core.day_label(trip, default)} 마지막으로 할까요?"
         answer = f"야경 목표를 {core.day_label(trip, default)}로 바꿔 이어 가요"
     reason = "쉬는 날엔 둘 수 없어서 여는 날을 기본값으로 했어요, " + ("모델이 제안한 날" if proposed_by == "model" else "코드가 고른 첫 여는 날")
     question = Question(f"q{len(ds.questions) + 1}", "choose_day", goal.id, tuple([*options, DROP]), text, default, labels, reason)
@@ -286,7 +287,7 @@ def _ask(call: CourseAskRequester, ds: DirectState, by: str = "model") -> tuple[
             return ds, _fail(tool, "INVALID_ID", "ask_closed_day는 영업 여부를 모르는 장소(checks)를 subject로 줘야 한다")
         name = state.trip.place(call.subject).name
         question = Question(qid, call.kind, call.subject, ("열어요", "쉬어요", CLOSED_DAY_DEFAULT),
-                            f"{name}이(가) 여행 기간에 여는지 아시나요?", CLOSED_DAY_DEFAULT)
+                            f"{attach(name, '이/가')} 여행 기간에 여는지 아시나요?", CLOSED_DAY_DEFAULT)
         ds = replace(ds, questions=(*ds.questions, question))
     return ds, ToolResult(tool, ok=True, data={
         "question_id": question.question_id, "default": question.default, "note": "답을 받지 않고 기본 선택지로 이어 간다",

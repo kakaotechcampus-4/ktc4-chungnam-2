@@ -26,6 +26,7 @@ from agent.course.constants import (
     THOUGHT_MAX_CHARS,
     TOUR_CATEGORY,
 )
+from agent.course.korean import fix_particle_after
 from agent.course.schemas import Move, MoveDay, ReorderDay, Swap
 from common.geo import Point, approx_walk_minutes, haversine_distance_m, nearest_neighbor_order
 
@@ -416,10 +417,18 @@ def day_label(trip: Trip, alias: str) -> str:
 
 def render_thought(trip: Trip, text: str) -> str:
     """검증을 통과한 문장의 슬롯을 실제 이름으로 바꾼다. thought_problem을 먼저 부른다."""
-    return _ALIAS.sub(
-        lambda m: trip.place(m.group(1)).name if m.group(1).startswith("p") else day_label(trip, m.group(1)),
-        text,
-    )
+    out, pos = [], 0
+    for m in _ALIAS.finditer(text):
+        word = trip.place(m.group(1)).name if m.group(1).startswith("p") else day_label(trip, m.group(1))
+        out.append(text[pos:m.start()] + word)
+        pos = m.end()
+        nxt = _ALIAS.search(text, pos)
+        rest = text[pos:nxt.start() if nxt else len(text)]
+        fixed = fix_particle_after(word, rest)           # "{p4}는"처럼 모델이 쓴 조사를 실제 이름의 받침에 맞춘다
+        out.append(fixed)
+        pos += len(rest)
+    out.append(text[pos:])
+    return "".join(out)
 
 
 # ---- 결과 판정 (명세 11.3) ----

@@ -15,15 +15,15 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from agent.course.korean import attach
+
 ORDINALS = ("첫째 날", "둘째 날", "셋째 날", "넷째 날", "다섯째 날")
 PLACE_LIMIT, NIGHT_LIMIT, WALK_LIMIT = 4, 3, 1        # 종류별 상한 — 합쳐 5~8개
 WALK_SUFFIX = ", 부모님이랑 가서 많이 못 걸어요"
 
 
 def _topic(name: str) -> str:
-    """이름 뒤에 은/는을 붙인다(받침 있으면 은). 한글이 아니면 는."""
-    last = name[-1]
-    return f"{name}{'은' if '가' <= last <= '힣' and (ord(last) - 0xAC00) % 28 else '는'}"
+    return attach(name, "은/는")
 
 
 def _statuses(place: Mapping[str, Any], days: Sequence[date]) -> list[str]:

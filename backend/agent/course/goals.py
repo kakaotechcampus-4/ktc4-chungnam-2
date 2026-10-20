@@ -19,6 +19,7 @@ from agent.course.constants import (
     DAILY_WALK_LOW_MAX_MIN, GOALS_MAX, INDOOR_LABEL, INDOOR_MET_RATIO, NIGHT_LABEL,
 )
 from agent.course.core import Course, Trip
+from agent.course.korean import attach
 
 GoalKind = Literal["day_indoor", "night_end", "daily_walk_low", "day_light", "place_on_day", "together"]
 GOAL_KINDS: tuple[str, ...] = ("day_indoor", "night_end", "daily_walk_low", "day_light", "place_on_day", "together")
@@ -197,7 +198,7 @@ def label(trip: Trip, goal: Goal) -> str:
         "night_end": f"{day} 마지막은 야경 명소",
         "daily_walk_low": "하루 걷는 시간 줄이기",
         "day_light": f"{day}은 여유 있게",
-        "place_on_day": f"{names[0] if names else ''}을(를) {day}에" if goal.kind == "place_on_day" else "",
+        "place_on_day": f"{attach(names[0], '을/를')} {day}에" if goal.kind == "place_on_day" else "",
         "together": f"{' · '.join(names)} 같은 날" if goal.kind == "together" else "",
     }[goal.kind]
 
