@@ -438,6 +438,27 @@ feedback(                             -- 서비스 피드백. 저장만 한다
 
 ---
 
+## 게스트 합치기 (v2, #560, 2026-10-20)
+
+게스트(`users.is_guest`)가 카카오로 로그인하면(`GET /auth/kakao/login`을 게스트 세션으로 시작 → 콜백) **게스트 계정의 기록을 카카오 계정으로 합친다.** 새 엔드포인트는 없다 — 로그인 시작이 게스트 id를 서명한 state 쿠키에 담고, 콜백이 카카오 계정을 찾거나 만든 뒤 **한 트랜잭션**에서 합친다. 합치기가 실패하면 카카오 로그인은 그대로 성공시키고 게스트 기록은 남긴다(`guest_merged=false`).
+
+각 모듈은 자기 테이블만 옮긴다 — auth가 다른 모듈의 테이블을 직접 바꾸지 않고 각 `api.py`의 `reassign_user(db, *, from_user_id, to_user_id) -> dict[str, int]`(옮긴 행 수, 커밋은 호출자)를 부른다. 지도별로 충돌하면 **카카오 계정의 기존 값이 이긴다.**
+
+| 모듈 | 옮기는 것 | 충돌 규칙 |
+|---|---|---|
+| maps | `memberships.user_id`, `invites.created_by` | 같은 지도에 카카오 계정이 이미 구성원이면 게스트의 멤버십은 지운다(역할은 카카오 쪽 그대로). 지도 수 상한(20)은 합칠 때 검사하지 않는다 |
+| pins | `pins.created_by`, `reactions.user_id` | 같은 핀에 카카오 계정의 반응이 이미 있으면 게스트의 반응을 지운다 |
+| recommend | `recommend_runs.requested_by`, `evidence_lines`의 작성자, `exclusions.requested_by`, 후보의 요청자 | 제안·거절 이력이 (지도, 장소)로 겹치면 게스트 것을 지운다. `attempt_no`는 건드리지 않는다(추천 횟수는 합치지 않는다) |
+| shortlist | `shortlist_items.added_by` | 없음 |
+| notifications | `notifications.user_id` | `notification_prefs`는 카카오 계정 것을 쓰고 게스트 것은 지운다 |
+| feedback | `feedback.user_id` | 없음 |
+| agent | 사용자 id를 가진 열 전부 | agent 담당이 정한다(사유 원문은 저장하지 않는 규칙 유지) |
+| auth | 마지막에 게스트 행을 `deleted_at`으로 지운다(탈퇴처럼 반응·근거를 지우지는 않는다 — 이미 옮겼다) | — |
+
+합치기로 사용자가 보는 이름이 게스트 이름에서 카카오 이름으로 바뀐다(구성원 목록·핀 작성자 표시는 다시 불러오면 된다). 게스트가 아닌 사용자가 시작하면 아무것도 하지 않는다. 이미 합쳐진(삭제된) 게스트 id로는 다시 합치지 않는다.
+
+---
+
 ## common (모든 모듈이 쓰고 realtime만 읽는다)
 
 ```
