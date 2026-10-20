@@ -8,7 +8,8 @@
   agent_advise_run(추천 막힘 조언, #587): 진단과 같은 도구 왕복이고 도구는 추천 막힘 전용 4개(RUN_ADVICE_TOOLS)다.
   신호 순위(agent_prioritize)는 #582에서 지웠다 — agent의 코드 규칙(core.fallback_order)이다.
   요약의 구체화 문장은 고정 문구라 모델 함수가 없다(2026-10-16, #588에서 재검토).
-- agent.course(v2 동선 에이전트, #334): agent_course_turn(턴 하나 → 다음 행동, CourseTurn). 실패는 AgentCallFailed.
+- agent.course(v2 동선 에이전트, #334): agent_course_turn(턴 하나 → 다음 행동, CourseTurn), course_set_goals(요청 한 줄 → 목표),
+  course_direct_turn(지휘 턴). 실패는 AgentCallFailed.
 
 고정 응답 스텁(dev)과 실제 모델(real) 중 무엇을 쓸지는 이 모듈이 아니라 받는 쪽의 Gateway(recommend/deps.py,
 agent/deps.py)가 planner 인자로 고른다.
@@ -16,10 +17,13 @@ agent/deps.py)가 planner 인자로 고른다.
 
 from llm.prompts import DIAGNOSIS_TOOLS, RUN_ADVICE_TOOLS
 from llm.schemas import (
-    AgentCallFailed, AgentReply, AgentUsage, CourseTurn, DiagnosisOutput, EvidenceLine, RunAdviceOutput,
+    AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
+    RunAdviceOutput,
 )
 from llm.service import (
     AdvicePlanner,
+    CourseDirectPlanner,
+    CourseGoalsPlanner,
     CourseTurnPlanner,
     DiagnosisPlanner,
     EvidencePlanner,
@@ -29,6 +33,11 @@ from llm.service import (
     ToolRunnerError,
     agent_advise_run,
     agent_course_turn,
+    course_direct_turn,
+    course_set_goals,
+    fixed_course_goals_planner,
+    real_course_direct_planner,
+    real_course_goals_planner,
     agent_diagnose,
     fixed_advice_planner,
     fixed_diagnosis_planner,
@@ -49,4 +58,6 @@ __all__ = [
     "RunAdviceOutput", "RUN_ADVICE_TOOLS", "AdvicePlanner",
     "agent_advise_run", "fixed_advice_planner", "real_advice_planner",
     "CourseTurn", "CourseTurnPlanner", "agent_course_turn", "real_course_turn_planner",
+    "CourseGoalSet", "CourseGoalsPlanner", "course_set_goals", "fixed_course_goals_planner", "real_course_goals_planner",
+    "CourseDirectTurn", "CourseDirectPlanner", "course_direct_turn", "real_course_direct_planner",
 ]

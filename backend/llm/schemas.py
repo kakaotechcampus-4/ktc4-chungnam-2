@@ -11,7 +11,7 @@
   ③-b   RankedCandidate (선호 순위)
   v2 에이전트 DiagnosisOutput, AgentCallFailed (docs/agent-v2.md 11.1, #532), AgentUsage·AgentReply(#564),
        RunAdviceOutput(#587). PriorityOutput은 #582에서 지웠다(우선순위는 agent의 코드 규칙)
-  v2 동선 에이전트 CourseTurn (drafts/agent-route-v2.md 11.1, #334)
+  v2 동선 에이전트 CourseTurn (drafts/agent-route-v2.md 11.1, #334), 목표 세우기 CourseGoalSet, 지휘 턴 CourseDirectTurn
 """
 
 from dataclasses import dataclass
@@ -400,3 +400,63 @@ class CourseTurn(_CourseStrict):
     plan: list[CoursePlanStep] = []
     lesson: Optional[str] = None
     action: CourseToolCall
+
+
+# ---- 목표 세우기와 지휘 턴 (#334, drafts/course-agent-pivot.md) ----
+# 모델은 코스를 직접 고치지 않는다. 요청 한 줄을 목표로 바꾸고(CourseGoalSet), 코드 최적화 도구를 불러 후보를 고른다(CourseDirectTurn).
+# 목표 점수·충족 판정과 후보 계산은 agent/course가 코드로 한다. 평평한 객체만 쓴다(oneOf 금지).
+
+
+class CourseGoal(_CourseStrict):
+    kind: Literal["day_indoor", "night_end", "daily_walk_low", "day_light", "place_on_day", "together"]
+    day: Optional[str] = None            # d1 … (day_indoor, night_end, day_light, place_on_day)
+    places: list[str] = []               # p1 … (place_on_day 1개, together 2개)
+    source: Literal["request", "reason"] = "request"    # reason(구성원 사유)은 이번 범위 밖 — 자리만 둔다
+    quote: str = ""                      # source=request: 근거가 된 요청 문장 조각(코드가 원문 부분 문자열인지 대조)
+    reaction_ids: list[str] = []         # source=reason: 근거 사유 별칭(r1 …). 이번 범위 밖
+
+
+class CourseGoalSet(_CourseStrict):
+    goals: list[CourseGoal]
+    unmatched: list[str]                 # 목표로 못 바꾼 요청 조각(원문 부분 문자열). 화면에 "반영하지 못했어요"
+
+
+class CourseLockSpec(_CourseStrict):
+    place: str
+    day: str
+
+
+class CourseOptimize(_CourseStrict):
+    """코드 최적화를 부른다. priority는 목표 id 순서(앞이 더 중요), locks는 이번 호출에서 날짜를 고정할 장소."""
+    tool: Literal["optimize"]
+    priority: list[str]
+    locks: list[CourseLockSpec]
+
+
+class CourseLockCall(_CourseStrict):
+    """장소를 한 날에 고정한다. 한 번 고정하면 풀 수 없다."""
+    tool: Literal["lock"]
+    place: str
+    day: str
+
+
+class CourseAskRequester(_CourseStrict):
+    """요청자에게 묻는다. 문구는 코드 템플릿이다 — 종류와 대상만 고른다."""
+    tool: Literal["ask_requester"]
+    kind: Literal["pick_course", "ask_closed_day"]
+    subject: Optional[str] = None        # ask_closed_day: 장소 별칭
+    options: list[str] = []              # pick_course: 후보 id(c1, c2 …)
+
+
+class CourseDirectFinish(_CourseStrict):
+    tool: Literal["finish"]
+    candidate_id: str
+
+
+CourseDirectCall = Union[CourseOptimize, CourseLockCall, CourseAskRequester, CourseDirectFinish]
+
+
+class CourseDirectTurn(_CourseStrict):
+    """지휘 턴 한 번의 출력. 생각은 화면 문장 검증(별칭 슬롯)을 거친다."""
+    thought: str
+    action: CourseDirectCall

@@ -20,14 +20,15 @@ from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
 
 from common.errors import AppError
 from llm.client import (
-    LlmCallError, call_agent_advice_turn, call_agent_diagnosis_turn, call_course_turn, call_planner, get_client, metering,
+    LlmCallError, call_agent_advice_turn, call_agent_diagnosis_turn, call_course_direct, call_course_goals, call_course_turn,
+    call_planner, get_client, metering,
 )
 from llm.prompts import (
     ADVICE_MAX_TOOL_CALLS, AGENT_ADVISE_RUN_PROMPT, AGENT_DIAGNOSE_PROMPT, DIAGNOSIS_MAX_TOOL_CALLS, DIAGNOSIS_TOOLS,
     RUN_ADVICE_TOOLS, STRUCTURE_REASONS_MAX_CALLS, diagnosis_tools, run_advice_tools,
 )
 from llm.schemas import (
-    AgentCallFailed, AgentReply, CourseTurn, DiagnosisOutput, EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason,
+    AgentCallFailed, AgentReply, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition, PlannedReason,
     PlanningOutput, RankedCandidate, RunAdviceOutput,
 )
 
@@ -504,3 +505,44 @@ def agent_course_turn(turn_input: Mapping[str, Any], *, planner: CourseTurnPlann
             return AgentReply(planner(turn_input), usage)
         except (LlmCallError, ValueError) as exc:
             return AgentReply(_failed("agent_course_turn", exc, f"turn={turn_input.get('turn', 0)}"), usage)
+
+
+# ---- 동선 목표 세우기와 지휘 턴 (#334, drafts/course-agent-pivot.md) ----
+# 입력은 agent/course가 만든 dict다. 목표 세우기 입력에는 요청 원문과 장소 이름이 들어 있다 — 요청 속 이름을 별칭으로 바꾸려면 필요하다.
+# 지휘 턴 입력은 별칭과 점수만이다. 두 호출 모두 실패는 재요청 없이 AgentCallFailed로 돌려준다.
+CourseGoalsPlanner = Callable[[Mapping[str, Any]], CourseGoalSet]
+CourseDirectPlanner = Callable[[Mapping[str, Any]], CourseDirectTurn]
+
+
+def fixed_course_goals_planner(goals_input: Mapping[str, Any]) -> CourseGoalSet:
+    """고정 응답 스텁 — 목표를 만들지 않고 요청 전체를 "반영하지 못했어요"로 돌린다(지어낸 목표가 나갈 길이 없다)."""
+    request = str(goals_input.get("request", ""))
+    return CourseGoalSet(goals=[], unmatched=[request] if request else [])
+
+
+def real_course_goals_planner(goals_input: Mapping[str, Any]) -> CourseGoalSet:
+    """실제 모델(gpt-6-luna). 설정이 비면 LlmCallError(call_failed)."""
+    return call_course_goals(get_client(), goals_input)
+
+
+def course_set_goals(goals_input: Mapping[str, Any], *, planner: CourseGoalsPlanner) -> AgentReply[CourseGoalSet]:
+    """요청 한 줄 → 목표(CourseGoalSet). 별칭·종류별 매개변수·quote/unmatched가 원문 부분 문자열인지는 agent의 goals 검증이 본다
+    (떨어진 목표는 버리고 그 조각을 unmatched로 옮긴다). 구성원 사유 입력은 이번 범위 밖이다."""
+    with metering() as usage:
+        try:
+            return AgentReply(planner(goals_input), usage)
+        except (LlmCallError, ValueError) as exc:
+            return AgentReply(_failed("course_set_goals", exc, "goals"), usage)
+
+
+def real_course_direct_planner(turn_input: Mapping[str, Any]) -> CourseDirectTurn:
+    return call_course_direct(get_client(), turn_input, turn=turn_input.get("turn", 0))
+
+
+def course_direct_turn(turn_input: Mapping[str, Any], *, planner: CourseDirectPlanner) -> AgentReply[CourseDirectTurn]:
+    """지휘 턴 하나. 실패는 AgentCallFailed — 그 턴은 agent가 코드 규칙(가장 나은 후보 고르기)으로 대신한다."""
+    with metering() as usage:
+        try:
+            return AgentReply(planner(turn_input), usage)
+        except (LlmCallError, ValueError) as exc:
+            return AgentReply(_failed("course_direct_turn", exc, f"turn={turn_input.get('turn', 0)}"), usage)

@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from agent.course import baseline, core, loop
+from agent.course import baseline, core, direct, goals as goals_mod, loop
+from agent.course.constants import REQUEST_TEXT_MAX_CHARS
+from agent.course.deps import ModelTurnFailed
 from agent.course.core import Course, MemberConstraint, Place, Trip
 from agent.course.ports import FixtureOpeningHours
 from agent.course.state import initial_state
@@ -116,14 +119,138 @@ def load_maps(data_dir: Path) -> list[dict[str, Any]]:
     return [json.loads(p.read_text(encoding="utf-8")) for p in sorted((data_dir / "maps").glob("map_*.json"))]
 
 
+# ---- 요청 목표 비교 (pivot 4절) ----
+
+@dataclass(frozen=True)
+class RequestScore:
+    score: Score
+    gold_met: int                       # 정답 목표 중 최종 코스가 지킨 수(판단할 수 없는 목표는 뺀다)
+    gold_total: int                     # 판단할 수 있는 정답 목표 수
+    goals_exact: Optional[bool] = None  # 에이전트만: 만든 목표가 정답과 종류·매개변수까지 일치
+    goals_trap_ok: Optional[bool] = None  # 에이전트만: 정답이 목표 0개인 지도에서 0개를 냈다
+    calls: int = 0
+    seconds: float = 0.0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    failures: int = 0
+
+
+def _goal_sig(g: goals_mod.Goal) -> tuple:
+    return (g.kind, g.day, tuple(sorted(g.places)))
+
+
+def gold_goals(sc: Scenario, req: Mapping[str, Any]) -> tuple[goals_mod.Goal, ...]:
+    out = []
+    for g in req["gold_goals"]:
+        goal, why = goals_mod.normalize(sc.trip, g["kind"], g["day"], g["places"])
+        if goal is None:
+            raise ValueError(f"정답 목표가 지도와 안 맞는다: {why}")
+        out.append(goal)
+    return tuple(out)
+
+
+def request_score(sc: Scenario, course: Course, gold: Sequence[goals_mod.Goal], **extra: Any) -> RequestScore:
+    met, total = goals_mod.met_count(sc.trip, course, gold)
+    return RequestScore(score(sc, course), met, total, **extra)
+
+
+def run_request_variants(
+    sc: Scenario, req: Mapping[str, Any], *, goal_setter: Optional[Callable] = None, decider: Optional[Callable] = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, RequestScore]:
+    """초안 / 강한 기준선(요청을 모름) / 강한 기준선 + 정답 목표 / 에이전트(목표 세우기 + 지휘, 모델 자리가 있을 때)."""
+    gold = gold_goals(sc, req)
+    draft = core.draft_course(sc.trip)
+    out = {"draft": request_score(sc, draft, gold)}
+
+    def climb_with(goals: tuple[goals_mod.Goal, ...], decide=None, unmatched=0):
+        return direct.run_direct(initial_state(sc.trip, sc.start_hours, draft, goals), decide=decide, hours=sc.gateway,
+                                 unmatched_count=unmatched)
+
+    out["strong"] = request_score(sc, climb_with(()).course, gold)
+    out["strong_gold"] = request_score(sc, climb_with(gold).course, gold)
+    if goal_setter is not None and decider is not None:
+        started = clock()
+        text = req["request_text"][:REQUEST_TEXT_MAX_CHARS]
+        verified = goals_mod.VerifiedGoals((), (text,), ())
+        try:
+            verified = goals_mod.verify_goal_set(sc.trip, text, goal_setter(goals_mod.goals_input(sc.trip, text)))
+        except ModelTurnFailed:
+            pass                                          # 목표 세우기 실패 → 요청 목표 없이 진행(기본 목표만)
+        result = climb_with(verified.goals, decider, len(verified.unmatched))
+        out["agent"] = request_score(
+            sc, result.course, gold,
+            goals_exact={_goal_sig(g) for g in verified.goals} == {_goal_sig(g) for g in gold},
+            goals_trap_ok=(not verified.goals) if not gold else None,
+            calls=goal_setter.calls + decider.calls, seconds=clock() - started,
+            tokens_in=goal_setter.tokens[0] + decider.tokens[0], tokens_out=goal_setter.tokens[1] + decider.tokens[1],
+            failures=len(goal_setter.failures) + len(decider.failures),
+        )
+    return out
+
+
+def aggregate_requests(results: Sequence[Mapping[str, RequestScore]]) -> dict[str, dict[str, Optional[float]]]:
+    table: dict[str, dict[str, Optional[float]]] = {}
+    for variant in results[0]:
+        rows = [r[variant] for r in results]
+        judged = [r for r in rows if r.gold_total]
+        exact = [r.goals_exact for r in rows if r.goals_exact is not None]
+        trap = [r.goals_trap_ok for r in rows if r.goals_trap_ok is not None]
+        table[variant] = {
+            "goal_met": _mean([r.gold_met / r.gold_total for r in judged]),
+            "hard_solved": sum(r.score.hard_confirmed == 0 for r in rows) / len(rows),
+            "hard_confirmed": _mean([r.score.hard_confirmed for r in rows]),
+            "cafe_after_meal": _mean([r.score.soft["cafe_after_meal"] for r in rows]),
+            "night_last": _mean([r.score.soft["night_last"] for r in rows]),
+            "meal_per_day": _mean([r.score.soft["meal_per_day"] for r in rows]),
+            "day_balance": _mean([r.score.soft["day_balance"] for r in rows]),
+            "travel_total": _mean([r.score.soft["travel_total"] for r in rows]),
+            "goals_exact": (sum(exact) / len(exact)) if exact else None,
+            "trap_zero": (sum(trap) / len(trap)) if trap else None,
+            "model_calls": _mean([r.calls for r in rows]),
+            "seconds": _mean([r.seconds for r in rows]),
+            "tokens_in": _mean([r.tokens_in for r in rows]),
+            "tokens_out": _mean([r.tokens_out for r in rows]),
+            "failures": sum(r.failures for r in rows),
+        }
+    return table
+
+
+def _main_requests(args: argparse.Namespace) -> None:
+    maps = load_maps(args.data)
+    requests = {r["map_id"]: r for r in json.loads(args.requests.read_text(encoding="utf-8"))}
+    if args.only:
+        wanted = args.only.split(",")
+        maps = [m for m in maps if m["id"] in wanted]
+    goal_setter = decider = None
+    if args.model:
+        limit = min(args.max_maps or MODEL_MAP_CAP, MODEL_MAP_CAP)
+        maps = maps[:limit]
+        from agent.course.deps import DirectDecider, GoalSetter     # 실모델 설정(.env)이 필요할 때만 가져온다
+        from llm.api import real_course_direct_planner, real_course_goals_planner
+    elif args.max_maps:
+        maps = maps[: args.max_maps]
+    results = []
+    for m in maps:
+        if args.model:
+            goal_setter, decider = GoalSetter(real_course_goals_planner), DirectDecider(real_course_direct_planner)
+        results.append(run_request_variants(scenario_from_map(m), requests[m["id"]], goal_setter=goal_setter, decider=decider))
+    print(format_table(aggregate_requests(results), len(maps)))
+
+
 def main(argv: Optional[Sequence[str]] = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", type=Path, default=Path(__file__).parent / "data")
     ap.add_argument("--model", action="store_true", help=f"실모델 에이전트도 돌린다(지도 {MODEL_MAP_CAP}개 이하)")
     ap.add_argument("--max-maps", type=int, default=None)
+    ap.add_argument("--requests", type=Path, default=None,
+                    help="요청 문장 세트(requests.json). 주면 강한 기준선 / +정답 목표 / 에이전트(지휘)를 비교한다")
+    ap.add_argument("--only", default=None, help="지도 id를 쉼표로(예: map_04,map_07). --requests에서만")
     ap.add_argument("--unknown-as-violation", action="store_true", help="휴무 모름을 위반으로 센다(기본은 「확인 필요」)")
     args = ap.parse_args(argv)
 
+    if args.requests:
+        return _main_requests(args)
     maps = load_maps(args.data)
     decide = None
     if args.model:

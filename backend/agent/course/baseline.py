@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from agent.course import core
+from agent.course import core, goals as goals_mod
 from agent.course.constants import TOOL_LIMITS
 from agent.course.schemas import (
     CommitMove,
@@ -96,11 +96,13 @@ def _soft_key(trip, course) -> tuple[float, ...]:
     )
 
 
-def _strong_key(state: State, course: core.Course, violations) -> tuple:
-    return (*core.hard_score(violations), _soft_key(state.trip, course))
+def strong_key(state: State, course: core.Course, violations) -> tuple:
+    # 확정 위반 → 확인 필요 → 요청 목표(충족 수, 우선순위순) → 기본 목표. 요청 목표가 없으면 이 자리는 빈 값이다
+    return (*core.hard_score(violations), goals_mod.key_part(state.trip, course, state.goals, state.priority),
+            _soft_key(state.trip, course))
 
 
-def _strong_best_move(state: State) -> Optional[Move]:
+def strong_best_move(state: State) -> Optional[Move]:
     places = [p.alias for p in state.trip.places]
     n_days = len(state.trip.days)
     candidates: list[Move] = []
@@ -108,13 +110,13 @@ def _strong_best_move(state: State) -> Optional[Move]:
         frm, _ = core.locate(state.course, p)
         candidates += [MoveDay(type="move_day", place=p, to_day=core.day_alias(i)) for i in range(n_days) if i != frm]
         candidates += [Swap(type="swap", a=p, b=q) for q in places if q > p]
-    best: tuple[tuple, Optional[Move]] = (_strong_key(state, state.course, state.violations), None)
+    best: tuple[tuple, Optional[Move]] = (strong_key(state, state.course, state.violations), None)
     for move in candidates:
         try:
             course = core.apply_move(state.trip, state.course, move, state.locks)
         except core.MoveError:
             continue
-        key = _strong_key(state, course, core.find_violations(state.trip, course, state.hours))
+        key = strong_key(state, course, core.find_violations(state.trip, course, state.hours))
         if key < best[0]:
             best = (key, move)
     return best[1]
@@ -126,14 +128,14 @@ def next_action_strong(state: State) -> ToolCall:
     if unknown and _left(state, "get_opening_hours"):
         return GetOpeningHours(tool="get_opening_hours", place=unknown[0])
 
-    current = _strong_key(state, state.course, state.violations)
-    better = [t for t in state.trials if _strong_key(state, t.course, t.violations) < current]
+    current = strong_key(state, state.course, state.violations)
+    better = [t for t in state.trials if strong_key(state, t.course, t.violations) < current]
     if better:
-        best = min(better, key=lambda t: _strong_key(state, t.course, t.violations))
+        best = min(better, key=lambda t: strong_key(state, t.course, t.violations))
         return CommitMove(tool="commit_move", trial_id=best.trial_id)
 
     if _left(state, "try_move"):
-        move = _strong_best_move(state)
+        move = strong_best_move(state)
         if move is not None:
             return TryMove(tool="try_move", move=move)
 

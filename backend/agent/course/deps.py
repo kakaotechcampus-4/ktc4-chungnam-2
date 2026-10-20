@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from llm.api import AgentCallFailed, AgentUsage, CourseTurn, CourseTurnPlanner, agent_course_turn
+from llm.api import (
+    AgentCallFailed, AgentUsage, CourseTurn, CourseTurnPlanner, agent_course_turn, course_direct_turn, course_set_goals,
+)
 
 
 class ModelTurnFailed(RuntimeError):
@@ -39,3 +41,48 @@ class ModelDecider:
     @property
     def tokens(self) -> tuple[int, int]:
         return sum(u.tokens_in for u in self.usages), sum(u.tokens_out for u in self.usages)
+
+
+class _Metered:
+    """llm 호출 결과(AgentReply)를 받아 사용량을 모으고 실패를 ModelTurnFailed로 바꾸는 공통 부분."""
+
+    def __init__(self) -> None:
+        self.usages: list[AgentUsage] = []
+        self.failures: list[AgentCallFailed] = []
+
+    def _unwrap(self, reply):
+        self.usages.append(reply.usage)
+        if isinstance(reply.result, AgentCallFailed):
+            self.failures.append(reply.result)
+            raise ModelTurnFailed(reply.result)
+        return reply.result
+
+    @property
+    def tokens(self) -> tuple[int, int]:
+        return sum(u.tokens_in for u in self.usages), sum(u.tokens_out for u in self.usages)
+
+    @property
+    def calls(self) -> int:
+        return len(self.usages)
+
+
+class GoalSetter(_Metered):
+    """요청 한 줄 → CourseGoalSet. planner로 실제 모델(real_course_goals_planner)이나 스텁(fixed_course_goals_planner)을 받는다."""
+
+    def __init__(self, planner):
+        super().__init__()
+        self._planner = planner
+
+    def __call__(self, goals_input):
+        return self._unwrap(course_set_goals(goals_input, planner=self._planner))
+
+
+class DirectDecider(_Metered):
+    """지휘 턴의 모델 자리(direct.run_direct(decide=...))."""
+
+    def __init__(self, planner):
+        super().__init__()
+        self._planner = planner
+
+    def __call__(self, turn_input):
+        return self._unwrap(course_direct_turn(turn_input, planner=self._planner))

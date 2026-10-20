@@ -38,3 +38,15 @@ NIGHT_LABEL = "night_view"
 
 # 화면 문장에 쓰면 안 되는 표현(초안). 결정을 지시하는 말을 막는다.
 FORBIDDEN_PHRASES = ("빼세요", "삭제하세요", "확정하세요", "여기로 가세요", "포기하세요")
+
+# 요청 목표(명세 8.2). 점수는 코드가 계산하고 모델은 쓰지 않는다
+REQUEST_TEXT_MAX_CHARS = 100
+GOALS_MAX = 4
+INDOOR_LABEL = "is_indoor"
+INDOOR_MET_RATIO = 0.7             # day_indoor: 라벨을 아는 장소 중 실내 비율이 이 이상이면 충족
+DAILY_WALK_LOW_MAX_MIN = 60        # daily_walk_low: 하루 도보 합계의 최대가 이 이하면 충족
+# 지휘 턴(pivot 3절)
+DIRECT_MAX_TURNS = 5
+CANDIDATES_MAX = 3
+ASK_MAX = 2
+CLIMB_MAX_STEPS = 60               # optimize 한 번이 채택하는 수리의 최대 수

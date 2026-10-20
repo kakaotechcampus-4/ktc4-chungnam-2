@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, replace
 from typing import Mapping, Optional
 
 from agent.course import core
+from agent.course.goals import Goal
 from agent.course.core import Course, Hours, Trip, Violation
 from agent.course.schemas import Move
 
@@ -43,6 +44,8 @@ class State:
     tool_counts: Mapping[str, int] = field(default_factory=dict)
     looked_up: frozenset[str] = frozenset()                    # 영업시간 조회가 더는 새 정보를 못 주는 장소(조회했거나, 처음부터 다 안다)
     open_days_asked: frozenset[str] = frozenset()              # find_open_days를 이미 부른 장소(같은 답이라 되풀이를 거절한다)
+    goals: tuple[Goal, ...] = ()                               # 요청 목표(명세 8.2). 강한 기준선의 비교에 들어간다
+    priority: tuple[str, ...] = ()                             # 목표 id 순서(앞이 더 중요). 비면 goals 순서
     plan: tuple[str, ...] = ()
     lessons: tuple[str, ...] = ()
 
@@ -50,7 +53,9 @@ class State:
         return next((t for t in self.trials if t.trial_id == trial_id), None)
 
 
-def initial_state(trip: Trip, hours: Hours, course: Optional[Course] = None) -> State:
+def initial_state(
+    trip: Trip, hours: Hours, course: Optional[Course] = None, goals: tuple[Goal, ...] = (),
+) -> State:
     """course를 안 주면 초안 배치로 시작한다. 테스트는 정해진 코스로 시작할 수 있다."""
     course = course if course is not None else core.draft_course(trip)
     _check_course(trip, course)
@@ -59,7 +64,7 @@ def initial_state(trip: Trip, hours: Hours, course: Optional[Course] = None) -> 
     # 그 경우는 첫 조회가 확인해 주므로 여기서는 "다 아는 곳"만 표시한다.
     known = frozenset(p.alias for p in trip.places if all(core.status_on(hours, p.alias, d) != "unknown" for d in trip.days))
     return State(
-        trip=trip, hours=hours, course=course, looked_up=known,
+        trip=trip, hours=hours, course=course, looked_up=known, goals=goals,
         violations=core.find_violations(trip, course, hours),
         history=(Commit(0, course),),
     )
