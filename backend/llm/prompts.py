@@ -201,6 +201,11 @@ PLAN_EVIDENCE_PROMPT = (
 # 진단 1회당 도구 상한(명세 5절, 10절). service.agent_diagnose가 이 값으로 막고, 프롬프트도 같은 값을 알려 준다.
 DIAGNOSIS_MAX_TOOL_CALLS = 5
 STRUCTURE_REASONS_MAX_CALLS = 1
+# 진단 1회의 도구 대화 시간 예산(초, #677 초안). 왕복을 시작할 때 대화 시작부터 이만큼 지났으면 그 왕복은 도구를 닫고 답을
+# 받는다(service._tool_conversation). 진행 중인 왕복을 끊지는 않으므로 최악은 예산 + 요청 두 번(클라이언트 타임아웃 15초씩)과
+# 그 사이 도구 실행이다(예산 직전에 도구를 연 왕복 하나, 닫은 왕복 하나).
+# 관찰 tick(agent TICK_BUDGET_SEC)이 새 관찰만 막아서, 이미 시작한 진단이 lease를 넘기지 않게 여기서 묶는다.
+DIAGNOSIS_TIME_BUDGET_SEC = 40
 
 # 프롬프트 버전(agent_runs.prompt_version, #564). 아래 프롬프트 글이나 도구 설명을 바꾸면 올린다 — #534 평가가 run을
 # 버전별로 나눠 본다. v2(#534): 유형별 판단과 침묵 기준, 도구를 언제 쓰고 언제 쓰지 않는지, 슬롯과 is_guess.
@@ -364,7 +369,12 @@ def diagnosis_tools(diagnosis: str) -> list[dict]:
 # 나온다. 조건을 끄는 것은 사람이다(가드레일 4) — 모델은 몇 곳이 빠졌는지만 말한다. #588에서 평가셋으로 다듬는다(초안).
 
 ADVICE_MAX_TOOL_CALLS = 5   # 진단과 같은 값으로 시작한다(초안, #588에서 호출 분포를 보고 정한다)
-AGENT_ADVISE_RUN_PROMPT_VERSION = "advise-v1"
+# 조언 1회의 도구 대화 시간 예산(초, #677 초안). GET /runs/{runId}/advice 요청 안에서 돌아서 진단보다 짧게 둔다. 뜻은
+# DIAGNOSIS_TIME_BUDGET_SEC와 같다.
+ADVICE_TIME_BUDGET_SEC = 25
+# v2(#677): radius는 버튼 한 번의 배율(radius.next_radius_factor)로만 시뮬레이션하고, null이면 고르지 않는다 — agent 검증이
+# 다른 배율의 시뮬레이션에는 반경 넓히기 버튼을 붙이지 않는다(not_next_step).
+AGENT_ADVISE_RUN_PROMPT_VERSION = "advise-v2"
 
 AGENT_ADVISE_RUN_PROMPT = f"""너는 AI 추천 결과가 적게 나온 사람에게, 더 많이 추천받으려면 무엇을 확인하면 되는지 짧게 알려 준다.
 이 메시지는 그 추천을 요청한 사람 한 명에게만 보인다. 너는 아무것도 직접 바꾸지 않는다. 조건을 끄거나 반경을 넓히는 것은 사람이
@@ -378,16 +388,18 @@ AGENT_ADVISE_RUN_PROMPT = f"""너는 AI 추천 결과가 적게 나온 사람에
 
 ## 입력
 - category: 추천 카테고리. result_count: 이번 추천 결과 수(최대 3). same_category_runs: 이 사람이 같은 카테고리로 추천을 받은 횟수.
-- radius: walk_min(지금 기본 반경, 도보 분), max_walk_min(사람이 넓힐 수 있는 상한), max_radius_factor(상한까지의 배율. 1 이하면
-  더 넓힐 수 없다).
+- radius: walk_min(지금 기본 반경, 도보 분), max_walk_min(사람이 넓힐 수 있는 상한), max_radius_factor(상한까지의 배율, 참고용),
+  next_radius_factor(반경 넓히기 버튼을 한 번 눌렀을 때의 배율. null이면 이미 상한이라 더 넓힐 수 없다).
 - funnel: 이번 추천의 깔때기. 도구 결과와 같은 모양({{"call_id": "t0", "result": …}})이라 tool_result claim에 call_id "t0"으로 쓸 수
   있다. result.funnel은 단계별 탈락 수(label, removed_count), result.passed는 필터를 모두 통과한 곳 수(상위 3곳을 고르기 전)다.
 
 ## 종류(kind) 고르기 — 하나만 고른다
 깔때기에서 가장 많이 빠진 단계를 보고 고른다.
-- radius: 「반경 밖 제거」가 많다. max_radius_factor가 1보다 클 때만 고른다. simulate_filter(radius_factor=1보다 크고
-  max_radius_factor 이하, disable_line_ids=null)로 넓히면 몇 곳이 더 남는지 보고, 그 결과의 gained를 claim으로 쓴다. 버튼은
-  widen_radius 하나이고 basis는 그 simulate_filter claim이다.
+- radius: 「반경 밖 제거」가 많다. radius.next_radius_factor가 null이 아닐 때만 고른다(null이면 radius를 고르지 않는다).
+  simulate_filter(radius_factor=next_radius_factor 값 그대로, disable_line_ids=null)로 반경 넓히기 버튼을 한 번 누르면 몇 곳이
+  더 남는지 보고, 그 결과의 gained를 claim으로 쓴다. 다른 배율(max_radius_factor 등)로는 시뮬레이션하지 않는다. 버튼은 한 번에
+  한 단계만 넓혀서, 다른 배율의 숫자는 버튼을 눌렀을 때와 다르다. 버튼은 widen_radius 하나이고 basis는 그 simulate_filter
+  claim이다.
 - soft_relax: 「실격 조건 제거」가 많다. get_run_evidence로 근거 줄을 읽고, badge가 required이고 is_active가 true인 조건 줄
   (kind=condition)마다 simulate_filter(radius_factor=null, disable_line_ids=[그 줄의 line_id])로 그 줄 하나를 끄면 몇 곳이 더
   남는지 본다. 많이 늘어나는 줄부터 하나나 둘만 말한다. 줄 이름은 lines.N.label을 tool_result claim으로 가리킨다.
@@ -444,8 +456,9 @@ AGENT_TOOL_SPECS.update({
     },
     "simulate_filter": {
         "description": "입력만 바꿔 실격 필터를 다시 돌린 결과(아무것도 바꾸지 않는다): before, after(각각 result_count, passed, "
-                       "funnel), gained(after.passed − before.passed, 더 남는 곳 수). radius_factor는 반경 배율(1보다 크고 "
-                       "max_radius_factor 이하), disable_line_ids는 끄고 볼 근거 줄 id다. 하나만 바꿔서 본다.",
+                       "funnel), gained(after.passed − before.passed, 더 남는 곳 수). radius_factor는 반경 배율로, 입력의 "
+                       "radius.next_radius_factor(버튼 한 번)를 그대로 쓴다. disable_line_ids는 끄고 볼 근거 줄 id다. 하나만 "
+                       "바꿔서 본다.",
         "parameters": _object({"radius_factor": _NULLABLE_NUMBER, "disable_line_ids": _NULLABLE_STRING_LIST}),
     },
 })

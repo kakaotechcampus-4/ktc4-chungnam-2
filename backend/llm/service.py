@@ -14,6 +14,7 @@ passthrough_planner는 입력을 스키마로 검증·통과하는 스텁이다(
 import json
 import logging
 import re
+import time
 import unicodedata
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
 
@@ -22,8 +23,9 @@ from llm.client import (
     LlmCallError, call_agent_advice_turn, call_agent_diagnosis_turn, call_planner, get_client, metering,
 )
 from llm.prompts import (
-    ADVICE_MAX_TOOL_CALLS, AGENT_ADVISE_RUN_PROMPT, AGENT_DIAGNOSE_PROMPT, DIAGNOSIS_MAX_TOOL_CALLS, DIAGNOSIS_TOOLS,
-    RUN_ADVICE_TOOLS, STRUCTURE_REASONS_MAX_CALLS, diagnosis_tools, run_advice_tools,
+    ADVICE_MAX_TOOL_CALLS, ADVICE_TIME_BUDGET_SEC, AGENT_ADVISE_RUN_PROMPT, AGENT_DIAGNOSE_PROMPT, DIAGNOSIS_MAX_TOOL_CALLS,
+    DIAGNOSIS_TIME_BUDGET_SEC, DIAGNOSIS_TOOLS, RUN_ADVICE_TOOLS, STRUCTURE_REASONS_MAX_CALLS, diagnosis_tools,
+    run_advice_tools,
 )
 from llm.schemas import (
     AgentCallFailed, AgentReply, AgentUsage, DiagnosisOutput, EvidenceLine, FactKey, PlaceFactLabel, PlannedCondition,
@@ -289,6 +291,7 @@ class ToolCaller(Protocol):
 
 DiagnosisPlanner = Callable[[Mapping[str, Any], ToolCaller], DiagnosisOutput]
 AdvicePlanner = Callable[[Mapping[str, Any], ToolCaller], RunAdviceOutput]
+Clock = Callable[[], float]   # 도구 대화의 시간 예산을 재는 시계(초). 기본 time.monotonic, 테스트가 바꾼다
 
 
 class ToolRunnerError(RuntimeError):
@@ -371,17 +374,24 @@ def _assistant_tool_message(message: Any) -> dict[str, Any]:
 
 def _tool_conversation(
     client: Any, *, prompt: str, payload: Mapping[str, Any], tools: list[dict], call_tool: ToolCaller, max_calls: int,
-    turn_call: Callable[..., Any],
+    time_budget_sec: float, turn_call: Callable[..., Any], clock: Clock = time.monotonic,
 ) -> Any:
-    """도구 호출 대화(진단과 추천 막힘 조언이 같이 쓴다). 상한을 다 썼거나 마지막 왕복이면 tool_choice="none"으로 답을
-    받는다 — 요청은 많아야 max_calls + 1번이다. "none"인데도 도구를 부르면 실패(call_failed), 도구 인자 JSON이 깨지면
+    """도구 호출 대화(진단과 추천 막힘 조언이 같이 쓴다). 상한을 다 썼거나, 마지막 왕복이거나, 왕복을 시작할 때 대화 시작부터
+    time_budget_sec가 지났으면(#677) 그 왕복은 tool_choice="none"으로 답을 받는다 — 요청은 많아야 max_calls + 1번이다. 시간은
+    왕복 사이에만 보고 진행 중인 요청은 끊지 않는다. "none"인데도 도구를 부르면 실패(call_failed), 도구 인자 JSON이 깨지면
     ValueError(invalid_schema)다. 어떤 실패도 다시 묻지 않는다."""
+    started = clock()
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": prompt},
         {"role": "user", "content": json.dumps(dict(payload), ensure_ascii=False, default=str)},
     ]
     for turn in range(max_calls + 1):
         tools_open = turn < max_calls and not call_tool.exhausted
+        elapsed = clock() - started
+        if tools_open and elapsed >= time_budget_sec:
+            log.info("도구 대화 시간 예산을 넘겨 도구를 닫는다: turn=%d budget_sec=%s elapsed_ms=%d",
+                     turn, time_budget_sec, int(elapsed * 1000))
+            tools_open = False
         message = turn_call(client, messages, tools=tools, tool_choice="auto" if tools_open else "none", turn=turn)
         if not message.tool_calls:
             return message.parsed
@@ -400,10 +410,13 @@ def _tool_conversation(
     raise LlmCallError("도구 왕복 상한을 넘겼다")  # 마지막 왕복은 늘 "none"이라 오지 않는다
 
 
-def _model_diagnosis_planner(client: Any, diagnosis_input: Mapping[str, Any], call_tool: ToolCaller) -> DiagnosisOutput:
+def _model_diagnosis_planner(
+    client: Any, diagnosis_input: Mapping[str, Any], call_tool: ToolCaller, *, clock: Clock = time.monotonic,
+) -> DiagnosisOutput:
     return _tool_conversation(
         client, prompt=AGENT_DIAGNOSE_PROMPT, payload=diagnosis_input, tools=diagnosis_tools(diagnosis_input["diagnosis"]),
-        call_tool=call_tool, max_calls=DIAGNOSIS_MAX_TOOL_CALLS, turn_call=call_agent_diagnosis_turn,
+        call_tool=call_tool, max_calls=DIAGNOSIS_MAX_TOOL_CALLS, time_budget_sec=DIAGNOSIS_TIME_BUDGET_SEC,
+        turn_call=call_agent_diagnosis_turn, clock=clock,
     )
 
 
@@ -422,6 +435,7 @@ def agent_diagnose(
     tool_runner: 도구 실행 콜백. 이 함수가 call_id(t1, t2 …)를 매겨 부른다. 진단 1회당 DIAGNOSIS_MAX_TOOL_CALLS(5)회,
     그중 structure_reasons는 STRUCTURE_REASONS_MAX_CALLS(1)회까지 실행하고, 넘는 호출은 실행하지 않고 LIMIT_EXCEEDED를,
     유형에 허용되지 않은 도구는 NOT_FOUND를 도구 결과로 돌려준다. tool_runner의 예외는 ToolRunnerError로 그대로 올라간다.
+    실제 planner는 대화가 DIAGNOSIS_TIME_BUDGET_SEC(40초)를 넘기면 다음 왕복에서 도구를 닫고 답을 받는다(#677).
 
     결과(DiagnosisOutput 또는 AgentCallFailed)와 사용량(AgentUsage, #564. 도구 왕복 전부의 합)을 함께 돌려준다. 실패(호출
     실패, 타임아웃, 스키마 검증 실패)는 재요청하지 않고 AgentCallFailed로 돌려준다. signal_id·diagnosis가 입력과 같은지,
@@ -455,10 +469,13 @@ def fixed_advice_planner(advice_input: Mapping[str, Any], call_tool: ToolCaller)
     return RunAdviceOutput(decision="silent", kind="exhausted", claims=[], advice=[], actions=[])
 
 
-def _model_advice_planner(client: Any, advice_input: Mapping[str, Any], call_tool: ToolCaller) -> RunAdviceOutput:
+def _model_advice_planner(
+    client: Any, advice_input: Mapping[str, Any], call_tool: ToolCaller, *, clock: Clock = time.monotonic,
+) -> RunAdviceOutput:
     return _tool_conversation(
         client, prompt=AGENT_ADVISE_RUN_PROMPT, payload=advice_input, tools=run_advice_tools(),
-        call_tool=call_tool, max_calls=ADVICE_MAX_TOOL_CALLS, turn_call=call_agent_advice_turn,
+        call_tool=call_tool, max_calls=ADVICE_MAX_TOOL_CALLS, time_budget_sec=ADVICE_TIME_BUDGET_SEC,
+        turn_call=call_agent_advice_turn, clock=clock,
     )
 
 
@@ -475,7 +492,8 @@ def agent_advise_run(
     advice_input: agent의 core.advice_input이 만든 dict(카테고리, 결과 수, 반경 상한, 미리 읽은 깔때기 등). 모델에는 JSON
     문자열로만 넘긴다. 구성원은 "본인"과 "다른 구성원"으로만 들어 있어야 한다(agent 책임).
     tool_runner: 도구 실행 콜백. call_id(t1, t2 …)를 매겨 부른다. 1회당 ADVICE_MAX_TOOL_CALLS(5)회까지 실행하고, 넘는 호출은
-    LIMIT_EXCEEDED, 추천 막힘 전용 4개(RUN_ADVICE_TOOLS) 밖의 도구는 NOT_FOUND를 도구 결과로 돌려준다.
+    LIMIT_EXCEEDED, 추천 막힘 전용 4개(RUN_ADVICE_TOOLS) 밖의 도구는 NOT_FOUND를 도구 결과로 돌려준다. 실제 planner는 대화가
+    ADVICE_TIME_BUDGET_SEC(25초)를 넘기면 다음 왕복에서 도구를 닫고 답을 받는다(#677).
 
     결과(RunAdviceOutput 또는 AgentCallFailed)와 사용량을 함께 돌려준다. 실패는 재요청하지 않는다."""
     budget = _ToolBudget(RUN_ADVICE_TOOLS, tool_runner, max_calls=ADVICE_MAX_TOOL_CALLS)

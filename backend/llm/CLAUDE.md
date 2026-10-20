@@ -15,7 +15,8 @@
 
 지금 열린 것(`llm/api.py`): `agent_diagnose(diagnosis_input, *, tool_runner, planner)`(#532), `agent_advise_run(advice_input, *, tool_runner, planner)`(#587).
 - planner는 ②처럼 부르는 쪽이 넘긴다. 스텁 `fixed_diagnosis_planner`(get_reasons를 한 번 부르고 늘 silent), `fixed_advice_planner`(get_run_evidence를 한 번 부르고 늘 silent), 실제 `real_diagnosis_planner`, `real_advice_planner`.
-- 추천 막힘 조언은 진단과 같은 도구 왕복이다. 도구는 추천 막힘 전용 4개(`prompts.RUN_ADVICE_TOOLS`), 1회당 `ADVICE_MAX_TOOL_CALLS`(5)회, 프롬프트는 `advise-v1`(초안, 다듬기와 평가는 #588).
+- 추천 막힘 조언은 진단과 같은 도구 왕복이다. 도구는 추천 막힘 전용 4개(`prompts.RUN_ADVICE_TOOLS`), 1회당 `ADVICE_MAX_TOOL_CALLS`(5)회, 프롬프트는 `advise-v2`(반경은 버튼 한 번의 배율 `radius.next_radius_factor`로만 시뮬레이션, #677. 평가는 #588).
+- 도구 대화에는 시간 예산도 있다(#677): 왕복을 시작할 때 대화 시작부터 `DIAGNOSIS_TIME_BUDGET_SEC`(40초), `ADVICE_TIME_BUDGET_SEC`(25초, HTTP 요청 안)가 지났으면 그 왕복은 `tool_choice="none"`이다. 진행 중인 요청은 끊지 않는다. 시계는 `_model_*_planner(clock=)`로 바꾼다.
 - 실패(호출 실패, 타임아웃, 스키마 검증 실패)는 예외가 아니라 `AgentCallFailed(reason, detail)`로 돌려준다. 다시 묻지 않는다. 여기서는 스키마 검증까지만 하고, claim·문장·행동 검증은 agent의 core가 한다.
 - 도구는 agent가 넘기는 `tool_runner(call_id, name, args)`로만 실행한다. call_id(t1, t2 …)는 이 모듈이 매긴다. 진단 1회당 5회, 그중 structure_reasons 1회(`prompts.DIAGNOSIS_MAX_TOOL_CALLS`, `STRUCTURE_REASONS_MAX_CALLS`)를 넘는 호출은 실행하지 않고 `LIMIT_EXCEEDED`를, 유형에 없는 도구는 `NOT_FOUND`를 도구 결과로 돌려준다. 상한을 다 쓰면 `tool_choice="none"`으로 답을 받는다. 도구 설명과 유형별 허용 목록은 `prompts.AGENT_TOOL_SPECS`, `DIAGNOSIS_TOOLS`이고, map_id는 모델이 고르지 않는다(agent가 채운다).
 - gpt-6-luna는 chat.completions에서 도구를 `reasoning_effort="none"`일 때만 받는다(2026-10-15 확인). 진단과 조언 호출은 none 고정이다.

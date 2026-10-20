@@ -4,6 +4,45 @@
 
 ---
 
+# #677 — 도구 대화 시간 예산, advise-v2(반경은 버튼 한 번의 배율)
+
+agent 쪽(#678, 관찰 실패 기록, tick 예산, `next_radius_factor`)이 머지된 뒤 llm 쪽 남은 두 가지(agent/for_Root.md #677 "루트 확인 요청" 2번)를 했다.
+
+## 바뀐 것
+
+- **도구 대화 시간 예산** (`service._tool_conversation`): 왕복을 시작할 때 대화 시작부터 예산이 지났으면 그 왕복은
+  `tool_choice="none"`으로 답을 받는다. 상수는 `prompts.DIAGNOSIS_TIME_BUDGET_SEC`(40), `ADVICE_TIME_BUDGET_SEC`(25, HTTP 요청 안)이고
+  초안이다. 시간은 왕복 사이에만 보고 진행 중인 요청은 끊지 않는다. 예산으로 닫히면 info 로그(turn, budget_sec, elapsed_ms)를 남긴다.
+  닫은 뒤에도 도구를 부르면 상한으로 닫았을 때와 같이 call_failed이고 다시 묻지 않는다
+- 시계는 `_model_diagnosis_planner`, `_model_advice_planner`의 키워드 인자 `clock`(기본 `time.monotonic`)으로 바꾼다. 공개 함수
+  (`agent_diagnose`, `agent_advise_run`, `real_*_planner`) 시그니처는 그대로라 agent는 고칠 것이 없다
+- **advise-v2** (`AGENT_ADVISE_RUN_PROMPT_VERSION`): 입력 radius 설명에 `next_radius_factor`(버튼 한 번의 배율, null이면 이미 상한)를
+  넣었다. radius 종류는 그 값이 null이 아닐 때만 고르고, `simulate_filter(radius_factor=next_radius_factor 값 그대로)`로 "한 번 넓히면
+  몇 곳"을 본다. 다른 배율로 시뮬레이션하지 않는 이유(버튼은 한 단계씩)도 적었다. simulate_filter 도구 설명의 "1보다 크고
+  max_radius_factor 이하"도 같은 말로 바꿨다. 진단 프롬프트(diagnose-v2)는 그대로다
+
+## 루트가 알아야 할 것
+
+1. **최악 시간.** 진행 중인 요청을 끊지 않으므로, 예산 직전에 도구를 연 왕복 하나와 닫은 왕복 하나가 더 붙는다. 진단 최악은
+   40 + 15 + 15초와 그 사이 도구 실행으로 약 70초다(전에는 요청 6번 × 15초 = 90초). 조언 최악은 약 55초다(전 90초).
+2. **agent tick 예산과 맞지 않을 수 있다.** `TICK_BUDGET_SEC`(150 = LEASE_SEC 180 − 30)은 관찰 하나가 30초 안에 끝난다고 보는 값이다.
+   149초에 시작한 관찰의 진단이 최악(약 70초)까지 가면 lease를 넘긴다. 확실히 막으려면 `TICK_BUDGET_SEC`를 LEASE_SEC − 관찰 최악
+   (약 75초) 이하로 두거나 진단 예산을 줄여야 한다. #534 평가의 진단 시간은 평균 5.4초, p90 7.9초, 최대 13.7초라 실제로 닿을 일은
+   드물다. agent 상수라 루트 결정이다.
+3. 실제 모델로 advise-v2를 잰 결과는 #588 평가셋에서 본다.
+
+## 테스트
+
+- `test_agent_calls.py` TestTimeBudget 3개: 예산을 다 쓰면 도구 상한이 남아도 다음 왕복은 none(로그 포함), 도구 하나에 예산의
+  1/4이면 넷째 도구 뒤에 닫힘(예산과 같으면 닫는다), 시간으로 닫은 뒤 도구를 부르면 call_failed 한 번
+- `test_agent_advice_calls.py`: 조언 예산을 다 쓰면 none, 프롬프트(next_radius_factor 그대로, null이면 radius를 고르지 않음, 프롬프트와
+  도구 설명에 "max_radius_factor 이하"가 없음), 버전 advise-v2
+- `pytest llm agent`: 860 passed, 5 deselected(live)
+- `pytest integration`: 177 passed, 1 xfailed(#226), 1 failed — `test_agent_e2e.py`의 버튼 테스트가 XPASS(strict)다. 저장소에 아직 없는 #676
+  파일의 xfail 표시 때문이고 이번 변경과 무관하다(#678 본문 참고)
+
+---
+
 # #587 — agent_advise_run(추천 막힘 조언)
 
 ## 연 것 (`llm/api.py`)
