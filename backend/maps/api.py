@@ -11,6 +11,8 @@ authz/deps.py::get_membership_gateway가 이 클래스를 직접 쓴다(#89로 A
 하위 경로(핀·추천·확정 리스트·SSE 구독)가 따로 고치지 않아도 404가 된다.
 """
 
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -108,3 +110,12 @@ def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
     """POST /invites/{token}/accept와 같은 흐름(#472, auth가 추가한 위임) — 구성원 가입, used_count, member.joined
     이벤트, 방장 알림까지 한 트랜잭션. 커밋은 호출자가 한다."""
     return service.accept_invite(db, token=token, user_id=user_id)
+
+
+def purge_deleted_maps(db: Session, *, now: datetime, older_than_days: int) -> dict[str, int]:
+    """정기 정리(#168)가 부른다 — 삭제한 지 `older_than_days`일이 지난 지도와 딸린 데이터를 지운다(`maps.purge`의 로직).
+    테이블 이름 → 지운 행 수, 지운 지도 수는 `maps` 키가 아니라 `deleted_maps`에 담는다. 커밋은 호출자."""
+    from maps import purge   # 지연 import — purge가 maps.api를 import해 순환이 된다
+
+    map_count, counts = purge.purge(db, now=now, older_than_days=older_than_days)
+    return {"deleted_maps": map_count, **counts}

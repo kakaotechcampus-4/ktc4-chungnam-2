@@ -70,3 +70,8 @@ def test_step_receives_now():
 
 def test_default_steps_are_the_three_stages():
     assert list(run.STEPS) == ["maps", "notifications", "guests"]
+
+
+def test_format_report_shows_map_count_apart_from_rows():
+    out = run.format_report({"maps": {"deleted_maps": 2, "pins": 5, "maps": 2}}, dry_run=False)
+    assert "maps: 7행 (지도 2개)" in out

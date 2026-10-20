@@ -9,7 +9,7 @@
 
 ## 하지 않는 것
 
-- 삭제 로직 (→ 각 모듈의 `api.py`. 여기는 부르기만 한다. 지도는 기존 `maps.purge`를 재사용하고 그 CLI는 그대로다)
+- 삭제 로직 (→ 각 모듈의 `api.py`. 여기는 부르기만 한다. 지도는 기존 `maps.api.purge_deleted_maps`(`maps.purge`에 위임)를 재사용하고 그 CLI는 그대로다)
 - agent의 일일 정리(`agent.flows.daily_cleanup_if_due`) — 프로세스 안에서 돌아서 넣지 않는다
 
 ## 규칙

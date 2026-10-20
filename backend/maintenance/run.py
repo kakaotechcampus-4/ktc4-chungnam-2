@@ -3,7 +3,7 @@
     python -m maintenance.run [--dry-run] [--only maps|notifications|guests]
 
 한 번 돌리면 ① 삭제한 지 30일 지난 지도 ② 90일 지난 알림 ③ 90일 안 쓴 게스트를 차례로 지운다. 실제 삭제는 각
-모듈이 한다(`maps.purge.purge`, `notifications.api.purge_old`, `auth.api.purge_inactive_guests`) — 여기는 부르기만 한다.
+모듈이 한다(`maps.api.purge_deleted_maps`, `notifications.api.purge_old`, `auth.api.purge_inactive_guests`) — 여기는 부르기만 한다.
 
 - 단계마다 별도 세션·트랜잭션·커밋이다. 한 단계가 실패하면 그 단계만 되돌리고 다음으로 넘어간다. 실패는 로그에 단계
   이름과 에러 타입만 남긴다(메시지에는 사용자 데이터가 섞일 수 있다). 하나라도 실패하면 종료 코드는 1이다.
@@ -28,10 +28,9 @@ Step = Callable[[Session, datetime], dict[str, int]]
 
 
 def purge_maps(db: Session, now: datetime) -> dict[str, int]:
-    from maps import purge
+    from maps import api as maps_api
 
-    map_count, counts = purge.purge(db, now=now, older_than_days=MAP_RETENTION_DAYS)
-    return {"maps": map_count, **counts}
+    return maps_api.purge_deleted_maps(db, now=now, older_than_days=MAP_RETENTION_DAYS)
 
 
 def purge_notifications(db: Session, now: datetime) -> dict[str, int]:
@@ -77,8 +76,8 @@ def format_report(results: dict[str, dict[str, int] | None], *, dry_run: bool) -
         if counts is None:
             lines.append(f"  {name}: 실패")
             continue
-        total = sum(counts.values()) if name != "maps" else sum(v for k, v in counts.items() if k != "maps")
-        lines.append(f"  {name}: {total}행" + (f" (지도 {counts['maps']}개)" if name == "maps" else ""))
+        total = sum(v for k, v in counts.items() if k != "deleted_maps")
+        lines.append(f"  {name}: {total}행" + (f" (지도 {counts['deleted_maps']}개)" if "deleted_maps" in counts else ""))
     if dry_run:
         lines.append("(dry-run: 아무것도 지우지 않았다)")
     return "\n".join(lines)
