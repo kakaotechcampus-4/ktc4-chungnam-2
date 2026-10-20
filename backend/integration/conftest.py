@@ -14,6 +14,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
+import ads.models  # noqa: F401 — 골든 패스가 광고 조회와 클릭을 지난다(#648)
 import agent.models  # noqa: F401 — 지도 정리·탈퇴가 agent_* 테이블도 지운다(#512)
 import auth.models  # noqa: F401
 import common.events  # noqa: F401
