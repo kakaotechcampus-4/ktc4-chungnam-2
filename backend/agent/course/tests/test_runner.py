@@ -8,8 +8,9 @@ from datetime import date
 from agent.course import core
 from agent.course.gateways import CourseLlm, NullOpeningHours, get_course_llm
 from agent.course.intake import PinInput, build_trip
-from agent.course.result import parse_steps, violation_text
+from agent.course.result import violation_text
 from agent.course.runner import run_course, start_hours
+from agent.course.worklog import StepRecord
 from agent.course.tests.fixtures import MON, TUE, WED
 from llm.client import LlmCallError
 from llm.schemas import CourseDirectTurn, CourseGoal, CourseGoalSet
@@ -146,16 +147,13 @@ class TestRunWithRequest:
 
 
 class TestViewTexts:
-    def test_parse_steps_handles_roles_nested_parentheses_and_plain_lines(self):
-        steps = parse_steps(["[이해] 해석(코드(목표 세우기 실패)) 이렇게 이해했어요: 없음", "[짜기] 지휘(모델 → 코드) 후보 c1",
-                             "[답] 결정(코드) 기본값", "[질문] 지휘(코드가 열음 → 사람) 어느 날?", "그냥 줄"])
-        assert steps == [
-            {"stage": "이해", "role": "해석", "by": "code", "by_detail": "코드(목표 세우기 실패)", "text": "이렇게 이해했어요: 없음"},
-            {"stage": "짜기", "role": "지휘", "by": "ai", "by_detail": "모델 → 코드", "text": "후보 c1"},
-            {"stage": "답", "role": "결정", "by": "code", "by_detail": None, "text": "기본값"},
-            {"stage": "질문", "role": "지휘", "by": "human", "by_detail": "코드가 열음 → 사람", "text": "어느 날?"},
-            {"stage": "기록", "role": "지휘", "by": "code", "by_detail": None, "text": "그냥 줄"},
-        ]
+    def test_step_record_splits_who_into_by_and_by_detail(self):
+        rec = lambda who: StepRecord("짜기", "지휘", who, "문장").as_dict()
+        assert rec("코드(목표 세우기 실패)") == {"stage": "짜기", "role": "지휘", "by": "code", "by_detail": "코드(목표 세우기 실패)", "text": "문장"}
+        assert (rec("모델 → 코드")["by"], rec("모델 → 코드")["by_detail"]) == ("ai", "모델 → 코드")
+        assert (rec("코드가 열음 → 사람")["by"], rec("코드가 열음 → 사람")["by_detail"]) == ("human", "코드가 열음 → 사람")
+        assert (rec("코드")["by"], rec("코드")["by_detail"]) == ("code", None)
+        assert StepRecord("답", "결정", "코드", "기본값").line() == "[답] 결정(코드) 기본값"
 
     def test_violation_texts(self):
         trip = build().trip
@@ -167,3 +165,41 @@ class TestViewTexts:
         assert violation_text(trip, leg) == "첫째 날 (월) 장소1에서 장소2까지 걸어서 45분이에요(구간 상한 40분)"
         assert violation_text(trip, day) == "첫째 날 (월) 도보 합계 160분이에요(하루 상한 150분)"
         assert violation_text(trip, member) == "첫째 날 (월) 도보 70분이 구성원 조건 60분을 넘어요"
+
+
+class TestOnStep:
+    def run(self, on_step):
+        return run_course(build(), TEXT, goals_planner=goals_planner, direct_planner=direct_planner(),
+                          gateway=NullOpeningHours(), on_step=on_step)
+
+    def test_callback_gets_structured_steps_in_order_and_matches_the_final_view(self):
+        seen: list[StepRecord] = []
+        out = self.run(seen.append)
+        assert [r.as_dict() for r in seen] == out.view.steps                 # 마지막 저장과 같은 목록, 같은 순서
+        assert seen[0].stage == "이해" and seen[0].role == "해석" and seen[-1].stage == "결과"
+        stages = [r.stage for r in seen]
+        assert stages.index("확인") < stages.index("짜기") < stages.index("끝") < stages.index("결과")
+        assert all(isinstance(r, StepRecord) for r in seen)
+
+    def test_each_step_arrives_before_the_next_model_turn(self):
+        seen: list[StepRecord] = []
+        counts: list[int] = []
+        queue = direct_planner()
+
+        def spying(i):
+            counts.append(len(seen))
+            return queue(i)
+
+        run_course(build(), TEXT, goals_planner=goals_planner, direct_planner=spying, gateway=NullOpeningHours(), on_step=seen.append)
+        assert counts[0] >= 2 and counts[1] > counts[0]       # 이해·확인이 첫 턴 전에, 짜기 단계가 둘째 턴 전에 이미 나와 있다
+
+    def test_a_failing_callback_does_not_stop_the_run(self):
+        def boom(_rec):
+            raise RuntimeError("db down")
+        out = self.run(boom)
+        assert out.view.outcome == "solved_with_checks" and out.view.steps[-1]["stage"] == "결과"
+
+    def test_without_request_the_baseline_still_reports_steps(self):
+        seen: list[StepRecord] = []
+        out = run_course(build(), "", goals_planner=None, direct_planner=None, gateway=NullOpeningHours(), on_step=seen.append)
+        assert [r.as_dict() for r in seen] == out.view.steps and len(seen) >= 2

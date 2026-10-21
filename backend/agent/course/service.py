@@ -24,7 +24,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from agent.course import runner
+from agent.course import runner, worklog
 from agent.course.api_schemas import CourseRequest, CourseRun
 from agent.course.constants import (
     COURSE_DAILY_LIMIT, COURSE_DAY_BOUNDARY_TZ, COURSE_DAYS_MAX, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE,
@@ -199,7 +199,8 @@ def execute_run(
 ) -> None:
     """queued run을 돌려 결과를 저장한다. 예외를 밖으로 던지지 않는다(백그라운드라 받을 곳이 없다).
 
-    세션은 둘이다: ① running 표시(짧게), ② 결과 저장(짧게). 사이에서 모델을 부른다 — 그동안 연결을 잡지 않는다."""
+    세션은 짧게 여러 번이다: ① running 표시, ② 단계가 생길 때마다 steps 저장(progress_writer), ③ 결과 저장. 사이에서 모델을
+    부른다 — 그동안 연결을 잡지 않는다."""
     run_id = uuid.UUID(job.run_id)
     try:
         with session_factory() as db:
@@ -214,6 +215,7 @@ def execute_run(
             computed = runner.run_course(
                 job.build, job.request_text,
                 goals_planner=llm.goals_planner, direct_planner=llm.direct_planner, gateway=gateway,
+                on_step=progress_writer(session_factory, run_id),
             )
             values = _done_values(computed)
         except Exception as exc:   # noqa: BLE001 — 엔진 오류가 run을 running으로 남기면 안 된다. 클래스 이름만 로그(사유·요청 원문 금지)
@@ -227,6 +229,24 @@ def execute_run(
             db.commit()
     except Exception as exc:   # noqa: BLE001 — DB 오류 등. 남은 running은 STALE_AFTER 뒤 다음 요청이 정리한다
         log.warning("course run %s 저장 실패: %s", job.run_id, type(exc).__name__)
+
+
+def progress_writer(session_factory: Callable[[], Session], run_id: uuid.UUID) -> Callable[[worklog.StepRecord], None]:
+    """단계가 생길 때마다 steps를 저장하는 콜백. 세션은 호출마다 따로 열고 커밋하고 닫는다(모델 호출 중에 잡고 있지 않는다).
+    매번 지금까지의 전체 목록을 쓴다 — 한 번 빠져도 다음 저장이 메우고, 순서가 뒤집히지 않는다. running일 때만 쓴다(그 사이
+    지워지거나 INTERRUPTED로 끝난 run은 건드리지 않는다)."""
+    steps: list[dict] = []
+
+    def write(record: worklog.StepRecord) -> None:
+        steps.append(record.as_dict())
+        with session_factory() as db:
+            db.execute(
+                update(AgentCourseRun).where(AgentCourseRun.id == run_id, AgentCourseRun.status == "running")
+                .values(steps=list(steps))
+            )
+            db.commit()
+
+    return write
 
 
 def _done_values(c: runner.Computation) -> dict:

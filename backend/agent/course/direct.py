@@ -24,6 +24,7 @@ from agent.course.tools import ToolResult, _fail
 from llm.schemas import CourseAskRequester, CourseDirectFinish, CourseDirectTurn, CourseLockCall, CourseOptimize
 
 Decide = Callable[[dict[str, Any]], CourseDirectTurn]
+OnStep = Callable[["DirectStep", "DirectState"], None]
 MODEL_FAILURES = (ValidationError, RuntimeError, TimeoutError)
 UNUSABLE_ERRORS = ("LIMIT_EXCEEDED",)       # 이 오류가 나면 그 턴은 코드 규칙이 대신한다. 그 밖의 오류는 메시지가 계획에 도움이 된다
 CLOSED_DAY_DEFAULT = "모르겠어요"
@@ -332,15 +333,23 @@ def _reference(before: DirectState, after: DirectState, call, result: ToolResult
 
 def run_direct(
     state: State, *, decide: Optional[Decide], hours: OpeningHoursGateway, unmatched_count: int = 0,
+    on_step: Optional[OnStep] = None,
 ) -> DirectResult:
+    """on_step(step, ds)는 단계가 하나 생길 때마다(순서대로, 그 단계가 반영된 상태와 함께) 부른다 — 진행 중 저장용."""
     ds = DirectState(state)
     steps: list[DirectStep] = []
+
+    def emit(step: DirectStep) -> None:
+        steps.append(step)
+        if on_step is not None:
+            on_step(step, ds)
+
     last: Optional[ToolResult] = None
     if state.goals:                                              # 첫 단계: 코드가 데이터 확인을 자동으로 부르고 결과를 모델 입력에 넣는다
         checks = goals_mod.check_goals(state.trip, state.hours, state.goals)
         ds = replace(ds, checks=checks)
         last = _check_result(ds)
-        steps.append(DirectStep(0, "code", None, None, {"tool": "check_goals"}, last))
+        emit(DirectStep(0, "code", None, None, {"tool": "check_goals"}, last))
     use_model = decide is not None and bool(state.goals)       # 목표가 없으면 모델을 부르지 않는다
     finished = False
 
@@ -383,18 +392,18 @@ def run_direct(
             guarded = verify.guard(_reference(before, ds, call, result), raw_thought)
             if guarded:
                 guard_reasons, blocked, thought = guarded.reasons, raw_thought, guarded.replacement
-        steps.append(DirectStep(turn, by, thought, problem, call.model_dump(), result, substituted, guard_reasons, blocked))
+        emit(DirectStep(turn, by, thought, problem, call.model_dump(), result, substituted, guard_reasons, blocked))
         last = result
         if isinstance(call, CourseAskRequester) and call.kind == "choose_day" and result.ok:
             last = _check_result(ds)                             # 답으로 목표가 바뀌었다 — 코드가 다시 확인하고 그 결과를 모델에 준다
-            steps.append(DirectStep(turn, "code", None, None, {"tool": "check_goals"}, last))
+            emit(DirectStep(turn, "code", None, None, {"tool": "check_goals"}, last))
         if isinstance(call, CourseDirectFinish) and result.ok:
             finished = True
             break
         if not use_model and ds.candidates:                     # 모델 없이 optimize 한 번이면 끝이다
             call = _fallback_call(ds)
             ds, result = execute(call, ds, hours)
-            steps.append(DirectStep(turn, "baseline", None, None, call.model_dump(), result))
+            emit(DirectStep(turn, "baseline", None, None, call.model_dump(), result))
             finished = True
             break
 
@@ -402,11 +411,11 @@ def run_direct(
         pair = ask_trigger(ds)
         if pair:
             ds, result = execute(_ask_call(pair), ds, hours, "code")
-            steps.append(DirectStep(len(steps), "code", None, None, _ask_call(pair).model_dump(), result,
+            emit(DirectStep(len(steps), "code", None, None, _ask_call(pair).model_dump(), result,
                                     {"call": {"tool": "finish"}, "error": "QUESTION_OPENED_BY_CODE"}))
         if not ds.candidates:
             ds, result = execute(_fallback_call(ds), ds, hours)
-            steps.append(DirectStep(len(steps) + 1, "baseline", None, None,
+            emit(DirectStep(len(steps) + 1, "baseline", None, None,
                                     CourseOptimize(tool="optimize", priority=[], locks=[]).model_dump(), result))
     if finished:
         chosen_id = steps[-1].result.data["candidate_id"]

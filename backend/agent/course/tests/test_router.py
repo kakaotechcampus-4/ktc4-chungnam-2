@@ -31,6 +31,40 @@ def insert_run(world, map_id, *, user="u1", status="done", created_at=None):
         return str(r.id)
 
 
+# ---------------------------------------------------------------- 진행 중 GET
+
+def _running_ids(world):
+    with world.factory() as db:
+        return [str(r.id) for r in db.query(AgentCourseRun).filter(AgentCourseRun.status == "running")]
+
+
+def test_get_while_running_returns_the_steps_so_far(world, places, client):
+    map_id, _ = confirmed_map(world, places, 4)
+    u1, watcher = client("u1"), client("u1")
+    seen: list[dict] = []
+    queue = direct_planner()
+
+    def inspecting(i):                # 모델 턴 한가운데에서 다른 연결로 GET — 계산은 아직 안 끝났다
+        (rid,) = _running_ids(world)
+        seen.append(watcher.get(f"/course-runs/{rid}").json())
+        return queue(i)
+
+    client.set_llm(CourseLlm(goals_planner, inspecting))
+    res = u1.post(f"/maps/{map_id}/courses", json={"request_text": TEXT, "member_constraints": []})
+    assert res.status_code == 202
+
+    first, second = seen
+    for body in seen:
+        assert body["status"] == "running" and body["outcome"] is None and body["finished_at"] is None
+        assert body["days"] == [] and body["violations"] == [] and body["checks"] == []     # 결과 칸은 비어 있다
+    assert [s["stage"] for s in first["steps"]][:2] == ["이해", "확인"]
+    assert len(second["steps"]) > len(first["steps"])
+    assert second["steps"][: len(first["steps"])] == first["steps"]                          # 앞 단계는 그대로, 뒤로만 늘어난다
+    assert {"stage", "role", "by", "by_detail", "text"} == set(first["steps"][0])
+    done = u1.get(f"/course-runs/{res.json()['course_run_id']}").json()
+    assert done["status"] == "done" and done["steps"][: len(second["steps"])] == second["steps"]
+
+
 # ---------------------------------------------------------------- 통합: 요청 → 백그라운드 → 완료
 
 def test_request_runs_in_background_and_get_returns_done(world, places, client):

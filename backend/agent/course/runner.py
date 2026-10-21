@@ -11,6 +11,7 @@ DB를 모른다. 모델 자리는 planner로 주입한다(llm.api의 fixed/real 
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
@@ -21,6 +22,10 @@ from agent.course.intake import TripBuild
 from agent.course.ports import OpeningHoursGateway
 from agent.course.result import CourseView, build_view
 from agent.course.state import initial_state
+
+log = logging.getLogger("pingo.agent.course")
+
+OnStepRecord = Callable[[worklog.StepRecord], None]
 
 
 @dataclass(frozen=True)
@@ -50,9 +55,12 @@ def run_course(
     build: TripBuild, request_text: str, *,
     goals_planner: Optional[Callable[[Mapping[str, Any]], Any]],
     direct_planner: Optional[Callable[[Mapping[str, Any]], Any]],
-    gateway: OpeningHoursGateway,
+    gateway: OpeningHoursGateway, on_step: Optional[OnStepRecord] = None,
 ) -> Computation:
-    """build.trip이 있어야 한다(too_few면 호출하지 않는다). 모델 호출 실패는 던지지 않는다 — 기준선이 대신한다."""
+    """build.trip이 있어야 한다(too_few면 호출하지 않는다). 모델 호출 실패는 던지지 않는다 — 기준선이 대신한다.
+
+    on_step(record)는 작업 기록 단계(`worklog.StepRecord`)가 생길 때마다 순서대로 부른다: 목표 세우기 뒤의 "이해", 확인 문장, 지휘 턴마다의
+    생각·도구 결과·검증 줄·기본값 답, 마지막 "결과". 콜백이 던져도 계산은 계속한다(진행 표시는 부가 기능이다)."""
     trip = build.trip
     assert trip is not None
     text = request_text.strip()[:REQUEST_TEXT_MAX_CHARS]
@@ -70,13 +78,35 @@ def run_course(
                 goals, unmatched = verified.goals, verified.unmatched
             except ModelTurnFailed:
                 unmatched, understood_by = (text,), "코드(목표 세우기 실패)"
+
+    def emit(recs: list[worklog.StepRecord]) -> None:
+        for rec in recs:
+            if on_step is None:
+                continue
+            try:
+                on_step(rec)
+            except Exception as exc:   # noqa: BLE001 — 진행 저장 실패가 코스 계산을 멈추면 안 된다. 클래스 이름만 로그
+                log.warning("course 진행 기록 실패: %s", type(exc).__name__)
+
+    narrator = worklog.Narrator(trip, goals, unmatched, understood_by=understood_by)
+    records = narrator.opening()
+    emit(records)
+
+    def on_direct_step(step: direct.DirectStep, ds: direct.DirectState) -> None:
+        new = narrator.step(step, goals=ds.state.goals, questions=ds.questions)
+        records.extend(new)
+        emit(new)
+
     state = initial_state(trip, start_hours(trip, gateway), core.draft_course(trip), goals)
-    result = direct.run_direct(state, decide=decider, hours=gateway, unmatched_count=len(unmatched))
-    lines = worklog.render(trip, goals, unmatched, result, understood_by=understood_by)
+    result = direct.run_direct(state, decide=decider, hours=gateway, unmatched_count=len(unmatched),
+                              on_step=on_direct_step)
+    closing = narrator.closing(result)
+    records.extend(closing)
+    emit(closing)
     model, prompt_version = _usage_meta(setter, decider)
     tokens = [m.tokens for m in (setter, decider) if m is not None]
     return Computation(
-        view=build_view(trip, build.excluded, goals, unmatched, result, lines),
+        view=build_view(trip, build.excluded, goals, unmatched, result, records),
         model_turns=result.model_turns,
         tokens_in=sum(t[0] for t in tokens), tokens_out=sum(t[1] for t in tokens),
         model=model, prompt_version=prompt_version,

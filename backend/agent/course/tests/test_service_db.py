@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from agent.course import api as course_api, service
 from agent.course.api_schemas import CourseRequest
@@ -161,6 +161,43 @@ def test_execute_run_saves_the_view_and_marks_done(world, places):
     assert placed == sorted(pin_ids[:4])
     assert [e["pin_id"] for e in r.excluded] == [pin_ids[4]] and len(r.checks) == 4
     assert r.steps[0]["stage"] == "이해"
+
+
+def test_steps_grow_in_short_transactions_while_the_run_is_running(world, places):
+    map_id, _ = confirmed_map(world, places, 4)
+    job = request(world, map_id, body=CourseRequest(request_text=TEXT))
+    observed: list[tuple[str, int]] = []
+    queue = direct_planner()
+
+    def spying(i):                 # 모델 턴마다 DB를 다른 세션으로 본다 — 앞 단계가 이미 저장돼 있어야 한다(저장이 모델을 기다리지 않는다)
+        r = row(world, job.run_id)
+        observed.append((r.status, len(r.steps)))
+        return queue(i)
+
+    service.execute_run(job, session_factory=world.factory, llm=CourseLlm(goals_planner, spying), gateway=NullOpeningHours())
+
+    assert [s for s, _ in observed] == ["running", "running"]
+    assert 2 <= observed[0][1] < observed[1][1]
+    final = row(world, job.run_id)
+    assert final.status == "done" and len(final.steps) > observed[1][1]
+    assert [s["stage"] for s in final.steps][:2] == ["이해", "확인"]
+
+
+def test_progress_writer_writes_the_whole_list_and_only_while_running(world, places):
+    from agent.course.worklog import StepRecord
+    map_id, _ = confirmed_map(world, places, 3)
+    job = request(world, map_id)
+    run_id = uuid.UUID(job.run_id)
+    write = service.progress_writer(world.factory, run_id)
+    write(StepRecord("이해", "해석", "모델", "하나"))              # queued라서 쓰지 않는다
+    assert row(world, job.run_id).steps == []
+    with world.factory() as db:
+        db.execute(update(AgentCourseRun).where(AgentCourseRun.id == run_id).values(status="running"))
+        db.commit()
+    write(StepRecord("확인", "검증", "코드", "둘"))
+    assert [s["text"] for s in row(world, job.run_id).steps] == ["하나", "둘"]       # 빠진 앞 단계를 다음 저장이 메운다
+    write(StepRecord("짜기", "계산", "코드", "셋"))
+    assert [s["text"] for s in row(world, job.run_id).steps] == ["하나", "둘", "셋"]
 
 
 def test_saved_run_has_no_place_names_in_structured_fields_and_no_coordinates(world, places):
