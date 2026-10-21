@@ -2,6 +2,25 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-21, AI 코스 짜기 엔드포인트 3개 (#334) — (#580 결정 전 — 브랜치 초안)
+
+스펙이 먼저다. **팀 결정 #580이 나기 전의 브랜치 초안이다 — 머지 전에는 실서버에 없고, 결정이 바뀌면 이 항목도 바뀐다.** 구현 브랜치 `ai/course-agent-api-334`.
+
+- **`POST /maps/{mapId}/courses`** `{request_text?, member_constraints[]}` → 202 `{course_run_id}`. 구성원 누구나(`course.request`). 계산은 백그라운드라 FE는 `GET /course-runs/{runId}`를 2초 간격으로 불러 `status`가 `done`이나 `failed`가 될 때까지 기다린다.
+- **`GET /course-runs/{runId}`** → `CourseRun`. 요청자 본인만(`course.view`, 비구성원 404, 요청자 아님 403).
+- **`GET /maps/{mapId}/courses/latest`** → `CourseRun` 또는 204. 내 마지막 run(진행 중도 포함 — 화면을 다시 열면 이어서 기다린다).
+- **스키마**: `CourseRequest`, `CourseMemberConstraint`, `CourseRunCreated`, `CourseRun`, `CourseGoal`, `CourseStep`, `CourseDay`, `CourseSlot`, `CourseLeg`, `CourseViolation`, `CourseCheck`, `CourseExcluded`. 문장(`label`, `text`, `steps`)은 모두 서버가 코드 템플릿으로 만들어 그대로 보여 주면 된다.
+- **에러**: 새 코드 `COURSE_NOT_ENOUGH_PLACES`(422, `detail {min, count}`), `COURSE_LIMIT`(429, 사용자당 하루 5번·KST 자정 초기화, `detail {limit, used}`), `COURSE_IN_PROGRESS`(409, `detail {course_run_id}`).
+- **권한**: 새 액션 `course.request`(member), `course.view`(author, run 범위). `authz/policy.py`를 정본에 맞췄다.
+- **이벤트(SSE)는 없다**: 진행은 GET 폴링이다. 질문에 답하는 API도 없다 — 엔진이 답이 없으면 기본값으로 이어 간다(`waiting_input` 상태 없음).
+- **동작 메모**
+  - 확정 장소는 좌표를 아는 것(자체 DB 핀)만 센다. 실시간 핀은 코스에서 빠지고 `excluded[].reason = NO_COORDINATES`로 남는다. 한 번에 30곳, 여행 기간은 앞 14일까지다(넘으면 `OVER_LIMIT`).
+  - **영업시간을 아직 모른다**(places에 칸이 없다, #580 6번). 그래서 지금은 모든 장소가 `checks`(「가게에 직접 확인해 주세요」)에 들고 `slots[].needs_check=true`이며 `outcome`은 보통 `solved_with_checks`다. 휴무를 피하는 동작은 칸이 생긴 뒤에 켜진다.
+  - 요청 한 줄은 LLM_MODE=real일 때만 목표가 된다(dev는 요청 전체가 `unmatched`로 남고 코스는 코드 기준선이 짠다).
+  - `steps`는 끝난 뒤에 한꺼번에 채워진다(진행 중에는 빈 배열).
+  - `stale`이면 요청 뒤 확정 리스트가 바뀐 것이다 — 「다시 짜기」.
+- **FE 할 일(#580 결정 뒤)**: 확정 탭 「AI 코스 짜기」 시트(요청 한 줄, 하루 도보 상한 선택), 진행 화면(폴링), 결과 화면(목표 지킴/못 지킴 → 날짜별 순서와 구간 도보 → 확인 필요 → 빠진 핀 → 작업 기록). 목 서버 핸들러를 `contracts/mocks/handlers/course.ts`에 추가했다.
+
 ## 2026-10-19 (여섯 번째), 구성원 충족 집계는 확인한 조건 기준 (#620)
 
 - **스키마 변경 없음. 값의 뜻이 바뀐다.** `Candidate.member_fulfillment`(「n명 중 m명 충족」)를 확인한 조건 기준으로 센다(recommend 구현 뒤).
