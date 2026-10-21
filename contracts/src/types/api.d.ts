@@ -3996,7 +3996,7 @@ export interface components {
             goals: components["schemas"]["CourseGoal"][];
             /** @description 목표로 바꾸지 못한 요청 조각(요청 원문의 일부). 화면에 「반영하지 못했어요」로 보인다 */
             unmatched: string[];
-            /** @description 작업 기록 — 이해, 확인, 짜기, 점검, 재계획, 끝, 결과 순으로 누가 했는지와 함께. 끝난 뒤에 한꺼번에 채워진다 */
+            /** @description 작업 기록 — 이해, 확인, 짜기, 점검, 재계획, 끝, 결과 순으로 누가 했는지와 함께. running 중에도 단계마다 늘어난다(앞 단계는 바뀌지 않고 뒤로만 붙는다). 그동안 goals, days 같은 결과 칸은 비어 있다 */
             steps: components["schemas"]["CourseStep"][];
             /** @description 지도 기간의 날짜별 순서(최대 14일). 날짜 하나가 비어 있을 수 있다 */
             days: components["schemas"]["CourseDay"][];

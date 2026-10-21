@@ -5,7 +5,7 @@ import { apiError } from "../util";
 /**
  * AI 코스 짜기(#334, 팀 결정 #580 전 초안). 실서버 구현 전이라 목 서버가 계약을 먼저 연다.
  * 실제 엔진을 흉내 내지 않는다 — 확정 리스트의 핀을 날짜에 고르게 나눠 담고, 같은 날은 들어온 순서로 이은 뒤
- * 도보 시간은 직선거리 근사로 채운다. 진행 화면의 폴링을 보려고 첫 GET은 running, 그다음부터 done이다.
+ * 도보 시간은 직선거리 근사로 채운다. 진행 화면의 폴링을 보려고 첫 GET은 running(단계 2개), 둘째는 running(단계 5개), 셋째부터 done이다 — 진행 중에도 steps가 단계마다 늘어난다.
  * 영업시간을 아직 모르는 실서버와 같게 모든 장소가 「확인 필요」다(checks, needs_check).
  */
 
@@ -78,7 +78,10 @@ function buildRun(mapId: string, requestText: string, routable: ReturnType<typeo
     unmatched,
     steps: [
       { stage: "이해", role: "해석", by: "ai", by_detail: null, text: `이렇게 이해했어요: ${goals.map((g) => g.label).join(" · ") || "요청 목표 없음"}${unmatched.map((u) => ` · 「${u}」는 그대로는 판단할 수 없어요`).join("")}` },
-      { stage: "짜기", role: "계산", by: "code", by_detail: null, text: `후보 c1: 지킴 ${goals.map((g) => g.label).join(", ") || "없음"} · 못 지킴 없음 · 확정 위반 0` },
+      { stage: "확인", role: "검증", by: "code", by_detail: null, text: "요청한 목표가 이 장소들로 가능한지 데이터와 맞춰 봤어요" },
+      { stage: "짜기", role: "지휘", by: "ai", by_detail: "모델 → 코드", text: "목표에 맞춰 짜 볼게요" },
+      { stage: "짜기", role: "계산", by: "code", by_detail: null, text: `후보 c1: 지킴 ${goals.map((g) => g.label).join(", ") || "없음"} · 못 지킴 없음 · 하루 최대 도보 30분 · 확정 위반 0` },
+      { stage: "점검", role: "지휘", by: "ai", by_detail: null, text: "후보 c1이 목표를 지키고 확정 위반이 없어요" },
       { stage: "끝", role: "지휘", by: "ai", by_detail: null, text: "후보 c1로 끝내요" },
       { stage: "결과", role: "검증", by: "code", by_detail: null, text: "지킨 목표: " + (goals.map((g) => g.label).join(", ") || "없음") + " · 확정 위반 0 · 결과 solved_with_checks" },
     ],
@@ -95,18 +98,22 @@ function buildRun(mapId: string, requestText: string, routable: ReturnType<typeo
   };
 }
 
-/** 응답에 싣는 값 — 진행 중이면 결과 칸을 비운다. stale은 지금 확정 리스트와 비교해 계산한다. */
+/** 진행 중 GET이 돌려주는 steps 개수 — 폴링마다 늘어난다(실서버는 단계가 생길 때마다 늘어난다). */
+const RUNNING_STEP_COUNTS = [2, 5];
+
+/** 응답에 싣는 값 — 진행 중이면 결과 칸을 비우고 steps만 지금까지의 것을 싣는다. stale은 지금 확정 리스트와 비교해 계산한다. */
 function view(entry: CourseRunEntity): CourseRunMock {
   const run = entry.run;
   const current = (store.shortlist[run.map_id] ?? []).map((i) => i.pin.id);
   const stale = current.length !== entry.snapshot_pin_ids.length || current.some((id) => !entry.snapshot_pin_ids.includes(id));
   if (run.status === "done" || run.status === "failed") return { ...run, stale };
-  return { ...run, outcome: null, goals: [], unmatched: [], steps: [], days: [], violations: [], checks: [], excluded: [], finished_at: null, stale };
+  const shown = RUNNING_STEP_COUNTS[Math.min(Math.max(entry.polls, 1), RUNNING_STEP_COUNTS.length) - 1] ?? 0;
+  return { ...run, outcome: null, goals: [], unmatched: [], steps: run.steps.slice(0, shown), days: [], violations: [], checks: [], excluded: [], finished_at: null, stale };
 }
 
 function advance(entry: CourseRunEntity) {
   entry.polls += 1;
-  entry.run.status = entry.polls === 1 ? "running" : "done";
+  entry.run.status = entry.polls <= RUNNING_STEP_COUNTS.length ? "running" : "done";
   return view(entry);
 }
 

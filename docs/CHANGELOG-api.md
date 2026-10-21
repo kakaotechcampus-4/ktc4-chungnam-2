@@ -2,6 +2,13 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-21 (두 번째), AI 코스 짜기 진행 중에도 steps가 늘어난다 (#334) — (#580 결정 전 — 브랜치 초안)
+
+- **스키마 변경 없음. `CourseRun.steps`의 뜻이 바뀐다.** 전에는 끝난 뒤에 한꺼번에 채워졌지만, 이제 `status=running`인 동안에도 단계가 생길 때마다 늘어난다(목표 이해 → 확인 문장 → 지휘 턴마다 생각·도구 결과·검증 줄 → 마지막 「결과」). 앞 단계는 바뀌지 않고 뒤로만 붙는다.
+- running 동안 `goals`, `unmatched`, `days`, `violations`, `checks`, `excluded`, `outcome`은 그대로 비어 있고 `steps`만 차 있다. `done`이 되면 모두 채워지고 `steps`는 마지막 running 응답의 연장이다(같은 순서, 같은 내용).
+- **FE**: 진행 화면은 기존 2초 폴링 그대로 `steps`를 단계 목록으로 그리면 된다(「이해 → 확인 → 짜기 …」가 하나씩 나타난다). 새로 부르는 API는 없다. 단계 하나는 `{stage, role, by, by_detail, text}`로 이전과 같다.
+- 목 서버(`contracts/mocks/handlers/course.ts`): 첫 GET은 running(단계 2개), 둘째는 running(5개), 셋째부터 done(7개). 타입(`api.d.ts`)은 설명만 달라져 다시 생성했다.
+
 ## 2026-10-21, AI 코스 짜기 엔드포인트 3개 (#334) — (#580 결정 전 — 브랜치 초안)
 
 스펙이 먼저다. **팀 결정 #580이 나기 전의 브랜치 초안이다 — 머지 전에는 실서버에 없고, 결정이 바뀌면 이 항목도 바뀐다.** 구현 브랜치 `ai/course-agent-api-334`.
@@ -17,7 +24,7 @@
   - 확정 장소는 좌표를 아는 것(자체 DB 핀)만 센다. 실시간 핀은 코스에서 빠지고 `excluded[].reason = NO_COORDINATES`로 남는다. 한 번에 30곳, 여행 기간은 앞 14일까지다(넘으면 `OVER_LIMIT`).
   - **영업시간을 아직 모른다**(places에 칸이 없다, #580 6번). 그래서 지금은 모든 장소가 `checks`(「가게에 직접 확인해 주세요」)에 들고 `slots[].needs_check=true`이며 `outcome`은 보통 `solved_with_checks`다. 휴무를 피하는 동작은 칸이 생긴 뒤에 켜진다.
   - 요청 한 줄은 LLM_MODE=real일 때만 목표가 된다(dev는 요청 전체가 `unmatched`로 남고 코스는 코드 기준선이 짠다).
-  - `steps`는 끝난 뒤에 한꺼번에 채워진다(진행 중에는 빈 배열).
+  - `steps`는 진행 중에도 단계마다 늘어난다(아래 「두 번째」 항목).
   - `steps[]`는 `{stage, role(해석|지휘|계산|검증|결정), by(ai|code|human), by_detail}`다. by는 칩용 대표값이고 섞인 단계의 원문(「모델 → 코드」 등)은 by_detail.
   - 지도 삭제 정리(`maps/purge.py`)와 탈퇴(`withdraw_user`)가 코스 run(요청 한 줄 포함)을 지운다.
   - `stale`이면 요청 뒤 확정 리스트가 바뀐 것이다 — 「다시 짜기」.

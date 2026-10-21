@@ -1179,7 +1179,7 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     expect(body.detail).toEqual({ min: 2, count: 1 });
   });
 
-  it("요청 → 202, 첫 GET은 running(결과 칸 비어 있음), 다음 GET은 done, 확정 리스트가 바뀌면 stale", async () => {
+  it("요청 → 202, 첫 GET은 running(단계 2개), 다음 GET은 running(단계 5개), 그다음은 done, 확정 리스트가 바뀌면 stale", async () => {
     await confirm("pin_1");
     await confirm("pin_2");
     const created = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST", body: JSON.stringify({ request_text: "하루에 덜 걷고 싶어요" }) });
@@ -1194,6 +1194,14 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     const running = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
     expect(running.status).toBe("running");
     expect(running.days).toEqual([]);
+    expect(running.outcome).toBeNull();
+    expect(running.steps).toHaveLength(2);
+
+    const running2 = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(running2.status).toBe("running");
+    expect(running2.steps).toHaveLength(5);
+    expect(running2.steps.slice(0, 2)).toEqual(running.steps); // 앞 단계는 그대로, 뒤로만 늘어난다
+    expect(running2.days).toEqual([]);
 
     const done = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
     expect(done.status).toBe("done");
@@ -1202,6 +1210,7 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     const placed = done.days.flatMap((d: { slots: { pin_id: string }[] }) => d.slots.map((s) => s.pin_id));
     expect(placed.sort()).toEqual(["pin_1", "pin_2"]);
     expect(done.checks.length).toBe(2);
+    expect(done.steps.length).toBe(7);
     expect(done.stale).toBe(false);
 
     await confirm("pin_3");
@@ -1223,7 +1232,8 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
       const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
       expect(res.status).toBe(202);
       const { course_run_id } = await res.json();
-      await fetch(`${BASE}/course-runs/${course_run_id}`); // running
+      await fetch(`${BASE}/course-runs/${course_run_id}`); // running(2)
+      await fetch(`${BASE}/course-runs/${course_run_id}`); // running(5)
       await fetch(`${BASE}/course-runs/${course_run_id}`); // done
     }
     const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });

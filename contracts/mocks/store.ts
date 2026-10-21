@@ -66,7 +66,7 @@ export interface CourseRunMock {
 export interface CourseRunEntity {
   run: CourseRunMock;
   requested_by: string;
-  polls: number; // GET 횟수 — 첫 GET은 running, 그다음부터 done(진행 화면의 폴링을 흉내)
+  polls: number; // GET 횟수 — 첫 GET은 running(단계 2개), 둘째는 running(5개), 셋째부터 done(진행 화면의 폴링을 흉내)
   snapshot_pin_ids: string[];
 }
 
