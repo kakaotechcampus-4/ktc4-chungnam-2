@@ -122,7 +122,8 @@ def direct_input(ds: DirectState, last: Optional[ToolResult], turn: int, unmatch
     state = ds.state
     return {
         "turn": turn,
-        "goals": [{"id": g.id, "kind": g.kind, "day": g.day, "places": list(g.places)} for g in state.goals],
+        "goals": [{"id": g.id, "kind": g.kind, "day": g.day, "places": list(g.places),
+                   **({"tag": g.tag} if g.tag else {})} for g in state.goals],
         "unmatched_count": unmatched_count,
         "goal_checks": list(ds.checks),
         "optimize_calls": ds.optimize_calls,

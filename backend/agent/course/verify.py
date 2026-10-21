@@ -47,6 +47,16 @@ TOPICS = {
     "daily_walk_low": re.compile(r"걷|걸|도보|이동"),
     "day_light": re.compile(r"여유|빽빽|느긋"),
 }
+TAG_TOPICS = {                                  # day_has의 tag별로 문장이 그 목표를 말하는지 보는 말
+    "performance": re.compile(r"공연|축제"),
+    "exhibition": re.compile(r"전시"),
+    "night_view": re.compile(r"야경"),
+    "indoor": re.compile(r"실내"),
+    "shopping": re.compile(r"시장|쇼핑"),
+    "walkable": re.compile(r"산책"),
+    "kid_friendly": re.compile(r"아이|어린이"),
+    "heritage": re.compile(r"고궁|궁궐|유적"),
+}
 GOAL_WORD_RE = re.compile(r"목표|요청")
 PLACEMENT_RE = re.compile(r"배치|배정|날짜|방문")
 
@@ -150,7 +160,7 @@ def _goal_claims(ref: Reference, clause: str) -> list[str]:
     slots = [m.group(1) for m in SLOT.finditer(clause)]
     results = ref.goal_results
     matched = [r for r in results if _on_topic(r.goal, clause, slots)]
-    any_topic = any(rx.search(clause) for rx in TOPICS.values())
+    any_topic = any(rx.search(clause) for rx in (*TOPICS.values(), *TAG_TOPICS.values()))
     if not matched:
         if any_topic or not GOAL_WORD_RE.search(clause):
             return []                                    # 코드가 이 말에 맞는 목표를 모른다 — 확인할 수 없는 말은 둔다
@@ -167,6 +177,8 @@ def _goal_claims(ref: Reference, clause: str) -> list[str]:
 def _on_topic(goal: goals_mod.Goal, clause: str, slots: Sequence[str]) -> bool:
     if goal.kind in TOPICS:
         return bool(TOPICS[goal.kind].search(clause))
+    if goal.kind == "day_has":
+        return bool(TAG_TOPICS[goal.tag or ""].search(clause))
     if goal.kind == "place_on_day":
         return goal.places[0] in slots or (goal.day in slots and bool(PLACEMENT_RE.search(clause)))
     return all(p in slots for p in goal.places) or "같은 날" in clause         # together

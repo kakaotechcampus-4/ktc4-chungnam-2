@@ -44,6 +44,18 @@ REQUEST_TEXT_MAX_CHARS = 100
 GOALS_MAX = 4
 INDOOR_LABEL = "is_indoor"
 INDOOR_MET_RATIO = 0.7             # day_indoor: 라벨을 아는 장소 중 실내 비율이 이 이상이면 충족
+# day_has(day, tag): 그날 코스에 그 라벨이 참인 장소가 하나 이상. tag → (장소 라벨 키, 화면에 쓰는 말). 전부 docs/constraints.md 관광지 라벨이고
+# 서비스가 Place.labels로 읽는 키(confidence=known, value=true)다. 모델은 이 tag 이름만 고르고, 이 밖의 말은 unmatched다.
+DAY_HAS_TAGS: dict[str, tuple[str, str]] = {
+    "performance": ("performance", "공연"),
+    "exhibition": ("exhibition", "전시"),
+    "night_view": ("night_view", "야경"),
+    "indoor": ("is_indoor", "실내"),
+    "shopping": ("shopping", "시장·쇼핑"),
+    "walkable": ("walkable", "산책"),
+    "kid_friendly": ("kid_friendly", "아이와 가기 좋은"),
+    "heritage": ("heritage_tour", "고궁·유적"),
+}
 DAILY_WALK_LOW_MAX_MIN = 60        # daily_walk_low: 하루 도보 합계의 최대가 이 이하면 충족
 # 지휘 턴(pivot 3절)
 DIRECT_MAX_TURNS = 5

@@ -408,9 +408,10 @@ class CourseTurn(_CourseStrict):
 
 
 class CourseGoal(_CourseStrict):
-    kind: Literal["day_indoor", "night_end", "daily_walk_low", "day_light", "place_on_day", "together"]
-    day: Optional[str] = None            # d1 … (day_indoor, night_end, day_light, place_on_day)
+    kind: Literal["day_indoor", "night_end", "daily_walk_low", "day_light", "place_on_day", "together", "day_has"]
+    day: Optional[str] = None            # d1 … (day_indoor, night_end, day_light, place_on_day, day_has)
     places: list[str] = []               # p1 … (place_on_day 1개, together 2개)
+    tag: Optional[str] = None            # day_has만: 고정 목록(performance, exhibition, night_view, indoor, shopping, walkable, kid_friendly, heritage). 코드가 대조한다
     source: Literal["request", "reason"] = "request"    # reason(구성원 사유)은 이번 범위 밖 — 자리만 둔다
     quote: str = ""                      # source=request: 근거가 된 요청 문장 조각(코드가 원문 부분 문자열인지 대조)
     reaction_ids: list[str] = []         # source=reason: 근거 사유 별칭(r1 …). 이번 범위 밖

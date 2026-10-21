@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.course import core, goals as G
-from agent.course.constants import DAILY_WALK_LOW_MAX_MIN, GOALS_MAX
+from agent.course.constants import DAILY_WALK_LOW_MAX_MIN, DAY_HAS_TAGS, GOALS_MAX
 from agent.course.goals import Goal
 from agent.course.tests.fixtures import MON, TUE, place, trip
 
@@ -190,3 +190,49 @@ class TestVerifyGoalSet:
         inp = G.goals_input(self.tr, self.TEXT)
         assert inp["last_day"] == "d2" and inp["first_day"] == "d1" and inp["days"][0] == {"day": "d1", "weekday": "월요일"}
         assert inp["places"][0]["place"] == "p1" and "lat" not in inp["places"][0]
+
+
+class TestDayHas:
+    PERF = Goal("day_has", "d2", (), "performance")
+
+    def test_normalize_validates_tag_day_and_drops_extras(self):
+        tr = t(A("p1"), A("p2"))
+        assert G.normalize(tr, "day_has", "d2", ["p1"], "performance") == (self.PERF, None)
+        assert G.normalize(tr, "daily_walk_low", "d1", [], "performance")[0] == Goal("daily_walk_low")   # 다른 종류에서 tag는 버린다
+        for day, tag in (("d2", "umbrella"), ("d2", None), (None, "performance"), ("d9", "performance")):
+            goal, why = G.normalize(tr, "day_has", day, [], tag)
+            assert goal is None and why
+
+    def test_id_label_and_every_tag_maps_to_a_label_key(self):
+        tr = t(A("p1"), A("p2"))
+        assert self.PERF.id == "day_has:d2:performance"
+        assert Goal("day_has", "d1", (), "indoor").id != Goal("day_has", "d1", (), "walkable").id
+        assert G.label(tr, self.PERF) == "둘째 날 (화)에 공연 장소 넣기"
+        for tag, (key, noun) in DAY_HAS_TAGS.items():
+            assert key and noun and G.label(tr, Goal("day_has", "d1", (), tag)).endswith(f"{noun} 장소 넣기")
+
+    def test_evaluate(self):
+        tr = t(A("p1", ("performance",)), A("p2", OUT), A("p3"))
+        assert G.evaluate(tr, (("p2",), ("p1", "p2")), self.PERF).met is True
+        r = G.evaluate(tr, (("p1",), ("p2",)), self.PERF)
+        assert r.met is False and r.gap == 1.0
+        assert G.evaluate(tr, (("p1", "p2"), ()), self.PERF).met is False                  # 빈 날
+        assert G.evaluate(tr, (("p1", "p2"), ("p3",)), self.PERF).met is None              # 그날 라벨을 아는 장소가 없다
+
+    def test_verify_goal_set_takes_tag_and_unknown_tag_goes_to_unmatched(self):
+        tr = t(A("p1", ("performance",)), A("p2"))
+        text = "둘째 날 저녁엔 공연 보고 싶고, 많이 안 걸었으면 해요"
+        mk = lambda tag: SimpleNamespace(kind="day_has", day="d2", places=[], tag=tag, source="request",
+                                         quote="둘째 날 저녁엔 공연 보고 싶고", reaction_ids=[])
+        ok = G.verify_goal_set(tr, text, SimpleNamespace(goals=[mk("performance")], unmatched=[]))
+        assert ok.goals == (self.PERF,) and ok.unmatched == ()
+        bad = G.verify_goal_set(tr, text, SimpleNamespace(goals=[mk("opera")], unmatched=[]))
+        assert bad.goals == () and bad.unmatched == ("둘째 날 저녁엔 공연 보고 싶고",)
+
+    def test_goals_with_same_day_and_different_tags_stay_distinct(self):
+        tr = t(A("p1"))
+        goals = G.truncate([Goal("day_has", "d1", (), "indoor"), Goal("day_has", "d1", (), "shopping"), Goal("day_has", "d1", (), "indoor")])
+        assert len(goals) == 2
+
+    def test_retarget_keeps_tag(self):
+        assert G.retarget(self.PERF, "d1") == Goal("day_has", "d1", (), "performance")

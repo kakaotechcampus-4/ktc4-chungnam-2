@@ -4018,9 +4018,12 @@ export interface components {
         CourseGoal: {
             /** @description 예: day_indoor:d2 */
             id: string;
-            /** @enum {string} */
-            kind: "day_indoor" | "night_end" | "daily_walk_low" | "day_light" | "place_on_day" | "together";
-            /** @description 예: 「둘째 날 (화)은 실내 위주로」 */
+            /**
+             * @description day_has = 그 날 코스에 공연·전시·야경 같은 종류의 장소가 하나 이상(종류는 코드의 고정 목록, 화면에는 label로만 보인다)
+             * @enum {string}
+             */
+            kind: "day_indoor" | "night_end" | "daily_walk_low" | "day_light" | "place_on_day" | "together" | "day_has";
+            /** @description 예: 「둘째 날 (화)은 실내 위주로」 「둘째 날 (화)에 공연 장소 넣기」 */
             label: string;
             /** @description 지켜졌나. null = 판단할 수 없다(라벨을 아는 장소가 없다) — 「확인할 수 없어요」 */
             met: boolean | null;

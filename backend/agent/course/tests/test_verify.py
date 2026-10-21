@@ -236,3 +236,21 @@ class TestModelVocabulary:
     def test_guarded_vocabulary_in_the_loop(self, monkeypatch):
         _, result, _ = run([("해 볼게요.", OPT), ("요청한 날짜 배치 목표가 충족됐고 확정 조건도 지킨 후보라 이 코스로 마무리해요.", FIN)], monkeypatch)
         assert result.steps[-1].guard and result.steps[-1].thought.startswith("확정 위반 1개가 남은 후보예요")
+
+
+class TestDayHasClaims:
+    PERF = G.Goal("day_has", "d2", (), "performance")
+
+    def labeled_ref(self, with_perf):
+        places = tuple(p if p.alias != "p1" else core.Place(p.alias, p.pin_id, p.place_id, p.name, p.category, p.lat, p.lng,
+                                                              frozenset({"performance"} if with_perf else {"quiet"})) for p in PLACES)
+        return ref(goals=(self.PERF,), t=trip(places=places))
+
+    def test_keeping_claim_is_blocked_when_no_performance_place_is_on_the_day(self):
+        found = verify.problems(self.labeled_ref(with_perf=False), "{d2}에 공연 장소를 넣는 목표를 지켰어요.")
+        assert found and "공연 장소 넣기" in found[0]
+
+    def test_keeping_claim_passes_and_gave_up_claim_is_blocked_when_met(self):
+        r = self.labeled_ref(with_perf=True)                                      # p1이 둘째 날(COURSE)이라 지켜진다
+        assert verify.problems(r, "{d2}에 공연 장소를 넣는 목표를 지켰어요.") == []
+        assert verify.problems(r, "공연 목표는 못 지켰어요.") != []

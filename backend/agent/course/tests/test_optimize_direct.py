@@ -83,6 +83,34 @@ class TestOptimize:
         assert {"p4", "p5"} <= st.looked_up and st.tool_counts["get_opening_hours"] == 2
 
 
+class TestDayHasOptimize:
+    def tagged_state(self, tag_on="p2", course=START):
+        places = tuple(place(p.alias, p.category, p.lat, p.lng, ("performance",) if p.alias == tag_on else ("quiet",)) for p in PLACES)
+        return initial_state(trip(places=places), OPEN, course, [Goal("day_has", "d3", (), "performance")])
+
+    def test_optimize_puts_a_tagged_place_on_the_day_when_possible(self):
+        st = self.tagged_state()
+        goal = st.goals[0]
+        assert G.evaluate(st.trip, st.course, goal).met is False
+        _, cands = O.optimize(st, gateway=TRUE_HOURS, priority=[goal.id])
+        assert G.evaluate(st.trip, cands[0].course, goal).met is True
+        assert all(core.hard_score(c.violations)[0] <= core.hard_score(st.violations)[0] for c in cands)
+
+    def test_no_tagged_place_stays_unmet_and_is_reported_not_invented(self):
+        st = self.tagged_state(tag_on="none")
+        goal = st.goals[0]
+        result = direct.run_direct(st, decide=None, hours=TRUE_HOURS)
+        assert result.checks[0]["reasons"] == [G.NO_TAGGED_PLACE]
+        assert [r.met for r in result.goal_results] == [False]
+        assert {p for d in result.chosen.course for p in d} == {p.alias for p in st.trip.places}      # 장소를 더하거나 빼지 않는다
+
+    def test_model_input_carries_the_tag(self):
+        st = self.tagged_state()
+        decide = scripted({"tool": "optimize", "priority": [], "locks": []}, {"tool": "finish", "candidate_id": "c1"})
+        direct.run_direct(st, decide=decide, hours=TRUE_HOURS)
+        assert decide.seen[0]["goals"][0] == {"id": "day_has:d3:performance", "kind": "day_has", "day": "d3", "places": [], "tag": "performance"}
+
+
 class TestDirectWithoutModel:
     def test_no_goals_never_calls_the_model_and_runs_optimize_once(self):
         calls = []
@@ -310,6 +338,21 @@ class TestCheckGoals:
         assert self.check(tr, h, Goal("daily_walk_low"))["feasible"] is True
         none = self.check(*self.labeled([("p1", "관광지", ("quiet",))]), Goal("night_end", "d1"))
         assert G.check_sentence(tr, none, Goal("night_end", "d1")).endswith("야경 명소가 이 리스트에 없어요")
+
+    def test_day_has_without_and_with_a_tagged_place(self):
+        goal = Goal("day_has", "d2", (), "performance")
+        tr, h = self.labeled([("p1", "관광지", ("quiet",)), ("p2", "카페", ("quiet",))])
+        none = self.check(tr, h, goal)
+        assert none["feasible"] is False and none["reasons"] == [G.NO_TAGGED_PLACE] and none["facts"]["tagged_places"] == 0
+        assert G.check_sentence(tr, none, goal) == "둘째 날 (화)에 공연 장소 넣기: 확정 리스트에 공연 장소가 없어요"
+        tr2, _ = self.labeled([("p1", "관광지", ("performance",)), ("p2", "카페", ("quiet",))])
+        assert self.check(tr2, {"p1": ALL_OPEN}, goal)["feasible"] is True
+        closed = {"p1": {TUE.weekday(): "closed"}}
+        res = self.check(tr2, closed, goal)
+        assert res["feasible"] is False and res["reasons"] == [G.TAGGED_PLACE_CLOSED_ON_DAY]
+        assert G.check_sentence(tr2, res, goal).endswith("공연 장소가 그날 모두 쉬어요")
+        unknown = self.check(*self.labeled([("p1", "관광지", ())]), goal)
+        assert unknown["feasible"] is None and unknown["reasons"] == [G.LABELS_UNKNOWN]
 
     def test_loop_runs_check_first_and_puts_it_in_model_input(self):
         decide = scripted({"tool": "optimize", "priority": [], "locks": []}, {"tool": "finish", "candidate_id": "c1"})

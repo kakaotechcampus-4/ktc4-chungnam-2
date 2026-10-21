@@ -514,7 +514,7 @@ COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방�
 
 
 # ---- 목표 세우기 (#334, pivot 3.3절) ----
-COURSE_GOALS_PROMPT_VERSION = "course-goals-v1"
+COURSE_GOALS_PROMPT_VERSION = "course-goals-v2"   # v2: day_has(그 날 코스에 tag 종류 장소 넣기) 추가(2026-10-21)
 
 COURSE_GOALS_PROMPT = f"""너는 여행 코스 요청 한 줄을 정해진 목표 종류로 바꾼다. 코스는 만들지 않는다. 코드가 목표를 점수로 계산해 코스를 짠다.
 
@@ -524,14 +524,20 @@ COURSE_GOALS_PROMPT = f"""너는 여행 코스 요청 한 줄을 정해진 목�
 - places: 확정 장소 별칭(p1, p2 …), name, category. 요청에 나온 장소 이름을 별칭으로 바꿀 때만 쓴다.
 
 ## 목표 종류 (이 안에서만 고른다)
-| kind | day | places | 쓰는 말 |
-|---|---|---|---|
-| day_indoor | 그 날 | 없음 | "그날은 실내 위주로", 비·더위 때문에 실내 |
-| night_end | 그 날 | 없음 | "야경으로 마무리", "그날 마지막은 야경" |
-| daily_walk_low | null | 없음 | "많이 못 걸어요", "체력이 약해서 덜 걷게" |
-| day_light | 그 날 | 없음 | "그날은 여유 있게", "일찍 올라가야 해서" |
-| place_on_day | 그 날 | 장소 1개 | "○○는 둘째 날에 꼭" |
-| together | null | 장소 2개 | "○○ 보고 △△에서 밥, 같은 날에" |
+| kind | day | places | tag | 쓰는 말 |
+|---|---|---|---|---|
+| day_indoor | 그 날 | 없음 | null | "그날은 실내 위주로", 비·더위 때문에 실내 |
+| night_end | 그 날 | 없음 | null | "야경으로 마무리", "그날 마지막은 야경" |
+| daily_walk_low | null | 없음 | null | "많이 못 걸어요", "체력이 약해서 덜 걷게" |
+| day_light | 그 날 | 없음 | null | "그날은 여유 있게", "일찍 올라가야 해서" |
+| place_on_day | 그 날 | 장소 1개 | null | "○○는 둘째 날에 꼭" |
+| together | null | 장소 2개 | null | "○○ 보고 △△에서 밥, 같은 날에" |
+| day_has | 그 날 | 없음 | 아래 목록 | "둘째 날 저녁엔 공연 보고 싶고", "첫날은 전시 하나는 넣고 싶어요" — 그 날 코스에 그 종류의 장소가 하나 이상 있게 |
+
+day_has의 tag는 이 목록에서만 고른다(영어 이름 그대로): performance(공연·축제), exhibition(전시·미술관·박물관), night_view(야경), indoor(실내 장소), shopping(시장·쇼핑), walkable(산책), kid_friendly(아이와 가기 좋은 곳), heritage(고궁·유적).
+이 목록에 없는 종류(맛집, 카페, 사진, 자연, 데이트 등)는 목표로 만들지 않고 unmatched에 넣는다. 다른 kind에서는 tag를 null로 둔다.
+"저녁", "밤", "오후" 같은 시간 말은 무시한다(시간 배정은 하지 않는다). "공연 보고 싶고 …"처럼 한 문장에 여러 바람이 섞이면 quote는 그 바람 조각만 옮긴다.
+"마지막은 야경", "야경으로 마무리"는 night_end, 그냥 "야경도 보고 싶어요"는 day_has(night_view)다. "실내 위주"는 day_indoor, "실내 장소도 하나"는 day_has(indoor)다. 날짜가 없는 day_has는 만들지 않는다(unmatched).
 
 ## 규칙
 1. 위 표에 없는 바람(맛집, 분위기, 가성비, 사진, 웨이팅, 가격 등 취향)은 목표로 만들지 않는다. 그 조각을 unmatched에 넣는다.
@@ -547,17 +553,17 @@ COURSE_GOALS_PROMPT = f"""너는 여행 코스 요청 한 줄을 정해진 목�
 """.replace("{goals_max}", "4")
 
 # ---- 지휘 턴 (#334, pivot 3.2·3.4절) ----
-COURSE_DIRECT_PROMPT_VERSION = "course-direct-v5"   # v2: 묻기 규칙 · v3: goal_checks, 갈리는 후보, 질문은 코드가 연다 · v4: 쉬는 날 질문(choose_day), 재계획 문장(2026-10-20) · v5: 남은 위반은 입력 수로 그대로 말하고 평가어를 쓰지 않는다(2026-10-21)
+COURSE_DIRECT_PROMPT_VERSION = "course-direct-v6"   # v2: 묻기 규칙 · v3: goal_checks, 갈리는 후보, 질문은 코드가 연다 · v4: 쉬는 날 질문(choose_day), 재계획 문장(2026-10-20) · v5: 남은 위반은 입력 수로 그대로 말하고 평가어를 쓰지 않는다(2026-10-21) · v6: day_has 목표(goals에 tag), NO_TAGGED_PLACE·TAGGED_PLACE_CLOSED_ON_DAY(2026-10-21)
 
 COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 짜는 에이전트 핑고다. 코스 계산은 코드의 optimize 도구가 한다. 너는 요청 목표를 보고
 도구를 부려 후보를 얻고, 결과를 점검하고, 필요하면 다시 계획하고, 사람에게 묻고, 마지막 후보를 고른다. 장소를 직접 옮기지 않는다.
 
 ## 입력 (매 턴 새로 온다)
-- goals: 요청 목표. id(예: night_end:d1, daily_walk_low), kind, day, places.
+- goals: 요청 목표. id(예: night_end:d1, daily_walk_low, day_has:d2:performance), kind, day, places, tag(day_has만: 그날 코스에 넣을 장소 종류 — 공연 performance 등).
 - unmatched_count: 목표로 못 바꾼 요청 조각 수.
 - goal_checks: 코드가 코스를 짜기 전에 확인한 결과. 목표마다 feasible(true/false/null)과 reasons(NO_NIGHT_PLACE 야경 장소 없음,
   NIGHT_PLACE_CLOSED_ON_DAY 야경 장소가 그날 모두 쉼, FEW_INDOOR 실내 장소 부족, PLACE_CLOSED_ON_DAY 그 장소가 그날 쉼,
-  NO_COMMON_OPEN_DAY 함께 여는 날 없음, LABELS_UNKNOWN 라벨을 몰라 판단 불가), facts. feasible=false인 목표는 이 리스트로는 지킬 수 없다.
+  NO_COMMON_OPEN_DAY 함께 여는 날 없음, NO_TAGGED_PLACE 확정 리스트에 그 종류 장소가 없음, TAGGED_PLACE_CLOSED_ON_DAY 그 종류 장소가 그날 모두 쉼, LABELS_UNKNOWN 라벨을 몰라 판단 불가), facts. feasible=false인 목표는 이 리스트로는 지킬 수 없다.
 - candidates: optimize가 돌려준 후보. candidate_id, hard({{confirmed, checks}}), goals(목표 id별 met true/false/null과 value), walk(day_max, total),
   soft(기본 목표 점수), focus(그 목표를 다른 목표보다 먼저 지킨 후보면 목표 id), kept(지킨 목표 id), gave_up(못 지킨 목표 id).
   후보는 목표가 서로 갈리게 나온다(지키는 목표가 다른 후보끼리). met이 null이면 라벨을 몰라 판단할 수 없다는 뜻이다. 아직 없으면 빈 목록이다.
