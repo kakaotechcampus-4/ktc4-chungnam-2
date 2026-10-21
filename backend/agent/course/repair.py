@@ -117,8 +117,8 @@ def rebuild_walk_feasible(
     where = {p: i for i, day in enumerate(current) for p in day}
 
     # 날마다 쓸 수 있는 (전체 비트마스크, 대중교통 구간 수, 장소 수의 제곱, 현재 코스와 다른 날에 놓인 장소 수, 방문 순서).
-    # 배정의 비용은 (대중교통 구간 수의 합, 날별 장소 수 제곱의 합, 옮겨지는 장소 수) — 고를 수 있는 배정 중 하루에 한 지역에 가까운 것,
-    # 같으면 날 사이가 가장 고른 것, 같으면 현재 코스에서 덜 옮기는 것
+    # 배정의 비용은 (날별 장소 수 제곱의 합, 대중교통 구간 수의 합, 옮겨지는 장소 수) — 고를 수 있는 배정 중 날 사이가 가장 고른 것,
+    # 같으면 하루에 한 지역에 가까운 것, 같으면 현재 코스에서 덜 옮기는 것
     options: list[dict[int, list[tuple[int, int, int, int, tuple[str, ...]]]]] = [dict() for _ in range(n_days)]
     for comp in comps:
         dp = _path_table(trip, comp)
@@ -160,7 +160,7 @@ def rebuild_walk_feasible(
                 rest = best(remaining & ~full, used | 1 << d)
                 if rest is None:
                     continue
-                cand = ((rest[0][0] + transit, rest[0][1] + squared, rest[0][2] + shift), ((d, order), *rest[1]))
+                cand = ((rest[0][0] + squared, rest[0][1] + transit, rest[0][2] + shift), ((d, order), *rest[1]))
                 if found is None or cand[0] < found[0]:
                     found = cand
         return found

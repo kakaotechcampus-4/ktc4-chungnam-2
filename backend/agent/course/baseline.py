@@ -82,18 +82,18 @@ def next_action(state: State) -> ToolCall:
 
 
 # ---- 강한 기준선 ----
-# 위반을 먼저 줄이고, 위반이 없어지면 대중교통 구간 수(하루에 한 지역)와 기본 목표(식당 연속·하루 식당 수·식사 후 카페·야경 마지막·카테고리 섞기·날짜 균형)를 욕심껏 줄인다.
+# 위반을 먼저 줄이고, 위반이 없어지면 날짜 균형, 대중교통 구간 수(하루에 한 지역)와 기본 목표(식당 연속·하루 식당 수·식사 후 카페·야경 마지막·카테고리 섞기·날짜 균형)를 욕심껏 줄인다.
 # 같은 도구·같은 상한으로 움직인다. 모델이 있어야 하는 판단(사람의 말을 목표로 바꾸기, 목표끼리의 절충 설명)은 못 한다.
 
 def _soft_key(trip, course) -> tuple[float, ...]:
     s = core.soft_scores(trip, course)
     return (
-        s["transit_legs"],                       # 하루에 한 지역: 대중교통 구간이 적을수록 좋다(위반·요청 목표 다음, 식사 같은 기본 목표보다 먼저)
+        s["day_balance"],                        # 날 사이 장소 수가 고른 것이 먼저(위반·요청 목표 다음)
+        s["transit_legs"],                       # 그다음 하루에 한 지역: 대중교통 구간이 적을수록 좋다(식사 같은 기본 목표보다 먼저)
         s["meal_spacing"] + s["meal_per_day"] + s["cafe_spacing"],
         -(s["cafe_after_meal"] or 0.0),
         -(s["night_last"] or 0.0),
         s["mono_category_days"] + (s["no_tour_days"] or 0),
-        s["day_balance"],
         s["travel_total"],
     )
 

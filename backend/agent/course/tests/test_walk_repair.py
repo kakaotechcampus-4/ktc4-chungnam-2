@@ -90,6 +90,25 @@ class TestStrongMoves:
         assert [set(d) for d in done.course] in ([{"n0", "n1"}, {"f0", "f1"}], [{"f0", "f1"}, {"n0", "n1"}])
 
 
+    def test_day_balance_comes_before_transit_legs(self):
+        # 3곳짜리 지역 넷(서로 멀다)을 사흘에: 지역별로 묶으면 3/3/6이라 고르지 않다. 균형이 먼저라 날마다 4곳(3/4/5가 최악)이고 그 안에서 대중교통이 적다
+        areas = [tuple(at(f"a{k}{i}", CATS[i % 3], 3 * i, 500 * k) for i in range(3)) for k in range(4)]
+        places = tuple(p for a in areas for p in a)
+        trip = Trip(places=places, days=DAYS)
+        start = (tuple(p.alias for p in areas[0]), tuple(p.alias for p in areas[1]), tuple(p.alias for a in areas[2:] for p in a))
+        done = O.climb(state_of(trip, start))
+        counts = sorted(len(d) for d in done.course)
+        assert counts[-1] - counts[0] <= 2 and counts[0] >= 3
+        assert max(counts) <= 5
+
+    def test_a_single_place_day_is_avoided_while_another_day_has_four(self):
+        trip = make_trip(places=LINE, days=DAYS, cap=90)
+        s = state_of(trip, (("p1", "p2", "p3", "p4", "p5"), ("p6",), ()))
+        done = O.climb(s)
+        counts = sorted(len(d) for d in done.course)
+        assert not (counts[0] <= 1 and counts[-1] >= 4)
+
+
 class TestRebuild:
     START = (("p1", "p2", "p3", "p4", "p5", "p6"), ("p7",), ())
 
@@ -116,14 +135,16 @@ class TestRebuild:
 
     def test_prefers_the_arrangement_closest_to_the_current_course(self):
         trip = make_trip()
-        good = (("p1", "p2", "p3"), ("p4", "p5", "p6"), ("p7",))
+        good = (("p1", "p2", "p3"), ("p4", "p7"), ("p5", "p6"))
         r = repair.rebuild_walk_feasible(trip, {p.alias: OPEN for p in trip.places}, {}, good)
         assert r.course is not None and [set(d) for d in r.course] == [set(d) for d in good]
 
-    def test_rebuild_keeps_areas_together_so_there_is_no_needless_transit(self):
+    def test_rebuild_balances_days_before_saving_transit(self):
+        # 외톨이를 혼자 두면 3/3/1이라 대중교통은 0이지만, 날짜 균형이 먼저라 3/2/2(대중교통 1)를 고른다
         trip = make_trip()
         r = repair.rebuild_walk_feasible(trip, {p.alias: OPEN for p in trip.places}, {}, self.START)
-        assert r.course is not None and core.course_transit_legs(trip, r.course) == 0
+        assert r.course is not None and sorted(len(d) for d in r.course) == [2, 2, 3]
+        assert core.course_transit_legs(trip, r.course) == 1
 
     def test_rebuild_rides_transit_to_keep_the_walk_cap_when_it_must(self):
         # 일렬 6곳이 하루 도보 30분 상한 아래 둘째 날까지 두 날뿐: 걷기만으론 3곳씩(30분)이 한계 — 가능하다
