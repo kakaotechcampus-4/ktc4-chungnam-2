@@ -19,6 +19,7 @@ from agent.course.constants import ASK_MAX, DIRECT_MAX_TURNS
 from agent.course.korean import attach
 from agent.course.optimize import Candidate
 from agent.course.ports import OpeningHoursGateway
+from agent.course.schemas import MoveDay, ReorderDay
 from agent.course.state import State
 from agent.course.tools import ToolResult, _fail
 from llm.schemas import CourseAskRequester, CourseDirectFinish, CourseDirectTurn, CourseLockCall, CourseOptimize
@@ -90,8 +91,11 @@ class DirectResult:
 # ---- 입력과 요약 ----
 
 def _walk(trip: core.Trip, course: core.Course) -> dict[str, int]:
-    days = [core.day_travel(trip, d) for d in course]
-    return {"day_max": max(days, default=0), "total": sum(days)}
+    """도보 분(하루 최대·합계)과 대중교통 구간 수·하루 이동 최대(도보+대중교통)."""
+    walks = [core.day_walk(trip, d) for d in course]
+    travels = [core.day_travel(trip, d) for d in course]
+    return {"day_max": max(walks, default=0), "total": sum(walks), "transit_legs": core.course_transit_legs(trip, course),
+            "travel_day_max": max(travels, default=0)}
 
 
 def candidate_summary(state: State, c: Candidate) -> dict[str, Any]:
@@ -112,6 +116,9 @@ def candidate_summary(state: State, c: Candidate) -> dict[str, Any]:
 def _must_ask(ds: DirectState) -> Optional[dict]:
     if (pend := pending_closure(ds)) is not None:
         return {"kind": "choose_day", "subject": pend["goal"].id, "closed_day": pend["goal"].day, "options": pend["days"]}
+    if (split := pending_split(ds)) is not None:
+        return {"kind": "split_day", "subject": split["day"],
+                "options": [{"id": o.option_id, "places": list(o.places), "to_day": o.to_day} for o in split["options"]]}
     if (pair := ask_trigger(ds)) is not None:
         return {"kind": "pick_course", "candidates": list(pair)}
     return None
@@ -163,6 +170,135 @@ def pending_closure(ds: DirectState) -> Optional[dict]:
         if days:
             return {"goal": goal, "check": check, "days": days}
     return None
+
+
+KEEP = "keep"       # split_day의 마지막 선택지: 그대로 두기(기본값이 아니다 — 기본값은 늘 코드가 계산한 첫 나누기)
+SPLIT_OPTIONS_MAX = 3
+
+
+@dataclass(frozen=True)
+class SplitOption:
+    """코드가 계산한 나누기 하나: 이 날의 places를 to_day로 옮기고 닿은 두 날의 순서를 다시 짠 코스(확정 위반이 지금보다 줄어드는 것만)."""
+    option_id: str                       # m1, m2 …
+    places: tuple[str, ...]
+    to_day: str
+    course: core.Course
+    violations: tuple[core.Violation, ...]
+
+
+def _travel_blockers(violations) -> list[core.Violation]:
+    """남은 확정 위반 중 이동(도보 구간·하루 도보·하루 이동 합계)과 구성원 도보 조건 — 영업 여부를 묻는다고 풀리지 않는 것."""
+    return [v for v in violations if v.status == "confirmed" and v.kind in ("travel", "member")]
+
+
+def _walk_clusters(trip: core.Trip, day: tuple[str, ...]) -> list[tuple[str, ...]]:
+    """그 날 장소를 걸어서 이어지는 묶음(지역)으로 — 단일 연결, 걷는 구간(직선거리 WALK_MAX_M 이하)만 이은다. 하루 안의 순서를 유지한다."""
+    left, out = list(day), []
+    while left:
+        comp, stack = [left.pop(0)], []
+        stack.append(comp[0])
+        while stack:
+            x = stack.pop()
+            near = [y for y in left if core.leg_between(trip, x, y).mode == "walk"]
+            for y in near:
+                left.remove(y)
+                comp.append(y)
+                stack.append(y)
+        out.append(tuple(sorted(comp, key=day.index)))
+    return out
+
+
+def split_options(state: State, course: core.Course, day: str) -> tuple[SplitOption, ...]:
+    """day(날짜 별칭)의 이동 위반을 줄이는 나누기를 코드가 모두 따져 좋은 순으로 SPLIT_OPTIONS_MAX개까지.
+    후보는 그 날의 지역 묶음 또는 장소 하나를 다른 날로 옮기는 것이다. 옮긴 뒤 닿은 두 날의 순서를 다시 짜고, 전체 확정 위반이 지금보다
+    엄격히 줄어들 때만 선택지가 된다(고정과 어긋나는 것은 뺀다). 순위는 (확정 위반, 대중교통 구간 수, 이동 합계, 옮기는 장소 수)."""
+    trip = state.trip
+    i = core.day_index(trip, day)
+    assert i is not None
+    current = core.hard_score(core.find_violations(trip, course, state.hours))[0]
+    units = list(dict.fromkeys([*_walk_clusters(trip, course[i]), *[(p,) for p in course[i]]]))
+    found: dict[core.Course, tuple[tuple, tuple[str, ...], str, tuple[core.Violation, ...]]] = {}
+    for unit in units:
+        for j in range(len(trip.days)):
+            if j == i:
+                continue
+            try:
+                moved = course
+                for p in unit:
+                    moved = core.apply_move(trip, moved, MoveDay(type="move_day", place=p, to_day=core.day_alias(j), position=None), state.locks)
+                for k in (i, j):
+                    order = core.best_day_order(trip, moved[k])
+                    if order != tuple(moved[k]):
+                        moved = core.apply_move(trip, moved, ReorderDay(type="reorder_day", day=core.day_alias(k), places=list(order)), state.locks)
+            except core.MoveError:
+                continue
+            violations = core.find_violations(trip, moved, state.hours)
+            if core.hard_score(violations)[0] >= current:
+                continue
+            key = (core.hard_score(violations), core.course_transit_legs(trip, moved), core.course_travel(trip, moved), len(unit), j)
+            if moved not in found or key < found[moved][0]:
+                found[moved] = (key, unit, core.day_alias(j), violations)
+    ranked = sorted(found.items(), key=lambda kv: kv[1][0])[:SPLIT_OPTIONS_MAX]
+    return tuple(SplitOption(f"m{n + 1}", unit, to_day, c, v) for n, (c, (_, unit, to_day, v)) in enumerate(ranked))
+
+
+def pending_split(ds: DirectState) -> Optional[dict]:
+    """지금 가장 나은 후보에 확정 이동 위반이 남았고, 코드가 위반을 줄이는 나누기를 찾았으면 그 날과 선택지. 질문 상한 안에서 날마다 한 번만.
+    영업 여부 질문(ask_closed_day)이 아니라 이 질문이 막힌 곳을 겨눈다. 줄이는 나누기가 하나도 없으면 묻지 않는다(없는 선택지를 지어내지 않는다)."""
+    if len(ds.questions) >= ASK_MAX or not ds.candidates:
+        return None
+    best = best_candidate(ds.state, ds.candidates, ds.preferred)
+    blockers = _travel_blockers(best.violations)
+    if not blockers:
+        return None
+    asked = {q.subject for q in ds.questions if q.kind == "split_day"}
+    for day in dict.fromkeys(v.day for v in blockers):
+        if day in asked:
+            continue
+        options = split_options(ds.state, best.course, day)
+        if options:
+            return {"day": day, "options": options, "course": best.course, "violation": next(v for v in blockers if v.day == day)}
+    return None
+
+
+def _split_call(split: dict) -> CourseAskRequester:
+    return CourseAskRequester(tool="ask_requester", kind="split_day", subject=split["day"], options=[o.option_id for o in split["options"]])
+
+
+def _far_pair(trip: core.Trip, course: core.Course, day: str) -> tuple[str, str, core.Leg]:
+    """그 날에서 가장 오래 걸리는 이동 구간의 두 장소(질문 문장에 쓴다). 구간이 없으면(장소 하나) 첫 두 장소 대신 같은 장소를 돌려준다."""
+    places = course[core.day_index(trip, day)]
+    legs = [(core.leg_between(trip, a, b), a, b) for a, b in zip(places, places[1:])]
+    leg, a, b = max(legs, key=lambda t: (t[0].minutes, t[0].mode == "transit")) if legs else (core.Leg("walk", 0, 0), places[0], places[0])
+    return a, b, leg
+
+
+def _names(trip: core.Trip, places: tuple[str, ...]) -> str:
+    names = [trip.place(p).name for p in places]
+    return ", ".join(names[:2]) + (f" 외 {len(names) - 2}곳" if len(names) > 2 else "")
+
+
+def _split_day(ds: DirectState, split: dict, options: list[str], proposed_by: str) -> tuple[DirectState, ToolResult]:
+    """남은 이동 위반을 낳는 날을 나눌지 물어보고, 답이 없으니 첫 선택지(기본값)로 옮겨 이어 간다. 옮긴 장소는 그 날에 고정한다."""
+    state, trip, day = ds.state, ds.state.trip, split["day"]
+    by_id = {o.option_id: o for o in split["options"]}
+    chosen = by_id[options[0]]
+    a, b, leg = _far_pair(trip, split["course"], day)
+    kind_text = f"걸어서 {leg.minutes}분" if leg.mode == "walk" else f"대중교통 약 {leg.minutes}분"
+    text = (f"{core.day_label(trip, day)}에 {attach(trip.place(a).name, '와/과')} {attach(trip.place(b).name, '을/를')} 같은 날 넣었어요({kind_text}). "
+            "다른 날로 나눌까요?")
+    labels = tuple([f"{attach(_names(trip, by_id[o].places), '을/를')} {attach(core.day_label(trip, by_id[o].to_day), '으로/로')} 옮기기" for o in options]
+                   + ["그대로 두기"])
+    reason = "이동 위반을 줄이는 나누기를 기본값으로 했어요, " + ("모델이 고른 것" if proposed_by == "model" else "코드가 고른 가장 나은 나누기")
+    question = Question(f"q{len(ds.questions) + 1}", "split_day", day, tuple([*options, KEEP]), text, options[0], labels, reason)
+    locks = {**state.locks, **{p: chosen.to_day for p in chosen.places}}
+    new_state = opt.with_course(replace(state, locks=locks), chosen.course)
+    ds = replace(ds, state=new_state, questions=(*ds.questions, question), candidates=(), preferred=None)
+    answer = f"{attach(_names(trip, chosen.places), '을/를')} {core.day_label(trip, chosen.to_day)}에 두는 걸로 이어 가요"
+    return ds, ToolResult("ask_requester", ok=True, data={
+        "question_id": question.question_id, "default": options[0], "note": "답을 받지 않고 기본 선택지로 이어 간다",
+        "answer": answer, "moved": list(chosen.places), "to_day": chosen.to_day,
+    })
 
 
 def _closure_call(pend: dict) -> CourseAskRequester:
@@ -277,6 +413,14 @@ def _ask(call: CourseAskRequester, ds: DirectState, by: str = "model") -> tuple[
         if not call.options or len(set(call.options)) != len(call.options) or any(o not in pend["days"] for o in call.options):
             return ds, _fail(tool, "INVALID_MOVE", "options는 그 목표를 옮길 수 있는 여는 날(must_ask.options)만, 첫 번째가 제안하는 날이어야 한다")
         return _choose_day(ds, pend, list(call.options), by)
+    if call.kind == "split_day":
+        split = pending_split(ds)
+        if split is None or call.subject != split["day"]:
+            return ds, _fail(tool, "INVALID_ID", "split_day는 이동 위반이 남은 날(must_ask.subject)을 subject로 줘야 한다")
+        valid = [o.option_id for o in split["options"]]
+        if not call.options or len(set(call.options)) != len(call.options) or any(o not in valid for o in call.options):
+            return ds, _fail(tool, "INVALID_MOVE", "options는 must_ask.options의 선택지 id만, 첫 번째가 제안하는 나누기여야 한다")
+        return _split_day(ds, split, list(call.options), by)
     if call.kind == "pick_course":
         ids = [c.candidate_id for c in ds.candidates]
         if len(call.options) < 2 or any(o not in ids for o in call.options) or len(set(call.options)) != len(call.options):
@@ -291,6 +435,10 @@ def _ask(call: CourseAskRequester, ds: DirectState, by: str = "model") -> tuple[
         question = Question(qid, call.kind, None, tuple(call.options), " / ".join(lines) + ". 어느 쪽?", call.options[0])
         ds = replace(ds, questions=(*ds.questions, question), preferred=question.default)
     else:
+        # 이동 위반이 남아 있으면 영업 여부를 물어도 풀리지 않는다 — 막힌 곳(이동)을 먼저 푼다
+        known = best_candidate(state, ds.candidates, ds.preferred).violations if ds.candidates else state.violations
+        if _travel_blockers(known):
+            return ds, _fail(tool, "BLOCKED_BY_TRAVEL", "이동 위반(hard.confirmed)이 남아 있어 영업 여부를 묻지 않는다 — 이동을 먼저 푼다")
         checks = {v.places[0] for v in core.find_checks(state.trip, state.course, state.hours)}
         if call.subject is None or call.subject not in checks:
             return ds, _fail(tool, "INVALID_ID", "ask_closed_day는 영업 여부를 모르는 장소(checks)를 subject로 줘야 한다")
@@ -373,6 +521,11 @@ def run_direct(
             # 쉬는 날에 걸린 목표는 짜기 전에 먼저 묻는다 — 모델이 다른 행동을 골라도 코드가 질문을 연다(여는 날 중 첫날이 기본값)
             substituted = {"call": call.model_dump(), "error": "QUESTION_OPENED_BY_CODE"}
             call, by, thought, problem = _closure_call(pend), "code", None, None
+        split = None if pend else pending_split(ds)
+        if split and not (isinstance(call, CourseAskRequester) and call.kind == "split_day"):
+            # 확정 이동 위반이 남았다 — 모델이 다른 행동(영업 여부 질문, 끝내기 …)을 골라도 코드가 이동 나누기 질문을 먼저 연다
+            substituted = {"call": call.model_dump(), "error": "QUESTION_OPENED_BY_CODE"}
+            call, by, thought, problem = _split_call(split), "code", None, None
         pair = ask_trigger(ds) if isinstance(call, CourseDirectFinish) else None
         if pair:                                                 # 끝내려는데 물을 조건이 되어 있다 — 코드가 질문을 대신 연다
             substituted = {"call": call.model_dump(), "error": "QUESTION_OPENED_BY_CODE"}
@@ -382,6 +535,10 @@ def run_direct(
         if pend and by == "model" and not result.ok:             # 모델이 낸 choose_day 질문이 틀렸다 — 코드가 대신 연다
             substituted = {"call": call.model_dump(), "error": result.error}
             call, by, thought, problem = _closure_call(pend), "code", None, None
+            new_ds, result = execute(call, ds, hours, by)
+        elif split and by == "model" and not result.ok:          # 모델이 낸 split_day 질문이 틀렸다 — 코드가 대신 연다
+            substituted = {"call": call.model_dump(), "error": result.error}
+            call, by, thought, problem = _split_call(split), "code", None, None
             new_ds, result = execute(call, ds, hours, by)
         elif by == "model" and not result.ok and result.error in UNUSABLE_ERRORS:
             substituted = {"call": call.model_dump(), "error": result.error}
@@ -401,7 +558,13 @@ def run_direct(
         if isinstance(call, CourseDirectFinish) and result.ok:
             finished = True
             break
-        if not use_model and ds.candidates:                     # 모델 없이 optimize 한 번이면 끝이다
+        if not use_model and ds.candidates:                     # 모델 없이 optimize 한 번이면 끝이다 — 단 이동 위반이 남아 나눌 길이 있으면 코드가 먼저 묻고 다시 짠다
+            split = pending_split(ds)
+            if split:
+                call = _split_call(split)
+                ds, result = execute(call, ds, hours, "code")
+                emit(DirectStep(turn, "code", None, None, call.model_dump(), result))
+                continue
             call = _fallback_call(ds)
             ds, result = execute(call, ds, hours)
             emit(DirectStep(turn, "baseline", None, None, call.model_dump(), result))

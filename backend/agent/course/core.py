@@ -12,23 +12,30 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import date
+from functools import lru_cache
 from typing import Literal, Mapping, Optional, Sequence
 
 from agent.course.constants import (
     CAFE_CATEGORY,
     CLUSTER_THRESHOLD_M,
     DAY_TRAVEL_MAX_MIN,
+    DAY_WALK_MAX_MIN,
     FORBIDDEN_PHRASES,
     LEG_MAX_MIN,
     MEAL_CATEGORY,
     MEALS_PER_DAY_MAX,
+    MODE_TRANSIT,
+    MODE_WALK,
     NIGHT_LABEL,
     THOUGHT_MAX_CHARS,
     TOUR_CATEGORY,
+    TRANSIT_OVERHEAD_MIN,
+    TRANSIT_SPEED_M_PER_MIN,
+    WALK_MAX_M,
 )
 from agent.course.korean import fix_particle_after
 from agent.course.schemas import Move, MoveDay, ReorderDay, Swap
-from common.geo import Point, approx_walk_minutes, haversine_distance_m, nearest_neighbor_order
+from common.geo import Point, approx_transit_minutes, approx_walk_minutes, haversine_distance_m, nearest_neighbor_order
 
 Course = tuple[tuple[str, ...], ...]
 DayStatus = Literal["open", "closed", "unknown"]
@@ -52,9 +59,9 @@ class Place:
 
 @dataclass(frozen=True)
 class MemberConstraint:
-    """요청자가 고른 구성원 제약(명세 14.2). 범위 B에서는 하루 도보 상한만 쓴다."""
+    """요청자가 고른 구성원 제약(명세 14.2). 범위 B에서는 하루 도보 상한만 쓴다(도보 구간 분만 센다)."""
     kind: Literal["daily_walk_max"]
-    value: int                      # 분
+    value: int                      # 하루 도보 분(대중교통은 세지 않는다)
     day: Optional[str] = None       # 날짜 별칭. None이면 모든 날
 
 
@@ -106,17 +113,59 @@ def status_on(hours: Hours, place: str, d: date) -> DayStatus:
 
 # ---- 이동 ----
 
-def travel_minutes(trip: Trip, a: str, b: str) -> int:
+@dataclass(frozen=True)
+class Leg:
+    """두 장소 사이 한 구간. mode가 walk면 minutes는 도보 분, transit이면 대중교통 약 분(직선거리 기준 거친 추정, constants.py)."""
+    mode: Literal["walk", "transit"]
+    minutes: int
+    distance_m: int
+
+
+@lru_cache(maxsize=None)
+def _leg_between(lat1: float, lng1: float, lat2: float, lng2: float) -> Leg:
+    d = haversine_distance_m(lat1, lng1, lat2, lng2)
+    if d <= WALK_MAX_M:
+        return Leg(MODE_WALK, approx_walk_minutes(d), round(d))
+    return Leg(
+        MODE_TRANSIT,
+        approx_transit_minutes(d, speed_m_per_min=TRANSIT_SPEED_M_PER_MIN, overhead_min=TRANSIT_OVERHEAD_MIN), round(d),
+    )
+
+
+def leg_between(trip: Trip, a: str, b: str) -> Leg:
     pa, pb = trip.place(a), trip.place(b)
-    return approx_walk_minutes(haversine_distance_m(pa.lat, pa.lng, pb.lat, pb.lng))
+    return _leg_between(pa.lat, pa.lng, pb.lat, pb.lng)
+
+
+def travel_minutes(trip: Trip, a: str, b: str) -> int:
+    """구간 분. 걷는 구간이면 도보 분, 대중교통 구간이면 대중교통 분(leg_between으로 방식을 본다)."""
+    return leg_between(trip, a, b).minutes
+
+
+def day_legs(trip: Trip, places: Sequence[str]) -> list[Leg]:
+    return [leg_between(trip, a, b) for a, b in zip(places, places[1:])]
 
 
 def day_travel(trip: Trip, places: Sequence[str]) -> int:
-    return sum(travel_minutes(trip, a, b) for a, b in zip(places, places[1:]))
+    """하루 이동 합계(도보 + 대중교통)."""
+    return sum(leg.minutes for leg in day_legs(trip, places))
+
+
+def day_walk(trip: Trip, places: Sequence[str]) -> int:
+    """하루 도보 합계 — 대중교통 구간은 세지 않는다."""
+    return sum(leg.minutes for leg in day_legs(trip, places) if leg.mode == MODE_WALK)
+
+
+def day_transit_legs(trip: Trip, places: Sequence[str]) -> int:
+    return sum(leg.mode == MODE_TRANSIT for leg in day_legs(trip, places))
 
 
 def course_travel(trip: Trip, course: Course) -> int:
     return sum(day_travel(trip, day) for day in course)
+
+
+def course_transit_legs(trip: Trip, course: Course) -> int:
+    return sum(day_transit_legs(trip, day) for day in course)
 
 
 # ---- 초안 배치 (명세 14.4) ----
@@ -178,7 +227,7 @@ def draft_course(trip: Trip) -> Course:
 
 @dataclass(frozen=True)
 class Violation:
-    id: str                                   # 예: closed:p4:d2, leg:p1-p2:d1, day:d1, member:d1
+    id: str                                   # 예: closed:p4:d2, leg:p1-p2:d1(도보 구간), walk:d1(하루 도보 합계), day:d1(하루 이동 합계), member:d1
     kind: Literal["closed", "travel", "member"]
     status: Literal["confirmed", "unknown"]   # unknown = 결측(판정할 데이터가 없다)
     day: str
@@ -200,21 +249,25 @@ def find_violations(trip: Trip, course: Course, hours: Hours) -> tuple[Violation
                     f"closed:{p}:{da}", "closed", "confirmed" if status == "closed" else "unknown", da, (p,),
                 ))
         for a, b in zip(day, day[1:]):
-            minutes = travel_minutes(trip, a, b)
-            if minutes > LEG_MAX_MIN:
+            leg = leg_between(trip, a, b)
+            if leg.mode == MODE_WALK and leg.minutes > LEG_MAX_MIN:      # 대중교통 구간에는 구간 상한이 없다
                 out.append(Violation(
                     f"leg:{a}-{b}:{da}", "travel", "confirmed", da, (a, b),
-                    {"minutes": minutes, "limit": LEG_MAX_MIN},
+                    {"minutes": leg.minutes, "limit": LEG_MAX_MIN},
                 ))
-        total = day_travel(trip, day)
+        walk, total = day_walk(trip, day), day_travel(trip, day)
+        if walk > DAY_WALK_MAX_MIN:
+            out.append(Violation(
+                f"walk:{da}", "travel", "confirmed", da, tuple(day), {"minutes": walk, "limit": DAY_WALK_MAX_MIN},
+            ))
         if total > DAY_TRAVEL_MAX_MIN:
             out.append(Violation(
                 f"day:{da}", "travel", "confirmed", da, tuple(day), {"minutes": total, "limit": DAY_TRAVEL_MAX_MIN},
             ))
         for c in trip.member_constraints:
-            if c.day in (None, da) and total > c.value:
+            if c.day in (None, da) and walk > c.value:
                 out.append(Violation(
-                    f"member:{da}", "member", "confirmed", da, tuple(day), {"minutes": total, "limit": c.value},
+                    f"member:{da}", "member", "confirmed", da, tuple(day), {"minutes": walk, "limit": c.value},
                 ))
     return tuple(out)
 
@@ -289,6 +342,7 @@ def soft_scores(trip: Trip, course: Course) -> dict[str, Optional[float]]:
         "no_tour_days": no_tour_days,
         "day_balance": max(counts) - min(counts),
         "travel_total": course_travel(trip, course),
+        "transit_legs": course_transit_legs(trip, course),
     }
 
 
@@ -330,13 +384,16 @@ _EXACT_ORDER_MAX = 10          # 이 수까지는 모든 순서를 따져 가장
 _LEG_PENALTY = 1000            # 구간 상한을 넘는 구간 하나는 이동시간 1000분만큼 나쁘다 — 구간 위반을 먼저 없앤다
 
 
+def _penalized(leg: Leg) -> int:
+    return leg.minutes + (_LEG_PENALTY if leg.mode == MODE_WALK and leg.minutes > LEG_MAX_MIN else 0)
+
+
 def _order_cost(trip: Trip, order: Sequence[str]) -> int:
-    legs = [travel_minutes(trip, a, b) for a, b in zip(order, order[1:])]
-    return sum(legs) + _LEG_PENALTY * sum(m > LEG_MAX_MIN for m in legs)
+    return sum(_penalized(leg) for leg in day_legs(trip, order))
 
 
 def best_day_order(trip: Trip, day: Sequence[str]) -> tuple[str, ...]:
-    """그날 장소를 한 번씩 도는 순서 중 (구간 상한 초과 수, 이동 합계)가 가장 작은 것. 같은 입력이면 같은 출력이다.
+    """그날 장소를 한 번씩 도는 순서 중 (도보 구간 상한 초과 수, 이동 합계 — 대중교통 포함)가 가장 작은 것. 같은 입력이면 같은 출력이다.
     현재 순서가 이미 가장 좋으면 그대로 돌려준다. 10곳 이하는 최적, 그보다 많으면 2-opt로 줄인다(최적 보장 없음)."""
     day = tuple(day)
     if len(day) <= 2:
@@ -347,8 +404,7 @@ def best_day_order(trip: Trip, day: Sequence[str]) -> tuple[str, ...]:
 
 def _exact_order(trip: Trip, day: tuple[str, ...]) -> tuple[str, ...]:
     n = len(day)
-    w = [[travel_minutes(trip, a, b) for b in day] for a in day]
-    w = [[m + (_LEG_PENALTY if m > LEG_MAX_MIN else 0) for m in row] for row in w]
+    w = [[_penalized(leg_between(trip, a, b)) for b in day] for a in day]
     inf = float("inf")
     dp: list[list[tuple[float, int]]] = [[(inf, -1)] * n for _ in range(1 << n)]
     for i in range(n):
@@ -386,36 +442,6 @@ def _two_opt(trip: Trip, day: tuple[str, ...]) -> tuple[str, ...]:
                 if _order_cost(trip, cand) < _order_cost(trip, best):
                     best, improved = cand, True
     return best
-
-
-def walk_infeasible(trip: Trip) -> Optional[tuple[int, int]]:
-    """도보 상한(구간·하루)만으로 어떻게 짜도 안 되는 것이 증명되면 (필요한 최소 날 수, 여행 날 수), 아니면 None.
-    증명은 보수적이다 — 못 증명했다고 해결할 수 있다는 뜻은 아니다. 근거: 구간 상한 이하로만 이어지는 장소 묶음(연결 성분)은
-    한 날 안에서만 이어질 수 있고, 한 날의 도보는 그 날 장소의 최소 신장 트리(MST)보다 짧을 수 없다. 한 성분을 j일로 쪼개면
-    조각들의 MST 합은 성분의 MST에서 구간 상한 x (j-1) 이상 줄지 않는다. 그러니 성분마다
-    j x 하루 상한 >= MST - 구간 상한 x (j-1)을 만족하는 가장 작은 j일이 필요하다.
-    하루 상한은 모든 날에 걸린 상한 중 가장 낮은 값이다(특정 날짜에만 걸린 구성원 제약은 쓰지 않는다)."""
-    aliases = [p.alias for p in trip.places]
-    cap = min([DAY_TRAVEL_MAX_MIN, *[c.value for c in trip.member_constraints if c.day is None]])
-    seen: set[str] = set()
-    needed = 0
-    for start in aliases:
-        if start in seen:
-            continue
-        comp, stack = {start}, [start]
-        while stack:
-            x = stack.pop()
-            for y in aliases:
-                if y not in comp and travel_minutes(trip, x, y) <= LEG_MAX_MIN:
-                    comp.add(y)
-                    stack.append(y)
-        seen |= comp
-        inside, mst = {start}, 0
-        while len(inside) < len(comp):
-            w, y = min((travel_minutes(trip, a, b), b) for a in sorted(inside) for b in sorted(comp - inside))
-            mst, inside = mst + w, inside | {y}
-        needed += max(1, -(-(mst + LEG_MAX_MIN) // (cap + LEG_MAX_MIN)))
-    return (needed, len(trip.days)) if needed > len(trip.days) else None
 
 
 def apply_move(trip: Trip, course: Course, move: Move, locks: Mapping[str, str]) -> Course:

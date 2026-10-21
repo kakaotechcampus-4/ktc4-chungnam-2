@@ -112,11 +112,11 @@ class TestFactSentence:
         assert "플랫폼엘이 둘째 날 (화) 휴무" in verify.fact_sentence(ref(t=trip(places=tuple(named))))
 
     def test_walk_violation_text(self):
-        far = [replace(p, lat=37.5665 + 0.05 * i) for i, p in enumerate(PLACES)]     # 장소 사이가 멀다
+        far = [replace(p, lat=37.5665 + 0.3 * i) for i, p in enumerate(PLACES)]     # 장소 사이가 멀다(구간마다 대중교통 약 100분)
         t = trip(places=tuple(far))
         r = ref(t=t, course=(("p1", "p2", "p3"), ("p4", "p5"), ("p6",)), hours={p.alias: ALL_OPEN for p in PLACES})
         text = verify.fact_sentence(r)
-        assert "구간 상한 40분" in text and "→" in text
+        assert "하루 이동 합계" in text and "대중교통 포함" in text
 
 
 # ---- 지휘 루프 안에서 ----

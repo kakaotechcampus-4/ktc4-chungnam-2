@@ -77,11 +77,14 @@ class TestScores:
 
     def test_daily_walk_low_boundary(self):
         def course_with(minutes):
-            step = minutes * 80 / 111_000
-            pa, pb = A("p1", lat=37.5), A("p2", lat=37.5 + step)
-            tr = t(pa, pb, days=(MON,))
-            assert core.travel_minutes(tr, "p1", "p2") == minutes             # 분 계산이 이 경계를 정확히 짚는지 확인
-            return tr, (("p1", "p2"),)
+            # 도보 구간 하나는 25분 이하(2km)라 20·20·나머지로 이은 네 곳의 도보 합계를 맞춘다
+            legs = [20, 20, minutes - 40]
+            lats = [37.5]
+            for m in legs:
+                lats.append(lats[-1] + m * 80 / 111_000)
+            tr = t(*(A(f"p{i + 1}", lat=lat) for i, lat in enumerate(lats)), days=(MON,))
+            assert core.day_walk(tr, ("p1", "p2", "p3", "p4")) == minutes     # 분 계산이 이 경계를 정확히 짚는지 확인
+            return tr, (("p1", "p2", "p3", "p4"),)
 
         tr, c = course_with(DAILY_WALK_LOW_MAX_MIN)
         assert G.evaluate(tr, c, Goal("daily_walk_low")).met is True

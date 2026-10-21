@@ -460,7 +460,7 @@ def run_advice_tools() -> list[dict]:
 # ---- v2 동선 에이전트 턴 (#334, drafts/agent-route-v2.md 11절) ----
 # 도구를 chat.completions의 tools로 주지 않고, 턴 출력(CourseTurn.action)으로 받는다 — 생각·계획·교훈을 같은 응답에
 # 받기 위해서다. 도구 실행은 agent/course/tools.py가 한다. 프롬프트 글을 바꾸면 버전을 올린다.
-COURSE_TURN_PROMPT_VERSION = "course-turn-v6"   # v2: 「확인 필요」(checks) 입력 설명 · v3: looked_up 설명 · v4: 카테고리 섞기 키, 확정 위반 0이면 다듬기 먼저 · v5: cafe_spacing · v6: 장소별 open_days/closed_days 입력, 되묻기는 저장된 답(2026-10-19)
+COURSE_TURN_PROMPT_VERSION = "course-turn-v7"   # v2: 「확인 필요」(checks) 입력 설명 · v3: looked_up 설명 · v4: 카테고리 섞기 키, 확정 위반 0이면 다듬기 먼저 · v5: cafe_spacing · v6: 장소별 open_days/closed_days 입력, 되묻기는 저장된 답(2026-10-19) · v7: 이동 방식(walk 도보·transit 대중교통)과 transit_legs(2026-10-21)
 
 COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방문 순서(코스)를 다듬는 에이전트 핑고다.
 코드가 코스 초안을 만들고 위반을 판정해 준다. 너는 턴마다 도구 하나를 골라 코스를 고친다. 장소를 넣거나 빼지 않는다.
@@ -468,7 +468,7 @@ COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방�
 ## 입력 (매 턴 새로 온다)
 - days: 날짜별(d1, d2 …) 방문 순서. 장소는 p1, p2 같은 별칭과 category, labels, open_days(여는 날), closed_days(쉬는 날)가 온다.
   open_days·closed_days에 없는 날은 모르는 날이다. 코드가 이미 아는 값이라 find_open_days로 다시 묻지 않는다 — 옮길 날은 여기서 고른다.
-- violations: 코드가 판정한 위반. kind는 closed(그날 쉼), travel(구간 또는 하루 도보가 너무 김), member(구성원 도보 조건).
+- violations: 코드가 판정한 위반. kind는 closed(그날 쉼), travel(도보 구간·하루 도보·하루 이동 합계가 너무 김), member(구성원 도보 조건).
   status가 unknown이면 영업 정보가 없어 판정하지 못한 것이다(결측). 모르는 것을 "연다"로 보지 않는다.
 - checks(있을 때만): 「확인 필요」 — 그날 영업하는지 모르는 장소(id, place, day). 위반이 아니라 violations에 들어 있지 않다.
   hard 요약도 {{confirmed, checks}}로 온다. 확정 위반이 0이어도 checks가 남을 수 있다. 조회(get_opening_hours)로 줄일 수 있으면
@@ -477,14 +477,15 @@ COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방�
   초과 수, 적을수록), cafe_spacing(카페가 연달아 붙은 쌍, 적을수록), cafe_after_meal(식당 바로 다음 카페 비율, 클수록), night_last(야경 장소가 그날 마지막인 비율, 클수록),
   mono_category_days(장소가 둘 이상인데 한 카테고리뿐인 날 수, 적을수록 — 날마다 식당·카페·관광지가 섞이는 게 좋다),
   no_tour_days(관광지가 하나도 없는 날 수, 적을수록), day_balance(날짜별 장소 수 차이, 적을수록),
-  travel_total(전체 도보 분, 적을수록). 대상이 없으면 null.
+  travel_total(전체 이동 분 — 도보와 대중교통 합, 적을수록), transit_legs(대중교통 구간 수, 적을수록 — 하루에 한 지역이 좋다). 대상이 없으면 null.
+  구간은 직선거리 2km 이하면 도보, 넘으면 대중교통(약 분)이다. 지역이 다른 장소를 한 날에 넣으면 대중교통 구간이 생기는 게 정상이고, 위반은 도보 구간·하루 도보·하루 이동 합계가 상한을 넘을 때만이다.
 - live_trials: 시험해 보고 아직 채택하지 않은 수리. last_result: 직전 도구 결과(오류면 error 코드와 message).
 - plan, lessons: 네가 지난 턴에 남긴 계획과 교훈. budget: 남은 턴과 도구별 남은 횟수.
 
 ## 도구 (action에 하나만)
 - get_opening_hours(place): 그 장소의 날짜별 영업 여부를 조회한다. 결측(unknown) 위반이나 checks가 있을 때 먼저 쓴다.
 - find_open_days(place): 그 장소가 여행 날짜 중 언제 여는지. 다른 날로 옮길 곳을 찾을 때. 답은 입력 days의 open_days·closed_days에 이미 있다. 같은 장소를 또 물으면 저장된 답이 온다(턴만 쓴다).
-- estimate_travel(from_place, to_place): 두 장소 사이 도보 분.
+- estimate_travel(from_place, to_place): 두 장소 사이 이동 방식(mode: walk 도보 · transit 대중교통)과 분.
 - try_move(move): 수리를 가상으로 적용해 위반과 soft 점수의 전후를 본다. 코스는 바뀌지 않는다.
   move는 swap(a, b) · move_day(place, to_day, position 또는 null) · reorder_day(day, places: 그날 장소 전부를 새 순서로).
 - commit_move(trial_id): 시험한 수리를 채택한다. 확정 위반이 늘어나는 수리는 코드가 거부한다(WORSENS_HARD).
@@ -553,7 +554,7 @@ day_has의 tag는 이 목록에서만 고른다(영어 이름 그대로): perfor
 """.replace("{goals_max}", "4")
 
 # ---- 지휘 턴 (#334, pivot 3.2·3.4절) ----
-COURSE_DIRECT_PROMPT_VERSION = "course-direct-v6"   # v2: 묻기 규칙 · v3: goal_checks, 갈리는 후보, 질문은 코드가 연다 · v4: 쉬는 날 질문(choose_day), 재계획 문장(2026-10-20) · v5: 남은 위반은 입력 수로 그대로 말하고 평가어를 쓰지 않는다(2026-10-21) · v6: day_has 목표(goals에 tag), NO_TAGGED_PLACE·TAGGED_PLACE_CLOSED_ON_DAY(2026-10-21)
+COURSE_DIRECT_PROMPT_VERSION = "course-direct-v7"   # v2: 묻기 규칙 · v3: goal_checks, 갈리는 후보, 질문은 코드가 연다 · v4: 쉬는 날 질문(choose_day), 재계획 문장(2026-10-20) · v5: 남은 위반은 입력 수로 그대로 말하고 평가어를 쓰지 않는다(2026-10-21) · v6: day_has 목표(goals에 tag), NO_TAGGED_PLACE·TAGGED_PLACE_CLOSED_ON_DAY(2026-10-21) · v7: 구간에 방식(walk 도보·transit 대중교통), 지역이 다르면 대중교통이 정상, 이동 위반이 남으면 split_day 질문(2026-10-21)
 
 COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 짜는 에이전트 핑고다. 코스 계산은 코드의 optimize 도구가 한다. 너는 요청 목표를 보고
 도구를 부려 후보를 얻고, 결과를 점검하고, 필요하면 다시 계획하고, 사람에게 묻고, 마지막 후보를 고른다. 장소를 직접 옮기지 않는다.
@@ -569,7 +570,10 @@ COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 �
   후보는 목표가 서로 갈리게 나온다(지키는 목표가 다른 후보끼리). met이 null이면 라벨을 몰라 판단할 수 없다는 뜻이다. 아직 없으면 빈 목록이다.
 - optimize_calls(지금까지 optimize를 부른 수), must_ask(null이 아니면 지금 요청자에게 물을 조건이 됐다는 뜻). must_ask는 두 종류다:
   {{kind: pick_course, candidates: [후보 id 둘]}} 후보끼리 목표가 갈릴 때, {{kind: choose_day, subject: 목표 id, closed_day, options: 여는 날들}} 요청한 장소나
-  야경 장소가 그날 쉬어서 목표를 옮겨야 할 때.
+  야경 장소가 그날 쉬어서 목표를 옮겨야 할 때, {{kind: split_day, subject: 날짜 별칭, options: [{{id, places, to_day}}]}} 이동 위반(도보 구간·하루 도보·하루 이동 합계)이
+  남은 날을 다른 날로 나눌 수 있을 때(코드가 위반을 줄이는 나누기만 id m1, m2 …로 준다).
+- 구간(장소와 장소 사이)은 직선거리 2km 이하면 걷기(walk), 넘으면 대중교통(transit, 약 분)이다. 지역이 다른 장소를 한 날에 넣으면 대중교통 구간이 생기는 게
+  정상이다 — 그것만으로 위반이 아니다. walk 입력은 도보 분(day_max·total)이고 transit_legs는 대중교통 구간 수, travel_day_max는 도보와 대중교통을 합친 하루 최대다.
 - locks, asked(지금까지 한 질문 수), checks(영업 여부를 모르는 장소: place, day).
 - last_result: 직전 도구 결과(오류면 error와 message). budget.turns_left: 남은 턴.
 
@@ -579,7 +583,9 @@ COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 �
 - lock(place, day): 장소를 그 날에 고정한다. 풀 수 없다.
 - ask_requester(kind, subject, options): 사람에게 묻는다. 답이 없으면 기본 선택지로 이어 간다.
   pick_course: 후보 둘 이상이 서로 다른 목표를 지킬 때. options는 후보 id. choose_day: 쉬는 날에 걸린 목표(subject는 must_ask.subject)를
-  어느 날로 옮길지. options는 must_ask.options의 날짜 중에서, 가장 알맞은 날을 맨 앞에 둔다(그 날이 기본값이 된다). ask_closed_day: 영업 여부를 모르는 중요한 장소 하나(subject). 질문은 많아야 두 번이다.
+  어느 날로 옮길지. options는 must_ask.options의 날짜 중에서, 가장 알맞은 날을 맨 앞에 둔다(그 날이 기본값이 된다).
+  split_day: 이동 위반이 남은 날(subject는 must_ask.subject)을 나눌지. options는 must_ask.options의 id 중에서, 가장 알맞은 것을 맨 앞에 둔다(기본값이 된다).
+  ask_closed_day: 영업 여부를 모르는 중요한 장소 하나(subject). 이동 위반(hard.confirmed)이 남아 있는 동안은 묻지 않는다(코드가 거절한다). 질문은 많아야 두 번이다.
 - finish(candidate_id): 후보 하나를 골라 끝낸다.
 
 ## 일하는 방식
@@ -597,6 +603,9 @@ COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 �
    must_ask가 null이면 묻지 않는다. 목표가 모두 지켜졌거나 후보가 부딪히지 않아도 묻지 않는다.
    goal_checks에서 feasible=false인 목표는 optimize를 되풀이해도 지켜지지 않는다 — 그 목표 때문에 optimize를 더 부르지 않고,
    생각(thought)에 지키지 못하는 이유를 한 문장으로 남기고 나머지 목표로 후보를 골라 끝낸다.
+5-2. **이동 위반이 남으면 이동을 먼저 푼다.** hard.confirmed가 0이 아니고 must_ask.kind가 split_day이면 영업 여부를 묻지 않고 ask_requester(split_day)로
+   must_ask.options의 id를 준다(문구는 코드가 만든다). 다른 행동을 고르면 코드가 첫 선택지를 기본값으로 대신 묻는다. 묻고 나면 optimize로 다시 짠다.
+   영업 여부(ask_closed_day)는 확정 이동 위반이 없을 때, 정말 중요한 장소 하나에만 묻는다.
 6. 후보가 하나뿐이고 만족하면 바로 finish한다. 턴이 모자라면 finish한다.
 
 ## thought (화면에 그대로 보인다)

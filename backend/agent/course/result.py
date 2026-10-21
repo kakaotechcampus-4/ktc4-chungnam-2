@@ -37,14 +37,16 @@ def violation_text(trip: core.Trip, v: core.Violation) -> str:
         return f"{attach(trip.place(v.places[0]).name, '은/는')} {day}에 쉬는 날이에요"
     if v.kind == "member":
         return f"{day} 도보 {v.detail['minutes']}분이 구성원 조건 {v.detail['limit']}분을 넘어요"
-    if len(v.places) == 2:     # 구간
+    if v.id.startswith("leg:"):     # 도보 구간(대중교통 구간에는 구간 상한이 없다)
         a, b = (trip.place(p).name for p in v.places)
         return f"{day} {a}에서 {b}까지 걸어서 {v.detail['minutes']}분이에요(구간 상한 {v.detail['limit']}분)"
+    if v.id.startswith("day:"):
+        return f"{day} 이동 합계가 약 {v.detail['minutes']}분이에요(대중교통 포함, 하루 상한 {v.detail['limit']}분)"
     return f"{day} 도보 합계 {v.detail['minutes']}분이에요(하루 상한 {v.detail['limit']}분)"
 
 
 def build_days(trip: core.Trip, course: core.Course, check_places: set[tuple[str, str]]) -> list[dict[str, Any]]:
-    """날짜별 순서와 구간 도보. check_places는 (장소 별칭, 날짜 별칭) — 영업 여부를 모르는 칸."""
+    """날짜별 순서와 구간(도보면 도보 분, 대중교통이면 약 분). check_places는 (장소 별칭, 날짜 별칭) — 영업 여부를 모르는 칸."""
     out = []
     for i, day in enumerate(course):
         alias = core.day_alias(i)
@@ -53,7 +55,8 @@ def build_days(trip: core.Trip, course: core.Course, check_places: set[tuple[str
             "slots": [{"pin_id": trip.place(p).pin_id, "order": k + 1, "needs_check": (p, alias) in check_places}
                       for k, p in enumerate(day)],
             "legs": [{"from_pin_id": trip.place(a).pin_id, "to_pin_id": trip.place(b).pin_id,
-                      "approx_minutes": core.travel_minutes(trip, a, b)} for a, b in zip(day, day[1:])],
+                      "mode": leg.mode, "approx_minutes": leg.minutes}
+                     for (a, b), leg in zip(zip(day, day[1:]), core.day_legs(trip, day))],
         })
     return out
 

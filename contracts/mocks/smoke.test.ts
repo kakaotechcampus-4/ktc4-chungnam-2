@@ -1219,6 +1219,31 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     expect(latest.stale).toBe(true);
   });
 
+  it("구간은 mode로 갈린다 — 2km 이하는 walk, 먼 구간은 transit(대중교통 약 분)", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    await confirm("pin_3");
+    store.maps["map_1"].end_date = store.maps["map_1"].start_date; // 하루에 셋 — 구간이 둘 생긴다
+    const items = store.shortlist["map_1"];
+    items[0].pin.lat = 33.4996;
+    items[0].pin.lng = 126.5312;
+    items[1].pin.lat = 33.5015; // 첫째와 200m쯤
+    items[1].pin.lng = 126.5312;
+    items[2].pin.lat = 33.28; // 20km 넘게 떨어진 곳
+    items[2].pin.lng = 126.7183;
+    const { course_run_id } = await (await fetch(`${BASE}/maps/map_1/courses`, { method: "POST", body: JSON.stringify({}) })).json();
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    const done = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    const legs = done.days.flatMap((d: { legs: { mode: string; approx_minutes: number }[] }) => d.legs);
+    expect(legs.length).toBeGreaterThan(0);
+    for (const l of legs) expect(["walk", "transit"]).toContain(l.mode);
+    const transit = legs.filter((l: { mode: string }) => l.mode === "transit");
+    expect(transit.length).toBeGreaterThan(0);
+    expect(transit[0].approx_minutes).toBeGreaterThan(10); // 대기 10분이 더해진 대략 분
+    expect(done.steps.some((st: { text: string }) => st.text.includes("대중교통 1구간"))).toBe(true);
+  });
+
   it("짠 적이 없으면 latest는 204, 없는 run은 404, 지도가 없으면 404", async () => {
     expect((await fetch(`${BASE}/maps/map_1/courses/latest`)).status).toBe(204);
     expect((await fetch(`${BASE}/course-runs/nope`)).status).toBe(404);

@@ -5,19 +5,25 @@ import { apiError } from "../util";
 /**
  * AI 코스 짜기(#334, 팀 결정 #580 전 초안). 실서버 구현 전이라 목 서버가 계약을 먼저 연다.
  * 실제 엔진을 흉내 내지 않는다 — 확정 리스트의 핀을 날짜에 고르게 나눠 담고, 같은 날은 들어온 순서로 이은 뒤
- * 도보 시간은 직선거리 근사로 채운다. 진행 화면의 폴링을 보려고 첫 GET은 running(단계 2개), 둘째는 running(단계 5개), 셋째부터 done이다 — 진행 중에도 steps가 단계마다 늘어난다.
+ * 구간은 직선거리 근사로 채운다(2km 이하는 도보, 넘으면 대중교통). 진행 화면의 폴링을 보려고 첫 GET은 running(단계 2개), 둘째는 running(단계 5개), 셋째부터 done이다 — 진행 중에도 steps가 단계마다 늘어난다.
  * 영업시간을 아직 모르는 실서버와 같게 모든 장소가 「확인 필요」다(checks, needs_check).
  */
 
 const DAILY_LIMIT = 5; // 사용자당 하루 요청 상한(KST 자정 초기화) — 목 서버는 시나리오가 바뀔 때까지 센다
 const MIN_PLACES = 2;
 const WALK_M_PER_MIN = 80;
+const WALK_MAX_M = 2_000; // 서버 초안 규칙: 직선거리 2km 이하는 walk, 넘으면 transit
+const TRANSIT_M_PER_MIN = 333; // 약 20km/h
+const TRANSIT_OVERHEAD_MIN = 10;
 const DAY_MS = 86_400_000;
 
-function approxMinutes(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+/** 구간 방식과 분 — 서버와 같은 규칙(직선거리 기준 거친 추정). */
+function leg(a: { lat: number; lng: number }, b: { lat: number; lng: number }): { mode: "walk" | "transit"; approx_minutes: number } {
   const dLat = (a.lat - b.lat) * 111_000;
   const dLng = (a.lng - b.lng) * 88_000;
-  return Math.max(1, Math.round(Math.sqrt(dLat * dLat + dLng * dLng) / WALK_M_PER_MIN));
+  const meters = Math.sqrt(dLat * dLat + dLng * dLng);
+  if (meters <= WALK_MAX_M) return { mode: "walk", approx_minutes: Math.max(1, Math.round(meters / WALK_M_PER_MIN)) };
+  return { mode: "transit", approx_minutes: Math.max(1, Math.round(meters / TRANSIT_M_PER_MIN + TRANSIT_OVERHEAD_MIN)) };
 }
 
 function tripDays(startDate: string, endDate: string): string[] {
@@ -58,7 +64,7 @@ function buildRun(mapId: string, requestText: string, routable: ReturnType<typeo
     return {
       date,
       slots: pins.map((p, k) => ({ pin_id: p.id, order: k + 1, needs_check: true })),
-      legs: pins.slice(1).map((p, k) => ({ from_pin_id: pins[k].id, to_pin_id: p.id, approx_minutes: approxMinutes(pins[k], p) })),
+      legs: pins.slice(1).map((p, k) => ({ from_pin_id: pins[k].id, to_pin_id: p.id, ...leg(pins[k], p) })),
     };
   });
   const wantsLightWalk = requestText.includes("걷") || requestText.includes("덜");
@@ -80,7 +86,7 @@ function buildRun(mapId: string, requestText: string, routable: ReturnType<typeo
       { stage: "이해", role: "해석", by: "ai", by_detail: null, text: `이렇게 이해했어요: ${goals.map((g) => g.label).join(" · ") || "요청 목표 없음"}${unmatched.map((u) => ` · 「${u}」는 그대로는 판단할 수 없어요`).join("")}` },
       { stage: "확인", role: "검증", by: "code", by_detail: null, text: "요청한 목표가 이 장소들로 가능한지 데이터와 맞춰 봤어요" },
       { stage: "짜기", role: "지휘", by: "ai", by_detail: "모델 → 코드", text: "목표에 맞춰 짜 볼게요" },
-      { stage: "짜기", role: "계산", by: "code", by_detail: null, text: `후보 c1: 지킴 ${goals.map((g) => g.label).join(", ") || "없음"} · 못 지킴 없음 · 하루 최대 도보 30분 · 확정 위반 0` },
+      { stage: "짜기", role: "계산", by: "code", by_detail: null, text: `후보 c1: 지킴 ${goals.map((g) => g.label).join(", ") || "없음"} · 못 지킴 없음 · 하루 최대 도보 30분 · 대중교통 ${days.reduce((n, d) => n + d.legs.filter((l) => l.mode === "transit").length, 0)}구간 · 확정 위반 0` },
       { stage: "점검", role: "지휘", by: "ai", by_detail: null, text: "후보 c1이 목표를 지키고 확정 위반이 없어요" },
       { stage: "끝", role: "지휘", by: "ai", by_detail: null, text: "후보 c1로 끝내요" },
       { stage: "결과", role: "검증", by: "code", by_detail: null, text: "지킨 목표: " + (goals.map((g) => g.label).join(", ") || "없음") + " · 확정 위반 0 · 결과 solved_with_checks" },

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
 from agent.course import core, goals as goals_mod
-from agent.course.constants import DAY_TRAVEL_MAX_MIN, LEG_MAX_MIN
+from agent.course.constants import DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, LEG_MAX_MIN
 from agent.course.direct import DirectResult, DirectStep, Question
 from agent.course.korean import attach
 
@@ -103,7 +103,7 @@ class Narrator:
             for c in step.result.data["candidates"]:
                 out.append(_rec(stage_name, COMPUTE, CODE, f"후보 {c['candidate_id']}: 지킴 {_kept_text(by_id, trip, c['kept'])} · "
                                 f"못 지킴 {_kept_text(by_id, trip, c['gave_up'])} · 하루 최대 도보 {c['walk']['day_max']}분 · "
-                                f"확정 위반 {c['hard']['confirmed']}"))
+                                f"대중교통 {c['walk']['transit_legs']}구간 · 확정 위반 {c['hard']['confirmed']}"))
         elif tool == "lock" and step.result.ok:
             out.append(_rec("고정", DIRECT, MODEL, "장소를 한 날에 고정했어요"))
         elif tool == "ask_requester":
@@ -112,7 +112,7 @@ class Narrator:
                 return out
             q = next(q for q in questions if q.question_id == step.result.data["question_id"])
             opener = f"코드가 열고 {MODEL}이 고름 → {PERSON}" if step.by == "model" else f"코드가 열음 → {PERSON}"
-            if q.kind == "choose_day":
+            if q.kind in ("choose_day", "split_day"):
                 opener = f"코드가 열고 {MODEL}이 날짜를 제안 → {PERSON}" if step.by == "model" else f"코드가 열음 → {PERSON}"
                 out.append(_rec("질문", DIRECT, opener, f"{q.text} · 선택지 {' / '.join(q.option_labels)} · 기본값 {q.option_labels[0]}({q.default_reason})"))
                 out.append(_rec("답", DECIDE, CODE, f"답이 없어 기본값으로 이어 가요: {step.result.data['answer']}"))
@@ -130,8 +130,8 @@ class Narrator:
         self.by_id.update({g.id: g for g in result.state.goals})
         out = []
         if result.chosen.walk_infeasible:
-            out.append(_rec("결과", COMPUTE, CODE, f"구간 도보 {LEG_MAX_MIN}분·하루 도보 {DAY_TRAVEL_MAX_MIN}분 상한을 모두 지키는 순서는 이 장소 구성으로는 "
-                            "없다는 것을 모든 경우를 따져 확인했어요 — 장소나 날짜 수가 바뀌어야 풀려요"))
+            out.append(_rec("결과", COMPUTE, CODE, f"도보 구간 {LEG_MAX_MIN}분·하루 도보 {DAY_WALK_MAX_MIN}분·하루 이동 {DAY_TRAVEL_MAX_MIN}분(대중교통 포함, 약) 상한과 "
+                            "구성원 조건, 확인된 휴무를 모두 지키는 순서는 이 장소 구성으로는 없다는 것을 모든 경우를 따져 확인했어요 — 장소나 날짜 수가 바뀌어야 풀려요"))
         met = [r.goal.id for r in result.goal_results if r.met is True]
         out.append(_rec("결과", VERIFY, CODE, f"지킨 목표: {_kept_text(self.by_id, self.trip, met)} · 확정 위반 "
                         f"{core.hard_score(result.violations)[0]} · 결과 {result.outcome}"))

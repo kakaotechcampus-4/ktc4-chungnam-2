@@ -2536,11 +2536,12 @@ components:
 
     CourseLeg:
       type: object
-      required: [from_pin_id, to_pin_id, approx_minutes]
+      required: [from_pin_id, to_pin_id, mode, approx_minutes]
       properties:
         from_pin_id: { type: string }
         to_pin_id: { type: string }
-        approx_minutes: { type: integer, minimum: 0, description: "도보 대략 분(직선거리 기준 추정). 길 안내가 아니다" }
+        mode: { type: string, enum: [walk, transit], description: "이동 방식. 직선거리 2km 이하는 walk(도보), 넘으면 transit(대중교통). 서버 초안 규칙(#580 전)이라 기준이 바뀔 수 있다" }
+        approx_minutes: { type: integer, minimum: 0, description: "mode 기준 대략 분 — walk면 도보 분, transit이면 대중교통 약 분(직선거리로 잰 거친 추정). 길 안내·시간표가 아니다. 화면에는 「도보 N분」「대중교통 약 N분」으로 쓴다" }
 
     CourseViolation:
       type: object

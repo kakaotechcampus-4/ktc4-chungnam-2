@@ -5,7 +5,16 @@ from dataclasses import replace
 import pytest
 
 from agent.course import core, tools
-from agent.course.constants import DAY_TRAVEL_MAX_MIN, LEG_MAX_MIN, MAX_LIVE_TRIALS, TOOL_LIMITS
+from agent.course.constants import (
+    DAY_TRAVEL_MAX_MIN,
+    DAY_WALK_MAX_MIN,
+    LEG_MAX_MIN,
+    MAX_LIVE_TRIALS,
+    TOOL_LIMITS,
+    TRANSIT_OVERHEAD_MIN,
+    TRANSIT_SPEED_M_PER_MIN,
+    WALK_MAX_M,
+)
 from agent.course.core import MemberConstraint
 from agent.course.ports import FixtureOpeningHours
 from agent.course.schemas import (
@@ -60,25 +69,86 @@ class TestViolations:
         vs = core.find_violations(trip(), COURSE, KNOWN_HOURS)
         assert {(v.id, v.status) for v in vs} == {("closed:p4:d2", "unknown"), ("closed:p5:d2", "unknown")}
 
-    def test_leg_limit_boundary(self):
-        # 위도 0.001도 ≈ 111m. 도보 80m/분 기준으로 상한 바로 아래와 위
-        def far_pair(minutes):
-            dlat = minutes * 80 / 111_000
-            return (place("a", "관광지", 37.5, 127.0), place("b", "관광지", 37.5 + dlat, 127.0))
+    def test_walk_leg_limit_boundary(self, monkeypatch):
+        # 도보 구간 상한은 걷는 구간에만 걸린다. 걷는 거리 한계를 넓혀 40분 경계를 만든다(위도 1도 ≈ 111km, 도보 80m/분)
+        monkeypatch.setattr(core, "WALK_MAX_M", 10_000)
+        core._leg_between.cache_clear()
+        try:
+            def far_pair(minutes):
+                dlat = minutes * 80 / 111_000
+                return (place("a", "관광지", 37.5, 127.0), place("b", "관광지", 37.5 + dlat, 127.0))
 
-        for minutes, expected in ((LEG_MAX_MIN, 0), (LEG_MAX_MIN + 1, 1)):
-            t = trip(places=far_pair(minutes), days=(MON,))
-            vs = core.find_violations(t, (("a", "b"),), {"a": ALL_OPEN, "b": ALL_OPEN})
-            assert sum(v.id.startswith("leg:") for v in vs) == expected, minutes
+            for minutes, expected in ((LEG_MAX_MIN, 0), (LEG_MAX_MIN + 1, 1)):
+                t = trip(places=far_pair(minutes), days=(MON,))
+                vs = core.find_violations(t, (("a", "b"),), {"a": ALL_OPEN, "b": ALL_OPEN})
+                assert sum(v.id.startswith("leg:") for v in vs) == expected, minutes
+        finally:
+            core._leg_between.cache_clear()
 
-    def test_day_total_and_member_limit(self):
-        # 35분 구간 다섯 개 = 175분 > 하루 상한, 구성원 제약(100분)도 걸린다
-        step = 35 * 80 / 111_000
+    def test_transit_leg_has_no_leg_cap(self):
+        # 직선 10km는 걸으면 125분이지만 대중교통 구간이라 구간 상한(40분)이 걸리지 않는다(약 40분)
+        a, b = place("a", "관광지", 37.5, 127.0), place("b", "관광지", 37.5 + 10_000 / 111_195, 127.0)
+        t = trip(places=(a, b), days=(MON,))
+        assert core.leg_between(t, "a", "b").mode == "transit"
+        assert core.find_violations(t, (("a", "b"),), {"a": ALL_OPEN, "b": ALL_OPEN}) == ()
+
+    def test_day_walk_total_and_member_limit_count_walk_legs_only(self):
+        # 걷는 구간(20분) 다섯 개 = 100분. 하루 도보 상한(150) 아래, 구성원 제약(60분)을 넘는다 — 사이에 낀 대중교통 구간은 세지 않는다
+        step = 20 * 80 / 111_000
         ps = tuple(place(f"x{i}", "관광지", 37.5 + step * i, 127.0) for i in range(6))
-        t = trip(places=ps, days=(MON,), member_constraints=(MemberConstraint("daily_walk_max", 100),))
+        t = trip(places=ps, days=(MON,), member_constraints=(MemberConstraint("daily_walk_max", 60),))
+        hours = {p.alias: ALL_OPEN for p in ps}
+        vs = core.find_violations(t, (tuple(p.alias for p in ps),), hours)
+        assert {v.id for v in vs} == {"member:d1"} and vs[0].detail == {"minutes": 100, "limit": 60}
+        # x0 → x5 → x1 → x4 … 건너뛰면 걷는 구간이 줄어 같은 구성원 제약을 지킨다
+        hop = ("x0", "x2", "x4", "x1", "x3", "x5")
+        assert core.day_walk(t, hop) < core.day_walk(t, tuple(p.alias for p in ps))
+
+    def test_day_walk_cap_and_day_travel_cap_are_separate_violations(self):
+        step = 20 * 80 / 111_000                       # 도보 20분 구간 9개 = 180분 > 도보 150, 이동 합계 180 = 상한(넘지 않는다)
+        ps = tuple(place(f"x{i}", "관광지", 37.5 + step * i, 127.0) for i in range(10))
+        t = trip(places=ps, days=(MON,))
         vs = core.find_violations(t, (tuple(p.alias for p in ps),), {p.alias: ALL_OPEN for p in ps})
-        assert {v.id for v in vs} == {"day:d1", "member:d1"}
-        assert next(v for v in vs if v.id == "day:d1").detail["limit"] == DAY_TRAVEL_MAX_MIN
+        assert {v.id for v in vs} == {"walk:d1"}
+        assert vs[0].detail == {"minutes": 180, "limit": DAY_WALK_MAX_MIN}
+        # 먼 곳 셋(구간마다 대중교통 약 100분) = 200분 > 하루 이동 상한. 도보는 0이라 도보 위반은 없다
+        far = tuple(place(f"y{i}", "관광지", 37.5 + 0.3 * i, 127.0) for i in range(3))
+        t2 = trip(places=far, days=(MON,))
+        vs2 = core.find_violations(t2, (("y0", "y1", "y2"),), {p.alias: ALL_OPEN for p in far})
+        assert [v.id for v in vs2] == ["day:d1"] and vs2[0].detail["limit"] == DAY_TRAVEL_MAX_MIN
+
+
+class TestLegModes:
+    def _pair(self, meters):
+        return trip(places=(place("a", "관광지", 37.5, 127.0), place("b", "관광지", 37.5 + meters / 111_195, 127.0)), days=(MON,))
+
+    def test_walk_up_to_the_limit_then_transit(self):
+        assert core.leg_between(self._pair(WALK_MAX_M - 5), "a", "b").mode == "walk"
+        assert core.leg_between(self._pair(WALK_MAX_M + 5), "a", "b").mode == "transit"
+
+    def test_walk_minutes_use_the_walking_speed(self):
+        leg = core.leg_between(self._pair(800), "a", "b")
+        assert (leg.mode, leg.minutes) == ("walk", 10)
+
+    def test_transit_minutes_are_distance_over_speed_plus_overhead(self):
+        t = self._pair(10_000)
+        leg = core.leg_between(t, "a", "b")
+        assert leg.mode == "transit" and leg.minutes == round(leg.distance_m / TRANSIT_SPEED_M_PER_MIN + TRANSIT_OVERHEAD_MIN)
+        assert 38 <= leg.minutes <= 42                   # 약 20km/h로 10km + 대기 10분
+        assert core.travel_minutes(t, "a", "b") == leg.minutes
+
+    def test_day_totals_split_walk_and_transit(self):
+        ps = (place("a", "관광지", 37.5, 127.0), place("b", "관광지", 37.5 + 800 / 111_195, 127.0),
+              place("c", "관광지", 37.5 + 10_800 / 111_195, 127.0))
+        t = trip(places=ps, days=(MON,))
+        assert core.day_walk(t, ("a", "b", "c")) == 10
+        assert core.day_transit_legs(t, ("a", "b", "c")) == 1
+        assert core.day_travel(t, ("a", "b", "c")) == 10 + core.leg_between(t, "b", "c").minutes
+
+    def test_soft_scores_count_transit_legs(self):
+        far = tuple(place(f"y{i}", "관광지", 37.5 + 0.1 * i, 127.0) for i in range(3))
+        t = trip(places=far, days=(MON,))
+        assert core.soft_scores(t, (("y0", "y1", "y2"),))["transit_legs"] == 2
 
 
 class TestSoft:

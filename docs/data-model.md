@@ -426,7 +426,7 @@ agent_course_runs(
   goals jsonb, unmatched jsonb,       -- [{id, kind, label, met}], 요청 원문 조각
   excluded jsonb,                     -- [{pin_id, reason('NO_COORDINATES'|'OVER_LIMIT'), text}]
   steps jsonb,                        -- [{stage, role, by, by_detail, text}] 작업 기록(끝난 뒤 한꺼번에 채운다)
-  days jsonb,                         -- [{date, slots:[{pin_id, order, needs_check}], legs:[{from_pin_id, to_pin_id, approx_minutes}]}]
+  days jsonb,                         -- [{date, slots:[{pin_id, order, needs_check}], legs:[{from_pin_id, to_pin_id, mode(walk|transit), approx_minutes}]}]
   violations jsonb, checks jsonb,     -- [{kind, text}], [{pin_id, text}]
   model null, prompt_version null, model_turns, tokens_in, tokens_out,
   created_at, finished_at null
