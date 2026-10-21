@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent.course.rest_days import known_weekdays, merge_sources, parse_rest_days
+from agent.course.rest_days import known_weekdays, merge_sources, parse_rest_days, parse_structured, read_hours
 
 
 def row(text: str) -> str:
@@ -78,3 +78,26 @@ def test_합치기는_모름을_채우고_충돌은_모름으로():
     conflict = merge_sources(parse_rest_days("연중무휴"), parse_rest_days("매주 월요일"))
     assert conflict[0] == "unknown" and conflict[1] == "open"
     assert merge_sources(parse_rest_days(""), parse_rest_days("")) == {wd: "unknown" for wd in range(7)}
+
+
+def test_구조화_칸_없으면_모름_빈목록이면_매일_영업():
+    assert parse_structured(None) == {wd: "unknown" for wd in range(7)}
+    assert parse_structured([]) == {wd: "open" for wd in range(7)}
+    assert parse_structured(["월", "일"]) == {0: "closed", **{wd: "open" for wd in range(1, 6)}, 6: "closed"}
+
+
+def test_hours는_빈_요일만_본다():
+    full = {d: [["09:00", "18:00"]] for d in "월화수목금토일"}
+    assert parse_structured([], full) == {wd: "open" for wd in range(7)}
+    # closed_days가 없으면 빈 요일만 휴무, 나머지는 모름
+    got = parse_structured(None, {**full, "월": []})
+    assert got[0] == "closed" and got[1] == "unknown"
+    # 영업이라는데 시간 목록이 비면 모름(어긋남은 단정하지 않는다), closed_days가 휴무라 한 날은 시간이 있어도 휴무
+    got = parse_structured(["화"], {**full, "일": []})
+    assert got[6] == "unknown" and got[1] == "closed" and got[0] == "open"
+
+
+def test_글_읽기는_closed_days_칸이_없을_때만():
+    assert read_hours([], None, "매주 월요일")[0] == "open"
+    assert read_hours(None, None, "매주 월요일")[0] == "closed"
+    assert read_hours(None, None, None) == {wd: "unknown" for wd in range(7)}

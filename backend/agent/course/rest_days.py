@@ -115,3 +115,29 @@ def merge_sources(*parsed: Mapping[int, DayStatus]) -> dict[int, DayStatus]:
         known = {v for v in vals if v != "unknown"}
         out[wd] = known.pop() if len(known) == 1 else "unknown"
     return out
+
+
+def parse_structured(closed_days: Optional[list[str]], hours: Optional[Mapping[str, list]] = None) -> dict[int, DayStatus]:
+    """구조화된 칸에서 요일별 상태를 읽는다(정예DB 2026-10-21).
+    - `closed_days`: 칸이 없으면(None) 모름, []이면 매일 영업, 요일 목록이면 그 요일만 휴무.
+    - `hours`: 그 요일의 시간 목록이 비었는가(휴무)만 본다. 시간 배정에는 쓰지 않는다.
+      `closed_days`가 아는 날과 어긋나면(영업이라는데 목록이 빔) 그 요일은 모름이다 — 휴무로 단정하지 않는다.
+      `closed_days`가 없을 때는 빈 요일만 closed이고 나머지는 모른다."""
+    out: dict[int, DayStatus] = {}
+    empty = {wd for wd, d in enumerate(_DAYS) if hours is not None and d in hours and not hours[d]}
+    for wd, d in enumerate(_DAYS):
+        if closed_days is None:
+            out[wd] = "closed" if wd in empty else "unknown"
+        elif d in closed_days:
+            out[wd] = "closed"
+        else:
+            out[wd] = "unknown" if wd in empty else "open"
+    return out
+
+
+def read_hours(closed_days: Optional[list[str]], hours: Optional[Mapping[str, list]], fallback_text: Optional[str] = None) -> dict[int, DayStatus]:
+    """구조화된 칸을 먼저 쓰고, `closed_days` 칸 자체가 없을 때만 글 읽기로 빈 곳을 채운다."""
+    structured = parse_structured(closed_days, hours)
+    if closed_days is not None:
+        return structured
+    return merge_sources(structured, parse_rest_days(fallback_text))

@@ -2,7 +2,8 @@
 
     cd backend && .venv/bin/python -m agent.course.eval.build_maps <데이터 폴더> [--out agent/course/eval/data] [--count 24]
 
-데이터 폴더에는 관광지/·음식점/·카페/ 아래 파일이 있어야 한다(인수인계 4절).
+데이터 폴더(정예DB 지역 폴더, 예: 정예DB_2026-10-21/서울)에는 관광지/·음식점/·카페/ 아래 파일이 있어야 한다.
+휴무는 구조화된 closed_days·hours를 먼저 읽고, closed_days 칸이 없을 때만 글 읽기로 채운다.
 결과: <out>/maps/map_NN.json(장소 이름 포함 — 로컬 전용) + <out>/summary.json(이름 없는 집계).
 """
 
@@ -12,18 +13,18 @@ import argparse
 import csv
 import json
 import random
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from agent.course.rest_days import known_weekdays, merge_sources, parse_rest_days
+from agent.course.rest_days import known_weekdays, read_hours
 
 MONDAY_START = date(2026, 11, 2)     # 월요일 시작 — 월요일 휴관 관광지가 걸리는 지도
 FRIDAY_START = date(2026, 11, 6)     # 금요일 시작 — 일요일 휴무가 걸리는 지도
 TOURIST = "관광지"
-REST_COLUMNS = ("tour_쉬는날", "착한가격_휴무일", "용산구관광거리_휴무일")
 
 
 @dataclass(frozen=True)
@@ -46,38 +47,54 @@ def _true_labels(raw: dict[str, Any]) -> tuple[str, ...]:
     return tuple(sorted(k for k, v in raw.items() if isinstance(v, dict) and v.get("value") == "true"))
 
 
-def load_tourist(path: Path) -> list[Record]:
+def _gu(addr: str) -> str:
+    m = re.search(r"서울특별시\s+(\S+구)", addr or "")
+    return m.group(1) if m else ""
+
+
+def load_tourist(places: Path, closed_days: Path, labels_csv: Path) -> list[Record]:
+    """관광지: 좌표·이름은 places, 휴무는 closed_days(source_id = contentid), 라벨은 라벨 csv."""
+    closed = {c["source_id"]: c for c in json.loads(closed_days.read_text(encoding="utf-8"))}
+    true_labels: dict[str, list[str]] = defaultdict(list)
+    with labels_csv.open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            if row["value"] == "true" and row["confidence"] == "known":
+                true_labels[row["source_id"]].append(row["fact_key"])
+    out = []
+    for p in json.loads(places.read_text(encoding="utf-8")):
+        try:
+            lat, lng = float(p["mapy"]), float(p["mapx"])
+        except (KeyError, ValueError):
+            continue
+        c = closed.get(p["contentid"], {})
+        hours = read_hours(c.get("closed_days"), c.get("hours"), c.get("closed_note"))
+        out.append(Record(f"tour:{p['contentid']}", p["title"], _gu(p.get("addr1", "")), "관광지", lat, lng,
+                          tuple(sorted(true_labels.get(p["contentid"], ()))), hours))
+    return out
+
+
+def load_labeled_places(path: Path, category: str) -> list[Record]:
+    """음식점·카페: 라벨 JSON 한 파일에 좌표·라벨·info(closed_days, hours)가 다 있다."""
     out = []
     for p in json.loads(path.read_text(encoding="utf-8")):
         try:
             lat, lng = float(p["mapy"]), float(p["mapx"])
         except (KeyError, ValueError):
             continue
-        out.append(Record(
-            f"tour:{p['place_id']}", p["title"], p.get("sigungu", ""), "관광지", lat, lng,
-            _true_labels(p.get("labels", {})), parse_rest_days(p.get("info", {}).get("rest_days", "")),
-        ))
-    return out
-
-
-def load_csv_places(path: Path, category: str) -> list[Record]:
-    out = []
-    with path.open(encoding="utf-8-sig", newline="") as f:
-        for row in csv.DictReader(f):
-            try:
-                lat, lng = float(row["위도"]), float(row["경도"])
-            except (KeyError, ValueError):
-                continue
-            hours = merge_sources(*(parse_rest_days(row.get(c, "")) for c in REST_COLUMNS))
-            out.append(Record(f"{category}:{row['관리번호']}", row["사업장명"], row.get("자치구", ""), category, lat, lng, (), hours))
+        info = p.get("info") or {}
+        hours = read_hours(info.get("closed_days"), info.get("hours"), info.get("opening_hours"))
+        out.append(Record(p["place_id"], p["title"], p.get("sigungu") or _gu(p.get("addr1", "")), category, lat, lng,
+                          _true_labels(p.get("labels", {})), hours))
     return out
 
 
 def load_all(data_dir: Path) -> list[Record]:
+    """data_dir는 정예DB의 지역 폴더(예: 정예DB_2026-10-21/서울) — 관광지/·음식점/·카페/ 아래 파일을 읽는다."""
     return [
-        *load_tourist(data_dir / "관광지" / "tourist_seoul_curated_labels.json"),
-        *load_csv_places(data_dir / "음식점" / "final_restaurant_places_hotspot.csv", "음식점"),
-        *load_csv_places(data_dir / "카페" / "cafe_seoul_curated.csv", "카페"),
+        *load_tourist(data_dir / "관광지" / "tourist_seoul_places.json", data_dir / "관광지" / "tourist_seoul_closed_days.json",
+                      data_dir / "관광지" / "tourist_seoul_curated_labels.csv"),
+        *load_labeled_places(data_dir / "음식점" / "seoul_restaurant_labels_hotspot.json", "음식점"),
+        *load_labeled_places(data_dir / "카페" / "cafe_seoul_curated_labels.json", "카페"),
     ]
 
 
