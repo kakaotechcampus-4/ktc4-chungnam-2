@@ -2897,6 +2897,150 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/{mapId}/courses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 「AI 코스 짜기」 요청 — 구성원 누구나(course.request). 확정 리스트를 지도 기간의 날짜별 방문 순서로 짠다.
+         *     run을 queued로 저장하고 202를 돌려준다. 계산은 백그라운드에서 한다(보통 수 초에서 수십 초) — FE는 `GET /course-runs/{runId}`를 2초 간격으로 불러 status가 done이나 failed가 될 때까지 기다린다.
+         *     코스는 요청한 본인에게만 보인다(가드레일 1). 확정 장소는 좌표를 아는 것만 센다(실시간 핀은 빠지고 excluded에 남는다). 한 번에 30곳까지, 여행 기간은 앞 14일까지 짠다.
+         *     하루 상한은 사용자당 5번(KST 자정 초기화)이고 지도마다 내 진행 중 run은 하나다. request_text와 member_constraints는 모두 선택이다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["CourseRequest"];
+                };
+            };
+            responses: {
+                /** @description 접수됨 */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CourseRunCreated"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["CourseInProgress"];
+                422: components["responses"]["CourseNotEnoughPlaces"];
+                429: components["responses"]["CourseLimit"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/courses/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 내 마지막 코스 — 구성원 누구나(남의 코스는 내려가지 않는다). 진행 중인 run도 돌려주므로 화면을 다시 열면 이어서 기다릴 수 있다.
+         *     짠 적이 없으면 204.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 가장 최근에 요청한 run */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CourseRun"];
+                    };
+                };
+                /** @description 아직 짠 코스가 없음 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/course-runs/{runId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 코스 run 하나 — 요청한 본인만(course.view). 비구성원 404, 요청자가 아닌 구성원 403.
+         *     status가 queued·running이면 결과 칸은 비어 있다(진행 기록도 끝난 뒤에 한꺼번에 채워진다). done이면 모두 채워지고, failed면 failure_code만 있다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    runId: components["parameters"]["RunId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CourseRun"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/events": {
         parameters: {
             query?: never;
@@ -3811,6 +3955,130 @@ export interface components {
             /** @description widen_radius, open_evidence만 */
             actions: components["schemas"]["AgentAction"][];
         };
+        CourseRequest: {
+            /** @description 요청 한 줄(선택). 예: '둘째 날은 실내 위주로'. 요청자가 이 run을 위해 쓴 글이라 run에만 저장되고 다른 구성원에게 보이지 않는다. 모델은 이 글을 목표(실내 위주, 야경 마지막, 덜 걷기, 여유 있게, 한 장소를 그 날에, 두 장소 같은 날)로 바꾼다 */
+            request_text?: string | null;
+            /** @description 구성원 제약(선택). 고정 목록에서 고른다 — 지금은 하루 도보 상한 하나 */
+            member_constraints?: components["schemas"]["CourseMemberConstraint"][];
+        };
+        CourseMemberConstraint: {
+            /** @enum {string} */
+            kind: "daily_walk_max";
+            /** @description 하루 도보 상한(분) */
+            value: number;
+            /** @description 날짜 별칭 d1 … (d1 = 지도 첫날). 없으면 모든 날. 여행 기간 밖이면 422 VALIDATION_ERROR */
+            day?: string | null;
+        };
+        CourseRunCreated: {
+            course_run_id: string;
+        };
+        /**
+         * @description 코스 run 하나. 요청자에게만 보인다. 문장(label, text, steps)은 모두 서버가 코드 템플릿으로 만든 것이라 FE는 그대로 보여 준다.
+         *     AI는 목표를 세우고 코드 최적화를 지휘할 뿐이고, 위반 판정·이동시간·순서는 코드가 계산한다. 영업시간을 아직 모르므로(places에 칸이 없다, #580 6번)
+         *     지금은 모든 장소가 checks(「가게에 확인해 주세요」)에 들고 needs_check=true다.
+         */
+        CourseRun: {
+            id: string;
+            map_id: string;
+            /** @enum {string} */
+            status: "queued" | "running" | "done" | "failed";
+            /**
+             * @description done일 때만. solved=위반·확인 필요 없음, solved_with_checks=확정 위반 없음·확인 필요 남음, unresolved=확정 위반이 남음(violations), timeout=시간 초과. 영업시간을 모르는 동안은 보통 solved_with_checks
+             * @enum {string|null}
+             */
+            outcome: "solved" | "solved_with_checks" | "unresolved" | "timeout" | null;
+            /**
+             * @description failed일 때만. INTERRUPTED=서버가 다시 떠서 끊김(또는 15분 넘게 끝나지 않음), ENGINE_ERROR=계산 오류. 화면은 같은 문구 「코스를 만들지 못했어요」 + 「다시 짜기」
+             * @enum {string|null}
+             */
+            failure_code: "INTERRUPTED" | "ENGINE_ERROR" | null;
+            /** @description 요청 한 줄에서 모델이 세우고 코드가 검증한 목표. 요청이 없으면 빈 배열 */
+            goals: components["schemas"]["CourseGoal"][];
+            /** @description 목표로 바꾸지 못한 요청 조각(요청 원문의 일부). 화면에 「반영하지 못했어요」로 보인다 */
+            unmatched: string[];
+            /** @description 작업 기록 — 이해, 확인, 짜기, 점검, 재계획, 끝, 결과 순으로 누가 했는지와 함께. 끝난 뒤에 한꺼번에 채워진다 */
+            steps: components["schemas"]["CourseStep"][];
+            /** @description 지도 기간의 날짜별 순서(최대 14일). 날짜 하나가 비어 있을 수 있다 */
+            days: components["schemas"]["CourseDay"][];
+            /** @description 남은 확정 위반(쉬는 날, 도보 상한 초과). 비어 있어야 정상이다 */
+            violations: components["schemas"]["CourseViolation"][];
+            /** @description 그날 영업하는지 알 수 없는 장소 — 「가게에 직접 확인해 주세요」 */
+            checks: components["schemas"]["CourseCheck"][];
+            /** @description 코스에서 빠진 확정 핀(좌표를 알 수 없는 실시간 핀, 30곳을 넘은 핀) */
+            excluded: components["schemas"]["CourseExcluded"][];
+            /** Format: date-time */
+            snapshot_at: string;
+            /** @description 요청 뒤 확정 리스트가 바뀌었다 — 「확정 리스트가 바뀌었어요」 + 「다시 짜기」 */
+            stale: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+        };
+        CourseGoal: {
+            /** @description 예: day_indoor:d2 */
+            id: string;
+            /** @enum {string} */
+            kind: "day_indoor" | "night_end" | "daily_walk_low" | "day_light" | "place_on_day" | "together";
+            /** @description 예: 「둘째 날 (화)은 실내 위주로」 */
+            label: string;
+            /** @description 지켜졌나. null = 판단할 수 없다(라벨을 아는 장소가 없다) — 「확인할 수 없어요」 */
+            met: boolean | null;
+        };
+        CourseStep: {
+            /** @description 이해 · 확인 · 짜기 · 점검 · 재계획 · 다시 짜기 · 고정 · 검증 · 질문 · 답 · 대행 · 끝 · 결과 */
+            stage: string;
+            /**
+             * @description 무슨 일이었나. 해석=요청을 목표로, 지휘=도구 고르기·점검·끝, 계산=최적화·수리, 검증=코드가 사실과 맞춰 봄(모델 문장을 코드 문장으로 바꾼 기록 포함), 결정=사람의 답 또는 기본값
+             * @enum {string}
+             */
+            role: "해석" | "지휘" | "계산" | "검증" | "결정";
+            /**
+             * @description 누가 했나. 칩으로 보여 준다. 여럿이 함께한 단계는 대표값(사람 > 모델 > 코드)이고 자세한 말은 by_detail
+             * @enum {string}
+             */
+            by: "ai" | "code" | "human";
+            /** @description 섞인 단계의 원문. 예: 「모델 → 코드」, 「코드가 열고 모델이 고름 → 사람」, 「코드(목표 세우기 실패)」. 단순하면 null */
+            by_detail: string | null;
+            text: string;
+        };
+        CourseDay: {
+            /** Format: date */
+            date: string;
+            slots: components["schemas"]["CourseSlot"][];
+            /** @description 그날 장소 사이 구간. slots보다 하나 적다 */
+            legs: components["schemas"]["CourseLeg"][];
+        };
+        CourseSlot: {
+            /** @description 확정 리스트의 핀. 이름과 좌표는 핀 응답(GET /maps/{mapId}/shortlist)에서 읽는다 */
+            pin_id: string;
+            /** @description 그날의 방문 순서(1부터) */
+            order: number;
+            /** @description 그날 영업하는지 알 수 없다 — checks에도 있다 */
+            needs_check: boolean;
+        };
+        CourseLeg: {
+            from_pin_id: string;
+            to_pin_id: string;
+            /** @description 도보 대략 분(직선거리 기준 추정). 길 안내가 아니다 */
+            approx_minutes: number;
+        };
+        CourseViolation: {
+            /** @enum {string} */
+            kind: "closed" | "travel" | "member";
+            text: string;
+        };
+        CourseCheck: {
+            pin_id: string;
+            /** @description 예: 「○○미술관은 첫째 날 (월)에 영업하는지 알 수 없어요. 가게에 직접 확인해 주세요」 */
+            text: string;
+        };
+        CourseExcluded: {
+            pin_id: string;
+            /** @enum {string} */
+            reason: "NO_COORDINATES" | "OVER_LIMIT";
+            text: string;
+        };
         /** @description 모든 SSE 이벤트의 공통 봉투. id는 event_log.seq와 같고 SSE의 id: 필드로 전송된다 */
         SseEnvelope: {
             /**
@@ -4183,6 +4451,33 @@ export interface components {
         };
         /** @description 추천 파이프라인 실패 (6절 "조건이 까다로워서가 아니에요") */
         RecommendFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 코스를 짤 확정 장소가 2곳 미만 (COURSE_NOT_ENOUGH_PLACES, */
+        CourseNotEnoughPlaces: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 사용자당 하루 5번(KST 자정 초기화)을 넘김 (COURSE_LIMIT, */
+        CourseLimit: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 이 지도에서 내가 요청한 코스를 아직 짜는 중 (COURSE_IN_PROGRESS, */
+        CourseInProgress: {
             headers: {
                 [name: string]: unknown;
             };
