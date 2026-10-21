@@ -161,8 +161,8 @@ def test_요청_비교는_작업_기록을_단계_모양으로_담는다():
                                                       "quote": "첫날 저녁엔 야경", "reaction_ids": []}], "unmatched": []})
     out = compare.run_request_variants(compare.scenario_from_map(m), req, goal_setter=_FakeSetter(right), decider=_FakeDecider())
     log = out["agent"].worklog
-    assert log[0].startswith("[이해] (모델)") and any(l.startswith("[확인] (코드)") for l in log) and log[-1].startswith("[결과]")
-    assert out["strong_gold"].worklog[0].startswith("[이해] (정답 주입)") and out["strong"].worklog == ()
+    assert log[0].startswith("[이해] 해석(모델)") and any(l.startswith("[확인] 검증(코드)") for l in log) and log[-1].startswith("[결과]")
+    assert out["strong_gold"].worklog[0].startswith("[이해] 해석(정답 주입)") and out["strong"].worklog == ()
 
 
 def test_시연은_요청_문장을_직접_받아_작업_기록을_찍는다(tmp_path):
@@ -173,5 +173,5 @@ def test_시연은_요청_문장을_직접_받아_작업_기록을_찍는다(tmp
     lines: list[str] = []
     demo.run_direct_demo(0, data, use_model=False, request="첫날 저녁엔 야경 보고 싶어요", out=lines.append)
     text = "\n".join(lines)
-    assert "요청: 첫날 저녁엔 야경 보고 싶어요" in text and "[이해] (스텁)" in text and "「첫날 저녁엔 야경 보고 싶어요」는 그대로는 판단할 수 없어요" in text
+    assert "요청: 첫날 저녁엔 야경 보고 싶어요" in text and "[이해] 해석(스텁)" in text and "「첫날 저녁엔 야경 보고 싶어요」는 그대로는 판단할 수 없어요" in text
     assert "▶ 최종 코스" in text
