@@ -53,7 +53,7 @@ export interface CourseRunMock {
   days: {
     date: string;
     slots: { pin_id: string; order: number; needs_check: boolean }[];
-    legs: { from_pin_id: string; to_pin_id: string; approx_minutes: number }[];
+    legs: { from_pin_id: string; to_pin_id: string; mode: "walk" | "transit"; approx_minutes: number }[];
   }[];
   violations: { kind: "closed" | "travel" | "member"; text: string }[];
   checks: { pin_id: string; text: string }[];
