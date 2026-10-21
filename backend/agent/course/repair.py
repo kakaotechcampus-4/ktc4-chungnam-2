@@ -2,7 +2,7 @@
 
 올라가기는 한 수(또는 묶음)씩 고치므로 "구간 상한 안에 이어지는 이웃이 하나도 없는 장소는 그 날 혼자여야 한다" 같은 큰 구조 변화는
 못 찾는다. 여기서는 장소 수가 작을 때(큰 묶음 14곳 이하) 가능한 모든 날 배정을 따져서 도보(구간·하루·구성원)와 확인된 휴무를 모두 지키는
-코스를 찾는다. 있으면 현재 코스와 가장 덜 달라지는 것을 돌려주고(그 위에서 올라가기를 다시 한다), 없으면 없다는 것을 증명한 것이다.
+코스를 찾는다. 있으면 날 사이 장소 수가 가장 고르고(같으면 현재 코스와 가장 덜 달라지는) 것을 돌려주고(그 위에서 올라가기를 다시 한다), 없으면 없다는 것을 증명한 것이다.
 
 - 한 날의 장소는 구간 상한(LEG_MAX_MIN) 이하로만 이어지는 한 묶음(연결 성분) 안에 있어야 한다. 묶음 안에서 부분집합마다 최단 방문 순서(비트마스크 DP)를 구한다.
 - 부분집합이 하루 상한(구성원 제약 포함)을 넘거나, 그날 쉬는 곳이 있거나, 고정(locks)과 어긋나면 그 날에는 쓸 수 없다.
@@ -104,8 +104,9 @@ def rebuild_walk_feasible(
     index = {a: i for i, a in enumerate(aliases)}                      # 전체 비트마스크 자리
     where = {p: i for i, day in enumerate(current) for p in day}
 
-    # 날마다 쓸 수 있는 (전체 비트마스크, 비용, 순서) — 비용은 현재 코스와 다른 날에 놓인 장소 수
-    options: list[dict[int, list[tuple[int, int, tuple[str, ...]]]]] = [dict() for _ in range(n_days)]
+    # 날마다 쓸 수 있는 (전체 비트마스크, 장소 수의 제곱, 현재 코스와 다른 날에 놓인 장소 수, 방문 순서).
+    # 배정의 비용은 (날별 장소 수 제곱의 합, 옮겨지는 장소 수) — 고를 수 있는 배정 중 날 사이가 가장 고른 것, 같으면 현재 코스에서 덜 옮기는 것
+    options: list[dict[int, list[tuple[int, int, int, tuple[str, ...]]]]] = [dict() for _ in range(n_days)]
     for comp in comps:
         dp, parent = _path_table(trip, comp)
         costs = [min(row) for row in dp]
@@ -127,25 +128,25 @@ def rebuild_walk_feasible(
                 if order is None:
                     order = _order(comp, dp[sub], parent, sub)
                 low = min(index[p] for p in members)
-                options[d].setdefault(low, []).append((full, shift, order))
+                options[d].setdefault(low, []).append((full, len(members) ** 2, shift, order))
     all_mask = (1 << len(aliases)) - 1
 
     @lru_cache(maxsize=None)
-    def best(remaining: int, used: int) -> Optional[tuple[int, tuple]]:
+    def best(remaining: int, used: int) -> Optional[tuple[tuple[int, int], tuple]]:
         if remaining == 0:
-            return 0, ()
+            return (0, 0), ()
         low = (remaining & -remaining).bit_length() - 1
-        found: Optional[tuple[int, tuple]] = None
+        found: Optional[tuple[tuple[int, int], tuple]] = None
         for d in range(n_days):
             if used >> d & 1:
                 continue
-            for full, shift, order in options[d].get(low, ()):
+            for full, squared, shift, order in options[d].get(low, ()):
                 if full & ~remaining:
                     continue
                 rest = best(remaining & ~full, used | 1 << d)
                 if rest is None:
                     continue
-                cand = (shift + rest[0], ((d, order), *rest[1]))
+                cand = ((rest[0][0] + squared, rest[0][1] + shift), ((d, order), *rest[1]))
                 if found is None or cand[0] < found[0]:
                     found = cand
         return found

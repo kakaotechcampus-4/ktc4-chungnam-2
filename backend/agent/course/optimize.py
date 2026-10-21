@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Mapping, Optional, Sequence
 
-from agent.course import baseline, core, goals as goals_mod, tools
+from agent.course import baseline, core, goals as goals_mod, repair, tools
 from agent.course.constants import CANDIDATES_MAX, CLIMB_MAX_STEPS, TOOL_LIMITS
 from agent.course.goals import Goal
 from agent.course.ports import OpeningHoursGateway
@@ -25,6 +25,7 @@ class Candidate:
     violations: tuple[core.Violation, ...]
     priority: tuple[str, ...]              # 이 후보를 만든 목표 순서
     focus: Optional[str] = None            # 이 목표를 다른 목표보다 먼저 지킨 "집중" 후보(None이면 목표 수를 최대로 지킨 후보)
+    walk_infeasible: bool = False          # 확정 위반이 남았고, 도보·확정 휴무를 모두 지키는 코스가 없다는 것이 증명됨(못 찾은 게 아니라 없다)
 
 
 def look_up_unknowns(state: State, gateway: OpeningHoursGateway) -> State:
@@ -69,6 +70,19 @@ def climb(state: State) -> State:
     return state
 
 
+def climb_and_rebuild(state: State) -> tuple[State, bool]:
+    """올라가기 뒤에도 확정 위반이 남으면 도보를 모두 지키는 코스를 정확히 찾아(repair) 그 위에서 다시 올라간다.
+    새 결과가 확정 위반을 더 줄일 때만 바꾼다. 두 번째는 "없다는 증명이 됐는가"."""
+    done = climb(state)
+    if core.hard_score(done.violations)[0] == 0:
+        return done, False
+    rebuilt = repair.rebuild_walk_feasible(state.trip, state.hours, state.locks, done.course)
+    if rebuilt.course is None:
+        return done, rebuilt.exhaustive
+    seeded = climb(with_course(done, rebuilt.course))
+    return (seeded if core.hard_score(seeded.violations) < core.hard_score(done.violations) else done), False
+
+
 def base_order(goals: Sequence[Goal], priority: Sequence[str]) -> tuple[str, ...]:
     ids = [g.id for g in goals]
     return tuple([i for i in priority if i in ids] + [i for i in ids if i not in priority])
@@ -100,13 +114,13 @@ def optimize(
     out: list[Candidate] = []
     seen: set[tuple] = set()
     for order, strict, focus in runs:
-        done = climb(replace(start, priority=order, strict_priority=strict))
+        done, proven = climb_and_rebuild(replace(start, priority=order, strict_priority=strict))
         vector = met_vector(start, done.course)
         if core.hard_score(done.violations)[0] > ceiling or vector in seen:
             continue
         seen.add(vector)
-        out.append(Candidate(f"c{len(out) + 1}", done.course, done.violations, order, focus))
+        out.append(Candidate(f"c{len(out) + 1}", done.course, done.violations, order, focus, proven))
     if not out:                                   # 후보가 모두 걸러진 경우 — 시작 코스에서 한 번 올라간다
-        done = climb(start)
-        out.append(Candidate("c1", done.course, done.violations, ()))
+        done, proven = climb_and_rebuild(start)
+        out.append(Candidate("c1", done.course, done.violations, (), walk_infeasible=proven))
     return replace(start, priority=tuple(priority), strict_priority=False), tuple(out)
