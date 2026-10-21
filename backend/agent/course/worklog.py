@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Optional, Sequence
 
 from agent.course import core, goals as goals_mod
+from agent.course.constants import DAY_TRAVEL_MAX_MIN, LEG_MAX_MIN
 from agent.course.direct import DirectResult
 from agent.course.korean import attach
 
@@ -75,6 +76,9 @@ def render(
             note = step.result.data.get("note")
             out.append(_line("끝", MODEL if step.by == "model" else CODE,
                              f"후보 {step.result.data['candidate_id']}로 끝내요" + (f" — {note}" if note else "")))
+    if result.chosen.walk_infeasible:
+        out.append(_line("결과", CODE, f"구간 도보 {LEG_MAX_MIN}분·하루 도보 {DAY_TRAVEL_MAX_MIN}분 상한을 모두 지키는 순서는 이 장소 구성으로는 "
+                         "없다는 것을 모든 경우를 따져 확인했어요 — 장소나 날짜 수가 바뀌어야 풀려요"))
     met = [r.goal.id for r in result.goal_results if r.met is True]
     out.append(_line("결과", CODE, f"지킨 목표: {_kept_text(by_id, trip, met)} · 확정 위반 "
                      f"{core.hard_score(result.violations)[0]} · 결과 {result.outcome}"))

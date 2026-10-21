@@ -59,10 +59,13 @@ def apply_locks(state: State, locks: Mapping[str, str]) -> State:
 def climb(state: State) -> State:
     """더 나아지는 수가 없을 때까지 강한 기준선의 최선 수를 채택한다. 사전식 비교가 엄격히 좋아질 때만 채택하므로 끝난다."""
     for _ in range(CLIMB_MAX_STEPS):
-        move = baseline.strong_best_move(state)
-        if move is None:
+        moves = baseline.strong_best_moves(state)
+        if moves is None:
             break
-        state = with_course(state, core.apply_move(state.trip, state.course, move, state.locks))
+        course = state.course
+        for move in moves:
+            course = core.apply_move(state.trip, course, move, state.locks)
+        state = with_course(state, course)
     return state
 
 

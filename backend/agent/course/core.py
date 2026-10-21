@@ -326,6 +326,98 @@ def best_position(trip: Trip, day: Sequence[str], place: str) -> int:
     return min(range(len(day) + 1), key=key)
 
 
+_EXACT_ORDER_MAX = 10          # 이 수까지는 모든 순서를 따져 가장 좋은 순서를 찾는다(비트마스크 DP)
+_LEG_PENALTY = 1000            # 구간 상한을 넘는 구간 하나는 이동시간 1000분만큼 나쁘다 — 구간 위반을 먼저 없앤다
+
+
+def _order_cost(trip: Trip, order: Sequence[str]) -> int:
+    legs = [travel_minutes(trip, a, b) for a, b in zip(order, order[1:])]
+    return sum(legs) + _LEG_PENALTY * sum(m > LEG_MAX_MIN for m in legs)
+
+
+def best_day_order(trip: Trip, day: Sequence[str]) -> tuple[str, ...]:
+    """그날 장소를 한 번씩 도는 순서 중 (구간 상한 초과 수, 이동 합계)가 가장 작은 것. 같은 입력이면 같은 출력이다.
+    현재 순서가 이미 가장 좋으면 그대로 돌려준다. 10곳 이하는 최적, 그보다 많으면 2-opt로 줄인다(최적 보장 없음)."""
+    day = tuple(day)
+    if len(day) <= 2:
+        return day
+    best = _exact_order(trip, day) if len(day) <= _EXACT_ORDER_MAX else _two_opt(trip, day)
+    return best if _order_cost(trip, best) < _order_cost(trip, day) else day
+
+
+def _exact_order(trip: Trip, day: tuple[str, ...]) -> tuple[str, ...]:
+    n = len(day)
+    w = [[travel_minutes(trip, a, b) for b in day] for a in day]
+    w = [[m + (_LEG_PENALTY if m > LEG_MAX_MIN else 0) for m in row] for row in w]
+    inf = float("inf")
+    dp: list[list[tuple[float, int]]] = [[(inf, -1)] * n for _ in range(1 << n)]
+    for i in range(n):
+        dp[1 << i][i] = (0, -1)
+    for mask in range(1, 1 << n):
+        for last in range(n):
+            cost = dp[mask][last][0]
+            if cost == inf:
+                continue
+            for j in range(n):
+                if mask >> j & 1:
+                    continue
+                nm, c = mask | 1 << j, cost + w[last][j]
+                if c < dp[nm][j][0]:                      # 같은 비용이면 먼저 찾은 쪽을 둔다(결정적)
+                    dp[nm][j] = (c, last)
+    full = (1 << n) - 1
+    last = min(range(n), key=lambda j: (dp[full][j][0], j))
+    path, mask = [], full
+    while last != -1:
+        path.append(day[last])
+        prev = dp[mask][last][1]
+        mask ^= 1 << last
+        last = prev
+    return tuple(reversed(path))
+
+
+def _two_opt(trip: Trip, day: tuple[str, ...]) -> tuple[str, ...]:
+    best = day
+    improved = True
+    while improved:
+        improved = False
+        for i in range(len(best) - 1):
+            for j in range(i + 1, len(best)):
+                cand = best[:i] + best[i:j + 1][::-1] + best[j + 1:]
+                if _order_cost(trip, cand) < _order_cost(trip, best):
+                    best, improved = cand, True
+    return best
+
+
+def walk_infeasible(trip: Trip) -> Optional[tuple[int, int]]:
+    """도보 상한(구간·하루)만으로 어떻게 짜도 안 되는 것이 증명되면 (필요한 최소 날 수, 여행 날 수), 아니면 None.
+    증명은 보수적이다 — 못 증명했다고 해결할 수 있다는 뜻은 아니다. 근거: 구간 상한 이하로만 이어지는 장소 묶음(연결 성분)은
+    한 날 안에서만 이어질 수 있고, 한 날의 도보는 그 날 장소의 최소 신장 트리(MST)보다 짧을 수 없다. 한 성분을 j일로 쪼개면
+    조각들의 MST 합은 성분의 MST에서 구간 상한 x (j-1) 이상 줄지 않는다. 그러니 성분마다
+    j x 하루 상한 >= MST - 구간 상한 x (j-1)을 만족하는 가장 작은 j일이 필요하다.
+    하루 상한은 모든 날에 걸린 상한 중 가장 낮은 값이다(특정 날짜에만 걸린 구성원 제약은 쓰지 않는다)."""
+    aliases = [p.alias for p in trip.places]
+    cap = min([DAY_TRAVEL_MAX_MIN, *[c.value for c in trip.member_constraints if c.day is None]])
+    seen: set[str] = set()
+    needed = 0
+    for start in aliases:
+        if start in seen:
+            continue
+        comp, stack = {start}, [start]
+        while stack:
+            x = stack.pop()
+            for y in aliases:
+                if y not in comp and travel_minutes(trip, x, y) <= LEG_MAX_MIN:
+                    comp.add(y)
+                    stack.append(y)
+        seen |= comp
+        inside, mst = {start}, 0
+        while len(inside) < len(comp):
+            w, y = min((travel_minutes(trip, a, b), b) for a in sorted(inside) for b in sorted(comp - inside))
+            mst, inside = mst + w, inside | {y}
+        needed += max(1, -(-(mst + LEG_MAX_MIN) // (cap + LEG_MAX_MIN)))
+    return (needed, len(trip.days)) if needed > len(trip.days) else None
+
+
 def apply_move(trip: Trip, course: Course, move: Move, locks: Mapping[str, str]) -> Course:
     """수리를 적용한 새 코스를 돌려준다. 원래 코스는 바꾸지 않는다. 적용할 수 없으면 MoveError."""
     days = [list(day) for day in course]
