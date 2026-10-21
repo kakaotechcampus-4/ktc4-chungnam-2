@@ -1,8 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import CourseSheet from '@/features/course/CourseSheet'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import type { Pin } from '@/features/map/model'
@@ -40,6 +41,7 @@ export default function ShortlistTab() {
   const add = useAddToShortlistMutation(mapId)
   const reorder = useReorderShortlistMutation(mapId)
   const [params, setParams] = useSearchParams()
+  const [courseOpen, setCourseOpen] = useState(false)
   const enrich = useEnrichPin()
   // 확정 리스트 항목의 핀은 핀 목록 밖에서 온다 — 실시간 핀(#382)의 이름·좌표를 같은 값으로 얹는다.
   const items = (shortlist.data ?? []).map((i) => ({ ...i, pin: enrich(i.pin) }))
@@ -108,14 +110,19 @@ export default function ShortlistTab() {
             <p className="mt-0.5 text-xs text-ink-500">{shortlist.isPending ? '불러오는 중…' : subtitle}</p>
           </div>
           {items.length > 0 && (
-            <button
-              type="button"
-              aria-pressed={routeOn}
-              onClick={toggleRoute}
-              className="chip"
-            >
-              동선 보기{routeOn && ' ✓'}
-            </button>
+            <div className="flex shrink-0 gap-2">
+              <button type="button" disabled={routable < 2} onClick={() => setCourseOpen(true)} className="chip">
+                AI 코스 짜기
+              </button>
+              <button
+                type="button"
+                aria-pressed={routeOn}
+                onClick={toggleRoute}
+                className="chip"
+              >
+                동선 보기{routeOn && ' ✓'}
+              </button>
+            </div>
           )}
         </div>
       }
@@ -146,6 +153,7 @@ export default function ShortlistTab() {
           onReorder={(from, to) => reorder.mutate(move(items, from, to), { onError: () => showToast('순서를 바꾸지 못했어요') })}
         />
       )}
+      {courseOpen && <CourseSheet mapId={mapId} onClose={() => setCourseOpen(false)} />}
     </TabSheet>
   )
 }
