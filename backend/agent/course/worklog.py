@@ -52,7 +52,12 @@ def render(
         if step.thought:
             stage = "다시 짜기" if redo and tool == "optimize" else "짜기" if not reviewing and tool == "optimize" and optimized == 0 else (
                 "재계획" if tool == "optimize" else "점검")
-            out.append(_line(stage, DIRECT, f"{MODEL} → {CODE}" if tool == "optimize" else MODEL, step.thought))
+            if step.guard:                      # 모델 문장은 화면에 내지 않는다 — 코드 사실로 만든 문장과, 바꿨다는 기록만
+                out.append(_line("검증", VERIFY, CODE, "모델이 쓴 문장이 결과와 맞지 않아 코드가 만든 문장으로 바꿨어요 — "
+                                 + " · ".join(step.guard)))
+                out.append(_line(stage, DIRECT, CODE, step.thought))
+            else:
+                out.append(_line(stage, DIRECT, f"{MODEL} → {CODE}" if tool == "optimize" else MODEL, step.thought))
         if tool == "optimize" and step.result.ok:
             optimized += 1
             reviewing = True

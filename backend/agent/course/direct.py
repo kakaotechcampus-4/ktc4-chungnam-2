@@ -14,7 +14,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from pydantic import ValidationError
 
-from agent.course import baseline, core, goals as goals_mod, optimize as opt
+from agent.course import baseline, core, goals as goals_mod, optimize as opt, verify
 from agent.course.constants import ASK_MAX, DIRECT_MAX_TURNS
 from agent.course.korean import attach
 from agent.course.optimize import Candidate
@@ -51,6 +51,8 @@ class DirectStep:
     call: dict[str, Any]
     result: ToolResult
     substituted_for: Optional[dict[str, Any]] = None
+    guard: tuple[str, ...] = ()            # 모델 문장이 코드 사실과 어긋나 코드 문장으로 바꿨다면 그 이유들(화면용 한국어)
+    blocked_thought: Optional[str] = None  # 바꾸기 전 모델 원문(별칭 슬롯 그대로). 화면에는 내지 않는다 — 시도 기록용
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,11 @@ class DirectResult:
     state: State
     model_turns: int
     checks: tuple[dict, ...] = ()
+
+    @property
+    def guarded(self) -> int:
+        """검증이 모델 문장을 코드 문장으로 바꾼 수."""
+        return sum(bool(s.guard) for s in self.steps)
 
 
 # ---- 입력과 요약 ----
@@ -307,6 +314,22 @@ def _fallback_call(ds: DirectState):
     return CourseDirectFinish(tool="finish", candidate_id=best_candidate(state, ds.candidates, ds.preferred).candidate_id)
 
 
+def _reference(before: DirectState, after: DirectState, call, result: ToolResult) -> verify.Reference:
+    """모델 문장을 견줄 코드 사실. finish면 고른 후보, 아니면 모델이 그때 본 후보 중 코드 규칙으로 가장 나은 후보(없으면 초안).
+    영업시간은 그 턴 뒤의 것을 쓴다(optimize가 새로 알아낸 휴무까지)."""
+    state = before.state
+    chosen = None
+    if isinstance(call, CourseDirectFinish) and result.ok:
+        chosen = next((c for c in before.candidates if c.candidate_id == result.data["candidate_id"]), None)
+    if chosen is None and before.candidates:
+        chosen = best_candidate(state, before.candidates, before.preferred)
+    course, violations = (chosen.course, chosen.violations) if chosen else (state.course, state.violations)
+    return verify.Reference(
+        state.trip, after.state.hours, course, violations, state.goals,
+        "후보" if chosen else "초안", len(before.candidates),
+    )
+
+
 def run_direct(
     state: State, *, decide: Optional[Decide], hours: OpeningHoursGateway, unmatched_count: int = 0,
 ) -> DirectResult:
@@ -322,7 +345,7 @@ def run_direct(
     finished = False
 
     for turn in range(1, DIRECT_MAX_TURNS + 1):
-        thought = problem = substituted = None
+        thought = problem = substituted = raw_thought = None
         call, by = None, "baseline"
         if use_model:
             try:
@@ -330,6 +353,7 @@ def run_direct(
                 call, by = reply.action, "model"
                 problem = core.thought_problem(ds.state.trip, reply.thought)
                 thought = None if problem else core.render_thought(ds.state.trip, reply.thought)
+                raw_thought = None if problem else reply.thought
             except MODEL_FAILURES:
                 call = None
         if call is None:
@@ -343,6 +367,7 @@ def run_direct(
         if pair:                                                 # 끝내려는데 물을 조건이 되어 있다 — 코드가 질문을 대신 연다
             substituted = {"call": call.model_dump(), "error": "QUESTION_OPENED_BY_CODE"}
             call, by, thought, problem = _ask_call(pair), "code", None, None
+        before = ds
         new_ds, result = execute(call, ds, hours, by)
         if pend and by == "model" and not result.ok:             # 모델이 낸 choose_day 질문이 틀렸다 — 코드가 대신 연다
             substituted = {"call": call.model_dump(), "error": result.error}
@@ -353,7 +378,12 @@ def run_direct(
             call, by, thought, problem = _fallback_call(ds), "baseline", None, None
             new_ds, result = execute(call, ds, hours, by)
         ds = new_ds
-        steps.append(DirectStep(turn, by, thought, problem, call.model_dump(), result, substituted))
+        guard_reasons, blocked = (), None
+        if thought and by == "model":                            # 화면에 나갈 모델 문장이 코드 사실과 어긋나면 코드 문장으로 바꾼다(다시 부르지 않는다)
+            guarded = verify.guard(_reference(before, ds, call, result), raw_thought)
+            if guarded:
+                guard_reasons, blocked, thought = guarded.reasons, raw_thought, guarded.replacement
+        steps.append(DirectStep(turn, by, thought, problem, call.model_dump(), result, substituted, guard_reasons, blocked))
         last = result
         if isinstance(call, CourseAskRequester) and call.kind == "choose_day" and result.ok:
             last = _check_result(ds)                             # 답으로 목표가 바뀌었다 — 코드가 다시 확인하고 그 결과를 모델에 준다
