@@ -1,7 +1,8 @@
 import type { components } from '@pingo/contracts/src/types/api'
 
 import { ApiError } from '@/api'
-import type { Pin } from '@/features/map/model'
+import { isPlaced, type Pin } from '@/features/map/model'
+import { KAKAO_ROUTE_MAX, kakaoTrafficUrl, kakaoWalkUrl, type KakaoPoint } from '@/features/shortlist/model'
 
 export type CourseRunDto = components['schemas']['CourseRun']
 export type CourseStepDto = components['schemas']['CourseStep']
@@ -103,18 +104,67 @@ export function pinNames(pins: Pin[]): Map<string, string> {
   return names
 }
 
-/** 한 날의 장소를 방문 순서대로, 각 장소 뒤에 다음 곳까지의 도보 분을 붙인다(마지막은 null). */
-export function dayStops(day: CourseDayDto, names: Map<string, string>) {
+/** pin_id → 좌표. 위치를 모르는 핀(실시간 핀 등)은 넣지 않는다. 앞에 둔 것이 이긴다. */
+export function pinPoints(pins: Pin[]): Map<string, { lat: number; lng: number }> {
+  const points = new Map<string, { lat: number; lng: number }>()
+  for (const p of pins) if (isPlaced(p) && !points.has(p.id)) points.set(p.id, { lat: p.lat, lng: p.lng })
+  return points
+}
+
+export type Leg = { mode: 'walk' | 'transit'; minutes: number }
+
+/** 구간 문구 — 도보 N분 / 대중교통 약 N분(직선거리 어림). */
+export const legLabel = (leg: Leg): string => (leg.mode === 'transit' ? `대중교통 약 ${leg.minutes}분` : `도보 ${leg.minutes}분`)
+
+/** 한 날의 합계 「도보 X분 · 대중교통 약 Y분」(0인 쪽은 뺀다). 구간이 없으면 빈 문자열. */
+export function daySummary(legs: Leg[]): string {
+  const sum = (mode: Leg['mode']) => legs.filter((l) => l.mode === mode).reduce((a, l) => a + l.minutes, 0)
+  const walk = sum('walk')
+  const transit = sum('transit')
+  return [walk > 0 && `도보 ${walk}분`, transit > 0 && `대중교통 약 ${transit}분`].filter(Boolean).join(' · ')
+}
+
+/** 한 날의 장소를 방문 순서대로, 각 장소 뒤에 다음 곳까지의 구간을 붙인다(마지막은 null). 좌표를 알면 point 도 붙는다. */
+export function dayStops(day: CourseDayDto, names: Map<string, string>, points: Map<string, { lat: number; lng: number }> = new Map()) {
   return [...day.slots]
     .sort((a, b) => a.order - b.order)
     .map((slot, i, all) => {
       const next = all[i + 1]
-      const leg = next && day.legs.find((l) => l.from_pin_id === slot.pin_id && l.to_pin_id === next.pin_id)
-      return {
-        pinId: slot.pin_id,
-        name: names.get(slot.pin_id) ?? '이 장소',
-        needsCheck: slot.needs_check,
-        walkMinutes: leg ? leg.approx_minutes : null,
-      }
+      const found = next && day.legs.find((l) => l.from_pin_id === slot.pin_id && l.to_pin_id === next.pin_id)
+      const leg: Leg | null = found ? { mode: found.mode === 'transit' ? 'transit' : 'walk', minutes: found.approx_minutes } : null
+      const name = names.get(slot.pin_id) ?? '이 장소'
+      const at = points.get(slot.pin_id)
+      return { pinId: slot.pin_id, name, needsCheck: slot.needs_check, leg, point: at ? ({ name, ...at } satisfies KakaoPoint) : null }
     })
+}
+
+export type DayStop = ReturnType<typeof dayStops>[number]
+
+export type DayLink = { url: string; label: string; cut: boolean }
+
+/** 하루 도보 길찾기 링크 — 이어지는 도보 구간(양 끝 좌표를 앎)을 한 경로로 묶는다. 경로가 둘 이상이면 「N 길찾기」로 가른다. */
+export function walkLinks(stops: DayStop[]): DayLink[] {
+  const paths: KakaoPoint[][] = []
+  let cur: KakaoPoint[] = []
+  stops.forEach((s, i) => {
+    const next = stops[i + 1]
+    const linkable = s.point && next?.point && s.leg?.mode === 'walk'
+    if (!linkable) {
+      if (cur.length >= 2) paths.push(cur)
+      cur = []
+      return
+    }
+    if (cur.length === 0) cur.push(s.point!)
+    cur.push(next.point!)
+  })
+  if (cur.length >= 2) paths.push(cur)
+  return paths.flatMap((path, i) => {
+    const url = kakaoWalkUrl(path)
+    return url ? [{ url, label: paths.length > 1 ? `도보 길찾기 ${i + 1}` : '카카오맵에서 길찾기', cut: path.length > KAKAO_ROUTE_MAX }] : []
+  })
+}
+
+/** 대중교통 구간의 길찾기 링크(출발 → 도착). 좌표를 모르면 null. */
+export function transitLink(from: DayStop, to: DayStop | undefined): string | null {
+  return from.point && to?.point ? kakaoTrafficUrl(from.point, to.point) : null
 }

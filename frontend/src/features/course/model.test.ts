@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { ApiError } from '@/api'
 import type { Pin } from '@/features/map/model'
 
-import { createErrorMessage, dayStops, dayTitle, goalState, inProgressRunId, isFinished, pinNames, requestBody, understandBody } from './model'
+import { kakaoTrafficUrl } from '@/features/shortlist/model'
+
+import { createErrorMessage, daySummary, dayStops, dayTitle, goalState, inProgressRunId, isFinished, legLabel, pinNames, pinPoints, requestBody, transitLink, understandBody, walkLinks } from './model'
 
 const err = (code: string, detail?: Record<string, unknown>) => new ApiError(409, { code, message: code, detail })
 
@@ -59,16 +61,64 @@ describe('course model', () => {
           { pin_id: 'z', order: 3, needs_check: true },
         ],
         legs: [
-          { from_pin_id: 'a', to_pin_id: 'b', approx_minutes: 7 },
-          { from_pin_id: 'b', to_pin_id: 'z', approx_minutes: 3 },
+          { from_pin_id: 'a', to_pin_id: 'b', mode: 'walk', approx_minutes: 7 },
+          { from_pin_id: 'b', to_pin_id: 'z', mode: 'transit', approx_minutes: 3 },
         ],
       },
       names,
     )
-    expect(stops.map((s) => [s.name, s.walkMinutes, s.needsCheck])).toEqual([
-      ['가', 7, true],
-      ['나', 3, false],
+    expect(stops.map((s) => [s.name, s.leg, s.needsCheck])).toEqual([
+      ['가', { mode: 'walk', minutes: 7 }, true],
+      ['나', { mode: 'transit', minutes: 3 }, false],
       ['이 장소', null, true],
     ])
+  })
+
+  const pin = (id: string, name: string, lat?: number, lng?: number) => ({ id, place_name: name, lat, lng }) as Pin
+  const day = (ids: string[], modes: ('walk' | 'transit')[]) => ({
+    date: '2026-10-03',
+    slots: ids.map((pin_id, i) => ({ pin_id, order: i + 1, needs_check: false })),
+    legs: modes.map((mode, i) => ({ from_pin_id: ids[i], to_pin_id: ids[i + 1], mode, approx_minutes: 10 })),
+  })
+
+  it('구간 문구와 하루 합계 — 0인 쪽은 뺀다', () => {
+    expect(legLabel({ mode: 'walk', minutes: 7 })).toBe('도보 7분')
+    expect(legLabel({ mode: 'transit', minutes: 25 })).toBe('대중교통 약 25분')
+    expect(daySummary([{ mode: 'walk', minutes: 7 }, { mode: 'transit', minutes: 25 }, { mode: 'walk', minutes: 3 }])).toBe('도보 10분 · 대중교통 약 25분')
+    expect(daySummary([{ mode: 'transit', minutes: 25 }])).toBe('대중교통 약 25분')
+    expect(daySummary([])).toBe('')
+  })
+
+  it('도보 길찾기는 이어지는 도보 구간을 한 경로로 묶고, 대중교통에서 끊는다', () => {
+    const pins = [pin('a', '가', 37.1, 127.1), pin('b', '나', 37.2, 127.2), pin('c', '다', 37.3, 127.3), pin('d', '라', 37.4, 127.4), pin('e', '마', 37.5, 127.5)]
+    const stops = dayStops(day(['a', 'b', 'c', 'd', 'e'], ['walk', 'walk', 'transit', 'walk']), pinNames(pins), pinPoints(pins))
+    const links = walkLinks(stops)
+    expect(links.map((l) => l.url)).toEqual([
+      `https://map.kakao.com/link/by/walk/${encodeURIComponent('가')},37.1,127.1/${encodeURIComponent('나')},37.2,127.2/${encodeURIComponent('다')},37.3,127.3`,
+      `https://map.kakao.com/link/by/walk/${encodeURIComponent('라')},37.4,127.4/${encodeURIComponent('마')},37.5,127.5`,
+    ])
+    expect(links.map((l) => l.label)).toEqual(['도보 길찾기 1', '도보 길찾기 2'])
+    // 경로가 하나면 이름은 「카카오맵에서 길찾기」
+    expect(walkLinks(dayStops(day(['a', 'b'], ['walk']), pinNames(pins), pinPoints(pins))).map((l) => l.label)).toEqual(['카카오맵에서 길찾기'])
+  })
+
+  it('좌표를 모르는 장소나 대중교통뿐인 날엔 도보 링크가 없고, 7곳을 넘으면 앞 7곳만', () => {
+    const pins = [pin('a', '가', 37.1, 127.1), pin('b', '나'), pin('c', '다', 37.3, 127.3)]
+    expect(walkLinks(dayStops(day(['a', 'b', 'c'], ['walk', 'walk']), pinNames(pins), pinPoints(pins)))).toEqual([])
+    expect(walkLinks(dayStops(day(['a', 'c'], ['transit']), pinNames(pins), pinPoints(pins)))).toEqual([])
+    const ids = 'abcdefghi'.split('')
+    const many = ids.map((id, i) => pin(id, id, 37 + i / 100, 127))
+    const [link] = walkLinks(dayStops(day(ids, Array(8).fill('walk')), pinNames(many), pinPoints(many)))
+    expect(link.cut).toBe(true)
+    expect(link.url.split('/by/walk/')[1].split('/')).toHaveLength(7)
+  })
+
+  it('대중교통 링크는 출발 → 도착만, 이름의 , / 는 띄어쓰기로 바꾼다', () => {
+    const pins = [pin('a', '가,나/다', 37.1, 127.1), pin('b', '라', 37.2, 127.2), pin('c', '마')]
+    const stops = dayStops(day(['a', 'b', 'c'], ['transit', 'transit']), pinNames(pins), pinPoints(pins))
+    const url = transitLink(stops[0], stops[1])
+    expect(url).toBe(`https://map.kakao.com/link/by/traffic/${encodeURIComponent('가 나 다')},37.1,127.1/${encodeURIComponent('라')},37.2,127.2`)
+    expect(url).toBe(kakaoTrafficUrl({ name: '가,나/다', lat: 37.1, lng: 127.1 }, { name: '라', lat: 37.2, lng: 127.2 }))
+    expect(transitLink(stops[1], stops[2])).toBeNull() // 도착 좌표 모름
   })
 })

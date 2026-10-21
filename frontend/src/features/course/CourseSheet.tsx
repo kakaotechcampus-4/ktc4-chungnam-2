@@ -12,7 +12,7 @@ import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 
 import CourseRun from './CourseRun'
-import { createErrorMessage, inProgressRunId, pinNames, REQUEST_MAX } from './model'
+import { createErrorMessage, inProgressRunId, pinNames, pinPoints, REQUEST_MAX } from './model'
 import { courseKeys, useCreateCourseMutation, useLatestCourseQuery } from './queries'
 
 /**
@@ -25,12 +25,14 @@ export default function CourseSheet({ mapId, onClose }: { mapId: string; onClose
   const shortlist = useShortlistQuery(mapId).data ?? []
   const pins = usePinsQuery(mapId).data ?? []
   // 확정 리스트의 핀(실시간 핀 이름 포함)을 먼저, 없으면 핀 목록에서.
-  const names = pinNames([...shortlist.map((i) => enrich(i.pin)), ...pins])
+  const all = [...shortlist.map((i) => enrich(i.pin)), ...pins]
+  const names = pinNames(all)
+  const points = pinPoints(all)
 
   return (
     <ModalSheet label="AI 코스 짜기" onClose={onClose}>
       {runId ? (
-        <CourseRun runId={runId} names={names} onRetry={() => setRunId(null)} onClose={onClose} />
+        <CourseRun runId={runId} names={names} points={points} onRetry={() => setRunId(null)} onClose={onClose} />
       ) : (
         <Entry mapId={mapId} onRun={setRunId} />
       )}

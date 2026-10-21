@@ -65,6 +65,7 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.getByRole('heading', { name: /첫째 날 · / })).toBeInTheDocument()
     expect(screen.getAllByText('? 영업 확인 필요').length).toBeGreaterThan(0)
     expect(screen.queryByText('다시 짜기')).not.toBeInTheDocument() // stale 아님
+    expect(screen.queryAllByRole('link', { name: /길찾기/, hidden: true }).every((a) => a.getAttribute('href')?.startsWith('https://map.kakao.com/link/by/') && a.getAttribute('target') === '_blank')).toBe(true)
     // 장소 이름은 이미 받은 확정 리스트에서 찾는다
     expect(screen.queryByText('이 장소')).not.toBeInTheDocument()
 
@@ -117,7 +118,7 @@ describe('AI 코스 짜기 시트', () => {
   it('최근 코스가 없으면 링크가 없고, 있으면 결과를 바로 연다(stale 이면 「다시 짜기」)', async () => {
     const done = {
       id: 'run_old', map_id: 'map_1', status: 'done', outcome: 'solved', failure_code: null, goals: [], unmatched: ['아무거나'],
-      steps: [], days: [{ date: '2026-10-10', slots: [{ pin_id: 'pin_1', order: 1, needs_check: false }, { pin_id: 'pin_2', order: 2, needs_check: true }], legs: [{ from_pin_id: 'pin_1', to_pin_id: 'pin_2', approx_minutes: 5 }] }],
+      steps: [], days: [{ date: '2026-10-10', slots: [{ pin_id: 'pin_1', order: 1, needs_check: false }, { pin_id: 'pin_2', order: 2, needs_check: true }], legs: [{ from_pin_id: 'pin_1', to_pin_id: 'pin_2', mode: 'walk', approx_minutes: 5 }] }],
       violations: [], checks: [], excluded: [], snapshot_at: '2026-10-21T00:00:00Z', stale: true,
       created_at: '2026-10-21T00:00:00Z', finished_at: '2026-10-21T00:00:00Z',
     }
@@ -134,7 +135,7 @@ describe('AI 코스 짜기 시트', () => {
     expect(await screen.findByText(/확정 리스트가 바뀌었어요/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '다시 짜기' })).toBeInTheDocument()
     expect(screen.getByText(/반영하지 못했어요: 「아무거나」/)).toBeInTheDocument()
-    expect(screen.getByText('도보 5분')).toBeInTheDocument()
+    expect(screen.getAllByText('도보 5분')).toHaveLength(2) // 구간 + 하루 합계
     expect(screen.getAllByText('? 영업 확인 필요')).toHaveLength(1)
   })
 })

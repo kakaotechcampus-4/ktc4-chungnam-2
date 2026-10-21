@@ -1,16 +1,22 @@
 import { useState } from 'react'
+import { Bus, ExternalLink } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { AiHeader } from '@/features/recommend/Readiness'
+import { KAKAO_ROUTE_MAX } from '@/features/shortlist/model'
 import Notice from '@/ui/Notice'
 import PingoLoading from '@/ui/PingoLoading'
 
 import {
+  daySummary,
   dayStops,
   dayTitle,
   failureText,
   goalState,
+  legLabel,
   outcomeText,
+  transitLink,
+  walkLinks,
   VIOLATION_LABEL,
   type CourseRunDto,
 } from './model'
@@ -21,7 +27,9 @@ import WorkLog from './WorkLog'
  * 한 번의 코스 run 화면. 끝나기 전엔 진행(작업 기록이 늘어남), done 이면 결과, failed 면 실패 안내.
  * 결과는 요청한 사람에게만 보이고, 지도와 확정 리스트는 바꾸지 않는다.
  */
-export default function CourseRun({ runId, names, onRetry, onClose }: { runId: string; names: Map<string, string>; onRetry: () => void; onClose: () => void }) {
+type Points = Map<string, { lat: number; lng: number }>
+
+export default function CourseRun({ runId, names, points, onRetry, onClose }: { runId: string; names: Map<string, string>; points: Points; onRetry: () => void; onClose: () => void }) {
   const query = useCourseRunQuery(runId)
   const run = query.data
 
@@ -44,7 +52,7 @@ export default function CourseRun({ runId, names, onRetry, onClose }: { runId: s
     return <PingoLoading label="코스를 불러오는 중…" />
   }
 
-  if (run.status === 'done') return <Result run={run} names={names} onRetry={onRetry} onClose={onClose} />
+  if (run.status === 'done') return <Result run={run} names={names} points={points} onRetry={onRetry} onClose={onClose} />
   if (run.status === 'failed') return <Failed run={run} onRetry={onRetry} onClose={onClose} />
   return <Progress run={run} />
 }
@@ -84,14 +92,14 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
-function Result({ run, names, onRetry, onClose }: { run: CourseRunDto; names: Map<string, string>; onRetry: () => void; onClose: () => void }) {
+function Result({ run, names, points, onRetry, onClose }: { run: CourseRunDto; names: Map<string, string>; points: Points; onRetry: () => void; onClose: () => void }) {
   const [showLog, setShowLog] = useState(false)
   const name = (pinId: string) => names.get(pinId) ?? '이 장소'
   const anyCheck = run.checks.length > 0 || run.days.some((d) => d.slots.some((s) => s.needs_check))
 
   return (
     <div className="space-y-4">
-      <AiHeader title={run.outcome ? outcomeText(run.outcome) : '코스를 짰어요'} sub="순서와 도보 시간만 보여 줘요. 시간 배정은 하지 않아요" mood="happy" />
+      <AiHeader title={run.outcome ? outcomeText(run.outcome) : '코스를 짰어요'} sub="순서와 이동 시간만 보여 줘요. 시간 배정은 하지 않아요" mood="happy" />
 
       {run.stale && (
         <Notice
@@ -128,10 +136,10 @@ function Result({ run, names, onRetry, onClose }: { run: CourseRunDto; names: Ma
       <Section title="날짜별 순서">
         <div className="space-y-2">
           {run.days.map((day, i) => (
-            <DayCard key={day.date} day={day} index={i} names={names} />
+            <DayCard key={day.date} day={day} index={i} names={names} points={points} />
           ))}
         </div>
-        <p className="text-label text-ink-500">도보 시간은 직선거리로 어림한 값이에요. 길 안내가 아니에요</p>
+        <p className="text-label text-ink-500">이동 시간은 직선거리로 어림한 값이에요. 정확한 길은 카카오맵에서 확인하세요</p>
         {anyCheck && <p className="text-label text-ink-500">영업 여부를 모르는 장소는 가게에 직접 확인해 주세요</p>}
       </Section>
 
@@ -174,33 +182,62 @@ function Result({ run, names, onRetry, onClose }: { run: CourseRunDto; names: Ma
   )
 }
 
-/** 날짜 하나 — 방문 순서대로 장소, 장소 사이엔 도보 분. 시간은 쓰지 않는다. */
-function DayCard({ day, index, names }: { day: CourseRunDto['days'][number]; index: number; names: Map<string, string> }) {
-  const stops = dayStops(day, names)
+/** 날짜 하나 — 방문 순서대로 장소, 장소 사이엔 도보·대중교통 분. 시간은 쓰지 않는다. 길찾기는 카카오맵 새 창이다. */
+function DayCard({ day, index, names, points }: { day: CourseRunDto['days'][number]; index: number; names: Map<string, string>; points: Points }) {
+  const stops = dayStops(day, names, points)
+  const summary = daySummary(stops.flatMap((s) => (s.leg ? [s.leg] : [])))
+  const links = walkLinks(stops)
   return (
     <article className="rounded-xl bg-white p-3 ring-1 ring-ink-200">
       <h4 className="text-base font-bold text-ink-900">{dayTitle(day.date, index)}</h4>
+      {summary && <p className="text-xs text-ink-500">{summary}</p>}
       {stops.length === 0 ? (
         <p className="mt-1 text-body text-ink-500">이 날은 비어 있어요</p>
       ) : (
         <ol className="mt-2">
-          {stops.map((s, i) => (
-            <li key={s.pinId}>
-              <div className="flex items-start gap-2">
-                <span aria-hidden="true" className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-100 text-xs font-bold text-ink-700">
-                  {i + 1}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="break-keep text-body font-semibold text-ink-900">{s.name}</p>
-                  {s.needsCheck && <span className="tag tag-warn mt-1">? 영업 확인 필요</span>}
+          {stops.map((s, i) => {
+            const traffic = s.leg?.mode === 'transit' ? transitLink(s, stops[i + 1]) : null
+            return (
+              <li key={s.pinId}>
+                <div className="flex items-start gap-2">
+                  <span aria-hidden="true" className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-100 text-xs font-bold text-ink-700">
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="break-keep text-body font-semibold text-ink-900">{s.name}</p>
+                    {s.needsCheck && <span className="tag tag-warn mt-1">? 영업 확인 필요</span>}
+                  </div>
                 </div>
-              </div>
-              {s.walkMinutes !== null && (
-                <p className="my-1 ml-2.5 border-l-2 border-ink-200 pl-4 text-xs text-ink-500">도보 {s.walkMinutes}분</p>
-              )}
-            </li>
-          ))}
+                {s.leg && (
+                  <div className="my-1 ml-2.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 border-l-2 border-ink-200 pl-4 text-xs text-ink-500">
+                    {s.leg.mode === 'transit' ? (
+                      <span className="tag tag-neutral">
+                        <Bus size={12} aria-hidden="true" /> {legLabel(s.leg)}
+                      </span>
+                    ) : (
+                      <span>{legLabel(s.leg)}</span>
+                    )}
+                    {traffic && (
+                      <a href={traffic} target="_blank" rel="noopener noreferrer" className="btn-link text-xs">
+                        대중교통 길찾기 <ExternalLink size={12} aria-hidden="true" />
+                      </a>
+                    )}
+                  </div>
+                )}
+              </li>
+            )
+          })}
         </ol>
+      )}
+      {links.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4">
+          {links.map((l) => (
+            <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="btn-link text-sm">
+              {l.label} <ExternalLink size={14} aria-hidden="true" />
+              {l.cut && <span className="font-normal text-ink-500"> · 앞 {KAKAO_ROUTE_MAX}곳</span>}
+            </a>
+          ))}
+        </div>
       )}
     </article>
   )
