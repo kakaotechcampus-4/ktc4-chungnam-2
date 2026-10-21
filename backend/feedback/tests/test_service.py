@@ -41,3 +41,25 @@ def test_anonymize_by_user_nulls_only_that_users_rows_and_keeps_content(db_sessi
     assert db_session.get(Feedback, mine.id).message == "내 의견"
     assert db_session.get(Feedback, other.id).user_id == "stayer"
 
+
+
+def test_reassign_user_moves_only_from_users_rows_and_is_idempotent(db_session):
+    moved = _submit(db_session, user_id="guest")
+    other = _submit(db_session, user_id="stayer")
+    anonymous = _submit(db_session, user_id="guest")
+    anonymous.user_id = None
+    db_session.flush()
+
+    assert api.reassign_user(db_session, from_user_id="guest", to_user_id="kakao") == {"feedback": 1}
+    assert api.reassign_user(db_session, from_user_id="guest", to_user_id="kakao") == {"feedback": 0}
+
+    db_session.expire_all()
+    assert db_session.get(Feedback, moved.id).user_id == "kakao"
+    assert db_session.get(Feedback, other.id).user_id == "stayer"
+    assert db_session.get(Feedback, anonymous.id).user_id is None
+
+
+def test_reassign_user_with_same_id_does_nothing(db_session):
+    row = _submit(db_session, user_id="same")
+    assert api.reassign_user(db_session, from_user_id="same", to_user_id="same") == {"feedback": 0}
+    assert db_session.get(Feedback, row.id).user_id == "same"

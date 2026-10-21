@@ -116,6 +116,24 @@ def delete_by_user(db: Session, *, user_id: str) -> dict[str, int]:
     }
 
 
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#560) — from_user의 알림함을 to_user로 옮긴다. 테이블 이름 → 옮긴 행 수.
+    알림은 읽음 상태·created_at·문장 그대로 user_id만 바꾼다. 알림 설정은 to_user의 기존 값이 이긴다:
+    같은 종류가 양쪽에 있으면 게스트 것을 지우고, 게스트에만 있는 종류는 to_user에 그 종류 행이 없을 때만 옮긴다.
+    멱등이고 같은 id면 아무것도 하지 않는다."""
+    if from_user_id == to_user_id:
+        return {"notifications": 0, "notification_prefs": 0}
+    moved = db.execute(
+        update(NotificationRow).where(NotificationRow.user_id == from_user_id).values(user_id=to_user_id)
+    ).rowcount
+    kept_types = select(PrefRow.type).where(PrefRow.user_id == to_user_id)
+    db.execute(delete(PrefRow).where(PrefRow.user_id == from_user_id, PrefRow.type.in_(kept_types)))
+    prefs_moved = db.execute(
+        update(PrefRow).where(PrefRow.user_id == from_user_id).values(user_id=to_user_id)
+    ).rowcount
+    return {"notifications": moved, "notification_prefs": prefs_moved}
+
+
 def purge_old(db: Session, *, now: datetime, older_than_days: int = RETENTION_DAYS) -> dict[str, int]:
     """`now` 기준 N일(기본 90)이 지난 알림을 지운다. 읽었든 안 읽었든 같다. 설정은 건드리지 않는다."""
     cutoff = now - timedelta(days=older_than_days)

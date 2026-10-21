@@ -53,8 +53,10 @@ _SOFT_KEYS_BY_CATEGORY: dict[str, frozenset[str]] = {
     )},
     # 음식점·카페 공통 (#203, #263)
     **{key: _RESTAURANT_AND_CAFE for key in ("spacious", "long_established", "vegetarian_friendly", "franchise")},
-    # 음식점·카페 공통 — 카페에서 먼저 썼고(#263) 음식점에도 연다(#461)
-    **{key: _RESTAURANT_AND_CAFE for key in ("serves_alcohol", "open_late")},
+    # open_late는 카페에서 먼저 썼고(#263) 음식점에도 연다(#461)
+    "open_late": _RESTAURANT_AND_CAFE,
+    # serves_alcohol은 음식점 전용이다 — 카페는 2026-10-20부터 쓰지 않는다(#659, docs/constraints.md 카페 절)
+    "serves_alcohol": _RESTAURANT,
     # 카페 전용 (#263)
     "bakery": _CAFE,
     # 카페·관광지 공통

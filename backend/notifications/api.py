@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from notifications import core, service
 from notifications.service import RETENTION_DAYS
 
-__all__ = ["RETENTION_DAYS", "compose_message", "delete_by_user", "notify", "purge_old"]
+__all__ = ["RETENTION_DAYS", "compose_message", "delete_by_user", "notify", "purge_old", "reassign_user"]
 
 
 def compose_message(type: str, *, actor_name: str | None = None, map_title: str | None = None,
@@ -46,3 +46,10 @@ def purge_old(db: Session, *, now: datetime, older_than_days: int = RETENTION_DA
     달리 map_id를 보지 않는다(삭제된 지도의 `map_deleted` 알림이 남은 구성원에게 보여야 한다). 테이블 이름 → 지운 행 수.
     호출 연결은 아직 없다(#168 이슈에 남겼다)."""
     return service.purge_old(db, now=now, older_than_days=older_than_days)
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#560)가 부른다 — from_user의 알림(notifications.user_id)을 to_user로 옮기고 테이블 이름 → 옮긴 행 수를
+    돌려준다. 알림 설정은 to_user 것을 유지하고 게스트 것은 지운다(게스트에만 있는 종류는 to_user에 그 종류가 없을 때만 옮김).
+    멱등이고 같은 id면 아무것도 하지 않는다. 커밋하지 않는다."""
+    return service.reassign_user(db, from_user_id=from_user_id, to_user_id=to_user_id)

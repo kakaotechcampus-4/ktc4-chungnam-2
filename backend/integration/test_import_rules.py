@@ -82,3 +82,14 @@ def test_cross_module_imports_follow_the_rule():
 def test_known_violations_are_still_violations():
     stale = sorted(set(KNOWN_VIOLATIONS) - set(_violations()))
     assert not stale, f"고쳐진 위반이 KNOWN_VIOLATIONS에 남아 있다 — 지운다: {stale}"
+
+
+def test_recommend_never_imports_ads():
+    """광고는 추천의 후보와 순위에 들어가지 않는다(docs/ads.md 2절 2번, 11절 14번). api.py도 안 되고 테스트도 예외가 아니다 —
+    import 방향은 ads → recommend 한쪽뿐이다."""
+    found = sorted(
+        path.relative_to(BACKEND).as_posix()
+        for path in (BACKEND / "recommend").rglob("*.py")
+        if "__pycache__" not in path.parts and any(top == "ads" for top, _ in _imported_modules(path))
+    )
+    assert not found, f"recommend가 ads를 import했다: {found}"

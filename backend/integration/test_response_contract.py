@@ -10,10 +10,12 @@ test_spec_route_coverage.py는 "경로가 있는가"만 본다. 프론트가 실
 
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 import yaml
+from sqlalchemy import text
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
@@ -23,8 +25,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
-    ("GET", "/maps/{mapId}/ads"): "#642 ads 구현 PR이 골든 패스에 넣고 지운다",
-    ("POST", "/ads/{adId}/clicks"): "#642 ads 구현 PR이 골든 패스에 넣고 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
@@ -137,7 +137,24 @@ def anon_client(app_client):
     c.close()
 
 
-def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin_body, advice_sessions):
+def _put_ad(db_session, fake_places, key: str) -> str:
+    """광고 하나 — 광고 조회는 실제 places(get_ad_places)를 읽고 핀 생성은 FakePlaces를 거친다. 그래서 FakePlaces 샘플 장소와
+    같은 id, 이름, 좌표의 places 행을 넣고 그 장소에 광고를 건다. 요청이 오류로 롤백돼도 남게 커밋한다(바깥 트랜잭션은 롤백)."""
+    from ads.models import Ad
+    from places.models import Place
+
+    row = fake_places._row(fake_places.place_id(key))
+    db_session.add(Place(id=uuid.UUID(row.place_id), source="permit", source_id=f"golden-{key}", name=row.name,
+                         category=row.category, geom=f"SRID=4326;POINT({row.lng} {row.lat})", status="open"))
+    ad = Ad(place_id=row.place_id, starts_at=datetime.now(timezone.utc) - timedelta(days=1),
+            ends_at=datetime.now(timezone.utc) + timedelta(days=1), memo="골든 패스")
+    db_session.add(ad)
+    db_session.commit()
+    return str(ad.id)
+
+
+def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin_body, advice_sessions, db_session,
+                                                                     fake_places):
     a, b, problems = clients
     assert a.get("/auth/me").status_code == 200
 
@@ -231,6 +248,22 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert history.json()[0]["published_count"] == 1
     assert b.get(f"/runs/{run_id}/advice").status_code == 403                                       # 요청자만(#587)
     assert a.get(f"/runs/{run_id}/advice").status_code == 204                                       # 낼 조언 없음
+
+    # 추천 탭 광고(#648) — 조회(노출 집계, no-store), 클릭 기록, 광고 장소를 기존 핀 생성 API로 지도에 올리기
+    ad_id = _put_ad(db_session, fake_places, "seongsu-cafe-b")
+    ad_params = {"category": "카페", "lat": 37.5445, "lng": 127.0561}
+    ads = a.get(f"/maps/{map_id}/ads", params=ad_params)
+    assert ads.status_code == 200 and ads.headers["cache-control"] == "no-store"
+    [ad] = ads.json()["ads"]
+    assert (ad["ad_id"], ad["on_map"]) == (ad_id, False)
+    assert a.get(f"/maps/{map_id}/ads", params={**ad_params, "category": "숙소"}).status_code == 422
+    assert b.post(f"/ads/{ad_id}/clicks", json={"map_id": map_id}).status_code == 204
+    assert b.post(f"/ads/{uuid.uuid4()}/clicks", json={"map_id": map_id}).status_code == 404
+    place = ad["place"]
+    from_ad = a.post(f"/maps/{map_id}/pins", json={"category": place["category"], "place_id": place["place_id"],
+                                                   "place_name": place["name"], "lat": place["lat"], "lng": place["lng"]})
+    assert from_ad.status_code == 201, from_ad.text
+    assert a.get(f"/maps/{map_id}/ads", params=ad_params).json()["ads"][0]["on_map"] is True
 
     for pid in pin_ids[:2]:
         assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pid}).status_code in (200, 201)
@@ -581,10 +614,22 @@ def test_notification_responses_match_the_openapi_spec(clients, db_session):
     empty = a.get("/me/notifications")
     assert empty.status_code == 200 and empty.json() == {"items": [], "unread_count": 0}
 
+    made = []
+
     def notify(user_id, type, actor_id, **kwargs):
-        return notifications_api.notify(
+        created = notifications_api.notify(
             db_session, user_id=user_id, type=type, map_id=map_id, map_title="성수", actor_id=actor_id,
             message=notifications_api.compose_message(type, actor_name="영희"), **kwargs)
+        if created is not None:
+            # 연달아 만든 알림은 시계 해상도(Windows 약 15ms)에 따라 created_at이 같아져 최신순이 uuid로 갈린다(#614).
+            # 순서를 단정하려면 시각이 서로 달라야 하므로 만든 순서대로 1초씩 벌려 둔다.
+            made.append(created)
+            db_session.execute(
+                text("UPDATE notifications SET created_at = :at WHERE id = :id"),
+                {"at": datetime(2026, 12, 1, tzinfo=timezone.utc) + timedelta(seconds=len(made)), "id": created},
+            )
+            db_session.flush()
+        return created
 
     assert notify("user_a", "pin_reaction", "user_b", pin_id="pin_1") is not None
     assert notify("user_a", "member_joined", "user_b") is not None

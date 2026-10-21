@@ -65,6 +65,7 @@ class PlaceUpsertResult:
     existing_kept: int = 0  # 이미 있어 손대지 않은 수 — existing="keep"(인허가 커버리지, #507)
     name_changed: int = 0   # 갱신하면서 이름이 바뀐 수
     category_changed: int = 0   # 갱신하면서 분류가 바뀐 수 — existing="overwrite"(정예)에서만 생긴다
+    reopened: int = 0       # 폐업이던 장소가 파일에 다시 영업으로 나와 되살린 수(keep에서도 status만 되살린다)
 
 
 # 이미 있는 (source, source_id)를 어떻게 다루나(#507). 정예 파일은 정예가, 인허가 커버리지는 기존 값이 이긴다.
@@ -77,7 +78,7 @@ EXISTING_MODES = ("refresh", "overwrite", "keep")
 def upsert_places(db: Session, rows: Sequence[PlaceRow], *, existing_mode: str = "refresh") -> PlaceUpsertResult:
     if existing_mode not in EXISTING_MODES:
         raise ValueError(f"existing_mode는 {EXISTING_MODES} 중 하나: {existing_mode!r}")
-    inserted = updated = closed_marked = closed_ignored = category_kept = existing_kept = name_changed = category_changed = 0
+    inserted = updated = closed_marked = closed_ignored = category_kept = existing_kept = name_changed = category_changed = reopened = 0
     for chunk in _chunks(list(rows)):
         keys = {(r.source, r.source_id) for r in chunk}
         existing = {
@@ -97,6 +98,9 @@ def upsert_places(db: Session, rows: Sequence[PlaceRow], *, existing_mode: str =
                     closed_marked += 1
                 continue
             if place is not None and existing_mode == "keep":
+                if place.status == "closed":
+                    place.status = "open"   # 닫힌 장소가 파일에 다시 나왔다 — 이름·분류·좌표는 그대로 두고 status만 되살린다
+                    reopened += 1
                 existing_kept += 1   # 인허가 커버리지는 이미 있는 장소를 건드리지 않는다(#507)
                 continue
             if place is not None and existing_mode == "refresh" and place.category != r.category:
@@ -109,6 +113,7 @@ def upsert_places(db: Session, rows: Sequence[PlaceRow], *, existing_mode: str =
                 inserted += 1
             else:
                 updated += 1
+                reopened += place.status == "closed"
                 name_changed += place.name != r.name
                 category_changed += place.category != r.category
             place.name, place.category, place.address, place.phone = r.name, r.category, r.address, r.phone
@@ -116,7 +121,26 @@ def upsert_places(db: Session, rows: Sequence[PlaceRow], *, existing_mode: str =
             if existing_mode == "overwrite":
                 place.curated = True   # 정예 적재가 켠다. 커버리지(keep)·재계산은 끄지 않는다 — 한 번 true면 유지(#561 후속)
         db.flush()
-    return PlaceUpsertResult(inserted, updated, closed_marked, closed_ignored, category_kept, existing_kept, name_changed, category_changed)
+    return PlaceUpsertResult(inserted, updated, closed_marked, closed_ignored, category_kept, existing_kept, name_changed, category_changed, reopened)
+
+
+def open_permit_source_ids(db: Session) -> set[str]:
+    """--close-missing가 닫을 수 있는 장소: source='permit'이고 정예가 아니며 지금 열려 있는 것의 source_id."""
+    return set(db.execute(
+        select(Place.source_id).where(Place.source == "permit", Place.curated.is_(False), Place.status == "open")
+    ).scalars())
+
+
+def close_permit_places(db: Session, source_ids: Sequence[str]) -> int:
+    """status만 'closed'로 바꾼다(삭제·라벨 삭제 없음). 같은 조건(permit·비정예·열림)을 다시 걸어 정예·다른 출처는 건드리지 않는다."""
+    closed = 0
+    for chunk in _chunks(list(source_ids)):
+        closed += db.execute(
+            update(Place)
+            .where(Place.source == "permit", Place.curated.is_(False), Place.status == "open", Place.source_id.in_(chunk))
+            .values(status="closed")
+        ).rowcount
+    return closed
 
 
 @dataclass(frozen=True)

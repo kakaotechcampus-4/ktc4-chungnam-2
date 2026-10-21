@@ -51,6 +51,12 @@ import는 `from notifications import api as notifications_api`만 쓴다(models�
 탈퇴(`auth.service.withdraw_user`, #155)가 부른다 — 그 사용자의 알림과 설정을 지운다. 순서 제약 없음. **연결은 auth 세션 몫이다.**
 `test_withdraw_cascade`에도 알림 단언을 넣어야 한다.
 
+### `reassign_user(db, *, from_user_id, to_user_id) -> dict[str, int]`
+
+게스트 합치기(#560, `docs/data-model.md`「게스트 합치기」)가 부른다. `notifications.user_id`를 to_user로 옮긴다(읽음 상태·created_at·문장 그대로).
+`notification_prefs`는 to_user 값이 이긴다 — 같은 종류가 양쪽에 있으면 게스트 것을 지우고, 게스트에만 있는 종류는 to_user에 그 종류가 없을 때만 옮긴다.
+반환은 `{"notifications": 옮긴 알림 수, "notification_prefs": 옮긴 설정 수}`(지운 설정은 세지 않는다). 멱등, 같은 id면 아무것도 안 함, 커밋은 호출자. **연결은 auth 세션 몫이다.**
+
 ### `purge_old(db, *, now, older_than_days=90) -> dict[str, int]`
 
 90일이 지난 알림을 읽음 여부와 상관없이 지운다. **호출 연결은 만들지 않았다 — #168(정리 작업) 이슈에 남긴다.**

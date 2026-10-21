@@ -561,8 +561,6 @@ def _run_pipeline(
         fulfillment = core.build_member_fulfillment(
             checks, hearted_places, criteria, preferred_authors_frozen, disqualifier_conditions,
         )
-        # 이유 문장의 "(n/m명)"은 선호를 가진 구성원만 센다 — 실격 사유만 낸 사람을 선호 충족으로 부풀리지 않는다.
-        preference_fulfillment = core.build_member_fulfillment(checks, hearted_places, criteria, preferred_authors_frozen)
         candidates_data.append({
             "place_id": place_id, "region_id": region_id, "lat": place.lat, "lng": place.lng,
             "rank": index + 1,
@@ -571,7 +569,7 @@ def _run_pipeline(
                 for check in core.to_satisfaction_checks(core.checks_to_show(checks, wanted_soft_keys), directions)
             ],
             "member_fulfillment": fulfillment,
-            "reason": core.build_reason(checks, criteria, preference_fulfillment),
+            "reason": core.build_reason(checks, criteria),
             "place_source": dict(place.source) if place.source else None,
         })
     funnel = core.funnel_counts([

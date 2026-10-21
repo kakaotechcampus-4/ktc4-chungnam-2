@@ -1253,8 +1253,8 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
 
     by_place = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
     sourced, bare = by_place["sourced"], by_place["bare"]
-    assert sourced.reason == "실격 조건 통과: 붐비는 대형 장소 아님 · 선호 충족: 조용함 (1/1명)"
-    # user_1은 실격 사유(너무 붐벼요)를 냈고 후보가 통과했으니 충족(#255). 이유 문장의 (1/1명)은 선호 구성원만 센다.
+    assert sourced.reason == "실격 조건 통과: 붐비는 대형 장소 아님 · 선호 충족: 조용함"
+    # user_1은 실격 사유(너무 붐벼요)를 냈고 후보가 통과했으니 충족(#255). 이유 문장은 인원을 말하지 않는다(#631).
     assert sourced.member_fulfillment == {"satisfied": 2, "total": 2, "by_member": [
         {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": True},
     ]}
@@ -1967,7 +1967,7 @@ def test_restaurant_heart_convenience_labels_do_not_outrank_a_written_preference
 
     candidates = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
     assert candidates["sushi"].rank == 1 and candidates["buffet"].rank == 2
-    assert candidates["sushi"].reason == "선호 충족: 일식 (1/1명)"
+    assert candidates["sushi"].reason == "선호 충족: 일식"
     assert "선호 충족" not in candidates["buffet"].reason
     assert "franchise" not in {c["fact_key"] for c in candidates["buffet"].checks}  # ♥에서 빠진 키는 응답 체크에도 없다
 

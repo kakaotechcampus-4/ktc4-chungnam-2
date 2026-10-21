@@ -9,7 +9,7 @@ flows.py 모듈 docstring 참고). event_log 기록만 예외다 — architectur
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -329,4 +329,30 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
         "regions": db.execute(delete(Region).where(Region.run_id.in_(run_ids))).rowcount,
         "exclusions": db.execute(delete(Exclusion).where(Exclusion.map_id.in_(map_ids))).rowcount,
         "recommend_runs": db.execute(delete(RecommendRun).where(RecommendRun.map_id.in_(map_ids))).rowcount,
+    }
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#560) — from_user의 run 요청자·근거 줄 작성자·제외 요청자를 to_user로 옮긴다. 테이블 이름 →
+    옮긴(제외는 겹쳐서 지운 것 제외) 행 수. 같은 (지도, 장소) 제외가 to_user에게 이미 있으면 from_user 것을 지운다
+    (uq_exclusions_map_requester_place, 카카오 계정 쪽이 이긴다). attempt_no는 건드리지 않는다. 후보에는 요청자
+    열이 없다(run의 requested_by를 따른다). 커밋하지 않는다."""
+    if from_user_id == to_user_id:
+        return {"recommend_runs": 0, "evidence_lines": 0, "exclusions": 0}
+    kept = select(Exclusion.map_id, Exclusion.place_id).where(Exclusion.requested_by == to_user_id)
+    db.execute(
+        delete(Exclusion).where(
+            Exclusion.requested_by == from_user_id, tuple_(Exclusion.map_id, Exclusion.place_id).in_(kept)
+        )
+    )
+    return {
+        "recommend_runs": db.execute(
+            update(RecommendRun).where(RecommendRun.requested_by == from_user_id).values(requested_by=to_user_id)
+        ).rowcount,
+        "evidence_lines": db.execute(
+            update(EvidenceLine).where(EvidenceLine.author_id == from_user_id).values(author_id=to_user_id)
+        ).rowcount,
+        "exclusions": db.execute(
+            update(Exclusion).where(Exclusion.requested_by == from_user_id).values(requested_by=to_user_id)
+        ).rowcount,
     }
