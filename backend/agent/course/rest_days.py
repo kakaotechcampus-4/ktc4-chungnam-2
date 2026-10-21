@@ -118,25 +118,24 @@ def merge_sources(*parsed: Mapping[int, DayStatus]) -> dict[int, DayStatus]:
 
 
 def parse_structured(closed_days: Optional[list[str]], hours: Optional[Mapping[str, list]] = None) -> dict[int, DayStatus]:
-    """구조화된 칸에서 요일별 상태를 읽는다(정예DB 2026-10-21).
+    """구조화된 칸에서 요일별 상태를 읽는다(정예DB 2026-10-21). 시간 배정이 아니라 요일의 영업 여부만 본다.
     - `closed_days`: 칸이 없으면(None) 모름, []이면 매일 영업, 요일 목록이면 그 요일만 휴무.
-    - `hours`: 그 요일의 시간 목록이 비었는가(휴무)만 본다. 시간 배정에는 쓰지 않는다.
-      `closed_days`가 아는 날과 어긋나면(영업이라는데 목록이 빔) 그 요일은 모름이다 — 휴무로 단정하지 않는다.
-      `closed_days`가 없을 때는 빈 요일만 closed이고 나머지는 모른다."""
+    - `hours`: 요일 칸이 있고 시간 목록이 비면 휴무, 시간이 있으면 영업(시각 값 "26:00" 등은 읽지 않는다). 요일 칸이 없으면 모름.
+    - 두 칸이 같은 요일에서 어긋나면 그 요일은 모름이다(한쪽으로 단정하지 않는다). 한쪽만 알면 그쪽을 따른다."""
     out: dict[int, DayStatus] = {}
-    empty = {wd for wd, d in enumerate(_DAYS) if hours is not None and d in hours and not hours[d]}
     for wd, d in enumerate(_DAYS):
-        if closed_days is None:
-            out[wd] = "closed" if wd in empty else "unknown"
-        elif d in closed_days:
-            out[wd] = "closed"
-        else:
-            out[wd] = "unknown" if wd in empty else "open"
+        from_closed: DayStatus = "unknown" if closed_days is None else ("closed" if d in closed_days else "open")
+        from_hours: DayStatus = "unknown"
+        if hours is not None and d in hours:
+            from_hours = "open" if hours[d] else "closed"
+        known = {v for v in (from_closed, from_hours) if v != "unknown"}
+        out[wd] = known.pop() if len(known) == 1 else "unknown"
     return out
 
 
 def read_hours(closed_days: Optional[list[str]], hours: Optional[Mapping[str, list]], fallback_text: Optional[str] = None) -> dict[int, DayStatus]:
-    """구조화된 칸을 먼저 쓰고, `closed_days` 칸 자체가 없을 때만 글 읽기로 빈 곳을 채운다."""
+    """구조화된 칸을 먼저 쓰고, `closed_days` 칸 자체가 없을 때만 글 읽기로 모르는 요일을 채운다(글과 어긋나면 모름).
+    `closed_days`가 있는데 hours와 어긋나 모름이 된 요일은 글로 되살리지 않는다."""
     structured = parse_structured(closed_days, hours)
     if closed_days is not None:
         return structured

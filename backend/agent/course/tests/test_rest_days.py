@@ -86,15 +86,40 @@ def test_구조화_칸_없으면_모름_빈목록이면_매일_영업():
     assert parse_structured(["월", "일"]) == {0: "closed", **{wd: "open" for wd in range(1, 6)}, 6: "closed"}
 
 
-def test_hours는_빈_요일만_본다():
+def test_hours는_요일별_영업_여부만_본다():
     full = {d: [["09:00", "18:00"]] for d in "월화수목금토일"}
     assert parse_structured([], full) == {wd: "open" for wd in range(7)}
-    # closed_days가 없으면 빈 요일만 휴무, 나머지는 모름
+    # closed_days 칸이 없으면 hours만으로 판정: 빈 요일은 휴무, 시간이 있으면 영업, 요일 칸이 없으면 모름
     got = parse_structured(None, {**full, "월": []})
-    assert got[0] == "closed" and got[1] == "unknown"
-    # 영업이라는데 시간 목록이 비면 모름(어긋남은 단정하지 않는다), closed_days가 휴무라 한 날은 시간이 있어도 휴무
+    assert got[0] == "closed" and got[1] == "open"
+    got = parse_structured(None, {"화": [["12:30", "20:00"]]})
+    assert got[1] == "open" and got[0] == "unknown" and got[6] == "unknown"
+    # closed_days만 있고 hours 칸이 없으면 closed_days를 따른다
+    assert parse_structured(["월"], {})[0] == "closed"
+
+
+def test_두_칸이_어긋나는_요일은_모름():
+    full = {d: [["09:00", "18:00"]] for d in "월화수목금토일"}
+    # 영업이라는데 시간 목록이 빔 / 휴무라는데 시간이 있음
     got = parse_structured(["화"], {**full, "일": []})
-    assert got[6] == "unknown" and got[1] == "closed" and got[0] == "open"
+    assert got[6] == "unknown" and got[1] == "unknown" and got[0] == "open"
+    # 어긋나지 않는 휴무는 그대로
+    assert parse_structured(["월"], {**full, "월": []})[0] == "closed"
+
+
+def test_자정을_넘기는_시각도_영업으로_읽는다():
+    got = parse_structured([], {"금": [["18:00", "26:00"]], "토": [["00:00", "24:00"]]})
+    assert got[4] == "open" and got[5] == "open" and got[6] == "open"
+
+
+def test_hours로_모자란_요일은_글로_채우되_어긋나면_모름():
+    # closed_days 없음 + hours는 월만 앎 → 나머지는 글로
+    got = read_hours(None, {"월": [["09:00", "18:00"]]}, "매주 화요일")
+    assert got[0] == "open" and got[1] == "closed"
+    # hours(월 영업)와 글(월 휴무)이 어긋나면 모름
+    assert read_hours(None, {"월": [["09:00", "18:00"]]}, "매주 월요일")[0] == "unknown"
+    # closed_days가 있으면 글은 쓰지 않는다
+    assert read_hours(["월"], None, "연중무휴")[0] == "closed"
 
 
 def test_글_읽기는_closed_days_칸이_없을_때만():
