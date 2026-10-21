@@ -288,12 +288,17 @@ def latest_run(db: Session, *, map_id: str, requested_by: str) -> Optional[Agent
     ).scalar_one_or_none()
 
 
+def _with_leg_modes(days: list) -> list:
+    """mode가 생기기 전(#685)에 저장된 run은 구간에 mode가 없다 — 그때는 모든 구간이 도보였으니 walk로 읽는다."""
+    return [{**d, "legs": [{"mode": "walk", **leg} for leg in d.get("legs", [])]} for d in days or []]
+
+
 def to_response(db: Session, row: AgentCourseRun) -> CourseRun:
     stale = set(row.snapshot_pin_ids) != current_confirmed_pin_ids(db, row.map_id)
     return CourseRun.model_validate({
         "id": str(row.id), "map_id": row.map_id, "status": row.status, "outcome": row.outcome,
         "failure_code": row.failure_code, "goals": row.goals, "unmatched": row.unmatched, "steps": row.steps,
-        "days": row.days, "violations": row.violations, "checks": row.checks, "excluded": row.excluded,
+        "days": _with_leg_modes(row.days), "violations": row.violations, "checks": row.checks, "excluded": row.excluded,
         "snapshot_at": row.snapshot_at, "stale": stale, "created_at": row.created_at, "finished_at": row.finished_at,
     })
 
