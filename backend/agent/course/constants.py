@@ -6,9 +6,19 @@ M0는 범위 B(순서 + 이동시간 검증)만 구현한다. 범위 A(시간 �
 COURSE_MODE = "B"
 MIN_PLACES, MAX_PLACES = 2, 30
 
+# 이동 방식(초안 — 직선거리만 아는 거친 추정이라 화면에는 늘 "약"으로 쓴다. 평가셋과 운영 기록을 보고 조정한다)
+# 직선거리가 WALK_MAX_M 이하인 구간은 걷고(분은 common.geo.approx_walk_minutes), 넘으면 대중교통을 탄다.
+# 대중교통 분 = 직선거리 / TRANSIT_SPEED_M_PER_MIN + TRANSIT_OVERHEAD_MIN. 속도 약 20km/h는 서울 지하철·버스의 평균 표정속도(약 30km/h 안팎)에
+# 직선이 아닌 노선(우회·환승)을 감안해 보수적으로 낮춘 값이고, 10분은 걸어서 타고 내리는 시간·대기·환승을 뭉친 값이다.
+WALK_MAX_M = 2_000                 # 이 거리 이하는 도보 구간(약 25분)
+TRANSIT_SPEED_M_PER_MIN = 333      # 약 20km/h
+TRANSIT_OVERHEAD_MIN = 10
+MODE_WALK, MODE_TRANSIT = "walk", "transit"
+
 # 하드 판정
-LEG_MAX_MIN = 40                   # 구간 하나의 도보 상한(분)
-DAY_TRAVEL_MAX_MIN = 150           # 하루 도보 합계 상한(분)
+LEG_MAX_MIN = 40                   # 도보 구간 하나의 상한(분). 대중교통 구간에는 적용하지 않는다
+DAY_WALK_MAX_MIN = 150             # 하루 도보 합계 상한(분). 구성원 daily_walk_max도 도보 분에만 건다
+DAY_TRAVEL_MAX_MIN = 180           # 하루 이동 합계 상한(분, 도보+대중교통). 하루를 넘기지 않는 하드 한계
 # shortlist/routing.py의 DEFAULT_CLUSTER_THRESHOLD_M과 같은 값. 두 기준을 하나로 합치는 일은 #226/#274.
 CLUSTER_THRESHOLD_M = 3_000
 

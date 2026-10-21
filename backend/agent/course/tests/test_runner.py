@@ -159,11 +159,13 @@ class TestViewTexts:
         trip = build().trip
         closed = core.Violation("closed:p1:d1", "closed", "confirmed", "d1", ("p1",))
         leg = core.Violation("leg:p1-p2:d1", "travel", "confirmed", "d1", ("p1", "p2"), {"minutes": 45, "limit": 40})
-        day = core.Violation("day:d1", "travel", "confirmed", "d1", ("p1", "p2", "p3"), {"minutes": 160, "limit": 150})
+        walk = core.Violation("walk:d1", "travel", "confirmed", "d1", ("p1", "p2", "p3"), {"minutes": 160, "limit": 150})
+        day = core.Violation("day:d1", "travel", "confirmed", "d1", ("p1", "p2", "p3"), {"minutes": 190, "limit": 180})
         member = core.Violation("member:d1", "member", "confirmed", "d1", ("p1",), {"minutes": 70, "limit": 60})
         assert violation_text(trip, closed) == "장소1은 첫째 날 (월)에 쉬는 날이에요"
         assert violation_text(trip, leg) == "첫째 날 (월) 장소1에서 장소2까지 걸어서 45분이에요(구간 상한 40분)"
-        assert violation_text(trip, day) == "첫째 날 (월) 도보 합계 160분이에요(하루 상한 150분)"
+        assert violation_text(trip, walk) == "첫째 날 (월) 도보 합계 160분이에요(하루 상한 150분)"
+        assert violation_text(trip, day) == "첫째 날 (월) 이동 합계가 약 190분이에요(대중교통 포함, 하루 상한 180분)"
         assert violation_text(trip, member) == "첫째 날 (월) 도보 70분이 구성원 조건 60분을 넘어요"
 
 

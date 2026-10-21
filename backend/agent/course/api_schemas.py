@@ -15,7 +15,7 @@ from agent.course.constants import MEMBER_WALK_MAX, MEMBER_WALK_MIN, REQUEST_TEX
 
 class MemberConstraint(BaseModel):
     kind: Literal["daily_walk_max"]
-    value: int = Field(ge=MEMBER_WALK_MIN, le=MEMBER_WALK_MAX, description="하루 도보 상한(분)")
+    value: int = Field(ge=MEMBER_WALK_MIN, le=MEMBER_WALK_MAX, description="하루 도보 상한(분). 대중교통 시간은 세지 않는다")
     day: Optional[str] = Field(default=None, pattern=r"^d[1-9][0-9]*$", description="날짜 별칭 d1 … 없으면 모든 날")
 
 
@@ -52,7 +52,8 @@ class CourseSlot(BaseModel):
 class CourseLeg(BaseModel):
     from_pin_id: str
     to_pin_id: str
-    approx_minutes: int
+    mode: Literal["walk", "transit"]   # 직선거리 2km 이하는 walk(도보), 넘으면 transit(대중교통)
+    approx_minutes: int                # mode 기준 대략 분(직선거리로 잰 추정 — 길 안내·시간표가 아니다)
 
 
 class CourseDay(BaseModel):

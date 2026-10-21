@@ -444,9 +444,9 @@ class CourseLockCall(_CourseStrict):
 class CourseAskRequester(_CourseStrict):
     """요청자에게 묻는다. 문구는 코드 템플릿이다 — 종류와 대상만 고른다."""
     tool: Literal["ask_requester"]
-    kind: Literal["pick_course", "ask_closed_day", "choose_day"]
-    subject: Optional[str] = None        # ask_closed_day: 장소 별칭, choose_day: 쉬는 날에 걸린 목표 id
-    options: list[str] = []              # pick_course: 후보 id(c1, c2 …), choose_day: 여는 날 별칭(첫 번째가 제안하는 기본값)
+    kind: Literal["pick_course", "ask_closed_day", "choose_day", "split_day"]
+    subject: Optional[str] = None        # ask_closed_day: 장소 별칭, choose_day: 쉬는 날에 걸린 목표 id, split_day: 이동 위반이 남은 날 별칭
+    options: list[str] = []              # pick_course: 후보 id(c1, c2 …), choose_day: 여는 날 별칭, split_day: 나누기 선택지 id(m1, m2 …) — 첫 번째가 제안하는 기본값
 
 
 class CourseDirectFinish(_CourseStrict):

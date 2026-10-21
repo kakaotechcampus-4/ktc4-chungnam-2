@@ -26,14 +26,15 @@ def format_course(sc: Scenario, course: core.Course, hours: dict) -> list[str]:
     out = []
     for i, day in enumerate(course):
         d = sc.trip.days[i]
-        out.append(f"  {core.day_alias(i)} {d.isoformat()}({WEEKDAY[d.weekday()]}) — {len(day)}곳, 도보 합계 {core.day_travel(sc.trip, day)}분")
+        out.append(f"  {core.day_alias(i)} {d.isoformat()}({WEEKDAY[d.weekday()]}) — {len(day)}곳, 도보 {core.day_walk(sc.trip, day)}분 · 이동 합계 {core.day_travel(sc.trip, day)}분")
         for k, p in enumerate(day):
             place = sc.trip.place(p)
             status = core.status_on(hours, p, d)
             mark = {"closed": "  ✗ 이날 휴무", "unknown": "  ? 영업 확인 필요", "open": ""}[status]
             out.append(f"     {k + 1}. [{place.category}] {place.name}{mark}")
             if k + 1 < len(day):
-                out.append(f"        ↓ 도보 {core.travel_minutes(sc.trip, p, day[k + 1])}분")
+                leg = core.leg_between(sc.trip, p, day[k + 1])
+                out.append(f"        ↓ {'도보' if leg.mode == 'walk' else '대중교통 약'} {leg.minutes}분")
     return out
 
 
@@ -42,7 +43,7 @@ def describe_call(sc: Scenario, call: dict) -> str:
     t = call["tool"]
     if t == "get_opening_hours": return f"영업시간 조회({name(call['place'])})"
     if t == "find_open_days": return f"영업하는 날 찾기({name(call['place'])})"
-    if t == "estimate_travel": return f"도보 시간 계산({name(call['from_place'])} → {name(call['to_place'])})"
+    if t == "estimate_travel": return f"이동 시간 계산({name(call['from_place'])} → {name(call['to_place'])})"
     if t == "try_move":
         m = call["move"]
         if m["type"] == "move_day": return f"시험: {name(m['place'])}를 {m['to_day']}로 옮기기"
@@ -61,8 +62,8 @@ def describe_result(r) -> str:
         return f"하드 {d['hard_before']} → {d['hard_after']}"
     if "days" in d:
         return "영업: " + ", ".join(f"{k}={v}" for k, v in d["days"].items())
-    if "walk_minutes" in d:
-        return f"{d['walk_minutes']}분"
+    if "minutes" in d:
+        return f"{'도보' if d.get('mode') == 'walk' else '대중교통 약'} {d['minutes']}분"
     if "hard" in d:
         return f"하드 {d['hard']}"
     return "ok"

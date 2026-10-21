@@ -87,8 +87,8 @@ def execute(call: ToolCall, state: State, hours_gateway: OpeningHoursGateway) ->
         for p in (call.from_place, call.to_place):
             if not state.trip.has_place(p):
                 return state, _fail(tool, "INVALID_ID", f"{p}는 없는 장소다")
-        minutes = core.travel_minutes(state.trip, call.from_place, call.to_place)
-        return state, ToolResult(tool, ok=True, data={"from": call.from_place, "to": call.to_place, "walk_minutes": minutes})
+        leg = core.leg_between(state.trip, call.from_place, call.to_place)
+        return state, ToolResult(tool, ok=True, data={"from": call.from_place, "to": call.to_place, "mode": leg.mode, "minutes": leg.minutes})
     if isinstance(call, TryMove):
         return _try_move(call, state)
     if isinstance(call, CommitMove):

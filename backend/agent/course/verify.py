@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Optional, Sequence
 
 from agent.course import core, goals as goals_mod
-from agent.course.constants import DAY_TRAVEL_MAX_MIN, LEG_MAX_MIN
+from agent.course.constants import DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, LEG_MAX_MIN
 from agent.course.korean import attach
 
 SLOT = re.compile(r"\{([pd][1-9][0-9]*)\}")
@@ -236,8 +236,10 @@ def _sino_value(word: str) -> int:
 def _fact_numbers(ref: Reference) -> set[int]:
     trip = ref.trip
     days = [core.day_travel(trip, d) for d in ref.course]
+    walks = [core.day_walk(trip, d) for d in ref.course]
     nums = {len(ref.confirmed), len(ref.violations) - len(ref.confirmed), len(ref.checks), len(trip.places), len(trip.days), len(ref.goals),
-            ref.candidate_count, LEG_MAX_MIN, DAY_TRAVEL_MAX_MIN, sum(days), max(days, default=0), *days, *(len(d) for d in ref.course)}
+            ref.candidate_count, LEG_MAX_MIN, DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, sum(days), max(days, default=0), *days,
+            sum(walks), max(walks, default=0), *walks, core.course_transit_legs(trip, ref.course), *(len(d) for d in ref.course)}
     for v in ref.violations:
         nums |= {int(x) for x in v.detail.values()}
     return nums
@@ -267,6 +269,8 @@ def _violation_text(trip: core.Trip, v: core.Violation) -> str:
         return f"{when} {trip.place(a).name}→{trip.place(b).name} 도보 {v.detail['minutes']}분(구간 상한 {v.detail['limit']}분)"
     if v.kind == "member":
         return f"{when} 하루 도보 {v.detail['minutes']}분(구성원 상한 {v.detail['limit']}분)"
+    if v.id.startswith("day:"):
+        return f"{when} 하루 이동 합계 {v.detail['minutes']}분(대중교통 포함, 상한 {v.detail['limit']}분)"
     return f"{when} 하루 도보 {v.detail['minutes']}분(상한 {v.detail['limit']}분)"
 
 

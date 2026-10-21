@@ -106,7 +106,7 @@ def evaluate(trip: Trip, course: Course, goal: Goal) -> GoalResult:
         hit = NIGHT_LABEL in trip.place(day[-1]).labels
         return GoalResult(goal, hit, 0.0 if hit else 1.0, 1.0 if hit else 0.0)
     if goal.kind == "daily_walk_low":
-        worst = max((core.day_travel(trip, d) for d in course), default=0)
+        worst = max((core.day_walk(trip, d) for d in course), default=0)
         return GoalResult(goal, worst <= DAILY_WALK_LOW_MAX_MIN,
                           max(0, worst - DAILY_WALK_LOW_MAX_MIN) / DAILY_WALK_LOW_MAX_MIN, float(worst))
     if goal.kind == "place_on_day":
