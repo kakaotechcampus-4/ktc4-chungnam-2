@@ -110,7 +110,7 @@ class TestRunWithRequest:
         assert out.model_turns == 2
         stages = [s["stage"] for s in v.steps]
         assert stages[0] == "이해" and "끝" in stages
-        assert v.steps[0]["by"] == "모델" and "둘째 날 (화)은 실내 위주로" in v.steps[0]["text"]
+        assert (v.steps[0]["role"], v.steps[0]["by"]) == ("해석", "ai") and "둘째 날 (화)은 실내 위주로" in v.steps[0]["text"]
 
     def test_goal_setting_failure_leaves_the_whole_request_unmatched(self):
         def failing(_input):
@@ -118,7 +118,7 @@ class TestRunWithRequest:
 
         out = run_course(build(), TEXT, goals_planner=failing, direct_planner=None, gateway=NullOpeningHours())
         assert out.view.goals == [] and out.view.unmatched == [TEXT]
-        assert out.view.steps[0]["by"] == "코드(목표 세우기 실패)"          # 괄호 안에 괄호가 있어도 칸이 맞게 나뉜다
+        assert (out.view.steps[0]["by"], out.view.steps[0]["by_detail"]) == ("code", "코드(목표 세우기 실패)")   # 괄호 안에 괄호가 있어도 칸이 맞게 나뉜다
         assert out.view.outcome == "solved_with_checks"
 
     def test_without_a_goals_planner_the_request_is_unmatched(self):
@@ -146,12 +146,15 @@ class TestRunWithRequest:
 
 
 class TestViewTexts:
-    def test_parse_steps_handles_nested_parentheses_and_plain_lines(self):
-        steps = parse_steps(["[이해] (코드(목표 세우기 실패)) 이렇게 이해했어요: 없음", "[짜기] (모델 → 코드) 후보 c1", "그냥 줄"])
+    def test_parse_steps_handles_roles_nested_parentheses_and_plain_lines(self):
+        steps = parse_steps(["[이해] 해석(코드(목표 세우기 실패)) 이렇게 이해했어요: 없음", "[짜기] 지휘(모델 → 코드) 후보 c1",
+                             "[답] 결정(코드) 기본값", "[질문] 지휘(코드가 열음 → 사람) 어느 날?", "그냥 줄"])
         assert steps == [
-            {"stage": "이해", "by": "코드(목표 세우기 실패)", "text": "이렇게 이해했어요: 없음"},
-            {"stage": "짜기", "by": "모델 → 코드", "text": "후보 c1"},
-            {"stage": "기록", "by": "코드", "text": "그냥 줄"},
+            {"stage": "이해", "role": "해석", "by": "code", "by_detail": "코드(목표 세우기 실패)", "text": "이렇게 이해했어요: 없음"},
+            {"stage": "짜기", "role": "지휘", "by": "ai", "by_detail": "모델 → 코드", "text": "후보 c1"},
+            {"stage": "답", "role": "결정", "by": "code", "by_detail": None, "text": "기본값"},
+            {"stage": "질문", "role": "지휘", "by": "human", "by_detail": "코드가 열음 → 사람", "text": "어느 날?"},
+            {"stage": "기록", "role": "지휘", "by": "code", "by_detail": None, "text": "그냥 줄"},
         ]
 
     def test_violation_texts(self):

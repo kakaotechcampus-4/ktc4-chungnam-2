@@ -34,6 +34,7 @@ DEFAULT_OLDER_THAN_DAYS = 30
 # agent_* 테이블은 다른 모듈 테이블을 참조하지 않고 참조받지도 않아 순서와 무관하다(#512) — 맨 앞에 둔다.
 PURGE_STEPS: tuple[Callable[..., dict[str, int]], ...] = (
     agent_api.purge_map_data,
+    agent_api.purge_course_runs,
     shortlist_api.purge_map_data,
     recommend_api.purge_map_data,
     pins_api.purge_map_data,

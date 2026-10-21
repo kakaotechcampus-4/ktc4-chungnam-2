@@ -18,6 +18,8 @@
   - **영업시간을 아직 모른다**(places에 칸이 없다, #580 6번). 그래서 지금은 모든 장소가 `checks`(「가게에 직접 확인해 주세요」)에 들고 `slots[].needs_check=true`이며 `outcome`은 보통 `solved_with_checks`다. 휴무를 피하는 동작은 칸이 생긴 뒤에 켜진다.
   - 요청 한 줄은 LLM_MODE=real일 때만 목표가 된다(dev는 요청 전체가 `unmatched`로 남고 코스는 코드 기준선이 짠다).
   - `steps`는 끝난 뒤에 한꺼번에 채워진다(진행 중에는 빈 배열).
+  - `steps[]`는 `{stage, role(해석|지휘|계산|검증|결정), by(ai|code|human), by_detail}`다. by는 칩용 대표값이고 섞인 단계의 원문(「모델 → 코드」 등)은 by_detail.
+  - 지도 삭제 정리(`maps/purge.py`)와 탈퇴(`withdraw_user`)가 코스 run(요청 한 줄 포함)을 지운다.
   - `stale`이면 요청 뒤 확정 리스트가 바뀐 것이다 — 「다시 짜기」.
 - **FE 할 일(#580 결정 뒤)**: 확정 탭 「AI 코스 짜기」 시트(요청 한 줄, 하루 도보 상한 선택), 진행 화면(폴링), 결과 화면(목표 지킴/못 지킴 → 날짜별 순서와 구간 도보 → 확인 필요 → 빠진 핀 → 작업 기록). 목 서버 핸들러를 `contracts/mocks/handlers/course.ts`에 추가했다.
 

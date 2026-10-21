@@ -413,7 +413,7 @@ agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조�
 > 동선 에이전트(`backend/agent/course/`)가 쓰는 테이블 1개. `map_id`, `requested_by`는 문자열이고 FK가 없다. run은 요청자 본인 것이다(가드레일 1).
 > **장소 이름과 좌표는 저장하지 않는다.** 핀은 `pin_id`로만 가리킨다(화면 문장에 들어간 이름은 코드가 렌더한 문장 안에만 있다). 사유 원문도 없다 —
 > 요청 한 줄(`input.request_text`)은 요청자가 이 run을 위해 쓴 글이라 run 행에만 둔다. 지도 정리와 탈퇴 정리는 `agent.course.api`(`purge_map_data`, `delete_by_user`)가
-> 맡는다 — `maps/purge.py`와 `auth/service.py`에 연결하는 일은 #580 결정 뒤다. 질문에 답을 받지 않아 waiting_input 상태와 답 칸이 없다.
+> 맡는다 — `maps/purge.py`의 PURGE_STEPS와 `withdraw_user`에 연결돼 있다. 질문에 답을 받지 않아 waiting_input 상태와 답 칸이 없다.
 
 ```
 agent_course_runs(
@@ -425,7 +425,7 @@ agent_course_runs(
   snapshot_at, snapshot_pin_ids jsonb,-- 요청 때 확정 리스트의 핀 id. 지금과 다르면 응답의 stale=true
   goals jsonb, unmatched jsonb,       -- [{id, kind, label, met}], 요청 원문 조각
   excluded jsonb,                     -- [{pin_id, reason('NO_COORDINATES'|'OVER_LIMIT'), text}]
-  steps jsonb,                        -- [{stage, by, text}] 작업 기록(끝난 뒤 한꺼번에 채운다)
+  steps jsonb,                        -- [{stage, role, by, by_detail, text}] 작업 기록(끝난 뒤 한꺼번에 채운다)
   days jsonb,                         -- [{date, slots:[{pin_id, order, needs_check}], legs:[{from_pin_id, to_pin_id, approx_minutes}]}]
   violations jsonb, checks jsonb,     -- [{kind, text}], [{pin_id, text}]
   model null, prompt_version null, model_turns, tokens_in, tokens_out,

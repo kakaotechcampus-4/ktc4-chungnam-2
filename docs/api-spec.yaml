@@ -2510,10 +2510,12 @@ components:
 
     CourseStep:
       type: object
-      required: [stage, by, text]
+      required: [stage, role, by, by_detail, text]
       properties:
-        stage: { type: string, description: "이해 · 확인 · 짜기 · 점검 · 재계획 · 다시 짜기 · 고정 · 질문 · 답 · 대행 · 끝 · 결과" }
-        by: { type: string, description: "누가 했는지, 한국어 그대로. 모델 · 코드 · 사람 또는 「모델 → 코드」 같은 조합. 칩으로 보여 준다" }
+        stage: { type: string, description: "이해 · 확인 · 짜기 · 점검 · 재계획 · 다시 짜기 · 고정 · 검증 · 질문 · 답 · 대행 · 끝 · 결과" }
+        role: { type: string, enum: [해석, 지휘, 계산, 검증, 결정], description: "무슨 일이었나. 해석=요청을 목표로, 지휘=도구 고르기·점검·끝, 계산=최적화·수리, 검증=코드가 사실과 맞춰 봄(모델 문장을 코드 문장으로 바꾼 기록 포함), 결정=사람의 답 또는 기본값" }
+        by: { type: string, enum: [ai, code, human], description: "누가 했나. 칩으로 보여 준다. 여럿이 함께한 단계는 대표값(사람 > 모델 > 코드)이고 자세한 말은 by_detail" }
+        by_detail: { type: [string, "null"], description: "섞인 단계의 원문. 예: 「모델 → 코드」, 「코드가 열고 모델이 고름 → 사람」, 「코드(목표 세우기 실패)」. 단순하면 null" }
         text: { type: string }
 
     CourseDay:

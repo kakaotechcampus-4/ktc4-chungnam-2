@@ -36,8 +36,10 @@ class CourseGoal(BaseModel):
 
 
 class CourseStep(BaseModel):
-    stage: str                       # 이해 · 확인 · 짜기 · 점검 · 재계획 · 다시 짜기 · 고정 · 질문 · 답 · 대행 · 끝 · 결과
-    by: str                          # 누가 했는지 한국어 그대로: 모델, 코드, 사람, "모델 → 코드" 같은 조합
+    stage: str                       # 이해 · 확인 · 짜기 · 점검 · 재계획 · 다시 짜기 · 고정 · 검증 · 질문 · 답 · 대행 · 끝 · 결과
+    role: Literal["해석", "지휘", "계산", "검증", "결정"]
+    by: Literal["ai", "code", "human"]   # 섞여 있으면 대표값(사람 > 모델 > 코드)이고 by_detail에 원문
+    by_detail: Optional[str] = None  # 예: "모델 → 코드", "코드(목표 세우기 실패)". 단순하면 null
     text: str
 
 

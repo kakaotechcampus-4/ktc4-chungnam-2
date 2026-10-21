@@ -49,7 +49,7 @@ export interface CourseRunMock {
   failure_code: "INTERRUPTED" | "ENGINE_ERROR" | null;
   goals: { id: string; kind: string; label: string; met: boolean | null }[];
   unmatched: string[];
-  steps: { stage: string; by: string; text: string }[];
+  steps: { stage: string; role: "해석" | "지휘" | "계산" | "검증" | "결정"; by: "ai" | "code" | "human"; by_detail: string | null; text: string }[];
   days: {
     date: string;
     slots: { pin_id: string; order: number; needs_check: boolean }[];

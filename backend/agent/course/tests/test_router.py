@@ -50,7 +50,7 @@ def test_request_runs_in_background_and_get_returns_done(world, places, client):
     assert goal["label"].startswith("둘째 날 (") and goal["label"].endswith(")은 실내 위주로")
     assert body["unmatched"] == ["웨이팅 없는 곳으로"]
     step = body["steps"][0]
-    assert (step["stage"], step["by"]) == ("이해", "모델") and step["text"].endswith("「웨이팅 없는 곳으로」는 그대로는 판단할 수 없어요")
+    assert (step["stage"], step["role"], step["by"], step["by_detail"]) == ("이해", "해석", "ai", None) and step["text"].endswith("「웨이팅 없는 곳으로」는 그대로는 판단할 수 없어요")
     assert sorted(s["pin_id"] for d in body["days"] for s in d["slots"]) == sorted(pin_ids[:4])
     assert [e["pin_id"] for e in body["excluded"]] == [pin_ids[4]] and body["excluded"][0]["reason"] == "NO_COORDINATES"
     assert len(body["checks"]) == 4 and body["violations"] == [] and body["stale"] is False

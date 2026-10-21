@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
 from agent.course import core, goals as goals_mod
 from agent.course.direct import DirectResult
@@ -22,27 +22,43 @@ class CourseView:
     outcome: str
     goals: list[dict[str, Any]]
     unmatched: list[str]
-    steps: list[dict[str, str]]
+    steps: list[dict[str, Any]]
     days: list[dict[str, Any]]
     violations: list[dict[str, str]]
     checks: list[dict[str, str]]
     excluded: list[dict[str, str]] = field(default_factory=list)
 
 
-def _split_line(line: str) -> dict[str, str]:
-    """"[단계] (누가) 문장" → 칸. 누가 안에 괄호가 들어 있을 수 있어("코드(목표 세우기 실패)") 괄호 짝을 센다."""
-    if line.startswith("[") and "] (" in line:
-        stage, rest = line[1:].split("] (", 1)
-        depth = 1
-        for i, ch in enumerate(rest):
-            depth += (ch == "(") - (ch == ")")
-            if depth == 0:
-                return {"stage": stage, "by": rest[:i], "text": rest[i + 1:].lstrip()}
-    return {"stage": "기록", "by": "코드", "text": line}
+ROLES = ("해석", "지휘", "계산", "검증", "결정")
+_SIMPLE_WHO = {"모델": "ai", "코드": "code", "사람": "human"}
 
 
-def parse_steps(lines: Sequence[str]) -> list[dict[str, str]]:
-    """worklog 줄 → {stage, by, text}. 형식이 아닌 줄은 단계 "기록"으로 그대로 둔다."""
+def _by(who: str) -> tuple[str, Optional[str]]:
+    """누가 → (ai|code|human, 자세한 말). 단순한 이름이면 자세한 말이 없다. 섞여 있으면("모델 → 코드") 사람 > 모델 > 코드 순으로
+    대표값을 고르고 원문을 by_detail에 남긴다."""
+    if who in _SIMPLE_WHO:
+        return _SIMPLE_WHO[who], None
+    return ("human" if "사람" in who else "ai" if "모델" in who else "code"), who
+
+
+def _split_line(line: str) -> dict[str, Any]:
+    """"[단계] 역할(누가) 문장" → 칸. 누가 안에 괄호가 들어 있을 수 있어("코드(목표 세우기 실패)") 괄호 짝을 센다."""
+    if line.startswith("[") and "] " in line:
+        stage, rest = line[1:].split("] ", 1)
+        role = next((r for r in ROLES if rest.startswith(r + "(")), None)
+        if role is not None:
+            body = rest[len(role) + 1:]
+            depth = 1
+            for i, ch in enumerate(body):
+                depth += (ch == "(") - (ch == ")")
+                if depth == 0:
+                    by, detail = _by(body[:i])
+                    return {"stage": stage, "role": role, "by": by, "by_detail": detail, "text": body[i + 1:].lstrip()}
+    return {"stage": "기록", "role": "지휘", "by": "code", "by_detail": None, "text": line}
+
+
+def parse_steps(lines: Sequence[str]) -> list[dict[str, Any]]:
+    """worklog 줄 → {stage, role, by, by_detail, text}. 형식이 아닌 줄은 단계 "기록"으로 그대로 둔다."""
     return [_split_line(line) for line in lines]
 
 
