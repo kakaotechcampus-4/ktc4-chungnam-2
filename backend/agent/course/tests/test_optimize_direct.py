@@ -332,7 +332,7 @@ class TestWorklog:
         stages = [l.split("]")[0][1:] for l in lines]
         assert stages[0] == "이해" and "확인" in stages and stages.index("확인") < stages.index("짜기")
         assert "재계획" in stages and "질문" in stages and stages[-2:] == ["끝", "결과"]
-        assert lines[0].startswith("[이해] (모델)") and "「웨이팅 없는 곳」는 그대로는 판단할 수 없어요" in lines[0]
+        assert lines[0].startswith("[이해] 해석(모델)") and "「웨이팅 없는 곳」은 그대로는 판단할 수 없어요" in lines[0]
         ask = next(l for l in lines if l.startswith("[질문]"))
         assert "코드가 열음" in ask and "A: " in ask and "기본값" in ask
         assert all("(" in l and ")" in l for l in lines)                            # 단계마다 누가
