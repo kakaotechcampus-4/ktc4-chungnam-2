@@ -29,3 +29,14 @@ v2 계획 보조 에이전트. **구현 명세 `docs/agent-v2.md`를 먼저 끝�
 ## 코드 품질
 
 `docs/code-quality.md` 참고.
+
+## 하위 패키지 `course/` — 동선 에이전트 (#334)
+
+계획 보조 에이전트와 별개 기능이다. 확정 리스트로 여행 코스를 짜는 에이전트로, 명세는 `drafts/agent-route-v2.md`(정본 반영 전,
+`docs/agent-route-v2.md` 예정). `course/` 작업은 그 명세를 먼저 읽는다.
+
+- 지금은 M0: 모델 없이 도는 루프 뼈대(`course/core.py`·`tools.py`·`baseline.py`·`loop.py`). 순수 함수이고 DB를 모른다.
+- 모델 자리는 `course.loop.run_loop(decide=...)`로 주입한다. `decide=None`이면 코드 기준선이 끝까지 돈다.
+- 하드 위반(휴무·이동시간·구성원 제약) 판정은 코드다. 확정 위반을 늘리는 채택은 `course/tools.py`가 거부한다.
+- 모델 입력에는 별칭만 넣는다 — pin_id, place_id, 좌표, 장소·구성원 이름은 넣지 않는다.
+- DB 테이블·API·이벤트·llm 프롬프트는 정본 문서 반영과 루트 승인 뒤(M1).

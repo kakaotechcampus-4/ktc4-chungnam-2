@@ -126,6 +126,7 @@ export function buildBaseState(): StoreState {
     routes: {},
     invites: {},
     eventLog: [],
+    courseRuns: {},
     ...buildAgentState(mapId),
     ...buildAdsState(),
     notifications: [

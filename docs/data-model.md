@@ -408,6 +408,39 @@ agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조�
 
 ---
 
+## agent_course_runs (AI 코스 짜기, #334 — 팀 결정 #580 전 브랜치 초안, 마이그레이션 0037)
+
+> 동선 에이전트(`backend/agent/course/`)가 쓰는 테이블 1개. `map_id`, `requested_by`는 문자열이고 FK가 없다. run은 요청자 본인 것이다(가드레일 1).
+> **장소 이름과 좌표는 저장하지 않는다.** 핀은 `pin_id`로만 가리킨다(화면 문장에 들어간 이름은 코드가 렌더한 문장 안에만 있다). 사유 원문도 없다 —
+> 요청 한 줄(`input.request_text`)은 요청자가 이 run을 위해 쓴 글이라 run 행에만 둔다. 지도 정리와 탈퇴 정리는 `agent.course.api`(`purge_map_data`, `delete_by_user`)가
+> 맡는다 — `maps/purge.py`의 PURGE_STEPS와 `withdraw_user`에 연결돼 있다. 질문에 답을 받지 않아 waiting_input 상태와 답 칸이 없다.
+
+```
+agent_course_runs(
+  id uuid, map_id, requested_by,
+  status('queued'|'running'|'done'|'failed'),
+  outcome null('solved'|'solved_with_checks'|'unresolved'|'timeout'),    -- done일 때만
+  failure_code null('INTERRUPTED'|'ENGINE_ERROR'),                       -- failed일 때만
+  input jsonb,                        -- {request_text, member_constraints:[{kind:'daily_walk_max', value, day}]}
+  snapshot_at, snapshot_pin_ids jsonb,-- 요청 때 확정 리스트의 핀 id. 지금과 다르면 응답의 stale=true
+  goals jsonb, unmatched jsonb,       -- [{id, kind, label, met}], 요청 원문 조각
+  excluded jsonb,                     -- [{pin_id, reason('NO_COORDINATES'|'OVER_LIMIT'), text}]
+  steps jsonb,                        -- [{stage, role, by, by_detail, text}] 작업 기록(끝난 뒤 한꺼번에 채운다)
+  days jsonb,                         -- [{date, slots:[{pin_id, order, needs_check}], legs:[{from_pin_id, to_pin_id, mode(walk|transit), approx_minutes}]}]
+  violations jsonb, checks jsonb,     -- [{kind, text}], [{pin_id, text}]
+  model null, prompt_version null, model_turns, tokens_in, tokens_out,
+  created_at, finished_at null
+)
+index ix_agent_course_runs_map_user (map_id, requested_by, created_at)
+index ix_agent_course_runs_user_created (requested_by, created_at)       -- 하루 상한(5회, KST 자정) 집계
+unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queued','running')   -- 내 진행 중 run은 지도당 하나 → 409 COURSE_IN_PROGRESS
+```
+
+- 진행 중으로 15분 넘게 남은 run은 다음 요청이 `failed(INTERRUPTED)`로 끝낸다. 서버가 시작할 때도 진행 중인 run을 모두 같은 값으로 끝낸다(인스턴스 하나 전제, #168).
+- 영업시간 칸이 places에 아직 없어(#580 6번) 지금은 모든 장소가 「확인 필요」(`checks`)다.
+
+---
+
 ## notifications / feedback (v2, #470, #10)
 
 > v2. 계약만 먼저 올렸고 마이그레이션은 구현 PR이 그때의 head 다음 번호로 만든다(번호를 문서에 못 박지 않는다 — agent·maps 마이그레이션과 겹친다). 이슈 본문의 `0026`은 옛 초안이다.

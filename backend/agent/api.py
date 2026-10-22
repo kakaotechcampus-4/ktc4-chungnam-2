@@ -9,6 +9,7 @@
 from sqlalchemy.orm import Session
 
 from agent import service
+from agent.course import api as course_api
 
 
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
@@ -24,3 +25,13 @@ def delete_by_user(db: Session, *, user_id: str, map_ids: list[str]) -> dict[str
 
     순서 제약은 없다(agent는 다른 모듈 테이블을 읽지 않는다). 반응 삭제 앞이든 뒤든 같은 결과다."""
     return service.delete_by_user(db, user_id=user_id, map_ids=map_ids)
+
+
+def purge_course_runs(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+    """지도 정리(maps.purge)가 부른다 — AI 코스 짜기 run(agent_course_runs, #334)을 지운다. 구현은 agent.course.api."""
+    return course_api.purge_map_data(db, map_ids=map_ids)
+
+
+def delete_course_runs_by_user(db: Session, *, user_id: str) -> dict[str, int]:
+    """탈퇴(auth.service.withdraw_user)가 부른다 — 그 사람이 요청한 코스 run(요청 한 줄 포함)을 지운다."""
+    return course_api.delete_by_user(db, user_id=user_id)

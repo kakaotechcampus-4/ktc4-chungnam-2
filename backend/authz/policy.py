@@ -47,6 +47,7 @@ POLICY: Mapping[str, RoleSpec] = {
                 "route.recalculate",  # 동선 재계산 — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
                 "agent.toggle",  # 계획 보조 에이전트 모드 켜고 끄기(v2, docs/agent-v2.md)
                 "agent.suggestion.resolve",  # 지도 제안 수락·닫기(v2). 지도 단위
+                "course.request",  # AI 코스 짜기 요청(#334, #580 결정 전 브랜치 초안). 구성원 누구나, 하루 상한은 서비스가 센다
             }
         ),
     ),
@@ -59,6 +60,7 @@ POLICY: Mapping[str, RoleSpec] = {
                                       # run.requested_by 본인만(가드레일1)
                 "recommend.publish",  # 「지도에 올리기」 — candidate.requested_by 본인만
                 "pin.edit",  # 핀 메모·분류 수정(#466) — 찍은 사람만. AI 추천·확정 핀 제외는 pins 코어가 판정
+                "course.view",  # AI 코스 run 조회(#334) — run.requested_by 본인만(가드레일 1)
             }
         ),
     ),
@@ -110,4 +112,6 @@ ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     # 제안은 지도에 딸린다 — 제안 id로 지도를 찾아 Resource(type="map", ...)으로 판정한다(agent 모듈의 loader)
     "agent.toggle": frozenset({"map"}),
     "agent.suggestion.resolve": frozenset({"map"}),
+    "course.request": frozenset({"map"}),
+    "course.view": frozenset({"run"}),  # agent/course/loaders.py::load_course_run이 Resource(type="run", ...)로 채운다
 }

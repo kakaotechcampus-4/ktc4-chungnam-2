@@ -1165,3 +1165,104 @@ describe("#642 추천 탭 광고 — 목 서버 계약", () => {
     expect((await fetch(`${BASE}/ads/ad_1/clicks`, { method: "POST", body: JSON.stringify({}) })).status).toBe(422);
   });
 });
+
+describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)", () => {
+  const confirm = (pinId: string) =>
+    fetch(`${BASE}/maps/map_1/shortlist`, { method: "POST", body: JSON.stringify({ pin_id: pinId }) });
+
+  it("확정 장소가 2곳 미만이면 422 COURSE_NOT_ENOUGH_PLACES(detail에 min, count)", async () => {
+    await confirm("pin_1");
+    const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.code).toBe("COURSE_NOT_ENOUGH_PLACES");
+    expect(body.detail).toEqual({ min: 2, count: 1 });
+  });
+
+  it("요청 → 202, 첫 GET은 running(단계 2개), 다음 GET은 running(단계 5개), 그다음은 done, 확정 리스트가 바뀌면 stale", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    const created = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST", body: JSON.stringify({ request_text: "하루에 덜 걷고 싶어요" }) });
+    expect(created.status).toBe(202);
+    const { course_run_id } = await created.json();
+
+    // 진행 중인 run이 있으면 다시 요청할 수 없다
+    const dup = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
+    expect(dup.status).toBe(409);
+    expect((await dup.json()).detail).toEqual({ course_run_id });
+
+    const running = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(running.status).toBe("running");
+    expect(running.days).toEqual([]);
+    expect(running.outcome).toBeNull();
+    expect(running.steps).toHaveLength(2);
+
+    const running2 = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(running2.status).toBe("running");
+    expect(running2.steps).toHaveLength(5);
+    expect(running2.steps.slice(0, 2)).toEqual(running.steps); // 앞 단계는 그대로, 뒤로만 늘어난다
+    expect(running2.days).toEqual([]);
+
+    const done = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(done.status).toBe("done");
+    expect(done.outcome).toBe("solved_with_checks");
+    expect(done.goals[0].kind).toBe("daily_walk_low");
+    const placed = done.days.flatMap((d: { slots: { pin_id: string }[] }) => d.slots.map((s) => s.pin_id));
+    expect(placed.sort()).toEqual(["pin_1", "pin_2"]);
+    expect(done.checks.length).toBe(2);
+    expect(done.steps.length).toBe(7);
+    expect(done.stale).toBe(false);
+
+    await confirm("pin_3");
+    const latest = await (await fetch(`${BASE}/maps/map_1/courses/latest`)).json();
+    expect(latest.id).toBe(course_run_id);
+    expect(latest.stale).toBe(true);
+  });
+
+  it("구간은 mode로 갈린다 — 2km 이하는 walk, 먼 구간은 transit(대중교통 약 분)", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    await confirm("pin_3");
+    store.maps["map_1"].end_date = store.maps["map_1"].start_date; // 하루에 셋 — 구간이 둘 생긴다
+    const items = store.shortlist["map_1"];
+    items[0].pin.lat = 33.4996;
+    items[0].pin.lng = 126.5312;
+    items[1].pin.lat = 33.5015; // 첫째와 200m쯤
+    items[1].pin.lng = 126.5312;
+    items[2].pin.lat = 33.28; // 20km 넘게 떨어진 곳
+    items[2].pin.lng = 126.7183;
+    const { course_run_id } = await (await fetch(`${BASE}/maps/map_1/courses`, { method: "POST", body: JSON.stringify({}) })).json();
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    const done = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    const legs = done.days.flatMap((d: { legs: { mode: string; approx_minutes: number }[] }) => d.legs);
+    expect(legs.length).toBeGreaterThan(0);
+    for (const l of legs) expect(["walk", "transit"]).toContain(l.mode);
+    const transit = legs.filter((l: { mode: string }) => l.mode === "transit");
+    expect(transit.length).toBeGreaterThan(0);
+    expect(transit[0].approx_minutes).toBeGreaterThan(10); // 대기 10분이 더해진 대략 분
+    expect(done.steps.some((st: { text: string }) => st.text.includes("대중교통 1구간"))).toBe(true);
+  });
+
+  it("짠 적이 없으면 latest는 204, 없는 run은 404, 지도가 없으면 404", async () => {
+    expect((await fetch(`${BASE}/maps/map_1/courses/latest`)).status).toBe(204);
+    expect((await fetch(`${BASE}/course-runs/nope`)).status).toBe(404);
+    expect((await fetch(`${BASE}/maps/no_such_map/courses`, { method: "POST" })).status).toBe(404);
+  });
+
+  it("하루 5번을 넘기면 429 COURSE_LIMIT", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    for (let i = 0; i < 5; i += 1) {
+      const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
+      expect(res.status).toBe(202);
+      const { course_run_id } = await res.json();
+      await fetch(`${BASE}/course-runs/${course_run_id}`); // running(2)
+      await fetch(`${BASE}/course-runs/${course_run_id}`); // running(5)
+      await fetch(`${BASE}/course-runs/${course_run_id}`); // done
+    }
+    const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
+    expect(res.status).toBe(429);
+    expect((await res.json()).detail).toEqual({ limit: 5, used: 5 });
+  });
+});

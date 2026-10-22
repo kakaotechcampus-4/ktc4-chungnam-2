@@ -98,3 +98,6 @@ franchise_brands.csv
 관광지_라벨_*.zip
 tourist_seoul_*.csv
 tourist_seoul_*.json
+
+# 동선 에이전트 평가 지도 — 정예 라벨·장소 이름이 들어 있어(저장소는 public) 로컬에만 둔다. 스크립트만 커밋한다.
+backend/agent/course/eval/data/

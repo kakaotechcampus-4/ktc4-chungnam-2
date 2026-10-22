@@ -13,8 +13,9 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from agent import loop as agent_loop
+from agent.course import service as course_service
 from common.adapters import format_assembly
-from common.database import engine
+from common.database import SessionLocal, engine
 from common.errors import register_error_handlers
 from common.settings import settings
 from realtime.dispatcher import dispatcher
@@ -39,6 +40,12 @@ async def lifespan(_app: FastAPI):
     # 반드시 이 순서로: 이미 있는 event_log까지 따라잡은 뒤(동기, 한 번) 폴링 루프를 시작한다.
     dispatcher.initialize_last_seen()
     task = asyncio.create_task(dispatcher.run_forever())
+    try:   # 서버가 죽으면서 끊긴 AI 코스 짜기(백그라운드) run을 끝낸다. 표가 아직 없어도(마이그레이션 전) 서버는 떠야 한다
+        interrupted = course_service.interrupt_unfinished_runs(SessionLocal)
+        if interrupted:
+            logger.info("끊긴 AI 코스 run %d개를 INTERRUPTED로 끝냈다", interrupted)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("끊긴 AI 코스 run을 정리하지 못했다: %s", type(exc).__name__)
     agent_loop.start()   # AGENT_LOOP_IN_PROCESS=True(개발)일 때만 관찰 반복 작업을 띄운다(docs/agent-v2.md 12.1)
     try:
         yield
@@ -72,6 +79,7 @@ def health():
 
 # 모듈 담당자가 router.py를 만들면 여기 등록한다. docs/api-spec.yaml 태그 = 모듈 단위.
 from ads.router import router as ads_router  # noqa: E402
+from agent.course.router import router as course_router  # noqa: E402
 from agent.router import router as agent_router  # noqa: E402
 from auth.router import public_router as auth_public_router  # noqa: E402
 from auth.router import router as auth_router  # noqa: E402
@@ -97,6 +105,7 @@ app.include_router(recommend_router)
 app.include_router(shortlist_router)
 app.include_router(realtime_router)
 app.include_router(agent_router)
+app.include_router(course_router)
 app.include_router(ads_router)
 
 # CORS는 add_middleware가 아니라 앱을 "바깥에서" 감싼다.
