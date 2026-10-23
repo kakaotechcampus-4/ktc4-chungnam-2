@@ -48,7 +48,9 @@ n명이 하나의 지도에 핀을 찍어 여행 장소를 정하고, 의견이 
 
 ### 백엔드 로컬에서 띄우기 (다운로드 후 이 순서 그대로 ㄱㄱ)
 
-미리 설치할 것: [Python 3.10+](https://www.python.org/downloads/), [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+미리 설치할 것: [Python 3.12](https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe), [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+
+Python은 3.10~3.12만 된다. 3.13 이상은 `psycopg2-binary`·`pyproj` 설치 파일이 없어서 `pip install`이 실패한다. 다른 버전이 기본이면 venv를 `py -3.12 -m venv .venv`로 만든다.
 
 ```bash
 git clone https://github.com/kakaotechcampus-4/ktc4-chungnam-2.git

@@ -11,10 +11,11 @@
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from agent import core
 from agent.snapshot import Chip, MapInfo, Member, Pin, Reaction, Reason, ShortlistItem, Snapshot, derive_actions
@@ -262,3 +263,26 @@ def verify(world: World, key: str, out: Any, tools: FixtureTools) -> core.Verifi
     comparison = world.comparison(top.pin_id) if top.diagnosis == "split" else None
     names = MEMBER_NAMES[:world.snap.member_count]
     return core.verify_diagnosis(out, top, world.snap, tools.results, member_names=names, comparison=comparison)
+
+
+# ---------------------------------------------------------------- 결정 지시 (#717)
+
+_SLOT = re.compile(r"\{c\d+(?:\.value)?\}")   # agent.core의 슬롯 모양({cN}, {cN.value})
+_SPACES = re.compile(r"\s+")
+
+
+def outside_slots(slot_text: str) -> str:
+    """모델 원문 한 줄에서 슬롯을 뺀 글 — 에이전트가 직접 쓴 말이다."""
+    return _SLOT.sub(" ", slot_text)
+
+
+def segment_texts(segments: Sequence[Mapping[str, Any]], kind: str = "text") -> str:
+    """렌더된 조각(model_dump) 중 한 종류만 이어 붙인 것. text 조각이 에이전트의 말이고, quote는 구성원 글, pin은 핀 이름이다."""
+    return " ".join(s["text"] for s in segments if s["kind"] == kind)
+
+
+def decision_echoes(texts: Iterable[str], phrases: Sequence[str]) -> list[str]:
+    """글에 나온 결정 지시 문구(#717). 공백을 빼고 비교한다. 판정은 금지어 목록(core.FORBIDDEN_PHRASES)이 아니라 케이스마다
+    적은 expect.decision_phrases다 — 목록에 없는 표현이 옮겨지거나 바꿔 말해진 것을 잡으려는 것이다."""
+    said = _SPACES.sub("", " ".join(texts))
+    return [p for p in phrases if _SPACES.sub("", p) in said]

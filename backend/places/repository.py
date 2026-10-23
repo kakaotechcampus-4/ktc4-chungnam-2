@@ -309,8 +309,8 @@ def get_places(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceInfo]:
     if not ids:
         return {}
     lat, lng = _lat_lng()
-    rows = db.execute(select(Place.id, Place.name, Place.category, Place.kakao_place_url, Place.source, lat, lng).where(Place.id.in_(ids))).all()
-    return {str(r.id): PlaceInfo(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_url, r.source) for r in rows}
+    rows = db.execute(select(Place.id, Place.name, Place.category, Place.kakao_place_url, Place.source, Place.curated, lat, lng).where(Place.id.in_(ids))).all()
+    return {str(r.id): PlaceInfo(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_url, r.source, r.curated) for r in rows}
 
 
 def search_nearby_own(db: Session, category: str, areas: Sequence[Area]) -> list[PlaceRef]:
@@ -353,20 +353,12 @@ def recompute_can_recommend(db: Session, *, dry_run: bool = False) -> RecomputeR
     """전체 장소의 can_recommend를 core 규칙으로 다시 계산해 바뀐 행만 갱신한다. 멱등. 커밋하지 않는다.
 
     정예 여부는 places.curated다(`--authoritative` 적재가 켠다). 폐업 장소도 계산한다(다시 열릴 때 값이 맞도록)."""
-    agg = (
-        select(PlaceFact.place_id, func.count().filter(PlaceFact.confidence == "known").label("known"))
-        .group_by(PlaceFact.place_id)
-        .subquery()
-    )
-    rows = db.execute(
-        select(Place.id, Place.category, Place.can_recommend, func.coalesce(agg.c.known, 0), Place.curated)
-        .outerjoin(agg, agg.c.place_id == Place.id)
-    ).all()
+    rows = db.execute(select(Place.id, Place.category, Place.can_recommend, Place.curated)).all()
     counts: dict[tuple[str, bool], int] = {}
     to_true: list[uuid.UUID] = []
     to_false: list[uuid.UUID] = []
-    for pid, category, current, known, curated in rows:
-        new = core.can_recommend(category, known, curated=curated)
+    for pid, category, current, curated in rows:
+        new = core.can_recommend(curated=curated)
         counts[(category, new)] = counts.get((category, new), 0) + 1
         if new != current:
             (to_true if new else to_false).append(pid)
@@ -410,6 +402,19 @@ def get_facts(db: Session, place_ids: Sequence[str]) -> dict[str, list[FactLabel
     for f in rows:
         out[by_uuid[f.place_id]].append(FactLabel(f.fact_key, f.value, f.confidence))
     return out
+
+
+def search_by_name_own(db: Session, query: str, category: str | None, limit: int) -> list[dict]:
+    """자체 DB 이름 부분 일치(대소문자 무시). status와 무관하게 closed도 돌려준다. 이름순."""
+    needle = query.strip()
+    if not needle or limit <= 0:
+        return []
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")   # LIKE 와일드카드는 글자 그대로 찾는다
+    stmt = select(Place.id, Place.name, Place.address, Place.category, Place.status).where(Place.name.ilike(f"%{escaped}%", escape="\\"))
+    if category is not None:
+        stmt = stmt.where(Place.category == category)
+    rows = db.execute(stmt.order_by(Place.name.collate("C"), Place.id).limit(limit)).all()
+    return [{"id": str(r.id), "name": r.name, "address": r.address, "category": r.category, "status": r.status} for r in rows]
 
 
 def get_hours(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceHoursInfo]:

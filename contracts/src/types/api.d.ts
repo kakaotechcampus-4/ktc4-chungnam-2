@@ -1914,7 +1914,11 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md) */
+        /**
+         * 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md).
+         *     '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
+         *     한 요청에 5줄까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 줄은 10줄까지다(뺀 줄도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
+         */
         patch: {
             parameters: {
                 query?: never;
@@ -1941,6 +1945,7 @@ export interface paths {
                 };
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
+                409: components["responses"]["EvidenceLimit"];
                 500: components["responses"]["RecommendFailed"];
             };
         };
@@ -3647,7 +3652,7 @@ export interface components {
             author_display_name?: string;
             text: string;
             /**
-             * @description 꼭/선호/참고 (5-5)
+             * @description 꼭/선호/참고 (5-5). 「+」로 직접 추가한 줄은 preferred다(#707). v1 서버는 reference를 만들지 않는다
              * @enum {string}
              */
             badge: "required" | "preferred" | "reference";
@@ -3656,6 +3661,8 @@ export interface components {
             fact_label?: string | null;
             /** @description 이 특징(fact_key)이 있는 장소를 원하는가(#228). true=원함("한식 먹자"), false=원하지 않음("한식 말고"), 없거나 null=모름. FE는 근거 줄에 해석한 방향(예: "한식 제외")을 보여 주어 틀리면 −로 뺄 수 있게 한다 */
             wants?: boolean | null;
+            /** @description 이 줄이 후보를 거르거나 점수를 매기는 데 실제로 쓰이는가(#720). fact_key가 있으면 true, 키 없는 줄(알레르기·가격 등 모델이 라벨로 옮기지 못한 사유)은 false — 서버가 이 줄로 후보를 걸러 주지 않는다. 없으면 true로 본다(구버전 서버). FE는 enforced=false인 badge=required 줄을 「꼭 지켜야 하는 조건」으로 보이지 말고 「걸러지지 않아요. 가게에 직접 확인해 주세요」처럼 구분해 보여 준다 */
+            enforced?: boolean;
             is_active: boolean;
             permissions: components["schemas"]["Permissions"];
         };
@@ -3664,6 +3671,7 @@ export interface components {
                 id?: string;
                 is_active?: boolean;
             }[];
+            /** @description 직접 추가할 글. 한 요청에 5줄까지, run 하나에 모두 10줄까지(#707) */
             add?: {
                 text?: string;
             }[];
@@ -3811,10 +3819,28 @@ export interface components {
          * @enum {string}
          */
         AgentDiagnosis: "stall" | "split" | "no_reaction" | "category_gap";
-        /** @description 서버가 렌더한 문장 한 줄. is_guess=false는 확인된 사실(「확인된 것」), true는 추정(「AI 조언」, 화면에 '추정' 표시) */
+        /**
+         * @description 서버가 렌더한 문장 한 줄(#717). 에이전트의 말과 구성원이 쓴 글을 한 문자열에 섞지 않고 조각으로 나눠 내린다.
+         *     FE는 조각을 차례로 이어 그리되, quote는 구성원 의견(인용 모양), pin은 핀 이름 모양으로 따로 그린다. 조각 text의 합은 300자 이하.
+         *     is_guess=false는 확인된 사실(「확인된 것」), true는 추정(「AI 조언」, 화면에 '추정' 표시).
+         *     예: [{kind: text, text: "반대 의견이 2개 남은 뒤로 새 후보가 없어요. "}, {kind: pin, pin_id: "p1", text: "성수 칼국수"}, {kind: text, text: "에는 "}, {kind: quote, reaction_id: "r1", text: "너무 매워요"}, {kind: text, text: "라는 의견이 있어요"}]
+         */
         AgentAdviceLine: {
-            text: string;
+            segments: components["schemas"]["AdviceSegment"][];
             is_guess: boolean;
+        };
+        /**
+         * @description 문장 조각(#717). text는 에이전트 문장(서버 문구와 검증된 숫자)이다. quote는 구성원 사유 글 중 서버가 검증한 범위만이고 원문 전체가 아니다.
+         *     누가 쓴 글인지는 싣지 않는다(이름 없음). pin은 핀 이름이다(장소 이름, 실시간 핀은 사용자가 친 검색어).
+         */
+        AdviceSegment: {
+            /** @enum {string} */
+            kind: "text" | "quote" | "pin";
+            text: string;
+            /** @description kind=quote일 때만. 인용한 반응 */
+            reaction_id?: string;
+            /** @description kind=pin일 때만. 그 핀 */
+            pin_id?: string;
         };
         /**
          * @description 버튼 하나. 사람이 원래 하던 동작으로만 이어진다(확정, 삭제, 반응 변경, 근거 줄 빼기는 없다). FE가 하는 일은 docs/agent-v2.md 16.3 표.
@@ -4468,6 +4494,15 @@ export interface components {
         };
         /** @description 코스를 짤 확정 장소가 2곳 미만 (COURSE_NOT_ENOUGH_PLACES, */
         CourseNotEnoughPlaces: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description run 하나에 직접 추가('+')한 근거 줄이 10줄을 넘음(뺀 줄 포함, EVIDENCE_LIMIT, */
+        EvidenceLimit: {
             headers: {
                 [name: string]: unknown;
             };

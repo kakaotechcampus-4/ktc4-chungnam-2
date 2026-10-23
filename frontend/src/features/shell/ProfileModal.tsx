@@ -55,7 +55,7 @@ function ProfileConfirm({ mapId, which, onCancel }: { mapId: string; which: Conf
 function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: Confirm) => void }) {
   const map = useMapQuery(mapId)
   const members = useMembersQuery(mapId)
-  const { url, error: inviteError, copied, copy, share } = useShareInvite(mapId)
+  const { url, status: inviteStatus, error: inviteError, retry: retryInvite, copied, copy, share } = useShareInvite(mapId)
   const me = useMeQuery()
 
   return (
@@ -73,18 +73,27 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
       <button
         type="button"
         onClick={() => void share()}
-        disabled={!url}
+        disabled={inviteStatus !== 'ready'}
         className="btn-primary btn-lg w-full"
       >
         <Share size={20} aria-hidden="true" /> 초대 링크 공유하기
       </button>
-      <div className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-ink-100 px-3 py-2.5 text-sm">
-        <span className="truncate text-ink-600">{url ?? '링크를 만드는 중…'}</span>
-        <button type="button" onClick={() => void copy()} disabled={!url} className="btn-link shrink-0">
-          {copied ? '✓ 복사됨' : '복사'}
-        </button>
-      </div>
-      {inviteError && <ErrorText message="초대 링크를 만들지 못했어요" error={inviteError} />}
+      {/* 링크를 못 만들면 링크 줄 자리에 실패 문구와 「다시 시도」를 둔다(온보딩과 같은 규칙, #703). */}
+      {inviteStatus === 'failed' ? (
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <ErrorText message="초대 링크를 만들지 못했어요" error={inviteError} />
+          <button type="button" onClick={retryInvite} className="btn-link shrink-0 text-sm">
+            다시 시도
+          </button>
+        </div>
+      ) : (
+        <div className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-ink-100 px-3 py-2.5 text-sm">
+          <span className="truncate text-ink-600">{url ?? '링크를 만드는 중…'}</span>
+          <button type="button" onClick={() => void copy()} disabled={!url} className="btn-link shrink-0">
+            {copied ? '✓ 복사됨' : '복사'}
+          </button>
+        </div>
+      )}
 
       <h3 className="mb-2 mt-6 text-sm font-bold text-ink-900">구성원</h3>
       {members.error && <ErrorText message="구성원을 불러오지 못했어요" error={members.error} />}

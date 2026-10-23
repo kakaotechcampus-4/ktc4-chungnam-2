@@ -414,6 +414,24 @@ pingo_demo는 `alembic_version=0020_evidence_wants`다. 단계별로 `upgrade()`
 `places/tests/test_ingest.py`(지역 해제·28·`region_of`·닫기 계획), `places/tests/test_load_regions_close.py`(옵션 전달·닫기 대상·안전장치·dry-run·되살리기). places 전체 406 통과. `test_link.py` 3건은 `authz.guard`↔`auth.deps` 순환 import로 이 변경과 무관하게 실패한다(`python -c "import authz.guard"` 단독 재현).
 
 
+# #682 관광지 검색(CT1·정확도 순) · #674 search_own_by_name (2026-10-24)
+
+## #682 — `backend/places/sources/kakao.py`
+- 카카오 문화시설(CT1: 박물관·미술관·공연장)을 `"관광지"`로 매핑한다(`_GROUP_CODES`: 관광지 = AT4 + CT1). 키워드 검색 응답의 분류가 "기타"가 되던 것이 사라지고, 핀을 찍을 수 있는지는 지금처럼 자체 DB 짝 여부(`pinnable_flags`·`match_place`)로 정한다.
+- 카테고리 검색(`search_nearby`)은 관광지에서 AT4·CT1을 각각 불러 같은 id는 한 번만 두고 가까운 순으로 합친다 — **관광지는 카카오 호출이 코드당 최대 페이지 수만큼, 즉 두 배**가 된다(`max_pages` 기본 2 → 최대 4회). CT1 호출이 실패하면 AT4 결과는 유지하고, AT4(첫 코드) 첫 페이지 실패는 지금처럼 소스 실패로 올린다. 반경 제한은 그대로다.
+- 키워드 검색(`search_by_name`)은 `sort=accuracy`로 바꿨다. 좌표가 있으면 `x`·`y`를 같이 보내 가까운 곳을 약하게 우대받고, **반경 제한은 지금처럼 없다**(#351 범위 결정과 어긋나지 않는 최소 변경). 좌표가 없을 때도 같은 정확도 순이다(전엔 sort 파라미터가 없었다).
+- 확인 못 한 것: 실제 카카오로 "경복궁"을 불러 본체가 상위에 오는지는 **목 응답으로만** 검증했다(요청에 `sort=accuracy`가 가고 응답 순서를 그대로 유지하는 것까지). 라이브 확인은 키가 있는 환경에서 해야 한다.
+- FE: `frontend/src/features/map/livePlaces.ts`의 `GROUP_CODE`에 CT1 → "관광지"가 필요하다(FE 몫, 건드리지 않았다).
+
+## #674 — `places.api.search_own_by_name(db, *, query, category=None, limit=20) -> list[dict]`
+- 이슈의 시그니처·규칙 그대로: 자체 DB `places.name` 부분 일치(대소문자 무시), status 무관(closed 포함), `[{id, name, address, category, status}]`, 읽기 전용·커밋 없음.
+- 정한 것: 이름순은 **코드포인트 순**(`COLLATE "C"`)이다 — DB 로캘에 따라 공백이 무시돼 순서가 달라지는 것을 막았다(한글은 가나다순과 같다). `%`·`_`는 글자 그대로 찾고, 빈 질의·`limit<=0`은 빈 목록, `category`가 자체 DB 분류가 아니면 빈 목록이 된다.
+- ads의 `find_place`와 등록 스크립트 status 확인 교체는 ads 몫이다.
+
+## 테스트
+`test_sources.py`(CT1 매핑·합치기·부분 실패), `test_name_search.py`(정확도 순·반경 없음·본체 우선), `test_search_own_by_name.py`.
+
+
 # #690 영업시간·휴무일 — place_hours·get_hours·is_open_on·place-hours 로더 (2026-10-24)
 
 스펙(PR #693: `data-model.md` place_hours, `constraints.md` 영업 중 판정, `architecture.md` get_hours)대로 구현했다. 스펙·docs는 바꾸지 않았다.
@@ -434,3 +452,18 @@ pingo_demo는 `alembic_version=0020_evidence_wants`다. 단계별로 `upgrade()`
 
 ## 테스트
 `places/tests/test_place_hours.py`(경계·파싱·적재·get_hours), `test_place_hours_migration.py`(up/down·단일 head·모델 일치).
+
+
+# #681 PlaceInfo.curated (2026-10-24)
+
+`places.api.get_places`가 돌려주는 `PlaceInfo`에 `curated: bool = False`(`places.curated`)를 더했다 — 같은 배치 쿼리로 읽고 기본값이 있어 기존 호출자는 그대로다. `PlaceRef`는 recommend가 `get_places`로 정예 여부를 읽을 수 있어 건드리지 않았다(필요하면 알려 달라).
+
+
+# #690 FakePlaces.get_hours (2026-10-24)
+
+`places.testing.FakePlaces`에 `get_hours`와 `hours: dict[place_id, PlaceHours]`(기본 빈 dict = 모름)를 더하고 `install()` 패치 목록에 넣었다 — recommend 쪽 테스트가 `FakePlaces().install()` 아래서 진짜 DB로 가지 않는다. 테스트는 `fake.hours[place_id] = PlaceHours(...)`로 지정한다.
+
+
+# #681 can_recommend 규칙 개정 (2026-10-24)
+
+원칙: **추천은 정예 데이터에서만 가능하다 — 정예 외 데이터는 핀을 꽂을 수 있는 최소 정보일 뿐이다.** `core.can_recommend(*, curated)`는 `curated` 값 그대로다. `KNOWN_LABEL_THRESHOLDS`·`ALWAYS_RECOMMENDABLE`(관광지 예외)·`known_label_count`·`category` 인자를 모두 지웠고, 재계산(`recompute_can_recommend`)은 라벨 집계 조인 없이 `places.curated`만 읽는다. 규칙 정본은 docs PR #711(문서는 루트가 맞춘다). 이미 적재된 DB는 `python -m places.scripts.recompute_can_recommend`(또는 다음 적재 끝의 자동 재계산)로 새 규칙에 맞춰진다 — **비정예 음식점·카페의 true가 모두 false로 바뀌어 추천 후보 풀이 정예로 좁아진다.** pingo_demo의 관광지는 전부 curated=true라 관광지 결과는 그대로이고, 앞으로 들어오는 비정예 관광지는 추천에 안 나간다.

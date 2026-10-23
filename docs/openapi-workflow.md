@@ -54,9 +54,14 @@ npm test             # vitest — smoke.test.ts
 docker-compose up -d                  # PostgreSQL+PostGIS, Redis
 cp .env.example .env                  # 없으면. 값은 커밋하지 않는다
 python -m alembic upgrade head        # 마이그레이션 체인이 head 하나여야 한다
-# 자체 장소 DB 적재(한 번, 약 4분) — 파일은 저장소 밖에 둔다(.gitignore). 안 하면 검색·핀·추천이 모두 빈다
-python -m places.load restaurants --file <restaurant_seoul_curated.csv> --labels <restaurant_seoul_curated_labels.json> --dry-run   # 리포트 확인 후 --dry-run을 뺀다
-python -m places.load cafes --file <cafe_seoul_curated.csv> --labels <cafe_seoul_curated_labels.json|.csv> --dry-run          # 카페(분류 '카페'). 업태는 가리지 않는다. 좌표 없는 행은 건너뛰고, 이미 음식점 등 다른 분류로 있는 관리번호는 분류를 바꾸지 않고 건너뛰며 건수를 보고한다
+# 자체 장소 DB 적재(한 번, 약 5분) — 파일은 저장소 밖에 둔다(.gitignore). 안 하면 검색·핀·추천이 모두 빈다. 윈도는 먼저 `PYTHONUTF8=1`
+# 순서: 정예(사람이 조사한 납품본, 오래된 것부터) → 커버리지(인허가). 다시 넣을 때도 이 순서 전체를 처음부터 한다(#507)
+# 정예는 반드시 --authoritative — places.curated=true를 켠다. 빼면 can_recommend가 라벨 수로만 정해져 라벨 적은 가게가 추천 후보에서 빠진다
+python -m places.load restaurants --file <식당카페_라벨_2026-10-02/restaurant_seoul_curated.csv> --labels <restaurant_seoul_curated_labels.json> --authoritative --dry-run   # 리포트 확인 후 --dry-run을 뺀다
+python -m places.load cafes --file <식당카페_라벨_2026-10-02/cafe_seoul_curated.csv> --labels <cafe_seoul_curated_labels.csv> --authoritative
+python -m places.load restaurants --file <음식점_1013/final_restaurant_places_hotspot.csv> --labels <seoul_restaurant_labels_hotspot.json> --authoritative
+python -m places.load cafes --file <카페_1013/cafe_seoul_curated.csv> --labels <cafe_seoul_curated_labels.json> --authoritative   # 음식점 다음 — 두 파일에 겹치는 6곳을 카페로 둔다(#507 결정 ①)
+python -m places.load tourapi --file <관광지_1013/tourist_seoul_places.json> --labels <tourist_seoul_curated_labels.csv> --authoritative   # 관광지 라벨은 CSV. JSON은 형식이 달라 전부 건너뛴다
 # (선택) 인허가 커버리지 확장(#499) — 윈도에서는 먼저 `PYTHONUTF8=1`(안 하면 리포트 출력에서 죽는다). 파일 3개 다음 라벨 파일. `분류` 열이 있으면 업태 대응표보다 우선한다. 이미 다른 분류로 있는 관리번호는 건너뛴다
 python -m places.load permit --file <permit_N.csv> --encoding cp949 --dry-run     # 3개 파일 각각
 python -m places.load restaurant-labels --file <permit_cover_labels.json>

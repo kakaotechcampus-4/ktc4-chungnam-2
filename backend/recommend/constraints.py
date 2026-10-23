@@ -77,7 +77,7 @@ SOFT_REGISTRY: dict[str, ConstraintSpec] = {
 }
 SOFT_FACT_KEYS: frozenset[str] = frozenset(SOFT_REGISTRY)
 
-# ♥ 핀 라벨을 선호 신호로 쓰는 방법 — docs/constraints.md "♥에서 선호로 쓰는 라벨 (음식점)" 표 그대로(#414).
+# ♥ 핀 라벨을 선호 신호로 쓰는 방법 — docs/constraints.md "♥에서 선호로 쓰는 라벨" 표(음식점 #414, 카페·관광지 #681-3) 그대로.
 # 직접 쓴 선호 사유에는 적용하지 않는다(♥ 핀 라벨에서 나온 신호만 거른다). 표에 없는 카테고리·키는 "use"다.
 HeartSignalUse = Literal["use", "two_or_more", "unused"]
 HEART_SIGNAL_MIN_TRUE_PLACES = 2  # '2곳 이상' — 그 라벨이 참인 ♥ 핀 수. 시작값(시험으로 조정)
@@ -96,6 +96,28 @@ HEART_SIGNAL_BY_CATEGORY: dict[str, dict[str, HeartSignalUse]] = {
             "open_late", "serves_alcohol",   # 일반음식점 대부분이 술을 팔고 늦게 여는 것도 ♥의 이유로 보기 어렵다(#461)
         )},
     },
+    # 카페·관광지 — docs/constraints.md "♥에서 선호로 쓰는 라벨 (카페·관광지)" 표 그대로(#681-3, 2026-10-24).
+    # 계절 키(cherry_blossom 등)는 표에서 "쓴다"(여행 날짜 규칙은 #681-6)라 따로 적지 않는다 — 표에 없는 키는 "use"다.
+    "카페": {
+        "bakery": "use",
+        **{key: "two_or_more" for key in ("quiet", "comfortable_seat", "local_flavor", "long_established")},
+        **{key: "unused" for key in (
+            "franchise", "spacious", "open_late",
+            "pet_friendly", "accessible", "vegetarian_friendly",   # 표에 없지만 편의·동반·접근 성격 — 루트 확인(#681)
+        )},
+    },
+    "관광지": {
+        **{key: "use" for key in (   # 장소의 정체, 하는 일
+            "mountain", "waterside", "forest", "flower_garden", "seaside", "hiking", "cycling", "hands_on",
+            "exhibition", "performance", "shopping", "heritage_tour", "traditional_hanok",
+            "modern_architecture", "religious_site", "hallyu_related",
+        )},
+        **{key: "two_or_more" for key in (   # 성격, 공간
+            "quiet", "restful", "good_view", "photogenic", "night_view", "date_spot", "local_flavor",
+            "walkable", "is_indoor", "is_outdoor",
+        )},
+        **{key: "unused" for key in ("family_friendly", "kid_friendly", "accessible", "pet_friendly")},   # 편의, 동반, 접근(pet_friendly는 루트 확인, #681)
+    },
 }
 
 
@@ -103,9 +125,16 @@ def heart_signal_use(category: str, fact_key: str) -> HeartSignalUse:
     return HEART_SIGNAL_BY_CATEGORY.get(category, {}).get(fact_key, "use")
 
 
+# "원함이어도 required" 내리기(#422)에 쓰는 "가게의 정체" 키 — 음식점 표의 "use"만이다. 카페·관광지 표(#681-3)의 "use"는
+# ♥ 신호 규칙이지 이 규칙이 아니라서 여기 넣지 않는다.
+_PLACE_IDENTITY_KEYS: dict[str, frozenset[str]] = {
+    "음식점": frozenset(key for key, use in HEART_SIGNAL_BY_CATEGORY["음식점"].items() if use == "use"),
+}
+
+
 def is_place_identity_key(category: str, fact_key: str | None) -> bool:
-    """표에 "use"로 적힌 키 = "가게의 정체"(음식점 cuisine_*, #422). heart_signal_use와 달리 표에 없는 키는 아니다."""
-    return fact_key is not None and HEART_SIGNAL_BY_CATEGORY.get(category, {}).get(fact_key) == "use"
+    """"가게의 정체"인 키(음식점 cuisine_*, #422). heart_signal_use와 달리 표에 없는 키는 아니다."""
+    return fact_key in _PLACE_IDENTITY_KEYS.get(category, frozenset())
 
 
 # 추천 이유(Candidate.reason) 한 줄에 쓰는 표시 이름 — fact_key를 사용자 문장으로 옮긴다. 값이
@@ -113,6 +142,7 @@ def is_place_identity_key(category: str, fact_key: str | None) -> bool:
 # (가드레일 5는 근거가 있는 것만 말하라는 뜻 — 이름 없는 키를 날것으로 노출하지 않는다)
 # 레지스트리에 키를 추가할 때(#171) 여기도 같이 채운다. test_constraints.py가 빠진 키를 잡는다.
 PASSED_LABELS: dict[str, str] = {
+    "is_open": "여행 기간에 영업하는 날이 있음",   # 레지스트리 밖(코드 판정, #690) — 영업하는 요일이 확인됐을 때만 쓴다
     "spicy_focused": "매운맛 전문점",       # 취향 키(#378) — 선호 충족 문장이라 "그렇다"는 쪽이다(피한 쪽은 "<이름> 제외")
     "oily_focused": "기름진 메뉴 위주",
     "is_crowded_large": "붐비는 대형 장소 아님",
