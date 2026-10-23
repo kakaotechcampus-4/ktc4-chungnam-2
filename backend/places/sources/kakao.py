@@ -11,8 +11,9 @@ from places.sources.base import RawPlace, is_same_place
 log = logging.getLogger("pingo.places")
 
 BASE = "https://dapi.kakao.com/v2/local/search"
-_GROUP_CODE = {"음식점": "FD6", "카페": "CE7", "숙소": "AD5", "관광지": "AT4"}
-_CATEGORY_OF = {v: k for k, v in _GROUP_CODE.items()}
+# 관광지는 관광명소(AT4)와 문화시설(CT1: 박물관·미술관·공연장)을 함께 본다(#682). 자체 DB는 TourAPI 문화시설(14)을 관광지로 적재한다.
+_GROUP_CODES = {"음식점": ("FD6",), "카페": ("CE7",), "숙소": ("AD5",), "관광지": ("AT4", "CT1")}
+_CATEGORY_OF = {code: category for category, codes in _GROUP_CODES.items() for code in codes}
 _MAX_RADIUS_M = 20000   # 카카오 로컬 API 반경 상한
 _PAGE_SIZE = 15
 
@@ -33,9 +34,26 @@ class KakaoPlaceSource:
         return {"Authorization": f"KakaoAK {self._key}"}
 
     def search_nearby(self, *, category: str, lat: float, lng: float, radius_m: int) -> list[RawPlace]:
-        code = _GROUP_CODE.get(category)
-        if code is None:
+        codes = _GROUP_CODES.get(category)
+        if codes is None:
             return []   # "기타"는 카카오 카테고리 그룹이 없다
+        out: dict[str, RawPlace] = {}
+        for i, code in enumerate(codes):
+            try:
+                found = self._category_pages(code, lat, lng, radius_m)
+            except SourceError as exc:
+                if i == 0:
+                    raise   # 첫 코드의 첫 페이지 실패는 소스 실패 — 폴백이 처리한다
+                log.warning("places.kakao %s 실패, 앞 코드 결과는 유지: %s", code, exc)
+                continue
+            for p in found:
+                out.setdefault(p.source_id, p)
+        merged = list(out.values())
+        if len(codes) > 1:   # 코드별로 가까운 순인 두 목록을 하나로 합친다
+            merged.sort(key=lambda p: (p.lat - lat) ** 2 + (p.lng - lng) ** 2)
+        return merged
+
+    def _category_pages(self, code: str, lat: float, lng: float, radius_m: int) -> list[RawPlace]:
         out: list[RawPlace] = []
         for page in range(1, self._max_pages + 1):
             try:
@@ -46,7 +64,7 @@ class KakaoPlaceSource:
                 )
             except SourceError as exc:
                 if page == 1:
-                    raise   # 첫 페이지 실패는 소스 실패 — 폴백이 처리한다
+                    raise
                 log.warning("places.kakao page=%d 실패, 앞 페이지 결과는 유지: %s", page, exc)
                 break
             out.extend(p for p in (_parse(d) for d in body.get("documents", [])) if p)
@@ -55,10 +73,11 @@ class KakaoPlaceSource:
         return out
 
     def search_by_name(self, *, query: str, lat: float | None, lng: float | None, limit: int) -> list[RawPlace]:
-        """키워드 검색. 좌표가 있으면 가까운 순(반경 제한 없음), 없으면 관련도 순."""
-        params: dict[str, Any] = {"query": query, "size": min(limit, _PAGE_SIZE), "page": 1}
+        """키워드 검색. 정확도 순이다(반경 제한 없음) — 가까운 순이면 "경복궁"이 매표소·편의시설에 밀려 본체가 빠진다(#682).
+        좌표가 있으면 x·y를 같이 보내 가까운 곳을 약간 우대받는다."""
+        params: dict[str, Any] = {"query": query, "size": min(limit, _PAGE_SIZE), "page": 1, "sort": "accuracy"}
         if lat is not None and lng is not None:
-            params.update({"x": lng, "y": lat, "sort": "distance"})
+            params.update({"x": lng, "y": lat})
         body = self._http.request_json(
             self.name, "keyword", "GET", f"{BASE}/keyword.json", headers=self._headers(), params=params,
         )
