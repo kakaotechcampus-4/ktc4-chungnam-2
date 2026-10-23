@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import CourseSheet from './CourseSheet'
 
@@ -11,6 +11,7 @@ const BASE = 'http://localhost'
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
 afterEach(() => {
+  vi.useRealTimers()
   server.resetHandlers()
   server.events.removeAllListeners()
   resetScenario('happy-path')
@@ -38,7 +39,9 @@ const error = (status: number, code: string, detail?: Record<string, unknown>) =
 
 describe('AI 코스 짜기 시트', () => {
   it('진입 → 진행(작업 기록이 늘어남) → 결과, 끝나면 조회를 멈춘다', async () => {
-    const user = userEvent.setup()
+    // 실제 시간을 기다리지 않는다 — 시간은 우리가 앞으로 돌린다(shouldAdvanceTime 은 msw 의 비동기가 멈추지 않게).
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) })
     let polls = 0
     server.events.on('request:start', ({ request }) => {
       if (new URL(request.url).pathname.startsWith('/course-runs/')) polls++
@@ -56,10 +59,12 @@ describe('AI 코스 짜기 시트', () => {
     expect(within(log).getByText('코드')).toBeInTheDocument() // 누가 칩
 
     // 두 번째 조회에서 5개로 늘어난다(앞 줄은 그대로, 뒤에만 붙음)
-    await waitFor(() => expect(within(screen.getByRole('list', { name: '작업 기록' })).getAllByRole('listitem')).toHaveLength(5), { timeout: 5000 })
+    await vi.advanceTimersByTimeAsync(2000)
+    await waitFor(() => expect(within(screen.getByRole('list', { name: '작업 기록' })).getAllByRole('listitem')).toHaveLength(5))
 
     // 결과
-    expect(await screen.findByText('요청한 것', undefined, { timeout: 6000 })).toBeInTheDocument()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(await screen.findByText('요청한 것')).toBeInTheDocument()
     expect(screen.getByText('하루 걷는 시간 줄이기')).toBeInTheDocument()
     expect(screen.getByText('지킴')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /첫째 날 · / })).toBeInTheDocument()
@@ -75,9 +80,42 @@ describe('AI 코스 짜기 시트', () => {
 
     // done 이후엔 더 부르지 않는다
     const seen = polls
-    await new Promise((r) => setTimeout(r, 2500))
+    await vi.advanceTimersByTimeAsync(6000)
     expect(polls).toBe(seen)
-  }, 20000)
+  })
+
+  it('진행 중에 조회가 실패하면 진행 화면 밑에 「다시 불러오기」가 뜨고, 누르면 다시 이어진다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) })
+    let calls = 0
+    const running = {
+      id: 'run_p', map_id: 'map_1', status: 'running', outcome: null, failure_code: null, goals: [], unmatched: [], steps: [], days: [],
+      violations: [], checks: [], excluded: [], snapshot_at: '2026-10-21T00:00:00Z', stale: false, created_at: '2026-10-21T00:00:00Z', finished_at: null,
+    }
+    server.use(
+      http.post('*/maps/:mapId/courses', () => HttpResponse.json({ course_run_id: 'run_p' }, { status: 202 })),
+      http.get('*/course-runs/run_p', () => {
+        calls++
+        if (calls === 1) return HttpResponse.json(running)
+        if (calls <= 4) return error(500, 'INTERNAL') // 폴링 한 번 + 재시도 2번이 모두 실패
+        return HttpResponse.json({ ...running, status: 'done', outcome: 'solved', finished_at: '2026-10-21T00:00:10Z' })
+      }),
+    )
+    renderSheet()
+    await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
+    expect(await screen.findByText('코스를 짜고 있어요')).toBeInTheDocument()
+
+    await vi.advanceTimersByTimeAsync(2000 + 1000 + 2000) // 두 번째 조회와 재시도 둘이 실패
+    const retry = await screen.findByRole('button', { name: '다시 불러오기' }, { timeout: 3000 })
+    expect(screen.getByText('코스를 짜고 있어요')).toBeInTheDocument() // 진행 화면은 그대로
+    const before = calls
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(calls).toBe(before) // 폴링은 멈춰 있다
+
+    await user.click(retry)
+    expect(await screen.findByText('코스를 짰어요')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 불러오기' })).not.toBeInTheDocument()
+  })
 
   it('429 는 「오늘은 다 썼어요」', async () => {
     server.use(http.post('*/maps/:mapId/courses', () => error(429, 'COURSE_LIMIT', { limit: 5, used: 5 })))
@@ -110,7 +148,8 @@ describe('AI 코스 짜기 시트', () => {
     renderSheet()
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
     expect(await screen.findByText('코스를 만들지 못했어요')).toBeInTheDocument()
-    expect(screen.getByText(/서버가 다시 켜지면서/)).toBeInTheDocument()
+    expect(screen.getByText('코스 짜기가 중간에 끊겼어요')).toBeInTheDocument()
+    expect(screen.getByText('이미 짜는 중인 코스가 있어서 그걸 보여 드려요')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '다시 짜기' }))
     expect(await screen.findByRole('button', { name: '코스 짜기' })).toBeInTheDocument() // 진입으로 돌아감
   })
