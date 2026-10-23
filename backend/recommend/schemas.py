@@ -5,9 +5,9 @@ shortlist와 같은 재사용 원칙) — 이 모듈은 candidate 전용 permiss
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from authz.schemas import Permissions
 from common import categories
@@ -68,6 +68,9 @@ class EvidenceLine(BaseModel):
     fact_key: str | None = None
     fact_label: str | None = None  # fact_key의 표시 이름("한식") — constraints.FACT_LABELS
     wants: bool | None = None  # 이 특징이 있는 장소를 원하는가(#228). None = 모름
+    # 후보를 거르거나 점수 매기는 데 실제로 쓰이는 줄인가(#720) — fact_key가 있으면 true, 키 없는 줄(알레르기처럼 라벨로 옮기지
+    # 못한 사유, 「+」로 키 없이 남은 줄)은 false. 응답에는 항상 채워 내려 준다.
+    enforced: bool | None = None
     is_active: bool
     permissions: Permissions
 
@@ -77,13 +80,18 @@ class EvidenceToggleEntry(BaseModel):
     is_active: bool
 
 
+EVIDENCE_ADD_PER_REQUEST = 5   # 「+」 한 번에 5줄까지(docs/api-spec.yaml add.maxItems, #707)
+EVIDENCE_ADD_PER_RUN = 10      # run 하나에 직접 추가한 줄 10줄까지 — ×로 뺀 줄도 센다(409 EVIDENCE_LIMIT)
+
+
 class EvidenceAddEntry(BaseModel):
-    text: str = Field(max_length=140)
+    # 앞뒤 공백을 뗀 뒤 1~140자 — 빈 값·공백만은 422(#707, #716)
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=140)]
 
 
 class EvidencePatchRequest(BaseModel):
     toggle: list[EvidenceToggleEntry] = Field(default_factory=list)
-    add: list[EvidenceAddEntry] = Field(default_factory=list)
+    add: list[EvidenceAddEntry] = Field(default_factory=list, max_length=EVIDENCE_ADD_PER_REQUEST)
 
 
 class Region(BaseModel):
