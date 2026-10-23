@@ -1087,6 +1087,39 @@ def test_execute_run_unwanted_unknown_soft_checks_still_feed_scoring(db_session)
     assert "일식" in candidate.reason
 
 
+def _run_with_written_season_preference(db_session, *, start_date, end_date):
+    """직접 쓴 선호 cherry_blossom(작성자 user_2), 후보 라벨은 벚꽃 명소 참. 지도 여행 기간만 바꾼다(#681-6)."""
+    from datetime import date
+    from maps.models import Map as MapRow
+
+    _make_members(db_session, user_ids=["user_1"])   # 지도 행(여행 기간)이 먼저 있어야 한다
+    run = _make_run(db_session, status="collecting_evidence")
+    db_session.get(MapRow, run.map_id).start_date = date.fromisoformat(start_date)
+    db_session.get(MapRow, run.map_id).end_date = date.fromisoformat(end_date)
+    _make_region(db_session, run, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_2", "source": "reaction", "text": "벚꽃 보고 싶어요", "badge": "preferred",
+         "fact_key": "cherry_blossom", "wants": True},
+    ])
+    places = [PlaceStub(place_id="cand", lat=35.0005, lng=129.0005)]
+    facts = _FakePlaceFacts({"cand": {"cherry_blossom": True}})
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
+    [candidate] = service.list_candidates(db_session, str(run.id))   # 시즌 밖이어도 후보는 거르지 않는다
+    return candidate
+
+
+def test_season_key_counts_when_the_trip_overlaps_the_season(db_session):
+    candidate = _run_with_written_season_preference(db_session, start_date="2027-03-31", end_date="2027-04-02")
+    assert "cherry_blossom" in {c["fact_key"] for c in candidate.checks}
+    assert "벚꽃" in candidate.reason
+
+
+def test_season_key_outside_the_trip_is_neither_scored_nor_shown_as_met(db_session):
+    candidate = _run_with_written_season_preference(db_session, start_date="2027-01-10", end_date="2027-01-12")
+    assert "cherry_blossom" not in {c["fact_key"] for c in candidate.checks}
+    assert "벚꽃" not in candidate.reason
+
+
 def test_publish_candidate_pin_checks_follow_the_same_filter(db_session):
     """게시(pins 복사)는 candidate.checks 그대로라 같은 기준이다 — 원하지 않은 unknown soft는 핀에도 없다."""
     run, candidate = _run_with_wanted_and_unwanted_soft_keys(db_session)
