@@ -1,19 +1,15 @@
 """can_recommend 판정 규칙(순수 함수) — AI 추천 후보 풀에 넣어도 되는 장소인가(2026-10-15 결정, 2026-10-24 개정 #681).
 
-DB를 모른다. 분류와 정예 여부를 받아 true/false만 정한다. 새 모델 호출은 없다.
-비정예 음식점·카페는 확정 라벨이 인허가 자동값(cuisine_* 등)뿐이라 라벨 수가 품질 신호가 아니므로 임계를 두지 않고 false다.
-정본: docs/data-model.md places 절, docs/constraints.md「추천 가능(can_recommend)」.
+추천은 정예 데이터에서만 가능하다 — 정예 외 데이터는 핀을 꽂을 수 있는 최소 정보일 뿐이다. 그래서 can_recommend = places.curated 하나다
+(분류·라벨 수는 보지 않는다). 새 모델 호출은 없다. 정본: docs/data-model.md places 절, docs/constraints.md「추천 가능(can_recommend)」.
 """
 
 from __future__ import annotations
 
-# 정예가 아니어도 항상 추천 가능한 분류(관광지는 TourAPI 라벨이 7개 이상으로 모두 충분하다).
-ALWAYS_RECOMMENDABLE = frozenset({"관광지"})
 
-
-def can_recommend(category: str, *, curated: bool) -> bool:
-    """정예 적재 행이거나 항상 추천 가능한 분류(관광지)면 true. 비정예 음식점·카페·모르는 분류는 false(후보에서 뺀다)."""
-    return curated or category in ALWAYS_RECOMMENDABLE
+def can_recommend(*, curated: bool) -> bool:
+    """정예 적재 행(places.curated)이면 true, 아니면 false — 분류와 무관하다."""
+    return curated
 
 
 # ---------------------------------------------------------------- 영업 중 판정 (#690)

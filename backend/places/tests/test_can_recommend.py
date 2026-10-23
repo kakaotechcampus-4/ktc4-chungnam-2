@@ -17,20 +17,15 @@ LAT, LNG = 37.5445, 127.0561
 
 # ---- 판정 규칙(순수 함수) ----
 
-@pytest.mark.parametrize("category,curated,expected", [
-    ("음식점", False, False), ("카페", False, False),    # 비정예 음식점·카페는 라벨이 몇 개든 false
-    ("관광지", False, True),                              # 관광지는 정예가 아니어도 true
-    ("음식점", True, True), ("카페", True, True), ("관광지", True, True),   # 정예는 true
-    ("숙소", False, False),                              # 모르는 분류는 추천 후보에서 뺀다
-])
-def test_rule(category, curated, expected):
-    assert core.can_recommend(category, curated=curated) is expected
+@pytest.mark.parametrize("curated,expected", [(True, True), (False, False)])
+def test_rule(curated, expected):
+    assert core.can_recommend(curated=curated) is expected
 
 
-def test_label_count_is_not_an_input_any_more():
-    assert not hasattr(core, "KNOWN_LABEL_THRESHOLDS")
+def test_neither_category_nor_label_count_is_an_input():
+    assert not hasattr(core, "KNOWN_LABEL_THRESHOLDS") and not hasattr(core, "ALWAYS_RECOMMENDABLE")
     with pytest.raises(TypeError):
-        core.can_recommend("음식점", 99, curated=False)   # type: ignore[misc]
+        core.can_recommend("관광지", curated=False)   # type: ignore[misc]
 
 
 # ---- DB 헬퍼 ----
@@ -54,14 +49,15 @@ def _flag(db, place):
 
 # ---- 재계산 ----
 
-def test_recompute_flags_curated_and_tourist_spots_only_and_reports_counts_per_category(db_session):
+def test_recompute_flags_curated_only_and_reports_counts_per_category(db_session):
     plain, many_labels = _place(db_session, "비정예", labels=1), _place(db_session, "라벨 많은 비정예", labels=9)
     cafe_plain, cafe_curated = _place(db_session, "카페", "카페", labels=5), _place(db_session, "정예 카페", "카페", curated=True)
-    sight = _place(db_session, "관광지", "관광지")
+    sight, sight_curated = _place(db_session, "관광지", "관광지"), _place(db_session, "정예 관광지", "관광지", curated=True)
     result = repository.recompute_can_recommend(db_session)
-    assert [_flag(db_session, p) for p in (plain, many_labels, cafe_plain, cafe_curated, sight)] == [False, False, False, True, True]
+    assert [_flag(db_session, p) for p in (plain, many_labels, cafe_plain, cafe_curated)] == [False, False, False, True]
     assert result.counts[("음식점", False)] == 2 and result.counts[("카페", True)] == 1 and result.counts[("카페", False)] == 1
-    assert result.counts[("관광지", True)] == 1
+    assert _flag(db_session, sight) is False and _flag(db_session, sight_curated) is True   # 비정예 관광지도 false
+    assert result.counts[("관광지", True)] == 1 and result.counts[("관광지", False)] == 1
     assert result.changed == 2
 
 

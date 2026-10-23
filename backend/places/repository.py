@@ -358,7 +358,7 @@ def recompute_can_recommend(db: Session, *, dry_run: bool = False) -> RecomputeR
     to_true: list[uuid.UUID] = []
     to_false: list[uuid.UUID] = []
     for pid, category, current, curated in rows:
-        new = core.can_recommend(category, curated=curated)
+        new = core.can_recommend(curated=curated)
         counts[(category, new)] = counts.get((category, new), 0) + 1
         if new != current:
             (to_true if new else to_false).append(pid)
