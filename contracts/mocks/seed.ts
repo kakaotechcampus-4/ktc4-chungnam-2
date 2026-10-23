@@ -288,7 +288,7 @@ export function buildAgentState(mapId: string): Pick<StoreState, "agentSettings"
           category: "카페",
           title: "확정 리스트에 카페가 아직 없어요",
           analysis: null,
-          advice: [{ text: "확정 2곳 중 카페 0곳", is_guess: false }],
+          advice: [{ segments: [{ kind: "text" as const, text: "확정 2곳 중 카페 0곳" }], is_guess: false }],
           actions: [
             { index: 0, type: "open_recommend", label: "카페 추천 받기", params: { category: "카페" } },
             { index: 1, type: "show_pins", label: "카페 핀 보기", params: { category: "카페" } },

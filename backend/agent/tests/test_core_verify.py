@@ -72,7 +72,11 @@ def test_valid_split_diagnosis_becomes_slot_draft_without_quote_text():
                                 "params": {"category": "음식점"}}]
     assert v.draft.analysis == comparison
     quote = next(c for c in v.draft.claims if c["kind"] == "quote")
-    assert quote == {"id": "c3", "kind": "quote", "reaction_id": "r3"}   # 대조용 text는 버린다(2절 13번)
+    # 대조용 text는 버리고 검증한 범위와 그 범위의 다이제스트만 남긴다(2절 13번, #717)
+    span = "주차할 곳이 전혀 없어서"
+    assert quote == {"id": "c3", "kind": "quote", "reaction_id": "r3", "start": 0, "end": len(span),
+                     "digest": core.quote_digest(span)}
+    assert AGAINST_TEXT[quote["start"]:quote["end"]] == span
     assert AGAINST_TEXT[:4] not in json.dumps([v.draft.claims, v.record], ensure_ascii=False)
 
 
@@ -132,6 +136,35 @@ def test_claim_that_does_not_match_is_removed(claim, reason):
 
     assert _removed(v, "claims") == {claim["id"]: reason}
     assert v.outcome == "suggested"   # 남은 claim으로 성립한다
+
+
+@pytest.mark.parametrize("text, quote, span", [
+    ("주차할 곳이 전혀 없어서", "곳이 전혀", (4, 9)),
+    ("  주차할 곳이\n\n 전혀 없어요", "곳이 전혀", (6, 13)),   # 범위는 정규화 전 원문 기준(줄바꿈 포함)
+    ("가나 가나다", "가나다", (3, 6)),                          # 처음 나오는 곳
+    ("가나다", "라", None),
+    ("가나다", "", None),
+])
+def test_quote_span_is_in_original_text(text, quote, span):
+    assert core.quote_span(text, quote) == span
+    if span:
+        assert core._normalize(text[span[0]:span[1]]) == quote
+
+
+def test_quote_longer_than_the_limit_is_removed():
+    """인용은 QUOTE_MAX_CHARS(60)까지다(#717). 범위는 원문 기준으로 잰다."""
+    long_text = "가" * 70
+    r3 = reason(R3, long_text, alias="m3")
+    long_snap = replace(SNAP, reasons=(SNAP.reasons[0], r3))
+    ok = C_QUOTE | {"text": "가" * core.QUOTE_MAX_CHARS}
+    too_long = C_QUOTE | {"id": "c6", "text": "가" * (core.QUOTE_MAX_CHARS + 1)}
+
+    v = core.verify_diagnosis(_out(claims=[C_LIKE, C_AGAINST, ok, too_long], advice=GOOD_LINES[:2]), SPLIT,
+                              long_snap, TOOLS, member_names=NAMES)
+
+    assert _removed(v, "claims") == {"c6": "quote_too_long"}
+    [quote] = [c for c in v.draft.claims if c["kind"] == "quote"]
+    assert (quote["id"], quote["end"] - quote["start"]) == ("c3", core.QUOTE_MAX_CHARS)
 
 
 def test_tool_claim_follows_list_path_and_counts_match_other_subjects():

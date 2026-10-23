@@ -3819,10 +3819,28 @@ export interface components {
          * @enum {string}
          */
         AgentDiagnosis: "stall" | "split" | "no_reaction" | "category_gap";
-        /** @description 서버가 렌더한 문장 한 줄. is_guess=false는 확인된 사실(「확인된 것」), true는 추정(「AI 조언」, 화면에 '추정' 표시) */
+        /**
+         * @description 서버가 렌더한 문장 한 줄(#717). 에이전트의 말과 구성원이 쓴 글을 한 문자열에 섞지 않고 조각으로 나눠 내린다.
+         *     FE는 조각을 차례로 이어 그리되, quote는 구성원 의견(인용 모양), pin은 핀 이름 모양으로 따로 그린다. 조각 text의 합은 300자 이하.
+         *     is_guess=false는 확인된 사실(「확인된 것」), true는 추정(「AI 조언」, 화면에 '추정' 표시).
+         *     예: [{kind: text, text: "반대 의견이 2개 남은 뒤로 새 후보가 없어요. "}, {kind: pin, pin_id: "p1", text: "성수 칼국수"}, {kind: text, text: "에는 "}, {kind: quote, reaction_id: "r1", text: "너무 매워요"}, {kind: text, text: "라는 의견이 있어요"}]
+         */
         AgentAdviceLine: {
-            text: string;
+            segments: components["schemas"]["AdviceSegment"][];
             is_guess: boolean;
+        };
+        /**
+         * @description 문장 조각(#717). text는 에이전트 문장(서버 문구와 검증된 숫자)이다. quote는 구성원 사유 글 중 서버가 검증한 범위만이고 원문 전체가 아니다.
+         *     누가 쓴 글인지는 싣지 않는다(이름 없음). pin은 핀 이름이다(장소 이름, 실시간 핀은 사용자가 친 검색어).
+         */
+        AdviceSegment: {
+            /** @enum {string} */
+            kind: "text" | "quote" | "pin";
+            text: string;
+            /** @description kind=quote일 때만. 인용한 반응 */
+            reaction_id?: string;
+            /** @description kind=pin일 때만. 그 핀 */
+            pin_id?: string;
         };
         /**
          * @description 버튼 하나. 사람이 원래 하던 동작으로만 이어진다(확정, 삭제, 반응 변경, 근거 줄 빼기는 없다). FE가 하는 일은 docs/agent-v2.md 16.3 표.

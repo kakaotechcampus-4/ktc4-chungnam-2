@@ -392,7 +392,7 @@ agent_suggestions(                    -- 바텀시트의 지도 제안
   id uuid, map_id, run_id null references agent_runs on delete set null,
   diagnosis('stall'|'split'|'no_reaction'|'category_gap'), category null, pin_id null,
   fingerprint, evidence_hash,         -- 중복 금지(유형+카테고리+근거 id), 상태 재확인(근거 id+반응 종류+updated_at)
-  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id만). 렌더는 응답 때
+  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id, 인용 범위, 범위의 다이제스트만. 원문 없음, #717). 렌더는 응답 때 조각으로
   status('active'|'accepted'|'dismissed'|'expired'|'superseded'),
   shadow boolean default false,       -- true면 저장만 하고 화면과 이벤트에 내지 않는다
   created_at, expires_at,             -- 24시간

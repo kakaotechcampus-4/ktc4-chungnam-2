@@ -2,6 +2,12 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-24 (다섯 번째), 에이전트 문장은 조각 목록으로 (#717), 호환이 깨짐
+
+- `AgentAdviceLine.text`를 없애고 `segments`(조각 목록)를 둔다. 조각은 `{ kind: text | quote | pin, text, reaction_id?, pin_id? }`(`AdviceSegment`). `AgentSuggestion.advice`, `RunAdvice.advice`, `agent.suggested` 이벤트 페이로드가 모두 바뀐다.
+- 이유(멘토 리뷰 #680): 전에는 구성원 사유 글이 에이전트 문장 안에 통째로 섞여 내려갔고, 서버가 검증한 인용 범위보다 많은 글이 화면에 나갔다. 이제 `quote` 조각은 서버가 검증한 범위만 담고, 구성원 글은 데이터로 따로 내린다.
+- FE: 에이전트 화면(#516, #536, #589)을 만들 때 조각을 차례로 이어 그린다. `text`는 에이전트 문장, `quote`는 구성원 의견(인용 모양, 이름 없음), `pin`은 핀 이름 모양. 추천 막힘 조언(`RunAdvice`)은 `text` 조각만 나온다. 아직 이 응답을 쓰는 화면이 없어 고칠 코드는 없다. 목 서버와 타입이 바뀌었다.
+
 ## 2026-10-24 (네 번째), EvidenceLine.enforced — 걸러지지 않는 줄 구분 (#720)
 
 `EvidenceLine`에 선택 필드 `enforced: boolean`을 더했다. **후보를 거르거나 점수 매기는 데 실제로 쓰이는 줄인가**다 — `fact_key`가 있으면 true, 키 없는 줄("땅콩 알레르기가 있어서 못 먹어요"처럼 모델이 라벨로 옮기지 못한 사유)은 false. 없으면 true로 본다(구버전 서버 호환).
