@@ -135,6 +135,7 @@ export const recommendHandlers = [
         text: a.text,
         badge: "preferred", // #707 — 「+」는 선호. 목 서버는 ②를 흉내 내지 않아 키 없이 둔다
         fact_key: null,
+        enforced: false, // 키 없는 줄은 후보를 걸러 주지 않는다(#720)
         is_active: true,
         permissions: { can_disable: true },
       });

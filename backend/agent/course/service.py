@@ -314,3 +314,25 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
 def delete_by_user(db: Session, *, user_id: str) -> dict[str, int]:
     """탈퇴 — 그 사람이 요청한 run을 모두 지운다(요청 한 줄과 결과는 요청자 본인 것이다)."""
     return {"agent_course_runs": db.execute(delete(AgentCourseRun).where(AgentCourseRun.requested_by == user_id)).rowcount}
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#694) — from_user가 요청한 run을 to_user 것으로 옮긴다. 커밋은 호출자.
+    진행 중은 지도당 한 사람에 하나(uq_agent_course_runs_active)라서, 같은 지도에 둘 다 진행 중이면 from_user의 진행 중 run을
+    지운다(to_user 쪽이 이긴다). 백그라운드 실행은 그 run이 지워졌으면 아무것도 쓰지 않는다(execute_run). 하루 상한은 합치지
+    않는다 — 옮긴 run도 created_at대로 to_user의 오늘 횟수에 들어간다. 멱등, 같은 id면 아무것도 안 한다."""
+    if from_user_id == to_user_id:
+        return {"agent_course_runs": 0, "agent_course_runs_dropped": 0}
+    to_user_active_maps = select(AgentCourseRun.map_id).where(
+        AgentCourseRun.requested_by == to_user_id, AgentCourseRun.status.in_(ACTIVE_STATUSES)
+    )
+    dropped = db.execute(
+        delete(AgentCourseRun).where(
+            AgentCourseRun.requested_by == from_user_id, AgentCourseRun.status.in_(ACTIVE_STATUSES),
+            AgentCourseRun.map_id.in_(to_user_active_maps),
+        )
+    ).rowcount
+    moved = db.execute(
+        update(AgentCourseRun).where(AgentCourseRun.requested_by == from_user_id).values(requested_by=to_user_id)
+    ).rowcount
+    return {"agent_course_runs": moved, "agent_course_runs_dropped": dropped}

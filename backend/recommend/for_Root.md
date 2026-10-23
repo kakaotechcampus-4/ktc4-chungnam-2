@@ -1,8 +1,55 @@
 # 루트 리뷰 가이드 — backend/recommend
 
 `backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 네 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#617" 절이 최신, 그 아래 "#587" 절, 그 아래 "#585" 절, "#569" 절, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
+작업을 누적해서 담는다 — 아래 "#707" 절이 최신, 그 아래 "#617" 절, 그 아래 "#587" 절, 그 아래 "#585" 절, "#569" 절, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
 전체, 가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+
+---
+
+# #707 — 「+」 직접 추가는 선호, 요청당 5줄·run당 10개 상한 (멘토 리뷰 #680)
+
+## 바뀐 것
+
+- `service.add_manual_evidence`의 배지가 `reference` → `preferred`. ②에 보내는 입력 배지도 `preferred`다(프롬프트는 배지를
+  특별히 다루지 않는다). 선호 집계(`flows` 안 `preferred_authors`·`avoided_authors`)는 source를 보지 않고 badge·fact_key·wants만
+  보므로 코드 변경 없이 점수에 들어간다. ②가 키나 방향을 못 붙인 줄은 지금처럼 남고 효과가 없다.
+- 한 요청 5줄: `schemas.EvidencePatchRequest.add`에 `max_length=5` → 422 `VALIDATION_ERROR`.
+- run 하나 10개: `core.MANUAL_EVIDENCE_LIMIT = 10`, 넘으면 `AppError("EVIDENCE_LIMIT", detail={"limit": 10, "used": 이 요청 전 수})`.
+  ×로 뺀 줄도 센다. 사람이 아니라 run 단위다(다른 구성원이 넣은 것도 합산).
+- 검사는 두 번: 모델 앞 읽기 단계에서 한 번(넘으면 ②를 부르지 않는다), 모델 뒤 쓰기 단계에서 `service.lock_run`(run 행
+  `FOR UPDATE`)으로 잠근 뒤 다시 한 번. 읽기 단계 잠금은 #275 롤백으로 풀려서 동시 요청을 못 막기 때문이다. 동시 요청이
+  둘 다 앞 검사를 통과하면 늦은 쪽은 모델을 부른 뒤 409로 끝나고 줄은 남지 않는다.
+
+## 루트 확인 필요 — "10줄"을 무엇으로 세나
+
+**줄(행)이 아니라 「+」로 넣은 글 수로 센다**(`service.count_manual_entries`: source='manual' 행을 `(text, created_at)`으로 묶어
+센다. created_at은 트랜잭션 시작 시각이라 한 요청에서 넣은 줄은 같다). 글 하나에 조건이 여럿이면 행이 여럿이 되는데(#419),
+모델 앞에서는 글이 몇 행이 될지 모르고, 행으로 세면 "8개 넣었는데 막힌다"·`used`가 10을 넘는 응답이 생긴다. 상한의 목적(모델
+입력 수)과 FE 문구("직접 추가는 10개까지예요")에 맞춰 **글 수로 정했다**(2026-10-24 사용자 확인).
+
+- 한 요청 안의 같은 글은 `patch_evidence`가 ②를 부르기 전에 하나로 줄인다(`dict.fromkeys`, 순서 유지). 같은 글 5개를 보내 1개로
+  세이면서 ②에는 5개를 넣는 우회를 막는다. 다른 요청에서 같은 글을 다시 넣으면 따로 센다.
+- 남은 전제: created_at이 트랜잭션 시각이라는 것. 깨지면(행마다 다른 시각) 행 수로 세는 것과 같아져 더 엄격해질 뿐 상한이
+  뚫리지는 않는다.
+- **루트 몫**: `docs/constraints.md`·`docs/errors.md`·api-spec·CHANGELOG의 "run 하나에 10줄"을 "10개(글)"로 고친다. FE가 응답
+  줄 수로 세면 서버보다 먼저 「+」를 끈다(아래 FE 참고).
+
+## FE 참고
+
+`EvidenceLine` 응답에는 source가 없어 FE가 직접 추가한 개수를 응답만으로 셀 수 없다. 「+」 끄기는 FE가 넣은 수를 세거나
+409를 받고 끄는 방식이 된다. 직접 추가한 줄은 이제 `badge: preferred`라 "가능하면 맞춰주세요" 구역에 보인다
+(`frontend/src/features/recommend/model.ts:44`의 reference 구역은 v1에서 비게 된다).
+
+## 바뀐 테스트
+
+- 기대값만 새 규칙으로: `test_service.py::test_add_manual_evidence_is_preferred`,
+  `test_flows.py::test_patch_evidence_add_creates_manual_preferred_line`, `::test_plus_manual_line_goes_through_plan_evidence_and_is_preferred`,
+  `::test_plus_manual_text_with_several_conditions_adds_a_preferred_line_per_condition`
+- 새 테스트(`test_flows.py` "「+」 직접 추가는 선호, 상한" 절, `test_router.py`): "회 좋아해" → 횟집 1위·실격 0, 키·방향 없는 줄은 순위
+  불변, 11번째 409(detail, 모델 안 부름), 뺀 줄도 셈, 조건 여럿인 글은 하나로 셈, 토글만인 요청·반응 줄은 세지 않음, 동시 요청
+  (test_engine 두 세션), 같은 글 반복은 ②에 한 번, 라우터 6줄 422·11번째 409.
+- 점수: 「+」 선호 작성자는 지지 1명이지만 직접 쓴 선호라 `WRITTEN_PREFERENCE_POINTS`(3점)다(#414). 테스트는 점수 값이 아니라
+  순위로 확인한다(후보에 score 컬럼이 없다).
 
 ---
 
@@ -690,3 +737,7 @@ recommend 소스+테스트 전부 통과(마이그레이션 파일의 `Union`/`S
 - `PlaceFactsGateway`에 선택 메서드 `get_hours`를 더했다(실제 모드는 `places.api.get_hours`). 이 메서드가 없는 게이트웨이(dev·다른 모듈 테스트의 가짜)는 전부 「모름」(통과 + 확인 필요)이다.
 - 확인 필요 기준: 휴무가 아닌 요일 중 영업이 확인된 요일(hours에 구간이 있는 요일)이 하나도 없으면 `needs_check`다. 즉 행이 없는 경우뿐 아니라 `closed_days`만 있고 여행 요일이 거기 없는 경우(휴무는 아니지만 영업 여부는 모름)도 확인 필요로 둔다 — 문서 「영업 중 판정」의 `unknown` 정의를 따랐다.
 - known 통과 체크의 문구는 「여행 기간에 영업하는 날이 있음」(`PASSED_LABELS["is_open"]`)이다. 다른 문구를 원하면 알려 달라.
+
+## #720 (2026-10-24)
+
+- EvidenceLine에 `enforced`를 더했다(`fact_key is not None`, 응답에 항상 채움). 구현은 `flows._evidence_response` 한 곳이다. 스펙 PR #725가 정본이며 이견 없음.

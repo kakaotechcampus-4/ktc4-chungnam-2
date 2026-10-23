@@ -1,13 +1,12 @@
 """
 게스트 제한(#472) 통합 테스트 — 지도 만들기 403, 방장 후임·직접 넘기기에서 게스트 제외.
-게스트 계정은 users 행의 is_guest를 직접 켠다(conftest.py 참고 — 실제 PostgreSQL 필요).
+게스트 계정은 있는 사용자의 로그인 수단을 지워 만든다(#694, auth.testing.make_guest — 실제 PostgreSQL 필요).
 """
 
 import pytest
-from sqlalchemy import update
 
 import maps.api as maps_api
-from auth.models import User
+from auth.testing import make_guest
 from maps.core import MAP_LIMIT, MembershipEntry, check_owner_target
 from maps.models import Map as MapRow
 from maps.tests.test_delete_leave_api import (
@@ -19,7 +18,7 @@ GUEST = "user_guest"
 
 
 def _make_guest(db_session, user_id=GUEST):
-    db_session.execute(update(User).where(User.id == user_id).values(is_guest=True))
+    make_guest(db_session, user_id)
     db_session.commit()
 
 

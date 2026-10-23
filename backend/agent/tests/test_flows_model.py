@@ -163,7 +163,10 @@ def test_split_diagnosis_is_verified_and_saved(world, factory):
     assert inp["pin_id"] == pin_id and inp["comparison"]["conflict_type"] == "unclear"   # dev ②는 키를 안 붙인다
     sug = world.one(AgentSuggestion, map_id=map_id)
     assert (sug.diagnosis, sug.shadow, sug.title, sug.pin_id is not None) == ("split", False, "의견이 갈린 핀이 있어요", True)
-    assert {"id": "c3", "kind": "quote", "reaction_id": against} in sug.claims   # 인용은 id만
+    quote = next(c for c in sug.claims if c["kind"] == "quote")
+    # 인용은 id와 검증한 범위, 그 범위의 다이제스트만(원문 없음, #717)
+    assert (quote["reaction_id"], quote["start"], quote["end"]) == (against, 0, 8)
+    assert set(quote) == {"id", "kind", "reaction_id", "start", "end", "digest"}
     assert sug.analysis == inp["comparison"]
     assert sug.actions == [{"index": 0, "type": "open_recommend", "label": "음식점 추천 받기",
                             "params": {"category": "음식점"}}]
@@ -176,6 +179,12 @@ def test_split_diagnosis_is_verified_and_saved(world, factory):
     assert [c["name"] for c in run.tool_calls] == ["get_reasons"]
     [(type_, payload)] = suggestion_events(world, map_id)   # 모델 유형도 노출(#582)
     assert (type_, payload["id"], payload["diagnosis"]) == ("agent.suggested", str(sug.id), "split")
+    # 이벤트도 응답과 같은 조각 모양이고, 인용은 검증한 앞 8글자만 나간다 — 사유 글 전체가 아니다(#717)
+    assert payload["advice"][1]["segments"] == [
+        {"kind": "text", "text": "🚫 쪽은 "}, {"kind": "quote", "text": AGAINST_TEXT[:8], "reaction_id": against},
+        {"kind": "text", "text": "라고 했어요"},
+    ]
+    assert AGAINST_TEXT not in json.dumps(payload, ensure_ascii=False)
     dumped = _dump_agent_rows(factory)
     assert LIKE_TEXT not in dumped and AGAINST_TEXT not in dumped and AGAINST_TEXT[:8] not in dumped
 

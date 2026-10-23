@@ -1,0 +1,320 @@
+"""API edge 케이스 실행기 — 실제 앱(TestClient) + 격리 DB(pingo_eval) + 실제 모델(추천 구조화 호출 포함).
+키·시크릿은 출력하지 않는다. 결과는 표준출력에 `ID | 판정 | 메모`로 낸다(qa/results/<날짜>.md에 옮겨 적는다).
+
+usage (backend 폴더에서):
+  PYTHONUTF8=1 DATABASE_URL=postgresql://pingo:pingo@localhost:5432/pingo_eval python ../qa/harness/run_api_cases.py [ID ...]
+판정: PASS(기대대로) | FAIL(기대와 다름 — 버그 후보) | INFO(관찰만) | ERR(하네스 오류)
+"""
+import sys
+import threading
+import unicodedata
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+
+sys.path.insert(0, ".")
+import sqlalchemy as sa
+from fastapi.testclient import TestClient
+
+from auth.testing import ensure_users, session_cookie
+from common import database
+from main import app
+
+SEONGSU = {"label": "성수", "lat": 37.5446, "lng": 127.0557}
+RESULTS = []
+
+
+def user(tag=""):
+    uid = f"qa_{uuid.uuid4().hex[:8]}{tag}"
+    with database.SessionLocal() as db:
+        ensure_users(db, uid, display_names={uid: f"QA {uid[-6:]}"})
+        db.commit()
+    return uid, TestClient(app, cookies=session_cookie(uid))
+
+
+def place(cat="음식점", skip=0, fact=None):
+    q = """select name, ST_Y(geom::geometry), ST_X(geom::geometry), category from places p
+           where curated and status='open' and category=:c"""
+    if fact:
+        q += " and exists (select 1 from place_facts f where f.place_id=p.id and f.fact_key=:fk and f.value=to_jsonb(true))"
+    q += " order by ST_Distance(geom, ST_SetSRID(ST_MakePoint(127.0557,37.5446),4326)::geography) offset :s limit 1"
+    with database.SessionLocal() as db:
+        return db.execute(sa.text(q), {"c": cat, "s": skip, "fk": fact}).first()
+
+
+def new_map(c, start="2026-11-10", end="2026-11-12", **kw):
+    r = c.post("/maps", json={"title": "QA 지도", "start_date": start, "end_date": end, "region": SEONGSU, **kw})
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def add_pin(c, mid, skip=0, cat="음식점", fact=None):
+    name, lat, lng, cat = place(cat, skip, fact)
+    r = c.post(f"/maps/{mid}/pins", json={"category": cat, "place_id": "hint", "place_name": name, "lat": lat, "lng": lng})
+    return r
+
+
+def rec(cid, verdict, note=""):
+    RESULTS.append((cid, verdict, note))
+    print(f"{cid} | {verdict} | {note}", flush=True)
+
+
+def check(cid, cond, ok, bad):
+    rec(cid, "PASS" if cond else "FAIL", ok if cond else bad)
+
+
+# ───────── 케이스 ─────────
+def a01_a02():
+    _, c = user(); mid = new_map(c); pin = add_pin(c, mid).json()["id"]
+    for n in (139, 140):
+        r = c.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_text": "가" * n})
+        check(f"A01.{n}", r.status_code == 200, "200", f"{r.status_code} {r.text[:120]}")
+    r = c.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_text": "가" * 141})
+    check("A02", r.status_code == 422, "141자 422", f"{r.status_code} {r.text[:120]}")
+
+
+def a03():
+    _, c = user(); mid = new_map(c); pin = add_pin(c, mid).json()["id"]
+    for label, txt in (("empty", ""), ("spaces", "   "), ("newline", "\n\t "), ("missing", None)):
+        body = {"type": "against"}
+        if txt is not None:
+            body["reason_text"] = txt
+        r = c.put(f"/pins/{pin}/reaction", json=body)
+        check(f"A03.{label}", r.status_code == 422, "422", f"{r.status_code} {r.text[:120]}")
+
+
+def a04_a05():
+    _, c = user(); mid = new_map(c); pin = add_pin(c, mid).json()["id"]
+    cases = {
+        "emoji": "맛있어요 😋🍜 또 가고 싶어요", "zwj": "아이랑 👨‍👩‍👧‍👦 가기 좋아요",
+        "nfd": unicodedata.normalize("NFD", "한식이 좋아요"), "zerowidth": "조​용​한 곳",
+        "mixed": "ラーメン이 먹고 싶어요 ramen", "html": "<b>시끄러워요</b><script>alert(1)</script>",
+        "sql": "'; DROP TABLE places; --", "url": "https://evil.example/ 여기 가요",
+    }
+    for k, txt in cases.items():
+        r = c.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_text": txt})
+        if r.status_code != 200:
+            rec(f"A04/5.{k}", "FAIL", f"{r.status_code} {r.text[:120]}"); continue
+        back = c.get(f"/pins/{pin}/reactions").json()
+        stored = next((x.get("reason_text") for x in back if x.get("reason_text") is not None), None)
+        note = "저장값 원문과 동일" if stored == txt else f"저장값 변형됨: {stored!r}"
+        rec(f"A04/5.{k}", "PASS" if stored == txt else "INFO", note)
+
+
+def a06_a09():
+    _, c = user(); mid = new_map(c); pin = add_pin(c, mid).json()["id"]
+    c.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})
+    run = c.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+    rid = run.json()["id"]
+    r = c.patch(f"/runs/{rid}/evidence", json={"add": [{"text": t} for t in ["한식", "조용한 곳", "주차 가능", "웨이팅 짧음", "가성비"]]})
+    check("A06", r.status_code == 200, "5줄 200", f"{r.status_code} {r.text[:150]}")
+    r = c.patch(f"/runs/{rid}/evidence", json={"add": [{"text": f"조건{i}"} for i in range(6)]})
+    check("A07", r.status_code == 422, "6줄 422", f"{r.status_code} (스펙은 422) {r.text[:150]}")
+    n = 0
+    last = None
+    for i in range(8):
+        last = c.patch(f"/runs/{rid}/evidence", json={"add": [{"text": f"추가{i}"}]})
+        n += last.status_code == 200
+    check("A08", last.status_code == 409 and last.json().get("code") == "EVIDENCE_LIMIT",
+          "run당 상한 409 EVIDENCE_LIMIT", f"추가 요청 8번 모두 후 마지막 {last.status_code} {last.text[:120]} (성공 {n}회; 스펙은 run당 10줄)")
+    for label, txt in (("empty", ""), ("len141", "가" * 141)):
+        r = c.patch(f"/runs/{rid}/evidence", json={"add": [{"text": txt}]})
+        check(f"A09.{label}", r.status_code == 422, "422", f"{r.status_code} {r.text[:120]}")
+
+
+def a10_a12():
+    _, c = user()
+    def mk(title="t", **kw):
+        return c.post("/maps", json={"title": title, "start_date": "2026-11-10", "end_date": "2026-11-12", "region": SEONGSU, **kw})
+    check("A10.100", mk("가" * 100).status_code == 201, "100자 201", "100자 실패")
+    r = mk("가" * 101); check("A10.101", r.status_code == 422, "101자 422", f"{r.status_code}")
+    r = mk(""); check("A10.empty", r.status_code == 422, "빈 제목 422", f"{r.status_code}")
+    r = mk("제목 😋🍜"); check("A10.emoji", r.status_code == 201, "이모지 201", f"{r.status_code}")
+    def mk2(s, e):
+        return c.post("/maps", json={"title": "d", "start_date": s, "end_date": e, "region": SEONGSU})
+    r = mk2("2026-11-10", "2026-11-10"); check("A11.sameday", r.status_code == 201, "같은 날 201", f"{r.status_code}")
+    r = mk2("2026-11-12", "2026-11-10"); check("A11.inverted", r.status_code == 422, "종료<시작 422", f"{r.status_code}")
+    r = mk2("2026-11-10", "2028-11-10"); rec("A11.2years", "INFO", f"2년짜리 여행 → {r.status_code}")
+    r = mk2("2020-01-01", "2020-01-03"); rec("A11.past", "INFO", f"과거 날짜 → {r.status_code}")
+    r = c.post("/maps", json={"title": "n", "region": SEONGSU}); rec("A11.nodates", "INFO", f"날짜 없음 → {r.status_code}")
+    mid = new_map(c)
+    r = c.patch(f"/maps/{mid}", json={"start_date": "2027-01-01"}); check("A12", r.status_code == 422, "start만 end 뒤로 PATCH 422", f"{r.status_code} {r.text[:120]}")
+
+
+def a13_a14():
+    _, c = user(); mid = new_map(c)
+    r1 = add_pin(c, mid); r2 = add_pin(c, mid)
+    check("A13.seq", r1.status_code == 201 and r2.status_code == 409 and r2.json().get("code") == "PIN_DUPLICATE",
+          "두 번째 409 PIN_DUPLICATE", f"{r1.status_code}/{r2.status_code} {r2.text[:100]}")
+    mid2 = new_map(c); name, lat, lng, cat = place("카페", 3)
+    def go(_):
+        _, cc = user(); return None
+    codes = []
+    def one(_):
+        cl = TestClient(app, cookies=c.cookies)
+        r = cl.post(f"/maps/{mid2}/pins", json={"category": cat, "place_id": "hint", "place_name": name, "lat": lat, "lng": lng})
+        codes.append(r.status_code)
+    with ThreadPoolExecutor(4) as ex:
+        list(ex.map(one, range(4)))
+    check("A13.race", sorted(codes).count(201) == 1 and all(x in (201, 409) for x in codes), f"동시 4요청 → {sorted(codes)}", f"동시 4요청 → {sorted(codes)}")
+    r = c.post(f"/maps/{mid}/pins", json={"category": "숙소", "place_id": "hint", "place_name": "x", "lat": 37.5, "lng": 127.0})
+    check("A14", r.status_code == 422, "숙소 핀 422", f"{r.status_code} {r.text[:100]}")
+
+
+def b01_b03():
+    uid, c = user()
+    ids = [new_map(c) for _ in range(20)]
+    r = c.post("/maps", json={"title": "21", "start_date": "2026-11-10", "end_date": "2026-11-12", "region": SEONGSU})
+    check("B01", r.status_code in (403, 409, 422) and "MAP_LIMIT" in r.text, "21번째 MAP_LIMIT", f"{r.status_code} {r.text[:120]}")
+    _, owner = user(); omid = new_map(owner); tok = owner.post(f"/maps/{omid}/invite").json()["token"]
+    r = c.post(f"/invites/{tok}/accept")
+    check("B02", "MAP_LIMIT" in r.text, "20개 보유자 수락 MAP_LIMIT", f"{r.status_code} {r.text[:120]}")
+    d = c.delete(f"/maps/{ids[0]}")
+    r = c.post(f"/invites/{tok}/accept")
+    check("B03", d.status_code == 204 and r.status_code == 200, "삭제 후 수락 200", f"del {d.status_code}, accept {r.status_code} {r.text[:100]}")
+
+
+def b04_b08():
+    uid, c = user(); mid = new_map(c)
+    for cat in ("음식점", "카페", "관광지"):   # 카테고리마다 ♥ 핀이 있어야 readiness를 통과한다
+        pin = add_pin(c, mid, cat=cat).json()["id"]
+        c.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "조용해서 좋아요"})
+    codes = []
+    for i in range(11):
+        cat = ("음식점", "카페", "관광지")[i % 3]
+        r = c.post(f"/maps/{mid}/runs", json={"category": cat}); codes.append(r.status_code)
+    last = r
+    check("B04", codes[:10] == [202] * 10 and codes[10] == 429 and last.json().get("code") == "RETRY_LIMIT",
+          "10회까지 202, 11번째 429 RETRY_LIMIT", f"{codes} {last.text[:150]}")
+    rid = c.get(f"/maps/{mid}/runs").json()[0]["id"]
+    r = c.get(f"/runs/{rid}/result")
+    check("B08", r.status_code == 409 and r.json().get("code") == "RUN_NOT_FINISHED", "execute 전 409 RUN_NOT_FINISHED", f"{r.status_code} {r.text[:120]}")
+
+
+def c01_c05():
+    uid, c = user(); mid = new_map(c); pin = add_pin(c, mid).json()["id"]
+    def react(i):
+        cl = TestClient(app, cookies=c.cookies)
+        return cl.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_text": f"동시{i}"}).status_code
+    with ThreadPoolExecutor(6) as ex:
+        codes = list(ex.map(react, range(6)))
+    n = len(c.get(f"/pins/{pin}/reactions").json())
+    check("C01", all(x == 200 for x in codes) and n == 1, f"동시 6개 PUT → 모두 200, 반응 1개", f"{codes}, 저장 {n}개")
+    c.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "좋아요"})
+    run = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}); rid = run.json()["id"]
+    c.post(f"/runs/{rid}/regions/confirm", json={})
+    def exe(_):
+        return TestClient(app, cookies=c.cookies).post(f"/runs/{rid}/execute").status_code
+    with ThreadPoolExecutor(3) as ex:
+        codes = list(ex.map(exe, range(3)))
+    res = c.get(f"/runs/{rid}/result")
+    check("C03", all(x in (200, 202, 409) for x in codes) and res.status_code == 200, f"execute 3연타 → {codes}, result {res.status_code}", f"{codes} result {res.status_code} {res.text[:100]}")
+    cands = res.json().get("candidates", [])
+    if cands:
+        cid = cands[0]["id"]
+        def pub(_):
+            return TestClient(app, cookies=c.cookies).post(f"/candidates/{cid}/publish").status_code
+        with ThreadPoolExecutor(3) as ex:
+            codes = list(ex.map(pub, range(3)))
+        pins = [p for p in c.get(f"/maps/{mid}/pins").json() if p.get("source") != "search" or True]
+        check("C04", all(x in (200, 409) for x in codes), f"publish 3연타 → {codes}", f"{codes}")
+
+
+def l01_l04():
+    uid, c = user(); mid = new_map(c); pin = add_pin(c, mid).json()["id"]
+    c.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})
+    rid = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}).json()["id"]
+    c.post(f"/runs/{rid}/regions/confirm", json={}); c.post(f"/runs/{rid}/execute")
+    tok = c.post(f"/maps/{mid}/invite").json()["token"]
+    c.delete(f"/maps/{mid}")
+    r = c.get(f"/runs/{rid}/result")
+    check("L01", r.status_code in (403, 404, 410), f"삭제 후 result {r.status_code}", f"{r.status_code} {r.text[:120]}")
+    _, other = user(); r = other.post(f"/invites/{tok}/accept")
+    check("L04", r.status_code in (404, 410), f"삭제된 지도 초대 수락 {r.status_code}", f"{r.status_code} {r.text[:120]}")
+
+
+def l05_l06():
+    uid, c = user(); mid = new_map(c)
+    tok = c.post(f"/maps/{mid}/invite").json()["token"]
+    anon = TestClient(app)
+    codes = []
+    for i in range(11):
+        r = anon.post("/auth/guest", json={"display_name": f"게스트{i}", "invite_token": tok}); codes.append(r.status_code)
+    rec("L05.guest11", "PASS" if codes[10] in (409, 429) else "FAIL", f"11번째 게스트 → {codes[10]} (전체 {codes})")
+    gc = TestClient(app, cookies=r.cookies if r.status_code == 201 else anon.cookies)
+    g = TestClient(app); gr = g.post("/auth/guest", json={"display_name": "g", "invite_token": tok})
+    if gr.status_code == 201:
+        r = g.post("/maps", json={"title": "x", "start_date": "2026-11-10", "end_date": "2026-11-12", "region": SEONGSU})
+        check("L06", r.status_code == 403 and r.json().get("code") == "GUEST_NOT_ALLOWED", "게스트 지도 생성 403", f"{r.status_code} {r.text[:100]}")
+    else:
+        rec("L06", "INFO", f"게스트 생성 불가({gr.status_code}) — 10명 상한 때문일 수 있음")
+    c.delete(f"/invites/{tok}")
+    r = TestClient(app).post("/auth/guest", json={"display_name": "late", "invite_token": tok})
+    check("L05.revoked", r.status_code == 410, "폐기 토큰 410", f"{r.status_code} {r.text[:100]}")
+
+
+def l08():
+    uid, c = user(); mid = new_map(c)
+    r = c.post("/auth/withdraw")
+    check("L08.withdraw", r.status_code == 204, "탈퇴 204", f"{r.status_code} {r.text[:100]}")
+    r2 = c.get("/maps")
+    check("L08", r2.status_code == 401, "탈퇴 후 같은 쿠키 401", f"{r2.status_code}")
+    r3 = c.get(f"/maps/{mid}")
+    check("L08.map", r3.status_code in (401, 404), f"탈퇴 후 지도 접근 {r3.status_code}", f"{r3.status_code}")
+
+
+def s06():
+    _, a = user(); _, b = user(); mid = new_map(a)
+    for label, r in (("maps", b.get(f"/maps/{mid}")), ("pins", b.get(f"/maps/{mid}/pins")),
+                     ("shortlist", b.get(f"/maps/{mid}/shortlist")), ("runs", b.get(f"/maps/{mid}/runs")),
+                     ("members", b.get(f"/maps/{mid}/members"))):
+        check(f"S06.{label}", r.status_code == 404, "비구성원 404", f"{r.status_code} {r.text[:80]}")
+
+
+def l02_l03():
+    _, a = user(); _, b = user(); mid = new_map(a)
+    tok = a.post(f"/maps/{mid}/invite").json()["token"]; b.post(f"/invites/{tok}/accept")
+    pin = add_pin(b, mid).json()["id"]
+    b.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "좋아요"})
+    rid = b.post(f"/maps/{mid}/runs", json={"category": "음식점"}).json()["id"]
+    b.post("/auth/withdraw")
+    r = b.get(f"/runs/{rid}/result")
+    check("L02", r.status_code in (401, 403, 404), f"탈퇴한 요청자 접근 {r.status_code}", f"{r.status_code}")
+    check("L02.members", len(a.get(f"/maps/{mid}/members").json()) == 1, "탈퇴자는 구성원에서 빠짐", "구성원 수 불일치")
+    pins = a.get(f"/maps/{mid}/pins").json()
+    rec("L02.pin_author", "PASS" if pins and pins[0].get("created_by_display_name") == "탈퇴한 구성원" else "FAIL",
+        f"탈퇴자 핀 작성자 표기: {pins[0].get('created_by_display_name') if pins else None}")
+    # 방장 나가기
+    _, o = user(); _, m = user(); omid = new_map(o)
+    t2 = o.post(f"/maps/{omid}/invite").json()["token"]; m.post(f"/invites/{t2}/accept")
+    r = o.delete(f"/maps/{omid}/members/me")
+    rec("L03.owner_leaves_with_member", "PASS" if r.status_code in (204, 409) else "FAIL", f"구성원 있는 방장 나가기 → {r.status_code} {r.text[:80]}")
+    _, solo = user(); smid = new_map(solo)
+    r = solo.delete(f"/maps/{smid}/members/me")
+    rec("L03.owner_alone", "PASS" if r.status_code in (409, 204) else "FAIL", f"혼자인 방장 나가기 → {r.status_code} {r.text[:80]}")
+
+
+def s03_s05():
+    _, a = user(); _, b = user(); mid = new_map(a)
+    r = a.get("/me/notifications"); rec("S03.list", "PASS" if r.status_code == 200 else "FAIL", f"{r.status_code}")
+    r = a.post("/me/notifications/read", json={"ids": ["00000000-0000-0000-0000-000000000000"]})
+    rec("S03.read_unknown", "PASS" if r.status_code in (200, 204, 404, 422) else "FAIL", f"없는 알림 읽음 → {r.status_code}")
+    r = a.get(f"/maps/{mid}/shortlist"); check("S05.empty", r.status_code == 200 and r.json() == [], "빈 확정 리스트 200 []", f"{r.status_code} {r.text[:80]}")
+    r = a.get(f"/maps/{mid}/shortlist/export"); rec("S05.export_empty", "PASS" if r.status_code in (200, 409, 422) else "FAIL", f"빈 리스트 내보내기 → {r.status_code}")
+    for label, body in (("empty", {"message": ""}), ("long", {"message": "가" * 5000}), ("ok", {"message": "좋아요"})):
+        r = a.post("/feedback", json=body); rec(f"S04.{label}", "INFO", f"{r.status_code} {r.text[:80]}")
+
+
+CASES = {"A01": a01_a02, "A03": a03, "A04": a04_a05, "A06": a06_a09, "A10": a10_a12, "A13": a13_a14, "B01": b01_b03,
+         "B04": b04_b08, "C01": c01_c05, "L01": l01_l04, "L05": l05_l06, "L02": l02_l03, "L08": l08, "S03": s03_s05, "S06": s06}
+
+if __name__ == "__main__":
+    want = set(sys.argv[1:])
+    for name, fn in CASES.items():
+        if want and name not in want:
+            continue
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001 — 하네스 오류는 케이스 단위로 격리
+            rec(name, "ERR", f"{type(e).__name__}: {str(e)[:200]}")
+    p = sum(1 for r in RESULTS if r[1] == "PASS"); f = sum(1 for r in RESULTS if r[1] == "FAIL")
+    print(f"\n합계: PASS {p} / FAIL {f} / INFO·ERR {len(RESULTS) - p - f}")

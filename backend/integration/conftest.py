@@ -25,8 +25,7 @@ import pins.models  # noqa: F401
 import places.models  # noqa: F401 — pins가 get_places(db)로 이름·URL을 읽고, recommend 통합 테스트가 자체 장소 DB를 쓴다
 import recommend.models  # noqa: F401
 import shortlist.models  # noqa: F401
-from auth.models import User
-from auth.testing import session_cookie
+from auth.testing import create_kakao_user, session_cookie
 from common.database import Base, get_db_session, session_scope
 
 BASE_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://pingo:pingo@localhost:5432/pingo")
@@ -121,7 +120,7 @@ def app_client(db_session, fake_places):
 @pytest.fixture()
 def two_users(db_session):
     """로그인해 있는 사용자 둘. 서명된 세션 쿠키를 돌려준다(#126)."""
-    db_session.add(User(id="user_a", provider="kakao", provider_user_id="pa", display_name="철수"))
-    db_session.add(User(id="user_b", provider="kakao", provider_user_id="pb", display_name="영희"))
+    create_kakao_user(db_session, "user_a", provider_user_id="pa", display_name="철수")
+    create_kakao_user(db_session, "user_b", provider_user_id="pb", display_name="영희")
     db_session.commit()
     return session_cookie("user_a"), session_cookie("user_b")

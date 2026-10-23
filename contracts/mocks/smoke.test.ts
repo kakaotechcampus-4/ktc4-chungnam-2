@@ -1126,7 +1126,11 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
     resetScenario("no-results");
     const mine = await fetch(`${BASE}/runs/run_no_results/advice`);
     expect(mine.status).toBe(200);
-    expect(await mine.json()).toMatchObject({ kind: "radius", actions: [{ type: "widen_radius" }] });
+    const advice = await mine.json();
+    expect(advice).toMatchObject({ kind: "radius", actions: [{ type: "widen_radius" }] });
+    // #717 — 문장은 조각 목록이다. 조언은 인용이 없어 text 조각만
+    expect(advice.advice[0].segments[0]).toMatchObject({ kind: "text" });
+    expect(advice.advice[0]).not.toHaveProperty("text");
 
     store.runAdvice["run_no_results"] = null;
     expect((await fetch(`${BASE}/runs/run_no_results/advice`)).status).toBe(204);

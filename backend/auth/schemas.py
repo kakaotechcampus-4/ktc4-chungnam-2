@@ -19,7 +19,7 @@ class CurrentUser:
     (display_name, session_id) 호출부 시그니처가 바뀌지 않게 객체로 둔다."""
 
     user_id: str
-    is_guest: bool = False   # users 행에서 채운다(#472). 기본값이라 CurrentUser(user_id=...) 호출부는 그대로 동작한다
+    is_guest: bool = False   # 로그인 수단이 없으면 게스트(#472, #694). users 행을 읽을 때 계산한 값. 기본값이라 CurrentUser(user_id=...) 호출부는 그대로 동작한다
 
 
 class UserResponse(BaseModel):
