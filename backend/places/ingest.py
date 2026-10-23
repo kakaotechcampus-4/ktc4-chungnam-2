@@ -394,6 +394,97 @@ def parse_label_rows(rows: Iterable[Mapping[str, Any]], allowed: frozenset[str])
     return out, report
 
 
+# ---------------------------------------------------------------- 영업시간·휴무일 (place_hours, #690)
+# 정예 라벨 JSON 각 항목의 info.hours·closed_days·closed_note·hours_note(place_id가 rest_·cafe_ → permit, tour_ → tourapi)와
+# 서울 관광지 별도 파일(source_id = contentid, 칸이 항목 바로 아래)을 읽는다. 칸이 하나도 없으면 행을 만들지 않는다(= 모름).
+
+HOURS_PLACE_ID_PREFIXES = {"rest_": "permit", "cafe_": "permit", "tour_": "tourapi"}
+HOURS_KEYS = ("hours", "closed_days", "closed_note", "hours_note")
+
+
+@dataclass(frozen=True)
+class HoursRow:
+    source: str
+    source_id: str
+    hours: dict | None
+    closed_days: list[str] | None
+    closed_note: str | None
+    hours_note: str | None
+
+
+def _valid_hours(raw: Any) -> dict | None:
+    """요일 7개 모두에 [[여는, 닫는], …]이 있고 시각이 "HH:MM"(자정 넘김은 24 더함)이면 그대로, 아니면 None."""
+    from places import core   # 순수 함수만 쓴다
+
+    if not isinstance(raw, dict) or set(raw) != set(core.WEEKDAYS):
+        return None
+    for spans in raw.values():
+        if not isinstance(spans, list):
+            return None
+        for span in spans:
+            if not isinstance(span, (list, tuple)) or len(span) != 2:
+                return None
+            try:
+                start, end = core.parse_minutes(span[0]), core.parse_minutes(span[1])
+            except (ValueError, AttributeError):
+                return None
+            if not 0 <= start < 24 * 60 or not start < end <= 48 * 60:
+                return None
+    return {day: [[a, b] for a, b in raw[day]] for day in core.WEEKDAYS}
+
+
+def _valid_closed_days(raw: Any) -> list[str] | None:
+    from places import core
+
+    if not isinstance(raw, list) or any(d not in core.WEEKDAYS for d in raw):
+        return None
+    return list(dict.fromkeys(raw))
+
+
+def _note(raw: Any) -> str | None:
+    text = str(raw).strip() if raw is not None else ""
+    return text or None
+
+
+def parse_hours_entries(entries: Iterable[Mapping[str, Any]], *, seoul_only: bool = True) -> tuple[list[HoursRow], Report]:
+    report = Report()
+    out: list[HoursRow] = []
+    bad_hours = bad_closed = 0
+    for entry in entries:
+        report.read += 1
+        place_id = str(entry.get("place_id", ""))
+        prefix = next((p for p in HOURS_PLACE_ID_PREFIXES if place_id.startswith(p)), None)
+        if prefix:
+            source, source_id, body = HOURS_PLACE_ID_PREFIXES[prefix], place_id[len(prefix):], entry.get("info") or {}
+        elif str(entry.get("source_id", "")).strip():
+            source, source_id, body = "tourapi", str(entry["source_id"]).strip(), entry   # 서울 관광지 별도 파일
+        else:
+            report.skip("place_id(rest_·cafe_·tour_) 또는 source_id 이상")
+            continue
+        if not source_id or not isinstance(body, Mapping):
+            report.skip("place_id(rest_·cafe_·tour_) 또는 source_id 이상")
+            continue
+        addr = str(entry.get("addr1", "")).strip()
+        if seoul_only and addr and not addr.startswith("서울"):
+            report.skip("서울 아님(--all-regions로 허용)")
+            continue
+        hours = _valid_hours(body.get("hours"))
+        closed_days = _valid_closed_days(body.get("closed_days"))
+        bad_hours += body.get("hours") not in (None, {}) and hours is None   # 그 칸만 버린다 — 다른 칸이 있으면 행은 넣는다
+        bad_closed += body.get("closed_days") is not None and closed_days is None
+        closed_note, hours_note = _note(body.get("closed_note")), _note(body.get("hours_note"))
+        if hours is None and closed_days is None and closed_note is None and hours_note is None:
+            report.skip("영업시간·휴무일 칸 없음(모름 — 행을 만들지 않는다)")
+            continue
+        out.append(HoursRow(source, source_id, hours, closed_days, closed_note, hours_note))
+        report.accept(addr or None)
+    if bad_hours:
+        report.warnings.append(f"hours 형식이 이상해 그 칸만 버린 항목 {bad_hours}개(요일 7개·HH:MM 확인)")
+    if bad_closed:
+        report.warnings.append(f"closed_days 형식이 이상해 그 칸만 버린 항목 {bad_closed}개")
+    return out, report
+
+
 # ---------------------------------------------------------------- 음식점 납품본 (#207)
 # 데이터 담당이 큐레이션한 restaurant_seoul_curated.csv(+ _labels.json). 인허가 원본과 달리 좌표가 이미 WGS84 위도/경도이고
 # 영업 중인 곳만 담겨 있어 영업상태·좌표 변환·업태→분류 대응이 없다(전부 음식점, source='permit', source_id=관리번호).

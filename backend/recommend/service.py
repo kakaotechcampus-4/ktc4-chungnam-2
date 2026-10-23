@@ -151,14 +151,34 @@ def add_reaction_evidence(db: Session, *, run_id: uuid.UUID, lines: list[dict]) 
 def add_manual_evidence(
     db: Session, *, run_id: uuid.UUID, author_id: str, text: str, fact_key: str | None = None, wants: bool | None = None,
 ) -> EvidenceLine:
-    """「+」로 직접 추가한 줄 — 배지는 reference 고정. fact_key·wants는 ②(plan_evidence)가 붙인 값이다(#254)."""
+    """「+」로 직접 추가한 줄 — 배지는 preferred 고정(#707, ♥ 사유와 같은 규칙: 순위 점수에만 들어가고 후보를 거르지
+    않는다). fact_key·wants는 ②(plan_evidence)가 붙인 값이다(#254) — 못 붙였으면 근거 줄에만 남고 효과가 없다."""
     line = EvidenceLine(
         run_id=run_id, author_id=author_id, source="manual", text=text,
-        badge="reference", fact_key=fact_key, wants=wants, is_active=True,
+        badge="preferred", fact_key=fact_key, wants=wants, is_active=True,
     )
     db.add(line)
     db.flush()
     return line
+
+
+def count_manual_entries(db: Session, run_id: uuid.UUID) -> int:
+    """이 run에 「+」로 추가한 글 수(#707) — ×로 뺀 줄도 센다. 글 하나에 조건이 여럿이면 줄이 여럿이라(#419)
+    (text, created_at)으로 묶어 센다. created_at은 트랜잭션 시작 시각이라 한 요청에서 넣은 줄은 모두 같다 — 이 전제가
+    깨지면(행마다 다른 시각) 줄 수로 세는 것과 같아져 더 엄격해진다. 한 요청 안의 같은 글은 flows가 미리 하나로 줄인다."""
+    entries = (
+        select(EvidenceLine.text, EvidenceLine.created_at)
+        .where(EvidenceLine.run_id == run_id, EvidenceLine.source == "manual")
+        .distinct()
+        .subquery()
+    )
+    return db.execute(select(func.count()).select_from(entries)).scalar_one()
+
+
+def lock_run(db: Session, run_id: uuid.UUID) -> None:
+    """run 행을 FOR UPDATE로 잠근다 — 같은 run에 동시에 온 「+」 요청이 상한을 함께 넘지 못하게(#707, 멘토 리뷰 #380).
+    잠금은 트랜잭션 끝(session_scope 커밋·롤백)에 풀린다."""
+    db.execute(select(RecommendRun.id).where(RecommendRun.id == run_id).with_for_update())
 
 
 def get_evidence_or_none(db: Session, evidence_id: str) -> EvidenceLine | None:

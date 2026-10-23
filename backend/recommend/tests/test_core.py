@@ -1,6 +1,7 @@
 """순수 함수 테스트 — DB 없이 직접 호출한다(docs/code-quality.md)."""
 
 import pytest
+from datetime import date
 
 from common.errors import AppError
 from common.geo import WALKING_SPEED_M_PER_MIN
@@ -613,6 +614,125 @@ def test_reason_does_not_print_a_member_count_that_contradicts_the_label_631():
     assert "명)" not in reason
 
 
+# ---------- out_of_season_keys (#681-6) ----------
+
+def _off(start, end):
+    return core.out_of_season_keys(date.fromisoformat(start) if start else None, date.fromisoformat(end) if end else None)
+
+
+def test_out_of_season_keys_without_dates_uses_every_key():
+    assert core.out_of_season_keys(None, None) == frozenset()
+    assert core.out_of_season_keys(date(2027, 1, 1), None) == frozenset()
+
+
+def test_out_of_season_keys_january_trip_drops_cherry_blossom_autumn_and_water():
+    assert _off("2027-01-10", "2027-01-14") == {"cherry_blossom", "autumn_foliage", "water_play"}
+
+
+def test_out_of_season_keys_overlap_by_a_single_day_counts():
+    assert "cherry_blossom" not in _off("2027-03-31", "2027-03-31")        # 3월 31일 하루
+    assert "cherry_blossom" not in _off("2027-02-28", "2027-03-01")        # 걸치기만 해도
+    assert "cherry_blossom" not in _off("2027-04-30", "2027-05-02")        # 4월 30일 하루가 겹친다
+    assert "cherry_blossom" in _off("2027-05-01", "2027-05-03")            # 하루도 안 겹침
+    assert "cherry_blossom" in _off("2027-02-01", "2027-02-28")
+
+
+def test_out_of_season_keys_new_year_trip_keeps_winter_and_a_long_trip_keeps_everything():
+    assert _off("2026-12-30", "2027-01-02") == {"cherry_blossom", "autumn_foliage", "water_play"}
+    assert _off("2026-03-01", "2027-02-28") == frozenset()
+    assert _off("2026-11-30", "2026-12-01") == {"cherry_blossom", "water_play"}   # 단풍(11월)과 겨울(12월)
+
+
+def test_sight_hearts_only_user_is_satisfied_by_a_matching_candidate_681():
+    """#681-2 — 관광지 ♥ 두 곳이 선호 14개로 번져 "1명 중 0명 충족"이던 사용자가, 표대로 거르면 정체(performance)와
+    두 곳 모두 참인 성격(quiet)만 남아 그 둘을 가진 후보에서 충족이 된다. 집계 규칙(#620)은 그대로다."""
+    everything = ("performance", "quiet", "good_view", "family_friendly", "kid_friendly", "accessible", "walkable")
+    hearted = [
+        _place(*(_check(k) for k in everything), members=frozenset({"u1"})),
+        _place(_check("performance"), _check("quiet"), _check("accessible"), _check("family_friendly"),
+               members=frozenset({"u1"})),
+    ]
+    candidate = [_check("performance"), _check("quiet"), _check("good_view", confidence="unknown")]
+
+    raw = core.build_preference_criteria(hearted, disqualifying_fact_keys=[], preferred_authors={})
+    assert len(raw) == len(everything)
+    assert core.build_member_fulfillment(candidate, hearted, raw)["satisfied"] == 0   # 고치기 전
+
+    filtered = core.filter_heart_signals(hearted, "관광지")
+    criteria = core.build_preference_criteria(filtered, disqualifying_fact_keys=[], preferred_authors={})
+    assert criteria == {"performance": True, "quiet": True}   # good_view는 1곳뿐, 편의·접근·동반은 안 쓴다
+    result = core.build_member_fulfillment(candidate, filtered, criteria)
+    assert (result["satisfied"], result["total"]) == (1, 1)
+
+
+def test_cafe_hearts_use_the_cafe_table():
+    hearted = [
+        _place(_check("bakery"), _check("franchise"), _check("quiet"), members=frozenset({"u1"})),
+        _place(_check("franchise"), _check("open_late"), members=frozenset({"u1"})),
+    ]
+    kept = {c.fact_key for place in core.filter_heart_signals(hearted, "카페") for c in place.checks}
+    assert kept == {"bakery"}   # quiet는 1곳뿐, franchise·open_late는 쓰지 않음
+
+
+# ---------- limit_preference_checks (#681-4) ----------
+
+def test_limit_preference_checks_shows_only_met_preferences_but_every_disqualifier_check():
+    checks = [
+        _check("is_open", passed=False),                                # hard — 거짓도 그대로
+        _check("is_crowded_large", passed=True, confidence="unknown"),  # hard — 모름도 그대로
+        _check("quiet", passed=True),                                   # soft 충족
+        _check("good_view", passed=False),                              # soft 거짓 → 뺀다
+        _check("photogenic", passed=True, confidence="unknown"),        # soft 모름 → 뺀다
+        _check("cuisine_korean", passed=False),                         # 🚫로 낸 soft 키 → 실격 조건이라 그대로
+    ]
+    shown = core.limit_preference_checks(checks, required_soft_keys={"cuisine_korean"}, weights={"quiet": 1})
+    assert [c.fact_key for c in shown] == ["is_open", "is_crowded_large", "quiet", "cuisine_korean"]
+
+
+def test_limit_preference_checks_keeps_the_top_five_by_weight_in_original_order():
+    keys = ["quiet", "good_view", "photogenic", "night_view", "date_spot", "walkable", "restful"]
+    weights = {k: w for k, w in zip(keys, [1, 3, 1, 3, 1, 3, 3])}
+    shown = core.limit_preference_checks([_check(k) for k in keys], required_soft_keys=set(), weights=weights)
+    assert {c.fact_key for c in shown} == {"good_view", "night_view", "walkable", "restful", "quiet"}
+    assert [c.fact_key for c in shown] == [k for k in keys if k in {c.fact_key for c in shown}]   # 동점은 앞선 쪽, 순서 유지
+
+
+def test_preference_weights_match_the_score_a_met_key_adds():
+    hearted = [_place(_check("quiet"), members=frozenset({"u1", "u2"}))]
+    authors = {"quiet": frozenset({"u1"})}
+    weights = core.preference_weights(hearted, {"quiet": True}, authors, {"cuisine_korean": frozenset({"u2"})})
+    assert weights == {"quiet": 3 + 1, "cuisine_korean": 3}
+    assert core.score_candidates({"p": [_check("quiet")]}, hearted, {"quiet": True}, authors) == {"p": weights["quiet"]}
+
+
+# ---------- 여행 기간 영업 판정 (#690) ----------
+
+def test_trip_weekday_names_follow_the_trip_days_and_cap_at_a_week():
+    assert core.trip_weekday_names(None, date(2027, 1, 3)) == []
+    assert core.trip_weekday_names(date(2027, 1, 4), date(2027, 1, 4)) == ["월"]        # 2027-01-04는 월요일
+    assert core.trip_weekday_names(date(2027, 1, 8), date(2027, 1, 11)) == ["월", "금", "토", "일"]
+    assert core.trip_weekday_names(date(2027, 1, 1), date(2027, 3, 1)) == list("월화수목금토일")
+
+
+def test_trip_open_status_closed_only_when_every_trip_day_is_closed():
+    hours = {"월": [["11:00", "21:00"]], "화": []}
+    assert core.trip_open_status(hours, None, ["화"]) == "closed"            # hours의 빈 요일
+    assert core.trip_open_status(hours, None, ["월", "화"]) == "open"        # 일부 휴무 — 통과
+    assert core.trip_open_status(None, ["월", "화"], ["월", "화"]) == "closed"   # closed_days만
+    assert core.trip_open_status(None, ["월"], ["월", "화"]) == "unknown"    # 화요일은 영업하는지 모른다
+    assert core.trip_open_status(None, [], ["월"]) == "unknown"              # 연중무휴라도 시간은 모른다
+    assert core.trip_open_status(None, None, ["월"]) == "unknown"            # 정보 없음
+    assert core.trip_open_status(hours, None, []) == "unknown"               # 여행 날짜 없음
+
+
+def test_trip_open_status_day_after_an_overnight_span_is_not_closed():
+    hours = {"금": [["18:00", "26:00"]], "토": []}   # 금요일 밤 02시까지 — 토요일 새벽에는 영업
+    assert core.trip_open_status(hours, None, ["토"]) == "open"
+    assert core.trip_open_status({"금": [["18:00", "24:00"]], "토": []}, None, ["토"]) == "closed"
+    assert core.trip_open_status({"일": [], "월": []}, None, ["월"]) == "closed"
+    assert core.trip_open_status({"일": [["10:00", "25:00"]], "월": []}, None, ["월"]) == "open"   # 일요일의 어제는 토, 월요일의 어제는 일
+
+
 # ---------- select_top_candidates ----------
 
 def test_select_top_candidates_picks_highest_scores_first():
@@ -822,10 +942,10 @@ def test_filter_heart_signals_counts_places_not_members():
     assert _keys(core.filter_heart_signals(hearted, "음식점")) == [[]]
 
 
-def test_filter_heart_signals_leaves_cafe_unchanged():
-    """카페·관광지는 아직 나누지 않았다 — 같은 키(franchise·spacious)도 그대로 쓴다."""
+def test_filter_heart_signals_leaves_categories_without_a_table_unchanged():
+    """표가 없는 카테고리는 전부 쓴다(표에 없는 키는 '쓴다')."""
     hearted = [_place(_check("franchise"), _check("spacious"), _check("quiet"), members=frozenset({"u1", "u2"}))]
-    assert core.filter_heart_signals(hearted, "카페") == hearted
+    assert core.filter_heart_signals(hearted, "숙소") == hearted
 
 
 def test_written_preference_for_an_unused_key_still_counts_but_hearts_do_not():

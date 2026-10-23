@@ -10,14 +10,24 @@ DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). 실시간 보조: Redis
 ## auth / maps
 
 ```
-users(
-  id, provider('kakao'|'guest'), provider_user_id, display_name,
-  is_guest boolean not null default false,   -- v2 #472: 이름만 입력한 임시 계정. provider='guest', provider_user_id는 임의 값(재사용 안 함)
-  guest_invite_token null,                   -- 게스트를 만든 초대 토큰. 토큰 하나당 게스트 10명 상한(GUEST_LIMIT)을 이 열로 센다
+users(                                -- 사람. 다른 모듈은 이 id만 가리킨다. 로그인 수단은 user_identities(#694)
+  id, display_name,
+  guest_invite_token null,                   -- 게스트를 만든 초대 토큰. 토큰 하나당 게스트 10명 상한(GUEST_LIMIT)을 이 열로 센다.
+                                             -- 카카오 수단을 붙이면(게스트 전환) 비운다. 상한에서 빠진다
   last_seen_at timestamptz null,             -- 게스트 정리 기준: 90일 쓰지 않으면 정리 작업(#168)이 지운다. 세션을 쓸 때 하루 한 번 갱신
   created_at, deleted_at            -- 탈퇴 시 users만 soft delete. 반응·근거 줄은 hard delete, 핀은 유지하고 작성자는 '탈퇴한 구성원'으로 표시 (12절, #155)
   sessions_valid_after timestamptz null   -- 로그아웃 시각. 이 시각 이전(같은 초 포함)에 발급된 세션 토큰은 무효, NULL이면 전부 유효 (#129)
 )
+
+user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사람(users)과 나눈다
+  id uuid, user_id → users.id, provider('kakao'), provider_user_id, created_at
+  unique(provider, provider_user_id)    -- 카카오 계정 하나는 사람 하나에만
+  unique(user_id, provider)             -- 한 사람에 카카오는 하나
+)
+-- 게스트(v2 #472) = 로그인 수단이 없는 사용자. 세션 쿠키로만 들어온다. is_guest는 저장하지 않고 "수단이 하나도 없는가"로
+--   계산한다(CurrentUser.is_guest, GET /auth/me). 저장하면 수단을 붙일 때 함께 고치는 것을 빠뜨릴 수 있다.
+-- 탈퇴(deleted_at)해도 수단은 지우지 않는다. 같은 카카오 계정의 재로그인을 "탈퇴한 계정"으로 막는 근거다(#409).
+-- 예전 users.provider, provider_user_id, is_guest는 이 리비전에서 지운다(카카오 사용자는 user_identities로 옮긴다).
 
 maps(
   id, title, start_date, end_date, member_count_expected,
@@ -162,11 +172,10 @@ places(
                                         -- AI 추천 후보 풀에 들어가도 되는 장소인가(2026-10-15 결정, 구현은 places).
                                         -- 직접 찍은 핀·검색·링크에는 영향이 없다 — 추천 후보를 고를 때만 쓴다.
                                         -- 규칙(재계산 가능한 값이다, 사람이 손으로 정하지 않는다):
-                                        --   정예 행(curated=true)은 true.
-                                        --   그 밖에는 카테고리별 확정(known) 라벨 수가 임계 이상이면 true
-                                        --   (시작값: 음식점 5개, 카페 3개 — pingo_demo 분포로 조정, 결정은 루트).
-                                        --   관광지는 true. 유흥·주점류도 같은 규칙을 쓴다(제외하지 않는다).
-                                        -- 라벨이 늘거나 적재가 끝나면 places의 재계산 스크립트로 다시 계산한다.
+                                        --   정예 행(curated=true)만 true다. 정예가 아닌 데이터(인허가 커버리지 등)는 지도에 핀을 꽂을 수 있는 최소 정보일 뿐 추천 후보가 아니다(원칙, 2026-10-24).
+                                        --   라벨 수 임계는 2026-10-24에 폐기했다 — 비정예 장소의 확정 라벨이 전부 인허가에서 자동으로
+                                        --   나온 값(cuisine_* 10개·spacious·franchise 등)이라 품질 신호가 아님을 실측으로 확인했다(#681-1).
+                                        -- 정예가 늘면(재적재) places의 재계산 스크립트로 다시 계산한다.
   kakao_place_id null, kakao_place_url null, kakao_matched_at null,
                                         -- 사용자가 검색해서 고를 때 한 건씩 매칭한 결과. 허용 범위: 카카오 장소 ID·URL·확인 일자.
                                         -- 카카오 응답의 이름·주소·좌표는 저장하지 않는다(#53)
@@ -188,7 +197,21 @@ place_facts(
   labeled_at
 )
   primary key(place_id, fact_key)
+
+place_hours(                            -- v2 #690(2026-10-24): 영업시간·휴무일. 칸이 없으면 **행이 없다 = 모름**(지어내지 않는다)
+  place_id primary key references places(id) on delete cascade,
+  hours jsonb null,                     -- {"월": [["11:00","21:00"]], "화": [["12:30","15:00"],["17:00","22:00"]], "일": []} — 요일 키 7개(월~일),
+                                         --   값은 [여는 시각, 닫는 시각] 목록(브레이크타임이면 구간 여러 개), 빈 목록 = 그 요일 휴무,
+                                         --   자정을 넘기면 24를 더한다("26:00" = 다음 날 02:00), 상시 개방 = [["00:00","24:00"]].
+                                         --   hours가 있으면 7일을 다 아는 경우다. NULL이면 모름(closed_days만 있을 수 있다)
+  closed_days text[] null,              -- 매주 쉬는 요일("월","화"…). [] = 매일 영업(연중무휴), NULL = 모름. hours가 있으면 hours에서 빈 목록인 요일과 같다
+  closed_note text null,                -- 요일로 못 담는 휴무 원문(예: "1월 1일 / 설·추석 당일", "공연별 상이") — 표시용, 판단에 쓰지 않는다
+  hours_note text null,                 -- 영업시간 원문(계절별 운영 등은 가장 긴 계절 기준으로 hours에 넣고 원문은 여기) — 표시용
+  updated_at timestamptz not null default now()
+)
 ```
+
+> **영업시간·휴무일 (v2, #690)** — 데이터 담당 공유본(2026-10-21)의 정예 라벨 JSON `info.hours`·`info.closed_days`·`closed_note`·`hours_note`(음식점 `rest_`·카페 `cafe_` 접두어, 지역 관광지 포함)와 서울 관광지 별도 파일 `tourist_seoul_closed_days.json`(`source_id`=contentid)에서 적재한다. 출처는 구글 지도 영업시간 + TourAPI 이용시간·쉬는날 + 모델로 형식 변환한 문장(데이터 담당 소관)이라 카카오 응답이 아니다 — 저장해도 된다(#53). 라벨 키(`closed_mon`…)로는 시간 구간을 못 담고 `places`에 칸을 늘리면 비대해져 별도 테이블로 둔다. 인허가 커버리지 라벨에는 `info`가 없어 행이 없다(모름). 마이그레이션은 구현 PR이 그때의 head 다음 번호로 만든다. 적재는 멱등(같은 장소는 갱신)이고 파일에 칸이 없는 장소의 기존 행은 지우지 않는다.
 
 > **2026-10-01(#53) — `places`는 자체 DB다.** 카카오 로컬 API 응답(좌표·이름·주소 포함)은 어떤 형태로도 저장하지 않으므로 이 표의 이름·좌표는 인허가 공공데이터와 TourAPI에서만 온다(v1 서울만). 이전 설계의 `source('kakao'|'google'|'naver')`와 `last_synced_at`은 없앴다. 자체 DB는 음식점·카페·관광지만 담는다(TourAPI의 숙박은 받지 않는다, 2026-10-01) — 숙소·기타 장소는 `places`에 없으므로 v1에서 핀으로 만들 수 없다(`pins.category`의 숙소·기타 값은 스키마 호환으로 남긴다). 핀이 `places.id`를 가리키도록 바꾸는 `pins` 변경은 #195에서 한다.
 >
@@ -379,7 +402,7 @@ agent_suggestions(                    -- 바텀시트의 지도 제안
   id uuid, map_id, run_id null references agent_runs on delete set null,
   diagnosis('stall'|'split'|'no_reaction'|'category_gap'), category null, pin_id null,
   fingerprint, evidence_hash,         -- 중복 금지(유형+카테고리+근거 id), 상태 재확인(근거 id+반응 종류+updated_at)
-  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id만). 렌더는 응답 때
+  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id, 인용 범위, 범위의 다이제스트만. 원문 없음, #717). 렌더는 응답 때 조각으로
   status('active'|'accepted'|'dismissed'|'expired'|'superseded'),
   shadow boolean default false,       -- true면 저장만 하고 화면과 이벤트에 내지 않는다
   created_at, expires_at,             -- 24시간
@@ -471,9 +494,18 @@ feedback(                             -- 서비스 피드백. 저장만 한다
 
 ---
 
-## 게스트 합치기 (v2, #560, 2026-10-20)
+## 게스트 전환과 합치기 (v2, #560, 2026-10-20 / 2026-10-24 개정 #694)
 
-게스트(`users.is_guest`)가 카카오로 로그인하면(`GET /auth/kakao/login`을 게스트 세션으로 시작 → 콜백) **게스트 계정의 기록을 카카오 계정으로 합친다.** 새 엔드포인트는 없다 — 로그인 시작이 게스트 id를 서명한 state 쿠키에 담고, 콜백이 카카오 계정을 찾거나 만든 뒤 **한 트랜잭션**에서 합친다. 합치기가 실패하면 카카오 로그인은 그대로 성공시키고 게스트 기록은 남긴다(`guest_merged=false`).
+게스트가 카카오로 로그인하면(`GET /auth/kakao/login`을 게스트 세션으로 시작 → 콜백) 게스트의 기록을 카카오 계정으로 잇는다. 새 엔드포인트는 없다. 로그인 시작이 게스트 id를 서명한 state 쿠키에 담고, 콜백이 카카오 수단을 찾은 뒤 한 트랜잭션에서 아래 둘 중 하나를 한다. 게스트 행은 먼저 `FOR UPDATE`로 잠근다(같은 게스트로 겹친 콜백은 한쪽만 한다).
+
+| 그 카카오 계정 | 처리 | 다른 모듈 |
+| --- | --- | --- |
+| 처음(수단이 없다) | 게스트 행에 카카오 수단을 붙인다. 사용자 id 그대로, 표시 이름은 게스트 때 이름 그대로, `guest_invite_token`은 비운다 | 아무것도 하지 않는다 |
+| 이미 쓰던 사용자가 있다 | 아래 합치기. 게스트의 기록을 그 사용자로 옮기고 게스트 행을 지운다 | 모듈마다 `reassign_user` |
+
+같은 카카오 계정이 두 게스트에 동시에 붙으면 `unique(provider, provider_user_id)`가 막고, 나중 요청은 합치기로 간다. 어느 쪽이든 실패하면 카카오 로그인은 그대로 성공시키고 게스트 기록은 남긴다(`guest_merged=false`). 2026-10-20 판은 처음 전환도 새 사용자를 만들어 합쳤다. 가장 흔한 전환이 모듈 7개를 거치는 길을 타서 바꿨다(멘토 리뷰 #680).
+
+### 합치기 (이미 쓰던 카카오 계정이 있을 때)
 
 각 모듈은 자기 테이블만 옮긴다 — auth가 다른 모듈의 테이블을 직접 바꾸지 않고 각 `api.py`의 `reassign_user(db, *, from_user_id, to_user_id) -> dict[str, int]`(옮긴 행 수, 커밋은 호출자)를 부른다. 지도별로 충돌하면 **카카오 계정의 기존 값이 이긴다.**
 
@@ -485,10 +517,12 @@ feedback(                             -- 서비스 피드백. 저장만 한다
 | shortlist | `shortlist_items.added_by` | 없음 |
 | notifications | `notifications.user_id` | `notification_prefs`는 카카오 계정 것을 쓰고 게스트 것은 지운다 |
 | feedback | `feedback.user_id` | 없음 |
-| agent | 사용자 id를 가진 열 전부 | agent 담당이 정한다(사유 원문은 저장하지 않는 규칙 유지) |
+| agent | `agent_suggestion_views.user_id`, `agent_course_runs.requested_by`, `agent_settings.updated_by`, `agent_suggestions.resolved_by` | 같은 제안을 둘 다 열람했으면 게스트 것을 지운다. 같은 지도에 둘 다 진행 중인 코스 요청이 있으면 게스트 것을 지운다(진행 중은 지도당 한 사람에 하나). 코스 하루 상한은 합치지 않는다(추천 횟수와 같다) |
 | auth | 마지막에 게스트 행을 `deleted_at`으로 지운다(탈퇴처럼 반응·근거를 지우지는 않는다 — 이미 옮겼다) | — |
 
-합치기로 사용자가 보는 이름이 게스트 이름에서 카카오 이름으로 바뀐다(구성원 목록·핀 작성자 표시는 다시 불러오면 된다). 게스트가 아닌 사용자가 시작하면 아무것도 하지 않는다. 이미 합쳐진(삭제된) 게스트 id로는 다시 합치지 않는다.
+합치기로 사용자가 보는 이름이 게스트 이름에서 카카오 계정의 이름으로 바뀐다(구성원 목록과 핀 작성자 표시는 다시 불러오면 된다).
+
+사용자 기록을 다루는 목록은 탈퇴(`withdraw_user`)와 합치기(`MERGE_STEPS`) 둘이다. 한쪽에만 모듈이 더해지지 않게 "탈퇴 목록에 있는 모듈은 합치기 목록에도 있다"를 테스트로 고정한다(#694). 지도 정리(`maps.purge.PURGE_STEPS`)는 지도 단위라 대상이 다르다. 게스트가 아닌 사용자가 시작하면 아무것도 하지 않는다. 이미 합쳐진(삭제된) 게스트 id로는 다시 합치지 않는다.
 
 ---
 

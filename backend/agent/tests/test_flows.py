@@ -73,7 +73,7 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
     [(type_, payload)] = world.agent_events(map_id)
     assert type_ == "agent.suggested"
     assert AgentSuggestionSchema.model_validate(payload).id == str(sug.id)
-    assert payload["advice"] == [{"text": "확정 2곳 중 카페 0곳", "is_guess": False}]
+    assert payload["advice"] == [{"segments": [{"kind": "text", "text": "확정 2곳 중 카페 0곳"}], "is_guess": False}]
     assert payload["actions"] == [
         {"index": 0, "type": "open_recommend", "label": "카페 추천 받기", "params": {"category": "카페"}},
         {"index": 1, "type": "show_pins", "label": "카페 핀 보기", "params": {"category": "카페"}},
@@ -121,7 +121,8 @@ def test_no_reaction_suggestion_renders_pin_names(world, monkeypatch):
     [(_, payload)] = world.agent_events(map_id)
     assert payload["title"] == "아직 확인되지 않은 핀이 3개 있어요"
     # 장소 이름을 찾지 못한 핀(pl_b)은 지어내지 않고 줄을 뺀다
-    assert sorted(line["text"] for line in payload["advice"]) == ["성수 곱창", "성수 칼국수"]
+    assert sorted((line["segments"] for line in payload["advice"]), key=str) == [   # 핀 이름은 pin 조각(#717)
+        [{"kind": "pin", "text": "성수 곱창", "pin_id": live_pin}], [{"kind": "pin", "text": "성수 칼국수", "pin_id": db_pin}]]
     [action] = payload["actions"]
     assert (action["type"], action["label"]) == ("show_pins", "미확인 핀 보기")
     assert db_pin in action["params"]["pin_ids"] and live_pin in action["params"]["pin_ids"]

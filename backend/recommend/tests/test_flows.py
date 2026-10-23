@@ -20,6 +20,7 @@ from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
 from recommend import constraints, core, flows, service
 from recommend.models import Candidate, Exclusion, RecommendRun, Region
+from recommend.models import EvidenceLine as EvidenceLineRow
 from places.schemas import FactLabel
 from recommend.deps import DevEvidencePlanGateway
 from recommend.ports import PlaceStub
@@ -111,6 +112,60 @@ class _FakePlaceFacts:
             pid: [FactLabel(key, value, "known") for key, value in self._facts.get(pid, {}).items()]
             for pid in place_ids
         }
+
+
+class _FakePlaceHours(_FakePlaceFacts):
+    """라벨 가짜에 영업시간을 더한다 — {place_id: PlaceHours}. 없는 장소는 키에서 빠진다(= 모름)."""
+
+    def __init__(self, hours_by_place):
+        super().__init__()
+        self._hours = hours_by_place
+
+    def get_hours(self, place_ids):
+        return {pid: self._hours[pid] for pid in place_ids if pid in self._hours}
+
+
+def _run_with_hours(db_session, *, hours_by_place, facts=None):
+    """기본 지도 여행 기간은 2026-01-01(목)~01-02(금). 후보 4곳: closed_all·closed_one·no_row·no_info."""
+    from places.schemas import PlaceHours
+
+    _make_members(db_session, user_ids=["user_1"])
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    places = [PlaceStub(place_id=pid, lat=35.0005, lng=129.0005) for pid in ("closed_all", "closed_one", "no_row", "no_info")]
+    gateway = _FakePlaceHours({pid: PlaceHours(**kwargs) for pid, kwargs in hours_by_place.items()})
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=gateway)
+    db_session.refresh(run)
+    return run, {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+
+
+def test_is_open_removes_only_places_closed_every_trip_day_and_counts_them_in_the_funnel(db_session):
+    run, by_place = _run_with_hours(db_session, hours_by_place={
+        "closed_all": {"closed_days": ["목", "금"]},
+        "closed_one": {"hours": {"목": [], "금": [["11:00", "21:00"]]}},
+        "no_info": {"closed_days": ["월"]},
+    })
+
+    assert set(by_place) == {"closed_one", "no_row", "no_info"}
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["영업 종료 제거"] == 1
+    open_check = lambda pid: next(c for c in by_place[pid].checks if c["fact_key"] == "is_open")
+    assert open_check("closed_one")["confidence"] == "known" and open_check("closed_one")["needs_check"] is False
+    for unknown in ("no_row", "no_info"):   # 행이 없거나 영업하는지 모르면 통과 + 「영업 여부 확인 필요」
+        assert open_check(unknown)["needs_check"] is True
+
+
+def test_is_open_without_hours_lookup_removes_nobody(db_session):
+    """시간 조회가 없는 게이트웨이(dev)는 지금처럼 모두 통과 + 확인 필요다."""
+    _make_members(db_session, user_ids=["user_1"])
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    places = [PlaceStub(place_id="p1", lat=35.0005, lng=129.0005)]
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts())
+    db_session.refresh(run)
+
+    [candidate] = service.list_candidates(db_session, str(run.id))
+    assert next(c for c in candidate.checks if c["fact_key"] == "is_open")["needs_check"] is True
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["영업 종료 제거"] == 0
 
 
 def test_publish_candidate_inserts_ai_pin_links_candidate_and_records_event(db_session):
@@ -792,7 +847,7 @@ def test_patch_evidence_toggle_other_users_line_is_forbidden(db_session):
     assert exc_info.value.code == "FORBIDDEN"
 
 
-def test_patch_evidence_add_creates_manual_reference_line(db_session):
+def test_patch_evidence_add_creates_manual_preferred_line(db_session):
     run = _make_run(db_session, status="collecting_evidence")
     principal = Principal(user_id="user_1", map_id="map_1", role="member")
 
@@ -800,7 +855,7 @@ def test_patch_evidence_add_creates_manual_reference_line(db_session):
     result = flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["주차 필요해요"], evidence_planner=PLANNER)
     assert len(result) == 1
     assert result[0].text == "주차 필요해요"
-    assert result[0].badge == "reference"
+    assert result[0].badge == "preferred"  # #707 — 「+」는 선호다
 
 
 # ---------- regions confirm ----------
@@ -1068,14 +1123,14 @@ def _run_with_wanted_and_unwanted_soft_keys(db_session):
 
 
 def test_execute_run_checks_omit_unwanted_unknown_soft_keys(db_session):
-    """#216 — 아무도 원하지 않았고 unknown인 soft 키(pet_friendly 등)는 저장되는 checks에 없다(known인 franchise도). 원한 키는
-    known이든 unknown이든 남고(unknown은 needs_check), hard 체크는 그대로다."""
+    """#216 — 아무도 원하지 않았고 unknown인 soft 키(pet_friendly 등)는 저장되는 checks에 없다(known인 franchise도).
+    선호(soft)는 충족한 것만 남는다 — 원한 키가 unknown이어도 「확인 필요」로 싣지 않는다(#681-4). hard 체크는 그대로다."""
     _run, candidate = _run_with_wanted_and_unwanted_soft_keys(db_session)
     by_key = {c["fact_key"]: c for c in candidate.checks}
 
     assert "pet_friendly" not in by_key and "vegetarian_friendly" not in by_key  # 원하지 않은 unknown
     assert "franchise" not in by_key  # 원하지 않은 known(거짓)도 싣지 않는다
-    assert by_key["wait_short"]["needs_check"] is True and by_key["wait_short"]["confidence"] == "unknown"  # 활성 근거 줄
+    assert "wait_short" not in by_key  # 활성 근거 줄이지만 선호가 unknown이면 싣지 않는다(#681-4)
     assert by_key["cuisine_japanese"]["confidence"] == "known"  # ♥ 핀 기준(known)
     assert "is_open" in by_key  # hard(코드 판정) 그대로
 
@@ -1085,6 +1140,39 @@ def test_execute_run_unwanted_unknown_soft_checks_still_feed_scoring(db_session)
     _run, candidate = _run_with_wanted_and_unwanted_soft_keys(db_session)
     assert candidate.member_fulfillment["total"] >= 1 and candidate.member_fulfillment["satisfied"] >= 1
     assert "일식" in candidate.reason
+
+
+def _run_with_written_season_preference(db_session, *, start_date, end_date):
+    """직접 쓴 선호 cherry_blossom(작성자 user_2), 후보 라벨은 벚꽃 명소 참. 지도 여행 기간만 바꾼다(#681-6)."""
+    from datetime import date
+    from maps.models import Map as MapRow
+
+    _make_members(db_session, user_ids=["user_1"])   # 지도 행(여행 기간)이 먼저 있어야 한다
+    run = _make_run(db_session, status="collecting_evidence")
+    db_session.get(MapRow, run.map_id).start_date = date.fromisoformat(start_date)
+    db_session.get(MapRow, run.map_id).end_date = date.fromisoformat(end_date)
+    _make_region(db_session, run, radius_m=1000)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        {"author_id": "user_2", "source": "reaction", "text": "벚꽃 보고 싶어요", "badge": "preferred",
+         "fact_key": "cherry_blossom", "wants": True},
+    ])
+    places = [PlaceStub(place_id="cand", lat=35.0005, lng=129.0005)]
+    facts = _FakePlaceFacts({"cand": {"cherry_blossom": True}})
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
+    [candidate] = service.list_candidates(db_session, str(run.id))   # 시즌 밖이어도 후보는 거르지 않는다
+    return candidate
+
+
+def test_season_key_counts_when_the_trip_overlaps_the_season(db_session):
+    candidate = _run_with_written_season_preference(db_session, start_date="2027-03-31", end_date="2027-04-02")
+    assert "cherry_blossom" in {c["fact_key"] for c in candidate.checks}
+    assert "벚꽃" in candidate.reason
+
+
+def test_season_key_outside_the_trip_is_neither_scored_nor_shown_as_met(db_session):
+    candidate = _run_with_written_season_preference(db_session, start_date="2027-01-10", end_date="2027-01-12")
+    assert "cherry_blossom" not in {c["fact_key"] for c in candidate.checks}
+    assert "벚꽃" not in candidate.reason
 
 
 def test_publish_candidate_pin_checks_follow_the_same_filter(db_session):
@@ -1101,7 +1189,7 @@ def test_publish_candidate_pin_checks_follow_the_same_filter(db_session):
     )
     pin_keys = [c.fact_key for c in response.checks]
     assert pin_keys == [c["fact_key"] for c in candidate.checks]
-    assert "pet_friendly" not in pin_keys and "wait_short" in pin_keys
+    assert "pet_friendly" not in pin_keys and "wait_short" not in pin_keys and "cuisine_japanese" in pin_keys
 
 
 def test_create_run_leaves_no_run_row_when_planning_fails(db_session, monkeypatch):
@@ -1659,8 +1747,8 @@ def test_inactive_hard_reason_is_not_applied(db_session):
     assert flows._active_hard_fact_keys(db_session, run) == []
 
 
-def test_plus_manual_line_goes_through_plan_evidence_and_keeps_reference_badge(db_session, monkeypatch):
-    """#254 — 「+」로 추가한 줄도 ②로 보내 fact_key·wants를 붙인다. 배지는 reference."""
+def test_plus_manual_line_goes_through_plan_evidence_and_is_preferred(db_session, monkeypatch):
+    """#254 — 「+」로 추가한 줄도 ②로 보내 fact_key·wants를 붙인다. 배지는 preferred(#707)라 실격을 켜지 않는다."""
     from llm.schemas import EvidenceLine as PlannedLine
 
     sent = []
@@ -1676,10 +1764,10 @@ def test_plus_manual_line_goes_through_plan_evidence_and_keeps_reference_badge(d
     db_session.commit()  # 요청 앞의 준비는 커밋된 상태다 — 모델 직전에 읽기 트랜잭션을 롤백한다(#275)
     flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["매운 건 못 먹어요"], evidence_planner=PLANNER)
 
-    assert [r["source"] for r in sent] == ["manual"]
+    assert [(r["source"], r["badge"]) for r in sent] == [("manual", "preferred")]
     [line] = service.list_evidence(db_session, str(run.id))
-    assert (line.badge, line.fact_key, line.wants) == ("reference", "spicy_focused", False)
-    assert flows._active_soft_requirements(db_session, run) == []   # reference는 실격을 켜지 않는다
+    assert (line.badge, line.fact_key, line.wants) == ("preferred", "spicy_focused", False)
+    assert flows._active_soft_requirements(db_session, run) == []   # preferred는 실격을 켜지 않는다
 
 
 def test_plus_manual_line_planner_failure_leaves_no_line(db_session, monkeypatch):
@@ -1693,6 +1781,218 @@ def test_plus_manual_line_planner_failure_leaves_no_line(db_session, monkeypatch
     with pytest.raises(RuntimeError):
         flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["x"], evidence_planner=PLANNER)
     assert service.list_evidence(db_session, str(run.id)) == []
+
+
+# ---------- 「+」 직접 추가는 선호, 상한 (#707) ----------
+
+def _plan_as(monkeypatch, fact_key, wants, calls=None):
+    """②를 대신한다 — 글마다 (fact_key, wants) 줄 하나. calls에 받은 글을 남긴다."""
+    from llm.schemas import EvidenceLine as PlannedLine
+
+    def planner(raw):
+        if calls is not None:
+            calls.append([r["text"] for r in raw])
+        return [[PlannedLine(**{**r, "fact_key": fact_key, "wants": wants})] for r in raw]
+
+    monkeypatch.setattr(PLANNER, "plan_evidence", planner)
+
+
+def _add_manual_entries(db_session, run, count, *, is_active=True):
+    for i in range(count):
+        line = service.add_manual_evidence(db_session, run_id=run.id, author_id="user_1", text=f"직접 쓴 글 {i}")
+        line.is_active = is_active
+    db_session.commit()
+
+
+def _execute_with_places(db_session, run, facts_by_place):
+    places = [PlaceStub(place_id=pid, lat=35.0005, lng=129.0005) for pid in facts_by_place]
+    flows.execute_run(
+        db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts(facts_by_place),
+    )
+    return {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+
+
+def test_plus_preference_raises_the_matching_place_and_filters_nothing(db_session, monkeypatch):
+    """「+」 "회 좋아해" → 횟집이 선호 점수를 받아 위로 오고, 횟집이 아닌 곳도 후보에 남는다."""
+    facts = {"other": {"cuisine_raw_fish": False}, "unknown_place": {}, "raw_fish": {"cuisine_raw_fish": True}}
+    baseline_run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, baseline_run, radius_m=1000)
+    assert _execute_with_places(db_session, baseline_run, facts)["raw_fish"].rank != 1   # 선호가 없으면 1위가 아니다
+
+    _plan_as(monkeypatch, "cuisine_raw_fish", True)
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    db_session.commit()
+
+    flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["회 좋아해"], evidence_planner=PLANNER)
+    db_session.commit()
+    candidates = _execute_with_places(db_session, run, facts)
+
+    funnel = {entry["label"]: entry["removed_count"] for entry in run.last_funnel}
+    assert set(candidates) == set(facts) and funnel["실격 조건 제거"] == 0
+    assert candidates["raw_fish"].rank == 1
+    met = next(c for c in candidates["raw_fish"].checks if c["fact_key"] == "cuisine_raw_fish")
+    assert met["passed"] is True
+
+
+def test_plus_line_without_key_or_direction_stays_but_has_no_effect(db_session, monkeypatch):
+    """②가 키나 방향을 못 붙인 「+」 줄은 근거 줄에 남지만 점수에 들어가지 않는다(constraints.md 표) — 근거 줄이 없는
+    run과 순위가 같다."""
+    facts = {"other": {"cuisine_raw_fish": False}, "raw_fish": {"cuisine_raw_fish": True}}
+    baseline_run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, baseline_run, radius_m=1000)
+    baseline = {pid: c.rank for pid, c in _execute_with_places(db_session, baseline_run, facts).items()}
+    for fact_key, wants in ((None, None), ("cuisine_raw_fish", None)):
+        _plan_as(monkeypatch, fact_key, wants)
+        run = _make_run(db_session, status="collecting_evidence")
+        _make_region(db_session, run, radius_m=1000)
+        principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+        db_session.commit()
+        flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["음"], evidence_planner=PLANNER)
+        db_session.commit()
+        [line] = service.list_evidence(db_session, str(run.id))
+        assert line.badge == "preferred"
+
+        candidates = _execute_with_places(db_session, run, facts)
+        assert {pid: c.rank for pid, c in candidates.items()} == baseline, (fact_key, wants)
+
+
+def test_plus_eleventh_entry_is_evidence_limit_and_the_model_is_not_called(db_session, monkeypatch):
+    calls = []
+    _plan_as(monkeypatch, None, None, calls)
+    run = _make_run(db_session, status="collecting_evidence")
+    _add_manual_entries(db_session, run, core.MANUAL_EVIDENCE_LIMIT)
+    principal = Principal(user_id="user_2", map_id=run.map_id, role="member")   # 사람이 아니라 run 단위다
+
+    with pytest.raises(AppError) as exc_info:
+        flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["하나 더"], evidence_planner=PLANNER)
+    assert exc_info.value.code == "EVIDENCE_LIMIT" and exc_info.value.status == 409
+    assert exc_info.value.detail == {"limit": 10, "used": 10}
+    assert calls == []
+
+
+def test_plus_limit_counts_lines_taken_out_with_x(db_session, monkeypatch):
+    """넣고 빼기를 되풀이해 모델을 부르지 못하게 뺀 줄도 센다."""
+    calls = []
+    _plan_as(monkeypatch, None, None, calls)
+    run = _make_run(db_session, status="collecting_evidence")
+    _add_manual_entries(db_session, run, 8, is_active=False)
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+
+    with pytest.raises(AppError) as exc_info:
+        flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["a", "b", "c"], evidence_planner=PLANNER)
+    assert exc_info.value.detail == {"limit": 10, "used": 8}
+    assert calls == []
+
+    # 딱 10개까지는 들어간다
+    flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["a", "b"], evidence_planner=PLANNER)
+    db_session.commit()
+    assert service.count_manual_entries(db_session, run.id) == 10
+
+
+def test_plus_limit_counts_entries_not_condition_lines(db_session, monkeypatch):
+    """글 하나에 조건이 여럿이면 줄이 여럿이지만(#419) 「+」 하나로 센다 — 사람이 넣은 수가 10이다."""
+    from llm.schemas import EvidenceLine as PlannedLine
+
+    def two_conditions(raw):
+        return [[PlannedLine(**{**r, "fact_key": "cuisine_korean", "wants": False}),
+                 PlannedLine(**{**r, "fact_key": "quiet", "wants": True})] for r in raw]
+
+    monkeypatch.setattr(PLANNER, "plan_evidence", two_conditions)
+    run = _make_run(db_session, status="collecting_evidence")
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    db_session.commit()
+    flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[], adds=["한식 말고 조용한 곳"], evidence_planner=PLANNER)
+    db_session.commit()
+    assert len(service.list_evidence(db_session, str(run.id))) == 2
+    assert service.count_manual_entries(db_session, run.id) == 1
+
+
+def test_plus_same_text_repeated_in_one_request_reaches_the_model_once(db_session, monkeypatch):
+    """같은 글을 한 요청에 반복해도 ②에는 한 번만 가고 줄도 하나다 — 상한에 1개로 세는 것과 맞는다."""
+    calls = []
+    _plan_as(monkeypatch, "cuisine_raw_fish", True, calls)
+    run = _make_run(db_session, status="collecting_evidence")
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    db_session.commit()
+
+    flows.patch_evidence(
+        db_session, run_id=str(run.id), principal=principal, toggles=[],
+        adds=["회 좋아해", "주차 되는 곳", "회 좋아해", "회 좋아해"], evidence_planner=PLANNER,
+    )
+    db_session.commit()
+    assert calls == [["회 좋아해", "주차 되는 곳"]]
+    assert [line.text for line in service.list_evidence(db_session, str(run.id))] == ["회 좋아해", "주차 되는 곳"]
+    assert service.count_manual_entries(db_session, run.id) == 2
+
+
+def test_plus_limit_ignores_toggle_only_requests_and_reaction_lines(db_session, monkeypatch):
+    calls = []
+    _plan_as(monkeypatch, None, None, calls)
+    run = _make_run(db_session, status="collecting_evidence")
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[_line("user_1", "required", None, None, text=f"반응 {i}") for i in range(12)])
+    _add_manual_entries(db_session, run, core.MANUAL_EVIDENCE_LIMIT)
+    principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
+    line = next(l for l in service.list_evidence(db_session, str(run.id)) if l.source == "manual")
+
+    result = flows.patch_evidence(db_session, run_id=str(run.id), principal=principal, toggles=[(str(line.id), False)], adds=[], evidence_planner=PLANNER)
+    assert next(r for r in result if r.id == str(line.id)).is_active is False
+    assert calls == []
+
+
+def test_concurrent_plus_requests_do_not_exceed_the_limit_together(test_engine, monkeypatch):
+    """9개가 찬 run에 두 요청이 동시에 하나씩 넣는다 — 둘 다 모델 앞 검사(9+1)를 통과하지만 run 행 잠금 뒤 다시
+    세므로 하나만 들어가고 다른 하나는 EVIDENCE_LIMIT이다. db_session(롤백 전용) 대신 진짜 커밋이 필요하다."""
+    from llm.schemas import EvidenceLine as PlannedLine
+
+    Session = sessionmaker(bind=test_engine)
+    run_id = uuid.uuid4()
+    setup = Session()
+    setup.add(RecommendRun(id=run_id, map_id="map_race_707", category="음식점", requested_by="racer", status="collecting_evidence"))
+    setup.flush()
+    for i in range(core.MANUAL_EVIDENCE_LIMIT - 1):
+        service.add_manual_evidence(setup, run_id=run_id, author_id="racer", text=f"직접 쓴 글 {i}")
+    setup.commit()
+    setup.close()
+
+    model_barrier = threading.Barrier(2)
+
+    def planner(raw):
+        model_barrier.wait(timeout=5)   # 둘 다 모델 앞 검사를 통과한 뒤에야 쓰기로 넘어간다
+        return [[PlannedLine(**r)] for r in raw]
+
+    monkeypatch.setattr(PLANNER, "plan_evidence", planner)
+    results: list[str] = []
+
+    def _attempt(text):
+        session = Session()
+        principal = Principal(user_id="racer", map_id="map_race_707", role="member")
+        try:
+            flows.patch_evidence(session, run_id=str(run_id), principal=principal, toggles=[], adds=[text], evidence_planner=PLANNER)
+            session.commit()
+            results.append("ok")
+        except AppError as exc:
+            session.rollback()
+            results.append(exc.code)
+        finally:
+            session.close()
+
+    threads = [threading.Thread(target=_attempt, args=(text,)) for text in ("첫째", "둘째")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    verify = Session()
+    try:
+        assert sorted(results) == ["EVIDENCE_LIMIT", "ok"]
+        assert service.count_manual_entries(verify, run_id) == core.MANUAL_EVIDENCE_LIMIT
+    finally:
+        verify.execute(delete(EvidenceLineRow).where(EvidenceLineRow.run_id == run_id))
+        verify.execute(delete(RecommendRun).where(RecommendRun.id == run_id))
+        verify.commit()
+        verify.close()
 
 
 def test_create_run_holds_no_transaction_while_the_model_is_called(db_session, monkeypatch):
@@ -1841,8 +2141,8 @@ def test_split_lines_are_turned_off_one_condition_at_a_time(db_session, monkeypa
     assert flows._active_soft_requirements(db_session, run) == []   # 남은 고기구이 줄은 #422로 선호라 실격이 아니다
 
 
-def test_plus_manual_text_with_several_conditions_adds_a_reference_line_per_condition(db_session, monkeypatch):
-    """#419 — 「+」 글도 같다. "매운 거랑 회 둘 다 별로예요"는 조건마다 reference 줄 하나다.
+def test_plus_manual_text_with_several_conditions_adds_a_preferred_line_per_condition(db_session, monkeypatch):
+    """#419 — 「+」 글도 같다. "매운 거랑 회 둘 다 별로예요"는 조건마다 preferred 줄 하나다(#707).
     여러 글을 한 번에 더하면 글 순서대로, 글마다 조건 줄들이 붙는다."""
     _planner_with_conditions(monkeypatch, {
         "매운 거랑 회 둘 다 별로예요": [("spicy_focused", False), ("cuisine_raw_fish", False)],
@@ -1858,9 +2158,9 @@ def test_plus_manual_text_with_several_conditions_adds_a_reference_line_per_cond
     )
 
     assert _lines_by_author(db_session, run) == {"user_1": [
-        ("매운 거랑 회 둘 다 별로예요", None, "spicy_focused", False, "reference", None),
-        ("매운 거랑 회 둘 다 별로예요", None, "cuisine_raw_fish", False, "reference", None),
-        ("주차 필요해요", None, None, None, "reference", None),
+        ("매운 거랑 회 둘 다 별로예요", None, "spicy_focused", False, "preferred", None),
+        ("매운 거랑 회 둘 다 별로예요", None, "cuisine_raw_fish", False, "preferred", None),
+        ("주차 필요해요", None, None, None, "preferred", None),
     ]}
 
 

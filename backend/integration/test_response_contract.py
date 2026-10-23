@@ -639,7 +639,8 @@ def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions)
     advice = a.get(f"/runs/{runs[2]}/advice")
     assert advice.status_code == 200
     assert advice.json()["run_id"] == runs[2] and advice.json()["kind"] == "exhausted"
-    assert advice.json()["advice"][0]["text"].startswith("조건을 모두 통과한 곳은 ")
+    [segment] = advice.json()["advice"][0]["segments"]   # 조언은 text 조각만(#717)
+    assert segment["kind"] == "text" and segment["text"].startswith("조건을 모두 통과한 곳은 ")
     assert a.get(f"/runs/{runs[2]}/advice").json() == advice.json()   # run당 한 번 — 다시 열어도 같다
     assert not problems, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(problems)
 

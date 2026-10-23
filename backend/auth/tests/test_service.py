@@ -6,8 +6,11 @@
 
 import pytest
 
+from sqlalchemy import select
+
 from auth import service
-from auth.models import User
+from auth.models import User, UserIdentity
+from auth.testing import create_kakao_user
 from common.errors import AppError
 
 
@@ -34,14 +37,20 @@ def _mock_kakao_success(monkeypatch, *, kakao_id=42, nickname="철수"):
     monkeypatch.setattr(service.httpx, "get", fake_get)
 
 
+def _identities(db, user_id):
+    return db.execute(
+        select(UserIdentity.provider, UserIdentity.provider_user_id).where(UserIdentity.user_id == user_id)
+    ).all()
+
+
 def test_login_with_kakao_code_creates_new_user(db_session, monkeypatch):
     _mock_kakao_success(monkeypatch, kakao_id=42, nickname="철수")
 
     user = service.login_with_kakao_code(db_session, code="auth-code")
 
-    assert user.provider == "kakao"
-    assert user.provider_user_id == "42"
+    assert _identities(db_session, user.id) == [("kakao", "42")]   # 사용자와 수단을 함께 만든다(#694)
     assert user.display_name == "철수"
+    assert user.is_guest is False
     assert user.deleted_at is None
 
 
@@ -100,9 +109,7 @@ def test_get_active_user_or_401_rejects_unknown_user(db_session):
 
 
 def test_get_active_user_or_401_rejects_withdrawn_user(db_session):
-    row = User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수")
-    db_session.add(row)
-    db_session.flush()
+    create_kakao_user(db_session, "user_1", display_name="철수")
     service.withdraw_user(db_session, user_id="user_1")
 
     with pytest.raises(AppError) as exc:
@@ -111,9 +118,7 @@ def test_get_active_user_or_401_rejects_withdrawn_user(db_session):
 
 
 def test_withdraw_user_sets_deleted_at(db_session):
-    row = User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수")
-    db_session.add(row)
-    db_session.flush()
+    create_kakao_user(db_session, "user_1", display_name="철수")
 
     withdrawn = service.withdraw_user(db_session, user_id="user_1")
 
@@ -124,8 +129,7 @@ def test_withdraw_user_detaches_feedback_author_but_keeps_content(db_session):
     from feedback import service as feedback_service
     from feedback.models import Feedback
 
-    db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
-    db_session.flush()
+    create_kakao_user(db_session, "user_1", display_name="철수")
     row = feedback_service.submit(db_session, user_id="user_1", message="의견", category="idea", map_id=None)
 
     service.withdraw_user(db_session, user_id="user_1")
@@ -136,8 +140,7 @@ def test_withdraw_user_detaches_feedback_author_but_keeps_content(db_session):
 
 
 def test_withdraw_user_locks_member_maps_before_anything_else(db_session, monkeypatch):
-    db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
-    db_session.flush()
+    create_kakao_user(db_session, "user_1", display_name="철수")
     calls = []
     monkeypatch.setattr(service.maps_api, "lock_member_maps", lambda db, user_id: calls.append(("lock", user_id)) or [])
     monkeypatch.setattr(service.maps_api, "transfer_or_delete_owned_maps", lambda db, user_id: calls.append(("transfer", user_id)))
@@ -150,9 +153,41 @@ def test_withdraw_user_locks_member_maps_before_anything_else(db_session, monkey
     assert all(uid == "user_1" for _, uid in calls)
 
 
+def test_withdraw_keeps_the_login_identity_so_the_account_stays_blocked(db_session):
+    """탈퇴해도 수단은 남는다 — 같은 카카오 계정의 재로그인을 막는 근거다(#409, #694)."""
+    create_kakao_user(db_session, "user_1", provider_user_id="pu1")
+
+    service.withdraw_user(db_session, user_id="user_1")
+
+    assert _identities(db_session, "user_1") == [("kakao", "pu1")]
+    with pytest.raises(AppError):
+        service.find_or_create_user(db_session, provider="kakao", provider_user_id="pu1", display_name="다시")
+
+
+def test_withdraw_steps_are_also_merge_steps():
+    """탈퇴에서 사용자 기록을 다루는 모듈은 게스트 합치기에서도 옮겨야 한다(#694). 한쪽 목록에만 모듈이 더해지면
+    합친 뒤 게스트 때 기록이 안 보이거나(합치기 누락) 탈퇴 뒤에 남는다."""
+    withdraw_modules = {name for name, _ in service.WITHDRAW_STEPS}
+    merge_modules = {name for name, _ in service.MERGE_STEPS}
+    assert withdraw_modules <= merge_modules, withdraw_modules - merge_modules
+
+
+def test_withdraw_runs_every_step_in_order(db_session, monkeypatch):
+    create_kakao_user(db_session, "user_1")
+    calls = []
+    monkeypatch.setattr(service, "WITHDRAW_STEPS", tuple(
+        (name, lambda db, user_id, map_ids, name=name: calls.append((name, user_id, map_ids)))
+        for name in ("maps", "pins", "agent")
+    ))
+    monkeypatch.setattr(service.maps_api, "lock_member_maps", lambda db, user_id: ["m1"])
+
+    service.withdraw_user(db_session, user_id="user_1")
+
+    assert calls == [("maps", "user_1", ["m1"]), ("pins", "user_1", ["m1"]), ("agent", "user_1", ["m1"])]
+
+
 def test_revoke_sessions_sets_sessions_valid_after(db_session):
-    db_session.add(User(id="user_1", provider="kakao", provider_user_id="pu1", display_name="철수"))
-    db_session.flush()
+    create_kakao_user(db_session, "user_1", display_name="철수")
 
     service.revoke_sessions(db_session, user_id="user_1")
     db_session.expire_all()
@@ -180,23 +215,22 @@ def _simulate_lost_race(monkeypatch):
 
 
 def test_concurrent_first_login_returns_the_row_created_by_the_other_request(db_session, monkeypatch):
-    winner = User(provider="kakao", provider_user_id="777", display_name="먼저 온 요청")
-    db_session.add(winner)
-    db_session.flush()
+    winner = create_kakao_user(db_session, provider_user_id="777", display_name="먼저 온 요청")
+    users_before = db_session.query(User).count()
     _simulate_lost_race(monkeypatch)
 
     row = service.find_or_create_user(db_session, provider="kakao", provider_user_id="777", display_name="나중 요청")
 
     assert row.id == winner.id
     assert row.display_name == "먼저 온 요청"   # 나중 요청이 덮어쓰지 않는다
-    assert db_session.query(User).filter_by(provider_user_id="777").count() == 1
+    assert db_session.query(UserIdentity).filter_by(provider_user_id="777").count() == 1
+    assert db_session.query(User).count() == users_before   # 세이브포인트와 함께 users 행도 되돌아갔다
 
 
 def test_concurrent_first_login_still_rejects_withdrawn_account(db_session, monkeypatch):
     from datetime import datetime, timezone
 
-    db_session.add(User(provider="kakao", provider_user_id="778", display_name="x", deleted_at=datetime.now(timezone.utc)))
-    db_session.flush()
+    create_kakao_user(db_session, provider_user_id="778", display_name="x", deleted_at=datetime.now(timezone.utc))
     _simulate_lost_race(monkeypatch)
 
     with pytest.raises(AppError) as exc:

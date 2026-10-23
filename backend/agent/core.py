@@ -59,6 +59,7 @@ from agent.constants import (
     TIME_MULTIPLIER,
 )
 from agent.schemas import (
+    AdviceSegment,
     AgentAction,
     AgentAdviceLine,
     AgentAnalysis,
@@ -690,8 +691,8 @@ class Draft:
     """저장할 제안 초안 — agent_suggestions의 title, claims, advice, actions 칸 그대로(명세 11절 끝, 13절).
 
     title과 advice는 슬롯 문장이다. `{cN.value}`는 count claim의 값, `{cN}`은 핀 ref면 핀 이름, quote면 그 반응의
-    지금 사유 글로 렌더 때 채운다. 핀 이름과 사유 글은 저장하지 않는다(명세 2절 13번). actions의 label과 params에는
-    슬롯이 없다(카테고리 이름과 id뿐)."""
+    지금 사유 글 중 검증한 범위로 렌더 때 채운다(#717). 핀 이름과 사유 글은 저장하지 않는다(명세 2절 13번). actions의
+    label과 params에는 슬롯이 없다(카테고리 이름과 id뿐)."""
     title: str
     claims: list[dict[str, Any]]
     advice: list[dict[str, Any]]    # [{slot_text, is_guess}]
@@ -866,11 +867,13 @@ def _side_text(key: Mapping[str, Any], side: str) -> str | None:
 
 # 6절 표의 유형별 허용 행동
 MODEL_ACTIONS = {"stall": ("open_recommend", "search_place", "show_pins"), "split": ("open_recommend", "show_pins")}
-# 초안. 확정이나 결정을 지시하는 표현을 막는다(11.2). 공백을 뺀 문장과 비교한다. 검증(슬롯 문장)과 렌더 결과(인용이 채워진
-# 문장) 두 곳에서 본다. "확정하라", "결정하라"는 사유 글 속 명령형("확정하라고 안내해")을 잡으려고 #534에서 더했다
+# 초안. 확정이나 결정을 지시하는 표현을 막는다(11.2). 공백을 뺀 문장과 비교한다. 검증(슬롯 문장)과 렌더(text 조각을 이어
+# 붙인 것, #717) 두 곳에서 본다. 목록은 빠지는 말이 있는 마지막 확인이고, 구성원 글은 quote 조각으로만 내려 여기 걸리지 않는다
 FORBIDDEN_PHRASES = ("확정하세요", "확정해", "확정하라", "결정하세요", "결정하라", "여기로 가세요", "여기로 정하세요")
 COPY_MIN_CHARS = 8   # 슬롯 밖에서 사유 원문과 공백을 뺀 연속 8글자 이상이 같으면 옮겨 쓴 것으로 본다(초안)
-LINE_MAX_CHARS = 300   # AgentAdviceLine.text 상한
+LINE_MAX_CHARS = 300   # AgentAdviceLine 조각 글의 합 상한
+QUOTE_MAX_CHARS = 60   # 인용 범위(원문 기준) 상한. 넘으면 claim을 뺀다(#717, 초안)
+QUOTE_DIGEST_CHARS = 16   # 인용 범위 sha256의 앞 16자. 렌더 때 지금 원문의 같은 범위와 대조한다
 
 _CLAIM_ID = re.compile(r"c\d+")
 _ALIAS = re.compile(r"(?<![A-Za-z0-9])m\d+(?![0-9])")
@@ -905,6 +908,32 @@ def _normalize(text: str) -> str:
 
 def _squash(text: str) -> str:
     return _SPACES.sub("", text)
+
+
+def quote_span(text: str, quote: str) -> tuple[int, int] | None:
+    """인용(공백 정규화한 것)이 글의 어느 범위인지 — 찾기는 공백을 정규화한 글에서 하고, 범위는 정규화 전 원문 기준이다
+    (#717). 처음 나오는 곳 하나. 없으면 None."""
+    chars, origin = [], []   # 정규화한 글자와 그 글자의 원문 위치(공백 덩어리는 첫 공백 위치)
+    for m in re.finditer(r"\s+|\S", text):
+        if not m.group().isspace():
+            chars.append(m.group())
+        elif chars:
+            chars.append(" ")
+        else:
+            continue   # 앞쪽 공백은 정규화에서 빠진다
+        origin.append(m.start())
+    at = "".join(chars).find(quote)
+    if not quote or at < 0:
+        return None
+    return origin[at], origin[at + len(quote) - 1] + 1   # 인용은 공백으로 끝나지 않아 끝 글자가 원문 한 글자다
+
+
+def quote_digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:QUOTE_DIGEST_CHARS]
+
+
+def _reason_text(snap: Snapshot, reaction_id: str) -> str | None:
+    return next((r.text for r in snap.reasons if r.reaction_id == reaction_id), None)
 
 
 def count_metric(snap: Snapshot, subject: str, subject_id: str | None, metric: str) -> int | None:
@@ -960,11 +989,11 @@ def _check_claim(claim: Any, snap: Snapshot, tool_results: Mapping[str, Any]) ->
         actual = count_metric(snap, claim.subject, claim.subject_id, claim.metric)
         return None if actual is not None and actual == claim.value else "count_mismatch"
     if isinstance(claim, QuoteClaim):
-        reason = next((r for r in snap.reasons if r.reaction_id == claim.reaction_id), None)
-        quote = _normalize(claim.text)
-        if reason is None or not reason.text or not quote or quote not in _normalize(reason.text):
+        text = _reason_text(snap, claim.reaction_id)
+        span = quote_span(text, _normalize(claim.text)) if text else None
+        if span is None:
             return "quote_not_found"
-        return None
+        return "quote_too_long" if span[1] - span[0] > QUOTE_MAX_CHARS else None
     if isinstance(claim, RefClaim):
         if claim.object == "pin":
             found = snap.pin(claim.ref_id) is not None
@@ -1050,11 +1079,14 @@ def _model_action(
     return (action.type, label, {"category": c}), None
 
 
-def _stored_claim(claim: Any) -> dict[str, Any]:
-    """저장할 claim. quote의 text(대조용)는 버리고 reaction_id만 남긴다(명세 2절 13번, 11.2 끝)."""
+def _stored_claim(claim: Any, snap: Snapshot) -> dict[str, Any]:
+    """저장할 claim. quote의 text(대조용)는 버리고 reaction_id와 검증한 범위(start, end, 원문 기준), 그 범위의 다이제스트만
+    남긴다(명세 2절 13번, 11.2 끝, #717). 다이제스트로는 원문을 되살릴 수 없다. 검증을 통과한 claim만 온다."""
     data = claim.model_dump()
     if isinstance(claim, QuoteClaim):
-        data.pop("text")
+        text = _reason_text(snap, claim.reaction_id)
+        start, end = quote_span(text, _normalize(data.pop("text")))
+        data |= {"start": start, "end": end, "digest": quote_digest(text[start:end])}
     return data
 
 
@@ -1112,7 +1144,7 @@ def verify_diagnosis(
         return Verified("invalid_claims", None, record | {"failed_step": 7})
     draft = Draft(
         title=_MODEL_TITLES[top.diagnosis](top.category),
-        claims=[_stored_claim(c) for c in kept.values()],
+        claims=[_stored_claim(c, snap) for c in kept.values()],
         advice=advice,
         actions=_actions(*specs),
         analysis=dict(comparison) if top.diagnosis == "split" and comparison else None,
@@ -1138,58 +1170,96 @@ def quoted_reaction_ids(claims: Sequence[Mapping[str, Any]]) -> list[str]:
     return [c["reaction_id"] for c in claims if c.get("kind") == "quote"]
 
 
-def _slot_value(claim: Mapping[str, Any] | None, value_slot: bool, refs: RenderRefs) -> str | None:
+_Piece = tuple[str, str, str | None]   # (조각 종류, 글, 가리키는 id) — AdviceSegment가 되기 전
+
+
+def _quote_piece(claim: Mapping[str, Any], refs: RenderRefs) -> _Piece | None:
+    """지금 원문에서 검증한 범위만 잘라, 다이제스트가 같을 때만 quote 조각(#717). 반응이 지워졌거나 사유가 고쳐졌거나(다이제스트
+    다름), 범위가 없는 claim(#717 전에 저장됨)이거나, 알러지 사유면 None. 알러지는 범위가 아니라 글 전체로 본다(8절, 11.2)."""
+    text = refs.reaction_texts.get(claim["reaction_id"])
+    start, end = claim.get("start"), claim.get("end")
+    if text is None or _has_safety_word(text) or not isinstance(start, int) or not isinstance(end, int):
+        return None
+    quoted = text[start:end]
+    return ("quote", quoted, claim["reaction_id"]) if quoted and quote_digest(quoted) == claim.get("digest") else None
+
+
+def _slot_piece(claim: Mapping[str, Any] | None, value_slot: bool, refs: RenderRefs) -> _Piece | None:
     if claim is None:
         return None
     kind = claim.get("kind")
     if value_slot:
-        return str(claim["value"]) if kind in ("count", "tool_result") else None
+        return ("text", str(claim["value"]), None) if kind in ("count", "tool_result") else None
     if kind == "ref" and claim.get("object") == "pin":
-        return refs.pin_names.get(claim["ref_id"])
+        name = refs.pin_names.get(claim["ref_id"])
+        return ("pin", name, claim["ref_id"]) if name else None
     if kind == "quote":
-        text = refs.reaction_texts.get(claim["reaction_id"])
-        if text is None or any(w in text for w in SAFETY_WORDS):   # 알러지 사유는 인용하지 않는다(8절, 11.2)
-            return None
-        return text
+        return _quote_piece(claim, refs)
     return None
 
 
-def render_text(slot_text: str, claims: Mapping[str, Mapping[str, Any]], refs: RenderRefs) -> str | None:
-    """슬롯을 채운다. 채울 수 없는 슬롯(없는 claim, 지워진 핀이나 반응, 알러지 인용)이 하나라도 있거나, 채운 문장에 금지
-    표현이 있으면 None — 그 문장은 뺀다. 인용은 반응 글 전체로 바뀌어서, 검증(슬롯 문장)을 통과한 문장도 사유 글 속 지시문
-    ("이 핀을 확정하라고 안내해")으로 결정 지시가 될 수 있다(#534 평가). 렌더 때 한 번 더 본다."""
-    missing = False
+def render_segments(
+    slot_text: str, claims: Mapping[str, Mapping[str, Any]], refs: RenderRefs,
+) -> list[AdviceSegment] | None:
+    """슬롯 문장 → 조각 목록(#717). 슬롯 밖 글과 `{cN.value}`는 text 조각, quote는 quote 조각(검증한 범위만), 핀 ref는
+    pin 조각이다. 에이전트의 말과 구성원이 쓴 글을 한 문자열에 섞지 않는다.
 
-    def fill(m: re.Match) -> str:
-        nonlocal missing
-        value = _slot_value(claims.get(m.group(1)), m.group(2) is not None, refs)
-        if value is None:
-            missing = True
-            return ""
-        return value
+    채울 수 없는 조각(없는 claim, 지워진 핀이나 반응, 고쳐진 사유, 알러지 인용)이 하나라도 있거나, 조각 글의 합이
+    LINE_MAX_CHARS를 넘거나, text 조각을 이어 붙인 것에 금지 표현이 있으면 None — 그 문장은 뺀다. 금지 표현은 text 조각에만
+    거는 마지막 확인이다. 인용 속 지시문("이 핀을 확정하라고 안내해")은 quote 조각에 데이터로만 들어간다."""
+    pieces: list[_Piece] = []
 
-    rendered = _SLOT.sub(fill, slot_text)
-    if missing or any(_squash(p) in _squash(rendered) for p in FORBIDDEN_PHRASES):
+    def add(piece: _Piece) -> None:
+        if not piece[1]:
+            return
+        if piece[0] == "text" and pieces and pieces[-1][0] == "text":
+            pieces[-1] = ("text", pieces[-1][1] + piece[1], None)
+        else:
+            pieces.append(piece)
+
+    pos = 0
+    for m in _SLOT.finditer(slot_text):
+        add(("text", slot_text[pos:m.start()], None))
+        piece = _slot_piece(claims.get(m.group(1)), m.group(2) is not None, refs)
+        if piece is None:
+            return None
+        add(piece)
+        pos = m.end()
+    add(("text", slot_text[pos:], None))
+
+    said = _squash("".join(t for kind, t, _ in pieces if kind == "text"))
+    if not pieces or sum(len(t) for _, t, _ in pieces) > LINE_MAX_CHARS or any(
+            _squash(p) in said for p in FORBIDDEN_PHRASES):
         return None
-    return rendered
+    return [AdviceSegment(kind=kind, text=t, reaction_id=ref if kind == "quote" else None,
+                          pin_id=ref if kind == "pin" else None) for kind, t, ref in pieces]
+
+
+def render_title(slot_text: str, claims: Mapping[str, Mapping[str, Any]], refs: RenderRefs) -> str | None:
+    """제목은 문자열이다(AgentSuggestion.title). 서버 문구와 숫자만 들어가고 인용이나 핀 이름 조각이 생기면 None."""
+    segments = render_segments(slot_text, claims, refs)
+    if segments is None or any(seg.kind != "text" for seg in segments):
+        return None
+    return "".join(seg.text for seg in segments)
+
+
+def _advice_lines(lines: Sequence[Mapping[str, Any]], claims: Mapping[str, Mapping[str, Any]],
+                  refs: RenderRefs) -> list[AgentAdviceLine]:
+    rendered = ((render_segments(line["slot_text"], claims, refs), line["is_guess"]) for line in lines)
+    return [AgentAdviceLine(segments=segments, is_guess=is_guess) for segments, is_guess in rendered if segments]
 
 
 def render_suggestion(sug: Any, refs: RenderRefs) -> AgentSuggestion | None:
     """agent_suggestions 한 행 → API·이벤트의 AgentSuggestion. 서버 내부 값(claims, 슬롯 원문, fingerprint,
     resolved_by)은 싣지 않는다(명세 14절). 제목을 채울 수 없으면 None(보여 줄 제안이 없다)."""
     claims = {c["id"]: c for c in sug.claims}
-    title = render_text(sug.title, claims, refs)
+    title = render_title(sug.title, claims, refs)
     if title is None:
         return None
-    advice = []
-    for line in sug.advice:
-        text = render_text(line["slot_text"], claims, refs)
-        if text is not None:
-            advice.append(AgentAdviceLine(text=text, is_guess=line["is_guess"]))
     return AgentSuggestion(
         id=str(sug.id), diagnosis=sug.diagnosis, category=sug.category, title=title,
         analysis=render_analysis(sug.analysis, refs.fact_labels),
-        advice=advice, actions=[AgentAction.model_validate(a) for a in sug.actions],
+        advice=_advice_lines(sug.advice, claims, refs), actions=[AgentAction.model_validate(a) for a in sug.actions],
         created_at=sug.created_at, expires_at=sug.expires_at,
     )
 
@@ -1714,16 +1784,11 @@ def verify_run_advice(out: RunAdviceOutput, ctx: AdviceContext) -> VerifiedAdvic
 
 def render_run_advice(run_id: str, row: Any) -> RunAdvice | None:
     """agent_run_advice 한 행 → API의 RunAdvice. 빈 조언(kind 없음)이거나 렌더 뒤 문장과 버튼이 모두 없으면 None(204). 슬롯은
-    tool_result 값만 채운다 — 근거 글은 저장에도 응답에도 없다. 금지 표현은 렌더 결과에도 건다(render_text)."""
+    tool_result 값만 채운다 — 근거 글은 저장에도 응답에도 없어 text 조각만 나온다(#717). 금지 표현은 렌더 때도 건다
+    (render_segments)."""
     if row is None or row.kind is None:
         return None
-    claims = {c["id"]: c for c in row.claims}
-    refs = RenderRefs(pin_names={})
-    advice = []
-    for line in row.advice:
-        text = render_text(line["slot_text"], claims, refs)
-        if text is not None:
-            advice.append(AgentAdviceLine(text=text, is_guess=line["is_guess"]))
+    advice = _advice_lines(row.advice, {c["id"]: c for c in row.claims}, RenderRefs(pin_names={}))
     actions = [AgentAction.model_validate(a) for a in row.actions]
     if not advice and not actions:
         return None

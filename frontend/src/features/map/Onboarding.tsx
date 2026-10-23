@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 
-import { useShareInvite } from '@/features/maps/useShareInvite'
+import ErrorText from '@/ErrorText'
+import { useShareInvite, type InviteStatus } from '@/features/maps/useShareInvite'
 import AgainstMark from '@/ui/AgainstMark'
 import { josa } from '@/ui/josa'
 import Pingo from '@/ui/Pingo'
@@ -66,22 +67,29 @@ export function OnboardingBody({ mapId, kind, onDone }: { mapId: string; kind: O
   )
 }
 
+const INVITE_BUTTON: Record<InviteStatus, string> = {
+  creating: '초대 링크를 만드는 중…',
+  failed: '다시 시도',
+  ready: '친구 초대하기',
+}
+
 /**
  * 지도를 막 만든 방장의 다음 할 일은 초대다. 문장으로만 안내하지 않고 이 화면의 유일한 채움 버튼으로 둔다(#351).
- * 공유 창이 없는 브라우저는 링크 복사로 대신한다.
+ * 공유 창이 없는 브라우저는 링크 복사로 대신한다. 링크를 못 만들면 같은 자리 버튼이 「다시 시도」가 된다(#703).
  */
 function OwnerActions({ mapId, onDone }: { mapId: string; onDone: () => void }) {
-  const { share, url } = useShareInvite(mapId)
+  const { share, status, error, retry } = useShareInvite(mapId)
   return (
     <div className="mt-6 space-y-1">
       <button
         type="button"
-        onClick={() => void share()}
-        disabled={!url}
+        onClick={status === 'failed' ? retry : () => void share()}
+        disabled={status === 'creating'}
         className="btn-primary btn-lg w-full"
       >
-        {url ? '친구 초대하기' : '초대 링크를 만드는 중…'}
+        {INVITE_BUTTON[status]}
       </button>
+      {status === 'failed' && <ErrorText message="초대 링크를 만들지 못했어요" error={error} />}
       <button type="button" onClick={onDone} className="btn-text btn-md w-full">
         나중에 할게요
       </button>

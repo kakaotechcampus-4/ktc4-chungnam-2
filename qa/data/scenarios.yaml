@@ -1,0 +1,27 @@
+# UI·추천 시나리오 데이터 — 합성. 장소는 pingo_eval의 정예(curated, open)에서 "중심점에서 가장 가까운 + 라벨 조건"으로 고른다(harness/run_reco.py pick()).
+# 사용자: auth.testing.session_cookie(<user_id>)로 만든 세션 쿠키(카카오 로그인 대체). 지도 지역 중심은 아래 center.
+centers:
+  성수: {lat: 37.5446, lng: 127.0557}
+  홍대: {lat: 37.5563, lng: 126.9236}
+  종로: {lat: 37.5704, lng: 126.9922}
+users:                      # 테스트 전용 계정(id → 표시 이름)
+  qa_ui_owner: QA방장
+  qa_ui_member: QA구성원
+  qa_ui_limit: QA한도       # 추천 10회 소진 + 확정 리스트 3곳이 들어 있는 지도 보유
+  qa_ui_solo: QA혼자        # 혼자인 방장(나가기 불가 안내 확인용)
+trips:
+  default: {start: "2026-11-10", end: "2026-11-12"}
+  one_monday: {start: "2026-11-09", end: "2026-11-09"}
+  one_week: {start: "2026-11-09", end: "2026-11-15"}
+  july: {start: "2026-07-10", end: "2026-07-12"}
+reco_scenarios:             # run_reco.py SCENARIOS와 같은 정의의 요약(핀 선택 규칙: category/center/fact)
+  - {id: R01, center: 성수, category: 음식점, likes: [{fact: cuisine_korean, reason: "국물 있는 한식이 좋아요"}], againsts: [{fact: cuisine_western, reason: "양식은 느끼해서 싫어요"}]}
+  - {id: R02, center: 홍대, category: 카페, likes: [{fact: bakery, reason: "조용하고 오래 앉아 있을 수 있어서 좋아요"}], againsts: [{fact: franchise, reason: "프랜차이즈는 싫어요"}]}
+  - {id: R03, center: 종로, category: 관광지, trip: default, likes: [{reason: "단풍 구경하고 싶어요"}]}
+  - {id: R04, center: 종로, category: 관광지, trip: july, likes: [{reason: "단풍 구경하고 싶어요"}]}
+  - {id: R05, center: 성수, category: 음식점, members: 2, likes: [{fact: cuisine_bbq, reason: "고기 구워 먹고 싶어요"}], againsts_by_member2: [{fact: cuisine_bbq, reason: "매운 음식은 못 먹어요"}]}
+  - {id: R06, center: 성수, category: 음식점, likes: [{fact: cuisine_korean, reason: "한식이 좋아요"}], againsts: [{fact: cuisine_western, reason: "땅콩 알레르기가 있어서 못 먹어요"}]}
+ui_flows:
+  invite: "map(qa_ui_owner) → 초대 토큰 → (로그아웃) /invites/<토큰> → qa_ui_member 쿠키 → 「참여하기」 → ?onboarding=member"
+  retry_limit: "qa_ui_limit이 한 지도에서 run 10개 생성 후 UI에서 11번째 요청"
+  solo_owner: "qa_ui_solo가 혼자인 지도의 정보 시트 열기"

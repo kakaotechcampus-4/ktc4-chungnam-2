@@ -100,6 +100,12 @@ def map_id(world):
     return found
 
 
+def said(advice) -> list[str]:
+    """조언 문장들. 조언은 tool_result claim만이라 줄마다 text 조각 하나다(#717)."""
+    assert all([s.kind for s in line.segments] == ["text"] for line in advice.advice)
+    return [line.segments[0].text for line in advice.advice]
+
+
 def make_run(world, map_id, *, execute=True, walk=15, requester="u1") -> str:
     """조언 대상 판. execute=False면 근거 수집 중인 run이다."""
     with world.factory() as db:
@@ -233,7 +239,7 @@ def test_soft_relax_button_only_for_own_line_and_nothing_private_is_said_or_stor
 
     own_line = next(line for line in recommend_service_lines(world, run_id) if line["text"] == OWN_TEXT)
     assert advice.kind == "soft_relax"
-    assert [a.text for a in advice.advice] == [
+    assert said(advice) == [
         f"「{labels['spacious']} 원함」 조건을 끄면 1곳이 더 남아요",
         f"다른 구성원의 「{labels['is_crowded_large']}」 조건 때문에 1곳이 빠졌어요",
     ]
@@ -282,7 +288,7 @@ def test_the_model_input_has_the_funnel_and_no_people(world, map_id):
     assert sent["radius"] == {"walk_min": 15, "max_walk_min": 30, "max_radius_factor": 2.0,
                               "next_radius_factor": 20 / 15}
     assert all(s not in json.dumps(sent, ensure_ascii=False) for s in (*SECRETS, world.uid("u1"), map_id))
-    assert [a.text for a in advice.advice] == ["이미 보여 드렸거나 거절한 곳이 1곳 빠졌어요"]
+    assert said(advice) == ["이미 보여 드렸거나 거절한 곳이 1곳 빠졌어요"]
 
 
 # ---------------------------------------------------------------- 반경 상한 (가드레일 4)
@@ -294,7 +300,7 @@ def test_widen_beyond_the_limit_is_dropped(world, map_id):
 
     advice = advise(world, run_id, ScriptedGateway(radius))
 
-    assert [a.text for a in advice.advice] == ["반경을 끝까지 넓히면 1곳이 더 나와요"]
+    assert said(advice) == ["반경을 끝까지 넓히면 1곳이 더 나와요"]
     assert [a.model_dump(mode="json") for a in advice.actions] == [
         {"index": 0, "type": "widen_radius", "label": "반경 넓히기", "params": {"run_id": run_id}},
     ]

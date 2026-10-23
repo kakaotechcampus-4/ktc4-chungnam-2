@@ -855,3 +855,108 @@ service, 다른 모듈 읽기와 트랜잭션은 flows. 마이그레이션 없�
 - recommend/tests/test_run_reads_api.py: get_run_meta에 widen_step_walk_min
 - integration/test_agent_e2e.py: xfail 표시를 지운 테스트 통과
 - `pytest agent recommend integration llm`: 1369 passed, 1 xfailed(#226, 무관), 5 deselected(live)
+
+---
+
+# 루트 보고 — backend/agent (#717, 에이전트 문장을 조각으로: 구성원 인용은 검증한 범위만)
+
+계약은 이 브랜치(docs/advice-segments-717)의 api-spec `AgentAdviceLine`·`AdviceSegment`, agent-v2 11절 "렌더"·"저장과 렌더 시점", 16.2다.
+
+## 바뀐 것
+
+- `schemas.py`: `AdviceSegment{kind: text|quote|pin, text, reaction_id?, pin_id?}`를 두고 `AgentAdviceLine.text`를 `segments`(1개 이상)로
+  바꿨다. 채우지 않은 `reaction_id`·`pin_id`는 직렬화에서 뺀다(스펙이 null을 받지 않는다, `AgentActionParams`와 같은 방식).
+- 검증(`core.verify_diagnosis`): QuoteClaim이 통과하면 반응 글 안의 범위를 찾는다(`core.quote_span`). 찾기는 공백을 정규화한 글에서 하고,
+  범위(start, end)는 정규화 전 원문 기준이다. 범위가 `QUOTE_MAX_CHARS`(60)를 넘으면 claim을 뺀다(이유 `quote_too_long`).
+- 저장: quote claim은 `{id, kind, reaction_id, start, end, digest}`다. `digest`는 그 범위의 sha256 16진 앞 16자(`QUOTE_DIGEST_CHARS`).
+  대조용 `text`는 전처럼 버린다.
+- 렌더(`core.render_segments`): 슬롯 밖 글과 `{cN.value}`는 text 조각(이어지면 하나로 합친다), quote는 지금 원문에서 범위만 잘라 다이제스트가
+  같을 때만 quote 조각, 핀 ref는 pin 조각(이름은 지금 읽은 것). 채울 수 없는 조각이 하나라도 있으면 그 줄을 뺀다.
+- 금지 표현: 렌더 때는 text 조각을 이어 붙인 것에만 건다. 렌더 결과 전체(인용 포함)에 걸던 것은 없앴다. 검증 5단계(슬롯 밖 글)의 검사는 그대로다.
+- `RunAdvice`도 같은 렌더를 쓴다. 조언 claim은 tool_result뿐이라 text 조각만 나온다.
+- `agent.suggested` 페이로드는 `AgentSuggestion.model_dump`라 응답과 같은 모양이다(events.md는 `AgentSuggestion`을 가리켜 고칠 것이 없다).
+  `test_flows_model.py`에서 이벤트의 quote 조각이 검증한 앞 8글자뿐인 것을 확인한다.
+- `render_text`는 없앴다. 제목은 `render_title`(문자열 그대로, 아래 참고).
+- llm(작은 변경): `llm/tests/eval_agent/run_eval.py`가 `render_text` 대신 `render_segments`를 쓴다. 결과 파일의 `rendered`에 `segments`를 더 남기고,
+  `text`는 읽기용으로 이어 붙인 것이다(인용은 「」로 감쌈). 평가셋 인젝션 케이스 추가와 "text 조각에 결정 지시 0" 지표는 이번에 하지 않았다(이슈의 llm 할 일).
+
+## 명세에 없어 정한 것
+
+- 인용 길이는 원문 범위의 길이(end − start)로 잰다. 화면에 나가는 것이 그 범위라서다. 정규화한 인용 길이보다 길 수 있다(공백 덩어리).
+- 범위는 정규화한 글에서 인용이 처음 나오는 곳이다.
+- quote 조각의 글은 원문 범위 그대로다. 공백을 정규화하지 않아 줄바꿈이 있으면 그대로 나간다. FE가 인용 모양으로 그릴 때 공백을 접을지 정하면 된다.
+- 알러지 검사는 범위가 아니라 반응 글 전체로 본다(전과 같다). 범위 밖에 알러지 말이 있어도 인용하지 않는다.
+- 범위가 없는 quote claim(#717 전에 저장된 제안)은 글 전체를 내지 않고 그 줄을 뺀다. 활성 제안은 24시간이라 하루 지나면 없어진다.
+- 조각 글의 합이 `LINE_MAX_CHARS`(300)를 넘으면 그 줄을 뺀다. 전에는 300자를 넘으면 `AgentAdviceLine` 검증 오류가 났을 자리다.
+- 금지 표현은 text 조각을 "이어 붙인 것"에 걸어서, 인용 양쪽의 text가 이어져 금지 표현이 되면(예: "확정" + 인용 + "하세요") 그 줄도 뺀다(보수적).
+- 제목(`AgentSuggestion.title`)은 스펙대로 문자열이다. text 조각만 생기는 제목만 렌더하고, 핀 이름이나 인용이 들어가면 None(제안을 보여 주지 않음)이다.
+  지금 제목 템플릿은 카테고리 이름과 `{cN.value}`뿐이라 해당하는 경우가 없다.
+
+## 루트 확인 요청 (문서는 고치지 않았다)
+
+1. `docs/agent-v2.md` 584줄 FORBIDDEN_PHRASES 코드 블록의 주석 "슬롯 문장(검증 5단계)뿐 아니라 렌더 결과에도 건다(#534). 인용 슬롯은 반응 글 전체로 바뀌어,"는
+   #717 뒤로 맞지 않는다. "렌더 때는 text 조각을 이어 붙인 것에만 건다"로 고쳐 달라.
+2. `backend/integration/test_agent_e2e.py`는 작업 폴더에 미추적 파일로만 있고 어느 브랜치에도 없어 손대지 않았다. 그 파일을 커밋할 때 맞출 곳:
+   - 390~392줄, 508줄: `{"text": ..., "is_guess": ...}` → `{"segments": [...], "is_guess": ...}`(조언은 `[{"kind": "text", "text": ...}]`)
+   - `test_instruction_hidden_in_a_reason_never_reaches_the_screen`: 모델이 인용한 것은 "느끼한 건 별로예요"(지시문 앞부분)뿐이라 이제 그 줄이
+     빠지지 않고 quote 조각에 그 범위만 나간다. `[False, True]`는 `[False, False, True]`가 되고, "확정"·"시스템 지시"가 화면에 없다는 확인은 그대로 통과해야 한다.
+     테스트 설명(렌더 단계 금지 표현 검사가 문장을 뺀다)도 "검증한 범위만 나간다"로 바꿔야 한다.
+
+## 테스트
+
+- test_core_verify.py: 저장된 quote claim이 범위와 다이제스트를 갖고 원문이 없다; `quote_span` 5가지(원문 기준 범위, 줄바꿈 포함, 처음 나오는 곳,
+  없음, 빈 인용); 60자 인용은 남고 61자는 `quote_too_long`
+- test_core_render.py: pin 조각(db 핀과 실시간 핀), 숫자와 앞뒤 글은 text 조각 하나, 지워진 핀은 줄을 뺀다, 인용은 검증한 범위만(글 전체가 아님),
+  원문 기준 범위로 자름, 사유가 고쳐지면(다이제스트 다름·앞이 고쳐져 범위가 밀림)·반응이 지워지면·알러지면 줄을 뺀다, 범위 없는 옛 claim은 렌더하지 않음,
+  지시문이 섞인 사유를 인용해도 quote 조각에만 들어가고 text 조각에는 없음, text 조각의 금지 표현은 줄을 뺀다, 300자 상한, 제목은 text만
+- test_schemas.py: 조각 세 종류가 든 응답이 스펙 스키마를 통과, 채우지 않은 id는 키가 없다, 빈 segments와 301자 조각은 거부
+- test_flows.py, test_router.py: 응답과 이벤트의 조각 모양(text, pin). test_flows_model.py: 이벤트의 quote 조각은 검증한 앞 8글자뿐
+- test_core_advice.py, test_flows_advice.py: 조언은 text 조각만
+- integration/test_response_contract.py: 조언 응답의 조각을 보게 고쳤다. 에이전트 엔드포인트 계약 테스트는 그대로 통과
+- `pytest agent`(course/tests/test_service_db.py 제외): 823 passed, 7 failed — 실패는 모두 `agent/course/tests/test_router.py`의 `tzdata` 미설치(Windows, 이번 변경 전에도 같음)
+- `pytest integration llm`(test_agent_e2e.py 제외): 621 passed, 2 failed — course 계약 테스트(`tzdata`)와 그것에 딸린 `test_zz_every_spec_operation_is_exercised…`
+
+# 루트 보고 — backend/agent (#694, 게스트 합치기: reassign_user)
+
+브랜치 `feat/agent-reassign-user-694`. 정본은 data-model.md 「게스트 전환과 합치기」 절의 agent 행이다(루트 브랜치 `docs/user-identities-694`,
+이 보고를 쓸 때는 아직 develop에 없다). 다른 모듈 파일은 고치지 않았다.
+
+## auth가 연결할 함수
+
+### `agent.api.reassign_user(db, *, from_user_id, to_user_id) -> dict[str, int]`
+
+다른 모듈의 `reassign_user`와 같은 모양이다. 옮기거나 지운 행 수를 돌려주고, 커밋하지 않는다. 같은 id면 아무것도 하지 않고(모두 0),
+두 번 불러도 결과가 같다. agent는 다른 모듈 테이블을 읽지 않으므로 `MERGE_STEPS` 어디에 둬도 된다.
+
+| 키 | 칸 | 충돌 규칙 |
+|---|---|---|
+| `agent_suggestion_views` / `agent_suggestion_views_dropped` | `agent_suggestion_views.user_id` | 같은 제안을 둘 다 열람했으면 게스트 행을 지운다. 카카오 쪽 `viewed_at`이 남는다 |
+| `agent_course_runs` / `agent_course_runs_dropped` | `agent_course_runs.requested_by` | 같은 지도에 둘 다 진행 중(queued·running)이면 게스트의 진행 중 run을 지운다(`uq_agent_course_runs_active`). 끝난 run은 겹쳐도 옮긴다 |
+| `agent_settings` | `agent_settings.updated_by` | 없음 |
+| `agent_suggestions` | `agent_suggestions.resolved_by` | 없음 |
+
+- 사유 원문은 다루지 않는다. agent 테이블에는 원문이 없고 `reaction_id`만 있다. 반응은 pins의 `reassign_user`가 옮긴다
+- 지운 진행 중 run이 백그라운드에서 돌고 있어도 괜찮다. `execute_run`과 `progress_writer`는 id와 상태로 갱신하므로, 행이 없으면 아무것도 쓰지 않는다
+- 구현은 `agent.service.reassign_user`(열람, 설정, 제안)와 `agent.course.api.reassign_user`(코스 run)이고, `agent.api`가 둘을 합친다
+
+## auth 쪽 남은 일 (#694 체크리스트, 이번에 하지 않았다)
+
+- `auth/service.py`의 `MERGE_STEPS`에 `("agent", agent_api)`를 넣는다. 탈퇴(`withdraw_user`)는 이미 agent를 부르므로, #694의
+  "탈퇴 목록에 있는 모듈은 합치기 목록에도 있다" 테스트는 이걸 넣기 전까지 실패한다
+
+## 루트 확인 요청
+
+1. **코스 하루 상한.** 명세는 "하루 상한은 합치지 않는다(추천 횟수와 같다)"인데, 둘은 동작이 다르다. 추천의 `attempt_no`는 행에 저장된
+   값이라 옮겨도 그대로다. 코스 상한은 `requested_by`와 `created_at`으로 그날 행을 센다(`count_since`). 그래서 게스트가 오늘 만든 run을
+   옮기면, 카카오 계정의 오늘 횟수에 그만큼 더해진다. 다음 KST 자정에 풀리고, 게스트와 카카오 계정 둘 다 같은 날 코스를 여러 번 요청했을
+   때만 상한(5)에 닿는다. 지금은 별도 처리 없이 둔다. 문장을 "따로 조정하지 않는다(그날 옮긴 run은 카카오 계정의 횟수에 들어간다)"로
+   고칠지, 상한에서 빼는 처리가 필요한지 정해 달라. 빼려면 칸이 하나 더 필요하다
+2. **겹친 동시 요청.** 진행 중 run 정리와 이동 사이에 카카오 계정이 같은 지도에서 새 코스를 요청하면, 이동이 부분 유니크 인덱스에 걸려
+   합치기 전체가 실패한다(`guest_merged=false`, 게스트 기록은 남는다). 매우 드물고 기존 실패 경로를 그대로 타므로 따로 막지 않았다
+
+## 테스트
+
+- `agent/tests/test_reassign_user.py` 6개: 열람 겹침(카카오 쪽 viewed_at 유지), 진행 중 코스 겹침(끝난 run과 카카오가 끝난 지도의
+  진행 중 run은 옮김), updated_by와 resolved_by, 멱등(두 번째 호출은 모두 0이고 상태가 같음), 같은 id, 다른 사용자 행은 그대로
+- `pytest agent auth`: 944 passed, 21 failed. 실패 21개는 모두 이 PC venv에 `tzdata`가 없어 `ZoneInfo("Asia/Seoul")`가 실패한 것이다
+  (agent/course의 DB·라우터 테스트). develop에서도 같은 실패가 나고, 이번 변경과 무관하다
