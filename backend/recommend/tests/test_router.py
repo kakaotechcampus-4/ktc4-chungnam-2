@@ -243,7 +243,7 @@ def _manual_count(db_session, run_id) -> int:
 
 
 def test_evidence_add_accepts_five_lines_and_rejects_six_with_422(app_client, db_session):
-    """#716 — 요청당 5줄까지. 6줄은 422이고 아무것도 저장하지 않는다."""
+    """#716 — 요청당 글 5개까지. 6개는 422이고 아무것도 저장하지 않는다."""
     run_id = _evidence_run(app_client, db_session)
     resp = _add(app_client, run_id, [f"조건 {i}" for i in range(6)])
     assert resp.status_code == 422 and resp.json()["code"] == "VALIDATION_ERROR"
@@ -266,8 +266,9 @@ def test_evidence_add_accepts_one_and_140_chars_and_strips_whitespace(app_client
     assert "조용한 곳" in texts and "가" * 140 in texts
 
 
-def test_evidence_add_run_limit_is_ten_lines_including_disabled_ones_then_409(app_client, db_session):
-    """#716 — run당 누적 10줄(×로 뺀 줄 포함). 10줄째까지 200, 11줄째는 409 EVIDENCE_LIMIT {limit, used}."""
+def test_evidence_add_run_limit_is_ten_entries_including_disabled_ones_then_409(app_client, db_session):
+    """#716, #707 — run당 누적 글 10개(×로 뺀 것 포함). 10개째까지 200, 11개째는 409 EVIDENCE_LIMIT {limit, used}. dev ②는 글 하나에
+    줄 하나라 줄 수와 글 수가 같다(글 하나가 여러 줄인 경우는 test_flows가 본다)."""
     run_id = _evidence_run(app_client, db_session)
     before = {line["id"] for line in app_client.get(f"/runs/{run_id}/evidence", cookies=_auth("user_1")).json()}
     for batch in (5, 4, 1):

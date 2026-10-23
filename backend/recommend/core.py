@@ -25,6 +25,9 @@ from recommend.ports import Circle
 from recommend.schemas import Check
 
 ATTEMPT_LIMIT = 10  # #31: 지도 안에서 구성원 각자, 카테고리 무관, 팀 합산 상한 없음. 5→10회 상향(2026-10-15, #558)
+# #707 — run 하나에 「+」로 직접 추가하는 글은 10개까지(×로 뺀 것도 센다). 「+」도 ②로 모델을 불러서다. 출발값이고,
+# 사람 단위 크레딧(#432)이 정해지면 거기서 센다. 한 요청 5줄은 schemas.EvidencePatchRequest가 422로 막는다.
+MANUAL_EVIDENCE_LIMIT = 10
 # 반경 넓히기 상수 — docs/constraints.md "반경 넓히기 상수" 절 그대로(조정 가능한 상수, 바꿀
 # 때 루트에게 알린다). 기본값 원은 도보 15분에서 시작해 한 번에 5분씩, 30분까지.
 DEFAULT_RADIUS_WALK_MIN = 15
@@ -62,7 +65,7 @@ def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> l
     한다) 이 함수는 순수 병합/정렬만 한다.
 
     reaction_lines: badge='required'(반대) 등 반응에서 파생된 근거(source='reaction').
-    manual_lines: 사용자가 직접 추가한 근거(source='manual', badge='reference').
+    manual_lines: 사용자가 직접 추가한 근거(source='manual', badge='preferred', #707).
     둘 다 EvidenceLine 생성에 바로 쓸 수 있는 dict(author_id/source/text/badge/fact_key/...)
     shape라고 전제한다 — DB insert 자체는 service.py가 한다(이 함수는 순서만 정한다: 반응
     유래 근거를 먼저, 수동 추가를 뒤에 — "-"로 뺄 수 있는 자기 근거를 찾기 쉽게 원 작성

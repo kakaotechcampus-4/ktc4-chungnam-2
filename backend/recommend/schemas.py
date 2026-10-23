@@ -80,8 +80,7 @@ class EvidenceToggleEntry(BaseModel):
     is_active: bool
 
 
-EVIDENCE_ADD_PER_REQUEST = 5   # 「+」 한 번에 5줄까지(docs/api-spec.yaml add.maxItems, #707)
-EVIDENCE_ADD_PER_RUN = 10      # run 하나에 직접 추가한 줄 10줄까지 — ×로 뺀 줄도 센다(409 EVIDENCE_LIMIT)
+EVIDENCE_ADD_PER_REQUEST = 5   # 「+」 한 번에 글 5개까지(docs/api-spec.yaml add.maxItems, #707). run 하나 상한은 core.MANUAL_EVIDENCE_LIMIT
 
 
 class EvidenceAddEntry(BaseModel):
@@ -91,6 +90,7 @@ class EvidenceAddEntry(BaseModel):
 
 class EvidencePatchRequest(BaseModel):
     toggle: list[EvidenceToggleEntry] = Field(default_factory=list)
+    # 한 요청 5개(api-spec maxItems, 넘으면 422 VALIDATION_ERROR, #707). run 하나 상한은 core.MANUAL_EVIDENCE_LIMIT(글 수).
     add: list[EvidenceAddEntry] = Field(default_factory=list, max_length=EVIDENCE_ADD_PER_REQUEST)
 
 

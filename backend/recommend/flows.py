@@ -302,6 +302,13 @@ def list_evidence(db: Session, *, run_id: str, principal: Principal) -> list[sch
     return [_evidence_response(line, principal) for line in service.list_evidence(db, run_id)]
 
 
+def _check_manual_evidence_limit(db: Session, run_id: uuid.UUID, *, adding: int) -> None:
+    """run 하나에 「+」로 추가한 글은 core.MANUAL_EVIDENCE_LIMIT개까지(뺀 것도 센다, #707). used는 이 요청 전까지의 수다."""
+    used = service.count_manual_entries(db, run_id)
+    if used + adding > core.MANUAL_EVIDENCE_LIMIT:
+        raise AppError("EVIDENCE_LIMIT", detail={"limit": core.MANUAL_EVIDENCE_LIMIT, "used": used})
+
+
 def patch_evidence(
     db: Session, *, run_id: str, principal: Principal,
     toggles: list[tuple[str, bool]], adds: list[str], evidence_planner: EvidencePlanGateway,
@@ -321,12 +328,11 @@ def patch_evidence(
         if not can(principal, "evidence.disable", resource):
             raise AppError("FORBIDDEN")
         validated.append((line.id, is_active))
-    # run당 직접 추가 상한(#707) — 모델을 부르기 전에 막는다. 뺀 줄도 센다. 한 글이 여러 줄이 될 수 있어 이미 있는 줄 수에
-    # 이번 글 수를 더해 보수적으로 본다.
+    # 한 요청 안의 같은 글은 하나로 줄인다 — 상한은 (글, 요청)으로 세므로 반복한 글이 ②에만 여러 번 들어가지 않게(#707).
+    adds = list(dict.fromkeys(adds))
+    # 「+」 상한(#707)은 모델을 부르기 전에 본다 — 넘는 요청은 ②를 부르지 않는다.
     if adds:
-        used = service.count_manual_evidence(db, run_uuid)
-        if used + len(adds) > schemas.EVIDENCE_ADD_PER_RUN:
-            raise AppError("EVIDENCE_LIMIT", detail={"limit": schemas.EVIDENCE_ADD_PER_RUN, "used": used})
+        _check_manual_evidence_limit(db, run_uuid, adding=len(adds))
     # 「+」로 추가한 줄도 ②를 거쳐 fact_key·wants를 붙인다(#254) — 근거 줄에 "한식 제외"처럼 해석한 조건이
     # 보인다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다 — 모델이 쓰기보다 먼저라 행이 안 남는다).
     # 글 하나에 조건이 여럿이면 같은 글로 조건마다 줄 하나다(#419).
@@ -334,9 +340,13 @@ def patch_evidence(
     if adds:
         db.rollback()  # 읽기 트랜잭션을 끝내 연결을 돌려준다(#275). 저장이 아니다.
         planned = evidence_planner.plan_evidence([
-            {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "reference", "fact_key": None}
+            {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "preferred", "fact_key": None}
             for text in adds
         ])
+        # 위 검사는 롤백으로 잠금 없이 끝났다. 같은 run에 동시에 온 요청이 함께 상한을 넘지 않게 run 행을 잠그고
+        # 다시 센다 — 이때 걸리면 모델은 이미 불렸지만 줄은 남지 않는다(멘토 리뷰 #380: 여러 행에 걸친 상한).
+        service.lock_run(db, run_uuid)
+        _check_manual_evidence_limit(db, run_uuid, adding=len(adds))
     for line_id, is_active in validated:
         service.set_evidence_active(db, line_id, is_active)
     if adds:
