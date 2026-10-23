@@ -367,7 +367,8 @@ def test_render_fills_tool_values():
 
     assert rendered.model_dump(mode="json") == {
         "run_id": RUN, "kind": "soft_relax",
-        "advice": [{"text": "「넓은 곳 원함」 조건을 끄면 5곳이 더 남아요", "is_guess": False}],
+        # 조언은 tool_result claim만이라 text 조각 하나다(#717)
+        "advice": [{"segments": [{"kind": "text", "text": "「넓은 곳 원함」 조건을 끄면 5곳이 더 남아요"}], "is_guess": False}],
         "actions": [{"index": 0, "type": "open_evidence", "label": "근거 확인에서 빼 보기",
                      "params": {"run_id": RUN, "evidence_line_ids": [OWN]}}],
     }

@@ -94,6 +94,14 @@ def _totals(requests: list[dict[str, Any]]) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- 한 번 돌리기
 
+def _rendered(segments, is_guess: bool) -> dict[str, Any]:
+    """렌더된 문장 한 줄(#717 조각). text는 읽기용으로 이어 붙인 것이고 인용 조각은 「」로 감싼다. 빠진 줄은 둘 다 None."""
+    if segments is None:
+        return {"text": None, "segments": None, "is_guess": is_guess}
+    text = "".join(f"「{s.text}」" if s.kind == "quote" else s.text for s in segments)
+    return {"text": text, "segments": [s.model_dump() for s in segments], "is_guess": is_guess}
+
+
 def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     world = fx.build(case)
     expect = case["expect"]
@@ -131,10 +139,8 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
         refs = core.RenderRefs(pin_names=world.names,
                                reaction_texts={r.reaction_id: r.text for r in world.snap.reasons if r.text})
         row["kept_actions"] = [a["type"] for a in draft.actions]
-        row["rendered"] = [
-            {"text": core.render_text(line["slot_text"], claims, refs), "is_guess": line["is_guess"]}
-            for line in draft.advice
-        ]
+        row["rendered"] = [_rendered(core.render_segments(line["slot_text"], claims, refs), line["is_guess"])
+                           for line in draft.advice]
     else:
         row["kept_actions"] = []
     if expected_silent:
