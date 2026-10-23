@@ -672,3 +672,9 @@ recommend 소스+테스트 전부 통과(마이그레이션 파일의 `Union`/`S
 ## #659 (2026-10-20)
 
 - llm 프롬프트에 카페 예시 있음: `llm/prompts.py:42` serves_alcohol 설명의 "카페인데 맥주도 되는 곳". 이번 PR에서는 건드리지 않았다.
+
+## #681-4·#681-12 (2026-10-24)
+
+- **#681-4 (구현함)**: 카드 checks는 hard + 🚫 사유로 낸 soft 키는 모름·거짓도 그대로, 나머지 선호(soft)는 충족한(known+passed) 것만 점수 기여 큰 순 최대 5줄(`core.limit_preference_checks`). 점수·집계·이유 입력은 전체 체크 그대로다.
+- **「외 N개」는 못 했다**: Check 응답에 줄 수를 담을 칸이 없다(스키마를 바꾸지 말라는 지시). 필요하면 응답에 `hidden_preference_count` 같은 칸을 루트가 스펙에 넣어 주면 `limit_preference_checks`가 넘긴 개수를 채운다. 또 이 변경으로 원한 선호가 모름이어도 「확인 필요」로 안 보인다(기존 테스트 2건 기대값을 바꿨다).
+- **#681-12 (보류, 루트 확인 필요)**: `places.schemas.PlaceInfo`에 `curated`가 없다(`source`는 "permit" | "tourapi"뿐). 정예 장소를 "정예 조사"로 표시하려면 places가 `PlaceInfo.curated: bool`(또는 `source="curated"`)을 주고 `PlaceSourceInfo` 스펙에도 값이 있어야 한다. 그 뒤 recommend가 `place_source`에 그대로 싣는다 — recommend 쪽 변경은 그때 몇 줄이다.
