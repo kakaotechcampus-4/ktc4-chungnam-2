@@ -124,7 +124,12 @@ def get_kakao_callback(
     if error is not None or not code:
         return _login_redirect(error="cancelled")
     try:
-        user = service.login_with_kakao_code(db, code=code)
+        if state_claims.guest_user_id:   # 게스트가 시작한 로그인 — 카카오 수단을 붙이거나 기록을 합친다. 실패해도 로그인은 성공이다(#560, #694)
+            user, guest_merged = service.login_guest_with_kakao_code(
+                db, code=code, guest_user_id=state_claims.guest_user_id,
+            )
+        else:
+            user, guest_merged = service.login_with_kakao_code(db, code=code), None
     except service.KakaoApiError as exc:
         logger.warning("kakao login failed: reason=%s kakao_status=%s", exc.detail.get("reason"), exc.detail.get("kakao_status"))
         return _login_redirect(error="kakao_failed")
@@ -132,9 +137,6 @@ def get_kakao_callback(
         logger.error("kakao login failed: %s", type(exc).__name__)   # 종류만 — 메시지에 토큰·프로필이 섞일 수 있다
         db.rollback()   # 실패한 요청이 만든 반쪽 상태를 커밋하지 않는다
         return _login_redirect(error="server_error")
-    guest_merged = None
-    if state_claims.guest_user_id:   # 게스트가 시작한 로그인 — 기록을 합친다. 실패해도 로그인은 성공이다(#560)
-        guest_merged = service.merge_guest_into(db, guest_user_id=state_claims.guest_user_id, to_user_id=user.id)
     redirect = _login_redirect(guest_merged=guest_merged)
     _set_session_cookie(redirect, user.id)
     return redirect
