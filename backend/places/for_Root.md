@@ -457,3 +457,8 @@ pingo_demo는 `alembic_version=0020_evidence_wants`다. 단계별로 `upgrade()`
 # #681 PlaceInfo.curated (2026-10-24)
 
 `places.api.get_places`가 돌려주는 `PlaceInfo`에 `curated: bool = False`(`places.curated`)를 더했다 — 같은 배치 쿼리로 읽고 기본값이 있어 기존 호출자는 그대로다. `PlaceRef`는 recommend가 `get_places`로 정예 여부를 읽을 수 있어 건드리지 않았다(필요하면 알려 달라).
+
+
+# #690 FakePlaces.get_hours (2026-10-24)
+
+`places.testing.FakePlaces`에 `get_hours`와 `hours: dict[place_id, PlaceHours]`(기본 빈 dict = 모름)를 더하고 `install()` 패치 목록에 넣었다 — recommend 쪽 테스트가 `FakePlaces().install()` 아래서 진짜 DB로 가지 않는다. 테스트는 `fake.hours[place_id] = PlaceHours(...)`로 지정한다.

@@ -614,6 +614,35 @@ def test_reason_does_not_print_a_member_count_that_contradicts_the_label_631():
     assert "명)" not in reason
 
 
+# ---------- out_of_season_keys (#681-6) ----------
+
+def _off(start, end):
+    return core.out_of_season_keys(date.fromisoformat(start) if start else None, date.fromisoformat(end) if end else None)
+
+
+def test_out_of_season_keys_without_dates_uses_every_key():
+    assert core.out_of_season_keys(None, None) == frozenset()
+    assert core.out_of_season_keys(date(2027, 1, 1), None) == frozenset()
+
+
+def test_out_of_season_keys_january_trip_drops_cherry_blossom_autumn_and_water():
+    assert _off("2027-01-10", "2027-01-14") == {"cherry_blossom", "autumn_foliage", "water_play"}
+
+
+def test_out_of_season_keys_overlap_by_a_single_day_counts():
+    assert "cherry_blossom" not in _off("2027-03-31", "2027-03-31")        # 3월 31일 하루
+    assert "cherry_blossom" not in _off("2027-02-28", "2027-03-01")        # 걸치기만 해도
+    assert "cherry_blossom" not in _off("2027-04-30", "2027-05-02")        # 4월 30일 하루가 겹친다
+    assert "cherry_blossom" in _off("2027-05-01", "2027-05-03")            # 하루도 안 겹침
+    assert "cherry_blossom" in _off("2027-02-01", "2027-02-28")
+
+
+def test_out_of_season_keys_new_year_trip_keeps_winter_and_a_long_trip_keeps_everything():
+    assert _off("2026-12-30", "2027-01-02") == {"cherry_blossom", "autumn_foliage", "water_play"}
+    assert _off("2026-03-01", "2027-02-28") == frozenset()
+    assert _off("2026-11-30", "2026-12-01") == {"cherry_blossom", "water_play"}   # 단풍(11월)과 겨울(12월)
+
+
 def test_sight_hearts_only_user_is_satisfied_by_a_matching_candidate_681():
     """#681-2 — 관광지 ♥ 두 곳이 선호 14개로 번져 "1명 중 0명 충족"이던 사용자가, 표대로 거르면 정체(performance)와
     두 곳 모두 참인 성격(quiet)만 남아 그 둘을 가진 후보에서 충족이 된다. 집계 규칙(#620)은 그대로다."""
