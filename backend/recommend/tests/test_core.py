@@ -613,6 +613,37 @@ def test_reason_does_not_print_a_member_count_that_contradicts_the_label_631():
     assert "명)" not in reason
 
 
+def test_sight_hearts_only_user_is_satisfied_by_a_matching_candidate_681():
+    """#681-2 — 관광지 ♥ 두 곳이 선호 14개로 번져 "1명 중 0명 충족"이던 사용자가, 표대로 거르면 정체(performance)와
+    두 곳 모두 참인 성격(quiet)만 남아 그 둘을 가진 후보에서 충족이 된다. 집계 규칙(#620)은 그대로다."""
+    everything = ("performance", "quiet", "good_view", "family_friendly", "kid_friendly", "accessible", "walkable")
+    hearted = [
+        _place(*(_check(k) for k in everything), members=frozenset({"u1"})),
+        _place(_check("performance"), _check("quiet"), _check("accessible"), _check("family_friendly"),
+               members=frozenset({"u1"})),
+    ]
+    candidate = [_check("performance"), _check("quiet"), _check("good_view", confidence="unknown")]
+
+    raw = core.build_preference_criteria(hearted, disqualifying_fact_keys=[], preferred_authors={})
+    assert len(raw) == len(everything)
+    assert core.build_member_fulfillment(candidate, hearted, raw)["satisfied"] == 0   # 고치기 전
+
+    filtered = core.filter_heart_signals(hearted, "관광지")
+    criteria = core.build_preference_criteria(filtered, disqualifying_fact_keys=[], preferred_authors={})
+    assert criteria == {"performance": True, "quiet": True}   # good_view는 1곳뿐, 편의·접근·동반은 안 쓴다
+    result = core.build_member_fulfillment(candidate, filtered, criteria)
+    assert (result["satisfied"], result["total"]) == (1, 1)
+
+
+def test_cafe_hearts_use_the_cafe_table():
+    hearted = [
+        _place(_check("bakery"), _check("franchise"), _check("quiet"), members=frozenset({"u1"})),
+        _place(_check("franchise"), _check("open_late"), members=frozenset({"u1"})),
+    ]
+    kept = {c.fact_key for place in core.filter_heart_signals(hearted, "카페") for c in place.checks}
+    assert kept == {"bakery"}   # quiet는 1곳뿐, franchise·open_late는 쓰지 않음
+
+
 # ---------- limit_preference_checks (#681-4) ----------
 
 def test_limit_preference_checks_shows_only_met_preferences_but_every_disqualifier_check():
@@ -853,10 +884,10 @@ def test_filter_heart_signals_counts_places_not_members():
     assert _keys(core.filter_heart_signals(hearted, "음식점")) == [[]]
 
 
-def test_filter_heart_signals_leaves_cafe_unchanged():
-    """카페·관광지는 아직 나누지 않았다 — 같은 키(franchise·spacious)도 그대로 쓴다."""
+def test_filter_heart_signals_leaves_categories_without_a_table_unchanged():
+    """표가 없는 카테고리는 전부 쓴다(표에 없는 키는 '쓴다')."""
     hearted = [_place(_check("franchise"), _check("spacious"), _check("quiet"), members=frozenset({"u1", "u2"}))]
-    assert core.filter_heart_signals(hearted, "카페") == hearted
+    assert core.filter_heart_signals(hearted, "숙소") == hearted
 
 
 def test_written_preference_for_an_unused_key_still_counts_but_hearts_do_not():
