@@ -15,7 +15,7 @@ from auth.testing import ensure_users, session_cookie
 from common import database
 from main import app
 
-R = {"성수": (37.5446, 127.0557), "홍대": (37.5563, 126.9236), "종로": (37.5704, 126.9922)}
+R = {"춘천": (37.8813, 127.7298), "성수": (37.5446, 127.0557), "홍대": (37.5563, 126.9236), "종로": (37.5704, 126.9922)}
 
 
 def pick(cat, center, fact=None, fact_val=True, name_like=None, skip=0, extra_sql=""):
@@ -106,6 +106,14 @@ SCENARIOS = [
         (pick("음식점", "성수", "cuisine_bbq", skip=2), "against", "고기 싫어요"),
         (pick("음식점", "성수", "cuisine_bunsik"), "against", "분식 싫어요"),
     ]]),
+    # 14 정예가 적은 지역(춘천 카페) R09
+    sc("춘천 카페(정예 적은 지역) ♥빵", "춘천", "카페", [[
+        (pick("카페", "춘천"), "like", "분위기가 좋아요"),
+    ]]),
+    # 15 ♥만 있고 사유 없음 R10
+    sc("성수 음식점 — ♥만(사유 없음)", "성수", "음식점", [[
+        (pick("음식점", "성수", "cuisine_korean"), "like", ""),
+    ]]),
 ]
 
 
@@ -153,7 +161,7 @@ def run(s):
             else:
                 assert p.status_code == 201, (name, p.text)
                 pid = p.json()["id"]
-            rr = c.put(f"/pins/{pid}/reaction", json={"type": rtype, "reason_text": reason})
+            rr = c.put(f"/pins/{pid}/reaction", json={"type": rtype, **({"reason_text": reason} if reason else {})})
             assert rr.status_code == 200, (name, rr.status_code, rr.text)
     print(f"[설정] 핀·반응:")
     for i, pins in enumerate(s["users"]):
