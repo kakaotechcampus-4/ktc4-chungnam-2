@@ -114,6 +114,60 @@ class _FakePlaceFacts:
         }
 
 
+class _FakePlaceHours(_FakePlaceFacts):
+    """라벨 가짜에 영업시간을 더한다 — {place_id: PlaceHours}. 없는 장소는 키에서 빠진다(= 모름)."""
+
+    def __init__(self, hours_by_place):
+        super().__init__()
+        self._hours = hours_by_place
+
+    def get_hours(self, place_ids):
+        return {pid: self._hours[pid] for pid in place_ids if pid in self._hours}
+
+
+def _run_with_hours(db_session, *, hours_by_place, facts=None):
+    """기본 지도 여행 기간은 2026-01-01(목)~01-02(금). 후보 4곳: closed_all·closed_one·no_row·no_info."""
+    from places.schemas import PlaceHours
+
+    _make_members(db_session, user_ids=["user_1"])
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    places = [PlaceStub(place_id=pid, lat=35.0005, lng=129.0005) for pid in ("closed_all", "closed_one", "no_row", "no_info")]
+    gateway = _FakePlaceHours({pid: PlaceHours(**kwargs) for pid, kwargs in hours_by_place.items()})
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=gateway)
+    db_session.refresh(run)
+    return run, {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+
+
+def test_is_open_removes_only_places_closed_every_trip_day_and_counts_them_in_the_funnel(db_session):
+    run, by_place = _run_with_hours(db_session, hours_by_place={
+        "closed_all": {"closed_days": ["목", "금"]},
+        "closed_one": {"hours": {"목": [], "금": [["11:00", "21:00"]]}},
+        "no_info": {"closed_days": ["월"]},
+    })
+
+    assert set(by_place) == {"closed_one", "no_row", "no_info"}
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["영업 종료 제거"] == 1
+    open_check = lambda pid: next(c for c in by_place[pid].checks if c["fact_key"] == "is_open")
+    assert open_check("closed_one")["confidence"] == "known" and open_check("closed_one")["needs_check"] is False
+    for unknown in ("no_row", "no_info"):   # 행이 없거나 영업하는지 모르면 통과 + 「영업 여부 확인 필요」
+        assert open_check(unknown)["needs_check"] is True
+
+
+def test_is_open_without_hours_lookup_removes_nobody(db_session):
+    """시간 조회가 없는 게이트웨이(dev)는 지금처럼 모두 통과 + 확인 필요다."""
+    _make_members(db_session, user_ids=["user_1"])
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    places = [PlaceStub(place_id="p1", lat=35.0005, lng=129.0005)]
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts())
+    db_session.refresh(run)
+
+    [candidate] = service.list_candidates(db_session, str(run.id))
+    assert next(c for c in candidate.checks if c["fact_key"] == "is_open")["needs_check"] is True
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["영업 종료 제거"] == 0
+
+
 def test_publish_candidate_inserts_ai_pin_links_candidate_and_records_event(db_session):
     run = _make_run(db_session)
     candidate = _make_candidate(db_session, run)

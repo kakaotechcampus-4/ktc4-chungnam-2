@@ -730,3 +730,10 @@ recommend 소스+테스트 전부 통과(마이그레이션 파일의 `Union`/`S
 - **#681-4 (구현함)**: 카드 checks는 hard + 🚫 사유로 낸 soft 키는 모름·거짓도 그대로, 나머지 선호(soft)는 충족한(known+passed) 것만 점수 기여 큰 순 최대 5줄(`core.limit_preference_checks`). 점수·집계·이유 입력은 전체 체크 그대로다.
 - **「외 N개」는 못 했다**: Check 응답에 줄 수를 담을 칸이 없다(스키마를 바꾸지 말라는 지시). 필요하면 응답에 `hidden_preference_count` 같은 칸을 루트가 스펙에 넣어 주면 `limit_preference_checks`가 넘긴 개수를 채운다. 또 이 변경으로 원한 선호가 모름이어도 「확인 필요」로 안 보인다(기존 테스트 2건 기대값을 바꿨다).
 - **#681-12 (보류, 루트 확인 필요)**: `places.schemas.PlaceInfo`에 `curated`가 없다(`source`는 "permit" | "tourapi"뿐). 정예 장소를 "정예 조사"로 표시하려면 places가 `PlaceInfo.curated: bool`(또는 `source="curated"`)을 주고 `PlaceSourceInfo` 스펙에도 값이 있어야 한다. 그 뒤 recommend가 `place_source`에 그대로 싣는다 — recommend 쪽 변경은 그때 몇 줄이다.
+
+## #690 is_open (2026-10-24)
+
+- 요일 단위 휴무 판정은 `places.core.is_open_on`을 import하지 않고 `recommend.core.trip_open_status`에 같은 규칙으로 구현했다(hours의 빈 요일, `closed_days`, 전날 구간이 24:00을 넘겨 이어지는 새벽은 영업). 공개 래퍼는 필요 없다.
+- `PlaceFactsGateway`에 선택 메서드 `get_hours`를 더했다(실제 모드는 `places.api.get_hours`). 이 메서드가 없는 게이트웨이(dev·다른 모듈 테스트의 가짜)는 전부 「모름」(통과 + 확인 필요)이다.
+- 확인 필요 기준: 휴무가 아닌 요일 중 영업이 확인된 요일(hours에 구간이 있는 요일)이 하나도 없으면 `needs_check`다. 즉 행이 없는 경우뿐 아니라 `closed_days`만 있고 여행 요일이 거기 없는 경우(휴무는 아니지만 영업 여부는 모름)도 확인 필요로 둔다 — 문서 「영업 중 판정」의 `unknown` 정의를 따랐다.
+- known 통과 체크의 문구는 「여행 기간에 영업하는 날이 있음」(`PASSED_LABELS["is_open"]`)이다. 다른 문구를 원하면 알려 달라.

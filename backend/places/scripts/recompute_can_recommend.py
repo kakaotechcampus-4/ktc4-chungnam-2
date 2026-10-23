@@ -1,8 +1,8 @@
-"""places.can_recommend 전체 재계산 — 규칙은 places/core.py(임계는 거기 상수).
+"""places.can_recommend 전체 재계산 — 규칙은 places/core.py(정예 또는 관광지).
 
     python -m places.scripts.recompute_can_recommend [--dry-run]
 
-라벨이 늘거나 적재가 끝난 뒤, 임계를 바꾼 뒤에 돌린다. 멱등이다. 분류별 true/false 건수를 보고한다.
+적재가 끝난 뒤, 규칙을 바꾼 뒤에 돌린다. 멱등이다. 분류별 true/false 건수를 보고한다.
 places.load는 적재 끝에 같은 함수를 자동으로 부른다. 새 모델 호출·카카오 호출은 없다.
 """
 
