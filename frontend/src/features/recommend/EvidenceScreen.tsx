@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Ban, ChevronLeft, X } from 'lucide-react'
+import { Ban, Check, ChevronLeft, X } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
@@ -39,13 +39,14 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
   // 넓은 화면은 이 화면 머리의 ‹ 대신 패널 헤더 ‹ 가 추천을 그만두고 AI 추천으로 돌아간다.
   usePanelBack('AI 추천', () => setRun(mapId, undefined), desktop)
 
-  function toggle(line: EvidenceLineDto, active: boolean) {
+  // 한 사유가 조건마다 줄로 나뉘어(#421) 같은 태그에 내 줄이 여럿일 수 있다 — 한 번에 같이 끄고 켠다.
+  function toggle(lines: EvidenceLineDto[], active: boolean) {
     patch.mutate(
-      { toggle: [{ id: line.id, is_active: active }] },
+      { toggle: lines.map((l) => ({ id: l.id, is_active: active })) },
       {
         onSuccess: () =>
           !active &&
-          showToast(`‘${evidenceLabel(line)}’을(를) 뺐어요`, { label: '되돌리기', onClick: () => toggle(line, true) }),
+          showToast(`‘${evidenceLabel(lines[0])}’을(를) 뺐어요`, { label: '되돌리기', onClick: () => toggle(lines, true) }),
         onError: () => showToast('조건을 바꾸지 못했어요'),
       },
     )
@@ -102,9 +103,14 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
             <h2 className="text-sm font-bold text-ink-900">꼭 지켜야 하는 조건</h2>
             {groups.required.map((line) => (
               <div key={line.id} className="flex items-center gap-3 rounded-xl border border-ink-200 p-3">
-                <Ban size={16} className="shrink-0 text-[var(--bad-line)]" aria-hidden="true" />
+                {/* 묶음은 badge로 정한다 — 🚫에서 나왔다고 반대 조건인 게 아니고, ♥ 쪽 "꼭 ○○여야 해"도 여기 온다(#231·#427). */}
+                {line.wants === true ? (
+                  <Check size={16} className="shrink-0 text-[var(--good-line)]" aria-hidden="true" />
+                ) : (
+                  <Ban size={16} className="shrink-0 text-[var(--bad-line)]" aria-hidden="true" />
+                )}
                 <div className="min-w-0 flex-1">
-                  <p className="text-label text-ink-500">{line.author_display_name} · 반대 조건</p>
+                  <p className="text-label text-ink-500">{line.author_display_name}</p>
                   <p className="font-bold text-ink-900">{evidenceLabel(line)}</p>
                 </div>
                 {line.permissions.can_disable && (
@@ -125,7 +131,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
               {mergeTags(groups.preferred).map(({ tag, mine }) => (
                 <span key={tag} className="flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-sm font-semibold text-brand-700">
                   #{tag}
-                  {mine && (
+                  {mine.length > 0 && (
                     <button type="button" aria-label={`#${tag} 빼기`} onClick={() => toggle(mine, false)} className="hit-44">
                       <X size={14} />
                     </button>
@@ -208,7 +214,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
           danger
           onCancel={() => setAskRemove(null)}
           onOk={() => {
-            toggle(askRemove, false)
+            toggle([askRemove], false)
             setAskRemove(null)
           }}
         />
@@ -237,12 +243,14 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
   )
 }
 
+/** 같은 태그는 하나로 합친다. mine = 그 태그에 든 내 줄(뺄 수 있는 줄) 전부. */
 function mergeTags(lines: EvidenceLineDto[]) {
-  const tags = new Map<string, EvidenceLineDto | null>()
+  const tags = new Map<string, EvidenceLineDto[]>()
   for (const line of lines) {
     const tag = evidenceLabel(line)
-    const mine = line.permissions.can_disable ? line : null
-    tags.set(tag, tags.get(tag) ?? mine)
+    const mine = tags.get(tag) ?? []
+    if (line.permissions.can_disable) mine.push(line)
+    tags.set(tag, mine)
   }
   return [...tags].map(([tag, mine]) => ({ tag, mine }))
 }
