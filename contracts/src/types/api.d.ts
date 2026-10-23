@@ -1917,7 +1917,7 @@ export interface paths {
         /**
          * 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md).
          *     '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
-         *     한 요청에 5줄까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 줄은 10줄까지다(뺀 줄도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
+         *     한 요청에 글 5개까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 글은 10개까지다(뺀 것도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
          */
         patch: {
             parameters: {
@@ -3671,7 +3671,7 @@ export interface components {
                 id?: string;
                 is_active?: boolean;
             }[];
-            /** @description 직접 추가할 글. 한 요청에 5줄까지, run 하나에 모두 10줄까지(#707) */
+            /** @description 직접 추가할 글. 한 요청에 5개까지, run 하나에 모두 10개까지(#707). 근거 줄이 아니라 글 수로 센다. 한 요청 안의 같은 글은 하나로 친다 */
             add?: {
                 text?: string;
             }[];
@@ -4501,7 +4501,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description run 하나에 직접 추가('+')한 근거 줄이 10줄을 넘음(뺀 줄 포함, EVIDENCE_LIMIT, */
+        /** @description run 하나에 직접 추가('+')한 글이 10개를 넘음(뺀 것 포함, EVIDENCE_LIMIT, */
         EvidenceLimit: {
             headers: {
                 [name: string]: unknown;
