@@ -915,3 +915,48 @@ service, 다른 모듈 읽기와 트랜잭션은 flows. 마이그레이션 없�
 - integration/test_response_contract.py: 조언 응답의 조각을 보게 고쳤다. 에이전트 엔드포인트 계약 테스트는 그대로 통과
 - `pytest agent`(course/tests/test_service_db.py 제외): 823 passed, 7 failed — 실패는 모두 `agent/course/tests/test_router.py`의 `tzdata` 미설치(Windows, 이번 변경 전에도 같음)
 - `pytest integration llm`(test_agent_e2e.py 제외): 621 passed, 2 failed — course 계약 테스트(`tzdata`)와 그것에 딸린 `test_zz_every_spec_operation_is_exercised…`
+
+# 루트 보고 — backend/agent (#694, 게스트 합치기: reassign_user)
+
+브랜치 `feat/agent-reassign-user-694`. 정본은 data-model.md 「게스트 전환과 합치기」 절의 agent 행이다(루트 브랜치 `docs/user-identities-694`,
+이 보고를 쓸 때는 아직 develop에 없다). 다른 모듈 파일은 고치지 않았다.
+
+## auth가 연결할 함수
+
+### `agent.api.reassign_user(db, *, from_user_id, to_user_id) -> dict[str, int]`
+
+다른 모듈의 `reassign_user`와 같은 모양이다. 옮기거나 지운 행 수를 돌려주고, 커밋하지 않는다. 같은 id면 아무것도 하지 않고(모두 0),
+두 번 불러도 결과가 같다. agent는 다른 모듈 테이블을 읽지 않으므로 `MERGE_STEPS` 어디에 둬도 된다.
+
+| 키 | 칸 | 충돌 규칙 |
+|---|---|---|
+| `agent_suggestion_views` / `agent_suggestion_views_dropped` | `agent_suggestion_views.user_id` | 같은 제안을 둘 다 열람했으면 게스트 행을 지운다. 카카오 쪽 `viewed_at`이 남는다 |
+| `agent_course_runs` / `agent_course_runs_dropped` | `agent_course_runs.requested_by` | 같은 지도에 둘 다 진행 중(queued·running)이면 게스트의 진행 중 run을 지운다(`uq_agent_course_runs_active`). 끝난 run은 겹쳐도 옮긴다 |
+| `agent_settings` | `agent_settings.updated_by` | 없음 |
+| `agent_suggestions` | `agent_suggestions.resolved_by` | 없음 |
+
+- 사유 원문은 다루지 않는다. agent 테이블에는 원문이 없고 `reaction_id`만 있다. 반응은 pins의 `reassign_user`가 옮긴다
+- 지운 진행 중 run이 백그라운드에서 돌고 있어도 괜찮다. `execute_run`과 `progress_writer`는 id와 상태로 갱신하므로, 행이 없으면 아무것도 쓰지 않는다
+- 구현은 `agent.service.reassign_user`(열람, 설정, 제안)와 `agent.course.api.reassign_user`(코스 run)이고, `agent.api`가 둘을 합친다
+
+## auth 쪽 남은 일 (#694 체크리스트, 이번에 하지 않았다)
+
+- `auth/service.py`의 `MERGE_STEPS`에 `("agent", agent_api)`를 넣는다. 탈퇴(`withdraw_user`)는 이미 agent를 부르므로, #694의
+  "탈퇴 목록에 있는 모듈은 합치기 목록에도 있다" 테스트는 이걸 넣기 전까지 실패한다
+
+## 루트 확인 요청
+
+1. **코스 하루 상한.** 명세는 "하루 상한은 합치지 않는다(추천 횟수와 같다)"인데, 둘은 동작이 다르다. 추천의 `attempt_no`는 행에 저장된
+   값이라 옮겨도 그대로다. 코스 상한은 `requested_by`와 `created_at`으로 그날 행을 센다(`count_since`). 그래서 게스트가 오늘 만든 run을
+   옮기면, 카카오 계정의 오늘 횟수에 그만큼 더해진다. 다음 KST 자정에 풀리고, 게스트와 카카오 계정 둘 다 같은 날 코스를 여러 번 요청했을
+   때만 상한(5)에 닿는다. 지금은 별도 처리 없이 둔다. 문장을 "따로 조정하지 않는다(그날 옮긴 run은 카카오 계정의 횟수에 들어간다)"로
+   고칠지, 상한에서 빼는 처리가 필요한지 정해 달라. 빼려면 칸이 하나 더 필요하다
+2. **겹친 동시 요청.** 진행 중 run 정리와 이동 사이에 카카오 계정이 같은 지도에서 새 코스를 요청하면, 이동이 부분 유니크 인덱스에 걸려
+   합치기 전체가 실패한다(`guest_merged=false`, 게스트 기록은 남는다). 매우 드물고 기존 실패 경로를 그대로 타므로 따로 막지 않았다
+
+## 테스트
+
+- `agent/tests/test_reassign_user.py` 6개: 열람 겹침(카카오 쪽 viewed_at 유지), 진행 중 코스 겹침(끝난 run과 카카오가 끝난 지도의
+  진행 중 run은 옮김), updated_by와 resolved_by, 멱등(두 번째 호출은 모두 0이고 상태가 같음), 같은 id, 다른 사용자 행은 그대로
+- `pytest agent auth`: 944 passed, 21 failed. 실패 21개는 모두 이 PC venv에 `tzdata`가 없어 `ZoneInfo("Asia/Seoul")`가 실패한 것이다
+  (agent/course의 DB·라우터 테스트). develop에서도 같은 실패가 나고, 이번 변경과 무관하다
