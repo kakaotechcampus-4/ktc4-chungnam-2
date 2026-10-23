@@ -412,6 +412,19 @@ def get_facts(db: Session, place_ids: Sequence[str]) -> dict[str, list[FactLabel
     return out
 
 
+def search_by_name_own(db: Session, query: str, category: str | None, limit: int) -> list[dict]:
+    """자체 DB 이름 부분 일치(대소문자 무시). status와 무관하게 closed도 돌려준다. 이름순."""
+    needle = query.strip()
+    if not needle or limit <= 0:
+        return []
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")   # LIKE 와일드카드는 글자 그대로 찾는다
+    stmt = select(Place.id, Place.name, Place.address, Place.category, Place.status).where(Place.name.ilike(f"%{escaped}%", escape="\\"))
+    if category is not None:
+        stmt = stmt.where(Place.category == category)
+    rows = db.execute(stmt.order_by(Place.name.collate("C"), Place.id).limit(limit)).all()
+    return [{"id": str(r.id), "name": r.name, "address": r.address, "category": r.category, "status": r.status} for r in rows]
+
+
 def get_hours(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceHoursInfo]:
     """행이 있는 장소만 돌려준다(행 없음 = 모름). 한 번의 IN 조회."""
     by_uuid = {u: pid for pid in place_ids if (u := _uuid_or_none(pid)) is not None}
