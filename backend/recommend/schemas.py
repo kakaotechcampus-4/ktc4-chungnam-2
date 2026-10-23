@@ -83,7 +83,8 @@ class EvidenceAddEntry(BaseModel):
 
 class EvidencePatchRequest(BaseModel):
     toggle: list[EvidenceToggleEntry] = Field(default_factory=list)
-    add: list[EvidenceAddEntry] = Field(default_factory=list)
+    # 한 요청 5줄(api-spec maxItems, 넘으면 422 VALIDATION_ERROR, #707). run 하나 상한은 core.MANUAL_EVIDENCE_LIMIT.
+    add: list[EvidenceAddEntry] = Field(default_factory=list, max_length=5)
 
 
 class Region(BaseModel):

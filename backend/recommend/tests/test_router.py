@@ -223,6 +223,23 @@ def test_other_members_can_view_and_add_evidence_on_someone_elses_run(app_client
     assert any(line["text"] == "user_2가 추가한 근거" for line in patch_resp.json())
 
 
+def test_plus_six_lines_in_one_request_is_422_and_eleventh_entry_is_409(app_client, db_session):
+    """#707 — 한 요청 5줄 초과는 스키마가 422 VALIDATION_ERROR로, run 하나 10개 초과는 409 EVIDENCE_LIMIT(detail)."""
+    _seed_ready_map(db_session)
+    run_id = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth()).json()["id"]
+
+    six = [{"text": f"글 {i}"} for i in range(6)]
+    resp = app_client.patch(f"/runs/{run_id}/evidence", json={"add": six}, cookies=_auth())
+    assert resp.status_code == 422 and resp.json()["code"] == "VALIDATION_ERROR"
+
+    for batch in (range(5), range(5, 10)):
+        resp = app_client.patch(f"/runs/{run_id}/evidence", json={"add": [{"text": f"글 {i}"} for i in batch]}, cookies=_auth())
+        assert resp.status_code == 200
+    resp = app_client.patch(f"/runs/{run_id}/evidence", json={"add": [{"text": "열한 번째"}]}, cookies=_auth())
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "EVIDENCE_LIMIT" and resp.json()["detail"] == {"limit": 10, "used": 10}
+
+
 def test_run_not_found_is_404(app_client, db_session):
     _seed_ready_map(db_session)
     resp = app_client.get(f"/runs/{'0' * 8}-0000-0000-0000-{'0' * 12}/evidence", cookies=_auth())
