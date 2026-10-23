@@ -125,10 +125,16 @@ def heart_signal_use(category: str, fact_key: str) -> HeartSignalUse:
     return HEART_SIGNAL_BY_CATEGORY.get(category, {}).get(fact_key, "use")
 
 
+# "원함이어도 required" 내리기(#422)에 쓰는 "가게의 정체" 키 — 음식점 표의 "use"만이다. 카페·관광지 표(#681-3)의 "use"는
+# ♥ 신호 규칙이지 이 규칙이 아니라서 여기 넣지 않는다.
+_PLACE_IDENTITY_KEYS: dict[str, frozenset[str]] = {
+    "음식점": frozenset(key for key, use in HEART_SIGNAL_BY_CATEGORY["음식점"].items() if use == "use"),
+}
+
+
 def is_place_identity_key(category: str, fact_key: str | None) -> bool:
-    """표에 "use"로 적힌 키 = "가게의 정체"(음식점 cuisine_*, #422). heart_signal_use와 달리 표에 없는 키는 아니다.
-    음식점만 센다 — "원함이어도 required" 내리기(#422)는 음식점 규칙이라 카페·관광지 표(#681-3)로 번지지 않는다."""
-    return category == "음식점" and fact_key is not None and HEART_SIGNAL_BY_CATEGORY["음식점"].get(fact_key) == "use"
+    """"가게의 정체"인 키(음식점 cuisine_*, #422). heart_signal_use와 달리 표에 없는 키는 아니다."""
+    return fact_key in _PLACE_IDENTITY_KEYS.get(category, frozenset())
 
 
 # 추천 이유(Candidate.reason) 한 줄에 쓰는 표시 이름 — fact_key를 사용자 문장으로 옮긴다. 값이
