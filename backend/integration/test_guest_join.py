@@ -10,8 +10,9 @@ from fastapi.testclient import TestClient
 
 from auth import api as auth_api
 from auth import router as auth_router
-from auth.models import User
-from auth.testing import session_cookie
+from auth import service as auth_service
+from auth.models import User, UserIdentity
+from auth.testing import create_kakao_user, session_cookie
 from common.errors import AppError
 from common.events import EventLog
 from maps import api as maps_api
@@ -62,7 +63,8 @@ def test_guest_join_creates_account_joins_map_and_sets_session(owner, anon, db_s
     assert "Max-Age=2592000" in cookie   # 30일
 
     row = db_session.get(User, body["user"]["id"])
-    assert (row.provider, row.is_guest, row.guest_invite_token) == ("guest", True, token)
+    assert (row.is_guest, row.guest_invite_token) == (True, token)
+    assert db_session.query(UserIdentity).filter_by(user_id=row.id).count() == 0   # 게스트는 로그인 수단이 없다(#694)
     assert row.last_seen_at is not None
     assert db_session.query(InviteRow).filter_by(token=token).one().used_count == 1
     assert db_session.query(EventLog).filter_by(map_id=map_id, type="member.joined").count() == 1
@@ -116,6 +118,30 @@ def test_eleventh_guest_for_one_token_is_409_but_another_token_is_fine(owner, an
     assert _join(anon, other).status_code == 201
 
 
+def _claim(db_session, guest_id, kakao_id):
+    """게스트에 처음 쓰는 카카오 수단을 붙인다(콜백의 처음 전환과 같은 함수)."""
+    user, merged = auth_service.claim_guest(
+        db_session, guest_user_id=guest_id, provider="kakao", provider_user_id=kakao_id, display_name="카카오 이름",
+    )
+    assert (user.id, merged) == (guest_id, True)
+
+
+def test_guest_who_attached_kakao_no_longer_counts_toward_the_invite_limit(owner, anon, db_session):
+    """카카오 수단을 붙이면 guest_invite_token을 비우고 게스트도 아니다 — 초대당 10명에서 빠진다(#694)."""
+    _, token = _invite(owner)
+    ids = []
+    for _ in range(10):
+        ids.append(_join(anon, token).json()["user"]["id"])
+        auth_router.guest_join_limiter._hits.clear()
+    assert _join(anon, token).status_code == 409
+    auth_router.guest_join_limiter._hits.clear()
+
+    _claim(db_session, ids[0], "k-limit")
+
+    assert db_session.get(User, ids[0]).guest_invite_token is None
+    assert _join(anon, token).status_code == 201
+
+
 def test_duplicate_display_names_are_allowed(owner, anon):
     _, token = _invite(owner)
     ids = {_join(anon, token, "손님").json()["user"]["id"] for _ in range(2)}
@@ -153,12 +179,16 @@ def test_purge_inactive_guests_uses_withdraw_rules(owner, anon, db_session):
     now = datetime.now(timezone.utc)
     db_session.get(User, old_id).last_seen_at = now - timedelta(days=91)
     db_session.get(User, fresh_id).last_seen_at = now - timedelta(days=89)
+    claimed_id = _join(TestClient(anon.app), token).json()["user"]["id"]
+    _claim(db_session, claimed_id, "k-purge")
+    db_session.get(User, claimed_id).last_seen_at = now - timedelta(days=91)   # 카카오 수단이 있으면 게스트 정리 대상이 아니다
     db_session.flush()
 
     assert auth_api.purge_inactive_guests(db_session, now) == 1
 
     assert db_session.get(User, old_id).deleted_at is not None
     assert db_session.get(User, fresh_id).deleted_at is None
+    assert db_session.get(User, claimed_id).deleted_at is None
     assert db_session.get(User, "user_a").deleted_at is None            # 일반 사용자는 건드리지 않는다
     assert auth_api.display_names(db_session, [old_id]) == {old_id: "탈퇴한 구성원"}
     assert auth_api.purge_inactive_guests(db_session, now) == 0          # 두 번째는 건너뜀
@@ -195,8 +225,7 @@ def test_maps_api_check_invite_raises_what_accept_raises(owner, db_session):
 
 def test_maps_api_accept_invite_joins_and_emits_event(owner, db_session):
     map_id, token = _invite(owner)
-    db_session.add(User(id="late", provider="kakao", provider_user_id="pl", display_name="늦게"))
-    db_session.flush()
+    create_kakao_user(db_session, "late", provider_user_id="pl", display_name="늦게")
 
     result = maps_api.accept_invite(db_session, token=token, user_id="late")
 

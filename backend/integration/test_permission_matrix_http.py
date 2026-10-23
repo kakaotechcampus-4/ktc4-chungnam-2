@@ -11,8 +11,7 @@ SSE(/events)는 스트림이라 test_cycle1_defects의 ASGI 헬퍼가 따로 본
 
 import pytest
 
-from auth.models import User
-from auth.testing import session_cookie
+from auth.testing import create_kakao_user, session_cookie
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
     PLACES, _pin, _recommend, fake_planner, members, own_db, place_ids, real_client,
 )
@@ -24,7 +23,7 @@ def world(members, place_ids, fake_planner, db_session, real_client):
     from fastapi.testclient import TestClient
 
     a, b, map_id = members
-    db_session.add(User(id="user_c", provider="kakao", provider_user_id="pc", display_name="외부인"))
+    create_kakao_user(db_session, "user_c", provider_user_id="pc", display_name="외부인")
     db_session.commit()
     c = TestClient(real_client.app, cookies=session_cookie("user_c"))
     anon = TestClient(real_client.app)

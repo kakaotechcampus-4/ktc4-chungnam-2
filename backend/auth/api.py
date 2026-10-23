@@ -37,11 +37,11 @@ def withdrawn_user_ids(db: Session, user_ids: Sequence[str]) -> set[str]:
 
 
 def guest_user_ids(db: Session, user_ids: Sequence[str]) -> set[str]:
-    """주어진 user_id 중 게스트(users.is_guest)만 돌려준다(#472) — maps가 후임 판정·방장 넘기기
+    """주어진 user_id 중 게스트(로그인 수단이 없는 사용자, #694)만 돌려준다(#472) — maps가 후임 판정·방장 넘기기
     대상 검사에 쓴다. withdrawn_user_ids와 같은 배치 조회. users 행이 없는 id는 게스트가 아니다."""
     if not user_ids:
         return set()
-    rows = db.execute(select(User.id).where(User.id.in_(user_ids), User.is_guest.is_(True))).scalars().all()
+    rows = db.execute(select(User.id).where(User.id.in_(user_ids), User.is_guest)).scalars().all()
     return set(rows)
 
 
