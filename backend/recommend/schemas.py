@@ -5,9 +5,9 @@ shortlist와 같은 재사용 원칙) — 이 모듈은 candidate 전용 permiss
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from authz.schemas import Permissions
 from common import categories
@@ -77,13 +77,18 @@ class EvidenceToggleEntry(BaseModel):
     is_active: bool
 
 
+EVIDENCE_ADD_PER_REQUEST = 5   # 「+」 한 번에 5줄까지(docs/api-spec.yaml add.maxItems, #707)
+EVIDENCE_ADD_PER_RUN = 10      # run 하나에 직접 추가한 줄 10줄까지 — ×로 뺀 줄도 센다(409 EVIDENCE_LIMIT)
+
+
 class EvidenceAddEntry(BaseModel):
-    text: str = Field(max_length=140)
+    # 앞뒤 공백을 뗀 뒤 1~140자 — 빈 값·공백만은 422(#707, #716)
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=140)]
 
 
 class EvidencePatchRequest(BaseModel):
     toggle: list[EvidenceToggleEntry] = Field(default_factory=list)
-    add: list[EvidenceAddEntry] = Field(default_factory=list)
+    add: list[EvidenceAddEntry] = Field(default_factory=list, max_length=EVIDENCE_ADD_PER_REQUEST)
 
 
 class Region(BaseModel):

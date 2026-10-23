@@ -161,6 +161,13 @@ def add_manual_evidence(
     return line
 
 
+def count_manual_evidence(db: Session, run_id: uuid.UUID) -> int:
+    """이 run에 「+」로 직접 추가한 줄 수 — ×로 뺀 줄(is_active=false)도 센다(상한 EVIDENCE_ADD_PER_RUN, #707)."""
+    return db.execute(
+        select(func.count()).select_from(EvidenceLine).where(EvidenceLine.run_id == run_id, EvidenceLine.source == "manual")
+    ).scalar_one()
+
+
 def get_evidence_or_none(db: Session, evidence_id: str) -> EvidenceLine | None:
     try:
         evidence_uuid = uuid.UUID(evidence_id)

@@ -321,6 +321,12 @@ def patch_evidence(
         if not can(principal, "evidence.disable", resource):
             raise AppError("FORBIDDEN")
         validated.append((line.id, is_active))
+    # run당 직접 추가 상한(#707) — 모델을 부르기 전에 막는다. 뺀 줄도 센다. 한 글이 여러 줄이 될 수 있어 이미 있는 줄 수에
+    # 이번 글 수를 더해 보수적으로 본다.
+    if adds:
+        used = service.count_manual_evidence(db, run_uuid)
+        if used + len(adds) > schemas.EVIDENCE_ADD_PER_RUN:
+            raise AppError("EVIDENCE_LIMIT", detail={"limit": schemas.EVIDENCE_ADD_PER_RUN, "used": used})
     # 「+」로 추가한 줄도 ②를 거쳐 fact_key·wants를 붙인다(#254) — 근거 줄에 "한식 제외"처럼 해석한 조건이
     # 보인다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다 — 모델이 쓰기보다 먼저라 행이 안 남는다).
     # 글 하나에 조건이 여럿이면 같은 글로 조건마다 줄 하나다(#419).
