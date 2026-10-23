@@ -17,3 +17,9 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
 def delete_by_user(db: Session, *, user_id: str) -> dict[str, int]:
     """탈퇴(auth.service.withdraw_user, #155)가 부른다 — 그 사람이 요청한 코스 run(요청 한 줄, 결과)을 지운다."""
     return service.delete_by_user(db, user_id=user_id)
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#694)가 agent.api.reassign_user를 거쳐 부른다 — 게스트가 요청한 코스 run을 카카오 계정으로 옮긴다.
+    같은 지도에 둘 다 진행 중이면 게스트 것을 지운다. 키: agent_course_runs(옮김)·agent_course_runs_dropped(충돌로 지움)."""
+    return service.reassign_user(db, from_user_id=from_user_id, to_user_id=to_user_id)
