@@ -252,3 +252,66 @@ fallback·타 라우트 인증 유지. `KNOWN_MISSING`에서 `("get", "/invites/
 - **#245**: `Map.member_count`(단건·`GET /maps` 목록)와 `maps.api.count_members`(준비 판정 N)가 탈퇴자를 뺀다. 구성원 목록(`GET /members`)은 핀 작성자 표기용(#155)으로 그대로 둔다.
   - **다른 모듈 파일 수정 보고**: 탈퇴 여부를 알 공개 함수가 없어 `auth/api.py`에 읽기 전용 `withdrawn_user_ids(db, user_ids) -> set[str]`을 **추가**했다(기존 함수 불변). 원칙상 auth 담당에게 요청해야 하나 이슈가 "auth 탈퇴 연쇄 확인"을 명시해 최소 추가로 처리 — 마음에 안 들면 이 함수만 auth PR로 옮기면 된다.
   - **recommend 경계값(루트 확인)**: 구성원이 전부 탈퇴하면 N=0이고 `recommend.core.required_count(0)`은 0 → `ready=True`. 이슈 문구("반응 가능 인원이 없으면 준비 판정이 안 걸린다")와 다르다. 도달 경로가 "마지막 구성원 탈퇴"뿐이라(요청할 사람이 없음) 손대지 않았다. 바꾸려면 recommend 담당 몫.
+
+---
+
+## #468 — POST /maps/{mapId}/owner 방장 직접 넘기기 (2026-10-13)
+
+**구현**: 방장만(`require_on_map("owner.transfer")`, 구성원 403, 비구성원·삭제된 지도 404). `service.hand_over_owner`가 지도 행을
+먼저 `FOR UPDATE`로 잠그고 멤버십을 다시 읽는다 — 나가기·탈퇴·다른 위임과 줄을 서므로, 그 사이 방장이 바뀌었으면(요청자가
+더는 방장이 아님) 403, 대상이 나갔으면 422다. 대상 검증은 `core.check_owner_target`: 지금 구성원 + 탈퇴자 아님 + 나 자신 아님,
+아니면 422 `OWNER_TARGET_INVALID`(구성원이 아닌 사람과 없는 사용자를 구분하지 않는다). 승격·강등은 기존 `service.transfer_owner`를
+재사용한다(강등 먼저). 나는 member로 남고(나가기 아님), `owner.changed {map_id, from_user_id, to_user_id}`를 같은 트랜잭션에
+기록한다 — `member.left`는 쓰지 않는다. 응답은 요청자(이제 구성원) 기준 `Map`(`my_role: member`, `can_delete: false`).
+`common/errors.py` CATALOG에 `INVITE_REVOKED`·`OWNER_TARGET_INVALID`를 함께 넣었다(`test_catalog_matches_docs` 때문, #467 PR과 동일한 줄).
+**통합**: `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 제거, 골든 패스(구성원 403·자기 자신 422·넘기고 되받기)·권한 행렬(`_endpoints`)에
+호출 추가, 방장 전용 테스트 추가.
+
+**루트 확인 요청 — 스펙 모순(구현에는 영향 없음)**: `docs/events.md`의 「구독을 끊는 경우」 표에 `map.updated`, `owner.changed` 행이
+"그 지도의 모든 구독을 보낸 뒤 닫는다"로 들어가 있다. 그런데 같은 문서의 `owner.changed` 설명과 `docs/CHANGELOG-api.md`는
+"두 사람 모두 지도에 남아 SSE 구독이 끊기지 않는다"고 한다(`member.left`를 재사용하지 않는 이유 자체가 닫히는 것을 피하려는 것).
+수정 이벤트도 구독을 닫을 이유가 없다. 표의 그 행은 실수로 보인다 — 현재 `realtime/core.py`는 `map.deleted`·`member.left`만 닫으므로
+구현은 "닫지 않음"으로 동작한다. 표를 고칠지, 정말 닫는 게 의도면 realtime 담당에게 요청해야 한다.
+복잡도 예상 2 / 실제 2.
+
+## #465 — PATCH /maps/{mapId} 지도 수정 (2026-10-13)
+
+**구현**: 보낸 필드만 바꾼다. `core.validate_map_update`가 기존 값에 합친 결과를 `validate_map_create`로 검사한다
+(종료일만 보내도 기존 시작일과 비교). region은 바꾸기만, 지우기 없음(명시적 null은 422). 빈 객체·null 값은
+`MapUpdateRequest`의 model_validator가 422로 막는다. 방장만(`require_on_map("map.settings.edit")`, 구성원 403,
+비구성원·삭제된 지도 404). 지도 행을 `FOR UPDATE`로 잠가 동시 수정이 줄을 선다. `map.updated`를 수정과
+같은 트랜잭션에 기록하고 payload는 요청자 무관 필드(map_id·title·날짜·region?)만 싣는다.
+`Permissions.can_edit`는 `core.map_permissions`가 `map.settings.edit` 판정으로 채운다(방장 true, 구성원 false).
+응답은 `_map_response`(요청자 기준 Map, 방장이라 `next_owner` 포함).
+
+**기존 테스트 수정**: `permissions`를 dict로 통째 비교하던 `test_core.py`·`test_delete_leave_api.py`에 `can_edit`을 더했다.
+**통합**: `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 PATCH 항목 제거, 골든 패스·권한 행렬(`_endpoints`)에 호출 추가,
+구성원 403 테스트 추가.
+
+**루트 확인 사항 없음.** 스펙·권한 모델은 그대로 따랐다. (참고: realtime 테스트 4건은 이 PR과 무관하게 develop에서도 실패한다.)
+복잡도 예상 2 / 실제 2.
+
+## #467 — 초대 링크 목록·끄기·재사용 (2026-10-13)
+
+**구현**
+- **마이그레이션 `0025_invite_revoke`**(down_revision `0024_evidence_lines_seq`): `invites.revoked_at`(NULL=켜짐), `created_at`(기존 행은 컬럼 추가 시각), `ix_invites_map_id`. 올리기→내리기→올리기 왕복을 확인했다. `docs/data-model.md` invites 줄을 맞췄다.
+- **GET /maps/{mapId}/invites**: `require_on_map("invite.revoke")`(구성원 403, 비구성원 404). 끄지 않았고 만료 전인 것만, 만든 시각 최신순. `created_at`·`created_by_display_name`(탈퇴자는 `auth.api.display_names`가 '탈퇴한 구성원'으로 가려 준다)·`used_count` 포함.
+- **DELETE /invites/{token}**: 토큰만으로는 지도를 몰라 라우터 가드를 못 쓰고 `service.revoke_invite`가 판정한다 — 없는 토큰·삭제된 지도·그 지도의 구성원이 아닌 사람은 404 `INVITE_NOT_FOUND`(존재를 흘리지 않는다), 구성원인데 방장이 아니면 403, 방장은 204. 이미 끈 링크는 `revoked_at`을 덮어쓰지 않고 204(멱등). 이미 참여한 사람은 그대로.
+- **끈 링크**: 요약·수락 모두 410 `INVITE_REVOKED`. 끈 링크가 만료까지 지났으면 끈 쪽이 먼저다(`core.check_invite_acceptable`). 삭제된 지도의 토큰은 여전히 404가 먼저.
+- **POST /maps/{mapId}/invite**: 내가 만든 유효한 링크가 있으면(가장 최근 것) 새로 만들지 않고 200, 없으면 201. 남이 만든 링크는 재사용하지 않는다. 동시에 두 번 눌러 둘 다 새로 만들어도 링크가 하나 더 생길 뿐 깨지는 건 없어 지도 행 잠금은 걸지 않았다.
+- `common/errors.py` CATALOG에 `INVITE_REVOKED`와 `OWNER_TARGET_INVALID`를 함께 넣었다 — `test_catalog_matches_docs`가 errors.md와 전체 일치를 보기 때문에 #468 PR도 같은 두 줄을 넣는다(동일한 줄이라 머지 충돌 없음).
+
+**기존 테스트 수정**: "같은 지도에 링크 두 번 발급 → 서로 다른 토큰" 테스트를 재사용(201→200, 같은 토큰)으로 바꿨고, 링크를 여러 번 받는 헬퍼(`_invite_token`)는 200도 허용한다.
+**통합**: `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 두 항목 제거, 골든 패스·권한 행렬에 호출과 방장 전용 테스트 추가.
+
+**루트 확인 사항 없음.** 복잡도 예상 2 / 실제 2.
+
+## auth가 추가한 api 함수 2개 (#472, 루트 승인)
+
+`maps/api.py`에 `check_invite(db, token)`(수락 가능 여부만 확인, 404·410)·`accept_invite(db, *, token, user_id) -> Map`(`service.accept_invite` 위임)을 auth가 추가했다 — `POST /auth/guest`가 쓴다. 로직은 service에 그대로 있다.
+
+## #472 — 게스트 제한 (2026-10-16)
+
+**구현**: `POST /maps`는 게스트면 403 `GUEST_NOT_ALLOWED`(MAP_LIMIT·입력 검증보다 먼저, `core.check_can_create_map`). `pick_successor`·`owner_successor`·`check_owner_target`에 keyword-only `guests`를 더했다 — 호출부(service·flows)가 `auth.api.guest_user_ids`로 구한 집합을 넘기고 core는 순수 함수다. `withdrawn`과 합치지 않았다: withdrawn은 구성원 수·목록에도 쓰이는데 게스트는 구성원 수에 그대로 센다. 게스트 집합은 목록(GET /maps)에서도 배치 한 번이다. 남은 사람이 게스트뿐이면 나가기 409 `OWNER_CANNOT_LEAVE`, 탈퇴는 지도 삭제, 직접 넘기기 대상이 게스트면 422 `OWNER_TARGET_INVALID`. 그 밖의 구성원 행동은 막지 않았다.
+**테스트**: 게스트 계정은 users.is_guest를 직접 켠다(`maps/tests/test_guest_limits.py`). 기존 호출부 시그니처 변경에 맞춰 test_core·test_owner_transfer_api를 고쳤다.
+**루트 확인 사항 없음.** 복잡도 예상 2 / 실제 2.

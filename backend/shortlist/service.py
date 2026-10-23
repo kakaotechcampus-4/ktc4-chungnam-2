@@ -5,7 +5,7 @@ shortlist/core.py로, pins 테이블을 건드리는 부분은 shortlist/flows.p
 
 import uuid
 
-from sqlalchemy import BigInteger, delete, func, select
+from sqlalchemy import BigInteger, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -153,6 +153,16 @@ def list_routes(db: Session, *, map_id: str) -> list[RouteRow]:
     )
 
 
+def list_items_for_agent(db: Session, *, map_id: str) -> list[dict]:
+    """agent 스냅샷용(#522) — 확정 항목의 핀·추가한 사람·시각만. added_at 순(같으면 id 순)."""
+    rows = db.execute(
+        select(ShortlistItemRow.pin_id, ShortlistItemRow.added_by, ShortlistItemRow.added_at)
+        .where(ShortlistItemRow.map_id == map_id)
+        .order_by(ShortlistItemRow.added_at, ShortlistItemRow.id)
+    ).all()
+    return [{"pin_id": str(pin_id), "added_by": added_by, "added_at": added_at} for pin_id, added_by, added_at in rows]
+
+
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(#431) — 이 지도들의 확정 항목과 동선을 지운다. 테이블 이름 → 지운 행 수."""
     if not map_ids:
@@ -161,3 +171,14 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
         "shortlist_items": db.execute(delete(ShortlistItemRow).where(ShortlistItemRow.map_id.in_(map_ids))).rowcount,
         "routes": db.execute(delete(RouteRow).where(RouteRow.map_id.in_(map_ids))).rowcount,
     }
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#560) — from_user가 추가한 확정 항목의 added_by를 to_user로 옮긴다. 테이블 이름 → 옮긴 행 수.
+    항목 순서(visit_order)·핀 id는 그대로다. 같은 id면 아무것도 하지 않는다."""
+    if from_user_id == to_user_id:
+        return {"shortlist_items": 0}
+    moved = db.execute(
+        update(ShortlistItemRow).where(ShortlistItemRow.added_by == from_user_id).values(added_by=to_user_id)
+    ).rowcount
+    return {"shortlist_items": moved}

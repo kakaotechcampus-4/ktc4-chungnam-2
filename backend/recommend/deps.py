@@ -24,7 +24,7 @@ from common.database import get_db_session
 from common.settings import settings
 from llm import api as llm_api
 from places import api as places_api
-from places.schemas import Area, FactLabel
+from places.schemas import Area, FactLabel, PlaceHours
 from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway, PlaceStub
 
 
@@ -78,7 +78,7 @@ class RealPlaceSearchGateway:
         areas = [Area(lat=c.anchor_lat, lng=c.anchor_lng, radius_m=c.radius_m) for c in circles]
         refs = places_api.search_nearby_own(category, areas, db=self._db)
         infos = places_api.get_places([r.place_id for r in refs], db=self._db) if refs else {}
-        return [PlaceStub(place_id=r.place_id, lat=r.lat, lng=r.lng, source=_place_source(infos.get(r.place_id))) for r in refs]
+        return [PlaceStub(place_id=r.place_id, lat=r.lat, lng=r.lng, source=_place_source(infos.get(r.place_id)), can_recommend=r.can_recommend) for r in refs]
 
     def get_names(self, place_ids: Sequence[str]) -> Mapping[str, str]:
         return {pid: info.name for pid, info in places_api.get_places(list(place_ids), db=self._db).items()}
@@ -92,6 +92,9 @@ class RealPlaceFactsGateway:
 
     def get_facts(self, place_ids: Sequence[str]) -> Mapping[str, Sequence[FactLabel]]:
         return places_api.get_facts(list(place_ids), db=self._db)
+
+    def get_hours(self, place_ids: Sequence[str]) -> Mapping[str, PlaceHours]:
+        return places_api.get_hours(list(place_ids), db=self._db)
 
 
 def _real_place_search_gateway() -> PlaceSearchGateway:

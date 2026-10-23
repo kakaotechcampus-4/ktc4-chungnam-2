@@ -117,11 +117,11 @@ def test_add_reaction_evidence_and_list_evidence_round_trip(db_session):
     assert lines[0].is_active is True
 
 
-def test_add_manual_evidence_defaults_to_reference_badge(db_session):
+def test_add_manual_evidence_is_preferred(db_session):
     run = _make_run(db_session)
     line = service.add_manual_evidence(db_session, run_id=run.id, author_id="user_1", text="주차 가능하면 좋겠어요")
     assert line.source == "manual"
-    assert line.badge == "reference"
+    assert line.badge == "preferred"  # #707 — 「+」는 선호다
     assert line.fact_key is None
 
 

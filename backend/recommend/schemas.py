@@ -4,9 +4,10 @@ shortlist와 같은 재사용 원칙) — 이 모듈은 candidate 전용 permiss
 채울 때도 authz.core.can()을 그대로 부른다(recommend/service.py 참고).
 """
 
-from typing import Literal
+from datetime import datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from authz.schemas import Permissions
 from common import categories
@@ -41,7 +42,21 @@ class RecommendRun(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
+    attempt_limit: int  # 한 사람이 한 지도에서 받을 수 있는 횟수 상한(core.ATTEMPT_LIMIT)
     default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한 30
+
+
+class RunSummary(BaseModel):
+    """GET /maps/{mapId}/runs 한 건(#469) — 내가 요청한 run만 온다."""
+    id: str
+    map_id: str
+    category: Category
+    status: RunStatus
+    attempt_no: int
+    attempt_limit: int  # RecommendRun.attempt_limit과 같다
+    created_at: datetime
+    candidate_count: int = Field(ge=0)  # 마지막 시도의 후보 수. done이 아니면 0
+    published_count: int = Field(ge=0)  # 그 run에서 게시한 후보 수
 
 
 class EvidenceLine(BaseModel):
@@ -53,6 +68,9 @@ class EvidenceLine(BaseModel):
     fact_key: str | None = None
     fact_label: str | None = None  # fact_key의 표시 이름("한식") — constraints.FACT_LABELS
     wants: bool | None = None  # 이 특징이 있는 장소를 원하는가(#228). None = 모름
+    # 후보를 거르거나 점수 매기는 데 실제로 쓰이는 줄인가(#720) — fact_key가 있으면 true, 키 없는 줄(알레르기처럼 라벨로 옮기지
+    # 못한 사유, 「+」로 키 없이 남은 줄)은 false. 응답에는 항상 채워 내려 준다.
+    enforced: bool | None = None
     is_active: bool
     permissions: Permissions
 
@@ -62,13 +80,18 @@ class EvidenceToggleEntry(BaseModel):
     is_active: bool
 
 
+EVIDENCE_ADD_PER_REQUEST = 5   # 「+」 한 번에 글 5개까지(docs/api-spec.yaml add.maxItems, #707). run 하나 상한은 core.MANUAL_EVIDENCE_LIMIT
+
+
 class EvidenceAddEntry(BaseModel):
-    text: str = Field(max_length=140)
+    # 앞뒤 공백을 뗀 뒤 1~140자 — 빈 값·공백만은 422(#707, #716)
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=140)]
 
 
 class EvidencePatchRequest(BaseModel):
     toggle: list[EvidenceToggleEntry] = Field(default_factory=list)
-    add: list[EvidenceAddEntry] = Field(default_factory=list)
+    # 한 요청 5개(api-spec maxItems, 넘으면 422 VALIDATION_ERROR, #707). run 하나 상한은 core.MANUAL_EVIDENCE_LIMIT(글 수).
+    add: list[EvidenceAddEntry] = Field(default_factory=list, max_length=EVIDENCE_ADD_PER_REQUEST)
 
 
 class Region(BaseModel):

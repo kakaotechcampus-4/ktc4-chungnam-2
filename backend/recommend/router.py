@@ -21,7 +21,7 @@ docs/api-spec.yaml의 recommend 태그 엔드포인트 전체(#108 + PR #71 publ
   authz.guard.require()를 직접 호출한다(PR #71 결정, Rule A 대응 — flows.py 모듈 docstring 참고).
 """
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
 from auth.deps import get_current_user
@@ -31,18 +31,20 @@ from authz.deps import MembershipGatewayDep
 from authz.guard import require_map_member, require_on_map, require_with_principal
 from authz.ports import MembershipGateway
 from pins.schemas import Pin
-from recommend import flows
+from recommend import core, flows
 from recommend.deps import DbSession, EvidencePlanGatewayDep, PlaceFactsGatewayDep, PlaceSearchGatewayDep
 from recommend.loaders import load_run
 from recommend.ports import EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
 from recommend.schemas import (
     EvidenceLine,
+    Category,
     EvidencePatchRequest,
     Readiness,
     RecommendResult,
     Region,
     RegionConfirmRequest,
     RunCreateRequest,
+    RunSummary,
 )
 from recommend.schemas import RecommendRun as RecommendRunResponse
 
@@ -57,6 +59,7 @@ EvidenceGate = Depends(require_with_principal("recommend.evidence", load_run))
 def _run_response(run) -> RecommendRunResponse:
     return RecommendRunResponse(
         id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
+        attempt_limit=core.ATTEMPT_LIMIT,
         default_radius_walk_min=run.default_radius_walk_min,
     )
 
@@ -64,6 +67,15 @@ def _run_response(run) -> RecommendRunResponse:
 @router.get("/maps/{mapId}/recommend/readiness", response_model=dict[str, Readiness])
 def get_readiness(mapId: str = Path(...), _principal: Principal = RecommendForMap, db: Session = DbSession):
     return flows.get_readiness(db, map_id=mapId)
+
+
+@router.get("/maps/{mapId}/runs", response_model=list[RunSummary])
+def get_runs(
+    mapId: str = Path(...), category: Category | None = Query(None), limit: int = Query(20, ge=1, le=50),
+    principal: Principal = RecommendForMap, db: Session = DbSession,
+):
+    """지난 추천 기록(#469). 구성원만(아니면 404), 내가 요청한 run만."""
+    return flows.list_runs(db, map_id=mapId, requested_by=principal.user_id, category=category, limit=limit)
 
 
 @router.post("/maps/{mapId}/runs", response_model=RecommendRunResponse, status_code=202)

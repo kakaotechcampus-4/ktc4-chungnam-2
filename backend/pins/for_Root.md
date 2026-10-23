@@ -229,3 +229,49 @@
 
 ## 복잡도
 예상 2, 실제 2.
+
+## #466 — 핀 메모·분류 수정 (PATCH /pins/{pinId}, pin.updated)
+
+- 라우터: `require_with_principal("pin.edit", load_pin)` — 비구성원 404, 구성원이지만 찍은 사람이 아니면 403. 스펙·권한 모델·`authz`는 바꾸지 않았다(policy.py의 `pin.edit`을 그대로 씀).
+- **kind 게이팅은 pins 코어**(`core.can_edit_pin`): `can(pin.edit)` and `kind == "일반"`. AI 추천·확정 핀은 찍은 사람도 403이고 `Pin.permissions.can_edit=false`. `to_pin_response`가 `permissions_for` 결과에 `can_edit`을 덮어 채운다(`authz.core`는 pin의 `can_edit`을 계산하지 않는다 — 계산은 pins가 한다).
+- `core.validate_update`: 403(kind)을 먼저 보고, 그다음 category — live 핀만, 음식점·카페·관광지만, 반응이 하나라도 있으면 422. 같은 값을 다시 보내도 반응이 있으면 422(스펙 문구 그대로).
+- `PinUpdateRequest`: `extra=forbid`, 빈 객체·`null` 값 422. memo는 `reason_content`로 다듬어 공백·빈 문자열이면 지운다(생성 때와 같은 기준). 그 밖의 컬럼(source_run_id·checks·reason·member_fulfillment·place_source·kind·origin·place_id·geom·visibility·kakao_place_id·search_query)은 `update_pin`이 건드리지 않고, 테스트가 컬럼 전체를 비교한다.
+- `pin.updated`(`core.pin_updated_event`, `pin.created`와 같은 Pin 모양, `my_reaction` 제외)를 수정과 같은 트랜잭션에 기록한다. 거절된 요청은 기록하지 않는다.
+- 알려진 한계: 반응 수 확인과 UPDATE 사이에 다른 구성원이 반응하면 분류가 바뀐 채 반응이 붙을 수 있다(`set_reaction`이 핀 행을 잠그지 않는다). 핀 행 잠금을 양쪽에 넣을지는 필요해지면 결정.
+- 테스트: `pins/tests/test_pin_edit_466.py`(32개), 통합 — `KNOWN_MISSING`·`KNOWN_UNCOVERED`의 `PATCH /pins/{pinId}` 삭제, 골든 패스(`test_live_pin_responses_match_the_openapi_spec`)와 permission matrix(401·404 순회 + `test_pin_edit_is_author_only_and_never_for_ai_pins`)에 호출 추가.
+- 복잡도 예상 2, 실제 2.
+
+## #501 — 실시간 핀 승격 (POST /pins/{pinId}/resolve) + 핀 생성 address 힌트
+
+- 라우터: `require_with_principal("pin.resolve", load_pin)` — 구성원 누구나(찍은 사람이 아니어도), 비구성원 404. 스펙·`authz` 정책은 #537에서 이미 들어와 있어 바꾸지 않았다(`authz/tests/test_can.py`에 pin.resolve 판정만 추가).
+- `service.resolve_pin`: **source=live이고 kind=일반인 핀만** 대상이다. db 핀·AI 추천·확정 핀(확정 항목이 된 live 핀 포함)은 200으로 현재 Pin을 그대로 주고 이벤트도 없다. 확정된 live 핀은 승격되지 않는다는 뜻이니, 원하는 동작이 아니면 알려 달라.
+- 매칭: 핀의 `category`·`kakao_place_id`와 body의 `place_name`·`lat`·`lng`·`address`로 `PlaceHint`를 만들어 `places.api.match_place`. 짝이 없으면 200 변화 없음·이벤트 없음.
+- 짝이 있으면 **같은 트랜잭션**에서 `source=db`, `place_id`·`geom`(매칭된 places 행의 좌표) 채움, `kakao_place_id`·`search_query` NULL(`ck_pins_source_fields` 충족), 핀 id·memo·반응·사유·확정 항목 유지, `pin.updated`(`my_reaction` 제외). 핀 생성과 똑같이 승격이 확정된 뒤 `record_kakao_match`로 자체 DB 장소에 카카오 ID·URL을 기록한다(핀에는 남기지 않는다).
+- 같은 지도에 그 장소 핀이 이미 있으면 409 `PIN_DUPLICATE`(`detail.pin_id`=기존 핀). 자동 병합 없음 — live 핀은 그대로 남는다. 사전 조회가 놓친 동시 요청은 `uq_pins_map_place` 위반을 같은 409로 바꾼다.
+- 응답 Pin은 목록과 같은 규칙으로 조립한다(`_viewer_pin_response`: 작성자 표시 #369, 요청자의 `my_reaction`).
+- `PinCreateSearch.address`(선택, 200자)를 `PlaceHint.address`로 넘긴다. 생성·승격 모두 이름·좌표·주소 힌트는 DB·로그·응답·이벤트 어디에도 남기지 않는다(`test_hint_is_never_logged_or_stored`가 caplog·행·이벤트 페이로드를 확인).
+- 테스트: `pins/tests/test_pin_resolve_501.py`(11개), 통합 — `KNOWN_MISSING`·`KNOWN_UNCOVERED`의 resolve 삭제, 골든 패스(`test_live_pin_responses_match_the_openapi_spec`에 승격·409·변화 없음), permission matrix(401·404 순회 + 구성원 누구나 승격).
+- 복잡도 예상 3, 실제 3.
+
+## #569 — 실시간 핀과 자체 DB 핀의 교차 중복 방지 (#444 B안, pins 몫)
+
+- 기준은 카카오 장소 ID뿐이다(이름·좌표는 보지 않는다). 모두 409 `PIN_DUPLICATE`, `detail.pin_id`=이미 있는 핀, 자동 병합 없음. 스펙·응답 변경 없음.
+  - 생성 `source=search`: 매칭된 장소에 대해 `service._find_live_pin_for_place` — 요청 힌트의 `place_id`가 이 지도 live 핀의 `kakao_place_id`와 같거나, live 핀의 카카오 ID가 기록된 자체 DB 장소(`own_places_by_kakao_id`)가 매칭된 장소일 때.
+  - 생성 `source=live`: 요청 `kakao_place_id`가 기록된 자체 DB 장소의 핀이 이 지도에 있으면(기존 "같은 지도 같은 kakao_place_id" 검사는 그대로, 먼저 본다).
+  - 승격 `resolve`: 매칭된 장소에 대해 같은 helper로 **다른** live 핀(자기 제외)도 본다.
+- `PlaceInfo`·`PlaceMatch`에 카카오 ID가 없어서, "기록된 ID가 live 핀과 같은가"는 이 지도 live 핀마다 `own_places_by_kakao_id`를 부르는 방식으로 판정한다(live 핀 수만큼 쿼리 — 지도당 소수라 수용). 더 많아지면 places에 `PlaceMatch.kakao_place_id` 노출을 요청하겠다.
+- `pins.api.list_live_kakao_place_ids(db, *, map_id) -> list[str]` — 삭제되지 않은 live 핀의 카카오 ID만(순서 보장 없음). recommend가 "이미 지도에 있는 장소 빼기"에 쓴다.
+- 알려진 한계: 이 검사는 DB 유니크 인덱스가 아니라 조회라, 같은 가게를 live·search로 동시에 만드는 경합은 막지 못한다.
+- 테스트: `pins/tests/test_pin_cross_duplicate_569.py`(9개). 복잡도 예상 2, 실제 2.
+
+## #577 — 카톡 대화 링크 일괄 핀 찍기 (POST /maps/{mapId}/pins/link-preview, /pins/bulk)
+
+- 새 모듈 `pins/link_import.py`(미리보기·일괄 생성). 라우터는 `require_on_map("pin.create")` — 구성원(게스트 포함) 누구나, 비구성원 404. 스펙·권한·에러 코드 변경 없음.
+- **link-preview**: `parse_link(url, db=None)`을 `ThreadPoolExecutor(5)`로 병렬 실행, 마감 `PREVIEW_DEADLINE_S=15`초(넘기면 그 항목 `LINK_UNRESOLVED`, 스레드는 기다리지 않고 결과를 버린다). `AppError`(LINK_NOT_SUPPORTED·LINK_UNRESOLVED)는 그 코드로, 그 밖의 예외는 타입만 로그에 남기고 `LINK_UNRESOLVED`. 쓰기 없음.
+- `already_pinned_pin_id`: matches의 `own:<uuid>`는 그 장소 핀, 기록된 카카오 ID는 `own_places_by_kakao_id`로 장소를 찾아 핀 조회, 거기에 #569의 `service._find_live_pin_for_place`를 그대로 쓰고, 마지막으로 링크의 `kakao_place_id`가 이 지도 live 핀이면 그 핀. 같은 요청 안 중복 링크는 그대로 둔다.
+- 호출 상한: 사용자당 URL 수 기준 분당 60(`PINS_LINK_PREVIEW_PER_MIN`, 0 이하면 끔). 위해 `common.ratelimit.SlidingWindowLimiter.allow(key, cost=1)`에 `cost`를 더했다(상한을 넘으면 하나도 세지 않는다 — 거절된 요청은 소비하지 않음). 순서는 422 → 404 → 429 → 해석.
+- 로그에는 개수만 남긴다(URL·좌표·이름 없음, 테스트로 caplog 확인). 응답에 URL 필드 없음.
+- **bulk**: 항목을 `TypeAdapter(PinCreateRequest)`로 **항목마다** 검증한다(한 항목의 형식 오류가 요청 전체 422가 되지 않고 그 항목만 `rejected`/`VALIDATION_ERROR`; 스펙 `BulkPinRequest.pins`의 항목 스키마를 느슨히 읽은 것이다). 항목마다 `db.begin_nested()`로 감싸 `service.create_pin(..., isolated=True)`를 부르고 `AppError`는 results에 담는다(`PIN_DUPLICATE`→duplicate, 나머지→rejected). 같은 요청 안 같은 장소는 앞 항목이 flush돼 있어 뒤의 것이 duplicate. 커밋은 요청 끝 한 번, 핀마다 `pin.created`.
+- **`_flush_pin_row` 수정**: `db.add`를 `begin_nested()` 안으로 옮겼다. 전에는 add 뒤에 `begin_nested()`로 들어가며 그 진입 시점의 autoflush가 INSERT를 실행해, 유니크 위반이 SAVEPOINT 밖에서 나고 바깥 트랜잭션까지 닫혔다(그래서 `db.rollback()`이 필요했다). `isolated=True`(일괄)일 때만 `db.rollback()`을 건너뛴다 — 단건 생성의 동작은 그대로다. 동시 요청 경합(사전 조회가 놓친 중복)이 앞 항목을 지우지 않는 걸 `test_race_on_unique_index_rolls_back_only_that_item`이 확인한다.
+- 알려진 한계: 미리보기 응답 시간은 가장 느린 링크(최대 15초)에 묶이고, 마감을 넘긴 해석 스레드는 끝날 때까지 백그라운드에서 돈다(자체 세션이라 요청과 무관하게 닫힌다). `parse_link`가 스레드 안전하다는 건 places 쪽 전제다(`_link_client`가 lru_cache 공유 httpx 클라이언트).
+- 테스트: `pins/tests/test_link_import_577.py`(22개), 통합 — `KNOWN_MISSING`·`KNOWN_UNCOVERED` 삭제, 골든 패스(미리보기·일괄), 권한 행렬(401·404 순회)에 두 엔드포인트 추가. 복잡도 예상 3, 실제 3.

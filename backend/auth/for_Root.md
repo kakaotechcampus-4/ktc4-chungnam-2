@@ -1,5 +1,93 @@
 # 루트 리뷰 가이드 — backend/auth
 
+## #694 사용자와 로그인 수단을 나누고, 게스트의 첫 카카오 로그인은 같은 사용자에 수단을 붙인다 (2026-10-24)
+
+브랜치 `feat/user-identities-694`. 정본은 루트 워크트리 `docs/user-identities-694`의 data-model.md auth 절과 「게스트 전환과 합치기」
+절이다(이 보고를 쓸 때 아직 커밋 전이라 이 브랜치의 docs에는 없다). FE 계약(api-spec.yaml) 변경 없음.
+agent의 `reassign_user`는 로컬 브랜치 `feat/agent-reassign-user-694`(push 전)를 이 브랜치에 merge 커밋으로 합쳤다.
+
+### 바뀐 것
+- **모델·마이그레이션 `0039_user_identities`**(0038_place_hours 다음): `user_identities(id uuid, user_id → users.id, provider,
+  provider_user_id, created_at)`, unique(provider, provider_user_id) `uq_user_identities_provider_identity`, unique(user_id, provider)
+  `uq_user_identities_user_provider`. provider='kakao'인 users 행을 백필하고(created_at 유지) 같은 리비전에서 users의 provider,
+  provider_user_id, is_guest와 `uq_users_provider_identity`를 지운다. downgrade는 수단을 users로 되돌리고, 수단이 없는 사용자는
+  provider='guest', is_guest=true, provider_user_id=임의 uuid 문자열로 채운다(전환한 게스트는 카카오 사용자로 돌아간다).
+- **is_guest 계산**: `User.is_guest`는 `column_property(NOT EXISTS user_identities)` — users를 읽는 같은 SELECT에서 계산한다.
+  그래서 `CurrentUser.is_guest`, `GET /auth/me`, `auth.api.guest_user_ids`(maps의 후임 판정·방장 넘기기), maps의
+  `creator_is_guest`(POST /maps 403)는 호출부 변경 없이 새 기준을 쓴다. 요청당 쿼리 수도 그대로다.
+- **로그인 `find_or_create_user`**: 수단으로 사용자를 찾고, 없으면 사용자와 수단을 한 세이브포인트에서 만든다. 동시 첫 로그인은
+  수단 유일 제약 위반이면 먼저 만든 사용자를 읽는다(세이브포인트와 함께 users 행도 되돌아간다). 탈퇴한 사용자는 지금처럼 막는다(#409).
+  탈퇴해도 수단은 지우지 않는다(그게 막는 근거).
+- **게스트 전환**(`service.claim_guest`, 콜백은 `login_guest_with_kakao_code`): 게스트 행을 FOR UPDATE로 잠그고
+  - 그 카카오 수단이 없으면 게스트 행에 붙인다. 사용자 id·표시 이름 그대로, `guest_invite_token`은 비운다. 다른 모듈은 부르지 않는다.
+    세션 쿠키는 같은 사용자라 게스트 때 것도 그대로 유효하다(콜백은 지금처럼 새 세션도 발급한다)
+  - 있으면 지금의 `merge_guest_into`(MERGE_STEPS)로 옮긴다. `MERGE_STEPS`에 `("agent", agent_api)`를 마지막에 넣었다
+  - 같은 카카오가 동시에 다른 게스트에 붙으면 뒤 요청은 수단 유일 제약에 걸려(세이브포인트만 롤백) 합치기로 간다
+- **게스트 생성·상한·정리**: `join_as_guest`는 수단 없이 users만 만든다. 초대당 상한은 `guest_invite_token = 토큰 AND 수단 없음`으로,
+  `purge_inactive_guests`는 수단 없는 사용자만 센다.
+- **탈퇴 단계 목록**: `withdraw_user`의 모듈 호출을 `WITHDRAW_STEPS`(모듈 이름, fn(db, user_id, map_ids))로 바꿨다. 순서·동작은 그대로다.
+  `test_withdraw_steps_are_also_merge_steps`가 "WITHDRAW_STEPS의 모듈 이름 ⊆ MERGE_STEPS의 모듈 이름"을 고정한다. 지도 잠금
+  (`lock_member_maps`)은 단계가 아니라 맨 앞의 준비로 남겼다. auth 자신의 soft delete는 목록 밖이다(#452).
+
+### 명세에 없어 정한 것
+1. **같은 게스트로 겹친 콜백**: 뒤 요청은 잠금을 기다린 뒤 수단이 이미 붙은 것을 보고 보통 로그인으로 같은 사용자를 찾는다.
+   이때 카카오 수단의 사용자가 그 게스트 자신이므로 `guest_merged=true`로 낸다("게스트 기록이 카카오 계정으로 이어졌다"와 같은 뜻).
+2. **붙이기의 예상 밖 실패**(유일 제약 경합이 아닌 오류): 명세의 "어느 쪽이든 실패하면 로그인은 성공, guest_merged=false"를 따라
+   보통 로그인으로 카카오 사용자를 새로 만들고 `false`. 게스트 기록은 남는다. 로그는 예외 종류만.
+3. **잠근 뒤의 게스트 판정은 따로 읽는다**: 잠금을 기다린 SELECT의 하위 질의(`is_guest`)는 잠금 전 스냅숏을 봐서 앞 요청이 방금 붙인
+   수단을 못 본다. 그래서 `_lock_live_guest`가 잠근 뒤 user_identities를 별도 문장으로 확인한다. 합치기도 같은 함수를 쓴다 —
+   한 요청이 수단을 붙이는 사이 다른 요청이 같은 게스트를 다른 카카오 계정으로 합쳐 지우는 일을 막는다.
+4. **이미 전환한 게스트의 세션으로 다시 로그인 시작**: 이제 게스트가 아니라 state에 게스트 id가 실리지 않고 보통 로그인이다.
+5. **`user_identities.user_id` FK는 `ON DELETE CASCADE`**: 서비스에서 users는 탈퇴해도 soft delete라 CASCADE가 일어나지 않는다(수단은
+   남는다). agent 테스트(`agent/tests/world.py`, `integration/test_agent_e2e.py`)와 `maps/tests/test_invites_api.py`가 정리 단계에서
+   users 행을 실제로 지우는데, CASCADE 없이는 FK 위반으로 166개가 깨졌다. 테스트를 고치는 대신 스키마에 넣었다.
+
+### 고친 테스트(다른 모듈 파일 포함, 테스트만)
+- `auth/testing.py`에 `create_kakao_user`, `create_guest`, `make_guest`를 두고 `ensure_users`는 수단까지 만든다.
+- `User(provider=..., provider_user_id=..., is_guest=...)`를 쓰던 곳: auth 테스트 5개, `integration/conftest.py`,
+  `integration/test_guest_join.py`, `integration/test_permission_matrix_http.py`, `maps/tests/test_guest_limits.py`(is_guest를 켜던
+  것을 `make_guest`로).
+- `auth/tests/test_guest_merge.py`: 처음 전환(붙이기·다른 모듈 안 부름·이름 유지·토큰 비움·옛 쿠키 유효), 붙이기 실패, 같은 게스트로
+  겹친 콜백, 같은 카카오로 겹친 붙이기(합치기로 감), 기존 카카오 계정으로 합치기, 탈퇴한 카카오 계정 거절.
+- `auth/tests/test_user_identities_migration.py`: 백필, 두 유일 제약, 칸 삭제, downgrade 복원(전환한 게스트·새 게스트 포함), 다시 upgrade.
+- `integration/test_guest_claim_e2e.py`를 두 갈래로 나눴다: 처음 전환(사용자 id·기록·멤버십 그대로, 지도 만들기 가능, 재로그인은 같은
+  사람, 그 뒤 다른 게스트가 같은 카카오로 오면 합쳐짐)과 기존 카카오 계정으로 전환(B가 구성원/아님, agent 열람·코스 요청 포함 7개 모듈
+  옮김, agent 단계 실패 시 전부 롤백).
+- `integration/test_guest_join.py`: 수단을 붙인 게스트는 초대당 상한에서 빠지고, 게스트 정리 대상이 아니다.
+
+### 루트 확인 필요
+- docs(`data-model.md`·`api-spec.yaml`·`permissions.md`·CHANGELOG)는 루트 워크트리의 미커밋 변경 그대로다. 이 PR 전에 들어가야 한다.
+- agent 쪽 루트 확인 요청 두 가지(코스 하루 상한, 겹친 진행 중 요청)는 `agent/for_Root.md` #694 절에 있다.
+- 검증: `PINGO_TEST_DB=pingo_test_auth694 PLACES_MODE=dev LLM_MODE=dev python -m pytest` → 3351 passed, 24 failed, 1 xfailed,
+  9 deselected. 실패 24개는 모두 이 PC venv에 `tzdata`가 없어 `ZoneInfo("Asia/Seoul")`가 실패한 것이다(agent/course 21개,
+  `integration/test_agent_e2e.py` 1개, `integration/test_response_contract.py`의 코스 계약 1개와 그게 빠져 생긴 전체 덮기 검사 1개).
+  agent 담당 보고(`agent/for_Root.md` #694)에 develop에서도 같다고 돼 있다. 이번 변경과 무관하다.
+  `auth` 단독 139 passed(마이그레이션 테스트 포함).
+- 복잡도: 예상 3, 실제 3.
+- 디스코드 "#694 착수합니다"는 CLI로 못 남겼다.
+
+---
+
+## #560 게스트 → 카카오 전환, 기록 합치기 (2026-10-20) — 루트 확인 요청
+
+스펙(`docs/api-spec.yaml`·`data-model.md`「게스트 합치기」)·마이그레이션 변경 없음. 새 엔드포인트 없음. 스펙 PR #657은 이미 develop에 머지돼 있다.
+
+- **로그인 시작**(`GET /auth/kakao/login`): 세션 쿠키가 지금 살아 있는 게스트(서명·만료·탈퇴·로그아웃 무효화 모두 `get_current_user`와 같은 판정)의 것이면 그 id를 state 쿠키에 함께 서명해 넣는다. `state.발급시각.게스트id.서명` — 게스트 id는 서명 대상이라 바꾸거나 떼거나 붙이면 `invalid_state`. 게스트가 아니면 기존 3단 형식 그대로. `core.parse_state`(→`StateClaims`)가 추가됐고 `verify_state`는 그 래퍼다.
+- **콜백**: state 검증 → 카카오 로그인 → state에 게스트 id가 있으면 `service.merge_guest_into`. 결과 `True/False`면 성공 리디렉션에 `guest_merged=true/false`, `None`이면 쿼리를 붙이지 않는다. 기존 `login_error` 처리·진입점 주소의 쿼리·조각 보존 규칙 그대로(같은 이름 `guest_merged`만 대체).
+- **합치기**: 게스트 행을 `FOR UPDATE`로 잠그고 살아 있는 게스트인지 확인 → 세이브포인트 안에서 `MERGE_STEPS` 순서대로 `<module>.api.reassign_user(db, from_user_id=, to_user_id=)` → 마지막에 게스트 `deleted_at`. 어느 단계든 실패하면 세이브포인트만 롤백되고(카카오 사용자 생성은 유지) `guest_merged=false`, 로그는 `step=<이름> error=<예외 종류>`만.
+- **`None`(쿼리 없음)이 되는 경우**: 게스트 행이 없거나 게스트가 아니거나 이미 삭제됨(이미 합쳐진 id 포함), 게스트 id와 카카오 사용자 id가 같음. 스펙의 "게스트 전환이 아닌 로그인에는 붙이지 않는다"를 합칠 대상이 없는 경우로 읽었다. 게스트가 로그인 도중 정리(90일)돼 사라진 드문 경우에도 쿼리가 없다 — FE가 `false`로 안내하길 원하면 알려 달라(`merge_guest_into`의 `None` 한 줄).
+
+### 루트 확인 필요
+1. **지금 develop에는 어떤 모듈에도 `reassign_user`가 없다.** `MERGE_STEPS`는 이름과 모듈 `api`만 등록하고 호출 시점에 함수를 찾는다 — 없으면 `AttributeError`로 그 합치기가 실패(`guest_merged=false`, 게스트 기록 유지). 일부 모듈만 옮기고 게스트를 지우는 일을 막으려는 선택이다. 즉 6개 모듈(maps·pins·recommend·shortlist·notifications·feedback)이 모두 병합되기 전에는 실제 전환이 항상 `false`다. 각 모듈 PR이 들어오면 auth 쪽은 코드 변경이 필요 없다.
+2. **agent**: `data-model.md` 표에는 agent가 있지만 이번 지시의 목록에는 없어 `MERGE_STEPS`에 넣지 않았다. agent 담당이 `reassign_user`를 정하면 튜플 한 줄 추가.
+3. 순서: maps(멤버십) → pins → recommend → shortlist → notifications → feedback. 모듈 간 순서 의존이 있으면(예: recommend가 maps 멤버십을 본다) 알려 달라.
+4. 테스트는 `MERGE_STEPS`를 대역으로 바꿔 검증한다(`auth/tests/test_guest_merge.py`, `test_state_guest.py`). 실제 모듈이 합쳐진 뒤의 끝단 확인(`integration/`)은 각 모듈이 병합된 다음에 추가한다.
+- 검증: `PINGO_TEST_DB=pingo_test_auth560 PLACES_MODE=dev LLM_MODE=dev python -m pytest auth integration/test_guest_join.py` → 142 passed. 전체 실행은 888 passed, 1 failed(`integration/test_response_contract.py::test_notification_responses_match_the_openapi_spec`) — 그 파일만 따로 돌리면 변경 전·후 모두 통과해 순서 의존으로 보이며 이번 변경과 무관.
+- 복잡도: 예상 4, 실제 3.
+- 디스코드 "#560 착수합니다"는 CLI로 못 남겼다(사람이 남겨야 한다).
+
+---
+
 ## 이번 작업 (#369 2단계 auth 몫 — 방장 탈퇴 위임, 2026-10-07)
 
 - `auth/service.py::withdraw_user`가 맨 먼저 `maps.api.transfer_or_delete_owned_maps(db, user_id)`를 부른다. 방장인 지도마다
@@ -365,3 +453,23 @@ get_place_gateway`, `authz/deps.py::get_membership_gateway`와 같은 패턴). `
 - 기존 쿼리가 있는 진입점 주소는 보존하고 같은 이름의 `login_error`만 대체한다.
 - `/me`의 "이중 조회"는 같은 요청 세션의 identity map에서 나와 SQL이 한 번만 나간다(`get_db_session` 캐시) — 바꾸지 않았다.
 - FE: `login_error` 값별 안내는 FE 몫이다. 목 서버(`contracts/mocks/handlers/auth.ts`)가 실패 경로를 흉내 내는지는 루트 확인.
+
+## #472 PR 1 — 게스트 기반 (2026-10-16) — maps가 부르는 법
+
+스펙·docs는 건드리지 않았다. 마이그레이션 `0035_users_guest`(head): `users.is_guest`(not null, 기본 false)·`guest_invite_token`(인덱스)·`last_seen_at`. `provider`는 text라 `'guest'` 값에 DDL이 필요 없다.
+
+- **지도 만들기 차단(`POST /maps` → 403 `GUEST_NOT_ALLOWED`)**: 라우터에서 `user.is_guest`를 본다. `CurrentUser.is_guest: bool = False`는 세션 인증(`auth.deps.get_current_user`)이 users 행에서 채운다. 기본값이라 `CurrentUser(user_id=...)`를 직접 만드는 기존 코드·테스트는 그대로다(그 경우 게스트가 아닌 것으로 본다).
+- **후임 판정·방장 넘기기 대상 검사**: `auth.api.guest_user_ids(db, user_ids) -> set[str]`. `withdrawn_user_ids`와 같은 배치 조회(빈 입력은 쿼리 없이 빈 집합, users 행 없는 id는 게스트가 아님). 후보 id 목록을 한 번에 넘겨 `candidates - guest_user_ids(...) - withdrawn_user_ids(...)`로 거른다.
+- `GET /auth/me`·`PATCH /auth/me` 응답에 `is_guest`(bool)를 항상 포함한다.
+
+## #472 PR 2 — POST /auth/guest (2026-10-16)
+
+스펙·docs는 건드리지 않았다. 구현: `auth/router.py::post_guest`(public_router, `security: []`), `auth/service.py::join_as_guest`·`purge_inactive_guests`, `auth.api.purge_inactive_guests(db, now, older_than_days=90)`.
+
+- 흐름(한 트랜잭션): IP 상한 → 이름 검증(422) → `maps.api.check_invite`(404·410) → 토큰 단위 advisory lock → 게스트 수 확인(409 `GUEST_LIMIT`, `users.guest_invite_token`으로 셈, 탈퇴한 게스트도 센다) → users 행 생성(`provider='guest'`, 임의 `provider_user_id`) → `maps.api.accept_invite`(member.joined·방장 알림 포함) → 세션 쿠키(카카오 로그인과 같은 쿠키, 30일) → 201 `{user, map}`.
+- 상한: 토큰당 게스트 10명, IP당 시간당 10회(성공·실패 모두 셈, `common.ratelimit`, 인메모리라 인스턴스마다). IP는 `request.client.host`다 — Cloud Run 앞단에서 프록시 주소로 보이면 uvicorn `--proxy-headers`/`forwarded_allow_ips` 설정이 필요한지 루트 확인.
+- `last_seen_at`: 게스트의 세션 인증 때 하루 한 번만 갱신(`auth/deps.py`). 일반 사용자는 쓰지 않는다.
+- 정리: `purge_inactive_guests`는 `last_seen_at`(없으면 `created_at`)이 90일 지난 게스트를 `withdraw_user`로 지운다(일반 탈퇴와 같은 연쇄, soft delete). 호출 연결은 #168. 탈퇴한 게스트의 알림 삭제·멤버십 유지는 `integration/test_guest_join.py`로 확인.
+- 로그에는 쿠키·초대 토큰·이름을 남기지 않는다(새 로그 없음).
+- **maps 몫(이 PR에서 하지 않음)**: `POST /maps`의 게스트 403 `GUEST_NOT_ALLOWED`, 후임 판정·방장 넘기기 대상(422 `OWNER_TARGET_INVALID`)에서 `auth.api.guest_user_ids`를 쓰는 것.
+- `maps/api.py`에 위임 함수 2개 추가(루트 승인): `check_invite`, `accept_invite`. maps 로직(service·core·router)은 건드리지 않았다.

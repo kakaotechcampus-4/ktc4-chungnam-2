@@ -220,3 +220,250 @@ PR 1(#197)에서 고정한 6개 공개 함수를 실제로 구현했다. 이 브
 - **#248 정책**: `record_kakao_match`는 **첫 값 유지**다. 장소에 카카오 ID가 이미 있고 다른 ID가 오면 아무것도 바꾸지 않는다. 같은 ID면 `kakao_matched_at`만 갱신한다. `FakePlaces`도 같다. (시그니처·예외는 그대로 — 없는 `place_id`는 `KeyError`.)
 - **루트에 요청**: `docs/architecture.md`의 `record_kakao_match` 행("이미 있으면 덮어쓴다")을 "첫 값 유지, 같은 ID면 확인 일자만 갱신"으로 고쳐 주세요(스펙이라 이 모듈에서 바꾸지 않았다). `test_d7_*`의 xfail은 develop을 합친 뒤 이 PR에서 지웠다. `test_d21_*`는 pins 입력 검증(ID 형식·길이)과 함께 정리해야 한다.
 - **#248의 pins 몫(미착수)**: 카카오 ID 형식 검증(`pins/core.py::kakao_place_url`)·`place_id`/`place_name` 길이 제한은 pins 담당이다. 이 PR은 places 정책만 한다.
+
+---
+
+# #499 인허가 커버리지 적재 (2026-10-13)
+
+- **코드**: `ingest.PERMIT_ALIASES`에 선택 열 `분류`(카페/음식점)를 추가했다. 값이 둘 중 하나면 업태 대응표보다 우선하고, 열이 없거나 값이 이상하면 업태 대응표로 폴백한다. 좌표 없는 행은 `분류`가 있어도 건너뛴다. `places.load permit` 리포트에 "다른 분류로 이미 있음" 건수를 추가했다(음식점·카페 납품본 적재와 같은 줄). 테스트 `test_ingest.py`에 5건(우선·구제·폴백·대응표에도 없으면 건너뜀·좌표 없음).
+- **명령**(윈도는 `PYTHONUTF8=1` — 없으면 리포트 출력에서 cp949 오류로 끝난다. 장소·라벨은 그 전에 커밋돼 있으니 출력만 실패한다): `python -m places.load permit --file permit_N.csv --encoding cp949`(3개) → `python -m places.load restaurant-labels --file permit_cover_labels.json`. 카카오 API는 부르지 않았고, 원본 파일은 커밋하지 않는다.
+- **검증 DB**(pingo_demo 복사본 `pingo_verify499`) 결과 — 건수만:
+
+| 파일 | 읽음 | 적재 대상 | 건너뜀(좌표 없음) | 신규 | 갱신 | 다른 분류로 이미 있음 |
+|---|---|---|---|---|---|---|
+| permit_1 | 73,697 | 72,930 | 767 | 72,900 | 12 | 18 |
+| permit_2 | 2,939 | 2,907 | 32 | 2,848 | 53 | 6 |
+| permit_3 | 16,303 | 16,075 | 228 | 15,879 | 176 | 20 |
+| 합계 | 92,939 | 91,912 | 1,027 | 91,627 | 241 | 44 |
+
+  README 시뮬레이션(91,912곳, 좌표 없음 1,027)과 일치. 신규 카페 23,147 / 음식점 68,480(시뮬레이션 23,387/68,525에서 기존 장소와 겹친 285행을 뺀 값).
+- **라벨**: 읽음 720,654행 → upsert 713,186, 장소를 못 찾아 건너뜀 7,468(좌표 없어 적재 안 된 장소의 라벨). place_facts 256,698 → 968,996.
+- **정예 보존**(적재 전 12,376곳 · 라벨 256,698행 스냅샷과 비교): 정예 장소의 category·kakao_place_id 변경 0, 정예 라벨 삭제 0, 값이 바뀐 라벨 1건(`franchise` unknown → known, 출처 franchise_brands).
+- **README와 다른 점 — 확인 요청**: README는 "정예 파일과 관리번호가 겹치지 않는다"고 했지만 pingo_demo의 기존 장소와 **285행이 겹쳤다**(44행은 분류가 달라 건너뜀, 241행은 같은 분류라 갱신). 갱신된 241행은 좌표가 0.1m 이내로 반올림 차이만 났고 207행은 이름·주소 그대로, 34행은 **이름이 커버리지 파일의 정리된 이름으로 바뀌었다**. 기존 동작(같은 분류면 갱신)을 그대로 둔 결과다. 정예 이름을 지키려면 "이미 있는 (source, source_id)는 건드리지 않는다"로 바꿔야 하며, 이는 다른 납품본 재적재(갱신) 동작도 바꾸므로 결정을 요청한다.
+- **로컬 pingo_demo 적재**: 백업 `C:\Users\user\Desktop\pingo_demo_before499.dump`(pg_dump -Fc). 되돌리기: `pg_restore --clean -d pingo_demo`. 적재 후 숫자는 아래.
+  - 첫 시도에서 라벨 단계 중 Docker가 내려가 DB 연결이 끊겼다(장소 3파일은 커밋 완료, 라벨은 롤백). DB 복구 후 장소 104,003 · 라벨 256,698을 확인하고 라벨만 다시 적재해 성공했다.
+  - pingo_demo 결과: 장소 104,003(음식점 80,323 / 카페 23,680, 신규 음식점 68,480 / 카페 23,147), 라벨 968,996(upsert 713,186, 못 찾아 건너뜀 7,468). 정예 category·kakao_place_id 변경 0, 정예 라벨 삭제 0, 값이 바뀐 라벨 1건(`franchise` unknown → known). 검증 DB와 같은 숫자다.
+
+---
+
+# #500 매처 주소 보조 매칭 + 매칭률 측정 (2026-10-13)
+
+- **규칙**(`matching.py`, 순수 함수 — DB 구현과 `FakePlaces`가 같은 `pick_match`를 쓴다): `PlaceHint.address`(선택)와 `Candidate.address`(자체 DB)를 도로명(`성수이로 100`) 또는 지번(`성수동2가 300-1`)으로 줄여 비교한다(시·구·층·괄호·`로 12길` 띄어쓰기 정리). 결과는 같음 / 다름 / 비교 불가(한쪽이 없거나 도로명 vs 지번, 본번만 같고 한쪽에 부번이 없음).
+  - **다름** → 그 후보는 다른 점포라 뺀다(같은 이름의 다른 지점을 거절). **비교 불가** → 이름 규칙 그대로(기존 동작).
+  - **같음** + 이름 점수 0.5 이상 → 이름이 0.8에 못 미쳐도 같은 곳으로 본다. 단 이름만으로 충분한 후보(0.8↑)가 있으면 그쪽을 쓰고 이름이 모자란 후보는 보지 않는다.
+  - 동명 점포 모호 거절은 유지하고, 주소가 같다고 확인된 후보가 이기면 모호하지 않다. 카카오 ID로 이미 짝지어진 장소는 주소를 보지 않는다. 분류가 같은 후보만 본다.
+  - 주소는 비교에만 쓴다 — 저장·로깅하지 않는다(#53).
+- **측정**: `python -m places.scripts.measure_match_rate [--queries 200] [--out rates.json]` — 지역×업종 200개 검색어(고정)로 장소 검색을 돌려 pinnable 비율을 [주소 보조 전/후]로 낸다. 출력은 건수·비율뿐이다. `KAKAO_REST_API_KEY`(환경변수)와 `PLACES_MODE=prod`가 필요하다.
+
+  **측정 결과**(루트가 직접 측정, 같은 검색어 200개 × 2개 DB, 결과 2,999건, 같은 표본):
+
+| DB | pinnable 주소 보조 전 | 주소 보조 후 | 주소로 새로 매칭 / 거절 |
+|---|---|---|---|
+| 적재 전(12,376곳) | 462/2999 (15.4%) | 493/2999 (16.4%) | 44 / 13 |
+| 적재 후(104,003곳) | 1765/2999 (58.9%) | 1877/2999 (62.6%) | 120 / 8 |
+| 정예 우선 적재 후(106,156곳, #507, 2026-10-15) | 1922/2999 (64.1%) | 2041/2999 (68.1%) | 132 / 13 |
+
+  - 적재(#499)만으로 15.4% → 58.9%, 주소 보조로 +3.7%p(적재 후 기준). 순증은 새로 매칭에서 거절을 뺀 값이다(적재 전 +31, 적재 후 +112).
+  - #507(정예 신규 3종·갱신본 적재) 뒤 같은 표본으로 다시 쟀다: 적재 전 15.4% → #499 58.9% → #507 64.1%, 주소 보조까지 켜면 **68.1%**(+4.0%p). 주소 보조 연결(`_fill_pinnable`, #550)이 병합되면 검색의 `pinnable`과 핀 생성 매칭이 같은 규칙으로 맞는다.
+  - #507 적재는 커버리지 라벨 단계(`restaurant-labels`, 새 키 750개)만 pingo_demo에 반영되지 않았다(시스템 메모리 부족으로 중단). 장소·정예 라벨은 모두 반영됐고 보존 검증(삭제 0·카카오 ID 변경 0·status 변경 0·6곳 카페)을 통과했다.
+  - 표본의 1/8이 "공원"(관광지, 인허가에 없음)이라 음식점·카페만의 비율은 더 높을 수 있다.
+  - 이 숫자는 검색 라우터에 주소를 넘겼을 때의 값이다. 라우터 연결(아래 3번)은 스펙·pins가 머지되기 전에는 켜지 않는다.
+- **루트에 요청 — 아직 켜지 않았다**: 검색 라우터(`_fill_pinnable`)는 주소를 넘기지 않는다. 지금 켜면 검색은 pinnable=true인데 핀 생성(`PinCreateSearch`에 주소가 없음)은 `PLACE_NOT_SUPPORTED`가 되어 어긋난다. 아래 3개를 **같은 시점에** 켜야 한다(순서: 1 → 2 → 3).
+
+| # | 항목 | 담당 | 내용 |
+|---|---|---|---|
+| 1 | 스펙 `PinCreateSearch.address` | 루트 | `docs/api-spec.yaml`의 `PinCreateSearch`에 선택 필드 `address`(maxLength 200, 검색 결과의 address를 그대로 되돌려 보내는 **저장하지 않는 매칭 힌트**) 추가, `CHANGELOG-api.md`에 먼저 기록, `contracts/` 타입 재생성, FE에 통보. 필수가 아니라 선택이라 기존 호출은 그대로 동작한다 |
+| 2 | pins 전달 | pins | `pins/schemas.py::PinCreateSearch`에 `address: str \| None = Field(default=None, max_length=200)`, `pins/service.py::_create_db_pin`이 `PlaceHint(..., address=req.address)`로 넘긴다. 주소는 저장·로깅하지 않는다(핀 행·감사 로그·예외 메시지에 넣지 않는다) |
+| 3 | 검색 라우터 연결 | places | `places/router.py::_fill_pinnable`의 `PlaceHint`에 `r.address`를 추가한다(한 줄). 1·2가 머지된 뒤에 켠다 — 이 세션이 맡는다. 측정 스크립트는 이미 주소 있음/없음을 나눠 잰다 |
+
+  FE는 핀 생성 요청에 검색 결과의 `address`를 함께 보내야 효과가 있다(보내지 않으면 지금과 같다 — 이름 규칙만 쓴다).
+
+
+---
+
+# #507 정예 우선 정책 + 인허가 갱신본(2)·정예 신규 3종 (2026-10-15)
+
+- **정책(구현 완료, 테스트 `test_curated_first.py` 14개)**: `restaurants`·`cafes`·`tourapi`에 `--authoritative`를 주면 같은 (source, source_id)의 이름·분류·주소·좌표를 파일 값으로 갱신하고(분류가 달라도) 라벨도 파일 값이 덮는다. 카카오 ID·URL은 건드리지 않는다. `permit`(커버리지)은 이미 있는 장소의 이름·분류·좌표를 건드리지 않고 신규 행만 넣는다. `restaurant-labels`는 기본이 커버리지용 — 이미 있는 (장소, fact_key)는 건드리지 않고 없는 키만 넣는다(`--overwrite`면 덮는다). 옵션 없이 부르면 기존 동작(같은 분류면 갱신·다른 분류면 건너뜀)이다. 리포트에 갱신 중 이름·분류 바뀜 수와 "이미 있어 건드리지 않음"을 낸다.
+- **적재 순서·명령**(결정 반영, 윈도는 `PYTHONUTF8=1`): `restaurants --file 음식점_1013/final_restaurant_places_hotspot.csv --labels seoul_restaurant_labels_hotspot.json --authoritative` → `cafes --file 카페_1013/cafe_seoul_curated.csv --labels cafe_seoul_curated_labels.json --authoritative` → `tourapi --file 관광지_1013/tourist_seoul_places.json --labels tourist_seoul_curated_labels.csv --authoritative` → `permit --file permit_data_2/permit_{1,2,3}.csv --encoding cp949` → `restaurant-labels --file permit_cover_labels.json`. **관광지 라벨은 JSON이 아니라 CSV를 쓴다** — JSON은 음식점 형식이 아니라 26,751행이 전부 "source/source_id 이상"으로 건너뛰어진다.
+- **결정 ① (2026-10-15, 루트): 정예 카페·음식점 파일에 같은 관리번호 6곳은 카페로 둔다.** 나중에 적재한 쪽이 이기므로 순서를 음식점 → 카페로 했다. 복사본에서 6곳(애즈라이크·럭키서울·써머레인·그레인서울·훌리건커피·컨플릭트스토어 잠실점) 모두 카페로 남은 것을 SQL로 확인했다. 이름은 카페 파일 값이다(오리지널팬케이크하우스 → 컨플릭트스토어 잠실점, 훌리건 → 훌리건커피).
+- **결정 ② (2026-10-15, 루트): 갱신본에서 빠진 657행은 그대로 둔다.** 삭제·status 변경 없이 보고만 한다(`closed` 0). 폐업·이탈 후보다.
+- **충돌 규모(복사본 dry-run, 적재 전 상태 기준)**: 정예 음식점 1,570 → 신규 104·갱신 1,466(이름 바뀜 68·분류 바뀜 8; 옛 규칙은 8곳 건너뜀), 정예 카페 1,678 → 신규 1,329·갱신 349(이름 107·**분류 167**; 옛 규칙은 167곳 건너뜀), 관광지 723 전부 신규.
+- **새 순서의 실제 적재 결과(복사본 `pingo_v507`, pingo_demo에서 새로 뜸)**: 음식점 신규 104·갱신 1,466(이름 68·분류 8) → 카페 신규 1,325·갱신 353(이름 110·분류 171; 겹침 6곳이 음식점에서 카페로 넘어가 이전 순서보다 신규 4·분류 4 차이) → 관광지 신규 723. 장소 106,156(음식점 80,265 · 카페 25,168 · 관광지 723), 라벨 968,996 → 1,027,876. 커버리지 장소 3파일은 읽음 101,514 → 신규 1·**이미 있어 건드리지 않음 100,425**·좌표 없음 1,088(갱신본 추가 9,232행이 전부 정예와 겹친다). 커버리지 라벨 807,484행 → 새 키 750·건드리지 않음 798,662·장소 없음 8,072.
+- **보존 검증(SQL, 단계별 스냅샷 비교, 복사본)**: 커버리지 단계에서 장소 이름·분류·좌표·카카오 ID·상태 변경 0, 장소·라벨 삭제 0, 라벨 값·확신도·출처 변경 0. 정예 단계에서 카카오 ID 변경 0, 장소·라벨 삭제 0. 정예 파일이 의도대로 바꾼 것: 이름 175·분류 175·라벨 값 3,110.
+- **참고**: 커버리지 갱신본에서 값이 바뀐 라벨(이미 있던 비정예 장소)은 "건드리지 않음"이라 반영되지 않는다. 유흥·주점류 업태가 정예에 카페 2·음식점 5행 포함(기존 "루트 결정 대기" 그대로).
+- **pingo_demo 적재 — 중간에 멈췄다(미완료)**: 백업 `C:\Users\user\Desktop\pingo_demo_before507.dump`(pg_dump -Fc, 적재 직전 pingo_demo와 건수·최종 수정 시각이 같음을 확인. 되돌리기 `pg_restore --clean -d pingo_demo`). 같은 순서로 적재하던 중 시스템 메모리 부족으로 백그라운드 작업이 중단됐다. 중단 시점: 장소 단계(정예 3종 + 커버리지 3파일)는 끝나 장소 106,156으로 복사본과 같고, 정예 라벨까지 들어가 라벨 1,027,126이다. **커버리지 라벨(`restaurant-labels`) 단계만 반영되지 않았다**(복사본은 1,027,876, 750 차이). pingo_demo에 검증용 스냅샷 테이블 `snap0_*`·`snap1_*`이 남아 있다. 남은 일은 커버리지 라벨 한 단계이고, 끝난 뒤 보존 검증을 하고 스냅샷 테이블을 지운다.
+- **복사본**: `pingo_v507`(적재·검증 완료본)은 비교용으로 남겨 두었다.
+
+---
+
+# #474 POST /places/from-link 구현 결과 (2026-10-15)
+
+스펙(`LinkParseRequest`/`LinkParseResult`, `LINK_NOT_SUPPORTED`·`LINK_UNRESOLVED`)대로 구현했다. 스펙·`common/errors.py`는 바꾸지 않았다. parse-only — 핀·DB 쓰기·모델 호출 없음.
+
+- **파일**: `linkparse.py`(순수 — 링크 읽기·도메인 허용목록), `linkfetch.py`(단축 링크 따라가기, SSRF 방어), `matching.pick_link_matches`(구글 짝 고르기), `api.parse_link`·`check_link_rate`·`own_places_near`·`own_places_by_kakao_id`, `router.py`(라우트), `schemas.LinkParseResult`, `testing.FakePlaces`에 대역 2개.
+- **허용 링크**: 구글(`google.com`·`google.co.kr`의 `/maps…`, `maps.app.goo.gl`, `goo.gl`)과 카카오(`place.map.kakao.com/{id}`, `map.kakao.com/?itemId={id}`, `kko.to`). 네이버·인스타·블로그·그 밖은 422 `LINK_NOT_SUPPORTED`. 지도 주소인데 장소가 없으면(구글 화면 위치·좌표만, 카카오 주소에 ID 없음) 422 `LINK_UNRESOLVED`.
+- **구글**: 이름(`/place/<이름>` 또는 `?q=`)은 `name_hint`로, 좌표는 `!3d!4d`(장소 핀)를 `@`(뷰포트)보다 먼저 써서 반경 100m 자체 DB 장소를 찾는다. **이름이 같은 곳으로 볼 만한(`NAME_MIN_SCORE` 0.8) 후보만** `matches`에 담는다(가까운 순 최대 5) — 스펙은 반경만 적었지만 같은 건물의 다른 가게가 핀 후보로 올라가지 않게 `match_place`와 같은 이름 기준을 더했다. 좌표 없는 링크(`?q=`)는 DB를 보지 않고 `name_hint`만 준다. `needs_search_query`는 항상 false.
+- **카카오**: `kakao_place_id`(`kakao:<id>`)만 뽑는다. 자체 DB에 그 ID가 기록된 장소가 있으면 `matches`, 없으면 `needs_search_query=true`. 카카오 API는 부르지 않는다.
+- **`matches[].place_id`**: 자체 DB 장소에 카카오 ID가 기록돼 있으면 그 값, 없으면 `own:<places.id>`. FE는 그대로 `POST /maps/{id}/pins`(`source: search`)에 되돌려 보내면 된다(이름·좌표는 자체 DB 값이라 `match_place`가 같은 장소를 찾는다). `own:` 값은 카카오 ID가 아니라서 핀 생성이 `kakao_*`로 기록하지 않는다. **스펙 `PlaceSearchResult.place_id` 설명에 `own:<id>` 형태 한 줄을 추가해 주세요**(루트).
+- **SSRF 방어**(`linkfetch.py`, 단축 호스트 `maps.app.goo.gl`·`goo.gl`·`kko.to`만 가져온다):
+  - http(s)만, 포트 80/443만, 사용자 정보(`user:pw@`) 거부, 호스트는 도메인 허용목록(정확히 같거나 하위 도메인 — `google.com.evil.com`·`evilgoogle.com`은 막힘).
+  - 리다이렉트는 직접 따라가고(최대 4회) **매 홉마다** 허용목록·포트·스킴을 다시 검사한다. 허용 밖으로 가면 요청을 보내지 않고 멈춘다.
+  - 매 홉 DNS를 풀어 **모든 주소가 공인 IP**(사설·루프백·링크로컬·CGNAT·예약·멀티캐스트·IPv4-매핑 IPv6 차단)일 때만 접속하고, 검사한 IP로 직접 접속한다(`Host`·SNI는 원래 호스트) — 검사 뒤 DNS가 바뀌는 rebinding을 막는다.
+  - 타임아웃 3초, 본문은 읽지 않는다(헤더의 `Location`만 보고 닫음 — 크기 제한이 따로 필요 없다). 이미 긴 지도 주소는 가져오지 않고 바로 읽는다. 환경 프록시는 쓰지 않는다(`trust_env=False`).
+  - 열지 못하면(허용 밖 이동·사설 IP·횟수 초과·타임아웃·리다이렉트 아님) 422 `LINK_UNRESOLVED`.
+- **로그·응답**: 링크 주소·이름·좌표를 로그에 남기지 않는다(`places.link provider=… matches=N`, 실패 시 사유 종류만). 응답에는 링크의 좌표를 싣지 않는다(`matches`의 좌표는 자체 DB 값). 테스트가 로그에 이름·좌표·ID·도메인이 없음을 고정한다.
+- **호출 상한**: `PLACES_SEARCH_PER_MIN`(기본 30)과 같은 값을 쓰되 `/places/search`와 **따로 센다**(`link_limiter`, 사용자당). 순서는 422(본문 형식) → 429 → 해석. 로그인 필요, 지도 구성원 여부는 보지 않는다.
+- **테스트**: `places/tests/test_link.py`(80개, DB·네트워크 없음 — 파서·SSRF·짝 찾기·로그·라우트), `test_own_db.py`(실제 DB 조회 3개), `integration/test_places_search.py`(링크 → 핀 생성 왕복, 429, 401), 골든 패스(`test_response_contract.py`)에 4호출 추가. `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 `/places/from-link`를 지웠다. backend 전체 1914 passed.
+- **실제 구글·카카오 단축 링크로는 아직 시험하지 못했다**(테스트는 `httpx.MockTransport`). 실서버 연동 점검에서 `maps.app.goo.gl/…`와 `kko.to/…` 실링크 한 개씩 확인이 필요하다 — 특히 단축 링크가 `consent.google.com` 같은 동의 화면으로 먼저 보내는 경우(이때는 `LINK_UNRESOLVED`로 떨어진다).
+
+---
+
+# #473 GET /places/nearest 구현 (2026-10-15)
+
+- **동작**: `lat`·`lng`(+`category`) 기준 100m 안의 자체 DB 장소(`status='open'`)를 가까운 순 최대 5곳. `ST_DWithin`(geography) + `ST_Distance` 정렬, `idx_places_geom`(GiST)을 탄다 — 계획 확인은 `integration/test_places_nearest.py::test_query_uses_the_gist_index`(작은 테이블은 순차 스캔이 이기므로 `enable_seqscan=off`로 계획만 본다). 숙소·기타는 빈 배열, 모르는 분류는 422.
+- **pinnable=true만**: 후보 10곳을 읽고, 핀 생성이 부를 `match_place`와 같은 규칙(`find_candidates_many` + `pick_match`, 자기 이름·좌표를 힌트로)으로 거절될 곳(같은 자리 동명 점포 등)을 뺀 뒤 5곳으로 자른다. 주소는 힌트에 넣지 않는다 — pins가 아직 주소를 안 넘긴다(#500 3개 항목이 켜지기 전 기준).
+- **응답**: `place_id`=`own:<places.id>`, `place_source.provider`=`permit`|`tourapi`(url 없음), `address`·`category`는 자체 DB 값. 카카오 값은 어디에도 없다. `own:` ID로 핀을 만들어도 `pins/core.kakao_place_url`이 `kakao:` 접두어만 URL로 바꾸므로 카카오 ID로 기록되지 않는다.
+- **가드레일 (#53)**: 누른 좌표는 저장·로깅하지 않는다. 쓰기 쿼리 없음. DB 오류는 예외 타입만 남기고 `503 PLACES_UNAVAILABLE`(SQL 파라미터에 좌표가 실린다). uvicorn 접근 로그는 요청 줄에 쿼리스트링을 찍으므로 `places/logguard.py`(`StripQueryFilter`, `router.py` 임포트 시 설치)가 `/places/nearest`의 쿼리를 `?[redacted]`로 바꾼다. **배포에서 접근 로그를 다른 프록시(Cloud Run 요청 로그 등)가 남기는 것은 이 필터 밖이다 — 운영 쪽 확인이 필요하다.**
+- **호출 상한**: `check_search_rate` 그대로 — `GET /places/search`와 같은 사용자별 버킷(분당 `PLACES_SEARCH_PER_MIN`, 기본 30)을 공유한다. 지도를 연달아 누르면 검색 상한을 같이 쓴다.
+- **스펙 보정**: `503 PLACES_UNAVAILABLE` 응답 추가(`docs/api-spec.yaml`, `CHANGELOG-api.md` 2026-10-15 네 번째). 그 외 계약 변경 없음.
+- **테스트**: `integration/test_places_nearest.py` 17개(반경·정렬·최대 5·분류·폐업 제외·pinnable 거절 제외·422·401·429 공유 버킷·503 좌표 비노출·로그/저장 없음·접근 로그 필터·GiST 계획). `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 항목 삭제, 골든 패스(`test_response_contract.py`)에 nearest 호출 추가. `integration`·`places`·`common` 472 통과.
+- **FE 참고**: 목 서버(`contracts/mocks`)의 nearest는 `kakao:` 형식 ID를 쓴다. 실서버는 `own:<uuid>`이고 불투명 값으로 그대로 보내면 된다.
+
+
+---
+
+# places.can_recommend 구현 (2026-10-15)
+
+- **구현**: 마이그레이션 `0033_places_can_recommend`(not null default false, down_revision `0032_feedback`, 단일 head), 판정 규칙 `places/core.py`(순수 함수 `can_recommend(category, known_label_count, *, curated)`, 임계는 같은 파일 상수 `KNOWN_LABEL_THRESHOLDS = {"음식점": 5, "카페": 3}`·`ALWAYS_RECOMMENDABLE = {"관광지"}` 한 곳), 재계산 `repository.recompute_can_recommend`와 `python -m places.scripts.recompute_can_recommend [--dry-run]`(분류별 true/false·바뀐 수 보고, 멱등), `places.load`는 적재 끝에 같은 함수를 같은 트랜잭션에서 자동 재계산하고 건수를 출력한다(dry-run이면 같이 롤백). `PlaceRef.can_recommend: bool = True`(기본값이라 기존 호출자 그대로)를 `search_nearby_own`만 실제 값으로 채운다. 검색·핀 생성 매칭·nearest·링크 해석은 읽지 않는다(테스트로 고정).
+- **정예 판별 기준 — 조사 결과**: `places.source`는 모두 `permit`이라 못 가르고, **`label_source`로도 못 가른다**. 인허가 커버리지 라벨이 정예와 같은 출처 표기(`license_*`, `franchise_brands` 등)를 쓰고, 정예 12,376곳 중 4,710곳은 확정 라벨이 전부 `license_*` 계열이다(`pingo_before499` 기준). 대신 **"출처(`label_source`)가 NULL인 라벨 행을 하나라도 가진 장소 = 정예"**가 정확히 맞는다 — 정예 납품본은 근거 없는 `unknown` 행을 항상 담고, 커버리지 라벨은 "근거 없으면 넣지 않는다"(permit README)라 NULL 행이 없다. 검증: 정예 파일 소속 집합(기존 정예 12,376 + 신규 음식점·카페·관광지 파일 = 15,181곳)과 pingo_demo의 NULL 라벨 보유 장소 15,181곳이 **양방향 차이 0**.
+  - **취약점: 해결됨(2026-10-16, `places.curated` 컬럼 — 아래 「places.curated」 절).** 이 항목의 기준(출처 NULL 라벨 행)은 0034 마이그레이션이 과거 적재분을 한 번 되메울 때만 쓰고, 이후 정예 판별은 `--authoritative` 적재가 켜는 `places.curated`다.
+- **인덱스를 더하지 않았다**: 후보 검색은 기존 GiST(`idx_places_geom`)로 반경을 먼저 거르고 `category`·`status`·`can_recommend`는 그 결과에 얹는 조건이다. `can_recommend`는 약 86%가 true인 불리언이라 부분 인덱스의 이득이 없다. 추천 후보 검색 계획이 느려지면 그때 `WHERE can_recommend AND status='open'` 부분 GiST를 검토한다.
+- **⚠ 마이그레이션만으로는 값이 안 채워진다**: 기존 행은 모두 false다. 적용한 뒤 `recompute_can_recommend`를 한 번 돌려야 추천 후보가 생긴다(안 돌리면 후보 풀이 비어 「추천 가능 아님 제거」 단계가 전부를 뺀다). 배포 절차에 넣어야 한다.
+- **재계산 결과(pingo_demo의 복사본 `pingo_cr507`, 임계 음식점 5·카페 3, 멱등 확인: 두 번째 실행 바뀐 장소 0)**:
+
+| 분류 | true | false |
+|---|---|---|
+| 음식점 | 66,926 | 13,339 |
+| 카페 | 23,855 | 1,313 |
+| 관광지 | 723 | 0 |
+| 합계 | 91,504 | 14,652 |
+
+  정예 15,181곳은 전부 true(false 0). 임계 이상인데 false인 장소 0. false인 음식점의 확정 라벨 수는 0개 13곳·1개 9,636·2개 3,618·3개 72(임계 5 미만 전부). 루트가 준 참고 분포와 맞는다.
+- **⚠ pingo_demo 마이그레이션 적용 — 아직 안 했고, 알릴 것이 있다**: pingo_demo의 `alembic_version`이 **`0020_evidence_wants`**다. 0033을 적용하면 0021~0032까지 열두 단계가 함께 올라간다(테이블 18개 → 28개, agent·notifications·feedback 등 새 테이블 추가). 복사본에서는 오류 없이 head(`0033_places_can_recommend`)까지 올라갔다. 기존 데이터를 바꾸는 단계가 있는지는 단계별로 확인하지 않았다. pingo_demo를 바꾸는 작업이라 사용자 확인을 받은 뒤에 한다. 백업 `C:\Users\user\Desktop\pingo_demo_before507.dump`(#507 적재 직전 상태)는 그대로 있으나, **#507 장소 적재 이후의 pingo_demo는 이 백업에 없다** — 적용 직전에 새로 백업을 뜬다.
+- **커버리지 새 라벨 750개(restaurant-labels 단계)**: 하지 않았다(메모리). 해당 라벨이 들어가면 일부 커버리지 장소의 확정 라벨 수가 늘어 can_recommend 건수가 소폭 달라질 수 있다 — 적재 끝의 자동 재계산이 반영한다.
+- **테스트**: `places/tests/test_can_recommend.py`(규칙 파라미터화·임계 상수·재계산 임계/정예 보존/멱등/라벨 변화 양방향/dry-run/폐업 포함/스크립트/적재 자동 재계산·PlaceRef 필드와 기본값·검색·nearest 무관) + `test_can_recommend_migration.py`(단일 head·up/down·기존 행 false·모델 일치). `places`·`integration`·`common` 609 통과.
+
+
+---
+
+# places.curated — 정예 표시 컬럼 (2026-10-16)
+
+- **구현**: 마이그레이션 `0034_places_curated`(`curated boolean not null default false`, down_revision `0033_places_can_recommend`, 단일 head). **되메우기는 이 마이그레이션 안에서 휴리스틱("출처(`label_source`)가 NULL인 라벨 행을 가진 장소 = 정예")으로 한 번만** 채운다. 그 뒤로는 휴리스틱을 쓰지 않는다. down은 컬럼 삭제.
+- **로더**: `--authoritative` 적재(`existing_mode="overwrite"`)가 같은 (source, source_id)의 `curated`를 true로 켠다. 이미 있던 커버리지 장소를 정예가 덮을 때도, 신규 정예 행도 true다. 커버리지(`permit`, `keep`)와 기본(`refresh`) 적재, 재계산은 `curated`를 끄지도 켜지도 않는다(한 번 true면 유지). 폐업 처리도 `curated`를 건드리지 않는다.
+- **`recompute_can_recommend`**: 정예 판별을 라벨 NULL 휴리스틱에서 `places.curated`로 교체했다(라벨 집계 쿼리는 확정 라벨 수만 센다).
+- **결과가 #561 보고와 같다(복사본 `pingo_cur507` = 현재 pingo_demo에서 새로 뜸, 0021~0034 적용 뒤 재계산)**: 음식점 66,926 / 13,339, 카페 23,855 / 1,313, 관광지 723 / 0(true / false), 합계 91,504 / 14,652. `curated=true` 15,181곳이 전부 `can_recommend=true`(예외 0). 두 번째 실행에서 바뀐 장소 0(멱등). 불일치 없음.
+- **#561 조사 결과의 취약점 항목: 해결됨.** 정예 판별이 더는 "납품본에 근거 없는 unknown 행이 있다"는 데이터 관례에 기대지 않는다. 납품 형식이 바뀌어도 `--authoritative`로 적재하면 정예로 표시된다. 휴리스틱은 0034 되메우기에만 남는다(과거 적재분 한 번).
+- **테스트**: `test_curated_flag.py`(적재가 켬·신규 정예 행·커버리지/refresh/폐업/재계산이 끄지 않음·기본 false), `test_curated_migration.py`(단일 head·되메우기 한 번(NULL 라벨만 true)·up/down·모델 일치), `test_can_recommend.py`를 `curated` 컬럼 기준으로 갱신(NULL 라벨이 더는 정예 신호가 아님·재계산이 정예를 끄지 않음). `places`·`common`·`integration` 중 통합 계약 테스트 몇 개가 실패하는데 **develop 원본에서도 같은 계열이 실패한다**(알림·피드백·협업 계약 테스트, 실행마다 실패 조합이 달라짐 — 이 PR과 무관한 기존 불안정, 별도 확인 필요).
+
+## pingo_demo 마이그레이션 단계별 조사 (0020 → 0034, 14단계)
+
+pingo_demo는 `alembic_version=0020_evidence_wants`다. 단계별로 `upgrade()`를 읽고, **현재 pingo_demo의 복사본에 실제로 올려서** 기존 테이블 행 수를 비교했다(오류 없이 head `0034_places_curated`까지 올라감).
+
+| 단계 | 내용 | 기존 행 영향 |
+|---|---|---|
+| 0021_maps_delete_leave | `maps.deleted_at` 추가, `memberships` 방장 1명 유일 인덱스 | 값 변경 없음. **방장이 2명 이상인 지도가 있으면 RuntimeError로 중단**(지금 데이터는 해당 없음, 복사본 통과) |
+| **0022_reaction_two_state** | **`DELETE FROM reactions WHERE type='neutral'`** 후 enum을 like·against 둘로 교체 | **기존 행을 지운다.** pingo_demo reactions 20행 중 neutral 6행(like 9·against 5는 남음)이 삭제된다. downgrade로도 지운 행은 돌아오지 않는다. 지운 사람의 사유는 evidence_lines에 남는다고 마이그레이션 주석에 적혀 있다 |
+| 0023_pins_live | `pins`에 source(기본 'db')·kakao_place_id·search_query·memo 추가, `place_id`·`geom` NOT NULL 해제, 체크 제약·유일 인덱스 | 값 삭제 없음. 기존 28핀은 전부 `source='db'`로 채워진다. 체크 제약이 기존 행에 통과함을 복사본에서 확인 |
+| 0024_evidence_lines_seq | `evidence_lines`에 identity `seq` 추가 | 테이블 재작성, 기존 30행에 1~30이 매겨진다. 값 삭제 없음 |
+| 0028_recommend_runs_history_idx | 인덱스 추가 | 없음 |
+| 0025_invite_revoke | `invites`에 revoked_at·created_at(기본 now()) 추가, 인덱스 | **기존 9개 초대의 created_at이 전부 적용 시각 한 값이 된다**(원래 생성 시각을 알 수 없음). 삭제는 없음 |
+| 0029_agent_tables | agent 테이블 7개 CREATE | 없음(새 테이블) |
+| 0030_agent_cursor_drop_gap_seq | `agent_cursors.gap_seq` 컬럼 삭제 | 0029에서 방금 만든 빈 테이블의 컬럼이라 영향 없음 |
+| 0031_notifications | notifications·notification_prefs CREATE | 없음 |
+| 0032_feedback | feedback CREATE | 없음 |
+| 0033_places_can_recommend | `places.can_recommend` 추가(기본 false) | 값 변경 없음(재계산 전까지 전부 false) |
+| 0034_places_curated | `places.curated` 추가 + 휴리스틱 되메우기 UPDATE | places의 새 컬럼만 채운다. 기존 컬럼 불변 |
+
+- **요약**: CREATE TABLE·ADD COLUMN·인덱스가 대부분이고, **기존 행을 건드리는 것은 두 곳**이다. ① 0022가 reactions의 neutral 6행(20행 중)을 **삭제**한다. ② 0025가 invites 9행의 created_at을 적용 시각으로 채운다. 그 외에 0021은 방장 중복이 있으면 적용이 중단된다(지금은 해당 없음).
+- **복사본 실측**: 적용 전후 행 수가 같은 테이블은 candidates 12·event_log 70·evidence_lines 30·exclusions 0·invites 9·maps 6·memberships 15·pins 28·place_facts 1,027,876·places 106,156·recommend_runs 11·regions 11·routes 2·shortlist_items 6·users 7. **reactions만 20 → 14**로 줄었다.
+- **참고**: 조사 중 pingo_demo의 `place_facts`가 1,027,876행(커버리지 라벨 새 키 750개 포함, 장소 106,156)이다 — #507 보고에 "미완료"로 적은 상태(1,027,126)와 다르다. 누군가 커버리지 라벨 단계를 마친 것으로 보이며 이 세션은 하지 않았다. 지금 복사본·재계산 숫자는 그 상태 기준이다.
+- **pingo_demo에는 적용하지 않았다.** 적용 여부는 루트가 백업(pg_dump) 후 정한다. 적용하면 reactions 6행이 사라지므로, 그 행이 시연 데이터에 필요하면 먼저 따로 보관해야 한다. 백업은 적용 직전에 새로 떠야 한다(`pingo_demo_before507.dump`는 #507 적재 이전 상태).
+
+
+# 적재 로더 3건 — 지역 해제·레포츠(28)·`--close-missing` (데이터 담당 요청, 2026-10-20)
+
+요청 출처는 데이터 담당이다(이슈 번호 없음). 마이그레이션 없음, `can_recommend` 판정 코드는 그대로다. 한 PR(브랜치 `feat/places-loader-region-leisure-close`)에 커밋 3개.
+
+## 1. `--all-regions` — permit·tourapi·cafes·restaurants
+- 켜면 서울 판정 세 곳(주소 "서울", TourAPI `areacode`, 서울 좌표 상자)을 모두 끈다. 기본은 서울만. 설명에서 "테스트용"을 지웠다.
+- 좌표 없음·(0,0)·위경도 범위 밖(한국 상자 밖)은 지역을 풀어도 계속 건너뛴다.
+- 보고: 적재 대상이 두 지역 이상이면 `[지역별 적재 대상] 서울 N, 부산 M …` 한 줄이 붙는다(서울만이면 안 붙는다). 시도명 앞 두 글자 기준이되 충청·전라·경상은 북·남이 갈리도록 `충북·경남`처럼 쓴다(앞 두 글자만 쓰면 둘이 합쳐진다).
+- 주의: 지금 DB의 `places`는 서울 가정으로 검색한다. 타 지역을 적재하면 서울 밖 좌표로도 후보가 잡히므로 서비스 쪽 영향은 적재 전에 루트가 판단한다.
+
+## 2. 관광지 레포츠(contenttypeid 28)
+- `TOURAPI_PLACE_TYPES`에 28 추가, 분류는 관광지. 건너뛰기 사유 문구는 `관광지·문화시설·레포츠·쇼핑(contenttypeid=12·14·28·38) 아님`. 로더 docstring·`docs/data-model.md` places 절의 한 줄 설명만 맞췄다(그 밖의 스펙은 안 바꿨다).
+
+## 3. `permit --close-missing` (기본 꺼짐)
+- 파일에 없는 장소를 `status='closed'`로 바꾼다(삭제·라벨 삭제 없음). 대상은 `source='permit'`·`curated=false`·`status='open'`뿐이다 — 정예와 tourapi는 닫지 않는다(UPDATE에도 같은 조건을 다시 건다).
+- 안전장치: ① `--file`을 여러 번(또는 디렉터리 → 안의 `*.csv`, 글롭) 받아 모두 읽은 뒤에만 닫고, 파일 하나면 거부(exit 2). ② 위 대상 한정. ③ `--dry-run`이 `DB: 파일에 없어 닫음 N행`을 보인다(롤백). ④ 파일에 다시 나온 기존 열린 비정예 인허가 장소가 그 장소의 30% 미만이면 거부(`--force`로만 우회) — 거부면 신규 적재도 하지 않는다. ⑤ 라벨은 그대로.
+- '파일에 있다'의 기준은 관리번호가 있는 모든 행이다. 좌표 없음·업태 미대응 등으로 건너뛰는 행도 '있다'로 센다(그런 장소를 닫지 않는다).
+- **되살리기 수정**: 확인해 보니 인허가 로더(`keep` 모드)는 이미 있는 장소를 통째로 건너뛰어, 닫힌 장소가 파일에 영업으로 다시 나와도 열리지 않았다(`refresh` 경로만 열었다). `keep`에서도 닫힌 장소는 `status`만 다시 열도록 했다(이름·분류·좌표는 그대로). 보고에 `되살림 N행`이 붙는다. 이전 동작에서 닫힌 채 남던 장소가 다음 인허가 적재 때 열린다는 점이 달라졌다.
+- 정예 우선 결정의 "갱신본에서 빠진 657행은 그대로 둔다"는 그대로다 — 옵션을 안 주면 아무것도 닫히지 않는다.
+
+## 테스트
+`places/tests/test_ingest.py`(지역 해제·28·`region_of`·닫기 계획), `places/tests/test_load_regions_close.py`(옵션 전달·닫기 대상·안전장치·dry-run·되살리기). places 전체 406 통과. `test_link.py` 3건은 `authz.guard`↔`auth.deps` 순환 import로 이 변경과 무관하게 실패한다(`python -c "import authz.guard"` 단독 재현).
+
+
+# #682 관광지 검색(CT1·정확도 순) · #674 search_own_by_name (2026-10-24)
+
+## #682 — `backend/places/sources/kakao.py`
+- 카카오 문화시설(CT1: 박물관·미술관·공연장)을 `"관광지"`로 매핑한다(`_GROUP_CODES`: 관광지 = AT4 + CT1). 키워드 검색 응답의 분류가 "기타"가 되던 것이 사라지고, 핀을 찍을 수 있는지는 지금처럼 자체 DB 짝 여부(`pinnable_flags`·`match_place`)로 정한다.
+- 카테고리 검색(`search_nearby`)은 관광지에서 AT4·CT1을 각각 불러 같은 id는 한 번만 두고 가까운 순으로 합친다 — **관광지는 카카오 호출이 코드당 최대 페이지 수만큼, 즉 두 배**가 된다(`max_pages` 기본 2 → 최대 4회). CT1 호출이 실패하면 AT4 결과는 유지하고, AT4(첫 코드) 첫 페이지 실패는 지금처럼 소스 실패로 올린다. 반경 제한은 그대로다.
+- 키워드 검색(`search_by_name`)은 `sort=accuracy`로 바꿨다. 좌표가 있으면 `x`·`y`를 같이 보내 가까운 곳을 약하게 우대받고, **반경 제한은 지금처럼 없다**(#351 범위 결정과 어긋나지 않는 최소 변경). 좌표가 없을 때도 같은 정확도 순이다(전엔 sort 파라미터가 없었다).
+- 확인 못 한 것: 실제 카카오로 "경복궁"을 불러 본체가 상위에 오는지는 **목 응답으로만** 검증했다(요청에 `sort=accuracy`가 가고 응답 순서를 그대로 유지하는 것까지). 라이브 확인은 키가 있는 환경에서 해야 한다.
+- FE: `frontend/src/features/map/livePlaces.ts`의 `GROUP_CODE`에 CT1 → "관광지"가 필요하다(FE 몫, 건드리지 않았다).
+
+## #674 — `places.api.search_own_by_name(db, *, query, category=None, limit=20) -> list[dict]`
+- 이슈의 시그니처·규칙 그대로: 자체 DB `places.name` 부분 일치(대소문자 무시), status 무관(closed 포함), `[{id, name, address, category, status}]`, 읽기 전용·커밋 없음.
+- 정한 것: 이름순은 **코드포인트 순**(`COLLATE "C"`)이다 — DB 로캘에 따라 공백이 무시돼 순서가 달라지는 것을 막았다(한글은 가나다순과 같다). `%`·`_`는 글자 그대로 찾고, 빈 질의·`limit<=0`은 빈 목록, `category`가 자체 DB 분류가 아니면 빈 목록이 된다.
+- ads의 `find_place`와 등록 스크립트 status 확인 교체는 ads 몫이다.
+
+## 테스트
+`test_sources.py`(CT1 매핑·합치기·부분 실패), `test_name_search.py`(정확도 순·반경 없음·본체 우선), `test_search_own_by_name.py`.
+
+
+# #690 영업시간·휴무일 — place_hours·get_hours·is_open_on·place-hours 로더 (2026-10-24)
+
+스펙(PR #693: `data-model.md` place_hours, `constraints.md` 영업 중 판정, `architecture.md` get_hours)대로 구현했다. 스펙·docs는 바꾸지 않았다.
+
+## 만든 것
+- **마이그레이션 `0038_place_hours`**(down `0037_agent_course_runs`, 단일 head): `place_hours(place_id PK→places on delete cascade, hours jsonb, closed_days text[], closed_note, hours_note, updated_at)`. 모델 `places.models.PlaceHours`와 일치하는지 테스트가 본다. **다른 PR이 먼저 0038을 쓰면 번호를 올려야 한다**(병합 순서에 따라).
+- **`places.api.get_hours(place_ids, *, db=None) -> dict[str, PlaceHours]`**: 한 번의 IN 조회, 행 없는 장소·잘못된 id는 키에서 뺀다, 읽기 전용. `PlaceHours(hours, closed_days, closed_note, hours_note)`는 `places/schemas.py`(frozen dataclass).
+- **`places.core.is_open_on(hours, closed_days, weekday, minutes) -> "open"|"closed"|"unknown"`**: 스펙 그대로. **`weekday`는 0=월 … 6=일(`date.weekday()`와 같다), `minutes`는 0~1439**이고 범위 밖이면 ValueError — 호출하는 쪽(recommend)이 맞춰야 하는 약속이다. 한 가지 스펙에 없던 해석: `hours`는 있는데 그 요일 키만 빠진 경우(로더는 요일 7개가 아니면 hours를 버리므로 DB에는 안 생긴다)는 `closed_days`로 넘어간다. `core.parse_minutes("HH:MM"|"26:00")`도 공개.
+- **로더 `python -m places.load place-hours --file <라벨 JSON | tourist_seoul_closed_days.json> [--all-regions] [--dry-run]`**: `rest_`·`cafe_` → permit, `tour_` → tourapi, 서울 관광지 파일은 `source_id`(=contentid) → tourapi. 멱등(같은 장소는 파일 값으로 갱신), 파일에 없는 장소·칸이 없는 항목의 기존 행은 지우지 않는다, 장소를 못 찾으면 건수만 보고한다. 항목에 `addr1`이 있고 서울이 아니면 `--all-regions` 없이는 건너뛴다(주소 없는 항목은 판단하지 않는다 — 장소가 DB에 있는지는 어차피 못 찾음 건수로 나온다). 기존 restaurants·cafes·tourapi의 라벨 적재는 그대로(`info`를 읽지 않는다, 테스트로 고정).
+- **형식 검증**: hours는 요일 7개 모두 + `[여는, 닫는]`이 `HH:MM`(시작 < 24:00, 시작 < 끝 ≤ 48:00)이어야 하고, 아니면 hours 칸만 버리고 경고(다른 칸이 있으면 행은 만든다). closed_days는 월~일 이름만. 칸이 하나도 안 남으면 행을 만들지 않는다.
+
+## 공유본(2026-10-21) 파싱 확인 (DB에는 쓰지 않음)
+정예 라벨 JSON 18개를 `parse_hours_entries`로 읽어 본 결과 형식 경고 0건. 행이 생기는 수: 서울 음식점 1,342/1,355, 카페 1,516/1,676, 관광지(closed_days 파일) 723/723, 대전·춘천·광주·대구·부산은 README 채움률과 일치. 나머지는 칸이 없어 행이 없다(= 모름).
+
+## 루트 확인
+- 적재 순서: 장소를 먼저 적재한 뒤 `place-hours`를 돌린다(장소가 없으면 못 찾음으로 센다). 지역 라벨 파일에는 `addr1`이 있는 관광지만 주소 판정이 걸리므로 지역은 `--all-regions`를 주면 된다.
+- 마지막 `can_recommend` 재계산은 다른 적재 명령처럼 `place-hours`도 돌린다(값은 안 바뀐다).
+
+## 테스트
+`places/tests/test_place_hours.py`(경계·파싱·적재·get_hours), `test_place_hours_migration.py`(up/down·단일 head·모델 일치).
+
+
+# #681 PlaceInfo.curated (2026-10-24)
+
+`places.api.get_places`가 돌려주는 `PlaceInfo`에 `curated: bool = False`(`places.curated`)를 더했다 — 같은 배치 쿼리로 읽고 기본값이 있어 기존 호출자는 그대로다. `PlaceRef`는 recommend가 `get_places`로 정예 여부를 읽을 수 있어 건드리지 않았다(필요하면 알려 달라).
+
+
+# #690 FakePlaces.get_hours (2026-10-24)
+
+`places.testing.FakePlaces`에 `get_hours`와 `hours: dict[place_id, PlaceHours]`(기본 빈 dict = 모름)를 더하고 `install()` 패치 목록에 넣었다 — recommend 쪽 테스트가 `FakePlaces().install()` 아래서 진짜 DB로 가지 않는다. 테스트는 `fake.hours[place_id] = PlaceHours(...)`로 지정한다.
+
+
+# #681 can_recommend 규칙 개정 (2026-10-24)
+
+원칙: **추천은 정예 데이터에서만 가능하다 — 정예 외 데이터는 핀을 꽂을 수 있는 최소 정보일 뿐이다.** `core.can_recommend(*, curated)`는 `curated` 값 그대로다. `KNOWN_LABEL_THRESHOLDS`·`ALWAYS_RECOMMENDABLE`(관광지 예외)·`known_label_count`·`category` 인자를 모두 지웠고, 재계산(`recompute_can_recommend`)은 라벨 집계 조인 없이 `places.curated`만 읽는다. 규칙 정본은 docs PR #711(문서는 루트가 맞춘다). 이미 적재된 DB는 `python -m places.scripts.recompute_can_recommend`(또는 다음 적재 끝의 자동 재계산)로 새 규칙에 맞춰진다 — **비정예 음식점·카페의 true가 모두 false로 바뀌어 추천 후보 풀이 정예로 좁아진다.** pingo_demo의 관광지는 전부 curated=true라 관광지 결과는 그대로이고, 앞으로 들어오는 비정예 관광지는 추천에 안 나간다.

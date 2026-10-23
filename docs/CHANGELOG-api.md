@@ -2,6 +2,297 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-24 (일곱 번째), 「+」 상한은 글 수로 센다 (#707 정정)
+
+- 스키마 변경 없음. 아래 (두 번째) 기록의 "5줄", "10줄"은 근거 줄이 아니라 「+」로 넣은 글 수다. 글 하나에 조건이 여럿이면 근거 줄이 여럿 생기지만(#419) 글 1개로 센다. `EVIDENCE_LIMIT`의 `detail.used`도 글 수다.
+- 한 요청 안의 같은 글은 하나로 친다(②에도 한 번만 간다).
+- FE: `EvidenceLine`에는 직접 추가인지 알려 주는 칸이 없어서, 응답의 근거 줄 수로는 직접 추가한 개수를 셀 수 없다. 「+」를 끄는 판단은 이 화면에서 직접 넣은 글 수나 409 `EVIDENCE_LIMIT`의 `detail.used`로 한다.
+
+## 2026-10-24 (여섯 번째), 게스트의 첫 카카오 로그인은 같은 계정에 로그인을 붙인다 (#694)
+
+- 스키마 변경 없음. 콜백의 `guest_merged` 설명과 `User.is_guest` 설명만 고쳤다.
+- 게스트가 처음 쓰는 카카오 계정으로 로그인하면 이제 새 계정을 만들지 않고 게스트 계정에 카카오 로그인을 붙인다. 사용자 id와 표시 이름이 그대로다. 이미 쓰던 카카오 계정이면 전처럼 그 계정으로 기록을 옮기고 이름은 그 계정 것이다.
+- 서버 내부: 로그인 수단을 `user_identities`로 나눴다(data-model). 게스트는 로그인 수단이 없는 사용자다.
+- FE: 할 일은 없다. `guest_merged=true`면 지금처럼 "카카오 계정으로 이어졌어요" 같은 안내를 쓰면 된다. 처음 전환이면 내 id가 바뀌지 않으니, 전환 뒤 `GET /auth/me`로 사용자를 다시 받는 처리는 그대로 두면 된다.
+
+## 2026-10-24 (다섯 번째), 에이전트 문장은 조각 목록으로 (#717), 호환이 깨짐
+
+- `AgentAdviceLine.text`를 없애고 `segments`(조각 목록)를 둔다. 조각은 `{ kind: text | quote | pin, text, reaction_id?, pin_id? }`(`AdviceSegment`). `AgentSuggestion.advice`, `RunAdvice.advice`, `agent.suggested` 이벤트 페이로드가 모두 바뀐다.
+- 이유(멘토 리뷰 #680): 전에는 구성원 사유 글이 에이전트 문장 안에 통째로 섞여 내려갔고, 서버가 검증한 인용 범위보다 많은 글이 화면에 나갔다. 이제 `quote` 조각은 서버가 검증한 범위만 담고, 구성원 글은 데이터로 따로 내린다.
+- FE: 에이전트 화면(#516, #536, #589)을 만들 때 조각을 차례로 이어 그린다. `text`는 에이전트 문장, `quote`는 구성원 의견(인용 모양, 이름 없음), `pin`은 핀 이름 모양. 추천 막힘 조언(`RunAdvice`)은 `text` 조각만 나온다. 아직 이 응답을 쓰는 화면이 없어 고칠 코드는 없다. 목 서버와 타입이 바뀌었다.
+
+## 2026-10-24 (네 번째), EvidenceLine.enforced — 걸러지지 않는 줄 구분 (#720)
+
+`EvidenceLine`에 선택 필드 `enforced: boolean`을 더했다. **후보를 거르거나 점수 매기는 데 실제로 쓰이는 줄인가**다 — `fact_key`가 있으면 true, 키 없는 줄("땅콩 알레르기가 있어서 못 먹어요"처럼 모델이 라벨로 옮기지 못한 사유)은 false. 없으면 true로 본다(구버전 서버 호환).
+
+- **이유**: 키 없는 `required` 줄이 「꼭 지켜야 하는 조건」으로 보여서 걸러질 것처럼 읽힌다(QA 2026-10-24). 서버는 알레르기를 걸러 주지 않는다(#425).
+- **FE 할 일**: `enforced=false`인 줄은 「꼭 지켜야 하는」 묶음에서 빼고 「걸러지지 않아요. 가게에 직접 확인해 주세요」처럼 따로 보여 준다. 목 서버가 같은 규칙이다(키 없는 줄은 false).
+
+## 2026-10-24 (세 번째), 추천 후보는 정예만 (#681-1, API 응답 구조 변화 없음)
+
+`places.can_recommend` 규칙을 바꿨다: 정예 장소만 true, 그 밖(인허가 커버리지 등)은 false(라벨 수 임계 폐기, `docs/data-model.md`·`docs/constraints.md`). 응답 스키마는 그대로이고 추천 후보 풀만 줄어든다 — 깔때기 「추천 가능 아님 제거」의 `removed_count`가 커진다. FE 할 일 없음.
+
+## 2026-10-24 (두 번째), 「+」 직접 추가는 선호로, 요청당 5줄과 run당 10줄 (#707)
+
+- `PATCH /runs/{runId}/evidence`의 `add`에 `maxItems: 5`가 생겼다. 넘으면 422 `VALIDATION_ERROR`.
+- run 하나에 직접 추가한 줄은 10줄까지다(×로 뺀 줄도 센다). 넘으면 409 `EVIDENCE_LIMIT`, `detail`에 `{ limit, used }`(errors.md에 새 코드).
+- 「+」로 추가한 줄의 `badge`가 `reference`에서 `preferred`로 바뀐다(recommend 구현 뒤). 순위 점수에 반영되고 후보는 거르지 않는다. v1 서버는 `reference`를 더 이상 만들지 않는다(enum 값은 남는다).
+- FE: 「+」 입력은 한 번에 5줄까지 받고, run에서 10줄을 채우면 「+」를 끄고 "직접 추가는 10개까지예요"를 보여 준다. 409 `EVIDENCE_LIMIT`도 같은 문구다. 배지로 구역을 나누므로 직접 추가한 줄은 "가능하면 맞춰주세요"로 옮겨 보인다. 목 서버가 같은 동작을 한다.
+
+## 2026-10-23, AI 코스 짜기 설명 정리 — #580 결정과 #624 머지 반영 (#334)
+
+- **스키마·동작 변경 없음. 설명만 고쳤다.**
+- AI 코스 짜기는 이제 브랜치 초안이 아니다. #580에서 모델 호출을 정했고 #624가 develop에 머지돼 실서버에 있다. 태그 설명과 절 머리의 「팀 결정 #580 전 브랜치 초안」을 뺐다. 아래 2026-10-21 항목들의 「#580 결정 전」 표시는 그때 기록이라 그대로 둔다.
+- **`GET /course-runs/{runId}` 설명을 바로잡았다**: 「진행 기록도 끝난 뒤에 한꺼번에 채워진다」는 2026-10-21 (두 번째) 변경 전 설명이었다. 실제로는 running 동안 `steps`만 단계마다 늘어나고 나머지 결과 칸은 비어 있다. `failed`면 `failure_code`와 그때까지의 `steps`가 남는다.
+- `CourseLeg.mode`의 2km 기준은 서버 상수이고, 대중교통 계산을 다듬는 #685에서 바뀔 수 있다.
+- **FE**: 할 일 없음. #686(AI 코스 짜기 화면)은 이미 바뀐 설명대로 만들어졌다. 타입(`api.d.ts`)은 설명만 달라져 다시 생성했다.
+
+## 2026-10-21 (네 번째), CourseLeg에 mode(walk|transit) 추가 (#334) — (#580 결정 전 — 브랜치 초안)
+
+- **`CourseLeg.mode`(필수)가 늘었다**: `walk`(도보) 또는 `transit`(대중교통). 서버가 직선거리로 정한다 — 2km 이하는 `walk`, 넘으면 `transit`(초안 규칙, 서버 상수). `approx_minutes`는 이제 **mode 기준 분**이다: `walk`면 도보 분, `transit`이면 대중교통 약 분(거리 ÷ 약 20km/h + 대기·환승 10분의 거친 추정이라 시간표가 아니다).
+- 배경: 지역이 다른 장소(성수와 잠실처럼)를 한 날에 넣으면 전에는 구간을 전부 걸어서 계산해 「걸어서 63분」 위반이 났다. 이제 먼 구간은 대중교통으로 보고, 위반은 도보 구간(40분)·하루 도보 합계(150분)·하루 이동 합계(도보+대중교통 180분)·구성원 도보 조건(도보 분만)이 넘을 때만 난다. 위반 문장(`violations[].text`)도 서버가 만들어 도보 구간에만 「걸어서 N분」을 쓴다.
+- **FE**: 구간 표시는 `mode`로 갈라 쓴다 — `walk`는 「도보 N분」, `transit`은 「대중교통 약 N분」(아이콘도 다르게). 모르는 mode가 와도 `approx_minutes`는 분이니 「이동 약 N분」으로 폴백하면 된다. 새로 부르는 API는 없다.
+- `steps`의 계산 줄에 「대중교통 N구간」이 붙고, 이동 위반이 남으면 코드가 「A와 B를 같은 날 넣었어요. 다른 날로 나눌까요?」 질문을 연다(답이 없으면 코드가 고른 첫 선택지로 이어 간다, `stage=질문·답`) — 새 필드는 없다.
+- 목 서버(`contracts/mocks/handlers/course.ts`): 구간을 직선거리로 가르고 먼 구간은 `transit`으로 낸다. 타입(`api.d.ts`)을 다시 생성했다.
+
+## 2026-10-21 (세 번째), CourseGoal.kind에 day_has 추가 (#334) — (#580 결정 전 — 브랜치 초안)
+
+- **`CourseGoal.kind` enum에 `day_has`가 늘었다**("그 날 코스에 공연·전시·야경 같은 종류의 장소가 하나 이상"). 필드는 그대로(`id`, `kind`, `label`, `met`)이고 `id`는 `day_has:d2:performance` 꼴이다. 종류(tag)는 서버 고정 목록이라 FE에 노출되지 않는다.
+- **FE**: `label`을 그대로 보여 주면 된다(예: 「둘째 날 (화)에 공연 장소 넣기」). 확정 리스트에 그 종류의 장소가 없으면 `met=false`로 나오고 `steps`의 「확인」 줄에 「확정 리스트에 공연 장소가 없어요」가 붙는다 — 서버는 장소를 지어내지 않는다. `kind` 분기가 있다면 모르는 값은 label만 보이게 두면 된다.
+- 타입(`contracts/src/types/api.d.ts`)은 enum만 달라져 다시 생성했다.
+
+## 2026-10-21 (두 번째), AI 코스 짜기 진행 중에도 steps가 늘어난다 (#334) — (#580 결정 전 — 브랜치 초안)
+
+- **스키마 변경 없음. `CourseRun.steps`의 뜻이 바뀐다.** 전에는 끝난 뒤에 한꺼번에 채워졌지만, 이제 `status=running`인 동안에도 단계가 생길 때마다 늘어난다(목표 이해 → 확인 문장 → 지휘 턴마다 생각·도구 결과·검증 줄 → 마지막 「결과」). 앞 단계는 바뀌지 않고 뒤로만 붙는다.
+- running 동안 `goals`, `unmatched`, `days`, `violations`, `checks`, `excluded`, `outcome`은 그대로 비어 있고 `steps`만 차 있다. `done`이 되면 모두 채워지고 `steps`는 마지막 running 응답의 연장이다(같은 순서, 같은 내용).
+- **FE**: 진행 화면은 기존 2초 폴링 그대로 `steps`를 단계 목록으로 그리면 된다(「이해 → 확인 → 짜기 …」가 하나씩 나타난다). 새로 부르는 API는 없다. 단계 하나는 `{stage, role, by, by_detail, text}`로 이전과 같다.
+- 목 서버(`contracts/mocks/handlers/course.ts`): 첫 GET은 running(단계 2개), 둘째는 running(5개), 셋째부터 done(7개). 타입(`api.d.ts`)은 설명만 달라져 다시 생성했다.
+
+## 2026-10-21, AI 코스 짜기 엔드포인트 3개 (#334) — (#580 결정 전 — 브랜치 초안)
+
+스펙이 먼저다. **팀 결정 #580이 나기 전의 브랜치 초안이다 — 머지 전에는 실서버에 없고, 결정이 바뀌면 이 항목도 바뀐다.** 구현 브랜치 `ai/course-agent-api-334`.
+
+- **`POST /maps/{mapId}/courses`** `{request_text?, member_constraints[]}` → 202 `{course_run_id}`. 구성원 누구나(`course.request`). 계산은 백그라운드라 FE는 `GET /course-runs/{runId}`를 2초 간격으로 불러 `status`가 `done`이나 `failed`가 될 때까지 기다린다.
+- **`GET /course-runs/{runId}`** → `CourseRun`. 요청자 본인만(`course.view`, 비구성원 404, 요청자 아님 403).
+- **`GET /maps/{mapId}/courses/latest`** → `CourseRun` 또는 204. 내 마지막 run(진행 중도 포함 — 화면을 다시 열면 이어서 기다린다).
+- **스키마**: `CourseRequest`, `CourseMemberConstraint`, `CourseRunCreated`, `CourseRun`, `CourseGoal`, `CourseStep`, `CourseDay`, `CourseSlot`, `CourseLeg`, `CourseViolation`, `CourseCheck`, `CourseExcluded`. 문장(`label`, `text`, `steps`)은 모두 서버가 코드 템플릿으로 만들어 그대로 보여 주면 된다.
+- **에러**: 새 코드 `COURSE_NOT_ENOUGH_PLACES`(422, `detail {min, count}`), `COURSE_LIMIT`(429, 사용자당 하루 5번·KST 자정 초기화, `detail {limit, used}`), `COURSE_IN_PROGRESS`(409, `detail {course_run_id}`).
+- **권한**: 새 액션 `course.request`(member), `course.view`(author, run 범위). `authz/policy.py`를 정본에 맞췄다.
+- **이벤트(SSE)는 없다**: 진행은 GET 폴링이다. 질문에 답하는 API도 없다 — 엔진이 답이 없으면 기본값으로 이어 간다(`waiting_input` 상태 없음).
+- **동작 메모**
+  - 확정 장소는 좌표를 아는 것(자체 DB 핀)만 센다. 실시간 핀은 코스에서 빠지고 `excluded[].reason = NO_COORDINATES`로 남는다. 한 번에 30곳, 여행 기간은 앞 14일까지다(넘으면 `OVER_LIMIT`).
+  - **영업시간을 아직 모른다**(places에 칸이 없다, #580 6번). 그래서 지금은 모든 장소가 `checks`(「가게에 직접 확인해 주세요」)에 들고 `slots[].needs_check=true`이며 `outcome`은 보통 `solved_with_checks`다. 휴무를 피하는 동작은 칸이 생긴 뒤에 켜진다.
+  - 요청 한 줄은 LLM_MODE=real일 때만 목표가 된다(dev는 요청 전체가 `unmatched`로 남고 코스는 코드 기준선이 짠다).
+  - `steps`는 진행 중에도 단계마다 늘어난다(아래 「두 번째」 항목).
+  - `steps[]`는 `{stage, role(해석|지휘|계산|검증|결정), by(ai|code|human), by_detail}`다. by는 칩용 대표값이고 섞인 단계의 원문(「모델 → 코드」 등)은 by_detail.
+  - 지도 삭제 정리(`maps/purge.py`)와 탈퇴(`withdraw_user`)가 코스 run(요청 한 줄 포함)을 지운다.
+  - `stale`이면 요청 뒤 확정 리스트가 바뀐 것이다 — 「다시 짜기」.
+- **FE 할 일(#580 결정 뒤)**: 확정 탭 「AI 코스 짜기」 시트(요청 한 줄, 하루 도보 상한 선택), 진행 화면(폴링), 결과 화면(목표 지킴/못 지킴 → 날짜별 순서와 구간 도보 → 확인 필요 → 빠진 핀 → 작업 기록). 목 서버 핸들러를 `contracts/mocks/handlers/course.ts`에 추가했다.
+
+## 2026-10-19 (여섯 번째), 구성원 충족 집계는 확인한 조건 기준 (#620)
+
+- **스키마 변경 없음. 값의 뜻이 바뀐다.** `Candidate.member_fulfillment`(「n명 중 m명 충족」)를 확인한 조건 기준으로 센다(recommend 구현 뒤).
+  - 키 없는 반대 사유만 남긴 구성원(예: "조개 알러지 있어요", 「취향이 아니에요」, 「너무 멀어요」)은 `total`에서 빠진다. 전에는 "후보가 실격을 통과했으니 충족"으로 셌지만, 실제로는 아무것도 확인하지 않았다(멘토 리뷰).
+  - 키 있는 반대 조건이라도 그 가게 라벨이 모름(「확인 필요」)이면 그 구성원은 충족으로 세지 않는다.
+- 숫자가 전보다 작게 나올 수 있다(예: "3명 중 3명" → "2명 중 2명" 또는 "3명 중 2명").
+- **FE:** 숫자를 그대로 보여 주면 따로 할 일은 없다. 알러지 안내 문구(#425)는 그대로 둔다.
+
+## 2026-10-19 (다섯 번째), 반대 칩의 "원함"은 선호로 (#617)
+
+- **스키마 변경 없음.** 🚫 칩 중 원함 칩(「웨이팅이 길어요」, 「좁아요」, 「시끄러워요」, 「자리가 불편해요」)에서 나온 근거 줄의 배지가 required에서 preferred로 바뀐다(recommend 구현 뒤). 「좁아요」 하나로 작은 음식점이 그 지도 추천에서 모두 빠지던 것이 고쳐지고, 넓은 곳이 점수로 위에 온다.
+- 「휠체어·유모차로 가기 힘들어요」는 그대로 required다(필요 조건). 피함 칩(「매워요」, 「느끼해요」, 「너무 붐벼요」)도 그대로다.
+- **FE:** 근거 확인 화면의 배지 표시(꼭, 선호)가 서버 값을 그대로 쓰면 따로 할 일은 없다. 에이전트 요약에서도 「좁아요」가 "지키려는 조건"이 아니라 선호 칸으로 간다.
+
+## 2026-10-19 (네 번째), 추천 탭 광고 (#642)
+
+스펙이 먼저다. 명세는 `docs/ads.md`. 구현은 이슈별로 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다.
+
+- **`GET /maps/{mapId}/ads?category&lat&lng`** — 추천 탭 하단 광고 최대 2개(`AdList`). 구성원 누구나. 응답에 실린 광고마다 노출 수를 올리므로 미리 불러오지 않는다(탭을 열 때와 카테고리를 바꿀 때만). category가 없으면 추천 대상 전체.
+- **`POST /ads/{adId}/clicks {map_id}`** — 클릭 기록(204). 실패해도 사용자에게 알리지 않는다.
+- **스키마**: `AdList`, `Ad`(ad_id, place, on_map), `AdPlace`(place_id, name, category, address, lat, lng, place_url), `AdClickRequest`.
+- 광고는 추천 후보와 순위에 들어가지 않고, 반응과 실격 필터를 거치지 않는다. 광고 칸에는 이유, 충족 체크, 구성원 충족 집계를 붙이지 않는다.
+- **지도에 올리기**: 새 경로 없이 `POST /maps/{mapId}/pins`(source: search)에 `place`의 place_id, name, lat, lng, category를 그대로 보낸다(#473과 같은 경로). 광고 흔적은 핀에 남지 않는다.
+- 권한: 새 액션 없음(구성원 확인만). 에러 코드: 새 코드 없음(422 VALIDATION_ERROR, 404 NOT_FOUND). SSE 이벤트 없음.
+- **FE 할 일:** 추천 탭 하단 광고 영역(광고 배지, 「카카오맵에서 보기」, 「지도에 올리기」, on_map이면 「이미 지도에 있어요」), 탭 열 때 한 번 조회, 새 추천 결과와 겹치면 그 칸 숨김, 클릭 기록. 광고가 0개면 영역을 그리지 않는다.
+
+## 2026-10-19 (세 번째), 지도 목록 응답에 상한을 함께 (#623) — 호환이 깨짐
+
+- **`GET /maps` 응답이 `Map[]`에서 `MapList {items: Map[], limit}`으로 바뀐다.** 계약, 백엔드, FE를 한 PR(#623)에서 같이 바꾼다.
+- `limit`은 만들거나 참여할 수 있는 지도 수 상한이다(지금 20). 409 `MAP_LIMIT`의 `detail.limit`과 같은 값이다.
+- 왜(멘토 리뷰): 정책 값을 화면에 숫자로 두면 바꿀 때 놓친다. 지금은 화면이 상한을 몰라 만들기에 실패해야 알 수 있다.
+- **FE 할 일:** `fetchMaps`가 `items`를 읽는다. 지도 목록에 "n / limit"을 보여 주고, 값이 오기 전에는 같은 크기의 자리(플레이스홀더)를 잡아 레이아웃이 밀리지 않게 한다(CLS). `items.length >= limit`이면 「새 지도」를 막고 나가기나 삭제를 안내한다.
+
+## 2026-10-16, 계획 보조 에이전트 모델 유형 제안 노출 (#582)
+
+- **스키마 변경 없음.** #582가 머지되면 실서버가 모델 유형 제안 두 가지도 낸다: 반대 후 정체("{카테고리} 후보가 반대 의견 뒤로 멈춰 있어요"), 의견 갈림("의견이 갈린 핀이 있어요"). `GET /maps/{mapId}/agent`의 `active_suggestion`과 `agent.suggested` 이벤트로 온다.
+- 의견 갈림 제안에는 `analysis`(충돌 종류, 축마다 ♥ 쪽 / 🚫 쪽 문구)가 붙는다. 문장의 `is_guess=true`는 "추정" 표시를 붙인다(agent-v2.md 16.2).
+- 지도당 제안은 여전히 동시에 하나다. 어느 제안이 먼저 나올지는 서버 규칙이 정한다(agent-v2.md 7절).
+- **FE 할 일:** #516, #536에서 `analysis`와 추정 표시를 그린다. 목 서버 시드에는 아직 갈림 제안이 없다.
+
+## 2026-10-15 (여섯 번째), 계획 보조 에이전트 엔드포인트 실서버 연결 (#531)
+
+- **스키마 변경 없음.** #510에서 올린 agent 엔드포인트 5개(`GET /maps/{mapId}/agent`, `PUT .../agent/settings`, `POST /agent/suggestions/{id}/view|accept|dismiss`)가 실서버에 생겼다. `GET /runs/{runId}/advice`는 아직 없다(M2).
+- 지금 실서버가 내는 제안은 코드 유형 두 가지다: 반응 공백("아직 확인되지 않은 핀이 n개 있어요"), 카테고리 공백("확정 리스트에 카페가 아직 없어요"). 모델 유형(정체, 갈림)은 평가가 끝날 때까지(#534) 응답과 이벤트에 나오지 않는다. 요약(`summaries`)은 M2 전까지 빈 목록이다.
+- 동작 메모: view는 이미 처리된 제안도 204. accept의 범위 밖 `action_index`는 422(`detail: {action_index, actions}`). 만료 시각이 지난 제안은 GET에서 null이고 accept와 dismiss는 409 `SUGGESTION_RESOLVED`. 같은 값의 PUT settings는 이벤트를 내지 않는다.
+- 이벤트: `agent.suggested`, `agent.resolved`, `agent.settings_changed` 발행 시작.
+- **FE 할 일:** #516, #536을 실서버에 붙일 수 있다.
+
+## 2026-10-20, 게스트가 카카오 계정으로 전환 — 기록 합치기 (#560)
+
+스펙이 먼저다. 구현은 auth(흐름)와 각 모듈(`reassign_user`)이 한다. **새 엔드포인트는 없다.**
+
+- **`GET /auth/kakao/login`**: 게스트 세션 쿠키가 붙어 있으면 서버가 그 게스트 id를 서명한 state 쿠키에 담는다. 프론트가 할 일은 없다 — 게스트 화면의 「카카오로 계정 만들기」가 같은 주소로 이동하면 된다.
+- **`GET /auth/kakao/callback`**: 카카오 로그인에 성공하면 게스트 기록(구성원 자격·핀·반응·추천 기록·확정 항목·알림)을 카카오 계정으로 합치고, 성공 리디렉션에 **`guest_merged=true`**(합쳤다) 또는 **`guest_merged=false`**(합치지 못했다 — 로그인은 성공, 게스트 기록은 남음)를 붙인다. 게스트가 아닌 로그인에는 붙지 않는다.
+- 충돌은 카카오 계정의 기존 값이 이긴다(같은 지도 멤버십, 같은 핀의 반응, 제안·거절 이력). 추천 횟수(`attempt_no`)는 합치지 않는다. 자세한 규칙은 `docs/data-model.md`「게스트 합치기」.
+- **에러 코드·권한**: 새로 없음. **FE 할 일**: 게스트 화면에 「카카오로 계정 만들기」, 돌아온 뒤 `guest_merged` 쿼리로 안내(「기록을 옮겼어요」/「기록을 옮기지 못했어요」), 쿼리를 지우고 목록을 다시 불러온다. 목 서버: `guest` 시나리오에서 로그인하면 `guest_merged=true`로 돌아온다.
+
+## 2026-10-20, 카페의 `serves_alcohol` 폐기 (데이터 담당 요청)
+
+- **API 스키마는 그대로다.** 카페 납품 데이터에서 `serves_alcohol`을 뺐으므로 카페에서는 이 조건을 쓰지 않는다(`docs/constraints.md` 카페 절). 음식점의 `serves_alcohol`(#461)은 그대로다.
+- 카페에서 사용자가 "술" 조건을 말해도 후보를 거르지 않는다(라벨이 없는 조건 = `unknown_policy`). 이미 적재된 카페의 라벨 행은 지우지 않는다 — **`places.can_recommend` 판정과 건수는 바뀌지 않는다.**
+- BE: `recommend/constraints.py`의 `serves_alcohol` 적용 범위를 음식점 전용으로 줄인다(recommend 세션).
+
+## 2026-10-16, 카톡 대화 내보내기로 일괄 핀 찍기 (#9, 기획안 5-9)
+
+스펙이 먼저다. 구현은 pins가 한다. 그 전까지 아래 엔드포인트 2개는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다.
+
+- **`POST /maps/{mapId}/pins/link-preview`** `{urls: string[≤10]}` → `{items:[{index, status:'ok'|'error', result?: LinkParseResult, error_code?, already_pinned_pin_id?}]}`. 쓰기 없음. 링크마다 `POST /places/from-link`와 같은 해석을 하고 **이미 지도에 있는 장소인지**를 붙인다. 항목마다 따로 성공·실패(요청은 200). 사용자당 URL 수 기준 분당 60(429 `RATE_LIMITED`).
+- **`POST /maps/{mapId}/pins/bulk`** `{pins: PinCreateRequest[≤30]}` → `{results:[{index, status:'created'|'duplicate'|'rejected', pin?, error?:{code,message?,detail?}}]}`. 항목은 핀 생성과 같은 요청이고 규칙도 같다. 항목마다 따로 처리(일부만 성공해도 나머지는 만들어진다), 핀마다 `pin.created`.
+- **대화 내용은 서버로 가지 않는다.** 화면이 붙여넣은 텍스트를 **브라우저 안에서** 정규식으로 스캔해 구글맵·카카오맵 링크만 뽑고(네이버·인스타·블로그는 안 잡는다, #134), 텍스트는 즉시 버린다. 서버는 URL만 본다. 모델 호출 없음.
+- **권한**: 새 액션 없음(`pin.create`, 게스트 포함 구성원 누구나). **에러 코드**: 새 코드 없음(기존 `LINK_*`·`PIN_DUPLICATE`·`PLACE_NOT_SUPPORTED`를 항목별 코드로).
+- **FE 할 일**: 붙여넣기 → 브라우저 추출(최대 50개, 중복 제거) → 10개씩 미리보기 호출·진행 표시 → 목록(「찾음」「이미 있음」「이름으로 찾기」「실패」) → 선택 → 일괄 생성 → 결과 요약. 링크 하나 붙여넣기(#487)와 같은 컴포넌트를 쓴다. 구글 링크에 자체 DB 짝이 없으면 `result.name_hint`로 기존 이름 검색 흐름을 한 건씩 이어 간다(카카오 검색을 자동으로 돌리지 않는다).
+
+## 2026-10-15 (일곱 번째), 게스트 참여 (#472)
+
+스펙이 먼저다. 구현은 auth(계정·세션)·maps(지도 만들기 제한·후임 판정)가 한다. 그 전까지 `POST /auth/guest`는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다. **설계 결정은 루트 추천안이다**(사용자 변경 가능).
+
+- **`POST /auth/guest {display_name, invite_token}`** → 201 `{user, map}` + 세션 쿠키. 로그인 전에 부르고, 계정 생성과 초대 수락이 **한 요청**이다. 만료·꺼진 토큰은 초대 수락과 같은 에러(404·410), 초대 토큰 하나당 게스트 10명(409 `GUEST_LIMIT`), 호출 상한(429).
+- **`User.is_guest`**(선택, 없으면 false). 게스트는 `POST /maps`가 403 **`GUEST_NOT_ALLOWED`**(새 코드)다. 방장이 될 수 없다(후임에서 빠지고, 직접 넘기기는 422 `OWNER_TARGET_INVALID`). 그 밖의 구성원 행동과 상한(추천 10회 등)은 일반 구성원과 같다.
+- **세션 30일, 90일 미사용 게스트는 정리**(#168). 탈퇴·삭제 규칙은 일반 사용자와 같다.
+- **카카오 계정으로 합치기(claim)는 이 PR에 없다.** 합치는 규칙이 pins·maps·recommend·notifications에 걸쳐 별도 이슈로 나눈다.
+- **권한**: 새 롤·액션 없음(`docs/permissions.md` 게스트 절).
+- **DB**: `docs/data-model.md` users에 `is_guest`, `guest_invite_token`, `last_seen_at`. 마이그레이션은 구현 PR이 head 다음 번호로.
+- **FE 할 일(#485)**: 초대 요약 화면에 「이름만 입력하고 들어가기」, 입력 → `POST /auth/guest` → 응답의 `map`으로 이동. 게스트는 「새 지도 만들기」를 숨기고 카카오 로그인을 안내한다. 목 서버 시나리오 `guest`로 게스트 화면을 먼저 만들 수 있다.
+
+## 2026-10-15 (여섯 번째), 추천 상한 10회와 추천 가능 장소 (#31, 신규)
+
+스펙이 먼저다. 구현은 recommend(상한·후보 풀)와 places(`can_recommend`)가 따로 한다.
+
+- **재시도 상한 5 → 10회.** 단위는 그대로다 — 지도 안에서 구성원 각자(카테고리 무관, 새 추천·다시 추천 모두 1씩), 팀 합산 상한은 없다. 다른 사람의 시도에는 영향이 없다. 반경 넓히기(4회)는 별개다. 개인이 받은 추천은 그 사람만 보고, 「지도에 올리기」를 눌러야 모두에게 보이는 것도 그대로다.
+- **`RecommendRun.attempt_limit`, `RunSummary.attempt_limit`(선택)** — 상한을 응답으로 내려 준다. `429 RETRY_LIMIT`의 `detail`에도 `attempt_limit`. FE는 숫자를 하드코딩하지 말고 「n/10」을 이 값으로 그린다.
+- **깔때기에 단계 하나 추가**: 「추천 가능 아님 제거」(「영업 종료 제거」 다음). 라벨이 적어 추천 풀에서 빠진 장소 수다. 응답 구조는 그대로(`label`, `removed_count`).
+- **`places.can_recommend`**(docs/data-model.md, docs/constraints.md): 추천 후보 풀에만 쓰는 bool. 직접 찍은 핀·검색에는 영향이 없다. API 응답 필드는 없다.
+- **FE 할 일**: 추천 화면에 「n/10」 표시와 상한 도달 안내(문구는 `RETRY_LIMIT` 메시지 대신 `attempt_limit`으로), 깔때기 표에 새 단계가 보이는지 확인. 목 서버가 같은 규칙이다.
+
+## 2026-10-15 (네 번째), 실시간 핀 승격과 주소 힌트 (#501)
+
+스펙이 먼저다. 구현은 pins·places 세션이 따로 하며, 그 전까지 `POST /pins/{pinId}/resolve`는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다.
+
+- **`POST /pins/{pinId}/resolve`** — 실시간 핀(`source: live`)을 자체 DB 핀으로 승격한다. 본문 `PinResolveRequest {place_name, lat, lng, address?}`는 화면이 `kakao_place_id`로 다시 찾은 카카오 결과를 **매칭 힌트로만** 보낸다(저장·로깅·응답 모두 없음). 서버가 핀 생성(source=search)과 같은 규칙으로 짝을 찾는다. 짝이 있으면 `source: db`로 바뀌고 `place_id`·이름·좌표·링크가 장소에서 채워진다. **핀 id·반응·사유·확정 리스트 항목은 유지**. 짝이 없으면 200 + 변화 없음, 이미 DB 핀이어도 200 + 변화 없음. 같은 지도에 그 장소의 핀이 이미 있으면 409 `PIN_DUPLICATE`(`detail.pin_id`) — 자동 병합 없음. 지도 구성원 누구나.
+- **`PinCreateSearch.address`** (선택) — 검색 결과의 주소를 그대로. 이름이 비슷한 점포를 가르는 보조 힌트이며 저장·로깅하지 않는다. 안 보내도 지금처럼 동작한다.
+- **이벤트**: 승격하면 `pin.updated`(페이로드 `Pin`). 다시 받기 표에 "승격이면 마커·상세 같이 갱신"을 적었다.
+- **권한**: 새 member 액션 `pin.resolve`. `authz/policy.py`를 같은 PR에서 맞췄다.
+- **FE 할 일**: 화면이 live 핀의 이름·좌표를 `kakao_place_id`로 찾을 때마다(이미 `source: db`인 핀은 호출하지 않는다) 결과를 이 API로 보내고, 응답이 `db`면 핀을 갈아끼운다. 200 + live면 아무것도 바꾸지 않는다. 같은 호출을 반복하지 않게 핀마다 세션당 한 번만 시도한다. 검색 결과로 핀을 만들 때는 `PinCreateSearch.address`에 결과의 `address`를 함께 보낸다(#478과 함께).
+- **BE 할 일**: pins가 힌트를 `PlaceHint`에 넣어 `places.api.match_place`로 보낸다(저장·로깅 금지). places 라우터의 `_fill_pinnable`이 `r.address`를 쓰는 것은 pins 쪽이 병합된 뒤.
+## 2026-10-15 (다섯 번째), V2 알림함과 서비스 피드백 (#470, #10)
+
+스펙이 먼저다. 구현은 notifications 모듈(신설)과 feedback이 따로 하며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 동작한다.
+
+- **알림함 (notifications 태그)**: 앱 안 알림만 있다. 푸시·이메일은 없다.
+  - `GET /me/notifications?limit&before&unread_only` — 최근순 `NotificationList {items, unread_count, next_before?}`. `unread_count`는 페이지와 무관한 전체 수. 로그인만 필요하다(나간 지도의 알림도 남는다).
+  - `POST /me/notifications/read {ids?}` — `ids`를 주면 그 알림만, 생략하면 전부. 멱등이고 모르는 id는 조용히 무시한다. 204.
+  - `GET /me/notification-prefs`, `PUT /me/notification-prefs {prefs:[{type,enabled}]}` — 종류는 `pin_reaction`(내 핀에 반응), `member_joined`(내 지도에 새 구성원, 방장만), `owner_changed`(내가 방장이 됨), `map_deleted`(내 지도가 삭제됨), `my_ai_pin_published`(내가 요청한 AI 추천이 올라감). 행이 없으면 켜짐. 끈 종류는 만들 때 거른다.
+  - `Notification {id, type, map_id, map_title?, pin_id?, message, created_at, read}` — `message`는 서버 문장이고 **반대 사유 원문·메모는 싣지 않는다**. 내가 한 일의 알림은 나에게 만들지 않는다.
+- **피드백 (feedback 태그)**: `POST /feedback {message, category?, map_id?}` → 201 `{id, created_at}`. 사용자당 상한이 있다(429 `RATE_LIMITED`). 저장만 한다.
+- **실시간은 없다**: 알림에는 SSE 이벤트를 새로 만들지 않았다(`docs/events.md` 변경 없음). FE는 앱을 열 때·포커스가 돌아올 때·알림함을 열 때 불러온다.
+- **권한**: 새 액션 없음 — `/me/*`와 `/feedback`은 로그인만 본다.
+- **DB**: `docs/data-model.md`에 `notifications`, `notification_prefs`, `feedback` 절. 마이그레이션은 구현 PR이 head 다음 번호로 만든다.
+- **BE 할 일(알림 만들기)**: 반응(pins)·새 구성원·방장 변경·지도 삭제(maps)·AI 핀 게시(recommend)가 이벤트를 쓰는 같은 트랜잭션에서 `notifications.api.notify`를 부른다. 그 모듈 변경은 notifications 모듈이 선 뒤 각 모듈 PR이 따로 건다.
+- **FE 할 일**: 종 모양 배지·알림함·설정 화면, 상단바 피드백 바텀시트. 목 서버로 먼저 시작할 수 있다.
+
+## 2026-10-15 (세 번째), V2 계획 보조 에이전트 계약 (#510)
+
+스펙이 먼저다. 명세는 `docs/agent-v2.md`. 구현은 agent 모듈 M0부터 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다. 모델 호출 추가는 결정 이슈 #509에서 정하고, M0은 모델 없이 shadow로 돈다.
+
+- **엔드포인트 (agent 태그)**
+  - `GET /maps/{mapId}/agent` — 바텀시트 상태 `AgentState`(모드, 지금 제안, 미열람 점, 카테고리별 우리 조건 요약). 구성원 누구나.
+  - `PUT /maps/{mapId}/agent/settings {enabled}` — 모드 켜고 끄기, 구성원 누구나(`agent.toggle`). 응답 `AgentSettings`.
+  - `POST /agent/suggestions/{suggestionId}/view` — 열람 기록(204, 멱등, 이벤트 없음).
+  - `POST /agent/suggestions/{suggestionId}/accept {action_index}` — 버튼 하나 수락. 응답 `{action}`은 FE가 손으로 할 때와 같은 API로 실행할 동작이다. 서버는 대신 실행하지 않는다.
+  - `POST /agent/suggestions/{suggestionId}/dismiss` — 닫기(204). 지도 단위로 모두에게서 닫힌다.
+- **엔드포인트 (recommend 태그)**: `GET /runs/{runId}/advice` — 추천 막힘 조언 `RunAdvice`, 요청한 본인만. 대상이 아니거나 조언이 없으면 204.
+- **스키마**: `AgentState`, `AgentSettings`, `AgentSuggestion`, `AgentAction`, `AgentAdviceLine`, `AgentAnalysis`, `AgentSummary` 등. 문장은 모두 서버 렌더이고 FE는 숫자나 슬롯을 다루지 않는다.
+- **이벤트(전체 채널)**: `agent.suggested`, `agent.resolved`, `agent.summary_updated`, `agent.settings_changed`. 다시 받기 표도 갱신했다.
+- **권한**: 새 액션 `agent.toggle`, `agent.suggestion.resolve`(member). 조언은 기존 `recommend.manage`. `authz/policy.py`를 같은 PR에서 맞췄다.
+- **에러 코드**: `SUGGESTION_RESOLVED`(409) — 이미 처리된 제안. `common/errors.py` CATALOG도 맞췄다.
+- **DB**: `docs/data-model.md` agent 절에 테이블 7개. 마이그레이션은 M0에서.
+- **FE 할 일**: 버튼, 점, 바텀시트 골격을 목 서버로 먼저 시작할 수 있다(M0 FE 이슈).
+
+## 2026-10-15 (두 번째), 실시간 핀에도 카카오 장소 페이지 링크 (#445)
+
+- **API 스키마는 그대로다.** 실시간 핀(`source: live`)도 `Pin.place_url`이 채워진다. 카카오 장소 ID로 응답 때 만들고 저장하지 않는다. 전에는 자체 DB 핀만 있었다.
+- **FE:** 핀 상세에서 종류와 상관없이 `place_url`이 있으면 "카카오맵에서 보기"를 외부 브라우저로 연다(앱 안 WebView 금지, 카카오 약관).
+- 장소를 `place_id` 하나로 가리키는 큰 정리(#444, #446)의 1단계다.
+
+## 2026-10-15, 늦게까지 영업·술 판매를 음식점 조건으로도 쓴다 (#461)
+
+- **API 스키마는 그대로다.** 음식점 추천에서 `open_late`(밤 10시 이후까지 여는가), `serves_alcohol`(술도 파는 곳)이 조건 체크(`Candidate.checks`)와 근거 줄의 `fact_key`로 나올 수 있다. 전에는 카페에서만 썼다.
+- "늦게까지 하는 데로", "술 한잔할 수 있는 곳" 같은 사유가 음식점 추천에 반영된다. ♥한 가게의 이 두 라벨은 선호로 쓰지 않는다(직접 쓴 사유로만).
+
+## 2026-10-13 (세 번째), V2 기록·내보내기: 지난 추천 기록·확정 리스트 내보내기 (#469, #471)
+
+스펙이 먼저다. 구현은 이슈별로 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다.
+
+- **`GET /maps/{mapId}/runs?category&limit`** (#469) — **내가 요청한 run만**(가드레일 1) 최근순. 항목은 `RunSummary`(id·category·status·attempt_no·created_at·candidate_count·published_count). 결과는 기존 `GET /runs/{runId}/result`로 다시 연다. 결과는 마지막 시도의 후보만 남아 있다.
+- **`GET /runs/{runId}/result`가 409 `RUN_NOT_FINISHED`를 낸다** — status가 done이 아닌 run. 기존 FE 흐름(추천 실행 뒤 `run.candidates_ready`를 받고 조회)은 영향이 없다. 지난 기록에서 진행 중·실패한 run을 열 때만 만난다.
+- **`GET /maps/{mapId}/shortlist/export?format=txt|csv`** (#471) — 구성원 누구나. 확정 순서대로 순서·이름·분류·카카오 링크·메모. live 핀은 이름 대신 검색어 + "(이름 확인 필요)". CSV는 UTF-8 BOM. 응답은 JSON이 아니라 파일이다(`text/plain`·`text/csv`, `Content-Disposition: attachment`).
+- **에러 코드**: `RUN_NOT_FINISHED`(409). `common/errors.py` CATALOG도 함께 맞췄다.
+- **FE 할 일:** #482(지난 추천 기록), #484(내보내기). 목 서버에서 먼저 붙일 수 있다.
+
+## 2026-10-15 (네 번째), `GET /places/nearest` 구현에 맞춘 보정 (#473)
+
+- 응답에 `503 PLACES_UNAVAILABLE`을 추가했다(자체 DB를 못 읽을 때 — `GET /places/search`와 같다). 그 외 계약은 그대로다.
+- 결과의 `place_id`는 `own:<자체 DB 장소 UUID>`, `place_source.provider`는 `permit`·`tourapi`, `place_source.url`은 없다. 그대로 `POST /maps/{mapId}/pins`의 `source: search`로 보내면 된다(`own:` ID는 카카오 ID로 기록되지 않는다).
+- 호출 상한은 `GET /places/search`와 같은 사용자별 버킷을 쓴다. 누른 좌표는 uvicorn 접근 로그의 쿼리스트링에서도 지운다.
+
+## 2026-10-13 (두 번째), V2 핀: 핀 수정·지도를 눌러 핀·링크 해석 (#466, #473, #474)
+
+스펙이 먼저다. 구현은 이슈별로 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 쓸 수 있다.
+
+- **`PATCH /pins/{pinId}`** (#466) — 핀을 찍은 사람만. `memo`(모든 핀, 빈 문자열이면 지움)와 `category`(live 핀만, 반응이 없을 때만). AI 추천·확정 핀은 수정 불가(403). 응답은 `Pin`. `Pin.permissions.can_edit`을 쓴다.
+- **`GET /places/nearest?lat&lng&category`** (#473) — 반경 100m 안 자체 DB 장소를 가까운 순 최대 5곳. 모두 `pinnable=true`. 고르면 `source: search`로 핀을 만든다. 누른 좌표는 저장·로깅하지 않는다.
+- **`POST /places/from-link {url}`** (#474) — 구글맵·카카오맵 링크를 해석해 `LinkParseResult`를 준다. **핀을 만들지 않는다.** 구글: `matches`(자체 DB 짝)나 `name_hint`로 검색을 이어 간다. 카카오: `kakao_place_id`만 뽑고, 자체 DB 짝이 없으면 `needs_search_query=true` — 사용자에게 장소 이름을 입력받아 `source: live`로 만든다. 네이버·인스타·블로그는 422 `LINK_NOT_SUPPORTED`.
+  - 설계 변경: 이슈 #474는 `POST /maps/{id}/pins/from-link`였으나, 링크 해석과 핀 생성을 나눠 새 저장 값 없이 기존 두 생성 경로를 그대로 쓴다. 카톡 일괄 파싱(#9)도 이 해석기를 재사용한다.
+- **이벤트**: `pin.updated`(페이로드 `Pin`, `pin.created`와 같은 모양).
+- **권한**: 새 액션 `pin.edit`(author 범위 `pin: own`). `Permissions.can_edit`이 핀에도 쓰인다. `authz/policy.py`를 같은 PR에서 맞췄다.
+- **에러 코드**: `LINK_NOT_SUPPORTED`, `LINK_UNRESOLVED`(둘 다 422). `common/errors.py` CATALOG도 함께 맞췄다.
+- **FE 할 일:** #480(핀 수정), #486(지도 눌러 핀), #487(링크 붙여넣기). 목 서버에서 먼저 붙일 수 있다. 목 서버 마법 링크: `https://maps.app.goo.gl/fail`은 422 `LINK_UNRESOLVED`.
+
+## 2026-10-13, 장소 검색에서 자체 DB 장소를 앞으로 (#488)
+
+- **스키마 변경 없음.** `GET /places/search`는 카카오가 준 후보 안에서 `pinnable=true`(자체 DB에 짝이 있는 장소)를 앞으로 올려 돌려준다. 각 묶음 안의 순서는 카카오 순서 그대로이고, `pinnable`을 못 구했으면(생략) 원래 순서다. `limit`은 정렬 뒤에 적용한다. 호환 영향 없음.
+
+## 2026-10-13, V2 지도 생명주기: 지도 수정·초대 링크 관리·방장 넘기기 (#465, #467, #468)
+
+스펙이 먼저다. 백엔드 구현은 각 이슈에서 따로 들어오며, 그 전까지 아래 엔드포인트는 실서버에 없다(`KNOWN_MISSING`). 목 서버는 지금 바로 쓸 수 있다.
+
+- **추가 엔드포인트**
+  - `PATCH /maps/{mapId}` — 제목·날짜·지역 수정, 방장만(403), 보낸 필드만 바꾼다, 검증 실패 422. 응답은 `Map`.
+  - `POST /maps/{mapId}/owner {user_id}` — 방장 직접 넘기기, 방장만. 대상이 구성원이 아니거나 탈퇴했거나 나 자신이면 422 `OWNER_TARGET_INVALID`. 응답은 요청자(이제 구성원) 기준 `Map`.
+  - `GET /maps/{mapId}/invites` — 유효한 초대 링크 목록, 방장만. `Invite`에 `created_at`·`created_by_display_name`·`used_count`가 붙는다.
+  - `DELETE /invites/{token}` — 링크 끄기, 방장만, 멱등(204).
+- **바뀐 동작**
+  - `POST /maps/{mapId}/invite`는 **내가 만든 유효한 링크가 있으면 그것을 200으로 돌려준다**(새로 만들면 201). 남이 만든 링크는 재사용하지 않는다. FE는 `useInviteQuery`의 캐시 한 개를 그대로 써도 되고, 201/200을 구분할 필요는 없다.
+  - 초대 요약·수락의 410은 이제 `INVITE_EXPIRED`와 **`INVITE_REVOKED`** 두 코드다. 코드로 문구를 가른다.
+- **스키마**
+  - `Permissions.can_edit`(map 전용, 방장만 true).
+  - `MapUpdateRequest`, `OwnerTransferRequest` 추가.
+- **이벤트(전체 채널)**: `map.updated {map_id, title, start_date, end_date, region?}`, `owner.changed {map_id, from_user_id, to_user_id}`. `owner.changed`는 `member.left`가 아니다 — 두 사람 모두 지도에 남아 SSE 구독이 끊기지 않는다.
+- **스펙 보강**: `PublicEvent`에 events.md에는 있었는데 스키마가 없던 `member.left`·`map.deleted`를 채웠다(동작 변화 없음).
+- **권한**: 새 액션 `invite.revoke`(목록 보기·끄기), `owner.transfer`, 기존 `map.settings.edit` 사용 시작. 모두 owner 전용. `authz/policy.py`·`schemas.py`를 같은 PR에서 맞췄다.
+- **FE 할 일:** #479(휴지통은 후순위라 제외), #480(지도·핀 수정), #481(초대 링크 관리·방장 넘기기). 목 서버에서 먼저 붙일 수 있다.
+- 지도 삭제 복구(#464)는 후순위라 이번 묶음에 넣지 않았다.
+
 ## 2026-10-10 (세 번째), v1에 없는 private 핀 분기 정리 (#273)
 
 - **API 스키마는 그대로다.** `Pin.visibility`와 `pins.visibility` 칸은 남기되 "v1은 항상 public, 이 값으로 분기하지 않는다"로 설명을 바꿨다. 비공개 후보는 `candidates` 행이고, 게시할 때 처음부터 public 핀이 된다. 계약 타입은 설명만 바뀌어 다시 만들었다.

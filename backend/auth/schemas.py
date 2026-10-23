@@ -8,7 +8,9 @@ UserResponse는 반대로 계약용이다 — api-spec.yaml의 User 스키마(id
 from dataclasses import dataclass
 from typing import Annotated
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints
+
+from maps.schemas import Map
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,7 @@ class CurrentUser:
     (display_name, session_id) 호출부 시그니처가 바뀌지 않게 객체로 둔다."""
 
     user_id: str
+    is_guest: bool = False   # 로그인 수단이 없으면 게스트(#472, #694). users 행을 읽을 때 계산한 값. 기본값이라 CurrentUser(user_id=...) 호출부는 그대로 동작한다
 
 
 class UserResponse(BaseModel):
@@ -24,6 +27,7 @@ class UserResponse(BaseModel):
 
     id: str
     display_name: str
+    is_guest: bool = False   # 스펙 User.is_guest — 항상 내려 보낸다(없으면 false로 보는 쪽도 호환)
 
 
 class UserUpdateRequest(BaseModel):
@@ -31,3 +35,19 @@ class UserUpdateRequest(BaseModel):
     걷어낸 뒤 길이를 재므로 공백만 든 값은 빈 값과 같이 422가 된다."""
 
     display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+
+
+class GuestJoinRequest(BaseModel):
+    """POST /auth/guest 요청 — api-spec.yaml의 GuestJoinRequest. 앞뒤 공백을 걷은 뒤 1~50자."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+    invite_token: str
+
+
+class GuestJoinResult(BaseModel):
+    """POST /auth/guest 201 응답 — user와 방금 들어간 지도."""
+
+    user: UserResponse
+    map: Map

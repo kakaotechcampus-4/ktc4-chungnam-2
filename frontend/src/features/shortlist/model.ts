@@ -48,3 +48,34 @@ export function toRouteDrawings(routes: RouteDto[], pins: Pin[]): RouteDrawing[]
     }),
   }))
 }
+
+/** 카카오맵 길찾기는 출발·도착 + 경유지 5곳까지 받는다(카카오맵 URL 규칙). */
+export const KAKAO_ROUTE_MAX = 7
+
+export type KakaoPoint = { name: string; lat: number; lng: number }
+
+/** 카카오 링크 경로 한 칸 — 이름의 , / 는 구분자라 띄어쓰기로 바꾸고, 우리 핀의 이름·좌표만 담는다(#53). */
+const kakaoPoint = (p: KakaoPoint) => `${encodeURIComponent((p.name || '장소').replace(/[,/]/g, ' '))},${p.lat},${p.lng}`
+
+/** 이 순서대로 도보 길찾기를 여는 링크. 앞 KAKAO_ROUTE_MAX 곳만 담고, 2곳이 안 되면 없다. */
+export function kakaoWalkUrl(stops: KakaoPoint[]): string | null {
+  if (stops.length < 2) return null
+  return `https://map.kakao.com/link/by/walk/${stops.slice(0, KAKAO_ROUTE_MAX).map(kakaoPoint).join('/')}`
+}
+
+/** 출발 → 도착 대중교통 길찾기 링크(경유지 없음). */
+export function kakaoTrafficUrl(from: KakaoPoint, to: KakaoPoint): string {
+  return `https://map.kakao.com/link/by/traffic/${kakaoPoint(from)}/${kakaoPoint(to)}`
+}
+
+/**
+ * 동선 순서대로 카카오맵 길찾기(도보)를 여는 링크 — 지역마다 하나(트리플 「거리 → 길찾기」).
+ * 좌표·이름은 우리 핀 것이라 카카오 응답을 저장하는 게 아니다(#53). 이동 수단은 카카오맵에서 바꿀 수 있다.
+ */
+export function kakaoDirectionsUrl(route: RouteDto, pins: Pin[]): string | null {
+  const stops = route.ordered_pin_ids.flatMap((id) => {
+    const p = pins.find((pin) => pin.id === id)
+    return p && isPlaced(p) ? [{ name: p.place_name ?? '장소', lat: p.lat, lng: p.lng }] : []
+  })
+  return kakaoWalkUrl(stops)
+}

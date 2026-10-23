@@ -60,7 +60,7 @@ export function buildBaseState(): StoreState {
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, against: 1 },
-      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: false },
     },
     [pinFood2]: {
       id: pinFood2,
@@ -77,7 +77,7 @@ export function buildBaseState(): StoreState {
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, against: 1 },
-      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: true },
     },
     [pinCafe1]: {
       id: pinCafe1,
@@ -94,7 +94,7 @@ export function buildBaseState(): StoreState {
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 1, against: 0 },
-      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: false },
     },
   };
 
@@ -118,6 +118,7 @@ export function buildBaseState(): StoreState {
     pins,
     reactions,
     evidenceLines: {},
+    manualEvidenceCount: {},
     regions: {},
     runs: {},
     runRequestedBy: {},
@@ -126,6 +127,15 @@ export function buildBaseState(): StoreState {
     routes: {},
     invites: {},
     eventLog: [],
+    courseRuns: {},
+    ...buildAgentState(mapId),
+    ...buildAdsState(),
+    notifications: [
+      { id: "ntf_1", type: "pin_reaction", map_id: mapId, map_title: "제주도 여행", pin_id: "pin_1", message: "지우님이 내 핀에 ♥를 남겼어요", created_at: "2026-10-14T09:00:00Z", read: false },
+      { id: "ntf_2", type: "member_joined", map_id: mapId, map_title: "제주도 여행", message: "민수님이 지도에 들어왔어요", created_at: "2026-10-13T09:00:00Z", read: true },
+    ],
+    notificationPrefs: {},
+    feedback: [],
   };
 }
 
@@ -156,6 +166,7 @@ export function buildEvidenceLines(runId: string) {
       badge: "required" as const,
       fact_key: null, // 가격 라벨은 뺐다(#423). "비싸요"는 키 없는 근거 줄
       fact_label: null,
+      enforced: false, // 키 없는 줄은 후보를 걸러 주지 않는다(#720)
       is_active: true,
       permissions: { can_disable: false },
     },
@@ -188,8 +199,9 @@ export function buildEvidenceLines(runId: string) {
       author_id: "u_2",
       author_display_name: "박서영",
       text: "국물이 진해요",
-      badge: "reference" as const,
+      badge: "preferred" as const, // ♥ 사유는 선호다. v1 서버는 reference를 만들지 않는다(#707)
       fact_key: null,
+      enforced: false,
       is_active: true,
       permissions: { can_disable: false },
     },
@@ -254,4 +266,67 @@ export function buildCandidates(regionLabel: string) {
       permissions: { can_publish: true },
     },
   ];
+}
+
+/**
+ * v2 계획 보조 에이전트 시드(docs/agent-v2.md, #510). 지도 제안 하나(확정 리스트에 카페가 없음)와 음식점 우리 조건 요약 하나.
+ * 문장은 실서버처럼 서버 렌더 결과를 그대로 둔다 — FE는 숫자나 슬롯을 다루지 않는다.
+ */
+export const SEED_SUGGESTION_ID = "sug_1";
+export function buildAgentState(mapId: string): Pick<StoreState, "agentSettings" | "agentSuggestions" | "agentSummaries" | "runAdvice"> {
+  const now = new Date("2026-10-15T09:00:00+09:00");
+  return {
+    agentSettings: {},
+    agentSuggestions: {
+      [SEED_SUGGESTION_ID]: {
+        map_id: mapId,
+        status: "active",
+        viewed_by: [],
+        suggestion: {
+          id: SEED_SUGGESTION_ID,
+          diagnosis: "category_gap",
+          category: "카페",
+          title: "확정 리스트에 카페가 아직 없어요",
+          analysis: null,
+          advice: [{ segments: [{ kind: "text" as const, text: "확정 2곳 중 카페 0곳" }], is_guess: false }],
+          actions: [
+            { index: 0, type: "open_recommend", label: "카페 추천 받기", params: { category: "카페" } },
+            { index: 1, type: "show_pins", label: "카페 핀 보기", params: { category: "카페" } },
+          ],
+          created_at: now.toISOString(),
+          expires_at: new Date(now.getTime() + 24 * 3600 * 1000).toISOString(),
+        },
+      },
+    },
+    agentSummaries: {
+      [mapId]: [
+        {
+          category: "음식점",
+          must_keep: [{ fact_key: "spicy_focused", label: "매운 곳 제외", member_count: 1 }],
+          common_prefs: [{ fact_key: "cuisine_raw_fish", label: "횟집 원함", member_count: 2 }],
+          split_prefs: [{ fact_key: "franchise", label: "체인점", want_count: 1, avoid_count: 1 }],
+          vague_fixable: { count: 1, requests: ["어떤 점이 별로였는지 적어 주시면 추천에 반영돼요"] },
+          not_filtered: { count: 1, notices: ["알러지 같은 조건은 추천이 거르지 않아요. 가게에 직접 확인해 주세요."] },
+          updated_at: now.toISOString(),
+        },
+      ],
+    },
+    runAdvice: {},
+  };
+}
+
+/**
+ * 추천 탭 광고 시드(docs/ads.md, #642). 제주 시드 지도 근처 카페 둘, 음식점 하나, 반경 밖 카페 하나.
+ * 문구와 사진은 없다(범위 밖). 장소 정보는 실서버처럼 자체 DB 행 모양이다.
+ */
+export function buildAdsState(): Pick<StoreState, "ads" | "adStats"> {
+  return {
+    ads: [
+      { ad_id: "ad_1", on_map: false, place: { place_id: "place_ad_cafe_1", name: "바다정원 카페", category: "카페", address: "제주시 탑동로 11", lat: 33.5146, lng: 126.5236, place_url: "https://place.map.kakao.com/100001" } },
+      { ad_id: "ad_2", on_map: false, place: { place_id: "place_ad_cafe_2", name: "돌담 로스터리", category: "카페", address: "제주시 관덕로 8", lat: 33.5124, lng: 126.5226, place_url: null } },
+      { ad_id: "ad_3", on_map: false, place: { place_id: "place_ad_food_1", name: "한라 국수", category: "음식점", address: "제주시 중앙로 25", lat: 33.5106, lng: 126.5274, place_url: "https://place.map.kakao.com/100003" } },
+      { ad_id: "ad_far", on_map: false, place: { place_id: "place_ad_far", name: "서귀포 끝 카페", category: "카페", address: "서귀포시 남원읍", lat: 33.2797, lng: 126.7183, place_url: null } },
+    ],
+    adStats: {},
+  };
 }

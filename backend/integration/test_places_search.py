@@ -86,6 +86,72 @@ def test_pinnable_is_omitted_when_the_own_db_cannot_be_read(client, monkeypatch,
     assert "해운대" not in caplog.text and "OperationalError" in caplog.text   # 로그엔 예외 타입만(카카오 값 금지)
 
 
+def _results(*ids):
+    from places.schemas import PlaceSearchResult
+
+    return [PlaceSearchResult(place_id=pid, place_name=pid, lat=37.5, lng=127.0, category="음식점") for pid in ids]
+
+
+def _search_with_flags(client, monkeypatch, flags, *, limit=None):
+    """카카오 쪽 결과 순서가 flags(place_id → pinnable)의 삽입 순서인 검색 하나를 돌린다."""
+    seen = {}
+
+    def fake_search(q, near, lim):
+        seen["limit"] = lim
+        return _results(*flags)
+
+    monkeypatch.setattr(places_api, "search_by_name", fake_search)
+    monkeypatch.setattr(places_api, "pinnable_flags", lambda hints, **kw: [flags[h.kakao_place_id] for h in hints])
+    params = {"q": "성수"} | ({"limit": limit} if limit else {})
+    return [r["place_id"] for r in client.get("/places/search", params=params).json()], seen["limit"]
+
+
+def test_search_result_address_is_passed_to_the_matcher_hint_and_never_logged(client, monkeypatch, caplog):
+    """검색 결과의 address가 pinnable 계산의 힌트로 넘어가고(#500), 그 값이 로그에 남지 않는다(#53)."""
+    from places.schemas import PlaceSearchResult
+
+    secret_address = "서울 성동구 비밀로 12-34"
+    seen = []
+    monkeypatch.setattr(places_api, "search_by_name", lambda q, near, lim: [
+        PlaceSearchResult(place_id="k1", place_name="성수 칼국수", lat=37.5, lng=127.0, category="음식점", address=secret_address),
+        PlaceSearchResult(place_id="k2", place_name="주소 없는 곳", lat=37.5, lng=127.0, category="음식점"),
+    ])
+    monkeypatch.setattr(places_api, "pinnable_flags", lambda hints, **kw: seen.extend(hints) or [True] * len(hints))
+    with caplog.at_level("DEBUG"):
+        assert client.get("/places/search", params={"q": "성수"}).status_code == 200
+    assert [h.address for h in seen] == [secret_address, None]
+    assert secret_address not in caplog.text
+
+
+def test_own_db_places_come_first_and_keep_kakao_order_within_each_group(client, monkeypatch):
+    ids, _ = _search_with_flags(client, monkeypatch, {"k1": False, "o1": True, "k2": False, "o2": True, "k3": False})
+    assert ids == ["o1", "o2", "k1", "k2", "k3"]
+
+
+def test_fetches_15_from_kakao_then_cuts_to_limit_after_sorting(client, monkeypatch):
+    flags = {f"k{i}": False for i in range(1, 13)} | {"o1": True}   # 자체 DB 장소가 13번째라도 limit=3에서 살아남는다
+    ids, fetched = _search_with_flags(client, monkeypatch, flags, limit=3)
+    assert fetched == 15 and ids == ["o1", "k1", "k2"]
+
+
+def test_default_limit_is_still_applied_to_the_response(client, monkeypatch):
+    ids, _ = _search_with_flags(client, monkeypatch, {f"k{i}": False for i in range(1, 16)})
+    assert len(ids) == 10
+
+
+def test_order_is_untouched_when_pinnable_could_not_be_computed(client, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    monkeypatch.setattr(places_api, "search_by_name", lambda q, near, lim: _results("k1", "o1", "k2"))
+
+    def boom(hints, **kw):
+        raise OperationalError("select", {}, Exception("db down"))
+
+    monkeypatch.setattr(places_api, "pinnable_flags", boom)
+    found = client.get("/places/search", params={"q": "성수"}).json()
+    assert [r["place_id"] for r in found] == ["k1", "o1", "k2"] and all("pinnable" not in r for r in found)
+
+
 def test_partial_match_and_distance_order(client):
     r = client.get("/places/search", params={"q": "해운대", "lat": 35.1587, "lng": 129.1604})
     assert [p["place_name"] for p in r.json()] == ["해운대 바다 카페", "해운대 밀면"]
@@ -159,3 +225,49 @@ def test_missing_key_is_503(client, monkeypatch):
     monkeypatch.setattr(places_api, "_is_dev", lambda: False)
     monkeypatch.setattr(places_api, "_service", lambda: PlaceService([NamedFake("kakao", configured=False)]))
     assert client.get("/places/search", params={"q": "a"}).status_code == 503
+
+
+GOOGLE_LINK = ("https://www.google.com/maps/place/%EC%84%B1%EC%88%98+%EC%B9%BC%EA%B5%AD%EC%88%98/@37.5440,127.0560,17z"
+               "/data=!8m2!3d37.5445!4d127.0561")
+
+
+@pytest.fixture()
+def _fresh_link_limiter(monkeypatch):
+    monkeypatch.setattr(places_api, "link_limiter", SlidingWindowLimiter(1000))
+
+
+def test_from_link_match_becomes_a_pin_without_the_link_being_stored(client, _fresh_link_limiter):
+    """#474 — 구글 링크 → 자체 DB 짝(matches) → 그 값을 그대로 source=search 핀으로. 링크 해석은 아무것도 만들지 않는다."""
+    map_id = _make_map(client)
+    parsed = client.post("/places/from-link", json={"url": GOOGLE_LINK})
+    assert parsed.status_code == 200, parsed.text
+    [hit] = parsed.json()["matches"]
+    assert client.get(f"/maps/{map_id}/pins").json() == []
+
+    pin = client.post(f"/maps/{map_id}/pins", json={
+        "category": hit["category"], "source": "search", "place_id": hit["place_id"],
+        "place_name": hit["place_name"], "lat": hit["lat"], "lng": hit["lng"]})
+    assert pin.status_code == 201, pin.text
+    assert pin.json()["place_name"] == "성수 칼국수"
+
+
+def test_from_link_kakao_without_a_match_leads_to_a_live_pin(client, _fresh_link_limiter):
+    map_id = _make_map(client)
+    parsed = client.post("/places/from-link", json={"url": "https://place.map.kakao.com/1234567"}).json()
+    assert parsed["matches"] == [] and parsed["needs_search_query"] is True
+    pin = client.post(f"/maps/{map_id}/pins", json={
+        "source": "live", "category": "음식점", "kakao_place_id": parsed["kakao_place_id"], "search_query": "성수 칼국수"})
+    assert pin.status_code == 201, pin.text
+
+
+def test_from_link_requires_login_and_has_its_own_rate_limit(app_client, client, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    anon = TestClient(app_client.app)
+    assert anon.post("/places/from-link", json={"url": GOOGLE_LINK}).status_code == 401
+    monkeypatch.setattr(places_api, "link_limiter", SlidingWindowLimiter(1))
+    body = {"url": "https://place.map.kakao.com/1"}
+    assert client.post("/places/from-link", json=body).status_code == 200
+    limited = client.post("/places/from-link", json=body)
+    assert limited.status_code == 429 and limited.json()["code"] == "RATE_LIMITED"
+    assert client.get("/places/search", params={"q": "해운대"}).status_code == 200   # 검색 상한과는 따로 센다

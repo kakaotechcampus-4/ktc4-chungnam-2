@@ -1,6 +1,7 @@
 """순수 함수 테스트 — DB 없이 직접 호출한다(docs/code-quality.md)."""
 
 import pytest
+from datetime import date
 
 from common.errors import AppError
 from common.geo import WALKING_SPEED_M_PER_MIN
@@ -46,7 +47,7 @@ def test_assemble_evidence_preserves_reaction_then_manual_order():
     assert core.assemble_evidence(reaction, manual) == [{"text": "a"}, {"text": "b"}]
 
 
-# ---------- demote_wanted_place_identity (#422) ----------
+# ---------- demote_wanted_place_identity (#422, #617) ----------
 
 def _line(badge, fact_key, wants):
     return {"text": "사유", "badge": badge, "fact_key": fact_key, "wants": wants}
@@ -60,7 +61,7 @@ def test_demote_lowers_required_wanted_cuisine_to_preferred():
 @pytest.mark.parametrize("line", [
     _line("required", "cuisine_korean", False),   # 피함은 그대로 required
     _line("required", "parking_available", True), # 필요 조건은 그대로
-    _line("required", "spacious", True),          # 칩 「좁아요」
+    _line("required", "spacious", True),          # 글 "넓은 곳이어야 해요" — 칩이 아니면 그대로
     _line("required", "quiet", True),
     _line("required", "cuisine_bbq", None),       # 방향 모름
     _line("required", None, None),
@@ -88,6 +89,36 @@ def test_demote_covers_chip_lines_and_does_not_mutate_input():
 def test_demote_keeps_the_mixed_reason_split_korean_required_bbq_preferred():
     lines = [_line("required", "cuisine_korean", False), _line("required", "cuisine_bbq", True)]
     assert [l["badge"] for l in core.demote_wanted_place_identity(lines, "음식점")] == ["required", "preferred"]
+
+
+def _chip(chip_id, fact_key, wants, badge="required"):
+    return {"text": "칩", "chip_id": chip_id, "badge": badge, "fact_key": fact_key, "wants": wants}
+
+
+@pytest.mark.parametrize("chip_id, fact_key, category", [
+    ("food_wait", "wait_short", "음식점"),
+    ("food_cramped", "spacious", "음식점"),
+    ("cafe_noisy", "quiet", "카페"),
+    ("cafe_seat", "comfortable_seat", "카페"),
+    ("sight_noisy", "quiet", "관광지"),
+])
+def test_demote_lowers_every_wanted_chip_to_preferred(chip_id, fact_key, category):
+    """#617 — 칩의 원함은 그 가게가 별로였던 이유라 지도 전체를 거르지 않는다. 카테고리·키와 무관하다."""
+    (line,) = core.demote_wanted_place_identity([_chip(chip_id, fact_key, True)], category)
+    assert line["badge"] == "preferred"
+
+
+@pytest.mark.parametrize("line", [
+    _chip("sight_inaccessible", "accessible", True),   # 접근성은 필요 조건이라 required(REQUIRED_WANTED_CHIP_IDS)
+    _chip("food_spicy", "spicy_focused", False),       # 피함 칩은 그대로
+    _chip("cafe_crowded", "is_crowded_large", False),
+    _chip("common_far", None, None),                   # 키 없는 칩
+    _chip("매워요", None, None),                        # 옛 값
+    _chip("food_cramped", "spacious", True, badge="preferred"),
+])
+def test_demote_leaves_avoid_keyless_and_accessibility_chips_alone(line):
+    assert core.demote_wanted_place_identity([line], "관광지") == [line]
+    assert "sight_inaccessible" in core.REQUIRED_WANTED_CHIP_IDS
 
 
 # ---------- circles_all_overlap / region_signature / merge_circles ----------
@@ -253,16 +284,17 @@ def test_funnel_counts_maps_pairs_to_dicts():
 
 # ---------- check_retry_limit ----------
 
-@pytest.mark.parametrize("attempt_no", [0, 1, 4])
+@pytest.mark.parametrize("attempt_no", [0, 1, 9])
 def test_check_retry_limit_passes_below_limit(attempt_no):
     core.check_retry_limit(attempt_no)  # 예외 없이 통과
 
 
-@pytest.mark.parametrize("attempt_no", [5, 6])
+@pytest.mark.parametrize("attempt_no", [10, 11])
 def test_check_retry_limit_raises_at_or_above_limit(attempt_no):
     with pytest.raises(AppError) as exc_info:
         core.check_retry_limit(attempt_no)
     assert exc_info.value.code == "RETRY_LIMIT"
+    assert exc_info.value.detail == {"attempt_no": attempt_no, "attempt_limit": 10}
 
 
 # ============================================================================
@@ -543,11 +575,10 @@ def test_opposing_heart_of_another_member_still_offsets_preference_author():
 
 # ---------- build_reason ----------
 
-def test_build_reason_lists_passed_disqualifiers_and_met_preferences_with_member_count():
+def test_build_reason_lists_passed_disqualifiers_and_met_preferences():
     checks = [_check("is_crowded_large", passed=True), _check("quiet", passed=True)]
-    fulfillment = {"satisfied": 1, "total": 2, "by_member": []}
-    reason = core.build_reason(checks, {"quiet": True}, fulfillment)
-    assert reason == "실격 조건 통과: 붐비는 대형 장소 아님 · 선호 충족: 조용함 (1/2명)"
+    reason = core.build_reason(checks, {"quiet": True})
+    assert reason == "실격 조건 통과: 붐비는 대형 장소 아님 · 선호 충족: 조용함"
 
 
 def test_build_reason_does_not_claim_unknown_or_failed_checks():
@@ -556,13 +587,150 @@ def test_build_reason_does_not_claim_unknown_or_failed_checks():
         _check("quiet", passed=False),
         _check("local_flavor", passed=True, confidence="unknown"),
     ]
-    reason = core.build_reason(checks, {"quiet": True, "local_flavor": True}, {"satisfied": 0, "total": 1})
+    reason = core.build_reason(checks, {"quiet": True, "local_flavor": True})
     assert "붐비는" not in reason and "조용함" not in reason and "지역색" not in reason
 
 
 def test_build_reason_falls_back_to_selection_process_when_nothing_to_cite():
-    reason = core.build_reason([], {}, {"satisfied": 0, "total": 0})
+    reason = core.build_reason([], {})
     assert reason == "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
+
+
+def test_reason_does_not_print_a_member_count_that_contradicts_the_label_631():
+    """#631 — 한 구성원이 양식·조용함을 원했고 후보가 양식인데 조용한지는 모르면, 구성원은 충족(0/1)이 아니다.
+    이유 문장은 "선호 충족: 양식"만 말하고 인원은 카드의 member_fulfillment가 말한다 — 같은 문장에 (0/1명)이 없다."""
+    hearted = [
+        _place(_check("cuisine_western", passed=True), members=frozenset({"u1"})),
+        _place(_check("quiet", passed=True), members=frozenset({"u1"})),
+    ]
+    criteria = {"cuisine_western": True, "quiet": True}
+    candidate = [_check("cuisine_western", passed=True), _check("quiet", passed=True, confidence="unknown")]
+
+    fulfillment = core.build_member_fulfillment(candidate, hearted, criteria)
+    reason = core.build_reason(candidate, criteria)
+
+    assert (fulfillment["satisfied"], fulfillment["total"]) == (0, 1)
+    assert reason == "선호 충족: 양식"
+    assert "명)" not in reason
+
+
+# ---------- out_of_season_keys (#681-6) ----------
+
+def _off(start, end):
+    return core.out_of_season_keys(date.fromisoformat(start) if start else None, date.fromisoformat(end) if end else None)
+
+
+def test_out_of_season_keys_without_dates_uses_every_key():
+    assert core.out_of_season_keys(None, None) == frozenset()
+    assert core.out_of_season_keys(date(2027, 1, 1), None) == frozenset()
+
+
+def test_out_of_season_keys_january_trip_drops_cherry_blossom_autumn_and_water():
+    assert _off("2027-01-10", "2027-01-14") == {"cherry_blossom", "autumn_foliage", "water_play"}
+
+
+def test_out_of_season_keys_overlap_by_a_single_day_counts():
+    assert "cherry_blossom" not in _off("2027-03-31", "2027-03-31")        # 3월 31일 하루
+    assert "cherry_blossom" not in _off("2027-02-28", "2027-03-01")        # 걸치기만 해도
+    assert "cherry_blossom" not in _off("2027-04-30", "2027-05-02")        # 4월 30일 하루가 겹친다
+    assert "cherry_blossom" in _off("2027-05-01", "2027-05-03")            # 하루도 안 겹침
+    assert "cherry_blossom" in _off("2027-02-01", "2027-02-28")
+
+
+def test_out_of_season_keys_new_year_trip_keeps_winter_and_a_long_trip_keeps_everything():
+    assert _off("2026-12-30", "2027-01-02") == {"cherry_blossom", "autumn_foliage", "water_play"}
+    assert _off("2026-03-01", "2027-02-28") == frozenset()
+    assert _off("2026-11-30", "2026-12-01") == {"cherry_blossom", "water_play"}   # 단풍(11월)과 겨울(12월)
+
+
+def test_sight_hearts_only_user_is_satisfied_by_a_matching_candidate_681():
+    """#681-2 — 관광지 ♥ 두 곳이 선호 14개로 번져 "1명 중 0명 충족"이던 사용자가, 표대로 거르면 정체(performance)와
+    두 곳 모두 참인 성격(quiet)만 남아 그 둘을 가진 후보에서 충족이 된다. 집계 규칙(#620)은 그대로다."""
+    everything = ("performance", "quiet", "good_view", "family_friendly", "kid_friendly", "accessible", "walkable")
+    hearted = [
+        _place(*(_check(k) for k in everything), members=frozenset({"u1"})),
+        _place(_check("performance"), _check("quiet"), _check("accessible"), _check("family_friendly"),
+               members=frozenset({"u1"})),
+    ]
+    candidate = [_check("performance"), _check("quiet"), _check("good_view", confidence="unknown")]
+
+    raw = core.build_preference_criteria(hearted, disqualifying_fact_keys=[], preferred_authors={})
+    assert len(raw) == len(everything)
+    assert core.build_member_fulfillment(candidate, hearted, raw)["satisfied"] == 0   # 고치기 전
+
+    filtered = core.filter_heart_signals(hearted, "관광지")
+    criteria = core.build_preference_criteria(filtered, disqualifying_fact_keys=[], preferred_authors={})
+    assert criteria == {"performance": True, "quiet": True}   # good_view는 1곳뿐, 편의·접근·동반은 안 쓴다
+    result = core.build_member_fulfillment(candidate, filtered, criteria)
+    assert (result["satisfied"], result["total"]) == (1, 1)
+
+
+def test_cafe_hearts_use_the_cafe_table():
+    hearted = [
+        _place(_check("bakery"), _check("franchise"), _check("quiet"), members=frozenset({"u1"})),
+        _place(_check("franchise"), _check("open_late"), members=frozenset({"u1"})),
+    ]
+    kept = {c.fact_key for place in core.filter_heart_signals(hearted, "카페") for c in place.checks}
+    assert kept == {"bakery"}   # quiet는 1곳뿐, franchise·open_late는 쓰지 않음
+
+
+# ---------- limit_preference_checks (#681-4) ----------
+
+def test_limit_preference_checks_shows_only_met_preferences_but_every_disqualifier_check():
+    checks = [
+        _check("is_open", passed=False),                                # hard — 거짓도 그대로
+        _check("is_crowded_large", passed=True, confidence="unknown"),  # hard — 모름도 그대로
+        _check("quiet", passed=True),                                   # soft 충족
+        _check("good_view", passed=False),                              # soft 거짓 → 뺀다
+        _check("photogenic", passed=True, confidence="unknown"),        # soft 모름 → 뺀다
+        _check("cuisine_korean", passed=False),                         # 🚫로 낸 soft 키 → 실격 조건이라 그대로
+    ]
+    shown = core.limit_preference_checks(checks, required_soft_keys={"cuisine_korean"}, weights={"quiet": 1})
+    assert [c.fact_key for c in shown] == ["is_open", "is_crowded_large", "quiet", "cuisine_korean"]
+
+
+def test_limit_preference_checks_keeps_the_top_five_by_weight_in_original_order():
+    keys = ["quiet", "good_view", "photogenic", "night_view", "date_spot", "walkable", "restful"]
+    weights = {k: w for k, w in zip(keys, [1, 3, 1, 3, 1, 3, 3])}
+    shown = core.limit_preference_checks([_check(k) for k in keys], required_soft_keys=set(), weights=weights)
+    assert {c.fact_key for c in shown} == {"good_view", "night_view", "walkable", "restful", "quiet"}
+    assert [c.fact_key for c in shown] == [k for k in keys if k in {c.fact_key for c in shown}]   # 동점은 앞선 쪽, 순서 유지
+
+
+def test_preference_weights_match_the_score_a_met_key_adds():
+    hearted = [_place(_check("quiet"), members=frozenset({"u1", "u2"}))]
+    authors = {"quiet": frozenset({"u1"})}
+    weights = core.preference_weights(hearted, {"quiet": True}, authors, {"cuisine_korean": frozenset({"u2"})})
+    assert weights == {"quiet": 3 + 1, "cuisine_korean": 3}
+    assert core.score_candidates({"p": [_check("quiet")]}, hearted, {"quiet": True}, authors) == {"p": weights["quiet"]}
+
+
+# ---------- 여행 기간 영업 판정 (#690) ----------
+
+def test_trip_weekday_names_follow_the_trip_days_and_cap_at_a_week():
+    assert core.trip_weekday_names(None, date(2027, 1, 3)) == []
+    assert core.trip_weekday_names(date(2027, 1, 4), date(2027, 1, 4)) == ["월"]        # 2027-01-04는 월요일
+    assert core.trip_weekday_names(date(2027, 1, 8), date(2027, 1, 11)) == ["월", "금", "토", "일"]
+    assert core.trip_weekday_names(date(2027, 1, 1), date(2027, 3, 1)) == list("월화수목금토일")
+
+
+def test_trip_open_status_closed_only_when_every_trip_day_is_closed():
+    hours = {"월": [["11:00", "21:00"]], "화": []}
+    assert core.trip_open_status(hours, None, ["화"]) == "closed"            # hours의 빈 요일
+    assert core.trip_open_status(hours, None, ["월", "화"]) == "open"        # 일부 휴무 — 통과
+    assert core.trip_open_status(None, ["월", "화"], ["월", "화"]) == "closed"   # closed_days만
+    assert core.trip_open_status(None, ["월"], ["월", "화"]) == "unknown"    # 화요일은 영업하는지 모른다
+    assert core.trip_open_status(None, [], ["월"]) == "unknown"              # 연중무휴라도 시간은 모른다
+    assert core.trip_open_status(None, None, ["월"]) == "unknown"            # 정보 없음
+    assert core.trip_open_status(hours, None, []) == "unknown"               # 여행 날짜 없음
+
+
+def test_trip_open_status_day_after_an_overnight_span_is_not_closed():
+    hours = {"금": [["18:00", "26:00"]], "토": []}   # 금요일 밤 02시까지 — 토요일 새벽에는 영업
+    assert core.trip_open_status(hours, None, ["토"]) == "open"
+    assert core.trip_open_status({"금": [["18:00", "24:00"]], "토": []}, None, ["토"]) == "closed"
+    assert core.trip_open_status({"일": [], "월": []}, None, ["월"]) == "closed"
+    assert core.trip_open_status({"일": [["10:00", "25:00"]], "월": []}, None, ["월"]) == "open"   # 일요일의 어제는 토, 월요일의 어제는 일
 
 
 # ---------- select_top_candidates ----------
@@ -687,21 +855,51 @@ def test_avoided_authors_subtract_from_a_place_with_the_true_label():
     assert scores == {"a": -3 * 2, "b": 0}  # 피하겠다고 직접 쓴 사람당 −3(#414)
 
 
-def test_member_fulfillment_counts_disqualifier_authors_as_satisfied():
-    """#255 — 실격 사유를 낸 구성원도 total에 센다. 후보가 실격을 통과했으니 충족이고, 선호가 없어도 N명 중 N명이 남는다."""
-    result = core.build_member_fulfillment([_check("quiet", passed=True)], [], {}, disqualifier_authors=["u2", "u1"])
+def test_member_fulfillment_counts_keyed_disqualifier_known_pass_as_satisfied():
+    """#620 — 키 있는 반대 조건은 그 체크가 known이고 통과일 때만 충족이다. 선호가 없어도 집계된다."""
+    checks = [_check("is_crowded_large", passed=True), _label_check("spicy_focused", value=False)]
+    result = core.build_member_fulfillment(
+        checks, [], {}, disqualifier_conditions={"u2": {("spicy_focused", False)}, "u1": {("is_crowded_large", None)}},
+    )
     assert result == {"satisfied": 2, "total": 2, "by_member": [
         {"user_id": "u1", "satisfied": True}, {"user_id": "u2", "satisfied": True},
     ]}
 
 
-def test_member_fulfillment_disqualifier_author_with_unmet_preference_is_not_satisfied():
-    """선호 조건도 가진 구성원은 지금처럼 전부 충족해야 충족이다."""
+def test_member_fulfillment_unknown_label_on_disqualifier_is_not_satisfied():
+    """#620 — 매운맛 피함인데 라벨이 모름이면 실격 필터는 통과(확인 필요)지만 충족으로 세지 않는다. total에는 남는다."""
+    unknown = core.build_check("is_crowded_large", "pass", known=False, value=None, passes=True)
     result = core.build_member_fulfillment(
-        [_check("quiet", passed=False)], [], {"quiet": True}, {"quiet": frozenset({"u1"})}, disqualifier_authors=["u1", "u2"],
+        [_label_check("spicy_focused"), unknown], [], {},
+        disqualifier_conditions={"u1": {("spicy_focused", False)}, "u2": {("is_crowded_large", None)}},
     )
-    assert result["total"] == 2 and result["satisfied"] == 1
+    assert result["total"] == 2 and result["satisfied"] == 0
+
+
+def test_member_fulfillment_soft_disqualifier_follows_the_direction():
+    """방향은 근거 줄 표시와 같은 계산이다 — wants=true("조용한 곳이어야 해")는 라벨 참일 때만 충족."""
+    def satisfied(value):
+        return core.build_member_fulfillment(
+            [_label_check("quiet", value=value)], [], {}, disqualifier_conditions={"u1": {("quiet", True)}},
+        )["satisfied"]
+    assert (satisfied(True), satisfied(False)) == (1, 0)
+
+
+def test_member_fulfillment_drops_members_with_only_keyless_disqualifiers():
+    """#620 — 키 없는 반대(알러지 글, 「취향이 아니에요」)만 남긴 구성원은 확인한 것이 없어 total에서 빠진다."""
+    result = core.build_member_fulfillment([_check("quiet")], [], {}, disqualifier_conditions={"u1": set()})
+    assert result == {"satisfied": 0, "total": 0, "by_member": []}
+
+
+def test_member_fulfillment_member_with_both_needs_all_conditions_met():
+    """반대와 선호를 둘 다 가진 구성원은 모두 충족해야 충족이다."""
+    checks = [_check("quiet", passed=True), _label_check("spicy_focused")]  # 조용함 참, 매운맛 모름
+    result = core.build_member_fulfillment(
+        checks, [], {"quiet": True}, {"quiet": frozenset({"u1", "u2"})},
+        disqualifier_conditions={"u1": {("spicy_focused", False)}},
+    )
     assert {e["user_id"]: e["satisfied"] for e in result["by_member"]} == {"u1": False, "u2": True}
+    assert result["total"] == 2 and result["satisfied"] == 1
 
 
 # ---------- #414 — ♥ 신호 거르기(음식점)와 직접 쓴 사유 3점 ----------
@@ -744,10 +942,10 @@ def test_filter_heart_signals_counts_places_not_members():
     assert _keys(core.filter_heart_signals(hearted, "음식점")) == [[]]
 
 
-def test_filter_heart_signals_leaves_cafe_unchanged():
-    """카페·관광지는 아직 나누지 않았다 — 같은 키(franchise·spacious)도 그대로 쓴다."""
+def test_filter_heart_signals_leaves_categories_without_a_table_unchanged():
+    """표가 없는 카테고리는 전부 쓴다(표에 없는 키는 '쓴다')."""
     hearted = [_place(_check("franchise"), _check("spacious"), _check("quiet"), members=frozenset({"u1", "u2"}))]
-    assert core.filter_heart_signals(hearted, "카페") == hearted
+    assert core.filter_heart_signals(hearted, "숙소") == hearted
 
 
 def test_written_preference_for_an_unused_key_still_counts_but_hearts_do_not():
@@ -791,4 +989,4 @@ def test_written_preference_outweighs_other_heart_labels():
     assert core.score_candidates(candidates, hearted, criteria, authors) == {"sushi": 3, "buffet": 0}
 
     fulfillment = core.build_member_fulfillment(candidates["buffet"], hearted, criteria, authors)
-    assert core.build_reason(candidates["buffet"], criteria, fulfillment) == "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
+    assert core.build_reason(candidates["buffet"], criteria) == "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"

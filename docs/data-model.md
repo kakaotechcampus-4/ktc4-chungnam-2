@@ -10,11 +10,24 @@ DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). 실시간 보조: Redis
 ## auth / maps
 
 ```
-users(
-  id, provider('kakao'), provider_user_id, display_name,
+users(                                -- 사람. 다른 모듈은 이 id만 가리킨다. 로그인 수단은 user_identities(#694)
+  id, display_name,
+  guest_invite_token null,                   -- 게스트를 만든 초대 토큰. 토큰 하나당 게스트 10명 상한(GUEST_LIMIT)을 이 열로 센다.
+                                             -- 카카오 수단을 붙이면(게스트 전환) 비운다. 상한에서 빠진다
+  last_seen_at timestamptz null,             -- 게스트 정리 기준: 90일 쓰지 않으면 정리 작업(#168)이 지운다. 세션을 쓸 때 하루 한 번 갱신
   created_at, deleted_at            -- 탈퇴 시 users만 soft delete. 반응·근거 줄은 hard delete, 핀은 유지하고 작성자는 '탈퇴한 구성원'으로 표시 (12절, #155)
   sessions_valid_after timestamptz null   -- 로그아웃 시각. 이 시각 이전(같은 초 포함)에 발급된 세션 토큰은 무효, NULL이면 전부 유효 (#129)
 )
+
+user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사람(users)과 나눈다
+  id uuid, user_id → users.id, provider('kakao'), provider_user_id, created_at
+  unique(provider, provider_user_id)    -- 카카오 계정 하나는 사람 하나에만
+  unique(user_id, provider)             -- 한 사람에 카카오는 하나
+)
+-- 게스트(v2 #472) = 로그인 수단이 없는 사용자. 세션 쿠키로만 들어온다. is_guest는 저장하지 않고 "수단이 하나도 없는가"로
+--   계산한다(CurrentUser.is_guest, GET /auth/me). 저장하면 수단을 붙일 때 함께 고치는 것을 빠뜨릴 수 있다.
+-- 탈퇴(deleted_at)해도 수단은 지우지 않는다. 같은 카카오 계정의 재로그인을 "탈퇴한 계정"으로 막는 근거다(#409).
+-- 예전 users.provider, provider_user_id, is_guest는 이 리비전에서 지운다(카카오 사용자는 user_identities로 옮긴다).
 
 maps(
   id, title, start_date, end_date, member_count_expected,
@@ -41,7 +54,8 @@ memberships(
   -- 탈퇴자의 행은 핀 작성자 표시용으로 남는다(#245).
 
 invites(
-  token, map_id, created_by, expires_at, used_count
+  token, map_id, created_by, expires_at, used_count,
+  created_at, revoked_at            -- revoked_at: 방장이 끈 시각(NULL이면 켜짐, #467). map_id 인덱스
 )
 ```
 
@@ -144,11 +158,24 @@ routes(
 ```
 places(
   id,
-  source('permit'|'tourapi'),          -- permit = 지방행정 인허가 공공데이터(음식점·카페), tourapi = 한국관광공사 TourAPI(관광지)
+  source('permit'|'tourapi'),          -- permit = 지방행정 인허가 공공데이터(음식점·카페), tourapi = 한국관광공사 TourAPI(관광지·문화시설·레포츠·시장, contenttypeid 12·14·28·38 → 분류 관광지)
   source_id,                            -- 그 데이터셋의 관리번호/콘텐츠 ID
   name, category('음식점'|'카페'|'관광지'), address, phone,
   geom geography(Point,4326),          -- 인허가 좌표계가 위경도가 아니면 변환해 넣는다. 좌표가 없는 행은 적재하지 않는다
   status('open'|'closed'),             -- 인허가 영업 상태. closed는 검색·추천에서 제외
+  curated boolean not null default false,
+                                        -- 정예(사람이 직접 조사·납품한 데이터)인가(2026-10-16). `--authoritative` 적재가 켠다.
+                                        -- 이름·분류·라벨을 인허가 커버리지가 덮지 못하게 하고 can_recommend 판정의 기준이다.
+                                        -- 한 번 true가 되면 커버리지 적재가 끄지 않는다. 처음 채울 때는 "출처(label_source)가 NULL인
+                                        -- 라벨 행을 가진 장소 = 정예"로 되메운다(places/for_Root.md #can_recommend 조사 결과).
+  can_recommend boolean not null default false,
+                                        -- AI 추천 후보 풀에 들어가도 되는 장소인가(2026-10-15 결정, 구현은 places).
+                                        -- 직접 찍은 핀·검색·링크에는 영향이 없다 — 추천 후보를 고를 때만 쓴다.
+                                        -- 규칙(재계산 가능한 값이다, 사람이 손으로 정하지 않는다):
+                                        --   정예 행(curated=true)만 true다. 정예가 아닌 데이터(인허가 커버리지 등)는 지도에 핀을 꽂을 수 있는 최소 정보일 뿐 추천 후보가 아니다(원칙, 2026-10-24).
+                                        --   라벨 수 임계는 2026-10-24에 폐기했다 — 비정예 장소의 확정 라벨이 전부 인허가에서 자동으로
+                                        --   나온 값(cuisine_* 10개·spacious·franchise 등)이라 품질 신호가 아님을 실측으로 확인했다(#681-1).
+                                        -- 정예가 늘면(재적재) places의 재계산 스크립트로 다시 계산한다.
   kakao_place_id null, kakao_place_url null, kakao_matched_at null,
                                         -- 사용자가 검색해서 고를 때 한 건씩 매칭한 결과. 허용 범위: 카카오 장소 ID·URL·확인 일자.
                                         -- 카카오 응답의 이름·주소·좌표는 저장하지 않는다(#53)
@@ -170,7 +197,21 @@ place_facts(
   labeled_at
 )
   primary key(place_id, fact_key)
+
+place_hours(                            -- v2 #690(2026-10-24): 영업시간·휴무일. 칸이 없으면 **행이 없다 = 모름**(지어내지 않는다)
+  place_id primary key references places(id) on delete cascade,
+  hours jsonb null,                     -- {"월": [["11:00","21:00"]], "화": [["12:30","15:00"],["17:00","22:00"]], "일": []} — 요일 키 7개(월~일),
+                                         --   값은 [여는 시각, 닫는 시각] 목록(브레이크타임이면 구간 여러 개), 빈 목록 = 그 요일 휴무,
+                                         --   자정을 넘기면 24를 더한다("26:00" = 다음 날 02:00), 상시 개방 = [["00:00","24:00"]].
+                                         --   hours가 있으면 7일을 다 아는 경우다. NULL이면 모름(closed_days만 있을 수 있다)
+  closed_days text[] null,              -- 매주 쉬는 요일("월","화"…). [] = 매일 영업(연중무휴), NULL = 모름. hours가 있으면 hours에서 빈 목록인 요일과 같다
+  closed_note text null,                -- 요일로 못 담는 휴무 원문(예: "1월 1일 / 설·추석 당일", "공연별 상이") — 표시용, 판단에 쓰지 않는다
+  hours_note text null,                 -- 영업시간 원문(계절별 운영 등은 가장 긴 계절 기준으로 hours에 넣고 원문은 여기) — 표시용
+  updated_at timestamptz not null default now()
+)
 ```
+
+> **영업시간·휴무일 (v2, #690)** — 데이터 담당 공유본(2026-10-21)의 정예 라벨 JSON `info.hours`·`info.closed_days`·`closed_note`·`hours_note`(음식점 `rest_`·카페 `cafe_` 접두어, 지역 관광지 포함)와 서울 관광지 별도 파일 `tourist_seoul_closed_days.json`(`source_id`=contentid)에서 적재한다. 출처는 구글 지도 영업시간 + TourAPI 이용시간·쉬는날 + 모델로 형식 변환한 문장(데이터 담당 소관)이라 카카오 응답이 아니다 — 저장해도 된다(#53). 라벨 키(`closed_mon`…)로는 시간 구간을 못 담고 `places`에 칸을 늘리면 비대해져 별도 테이블로 둔다. 인허가 커버리지 라벨에는 `info`가 없어 행이 없다(모름). 마이그레이션은 구현 PR이 그때의 head 다음 번호로 만든다. 적재는 멱등(같은 장소는 갱신)이고 파일에 칸이 없는 장소의 기존 행은 지우지 않는다.
 
 > **2026-10-01(#53) — `places`는 자체 DB다.** 카카오 로컬 API 응답(좌표·이름·주소 포함)은 어떤 형태로도 저장하지 않으므로 이 표의 이름·좌표는 인허가 공공데이터와 TourAPI에서만 온다(v1 서울만). 이전 설계의 `source('kakao'|'google'|'naver')`와 `last_synced_at`은 없앴다. 자체 DB는 음식점·카페·관광지만 담는다(TourAPI의 숙박은 받지 않는다, 2026-10-01) — 숙소·기타 장소는 `places`에 없으므로 v1에서 핀으로 만들 수 없다(`pins.category`의 숙소·기타 값은 스키마 호환으로 남긴다). 핀이 `places.id`를 가리키도록 바꾸는 `pins` 변경은 #195에서 한다.
 >
@@ -223,7 +264,7 @@ recommend_runs(
   attempt_no,                           -- #31 확정(2026-09-22, 황준영·itsmedoyun 합의): 개인
                                          -- (requested_by) 단위로 집계, 카테고리 구분 없음(그
                                          -- 사람이 이 지도에서 만든 모든 run이 카테고리 무관하게
-                                         -- 한 카운터를 공유), 상한 5회(기존 3회에서 상향). 한
+                                         -- 한 카운터를 공유), 상한 10회(3→5→10회, 2026-10-15: 지도 안에서 구성원 각자). 한
                                          -- 사람이 상한에 도달해도 다른 사람의 추천 시도에는
                                          -- 영향 없음.
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
@@ -293,6 +334,195 @@ exclusions(
   -- 곳도 B의 추천에는 그대로 뜬다. 조회 시 반드시 requested_by = 현재 사용자로 필터링한다
   -- (map_id만으로 걸러진 예전 설계를 그대로 두면 다른 사람의 거절이 새어 들어간다).
 ```
+
+---
+
+## ads (추천 탭 광고, docs/ads.md 6절, #642)
+
+> 광고는 자체 DB(places)에 이미 있는 장소만 가리킨다. ads 모듈이 두 테이블을 소유하고, places는 `places.api`로만 읽는다(#113). 집계에는 user_id, map_id를 넣지 않는다.
+
+```
+ads(
+  id uuid primary key,
+  place_id text not null,              -- places.id. 모듈 경계라 FK 없음(등록 스크립트가 존재와 status=open을 검증)
+  starts_at timestamptz not null,
+  ends_at timestamptz not null,        -- 이 시각은 포함하지 않는다
+  active boolean not null default true,-- 기간과 별개로 즉시 내리는 스위치
+  memo text null,                      -- 광고주, 계약 메모(내부용, 응답에 내보내지 않음)
+  created_at, updated_at
+)
+  check (starts_at < ends_at)
+  unique(place_id) where active        -- 같은 장소에 active 광고는 하나(제안)
+
+ad_daily_stats(
+  ad_id uuid not null references ads(id),
+  stat_date date not null,             -- Asia/Seoul 기준 날짜
+  served_count integer not null default 0,   -- 광고 조회 응답에 실린 횟수(화면 노출이 아니다, docs/ads.md 9절)
+  click_count integer not null default 0,
+  primary key(ad_id, stat_date)
+)
+  -- 증가는 INSERT ... ON CONFLICT (ad_id, stat_date) DO UPDATE SET 칸 = 칸 + 1
+```
+
+---
+
+## agent (v2 계획 보조 에이전트, docs/agent-v2.md 13절, #510)
+
+> v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 7개 테이블만 쓰고, 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.
+> `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다. 지도 정리(#431)는 `agent.api.purge_map_data`, 탈퇴(#155)는 `agent.api.delete_by_user`가 맡는다.
+> **agent 테이블에는 사유 원문을 저장하지 않는다**(2026-10-15). 사유는 `reaction_id`로만 가리키고, 인용 문장은 응답과 이벤트를 만들 때 pins에서 읽어 렌더한다. 반응이 지워지면 인용도 사라진다(docs/agent-v2.md 2절 13번).
+
+```
+agent_settings(                       -- 지도별 모드. 행이 없으면 켜짐(기본값)
+  map_id primary key, enabled boolean, updated_by, updated_at
+)
+
+agent_cursors(                        -- 관찰 흐름만 쓴다. 지도별 책갈피와 다음 점검 시각, 중복 실행 방지 자리표
+  map_id primary key,
+  last_seen_seq bigint default 0,     -- 관찰 때 본 가장 큰 event_log seq(구멍은 추적하지 않는다, agent-v2.md 12.5)
+  last_observed_at null, next_check_at null, lease_until null
+                                      -- gap_seq는 0030에서 지웠다(#515)
+)
+
+agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 끝나도 남긴다. 30일 보존
+  id uuid, map_id, started_at, finished_at null,
+  trigger('activity'|'time'|'summary'|'run_advice'),
+  snapshot_at null, snapshot_seq null,
+  signals jsonb, blocked jsonb, priority jsonb null,
+  policy_version null, prompt_version null, model null, used_model boolean,
+  tool_calls jsonb,                   -- 도구 입력과 결과. 사유 글은 reaction_id와 글자 수로 바꿔 남긴다
+  verification jsonb null, tokens_in, tokens_out,
+  outcome('no_signal'|'blocked'|'silent'|'unknown'|'invalid_schema'|'invalid_claims'|'model_failed'|'stale'
+          |'suggested'|'summarized'|'advised'|'trip_ended'|'map_deleted'),
+  outcome_detail jsonb null
+)
+  index(map_id, started_at)
+
+agent_suggestions(                    -- 바텀시트의 지도 제안
+  id uuid, map_id, run_id null references agent_runs on delete set null,
+  diagnosis('stall'|'split'|'no_reaction'|'category_gap'), category null, pin_id null,
+  fingerprint, evidence_hash,         -- 중복 금지(유형+카테고리+근거 id), 상태 재확인(근거 id+반응 종류+updated_at)
+  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id, 인용 범위, 범위의 다이제스트만. 원문 없음, #717). 렌더는 응답 때 조각으로
+  status('active'|'accepted'|'dismissed'|'expired'|'superseded'),
+  shadow boolean default false,       -- true면 저장만 하고 화면과 이벤트에 내지 않는다
+  created_at, expires_at,             -- 24시간
+  resolved_by null,                   -- 기록만. 화면과 이벤트에 싣지 않는다
+  resolved_at null, resolved_action jsonb null, decided_within_24h boolean null
+)
+  unique(map_id) where status = 'active'   -- 지도당 활성 제안 하나
+  index(map_id, fingerprint)
+
+agent_suggestion_views(               -- 사용자별 열람. 버튼의 점(has_unseen)
+  suggestion_id references agent_suggestions on delete cascade, user_id, viewed_at,
+  primary key(suggestion_id, user_id)
+)
+
+agent_reason_summaries(               -- 우리 조건 요약. 카테고리마다 최신본 하나를 덮어쓴다
+  map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸(키, 개수, 서버 문구)과 근거 reaction_id. 사유 원문 없음
+  based_on_reaction_count, run_id null, updated_at,
+  primary key(map_id, category)
+)
+
+agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조언이 없어도 빈 값으로 저장해 다시 만들지 않는다
+  run_id primary key,                 -- recommend_runs.id. 모듈 경계라 FK 없음
+  map_id, kind null, claims jsonb, advice jsonb, actions jsonb, agent_run_id null, created_at
+)
+```
+
+---
+
+## agent_course_runs (AI 코스 짜기, #334 — 팀 결정 #580 전 브랜치 초안, 마이그레이션 0037)
+
+> 동선 에이전트(`backend/agent/course/`)가 쓰는 테이블 1개. `map_id`, `requested_by`는 문자열이고 FK가 없다. run은 요청자 본인 것이다(가드레일 1).
+> **장소 이름과 좌표는 저장하지 않는다.** 핀은 `pin_id`로만 가리킨다(화면 문장에 들어간 이름은 코드가 렌더한 문장 안에만 있다). 사유 원문도 없다 —
+> 요청 한 줄(`input.request_text`)은 요청자가 이 run을 위해 쓴 글이라 run 행에만 둔다. 지도 정리와 탈퇴 정리는 `agent.course.api`(`purge_map_data`, `delete_by_user`)가
+> 맡는다 — `maps/purge.py`의 PURGE_STEPS와 `withdraw_user`에 연결돼 있다. 질문에 답을 받지 않아 waiting_input 상태와 답 칸이 없다.
+
+```
+agent_course_runs(
+  id uuid, map_id, requested_by,
+  status('queued'|'running'|'done'|'failed'),
+  outcome null('solved'|'solved_with_checks'|'unresolved'|'timeout'),    -- done일 때만
+  failure_code null('INTERRUPTED'|'ENGINE_ERROR'),                       -- failed일 때만
+  input jsonb,                        -- {request_text, member_constraints:[{kind:'daily_walk_max', value, day}]}
+  snapshot_at, snapshot_pin_ids jsonb,-- 요청 때 확정 리스트의 핀 id. 지금과 다르면 응답의 stale=true
+  goals jsonb, unmatched jsonb,       -- [{id, kind, label, met}], 요청 원문 조각
+  excluded jsonb,                     -- [{pin_id, reason('NO_COORDINATES'|'OVER_LIMIT'), text}]
+  steps jsonb,                        -- [{stage, role, by, by_detail, text}] 작업 기록(끝난 뒤 한꺼번에 채운다)
+  days jsonb,                         -- [{date, slots:[{pin_id, order, needs_check}], legs:[{from_pin_id, to_pin_id, mode(walk|transit), approx_minutes}]}]
+  violations jsonb, checks jsonb,     -- [{kind, text}], [{pin_id, text}]
+  model null, prompt_version null, model_turns, tokens_in, tokens_out,
+  created_at, finished_at null
+)
+index ix_agent_course_runs_map_user (map_id, requested_by, created_at)
+index ix_agent_course_runs_user_created (requested_by, created_at)       -- 하루 상한(5회, KST 자정) 집계
+unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queued','running')   -- 내 진행 중 run은 지도당 하나 → 409 COURSE_IN_PROGRESS
+```
+
+- 진행 중으로 15분 넘게 남은 run은 다음 요청이 `failed(INTERRUPTED)`로 끝낸다. 서버가 시작할 때도 진행 중인 run을 모두 같은 값으로 끝낸다(인스턴스 하나 전제, #168).
+- 영업시간 칸이 places에 아직 없어(#580 6번) 지금은 모든 장소가 「확인 필요」(`checks`)다.
+
+---
+
+## notifications / feedback (v2, #470, #10)
+
+> v2. 계약만 먼저 올렸고 마이그레이션은 구현 PR이 그때의 head 다음 번호로 만든다(번호를 문서에 못 박지 않는다 — agent·maps 마이그레이션과 겹친다). 이슈 본문의 `0026`은 옛 초안이다.
+> notifications는 이 테이블들만 쓴다. 다른 모듈은 `notifications/api.py`의 `notify(db, ...)`만 부르고, **이벤트를 발행하는 같은 트랜잭션에서** 호출한다(event_log는 지도 단위이고 읽음 상태가 없어 알림함으로 못 쓴다).
+
+```
+notifications(                        -- 사용자별 알림함. 수신자마다 한 행
+  id, user_id, map_id,                -- map_id는 FK 없음(지도가 삭제돼도 알림은 남는다)
+  type,                               -- NotificationType 5종(api-spec)
+  map_title,                          -- 만들 때의 제목 스냅샷
+  pin_id nullable,                    -- pin_reaction·my_ai_pin_published만. FK 없음
+  message,                            -- 서버가 만든 문장. 반대 사유·메모는 넣지 않는다
+  created_at, read_at nullable,
+  index (user_id, created_at desc), index (user_id) where read_at is null
+)
+notification_prefs(                   -- 행이 없으면 켜짐(기본값)
+  user_id, type, enabled, primary key (user_id, type)
+)
+feedback(                             -- 서비스 피드백. 저장만 한다
+  id, user_id nullable,               -- 탈퇴하면 NULL로 끊고 내용은 남긴다
+  category,                           -- bug | idea | other
+  message,                            -- 1~1000자, 앞뒤 공백 제거
+  map_id nullable, created_at
+)
+```
+
+규칙: 행위자 본인에게는 알림을 만들지 않는다. `notification_prefs`에서 끈 종류는 만들 때 거른다(이미 쌓인 알림은 지우지 않는다). 90일이 지난 알림은 정리 작업(#168)이 지운다. 계정 탈퇴(#155)는 `notifications.api.delete_by_user`가 그 사용자의 알림·설정을 지우고, 지도 정리(#431)는 map_id가 같은 알림을 지우지 않는다(남은 구성원의 알림함에 `map_deleted`가 보여야 한다).
+
+---
+
+## 게스트 전환과 합치기 (v2, #560, 2026-10-20 / 2026-10-24 개정 #694)
+
+게스트가 카카오로 로그인하면(`GET /auth/kakao/login`을 게스트 세션으로 시작 → 콜백) 게스트의 기록을 카카오 계정으로 잇는다. 새 엔드포인트는 없다. 로그인 시작이 게스트 id를 서명한 state 쿠키에 담고, 콜백이 카카오 수단을 찾은 뒤 한 트랜잭션에서 아래 둘 중 하나를 한다. 게스트 행은 먼저 `FOR UPDATE`로 잠근다(같은 게스트로 겹친 콜백은 한쪽만 한다).
+
+| 그 카카오 계정 | 처리 | 다른 모듈 |
+| --- | --- | --- |
+| 처음(수단이 없다) | 게스트 행에 카카오 수단을 붙인다. 사용자 id 그대로, 표시 이름은 게스트 때 이름 그대로, `guest_invite_token`은 비운다 | 아무것도 하지 않는다 |
+| 이미 쓰던 사용자가 있다 | 아래 합치기. 게스트의 기록을 그 사용자로 옮기고 게스트 행을 지운다 | 모듈마다 `reassign_user` |
+
+같은 카카오 계정이 두 게스트에 동시에 붙으면 `unique(provider, provider_user_id)`가 막고, 나중 요청은 합치기로 간다. 어느 쪽이든 실패하면 카카오 로그인은 그대로 성공시키고 게스트 기록은 남긴다(`guest_merged=false`). 2026-10-20 판은 처음 전환도 새 사용자를 만들어 합쳤다. 가장 흔한 전환이 모듈 7개를 거치는 길을 타서 바꿨다(멘토 리뷰 #680).
+
+### 합치기 (이미 쓰던 카카오 계정이 있을 때)
+
+각 모듈은 자기 테이블만 옮긴다 — auth가 다른 모듈의 테이블을 직접 바꾸지 않고 각 `api.py`의 `reassign_user(db, *, from_user_id, to_user_id) -> dict[str, int]`(옮긴 행 수, 커밋은 호출자)를 부른다. 지도별로 충돌하면 **카카오 계정의 기존 값이 이긴다.**
+
+| 모듈 | 옮기는 것 | 충돌 규칙 |
+|---|---|---|
+| maps | `memberships.user_id`, `invites.created_by` | 같은 지도에 카카오 계정이 이미 구성원이면 게스트의 멤버십은 지운다(역할은 카카오 쪽 그대로). 지도 수 상한(20)은 합칠 때 검사하지 않는다 |
+| pins | `pins.created_by`, `reactions.user_id` | 같은 핀에 카카오 계정의 반응이 이미 있으면 게스트의 반응을 지운다 |
+| recommend | `recommend_runs.requested_by`, `evidence_lines`의 작성자, `exclusions.requested_by`, 후보의 요청자 | 제안·거절 이력이 (지도, 장소)로 겹치면 게스트 것을 지운다. `attempt_no`는 건드리지 않는다(추천 횟수는 합치지 않는다) |
+| shortlist | `shortlist_items.added_by` | 없음 |
+| notifications | `notifications.user_id` | `notification_prefs`는 카카오 계정 것을 쓰고 게스트 것은 지운다 |
+| feedback | `feedback.user_id` | 없음 |
+| agent | `agent_suggestion_views.user_id`, `agent_course_runs.requested_by`, `agent_settings.updated_by`, `agent_suggestions.resolved_by` | 같은 제안을 둘 다 열람했으면 게스트 것을 지운다. 같은 지도에 둘 다 진행 중인 코스 요청이 있으면 게스트 것을 지운다(진행 중은 지도당 한 사람에 하나). 코스 하루 상한은 합치지 않는다(추천 횟수와 같다) |
+| auth | 마지막에 게스트 행을 `deleted_at`으로 지운다(탈퇴처럼 반응·근거를 지우지는 않는다 — 이미 옮겼다) | — |
+
+합치기로 사용자가 보는 이름이 게스트 이름에서 카카오 계정의 이름으로 바뀐다(구성원 목록과 핀 작성자 표시는 다시 불러오면 된다).
+
+사용자 기록을 다루는 목록은 탈퇴(`withdraw_user`)와 합치기(`MERGE_STEPS`) 둘이다. 한쪽에만 모듈이 더해지지 않게 "탈퇴 목록에 있는 모듈은 합치기 목록에도 있다"를 테스트로 고정한다(#694). 지도 정리(`maps.purge.PURGE_STEPS`)는 지도 단위라 대상이 다르다. 게스트가 아닌 사용자가 시작하면 아무것도 하지 않는다. 이미 합쳐진(삭제된) 게스트 id로는 다시 합치지 않는다.
 
 ---
 

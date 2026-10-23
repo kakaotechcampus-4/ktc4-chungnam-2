@@ -1,15 +1,18 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
+import { ExternalLink } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import CourseSheet from '@/features/course/CourseSheet'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import { useEnrichPin } from '@/features/map/livePlaces'
+import type { Pin } from '@/features/map/model'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMembersQuery } from '@/features/maps/queries'
 import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
-import { move, routeSummary, type ShortlistItemDto } from '@/features/shortlist/model'
+import { KAKAO_ROUTE_MAX, kakaoDirectionsUrl, move, routeSummary, type RouteDto, type ShortlistItemDto } from '@/features/shortlist/model'
 import {
   useAddToShortlistMutation,
   useRemoveFromShortlistMutation,
@@ -22,6 +25,7 @@ import { useRouteStore } from '@/features/shortlist/routeStore'
 import ShortlistList from '@/features/shortlist/ShortlistList'
 import { josa } from '@/ui/josa'
 import EmptyState from '@/ui/EmptyState'
+import SheetTitle from '@/ui/SheetTitle'
 
 /** 확정된 장소 탭(Figma 7절). 동선은 순서만 — 몇 시에 어디는 정하지 않는다(범위 밖). */
 export default function ShortlistTab() {
@@ -37,6 +41,7 @@ export default function ShortlistTab() {
   const add = useAddToShortlistMutation(mapId)
   const reorder = useReorderShortlistMutation(mapId)
   const [params, setParams] = useSearchParams()
+  const [courseOpen, setCourseOpen] = useState(false)
   const enrich = useEnrichPin()
   // 확정 리스트 항목의 핀은 핀 목록 밖에서 온다 — 실시간 핀(#382)의 이름·좌표를 같은 값으로 얹는다.
   const items = (shortlist.data ?? []).map((i) => ({ ...i, pin: enrich(i.pin) }))
@@ -64,6 +69,11 @@ export default function ShortlistTab() {
   function toggleRoute() {
     if (!routeOn && routable < 2) return showToast(hasLive ? '위치를 아는 장소가 2곳부터 동선을 보여 줘요' : '2곳부터 동선을 보여 줘요')
     setRouteOn(!routeOn)
+  }
+
+  function openCourse() {
+    if (routable < 2) return showToast('위치를 아는 장소가 2곳부터 코스를 짤 수 있어요')
+    setCourseOpen(true)
   }
 
   function removeItem(item: ShortlistItemDto) {
@@ -101,20 +111,23 @@ export default function ShortlistTab() {
       header={
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <h2 className="text-xl font-bold text-ink-900">확정된 장소 모아보기</h2>
+            <SheetTitle>확정된 장소 모아보기</SheetTitle>
             <p className="mt-0.5 text-xs text-ink-500">{shortlist.isPending ? '불러오는 중…' : subtitle}</p>
           </div>
           {items.length > 0 && (
-            <button
-              type="button"
-              aria-pressed={routeOn}
-              onClick={toggleRoute}
-              className={`shrink-0 rounded-lg border px-3 py-1.5 text-sm font-semibold ${
-                routeOn ? 'border-brand-600 bg-brand-100 text-brand-700' : 'border-ink-300 bg-white text-brand-600'
-              }`}
-            >
-              동선 보기{routeOn && ' ✓'}
-            </button>
+            <div className="flex shrink-0 gap-2">
+              <button type="button" onClick={openCourse} className="chip">
+                AI 코스 짜기
+              </button>
+              <button
+                type="button"
+                aria-pressed={routeOn}
+                onClick={toggleRoute}
+                className="chip"
+              >
+                동선 보기{routeOn && ' ✓'}
+              </button>
+            </div>
           )}
         </div>
       }
@@ -122,11 +135,12 @@ export default function ShortlistTab() {
       {shortlist.error && <ErrorText message="확정 리스트를 불러오지 못했어요" error={shortlist.error} />}
       {calc.error && <ErrorText message="동선을 계산하지 못했어요" error={calc.error} />}
       {routeOn && hasLive && <p className="text-xs text-ink-500">장소 정보가 없는 핀은 위치를 몰라 동선에서 빠졌어요</p>}
+      {routeOn && route.data && <DirectionsLinks routes={route.data} pins={pins} />}
       {shortlist.data?.length === 0 && (
         <EmptyState
           title="아직 확정된 장소가 없어요"
           action={
-            <Link to={`/maps/${mapId}`} className="btn-outline px-4 py-2 text-sm">
+            <Link to={`/maps/${mapId}`} className="btn-outline btn-md">
               마킹된 장소 보러 가기
             </Link>
           }
@@ -144,6 +158,26 @@ export default function ShortlistTab() {
           onReorder={(from, to) => reorder.mutate(move(items, from, to), { onError: () => showToast('순서를 바꾸지 못했어요') })}
         />
       )}
+      {courseOpen && <CourseSheet mapId={mapId} onClose={() => setCourseOpen(false)} />}
     </TabSheet>
+  )
+}
+
+/** 동선을 켜면 지역마다 「카카오맵에서 길찾기」. 앱 안 WebView 는 카카오 약관상 안 돼서 새 창이다. */
+function DirectionsLinks({ routes, pins }: { routes: RouteDto[]; pins: Pin[] }) {
+  const links = routes.flatMap((r) => {
+    const url = kakaoDirectionsUrl(r, pins)
+    return url ? [{ url, label: routes.length > 1 ? `${r.region_label} 길찾기` : '카카오맵에서 길찾기', cut: r.ordered_pin_ids.length > KAKAO_ROUTE_MAX }] : []
+  })
+  if (links.length === 0) return null
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-x-4">
+      {links.map((l) => (
+        <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="btn-link text-sm">
+          {l.label} <ExternalLink size={14} aria-hidden="true" />
+          {l.cut && <span className="font-normal text-ink-500"> · 앞 {KAKAO_ROUTE_MAX}곳</span>}
+        </a>
+      ))}
+    </div>
   )
 }

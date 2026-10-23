@@ -15,10 +15,12 @@
 | 프로그램 | 받는 곳 | 확인하는 명령 (PowerShell) | 이렇게 나오면 OK |
 |---|---|---|---|
 | **Docker Desktop** | https://www.docker.com/products/docker-desktop | `docker --version` | `Docker version 2x...` |
-| **Python 3.10 이상** | https://www.python.org/downloads | `python --version` | `Python 3.10` 이상 |
+| **Python 3.12** | https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe (3.12의 마지막 윈도 설치 파일) | `python --version` | `Python 3.12.10` |
 | **Node.js 20 이상** | https://nodejs.org (LTS) | `node --version` | `v20` 이상 |
 | **Git** | https://git-scm.com | `git --version` | `git version 2...` |
 
+> ❗ **Python 3.13·3.14는 안 됩니다.** 서버 부품 두 개(`psycopg2-binary`, `pyproj`)가 3.12까지만 설치 파일이 있어서 5-1에서 설치가 실패합니다. 3.10·3.11은 됩니다.
+> 💡 다른 버전이 이미 깔려 있으면 3.12를 하나 더 설치하고, 이 문서의 `python`을 전부 `py -3.12`로 바꿔 쓰세요(예: `py -3.12 -m pip install -r requirements.txt`).
 > 💡 Python을 설치할 때 **"Add python.exe to PATH"** 체크박스를 꼭 켜세요. 안 켜면 `python` 명령이 안 먹습니다.
 > 💡 설치한 뒤에는 **PowerShell 창을 새로 열어야** 명령이 인식됩니다.
 
@@ -38,7 +40,14 @@
 
 ### 1-3. 가게 데이터 폴더를 받으세요
 
-`식당카페_라벨_2026-10-02` 폴더(음식점·카페 목록과 라벨 파일)를 팀 리드(또는 데이터 담당)에게 받아 **저장소 밖**(예: `C:\Users\내이름\Downloads\식당카페_라벨_2026-10-02`)에 두세요. 저장소는 공개라서 이 파일은 깃에 올리지 않습니다.
+아래 폴더를 팀 리드(또는 데이터 담당)에게 받아 **저장소 밖**(예: `C:\Users\내이름\Downloads\`)에 두세요. 저장소는 공개라서 이 파일은 깃에 올리지 않습니다.
+
+| 폴더 | 들어 있는 것 |
+|---|---|
+| `식당카페_라벨_2026-10-02` | 음식점·카페 목록과 라벨(10/2 납품) |
+| `음식점_1013`, `카페_1013`, `관광지_1013` | 음식점·카페·관광지 목록과 라벨(10/13 납품) |
+
+한쪽만 받았으면 받은 것만 넣으면 됩니다(5-4).
 
 ---
 
@@ -124,20 +133,29 @@ docker compose up -d
 python -m alembic upgrade head
 ```
 
-> ✅ 마지막에 `Running upgrade ... 0020_evidence_wants` 같은 줄이 나오면 성공입니다.
+> ✅ 빨간 `Error`나 `Traceback` 없이 끝나면 성공입니다. 마지막 `Running upgrade ...` 줄의 번호는 코드가 바뀔 때마다 늘어납니다.
 
 ### 5-4. 가게 데이터 넣기 (약 5분)
 
-아래 `C:\...` 부분을 **1-3에서 받은 폴더의 실제 경로**로 바꾸세요(경로에 한글/공백이 있으면 따옴표로 감싼 그대로 두세요).
+아래 `C:\경로` 부분을 **1-3에서 받은 폴더가 있는 실제 경로**로 바꾸세요(경로에 한글/공백이 있으면 따옴표로 감싼 그대로 두세요). **위에서부터 순서대로** 넣고, 받지 않은 폴더의 줄은 건너뜁니다. 파일이 다른 폴더에 들어 있으면 파일 이름으로 찾아 경로를 바꾸세요.
 
 ```powershell
-python -m places.load restaurants --file "C:\경로\식당카페_라벨_2026-10-02\restaurant_seoul_curated.csv" --labels "C:\경로\식당카페_라벨_2026-10-02\restaurant_seoul_curated_labels.json"
-python -m places.load cafes --file "C:\경로\식당카페_라벨_2026-10-02\cafe_seoul_curated.csv" --labels "C:\경로\식당카페_라벨_2026-10-02\cafe_seoul_curated_labels.csv"
+$env:PYTHONUTF8=1
+# 10/2 납품본
+python -m places.load restaurants --file "C:\경로\식당카페_라벨_2026-10-02\restaurant_seoul_curated.csv" --labels "C:\경로\식당카페_라벨_2026-10-02\restaurant_seoul_curated_labels.json" --authoritative
+python -m places.load cafes --file "C:\경로\식당카페_라벨_2026-10-02\cafe_seoul_curated.csv" --labels "C:\경로\식당카페_라벨_2026-10-02\cafe_seoul_curated_labels.csv" --authoritative
+# 10/13 납품본 (음식점 → 카페 → 관광지 순서)
+python -m places.load restaurants --file "C:\경로\음식점_1013\final_restaurant_places_hotspot.csv" --labels "C:\경로\음식점_1013\seoul_restaurant_labels_hotspot.json" --authoritative
+python -m places.load cafes --file "C:\경로\카페_1013\cafe_seoul_curated.csv" --labels "C:\경로\카페_1013\cafe_seoul_curated_labels.json" --authoritative
+python -m places.load tourapi --file "C:\경로\관광지_1013\tourist_seoul_places.json" --labels "C:\경로\관광지_1013\tourist_seoul_curated_labels.csv" --authoritative
 ```
 
-> ✅ `DB: 신규 11843`(음식점)과 `DB: 신규 533`(카페) 같은 줄이 나오면 성공입니다. 좌표가 없는 가게는 자동으로 건너뛰니 파일 행 수보다 조금 적은 게 정상입니다.
+> ✅ 명령마다 `DB: 신규 ...` 줄이 나오고, 끝에 `[can_recommend] 분류별 true / false` 표가 나오면 성공입니다. 좌표가 없는 가게는 자동으로 건너뛰니 파일 행 수보다 조금 적은 게 정상입니다.
+> ❗ **`--authoritative`를 빼지 마세요.** 빼면 사람이 조사한 가게로 표시되지 않아서, 라벨이 적은 가게가 AI 추천 후보에서 빠집니다.
+> ❗ 관광지 라벨은 `.json`이 아니라 **`.csv`** 파일을 넣습니다. json을 넣으면 라벨이 전부 건너뛰어집니다.
 > 💡 먼저 연습해 보고 싶으면 명령 맨 끝에 `--dry-run`을 붙이세요. 실제로는 넣지 않고 결과만 보여 줍니다.
-> 💡 이미 한 번 넣었다면 다시 해도 같은 결과입니다(중복되지 않습니다).
+> 💡 다시 넣을 때는 **위 순서 전체를 처음부터** 하세요. 중복은 생기지 않지만, 한 줄만 다시 하면 나중 납품본의 값을 예전 값으로 덮어씁니다.
+> 💡 인허가 데이터(서울 음식점·카페 약 10만 곳)는 선택입니다. 넣으면 검색 결과 중 핀으로 찍히는 가게가 늘지만 오래 걸리고 메모리를 많이 씁니다. 넣는 법은 `docs/openapi-workflow.md` 5-1에 있습니다.
 
 ### 5-5. 프론트 부품 설치 (약 1~2분)
 
@@ -194,6 +212,7 @@ npm run dev
 | `failed to connect to the docker API` | Docker Desktop이 꺼져 있다 | Docker Desktop을 실행하고 초록색이 될 때까지 기다린 뒤 다시 |
 | 서버가 안 켜지고 `ConfigError` | `backend\.env`가 없거나 `PINGO_ENV=dev`가 없다 | 3절을 다시 한다(`.env`가 `backend` 폴더 안에 있어야 한다) |
 | `relation "..." does not exist` | 표를 아직 안 만들었다 | `python -m alembic upgrade head` |
+| 5-1에서 `pg_config executable not found`나 `proj executable not found` | Python이 3.13 이상이다 | 1-1대로 3.12를 깔고 `py -3.12 -m pip install -r requirements.txt` |
 | `address already in use` | 8000(또는 5173) 포트를 다른 프로그램이 쓴다 | 이전에 켠 서버 창을 닫거나, `netstat -ano \| findstr :8000`으로 찾아 종료 |
 | 로그인 버튼을 누르면 카카오 오류 `KOE010` | `KAKAO_CLIENT_SECRET`이 비었거나 틀렸다(앞뒤 공백 포함) | `.env`의 시크릿을 다시 확인하고 서버를 껐다 켠다 |
 | 카카오 오류 `KOE101`·`KOE004` | `KAKAO_CLIENT_ID`가 틀렸거나 앱의 카카오 로그인이 꺼져 있다 | 키를 다시 확인하고, 계속되면 팀 리드에게 알린다 |

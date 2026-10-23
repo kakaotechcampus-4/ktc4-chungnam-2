@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
+import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
+import SheetTitle from '@/ui/SheetTitle'
 import EmptyMap from '@/features/map/EmptyMap'
 import { OnboardingBody, OnboardingHeader, type OnboardingKind } from '@/features/map/Onboarding'
 import { filterPins } from '@/features/map/model'
 import { CategoryChips, PinFilterBar } from '@/features/map/PinFilterControls'
-import PinList, { PinListSkeleton } from '@/features/map/PinList'
+import PinList from '@/features/map/PinList'
 import { usePinFilters } from '@/features/map/usePinFilters'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import PinUnavailable from '@/features/map/PinUnavailable'
@@ -126,7 +128,7 @@ export default function MapTab() {
       }
     >
       {unavailable && <PinUnavailable onClose={() => selectPin(null)} />}
-      {isPending && <PinListSkeleton />}
+      {isPending && <CardSkeleton />}
       {error && <ErrorText message="핀을 불러오지 못했어요" error={error} />}
       {pins?.length === 0 && <EmptyMap />}
       {pins && pins.length > 0 && shown?.length === 0 && filtered && (
@@ -144,7 +146,7 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
     <EmptyState
       title="필터에 걸리는 핀이 없어요"
       action={
-        <button type="button" onClick={onClear} className="btn-outline px-4 py-2 text-sm">
+        <button type="button" onClick={onClear} className="btn-outline btn-md">
           필터 해제
         </button>
       }
@@ -152,8 +154,4 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
       {what} 핀은 아직 없어요
     </EmptyState>
   )
-}
-
-function SheetTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="truncate text-xl font-bold text-ink-900">{children}</h2>
 }

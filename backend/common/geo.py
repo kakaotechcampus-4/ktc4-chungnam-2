@@ -40,6 +40,12 @@ def approx_walk_minutes(distance_m: float) -> int:
     return max(1, round(distance_m / WALKING_SPEED_M_PER_MIN))
 
 
+def approx_transit_minutes(distance_m: float, *, speed_m_per_min: float, overhead_min: float) -> int:
+    """직선거리를 "대중교통 약 N분"으로 근사 표기할 때 쓰는 값(거리 ÷ 평균 속도 + 타고 내리는·기다리는 시간). 실제 노선·시간표가 아니다.
+    속도와 대기 시간은 호출하는 쪽이 정한다(동선 에이전트는 agent/course/constants.py)."""
+    return max(1, round(distance_m / speed_m_per_min + overhead_min))
+
+
 class Point(NamedTuple):
     id: str
     lat: float

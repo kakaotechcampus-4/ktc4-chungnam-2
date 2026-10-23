@@ -1,13 +1,16 @@
 import { useState } from 'react'
-import { Ban, ChevronLeft, X } from 'lucide-react'
+import { Ban, Check, ChevronLeft, X } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { TAB_BAR_H } from '@/features/shell/layout'
+import { usePanelBack } from '@/features/shell/panelBack'
 import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import ConfirmDialog from '@/ui/ConfirmDialog'
+import Pingo from '@/ui/Pingo'
+import PingoLoading from '@/ui/PingoLoading'
 
 import { useAiStore } from './aiStore'
 import { evidenceLabel, groupEvidence, type EvidenceLineDto, type RecommendRunDto, type RegionDto } from './model'
@@ -15,7 +18,7 @@ import { useConfirmRegionsMutation, useEvidenceQuery, useExecuteRunMutation, use
 
 /**
  * 근거 확인(Figma 6절, 최종기획안 5-5). 모델이 사유를 어떻게 읽었는지 보여 주고 사람이 고치게 한다.
- * - 꼭 지켜야 하는 조건: 구성원별 줄. 내 것만 × 로 뺀다(빼기 전에 한 번 묻는다 — 알레르기처럼 틀리면 안 되는 조건일 수 있다)
+ * - 꼭 지켜야 하는 조건: 구성원별 줄. 내 것만 × 로 뺀다(빼기 전에 한 번 묻는다)
  * - 가능하면 맞춰주세요: 해시태그로 합친다. 내 몫이 든 태그에만 ×
  * - 지금까지 나온 의견에서: 원문 인용
  * 제약을 AI가 임의로 완화하지 않는다(가드레일 4) — 빼는 건 언제나 사람이다.
@@ -33,14 +36,17 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
   const groups = groupEvidence(evidence.data ?? [])
   const busy = confirm.isPending
   const desktop = useIsDesktop()
+  // 넓은 화면은 이 화면 머리의 ‹ 대신 패널 헤더 ‹ 가 추천을 그만두고 AI 추천으로 돌아간다.
+  usePanelBack('AI 추천', () => setRun(mapId, undefined), desktop)
 
-  function toggle(line: EvidenceLineDto, active: boolean) {
+  // 한 사유가 조건마다 줄로 나뉘어(#421) 같은 태그에 내 줄이 여럿일 수 있다 — 한 번에 같이 끄고 켠다.
+  function toggle(lines: EvidenceLineDto[], active: boolean) {
     patch.mutate(
-      { toggle: [{ id: line.id, is_active: active }] },
+      { toggle: lines.map((l) => ({ id: l.id, is_active: active })) },
       {
         onSuccess: () =>
           !active &&
-          showToast(`‘${evidenceLabel(line)}’을(를) 뺐어요`, { label: '되돌리기', onClick: () => toggle(line, true) }),
+          showToast(`‘${evidenceLabel(lines[0])}’을(를) 뺐어요`, { label: '되돌리기', onClick: () => toggle(lines, true) }),
         onError: () => showToast('조건을 바꾸지 못했어요'),
       },
     )
@@ -68,22 +74,28 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
       style={desktop ? undefined : { bottom: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
     >
       <header className="flex items-center gap-2 border-b border-ink-100 px-4 py-3">
-        <button type="button" aria-label="추천 그만두기" onClick={() => setRun(mapId, undefined)} className="text-ink-900">
-          <ChevronLeft size={22} />
-        </button>
-        <h1 className="text-lg font-bold text-ink-900">{run.category} 추천받기</h1>
+        {!desktop && (
+          <button type="button" aria-label="추천 그만두기" onClick={() => setRun(mapId, undefined)} className="hit-44 text-ink-900">
+            <ChevronLeft size={20} />
+          </button>
+        )}
+        <h1 className="text-title font-bold text-ink-900">{run.category} 추천받기</h1>
       </header>
 
       <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4">
-        <div className="rounded-2xl border border-brand-300 bg-[var(--pingo-bg)] p-4">
-          <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--pingo-text)]">
-            <span className="rounded bg-brand-600 px-1.5 text-[0.6875rem] text-white">AI</span> AI가 정리한 조건
-          </p>
-          <p className="mt-1 font-bold text-ink-900">이 조건으로 추천해도 될까요?</p>
-          <p className="mt-1 text-xs text-ink-500">지금까지 남긴 의견을 이렇게 정리했어요.</p>
+        {/* 의견을 다 모아 조건으로 정리했다 — 핑고가 손을 든다(시안 「결정했어요!」). */}
+        <div className="flex items-center gap-3 rounded-xl border border-brand-300 bg-[var(--pingo-bg)] p-4">
+          <Pingo size={48} mood="wave" />
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--pingo-text)]">
+              <span className="tag tag-ai">AI</span> AI가 정리한 조건
+            </p>
+            <p className="mt-1 font-bold text-ink-900">이 조건으로 추천해도 될까요?</p>
+            <p className="mt-1 text-xs text-ink-500">지금까지 남긴 의견을 이렇게 정리했어요.</p>
+          </div>
         </div>
 
-        {evidence.isPending && <p className="text-sm text-ink-500">조건을 정리하는 중…</p>}
+        {evidence.isPending && <PingoLoading label="조건을 정리하는 중…" />}
         {evidence.error && <ErrorText message="조건을 불러오지 못했어요" error={evidence.error} />}
 
         {groups.required.length > 0 && (
@@ -91,14 +103,19 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
             <h2 className="text-sm font-bold text-ink-900">꼭 지켜야 하는 조건</h2>
             {groups.required.map((line) => (
               <div key={line.id} className="flex items-center gap-3 rounded-xl border border-ink-200 p-3">
-                <Ban size={16} className="shrink-0 text-[var(--bad-line)]" aria-hidden="true" />
+                {/* 묶음은 badge로 정한다 — 🚫에서 나왔다고 반대 조건인 게 아니고, ♥ 쪽 "꼭 ○○여야 해"도 여기 온다(#231·#427). */}
+                {line.wants === true ? (
+                  <Check size={16} className="shrink-0 text-[var(--good-line)]" aria-hidden="true" />
+                ) : (
+                  <Ban size={16} className="shrink-0 text-[var(--bad-line)]" aria-hidden="true" />
+                )}
                 <div className="min-w-0 flex-1">
-                  <p className="text-[0.6875rem] text-ink-500">{line.author_display_name} · 반대 조건</p>
+                  <p className="text-label text-ink-500">{line.author_display_name}</p>
                   <p className="font-bold text-ink-900">{evidenceLabel(line)}</p>
                 </div>
                 {line.permissions.can_disable && (
-                  <button type="button" aria-label={`${evidenceLabel(line)} 빼기`} onClick={() => setAskRemove(line)} className="text-ink-400">
-                    <X size={18} />
+                  <button type="button" aria-label={`${evidenceLabel(line)} 빼기`} onClick={() => setAskRemove(line)} className="hit-44 text-ink-500">
+                    <X size={16} />
                   </button>
                 )}
               </div>
@@ -114,8 +131,8 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
               {mergeTags(groups.preferred).map(({ tag, mine }) => (
                 <span key={tag} className="flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-sm font-semibold text-brand-700">
                   #{tag}
-                  {mine && (
-                    <button type="button" aria-label={`#${tag} 빼기`} onClick={() => toggle(mine, false)}>
+                  {mine.length > 0 && (
+                    <button type="button" aria-label={`#${tag} 빼기`} onClick={() => toggle(mine, false)} className="hit-44">
                       <X size={14} />
                     </button>
                   )}
@@ -130,7 +147,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
             <h2 className="text-sm font-bold text-ink-900">지금까지 나온 의견에서</h2>
             {groups.reference.map((line) => (
               <blockquote key={line.id} className="rounded-xl bg-ink-50 p-3 text-sm text-ink-700">
-                <p className="text-[0.6875rem] text-ink-500">{line.author_display_name}</p>“{line.text}”
+                <p className="text-label text-ink-500">{line.author_display_name}</p>“{line.text}”
               </blockquote>
             ))}
           </section>
@@ -150,7 +167,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
                   onError: () => showToast('조건을 더하지 못했어요'),
                 })
             }}
-            className="flex gap-2"
+            className="field"
           >
             <input
               value={draft}
@@ -159,15 +176,15 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
               autoFocus
               aria-label="조건 더하기"
               placeholder="예: 비 오면 실내로 가고 싶어요"
-              className="min-w-0 flex-1 rounded-xl border border-ink-300 px-3 py-2 text-sm"
+              className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-ink-500"
             />
-            <button type="submit" disabled={patch.isPending} className="btn-outline px-3 text-sm">
+            <button type="submit" disabled={patch.isPending} className="btn-link shrink-0 text-sm">
               더하기
             </button>
           </form>
         ) : (
-          <button type="button" onClick={() => setAdding(true)} className="mx-auto block text-sm text-brand-600">
-            조건 수정
+          <button type="button" onClick={() => setAdding(true)} className="btn-link mx-auto flex text-sm">
+            조건 더하기
           </button>
         )}
 
@@ -179,10 +196,10 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
       {/* 이 화면은 시트가 없어서 토스트를 아래 버튼 줄 위에 띄운다. 넓은 화면은 지도 영역 토스트 하나만 쓴다. */}
       <div className="relative grid grid-cols-2 gap-2 border-t border-ink-100 p-4">
         {!desktop && <Toaster controlsVisible={false} />}
-        <button type="button" onClick={() => setRun(mapId, undefined)} className="rounded-xl border border-ink-300 py-3 font-semibold text-ink-900">
+        <button type="button" onClick={() => setRun(mapId, undefined)} className="btn-neutral btn-lg">
           취소
         </button>
-        <button type="button" disabled={busy || evidence.isPending} onClick={() => start(false)} className="btn-primary py-3">
+        <button type="button" disabled={busy || evidence.isPending} onClick={() => start(false)} className="btn-primary btn-lg">
           {busy ? '찾기 시작하는 중…' : '네, 추천해주세요'}
         </button>
       </div>
@@ -190,14 +207,14 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
       {askRemove && (
         <ConfirmDialog
           title="꼭 지켜야 하는 조건을 뺄까요?"
-          body={`‘${evidenceLabel(askRemove)}’을(를) 빼면 이번 추천에서 이 조건으로 거르지 않아요. 알레르기처럼 한 번 틀리면 안 되는 조건이라면 그대로 두세요.`}
+          body={`‘${evidenceLabel(askRemove)}’을(를) 빼면 이번 추천에서 이 조건으로 거르지 않아요.`}
           note="내가 쓴 조건만 뺄 수 있어요. 다른 구성원의 조건은 그대로 남아요."
           cancel="그대로 두기"
           ok="빼기"
           danger
           onCancel={() => setAskRemove(null)}
           onOk={() => {
-            toggle(askRemove, false)
+            toggle([askRemove], false)
             setAskRemove(null)
           }}
         />
@@ -226,12 +243,14 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
   )
 }
 
+/** 같은 태그는 하나로 합친다. mine = 그 태그에 든 내 줄(뺄 수 있는 줄) 전부. */
 function mergeTags(lines: EvidenceLineDto[]) {
-  const tags = new Map<string, EvidenceLineDto | null>()
+  const tags = new Map<string, EvidenceLineDto[]>()
   for (const line of lines) {
     const tag = evidenceLabel(line)
-    const mine = line.permissions.can_disable ? line : null
-    tags.set(tag, tags.get(tag) ?? mine)
+    const mine = tags.get(tag) ?? []
+    if (line.permissions.can_disable) mine.push(line)
+    tags.set(tag, mine)
   }
   return [...tags].map(([tag, mine]) => ({ tag, mine }))
 }

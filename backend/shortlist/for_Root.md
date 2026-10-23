@@ -1,5 +1,45 @@
 # 루트 리뷰 가이드 — backend/shortlist (PR #71 멘토 리뷰 대응)
 
+## [보고, 2026-10-16] #508 내보내기 링크·파일 이름 후속 (#471)
+
+- live 핀 링크: 내보내기가 따로 만들던 링크를 없애고 `pins.api`가 돌려준 `Pin.place_url`을 그대로 쓴다(없으면 빈 칸, #445).
+  이름이 없는 live 핀은 그대로 `검색어 (이름 확인 필요)`.
+- 파일 이름: `maps.api.get_map_title(db, map_id)`로만 읽는다(None이면 기존 `확정 리스트`). `core.export_basename`이 개행·탭을 공백으로 접고
+  경로 문자(`/ \ : * ? " < > |`)·제어/서식 문자를 빼고 앞뒤 공백·점을 정리해 50자로 자른다(비면 기본 이름). 형식은 `<제목> 확정 리스트.<ext>`.
+  `Content-Disposition`은 `filename*=UTF-8''<퍼센트 인코딩>` + ASCII fallback `filename`(한글만이면 `shortlist`) — 이름에 개행·따옴표가 없어 헤더 인젝션 불가.
+- 반응·반대 사유·좌표는 여전히 내보내지 않는다(`ExportRow` 필드로 고정, 단위 테스트). 스펙 변경 없음.
+- 테스트: `shortlist/tests/conftest.py`가 `maps.models`를 import해 지도 행을 심는다(제목 읽기용).
+
+## [보고, 2026-10-13] #471 `GET /maps/{mapId}/shortlist/export` 구현
+
+상태: 코드·테스트 완료, 브랜치 `feat/shortlist-export-471`(PR 대상 develop).
+
+### 구현
+- `router.py`: `format: Literal["txt","csv"] = "txt"`. 그 밖의 값은 422 `VALIDATION_ERROR`. 인가는 `require_map_member()`(비구성원 404).
+  응답은 JSON이 아니라 `Response` — `text/plain`·`text/csv`(`charset=utf-8`) + `Content-Disposition: attachment`.
+- `flows.export_shortlist`: `service.list_items`(visit_order, 없으면 추가 순)로 읽고 핀은 `pins_api.get_pin_response_for_viewer`로만 받는다.
+- `core.py`(순수): `to_export_row`(자체 DB 핀은 장소 이름·`place_url`, live 핀은 `search_query + " (이름 확인 필요)"`와
+  `https://place.map.kakao.com/<id>`, `kakao:` 접두어는 뗀다 — 좌표는 담지 않는다), `render_csv`(BOM·CRLF·RFC 4180·
+  `=`·`+`·`-`·`@`·탭·CR로 시작하는 칸 앞에 `'`), `render_txt`(한 줄 한 장소, 칸 안의 개행은 공백으로),
+  `export_content_disposition`(제어문자 제거 + 퍼센트 인코딩한 `filename*=UTF-8''…`, 구형용 ASCII `filename="shortlist.<ext>"` 병기).
+- 테스트: core 9(이스케이프·수식 주입·live 핀·빈 목록·헤더) / API 5(순서·live·CSV·빈 목록·422·비구성원 404).
+  `integration`의 `KNOWN_MISSING`·`KNOWN_UNCOVERED`에서 export 항목을 지우고 계약 테스트 골든 패스에 txt/csv/422 호출을 넣었다
+  (텍스트 응답이라 스키마 검증 대신 content-type·attachment·BOM·줄 수를 직접 확인).
+
+### 루트 판단이 필요한 것
+1. (#508에서 해소) **파일 이름에 지도 제목을 쓰지 않았다.** `maps/api.py`에 지도 제목을 읽는 함수가 없고, 다른 모듈의 `service.py`·`models.py`는
+   가져올 수 없다. 지금은 고정 이름 `확정 리스트.<ext>`다. 제목을 쓰려면 `maps.api.get_map_title(db, map_id) -> str` 같은 함수가
+   필요하다 — maps 담당에게 요청해 달라. 붙일 때는 `core.export_content_disposition(basename, ext)`에 제목만 넘기면 된다
+   (제어문자 제거·퍼센트 인코딩은 이미 한다).
+2. **수식 주입 방지 접두 문자를 지시보다 두 개(탭·CR, OWASP 기준) 더 넓혔다.** 지시한 `= + - @`는 그대로다.
+   `-3` 같은 음수 메모도 `'-3`으로 나온다(엑셀에서 문자열로 보인다) — 의도한 트레이드오프다.
+
+### 프론트 전달용 요약
+- `GET /maps/{mapId}/shortlist/export?format=txt|csv`(기본 txt) — 구성원만. 응답은 파일이다: `fetch` 후 `res.blob()`으로 받아 저장하거나
+  `<a download>`로 연다. 파일 이름은 `Content-Disposition`의 `filename*`에서 읽는다(`decodeURIComponent`).
+- 열: 순서·이름·분류·링크·메모. live 핀은 이름 칸이 `검색어 (이름 확인 필요)`다. 빈 리스트는 txt는 안내 한 줄, CSV는 머리글만.
+- 에러: 비구성원 404, format 오류 422(JSON 에러 봉투).
+
 ## [보고, 2026-09-30] #142 `PUT /maps/{mapId}/shortlist/order` 구현
 
 상태: 코드·테스트 완료, **브랜치·PR 미생성**(이 작업 폴더가 git 저장소가 아니라 develop pull/merge,

@@ -16,38 +16,7 @@ function visiblePins(mapId: string): Pin[] {
   return Object.values(store.pins).filter((p) => p.map_id === mapId);
 }
 
-export const pinsHandlers = [
-  http.get("*/maps/:mapId/pins", ({ params, request }) => {
-    const mapId = params.mapId as string;
-    const url = new URL(request.url);
-    const category = url.searchParams.get("category");
-    const kind = url.searchParams.get("kind");
-    const createdBy = url.searchParams.getAll("created_by");
-    let pins = visiblePins(mapId);
-    if (category) pins = pins.filter((p) => p.category === category);
-    if (kind) pins = pins.filter((p) => p.kind === kind);
-    if (createdBy.length) pins = pins.filter((p) => p.created_by && createdBy.includes(p.created_by)); // #26
-    return HttpResponse.json(
-      pins.map((p) => ({
-        ...p,
-        permissions: pinPermissions(p),
-        my_reaction: (store.reactions[p.id] ?? []).find((r) => r.user_id === ME_USER_ID) ?? null,
-      })),
-    );
-  }),
-
-  http.get("*/pins/:pinId/reactions", ({ params }) => {
-    const pinId = params.pinId as string;
-    if (!store.pins[pinId]) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
-    const list = store.reactions[pinId] ?? [];
-    return HttpResponse.json(
-      list.map((r) => ({ ...r, display_name: store.members[store.pins[pinId].map_id]?.find((m) => m.user_id === r.user_id)?.display_name ?? "구성원" })),
-    );
-  }),
-
-  http.post("*/maps/:mapId/pins", async ({ params, request }) => {
-    const mapId = params.mapId as string;
-    const body = (await request.json()) as {
+type CreatePinBody = {
       category: Pin["category"];
       source?: "link" | "search" | "coordinate" | "live";
       link_url?: string;
@@ -58,7 +27,10 @@ export const pinsHandlers = [
       place_name?: string;
       lat?: number;
       lng?: number;
-    };
+};
+
+/** POST /maps/{mapId}/pins의 본문. 일괄 생성(#9)이 항목마다 같은 규칙으로 부른다. */
+function createPin(mapId: string, body: CreatePinBody): Response {
     // #191(2026-10-01): v1의 핀은 모두 자체 DB 장소를 가리킨다. 목 서버는 GET /places/search의 시드 장소(kakao:mock-*)를
     // "자체 DB에 짝이 있는 장소"로 본다. 요청의 place_name·lat·lng는 매칭 힌트라 쓰지 않는다.
     if (body.source === "link" || body.link_url) {
@@ -83,6 +55,8 @@ export const pinsHandlers = [
         visibility: "public",
         source: "live",
         kakao_place_id: body.kakao_place_id,
+        // #445 — 카카오 장소 페이지 링크. 저장하지 않고 장소 ID로 만든다(백엔드 pins/core.py::kakao_place_url과 같은 규칙)
+        ...(body.kakao_place_id.startsWith("kakao:") ? { place_url: `https://place.map.kakao.com/${body.kakao_place_id.slice("kakao:".length)}` } : {}),
         search_query: body.search_query.trim(),
         ...(body.memo ? { memo: body.memo } : {}),
         created_by: ME_USER_ID,
@@ -91,7 +65,7 @@ export const pinsHandlers = [
         checks: [],
         source_run_id: null,
         reaction_summary: { like: 0, against: 0 },
-        permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+        permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: true },
       };
       store.pins[liveId] = livePin;
       store.reactions[liveId] = [];
@@ -130,14 +104,45 @@ export const pinsHandlers = [
       checks: [],
       source_run_id: null,
       reaction_summary: { like: 0, against: 0 },
-      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: true },
     };
     (pin as any)._place_id = own.place_id;
     store.pins[pinId] = pin;
     store.reactions[pinId] = [];
     emitEvent(mapId, "public", "pin.created", pin);
     return HttpResponse.json(pin, { status: 201 });
+}
+
+export const pinsHandlers = [
+  http.get("*/maps/:mapId/pins", ({ params, request }) => {
+    const mapId = params.mapId as string;
+    const url = new URL(request.url);
+    const category = url.searchParams.get("category");
+    const kind = url.searchParams.get("kind");
+    const createdBy = url.searchParams.getAll("created_by");
+    let pins = visiblePins(mapId);
+    if (category) pins = pins.filter((p) => p.category === category);
+    if (kind) pins = pins.filter((p) => p.kind === kind);
+    if (createdBy.length) pins = pins.filter((p) => p.created_by && createdBy.includes(p.created_by)); // #26
+    return HttpResponse.json(
+      pins.map((p) => ({
+        ...p,
+        permissions: pinPermissions(p),
+        my_reaction: (store.reactions[p.id] ?? []).find((r) => r.user_id === ME_USER_ID) ?? null,
+      })),
+    );
   }),
+
+  http.get("*/pins/:pinId/reactions", ({ params }) => {
+    const pinId = params.pinId as string;
+    if (!store.pins[pinId]) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    const list = store.reactions[pinId] ?? [];
+    return HttpResponse.json(
+      list.map((r) => ({ ...r, display_name: store.members[store.pins[pinId].map_id]?.find((m) => m.user_id === r.user_id)?.display_name ?? "구성원" })),
+    );
+  }),
+
+  http.post("*/maps/:mapId/pins", async ({ params, request }) => createPin(params.mapId as string, (await request.json()) as CreatePinBody)),
 
   http.get("*/maps/:mapId/counts", ({ params }) => {
     const mapId = params.mapId as string;
@@ -161,6 +166,109 @@ export const pinsHandlers = [
 
   // #60: 반대 사유 칩 — 고정 목록(docs/constraints.md「반대 사유 칩」)
   http.get("*/categories/:category/reason-chips", ({ params }) => HttpResponse.json(chipsFor(decodeURIComponent(params.category as string)))),
+
+  // #9 카톡 대화에서 뽑은 지도 링크 미리보기 — 쓰기 없음. 구글맵(이름으로 자체 DB 시드 찾기)·카카오맵(장소 ID)만 읽고 이미 지도에 있는지 붙인다.
+  http.post("*/maps/:mapId/pins/link-preview", async ({ params, request }) => {
+    const mapId = params.mapId as string;
+    if (!store.maps[mapId]) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    const body = (await request.json()) as { urls?: string[] };
+    if (!body.urls?.length || body.urls.length > 10 || body.urls.some((u) => typeof u !== "string" || !u || u.length > 2000)) {
+      return apiError(422, "VALIDATION_ERROR", "링크는 1~10개, 각각 2000자 이하여야 해요");
+    }
+    const items = body.urls.map((url, index) => {
+      let host = "";
+      try { host = new URL(url).hostname; } catch { return { index, status: "error", error_code: "LINK_NOT_SUPPORTED" }; }
+      const isGoogle = /(^|\.)google\.[a-z.]+$/.test(host) || host === "maps.app.goo.gl" || host === "goo.gl";
+      const isKakao = host === "place.map.kakao.com" || host === "map.kakao.com" || host === "kko.to";
+      if (!isGoogle && !isKakao) return { index, status: "error", error_code: "LINK_NOT_SUPPORTED" };
+      let own: (typeof SEED_PLACES)[number] | undefined;
+      let result: Record<string, unknown>;
+      if (isKakao) {
+        const id = url.match(/place\.map\.kakao\.com\/(\w[\w-]*)/)?.[1] ?? new URL(url).searchParams.get("itemId");
+        if (!id) return { index, status: "error", error_code: "LINK_UNRESOLVED" };
+        own = SEED_PLACES.find((p) => p.place_id === `kakao:${id}` && !NOT_IN_OWN_DB.has(p.place_id));
+        result = { provider: "kakao", kakao_place_id: `kakao:${id}`, matches: own ? [{ ...own, pinnable: true }] : [], needs_search_query: !own };
+      } else {
+        const name = url.match(/\/maps\/place\/([^/@?]+)/)?.[1];
+        if (!name) return { index, status: "error", error_code: "LINK_UNRESOLVED" };
+        const hint = decodeURIComponent(name.replace(/\+/g, " "));
+        own = SEED_PLACES.find((p) => p.place_name === hint && !NOT_IN_OWN_DB.has(p.place_id));
+        result = { provider: "google", name_hint: hint, matches: own ? [{ ...own, pinnable: true }] : [], needs_search_query: false };
+      }
+      const already = Object.values(store.pins).find(
+        (p) => p.map_id === mapId && ((own && (p as any)._place_id === own.place_id) || (isKakao && p.kakao_place_id === (result.kakao_place_id as string))),
+      );
+      return { index, status: "ok", result, ...(already ? { already_pinned_pin_id: already.id } : {}) };
+    });
+    return HttpResponse.json({ items });
+  }),
+
+  // #9 핀 일괄 생성 — 항목마다 핀 생성과 같은 규칙, 일부만 성공해도 나머지는 만들어진다
+  http.post("*/maps/:mapId/pins/bulk", async ({ params, request }) => {
+    const mapId = params.mapId as string;
+    if (!store.maps[mapId]) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    const body = (await request.json()) as { pins?: CreatePinBody[] };
+    if (!body.pins?.length || body.pins.length > 30) return apiError(422, "VALIDATION_ERROR", "핀은 1~30개여야 해요");
+    const results = [];
+    for (const [index, item] of body.pins.entries()) {
+      const res = createPin(mapId, item);
+      const json = await res.json();
+      if (res.status === 201) results.push({ index, status: "created", pin: json });
+      else results.push({ index, status: json.code === "PIN_DUPLICATE" ? "duplicate" : "rejected", error: { code: json.code, message: json.message, ...(json.detail ? { detail: json.detail } : {}) } });
+    }
+    return HttpResponse.json({ results });
+  }),
+
+  // #466 핀 수정 — 찍은 사람만. memo는 모든 핀, category는 live 핀만(반응이 없을 때만). AI 추천·확정 핀은 403.
+  http.patch("*/pins/:pinId", async ({ params, request }) => {
+    const pinId = params.pinId as string;
+    const pin = store.pins[pinId];
+    if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    if (pin.created_by !== ME_USER_ID || pin.kind !== "일반") return apiError(403, "FORBIDDEN", "이 핀은 수정할 수 없어요");
+    const body = (await request.json()) as { memo?: string; category?: Pin["category"] };
+    if (Object.keys(body).length === 0) return apiError(422, "VALIDATION_ERROR", "바꿀 값이 없어요");
+    if (body.memo !== undefined && body.memo.length > 200) return apiError(422, "VALIDATION_ERROR", "메모는 200자까지예요");
+    if (body.category !== undefined) {
+      if (pin.source !== "live") return apiError(422, "VALIDATION_ERROR", "자체 DB 핀의 분류는 바꿀 수 없어요");
+      if (!CATEGORY_RULES[body.category].pinnable) return apiError(422, "VALIDATION_ERROR", `${body.category} 핀은 만들 수 없어요`);
+      if ((store.reactions[pinId] ?? []).length > 0) return apiError(422, "VALIDATION_ERROR", "의견이 이미 있는 핀은 분류를 바꿀 수 없어요");
+      pin.category = body.category;
+    }
+    if (body.memo !== undefined) {
+      if (body.memo === "") delete pin.memo;
+      else pin.memo = body.memo;
+    }
+    pin.permissions = pinPermissions(pin);
+    emitEvent(pin.map_id, "public", "pin.updated", pin);
+    return HttpResponse.json(pin);
+  }),
+
+  // #501 실시간 핀 승격 — 힌트(이름·좌표·주소)는 저장하지 않는다. 목 서버는 같은 분류의 시드 장소와 이름이 같으면 짝으로 본다.
+  http.post("*/pins/:pinId/resolve", async ({ params, request }) => {
+    const pinId = params.pinId as string;
+    const pin = store.pins[pinId];
+    if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    const body = (await request.json()) as { place_name?: string; lat?: number; lng?: number; address?: string };
+    if (!body.place_name?.trim() || typeof body.lat !== "number" || typeof body.lng !== "number" || Math.abs(body.lat) > 90 || Math.abs(body.lng) > 180) {
+      return apiError(422, "VALIDATION_ERROR", "이름과 좌표가 필요해요");
+    }
+    if (pin.source !== "live") return HttpResponse.json(pin); // 이미 자체 DB 핀 · AI 추천·확정 핀 — 변화 없음
+    const own = SEED_PLACES.find((p) => p.place_name === body.place_name!.trim() && p.category === pin.category && !NOT_IN_OWN_DB.has(p.place_id));
+    if (!own) return HttpResponse.json(pin); // 짝 없음 — 변화 없음
+    const dup = Object.values(store.pins).find((p) => p.id !== pinId && p.map_id === pin.map_id && (p as any)._place_id === own.place_id);
+    if (dup) return apiError(409, "PIN_DUPLICATE", "이미 지도에 있는 장소예요", { pin_id: dup.id });
+    pin.source = "db";
+    pin.lat = own.lat;
+    pin.lng = own.lng;
+    pin.place_name = own.place_name;
+    if (own.place_source?.url) pin.place_url = own.place_source.url;
+    delete pin.kakao_place_id;
+    delete pin.search_query;
+    (pin as any)._place_id = own.place_id;
+    pin.permissions = pinPermissions(pin);
+    emitEvent(pin.map_id, "public", "pin.updated", pin);
+    return HttpResponse.json(pin);
+  }),
 
   http.delete("*/pins/:pinId", ({ params }) => {
     const pinId = params.pinId as string;

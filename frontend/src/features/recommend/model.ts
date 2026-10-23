@@ -1,6 +1,7 @@
 import type { components } from '@pingo/contracts/src/types/api'
 
 import { ApiError } from '@/api'
+import { josa } from '@/ui/josa'
 
 export type RecommendCategory = components['schemas']['RecommendCategory']
 export type ReadinessDto = components['schemas']['Readiness']
@@ -48,9 +49,12 @@ export function groupEvidence(lines: EvidenceLineDto[]) {
 export function runErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.code === 'NOT_READY') return '아직 의견이 달린 핀이 없어요. 핀에 ♥나 반대 의견을 남기면 다시 눌러 주세요'
-    if (err.code === 'RETRY_LIMIT') return '5번까지만 찾습니다'
+    if (err.code === 'RETRY_LIMIT') {
+      const limit = typeof err.detail?.attempt_limit === 'number' ? err.detail.attempt_limit : DEFAULT_ATTEMPT_LIMIT
+      return `${limit}번까지만 찾습니다`
+    }
     if (err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 근거를 고치거나 직접 찍어 보세요'
-    if (err.code === 'RECOMMEND_FAILED') return '추천을 찾지 못했어요. 조건이 까다로워서가 아니에요 — 남긴 것은 그대로 있어요'
+    if (err.code === 'RECOMMEND_FAILED') return '의견을 조건으로 정리하지 못했어요. 남긴 의견은 그대로 있으니 잠시 뒤 다시 눌러 주세요'
   }
   return '추천을 시작하지 못했어요'
 }
@@ -63,7 +67,28 @@ export function noResultsFunnel(err: unknown): FunnelRow[] | null {
   return (err.detail?.funnel as FunnelRow[] | undefined) ?? []
 }
 
-export const RETRY_MAX = 5
+/** 추천 횟수 상한(#31, 지도 안 구성원 각자·카테고리 무관). 서버 값(attempt_limit)을 쓰고, 없으면(구버전 서버) 이 값. */
+const DEFAULT_ATTEMPT_LIMIT = 10
+export const attemptLimit = (run: RecommendRunDto) => run.attempt_limit ?? DEFAULT_ATTEMPT_LIMIT
+
+/**
+ * 원한 조건(wants=true 근거 줄)인데 추천한 곳 모두가 못 맞췄거나(passed=false) 모르는(needs_check) 조건의 이름.
+ * 예: "곱창 먹고 싶어요"인데 반경 안에 곱창집이 없어 양식집만 나왔을 때 이유를 말해 주려고 쓴다.
+ * 원하지 않는 조건·실격 조건은 보지 않는다 — 그쪽의 '확인 필요'는 "그런 곳이 없다"는 뜻이 아니다.
+ */
+export function missingWants(candidates: CandidateDto[], evidence: EvidenceLineDto[]): string[] {
+  if (candidates.length === 0) return []
+  const wanted = new Map<string, string>()
+  for (const l of evidence) if (l.is_active && l.wants === true && l.fact_key) wanted.set(l.fact_key, l.fact_label ?? l.text)
+  return [...wanted]
+    .filter(([key]) =>
+      candidates.every((c) => {
+        const check = c.checks.find((k) => k.fact_key === key)
+        return check && (!check.passed || check.needs_check)
+      }),
+    )
+    .map(([, label]) => label)
+}
 
 export type CheckView = { label: string; tone: 'pass' | 'check' | 'fail' }
 
@@ -88,7 +113,7 @@ export function fulfillmentLine(c: CandidateDto, members: { userId: string; name
   return [
     ok.length && (no.length ? `${ok.join('·')} 통과` : `조건을 건 ${ok.join('·')} 모두 통과`),
     no.length && `${no.join('·')} 미충족`,
-    none.length && `${none.join('·')}은(는) 건 조건 없음`,
+    none.length && `${none.join('·')}${josa(none[none.length - 1], '은', '는')} 건 조건 없음`,
   ]
     .filter(Boolean)
     .join(' · ')

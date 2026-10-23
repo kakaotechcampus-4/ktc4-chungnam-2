@@ -12,13 +12,14 @@ from sqlalchemy.orm import Session
 
 from common.database import SessionLocal
 from common.settings import settings
-from places import matching, repository
+from places import linkfetch, linkparse, matching, repository
 from places.http import CallStats, SourceHttp
 from common.errors import AppError
 from places.ratelimit import SlidingWindowLimiter
 from places.samples import search_samples
+from places.matching import Candidate
 from places.schemas import (
-    Area, FactLabel, PlaceHint, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult, ResolvedCoords,
+    Area, FactLabel, LinkParseResult, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult, PlaceSourceInfo, ResolvedCoords,
 )
 from places.service import PlaceService, to_result
 from places.sources.base import PlaceSource
@@ -28,6 +29,7 @@ from places.sources.naver import NaverPlaceSource
 log = logging.getLogger("pingo.places")
 _STATS = CallStats()
 search_limiter = SlidingWindowLimiter(settings.places_search_per_min)   # 사용자당 분당 상한, 인메모리
+link_limiter = SlidingWindowLimiter(settings.places_search_per_min)     # POST /places/from-link — 검색과 같은 상한, 따로 센다(#474)
 
 
 def call_counts() -> dict[str, int]:
@@ -135,6 +137,34 @@ def pinnable_flags(hints: Sequence[PlaceHint], *, db: Session | None = None) -> 
     return flags
 
 
+NEAREST_RADIUS_M = 100.0   # GET /places/nearest 반경(#473)
+NEAREST_MAX = 5
+_NEAREST_FETCH = 10        # pinnable이 아닌 곳을 걸러 내도 NEAREST_MAX를 채우도록 조금 더 읽는다
+
+
+def nearest_own_places(lat: float, lng: float, category: str | None, *, db: Session | None = None) -> list[PlaceSearchResult]:
+    """누른 좌표 100m 안의 자체 DB 장소를 가까운 순 최대 5곳. 핀으로 만들 수 있는(pinnable) 곳만, 없으면 빈 배열.
+    카카오 값을 쓰지 않고 좌표를 저장·로깅하지 않는다. 읽기 전용."""
+    if category is not None and category not in matching.OWN_CATEGORIES:
+        return []   # 숙소·기타는 자체 DB에 없다
+    with _session(db) as s:
+        rows = repository.find_nearest(s, lat, lng, category, NEAREST_RADIUS_M, _NEAREST_FETCH)
+        if not rows:
+            return []
+        # 핀 생성이 같은 힌트(자기 이름·좌표)로 match_place를 부르므로, 거기서 거절될 곳(동명 점포 등)은 미리 뺀다
+        hints = [PlaceHint(f"own:{r.place_id}", r.name, r.lat, r.lng, r.category) for r in rows]
+        candidates = repository.find_candidates_many(s, hints)
+    flags = [matching.pick_match(h, c) is not None for h, c in zip(hints, candidates)]
+    return [
+        PlaceSearchResult(
+            place_id=f"own:{r.place_id}", place_name=r.name[:100], lat=r.lat, lng=r.lng, category=r.category,
+            address=r.address[:200] if r.address else None,
+            place_source=PlaceSourceInfo(provider=r.source), pinnable=True,
+        )
+        for r, ok in zip(rows, flags) if ok
+    ][:NEAREST_MAX]
+
+
 def get_places(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceInfo]:
     """이름·좌표·분류·kakao_place_url을 배치로 조회한다. 없는 ID는 키에서 빠진다."""
     with _session(db) as s:
@@ -149,7 +179,95 @@ def search_nearby_own(category: str, areas: Sequence[Area], *, db: Session | Non
         return repository.search_nearby_own(s, category, areas)
 
 
+def get_ad_places(db: Session, *, place_ids: Sequence[str], center: tuple[float, float], radius_m: float,
+                  categories: Sequence[str]) -> list[dict]:
+    """추천 탭 광고용(docs/ads.md 5·6절, #645). 주어진 place_id 중 status=open, category in categories,
+    center(lat, lng)에서 radius_m 안인 장소만 {id, name, category, address, lat, lng, kakao_place_id, kakao_place_url}로.
+    없는 ID·형식이 틀린 ID는 빠진다. 읽기 전용, 커밋하지 않는다."""
+    return repository.get_ad_places(db, place_ids, center, radius_m, categories)
+
+
+def search_own_by_name(db: Session, *, query: str, category: str | None = None, limit: int = 20) -> list[dict]:
+    """자체 DB places에서 이름 부분 일치(대소문자 무시, #674). status와 무관하게 돌려준다(closed도 — 광고 등록에서 고르지 않도록 보여야 한다).
+    [{id, name, address, category, status}] 이름순. 읽기 전용, 커밋하지 않는다. 카카오를 부르지 않는다."""
+    return repository.search_by_name_own(db, query, category, limit)
+
+
 def get_facts(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, list[FactLabel]]:
     """place_facts의 fact_key·value·confidence를 그대로. 라벨이 없으면 빈 리스트. unknown_policy는 호출하는 쪽이 적용한다."""
     with _session(db) as s:
         return repository.get_facts(s, place_ids)
+
+
+def get_hours(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceHours]:
+    """place_hours를 배치로 조회한다(#690). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용. 판정은 places.core.is_open_on."""
+    with _session(db) as s:
+        return repository.get_hours(s, place_ids)
+
+
+# ---- 지도 링크 해석 (POST /places/from-link, #474) ----
+# parse-only: 아무것도 저장하지 않는다. 링크의 좌표·이름은 자체 DB를 찾는 데만 쓰고 응답·로그에 싣지 않는다.
+
+def check_link_rate(user_id: str) -> None:
+    if not link_limiter.allow(user_id):
+        raise AppError("RATE_LIMITED")
+
+
+@lru_cache(maxsize=1)
+def _link_client() -> httpx.Client:
+    return linkfetch.make_client()
+
+
+def own_places_near(lat: float, lng: float, radius_m: float, limit: int, *, db: Session | None = None) -> list[Candidate]:
+    """좌표 반경 안의 영업 중 자체 DB 장소(가까운 순). 읽기 전용."""
+    with _session(db) as s:
+        return repository.find_nearby_own(s, lat, lng, radius_m, limit)
+
+
+def own_places_by_kakao_id(kakao_place_id: str, *, db: Session | None = None) -> list[Candidate]:
+    """이미 이 카카오 장소 ID로 매칭된 영업 중 자체 DB 장소. 읽기 전용."""
+    with _session(db) as s:
+        return repository.find_by_kakao_place_id(s, kakao_place_id)
+
+
+def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
+    """구글맵·카카오맵 링크 → 단서. 허용 호스트가 아니면 LINK_NOT_SUPPORTED, 단축 링크를 못 열었거나 장소를 못 찾으면 LINK_UNRESOLVED."""
+    parts = linkparse.split_url(url)
+    final = parts.geturl()
+    shortened = linkparse.is_short_host((parts.hostname or "").lower().rstrip("."))
+    if shortened:
+        try:
+            final = linkfetch.follow_short_link(final, client=_link_client())
+        except linkfetch.LinkFetchError as exc:
+            log.info("places.link 단축 링크 해석 실패: %s", exc)   # 링크 주소는 남기지 않는다
+            raise AppError("LINK_UNRESOLVED") from exc
+    parsed = linkparse.parse_resolved(final)
+    if parsed is None:
+        raise AppError("LINK_UNRESOLVED" if shortened else "LINK_NOT_SUPPORTED")
+
+    if parsed.provider == "kakao":
+        found = own_places_by_kakao_id(parsed.kakao_place_id, db=db)[: matching.LINK_MAX_MATCHES]
+        result = LinkParseResult(
+            provider="kakao", kakao_place_id=parsed.kakao_place_id,
+            matches=[_to_link_match(c) for c in found], needs_search_query=not found,
+        )
+    else:
+        found = []
+        if parsed.lat is not None and parsed.lng is not None:
+            near = own_places_near(parsed.lat, parsed.lng, matching.LINK_MATCH_RADIUS_M, matching.MAX_CANDIDATES, db=db)
+            found = matching.pick_link_matches(parsed.name_hint, near)
+        result = LinkParseResult(
+            provider="google", name_hint=parsed.name_hint,
+            matches=[_to_link_match(c) for c in found], needs_search_query=False,
+        )
+    log.info("places.link provider=%s matches=%d", result.provider, len(result.matches))
+    return result
+
+
+def _to_link_match(c: Candidate) -> PlaceSearchResult:
+    """핀 생성 요청에 그대로 되돌려 보낼 모양. place_id는 기록된 카카오 ID가 있으면 그것, 없으면 `own:<id>`(카카오 ID로 기록되지 않는다)."""
+    return PlaceSearchResult(
+        place_id=c.kakao_place_id or f"own:{c.place_id}",
+        place_name=c.name[:100], lat=c.lat, lng=c.lng, category=c.category,
+        address=c.address[:200] if c.address else None, pinnable=True,
+    )

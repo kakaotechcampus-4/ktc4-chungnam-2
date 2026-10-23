@@ -30,6 +30,8 @@ class PlaceStub:
     # 가드레일5 출처 — {"provider": "kakao"|"naver"|"google"|"permit"|"tourapi", "url"?: str}. places(#14)가 실구현되면
     # 채운다. dev 스텁은 출처가 없으므로 None(없는 출처를 지어내지 않는다).
     source: Mapping[str, Any] | None = None
+    # places.can_recommend — false면 후보 풀에서 뺀다(constraints.md「추천 가능」). dev 스텁은 항상 True.
+    can_recommend: bool = True
 
 
 class PlaceSearchGateway(Protocol):
@@ -51,6 +53,9 @@ class PlaceFactsGateway(Protocol):
     인터페이스 어디에도 없다."""
 
     def get_facts(self, place_ids: Sequence[str]) -> Mapping[str, Sequence[FactLabel]]: ...
+
+    # 선택(#690): `get_hours(place_ids) -> Mapping[str, PlaceHours]` — 영업시간·휴무일(places.api.get_hours). 행이 없는 장소는
+    # 키에서 빠진다(= 모름). 이 메서드가 없는 게이트웨이(dev·테스트 가짜)는 전부 모름으로 본다.
 
 
 class EvidencePlanGateway(Protocol):

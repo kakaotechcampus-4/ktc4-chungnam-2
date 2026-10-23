@@ -1,8 +1,191 @@
 # 루트 리뷰 가이드 — backend/recommend
 
 `backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 네 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#190" 절이 최신, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
+작업을 누적해서 담는다 — 아래 "#707" 절이 최신, 그 아래 "#617" 절, 그 아래 "#587" 절, 그 아래 "#585" 절, "#569" 절, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
 전체, 가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+
+---
+
+# #707 — 「+」 직접 추가는 선호, 요청당 5줄·run당 10개 상한 (멘토 리뷰 #680)
+
+## 바뀐 것
+
+- `service.add_manual_evidence`의 배지가 `reference` → `preferred`. ②에 보내는 입력 배지도 `preferred`다(프롬프트는 배지를
+  특별히 다루지 않는다). 선호 집계(`flows` 안 `preferred_authors`·`avoided_authors`)는 source를 보지 않고 badge·fact_key·wants만
+  보므로 코드 변경 없이 점수에 들어간다. ②가 키나 방향을 못 붙인 줄은 지금처럼 남고 효과가 없다.
+- 한 요청 5줄: `schemas.EvidencePatchRequest.add`에 `max_length=5` → 422 `VALIDATION_ERROR`.
+- run 하나 10개: `core.MANUAL_EVIDENCE_LIMIT = 10`, 넘으면 `AppError("EVIDENCE_LIMIT", detail={"limit": 10, "used": 이 요청 전 수})`.
+  ×로 뺀 줄도 센다. 사람이 아니라 run 단위다(다른 구성원이 넣은 것도 합산).
+- 검사는 두 번: 모델 앞 읽기 단계에서 한 번(넘으면 ②를 부르지 않는다), 모델 뒤 쓰기 단계에서 `service.lock_run`(run 행
+  `FOR UPDATE`)으로 잠근 뒤 다시 한 번. 읽기 단계 잠금은 #275 롤백으로 풀려서 동시 요청을 못 막기 때문이다. 동시 요청이
+  둘 다 앞 검사를 통과하면 늦은 쪽은 모델을 부른 뒤 409로 끝나고 줄은 남지 않는다.
+
+## 루트 확인 필요 — "10줄"을 무엇으로 세나
+
+**줄(행)이 아니라 「+」로 넣은 글 수로 센다**(`service.count_manual_entries`: source='manual' 행을 `(text, created_at)`으로 묶어
+센다. created_at은 트랜잭션 시작 시각이라 한 요청에서 넣은 줄은 같다). 글 하나에 조건이 여럿이면 행이 여럿이 되는데(#419),
+모델 앞에서는 글이 몇 행이 될지 모르고, 행으로 세면 "8개 넣었는데 막힌다"·`used`가 10을 넘는 응답이 생긴다. 상한의 목적(모델
+입력 수)과 FE 문구("직접 추가는 10개까지예요")에 맞춰 **글 수로 정했다**(2026-10-24 사용자 확인).
+
+- 한 요청 안의 같은 글은 `patch_evidence`가 ②를 부르기 전에 하나로 줄인다(`dict.fromkeys`, 순서 유지). 같은 글 5개를 보내 1개로
+  세이면서 ②에는 5개를 넣는 우회를 막는다. 다른 요청에서 같은 글을 다시 넣으면 따로 센다.
+- 남은 전제: created_at이 트랜잭션 시각이라는 것. 깨지면(행마다 다른 시각) 행 수로 세는 것과 같아져 더 엄격해질 뿐 상한이
+  뚫리지는 않는다.
+- **루트 몫**: `docs/constraints.md`·`docs/errors.md`·api-spec·CHANGELOG의 "run 하나에 10줄"을 "10개(글)"로 고친다. FE가 응답
+  줄 수로 세면 서버보다 먼저 「+」를 끈다(아래 FE 참고).
+
+## FE 참고
+
+`EvidenceLine` 응답에는 source가 없어 FE가 직접 추가한 개수를 응답만으로 셀 수 없다. 「+」 끄기는 FE가 넣은 수를 세거나
+409를 받고 끄는 방식이 된다. 직접 추가한 줄은 이제 `badge: preferred`라 "가능하면 맞춰주세요" 구역에 보인다
+(`frontend/src/features/recommend/model.ts:44`의 reference 구역은 v1에서 비게 된다).
+
+## 바뀐 테스트
+
+- 기대값만 새 규칙으로: `test_service.py::test_add_manual_evidence_is_preferred`,
+  `test_flows.py::test_patch_evidence_add_creates_manual_preferred_line`, `::test_plus_manual_line_goes_through_plan_evidence_and_is_preferred`,
+  `::test_plus_manual_text_with_several_conditions_adds_a_preferred_line_per_condition`
+- 새 테스트(`test_flows.py` "「+」 직접 추가는 선호, 상한" 절, `test_router.py`): "회 좋아해" → 횟집 1위·실격 0, 키·방향 없는 줄은 순위
+  불변, 11번째 409(detail, 모델 안 부름), 뺀 줄도 셈, 조건 여럿인 글은 하나로 셈, 토글만인 요청·반응 줄은 세지 않음, 동시 요청
+  (test_engine 두 세션), 같은 글 반복은 ②에 한 번, 라우터 6줄 422·11번째 409.
+- 점수: 「+」 선호 작성자는 지지 1명이지만 직접 쓴 선호라 `WRITTEN_PREFERENCE_POINTS`(3점)다(#414). 테스트는 점수 값이 아니라
+  순위로 확인한다(후보에 score 컬럼이 없다).
+
+---
+
+# #617 — 반대 칩의 "원함"은 선호로 (접근성 칩 제외)
+
+## 바뀐 규칙
+
+`core.demote_wanted_place_identity`(이름·시그니처 그대로, agent는 `recommend.api`의 같은 이름으로 부른다)가 required이면서
+wants=true인 줄 중 아래를 preferred로 내린다.
+
+- 글 줄(chip_id 없음): 키가 가게의 정체(음식점 cuisine_*)일 때만 — #422 그대로. "주차 돼야 해요"는 required
+- 칩 줄(chip_id 있음): 전부 — food_wait, food_cramped, cafe_noisy, cafe_seat, sight_noisy. 예외는 `core.REQUIRED_WANTED_CHIP_IDS`
+  (= {"sight_inaccessible"})
+- wants=false 줄(「매워요」 등), 다른 배지, 키 없는 칩(wants가 null)은 그대로
+
+docstring은 constraints.md 절 이름을 "🚫 사유 안의 원함은 선호다"(#422, #617)로 적었다. **지금 constraints.md는 아직 옛 이름
+("음식 종류 '원함'")이고, 그 절 표에 칩 「좁아요」 → required(그대로) 줄과 "「좁아요」처럼 🚫 안의 원함이 필요 조건인 경우도 있어서"
+문장이 남아 있다.** 칩 절의 배지 설명("배지는 required")도 루트 몫이다.
+
+## recommend 밖에서 기대값만 고친 테스트 (같은 PR, 커밋은 모듈별)
+
+옛 규칙(칩 원함 = required)을 단언하던 4개. 모두 원함 칩이 preferred가 된 것 때문이었고, agent·integration 운영 코드는 그대로다.
+요약 테스트는 한 사람만 남긴 칩이라 「좁아요」가 must_keep에서 빠져도 common_prefs(2명 이상, agent-v2.md 요약 칸 표)에는 들지 않는다 —
+선호 칸에 보이려면 같은 칩을 두 명이 남겨야 한다.
+
+| 테스트 | 옛 단언 | 새 기대값 |
+|---|---|---|
+| `integration/test_reason_chips_412.py::test_chips_and_text_become_one_line_each_and_only_text_goes_to_the_planner` (61행) | 세 줄 모두 badge required | 「좁아요」 줄만 preferred |
+| `agent/tests/test_tools.py::test_structure_reasons_uses_planner_for_text_and_chip_table_for_chips` (164행) | spacious 칩 줄 required | preferred |
+| `agent/tests/test_flows_summary.py::test_two_new_reasons_wait_and_third_updates` (252행) | must_keep 4개 | must_keep은 매워요·느끼해요 2개, common_prefs 빈 칸(「웨이팅이 길어요」·「좁아요」가 빠진다) |
+| `agent/tests/test_flows_summary.py::test_one_category_per_observation_and_cursor_pulled_for_the_rest` (303행) | 카페 must_keep[0]이 quiet(칩 「시끄러워요」) | 카페 요약이 반응 1개를 보고 must_keep·common_prefs가 둘 다 빈 칸 |
+
+## recommend 안에서 바뀐 테스트
+
+- `test_flows.py`: `test_create_run_turns_each_chip_into_its_own_evidence_line_without_calling_the_model`(「좁아요」 badge
+  preferred), `test_soft_chip_becomes_a_directed_requirement` → `..._only_when_it_avoids`(실격 조건은 spicy_focused만)
+- `test_core.py`: 그대로 두는 줄 목록의 spacious 줄 주석을 "글"로 고쳤다(칩이 아니라 그대로 required)
+- 추가: 「좁아요」만 있는 run(좁은 곳 실격 0, 넓은 곳이 rank 1 — 좁은 곳을 더 가깝게 둬도), 「휠체어·유모차」 실격, 「매워요」 실격,
+  글 "주차 돼야 해요" 실격(create_run → execute_run 전체), 칩 다섯 개 내림·예외 칩 그대로(core), api 같은 결과(「좁아요」 preferred)
+
+---
+
+# #587 — 추천 막힘 조언용 run 정보 조회와 passed_count
+
+조언 자체(대상 판정, 모델, 검증, 저장)와 `GET /runs/{runId}/advice` 라우터는 agent에 있다. recommend는 run 읽기 함수만 더했고
+agent를 import하지 않는다(루트 리뷰 후속 수정, 2026-10-18 — 아래 "후속 수정").
+
+## 후속 수정 (루트 리뷰, 2026-10-18)
+
+- **라우터를 agent로 옮겼다.** 처음에는 recommend 라우터 → `flows.run_advice` → `agent.api.advise_run`이었고 recommend와 agent가 서로를
+  import했다. 지금은 agent/router.py가 `recommend.api.get_run_meta`와 authz로 권한을 보고 agent.flows를 바로 부른다. recommend의
+  `router.get_advice`, `flows.run_advice`, `deps.get_session_factory`(SessionFactoryDep)를 지웠다 — router·deps·flows의 import는 develop과
+  같다. recommend → agent import 0개
+- **passed_count**: `api.get_run_funnel`은 `{result_count, funnel, passed_count}`를, `api.simulate_filter`의 before·after는
+  `{result_count, funnel, passed_count}`를 돌려준다. passed_count는 필터를 모두 통과한 곳의 수(상위 3곳을 고르기 전)이고
+  `core.passed_count(result_count, funnel)` = 결과 수 + `core.RANKING_STAGE` 단계 탈락이다. 단계 라벨을 정하는 곳(`_run_pipeline`)과
+  세는 곳이 같은 상수를 써서 라벨 문구를 바꿔도 셈이 그대로다. 깔때기 라벨과 화면 문구, 필터 규칙은 바꾸지 않았다.
+  get_run_funnel의 result_count는 get_run_meta와 같은 기준(후보 수, done이 아니면 0)이라 이전 시도에서 게시된 후보가 남은 run은 그만큼
+  passed_count도 크게 나온다(전과 같은 기준, 바꾸지 않았다)
+- 테스트(`tests/test_run_reads_api.py`): 통과 다섯 곳·결과 3곳 판에서 passed_count가 저장 깔때기와 시뮬레이션 모두 5, 「좁아요」를 끄면 6.
+  `core.RANKING_STAGE`를 다른 문구로 바꿔도 같은 값
+
+## 구현
+
+- `api.get_run_meta(db, *, run_id)`: `{run_id, map_id, category, requested_by, status, result_count, created_at,
+  default_radius_walk_min, widen_limit_walk_min}`. agent가 대상 판정(완료, 결과 수), 요청자 확인, 반경 상한(core.WIDEN_LIMIT_MIN)에
+  쓴다. result_count는 get_recent_runs와 같은 기준(후보 수, done이 아니면 0). 권한 판정 없음
+- `api.get_run_evidence`에 `chip_id`를 더했다(키 없는 줄 중 「비싸요」 칩을 agent가 not_filtered로 가르려고). 다른 칸은 그대로다
+
+## 루트에 알릴 것
+
+- 명세 9절의 경로(recommend router → flows → agent.api)와 달리 라우터가 agent에 있다(위 후속 수정). 명세 문구는 고치지 않았다
+- 필터 규칙, 깔때기, 스펙은 바꾸지 않았다. 계약 테스트의 KNOWN_MISSING·KNOWN_UNCOVERED에서 이 경로를 지우고 골든 패스(403, 204)와
+  `test_run_advice_matches_the_openapi_spec`(같은 카테고리 run 3개 → 200, RunAdvice 스키마 검증, 다시 열어도 같음)에 넣었다
+- `tests/test_run_reads_api.py`: get_run_meta 테스트, 없는 run NOT_FOUND 목록에 get_run_meta, get_run_evidence 기대값에 chip_id
+
+---
+
+# #585 — 추천 막힘 조언용 run 조회 3종과 읽기 전용 시뮬레이션
+
+## 구현
+
+- `recommend.api`에 `get_recent_runs`·`get_run_funnel`·`get_run_evidence`·`simulate_filter`. 네 함수 모두 권한을 판정하지 않는다(agent가 run 요청자를
+  확인한 뒤 부른다, docstring에 적음). 없는 run은 `AppError NOT_FOUND`. 라우터·스펙 변경 없음.
+- `_run_pipeline`이 지역(`_PipelineRegion`, regions 행의 사본)과 활성 근거 줄을 인자로 받는다. 읽는 곳은 `_pipeline_inputs` 하나이고, 시뮬레이션만
+  반경 배율과 끌 줄을 넘긴다. 필터 순서·실격 규칙·깔때기 라벨은 그대로다. execute/widen/retry는 `_pipeline_inputs(db, run)`로 지금과 같은 입력을 넘긴다.
+- `_excluded_place_ids(record_dismissed=False)`: 🚫한 곳을 `exclusions`에 쌓지 않고 집합에만 합친다. 결과 집합은 실행 때와 같다(가드레일 6).
+- 테스트 `tests/test_run_reads_api.py`(15개): execute_run 깔때기·후보 고정, before = 실제 실행 결과, 줄 하나 끄면 그 실격만 풀림, 반경 배율 2배면 반경
+  단계 탈락 감소, 제안·거절한 곳은 계속 빠짐, 호출 전후 recommend 테이블 전부와 event_log가 같음(실행 전·후 두 경우).
+
+## 루트에 알릴 것
+
+- **`docs/agent-v2.md` 10절 표와 다르다**: `get_run_evidence`는 표의 `is_requester_own` 대신 이슈 #585대로 `author_id`를 돌려준다(agent가 run의
+  requested_by와 비교). 표를 고칠지 루트가 정한다.
+- **`result_count`는 상위 3곳 선정 뒤의 수라 최대 3이다.** soft_relax의 "끄면 몇 곳이 더 남는가"는 깔때기의 「실격 조건 제거」 차이(또는
+  `result_count` + 「상위 3곳 선정」 removed_count = 필터 통과 수)로 계산해야 한다. 통과 수 필드가 따로 필요하면 요청해 달라.
+- **before는 다시 계산한 값이다**(last_funnel을 그대로 쓰지 않는다). 실행 뒤 지도에 핀이 생기거나 🚫가 달리면 마지막 실행 결과와 달라질 수 있다. 차이는
+  같은 호출의 before/after로만 비교하는 것이 맞다. 저장된 마지막 실행은 `get_run_funnel`.
+- `simulate_filter`에 선택 인자 `place_search`, `place_facts`를 더했다(생략하면 `recommend.deps`가 고른 실행과 같은 Gateway). 테스트와 agent 스텁 주입용이다.
+- 입력 검증: 그 run의 근거 줄이 아닌 id(형식 오류 포함)는 `NOT_FOUND`, `radius_factor <= 0`은 `ValueError`. 배율 상한은 없다 — 반경 넓히기 상한(30분,
+  `WIDEN_LIMIT`)을 넘는 배율 조언을 내지 않는 건 agent 몫이다. 배율은 모든 지역 원에 곱한다(v1은 원 하나).
+- dev 스텁(`DevPlaceSearchGateway`)은 원 중심 150m 안에 고정 6곳만 만들어서 반경 배율을 바꿔도 결과가 같다. 반경 조언은 real 모드에서만 의미가 있다.
+- 시간: 로컬 PostgreSQL, 가짜 Gateway와 dev 스텁 모두 1회 약 25ms(파이프라인 2번, execute_run 1회는 약 29ms). real 모드는 여기에 장소 검색·라벨 조회가
+  2번씩 더 붙는다. soft_relax가 줄마다 부르면 줄 수만큼 before를 다시 계산한다 — 느려지면 여러 변경을 한 번에 받는 함수를 따로 연다.
+- 백엔드 전체 테스트에서 `agent/tests/test_flows.py::test_daily_cleanup_deletes_old_runs_once_a_day` 하나가 실패한다. 이번 변경을 뺀 develop 상태에서도
+  똑같이 실패해서 이번 작업과는 무관하다(agent 코드라 손대지 않았다).
+
+---
+
+# #569 — 실시간 핀 가게를 추천에서 제외
+
+`flows._excluded_place_ids`가 `pins.api.list_live_kakao_place_ids(map_id)`의 카카오 ID마다 `places.api.own_places_by_kakao_id`로 자체 DB `place_id`를 찾아 기존 제외 집합에 합친다(다른 모듈 service·models 호출 없음). 실시간 핀이 없으면 places를 부르지 않는다.
+
+- 깔때기: 새 단계 없음. 「이미 지도에 있는 장소」는 원래 별도 단계 없이 `_excluded_place_ids` 하나로 합쳐 「이미 제안·거절됨」(`removed_exclusions`)에서 세므로, 실시간 핀 가게도 거기에 합산된다.
+- 요청자 제안·거절 이력, 개인 단위 규칙, 스펙·응답은 그대로. 이견 없음.
+
+---
+
+# #469 — 지난 추천 기록
+
+## 구현
+
+- `GET /maps/{mapId}/runs?category&limit` — `require_map_member()`(비구성원 404). **`requested_by == 나`인 run만**(가드레일 1), `created_at` 내림차순,
+  limit 기본 20·최대 50(범위 밖 422), category 필터(없는 분류 422). 항목은 `RunSummary`(스펙 그대로).
+- `candidate_count`/`published_count`는 `service.list_runs_for_requester` 한 쿼리에서 `candidates`를 run별로 집계해 outer join한다(N+1 없음,
+  테스트가 SELECT 1회를 확인). `candidate_count`는 status가 `done`이 아니면 0, `published_count`는 상태와 무관하게 센다.
+- `GET /runs/{runId}/result`: status가 `done`이 아니면 409 `RUN_NOT_FINISHED`(검사가 `NO_RESULTS`보다 먼저). 기존 흐름(execute 뒤 조회)은 `execute_run`이
+  `done`으로 끝내므로 영향이 없다 — 골든 패스·계약 테스트가 그대로 통과한다.
+- 마이그레이션 `0028_recommend_runs_history_idx`: `recommend_runs (map_id, requested_by, created_at DESC)` 인덱스. **down_revision은 작성 시점 develop head인
+  `0024_evidence_lines_seq`다.** `0025_invite_revoke`(미병합 브랜치)가 먼저 머지되면 그 뒤로 down_revision을 옮겨야 head가 하나로 유지된다(머지 순서 확인 필요).
+- `KNOWN_MISSING`(test_spec_route_coverage)·`KNOWN_UNCOVERED`(test_response_contract)에서 `GET /maps/{}/runs`를 지웠고, 골든 패스에 내 run만 보이는지·남의 run이
+  안 보이는지를 넣었다.
+
+## 루트에 알릴 것
+
+- 같은 테스트 DB를 쓰는 pytest를 동시에 돌리면 `DROP TABLE` 데드락이 난다(이번에도 한 번 겪음) — `PINGO_TEST_DB`를 세션마다 다르게 준다.
 
 ---
 
@@ -532,3 +715,29 @@ recommend 소스+테스트 전부 통과(마이그레이션 파일의 `Union`/`S
 5. (이관) **pins/for_Root.md가 남긴 "create_ai_pin의 Principal 구성"** — 이번엔 실제로
    `Principal`을 만들 필요가 없어(3번 항목 참고, authz.guard.require가 알아서 처리) 이
    결정은 여전히 미룰 수 있었다 — 참고로만 남김.
+
+## #659 (2026-10-20)
+
+- llm 프롬프트에 카페 예시 있음: `llm/prompts.py:42` serves_alcohol 설명의 "카페인데 맥주도 되는 곳". 이번 PR에서는 건드리지 않았다.
+
+## #681-3 (2026-10-24)
+
+- (해결) 표에 없는 카페 `pet_friendly`·`accessible`·`vegetarian_friendly`와 관광지 `pet_friendly`는 루트 답변대로 '쓰지 않음'으로 표에 넣었다. 그 밖에 표에 없는 키는 '쓴다'다. 표 정의는 `constraints.HEART_SIGNAL_BY_CATEGORY`.
+- `is_place_identity_key`(원함이어도 required 내리기, #422)는 음식점만 센다. 카페 `bakery`·관광지 정체 키로 번지지 않게 막았다.
+
+## #681-4·#681-12 (2026-10-24)
+
+- **#681-4 (구현함)**: 카드 checks는 hard + 🚫 사유로 낸 soft 키는 모름·거짓도 그대로, 나머지 선호(soft)는 충족한(known+passed) 것만 점수 기여 큰 순 최대 5줄(`core.limit_preference_checks`). 점수·집계·이유 입력은 전체 체크 그대로다.
+- **「외 N개」는 못 했다**: Check 응답에 줄 수를 담을 칸이 없다(스키마를 바꾸지 말라는 지시). 필요하면 응답에 `hidden_preference_count` 같은 칸을 루트가 스펙에 넣어 주면 `limit_preference_checks`가 넘긴 개수를 채운다. 또 이 변경으로 원한 선호가 모름이어도 「확인 필요」로 안 보인다(기존 테스트 2건 기대값을 바꿨다).
+- **#681-12 (보류, 루트 확인 필요)**: `places.schemas.PlaceInfo`에 `curated`가 없다(`source`는 "permit" | "tourapi"뿐). 정예 장소를 "정예 조사"로 표시하려면 places가 `PlaceInfo.curated: bool`(또는 `source="curated"`)을 주고 `PlaceSourceInfo` 스펙에도 값이 있어야 한다. 그 뒤 recommend가 `place_source`에 그대로 싣는다 — recommend 쪽 변경은 그때 몇 줄이다.
+
+## #690 is_open (2026-10-24)
+
+- 요일 단위 휴무 판정은 `places.core.is_open_on`을 import하지 않고 `recommend.core.trip_open_status`에 같은 규칙으로 구현했다(hours의 빈 요일, `closed_days`, 전날 구간이 24:00을 넘겨 이어지는 새벽은 영업). 공개 래퍼는 필요 없다.
+- `PlaceFactsGateway`에 선택 메서드 `get_hours`를 더했다(실제 모드는 `places.api.get_hours`). 이 메서드가 없는 게이트웨이(dev·다른 모듈 테스트의 가짜)는 전부 「모름」(통과 + 확인 필요)이다.
+- 확인 필요 기준: 휴무가 아닌 요일 중 영업이 확인된 요일(hours에 구간이 있는 요일)이 하나도 없으면 `needs_check`다. 즉 행이 없는 경우뿐 아니라 `closed_days`만 있고 여행 요일이 거기 없는 경우(휴무는 아니지만 영업 여부는 모름)도 확인 필요로 둔다 — 문서 「영업 중 판정」의 `unknown` 정의를 따랐다.
+- known 통과 체크의 문구는 「여행 기간에 영업하는 날이 있음」(`PASSED_LABELS["is_open"]`)이다. 다른 문구를 원하면 알려 달라.
+
+## #720 (2026-10-24)
+
+- EvidenceLine에 `enforced`를 더했다(`fact_key is not None`, 응답에 항상 채움). 구현은 `flows._evidence_response` 한 곳이다. 스펙 PR #725가 정본이며 이견 없음.

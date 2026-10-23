@@ -13,8 +13,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from auth import service
-from auth.models import User
-from auth.testing import session_cookie
+from auth.models import User, UserIdentity
+from auth.testing import create_guest, create_kakao_user, session_cookie
 from auth.tests.test_service import _FakeResponse
 
 
@@ -22,10 +22,7 @@ LOGIN_URL = "http://localhost:5173/login"
 
 
 def _seed_user(db_session, *, user_id="user_1", display_name="철수"):
-    row = User(id=user_id, provider="kakao", provider_user_id=f"kakao_{user_id}", display_name=display_name)
-    db_session.add(row)
-    db_session.flush()
-    return row
+    return create_kakao_user(db_session, user_id, provider_user_id=f"kakao_{user_id}", display_name=display_name)
 
 
 @pytest.fixture()
@@ -140,7 +137,9 @@ def test_kakao_callback_creates_user_and_sets_session_cookie(app_client, db_sess
     assert resp.status_code == 302
     assert "session" in resp.cookies
 
-    row = db_session.execute(select(User).where(User.provider_user_id == "7")).scalar_one()
+    row = db_session.execute(
+        select(User).join(UserIdentity, UserIdentity.user_id == User.id).where(UserIdentity.provider_user_id == "7")
+    ).scalar_one()
     assert row.display_name == "민수"
 
 
@@ -292,8 +291,7 @@ def test_withdrawn_account_login_is_redirected_not_json(app_client, db_session, 
     from datetime import datetime, timezone
 
     _mock_kakao_login(monkeypatch, kakao_id=77)
-    db_session.add(User(provider="kakao", provider_user_id="77", display_name="탈퇴자", deleted_at=datetime.now(timezone.utc)))
-    db_session.flush()
+    create_kakao_user(db_session, provider_user_id="77", display_name="탈퇴자", deleted_at=datetime.now(timezone.utc))
     state = _start_login(app_client)
 
     _assert_failed_with(_callback(app_client, code="auth-code", state=state), "server_error")
@@ -393,7 +391,7 @@ def test_me_returns_current_user(app_client, db_session):
     _seed_user(db_session, user_id="user_1", display_name="철수")
     resp = app_client.get("/auth/me", cookies=session_cookie("user_1"))
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"id": "user_1", "display_name": "철수"}
+    assert resp.json() == {"id": "user_1", "display_name": "철수", "is_guest": False}
 
 
 def test_me_without_cookie_is_401(app_client):
@@ -411,7 +409,7 @@ def test_patch_me_updates_display_name(app_client, db_session):
     _seed_user(db_session, user_id="user_1", display_name="철수")
     resp = app_client.patch("/auth/me", json={"display_name": "  새이름 "}, cookies=session_cookie("user_1"))
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"id": "user_1", "display_name": "새이름"}
+    assert resp.json() == {"id": "user_1", "display_name": "새이름", "is_guest": False}
 
     assert app_client.get("/auth/me", cookies=session_cookie("user_1")).json()["display_name"] == "새이름"
 
@@ -541,3 +539,10 @@ def test_missing_cookie_via_real_asgi_app_returns_envelope():
     response = TestClient(asgi_app).get("/auth/me")
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHORIZED"
+
+
+def test_get_me_reports_is_guest(app_client, db_session):
+    create_guest(db_session, "g1", display_name="손님")
+    assert app_client.get("/auth/me", cookies=session_cookie("g1")).json()["is_guest"] is True
+    _seed_user(db_session, user_id="k1", display_name="철수")
+    assert app_client.get("/auth/me", cookies=session_cookie("k1")).json()["is_guest"] is False

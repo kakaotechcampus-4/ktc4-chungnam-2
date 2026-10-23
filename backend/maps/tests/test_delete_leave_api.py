@@ -42,7 +42,7 @@ def _create_map(app_client, user_id="user_1", title="부산 여행"):
 
 def _invite_token(app_client, map_id, user_id="user_1"):
     resp = app_client.post(f"/maps/{map_id}/invite", cookies=_auth(user_id))
-    assert resp.status_code == 201, resp.text
+    assert resp.status_code in (200, 201), resp.text  # 내가 만든 유효한 링크가 있으면 200으로 재사용한다(#467)
     return resp.json()["token"]
 
 
@@ -118,7 +118,7 @@ def test_owner_deletes_map_and_it_disappears_for_every_member(app_client, db_ses
     assert resp.content == b""
 
     for user_id in ("user_1", "user_2"):
-        assert map_id not in [m["id"] for m in app_client.get("/maps", cookies=_auth(user_id)).json()]
+        assert map_id not in [m["id"] for m in app_client.get("/maps", cookies=_auth(user_id)).json()["items"]]
         assert app_client.get(f"/maps/{map_id}", cookies=_auth(user_id)).status_code == 404
         assert app_client.get(f"/maps/{map_id}/pins", cookies=_auth(user_id)).status_code == 404
         assert app_client.get(f"/maps/{map_id}/members", cookies=_auth(user_id)).status_code == 404
@@ -184,7 +184,7 @@ def test_member_leaves_and_only_their_reactions_and_evidence_on_that_map_go(app_
     assert db_session.get(PinRow, pin_by_leaver).deleted_at is None    # 핀도 남는다
 
     assert app_client.get(f"/maps/{map_id}", cookies=_auth("user_2")).status_code == 404
-    assert map_id not in [m["id"] for m in app_client.get("/maps", cookies=_auth("user_2")).json()]
+    assert map_id not in [m["id"] for m in app_client.get("/maps", cookies=_auth("user_2")).json()["items"]]
     assert app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()["member_count"] == 1
     assert maps_api.count_members(db_session, map_id) == 1
 
@@ -224,7 +224,7 @@ def test_owner_leaving_hands_over_to_earliest_joined_non_withdrawn_member(app_cl
 
     detail = app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()
     assert detail["next_owner"] == {"user_id": "user_3", "display_name": "user_3"}
-    assert detail["permissions"] == {"can_delete": True, "can_leave": True}
+    assert detail["permissions"] == {"can_delete": True, "can_leave": True, "can_edit": True}
 
     assert app_client.delete(f"/maps/{map_id}/members/me", cookies=_auth("user_1")).status_code == 204
 
@@ -235,7 +235,7 @@ def test_owner_leaving_hands_over_to_earliest_joined_non_withdrawn_member(app_cl
     assert event.payload == {"map_id": map_id, "user_id": "user_1", "new_owner_user_id": "user_3"}
 
     new_owner_view = app_client.get(f"/maps/{map_id}", cookies=_auth("user_3")).json()
-    assert new_owner_view["permissions"] == {"can_delete": True, "can_leave": True}
+    assert new_owner_view["permissions"] == {"can_delete": True, "can_leave": True, "can_edit": True}
     assert new_owner_view["next_owner"]["user_id"] == "user_lonely"
 
 
@@ -280,7 +280,7 @@ def test_owner_without_successor_cannot_leave(app_client, db_session, others_wit
         _withdraw(db_session, "user_2")
 
     detail = app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()
-    assert detail["permissions"] == {"can_delete": True, "can_leave": False}
+    assert detail["permissions"] == {"can_delete": True, "can_leave": False, "can_edit": True}
     assert "next_owner" not in detail
 
     resp = app_client.delete(f"/maps/{map_id}/members/me", cookies=_auth("user_1"))
@@ -296,15 +296,15 @@ def test_permissions_on_every_map_response(app_client):
     created = app_client.post(
         "/maps", json={"title": "x", "start_date": "2026-10-10", "end_date": "2026-10-10"}, cookies=_auth("user_1")
     ).json()
-    assert created["permissions"] == {"can_delete": True, "can_leave": False}
+    assert created["permissions"] == {"can_delete": True, "can_leave": False, "can_edit": True}
     accepted = app_client.post(f"/invites/{token}/accept", cookies=_auth("user_2")).json()
-    assert accepted["permissions"] == {"can_delete": False, "can_leave": True}
+    assert accepted["permissions"] == {"can_delete": False, "can_leave": True, "can_edit": False}
 
-    listed = {m["id"]: m for m in app_client.get("/maps", cookies=_auth("user_1")).json()}
-    assert listed[map_id]["permissions"] == {"can_delete": True, "can_leave": True}
+    listed = {m["id"]: m for m in app_client.get("/maps", cookies=_auth("user_1")).json()["items"]}
+    assert listed[map_id]["permissions"] == {"can_delete": True, "can_leave": True, "can_edit": True}
     assert all("next_owner" not in m for m in listed.values())   # 목록에서는 생략
     member_view = app_client.get(f"/maps/{map_id}", cookies=_auth("user_2")).json()
-    assert member_view["permissions"] == {"can_delete": False, "can_leave": True}
+    assert member_view["permissions"] == {"can_delete": False, "can_leave": True, "can_edit": False}
     assert "next_owner" not in member_view
 
 
@@ -344,7 +344,7 @@ def test_creating_a_map_over_the_limit_is_409(app_client):
     assert resp.status_code == 409
     assert resp.json()["code"] == "MAP_LIMIT"
     assert resp.json()["detail"] == {"limit": MAP_LIMIT, "count": MAP_LIMIT}
-    assert len(app_client.get("/maps", cookies=_auth("user_2")).json()) == len(own)
+    assert len(app_client.get("/maps", cookies=_auth("user_2")).json()["items"]) == len(own)
 
 
 def test_accepting_a_new_invite_at_the_limit_is_409_but_rejoin_is_allowed(app_client):

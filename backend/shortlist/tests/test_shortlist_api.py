@@ -15,6 +15,7 @@ from authz.deps import get_membership_gateway
 from authz.testing import FakeMembership
 from common.events import EventLog
 from main import app
+from maps.models import Map as MapRow
 from pins.models import Pin as PinRow
 
 
@@ -322,3 +323,129 @@ def test_new_item_after_reorder_goes_last(app_client, db_session):
     c, = _confirm(app_client, db_session, n=1)
     got = app_client.get("/maps/map_1/shortlist", cookies=_auth())
     assert [i["id"] for i in got.json()] == [b, a, c]
+
+
+# --- 확정 리스트 내보내기(#471) ---
+
+def _insert_live_pin(db_session, *, map_id="map_1", kakao_place_id="kakao:555", search_query="성수 곱창", memo=None):
+    row = PinRow(
+        id=uuid.uuid4(), map_id=map_id, category="음식점", kind="일반", origin="direct", source="live",
+        kakao_place_id=kakao_place_id, search_query=search_query, memo=memo, visibility="public", created_by="user_1",
+    )
+    db_session.add(row)
+    db_session.commit()
+    return row
+
+
+def _confirm_pins(app_client, *pins):
+    return [app_client.post("/maps/map_1/shortlist", json={"pin_id": str(p.id)}, cookies=_auth()).json()["id"] for p in pins]
+
+
+def test_export_txt_is_default_follows_visit_order_and_marks_live_pin(app_client, db_session):
+    db_pin = _insert_pin(db_session)
+    live_pin = _insert_live_pin(db_session, memo="맛있대")
+    db_item, live_item = _confirm_pins(app_client, db_pin, live_pin)
+    app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [live_item, db_item]}, cookies=_auth())
+
+    resp = app_client.get("/maps/map_1/shortlist/export", cookies=_auth())
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+    assert resp.headers["content-disposition"].startswith("attachment; filename=")
+    assert "filename*=UTF-8''" in resp.headers["content-disposition"]
+    lines = resp.text.splitlines()
+    assert lines[0] == "1. 성수 곱창 (이름 확인 필요) (음식점) https://place.map.kakao.com/555 — 맛있대"
+    assert lines[1].startswith("2. ") and "129.12" not in resp.text   # 좌표는 내보내지 않는다
+
+
+def test_export_csv_has_bom_header_and_crlf(app_client, db_session):
+    _confirm_pins(app_client, _insert_live_pin(db_session))
+
+    resp = app_client.get("/maps/map_1/shortlist/export?format=csv", cookies=_auth())
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "text/csv; charset=utf-8"
+    assert resp.content.startswith("\ufeff순서,이름,분류,링크,메모\r\n".encode())
+    assert resp.content.decode("utf-8-sig").splitlines()[1] == "1,성수 곱창 (이름 확인 필요),음식점,https://place.map.kakao.com/555,"
+
+
+def test_export_empty_shortlist(app_client):
+    assert app_client.get("/maps/map_1/shortlist/export", cookies=_auth()).text == "확정한 장소가 아직 없어요\n"
+    assert app_client.get("/maps/map_1/shortlist/export?format=csv", cookies=_auth()).text == "\ufeff순서,이름,분류,링크,메모\r\n"
+
+
+def test_export_rejects_unknown_format_with_422(app_client):
+    resp = app_client.get("/maps/map_1/shortlist/export?format=pdf", cookies=_auth())
+
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_export_non_member_gets_404(app_client):
+    app.dependency_overrides[get_membership_gateway] = _deny_membership
+    try:
+        resp = app_client.get("/maps/map_1/shortlist/export", cookies=_auth("outsider"))
+    finally:
+        del app.dependency_overrides[get_membership_gateway]
+    assert resp.status_code == 404
+
+
+def _insert_map(db_session, title, *, deleted=False):
+    from datetime import date, datetime, timezone
+
+    db_session.add(MapRow(
+        id="map_1", title=title, start_date=date(2026, 11, 1), end_date=date(2026, 11, 2), created_by="user_1",
+        deleted_at=datetime.now(timezone.utc) if deleted else None,
+    ))
+    db_session.commit()
+
+
+def _filename_star(resp):
+    from urllib.parse import unquote
+
+    return unquote(resp.headers["content-disposition"].split("filename*=UTF-8''")[1])
+
+
+def test_export_live_pin_link_is_pin_place_url(app_client, db_session):
+    _confirm_pins(app_client, _insert_live_pin(db_session, kakao_place_id="kakao:777"))
+
+    pin_url = app_client.get("/maps/map_1/shortlist", cookies=_auth()).json()[0]["pin"]["place_url"]
+    resp = app_client.get("/maps/map_1/shortlist/export", cookies=_auth())
+
+    assert pin_url and resp.text.splitlines()[0] == f"1. 성수 곱창 (이름 확인 필요) (음식점) {pin_url}"
+
+
+def test_export_filename_uses_map_title_for_txt_and_csv(app_client, db_session):
+    _insert_map(db_session, "부산 여행")
+
+    txt = app_client.get("/maps/map_1/shortlist/export", cookies=_auth())
+    csv = app_client.get("/maps/map_1/shortlist/export?format=csv", cookies=_auth())
+
+    assert _filename_star(txt) == "부산 여행 확정 리스트.txt"
+    assert _filename_star(csv) == "부산 여행 확정 리스트.csv"
+    assert 'filename="shortlist.csv"' in csv.headers["content-disposition"]   # 한글은 ASCII fallback에서 빠진다
+
+
+def test_export_filename_strips_dangerous_chars_and_cannot_inject_headers(app_client, db_session):
+    _insert_map(db_session, '../a:b*c?"d<e>f|g\r\nSet-Cookie: x=1')
+
+    resp = app_client.get("/maps/map_1/shortlist/export", cookies=_auth())
+
+    assert resp.status_code == 200 and "set-cookie" not in resp.headers
+    assert _filename_star(resp) == "abcdefg Set-Cookie x=1 확정 리스트.txt"
+    assert "/" not in _filename_star(resp)
+
+
+def test_export_filename_truncates_long_title(app_client, db_session):
+    _insert_map(db_session, "가" * 300)
+
+    assert _filename_star(app_client.get("/maps/map_1/shortlist/export", cookies=_auth())) == "가" * 50 + " 확정 리스트.txt"
+
+
+def test_export_filename_falls_back_for_blank_or_deleted_map(app_client, db_session):
+    _insert_map(db_session, " . ")
+    assert _filename_star(app_client.get("/maps/map_1/shortlist/export", cookies=_auth())) == "확정 리스트.txt"
+
+
+def test_export_filename_is_default_when_map_has_no_title_row(app_client):
+    assert _filename_star(app_client.get("/maps/map_1/shortlist/export?format=csv", cookies=_auth())) == "확정 리스트.csv"

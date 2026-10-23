@@ -41,7 +41,7 @@ guard.py 안에서만 일어난다). "멤버십/작성자 확인이 멱등 경�
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Collection, Mapping, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -53,10 +53,13 @@ from authz.schemas import Permissions
 from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
+from maps import api as maps_api
 from pins import api as pins_api
 from pins.schemas import Pin
+from places import api as places_api
 from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
+from recommend.models import EvidenceLine as EvidenceLineRow
 from recommend.models import RecommendRun
 from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
 from recommend.schemas import Check
@@ -145,13 +148,31 @@ CATEGORIES: tuple[str, ...] = categories.recommendable()  # common/categories.py
 DEFAULT_REGION_RADIUS_M = core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)  # 15분 * 80m/분 = 1200m
 
 
+def list_runs(
+    db: Session, *, map_id: str, requested_by: str, category: str | None, limit: int,
+) -> list[schemas.RunSummary]:
+    """GET /maps/{mapId}/runs (#469) — 내가 요청한 run만, 최근순. 남의 run은 어떤 경로로도 섞이지 않는다."""
+    return [
+        schemas.RunSummary(
+            id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
+            attempt_limit=core.ATTEMPT_LIMIT, created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
+        )
+        for run, candidate_count, published_count in service.list_runs_for_requester(
+            db, map_id=map_id, requested_by=requested_by, category=category, limit=limit,
+        )
+    ]
+
+
 def get_readiness(db: Session, *, map_id: str) -> dict[str, dict]:
     """GET /maps/{mapId}/recommend/readiness (5-4). 카테고리마다 ♥/🚫 의견이 달린 핀이 1곳 이상이면 열린다
     (#360 — 구성원 수와 무관, 혼자 쓰는 지도도 같다)."""
-    return {
-        category: core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
-        for category in CATEGORIES
-    }
+    return {category: readiness_for_category(db, map_id=map_id, category=category) for category in CATEGORIES}
+
+
+def readiness_for_category(db: Session, *, map_id: str, category: str) -> dict:
+    """카테고리 하나의 준비 판정(⓪) — 라우터(get_readiness), create_run, recommend.api.get_readiness(#530)가
+    모두 이 함수를 쓴다. 계산을 한 곳에만 둔다."""
+    return core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
 
 
 def _evidence_from_reaction(reaction: dict) -> dict:
@@ -234,7 +255,7 @@ def create_run(
     4) 반응 → 근거 구조화(글은 llm.api.plan_evidence, 칩은 코드 #412) 5) run INSERT → evidence_lines INSERT 6) 기본값
     지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
     트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다."""
-    readiness = core.check_readiness(pins_api.count_opinion_pins(db, map_id=map_id, category=category))
+    readiness = readiness_for_category(db, map_id=map_id, category=category)
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
 
@@ -248,7 +269,7 @@ def create_run(
         db.rollback()  # 모델을 기다리는 동안 읽기 트랜잭션이 연결을 잡고 있지 않게 한다(#275). 저장이 아니라 연결 반환이다.
     planned = evidence_planner.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
     reaction_lines = _reaction_evidence_lines(raw_reactions, [[line.model_dump() for line in group] for group in planned])
-    merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422
+    merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422, #617
 
     # LLM 대기 중 같은 사용자의 동시 요청이 상한(#31)에 도달시켰을 수 있다 — INSERT 직전에 다시 읽어
     # 경합 구간을 수 ms로 줄인다(첫 검사는 모델을 부르기 전에 막는 빠른 실패용).
@@ -271,7 +292,7 @@ def _evidence_response(line, principal: Principal) -> schemas.EvidenceLine:
     return schemas.EvidenceLine(
         id=str(line.id), author_id=line.author_id, text=line.text, badge=line.badge,
         fact_key=line.fact_key, fact_label=constraints.FACT_LABELS.get(line.fact_key) if line.fact_key else None,
-        wants=line.wants, is_active=line.is_active,
+        wants=line.wants, enforced=line.fact_key is not None, is_active=line.is_active,
         permissions=Permissions(can_disable=can(principal, "evidence.disable", resource)),
     )
 
@@ -279,6 +300,13 @@ def _evidence_response(line, principal: Principal) -> schemas.EvidenceLine:
 def list_evidence(db: Session, *, run_id: str, principal: Principal) -> list[schemas.EvidenceLine]:
     service.get_run_or_404(db, run_id)
     return [_evidence_response(line, principal) for line in service.list_evidence(db, run_id)]
+
+
+def _check_manual_evidence_limit(db: Session, run_id: uuid.UUID, *, adding: int) -> None:
+    """run 하나에 「+」로 추가한 글은 core.MANUAL_EVIDENCE_LIMIT개까지(뺀 것도 센다, #707). used는 이 요청 전까지의 수다."""
+    used = service.count_manual_entries(db, run_id)
+    if used + adding > core.MANUAL_EVIDENCE_LIMIT:
+        raise AppError("EVIDENCE_LIMIT", detail={"limit": core.MANUAL_EVIDENCE_LIMIT, "used": used})
 
 
 def patch_evidence(
@@ -300,6 +328,11 @@ def patch_evidence(
         if not can(principal, "evidence.disable", resource):
             raise AppError("FORBIDDEN")
         validated.append((line.id, is_active))
+    # 한 요청 안의 같은 글은 하나로 줄인다 — 상한은 (글, 요청)으로 세므로 반복한 글이 ②에만 여러 번 들어가지 않게(#707).
+    adds = list(dict.fromkeys(adds))
+    # 「+」 상한(#707)은 모델을 부르기 전에 본다 — 넘는 요청은 ②를 부르지 않는다.
+    if adds:
+        _check_manual_evidence_limit(db, run_uuid, adding=len(adds))
     # 「+」로 추가한 줄도 ②를 거쳐 fact_key·wants를 붙인다(#254) — 근거 줄에 "한식 제외"처럼 해석한 조건이
     # 보인다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다 — 모델이 쓰기보다 먼저라 행이 안 남는다).
     # 글 하나에 조건이 여럿이면 같은 글로 조건마다 줄 하나다(#419).
@@ -307,9 +340,13 @@ def patch_evidence(
     if adds:
         db.rollback()  # 읽기 트랜잭션을 끝내 연결을 돌려준다(#275). 저장이 아니다.
         planned = evidence_planner.plan_evidence([
-            {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "reference", "fact_key": None}
+            {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "preferred", "fact_key": None}
             for text in adds
         ])
+        # 위 검사는 롤백으로 잠금 없이 끝났다. 같은 run에 동시에 온 요청이 함께 상한을 넘지 않게 run 행을 잠그고
+        # 다시 센다 — 이때 걸리면 모델은 이미 불렸지만 줄은 남지 않는다(멘토 리뷰 #380: 여러 행에 걸친 상한).
+        service.lock_run(db, run_uuid)
+        _check_manual_evidence_limit(db, run_uuid, adding=len(adds))
     for line_id, is_active in validated:
         service.set_evidence_active(db, line_id, is_active)
     if adds:
@@ -339,38 +376,106 @@ def confirm_regions(db: Session, *, run_id: str, accept_union: bool) -> list[sch
     return [_region_response(r) for r in service.list_regions(db, run_id)]
 
 
-def _active_hard_fact_keys(db: Session, run: RecommendRun) -> list[str]:
-    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: is_active=True인 evidence_line 중
+def _hard_fact_keys_from(lines: Sequence[EvidenceLineRow], category: str) -> list[str]:
+    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: 활성 evidence_line 중
     badge='required'로 hard 키가 매핑된 것만 켠다(누구도 문제 제기 안 한 조건은 검사하지 않는다). hard 키는
     방향이 고정이라("있으면 실격") wants를 보지 않는다. ♥·「+」 사유로도 켜던 안전 조건 규칙(D11, #254)은
     안전 조건 키와 함께 없앴다(#425). 카테고리에 안 맞는 fact_key는 애초에 제외."""
-    lines = service.list_active_evidence(db, run.id)
-    applicable = set(constraints.hard_fact_keys_for(run.category))
+    applicable = set(constraints.hard_fact_keys_for(category))
     active = {line.fact_key for line in lines if line.badge == "required" and line.fact_key is not None}
     return sorted(active & applicable)
 
 
-def _active_soft_requirements(db: Session, run: RecommendRun) -> list[tuple[str, bool]]:
+def _soft_requirements_from(lines: Sequence[EvidenceLineRow]) -> list[tuple[str, bool]]:
     """#231 — soft 키 중 `required` + `wants`가 true/false인 활성 사유를 (fact_key, wants)로 켠다. wants가
     null이거나 hard 키(방향 고정)면 여기 오지 않는다. 사람이 직접 밝힌 사유라 카테고리 기본 키에 없어도
     적용한다(선호 사유와 같다 — 아래 soft_keys가 그 키의 체크를 붙인다)."""
     return sorted({
-        (line.fact_key, line.wants) for line in service.list_active_evidence(db, run.id)
+        (line.fact_key, line.wants) for line in lines
         if line.badge == "required" and line.wants is not None and line.fact_key in constraints.SOFT_FACT_KEYS
     })
+
+
+def _active_hard_fact_keys(db: Session, run: RecommendRun) -> list[str]:
+    return _hard_fact_keys_from(service.list_active_evidence(db, run.id), run.category)
+
+
+def _active_soft_requirements(db: Session, run: RecommendRun) -> list[tuple[str, bool]]:
+    return _soft_requirements_from(service.list_active_evidence(db, run.id))
 
 
 def _passes_hard_check(value) -> bool:
     return not bool(value)  # is_crowded_large — "있으면 실격"류
 
 
+@dataclass(frozen=True)
+class _PipelineRegion:
+    """_run_pipeline이 읽는 지역 값. regions 행의 사본이라 반경을 바꿔도 DB에 쓰이지 않는다(시뮬레이션, #585)."""
+
+    id: uuid.UUID
+    label: str
+    center_lat: float
+    center_lng: float
+    radius_m: int
+    anchor_points: tuple[tuple[float, float], ...]
+
+
+def _trip_weekdays(db: Session, map_id: str) -> list[str]:
+    """지도 여행 기간의 요일들(core.trip_weekday_names). 지도를 못 읽거나 날짜가 없으면 빈 목록 = 영업 판정을 안 한다."""
+    info = maps_api.get_map_for_agent(db, map_id)
+    if info is None:
+        return []
+    return core.trip_weekday_names(info["start_date"], info["end_date"])
+
+
+def _open_status_by_place(place_facts: PlaceFactsGateway, place_ids: Sequence[str], weekdays: Sequence[str]) -> dict[str, str]:
+    """후보마다 여행 요일 기준 영업 여부("closed" | "open" | "unknown", #690). 시간 조회가 없는 게이트웨이이거나 여행 날짜가
+    없으면 전부 "unknown"이다(지금처럼 아무도 빼지 않는다). 한 번에 배치 조회(N+1 금지)."""
+    get_hours = getattr(place_facts, "get_hours", None)
+    if not weekdays or get_hours is None or not place_ids:
+        return dict.fromkeys(place_ids, "unknown")
+    hours_by_place = get_hours(list(place_ids))
+    return {
+        place_id: core.trip_open_status(
+            hours_by_place[place_id].hours, hours_by_place[place_id].closed_days, weekdays,
+        ) if place_id in hours_by_place else "unknown"
+        for place_id in place_ids
+    }
+
+
+def _pipeline_inputs(
+    db: Session, run: RecommendRun, *, radius_factor: float | None = None, disable_line_ids: frozenset[str] = frozenset(),
+) -> tuple[list[_PipelineRegion], list[EvidenceLineRow]]:
+    """저장된 지역과 활성 근거 줄을 _run_pipeline 입력으로 읽는다. 실행(execute/widen/retry)은 그대로 쓰고,
+    시뮬레이션(#585)만 반경 배율과 비활성으로 볼 줄을 준다 — 사본과 거른 목록이라 행은 바뀌지 않는다."""
+    regions = [
+        _PipelineRegion(
+            id=r.id, label=r.label, center_lat=r.center_lat, center_lng=r.center_lng,
+            radius_m=r.radius_m if radius_factor is None else round(r.radius_m * radius_factor),
+            anchor_points=tuple(tuple(point) for point in r.anchor_points),
+        )
+        for r in service.list_regions(db, str(run.id))
+    ]
+    active_lines = [line for line in service.list_active_evidence(db, run.id) if str(line.id) not in disable_line_ids]
+    return regions, active_lines
+
+
+def _out_of_season_keys(db: Session, map_id: str) -> frozenset[str]:
+    """이 지도의 여행 기간과 시즌이 안 겹치는 계절 키(core.out_of_season_keys). 지도를 못 읽으면 모두 쓴다."""
+    info = maps_api.get_map_for_agent(db, map_id)
+    if info is None:
+        return frozenset()
+    return core.out_of_season_keys(info["start_date"], info["end_date"])
+
+
 def _run_pipeline(
     db: Session, run: RecommendRun, *,
+    regions: Sequence[_PipelineRegion], active_lines: Sequence[EvidenceLineRow],
     place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway, excluded_place_ids: set[str],
 ) -> tuple[list[dict], list[dict]]:
     """5-6 실격 필터 순서(반경→영업종료→실격조건→중복제외→정렬)를 그대로 지킨다
-    (recommend/CLAUDE.md "넘지 말 것" — 순서가 funnel 표의 의미를 결정한다)."""
-    regions = service.list_regions(db, str(run.id))
+    (recommend/CLAUDE.md "넘지 말 것" — 순서가 funnel 표의 의미를 결정한다). 지역과 활성 근거 줄은 인자로 받는다
+    (_pipeline_inputs, #585) — 이 함수는 DB에 쓰지 않아 시뮬레이션이 입력만 바꿔 그대로 다시 돌린다."""
     circles = [Circle(anchor_lat=r.center_lat, anchor_lng=r.center_lng, radius_m=r.radius_m) for r in regions]
     region_id = regions[0].id if regions else None
 
@@ -379,14 +484,39 @@ def _run_pipeline(
     within_radius = [p for p in pool if core.is_within_any_region(p.lat, p.lng, circles)]
     removed_radius = len(pool) - len(within_radius)
 
-    is_open_check = core.build_check("is_open", "pass", known=False, value=None, passes=True)
-    removed_open = 0  # dev 스텁은 실시간 영업시간 조회가 없어 항상 unknown+needs_check — 결코 제거하지 않는다
+    # 영업 종료 제거(#690) — 여행 기간의 모든 요일이 휴무인 장소만 뺀다. 하루라도 영업하면 통과, 정보가 없으면 통과 +
+    # 「영업 여부 확인 필요」. 여행 날짜가 없거나 시간 조회가 없으면 아무도 안 뺀다(공휴일·closed_note는 보지 않는다).
+    open_status = _open_status_by_place(place_facts, [p.place_id for p in within_radius], _trip_weekdays(db, run.map_id))
+    open_places = [p for p in within_radius if open_status[p.place_id] != "closed"]
+    removed_open = len(within_radius) - len(open_places)
+    within_radius = open_places
+    unknown_open_check = core.build_check("is_open", "pass", known=False, value=None, passes=True)
+    known_open_check = core.build_check("is_open", "pass", known=True, value=True, passes=True)
 
-    active_hard_keys = _active_hard_fact_keys(db, run)
-    active_lines = service.list_active_evidence(db, run.id)
-    soft_requirements = _active_soft_requirements(db, run)
-    # 반대 사유(활성 required)를 낸 구성원 — fact_key로 구조화됐든 아니든 충족 집계에 센다(#255).
-    disqualifier_authors = sorted({line.author_id for line in active_lines if line.badge == "required"})
+    # 추천 가능 아님 제거 — 영업 종료 다음 단계. 모두 빠져 0개여도 0개로 보여 준다(반경·기준을 완화하지 않는다).
+    recommendable = [p for p in within_radius if p.can_recommend]
+    removed_not_recommendable = len(within_radius) - len(recommendable)
+    within_radius = recommendable
+
+    # 계절 키는 여행 기간이 시즌과 겹칠 때만 쓴다(#681-6) — 시즌 밖이면 직접 쓴 사유도 이번 실행에서 없는 셈 친다(점수 0,
+    # 후보를 거르지 않고, 이유·체크에도 안 나온다). 날짜가 없으면 모두 쓴다.
+    off_season = _out_of_season_keys(db, run.map_id)
+    active_lines = [line for line in active_lines if line.fact_key not in off_season]
+    active_hard_keys = _hard_fact_keys_from(active_lines, run.category)
+    soft_requirements = _soft_requirements_from(active_lines)
+    # 구성원별 반대 조건 — 충족 집계에 센다(#255, #620). 이번 실행이 실제로 확인하는 키만 넣는다: 카테고리에 맞는 hard 키
+    # (방향 고정이라 wants=None)와 방향이 있는 soft 요구. 키 없는 줄(알러지 글, 「취향이 아니에요」)은 넣지 않는다.
+    disqualifier_conditions: dict[str, set[tuple[str, bool | None]]] = {}
+    for line in active_lines:
+        if line.badge != "required":
+            continue
+        if line.fact_key in active_hard_keys:
+            condition = (line.fact_key, None)
+        elif (line.fact_key, line.wants) in soft_requirements:
+            condition = (line.fact_key, line.wants)
+        else:
+            continue
+        disqualifier_conditions.setdefault(line.author_id, set()).add(condition)
     preferred_authors: dict[str, set[str]] = {}
     avoided_authors: dict[str, set[str]] = {}  # preferred + wants=false — 점수에서 반대 구성원(#231)
     for line in active_lines:
@@ -409,7 +539,7 @@ def _run_pipeline(
     checks_by_place: dict[str, list[Check]] = {}
     for place in within_radius:
         labels = facts_by_place.get(place.place_id, [])
-        checks = [is_open_check]
+        checks = [known_open_check if open_status[place.place_id] == "open" else unknown_open_check]
         for fact_key in active_hard_keys:
             known, value = core.resolve_label(labels, fact_key)
             passes = _passes_hard_check(value) if known else True
@@ -446,7 +576,7 @@ def _run_pipeline(
     # 집계·이유에 똑같이 쓴다 — 직접 쓴 선호 사유(preferred_authors)는 거르지 않는다.
     hearted_places = core.filter_heart_signals([
         core.HeartedPlace(
-            checks=core.label_checks(liked_facts.get(entry["place_id"], [])),
+            checks=[c for c in core.label_checks(liked_facts.get(entry["place_id"], [])) if c.fact_key not in off_season],
             member_ids=frozenset(entry["member_ids"]),
         )
         for entry in liked_pins
@@ -468,10 +598,10 @@ def _run_pipeline(
             line.fact_key: line.wants for line in active_lines
             if line.badge == badge and line.fact_key in constraints.SOFT_FACT_KEYS and line.wants is not None
         })
+    required_soft_keys = {fact_key for fact_key, _wants in soft_requirements}   # 🚫 사유로 낸 soft 키는 실격 조건이다
+    weights = core.preference_weights(hearted_places, criteria, preferred_authors_frozen, avoided_authors_frozen)
     region_label = regions[0].label if regions else ""
-    anchor_points_by_region = (
-        {region_label: [tuple(point) for point in regions[0].anchor_points]} if regions else {}
-    )
+    anchor_points_by_region = {region_label: list(regions[0].anchor_points)} if regions else {}
     scores = core.score_candidates(
         {p.place_id: checks_by_place[p.place_id] for p in after_exclusions}, hearted_places, criteria,
         preferred_authors_frozen, avoided_authors_frozen,
@@ -489,28 +619,30 @@ def _run_pipeline(
         place = places_by_id[place_id]
         checks = checks_by_place[place_id]
         fulfillment = core.build_member_fulfillment(
-            checks, hearted_places, criteria, preferred_authors_frozen, disqualifier_authors,
+            checks, hearted_places, criteria, preferred_authors_frozen, disqualifier_conditions,
         )
-        # 이유 문장의 "(n/m명)"은 선호를 가진 구성원만 센다 — 실격 사유만 낸 사람을 선호 충족으로 부풀리지 않는다.
-        preference_fulfillment = core.build_member_fulfillment(checks, hearted_places, criteria, preferred_authors_frozen)
         candidates_data.append({
             "place_id": place_id, "region_id": region_id, "lat": place.lat, "lng": place.lng,
             "rank": index + 1,
             "checks": [
                 check.model_dump()
-                for check in core.to_satisfaction_checks(core.checks_to_show(checks, wanted_soft_keys), directions)
+                for check in core.limit_preference_checks(
+                    core.to_satisfaction_checks(core.checks_to_show(checks, wanted_soft_keys), directions),
+                    required_soft_keys=required_soft_keys, weights=weights,
+                )
             ],
             "member_fulfillment": fulfillment,
-            "reason": core.build_reason(checks, criteria, preference_fulfillment),
+            "reason": core.build_reason(checks, criteria),
             "place_source": dict(place.source) if place.source else None,
         })
     funnel = core.funnel_counts([
         ("카테고리 후보 풀", 0),
         ("반경 밖 제거", removed_radius),
         ("영업 종료 제거", removed_open),
+        ("추천 가능 아님 제거", removed_not_recommendable),
         ("실격 조건 제거", removed_disqualify),
         ("이미 제안·거절됨", removed_exclusions),
-        ("상위 3곳 선정", removed_ranking),
+        (core.RANKING_STAGE, removed_ranking),
     ])
     return candidates_data, funnel
 
@@ -534,24 +666,31 @@ def _candidates_ready_event(
                  payload=payload, recipient_user_id=run.requested_by)
 
 
-def _excluded_place_ids(db: Session, run: RecommendRun) -> set[str]:
+def _excluded_place_ids(db: Session, run: RecommendRun, *, record_dismissed: bool = True) -> set[str]:
     """후보에서 뺄 place_id 전부(가드레일 6). 세 갈래를 합친다:
     1) exclusions의 `proposed`(다시 추천 받기로 이미 제안한 곳)·`dismissed`
     2) 요청자가 🚫한 핀의 장소 — 이 호출에서 `dismissed`로 exclusions에 쌓는다(#119). 핀이 지워진
        뒤에도 거절 이력이 남도록 pins가 삭제된 핀까지 돌려준다. add_exclusions는 이미 있는
        조합을 건너뛰므로 여러 번 불러도 안전하다(이미 proposed인 곳은 그대로 둔다).
+       시뮬레이션(#585)은 record_dismissed=False로 쌓지 않고 집합에만 합친다 — 결과 집합은 같다.
     3) 이미 이 지도에 있는 핀(수동이든 게시된 것이든) — 안 빼면 게시하려는 순간 pins.unique(map_id,
-       place_id)에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정, 2026-09-23)."""
-    service.add_exclusions(
-        db, map_id=run.map_id, category=run.category,
-        place_ids=pins_api.list_disliked_place_ids(
-            db, user_id=run.requested_by, map_id=run.map_id, category=run.category,
-        ),
-        reason="dismissed", run_id=run.id, requested_by=run.requested_by,
-    )
+       place_id)에 걸려 PIN_DUPLICATE(409)만 반복된다(루트 수정, 2026-09-23).
+    4) 이 지도의 실시간 핀이 가리키는 가게(#569) — 실시간 핀은 place_id가 없고 카카오 ID만 있어 3)에 안 잡힌다.
+       그 카카오 ID로 매칭된 자체 DB 장소를 찾아 합친다. 깔때기에서는 「이미 제안·거절됨」에 같이 센다."""
+    disliked = pins_api.list_disliked_place_ids(db, user_id=run.requested_by, map_id=run.map_id, category=run.category)
+    if record_dismissed:
+        service.add_exclusions(
+            db, map_id=run.map_id, category=run.category, place_ids=disliked,
+            reason="dismissed", run_id=run.id, requested_by=run.requested_by,
+        )
+    live_pin_place_ids = {
+        candidate.place_id
+        for kakao_id in pins_api.list_live_kakao_place_ids(db, map_id=run.map_id)
+        for candidate in places_api.own_places_by_kakao_id(kakao_id, db=db)
+    }
     return service.list_excluded_place_ids(
         db, map_id=run.map_id, requested_by=run.requested_by,
-    ) | pins_api.list_place_ids_on_map(db, map_id=run.map_id)
+    ) | set(disliked) | pins_api.list_place_ids_on_map(db, map_id=run.map_id) | live_pin_place_ids
 
 
 def execute_run(
@@ -560,8 +699,10 @@ def execute_run(
     """POST /runs/{runId}/execute — 실격 필터(③-a-2) + 선호 순위(③-b) + 대안 반영(④)."""
     run = service.get_run_or_404(db, run_id)
     excluded = _excluded_place_ids(db, run)
+    regions, active_lines = _pipeline_inputs(db, run)
     candidates_data, funnel = _run_pipeline(
-        db, run, place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
+        db, run, regions=regions, active_lines=active_lines,
+        place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
     )
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
@@ -591,8 +732,10 @@ def widen_run(
 
     service.set_run_status(db, run, "executing")
     excluded = _excluded_place_ids(db, run)
+    regions, active_lines = _pipeline_inputs(db, run)
     candidates_data, funnel = _run_pipeline(
-        db, run, place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
+        db, run, regions=regions, active_lines=active_lines,
+        place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
     )
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
@@ -623,14 +766,50 @@ def retry_run(
     service.bump_attempt_no(db, run)
 
     excluded = _excluded_place_ids(db, run)
+    regions, active_lines = _pipeline_inputs(db, run)
     candidates_data, funnel = _run_pipeline(
-        db, run, place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
+        db, run, regions=regions, active_lines=active_lines,
+        place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
     )
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
     service.set_run_status(db, run, "done")
     record_event(db, _candidates_ready_event(db, run, candidates, place_search))
     return run
+
+
+def simulate_filter(
+    db: Session, *, run_id: str, radius_factor: float | None, disable_line_ids: Collection[str],
+    place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
+) -> dict:
+    """추천 막힘 조언(docs/agent-v2.md 9절, #585)의 "이 조건을 바꾸면 몇 곳이 남는가". 필터를 다시 구현하지 않고
+    _run_pipeline을 입력만 바꿔 두 번 돌린다 — before는 저장된 지역·활성 근거 줄 그대로, after는 반경에
+    radius_factor를 곱하고 disable_line_ids를 비활성으로 본다. 제외 목록(가드레일 6)은 실행 때와 같은 집합이다.
+    **쓰지 않는다**: run·후보·근거 줄·지역·제외 목록·last_funnel을 바꾸지 않고 이벤트도 남기지 않는다.
+    없는 run이나 그 run의 근거 줄이 아닌 id는 NOT_FOUND, radius_factor가 0 이하면 ValueError."""
+    if radius_factor is not None and not radius_factor > 0:
+        raise ValueError(f"radius_factor는 0보다 커야 한다: {radius_factor}")
+    run = service.get_run_or_404(db, run_id)
+    try:
+        disabled = frozenset(str(uuid.UUID(str(line_id))) for line_id in disable_line_ids)
+    except ValueError:
+        raise AppError("NOT_FOUND") from None
+    if not disabled <= {str(line.id) for line in service.list_evidence(db, str(run.id))}:
+        raise AppError("NOT_FOUND")
+    excluded = _excluded_place_ids(db, run, record_dismissed=False)
+
+    def outcome(**changes) -> dict:
+        regions, active_lines = _pipeline_inputs(db, run, **changes)
+        candidates_data, funnel = _run_pipeline(
+            db, run, regions=regions, active_lines=active_lines,
+            place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
+        )
+        return {
+            "result_count": len(candidates_data), "funnel": funnel,
+            "passed_count": core.passed_count(len(candidates_data), funnel),
+        }
+
+    return {"before": outcome(), "after": outcome(radius_factor=radius_factor, disable_line_ids=disabled)}
 
 
 def _candidate_response(
@@ -663,6 +842,8 @@ def get_result(
     """GET /runs/{runId}/result — funnel은 마지막 execute/widen/retry가 저장해둔 값을 그대로
     쓴다(재계산하지 않는다 — GET은 부작용도, 외부 게이트웨이 의존도 없어야 한다)."""
     run = service.get_run_or_404(db, run_id)
+    if run.status != "done":
+        raise AppError("RUN_NOT_FINISHED", detail={"status": run.status})  # #469 — 결과는 done일 때만 있다
     regions = service.list_regions(db, run_id)
     region_labels = {r.id: r.label for r in regions}
     candidates = service.list_candidates(db, run_id)
