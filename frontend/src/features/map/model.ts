@@ -28,7 +28,8 @@ export const SORTS = {
 export type PinSort = keyof typeof SORTS
 
 /** 의견 필터(기획안 4절). 'none' = 내가 아직 의견을 안 남긴 핀. */
-export const OPINIONS = { like: '♥ 좋음', against: '🚫 반대', unknown: '? 미확인', none: '내가 아직 안 남김' } as const
+// 필터 드롭다운(<option>)용 글자 — <option> 안에는 아이콘을 넣을 수 없고, 🚫 이모지는 OS마다 모양이 달라 기호를 뺀다.
+export const OPINIONS = { like: '좋음', against: '반대', unknown: '미확인', none: '내가 아직 안 남김' } as const
 export type PinOpinion = keyof typeof OPINIONS
 /** 종류 필터(기획안 5-2: 확정/일반/AI 추천 셋뿐). */
 export const KINDS: Pin['kind'][] = ['확정', '일반', 'AI추천']

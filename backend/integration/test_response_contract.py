@@ -561,6 +561,46 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     assert a.put(f"/maps/{map_id}/agent/settings", json={"enabled": True}).json()["enabled"] is True
 
 
+def test_course_endpoints_match_the_openapi_spec(clients, app_client, db_session, pin_body):
+    """AI 코스 짜기(#334, #580 결정 전 초안) — 요청(202), 완료된 run, 내 마지막 코스(204 → 200), 에러 봉투(422·404·403·409).
+    백그라운드 실행의 짧은 세션도 이 테스트 트랜잭션 안에서 열리게 하고, 모델은 부르지 않는다(dev)."""
+    from contextlib import contextmanager
+
+    from agent.course import gateways
+
+    @contextmanager
+    def same_session():
+        yield db_session
+
+    app_client.app.dependency_overrides[gateways.get_session_factory] = lambda: same_session
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "여수", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    assert b.post(f"/maps/{map_id}/courses").status_code == 404                  # 비구성원
+    assert b.get(f"/maps/{map_id}/courses/latest").status_code == 404
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+
+    assert a.get(f"/maps/{map_id}/courses/latest").status_code == 204             # 아직 짠 코스가 없다
+    assert a.post(f"/maps/{map_id}/courses").status_code == 422                   # 확정 장소 0곳
+    for key in ("seongsu-kalguksu", "seongsu-bunsik"):
+        pin_id = a.post(f"/maps/{map_id}/pins", json=pin_body(key)).json()["id"]
+        assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pin_id}).status_code == 201
+
+    assert a.post(f"/maps/{map_id}/courses", json={"request_text": "둘째 날은 실내 위주로",
+                                                   "member_constraints": [{"kind": "daily_walk_max", "value": 90}]}).status_code == 202
+    assert a.post(f"/maps/{map_id}/courses", json={"request_text": "x" * 101}).status_code == 422
+    run_id = a.get(f"/maps/{map_id}/courses/latest").json()["id"]
+    done = a.get(f"/course-runs/{run_id}")
+    assert done.status_code == 200 and done.json()["status"] == "done" and done.json()["unmatched"] == ["둘째 날은 실내 위주로"]
+    assert sum(len(d["slots"]) for d in done.json()["days"]) == 2
+    assert b.get(f"/course-runs/{run_id}").status_code == 403                     # 요청자만
+    assert b.get(f"/maps/{map_id}/courses/latest").status_code == 204             # 남의 코스는 내 마지막이 아니다
+    assert a.get("/course-runs/no-such-run").status_code == 404
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
 def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions):
     """추천 막힘 조언(#587) — 같은 카테고리 run이 3개가 되면 대상이다. 대상이 아닌 run은 204, 남의 run은 403, 대상 run은
     RunAdvice(200). 모델 자리의 대본은 미리 읽은 깔때기(t0)의 값으로 사실 문장 하나를 쓴다."""
@@ -599,7 +639,8 @@ def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions)
     advice = a.get(f"/runs/{runs[2]}/advice")
     assert advice.status_code == 200
     assert advice.json()["run_id"] == runs[2] and advice.json()["kind"] == "exhausted"
-    assert advice.json()["advice"][0]["text"].startswith("조건을 모두 통과한 곳은 ")
+    [segment] = advice.json()["advice"][0]["segments"]   # 조언은 text 조각만(#717)
+    assert segment["kind"] == "text" and segment["text"].startswith("조건을 모두 통과한 곳은 ")
     assert a.get(f"/runs/{runs[2]}/advice").json() == advice.json()   # run당 한 번 — 다시 열어도 같다
     assert not problems, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(problems)
 

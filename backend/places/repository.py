@@ -15,10 +15,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from places import core, matching
-from places.ingest import LabelRow, PlaceRow
+from places.ingest import HoursRow, LabelRow, PlaceRow
 from places.matching import Candidate
-from places.models import Place, PlaceFact
-from places.schemas import Area, FactLabel, PlaceHint, PlaceInfo, PlaceRef
+from places.models import Place, PlaceFact, PlaceHours
+from places.schemas import Area, FactLabel, PlaceHint, PlaceHours as PlaceHoursInfo, PlaceInfo, PlaceRef
 
 _CHUNK = 1000
 
@@ -309,8 +309,8 @@ def get_places(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceInfo]:
     if not ids:
         return {}
     lat, lng = _lat_lng()
-    rows = db.execute(select(Place.id, Place.name, Place.category, Place.kakao_place_url, Place.source, lat, lng).where(Place.id.in_(ids))).all()
-    return {str(r.id): PlaceInfo(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_url, r.source) for r in rows}
+    rows = db.execute(select(Place.id, Place.name, Place.category, Place.kakao_place_url, Place.source, Place.curated, lat, lng).where(Place.id.in_(ids))).all()
+    return {str(r.id): PlaceInfo(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_url, r.source, r.curated) for r in rows}
 
 
 def search_nearby_own(db: Session, category: str, areas: Sequence[Area]) -> list[PlaceRef]:
@@ -353,20 +353,12 @@ def recompute_can_recommend(db: Session, *, dry_run: bool = False) -> RecomputeR
     """전체 장소의 can_recommend를 core 규칙으로 다시 계산해 바뀐 행만 갱신한다. 멱등. 커밋하지 않는다.
 
     정예 여부는 places.curated다(`--authoritative` 적재가 켠다). 폐업 장소도 계산한다(다시 열릴 때 값이 맞도록)."""
-    agg = (
-        select(PlaceFact.place_id, func.count().filter(PlaceFact.confidence == "known").label("known"))
-        .group_by(PlaceFact.place_id)
-        .subquery()
-    )
-    rows = db.execute(
-        select(Place.id, Place.category, Place.can_recommend, func.coalesce(agg.c.known, 0), Place.curated)
-        .outerjoin(agg, agg.c.place_id == Place.id)
-    ).all()
+    rows = db.execute(select(Place.id, Place.category, Place.can_recommend, Place.curated)).all()
     counts: dict[tuple[str, bool], int] = {}
     to_true: list[uuid.UUID] = []
     to_false: list[uuid.UUID] = []
-    for pid, category, current, known, curated in rows:
-        new = core.can_recommend(category, known, curated=curated)
+    for pid, category, current, curated in rows:
+        new = core.can_recommend(curated=curated)
         counts[(category, new)] = counts.get((category, new), 0) + 1
         if new != current:
             (to_true if new else to_false).append(pid)
@@ -410,6 +402,67 @@ def get_facts(db: Session, place_ids: Sequence[str]) -> dict[str, list[FactLabel
     for f in rows:
         out[by_uuid[f.place_id]].append(FactLabel(f.fact_key, f.value, f.confidence))
     return out
+
+
+def search_by_name_own(db: Session, query: str, category: str | None, limit: int) -> list[dict]:
+    """자체 DB 이름 부분 일치(대소문자 무시). status와 무관하게 closed도 돌려준다. 이름순."""
+    needle = query.strip()
+    if not needle or limit <= 0:
+        return []
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")   # LIKE 와일드카드는 글자 그대로 찾는다
+    stmt = select(Place.id, Place.name, Place.address, Place.category, Place.status).where(Place.name.ilike(f"%{escaped}%", escape="\\"))
+    if category is not None:
+        stmt = stmt.where(Place.category == category)
+    rows = db.execute(stmt.order_by(Place.name.collate("C"), Place.id).limit(limit)).all()
+    return [{"id": str(r.id), "name": r.name, "address": r.address, "category": r.category, "status": r.status} for r in rows]
+
+
+def get_hours(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceHoursInfo]:
+    """행이 있는 장소만 돌려준다(행 없음 = 모름). 한 번의 IN 조회."""
+    by_uuid = {u: pid for pid in place_ids if (u := _uuid_or_none(pid)) is not None}
+    if not by_uuid:
+        return {}
+    rows = db.execute(select(PlaceHours).where(PlaceHours.place_id.in_(list(by_uuid)))).scalars()
+    return {
+        by_uuid[h.place_id]: PlaceHoursInfo(h.hours, list(h.closed_days) if h.closed_days is not None else None, h.closed_note, h.hours_note)
+        for h in rows
+    }
+
+
+@dataclass(frozen=True)
+class HoursUpsertResult:
+    upserted: int
+    place_not_found: int
+
+
+def upsert_hours(db: Session, rows: Sequence[HoursRow]) -> HoursUpsertResult:
+    """(source, source_id)로 장소를 찾아 place_hours를 upsert한다. 같은 장소는 파일 값으로 갱신, 파일에 없는 장소의 행은 건드리지 않는다."""
+    upserted = not_found = 0
+    for chunk in _chunks(list(rows)):
+        place_ids = {
+            (p.source, p.source_id): p.id
+            for p in db.execute(
+                select(Place).where(Place.source.in_({r.source for r in chunk}), Place.source_id.in_({r.source_id for r in chunk}))
+            ).scalars()
+        }
+        values = {}
+        for r in chunk:
+            pid = place_ids.get((r.source, r.source_id))
+            if pid is None:
+                not_found += 1
+                continue
+            values[pid] = {   # 같은 장소가 파일에 두 번이면 마지막 줄 — 한 INSERT에 같은 키가 두 번 들어가지 않게
+                "place_id": pid, "hours": r.hours, "closed_days": r.closed_days,
+                "closed_note": r.closed_note, "hours_note": r.hours_note, "updated_at": func.now(),
+            }
+        if values:
+            stmt = pg_insert(PlaceHours).values(list(values.values()))
+            db.execute(stmt.on_conflict_do_update(
+                index_elements=["place_id"],
+                set_={c: stmt.excluded[c] for c in ("hours", "closed_days", "closed_note", "hours_note", "updated_at")},
+            ))
+            upserted += len(values)
+    return HoursUpsertResult(upserted, not_found)
 
 
 def _uuid(raw: str) -> uuid.UUID:

@@ -37,6 +37,39 @@ export interface AgentSuggestionEntity {
   viewed_by: string[];
 }
 
+/**
+ * AI 코스 짜기 run(#334, #580 결정 전 초안). 스펙의 CourseRun과 같은 모양이다 — `npm run gen:types`로 api.d.ts를 다시 만든 뒤
+ * `Schemas["CourseRun"]`으로 바꾼다(지금 api.d.ts에는 아직 없다). requested_by, polls는 목 서버 내부 값이라 응답에서 뺀다.
+ */
+export interface CourseRunMock {
+  id: string;
+  map_id: string;
+  status: "queued" | "running" | "done" | "failed";
+  outcome: "solved" | "solved_with_checks" | "unresolved" | "timeout" | null;
+  failure_code: "INTERRUPTED" | "ENGINE_ERROR" | null;
+  goals: { id: string; kind: string; label: string; met: boolean | null }[];
+  unmatched: string[];
+  steps: { stage: string; role: "해석" | "지휘" | "계산" | "검증" | "결정"; by: "ai" | "code" | "human"; by_detail: string | null; text: string }[];
+  days: {
+    date: string;
+    slots: { pin_id: string; order: number; needs_check: boolean }[];
+    legs: { from_pin_id: string; to_pin_id: string; mode: "walk" | "transit"; approx_minutes: number }[];
+  }[];
+  violations: { kind: "closed" | "travel" | "member"; text: string }[];
+  checks: { pin_id: string; text: string }[];
+  excluded: { pin_id: string; reason: "NO_COORDINATES" | "OVER_LIMIT"; text: string }[];
+  snapshot_at: string;
+  stale: boolean;
+  created_at: string;
+  finished_at: string | null;
+}
+export interface CourseRunEntity {
+  run: CourseRunMock;
+  requested_by: string;
+  polls: number; // GET 횟수 — 첫 GET은 running(단계 2개), 둘째는 running(5개), 셋째부터 done(진행 화면의 폴링을 흉내)
+  snapshot_pin_ids: string[];
+}
+
 /** 목 서버에서 "나"로 취급하는 사용자. 기획안 6절 시나리오의 요청자다. */
 export const ME_USER_ID = "u_me";
 
@@ -58,6 +91,7 @@ export interface StoreState {
   pins: Record<string, Pin>; // pinId -> pin
   reactions: Record<string, Reaction[]>; // pinId -> reactions
   evidenceLines: Record<string, EvidenceLine[]>; // runId -> lines
+  manualEvidenceCount: Record<string, number>; // runId -> 「+」로 추가한 줄 수(뺀 줄 포함, #707)
   regions: Record<string, Region[]>; // runId -> regions
   runs: Record<string, RecommendRun>; // runId -> run
   runRequestedBy: Record<string, string>; // runId -> user_id (run 요청자 기록)
@@ -70,6 +104,7 @@ export interface StoreState {
   agentSuggestions: Record<string, AgentSuggestionEntity>; // suggestionId -> 제안
   agentSummaries: Record<string, AgentSummary[]>; // mapId -> 카테고리별 우리 조건 요약
   runAdvice: Record<string, RunAdvice | null>; // runId -> 추천 막힘 조언. null이면 204
+  courseRuns: Record<string, CourseRunEntity>; // runId -> AI 코스 run(#334)
   ads: Ad[]; // 진행 중인 광고(#642, 목 서버는 기간과 active를 따지지 않는다)
   adStats: Record<string, { served: number; clicks: number }>; // ad_id -> 집계(확인용, 응답에 싣지 않는다)
   notifications: Schemas["Notification"][]; // 내 알림함(#470) — 목 서버는 단일 사용자라 나만 있다
@@ -86,6 +121,7 @@ function emptyState(): StoreState {
     pins: {},
     reactions: {},
     evidenceLines: {},
+    manualEvidenceCount: {},
     regions: {},
     runs: {},
     runRequestedBy: {},
@@ -98,6 +134,7 @@ function emptyState(): StoreState {
     agentSuggestions: {},
     agentSummaries: {},
     runAdvice: {},
+    courseRuns: {},
     ads: [],
     adStats: {},
     notifications: [],

@@ -13,6 +13,7 @@ from referencing.jsonschema import DRAFT202012
 
 from agent.deps import FixedAgentLlmGateway, get_llm_gateway
 from agent.schemas import (
+    AdviceSegment,
     AgentAction,
     AgentActionParams,
     AgentAdviceLine,
@@ -47,7 +48,12 @@ SUGGESTION = AgentSuggestion(
         conflict_type="same_axis",
         axes=[AgentConflictAxis(label="조용한 곳", like_side="원함 2", against_side=None)],
     ),
-    advice=[AgentAdviceLine(text="♥ 2, 🚫 1이에요", is_guess=False)],
+    advice=[AgentAdviceLine(segments=[   # 조각 세 종류(#717). 채우지 않은 reaction_id, pin_id는 null로 나가지 않는다
+        AdviceSegment(kind="pin", text="성수 칼국수", pin_id="p1"),
+        AdviceSegment(kind="text", text="에는 "),
+        AdviceSegment(kind="quote", text="너무 매워요", reaction_id="r1"),
+        AdviceSegment(kind="text", text="라는 의견이 있어요"),
+    ], is_guess=False)],
     actions=[AgentAction(index=0, type="show_pins", label="핀 보기", params=AgentActionParams(pin_ids=["p1"]))],
     created_at=NOW, expires_at=NOW,
 )
@@ -78,7 +84,8 @@ SUMMARY = AgentSummary(
                                 params=AgentActionParams(pin_ids=["p1"], unseen_only=True))],
     })),
     ("RunAdvice", RunAdvice(
-        run_id="r1", kind="radius", advice=[AgentAdviceLine(text="반경을 넓히면 더 나와요", is_guess=False)],
+        run_id="r1", kind="radius", advice=[AgentAdviceLine(segments=[AdviceSegment(kind="text", text="반경을 넓히면 더 나와요")],
+                                                      is_guess=False)],
         actions=[AgentAction(index=0, type="widen_radius", label="반경 넓히기", params=AgentActionParams(run_id="r1"))],
     )),
 ])
@@ -90,9 +97,17 @@ def test_action_params_drop_unset_keys():
     assert AgentActionParams(category="카페").model_dump(mode="json") == {"category": "카페"}
 
 
+def test_segment_drops_unset_ids():
+    assert AdviceSegment(kind="text", text="가").model_dump(mode="json") == {"kind": "text", "text": "가"}
+    assert AdviceSegment(kind="quote", text="가", reaction_id="r1").model_dump(mode="json") == {
+        "kind": "quote", "text": "가", "reaction_id": "r1"}
+
+
 def test_lengths_follow_spec_max_length():
     with pytest.raises(ValidationError):
-        AgentAdviceLine(text="가" * 301, is_guess=False)
+        AdviceSegment(kind="text", text="가" * 301)
+    with pytest.raises(ValidationError):
+        AgentAdviceLine(segments=[], is_guess=False)   # 스펙 minItems 1
     with pytest.raises(ValidationError):
         AgentAction(index=0, type="show_pins", label="가" * 41, params=AgentActionParams())
     with pytest.raises(ValidationError):

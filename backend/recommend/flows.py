@@ -53,6 +53,7 @@ from authz.schemas import Permissions
 from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
+from maps import api as maps_api
 from pins import api as pins_api
 from pins.schemas import Pin
 from places import api as places_api
@@ -403,6 +404,29 @@ class _PipelineRegion:
     anchor_points: tuple[tuple[float, float], ...]
 
 
+def _trip_weekdays(db: Session, map_id: str) -> list[str]:
+    """지도 여행 기간의 요일들(core.trip_weekday_names). 지도를 못 읽거나 날짜가 없으면 빈 목록 = 영업 판정을 안 한다."""
+    info = maps_api.get_map_for_agent(db, map_id)
+    if info is None:
+        return []
+    return core.trip_weekday_names(info["start_date"], info["end_date"])
+
+
+def _open_status_by_place(place_facts: PlaceFactsGateway, place_ids: Sequence[str], weekdays: Sequence[str]) -> dict[str, str]:
+    """후보마다 여행 요일 기준 영업 여부("closed" | "open" | "unknown", #690). 시간 조회가 없는 게이트웨이이거나 여행 날짜가
+    없으면 전부 "unknown"이다(지금처럼 아무도 빼지 않는다). 한 번에 배치 조회(N+1 금지)."""
+    get_hours = getattr(place_facts, "get_hours", None)
+    if not weekdays or get_hours is None or not place_ids:
+        return dict.fromkeys(place_ids, "unknown")
+    hours_by_place = get_hours(list(place_ids))
+    return {
+        place_id: core.trip_open_status(
+            hours_by_place[place_id].hours, hours_by_place[place_id].closed_days, weekdays,
+        ) if place_id in hours_by_place else "unknown"
+        for place_id in place_ids
+    }
+
+
 def _pipeline_inputs(
     db: Session, run: RecommendRun, *, radius_factor: float | None = None, disable_line_ids: frozenset[str] = frozenset(),
 ) -> tuple[list[_PipelineRegion], list[EvidenceLineRow]]:
@@ -418,6 +442,14 @@ def _pipeline_inputs(
     ]
     active_lines = [line for line in service.list_active_evidence(db, run.id) if str(line.id) not in disable_line_ids]
     return regions, active_lines
+
+
+def _out_of_season_keys(db: Session, map_id: str) -> frozenset[str]:
+    """이 지도의 여행 기간과 시즌이 안 겹치는 계절 키(core.out_of_season_keys). 지도를 못 읽으면 모두 쓴다."""
+    info = maps_api.get_map_for_agent(db, map_id)
+    if info is None:
+        return frozenset()
+    return core.out_of_season_keys(info["start_date"], info["end_date"])
 
 
 def _run_pipeline(
@@ -436,14 +468,24 @@ def _run_pipeline(
     within_radius = [p for p in pool if core.is_within_any_region(p.lat, p.lng, circles)]
     removed_radius = len(pool) - len(within_radius)
 
-    is_open_check = core.build_check("is_open", "pass", known=False, value=None, passes=True)
-    removed_open = 0  # dev 스텁은 실시간 영업시간 조회가 없어 항상 unknown+needs_check — 결코 제거하지 않는다
+    # 영업 종료 제거(#690) — 여행 기간의 모든 요일이 휴무인 장소만 뺀다. 하루라도 영업하면 통과, 정보가 없으면 통과 +
+    # 「영업 여부 확인 필요」. 여행 날짜가 없거나 시간 조회가 없으면 아무도 안 뺀다(공휴일·closed_note는 보지 않는다).
+    open_status = _open_status_by_place(place_facts, [p.place_id for p in within_radius], _trip_weekdays(db, run.map_id))
+    open_places = [p for p in within_radius if open_status[p.place_id] != "closed"]
+    removed_open = len(within_radius) - len(open_places)
+    within_radius = open_places
+    unknown_open_check = core.build_check("is_open", "pass", known=False, value=None, passes=True)
+    known_open_check = core.build_check("is_open", "pass", known=True, value=True, passes=True)
 
     # 추천 가능 아님 제거 — 영업 종료 다음 단계. 모두 빠져 0개여도 0개로 보여 준다(반경·기준을 완화하지 않는다).
     recommendable = [p for p in within_radius if p.can_recommend]
     removed_not_recommendable = len(within_radius) - len(recommendable)
     within_radius = recommendable
 
+    # 계절 키는 여행 기간이 시즌과 겹칠 때만 쓴다(#681-6) — 시즌 밖이면 직접 쓴 사유도 이번 실행에서 없는 셈 친다(점수 0,
+    # 후보를 거르지 않고, 이유·체크에도 안 나온다). 날짜가 없으면 모두 쓴다.
+    off_season = _out_of_season_keys(db, run.map_id)
+    active_lines = [line for line in active_lines if line.fact_key not in off_season]
     active_hard_keys = _hard_fact_keys_from(active_lines, run.category)
     soft_requirements = _soft_requirements_from(active_lines)
     # 구성원별 반대 조건 — 충족 집계에 센다(#255, #620). 이번 실행이 실제로 확인하는 키만 넣는다: 카테고리에 맞는 hard 키
@@ -481,7 +523,7 @@ def _run_pipeline(
     checks_by_place: dict[str, list[Check]] = {}
     for place in within_radius:
         labels = facts_by_place.get(place.place_id, [])
-        checks = [is_open_check]
+        checks = [known_open_check if open_status[place.place_id] == "open" else unknown_open_check]
         for fact_key in active_hard_keys:
             known, value = core.resolve_label(labels, fact_key)
             passes = _passes_hard_check(value) if known else True
@@ -518,7 +560,7 @@ def _run_pipeline(
     # 집계·이유에 똑같이 쓴다 — 직접 쓴 선호 사유(preferred_authors)는 거르지 않는다.
     hearted_places = core.filter_heart_signals([
         core.HeartedPlace(
-            checks=core.label_checks(liked_facts.get(entry["place_id"], [])),
+            checks=[c for c in core.label_checks(liked_facts.get(entry["place_id"], [])) if c.fact_key not in off_season],
             member_ids=frozenset(entry["member_ids"]),
         )
         for entry in liked_pins
@@ -540,6 +582,8 @@ def _run_pipeline(
             line.fact_key: line.wants for line in active_lines
             if line.badge == badge and line.fact_key in constraints.SOFT_FACT_KEYS and line.wants is not None
         })
+    required_soft_keys = {fact_key for fact_key, _wants in soft_requirements}   # 🚫 사유로 낸 soft 키는 실격 조건이다
+    weights = core.preference_weights(hearted_places, criteria, preferred_authors_frozen, avoided_authors_frozen)
     region_label = regions[0].label if regions else ""
     anchor_points_by_region = {region_label: list(regions[0].anchor_points)} if regions else {}
     scores = core.score_candidates(
@@ -566,7 +610,10 @@ def _run_pipeline(
             "rank": index + 1,
             "checks": [
                 check.model_dump()
-                for check in core.to_satisfaction_checks(core.checks_to_show(checks, wanted_soft_keys), directions)
+                for check in core.limit_preference_checks(
+                    core.to_satisfaction_checks(core.checks_to_show(checks, wanted_soft_keys), directions),
+                    required_soft_keys=required_soft_keys, weights=weights,
+                )
             ],
             "member_fulfillment": fulfillment,
             "reason": core.build_reason(checks, criteria),

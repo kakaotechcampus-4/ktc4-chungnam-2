@@ -193,6 +193,7 @@ def withdraw_user(db: Session, *, user_id: str) -> User:
     pins_api.delete_reactions_by_user(db, user_id=user_id)
     recommend_api.delete_evidence_lines_by_author(db, user_id=user_id)
     agent_api.delete_by_user(db, user_id=user_id, map_ids=map_ids)
+    agent_api.delete_course_runs_by_user(db, user_id=user_id)   # 코스 요청 한 줄과 결과(#334)
     feedback_api.anonymize_by_user(db, user_id=user_id)
     notifications_api.delete_by_user(db, user_id=user_id)
     row.deleted_at = datetime.now(timezone.utc)

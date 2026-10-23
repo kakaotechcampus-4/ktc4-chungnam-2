@@ -162,11 +162,10 @@ places(
                                         -- AI 추천 후보 풀에 들어가도 되는 장소인가(2026-10-15 결정, 구현은 places).
                                         -- 직접 찍은 핀·검색·링크에는 영향이 없다 — 추천 후보를 고를 때만 쓴다.
                                         -- 규칙(재계산 가능한 값이다, 사람이 손으로 정하지 않는다):
-                                        --   정예 행(curated=true)은 true.
-                                        --   그 밖에는 카테고리별 확정(known) 라벨 수가 임계 이상이면 true
-                                        --   (시작값: 음식점 5개, 카페 3개 — pingo_demo 분포로 조정, 결정은 루트).
-                                        --   관광지는 true. 유흥·주점류도 같은 규칙을 쓴다(제외하지 않는다).
-                                        -- 라벨이 늘거나 적재가 끝나면 places의 재계산 스크립트로 다시 계산한다.
+                                        --   정예 행(curated=true)만 true다. 정예가 아닌 데이터(인허가 커버리지 등)는 지도에 핀을 꽂을 수 있는 최소 정보일 뿐 추천 후보가 아니다(원칙, 2026-10-24).
+                                        --   라벨 수 임계는 2026-10-24에 폐기했다 — 비정예 장소의 확정 라벨이 전부 인허가에서 자동으로
+                                        --   나온 값(cuisine_* 10개·spacious·franchise 등)이라 품질 신호가 아님을 실측으로 확인했다(#681-1).
+                                        -- 정예가 늘면(재적재) places의 재계산 스크립트로 다시 계산한다.
   kakao_place_id null, kakao_place_url null, kakao_matched_at null,
                                         -- 사용자가 검색해서 고를 때 한 건씩 매칭한 결과. 허용 범위: 카카오 장소 ID·URL·확인 일자.
                                         -- 카카오 응답의 이름·주소·좌표는 저장하지 않는다(#53)
@@ -188,7 +187,21 @@ place_facts(
   labeled_at
 )
   primary key(place_id, fact_key)
+
+place_hours(                            -- v2 #690(2026-10-24): 영업시간·휴무일. 칸이 없으면 **행이 없다 = 모름**(지어내지 않는다)
+  place_id primary key references places(id) on delete cascade,
+  hours jsonb null,                     -- {"월": [["11:00","21:00"]], "화": [["12:30","15:00"],["17:00","22:00"]], "일": []} — 요일 키 7개(월~일),
+                                         --   값은 [여는 시각, 닫는 시각] 목록(브레이크타임이면 구간 여러 개), 빈 목록 = 그 요일 휴무,
+                                         --   자정을 넘기면 24를 더한다("26:00" = 다음 날 02:00), 상시 개방 = [["00:00","24:00"]].
+                                         --   hours가 있으면 7일을 다 아는 경우다. NULL이면 모름(closed_days만 있을 수 있다)
+  closed_days text[] null,              -- 매주 쉬는 요일("월","화"…). [] = 매일 영업(연중무휴), NULL = 모름. hours가 있으면 hours에서 빈 목록인 요일과 같다
+  closed_note text null,                -- 요일로 못 담는 휴무 원문(예: "1월 1일 / 설·추석 당일", "공연별 상이") — 표시용, 판단에 쓰지 않는다
+  hours_note text null,                 -- 영업시간 원문(계절별 운영 등은 가장 긴 계절 기준으로 hours에 넣고 원문은 여기) — 표시용
+  updated_at timestamptz not null default now()
+)
 ```
+
+> **영업시간·휴무일 (v2, #690)** — 데이터 담당 공유본(2026-10-21)의 정예 라벨 JSON `info.hours`·`info.closed_days`·`closed_note`·`hours_note`(음식점 `rest_`·카페 `cafe_` 접두어, 지역 관광지 포함)와 서울 관광지 별도 파일 `tourist_seoul_closed_days.json`(`source_id`=contentid)에서 적재한다. 출처는 구글 지도 영업시간 + TourAPI 이용시간·쉬는날 + 모델로 형식 변환한 문장(데이터 담당 소관)이라 카카오 응답이 아니다 — 저장해도 된다(#53). 라벨 키(`closed_mon`…)로는 시간 구간을 못 담고 `places`에 칸을 늘리면 비대해져 별도 테이블로 둔다. 인허가 커버리지 라벨에는 `info`가 없어 행이 없다(모름). 마이그레이션은 구현 PR이 그때의 head 다음 번호로 만든다. 적재는 멱등(같은 장소는 갱신)이고 파일에 칸이 없는 장소의 기존 행은 지우지 않는다.
 
 > **2026-10-01(#53) — `places`는 자체 DB다.** 카카오 로컬 API 응답(좌표·이름·주소 포함)은 어떤 형태로도 저장하지 않으므로 이 표의 이름·좌표는 인허가 공공데이터와 TourAPI에서만 온다(v1 서울만). 이전 설계의 `source('kakao'|'google'|'naver')`와 `last_synced_at`은 없앴다. 자체 DB는 음식점·카페·관광지만 담는다(TourAPI의 숙박은 받지 않는다, 2026-10-01) — 숙소·기타 장소는 `places`에 없으므로 v1에서 핀으로 만들 수 없다(`pins.category`의 숙소·기타 값은 스키마 호환으로 남긴다). 핀이 `places.id`를 가리키도록 바꾸는 `pins` 변경은 #195에서 한다.
 >
@@ -379,7 +392,7 @@ agent_suggestions(                    -- 바텀시트의 지도 제안
   id uuid, map_id, run_id null references agent_runs on delete set null,
   diagnosis('stall'|'split'|'no_reaction'|'category_gap'), category null, pin_id null,
   fingerprint, evidence_hash,         -- 중복 금지(유형+카테고리+근거 id), 상태 재확인(근거 id+반응 종류+updated_at)
-  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id만). 렌더는 응답 때
+  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id, 인용 범위, 범위의 다이제스트만. 원문 없음, #717). 렌더는 응답 때 조각으로
   status('active'|'accepted'|'dismissed'|'expired'|'superseded'),
   shadow boolean default false,       -- true면 저장만 하고 화면과 이벤트에 내지 않는다
   created_at, expires_at,             -- 24시간
@@ -405,6 +418,39 @@ agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조�
   map_id, kind null, claims jsonb, advice jsonb, actions jsonb, agent_run_id null, created_at
 )
 ```
+
+---
+
+## agent_course_runs (AI 코스 짜기, #334 — 팀 결정 #580 전 브랜치 초안, 마이그레이션 0037)
+
+> 동선 에이전트(`backend/agent/course/`)가 쓰는 테이블 1개. `map_id`, `requested_by`는 문자열이고 FK가 없다. run은 요청자 본인 것이다(가드레일 1).
+> **장소 이름과 좌표는 저장하지 않는다.** 핀은 `pin_id`로만 가리킨다(화면 문장에 들어간 이름은 코드가 렌더한 문장 안에만 있다). 사유 원문도 없다 —
+> 요청 한 줄(`input.request_text`)은 요청자가 이 run을 위해 쓴 글이라 run 행에만 둔다. 지도 정리와 탈퇴 정리는 `agent.course.api`(`purge_map_data`, `delete_by_user`)가
+> 맡는다 — `maps/purge.py`의 PURGE_STEPS와 `withdraw_user`에 연결돼 있다. 질문에 답을 받지 않아 waiting_input 상태와 답 칸이 없다.
+
+```
+agent_course_runs(
+  id uuid, map_id, requested_by,
+  status('queued'|'running'|'done'|'failed'),
+  outcome null('solved'|'solved_with_checks'|'unresolved'|'timeout'),    -- done일 때만
+  failure_code null('INTERRUPTED'|'ENGINE_ERROR'),                       -- failed일 때만
+  input jsonb,                        -- {request_text, member_constraints:[{kind:'daily_walk_max', value, day}]}
+  snapshot_at, snapshot_pin_ids jsonb,-- 요청 때 확정 리스트의 핀 id. 지금과 다르면 응답의 stale=true
+  goals jsonb, unmatched jsonb,       -- [{id, kind, label, met}], 요청 원문 조각
+  excluded jsonb,                     -- [{pin_id, reason('NO_COORDINATES'|'OVER_LIMIT'), text}]
+  steps jsonb,                        -- [{stage, role, by, by_detail, text}] 작업 기록(끝난 뒤 한꺼번에 채운다)
+  days jsonb,                         -- [{date, slots:[{pin_id, order, needs_check}], legs:[{from_pin_id, to_pin_id, mode(walk|transit), approx_minutes}]}]
+  violations jsonb, checks jsonb,     -- [{kind, text}], [{pin_id, text}]
+  model null, prompt_version null, model_turns, tokens_in, tokens_out,
+  created_at, finished_at null
+)
+index ix_agent_course_runs_map_user (map_id, requested_by, created_at)
+index ix_agent_course_runs_user_created (requested_by, created_at)       -- 하루 상한(5회, KST 자정) 집계
+unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queued','running')   -- 내 진행 중 run은 지도당 하나 → 409 COURSE_IN_PROGRESS
+```
+
+- 진행 중으로 15분 넘게 남은 run은 다음 요청이 `failed(INTERRUPTED)`로 끝낸다. 서버가 시작할 때도 진행 중인 run을 모두 같은 값으로 끝낸다(인스턴스 하나 전제, #168).
+- 영업시간 칸이 places에 아직 없어(#580 6번) 지금은 모든 장소가 「확인 필요」(`checks`)다.
 
 ---
 
