@@ -37,16 +37,19 @@ describe('course model', () => {
     expect(understandBody('둘째 날은 실내 위주로 이해했어요')).toBe('둘째 날은 실내 위주로 이해했어요')
   })
 
-  it('목표 상태: 지킴 / 못 지킴 / 판단 못 함', () => {
+  it('목표 상태: 지킴 / 못 지킴 / 확인할 수 없어요', () => {
     const g = (met: boolean | null) => goalState({ id: 'a', kind: 'day_indoor', label: 'x', met }).label
     expect(g(true)).toBe('지킴')
     expect(g(false)).toBe('못 지킴')
-    expect(g(null)).toBe('판단 못 함')
+    expect(g(null)).toBe('확인할 수 없어요')
   })
 
   it('날짜 제목은 몇째 날과 요일만, 시간은 없다', () => {
     expect(dayTitle('2026-10-03', 0)).toBe('첫째 날 · 10.3 (토)')
     expect(dayTitle('2026-10-05', 2)).toBe('셋째 날 · 10.5 (월)')
+    expect(dayTitle('2026-10-08', 7)).toBe('여덟째 날 · 10.8 (목)')
+    expect(dayTitle('2026-10-16', 13)).toBe('열넷째 날 · 10.16 (금)')
+    expect(dayTitle('2026-10-17', 14)).toBe('15번째 날 · 10.17 (토)')
   })
 
   it('한 날의 장소를 순서대로 놓고 구간 도보 분을 붙인다. 이름을 모르면 「이 장소」', () => {

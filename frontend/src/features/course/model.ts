@@ -23,11 +23,11 @@ export const requestBody = (text: string): { request_text?: string } => {
   return trimmed ? { request_text: trimmed } : {}
 }
 
-/** 작업 기록의 「누가」 칩 — 색(tag-*)과 글자를 함께 쓴다. AI 파랑 · 코드 회색 · 사람 주황. */
+/** 작업 기록의 「누가」 칩 — 색(tag-*)과 글자를 함께 쓴다. AI 파랑 · 코드 회색 · 사람 회색+사람 아이콘(주의 색은 조건 체크용이라 쓰지 않는다). */
 export const BY: Record<CourseStepDto['by'], { label: string; tag: string }> = {
   ai: { label: 'AI', tag: 'tag-ai' },
   code: { label: '코드', tag: 'tag-neutral' },
-  human: { label: '사람', tag: 'tag-warn' },
+  human: { label: '사람', tag: 'tag-neutral' },
 }
 
 /** 첫 줄 「이해」는 카드의 제목이 "이렇게 이해했어요"라서, 문장 앞에 같은 말이 오면 한 번만 보이게 뗀다. */
@@ -38,7 +38,7 @@ export function understandBody(text: string): string {
 export const GOAL_STATE = {
   met: { label: '지킴', tag: 'tag-good' },
   missed: { label: '못 지킴', tag: 'tag-bad' },
-  unknown: { label: '판단 못 함', tag: 'tag-neutral' },
+  unknown: { label: '확인할 수 없어요', tag: 'tag-neutral' },
 } as const
 
 export function goalState(goal: CourseGoalDto) {
@@ -65,9 +65,8 @@ export function outcomeText(outcome: NonNullable<CourseRunDto['outcome']>): stri
   }
 }
 
-export function failureText(code: CourseRunDto['failure_code']): string {
-  return code === 'INTERRUPTED' ? '서버가 다시 켜지면서 코스 짜기가 끊겼어요' : '코스를 짜는 중에 오류가 났어요'
-}
+/** 실패 안내. 계약상 INTERRUPTED(서버 재시작·15분 초과)와 ENGINE_ERROR 는 같은 문구다. */
+export const FAILURE_TEXT = '코스 짜기가 중간에 끊겼어요'
 
 /** 코스 요청이 실패했을 때의 안내. 코드가 아닌 HTTP 만으로 갈리지 않는다(docs/errors.md). 모르는 코드는 null 이라 호출부가 ErrorText 로 보인다. */
 export function createErrorMessage(error: unknown): string | null {
@@ -89,7 +88,7 @@ export function inProgressRunId(error: unknown): string | null {
   return typeof id === 'string' ? id : null
 }
 
-const ORDINALS = ['첫째', '둘째', '셋째', '넷째', '다섯째', '여섯째', '일곱째']
+const ORDINALS = ['첫째', '둘째', '셋째', '넷째', '다섯째', '여섯째', '일곱째', '여덟째', '아홉째', '열째', '열한째', '열두째', '열셋째', '열넷째']
 
 /** "첫째 날 · 10.3 (토)" — 시간은 보이지 않고 날짜와 요일만. */
 export function dayTitle(date: string, index: number): string {

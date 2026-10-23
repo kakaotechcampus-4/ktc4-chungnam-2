@@ -1,3 +1,5 @@
+import { User } from 'lucide-react'
+
 import PingoLoading from '@/ui/PingoLoading'
 
 import { BY, understandBody, type CourseStepDto } from './model'
@@ -19,7 +21,12 @@ export default function WorkLog({ steps, running }: { steps: CourseStepDto[]; ru
 }
 
 function ByChip({ by }: { by: CourseStepDto['by'] }) {
-  return <span className={`tag ${BY[by].tag}`}>{BY[by].label}</span>
+  return (
+    <span className={`tag ${BY[by].tag}`}>
+      {by === 'human' && <User size={12} aria-hidden="true" />}
+      {BY[by].label}
+    </span>
+  )
 }
 
 function UnderstandCard({ step }: { step: CourseStepDto }) {

@@ -8,6 +8,7 @@ import { useEnrichPin } from '@/features/map/livePlaces'
 import { useMapQuery } from '@/features/maps/queries'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { useShortlistQuery } from '@/features/shortlist/queries'
+import Notice from '@/ui/Notice'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 
@@ -21,6 +22,7 @@ import { courseKeys, useCreateCourseMutation, useLatestCourseQuery } from './que
  */
 export default function CourseSheet({ mapId, onClose }: { mapId: string; onClose: () => void }) {
   const [runId, setRunId] = useState<string | null>(null)
+  const [redirected, setRedirected] = useState(false)
   const enrich = useEnrichPin()
   const shortlist = useShortlistQuery(mapId).data ?? []
   const pins = usePinsQuery(mapId).data ?? []
@@ -32,15 +34,33 @@ export default function CourseSheet({ mapId, onClose }: { mapId: string; onClose
   return (
     <ModalSheet label="AI 코스 짜기" onClose={onClose}>
       {runId ? (
-        <CourseRun runId={runId} names={names} points={points} onRetry={() => setRunId(null)} onClose={onClose} />
+        <div className="space-y-3">
+          {redirected && <Notice>이미 짜는 중인 코스가 있어서 그걸 보여 드려요</Notice>}
+          <CourseRun
+            runId={runId}
+            names={names}
+            points={points}
+            onRetry={() => {
+              setRedirected(false)
+              setRunId(null)
+            }}
+            onClose={onClose}
+          />
+        </div>
       ) : (
-        <Entry mapId={mapId} onRun={setRunId} />
+        <Entry
+          mapId={mapId}
+          onRun={(id, fromInProgress = false) => {
+            setRedirected(fromInProgress)
+            setRunId(id)
+          }}
+        />
       )}
     </ModalSheet>
   )
 }
 
-function Entry({ mapId, onRun }: { mapId: string; onRun: (runId: string) => void }) {
+function Entry({ mapId, onRun }: { mapId: string; onRun: (runId: string, fromInProgress?: boolean) => void }) {
   const [text, setText] = useState('')
   const queryClient = useQueryClient()
   const map = useMapQuery(mapId).data
@@ -54,7 +74,7 @@ function Entry({ mapId, onRun }: { mapId: string; onRun: (runId: string) => void
       // 이미 짜는 중이면 새로 만들지 않고 그 run 으로 간다.
       onError: (err) => {
         const running = inProgressRunId(err)
-        if (running) onRun(running)
+        if (running) onRun(running, true)
       },
     })
   }

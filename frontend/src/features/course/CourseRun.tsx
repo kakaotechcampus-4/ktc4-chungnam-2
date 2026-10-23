@@ -11,7 +11,7 @@ import {
   daySummary,
   dayStops,
   dayTitle,
-  failureText,
+  FAILURE_TEXT,
   goalState,
   legLabel,
   outcomeText,
@@ -54,14 +54,23 @@ export default function CourseRun({ runId, names, points, onRetry, onClose }: { 
 
   if (run.status === 'done') return <Result run={run} names={names} points={points} onRetry={onRetry} onClose={onClose} />
   if (run.status === 'failed') return <Failed run={run} onRetry={onRetry} onClose={onClose} />
-  return <Progress run={run} />
+  // 진행 중에 조회가 실패하면(이전 data 는 남는다) 폴링이 멈추므로, 진행 화면 아래에서 다시 불러오게 한다.
+  return <Progress run={run} error={query.isError ? query.error : null} onRetryLoad={() => void query.refetch()} />
 }
 
-function Progress({ run }: { run: CourseRunDto }) {
+function Progress({ run, error, onRetryLoad }: { run: CourseRunDto; error: Error | null; onRetryLoad: () => void }) {
   return (
     <div className="space-y-3">
       <AiHeader title="코스를 짜고 있어요" sub="누가 무엇을 했는지 한 줄씩 보여 줘요" mood="thinking" />
       <WorkLog steps={run.steps} running />
+      {error && (
+        <div className="space-y-2">
+          <ErrorText message="진행 상황을 불러오지 못했어요" error={error} />
+          <button type="button" onClick={onRetryLoad} className="btn-outline btn-md w-full">
+            다시 불러오기
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -69,7 +78,7 @@ function Progress({ run }: { run: CourseRunDto }) {
 function Failed({ run, onRetry, onClose }: { run: CourseRunDto; onRetry: () => void; onClose: () => void }) {
   return (
     <div className="space-y-3">
-      <AiHeader title="코스를 만들지 못했어요" sub={failureText(run.failure_code)} mood="sorry" />
+      <AiHeader title="코스를 만들지 못했어요" sub={FAILURE_TEXT} mood="sorry" />
       <WorkLog steps={run.steps} running={false} />
       <div className="grid grid-cols-2 gap-2">
         <button type="button" onClick={onClose} className="btn-neutral btn-lg">

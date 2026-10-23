@@ -71,6 +71,11 @@ export default function ShortlistTab() {
     setRouteOn(!routeOn)
   }
 
+  function openCourse() {
+    if (routable < 2) return showToast('위치를 아는 장소가 2곳부터 코스를 짤 수 있어요')
+    setCourseOpen(true)
+  }
+
   function removeItem(item: ShortlistItemDto) {
     const name = item.pin.place_name ?? '이 장소'
     remove.mutate(item.id, {
@@ -111,7 +116,7 @@ export default function ShortlistTab() {
           </div>
           {items.length > 0 && (
             <div className="flex shrink-0 gap-2">
-              <button type="button" disabled={routable < 2} onClick={() => setCourseOpen(true)} className="chip">
+              <button type="button" onClick={openCourse} className="chip">
                 AI 코스 짜기
               </button>
               <button
