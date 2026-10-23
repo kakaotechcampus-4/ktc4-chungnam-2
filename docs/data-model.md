@@ -188,7 +188,21 @@ place_facts(
   labeled_at
 )
   primary key(place_id, fact_key)
+
+place_hours(                            -- v2 #690(2026-10-24): 영업시간·휴무일. 칸이 없으면 **행이 없다 = 모름**(지어내지 않는다)
+  place_id primary key references places(id) on delete cascade,
+  hours jsonb null,                     -- {"월": [["11:00","21:00"]], "화": [["12:30","15:00"],["17:00","22:00"]], "일": []} — 요일 키 7개(월~일),
+                                         --   값은 [여는 시각, 닫는 시각] 목록(브레이크타임이면 구간 여러 개), 빈 목록 = 그 요일 휴무,
+                                         --   자정을 넘기면 24를 더한다("26:00" = 다음 날 02:00), 상시 개방 = [["00:00","24:00"]].
+                                         --   hours가 있으면 7일을 다 아는 경우다. NULL이면 모름(closed_days만 있을 수 있다)
+  closed_days text[] null,              -- 매주 쉬는 요일("월","화"…). [] = 매일 영업(연중무휴), NULL = 모름. hours가 있으면 hours에서 빈 목록인 요일과 같다
+  closed_note text null,                -- 요일로 못 담는 휴무 원문(예: "1월 1일 / 설·추석 당일", "공연별 상이") — 표시용, 판단에 쓰지 않는다
+  hours_note text null,                 -- 영업시간 원문(계절별 운영 등은 가장 긴 계절 기준으로 hours에 넣고 원문은 여기) — 표시용
+  updated_at timestamptz not null default now()
+)
 ```
+
+> **영업시간·휴무일 (v2, #690)** — 데이터 담당 공유본(2026-10-21)의 정예 라벨 JSON `info.hours`·`info.closed_days`·`closed_note`·`hours_note`(음식점 `rest_`·카페 `cafe_` 접두어, 지역 관광지 포함)와 서울 관광지 별도 파일 `tourist_seoul_closed_days.json`(`source_id`=contentid)에서 적재한다. 출처는 구글 지도 영업시간 + TourAPI 이용시간·쉬는날 + 모델로 형식 변환한 문장(데이터 담당 소관)이라 카카오 응답이 아니다 — 저장해도 된다(#53). 라벨 키(`closed_mon`…)로는 시간 구간을 못 담고 `places`에 칸을 늘리면 비대해져 별도 테이블로 둔다. 인허가 커버리지 라벨에는 `info`가 없어 행이 없다(모름). 마이그레이션은 구현 PR이 그때의 head 다음 번호로 만든다. 적재는 멱등(같은 장소는 갱신)이고 파일에 칸이 없는 장소의 기존 행은 지우지 않는다.
 
 > **2026-10-01(#53) — `places`는 자체 DB다.** 카카오 로컬 API 응답(좌표·이름·주소 포함)은 어떤 형태로도 저장하지 않으므로 이 표의 이름·좌표는 인허가 공공데이터와 TourAPI에서만 온다(v1 서울만). 이전 설계의 `source('kakao'|'google'|'naver')`와 `last_synced_at`은 없앴다. 자체 DB는 음식점·카페·관광지만 담는다(TourAPI의 숙박은 받지 않는다, 2026-10-01) — 숙소·기타 장소는 `places`에 없으므로 v1에서 핀으로 만들 수 없다(`pins.category`의 숙소·기타 값은 스키마 호환으로 남긴다). 핀이 `places.id`를 가리키도록 바꾸는 `pins` 변경은 #195에서 한다.
 >
