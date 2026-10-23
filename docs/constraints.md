@@ -354,15 +354,15 @@ AI 추천 대상이 아니다(2026-09-30, #145). v1에서는 숙소 핀도 만�
 |---|---|---|---|
 | 장소의 정체·하는 일 | 쓴다 | `bakery` | `mountain`, `waterside`, `forest`, `flower_garden`, `seaside`, `hiking`, `cycling`, `hands_on`, `exhibition`, `performance`, `shopping`, `heritage_tour`, `traditional_hanok`, `modern_architecture`, `religious_site`, `hallyu_related` |
 | 성격·공간 (취향일 수도, 우연일 수도) | 2곳 이상 | `quiet`, `comfortable_seat`, `local_flavor`, `long_established` | `quiet`, `restful`, `good_view`, `photogenic`, `night_view`, `date_spot`, `local_flavor`, `walkable`, `is_indoor`, `is_outdoor` |
-| 편의·동반·접근 (필요하면 말로 남기는 것) | 쓰지 않음 | `franchise`, `spacious`, `open_late` | `family_friendly`, `kid_friendly`, `accessible` |
+| 편의·동반·접근 (필요하면 말로 남기는 것) | 쓰지 않음 | `franchise`, `spacious`, `open_late`, `parking_available`, `pet_friendly`, `wait_short`, `accessible`, `vegetarian_friendly` | `family_friendly`, `kid_friendly`, `accessible`, `pet_friendly`, `parking_available` |
 | 계절 | 쓴다, **여행 날짜가 시즌과 겹칠 때만**(위 계절 규칙) | — | `cherry_blossom`, `autumn_foliage`, `water_play`, `winter_spot` |
 
 - '쓰지 않음'인 키도 구성원이 직접 쓴 사유(②가 구조화한 선호, 칩)에 나오면 그대로 쓴다. 빼는 것은 ♥ 핀의 라벨에서 나온 신호뿐이다. '2곳 이상'의 의미와 시작값 2는 음식점 표와 같다.
-- `is_crowded_large`는 hard라 선호가 아니다. 표에 없는 카페·관광지 soft 키는 '쓴다'로 본다.
+- `is_crowded_large`는 hard라 선호가 아니다. 표에 없는 키는 **편의·동반·접근 성격이면 '쓰지 않음', 장소의 정체를 나타내면 '쓴다'**로 본다(2026-10-24 확정, 카페의 `pet_friendly`·`accessible`·`vegetarian_friendly`·`parking_available`·`wait_short`와 관광지의 `pet_friendly`·`parking_available`을 '쓰지 않음'으로 명시했다). 새 카페·관광지 soft 키를 등록하면 이 표에도 넣는다.
 
 ### 결과 카드에 선호 조건을 보이는 법 — 2026-10-24 결정, #681-4
 
-「? 확인 필요」와 「✗ …아님」은 **실격 조건(hard·🚫 사유·칩)의 모름·거짓에만** 붙인다. 선호(soft)는 모르면 0점일 뿐이고 거짓이어도 감점이 아니라 0점이므로 **충족한 것만** 카드에 보인다(「✓ 조용함」). 선호가 여럿이라 줄이 길어지지 않게 충족한 선호는 점수 기여가 큰 순으로 최대 5줄까지 보이고 나머지는 「외 N개」로 접는다. 가드레일 5(조건별 충족 체크)는 실격 조건 체크와 충족한 선호 체크로 지킨다.
+「? 확인 필요」와 「✗ …아님」은 **실격 조건(hard·🚫 사유·칩)의 모름·거짓에만** 붙인다. 선호(soft)는 모르면 0점일 뿐이고 거짓이어도 감점이 아니라 0점이므로 **충족한 것만** 카드에 보인다(「✓ 조용함」). 선호가 여럿이라 줄이 길어지지 않게 충족한 선호는 점수 기여가 큰 순으로 **최대 5줄만** 보인다(「외 N개」는 응답에 칸이 없어 두지 않는다 — 2026-10-24 결정, 스키마를 늘리지 않는다). 가드레일 5(조건별 충족 체크)는 실격 조건 체크와 충족한 선호 체크로 지킨다.
 
 ### 점수
 

@@ -553,6 +553,8 @@ def _run_pipeline(
             line.fact_key: line.wants for line in active_lines
             if line.badge == badge and line.fact_key in constraints.SOFT_FACT_KEYS and line.wants is not None
         })
+    required_soft_keys = {fact_key for fact_key, _wants in soft_requirements}   # 🚫 사유로 낸 soft 키는 실격 조건이다
+    weights = core.preference_weights(hearted_places, criteria, preferred_authors_frozen, avoided_authors_frozen)
     region_label = regions[0].label if regions else ""
     anchor_points_by_region = {region_label: list(regions[0].anchor_points)} if regions else {}
     scores = core.score_candidates(
@@ -579,7 +581,10 @@ def _run_pipeline(
             "rank": index + 1,
             "checks": [
                 check.model_dump()
-                for check in core.to_satisfaction_checks(core.checks_to_show(checks, wanted_soft_keys), directions)
+                for check in core.limit_preference_checks(
+                    core.to_satisfaction_checks(core.checks_to_show(checks, wanted_soft_keys), directions),
+                    required_soft_keys=required_soft_keys, weights=weights,
+                )
             ],
             "member_fulfillment": fulfillment,
             "reason": core.build_reason(checks, criteria),
