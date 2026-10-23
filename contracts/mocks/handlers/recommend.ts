@@ -110,14 +110,16 @@ export const recommendHandlers = [
       toggle?: { id: string; is_active: boolean }[];
       add?: { text: string }[];
     };
-    // #707 — 「+」는 한 요청 5줄, run 하나에 10줄(뺀 줄 포함). 서버는 모델을 부르기 전에 검사한다
-    const adds = body.add ?? [];
-    if (adds.length > MANUAL_PER_REQUEST) {
-      return apiError(422, "VALIDATION_ERROR", `한 번에 ${MANUAL_PER_REQUEST}줄까지 추가할 수 있습니다`);
+    // #707 — 「+」는 한 요청에 글 5개, run 하나에 글 10개(뺀 것 포함). 근거 줄이 아니라 글 수로 세고, 한 요청 안의 같은 글은
+    // 하나로 친다. 서버는 모델을 부르기 전에 검사한다
+    const raw = body.add ?? [];
+    if (raw.length > MANUAL_PER_REQUEST) {
+      return apiError(422, "VALIDATION_ERROR", `한 번에 ${MANUAL_PER_REQUEST}개까지 추가할 수 있습니다`);
     }
+    const adds = [...new Map(raw.map((a) => [a.text, a])).values()];
     const used = store.manualEvidenceCount[runId] ?? 0;
     if (used + adds.length > MANUAL_PER_RUN) {
-      return apiError(409, "EVIDENCE_LIMIT", "직접 추가한 근거 줄 상한을 넘었습니다", { limit: MANUAL_PER_RUN, used });
+      return apiError(409, "EVIDENCE_LIMIT", "직접 추가한 근거 상한을 넘었습니다", { limit: MANUAL_PER_RUN, used });
     }
     store.manualEvidenceCount[runId] = used + adds.length;
     for (const t of body.toggle ?? []) {
@@ -125,7 +127,7 @@ export const recommendHandlers = [
       // 5-5: 자기가 쓴 것만 뺄 수 있다
       if (line && line.author_id === ME_USER_ID) line.is_active = t.is_active;
     }
-    for (const a of body.add ?? []) {
+    for (const a of adds) {
       lines.push({
         id: nextId("evi"),
         author_id: ME_USER_ID,

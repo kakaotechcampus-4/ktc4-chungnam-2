@@ -115,13 +115,14 @@ describe("기획안 6절 핵심 시나리오 — happy path", () => {
 });
 
 describe("에러 시나리오", () => {
-  it("evidence-limit — 「+」는 선호로 붙고, 한 번에 5줄, run 하나에 10줄까지(#707)", async () => {
+  it("evidence-limit — 「+」는 선호로 붙고, 한 번에 글 5개, run 하나에 글 10개까지(#707)", async () => {
     const run = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점" }) }).then((r) => r.json());
     const patch = (texts: string[]) =>
       fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify({ add: texts.map((text) => ({ text })) }) });
-    const six = await patch(["1", "2", "3", "4", "5", "6"]);
-    expect(six.status).toBe(422);
-    const first = await patch(["회 좋아해", "2", "3", "4", "5"]);
+    expect((await patch(["1", "2", "3", "4", "5", "6"])).status).toBe(422);
+    // 한 요청 안의 같은 글은 하나로 친다(글 수로 센다)
+    expect((await patch(["같은 글", "같은 글"])).status).toBe(200);
+    const first = await patch(["회 좋아해", "2", "3", "4"]);
     expect(first.status).toBe(200);
     const lines = await first.json();
     expect(lines.find((l: { text: string }) => l.text === "회 좋아해").badge).toBe("preferred");
@@ -130,7 +131,7 @@ describe("에러 시나리오", () => {
     expect(over.status).toBe(409);
     const body = await over.json();
     expect(body.code).toBe("EVIDENCE_LIMIT");
-    expect(body.detail).toEqual({ limit: 10, used: 10 });
+    expect(body.detail).toEqual({ limit: 10, used: 10 }); // 같은 글 1 + 4 + 5
   });
 
   it("no-results — 결과 0개는 404 NO_RESULTS", async () => {
