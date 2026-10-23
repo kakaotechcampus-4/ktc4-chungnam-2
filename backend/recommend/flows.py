@@ -292,7 +292,7 @@ def _evidence_response(line, principal: Principal) -> schemas.EvidenceLine:
     return schemas.EvidenceLine(
         id=str(line.id), author_id=line.author_id, text=line.text, badge=line.badge,
         fact_key=line.fact_key, fact_label=constraints.FACT_LABELS.get(line.fact_key) if line.fact_key else None,
-        wants=line.wants, is_active=line.is_active,
+        wants=line.wants, enforced=line.fact_key is not None, is_active=line.is_active,
         permissions=Permissions(can_disable=can(principal, "evidence.disable", resource)),
     )
 
