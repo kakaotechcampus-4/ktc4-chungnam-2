@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Sequence
 from common.geo import haversine_distance_m
 from places import matching
 from places.matching import OWN_CATEGORIES, Candidate
-from places.schemas import Area, FactLabel, PlaceHint, PlaceInfo, PlaceMatch, PlaceRef
+from places.schemas import Area, FactLabel, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -83,6 +83,7 @@ def _sample_facts() -> dict[str, list[FactLabel]]:
 class FakePlaces:
     rows: list[_Row] = field(default_factory=_sample_rows)
     facts: dict[str, list[FactLabel]] = field(default_factory=_sample_facts)
+    hours: dict[str, PlaceHours] = field(default_factory=dict)   # place_id → 영업시간·휴무일. 기본은 비어 있다(= 모름, #690)
 
     # ---- 6개 공개 함수 (places.api와 같은 이름·시그니처). db는 메모리 대역이라 받기만 하고 쓰지 않는다 ----
 
@@ -115,6 +116,9 @@ class FakePlaces:
             if row is not None:
                 out[pid] = PlaceInfo(pid, row.name, row.lat, row.lng, row.category, row.kakao_place_url, row.source, row.curated)
         return out
+
+    def get_hours(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceHours]:
+        return {pid: self.hours[pid] for pid in place_ids if pid in self.hours}   # 행 없는 장소는 키에서 뺀다 — 실제 구현과 같다
 
     def search_nearby_own(self, category: str, areas: Sequence[Area], *, db: Session | None = None) -> list[PlaceRef]:
         if category not in OWN_CATEGORIES:
@@ -149,7 +153,7 @@ class FakePlaces:
         """places.api의 공개 함수(링크 해석용 2개 포함)를 이 대역으로 바꾼다(pytest monkeypatch)."""
         from places import api
 
-        for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "get_facts",
+        for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "get_facts", "get_hours",
                      "own_places_near", "own_places_by_kakao_id"):
             monkeypatch.setattr(api, name, getattr(self, name))
         return self
