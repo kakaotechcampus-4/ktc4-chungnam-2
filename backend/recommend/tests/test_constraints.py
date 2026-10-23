@@ -96,7 +96,7 @@ def test_late_and_alcohol_are_soft_keys_with_category_free_names():
         assert constraints.SOFT_REGISTRY[key].unknown_policy == "pass"
         assert key in constraints.soft_fact_keys_for("음식점")
         assert constraints.heart_signal_use("음식점", key) == "unused"
-        assert constraints.heart_signal_use("카페", key) == "use"
+        assert constraints.heart_signal_use("카페", key) == ("unused" if key == "open_late" else "use")   # #681-3
         assert "카페" not in constraints.PASSED_LABELS[key]
         assert "카페" not in constraints.FACT_LABELS[key]
     assert constraints.PASSED_LABELS["serves_alcohol"] == "술도 파는 곳"
@@ -117,6 +117,34 @@ def test_heart_signal_table_classifies_every_restaurant_soft_key():
     assert constraints.HEART_SIGNAL_MIN_TRUE_PLACES == 2
 
 
-def test_heart_signal_defaults_to_use_outside_the_restaurant_table():
-    assert constraints.heart_signal_use("카페", "franchise") == "use"
-    assert constraints.heart_signal_use("관광지", "quiet") == "use"
+def test_heart_signal_table_for_cafe_and_sight_follows_the_doc_681():
+    """#681-3 — docs/constraints.md "♥에서 선호로 쓰는 라벨 (카페·관광지)" 표 전사. 표에 없는 키(계절 등)는 '쓴다'."""
+    for category, use_keys, two_keys, unused_keys in (
+        ("카페", {"bakery"}, {"quiet", "comfortable_seat", "local_flavor", "long_established"},
+         {"franchise", "spacious", "open_late"}),
+        ("관광지", {
+            "mountain", "waterside", "forest", "flower_garden", "seaside", "hiking", "cycling", "hands_on",
+            "exhibition", "performance", "shopping", "heritage_tour", "traditional_hanok", "modern_architecture",
+            "religious_site", "hallyu_related",
+        }, {"quiet", "restful", "good_view", "photogenic", "night_view", "date_spot", "local_flavor", "walkable",
+            "is_indoor", "is_outdoor"}, {"family_friendly", "kid_friendly", "accessible"}),
+    ):
+        table = constraints.HEART_SIGNAL_BY_CATEGORY[category]
+        assert {k for k, v in table.items() if v == "use"} == use_keys
+        assert {k for k, v in table.items() if v == "two_or_more"} == two_keys
+        assert {k for k, v in table.items() if v == "unused"} == unused_keys
+        assert set(table) <= set(constraints.soft_fact_keys_for(category))
+    for season in ("cherry_blossom", "autumn_foliage", "water_play", "winter_spot"):
+        assert constraints.heart_signal_use("관광지", season) == "use"
+
+
+def test_place_identity_key_stays_restaurant_only():
+    """#681-3 — 카페·관광지 표에 "use"가 생겨도 "원함이어도 required" 내리기(#422)는 음식점 cuisine_*만 센다."""
+    assert constraints.is_place_identity_key("음식점", "cuisine_bbq")
+    assert not constraints.is_place_identity_key("카페", "bakery")
+    assert not constraints.is_place_identity_key("관광지", "performance")
+
+
+def test_heart_signal_defaults_to_use_for_keys_outside_the_tables():
+    assert constraints.heart_signal_use("카페", "pet_friendly") == "use"
+    assert constraints.heart_signal_use("숙소", "quiet") == "use"
