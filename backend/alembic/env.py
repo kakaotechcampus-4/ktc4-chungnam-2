@@ -13,6 +13,8 @@ from sqlalchemy import engine_from_config, pool
 from common.database import Base  # noqa: E402
 
 # 모듈이 models.py를 만들면 여기 추가한다. 예:
+import ads.models  # noqa: F401
+import agent.course.models  # noqa: F401
 import agent.models  # noqa: F401
 import auth.models  # noqa: F401
 import common.events  # noqa: F401

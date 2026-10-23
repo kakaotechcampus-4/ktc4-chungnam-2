@@ -30,6 +30,7 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     - route.recalculate        # 동선 재계산(5-10) — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
     - agent.toggle             # 계획 보조 에이전트 모드 켜고 끄기(v2, docs/agent-v2.md). 구성원 누구나
     - agent.suggestion.resolve # 지도 제안 수락·닫기(v2). 구성원 누구나, 지도 단위로 모두에게서 닫힌다
+    - course.request           # AI 코스 짜기 요청(#334, #580 결정 전 브랜치 초안). 구성원 누구나. 하루 상한(5회)은 서비스가 센다
 
 author:                       # evidence_line·candidate·run을 만든 당사자에게 얹히는 추가 범위
   scope:
@@ -44,6 +45,7 @@ author:                       # evidence_line·candidate·run을 만든 당사�
                                  # 먼저 보인다 — 게시 전 run은 본인 것만 조작·열람
     - recommend.publish         # 「지도에 올리기」 — candidate.requested_by 본인만
     - pin.edit                  # 핀 메모·분류 수정(#466) — 핀을 찍은 사람만. AI 추천·확정 핀 제외는 역할이 아니라 핀 상태라 pins 코어가 판정한다
+    - course.view               # AI 코스 run 조회(#334) — run.requested_by 본인만. 가드레일 1: 코스는 요청한 사람에게만 보인다
 
 owner:                        # 방장. 처음엔 지도 생성자, 위임되면 바뀐다(#369). 판단 정본은 memberships.role
                               # (maps.created_by는 "만든 사람" 기록일 뿐 방장 판단에 쓰지 않는다). member 전체 + 아래 추가
@@ -112,6 +114,9 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 | 계획 보조 에이전트 모드 켜고 끄기 — 구성원 누구나 (v2, #510) | `member.actions: [agent.toggle]` |
 | 지도 제안 수락·닫기 — 구성원 누구나 (v2, #510) | `member.actions: [agent.suggestion.resolve]`. 열람 기록과 상태 조회는 구성원이면 되고 별도 액션이 없다 |
 | 추천 막힘 조언 조회 — 요청한 본인만 (v2, #510) | 기존 `author.actions: [recommend.manage]`를 쓴다(run 결과 조회와 같은 범위) |
+| 추천 탭 광고 조회, 광고 클릭 기록 — 구성원 누구나 (#642, docs/ads.md) | 새 액션 없음. 조회 전용 GET과 같이 지도 구성원 확인(`require_map_member`)만 한다. 클릭 기록은 집계 증가뿐이라 도메인 액션으로 보지 않는다 |
+| AI 코스 짜기 요청 — 구성원 누구나 (#334, #580 결정 전 초안) | `member.actions: [course.request]`. 하루 상한은 권한이 아니라 서비스 상태라 여기 넣지 않고 429 `COURSE_LIMIT`로 판정한다 |
+| AI 코스 run 조회 — 요청한 본인만 (#334) | `author.scope.run: own`, `author.actions: [course.view]`. 「내 마지막 코스」(`GET /maps/{mapId}/courses/latest`)는 구성원이면 되고(자기 run만 돌려준다) 별도 액션이 없다 |
 | AI 추천 run 근거 조회·토글·추가 — 구성원 누구나 (#108, #32, 최종기획안 5-5) | `member.actions: [recommend.evidence]` (개별 줄 비활성화만 `author.actions: [evidence.disable]`) |
 | AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `author.scope.run: own`, `author.actions: [recommend.manage]` |
 

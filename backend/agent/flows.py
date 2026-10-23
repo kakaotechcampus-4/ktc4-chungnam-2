@@ -20,6 +20,7 @@
 
 **추천 막힘 조언(9절, #587)**: `advise_run`. AI 추천 결과 화면의 `GET /runs/{runId}/advice`(agent/router.py)가 부른다. 관찰과
 따로 돌고(요청 안), 읽기 → 모델(세션 없음) → 쓰기를 짧은 세션으로 나눈다. run당 한 번 저장한다(trigger=run_advice).
+모델 단계가 예외로 끝나면 error 행만 남기고 저장하지 않는다(204, 다음 요청이 다시 시도, #677).
 
 화면 요청(명세 14절)도 여기 있다 — `get_state`, `change_settings`, `view`, `accept`, `dismiss`. 요청 세션(get_db) 안에서
 돌고 커밋은 그 세션이 한다. 이벤트는 같은 트랜잭션에 `record_event`로 남긴다. 권한은 router가 authz.guard로 끝낸 뒤다.
@@ -35,6 +36,8 @@ outcome(agent_runs.outcome)
 - invalid_claims: 검증(11.2) 2단계(신호 불일치)나 7단계(성립 실패)에서 떨어짐. 내역은 verification
 - stale: 저장 직전 재확인(12.8)에서 신호가 사라졌거나 근거가 바뀜
 - suggested: 제안을 저장함(shadow 유형이면 shadow=True)
+- error: 관찰이 예외로 끝남(#677). run_tick이 따로 남기고 outcome_detail은 {stage, error(예외 클래스 이름)}뿐이다. 진단을
+  부른 뒤면 used_model=true와 그때까지의 사용량, tool_calls를 함께 남긴다. 커서를 올리고 재시도를 미룬다(_observe_claimed)
 요약 관찰(trigger=summary)의 outcome
 - summarized: 그 카테고리 요약을 덮어씀. outcome_detail은 {category}
 - model_failed: ②(사유 구조화)가 실패해 요약을 만들지 못함. 요약은 그대로 두고 다음 관찰에서 다시 본다
@@ -53,11 +56,12 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from agent import core, deps, service, snapshot, tools
-from agent.constants import CODE_TYPES, SUGGESTION_TTL, TICK_MAX_MAPS
+from agent.constants import CODE_TYPES, DECIDED_WINDOW, SUGGESTION_TTL, TICK_BUDGET_SEC, TICK_MAX_MAPS
 from agent.models import AgentSuggestion as SuggestionRow
 from agent.schemas import (
     AgentAcceptResponse,
     AgentCallFailed,
+    AgentReply,
     AgentSettings,
     AgentState,
     AgentSuggestion,
@@ -75,8 +79,9 @@ from maps import api as maps_api
 from pins import api as pins_api
 from places import api as places_api
 from recommend import api as recommend_api
+from shortlist import api as shortlist_api
 
-log = logging.getLogger("pingo.agent")
+log =logging.getLogger("pingo.agent")
 
 SessionFactory = Callable[[], Session]
 
@@ -109,61 +114,174 @@ def _snapshot_read(factory: SessionFactory) -> Iterator[Session]:
             db.rollback()
 
 
+@dataclass
+class _Trace:
+    """관찰이나 조언 한 번이 어디까지 갔는지(#677). 흐름이 단계마다 고치고, 예외로 끝나면 이것으로 error 행을 남긴다.
+
+    단계: 관찰은 expire → snapshot → detect → draft → model → verify → save → summary, 조언은 prefetch → model → verify.
+    모델 사용(used_model, tool_calls, usage)은 아직 어느 행에도 남지 않은 것만 담는다 — 관찰의 저장 단계가 커밋되면 지도
+    관찰 행에 들어갔으므로 비운다(model_recorded). tool_calls는 도구 창구의 기록(글 대신 글자 수) 그대로다."""
+    stage: str
+    started: float = field(default_factory=time.monotonic)
+    used_model: bool = False
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    usage: AgentUsage | None = None
+
+    def model_recorded(self) -> None:
+        self.used_model, self.tool_calls, self.usage = False, [], None
+
+    def error_fields(self, exc: Exception, now: datetime) -> dict[str, Any]:
+        """error 행의 칸. outcome_detail은 단계와 예외 클래스 이름뿐이다 — str(예외)에는 사유 글이나 SQL 값이 들어 있을 수
+        있다. 모델을 이미 불렀으면 used_model=true와 그때까지의 사용량을 남겨 지도 상한에 센다(12.3)."""
+        return {
+            "started_at": now, "finished_at": now + timedelta(seconds=time.monotonic() - self.started),
+            "used_model": self.used_model, "tool_calls": self.tool_calls, "outcome": "error",
+            "outcome_detail": {"stage": self.stage, "error": type(exc).__name__},
+            **core.model_usage([self.usage] if self.usage is not None else []),
+        }
+
+
+def _call_model(trace: _Trace, tool_calls: list[dict[str, Any]], call: Callable[[], AgentReply]) -> AgentReply:
+    """모델 단계(진단, 조언). 부르기 전에 모델 사용을 표시하고, 도구가 예외를 내도(llm의 ToolRunnerError) 그때까지 쓴 사용량을
+    trace에 남긴다(#677)."""
+    trace.stage, trace.used_model, trace.tool_calls = "model", True, tool_calls
+    try:
+        reply = call()
+    except llm_api.ToolRunnerError as exc:
+        trace.usage = exc.usage
+        raise
+    trace.usage = reply.usage
+    return reply
+
+
 # ---------------------------------------------------------------- tick (12.2)
 
 def run_tick(
     now: datetime, *, session_factory: SessionFactory = SessionLocal, gateway: deps.AgentLlmGateway | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> list[str]:
-    """지도를 골라(lease) 하나씩 관찰한다. 한 지도가 실패해도 다른 지도는 계속하고, lease는 늘 푼다. 관찰한
-    map_id 목록을 돌려준다. gateway가 없으면 deps.get_llm_gateway()(LLM_MODE로 고른 것)."""
+    """지도를 골라(lease) 하나씩 관찰한다. 한 지도가 실패해도 다른 지도는 계속하고, lease는 늘 푼다. 관찰한 map_id 목록
+    (예외로 끝난 것 포함)을 돌려준다. gateway가 없으면 deps.get_llm_gateway()(LLM_MODE로 고른 것).
+
+    시간 예산(#677): 시작 뒤 TICK_BUDGET_SEC(LEASE_SEC − 30초)가 지나면 남은 지도는 관찰하지 않고 lease만 푼다 — 관찰이
+    lease 시간을 넘겨 다른 실행이 같은 지도를 잡지 않게 한다. 남은 지도는 커서가 그대로라 다음 tick에 다시 잡힌다."""
+    started = clock()
     gateway = gateway or deps.get_llm_gateway()
     with _write(session_factory) as db:
         claims = service.claim_maps(db, now, limit=TICK_MAX_MAPS)
-    for map_id, trigger in claims:
+    observed = []
+    for claim in claims:
         try:
-            observe_map(map_id, now, trigger=trigger, session_factory=session_factory, gateway=gateway)
-        except Exception:
-            log.exception("agent observe_map 실패 map_id=%s", map_id)
+            if clock() - started < TICK_BUDGET_SEC:
+                _observe_claimed(claim, now, session_factory, gateway)
+                observed.append(claim.map_id)
         finally:
             try:
                 with _write(session_factory) as db:
-                    service.release_lease(db, map_id)
+                    service.release_lease(db, claim.map_id)
             except Exception:   # 못 풀어도 LEASE_SEC 뒤에는 다른 실행이 가져간다(12.5)
-                log.exception("agent release_lease 실패 map_id=%s", map_id)
+                log.exception("agent release_lease 실패 map_id=%s", claim.map_id)
+    if len(observed) < len(claims):
+        log.warning("agent tick 시간 예산 %d초를 넘겨 지도 %d개는 관찰하지 않았다", TICK_BUDGET_SEC,
+                    len(claims) - len(observed))
     try:
         daily_cleanup_if_due(now, session_factory=session_factory)
     except Exception:
         log.exception("agent 보존 정리 실패")
-    return [map_id for map_id, _ in claims]
+    return observed
+
+
+def _observe_claimed(
+    claim: service.Claim, now: datetime, session_factory: SessionFactory, gateway: deps.AgentLlmGateway,
+) -> None:
+    """관찰 하나. 예외로 끝나면 error 행을 남기고 재시도를 미룬다(#677) — 기록 없이 두면 커서가 그대로라 같은 지도가 tick마다
+    다시 잡히고, 모델을 부른 뒤의 실패면 관찰마다 모델을 다시 부른다.
+
+    커서는 고를 때 본 가장 큰 seq로 올리고, next_check_at은 그 지도에서 연달아 예외로 끝난 관찰 수(service.error_streak)에
+    따라 30분, 2시간, 6시간 뒤다(core.error_retry_at). 다음 관찰은 도메인 테이블에서 다시 읽으므로 커서를 올려도 잃는 것이
+    없다(12.5). 그사이 새 이벤트가 오면 activity로 다시 잡힌다."""
+    trace = _Trace("expire")
+    try:
+        observe_map(claim.map_id, now, trigger=claim.trigger, session_factory=session_factory, gateway=gateway,
+                    trace=trace)
+    except Exception as exc:
+        log.exception("agent observe_map 실패 map_id=%s stage=%s", claim.map_id, trace.stage)
+        try:
+            with _write(session_factory) as db:
+                service.insert_run(db, map_id=claim.map_id, trigger=claim.trigger, **trace.error_fields(exc, now))
+                retry_at = core.error_retry_at(now, service.error_streak(db, claim.map_id))
+                service.advance_cursor(db, claim.map_id, claim.seq, next_check_at=retry_at, observed_at=now)
+        except Exception:
+            log.exception("agent 관찰 실패 기록 실패 map_id=%s", claim.map_id)
 
 
 _cleanup_done_on: date | None = None   # 이 프로세스가 보존 정리를 마친 KST 날짜
 
 
 def daily_cleanup_if_due(now: datetime, *, session_factory: SessionFactory = SessionLocal) -> bool:
-    """하루 한 번(KST) agent_runs 30일 초과분을 지운다(12.9). 했으면 True. 날짜는 프로세스 메모리에 둔다 — 인스턴스가
-    여럿이거나 다시 뜨면 하루에 몇 번 돌 수 있지만 지우는 일이라 결과는 같다."""
+    """하루 한 번(KST) 정리한다(12.9): agent_runs 30일 초과분을 지우고, 24시간 지난 제안의 decided_within_24h를 채운다.
+    했으면 True. 날짜는 프로세스 메모리에 둔다 — 인스턴스가 여럿이거나 다시 뜨면 하루에 몇 번 돌 수 있지만 지우기와
+    빈 칸 채우기라 결과는 같다."""
     global _cleanup_done_on
     today = core.kst_date(now)
     if _cleanup_done_on == today:
         return False
     with _write(session_factory) as db:
         deleted = service.delete_old_runs(db, now)
+    filled = fill_decided_within_24h(now, session_factory=session_factory)
     _cleanup_done_on = today
-    log.info("agent 보존 정리: agent_runs %d행 삭제", deleted)
+    log.info("agent 보존 정리: agent_runs %d행 삭제, decided_within_24h %d행 채움", deleted, filled)
     return True
+
+
+def fill_decided_within_24h(now: datetime, *, session_factory: SessionFactory = SessionLocal) -> int:
+    """만든 지 24시간이 넘었고 decided_within_24h가 빈 제안(shadow 포함, 상태 무관)을 채운다(12.9, #613). 채운 행 수.
+
+    지도마다 짧은 쓰기 트랜잭션 하나에서 다른 모듈을 한 번씩 읽고(지도, 확정 리스트, 카테고리 유형이 있으면 핀) 그 지도
+    제안을 한 번에 쓴다. 한 지도가 실패해도 다른 지도는 계속한다(그 지도는 다음 정리 때 다시 본다)."""
+    created_before = now - DECIDED_WINDOW
+    with _short_read(session_factory) as db:
+        map_ids = service.list_undecided_map_ids(db, created_before=created_before)
+    filled = 0
+    for map_id in map_ids:
+        try:
+            with _write(session_factory) as db:
+                filled += _fill_decided_for_map(db, map_id, created_before)
+        except Exception:
+            log.exception("agent decided_within_24h 채우기 실패 map_id=%s", map_id)
+    return filled
+
+
+def _fill_decided_for_map(db: Session, map_id: str, created_before: datetime) -> int:
+    found = maps_api.get_map_for_agent(db, map_id)
+    if found is None or found["deleted"]:   # 판정하지 않고 둔다. 삭제 30일 뒤 지도 정리가 지운다
+        return 0
+    targets = service.list_undecided(db, map_id=map_id, created_before=created_before)
+    if not targets:
+        return 0
+    category_of: dict[str, str] = {}
+    if any(t.diagnosis in core.CATEGORY_DECIDED for t in targets):
+        # 공개된 살아 있는 핀만 분류가 나온다. 삭제된 핀의 분류를 주는 pins.api 함수는 없다(for_Root.md #613)
+        category_of = {p["pin_id"]: p["category"] for p in pins_api.list_reaction_matrix(db, map_id=map_id)}
+    confirmations = [
+        core.Confirmation(pin_id=i["pin_id"], category=category_of.get(i["pin_id"]), added_at=i["added_at"])
+        for i in shortlist_api.list_items_for_agent(db, map_id=map_id)
+    ]
+    return service.set_decided(db, {t.id: core.decided_within_24h(t, confirmations) for t in targets})
 
 
 # ---------------------------------------------------------------- 관찰 (12.4)
 
 def observe_map(
     map_id: str, now: datetime, *, trigger: str = "activity", session_factory: SessionFactory = SessionLocal,
-    gateway: deps.AgentLlmGateway | None = None,
+    gateway: deps.AgentLlmGateway | None = None, trace: _Trace | None = None,
 ) -> str | None:
     """지도 하나를 관찰하고 agent_runs에 남긴 outcome을 돌려준다. 저장 단계에서 지도가 삭제된 것을 보면 아무것도
-    쓰지 않고 None(머리말의 outcome 목록)."""
+    쓰지 않고 None(머리말의 outcome 목록). 예외는 그대로 올린다 — 어디까지 갔는지는 trace에 남는다(run_tick이 error 행을
+    쓴다, #677)."""
     started = time.monotonic()
     gateway = gateway or deps.get_llm_gateway()
+    trace = trace if trace is not None else _Trace("expire")
 
     def run_fields(snap: snapshot.Snapshot | None, outcome: str, **extra: Any) -> dict[str, Any]:
         return {
@@ -173,10 +291,12 @@ def observe_map(
         }
 
     # 1. 만료 정리 (짧은 쓰기) + agent.resolved
+    trace.stage = "expire"
     with _write(session_factory) as db:
         _announce_resolved(db, map_id, service.expire_suggestions(db, map_id, now), "expired")
 
     # 2. 스냅샷과 이력 (짧은 읽기, REPEATABLE READ). 여기서 세션을 닫는다
+    trace.stage = "snapshot"
     with _snapshot_read(session_factory) as db:
         snap = snapshot.build(db, map_id, now)
         hist = service.load_history(db, map_id, now)
@@ -185,12 +305,14 @@ def observe_map(
 
     ended = _ended(snap)
     if ended is not None:   # 끝난 지도는 관찰하지 않는다. 새 이벤트가 와야 다시 잡히고, 그때도 바로 끝난다
+        trace.stage = "save"
         with _write(session_factory) as db:
             service.insert_run(db, **run_fields(snap, ended))
             service.advance_cursor(db, map_id, snap.latest_seq if snap else None, next_check_at=None, observed_at=now)
         return ended
 
     # 3. 탐지와 활성 제안 무효화 판단 (순수)
+    trace.stage = "detect"
     th = core.time_threshold(snap.action_times, snap.map.start_date, snap.today)
     signals = core.detect_all(snap, now, th)
     superseding = core.find_superseded(hist.active, signals)
@@ -203,13 +325,15 @@ def observe_map(
     top, priority = core.choose_top(passed, policy)
 
     # 6. 초안 — 코드 유형은 템플릿, 모델 유형은 진단과 검증(세션 없음, 도구만 짧게 읽는다)
-    step = _draft(map_id, top, snap, names, now, session_factory, gateway) if top is not None else _Step(None)
+    trace.stage = "draft"
+    step = _draft(map_id, top, snap, names, now, session_factory, gateway, trace) if top is not None else _Step(None)
     chosen = top if step.draft is not None else None
     draft = step.draft
     outcome, detail = _planned_outcome(signals, top, step)
     usages = [step.usage] if step.usage is not None else []
 
     # 7. 재확인과 저장 (짧은 쓰기 트랜잭션). 이벤트도 같은 트랜잭션
+    trace.stage = "save"
     with _write(session_factory) as db:
         if not maps_api.lock_map_if_alive(db, map_id):   # 지도 행 잠금 + 삭제 확인(#435, #512)
             return None                                   # 관찰 중 지도가 삭제됐다. 아무것도 쓰지 않는다
@@ -245,8 +369,10 @@ def observe_map(
             db, map_id, snap.latest_seq, next_check_at=_next_check(snap, hist, now, th, new_expires_at),
             observed_at=now,
         )
+    trace.model_recorded()   # 진단의 모델 사용은 위 행에 남았다. 요약에서 실패해도 다시 세지 않는다
 
     # 8. 요약 (별도 흐름, 별도 트랜잭션)
+    trace.stage = "summary"
     update_summary(map_id, snap, hist, now, session_factory=session_factory, gateway=gateway)
     return outcome
 
@@ -273,10 +399,11 @@ class _Step:
 
 def _draft(
     map_id: str, top: core.Signal, snap: snapshot.Snapshot, names: list[str], now: datetime,
-    session_factory: SessionFactory, gateway: deps.AgentLlmGateway,
+    session_factory: SessionFactory, gateway: deps.AgentLlmGateway, trace: _Trace,
 ) -> _Step:
     """제안 초안(12.4 6단계). 코드 유형은 템플릿. 모델 유형은 진단을 부른다 — split은 충돌 종류(compare_reasons, 코드)를
-    먼저 계산해 입력에 넣는다. 실패(AgentCallFailed)와 검증 실패는 재요청하지 않고 침묵한다(2절 10번)."""
+    먼저 계산해 입력에 넣는다. 실패(AgentCallFailed)와 검증 실패는 재요청하지 않고 침묵한다(2절 10번). 예외는 그대로
+    올리고, 진단을 부른 뒤면 trace에 모델 사용이 남는다(#677)."""
     if top.diagnosis in CODE_TYPES:
         return _Step(core.render_template(top))
     ctx = tools.ToolContext(
@@ -284,7 +411,10 @@ def _draft(
         structure=gateway.structure, now=now,
     )
     comparison = _comparison(ctx, top)
-    reply = gateway.diagnose(core.diagnosis_input(top, snap, comparison), tool_runner=ctx.run)
+    reply = _call_model(trace, ctx.calls, lambda: gateway.diagnose(
+        core.diagnosis_input(top, snap, comparison), tool_runner=ctx.run,
+    ))
+    trace.stage = "verify"
     out = reply.result
     which = {"signal_id": top.id, "diagnosis": top.diagnosis}
     if isinstance(out, AgentCallFailed):
@@ -519,9 +649,12 @@ def advise_run(
        행을 다시 읽어 렌더한다 — 같은 run에 동시에 두 요청이 와도 먼저 커밋한 조언 하나만 남고 둘 다 그것을 돌려준다.
        침묵, 실패, 검증 실패도 빈 조언으로 저장해 다시 만들지 않는다.
 
+    3단계(미리 읽기, 모델과 도구, 검증)가 예외로 끝나면 agent_runs에 outcome=error 한 행만 남기고 조언은 저장하지 않은 채
+    None(204)을 돌려준다(#677). 다음 요청이 다시 시도한다(16.5) — 모델의 실패(AgentCallFailed)와 달리 우리 쪽 오류라서다.
+
     지도 모델 사용 상한에는 세지 않는다(9절 — service.MODEL_RUN_TRIGGERS에 run_advice가 없다). outcome은 advised(조언을
-    만듦), silent, unknown, invalid_schema, model_failed, invalid_claims다."""
-    started = time.monotonic()
+    만듦), silent, unknown, invalid_schema, model_failed, invalid_claims, error다."""
+    trace = _Trace("prefetch")
     now = now or datetime.now(timezone.utc)
 
     with _short_read(session_factory) as db:
@@ -546,9 +679,20 @@ def advise_run(
         run_id=run_id, requester_id=requester_id, meta=meta, session_factory=session_factory,
         fact_labels=recommend_api.fact_labels(),
     )
-    funnel = ctx.prefetch(core.PREFETCH_CALL_ID, "get_run_funnel")
-    reply = gateway.advise_run(core.advice_input(meta, same_runs, funnel), tool_runner=ctx.run)
-    outcome, draft, verification, detail = _checked_advice(reply.result, ctx, evidence, names, meta)
+    try:
+        funnel = ctx.prefetch(core.PREFETCH_CALL_ID, "get_run_funnel")
+        reply = _call_model(trace, ctx.calls, lambda: gateway.advise_run(
+            core.advice_input(meta, same_runs, funnel), tool_runner=ctx.run,
+        ))
+        trace.stage = "verify"
+        outcome, draft, verification, detail = _checked_advice(reply.result, ctx, evidence, names, meta)
+    except Exception as exc:
+        log.exception("agent 조언 실패 run_id=%s stage=%s", run_id, trace.stage)
+        fields = trace.error_fields(exc, now)
+        fields["outcome_detail"] = {"run_id": run_id, **fields["outcome_detail"]}   # 어느 run의 조언인지
+        with _write(session_factory) as db:   # 조언 행은 쓰지 않는다 — 다음 요청이 다시 만든다
+            service.insert_run(db, map_id=meta["map_id"], trigger="run_advice", **fields)
+        return None
 
     with _write(session_factory) as db:
         agent_run_id = uuid.uuid4()
@@ -557,8 +701,8 @@ def advise_run(
         )
         service.insert_run(
             db, id=agent_run_id, map_id=meta["map_id"], started_at=now,
-            finished_at=now + timedelta(seconds=time.monotonic() - started), trigger="run_advice", used_model=True,
-            tool_calls=ctx.calls, verification=verification, outcome=outcome,
+            finished_at=now + timedelta(seconds=time.monotonic() - trace.started), trigger="run_advice",
+            used_model=True, tool_calls=ctx.calls, verification=verification, outcome=outcome,
             outcome_detail={"run_id": run_id, "stored": inserted, **detail}, **core.model_usage([reply.usage]),
         )
         return core.render_run_advice(run_id, service.get_run_advice(db, run_id))
@@ -573,7 +717,7 @@ def _checked_advice(
     verified = core.verify_run_advice(out, core.AdviceContext(
         run_id=ctx.run_id, tool_results=ctx.results, tool_names=ctx.names,
         own_lines={line["line_id"]: line["author_id"] == ctx.requester_id for line in evidence},
-        evidence_texts=[line["text"] for line in evidence if line["text"]],
-        radius=core.radius_limits(meta["default_radius_walk_min"], meta["widen_limit_walk_min"]), member_names=names,
+        evidence_texts=[line["text"] for line in evidence if line["text"]], radius=core.run_radius(meta),
+        member_names=names,
     ))
     return verified.outcome, verified.draft, verified.record, {"decision": out.decision, "kind": out.kind}

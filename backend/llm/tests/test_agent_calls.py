@@ -410,6 +410,18 @@ class TestUsage:
             model=settings.llm_model, prompt_version=AGENT_DIAGNOSE_PROMPT_VERSION, tokens_in=200, tokens_out=40,
         )
 
+    def test_tool_runner_error_carries_usage_spent_so_far(self):
+        # 첫 왕복(도구 호출) 뒤 tool_runner가 예외 — agent가 실패 기록에 남겨 지도 상한에 센다(#677)
+        client = FakeClient(_tool_call(*GET_REASONS))
+
+        with pytest.raises(service.ToolRunnerError) as raised:
+            service.agent_diagnose(STALL, tool_runner=Runner(error=RuntimeError("db")),
+                                   planner=partial(service._model_diagnosis_planner, client))
+
+        assert raised.value.usage == AgentUsage(
+            model=settings.llm_model, prompt_version=AGENT_DIAGNOSE_PROMPT_VERSION, tokens_in=100, tokens_out=20,
+        )
+
     def test_failure_before_any_response_names_the_model_with_zero_tokens(self):
         client = FakeClient(openai.APITimeoutError(request=_request()))
 

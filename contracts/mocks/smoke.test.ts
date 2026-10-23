@@ -239,7 +239,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
     expect(detail.permissions).toEqual({ can_delete: true, can_leave: true, can_edit: true });
     expect(detail.next_owner.user_id).toBe("u_2");
-    const list = await (await fetch(`${BASE}/maps`)).json();
+    const list = (await (await fetch(`${BASE}/maps`)).json()).items;
     expect(list[0].permissions.can_delete).toBe(true);
     expect(list[0].next_owner).toBeUndefined();
   });
@@ -270,7 +270,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
     expect((await fetch(`${BASE}/maps/map_1`, { method: "DELETE" })).status).toBe(204);
     expect((await fetch(`${BASE}/maps/map_1`)).status).toBe(404);
     expect((await (await fetch(`${BASE}/invites/${invite.token}/accept`, { method: "POST" })).json()).code).toBe("INVITE_NOT_FOUND");
-    expect(await (await fetch(`${BASE}/maps`)).json()).toEqual([]);
+    expect(await (await fetch(`${BASE}/maps`)).json()).toEqual({ items: [], limit: MAP_LIMIT });
   });
 });
 
@@ -589,6 +589,17 @@ describe("#472 — 게스트 참여", () => {
     expect((await send("/auth/guest", "POST", { display_name: "x", invite_token: token })).status).toBe(410);
   });
 
+  it("게스트가 카카오로 전환하면(콜백) guest_merged=true로 돌아오고 더는 게스트가 아니다", async () => {
+    resetScenario("guest");
+    const res = await fetch(`${BASE}/auth/kakao/callback?code=x&state=y`, { redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/?guest_merged=true");
+    expect((await (await fetch(`${BASE}/auth/me`)).json()).is_guest).toBe(false);
+    const again = await fetch(`${BASE}/auth/kakao/callback?code=x&state=y`, { redirect: "manual" });
+    expect(again.headers.get("location")).toBe("/"); // 게스트가 아니면 쿼리가 붙지 않는다
+    resetScenario("happy-path");
+  });
+
   it("게스트 시나리오: 지도 만들기는 403 GUEST_NOT_ALLOWED, 그 밖의 구성원 행동은 된다", async () => {
     resetScenario("guest");
     expect((await (await fetch(`${BASE}/auth/me`)).json()).is_guest).toBe(true);
@@ -658,11 +669,11 @@ describe("#369 — 내 지도 상한(#433에서 20개)", () => {
 
   it("내 지도가 상한이면 만들기가 409 MAP_LIMIT, 하나 지우면 다시 된다", async () => {
     expect(MAP_LIMIT).toBe(20);
-    while ((await (await fetch(`${BASE}/maps`)).json()).length < MAP_LIMIT) expect((await create()).status).toBe(201);
+    while ((await (await fetch(`${BASE}/maps`)).json()).items.length < MAP_LIMIT) expect((await create()).status).toBe(201);
     const r = await create();
     expect(r.status).toBe(409);
     expect(await r.json()).toMatchObject({ code: "MAP_LIMIT", detail: { limit: MAP_LIMIT, count: MAP_LIMIT } });
-    const [last] = await (await fetch(`${BASE}/maps`)).json();
+    const [last] = (await (await fetch(`${BASE}/maps`)).json()).items;
     expect((await fetch(`${BASE}/maps/${last.id}`, { method: "DELETE" })).status).toBe(204);
     expect((await create()).status).toBe(201);
   });
@@ -675,7 +686,7 @@ describe("#22·#24 — 내 지도 목록 + 지도 생성 지역(선택)", () => 
       body: JSON.stringify({ title: "제주 여행", start_date: "2026-11-01", end_date: "2026-11-03" }),
     }).then((r) => r.json());
 
-    const list = await fetch(`${BASE}/maps`).then((r) => r.json());
+    const list = (await fetch(`${BASE}/maps`).then((r) => r.json())).items;
     expect(list[0].id).toBe(created.id); // 방금 만든 게 가장 최근이라 맨 앞
     expect(list.some((m: { id: string }) => m.id === "map_1")).toBe(true); // 시드 지도도 이미 구성원
   });
@@ -1018,7 +1029,7 @@ describe("#360 — 반응은 ♥/🚫 둘뿐, 추천은 ♥/🚫 의견이 달�
 
 describe("#340·회의 14번 — 지도 목록 구분과 후보 좌표", () => {
   it("내가 만든 지도는 my_role=owner, created_by_me=true", async () => {
-    const maps = await fetch(`${BASE}/maps`).then((r) => r.json());
+    const maps = (await fetch(`${BASE}/maps`).then((r) => r.json())).items;
     expect(maps[0]).toMatchObject({ my_role: "owner", created_by_me: true });
     expect(maps[0].created_by).toBeUndefined(); // 목 서버 내부 값은 응답에 새지 않는다
   });
@@ -1103,5 +1114,155 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
 
     store.runRequestedBy["run_no_results"] = "u_2";
     expect((await fetch(`${BASE}/runs/run_no_results/advice`)).status).toBe(403);
+  });
+});
+
+describe("#623 지도 목록에 상한을 함께", () => {
+  it("GET /maps는 {items, limit}이고 limit은 409 MAP_LIMIT의 detail.limit과 같다", async () => {
+    const body = await (await fetch(`${BASE}/maps`)).json();
+    expect(Array.isArray(body.items)).toBe(true);
+    expect(body.limit).toBe(MAP_LIMIT);
+  });
+});
+
+describe("#642 추천 탭 광고 — 목 서버 계약", () => {
+  const JEJU = "lat=33.4996&lng=126.5312";
+
+  it("카테고리와 반경으로 최대 2개를 고르고, 응답에 실린 광고만 노출 수가 오른다", async () => {
+    const res = await fetch(`${BASE}/maps/map_1/ads?category=카페&${JEJU}`);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    const { ads } = await res.json();
+    expect(ads.map((a: { ad_id: string }) => a.ad_id)).toEqual(["ad_1", "ad_2"]); // 반경 밖 ad_far, 음식점 ad_3은 빠짐
+    expect(ads[0].place).toMatchObject({ place_id: "place_ad_cafe_1", category: "카페", lat: 33.5146 });
+    expect(ads[0].memo).toBeUndefined();
+    expect(store.adStats["ad_1"].served).toBe(1);
+    expect(store.adStats["ad_3"]).toBeUndefined();
+  });
+
+  it("카테고리가 없으면 추천 대상 전체에서 고른다", async () => {
+    const { ads } = await (await fetch(`${BASE}/maps/map_1/ads?${JEJU}`)).json();
+    expect(ads.length).toBe(2);
+  });
+
+  it("추천 대상이 아닌 카테고리나 좌표가 없으면 422, 비구성원 지도면 404", async () => {
+    expect((await fetch(`${BASE}/maps/map_1/ads?category=숙소&${JEJU}`)).status).toBe(422);
+    expect((await fetch(`${BASE}/maps/map_1/ads?category=카페`)).status).toBe(422);
+    expect((await fetch(`${BASE}/maps/no_such_map/ads?${JEJU}`)).status).toBe(404);
+  });
+
+  it("같은 장소의 핀이 이미 있으면 on_map=true", async () => {
+    const pin = Object.values(store.pins).find((p) => p.map_id === "map_1")!;
+    pin.place_name = "바다정원 카페";
+    const { ads } = await (await fetch(`${BASE}/maps/map_1/ads?category=카페&${JEJU}`)).json();
+    expect(ads.find((a: { ad_id: string }) => a.ad_id === "ad_1").on_map).toBe(true);
+  });
+
+  it("클릭 기록은 204, 없는 광고는 404, map_id가 없으면 422", async () => {
+    const ok = await fetch(`${BASE}/ads/ad_1/clicks`, { method: "POST", body: JSON.stringify({ map_id: "map_1" }) });
+    expect(ok.status).toBe(204);
+    expect(store.adStats["ad_1"].clicks).toBe(1);
+    expect((await fetch(`${BASE}/ads/nope/clicks`, { method: "POST", body: JSON.stringify({ map_id: "map_1" }) })).status).toBe(404);
+    expect((await fetch(`${BASE}/ads/ad_1/clicks`, { method: "POST", body: JSON.stringify({}) })).status).toBe(422);
+  });
+});
+
+describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)", () => {
+  const confirm = (pinId: string) =>
+    fetch(`${BASE}/maps/map_1/shortlist`, { method: "POST", body: JSON.stringify({ pin_id: pinId }) });
+
+  it("확정 장소가 2곳 미만이면 422 COURSE_NOT_ENOUGH_PLACES(detail에 min, count)", async () => {
+    await confirm("pin_1");
+    const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.code).toBe("COURSE_NOT_ENOUGH_PLACES");
+    expect(body.detail).toEqual({ min: 2, count: 1 });
+  });
+
+  it("요청 → 202, 첫 GET은 running(단계 2개), 다음 GET은 running(단계 5개), 그다음은 done, 확정 리스트가 바뀌면 stale", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    const created = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST", body: JSON.stringify({ request_text: "하루에 덜 걷고 싶어요" }) });
+    expect(created.status).toBe(202);
+    const { course_run_id } = await created.json();
+
+    // 진행 중인 run이 있으면 다시 요청할 수 없다
+    const dup = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
+    expect(dup.status).toBe(409);
+    expect((await dup.json()).detail).toEqual({ course_run_id });
+
+    const running = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(running.status).toBe("running");
+    expect(running.days).toEqual([]);
+    expect(running.outcome).toBeNull();
+    expect(running.steps).toHaveLength(2);
+
+    const running2 = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(running2.status).toBe("running");
+    expect(running2.steps).toHaveLength(5);
+    expect(running2.steps.slice(0, 2)).toEqual(running.steps); // 앞 단계는 그대로, 뒤로만 늘어난다
+    expect(running2.days).toEqual([]);
+
+    const done = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(done.status).toBe("done");
+    expect(done.outcome).toBe("solved_with_checks");
+    expect(done.goals[0].kind).toBe("daily_walk_low");
+    const placed = done.days.flatMap((d: { slots: { pin_id: string }[] }) => d.slots.map((s) => s.pin_id));
+    expect(placed.sort()).toEqual(["pin_1", "pin_2"]);
+    expect(done.checks.length).toBe(2);
+    expect(done.steps.length).toBe(7);
+    expect(done.stale).toBe(false);
+
+    await confirm("pin_3");
+    const latest = await (await fetch(`${BASE}/maps/map_1/courses/latest`)).json();
+    expect(latest.id).toBe(course_run_id);
+    expect(latest.stale).toBe(true);
+  });
+
+  it("구간은 mode로 갈린다 — 2km 이하는 walk, 먼 구간은 transit(대중교통 약 분)", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    await confirm("pin_3");
+    store.maps["map_1"].end_date = store.maps["map_1"].start_date; // 하루에 셋 — 구간이 둘 생긴다
+    const items = store.shortlist["map_1"];
+    items[0].pin.lat = 33.4996;
+    items[0].pin.lng = 126.5312;
+    items[1].pin.lat = 33.5015; // 첫째와 200m쯤
+    items[1].pin.lng = 126.5312;
+    items[2].pin.lat = 33.28; // 20km 넘게 떨어진 곳
+    items[2].pin.lng = 126.7183;
+    const { course_run_id } = await (await fetch(`${BASE}/maps/map_1/courses`, { method: "POST", body: JSON.stringify({}) })).json();
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    const done = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    const legs = done.days.flatMap((d: { legs: { mode: string; approx_minutes: number }[] }) => d.legs);
+    expect(legs.length).toBeGreaterThan(0);
+    for (const l of legs) expect(["walk", "transit"]).toContain(l.mode);
+    const transit = legs.filter((l: { mode: string }) => l.mode === "transit");
+    expect(transit.length).toBeGreaterThan(0);
+    expect(transit[0].approx_minutes).toBeGreaterThan(10); // 대기 10분이 더해진 대략 분
+    expect(done.steps.some((st: { text: string }) => st.text.includes("대중교통 1구간"))).toBe(true);
+  });
+
+  it("짠 적이 없으면 latest는 204, 없는 run은 404, 지도가 없으면 404", async () => {
+    expect((await fetch(`${BASE}/maps/map_1/courses/latest`)).status).toBe(204);
+    expect((await fetch(`${BASE}/course-runs/nope`)).status).toBe(404);
+    expect((await fetch(`${BASE}/maps/no_such_map/courses`, { method: "POST" })).status).toBe(404);
+  });
+
+  it("하루 5번을 넘기면 429 COURSE_LIMIT", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    for (let i = 0; i < 5; i += 1) {
+      const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
+      expect(res.status).toBe(202);
+      const { course_run_id } = await res.json();
+      await fetch(`${BASE}/course-runs/${course_run_id}`); // running(2)
+      await fetch(`${BASE}/course-runs/${course_run_id}`); // running(5)
+      await fetch(`${BASE}/course-runs/${course_run_id}`); // done
+    }
+    const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
+    expect(res.status).toBe(429);
+    expect((await res.json()).detail).toEqual({ limit: 5, used: 5 });
   });
 });

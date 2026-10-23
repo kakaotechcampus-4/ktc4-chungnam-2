@@ -1,4 +1,5 @@
-"""관찰 루프(#515, 명세 12.2~12.9) — run_tick, observe_map, 커서, lease, 기록, 정리.
+"""관찰 루프(#515, 명세 12.2~12.9) — run_tick, observe_map, 커서, lease, 기록, 정리. 관찰 실패 기록과 재시도 간격, tick
+시간 예산(#677).
 
 17절 7(재확인으로 stale), 8(동시 저장에도 active 하나), 9(커서), 10(lease), 14(trip_ended, map_deleted, 관찰 중 삭제),
 15(shadow면 이벤트 없음), 그리고 2절 13번(agent_* 어느 행에도 사유 글이 없음).
@@ -390,21 +391,65 @@ def test_old_event_does_not_pull_next_check(world):
     assert _cursor(world, map_id).next_check_at == world.now + constants.SUGGESTION_TTL
 
 
-def test_rolled_back_save_keeps_cursor(world, monkeypatch):
-    """저장 트랜잭션이 실패하면 커서도 그대로다. 실패는 로그로 남고 lease는 풀린다."""
+def _boom(*args, **kwargs):
+    raise RuntimeError(f"실패 {SECRET}")
+
+
+def test_failed_save_is_recorded_as_error_and_moves_the_cursor(world, monkeypatch):
+    """저장 트랜잭션이 실패하면 제안도 지도 관찰 행도 남지 않는다(같은 트랜잭션). run_tick이 error 행을 따로 남기고, 커서를
+    고를 때 본 seq로 올려 30분 뒤로 미룬다(#677). outcome_detail은 단계와 예외 클래스 이름뿐이다."""
+    map_id = world.gap_map()
+    seq = world.event(map_id)
+    monkeypatch.setattr(service, "insert_suggestion", _boom)
+
+    assert map_id in tick(world)
+
+    assert world.rows(AgentSuggestion, map_id=map_id) == []
+    run = world.one(AgentRun, map_id=map_id)
+    assert (run.outcome, run.trigger, run.used_model, run.tool_calls) == ("error", "activity", False, [])
+    assert run.outcome_detail == {"stage": "save", "error": "RuntimeError"}   # 예외 메시지(사유 글)는 없다
+    cur = _cursor(world, map_id)
+    assert (cur.last_seen_seq, cur.next_check_at, cur.lease_until) == (seq, world.now + timedelta(minutes=30), None)
+
+
+def test_failed_map_is_not_claimed_again_until_its_retry_time(world, monkeypatch):
+    """예외로 끝난 지도는 다음 tick에 바로 다시 잡히지 않는다(#677). 연속 error 1회 30분, 2회 2시간, 3회부터 6시간 뒤에 시간
+    점검으로 다시 본다. 한 번 성공하면 처음부터 다시 센다."""
     map_id = world.gap_map()
     world.event(map_id)
+    real_build = flows.snapshot.build
+    monkeypatch.setattr(flows.snapshot, "build", _boom)
 
-    def boom(db, **fields):
-        raise RuntimeError("저장 실패")
+    at = timedelta(0)
+    for wait in (timedelta(minutes=30), timedelta(hours=2), timedelta(hours=6), timedelta(hours=6)):
+        assert map_id in tick(world, after=at)
+        assert map_id not in tick(world, after=at + timedelta(minutes=5))
+        assert _cursor(world, map_id).next_check_at == world.now + at + wait
+        at += wait
+    runs = sorted(world.rows(AgentRun, map_id=map_id), key=lambda r: r.started_at)
+    assert [(r.trigger, r.outcome) for r in runs] == [("activity", "error")] + [("time", "error")] * 3
+    assert [r.outcome_detail for r in runs] == [{"stage": "snapshot", "error": "RuntimeError"}] * 4
 
-    monkeypatch.setattr(service, "insert_run", boom)
+    monkeypatch.setattr(flows.snapshot, "build", real_build)
+    assert map_id in tick(world, after=at)
+    assert world.one(AgentSuggestion, map_id=map_id).status == "active"
+    monkeypatch.setattr(flows.snapshot, "build", _boom)   # 제안 이벤트로 다시 잡히고 또 실패한다
+    later = at + timedelta(minutes=5)
+    assert map_id in tick(world, after=later)
+    assert _cursor(world, map_id).next_check_at == world.now + later + timedelta(minutes=30)
 
-    tick(world)
 
-    cur = _cursor(world, map_id)
-    assert (cur.last_seen_seq, cur.next_check_at, cur.lease_until) == (0, None, None)
-    assert world.rows(AgentSuggestion, map_id=map_id) == []
+def test_new_event_reclaims_a_failed_map_before_its_retry_time(world, monkeypatch):
+    """미룬 동안에도 새 이벤트가 오면 activity로 다시 잡힌다 — 미루는 것은 시간 점검뿐이다."""
+    map_id = world.gap_map()
+    world.event(map_id)
+    with monkeypatch.context() as m:
+        m.setattr(flows.snapshot, "build", _boom)
+        tick(world)
+
+    world.event(map_id)
+    assert map_id in tick(world, after=timedelta(minutes=5))
+    assert sorted(r.outcome for r in world.rows(AgentRun, map_id=map_id)) == ["error", "suggested"]
 
 
 def test_one_failing_map_does_not_stop_others(world, monkeypatch):
@@ -423,7 +468,31 @@ def test_one_failing_map_does_not_stop_others(world, monkeypatch):
     tick(world)
 
     assert world.one(AgentRun, map_id=good).outcome == "suggested"
+    assert world.one(AgentRun, map_id=bad).outcome == "error"
     assert _cursor(world, bad).lease_until is None and _cursor(world, good).lease_until is None
+
+
+def test_tick_over_its_time_budget_only_releases_the_remaining_leases(world):
+    """시작 뒤 TICK_BUDGET_SEC(LEASE_SEC − 30초)가 지나면 남은 지도는 관찰하지 않고 lease만 푼다(#677). 커서가 그대로라
+    다음 tick에 다시 잡힌다."""
+    maps = [world.gap_map() for _ in range(3)]
+    for m in maps:
+        world.event(m)
+    readings = iter([0.0, 0.0])   # tick 시작과 첫 지도 — 그 뒤로는 예산을 다 쓴 시각
+
+    def clock():
+        return next(readings, float(constants.TICK_BUDGET_SEC))
+
+    observed = flows.run_tick(world.now, session_factory=world.factory, clock=clock)
+
+    assert len(observed) == 1
+    skipped = [m for m in maps if m not in observed]
+    assert len(skipped) >= 2
+    for m in skipped:
+        cur = _cursor(world, m)
+        assert (cur.lease_until, cur.last_seen_seq, cur.next_check_at) == (None, 0, None)
+        assert world.rows(AgentRun, map_id=m) == []
+    assert set(skipped) <= set(tick(world, after=timedelta(minutes=5)))
 
 
 # ---------------------------------------------------------------- 10. lease
@@ -456,18 +525,18 @@ def test_locked_and_leased_cursor_is_skipped(world):
     map_id = world.gap_map()
     world.event(map_id)
     with world.factory() as p:   # 커서 행을 미리 만들어 둔다 — 아래 a의 미커밋 upsert를 b가 기다리지 않게
-        for m, _ in service.claim_maps(p, world.now, limit=1000):
-            service.release_lease(p, m)
+        for claim in service.claim_maps(p, world.now, limit=1000):
+            service.release_lease(p, claim.map_id)
         p.commit()
     with world.factory() as a, world.factory() as b:
-        assert [m for m, _ in service.claim_maps(a, world.now, limit=1000) if m == map_id] == [map_id]
-        assert map_id not in [m for m, _ in service.claim_maps(b, world.now, limit=1000)]   # 잠김
+        assert [c.map_id for c in service.claim_maps(a, world.now, limit=1000) if c.map_id == map_id] == [map_id]
+        assert map_id not in [c.map_id for c in service.claim_maps(b, world.now, limit=1000)]   # 잠김
         b.rollback()
         a.commit()
-        assert map_id not in [m for m, _ in service.claim_maps(b, world.now, limit=1000)]   # lease
+        assert map_id not in [c.map_id for c in service.claim_maps(b, world.now, limit=1000)]   # lease
         b.rollback()
         later = world.now + timedelta(seconds=constants.LEASE_SEC + 1)
-        assert map_id in [m for m, _ in service.claim_maps(b, later, limit=1000)]   # lease가 지나면 다시
+        assert map_id in [c.map_id for c in service.claim_maps(b, later, limit=1000)]   # lease가 지나면 다시
         b.rollback()
 
 
@@ -587,3 +656,150 @@ def test_daily_cleanup_deletes_old_runs_once_a_day(world):
     assert {r.id for r in world.rows(AgentRun, map_id=map_id)} == {recent}
     assert old not in {r.id for r in world.rows(AgentRun, map_id=map_id)}
     assert flows.daily_cleanup_if_due(world.now + timedelta(minutes=5), session_factory=world.factory) is False
+
+
+# ---------------------------------------------------------------- 제안 뒤 24시간 안 확정 (12.9, #613)
+
+def _suggest(world, map_id, diagnosis, *, hours_ago=30.0, category=None, pin_id=None, pin_ids=(), **kw) -> uuid.UUID:
+    """hours_ago 시간 전에 만든 지난 제안(활성은 지도당 하나라 기본 expired). no_reaction은 pin_ids를 ref와 버튼에 담는다."""
+    claims = [{"id": f"c{i}", "kind": "ref", "object": "pin", "ref_id": p} for i, p in enumerate(pin_ids, start=2)]
+    actions = [{"index": 0, "type": "show_pins", "label": "핀 보기", "params": {"pin_ids": list(pin_ids)}}] if pin_ids else []
+    with world.factory() as db:
+        row = rows.suggestion(db, map_id, diagnosis=diagnosis, category=category,
+                              pin_id=uuid.UUID(pin_id) if pin_id else None, claims=claims, actions=actions,
+                              created_at=world.now - timedelta(hours=hours_ago), **({"status": "expired"} | kw))
+        db.commit()
+        return row.id
+
+
+def _decided(world, suggestion_id):
+    return world.one(AgentSuggestion, id=suggestion_id).decided_within_24h
+
+
+def _fill(world):
+    return flows.fill_decided_within_24h(world.now, session_factory=world.factory)
+
+
+def test_decided_within_24h_per_diagnosis(world):
+    """제안 30시간 전, 확정은 제안 10시간 뒤(20시간 전). 유형마다 참 하나, 거짓 하나."""
+    map_id = world.map()
+    food, cafe, other = (world.pin(map_id, category=c) for c in ("음식점", "카페", "카페"))
+    unseen = world.pin(map_id, category="관광지")
+    world.confirm(map_id, food, hours_ago=20)
+    world.confirm(map_id, cafe, hours_ago=20)
+    cases = {
+        _suggest(world, map_id, "category_gap", category="카페"): True,
+        _suggest(world, map_id, "category_gap", category="관광지"): False,
+        _suggest(world, map_id, "stall", category="음식점"): True,
+        _suggest(world, map_id, "stall", category="관광지"): False,
+        _suggest(world, map_id, "split", category="카페", pin_id=cafe): True,
+        _suggest(world, map_id, "split", category="카페", pin_id=other): False,
+        _suggest(world, map_id, "no_reaction", pin_ids=(unseen, food)): True,
+        _suggest(world, map_id, "no_reaction", pin_ids=(unseen, other)): False,
+    }
+
+    assert _fill(world) == len(cases)
+    assert {sid: _decided(world, sid) for sid in cases} == cases
+
+
+def test_decided_within_24h_boundary(world):
+    """제안 50시간 전. 24시간 정각 확정은 참, 24시간 1초 뒤 확정은 거짓."""
+    map_id = world.map()
+    on_time, late = world.pin(map_id), world.pin(map_id)
+    world.confirm(map_id, on_time, hours_ago=26)
+    world.confirm(map_id, late, hours_ago=26 - 1 / 3600)
+    exact = _suggest(world, map_id, "split", hours_ago=50, pin_id=on_time)
+    over = _suggest(world, map_id, "split", hours_ago=50, pin_id=late)
+
+    _fill(world)
+
+    assert (_decided(world, exact), _decided(world, over)) == (True, False)
+
+
+def test_decided_within_24h_waits_until_24_hours_pass(world):
+    map_id = world.map()
+    young = _suggest(world, map_id, "category_gap", hours_ago=23, category="카페")
+
+    assert _fill(world) == 0
+    assert _decided(world, young) is None
+
+
+def test_decided_within_24h_keeps_filled_rows(world):
+    """한 번 채운 행은 다시 보지 않는다 — 지금 판정하면 참이어도 이미 쓴 거짓이 남는다."""
+    map_id = world.map()
+    pin = world.pin(map_id, category="카페")
+    world.confirm(map_id, pin, hours_ago=20)
+    done = _suggest(world, map_id, "category_gap", category="카페", decided_within_24h=False)
+
+    assert _fill(world) == 0
+    assert _decided(world, done) is False
+
+
+def test_decided_within_24h_fills_shadow_and_any_status(world):
+    map_id = world.map()
+    pin = world.pin(map_id, category="카페")
+    world.confirm(map_id, pin, hours_ago=20)
+    shadow = _suggest(world, map_id, "category_gap", category="카페", shadow=True)
+    dismissed = _suggest(world, map_id, "category_gap", category="카페", status="dismissed")
+    active = _suggest(world, map_id, "category_gap", category="음식점", status="active")
+
+    assert _fill(world) == 3
+    assert [_decided(world, s) for s in (shadow, dismissed, active)] == [True, True, False]
+
+
+def test_decided_within_24h_counts_confirmed_pin_deleted_later(world):
+    """확정 항목이 남은 채 삭제된 핀도 센다(핀을 가리키는 유형). 보통은 핀을 지울 때 확정 항목도 빠진다(#235)."""
+    map_id = world.map()
+    gone = world.pin(map_id, category="카페")
+    world.confirm(map_id, gone, hours_ago=20)
+    world.delete_pin(gone)
+    split = _suggest(world, map_id, "split", category="카페", pin_id=gone)
+    unseen = _suggest(world, map_id, "no_reaction", pin_ids=(gone,))
+
+    _fill(world)
+
+    assert (_decided(world, split), _decided(world, unseen)) == (True, True)
+
+
+def test_decided_within_24h_skips_deleted_map(world):
+    map_id = world.map()
+    pin = world.pin(map_id, category="카페")
+    world.confirm(map_id, pin, hours_ago=20)
+    sug = _suggest(world, map_id, "category_gap", category="카페")
+    world.delete_map(map_id)
+
+    assert _fill(world) == 0
+    assert _decided(world, sug) is None
+
+
+def test_decided_within_24h_reads_other_modules_once_per_map(world, monkeypatch):
+    calls = []
+
+    def counted(name, fn):
+        def wrapper(db, *args, **kw):
+            calls.append((name, kw.get("map_id", args[0] if args else None)))
+            return fn(db, *args, **kw)
+        return wrapper
+
+    monkeypatch.setattr(maps_api, "get_map_for_agent", counted("map", maps_api.get_map_for_agent))
+    monkeypatch.setattr(flows.shortlist_api, "list_items_for_agent",
+                        counted("shortlist", flows.shortlist_api.list_items_for_agent))
+    monkeypatch.setattr(flows.pins_api, "list_reaction_matrix", counted("pins", flows.pins_api.list_reaction_matrix))
+    first, second = world.map(), world.map()
+    for _ in range(3):
+        _suggest(world, first, "category_gap", category="카페")
+    _suggest(world, second, "split", pin_id=world.pin(second))   # 카테고리 유형이 없으면 핀은 읽지 않는다
+
+    assert _fill(world) == 4
+    assert sorted(calls) == sorted([("map", first), ("shortlist", first), ("pins", first),
+                                    ("map", second), ("shortlist", second)])
+
+
+def test_daily_cleanup_fills_decided_within_24h(world):
+    map_id = world.map()
+    pin = world.pin(map_id, category="카페")
+    world.confirm(map_id, pin, hours_ago=20)
+    sug = _suggest(world, map_id, "category_gap", category="카페")
+
+    assert flows.daily_cleanup_if_due(world.now, session_factory=world.factory) is True
+    assert _decided(world, sug) is True

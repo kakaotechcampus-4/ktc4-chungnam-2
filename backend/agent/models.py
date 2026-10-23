@@ -20,6 +20,7 @@ RUN_TRIGGERS = ("activity", "time", "summary", "run_advice")
 RUN_OUTCOMES = (
     "no_signal", "blocked", "silent", "unknown", "invalid_schema", "invalid_claims", "model_failed",
     "stale", "suggested", "summarized", "advised", "trip_ended", "map_deleted",
+    "error",   # 관찰이나 조언이 예외로 끝남. outcome_detail은 단계와 예외 클래스 이름뿐(#677)
 )
 DIAGNOSES = ("stall", "split", "no_reaction", "category_gap")
 SUGGESTION_STATUSES = ("active", "accepted", "dismissed", "expired", "superseded")

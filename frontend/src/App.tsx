@@ -23,6 +23,7 @@ export default function App() {
         {/* 로그인 화면의 약관 동의 줄이 여는 문서라 이것도 비로그인으로 열린다 (#602). */}
         <Route path="/terms" element={<LegalPage title="이용약관" />} />
         <Route path="/privacy" element={<LegalPage title="개인정보처리방침" />} />
+        <Route path="/location-terms" element={<LegalPage title="위치기반서비스 이용약관" />} />
 
         <Route element={<RequireLogin />}>
           {/* 로그인 직후 진입점 = 내 지도 목록 (#24) */}

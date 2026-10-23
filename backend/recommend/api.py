@@ -30,6 +30,15 @@ def last_run_at_by_category(db: Session, *, map_id: str) -> dict[str, datetime]:
     return service.last_run_at_by_category(db, map_id=map_id)
 
 
+def latest_run_place_ids(db: Session, *, map_id: str, requested_by: str, category: str | None = None) -> set[str]:
+    """추천 탭 광고(docs/ads.md 5절 2번, #646)가 부른다 — 요청자의 이 지도 최신 run의 후보 place_id. category가 있으면
+    그 카테고리의 최신 run 하나, 없으면 카테고리마다 최신 run. 다른 구성원의 run은 보지 않는다. run이 없거나 추천 대상이
+    아닌 카테고리(숙소·기타 — run이 생길 수 없다)면 빈 집합. 권한은 보지 않는다. 읽기 전용, 커밋하지 않는다."""
+    if category is not None and category not in categories.recommendable():
+        return set()
+    return service.latest_run_place_ids(db, map_id=map_id, requested_by=requested_by, category=category)
+
+
 def get_readiness(db: Session, *, map_id: str, category: str) -> dict:
     """agent의 반대 후 정체 진단(docs/agent-v2.md 6.2, 10절 get_readiness, #530)이 부른다 — 그 카테고리가 추천
     준비(⓪)를 통과했나. `{ready, answered_count, required_count}`, `GET /maps/{mapId}/recommend/readiness`의 한
@@ -47,8 +56,9 @@ def fact_labels() -> dict[str, str]:
 
 
 def demote_wanted_place_identity(category: str, lines: Sequence[dict]) -> list[dict]:
-    """agent structure_reasons(docs/agent-v2.md 10절, #564)가 부른다 — 추천 근거 조립과 같은 #422 규칙(🚫 사유 안의
-    음식 종류 "원함"은 preferred). lines는 `{fact_key, wants, badge}`(다른 키는 그대로 둔다). 원본은 바꾸지 않는다."""
+    """agent structure_reasons(docs/agent-v2.md 10절, #564)가 부른다 — 추천 근거 조립과 같은 #422·#617 규칙(🚫 사유
+    안의 원함은 preferred: 글은 음식 종류만, 칩은 sight_inaccessible 말고 전부). lines는 `{fact_key, wants, badge}`에
+    칩 줄이면 `chip_id`(다른 키는 그대로 둔다). 원본은 바꾸지 않는다."""
     return core.demote_wanted_place_identity(lines, category)
 
 
@@ -73,14 +83,16 @@ def get_recent_runs(db: Session, *, run_id: str, limit: int = 10) -> list[dict]:
 
 def get_run_meta(db: Session, *, run_id: str) -> dict:
     """그 run 자신의 정보 `{run_id, map_id, category, requested_by, status, result_count, created_at,
-    default_radius_walk_min, widen_limit_walk_min}`(#587). agent가 조언 대상인지(완료, 결과 수)와 요청자 본인인지,
-    반경 넓히기 상한(도보 30분, core.WIDEN_LIMIT_MIN)을 넘는 배율인지 본다. result_count는 get_recent_runs와 같은 기준(후보 수,
-    done이 아니면 0). 권한 판정 없음(위 주석)."""
+    default_radius_walk_min, widen_limit_walk_min, widen_step_walk_min}`(#587). agent가 조언 대상인지(완료, 결과 수)와 요청자
+    본인인지, 반경 넓히기 상한(도보 30분, core.WIDEN_LIMIT_MIN)을 넘는 배율인지, 반경 넓히기 한 번(도보 5분,
+    core.WIDEN_STEP_MIN)이 몇 배율인지(#677) 본다. result_count는 get_recent_runs와 같은 기준(후보 수, done이 아니면 0).
+    권한 판정 없음(위 주석)."""
     run = service.get_run_or_404(db, run_id)
     return {
         "run_id": str(run.id), "map_id": run.map_id, "category": run.category, "requested_by": run.requested_by,
         "status": run.status, "result_count": _result_count(db, run), "created_at": run.created_at,
         "default_radius_walk_min": run.default_radius_walk_min, "widen_limit_walk_min": core.WIDEN_LIMIT_MIN,
+        "widen_step_walk_min": core.WIDEN_STEP_MIN,
     }
 
 
@@ -139,3 +151,10 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(maps.purge, #431)가 부른다 — 이 지도들의 evidence_lines·candidates·regions·exclusions·
     recommend_runs만 지우고 테이블 이름 → 지운 행 수를 돌려준다. 커밋하지 않는다."""
     return service.purge_map_data(db, map_ids=map_ids)
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#560)가 부른다 — from_user의 추천 기록(run 요청자·근거 줄 작성자·제외 요청자)을 to_user로 옮기고
+    테이블 이름 → 옮긴 행 수를 돌려준다. 제외가 (지도, 장소)로 겹치면 from_user 것을 지운다. 멱등이고 같은 id면
+    아무것도 하지 않는다. 커밋하지 않는다."""
+    return service.reassign_user(db, from_user_id=from_user_id, to_user_id=to_user_id)

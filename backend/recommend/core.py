@@ -69,18 +69,27 @@ def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> l
     return [*reaction_lines, *manual_lines]
 
 
+REQUIRED_WANTED_CHIP_IDS = frozenset({"sight_inaccessible"})  # #617 — 취향이 아니라 필요 조건이라 원함이어도 required
+
+
 def demote_wanted_place_identity(lines: Sequence[dict], category: str) -> list[dict]:
-    """docs/constraints.md "🚫 사유 안의 음식 종류 '원함'은 선호다"(#422): required이면서 wants=true이고 키가
-    가게의 정체(음식점 cuisine_*)인 줄은 배지를 preferred로 내린다. wants=false·다른 키·다른 배지는 그대로다.
-    글 줄·칩 줄 모두 같은 규칙이라 ②가 낸 줄과 칩 줄을 합친 뒤에 한 번 건다. 원본은 바꾸지 않는다."""
+    """docs/constraints.md "🚫 사유 안의 원함은 선호다"(#422, #617): required이면서 wants=true인 줄 중 아래는 배지를
+    preferred로 내린다. 글 줄은 키가 가게의 정체(음식점 cuisine_*)일 때만, 칩 줄(chip_id가 있음)은 전부 — 단
+    REQUIRED_WANTED_CHIP_IDS의 칩은 그대로다. wants=false·다른 배지·키 없는 칩은 그대로다.
+    ②가 낸 줄과 칩 줄을 합친 뒤에 한 번 건다. 원본은 바꾸지 않는다. 이름은 agent가 recommend.api로 불러 그대로 둔다."""
     return [
-        {**line, "badge": "preferred"}
-        if line.get("badge") == "required"
-        and line.get("wants") is True
-        and constraints.is_place_identity_key(category, line.get("fact_key"))
-        else line
+        {**line, "badge": "preferred"} if _demotes(line, category) else line
         for line in lines
     ]
+
+
+def _demotes(line: dict, category: str) -> bool:
+    if line.get("badge") != "required" or line.get("wants") is not True:
+        return False
+    chip_id = line.get("chip_id")
+    if chip_id:
+        return chip_id not in REQUIRED_WANTED_CHIP_IDS
+    return constraints.is_place_identity_key(category, line.get("fact_key"))
 
 
 def circles_all_overlap(circles: list[Circle]) -> bool:
@@ -262,10 +271,16 @@ def to_satisfaction_checks(checks: Sequence[Check], directions: Mapping[str, boo
         if wants is None or check.confidence != "known":
             shown.append(check)
             continue
-        satisfied = check.passed == wants
+        satisfied = _meets(check, wants)
         label = condition_label(check.fact_key, satisfied=satisfied, wants=wants)
         shown.append(check.model_copy(update={"passed": satisfied, "label": label}))
     return shown
+
+
+def _meets(check: Check, wants: bool | None) -> bool:
+    """known 체크가 그 사람 조건을 만족하는가. 방향 없는 키(hard)는 passed(통과) 그대로, 방향이 있는 soft 키는
+    라벨 참거짓 == wants(#237). 근거 줄 표시(`to_satisfaction_checks`)와 구성원 충족 집계가 같이 쓴다."""
+    return check.passed if wants is None else check.passed == wants
 
 
 RANKING_STAGE = "상위 3곳 선정"  # 깔때기의 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다
@@ -493,22 +508,25 @@ def build_member_fulfillment(
     hearted_places: Sequence[HeartedPlace],
     criteria: Mapping[str, bool],
     preferred_authors: Mapping[str, frozenset[str]] | None = None,
-    disqualifier_authors: Collection[str] = (),
+    disqualifier_conditions: Mapping[str, Collection[tuple[str, bool | None]]] | None = None,
 ) -> dict:
     """가드레일5 "구성원 충족 집계" — api-spec.yaml `MemberFulfillment` 모양 그대로
-    `{satisfied, total, by_member}`을 돌려준다.
+    `{satisfied, total, by_member}`을 돌려준다. 확인한 조건 기준으로 센다(#620).
 
-    - **total** = 조건을 남긴 구성원 수. 조건 = 이번 선호 기준(`criteria`가 True인 fact_key)
-      중 그 구성원이 지지한(그 값의 장소에 ♥했거나 선호 사유로 쓴) 것. 조건이 하나도 없는
-      구성원은 집계 대상이 아니다(♥만 누르고 기준에 안 든 사람, 반대만 한 사람).
-    - **satisfied** = 자기 조건을 *전부* 이 후보가 known+참으로 충족한 구성원 수. 일부만
-      맞으면 충족으로 세지 않는다(구성원 만족을 부풀리지 않는다).
-    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다.
-    - 실격 사유를 낸 구성원(`disqualifier_authors`, #255)도 total에 센다. 이 후보는 실격을 통과했으므로 그
-      구성원의 조건은 충족이다 — 선호가 하나도 없는 run에서도 "N명 중 N명"이 남는다. 선호 조건도 가진
-      구성원은 위 규칙(전부 충족해야 충족)을 그대로 따른다."""
+    - **total** = 확인할 수 있는 조건을 남긴 구성원 수. 조건은 두 가지다.
+      1) 선호: 이번 선호 기준(`criteria`가 True인 fact_key) 중 그 구성원이 지지한(그 값의 장소에 ♥했거나 선호
+         사유로 쓴) 것.
+      2) 반대: 그 구성원이 낸 키 있는 실격 사유(`disqualifier_conditions` = 구성원 → {(fact_key, wants)}).
+         hard 키는 wants=None, 방향이 있는 soft 키는 그 방향이다.
+      조건이 하나도 없는 구성원은 집계 대상이 아니다(♥만 누르고 기준에 안 든 사람, 키 없는 반대 사유만 남긴 사람 —
+      알러지 글이나 「취향이 아니에요」는 아무것도 확인하지 않았다).
+    - **satisfied** = 자기 조건을 *전부* 이 후보가 known으로 충족한 구성원 수. 선호는 known+참, 반대는 known이고
+      `_meets`(hard는 통과, soft는 방향에 맞음). 라벨이 모름(「확인 필요」)이면 실격 필터는 통과시켜도 충족으로
+      세지 않는다. 일부만 맞으면 충족으로 세지 않는다(구성원 만족을 부풀리지 않는다).
+    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다."""
     support = _member_support(hearted_places, preferred_authors)
     met = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
+    known_checks = {c.fact_key: c for c in candidate_checks if c.confidence == "known"}
     conditions: dict[str, set[str]] = {}
     for fact_key, wanted in criteria.items():
         if wanted is not True:
@@ -516,11 +534,16 @@ def build_member_fulfillment(
         supporting, _opposing = support.get(fact_key, (frozenset(), frozenset()))
         for member_id in supporting:
             conditions.setdefault(member_id, set()).add(fact_key)
-    for member_id in disqualifier_authors:
-        conditions.setdefault(member_id, set())  # 선호 조건이 없으면 빈 집합 → 후보가 실격을 통과했으니 충족
+    against = {member_id: set(keys) for member_id, keys in (disqualifier_conditions or {}).items() if keys}
     by_member = [
-        {"user_id": member_id, "satisfied": fact_keys <= met}
-        for member_id, fact_keys in sorted(conditions.items())
+        {
+            "user_id": member_id,
+            "satisfied": conditions.get(member_id, set()) <= met and all(
+                fact_key in known_checks and _meets(known_checks[fact_key], wants)
+                for fact_key, wants in against.get(member_id, ())
+            ),
+        }
+        for member_id in sorted(conditions.keys() | against.keys())
     ]
     return {
         "satisfied": sum(1 for entry in by_member if entry["satisfied"]),
@@ -529,13 +552,12 @@ def build_member_fulfillment(
     }
 
 
-def build_reason(
-    candidate_checks: Sequence[Check], criteria: Mapping[str, bool], member_fulfillment: Mapping,
-) -> str:
+def build_reason(candidate_checks: Sequence[Check], criteria: Mapping[str, bool]) -> str:
     """Candidate.reason — 실제로 통과한 체크와 충족한 선호 라벨에서 조립한 한 줄(가드레일 5).
     모델을 부르지 않는다. 두 종류만 말한다: 1) 이번 run의 활성 실격 조건 중 known으로 통과한
-    것 2) 선호 기준(criteria) 중 이 후보가 known+참인 것(+ 몇 명이 충족했는지). 표시 이름이
-    없는 키는 말하지 않는다 — 안 본 것을 통과했다고 하지 않기 위해서다. 말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지
+    것 2) 선호 기준(criteria) 중 이 후보가 known+참인 것. 몇 명이 충족했는지는 말하지 않는다 — 구성원은 자기 조건을
+    전부 충족해야 세는데 이 줄은 하나라도 맞는 라벨을 나열해서 "충족: 양식 (0/1명)"처럼 어긋난다(#631). 인원은
+    카드의 member_fulfillment가 따로 보여 준다. 표시 이름이 없는 키는 말하지 않는다 — 안 본 것을 통과했다고 하지 않기 위해서다. 말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지
     않는다)."""
     known_passed = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
     disqualifier_labels = [
@@ -555,11 +577,7 @@ def build_reason(
     if disqualifier_labels:
         parts.append("실격 조건 통과: " + ", ".join(disqualifier_labels))
     if preference_labels:
-        text = "선호 충족: " + ", ".join(preference_labels)
-        total = member_fulfillment.get("total", 0)
-        if total:
-            text += f" ({member_fulfillment.get('satisfied', 0)}/{total}명)"
-        parts.append(text)
+        parts.append("선호 충족: " + ", ".join(preference_labels))
     return " · ".join(parts) if parts else "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
 
 

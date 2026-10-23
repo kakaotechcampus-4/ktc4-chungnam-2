@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -27,6 +28,12 @@ export default defineConfig({
   server: {
     // contracts/ 는 Vite root(frontend/) 바깥이다. 명시하지 않으면 빌드는 되는데 dev 에서 403.
     fs: { allow: [rootDir, contractsDir] },
+  },
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.ts'],
+    // 목 서버(msw/node)가 절대 URL 만 받아서, api() 가 붙이는 BASE_URL 을 채운다.
+    env: { VITE_API_BASE_URL: 'http://localhost' },
   },
   optimizeDeps: {
     // 목 레이어가 dynamic import 로만 들어와서 스캐너가 놓친다. 미리 넣지 않으면 첫 렌더 직후

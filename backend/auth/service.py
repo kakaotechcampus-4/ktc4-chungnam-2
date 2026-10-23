@@ -6,7 +6,9 @@ auth/core.py(순수 함수)에 있다(docs/code-quality.md 기능형 코어/명�
 (pins/api.py와 같은 규약).
 """
 
+import logging
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -25,6 +27,9 @@ from maps import api as maps_api
 from notifications import api as notifications_api
 from pins import api as pins_api
 from recommend import api as recommend_api
+from shortlist import api as shortlist_api
+
+logger = logging.getLogger(__name__)
 
 KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 KAKAO_USERINFO_URL = "https://kapi.kakao.com/v2/user/me"
@@ -188,6 +193,7 @@ def withdraw_user(db: Session, *, user_id: str) -> User:
     pins_api.delete_reactions_by_user(db, user_id=user_id)
     recommend_api.delete_evidence_lines_by_author(db, user_id=user_id)
     agent_api.delete_by_user(db, user_id=user_id, map_ids=map_ids)
+    agent_api.delete_course_runs_by_user(db, user_id=user_id)   # 코스 요청 한 줄과 결과(#334)
     feedback_api.anonymize_by_user(db, user_id=user_id)
     notifications_api.delete_by_user(db, user_id=user_id)
     row.deleted_at = datetime.now(timezone.utc)
@@ -226,3 +232,63 @@ def purge_inactive_guests(db: Session, *, now: datetime, older_than_days: int) -
     for user_id in ids:
         withdraw_user(db, user_id=user_id)
     return len(ids)
+
+
+# 게스트 → 카카오 합치기(#560). 각 모듈이 자기 테이블만 옮기는 `<module>.api.reassign_user(db, *, from_user_id, to_user_id)`를
+# 이 순서로 부른다(docs/data-model.md「게스트 합치기」). 모듈 api는 호출 시점에 찾는다 — 아직 그 함수가 없는 모듈은
+# AttributeError로 실패해 합치기 전체가 롤백되고 게스트 기록이 남는다(일부만 옮긴 채 게스트를 지우는 일은 없다).
+# agent는 담당이 정하는 대로 합류하면 여기에 한 줄 추가한다.
+MERGE_STEPS = (
+    ("maps", maps_api),
+    ("pins", pins_api),
+    ("recommend", recommend_api),
+    ("shortlist", shortlist_api),
+    ("notifications", notifications_api),
+    ("feedback", feedback_api),
+)
+
+
+def live_guest_id_for_session(db: Session, session_cookie: str | None) -> str | None:
+    """로그인 시작 요청에 붙은 세션 쿠키가 지금 유효한 게스트의 것이면 그 user_id, 아니면 None.
+    get_current_user와 같은 판정(서명·만료·탈퇴·로그아웃 무효화)이지만 실패해도 예외 대신 None —
+    로그인 시작은 게스트가 아닌 사람도 하는 경로다."""
+    if not session_cookie:
+        return None
+    claims = core.parse_session_token(session_cookie, secret=settings.session_secret, now=int(time.time()))
+    if claims is None:
+        return None
+    row = db.get(User, claims.user_id)
+    if row is None or row.deleted_at is not None or not row.is_guest:
+        return None
+    if core.is_revoked(claims.issued_at, row.sessions_valid_after):
+        return None
+    return row.id
+
+
+def merge_guest_into(db: Session, *, guest_user_id: str, to_user_id: str) -> bool | None:
+    """콜백에서 카카오 로그인에 성공한 뒤 게스트 기록을 카카오 계정으로 합친다.
+
+    None — 합칠 대상이 아니다(자기 자신, 게스트 행이 없거나 게스트가 아니거나 이미 지워짐). 이미 합쳐진 게스트 id로
+    다시 오면 여기로 온다.
+    True — 모든 모듈 단계와 게스트 행 삭제(deleted_at)가 끝났다.
+    False — 어느 단계든 실패했다. 합치기는 세이브포인트 안이라 그 안의 쓰기만 롤백되고 카카오 로그인(사용자 생성)은
+    유지된다. 로그에는 단계 이름과 에러 종류만 남긴다(메시지에 사용자 데이터가 섞일 수 있다).
+    커밋하지 않는다 — 요청당 한 번 커밋은 get_db 몫이다."""
+    if guest_user_id == to_user_id:
+        return None
+    step = "lookup"
+    try:
+        # 같은 게스트로 두 콜백이 겹쳐도 한쪽만 옮기게 행을 잠그고, 잠근 뒤에 살아 있는 게스트인지 확인한다.
+        guest = db.execute(select(User).where(User.id == guest_user_id).with_for_update()).scalar_one_or_none()
+        if guest is None or not guest.is_guest or guest.deleted_at is not None:
+            return None
+        with db.begin_nested():
+            for step, module_api in MERGE_STEPS:
+                module_api.reassign_user(db, from_user_id=guest_user_id, to_user_id=to_user_id)
+            step = "auth"
+            guest.deleted_at = datetime.now(timezone.utc)
+            db.flush()
+    except Exception as exc:  # noqa: BLE001 — 합치기 실패가 카카오 로그인 성공을 막으면 안 된다
+        logger.error("guest merge failed: step=%s error=%s", step, type(exc).__name__)
+        return False
+    return True

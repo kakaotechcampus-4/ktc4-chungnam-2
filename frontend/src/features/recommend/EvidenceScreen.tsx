@@ -9,6 +9,8 @@ import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import ConfirmDialog from '@/ui/ConfirmDialog'
+import Pingo from '@/ui/Pingo'
+import PingoLoading from '@/ui/PingoLoading'
 
 import { useAiStore } from './aiStore'
 import { evidenceLabel, groupEvidence, type EvidenceLineDto, type RecommendRunDto, type RegionDto } from './model'
@@ -81,15 +83,19 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
       </header>
 
       <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4">
-        <div className="rounded-xl border border-brand-300 bg-[var(--pingo-bg)] p-4">
-          <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--pingo-text)]">
-            <span className="tag tag-ai">AI</span> AI가 정리한 조건
-          </p>
-          <p className="mt-1 font-bold text-ink-900">이 조건으로 추천해도 될까요?</p>
-          <p className="mt-1 text-xs text-ink-500">지금까지 남긴 의견을 이렇게 정리했어요.</p>
+        {/* 의견을 다 모아 조건으로 정리했다 — 핑고가 손을 든다(시안 「결정했어요!」). */}
+        <div className="flex items-center gap-3 rounded-xl border border-brand-300 bg-[var(--pingo-bg)] p-4">
+          <Pingo size={48} mood="wave" />
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--pingo-text)]">
+              <span className="tag tag-ai">AI</span> AI가 정리한 조건
+            </p>
+            <p className="mt-1 font-bold text-ink-900">이 조건으로 추천해도 될까요?</p>
+            <p className="mt-1 text-xs text-ink-500">지금까지 남긴 의견을 이렇게 정리했어요.</p>
+          </div>
         </div>
 
-        {evidence.isPending && <p className="text-sm text-ink-500">조건을 정리하는 중…</p>}
+        {evidence.isPending && <PingoLoading label="조건을 정리하는 중…" />}
         {evidence.error && <ErrorText message="조건을 불러오지 못했어요" error={evidence.error} />}
 
         {groups.required.length > 0 && (
@@ -178,7 +184,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
           </form>
         ) : (
           <button type="button" onClick={() => setAdding(true)} className="btn-link mx-auto flex text-sm">
-            조건 수정
+            조건 더하기
           </button>
         )}
 

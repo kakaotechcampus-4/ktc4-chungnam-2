@@ -3,7 +3,8 @@
 - 정리: 지도 정리(`purge_map_data`), 탈퇴(`delete_by_user`) — #513
 - 관찰 흐름(#515, 명세 12.2~12.5, 12.9): 지도 고르기와 lease(`claim_maps`, `release_lease`), 커서(`advance_cursor`),
   이력(`load_history`), 제안 상태(`expire_suggestions`, `supersede`, `insert_suggestion`), 기록(`insert_run`),
-  보존 정리(`delete_old_runs`)
+  보존 정리(`delete_old_runs`), 제안 뒤 24시간 안 확정(`list_undecided_map_ids`, `list_undecided`, `set_decided` — #613),
+  관찰 실패의 재시도 간격(`error_streak` — #677)
 - 화면 요청(#531, 명세 14절): 모드(`get_settings`, `save_settings`, `wake_cursor`), 지금 제안(`get_suggestion`,
   `active_suggestion`), 열람(`has_viewed`, `record_view`), 수락과 닫기(`resolve_suggestion` — status='active'일 때만
   바꾸는 가드 UPDATE), 모드 끄기(`supersede_active`)
@@ -18,13 +19,14 @@
 
 import uuid
 from datetime import datetime, timedelta
+from typing import NamedTuple
 
 from sqlalchemy import delete, func, null, or_, select, text, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from agent import core
-from agent.constants import AGENT_RUNS_RETENTION_DAYS, LEASE_SEC, SUGGESTION_TTL
+from agent.constants import AGENT_RUNS_RETENTION_DAYS, ERROR_RETRY_DELAYS, LEASE_SEC, SUGGESTION_TTL
 from agent.models import (
     AgentCursor,
     AgentReasonSummary,
@@ -101,9 +103,15 @@ def delete_by_user(db: Session, *, user_id: str, map_ids: list[str]) -> dict[str
 
 # ---------------------------------------------------------------- 지도 고르기와 lease (12.2, 12.5)
 
-def claim_maps(db: Session, now: datetime, *, limit: int) -> list[tuple[str, str]]:
-    """관찰할 지도를 골라 lease를 잡는다. (map_id, trigger) 목록 — 새 이벤트로 잡혔으면 activity, 시간 점검으로
-    잡혔으면 time. 호출부가 바로 커밋해야 lease가 다른 실행에 보인다.
+class Claim(NamedTuple):
+    map_id: str
+    trigger: str        # activity(새 이벤트) | time(시간 점검)
+    seq: int | None     # 고를 때 본 그 지도의 가장 큰 event_log seq. 보존 24시간 안에 이벤트가 없으면 None
+
+
+def claim_maps(db: Session, now: datetime, *, limit: int) -> list[Claim]:
+    """관찰할 지도를 골라 lease를 잡는다. 새 이벤트로 잡혔으면 trigger=activity, 시간 점검으로 잡혔으면 time. seq는
+    관찰이 예외로 끝났을 때 커서를 올릴 값이다(#677). 호출부가 바로 커밋해야 lease가 다른 실행에 보인다.
 
     1. `realtime.api.latest_seq_by_map`으로 지도별 가장 큰 seq를 받는다. 커서 행이 없는 지도는 여기서 만든다
        (ON CONFLICT DO NOTHING — 동시에 두 실행이 만들어도 하나). 커서보다 큰 seq가 있으면 바뀐 지도다.
@@ -139,7 +147,7 @@ def claim_maps(db: Session, now: datetime, *, limit: int) -> list[tuple[str, str
             update(AgentCursor).where(AgentCursor.map_id.in_(map_ids))
             .values(lease_until=now + timedelta(seconds=LEASE_SEC))
         )
-    return [(m, "activity" if m in changed else "time") for m in map_ids]
+    return [Claim(m, "activity" if m in changed else "time", latest[m][0] if m in latest else None) for m in map_ids]
 
 
 def release_lease(db: Session, map_id: str) -> None:
@@ -269,10 +277,68 @@ def set_run_outcome(db: Session, run_id: uuid.UUID, outcome: str, *, blocked: li
     db.execute(update(AgentRun).where(AgentRun.id == run_id).values(outcome=outcome, blocked=blocked))
 
 
+def error_streak(db: Session, map_id: str) -> int:
+    """그 지도의 가장 최근 관찰부터 이어서 예외로 끝난 관찰 수(#677). 관찰 한 번의 행들(지도 관찰, 요약, error)은 started_at
+    (관찰 시각)이 같아서 관찰 단위로 묶고, error 행이 있는 관찰을 센다 — 요약 단계에서 실패하면 지도 관찰 행과 error 행이
+    함께 있다. 조언(run_advice)은 관찰이 아니라 보지 않는다. 재시도 간격이 그 뒤로 같아 ERROR_RETRY_DELAYS 개수까지만 센다."""
+    failed = db.execute(
+        select(func.bool_or(AgentRun.outcome == "error"))
+        .where(AgentRun.map_id == map_id, AgentRun.trigger != "run_advice")
+        .group_by(AgentRun.started_at)
+        .order_by(AgentRun.started_at.desc())
+        .limit(len(ERROR_RETRY_DELAYS))
+    ).scalars()
+    streak = 0
+    for has_error in failed:
+        if not has_error:
+            break
+        streak += 1
+    return streak
+
+
 def delete_old_runs(db: Session, now: datetime) -> int:
     """보존 기한(30일)이 지난 agent_runs를 지운다. 제안의 run_id는 FK ON DELETE SET NULL로 비워진다."""
     cutoff = now - timedelta(days=AGENT_RUNS_RETENTION_DAYS)
     return db.execute(delete(AgentRun).where(AgentRun.started_at < cutoff)).rowcount
+
+
+def _undecided(created_before: datetime):
+    return (AgentSuggestion.decided_within_24h.is_(None), AgentSuggestion.created_at < created_before)
+
+
+def list_undecided_map_ids(db: Session, *, created_before: datetime) -> list[str]:
+    """decided_within_24h가 비었고 created_before보다 먼저 만든 제안이 있는 지도(12.9, #613). shadow와 상태는 보지 않는다."""
+    return list(db.execute(
+        select(AgentSuggestion.map_id).where(*_undecided(created_before)).distinct().order_by(AgentSuggestion.map_id)
+    ).scalars())
+
+
+def list_undecided(db: Session, *, map_id: str, created_before: datetime) -> list[core.DecisionTarget]:
+    rows = db.execute(
+        select(AgentSuggestion).where(AgentSuggestion.map_id == map_id, *_undecided(created_before))
+        .order_by(AgentSuggestion.created_at, AgentSuggestion.id)
+    ).scalars()
+    return [
+        core.DecisionTarget(id=r.id, diagnosis=r.diagnosis, category=r.category,
+                            pin_id=str(r.pin_id) if r.pin_id else None, claims=r.claims, actions=r.actions,
+                            created_at=r.created_at)
+        for r in rows
+    ]
+
+
+def set_decided(db: Session, decisions: dict[uuid.UUID, bool]) -> int:
+    """decided_within_24h를 채운다. 이미 채운 행은 건드리지 않는다(동시에 두 인스턴스가 정리해도 먼저 쓴 값이 남는다).
+    채운 행 수."""
+    filled = 0
+    for value in (True, False):
+        ids = [i for i, v in decisions.items() if v is value]
+        if ids:
+            filled += db.execute(
+                update(AgentSuggestion)
+                .where(AgentSuggestion.id.in_(ids), AgentSuggestion.decided_within_24h.is_(None))
+                .values(decided_within_24h=value)
+            ).rowcount
+    return filled
 
 
 # ---------------------------------------------------------------- 화면 요청 (14절)

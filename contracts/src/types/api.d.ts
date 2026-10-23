@@ -16,6 +16,8 @@ export interface paths {
          * @description 로그인 CSRF를 막으려고 서버가 `state`를 만들어 서명한 httpOnly 쿠키(`kakao_oauth_state`, 경로 `/auth/kakao`, 10분)에 넣고
          *     같은 값을 붙여 카카오 인가 URL로 보낸다. 콜백이 그 쿠키와 `state`를 대조한다. 프론트는 카카오 인가 URL을 직접 만들지 않는다 —
          *     `${VITE_API_BASE_URL}/auth/kakao/login`으로 `window.location`을 옮기기만 한다(client_id·redirect_uri를 프론트가 알 필요가 없다).
+         *     **게스트가 카카오로 전환할 때(#560, 2026-10-20)**: 게스트 세션 쿠키가 붙은 채로 이 주소로 이동하면 서버가 그 게스트 계정을 서명한 state 쿠키에 함께 담는다
+         *     (프론트가 따로 할 일은 없다 — 게스트 화면의 「카카오로 계정 만들기」 버튼이 같은 주소로 이동하기만 하면 된다). 콜백이 카카오 로그인에 성공하면 **게스트 계정의 기록을 그 카카오 계정으로 합친다**(`docs/data-model.md`「게스트 합치기」).
          */
         get: {
             parameters: {
@@ -70,6 +72,7 @@ export interface paths {
                 /**
                  * @description **성공이든 실패든 항상 302다** — 이 경로는 fetch가 아니라 브라우저 이동이라 JSON을 돌려주면 사용자가 그대로 본다(2026-10-04).
                  *     성공: 진입점(`FRONTEND_LOGIN_REDIRECT_URL`)으로, 세션 쿠키와 함께.
+                 *     **게스트 전환이었으면(#560)** 같은 주소에 쿼리 `guest_merged=true`(기록을 합쳤다) 또는 `guest_merged=false`(합치지 못했다 — 카카오 로그인은 성공했고 게스트 기록은 그대로 남아 있다. 사용자에게 알리고, 게스트 쿠키는 이미 카카오 세션으로 바뀌었으니 다시 합치지 않는다)를 붙인다. 게스트가 아닌 로그인에는 붙이지 않는다.
                  *     실패: 같은 주소에 쿼리 `?login_error=<값>`을 붙여 돌려보내고 세션 쿠키는 만들지 않는다. state 쿠키는 성공·실패 모두 지운다.
                  *     `login_error` 값: `cancelled`(사용자가 카카오 화면에서 취소), `invalid_state`(state 쿠키와 다르거나 없음 — 처음부터 다시), `kakao_failed`(카카오 토큰 교환·프로필 조회 실패), `server_error`(그 밖의 실패).
                  */
@@ -308,7 +311,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절). 삭제된 지도와 내가 나간 지도는 빠진다 (#369). 목록의 Map에는 next_owner를 채우지 않는다. 이 목록의 지도는 최대 10개다(만들거나 참여한 지도 합산, */
+        /** 내 지도 목록 — 내가 구성원인 지도, 최근 생성순. 로그인 직후 진입점 (#24, 기획안 6절). 삭제된 지도와 내가 나간 지도는 빠진다 (#369). 목록의 Map에는 next_owner를 채우지 않는다. 지도 상한은 응답의 `limit`으로 내려 준다(#623). 화면은 상한 숫자를 들고 있지 않는다 */
         get: {
             parameters: {
                 query?: never;
@@ -318,13 +321,13 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description OK. 속한 지도가 없으면 빈 배열 */
+                /** @description OK. 속한 지도가 없으면 items는 빈 배열 */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["Map"][];
+                        "application/json": components["schemas"]["MapList"];
                     };
                 };
             };
@@ -2555,6 +2558,119 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/{mapId}/ads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 추천 탭 하단 광고 — 구성원 누구나(새 권한 액션 없음). 화면 중심에서 반경 안의 진행 중인 광고를 최대 2개 고른다(코드, 모델 없음).
+         *     요청자의 이 지도 최신 추천 결과에 있는 장소는 뺀다. 광고는 반응과 실격 필터를 거치지 않고, 추천 후보와 순위에 들어가지 않는다(docs/ads.md 2절).
+         *     **응답에 실린 광고마다 노출(served_count)을 1 올린다.** 그래서 미리 불러오기를 하지 않고, 탭을 열 때와 카테고리를 바꿀 때만 부른다.
+         *     카테고리가 없으면 추천 대상 카테고리 전체에서 고른다. 광고 장소를 지도에 올릴 때는 place의 place_id, name, lat, lng, category를 그대로 `POST /maps/{mapId}/pins`(source: search)로 보낸다
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description 추천 대상 카테고리 중 하나. 없으면 전체 */
+                    category?: components["schemas"]["RecommendCategory"];
+                    /** @description 탭을 연 순간의 지도 화면 중심 */
+                    lat: number;
+                    lng: number;
+                };
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 광고가 없으면 ads는 빈 배열이고 화면은 광고 영역을 그리지 않는다. 응답은 캐시하지 않는다(Cache-Control no-store) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AdList"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                /** @description category가 추천 대상이 아니거나 lat, lng가 범위 밖(VALIDATION_ERROR) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ads/{adId}/clicks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 광고 클릭 기록 — 그 지도의 구성원(새 권한 액션 없음). 광고 칸에서 「카카오맵에서 보기」나 「지도에 올리기」를 누르면 보낸다.
+         *     본문의 map_id는 권한 확인에만 쓰고 저장하지 않는다(집계는 광고별 날짜별 수만). 기간이 끝났거나 내린 광고도 행이 있으면 센다.
+         *     실패해도 화면은 사용자에게 알리지 않는다
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    adId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AdClickRequest"];
+                };
+            };
+            responses: {
+                /** @description 기록함 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+                /** @description 본문 형식 오류(VALIDATION_ERROR) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/agent": {
         parameters: {
             query?: never;
@@ -2775,6 +2891,150 @@ export interface paths {
                 409: components["responses"]["SuggestionResolved"];
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/courses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 「AI 코스 짜기」 요청 — 구성원 누구나(course.request). 확정 리스트를 지도 기간의 날짜별 방문 순서로 짠다.
+         *     run을 queued로 저장하고 202를 돌려준다. 계산은 백그라운드에서 한다(보통 수 초에서 수십 초) — FE는 `GET /course-runs/{runId}`를 2초 간격으로 불러 status가 done이나 failed가 될 때까지 기다린다.
+         *     코스는 요청한 본인에게만 보인다(가드레일 1). 확정 장소는 좌표를 아는 것만 센다(실시간 핀은 빠지고 excluded에 남는다). 한 번에 30곳까지, 여행 기간은 앞 14일까지 짠다.
+         *     하루 상한은 사용자당 5번(KST 자정 초기화)이고 지도마다 내 진행 중 run은 하나다. request_text와 member_constraints는 모두 선택이다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["CourseRequest"];
+                };
+            };
+            responses: {
+                /** @description 접수됨 */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CourseRunCreated"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["CourseInProgress"];
+                422: components["responses"]["CourseNotEnoughPlaces"];
+                429: components["responses"]["CourseLimit"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/courses/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 내 마지막 코스 — 구성원 누구나(남의 코스는 내려가지 않는다). 진행 중인 run도 돌려주므로 화면을 다시 열면 이어서 기다릴 수 있다.
+         *     짠 적이 없으면 204.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 가장 최근에 요청한 run */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CourseRun"];
+                    };
+                };
+                /** @description 아직 짠 코스가 없음 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/course-runs/{runId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 코스 run 하나 — 요청한 본인만(course.view). 비구성원 404, 요청자가 아닌 구성원 403.
+         *     status가 queued·running이면 결과 칸은 비어 있다(진행 기록도 끝난 뒤에 한꺼번에 채워진다). done이면 모두 채워지고, failed면 failure_code만 있다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    runId: components["parameters"]["RunId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CourseRun"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3018,6 +3278,12 @@ export interface components {
             role: "owner" | "member";
             display_name?: string;
             online?: boolean;
+        };
+        /** @description 내 지도 목록과 상한(#623). 2026-10-19 전에는 Map 배열이었다 */
+        MapList: {
+            items: components["schemas"]["Map"][];
+            /** @description 만들거나 참여할 수 있는 지도 수 상한(만든 지도와 참여한 지도 합산, 삭제한 지도와 나간 지도는 세지 않음, #369). 화면은 이 값으로 "n / limit"을 그리고, items 수가 limit이면 「새 지도」를 막는다. 409 MAP_LIMIT의 detail.limit과 같은 값이다 */
+            limit: number;
         };
         MapCreateRequest: {
             /** @description 여행 제목 (#22) */
@@ -3444,9 +3710,9 @@ export interface components {
         };
         /** @description 구성원 충족 집계 (가드레일 5). 게시 뒤에도 유지된다 */
         MemberFulfillment: {
-            /** @description 이 후보가 자기 조건을 만족시키는 구성원 수 */
+            /** @description 이 후보가 자기 조건을 전부 확인된 값으로 만족시키는 구성원 수. 라벨이 모름(확인 필요)인 조건이 하나라도 있으면 충족으로 세지 않는다(#620) */
             satisfied: number;
-            /** @description 집계 대상 구성원 수 — 조건을 남긴 구성원. 선호(♥·선호 사유)뿐 아니라 실격 사유(required)를 낸 구성원도 포함한다(#246 G1). 후보는 실격을 통과했으므로 그 구성원은 충족으로 센다 */
+            /** @description 집계 대상 구성원 수 — 서비스가 확인할 수 있는 조건을 남긴 구성원. 선호(♥·선호 사유)와 키가 있는 실격 사유(required)를 낸 구성원이다(#246 G1). 키 없는 반대 사유(알러지 글, 「취향이 아니에요」 등)만 남긴 구성원은 확인한 것이 없어 빠진다(#620, 2026-10-19) */
             total: number;
             by_member?: {
                 user_id: string;
@@ -3513,6 +3779,32 @@ export interface components {
                 distance_m: number;
                 approx_minutes: number;
             }[];
+        };
+        /** @description 광고 장소. 자체 DB(places) 행에서만 읽는다(#53). 「지도에 올리기」 매칭 힌트로 place_id, name, lat, lng, category를 그대로 쓴다 */
+        AdPlace: {
+            /** @description 자체 DB 장소 id. POST /maps/{mapId}/pins의 place_id 힌트로 그대로 보낸다(#473과 같은 경로) */
+            place_id: string;
+            name: string;
+            category: components["schemas"]["RecommendCategory"];
+            address?: string | null;
+            lat: number;
+            lng: number;
+            /** @description places에 기록된 카카오 장소 링크. 있으면 「카카오맵에서 보기」를 새 창으로 연다(앱 안 WebView 금지). 없으면 그 버튼을 숨긴다 */
+            place_url?: string | null;
+        };
+        /** @description 광고 칸 하나. 이유, 조건별 충족 체크, 구성원 충족 집계는 없다(광고는 필터를 거치지 않는다, docs/ads.md 2절 4번). 계약 메모와 집계 값은 내보내지 않는다 */
+        Ad: {
+            ad_id: string;
+            place: components["schemas"]["AdPlace"];
+            /** @description 이 지도에 같은 장소의 핀이 이미 있다(같은 place_id의 db 핀, 또는 같은 카카오 장소 ID의 실시간 핀). true면 「지도에 올리기」 대신 비활성 「이미 지도에 있어요」 */
+            on_map: boolean;
+        };
+        AdList: {
+            ads: components["schemas"]["Ad"][];
+        };
+        AdClickRequest: {
+            /** @description 권한 확인용. 저장하지 않는다 */
+            map_id: string;
         };
         /**
          * @description 제안 종류. stall=반대 후 정체, split=의견 갈림, no_reaction=아직 확인되지 않은 핀, category_gap=확정 리스트에 빠진 카테고리 (docs/agent-v2.md 6절)
@@ -3662,6 +3954,138 @@ export interface components {
             advice: components["schemas"]["AgentAdviceLine"][];
             /** @description widen_radius, open_evidence만 */
             actions: components["schemas"]["AgentAction"][];
+        };
+        CourseRequest: {
+            /** @description 요청 한 줄(선택). 예: '둘째 날은 실내 위주로'. 요청자가 이 run을 위해 쓴 글이라 run에만 저장되고 다른 구성원에게 보이지 않는다. 모델은 이 글을 목표(실내 위주, 야경 마지막, 덜 걷기, 여유 있게, 한 장소를 그 날에, 두 장소 같은 날)로 바꾼다 */
+            request_text?: string | null;
+            /** @description 구성원 제약(선택). 고정 목록에서 고른다 — 지금은 하루 도보 상한 하나 */
+            member_constraints?: components["schemas"]["CourseMemberConstraint"][];
+        };
+        CourseMemberConstraint: {
+            /** @enum {string} */
+            kind: "daily_walk_max";
+            /** @description 하루 도보 상한(분) */
+            value: number;
+            /** @description 날짜 별칭 d1 … (d1 = 지도 첫날). 없으면 모든 날. 여행 기간 밖이면 422 VALIDATION_ERROR */
+            day?: string | null;
+        };
+        CourseRunCreated: {
+            course_run_id: string;
+        };
+        /**
+         * @description 코스 run 하나. 요청자에게만 보인다. 문장(label, text, steps)은 모두 서버가 코드 템플릿으로 만든 것이라 FE는 그대로 보여 준다.
+         *     AI는 목표를 세우고 코드 최적화를 지휘할 뿐이고, 위반 판정·이동시간·순서는 코드가 계산한다. 영업시간을 아직 모르므로(places에 칸이 없다, #580 6번)
+         *     지금은 모든 장소가 checks(「가게에 확인해 주세요」)에 들고 needs_check=true다.
+         */
+        CourseRun: {
+            id: string;
+            map_id: string;
+            /** @enum {string} */
+            status: "queued" | "running" | "done" | "failed";
+            /**
+             * @description done일 때만. solved=위반·확인 필요 없음, solved_with_checks=확정 위반 없음·확인 필요 남음, unresolved=확정 위반이 남음(violations), timeout=시간 초과. 영업시간을 모르는 동안은 보통 solved_with_checks
+             * @enum {string|null}
+             */
+            outcome: "solved" | "solved_with_checks" | "unresolved" | "timeout" | null;
+            /**
+             * @description failed일 때만. INTERRUPTED=서버가 다시 떠서 끊김(또는 15분 넘게 끝나지 않음), ENGINE_ERROR=계산 오류. 화면은 같은 문구 「코스를 만들지 못했어요」 + 「다시 짜기」
+             * @enum {string|null}
+             */
+            failure_code: "INTERRUPTED" | "ENGINE_ERROR" | null;
+            /** @description 요청 한 줄에서 모델이 세우고 코드가 검증한 목표. 요청이 없으면 빈 배열 */
+            goals: components["schemas"]["CourseGoal"][];
+            /** @description 목표로 바꾸지 못한 요청 조각(요청 원문의 일부). 화면에 「반영하지 못했어요」로 보인다 */
+            unmatched: string[];
+            /** @description 작업 기록 — 이해, 확인, 짜기, 점검, 재계획, 끝, 결과 순으로 누가 했는지와 함께. running 중에도 단계마다 늘어난다(앞 단계는 바뀌지 않고 뒤로만 붙는다). 그동안 goals, days 같은 결과 칸은 비어 있다 */
+            steps: components["schemas"]["CourseStep"][];
+            /** @description 지도 기간의 날짜별 순서(최대 14일). 날짜 하나가 비어 있을 수 있다 */
+            days: components["schemas"]["CourseDay"][];
+            /** @description 남은 확정 위반(쉬는 날, 도보 상한 초과). 비어 있어야 정상이다 */
+            violations: components["schemas"]["CourseViolation"][];
+            /** @description 그날 영업하는지 알 수 없는 장소 — 「가게에 직접 확인해 주세요」 */
+            checks: components["schemas"]["CourseCheck"][];
+            /** @description 코스에서 빠진 확정 핀(좌표를 알 수 없는 실시간 핀, 30곳을 넘은 핀) */
+            excluded: components["schemas"]["CourseExcluded"][];
+            /** Format: date-time */
+            snapshot_at: string;
+            /** @description 요청 뒤 확정 리스트가 바뀌었다 — 「확정 리스트가 바뀌었어요」 + 「다시 짜기」 */
+            stale: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+        };
+        CourseGoal: {
+            /** @description 예: day_indoor:d2 */
+            id: string;
+            /**
+             * @description day_has = 그 날 코스에 공연·전시·야경 같은 종류의 장소가 하나 이상(종류는 코드의 고정 목록, 화면에는 label로만 보인다)
+             * @enum {string}
+             */
+            kind: "day_indoor" | "night_end" | "daily_walk_low" | "day_light" | "place_on_day" | "together" | "day_has";
+            /** @description 예: 「둘째 날 (화)은 실내 위주로」 「둘째 날 (화)에 공연 장소 넣기」 */
+            label: string;
+            /** @description 지켜졌나. null = 판단할 수 없다(라벨을 아는 장소가 없다) — 「확인할 수 없어요」 */
+            met: boolean | null;
+        };
+        CourseStep: {
+            /** @description 이해 · 확인 · 짜기 · 점검 · 재계획 · 다시 짜기 · 고정 · 검증 · 질문 · 답 · 대행 · 끝 · 결과 */
+            stage: string;
+            /**
+             * @description 무슨 일이었나. 해석=요청을 목표로, 지휘=도구 고르기·점검·끝, 계산=최적화·수리, 검증=코드가 사실과 맞춰 봄(모델 문장을 코드 문장으로 바꾼 기록 포함), 결정=사람의 답 또는 기본값
+             * @enum {string}
+             */
+            role: "해석" | "지휘" | "계산" | "검증" | "결정";
+            /**
+             * @description 누가 했나. 칩으로 보여 준다. 여럿이 함께한 단계는 대표값(사람 > 모델 > 코드)이고 자세한 말은 by_detail
+             * @enum {string}
+             */
+            by: "ai" | "code" | "human";
+            /** @description 섞인 단계의 원문. 예: 「모델 → 코드」, 「코드가 열고 모델이 고름 → 사람」, 「코드(목표 세우기 실패)」. 단순하면 null */
+            by_detail: string | null;
+            text: string;
+        };
+        CourseDay: {
+            /** Format: date */
+            date: string;
+            slots: components["schemas"]["CourseSlot"][];
+            /** @description 그날 장소 사이 구간. slots보다 하나 적다 */
+            legs: components["schemas"]["CourseLeg"][];
+        };
+        CourseSlot: {
+            /** @description 확정 리스트의 핀. 이름과 좌표는 핀 응답(GET /maps/{mapId}/shortlist)에서 읽는다 */
+            pin_id: string;
+            /** @description 그날의 방문 순서(1부터) */
+            order: number;
+            /** @description 그날 영업하는지 알 수 없다 — checks에도 있다 */
+            needs_check: boolean;
+        };
+        CourseLeg: {
+            from_pin_id: string;
+            to_pin_id: string;
+            /**
+             * @description 이동 방식. 직선거리 2km 이하는 walk(도보), 넘으면 transit(대중교통). 서버 초안 규칙(#580 전)이라 기준이 바뀔 수 있다
+             * @enum {string}
+             */
+            mode: "walk" | "transit";
+            /** @description mode 기준 대략 분 — walk면 도보 분, transit이면 대중교통 약 분(직선거리로 잰 거친 추정). 길 안내·시간표가 아니다. 화면에는 「도보 N분」「대중교통 약 N분」으로 쓴다 */
+            approx_minutes: number;
+        };
+        CourseViolation: {
+            /** @enum {string} */
+            kind: "closed" | "travel" | "member";
+            text: string;
+        };
+        CourseCheck: {
+            pin_id: string;
+            /** @description 예: 「○○미술관은 첫째 날 (월)에 영업하는지 알 수 없어요. 가게에 직접 확인해 주세요」 */
+            text: string;
+        };
+        CourseExcluded: {
+            pin_id: string;
+            /** @enum {string} */
+            reason: "NO_COORDINATES" | "OVER_LIMIT";
+            text: string;
         };
         /** @description 모든 SSE 이벤트의 공통 봉투. id는 event_log.seq와 같고 SSE의 id: 필드로 전송된다 */
         SseEnvelope: {
@@ -4035,6 +4459,33 @@ export interface components {
         };
         /** @description 추천 파이프라인 실패 (6절 "조건이 까다로워서가 아니에요") */
         RecommendFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 코스를 짤 확정 장소가 2곳 미만 (COURSE_NOT_ENOUGH_PLACES, */
+        CourseNotEnoughPlaces: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 사용자당 하루 5번(KST 자정 초기화)을 넘김 (COURSE_LIMIT, */
+        CourseLimit: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 이 지도에서 내가 요청한 코스를 아직 짜는 중 (COURSE_IN_PROGRESS, */
+        CourseInProgress: {
             headers: {
                 [name: string]: unknown;
             };

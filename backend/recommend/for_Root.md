@@ -1,8 +1,47 @@
 # 루트 리뷰 가이드 — backend/recommend
 
 `backend/pins/for_Root.md`·`backend/authz/for_Root.md`와 같은 형식. 이 파일은 네 세션에 걸친
-작업을 누적해서 담는다 — 아래 "#587" 절이 최신, 그 아래 "#585" 절, "#569" 절, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
+작업을 누적해서 담는다 — 아래 "#617" 절이 최신, 그 아래 "#587" 절, 그 아래 "#585" 절, "#569" 절, 그 아래 "#469" 절, 그 아래 "#190" 절, 그 아래 "#119·#114" 절, 그 아래 "#158·#146·#112 후속" 절, 그 아래 "#112" 절, 그 아래 "#124" 절, "#108" 절이 코어 파이프라인
 전체, 가장 아래 "PR #71" 절이 `publish_candidate` 하나만 다룬 첫 세션 기록이다.
+
+---
+
+# #617 — 반대 칩의 "원함"은 선호로 (접근성 칩 제외)
+
+## 바뀐 규칙
+
+`core.demote_wanted_place_identity`(이름·시그니처 그대로, agent는 `recommend.api`의 같은 이름으로 부른다)가 required이면서
+wants=true인 줄 중 아래를 preferred로 내린다.
+
+- 글 줄(chip_id 없음): 키가 가게의 정체(음식점 cuisine_*)일 때만 — #422 그대로. "주차 돼야 해요"는 required
+- 칩 줄(chip_id 있음): 전부 — food_wait, food_cramped, cafe_noisy, cafe_seat, sight_noisy. 예외는 `core.REQUIRED_WANTED_CHIP_IDS`
+  (= {"sight_inaccessible"})
+- wants=false 줄(「매워요」 등), 다른 배지, 키 없는 칩(wants가 null)은 그대로
+
+docstring은 constraints.md 절 이름을 "🚫 사유 안의 원함은 선호다"(#422, #617)로 적었다. **지금 constraints.md는 아직 옛 이름
+("음식 종류 '원함'")이고, 그 절 표에 칩 「좁아요」 → required(그대로) 줄과 "「좁아요」처럼 🚫 안의 원함이 필요 조건인 경우도 있어서"
+문장이 남아 있다.** 칩 절의 배지 설명("배지는 required")도 루트 몫이다.
+
+## recommend 밖에서 기대값만 고친 테스트 (같은 PR, 커밋은 모듈별)
+
+옛 규칙(칩 원함 = required)을 단언하던 4개. 모두 원함 칩이 preferred가 된 것 때문이었고, agent·integration 운영 코드는 그대로다.
+요약 테스트는 한 사람만 남긴 칩이라 「좁아요」가 must_keep에서 빠져도 common_prefs(2명 이상, agent-v2.md 요약 칸 표)에는 들지 않는다 —
+선호 칸에 보이려면 같은 칩을 두 명이 남겨야 한다.
+
+| 테스트 | 옛 단언 | 새 기대값 |
+|---|---|---|
+| `integration/test_reason_chips_412.py::test_chips_and_text_become_one_line_each_and_only_text_goes_to_the_planner` (61행) | 세 줄 모두 badge required | 「좁아요」 줄만 preferred |
+| `agent/tests/test_tools.py::test_structure_reasons_uses_planner_for_text_and_chip_table_for_chips` (164행) | spacious 칩 줄 required | preferred |
+| `agent/tests/test_flows_summary.py::test_two_new_reasons_wait_and_third_updates` (252행) | must_keep 4개 | must_keep은 매워요·느끼해요 2개, common_prefs 빈 칸(「웨이팅이 길어요」·「좁아요」가 빠진다) |
+| `agent/tests/test_flows_summary.py::test_one_category_per_observation_and_cursor_pulled_for_the_rest` (303행) | 카페 must_keep[0]이 quiet(칩 「시끄러워요」) | 카페 요약이 반응 1개를 보고 must_keep·common_prefs가 둘 다 빈 칸 |
+
+## recommend 안에서 바뀐 테스트
+
+- `test_flows.py`: `test_create_run_turns_each_chip_into_its_own_evidence_line_without_calling_the_model`(「좁아요」 badge
+  preferred), `test_soft_chip_becomes_a_directed_requirement` → `..._only_when_it_avoids`(실격 조건은 spicy_focused만)
+- `test_core.py`: 그대로 두는 줄 목록의 spacious 줄 주석을 "글"로 고쳤다(칩이 아니라 그대로 required)
+- 추가: 「좁아요」만 있는 run(좁은 곳 실격 0, 넓은 곳이 rank 1 — 좁은 곳을 더 가깝게 둬도), 「휠체어·유모차」 실격, 「매워요」 실격,
+  글 "주차 돼야 해요" 실격(create_run → execute_run 전체), 칩 다섯 개 내림·예외 칩 그대로(core), api 같은 결과(「좁아요」 preferred)
 
 ---
 
@@ -629,3 +668,7 @@ recommend 소스+테스트 전부 통과(마이그레이션 파일의 `Union`/`S
 5. (이관) **pins/for_Root.md가 남긴 "create_ai_pin의 Principal 구성"** — 이번엔 실제로
    `Principal`을 만들 필요가 없어(3번 항목 참고, authz.guard.require가 알아서 처리) 이
    결정은 여전히 미룰 수 있었다 — 참고로만 남김.
+
+## #659 (2026-10-20)
+
+- llm 프롬프트에 카페 예시 있음: `llm/prompts.py:42` serves_alcohol 설명의 "카페인데 맥주도 되는 곳". 이번 PR에서는 건드리지 않았다.

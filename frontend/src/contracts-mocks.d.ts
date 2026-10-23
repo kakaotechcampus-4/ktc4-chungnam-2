@@ -35,3 +35,20 @@ declare module '@pingo/contracts/mocks/browser' {
   export function resetScenario(name: ScenarioName): void
   export type { ScenarioName }
 }
+
+declare module '@pingo/contracts/mocks/node' {
+  import type { ScenarioName } from '@pingo/contracts/mocks/scenarios'
+
+  /** 테스트용 목 서버(msw/node). 라우트는 `server.use(...)` 로 덮어쓴다. */
+  export const server: {
+    listen(options?: { onUnhandledRequest?: 'bypass' | 'warn' | 'error' }): void
+    close(): void
+    resetHandlers(): void
+    use(...handlers: import('msw').RequestHandler[]): void
+    events: {
+      on(type: 'request:start', listener: (args: { request: Request }) => void): void
+      removeAllListeners(): void
+    }
+  }
+  export function resetScenario(name: ScenarioName): void
+}

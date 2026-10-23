@@ -160,7 +160,7 @@ def test_tourapi_keeps_only_seoul_tourist_spots(tour):
 def test_tourapi_does_not_take_lodging(tour):
     _, report = tour
     assert report.skipped["숙박은 받지 않는다"] == 1
-    assert report.skipped["관광지·문화시설·쇼핑(contenttypeid=12·14·38) 아님"] == 1   # 음식점(39)
+    assert report.skipped["관광지·문화시설·레포츠·쇼핑(contenttypeid=12·14·28·38) 아님"] == 1   # 음식점(39)
 
 
 def test_tourapi_mapx_is_lng_and_mapy_is_lat(tour):
@@ -471,3 +471,77 @@ def test_odd_category_with_unmapped_type_is_still_skipped():
 def test_rows_without_coordinates_are_skipped_even_with_category_column():
     rows, report = ingest.parse_permit_rows([_permit_row("E1", "한식", "음식점", x="", y="")])
     assert rows == [] and report.skipped["좌표 없음"] == 1
+
+
+# ---- 지역 해제(--all-regions) · 레포츠(28) · 닫기 계획 ----
+
+def test_tourapi_takes_leisure_as_tourist_category():
+    rows, report = ingest.parse_tourapi_items([_tour_item("28", "1")])
+    assert [r.category for r in rows] == ["관광지"] and report.accepted_by_type == {"28": 1}
+
+
+def test_tourapi_all_regions_turns_off_area_address_and_seoul_box():
+    busan = _tour_item("12", "1", mapx="129.0756", mapy="35.1796", addr="부산광역시 중구 중앙대로 1")
+    wrong_box = _tour_item("12", "2", mapx="127.709322", mapy="37.470571", addr="서울특별시 관악구 관악로 173")
+    assert ingest.parse_tourapi_items([busan, wrong_box])[0] == []
+    rows, report = ingest.parse_tourapi_items([busan, wrong_box], seoul_only=False)
+    assert [r.source_id for r in rows] == ["1", "2"]
+    assert any(line.startswith("  [지역별 적재 대상]") and "부산 1" in line and "서울 1" in line for line in report.lines())
+
+
+def test_tourapi_all_regions_still_skips_missing_and_out_of_range_coords():
+    nowhere = _tour_item("12", "1", mapx="0", mapy="0")
+    far = _tour_item("12", "2", mapx="10.0", mapy="35.0", addr="부산광역시 중구")
+    missing = _tour_item("12", "3", mapx="", mapy="")
+    rows, report = ingest.parse_tourapi_items([nowhere, far, missing], seoul_only=False)
+    assert rows == [] and report.skipped["좌표 없음"] == 2 and report.skipped["좌표가 한국 범위 밖"] == 1
+
+
+def test_permit_all_regions_still_skips_missing_or_out_of_range_coords():
+    base = {"관리번호": "X1", "사업장명": "부산집", "영업상태명": "영업/정상", "업태구분명": "한식", "도로명전체주소": "부산광역시 중구 1"}
+    ok = {**base, "좌표정보(X)": "129.0756", "좌표정보(Y)": "35.1796"}
+    no_xy = {**base, "관리번호": "X2", "좌표정보(X)": "", "좌표정보(Y)": ""}
+    far = {**base, "관리번호": "X3", "좌표정보(X)": "10.0", "좌표정보(Y)": "35.0"}
+    rows, report = ingest.parse_permit_rows([ok, no_xy, far], seoul_only=False)
+    assert [r.source_id for r in rows] == ["X1"] and report.skipped["좌표 없음"] == 1
+    assert report.skipped["좌표가 한국 범위 밖(좌표계 확인)"] == 1
+
+
+def test_curated_and_cafe_all_regions_keep_non_seoul_rows():
+    rows = read_csv_rows(FIX / "cafe_curated_sample.csv")
+    rows.append({**rows[0], "관리번호": "BUSAN", "도로명주소": "부산광역시 중구 1", "위도": "35.1796", "경도": "129.0756"})
+    assert "BUSAN" not in {r.source_id for r in ingest.parse_cafe_rows(rows)[0]}
+    out, report = ingest.parse_cafe_rows(rows, seoul_only=False)
+    assert "BUSAN" in {r.source_id for r in out} and any("부산 1" in line for line in report.lines())
+    assert "BUSAN" in {r.source_id for r in ingest.parse_curated_rows(rows, seoul_only=False)[0]}
+
+
+@pytest.mark.parametrize("address,expected", [
+    ("서울특별시 종로구", "서울"), ("경기도 수원시", "경기"), ("경상북도 안동시", "경북"), ("경상남도 창원시", "경남"),
+    ("충청남도 천안시", "충남"), ("전라북도 전주시", "전북"), ("제주특별자치도 제주시", "제주"), ("", "(주소 없음)"), (None, "(주소 없음)"),
+])
+def test_region_of(address, expected):
+    assert ingest.region_of(address) == expected
+
+
+def test_default_report_has_no_region_line_when_only_seoul(permit):
+    _, _, report = permit
+    assert not any("지역별" in line for line in report.lines())
+
+
+def test_plan_close_missing_closes_only_what_the_file_lacks():
+    plan = ingest.plan_close_missing({"A", "B", "C", "D"}, {"A", "B", "C", "NEW"})
+    assert plan.to_close == {"D"} and plan.refused is None and (plan.candidates, plan.found_in_file) == (4, 3)
+
+
+def test_plan_close_missing_refuses_a_file_that_covers_too_few_and_force_bypasses():
+    open_ids = {str(i) for i in range(10)}
+    plan = ingest.plan_close_missing(open_ids, {"0", "1", "other"})   # 2/10 = 20%
+    assert plan.refused and "--force" in plan.refused
+    assert ingest.plan_close_missing(open_ids, {"0", "1"}, force=True).refused is None
+    assert ingest.plan_close_missing(open_ids, {"0", "1", "2"}).refused is None   # 정확히 30%는 통과
+
+
+def test_permit_source_ids_count_rows_skipped_for_other_reasons():
+    ids = ingest.permit_source_ids(read_csv_rows(FIX / "permit_sample.csv"))
+    assert {"P040", "P042"} <= ids   # 좌표 없음·타 지역으로 건너뛰는 행도 '파일에 있다'

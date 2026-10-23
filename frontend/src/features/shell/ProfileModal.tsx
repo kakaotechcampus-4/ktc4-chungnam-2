@@ -22,7 +22,7 @@ type Confirm = 'logout' | 'leave' | 'delete' | null
 export default function ProfileModal({ mapId, onClose }: { mapId: string; onClose: () => void }) {
   const [confirm, setConfirm] = useState<Confirm>(null)
   return (
-    <ModalSheet label="지도 정보" onClose={onClose} overlay={<ProfileConfirm mapId={mapId} which={confirm} onCancel={() => setConfirm(null)} />}>
+    <ModalSheet label="지도 정보" fullWidth onClose={onClose} overlay={<ProfileConfirm mapId={mapId} which={confirm} onCancel={() => setConfirm(null)} />}>
       <ProfileBody mapId={mapId} onConfirm={setConfirm} />
     </ModalSheet>
   )

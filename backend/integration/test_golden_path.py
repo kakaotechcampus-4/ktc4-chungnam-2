@@ -49,8 +49,8 @@ def test_map_invite_pins_reactions_recommend_publish_shortlist_route(clients, pi
     assert r.status_code == 201, r.text
     map_id = r.json()["id"]
     assert r.json()["region"]["label"] == "부산"
-    assert [m["id"] for m in a.get("/maps").json()] == [map_id]
-    assert b.get("/maps").json() == []
+    assert [m["id"] for m in a.get("/maps").json()["items"]] == [map_id]
+    assert b.get("/maps").json()["items"] == []
     assert b.get(f"/maps/{map_id}").status_code == 404
 
     # 초대 → 수락 → 구성원 2명(display_name 포함)

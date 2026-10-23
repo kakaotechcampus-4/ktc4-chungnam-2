@@ -21,8 +21,14 @@ from typing import Any, Mapping, Optional, Sequence
 from openai import APITimeoutError, OpenAI
 
 from common.settings import settings
-from llm.prompts import AGENT_ADVISE_RUN_PROMPT_VERSION, AGENT_DIAGNOSE_PROMPT_VERSION, PLAN_EVIDENCE_PROMPT
-from llm.schemas import AgentFailureReason, AgentUsage, DiagnosisOutput, PlanningOutput, RunAdviceOutput
+from llm.prompts import (
+    AGENT_ADVISE_RUN_PROMPT_VERSION, AGENT_DIAGNOSE_PROMPT_VERSION, COURSE_DIRECT_PROMPT, COURSE_DIRECT_PROMPT_VERSION,
+    COURSE_GOALS_PROMPT, COURSE_GOALS_PROMPT_VERSION, COURSE_TURN_PROMPT, COURSE_TURN_PROMPT_VERSION,
+    PLAN_EVIDENCE_PROMPT,
+)
+from llm.schemas import (
+    AgentFailureReason, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, PlanningOutput, RunAdviceOutput,
+)
 
 # POST /runs 요청 안에서 동기로 도는 호출이라 길게 기다리지 않는다. 재시도도 안 한다 —
 # 실패하면 어차피 RECOMMEND_FAILED이고, 재시도는 요청 지연만 두 배로 만든다.
@@ -253,4 +259,50 @@ def call_agent_advice_turn(
     return _agent_tool_turn(
         client, messages, tools=tools, tool_choice=tool_choice, turn=turn,
         what="추천 막힘 조언", prompt_version=AGENT_ADVISE_RUN_PROMPT_VERSION, response_format=RunAdviceOutput,
+    )
+
+
+def call_course_turn(client: Any, turn_input: Mapping[str, Any], *, turn: int) -> CourseTurn:
+    """동선 에이전트 턴 한 번(#334). 도구를 tools로 주지 않고 CourseTurn.action으로 받는다 — 그래서 reasoning_effort를
+    넘기지 않는다(우선순위 호출과 같다). 입력은 JSON 문자열로만 넘긴다(프롬프트에 섞지 않는다)."""
+    message = _agent_parse(
+        client, what="동선 에이전트 턴", context=f"turn={turn}", prompt_version=COURSE_TURN_PROMPT_VERSION,
+        messages=[
+            {"role": "system", "content": COURSE_TURN_PROMPT},
+            {"role": "user", "content": json.dumps(dict(turn_input), ensure_ascii=False, default=str)},
+        ],
+        response_format=CourseTurn,
+    )
+    if message.parsed is None:  # 도구를 주지 않았는데 도구 호출만 왔다
+        raise LlmCallError("동선 에이전트 턴 응답이 비어 있다", reason="invalid_schema")
+    return message.parsed
+
+
+def _course_parse(client: Any, *, what: str, context: str, prompt_version: str, system: str, payload: Mapping[str, Any], fmt: Any) -> Any:
+    message = _agent_parse(
+        client, what=what, context=context, prompt_version=prompt_version,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(dict(payload), ensure_ascii=False, default=str)},
+        ],
+        response_format=fmt,
+    )
+    if message.parsed is None:
+        raise LlmCallError(f"{what} 응답이 비어 있다", reason="invalid_schema")
+    return message.parsed
+
+
+def call_course_goals(client: Any, goals_input: Mapping[str, Any]) -> CourseGoalSet:
+    """요청 한 줄 → 목표(#334). 도구 없이 구조화 출력만 받는다."""
+    return _course_parse(
+        client, what="동선 목표 세우기", context="goals", prompt_version=COURSE_GOALS_PROMPT_VERSION,
+        system=COURSE_GOALS_PROMPT, payload=goals_input, fmt=CourseGoalSet,
+    )
+
+
+def call_course_direct(client: Any, turn_input: Mapping[str, Any], *, turn: int) -> CourseDirectTurn:
+    """지휘 턴 한 번(#334). 도구는 CourseDirectTurn.action으로 받는다."""
+    return _course_parse(
+        client, what="동선 지휘 턴", context=f"turn={turn}", prompt_version=COURSE_DIRECT_PROMPT_VERSION,
+        system=COURSE_DIRECT_PROMPT, payload=turn_input, fmt=CourseDirectTurn,
     )

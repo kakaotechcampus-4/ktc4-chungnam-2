@@ -1,7 +1,7 @@
 """계획 보조 에이전트의 판단 — 순수 함수만 둔다. DB를 모르고 시각은 인자로 받는다(docs/code-quality.md 기능형 코어).
 
 - 기준 시간(명세 6.1), 탐지기 4종(6.2~6.5), 신호(Signal)와 해시(3절)
-- 개입 정책(12.3), 우선순위 코드 규칙(7절, #582), 다음 점검 시각(12.4)
+- 개입 정책(12.3), 우선순위 코드 규칙(7절, #582), 다음 점검 시각(12.4), 제안 뒤 24시간 안 확정 판정(12.9, #613)
 - 우선순위 정책 파일(`priority_policy.yaml`) 로더 — 파일 읽기 한 곳만 I/O다
 - 코드 유형 템플릿(6.4, 6.5)과 렌더(11절 끝 "저장과 렌더 시점"), 이벤트 페이로드(15절) — #531
 - 진단 입력(12.4 6단계), 충돌 종류(6.3), 모델 출력 검증(11.2) — #533
@@ -39,6 +39,8 @@ from agent.constants import (
     DDAY_FACTOR_NEAR,
     DDAY_FAR,
     DDAY_MID,
+    DECIDED_WINDOW,
+    ERROR_RETRY_DELAYS,
     MODEL_TYPES,
     NO_REACTION_DAILY_LIMIT,
     NOT_FILTERED_CHIP_IDS,
@@ -564,6 +566,12 @@ def has_recent_event(latest_event_at: datetime | None, now: datetime) -> bool:
     return latest_event_at is not None and now - latest_event_at < RECENT_EVENT_GRACE
 
 
+def error_retry_at(now: datetime, streak: int) -> datetime:
+    """관찰이 예외로 끝난 지도를 다시 볼 시각(#677). streak은 이번 실패를 포함한 그 지도의 연속 error 수(1 이상)다 —
+    ERROR_RETRY_DELAYS(30분, 2시간, 6시간)에서 고르고 3회부터는 마지막 값이다."""
+    return now + ERROR_RETRY_DELAYS[min(max(streak, 1), len(ERROR_RETRY_DELAYS)) - 1]
+
+
 def find_superseded(active: PastSuggestion | None, signals: Sequence[Signal]) -> list[str]:
     """활성 제안을 무효화할지(12.9). 같은 fingerprint의 신호가 사라졌거나 evidence_hash가 바뀌었으면 그 id 하나."""
     if active is None:
@@ -619,6 +627,53 @@ def signal_record(sig: Signal) -> dict[str, Any]:
         "evidence_ids": list(sig.evidence_ids), "features": dict(sig.features),
         "fingerprint": sig.fingerprint, "evidence_hash": sig.evidence_hash,
     }
+
+
+# ---------------------------------------------------------------- 제안 뒤 24시간 안 확정 (12.9, #613)
+
+CATEGORY_DECIDED = ("category_gap", "stall")   # 제안 카테고리의 핀이 확정되면 참. 나머지는 가리킨 핀으로 본다
+
+
+@dataclass(frozen=True)
+class Confirmation:
+    """확정 항목 하나. category는 핀의 지금 분류(#466) — 분류를 읽지 못한 핀(삭제된 핀 등)은 None."""
+    pin_id: str
+    category: str | None
+    added_at: datetime
+
+
+@dataclass(frozen=True)
+class DecisionTarget:
+    """decided_within_24h를 채울 제안 — agent_suggestions에서 판정에 쓰는 칸만."""
+    id: Any
+    diagnosis: str
+    category: str | None
+    pin_id: str | None
+    claims: Sequence[Mapping[str, Any]]
+    actions: Sequence[Mapping[str, Any]]
+    created_at: datetime
+
+
+def pointed_pin_ids(target: DecisionTarget) -> frozenset[str]:
+    """제안이 가리킨 핀. split은 pin_id, no_reaction은 핀 ref claim과 show_pins 버튼의 pin_ids(근거 id 그대로, 6.4)."""
+    if target.diagnosis == "split":
+        return frozenset([target.pin_id] if target.pin_id else [])
+    shown = (pid for a in target.actions if a.get("type") == "show_pins" for pid in a.get("params", {}).get("pin_ids", []))
+    return frozenset(referenced_pin_ids(target.claims)) | frozenset(shown)
+
+
+def decided_within_24h(target: DecisionTarget, confirmations: Iterable[Confirmation]) -> bool:
+    """제안 created_at부터 DECIDED_WINDOW(24시간) 안에(양 끝 포함) 확정된 항목이 있는가. category_gap과 stall은 제안
+    카테고리의 핀, split과 no_reaction은 제안이 가리킨 핀이 확정됐는지 본다. 확정 항목은 지금 남은 것이라 삭제된 핀의
+    항목도 들어오면 센다(분류를 모르면 카테고리 유형에서는 세지 못한다)."""
+    end = target.created_at + DECIDED_WINDOW
+    in_window = [c for c in confirmations if target.created_at <= c.added_at <= end]
+    if target.diagnosis in CATEGORY_DECIDED:
+        return target.category is not None and any(c.category == target.category for c in in_window)
+    if target.diagnosis in ("split", "no_reaction"):
+        pins = pointed_pin_ids(target)
+        return any(c.pin_id in pins for c in in_window)
+    raise ValueError(f"알 수 없는 diagnosis: {target.diagnosis}")
 
 
 # ---------------------------------------------------------------- 노출 (#531)
@@ -1378,11 +1433,16 @@ def same_category_runs(recent: Sequence[Mapping[str, Any]], created_at: datetime
     return sum(r["created_at"] <= created_at for r in recent)
 
 
-def radius_limits(walk_min: int, limit_walk_min: int) -> dict[str, Any]:
-    """조언 입력의 반경: 지금 기본 반경(도보 분), 넓힐 수 있는 상한(WIDEN_LIMIT, 30분), 상한까지의 배율(소수 둘째 자리 내림).
-    배율이 1 이하면 더 넓힐 수 없다."""
+def radius_limits(walk_min: int, limit_walk_min: int, step_walk_min: int) -> dict[str, Any]:
+    """조언 입력의 반경: 지금 기본 반경(도보 분), 넓힐 수 있는 상한(WIDEN_LIMIT, 30분), 상한까지의 배율(소수 둘째 자리 내림),
+    반경 넓히기 버튼 한 번(WIDEN_STEP, 5분)의 배율. 상한까지의 배율이 1 이하면 더 넓힐 수 없다.
+
+    next_radius_factor = min(walk_min + 한 단계, 상한) / walk_min(#677). 반올림하거나 자르지 않는다 — 이 배율로 돌린
+    시뮬레이션의 반경이 버튼 한 번(recommend widen) 뒤의 반경과 같아야 조언의 숫자가 버튼 결과와 맞는다. 이미 상한이면 None."""
     factor = math.floor(limit_walk_min / walk_min * 100) / 100 if walk_min > 0 else 1.0
-    return {"walk_min": walk_min, "max_walk_min": limit_walk_min, "max_radius_factor": factor}
+    next_factor = min(walk_min + step_walk_min, limit_walk_min) / walk_min if 0 < walk_min < limit_walk_min else None
+    return {"walk_min": walk_min, "max_walk_min": limit_walk_min, "max_radius_factor": factor,
+            "next_radius_factor": next_factor}
 
 
 def within_widen_limit(radius_factor: float | None, walk_min: int, limit_walk_min: int) -> bool:
@@ -1462,9 +1522,14 @@ def advice_input(meta: Mapping[str, Any], same_runs: int, funnel_result: Mapping
     쓸 수 있게 한다. 근거 글, 구성원, run_id는 넣지 않는다(근거 줄은 get_run_evidence로, run은 tool_runner가 채운다)."""
     return {
         "category": meta["category"], "result_count": meta["result_count"], "same_category_runs": same_runs,
-        "radius": radius_limits(meta["default_radius_walk_min"], meta["widen_limit_walk_min"]),
+        "radius": run_radius(meta),
         "funnel": {"call_id": PREFETCH_CALL_ID, "result": dict(funnel_result)},
     }
+
+
+def run_radius(meta: Mapping[str, Any]) -> dict[str, Any]:
+    """recommend.api.get_run_meta → radius_limits. 조언 입력과 검증이 같은 값을 본다."""
+    return radius_limits(meta["default_radius_walk_min"], meta["widen_limit_walk_min"], meta["widen_step_walk_min"])
 
 
 @dataclass(frozen=True)
@@ -1539,12 +1604,22 @@ def _widens(claim: ToolClaim, ctx: AdviceContext) -> bool:
     return name == "simulate_filter" and (result.get("radius_factor") or 0) > 1
 
 
+def _is_next_step(claim: ToolClaim, ctx: AdviceContext) -> bool:
+    """반경 넓히기 버튼 한 번과 같은 배율(next_radius_factor)로 넓힌 시뮬레이션인가(#677). 부동소수 오차만 허용한다."""
+    name, result = _tool_of(claim, ctx)
+    factor, next_factor = result.get("radius_factor"), ctx.radius["next_radius_factor"]
+    return (name == "simulate_filter" and factor is not None and next_factor is not None
+            and math.isclose(factor, next_factor, rel_tol=0, abs_tol=1e-9))
+
+
 def _advice_action(
     action: Any, kind: str, kept: Mapping[str, ToolClaim], ctx: AdviceContext,
 ) -> tuple[tuple[str, str, dict[str, Any]] | None, str | None]:
     """버튼 하나(11.2 6단계를 조언에 맞게) → ((type, label, params), None) 또는 (None, 이유).
     - 종류별 허용(radius는 widen_radius, soft_relax와 vague_reason은 open_evidence, exhausted는 없음)과 basis.
-    - widen_radius: 반경 상한 안에서 넓힌 시뮬레이션 claim이 basis에 있어야 하고, 이미 상한이면 뺀다.
+    - widen_radius: 이미 상한이면 뺀다. basis에 넓힌 시뮬레이션 claim이 있어야 하고, 그 배율이 버튼 한 번의 배율
+      (next_radius_factor)이어야 한다(#677) — 버튼은 한 번에 한 단계만 넓혀서, 다른 배율의 숫자를 약속하면 버튼 결과와 어긋난다.
+      문장은 따로 검사해 사실이면 남는다.
     - open_evidence: basis가 가리키는 근거 줄이 모두 요청자 본인 줄이어야 한다. 남의 줄이 하나라도 있으면 버튼을 뺀다 — 근거
       줄 빼기는 쓴 사람만 할 수 있다(9절, permissions의 evidence.disable). 문장은 따로 검사해 남는다."""
     if action.type not in RUN_ADVICE_ACTIONS[kind]:
@@ -1553,10 +1628,12 @@ def _advice_action(
         return None, "basis"
     basis = [kept[b] for b in action.basis]
     if action.type == "widen_radius":
-        if ctx.radius["max_radius_factor"] <= 1:
+        if ctx.radius["next_radius_factor"] is None:
             return None, "radius_limit"
         if not any(_widens(c, ctx) for c in basis):
             return None, "no_simulation"
+        if not any(_is_next_step(c, ctx) for c in basis):
+            return None, "not_next_step"
         return ("widen_radius", RUN_ADVICE_LABELS[kind], {"run_id": ctx.run_id}), None
     line_ids = list(dict.fromkeys(i for c in basis for i in _claim_line_ids(c, ctx)))
     if not line_ids:
@@ -1583,7 +1660,7 @@ def verify_run_advice(out: RunAdviceOutput, ctx: AdviceContext) -> VerifiedAdvic
 
     1 decision이 silent·unknown이면 그대로 침묵 3 claim(tool_result만, 근거 글 경로 금지, 도구 결과와 같은 값, 반경 상한 안)
     5 문장(제거된 claim을 가리킴, 슬롯 밖 숫자, 구성원 이름, 금지 표현, 슬롯 밖에서 근거 글 옮겨 쓰기 — 진단과 같은 _check_line)
-    6 버튼(종류별 허용, 반경 상한, 요청자 본인 줄) 7 성립(종류의 필수 claim, 문장이나 버튼이 하나 이상). 7단계에서 떨어지면
+    6 버튼(종류별 허용, 반경 상한, 버튼 한 번의 배율, 요청자 본인 줄) 7 성립(종류의 필수 claim, 문장이나 버튼이 하나 이상). 7단계에서 떨어지면
     invalid_claims로 침묵한다. 2단계(신호)와 4단계(요약 구조)는 조언에 없다."""
     record: dict[str, Any] = {"decision": out.decision, "kind": out.kind}
     if out.decision != "suggest":

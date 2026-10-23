@@ -720,3 +720,138 @@ tools(recommend.api를 감싼다), 순서와 세션은 flows. 모델은 llm.agen
 2. **passed는 recommend의 passed_count를 쓴다.** `core.FUNNEL_TOP_STAGE`와 라벨 비교를 지웠다. `core.funnel_view(outcome)`이
    `{result_count, funnel, passed_count}`를 받아 도구 결과의 `passed`로 옮긴다(도구 결과 모양과 프롬프트는 그대로). 테스트: 마지막 단계
    라벨을 바꿔도 passed와 gained가 같다(test_core_advice.py)
+
+---
+
+# 루트 보고 — backend/agent (#613, 제안 뒤 24시간 안 확정: decided_within_24h)
+
+하루 한 번 정리(`flows.daily_cleanup_if_due`)가 보존 정리 뒤에 `fill_decided_within_24h`를 부른다. 판정은 core(순수), 읽기와 쓰기는
+service, 다른 모듈 읽기와 트랜잭션은 flows. 마이그레이션 없음(칸은 0029에 있다).
+
+## 구현 범위
+
+- `constants.DECIDED_WINDOW = timedelta(hours=24)` — 칸 이름의 24시간(12.9). 5절 표에는 없다
+- `core.py`: `Confirmation`, `DecisionTarget`, `pointed_pin_ids`, `decided_within_24h`, `CATEGORY_DECIDED`
+- `service.py`: `list_undecided_map_ids`, `list_undecided`, `set_decided`(decided_within_24h IS NULL인 행만 UPDATE)
+- `flows.py`: `fill_decided_within_24h`, `_fill_decided_for_map`. 지도마다 짧은 쓰기 트랜잭션 하나, 한 지도가 실패해도 다음 지도는 계속
+
+## 판정 규칙 (core.decided_within_24h)
+
+- 대상: decided_within_24h IS NULL이고 created_at < now − 24시간. shadow와 상태(active 포함)는 보지 않는다. 한 번 채우면 다시 보지 않는다
+- 창: 제안 created_at ≤ 확정 added_at ≤ created_at + 24시간(양 끝 포함). 제안 전 확정은 세지 않는다
+- category_gap, stall: 창 안에 제안 category의 핀이 확정됐으면 참
+- split: 창 안에 제안 pin_id가 확정됐으면 참
+- no_reaction: 가리킨 핀 = ref claim의 ref_id ∪ show_pins 버튼의 pin_ids(근거 id 그대로). 그중 하나라도 창 안에 확정됐으면 참
+- 지도가 없거나 삭제됐으면(maps.api.get_map_for_agent가 None 또는 deleted) 판정하지 않고 NULL로 둔다
+
+## 다른 모듈에서 쓴 함수
+
+- `maps.api.get_map_for_agent(db, map_id)` — 지도 삭제 확인. 지도마다 1번
+- `shortlist.api.list_items_for_agent(db, *, map_id)` — 확정 항목(pin_id, added_at). 삭제된 핀의 항목도 담긴다. 지도마다 1번
+- `pins.api.list_reaction_matrix(db, *, map_id)` — 핀 카테고리. 그 지도에 category_gap이나 stall 제안이 있을 때만 1번
+
+## 루트 확인 요청 (문서는 고치지 않았다)
+
+1. **삭제된 핀의 카테고리를 읽을 함수가 없다.** `list_reaction_matrix`는 삭제되지 않은 공개 핀만 준다. 그래서 확정 항목이 남은 채
+   삭제된 핀은 split과 no_reaction(핀 id로 본다)에서는 세지만, category_gap과 stall(카테고리로 본다)에서는 세지 못한다. 세려면
+   pins에 `pins.api.get_pin_categories(db, *, map_id, pin_ids) -> dict[str, str]`(삭제된 핀, 비공개 핀 포함) 같은 함수가 필요하다.
+   다만 아래 2번 때문에 실제로 영향받는 경우는 드물다
+2. **판정은 정리할 때 남아 있는 확정 항목으로만 한다.** 확정한 핀을 지우면 확정 항목도 같이 지운다(`shortlist.api.remove_for_deleted_pin`,
+   #235). 확정 리스트에서 빼면 행이 지워진다. 그래서 24시간 안에 확정했다가 정리 전에 빼거나 핀을 지우면 거짓이 된다. 삭제된 핀의
+   항목이 남는 것은 그 순서를 거치지 않는 옛 행이나 경합 정도다. 뺀 확정까지 세려면 확정 기록이 필요하다(event_log는 24시간만 보존하고
+   정리는 하루 한 번이라 모자란다). 지표로 쓸 때 "정리 시점까지 남은 확정" 기준이라는 점을 명세 12.9에 적을지 정해 달라
+3. 명세 12.9 문장 "그 카테고리에 확정이 생겼는지"를 유형별 규칙(위 표, 특히 split과 no_reaction은 가리킨 핀)으로 바꿀지
+4. 대상 조회는 decided_within_24h IS NULL 조건으로 테이블을 훑는다. 인덱스는 넣지 않았다. 제안 수가 늘면 부분 인덱스
+   `(created_at) WHERE decided_within_24h IS NULL`을 검토한다
+
+## 테스트
+
+- test_core_decided.py 12개: 카테고리 유형 참·거짓, 분류 없는 핀, split은 그 핀만, no_reaction은 가리킨 핀 중 하나(ref와 버튼 둘 다),
+  경계(같은 시각 참, 24시간 정각 참, 24시간 1초 뒤 거짓, 제안 1초 전 거짓), 모르는 유형은 ValueError
+- test_flows.py 9개(실제 DB): 유형별 참·거짓 8건, 경계, 24시간 전은 그대로, 이미 채운 행 그대로, shadow·dismissed·active 채움, 삭제된 핀의
+  확정 셈(split, no_reaction), 삭제된 지도 건너뜀, 지도마다 다른 모듈 호출 1번(카테고리 유형이 없으면 핀은 안 읽음), daily_cleanup_if_due가 채움
+
+---
+
+# 루트 보고 — backend/agent (#677, 관찰 실패 기록과 재시도 간격, tick 시간 예산, 조언 실패, 반경 조언과 버튼 한 번)
+
+브랜치 `fix/agent-observe-failure-677`. 마이그레이션 없음 — outcome은 text라 `'error'`는 `models.RUN_OUTCOMES`에만 더했다
+(data-model.md는 루트가 먼저 고쳤다). recommend(`get_run_meta`)와 llm(`ToolRunnerError.usage`)을 조금 고쳤다.
+
+## 바뀐 것
+
+1. **관찰 실패 기록** (`flows.run_tick` → `_observe_claimed`)
+   - observe_map이 예외로 끝나면 agent_runs에 한 행을 남긴다. trigger는 claim 그대로(activity|time), outcome=`error`,
+     outcome_detail=`{stage, error}`. error는 `type(예외).__name__`이고 str(예외)와 사유 글은 넣지 않는다.
+   - 진단을 부른 뒤(모델 단계부터 저장 커밋 전까지)의 실패면 used_model=true, 그때까지의 사용량(model, prompt_version, tokens),
+     tool_calls(도구 창구의 기록 그대로라 글 대신 글자 수)를 남긴다. 그래서 지도 상한(구성원 수 × 4)에 센다. 저장이 커밋된 뒤
+     (요약 단계)의 실패는 모델 사용이 이미 지도 관찰 행에 있어 error 행은 used_model=false다. 두 번 세지 않는다.
+   - 같은 트랜잭션에서 커서를 claim 때 본 가장 큰 seq로 올리고(`advance_cursor`는 greatest라 뒤로 가지 않는다), next_check_at을
+     그 지도의 연속 실패 관찰 수 1, 2, 3회 이상에 따라 30분, 2시간, 6시간 뒤로 둔다(`constants.ERROR_RETRY_DELAYS`,
+     `core.error_retry_at`). 그사이 새 이벤트가 오면 activity로 다시 잡힌다. 미루는 것은 시간 점검뿐이다.
+   - error 행 기록 자체가 실패하면 로그만 남긴다. lease는 그대로 풀고, 그 지도는 전처럼 다음 tick에 다시 잡힌다.
+2. **tick 시간 예산**: `constants.TICK_BUDGET_SEC = LEASE_SEC − 30`(150초). run_tick이 지도마다 관찰을 시작하기 전에 시작 뒤 경과를
+   보고, 넘었으면 관찰하지 않고 lease만 푼다(커서는 그대로라 다음 tick에 다시 잡힌다). 반환값은 실제로 관찰한 map_id다(예외로 끝난
+   것 포함, 건너뛴 것 제외). 시계는 `run_tick(clock=)` 인자(기본 time.monotonic)로 테스트가 바꾼다.
+3. **조언 실패** (`flows.advise_run`): 미리 읽기(prefetch), 모델과 도구(model), 검증(verify)에서 예외가 나면 agent_runs
+   (trigger=run_advice, outcome=error)만 남기고 조언은 저장하지 않은 채 None(204)을 돌려준다. 다음 요청이 다시 시도한다(16.5).
+   used_model과 사용량 규칙은 관찰과 같고, 지도 상한에는 전처럼 세지 않는다. 모델의 실패(AgentCallFailed)는 전처럼 빈 조언으로 저장한다.
+4. **반경 조언과 버튼 한 번** (#677 댓글)
+   - `recommend.api.get_run_meta`에 `widen_step_walk_min`(recommend.core.WIDEN_STEP_MIN, 5)을 더했다. agent에는 5분을 따로 적지 않았다.
+   - `core.radius_limits(walk_min, limit_walk_min, step_walk_min)`이 `next_radius_factor = min(walk_min + step, limit) / walk_min`을 함께
+     준다. 반올림하거나 자르지 않는다(1200m × 20/15 = 1600m로 widen 결과와 같다). 이미 상한이면 None. 조언 입력의 radius와 검증이 같은
+     값(`core.run_radius(meta)`)을 본다.
+   - `verify_run_advice`: widen_radius 버튼은 basis에 next_radius_factor로 넓힌 simulate_filter claim이 있을 때만 남긴다(허용오차
+     abs 1e-9). 넓힌 시뮬레이션은 있는데 배율이 다르면 `not_next_step`으로 뺀다. 문장은 사실이면 남는다. 이미 상한이면 전처럼
+     `radius_limit`이다(판정을 max_radius_factor ≤ 1에서 next_radius_factor None으로 바꿨는데, 정수 도보 분에서는 같은 경우다).
+   - `integration/test_agent_e2e.py`의 `test_one_press_of_the_advice_button_delivers_what_the_advice_said`에서 xfail 표시를 지웠다.
+     이제 통과한다.
+5. **llm(작은 변경)**: `ToolRunnerError`에 `usage` 속성을 두고, `agent_diagnose`와 `agent_advise_run`이 다시 올리기 전에 그때까지 쓴
+   사용량을 붙인다. 이게 없으면 도구 예외 때 agent가 사용량을 알 수 없다. 공개 함수 시그니처는 그대로다.
+
+## 명세에 없어 정한 것
+
+- 단계 이름: 관찰은 expire, snapshot, detect, draft, model, verify, save, summary. 조언은 prefetch, model, verify.
+- 연속 실패 수는 관찰 단위로 센다. agent_runs를 started_at(관찰 시각)으로 묶어서, error 행이 있는 관찰을 최근부터 센다
+  (`service.error_streak`). 요약 단계에서 실패하면 한 관찰에 지도 관찰 행과 error 행이 함께 있기 때문이다. run_advice 행은 보지 않는다.
+  성공한 관찰이 하나 끼면 처음부터 다시 센다.
+- error 행의 snapshot_at, snapshot_seq는 비운다.
+- 조언 error 행의 outcome_detail에는 run_id를 더 둔다(`{run_id, stage, error}`). 다른 run_advice 행처럼 어느 run인지 알아야 해서다.
+  사유 글은 아니다.
+- 도구 예외의 error는 llm이 감싼 `ToolRunnerError`로 남는다. 원인 클래스는 서버 로그에만 있다.
+- TICK_BUDGET_SEC와 ERROR_RETRY_DELAYS는 명세 5절 표에 없는 값이다(초안).
+
+## 루트 확인 요청 (문서는 고치지 않았다)
+
+1. 명세에 반영해 달라: 21.3의 "관찰 도중 예외: 지금은 기록 없이 …" 줄, 12.2 run_tick 코드 블록(except에서 로그만 남김), 5절 상수 표
+   (TICK_BUDGET_SEC, ERROR_RETRY_DELAYS), 9절(조언 예외는 저장하지 않고 204), 21.2의 반경 조언 결함 문단과 21.4 표의 "(#677, xfail)".
+2. **llm 쪽 남은 일**(#677 본문과 댓글, 이번에 하지 않았다)
+   - (a) 도구 대화(`_tool_conversation`)의 전체 시간 예산. tick 예산은 새 관찰을 시작하지 않을 뿐이라, 이미 시작한 진단 하나가 최악
+     6번 × 15초를 쓰면 여전히 lease를 넘길 수 있다. 조언도 HTTP 요청 안에서 최악 약 90초를 기다린다.
+   - (b) advise 프롬프트를 `simulate_filter(radius_factor=next_radius_factor)`로 바꾸고 advise-v2로 올리기. 지금 프롬프트(advise-v1)는
+     "1보다 크고 max_radius_factor 이하"라서 실제 모델은 보통 상한으로 시뮬레이션하고, 그러면 이번 검증이 버튼을 뺀다(문장은 남는다).
+     프롬프트를 바꾸기 전까지는 실제 모델의 반경 조언에 버튼이 거의 붙지 않는다. 입력 칸 이름은 `radius.next_radius_factor`다.
+3. 실패 로그(`log.exception`)는 전처럼 traceback과 예외 메시지를 서버 콘솔에 남긴다. DB에는 클래스 이름만 저장한다. 로그도 llm
+   규칙(#390)처럼 클래스 이름만 남길지 정해 달라.
+4. 시뮬레이션 반경과 버튼 결과가 같으려면 저장된 원의 반경이 기본 반경(도보 분 × 80m)이어야 한다. `recommend.widen_run`은 모든 원을
+   next_walk × 80m로 바꾸고, simulate_filter는 원마다 반경 × 배율을 쓴다. v1은 저장된 원이 모두 기본값 원이라 같다(widen_run 머리말).
+   사람이 명시한 원이 생기면 둘이 어긋나니 그때 다시 봐야 한다.
+5. 조언에서 예외가 계속 나면 결과 화면을 열 때마다 모델을 다시 부른다(저장하지 않으므로). 지금은 결과 화면을 여는 횟수로만 묶인다.
+   상한이 필요하면 run당 error 행 수를 세서 막을 수 있다.
+
+## 테스트
+
+- test_core_flow.py: error_retry_at 간격(1, 2, 3, 4, 10회), TICK_BUDGET_SEC = LEASE_SEC − 30
+- test_core_advice.py: radius_limits 6가지(next_radius_factor 포함), 반올림 없음, 버튼은 한 번 넓힌 시뮬레이션에만(not_next_step, 문장은
+  남음), 배율 허용오차(1.3333333333 통과, 1.33과 1.5는 탈락), 상한이면 radius_limit
+- test_flows.py: 저장 실패 → error 행(stage save), 커서는 본 seq, 30분 뒤; 연속 실패 30분 → 2시간 → 6시간 → 6시간, 그 사이 5분 뒤
+  tick에 다시 잡지 않음, 성공 뒤 실패는 다시 30분; 미룬 동안 새 이벤트가 오면 activity로 다시 잡힘; 실패한 지도에 error 행; tick 예산을
+  넘기면 남은 지도는 관찰 없이 lease만 풀고 다음 tick에 잡힘
+- test_flows_model.py: 진단 중 도구 예외 → used_model=true, 사용량, 글자 수 도구 기록, 지도 상한 1회, 다음 tick에 모델을 다시 부르지
+  않음; 요약 단계 실패는 모델 사용을 두 번 세지 않고 30분 뒤
+- test_flows_advice.py: prefetch, model, verify 예외 → error 행만 남고 조언 미저장, None, 다음 요청이 다시 만듦; 도구 예외의 사용량
+  기록(지도 상한 0); 라우터는 500이 아니라 204, 다시 열면 200; 반경 조언에서 상한까지 넓힌 숫자의 버튼은 not_next_step
+- llm/tests/test_agent_calls.py: ToolRunnerError가 그때까지의 사용량을 싣는다
+- recommend/tests/test_run_reads_api.py: get_run_meta에 widen_step_walk_min
+- integration/test_agent_e2e.py: xfail 표시를 지운 테스트 통과
+- `pytest agent recommend integration llm`: 1369 passed, 1 xfailed(#226, 무관), 5 deselected(live)
