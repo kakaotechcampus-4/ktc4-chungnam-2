@@ -70,17 +70,17 @@
 - {id: S06, layer: api, area: permission, scenario: "비구성원이 지도 리소스 접근", expect: "404(존재 노출 안 함)", status: pass}
 
 # ───────── UI(브라우저) ─────────
-- {id: U01, layer: ui, area: invite, scenario: "로그인 전 초대 링크 열기 → 로그인 → 수락 → 온보딩", expect: "pendingInvite 복원, 지도 진입", status: untested}
+- {id: U01, layer: ui, area: invite, scenario: "로그인 전 초대 링크 열기 → 로그인 → 수락 → 온보딩", expect: "pendingInvite 복원, 지도 진입", status: pass}
 - {id: U02, layer: ui, area: invite, scenario: "만료/폐기/없는 초대 링크", expect: "각각 명확한 안내(INVITE_REVOKED는 FE 미처리 예상)", status: bug#719}
 - {id: U03, layer: ui, area: auth, scenario: "게스트로 시작하기", expect: "FE가 POST /auth/guest를 호출하지 않음 → 미구현 확인", status: na}
 - {id: U04, layer: ui, area: map, scenario: "지도 만들기: 지역 선택·날짜·제목 경계", expect: "검증 메시지, 20개 도달 안내", status: pass}
 - {id: U05, layer: ui, area: pin, scenario: "핀 추가: 검색 0건·중복·미지원·네트워크 오류", expect: "각 에러 코드 문구", status: pass}
 - {id: U06, layer: ui, area: reaction, scenario: "🚫 사유 없이 제출·140자 초과·이모지", expect: "인라인 검증", status: pass}
 - {id: U07, layer: ui, area: recommend, scenario: "추천 흐름 전체: readiness→근거→영역→결과→올리기", expect: "단계 전환·로딩·결과 0개 문구", status: pass}
-- {id: U08, layer: ui, area: recommend, scenario: "상한 도달(10회)·넓히기 상한", expect: "attempt_limit 기반 문구, WIDEN_LIMIT 문구", status: untested}
+- {id: U08, layer: ui, area: recommend, scenario: "상한 도달(10회)·넓히기 상한", expect: "attempt_limit 기반 문구, WIDEN_LIMIT 문구", status: bug#719}
 - {id: U09, layer: ui, area: recommend, scenario: "evidence '+' 6줄/11줄", expect: "EVIDENCE_LIMIT 처리(FE 미처리 예상)", status: bug#720}
-- {id: U10, layer: ui, area: shortlist, scenario: "확정 리스트·동선 보기", expect: "순서만, 빈 상태 문구", status: untested}
+- {id: U10, layer: ui, area: shortlist, scenario: "확정 리스트·동선 보기", expect: "순서만, 빈 상태 문구", status: pass}
 - {id: U11, layer: ui, area: realtime, scenario: "서버 중단 후 복구: 재연결 배너·다시 연결", expect: "배너 노출, 복구 후 핀 최신화", status: pass}
-- {id: U12, layer: ui, area: account, scenario: "나가기/탈퇴 확인 모달, 방장 나가기", expect: "OWNER_CANNOT_LEAVE 안내", status: untested}
-- {id: U13, layer: ui, area: layout, scenario: "모바일 폭(375px)·긴 한글 이름·긴 사유 줄바꿈", expect: "레이아웃 깨짐 없음", status: untested}
-- {id: U14, layer: ui, area: legal, scenario: "약관·개인정보·위치정보 페이지", expect: "로그인 없이 열림", status: untested}
+- {id: U12, layer: ui, area: account, scenario: "나가기/탈퇴 확인 모달, 방장 나가기", expect: "OWNER_CANNOT_LEAVE 안내", status: pass}
+- {id: U13, layer: ui, area: layout, scenario: "모바일 폭(375px)·긴 한글 이름·긴 사유 줄바꿈", expect: "레이아웃 깨짐 없음", status: pass}
+- {id: U14, layer: ui, area: legal, scenario: "약관·개인정보·위치정보 페이지", expect: "로그인 없이 열림", status: bug#723}
