@@ -142,6 +142,7 @@ def is_place_identity_key(category: str, fact_key: str | None) -> bool:
 # (가드레일 5는 근거가 있는 것만 말하라는 뜻 — 이름 없는 키를 날것으로 노출하지 않는다)
 # 레지스트리에 키를 추가할 때(#171) 여기도 같이 채운다. test_constraints.py가 빠진 키를 잡는다.
 PASSED_LABELS: dict[str, str] = {
+    "is_open": "여행 기간에 영업하는 날이 있음",   # 레지스트리 밖(코드 판정, #690) — 영업하는 요일이 확인됐을 때만 쓴다
     "spicy_focused": "매운맛 전문점",       # 취향 키(#378) — 선호 충족 문장이라 "그렇다"는 쪽이다(피한 쪽은 "<이름> 제외")
     "oily_focused": "기름진 메뉴 위주",
     "is_crowded_large": "붐비는 대형 장소 아님",
