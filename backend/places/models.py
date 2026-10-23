@@ -10,7 +10,7 @@ from datetime import datetime
 
 from geoalchemy2 import Geography
 from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum, ForeignKey, SmallInteger, String, Text, UniqueConstraint, func, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from common import categories
@@ -73,3 +73,20 @@ class PlaceFact(Base):
     labeled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (CheckConstraint("source_layer IN (1, 2, 3)", name="ck_place_facts_source_layer"),)
+
+
+class PlaceHours(Base):
+    """영업시간·휴무일(#690). 칸이 없으면 행이 없다 = 모름. 모양은 docs/data-model.md place_hours 절."""
+
+    __tablename__ = "place_hours"
+
+    place_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("places.id", ondelete="CASCADE"), primary_key=True
+    )
+    hours = mapped_column(JSONB(none_as_null=True), nullable=True)   # {"월": [["11:00","21:00"]], …} 요일 7개, 빈 목록 = 휴무, "26:00" = 다음 날 02:00
+    closed_days = mapped_column(ARRAY(Text), nullable=True)           # 매주 쉬는 요일. [] = 연중무휴, NULL = 모름
+    closed_note: Mapped[str | None] = mapped_column(Text, nullable=True)   # 표시용 원문 — 판단에 쓰지 않는다
+    hours_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
