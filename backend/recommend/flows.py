@@ -53,6 +53,7 @@ from authz.schemas import Permissions
 from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
+from maps import api as maps_api
 from pins import api as pins_api
 from pins.schemas import Pin
 from places import api as places_api
@@ -420,6 +421,14 @@ def _pipeline_inputs(
     return regions, active_lines
 
 
+def _out_of_season_keys(db: Session, map_id: str) -> frozenset[str]:
+    """이 지도의 여행 기간과 시즌이 안 겹치는 계절 키(core.out_of_season_keys). 지도를 못 읽으면 모두 쓴다."""
+    info = maps_api.get_map_for_agent(db, map_id)
+    if info is None:
+        return frozenset()
+    return core.out_of_season_keys(info["start_date"], info["end_date"])
+
+
 def _run_pipeline(
     db: Session, run: RecommendRun, *,
     regions: Sequence[_PipelineRegion], active_lines: Sequence[EvidenceLineRow],
@@ -444,6 +453,10 @@ def _run_pipeline(
     removed_not_recommendable = len(within_radius) - len(recommendable)
     within_radius = recommendable
 
+    # 계절 키는 여행 기간이 시즌과 겹칠 때만 쓴다(#681-6) — 시즌 밖이면 직접 쓴 사유도 이번 실행에서 없는 셈 친다(점수 0,
+    # 후보를 거르지 않고, 이유·체크에도 안 나온다). 날짜가 없으면 모두 쓴다.
+    off_season = _out_of_season_keys(db, run.map_id)
+    active_lines = [line for line in active_lines if line.fact_key not in off_season]
     active_hard_keys = _hard_fact_keys_from(active_lines, run.category)
     soft_requirements = _soft_requirements_from(active_lines)
     # 구성원별 반대 조건 — 충족 집계에 센다(#255, #620). 이번 실행이 실제로 확인하는 키만 넣는다: 카테고리에 맞는 hard 키
@@ -518,7 +531,7 @@ def _run_pipeline(
     # 집계·이유에 똑같이 쓴다 — 직접 쓴 선호 사유(preferred_authors)는 거르지 않는다.
     hearted_places = core.filter_heart_signals([
         core.HeartedPlace(
-            checks=core.label_checks(liked_facts.get(entry["place_id"], [])),
+            checks=[c for c in core.label_checks(liked_facts.get(entry["place_id"], [])) if c.fact_key not in off_season],
             member_ids=frozenset(entry["member_ids"]),
         )
         for entry in liked_pins
