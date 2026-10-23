@@ -63,7 +63,7 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 
 ## 게스트 (v2, #472)
 
-게스트(`users.is_guest`)는 **새 롤이 아니다.** 초대로 들어간 지도에서는 일반 `member`와 똑같이 움직이고(핀·반응·추천·확정 리스트·초대 수락, 같은 상한) 아래 두 가지만 막는다. 롤이 아니라 계정 속성이라 `authz/policy.py`·`Permissions`는 바뀌지 않는다.
+게스트(로그인 수단이 없는 사용자, `CurrentUser.is_guest`, #694)는 **새 롤이 아니다.** 초대로 들어간 지도에서는 일반 `member`와 똑같이 움직이고(핀·반응·추천·확정 리스트·초대 수락, 같은 상한) 아래 두 가지만 막는다. 롤이 아니라 계정 속성이라 `authz/policy.py`·`Permissions`는 바뀌지 않는다.
 
 - **지도 만들기 불가** — `POST /maps` → 403 `GUEST_NOT_ALLOWED`(maps 라우터가 `CurrentUser.is_guest`로 판정).
 - **방장이 될 수 없다** — `pick_successor`(나가기·탈퇴 위임)가 게스트를 후보에서 뺀다. 직접 넘기기 대상이 게스트면 422 `OWNER_TARGET_INVALID`. 방장이 혼자이고 남은 사람이 게스트뿐이면 나가기는 409 `OWNER_CANNOT_LEAVE`(탈퇴는 지도 삭제).

@@ -77,7 +77,7 @@ paths:
           description: |
             **성공이든 실패든 항상 302다** — 이 경로는 fetch가 아니라 브라우저 이동이라 JSON을 돌려주면 사용자가 그대로 본다(2026-10-04).
             성공: 진입점(`FRONTEND_LOGIN_REDIRECT_URL`)으로, 세션 쿠키와 함께.
-            **게스트 전환이었으면(#560)** 같은 주소에 쿼리 `guest_merged=true`(기록을 합쳤다) 또는 `guest_merged=false`(합치지 못했다 — 카카오 로그인은 성공했고 게스트 기록은 그대로 남아 있다. 사용자에게 알리고, 게스트 쿠키는 이미 카카오 세션으로 바뀌었으니 다시 합치지 않는다)를 붙인다. 게스트가 아닌 로그인에는 붙이지 않는다.
+            **게스트 전환이었으면(#560, #694)** 같은 주소에 쿼리 `guest_merged=true`(게스트 기록이 카카오 계정으로 이어졌다) 또는 `guest_merged=false`(잇지 못했다 — 카카오 로그인은 성공했고 게스트 기록은 그대로 남아 있다. 사용자에게 알리고, 게스트 쿠키는 이미 카카오 세션으로 바뀌었으니 다시 하지 않는다)를 붙인다. 처음 쓰는 카카오 계정이면 게스트 계정에 카카오 로그인을 붙여 사용자 id와 표시 이름이 그대로이고, 이미 쓰던 카카오 계정이면 그 계정으로 기록을 옮긴다(이름은 그 계정 것). 게스트가 아닌 로그인에는 붙이지 않는다.
             실패: 같은 주소에 쿼리 `?login_error=<값>`을 붙여 돌려보내고 세션 쿠키는 만들지 않는다. state 쿠키는 성공·실패 모두 지운다.
             `login_error` 값: `cancelled`(사용자가 카카오 화면에서 취소), `invalid_state`(state 쿠키와 다르거나 없음 — 처음부터 다시), `kakao_failed`(카카오 토큰 교환·프로필 조회 실패), `server_error`(그 밖의 실패).
 
@@ -1598,7 +1598,7 @@ components:
       properties:
         id: { type: string }
         display_name: { type: string, maxLength: 50 } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
-        is_guest: { type: boolean, description: "게스트(이름만 입력한 임시 계정, #472)면 true. 없으면 false로 본다. 게스트는 지도를 만들 수 없다(POST /maps 403 GUEST_NOT_ALLOWED)" }
+        is_guest: { type: boolean, description: "게스트(이름만 입력한 임시 계정, #472)면 true. 서버는 로그인 수단(카카오)이 없는 사용자를 게스트로 본다(#694). 없으면 false로 본다. 게스트는 지도를 만들 수 없다(POST /maps 403 GUEST_NOT_ALLOWED)" }
 
     GuestJoinRequest:
       type: object
