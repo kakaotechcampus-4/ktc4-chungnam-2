@@ -3,6 +3,7 @@
 조언 평가는 run_eval.py --target advice가 실제 모델로 한다. 여기서는 평가셋이 대상 판정(run_advice_target), 근거 줄 종류
 (evidence_kind), 버튼 규칙(verify_run_advice: 반경은 버튼 한 번의 배율, open_evidence는 본인 줄만)과 어긋나지 않는지 본다.
 케이스마다 기대대로 쓴 모범 답을 만들어 운영 검증을 통과하는지 보므로, agent 규칙이 바뀌어 기대값이 낡으면 여기서 먼저 깨진다.
+지시문 케이스(#717)는 진단과 같이 expect.decision_phrases로 결정 지시를 판정한다.
 """
 
 import json
@@ -12,6 +13,7 @@ import pytest
 from agent import core
 from agent.schemas import Action, AdviceLine, RunAdviceOutput, ToolClaim
 from llm.prompts import ADVICE_CLEAR_DROP, AGENT_ADVISE_RUN_PROMPT
+from llm.tests.eval_agent import fixtures as fx
 from llm.tests.eval_agent import fixtures_advice as fxa
 from recommend import api as recommend_api
 
@@ -282,3 +284,42 @@ def test_not_filtered_lines_carry_no_text():
     kinds = {l["line_id"]: (l["kind"], l["text"]) for l in evidence["lines"]}
     assert kinds[world.line_id("l1")] == ("not_filtered", None)   # 알러지 글은 도구 결과에도 없다
     assert kinds[world.line_id("l2")] == ("not_filtered", None)
+
+
+# ---------------------------------------------------------------- 지시문 케이스와 결정 지시 판정 (#717)
+
+INJECTION_CASES = [c for c in CASES if c["expect"].get("decision_phrases")]
+NEW_EXPRESSION_CASES = [c for c in INJECTION_CASES if c["id"][:3] in ("a24", "a25")]
+
+
+def _injected(case):
+    phrases = case["expect"]["decision_phrases"]
+    return [l["text"] for l in case["lines"] if fx.decision_echoes([l.get("text") or ""], phrases)]
+
+
+def test_injection_cases_cover_own_and_other_lines():
+    by = {l["by"] for c in NEW_EXPRESSION_CASES for l in c["lines"] if l.get("text") in _injected(c)}
+
+    assert len(NEW_EXPRESSION_CASES) == 2 and by == {"self", "other"}
+
+
+@pytest.mark.parametrize("case", INJECTION_CASES, ids=[c["id"] for c in INJECTION_CASES])
+def test_decision_phrases_come_from_the_injected_line(case):
+    assert _injected(case)
+
+
+@pytest.mark.parametrize("case", NEW_EXPRESSION_CASES, ids=[c["id"] for c in NEW_EXPRESSION_CASES])
+def test_new_injection_expressions_pass_the_forbidden_list(case):
+    """#717에서 더한 지시문은 금지어 목록(core.FORBIDDEN_PHRASES)에 걸리지 않는다 — 목록 밖 표현을 재려는 케이스다."""
+    assert fx.decision_echoes(_injected(case), core.FORBIDDEN_PHRASES) == []
+
+
+@pytest.mark.parametrize("case", INJECTION_CASES, ids=[c["id"] for c in INJECTION_CASES])
+def test_reference_answer_renders_text_segments_without_decision_phrases(case):
+    """모범 답의 렌더(text 조각만)에는 케이스 문구가 없다 — 평가 러너가 세는 길(world.render → 조각)이 조각 모양으로 돈다."""
+    world, verified = _run_reference(case)
+    rendered = world.render(verified.draft)
+    segments = [[s.model_dump() for s in line.segments] for line in rendered.advice]
+
+    assert {s["kind"] for line in segments for s in line} == {"text"}
+    assert fx.decision_echoes((fx.segment_texts(line) for line in segments), case["expect"]["decision_phrases"]) == []
