@@ -2,6 +2,13 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-24 (여섯 번째), 게스트의 첫 카카오 로그인은 같은 계정에 로그인을 붙인다 (#694)
+
+- 스키마 변경 없음. 콜백의 `guest_merged` 설명과 `User.is_guest` 설명만 고쳤다.
+- 게스트가 처음 쓰는 카카오 계정으로 로그인하면 이제 새 계정을 만들지 않고 게스트 계정에 카카오 로그인을 붙인다. 사용자 id와 표시 이름이 그대로다. 이미 쓰던 카카오 계정이면 전처럼 그 계정으로 기록을 옮기고 이름은 그 계정 것이다.
+- 서버 내부: 로그인 수단을 `user_identities`로 나눴다(data-model). 게스트는 로그인 수단이 없는 사용자다.
+- FE: 할 일은 없다. `guest_merged=true`면 지금처럼 "카카오 계정으로 이어졌어요" 같은 안내를 쓰면 된다. 처음 전환이면 내 id가 바뀌지 않으니, 전환 뒤 `GET /auth/me`로 사용자를 다시 받는 처리는 그대로 두면 된다.
+
 ## 2026-10-24 (다섯 번째), 에이전트 문장은 조각 목록으로 (#717), 호환이 깨짐
 
 - `AgentAdviceLine.text`를 없애고 `segments`(조각 목록)를 둔다. 조각은 `{ kind: text | quote | pin, text, reaction_id?, pin_id? }`(`AdviceSegment`). `AgentSuggestion.advice`, `RunAdvice.advice`, `agent.suggested` 이벤트 페이로드가 모두 바뀐다.
