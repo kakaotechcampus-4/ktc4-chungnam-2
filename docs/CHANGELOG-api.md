@@ -2,6 +2,12 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-24 (네 번째), 에이전트 문장은 조각 목록으로 (#717) — 호환이 깨짐
+
+- `AgentAdviceLine.text`를 없애고 `segments`(조각 목록)를 둔다. 조각은 `{ kind: text | quote | pin, text, reaction_id?, pin_id? }`(`AdviceSegment`). `AgentSuggestion.advice`, `RunAdvice.advice`, `agent.suggested` 이벤트 페이로드가 모두 바뀐다.
+- 이유(멘토 리뷰 #680): 전에는 구성원 사유 글이 에이전트 문장 안에 통째로 섞여 내려갔고, 서버가 검증한 인용 범위보다 많은 글이 화면에 나갔다. 이제 `quote` 조각은 서버가 검증한 범위만 담고, 구성원 글은 데이터로 따로 내린다.
+- FE: 에이전트 화면(#516, #536, #589)을 만들 때 조각을 차례로 이어 그린다. `text`는 에이전트 문장, `quote`는 구성원 의견(인용 모양, 이름 없음), `pin`은 핀 이름 모양. 추천 막힘 조언(`RunAdvice`)은 `text` 조각만 나온다. 아직 이 응답을 쓰는 화면이 없어 고칠 코드는 없다. 목 서버와 타입이 바뀌었다.
+
 ## 2026-10-24 (세 번째), 추천 후보는 정예만 (#681-1, API 응답 구조 변화 없음)
 
 `places.can_recommend` 규칙을 바꿨다: 정예 장소만 true, 그 밖(인허가 커버리지 등)은 false(라벨 수 임계 폐기, `docs/data-model.md`·`docs/constraints.md`). 응답 스키마는 그대로이고 추천 후보 풀만 줄어든다 — 깔때기 「추천 가능 아님 제거」의 `removed_count`가 커진다. FE 할 일 없음.
