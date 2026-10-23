@@ -24,6 +24,7 @@ CATALOG: dict[str, tuple[int, str]] = {
     "NO_RESULTS": (404, "필터를 통과한 후보가 없습니다"),
     "NOT_READY": (409, "추천 준비가 덜 됐습니다"),
     "EVIDENCE_REQUIRED": (422, "사유가 필요합니다"),
+    "EVIDENCE_LIMIT": (409, "직접 추가한 근거 줄 상한을 넘었습니다"),
     "PIN_DUPLICATE": (409, "이미 지도에 있는 장소입니다"),
     "AI_PIN_PRIVATE": (404, "비공개 AI 핀입니다"),
     "REGION_CONFLICT": (409, "두 조건을 동시에 만족하는 곳이 없습니다"),
