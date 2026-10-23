@@ -17,20 +17,20 @@ LAT, LNG = 37.5445, 127.0561
 
 # ---- 판정 규칙(순수 함수) ----
 
-@pytest.mark.parametrize("category,known,curated,expected", [
-    ("음식점", 4, False, False), ("음식점", 5, False, True), ("음식점", 0, False, False),
-    ("카페", 2, False, False), ("카페", 3, False, True),
-    ("관광지", 0, False, True),                      # 관광지는 임계 없이 true
-    ("음식점", 0, True, True), ("카페", 0, True, True),   # 정예는 라벨 수와 무관하게 true
-    ("숙소", 99, False, False),                      # 모르는 분류는 추천 후보에서 뺀다
+@pytest.mark.parametrize("category,curated,expected", [
+    ("음식점", False, False), ("카페", False, False),    # 비정예 음식점·카페는 라벨이 몇 개든 false
+    ("관광지", False, True),                              # 관광지는 정예가 아니어도 true
+    ("음식점", True, True), ("카페", True, True), ("관광지", True, True),   # 정예는 true
+    ("숙소", False, False),                              # 모르는 분류는 추천 후보에서 뺀다
 ])
-def test_rule(category, known, curated, expected):
-    assert core.can_recommend(category, known, curated=curated) is expected
+def test_rule(category, curated, expected):
+    assert core.can_recommend(category, curated=curated) is expected
 
 
-def test_thresholds_live_in_one_constant(monkeypatch):
-    monkeypatch.setitem(core.KNOWN_LABEL_THRESHOLDS, "음식점", 2)
-    assert core.can_recommend("음식점", 2, curated=False) is True
+def test_label_count_is_not_an_input_any_more():
+    assert not hasattr(core, "KNOWN_LABEL_THRESHOLDS")
+    with pytest.raises(TypeError):
+        core.can_recommend("음식점", 99, curated=False)   # type: ignore[misc]
 
 
 # ---- DB 헬퍼 ----
@@ -54,59 +54,66 @@ def _flag(db, place):
 
 # ---- 재계산 ----
 
-def test_recompute_applies_thresholds_and_reports_counts_per_category(db_session):
-    few, enough = _place(db_session, "라벨 적음", labels=4), _place(db_session, "라벨 충분", labels=5)
-    cafe_few, cafe_ok = _place(db_session, "카페 적음", "카페", labels=2), _place(db_session, "카페 충분", "카페", labels=3)
+def test_recompute_flags_curated_and_tourist_spots_only_and_reports_counts_per_category(db_session):
+    plain, many_labels = _place(db_session, "비정예", labels=1), _place(db_session, "라벨 많은 비정예", labels=9)
+    cafe_plain, cafe_curated = _place(db_session, "카페", "카페", labels=5), _place(db_session, "정예 카페", "카페", curated=True)
     sight = _place(db_session, "관광지", "관광지")
     result = repository.recompute_can_recommend(db_session)
-    assert [_flag(db_session, p) for p in (few, enough, cafe_few, cafe_ok, sight)] == [False, True, False, True, True]
-    assert result.counts[("음식점", True)] == 1 and result.counts[("음식점", False)] == 1
-    assert result.counts[("카페", True)] == 1 and result.counts[("카페", False)] == 1 and result.counts[("관광지", True)] == 1
-    assert result.changed == 3
+    assert [_flag(db_session, p) for p in (plain, many_labels, cafe_plain, cafe_curated, sight)] == [False, False, False, True, True]
+    assert result.counts[("음식점", False)] == 2 and result.counts[("카페", True)] == 1 and result.counts[("카페", False)] == 1
+    assert result.counts[("관광지", True)] == 1
+    assert result.changed == 2
 
 
-def test_curated_rows_are_true_even_without_enough_known_labels(db_session):
-    """정예(places.curated)는 확정 라벨이 적어도 true."""
-    curated = _place(db_session, "정예", labels=1, curated=True)
-    coverage = _place(db_session, "커버리지", labels=1)
+def test_curated_rows_are_true_regardless_of_labels(db_session):
+    curated = _place(db_session, "정예", labels=0, curated=True)
+    coverage = _place(db_session, "커버리지", labels=9)
     repository.recompute_can_recommend(db_session)
     assert _flag(db_session, curated) is True and _flag(db_session, coverage) is False
 
 
+def test_old_rule_values_are_recomputed_to_the_new_rule(db_session):
+    """예전 임계(음식점 5개)로 true였던 비정예 행은 다시 계산하면 false가 된다."""
+    p = _place(db_session, "예전엔 true", labels=5)
+    db_session.execute(Place.__table__.update().where(Place.id == p.id).values(can_recommend=True))
+    result = repository.recompute_can_recommend(db_session)
+    assert _flag(db_session, p) is False and result.changed == 1
+
+
 def test_recompute_is_idempotent(db_session):
-    _place(db_session, "충분", labels=5)
-    _place(db_session, "적음", labels=1)
+    _place(db_session, "정예", curated=True)
+    _place(db_session, "비정예", labels=1)
     first = repository.recompute_can_recommend(db_session)
     second = repository.recompute_can_recommend(db_session)
     assert first.changed == 1 and second.changed == 0 and second.counts == first.counts
 
 
-def test_recompute_follows_label_changes_both_ways(db_session):
+def test_label_changes_do_not_move_the_flag(db_session):
     p = _place(db_session, "가게", labels=5)
     repository.recompute_can_recommend(db_session)
-    assert _flag(db_session, p) is True
-    for fact in db_session.execute(select(PlaceFact).where(PlaceFact.place_id == p.id)).scalars().all()[:2]:
+    assert _flag(db_session, p) is False
+    for fact in db_session.execute(select(PlaceFact).where(PlaceFact.place_id == p.id)).scalars().all():
         db_session.delete(fact)
     db_session.flush()
-    repository.recompute_can_recommend(db_session)
+    assert repository.recompute_can_recommend(db_session).changed == 0
     assert _flag(db_session, p) is False
 
 
 def test_dry_run_changes_nothing_but_reports(db_session):
-    p = _place(db_session, "충분", labels=5)
+    p = _place(db_session, "정예", curated=True)
     result = repository.recompute_can_recommend(db_session, dry_run=True)
     assert result.changed == 1 and result.counts[("음식점", True)] == 1
     assert _flag(db_session, p) is False
 
 
 def test_closed_places_are_computed_too(db_session):
-    p = _place(db_session, "폐업", status="closed", labels=5)
+    p = _place(db_session, "폐업", status="closed", curated=True)
     repository.recompute_can_recommend(db_session)
     assert _flag(db_session, p) is True   # 다시 열릴 때 값이 맞도록
 
 
 def test_script_reports_counts_and_commits(db_session, capsys):
-    pid = _place(db_session, "충분", labels=5).id
+    pid = _place(db_session, "정예", curated=True).id
     assert recompute_script.main([], session_factory=lambda: db_session) == 0
     out = capsys.readouterr().out
     assert "음식점: 1 / 0" in out and "dry-run" not in out
@@ -115,7 +122,7 @@ def test_script_reports_counts_and_commits(db_session, capsys):
 
 def test_script_dry_run_reports_but_does_not_write(db_session, capsys):
     """dry-run은 롤백한다 — 테스트 세션의 savepoint째 되돌아가므로 값이 아니라 계산·쓰기 호출 여부를 본다."""
-    _place(db_session, "충분", labels=5)
+    _place(db_session, "정예", curated=True)
     wrote = []
     real = db_session.execute
     db_session.execute = lambda stmt, *a, **kw: (wrote.append(1) if stmt.__class__.__name__ == "Update" else None) or real(stmt, *a, **kw)
@@ -134,7 +141,7 @@ def test_report_lines_format():
 # ---- PlaceRef ----
 
 def test_search_nearby_own_carries_can_recommend(db_session):
-    yes, no = _place(db_session, "충분", labels=5, dlat=0.0001), _place(db_session, "적음", labels=1, dlat=0.0002)
+    yes, no = _place(db_session, "정예", curated=True, dlat=0.0001), _place(db_session, "비정예", labels=9, dlat=0.0002)
     repository.recompute_can_recommend(db_session)
     refs = {r.place_id: r for r in api.search_nearby_own("음식점", [Area(LAT, LNG, 500)], db=db_session)}
     assert refs[str(yes.id)].can_recommend is True and refs[str(no.id)].can_recommend is False

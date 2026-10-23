@@ -353,20 +353,12 @@ def recompute_can_recommend(db: Session, *, dry_run: bool = False) -> RecomputeR
     """전체 장소의 can_recommend를 core 규칙으로 다시 계산해 바뀐 행만 갱신한다. 멱등. 커밋하지 않는다.
 
     정예 여부는 places.curated다(`--authoritative` 적재가 켠다). 폐업 장소도 계산한다(다시 열릴 때 값이 맞도록)."""
-    agg = (
-        select(PlaceFact.place_id, func.count().filter(PlaceFact.confidence == "known").label("known"))
-        .group_by(PlaceFact.place_id)
-        .subquery()
-    )
-    rows = db.execute(
-        select(Place.id, Place.category, Place.can_recommend, func.coalesce(agg.c.known, 0), Place.curated)
-        .outerjoin(agg, agg.c.place_id == Place.id)
-    ).all()
+    rows = db.execute(select(Place.id, Place.category, Place.can_recommend, Place.curated)).all()
     counts: dict[tuple[str, bool], int] = {}
     to_true: list[uuid.UUID] = []
     to_false: list[uuid.UUID] = []
-    for pid, category, current, known, curated in rows:
-        new = core.can_recommend(category, known, curated=curated)
+    for pid, category, current, curated in rows:
+        new = core.can_recommend(category, curated=curated)
         counts[(category, new)] = counts.get((category, new), 0) + 1
         if new != current:
             (to_true if new else to_false).append(pid)
