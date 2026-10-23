@@ -303,6 +303,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 | `pinnable_flags(hints) -> list[bool]` | 검색 응답(`GET /places/search`) | 힌트마다 `match_place`가 성공할지 읽기만 해서 계산한다. **카카오 ID를 기록하지 않는다**(`record_kakao_match`와 분리) |
 | `get_places(place_ids) -> dict[str, PlaceInfo]` | pins(핀 응답), recommend(후보 응답) | `name`, `lat`, `lng`, `category`, `kakao_place_url`을 배치로 조회(N+1 금지). 없는 ID는 키에서 빠진다 |
 | `search_nearby_own(category, areas) -> list[PlaceRef]` | recommend(후보 풀) | 반경 안의 **영업 중**(`status='open'`) 장소의 `place_id`·좌표. 카테고리는 음식점·카페·관광지 |
+| `get_hours(place_ids) -> dict[str, PlaceHours]` | recommend(`is_open`), 동선·상세 표시 | `place_hours`의 `hours`·`closed_days`·`closed_note`·`hours_note`를 배치로 조회(#690). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용. 영업 중 판정은 같은 모듈의 순수 함수 `core.is_open_on`(요일·분 → open/closed/unknown, `docs/constraints.md`「영업 중 판정」)이고 호출하는 쪽이 여행 날짜로 반복해 쓴다 |
 | `get_facts(place_ids) -> dict[str, list[FactLabel]]` | recommend(라벨) | `place_facts`의 `fact_key`·`value`·`confidence`를 그대로(없으면 빈 리스트). 호출하는 쪽이 `unknown_policy`를 적용한다 |
 
 - **`db` 선택 키워드 인자(#199에서 추가, 6개 함수 전부 `*, db: Session | None = None`)**: `db=db`를 넘기면 그 요청 트랜잭션에 참여한다(커밋은 호출한 쪽이 한다). **pins는 `record_kakao_match`를 반드시 `db=db`로 부른다** — 핀 생성과 같은 트랜잭션이어야 한다. 안 넘기면 places가 짧은 세션을 직접 열어 쓰고 닫는다(읽기 전용 호출은 충분하지만 호출마다 연결을 쓴다). `FakePlaces`도 같은 인자를 받는다.
