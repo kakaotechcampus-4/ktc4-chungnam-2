@@ -5,6 +5,8 @@
 행동(필터 순서·unknown_policy 등)은 test_flows.py가 이미 커버한다.
 """
 
+import uuid
+
 import pytest
 from sqlalchemy import func
 
@@ -221,6 +223,94 @@ def test_other_members_can_view_and_add_evidence_on_someone_elses_run(app_client
     )
     assert patch_resp.status_code == 200
     assert any(line["text"] == "user_2가 추가한 근거" for line in patch_resp.json())
+
+
+def _evidence_run(app_client, db_session) -> str:
+    _seed_ready_map(db_session)
+    return app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth("user_1")).json()["id"]
+
+
+def _add(app_client, run_id, texts):
+    return app_client.patch(
+        f"/runs/{run_id}/evidence", json={"toggle": [], "add": [{"text": t} for t in texts]}, cookies=_auth("user_1"),
+    )
+
+
+def _manual_count(db_session, run_id) -> int:
+    from recommend.models import EvidenceLine
+
+    return db_session.query(EvidenceLine).filter_by(source="manual").count()
+
+
+def test_evidence_add_accepts_five_lines_and_rejects_six_with_422(app_client, db_session):
+    """#716 — 요청당 글 5개까지. 6개는 422이고 아무것도 저장하지 않는다."""
+    run_id = _evidence_run(app_client, db_session)
+    resp = _add(app_client, run_id, [f"조건 {i}" for i in range(6)])
+    assert resp.status_code == 422 and resp.json()["code"] == "VALIDATION_ERROR"
+    assert _manual_count(db_session, run_id) == 0
+    assert _add(app_client, run_id, [f"조건 {i}" for i in range(5)]).status_code == 200
+    assert _manual_count(db_session, run_id) >= 5
+
+
+@pytest.mark.parametrize("text", ["", "   ", "\n\t", "가" * 141])
+def test_evidence_add_rejects_empty_whitespace_and_141_chars_with_422(app_client, db_session, text):
+    run_id = _evidence_run(app_client, db_session)
+    assert _add(app_client, run_id, [text]).status_code == 422
+
+
+def test_evidence_add_accepts_one_and_140_chars_and_strips_whitespace(app_client, db_session):
+    run_id = _evidence_run(app_client, db_session)
+    resp = _add(app_client, run_id, ["  조용한 곳  ", "가" * 140])
+    assert resp.status_code == 200
+    texts = {line["text"] for line in resp.json()}
+    assert "조용한 곳" in texts and "가" * 140 in texts
+
+
+def test_evidence_add_run_limit_is_ten_entries_including_disabled_ones_then_409(app_client, db_session):
+    """#716, #707 — run당 누적 글 10개(×로 뺀 것 포함). 10개째까지 200, 11개째는 409 EVIDENCE_LIMIT {limit, used}. dev ②는 글 하나에
+    줄 하나라 줄 수와 글 수가 같다(글 하나가 여러 줄인 경우는 test_flows가 본다)."""
+    run_id = _evidence_run(app_client, db_session)
+    before = {line["id"] for line in app_client.get(f"/runs/{run_id}/evidence", cookies=_auth("user_1")).json()}
+    for batch in (5, 4, 1):
+        assert _add(app_client, run_id, [f"조건 {batch}-{i}" for i in range(batch)]).status_code == 200
+    manual = [line for line in app_client.get(f"/runs/{run_id}/evidence", cookies=_auth("user_1")).json()
+              if line["id"] not in before]
+    assert len(manual) == 10
+    app_client.patch(f"/runs/{run_id}/evidence", json={"toggle": [{"id": manual[0]["id"], "is_active": False}]},
+                     cookies=_auth("user_1"))
+
+    resp = _add(app_client, run_id, ["열한 번째"])
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "EVIDENCE_LIMIT" and resp.json()["detail"] == {"limit": 10, "used": 10}
+    assert _manual_count(db_session, run_id) == 10
+
+
+def test_evidence_add_that_would_cross_the_run_limit_is_rejected_whole(app_client, db_session):
+    run_id = _evidence_run(app_client, db_session)
+    assert _add(app_client, run_id, [f"조건 {i}" for i in range(5)]).status_code == 200
+    assert _add(app_client, run_id, [f"조건 {i}" for i in range(5, 9)]).status_code == 200   # 누적 9
+    assert _add(app_client, run_id, ["a", "b"]).status_code == 409                          # 9 + 2 > 10
+    assert _manual_count(db_session, run_id) == 9
+
+
+def test_evidence_response_marks_enforced_by_fact_key_720(app_client, db_session):
+    """#720 — enforced는 fact_key가 있는 줄만 true다. 키 없는 required 줄(알레르기 등)과 「+」로 키 없이 남은 줄은 false."""
+    from recommend import service
+
+    run_id = _evidence_run(app_client, db_session)
+    run_uuid = uuid.UUID(run_id)
+    service.add_reaction_evidence(db_session, run_id=run_uuid, lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "한식 말고", "badge": "required", "fact_key": "cuisine_korean", "wants": False},
+        {"author_id": "user_1", "source": "reaction", "text": "새우 알레르기", "badge": "required", "fact_key": None},
+    ])
+    db_session.commit()
+    assert _add(app_client, run_id, ["그냥 분위기 좋은 곳"]).status_code == 200   # dev 플래너는 키를 안 붙인다
+
+    lines = {line["text"]: line for line in app_client.get(f"/runs/{run_id}/evidence", cookies=_auth("user_1")).json()}
+    assert lines["한식 말고"]["enforced"] is True
+    assert lines["새우 알레르기"]["enforced"] is False
+    assert lines["그냥 분위기 좋은 곳"]["enforced"] is False
+    assert all(isinstance(line["enforced"], bool) for line in lines.values())
 
 
 def test_run_not_found_is_404(app_client, db_session):

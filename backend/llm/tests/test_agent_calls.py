@@ -21,7 +21,8 @@ from llm import service
 from llm.client import LlmCallError
 from llm import prompts, schemas
 from llm.prompts import (
-    AGENT_DIAGNOSE_PROMPT, AGENT_DIAGNOSE_PROMPT_VERSION, AGENT_TOOL_SPECS, DIAGNOSIS_MAX_TOOL_CALLS, DIAGNOSIS_TOOLS,
+    AGENT_DIAGNOSE_PROMPT, AGENT_DIAGNOSE_PROMPT_VERSION, AGENT_TOOL_SPECS, DIAGNOSIS_MAX_TOOL_CALLS, DIAGNOSIS_TIME_BUDGET_SEC,
+    DIAGNOSIS_TOOLS,
 )
 from llm.schemas import AgentCallFailed, AgentUsage, DiagnosisOutput
 
@@ -43,6 +44,22 @@ class Runner:
         if self._error:
             raise self._error
         return {"items": [{"reaction_id": "r1", "text": SECRET_REASON}], "total": 1}
+
+
+class SlowRunner(Runner):
+    """도구 하나가 sec초 걸리는 tool_runner 대역 — 도구를 실행할 때마다 시계 대역(clock)이 그만큼 흐른다(대화 시간 예산, #677)."""
+
+    def __init__(self, sec):
+        super().__init__()
+        self.now = 0.0
+        self._sec = sec
+
+    def clock(self):
+        return self.now
+
+    def __call__(self, call_id, name, args):
+        self.now += self._sec
+        return super().__call__(call_id, name, args)
 
 
 def _scripted(*steps):
@@ -366,6 +383,47 @@ class TestRealDiagnosisPlanner:
             object.__setattr__(settings, "elice_ml_api_key", saved)
 
         assert out.reason == "call_failed"
+
+
+class TestTimeBudget:
+    """도구 대화 시간 예산(#677): 왕복을 시작할 때 대화 시작부터 DIAGNOSIS_TIME_BUDGET_SEC가 지났으면 그 왕복은 도구를 닫는다."""
+
+    def _diagnose_slowly(self, client, runner):
+        planner = partial(service._model_diagnosis_planner, client, clock=runner.clock)
+        return service.agent_diagnose(STALL, tool_runner=runner, planner=planner).result
+
+    def test_tools_close_once_the_budget_is_spent(self, caplog):
+        runner = SlowRunner(DIAGNOSIS_TIME_BUDGET_SEC)
+        client = FakeClient(_tool_call(*GET_REASONS), _answer(_silent()))
+
+        with caplog.at_level(logging.INFO, logger="pingo.llm"):
+            out = self._diagnose_slowly(client, runner)
+
+        assert out == _silent()
+        assert len(runner.calls) == 1   # 도구 상한(5회)은 남았지만 시간을 다 썼다
+        assert [c["tool_choice"] for c in client.calls] == ["auto", "none"]
+        assert "시간 예산" in caplog.text
+
+    def test_tools_stay_open_until_the_budget(self):
+        # 도구 하나에 예산의 1/4 — 넷째 도구 뒤 왕복을 시작할 때 예산과 같아져 닫힌다(상한 5회보다 먼저)
+        runner = SlowRunner(DIAGNOSIS_TIME_BUDGET_SEC / 4)
+        steps = [_tool_call(*GET_REASONS, call_id=f"call_{i}") for i in range(4)]
+        client = FakeClient(*steps, _answer(_silent()))
+
+        out = self._diagnose_slowly(client, runner)
+
+        assert out == _silent()
+        assert [c["tool_choice"] for c in client.calls] == ["auto"] * 4 + ["none"]
+
+    def test_tool_call_after_the_budget_fails_once(self):
+        # 시간으로 닫았는데도 도구를 부르면 상한으로 닫았을 때와 같이 실패이고 다시 묻지 않는다
+        runner = SlowRunner(DIAGNOSIS_TIME_BUDGET_SEC)
+        client = FakeClient(_tool_call(*GET_REASONS), _tool_call(*GET_REASONS))
+
+        out = self._diagnose_slowly(client, runner)
+
+        assert out.reason == "call_failed"
+        assert len(client.calls) == 2
 
 
 # ---------- 사용량 (#564) — agent_runs의 model, prompt_version, tokens_in, tokens_out ----------

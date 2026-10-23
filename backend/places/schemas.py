@@ -68,6 +68,7 @@ class PlaceInfo:
     category: str
     kakao_place_url: str | None = None
     source: str | None = None   # 데이터 출처 — "permit"(인허가 공공데이터) | "tourapi"(한국관광공사). 가드레일 5 출처 표시용(#242)
+    curated: bool = False       # 정예(사람이 직접 조사·납품, places.curated) — 출처를 "정예 조사"로 표시할 때 쓴다(#681). 기본 False라 기존 호출자는 그대로다
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,16 @@ class FactLabel:
     fact_key: str
     value: Any
     confidence: Literal["known", "unknown"]
+
+
+@dataclass(frozen=True)
+class PlaceHours:
+    """get_hours의 결과 — place_hours 그대로(#690). None인 칸은 모름. 판정은 core.is_open_on이 한다."""
+
+    hours: dict[str, list[list[str]]] | None = None   # {"월": [["11:00","21:00"]], …}, 빈 목록 = 휴무, "26:00" = 다음 날 02:00
+    closed_days: list[str] | None = None               # 매주 쉬는 요일, [] = 연중무휴
+    closed_note: str | None = None                     # 표시용 — 판단에 쓰지 않는다
+    hours_note: str | None = None
 
 
 @dataclass(frozen=True)

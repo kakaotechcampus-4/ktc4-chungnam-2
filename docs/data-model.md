@@ -162,11 +162,10 @@ places(
                                         -- AI 추천 후보 풀에 들어가도 되는 장소인가(2026-10-15 결정, 구현은 places).
                                         -- 직접 찍은 핀·검색·링크에는 영향이 없다 — 추천 후보를 고를 때만 쓴다.
                                         -- 규칙(재계산 가능한 값이다, 사람이 손으로 정하지 않는다):
-                                        --   정예 행(curated=true)은 true.
-                                        --   그 밖에는 카테고리별 확정(known) 라벨 수가 임계 이상이면 true
-                                        --   (시작값: 음식점 5개, 카페 3개 — pingo_demo 분포로 조정, 결정은 루트).
-                                        --   관광지는 true. 유흥·주점류도 같은 규칙을 쓴다(제외하지 않는다).
-                                        -- 라벨이 늘거나 적재가 끝나면 places의 재계산 스크립트로 다시 계산한다.
+                                        --   정예 행(curated=true)만 true다. 정예가 아닌 데이터(인허가 커버리지 등)는 지도에 핀을 꽂을 수 있는 최소 정보일 뿐 추천 후보가 아니다(원칙, 2026-10-24).
+                                        --   라벨 수 임계는 2026-10-24에 폐기했다 — 비정예 장소의 확정 라벨이 전부 인허가에서 자동으로
+                                        --   나온 값(cuisine_* 10개·spacious·franchise 등)이라 품질 신호가 아님을 실측으로 확인했다(#681-1).
+                                        -- 정예가 늘면(재적재) places의 재계산 스크립트로 다시 계산한다.
   kakao_place_id null, kakao_place_url null, kakao_matched_at null,
                                         -- 사용자가 검색해서 고를 때 한 건씩 매칭한 결과. 허용 범위: 카카오 장소 ID·URL·확인 일자.
                                         -- 카카오 응답의 이름·주소·좌표는 저장하지 않는다(#53)
@@ -393,7 +392,7 @@ agent_suggestions(                    -- 바텀시트의 지도 제안
   id uuid, map_id, run_id null references agent_runs on delete set null,
   diagnosis('stall'|'split'|'no_reaction'|'category_gap'), category null, pin_id null,
   fingerprint, evidence_hash,         -- 중복 금지(유형+카테고리+근거 id), 상태 재확인(근거 id+반응 종류+updated_at)
-  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id만). 렌더는 응답 때
+  title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id, 인용 범위, 범위의 다이제스트만. 원문 없음, #717). 렌더는 응답 때 조각으로
   status('active'|'accepted'|'dismissed'|'expired'|'superseded'),
   shadow boolean default false,       -- true면 저장만 하고 화면과 이벤트에 내지 않는다
   created_at, expires_at,             -- 24시간

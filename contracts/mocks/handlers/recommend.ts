@@ -12,6 +12,9 @@ const runCreatedAt: Record<string, string> = {};
 
 // 2026-10-07(#360): 카테고리에 ♥/🚫 의견이 달린 핀이 1개 이상이면 열린다. 구성원 수와 무관 — 혼자 쓰는 지도도 같다.
 const REQUIRED_OPINION_PINS = 1;
+// 「+」 직접 추가 상한(#707, docs/api-spec.yaml EvidencePatchRequest, errors.md EVIDENCE_LIMIT)
+const MANUAL_PER_REQUEST = 5;
+const MANUAL_PER_RUN = 10;
 
 function opinionPinCount(mapId: string, category: string) {
   return Object.values(store.pins).filter(
@@ -107,6 +110,16 @@ export const recommendHandlers = [
       toggle?: { id: string; is_active: boolean }[];
       add?: { text: string }[];
     };
+    // #707 — 「+」는 한 요청 5줄, run 하나에 10줄(뺀 줄 포함). 서버는 모델을 부르기 전에 검사한다
+    const adds = body.add ?? [];
+    if (adds.length > MANUAL_PER_REQUEST) {
+      return apiError(422, "VALIDATION_ERROR", `한 번에 ${MANUAL_PER_REQUEST}줄까지 추가할 수 있습니다`);
+    }
+    const used = store.manualEvidenceCount[runId] ?? 0;
+    if (used + adds.length > MANUAL_PER_RUN) {
+      return apiError(409, "EVIDENCE_LIMIT", "직접 추가한 근거 줄 상한을 넘었습니다", { limit: MANUAL_PER_RUN, used });
+    }
+    store.manualEvidenceCount[runId] = used + adds.length;
     for (const t of body.toggle ?? []) {
       const line = lines.find((l) => l.id === t.id);
       // 5-5: 자기가 쓴 것만 뺄 수 있다
@@ -118,8 +131,9 @@ export const recommendHandlers = [
         author_id: ME_USER_ID,
         author_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
         text: a.text,
-        badge: "reference",
+        badge: "preferred", // #707 — 「+」는 선호. 목 서버는 ②를 흉내 내지 않아 키 없이 둔다
         fact_key: null,
+        enforced: false, // 키 없는 줄은 후보를 걸러 주지 않는다(#720)
         is_active: true,
         permissions: { can_disable: true },
       });

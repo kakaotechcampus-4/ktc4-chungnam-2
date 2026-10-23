@@ -32,8 +32,8 @@ function defaultAdvice(runId: string): RunAdvice | null {
     run_id: runId,
     kind: "radius",
     advice: [
-      { text: "반경 밖에서 빠진 곳이 많아요", is_guess: false },
-      { text: "걸어서 20분까지 넓히면 4곳이 더 후보가 돼요", is_guess: false },
+      { segments: [{ kind: "text", text: "반경 밖에서 빠진 곳이 많아요" }], is_guess: false },
+      { segments: [{ kind: "text", text: "걸어서 20분까지 넓히면 4곳이 더 후보가 돼요" }], is_guess: false },
     ],
     actions: [{ index: 0, type: "widen_radius", label: "반경 넓히기", params: { run_id: runId } }],
   };

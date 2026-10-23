@@ -8,6 +8,7 @@
                                       [--exclude-bars] [--all-regions] [--constraints ...] [--dry-run]
     python -m places.load cafes   --file cafe_seoul_curated.csv [--labels cafe_seoul_curated_labels.json|.csv]
                                   [--exclude-bars] [--all-regions] [--constraints ...] [--dry-run]
+    python -m places.load place-hours --file <정예 라벨 JSON | 서울 관광지 tourist_seoul_closed_days.json> [--all-regions] [--dry-run]
     python -m places.load restaurant-labels --file restaurant_seoul_curated_labels.json [--overwrite] [--constraints ...] [--dry-run]
 
 - 정예 우선(#507): `restaurants`·`cafes`·`tourapi`에 `--authoritative`를 주면 같은 (source, source_id)의 이름·분류·주소·좌표를 파일 값으로
@@ -15,6 +16,9 @@
   `permit`(인허가 커버리지)은 이미 있는 장소의 이름·분류·좌표를 건드리지 않고 신규 행만 넣는다. `restaurant-labels`는 기본이 커버리지용 —
   이미 있는 (장소, fact_key) 라벨을 건드리지 않고 없는 키만 넣는다(`--overwrite`면 덮는다). 적재 순서: 정예 → 커버리지.
 
+- `place-hours`(#690): 라벨 JSON의 `info.hours`·`closed_days`·`closed_note`·`hours_note`를 `place_hours`에 넣는다(칸이 없으면 행을 안 만든다 = 모름).
+  restaurants·cafes·tourapi의 라벨 적재는 `info`를 계속 읽지 않고, 이 단계가 따로 읽는다. 같은 장소는 파일 값으로 갱신하고, 파일에 없는 장소의 행은 지우지 않는다.
+  장소를 못 찾으면 건수만 보고한다(장소를 먼저 적재). 항목에 `addr1`이 있고 서울이 아니면 `--all-regions` 없이는 건너뛴다.
 - 기본은 서울만이다. 장소를 받는 명령(permit·tourapi·restaurants·cafes)에 `--all-regions`를 주면 서울 판정(주소 "서울", TourAPI areacode,
   서울 좌표 상자)을 모두 끈다(타 지역 적재용). 좌표가 없거나 위경도 범위 밖인 행은 그때도 건너뛴다. 보고에 지역별(시도명 앞 두 글자) 적재 수가 한 줄 붙는다.
 - `permit --close-missing`(기본 꺼짐): 파일에 없는 장소를 status='closed'로 바꾼다(삭제 아님, 라벨 유지). 대상은 source='permit'·curated=false·열림뿐이다.
@@ -198,14 +202,22 @@ def load_restaurants(
     return lines
 
 
+def load_place_hours(db: Session, path: Path, *, seoul_only: bool = True) -> list[str]:
+    """영업시간·휴무일(#690) — 정예 라벨 JSON(rest_·cafe_·tour_) 또는 서울 관광지 closed_days JSON. 라벨 적재와 따로 읽는다."""
+    rows, report = ingest.parse_hours_entries(_read_curated_labels(path), seoul_only=seoul_only)
+    result = repository.upsert_hours(db, rows)
+    skipped = f"장소를 못 찾아 건너뜀 {result.place_not_found}" if result.place_not_found else "장소 못 찾음 0"
+    return report.lines() + [f"DB: place_hours upsert {result.upserted}, {skipped}"]
+
+
 def main(argv: list[str] | None = None, *, session_factory: Callable[[], Session] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m places.load", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("permit", "tourapi", "labels", "restaurants", "cafes", "restaurant-labels"):
+    for name in ("permit", "tourapi", "labels", "restaurants", "cafes", "restaurant-labels", "place-hours"):
         p = sub.add_parser(name)
         p.add_argument("--file", required=True, type=Path, action="append" if name == "permit" else "store",
                        help="인허가 파일(여러 번 가능, 디렉터리·글롭도 받는다)" if name == "permit" else None)
-        if name in ("permit", "tourapi", "restaurants", "cafes"):
+        if name in ("permit", "tourapi", "restaurants", "cafes", "place-hours"):
             p.add_argument("--all-regions", action="store_true",
                            help="서울 판정(주소·areacode·좌표 상자)을 모두 끈다 — 타 지역 적재용. 좌표 없음·범위 밖은 그대로 건너뛴다")
         p.add_argument("--dry-run", action="store_true", help="파일을 해석하고 DB에는 쓰지 않는다(롤백)")
@@ -269,6 +281,8 @@ def main(argv: list[str] | None = None, *, session_factory: Callable[[], Session
             lines = load_cafes(db, args.file, labels=args.labels, constraints=args.constraints,
                               exclude_bars=args.exclude_bars, encoding=args.encoding,
                               authoritative=args.authoritative, seoul_only=not args.all_regions)
+        elif args.command == "place-hours":
+            lines = load_place_hours(db, args.file, seoul_only=not args.all_regions)
         elif args.command == "restaurant-labels":
             lines = _load_curated_labels(db, args.file, constraints=args.constraints, overwrite=args.overwrite)
         else:
