@@ -53,6 +53,7 @@ from authz.schemas import Permissions
 from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
+from maps import api as maps_api
 from pins import api as pins_api
 from pins.schemas import Pin
 from places import api as places_api
@@ -403,6 +404,29 @@ class _PipelineRegion:
     anchor_points: tuple[tuple[float, float], ...]
 
 
+def _trip_weekdays(db: Session, map_id: str) -> list[str]:
+    """지도 여행 기간의 요일들(core.trip_weekday_names). 지도를 못 읽거나 날짜가 없으면 빈 목록 = 영업 판정을 안 한다."""
+    info = maps_api.get_map_for_agent(db, map_id)
+    if info is None:
+        return []
+    return core.trip_weekday_names(info["start_date"], info["end_date"])
+
+
+def _open_status_by_place(place_facts: PlaceFactsGateway, place_ids: Sequence[str], weekdays: Sequence[str]) -> dict[str, str]:
+    """후보마다 여행 요일 기준 영업 여부("closed" | "open" | "unknown", #690). 시간 조회가 없는 게이트웨이이거나 여행 날짜가
+    없으면 전부 "unknown"이다(지금처럼 아무도 빼지 않는다). 한 번에 배치 조회(N+1 금지)."""
+    get_hours = getattr(place_facts, "get_hours", None)
+    if not weekdays or get_hours is None or not place_ids:
+        return dict.fromkeys(place_ids, "unknown")
+    hours_by_place = get_hours(list(place_ids))
+    return {
+        place_id: core.trip_open_status(
+            hours_by_place[place_id].hours, hours_by_place[place_id].closed_days, weekdays,
+        ) if place_id in hours_by_place else "unknown"
+        for place_id in place_ids
+    }
+
+
 def _pipeline_inputs(
     db: Session, run: RecommendRun, *, radius_factor: float | None = None, disable_line_ids: frozenset[str] = frozenset(),
 ) -> tuple[list[_PipelineRegion], list[EvidenceLineRow]]:
@@ -436,8 +460,14 @@ def _run_pipeline(
     within_radius = [p for p in pool if core.is_within_any_region(p.lat, p.lng, circles)]
     removed_radius = len(pool) - len(within_radius)
 
-    is_open_check = core.build_check("is_open", "pass", known=False, value=None, passes=True)
-    removed_open = 0  # dev 스텁은 실시간 영업시간 조회가 없어 항상 unknown+needs_check — 결코 제거하지 않는다
+    # 영업 종료 제거(#690) — 여행 기간의 모든 요일이 휴무인 장소만 뺀다. 하루라도 영업하면 통과, 정보가 없으면 통과 +
+    # 「영업 여부 확인 필요」. 여행 날짜가 없거나 시간 조회가 없으면 아무도 안 뺀다(공휴일·closed_note는 보지 않는다).
+    open_status = _open_status_by_place(place_facts, [p.place_id for p in within_radius], _trip_weekdays(db, run.map_id))
+    open_places = [p for p in within_radius if open_status[p.place_id] != "closed"]
+    removed_open = len(within_radius) - len(open_places)
+    within_radius = open_places
+    unknown_open_check = core.build_check("is_open", "pass", known=False, value=None, passes=True)
+    known_open_check = core.build_check("is_open", "pass", known=True, value=True, passes=True)
 
     # 추천 가능 아님 제거 — 영업 종료 다음 단계. 모두 빠져 0개여도 0개로 보여 준다(반경·기준을 완화하지 않는다).
     recommendable = [p for p in within_radius if p.can_recommend]
@@ -481,7 +511,7 @@ def _run_pipeline(
     checks_by_place: dict[str, list[Check]] = {}
     for place in within_radius:
         labels = facts_by_place.get(place.place_id, [])
-        checks = [is_open_check]
+        checks = [known_open_check if open_status[place.place_id] == "open" else unknown_open_check]
         for fact_key in active_hard_keys:
             known, value = core.resolve_label(labels, fact_key)
             passes = _passes_hard_check(value) if known else True

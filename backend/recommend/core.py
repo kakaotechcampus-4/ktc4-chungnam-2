@@ -13,6 +13,7 @@ recommend.publish가 있다). 이 파일에 남는 건 run/candidate/evidence/re
 import hashlib
 import math
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Any, Collection, Mapping, Sequence
 
 from common.errors import AppError
@@ -324,6 +325,55 @@ def limit_preference_checks(
     met = [c for c in checks if c not in keep_always and c.confidence == "known" and c.passed]
     top = sorted(met, key=lambda c: -weights.get(c.fact_key, 0))[:limit]   # sorted는 안정 — 동점은 원래 순서
     return [c for c in checks if c in keep_always or c in top]
+
+
+_WEEKDAY_NAMES = "월화수목금토일"   # date.weekday() 0=월 … 6=일 — places.core.WEEKDAYS와 같은 이름(hours 키·closed_days)
+
+
+def trip_weekday_names(start: date | None, end: date | None) -> list[str]:
+    """여행 기간(start~end, 양 끝 포함)에 들어 있는 요일 이름. 날짜가 하나라도 없으면 빈 목록(= 영업 판정을 안 한다).
+    7일을 넘기면 모든 요일이라 7일까지만 센다."""
+    if start is None or end is None:
+        return []
+    if end < start:
+        start, end = end, start
+    days = min((end - start).days + 1, 7)
+    return sorted({_WEEKDAY_NAMES[(start + timedelta(days=i)).weekday()] for i in range(days)}, key=_WEEKDAY_NAMES.index)
+
+
+def trip_open_status(
+    hours: Mapping[str, Sequence[Sequence[str]]] | None, closed_days: Sequence[str] | None, weekdays: Sequence[str],
+) -> str:
+    """여행 요일들에서 이 장소의 영업 여부 → "closed"(모든 요일이 휴무) | "open"(영업하는 요일이 확인됨) | "unknown".
+    docs/constraints.md「영업 중 판정」·「추천에서의 쓰임」, places.core.is_open_on과 같은 규칙을 요일 단위로 쓴다
+    (시각은 없다). 요일 하나는 hours에 값이 있으면 그것(빈 목록 = 휴무, 단 전날 구간이 자정을 넘겨 이어지면 영업),
+    없으면 closed_days에 있을 때만 휴무이고 아니면 모름이다. 공휴일·closed_note는 보지 않는다.
+    휴무가 아닌 요일이 하나라도 모름뿐이면 영업한다고 단정하지 않는다(unknown)."""
+    if not weekdays:
+        return "unknown"
+    statuses = []
+    for name in weekdays:
+        spans = hours.get(name) if hours else None
+        if spans is not None:
+            statuses.append("open" if spans or _carries_over_from_yesterday(hours, name) else "closed")
+        elif closed_days and name in closed_days:
+            statuses.append("closed")
+        else:
+            statuses.append("unknown")
+    if all(status == "closed" for status in statuses):
+        return "closed"
+    return "open" if "open" in statuses else "unknown"
+
+
+def _carries_over_from_yesterday(hours: Mapping[str, Sequence[Sequence[str]]], name: str) -> bool:
+    """어제 구간 중 끝이 24:00을 넘는 것(자정을 넘긴 영업)이 있으면 오늘 새벽에 영업한다."""
+    yesterday = _WEEKDAY_NAMES[_WEEKDAY_NAMES.index(name) - 1]   # -1 = 일요일 — 월요일의 어제
+    return any(_minutes(span[1]) > 24 * 60 for span in hours.get(yesterday) or ())
+
+
+def _minutes(clock: str) -> int:
+    hour, minute = clock.split(":")
+    return int(hour) * 60 + int(minute)
 
 
 RANKING_STAGE = "상위 3곳 선정"  # 깔때기의 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다
