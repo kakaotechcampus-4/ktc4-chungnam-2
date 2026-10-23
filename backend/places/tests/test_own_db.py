@@ -665,3 +665,20 @@ def test_parse_link_end_to_end_on_the_real_db(loaded):
     api.record_kakao_match(pid, "kakao:777", "http://place.map.kakao.com/777", db=loaded)
     kakao = api.parse_link("https://place.map.kakao.com/777", db=loaded)
     assert kakao.needs_search_query is False and kakao.matches[0].place_id == "kakao:777"
+
+
+def test_get_places_returns_curated_flag_in_the_same_batch(db_session):
+    repository.upsert_places(db_session, [
+        ingest.PlaceRow("permit", "CUR", "정예집", "음식점", None, None, 37.5, 127.0, "open"),
+        ingest.PlaceRow("permit", "COV", "커버리지집", "음식점", None, None, 37.5, 127.0001, "open"),
+    ], existing_mode="overwrite")   # 정예 적재가 curated를 켠다
+    repository.upsert_places(db_session, [ingest.PlaceRow("permit", "COV", "커버리지집", "음식점", None, None, 37.5, 127.0001, "open")])
+    db_session.execute(Place.__table__.update().where(Place.source_id == "COV").values(curated=False))
+    cur, cov = _pid(db_session, "permit", "CUR"), _pid(db_session, "permit", "COV")
+    got = api.get_places([cur, cov, "00000000-0000-0000-0000-000000000000", "not-a-uuid"], db=db_session)
+    assert (got[cur].curated, got[cov].curated) == (True, False) and set(got) == {cur, cov}
+
+
+def test_place_info_curated_defaults_to_false_for_existing_callers():
+    from places.schemas import PlaceInfo
+    assert PlaceInfo("id", "n", 1.0, 2.0, "음식점").curated is False
