@@ -1,0 +1,86 @@
+# QA 케이스 대장 — 출시 전 사용자 여정 edge·예외 검증 (루트 소관, 2026-10-24 시작)
+# layer: reco(실제 모델 추천 품질) | api(백엔드 HTTP) | ui(브라우저)
+# status: untested | pass | fail | bug#N(이슈 번호) | na(미구현 기능) ; 결과는 qa/results/<날짜>.md 에 누적한다.
+# 데이터: qa/data/reasons.yaml · scenarios.yaml. 기대(expect)는 docs/api-spec.yaml·errors.md·constraints.md 기준.
+
+# ───────── 추천 품질(reco) — 정예 전용 규칙(#711~#713) ─────────
+- {id: R01, layer: reco, area: recommend, scenario: "성수 음식점 ♥한식(국물) / 🚫양식", expect: "후보 전원 정예·한식·양식 제외, 이유·체크 붙음", guardrail: "1,5,7", status: pass}
+- {id: R02, layer: reco, area: recommend, scenario: "홍대 카페 ♥조용·오래 앉기 / 🚫프랜차이즈", expect: "프랜차이즈 제외, 선호 충족 라벨 표 반영(#700)", guardrail: "7", status: pass}
+- {id: R03, layer: reco, area: recommend, scenario: "종로 관광지, 여행 11월 + '단풍'", expect: "autumn_foliage 시즌 안이라 점수 반영(#705)", status: pass}
+- {id: R04, layer: reco, area: recommend, scenario: "같은 조건 7월", expect: "시즌 밖이라 계절 키가 점수·이유·체크에서 빠짐, 후보는 그대로", status: pass}
+- {id: R05, layer: reco, area: recommend, scenario: "2명: A ♥고기 / B 🚫매운 음식 못 먹음", expect: "B 실격 조건은 한 명이라도 실격이면 제외(가드레일 9), 구성원 충족 집계", guardrail: "9", status: pass}
+- {id: R06, layer: reco, area: recommend, scenario: "🚫땅콩 알레르기(안전)", expect: "알 수 없음(unknown)은 통과시키지 않음, 확인 필요 표시", guardrail: "8", status: pass}
+- {id: R07, layer: reco, area: recommend, scenario: "여행 월요일 하루", expect: "월요일 휴무 정예는 「영업 종료 제거」로 빠짐(#710)", status: pass}
+- {id: R08, layer: reco, area: recommend, scenario: "여행 1주일", expect: "R07보다 영업 종료 제거 수가 같거나 적음", status: pass}
+- {id: R09, layer: reco, area: recommend, scenario: "정예가 거의 없는 지역(춘천 카페)에서 추천", expect: "후보 0~소수면 0으로 보여줌, 반경 임의 확대 없음, 깔때기에 사유", guardrail: "2,4,10", status: untested}
+- {id: R10, layer: reco, area: recommend, scenario: "사유 없이 ♥만 있는 지도에서 추천", expect: "readiness 규칙대로(NOT_READY 또는 선호 없이 동작)", status: untested}
+- {id: R11, layer: reco, area: recommend, scenario: "후보를 모두 지도에 올린 뒤 다시 추천", expect: "이미 제안·거절된 장소 제외, 새 후보 또는 0개", guardrail: "6", status: untested}
+- {id: R12, layer: reco, area: recommend, scenario: "프롬프트 인젝션 사유(reasons.injection) 4종", expect: "지시로 해석 안 됨 — 제약·반경·실격 불변, 시스템 문구 노출 없음", guardrail: "4,7", status: pass}
+
+# ───────── 입력 경계(api) ─────────
+- {id: A01, layer: api, area: reaction, scenario: "반응 사유 139/140자", data: reasons.boundary_length, expect: "200", status: pass}
+- {id: A02, layer: api, area: reaction, scenario: "반응 사유 141자", data: reasons.boundary_length.len_141, expect: "422", status: pass}
+- {id: A03, layer: api, area: reaction, scenario: "🚫 반응에 빈/공백 사유", data: reasons.whitespace_only, expect: "422 EVIDENCE_REQUIRED(가드레일 3)", guardrail: "3", status: pass}
+- {id: A04, layer: api, area: reaction, scenario: "이모지·ZWJ·NFD·제로폭·혼합 문자 사유", data: reasons.unicode, expect: "200, 저장·반환 시 깨지지 않음(글자 수는 코드포인트 기준 일관)", status: pass}
+- {id: A05, layer: api, area: reaction, scenario: "HTML/SQL/URL 사유", data: reasons.markup, expect: "200, 그대로 문자열로 저장·반환(응답에 실행되는 마크업 없음), 서버 오류 없음", status: pass}
+- {id: A06, layer: api, area: evidence, scenario: "evidence '+' 5줄 한 번에", data: reasons.evidence_plus.five_lines, expect: "200", status: pass}
+- {id: A07, layer: api, area: evidence, scenario: "evidence '+' 6줄 한 번에", data: reasons.evidence_plus.six_lines, expect: "422 (스펙 #707)", status: pass}
+- {id: A08, layer: api, area: evidence, scenario: "한 run에 '+' 누적 11줄", expect: "409 EVIDENCE_LIMIT (스펙 #707)", status: pass}
+- {id: A09, layer: api, area: evidence, scenario: "evidence '+' 빈 문자열·141자", expect: "422", status: pass}
+- {id: A10, layer: api, area: map, scenario: "지도 제목 100자/101자/이모지/빈", expect: "100 OK, 101·빈 422", status: pass}
+- {id: A11, layer: api, area: map, scenario: "여행 날짜: 없음·같은 날·종료<시작·1년 이상·과거", expect: "스펙대로 허용/422, 서버 오류 없음", status: pass}
+- {id: A12, layer: api, area: map, scenario: "PATCH로 start만 end 뒤로 변경", expect: "422(뒤집힘 방지, DB check 포함)", status: pass}
+- {id: A13, layer: api, area: pin, scenario: "핀 중복 생성(같은 장소 2회·동시 2요청)", expect: "409 PIN_DUPLICATE 한 번, 500 없음", status: pass}
+- {id: A14, layer: api, area: pin, scenario: "미지원 카테고리(숙소) 핀", expect: "422 PLACE_NOT_SUPPORTED", status: pass}
+- {id: A15, layer: api, area: places, scenario: "검색어 빈/공백/매우 긴/특수문자, 결과 0건", expect: "빈 목록 또는 422, 500 없음", status: untested}
+
+# ───────── 한도·경계(api) ─────────
+- {id: B01, layer: api, area: map, scenario: "지도 20개 생성 후 21번째 생성", expect: "MAP_LIMIT", status: pass}
+- {id: B02, layer: api, area: invite, scenario: "20개 보유자가 초대 수락", expect: "MAP_LIMIT, 안내 가능한 코드", status: pass}
+- {id: B03, layer: api, area: invite, scenario: "나간 뒤 개수 재집계 후 수락", expect: "200", status: pass}
+- {id: B04, layer: api, area: recommend, scenario: "한 구성원이 11번째 추천", expect: "429 RETRY_LIMIT + attempt_limit=10, 카테고리 섞어도 합산", status: pass}
+- {id: B05, layer: api, area: recommend, scenario: "다른 구성원의 시도 횟수는 독립", expect: "A가 10회여도 B는 가능", status: untested}
+- {id: B06, layer: api, area: recommend, scenario: "반경 넓히기 상한 후 한 번 더", expect: "WIDEN_LIMIT", status: untested}
+- {id: B07, layer: api, area: recommend, scenario: "결과 0개 run에서 넓히기→재시도", expect: "NO_RESULTS 처리, 임의 완화 없음", status: untested}
+- {id: B08, layer: api, area: recommend, scenario: "execute 전에 result 조회", expect: "409 RUN_NOT_FINISHED", status: pass}
+
+# ───────── 동시성·멱등(api) ─────────
+- {id: C01, layer: api, area: reaction, scenario: "같은 핀에 같은 사용자가 동시에 PUT 반응 2개", expect: "마지막 값 하나만 남음, 500 없음", status: pass}
+- {id: C02, layer: api, area: recommend, scenario: "create-run 연타(동시 2회)", expect: "시도 횟수 정확히 계산, 500 없음", status: untested}
+- {id: C03, layer: api, area: recommend, scenario: "execute 연타", expect: "한 번만 실행, 결과 일관", status: pass}
+- {id: C04, layer: api, area: recommend, scenario: "같은 후보 publish 2회(동시)", expect: "핀 하나, 이벤트 하나(멱등)", status: pass}
+- {id: C05, layer: api, area: shortlist, scenario: "같은 핀을 동시에 확정 리스트에 추가", expect: "중복 없음", status: untested}
+
+# ───────── 수명주기 충돌(api) ─────────
+- {id: L01, layer: api, area: recommend, scenario: "run 도중 지도 삭제 후 result/publish", expect: "404/410 계열, 500 없음", status: pass}
+- {id: L02, layer: api, area: recommend, scenario: "요청자가 탈퇴한 뒤 그 run 접근", expect: "접근 불가, 데이터 정리 일관", status: pass}
+- {id: L03, layer: api, area: map, scenario: "방장이 나가기: 구성원 있음/혼자/게스트만", expect: "위임·OWNER_CANNOT_LEAVE 규칙", status: pass}
+- {id: L04, layer: api, area: invite, scenario: "요약을 본 뒤 지도가 삭제된 초대 수락", expect: "404 INVITE_NOT_FOUND", status: pass}
+- {id: L05, layer: api, area: invite, scenario: "만료/폐기 토큰, 게스트 11번째", expect: "410 INVITE_EXPIRED/REVOKED, 409 GUEST_LIMIT", status: untested}
+- {id: L06, layer: api, area: auth, scenario: "게스트가 지도 생성", expect: "403 GUEST_NOT_ALLOWED", status: untested}
+- {id: L07, layer: api, area: auth, scenario: "게스트→카카오 전환 후 데이터 이전", expect: "핀·반응·추천 기록 유지", status: untested}
+- {id: L08, layer: api, area: auth, scenario: "탈퇴 후 같은 세션 쿠키로 API 호출", expect: "401", status: pass}
+
+# ───────── 실시간·알림·기타(api) ─────────
+- {id: S01, layer: api, area: realtime, scenario: "SSE Last-Event-ID 재연결, 놓친 이벤트", expect: "놓친 이벤트 재전송 또는 새 스냅샷 안내", status: untested}
+- {id: S02, layer: api, area: realtime, scenario: "나가기/탈퇴/삭제 시 SSE 종료·map.deleted", expect: "스트림 정리", status: untested}
+- {id: S03, layer: api, area: notification, scenario: "알림 목록·읽음·선호", expect: "권한 경계(남의 알림 접근 불가)", status: pass}
+- {id: S04, layer: api, area: feedback, scenario: "피드백 제출 빈/긴/연타", expect: "422/429", status: untested}
+- {id: S05, layer: api, area: shortlist, scenario: "확정 리스트 내보내기·순서 변경 경계", expect: "빈 리스트, 1개, 많은 개수", status: pass}
+- {id: S06, layer: api, area: permission, scenario: "비구성원이 지도 리소스 접근", expect: "404(존재 노출 안 함)", status: pass}
+
+# ───────── UI(브라우저) ─────────
+- {id: U01, layer: ui, area: invite, scenario: "로그인 전 초대 링크 열기 → 로그인 → 수락 → 온보딩", expect: "pendingInvite 복원, 지도 진입", status: untested}
+- {id: U02, layer: ui, area: invite, scenario: "만료/폐기/없는 초대 링크", expect: "각각 명확한 안내(INVITE_REVOKED는 FE 미처리 예상)", status: bug#719}
+- {id: U03, layer: ui, area: auth, scenario: "게스트로 시작하기", expect: "FE가 POST /auth/guest를 호출하지 않음 → 미구현 확인", status: na}
+- {id: U04, layer: ui, area: map, scenario: "지도 만들기: 지역 선택·날짜·제목 경계", expect: "검증 메시지, 20개 도달 안내", status: pass}
+- {id: U05, layer: ui, area: pin, scenario: "핀 추가: 검색 0건·중복·미지원·네트워크 오류", expect: "각 에러 코드 문구", status: pass}
+- {id: U06, layer: ui, area: reaction, scenario: "🚫 사유 없이 제출·140자 초과·이모지", expect: "인라인 검증", status: pass}
+- {id: U07, layer: ui, area: recommend, scenario: "추천 흐름 전체: readiness→근거→영역→결과→올리기", expect: "단계 전환·로딩·결과 0개 문구", status: pass}
+- {id: U08, layer: ui, area: recommend, scenario: "상한 도달(10회)·넓히기 상한", expect: "attempt_limit 기반 문구, WIDEN_LIMIT 문구", status: untested}
+- {id: U09, layer: ui, area: recommend, scenario: "evidence '+' 6줄/11줄", expect: "EVIDENCE_LIMIT 처리(FE 미처리 예상)", status: bug#720}
+- {id: U10, layer: ui, area: shortlist, scenario: "확정 리스트·동선 보기", expect: "순서만, 빈 상태 문구", status: untested}
+- {id: U11, layer: ui, area: realtime, scenario: "서버 중단 후 복구: 재연결 배너·다시 연결", expect: "배너 노출, 복구 후 핀 최신화", status: pass}
+- {id: U12, layer: ui, area: account, scenario: "나가기/탈퇴 확인 모달, 방장 나가기", expect: "OWNER_CANNOT_LEAVE 안내", status: untested}
+- {id: U13, layer: ui, area: layout, scenario: "모바일 폭(375px)·긴 한글 이름·긴 사유 줄바꿈", expect: "레이아웃 깨짐 없음", status: untested}
+- {id: U14, layer: ui, area: legal, scenario: "약관·개인정보·위치정보 페이지", expect: "로그인 없이 열림", status: untested}
