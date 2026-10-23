@@ -118,6 +118,7 @@ export function buildBaseState(): StoreState {
     pins,
     reactions,
     evidenceLines: {},
+    manualEvidenceCount: {},
     regions: {},
     runs: {},
     runRequestedBy: {},
@@ -197,7 +198,7 @@ export function buildEvidenceLines(runId: string) {
       author_id: "u_2",
       author_display_name: "박서영",
       text: "국물이 진해요",
-      badge: "reference" as const,
+      badge: "preferred" as const, // ♥ 사유는 선호다. v1 서버는 reference를 만들지 않는다(#707)
       fact_key: null,
       is_active: true,
       permissions: { can_disable: false },

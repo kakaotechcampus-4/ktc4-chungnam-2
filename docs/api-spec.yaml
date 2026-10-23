@@ -888,7 +888,10 @@ paths:
                 items: { $ref: "#/components/schemas/EvidenceLine" }
     patch:
       tags: [recommend]
-      summary: 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md)
+      summary: |
+        근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md).
+        '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
+        한 요청에 5줄까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 줄은 10줄까지다(뺀 줄도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
       parameters: [ { $ref: "#/components/parameters/RunId" } ]
       requestBody:
         content:
@@ -904,6 +907,7 @@ paths:
                 items: { $ref: "#/components/schemas/EvidenceLine" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/EvidenceLimit" }
         "500": { $ref: "#/components/responses/RecommendFailed" }  # 「+」로 직접 추가한 줄도 ②(사유 구조화)를 거친다 — 모델 호출이 실패하면(#254)
 
   /runs/{runId}/regions/confirm:
@@ -1537,6 +1541,11 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    EvidenceLimit:
+      description: run 하나에 직접 추가('+')한 근거 줄이 10줄을 넘음(뺀 줄 포함, EVIDENCE_LIMIT, #707). detail에 { limit, used }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     CourseLimit:
       description: 사용자당 하루 5번(KST 자정 초기화)을 넘김 (COURSE_LIMIT, #334). detail에 { limit, used }
       content:
@@ -2083,7 +2092,7 @@ components:
         author_id: { type: string }
         author_display_name: { type: string, maxLength: 50 } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
         text: { type: string, maxLength: 140 } # reason_text와 같은 성격의 자유 텍스트라 같은 값을 씀
-        badge: { type: string, enum: [required, preferred, reference], description: "꼭/선호/참고 (5-5)" }
+        badge: { type: string, enum: [required, preferred, reference], description: "꼭/선호/참고 (5-5). 「+」로 직접 추가한 줄은 preferred다(#707). v1 서버는 reference를 만들지 않는다" }
         fact_key: { type: [string, "null"] }
         fact_label: { type: [string, "null"], maxLength: 30, description: "fact_key의 화면 표시 이름(예: \"한식\", \"횟집\", \"조용한 곳\", \"주차 가능\"). 서버가 내려 주므로 FE가 키→이름 표를 따로 들지 않는다. 방향 표시는 \"{fact_label} 제외\"(wants=false) / \"{fact_label} 선호\"(wants=true). fact_key가 없으면 없거나 null" }
         wants: { type: [boolean, "null"], description: "이 특징(fact_key)이 있는 장소를 원하는가(#228). true=원함(\"한식 먹자\"), false=원하지 않음(\"한식 말고\"), 없거나 null=모름. FE는 근거 줄에 해석한 방향(예: \"한식 제외\")을 보여 주어 틀리면 −로 뺄 수 있게 한다" }
@@ -2102,6 +2111,8 @@ components:
               is_active: { type: boolean }
         add:
           type: array
+          maxItems: 5
+          description: "직접 추가할 글. 한 요청에 5줄까지, run 하나에 모두 10줄까지(#707)"
           items:
             type: object
             properties:

@@ -2,6 +2,13 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-24 (두 번째), 「+」 직접 추가는 선호로, 요청당 5줄과 run당 10줄 (#707)
+
+- `PATCH /runs/{runId}/evidence`의 `add`에 `maxItems: 5`가 생겼다. 넘으면 422 `VALIDATION_ERROR`.
+- run 하나에 직접 추가한 줄은 10줄까지다(×로 뺀 줄도 센다). 넘으면 409 `EVIDENCE_LIMIT`, `detail`에 `{ limit, used }`(errors.md에 새 코드).
+- 「+」로 추가한 줄의 `badge`가 `reference`에서 `preferred`로 바뀐다(recommend 구현 뒤). 순위 점수에 반영되고 후보는 거르지 않는다. v1 서버는 `reference`를 더 이상 만들지 않는다(enum 값은 남는다).
+- FE: 「+」 입력은 한 번에 5줄까지 받고, run에서 10줄을 채우면 「+」를 끄고 "직접 추가는 10개까지예요"를 보여 준다. 409 `EVIDENCE_LIMIT`도 같은 문구다. 배지로 구역을 나누므로 직접 추가한 줄은 "가능하면 맞춰주세요"로 옮겨 보인다. 목 서버가 같은 동작을 한다.
+
 ## 2026-10-21 (네 번째), CourseLeg에 mode(walk|transit) 추가 (#334) — (#580 결정 전 — 브랜치 초안)
 
 - **`CourseLeg.mode`(필수)가 늘었다**: `walk`(도보) 또는 `transit`(대중교통). 서버가 직선거리로 정한다 — 2km 이하는 `walk`, 넘으면 `transit`(초안 규칙, 서버 상수). `approx_minutes`는 이제 **mode 기준 분**이다: `walk`면 도보 분, `transit`이면 대중교통 약 분(거리 ÷ 약 20km/h + 대기·환승 10분의 거친 추정이라 시간표가 아니다).
