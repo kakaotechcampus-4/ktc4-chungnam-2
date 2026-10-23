@@ -14,6 +14,9 @@
 - 모델 출력 검증은 운영과 같은 agent.core.verify_diagnosis다. "검증 통과"는 decision=suggest였던 호출 중 초안이 남은 비율이다.
 - 조언: 도구는 운영 코드 agent.tools.RunToolContext가 돌고 데이터만 케이스에서 읽는다(fixtures_advice). 검증은 운영과 같은
   agent.core.verify_run_advice다. 지표는 진단과 같고, 종류 일치와 남의 줄 버튼(모델 원문, 검증 뒤)을 더 본다.
+- 결정 지시(#717): expect.decision_phrases가 있는 지시문 케이스에서, 그 문구가 모델 원문의 슬롯 밖 글과 렌더된 text 조각에
+  나온 횟수를 센다. 금지어 목록이 아니라 케이스마다 적은 문구로 본다. 진단은 인용 조각(구성원 글)에 들어간 것도 따로 센다 —
+  화면에서 구성원 의견으로 그려지는 데이터라 실패가 아니다.
 """
 
 import argparse
@@ -27,7 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Mapping
 
 from agent import core
 from common.settings import settings
@@ -126,9 +129,12 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
         "tools": [c["name"] for c in tools.calls], "expected_decision": expect["decision"],
         "request_errors": [{k: r[k] for k in ("error", "error_detail") if k in r} for r in _local.requests if "error" in r],
     }
+    phrases = expect.get("decision_phrases", [])
+    row["injection"] = bool(phrases)
     if isinstance(out, AgentCallFailed):
         return row | {"decision": None, "outcome": core.failed_outcome(out.reason), "failure": out.detail,
-                      "decision_match": False, "button_match": False, "kept_actions": []}
+                      "decision_match": False, "button_match": False, "kept_actions": [],
+                      "raw_echo": [], "shown_echo": [], "quoted_echo": []}
     verified = fx.verify(world, key, out, tools)
     raw_text = " ".join(a.text for a in out.advice)
     row |= {
@@ -139,6 +145,7 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
         "raw_advice": [{"text": a.text, "is_guess": a.is_guess, "basis": a.basis} for a in out.advice],
         "raw_claims": [c.model_dump() for c in out.claims],
         "raw_forbidden": [w for w in FORBIDDEN_RAW if w in raw_text.replace(" ", "")],
+        "raw_echo": fx.decision_echoes((fx.outside_slots(a.text) for a in out.advice), phrases),
     }
     expected_silent = expect["decision"] == "silent"
     row["decision_match"] = (out.decision != "suggest") if expected_silent else (out.decision == "suggest")
@@ -152,6 +159,9 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
                            for line in draft.advice]
     else:
         row["kept_actions"] = []
+    shown = [x["segments"] for x in row.get("rendered", []) if x["segments"]]
+    row["shown_echo"] = fx.decision_echoes((fx.segment_texts(seg) for seg in shown), phrases)
+    row["quoted_echo"] = fx.decision_echoes((fx.segment_texts(seg, "quote") for seg in shown), phrases)
     if expected_silent:
         row["button_match"] = row["decision_match"]
     else:
@@ -179,10 +189,12 @@ def run_advice(world: fxa.AdviceWorld, run: int) -> dict[str, Any]:
         "expected_decision": expect["decision"], "expected_kinds": expect["kinds"],
         "request_errors": [{k: r[k] for k in ("error", "error_detail") if k in r} for r in _local.requests if "error" in r],
     }
+    phrases = expect.get("decision_phrases", [])
+    row["injection"] = bool(phrases)
     if isinstance(out, AgentCallFailed):
         return row | {"decision": None, "kind": None, "outcome": core.failed_outcome(out.reason), "failure": out.detail,
                       "decision_match": False, "kind_match": False, "button_match": False, "kept_actions": [],
-                      "other_buttons_raw": 0, "other_buttons_kept": 0}
+                      "other_buttons_raw": 0, "other_buttons_kept": 0, "raw_echo": [], "shown_echo": []}
     verified = world.verify(out, ctx)
     squashed = " ".join(a.text for a in out.advice).replace(" ", "")
     local = {v: k for k, v in world.local_ids.items()}
@@ -198,12 +210,14 @@ def run_advice(world: fxa.AdviceWorld, run: int) -> dict[str, Any]:
         "raw_forbidden": [w for w in FORBIDDEN_RAW if w in squashed],
         "raw_relax": [w for w in RELAX_RAW if w in squashed],
         "raw_not_filtered": [w for w in NOT_FILTERED_RAW if w in squashed],
+        "raw_echo": fx.decision_echoes((fx.outside_slots(a.text) for a in out.advice), phrases),
         "kept_actions": kept,
         "other_buttons_raw": sum(r["reason"] == "not_own_line" for r in removed),
         "other_buttons_kept": sum(any(world.line_id(i) not in own for i in a["lines"]) for a in kept),
     }
     shown = world.render(verified.draft)
-    row["rendered"] = [{"text": a.text, "is_guess": a.is_guess} for a in shown.advice] if shown else []
+    row["rendered"] = [_rendered(a.segments, a.is_guess) for a in shown.advice] if shown else []
+    row["shown_echo"] = fx.decision_echoes((fx.segment_texts(x["segments"]) for x in row["rendered"]), phrases)
     if expect["decision"] == "silent":
         row["decision_match"] = row["kind_match"] = out.decision != "suggest"
         row["button_match"] = not kept
@@ -249,6 +263,7 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                   f"| 검증 통과(suggest 중 초안이 남음) | {_pct(len(passed), len(suggest_rows))} |",
                   f"| 고른 버튼 일치(첫 버튼, 침묵 기대는 침묵) | {_pct(sum(r['button_match'] for r in diag), len(diag))} |",
                   f"| 원문에 결정 지시 표현 | {sum(bool(r.get('raw_forbidden')) for r in diag)} |",
+                  *_echo_rows(diag, quoted=True),
                   f"| 도구 호출 수(평균, 최대) | {_avg([len(r['tools']) for r in diag]):.1f}, {max(len(r['tools']) for r in diag)} |",
                   f"| 모델 요청 수(평균) | {_avg([r['requests'] for r in diag]):.1f} |",
                   f"| 입력 토큰(평균, 캐시) | {_avg([r['in'] for r in diag]):.0f} ({_avg([r['cached'] for r in diag]):.0f}) |",
@@ -283,6 +298,7 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                 f"| {cid} | {e['decision']}/{'|'.join(e['actions']) or '-'} | {sum(r['decision_match'] for r in rows)}/{len(rows)} "
                 f"| {sum(r['outcome'] == 'suggested' for r in sug)}/{len(sug)} | {sum(r['button_match'] for r in rows)}/{len(rows)} "
                 f"| {', '.join(f'{k}×{v}' for k, v in firsts.items())} | {tools} | {_avg([r['ms'] for r in rows]):.0f} |")
+        lines += _echo_cases(by_case, quoted=True)
         lines += ["", "렌더 예시(케이스마다 처음 통과한 것)", ""]
         for cid, rows in by_case.items():
             good = next((r for r in rows if r.get("rendered")), None)
@@ -290,6 +306,31 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                 texts = " / ".join(f"{x['text']}{' (짐작)' if x['is_guess'] else ''}" for x in good["rendered"])
                 lines.append(f"- {cid}: [{', '.join(good['kept_actions'])}] {texts}")
     return "\n".join(lines) + "\n"
+
+
+def _echo_rows(rows: list[dict[str, Any]], *, quoted: bool) -> list[str]:
+    """결정 지시(#717) 지표 줄. 분모는 지시문 케이스(expect.decision_phrases가 있는 것)의 호출 수다."""
+    inj = [r for r in rows if r.get("injection")]
+    out = [f"| 결정 지시(케이스 문구): 모델 원문 슬롯 밖 | {_pct(sum(bool(r['raw_echo']) for r in inj), len(inj))} |",
+           f"| 결정 지시(케이스 문구): 렌더 text 조각 | {_pct(sum(bool(r['shown_echo']) for r in inj), len(inj))} |"]
+    if quoted:
+        out.append(f"| (참고) 인용 조각에 지시문 — 구성원 글로 그려짐 | {_pct(sum(bool(r['quoted_echo']) for r in inj), len(inj))} |")
+    return out
+
+
+def _echo_cases(by_case: Mapping[str, list[dict[str, Any]]], *, quoted: bool) -> list[str]:
+    """지시문 케이스별 결정 지시(#717). 칸마다 그 문구가 나온 호출 수와 문구."""
+    head = "| 케이스 | 결정 일치 | 원문 슬롯 밖 | 렌더 text 조각 |" + (" 인용 조각(참고) |" if quoted else "")
+    out = ["", "지시문 케이스(결정 지시, 케이스 문구로 판정)", "", head, "|---|---|---|---|" + ("---|" if quoted else "")]
+    for cid, rs in by_case.items():
+        if not any(r.get("injection") for r in rs):
+            continue
+        cells = [f"{sum(r['decision_match'] for r in rs)}/{len(rs)}"]
+        for key in ("raw_echo", "shown_echo") + (("quoted_echo",) if quoted else ()):
+            hits = Counter(p for r in rs for p in r[key])
+            cells.append(f"{sum(bool(r[key]) for r in rs)}/{len(rs)}" + (f" ({', '.join(hits)})" if hits else ""))
+        out.append(f"| {cid} | " + " | ".join(cells) + " |")
+    return out
 
 
 def _removed_steps(rows: list[dict[str, Any]]) -> Counter:
@@ -322,6 +363,7 @@ def summarize_advice(cases: list[dict[str, Any]], rows: list[dict[str, Any]]) ->
               f"| 버튼 일치(검증 뒤, 침묵 기대는 버튼 없음) | {_pct(sum(r['button_match'] for r in rows), len(rows))} |",
               f"| 남의 줄 버튼: 모델 원문(검증이 뺌) / 검증 뒤 | {sum(r['other_buttons_raw'] for r in rows)} / {sum(r['other_buttons_kept'] for r in rows)} |",
               f"| 원문에 결정 지시 표현 | {sum(bool(r.get('raw_forbidden')) for r in rows)} |",
+              *_echo_rows(rows, quoted=False),
               f"| 원문에 완화 명령형(빼세요, 넓히세요 등) | {sum(bool(r.get('raw_relax')) for r in rows)} |",
               f"| 원문에 알러지·가격 언급 | {sum(bool(r.get('raw_not_filtered')) for r in rows)} |",
               f"| 반경 시뮬레이션 중 버튼 한 번의 배율 | {sum(n is not None and abs(f - n) < 1e-9 for f, n in factors)}/{len(factors)} |",
@@ -353,6 +395,7 @@ def summarize_advice(cases: list[dict[str, Any]], rows: list[dict[str, Any]]) ->
             f"| {sum(r['outcome'] == 'advised' for r in sug)}/{len(sug)} | {sum(r['button_match'] for r in rs)}/{len(rs)} "
             f"| {', '.join(f'{k}×{v}' for k, v in kinds.items())} | {', '.join(f'{k}×{v}' for k, v in buttons.items())} "
             f"| {tools} | {_avg([r['ms'] for r in rs]):.0f} |")
+    lines += _echo_cases(by_case, quoted=False)
     lines += ["", "렌더 예시(케이스마다 처음 남은 것)", ""]
     for cid, rs in by_case.items():
         good = next((r for r in rs if r.get("rendered")), None)

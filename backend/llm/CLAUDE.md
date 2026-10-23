@@ -20,8 +20,9 @@
 - 실패(호출 실패, 타임아웃, 스키마 검증 실패)는 예외가 아니라 `AgentCallFailed(reason, detail)`로 돌려준다. 다시 묻지 않는다. 여기서는 스키마 검증까지만 하고, claim·문장·행동 검증은 agent의 core가 한다.
 - 도구는 agent가 넘기는 `tool_runner(call_id, name, args)`로만 실행한다. call_id(t1, t2 …)는 이 모듈이 매긴다. 진단 1회당 5회, 그중 structure_reasons 1회(`prompts.DIAGNOSIS_MAX_TOOL_CALLS`, `STRUCTURE_REASONS_MAX_CALLS`)를 넘는 호출은 실행하지 않고 `LIMIT_EXCEEDED`를, 유형에 없는 도구는 `NOT_FOUND`를 도구 결과로 돌려준다. 상한을 다 쓰면 `tool_choice="none"`으로 답을 받는다. 도구 설명과 유형별 허용 목록은 `prompts.AGENT_TOOL_SPECS`, `DIAGNOSIS_TOOLS`이고, map_id는 모델이 고르지 않는다(agent가 채운다).
 - gpt-6-luna는 chat.completions에서 도구를 `reasoning_effort="none"`일 때만 받는다(2026-10-15 확인). 진단과 조언 호출은 none 고정이다.
-- 평가셋은 `llm/tests/eval_agent/`(지도 상태 20건, 지어낸 사유 글만). 프롬프트를 바꾸면 `python -m llm.tests.eval_agent.run_eval`로 진단을 다시 재고 `prompt_version`을 올린다. 결과(`results/`)는 커밋하지 않는다. 우선순위 케이스는 모델 없이 `core.fallback_order` 기대값 테스트로 돈다(`test_eval_cases.py`, #582).
-- 조언 평가셋은 `cases_advice.json`(run 상태 23건, #588)이고 `run_eval --target advice`로 잰다. 도구는 운영 `RunToolContext`가 돌고 데이터만 케이스에서 읽는다(`fixtures_advice.py`). 평가셋이 지금 규칙(대상 판정, 줄 종류, 버튼 규칙)과 맞는지는 모델 없이 `test_eval_advice_cases.py`가 본다.
+- 평가셋은 `llm/tests/eval_agent/`(지도 상태 24건, 지어낸 사유 글만). 프롬프트를 바꾸면 `python -m llm.tests.eval_agent.run_eval`로 진단을 다시 재고 `prompt_version`을 올린다. 결과(`results/`)는 커밋하지 않는다. 우선순위 케이스는 모델 없이 `core.fallback_order` 기대값 테스트로 돈다(`test_eval_cases.py`, #582).
+- 조언 평가셋은 `cases_advice.json`(run 상태 25건, #588)이고 `run_eval --target advice`로 잰다. 도구는 운영 `RunToolContext`가 돌고 데이터만 케이스에서 읽는다(`fixtures_advice.py`). 평가셋이 지금 규칙(대상 판정, 줄 종류, 버튼 규칙)과 맞는지는 모델 없이 `test_eval_advice_cases.py`가 본다.
+- 지시문 케이스는 `expect.decision_phrases`에 결정 지시 기대 문구를 적는다(#717). 러너는 그 문구가 모델 원문의 슬롯 밖 글과 렌더된 text 조각에 나온 횟수를 센다 — 금지어 목록이 아니라 케이스 문구로 판정해 목록 밖 표현도 잡는다. 인용 조각(구성원 글)에 들어간 것은 참고로만 센다.
 - 엘리스 strict 구조화 출력은 `oneOf`를 거절한다. 출력 스키마에 discriminator를 걸지 않는다(`schemas.Claim`).
 
 **v2 동선 에이전트 호출(#580, 2026-10-21 결정, #334)**: `course_set_goals`(요청 한 줄 → 목표 6종, 인용은 원문 대조), `course_direct_turn`(지휘: optimize·lock·ask_requester·finish 중 하나를 답변 형식으로 고름, 도구를 `tools`로 주지 않는다). `agent/course`가 사람의 요청으로 부르고, 계산·검증은 그쪽 코드가 한다. 모델 입력은 별칭(p1, d1)만이고 이름·좌표·id를 넣지 않는다. 실패는 재요청하지 않고 코드 기준선이 그 단계를 대신한다.
