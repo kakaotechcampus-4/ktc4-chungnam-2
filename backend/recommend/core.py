@@ -13,6 +13,7 @@ recommend.publish가 있다). 이 파일에 남는 건 run/candidate/evidence/re
 import hashlib
 import math
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Collection, Mapping, Sequence
 
 from common.errors import AppError
@@ -281,6 +282,30 @@ def _meets(check: Check, wants: bool | None) -> bool:
     """known 체크가 그 사람 조건을 만족하는가. 방향 없는 키(hard)는 passed(통과) 그대로, 방향이 있는 soft 키는
     라벨 참거짓 == wants(#237). 근거 줄 표시(`to_satisfaction_checks`)와 구성원 충족 집계가 같이 쓴다."""
     return check.passed if wants is None else check.passed == wants
+
+
+# 계절 키의 시즌 달(docs/constraints.md 계절 규칙, #681-6). 여행 기간이 이 달과 하루라도 겹칠 때만 그 키를 쓴다.
+SEASON_MONTHS: dict[str, frozenset[int]] = {
+    "cherry_blossom": frozenset({3, 4}),
+    "autumn_foliage": frozenset({10, 11}),
+    "water_play": frozenset({6, 7, 8}),
+    "winter_spot": frozenset({12, 1, 2}),
+}
+
+
+def out_of_season_keys(start: date | None, end: date | None) -> frozenset[str]:
+    """여행 기간(start~end, 양 끝 포함)이 시즌 달과 하루도 안 겹치는 계절 키. 날짜가 하나라도 없으면 비어 있다(모두 쓴다).
+    시즌이 통째로 달 단위라 달만 비교하면 하루 단위 겹침과 같다. 연말연시에 걸친 기간도 달을 차례로 센다."""
+    if start is None or end is None:
+        return frozenset()
+    if end < start:
+        start, end = end, start
+    months: set[int] = set()
+    year, month = start.year, start.month
+    while (year, month) <= (end.year, end.month) and len(months) < 12:
+        months.add(month)
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return frozenset(key for key, season in SEASON_MONTHS.items() if not season & months)
 
 
 MAX_SHOWN_PREFERENCE_CHECKS = 5   # 결과 카드에 보이는 충족한 선호 체크 수(docs/constraints.md "결과 카드에 선호 조건을 보이는 법", #681-4)
