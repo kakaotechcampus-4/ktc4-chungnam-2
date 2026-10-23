@@ -3012,7 +3012,7 @@ export interface paths {
         };
         /**
          * 코스 run 하나 — 요청한 본인만(course.view). 비구성원 404, 요청자가 아닌 구성원 403.
-         *     status가 queued·running이면 결과 칸은 비어 있다(진행 기록도 끝난 뒤에 한꺼번에 채워진다). done이면 모두 채워지고, failed면 failure_code만 있다.
+         *     status가 queued·running이면 결과 칸(goals, days 등)은 비어 있고 steps만 단계가 생길 때마다 뒤로 늘어난다. done이면 모두 채워지고, failed면 failure_code와 그때까지의 steps만 있다.
          */
         get: {
             parameters: {
@@ -4090,7 +4090,7 @@ export interface components {
             from_pin_id: string;
             to_pin_id: string;
             /**
-             * @description 이동 방식. 직선거리 2km 이하는 walk(도보), 넘으면 transit(대중교통). 서버 초안 규칙(#580 전)이라 기준이 바뀔 수 있다
+             * @description 이동 방식. 직선거리 2km 이하는 walk(도보), 넘으면 transit(대중교통). 서버 상수라 대중교통 계산을 다듬으면(#685) 기준이 바뀔 수 있다
              * @enum {string}
              */
             mode: "walk" | "transit";

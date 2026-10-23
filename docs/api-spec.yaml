@@ -31,7 +31,7 @@ tags:
   - name: ads
     description: 추천 탭 광고(docs/ads.md, #642). 자체 DB 장소만, 추천 후보와 순위에 들어가지 않는다. 노출과 클릭은 광고별 날짜별 집계만 남긴다
   - name: course
-    description: AI 코스 짜기(동선 에이전트, #334). 확정 리스트를 날짜별 방문 순서로 짠다 — 계산은 코드가, 요청 한 줄의 해석은 모델이 한다. 팀 결정 #580 전 브랜치 초안이라 실서버에 아직 없다. 질문에 답하는 API는 없다(엔진이 답이 없으면 기본값으로 이어 간다)
+    description: AI 코스 짜기(동선 에이전트, #334). 확정 리스트를 날짜별 방문 순서로 짠다 — 계산은 코드가, 요청 한 줄의 해석은 모델이 한다(모델 호출 범위는 #580 결정). 질문에 답하는 API는 없다(엔진이 답이 없으면 기본값으로 이어 간다)
   - name: agent
     description: v2 계획 보조 에이전트(docs/agent-v2.md). 지도를 관찰해 막힌 곳에 제안을 내지만 아무것도 직접 실행하지 않는다. 엔드포인트 5개는 #531에서 구현(코드 유형 제안부터 노출), 추천 막힘 조언은 M2
 
@@ -1302,7 +1302,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/SuggestionResolved" }
 
-  # ---------- course (AI 코스 짜기, #334 — 팀 결정 #580 전 브랜치 초안) ----------
+  # ---------- course (AI 코스 짜기, #334 · 모델 호출 결정 #580) ----------
   /maps/{mapId}/courses:
     post:
       tags: [course]
@@ -1350,7 +1350,7 @@ paths:
       tags: [course]
       summary: |
         코스 run 하나 — 요청한 본인만(course.view). 비구성원 404, 요청자가 아닌 구성원 403.
-        status가 queued·running이면 결과 칸은 비어 있다(진행 기록도 끝난 뒤에 한꺼번에 채워진다). done이면 모두 채워지고, failed면 failure_code만 있다.
+        status가 queued·running이면 결과 칸(goals, days 등)은 비어 있고 steps만 단계가 생길 때마다 뒤로 늘어난다. done이면 모두 채워지고, failed면 failure_code와 그때까지의 steps만 있다.
       parameters: [ { $ref: "#/components/parameters/RunId" } ]
       responses:
         "200":
@@ -2468,7 +2468,7 @@ components:
         advice: { type: array, items: { $ref: "#/components/schemas/AgentAdviceLine" } }
         actions: { type: array, items: { $ref: "#/components/schemas/AgentAction" }, description: "widen_radius, open_evidence만" }
 
-    # ---------- course (AI 코스 짜기, #334 — 팀 결정 #580 전 브랜치 초안) ----------
+    # ---------- course (AI 코스 짜기, #334 · 모델 호출 결정 #580) ----------
     CourseRequest:
       type: object
       properties:
@@ -2568,7 +2568,7 @@ components:
       properties:
         from_pin_id: { type: string }
         to_pin_id: { type: string }
-        mode: { type: string, enum: [walk, transit], description: "이동 방식. 직선거리 2km 이하는 walk(도보), 넘으면 transit(대중교통). 서버 초안 규칙(#580 전)이라 기준이 바뀔 수 있다" }
+        mode: { type: string, enum: [walk, transit], description: "이동 방식. 직선거리 2km 이하는 walk(도보), 넘으면 transit(대중교통). 서버 상수라 대중교통 계산을 다듬으면(#685) 기준이 바뀔 수 있다" }
         approx_minutes: { type: integer, minimum: 0, description: "mode 기준 대략 분 — walk면 도보 분, transit이면 대중교통 약 분(직선거리로 잰 거친 추정). 길 안내·시간표가 아니다. 화면에는 「도보 N분」「대중교통 약 N분」으로 쓴다" }
 
     CourseViolation:
