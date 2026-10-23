@@ -19,7 +19,7 @@ from places.ratelimit import SlidingWindowLimiter
 from places.samples import search_samples
 from places.matching import Candidate
 from places.schemas import (
-    Area, FactLabel, LinkParseResult, PlaceHint, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult, PlaceSourceInfo, ResolvedCoords,
+    Area, FactLabel, LinkParseResult, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult, PlaceSourceInfo, ResolvedCoords,
 )
 from places.service import PlaceService, to_result
 from places.sources.base import PlaceSource
@@ -197,6 +197,12 @@ def get_facts(place_ids: Sequence[str], *, db: Session | None = None) -> dict[st
     """place_facts의 fact_key·value·confidence를 그대로. 라벨이 없으면 빈 리스트. unknown_policy는 호출하는 쪽이 적용한다."""
     with _session(db) as s:
         return repository.get_facts(s, place_ids)
+
+
+def get_hours(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceHours]:
+    """place_hours를 배치로 조회한다(#690). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용. 판정은 places.core.is_open_on."""
+    with _session(db) as s:
+        return repository.get_hours(s, place_ids)
 
 
 # ---- 지도 링크 해석 (POST /places/from-link, #474) ----

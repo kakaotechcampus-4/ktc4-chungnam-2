@@ -430,3 +430,25 @@ pingo_demo는 `alembic_version=0020_evidence_wants`다. 단계별로 `upgrade()`
 
 ## 테스트
 `test_sources.py`(CT1 매핑·합치기·부분 실패), `test_name_search.py`(정확도 순·반경 없음·본체 우선), `test_search_own_by_name.py`.
+
+
+# #690 영업시간·휴무일 — place_hours·get_hours·is_open_on·place-hours 로더 (2026-10-24)
+
+스펙(PR #693: `data-model.md` place_hours, `constraints.md` 영업 중 판정, `architecture.md` get_hours)대로 구현했다. 스펙·docs는 바꾸지 않았다.
+
+## 만든 것
+- **마이그레이션 `0038_place_hours`**(down `0037_agent_course_runs`, 단일 head): `place_hours(place_id PK→places on delete cascade, hours jsonb, closed_days text[], closed_note, hours_note, updated_at)`. 모델 `places.models.PlaceHours`와 일치하는지 테스트가 본다. **다른 PR이 먼저 0038을 쓰면 번호를 올려야 한다**(병합 순서에 따라).
+- **`places.api.get_hours(place_ids, *, db=None) -> dict[str, PlaceHours]`**: 한 번의 IN 조회, 행 없는 장소·잘못된 id는 키에서 뺀다, 읽기 전용. `PlaceHours(hours, closed_days, closed_note, hours_note)`는 `places/schemas.py`(frozen dataclass).
+- **`places.core.is_open_on(hours, closed_days, weekday, minutes) -> "open"|"closed"|"unknown"`**: 스펙 그대로. **`weekday`는 0=월 … 6=일(`date.weekday()`와 같다), `minutes`는 0~1439**이고 범위 밖이면 ValueError — 호출하는 쪽(recommend)이 맞춰야 하는 약속이다. 한 가지 스펙에 없던 해석: `hours`는 있는데 그 요일 키만 빠진 경우(로더는 요일 7개가 아니면 hours를 버리므로 DB에는 안 생긴다)는 `closed_days`로 넘어간다. `core.parse_minutes("HH:MM"|"26:00")`도 공개.
+- **로더 `python -m places.load place-hours --file <라벨 JSON | tourist_seoul_closed_days.json> [--all-regions] [--dry-run]`**: `rest_`·`cafe_` → permit, `tour_` → tourapi, 서울 관광지 파일은 `source_id`(=contentid) → tourapi. 멱등(같은 장소는 파일 값으로 갱신), 파일에 없는 장소·칸이 없는 항목의 기존 행은 지우지 않는다, 장소를 못 찾으면 건수만 보고한다. 항목에 `addr1`이 있고 서울이 아니면 `--all-regions` 없이는 건너뛴다(주소 없는 항목은 판단하지 않는다 — 장소가 DB에 있는지는 어차피 못 찾음 건수로 나온다). 기존 restaurants·cafes·tourapi의 라벨 적재는 그대로(`info`를 읽지 않는다, 테스트로 고정).
+- **형식 검증**: hours는 요일 7개 모두 + `[여는, 닫는]`이 `HH:MM`(시작 < 24:00, 시작 < 끝 ≤ 48:00)이어야 하고, 아니면 hours 칸만 버리고 경고(다른 칸이 있으면 행은 만든다). closed_days는 월~일 이름만. 칸이 하나도 안 남으면 행을 만들지 않는다.
+
+## 공유본(2026-10-21) 파싱 확인 (DB에는 쓰지 않음)
+정예 라벨 JSON 18개를 `parse_hours_entries`로 읽어 본 결과 형식 경고 0건. 행이 생기는 수: 서울 음식점 1,342/1,355, 카페 1,516/1,676, 관광지(closed_days 파일) 723/723, 대전·춘천·광주·대구·부산은 README 채움률과 일치. 나머지는 칸이 없어 행이 없다(= 모름).
+
+## 루트 확인
+- 적재 순서: 장소를 먼저 적재한 뒤 `place-hours`를 돌린다(장소가 없으면 못 찾음으로 센다). 지역 라벨 파일에는 `addr1`이 있는 관광지만 주소 판정이 걸리므로 지역은 `--all-regions`를 주면 된다.
+- 마지막 `can_recommend` 재계산은 다른 적재 명령처럼 `place-hours`도 돌린다(값은 안 바뀐다).
+
+## 테스트
+`places/tests/test_place_hours.py`(경계·파싱·적재·get_hours), `test_place_hours_migration.py`(up/down·단일 head·모델 일치).

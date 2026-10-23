@@ -15,10 +15,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from places import core, matching
-from places.ingest import LabelRow, PlaceRow
+from places.ingest import HoursRow, LabelRow, PlaceRow
 from places.matching import Candidate
-from places.models import Place, PlaceFact
-from places.schemas import Area, FactLabel, PlaceHint, PlaceInfo, PlaceRef
+from places.models import Place, PlaceFact, PlaceHours
+from places.schemas import Area, FactLabel, PlaceHint, PlaceHours as PlaceHoursInfo, PlaceInfo, PlaceRef
 
 _CHUNK = 1000
 
@@ -423,6 +423,54 @@ def search_by_name_own(db: Session, query: str, category: str | None, limit: int
         stmt = stmt.where(Place.category == category)
     rows = db.execute(stmt.order_by(Place.name.collate("C"), Place.id).limit(limit)).all()
     return [{"id": str(r.id), "name": r.name, "address": r.address, "category": r.category, "status": r.status} for r in rows]
+
+
+def get_hours(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceHoursInfo]:
+    """행이 있는 장소만 돌려준다(행 없음 = 모름). 한 번의 IN 조회."""
+    by_uuid = {u: pid for pid in place_ids if (u := _uuid_or_none(pid)) is not None}
+    if not by_uuid:
+        return {}
+    rows = db.execute(select(PlaceHours).where(PlaceHours.place_id.in_(list(by_uuid)))).scalars()
+    return {
+        by_uuid[h.place_id]: PlaceHoursInfo(h.hours, list(h.closed_days) if h.closed_days is not None else None, h.closed_note, h.hours_note)
+        for h in rows
+    }
+
+
+@dataclass(frozen=True)
+class HoursUpsertResult:
+    upserted: int
+    place_not_found: int
+
+
+def upsert_hours(db: Session, rows: Sequence[HoursRow]) -> HoursUpsertResult:
+    """(source, source_id)로 장소를 찾아 place_hours를 upsert한다. 같은 장소는 파일 값으로 갱신, 파일에 없는 장소의 행은 건드리지 않는다."""
+    upserted = not_found = 0
+    for chunk in _chunks(list(rows)):
+        place_ids = {
+            (p.source, p.source_id): p.id
+            for p in db.execute(
+                select(Place).where(Place.source.in_({r.source for r in chunk}), Place.source_id.in_({r.source_id for r in chunk}))
+            ).scalars()
+        }
+        values = {}
+        for r in chunk:
+            pid = place_ids.get((r.source, r.source_id))
+            if pid is None:
+                not_found += 1
+                continue
+            values[pid] = {   # 같은 장소가 파일에 두 번이면 마지막 줄 — 한 INSERT에 같은 키가 두 번 들어가지 않게
+                "place_id": pid, "hours": r.hours, "closed_days": r.closed_days,
+                "closed_note": r.closed_note, "hours_note": r.hours_note, "updated_at": func.now(),
+            }
+        if values:
+            stmt = pg_insert(PlaceHours).values(list(values.values()))
+            db.execute(stmt.on_conflict_do_update(
+                index_elements=["place_id"],
+                set_={c: stmt.excluded[c] for c in ("hours", "closed_days", "closed_note", "hours_note", "updated_at")},
+            ))
+            upserted += len(values)
+    return HoursUpsertResult(upserted, not_found)
 
 
 def _uuid(raw: str) -> uuid.UUID:
