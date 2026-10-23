@@ -3661,6 +3661,8 @@ export interface components {
             fact_label?: string | null;
             /** @description 이 특징(fact_key)이 있는 장소를 원하는가(#228). true=원함("한식 먹자"), false=원하지 않음("한식 말고"), 없거나 null=모름. FE는 근거 줄에 해석한 방향(예: "한식 제외")을 보여 주어 틀리면 −로 뺄 수 있게 한다 */
             wants?: boolean | null;
+            /** @description 이 줄이 후보를 거르거나 점수를 매기는 데 실제로 쓰이는가(#720). fact_key가 있으면 true, 키 없는 줄(알레르기·가격 등 모델이 라벨로 옮기지 못한 사유)은 false — 서버가 이 줄로 후보를 걸러 주지 않는다. 없으면 true로 본다(구버전 서버). FE는 enforced=false인 badge=required 줄을 「꼭 지켜야 하는 조건」으로 보이지 말고 「걸러지지 않아요. 가게에 직접 확인해 주세요」처럼 구분해 보여 준다 */
+            enforced?: boolean;
             is_active: boolean;
             permissions: components["schemas"]["Permissions"];
         };
