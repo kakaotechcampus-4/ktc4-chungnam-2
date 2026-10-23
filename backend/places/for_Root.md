@@ -452,3 +452,8 @@ pingo_demo는 `alembic_version=0020_evidence_wants`다. 단계별로 `upgrade()`
 
 ## 테스트
 `places/tests/test_place_hours.py`(경계·파싱·적재·get_hours), `test_place_hours_migration.py`(up/down·단일 head·모델 일치).
+
+
+# #681 PlaceInfo.curated (2026-10-24)
+
+`places.api.get_places`가 돌려주는 `PlaceInfo`에 `curated: bool = False`(`places.curated`)를 더했다 — 같은 배치 쿼리로 읽고 기본값이 있어 기존 호출자는 그대로다. `PlaceRef`는 recommend가 `get_places`로 정예 여부를 읽을 수 있어 건드리지 않았다(필요하면 알려 달라).

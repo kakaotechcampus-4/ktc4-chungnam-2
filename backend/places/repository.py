@@ -309,8 +309,8 @@ def get_places(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceInfo]:
     if not ids:
         return {}
     lat, lng = _lat_lng()
-    rows = db.execute(select(Place.id, Place.name, Place.category, Place.kakao_place_url, Place.source, lat, lng).where(Place.id.in_(ids))).all()
-    return {str(r.id): PlaceInfo(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_url, r.source) for r in rows}
+    rows = db.execute(select(Place.id, Place.name, Place.category, Place.kakao_place_url, Place.source, Place.curated, lat, lng).where(Place.id.in_(ids))).all()
+    return {str(r.id): PlaceInfo(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_url, r.source, r.curated) for r in rows}
 
 
 def search_nearby_own(db: Session, category: str, areas: Sequence[Area]) -> list[PlaceRef]:
