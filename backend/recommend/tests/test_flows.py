@@ -1068,14 +1068,14 @@ def _run_with_wanted_and_unwanted_soft_keys(db_session):
 
 
 def test_execute_run_checks_omit_unwanted_unknown_soft_keys(db_session):
-    """#216 — 아무도 원하지 않았고 unknown인 soft 키(pet_friendly 등)는 저장되는 checks에 없다(known인 franchise도). 원한 키는
-    known이든 unknown이든 남고(unknown은 needs_check), hard 체크는 그대로다."""
+    """#216 — 아무도 원하지 않았고 unknown인 soft 키(pet_friendly 등)는 저장되는 checks에 없다(known인 franchise도).
+    선호(soft)는 충족한 것만 남는다 — 원한 키가 unknown이어도 「확인 필요」로 싣지 않는다(#681-4). hard 체크는 그대로다."""
     _run, candidate = _run_with_wanted_and_unwanted_soft_keys(db_session)
     by_key = {c["fact_key"]: c for c in candidate.checks}
 
     assert "pet_friendly" not in by_key and "vegetarian_friendly" not in by_key  # 원하지 않은 unknown
     assert "franchise" not in by_key  # 원하지 않은 known(거짓)도 싣지 않는다
-    assert by_key["wait_short"]["needs_check"] is True and by_key["wait_short"]["confidence"] == "unknown"  # 활성 근거 줄
+    assert "wait_short" not in by_key  # 활성 근거 줄이지만 선호가 unknown이면 싣지 않는다(#681-4)
     assert by_key["cuisine_japanese"]["confidence"] == "known"  # ♥ 핀 기준(known)
     assert "is_open" in by_key  # hard(코드 판정) 그대로
 
@@ -1101,7 +1101,7 @@ def test_publish_candidate_pin_checks_follow_the_same_filter(db_session):
     )
     pin_keys = [c.fact_key for c in response.checks]
     assert pin_keys == [c["fact_key"] for c in candidate.checks]
-    assert "pet_friendly" not in pin_keys and "wait_short" in pin_keys
+    assert "pet_friendly" not in pin_keys and "wait_short" not in pin_keys and "cuisine_japanese" in pin_keys
 
 
 def test_create_run_leaves_no_run_row_when_planning_fails(db_session, monkeypatch):

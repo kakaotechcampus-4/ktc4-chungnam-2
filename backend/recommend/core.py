@@ -283,6 +283,49 @@ def _meets(check: Check, wants: bool | None) -> bool:
     return check.passed if wants is None else check.passed == wants
 
 
+MAX_SHOWN_PREFERENCE_CHECKS = 5   # 결과 카드에 보이는 충족한 선호 체크 수(docs/constraints.md "결과 카드에 선호 조건을 보이는 법", #681-4)
+
+
+def preference_weights(
+    hearted_places: "Sequence[HeartedPlace]",
+    criteria: Mapping[str, bool],
+    preferred_authors: Mapping[str, frozenset[str]] | None = None,
+    avoided_authors: Mapping[str, frozenset[str]] | None = None,
+) -> dict[str, int]:
+    """선호 키마다 "충족하면 점수를 얼마나 주는가" — `score_candidates`가 키 하나에 더하는 값과 같다. 카드에 보일
+    선호를 점수 기여가 큰 순으로 고르는 데만 쓴다(#681-4). 피하겠다고 쓴 키는 피한 것을 충족으로 보이므로 그 점수다."""
+    preferred_authors = preferred_authors or {}
+    avoided_authors = avoided_authors or {}
+    support = _member_support(hearted_places, preferred_authors, avoided_authors)
+    empty: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset())
+    weights: dict[str, int] = {}
+    for fact_key, wanted in criteria.items():
+        if wanted is True:
+            supporting, opposing = support.get(fact_key, empty)
+            weights[fact_key] = _points(supporting, preferred_authors.get(fact_key, frozenset())) - _points(
+                opposing, avoided_authors.get(fact_key, frozenset())
+            )
+    for fact_key, authors in avoided_authors.items():
+        weights.setdefault(fact_key, WRITTEN_PREFERENCE_POINTS * len(authors))
+    return weights
+
+
+def limit_preference_checks(
+    checks: Sequence[Check], *, required_soft_keys: Collection[str], weights: Mapping[str, int],
+    limit: int = MAX_SHOWN_PREFERENCE_CHECKS,
+) -> list[Check]:
+    """결과 카드에 실을 체크 — 「? 확인 필요」·「✗ …아님」은 실격 조건(hard, 🚫 사유로 낸 soft 키 `required_soft_keys`)의
+    모름·거짓에만 붙이고, 선호(soft)는 충족한(known+passed) 것만 점수 기여 큰 순으로 `limit`줄까지 싣는다(#681-4).
+    `to_satisfaction_checks`를 거친 체크를 받는다(passed = 그 사람 조건을 만족하는가). 순서는 원래 순서를 지킨다.
+    "외 N개"는 응답에 칸이 없어 싣지 않는다(for_Root.md 보고)."""
+    keep_always = [
+        c for c in checks if c.fact_key not in constraints.SOFT_FACT_KEYS or c.fact_key in required_soft_keys
+    ]
+    met = [c for c in checks if c not in keep_always and c.confidence == "known" and c.passed]
+    top = sorted(met, key=lambda c: -weights.get(c.fact_key, 0))[:limit]   # sorted는 안정 — 동점은 원래 순서
+    return [c for c in checks if c in keep_always or c in top]
+
+
 RANKING_STAGE = "상위 3곳 선정"  # 깔때기의 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다
 
 
