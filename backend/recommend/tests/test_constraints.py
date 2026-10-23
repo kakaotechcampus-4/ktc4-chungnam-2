@@ -121,13 +121,13 @@ def test_heart_signal_table_for_cafe_and_sight_follows_the_doc_681():
     """#681-3 — docs/constraints.md "♥에서 선호로 쓰는 라벨 (카페·관광지)" 표 전사. 표에 없는 키(계절 등)는 '쓴다'."""
     for category, use_keys, two_keys, unused_keys in (
         ("카페", {"bakery"}, {"quiet", "comfortable_seat", "local_flavor", "long_established"},
-         {"franchise", "spacious", "open_late"}),
+         {"franchise", "spacious", "open_late", "pet_friendly", "accessible", "vegetarian_friendly"}),
         ("관광지", {
             "mountain", "waterside", "forest", "flower_garden", "seaside", "hiking", "cycling", "hands_on",
             "exhibition", "performance", "shopping", "heritage_tour", "traditional_hanok", "modern_architecture",
             "religious_site", "hallyu_related",
         }, {"quiet", "restful", "good_view", "photogenic", "night_view", "date_spot", "local_flavor", "walkable",
-            "is_indoor", "is_outdoor"}, {"family_friendly", "kid_friendly", "accessible"}),
+            "is_indoor", "is_outdoor"}, {"family_friendly", "kid_friendly", "accessible", "pet_friendly"}),
     ):
         table = constraints.HEART_SIGNAL_BY_CATEGORY[category]
         assert {k for k, v in table.items() if v == "use"} == use_keys
@@ -146,5 +146,5 @@ def test_place_identity_key_stays_restaurant_only():
 
 
 def test_heart_signal_defaults_to_use_for_keys_outside_the_tables():
-    assert constraints.heart_signal_use("카페", "pet_friendly") == "use"
+    assert constraints.heart_signal_use("카페", "bakery_unknown_key") == "use"
     assert constraints.heart_signal_use("숙소", "quiet") == "use"

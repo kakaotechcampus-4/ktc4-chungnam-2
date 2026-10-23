@@ -675,5 +675,5 @@ recommend 소스+테스트 전부 통과(마이그레이션 파일의 `Union`/`S
 
 ## #681-3 (2026-10-24)
 
-- 카페·관광지 ♥ 표에 없는 키는 문서 규칙대로 '쓴다'가 된다: 카페의 `pet_friendly`·`accessible`·`vegetarian_friendly`(편의·접근 성격이라 '쓰지 않음'이 맞는지 확인 필요), 관광지의 `pet_friendly`. 표 정의는 `constraints.HEART_SIGNAL_BY_CATEGORY`.
+- (해결) 표에 없는 카페 `pet_friendly`·`accessible`·`vegetarian_friendly`와 관광지 `pet_friendly`는 루트 답변대로 '쓰지 않음'으로 표에 넣었다. 그 밖에 표에 없는 키는 '쓴다'다. 표 정의는 `constraints.HEART_SIGNAL_BY_CATEGORY`.
 - `is_place_identity_key`(원함이어도 required 내리기, #422)는 음식점만 센다. 카페 `bakery`·관광지 정체 키로 번지지 않게 막았다.

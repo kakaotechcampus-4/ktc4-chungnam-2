@@ -101,7 +101,10 @@ HEART_SIGNAL_BY_CATEGORY: dict[str, dict[str, HeartSignalUse]] = {
     "카페": {
         "bakery": "use",
         **{key: "two_or_more" for key in ("quiet", "comfortable_seat", "local_flavor", "long_established")},
-        **{key: "unused" for key in ("franchise", "spacious", "open_late")},
+        **{key: "unused" for key in (
+            "franchise", "spacious", "open_late",
+            "pet_friendly", "accessible", "vegetarian_friendly",   # 표에 없지만 편의·동반·접근 성격 — 루트 확인(#681)
+        )},
     },
     "관광지": {
         **{key: "use" for key in (   # 장소의 정체, 하는 일
@@ -113,7 +116,7 @@ HEART_SIGNAL_BY_CATEGORY: dict[str, dict[str, HeartSignalUse]] = {
             "quiet", "restful", "good_view", "photogenic", "night_view", "date_spot", "local_flavor",
             "walkable", "is_indoor", "is_outdoor",
         )},
-        **{key: "unused" for key in ("family_friendly", "kid_friendly", "accessible")},   # 편의, 동반, 접근
+        **{key: "unused" for key in ("family_friendly", "kid_friendly", "accessible", "pet_friendly")},   # 편의, 동반, 접근(pet_friendly는 루트 확인, #681)
     },
 }
 
