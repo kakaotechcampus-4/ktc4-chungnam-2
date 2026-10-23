@@ -101,6 +101,32 @@ def delete_by_user(db: Session, *, user_id: str, map_ids: list[str]) -> dict[str
     return counts
 
 
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#694) — from_user의 열람 기록, 모드를 바꾼 사람, 제안을 처리한 사람을 to_user로 옮긴다. 커밋은 호출자.
+    같은 제안을 둘 다 열람했으면 from_user의 열람만 지운다(to_user 쪽 viewed_at이 이긴다). 사유 원문은 다루지 않는다
+    (agent 테이블에는 원문이 없고 reaction_id만 있다). 멱등 — 옮길 게 없으면 0이고, 같은 id면 아무것도 안 한다."""
+    if from_user_id == to_user_id:
+        return {"agent_suggestion_views": 0, "agent_suggestion_views_dropped": 0, "agent_settings": 0,
+                "agent_suggestions": 0}
+    already_viewed = select(AgentSuggestionView.suggestion_id).where(AgentSuggestionView.user_id == to_user_id)
+    dropped = db.execute(
+        delete(AgentSuggestionView).where(
+            AgentSuggestionView.user_id == from_user_id, AgentSuggestionView.suggestion_id.in_(already_viewed)
+        )
+    ).rowcount
+    views = db.execute(
+        update(AgentSuggestionView).where(AgentSuggestionView.user_id == from_user_id).values(user_id=to_user_id)
+    ).rowcount
+    settings = db.execute(
+        update(AgentSettings).where(AgentSettings.updated_by == from_user_id).values(updated_by=to_user_id)
+    ).rowcount
+    suggestions = db.execute(
+        update(AgentSuggestion).where(AgentSuggestion.resolved_by == from_user_id).values(resolved_by=to_user_id)
+    ).rowcount
+    return {"agent_suggestion_views": views, "agent_suggestion_views_dropped": dropped, "agent_settings": settings,
+            "agent_suggestions": suggestions}
+
+
 # ---------------------------------------------------------------- 지도 고르기와 lease (12.2, 12.5)
 
 class Claim(NamedTuple):
