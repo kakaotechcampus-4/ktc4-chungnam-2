@@ -673,6 +673,11 @@ recommend 소스+테스트 전부 통과(마이그레이션 파일의 `Union`/`S
 
 - llm 프롬프트에 카페 예시 있음: `llm/prompts.py:42` serves_alcohol 설명의 "카페인데 맥주도 되는 곳". 이번 PR에서는 건드리지 않았다.
 
+## #681-3 (2026-10-24)
+
+- (해결) 표에 없는 카페 `pet_friendly`·`accessible`·`vegetarian_friendly`와 관광지 `pet_friendly`는 루트 답변대로 '쓰지 않음'으로 표에 넣었다. 그 밖에 표에 없는 키는 '쓴다'다. 표 정의는 `constraints.HEART_SIGNAL_BY_CATEGORY`.
+- `is_place_identity_key`(원함이어도 required 내리기, #422)는 음식점만 센다. 카페 `bakery`·관광지 정체 키로 번지지 않게 막았다.
+
 ## #681-4·#681-12 (2026-10-24)
 
 - **#681-4 (구현함)**: 카드 checks는 hard + 🚫 사유로 낸 soft 키는 모름·거짓도 그대로, 나머지 선호(soft)는 충족한(known+passed) 것만 점수 기여 큰 순 최대 5줄(`core.limit_preference_checks`). 점수·집계·이유 입력은 전체 체크 그대로다.
