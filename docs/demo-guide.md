@@ -14,9 +14,9 @@
 
 시작 전에 아래가 다 있는지 확인하세요.
 
-- [ ] **프로그램 4개**가 설치되어 있다: Docker Desktop, Python 3.10 이상, Node.js 20 이상, Git
+- [ ] **프로그램 4개**가 설치되어 있다: Docker Desktop, Python 3.12(3.10~3.12. 3.13 이상은 서버 부품 설치가 실패한다), Node.js 20 이상, Git
 - [ ] **저장소**를 받아 두었다 (`git clone` 한 폴더)
-- [ ] **데이터 폴더** `식당카페_라벨_2026-10-02` (안에 `restaurant_seoul_curated.csv`, `cafe_seoul_curated.csv` 등이 있다 — 저장소 밖에 둔다)
+- [ ] **데이터 폴더** `식당카페_라벨_2026-10-02`(10/2 납품), `음식점_1013`·`카페_1013`·`관광지_1013`(10/13 납품) — 저장소 밖에 둔다
 - [ ] **키 3종**을 갖고 있다
   - 카카오 **REST API 키** (로그인 + 장소 검색용)
   - 카카오 **JavaScript 키** (지도 그리기용)
@@ -88,15 +88,11 @@ docker compose up -d
 ```bash
 python -m alembic upgrade head
 ```
-> 마지막에 `Running upgrade ... 0020_evidence_wants` 같은 글이 나오면 성공입니다.
+> 빨간 `Error`나 `Traceback` 없이 끝나면 성공입니다.
 
-**⑤ 가게 데이터 넣기** (약 5분, **딱 한 번**만. 아래 `<데이터폴더>` 는 실제 폴더 경로로 바꿉니다)
-```bash
-python -m places.load restaurants --file "<데이터폴더>/restaurant_seoul_curated.csv" --labels "<데이터폴더>/restaurant_seoul_curated_labels.json"
-python -m places.load cafes --file "<데이터폴더>/cafe_seoul_curated.csv" --labels "<데이터폴더>/cafe_seoul_curated_labels.csv"
-```
-> ✅ 성공하면 `DB: 신규 11843` (음식점), `DB: 신규 533` (카페) 같은 줄이 나옵니다. 좌표가 없는 가게는 자동으로 건너뛰니 숫자가 데이터 파일보다 조금 적은 게 정상입니다.
-> 💡 먼저 연습으로 해보고 싶으면 명령 맨 끝에 `--dry-run` 을 붙이세요. 실제로는 넣지 않고 결과만 보여 줍니다.
+**⑤ 가게 데이터 넣기** (약 5분, **딱 한 번**만)
+
+`docs/team-setup-guide.md` **5-4**의 명령을 그대로 따릅니다. 넣는 순서와 `--authoritative`가 틀리면 AI 추천 후보가 줄어들어서, 명령은 그 문서 한 곳에만 적어 둡니다.
 
 ### 2-3. 프론트(화면) 설정
 

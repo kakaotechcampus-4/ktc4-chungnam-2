@@ -27,6 +27,36 @@ def test_kakao_category_search_parses_and_sends_key_in_header():
     assert "REST-KEY" not in str(req.url)   # 키는 URL에 안 실린다
 
 
+def test_kakao_tourist_category_searches_attractions_and_culture_facilities_and_merges_by_distance():
+    far = {**KAKAO_DOC, "id": "AT-far", "category_group_code": "AT4", "x": "127.0600", "y": "37.5500"}
+    near_culture = {**KAKAO_DOC, "id": "CT-near", "category_group_code": "CT1", "x": "127.0502", "y": "37.5401"}
+    dup = {**far, "category_group_code": "AT4"}   # 같은 id가 두 코드에 나오면 한 번만
+
+    def handler(request):
+        code = request.url.params["category_group_code"]
+        return httpx.Response(200, json={"documents": [far, dup] if code == "AT4" else [near_culture, dup], "meta": {"is_end": True}})
+
+    http, _, seen = make_http(handler)
+    found = KakaoPlaceSource(http, "k").search_nearby(category="관광지", lat=37.54, lng=127.05, radius_m=800)
+    assert [r.url.params["category_group_code"] for r in seen] == ["AT4", "CT1"]
+    assert [p.source_id for p in found] == ["CT-near", "AT-far"]            # 가까운 순으로 합쳐진다
+    assert {p.source_id: p.category for p in found} == {"CT-near": "관광지", "AT-far": "관광지"}
+    assert all(r.url.params["radius"] == "800" for r in seen)               # 반경 제한은 그대로
+
+
+def test_kakao_tourist_search_keeps_attractions_when_culture_call_fails():
+    replies = iter([httpx.Response(200, json={"documents": [KAKAO_DOC], "meta": {"is_end": True}}), httpx.Response(500)])
+    http, _, _ = make_http(lambda r: next(replies))
+    found = KakaoPlaceSource(http, "k").search_nearby(category="관광지", lat=37.54, lng=127.05, radius_m=500)
+    assert [p.source_id for p in found] == ["111"]
+
+
+def test_kakao_tourist_search_first_code_failure_still_raises_for_fallback():
+    http, _, _ = make_http(lambda r: httpx.Response(500))
+    with pytest.raises(SourceError):
+        KakaoPlaceSource(http, "k").search_nearby(category="관광지", lat=1, lng=2, radius_m=500)
+
+
 def test_kakao_clamps_radius_and_pages_until_end():
     pages = iter([{"documents": [KAKAO_DOC], "meta": {"is_end": False}},
                   {"documents": [{**KAKAO_DOC, "id": "222"}], "meta": {"is_end": False}}])

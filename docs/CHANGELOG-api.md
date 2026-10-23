@@ -2,6 +2,30 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-24 (다섯 번째), 에이전트 문장은 조각 목록으로 (#717), 호환이 깨짐
+
+- `AgentAdviceLine.text`를 없애고 `segments`(조각 목록)를 둔다. 조각은 `{ kind: text | quote | pin, text, reaction_id?, pin_id? }`(`AdviceSegment`). `AgentSuggestion.advice`, `RunAdvice.advice`, `agent.suggested` 이벤트 페이로드가 모두 바뀐다.
+- 이유(멘토 리뷰 #680): 전에는 구성원 사유 글이 에이전트 문장 안에 통째로 섞여 내려갔고, 서버가 검증한 인용 범위보다 많은 글이 화면에 나갔다. 이제 `quote` 조각은 서버가 검증한 범위만 담고, 구성원 글은 데이터로 따로 내린다.
+- FE: 에이전트 화면(#516, #536, #589)을 만들 때 조각을 차례로 이어 그린다. `text`는 에이전트 문장, `quote`는 구성원 의견(인용 모양, 이름 없음), `pin`은 핀 이름 모양. 추천 막힘 조언(`RunAdvice`)은 `text` 조각만 나온다. 아직 이 응답을 쓰는 화면이 없어 고칠 코드는 없다. 목 서버와 타입이 바뀌었다.
+
+## 2026-10-24 (네 번째), EvidenceLine.enforced — 걸러지지 않는 줄 구분 (#720)
+
+`EvidenceLine`에 선택 필드 `enforced: boolean`을 더했다. **후보를 거르거나 점수 매기는 데 실제로 쓰이는 줄인가**다 — `fact_key`가 있으면 true, 키 없는 줄("땅콩 알레르기가 있어서 못 먹어요"처럼 모델이 라벨로 옮기지 못한 사유)은 false. 없으면 true로 본다(구버전 서버 호환).
+
+- **이유**: 키 없는 `required` 줄이 「꼭 지켜야 하는 조건」으로 보여서 걸러질 것처럼 읽힌다(QA 2026-10-24). 서버는 알레르기를 걸러 주지 않는다(#425).
+- **FE 할 일**: `enforced=false`인 줄은 「꼭 지켜야 하는」 묶음에서 빼고 「걸러지지 않아요. 가게에 직접 확인해 주세요」처럼 따로 보여 준다. 목 서버가 같은 규칙이다(키 없는 줄은 false).
+
+## 2026-10-24 (세 번째), 추천 후보는 정예만 (#681-1, API 응답 구조 변화 없음)
+
+`places.can_recommend` 규칙을 바꿨다: 정예 장소만 true, 그 밖(인허가 커버리지 등)은 false(라벨 수 임계 폐기, `docs/data-model.md`·`docs/constraints.md`). 응답 스키마는 그대로이고 추천 후보 풀만 줄어든다 — 깔때기 「추천 가능 아님 제거」의 `removed_count`가 커진다. FE 할 일 없음.
+
+## 2026-10-24 (두 번째), 「+」 직접 추가는 선호로, 요청당 5줄과 run당 10줄 (#707)
+
+- `PATCH /runs/{runId}/evidence`의 `add`에 `maxItems: 5`가 생겼다. 넘으면 422 `VALIDATION_ERROR`.
+- run 하나에 직접 추가한 줄은 10줄까지다(×로 뺀 줄도 센다). 넘으면 409 `EVIDENCE_LIMIT`, `detail`에 `{ limit, used }`(errors.md에 새 코드).
+- 「+」로 추가한 줄의 `badge`가 `reference`에서 `preferred`로 바뀐다(recommend 구현 뒤). 순위 점수에 반영되고 후보는 거르지 않는다. v1 서버는 `reference`를 더 이상 만들지 않는다(enum 값은 남는다).
+- FE: 「+」 입력은 한 번에 5줄까지 받고, run에서 10줄을 채우면 「+」를 끄고 "직접 추가는 10개까지예요"를 보여 준다. 409 `EVIDENCE_LIMIT`도 같은 문구다. 배지로 구역을 나누므로 직접 추가한 줄은 "가능하면 맞춰주세요"로 옮겨 보인다. 목 서버가 같은 동작을 한다.
+
 ## 2026-10-21 (네 번째), CourseLeg에 mode(walk|transit) 추가 (#334) — (#580 결정 전 — 브랜치 초안)
 
 - **`CourseLeg.mode`(필수)가 늘었다**: `walk`(도보) 또는 `transit`(대중교통). 서버가 직선거리로 정한다 — 2km 이하는 `walk`, 넘으면 `transit`(초안 규칙, 서버 상수). `approx_minutes`는 이제 **mode 기준 분**이다: `walk`면 도보 분, `transit`이면 대중교통 약 분(거리 ÷ 약 20km/h + 대기·환승 10분의 거친 추정이라 시간표가 아니다).

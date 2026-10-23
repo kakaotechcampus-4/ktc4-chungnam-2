@@ -39,8 +39,21 @@ ConflictType = Literal["same_axis", "different_axes", "unclear"]
 RunAdviceKind = Literal["radius", "soft_relax", "vague_reason", "exhausted"]
 
 
-class AgentAdviceLine(BaseModel):
+class AdviceSegment(BaseModel):
+    """문장 조각(#717). text는 에이전트 문장, quote는 구성원 사유 글 중 검증한 범위만, pin은 핀 이름. 스펙의 reaction_id와
+    pin_id는 null을 받지 않아서 채우지 않은 키는 직렬화에서 뺀다(AgentActionParams와 같은 방식)."""
+    kind: Literal["text", "quote", "pin"]
     text: str = Field(max_length=300)
+    reaction_id: str | None = None   # kind=quote일 때만
+    pin_id: str | None = None        # kind=pin일 때만
+
+    @model_serializer(mode="wrap")
+    def _drop_unset(self, handler):
+        return {k: v for k, v in handler(self).items() if v is not None}
+
+
+class AgentAdviceLine(BaseModel):
+    segments: list[AdviceSegment] = Field(min_length=1)
     is_guess: bool  # false=확인된 것, true=AI 조언(추정)
 
 

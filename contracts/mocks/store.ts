@@ -91,6 +91,7 @@ export interface StoreState {
   pins: Record<string, Pin>; // pinId -> pin
   reactions: Record<string, Reaction[]>; // pinId -> reactions
   evidenceLines: Record<string, EvidenceLine[]>; // runId -> lines
+  manualEvidenceCount: Record<string, number>; // runId -> 「+」로 추가한 줄 수(뺀 줄 포함, #707)
   regions: Record<string, Region[]>; // runId -> regions
   runs: Record<string, RecommendRun>; // runId -> run
   runRequestedBy: Record<string, string>; // runId -> user_id (run 요청자 기록)
@@ -120,6 +121,7 @@ function emptyState(): StoreState {
     pins: {},
     reactions: {},
     evidenceLines: {},
+    manualEvidenceCount: {},
     regions: {},
     runs: {},
     runRequestedBy: {},

@@ -15,21 +15,41 @@ from places.tests.test_fallback import FakeSource, place
 
 # ---- 카카오 keyword ----
 
-def test_kakao_name_search_with_coords_sorts_by_distance():
+def test_kakao_name_search_with_coords_sorts_by_accuracy_without_radius():
     http, _, seen = make_http(json_response({"documents": [KAKAO_DOC], "meta": {}}))
     found = KakaoPlaceSource(http, "KEY").search_by_name(query="칼국수", lat=37.5, lng=127.0, limit=10)
     p = seen[0].url.params
     assert seen[0].url.path.endswith("/keyword.json")
-    assert p["query"] == "칼국수" and p["sort"] == "distance" and p["x"] == "127.0" and p["y"] == "37.5"
+    assert p["query"] == "칼국수" and p["sort"] == "accuracy" and p["x"] == "127.0" and p["y"] == "37.5"
+    assert "radius" not in p   # 반경 제한은 지금처럼 없다(#351)
     assert "KEY" not in str(seen[0].url)
     assert found[0].name == "성수 칼국수" and found[0].category == "음식점"
 
 
-def test_kakao_name_search_without_coords_is_relevance_order():
+def test_kakao_name_search_without_coords_is_accuracy_order_too():
     http, _, seen = make_http(json_response({"documents": []}))
     assert KakaoPlaceSource(http, "k").search_by_name(query="a", lat=None, lng=None, limit=5) == []
     p = seen[0].url.params
-    assert "sort" not in p and "x" not in p and p["size"] == "5"
+    assert p["sort"] == "accuracy" and "x" not in p and p["size"] == "5"
+
+
+def test_name_search_keeps_the_main_landmark_first_as_kakao_ranks_it():
+    """"경복궁" — 가까운 순이면 매표소·편의시설이 앞서 본체가 빠졌다(#682). 정확도 순 응답의 순서를 그대로 둔다."""
+    docs = [
+        {**KAKAO_DOC, "id": "1", "place_name": "경복궁", "category_group_code": "AT4"},
+        {**KAKAO_DOC, "id": "2", "place_name": "경복궁 매표소", "category_group_code": "AT4"},
+        {**KAKAO_DOC, "id": "3", "place_name": "국립민속박물관", "category_group_code": "CT1"},
+    ]
+    http, _, seen = make_http(json_response({"documents": docs}))
+    found = KakaoPlaceSource(http, "k").search_by_name(query="경복궁", lat=37.5796, lng=126.9770, limit=15)
+    assert [p.name for p in found] == ["경복궁", "경복궁 매표소", "국립민속박물관"]
+    assert seen[0].url.params["sort"] == "accuracy"
+
+
+def test_kakao_culture_facility_ct1_is_a_tourist_spot():
+    http, _, _ = make_http(json_response({"documents": [{**KAKAO_DOC, "category_group_code": "CT1", "place_name": "아르코예술극장"}]}))
+    found = KakaoPlaceSource(http, "k").search_by_name(query="아르코예술극장", lat=None, lng=None, limit=5)
+    assert found[0].category == "관광지"
 
 
 def test_kakao_name_search_respects_limit_and_page_size_cap():
