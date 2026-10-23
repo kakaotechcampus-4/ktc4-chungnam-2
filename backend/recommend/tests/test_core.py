@@ -613,6 +613,37 @@ def test_reason_does_not_print_a_member_count_that_contradicts_the_label_631():
     assert "명)" not in reason
 
 
+# ---------- limit_preference_checks (#681-4) ----------
+
+def test_limit_preference_checks_shows_only_met_preferences_but_every_disqualifier_check():
+    checks = [
+        _check("is_open", passed=False),                                # hard — 거짓도 그대로
+        _check("is_crowded_large", passed=True, confidence="unknown"),  # hard — 모름도 그대로
+        _check("quiet", passed=True),                                   # soft 충족
+        _check("good_view", passed=False),                              # soft 거짓 → 뺀다
+        _check("photogenic", passed=True, confidence="unknown"),        # soft 모름 → 뺀다
+        _check("cuisine_korean", passed=False),                         # 🚫로 낸 soft 키 → 실격 조건이라 그대로
+    ]
+    shown = core.limit_preference_checks(checks, required_soft_keys={"cuisine_korean"}, weights={"quiet": 1})
+    assert [c.fact_key for c in shown] == ["is_open", "is_crowded_large", "quiet", "cuisine_korean"]
+
+
+def test_limit_preference_checks_keeps_the_top_five_by_weight_in_original_order():
+    keys = ["quiet", "good_view", "photogenic", "night_view", "date_spot", "walkable", "restful"]
+    weights = {k: w for k, w in zip(keys, [1, 3, 1, 3, 1, 3, 3])}
+    shown = core.limit_preference_checks([_check(k) for k in keys], required_soft_keys=set(), weights=weights)
+    assert {c.fact_key for c in shown} == {"good_view", "night_view", "walkable", "restful", "quiet"}
+    assert [c.fact_key for c in shown] == [k for k in keys if k in {c.fact_key for c in shown}]   # 동점은 앞선 쪽, 순서 유지
+
+
+def test_preference_weights_match_the_score_a_met_key_adds():
+    hearted = [_place(_check("quiet"), members=frozenset({"u1", "u2"}))]
+    authors = {"quiet": frozenset({"u1"})}
+    weights = core.preference_weights(hearted, {"quiet": True}, authors, {"cuisine_korean": frozenset({"u2"})})
+    assert weights == {"quiet": 3 + 1, "cuisine_korean": 3}
+    assert core.score_candidates({"p": [_check("quiet")]}, hearted, {"quiet": True}, authors) == {"p": weights["quiet"]}
+
+
 # ---------- select_top_candidates ----------
 
 def test_select_top_candidates_picks_highest_scores_first():
