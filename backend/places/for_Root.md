@@ -462,3 +462,8 @@ pingo_demo는 `alembic_version=0020_evidence_wants`다. 단계별로 `upgrade()`
 # #690 FakePlaces.get_hours (2026-10-24)
 
 `places.testing.FakePlaces`에 `get_hours`와 `hours: dict[place_id, PlaceHours]`(기본 빈 dict = 모름)를 더하고 `install()` 패치 목록에 넣었다 — recommend 쪽 테스트가 `FakePlaces().install()` 아래서 진짜 DB로 가지 않는다. 테스트는 `fake.hours[place_id] = PlaceHours(...)`로 지정한다.
+
+
+# #681 can_recommend 규칙 개정 (2026-10-24)
+
+원칙: **추천은 정예 데이터에서만 가능하다 — 정예 외 데이터는 핀을 꽂을 수 있는 최소 정보일 뿐이다.** `core.can_recommend(*, curated)`는 `curated` 값 그대로다. `KNOWN_LABEL_THRESHOLDS`·`ALWAYS_RECOMMENDABLE`(관광지 예외)·`known_label_count`·`category` 인자를 모두 지웠고, 재계산(`recompute_can_recommend`)은 라벨 집계 조인 없이 `places.curated`만 읽는다. 규칙 정본은 docs PR #711(문서는 루트가 맞춘다). 이미 적재된 DB는 `python -m places.scripts.recompute_can_recommend`(또는 다음 적재 끝의 자동 재계산)로 새 규칙에 맞춰진다 — **비정예 음식점·카페의 true가 모두 false로 바뀌어 추천 후보 풀이 정예로 좁아진다.** pingo_demo의 관광지는 전부 curated=true라 관광지 결과는 그대로이고, 앞으로 들어오는 비정예 관광지는 추천에 안 나간다.
