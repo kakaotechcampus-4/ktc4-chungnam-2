@@ -5,6 +5,8 @@
 행동(필터 순서·unknown_policy 등)은 test_flows.py가 이미 커버한다.
 """
 
+import uuid
+
 import pytest
 from sqlalchemy import func
 
@@ -288,6 +290,26 @@ def test_evidence_add_that_would_cross_the_run_limit_is_rejected_whole(app_clien
     assert _add(app_client, run_id, [f"조건 {i}" for i in range(5, 9)]).status_code == 200   # 누적 9
     assert _add(app_client, run_id, ["a", "b"]).status_code == 409                          # 9 + 2 > 10
     assert _manual_count(db_session, run_id) == 9
+
+
+def test_evidence_response_marks_enforced_by_fact_key_720(app_client, db_session):
+    """#720 — enforced는 fact_key가 있는 줄만 true다. 키 없는 required 줄(알레르기 등)과 「+」로 키 없이 남은 줄은 false."""
+    from recommend import service
+
+    run_id = _evidence_run(app_client, db_session)
+    run_uuid = uuid.UUID(run_id)
+    service.add_reaction_evidence(db_session, run_id=run_uuid, lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "한식 말고", "badge": "required", "fact_key": "cuisine_korean", "wants": False},
+        {"author_id": "user_1", "source": "reaction", "text": "새우 알레르기", "badge": "required", "fact_key": None},
+    ])
+    db_session.commit()
+    assert _add(app_client, run_id, ["그냥 분위기 좋은 곳"]).status_code == 200   # dev 플래너는 키를 안 붙인다
+
+    lines = {line["text"]: line for line in app_client.get(f"/runs/{run_id}/evidence", cookies=_auth("user_1")).json()}
+    assert lines["한식 말고"]["enforced"] is True
+    assert lines["새우 알레르기"]["enforced"] is False
+    assert lines["그냥 분위기 좋은 곳"]["enforced"] is False
+    assert all(isinstance(line["enforced"], bool) for line in lines.values())
 
 
 def test_run_not_found_is_404(app_client, db_session):

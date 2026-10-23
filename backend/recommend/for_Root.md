@@ -690,3 +690,7 @@ recommend 소스+테스트 전부 통과(마이그레이션 파일의 `Union`/`S
 - `PlaceFactsGateway`에 선택 메서드 `get_hours`를 더했다(실제 모드는 `places.api.get_hours`). 이 메서드가 없는 게이트웨이(dev·다른 모듈 테스트의 가짜)는 전부 「모름」(통과 + 확인 필요)이다.
 - 확인 필요 기준: 휴무가 아닌 요일 중 영업이 확인된 요일(hours에 구간이 있는 요일)이 하나도 없으면 `needs_check`다. 즉 행이 없는 경우뿐 아니라 `closed_days`만 있고 여행 요일이 거기 없는 경우(휴무는 아니지만 영업 여부는 모름)도 확인 필요로 둔다 — 문서 「영업 중 판정」의 `unknown` 정의를 따랐다.
 - known 통과 체크의 문구는 「여행 기간에 영업하는 날이 있음」(`PASSED_LABELS["is_open"]`)이다. 다른 문구를 원하면 알려 달라.
+
+## #720 (2026-10-24)
+
+- EvidenceLine에 `enforced`를 더했다(`fact_key is not None`, 응답에 항상 채움). 구현은 `flows._evidence_response` 한 곳이다. 스펙 PR #725가 정본이며 이견 없음.
