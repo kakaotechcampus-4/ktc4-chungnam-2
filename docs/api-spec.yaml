@@ -1934,7 +1934,7 @@ components:
       properties:
         source: { type: string, enum: [live] }
         category: { $ref: "#/components/schemas/Category", description: "음식점·카페·관광지만. 숙소·기타는 422 VALIDATION_ERROR" }
-        kakao_place_id: { type: string, maxLength: 100, description: "GET /places/search 결과의 place_id(예 kakao:1234)를 그대로. 저장이 허용된 유일한 카카오 값(#53). 같은 지도에서 같으면 409 PIN_DUPLICATE" }
+        kakao_place_id: { type: string, minLength: 1, maxLength: 100, description: "GET /places/search 결과의 place_id(예 kakao:1234)를 그대로. 저장이 허용된 유일한 카카오 값(#53). 같은 지도에서 같으면 409 PIN_DUPLICATE" }
         search_query: { type: string, minLength: 1, maxLength: 100, description: "사용자가 장소 검색창에 친 검색어(사용자 입력이라 저장 가능). 화면이 지도를 열 때마다 이 검색어로 카카오 키워드 검색을 다시 해서 kakao_place_id를 찾는다" }
         memo: { type: string, maxLength: 200, description: "선택. 핀을 찍은 사람이 남기는 한마디(예 \"여기 곱창 맛있대\"). 사용자 입력" }
 
@@ -2117,7 +2117,7 @@ components:
           items:
             type: object
             properties:
-              text: { type: string, maxLength: 140 } # EvidenceLine.text와 동일 근거
+              text: { type: string, minLength: 1, maxLength: 140, description: "앞뒤 공백을 뗀 뒤 1~140자(#716)" } # EvidenceLine.text와 동일 근거
 
     Region:
       type: object
@@ -2284,7 +2284,7 @@ components:
       type: object
       required: [map_id]
       properties:
-        map_id: { type: string, description: "권한 확인용. 저장하지 않는다" }
+        map_id: { type: string, minLength: 1, description: "권한 확인용. 저장하지 않는다" }
 
     # ---------- agent (v2 계획 보조 에이전트, docs/agent-v2.md) ----------
     AgentDiagnosis:
