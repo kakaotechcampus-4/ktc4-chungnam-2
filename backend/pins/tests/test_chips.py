@@ -26,8 +26,9 @@ def _doc_table() -> list[Row]:
     rows = []
     for line in section.splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) == 5 and re.fullmatch(r"[a-z]+_[a-z_]+", cells[0]):
-            chip_id, label, category, fact_key, wants = cells
+        # 여섯째 열(배지)은 추천 쪽 동작이라 integration/test_policy_tables.py가 본다(#731)
+        if len(cells) == 6 and re.fullmatch(r"[a-z]+_[a-z_]+", cells[0]):
+            chip_id, label, category, fact_key, wants, _badge = cells
             rows.append((chip_id, label, category, _key_or_none(fact_key), WANTS[wants]))
     return rows
 

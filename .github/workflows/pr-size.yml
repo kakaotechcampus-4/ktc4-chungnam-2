@@ -1,0 +1,35 @@
+name: pr-size
+
+# PR이 건드린 모듈 수와 파일 수를 PR 코멘트로 단다(#731, 멘토 리뷰 #680). 다시 push하면 새 코멘트를 달지 않고 같은 코멘트를 고친다.
+# 세는 규칙은 .github/scripts/pr_size.py. 필수 검사로 걸지 않는다 — 코멘트를 못 달아도 머지를 막지 않는다.
+on:
+  pull_request:
+    branches: [develop, main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  pr-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 세기
+        run: python3 .github/scripts/pr_size.py "origin/${{ github.base_ref }}" "${{ github.event.pull_request.head.sha }}" > pr-size.md
+      - name: 코멘트 달기(있으면 고치기)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- pr-size -->"))) | .id' | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@pr-size.md > /dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@pr-size.md > /dev/null
+          fi

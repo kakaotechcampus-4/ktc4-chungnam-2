@@ -16,6 +16,44 @@
 3. 착수 직후 프론트 담당자에게 그대로 전달할 요약(무엇을 개발하는지 + 엔드포인트·스키마·연결 방법)을 낸다.
 4. 구조 변경은 `docs/CHANGELOG-api.md`에 기록하고 즉시 보고한다.
 
+## 일하는 순서
+
+루트와 모든 서브 디렉토리 세션이 구현 전에 이 순서를 밟는다. 규칙 하나를 바꾸는 데 여러 모듈을 고쳐야 했던 변경을 돌아보고 정했다(멘토 리뷰 #380, #680, #731).
+
+1. 모르는 게 있으면 질문부터 한다. 코드와 문서에서 찾지 못한 것은 추측으로 채우지 않고 "못 찾음"으로 적는다.
+2. 다루는 개념이 새 것인지 기존 것인지, 그 결정을 어디서 내리는지를 먼저 적는다. 기존 개념이면 아래 "한 곳이어야 하는 것" 표의 자리를 쓴다.
+3. 더하기 전에 덜어내거나 바꿔서 풀리는지 본다. 새 파일, 테이블, 상수, 장치는 그다음이다. 결과는 PR 본문의 "새로 생긴 개념"과 "덜어낸 것"에 적는다(모듈 수와 파일 수는 PR 코멘트가 센다).
+4. 데이터 모양(스키마, 응답), 모듈 경계, 결정 위치를 바꾸는 일은 구현 전에 사람(루트)이 확인한다.
+5. 연습에서 정한 규칙. 괄호 안의 검사가 지키고, 검사의 알려진 예외 목록은 비어 가는 것이 정상이다. 새로 걸리면 예외에 넣기 전에 루트와 정한다.
+   - 모듈 세 곳 넘게 고치게 될 변경은 착수 전에 묻는다: 이 데이터는 어떤 개념에 속하는가, 원본인가 계산한 것인가, 이 결정은 어디서 한 번만 내려지는가, 자주 바뀔 것을 따로 떼어 두었는가(#380).
+   - `common`, `auth`, `authz`는 기능 모듈을 import하지 않는다. 기능 모듈이 그 셋을 부른다(`backend/pyproject.toml`의 import-linter 계약, 예외와 다시 볼 조건도 그 파일에).
+   - 조건의 세기(실격인지 선호인지, badge, 키의 hard/soft)는 한 곳에서만 정한다. 새로 판단하지 말고 그 함수를 부른다. 알러지 키 빼기(#425)가 모듈 6곳을 고치고도 충족 집계를 빠뜨린 이유다(`test_condition_strength_sites.py`, 정리는 #732).
+   - 사용자 id를 담는 열을 새로 만들면 그 모듈의 `reassign_user`를 열고 게스트 합치기 목록(`auth.service.MERGE_STEPS`)에 넣고, 탈퇴 때 지울지 정해 탈퇴 목록(`WITHDRAW_STEPS`)에 넣거나 남기는 이유를 적는다. 게스트 합치기(#560)에서 agent가 빠진 이유다(`test_user_data_lists.py`).
+   - 칩과 조건 같은 정책 표의 값은 `docs/constraints.md` 표에서만 바꾼다. 테스트는 표의 모든 행을 읽고 id나 키를 다시 적지 않는다(`test_policy_tables.py`, `pins/tests/test_chips.py`).
+   - 계약(오류 코드, 요청 본문 제약)을 바꾸는 PR은 구현과 같이 들어가거나 구현 이슈를 알려진 목록에 적는다. 「+」 상한(#707)이 구현 없이 남아 QA가 찾고(#716) 두 번 구현된 이유다(#733).
+   - 상한 같은 정책 값은 응답(오류 `detail`의 limit, 목록 응답)으로 내리고 화면에 숫자를 적지 않는다. 지도 상한을 바꿨을 때(#433) 화면에 숫자가 남은 이유다(#733).
+   - 사용자가 쓴 글(사유, 검색어)은 서버가 만든 문장 문자열에 섞지 않고 데이터 조각으로 따로 내린다(#717).
+
+## 한 곳이어야 하는 것
+
+같은 문제를 여러 방식으로 풀지 않는다. 아래 "한 곳"을 쓰고, 오른쪽처럼 보이면 의심한다. "정리 전"은 아직 한 곳이 없다는 뜻이고 지금 흩어진 곳을 적었다. 정리 이슈가 자리를 정하기 전에는 새 자리를 만들지 않는다. 구조 리뷰 스킬(`.claude/skills/structure-review`)도 이 표를 쓴다.
+
+| 문제 | 한 곳 | 이렇게 보이면 의심 |
+|---|---|---|
+| 권한·소유자 판정 | `authz` 정책 테이블 | 모듈 안의 `if user_id == ...`, 같은 판정이 정책 테이블과 `core.py` 양쪽에 |
+| 카테고리 목록·속성 | `common/categories.py`(#223 이후) | `"음식점"`·`"숙소"` 리터럴 비교, enum 재정의 |
+| 비공개 후보 / 공개 | `candidates.published_pin_id` | `visibility == "private"` 분기, 새 비공개 상태 컬럼 |
+| 동네 묶기·거리·반경 | `common/geo.py` | 모듈 안의 거리·클러스터 함수 복사 |
+| 외부 의존(LLM·장소·인증) | 그 모듈의 `api.py` + 호출 쪽 `ports.py` Gateway | 다른 모듈 `service.py`·`models.py` 직접 import, 모듈마다 다른 dev/real 선택 방식 |
+| 에러 코드 | `docs/errors.md` ↔ `common/errors.py` | 카탈로그에 없는 문자열 코드 |
+| fact_key 목록 | `docs/constraints.md` | 코드·프롬프트 안의 키 목록 복사본 |
+| 응답 필드 | `docs/api-spec.yaml` | 스펙에 없는 필드를 라우터가 반환 |
+| 계정 수명(탈퇴, 게스트 합치기) | 정리 전. `auth/service.py`의 `WITHDRAW_STEPS`와 `MERGE_STEPS`, 각 모듈 `api.py`의 `reassign_user`와 `delete_by_user` | 사용자 id 열을 새로 만들면서 두 목록을 건드리지 않음, JSONB 안에 사용자 id를 담음(`test_user_data_lists.py`가 못 봄) |
+| 모델 호출 계량 | 정리 전. 지도 하루 상한 `agent/constants.py`(세는 곳 `agent/core.py`), 코스 하루 상한과 지휘 횟수 `agent/course/constants.py`(세는 곳 `agent/course/service.py`), 호출 1회의 도구 상한 `llm/prompts.py`와 `llm/service.py`의 `_ToolBudget` | 새 모델 호출이 자기 상한 상수와 세는 쿼리를 따로 만듦 |
+| 조건의 세기(실격, 선호) | 정리 전(#732). 19곳이 `test_condition_strength_sites.py`의 목록에 있다(`recommend/flows.py`, `recommend/core.py`, `recommend/service.py`, `agent/core.py`, `agent/tools.py`). 칩의 배지는 `docs/constraints.md` 칩 표의 배지 열 | badge를 `"required"`, `"preferred"` 글자와 비교함, `SOFT_FACT_KEYS`나 `HARD_REGISTRY`를 `recommend/constraints.py` 밖에서 읽음 |
+| 사용자 글의 렌더 | 정리 전. agent 조언은 조각으로 내림(`agent/core.py`의 `render_segments`, #717). 알림 문장 `notifications/core.py`의 `compose_message`, 코스의 요청 원문 조각과 작업 기록(`agent/course`)은 아직 문장에 섞음 | 서버 문장 f-string 안에 사유, 검색어, 표시 이름 |
+| 사람과 로그인 수단 | `auth`: `users`(사람)와 `user_identities`(로그인 수단, #694) | 다른 모듈이 `is_guest`나 provider를 직접 판정함, `users`에 로그인 수단 열을 더함 |
+
 ## Git
 
 - 브랜치 분기 직전: `git checkout develop && git pull` 후 그 위에서 분기한다.
