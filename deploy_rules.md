@@ -26,11 +26,25 @@
 
 | 단계 | 언제 | 명령 | 주의 |
 |---|---|---|---|
-| 장소 적재 | 처음 한 번, 정예 납품본이나 인허가 데이터가 바뀔 때 | `python -m places.load ...` 순서 전체(`docs/team-setup-guide.md` 5-4, `docs/openapi-workflow.md`) | 정예를 먼저 `--authoritative`로, 커버리지(인허가)는 그다음. 다시 넣을 때도 순서 전체를 처음부터 한다(#507). 끝에 나오는 `[curated] 분류별 정예 / 정예 아님` 수를 확인한다 |
-| 영업시간(`place_hours`) | 영업시간 데이터를 받았을 때 | 아직 없음(#690) | 테이블은 마이그레이션 0038이 만든다. 행이 없으면 영업 여부는 "확인 필요"로 통과한다 |
-| 광고 | 광고를 넣거나 뺄 때 | `python -m ads.scripts.register --csv <경로>`, `python -m ads.scripts.deactivate <ad_id>` | `docs/ads.md`. 광고는 추천 후보 여부(`curated`)를 바꾸지 않는다 |
+| 장소 적재 | 처음 한 번, 정예DB 공유본이 새로 나왔을 때 | 아래 "장소 데이터 적재" 순서 전체 | 정예를 먼저 `--authoritative`로, 커버리지(인허가)는 그다음. 끝에 나오는 `[curated] 분류별 정예 / 정예 아님` 수를 확인한다 |
+| 영업시간(`place_hours`) | 장소 적재 뒤, 정예 라벨이 바뀌었을 때 | `python -m places.load place-hours --file <라벨 JSON>` | 장소를 먼저 넣는다(못 찾은 장소는 건수만 보고한다). 칸이 없는 장소는 행을 만들지 않고, 영업 여부는 "확인 필요"로 통과한다 |
+| 광고 | 광고를 넣거나 뺄 때 | `python -m ads.scripts.register --csv <경로>`, `python -m ads.scripts.deactivate <ad_id>` | `docs/ads.md`. 광고는 추천 후보 여부(`curated`)를 바꾸지 않는다. 장소를 새 DB에 다시 넣으면 장소 id가 바뀌므로 광고도 다시 등록한다 |
 
 추천 후보 여부는 재계산할 것이 없다. 후보 조회가 `places.curated`를 바로 읽는다(#743). 정예가 늘면 정예 적재만 하면 된다.
+
+### 장소 데이터 적재
+
+지금 데이터는 정예DB 공유본 2026-10-25판이다(서울, 그리고 v2 범위인 대전, 춘천, 광주, 대구, 부산). 폴더는 저장소 밖에 둔다. 명령은 `backend`에서 돌리고, 윈도는 먼저 `PYTHONUTF8=1`을 켠다. 공유본 안의 `README.md`가 명령의 정본이고, 아래는 그 순서를 옮긴 것이다.
+
+1. 새 공유본으로 바꿀 때는 새 DB에서 시작한다. 로더는 파일에서 빠진 장소와 라벨을 지우지 않는다(공유본 `서울/README.md` "적재만으로는 지워지지 않는 것"). 새 DB를 만들고 `python -m alembic upgrade head`를 먼저 한다.
+2. 서울 정예: `restaurants`, `cafes`, `tourapi` 순서로 `--authoritative --file <장소> --labels <라벨>`. 관광지 라벨은 JSON이 아니라 CSV다. 음식점 다음에 카페를 넣어 두 파일에 겹치는 6곳을 카페로 둔다(#507).
+3. 서울 커버리지: `permit --encoding cp949`에 인허가 파일 3개를 `--file`로 한 번에 준다. 이어서 `restaurant-labels --file permit_cover_labels.json`.
+4. 지역마다(v2): 2와 3을 `--all-regions`를 붙여 같은 순서로 한다(`restaurant-labels`에는 붙이지 않는다).
+5. 영업시간: 장소를 모두 넣은 뒤 `place-hours`. 서울은 음식점 라벨 JSON, 카페 라벨 JSON, 관광지 `tourist_seoul_closed_days.json`. 지역은 음식점, 카페, 관광지 라벨 JSON에 `--all-regions`.
+
+- 모든 명령은 `--dry-run`을 지원한다. 처음 한 명령은 dry-run으로 경로와 건수를 확인한다.
+- 기존 DB를 유지한 채 인허가만 새로 받을 때 `permit --close-missing`을 쓴다(파일에 없는 커버리지를 폐업으로 바꾼다). 지역 커버리지에 쓰면 서울 커버리지가 닫히지 않는지 먼저 `--dry-run`으로 본다. 새 DB에서는 닫을 행이 없어 쓰지 않는다.
+- 2026-10-27 로컬 실측(새 DB, 서울과 5개 지역 전부): 장소 199,211곳(정예 13,901), 라벨 약 191만 건, 영업시간 12,843곳.
 
 ## 예약 실행
 
@@ -43,7 +57,6 @@
 ## 배포 전에 정할 것
 
 - `event_log` 오래된 행 삭제: 읽기는 24시간으로 자르지만(`realtime.service.RETENTION`) 지우는 작업은 아직 없다. `created_at` 인덱스는 삭제용으로 있다. 정기 정리(`maintenance.run`)에 단계로 넣을지 정한다.
-- 영업시간 적재 명령(#690).
 - 배포 환경, 비밀 관리, 프리뷰 배포(#168).
 - 관찰 tick 엔드포인트와 예약(#535).
 - 개발 중 로컬 DB에 쌓인 카카오 좌표와 이름은 배포 전에 지운다(`docs/architecture.md`, #53). 배포 DB를 로컬 DB에서 복사하지 않는다.

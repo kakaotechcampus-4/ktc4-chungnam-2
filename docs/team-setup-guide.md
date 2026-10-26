@@ -44,10 +44,10 @@
 
 | 폴더 | 들어 있는 것 |
 |---|---|
-| `식당카페_라벨_2026-10-02` | 음식점·카페 목록과 라벨(10/2 납품) |
-| `음식점_1013`, `카페_1013`, `관광지_1013` | 음식점·카페·관광지 목록과 라벨(10/13 납품) |
+| `정예DB_서울_공유_2026-10-25` | 서울 음식점·카페·관광지 목록과 라벨, 영업시간, 인허가 가게(필수) |
+| `정예DB_타지역_공유_2026-10-25` | 대전·춘천·광주·대구·부산(선택, v2) |
 
-한쪽만 받았으면 받은 것만 넣으면 됩니다(5-4).
+예전 폴더(`식당카페_라벨_2026-10-02`, `음식점_1013` 등)는 더 쓰지 않습니다. 이 폴더로 넣으세요(5-4).
 
 ---
 
@@ -135,27 +135,35 @@ python -m alembic upgrade head
 
 > ✅ 빨간 `Error`나 `Traceback` 없이 끝나면 성공입니다. 마지막 `Running upgrade ...` 줄의 번호는 코드가 바뀔 때마다 늘어납니다.
 
-### 5-4. 가게 데이터 넣기 (약 5분)
+### 5-4. 가게 데이터 넣기 (서울 정예 약 5분)
 
-아래 `C:\경로` 부분을 **1-3에서 받은 폴더가 있는 실제 경로**로 바꾸세요(경로에 한글/공백이 있으면 따옴표로 감싼 그대로 두세요). **위에서부터 순서대로** 넣고, 받지 않은 폴더의 줄은 건너뜁니다. 파일이 다른 폴더에 들어 있으면 파일 이름으로 찾아 경로를 바꾸세요.
+첫 줄의 `C:\경로` 부분을 **1-3에서 받은 `정예DB_서울_공유_2026-10-25` 폴더가 있는 실제 경로**로 바꾸세요. 경로에 한글이나 공백이 있어도 따옴표 안에 그대로 두면 됩니다. **위에서부터 순서대로** 넣습니다.
 
 ```powershell
 $env:PYTHONUTF8=1
-# 10/2 납품본
-python -m places.load restaurants --file "C:\경로\식당카페_라벨_2026-10-02\restaurant_seoul_curated.csv" --labels "C:\경로\식당카페_라벨_2026-10-02\restaurant_seoul_curated_labels.json" --authoritative
-python -m places.load cafes --file "C:\경로\식당카페_라벨_2026-10-02\cafe_seoul_curated.csv" --labels "C:\경로\식당카페_라벨_2026-10-02\cafe_seoul_curated_labels.csv" --authoritative
-# 10/13 납품본 (음식점 → 카페 → 관광지 순서)
-python -m places.load restaurants --file "C:\경로\음식점_1013\final_restaurant_places_hotspot.csv" --labels "C:\경로\음식점_1013\seoul_restaurant_labels_hotspot.json" --authoritative
-python -m places.load cafes --file "C:\경로\카페_1013\cafe_seoul_curated.csv" --labels "C:\경로\카페_1013\cafe_seoul_curated_labels.json" --authoritative
-python -m places.load tourapi --file "C:\경로\관광지_1013\tourist_seoul_places.json" --labels "C:\경로\관광지_1013\tourist_seoul_curated_labels.csv" --authoritative
+$S = "C:\경로\정예DB_서울_공유_2026-10-25\정예DB_공유_2026-10-25\서울"
+# 1) 서울 정예: 음식점 → 카페 → 관광지 순서
+python -m places.load restaurants --authoritative --file "$S\음식점\final_restaurant_places_hotspot.csv" --labels "$S\음식점\seoul_restaurant_labels_hotspot.json"
+python -m places.load cafes --authoritative --file "$S\카페\cafe_seoul_curated.csv" --labels "$S\카페\cafe_seoul_curated_labels.json"
+python -m places.load tourapi --authoritative --file "$S\관광지\tourist_seoul_places.json" --labels "$S\관광지\tourist_seoul_curated_labels.csv"
+# 2) 영업시간과 휴무일
+python -m places.load place-hours --file "$S\음식점\seoul_restaurant_labels_hotspot.json"
+python -m places.load place-hours --file "$S\카페\cafe_seoul_curated_labels.json"
+python -m places.load place-hours --file "$S\관광지\tourist_seoul_closed_days.json"
 ```
 
 > ✅ 명령마다 `DB: 신규 ...` 줄이 나오고, 끝에 `[curated] 분류별 정예 / 정예 아님` 표가 나오면 성공입니다. 좌표가 없는 가게는 자동으로 건너뛰니 파일 행 수보다 조금 적은 게 정상입니다.
-> ❗ **`--authoritative`를 빼지 마세요.** 빼면 사람이 조사한 가게로 표시되지 않아서, 라벨이 적은 가게가 AI 추천 후보에서 빠집니다.
+> ❗ **`--authoritative`를 빼지 마세요.** 빼면 사람이 조사한 가게로 표시되지 않아서 AI 추천 후보에서 빠집니다.
 > ❗ 관광지 라벨은 `.json`이 아니라 **`.csv`** 파일을 넣습니다. json을 넣으면 라벨이 전부 건너뛰어집니다.
 > 💡 먼저 연습해 보고 싶으면 명령 맨 끝에 `--dry-run`을 붙이세요. 실제로는 넣지 않고 결과만 보여 줍니다.
-> 💡 다시 넣을 때는 **위 순서 전체를 처음부터** 하세요. 중복은 생기지 않지만, 한 줄만 다시 하면 나중 납품본의 값을 예전 값으로 덮어씁니다.
-> 💡 인허가 데이터(서울 음식점·카페 약 10만 곳)는 선택입니다. 넣으면 검색 결과 중 핀으로 찍히는 가게가 늘지만 오래 걸리고 메모리를 많이 씁니다. 넣는 법은 `docs/openapi-workflow.md` 5-1에 있습니다.
+> 💡 인허가 가게(서울 음식점·카페 약 10만 곳)는 선택입니다. 넣으면 검색에서 핀으로 찍히는 가게가 늘지만 오래 걸립니다. 다른 지역(v2)도 선택입니다. 넣는 순서는 루트의 `deploy_rules.md` "장소 데이터 적재"에 있습니다.
+
+**예전 데이터(10/2, 10/13 폴더)를 넣었던 컴퓨터라면** 위 명령 전에 데이터베이스를 새로 만드세요. 그냥 덮어 넣으면 새 데이터에서 빠진 가게가 그대로 남습니다. 내 컴퓨터의 시연 데이터(지도, 핀, 계정)도 함께 지워집니다.
+
+```powershell
+docker exec backend-db-1 psql -U pingo -d postgres -c "DROP DATABASE pingo" -c "CREATE DATABASE pingo OWNER pingo"
+python -m alembic upgrade head
+```
 
 ### 5-5. 프론트 부품 설치 (약 1~2분)
 
