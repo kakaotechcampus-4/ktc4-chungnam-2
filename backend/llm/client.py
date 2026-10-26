@@ -22,12 +22,12 @@ from openai import APITimeoutError, OpenAI
 
 from common.settings import settings
 from llm.prompts import (
-    AGENT_ADVISE_RUN_PROMPT_VERSION, AGENT_DIAGNOSE_PROMPT_VERSION, COURSE_DIRECT_PROMPT, COURSE_DIRECT_PROMPT_VERSION,
+    AGENT_DIAGNOSE_PROMPT_VERSION, COURSE_DIRECT_PROMPT, COURSE_DIRECT_PROMPT_VERSION,
     COURSE_GOALS_PROMPT, COURSE_GOALS_PROMPT_VERSION, COURSE_TURN_PROMPT, COURSE_TURN_PROMPT_VERSION,
     PLAN_EVIDENCE_PROMPT,
 )
 from llm.schemas import (
-    AgentFailureReason, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, PlanningOutput, RunAdviceOutput,
+    AgentFailureReason, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, PlanningOutput,
 )
 
 # POST /runs 요청 안에서 동기로 도는 호출이라 길게 기다리지 않는다. 재시도도 안 한다 —
@@ -249,16 +249,6 @@ def call_agent_diagnosis_turn(
     return _agent_tool_turn(
         client, messages, tools=tools, tool_choice=tool_choice, turn=turn,
         what="에이전트 진단", prompt_version=AGENT_DIAGNOSE_PROMPT_VERSION, response_format=DiagnosisOutput,
-    )
-
-
-def call_agent_advice_turn(
-    client: Any, messages: Sequence[Mapping[str, Any]], *, tools: Sequence[Mapping[str, Any]], tool_choice: str, turn: int
-) -> Any:
-    """추천 막힘 조언 대화의 한 왕복(#587). 답은 message.parsed(RunAdviceOutput)."""
-    return _agent_tool_turn(
-        client, messages, tools=tools, tool_choice=tool_choice, turn=turn,
-        what="추천 막힘 조언", prompt_version=AGENT_ADVISE_RUN_PROMPT_VERSION, response_format=RunAdviceOutput,
     )
 
 

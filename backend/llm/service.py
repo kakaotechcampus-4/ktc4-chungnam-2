@@ -1,5 +1,5 @@
 """backend/llm 비즈니스 로직 — 모델 호출 3곳(plan_evidence/label_place/rank_candidates)과 v2 에이전트 호출
-(agent_diagnose #532, agent_advise_run #587 — 맨 아래 절. 신호 순위는 #582에서 agent의 코드 규칙으로 옮겼다),
+(agent_diagnose #532 — 맨 아래 절. 신호 순위는 #582에서 agent의 코드 규칙으로 옮겼다),
 v2 동선 에이전트 턴(agent_course_turn, #334 — 맨 아래 절).
 
 ② plan_evidence는 넘겨받은 planner로 부른다 — real_evidence_planner는 Luna를 실제로 부르고(#116), 기존
@@ -21,17 +21,16 @@ from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
 
 from common.errors import AppError
 from llm.client import (
-    LlmCallError, call_agent_advice_turn, call_agent_diagnosis_turn, call_course_direct, call_course_goals, call_course_turn,
+    LlmCallError, call_agent_diagnosis_turn, call_course_direct, call_course_goals, call_course_turn,
     call_planner, get_client, metering,
 )
 from llm.prompts import (
-    ADVICE_MAX_TOOL_CALLS, ADVICE_TIME_BUDGET_SEC, AGENT_ADVISE_RUN_PROMPT, AGENT_DIAGNOSE_PROMPT, DIAGNOSIS_MAX_TOOL_CALLS,
-    DIAGNOSIS_TIME_BUDGET_SEC, DIAGNOSIS_TOOLS, RUN_ADVICE_TOOLS, STRUCTURE_REASONS_MAX_CALLS, diagnosis_tools,
-    run_advice_tools,
+    AGENT_DIAGNOSE_PROMPT, DIAGNOSIS_MAX_TOOL_CALLS, DIAGNOSIS_TIME_BUDGET_SEC, DIAGNOSIS_TOOLS, STRUCTURE_REASONS_MAX_CALLS,
+    diagnosis_tools,
 )
 from llm.schemas import (
     AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
-    FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, RankedCandidate, RunAdviceOutput,
+    FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, RankedCandidate,
 )
 
 log = logging.getLogger("pingo.llm")
@@ -292,7 +291,6 @@ class ToolCaller(Protocol):
 
 
 DiagnosisPlanner = Callable[[Mapping[str, Any], ToolCaller], DiagnosisOutput]
-AdvicePlanner = Callable[[Mapping[str, Any], ToolCaller], RunAdviceOutput]
 Clock = Callable[[], float]   # 도구 대화의 시간 예산을 재는 시계(초). 기본 time.monotonic, 테스트가 바꾼다
 
 
@@ -300,16 +298,16 @@ class ToolRunnerError(RuntimeError):
     """agent의 tool_runner가 예외를 냈다. 모델 실패가 아니라 agent 쪽 오류라 실패 결과로 바꾸지 않고 그대로 올린다
     (tool_runner의 ValueError가 스키마 실패로 잘못 분류돼 묻히지 않게 감싼다).
 
-    usage: agent_diagnose와 agent_advise_run이 올리기 전에 그때까지 쓴 사용량을 붙인다 — agent가 실패 기록(outcome=error)에
+    usage: agent_diagnose가 올리기 전에 그때까지 쓴 사용량을 붙인다 — agent가 실패 기록(outcome=error)에
     남겨 지도 상한에 센다(#677)."""
 
     usage: AgentUsage | None = None
 
 
 class _ToolBudget:
-    """호출 1회의 도구 상한(명세 10절 — 진단은 DIAGNOSIS_MAX_TOOL_CALLS, 추천 막힘 조언은 ADVICE_MAX_TOOL_CALLS). 넘는 호출과
-    허용되지 않은 도구는 tool_runner를 부르지 않고 오류를 결과로 돌려준다 — 모델은 그 결과를 보고 답을 내면 된다. 실행한
-    호출만 상한에 센다(오류로 돌려준 호출은 실행하지 않았다)."""
+    """호출 1회의 도구 상한(명세 10절, DIAGNOSIS_MAX_TOOL_CALLS). 넘는 호출과 허용되지 않은 도구는 tool_runner를 부르지 않고
+    오류를 결과로 돌려준다 — 모델은 그 결과를 보고 답을 내면 된다. 실행한 호출만 상한에 센다(오류로 돌려준 호출은 실행하지
+    않았다)."""
 
     def __init__(self, allowed: tuple[str, ...], tool_runner: ToolRunner, *, max_calls: int):
         self._allowed = allowed
@@ -378,7 +376,7 @@ def _tool_conversation(
     client: Any, *, prompt: str, payload: Mapping[str, Any], tools: list[dict], call_tool: ToolCaller, max_calls: int,
     time_budget_sec: float, turn_call: Callable[..., Any], clock: Clock = time.monotonic,
 ) -> Any:
-    """도구 호출 대화(진단과 추천 막힘 조언이 같이 쓴다). 상한을 다 썼거나, 마지막 왕복이거나, 왕복을 시작할 때 대화 시작부터
+    """도구 호출 대화(진단). 상한을 다 썼거나, 마지막 왕복이거나, 왕복을 시작할 때 대화 시작부터
     time_budget_sec가 지났으면(#677) 그 왕복은 tool_choice="none"으로 답을 받는다 — 요청은 많아야 max_calls + 1번이다. 시간은
     왕복 사이에만 보고 진행 중인 요청은 끊지 않는다. "none"인데도 도구를 부르면 실패(call_failed), 도구 인자 JSON이 깨지면
     ValueError(invalid_schema)다. 어떤 실패도 다시 묻지 않는다."""
@@ -455,59 +453,6 @@ def agent_diagnose(
             exc.usage = usage
             raise
     log.info("agent_diagnose 완료: diagnosis=%s decision=%s tools_used=%d", diagnosis, output.decision, budget.used)
-    return AgentReply(output, usage)
-
-
-# ---------- 추천 막힘 조언 (docs/agent-v2.md 9절, 10절, 11절, #587) ----------
-# 진단과 같은 길이다: 도구는 agent의 tool_runner로만, 상한은 ADVICE_MAX_TOOL_CALLS, 실패는 AgentCallFailed, 사용량은 AgentReply.
-# 도구 목록은 추천 막힘 전용 4개(RUN_ADVICE_TOOLS)이고 structure_reasons는 없다. 검증(종류별 행동, 요청자 본인 줄, 반경 상한)은
-# agent의 core가 한다.
-
-
-def fixed_advice_planner(advice_input: Mapping[str, Any], call_tool: ToolCaller) -> RunAdviceOutput:
-    """고정 응답 스텁 — 근거 줄을 한 번 읽고(도구 콜백과 call_id 경로를 통합에서 지나가게) 늘 silent로 답한다. 지어낸
-    문장이나 숫자가 화면으로 나갈 길이 없다(명세 2절 10번). silent의 kind는 쓰이지 않아 버튼이 없는 exhausted로 둔다."""
-    call_tool("get_run_evidence", {})
-    return RunAdviceOutput(decision="silent", kind="exhausted", claims=[], advice=[], actions=[])
-
-
-def _model_advice_planner(
-    client: Any, advice_input: Mapping[str, Any], call_tool: ToolCaller, *, clock: Clock = time.monotonic,
-) -> RunAdviceOutput:
-    return _tool_conversation(
-        client, prompt=AGENT_ADVISE_RUN_PROMPT, payload=advice_input, tools=run_advice_tools(),
-        call_tool=call_tool, max_calls=ADVICE_MAX_TOOL_CALLS, time_budget_sec=ADVICE_TIME_BUDGET_SEC,
-        turn_call=call_agent_advice_turn, clock=clock,
-    )
-
-
-def real_advice_planner(advice_input: Mapping[str, Any], call_tool: ToolCaller) -> RunAdviceOutput:
-    """실제 모델(gpt-6-luna, 도구 호출, reasoning_effort="none"). 설정이 비면 LlmCallError(call_failed)."""
-    return _model_advice_planner(get_client(), advice_input, call_tool)
-
-
-def agent_advise_run(
-    advice_input: Mapping[str, Any], *, tool_runner: ToolRunner, planner: AdvicePlanner
-) -> AgentReply[RunAdviceOutput]:
-    """추천 막힘 조언(명세 9절). 그 run의 요청자 한 명에게 그 run의 데이터로만 조언한다.
-
-    advice_input: agent의 core.advice_input이 만든 dict(카테고리, 결과 수, 반경 상한, 미리 읽은 깔때기 등). 모델에는 JSON
-    문자열로만 넘긴다. 구성원은 "본인"과 "다른 구성원"으로만 들어 있어야 한다(agent 책임).
-    tool_runner: 도구 실행 콜백. call_id(t1, t2 …)를 매겨 부른다. 1회당 ADVICE_MAX_TOOL_CALLS(5)회까지 실행하고, 넘는 호출은
-    LIMIT_EXCEEDED, 추천 막힘 전용 4개(RUN_ADVICE_TOOLS) 밖의 도구는 NOT_FOUND를 도구 결과로 돌려준다. 실제 planner는 대화가
-    ADVICE_TIME_BUDGET_SEC(25초)를 넘기면 다음 왕복에서 도구를 닫고 답을 받는다(#677).
-
-    결과(RunAdviceOutput 또는 AgentCallFailed)와 사용량을 함께 돌려준다. 실패는 재요청하지 않는다."""
-    budget = _ToolBudget(RUN_ADVICE_TOOLS, tool_runner, max_calls=ADVICE_MAX_TOOL_CALLS)
-    with metering() as usage:
-        try:
-            output = planner(advice_input, budget)
-        except (LlmCallError, ValueError) as exc:
-            return AgentReply(_failed("agent_advise_run", exc, f"tools_used={budget.used}"), usage)
-        except ToolRunnerError as exc:
-            exc.usage = usage
-            raise
-    log.info("agent_advise_run 완료: decision=%s kind=%s tools_used=%d", output.decision, output.kind, budget.used)
     return AgentReply(output, usage)
 
 
