@@ -48,6 +48,8 @@ def post_course(
 
 @router.get("/maps/{mapId}/courses/latest", response_model=CourseRun, responses={204: {"description": "아직 짠 코스가 없음"}})
 def get_latest_course(mapId: str = Path(...), principal: Principal = CourseForMap, db: Session = DbSession):
+    service.fail_stale_runs(db, map_id=mapId, requested_by=principal.user_id, now=datetime.now(timezone.utc))
+    db.commit()   # 오래된 진행 중 run을 끝낸 뒤에 읽는다 — 끝났는지는 서버가 정한다(#736)
     row = service.latest_run(db, map_id=mapId, requested_by=principal.user_id)
     if row is None:
         return Response(status_code=204)
@@ -57,4 +59,6 @@ def get_latest_course(mapId: str = Path(...), principal: Principal = CourseForMa
 @router.get("/course-runs/{runId}", response_model=CourseRun)
 def get_course_run(loaded=CourseToView, db: Session = DbSession):
     row, _principal = loaded
+    service.fail_stale_runs(db, run_id=row.id, now=datetime.now(timezone.utc))
+    db.commit()   # 커밋이 행을 만료시켜 아래 응답이 바뀐 값을 읽는다(#736)
     return service.to_response(db, row)

@@ -132,12 +132,20 @@ class CourseJob:
     request_text: str
 
 
-def fail_stale_runs(db: Session, *, map_id: str, requested_by: str, now: datetime) -> int:
-    """STALE_AFTER를 넘겨 진행 중으로 남은 내 run을 INTERRUPTED로 끝낸다."""
+def fail_stale_runs(
+    db: Session, *, now: datetime, map_id: Optional[str] = None, requested_by: Optional[str] = None,
+    run_id: Optional[uuid.UUID] = None,
+) -> int:
+    """STALE_AFTER를 넘겨 진행 중으로 남은 run을 INTERRUPTED로 끝낸다. 오래됐다는 판정은 여기 한 곳이다 — 요청(지도+사람)과
+    조회(run id, 또는 지도+사람)가 범위만 달리해서 부른다. 이미 끝난 run과 STALE_AFTER 안의 run은 걸리지 않는다. 커밋은 호출부."""
+    scope = [
+        col == value for col, value in (
+            (AgentCourseRun.map_id, map_id), (AgentCourseRun.requested_by, requested_by), (AgentCourseRun.id, run_id),
+        ) if value is not None
+    ]
     res = db.execute(
         update(AgentCourseRun)
-        .where(AgentCourseRun.map_id == map_id, AgentCourseRun.requested_by == requested_by,
-               AgentCourseRun.status.in_(ACTIVE_STATUSES), AgentCourseRun.created_at < now - STALE_AFTER)
+        .where(*scope, AgentCourseRun.status.in_(ACTIVE_STATUSES), AgentCourseRun.created_at < now - STALE_AFTER)
         .values(status="failed", failure_code="INTERRUPTED", finished_at=now)
     )
     return res.rowcount
