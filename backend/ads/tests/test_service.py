@@ -244,13 +244,13 @@ def test_stats_table_has_no_user_or_map_column(db_session):
     assert columns == {"ad_id", "stat_date", "served_count", "click_count"}
 
 
-def test_serving_ads_does_not_change_can_recommend_or_create_places(world):
+def test_serving_ads_does_not_change_curated_or_create_places(world):
     map_id = world.map()
-    world.ad(world.place("추천 불가 카페", can_recommend=False))
-    world.ad(world.place("추천 가능 카페", can_recommend=True))
-    before = world.db.execute(select(Place.id, Place.can_recommend).where(Place.name.like("추천%"))).all()
+    world.ad(world.place("추천 불가 카페", curated=False))
+    world.ad(world.place("추천 가능 카페", curated=True))
+    before = world.db.execute(select(Place.id, Place.curated).where(Place.name.like("추천%"))).all()
 
     list_ads(world, map_id)
 
-    after = world.db.execute(select(Place.id, Place.can_recommend).where(Place.name.like("추천%"))).all()
+    after = world.db.execute(select(Place.id, Place.curated).where(Place.name.like("추천%"))).all()
     assert sorted(after) == sorted(before)

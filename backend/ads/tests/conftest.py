@@ -105,9 +105,9 @@ class World:
 
     def place(self, name: str, *, lat: float = SEONGSU[0], lng: float = SEONGSU[1], category: str = "카페",
               status: str = "open", kakao_place_id: str | None = None, kakao_place_url: str | None = None,
-              address: str | None = "서울 성동구 성수동", can_recommend: bool = False) -> str:
+              address: str | None = "서울 성동구 성수동", curated: bool = False) -> str:
         row = Place(source="permit", source_id=f"{self.prefix}-{uuid.uuid4().hex[:8]}", name=name, category=category,
-                    address=address, geom=f"SRID=4326;POINT({lng} {lat})", status=status, can_recommend=can_recommend,
+                    address=address, geom=f"SRID=4326;POINT({lng} {lat})", status=status, curated=curated,
                     kakao_place_id=kakao_place_id, kakao_place_url=kakao_place_url)
         self.db.add(row)
         self.db.flush()

@@ -66,7 +66,7 @@ def _columns(url, table):
 
 def test_chain_has_a_single_head_and_this_revision_follows_place_hours():
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == [REVISION]
+    assert len(script.get_heads()) == 1
     assert script.get_revision(REVISION).down_revision == PREVIOUS
 
 

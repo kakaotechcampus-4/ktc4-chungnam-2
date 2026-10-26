@@ -1,4 +1,4 @@
-"""마이그레이션 0033_places_can_recommend up/down — 빈 DB에 올리고, 0032로 내렸다가 다시 올린다.
+"""마이그레이션 0040_drop_places_can_recommend up/down — 0039까지 올린 DB에서 칸을 지우고, 내리면 curated 값으로 채워 되살린다(#743).
 
 다른 테스트와 테이블을 섞지 않도록 `<PINGO_TEST_DB>_cr_mig` DB를 따로 만들고 끝나면 지운다. models.py와 어긋나지 않았는지도 본다.
 """
@@ -15,8 +15,8 @@ from places.models import Place
 from places.tests.conftest import BASE_DATABASE_URL, TEST_DB_NAME, _replace_dbname
 
 BACKEND = Path(__file__).resolve().parents[2]
-REVISION = "0033_places_can_recommend"
-PREVIOUS = "0032_feedback"
+REVISION = "0040_drop_places_can_recommend"
+PREVIOUS = "0039_user_identities"
 MIG_DB = f"{TEST_DB_NAME}_cr_mig"[:63]
 
 
@@ -52,29 +52,32 @@ def _can_recommend_column(url):
         engine.dispose()
 
 
-def test_chain_has_a_single_head_and_this_revision_follows_feedback():
+def test_chain_has_a_single_head_and_this_revision_follows_user_identities():
     script = ScriptDirectory.from_config(_config())
     assert len(script.get_heads()) == 1
     assert script.get_revision(REVISION).down_revision == PREVIOUS
 
 
-def test_upgrade_adds_not_null_default_false_column_and_downgrade_removes_it(mig_url):
+def test_upgrade_drops_the_column_and_downgrade_restores_it_from_curated(mig_url):
     cfg = _config()
     command.upgrade(cfg, PREVIOUS)
-    assert _can_recommend_column(mig_url) is None
+    assert _can_recommend_column(mig_url) is not None
     engine = sa.create_engine(mig_url)
-    with engine.begin() as conn:   # 이미 있는 행은 마이그레이션 뒤 false가 된다
-        conn.execute(sa.text("INSERT INTO places (id, source, source_id, name, category, geom, status) VALUES "
-                             "(gen_random_uuid(), 'permit', 'M1', '기존', '음식점', ST_GeogFromText('POINT(127 37.5)'), 'open')"))
+    with engine.begin() as conn:   # 옛 규칙으로 계산된 값(curated와 어긋남)이 남아 있어도 내릴 때는 curated로 채운다
+        for sid, curated, stale in (("CUR", True, False), ("PLAIN", False, True)):
+            conn.execute(sa.text(
+                "INSERT INTO places (id, source, source_id, name, category, geom, status, curated, can_recommend) VALUES "
+                "(gen_random_uuid(), 'permit', :s, :s, '음식점', ST_GeogFromText('POINT(127 37.5)'), 'open', :c, :r)"),
+                {"s": sid, "c": curated, "r": stale})
     command.upgrade(cfg, REVISION)
+    assert _can_recommend_column(mig_url) is None
+    assert "can_recommend" not in Place.__table__.c
+    command.downgrade(cfg, PREVIOUS)
     col = _can_recommend_column(mig_url)
     assert col is not None and col["nullable"] is False and "false" in str(col["default"]).lower()
-    declared = Place.__table__.c.can_recommend
-    assert declared.nullable is False and str(col["type"]) == str(declared.type.compile(engine.dialect))
     with engine.connect() as conn:
-        assert conn.execute(sa.text("SELECT can_recommend FROM places WHERE source_id='M1'")).scalar_one() is False
-    command.downgrade(cfg, PREVIOUS)
-    assert _can_recommend_column(mig_url) is None
+        rows = dict(conn.execute(sa.text("SELECT source_id, can_recommend FROM places")).all())
+    assert rows == {"CUR": True, "PLAIN": False}
     command.upgrade(cfg, REVISION)   # 다시 올라간다
-    assert _can_recommend_column(mig_url) is not None
+    assert _can_recommend_column(mig_url) is None
     engine.dispose()

@@ -89,13 +89,13 @@ def test_one_bad_row_inserts_nothing(world):
 
 
 def test_registering_does_not_touch_places(world):
-    """16번 — 광고를 등록해도 places.can_recommend가 바뀌지 않고 places 행이 늘지 않는다."""
-    off, on = world.place("추천 불가", can_recommend=False), world.place("추천 가능", can_recommend=True)
+    """16번 — 광고를 등록해도 places.curated가 바뀌지 않고 places 행이 늘지 않는다."""
+    off, on = world.place("추천 불가", curated=False), world.place("추천 가능", curated=True)
     count = world.db.execute(select(sa.func.count()).select_from(Place)).scalar_one()
 
     register.register(world.db, register.parse_csv(HEADER + csv_line(off) + csv_line(on))[0], now=NOW)
 
-    flags = dict(world.db.execute(select(Place.id, Place.can_recommend).where(Place.id.in_([off, on]))).all())
+    flags = dict(world.db.execute(select(Place.id, Place.curated).where(Place.id.in_([off, on]))).all())
     assert flags == {uuid.UUID(off): False, uuid.UUID(on): True}
     assert world.db.execute(select(sa.func.count()).select_from(Place)).scalar_one() == count
 

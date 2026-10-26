@@ -28,7 +28,7 @@ class PlaceRef:
     place_id: str
     lat: float
     lng: float
-    can_recommend: bool = True   # 추천 후보 풀에 넣어도 되는가(places.can_recommend). search_nearby_own만 실제 값을 채운다 — 기본 True라 다른 호출자는 그대로다
+    can_recommend: bool = True   # 추천 후보 풀에 넣어도 되는가(places.curated 그대로, #743). search_nearby_own만 실제 값을 채운다 — 기본 True라 다른 호출자는 그대로다
 
 
 # ---- 자체 장소 DB 공개 함수의 입출력 (docs/architecture.md "places 공개 함수 계약", #189·#190·#195) ----
