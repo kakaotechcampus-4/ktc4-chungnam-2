@@ -734,6 +734,7 @@ recommend 소스+테스트 전부 통과(마이그레이션 파일의 `Union`/`S
 ## #690 is_open (2026-10-24)
 
 - 요일 단위 휴무 판정은 `places.core.is_open_on`을 import하지 않고 `recommend.core.trip_open_status`에 같은 규칙으로 구현했다(hours의 빈 요일, `closed_days`, 전날 구간이 24:00을 넘겨 이어지는 새벽은 영업). 공개 래퍼는 필요 없다.
+- 위 복사본은 지웠다(#747): 게이트웨이가 `places.api.get_week_open_status`(요일별 상태)를 돌려주고 `trip_open_status`는 여행 요일에 모아 쓸 뿐이다. 동작 변경: `closed_days`가 있고 그 요일이 없으면 open(「확인 필요」가 줄어든다), hours의 빈 요일은 전날이 자정을 넘겨도 closed.
 - `PlaceFactsGateway`에 선택 메서드 `get_hours`를 더했다(실제 모드는 `places.api.get_hours`). 이 메서드가 없는 게이트웨이(dev·다른 모듈 테스트의 가짜)는 전부 「모름」(통과 + 확인 필요)이다.
 - 확인 필요 기준: 휴무가 아닌 요일 중 영업이 확인된 요일(hours에 구간이 있는 요일)이 하나도 없으면 `needs_check`다. 즉 행이 없는 경우뿐 아니라 `closed_days`만 있고 여행 요일이 거기 없는 경우(휴무는 아니지만 영업 여부는 모름)도 확인 필요로 둔다 — 문서 「영업 중 판정」의 `unknown` 정의를 따랐다.
 - known 통과 체크의 문구는 「여행 기간에 영업하는 날이 있음」(`PASSED_LABELS["is_open"]`)이다. 다른 문구를 원하면 알려 달라.

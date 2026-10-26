@@ -54,8 +54,9 @@ class PlaceFactsGateway(Protocol):
 
     def get_facts(self, place_ids: Sequence[str]) -> Mapping[str, Sequence[FactLabel]]: ...
 
-    # 선택(#690): `get_hours(place_ids) -> Mapping[str, PlaceHours]` — 영업시간·휴무일(places.api.get_hours). 행이 없는 장소는
-    # 키에서 빠진다(= 모름). 이 메서드가 없는 게이트웨이(dev·테스트 가짜)는 전부 모름으로 본다.
+    # 선택(#690, #747): `get_week_open_status(place_ids) -> Mapping[str, Mapping[int, str]]` — 장소별 요일 영업 판정
+    # {0=월 … 6=일: "open"|"closed"|"unknown"}(places.api.get_week_open_status). 행이 없는 장소는 키에서 빠진다(= 모름).
+    # 이 메서드가 없는 게이트웨이(dev·테스트 가짜)는 전부 모름으로 본다.
 
 
 class EvidencePlanGateway(Protocol):

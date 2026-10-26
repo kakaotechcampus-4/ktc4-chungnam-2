@@ -707,30 +707,22 @@ def test_preference_weights_match_the_score_a_met_key_adds():
 
 # ---------- 여행 기간 영업 판정 (#690) ----------
 
-def test_trip_weekday_names_follow_the_trip_days_and_cap_at_a_week():
-    assert core.trip_weekday_names(None, date(2027, 1, 3)) == []
-    assert core.trip_weekday_names(date(2027, 1, 4), date(2027, 1, 4)) == ["월"]        # 2027-01-04는 월요일
-    assert core.trip_weekday_names(date(2027, 1, 8), date(2027, 1, 11)) == ["월", "금", "토", "일"]
-    assert core.trip_weekday_names(date(2027, 1, 1), date(2027, 3, 1)) == list("월화수목금토일")
+def test_trip_weekdays_follow_the_trip_days_and_cap_at_a_week():
+    assert core.trip_weekdays(None, date(2027, 1, 3)) == []
+    assert core.trip_weekdays(date(2027, 1, 4), date(2027, 1, 4)) == [0]        # 2027-01-04는 월요일
+    assert core.trip_weekdays(date(2027, 1, 8), date(2027, 1, 11)) == [0, 4, 5, 6]
+    assert core.trip_weekdays(date(2027, 1, 1), date(2027, 3, 1)) == list(range(7))
 
 
 def test_trip_open_status_closed_only_when_every_trip_day_is_closed():
-    hours = {"월": [["11:00", "21:00"]], "화": []}
-    assert core.trip_open_status(hours, None, ["화"]) == "closed"            # hours의 빈 요일
-    assert core.trip_open_status(hours, None, ["월", "화"]) == "open"        # 일부 휴무 — 통과
-    assert core.trip_open_status(None, ["월", "화"], ["월", "화"]) == "closed"   # closed_days만
-    assert core.trip_open_status(None, ["월"], ["월", "화"]) == "unknown"    # 화요일은 영업하는지 모른다
-    assert core.trip_open_status(None, [], ["월"]) == "unknown"              # 연중무휴라도 시간은 모른다
-    assert core.trip_open_status(None, None, ["월"]) == "unknown"            # 정보 없음
-    assert core.trip_open_status(hours, None, []) == "unknown"               # 여행 날짜 없음
-
-
-def test_trip_open_status_day_after_an_overnight_span_is_not_closed():
-    hours = {"금": [["18:00", "26:00"]], "토": []}   # 금요일 밤 02시까지 — 토요일 새벽에는 영업
-    assert core.trip_open_status(hours, None, ["토"]) == "open"
-    assert core.trip_open_status({"금": [["18:00", "24:00"]], "토": []}, None, ["토"]) == "closed"
-    assert core.trip_open_status({"일": [], "월": []}, None, ["월"]) == "closed"
-    assert core.trip_open_status({"일": [["10:00", "25:00"]], "월": []}, None, ["월"]) == "open"   # 일요일의 어제는 토, 월요일의 어제는 일
+    week = {0: "open", 1: "closed", 2: "unknown", 3: "closed"}
+    assert core.trip_open_status(week, [1]) == "closed"
+    assert core.trip_open_status(week, [1, 3]) == "closed"
+    assert core.trip_open_status(week, [0, 1]) == "open"          # 일부 휴무 — 통과
+    assert core.trip_open_status(week, [1, 2]) == "unknown"       # 영업하는 요일이 확인되지 않았다
+    assert core.trip_open_status(week, [5]) == "unknown"          # 없는 요일은 모름
+    assert core.trip_open_status(None, [0]) == "unknown"          # 정보 없음
+    assert core.trip_open_status(week, []) == "unknown"           # 여행 날짜 없음
 
 
 # ---------- select_top_candidates ----------
