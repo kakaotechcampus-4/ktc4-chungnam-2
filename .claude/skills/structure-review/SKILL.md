@@ -13,24 +13,15 @@ description: PR이나 브랜치가 건드린 범위에서 "같은 문제를 여�
 
 1. 범위를 정한다: `git diff origin/develop...<대상> --name-only`. 바뀐 모듈(`backend/<module>`, `frontend`, `contracts`, `docs`)을 묶는다.
 2. 기계가 잡는 것부터 돌린다. 이미 있는 가드가 실패하면 구조 점검 전에 그것부터 보고한다.
-   `pytest integration/test_import_rules.py integration/test_spec_route_coverage.py integration/test_response_contract.py`
-3. 아래 "같은 문제를 푸는 방식" 표의 각 줄에 대해, 바뀐 파일이 **새 방식을 하나 더 만들었는지** 본다. 그냥 쓰기만 했으면 문제 아니다.
+   `lint-imports` 그리고 `pytest integration/test_import_rules.py integration/test_spec_route_coverage.py integration/test_response_contract.py integration/test_user_data_lists.py integration/test_policy_tables.py integration/test_condition_strength_sites.py`(backend에서)
+3. "한 곳이어야 하는 것" 표의 각 줄에 대해, 바뀐 파일이 **새 방식을 하나 더 만들었는지** 본다. 그냥 쓰기만 했으면 문제 아니다.
 4. 찾은 것마다 근거(파일:줄), 기존 방식이 어디 있는지, 합치면 무엇이 줄어드는지를 쓴다. 확인 못 한 건 "불확실"로 표시한다.
 5. 건드린 모듈과 그 사이 호출 방향을 mermaid로 그린다(아래 형식).
 6. 결과를 사용자에게 보여 준다. PR 코멘트는 사용자가 요청할 때만 `gh pr comment`로 단다.
 
 ## 같은 문제를 푸는 방식 (한 곳이어야 하는 것)
 
-| 문제 | 한 곳 | 이렇게 보이면 의심 |
-|---|---|---|
-| 권한·소유자 판정 | `authz` 정책 테이블 | 모듈 안의 `if user_id == ...`, 같은 판정이 정책 테이블과 `core.py` 양쪽에 |
-| 카테고리 목록·속성 | `common/categories.py`(#223 이후) | `"음식점"`·`"숙소"` 리터럴 비교, enum 재정의 |
-| 비공개 후보 / 공개 | `candidates.published_pin_id` | `visibility == "private"` 분기, 새 비공개 상태 컬럼 |
-| 동네 묶기·거리·반경 | `common/geo.py` | 모듈 안의 거리·클러스터 함수 복사 |
-| 외부 의존(LLM·장소·인증) | 그 모듈의 `api.py` + 호출 쪽 `ports.py` Gateway | 다른 모듈 `service.py`·`models.py` 직접 import, 모듈마다 다른 dev/real 선택 방식 |
-| 에러 코드 | `docs/errors.md` ↔ `common/errors.py` | 카탈로그에 없는 문자열 코드 |
-| fact_key 목록 | `docs/constraints.md` | 코드·프롬프트 안의 키 목록 복사본 |
-| 응답 필드 | `docs/api-spec.yaml` | 스펙에 없는 필드를 라우터가 반환 |
+표는 루트 `CLAUDE.md`의 "한 곳이어야 하는 것"에 있다(#731에서 옮김). "정리 전" 줄은 새 자리를 하나 더 만들었는지만 본다.
 
 찾는 방법 예: `grep -rn '"숙소"' backend --include=*.py | grep -v tests`, `grep -rn 'def .*cluster\|haversine' backend`, `grep -rn 'visibility' backend --include=*.py`.
 

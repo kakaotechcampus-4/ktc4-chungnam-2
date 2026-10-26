@@ -102,40 +102,7 @@ def test_late_and_alcohol_are_soft_keys_with_category_free_names():
     assert constraints.PASSED_LABELS["serves_alcohol"] == "술도 파는 곳"
 
 
-def test_heart_signal_table_classifies_every_restaurant_soft_key():
-    """#414 — docs/constraints.md "♥에서 선호로 쓰는 라벨 (음식점)" 표 전사. 새 음식점 soft 키는 표에도 넣는다."""
-    table = constraints.HEART_SIGNAL_BY_CATEGORY["음식점"]
-    assert set(table) == set(constraints.soft_fact_keys_for("음식점"))
-    by_use = {use: {k for k, v in table.items() if v == use} for use in ("use", "two_or_more", "unused")}
-    assert by_use["use"] == {k for k in table if k.startswith("cuisine_")} and len(by_use["use"]) == 11
-    assert by_use["two_or_more"] == {"spicy_focused", "oily_focused", "long_established", "vegetarian_friendly"}
-    assert by_use["unused"] == {
-        "franchise", "spacious", "parking_available", "pet_friendly", "wait_short",
-        "open_late", "serves_alcohol",   # #461
-    }
-    assert constraints.heart_signal_use("음식점", "cuisine_gopchang") == "use"   # 가게의 정체(#417)
-    assert constraints.HEART_SIGNAL_MIN_TRUE_PLACES == 2
-
-
-def test_heart_signal_table_for_cafe_and_sight_follows_the_doc_681():
-    """#681-3 — docs/constraints.md "♥에서 선호로 쓰는 라벨 (카페·관광지)" 표 전사. 표에 없는 키(계절 등)는 '쓴다'."""
-    for category, use_keys, two_keys, unused_keys in (
-        ("카페", {"bakery"}, {"quiet", "comfortable_seat", "local_flavor", "long_established"},
-         {"franchise", "spacious", "open_late", "pet_friendly", "accessible", "vegetarian_friendly"}),
-        ("관광지", {
-            "mountain", "waterside", "forest", "flower_garden", "seaside", "hiking", "cycling", "hands_on",
-            "exhibition", "performance", "shopping", "heritage_tour", "traditional_hanok", "modern_architecture",
-            "religious_site", "hallyu_related",
-        }, {"quiet", "restful", "good_view", "photogenic", "night_view", "date_spot", "local_flavor", "walkable",
-            "is_indoor", "is_outdoor"}, {"family_friendly", "kid_friendly", "accessible", "pet_friendly"}),
-    ):
-        table = constraints.HEART_SIGNAL_BY_CATEGORY[category]
-        assert {k for k, v in table.items() if v == "use"} == use_keys
-        assert {k for k, v in table.items() if v == "two_or_more"} == two_keys
-        assert {k for k, v in table.items() if v == "unused"} == unused_keys
-        assert set(table) <= set(constraints.soft_fact_keys_for(category))
-    for season in ("cherry_blossom", "autumn_foliage", "water_play", "winter_spot"):
-        assert constraints.heart_signal_use("관광지", season) == "use"
+# ♥ 표(#414, #681-3)가 문서와 같은지는 integration/test_policy_tables.py가 문서 표를 읽어 행마다 본다(#731).
 
 
 def test_place_identity_key_stays_restaurant_only():

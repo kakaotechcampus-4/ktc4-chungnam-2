@@ -289,24 +289,25 @@ AI 추천 대상이 아니다(2026-09-30, #145). v1에서는 숙소 핀도 만�
   - `wants`는 "이 특징이 있는 곳을 원하는가"다("사유의 방향" 절과 같은 뜻). 「좁아요」는 넓은 곳을 원하므로 `spacious`, `true`다.
 - 「갑각류 알러지가 있어요」(`food_shellfish`)는 #425에서 뺐다. 새 반응에서는 고를 수 없다(422). 이미 이 칩으로 남긴 반응이 근거 화면에 id 그대로 보이지 않게, 구현에는 뺀 칩의 이름표만 남긴다.
 - **칩의 배지 (#617, 2026-10-19).** `wants=false` 칩(「매워요」, 「느끼해요」, 「너무 붐벼요」)은 required다. 그 특징이 있는 가게만 빠진다. `wants=true` 칩(「웨이팅이 길어요」, 「좁아요」, 「시끄러워요」 둘, 「자리가 불편해요」)은 preferred다. 원함을 required로 두면 그 특징이 없는 가게가 모두 빠져, 한 가게에 대한 불평이 지도 전체 조건이 된다. 반대한 그 가게는 이미 제외 목록으로 빠지므로 "이 가게는 싫다"는 지켜진다. 예외로 「휠체어·유모차로 가기 힘들어요」(`accessible` 원함)는 required다. 취향이 아니라 필요 조건이라, 선호로 내리면 휠체어를 쓰는 사람에게 계단 있는 곳이 추천될 수 있다. 키가 없는 칩은 배지와 상관없이 효과가 없다.
-- 칩을 더하거나 바꾸는 것은 루트만 한다(이 표 + 구현의 목록을 같이 고친다). 구현의 목록은 이 표와 어긋나면 테스트가 실패한다. 칩을 더할 때는 배지 규칙(원함은 선호, 필요 조건이면 예외로 명시)도 정한다.
+- 칩을 더하거나 바꾸는 것은 루트만 한다(이 표 + 구현의 목록을 같이 고친다). 구현의 목록은 이 표와 어긋나면 테스트가 실패한다. 칩을 더할 때는 배지 열도 채운다(원함은 preferred, 필요 조건이면 required로 적고 이유를 위 문단에 남긴다).
+- 배지 열은 그 칩의 근거 줄이 추천에서 갖는 배지다(#731, 값은 #617 그대로). `(없음)`은 키가 없어 배지와 상관없이 효과가 없다는 뜻이다. 표의 모든 행이 실제 근거 조립 결과와 같은지 `backend/integration/test_policy_tables.py`가 본다.
 
-| id | label | 카테고리 | fact_key | wants |
-|---|---|---|---|---|
-| food_spicy | 매워요 | 음식점 | spicy_focused | false |
-| food_oily | 느끼해요 | 음식점 | oily_focused | false |
-| food_expensive | 비싸요 | 음식점 | (없음, #423) | (없음) |
-| food_wait | 웨이팅이 길어요 | 음식점 | wait_short | true |
-| food_cramped | 좁아요 | 음식점 | spacious | true |
-| cafe_crowded | 너무 붐벼요 | 카페 | is_crowded_large | false |
-| cafe_noisy | 시끄러워요 | 카페 | quiet | true |
-| cafe_seat | 자리가 불편해요 | 카페 | comfortable_seat | true |
-| cafe_expensive | 비싸요 | 카페 | (없음, #423) | (없음) |
-| sight_inaccessible | 휠체어·유모차로 가기 힘들어요 | 관광지 | accessible | true |
-| sight_expensive | 입장료가 비싸요 | 관광지 | (없음, #423) | (없음) |
-| sight_noisy | 시끄러워요 | 관광지 | quiet | true |
-| common_not_my_taste | 취향이 아니에요 | 공통 | (없음) | (없음) |
-| common_far | 너무 멀어요 | 공통 | (없음) | (없음) |
+| id | label | 카테고리 | fact_key | wants | 배지 |
+|---|---|---|---|---|---|
+| food_spicy | 매워요 | 음식점 | spicy_focused | false | required |
+| food_oily | 느끼해요 | 음식점 | oily_focused | false | required |
+| food_expensive | 비싸요 | 음식점 | (없음, #423) | (없음) | (없음) |
+| food_wait | 웨이팅이 길어요 | 음식점 | wait_short | true | preferred |
+| food_cramped | 좁아요 | 음식점 | spacious | true | preferred |
+| cafe_crowded | 너무 붐벼요 | 카페 | is_crowded_large | false | required |
+| cafe_noisy | 시끄러워요 | 카페 | quiet | true | preferred |
+| cafe_seat | 자리가 불편해요 | 카페 | comfortable_seat | true | preferred |
+| cafe_expensive | 비싸요 | 카페 | (없음, #423) | (없음) | (없음) |
+| sight_inaccessible | 휠체어·유모차로 가기 힘들어요 | 관광지 | accessible | true | required |
+| sight_expensive | 입장료가 비싸요 | 관광지 | (없음, #423) | (없음) | (없음) |
+| sight_noisy | 시끄러워요 | 관광지 | quiet | true | preferred |
+| common_not_my_taste | 취향이 아니에요 | 공통 | (없음) | (없음) | (없음) |
+| common_far | 너무 멀어요 | 공통 | (없음) | (없음) | (없음) |
 
 ## 실격 필터 순서에서의 적용 지점
 
@@ -356,10 +357,11 @@ AI 추천 대상이 아니다(2026-09-30, #145). v1에서는 숙소 핀도 만�
 |---|---|---|---|
 | 장소의 정체·하는 일 | 쓴다 | `bakery` | `mountain`, `waterside`, `forest`, `flower_garden`, `seaside`, `hiking`, `cycling`, `hands_on`, `exhibition`, `performance`, `shopping`, `heritage_tour`, `traditional_hanok`, `modern_architecture`, `religious_site`, `hallyu_related` |
 | 성격·공간 (취향일 수도, 우연일 수도) | 2곳 이상 | `quiet`, `comfortable_seat`, `local_flavor`, `long_established` | `quiet`, `restful`, `good_view`, `photogenic`, `night_view`, `date_spot`, `local_flavor`, `walkable`, `is_indoor`, `is_outdoor` |
-| 편의·동반·접근 (필요하면 말로 남기는 것) | 쓰지 않음 | `franchise`, `spacious`, `open_late`, `parking_available`, `pet_friendly`, `wait_short`, `accessible`, `vegetarian_friendly` | `family_friendly`, `kid_friendly`, `accessible`, `pet_friendly`, `parking_available` |
+| 편의·동반·접근 (필요하면 말로 남기는 것) | 쓰지 않음 | `franchise`, `spacious`, `open_late`, `pet_friendly`, `accessible`, `vegetarian_friendly` | `family_friendly`, `kid_friendly`, `accessible`, `pet_friendly` |
 | 계절 | 쓴다, **여행 날짜가 시즌과 겹칠 때만**(위 계절 규칙) | — | `cherry_blossom`, `autumn_foliage`, `water_play`, `winter_spot` |
 
 - '쓰지 않음'인 키도 구성원이 직접 쓴 사유(②가 구조화한 선호, 칩)에 나오면 그대로 쓴다. 빼는 것은 ♥ 핀의 라벨에서 나온 신호뿐이다. '2곳 이상'의 의미와 시작값 2는 음식점 표와 같다.
+- 표에는 그 카테고리에 등록된 키만 적는다. 처음 판(2026-10-24)에 적었던 카페 `parking_available`, `wait_short`와 관광지 `parking_available`은 그 카테고리 키가 아니라 라벨이 생기지 않으므로 뺐다(동작은 같다, #731). 표와 코드가 같은지는 `backend/integration/test_policy_tables.py`가 본다.
 - `is_crowded_large`는 hard라 선호가 아니다. 표에 없는 키는 **편의·동반·접근 성격이면 '쓰지 않음', 장소의 정체를 나타내면 '쓴다'**로 본다(2026-10-24 확정, 카페의 `pet_friendly`·`accessible`·`vegetarian_friendly`·`parking_available`·`wait_short`와 관광지의 `pet_friendly`·`parking_available`을 '쓰지 않음'으로 명시했다). 새 카페·관광지 soft 키를 등록하면 이 표에도 넣는다.
 
 ### 결과 카드에 선호 조건을 보이는 법 — 2026-10-24 결정, #681-4
