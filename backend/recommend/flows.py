@@ -436,27 +436,22 @@ class _PipelineRegion:
     anchor_points: tuple[tuple[float, float], ...]
 
 
-def _trip_weekdays(db: Session, map_id: str) -> list[str]:
-    """지도 여행 기간의 요일들(core.trip_weekday_names). 지도를 못 읽거나 날짜가 없으면 빈 목록 = 영업 판정을 안 한다."""
+def _trip_weekdays(db: Session, map_id: str) -> list[int]:
+    """지도 여행 기간의 요일들(core.trip_weekdays, 0=월 … 6=일). 지도를 못 읽거나 날짜가 없으면 빈 목록 = 영업 판정을 안 한다."""
     info = maps_api.get_map_for_agent(db, map_id)
     if info is None:
         return []
-    return core.trip_weekday_names(info["start_date"], info["end_date"])
+    return core.trip_weekdays(info["start_date"], info["end_date"])
 
 
-def _open_status_by_place(place_facts: PlaceFactsGateway, place_ids: Sequence[str], weekdays: Sequence[str]) -> dict[str, str]:
+def _open_status_by_place(place_facts: PlaceFactsGateway, place_ids: Sequence[str], weekdays: Sequence[int]) -> dict[str, str]:
     """후보마다 여행 요일 기준 영업 여부("closed" | "open" | "unknown", #690). 시간 조회가 없는 게이트웨이이거나 여행 날짜가
     없으면 전부 "unknown"이다(지금처럼 아무도 빼지 않는다). 한 번에 배치 조회(N+1 금지)."""
-    get_hours = getattr(place_facts, "get_hours", None)
-    if not weekdays or get_hours is None or not place_ids:
+    get_week_status = getattr(place_facts, "get_week_open_status", None)
+    if not weekdays or get_week_status is None or not place_ids:
         return dict.fromkeys(place_ids, "unknown")
-    hours_by_place = get_hours(list(place_ids))
-    return {
-        place_id: core.trip_open_status(
-            hours_by_place[place_id].hours, hours_by_place[place_id].closed_days, weekdays,
-        ) if place_id in hours_by_place else "unknown"
-        for place_id in place_ids
-    }
+    week_by_place = get_week_status(list(place_ids))
+    return {place_id: core.trip_open_status(week_by_place.get(place_id), weekdays) for place_id in place_ids}
 
 
 def _pipeline_inputs(

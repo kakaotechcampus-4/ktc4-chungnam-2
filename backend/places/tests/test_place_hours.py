@@ -289,3 +289,56 @@ def test_label_loading_commands_still_ignore_info(db_session, tmp_path):
     constraints = Path(__file__).resolve().parents[3] / "docs" / "constraints.md"
     load.load_restaurants(db_session, csv_path, labels=labels, constraints=constraints, exclude_bars=False)
     assert db_session.scalar(select(func.count()).select_from(PlaceHours)) == 0
+
+
+# ---- 요일 단위 판정 (#747) ----
+
+def test_day_open_status_hours_key_wins():
+    hours = _week(월=[["11:00", "21:00"]])
+    assert core.day_open_status(hours, None, 0) == "open"
+    assert core.day_open_status(hours, None, 1) == "closed"   # 빈 목록 = 휴무
+    assert core.day_open_status({"월": [["11:00", "21:00"]]}, ["월"], 0) == "open"   # hours와 closed_days가 어긋나면 hours가 이긴다
+    assert core.day_open_status(_week(), ["월"], 0) == "closed"
+
+
+def test_day_open_status_falls_back_to_closed_days():
+    assert core.day_open_status(None, ["월"], 0) == "closed"
+    assert core.day_open_status(None, ["월"], 1) == "open"
+    assert core.day_open_status({"월": []}, ["화"], 1) == "closed"   # hours에 그 요일 키가 없으면 closed_days로 넘어간다
+    assert core.day_open_status({"월": []}, ["화"], 2) == "open"
+
+
+def test_day_open_status_empty_closed_days_means_open_every_day():
+    assert [core.day_open_status(None, [], d) for d in range(7)] == ["open"] * 7
+
+
+def test_day_open_status_unknown_when_nothing_is_known():
+    assert core.week_open_status(None, None) == {d: "unknown" for d in range(7)}
+    assert core.week_open_status({}, None) == {d: "unknown" for d in range(7)}
+
+
+def test_day_open_status_rejects_bad_weekday():
+    with pytest.raises(ValueError):
+        core.day_open_status(None, None, 7)
+
+
+def test_week_open_status_ignores_yesterdays_tail_but_is_open_on_sees_it():
+    hours = _week(금=[["18:00", "26:00"]])   # 토요일은 비었다
+    assert core.week_open_status(hours, None)[5] == "closed"
+    assert core.is_open_on(hours, None, 5, _m("01:00")) == "open"
+
+
+def test_api_week_open_status_is_the_pure_rule():
+    hours = _week(수=[["09:00", "18:00"]])
+    got = api.week_open_status(hours, None)
+    assert got == {d: ("open" if d == 2 else "closed") for d in range(7)}
+
+
+def test_get_week_open_status_omits_places_without_a_row(db_session, tmp_path):
+    _seed(db_session, ("permit", "R1"), ("permit", "R2"))
+    load.load_place_hours(db_session, _write(tmp_path, [_entry("rest_R1", {"closed_days": ["월"]})]))
+    r1, r2 = _pid(db_session, "permit", "R1"), _pid(db_session, "permit", "R2")
+    got = api.get_week_open_status([r1, r2, "not-a-uuid"], db=db_session)
+    assert set(got) == {r1}
+    assert got[r1][0] == "closed" and got[r1][1] == "open"
+    assert api.get_week_open_status([], db=db_session) == {}

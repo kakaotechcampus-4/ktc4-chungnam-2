@@ -9,7 +9,7 @@ from places.matching import Candidate, name_score, normalize_name, pick_match
 from places.schemas import Area, FactLabel, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef
 from places.testing import FakePlaces, sample_id
 
-FUNCS = ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "get_facts", "get_hours")
+FUNCS = ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "get_facts", "get_hours", "get_week_open_status")
 
 
 @pytest.fixture()

@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent.course.rest_days import known_weekdays, merge_sources, parse_rest_days, parse_structured, read_hours
+from agent.course.rest_days import known_weekdays, merge_sources, parse_rest_days, read_hours
 
 
 def row(text: str) -> str:
@@ -81,34 +81,33 @@ def test_합치기는_모름을_채우고_충돌은_모름으로():
 
 
 def test_구조화_칸_없으면_모름_빈목록이면_매일_영업():
-    assert parse_structured(None) == {wd: "unknown" for wd in range(7)}
-    assert parse_structured([]) == {wd: "open" for wd in range(7)}
-    assert parse_structured(["월", "일"]) == {0: "closed", **{wd: "open" for wd in range(1, 6)}, 6: "closed"}
+    assert read_hours(None, None) == {wd: "unknown" for wd in range(7)}
+    assert read_hours([], None) == {wd: "open" for wd in range(7)}
+    assert read_hours(["월", "일"], None) == {0: "closed", **{wd: "open" for wd in range(1, 6)}, 6: "closed"}
 
 
 def test_hours는_요일별_영업_여부만_본다():
     full = {d: [["09:00", "18:00"]] for d in "월화수목금토일"}
-    assert parse_structured([], full) == {wd: "open" for wd in range(7)}
+    assert read_hours([], full) == {wd: "open" for wd in range(7)}
     # closed_days 칸이 없으면 hours만으로 판정: 빈 요일은 휴무, 시간이 있으면 영업, 요일 칸이 없으면 모름
-    got = parse_structured(None, {**full, "월": []})
+    got = read_hours(None, {**full, "월": []})
     assert got[0] == "closed" and got[1] == "open"
-    got = parse_structured(None, {"화": [["12:30", "20:00"]]})
+    got = read_hours(None, {"화": [["12:30", "20:00"]]})
     assert got[1] == "open" and got[0] == "unknown" and got[6] == "unknown"
     # closed_days만 있고 hours 칸이 없으면 closed_days를 따른다
-    assert parse_structured(["월"], {})[0] == "closed"
+    assert read_hours(["월"], {})[0] == "closed"
 
 
-def test_두_칸이_어긋나는_요일은_모름():
+def test_두_칸이_어긋나는_요일은_hours를_따른다():
     full = {d: [["09:00", "18:00"]] for d in "월화수목금토일"}
-    # 영업이라는데 시간 목록이 빔 / 휴무라는데 시간이 있음
-    got = parse_structured(["화"], {**full, "일": []})
-    assert got[6] == "unknown" and got[1] == "unknown" and got[0] == "open"
-    # 어긋나지 않는 휴무는 그대로
-    assert parse_structured(["월"], {**full, "월": []})[0] == "closed"
+    # 휴무라는데 시간이 있음 / 영업이라는데 시간 목록이 빔 — 둘 다 hours가 이긴다(places.core.day_open_status, #747)
+    got = read_hours(["화"], {**full, "일": []})
+    assert got[1] == "open" and got[6] == "closed" and got[0] == "open"
+    assert read_hours(["월"], {**full, "월": []})[0] == "closed"
 
 
 def test_자정을_넘기는_시각도_영업으로_읽는다():
-    got = parse_structured([], {"금": [["18:00", "26:00"]], "토": [["00:00", "24:00"]]})
+    got = read_hours([], {"금": [["18:00", "26:00"]], "토": [["00:00", "24:00"]]})
     assert got[4] == "open" and got[5] == "open" and got[6] == "open"
 
 

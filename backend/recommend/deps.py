@@ -24,7 +24,7 @@ from common.database import get_db_session
 from common.settings import settings
 from llm import api as llm_api
 from places import api as places_api
-from places.schemas import Area, FactLabel, PlaceHours
+from places.schemas import Area, FactLabel
 from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway, PlaceStub
 
 
@@ -93,8 +93,8 @@ class RealPlaceFactsGateway:
     def get_facts(self, place_ids: Sequence[str]) -> Mapping[str, Sequence[FactLabel]]:
         return places_api.get_facts(list(place_ids), db=self._db)
 
-    def get_hours(self, place_ids: Sequence[str]) -> Mapping[str, PlaceHours]:
-        return places_api.get_hours(list(place_ids), db=self._db)
+    def get_week_open_status(self, place_ids: Sequence[str]) -> Mapping[str, Mapping[int, str]]:
+        return places_api.get_week_open_status(list(place_ids), db=self._db)
 
 
 def _real_place_search_gateway() -> PlaceSearchGateway:

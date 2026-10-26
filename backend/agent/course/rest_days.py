@@ -10,9 +10,10 @@
 from __future__ import annotations
 
 import re
-from typing import Mapping, Optional
+from typing import Mapping, Optional, cast
 
 from agent.course.core import DayStatus
+from places import api as places_api
 
 _DAYS = "월화수목금토일"
 _ALL_UNKNOWN: dict[int, DayStatus] = {wd: "unknown" for wd in range(7)}
@@ -117,26 +118,10 @@ def merge_sources(*parsed: Mapping[int, DayStatus]) -> dict[int, DayStatus]:
     return out
 
 
-def parse_structured(closed_days: Optional[list[str]], hours: Optional[Mapping[str, list]] = None) -> dict[int, DayStatus]:
-    """구조화된 칸에서 요일별 상태를 읽는다(정예DB 2026-10-21). 시간 배정이 아니라 요일의 영업 여부만 본다.
-    - `closed_days`: 칸이 없으면(None) 모름, []이면 매일 영업, 요일 목록이면 그 요일만 휴무.
-    - `hours`: 요일 칸이 있고 시간 목록이 비면 휴무, 시간이 있으면 영업(시각 값 "26:00" 등은 읽지 않는다). 요일 칸이 없으면 모름.
-    - 두 칸이 같은 요일에서 어긋나면 그 요일은 모름이다(한쪽으로 단정하지 않는다). 한쪽만 알면 그쪽을 따른다."""
-    out: dict[int, DayStatus] = {}
-    for wd, d in enumerate(_DAYS):
-        from_closed: DayStatus = "unknown" if closed_days is None else ("closed" if d in closed_days else "open")
-        from_hours: DayStatus = "unknown"
-        if hours is not None and d in hours:
-            from_hours = "open" if hours[d] else "closed"
-        known = {v for v in (from_closed, from_hours) if v != "unknown"}
-        out[wd] = known.pop() if len(known) == 1 else "unknown"
-    return out
-
-
 def read_hours(closed_days: Optional[list[str]], hours: Optional[Mapping[str, list]], fallback_text: Optional[str] = None) -> dict[int, DayStatus]:
-    """구조화된 칸을 먼저 쓰고, `closed_days` 칸 자체가 없을 때만 글 읽기로 모르는 요일을 채운다(글과 어긋나면 모름).
-    `closed_days`가 있는데 hours와 어긋나 모름이 된 요일은 글로 되살리지 않는다."""
-    structured = parse_structured(closed_days, hours)
+    """구조화된 칸(places.api.week_open_status, hours가 closed_days보다 우선)을 먼저 쓰고, `closed_days` 칸 자체가 없을 때만 글 읽기로
+    모르는 요일을 채운다(글과 어긋나면 모름)."""
+    structured = cast(dict[int, DayStatus], places_api.week_open_status(hours, closed_days))   # 구조화된 칸의 규칙은 places가 한 곳에서 정한다(#747)
     if closed_days is not None:
         return structured
     return merge_sources(structured, parse_rest_days(fallback_text))

@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Sequence
 
 from common.geo import haversine_distance_m
-from places import matching
+from places import core, matching
 from places.matching import OWN_CATEGORIES, Candidate
 from places.schemas import Area, FactLabel, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef
 
@@ -120,6 +120,9 @@ class FakePlaces:
     def get_hours(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceHours]:
         return {pid: self.hours[pid] for pid in place_ids if pid in self.hours}   # 행 없는 장소는 키에서 뺀다 — 실제 구현과 같다
 
+    def get_week_open_status(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, dict[int, str]]:
+        return {pid: core.week_open_status(h.hours, h.closed_days) for pid, h in self.get_hours(place_ids).items()}
+
     def search_nearby_own(self, category: str, areas: Sequence[Area], *, db: Session | None = None) -> list[PlaceRef]:
         if category not in OWN_CATEGORIES:
             return []
@@ -154,6 +157,7 @@ class FakePlaces:
         from places import api
 
         for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "get_facts", "get_hours",
+                     "get_week_open_status",
                      "own_places_near", "own_places_by_kakao_id"):
             monkeypatch.setattr(api, name, getattr(self, name))
         return self
