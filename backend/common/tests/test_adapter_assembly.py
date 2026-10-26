@@ -13,7 +13,7 @@ MISSING_REAL = {
     "recommend.PlaceSearchGateway": "#14",
     "recommend.PlaceFactsGateway": "#14",
     "recommend.EvidencePlanGateway": "#116",
-    "agent.LlmGateway": "diagnose(#532, #533)와 advise_run(#587)은 real이 있다. prioritize는 #582에서 코드 규칙으로, summarize는 고정 문구라 없음(2026-10-16, #588에서 재검토)",
+    "agent.LlmGateway": "diagnose(#532, #533)는 real이 있다. advise_run은 #749에서 코드로 옮겨 포트에서 빠졌다. prioritize는 #582에서 코드 규칙으로, summarize는 고정 문구라 없음(2026-10-16, #588에서 재검토)",
 }
 # 주의: "authz.MembershipGateway"는 여기 없다(issue #89) — maps.api.DbMembershipGateway가
 # 유일한 구현이 되면서 authz/deps.py가 select()를 완전히 그만 썼다. dev 스텁도 함께 제거됐다.

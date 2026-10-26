@@ -602,21 +602,18 @@ def test_course_endpoints_match_the_openapi_spec(clients, app_client, db_session
 
 
 def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions):
-    """추천 막힘 조언(#587) — 같은 카테고리 run이 3개가 되면 대상이다. 대상이 아닌 run은 204, 남의 run은 403, 대상 run은
-    RunAdvice(200). 모델 자리의 대본은 미리 읽은 깔때기(t0)의 값으로 사실 문장 하나를 쓴다."""
-    from agent import deps as agent_deps
-    from agent.schemas import AdviceLine, RunAdviceOutput, ToolClaim
-    from llm import api as llm_api
+    """추천 막힘 조언(#587, 코드가 정한다 #749) — 같은 카테고리 run이 3개가 되면 대상이다. 대상이 아닌 run은 204, 남의 run은 403,
+    대상 run은 RunAdvice(200). 조언 종류는 깔때기 숫자로 정해지므로, 경계(recommend.api.get_run_funnel)의 결과만 바꿔
+    「이미 제안·거절됨」 12곳을 만들어 exhausted 조언이 늘 나오게 한다."""
+    from recommend import api as recommend_api
 
-    def facts_only(advice_input, call_tool):
-        passed = advice_input["funnel"]["result"]["passed"]
-        claim = ToolClaim(id="c1", kind="tool_result", call_id="t0", path="passed", value=passed)
-        line = AdviceLine(text="조건을 모두 통과한 곳은 {c1.value}곳이에요", basis=["c1"], is_guess=False)
-        return RunAdviceOutput(decision="suggest", kind="exhausted", claims=[claim], advice=[line], actions=[])
+    real_funnel = recommend_api.get_run_funnel
 
-    class Scripted(agent_deps.FixedAgentLlmGateway):
-        def advise_run(self, advice_input, *, tool_runner):
-            return llm_api.agent_advise_run(advice_input, tool_runner=tool_runner, planner=facts_only)
+    def funnel_with_many_excluded(db, *, run_id):
+        funnel = real_funnel(db, run_id=run_id)
+        return {**funnel, "funnel": [
+            {**stage, "removed_count": 12} if stage["label"] == "이미 제안·거절됨" else stage for stage in funnel["funnel"]
+        ]}
 
     a, b, problems = clients
     map_id = a.post("/maps", json={"title": "성수", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
@@ -635,12 +632,12 @@ def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions)
 
     assert a.get(f"/runs/{runs[1]}/advice").status_code == 204    # 아직 실행 전
     assert b.get(f"/runs/{runs[2]}/advice").status_code == 403
-    advice_sessions.setattr(agent_deps, "get_llm_gateway", Scripted)
+    advice_sessions.setattr(recommend_api, "get_run_funnel", funnel_with_many_excluded)
     advice = a.get(f"/runs/{runs[2]}/advice")
     assert advice.status_code == 200
     assert advice.json()["run_id"] == runs[2] and advice.json()["kind"] == "exhausted"
-    [segment] = advice.json()["advice"][0]["segments"]   # 조언은 text 조각만(#717)
-    assert segment["kind"] == "text" and segment["text"].startswith("조건을 모두 통과한 곳은 ")
+    segments = advice.json()["advice"][0]["segments"]   # 조언은 조각으로(#717), 숫자는 claim에서
+    assert all(s["kind"] == "text" for s in segments) and "12곳" in "".join(s["text"] for s in segments)
     assert a.get(f"/runs/{runs[2]}/advice").json() == advice.json()   # run당 한 번 — 다시 열어도 같다
     assert not problems, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(problems)
 

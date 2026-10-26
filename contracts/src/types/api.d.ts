@@ -2186,7 +2186,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 추천 막힘 조언 (v2, docs/agent-v2.md 9절) — 그 run을 요청한 본인만(recommend.manage). 실서버 구현 전(KNOWN_MISSING).
+         * 추천 막힘 조언 (v2, docs/agent-v2.md 9절) — 그 run을 요청한 본인만(recommend.manage). 종류, 버튼, 문장은 서버 코드가 깔때기와 근거 줄로 정한다(모델 호출 없음, #749).
          *     결과가 3곳 미만이거나 같은 카테고리 run을 3번 이상 만든 완료 run에서, 더 많이 추천받는 방법을 알려 준다(반경 넓히기, 실격 조건 확인, 애매한 사유 고치기, 후보 소진 안내).
          *     run당 한 번만 만들고 저장한다 — 같은 run을 다시 열면 같은 조언이다. 대상이 아니거나 낼 조언이 없으면 204.
          *     FE는 깔때기를 먼저 보여 준 뒤 부르고, 기다리는 동안 조언 자리만 둔다(16.5). 버튼은 widen_radius, open_evidence 두 종류뿐이다.
@@ -2211,7 +2211,7 @@ export interface paths {
                         "application/json": components["schemas"]["RunAdvice"];
                     };
                 };
-                /** @description 대상이 아니거나 낼 조언이 없음 */
+                /** @description 대상이 아니거나 낼 조언이 없음. 실패는 204가 아니다 */
                 204: {
                     headers: {
                         [name: string]: unknown;
@@ -2220,6 +2220,15 @@ export interface paths {
                 };
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
+                /** @description 조언 계산 실패(INTERNAL_ERROR, */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
             };
         };
         put?: never;
