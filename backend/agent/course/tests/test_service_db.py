@@ -235,6 +235,22 @@ def test_execute_skips_a_run_that_is_no_longer_queued(world, places):
     assert (r.status, r.failure_code) == ("failed", "INTERRUPTED") and r.days == []
 
 
+def test_late_finishing_run_does_not_overwrite_an_interrupted_one(world, places):
+    map_id, _ = confirmed_map(world, places, 3)
+    job = request(world, map_id, now=world.now - service.STALE_AFTER - timedelta(minutes=1))
+    class InterruptedMidRun:
+        def get_opening_hours(self, place_ids):         # 계산 도중 조회가 오래된 run을 끝낸다
+            with world.factory() as db:
+                assert service.fail_stale_runs(db, run_id=uuid.UUID(job.run_id), now=world.now) == 1
+                db.commit()
+            return {}
+
+    service.execute_run(job, session_factory=world.factory, llm=NO_MODEL, gateway=InterruptedMidRun())
+
+    r = row(world, job.run_id)
+    assert (r.status, r.failure_code) == ("failed", "INTERRUPTED") and r.days == [] and r.outcome is None
+
+
 def test_interrupt_unfinished_marks_queued_and_running_only(world, places):
     map_id, _ = confirmed_map(world, places, 3)
     queued = request(world, map_id)

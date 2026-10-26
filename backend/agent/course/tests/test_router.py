@@ -4,6 +4,7 @@ TestClient는 응답 뒤의 BackgroundTasks까지 끝내고 돌아오므로, POS
 """
 
 import uuid
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 
@@ -215,3 +216,62 @@ def test_stale_when_the_confirmed_list_changed_after_the_run(world, places, clie
     world.confirm(map_id, extra)
 
     assert u1.get(f"/course-runs/{run_id}").json()["stale"] is True
+
+
+# ---------------------------------------------------------------- 오래된 진행 중 run은 조회에서도 끝난다 (#736)
+
+def _db_row(world, run_id):
+    with world.factory() as db:
+        r = db.get(AgentCourseRun, uuid.UUID(run_id))
+        return r.status, r.failure_code, r.finished_at
+
+
+def _minutes_ago(world, minutes):
+    return world.now - timedelta(minutes=minutes)
+
+
+def test_get_fails_a_running_run_older_than_stale_after(world, places, client):
+    map_id, _ = confirmed_map(world, places, 3)
+    run_id = insert_run(world, map_id, status="running", created_at=_minutes_ago(world, 16))
+
+    body = client("u1").get(f"/course-runs/{run_id}").json()
+
+    assert (body["status"], body["failure_code"]) == ("failed", "INTERRUPTED") and body["finished_at"] is not None
+    status, code, finished = _db_row(world, run_id)
+    assert (status, code) == ("failed", "INTERRUPTED") and finished is not None
+
+
+def test_latest_fails_a_running_run_older_than_stale_after(world, places, client):
+    map_id, _ = confirmed_map(world, places, 3)
+    run_id = insert_run(world, map_id, status="queued", created_at=_minutes_ago(world, 16))
+
+    body = client("u1").get(f"/maps/{map_id}/courses/latest").json()
+
+    assert body["id"] == run_id and (body["status"], body["failure_code"]) == ("failed", "INTERRUPTED")
+    assert body["finished_at"] is not None
+    assert _db_row(world, run_id)[:2] == ("failed", "INTERRUPTED")
+
+
+def test_get_keeps_a_running_run_within_stale_after(world, places, client):
+    map_id, _ = confirmed_map(world, places, 3)
+    run_id = insert_run(world, map_id, status="running", created_at=_minutes_ago(world, 14))
+    u1 = client("u1")
+
+    assert u1.get(f"/course-runs/{run_id}").json()["status"] == "running"
+    assert u1.get(f"/maps/{map_id}/courses/latest").json()["status"] == "running"
+    assert _db_row(world, run_id) == ("running", None, None)
+
+
+def test_get_leaves_finished_runs_alone(world, places, client):
+    map_id, _ = confirmed_map(world, places, 3)
+    done_id = insert_run(world, map_id, status="done", created_at=_minutes_ago(world, 60))
+    failed_id = insert_run(world, map_id, status="failed", created_at=_minutes_ago(world, 30))
+    with world.factory() as db:
+        db.get(AgentCourseRun, uuid.UUID(failed_id)).failure_code = "ENGINE_ERROR"
+        db.commit()
+    u1 = client("u1")
+
+    assert u1.get(f"/course-runs/{done_id}").json()["status"] == "done"
+    assert u1.get(f"/course-runs/{failed_id}").json()["failure_code"] == "ENGINE_ERROR"
+    assert _db_row(world, done_id) == ("done", None, None)
+    assert _db_row(world, failed_id)[:2] == ("failed", "ENGINE_ERROR")
