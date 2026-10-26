@@ -1486,7 +1486,7 @@ def render_summary(
 
 # ---------------------------------------------------------------- 추천 막힘 조언 (9절, #587, #750)
 # run 요청자 한 명에게 그 run의 데이터로만 조언한다(2절 2번의 예외). 종류, 문장, 버튼을 코드가 정한다(#749 결정 — 모델 없음).
-# 절차는 llm advise-v4 프롬프트의 「종류(kind) 고르기」, 「종류별 문장과 버튼」, 「침묵이 맞는 경우」를 옮긴 것이다. 문장은 고정
+# 절차의 정본은 docs/agent-v2.md 9.1이다(advise-v4 프롬프트의 「종류(kind) 고르기」 등을 옮겼고 프롬프트는 #750에서 지웠다). 문장은 고정
 # 문구이고 숫자와 줄 이름만 claim 슬롯으로 넣는다(렌더 때 text 조각, #717). 근거 글은 절차의 입력에도 없다 — 글 안의 지시가
 # 결과를 바꿀 길이 없다. 저장에는 슬롯 문장, claim, 버튼(근거 줄은 line_id만)을 둔다 — 근거 글과 구성원은 넣지 않는다(2절 11번,
 # 13번). 조건을 끄는 것은 사람이다(가드레일 4): 버튼은 근거 확인 화면과 반경 넓히기로만 이어진다.
@@ -1652,7 +1652,7 @@ def choose_run_advice(
     run_id: str, funnel: Mapping[str, Any], lines: Sequence[Mapping[str, Any]], sims: Mapping[str, Mapping[str, Any]],
     next_factor: float | None,
 ) -> AdviceDraft:
-    """추천 막힘 조언의 종류, claim, 문장, 버튼(9절 표, advise-v4 절차). 침묵이면 EMPTY_ADVICE.
+    """추천 막힘 조언의 종류, claim, 문장, 버튼(9절 표, 9.1 절차). 침묵이면 EMPTY_ADVICE.
 
     funnel은 funnel_view, lines는 advice_evidence, sims는 call_id → simulate_view(advice_simulations가 고른 것을 돌린 결과).
     뚜렷한 단계를 많은 것부터 보고 처음 맞는 종류를 고른다.

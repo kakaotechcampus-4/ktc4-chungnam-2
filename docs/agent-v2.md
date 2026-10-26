@@ -571,15 +571,12 @@ class DiagnosisOutput(BaseModel):
 
 # SummaryOutput은 두지 않는다. 요약의 구체화 문장은 고정 문구다(8절, 2026-10-16). #588에서 모델이 필요하다고 보면 그때 정의한다
 
-class RunAdviceOutput(BaseModel):
-    decision: Literal["suggest", "silent", "unknown"]
-    kind: Literal["radius", "soft_relax", "vague_reason", "exhausted"]
-    claims: list[Claim]
-    advice: list[AdviceLine]
-    actions: list[Action]                # widen_radius, open_evidence만
+# RunAdviceOutput은 #750에서 지웠다. 추천 막힘 조언은 모델 출력이 아니라 코드가 정한다(9.1, 결정 #749)
 ```
 
 ### 11.2 검증 단계
+
+추천 막힘 조언은 모델 출력이 아니라 이 검증을 거치지 않는다(#749). 본인 줄에만 버튼을 붙이는 규칙과 고정 문장은 코드가 지키고 `agent/tests/test_advice_cases.py`(평가셋 25건)가 본다.
 
 `core.verify_*` 함수가 아래 순서로 검사한다. 단계별 통과와 실패 내역은 `agent_runs.verification`에 남긴다.
 
