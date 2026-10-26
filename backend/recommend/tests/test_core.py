@@ -942,10 +942,24 @@ def test_filter_heart_signals_counts_places_not_members():
     assert _keys(core.filter_heart_signals(hearted, "음식점")) == [[]]
 
 
-def test_filter_heart_signals_leaves_categories_without_a_table_unchanged():
-    """표가 없는 카테고리는 전부 쓴다(표에 없는 키는 '쓴다')."""
+def test_filter_heart_signals_drops_labels_outside_the_category_soft_keys_738():
+    """soft 키 표가 없는 카테고리는 ♥ 라벨을 하나도 쓰지 않는다(표에 없는 키는 기본값 없이 거른다)."""
     hearted = [_place(_check("franchise"), _check("spacious"), _check("quiet"), members=frozenset({"u1", "u2"}))]
-    assert core.filter_heart_signals(hearted, "숙소") == hearted
+    assert _keys(core.filter_heart_signals(hearted, "숙소")) == [[]]
+
+
+def test_cafe_hearts_ignore_old_and_hard_labels_but_keep_cafe_soft_keys_738():
+    """QA F-4 — 카페 핀에 남은 옛 serves_alcohol, hard 키 is_crowded_large는 ♥ 기준이 되지 않는다."""
+    hearted = [
+        _place(_check("serves_alcohol"), _check("is_crowded_large"), _check("bakery"), _check("quiet"),
+               members=frozenset({"u1"})),
+        _place(_check("serves_alcohol", passed=False), _check("quiet"), members=frozenset({"u2"})),
+    ]
+    filtered = core.filter_heart_signals(hearted, "카페")
+    criteria = core.build_preference_criteria(filtered, disqualifying_fact_keys=[], preferred_authors={})
+    assert "serves_alcohol" not in criteria
+    assert "is_crowded_large" not in criteria
+    assert criteria == {"bakery": True, "quiet": True}   # quiet는 2곳 이상이라 남는다
 
 
 def test_written_preference_for_an_unused_key_still_counts_but_hearts_do_not():

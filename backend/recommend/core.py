@@ -466,7 +466,9 @@ def filter_heart_signals(hearted_places: Sequence[HeartedPlace], category: str) 
 
     'unused' 키는 뺀다. 'two_or_more' 키는 known+참인 ♥ 핀이 `HEART_SIGNAL_MIN_TRUE_PLACES`곳 미만이면 그 키를
     참·거짓 모두 뺀다(신호가 없으면 반대 신호도 없다). 직접 쓴 선호 사유는 여기를 거치지 않는다. 걸러진 목록을
-    기준·점수·충족 집계·이유에 똑같이 넘겨야 ♥ 신호가 한 곳에서만 빠지는 일이 없다."""
+    기준·점수·충족 집계·이유에 똑같이 넘겨야 ♥ 신호가 한 곳에서만 빠지는 일이 없다.
+    그 카테고리 soft 키가 아닌 라벨(옛 라벨, hard 키)은 표를 보기 전에 참·거짓 모두 뺀다(#738)."""
+    soft_keys = set(constraints.soft_fact_keys_for(category))
     true_places: dict[str, int] = {}
     for place in hearted_places:
         for check in place.checks:
@@ -474,6 +476,8 @@ def filter_heart_signals(hearted_places: Sequence[HeartedPlace], category: str) 
                 true_places[check.fact_key] = true_places.get(check.fact_key, 0) + 1
 
     def keep(fact_key: str) -> bool:
+        if fact_key not in soft_keys:
+            return False
         use = constraints.heart_signal_use(category, fact_key)
         if use == "unused":
             return False

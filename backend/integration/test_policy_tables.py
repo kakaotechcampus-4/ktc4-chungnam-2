@@ -7,7 +7,7 @@
 
 이 테스트는 docs/constraints.md의 표를 읽어 행마다 실제 동작과 비교한다. id와 키는 여기 적지 않는다.
 - 「반대 사유 칩 (v1)」 표의 배지 열: 칩 → 근거 줄(recommend.flows) → 원함 내리기(recommend.api)를 거친 배지
-- 「♥에서 선호로 쓰는 라벨」 두 표: recommend.constraints.heart_signal_use의 결과, 양방향
+- 「♥에서 선호로 쓰는 라벨」 두 표: recommend.constraints.heart_signal_use의 결과, 양방향, 카테고리 soft 키 전부(기본값 없음, #738)
 칩 표의 나머지 열(id, label, 카테고리, fact_key, wants)은 pins/tests/test_chips.py가 본다.
 """
 
@@ -148,10 +148,14 @@ def test_heart_tables_only_use_registered_soft_keys():
     assert not unknown, f"♥ 표에 그 카테고리 soft 키가 아닌 것이 있다: {unknown}"
 
 
-def test_restaurant_heart_table_covers_every_restaurant_soft_key():
-    """문서: "새 음식점 soft 키를 등록하면 이 표에도 넣는다"(#414)."""
-    missing = sorted(set(constraints.soft_fact_keys_for("음식점")) - set(_heart_tables()["음식점"]))
-    assert not missing, f"음식점 soft 키인데 ♥ 표(음식점)에 없다: {missing}"
+def test_heart_tables_cover_every_soft_key_of_their_categories():
+    """표에 기본값은 없다(#738). 새 soft 키를 등록하면 ♥ 표에도 넣는다(#414, #681-3)."""
+    tables = _heart_tables()
+    missing = sorted(
+        f"{category} {key}" for category, keys in tables.items()
+        for key in set(constraints.soft_fact_keys_for(category)) - set(keys)
+    )
+    assert not missing, f"그 카테고리 soft 키인데 ♥ 표에 없다 — 표의 한 줄에 넣는다: {missing}"
 
 
 def test_two_or_more_threshold_matches_the_table_wording():

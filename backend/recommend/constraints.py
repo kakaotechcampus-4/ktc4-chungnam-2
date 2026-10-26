@@ -78,8 +78,8 @@ SOFT_REGISTRY: dict[str, ConstraintSpec] = {
 SOFT_FACT_KEYS: frozenset[str] = frozenset(SOFT_REGISTRY)
 
 # ♥ 핀 라벨을 선호 신호로 쓰는 방법 — docs/constraints.md "♥에서 선호로 쓰는 라벨" 표(음식점 #414, 카페·관광지 #681-3) 그대로.
-# 직접 쓴 선호 사유에는 적용하지 않는다(♥ 핀 라벨에서 나온 신호만 거른다). 표에 없는 카테고리·키는 "use"다.
-HeartSignalUse = Literal["use", "two_or_more", "unused"]
+# 직접 쓴 선호 사유에는 적용하지 않는다(♥ 핀 라벨에서 나온 신호만 거른다).
+HeartSignalUse =Literal["use", "two_or_more", "unused"]
 HEART_SIGNAL_MIN_TRUE_PLACES = 2  # '2곳 이상' — 그 라벨이 참인 ♥ 핀 수. 시작값(시험으로 조정)
 HEART_SIGNAL_BY_CATEGORY: dict[str, dict[str, HeartSignalUse]] = {
     "음식점": {
@@ -97,7 +97,6 @@ HEART_SIGNAL_BY_CATEGORY: dict[str, dict[str, HeartSignalUse]] = {
         )},
     },
     # 카페·관광지 — docs/constraints.md "♥에서 선호로 쓰는 라벨 (카페·관광지)" 표 그대로(#681-3, 2026-10-24).
-    # 계절 키(cherry_blossom 등)는 표에서 "쓴다"(여행 날짜 규칙은 #681-6)라 따로 적지 않는다 — 표에 없는 키는 "use"다.
     "카페": {
         "bakery": "use",
         **{key: "two_or_more" for key in ("quiet", "comfortable_seat", "local_flavor", "long_established")},
@@ -111,10 +110,11 @@ HEART_SIGNAL_BY_CATEGORY: dict[str, dict[str, HeartSignalUse]] = {
             "mountain", "waterside", "forest", "flower_garden", "seaside", "hiking", "cycling", "hands_on",
             "exhibition", "performance", "shopping", "heritage_tour", "traditional_hanok",
             "modern_architecture", "religious_site", "hallyu_related",
+            "cherry_blossom", "autumn_foliage", "water_play", "winter_spot",   # 계절(여행 날짜 규칙은 #681-6, 2026-10-27 표에 올림 #738)
         )},
         **{key: "two_or_more" for key in (   # 성격, 공간
             "quiet", "restful", "good_view", "photogenic", "night_view", "date_spot", "local_flavor",
-            "walkable", "is_indoor", "is_outdoor",
+            "walkable", "is_indoor", "is_outdoor", "comfortable_seat",
         )},
         **{key: "unused" for key in ("family_friendly", "kid_friendly", "accessible", "pet_friendly")},   # 편의, 동반, 접근(pet_friendly는 루트 확인, #681)
     },
@@ -122,7 +122,8 @@ HEART_SIGNAL_BY_CATEGORY: dict[str, dict[str, HeartSignalUse]] = {
 
 
 def heart_signal_use(category: str, fact_key: str) -> HeartSignalUse:
-    return HEART_SIGNAL_BY_CATEGORY.get(category, {}).get(fact_key, "use")
+    """표에 없는 (카테고리, 키)는 KeyError다 — 그 카테고리 soft 키로 거른 뒤에만 부른다(#738)."""
+    return HEART_SIGNAL_BY_CATEGORY[category][fact_key]
 
 
 # "원함이어도 required" 내리기(#422)에 쓰는 "가게의 정체" 키 — 음식점 표의 "use"만이다. 카페·관광지 표(#681-3)의 "use"는

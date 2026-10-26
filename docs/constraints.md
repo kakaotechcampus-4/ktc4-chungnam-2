@@ -347,7 +347,7 @@ AI 추천 대상이 아니다(2026-09-30, #145). v1에서는 숙소 핀도 만�
 - '쓰지 않음'인 키도 구성원이 직접 쓴 사유(②가 구조화한 선호, 칩)에 나오면 그대로 쓴다. 빼는 것은 ♥ 핀의 라벨에서 나온 신호뿐이다.
 - '2곳 이상'은 ♥가 달린 핀 중 그 라벨이 참인 곳이 2곳 이상일 때만 선호로 쓴다는 뜻이다. 매운 가게 한 곳에 ♥한 건 우연일 수 있지만 두 곳이 다 매우면 취향으로 본다. 2는 시작값이고 시험으로 조정한다.
 - 카페와 관광지는 아래 절에서 나눴다(2026-10-24).
-- 새 음식점 soft 키를 등록하면 이 표에도 넣는다. 표에 없는 음식점 키는 '쓴다'로 본다.
+- 새 음식점 soft 키를 등록하면 이 표에도 넣는다. 표에 기본값은 없다(아래 카페·관광지 표 끝의 규칙과 같다, #738).
 
 ### ♥에서 선호로 쓰는 라벨 (카페·관광지) — 2026-10-24 결정, #681-3
 
@@ -356,13 +356,14 @@ AI 추천 대상이 아니다(2026-09-30, #145). v1에서는 숙소 핀도 만�
 | 구분 | ♥ 핀에서 | 카페 | 관광지 |
 |---|---|---|---|
 | 장소의 정체·하는 일 | 쓴다 | `bakery` | `mountain`, `waterside`, `forest`, `flower_garden`, `seaside`, `hiking`, `cycling`, `hands_on`, `exhibition`, `performance`, `shopping`, `heritage_tour`, `traditional_hanok`, `modern_architecture`, `religious_site`, `hallyu_related` |
-| 성격·공간 (취향일 수도, 우연일 수도) | 2곳 이상 | `quiet`, `comfortable_seat`, `local_flavor`, `long_established` | `quiet`, `restful`, `good_view`, `photogenic`, `night_view`, `date_spot`, `local_flavor`, `walkable`, `is_indoor`, `is_outdoor` |
+| 성격·공간 (취향일 수도, 우연일 수도) | 2곳 이상 | `quiet`, `comfortable_seat`, `local_flavor`, `long_established` | `quiet`, `comfortable_seat`, `restful`, `good_view`, `photogenic`, `night_view`, `date_spot`, `local_flavor`, `walkable`, `is_indoor`, `is_outdoor` |
 | 편의·동반·접근 (필요하면 말로 남기는 것) | 쓰지 않음 | `franchise`, `spacious`, `open_late`, `pet_friendly`, `accessible`, `vegetarian_friendly` | `family_friendly`, `kid_friendly`, `accessible`, `pet_friendly` |
 | 계절 | 쓴다, **여행 날짜가 시즌과 겹칠 때만**(위 계절 규칙) | — | `cherry_blossom`, `autumn_foliage`, `water_play`, `winter_spot` |
 
 - '쓰지 않음'인 키도 구성원이 직접 쓴 사유(②가 구조화한 선호, 칩)에 나오면 그대로 쓴다. 빼는 것은 ♥ 핀의 라벨에서 나온 신호뿐이다. '2곳 이상'의 의미와 시작값 2는 음식점 표와 같다.
 - 표에는 그 카테고리에 등록된 키만 적는다. 처음 판(2026-10-24)에 적었던 카페 `parking_available`, `wait_short`와 관광지 `parking_available`은 그 카테고리 키가 아니라 라벨이 생기지 않으므로 뺐다(동작은 같다, #731). 표와 코드가 같은지는 `backend/integration/test_policy_tables.py`가 본다.
-- `is_crowded_large`는 hard라 선호가 아니다. 표에 없는 키는 **편의·동반·접근 성격이면 '쓰지 않음', 장소의 정체를 나타내면 '쓴다'**로 본다(2026-10-24 확정, 카페의 `pet_friendly`·`accessible`·`vegetarian_friendly`·`parking_available`·`wait_short`와 관광지의 `pet_friendly`·`parking_available`을 '쓰지 않음'으로 명시했다). 새 카페·관광지 soft 키를 등록하면 이 표에도 넣는다.
+- ♥ 핀의 라벨은 먼저 그 카테고리의 soft 키인지로 거른다(#738). hard 키(`is_crowded_large`)와 그 카테고리에 등록되지 않은 키(예: 카페에 쓰지 않게 된 `serves_alcohol`이 옛 카페 핀에 남은 것)는 ♥ 신호가 아니다. 그 키의 체크는 후보에 붙지 않아 아무도 채울 수 없는 선호가 되고, 결과 카드에 「충족 0/1」로 보였다(QA F-4, 멘토 리뷰 #680).
+- 표에 기본값은 없다. 각 카테고리의 soft 키는 모두 위 표의 한 줄에 있어야 하고, 새 soft 키를 등록하면 이 표에도 넣는다(`backend/integration/test_policy_tables.py`가 본다). 전에는 표에 없는 키를 '쓴다'로 봐서 문서의 "편의·동반·접근은 쓰지 않음"과 코드가 달랐다. 관광지 `comfortable_seat`은 2026-10-27에 카페와 같은 '2곳 이상'으로 정했다.
 
 ### 결과 카드에 선호 조건을 보이는 법 — 2026-10-24 결정, #681-4
 

@@ -1,5 +1,7 @@
 """docs/constraints.md 조건별 정의 표 전사(recommend/constraints.py)가 문서와 일치하는지."""
 
+import pytest
+
 from recommend import constraints, core
 
 
@@ -96,7 +98,10 @@ def test_late_and_alcohol_are_soft_keys_with_category_free_names():
         assert constraints.SOFT_REGISTRY[key].unknown_policy == "pass"
         assert key in constraints.soft_fact_keys_for("음식점")
         assert constraints.heart_signal_use("음식점", key) == "unused"
-        assert constraints.heart_signal_use("카페", key) == ("unused" if key == "open_late" else "use")   # #681-3
+        if key == "open_late":
+            assert constraints.heart_signal_use("카페", key) == "unused"   # #681-3
+        else:
+            assert key not in constraints.soft_fact_keys_for("카페")   # 카페 ♥ 기준에서는 걸러진다(#738)
         assert "카페" not in constraints.PASSED_LABELS[key]
         assert "카페" not in constraints.FACT_LABELS[key]
     assert constraints.PASSED_LABELS["serves_alcohol"] == "술도 파는 곳"
@@ -112,6 +117,16 @@ def test_place_identity_key_stays_restaurant_only():
     assert not constraints.is_place_identity_key("관광지", "performance")
 
 
-def test_heart_signal_defaults_to_use_for_keys_outside_the_tables():
-    assert constraints.heart_signal_use("카페", "bakery_unknown_key") == "use"
-    assert constraints.heart_signal_use("숙소", "quiet") == "use"
+def test_heart_signal_use_raises_for_keys_outside_the_tables():
+    """#738 — 표에 없는 (카테고리, 키)는 기본값 없이 KeyError다."""
+    with pytest.raises(KeyError):
+        constraints.heart_signal_use("카페", "bakery_unknown_key")
+    with pytest.raises(KeyError):
+        constraints.heart_signal_use("숙소", "quiet")
+
+
+def test_every_soft_key_has_a_heart_signal_row():
+    """#738 — 기본값이 없으니, 카테고리 soft 키는 모두 ♥ 표에 있어야 KeyError가 나지 않는다."""
+    for category in constraints.HEART_SIGNAL_BY_CATEGORY:
+        for key in constraints.soft_fact_keys_for(category):
+            constraints.heart_signal_use(category, key)
