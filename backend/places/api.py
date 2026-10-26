@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from common.database import SessionLocal
 from common.settings import settings
-from places import linkfetch, linkparse, matching, repository
+from places import core, linkfetch, linkparse, matching, repository
 from places.http import CallStats, SourceHttp
 from common.errors import AppError
 from places.ratelimit import SlidingWindowLimiter
@@ -203,6 +203,16 @@ def get_hours(place_ids: Sequence[str], *, db: Session | None = None) -> dict[st
     """place_hours를 배치로 조회한다(#690). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용. 판정은 places.core.is_open_on."""
     with _session(db) as s:
         return repository.get_hours(s, place_ids)
+
+
+def week_open_status(hours: dict | None, closed_days: list[str] | None) -> dict[int, str]:
+    """요일별 영업 판정(#747) — {0=월 … 6=일: "open"|"closed"|"unknown"}. DB 없이 원본 hours·closed_days를 읽는 쪽이 쓴다. 규칙은 places.core.day_open_status."""
+    return core.week_open_status(hours, closed_days)
+
+
+def get_week_open_status(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, dict[int, str]]:
+    """place_hours를 한 번에 읽어 장소별 요일 판정을 돌려준다(#747). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용."""
+    return {pid: core.week_open_status(h.hours, h.closed_days) for pid, h in get_hours(place_ids, db=db).items()}
 
 
 # ---- 지도 링크 해석 (POST /places/from-link, #474) ----

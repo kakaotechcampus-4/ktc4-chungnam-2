@@ -41,3 +41,25 @@ def is_open_on(hours: dict | None, closed_days: list[str] | None, weekday: int, 
     if closed_days and today in closed_days:
         return "closed"
     return "unknown"
+
+
+def day_open_status(hours: dict | None, closed_days: list[str] | None, weekday: int) -> str:
+    """요일 하나의 영업 여부 → "open" | "closed" | "unknown" (2026-10-27 결정, #747). 시각은 보지 않는다.
+
+    1. hours에 그 요일 키가 있으면 구간이 있을 때 open, 빈 목록이면 closed. 전날 구간의 자정 넘김 꼬리는 여기서 보지 않는다(is_open_on만 본다).
+    2. 아니고 closed_days가 None이 아니면 그 요일이 들어 있을 때 closed, 아니면 open([] = 매일 영업).
+    3. 둘 다 없으면 unknown.
+    """
+    if not 0 <= weekday <= 6:
+        raise ValueError(f"weekday 0~6: {weekday}")
+    today = WEEKDAYS[weekday]
+    if hours and today in hours:
+        return "open" if hours[today] else "closed"
+    if closed_days is not None:
+        return "closed" if today in closed_days else "open"
+    return "unknown"
+
+
+def week_open_status(hours: dict | None, closed_days: list[str] | None) -> dict[int, str]:
+    """7요일 전부의 day_open_status → {0..6: 상태}."""
+    return {d: day_open_status(hours, closed_days, d) for d in range(7)}
