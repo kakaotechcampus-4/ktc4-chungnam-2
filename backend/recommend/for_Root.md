@@ -742,3 +742,12 @@ recommend 소스+테스트 전부 통과(마이그레이션 파일의 `Union`/`S
 ## #720 (2026-10-24)
 
 - EvidenceLine에 `enforced`를 더했다(`fact_key is not None`, 응답에 항상 채움). 구현은 `flows._evidence_response` 한 곳이다. 스펙 PR #725가 정본이며 이견 없음.
+
+## #751 (2026-10-27)
+
+- 깔때기 단계 표는 `core.FUNNEL_STAGES`(키, 라벨) 한 곳이다. 표의 순서가 깔때기 순서이고, `flows._run_pipeline`은 키 → 제거 수만 넘긴다(`core.funnel_counts`). 라벨 글자, `last_funnel`, HTTP 응답은 그대로다.
+- **표에 `pool`「카테고리 후보 풀」을 더했다**(이슈의 6개 밖). 파이프라인이 늘 첫 단계로 저장하는 라벨이라 표에 없으면 새 실행에서도 key가 None이 된다. 다른 이름을 원하면 알려 달라.
+- `recommend.api.get_run_funnel`과 `simulate_filter`(before, after)의 funnel은 `[{key, label, removed_count}]`다(`core.keyed_funnel`). 옛 저장 깔때기도 라벨에서 키를 찾고, 표에 없는 라벨은 None이다. `passed_count`도 라벨이 아니라 키(ranking)로 센다.
+- `core.evidence_line_use`는 `LineUse(enforced, not_enforced_reason, effect)`를 돌려준다. effect는 쓰이는 required 줄 "filter", 쓰이는 preferred 줄 "score", 안 쓰이면 None. `get_run_evidence`와 `evidence_line_uses`에 effect가 실리고 HTTP EvidenceLine에는 없다. 배지 비교는 여전히 이 함수 안에만 있다.
+- `core.RANKING_STAGE`는 agent 테스트(`agent/tests/fixtures_advice.py`)가 import해서 표에서 파생해 남겼다. agent가 키로 옮기면 지운다.
+- agent 쪽 다음 세션: `core.RADIUS_STAGE` 등 라벨 상수 → 단계 키(radius, disqualify, excluded), 꺼 볼 줄 → `effect == "filter"`인 줄만.

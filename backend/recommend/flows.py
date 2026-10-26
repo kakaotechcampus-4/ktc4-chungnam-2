@@ -290,12 +290,12 @@ def create_run(
 def _evidence_response(
     line, principal: Principal, *, category: str, off_season: frozenset[str],
 ) -> schemas.EvidenceLine:
-    enforced, not_enforced_reason = core.evidence_line_use(line.badge, line.fact_key, line.wants, category, off_season)
+    use = core.evidence_line_use(line.badge, line.fact_key, line.wants, category, off_season)
     resource = Resource(type="evidence_line", map_id=principal.map_id, author_id=line.author_id)
-    return schemas.EvidenceLine(
+    return schemas.EvidenceLine(   # effect는 HTTP 응답에 내지 않는다(recommend.api만, #751)
         id=str(line.id), author_id=line.author_id, text=line.text, badge=line.badge,
         fact_key=line.fact_key, fact_label=constraints.FACT_LABELS.get(line.fact_key) if line.fact_key else None,
-        wants=line.wants, enforced=enforced, not_enforced_reason=not_enforced_reason, is_active=line.is_active,
+        wants=line.wants, enforced=use.enforced, not_enforced_reason=use.not_enforced_reason, is_active=line.is_active,
         permissions=Permissions(can_disable=can(principal, "evidence.disable", resource)),
     )
 
@@ -643,15 +643,15 @@ def _run_pipeline(
             "reason": core.build_reason(checks, criteria),
             "place_source": dict(place.source) if place.source else None,
         })
-    funnel = core.funnel_counts([
-        ("카테고리 후보 풀", 0),
-        ("반경 밖 제거", removed_radius),
-        ("영업 종료 제거", removed_open),
-        ("추천 가능 아님 제거", removed_not_recommendable),
-        ("실격 조건 제거", removed_disqualify),
-        ("이미 제안·거절됨", removed_exclusions),
-        (core.RANKING_STAGE, removed_ranking),
-    ])
+    funnel = core.funnel_counts({
+        "pool": 0,
+        "radius": removed_radius,
+        "closed": removed_open,
+        "not_recommendable": removed_not_recommendable,
+        "disqualify": removed_disqualify,
+        "excluded": removed_exclusions,
+        "ranking": removed_ranking,
+    })
     return candidates_data, funnel
 
 
@@ -813,7 +813,7 @@ def simulate_filter(
             place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
         )
         return {
-            "result_count": len(candidates_data), "funnel": funnel,
+            "result_count": len(candidates_data), "funnel": core.keyed_funnel(funnel),
             "passed_count": core.passed_count(len(candidates_data), funnel),
         }
 

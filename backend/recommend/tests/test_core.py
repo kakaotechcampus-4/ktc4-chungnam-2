@@ -274,12 +274,23 @@ def test_apply_disqualifier_filters_ignores_soft_checks_even_when_not_passed():
 
 # ---------- funnel_counts ----------
 
-def test_funnel_counts_maps_pairs_to_dicts():
-    result = core.funnel_counts([("카테고리 후보 풀", 0), ("반경 밖 제거", 3)])
-    assert result == [
-        {"label": "카테고리 후보 풀", "removed_count": 0},
-        {"label": "반경 밖 제거", "removed_count": 3},
-    ]
+def test_funnel_counts_lays_out_stages_in_table_order_without_keys():
+    removed = {key: i for i, (key, _) in enumerate(core.FUNNEL_STAGES)}
+    result = core.funnel_counts(dict(reversed(removed.items())))   # 넘긴 순서와 무관하게 표 순서다
+    assert result == [{"label": label, "removed_count": removed[key]} for key, label in core.FUNNEL_STAGES]
+
+
+def test_funnel_counts_needs_every_stage():
+    with pytest.raises(KeyError):
+        core.funnel_counts({"radius": 3})
+
+
+def test_keyed_funnel_finds_keys_from_labels_and_none_for_unknown_ones():
+    stored = [*core.funnel_counts({key: 1 for key, _ in core.FUNNEL_STAGES}), {"label": "옛 단계", "removed_count": 2}]
+    keyed = core.keyed_funnel(stored)
+    assert [e["key"] for e in keyed] == [*(key for key, _ in core.FUNNEL_STAGES), None]
+    assert [{"label": e["label"], "removed_count": e["removed_count"]} for e in keyed] == stored
+    assert "key" not in stored[0]   # 사본이다
 
 
 # ---------- check_retry_limit ----------
@@ -1002,23 +1013,30 @@ def test_written_preference_outweighs_other_heart_labels():
 
 
 @pytest.mark.parametrize("badge, fact_key, wants, category, off_season, expected", [
-    ("required", "is_crowded_large", None, "카페", (), (True, None)),                 # hard 키는 방향이 없어도 쓰인다
-    ("required", "quiet", False, "카페", (), (True, None)),                           # soft 키 + 방향
-    ("preferred", "quiet", True, "음식점", (), (True, None)),
-    ("required", None, None, "카페", (), (False, "no_key")),
-    ("required", "quiet", None, "카페", (), (False, "no_direction")),
-    ("preferred", "quiet", None, "카페", (), (False, "no_direction")),
-    ("required", "is_crowded_large", None, "음식점", (), (False, "not_for_category")),
-    ("preferred", "is_crowded_large", True, "카페", (), (False, "not_for_category")),   # preferred는 soft 키만
-    ("required", "no_such_key", True, "카페", (), (False, "not_for_category")),
-    ("required", "cherry_blossom", True, "관광지", ("cherry_blossom",), (False, "off_season")),
-    ("reference", "quiet", True, "카페", (), (False, "no_direction")),
+    ("required", "is_crowded_large", None, "카페", (), (True, None, "filter")),         # hard 키는 방향이 없어도 쓰인다
+    ("required", "quiet", False, "카페", (), (True, None, "filter")),                   # soft 키 + 방향, required는 거른다
+    ("preferred", "quiet", True, "음식점", (), (True, None, "score")),                  # preferred는 점수만
+    ("required", None, None, "카페", (), (False, "no_key", None)),
+    ("required", "quiet", None, "카페", (), (False, "no_direction", None)),
+    ("preferred", "quiet", None, "카페", (), (False, "no_direction", None)),
+    ("required", "is_crowded_large", None, "음식점", (), (False, "not_for_category", None)),
+    ("preferred", "is_crowded_large", True, "카페", (), (False, "not_for_category", None)),   # preferred는 soft 키만
+    ("required", "no_such_key", True, "카페", (), (False, "not_for_category", None)),
+    ("required", "cherry_blossom", True, "관광지", ("cherry_blossom",), (False, "off_season", None)),
+    ("reference", "quiet", True, "카페", (), (False, "no_direction", None)),
 ])
-def test_evidence_line_use_picks_the_reason(badge, fact_key, wants, category, off_season, expected):
+def test_evidence_line_use_picks_the_reason_and_effect(badge, fact_key, wants, category, off_season, expected):
     assert core.evidence_line_use(badge, fact_key, wants, category, off_season) == expected
 
 
 def test_evidence_line_use_reason_order_is_no_key_then_off_season_then_category():
-    assert core.evidence_line_use("required", None, None, "음식점", {"x"}) == (False, "no_key")
-    assert core.evidence_line_use("required", "is_crowded_large", None, "음식점", {"is_crowded_large"}) == (False, "off_season")
-    assert core.evidence_line_use("required", "is_crowded_large", None, "음식점", ()) == (False, "not_for_category")
+    assert core.evidence_line_use("required", None, None, "음식점", {"x"}).not_enforced_reason == "no_key"
+    assert core.evidence_line_use("required", "is_crowded_large", None, "음식점", {"is_crowded_large"}).not_enforced_reason == "off_season"
+    assert core.evidence_line_use("required", "is_crowded_large", None, "음식점", ()).not_enforced_reason == "not_for_category"
+
+
+def test_evidence_line_use_keeps_the_enforced_first_shape():
+    """인덱스 [0]으로 enforced를 읽는 호출부(flows._used_lines)가 그대로 돈다."""
+    use = core.evidence_line_use("preferred", "quiet", True, "카페", ())
+    assert use[0] is use.enforced is True
+    assert (use.not_enforced_reason, use.effect) == (None, "score")

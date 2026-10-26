@@ -172,6 +172,8 @@ def test_full_golden_path_run_to_execute_to_result_to_publish(app_client, db_ses
 
     result = app_client.get(f"/runs/{run_id}/result", cookies=_auth())
     assert result.status_code == 200
+    # 깔때기 단계 키는 recommend.api만 내준다 — HTTP 응답은 스펙(FunnelEntry) 그대로(#751)
+    assert {key for entry in result.json()["funnel"] for key in entry} == {"label", "removed_count"}
     candidates = result.json()["candidates"]
     assert len(candidates) > 0  # DevPlaceSearchGateway가 항상 최소 몇 개는 채운다
     assert candidates[0]["permissions"]["can_publish"] is True
@@ -314,6 +316,7 @@ def test_evidence_response_marks_enforced_by_fact_key_720(app_client, db_session
     assert lines["한식 말고"].get("not_enforced_reason") is None
     assert lines["새우 알레르기"].get("not_enforced_reason") == "no_key"
     assert lines["그냥 분위기 좋은 곳"].get("not_enforced_reason") == "no_key"
+    assert all("effect" not in line for line in lines.values())   # effect는 recommend.api만 내준다(#751)
 
 
 def test_run_not_found_is_404(app_client, db_session):
