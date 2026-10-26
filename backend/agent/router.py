@@ -78,8 +78,8 @@ def post_suggestion_dismiss(loaded=SuggestionToResolve, db: Session = DbSession)
 @router.get("/runs/{runId}/advice", response_model=RunAdvice, responses={204: {"description": "대상이 아니거나 낼 조언이 없음"}})
 def get_run_advice(loaded=RunToAdvise, db: Session = DbSession, session_factory: Callable[[], Session] = SessionFactoryDep):
     """추천 막힘 조언(docs/agent-v2.md 9절, #587). 비구성원 404, 그 run의 요청자가 아니면 403(RunToAdvise). 인증과 권한 확인은
-    요청 세션으로 끝내고 그 읽기 트랜잭션을 롤백해 연결을 돌려준 뒤(#275 — 저장이 아니다) 조언은 flows가 짧은 세션으로 만든다.
-    모델을 부르는 동안 요청 세션이 연결을 잡지 않는다. 대상이 아니거나 낼 조언이 없으면 204."""
+    요청 세션으로 끝내고 그 읽기 트랜잭션을 롤백해 연결을 돌려준 뒤(#275 — 저장이 아니다) 조언은 flows가 짧은 세션으로 만든다
+    — 연결을 둘 잡지 않는다. 대상이 아니거나 낼 조언이 없으면 204. 조언 계산이 실패하면 예외가 그대로 올라가 500이다(#750)."""
     meta, principal = loaded
     db.rollback()
     advice = flows.advise_run(meta["run_id"], principal.user_id, session_factory=session_factory)

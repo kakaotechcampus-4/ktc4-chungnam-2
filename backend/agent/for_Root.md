@@ -960,3 +960,66 @@ service, 다른 모듈 읽기와 트랜잭션은 flows. 마이그레이션 없�
   진행 중 run은 옮김), updated_by와 resolved_by, 멱등(두 번째 호출은 모두 0이고 상태가 같음), 같은 id, 다른 사용자 행은 그대로
 - `pytest agent auth`: 944 passed, 21 failed. 실패 21개는 모두 이 PC venv에 `tzdata`가 없어 `ZoneInfo("Asia/Seoul")`가 실패한 것이다
   (agent/course의 DB·라우터 테스트). develop에서도 같은 실패가 나고, 이번 변경과 무관하다
+
+---
+
+# 루트 보고 — backend/agent (#750, 추천 막힘 조언을 코드가 정한다, 결정 #749)
+
+## 바뀐 것
+
+- `core.py` 조언 절: 모델 출력 검증을 지우고 절차를 순수 함수로 옮겼다. 규칙의 정본은 advise-v4 프롬프트 「종류(kind) 고르기」,
+  「종류별 문장과 버튼」, 「침묵이 맞는 경우」다.
+  - `advice_simulations(funnel, lines, next_factor)`: 뚜렷한 단계(`ADVICE_CLEAR_DROP` 이상)를 많은 것부터 보며 필요한 시뮬레이션을
+    모두 고른다 — 반경은 버튼 한 번의 배율 하나, 실격 조건은 켜진 조건 줄마다(많아야 `ADVICE_MAX_RELAX_LINES` 3). 「이미 제안·거절됨」
+    차례가 오면 멈춘다. 앞 결과를 기다리지 않는다
+  - `choose_run_advice(run_id, funnel, lines, sims, next_factor) -> AdviceDraft`: 종류, claim, 슬롯 문장, 버튼. `AdviceDraft.decision`은
+    advise | silent
+  - 문장은 고정 문구(지시서 3번 그대로). 숫자와 줄 이름은 claim 슬롯 → 렌더 때 text 조각(#717)
+  - `advice_evidence`는 `{line_id, own, kind, label, is_active}`만 낸다 — 근거 글은 절차에 들어가지 않는다(지시문이 결과를 바꿀 길이 없다)
+- `constants.py`: `ADVICE_CLEAR_DROP = 5`(llm.prompts에서 옮김), `ADVICE_MAX_RELAX_LINES = 3`
+- `flows.advise_run`: 읽기(run, 저장된 조언, 대상 판정) → 읽기(깔때기, 근거 줄, 시뮬레이션 `recommend.api.simulate_filter`) → 고르기 →
+  쓰기. 저장(agent_runs trigger=run_advice, 조언 한 행, run당 한 번)과 응답 모양은 그대로. `used_model=false`, 모델·토큰 칸은 비운다.
+  `tool_calls`에는 읽은 것(t0 깔때기, t1 근거 줄, t2… 시뮬레이션)을 남긴다 — claim의 call_id가 가리키는 기록이다
+- 예외: 계산 중 예외는 삼키지 않는다. agent_runs에 outcome=error 한 행(`{run_id, error: 예외 클래스}`)을 남기고 올린다 → 라우터 500
+  INTERNAL_ERROR. 조언 행은 쓰지 않아 다음 요청이 다시 만든다. 대상 아님·침묵은 지금처럼 204
+- 지움: `deps.py`의 Gateway.advise_run(fixed/real), `tools.py`의 `RunToolContext`와 run 도구 4개, core의 `verify_run_advice`·
+  `AdviceContext`·`VerifiedAdvice`·`advice_input`·`PREFETCH_CALL_ID`·`RUN_ADVICE_ACTIONS`·`within_widen_limit`·`recent_runs_view`·
+  `radius_limits`(→ `next_radius_factor(meta)`). agent는 이제 `llm.agent_advise_run`을 참조하지 않는다
+
+## 명세에 없어 정한 것
+
+1. **soft_relax에서 말할 줄(「하나나 둘」).** gained가 가장 큰 줄 하나. 그 줄이 남의 줄이고 gained가 있는 본인 줄이 있으면 그중 가장 큰
+   본인 줄을 더한다(프롬프트 "남의 줄이 더 많이 걸렀어도 본인 줄에는 버튼"). 아니면 다음 줄이 `ADVICE_CLEAR_DROP` 이상 늘릴 때만 더한다.
+   평가셋 기대(a05, a07, a08, a23, a03)와 맞는다. 본인 줄이 둘이면 버튼 하나에 둘 다 담는다
+2. **꺼 볼 줄에서 실격/선호를 가르지 않는다.** 프롬프트는 badge=required만 시뮬레이션하지만 agent가 badge를 비교하면
+   `test_condition_strength_sites.py`의 새 세기 판단 자리가 된다(#732). 그래서 켜져 있고 이름 있는 condition 줄을 근거 줄 순서로 3줄까지
+   끄고, gained 0인 줄(선호 줄)은 말하지 않는다. 선호 줄이 앞에 많으면 실격 줄이 3줄 밖으로 밀릴 수 있다 — #732가 "이 줄이 거르는가"를
+   recommend.api로 내주면 그걸 쓰겠다
+3. **vague_reason**: 줄마다 `lines.N.line_id` claim, 본인 vague 줄 전부를 버튼 하나에. 끈 vague 줄도 프롬프트대로 센다
+
+## 루트 확인 요청 (문서·integration·llm은 고치지 않았다)
+
+1. **깔때기 단계 라벨.** 절차가 「반경 밖 제거」, 「실격 조건 제거」, 「이미 제안·거절됨」을 라벨 글자로 찾는다(`core.RADIUS_STAGE` 등,
+   recommend.flows의 리터럴과 같은 값). recommend.core.passed_count 주석은 "밖에서 라벨 글자를 볼 일이 없다"인데 모델이 하던 일을 코드가
+   하게 되면서 생겼다. recommend.api가 단계 키(radius, disqualify, excluded)를 내주면 바꾸겠다. 라벨이 바뀌면 `test_flows_advice.py`
+   (실제 recommend 실행)가 실패해서 알 수 있다
+2. **api-spec**: `GET /runs/{runId}/advice`에 500(INTERNAL_ERROR)이 없다. 지금 응답은 200/204/403/404만 적혀 있다. FE는 500을 "조언
+   자리 숨김"으로 다루면 된다(16.5). 문서 반영 부탁
+3. **integration**: `test_response_contract.py::test_run_advice_matches_the_openapi_spec`가 `llm.agent_advise_run` 가짜를 써서 깨진다
+   (예고된 것). 모델 가짜 없이 판(장소, 근거 줄)만 만들면 된다
+4. **llm 세션**: `llm/tests/eval_agent/test_eval_advice_cases.py`가 수집 단계에서 깨진다(`core.RUN_ADVICE_ACTIONS` 등을 가져옴).
+   `fixtures_advice.py`, `cases_advice.json`, `run_eval.py --target advice`, `prompts.ADVICE_CLEAR_DROP`, agent_advise_run과 그 도구
+   설명(`AGENT_TOOL_SPECS`의 run 도구 넷, `RUN_ADVICE_TOOLS`)을 지우면 된다. 평가셋은 `agent/tests/cases_advice.json`으로 옮겼다(칩 값은
+   `pins.chips.chip_for`로 읽어 표를 다시 적지 않는다). 지운 뒤 `agent/tests/test_tools.py`의 도구 설명 비교를 다시 `==`로 좁힐 수 있다
+5. `common/tests/test_adapter_assembly.py`의 `agent.LlmGateway` 설명 문구가 "advise_run(#587)은 real이 있다"로 남아 있다(검사는 포트
+   집합만이라 통과한다)
+
+## 테스트
+
+- `agent/tests/test_advice_cases.py`(새): 평가셋 25건마다 decision, 종류, 버튼, 버튼 줄(본인 줄만), 말한 줄. 지시문 케이스 4건은 지시를
+  지운 글로 바꿔도 조언이 같고 응답에 지시 문구가 없다. 고정 문장, 숫자는 claim에서만, 시뮬레이션은 필요한 것만
+- `test_core_advice.py`: 고르기 규칙 단위(본인 줄 우선, 둘째 줄 기준, 버튼 한 번 배율만, 상한, 같은 탈락 수의 순서, 영업 종료, not_filtered)
+- `test_flows_advice.py`: 실제 DB와 recommend 실행으로 종류 넷, 기록(used_model=false, call_id), run당 1회, 동시 요청, 예외는 올리고
+  error 행, 라우터 500/204/403/404, 스펙 모양
+- `pytest agent common integration`: 1333 passed, 5 failed — 위 3번 하나와, 저장소에 없는 로컬 `integration/test_agent_e2e.py` 4개(#717 전
+  모양이라 develop에서도 실패)

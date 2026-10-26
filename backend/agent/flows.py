@@ -19,8 +19,9 @@
 문구는 고정이라 모델 사용으로 세지 않는다(used_model=false). 갱신하면 같은 트랜잭션에 agent.summary_updated를 낸다.
 
 **추천 막힘 조언(9절, #587)**: `advise_run`. AI 추천 결과 화면의 `GET /runs/{runId}/advice`(agent/router.py)가 부른다. 관찰과
-따로 돌고(요청 안), 읽기 → 모델(세션 없음) → 쓰기를 짧은 세션으로 나눈다. run당 한 번 저장한다(trigger=run_advice).
-모델 단계가 예외로 끝나면 error 행만 남기고 저장하지 않는다(204, 다음 요청이 다시 시도, #677).
+따로 돌고(요청 안), 종류·문장·버튼은 코드가 정한다(core.choose_run_advice, #750 — 모델 없음). 읽기 → 고르기 → 쓰기를 짧은
+세션으로 나누고 run당 한 번 저장한다(trigger=run_advice). 계산이 예외로 끝나면 error 행만 남기고 예외를 올린다(500 — 조언
+없음 204와 가른다). 조언은 저장하지 않아 다음 요청이 다시 만든다.
 
 화면 요청(명세 14절)도 여기 있다 — `get_state`, `change_settings`, `view`, `accept`, `dismiss`. 요청 세션(get_db) 안에서
 돌고 커밋은 그 세션이 한다. 이벤트는 같은 트랜잭션에 `record_event`로 남긴다. 권한은 router가 authz.guard로 끝낸 뒤다.
@@ -116,9 +117,9 @@ def _snapshot_read(factory: SessionFactory) -> Iterator[Session]:
 
 @dataclass
 class _Trace:
-    """관찰이나 조언 한 번이 어디까지 갔는지(#677). 흐름이 단계마다 고치고, 예외로 끝나면 이것으로 error 행을 남긴다.
+    """관찰 한 번이 어디까지 갔는지(#677). 흐름이 단계마다 고치고, 예외로 끝나면 이것으로 error 행을 남긴다.
 
-    단계: 관찰은 expire → snapshot → detect → draft → model → verify → save → summary, 조언은 prefetch → model → verify.
+    단계: expire → snapshot → detect → draft → model → verify → save → summary.
     모델 사용(used_model, tool_calls, usage)은 아직 어느 행에도 남지 않은 것만 담는다 — 관찰의 저장 단계가 커밋되면 지도
     관찰 행에 들어갔으므로 비운다(model_recorded). tool_calls는 도구 창구의 기록(글 대신 글자 수) 그대로다."""
     stage: str
@@ -142,7 +143,7 @@ class _Trace:
 
 
 def _call_model(trace: _Trace, tool_calls: list[dict[str, Any]], call: Callable[[], AgentReply]) -> AgentReply:
-    """모델 단계(진단, 조언). 부르기 전에 모델 사용을 표시하고, 도구가 예외를 내도(llm의 ToolRunnerError) 그때까지 쓴 사용량을
+    """모델 단계(진단). 부르기 전에 모델 사용을 표시하고, 도구가 예외를 내도(llm의 ToolRunnerError) 그때까지 쓴 사용량을
     trace에 남긴다(#677)."""
     trace.stage, trace.used_model, trace.tool_calls = "model", True, tool_calls
     try:
@@ -633,28 +634,28 @@ def _next_check(
     return min(candidates) if candidates else None
 
 
-# ---------------------------------------------------------------- 추천 막힘 조언 (9절, #587)
+# ---------------------------------------------------------------- 추천 막힘 조언 (9절, #587, #750)
 
 def advise_run(
     run_id: str, requester_id: str, *, now: datetime | None = None, session_factory: SessionFactory = SessionLocal,
-    gateway: deps.AgentLlmGateway | None = None,
 ) -> RunAdvice | None:
     """GET /runs/{runId}/advice(agent/router.py)가 부른다. 그 run의 요청자에게 그 run의 데이터로만 조언한다(2절 2번 예외).
+    종류, 문장, 버튼은 코드가 정한다(core.choose_run_advice, #749 결정 — 모델 없음).
 
     1. 짧은 읽기: run(없으면 NOT_FOUND, 요청자가 아니면 FORBIDDEN), 저장된 조언(있으면 그대로 렌더해 돌려준다), 대상 판정
-       재료(같은 카테고리 run), 검증 재료(근거 줄, 구성원 표시 이름 — 모델에는 가지 않는다).
-    2. 대상이 아니면 None(204). 아무것도 쓰지 않는다 — 진행 중인 run은 끝난 뒤 다시 부르면 된다.
-    3. 모델(세션 없음, 12.6): 깔때기를 미리 읽어(t0) 입력에 넣고 Gateway를 부른다. 도구는 자기 세션을 짧게 연다.
-    4. 짧은 쓰기: agent_runs(trigger=run_advice) 한 행과 조언 한 행(ON CONFLICT (run_id) DO NOTHING). 같은 트랜잭션에서 저장된
+       재료(같은 카테고리 run). 대상이 아니면 None(204) — 아무것도 쓰지 않는다. 진행 중인 run은 끝난 뒤 다시 부르면 된다.
+    2. 짧은 읽기: 깔때기, 근거 줄, 필요한 시뮬레이션(core.advice_simulations — 앞 결과를 기다리지 않는다). 그리고 고르기(순수,
+       core.choose_run_advice).
+    3. 짧은 쓰기: agent_runs(trigger=run_advice) 한 행과 조언 한 행(ON CONFLICT (run_id) DO NOTHING). 같은 트랜잭션에서 저장된
        행을 다시 읽어 렌더한다 — 같은 run에 동시에 두 요청이 와도 먼저 커밋한 조언 하나만 남고 둘 다 그것을 돌려준다.
-       침묵, 실패, 검증 실패도 빈 조언으로 저장해 다시 만들지 않는다.
+       침묵도 빈 조언으로 저장해 다시 만들지 않는다.
 
-    3단계(미리 읽기, 모델과 도구, 검증)가 예외로 끝나면 agent_runs에 outcome=error 한 행만 남기고 조언은 저장하지 않은 채
-    None(204)을 돌려준다(#677). 다음 요청이 다시 시도한다(16.5) — 모델의 실패(AgentCallFailed)와 달리 우리 쪽 오류라서다.
+    2단계가 예외로 끝나면 agent_runs에 outcome=error 한 행(run, 예외 클래스 이름)만 남기고 예외를 올린다(라우터에서 500) —
+    "조언 없음"(204)과 "실패"를 같은 응답으로 두지 않는다. 조언 행은 저장하지 않으므로 다음 요청이 다시 만든다.
 
-    지도 모델 사용 상한에는 세지 않는다(9절 — service.MODEL_RUN_TRIGGERS에 run_advice가 없다). outcome은 advised(조언을
-    만듦), silent, unknown, invalid_schema, model_failed, invalid_claims, error다."""
-    trace = _Trace("prefetch")
+    지도 모델 사용 상한에는 세지 않는다(service.MODEL_RUN_TRIGGERS에 run_advice가 없다). outcome은 advised(조언을 만듦), silent, error다. tool_calls에는 읽은 것(깔때기 t0, 근거 줄 t1, 시뮬레이션 t2 …)을
+    남긴다 — claim의 call_id가 가리키는 기록이다. 근거 글은 읽기 결과에 없다."""
+    started = time.monotonic()
     now = now or datetime.now(timezone.utc)
 
     with _short_read(session_factory) as db:
@@ -664,35 +665,33 @@ def advise_run(
         stored = service.get_run_advice(db, run_id)
         if stored is not None:
             return core.render_run_advice(run_id, stored)
-        recent = recommend_api.get_recent_runs(db, run_id=run_id)
-        evidence = recommend_api.get_run_evidence(db, run_id=run_id)
-        found = maps_api.get_map_for_agent(db, meta["map_id"])
-        members = [m["user_id"] for m in found["members"]] if found else []
-        names = list(auth_api.display_names(db, members).values())
+        same_runs = core.same_category_runs(recommend_api.get_recent_runs(db, run_id=run_id), meta["created_at"])
+        if not core.run_advice_target(meta["status"], meta["result_count"], same_runs):
+            return None
 
-    same_runs = core.same_category_runs(recent, meta["created_at"])
-    if not core.run_advice_target(meta["status"], meta["result_count"], same_runs):
-        return None
-
-    gateway = gateway or deps.get_llm_gateway()
-    ctx = tools.RunToolContext(
-        run_id=run_id, requester_id=requester_id, meta=meta, session_factory=session_factory,
-        fact_labels=recommend_api.fact_labels(),
-    )
+    reads = _AdviceReads()
     try:
-        funnel = ctx.prefetch(core.PREFETCH_CALL_ID, "get_run_funnel")
-        reply = _call_model(trace, ctx.calls, lambda: gateway.advise_run(
-            core.advice_input(meta, same_runs, funnel), tool_runner=ctx.run,
-        ))
-        trace.stage = "verify"
-        outcome, draft, verification, detail = _checked_advice(reply.result, ctx, evidence, names, meta)
+        with _short_read(session_factory) as db:
+            funnel = reads.add(core.FUNNEL_CALL_ID, "get_run_funnel", {},
+                               lambda: core.funnel_view(recommend_api.get_run_funnel(db, run_id=run_id)))
+            lines = reads.add(core.EVIDENCE_CALL_ID, "get_run_evidence", {}, lambda: core.advice_evidence(
+                recommend_api.get_run_evidence(db, run_id=run_id), requester_id, recommend_api.fact_labels()))
+            next_factor = core.next_radius_factor(meta)
+            sims = {
+                call_id: reads.add(call_id, "simulate_filter", args, lambda args=args: core.simulate_view(
+                    recommend_api.simulate_filter(db, run_id=run_id, **args), **args))
+                for call_id, args in core.advice_simulations(funnel, lines, next_factor).items()
+            }
+        draft = core.choose_run_advice(run_id, funnel, lines, sims, next_factor)
     except Exception as exc:
-        log.exception("agent 조언 실패 run_id=%s stage=%s", run_id, trace.stage)
-        fields = trace.error_fields(exc, now)
-        fields["outcome_detail"] = {"run_id": run_id, **fields["outcome_detail"]}   # 어느 run의 조언인지
+        log.exception("agent 조언 실패 run_id=%s", run_id)
         with _write(session_factory) as db:   # 조언 행은 쓰지 않는다 — 다음 요청이 다시 만든다
-            service.insert_run(db, map_id=meta["map_id"], trigger="run_advice", **fields)
-        return None
+            service.insert_run(
+                db, map_id=meta["map_id"], started_at=now, trigger="run_advice", used_model=False,
+                finished_at=now + timedelta(seconds=time.monotonic() - started), tool_calls=reads.calls, outcome="error",
+                outcome_detail={"run_id": run_id, "error": type(exc).__name__},   # 예외 메시지는 남기지 않는다(#677)
+            )
+        raise
 
     with _write(session_factory) as db:
         agent_run_id = uuid.uuid4()
@@ -701,23 +700,22 @@ def advise_run(
         )
         service.insert_run(
             db, id=agent_run_id, map_id=meta["map_id"], started_at=now,
-            finished_at=now + timedelta(seconds=time.monotonic() - trace.started), trigger="run_advice",
-            used_model=True, tool_calls=ctx.calls, verification=verification, outcome=outcome,
-            outcome_detail={"run_id": run_id, "stored": inserted, **detail}, **core.model_usage([reply.usage]),
+            finished_at=now + timedelta(seconds=time.monotonic() - started), trigger="run_advice", used_model=False,
+            tool_calls=reads.calls, outcome="silent" if draft.kind is None else "advised",
+            outcome_detail={"run_id": run_id, "stored": inserted, "decision": draft.decision, "kind": draft.kind},
         )
         return core.render_run_advice(run_id, service.get_run_advice(db, run_id))
 
 
-def _checked_advice(
-    out: Any, ctx: tools.RunToolContext, evidence: list[dict[str, Any]], names: list[str], meta: Mapping[str, Any],
-) -> tuple[str, core.AdviceDraft, dict[str, Any] | None, dict[str, Any]]:
-    """모델 결과 → (outcome, 저장할 조언, verification, outcome_detail). 실패(AgentCallFailed)는 재요청하지 않고 빈 조언이다."""
-    if isinstance(out, AgentCallFailed):
-        return core.failed_outcome(out.reason), core.EMPTY_ADVICE, None, {"reason": out.reason, "detail": out.detail}
-    verified = core.verify_run_advice(out, core.AdviceContext(
-        run_id=ctx.run_id, tool_results=ctx.results, tool_names=ctx.names,
-        own_lines={line["line_id"]: line["author_id"] == ctx.requester_id for line in evidence},
-        evidence_texts=[line["text"] for line in evidence if line["text"]], radius=core.run_radius(meta),
-        member_names=names,
-    ))
-    return verified.outcome, verified.draft, verified.record, {"decision": out.decision, "kind": out.kind}
+@dataclass
+class _AdviceReads:
+    """조언 한 번이 읽은 것의 기록(agent_runs.tool_calls) — 진단 도구 기록(tools._record)과 같은 모양 {call_id, name, args,
+    result, ms}. 결과에 근거 글이 없어 그대로 남긴다."""
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def add(self, call_id: str, name: str, args: Mapping[str, Any], read: Callable[[], Any]) -> Any:
+        started = time.monotonic()
+        result = read()
+        self.calls.append({"call_id": call_id, "name": name, "args": dict(args), "result": result,
+                           "ms": int((time.monotonic() - started) * 1000)})
+        return result

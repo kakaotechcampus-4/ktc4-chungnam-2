@@ -1,7 +1,8 @@
-"""추천 막힘 조언의 순수 판단(명세 9절, 11.2, #587) — 대상 판정, 근거 줄의 표시와 종류, 검증, 렌더. DB 없이 돈다.
+"""추천 막힘 조언의 순수 판단(명세 9절, #587, #750) — 대상 판정, 근거 줄의 표시와 종류, 필요한 시뮬레이션, 종류·문장·버튼
+고르기, 렌더. DB 없이 돈다. 평가셋 25건은 test_advice_cases.py가 본다.
 
-17절 2(soft_relax에서 본인 줄만 open_evidence, 남의 줄은 문장만), 반경 상한(WIDEN_LIMIT)을 넘는 배율, 종류별 버튼, 근거 글과
-구성원 이름이 문장과 저장에 들어가지 않는 것.
+17절 2(soft_relax에서 본인 줄만 open_evidence, 남의 줄은 문장만), 반경은 버튼 한 번의 배율만, 뚜렷한 탈락(ADVICE_CLEAR_DROP),
+근거 글과 구성원이 문장과 저장에 들어가지 않는 것.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -10,69 +11,44 @@ from types import SimpleNamespace
 import pytest
 
 from agent import core
-from agent.schemas import Action, AdviceLine, CountClaim, QuoteClaim, RunAdviceOutput, ToolClaim
+from agent.constants import ADVICE_CLEAR_DROP, ADVICE_MAX_RELAX_LINES
 
 RUN = "run-1"
 OWN, OTHER, VAGUE = "line-own", "line-other", "line-vague"
 OWN_TEXT, OTHER_TEXT = "좁아서 다리를 펼 수가 없었어요", "사람이 너무 많아서 정신없었어요"
-NAMES = ["김철수", "이영희"]
-FUNNEL = core.funnel_view({"result_count": 1, "passed_count": 1, "funnel": [
-    {"label": "카테고리 후보 풀", "removed_count": 0}, {"label": "반경 밖 제거", "removed_count": 4},
-    {"label": "실격 조건 제거", "removed_count": 9}, {"label": "이미 제안·거절됨", "removed_count": 2},
-    {"label": "상위 3곳 선정", "removed_count": 0},
-]})
-LINES = core.advice_evidence([
-    {"line_id": OWN, "author_id": "u1", "text": OWN_TEXT, "badge": "required", "fact_key": "spacious", "wants": True,
-     "is_active": True, "chip_id": None},
-    {"line_id": OTHER, "author_id": "u2", "text": OTHER_TEXT, "badge": "required", "fact_key": "is_crowded_large",
-     "wants": None, "is_active": True, "chip_id": None},
-    {"line_id": VAGUE, "author_id": "u1", "text": "그냥 그래요", "badge": "required", "fact_key": None, "wants": None,
-     "is_active": True, "chip_id": None},
-], "u1", {"spacious": "넓은 곳", "is_crowded_large": "붐비는 대형 장소"})
-
-
-def _sim(factor=None, lines=(), gained=3, within=True):
-    side = {"result_count": 1, "funnel": [], "passed": 1}
-    return {"radius_factor": factor, "disable_line_ids": list(lines), "within_widen_limit": within,
-            "before": side, "after": {**side, "passed": 1 + gained}, "gained": gained}
-
-
+LABELS = {"spacious": "넓은 곳", "is_crowded_large": "붐비는 대형 장소", "quiet": "조용한 곳"}
 NEXT = 20 / 15   # 도보 15분에서 버튼 한 번(5분) 넓힌 배율(#677)
-RESULTS = {
-    "t0": FUNNEL,
-    "t1": {"lines": LINES, "total": 3},
-    "t2": _sim(lines=[OWN], gained=5),
-    "t3": _sim(lines=[OTHER], gained=4),
-    "t4": _sim(factor=2.0, gained=6),                   # 상한(30분)까지
-    "t5": _sim(factor=3.0, gained=9, within=False),
-    "t6": _sim(factor=NEXT, gained=2),                  # 버튼 한 번
-}
-NAMES_OF = {"t0": "get_run_funnel", "t1": "get_run_evidence", "t2": "simulate_filter", "t3": "simulate_filter",
-            "t4": "simulate_filter", "t5": "simulate_filter", "t6": "simulate_filter"}
 
 
-def _ctx(**over):
-    fields = dict(
-        run_id=RUN, tool_results=RESULTS, tool_names=NAMES_OF, own_lines={OWN: True, OTHER: False, VAGUE: True},
-        evidence_texts=[OWN_TEXT, OTHER_TEXT, "그냥 그래요"], radius=core.radius_limits(15, 30, 5), member_names=NAMES,
-    )
-    return core.AdviceContext(**(fields | over))
+def raw_line(line_id, author, *, fact_key=None, wants=None, text="", active=True, chip_id=None, reason=None):
+    """recommend.api.get_run_evidence의 한 줄."""
+    return {"line_id": line_id, "author_id": author, "text": text, "badge": "required", "fact_key": fact_key,
+            "wants": wants, "is_active": active, "chip_id": chip_id, "enforced": fact_key is not None and reason is None,
+            "not_enforced_reason": reason if reason else (None if fact_key else "no_key")}
 
 
-def tc(cid, call_id, path, value):
-    return ToolClaim(id=cid, kind="tool_result", call_id=call_id, path=path, value=value)
+RAW_LINES = [
+    raw_line(OWN, "u1", fact_key="spacious", wants=True, text=OWN_TEXT),
+    raw_line(OTHER, "u2", fact_key="is_crowded_large", text=OTHER_TEXT),
+    raw_line(VAGUE, "u1", text="그냥 그래요"),
+]
+LINES = core.advice_evidence(RAW_LINES, "u1", LABELS)
 
 
-def line(text, *basis, guess=False):
-    return AdviceLine(text=text, basis=list(basis), is_guess=guess)
+def funnel(radius=0, disqualify=0, excluded=0, closed=0):
+    return core.funnel_view({"result_count": 1, "passed_count": 1, "funnel": [
+        {"label": "카테고리 후보 풀", "removed_count": 0}, {"label": core.RADIUS_STAGE, "removed_count": radius},
+        {"label": "영업 종료 제거", "removed_count": closed}, {"label": core.DISQUALIFY_STAGE, "removed_count": disqualify},
+        {"label": core.EXCLUDED_STAGE, "removed_count": excluded}, {"label": "상위 3곳 선정", "removed_count": 0},
+    ]})
 
 
-def act(type_, *basis):
-    return Action(type=type_, basis=list(basis))
+def sim(gained, factor=None, lines=()):
+    return {"radius_factor": factor, "disable_line_ids": list(lines), "gained": gained}
 
 
-def out(kind, claims, advice, actions=(), decision="suggest"):
-    return RunAdviceOutput(decision=decision, kind=kind, claims=claims, advice=advice, actions=list(actions))
+def choose(f, sims, lines=LINES, next_factor=NEXT):
+    return core.choose_run_advice(RUN, f, lines, sims, next_factor)
 
 
 # ---------------------------------------------------------------- 대상 판정 (9절)
@@ -95,19 +71,19 @@ def test_same_category_runs_counts_up_to_this_run_only():
     assert core.same_category_runs(recent, at) == 3   # 나중 run 둘은 세지 않는다
 
 
-@pytest.mark.parametrize("walk, factor, next_factor", [
-    (15, 2.0, 20 / 15), (20, 1.5, 25 / 20), (25, 1.2, 30 / 25),
-    (28, 1.07, 30 / 28),   # 한 단계가 상한을 넘으면 상한까지
-    (30, 1.0, None), (35, 0.85, None),   # 이미 상한 — 버튼이 넓힐 수 없다
+@pytest.mark.parametrize("walk, next_factor", [
+    (15, 20 / 15), (20, 25 / 20), (25, 30 / 25),
+    (28, 30 / 28),   # 한 단계가 상한을 넘으면 상한까지
+    (30, None), (35, None),   # 이미 상한 — 버튼이 넓힐 수 없다
 ])
-def test_radius_limits(walk, factor, next_factor):
-    assert core.radius_limits(walk, 30, 5) == {"walk_min": walk, "max_walk_min": 30, "max_radius_factor": factor,
-                                               "next_radius_factor": next_factor}
+def test_next_radius_factor(walk, next_factor):
+    meta = {"default_radius_walk_min": walk, "widen_limit_walk_min": 30, "widen_step_walk_min": 5}
+    assert core.next_radius_factor(meta) == next_factor
 
 
 def test_next_radius_factor_is_not_rounded():
     """시뮬레이션 반경이 버튼 한 번 뒤의 반경과 같아야 한다(#677) — 1200m × 20/15는 반올림하면 1600m, 1.33이면 1596m다."""
-    factor = core.radius_limits(15, 30, 5)["next_radius_factor"]
+    factor = core.next_radius_factor({"default_radius_walk_min": 15, "widen_limit_walk_min": 30, "widen_step_walk_min": 5})
     assert factor == 20 / 15 and round(1200 * factor) == 20 * 80
 
 
@@ -115,18 +91,18 @@ def test_next_radius_factor_is_not_rounded():
 def test_passed_and_gained_come_from_passed_count_not_the_stage_label(top_label):
     """passed는 recommend가 센 passed_count 그대로다 — 깔때기 라벨 문구가 바뀌어도 passed와 gained가 같다(#587)."""
     def outcome(removed_at_top, passed_count):
-        funnel = [{"label": "실격 조건 제거", "removed_count": 4}, {"label": top_label, "removed_count": removed_at_top}]
-        return {"result_count": 3, "funnel": funnel, "passed_count": passed_count}
+        entries = [{"label": core.DISQUALIFY_STAGE, "removed_count": 4}, {"label": top_label, "removed_count": removed_at_top}]
+        return {"result_count": 3, "funnel": entries, "passed_count": passed_count}
 
     view = core.funnel_view(outcome(5, 8))
-    sim = core.simulate_view({"before": outcome(5, 8), "after": outcome(7, 10)}, radius_factor=None,
-                             disable_line_ids=[OWN], walk_min=15, limit_walk_min=30)
+    result = core.simulate_view({"before": outcome(5, 8), "after": outcome(7, 10)}, radius_factor=None,
+                                disable_line_ids=[OWN])
 
     assert (view["result_count"], view["passed"], view["funnel"][-1]["label"]) == (3, 8, top_label)
-    assert (sim["before"]["passed"], sim["after"]["passed"], sim["gained"]) == (8, 10, 2)
+    assert (result["before"]["passed"], result["after"]["passed"], result["gained"]) == (8, 10, 2)
 
 
-# ---------------------------------------------------------------- 근거 줄 (10절 get_run_evidence)
+# ---------------------------------------------------------------- 근거 줄
 
 @pytest.mark.parametrize("fields, kind", [
     ({"fact_key": "spacious", "wants": True, "enforced": True}, "condition"),
@@ -144,215 +120,178 @@ def test_evidence_kind(fields, kind):
     assert core.evidence_kind(base | fields) == kind
 
 
-def test_evidence_lines_show_only_self_or_other_member():
+def test_evidence_lines_carry_only_own_flag_label_and_kind():
     rows = core.advice_evidence([
-        {"line_id": "a", "author_id": "u1", "text": "넓은 데 가요", "badge": "required", "fact_key": "spacious",
-         "wants": True, "is_active": True, "chip_id": None},
-        {"line_id": "b", "author_id": "u2", "text": "갑각류 알러지 있어요", "badge": "required", "fact_key": None,
-         "wants": None, "is_active": True, "chip_id": None},
-    ], "u1", {"spacious": "넓은 곳"})
+        raw_line("a", "u1", fact_key="spacious", wants=True, text="넓은 데 가요"),
+        raw_line("b", "u2", text="갑각류 알러지 있어요"),
+    ], "u1", LABELS)
 
-    assert [r["author"] for r in rows] == ["본인", "다른 구성원"]
-    assert rows[0]["label"] == "넓은 곳 원함"
-    assert rows[1]["text"] is None and rows[1]["kind"] == "not_filtered"   # 알러지 원문은 모델에도 가지 않는다
-    assert "u1" not in str(rows) and "u2" not in str(rows)
+    assert rows == [
+        {"line_id": "a", "own": True, "kind": "condition", "label": "넓은 곳 원함", "is_active": True},
+        {"line_id": "b", "own": False, "kind": "not_filtered", "label": None, "is_active": True},
+    ]   # 글, 쓴 사람 id는 절차에 들어가지 않는다
 
 
-def test_advice_input_has_funnel_as_call_t0_and_no_people():
-    meta = {"category": "카페", "result_count": 1, "default_radius_walk_min": 20, "widen_limit_walk_min": 30,
-            "widen_step_walk_min": 5, "requested_by": "u1", "map_id": "m1", "run_id": RUN}
-    data = core.advice_input(meta, 2, FUNNEL)
+# ---------------------------------------------------------------- 필요한 시뮬레이션
 
-    assert data["funnel"] == {"call_id": "t0", "result": FUNNEL}
-    assert (data["radius"]["max_radius_factor"], data["radius"]["next_radius_factor"]) == (1.5, 1.25)
-    assert {"requested_by", "map_id", "run_id"}.isdisjoint(data)
+def test_simulations_follow_the_clear_stages_without_waiting_on_each_other():
+    """뚜렷한 단계마다 볼 것을 모두 고른다 — 반경은 버튼 한 번의 배율 하나, 실격 조건은 켜진 조건 줄마다."""
+    wanted = core.advice_simulations(funnel(radius=9, disqualify=6), LINES, NEXT)
+
+    assert wanted == {
+        "t2": {"radius_factor": NEXT, "disable_line_ids": []},
+        "t3": {"radius_factor": None, "disable_line_ids": [OWN]},
+        "t4": {"radius_factor": None, "disable_line_ids": [OTHER]},
+    }
 
 
-# ---------------------------------------------------------------- 검증 — soft_relax (17절 2)
+@pytest.mark.parametrize("f, next_factor, expected", [
+    (funnel(radius=4, disqualify=4, excluded=4), NEXT, {}),             # 뚜렷한 단계 없음
+    (funnel(radius=9, excluded=12), NEXT, {}),                          # 「이미 제안·거절됨」이 먼저라 볼 것이 없다
+    (funnel(radius=12, excluded=9, disqualify=6), NEXT, {"t2": {"radius_factor": NEXT, "disable_line_ids": []}}),
+    (funnel(radius=12), None, {}),                                      # 이미 상한
+])
+def test_simulations_only_what_is_needed(f, next_factor, expected):
+    assert core.advice_simulations(f, LINES, next_factor) == expected
+
+
+def test_relaxable_lines_are_active_named_conditions_up_to_the_cap():
+    lines = core.advice_evidence([
+        raw_line("off", "u1", fact_key="quiet", wants=True, active=False),   # 이미 끈 줄
+        raw_line("nameless", "u1", fact_key="no_such_key", wants=True),      # 이름이 없어 말할 수 없다
+        raw_line("vague", "u1"),
+        *[raw_line(f"c{i}", "u2", fact_key="spacious", wants=True) for i in range(ADVICE_MAX_RELAX_LINES + 1)],
+    ], "u1", LABELS)
+
+    wanted = core.advice_simulations(funnel(disqualify=9), lines, NEXT)
+
+    assert [w["disable_line_ids"] for w in wanted.values()] == [[f"c{i}"] for i in range(ADVICE_MAX_RELAX_LINES)]
+
+
+# ---------------------------------------------------------------- 종류 고르기
 
 def test_soft_relax_button_only_for_own_line_and_other_line_stays_as_a_fact():
-    advice = out("soft_relax",
-                 [tc("c1", "t2", "gained", 5), tc("c2", "t1", "lines.0.label", "넓은 곳 원함"),
-                  tc("c3", "t3", "gained", 4), tc("c4", "t1", "lines.1.label", "붐비는 대형 장소")],
-                 [line("「{c2.value}」 조건을 끄면 {c1.value}곳이 더 남아요", "c1", "c2"),
-                  line("다른 구성원의 「{c4.value}」 조건 때문에 {c3.value}곳이 빠졌어요", "c3", "c4")],
-                 [act("open_evidence", "c1"), act("open_evidence", "c3")])
+    draft = choose(funnel(disqualify=12), {"t2": sim(5, lines=[OWN]), "t3": sim(7, lines=[OTHER])})
 
-    v = core.verify_run_advice(advice, _ctx())
-
-    assert v.outcome == "advised"
-    assert [a["params"]["evidence_line_ids"] for a in v.draft.actions] == [[OWN]]
-    assert v.draft.actions[0] == {"index": 0, "type": "open_evidence", "label": "근거 확인에서 빼 보기",
-                                  "params": {"run_id": RUN, "evidence_line_ids": [OWN]}}
-    assert v.record["actions"]["removed"] == [{"index": 1, "reason": "not_own_line"}]
-    assert len(v.draft.advice) == 2   # 남의 줄 문장은 버튼 없이 남는다
+    assert draft.kind == "soft_relax"
+    assert [a["slot_text"] for a in draft.advice] == [
+        "「{c1.value}」 조건을 빼면 {c2.value}곳이 더 남아요.", "「{c3.value}」 조건을 빼면 {c4.value}곳이 더 남아요.",
+    ]
+    assert [(c["call_id"], c["path"], c["value"]) for c in draft.claims] == [
+        ("t1", "lines.1.label", "붐비는 대형 장소"), ("t3", "gained", 7), ("t1", "lines.0.label", "넓은 곳 원함"), ("t2", "gained", 5),
+    ]
+    assert draft.actions == [{"index": 0, "type": "open_evidence", "label": "근거 확인에서 빼 보기",
+                              "params": {"run_id": RUN, "evidence_line_ids": [OWN]}}]
 
 
-def test_open_evidence_mixing_own_and_other_lines_is_removed():
-    advice = out("soft_relax", [tc("c1", "t2", "gained", 5), tc("c2", "t3", "gained", 4)],
-                 [line("조건 두 개를 끄면 {c1.value}곳과 {c2.value}곳이 더 남아요", "c1", "c2")],
-                 [act("open_evidence", "c1", "c2")])
+def test_own_line_is_mentioned_even_when_it_gains_little():
+    """남의 줄이 더 많이 걸렀어도 본인 줄에 gained가 있으면 그 줄을 말하고 버튼을 붙인다(9절)."""
+    draft = choose(funnel(disqualify=12), {"t2": sim(1, lines=[OWN]), "t3": sim(9, lines=[OTHER])})
 
-    v = core.verify_run_advice(advice, _ctx())
-
-    assert v.draft.actions == []
-    assert v.record["actions"]["removed"] == [{"index": 0, "reason": "not_own_line"}]
+    assert [c["value"] for c in draft.claims if c["path"] == "gained"] == [9, 1]
+    assert draft.actions[0]["params"]["evidence_line_ids"] == [OWN]
 
 
-def test_vague_reason_button_points_at_own_line_from_evidence_list():
-    advice = out("vague_reason", [tc("c1", "t1", "lines.2.line_id", VAGUE)],
-                 [line("조건을 읽지 못한 근거가 있어요", "c1"),
-                  line("'조용한 곳이 좋아요'처럼 적으면 반영돼요", "c1", guess=True)],
-                 [act("open_evidence", "c1")])
+@pytest.mark.parametrize("second, mentioned", [(ADVICE_CLEAR_DROP - 1, 1), (ADVICE_CLEAR_DROP, 2)])
+def test_second_line_only_when_it_clearly_gains(second, mentioned):
+    two_own = core.advice_evidence([raw_line(OWN, "u1", fact_key="spacious", wants=True),
+                                    raw_line("own2", "u1", fact_key="quiet", wants=True)], "u1", LABELS)
 
-    v = core.verify_run_advice(advice, _ctx())
+    draft = choose(funnel(disqualify=12), {"t2": sim(8, lines=[OWN]), "t3": sim(second, lines=["own2"])}, lines=two_own)
 
-    assert v.outcome == "advised"
-    assert v.draft.actions[0]["label"] == "근거 확인하기"
-    assert v.draft.actions[0]["params"]["evidence_line_ids"] == [VAGUE]
-
-
-# ---------------------------------------------------------------- 검증 — 반경 (WIDEN_LIMIT)
-
-def test_widen_radius_beyond_the_limit_is_removed():
-    advice = out("radius", [tc("c1", "t5", "gained", 9)],
-                 [line("반경을 넓히면 {c1.value}곳이 더 나와요", "c1")], [act("widen_radius", "c1")])
-
-    v = core.verify_run_advice(advice, _ctx())
-
-    assert v.record["claims"]["removed"] == [{"id": "c1", "reason": "radius_over_limit"}]
-    assert v.outcome == "invalid_claims" and v.draft == core.EMPTY_ADVICE
+    assert len(draft.advice) == mentioned
+    # 본인 줄이 둘이면 버튼 하나에 둘 다
+    assert draft.actions[0]["params"]["evidence_line_ids"] == [OWN, "own2"][:mentioned]
 
 
-def test_widen_radius_within_the_limit_is_kept_and_over_limit_line_dropped():
-    advice = out("radius", [tc("c1", "t6", "gained", 2), tc("c2", "t5", "gained", 9)],
-                 [line("반경을 넓히면 {c1.value}곳이 더 나와요", "c1"), line("더 넓히면 {c2.value}곳이에요", "c2")],
-                 [act("widen_radius", "c1"), act("widen_radius", "c2")])
+def test_other_members_line_alone_has_no_button():
+    draft = choose(funnel(disqualify=12), {"t2": sim(0, lines=[OWN]), "t3": sim(6, lines=[OTHER])})
 
-    v = core.verify_run_advice(advice, _ctx())
-
-    assert v.draft.actions == [{"index": 0, "type": "widen_radius", "label": "반경 넓히기", "params": {"run_id": RUN}}]
-    assert [a["slot_text"] for a in v.draft.advice] == ["반경을 넓히면 {c1.value}곳이 더 나와요"]
+    assert (draft.kind, len(draft.advice), draft.actions) == ("soft_relax", 1, [])
 
 
-def test_widen_radius_button_only_for_the_one_press_simulation():
-    """버튼은 한 번에 5분만 넓힌다(#677). 상한까지 넓힌 숫자에는 버튼을 붙이지 않는다(not_next_step) — 문장은 사실이라 남는다."""
-    advice = out("radius", [tc("c1", "t4", "gained", 6), tc("c2", "t6", "gained", 2)],
-                 [line("끝까지 넓히면 {c1.value}곳이 더 나와요", "c1"), line("한 번 넓히면 {c2.value}곳이에요", "c2")],
-                 [act("widen_radius", "c1"), act("widen_radius", "c2")])
+def test_radius_uses_only_the_one_press_simulation():
+    """다른 배율(상한까지 등)의 숫자는 버튼을 눌렀을 때와 달라 쓰지 않는다(#677)."""
+    to_limit = choose(funnel(radius=9), {"t2": sim(6, factor=2.0)})
+    rounded = choose(funnel(radius=9), {"t2": sim(6, factor=1.33)})
+    exact = choose(funnel(radius=9), {"t2": sim(2, factor=1.3333333333)})   # 부동소수 오차 안
 
-    v = core.verify_run_advice(advice, _ctx())
-
-    assert v.record["actions"]["removed"] == [{"index": 0, "reason": "not_next_step"}]
-    assert v.draft.actions == [{"index": 0, "type": "widen_radius", "label": "반경 넓히기", "params": {"run_id": RUN}}]
-    assert len(v.draft.advice) == 2
-
-
-@pytest.mark.parametrize("factor, kept", [
-    (1.3333333333, True),    # 부동소수 오차 안
-    (1.33, False),           # 모델이 줄여 쓴 배율 — 1596m라 버튼 결과와 다르다
-    (1.5, False),
-])
-def test_widen_radius_needs_the_exact_next_factor(factor, kept):
-    results = RESULTS | {"t7": _sim(factor=factor, gained=2)}
-    names = NAMES_OF | {"t7": "simulate_filter"}
-    advice = out("radius", [tc("c1", "t7", "gained", 2)], [line("넓히면 {c1.value}곳이 더 나와요", "c1")],
-                 [act("widen_radius", "c1")])
-
-    v = core.verify_run_advice(advice, _ctx(tool_results=results, tool_names=names))
-
-    assert (len(v.draft.actions) == 1) is kept
-    assert v.record["actions"]["removed"] == ([] if kept else [{"index": 0, "reason": "not_next_step"}])
+    assert to_limit == rounded == core.choose_run_advice(RUN, funnel(radius=9), LINES, {}, NEXT)
+    assert exact.kind == "radius" and exact.claims == [
+        {"id": "c1", "kind": "tool_result", "call_id": "t2", "path": "gained", "value": 2}]
+    assert exact.actions == [{"index": 0, "type": "widen_radius", "label": "반경 넓히기", "params": {"run_id": RUN}}]
 
 
-def test_widen_radius_when_already_at_the_limit_is_removed():
-    advice = out("radius", [tc("c1", "t4", "gained", 6)],
-                 [line("반경을 넓히면 {c1.value}곳이 더 나와요", "c1")], [act("widen_radius", "c1")])
+def test_radius_that_gains_nothing_moves_to_the_next_stage():
+    draft = choose(funnel(radius=12, disqualify=6), {"t2": sim(0, factor=NEXT), "t3": sim(4, lines=[OWN])})
 
-    v = core.verify_run_advice(advice, _ctx(radius=core.radius_limits(30, 30, 5)))
-
-    assert v.record["actions"]["removed"] == [{"index": 0, "reason": "radius_limit"}]
-    assert v.draft.actions == []
+    assert draft.kind == "soft_relax"
 
 
-# ---------------------------------------------------------------- 검증 — claim, 문장, 버튼, 성립
+def test_radius_at_the_limit_moves_to_the_next_stage():
+    draft = choose(funnel(radius=12, excluded=6), {}, next_factor=None)
 
-def test_only_tool_claims_and_never_evidence_text():
-    advice = out("soft_relax", [
-        tc("c1", "t2", "gained", 5),
-        tc("c2", "t1", "lines.0.text", OWN_TEXT),                                     # 근거 글 경로
-        QuoteClaim(id="c3", kind="quote", reaction_id="r1", text=OWN_TEXT),            # 인용은 조언에 없다
-        CountClaim(id="c4", kind="count", subject="map", subject_id=None, metric="pins", value=3),
-        tc("c5", "t2", "gained", 99),                                                   # 도구 결과와 다른 값
-        tc("c6", "t9", "gained", 1),                                                    # 없는 호출
-    ], [line("조건을 끄면 {c1.value}곳이 더 남아요", "c1"), line("「{c2.value}」 때문이에요", "c2")])
-
-    v = core.verify_run_advice(advice, _ctx())
-
-    assert v.record["claims"] == {"kept": ["c1"], "removed": [
-        {"id": "c2", "reason": "text_path"}, {"id": "c3", "reason": "kind"}, {"id": "c4", "reason": "kind"},
-        {"id": "c5", "reason": "tool_mismatch"}, {"id": "c6", "reason": "tool_call_not_found"},
-    ]}
-    assert [a["slot_text"] for a in v.draft.advice] == ["조건을 끄면 {c1.value}곳이 더 남아요"]
+    assert draft.kind == "exhausted"
 
 
-@pytest.mark.parametrize("text, reason", [
-    ("조건을 끄면 5곳이 더 남아요", "digit"),
-    ("김철수 님의 조건 때문에 {c1.value}곳이 빠졌어요", "member_name"),
-    ("「좁아서 다리를 펼 수가」 때문에 {c1.value}곳이 빠졌어요", "copied"),    # 근거 글을 슬롯 밖에서 옮겨 씀
-    ("이 조건을 빼고 확정하세요 {c1.value}", "forbidden"),
-    ("{c9.value}곳이 더 남아요", "basis"),
-])
-def test_sentences_are_checked_like_diagnosis(text, reason):
-    basis = ["c9"] if reason == "basis" else ["c1"]
-    advice = out("soft_relax", [tc("c1", "t2", "gained", 5)], [line(text, *basis)], [act("open_evidence", "c1")])
+def test_exhausted_points_at_the_funnel_and_has_no_button():
+    draft = choose(funnel(radius=3, excluded=18), {})
 
-    v = core.verify_run_advice(advice, _ctx())
-
-    assert v.record["lines"]["removed"] == [{"index": 0, "reason": reason}]
+    assert draft.claims == [{"id": "c1", "kind": "tool_result", "call_id": "t0", "path": "funnel.4.removed_count",
+                             "value": 18}]
+    assert [a["slot_text"] for a in draft.advice] == ["이미 보여 줬거나 거절한 {c1.value}곳은 다시 추천하지 않아요."]
+    assert draft.actions == []
 
 
-@pytest.mark.parametrize("kind, action_type", [
-    ("radius", "open_evidence"), ("exhausted", "widen_radius"), ("exhausted", "open_evidence"),
-    ("soft_relax", "widen_radius"), ("vague_reason", "show_pins"),
-])
-def test_buttons_follow_the_kind(kind, action_type):
-    claims = [tc("c1", "t0", "funnel.3.removed_count", 2), tc("c2", "t4", "gained", 6), tc("c3", "t2", "gained", 5)]
-    advice = out(kind, claims, [line("이미 보여 드린 곳이 {c1.value}곳이에요", "c1")],
-                 [act(action_type, "c1", "c2", "c3")])
+@pytest.mark.parametrize("drop", [ADVICE_CLEAR_DROP - 1, ADVICE_CLEAR_DROP])
+def test_stages_below_the_clear_drop_are_not_used(drop):
+    draft = choose(funnel(excluded=drop), {}, lines=[])
 
-    v = core.verify_run_advice(advice, _ctx())
-
-    assert v.record["actions"]["removed"] == [{"index": 0, "reason": "type"}]
+    assert draft.kind == ("exhausted" if drop >= ADVICE_CLEAR_DROP else None)
 
 
-def test_exhausted_needs_the_funnel_claim():
-    ok = out("exhausted", [tc("c1", "t0", "funnel.3.removed_count", 2)],
-             [line("이미 보여 드렸거나 거절한 곳이 {c1.value}곳 빠졌어요", "c1")])
-    no_funnel = out("exhausted", [tc("c1", "t2", "gained", 5)], [line("{c1.value}곳이 더 남아요", "c1")])
+def test_equal_drops_follow_the_stage_order():
+    """같은 수면 반경 → 실격 조건 → 이미 제안·거절됨 순서로 본다."""
+    draft = choose(funnel(radius=7, excluded=7), {"t2": sim(1, factor=NEXT)})
 
-    assert core.verify_run_advice(ok, _ctx()).outcome == "advised"
-    failed = core.verify_run_advice(no_funnel, _ctx())
-    assert (failed.outcome, failed.record["failed_step"]) == ("invalid_claims", 7)
+    assert draft.kind == "radius"
 
 
-@pytest.mark.parametrize("decision", ["silent", "unknown"])
-def test_silence_is_kept_as_an_empty_advice(decision):
-    v = core.verify_run_advice(out("exhausted", [], [], decision=decision), _ctx())
-    assert (v.outcome, v.draft) == (decision, core.EMPTY_ADVICE)
+def test_closed_hours_are_not_a_kind():
+    """「영업 종료 제거」는 사람이 바꿀 수 없어 종류를 고르지 않는다 — vague 줄이 없으면 침묵."""
+    no_vague = [line for line in LINES if line["kind"] != "vague"]
+
+    assert choose(funnel(closed=20), {}, lines=no_vague) == core.EMPTY_ADVICE
 
 
-def test_stored_draft_has_no_text_or_names():
-    advice = out("soft_relax",
-                 [tc("c1", "t2", "gained", 5), tc("c2", "t1", "lines.0.label", "넓은 곳 원함"), tc("c3", "t3", "gained", 4)],
-                 [line("「{c2.value}」 조건을 끄면 {c1.value}곳이 더 남아요", "c1", "c2"),
-                  line("다른 구성원의 조건 때문에 {c3.value}곳이 빠졌어요", "c3")],
-                 [act("open_evidence", "c1")])
+@pytest.mark.parametrize("author, button", [("u1", True), ("u2", False)])
+def test_vague_reason_button_only_for_own_line(author, button):
+    lines = core.advice_evidence([raw_line("alg", "u1", text="땅콩 알러지가 있어요"),   # not_filtered — 세지 않는다
+                                  raw_line(VAGUE, author, text="그냥 그래요")], "u1", LABELS)
 
-    stored = str(core.verify_run_advice(advice, _ctx()).draft)
+    draft = choose(funnel(radius=2), {}, lines=lines)
 
-    for secret in (OWN_TEXT, OTHER_TEXT, *NAMES, "u1", "u2"):
-        assert secret not in stored
+    assert draft.kind == "vague_reason" and draft.decision == "advise"
+    assert draft.claims == [{"id": "c1", "kind": "tool_result", "call_id": "t1", "path": "lines.1.line_id", "value": VAGUE}]
+    assert [(a["slot_text"], a["is_guess"]) for a in draft.advice] == list(core.VAGUE_REASON_LINES)
+    assert draft.actions == ([{"index": 0, "type": "open_evidence", "label": "근거 확인하기",
+                               "params": {"run_id": RUN, "evidence_line_ids": [VAGUE]}}] if button else [])
+
+
+def test_not_filtered_lines_alone_are_silent():
+    lines = core.advice_evidence([raw_line("alg", "u1", text="땅콩 알러지가 있어요"),
+                                  raw_line("price", "u2", text="비싸요", chip_id="food_expensive")], "u1", LABELS)
+
+    draft = choose(funnel(radius=1), {}, lines=lines)
+
+    assert (draft, draft.decision) == (core.EMPTY_ADVICE, "silent")
+
+
+def test_stored_draft_has_no_text_or_people():
+    draft = choose(funnel(disqualify=12), {"t2": sim(5, lines=[OWN]), "t3": sim(7, lines=[OTHER])})
+
+    for secret in (OWN_TEXT, OTHER_TEXT, "u1", "u2"):
+        assert secret not in str(draft)
 
 
 # ---------------------------------------------------------------- 렌더
@@ -361,18 +300,15 @@ def _row(kind, claims, advice, actions=()):
     return SimpleNamespace(kind=kind, claims=claims, advice=advice, actions=list(actions))
 
 
-def test_render_fills_tool_values():
-    row = _row("soft_relax", [tc("c1", "t2", "gained", 5).model_dump(), tc("c2", "t1", "lines.0.label", "넓은 곳 원함").model_dump()],
-               [{"slot_text": "「{c2.value}」 조건을 끄면 {c1.value}곳이 더 남아요", "is_guess": False}],
-               [{"index": 0, "type": "open_evidence", "label": "근거 확인에서 빼 보기",
-                 "params": {"run_id": RUN, "evidence_line_ids": [OWN]}}])
+def test_render_fills_claim_values():
+    draft = choose(funnel(disqualify=12), {"t2": sim(5, lines=[OWN])})
 
-    rendered = core.render_run_advice(RUN, row)
+    rendered = core.render_run_advice(RUN, _row(draft.kind, draft.claims, draft.advice, draft.actions))
 
     assert rendered.model_dump(mode="json") == {
         "run_id": RUN, "kind": "soft_relax",
-        # 조언은 tool_result claim만이라 text 조각 하나다(#717)
-        "advice": [{"segments": [{"kind": "text", "text": "「넓은 곳 원함」 조건을 끄면 5곳이 더 남아요"}], "is_guess": False}],
+        # 숫자와 줄 이름은 claim 슬롯이라 text 조각 하나다(#717)
+        "advice": [{"segments": [{"kind": "text", "text": "「넓은 곳 원함」 조건을 빼면 5곳이 더 남아요."}], "is_guess": False}],
         "actions": [{"index": 0, "type": "open_evidence", "label": "근거 확인에서 빼 보기",
                      "params": {"run_id": RUN, "evidence_line_ids": [OWN]}}],
     }
@@ -382,6 +318,6 @@ def test_render_empty_advice_is_none():
     assert core.render_run_advice(RUN, _row(None, [], [])) is None
     assert core.render_run_advice(RUN, None) is None
     # 렌더 결과에 금지 표현이 생기면 그 문장을 빼고, 남는 것이 없으면 None
-    row = _row("exhausted", [tc("c1", "t1", "lines.0.label", "확정하세요").model_dump()],
+    row = _row("exhausted", [{"id": "c1", "kind": "tool_result", "call_id": "t1", "path": "lines.0.label", "value": "확정하세요"}],
                [{"slot_text": "「{c1.value}」", "is_guess": False}])
     assert core.render_run_advice(RUN, row) is None
