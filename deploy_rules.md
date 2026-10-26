@@ -54,6 +54,15 @@
 | v2 계획 보조 에이전트 관찰 | `POST /internal/agent/tick` | 5분(`docs/agent-v2.md` 12.1) | 엔드포인트와 예약 모두 아직 없음(#535). 개발과 시연은 `AGENT_LOOP_IN_PROCESS=1`로 서버 안에서 돈다 |
 | agent 일일 정리 | 없음 | 서버 안에서 돈다 | 따로 예약하지 않는다(`backend/maintenance/CLAUDE.md`) |
 
+## 배포 뒤 볼 지표
+
+지도가 늘면 v2 관찰(tick)이 가장 먼저 걸린다(멘토 리뷰 #680). tick은 5분마다 지도를 최대 `TICK_MAX_MAPS`(6)곳 관찰한다(`agent/constants.py`).
+
+| 지표 | 읽는 법 | 이렇게 보이면 |
+|---|---|---|
+| stale로 버린 관찰 비율 | `select outcome, count(*) from agent_runs where trigger in ('activity', 'time') and started_at > now() - interval '1 day' group by 1` 에서 stale ÷ 전체 | 늘면 관찰이 겹치거나 늦게 끝나고 있다. 결과가 틀리지는 않지만(저장할 때 지도 행을 잠그고 다시 확인한다) 모델 호출을 버린다 |
+| tick당 처리 수와 미룬 지도 수, 걸린 시간 | tick 끝의 info 로그(#756에서 더한다) | 미룬 지도가 tick마다 남으면 처리 수나 주기를 바꾼다. 걸린 시간이 lease(180초)에 가까우면 시간 예산을 본다(#754) |
+
 ## 배포 전에 정할 것
 
 - `event_log` 오래된 행 삭제: 읽기는 24시간으로 자르지만(`realtime.service.RETENTION`) 지우는 작업은 아직 없다. `created_at` 인덱스는 삭제용으로 있다. 정기 정리(`maintenance.run`)에 단계로 넣을지 정한다.
