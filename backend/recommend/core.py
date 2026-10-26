@@ -311,7 +311,29 @@ def out_of_season_keys(start: date | None, end: date | None) -> frozenset[str]:
     return frozenset(key for key, season in SEASON_MONTHS.items() if not season & months)
 
 
-MAX_SHOWN_PREFERENCE_CHECKS = 5   # 결과 카드에 보이는 충족한 선호 체크 수(docs/constraints.md "결과 카드에 선호 조건을 보이는 법", #681-4)
+def evidence_line_use(
+    badge: str, fact_key: str | None, wants: bool | None, category: str, off_season: Collection[str],
+) -> tuple[bool, str | None]:
+    """근거 줄이 이번 실행에서 실제로 쓰이는지 (enforced, not_enforced_reason)으로 정한다(#740). 파이프라인이 줄을 고르는
+    기준이자 근거 응답이 보이는 값이라 이 함수 하나가 정한다. 이유는 no_key → off_season → 배지별 순서로 고른다:
+    required+hard 키는 카테고리에 맞아야, soft 키(required·preferred)는 방향(wants)이 있어야 쓰인다.
+    그 밖(hard도 soft도 아닌 키, preferred인 hard 키)은 not_for_category, reference는 no_direction."""
+    if fact_key is None:
+        return False, "no_key"
+    if fact_key in off_season:
+        return False, "off_season"
+    if badge == "required" and fact_key in constraints.HARD_REGISTRY:
+        if fact_key in constraints.hard_fact_keys_for(category):
+            return True, None
+        return False, "not_for_category"
+    if badge in ("required", "preferred") and fact_key in constraints.SOFT_FACT_KEYS:
+        return (True, None) if wants is not None else (False, "no_direction")
+    if badge not in ("required", "preferred"):
+        return False, "no_direction"
+    return False, "not_for_category"
+
+
+MAX_SHOWN_PREFERENCE_CHECKS = 5  # 결과 카드에 보이는 충족한 선호 체크 수(docs/constraints.md "결과 카드에 선호 조건을 보이는 법", #681-4)
 
 
 def preference_weights(

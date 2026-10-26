@@ -109,17 +109,33 @@ def get_run_funnel(db: Session, *, run_id: str) -> dict:
 
 
 def get_run_evidence(db: Session, *, run_id: str) -> list[dict]:
-    """그 run의 근거 줄 전부(비활성 포함) `[{line_id, text, badge, fact_key, wants, is_active, author_id, chip_id}]`, 근거
-    줄 정본 순서(created_at, seq). 요청자 본인 줄인지는 agent가 author_id로 판단한다. chip_id(칩에서 나온 줄만, 아니면 None)는
-    agent가 키 없는 줄 중 「비싸요」처럼 추천이 거르지 않는 줄을 가르는 데 쓴다(#587). 권한 판정 없음(위 주석)."""
+    """그 run의 근거 줄 전부(비활성 포함) `[{line_id, text, badge, fact_key, wants, is_active, author_id, chip_id, enforced,
+    not_enforced_reason}]`, 근거 줄 정본 순서(created_at, seq). 요청자 본인 줄인지는 agent가 author_id로 판단한다. chip_id(칩에서
+    나온 줄만, 아니면 None)는 agent가 키 없는 줄 중 「비싸요」처럼 추천이 거르지 않는 줄을 가르는 데 쓴다(#587). enforced와
+    not_enforced_reason은 근거 응답과 같다(core.evidence_line_use, #740) — 끈 줄도 켜면 쓰이는지를 보인다. 권한 판정 없음(위 주석)."""
     run = service.get_run_or_404(db, run_id)
-    return [
-        {
+    off_season = flows._out_of_season_keys(db, run.map_id)
+    rows = []
+    for line in service.list_evidence(db, str(run.id)):
+        enforced, reason = core.evidence_line_use(line.badge, line.fact_key, line.wants, run.category, off_season)
+        rows.append({
             "line_id": str(line.id), "text": line.text, "badge": line.badge, "fact_key": line.fact_key,
             "wants": line.wants, "is_active": line.is_active, "author_id": line.author_id, "chip_id": line.chip_id,
-        }
-        for line in service.list_evidence(db, str(run.id))
-    ]
+            "enforced": enforced, "not_enforced_reason": reason,
+        })
+    return rows
+
+
+def evidence_line_uses(db: Session, *, map_id: str, category: str, lines: Sequence[dict]) -> list[dict]:
+    """run 없이 쓰는 근거 줄 판정(#740) — `lines`는 `[{badge, fact_key, wants}]`, 같은 순서로 `[{enforced,
+    not_enforced_reason}]`를 돌려준다. 파이프라인과 근거 응답이 쓰는 같은 함수(core.evidence_line_use)이고, 여행 기간 밖
+    계절 키는 그 지도의 기간으로 본다. 권한 판정 없음. 읽기 전용, 커밋하지 않는다."""
+    off_season = flows._out_of_season_keys(db, map_id)
+    results = []
+    for line in lines:
+        enforced, reason = core.evidence_line_use(line["badge"], line.get("fact_key"), line.get("wants"), category, off_season)
+        results.append({"enforced": enforced, "not_enforced_reason": reason})
+    return results
 
 
 def simulate_filter(

@@ -68,9 +68,10 @@ class EvidenceLine(BaseModel):
     fact_key: str | None = None
     fact_label: str | None = None  # fact_key의 표시 이름("한식") — constraints.FACT_LABELS
     wants: bool | None = None  # 이 특징이 있는 장소를 원하는가(#228). None = 모름
-    # 후보를 거르거나 점수 매기는 데 실제로 쓰이는 줄인가(#720) — fact_key가 있으면 true, 키 없는 줄(알레르기처럼 라벨로 옮기지
-    # 못한 사유, 「+」로 키 없이 남은 줄)은 false. 응답에는 항상 채워 내려 준다.
+    # 후보를 거르거나 점수 매기는 데 실제로 쓰이는 줄인가(#720, #740) — core.evidence_line_use가 파이프라인과 같은 기준으로 정한다.
+    # 끈 줄(is_active=false)도 켜면 쓰이는지를 보인다. 쓰이지 않으면 이유(not_enforced_reason)가 따라온다. 응답에는 항상 채워 내려 준다.
     enforced: bool | None = None
+    not_enforced_reason: Literal["no_key", "no_direction", "not_for_category", "off_season"] | None = None
     is_active: bool
     permissions: Permissions
 

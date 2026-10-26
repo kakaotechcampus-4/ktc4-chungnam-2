@@ -287,19 +287,30 @@ def create_run(
     return run
 
 
-def _evidence_response(line, principal: Principal) -> schemas.EvidenceLine:
+def _evidence_response(
+    line, principal: Principal, *, category: str, off_season: frozenset[str],
+) -> schemas.EvidenceLine:
+    enforced, not_enforced_reason = core.evidence_line_use(line.badge, line.fact_key, line.wants, category, off_season)
     resource = Resource(type="evidence_line", map_id=principal.map_id, author_id=line.author_id)
     return schemas.EvidenceLine(
         id=str(line.id), author_id=line.author_id, text=line.text, badge=line.badge,
         fact_key=line.fact_key, fact_label=constraints.FACT_LABELS.get(line.fact_key) if line.fact_key else None,
-        wants=line.wants, enforced=line.fact_key is not None, is_active=line.is_active,
+        wants=line.wants, enforced=enforced, not_enforced_reason=not_enforced_reason, is_active=line.is_active,
         permissions=Permissions(can_disable=can(principal, "evidence.disable", resource)),
     )
 
 
+def _evidence_responses(db: Session, run: RecommendRun, principal: Principal) -> list[schemas.EvidenceLine]:
+    off_season = _out_of_season_keys(db, run.map_id)
+    return [
+        _evidence_response(line, principal, category=run.category, off_season=off_season)
+        for line in service.list_evidence(db, str(run.id))
+    ]
+
+
 def list_evidence(db: Session, *, run_id: str, principal: Principal) -> list[schemas.EvidenceLine]:
-    service.get_run_or_404(db, run_id)
-    return [_evidence_response(line, principal) for line in service.list_evidence(db, run_id)]
+    run = service.get_run_or_404(db, run_id)
+    return _evidence_responses(db, run, principal)
 
 
 def _check_manual_evidence_limit(db: Session, run_id: uuid.UUID, *, adding: int) -> None:
@@ -355,7 +366,7 @@ def patch_evidence(
                 service.add_manual_evidence(
                     db, run_id=run_uuid, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
                 )
-    return [_evidence_response(line, principal) for line in service.list_evidence(db, run_id)]
+    return _evidence_responses(db, run, principal)
 
 
 def _region_response(region) -> schemas.Region:
@@ -376,32 +387,37 @@ def confirm_regions(db: Session, *, run_id: str, accept_union: bool) -> list[sch
     return [_region_response(r) for r in service.list_regions(db, run_id)]
 
 
-def _hard_fact_keys_from(lines: Sequence[EvidenceLineRow], category: str) -> list[str]:
-    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: 활성 evidence_line 중
-    badge='required'로 hard 키가 매핑된 것만 켠다(누구도 문제 제기 안 한 조건은 검사하지 않는다). hard 키는
-    방향이 고정이라("있으면 실격") wants를 보지 않는다. ♥·「+」 사유로도 켜던 안전 조건 규칙(D11, #254)은
-    안전 조건 키와 함께 없앴다(#425). 카테고리에 안 맞는 fact_key는 애초에 제외."""
-    applicable = set(constraints.hard_fact_keys_for(category))
-    active = {line.fact_key for line in lines if line.badge == "required" and line.fact_key is not None}
-    return sorted(active & applicable)
+def _used_lines(lines: Sequence[EvidenceLineRow], category: str, off_season: Collection[str]) -> list[EvidenceLineRow]:
+    """파이프라인이 실제로 쓰는 줄만(core.evidence_line_use, #740) — 근거 응답의 enforced와 같은 기준이다."""
+    return [line for line in lines if core.evidence_line_use(line.badge, line.fact_key, line.wants, category, off_season)[0]]
 
 
-def _soft_requirements_from(lines: Sequence[EvidenceLineRow]) -> list[tuple[str, bool]]:
-    """#231 — soft 키 중 `required` + `wants`가 true/false인 활성 사유를 (fact_key, wants)로 켠다. wants가
-    null이거나 hard 키(방향 고정)면 여기 오지 않는다. 사람이 직접 밝힌 사유라 카테고리 기본 키에 없어도
-    적용한다(선호 사유와 같다 — 아래 soft_keys가 그 키의 체크를 붙인다)."""
+def _hard_fact_keys_from(used_lines: Sequence[EvidenceLineRow]) -> list[str]:
+    """5-6 3단계 — "활성 실격 조건"(constraints.md)만 순회한다: 쓰이는 줄 중 badge='required'이고 hard 키인 것만 켠다
+    (누구도 문제 제기 안 한 조건은 검사하지 않는다). hard 키는 방향이 고정이라("있으면 실격") wants를 보지 않는다.
+    ♥·「+」 사유로도 켜던 안전 조건 규칙(D11, #254)은 안전 조건 키와 함께 없앴다(#425)."""
     return sorted({
-        (line.fact_key, line.wants) for line in lines
-        if line.badge == "required" and line.wants is not None and line.fact_key in constraints.SOFT_FACT_KEYS
+        line.fact_key for line in used_lines if line.badge == "required" and line.fact_key in constraints.HARD_REGISTRY
+    })
+
+
+def _soft_requirements_from(used_lines: Sequence[EvidenceLineRow]) -> list[tuple[str, bool]]:
+    """#231 — 쓰이는 줄 중 soft 키 + `required`인 사유를 (fact_key, wants)로 켠다. 사람이 직접 밝힌 사유라 카테고리 기본 키에
+    없어도 적용한다(선호 사유와 같다 — 아래 soft_keys가 그 키의 체크를 붙인다)."""
+    return sorted({
+        (line.fact_key, line.wants) for line in used_lines
+        if line.badge == "required" and line.fact_key in constraints.SOFT_FACT_KEYS
     })
 
 
 def _active_hard_fact_keys(db: Session, run: RecommendRun) -> list[str]:
-    return _hard_fact_keys_from(service.list_active_evidence(db, run.id), run.category)
+    off_season = _out_of_season_keys(db, run.map_id)
+    return _hard_fact_keys_from(_used_lines(service.list_active_evidence(db, run.id), run.category, off_season))
 
 
 def _active_soft_requirements(db: Session, run: RecommendRun) -> list[tuple[str, bool]]:
-    return _soft_requirements_from(service.list_active_evidence(db, run.id))
+    off_season = _out_of_season_keys(db, run.map_id)
+    return _soft_requirements_from(_used_lines(service.list_active_evidence(db, run.id), run.category, off_season))
 
 
 def _passes_hard_check(value) -> bool:
@@ -502,26 +518,23 @@ def _run_pipeline(
     # 후보를 거르지 않고, 이유·체크에도 안 나온다). 날짜가 없으면 모두 쓴다.
     off_season = _out_of_season_keys(db, run.map_id)
     active_lines = [line for line in active_lines if line.fact_key not in off_season]
-    active_hard_keys = _hard_fact_keys_from(active_lines, run.category)
-    soft_requirements = _soft_requirements_from(active_lines)
+    # 아래 조건·점수는 쓰이는 줄(core.evidence_line_use)에서만 만든다 — 근거 응답의 enforced와 같은 기준이다(#740).
+    used_lines = _used_lines(active_lines, run.category, off_season)
+    active_hard_keys = _hard_fact_keys_from(used_lines)
+    soft_requirements = _soft_requirements_from(used_lines)
     # 구성원별 반대 조건 — 충족 집계에 센다(#255, #620). 이번 실행이 실제로 확인하는 키만 넣는다: 카테고리에 맞는 hard 키
     # (방향 고정이라 wants=None)와 방향이 있는 soft 요구. 키 없는 줄(알러지 글, 「취향이 아니에요」)은 넣지 않는다.
     disqualifier_conditions: dict[str, set[tuple[str, bool | None]]] = {}
-    for line in active_lines:
+    for line in used_lines:
         if line.badge != "required":
             continue
-        if line.fact_key in active_hard_keys:
-            condition = (line.fact_key, None)
-        elif (line.fact_key, line.wants) in soft_requirements:
-            condition = (line.fact_key, line.wants)
-        else:
-            continue
+        condition = (line.fact_key, None) if line.fact_key in constraints.HARD_REGISTRY else (line.fact_key, line.wants)
         disqualifier_conditions.setdefault(line.author_id, set()).add(condition)
     preferred_authors: dict[str, set[str]] = {}
     avoided_authors: dict[str, set[str]] = {}  # preferred + wants=false — 점수에서 반대 구성원(#231)
-    for line in active_lines:
-        # wants=None(방향을 모름)인 선호는 지지·반대 어디에도 세지 않는다 — 효과 없음(constraints.md 표, #237).
-        if line.badge == "preferred" and line.fact_key is not None and line.wants is not None:
+    for line in used_lines:
+        # wants=None(방향을 모름)인 선호는 쓰이는 줄이 아니라 지지·반대 어디에도 세지 않는다 — 효과 없음(constraints.md 표, #237).
+        if line.badge == "preferred":
             by_direction = preferred_authors if line.wants else avoided_authors
             by_direction.setdefault(line.fact_key, set()).add(line.author_id)
     preferred_authors_frozen = {key: frozenset(authors) for key, authors in preferred_authors.items()}

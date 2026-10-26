@@ -311,6 +311,9 @@ def test_evidence_response_marks_enforced_by_fact_key_720(app_client, db_session
     assert lines["새우 알레르기"]["enforced"] is False
     assert lines["그냥 분위기 좋은 곳"]["enforced"] is False
     assert all(isinstance(line["enforced"], bool) for line in lines.values())
+    assert lines["한식 말고"].get("not_enforced_reason") is None
+    assert lines["새우 알레르기"].get("not_enforced_reason") == "no_key"
+    assert lines["그냥 분위기 좋은 곳"].get("not_enforced_reason") == "no_key"
 
 
 def test_run_not_found_is_404(app_client, db_session):
