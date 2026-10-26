@@ -2514,7 +2514,7 @@ components:
         failure_code:
           type: [string, "null"]
           enum: [INTERRUPTED, ENGINE_ERROR, null]
-          description: "failed일 때만. INTERRUPTED=서버가 다시 떠서 끊김(또는 15분 넘게 끝나지 않음), ENGINE_ERROR=계산 오류. 화면은 같은 문구 「코스를 만들지 못했어요」 + 「다시 짜기」"
+          description: "failed일 때만. INTERRUPTED=서버가 다시 떠서 끊김(또는 15분 넘게 끝나지 않음. 서버가 새 요청과 조회 때 판정해 이 값으로 끝낸다, #736), ENGINE_ERROR=계산 오류. 화면은 같은 문구 「코스를 만들지 못했어요」 + 「다시 짜기」"
         goals: { type: array, items: { $ref: "#/components/schemas/CourseGoal" }, description: "요청 한 줄에서 모델이 세우고 코드가 검증한 목표. 요청이 없으면 빈 배열" }
         unmatched: { type: array, items: { type: string }, description: "목표로 바꾸지 못한 요청 조각(요청 원문의 일부). 화면에 「반영하지 못했어요」로 보인다" }
         steps: { type: array, items: { $ref: "#/components/schemas/CourseStep" }, description: "작업 기록 — 이해, 확인, 짜기, 점검, 재계획, 끝, 결과 순으로 누가 했는지와 함께. running 중에도 단계마다 늘어난다(앞 단계는 바뀌지 않고 뒤로만 붙는다). 그동안 goals, days 같은 결과 칸은 비어 있다" }

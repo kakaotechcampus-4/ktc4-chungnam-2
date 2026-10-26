@@ -4015,7 +4015,7 @@ export interface components {
              */
             outcome: "solved" | "solved_with_checks" | "unresolved" | "timeout" | null;
             /**
-             * @description failed일 때만. INTERRUPTED=서버가 다시 떠서 끊김(또는 15분 넘게 끝나지 않음), ENGINE_ERROR=계산 오류. 화면은 같은 문구 「코스를 만들지 못했어요」 + 「다시 짜기」
+             * @description failed일 때만. INTERRUPTED=서버가 다시 떠서 끊김(또는 15분 넘게 끝나지 않음. 서버가 새 요청과 조회 때 판정해 이 값으로 끝낸다, #736), ENGINE_ERROR=계산 오류. 화면은 같은 문구 「코스를 만들지 못했어요」 + 「다시 짜기」
              * @enum {string|null}
              */
             failure_code: "INTERRUPTED" | "ENGINE_ERROR" | null;

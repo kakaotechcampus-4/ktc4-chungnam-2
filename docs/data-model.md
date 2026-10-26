@@ -459,7 +459,7 @@ index ix_agent_course_runs_user_created (requested_by, created_at)       -- 하�
 unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queued','running')   -- 내 진행 중 run은 지도당 하나 → 409 COURSE_IN_PROGRESS
 ```
 
-- 진행 중으로 15분 넘게 남은 run은 다음 요청이 `failed(INTERRUPTED)`로 끝낸다. 서버가 시작할 때도 진행 중인 run을 모두 같은 값으로 끝낸다(인스턴스 하나 전제, #168).
+- 진행 중으로 15분 넘게 남은 run은 `failed(INTERRUPTED)`로 끝낸다. 새 요청과 조회(`GET /course-runs/{runId}`, `GET /maps/{mapId}/courses/latest`)가 같은 판정(`agent.course.service.fail_stale_runs`)을 부른다(#736). 늦게 끝난 계산은 `running`일 때만 저장하므로 끝낸 run을 덮지 않는다. 서버가 시작할 때도 진행 중인 run을 모두 같은 값으로 끝낸다(인스턴스 하나 전제, #168).
 - 영업시간 칸이 places에 아직 없어(#580 6번) 지금은 모든 장소가 「확인 필요」(`checks`)다.
 
 ---
