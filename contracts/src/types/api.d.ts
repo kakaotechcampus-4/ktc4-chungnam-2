@@ -3673,6 +3673,7 @@ export interface components {
             }[];
             /** @description 직접 추가할 글. 한 요청에 5개까지, run 하나에 모두 10개까지(#707). 근거 줄이 아니라 글 수로 센다. 한 요청 안의 같은 글은 하나로 친다 */
             add?: {
+                /** @description 앞뒤 공백을 뗀 뒤 1~140자(#716) */
                 text?: string;
             }[];
         };
