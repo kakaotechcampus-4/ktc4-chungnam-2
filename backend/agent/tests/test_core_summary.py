@@ -30,13 +30,22 @@ def _spec_errors(name: str, body) -> list[str]:
     return [f"{'/'.join(map(str, e.path))}: {e.message}" for e in validator.iter_errors(body)]
 
 
+def _use(fact_key, wants):
+    """recommend.api.evidence_line_uses가 붙이는 값의 기본형 — 키와 방향이 있으면 쓰이고, 아니면 이유가 붙는다."""
+    if fact_key is None:
+        return {"enforced": False, "not_enforced_reason": "no_key"}
+    if wants is None:
+        return {"enforced": False, "not_enforced_reason": "no_direction"}
+    return {"enforced": True, "not_enforced_reason": None}
+
+
 def line(fact_key=None, wants=None, badge="required", **extra):
-    return {"fact_key": fact_key, "wants": wants, "badge": badge, "source": "text"} | extra
+    return {"fact_key": fact_key, "wants": wants, "badge": badge, "source": "text", **_use(fact_key, wants)} | extra
 
 
 def chip(chip_id, label="칩", fact_key=None, wants=None):
     return {"fact_key": fact_key, "wants": wants, "badge": "required", "source": "chip", "chip_id": chip_id,
-            "label": label}
+            "label": label, **_use(fact_key, wants)}
 
 
 def reason(rid, member_key, *lines, text="사유"):
@@ -303,3 +312,34 @@ def test_deleted_pin_reason_counts_and_its_author_is_not_new():
     s = snap(reasons=[gone])
     assert core.summary_changes(s, "음식점", None) == 1
     assert core.summary_changes(s, "음식점", _meta("음식점", ["r_gone"])) is None
+
+
+# ---------------------------------------------------------------- recommend가 정한 not_enforced_reason (#740)
+
+def test_off_season_and_not_for_category_lines_go_to_not_filtered_notices_not_conditions():
+    out = core.summarize_reasons([
+        reason("r1", "u1", line("season_snow", True, "preferred", enforced=False, not_enforced_reason="off_season")),
+        reason("r2", "u2", line("is_crowded_large", False, enforced=False, not_enforced_reason="not_for_category")),
+    ])
+
+    assert out["must_keep"] == [] and out["common_prefs"] == []
+    assert out["not_filtered"]["reaction_ids"] == ["r1", "r2"]
+    assert out["not_filtered"]["notices"] == ["season", "category"]
+    assert out["vague_fixable"]["count"] == 0
+
+
+def test_no_direction_line_is_vague_fixable():
+    out = core.summarize_reasons([reason("r1", "u1", line("quiet", None, "preferred"))])
+
+    assert out["vague_fixable"]["reaction_ids"] == ["r1"] and out["vague_fixable"]["requests"] == ["general"]
+
+
+def test_new_notice_kinds_render_fixed_sentences():
+    stored = core.summarize_reasons([
+        reason("r1", "u1", line("season_snow", True, "preferred", enforced=False, not_enforced_reason="off_season")),
+        reason("r2", "u2", line("is_crowded_large", False, enforced=False, not_enforced_reason="not_for_category")),
+    ])
+    notices = core.render_summary("카페", stored, NOW, LABELS).not_filtered.notices
+
+    assert notices == ["여행 기간에는 해당하지 않는 조건이라 이번 추천에 쓰지 않아요.",
+                       "이 카테고리에는 없는 조건이라 이번 추천에 쓰지 않아요."]

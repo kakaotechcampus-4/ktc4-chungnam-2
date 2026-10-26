@@ -275,7 +275,7 @@ def _lines(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[list[dic
     그대로. ♥ 글은 preferred, 🚫 글은 required로 넣는다 — 추천이 근거 줄을 만들 때와 같다. 칩은 🚫에만 있어 required.
     글 줄과 칩 줄을 합친 뒤 추천과 같은 #422 규칙(🚫 사유 안의 음식 종류 "원함"은 preferred)을 recommend.api로 건다(#564).
     줄마다 출처(source: text|chip)를 붙이고 칩 줄에는 chip_id와 label(칩 표의 고정 이름)도 붙인다 — 요약의 키 없는 사유
-    나누기(8절)가 쓴다. ②가 실패하면 llm.api.PlanEvidenceFailed가 그대로 올라간다."""
+    나누기(8절)가 쓴다. enforced와 not_enforced_reason은 recommend.api.evidence_line_uses가 붙인다(#740). ②가 실패하면 llm.api.PlanEvidenceFailed가 그대로 올라간다."""
     def key(r: Mapping[str, Any]) -> tuple[str, str]:
         return r["reaction_id"], _iso(r["updated_at"])
 
@@ -296,7 +296,19 @@ def _lines(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[list[dic
         lines += [{"fact_key": c["fact_key"], "wants": c["wants"], "badge": "required", "source": "chip",
                    "chip_id": c["chip_id"], "label": c["label"]} for c in r["chips"]]
         out.append(recommend_api.demote_wanted_place_identity(r["category"], lines))
-    return out
+    return _with_use(ctx, rows, out)
+
+
+def _with_use(
+    ctx: ToolContext, rows: Sequence[Mapping[str, Any]], grouped: list[list[dict[str, Any]]],
+) -> list[list[dict[str, Any]]]:
+    """줄마다 enforced와 not_enforced_reason을 붙인다. 쓰이는지는 recommend가 정하고(#740) agent는 그 값을 쓴다."""
+    with ctx.read() as db:
+        for r, lines in zip(rows, grouped, strict=True):
+            uses = recommend_api.evidence_line_uses(db, map_id=ctx.map_id, category=r["category"], lines=lines)
+            for line, use in zip(lines, uses, strict=True):
+                line.update(use)
+    return grouped
 
 
 _LINE_KEYS = ("fact_key", "wants", "badge")   # structure_reasons 도구가 모델에 주는 줄의 칸
