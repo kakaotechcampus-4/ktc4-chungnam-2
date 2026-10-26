@@ -94,7 +94,7 @@ backend/agent/
   api.py                # 다른 모듈에 여는 함수: advise_run, purge_map_data, delete_by_user
   router.py             # 14절 엔드포인트 (agent 태그)
   tests/
-backend/llm/            # agent_diagnose, agent_advise_run 추가. llm/api.py에서 연다(agent_prioritize는 #582에서 지움, 요약은 고정 문구라 모델 함수 없음)
+backend/llm/            # agent_diagnose 추가(agent_advise_run은 #749에서 지움). llm/api.py에서 연다(agent_prioritize는 #582에서 지움, 요약은 고정 문구라 모델 함수 없음)
 backend/recommend/      # api.py에 run 조회와 시뮬레이션 함수, 근거 줄 분류 함수 공개. GET /runs/{runId}/advice
 backend/pins/           # api.py에 반응 표 조회 함수 추가. 사유 조회는 기존 list_reasoned_reactions를 쓴다
 frontend/src/features/agent/   # 버튼, 바텀시트, 이벤트 처리
@@ -426,9 +426,10 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 - 엔드포인트: `GET /runs/{runId}/advice`, api-spec의 recommend 태그. 코드는 `agent/router.py` → `agent/flows.advise_run`이다(#587). recommend 라우터에 두면 recommend와 agent가 서로를 import하게 돼서 옮겼다. 권한은 `recommend.api.get_run_meta`로 run을 읽어 authz가 판정한다. agent만 recommend.api를 쓰는 한 방향이다.
 - 권한: 비구성원 404, run 요청자가 아니면 403.
 - 대상이 아니면 204. 저장된 조언이 있으면 그대로 200. 없으면 생성해 저장하고 200.
-- run당 1회: `agent_run_advice`에 `INSERT ... ON CONFLICT (run_id) DO NOTHING` 후 저장된 행을 돌려준다. 모델이 silent여도 빈 advice로 저장해 다시 생성하지 않는다.
+- run당 1회: `agent_run_advice`에 `INSERT ... ON CONFLICT (run_id) DO NOTHING` 후 저장된 행을 돌려준다. 낼 조언이 없어도(silent) 빈 advice로 저장해 다시 생성하지 않는다.
+- 계산이 실패하면 조언 없음(204)으로 삼키지 않고 500(`INTERNAL_ERROR`)이다. agent_runs에 outcome=error 한 행을 남기고 조언 행은 쓰지 않아 다음 요청이 다시 만든다(#750). FE는 500이면 조언 자리를 숨긴다(16.5).
 - 세션: 이 엔드포인트는 요청 단위 세션(get_db)을 쓰지 않는다. 조회와 저장을 짧은 세션으로 나눈다. `realtime/dispatcher.py`가 재전송 조회에 SessionLocal을 짧게 쓰는 것과 같은 이유다.
-- 지도 모델 사용 상한에는 세지 않는다. run당 1회라 개인 재시도 상한(10회, #31) 안에 묶인다. 서비스 전체 상한은 적용한다.
+- 모델을 부르지 않는다(2026-10-27 결정, #749). 종류, 버튼, 문장은 agent 코드(`core.advice_simulations`, `core.choose_run_advice`)가 깔때기 숫자, 근거 줄 종류, 시뮬레이션 결과로 정한다(9.1).
 
 조언 종류는 다음과 같다.
 
@@ -448,6 +449,18 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 - 라벨이 모르는 가게는 "통과 + 확인 필요"라 실격되지 않는다. 그래서 시뮬레이션 숫자는 라벨이 확실한 가게만 센다.
 - 조건을 끄는 것은 사람이다(가드레일 4). 에이전트는 몇 곳이 빠졌는지만 알린다.
 - 가격 라벨은 없어졌다(#423). 가격 완화 조언은 없다.
+
+### 9.1 종류 고르기는 코드다 (#749, #750)
+
+advise-v4 프롬프트의 「종류 고르기」는 순서가 정해진 절차였다. 모델이 글로 적힌 절차를 따라 하던 것을 코드로 옮겼다(멘토 리뷰 #680).
+
+1. 깔때기의 「반경 밖 제거」, 「실격 조건 제거」, 「이미 제안·거절됨」 중 `ADVICE_CLEAR_DROP`(5, `agent/constants.py`, 루트 결정 값) 이상 빠진 단계를 많은 것부터 본다. 「영업 종료 제거」와 「추천 가능 아님 제거」는 사람이 바꿀 수 없어 보지 않는다.
+2. 반경: 버튼 한 번의 배율로 시뮬레이션해 1곳 이상 늘면 radius. 이미 상한이면 다음 단계. 실격 조건: 켜진 조건 줄을 많아야 세 줄(`ADVICE_MAX_RELAX_LINES`) 하나씩 꺼 봐서 늘면 soft_relax. 이미 제안·거절됨: exhausted(시뮬레이션 없음).
+3. 고른 종류가 없으면 vague 줄이 있을 때 vague_reason, 없으면 silent(204).
+4. 필요한 시뮬레이션을 먼저 모두 고르고 부른다. 서로 기다리지 않는다. 근거 글은 절차에 들어가지 않아(줄 id, 본인 여부, 종류, 이름만) 글 속 지시가 결과를 바꿀 수 없다.
+5. 문장은 고정 문구다. 숫자와 조건 이름은 claim 조각(#717)이다. radius "반경 넓히기를 한 번 누르면 {gained}곳이 더 남아요.", soft_relax "「{label}」 조건을 빼면 {gained}곳이 더 남아요."(본인 줄에만 open_evidence), vague_reason "조건으로 읽지 못한 글이 있어 추천에 반영되지 않았어요."와 예시 "'조용한 곳이 좋아요'처럼 원하는 점을 적으면 반영돼요.", exhausted "이미 보여 줬거나 거절한 {n}곳은 다시 추천하지 않아요."
+
+옮긴 근거(#588 평가, advise-v4, 23건 × 5회 = 115회): 종류 일치 84/90(93%), 남은 종류 실패 5회는 모두 위 절차를 어긴 것이었다. 도구 호출 224번(평균 1.95번) 중 get_run_evidence 115번(모든 실행의 첫 왕복), simulate_filter 108번, get_run_funnel 1번(입력에 이미 있음)이었다. 115회 모두 왕복마다 도구 하나였다. 반경 시뮬레이션은 근거가 필요 없는데도 다음 왕복에, 서로 독립인 시뮬레이션 2~3번(36회)도 한 왕복씩 따로 불렀다. 근거만 읽고 답한 47회는 첫 왕복이 결정에 쓰이지 않았다. 조언 1회에 평균 5.6초(최대 10.6초)를 HTTP 요청 안에서 기다렸고 약 0.37원이 들었다. 평가셋 25건(23건과 인젝션 2건)은 `agent/tests/cases_advice.json`의 회귀 테스트로 남았다.
 
 ## 10. 도구
 
@@ -487,7 +500,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 - stall: get_map_overview, get_reasons, structure_reasons, get_readiness
 - split: get_reaction_matrix, get_reasons, structure_reasons, compare_reasons, get_place_facts
 - 요약: 도구를 모델이 고르지 않는다. 코드가 get_reasons, structure_reasons, compare_reasons를 차례로 부르고 칸을 나눈다(8절).
-- 추천 막힘 조언: get_recent_runs, get_run_funnel, get_run_evidence, simulate_filter
+- 추천 막힘 조언: 모델 도구가 없다(#749). agent가 recommend.api(get_recent_runs, get_run_funnel, get_run_evidence, simulate_filter)를 직접 부른다(9.1). 위 표의 "추천 막힘 전용" 네 줄은 그 함수의 설명으로 읽는다.
 
 simulate_filter는 recommend의 필터 순서(반경 → 영업종료 → 실격조건 → 중복제외)를 다시 구현하지 않는다. recommend.api가 여는 읽기 전용 시뮬레이션 함수를 부른다. run과 후보를 바꾸지 않는다.
 
@@ -558,15 +571,12 @@ class DiagnosisOutput(BaseModel):
 
 # SummaryOutput은 두지 않는다. 요약의 구체화 문장은 고정 문구다(8절, 2026-10-16). #588에서 모델이 필요하다고 보면 그때 정의한다
 
-class RunAdviceOutput(BaseModel):
-    decision: Literal["suggest", "silent", "unknown"]
-    kind: Literal["radius", "soft_relax", "vague_reason", "exhausted"]
-    claims: list[Claim]
-    advice: list[AdviceLine]
-    actions: list[Action]                # widen_radius, open_evidence만
+# RunAdviceOutput은 #750에서 지웠다. 추천 막힘 조언은 모델 출력이 아니라 코드가 정한다(9.1, 결정 #749)
 ```
 
 ### 11.2 검증 단계
+
+추천 막힘 조언은 모델 출력이 아니라 이 검증을 거치지 않는다(#749). 본인 줄에만 버튼을 붙이는 규칙과 고정 문장은 코드가 지키고 `agent/tests/test_advice_cases.py`(평가셋 25건)가 본다.
 
 `core.verify_*` 함수가 아래 순서로 검사한다. 단계별 통과와 실패 내역은 `agent_runs.verification`에 남긴다.
 

@@ -1,40 +1,33 @@
-"""추천 막힘 조언 평가셋(#588) — cases_advice.json의 run 상태를 agent가 보는 모양(조언 입력, 도구 결과, 검증 재료)으로 바꾼다.
-DB를 쓰지 않는다.
+"""추천 막힘 조언 회귀 셋(#588 평가셋을 #750에서 옮김) — cases_advice.json의 run 상태를 recommend.api가 돌려주는 모양으로
+바꾸고, flows.advise_run과 같은 순서로 core의 절차를 돌린다. DB를 쓰지 않는다.
 
-- 도구는 운영 코드 `agent.tools.RunToolContext`가 그대로 돈다. 데이터만 recommend.api 대신 FixtureRecommendApi(케이스의
-  깔때기, 근거 줄, 시뮬레이션)에서 읽는다 — patched_recommend_api()가 agent.tools의 recommend_api를 잠시 바꾼다. 그래서 도구
-  결과의 모양(core.funnel_view, simulate_view, advice_evidence), 인자 검사(배율, 근거 줄 id), 상위 N개 자르기, 기록이 운영과 같다.
-- 조언 입력은 core.advice_input, 대상 판정은 core.run_advice_target, 검증은 core.verify_run_advice, 렌더는
-  core.render_run_advice다(agent.flows.advise_run과 같은 재료). 평가가 보는 것은 프롬프트와 모델이다.
+- 깔때기, 근거 줄, 메타, 최근 run은 recommend.api.get_run_funnel, get_run_evidence, get_run_meta, get_recent_runs와 같은 모양이다.
 - simulate_filter는 필터를 다시 돌리지 않고 케이스에 적은 증가 수로 after를 만든다: 반경은 넓힌 도보 분 이하의 radius_gain 중
   가장 큰 값, 근거 줄은 끈 줄들의 gain 합. 그만큼 「반경 밖 제거」, 「실격 조건 제거」가 줄고 passed가 는다.
+- 칩 줄의 글, 키, 방향은 칩 표(pins.chips, 정본 docs/constraints.md)에서 읽는다 — 여기 다시 적지 않는다.
 - 근거 글은 지어낸 예시다. 실제 사용자 글을 넣지 않는다.
-
-평가 도구라 agent의 core와 tools(api.py가 아닌 모듈), recommend.core의 상수를 직접 가져온다. 운영 코드는 이 파일을 가져오지 않는다.
 """
 
 import json
 import uuid
-from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Collection, Iterator, Mapping, Sequence
+from typing import Any, Collection, Mapping
 
-from agent import core, tools
+from agent import core
 from common.errors import AppError
-from llm.schemas import RunAdviceOutput
-from llm.tests.eval_agent.fixtures import CHIPS, MEMBER_NAMES, NOW
+from pins import chips
 from recommend import api as recommend_api
 from recommend.core import RANKING_STAGE, WIDEN_LIMIT_MIN, WIDEN_STEP_MIN, passed_count
 
 CASES_PATH = Path(__file__).with_name("cases_advice.json")
+NOW = datetime(2026, 10, 15, 3, 0, tzinfo=timezone.utc)
 
 # recommend.flows._run_pipeline의 깔때기 단계 순서. 케이스의 funnel은 이 라벨 → 탈락 수(적지 않으면 0)
-STAGES = ("카테고리 후보 풀", "반경 밖 제거", "영업 종료 제거", "추천 가능 아님 제거", "실격 조건 제거", "이미 제안·거절됨",
-          RANKING_STAGE)
-RADIUS_STAGE, DISQUALIFY_STAGE, EXCLUDED_STAGE = "반경 밖 제거", "실격 조건 제거", "이미 제안·거절됨"
+STAGES = ("카테고리 후보 풀", core.RADIUS_STAGE, "영업 종료 제거", "추천 가능 아님 제거", core.DISQUALIFY_STAGE,
+          core.EXCLUDED_STAGE, RANKING_STAGE)
 
 REQUESTER = "u1"
 AUTHORS = {"self": REQUESTER, "other": "u2", "other2": "u3"}
@@ -52,7 +45,7 @@ def _id(case_id: str, local: str) -> str:
 
 @dataclass
 class AdviceWorld:
-    """케이스 하나의 run 상태. raw는 recommend.api가 돌려줄 값과 같은 모양이다."""
+    """케이스 하나의 run 상태. 칸은 recommend.api가 돌려줄 값과 같은 모양이다."""
     case: dict[str, Any]
     run_id: str
     meta: dict[str, Any]                 # recommend.api.get_run_meta
@@ -64,59 +57,45 @@ class AdviceWorld:
     radius_gain: dict[int, int]          # 넓힌 도보 분 → 더 남는 곳
 
     @property
-    def same_runs(self) -> int:
-        return core.same_category_runs(self.recent, self.meta["created_at"])
-
-    @property
     def is_target(self) -> bool:
-        return core.run_advice_target(self.meta["status"], self.meta["result_count"], self.same_runs)
+        same_runs = core.same_category_runs(self.recent, self.meta["created_at"])
+        return core.run_advice_target(self.meta["status"], self.meta["result_count"], same_runs)
 
     def line_id(self, local: str) -> str:
         return self.local_ids[local]
 
-    # ---- 조언 한 번 (agent.flows.advise_run과 같은 재료)
+    def own(self, line_id: str) -> bool:
+        return next(line["author_id"] for line in self.lines if line["line_id"] == line_id) == REQUESTER
 
-    def tool_context(self) -> tools.RunToolContext:
-        return tools.RunToolContext(
-            run_id=self.run_id, requester_id=REQUESTER, meta=self.meta, session_factory=_NoSession,
-            fact_labels=recommend_api.fact_labels(),
-        )
+    # ---- 조언 한 번 (flows.advise_run과 같은 순서: 깔때기, 근거 줄 → 필요한 시뮬레이션 → 고르기)
 
-    def advice_input(self, ctx: tools.RunToolContext) -> dict[str, Any]:
-        """깔때기를 미리 읽어(t0) 넣은 조언 입력. patched_recommend_api() 안에서 부른다."""
-        funnel = ctx.prefetch(core.PREFETCH_CALL_ID, "get_run_funnel")
-        return core.advice_input(self.meta, self.same_runs, funnel)
-
-    def member_names(self) -> list[str]:
-        return list(MEMBER_NAMES[:self.case.get("members", 3)])
-
-    def verify(self, out: RunAdviceOutput, ctx: tools.RunToolContext) -> core.VerifiedAdvice:
-        """agent.flows._checked_advice와 같은 AdviceContext로 검증한다."""
-        return core.verify_run_advice(out, core.AdviceContext(
-            run_id=ctx.run_id, tool_results=ctx.results, tool_names=ctx.names,
-            own_lines={line["line_id"]: line["author_id"] == REQUESTER for line in self.lines},
-            evidence_texts=[line["text"] for line in self.lines if line["text"]], radius=core.run_radius(self.meta),
-            member_names=self.member_names(),
-        ))
+    def advise(self) -> tuple[core.AdviceDraft, dict[str, dict[str, Any]]]:
+        """(조언, 돌린 시뮬레이션의 인자)."""
+        funnel = core.funnel_view(self.funnel)
+        lines = core.advice_evidence(self.lines, REQUESTER, recommend_api.fact_labels())
+        next_factor = core.next_radius_factor(self.meta)
+        wanted = core.advice_simulations(funnel, lines, next_factor)
+        sims = {cid: core.simulate_view(self.simulate(**args), **args) for cid, args in wanted.items()}
+        return core.choose_run_advice(self.run_id, funnel, lines, sims, next_factor), wanted
 
     def render(self, draft: core.AdviceDraft) -> Any:
         """저장될 조언 행 → API의 RunAdvice(core.render_run_advice). 빈 조언이면 None(204)."""
         row = SimpleNamespace(kind=draft.kind, claims=draft.claims, advice=draft.advice, actions=draft.actions)
         return core.render_run_advice(self.run_id, row)
 
-    # ---- simulate_filter
+    # ---- simulate_filter (recommend.api.simulate_filter의 {before, after})
 
-    def simulate(self, radius_factor: float | None, disabled: Collection[str]) -> dict[str, Any]:
-        unknown = set(disabled) - set(self.gains)
+    def simulate(self, radius_factor: float | None, disable_line_ids: Collection[str]) -> dict[str, Any]:
+        unknown = set(disable_line_ids) - set(self.gains)
         if unknown:
             raise AppError("NOT_FOUND")   # recommend.flows.simulate_filter: 그 run의 근거 줄이 아닌 id
         radius_gain = self._radius_gain(radius_factor)
-        line_gain = sum(self.gains[i] for i in set(disabled))
+        line_gain = sum(self.gains[i] for i in set(disable_line_ids))
         funnel = [dict(e) for e in self.funnel["funnel"]]
         for entry in funnel:
-            if entry["label"] == RADIUS_STAGE:
+            if entry["label"] == core.RADIUS_STAGE:
                 entry["removed_count"] = max(0, entry["removed_count"] - radius_gain)
-            elif entry["label"] == DISQUALIFY_STAGE:
+            elif entry["label"] == core.DISQUALIFY_STAGE:
                 entry["removed_count"] = max(0, entry["removed_count"] - line_gain)
         passed = self.funnel["passed_count"] + radius_gain + line_gain
         result = min(3, passed)
@@ -136,71 +115,16 @@ def _copy(outcome: Mapping[str, Any]) -> dict[str, Any]:
     return {**outcome, "funnel": [dict(e) for e in outcome["funnel"]]}
 
 
-class _NoSession:
-    """RunToolContext.read()가 여는 세션 자리. FixtureRecommendApi는 db를 보지 않는다."""
-
-    def __enter__(self) -> "_NoSession":
-        return self
-
-    def __exit__(self, *exc: Any) -> bool:
-        return False
-
-    def rollback(self) -> None:
-        pass
-
-
-class FixtureRecommendApi:
-    """agent.tools가 부르는 recommend.api 네 함수를 케이스 데이터로 돌려준다(시그니처와 반환 모양이 같다)."""
-
-    def __init__(self, worlds: Mapping[str, AdviceWorld]):
-        self._worlds = dict(worlds)
-
-    def _world(self, run_id: str) -> AdviceWorld:
-        if run_id not in self._worlds:
-            raise AppError("NOT_FOUND")
-        return self._worlds[run_id]
-
-    def get_recent_runs(self, db: Any, *, run_id: str, limit: int = 10) -> list[dict]:
-        return [dict(r) for r in self._world(run_id).recent[:limit]]
-
-    def get_run_funnel(self, db: Any, *, run_id: str) -> dict:
-        return _copy(self._world(run_id).funnel)
-
-    def get_run_evidence(self, db: Any, *, run_id: str) -> list[dict]:
-        return [dict(line) for line in self._world(run_id).lines]
-
-    def simulate_filter(
-        self, db: Any, *, run_id: str, radius_factor: float | None = None, disable_line_ids: Collection[str] = (),
-    ) -> dict:
-        if radius_factor is not None and not radius_factor > 0:
-            raise ValueError("radius_factor는 0보다 커야 한다")
-        return self._world(run_id).simulate(radius_factor, disable_line_ids)
-
-
-@contextmanager
-def patched_recommend_api(worlds: Sequence[AdviceWorld]) -> Iterator[FixtureRecommendApi]:
-    """agent.tools가 읽는 recommend.api를 이 블록 동안 FixtureRecommendApi로 바꾼다. run_id로 케이스를 가르므로 여러 케이스를
-    한꺼번에 넣고 동시에 돌려도 된다."""
-    fake = FixtureRecommendApi({w.run_id: w for w in worlds})
-    saved = tools.recommend_api
-    tools.recommend_api = fake
-    try:
-        yield fake
-    finally:
-        tools.recommend_api = saved
-
-
 def _line(case_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
     """케이스의 줄 → recommend.api.get_run_evidence의 한 줄. 칩 줄은 칩 표대로 글(label), 키, 방향을 채운다."""
-    chip = raw.get("chip")
-    if chip:
-        label, fact_key, wants = CHIPS[chip]
-        text, fact_key, wants = raw.get("text", label), raw.get("fact_key", fact_key), raw.get("wants", wants)
+    chip = chips.chip_for(raw["chip"]) if raw.get("chip") else None
+    if chip is not None:
+        text, fact_key, wants = raw.get("text", chip.label), raw.get("fact_key", chip.fact_key), raw.get("wants", chip.wants)
     else:
         text, fact_key, wants = raw["text"], raw.get("fact_key"), raw.get("wants")
     return {
         "line_id": _id(case_id, raw["id"]), "text": text, "badge": raw.get("badge", "required"), "fact_key": fact_key,
-        "wants": wants, "is_active": raw.get("active", True), "author_id": AUTHORS[raw["by"]], "chip_id": chip,
+        "wants": wants, "is_active": raw.get("active", True), "author_id": AUTHORS[raw["by"]], "chip_id": raw.get("chip"),
         "enforced": fact_key is not None, "not_enforced_reason": None if fact_key is not None else "no_key",   # recommend의 값(#740)
     }
 

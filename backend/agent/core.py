@@ -6,7 +6,7 @@
 - 코드 유형 템플릿(6.4, 6.5)과 렌더(11절 끝 "저장과 렌더 시점"), 이벤트 페이로드(15절) — #531
 - 진단 입력(12.4 6단계), 충돌 종류(6.3), 모델 출력 검증(11.2) — #533
 - 우리 조건 요약(8절): 갱신 판단, 다섯 칸 나누기, 고정 문구 렌더 — #586
-- 추천 막힘 조언(9절): 대상 판정, 도구 결과 모양, 출력 검증, 렌더 — #587
+- 추천 막힘 조언(9절): 대상 판정, 종류·문장·버튼 고르기(코드, #750), 렌더 — #587
 
 입력은 `agent.snapshot.Snapshot`(관찰 한 번의 사본)과 `History`(이 지도의 제안 이력, #515가 채운다)다.
 Signal과 features에는 사유 글을 넣지 않는다 — 근거는 reaction_id와 pin_id로만 가리킨다(명세 2절 13번).
@@ -29,6 +29,8 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from agent.constants import (
+    ADVICE_CLEAR_DROP,
+    ADVICE_MAX_RELAX_LINES,
     BACKOFF_HOURS,
     BLOCKED_RUN_MAX_RESULTS,
     BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS,
@@ -78,7 +80,6 @@ from agent.schemas import (
     QuoteClaim,
     RefClaim,
     RunAdvice,
-    RunAdviceOutput,
     ToolClaim,
 )
 from common import categories
@@ -1483,20 +1484,27 @@ def render_summary(
     )
 
 
-# ---------------------------------------------------------------- 추천 막힘 조언 (9절, 10절, 11.2, #587)
-# run 요청자 한 명에게 그 run의 데이터로만 조언한다(2절 2번의 예외). 대상 판정, 도구 결과 모양(근거 줄은 "본인"과 "다른 구성원"
-# 으로만), 모델 출력 검증, 렌더가 여기 있다. 저장에는 슬롯 문장, 검증을 통과한 tool_result claim, 버튼(근거 줄은 line_id만)을
-# 둔다 — 근거 글과 구성원 이름은 넣지 않는다(2절 11번, 13번). 조건을 끄는 것은 사람이다(가드레일 4): 버튼은 근거 확인 화면과
-# 반경 넓히기로만 이어진다.
+# ---------------------------------------------------------------- 추천 막힘 조언 (9절, #587, #750)
+# run 요청자 한 명에게 그 run의 데이터로만 조언한다(2절 2번의 예외). 종류, 문장, 버튼을 코드가 정한다(#749 결정 — 모델 없음).
+# 절차의 정본은 docs/agent-v2.md 9.1이다(advise-v4 프롬프트의 「종류(kind) 고르기」 등을 옮겼고 프롬프트는 #750에서 지웠다). 문장은 고정
+# 문구이고 숫자와 줄 이름만 claim 슬롯으로 넣는다(렌더 때 text 조각, #717). 근거 글은 절차의 입력에도 없다 — 글 안의 지시가
+# 결과를 바꿀 길이 없다. 저장에는 슬롯 문장, claim, 버튼(근거 줄은 line_id만)을 둔다 — 근거 글과 구성원은 넣지 않는다(2절 11번,
+# 13번). 조건을 끄는 것은 사람이다(가드레일 4): 버튼은 근거 확인 화면과 반경 넓히기로만 이어진다.
 
-ADVICE_SELF, ADVICE_OTHER = "본인", "다른 구성원"   # 근거 줄을 쓴 사람. 이름과 user_id는 모델에 가지 않는다
-PREFETCH_CALL_ID = "t0"   # 미리 읽어 입력에 넣는 깔때기의 call_id. llm이 매기는 t1, t2 …와 겹치지 않는다
-RUN_ADVICE_ACTIONS: dict[str, tuple[str, ...]] = {   # 9절 표의 종류별 버튼
-    "radius": ("widen_radius",), "soft_relax": ("open_evidence",), "vague_reason": ("open_evidence",), "exhausted": (),
-}
-RUN_ADVICE_LABELS = {   # 버튼 문구는 코드가 정한다. soft_relax 문구는 9절 그대로
+# recommend 깔때기의 단계 라벨(recommend.flows._run_pipeline). 사람이 바꿀 수 있는 세 단계만 종류를 고르는 데 쓴다 — 「영업 종료
+# 제거」와 「추천 가능 아님 제거」는 쓰지 않는다. 탈락 수가 같으면 이 순서로 본다
+RADIUS_STAGE, DISQUALIFY_STAGE, EXCLUDED_STAGE = "반경 밖 제거", "실격 조건 제거", "이미 제안·거절됨"
+ADVICE_STAGES = (RADIUS_STAGE, DISQUALIFY_STAGE, EXCLUDED_STAGE)
+# claim이 가리키는 읽기(agent_runs.tool_calls의 call_id). 시뮬레이션은 t2부터 매긴다(advice_simulations)
+FUNNEL_CALL_ID, EVIDENCE_CALL_ID = "t0", "t1"
+
+RUN_ADVICE_LABELS = {   # 버튼 문구. soft_relax 문구는 9절 그대로
     "radius": "반경 넓히기", "soft_relax": "근거 확인에서 빼 보기", "vague_reason": "근거 확인하기",
 }
+VAGUE_REASON_LINES = (   # (문장, is_guess). 둘째는 예시라 추정이다
+    ("조건으로 읽지 못한 글이 있어 추천에 반영되지 않았어요.", False),
+    ("'조용한 곳이 좋아요'처럼 원하는 점을 적으면 반영돼요.", True),
+)
 
 
 def run_advice_target(status: str, result_count: int, same_category_runs: int) -> bool:
@@ -1514,25 +1522,16 @@ def same_category_runs(recent: Sequence[Mapping[str, Any]], created_at: datetime
     return sum(r["created_at"] <= created_at for r in recent)
 
 
-def radius_limits(walk_min: int, limit_walk_min: int, step_walk_min: int) -> dict[str, Any]:
-    """조언 입력의 반경: 지금 기본 반경(도보 분), 넓힐 수 있는 상한(WIDEN_LIMIT, 30분), 상한까지의 배율(소수 둘째 자리 내림),
-    반경 넓히기 버튼 한 번(WIDEN_STEP, 5분)의 배율. 상한까지의 배율이 1 이하면 더 넓힐 수 없다.
-
-    next_radius_factor = min(walk_min + 한 단계, 상한) / walk_min(#677). 반올림하거나 자르지 않는다 — 이 배율로 돌린
-    시뮬레이션의 반경이 버튼 한 번(recommend widen) 뒤의 반경과 같아야 조언의 숫자가 버튼 결과와 맞는다. 이미 상한이면 None."""
-    factor = math.floor(limit_walk_min / walk_min * 100) / 100 if walk_min > 0 else 1.0
-    next_factor = min(walk_min + step_walk_min, limit_walk_min) / walk_min if 0 < walk_min < limit_walk_min else None
-    return {"walk_min": walk_min, "max_walk_min": limit_walk_min, "max_radius_factor": factor,
-            "next_radius_factor": next_factor}
-
-
-def within_widen_limit(radius_factor: float | None, walk_min: int, limit_walk_min: int) -> bool:
-    """반경 배율이 사람이 넓힐 수 있는 상한 안인가(가드레일 4 — 상한을 넘는 완화는 AI도 코드도 하지 않는다)."""
-    return radius_factor is None or walk_min * radius_factor <= limit_walk_min + 1e-9
+def next_radius_factor(meta: Mapping[str, Any]) -> float | None:
+    """반경 넓히기 버튼 한 번의 배율 = min(지금 도보 분 + 한 단계, 상한) / 지금 도보 분(#677). meta는 recommend.api.get_run_meta.
+    반올림하거나 자르지 않는다 — 이 배율로 돌린 시뮬레이션의 반경이 버튼 한 번(recommend widen) 뒤의 반경과 같아야 조언의
+    숫자가 버튼 결과와 맞는다. 이미 상한이면 None(더 넓힐 수 없다)."""
+    walk, limit = meta["default_radius_walk_min"], meta["widen_limit_walk_min"]
+    return min(walk + meta["widen_step_walk_min"], limit) / walk if 0 < walk < limit else None
 
 
 def funnel_view(outcome: Mapping[str, Any]) -> dict[str, Any]:
-    """깔때기 도구 결과: 결과 수(최대 3), 단계별 탈락, passed(필터를 모두 통과한 곳 — 상위 3곳을 고르기 전). outcome은
+    """깔때기: 결과 수(최대 3), 단계별 탈락, passed(필터를 모두 통과한 곳 — 상위 3곳을 고르기 전). outcome은
     recommend.api.get_run_funnel 또는 simulate_filter의 before·after `{result_count, funnel, passed_count}`다. passed는
     recommend가 센 passed_count 그대로다 — 깔때기 라벨 글자로 셈하지 않는다(#587)."""
     return {
@@ -1542,26 +1541,14 @@ def funnel_view(outcome: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def simulate_view(
-    raw: Mapping[str, Any], *, radius_factor: float | None, disable_line_ids: Sequence[str], walk_min: int,
-    limit_walk_min: int,
-) -> dict[str, Any]:
-    """simulate_filter 도구 결과. 결과 수는 상위 3곳 뒤라 최대 3이어서 비교는 passed로 한다 — gained = after.passed −
-    before.passed(같은 호출의 before와 after끼리, #585). within_widen_limit이 거짓인 결과를 가리키는 claim은 검증에서 빠진다."""
+def simulate_view(raw: Mapping[str, Any], *, radius_factor: float | None, disable_line_ids: Sequence[str]) -> dict[str, Any]:
+    """simulate_filter 결과. 결과 수는 상위 3곳 뒤라 최대 3이어서 비교는 passed로 한다 — gained = after.passed −
+    before.passed(같은 호출의 before와 after끼리, #585)."""
     before, after = funnel_view(raw["before"]), funnel_view(raw["after"])
     return {
         "radius_factor": radius_factor, "disable_line_ids": list(disable_line_ids),
-        "within_widen_limit": within_widen_limit(radius_factor, walk_min, limit_walk_min),
         "before": before, "after": after, "gained": after["passed"] - before["passed"],
     }
-
-
-def recent_runs_view(recent: Sequence[Mapping[str, Any]], run_id: str) -> list[dict[str, Any]]:
-    return [
-        {"run_id": r["run_id"], "status": r["status"], "result_count": r["result_count"],
-         "created_at": r["created_at"].isoformat(), "this_run": r["run_id"] == run_id}
-        for r in recent
-    ]
 
 
 def evidence_kind(line: Mapping[str, Any]) -> str:
@@ -1590,218 +1577,173 @@ def _condition_label(fact_key: str | None, wants: bool | None, fact_labels: Mapp
 def advice_evidence(
     lines: Sequence[Mapping[str, Any]], requester_id: str, fact_labels: Mapping[str, str],
 ) -> list[dict[str, Any]]:
-    """get_run_evidence 도구 결과의 줄. 쓴 사람은 "본인" 또는 "다른 구성원"으로만 나온다(이름, user_id 없음). label은 코드가 만든
-    조건 이름이라 문장 슬롯으로 쓸 수 있다. not_filtered 줄은 글을 싣지 않는다(알러지 원문, 2절 11번)."""
-    out = []
-    for line in lines:
-        kind = evidence_kind(line)
-        out.append({
-            "line_id": line["line_id"], "author": ADVICE_SELF if line["author_id"] == requester_id else ADVICE_OTHER,
-            "badge": line["badge"], "fact_key": line["fact_key"], "wants": line["wants"],
-            "label": _condition_label(line["fact_key"], line["wants"], fact_labels), "is_active": line["is_active"],
-            "kind": kind, "text": None if kind == "not_filtered" else line["text"],
-        })
-    return out
+    """절차가 보는 근거 줄(recommend.api.get_run_evidence 순서 그대로). 쓴 사람은 본인인지(own)만 남는다(이름, user_id 없음).
+    label은 코드가 만든 조건 이름이라 문장 슬롯으로 쓸 수 있다. 글(text)은 싣지 않는다 — 종류(kind)를 정하는 데만 쓴다."""
+    return [
+        {"line_id": line["line_id"], "own": line["author_id"] == requester_id, "kind": evidence_kind(line),
+         "label": _condition_label(line["fact_key"], line["wants"], fact_labels), "is_active": line["is_active"]}
+        for line in lines
+    ]
 
 
-def advice_input(meta: Mapping[str, Any], same_runs: int, funnel_result: Mapping[str, Any]) -> dict[str, Any]:
-    """llm.agent_advise_run에 넘길 입력. 그 run의 깔때기를 미리 넣어(call_id t0) 모델이 get_run_funnel을 부르지 않고도 claim을
-    쓸 수 있게 한다. 근거 글, 구성원, run_id는 넣지 않는다(근거 줄은 get_run_evidence로, run은 tool_runner가 채운다)."""
-    return {
-        "category": meta["category"], "result_count": meta["result_count"], "same_category_runs": same_runs,
-        "radius": run_radius(meta),
-        "funnel": {"call_id": PREFETCH_CALL_ID, "result": dict(funnel_result)},
-    }
+def _clear_stages(funnel: Mapping[str, Any]) -> list[str]:
+    """ADVICE_STAGES 중 ADVICE_CLEAR_DROP 이상 빠진 단계, 많이 빠진 것부터(같으면 ADVICE_STAGES 순서)."""
+    removed = {e["label"]: e["removed_count"] for e in funnel["funnel"]}
+    clear = [s for s in ADVICE_STAGES if removed.get(s, 0) >= ADVICE_CLEAR_DROP]
+    return sorted(clear, key=lambda s: -removed[s])
 
 
-def run_radius(meta: Mapping[str, Any]) -> dict[str, Any]:
-    """recommend.api.get_run_meta → radius_limits. 조언 입력과 검증이 같은 값을 본다."""
-    return radius_limits(meta["default_radius_walk_min"], meta["widen_limit_walk_min"], meta["widen_step_walk_min"])
+def _relaxable(lines: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """하나씩 꺼 볼 조건 줄 — 켜져 있고 이름이 있는 condition 줄, 근거 줄 순서로 많아야 ADVICE_MAX_RELAX_LINES. 실격인지
+    선호인지는 여기서 가르지 않는다(#732 — 세기 판단은 recommend 한 곳). 선호 줄은 꺼도 gained가 0이라 말하지 않는다."""
+    found = [line for line in lines if line["kind"] == "condition" and line["is_active"] and line["label"]]
+    return found[:ADVICE_MAX_RELAX_LINES]
+
+
+def advice_simulations(
+    funnel: Mapping[str, Any], lines: Sequence[Mapping[str, Any]], next_factor: float | None,
+) -> dict[str, dict[str, Any]]:
+    """조언에 필요한 시뮬레이션 — call_id(t2부터) → simulate_filter 인자 {radius_factor, disable_line_ids}.
+
+    뚜렷한 단계(_clear_stages)를 많은 것부터 보며 그 단계가 고를 때 볼 것을 모은다: 「반경 밖 제거」는 버튼 한 번의 배율 하나
+    (이미 상한이면 없음), 「실격 조건 제거」는 끌 수 있는 조건 줄마다 하나(_relaxable). 「이미 제안·거절됨」 차례가 오면 그 뒤는
+    볼 일이 없어 멈춘다. 서로 기다리지 않으므로 앞 단계의 결과를 보지 않고 모두 고른다 — 결과는 choose_run_advice가 순서대로 본다."""
+    wanted: list[tuple[float | None, list[str]]] = []
+    for stage in _clear_stages(funnel):
+        if stage == RADIUS_STAGE and next_factor is not None:
+            wanted.append((next_factor, []))
+        elif stage == DISQUALIFY_STAGE:
+            wanted += [(None, [line["line_id"]]) for line in _relaxable(lines)]
+        elif stage == EXCLUDED_STAGE:
+            break
+    return {f"t{i}": {"radius_factor": factor, "disable_line_ids": ids}
+            for i, (factor, ids) in enumerate(wanted, start=2)}
 
 
 @dataclass(frozen=True)
 class AdviceDraft:
-    """agent_run_advice에 저장할 조언. kind가 None이면 빈 조언(침묵, 실패, 검증 실패)이다 — 그래도 저장해 다시 만들지 않는다."""
+    """agent_run_advice에 저장할 조언. kind가 None이면 빈 조언(침묵)이다 — 그래도 저장해 다시 만들지 않는다."""
     kind: str | None
-    claims: list[dict[str, Any]]
+    claims: list[dict[str, Any]]    # tool_result 모양 {id, kind, call_id, path, value} — call_id는 agent_runs.tool_calls의 읽기
     advice: list[dict[str, Any]]    # [{slot_text, is_guess}]
     actions: list[dict[str, Any]]   # [{index, type, label, params}] — AgentAction 직렬화
+
+    @property
+    def decision(self) -> str:
+        return "silent" if self.kind is None else "advise"
 
 
 EMPTY_ADVICE = AdviceDraft(None, [], [], [])
 
 
 @dataclass(frozen=True)
-class VerifiedAdvice:
-    """verify_run_advice 결과. outcome: advised | silent | unknown | invalid_claims. record는 agent_runs.verification."""
-    outcome: str
-    draft: AdviceDraft
-    record: dict[str, Any]
+class _Relaxed:
+    index: int                  # 근거 줄 목록의 자리(claim path lines.N)
+    line: Mapping[str, Any]
+    call_id: str                # 그 줄 하나를 끈 시뮬레이션
+    gained: int
 
 
-@dataclass(frozen=True)
-class AdviceContext:
-    """검증이 보는 이번 조언의 사실. tool_results와 tool_names는 call_id(미리 읽은 t0 포함) → 모델에 준 결과, 도구 이름.
-    own_lines는 그 run의 근거 줄 → 요청자 본인이 쓴 줄인가. evidence_texts는 근거 글(옮겨 쓰기 검사용, 저장하지 않는다)."""
-    run_id: str
-    tool_results: Mapping[str, Any]
-    tool_names: Mapping[str, str]
-    own_lines: Mapping[str, bool]
-    evidence_texts: Sequence[str]
-    radius: Mapping[str, Any]
-    member_names: Sequence[str] = ()
+def _claim(cid: str, call_id: str, path: str, value: Any) -> dict[str, Any]:
+    return {"id": cid, "kind": "tool_result", "call_id": call_id, "path": path, "value": value}
 
 
-def _tool_of(claim: ToolClaim, ctx: AdviceContext) -> tuple[str | None, Mapping[str, Any]]:
-    result = ctx.tool_results.get(claim.call_id)
-    return ctx.tool_names.get(claim.call_id), result if isinstance(result, Mapping) else {}
+def choose_run_advice(
+    run_id: str, funnel: Mapping[str, Any], lines: Sequence[Mapping[str, Any]], sims: Mapping[str, Mapping[str, Any]],
+    next_factor: float | None,
+) -> AdviceDraft:
+    """추천 막힘 조언의 종류, claim, 문장, 버튼(9절 표, 9.1 절차). 침묵이면 EMPTY_ADVICE.
 
-
-def _advice_claim_reason(claim: Any, ctx: AdviceContext) -> str | None:
-    """claim 하나(11.2 3단계를 조언에 맞게). 조언은 tool_result claim만 쓴다 — 핀 개수, 인용, 참조는 없다. 근거 글(text)을
-    가리키는 claim은 렌더하면 원문이 나가서 뺀다. 반경 상한을 넘는 시뮬레이션 결과도 뺀다(가드레일 4)."""
-    if not isinstance(claim, ToolClaim):
-        return "kind"
-    if claim.path.split(".")[-1] == "text":
-        return "text_path"
-    reason = _check_claim(claim, None, ctx.tool_results)
-    if reason is not None:
-        return reason
-    name, result = _tool_of(claim, ctx)
-    if name == "simulate_filter" and not result.get("within_widen_limit", False):
-        return "radius_over_limit"
-    return None
-
-
-def _claim_line_ids(claim: ToolClaim, ctx: AdviceContext) -> list[str]:
-    """claim이 가리키는 근거 줄 — 줄을 끈 시뮬레이션이면 그 줄들, 근거 줄 목록의 한 줄(lines.N.…)이면 그 줄."""
-    name, result = _tool_of(claim, ctx)
-    if name == "simulate_filter":
-        return list(result.get("disable_line_ids") or ())
-    parts = claim.path.split(".")
-    if name == "get_run_evidence" and len(parts) >= 2 and parts[0] == "lines":
-        found, line = resolve_path(result, f"lines.{parts[1]}")
-        if found and isinstance(line, Mapping) and line.get("line_id"):
-            return [line["line_id"]]
-    return []
-
-
-def _widens(claim: ToolClaim, ctx: AdviceContext) -> bool:
-    name, result = _tool_of(claim, ctx)
-    return name == "simulate_filter" and (result.get("radius_factor") or 0) > 1
-
-
-def _is_next_step(claim: ToolClaim, ctx: AdviceContext) -> bool:
-    """반경 넓히기 버튼 한 번과 같은 배율(next_radius_factor)로 넓힌 시뮬레이션인가(#677). 부동소수 오차만 허용한다."""
-    name, result = _tool_of(claim, ctx)
-    factor, next_factor = result.get("radius_factor"), ctx.radius["next_radius_factor"]
-    return (name == "simulate_filter" and factor is not None and next_factor is not None
-            and math.isclose(factor, next_factor, rel_tol=0, abs_tol=1e-9))
-
-
-def _advice_action(
-    action: Any, kind: str, kept: Mapping[str, ToolClaim], ctx: AdviceContext,
-) -> tuple[tuple[str, str, dict[str, Any]] | None, str | None]:
-    """버튼 하나(11.2 6단계를 조언에 맞게) → ((type, label, params), None) 또는 (None, 이유).
-    - 종류별 허용(radius는 widen_radius, soft_relax와 vague_reason은 open_evidence, exhausted는 없음)과 basis.
-    - widen_radius: 이미 상한이면 뺀다. basis에 넓힌 시뮬레이션 claim이 있어야 하고, 그 배율이 버튼 한 번의 배율
-      (next_radius_factor)이어야 한다(#677) — 버튼은 한 번에 한 단계만 넓혀서, 다른 배율의 숫자를 약속하면 버튼 결과와 어긋난다.
-      문장은 따로 검사해 사실이면 남는다.
-    - open_evidence: basis가 가리키는 근거 줄이 모두 요청자 본인 줄이어야 한다. 남의 줄이 하나라도 있으면 버튼을 뺀다 — 근거
-      줄 빼기는 쓴 사람만 할 수 있다(9절, permissions의 evidence.disable). 문장은 따로 검사해 남는다."""
-    if action.type not in RUN_ADVICE_ACTIONS[kind]:
-        return None, "type"
-    if not action.basis or any(b not in kept for b in action.basis):
-        return None, "basis"
-    basis = [kept[b] for b in action.basis]
-    if action.type == "widen_radius":
-        if ctx.radius["next_radius_factor"] is None:
-            return None, "radius_limit"
-        if not any(_widens(c, ctx) for c in basis):
-            return None, "no_simulation"
-        if not any(_is_next_step(c, ctx) for c in basis):
-            return None, "not_next_step"
-        return ("widen_radius", RUN_ADVICE_LABELS[kind], {"run_id": ctx.run_id}), None
-    line_ids = list(dict.fromkeys(i for c in basis for i in _claim_line_ids(c, ctx)))
-    if not line_ids:
-        return None, "no_line"
-    if not all(ctx.own_lines.get(i) for i in line_ids):
-        return None, "not_own_line"
-    return ("open_evidence", RUN_ADVICE_LABELS[kind], {"run_id": ctx.run_id, "evidence_line_ids": line_ids}), None
-
-
-def _advice_established(kind: str, kept: Mapping[str, ToolClaim], ctx: AdviceContext) -> bool:
-    """종류의 필수 claim(11.2 7단계를 조언에 맞게): radius는 넓힌 시뮬레이션, soft_relax는 줄을 끈 시뮬레이션, vague_reason은
-    근거 줄 목록, exhausted는 깔때기."""
-    if kind == "radius":
-        return any(_widens(c, ctx) for c in kept.values())
-    tools = [_tool_of(c, ctx) for c in kept.values()]
-    if kind == "soft_relax":
-        return any(name == "simulate_filter" and result.get("disable_line_ids") for name, result in tools)
-    wanted = "get_run_evidence" if kind == "vague_reason" else "get_run_funnel"
-    return any(name == wanted for name, _ in tools)
-
-
-def verify_run_advice(out: RunAdviceOutput, ctx: AdviceContext) -> VerifiedAdvice:
-    """추천 막힘 조언 검증(11.2를 조언에 맞게). 스키마(1단계)와 kind 네 가지는 llm이 이미 봤다.
-
-    1 decision이 silent·unknown이면 그대로 침묵 3 claim(tool_result만, 근거 글 경로 금지, 도구 결과와 같은 값, 반경 상한 안)
-    5 문장(제거된 claim을 가리킴, 슬롯 밖 숫자, 구성원 이름, 금지 표현, 슬롯 밖에서 근거 글 옮겨 쓰기 — 진단과 같은 _check_line)
-    6 버튼(종류별 허용, 반경 상한, 버튼 한 번의 배율, 요청자 본인 줄) 7 성립(종류의 필수 claim, 문장이나 버튼이 하나 이상). 7단계에서 떨어지면
-    invalid_claims로 침묵한다. 2단계(신호)와 4단계(요약 구조)는 조언에 없다."""
-    record: dict[str, Any] = {"decision": out.decision, "kind": out.kind}
-    if out.decision != "suggest":
-        return VerifiedAdvice(out.decision, EMPTY_ADVICE, record)
-
-    kept: dict[str, ToolClaim] = {}
-    removed: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for claim in out.claims:
-        if not _CLAIM_ID.fullmatch(claim.id):
-            reason = "bad_id"
-        elif claim.id in seen:
-            reason = "duplicate_id"
+    funnel은 funnel_view, lines는 advice_evidence, sims는 call_id → simulate_view(advice_simulations가 고른 것을 돌린 결과).
+    뚜렷한 단계를 많은 것부터 보고 처음 맞는 종류를 고른다.
+    - 「반경 밖 제거」 → radius: 버튼 한 번의 배율로 넓힌 시뮬레이션의 gained가 1 이상. 다른 배율의 숫자는 버튼 결과와 달라 쓰지 않는다
+    - 「실격 조건 제거」 → soft_relax: 하나씩 끈 조건 줄 중 gained가 1 이상인 줄이 있다
+    - 「이미 제안·거절됨」 → exhausted
+    고른 것이 없으면 vague 줄이 있을 때 vague_reason, 없으면 침묵. not_filtered 줄은 세지도 말하지도 않는다."""
+    for stage in _clear_stages(funnel):
+        if stage == RADIUS_STAGE:
+            one_press = next((cid for cid, s in sims.items() if next_factor is not None and s["radius_factor"] is not None
+                              and math.isclose(s["radius_factor"], next_factor, rel_tol=0, abs_tol=1e-9)), None)
+            if one_press is not None and sims[one_press]["gained"] > 0:
+                return _radius_advice(run_id, one_press, sims[one_press]["gained"])
+        elif stage == DISQUALIFY_STAGE:
+            relaxed = _relaxed(lines, sims)
+            if relaxed:
+                return _soft_relax_advice(run_id, _mentioned(relaxed))
         else:
-            reason = _advice_claim_reason(claim, ctx)
-        seen.add(claim.id)
-        if reason is None:
-            kept[claim.id] = claim
-        else:
-            removed.append({"id": claim.id, "reason": reason})
-            kept.pop(claim.id, None)   # 같은 id가 또 오면 앞의 것도 믿지 않는다
-    record["claims"] = {"kept": list(kept), "removed": removed}
+            return _exhausted_advice(funnel)
+    vague = [(i, line) for i, line in enumerate(lines) if line["kind"] == "vague"]
+    return _vague_reason_advice(run_id, vague) if vague else EMPTY_ADVICE
 
-    names = [n for n in ctx.member_names if n and len(n) >= 2]
-    texts = [_squash(t) for t in ctx.evidence_texts if t]
-    advice, removed_lines = [], []
-    for i, line in enumerate(out.advice):
-        reason = _check_line(line.text, line.basis, kept, texts, names)
-        if reason is None:
-            advice.append({"slot_text": line.text, "is_guess": line.is_guess})
-        else:
-            removed_lines.append({"index": i, "reason": reason})
-    record["lines"] = {"kept": len(advice), "removed": removed_lines}
 
-    specs, removed_actions = [], []
-    for i, action in enumerate(out.actions):
-        spec, reason = _advice_action(action, out.kind, kept, ctx)
-        if reason is not None:
-            removed_actions.append({"index": i, "reason": reason})
-        elif spec not in specs:
-            specs.append(spec)
-    record["actions"] = {"kept": len(specs), "removed": removed_actions}
+def _relaxed(lines: Sequence[Mapping[str, Any]], sims: Mapping[str, Mapping[str, Any]]) -> list[_Relaxed]:
+    """줄 하나만 끈 시뮬레이션에서 gained가 1 이상인 조건 줄, gained 큰 것부터(같으면 근거 줄 순서)."""
+    by_line = {s["disable_line_ids"][0]: (cid, s["gained"]) for cid, s in sims.items()
+               if s["radius_factor"] is None and len(s["disable_line_ids"]) == 1}
+    relaxable = {line["line_id"] for line in _relaxable(lines)}
+    found = [_Relaxed(i, line, *by_line[line["line_id"]]) for i, line in enumerate(lines)
+             if line["line_id"] in relaxable and line["line_id"] in by_line and by_line[line["line_id"]][1] > 0]
+    return sorted(found, key=lambda r: -r.gained)
 
-    record["established"] = _advice_established(out.kind, kept, ctx) and bool(advice or specs)
-    if not record["established"]:
-        return VerifiedAdvice("invalid_claims", EMPTY_ADVICE, record | {"failed_step": 7})
-    draft = AdviceDraft(kind=out.kind, claims=[c.model_dump() for c in kept.values()], advice=advice,
-                        actions=_actions(*specs))
-    return VerifiedAdvice("advised", draft, record)
+
+def _mentioned(relaxed: list[_Relaxed]) -> list[_Relaxed]:
+    """말할 줄 하나나 둘 — gained가 가장 큰 줄, 그리고 그 줄이 남의 줄이면 gained가 있는 본인 줄 중 가장 큰 것(9절: 남의 줄이 더
+    많이 걸렀어도 본인 줄에는 버튼을 붙인다), 아니면 다음 줄이 ADVICE_CLEAR_DROP 이상 늘릴 때 그 줄."""
+    first, rest = relaxed[0], relaxed[1:]
+    own = next((r for r in rest if r.line["own"]), None)
+    if not first.line["own"] and own is not None:
+        return [first, own]
+    if rest and rest[0].gained >= ADVICE_CLEAR_DROP:
+        return [first, rest[0]]
+    return [first]
+
+
+def _radius_advice(run_id: str, call_id: str, gained: int) -> AdviceDraft:
+    return AdviceDraft(
+        kind="radius", claims=[_claim("c1", call_id, "gained", gained)],
+        advice=[{"slot_text": "반경 넓히기를 한 번 누르면 {c1.value}곳이 더 남아요.", "is_guess": False}],
+        actions=_actions(("widen_radius", RUN_ADVICE_LABELS["radius"], {"run_id": run_id})),
+    )
+
+
+def _soft_relax_advice(run_id: str, mentioned: list[_Relaxed]) -> AdviceDraft:
+    """줄마다 「{이름}」 조건을 빼면 {gained}곳이 더 남아요. 누가 쓴 조건인지는 쓰지 않는다. 버튼은 본인 줄에만 — 근거 줄 빼기는
+    쓴 사람만 할 수 있다(permissions의 evidence.disable). 본인 줄이 둘이면 버튼 하나에 둘 다 담는다."""
+    claims, advice = [], []
+    for n, r in enumerate(mentioned):
+        label, gained = f"c{2 * n + 1}", f"c{2 * n + 2}"
+        claims += [_claim(label, EVIDENCE_CALL_ID, f"lines.{r.index}.label", r.line["label"]),
+                   _claim(gained, r.call_id, "gained", r.gained)]
+        advice.append({"slot_text": f"「{{{label}.value}}」 조건을 빼면 {{{gained}.value}}곳이 더 남아요.", "is_guess": False})
+    own = [r.line["line_id"] for r in mentioned if r.line["own"]]
+    button = ("open_evidence", RUN_ADVICE_LABELS["soft_relax"], {"run_id": run_id, "evidence_line_ids": own})
+    actions = _actions(button) if own else []
+    return AdviceDraft(kind="soft_relax", claims=claims, advice=advice, actions=actions)
+
+
+def _exhausted_advice(funnel: Mapping[str, Any]) -> AdviceDraft:
+    """완화할 수 없어 사실만 알린다. 버튼 없음."""
+    index, entry = next((i, e) for i, e in enumerate(funnel["funnel"]) if e["label"] == EXCLUDED_STAGE)
+    return AdviceDraft(
+        kind="exhausted", claims=[_claim("c1", FUNNEL_CALL_ID, f"funnel.{index}.removed_count", entry["removed_count"])],
+        advice=[{"slot_text": "이미 보여 줬거나 거절한 {c1.value}곳은 다시 추천하지 않아요.", "is_guess": False}], actions=[],
+    )
+
+
+def _vague_reason_advice(run_id: str, vague: list[tuple[int, Mapping[str, Any]]]) -> AdviceDraft:
+    """조건으로 읽지 못한 줄이 있다고 알리고 예시를 든다. 근거 글은 옮기지 않는다. 본인 줄이면 근거 확인 버튼."""
+    claims = [_claim(f"c{n}", EVIDENCE_CALL_ID, f"lines.{i}.line_id", line["line_id"])
+              for n, (i, line) in enumerate(vague, start=1)]
+    own = [line["line_id"] for _, line in vague if line["own"]]
+    button = ("open_evidence", RUN_ADVICE_LABELS["vague_reason"], {"run_id": run_id, "evidence_line_ids": own})
+    actions = _actions(button) if own else []
+    return AdviceDraft(kind="vague_reason", claims=claims,
+                       advice=[{"slot_text": text, "is_guess": guess} for text, guess in VAGUE_REASON_LINES], actions=actions)
 
 
 def render_run_advice(run_id: str, row: Any) -> RunAdvice | None:
     """agent_run_advice 한 행 → API의 RunAdvice. 빈 조언(kind 없음)이거나 렌더 뒤 문장과 버튼이 모두 없으면 None(204). 슬롯은
-    tool_result 값만 채운다 — 근거 글은 저장에도 응답에도 없어 text 조각만 나온다(#717). 금지 표현은 렌더 때도 건다
+    claim 값만 채운다 — 근거 글은 저장에도 응답에도 없어 text 조각만 나온다(#717). 금지 표현은 렌더 때도 건다
     (render_segments)."""
     if row is None or row.kind is None:
         return None

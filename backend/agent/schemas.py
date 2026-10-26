@@ -25,7 +25,6 @@ from llm.schemas import (  # noqa: F401 — 모델 출력 스키마(11.1)의 정
     DiagnosisOutput,
     QuoteClaim,
     RefClaim,
-    RunAdviceOutput,
     ToolClaim,
 )
 
@@ -169,8 +168,8 @@ class RunAdvice(BaseModel):
 # ---------- 모델 출력 스키마 (명세 11.1) ----------
 # 정의는 llm/schemas.py 한 곳이다(#532). 사본을 두면 Gateway 반환 타입이 어긋나서 agent는 가져다 쓴다(다른 모듈 schemas.py
 # 직접 import는 허용, #113). Claim에는 discriminator가 없다 — 엘리스 API가 구조화 출력의 oneOf를 거절한다(#532).
-# RunAdviceOutput은 #587에서 llm/schemas.py로 옮겼다. SummaryOutput은 요약 문장이 고정 문구라(2026-10-16) llm 함수가 없어
-# 여기 남아 있다. #588에서 모델이 필요하다고 보면 그때 옮긴다.
+# 추천 막힘 조언은 #749에서 코드로 옮겨 모델 출력 스키마가 없다. SummaryOutput은 요약 문장이 고정 문구라(2026-10-16) llm 함수가
+# 없어 여기 남아 있다. #588에서 모델이 필요하다고 보면 그때 옮긴다.
 
 class SummaryOutput(BaseModel):
     """칸 나누기와 개수는 코드가 한다(명세 8절). 모델은 vague_fixable 사유에 붙일 구체화 요청 문장만 쓴다."""
