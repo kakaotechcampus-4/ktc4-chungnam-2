@@ -167,6 +167,7 @@ export function buildEvidenceLines(runId: string) {
       fact_key: null, // 가격 라벨은 뺐다(#423). "비싸요"는 키 없는 근거 줄
       fact_label: null,
       enforced: false, // 키 없는 줄은 후보를 걸러 주지 않는다(#720)
+      not_enforced_reason: "no_key" as const, // #740
       is_active: true,
       permissions: { can_disable: false },
     },
@@ -202,6 +203,7 @@ export function buildEvidenceLines(runId: string) {
       badge: "preferred" as const, // ♥ 사유는 선호다. v1 서버는 reference를 만들지 않는다(#707)
       fact_key: null,
       enforced: false,
+      not_enforced_reason: "no_key" as const,
       is_active: true,
       permissions: { can_disable: false },
     },

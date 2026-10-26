@@ -1004,3 +1004,29 @@ def test_written_preference_outweighs_other_heart_labels():
 
     fulfillment = core.build_member_fulfillment(candidates["buffet"], hearted, criteria, authors)
     assert core.build_reason(candidates["buffet"], criteria) == "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
+
+
+# ---------- evidence_line_use (#740) ----------
+
+
+@pytest.mark.parametrize("badge, fact_key, wants, category, off_season, expected", [
+    ("required", "is_crowded_large", None, "카페", (), (True, None)),                 # hard 키는 방향이 없어도 쓰인다
+    ("required", "quiet", False, "카페", (), (True, None)),                           # soft 키 + 방향
+    ("preferred", "quiet", True, "음식점", (), (True, None)),
+    ("required", None, None, "카페", (), (False, "no_key")),
+    ("required", "quiet", None, "카페", (), (False, "no_direction")),
+    ("preferred", "quiet", None, "카페", (), (False, "no_direction")),
+    ("required", "is_crowded_large", None, "음식점", (), (False, "not_for_category")),
+    ("preferred", "is_crowded_large", True, "카페", (), (False, "not_for_category")),   # preferred는 soft 키만
+    ("required", "no_such_key", True, "카페", (), (False, "not_for_category")),
+    ("required", "cherry_blossom", True, "관광지", ("cherry_blossom",), (False, "off_season")),
+    ("reference", "quiet", True, "카페", (), (False, "no_direction")),
+])
+def test_evidence_line_use_picks_the_reason(badge, fact_key, wants, category, off_season, expected):
+    assert core.evidence_line_use(badge, fact_key, wants, category, off_season) == expected
+
+
+def test_evidence_line_use_reason_order_is_no_key_then_off_season_then_category():
+    assert core.evidence_line_use("required", None, None, "음식점", {"x"}) == (False, "no_key")
+    assert core.evidence_line_use("required", "is_crowded_large", None, "음식점", {"is_crowded_large"}) == (False, "off_season")
+    assert core.evidence_line_use("required", "is_crowded_large", None, "음식점", ()) == (False, "not_for_category")

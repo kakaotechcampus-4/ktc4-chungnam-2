@@ -3661,8 +3661,13 @@ export interface components {
             fact_label?: string | null;
             /** @description 이 특징(fact_key)이 있는 장소를 원하는가(#228). true=원함("한식 먹자"), false=원하지 않음("한식 말고"), 없거나 null=모름. FE는 근거 줄에 해석한 방향(예: "한식 제외")을 보여 주어 틀리면 −로 뺄 수 있게 한다 */
             wants?: boolean | null;
-            /** @description 이 줄이 후보를 거르거나 점수를 매기는 데 실제로 쓰이는가(#720). fact_key가 있으면 true, 키 없는 줄(알레르기·가격 등 모델이 라벨로 옮기지 못한 사유)은 false — 서버가 이 줄로 후보를 걸러 주지 않는다. 없으면 true로 본다(구버전 서버). FE는 enforced=false인 badge=required 줄을 「꼭 지켜야 하는 조건」으로 보이지 말고 「걸러지지 않아요. 가게에 직접 확인해 주세요」처럼 구분해 보여 준다 */
+            /** @description 이 줄이 이번 추천에서 후보를 거르거나 점수를 매기는 데 실제로 쓰이는가(#720, #740). 파이프라인이 줄을 고르는 함수(recommend.core.evidence_line_use)가 그대로 정한다. 쓰이지 않으면 not_enforced_reason이 따라온다. 줄을 끈 것(is_active=false)과는 따로다: 끈 줄도 켜면 쓰이는지를 보인다. 없으면 true로 본다(구버전 서버) */
             enforced?: boolean;
+            /**
+             * @description enforced=false일 때만 값이 있다(#740). no_key=키가 없음(알레르기, 가격 등 라벨로 옮기지 못한 사유), no_direction=키는 있지만 방향(wants)이 없음("매운 것도 괜찮아"), not_for_category=이 카테고리에 없는 조건(그 카테고리에 없는 실격 키, 선호로 쓸 수 없는 키), off_season=지도의 여행 기간이 시즌과 안 겹치는 계절 키(지금 여행 날짜 기준). FE는 이 줄을 「꼭 지켜야 하는 조건」으로 보이지 않고 이유별로 안내한다: no_key는 「걸러지지 않아요. 가게에 직접 확인해 주세요」(가드레일 8), off_season은 「이번 여행 기간에는 해당 없어요」, no_direction과 not_for_category는 「이번 추천에 쓰이지 않아요」
+             * @enum {string|null}
+             */
+            not_enforced_reason?: "no_key" | "no_direction" | "not_for_category" | "off_season" | null;
             is_active: boolean;
             permissions: components["schemas"]["Permissions"];
         };

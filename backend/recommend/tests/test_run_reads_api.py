@@ -256,11 +256,32 @@ def test_get_run_evidence_returns_every_line_in_canonical_order(db_session):
 
     assert evidence == [
         {"line_id": lines["너무 붐벼요"], "text": "너무 붐벼요", "badge": "required", "fact_key": "is_crowded_large",
-         "wants": None, "is_active": True, "author_id": "user_2", "chip_id": None},
+         "wants": None, "is_active": True, "author_id": "user_2", "chip_id": None,
+         "enforced": True, "not_enforced_reason": None},
         {"line_id": lines["좁아요"], "text": "좁아요", "badge": "required", "fact_key": "spacious",
-         "wants": True, "is_active": True, "author_id": "user_1", "chip_id": "cafe_narrow"},
+         "wants": True, "is_active": True, "author_id": "user_1", "chip_id": "cafe_narrow",
+         "enforced": True, "not_enforced_reason": None},
         {"line_id": lines["조용한 곳"], "text": "조용한 곳", "badge": "preferred", "fact_key": "quiet",
-         "wants": True, "is_active": False, "author_id": "user_1", "chip_id": None},
+         "wants": True, "is_active": False, "author_id": "user_1", "chip_id": None,
+         "enforced": True, "not_enforced_reason": None},   # 끈 줄도 켜면 쓰인다(#740)
+    ]
+
+
+def test_evidence_line_uses_judges_lines_without_a_run(db_session):
+    _scenario(db_session)
+    lines = [
+        {"badge": "required", "fact_key": "is_crowded_large", "wants": None},
+        {"badge": "preferred", "fact_key": "quiet", "wants": None},
+        {"badge": "required", "fact_key": None, "wants": None},
+    ]
+
+    assert api.evidence_line_uses(db_session, map_id="map_1", category="카페", lines=lines) == [
+        {"enforced": True, "not_enforced_reason": None},
+        {"enforced": False, "not_enforced_reason": "no_direction"},
+        {"enforced": False, "not_enforced_reason": "no_key"},
+    ]
+    assert api.evidence_line_uses(db_session, map_id="map_1", category="음식점", lines=lines[:1]) == [
+        {"enforced": False, "not_enforced_reason": "not_for_category"},
     ]
 
 

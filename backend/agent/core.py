@@ -1281,9 +1281,12 @@ SUMMARY_REQUESTS = {   # vague_fixable 구체화 요청(고정 문구). 저장�
     "general": "어떤 점이 별로였는지 적어 주시면 추천에 반영돼요",
     "far": "거리 조건은 '숙소에서 걸어서 10분'처럼 적어 주세요",
 }
+NOT_ENFORCED_NOTICE = {"off_season": "season", "not_for_category": "category"}   # recommend의 not_enforced_reason → 문구 종류
 SUMMARY_NOTICES = {   # not_filtered 고정 안내. 알러지 문구는 추천 결과 화면 안내(#425)와 같은 말이다
     "allergy": "알러지 같은 조건은 추천이 거르지 않아요. 가게에 직접 확인해 주세요.",
     "price": "가격은 아직 추천 조건에 없어요.",
+    "season": "여행 기간에는 해당하지 않는 조건이라 이번 추천에 쓰지 않아요.",
+    "category": "이 카테고리에는 없는 조건이라 이번 추천에 쓰지 않아요.",
 }
 
 
@@ -1345,8 +1348,7 @@ def _keyless_kind(line: Mapping[str, Any], text: str | None) -> tuple[str, str] 
        알러지 낱말이 있으면(뺀 칩 「갑각류 알러지가 있어요」, #425) not_filtered(알러지). 나머지 칩은 vague_fixable.
     2. 글에서 나온 키 없는 줄: 글에 SAFETY_WORDS가 있으면 None(그 글은 반응 단위로 알러지 칸에 이미 들어갔다), 아니면
        vague_fixable.
-    3. 키는 있는데 방향이 없는 줄(wants=null)은 추천이 쓰지 않는다(constraints.md "wants가 null — 효과 없음"). 다시 적으면
-       반영될 수 있어 vague_fixable로 둔다."""
+    키는 있는데 쓰이지 않는 줄은 recommend가 이유를 정해 주므로(not_enforced_reason, #740) 여기 오지 않는다."""
     if line.get("source") == "chip":
         chip_id = line.get("chip_id")
         if chip_id in NOT_FILTERED_CHIP_IDS:
@@ -1375,16 +1377,19 @@ def summarize_reasons(reasons: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
     reasons의 항목은 {reaction_id, member, text, lines}. member는 사람을 가르는 값(같은 사람 같은 키는 1명)일 뿐 저장하지
     않는다. text는 알러지 낱말을 보는 데만 쓰고 저장하지 않는다. lines는 tools.summary_reasons가 낸 근거 줄
-    [{fact_key, wants, badge, source(text|chip), chip_id, label}] — #422 분류(음식 종류 "원함"은 preferred)는 이미 걸렸다.
+    [{fact_key, wants, badge, enforced, not_enforced_reason, source(text|chip), chip_id, label}] — #422 분류(음식 종류 "원함"은 preferred)는 이미 걸렸다.
 
-    - must_keep: 배지 required이고 키와 방향이 있는 줄. 키와 방향마다 사람 수
+    - must_keep: 배지 required이고 recommend가 쓰는(enforced) 줄. 키와 방향마다 사람 수
     - split_prefs: 배지 preferred이고 같은 키에 원함과 피함이 함께 있는 키. 원함 사람 수, 피함 사람 수
     - common_prefs: 배지 preferred이고 같은 키, 같은 방향을 2명 이상(갈린 키는 split_prefs에만 둔다)
-    - vague_fixable, not_filtered: 키 없는 사유(_keyless_kind). 개수는 반응 수, 문구는 종류만
+    - vague_fixable, not_filtered: 키 없는 사유(_keyless_kind), 방향 없는 줄(vague_fixable), 기간 밖 계절 키와 카테고리 밖 키(not_filtered). 개수는 반응 수, 문구는 종류만
     - reaction_ids: 이 요약이 본 사유 있는 반응 전부(다음 갱신 판단의 기준, summary_changes)"""
     must: dict[tuple[str, bool], dict[str, set[str]]] = {}
     prefs: dict[tuple[str, bool], dict[str, set[str]]] = {}
-    keyless = {"vague_fixable": {"general": set(), "far": set()}, "not_filtered": {"allergy": set(), "price": set()}}
+    keyless = {
+        "vague_fixable": {"general": set(), "far": set()},
+        "not_filtered": {"allergy": set(), "price": set(), "season": set(), "category": set()},
+    }
     for r in reasons:
         rid, member, text = r["reaction_id"], r["member"], r.get("text")
         if _has_safety_word(text):
@@ -1394,14 +1399,20 @@ def summarize_reasons(reasons: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             keyless["vague_fixable"]["general"].add(rid)
         for line in r["lines"]:
             key, wants, badge = line.get("fact_key"), line.get("wants"), line.get("badge")
-            if key is not None and wants is not None:
+            if line.get("enforced"):
                 bucket = must if badge == "required" else prefs if badge == "preferred" else None
-                if bucket is not None:
+                if bucket is not None and wants is not None:
                     bucket.setdefault((key, wants), {}).setdefault(member, set()).add(rid)
                 continue
-            kind = _keyless_kind(line, text)
-            if kind is not None:
-                keyless[kind[0]][kind[1]].add(rid)
+            not_enforced = line.get("not_enforced_reason")   # recommend가 정한 이유(#740) — 여기서 다시 판단하지 않는다
+            if not_enforced == "no_direction":
+                keyless["vague_fixable"]["general"].add(rid)
+            elif not_enforced in NOT_ENFORCED_NOTICE:
+                keyless["not_filtered"][NOT_ENFORCED_NOTICE[not_enforced]].add(rid)
+            else:
+                kind = _keyless_kind(line, text)
+                if kind is not None:
+                    keyless[kind[0]][kind[1]].add(rid)
 
     split_keys = sorted({k for k, w in prefs if (k, not w) in prefs})
     split = sorted(
@@ -1554,13 +1565,19 @@ def recent_runs_view(recent: Sequence[Mapping[str, Any]], run_id: str) -> list[d
 
 
 def evidence_kind(line: Mapping[str, Any]) -> str:
-    """근거 줄의 종류(9절 표, 8절 키 없는 사유 나누기): condition(키가 있다), not_filtered(키가 없고 「비싸요」 칩이거나 글에 알러지
-    낱말이 있다 — 추천이 거르지 않는 줄이라 vague_reason에서 세지 않는다), vague(그 밖의 키 없는 줄)."""
-    if line.get("fact_key") is not None:
+    """근거 줄의 종류(9절 표, 8절 키 없는 사유 나누기): condition(추천이 쓴다 — enforced), not_filtered(추천이 거르지 않는 줄이라
+    vague_reason에서 세지 않는다), vague(다시 적으면 반영될 수 있는 줄). 쓰이는지와 이유는 recommend가 정한다(#740):
+    no_key는 「비싸요」 칩이거나 글에 알러지 낱말이면 not_filtered, 아니면 vague. no_direction은 vague,
+    not_for_category와 off_season은 not_filtered."""
+    if line.get("enforced"):
         return "condition"
-    if line.get("chip_id") in NOT_FILTERED_CHIP_IDS or _has_safety_word(line.get("text")):
-        return "not_filtered"
-    return "vague"
+    if line.get("not_enforced_reason") == "no_key":
+        if line.get("chip_id") in NOT_FILTERED_CHIP_IDS or _has_safety_word(line.get("text")):
+            return "not_filtered"
+        return "vague"
+    if line.get("not_enforced_reason") == "no_direction":
+        return "vague"
+    return "not_filtered"
 
 
 def _condition_label(fact_key: str | None, wants: bool | None, fact_labels: Mapping[str, str]) -> str | None:

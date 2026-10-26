@@ -201,6 +201,7 @@ def _line(case_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "line_id": _id(case_id, raw["id"]), "text": text, "badge": raw.get("badge", "required"), "fact_key": fact_key,
         "wants": wants, "is_active": raw.get("active", True), "author_id": AUTHORS[raw["by"]], "chip_id": chip,
+        "enforced": fact_key is not None, "not_enforced_reason": None if fact_key is not None else "no_key",   # recommend의 값(#740)
     }
 
 

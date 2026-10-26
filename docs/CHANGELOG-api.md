@@ -2,6 +2,12 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-27 (두 번째), EvidenceLine.enforced를 파이프라인과 같은 기준으로, not_enforced_reason 추가 (#740)
+
+- `EvidenceLine.enforced`의 뜻이 정확해졌다. 전에는 키가 있으면 true였다. 이제 파이프라인이 실제로 쓰는 줄만 true다. 키가 있어도 방향(wants)이 없는 줄, 그 카테고리에 없는 실격 키, 여행 기간 밖 계절 키는 false다(멘토 리뷰 #680).
+- 새 필드 `not_enforced_reason`(nullable): `no_key`, `no_direction`, `not_for_category`, `off_season`. enforced=false일 때만 값이 있다.
+- FE: 근거 확인 화면에서 enforced=false인 줄은 「꼭 지켜야 하는 조건」으로 보이지 않는다. 안내는 이유별로 다르다. no_key는 「걸러지지 않아요. 가게에 직접 확인해 주세요」(가드레일 8), off_season은 「이번 여행 기간에는 해당 없어요」(QA F-5), no_direction과 not_for_category는 「이번 추천에 쓰이지 않아요」. FE는 아직 enforced를 쓰지 않으므로 바뀌는 코드는 없다.
+
 ## 2026-10-27, AI 코스 조회에서도 15분 넘은 진행 중 run을 끝낸다 (#736)
 
 - 스키마 변경 없음. `GET /course-runs/{runId}`와 `GET /maps/{mapId}/courses/latest`가 15분 넘게 진행 중(queued, running)으로 남은 run을 `failed`, `failure_code: INTERRUPTED`로 끝내고 돌려준다. 전에는 새 코스를 요청할 때만 끝내서, 마지막 저장이 실패한 run은 폴링이 끝나지 않았다(멘토 리뷰 #680).

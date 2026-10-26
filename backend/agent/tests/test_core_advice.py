@@ -129,15 +129,19 @@ def test_passed_and_gained_come_from_passed_count_not_the_stage_label(top_label)
 # ---------------------------------------------------------------- 근거 줄 (10절 get_run_evidence)
 
 @pytest.mark.parametrize("fields, kind", [
-    ({"fact_key": "spacious", "wants": True}, "condition"),
-    ({"fact_key": "is_crowded_large", "wants": None}, "condition"),   # hard 키는 방향 없이 거른다
-    ({"fact_key": None, "chip_id": "food_expensive", "text": "비싸요"}, "not_filtered"),   # 가격 (#423)
-    ({"fact_key": None, "text": "저 새우 알레르기 있어요"}, "not_filtered"),   # 안전 조건 (#425)
-    ({"fact_key": None, "chip_id": "common_far", "text": "너무 멀어요"}, "vague"),
-    ({"fact_key": None, "text": "그냥 별로"}, "vague"),
+    ({"fact_key": "spacious", "wants": True, "enforced": True}, "condition"),
+    ({"fact_key": "is_crowded_large", "wants": None, "enforced": True}, "condition"),   # hard 키는 방향 없이 거른다
+    ({"fact_key": None, "not_enforced_reason": "no_key", "chip_id": "food_expensive", "text": "비싸요"}, "not_filtered"),   # 가격 (#423)
+    ({"fact_key": None, "not_enforced_reason": "no_key", "text": "저 새우 알레르기 있어요"}, "not_filtered"),   # 안전 조건 (#425)
+    ({"fact_key": None, "not_enforced_reason": "no_key", "chip_id": "common_far", "text": "너무 멀어요"}, "vague"),
+    ({"fact_key": None, "not_enforced_reason": "no_key", "text": "그냥 별로"}, "vague"),
+    ({"fact_key": "quiet", "not_enforced_reason": "no_direction"}, "vague"),   # 다시 적으면 반영된다
+    ({"fact_key": "season_snow", "not_enforced_reason": "off_season"}, "not_filtered"),
+    ({"fact_key": "is_crowded_large", "not_enforced_reason": "not_for_category"}, "not_filtered"),
 ])
 def test_evidence_kind(fields, kind):
-    assert core.evidence_kind({"wants": None, "chip_id": None, "text": "", **fields}) == kind
+    base = {"wants": None, "chip_id": None, "text": "", "enforced": False}
+    assert core.evidence_kind(base | fields) == kind
 
 
 def test_evidence_lines_show_only_self_or_other_member():
