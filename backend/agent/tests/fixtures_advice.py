@@ -2,6 +2,8 @@
 바꾸고, flows.advise_run과 같은 순서로 core의 절차를 돌린다. DB를 쓰지 않는다.
 
 - 깔때기, 근거 줄, 메타, 최근 run은 recommend.api.get_run_funnel, get_run_evidence, get_run_meta, get_recent_runs와 같은 모양이다.
+  케이스의 funnel은 단계 키(recommend.core.FUNNEL_STAGES) → 탈락 수이고, 줄의 enforced, not_enforced_reason, effect는
+  recommend.core.evidence_line_use가 정한다(#751).
 - simulate_filter는 필터를 다시 돌리지 않고 케이스에 적은 증가 수로 after를 만든다: 반경은 넓힌 도보 분 이하의 radius_gain 중
   가장 큰 값, 근거 줄은 끈 줄들의 gain 합. 그만큼 「반경 밖 제거」, 「실격 조건 제거」가 줄고 passed가 는다.
 - 칩 줄의 글, 키, 방향은 칩 표(pins.chips, 정본 docs/constraints.md)에서 읽는다 — 여기 다시 적지 않는다.
@@ -20,14 +22,10 @@ from agent import core
 from common.errors import AppError
 from pins import chips
 from recommend import api as recommend_api
-from recommend.core import RANKING_STAGE, WIDEN_LIMIT_MIN, WIDEN_STEP_MIN, passed_count
+from recommend.core import FUNNEL_STAGES, WIDEN_LIMIT_MIN, WIDEN_STEP_MIN, evidence_line_use, passed_count
 
 CASES_PATH = Path(__file__).with_name("cases_advice.json")
 NOW = datetime(2026, 10, 15, 3, 0, tzinfo=timezone.utc)
-
-# recommend.flows._run_pipeline의 깔때기 단계 순서. 케이스의 funnel은 이 라벨 → 탈락 수(적지 않으면 0)
-STAGES = ("카테고리 후보 풀", core.RADIUS_STAGE, "영업 종료 제거", "추천 가능 아님 제거", core.DISQUALIFY_STAGE,
-          core.EXCLUDED_STAGE, RANKING_STAGE)
 
 REQUESTER = "u1"
 AUTHORS = {"self": REQUESTER, "other": "u2", "other2": "u3"}
@@ -93,14 +91,14 @@ class AdviceWorld:
         line_gain = sum(self.gains[i] for i in set(disable_line_ids))
         funnel = [dict(e) for e in self.funnel["funnel"]]
         for entry in funnel:
-            if entry["label"] == core.RADIUS_STAGE:
+            if entry["key"] == "radius":
                 entry["removed_count"] = max(0, entry["removed_count"] - radius_gain)
-            elif entry["label"] == core.DISQUALIFY_STAGE:
+            elif entry["key"] == "disqualify":
                 entry["removed_count"] = max(0, entry["removed_count"] - line_gain)
         passed = self.funnel["passed_count"] + radius_gain + line_gain
         result = min(3, passed)
-        funnel[-1]["removed_count"] = passed - result   # 상위 3곳 선정
-        after = {"result_count": result, "funnel": funnel, "passed_count": passed_count(result, funnel)}
+        funnel[-1]["removed_count"] = passed - result   # ranking(상위 3곳 선정)
+        after = {"result_count": result, "funnel": funnel, "passed_count": passed}
         return {"before": _copy(self.funnel), "after": after}
 
     def _radius_gain(self, radius_factor: float | None) -> int:
@@ -115,17 +113,19 @@ def _copy(outcome: Mapping[str, Any]) -> dict[str, Any]:
     return {**outcome, "funnel": [dict(e) for e in outcome["funnel"]]}
 
 
-def _line(case_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
+def _line(case_id: str, category: str, raw: Mapping[str, Any]) -> dict[str, Any]:
     """케이스의 줄 → recommend.api.get_run_evidence의 한 줄. 칩 줄은 칩 표대로 글(label), 키, 방향을 채운다."""
     chip = chips.chip_for(raw["chip"]) if raw.get("chip") else None
     if chip is not None:
         text, fact_key, wants = raw.get("text", chip.label), raw.get("fact_key", chip.fact_key), raw.get("wants", chip.wants)
     else:
         text, fact_key, wants = raw["text"], raw.get("fact_key"), raw.get("wants")
+    badge = raw.get("badge", "required")
+    use = evidence_line_use(badge, fact_key, wants, category, ())   # recommend의 값(#740, #751)
     return {
-        "line_id": _id(case_id, raw["id"]), "text": text, "badge": raw.get("badge", "required"), "fact_key": fact_key,
+        "line_id": _id(case_id, raw["id"]), "text": text, "badge": badge, "fact_key": fact_key,
         "wants": wants, "is_active": raw.get("active", True), "author_id": AUTHORS[raw["by"]], "chip_id": raw.get("chip"),
-        "enforced": fact_key is not None, "not_enforced_reason": None if fact_key is not None else "no_key",   # recommend의 값(#740)
+        "enforced": use.enforced, "not_enforced_reason": use.not_enforced_reason, "effect": use.effect,
     }
 
 
@@ -133,7 +133,7 @@ def build(case: Mapping[str, Any]) -> AdviceWorld:
     cid = case["id"]
     run_id = _id(cid, "run")
     stages = dict(case["funnel"])
-    funnel_entries = [{"label": label, "removed_count": stages.get(label, 0)} for label in STAGES]
+    funnel_entries = [{"key": key, "label": label, "removed_count": stages.get(key, 0)} for key, label in FUNNEL_STAGES]
     result_count = case["result_count"]
     funnel = {"result_count": result_count, "funnel": funnel_entries,
               "passed_count": passed_count(result_count, funnel_entries)}
@@ -148,7 +148,7 @@ def build(case: Mapping[str, Any]) -> AdviceWorld:
     recent = [{"run_id": run_id, "status": meta["status"], "result_count": result_count, "created_at": created}]
     recent += [{"run_id": _id(cid, f"run{i}"), "status": "done", "result_count": 1, "created_at": created - timedelta(days=i)}
                for i in range(1, case["same_category_runs"])]
-    lines = [_line(cid, raw) for raw in case.get("lines", [])]
+    lines = [_line(cid, case["category"], raw) for raw in case.get("lines", [])]
     local_ids = {raw["id"]: _id(cid, raw["id"]) for raw in case.get("lines", [])}
     gains = {local_ids[raw["id"]]: raw.get("gain", 0) for raw in case.get("lines", [])}
     radius_gain = {int(minutes): gain for minutes, gain in case.get("radius_gain", {}).items()}

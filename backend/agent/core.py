@@ -1491,10 +1491,10 @@ def render_summary(
 # 결과를 바꿀 길이 없다. 저장에는 슬롯 문장, claim, 버튼(근거 줄은 line_id만)을 둔다 — 근거 글과 구성원은 넣지 않는다(2절 11번,
 # 13번). 조건을 끄는 것은 사람이다(가드레일 4): 버튼은 근거 확인 화면과 반경 넓히기로만 이어진다.
 
-# recommend 깔때기의 단계 라벨(recommend.flows._run_pipeline). 사람이 바꿀 수 있는 세 단계만 종류를 고르는 데 쓴다 — 「영업 종료
-# 제거」와 「추천 가능 아님 제거」는 쓰지 않는다. 탈락 수가 같으면 이 순서로 본다
-RADIUS_STAGE, DISQUALIFY_STAGE, EXCLUDED_STAGE = "반경 밖 제거", "실격 조건 제거", "이미 제안·거절됨"
-ADVICE_STAGES = (RADIUS_STAGE, DISQUALIFY_STAGE, EXCLUDED_STAGE)
+# recommend 깔때기의 단계 키(recommend.core.FUNNEL_STAGES, #751). 라벨 글자는 화면 문구라 보지 않는다. 사람이 바꿀 수 있는 세
+# 단계(반경 밖 제거, 실격 조건 제거, 이미 제안·거절됨)만 종류를 고르는 데 쓴다 — closed와 not_recommendable은 쓰지 않는다.
+# 탈락 수가 같으면 이 순서로 본다
+ADVICE_STAGES = ("radius", "disqualify", "excluded")
 # claim이 가리키는 읽기(agent_runs.tool_calls의 call_id). 시뮬레이션은 t2부터 매긴다(advice_simulations)
 FUNNEL_CALL_ID, EVIDENCE_CALL_ID = "t0", "t1"
 
@@ -1533,10 +1533,10 @@ def next_radius_factor(meta: Mapping[str, Any]) -> float | None:
 def funnel_view(outcome: Mapping[str, Any]) -> dict[str, Any]:
     """깔때기: 결과 수(최대 3), 단계별 탈락, passed(필터를 모두 통과한 곳 — 상위 3곳을 고르기 전). outcome은
     recommend.api.get_run_funnel 또는 simulate_filter의 before·after `{result_count, funnel, passed_count}`다. passed는
-    recommend가 센 passed_count 그대로다 — 깔때기 라벨 글자로 셈하지 않는다(#587)."""
+    recommend가 센 passed_count 그대로다 — 깔때기 라벨 글자로 셈하지 않는다(#587). 단계는 recommend가 붙인 key로 찾는다(#751)."""
     return {
         "result_count": outcome["result_count"],
-        "funnel": [{"label": e["label"], "removed_count": e["removed_count"]} for e in outcome["funnel"]],
+        "funnel": [{"key": e["key"], "label": e["label"], "removed_count": e["removed_count"]} for e in outcome["funnel"]],
         "passed": outcome["passed_count"],
     }
 
@@ -1578,25 +1578,29 @@ def advice_evidence(
     lines: Sequence[Mapping[str, Any]], requester_id: str, fact_labels: Mapping[str, str],
 ) -> list[dict[str, Any]]:
     """절차가 보는 근거 줄(recommend.api.get_run_evidence 순서 그대로). 쓴 사람은 본인인지(own)만 남는다(이름, user_id 없음).
-    label은 코드가 만든 조건 이름이라 문장 슬롯으로 쓸 수 있다. 글(text)은 싣지 않는다 — 종류(kind)를 정하는 데만 쓴다."""
+    label은 코드가 만든 조건 이름이라 문장 슬롯으로 쓸 수 있다. 글(text)은 싣지 않는다 — 종류(kind)를 정하는 데만 쓴다.
+    effect는 recommend가 정한 쓰임 그대로다("filter" 후보를 거른다 | "score" 점수만 | None 안 쓰인다, #751)."""
     return [
         {"line_id": line["line_id"], "own": line["author_id"] == requester_id, "kind": evidence_kind(line),
-         "label": _condition_label(line["fact_key"], line["wants"], fact_labels), "is_active": line["is_active"]}
+         "label": _condition_label(line["fact_key"], line["wants"], fact_labels), "is_active": line["is_active"],
+         "effect": line["effect"]}
         for line in lines
     ]
 
 
 def _clear_stages(funnel: Mapping[str, Any]) -> list[str]:
     """ADVICE_STAGES 중 ADVICE_CLEAR_DROP 이상 빠진 단계, 많이 빠진 것부터(같으면 ADVICE_STAGES 순서)."""
-    removed = {e["label"]: e["removed_count"] for e in funnel["funnel"]}
+    removed = {e["key"]: e["removed_count"] for e in funnel["funnel"]}
     clear = [s for s in ADVICE_STAGES if removed.get(s, 0) >= ADVICE_CLEAR_DROP]
     return sorted(clear, key=lambda s: -removed[s])
 
 
 def _relaxable(lines: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-    """하나씩 꺼 볼 조건 줄 — 켜져 있고 이름이 있는 condition 줄, 근거 줄 순서로 많아야 ADVICE_MAX_RELAX_LINES. 실격인지
-    선호인지는 여기서 가르지 않는다(#732 — 세기 판단은 recommend 한 곳). 선호 줄은 꺼도 gained가 0이라 말하지 않는다."""
-    found = [line for line in lines if line["kind"] == "condition" and line["is_active"] and line["label"]]
+    """하나씩 꺼 볼 조건 줄 — 켜져 있고 후보를 거르는(effect "filter") 이름 있는 condition 줄, 근거 줄 순서로 많아야
+    ADVICE_MAX_RELAX_LINES. 거르는지는 recommend가 정한 effect를 읽는다(#751 — 세기 판단은 recommend 한 곳, #732). 점수만 주는
+    줄은 꺼도 「실격 조건 제거」가 줄지 않아 볼 일이 없다. 꺼도 gained가 0인 줄은 말하지 않는다(_relaxed)."""
+    found = [line for line in lines
+             if line["kind"] == "condition" and line["is_active"] and line["effect"] == "filter" and line["label"]]
     return found[:ADVICE_MAX_RELAX_LINES]
 
 
@@ -1610,11 +1614,11 @@ def advice_simulations(
     볼 일이 없어 멈춘다. 서로 기다리지 않으므로 앞 단계의 결과를 보지 않고 모두 고른다 — 결과는 choose_run_advice가 순서대로 본다."""
     wanted: list[tuple[float | None, list[str]]] = []
     for stage in _clear_stages(funnel):
-        if stage == RADIUS_STAGE and next_factor is not None:
+        if stage == "radius" and next_factor is not None:
             wanted.append((next_factor, []))
-        elif stage == DISQUALIFY_STAGE:
+        elif stage == "disqualify":
             wanted += [(None, [line["line_id"]]) for line in _relaxable(lines)]
-        elif stage == EXCLUDED_STAGE:
+        elif stage == "excluded":
             break
     return {f"t{i}": {"radius_factor": factor, "disable_line_ids": ids}
             for i, (factor, ids) in enumerate(wanted, start=2)}
@@ -1661,12 +1665,12 @@ def choose_run_advice(
     - 「이미 제안·거절됨」 → exhausted
     고른 것이 없으면 vague 줄이 있을 때 vague_reason, 없으면 침묵. not_filtered 줄은 세지도 말하지도 않는다."""
     for stage in _clear_stages(funnel):
-        if stage == RADIUS_STAGE:
+        if stage == "radius":
             one_press = next((cid for cid, s in sims.items() if next_factor is not None and s["radius_factor"] is not None
                               and math.isclose(s["radius_factor"], next_factor, rel_tol=0, abs_tol=1e-9)), None)
             if one_press is not None and sims[one_press]["gained"] > 0:
                 return _radius_advice(run_id, one_press, sims[one_press]["gained"])
-        elif stage == DISQUALIFY_STAGE:
+        elif stage == "disqualify":
             relaxed = _relaxed(lines, sims)
             if relaxed:
                 return _soft_relax_advice(run_id, _mentioned(relaxed))
@@ -1723,7 +1727,7 @@ def _soft_relax_advice(run_id: str, mentioned: list[_Relaxed]) -> AdviceDraft:
 
 def _exhausted_advice(funnel: Mapping[str, Any]) -> AdviceDraft:
     """완화할 수 없어 사실만 알린다. 버튼 없음."""
-    index, entry = next((i, e) for i, e in enumerate(funnel["funnel"]) if e["label"] == EXCLUDED_STAGE)
+    index, entry = next((i, e) for i, e in enumerate(funnel["funnel"]) if e["key"] == "excluded")
     return AdviceDraft(
         kind="exhausted", claims=[_claim("c1", FUNNEL_CALL_ID, f"funnel.{index}.removed_count", entry["removed_count"])],
         advice=[{"slot_text": "이미 보여 줬거나 거절한 {c1.value}곳은 다시 추천하지 않아요.", "is_guess": False}], actions=[],

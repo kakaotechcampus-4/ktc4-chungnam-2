@@ -994,7 +994,7 @@ service, 다른 모듈 읽기와 트랜잭션은 flows. 마이그레이션 없�
 2. **꺼 볼 줄에서 실격/선호를 가르지 않는다.** 프롬프트는 badge=required만 시뮬레이션하지만 agent가 badge를 비교하면
    `test_condition_strength_sites.py`의 새 세기 판단 자리가 된다(#732). 그래서 켜져 있고 이름 있는 condition 줄을 근거 줄 순서로 3줄까지
    끄고, gained 0인 줄(선호 줄)은 말하지 않는다. 선호 줄이 앞에 많으면 실격 줄이 3줄 밖으로 밀릴 수 있다 — #732가 "이 줄이 거르는가"를
-   recommend.api로 내주면 그걸 쓰겠다
+   recommend.api로 내주면 그걸 쓰겠다 → **#751에서 풀림**: recommend가 줄마다 effect를 내주고, 꺼 볼 줄은 effect "filter"인 줄만이다(아래 #751 절)
 3. **vague_reason**: 줄마다 `lines.N.line_id` claim, 본인 vague 줄 전부를 버튼 하나에. 끈 vague 줄도 프롬프트대로 센다
 
 ## 루트 확인 요청 (문서·integration·llm은 고치지 않았다)
@@ -1002,7 +1002,7 @@ service, 다른 모듈 읽기와 트랜잭션은 flows. 마이그레이션 없�
 1. **깔때기 단계 라벨.** 절차가 「반경 밖 제거」, 「실격 조건 제거」, 「이미 제안·거절됨」을 라벨 글자로 찾는다(`core.RADIUS_STAGE` 등,
    recommend.flows의 리터럴과 같은 값). recommend.core.passed_count 주석은 "밖에서 라벨 글자를 볼 일이 없다"인데 모델이 하던 일을 코드가
    하게 되면서 생겼다. recommend.api가 단계 키(radius, disqualify, excluded)를 내주면 바꾸겠다. 라벨이 바뀌면 `test_flows_advice.py`
-   (실제 recommend 실행)가 실패해서 알 수 있다
+   (실제 recommend 실행)가 실패해서 알 수 있다 → **#751에서 풀림**: 단계는 key로 찾는다(아래 #751 절)
 2. **api-spec**: `GET /runs/{runId}/advice`에 500(INTERNAL_ERROR)이 없다. 지금 응답은 200/204/403/404만 적혀 있다. FE는 500을 "조언
    자리 숨김"으로 다루면 된다(16.5). 문서 반영 부탁
 3. **integration**: `test_response_contract.py::test_run_advice_matches_the_openapi_spec`가 `llm.agent_advise_run` 가짜를 써서 깨진다
@@ -1023,3 +1023,40 @@ service, 다른 모듈 읽기와 트랜잭션은 flows. 마이그레이션 없�
   error 행, 라우터 500/204/403/404, 스펙 모양
 - `pytest agent common integration`: 1333 passed, 5 failed — 위 3번 하나와, 저장소에 없는 로컬 `integration/test_agent_e2e.py` 4개(#717 전
   모양이라 develop에서도 실패)
+
+---
+
+# 루트 보고 — backend/agent (#751, 조언은 깔때기 키와 근거 줄 쓰임으로 읽는다)
+
+recommend 커밋(같은 브랜치, 9195948)이 깔때기 단계마다 key를, `get_run_evidence`와 `evidence_line_uses`가 줄마다 effect를 내준다.
+agent는 라벨 글자나 추측 대신 그 값을 쓴다. recommend와 docs는 고치지 않았다.
+
+## 바뀐 것
+
+- `core.py`: `RADIUS_STAGE`, `DISQUALIFY_STAGE`, `EXCLUDED_STAGE`(라벨 글자)를 지웠다. `ADVICE_STAGES = ("radius", "disqualify",
+  "excluded")`이고 `_clear_stages`, `advice_simulations`, `choose_run_advice`, `_exhausted_advice`가 단계를 key로 찾는다.
+  `funnel_view`가 key를 싣는다(agent_runs.tool_calls의 t0 결과에도 key가 남는다). exhausted claim의 path(`funnel.N.removed_count`)는 그대로다
+- `advice_evidence`가 recommend의 effect를 그대로 싣는다(`"filter"` | `"score"` | None)
+- 꺼 볼 줄(`_relaxable`): 켜져 있고 effect가 `"filter"`인 이름 있는 condition 줄, 근거 줄 순서로 `ADVICE_MAX_RELAX_LINES`까지.
+  점수만 주는 선호 줄은 시뮬레이션하지 않는다. gained 0인 줄을 말하지 않는 규칙은 그대로다
+- 세기 판단은 새로 하지 않는다 — effect는 `recommend.core.evidence_line_use`가 정한 값이고 agent는 badge를 보지 않는다
+  (`test_condition_strength_sites.py` 통과, KNOWN_SITES 변화 없음)
+
+## 풀린 것
+
+- #750 절 "명세에 없어 정한 것" 2번(선호 줄이 앞에 많으면 실격 줄이 3줄 밖으로 밀린다)과 "루트 확인 요청" 1번(깔때기 라벨 글자)
+
+## 알아 둘 것
+
+- `recommend.core.RANKING_STAGE`는 "agent 테스트가 아직 라벨로 읽는다"는 주석과 함께 남아 있다. agent는 이제 읽지 않는다(fixture도
+  `FUNNEL_STAGES`로 바꿨다). 지울지는 recommend 쪽 판단이다
+
+## 테스트
+
+- `tests/cases_advice.json`의 funnel을 라벨 → 단계 키로 옮겼다(기대값은 그대로). `fixtures_advice.py`는 `FUNNEL_STAGES`로 깔때기를
+  만들고, 줄의 enforced, not_enforced_reason, effect를 `recommend.core.evidence_line_use`로 채운다(25건 모두 전과 같은 판정)
+- `test_advice_cases.py`: 회귀 25건 그대로 통과. 새 `test_funnel_label_text_does_not_change_the_advice` — 25건마다 깔때기 라벨 글자를
+  바꿔도(key 같음) 시뮬레이션, 종류, claim이 같다
+- `test_core_advice.py`: 새 `test_preference_lines_ahead_do_not_push_out_the_disqualifying_line` — 선호 줄 셋이 실격 줄 앞에 있어도
+  실격 줄만 꺼 보고 soft_relax로 말한다. `funnel()` 도우미의 라벨은 일부러 recommend 문구와 다르게 두었다
+- `pytest agent integration/test_condition_strength_sites.py`: 1051 passed
