@@ -165,17 +165,13 @@ places(
   status('open'|'closed'),             -- 인허가 영업 상태. closed는 검색·추천에서 제외
   curated boolean not null default false,
                                         -- 정예(사람이 직접 조사·납품한 데이터)인가(2026-10-16). `--authoritative` 적재가 켠다.
-                                        -- 이름·분류·라벨을 인허가 커버리지가 덮지 못하게 하고 can_recommend 판정의 기준이다.
+                                        -- 이름·분류·라벨을 인허가 커버리지가 덮지 못하게 하고, AI 추천 후보 풀의 기준이다(아래).
                                         -- 한 번 true가 되면 커버리지 적재가 끄지 않는다. 처음 채울 때는 "출처(label_source)가 NULL인
                                         -- 라벨 행을 가진 장소 = 정예"로 되메운다(places/for_Root.md #can_recommend 조사 결과).
-  can_recommend boolean not null default false,
-                                        -- AI 추천 후보 풀에 들어가도 되는 장소인가(2026-10-15 결정, 구현은 places).
-                                        -- 직접 찍은 핀·검색·링크에는 영향이 없다 — 추천 후보를 고를 때만 쓴다.
-                                        -- 규칙(재계산 가능한 값이다, 사람이 손으로 정하지 않는다):
-                                        --   정예 행(curated=true)만 true다. 정예가 아닌 데이터(인허가 커버리지 등)는 지도에 핀을 꽂을 수 있는 최소 정보일 뿐 추천 후보가 아니다(원칙, 2026-10-24).
-                                        --   라벨 수 임계는 2026-10-24에 폐기했다 — 비정예 장소의 확정 라벨이 전부 인허가에서 자동으로
-                                        --   나온 값(cuisine_* 10개·spacious·franchise 등)이라 품질 신호가 아님을 실측으로 확인했다(#681-1).
-                                        -- 정예가 늘면(재적재) places의 재계산 스크립트로 다시 계산한다.
+                                        -- AI 추천 후보 풀은 curated=true인 장소만이다(2026-10-24 원칙: 정예가 아닌 데이터는 핀을 꽂을 수 있는
+                                        -- 최소 정보일 뿐이다). 따로 저장한 칸(can_recommend)은 #743에서 없앴다(마이그레이션 0040): 규칙이 curated와
+                                        -- 같은 값인데 따로 저장하면 규칙을 바꿀 때 재계산을 잊어 옛 값이 남는다(멘토 리뷰 #680). 후보 조회
+                                        -- (places.repository.search_nearby_own)가 curated를 바로 읽는다. 직접 찍은 핀·검색·링크에는 영향이 없다.
   kakao_place_id null, kakao_place_url null, kakao_matched_at null,
                                         -- 사용자가 검색해서 고를 때 한 건씩 매칭한 결과. 허용 범위: 카카오 장소 ID·URL·확인 일자.
                                         -- 카카오 응답의 이름·주소·좌표는 저장하지 않는다(#53)

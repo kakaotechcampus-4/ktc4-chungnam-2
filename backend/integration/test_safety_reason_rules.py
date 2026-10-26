@@ -25,7 +25,7 @@ def _extra_place(db, sid, name, lat, lng, facts):
     repository.upsert_places(db, [PlaceRow("permit", sid, name, "음식점", f"서울 {sid}", None, lat, lng, "open")])
     repository.upsert_facts(db, [LabelRow("permit", sid, k, v, "known", 3, NOW) for k, v in facts.items()])
     db.flush()
-    db.execute(update(Place).where(Place.source_id == sid).values(can_recommend=True))  # 추천 후보 풀에 들어가게(#558)
+    db.execute(update(Place).where(Place.source_id == sid).values(curated=True))  # 추천 후보 풀에 들어가게(#558)
     db.flush()
 
 

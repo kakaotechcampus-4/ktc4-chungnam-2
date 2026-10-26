@@ -43,8 +43,8 @@ def own_db(db_session):
         for sid, (_, _, _, facts) in PLACES.items() for key, value in facts.items()
     ])
     db_session.flush()
-    # 이 테스트들은 추천 후보 풀을 시험한다 — DB 기본값(can_recommend=false)이면 풀에서 빠지므로 추천 가능으로 켠다(#558).
-    db_session.execute(update(Place).values(can_recommend=True))
+    # 이 테스트들은 추천 후보 풀을 시험한다 — DB 기본값(curated=false)이면 풀에서 빠지므로 정예로 켠다(후보 풀 = curated, #558, #743).
+    db_session.execute(update(Place).values(curated=True))
     db_session.flush()
     return db_session
 

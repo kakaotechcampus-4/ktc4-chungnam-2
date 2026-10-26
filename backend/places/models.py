@@ -39,9 +39,6 @@ class Place(Base):
     status: Mapped[str] = mapped_column(PlaceStatus, nullable=False, server_default="open")
     # 정예(사람이 직접 조사·납품한 데이터)인가 — `--authoritative` 적재가 켜고 한 번 true면 끄지 않는다. docs/data-model.md places 절.
     curated: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    # AI 추천 후보 풀에 들어가도 되는 장소인가 — 재계산 가능한 값이다(places/core.py 규칙, 손으로 정하지 않는다).
-    # 직접 찍은 핀·검색·링크에는 쓰지 않는다. docs/data-model.md places 절.
-    can_recommend: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     # 사용자가 검색해서 고를 때 한 건씩 매칭한 결과. 카카오 응답의 이름·주소·좌표는 저장하지 않는다.
     kakao_place_id: Mapped[str | None] = mapped_column(String, nullable=True)
     kakao_place_url: Mapped[str | None] = mapped_column(String, nullable=True)

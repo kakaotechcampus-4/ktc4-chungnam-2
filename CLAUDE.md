@@ -120,6 +120,7 @@ v2 동선 에이전트(「AI 코스 짜기」, #334)는 사람이 요청할 때 
 | `docs/agent-v2.md` | v2 계획 보조 에이전트 구현 명세 — 탐지, 제안, 우리 조건 요약, 추천 막힘 조언. 모델 호출은 #509에서 결정 |
 | `docs/execution-order.md` | 이슈 실행 순서 초안 |
 | `docs/team-setup-guide.md` | 팀원용 설치·실행 설명서 — 도구 설치·키 넣기(`.env`)·데이터 넣기·켜기·막혔을 때(비개발자용) |
+| `deploy_rules.md` | 배포 절차 — 코드 밖에서 맞춰야 하는 데이터 단계(마이그레이션, 장소 적재, 영업시간), 예약 실행, 아직 없는 것 |
 | `docs/demo-guide.md` | 팀 시연 따라 하기 — 준비·켜기·시연 대본·문제 해결(비개발자용, localhost) |
 | `contracts/` | FE 타입 생성 + 목 서버(msw), `docs/api-spec.yaml`에서 파생 |
 | `backend/CLAUDE.md` · `frontend/CLAUDE.md` | 백엔드·프론트 공통 컨벤션 |

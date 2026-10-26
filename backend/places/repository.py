@@ -14,7 +14,7 @@ from sqlalchemy import Float, cast, func, literal, null, or_, select, union_all,
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from places import core, matching
+from places import matching
 from places.ingest import HoursRow, LabelRow, PlaceRow
 from places.matching import Candidate
 from places.models import Place, PlaceFact, PlaceHours
@@ -318,10 +318,11 @@ def search_nearby_own(db: Session, category: str, areas: Sequence[Area]) -> list
         return []
     lat, lng = _lat_lng()
     circles = [func.ST_DWithin(Place.geom, _geog(a.lat, a.lng), a.radius_m) for a in areas]
+    # PlaceRef.can_recommend(추천 후보 풀에 넣어도 되는가)는 places.curated 그대로다 — 규칙이 바뀌면 이 쿼리 한 곳만 고친다(#743)
     rows = db.execute(
-        select(Place.id, lat, lng, Place.can_recommend).where(Place.status == "open", Place.category == category, or_(*circles))
+        select(Place.id, lat, lng, Place.curated).where(Place.status == "open", Place.category == category, or_(*circles))
     ).all()
-    return [PlaceRef(str(r.id), r.lat, r.lng, r.can_recommend) for r in rows]
+    return [PlaceRef(str(r.id), r.lat, r.lng, r.curated) for r in rows]
 
 
 def get_ad_places(db: Session, place_ids: Sequence[str], center: tuple[float, float], radius_m: float,
@@ -343,30 +344,10 @@ def get_ad_places(db: Session, place_ids: Sequence[str], center: tuple[float, fl
     ]
 
 
-@dataclass(frozen=True)
-class RecomputeResult:
-    counts: dict[tuple[str, bool], int]   # (분류, can_recommend) → 장소 수, 계산한 새 값 기준
-    changed: int                          # 값이 바뀐 장소 수(dry_run이면 바뀔 수)
-
-
-def recompute_can_recommend(db: Session, *, dry_run: bool = False) -> RecomputeResult:
-    """전체 장소의 can_recommend를 core 규칙으로 다시 계산해 바뀐 행만 갱신한다. 멱등. 커밋하지 않는다.
-
-    정예 여부는 places.curated다(`--authoritative` 적재가 켠다). 폐업 장소도 계산한다(다시 열릴 때 값이 맞도록)."""
-    rows = db.execute(select(Place.id, Place.category, Place.can_recommend, Place.curated)).all()
-    counts: dict[tuple[str, bool], int] = {}
-    to_true: list[uuid.UUID] = []
-    to_false: list[uuid.UUID] = []
-    for pid, category, current, curated in rows:
-        new = core.can_recommend(curated=curated)
-        counts[(category, new)] = counts.get((category, new), 0) + 1
-        if new != current:
-            (to_true if new else to_false).append(pid)
-    if not dry_run:
-        for ids, value in ((to_true, True), (to_false, False)):
-            for chunk in _chunks(ids):
-                db.execute(update(Place).where(Place.id.in_(chunk)).values(can_recommend=value))
-    return RecomputeResult(counts, len(to_true) + len(to_false))
+def curated_counts(db: Session) -> dict[tuple[str, bool], int]:
+    """(분류, 정예 여부) → 장소 수. 적재 리포트용(폐업 장소도 센다)."""
+    rows = db.execute(select(Place.category, Place.curated, func.count()).group_by(Place.category, Place.curated)).all()
+    return {(category, curated): n for category, curated, n in rows}
 
 
 def find_nearest(db: Session, lat: float, lng: float, category: str | None, radius_m: float, limit: int) -> list[NearestRow]:

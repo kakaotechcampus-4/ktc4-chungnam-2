@@ -150,7 +150,7 @@ python -m places.load cafes --file "C:\경로\카페_1013\cafe_seoul_curated.csv
 python -m places.load tourapi --file "C:\경로\관광지_1013\tourist_seoul_places.json" --labels "C:\경로\관광지_1013\tourist_seoul_curated_labels.csv" --authoritative
 ```
 
-> ✅ 명령마다 `DB: 신규 ...` 줄이 나오고, 끝에 `[can_recommend] 분류별 true / false` 표가 나오면 성공입니다. 좌표가 없는 가게는 자동으로 건너뛰니 파일 행 수보다 조금 적은 게 정상입니다.
+> ✅ 명령마다 `DB: 신규 ...` 줄이 나오고, 끝에 `[curated] 분류별 정예 / 정예 아님` 표가 나오면 성공입니다. 좌표가 없는 가게는 자동으로 건너뛰니 파일 행 수보다 조금 적은 게 정상입니다.
 > ❗ **`--authoritative`를 빼지 마세요.** 빼면 사람이 조사한 가게로 표시되지 않아서, 라벨이 적은 가게가 AI 추천 후보에서 빠집니다.
 > ❗ 관광지 라벨은 `.json`이 아니라 **`.csv`** 파일을 넣습니다. json을 넣으면 라벨이 전부 건너뛰어집니다.
 > 💡 먼저 연습해 보고 싶으면 명령 맨 끝에 `--dry-run`을 붙이세요. 실제로는 넣지 않고 결과만 보여 줍니다.

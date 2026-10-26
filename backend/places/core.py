@@ -1,15 +1,6 @@
-"""can_recommend 판정 규칙(순수 함수) — AI 추천 후보 풀에 넣어도 되는 장소인가(2026-10-15 결정, 2026-10-24 개정 #681).
-
-추천은 정예 데이터에서만 가능하다 — 정예 외 데이터는 핀을 꽂을 수 있는 최소 정보일 뿐이다. 그래서 can_recommend = places.curated 하나다
-(분류·라벨 수는 보지 않는다). 새 모델 호출은 없다. 정본: docs/data-model.md places 절, docs/constraints.md「추천 가능(can_recommend)」.
-"""
+"""places 순수 규칙 — 영업 중 판정."""
 
 from __future__ import annotations
-
-
-def can_recommend(*, curated: bool) -> bool:
-    """정예 적재 행(places.curated)이면 true, 아니면 false — 분류와 무관하다."""
-    return curated
 
 
 # ---------------------------------------------------------------- 영업 중 판정 (#690)
