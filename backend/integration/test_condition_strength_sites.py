@@ -12,6 +12,8 @@
 
 지금 있는 곳은 KNOWN_SITES에 적는다. #732가 판단을 한 곳으로 모으며 비운다. 새로 생기면 실패하고(새 판단을 만들지 말고 모아 둔
 함수를 부른다), 고쳐졌는데 목록에 남아 있어도 실패한다. 정적 검사라 DB 없이 돈다.
+
+모아 둔 곳은 HOME에 적는다. 비우는 목록이 아니라 다른 곳이 불러야 하는 자리다. 없어지면 실패한다.
 """
 
 import ast
@@ -22,6 +24,11 @@ SKIP_DIRS = {"tests", "integration", "alembic", "__pycache__", ".venv", "venv"}
 SKIP_FILES = {"recommend/constraints.py"}   # hard/soft 표의 정의 자리
 BADGES = {"required", "preferred", "reference"}
 STRENGTH_TABLES = {"SOFT_FACT_KEYS", "HARD_REGISTRY"}
+
+# (파일, 함수) -> 무엇을 정하는 한 곳인가. 파이프라인, 근거 응답, agent가 이 함수를 부른다.
+HOME: dict[tuple[str, str], str] = {
+    ("recommend/core.py", "evidence_line_use"): "근거 줄이 이번 추천에 쓰이는지와 안 쓰이는 이유(#740)",
+}
 
 # (파일, 함수) -> 추적 이슈. 비어 가는 것이 정상이다. 2026-10-24에 처음 센 19곳.
 KNOWN_SITES: dict[tuple[str, str], str] = {
@@ -121,7 +128,7 @@ def _sites() -> set[tuple[str, str]]:
 
 
 def test_no_new_place_decides_condition_strength():
-    new = sorted(set(_sites()) - set(KNOWN_SITES))
+    new = sorted(set(_sites()) - set(KNOWN_SITES) - set(HOME))
     assert not new, (
         "조건의 세기(배지, hard/soft)를 새로 판단하는 곳이 생겼다. 판단은 한 곳에 모은다(#732) — 그 함수를 부르거나, "
         f"정말 새 판단이 필요하면 루트와 정한 뒤 KNOWN_SITES에 이슈와 함께 적는다: {new}"
@@ -131,3 +138,8 @@ def test_no_new_place_decides_condition_strength():
 def test_known_sites_are_still_there():
     stale = sorted(set(KNOWN_SITES) - _sites())
     assert not stale, f"한 곳으로 모아진 자리가 KNOWN_SITES에 남아 있다 — 지운다: {stale}"
+
+
+def test_home_functions_still_decide():
+    gone = sorted(set(HOME) - _sites())
+    assert not gone, f"HOME의 함수가 없어졌거나 더는 판단하지 않는다 — 옮긴 자리로 고친다: {gone}"
