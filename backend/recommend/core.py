@@ -418,7 +418,6 @@ FUNNEL_STAGES: tuple[tuple[str, str], ...] = (
     ("excluded", "이미 제안·거절됨"),
     ("ranking", "상위 3곳 선정"),   # 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다
 )
-RANKING_STAGE = dict(FUNNEL_STAGES)["ranking"]   # agent 테스트가 아직 라벨로 읽는다(#751 다음 세션에서 키로 옮긴다)
 
 
 def funnel_counts(removed: Mapping[str, int]) -> list[dict]:
