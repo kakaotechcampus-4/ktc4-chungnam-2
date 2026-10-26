@@ -56,7 +56,7 @@ cp .env.example .env                  # 없으면. 값은 커밋하지 않는다
 python -m alembic upgrade head        # 마이그레이션 체인이 head 하나여야 한다
 # 자체 장소 DB 적재(한 번, 약 5분) — 파일은 저장소 밖에 둔다(.gitignore). 안 하면 검색·핀·추천이 모두 빈다. 윈도는 먼저 `PYTHONUTF8=1`
 # 순서: 정예(사람이 조사한 납품본, 오래된 것부터) → 커버리지(인허가). 다시 넣을 때도 이 순서 전체를 처음부터 한다(#507)
-# 정예는 반드시 --authoritative — places.curated=true를 켠다. 빼면 can_recommend가 라벨 수로만 정해져 라벨 적은 가게가 추천 후보에서 빠진다
+# 정예는 반드시 --authoritative — places.curated=true를 켠다. 빼면 정예로 표시되지 않아 AI 추천 후보에서 빠진다(후보 풀 = curated, #743)
 python -m places.load restaurants --file <식당카페_라벨_2026-10-02/restaurant_seoul_curated.csv> --labels <restaurant_seoul_curated_labels.json> --authoritative --dry-run   # 리포트 확인 후 --dry-run을 뺀다
 python -m places.load cafes --file <식당카페_라벨_2026-10-02/cafe_seoul_curated.csv> --labels <cafe_seoul_curated_labels.csv> --authoritative
 python -m places.load restaurants --file <음식점_1013/final_restaurant_places_hotspot.csv> --labels <seoul_restaurant_labels_hotspot.json> --authoritative

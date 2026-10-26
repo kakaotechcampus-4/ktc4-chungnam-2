@@ -257,7 +257,7 @@ API와 DB
 
 14. recommend 모듈의 어떤 파일도 ads를 import하지 않는다(integration/test_import_rules.py에 추가).
 15. 광고 장소를 지도에 올린 핀은 origin = direct이고, 직접 찍은 핀과 응답 모양이 같다(source: search에 광고 응답의 값을 그대로 보냄).
-16. 광고를 등록해도 places.can_recommend 값이 바뀌지 않는다.
+16. 광고를 등록해도 places.curated 값(추천 후보 여부, #743)이 바뀌지 않는다.
 
 ## 12. 작업 나누기
 
