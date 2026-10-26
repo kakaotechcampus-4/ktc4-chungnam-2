@@ -15,7 +15,7 @@ from auth.testing import ensure_users, session_cookie
 from common import database
 from main import app
 
-R = {"성수": (37.5446, 127.0557), "홍대": (37.5563, 126.9236), "종로": (37.5704, 126.9922)}
+R = {"춘천": (37.8813, 127.7298), "성수": (37.5446, 127.0557), "홍대": (37.5563, 126.9236), "종로": (37.5704, 126.9922)}
 
 
 def pick(cat, center, fact=None, fact_val=True, name_like=None, skip=0, extra_sql=""):
@@ -106,6 +106,38 @@ SCENARIOS = [
         (pick("음식점", "성수", "cuisine_bbq", skip=2), "against", "고기 싫어요"),
         (pick("음식점", "성수", "cuisine_bunsik"), "against", "분식 싫어요"),
     ]]),
+    # 14 정예가 적은 지역(춘천 카페) R09
+    sc("춘천 카페(정예 적은 지역) ♥빵", "춘천", "카페", [[
+        (pick("카페", "춘천"), "like", "분위기가 좋아요"),
+    ]]),
+    # 15 ♥만 있고 사유 없음 R10
+    sc("성수 음식점 — ♥만(사유 없음)", "성수", "음식점", [[
+        (pick("음식점", "성수", "cuisine_korean"), "like", ""),
+    ]]),
+    # 16~19 복합 조건 (구성원 여럿 · ♥/🚫 여러 개 · 직접 추가 · 날짜)
+    sc("복합1 성수 음식점 3명 — ♥한식·고기·분식 / 🚫양식·매운맛·해산물 / +조용·주차 / 월요일", "성수", "음식점", [
+        [(pick("음식점", "성수", "cuisine_korean"), "like", "한식 좋아요, 국물 있으면 더 좋아요"),
+         (pick("음식점", "성수", "cuisine_western", skip=1), "against", "양식은 느끼해서 싫어요")],
+        [(pick("음식점", "성수", "cuisine_bbq"), "like", "고기 구워 먹고 싶어요"),
+         (pick("음식점", "성수", "cuisine_bunsik"), "against", "매운 음식은 못 먹어요")],
+        [(pick("음식점", "성수", "cuisine_bunsik", skip=2), "like", "분식도 괜찮아요"),
+         (pick("음식점", "성수", "cuisine_raw_fish"), "against", "날것(회)은 못 먹어요")],
+    ], start="2026-11-09", end="2026-11-09", extra=["조용한 곳이면 좋겠어요", "주차가 되면 좋아요"]),
+    sc("복합2 홍대 카페 2명 — ♥조용·베이커리·오래 앉기 / 🚫프랜차이즈·붐빔 / +반려동물", "홍대", "카페", [
+        [(pick("카페", "홍대", "bakery"), "like", "빵이 맛있고 조용해서 좋아요"),
+         (pick("카페", "홍대", "franchise"), "against", "프랜차이즈는 싫어요")],
+        [(pick("카페", "홍대", "comfortable_seat"), "like", "오래 앉아 있기 편해서 좋아요"),
+         (pick("카페", "홍대", "is_crowded_large", skip=1), "against", "사람이 너무 많아서 시끄러워요")],
+    ], extra=["반려동물 동반 가능하면 좋아요", "콘센트가 있으면 좋아요"]),
+    sc("복합3 성수 음식점 — 충돌: A ♥한식 / B 🚫한식 / C ♥한식", "성수", "음식점", [
+        [(pick("음식점", "성수", "cuisine_korean"), "like", "한식이 좋아요")],
+        [(pick("음식점", "성수", "cuisine_korean", skip=3), "against", "한식은 질려서 싫어요")],
+        [(pick("음식점", "성수", "cuisine_korean", skip=5), "like", "한식 먹고 싶어요")],
+    ]),
+    sc("복합4 종로 관광지 12월 2명 — ♥역사·전통 / 🚫사람 많은 곳 / +겨울 풍경", "종로", "관광지", [
+        [(pick("관광지", "종로"), "like", "역사 유적과 전통 한옥을 보고 싶어요")],
+        [(pick("관광지", "종로", skip=3), "against", "사람이 너무 많은 곳은 싫어요")],
+    ], start="2026-12-20", end="2026-12-22", extra=["겨울 풍경이 예쁜 곳이면 좋아요", "아이와 함께 가기 좋은 곳"]),
 ]
 
 
@@ -153,7 +185,7 @@ def run(s):
             else:
                 assert p.status_code == 201, (name, p.text)
                 pid = p.json()["id"]
-            rr = c.put(f"/pins/{pid}/reaction", json={"type": rtype, "reason_text": reason})
+            rr = c.put(f"/pins/{pid}/reaction", json={"type": rtype, **({"reason_text": reason} if reason else {})})
             assert rr.status_code == 200, (name, rr.status_code, rr.text)
     print(f"[설정] 핀·반응:")
     for i, pins in enumerate(s["users"]):

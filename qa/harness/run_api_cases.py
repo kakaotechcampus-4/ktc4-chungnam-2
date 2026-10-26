@@ -5,6 +5,7 @@ usage (backend 폴더에서):
   PYTHONUTF8=1 DATABASE_URL=postgresql://pingo:pingo@localhost:5432/pingo_eval python ../qa/harness/run_api_cases.py [ID ...]
 판정: PASS(기대대로) | FAIL(기대와 다름 — 버그 후보) | INFO(관찰만) | ERR(하네스 오류)
 """
+import json
 import sys
 import threading
 import unicodedata
@@ -232,22 +233,33 @@ def l01_l04():
     check("L04", r.status_code in (404, 410), f"삭제된 지도 초대 수락 {r.status_code}", f"{r.status_code} {r.text[:120]}")
 
 
+def _reset_guest_limiter():
+    """IP 시간당 상한(auth.router.guest_join_limiter, 인메모리)을 비운다 — 토큰당 10명 상한(GUEST_LIMIT)과 구분해 보려는 하네스 전용."""
+    from auth.router import guest_join_limiter
+    guest_join_limiter._hits.clear()
+
+
 def l05_l06():
+    _reset_guest_limiter()
     uid, c = user(); mid = new_map(c)
     tok = c.post(f"/maps/{mid}/invite").json()["token"]
     anon = TestClient(app)
     codes = []
     for i in range(11):
+        _reset_guest_limiter()   # 토큰당 상한만 보려고 매번 IP 상한을 비운다
         r = anon.post("/auth/guest", json={"display_name": f"게스트{i}", "invite_token": tok}); codes.append(r.status_code)
-    rec("L05.guest11", "PASS" if codes[10] in (409, 429) else "FAIL", f"11번째 게스트 → {codes[10]} (전체 {codes})")
+    check("L05.guest11", codes[:10] == [201] * 10 and codes[10] == 409, "10명 201, 11번째 409 GUEST_LIMIT", f"{codes}")
     gc = TestClient(app, cookies=r.cookies if r.status_code == 201 else anon.cookies)
-    g = TestClient(app); gr = g.post("/auth/guest", json={"display_name": "g", "invite_token": tok})
+    _, c2 = user(); mid2 = new_map(c2); tok2 = c2.post(f"/maps/{mid2}/invite").json()["token"]
+    _reset_guest_limiter()
+    g = TestClient(app); gr = g.post("/auth/guest", json={"display_name": "g", "invite_token": tok2})
     if gr.status_code == 201:
         r = g.post("/maps", json={"title": "x", "start_date": "2026-11-10", "end_date": "2026-11-12", "region": SEONGSU})
         check("L06", r.status_code == 403 and r.json().get("code") == "GUEST_NOT_ALLOWED", "게스트 지도 생성 403", f"{r.status_code} {r.text[:100]}")
     else:
         rec("L06", "INFO", f"게스트 생성 불가({gr.status_code}) — 10명 상한 때문일 수 있음")
     c.delete(f"/invites/{tok}")
+    _reset_guest_limiter()
     r = TestClient(app).post("/auth/guest", json={"display_name": "late", "invite_token": tok})
     check("L05.revoked", r.status_code == 410, "폐기 토큰 410", f"{r.status_code} {r.text[:100]}")
 
@@ -304,8 +316,87 @@ def s03_s05():
         r = a.post("/feedback", json=body); rec(f"S04.{label}", "INFO", f"{r.status_code} {r.text[:80]}")
 
 
+def r3_widen_retry():
+    """B05 구성원별 시도 독립 · B06 넓히기 상한 · B07 결과 0 근처 · 재시도 상한과의 관계."""
+    _, a = user(); _, b = user(); mid = new_map(a)
+    tok = a.post(f"/maps/{mid}/invite").json()["token"]; b.post(f"/invites/{tok}/accept")
+    for c in (a, b):
+        pid = add_pin(c, mid, skip=0 if c is a else 7).json()["id"]
+        c.put(f"/pins/{pid}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})
+    codes_a = [a.post(f"/maps/{mid}/runs", json={"category": "음식점"}).status_code for _ in range(11)]
+    r = b.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+    check("B05", codes_a[:10] == [202] * 10 and codes_a[10] == 429 and r.status_code == 202,
+          "A 10회 후 429, B는 독립적으로 202", f"A {codes_a}, B {r.status_code} {r.text[:100]}")
+    rid = r.json()["id"]
+    b.post(f"/runs/{rid}/regions/confirm", json={}); b.post(f"/runs/{rid}/execute")
+    last = None; n = 0
+    for _ in range(6):
+        last = b.post(f"/runs/{rid}/widen"); n += last.status_code == 202
+    check("B06", n == 3 and last.status_code == 409 and last.json().get("code") == "WIDEN_LIMIT",
+          f"넓히기 3회(15→30분) 후 409 WIDEN_LIMIT", f"{n}회 성공, 마지막 {last.status_code} {last.text[:120]}")
+
+
+def r3_concurrent_shortlist():
+    uid, c = user(); mid = new_map(c); pid = add_pin(c, mid).json()["id"]
+    def add(_):
+        return TestClient(app, cookies=c.cookies).post(f"/maps/{mid}/shortlist", json={"pin_id": pid}).status_code
+    with ThreadPoolExecutor(4) as ex:
+        codes = list(ex.map(add, range(4)))
+    n = len(c.get(f"/maps/{mid}/shortlist").json())
+    check("C05", n == 1 and all(x in (201, 409) for x in codes), f"동시 4요청 → {sorted(codes)}, 항목 {n}개", f"{sorted(codes)}, 항목 {n}개")
+
+
+def r3_search_edges():
+    _, c = user(); mid = new_map(c)
+    cases = {"empty": "", "spaces": "   ", "long": "가" * 300, "special": "%_\';--", "emoji": "😋🍜", "single": "a"}
+    for k, q in cases.items():
+        r = c.get("/places/search", params={"q": q, "lat": 37.5446, "lng": 127.0557, "category": "음식점"})
+        rec(f"A15.{k}", "PASS" if r.status_code in (200, 422) else "FAIL", f"{r.status_code} {r.text[:80]}")
+
+
+def r3_pin_unsupported_and_dup_ui_codes():
+    _, c = user(); mid = new_map(c)
+    r1 = add_pin(c, mid); r2 = add_pin(c, mid)
+    rec("U05.codes", "PASS" if (r1.status_code, r2.status_code, r2.json().get("code")) == (201, 409, "PIN_DUPLICATE") else "FAIL",
+        f"중복 핀 응답 {r2.status_code} {r2.json().get('code')}")
+
+
+def r3_evidence_enforced():
+    """#720: 키 없는 줄(알레르기)은 enforced=false, 키 있는 줄은 true(구현 병합 후 확인 — 필드가 없으면 INFO)."""
+    _, c = user(); mid = new_map(c)
+    pid = add_pin(c, mid).json()["id"]; pid2 = add_pin(c, mid, skip=2, fact="cuisine_western").json()["id"]
+    c.put(f"/pins/{pid}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})
+    c.put(f"/pins/{pid2}/reaction", json={"type": "against", "reason_text": "땅콩 알레르기가 있어서 못 먹어요"})
+    rid = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}).json()["id"]
+    ev = c.get(f"/runs/{rid}/evidence").json()
+    if not any("enforced" in e for e in ev):
+        rec("E720", "INFO", "enforced 필드 아직 없음(#720 구현 미병합)"); return
+    key = [e for e in ev if e.get("fact_key")]; nokey = [e for e in ev if not e.get("fact_key")]
+    check("E720", all(e["enforced"] for e in key) and nokey and all(e["enforced"] is False for e in nokey),
+          f"키 있는 줄 {len(key)}개 true, 키 없는 줄 {len(nokey)}개 false", json.dumps(ev, ensure_ascii=False)[:300])
+
+
+def r3_republish_exclusion():
+    """R11: 후보를 지도에 올린 뒤 다시 추천 — 이미 핀이 된 장소는 후보에서 빠진다(가드레일 6)."""
+    _, c = user(); mid = new_map(c)
+    pid = add_pin(c, mid).json()["id"]
+    c.put(f"/pins/{pid}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})
+    def run_once():
+        rid = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}).json()["id"]
+        c.post(f"/runs/{rid}/regions/confirm", json={}); c.post(f"/runs/{rid}/execute")
+        return rid, c.get(f"/runs/{rid}/result").json().get("candidates", [])
+    rid1, c1 = run_once()
+    names1 = [x["place_name"] for x in c1]
+    for x in c1:
+        c.post(f"/candidates/{x['id']}/publish")
+    rid2, c2 = run_once()
+    names2 = [x["place_name"] for x in c2]
+    check("R11", c1 and c2 and not set(names1) & set(names2), f"1차 {names1} → 2차 {names2} (겹침 없음)",
+          f"1차 {names1} → 2차 {names2} (겹침 {set(names1) & set(names2)})")
+
+
 CASES = {"A01": a01_a02, "A03": a03, "A04": a04_a05, "A06": a06_a09, "A10": a10_a12, "A13": a13_a14, "B01": b01_b03,
-         "B04": b04_b08, "C01": c01_c05, "L01": l01_l04, "L05": l05_l06, "L02": l02_l03, "L08": l08, "S03": s03_s05, "S06": s06}
+         "B04": b04_b08, "C01": c01_c05, "L01": l01_l04, "L05": l05_l06, "L02": l02_l03, "L08": l08, "S03": s03_s05, "S06": s06, "R3a": r3_widen_retry, "R3b": r3_concurrent_shortlist, "R3c": r3_search_edges, "R3d": r3_pin_unsupported_and_dup_ui_codes, "R3e": r3_evidence_enforced, "R3f": r3_republish_exclusion}
 
 if __name__ == "__main__":
     want = set(sys.argv[1:])
