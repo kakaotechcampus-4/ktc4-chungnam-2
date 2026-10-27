@@ -61,7 +61,7 @@
 | 지표 | 읽는 법 | 이렇게 보이면 |
 |---|---|---|
 | stale로 버린 관찰 비율 | `select outcome, count(*) from agent_runs where trigger in ('activity', 'time') and started_at > now() - interval '1 day' group by 1` 에서 stale ÷ 전체 | 늘면 관찰이 겹치거나 늦게 끝나고 있다. 결과가 틀리지는 않지만(저장할 때 지도 행을 잠그고 다시 확인한다) 모델 호출을 버린다 |
-| tick당 처리 수와 미룬 지도 수, 걸린 시간 | tick 끝의 info 로그(#756에서 더한다) | 미룬 지도가 tick마다 남으면 처리 수나 주기를 바꾼다. 시간 예산은 150초(`TICK_BUDGET_SEC`)로 두고 이 지표로 본다(#754). 걸린 시간이 lease(180초)를 넘는 tick이 보이면 105초(`LEASE_SEC − 75`)로 낮춘다 |
+| tick당 처리 수와 미룬 지도 수, 걸린 시간 | tick 끝의 로그 한 줄 `agent tick due= observed= deferred_by_max= deferred_by_budget= elapsed_ms=`(#756). 차례였던 지도, 관찰한 수, `TICK_MAX_MAPS`로 미룬 수, 시간 예산으로 미룬 수, 걸린 ms. 시간 예산으로 미룬 지도가 있으면 warning | 미룬 지도가 tick마다 남으면 처리 수나 주기를 바꾼다. 시간 예산은 150초(`TICK_BUDGET_SEC`)로 두고 이 지표로 본다(#754). 걸린 시간이 lease(180초)를 넘는 tick이 보이면 105초(`LEASE_SEC − 75`)로 낮춘다 |
 
 ## 배포 전에 정할 것
 
