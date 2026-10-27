@@ -162,6 +162,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/qa-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * **스테이징 전용** QA 로그인 (#788, #789). FE는 쓰지 않는다. QA 하네스가 실제 HTTP로 핵심 흐름을 돌릴 때 카카오 로그인 없이 사용자를 만든다.
+         *     - 서버가 `PINGO_ENV=staging`이고 `QA_LOGIN_SECRET`이 있을 때만 이 경로가 있다. 그 밖의 환경(운영 포함)에는 경로가 없어 404다. 운영에 `QA_LOGIN_SECRET`이 있으면 서버가 뜨지 않는다.
+         *     - 헤더 `X-QA-Login-Secret`이 서버의 `QA_LOGIN_SECRET`과 같아야 한다. 다르거나 없으면 403 `FORBIDDEN`.
+         *     - 부를 때마다 새 사용자를 만든다. 로그인 수단은 `provider='qa'`라 게스트가 아니고(`is_guest=false`) 지도를 만들 수 있다. 응답에 카카오 로그인과 같은 세션 쿠키가 실린다.
+         *     - 스테이징과 운영은 `SESSION_SECRET`이 다르다. 여기서 받은 쿠키는 운영에서 401이다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    /** @description 스테이징의 QA_LOGIN_SECRET. 저장소·로그·채팅에 남기지 않는다 */
+                    "X-QA-Login-Secret": string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["QaLoginRequest"];
+                };
+            };
+            responses: {
+                /** @description 새 사용자를 만들었다. `Set-Cookie`로 세션 발급 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["User"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — 이름이 비었거나 50자 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/me": {
         parameters: {
             query?: never;
@@ -3208,6 +3267,10 @@ export interface components {
             display_name: string;
             /** @description 들어갈 지도의 초대 토큰(GET /invites/{token}으로 요약을 본 그 토큰) */
             invite_token: string;
+        };
+        QaLoginRequest: {
+            /** @description QA 사용자의 표시 이름. 앞뒤 공백을 지운 뒤 비어 있으면 422 */
+            display_name: string;
         };
         GuestJoinResult: {
             user: components["schemas"]["User"];

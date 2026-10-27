@@ -2,6 +2,12 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-27 (일곱 번째), 스테이징 전용 QA 로그인 (#788)
+
+- `POST /auth/qa-login`을 더했다. `PINGO_ENV=staging`이고 `QA_LOGIN_SECRET`이 있는 서버에만 있다. 헤더 `X-QA-Login-Secret`이 맞으면 새 사용자를 만들고 세션 쿠키를 준다. QA 하네스가 실제 HTTP로 핵심 흐름을 돌릴 때 쓴다(멘토 조언).
+- 서버 구현은 #789다. 운영에는 경로가 없다.
+- FE: 할 일 없음. 쓰지 않는다.
+
 ## 2026-10-27 (여섯 번째), my_ai_pin_published를 enum에서 뺐다 (#778)
 
 - `NotificationType`에서 `my_ai_pin_published`를 뺐다(#764 결정, 서버와 함께). `GET /me/notification-prefs`에 이 종류가 더 오지 않고, 이 값을 `PUT /me/notification-prefs`로 보내면 422다.
