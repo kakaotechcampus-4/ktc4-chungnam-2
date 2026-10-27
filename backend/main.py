@@ -81,6 +81,7 @@ def health():
 from ads.router import router as ads_router  # noqa: E402
 from agent.course.router import router as course_router  # noqa: E402
 from agent.router import router as agent_router  # noqa: E402
+from auth.qa_router import router as auth_qa_router  # noqa: E402
 from auth.router import public_router as auth_public_router  # noqa: E402
 from auth.router import router as auth_router  # noqa: E402
 from feedback.router import router as feedback_router  # noqa: E402
@@ -107,6 +108,8 @@ app.include_router(realtime_router)
 app.include_router(agent_router)
 app.include_router(course_router)
 app.include_router(ads_router)
+if settings.qa_login_enabled:   # 스테이징 전용 QA 로그인(#788) — 그 밖의 환경(운영 포함)에는 경로가 없다
+    app.include_router(auth_qa_router)
 
 # CORS는 add_middleware가 아니라 앱을 "바깥에서" 감싼다.
 # add_middleware로 넣으면 CORS가 ServerErrorMiddleware 안쪽이 돼서 500 응답에 CORS 헤더가
