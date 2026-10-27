@@ -1,7 +1,7 @@
 """
 ads 모듈이 소유하는 테이블 2개 — docs/data-model.md ads 절과 docs/ads.md 6절이 정본이다(마이그레이션 0036).
 
-- `ads.place_id`는 places.id지만 모듈 경계라 FK를 걸지 않는다(agent, pins.source_run_id와 같은 관례). 존재와 status=open은
+- `ads.place_id`는 places.id지만 모듈 경계라 FK를 걸지 않는다(docs/architecture.md 1절, #760). 존재와 status=open은
   등록 스크립트가 places.api로 검증하고, 장소가 정리되면 선택 규칙(places.api.get_ad_places 결과에 없음)으로 자연히 빠진다.
 - 카테고리는 저장하지 않는다. places.category에서 읽는다(같은 값을 두 곳에 두지 않는다).
 - `ad_daily_stats`는 광고별 날짜별 수만 남긴다. user_id, map_id 칸을 두지 않는다(명세 2절 7번).

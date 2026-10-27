@@ -69,7 +69,7 @@ export const recommendHandlers = [
         attempt_limit: ATTEMPT_LIMIT,
         created_at: runCreatedAt[r.id] ?? new Date(0).toISOString(),
         candidate_count: r.status === "done" ? (store.candidates[r.id] ?? []).length : 0,
-        published_count: Object.values(store.pins).filter((p) => p.source_run_id === r.id).length,
+        published_count: (store.candidates[r.id] ?? []).filter((c) => c.published_pin_id).length, // 실서버처럼 candidates.published_pin_id로 센다(#469, #761)
       }))
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
     return HttpResponse.json(list.slice(0, limit));
@@ -237,7 +237,6 @@ export const recommendHandlers = [
       created_by: ME_USER_ID, // 목 서버는 단일 사용자 시뮬레이션이라 run 요청자 = 나
       created_at: new Date().toISOString(), // 「지도에 올리기」를 누른 시각
       checks: cand.checks, // 가드레일 5: 게시 후에도 근거를 그대로 유지
-      source_run_id: runId,
       reaction_summary: { like: 0, against: 0 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: false },
     };

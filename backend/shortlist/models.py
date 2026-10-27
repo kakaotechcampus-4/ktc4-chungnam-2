@@ -16,7 +16,7 @@ class ShortlistItem(Base):
     __tablename__ = "shortlist_items"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # map_id: auth/maps가 아직 없어 pins.models와 같은 이유로 String(FK 없음, 루트 보고 대상).
+    # map_id: String이고 다른 모듈 테이블을 가리키므로 FK를 걸지 않는다(docs/architecture.md 1절, #760).
     map_id: Mapped[str] = mapped_column(String, nullable=False)
     pin_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pins.id"), nullable=False)
     added_by: Mapped[str] = mapped_column(String, nullable=False)

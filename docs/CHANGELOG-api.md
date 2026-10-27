@@ -2,6 +2,17 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-27 (다섯 번째), Pin.source_run_id를 지운다, my_ai_pin_published는 지우기로 한다, 확정된 실시간 핀도 승격한다 (#761, #762, #763, #764)
+
+- `Pin.source_run_id`를 지웠다(#761). 서버가 채운 적이 없는 칸이다. 목 서버의 run 목록 `published_count`도 실서버처럼 `candidates.published_pin_id`로 센다.
+- `NotificationType`의 `my_ai_pin_published`를 지우기로 했다(#764). 「지도에 올리기」는 요청자 본인만 누를 수 있어 만들어지지 않는다. enum은 서버와 함께 #778에서 뺀다. 그 전까지 `GET /me/notification-prefs`에 이 종류가 한 줄 온다.
+- `POST /pins/{pinId}/resolve`: 확정 리스트에 든 실시간 핀도 승격한다(#763). 확정 항목과 `kind`는 그대로이고 동선은 다음 「동선 짜주기」 때 들어간다. 서버는 #776에서 바뀐다(그 전까지 확정된 실시간 핀은 변화 없이 200). 목 서버는 이미 이렇게 동작한다.
+- `EvidenceLine.author_display_name`: 설명을 더했다. 핀 작성자와 같은 규칙(탈퇴한 구성원, 나간 구성원, 실명)이다. 서버는 #762에서 채운다(그 전까지 실서버에서 빈다).
+- `MemberFulfillment.by_member[].display_name`: 서버는 채우지 않는다고 적었다(#762). 지금 FE처럼 `user_id`로 구성원 목록에서 찾는다.
+- FE:
+  - 실시간 핀의 위치를 찾으면 resolve를 자동으로 부른다(#777).
+  - `source_run_id`, `my_ai_pin_published`는 FE가 쓰지 않아 바뀌는 코드가 없다.
+
 ## 2026-10-27 (네 번째), 설명을 서버 동작에 맞춘다 (#757)
 
 - 스키마 모양은 그대로이고 설명만 고쳤다. 서버는 이미 이렇게 동작한다(옛 for_Root.md에만 있던 것을 옮겼다).

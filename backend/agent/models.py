@@ -1,7 +1,7 @@
 """
 agent 모듈이 소유하는 테이블 7개 — docs/data-model.md agent 절과 docs/agent-v2.md 13절이 정본이다(마이그레이션 0029).
 
-- `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다(maps FK 미결과 같은 이유). `agent_run_advice.run_id`도
+- `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다(docs/architecture.md 1절, #760). `agent_run_advice.run_id`도
   recommend_runs.id지만 모듈 경계라 FK가 없다.
 - 상태값(trigger, outcome, diagnosis, status)은 명세대로 text다. 허용 값은 아래 튜플에 적어 두고 쓰는 쪽이 지킨다.
 - 지도 정리는 `api.purge_map_data`, 탈퇴는 `api.delete_by_user`가 이 테이블들을 지운다(명세 12.9).

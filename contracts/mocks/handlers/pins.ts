@@ -63,7 +63,6 @@ function createPin(mapId: string, body: CreatePinBody): Response {
         created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
         created_at: new Date().toISOString(),
         checks: [],
-        source_run_id: null,
         reaction_summary: { like: 0, against: 0 },
         permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: true },
       };
@@ -102,7 +101,6 @@ function createPin(mapId: string, body: CreatePinBody): Response {
       created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
       created_at: new Date().toISOString(),
       checks: [],
-      source_run_id: null,
       reaction_summary: { like: 0, against: 0 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: true },
     };
@@ -252,7 +250,7 @@ export const pinsHandlers = [
     if (!body.place_name?.trim() || typeof body.lat !== "number" || typeof body.lng !== "number" || Math.abs(body.lat) > 90 || Math.abs(body.lng) > 180) {
       return apiError(422, "VALIDATION_ERROR", "이름과 좌표가 필요해요");
     }
-    if (pin.source !== "live") return HttpResponse.json(pin); // 이미 자체 DB 핀 · AI 추천·확정 핀 — 변화 없음
+    if (pin.source !== "live") return HttpResponse.json(pin); // 이미 자체 DB 핀(AI 추천 핀 포함) — 변화 없음. 확정된 live 핀은 승격한다(#763)
     const own = SEED_PLACES.find((p) => p.place_name === body.place_name!.trim() && p.category === pin.category && !NOT_IN_OWN_DB.has(p.place_id));
     if (!own) return HttpResponse.json(pin); // 짝 없음 — 변화 없음
     const dup = Object.values(store.pins).find((p) => p.id !== pinId && p.map_id === pin.map_id && (p as any)._place_id === own.place_id);
