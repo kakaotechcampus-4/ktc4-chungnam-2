@@ -439,6 +439,15 @@ describe("#466·#473·#474 — 핀 수정, 지도를 눌러 핀, 링크 해석",
     expect((await send("/pins/nope/resolve", "POST", { place_name: "x", lat: 1, lng: 1 })).status).toBe(404);
   });
 
+  it("POST /pins/{id}/resolve: 확정 리스트에 든 live 핀도 승격하고 확정은 그대로다(#763)", async () => {
+    const live = await (await send("/maps/map_1/pins", "POST", { source: "live", category: "관광지", kakao_place_id: "kakao:live-763", search_query: "광안리" })).json();
+    expect((await send("/maps/map_1/shortlist", "POST", { pin_id: live.id })).status).toBe(201);
+    const pin = await (await send(`/pins/${live.id}/resolve`, "POST", { place_name: "광안리 해변", lat: 35.1532, lng: 129.1186 })).json();
+    expect(pin).toMatchObject({ id: live.id, source: "db", kind: "확정", place_name: "광안리 해변" });
+    const items = await (await fetch(`${BASE}/maps/map_1/shortlist`)).json();
+    expect(items.some((i: { pin: { id: string } }) => i.pin.id === live.id)).toBe(true);
+  });
+
   it("GET /places/nearest: 100m 안 자체 DB 장소만 가까운 순, 없으면 빈 배열, lat·lng 없으면 422", async () => {
     const near = await (await fetch(`${BASE}/places/nearest?lat=35.1631&lng=129.1639`)).json();
     expect(near.map((p: { place_name: string }) => p.place_name)).toEqual(["해운대 밀면"]);

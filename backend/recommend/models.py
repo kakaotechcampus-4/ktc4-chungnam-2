@@ -59,8 +59,7 @@ class RecommendRun(Base):
     __tablename__ = "recommend_runs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # map_id/requested_by: auth·maps가 아직 없어 String으로 받는다(pins.models와 같은 이유,
-    # FK는 그 모듈들이 오면 건다 — 루트 보고 대상).
+    # map_id/requested_by: String이고 다른 모듈 테이블을 가리키므로 FK를 걸지 않는다(docs/architecture.md 1절, #760).
     map_id: Mapped[str] = mapped_column(String, nullable=False)
     category: Mapped[str] = mapped_column(Category, nullable=False)
     requested_by: Mapped[str] = mapped_column(String, nullable=False)
@@ -86,8 +85,7 @@ class Candidate(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("recommend_runs.id"), nullable=False)
-    # places(id) 대상 테이블은 있지만 아직 어떤 모듈도 실제로 채우지 않는다 — pins.place_id와
-    # 같은 이유로 FK를 걸지 않는다(루트 보고 대상).
+    # places(id): 다른 모듈 테이블을 가리키므로 FK를 걸지 않는다(docs/architecture.md 1절, #760).
     place_id: Mapped[str] = mapped_column(String, nullable=False)
     region_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("regions.id"), nullable=True)
     # 위 모듈 docstring 참고 — data-model.md엔 없는 컬럼, pins.geom과 같은 이유로 denormalize.

@@ -1358,7 +1358,8 @@ export interface paths {
          *     - **짝이 없으면**: 200 + 핀 그대로(`source: live` 유지). 이벤트도 없다. 화면은 데이터가 늘어난 뒤 다시 시도할 수 있다.
          *     - **이미 자체 DB 핀이면** 아무것도 하지 않고 200으로 핀을 그대로 돌려준다(화면이 호출을 아끼려 거르지만 호출해도 안전).
          *     - **같은 지도에 그 장소의 핀이 이미 있으면** 409 `PIN_DUPLICATE`(`detail.pin_id` = 이미 있는 핀). 자동 병합은 하지 않는다 — 두 핀의 반응·사유가 엉키므로 사람이 한쪽을 지운다.
-         *     - AI 추천·확정 핀은 live가 아니므로 항상 변화 없이 200이다. 분류는 핀의 `category`를 쓴다(본문에 없다).
+         *     - **확정 리스트에 든 실시간 핀도 승격한다**(#763). 종류(`kind: 확정`)와 확정 항목은 그대로이고, 동선은 다음 「동선 짜주기」(`POST /maps/{mapId}/route`) 때 들어간다. AI 추천 핀은 늘 자체 DB 핀이라 변화 없이 200이다. 분류는 핀의 `category`를 쓴다(본문에 없다).
+         *     - 화면은 실시간 핀의 위치를 카카오 SDK로 찾은 순간 이 요청을 한 번 부른다(#777). 409는 안내 없이 넘긴다.
          *     - **힌트(`place_name`·`lat`·`lng`·`address`)는 저장하지도 로깅하지도 않는다**(카카오 약관). 응답에도 싣지 않는다.
          */
         post: {
@@ -3362,8 +3363,8 @@ export interface components {
         };
         /**
          * @description 알림 종류 (#470). `pin_reaction` 내 핀에 반응이 달림, `member_joined` 내 지도에 새 구성원(방장에게만),
-         *     `owner_changed` 내가 방장이 됨(직접 넘김·위임 모두), `map_deleted` 내가 속한 지도가 삭제됨,
-         *     `my_ai_pin_published` 내가 요청한 AI 추천이 지도에 올라감(다른 구성원이 「지도에 올리기」를 눌렀을 때).
+         *     `owner_changed` 내가 방장이 됨(직접 넘김·위임 모두), `map_deleted` 내가 속한 지도가 삭제됨.
+         *     `my_ai_pin_published`는 지운다(#764, 서버와 함께 #778에서 enum에서 뺀다). 「지도에 올리기」는 요청자 본인만 누를 수 있어 만들어지지 않는다. FE는 이 종류를 쓰지 않는다.
          *     지도 복구(#464)·강퇴(#8)는 그 기능이 들어올 때 종류를 더한다.
          * @enum {string}
          */
@@ -3375,7 +3376,7 @@ export interface components {
             map_id: string;
             /** @description 알림을 만들 때의 지도 제목(그 뒤에 바뀌어도 그대로). 지도 삭제 알림을 위해 남겨 둔다 */
             map_title?: string;
-            /** @description `pin_reaction`, `my_ai_pin_published`만 — 누르면 그 핀으로 이동. 그 핀이 지워졌으면 FE가 404를 받아 조용히 지도로만 이동한다 */
+            /** @description `pin_reaction`만 — 누르면 그 핀으로 이동. 그 핀이 지워졌으면 FE가 404를 받아 조용히 지도로만 이동한다 */
             pin_id?: string;
             /** @description 서버가 만든 문장. 예 "지우님이 내 핀에 ♥를 남겼어요". 반대 사유·메모는 싣지 않는다 */
             message: string;
@@ -3592,7 +3593,6 @@ export interface components {
             created_by_display_name?: string;
             /** @description 게시된 AI 추천 핀도 상세에서 계속 노출한다 (가드레일 5) */
             checks?: components["schemas"]["Check"][];
-            source_run_id?: string | null;
             /** @description AI 추천 핀만 — 추천 이유. 게시된 뒤에도 유지 (가드레일 5) */
             reason?: string;
             member_fulfillment?: components["schemas"]["MemberFulfillment"];
@@ -3658,6 +3658,7 @@ export interface components {
         EvidenceLine: {
             id: string;
             author_id: string;
+            /** @description 그 줄을 쓴 사람의 표시 이름. 핀 작성자와 같은 규칙이다: 탈퇴했으면 '탈퇴한 구성원', 이 지도에서 나갔으면 '나간 구성원', 아니면 실명. 조회할 때 계산한다(#369, #762) */
             author_display_name?: string;
             text: string;
             /**
@@ -3739,6 +3740,7 @@ export interface components {
             total: number;
             by_member?: {
                 user_id: string;
+                /** @description 서버는 채우지 않는다. 이 집계는 저장되고 게시할 때 핀으로 복사되므로 이름을 담지 않는다. FE는 user_id로 구성원 목록에서 이름을 찾는다(#762) */
                 display_name?: string;
                 satisfied: boolean;
             }[];

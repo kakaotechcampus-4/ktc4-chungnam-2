@@ -52,8 +52,7 @@ class Pin(Base):
 
     # id는 이 모듈이 전적으로 소유하므로 UUID로 발급한다.
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # map_id/created_by/place_id: auth·maps·places가 아직 없어 ID 형식(UUID vs 문자열)이 정해지지
-    # 않았다. 그 모듈들이 오기 전까지는 String으로 받아 형식을 강제하지 않는다 — FK도 그때 건다(루트 보고 대상).
+    # map_id/created_by/place_id: String이고 다른 모듈 테이블을 가리키므로 FK를 걸지 않는다(docs/architecture.md 1절, #760).
     map_id: Mapped[str] = mapped_column(String, nullable=False)
     category: Mapped[str] = mapped_column(Category, nullable=False)
     kind: Mapped[str] = mapped_column(PinKind, nullable=False)
@@ -113,7 +112,7 @@ class Reaction(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pin_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pins.id"), nullable=False)
-    # users(id) 대상 테이블이 아직 없다 — FK는 걸지 않는다. map_id와 같은 이유로 String.
+    # users(id): String이고 다른 모듈 테이블을 가리키므로 FK를 걸지 않는다(docs/architecture.md 1절, #760).
     user_id: Mapped[str] = mapped_column(String, nullable=False)
     type: Mapped[str] = mapped_column(ReactionType, nullable=False)
     reason_text: Mapped[str | None] = mapped_column(String, nullable=True)

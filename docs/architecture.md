@@ -13,6 +13,8 @@
 
 각 모듈이 서브 디렉토리 Claude Code 1개의 작업 범위(`backend/<module>/`)가 된다. 모듈은 자신의 DB 테이블만 직접 쓰고, 다른 모듈의 데이터는 반드시 그 모듈이 정의한 API/함수 계약을 통해서만 읽는다.
 
+다른 모듈 테이블을 가리키는 열(사용자 id, `map_id`, `place_id`, `run_id` 등)은 문자열이고 DB FK를 걸지 않는다(#760, 2026-10-27). 그 열을 가진 모듈이 자기 api의 `delete_by_user`, `reassign_user`, `purge_map_data`로 지우거나 옮기고, 부르는 목록은 `auth.service`의 `WITHDRAW_STEPS`·`MERGE_STEPS`와 `maps.purge.PURGE_STEPS`가 갖는다(빠지면 `test_user_data_lists.py`가 잡는다). 같은 모듈 안의 FK는 건다.
+
 모듈은 두 층으로 나뉜다. **수평 레이어**는 모든 기능 모듈이 공통으로 딛고 서는 바닥이고, **기능 모듈**은 그 위에서 각자의 도메인을 담당한다.
 
 ### 수평 레이어 (어느 모듈이든 직접 import한다)

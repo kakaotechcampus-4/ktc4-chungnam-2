@@ -1,11 +1,8 @@
 """
 maps / memberships / invites (docs/data-model.md).
 
-maps.id는 UUID가 아니라 String이다 — pins.map_id·shortlist_items.map_id가 이미 String으로
-"maps 도착 시 FK 추가"라는 주석과 함께 유보돼 있다(0001_pins.py, 0004_shortlist_items.py).
-String이면 그 FK 추가가 순수 제약 추가로 끝나지만, UUID였다면 다른 두 모듈 테이블의 컬럼
-타입을 바꿔야 하고(ALTER COLUMN ... TYPE uuid USING) 기존 dev 행("map_1" 등)에서 실패한다 —
-maps가 단독으로 결정할 수 없는 변경이라 String을 유지한다.
+maps.id는 UUID가 아니라 String이다 — 다른 모듈의 map_id 열(pins, shortlist_items 등)이 String이다.
+다른 모듈 테이블을 가리키는 열에는 FK를 걸지 않는다(docs/architecture.md 1절, #760).
 
 memberships.id는 반대로 UUID다 — 이 값은 모듈 경계를 넘어 다니지 않는다(비대칭은 의도적).
 """
@@ -52,7 +49,7 @@ class Map(Base):
     # 값이 있어야 한다(아래 CHECK). 없으면 지금처럼 첫 핀 좌표로 지역을 정한다.
     region_label: Mapped[str | None] = mapped_column(String, nullable=True)
     region_center = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)
-    created_by: Mapped[str] = mapped_column(String, nullable=False)  # users(id) — auth 도착 시 FK
+    created_by: Mapped[str] = mapped_column(String, nullable=False)  # users(id) — 모듈 경계라 FK 없음(#760)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -74,7 +71,7 @@ class Membership(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     map_id: Mapped[str] = mapped_column(String, ForeignKey("maps.id"), nullable=False)
-    user_id: Mapped[str] = mapped_column(String, nullable=False)  # users(id) — auth 도착 시 FK
+    user_id: Mapped[str] = mapped_column(String, nullable=False)  # users(id) — 모듈 경계라 FK 없음(#760)
     role: Mapped[str] = mapped_column(MembershipRole, nullable=False)
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -102,7 +99,7 @@ class Invite(Base):
     # data-model.md에 별도 id가 없다 — token 자체가 PK다.
     token: Mapped[str] = mapped_column(String, primary_key=True)
     map_id: Mapped[str] = mapped_column(String, ForeignKey("maps.id"), nullable=False)
-    created_by: Mapped[str] = mapped_column(String, nullable=False)  # users(id) — auth 도착 시 FK
+    created_by: Mapped[str] = mapped_column(String, nullable=False)  # users(id) — 모듈 경계라 FK 없음(#760)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(

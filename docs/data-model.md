@@ -30,7 +30,7 @@ user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사
 -- 예전 users.provider, provider_user_id, is_guest는 이 리비전에서 지운다(카카오 사용자는 user_identities로 옮긴다).
 
 maps(
-  id, title, start_date, end_date, member_count_expected,
+  id, title, start_date, end_date,     -- member_count_expected는 쓰지 않아 지웠다(#760, #775)
   region_label NULL, region_center geography(Point) NULL,   -- 9/28 #22 변경(PR #132, 루트 검증
                                                              -- 후 승인): 지역 검색(선택). 둘 다
                                                              -- 있거나 둘 다 없음
@@ -69,7 +69,7 @@ pins(
   id, map_id, category('음식점'|'카페'|'숙소'|'관광지'|'기타'),  -- 정의는 backend/common/categories.py(#280). v1 핀은 음식점·카페·관광지만
   kind('일반'|'AI추천'|'확정'),        -- 확정이 나머지 둘을 덮어쓴다(5-2)
   origin('direct'|'ai'),               -- kind와 별개. 원래 태생은 안 바뀐다(4절: 반대 많아도 모양 불변)
-  place_id null references places(id), -- 2026-10-01 결정(#191): 자체 DB 핀(source='db')은 자체 DB 장소를 가리킨다.
+  place_id null,                       -- places.id. 모듈 경계라 FK 없음(#760). 2026-10-01 결정(#191): 자체 DB 핀(source='db')은 자체 DB 장소를 가리킨다.
                                         -- 이름은 places.name에서 가져온다 — 핀에 따로 저장하지 않는다(place_name 컬럼은 없앤다).
                                         -- 카카오 응답의 이름·좌표는 저장하지 않는다. #382: source='live'(실시간 핀)는 place_id가 NULL이다.
   source('db'|'live'),                 -- #382. live = 자체 DB에 없는 장소를 사람이 남긴 핀. AI 핀(origin='ai')은 항상 db
@@ -78,12 +78,6 @@ pins(
   memo null,                           -- #382 live만. 사용자가 남긴 한마디(최대 200자)
   geom null geography(Point,4326),     -- 매칭된 places.geom의 복사(자체 데이터). 사용자가 카카오 지도에서 지정한 좌표와 카카오 응답 좌표는 저장하지 않는다. live 핀은 NULL
   visibility('public'|'private'),      -- v1은 항상 public. 이 값으로 분기하지 않는다(#273). 비공개 AI 후보는 pins가 아니라 candidates 행이고, 게시할 때 처음부터 public 핀으로 만든다. 칸은 마이그레이션 때문에 남기고, Pin 스키마를 크게 바꿀 때 같이 지운다
-  source_run_id null,                  -- #57 결정: recommend_runs.id를 게시 시점에 한 번만
-                                        -- 써넣는 불투명 참조값(추적·표시용). FK 제약은 걸지 않고
-                                        -- pins는 이 값을 절대 다시 읽어 recommend를 조회하지
-                                        -- 않는다("모듈 간 접근은 함수/API로만" 원칙은 실시간
-                                        -- 조회 금지가 핵심이지, 게시 시점 1회성 값 복사를 막지
-                                        -- 않는다 — candidates.lat/lng 비정규화와 같은 논리).
   checks jsonb null,                   -- #57 결정: candidate.checks를 게시 시점에 복사(가드레일
                                         -- 5, 게시 후에도 조건별 충족 체크가 유지돼야 함). run·
                                         -- candidate가 나중에 지워지거나 바뀌어도 이 값은 안 바뀐다.
@@ -324,7 +318,7 @@ candidates(
   -- 2. 게시는 pins.unique(map_id, place_id) where deleted_at is null 제약과 만난다 — 같은
   --    장소에 이미 핀(수동이든 이전 게시든)이 있으면 게시 INSERT가 충돌한다. 409로 처리할지
   --    기존 핀과 병합할지 정해야 한다.
-  -- 3. pins.source_run_id/checks는 write-once다 — 핀 수정 엔드포인트가 생기면 그 요청
+  -- 3. pins.checks는 write-once다 — 핀 수정 엔드포인트가 생기면 그 요청
   --    스키마에서 반드시 제외한다(클라이언트가 덮어쓸 수 없게).
 
 exclusions(
@@ -476,9 +470,9 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 ```
 notifications(                        -- 사용자별 알림함. 수신자마다 한 행
   id, user_id, map_id,                -- map_id는 FK 없음(지도가 삭제돼도 알림은 남는다)
-  type,                               -- NotificationType 5종(api-spec)
+  type,                               -- NotificationType(api-spec). my_ai_pin_published는 만들어지지 않아 지운다(#764, #778)
   map_title,                          -- 만들 때의 제목 스냅샷
-  pin_id nullable,                    -- pin_reaction·my_ai_pin_published만. FK 없음
+  pin_id nullable,                    -- pin_reaction만. FK 없음
   message,                            -- 서버가 만든 문장. 반대 사유·메모는 넣지 않는다
   created_at, read_at nullable,
   index (user_id, created_at desc), index (user_id) where read_at is null
@@ -576,7 +570,8 @@ event_log(
   시점에 candidate에서 복사(가드레일 5). 위 `pins` 테이블에 반영. 이유: `source_run_id`는 이미
   목 서버(`contracts/mocks`)가 쓰고 있어 없애면 FE 쪽 재작업이 필요하고,
   `candidates.lat/lng` 비정규화와 같은 논리로 "1회성 복사"는 "실시간 모듈 간 조회 금지" 원칙과
-  충돌하지 않는다.
+  충돌하지 않는다. 2026-10-27 #761에서 `source_run_id`는 지웠다: 구현된 적이 없고, 게시 수는
+  `candidates.published_pin_id`로 센다(#469). `checks`는 그대로다.
 - **`Candidate.permissions` 필드 추가 여부** — #64. 추가하는 쪽으로 확정: 이미 있는 공용
   `Permissions` 스키마에 `can_publish`를 추가하고 `Candidate`가 이를 참조한다(`Pin`/`EvidenceLine`
   등 다른 리소스와 같은 패턴). "FE가 권한 규칙을 재구현하지 않는다"(permissions.md) 원칙과
