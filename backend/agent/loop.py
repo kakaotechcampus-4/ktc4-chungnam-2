@@ -41,8 +41,8 @@ async def stop(timeout: float) -> None:
         await asyncio.wait_for(task, timeout)
     except asyncio.TimeoutError:
         log.warning("agent 관찰 반복 작업이 %s초 안에 멈추지 않아 취소했다", timeout)
-    except Exception:
-        log.exception("agent 관찰 반복 작업 종료 중 오류")
+    except Exception as exc:
+        log.error("agent 관찰 반복 작업 종료 중 오류 error=%s", type(exc).__name__)
 
 
 async def _run_forever(stop_event: asyncio.Event) -> None:
@@ -56,5 +56,5 @@ async def _run_forever(stop_event: asyncio.Event) -> None:
         try:
             # 동기 DB 작업이라 이벤트 루프를 막지 않게 스레드로 넘긴다
             await asyncio.to_thread(flows.run_tick, datetime.now(timezone.utc))
-        except Exception:   # 한 번 실패해도 다음 주기에 다시 돈다
-            log.exception("agent run_tick 실패")
+        except Exception as exc:   # 한 번 실패해도 다음 주기에 다시 돈다
+            log.error("agent run_tick 실패 error=%s", type(exc).__name__)

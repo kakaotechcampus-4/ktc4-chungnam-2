@@ -415,6 +415,22 @@ def test_failed_save_is_recorded_as_error_and_moves_the_cursor(world, monkeypatc
     assert (cur.last_seen_seq, cur.next_check_at, cur.lease_until) == (seq, world.now + timedelta(minutes=30), None)
 
 
+def test_failure_log_has_class_name_stage_and_id_only(world, monkeypatch, caplog):
+    """실패 로그는 예외 클래스 이름, 단계, map_id만 남긴다(#779). 예외 메시지(사유 글)와 traceback은 없다."""
+    map_id = world.gap_map()
+    world.event(map_id)
+    monkeypatch.setattr(service, "insert_suggestion", _boom)
+
+    with caplog.at_level(logging.WARNING, logger="pingo.agent"):
+        tick(world)
+
+    [record] = [r for r in caplog.records if r.getMessage().startswith("agent observe_map 실패")]
+    assert record.levelno == logging.ERROR
+    assert record.getMessage() == f"agent observe_map 실패 map_id={map_id} stage=save error=RuntimeError"
+    assert record.exc_info is None
+    assert all(SECRET not in r.getMessage() and r.exc_info is None for r in caplog.records)
+
+
 def test_failed_map_is_not_claimed_again_until_its_retry_time(world, monkeypatch):
     """예외로 끝난 지도는 다음 tick에 바로 다시 잡히지 않는다(#677). 연속 error 1회 30분, 2회 2시간, 3회부터 6시간 뒤에 시간
     점검으로 다시 본다. 한 번 성공하면 처음부터 다시 센다."""
