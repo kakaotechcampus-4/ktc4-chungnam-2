@@ -1,38 +1,87 @@
-"""API edge 케이스 실행기 — 실제 앱(TestClient) + 격리 DB(pingo_eval) + 실제 모델(추천 구조화 호출 포함).
+"""API edge 케이스 실행기 — 두 가지로 돈다.
+
+- 로컬(기본): 같은 프로세스의 앱(TestClient) + 격리 DB(pingo_eval) + 실제 모델(추천 구조화 호출 포함). 사용자는 DB에 직접
+  만들고, 장소는 DB에서 고른다.
+- HTTP(`--base-url`): 띄워 둔 서버에 실제 HTTP로 보낸다(#788). 백그라운드 작업, 쿠키, 프록시, 인스턴스마다 따로 세는 상한처럼
+  배포에서만 생기는 문제가 여기서 보인다. 이 모드는 backend를 import하지 않는다. 사용자는 스테이징 전용 QA 로그인
+  (`POST /auth/qa-login`, 헤더 X-QA-Login-Secret = 환경 변수 QA_LOGIN_SECRET)으로 만들고, 장소는 `GET /places/search`의
+  핀을 만들 수 있는(pinnable) 결과에서 고른다. 서버 메모리를 직접 비우는 케이스(L05)는 건너뛴다.
+
 키·시크릿은 출력하지 않는다. 결과는 표준출력에 `ID | 판정 | 메모`로 낸다(qa/results/<날짜>.md에 옮겨 적는다).
 
-usage (backend 폴더에서):
-  PYTHONUTF8=1 DATABASE_URL=postgresql://pingo:pingo@localhost:5432/pingo_eval python ../qa/harness/run_api_cases.py [ID ...]
-판정: PASS(기대대로) | FAIL(기대와 다름 — 버그 후보) | INFO(관찰만) | ERR(하네스 오류)
+usage:
+  로컬(backend 폴더에서): PYTHONUTF8=1 DATABASE_URL=postgresql://pingo:pingo@localhost:5432/pingo_eval python ../qa/harness/run_api_cases.py [ID ...]
+  HTTP: PYTHONUTF8=1 QA_LOGIN_SECRET=... python qa/harness/run_api_cases.py --base-url http://localhost:8000 [ID ...]
+판정: PASS(기대대로) | FAIL(기대와 다름 — 버그 후보) | INFO(관찰만) | SKIP(이 모드에서 못 봄) | ERR(하네스 오류)
 """
 import json
+import os
 import sys
-import threading
+import time
 import unicodedata
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-sys.path.insert(0, ".")
-import sqlalchemy as sa
-from fastapi.testclient import TestClient
-
-from auth.testing import ensure_users, session_cookie
-from common import database
-from main import app
-
 SEONGSU = {"label": "성수", "lat": 37.5446, "lng": 127.0557}
 RESULTS = []
+BASE_URL = None          # --base-url이 있으면 HTTP 모드
+RESULT_WAIT_SEC = 120    # 추천 실행(백그라운드) 결과를 기다리는 시간. 실제 모델 ② 호출이 들어 있다
+
+
+def _app():
+    """로컬 모드에서만 backend를 import한다 — HTTP 모드는 backend 없이 돈다(경로는 __main__이 넣는다)."""
+    from main import app
+    return app
+
+
+def client(cookies=None):
+    """클라이언트 하나. 같은 쿠키로 여럿을 만들면 동시 요청이 된다. 로컬은 TestClient, HTTP는 httpx."""
+    if BASE_URL:
+        import httpx
+        return httpx.Client(base_url=BASE_URL, cookies=cookies, timeout=60)
+    from fastapi.testclient import TestClient
+    return TestClient(_app(), cookies=cookies)
 
 
 def user(tag=""):
+    if BASE_URL:
+        c = client()
+        r = c.post("/auth/qa-login", headers={"X-QA-Login-Secret": os.environ["QA_LOGIN_SECRET"]},
+                   json={"display_name": f"QA {uuid.uuid4().hex[:6]}{tag}"})
+        assert r.status_code == 201, f"QA 로그인 실패 {r.status_code}"
+        return r.json()["id"], c
+    from auth.testing import ensure_users, session_cookie
+    from common import database
     uid = f"qa_{uuid.uuid4().hex[:8]}{tag}"
     with database.SessionLocal() as db:
         ensure_users(db, uid, display_names={uid: f"QA {uid[-6:]}"})
         db.commit()
-    return uid, TestClient(app, cookies=session_cookie(uid))
+    return uid, client(session_cookie(uid))
+
+
+# HTTP 모드의 장소 검색어. 카테고리마다 성수 근처에서 자체 DB 장소가 나오는 말이고, fact는 그 라벨이 붙었을 법한 말이다.
+# DB를 읽지 않으니 라벨로 거르지는 못한다.
+SEARCH_WORDS = {"음식점": "성수 맛집", "카페": "성수 카페", "관광지": "성수 갤러리"}
+FACT_WORDS = {"cuisine_western": "성수 파스타"}
+_search_cache: dict = {}
+_searcher = None
 
 
 def place(cat="음식점", skip=0, fact=None):
+    """(이름, 위도, 경도, 카테고리). 로컬은 DB에서 성수 가까운 순, HTTP는 검색 결과 중 핀을 만들 수 있는 것의 skip번째."""
+    if BASE_URL:
+        global _searcher
+        if _searcher is None:
+            _searcher = user("s")[1]
+        q = FACT_WORDS.get(fact) or SEARCH_WORDS[cat]
+        if q not in _search_cache:   # 결과는 이 실행의 메모리에만 둔다(#53)
+            r = _searcher.get("/places/search", params={"q": q, "lat": SEONGSU["lat"], "lng": SEONGSU["lng"], "limit": 15})
+            assert r.status_code == 200, f"장소 검색 {r.status_code}"
+            _search_cache[q] = [x for x in r.json() if x.get("pinnable", True) and x.get("category") == cat]
+        x = _search_cache[q][skip]
+        return x["place_name"], x["lat"], x["lng"], cat
+    import sqlalchemy as sa
+    from common import database
     q = """select name, ST_Y(geom::geometry), ST_X(geom::geometry), category from places p
            where curated and status='open' and category=:c"""
     if fact:
@@ -40,6 +89,17 @@ def place(cat="음식점", skip=0, fact=None):
     q += " order by ST_Distance(geom, ST_SetSRID(ST_MakePoint(127.0557,37.5446),4326)::geography) offset :s limit 1"
     with database.SessionLocal() as db:
         return db.execute(sa.text(q), {"c": cat, "s": skip, "fk": fact}).first()
+
+
+def result(c, rid):
+    """추천 결과. 실행은 백그라운드라 HTTP에서는 409 RUN_NOT_FINISHED가 끝날 때까지 다시 묻는다. 로컬 TestClient는 응답 전에
+    백그라운드 작업을 끝내서 이 차이가 보이지 않았다."""
+    deadline = time.monotonic() + RESULT_WAIT_SEC
+    while True:
+        r = c.get(f"/runs/{rid}/result")
+        if r.status_code != 409 or r.json().get("code") != "RUN_NOT_FINISHED" or time.monotonic() > deadline:
+            return r
+        time.sleep(1)
 
 
 def new_map(c, start="2026-11-10", end="2026-11-12", **kw):
@@ -151,7 +211,7 @@ def a13_a14():
         _, cc = user(); return None
     codes = []
     def one(_):
-        cl = TestClient(app, cookies=c.cookies)
+        cl = client(c.cookies)
         r = cl.post(f"/maps/{mid2}/pins", json={"category": cat, "place_id": "hint", "place_name": name, "lat": lat, "lng": lng})
         codes.append(r.status_code)
     with ThreadPoolExecutor(4) as ex:
@@ -194,7 +254,7 @@ def b04_b08():
 def c01_c05():
     uid, c = user(); mid = new_map(c); pin = add_pin(c, mid).json()["id"]
     def react(i):
-        cl = TestClient(app, cookies=c.cookies)
+        cl = client(c.cookies)
         return cl.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_text": f"동시{i}"}).status_code
     with ThreadPoolExecutor(6) as ex:
         codes = list(ex.map(react, range(6)))
@@ -204,16 +264,16 @@ def c01_c05():
     run = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}); rid = run.json()["id"]
     c.post(f"/runs/{rid}/regions/confirm", json={})
     def exe(_):
-        return TestClient(app, cookies=c.cookies).post(f"/runs/{rid}/execute").status_code
+        return client(c.cookies).post(f"/runs/{rid}/execute").status_code
     with ThreadPoolExecutor(3) as ex:
         codes = list(ex.map(exe, range(3)))
-    res = c.get(f"/runs/{rid}/result")
+    res = result(c, rid)
     check("C03", all(x in (200, 202, 409) for x in codes) and res.status_code == 200, f"execute 3연타 → {codes}, result {res.status_code}", f"{codes} result {res.status_code} {res.text[:100]}")
     cands = res.json().get("candidates", [])
     if cands:
         cid = cands[0]["id"]
         def pub(_):
-            return TestClient(app, cookies=c.cookies).post(f"/candidates/{cid}/publish").status_code
+            return client(c.cookies).post(f"/candidates/{cid}/publish").status_code
         with ThreadPoolExecutor(3) as ex:
             codes = list(ex.map(pub, range(3)))
         pins = [p for p in c.get(f"/maps/{mid}/pins").json() if p.get("source") != "search" or True]
@@ -234,7 +294,10 @@ def l01_l04():
 
 
 def _reset_guest_limiter():
-    """IP 시간당 상한(auth.router.guest_join_limiter, 인메모리)을 비운다 — 토큰당 10명 상한(GUEST_LIMIT)과 구분해 보려는 하네스 전용."""
+    """IP 시간당 상한(auth.router.guest_join_limiter, 인메모리)을 비운다 — 토큰당 10명 상한(GUEST_LIMIT)과 구분해 보려는 하네스 전용.
+    HTTP 모드에서는 서버 메모리에 손댈 수 없어 아무것도 하지 않는다."""
+    if BASE_URL:
+        return
     from auth.router import guest_join_limiter
     guest_join_limiter._hits.clear()
 
@@ -243,16 +306,18 @@ def l05_l06():
     _reset_guest_limiter()
     uid, c = user(); mid = new_map(c)
     tok = c.post(f"/maps/{mid}/invite").json()["token"]
-    anon = TestClient(app)
-    codes = []
-    for i in range(11):
-        _reset_guest_limiter()   # 토큰당 상한만 보려고 매번 IP 상한을 비운다
-        r = anon.post("/auth/guest", json={"display_name": f"게스트{i}", "invite_token": tok}); codes.append(r.status_code)
-    check("L05.guest11", codes[:10] == [201] * 10 and codes[10] == 409, "10명 201, 11번째 409 GUEST_LIMIT", f"{codes}")
-    gc = TestClient(app, cookies=r.cookies if r.status_code == 201 else anon.cookies)
+    if BASE_URL:   # 게스트 11명을 만들려면 IP 시간당 상한을 매번 비워야 한다
+        rec("L05.guest11", "SKIP", "IP 시간당 상한을 HTTP로 비울 수 없다 — 로컬 모드에서 본다")
+    else:
+        anon = client()
+        codes = []
+        for i in range(11):
+            _reset_guest_limiter()   # 토큰당 상한만 보려고 매번 IP 상한을 비운다
+            r = anon.post("/auth/guest", json={"display_name": f"게스트{i}", "invite_token": tok}); codes.append(r.status_code)
+        check("L05.guest11", codes[:10] == [201] * 10 and codes[10] == 409, "10명 201, 11번째 409 GUEST_LIMIT", f"{codes}")
     _, c2 = user(); mid2 = new_map(c2); tok2 = c2.post(f"/maps/{mid2}/invite").json()["token"]
     _reset_guest_limiter()
-    g = TestClient(app); gr = g.post("/auth/guest", json={"display_name": "g", "invite_token": tok2})
+    g = client(); gr = g.post("/auth/guest", json={"display_name": "g", "invite_token": tok2})
     if gr.status_code == 201:
         r = g.post("/maps", json={"title": "x", "start_date": "2026-11-10", "end_date": "2026-11-12", "region": SEONGSU})
         check("L06", r.status_code == 403 and r.json().get("code") == "GUEST_NOT_ALLOWED", "게스트 지도 생성 403", f"{r.status_code} {r.text[:100]}")
@@ -260,7 +325,7 @@ def l05_l06():
         rec("L06", "INFO", f"게스트 생성 불가({gr.status_code}) — 10명 상한 때문일 수 있음")
     c.delete(f"/invites/{tok}")
     _reset_guest_limiter()
-    r = TestClient(app).post("/auth/guest", json={"display_name": "late", "invite_token": tok})
+    r = client().post("/auth/guest", json={"display_name": "late", "invite_token": tok})
     check("L05.revoked", r.status_code == 410, "폐기 토큰 410", f"{r.status_code} {r.text[:100]}")
 
 
@@ -328,10 +393,12 @@ def r3_widen_retry():
     check("B05", codes_a[:10] == [202] * 10 and codes_a[10] == 429 and r.status_code == 202,
           "A 10회 후 429, B는 독립적으로 202", f"A {codes_a}, B {r.status_code} {r.text[:100]}")
     rid = r.json()["id"]
-    b.post(f"/runs/{rid}/regions/confirm", json={}); b.post(f"/runs/{rid}/execute")
+    b.post(f"/runs/{rid}/regions/confirm", json={}); b.post(f"/runs/{rid}/execute"); result(b, rid)
     last = None; n = 0
     for _ in range(6):
         last = b.post(f"/runs/{rid}/widen"); n += last.status_code == 202
+        if last.status_code == 202:
+            result(b, rid)   # 넓히기도 백그라운드로 다시 돈다 — 끝난 뒤에 다음을 누른다
     check("B06", n == 3 and last.status_code == 409 and last.json().get("code") == "WIDEN_LIMIT",
           f"넓히기 3회(15→30분) 후 409 WIDEN_LIMIT", f"{n}회 성공, 마지막 {last.status_code} {last.text[:120]}")
 
@@ -339,7 +406,7 @@ def r3_widen_retry():
 def r3_concurrent_shortlist():
     uid, c = user(); mid = new_map(c); pid = add_pin(c, mid).json()["id"]
     def add(_):
-        return TestClient(app, cookies=c.cookies).post(f"/maps/{mid}/shortlist", json={"pin_id": pid}).status_code
+        return client(c.cookies).post(f"/maps/{mid}/shortlist", json={"pin_id": pid}).status_code
     with ThreadPoolExecutor(4) as ex:
         codes = list(ex.map(add, range(4)))
     n = len(c.get(f"/maps/{mid}/shortlist").json())
@@ -351,7 +418,9 @@ def r3_search_edges():
     cases = {"empty": "", "spaces": "   ", "long": "가" * 300, "special": "%_\';--", "emoji": "😋🍜", "single": "a"}
     for k, q in cases.items():
         r = c.get("/places/search", params={"q": q, "lat": 37.5446, "lng": 127.0557, "category": "음식점"})
-        rec(f"A15.{k}", "PASS" if r.status_code in (200, 422) else "FAIL", f"{r.status_code} {r.text[:80]}")
+        # 200이면 결과 수만 남긴다 — 검색 결과(카카오 응답의 이름·좌표)는 기록에 옮기지 않는다(#53)
+        note = f"{r.status_code} 결과 {len(r.json())}개" if r.status_code == 200 else f"{r.status_code} {r.text[:80]}"
+        rec(f"A15.{k}", "PASS" if r.status_code in (200, 422) else "FAIL", note)
 
 
 def r3_pin_unsupported_and_dup_ui_codes():
@@ -384,7 +453,7 @@ def r3_republish_exclusion():
     def run_once():
         rid = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}).json()["id"]
         c.post(f"/runs/{rid}/regions/confirm", json={}); c.post(f"/runs/{rid}/execute")
-        return rid, c.get(f"/runs/{rid}/result").json().get("candidates", [])
+        return rid, result(c, rid).json().get("candidates", [])
     rid1, c1 = run_once()
     names1 = [x["place_name"] for x in c1]
     for x in c1:
@@ -399,7 +468,16 @@ CASES = {"A01": a01_a02, "A03": a03, "A04": a04_a05, "A06": a06_a09, "A10": a10_
          "B04": b04_b08, "C01": c01_c05, "L01": l01_l04, "L05": l05_l06, "L02": l02_l03, "L08": l08, "S03": s03_s05, "S06": s06, "R3a": r3_widen_retry, "R3b": r3_concurrent_shortlist, "R3c": r3_search_edges, "R3d": r3_pin_unsupported_and_dup_ui_codes, "R3e": r3_evidence_enforced, "R3f": r3_republish_exclusion}
 
 if __name__ == "__main__":
-    want = set(sys.argv[1:])
+    args = sys.argv[1:]
+    if "--base-url" in args:
+        i = args.index("--base-url")
+        BASE_URL = args[i + 1].rstrip("/")
+        del args[i:i + 2]
+        if not os.environ.get("QA_LOGIN_SECRET"):
+            sys.exit("HTTP 모드는 환경 변수 QA_LOGIN_SECRET이 필요하다(스테이징의 값)")
+    if not BASE_URL:
+        sys.path.insert(0, ".")   # 로컬 모드는 backend 폴더에서 돈다
+    want = set(args)
     for name, fn in CASES.items():
         if want and name not in want:
             continue
@@ -407,5 +485,6 @@ if __name__ == "__main__":
             fn()
         except Exception as e:  # noqa: BLE001 — 하네스 오류는 케이스 단위로 격리
             rec(name, "ERR", f"{type(e).__name__}: {str(e)[:200]}")
-    p = sum(1 for r in RESULTS if r[1] == "PASS"); f = sum(1 for r in RESULTS if r[1] == "FAIL")
-    print(f"\n합계: PASS {p} / FAIL {f} / INFO·ERR {len(RESULTS) - p - f}")
+    count = {v: sum(1 for r in RESULTS if r[1] == v) for v in ("PASS", "FAIL", "SKIP")}
+    print(f"\n합계({BASE_URL or '로컬'}): PASS {count['PASS']} / FAIL {count['FAIL']} / SKIP {count['SKIP']}"
+          f" / INFO·ERR {len(RESULTS) - sum(count.values())}")
