@@ -1324,6 +1324,109 @@ def test_widen_run_without_regions_raises_not_ready(db_session):
     assert exc_info.value.code == "NOT_READY"
 
 
+# ---------- 후보 풀: 넓히기 상한까지 가져와 「반경 밖 제거」를 센다 (#792) ----------
+
+class _CirclePlaceSearch(_FakePlaceSearch):
+    """실구현(places.repository.search_nearby_own, ST_DWithin)처럼 받은 원 안의 장소만 준다. 받은 원 반경을 남긴다."""
+
+    def __init__(self, places):
+        super().__init__(places)
+        self.radii: list[list[int]] = []
+
+    def search_nearby(self, *, category, circles):
+        from common.geo import haversine_distance_m
+
+        self.radii.append([c.radius_m for c in circles])
+        return [
+            p for p in self._places
+            if any(haversine_distance_m(c.anchor_lat, c.anchor_lng, p.lat, p.lng) <= c.radius_m for c in circles)
+        ]
+
+
+class _RecordingPlaceFacts(_FakePlaceFacts):
+    """라벨과 영업시간을 읽은 장소를 남긴다 — 반경 밖 장소는 읽지 않아야 한다."""
+
+    def __init__(self):
+        super().__init__()
+        self.read: set[str] = set()
+
+    def get_facts(self, place_ids):
+        self.read.update(place_ids)
+        return super().get_facts(place_ids)
+
+    def get_week_open_status(self, place_ids):
+        self.read.update(place_ids)
+        return {}
+
+
+# 중심 (35.0, 129.0), 기본 반경 도보 15분(1,200m). ring은 약 1,500m라 지금 반경 밖·넓히기 한 번(1,600m) 안이고,
+# beyond는 약 2,800m라 상한(30분, 2,400m) 밖이다.
+POOL_PLACES = [
+    PlaceStub(place_id="inside", lat=35.0045, lng=129.0),
+    PlaceStub(place_id="ring", lat=35.0135, lng=129.0),
+    PlaceStub(place_id="beyond", lat=35.025, lng=129.0),
+]
+
+
+def _pool_run(db_session, **run_overrides):
+    _make_members(db_session, user_ids=["user_1"])   # 여행 날짜가 있어 영업 여부를 읽는다
+    run = _make_run(db_session, status="collecting_evidence", **run_overrides)
+    walk_min = run_overrides.get("default_radius_walk_min", core.DEFAULT_RADIUS_WALK_MIN)
+    _make_region(db_session, run, radius_m=core.radius_m_for_walk_min(walk_min))
+    return run, _CirclePlaceSearch(POOL_PLACES), _RecordingPlaceFacts()
+
+
+def test_pool_reaches_the_widen_limit_and_counts_places_outside_the_current_radius(db_session):
+    run, search, facts = _pool_run(db_session)
+
+    flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
+
+    assert search.radii == [[core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)]]
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 1   # ring. beyond는 풀에도 없다
+    assert [c.place_id for c in service.list_candidates(db_session, str(run.id))] == ["inside"]   # 결과는 지금 반경 안만
+    assert facts.read == {"inside"}   # 반경 밖 장소의 라벨·영업시간은 읽지 않는다
+
+
+def test_widening_once_brings_the_counted_place_into_the_result(db_session):
+    run, search, facts = _pool_run(db_session)
+    flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
+
+    flows.widen_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
+
+    assert {c.place_id for c in service.list_candidates(db_session, str(run.id))} == {"inside", "ring"}
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 0
+    assert search.radii[-1] == [core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)]   # 넓힌 뒤에도 풀은 상한까지
+    assert "beyond" not in facts.read
+
+
+def test_pool_of_a_run_already_at_the_limit_is_its_radius(db_session):
+    run, search, facts = _pool_run(db_session, default_radius_walk_min=core.WIDEN_LIMIT_MIN)
+
+    flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
+
+    assert search.radii == [[core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)]]
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 0
+    assert {c.place_id for c in service.list_candidates(db_session, str(run.id))} == {"inside", "ring"}
+
+
+def test_simulation_uses_the_same_pool_and_one_press_matches_the_widen_button(db_session):
+    run, search, facts = _pool_run(db_session)
+    one_press = (core.DEFAULT_RADIUS_WALK_MIN + core.WIDEN_STEP_MIN) / core.DEFAULT_RADIUS_WALK_MIN
+
+    result = flows.simulate_filter(
+        db_session, run_id=str(run.id), radius_factor=one_press, disable_line_ids=[], place_search=search, place_facts=facts,
+    )
+
+    limit = core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)
+    assert search.radii == [[limit], [limit]]   # before와 after가 같은 풀
+    assert (result["before"]["passed_count"], result["after"]["passed_count"]) == (1, 2)
+    with pytest.raises(ValueError):   # 상한을 넘는 배율은 셀 수 없다(풀 밖)
+        flows.simulate_filter(
+            db_session, run_id=str(run.id), radius_factor=core.WIDEN_LIMIT_MIN / core.DEFAULT_RADIUS_WALK_MIN + 0.01,
+            disable_line_ids=[], place_search=search, place_facts=facts,
+        )
+
+
 # ---------- #158 Candidate 가드레일5 필드 ----------
 
 def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session):

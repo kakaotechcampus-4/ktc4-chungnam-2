@@ -360,7 +360,7 @@ def test_simulate_keeps_proposed_and_dismissed_places_out(db_session, monkeypatc
 
     monkeypatch.setattr(flows, "_run_pipeline", spy)
     result = api.simulate_filter(
-        db_session, run_id=str(run.id), radius_factor=3.0, disable_line_ids=list(lines.values()), **_gateways(),
+        db_session, run_id=str(run.id), radius_factor=2.0, disable_line_ids=list(lines.values()), **_gateways(),
     )
 
     assert _removed(result["after"]["funnel"])["이미 제안·거절됨"] == 2
@@ -391,7 +391,7 @@ def test_simulate_writes_nothing_after_an_execution_either(db_session):
     assert _snapshot(db_session) == before
 
 
-def test_simulate_rejects_a_line_of_another_run_and_a_non_positive_factor(db_session):
+def test_simulate_rejects_a_line_of_another_run_and_a_factor_out_of_range(db_session):
     run, _ = _scenario(db_session)
     other = _run(db_session)
     service.add_reaction_evidence(db_session, run_id=other.id, lines=[_line("user_1", "required", "spacious", True, "좁아요")])
@@ -401,7 +401,7 @@ def test_simulate_rejects_a_line_of_another_run_and_a_non_positive_factor(db_ses
         with pytest.raises(AppError) as exc:
             api.simulate_filter(db_session, run_id=str(run.id), disable_line_ids=bad_ids, **_gateways())
         assert exc.value.code == "NOT_FOUND"
-    for factor in (0, -1.0):
+    for factor in (0, -1.0, 2.5):   # 2.5는 넓히기 상한(30분 / 15분 = 2배) 밖이다(#792)
         with pytest.raises(ValueError):
             api.simulate_filter(db_session, run_id=str(run.id), radius_factor=factor, **_gateways())
 

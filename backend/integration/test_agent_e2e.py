@@ -490,7 +490,6 @@ def _result_names(client, run_id) -> set[str]:
 RADIUS_ADVICE = "반경 넓히기를 한 번 누르면 {n}곳이 더 남아요."
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="#792 — 추천 풀이 이미 반경 안이라 「반경 밖 제거」가 늘 0이고 반경 조언을 고를 수 없다")
 def test_thin_run_gets_radius_advice_once_and_only_for_the_requester(e2e):
     """조언은 코드가 깔때기를 읽고 버튼 한 번의 배율로 시뮬레이션해 고른다(#749). 모델은 부르지 않는다."""
     (a, b, outsider), map_id, run_id = _thin_run(e2e)
@@ -519,7 +518,6 @@ def test_thin_run_gets_radius_advice_once_and_only_for_the_requester(e2e):
     assert outsider.get(f"/runs/{run_id}/advice").status_code == 404
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="#792 — 추천 풀이 이미 반경 안이라 「반경 밖 제거」가 늘 0이고 반경 조언을 고를 수 없다")
 def test_one_press_of_the_advice_button_delivers_what_the_advice_said(e2e):
     """조언의 숫자는 버튼 한 번(반경 넓히기 한 단계)의 시뮬레이션이다(#677). 누르면 말한 만큼 늘어난다."""
     (a, _, _), _, run_id = _thin_run(e2e)

@@ -431,13 +431,15 @@ def _passes_hard_check(value) -> bool:
 
 @dataclass(frozen=True)
 class _PipelineRegion:
-    """_run_pipeline이 읽는 지역 값. regions 행의 사본이라 반경을 바꿔도 DB에 쓰이지 않는다(시뮬레이션, #585)."""
+    """_run_pipeline이 읽는 지역 값. regions 행의 사본이라 반경을 바꿔도 DB에 쓰이지 않는다(시뮬레이션, #585).
+    pool_radius_m은 후보 풀을 가져오는 반경(넓히기 상한까지, #792)이고 radius_m은 「반경 밖 제거」가 보는 반경이다."""
 
     id: uuid.UUID
     label: str
     center_lat: float
     center_lng: float
     radius_m: int
+    pool_radius_m: int
     anchor_points: tuple[tuple[float, float], ...]
 
 
@@ -463,11 +465,14 @@ def _pipeline_inputs(
     db: Session, run: RecommendRun, *, radius_factor: float | None = None, disable_line_ids: frozenset[str] = frozenset(),
 ) -> tuple[list[_PipelineRegion], list[EvidenceLineRow]]:
     """저장된 지역과 활성 근거 줄을 _run_pipeline 입력으로 읽는다. 실행(execute/widen/retry)은 그대로 쓰고,
-    시뮬레이션(#585)만 반경 배율과 비활성으로 볼 줄을 준다 — 사본과 거른 목록이라 행은 바뀌지 않는다."""
+    시뮬레이션(#585)만 반경 배율과 비활성으로 볼 줄을 준다 — 사본과 거른 목록이라 행은 바뀌지 않는다.
+    풀 반경은 배율과 무관하게 저장된 반경 × 넓히기 상한 배율이라 시뮬레이션도 실행과 같은 풀을 쓴다(#792)."""
+    pool_factor = core.pool_radius_factor(run.default_radius_walk_min)
     regions = [
         _PipelineRegion(
             id=r.id, label=r.label, center_lat=r.center_lat, center_lng=r.center_lng,
             radius_m=r.radius_m if radius_factor is None else round(r.radius_m * radius_factor),
+            pool_radius_m=round(r.radius_m * pool_factor),
             anchor_points=tuple(tuple(point) for point in r.anchor_points),
         )
         for r in service.list_regions(db, str(run.id))
@@ -495,7 +500,9 @@ def _run_pipeline(
     circles = [Circle(anchor_lat=r.center_lat, anchor_lng=r.center_lng, radius_m=r.radius_m) for r in regions]
     region_id = regions[0].id if regions else None
 
-    pool = place_search.search_nearby(category=run.category, circles=circles)
+    # 풀은 넓히기 상한의 원으로 가져오고 「반경 밖 제거」는 지금 반경으로 센다(#792). 다음 단계(영업 여부, 라벨)는 반경 안만 읽는다.
+    pool_circles = [Circle(anchor_lat=r.center_lat, anchor_lng=r.center_lng, radius_m=r.pool_radius_m) for r in regions]
+    pool = place_search.search_nearby(category=run.category, circles=pool_circles)
 
     within_radius = [p for p in pool if core.is_within_any_region(p.lat, p.lng, circles)]
     removed_radius = len(pool) - len(within_radius)
@@ -799,10 +806,13 @@ def simulate_filter(
     _run_pipeline을 입력만 바꿔 두 번 돌린다 — before는 저장된 지역·활성 근거 줄 그대로, after는 반경에
     radius_factor를 곱하고 disable_line_ids를 비활성으로 본다. 제외 목록(가드레일 6)은 실행 때와 같은 집합이다.
     **쓰지 않는다**: run·후보·근거 줄·지역·제외 목록·last_funnel을 바꾸지 않고 이벤트도 남기지 않는다.
-    없는 run이나 그 run의 근거 줄이 아닌 id는 NOT_FOUND, radius_factor가 0 이하면 ValueError."""
+    없는 run이나 그 run의 근거 줄이 아닌 id는 NOT_FOUND, radius_factor가 0 이하이거나 넓히기 상한을 넘으면 ValueError —
+    풀이 상한까지라(#792) 상한 밖은 셀 수 없고, 상한을 넘겨 완화하는 일도 없다(가드레일 4)."""
     if radius_factor is not None and not radius_factor > 0:
         raise ValueError(f"radius_factor는 0보다 커야 한다: {radius_factor}")
     run = service.get_run_or_404(db, run_id)
+    if radius_factor is not None and radius_factor > core.pool_radius_factor(run.default_radius_walk_min):
+        raise ValueError(f"radius_factor가 넓히기 상한을 넘는다: {radius_factor}")
     try:
         disabled = frozenset(str(uuid.UUID(str(line_id))) for line_id in disable_line_ids)
     except ValueError:
