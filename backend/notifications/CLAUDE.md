@@ -1,6 +1,6 @@
 # backend/notifications
 
-앱 안 알림함과 알림 설정(#470). 먼저 `/CLAUDE.md`, `backend/CLAUDE.md`, `docs/api-spec.yaml`(notifications 태그), `docs/data-model.md`(notifications 절)를 읽는다. 다른 모듈이 부르는 법은 `api.py`의 함수 설명(`for_Root.md`에서 옮기는 중, #757).
+앱 안 알림함과 알림 설정(#470). 먼저 `/CLAUDE.md`, `backend/CLAUDE.md`, `docs/api-spec.yaml`(notifications 태그), `docs/data-model.md`(notifications 절)를 읽는다. 다른 모듈이 부르는 법은 `api.py`의 함수 설명이다.
 
 ## 책임
 

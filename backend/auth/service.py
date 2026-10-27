@@ -112,8 +112,7 @@ def _find_user(db: Session, *, provider: str, provider_user_id: str) -> User | N
 
 def _reject_if_withdrawn(row: User) -> User:
     if row.deleted_at is not None:
-        # 탈퇴한 계정으로 재로그인 — 조용히 되살리지 않는다. 재활성화를 허용할지는
-        # 12절 범위 밖의 별도 결정이라 지금은 막고 루트에 보고한다(auth/for_Root.md).
+        # 탈퇴한 계정으로 재로그인 — 되살리지 않고 막는다(docs/data-model.md auth 절, #409).
         raise AppError("UNAUTHORIZED", "탈퇴한 계정입니다")
     return row
 

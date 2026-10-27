@@ -4,8 +4,7 @@ pins/tests/conftest.py와 동일 패턴(join_transaction_mode="create_savepoint"
 docstring 참고. DB에 못 붙으면 조용히 skip하지 않고 pytest.fail로 명확하게 실패시킨다.
 
 app_client는 오버라이드가 2개다 — DB 세션뿐 아니라 authz.deps.get_membership_gateway도
-FakeMembership으로 바꿔 끼운다(이슈 #88, authz/for_Root.md의 "[루트 정정] ... 이슈
-#87/#88/#89로 대체" 절 참고). `.env`의 MEMBERSHIP_MODE=real로 authz/deps.py의
+FakeMembership으로 바꿔 끼운다(이슈 #88, #89). `.env`의 MEMBERSHIP_MODE=real로 authz/deps.py의
 get_membership_gateway가 이제 DbMembershipGateway(실제 memberships 테이블 조회)를 돌려주는데,
 그 어댑터가 쓰는 DB 세션은 이 conftest의 테스트 트랜잭션이 아니라 별도 커넥션(common.database.
 engine)이라 이 fixture가 memberships 행을 미리 넣어도 영원히 안 보인다 — 게다가 이 conftest는

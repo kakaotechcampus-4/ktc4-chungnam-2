@@ -1,7 +1,7 @@
 """실제 외부 API 호출 — 기본 실행에서 제외된다. `python -m pytest -m live places -s`로만 돈다.
 
 키는 backend/.env에서 읽는다. 키가 없는 소스는 skip.
-영구 저장은 하지 않는다 — 응답 필드 이름만 출력해 for_Root.md 관찰 기록에 옮긴다.
+영구 저장은 하지 않는다 — 응답 필드 이름만 출력한다(관찰 기록은 #53 코멘트).
 """
 
 import httpx

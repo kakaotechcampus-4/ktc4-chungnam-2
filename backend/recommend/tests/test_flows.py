@@ -336,7 +336,7 @@ def test_publish_candidate_idempotent_path_propagates_pin_not_found(db_session):
 def test_publish_candidate_duplicate_place_id_rolls_back_everything(db_session):
     """create_ai_pin이 uq_pins_map_place 위반(IntegrityError)으로 PIN_DUPLICATE를 던지면
     candidates.published_pin_id도 event_log도 안 바뀐다 — 세이브포인트 롤백이 실패한
-    삽입만 되돌린다(pins/for_Root.md의 begin_nested 버그 수정과 같은 보장)."""
+    삽입만 되돌린다(pins.api.create_ai_pin의 begin_nested 세이브포인트)."""
     run = _make_run(db_session)
     candidate = _make_candidate(db_session, run, place_id="dup_place")
     existing = PinRow(

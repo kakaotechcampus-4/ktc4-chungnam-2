@@ -3,7 +3,7 @@ FastAPI 의존성 배선. places(#14)/seeding(#13)이 아직 없어, pins/deps.p
 자리를 채우는 개발용 어댑터를 여기 둔다 — settings.places_mode를 그대로 재사용한다(recommend
 전용 설정 키를 새로 만들지 않는다: "places가 실구현인지"라는 같은 질문이기 때문).
 
-**dev 스텁의 한계(recommend/for_Root.md에 자세히)**: `DevPlaceSearchGateway`는 실제 장소
+**dev 스텁의 한계**: `DevPlaceSearchGateway`는 실제 장소
 검색이 아니라 원 중심에서 고정 오프셋만큼 떨어진 좌표에 합성 place_id를 만드는 자리채움이다 —
 "AI 없이도 FE+BE 코어 루프가 도는 데모가 우선"(CLAUDE.md 이슈 운영 원칙)을 만족시키기 위한
 결정이고, 실제 장소 데이터가 아니다. `DevPlaceFactsGateway`는 항상 빈 라벨을 돌려줘 모든

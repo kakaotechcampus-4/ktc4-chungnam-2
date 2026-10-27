@@ -59,7 +59,7 @@ class Pin(Base):
     kind: Mapped[str] = mapped_column(PinKind, nullable=False)
     origin: Mapped[str] = mapped_column(PinOrigin, nullable=False)
     # #195: places.id(자체 DB 장소)의 문자열. 이름은 places.name에서 읽는다(핀에 저장하지 않는다 —
-    # 카카오 응답의 이름·좌표는 저장 금지, #53). DB FK·UUID 타입은 걸지 않았다 — for_Root.md 참고.
+    # 카카오 응답의 이름·좌표는 저장 금지, #53). DB FK·UUID 타입은 걸지 않았다(#760).
     # #382: 실시간 핀(source='live')은 place_id·geom이 NULL이다 — 아래 CHECK가 source와 짝을 강제한다.
     place_id: Mapped[str | None] = mapped_column(String, nullable=True)
     # 매칭된 places.geom의 복사(자체 데이터). 사용자가 보낸 좌표와 카카오 응답 좌표는 저장하지 않는다.

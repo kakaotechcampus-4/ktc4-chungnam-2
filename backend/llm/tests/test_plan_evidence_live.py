@@ -4,7 +4,7 @@
 돌릴 때: backend/.env에 ELICE_ML_API_BASE_URL / ELICE_ML_API_KEY / LLM_MODEL=gpt-6-luna가 있는 상태에서
     PINGO_TEST_DOTENV=1 PINGO_TEST_DB=pingo_test_llm pytest -m live llm/tests/test_plan_evidence_live.py -v -s
 chat.completions.parse(strict JSON schema)가 400으로 거절되면 이 테스트가 실패한다 — 그때
-call_planner를 response_format={"type": "json_object"} + 수동 Pydantic 검증으로 바꾼다(backend/llm/for_Root.md).
+call_planner를 response_format={"type": "json_object"} + 수동 Pydantic 검증으로 바꾼다(#116).
 """
 
 import pytest

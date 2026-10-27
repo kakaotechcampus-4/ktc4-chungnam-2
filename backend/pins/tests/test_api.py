@@ -2,7 +2,7 @@
 pins/api.py — 다른 모듈(recommend/shortlist)이 부르는 접점의 테스트. 아직 그 모듈들이 없어
 어떤 라우터도 이 파일을 실제로 호출하지 않지만, 방어 코드 2(세이브포인트)와 이벤트 조립을
 포함한 실제 로직이라 테스트 없이 두면 위험하다 — mentor-review-plan.md의 §10 목록엔 없지만
-docs/code-quality.md의 "테스트의 주장 내용" 기준에 맞춰 추가한다(for_Root.md에 기록).
+docs/code-quality.md의 "테스트의 주장 내용" 기준에 맞춰 추가한다.
 """
 
 import uuid
@@ -143,7 +143,7 @@ def test_unmark_confirmed_restores_kind_from_origin_direct(db_session):
 
 def test_get_pin_response_for_viewer_fills_lat_lng_and_reaction_summary(db_session):
     """shortlist.flows가 ShortlistItem.pin 조립에 쓰는 함수 — service.list_pins과 같은 모양의
-    Pin(lat/lng·reaction_summary·permissions 전부 채워짐)을 돌려주는지(for_Root.md 보고)."""
+    Pin(lat/lng·reaction_summary·permissions 전부 채워짐)을 돌려주는지."""
     from authz.core import Principal
     from pins.models import Reaction as ReactionRow
 

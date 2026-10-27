@@ -798,7 +798,7 @@ def compare_reasons(reasons: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
       - same_axis: 같은 키를 두고 ♥ 쪽과 🚫 쪽 방향이 반대다(♥ quiet 원함 / 🚫 quiet 피함)
       - different_axes: 양쪽 키가 겹치지 않는다
       - 그 밖(같은 키인데 방향이 같거나 모름. 예: ♥ "조용해서 좋아요"와 🚫 칩 「시끄러워요」는 둘 다 quiet 원함이다 —
-        취향이 아니라 이 가게가 조용한지를 두고 갈렸다)은 6.3 표에 없어 unclear로 둔다(for_Root.md #533)"""
+        취향이 아니라 이 가게가 조용한지를 두고 갈렸다)은 unclear다(agent-v2 6.3 표 마지막 줄, #533)"""
     sides: dict[str, dict[str, set[bool | None]]] = {"like": {}, "against": {}}
     entries: dict[str, dict[str, list[dict[str, str]]]] = {}
     for r in reasons:

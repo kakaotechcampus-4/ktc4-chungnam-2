@@ -68,4 +68,9 @@
 - `event_log` 오래된 행 삭제: 읽기는 24시간으로 자르지만(`realtime.service.RETENTION`) 지우는 작업은 아직 없다. `created_at` 인덱스는 삭제용으로 있다. 정기 정리(`maintenance.run`)에 단계로 넣을지 정한다.
 - 배포 환경, 비밀 관리, 프리뷰 배포(#168).
 - 관찰 tick 엔드포인트와 예약(#535).
+- prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`만 본다. 카카오 키(`KAKAO_CLIENT_ID/SECRET/REDIRECT_URI`)와 `ELICE_ML_API_KEY`가 비어도 서버가 뜨고 첫 호출에서야 실패한다. 가드에 넣을지 정한다(#168).
+- 게스트 가입 IP 상한(`POST /auth/guest`)은 `request.client.host`를 본다. 프록시 뒤(Cloud Run)에서는 uvicorn `--proxy-headers`와 `--forwarded-allow-ips`를 켠다. 안 켜면 모든 사용자가 한 IP로 보여 상한을 함께 쓴다(#168, #472).
+- 호출 상한(`common.ratelimit`: 장소 검색, 링크 해석, 핀 링크 미리보기)은 인메모리라 인스턴스마다 따로 센다. 인스턴스를 늘리면 실제 상한이 그 수만큼 커진다(#168).
+- `/places/nearest`의 쿼리스트링(누른 좌표)은 uvicorn 접근 로그에서만 가린다(`places/logguard.py`). 앞단 프록시의 요청 로그는 따로 막는다(#168, #473).
+- 비로그인 `GET /invites/{token}`에는 호출 상한이 없다. 토큰이 256비트라 추측은 비현실적이지만, 넣을지 정한다(#168).
 - 개발 중 로컬 DB에 쌓인 카카오 좌표와 이름은 배포 전에 지운다(`docs/architecture.md`, #53). 배포 DB를 로컬 DB에서 복사하지 않는다.

@@ -59,7 +59,7 @@ def create_ai_pin(
     간주해 구성한다 — 게시(recommend.publish)는 구성원만 할 수 있어(비구성원은 can()이 먼저
     거른다) 이 전제가 깨질 일이 없다.
     recommend가 실제로 붙을 때 자신이 이미 resolve한 Principal을 넘기도록 바꾸는 편이 더
-    정확하다(for_Root.md에 남김)."""
+    정확하다."""
     principal = Principal(user_id=created_by, map_id=map_id, role="member")
     validated_checks = (
         [check.model_dump() for check in _ChecksAdapter.validate_python(checks)]
@@ -206,9 +206,7 @@ def count_opinion_pins(db: Session, *, map_id: str, category: str) -> int:
 
 def get_category_pin_coordinates(db: Session, *, map_id: str, category: str) -> list[tuple[str, float, float]]:
     """recommend의 지역(regions) 기본값 계산(5-6-1, recommend/#108)이 쓴다 — 그 카테고리의
-    삭제되지 않은 공개 핀 좌표 전부(anchor 후보). place_facts/PlaceSource가 아직 없어 recommend가
-    "검색 범위 중심"을 스스로 정할 방법이 이것뿐이다(recommend/for_Root.md에 이 기본값 원
-    설계를 상세히 기록). 좌표가 없는 실시간 핀(#382)은 빠진다."""
+    삭제되지 않은 공개 핀 좌표 전부(anchor 후보). 핀마다의 원으로 바꾸는 일은 #274. 좌표가 없는 실시간 핀(#382)은 빠진다."""
     lat_col, lng_col = service._lat_lng_columns()
     rows = db.execute(
         select(PinRow.id, lat_col, lng_col).where(

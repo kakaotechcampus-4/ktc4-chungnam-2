@@ -7,11 +7,11 @@ recommend.ports 게이트웨이)은 전부 이 파일에 둔다(이 모듈 자�
 **publish_candidate** — 「지도에 올리기」, mentor-review-plan.md 결정(#71 PR).
 **아래 나머지 함수 전부** — #108(코어 파이프라인, llm 스텁 대상 통합) 범위. v1은 실제 비동기
 큐가 없어 "202 진행 중"을 문자 그대로 구현하지 않는다 — run 생성·execute·widen·retry 전부
-동기로 끝낸다(recommend/for_Root.md에 기록). places(#14)/seeding(#13)이 없어 candidate 풀
+동기로 끝낸다(docs/events.md "v1에서 발행하지 않는 이벤트"). places(#14)/seeding(#13)이 없어 candidate 풀
 확보(PlaceSearchGateway)·라벨 조회(PlaceFactsGateway)는 dev 모드면 recommend/deps.py의 스텁이,
 real 모드면 places.api의 자체 DB 함수가 채운다(#190 — 모델 호출은 ② 사유 구조화 하나뿐이다).
 
-**mentor-review-plan.md 대비 실제 구현 차이 (for_Root.md에 자세히 기록, 요약만 여기)**:
+**mentor-review-plan.md 대비 실제 구현 차이 (PR #71)**:
 계획 문서(작성 09-11 22:46)는 `membership: MembershipGateway`에 `.is_member(map_id, user_id)
 -> bool`이 있다고 전제했다 — 이건 `pins/ports.py`가 갖고 있던 옛 Protocol인데, pins의 PR #71
 재작업(09-12 00:10~00:24, 계획보다 늦게 끝남)에서 이미 삭제됐다. 그 사이 `docs/permissions.md`
@@ -221,9 +221,9 @@ def _default_circle_and_anchors(db: Session, *, map_id: str, category: str) -> t
     """지역(regions) 기본값 — places가 없어 실제 검색 범위를 스스로 정할 방법이 이것뿐이다:
     그 카테고리 핀들의 중심 좌표 + 고정 반경. 실제 반경 사유(circle_anchor_pin_id 등)가
     구조화되는 순간(모델 확정 이후) 이 기본값은 "사람이 명시하지 않았을 때만" 쓰여야 한다
-    (recommend/for_Root.md에 상세 기록). anchor 좌표 목록도 함께 돌려준다 — #112(선호 순위
+    (핀마다의 원으로 바꾸는 일은 #274). anchor 좌표 목록도 함께 돌려준다 — #112(선호 순위
     3단계)의 "그 무리의 기준 핀들까지 거리 평균" 계산에 그대로 쓰인다(regions.anchor_points에
-    저장, for_Root.md 보고)."""
+    저장, #112)."""
     coordinates = pins_api.get_category_pin_coordinates(db, map_id=map_id, category=category)
     if not coordinates:
         raise AppError("NOT_READY")
@@ -376,7 +376,7 @@ def _region_response(region) -> schemas.Region:
 def confirm_regions(db: Session, *, run_id: str, accept_union: bool) -> list[schemas.Region]:
     """POST /runs/{runId}/regions/confirm (5-6-1). v1은 항상 단일 기본값 원이라(아래
     _run_pipeline 참고) 실제로 REGION_CONFLICT가 나는 경로가 없다 — 겹침 판정 로직 자체는
-    core.circles_all_overlap/region_signature 단위 테스트로 커버한다(recommend/for_Root.md)."""
+    core.circles_all_overlap/region_signature 단위 테스트로 커버한다(#274)."""
     run = service.get_run_or_404(db, run_id)
     regions = service.list_regions(db, run_id)
     unconfirmed = [r for r in regions if not r.confirmed]
@@ -726,7 +726,7 @@ def widen_run(
     이미 닿았으면 409 WIDEN_LIMIT(core.next_default_radius_walk_min). v1은 사람이 명시한 원과
     기본값 원을 구분할 방법이 없어 — 반경 사유가 구조화되기 전이라 명시적 원이 저장되지 않는다 —
     저장된 원 전부가 기본값 원이다. 명시적 원이 생기면 그 원은 여기서 건드리지 않도록 좁혀야
-    한다(recommend/for_Root.md)."""
+    한다(docs/constraints.md "반경 넓히기 상수", #274)."""
     run = service.get_run_or_404(db, run_id)
     regions = service.list_regions(db, run_id)
     if not regions:
