@@ -288,12 +288,13 @@ def create_run(
 
 
 def _evidence_response(
-    line, principal: Principal, *, category: str, off_season: frozenset[str],
+    line, principal: Principal, *, category: str, off_season: frozenset[str], author_names: Mapping[str, str | None],
 ) -> schemas.EvidenceLine:
     enforced, not_enforced_reason = core.evidence_line_use(line.badge, line.fact_key, line.wants, category, off_season)
     resource = Resource(type="evidence_line", map_id=principal.map_id, author_id=line.author_id)
     return schemas.EvidenceLine(
-        id=str(line.id), author_id=line.author_id, text=line.text, badge=line.badge,
+        id=str(line.id), author_id=line.author_id, author_display_name=author_names.get(line.author_id),
+        text=line.text, badge=line.badge,
         fact_key=line.fact_key, fact_label=constraints.FACT_LABELS.get(line.fact_key) if line.fact_key else None,
         wants=line.wants, enforced=enforced, not_enforced_reason=not_enforced_reason, is_active=line.is_active,
         permissions=Permissions(can_disable=can(principal, "evidence.disable", resource)),
@@ -302,9 +303,13 @@ def _evidence_response(
 
 def _evidence_responses(db: Session, run: RecommendRun, principal: Principal) -> list[schemas.EvidenceLine]:
     off_season = _out_of_season_keys(db, run.map_id)
+    lines = service.list_evidence(db, str(run.id))
+    # 작성자 이름은 핀 작성자 규칙(#369)을 pins.api로 받아 조회할 때 계산한다(#762). 구성원 집합은 줄 수와 상관없이 한 번 구한다.
+    current_member_ids = maps_api.DbMembershipGateway(db).current_member_ids(run.map_id)
+    author_names = pins_api.author_display_names(db, [line.author_id for line in lines], current_member_ids)
     return [
-        _evidence_response(line, principal, category=run.category, off_season=off_season)
-        for line in service.list_evidence(db, str(run.id))
+        _evidence_response(line, principal, category=run.category, off_season=off_season, author_names=author_names)
+        for line in lines
     ]
 
 

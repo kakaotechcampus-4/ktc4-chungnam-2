@@ -62,7 +62,7 @@ class RunSummary(BaseModel):
 class EvidenceLine(BaseModel):
     id: str
     author_id: str
-    author_display_name: str | None = None  # 아직 채우지 않음(#762)
+    author_display_name: str | None = None
     text: str = Field(max_length=140)
     badge: Badge
     fact_key: str | None = None
@@ -108,7 +108,7 @@ class RegionConfirmRequest(BaseModel):
 
 class MemberFulfillmentEntry(BaseModel):
     user_id: str
-    display_name: str | None = None  # 아직 채우지 않음, FE가 구성원 목록으로 대신한다(#762)
+    display_name: str | None = None  # 서버는 채우지 않는다. FE가 user_id로 구성원 목록에서 찾는다(#762)
     satisfied: bool
 
 
