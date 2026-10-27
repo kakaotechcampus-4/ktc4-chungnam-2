@@ -125,6 +125,8 @@ export function toPinCard(pin: Pin, memberCount: number, myId?: string): PinCard
 }
 
 export type PinCreateRequest = components['schemas']['PinCreateRequest']
+/** 실시간 핀 승격의 매칭 힌트(#501). 서버도 화면도 저장하지 않는다. */
+export type PinResolveRequest = components['schemas']['PinResolveRequest']
 export type ReactionDto = components['schemas']['Reaction']
 export type ReactionRequest = components['schemas']['ReactionRequest']
 /** 반대 사유 칩(최종기획안 5-1-1). 목록은 서버가 카테고리별로 준다 — 화면엔 label, 요청엔 id. */
