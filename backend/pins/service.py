@@ -514,10 +514,13 @@ def _viewer_pin_response(db: Session, pin_row: PinRow, principal: Principal, cur
 def resolve_pin(
     db: Session, pin: PinRow, principal: Principal, current_member_ids: set[str], req: PinResolveRequest,
 ) -> Pin:
-    """POST /pins/{pinId}/resolve(#501) — 실시간 핀을 자체 DB 핀으로 승격한다. live·일반 핀만 대상이고, 짝이 없거나
-    이미 db·AI·확정 핀이면 아무것도 바꾸지 않는다(이벤트도 없음). 핀 id·반응·사유·확정 항목은 그대로 둔다.
-    힌트(이름·좌표·주소)는 매칭에만 쓰고 저장·로깅하지 않는다. 같은 지도에 그 장소 핀이 이미 있으면 409(자동 병합 금지)."""
-    if pin.source != "live" or pin.kind != "일반":
+    """POST /pins/{pinId}/resolve(#501) — 실시간 핀을 자체 DB 핀으로 승격한다. live 핀만 대상이다. 확정 리스트에 든
+    live 핀도 승격한다(#763). AI 추천 핀은 늘 db라 대상이 아니다. 짝이 없거나 이미 db 핀이면 아무것도 바꾸지 않는다
+    (이벤트도 없음). 종류·핀 id·반응·사유·확정 항목은 그대로 두고, 동선은 다시 계산하지 않는다(다음 「동선 짜주기」 때 들어간다).
+    힌트(이름·좌표·주소)는 매칭에만 쓰고 저장·로깅하지 않는다. 같은 지도에 그 장소 핀이 이미 있으면 409(자동 병합 금지).
+    같은 핀을 두 요청이 동시에 부르면 핀 행을 잠그고 다시 읽어, 늦은 쪽은 이미 db 핀으로 보고 200을 낸다(#776)."""
+    db.refresh(pin, with_for_update=True)
+    if pin.source != "live":
         return _viewer_pin_response(db, pin, principal, current_member_ids)
 
     match = places_api.match_place(
