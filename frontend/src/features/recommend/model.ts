@@ -11,16 +11,24 @@ export type EvidencePatchRequest = components['schemas']['EvidencePatchRequest']
 export type RegionDto = components['schemas']['Region']
 export type RecommendResultDto = components['schemas']['RecommendResult']
 export type CandidateDto = components['schemas']['Candidate']
+export type ExternalSearchDto = components['schemas']['ExternalSearch']
 
 /** AI 추천 대상 카테고리(#145 — 숙소는 추천 대상이 아니다). 순서는 화면 순서. */
 export const RECOMMEND_CATEGORIES: RecommendCategory[] = ['음식점', '카페', '관광지']
 
-export type ReadinessCard = { category: RecommendCategory; ready: boolean; answered: number; required: number }
+/** externalSearch 는 기본 지역 근처에 정예 장소가 없을 때만 서버가 준다(#798). 화면은 링크가 있는지만 본다. */
+export type ReadinessCard = { category: RecommendCategory; ready: boolean; answered: number; required: number; externalSearch?: ExternalSearchDto }
 
 export function toReadinessCards(map: Partial<Record<RecommendCategory, ReadinessDto>>): ReadinessCard[] {
   return RECOMMEND_CATEGORIES.map((category) => {
     const r = map[category]
-    return { category, ready: r?.ready ?? false, answered: r?.answered_count ?? 0, required: r?.required_count ?? 0 }
+    return {
+      category,
+      ready: r?.ready ?? false,
+      answered: r?.answered_count ?? 0,
+      required: r?.required_count ?? 0,
+      externalSearch: r?.external_search,
+    }
   })
 }
 
@@ -65,6 +73,12 @@ export type FunnelRow = RecommendResultDto['funnel'][number]
 export function noResultsFunnel(err: unknown): FunnelRow[] | null {
   if (!(err instanceof ApiError) || err.code !== 'NO_RESULTS') return null
   return (err.detail?.funnel as FunnelRow[] | undefined) ?? []
+}
+
+/** 결과 0곳이면 detail 에 카카오맵 검색 링크도 온다(#798). 구버전 서버는 없다. */
+export function noResultsExternalSearch(err: unknown): ExternalSearchDto | undefined {
+  if (!(err instanceof ApiError) || err.code !== 'NO_RESULTS') return undefined
+  return err.detail?.external_search as ExternalSearchDto | undefined
 }
 
 /** 추천 횟수 상한(#31, 지도 안 구성원 각자·카테고리 무관). 서버 값(attempt_limit)을 쓰고, 없으면(구버전 서버) 이 값. */

@@ -11,10 +11,12 @@ import Notice from '@/ui/Notice'
 import SheetTitle from '@/ui/SheetTitle'
 
 import { useAiStore } from './aiStore'
+import ExternalSearchLink from './ExternalSearchLink'
 import {
   attemptLimit,
   fulfillmentLine,
   missingWants,
+  noResultsExternalSearch,
   noResultsFunnel,
   toChecks,
   type CandidateDto,
@@ -114,13 +116,17 @@ export function ResultsBody({
           반경 안에서 ‘{missing.join('·')}’에 맞는 곳을 찾지 못해 다른 곳을 골랐어요. 반경을 넓혀 볼까요?
         </Notice>
       )}
-      <ol className="space-y-3 pb-[100px]">
-        {result.candidates.map((c) => (
-          <li key={c.id}>
-            <CandidateCard mapId={mapId} run={run} c={c} members={members} />
-          </li>
-        ))}
-      </ol>
+      <div className="space-y-3 pb-[100px]">
+        <ol className="space-y-3">
+          {result.candidates.map((c) => (
+            <li key={c.id}>
+              <CandidateCard mapId={mapId} run={run} c={c} members={members} />
+            </li>
+          ))}
+        </ol>
+        {/* 후보가 적으면 서버가 링크를 준다(#798). 기준 숫자는 서버가 정한다 — 화면은 링크가 있는지만 본다. */}
+        {result.external_search && <ExternalSearchLink search={result.external_search} className="btn-outline btn-md w-full" />}
+      </div>
     </div>
   )
 }
@@ -145,9 +151,10 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
       <p className="text-xs text-ink-600">{fulfillmentLine(c, members)}</p>
       <div className="flex items-center justify-between">
         <PublishButton mapId={mapId} run={run} c={c} />
-        {/* 사진·주소·영업시간은 카카오맵에서 본다 — 앱 안 WebView 금지(카카오 약관), 새 창으로. */}
-        {c.place_source?.url && (
-          <a href={c.place_source.url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
+        {/* 사진·주소·영업시간은 카카오맵에서 본다 — 앱 안 WebView 금지(카카오 약관), 새 창으로.
+            장소 페이지가 없으면 서버가 이름+동네 검색 링크를 준다(#798). */}
+        {c.place_url && (
+          <a href={c.place_url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
             카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
           </a>
         )}
@@ -251,6 +258,7 @@ function FunnelTable({ funnel, left }: { funnel: FunnelRow[]; left: number }) {
  */
 export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string; run: RecommendRunDto; error: unknown; onFixEvidence: () => void }) {
   const funnel = noResultsFunnel(error) ?? []
+  const search = noResultsExternalSearch(error)
   return (
     <div className="space-y-3">
       <FunnelTable funnel={funnel} left={0} />
@@ -259,6 +267,12 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
         <button type="button" onClick={onFixEvidence} className="btn-outline btn-lg">
           근거 고치기
         </button>
+        {/* 핑고 밖에서 찾는 출구(#798). 채움은 「반경 넓히기」 하나라 외곽선이다. */}
+        {search && (
+          <div className="col-span-2">
+            <ExternalSearchLink search={search} className="btn-outline btn-lg w-full" />
+          </div>
+        )}
       </div>
       <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-link text-sm">
         직접 찍기 — 검색창에서 찾아보기
