@@ -3,7 +3,7 @@ DB 레벨 제약 확인 — 이 테스트는 models.py의 선언이 실제로 Po
 픽스처가 Base.metadata.create_all(models.py 기준)로 스키마를 만들기 때문에, 0005_maps.py
 마이그레이션 파일 자체가 models.py와 다른 내용을 갖고 있어도(예: CHECK 제약을 빠뜨렸어도)
 이 테스트는 실행되지 않는다 — 그 드리프트는 자동 테스트가 아니라 "검증 방법"의 수동
-`alembic upgrade head` 사이클로만 잡힌다(maps/for_Root.md, Antigravity 검수 지적 반영).
+`alembic upgrade head` 사이클로만 잡힌다.
 """
 
 import uuid

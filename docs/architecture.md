@@ -13,6 +13,8 @@
 
 각 모듈이 서브 디렉토리 Claude Code 1개의 작업 범위(`backend/<module>/`)가 된다. 모듈은 자신의 DB 테이블만 직접 쓰고, 다른 모듈의 데이터는 반드시 그 모듈이 정의한 API/함수 계약을 통해서만 읽는다.
 
+다른 모듈 테이블을 가리키는 열(사용자 id, `map_id`, `place_id`, `run_id` 등)은 문자열이고 DB FK를 걸지 않는다(#760, 2026-10-27). 그 열을 가진 모듈이 자기 api의 `delete_by_user`, `reassign_user`, `purge_map_data`로 지우거나 옮기고, 부르는 목록은 `auth.service`의 `WITHDRAW_STEPS`·`MERGE_STEPS`와 `maps.purge.PURGE_STEPS`가 갖는다(빠지면 `test_user_data_lists.py`가 잡는다). 같은 모듈 안의 FK는 건다.
+
 모듈은 두 층으로 나뉜다. **수평 레이어**는 모든 기능 모듈이 공통으로 딛고 서는 바닥이고, **기능 모듈**은 그 위에서 각자의 도메인을 담당한다.
 
 ### 수평 레이어 (어느 모듈이든 직접 import한다)
@@ -39,6 +41,9 @@
 | `llm` | 모델 호출 2곳(② 사유 구조화, ③-a-1 라벨링) + 프롬프트 + 구조화 출력 스키마 | 8절, #99 | (외부 LLM API) |
 | `shortlist` | 확정 리스트 추가/제외, 동선 계산(모델 미사용) | 5-3, 5-10 | `pins` |
 | `realtime` | SSE 채널(전체/개인), `event_log` 폴링·재동기화 | 5-5-1 | — |
+| `notifications` | 앱 안 알림함과 알림 설정(#470). 다른 모듈은 이벤트를 쓰는 같은 트랜잭션에서 `notifications.api.notify`를 수신자마다 부르고, 문장은 `compose_message`로 만든다 | 신규(v2) | — |
+| `feedback` | 서비스 피드백 저장(#10). 읽는 API는 없다 | 신규(v2) | — |
+| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 각 모듈 api의 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth` (api.py만) |
 | `ads` | 추천 탭 광고: 기간 광고 관리, 선택(코드), 노출과 클릭의 날짜별 집계(docs/ads.md, #642) | 신규 | `places`, `recommend`, `pins` (api.py만. `recommend`는 `ads`를 import하지 않는다) |
 
 `의존` 열은 실제 import를 기준으로 적는다(2026-09-23 기준, #113). 계획상 필요할 것 같은 의존을 미리 적지 않는다 — 표와 코드가 어긋나면 표를 믿을 수 없게 된다.
@@ -112,7 +117,7 @@ core.py로 옮긴다.
 | 다른 모듈의 `service.py` | **금지** | 공개 접점이 아니다. 필요하면 그 모듈이 `api.py`에 함수를 연다 |
 
 `api.py`가 없는 모듈은 아직 다른 모듈에게 열어줄 데이터가 없다는 뜻이다. 필요해지는 쪽이
-그 모듈 담당에게 요청해서 만든다(`maps/for_Root.md`, `auth/for_Root.md`가 그렇게 요청한 전례).
+그 모듈 담당에게 이슈로 요청해서 만든다(`backend/CLAUDE.md`, #757).
 
 ---
 
@@ -299,10 +304,13 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 | 함수 | 쓰는 곳 | 하는 일 |
 |---|---|---|
 | `match_place(hint) -> PlaceMatch \| None` | pins(핀 생성) | 힌트(`kakao_place_id`, `name`, `lat`, `lng`, `category`)에 맞는 **자체 DB 장소 한 건**을 찾는다. 읽기 전용. 반경 상한(기본 300m)·후보 수 상한·분류 일치·이름 일치를 모두 만족할 때만 돌려준다. 동명 점포가 여럿이면 이름 일치 + 거리 순으로 한 건, **확신이 낮으면 `None`**(엉뚱한 곳에 핀이 꽂히는 것보다 거절이 낫다) |
-| `record_kakao_match(place_id, kakao_place_id, kakao_place_url) -> None` | pins(핀 생성 같은 트랜잭션) | 매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(`places.kakao_*`). **첫 값 유지**(#248) — 이미 다른 ID가 있으면 덮어쓰지 않고, 같은 ID면 확인 일자만 갱신한다. pins는 `kakao:<숫자 1~20자리>`일 때만 부른다(형식이 틀리면 매칭은 하되 기록하지 않는다) |
+| `record_kakao_match(place_id, kakao_place_id, kakao_place_url) -> None` | pins(핀 생성 같은 트랜잭션) | 매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(`places.kakao_*`). **첫 값 유지**(#248) — 이미 다른 ID가 있으면 덮어쓰지 않고, 같은 ID면 확인 일자만 갱신한다. pins는 `kakao:<숫자 1~20자리>`일 때만 부른다(형식이 틀리면 매칭은 하되 기록하지 않는다). 없는 `place_id`면 `KeyError`다(호출 쪽이 매칭된 id만 넘긴다) |
 | `pinnable_flags(hints) -> list[bool]` | 검색 응답(`GET /places/search`) | 힌트마다 `match_place`가 성공할지 읽기만 해서 계산한다. **카카오 ID를 기록하지 않는다**(`record_kakao_match`와 분리) |
-| `get_places(place_ids) -> dict[str, PlaceInfo]` | pins(핀 응답), recommend(후보 응답) | `name`, `lat`, `lng`, `category`, `kakao_place_url`을 배치로 조회(N+1 금지). 없는 ID는 키에서 빠진다 |
+| `get_places(place_ids) -> dict[str, PlaceInfo]` | pins(핀 응답), recommend(후보 응답) | `name`, `lat`, `lng`, `category`, `kakao_place_url`, `address`를 배치로 조회(N+1 금지). 없는 ID는 키에서 빠진다. `address`는 `place_link`가 동네를 자를 때 쓰고 응답에 그대로 싣지 않는다 |
 | `search_nearby_own(category, areas) -> list[PlaceRef]` | recommend(후보 풀) | 반경 안의 **영업 중**(`status='open'`) 장소의 `place_id`·좌표. 카테고리는 음식점·카페·관광지 |
+| `count_curated(category, areas) -> int` | recommend(readiness의 `curated_nearby`) | 원들 안의 영업 중 정예(`curated`) 장소 수(#799). 원 처리는 `search_nearby_own`과 같고 쿼리 한 번이다 |
+| `place_link(place: PlaceInfo) -> str \| None` | recommend(결과 카드), pins(핀 상세) | 「카카오맵에서 보기」 링크(#798, #799). 기록된 카카오 장소 URL이 있으면 그것, 없으면 `{이름} {동네}` 카카오맵 검색 링크(동네가 없으면 이름만), 이름이 없으면 `None`. 카카오를 부르지 않는다 |
+| `neighborhood(address) -> str \| None`, `kakao_search_url(query) -> str` | recommend(지역 단위 검색어와 링크) | 동네는 주소의 시·군·구와 괄호 안 동(읍·면), 괄호가 없으면 시·군·구까지. 검색 링크 형식(`https://map.kakao.com/link/search/` + URL 인코딩)은 `places.core` 한 곳이다 — 다른 모듈은 이 글자를 다시 적지 않는다(`docs/constraints.md` 「카카오맵 검색 링크」) |
 | `get_hours(place_ids) -> dict[str, PlaceHours]` | places 안(`get_week_open_status`), 상세 표시 | `place_hours`의 `hours`·`closed_days`·`closed_note`·`hours_note`를 배치로 조회(#690). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용. 영업 여부 판정은 아래 두 함수를 쓴다 |
 | `get_week_open_status(place_ids) -> dict[str, dict[int, str]]` | recommend(「영업 종료 제거」), AI 코스(휴무 요일) | 장소별 요일 판정 `{0=월 … 6=일: open/closed/unknown}`(#747). place_hours를 배치로 읽는다. 행이 없는 장소는 키에서 뺀다(= 모름). 판정 규칙은 `places.core.day_open_status` 한 곳이다(`docs/constraints.md`「영업 중 판정」). 다른 모듈은 요일 이름, 시각 파싱, 자정 넘김을 다시 계산하지 않는다 |
 | `week_open_status(hours, closed_days) -> dict[int, str]` | AI 코스 평가 스크립트(원본 파일을 읽는 쪽) | 위와 같은 판정을 DB 없이 원본 칸에 적용하는 순수 함수(#747) |

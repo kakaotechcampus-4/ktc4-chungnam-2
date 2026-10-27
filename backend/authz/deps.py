@@ -2,7 +2,7 @@
 FastAPI 의존성 배선. issue #89 — membership에는 더 이상 dev/real 두 구현이 없다. `maps.api.
 DbMembershipGateway`가 유일한 구현이고, `AllowAllMembership`(늘 'member') 개발용 스텁과
 `MEMBERSHIP_MODE` 포트는 완전히 제거했다 — "선택지가 있어서 잘못 고를 수 있는" 상태 자체를
-없앤다(authz/for_Root.md "[루트 정정]" 절 참고, `common.adapters.select()`를 거칠 이유가
+없앤다(#89, `common.adapters.select()`를 거칠 이유가
 없어졌다).
 
 authz는 HTTP 라우터가 없으므로(이 모듈은 다른 모듈이 호출하는 라이브러리다) 여기 배선은 authz

@@ -135,14 +135,20 @@ class Claim(NamedTuple):
     seq: int | None     # 고를 때 본 그 지도의 가장 큰 event_log seq. 보존 24시간 안에 이벤트가 없으면 None
 
 
-def claim_maps(db: Session, now: datetime, *, limit: int) -> list[Claim]:
+class Claimed(NamedTuple):
+    claims: list[Claim]
+    due: int            # limit 전에 관찰할 차례였던 지도 수(#756). 같은 순간 다른 실행이 잠근 지도도 셀 수 있다
+
+
+def claim_maps(db: Session, now: datetime, *, limit: int) -> Claimed:
     """관찰할 지도를 골라 lease를 잡는다. 새 이벤트로 잡혔으면 trigger=activity, 시간 점검으로 잡혔으면 time. seq는
     관찰이 예외로 끝났을 때 커서를 올릴 값이다(#677). 호출부가 바로 커밋해야 lease가 다른 실행에 보인다.
 
     1. `realtime.api.latest_seq_by_map`으로 지도별 가장 큰 seq를 받는다. 커서 행이 없는 지도는 여기서 만든다
        (ON CONFLICT DO NOTHING — 동시에 두 실행이 만들어도 하나). 커서보다 큰 seq가 있으면 바뀐 지도다.
     2. agent_cursors만 FOR UPDATE SKIP LOCKED로 잠그고 lease_until을 올린다. maps와 event_log는 조인하지 않는다.
-       모드가 꺼진 지도(agent_settings.enabled=false)는 고르지 않는다. 행이 없으면 켜짐이다."""
+       모드가 꺼진 지도(agent_settings.enabled=false)는 고르지 않는다. 행이 없으면 켜짐이다.
+    3. 같은 조건의 지도 수를 limit 없이 센다(#756, tick 처리량 로그). FOR UPDATE와 집계는 한 쿼리에 못 넣어 따로 센다."""
     latest = realtime_api.latest_seq_by_map(db)
     seen: dict[str, int] = dict(
         db.execute(select(AgentCursor.map_id, AgentCursor.last_seen_seq).where(AgentCursor.map_id.in_(latest))).all()
@@ -156,7 +162,7 @@ def claim_maps(db: Session, now: datetime, *, limit: int) -> list[Claim]:
         )
     changed = {m for m, (seq, _) in latest.items() if seq > seen.get(m, 0)}
 
-    map_ids = db.execute(
+    due = (
         select(AgentCursor.map_id)
         .outerjoin(AgentSettings, AgentSettings.map_id == AgentCursor.map_id)
         .where(
@@ -164,7 +170,10 @@ def claim_maps(db: Session, now: datetime, *, limit: int) -> list[Claim]:
             or_(AgentCursor.lease_until.is_(None), AgentCursor.lease_until < now),
             or_(AgentCursor.map_id.in_(changed), AgentCursor.next_check_at <= now),
         )
-        .order_by(AgentCursor.next_check_at.asc().nulls_last(), AgentCursor.map_id)
+    )
+    due_count = db.scalar(select(func.count()).select_from(due.subquery()))
+    map_ids = db.execute(
+        due.order_by(AgentCursor.next_check_at.asc().nulls_last(), AgentCursor.map_id)
         .limit(limit)
         .with_for_update(of=AgentCursor, skip_locked=True)
     ).scalars().all()
@@ -173,7 +182,8 @@ def claim_maps(db: Session, now: datetime, *, limit: int) -> list[Claim]:
             update(AgentCursor).where(AgentCursor.map_id.in_(map_ids))
             .values(lease_until=now + timedelta(seconds=LEASE_SEC))
         )
-    return [Claim(m, "activity" if m in changed else "time", latest[m][0] if m in latest else None) for m in map_ids]
+    claims = [Claim(m, "activity" if m in changed else "time", latest[m][0] if m in latest else None) for m in map_ids]
+    return Claimed(claims, due_count)
 
 
 def release_lease(db: Session, map_id: str) -> None:

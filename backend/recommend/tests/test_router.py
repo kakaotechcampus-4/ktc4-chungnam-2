@@ -319,6 +319,56 @@ def test_evidence_response_marks_enforced_by_fact_key_720(app_client, db_session
     assert all("effect" not in line for line in lines.values())   # effect는 recommend.api만 내준다(#751)
 
 
+def _evidence_run_with_three_authors(app_client, db_session) -> str:
+    """철수(user_1, 구성원), 영희(user_2, 이 지도에서 나감), 민수(user_3, 탈퇴 — 멤버십 행은 남는다 #245)가 줄을 하나씩 쓴 run."""
+    from datetime import datetime, timezone
+
+    from auth.models import User
+    from recommend import service
+
+    ensure_users(db_session, "user_1", "user_2", "user_3",
+                 display_names={"user_1": "철수", "user_2": "영희", "user_3": "민수"})
+    run_id = _evidence_run(app_client, db_session)
+    db_session.add(MembershipRow(map_id="map_1", user_id="user_3", role="member"))
+    db_session.flush()
+    service.add_reaction_evidence(db_session, run_id=uuid.UUID(run_id), lines=[
+        {"author_id": author, "source": "reaction", "text": f"{author}의 근거", "badge": "preferred", "fact_key": None}
+        for author in ("user_1", "user_2", "user_3")
+    ])
+    db_session.get(User, "user_3").deleted_at = datetime.now(timezone.utc)
+    db_session.commit()
+    return run_id
+
+
+def _names_by_text(lines) -> dict[str, str | None]:
+    return {line["text"]: line.get("author_display_name") for line in lines}
+
+
+def test_evidence_get_fills_author_name_by_pin_author_rule_762(app_client, db_session):
+    """#762 — 근거 줄 작성자 이름은 핀 작성자 규칙(#369)이다: 실명, 나갔으면 '나간 구성원', 탈퇴했으면 '탈퇴한 구성원'."""
+    run_id = _evidence_run_with_three_authors(app_client, db_session)
+
+    resp = app_client.get(f"/runs/{run_id}/evidence", cookies=_auth("user_1"))
+
+    assert resp.status_code == 200
+    names = _names_by_text(resp.json())
+    assert names["user_1의 근거"] == "철수"
+    assert names["user_2의 근거"] == "나간 구성원"
+    assert names["user_3의 근거"] == "탈퇴한 구성원"
+
+
+def test_evidence_patch_response_fills_author_name_762(app_client, db_session):
+    run_id = _evidence_run_with_three_authors(app_client, db_session)
+
+    resp = _add(app_client, run_id, ["조용한 곳"])
+
+    assert resp.status_code == 200
+    names = _names_by_text(resp.json())
+    assert names["조용한 곳"] == "철수"
+    assert names["user_2의 근거"] == "나간 구성원"
+    assert names["user_3의 근거"] == "탈퇴한 구성원"
+
+
 def test_run_not_found_is_404(app_client, db_session):
     _seed_ready_map(db_session)
     resp = app_client.get(f"/runs/{'0' * 8}-0000-0000-0000-{'0' * 12}/evidence", cookies=_auth())

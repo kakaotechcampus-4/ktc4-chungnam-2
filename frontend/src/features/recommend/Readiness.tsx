@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import { Check } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import Notice from '@/ui/Notice'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
 
+import ExternalSearchLink from './ExternalSearchLink'
 import { runErrorMessage, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
 import { useCreateRunMutation, useReadinessQuery } from './queries'
 
@@ -79,6 +81,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const firstReady = cards.find((c) => c.ready)?.category ?? null
   const [picked, setPicked] = useState<RecommendCategory | null>(null)
   const chosen = picked && cards.find((c) => c.category === picked)?.ready ? picked : firstReady
+  const search = cards.find((c) => c.category === chosen)?.externalSearch
 
   if (readiness.isPending) return <PingoLoading label="준비 상태를 확인하는 중…" />
   if (readiness.error) return <ErrorText message="추천 준비 상태를 불러오지 못했어요" error={readiness.error} />
@@ -102,6 +105,10 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
       {/* run 을 만들 때 AI가 사유를 조건으로 정리한다(②) — 5~12초 걸린다(백엔드 안내). 그동안 진행을 보인다. */}
       {create.isPending && <ProgressBody steps={COLLECT_STEPS} />}
       {create.error && <ErrorText message={runErrorMessage(create.error)} error={create.error} />}
+      {/* 의견 핀 근처에 정예 장소가 없으면 추천해도 0곳이다 — 막지 않고 밖에서 찾는 길을 같이 둔다(#798). */}
+      {search && (
+        <Notice action={<ExternalSearchLink search={search} className="btn-outline btn-sm" />}>이 지역은 아직 핑고 추천 장소가 없어요</Notice>
+      )}
       <button
         type="button"
         disabled={!chosen || create.isPending}

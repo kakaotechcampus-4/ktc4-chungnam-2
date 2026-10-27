@@ -58,7 +58,6 @@ export function buildBaseState(): StoreState {
       created_by_display_name: "박서영",
       created_at: minutesAgo(180),
       checks: [],
-      source_run_id: null,
       reaction_summary: { like: 1, against: 1 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: false },
     },
@@ -75,7 +74,6 @@ export function buildBaseState(): StoreState {
       created_by_display_name: "황경",
       created_at: minutesAgo(50),
       checks: [],
-      source_run_id: null,
       reaction_summary: { like: 1, against: 1 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: true },
     },
@@ -92,7 +90,6 @@ export function buildBaseState(): StoreState {
       created_by_display_name: "김도현",
       created_at: minutesAgo(10),
       checks: [],
-      source_run_id: null,
       reaction_summary: { like: 1, against: 0 },
       permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: false },
     },
@@ -247,7 +244,20 @@ export function buildCandidates(regionLabel: string) {
       visibility: "private" as const,
       published_pin_id: null,
       reason: "매운맛 조건은 지키지만 주차는 확인이 필요해요",
-      member_fulfillment: { satisfied: 1, total: 2 },
+      member_fulfillment: {
+        satisfied: 1,
+        total: 2,
+        by_member: [
+          {
+            user_id: "u_demo_1",
+            satisfied: false,
+            conditions: [
+              { fact_key: "spicy_focused", fact_label: "매운맛 전문", evidence_line_id: null, status: "met" as const },
+              { fact_key: "parking_available", fact_label: "주차 가능", evidence_line_id: null, status: "needs_check" as const },
+            ],
+          },
+        ],
+      },
       permissions: { can_publish: true },
     },
     {

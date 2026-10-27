@@ -17,7 +17,7 @@
 
 순서대로 한다.
 
-1. 환경 변수를 맞춘다. 키 목록은 `backend/.env.example`이다(DATABASE_URL, REDIS_URL, KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET, KAKAO_REDIRECT_URI, FRONTEND_BASE_URL, FRONTEND_LOGIN_REDIRECT_URL, SESSION_SECRET, PINGO_ENV, CORS_ALLOW_ORIGINS, PLACES_MODE, ELICE_ML_API_BASE_URL, ELICE_ML_API_KEY, LLM_MODE). 배포는 `PINGO_ENV=prod`다. 값은 저장소나 채팅에 남기지 않는다. 새 키를 더한 PR은 이 목록도 고친다.
+1. 환경 변수를 맞춘다. 키 목록은 `backend/.env.example`이다(DATABASE_URL, REDIS_URL, KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET, KAKAO_REDIRECT_URI, FRONTEND_BASE_URL, FRONTEND_LOGIN_REDIRECT_URL, SESSION_SECRET, PINGO_ENV, CORS_ALLOW_ORIGINS, PLACES_MODE, ELICE_ML_API_BASE_URL, ELICE_ML_API_KEY, LLM_MODE, QA_LOGIN_SECRET — 스테이징 전용, 운영에는 넣지 않는다). 배포는 `PINGO_ENV=prod`다. 값은 저장소나 채팅에 남기지 않는다. 새 키를 더한 PR은 이 목록도 고친다.
 2. 마이그레이션을 올린다: `python -m alembic upgrade head`(backend에서). head는 하나여야 하고 CI(backend-test)가 같은 명령으로 확인한다.
 3. 코드를 배포한다.
 4. 아래 "데이터가 바뀔 때"에 해당하는 단계가 이번 배포에 있는지 확인한다.
@@ -46,6 +46,16 @@
 - 기존 DB를 유지한 채 인허가만 새로 받을 때 `permit --close-missing`을 쓴다(파일에 없는 커버리지를 폐업으로 바꾼다). 지역 커버리지에 쓰면 서울 커버리지가 닫히지 않는지 먼저 `--dry-run`으로 본다. 새 DB에서는 닫을 행이 없어 쓰지 않는다.
 - 2026-10-27 로컬 실측(새 DB, 서울과 5개 지역 전부): 장소 199,211곳(정예 13,901), 라벨 약 191만 건, 영업시간 12,843곳.
 
+## 스테이징
+
+운영과 같은 방식으로 배포하고 실제 사용자는 없는 시험 서버다. QA 하네스(`qa/harness/run_api_cases.py --base-url`)가 이 주소로 핵심 흐름을 실제 HTTP로 돌린다(#788). 배포 환경은 #168에서 정한다. 그 전에는 로컬 `uvicorn`을 `PINGO_ENV=staging`으로 띄워 같은 방식으로 돌린다.
+
+- `PINGO_ENV=staging`. 운영과 같은 기동 가드를 받는다(스텁 금지, CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`).
+- `SESSION_SECRET`은 운영과 다른 값이다. 스테이징에서 만든 세션 쿠키가 운영에서 통하지 않게 한다.
+- `QA_LOGIN_SECRET`이 있을 때만 `POST /auth/qa-login`이 붙는다(#789). 운영에는 이 값을 넣지 않는다. 넣으면 서버가 뜨지 않는다.
+- DB는 운영과 나눈다. 운영 DB를 복사하지 않는다(실사용자 데이터, #53).
+- 값은 저장소나 채팅에 남기지 않는다.
+
 ## 예약 실행
 
 | 작업 | 명령 | 주기 | 상태 |
@@ -54,9 +64,24 @@
 | v2 계획 보조 에이전트 관찰 | `POST /internal/agent/tick` | 5분(`docs/agent-v2.md` 12.1) | 엔드포인트와 예약 모두 아직 없음(#535). 개발과 시연은 `AGENT_LOOP_IN_PROCESS=1`로 서버 안에서 돈다 |
 | agent 일일 정리 | 없음 | 서버 안에서 돈다 | 따로 예약하지 않는다(`backend/maintenance/CLAUDE.md`) |
 
+## 배포 뒤 볼 지표
+
+지도가 늘면 v2 관찰(tick)이 가장 먼저 걸린다(멘토 리뷰 #680). tick은 5분마다 지도를 최대 `TICK_MAX_MAPS`(6)곳 관찰한다(`agent/constants.py`).
+
+| 지표 | 읽는 법 | 이렇게 보이면 |
+|---|---|---|
+| stale로 버린 관찰 비율 | `select outcome, count(*) from agent_runs where trigger in ('activity', 'time') and started_at > now() - interval '1 day' group by 1` 에서 stale ÷ 전체 | 늘면 관찰이 겹치거나 늦게 끝나고 있다. 결과가 틀리지는 않지만(저장할 때 지도 행을 잠그고 다시 확인한다) 모델 호출을 버린다 |
+| tick당 처리 수와 미룬 지도 수, 걸린 시간 | tick 끝의 로그 한 줄 `agent tick due= observed= deferred_by_max= deferred_by_budget= elapsed_ms=`(#756). 차례였던 지도, 관찰한 수, `TICK_MAX_MAPS`로 미룬 수, 시간 예산으로 미룬 수, 걸린 ms. 시간 예산으로 미룬 지도가 있으면 warning | 미룬 지도가 tick마다 남으면 처리 수나 주기를 바꾼다. 시간 예산은 150초(`TICK_BUDGET_SEC`)로 두고 이 지표로 본다(#754). 걸린 시간이 lease(180초)를 넘는 tick이 보이면 105초(`LEASE_SEC − 75`)로 낮춘다 |
+
 ## 배포 전에 정할 것
 
 - `event_log` 오래된 행 삭제: 읽기는 24시간으로 자르지만(`realtime.service.RETENTION`) 지우는 작업은 아직 없다. `created_at` 인덱스는 삭제용으로 있다. 정기 정리(`maintenance.run`)에 단계로 넣을지 정한다.
 - 배포 환경, 비밀 관리, 프리뷰 배포(#168).
+- 세션 쿠키의 `Secure`는 prod에서만 붙는다(`settings.is_prod`). 로컬 http로 하네스를 돌리려고 staging은 붙이지 않는다. https 스테이징을 배포하면 staging도 붙일지 정한다(#168, #788).
 - 관찰 tick 엔드포인트와 예약(#535).
+- prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`만 본다. 카카오 키(`KAKAO_CLIENT_ID/SECRET/REDIRECT_URI`)와 `ELICE_ML_API_KEY`가 비어도 서버가 뜨고 첫 호출에서야 실패한다. 가드에 넣을지 정한다(#168).
+- 게스트 가입 IP 상한(`POST /auth/guest`)은 `request.client.host`를 본다. 프록시 뒤(Cloud Run)에서는 uvicorn `--proxy-headers`와 `--forwarded-allow-ips`를 켠다. 안 켜면 모든 사용자가 한 IP로 보여 상한을 함께 쓴다(#168, #472).
+- 호출 상한(`common.ratelimit`: 장소 검색, 링크 해석, 핀 링크 미리보기)은 인메모리라 인스턴스마다 따로 센다. 인스턴스를 늘리면 실제 상한이 그 수만큼 커진다(#168).
+- `/places/nearest`의 쿼리스트링(누른 좌표)은 uvicorn 접근 로그에서만 가린다(`places/logguard.py`). 앞단 프록시의 요청 로그는 따로 막는다(#168, #473).
+- 비로그인 `GET /invites/{token}`에는 호출 상한이 없다. 토큰이 256비트라 추측은 비현실적이지만, 넣을지 정한다(#168).
 - 개발 중 로컬 DB에 쌓인 카카오 좌표와 이름은 배포 전에 지운다(`docs/architecture.md`, #53). 배포 DB를 로컬 DB에서 복사하지 않는다.

@@ -1,9 +1,9 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { createPin, deletePin, deleteReaction, fetchCounts, fetchPins, fetchReactions, fetchReasonChips, putReaction } from './api'
+import { createPin, deletePin, deleteReaction, fetchCounts, fetchPins, fetchReactions, fetchReasonChips, putReaction, resolvePin } from './api'
 import { useLivePlaceStore, withLivePlace } from './livePlaces'
-import { withMyReaction, type Pin, type PinCategory, type PinCreateRequest, type ReactionRequest } from './model'
+import { withMyReaction, type Pin, type PinCategory, type PinCreateRequest, type PinResolveRequest, type ReactionRequest } from './model'
 
 export const pinKeys = {
   list: (mapId: string) => ['pins', mapId] as const,
@@ -45,6 +45,30 @@ export function useDeletePinMutation(mapId: string, pinId: string) {
       void queryClient.invalidateQueries({ queryKey: ['recommend', mapId] })
     },
   })
+}
+
+/**
+ * 실시간 핀 승격(#777). 화면이 카카오 SDK로 위치를 찾은 순간 한 번 부른다(useLivePinResolver).
+ * 짝이 있으면(source=db) 핀 목록의 그 핀을 응답으로 바꾸고, 핀을 따로 들고 있는 확정 리스트는 다시 받는다 —
+ * 그래야 확정 탭 이름과 동선 대상이 바뀐다. 다른 구성원은 pin.updated로 받는다. 짝이 없으면(source=live) 그대로 둔다.
+ *
+ * 사용자가 누른 게 아니라 화면이 알아서 부르는 요청이라 실패를 알리지 않는다. 409 PIN_DUPLICATE(같은 장소 핀이 이미 있음)도,
+ * 네트워크 실패도 핀은 실시간 핀으로 남고, 다시 시도하지 않는다 — 다음에 지도를 열 때 다시 찾고 다시 부른다.
+ */
+export function useResolveLivePin(mapId: string) {
+  const queryClient = useQueryClient()
+  return useCallback(
+    (pinId: string, hint: PinResolveRequest) => {
+      resolvePin(pinId, hint)
+        .then((pin) => {
+          if (pin.source !== 'db') return
+          queryClient.setQueryData<Pin[]>(pinKeys.list(mapId), (pins) => pins?.map((p) => (p.id === pin.id ? pin : p)))
+          void queryClient.invalidateQueries({ queryKey: ['shortlist', mapId] })
+        })
+        .catch(() => undefined)
+    },
+    [mapId, queryClient],
+  )
 }
 
 /** 핀 상세 「구성원 의견」. 반응한 구성원만 온다. */

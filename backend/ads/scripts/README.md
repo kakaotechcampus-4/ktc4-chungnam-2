@@ -20,7 +20,7 @@ place_id,starts_at,ends_at,memo
 - 장소가 places에 있고 status가 open인지, 기간이 맞는지(시작 < 끝, 끝이 지금보다 뒤), 그 장소에 active 광고가 이미 없는지,
   CSV 안에 같은 장소가 두 번 없는지 본다. **하나라도 틀리면 아무것도 넣지 않는다.**
 
-장소 찾기(`find_place`, 이름으로 place_id 찾기)는 아직 없다 — places.api에 자체 DB 이름 검색 함수가 없어서다(`../for_Root.md`).
+장소 찾기(`find_place`, 이름으로 place_id 찾기)는 아직 없다(#769). places.api의 `search_own_by_name`(#674)은 있고 스크립트만 남았다.
 그동안은 아래 SQL로 찾는다(읽기 전용).
 
 ```sql

@@ -3,7 +3,7 @@ FastAPI 의존성 배선. places(#14)/seeding(#13)이 아직 없어, pins/deps.p
 자리를 채우는 개발용 어댑터를 여기 둔다 — settings.places_mode를 그대로 재사용한다(recommend
 전용 설정 키를 새로 만들지 않는다: "places가 실구현인지"라는 같은 질문이기 때문).
 
-**dev 스텁의 한계(recommend/for_Root.md에 자세히)**: `DevPlaceSearchGateway`는 실제 장소
+**dev 스텁의 한계**: `DevPlaceSearchGateway`는 실제 장소
 검색이 아니라 원 중심에서 고정 오프셋만큼 떨어진 좌표에 합성 place_id를 만드는 자리채움이다 —
 "AI 없이도 FE+BE 코어 루프가 도는 데모가 우선"(CLAUDE.md 이슈 운영 원칙)을 만족시키기 위한
 결정이고, 실제 장소 데이터가 아니다. `DevPlaceFactsGateway`는 항상 빈 라벨을 돌려줘 모든
@@ -11,7 +11,7 @@ fact_key가 unknown이 된다(architecture.md 3절 — 라벨 없이도 unknown_
 전제 그대로).
 
 **실제 모드(#190)**: `Real*` 게이트웨이는 places.api의 자체 DB 함수(search_nearby_own·get_places·
-get_facts)에만 위임한다. 요청 중 모델 호출도 카카오 원자료도 이 경로에 없다.
+count_curated·get_facts)에만 위임한다. 요청 중 모델 호출도 카카오 원자료도 이 경로에 없다.
 """
 
 from typing import Any, Mapping, Sequence
@@ -24,7 +24,7 @@ from common.database import get_db_session
 from common.settings import settings
 from llm import api as llm_api
 from places import api as places_api
-from places.schemas import Area, FactLabel
+from places.schemas import Area, FactLabel, PlaceInfo
 from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway, PlaceStub
 
 
@@ -46,9 +46,11 @@ class DevPlaceSearchGateway:
             for i, (dlat, dlng) in enumerate(self._OFFSETS)
         ]
 
+    def get_places(self, place_ids: Sequence[str]) -> Mapping[str, PlaceInfo]:
+        return {}  # 합성 place_id라 이름도 주소도 없다
 
-    def get_names(self, place_ids: Sequence[str]) -> Mapping[str, str]:
-        return {}  # 합성 place_id라 이름이 없다
+    def count_curated(self, *, category: str, circles: Sequence[Circle]) -> int:
+        return len(self._OFFSETS) if circles else 0  # search_nearby가 지어내는 자리 수와 같게
 
 
 class DevPlaceFactsGateway:
@@ -80,8 +82,12 @@ class RealPlaceSearchGateway:
         infos = places_api.get_places([r.place_id for r in refs], db=self._db) if refs else {}
         return [PlaceStub(place_id=r.place_id, lat=r.lat, lng=r.lng, source=_place_source(infos.get(r.place_id)), can_recommend=r.can_recommend) for r in refs]
 
-    def get_names(self, place_ids: Sequence[str]) -> Mapping[str, str]:
-        return {pid: info.name for pid, info in places_api.get_places(list(place_ids), db=self._db).items()}
+    def get_places(self, place_ids: Sequence[str]) -> Mapping[str, PlaceInfo]:
+        return places_api.get_places(list(place_ids), db=self._db)
+
+    def count_curated(self, *, category: str, circles: Sequence[Circle]) -> int:
+        areas = [Area(lat=c.anchor_lat, lng=c.anchor_lng, radius_m=c.radius_m) for c in circles]
+        return places_api.count_curated(category, areas, db=self._db)
 
 
 class RealPlaceFactsGateway:

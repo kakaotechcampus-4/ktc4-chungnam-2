@@ -1,5 +1,5 @@
 """maps 모듈 첫 리비전 — maps, memberships, invites 테이블
-(maps/mentor-review-plan.md, maps/for_Root.md 참고).
+(#19).
 
 FK는 users(id) 대상 테이블이 아직 없어 걸지 않는다(auth 도착 시 별도 리비전으로 추가 —
 루트 보고 대상, 0001_pins.py와 같은 이유).
@@ -7,7 +7,7 @@ FK는 users(id) 대상 테이블이 아직 없어 걸지 않는다(auth 도착 �
 이번 리비전 범위 밖: pins.map_id·shortlist_items.map_id에 maps(id) FK를 추가하는 것.
 그 두 컬럼은 지금 String이고 "map_1" 같은 dev 값이 이미 들어있을 수 있어(FK를 걸면
 그 값들이 위반), 데이터 결정(truncate 또는 백필)이 먼저 필요하다 — 별도 리비전 +
-루트 보고 사항(maps/for_Root.md 항목 10).
+결정은 #760.
 
 Revision ID: 0005_maps
 Revises: 0004_shortlist_items

@@ -1,6 +1,6 @@
 """
 다른 모듈이 notifications를 부르는 유일한 접점(docs/architecture.md 1절 — 다른 모듈의 데이터 변경은 그 모듈의
-api.py만). 사용법은 notifications/for_Root.md. 모두 호출한 쪽 트랜잭션에 참여하고 커밋하지 않는다.
+api.py만). 사용법은 각 함수 설명이다. 모두 호출한 쪽 트랜잭션에 참여하고 커밋하지 않는다.
 """
 
 from datetime import datetime
@@ -17,7 +17,8 @@ __all__ = ["RETENTION_DAYS", "compose_message", "delete_by_user", "notify", "pur
 def compose_message(type: str, *, actor_name: str | None = None, map_title: str | None = None,
                     reaction: str | None = None) -> str:
     """종류별 알림 문장. `notify`의 `message`는 이 함수로 만든다 — 문장 틀에 반대 사유 원문·핀 메모를 넣을
-    자리가 없어서 그것들이 알림함으로 새지 않는다. 모르는 종류면 ValueError."""
+    자리가 없어서 그것들이 알림함으로 새지 않는다. 행위자 이름은 auth.api.display_names로 얻는다(탈퇴자는
+    '탈퇴한 구성원'). 모르는 종류면 ValueError."""
     return core.compose_message(type, actor_name=actor_name, map_title=map_title, reaction=reaction)
 
 
@@ -28,6 +29,7 @@ def notify(db: Session, *, user_id: str, type: str, map_id: str, map_title: str 
 
     notify 안에서 거른다(호출자가 따로 거를 필요 없다): `actor_id`가 수신자와 같으면(행위자 본인) 만들지 않고,
     수신자가 그 종류를 꺼 뒀으면(notification_prefs) 만들지 않는다. 만들었으면 알림 id, 걸렀으면 None.
+    `map_title`은 그때의 지도 제목이고 100자가 넘으면 자른다. `pin_id`는 핀 알림 종류만 넘긴다.
     모르는 `type`이면 ValueError — 종류 목록은 api-spec NotificationType이다."""
     return service.notify(
         db, user_id=user_id, type=type, map_id=map_id, map_title=map_title, message=message,
@@ -44,7 +46,7 @@ def delete_by_user(db: Session, *, user_id: str) -> dict[str, int]:
 def purge_old(db: Session, *, now: datetime, older_than_days: int = RETENTION_DAYS) -> dict[str, int]:
     """정리 작업(#168)이 부른다 — `now`보다 `older_than_days`(기본 90)일 넘게 지난 알림을 지운다. 지도 정리(#431)와
     달리 map_id를 보지 않는다(삭제된 지도의 `map_deleted` 알림이 남은 구성원에게 보여야 한다). 테이블 이름 → 지운 행 수.
-    호출 연결은 아직 없다(#168 이슈에 남겼다)."""
+    `maintenance.run`이 하루 한 번 부른다(#168)."""
     return service.purge_old(db, now=now, older_than_days=older_than_days)
 
 

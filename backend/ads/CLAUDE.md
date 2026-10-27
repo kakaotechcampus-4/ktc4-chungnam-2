@@ -22,7 +22,7 @@
 ## 다른 모듈
 
 `places.api.get_ad_places`, `recommend.api.latest_run_place_ids`, `pins.api.list_place_ids_on_map`,
-`pins.api.list_live_kakao_ids_on_map`만 부른다. 필요한 함수가 없으면 `for_Root.md`에 적어 루트에 보고한다.
+`pins.api.list_live_kakao_ids_on_map`만 부른다. 필요한 함수가 없으면 이슈로 요청한다(`backend/CLAUDE.md`).
 
 ## 테스트
 

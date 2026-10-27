@@ -2,14 +2,15 @@ import { useCallback, useEffect } from 'react'
 import { create } from 'zustand'
 
 import { loadKakaoMaps } from './kakaoMap'
-import { isPlaced, type Pin } from './model'
+import { isPlaced, type Pin, type PinResolveRequest } from './model'
 
 /**
  * 실시간 핀(#382)의 위치.
  *
  * 서버는 실시간 핀의 카카오 장소 ID·검색어·메모만 저장한다 — 이름·좌표는 카카오 약관상 저장할 수 없다(#53).
  * 그래서 지도를 열 때마다 카카오 키워드 검색으로 저장된 검색어를 다시 찾고, 결과 중 장소 ID가 같은 것의
- * 이름·좌표로 마커를 그린다. 이 값은 이 모듈의 메모리에만 있다 — 서버·localStorage·캐시 어디에도 보내지 않는다.
+ * 이름·좌표로 마커를 그린다. 이 값은 이 모듈의 메모리에만 있다 — localStorage·캐시에 두지 않는다.
+ * 서버에는 찾은 순간 승격(POST /pins/{pinId}/resolve, #777)의 매칭 힌트로 한 번만 보낸다. 서버도 저장하지 않는다.
  */
 export type LivePlace = { name: string; lat: number; lng: number }
 
@@ -130,11 +131,22 @@ async function findLivePlace(pin: Pin, anchor: Center): Promise<kakao.maps.servi
   return undefined
 }
 
+/** 찾은 장소를 승격 힌트로. 주소는 도로명, 없으면 지번이다. */
+function resolveHint(hit: kakao.maps.services.PlaceResult): PinResolveRequest {
+  const address = hit.road_address_name || hit.address_name
+  return { place_name: hit.place_name, lat: Number(hit.y), lng: Number(hit.x), ...(address ? { address } : {}) }
+}
+
 /**
  * 아직 위치를 모르는 실시간 핀을 찾는다. 지도 화면(MapLayout)에서 한 번만 쓴다.
  * 검색이 실패(키 없음·네트워크)하면 'missing'으로 박지 않고 둔다 — 다음에 핀 목록이 바뀔 때 다시 찾는다.
+ * 찾으면 그 핀에 승격(onFound, #777)을 한 번 부른다. 확정 리스트에 든 핀도 핀 목록에 있어서 같이 부른다.
  */
-export function useLivePinResolver(pins: Pin[], regionCenter: Center | null | undefined) {
+export function useLivePinResolver(
+  pins: Pin[],
+  regionCenter: Center | null | undefined,
+  onFound: (pinId: string, hint: PinResolveRequest) => void,
+) {
   const places = useLivePlaceStore((s) => s.places)
   const set = useLivePlaceStore((s) => s.set)
 
@@ -146,9 +158,12 @@ export function useLivePinResolver(pins: Pin[], regionCenter: Center | null | un
     for (const pin of todo) {
       inflight.add(pin.id)
       findLivePlace(pin, anchor)
-        .then((hit) => set(pin.id, hit ? { name: hit.place_name, lat: Number(hit.y), lng: Number(hit.x) } : 'missing'))
+        .then((hit) => {
+          set(pin.id, hit ? { name: hit.place_name, lat: Number(hit.y), lng: Number(hit.x) } : 'missing')
+          if (hit) onFound(pin.id, resolveHint(hit))
+        })
         .catch(() => undefined)
         .finally(() => inflight.delete(pin.id))
     }
-  }, [pins, places, regionCenter, set])
+  }, [pins, places, regionCenter, set, onFound])
 }

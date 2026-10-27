@@ -1,9 +1,6 @@
 """
 알림 호출 연결(#470) — pins·maps가 이벤트를 쓰는 같은 트랜잭션에서 notifications.api.notify를 부르는지,
 그리고 notify 안의 거르기(본인·끈 종류)와 문장에 사유·메모가 새지 않는 것을 실제 HTTP로 본다.
-
-`my_ai_pin_published`는 연결하지 않는다: 「지도에 올리기」는 그 추천을 요청한 사람만 누를 수 있어(남이면 404
-AI_PIN_PRIVATE) 올리는 사람과 요청자가 늘 같고, 본인 알림은 만들지 않기 때문에 이 종류는 지금 생길 일이 없다.
 """
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다

@@ -12,9 +12,10 @@ recommend.publish가 있다). 이 파일에 남는 건 run/candidate/evidence/re
 
 import hashlib
 import math
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Any, Collection, Mapping, NamedTuple, Sequence
+from typing import Any, Collection, Iterable, Mapping, NamedTuple, Sequence
 
 from common.errors import AppError
 from common.geo import WALKING_SPEED_M_PER_MIN, haversine_distance_m
@@ -41,7 +42,7 @@ def check_run_ready(run: RecommendRun) -> None:
     done이 아닌 나머지 상태(collecting_evidence/awaiting_region_confirm/executing/failed)를
     전부 동일하게 취급한다 — mentor-review-plan.md 실패 매핑 표는 "run이 아직 완료 안 됨"
     하나로만 다뤘다. failed를 다른 코드로 구분할지는 이 계획 범위 밖의 결정이라 루트 확인이
-    필요하다(for_Root.md에 기록)."""
+    필요하다. v1은 failed를 쓰지 않는다(실패하면 롤백, docs/events.md "v1에서 발행하지 않는 이벤트")."""
     if run.status != "done":
         raise AppError("NOT_READY")
 
@@ -147,6 +148,13 @@ def next_default_radius_walk_min(current_walk_min: int) -> int:
     if current_walk_min >= WIDEN_LIMIT_MIN:
         raise AppError("WIDEN_LIMIT", detail={"default_radius_walk_min": current_walk_min})
     return min(current_walk_min + WIDEN_STEP_MIN, WIDEN_LIMIT_MIN)
+
+
+def pool_radius_factor(current_walk_min: int) -> float:
+    """후보 풀을 가져오는 원의 배율 = 상한 도보 분 / 지금 도보 분(#792). 반경 넓히기가 갈 수 있는 끝까지만 가져와야
+    「반경 밖 제거」가 지금 반경 밖(상한 안)의 장소를 센다 — 지금 반경으로 가져오면 늘 0이다. 결과는 여전히 지금 반경
+    안에서만 나오고(is_within_any_region), 상한 밖은 풀에도 없다(가드레일 4). 이미 상한이면 1이다."""
+    return max(WIDEN_LIMIT_MIN / current_walk_min, 1.0)
 
 
 def is_within_any_region(lat: float, lng: float, regions: list[Circle]) -> bool:
@@ -342,6 +350,36 @@ def evidence_line_use(
     return LineUse(False, "not_for_category", None)
 
 
+# ---------------------------------------------------------------- 카카오맵 검색 링크 (#798, #800)
+# docs/constraints.md 「카카오맵 검색 링크」. 링크 형식과 동네 자르기는 places.api가 정한다 — 여기는 검색어의 말과 동네 고르기만.
+
+EXTERNAL_SEARCH_QUERY_MAX = 100  # api-spec ExternalSearch.query maxLength
+
+
+def external_search_query(
+    area: str | None, category: str, lines: Sequence[tuple[str, str | None, bool | None]], off_season: Collection[str],
+) -> str:
+    """검색어 "{동네} {말}". lines는 이번 run의 활성 근거 줄 (badge, fact_key, wants)를 근거 줄 순서로 — 사유 원문은 받지
+    않는다(#717). 말은 쓰이는 줄(evidence_line_use) 중 원함 방향(wants가 참)이고 조건 말 표에 있는 키의 말 하나(첫째),
+    없으면 카테고리 말이다. 동네가 없거나 붙이면 검색어 상한을 넘으면 말만 쓴다."""
+    word = next(
+        (
+            constraints.CONDITION_SEARCH_WORDS[fact_key] for badge, fact_key, wants in lines
+            if wants is True and fact_key in constraints.CONDITION_SEARCH_WORDS
+            and evidence_line_use(badge, fact_key, wants, category, off_season)[0]
+        ),
+        constraints.CATEGORY_SEARCH_WORDS[category],
+    )
+    query = f"{area} {word}" if area else word
+    return query if len(query) <= EXTERNAL_SEARCH_QUERY_MAX else word
+
+
+def most_common_area(areas: Iterable[str | None]) -> str | None:
+    """가장 많이 나온 동네(None은 세지 않는다). 같은 수면 가나다순으로 앞의 것이라 입력 순서와 무관하다. 없으면 None."""
+    counts = Counter(area for area in areas if area)
+    return min(counts, key=lambda area: (-counts[area], area)) if counts else None
+
+
 MAX_SHOWN_PREFERENCE_CHECKS = 5  # 결과 카드에 보이는 충족한 선호 체크 수(docs/constraints.md "결과 카드에 선호 조건을 보이는 법", #681-4)
 
 
@@ -376,7 +414,7 @@ def limit_preference_checks(
     """결과 카드에 실을 체크 — 「? 확인 필요」·「✗ …아님」은 실격 조건(hard, 🚫 사유로 낸 soft 키 `required_soft_keys`)의
     모름·거짓에만 붙이고, 선호(soft)는 충족한(known+passed) 것만 점수 기여 큰 순으로 `limit`줄까지 싣는다(#681-4).
     `to_satisfaction_checks`를 거친 체크를 받는다(passed = 그 사람 조건을 만족하는가). 순서는 원래 순서를 지킨다.
-    "외 N개"는 응답에 칸이 없어 싣지 않는다(for_Root.md 보고)."""
+    "외 N개"는 싣지 않는다(docs/constraints.md "결과 카드에 선호 조건을 보이는 법", 2026-10-24 결정)."""
     keep_always = [
         c for c in checks if c.fact_key not in constraints.SOFT_FACT_KEYS or c.fact_key in required_soft_keys
     ]
@@ -454,8 +492,7 @@ def check_retry_limit(attempt_no: int) -> None:
 # ============================================================================
 # #112 — 선호 순위 점수 계산과 상위 3곳 선정 (#99 후속, ③-b)
 #
-# 규칙 정본은 이슈 #112 본문("할 일" 절, docs/constraints.md에 아직 옮겨지지 않은 상태 —
-# for_Root.md에 문서 갭으로 보고). 아래 세 함수가 이슈의 1~3단계에 각각 대응한다.
+# 규칙 정본은 docs/constraints.md "선호 점수 계산 (③-b)" 절(#112). 아래 세 함수가 이슈의 1~3단계에 각각 대응한다.
 # ============================================================================
 
 
@@ -529,7 +566,7 @@ def build_preference_criteria(
        조사 안 된 라벨은 애초에 신호가 없다).
     ② 참/거짓으로 답할 수 없는 라벨은 뺀다 — 소프트 키만 쓰므로 따로 거를 키가 없다(가격대는 #423에서 뺐다).
     ③ ♥ 받은 "장소" 개수(사람 수가 아니다)로 값이 갈리면 많은 쪽을 택한다. 정확히 반반이면
-       —이슈 본문이 이 경우를 정하지 않아 이 세션이 임시로 정함(for_Root.md 보고)— 신호가
+       (docs/constraints.md "입력 — 선호 프로필" 3번, #112) 신호가
        없다고 보고 그 라벨 자체를 기준에서 뺀다.
     ④ 이번 run에서 활성 실격 사유로 이미 쓰인 라벨(`disqualifying_fact_keys`)은 뺀다 — 통과한
        후보 전부가 이미 같은 값이라 점수 차이를 못 만든다.

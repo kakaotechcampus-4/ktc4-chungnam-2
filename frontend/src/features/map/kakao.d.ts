@@ -93,6 +93,8 @@ declare namespace kakao.maps.services {
     y: string
     place_url: string
     address_name: string
+    /** 도로명 주소. 없으면 빈 문자열이다. */
+    road_address_name: string
   }
 
   interface Pagination {

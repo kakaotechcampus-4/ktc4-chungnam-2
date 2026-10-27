@@ -225,10 +225,11 @@ def record_from_row(
 
 
 def _place_url(pin_row: PinRow, place: PlaceInfo | None) -> str | None:
-    """db 핀은 자체 DB가 기록한 카카오 URL, live 핀(#445)은 저장하지 않고 kakao_place_id로 응답 때 만든다."""
+    """db 핀은 places의 장소 링크(기록된 카카오 URL, 없으면 이름+동네 검색, #801), live 핀(#445)은 저장하지 않고
+    kakao_place_id로 응답 때 만든다."""
     if pin_row.source == "live":
         return core.kakao_place_url(pin_row.kakao_place_id) if pin_row.kakao_place_id else None
-    return place.kakao_place_url if place else None
+    return places_api.place_link(place) if place else None
 
 
 def _reaction_from_row(row: ReactionRow, display_name: str | None = None) -> Reaction:
@@ -287,7 +288,8 @@ def _find_live_pin_for_place(
     db: Session, map_id: str, place_id: str, *, hint_kakao_id: str | None = None, exclude_pin_id: uuid.UUID | None = None,
 ) -> str | None:
     """자체 DB 장소 place_id와 같은 가게를 이미 가리키는 이 지도의 실시간 핀 id(#569). 기준은 카카오 장소 ID뿐이다 —
-    요청 힌트의 카카오 ID가 그 핀의 것이거나, 그 핀의 카카오 ID가 기록된 자체 DB 장소가 place_id일 때. 이름·좌표는 보지 않는다."""
+    요청 힌트의 카카오 ID가 그 핀의 것이거나, 그 핀의 카카오 ID가 기록된 자체 DB 장소가 place_id일 때. 이름·좌표는 보지 않는다.
+    조회로 막아 DB 유니크가 아니다 — 같은 가게를 live와 db로 동시에 만들면 둘 다 생길 수 있다(받아들인 한계)."""
     query = select(PinRow.id, PinRow.kakao_place_id).where(
         PinRow.map_id == map_id, PinRow.deleted_at.is_(None), PinRow.source == "live", PinRow.kakao_place_id.is_not(None),
     ).order_by(PinRow.created_at, PinRow.id)
@@ -479,7 +481,8 @@ def _author_pin_response(db: Session, pin_row: PinRow, principal: Principal) -> 
 
 def update_pin(db: Session, pin: PinRow, principal: Principal, req: PinUpdateRequest) -> Pin:
     """PATCH /pins/{pinId}(#466) — 메모·분류만 바꾼다. 장소·근거·종류 필드는 이 함수가 건드리지 않는다.
-    수정과 pin.updated 이벤트는 같은 트랜잭션에 기록된다."""
+    수정과 pin.updated 이벤트는 같은 트랜잭션에 기록된다. 분류 수정과 반응이 동시에 오면 반응 수 확인을 지나칠 수
+    있다(받아들인 한계, #466)."""
     reaction_count = db.execute(
         select(func.count()).select_from(ReactionRow).where(ReactionRow.pin_id == pin.id)
     ).scalar_one()
@@ -512,10 +515,13 @@ def _viewer_pin_response(db: Session, pin_row: PinRow, principal: Principal, cur
 def resolve_pin(
     db: Session, pin: PinRow, principal: Principal, current_member_ids: set[str], req: PinResolveRequest,
 ) -> Pin:
-    """POST /pins/{pinId}/resolve(#501) — 실시간 핀을 자체 DB 핀으로 승격한다. live·일반 핀만 대상이고, 짝이 없거나
-    이미 db·AI·확정 핀이면 아무것도 바꾸지 않는다(이벤트도 없음). 핀 id·반응·사유·확정 항목은 그대로 둔다.
-    힌트(이름·좌표·주소)는 매칭에만 쓰고 저장·로깅하지 않는다. 같은 지도에 그 장소 핀이 이미 있으면 409(자동 병합 금지)."""
-    if pin.source != "live" or pin.kind != "일반":
+    """POST /pins/{pinId}/resolve(#501) — 실시간 핀을 자체 DB 핀으로 승격한다. live 핀만 대상이다. 확정 리스트에 든
+    live 핀도 승격한다(#763). AI 추천 핀은 늘 db라 대상이 아니다. 짝이 없거나 이미 db 핀이면 아무것도 바꾸지 않는다
+    (이벤트도 없음). 종류·핀 id·반응·사유·확정 항목은 그대로 두고, 동선은 다시 계산하지 않는다(다음 「동선 짜주기」 때 들어간다).
+    힌트(이름·좌표·주소)는 매칭에만 쓰고 저장·로깅하지 않는다. 같은 지도에 그 장소 핀이 이미 있으면 409(자동 병합 금지).
+    같은 핀을 두 요청이 동시에 부르면 핀 행을 잠그고 다시 읽어, 늦은 쪽은 이미 db 핀으로 보고 200을 낸다(#776)."""
+    db.refresh(pin, with_for_update=True)
+    if pin.source != "live":
         return _viewer_pin_response(db, pin, principal, current_member_ids)
 
     match = places_api.match_place(

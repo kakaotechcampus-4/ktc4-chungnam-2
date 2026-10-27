@@ -3,7 +3,7 @@ import { ME_USER_ID, nextId, store } from "../store";
 import { apiError } from "../util";
 
 /** NotificationType 선언 순서 — GET /me/notification-prefs는 이 순서로 전부 돌려준다(docs/api-spec.yaml) */
-export const NOTIFICATION_TYPES = ["pin_reaction", "member_joined", "owner_changed", "map_deleted", "my_ai_pin_published"] as const;
+export const NOTIFICATION_TYPES = ["pin_reaction", "member_joined", "owner_changed", "map_deleted"] as const;
 
 const prefsBody = () => ({ prefs: NOTIFICATION_TYPES.map((type) => ({ type, enabled: store.notificationPrefs[type] ?? true })) });
 

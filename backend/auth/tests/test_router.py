@@ -287,7 +287,7 @@ def test_success_keeps_entry_url_untouched(app_client, monkeypatch, kakao_config
 
 
 def test_withdrawn_account_login_is_redirected_not_json(app_client, db_session, monkeypatch, kakao_configured):
-    """탈퇴 계정의 재로그인도 JSON이 아니라 302다. 스펙에 맞는 값이 없어 server_error로 간다(auth/for_Root.md)."""
+    """탈퇴 계정의 재로그인도 JSON이 아니라 302다. server_error로 간다(login_error=withdrawn은 #409에서 취소, 2026-10-08)."""
     from datetime import datetime, timezone
 
     _mock_kakao_login(monkeypatch, kakao_id=77)
@@ -526,7 +526,7 @@ def test_me_after_withdraw_is_401(app_client, db_session):
 
 
 def test_missing_cookie_via_real_asgi_app_returns_envelope():
-    """auth/mentor-review-plan.md·auth/for_Root.md(루트 확인·결정 필요 3번)가 남겨둔 후속 —
+    """PR #71 멘토 리뷰가 남겨둔 후속 —
     throwaway 앱이 아니라 main.asgi_app(실제 CORS 배선까지 포함) + 실제 등록된 보호 라우트
     (/auth/me)로 401 봉투가 나오는지 확인한다. dependency_overrides 없이 main.app을 그대로
     쓰므로 db_session 픽스처가 필요 없다 — 쿠키가 없으면 DB에 닿기도 전에 막힌다.

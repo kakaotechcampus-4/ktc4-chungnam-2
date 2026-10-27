@@ -4,7 +4,7 @@ FK 백필은 이번 리비전 범위 밖이다 — maps.created_by/memberships.u
 reactions.user_id, recommend_runs.requested_by 등이 이미 "users(id) — auth 도착 시 FK"
 주석과 함께 String으로 들어가 있는데, 그 모듈들의 기존 dev 값이 실제 users.id(UUID 문자열)와
 일치한다는 보장이 없다. FK를 지금 걸면 그 값들이 위반된다 — 데이터 백필 또는 truncate 결정이
-먼저 필요하다(auth/for_Root.md 보고 대상).
+먼저 필요하다(#760).
 
 maps(#85, 0005_maps)가 develop에 먼저 머지되어 0005 슬롯을 가져갔으므로, 이 리비전은
 0006_users로 rebase되었다(backend/CLAUDE.md "마이그레이션 — 체인은 하나다": 먼저 머지된

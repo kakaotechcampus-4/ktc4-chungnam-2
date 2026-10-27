@@ -162,6 +162,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/qa-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * **스테이징 전용** QA 로그인 (#788, #789). FE는 쓰지 않는다. QA 하네스가 실제 HTTP로 핵심 흐름을 돌릴 때 카카오 로그인 없이 사용자를 만든다.
+         *     - 서버가 `PINGO_ENV=staging`이고 `QA_LOGIN_SECRET`이 있을 때만 이 경로가 있다. 그 밖의 환경(운영 포함)에는 경로가 없어 404다. 운영에 `QA_LOGIN_SECRET`이 있으면 서버가 뜨지 않는다.
+         *     - 헤더 `X-QA-Login-Secret`이 서버의 `QA_LOGIN_SECRET`과 같아야 한다. 다르거나 없으면 403 `FORBIDDEN`.
+         *     - 부를 때마다 새 사용자를 만든다. 로그인 수단은 `provider='qa'`라 게스트가 아니고(`is_guest=false`) 지도를 만들 수 있다. 응답에 카카오 로그인과 같은 세션 쿠키가 실린다.
+         *     - 스테이징과 운영은 `SESSION_SECRET`이 다르다. 여기서 받은 쿠키는 운영에서 401이다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    /** @description 스테이징의 QA_LOGIN_SECRET. 저장소·로그·채팅에 남기지 않는다 */
+                    "X-QA-Login-Secret": string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["QaLoginRequest"];
+                };
+            };
+            responses: {
+                /** @description 새 사용자를 만들었다. `Set-Cookie`로 세션 발급 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["User"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — 이름이 비었거나 50자 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/me": {
         parameters: {
             query?: never;
@@ -1358,7 +1417,8 @@ export interface paths {
          *     - **짝이 없으면**: 200 + 핀 그대로(`source: live` 유지). 이벤트도 없다. 화면은 데이터가 늘어난 뒤 다시 시도할 수 있다.
          *     - **이미 자체 DB 핀이면** 아무것도 하지 않고 200으로 핀을 그대로 돌려준다(화면이 호출을 아끼려 거르지만 호출해도 안전).
          *     - **같은 지도에 그 장소의 핀이 이미 있으면** 409 `PIN_DUPLICATE`(`detail.pin_id` = 이미 있는 핀). 자동 병합은 하지 않는다 — 두 핀의 반응·사유가 엉키므로 사람이 한쪽을 지운다.
-         *     - AI 추천·확정 핀은 live가 아니므로 항상 변화 없이 200이다. 분류는 핀의 `category`를 쓴다(본문에 없다).
+         *     - **확정 리스트에 든 실시간 핀도 승격한다**(#763). 종류(`kind: 확정`)와 확정 항목은 그대로이고, 동선은 다음 「동선 짜주기」(`POST /maps/{mapId}/route`) 때 들어간다. AI 추천 핀은 늘 자체 DB 핀이라 변화 없이 200이다. 분류는 핀의 `category`를 쓴다(본문에 없다).
+         *     - 화면은 실시간 핀의 위치를 카카오 SDK로 찾은 순간 이 요청을 한 번 부른다(#777). 409는 안내 없이 넘긴다.
          *     - **힌트(`place_name`·`lat`·`lng`·`address`)는 저장하지도 로깅하지도 않는다**(카카오 약관). 응답에도 싣지 않는다.
          */
         post: {
@@ -1915,7 +1975,7 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md).
+         * 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md). 남이 쓴 줄이 하나라도 섞이면 요청 전체가 403 FORBIDDEN이고 아무것도 바뀌지 않는다(#108).
          *     '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
          *     한 요청에 글 5개까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 글은 10개까지다(뺀 것도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
          */
@@ -3208,13 +3268,17 @@ export interface components {
             /** @description 들어갈 지도의 초대 토큰(GET /invites/{token}으로 요약을 본 그 토큰) */
             invite_token: string;
         };
+        QaLoginRequest: {
+            /** @description QA 사용자의 표시 이름. 앞뒤 공백을 지운 뒤 비어 있으면 422 */
+            display_name: string;
+        };
         GuestJoinResult: {
             user: components["schemas"]["User"];
             /** @description 방금 들어간 지도(POST /invites/{token}/accept의 응답과 같다) */
             map: components["schemas"]["Map"];
         };
         UserUpdateRequest: {
-            /** @description 계정 단위 표시 이름 (2026-09-30 결정) */
+            /** @description 계정 단위 표시 이름 (2026-09-30 결정). 앞뒤 공백을 지운 뒤 1~50자이고 지운 값을 저장한다(#160). 공백뿐이면 422 */
             display_name: string;
         };
         Map: {
@@ -3362,12 +3426,12 @@ export interface components {
         };
         /**
          * @description 알림 종류 (#470). `pin_reaction` 내 핀에 반응이 달림, `member_joined` 내 지도에 새 구성원(방장에게만),
-         *     `owner_changed` 내가 방장이 됨(직접 넘김·위임 모두), `map_deleted` 내가 속한 지도가 삭제됨,
-         *     `my_ai_pin_published` 내가 요청한 AI 추천이 지도에 올라감(다른 구성원이 「지도에 올리기」를 눌렀을 때).
+         *     `owner_changed` 내가 방장이 됨(직접 넘김·위임 모두), `map_deleted` 내가 속한 지도가 삭제됨.
+         *     `my_ai_pin_published`는 지웠다(#764). 「지도에 올리기」는 요청자 본인만 누를 수 있어 만들어지지 않는다. FE는 이 종류를 쓰지 않는다.
          *     지도 복구(#464)·강퇴(#8)는 그 기능이 들어올 때 종류를 더한다.
          * @enum {string}
          */
-        NotificationType: "pin_reaction" | "member_joined" | "owner_changed" | "map_deleted" | "my_ai_pin_published";
+        NotificationType: "pin_reaction" | "member_joined" | "owner_changed" | "map_deleted";
         Notification: {
             id: string;
             type: components["schemas"]["NotificationType"];
@@ -3375,7 +3439,7 @@ export interface components {
             map_id: string;
             /** @description 알림을 만들 때의 지도 제목(그 뒤에 바뀌어도 그대로). 지도 삭제 알림을 위해 남겨 둔다 */
             map_title?: string;
-            /** @description `pin_reaction`, `my_ai_pin_published`만 — 누르면 그 핀으로 이동. 그 핀이 지워졌으면 FE가 404를 받아 조용히 지도로만 이동한다 */
+            /** @description `pin_reaction`만 — 누르면 그 핀으로 이동. 그 핀이 지워졌으면 FE가 404를 받아 조용히 지도로만 이동한다 */
             pin_id?: string;
             /** @description 서버가 만든 문장. 예 "지우님이 내 핀에 ♥를 남겼어요". 반대 사유·메모는 싣지 않는다 */
             message: string;
@@ -3528,7 +3592,7 @@ export interface components {
         };
         /** @description GET /places/search 한 건 — **화면 표시용이며 서버에 저장되지 않는다**. 핀을 만들 때 place_id·place_name·lat·lng·category를 그대로 POST /maps/{mapId}/pins로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는 매칭 힌트로 쓴다 */
         PlaceSearchResult: {
-            /** @description "<소스>:<소스 내 id>" 형태(예 kakao:1234). 불투명 값으로 취급한다 */
+            /** @description "<소스>:<소스 내 id>" 형태(예 kakao:1234, 자체 DB 장소는 own:<uuid>). 불투명 값으로 취급한다 */
             place_id: string;
             /** @description POST /maps/{mapId}/pins의 place_name과 같은 이름 — 그대로 보낸다 */
             place_name: string;
@@ -3579,7 +3643,7 @@ export interface components {
             search_query?: string;
             /** @description 자체 DB 장소의 이름 (#191). 핀에 따로 저장하지 않고 장소에서 가져온다. live 핀에는 없다(#382) — 화면이 실시간 검색 결과에서 읽는다 */
             place_name?: string;
-            /** @description 카카오 장소 페이지 링크. **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 자체 DB 핀은 매칭된 장소에 기록된 URL(저장 허용), 실시간 핀(source=live)은 kakao_place_id로 응답 때 만든다(저장하지 않음, #445). 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 필드를 생략한다 */
+            /** @description 카카오 장소 페이지 링크. **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 자체 DB 핀은 매칭된 장소에 기록된 URL(저장 허용), 실시간 핀(source=live)은 kakao_place_id로 응답 때 만든다(저장하지 않음, #445). 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 `{장소 이름} {동네}` 카카오맵 검색 링크다(#798, #801). 이름도 주소도 없으면 필드를 생략한다 */
             place_url?: string;
             /** @description 핀을 찍은 구성원의 user_id (#26) */
             created_by: string;
@@ -3592,7 +3656,6 @@ export interface components {
             created_by_display_name?: string;
             /** @description 게시된 AI 추천 핀도 상세에서 계속 노출한다 (가드레일 5) */
             checks?: components["schemas"]["Check"][];
-            source_run_id?: string | null;
             /** @description AI 추천 핀만 — 추천 이유. 게시된 뒤에도 유지 (가드레일 5) */
             reason?: string;
             member_fulfillment?: components["schemas"]["MemberFulfillment"];
@@ -3654,10 +3717,15 @@ export interface components {
             answered_count?: number;
             /** @description 항상 1. 구성원 수에 비례하던 ceil(N/2)는 폐기했다(#360). 필드를 남긴 것은 FE 호환(「의견 핀 0/1」 표기)용이다 */
             required_count?: number;
+            /** @description 추천 기본 지역(그 카테고리 의견 핀들의 중심)에서 반경 넓히기 상한(도보 30분) 안의 추천 가능 장소(정예) 수(#798). 의견 핀이 없어 기본 지역이 없으면 필드가 없다. 0이면 추천해도 결과가 0곳이다 — 화면은 추천 버튼을 막지 않고 external_search를 함께 보여 준다 */
+            curated_nearby?: number;
+            /** @description curated_nearby가 0일 때만 */
+            external_search?: components["schemas"]["ExternalSearch"];
         };
         EvidenceLine: {
             id: string;
             author_id: string;
+            /** @description 그 줄을 쓴 사람의 표시 이름. 핀 작성자와 같은 규칙이다: 탈퇴했으면 '탈퇴한 구성원', 이 지도에서 나갔으면 '나간 구성원', 아니면 실명. 조회할 때 계산한다(#369, #762) */
             author_display_name?: string;
             text: string;
             /**
@@ -3739,8 +3807,22 @@ export interface components {
             total: number;
             by_member?: {
                 user_id: string;
+                /** @description 서버는 채우지 않는다. 이 집계는 저장되고 게시할 때 핀으로 복사되므로 이름을 담지 않는다. FE는 user_id로 구성원 목록에서 이름을 찾는다(#762) */
                 display_name?: string;
                 satisfied: boolean;
+                /** @description 이 구성원의 조건별 상태(#796). 구성원 `satisfied`(조건을 전부 충족했는가)는 그대로이고, 이 목록이 부분 충족과 「확인 필요」를 보여 준다. 없으면 구버전 서버라 `satisfied`만 쓴다. 키 없는 반대 사유는 넣지 않는다. 직접 쓴 선호·실격 조건(근거 줄이 있는 것)은 met·unmet·needs_check를 모두 담고, ♥에서 나온 선호는 met만 담는다(constraints.md 「결과 카드에 선호 조건을 보이는 법」). 순위·추천 포함 여부는 이 값과 무관하다(표시용) */
+                conditions?: {
+                    fact_key: string;
+                    /** @description fact_key의 화면 표시 이름(EvidenceLine.fact_label과 같은 값). 서버가 내려 주므로 FE가 키→이름 표를 들지 않는다. 사용자가 쓴 글은 담지 않는다(#717) */
+                    fact_label?: string | null;
+                    /** @description 이 조건이 직접 쓴 근거 줄에서 나왔으면 그 줄의 id. ♥에서 나왔으면 null */
+                    evidence_line_id?: string | null;
+                    /**
+                     * @description met=확인했고 맞음, unmet=확인했고 틀림, needs_check=후보 라벨이 모름이라 판단 못 함(「확인 필요」)
+                     * @enum {string}
+                     */
+                    status: "met" | "unmet" | "needs_check";
+                }[];
             }[];
         };
         /** @description 장소 정보 출처 (가드레일 5, 5-6-1 지도 출처 표시) */
@@ -3768,6 +3850,8 @@ export interface components {
             reason: string;
             member_fulfillment: components["schemas"]["MemberFulfillment"];
             place_source?: components["schemas"]["PlaceSource"];
+            /** @description 「카카오맵에서 보기」 링크(#798). 장소에 기록된 카카오 장소 페이지가 있으면 그것, 없으면 `{장소 이름} {동네}` 카카오맵 검색 링크다. 이름도 주소도 없으면 필드가 없다. 외부 브라우저로 연다(앱 안 WebView 금지) */
+            place_url?: string;
             /** @enum {string} */
             visibility: "private" | "published";
             /** @description 게시하기 전에는 null이거나 필드가 없다 */
@@ -3783,6 +3867,19 @@ export interface components {
             }[];
             regions: components["schemas"]["Region"][];
             candidates: components["schemas"]["Candidate"][];
+            /** @description 후보가 3곳 미만일 때만(#798). 기준값은 서버가 정한다 — 화면에 숫자를 적지 않는다 */
+            external_search?: components["schemas"]["ExternalSearch"];
+        };
+        /**
+         * @description 카카오맵 검색 링크(#798). 핀고에 결과가 없거나 적을 때 사람이 밖에서 직접 찾는 출구다 — AI 추천 결과가 아니다. 서버는 카카오를 부르지 않고 저장하지 않는다(#53).
+         *     검색어 규칙은 docs/constraints.md 「카카오맵 검색 링크」: `{동네} {말}`, 말은 원함 조건 하나(표에 있는 키) 또는 카테고리 말. 사유 원문은 들어가지 않는다.
+         *     **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관)
+         */
+        ExternalSearch: {
+            /** @description 검색어. 화면에 그대로 보여 준다(예 "춘천 한식") */
+            query: string;
+            /** @description https://map.kakao.com/link/search/ + 검색어 */
+            url: string;
         };
         ShortlistItem: {
             id: string;
@@ -3927,7 +4024,7 @@ export interface components {
         };
         AgentSplitPref: {
             fact_key?: string;
-            /** @description 예: "조용함" */
+            /** @description 예: "조용한 곳"(키 표시 이름 그대로, #586) */
             label: string;
             want_count: number;
             avoid_count: number;
@@ -4326,7 +4423,10 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 필터 통과 후보 0개 (6절 "결과 0개") */
+        /**
+         * @description 필터 통과 후보 0개 (6절 "결과 0개"). `detail.funnel`(단계별로 빠진 수)과 `detail.external_search`(ExternalSearch, 카카오맵 검색 링크, #798)가 온다.
+         *     화면은 반경 넓히기, 근거 고치기와 함께 「카카오맵에서 더 찾아보기」를 보여 준다
+         */
         NoResults: {
             headers: {
                 [name: string]: unknown;

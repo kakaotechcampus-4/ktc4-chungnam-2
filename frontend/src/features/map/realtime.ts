@@ -48,7 +48,8 @@ function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
     'pin.created': [counts],
     'pin.published': [counts],
     // 분류가 바뀌었을 때만 필요하지만 페이로드에 예전 분류가 없어 늘 다시 받는다.
-    'pin.updated': [counts, readiness],
+    // 확정 리스트는 핀을 따로 들고 있어 실시간 핀 승격(#777)으로 이름이 바뀌면 다시 받는다(#786).
+    'pin.updated': [counts, readiness, { queryKey: shortlistKeys.list(mapId) }],
     'pin.deleted': [counts, readiness],
     'reaction.changed': [counts, readiness],
     'member.joined': [map, members],

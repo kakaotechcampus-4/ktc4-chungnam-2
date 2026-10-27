@@ -29,6 +29,7 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/maps/{mapId}/events/me"): "SSE 스트림 — realtime 테스트가 담당",
+    ("POST", "/auth/qa-login"): "스테이징 전용 — 테스트 앱에 없다(#788), staging 설정 앱으로 auth 테스트가 본다(#789)",
 }
 
 _EXERCISED: set[tuple[str, str]] = set()   # 이 모듈의 테스트들이 실제로 호출한 (메서드, 스펙 경로)
@@ -639,6 +640,35 @@ def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions)
     segments = advice.json()["advice"][0]["segments"]   # 조언은 조각으로(#717), 숫자는 claim에서
     assert all(s["kind"] == "text" for s in segments) and "12곳" in "".join(s["text"] for s in segments)
     assert a.get(f"/runs/{runs[2]}/advice").json() == advice.json()   # run당 한 번 — 다시 열어도 같다
+    assert not problems, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(problems)
+
+
+def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client):
+    """카카오맵 검색 링크(#798, #800) — readiness의 curated_nearby·external_search, 결과가 적을 때의 external_search, 결과 카드의
+    place_url. 추천의 장소 Gateway를 실제 구현(places.api → FakePlaces)으로 꽂는다. FakePlaces 샘플은 정예도 주소도 없어
+    readiness는 0곳 + 링크(동네는 지도의 지역 이름), 결과는 지도에 없는 성수 음식점 1곳 + 링크다."""
+    from recommend import deps as recommend_deps
+
+    app_client.app.dependency_overrides[recommend_deps.get_place_search_gateway] = lambda: recommend_deps.RealPlaceSearchGateway()
+    app_client.app.dependency_overrides[recommend_deps.get_place_facts_gateway] = lambda: recommend_deps.RealPlaceFactsGateway()
+    a, _b, problems = clients
+    map_id = a.post("/maps", json={"title": "성수", "start_date": "2026-12-01", "end_date": "2026-12-02",
+                                   "region": {"label": "성수동", "lat": 37.5445, "lng": 127.0561}}).json()["id"]
+    pin_id = a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-kalguksu")).json()["id"]
+    assert a.put(f"/pins/{pin_id}/reaction", json={"type": "like"}).status_code == 200
+
+    readiness = a.get(f"/maps/{map_id}/recommend/readiness").json()
+    assert readiness["음식점"]["curated_nearby"] == 0
+    assert readiness["음식점"]["external_search"]["query"] == "성수동 맛집"
+    assert "curated_nearby" not in readiness["카페"]   # 의견 핀이 없다
+
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
+    assert a.post(f"/runs/{run_id}/execute").status_code == 202
+    result = a.get(f"/runs/{run_id}/result").json()
+    [candidate] = result["candidates"]
+    assert candidate["place_url"].startswith("https://map.kakao.com/link/search/")
+    assert result["external_search"]["query"] == "성수동 맛집"
     assert not problems, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(problems)
 
 

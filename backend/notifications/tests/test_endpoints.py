@@ -152,14 +152,14 @@ def test_prefs_default_to_all_on_in_declared_order(app_client, as_a):
     r = app_client.get("/me/notification-prefs", cookies=as_a)
     assert r.status_code == 200
     assert r.json() == {"prefs": [{"type": t, "enabled": True} for t in (
-        "pin_reaction", "member_joined", "owner_changed", "map_deleted", "my_ai_pin_published")]}
+        "pin_reaction", "member_joined", "owner_changed", "map_deleted")]}
 
 
 def test_put_prefs_changes_only_the_sent_types_and_returns_the_whole(app_client, as_a, as_b):
     r = app_client.put("/me/notification-prefs", json={"prefs": [{"type": "pin_reaction", "enabled": False}]}, cookies=as_a)
     assert r.status_code == 200
     assert {p["type"]: p["enabled"] for p in r.json()["prefs"]} == {
-        "pin_reaction": False, "member_joined": True, "owner_changed": True, "map_deleted": True, "my_ai_pin_published": True}
+        "pin_reaction": False, "member_joined": True, "owner_changed": True, "map_deleted": True}
     r = app_client.put("/me/notification-prefs", json={"prefs": [{"type": "map_deleted", "enabled": False}]}, cookies=as_a)
     assert {p["type"] for p in r.json()["prefs"] if not p["enabled"]} == {"pin_reaction", "map_deleted"}    # 앞의 설정이 남는다
     r = app_client.put("/me/notification-prefs", json={"prefs": [{"type": "pin_reaction", "enabled": True}]}, cookies=as_a)

@@ -59,7 +59,7 @@ def create_ai_pin(
     간주해 구성한다 — 게시(recommend.publish)는 구성원만 할 수 있어(비구성원은 can()이 먼저
     거른다) 이 전제가 깨질 일이 없다.
     recommend가 실제로 붙을 때 자신이 이미 resolve한 Principal을 넘기도록 바꾸는 편이 더
-    정확하다(for_Root.md에 남김)."""
+    정확하다."""
     principal = Principal(user_id=created_by, map_id=map_id, role="member")
     validated_checks = (
         [check.model_dump() for check in _ChecksAdapter.validate_python(checks)]
@@ -104,7 +104,7 @@ def create_ai_pin(
         visibility="public", lat=lat, lng=lng, created_by=created_by,
         reaction_counts=core.ReactionCounts(),
         place_name=place.name if place else None,
-        place_url=place.kakao_place_url if place else None,
+        place_url=places_api.place_link(place) if place else None,   # AI 추천 핀은 늘 자체 DB 핀이다(#801)
         created_by_display_name=display_name,
         created_at=pin_row.created_at,
         checks=validated_checks,
@@ -172,6 +172,13 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
     return core.to_pin_response(record, principal)
 
 
+def author_display_names(db: Session, author_ids: list[str], current_member_ids: set[str]) -> dict[str, str | None]:
+    """작성자 id 배치의 표시 이름(#369 핀 작성자 규칙) — 탈퇴했으면 '탈퇴한 구성원', 이 지도에서 나갔으면
+    '나간 구성원', 아니면 실명. recommend 근거 줄 작성자(#762)가 규칙을 복사하지 않고 이것을 부른다.
+    current_member_ids는 호출부가 maps.api.DbMembershipGateway.current_member_ids(map_id)로 한 번 구해 넘긴다."""
+    return service.author_display_names(db, author_ids, current_member_ids)
+
+
 def count_public_pins_by_map(db: Session, map_ids: Sequence[str]) -> dict[str, int]:
     """maps(#313)가 Map.pin_count·InviteSummary.pin_count에 쓴다 — 삭제되지 않은 공개 핀 수.
     핀이 없는 지도는 0이다. 쿼리는 한 번이다. 비공개 핀(남의 AI 후보)은 세지 않는다(가드레일 1) —
@@ -206,9 +213,7 @@ def count_opinion_pins(db: Session, *, map_id: str, category: str) -> int:
 
 def get_category_pin_coordinates(db: Session, *, map_id: str, category: str) -> list[tuple[str, float, float]]:
     """recommend의 지역(regions) 기본값 계산(5-6-1, recommend/#108)이 쓴다 — 그 카테고리의
-    삭제되지 않은 공개 핀 좌표 전부(anchor 후보). place_facts/PlaceSource가 아직 없어 recommend가
-    "검색 범위 중심"을 스스로 정할 방법이 이것뿐이다(recommend/for_Root.md에 이 기본값 원
-    설계를 상세히 기록). 좌표가 없는 실시간 핀(#382)은 빠진다."""
+    삭제되지 않은 공개 핀 좌표 전부(anchor 후보). 핀마다의 원으로 바꾸는 일은 #274. 좌표가 없는 실시간 핀(#382)은 빠진다."""
     lat_col, lng_col = service._lat_lng_columns()
     rows = db.execute(
         select(PinRow.id, lat_col, lng_col).where(

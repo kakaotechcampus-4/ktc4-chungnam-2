@@ -88,9 +88,8 @@ def can(user: Principal, action: str, resource: Resource) -> bool:
 
 
 def _pin_permissions(user: Principal, resource: Resource) -> Permissions:
-    """kind==확정 게이팅은 permissions.md에 없는 상태 규칙이라 can()이 아니라 여기 둔다
-    (for_Root.md 참고). backend/pins/core.py::pin_permissions와 응답이 바이트 단위로 같아야
-    한다 — #56 이관 시 FE가 받는 JSON이 바뀌면 안 된다."""
+    """kind==확정 게이팅은 역할이 아니라 상태 규칙이라 can()이 아니라 여기 둔다
+    (docs/permissions.md「확정 리스트(shortlist) permissions 게이팅」 1번, #65)."""
     can_add = can(user, "shortlist.add", resource) and resource.kind != "확정"
     can_remove = can(user, "shortlist.remove", resource) and resource.kind == "확정"
     # 반응 못 받는 카테고리(숙소·기타, permissions.md "숙소·기타 핀의 반응 게이팅")는 역할이 아니라 리소스 상태로 막는다.
@@ -114,7 +113,7 @@ def _evidence_line_permissions(user: Principal, resource: Resource) -> Permissio
 
 def _shortlist_item_permissions(user: Principal, resource: Resource) -> Permissions:
     """can_add_to_shortlist는 항상 False — 이미 리스트에 올라간 항목이라 "추가"가 의미가 없다.
-    shortlist(#7) 미구현 상태에서의 추정 — for_Root.md에 보고."""
+    docs/permissions.md「확정 리스트(shortlist) permissions 게이팅」 2번(#65)."""
     return Permissions(
         can_add_to_shortlist=False,
         can_remove_from_shortlist=can(user, "shortlist.remove", resource),
@@ -125,9 +124,9 @@ def permissions_for(user: Principal, resource: Resource) -> Permissions:
     """모든 리소스 응답에 주입하는 permissions 객체 — 다른 모듈이 부르는 공용 진입점
     (authz/CLAUDE.md "모든 리소스 응답에 permissions 객체를 계산해 주입하는 공통 유틸").
 
-    리소스 종류별로 의미 있는 필드만 채우고 나머지는 None으로 둔다. map·candidate는 계약에
-    permissions 필드가 없어(candidate는 for_Root.md에 계약 갭으로 보고됨) 지원하지 않는다 —
-    호출하면 무엇이 비어 있는지 알 수 있도록 예외를 던진다."""
+    리소스 종류별로 의미 있는 필드만 채우고 나머지는 None으로 둔다. map(maps/core.py)과
+    candidate(recommend/flows.py)는 그 모듈이 can()으로 직접 조립하므로 여기서는 지원하지 않고
+    예외를 던진다."""
     if resource.type == "pin":
         return _pin_permissions(user, resource)
     if resource.type == "evidence_line":
@@ -136,5 +135,5 @@ def permissions_for(user: Principal, resource: Resource) -> Permissions:
         return _shortlist_item_permissions(user, resource)
     raise ValueError(
         f"resource.type={resource.type!r}에는 permissions 빌더가 없습니다 — "
-        "api-spec.yaml에 permissions 필드가 없는 리소스입니다(for_Root.md 참고)"
+        "map은 maps.core, candidate는 recommend.flows가 직접 조립합니다"
     )

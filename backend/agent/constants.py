@@ -7,14 +7,15 @@
 from datetime import timedelta
 
 from common.settings import settings
+from recommend.schemas import FEW_RESULTS
 
 TICK_INTERVAL_SEC = 300            # tick 주기
 LEASE_SEC = 180                    # 관찰 lease
 TICK_MAX_MAPS = 6                  # tick당 처리 지도 수. 관찰 최악 약 16초(#534) × 10이 lease 180초에 가까워 6으로(#582)
-TICK_BUDGET_SEC = LEASE_SEC - 30   # tick 시작 뒤 이만큼 지나면 남은 지도는 관찰하지 않고 lease만 푼다(#677). 5절 밖
+TICK_BUDGET_SEC = LEASE_SEC - 30   # tick 시작 뒤 이만큼 지나면 남은 지도는 관찰하지 않고 lease만 푼다(#677, #754)
 AGENT_LOOP_IN_PROCESS = settings.agent_loop_in_process   # 환경 변수 AGENT_LOOP_IN_PROCESS(기본 꺼짐, 12.1)
 
-# 관찰이 예외로 끝난 지도를 다시 보기까지의 간격 — 그 지도의 연속 error 1회, 2회, 3회 이상(#677, 초안). 5절 밖
+# 관찰이 예외로 끝난 지도를 다시 보기까지의 간격 — 그 지도의 연속 error 1회, 2회, 3회 이상(#677, 초안)
 ERROR_RETRY_DELAYS = (timedelta(minutes=30), timedelta(hours=2), timedelta(hours=6))
 
 PER_MEMBER_DAILY_MODEL_USES = 4    # 개인 단위 값. 지도 상한 = 구성원 수 × 이 값
@@ -38,7 +39,7 @@ CATEGORY_GAP_MIN_CONFIRMED = 2
 
 SUMMARY_NEW_REASONS = 3
 
-BLOCKED_RUN_MAX_RESULTS = 3        # 결과가 이 값 미만이면 추천 막힘
+BLOCKED_RUN_MAX_RESULTS = FEW_RESULTS   # 결과가 이 값 미만이면 추천 막힘. 값은 recommend가 정한다(#800)
 BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS = 3   # 또는 같은 사람이 같은 카테고리 run을 이 값 이상 만들었으면 (초안)
 # 재시도 상한(attempt_no)은 개인 단위, 카테고리 무관, 5회다(#31). attempt_no로 세면 다른 카테고리 시도가 섞이고,
 # 4회면 1회밖에 남지 않는다. 그래서 같은 카테고리 run 수를 따로 센다(GET /maps/{mapId}/runs의 기록, #469).

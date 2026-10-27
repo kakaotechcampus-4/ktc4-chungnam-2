@@ -71,7 +71,7 @@ def test_missing_cookie_via_http_returns_envelope():
     등록 순서·asgi_app 배선이 맞는지는 증명하지 않는다. 지금은 "AppError가 의존성 단계에서
     앱 레벨 핸들러에 잡히는가"라는 좁은 질문에 답하는 게 목적이다. 실제 main.asgi_app 경로를
     타는 확인은 이제 auth/tests/test_router.py::test_missing_cookie_via_real_asgi_app_returns_envelope가
-    한다(auth/for_Root.md "루트 확인·결정 필요" 3번 해소).
+    한다.
     """
     app = FastAPI()
     register_error_handlers(app)

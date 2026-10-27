@@ -42,7 +42,8 @@ def latest_run_place_ids(db: Session, *, map_id: str, requested_by: str, categor
 def get_readiness(db: Session, *, map_id: str, category: str) -> dict:
     """agent의 반대 후 정체 진단(docs/agent-v2.md 6.2, 10절 get_readiness, #530)이 부른다 — 그 카테고리가 추천
     준비(⓪)를 통과했나. `{ready, answered_count, required_count}`, `GET /maps/{mapId}/recommend/readiness`의 한
-    카테고리 값과 같다(같은 함수 flows.readiness_for_category). 권한은 보지 않는다(agent가 구성원 범위에서 부른다).
+    카테고리 값에서 정예 장소 수(curated_nearby, external_search, #798)를 뺀 것과 같다(같은 함수
+    flows.readiness_for_category). 권한은 보지 않는다(agent가 구성원 범위에서 부른다).
     추천 대상이 아닌 카테고리(숙소·기타)는 ValueError — 라우터 응답에도 그 키가 없다. 읽기 전용, 커밋하지 않는다."""
     if category not in categories.recommendable():
         raise ValueError(f"추천 대상이 아닌 카테고리: {category}")
@@ -153,7 +154,7 @@ def simulate_filter(
 
     장소 검색·라벨 Gateway는 생략하면 실행(라우터)과 같은 것을 고른다(recommend.deps, dev는 스텁). 쓰지 않는다 —
     run·후보·근거 줄·지역·제외 목록·last_funnel 모두 그대로다. 그 run의 근거 줄이 아닌 id는 NOT_FOUND, radius_factor가
-    0 이하면 ValueError. 권한 판정 없음(위 주석)."""
+    0 이하이거나 반경 넓히기 상한(widen_limit_walk_min / default_radius_walk_min)을 넘으면 ValueError(#792). 권한 판정 없음(위 주석)."""
     return flows.simulate_filter(
         db, run_id=run_id, radius_factor=radius_factor, disable_line_ids=disable_line_ids,
         place_search=place_search or deps.get_place_search_gateway(),

@@ -20,7 +20,7 @@ WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 # 내 지도 상한(#369 15번) — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다.
 MAP_LIMIT = 20
 
-# 목서버(contracts/mocks/handlers/maps.ts:33)와 동일한 7일 — 정본이 없다(maps/for_Root.md 보고).
+# 초대 링크 유효 기간 7일. 정본은 docs/data-model.md invites 절(목서버 contracts/mocks/handlers/maps.ts와 같다).
 INVITE_TTL = timedelta(days=7)
 
 
@@ -305,8 +305,8 @@ def to_map_response(
     viewer_id: str,
     next_owner: NextOwner | None = None,
 ) -> Map:
-    """confirmed_count는 shortlist_items 개수 — shortlist.api.count_confirmed로 채운다(루트,
-    maps/for_Root.md 항목 5 해결). 그래도 매개변수를 Optional로 남긴다 — 값을 못 구하는
+    """confirmed_count는 shortlist_items 개수 — shortlist.api.count_confirmed로 채운다.
+    그래도 매개변수를 Optional로 남긴다 — 값을 못 구하는
     호출부가 생기면 0(거짓 "확정 0개")이 아니라 None(라우터가 키 자체를 생략)으로 정직하게
     빠지게 하려는 의도다.
 
@@ -335,7 +335,7 @@ def to_member_response(
     user_id: str, *, role: Role, display_name: str | None, online: bool | None
 ) -> Member:
     """role은 memberships.role 그대로다(#369 11번 — maps.created_by로 판정하지 않는다).
-    display_name은 auth.api.display_names로 채운다(루트, maps/for_Root.md 항목 5 해결).
+    display_name은 auth.api.display_names로 채운다(탈퇴자는 '탈퇴한 구성원', #155).
     online은 여전히 채울 데이터 출처가 없다(realtime에 presence 없음, #32 별건) — user_id로
     대체하거나 False로 채우지 않는다(그럴싸해 보이는 거짓 fallback이다)."""
     return Member(user_id=user_id, role=role, display_name=display_name, online=online)

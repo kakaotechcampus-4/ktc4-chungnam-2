@@ -10,7 +10,7 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime
 
 # api-spec NotificationType의 선언 순서 — GET /me/notification-prefs가 이 순서로 돌려준다
-TYPES: tuple[str, ...] = ("pin_reaction", "member_joined", "owner_changed", "map_deleted", "my_ai_pin_published")
+TYPES: tuple[str, ...] = ("pin_reaction", "member_joined", "owner_changed", "map_deleted")
 
 MESSAGE_MAX = 200     # api-spec Notification.message maxLength
 MAP_TITLE_MAX = 100   # api-spec Notification.map_title maxLength
@@ -36,8 +36,6 @@ def compose_message(type: str, *, actor_name: str | None = None, map_title: str 
     elif type == "map_deleted":
         title = (map_title or "").strip()
         text = f"'{clip(title, 40)}' 지도가 삭제되었어요" if title else "지도가 삭제되었어요"
-    elif type == "my_ai_pin_published":
-        text = f"{actor}님이 내가 요청한 AI 추천을 지도에 올렸어요"
     else:
         raise ValueError(f"모르는 알림 종류: {type!r}")
     return clip(text, MESSAGE_MAX)

@@ -8,6 +8,7 @@
 이 테스트는 docs/constraints.md의 표를 읽어 행마다 실제 동작과 비교한다. id와 키는 여기 적지 않는다.
 - 「반대 사유 칩 (v1)」 표의 배지 열: 칩 → 근거 줄(recommend.flows) → 원함 내리기(recommend.api)를 거친 배지
 - 「♥에서 선호로 쓰는 라벨」 두 표: recommend.constraints.heart_signal_use의 결과, 양방향, 카테고리 soft 키 전부(기본값 없음, #738)
+- 「카카오맵 검색 링크」의 카테고리 말·조건 말 표: recommend.constraints.CATEGORY_SEARCH_WORDS, CONDITION_SEARCH_WORDS(#800)
 칩 표의 나머지 열(id, label, 카테고리, fact_key, wants)은 pins/tests/test_chips.py가 본다.
 """
 
@@ -16,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from common import categories
 from pins import chips
 from recommend import api as recommend_api
 from recommend import constraints
@@ -167,3 +169,38 @@ def test_two_or_more_threshold_matches_the_table_wording():
     assert words == {constraints.HEART_SIGNAL_MIN_TRUE_PLACES}, (
         f"표의 'N곳 이상'({sorted(words)})과 HEART_SIGNAL_MIN_TRUE_PLACES({constraints.HEART_SIGNAL_MIN_TRUE_PLACES})가 다르다"
     )
+
+
+# ---------- 카카오맵 검색 링크: 카테고리 말, 조건 말 (#798, #800) ----------
+
+def _search_word_tables() -> tuple[dict[str, str], dict[str, str]]:
+    """(카테고리 → 말, fact_key → 말). 절 안에 표가 둘이라 「카테고리 말:」, 「조건 말:」 줄로 나눠 읽는다."""
+    section = _section("카카오맵 검색 링크")
+    assert "카테고리 말:" in section and "조건 말:" in section, "검색어 표 앞의 「카테고리 말:」, 「조건 말:」 줄을 못 찾았다"
+    category_part, condition_part = section.split("카테고리 말:", 1)[1].split("조건 말:", 1)
+    category_words = {row[0]: row[1] for row in _rows(category_part)}
+    condition_words = {row[0].strip("`"): row[1] for row in _rows(condition_part)}
+    assert category_words and condition_words, "검색어 표를 못 읽었다"
+    return category_words, condition_words
+
+
+def test_category_search_words_match_the_table():
+    category_words, _ = _search_word_tables()
+    assert constraints.CATEGORY_SEARCH_WORDS == category_words, (
+        "「카테고리 말」 표와 recommend.constraints.CATEGORY_SEARCH_WORDS가 다르다 — 문서 표가 정본이다"
+    )
+
+
+def test_condition_search_words_match_the_table():
+    _, condition_words = _search_word_tables()
+    assert constraints.CONDITION_SEARCH_WORDS == condition_words, (
+        "「조건 말」 표와 recommend.constraints.CONDITION_SEARCH_WORDS가 다르다 — 문서 표가 정본이다"
+    )
+
+
+def test_search_word_tables_use_known_categories_and_soft_keys():
+    """카테고리 말은 추천 카테고리마다 하나(없으면 검색어를 못 만든다), 조건 말은 등록된 soft 키만."""
+    category_words, condition_words = _search_word_tables()
+    assert set(category_words) == set(categories.recommendable())
+    unknown = sorted(set(condition_words) - constraints.SOFT_FACT_KEYS)
+    assert not unknown, f"「조건 말」 표에 soft 키가 아닌 것이 있다: {unknown}"

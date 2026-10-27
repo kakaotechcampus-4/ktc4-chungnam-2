@@ -24,10 +24,10 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     - recommend.evidence       # run 하위 근거(조회·토글·추가) — 구성원 누구나(#32 결정: "근거
                                 # 목록은 구성원별로 한 줄씩 따로 뜬다", 최종기획안 5-5). 개별
                                 # 줄 비활성화만 그 줄 작성자 본인 제한(아래 author 참고)
-    - invite.create            # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
+    - invite.create            # 초대 링크 발급 — "구성원 누구나" (#4 결정)
     - map.leave                # 지도 나가기(#369). 방장도 member라 이 액션을 갖는다. 넘길 사람이 없는
                                 # 방장을 막는 건 역할이 아니라 지도 상태라 여기 넣지 않고 maps 코어가 판정한다(409 OWNER_CANNOT_LEAVE)
-    - route.recalculate        # 동선 재계산(5-10) — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
+    - route.recalculate        # 동선 재계산(5-10) — "구성원 누구나" (#103 결정)
     - agent.toggle             # 계획 보조 에이전트 모드 켜고 끄기(v2, docs/agent-v2.md). 구성원 누구나
     - agent.suggestion.resolve # 지도 제안 수락·닫기(v2). 구성원 누구나, 지도 단위로 모두에게서 닫힌다
     - course.request           # AI 코스 짜기 요청(#334, #580 결정 전 브랜치 초안). 구성원 누구나. 하루 상한(5회)은 서비스가 센다

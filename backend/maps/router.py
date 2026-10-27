@@ -34,10 +34,7 @@ public_router = APIRouter(tags=["maps"])
 
 MapForRead = Depends(require_map_member())
 MembersForMap = Depends(require_map_member())
-# invite.create가 docs/permissions.md에 없다 — require_map_member()로 "구성원 누구나"를
-# 최소 침습으로 연다. owner 전용인지는 루트가 정책을 정하면 require_on_map("invite.create")
-# 한 줄로 교체한다(maps/for_Root.md 항목 4). require_on_map("map.settings.edit")를 빌려
-# 쓰는 안은 기각했다 — 무관한 액션 이름 뒤에 정책 결정을 숨기게 된다.
+# 초대 링크 발급은 구성원 누구나다(#4 결정, docs/permissions.md invite.create).
 MapForInvite = Depends(require_map_member())
 OwnerToTransfer = Depends(require_on_map("owner.transfer"))  # 방장만 — 구성원 403(#468)
 InvitesToManage = Depends(require_on_map("invite.revoke"))  # 방장만 — 구성원 403(#467)
@@ -122,8 +119,7 @@ def post_invite(
     user: CurrentUser = Depends(get_current_user),
     db=DbSession,
 ):
-    # FE 오리진 정본이 생겼다(settings.frontend_base_url, 루트 확정 2026-09-23 — maps/for_Root.md
-    # 항목 6 해결). 못 정했을 때만(dev에서 지워버린 극단적 경우) 예전처럼 백엔드 자신의 주소로
+    # FE 오리진 정본이 생겼다(settings.frontend_base_url, 2026-09-23). 못 정했을 때만(dev에서 지워버린 극단적 경우) 예전처럼 백엔드 자신의 주소로
     # 대체한다 — accept가 POST 전용 API라 그 경로는 여전히 브라우저로 바로 열리지 않는다.
     base_url = settings.frontend_base_url or str(request.base_url)
     invite, created = service.create_invite(db, map_id=mapId, creator_id=user.user_id, base_url=base_url)

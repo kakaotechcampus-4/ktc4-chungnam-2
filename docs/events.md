@@ -25,7 +25,7 @@
 | `pin.created` | `Pin` (api-spec.yaml) | 핀 생성 직후. v1은 private 핀 행이 없어 모든 핀이 이 채널로 나간다(비공개 후보는 핀이 아니라 개인 채널 `run.candidates_ready`로만 온다). 실시간 핀(`source=live`, #382)은 `lat`·`lng`·`place_name` 없이 `kakao_place_id`·`search_query`·`memo`만 실린다 — 받은 화면이 그 자리에서 위치를 다시 찾는다 |
 | `pin.published` | `Pin` | 「지도에 올리기」 실행 시 (5-5-1) |
 | `pin.deleted` | `{ pin_id }` | 핀 삭제 |
-| `pin.updated` | `Pin` | 핀을 찍은 사람이 메모·분류를 고침(#466), 또는 구성원이 실시간 핀을 자체 DB 핀으로 승격함(#501 — `source`가 `live`→`db`, `place_id`·장소 값이 채워지고 반응·확정 항목은 그대로). `pin.created`와 같은 모양이다. 받은 FE는 그 핀을 갈아끼우고, 분류가 바뀌었으면 `FilterCounts`·readiness를 다시 불러온다 |
+| `pin.updated` | `Pin` | 핀을 찍은 사람이 메모·분류를 고침(#466), 또는 구성원이 실시간 핀을 자체 DB 핀으로 승격함(#501 — `source`가 `live`→`db`, `place_id`·장소 값이 채워지고 반응·확정 항목은 그대로). `pin.created`와 같은 모양이다. 받은 FE는 그 핀을 갈아끼우고 확정 리스트를 다시 받는다. 분류가 바뀌었으면 `FilterCounts`·readiness도 다시 불러온다 |
 | `reaction.changed` | `{ pin_id, reaction_summary, user_id, display_name, type }` | 반응 등록/수정/삭제. `user_id`·`display_name`은 그 반응을 남긴(지운) 구성원, `type`은 `like`·`against`이고 삭제면 `null`이다(2026-10-04, FE 요청 — 「지우님이 반대 의견을 남겼어요」). 반응 내용(사유)은 싣지 않는다 |
 | `shortlist.changed` | `{ item: ShortlistItem, action: 'added'\|'removed'\|'reordered' }` | 확정 리스트 변경. `reordered`는 수동 정렬 (#30) |
 | `route.recalculated` | `Route[]` | **「동선 짜주기」 실행 시** (#30, `POST /maps/{mapId}/route`). 확정 리스트 변경만으로는 발행하지 않는다 |
@@ -55,7 +55,7 @@
   - **실패**는 실행 요청의 HTTP 응답(500 `RECOMMEND_FAILED`, 상한이면 429 `RETRY_LIMIT` 등)으로 받는다. 이벤트를 기다리지 않는다.
   - 단계별 진행을 실시간으로 보여 주려면 실행을 백그라운드로 옮겨야 한다(v2 검토).
 - **`member.presence`**: 접속 상태 추적이 없다. `Member.online`은 비어 온다 — 접속 점은 그리지 않는다.
-- **`agent.*`**: v2 계획 보조 에이전트(docs/agent-v2.md)의 이벤트다. #531부터 코드 유형 제안(반응 공백, 카테고리 공백)의 `agent.suggested`, `agent.resolved`, `agent.settings_changed`가 발행된다. 모델 유형(정체, 갈림)은 #582부터 발행되고, `agent.summary_updated`는 M2부터다.
+- **`agent.*`**: v2 계획 보조 에이전트(docs/agent-v2.md)의 이벤트다. #531부터 코드 유형 제안(반응 공백, 카테고리 공백)의 `agent.suggested`, `agent.resolved`, `agent.settings_changed`가 발행된다. 모델 유형(정체, 갈림)은 #582부터 발행되고, `agent.summary_updated`는 #586부터 발행된다.
 - **FE는 이 이벤트들을 받아도 되지만 의존하지 않는다.** 결과는 항상 `GET /runs/{id}/result`가 정본이다(`done`이 될 때까지 2초 간격 조회).
 
 ## 이벤트별로 화면이 다시 받을 것 (#449)
@@ -65,7 +65,7 @@ FE는 이벤트를 받으면 아래 표대로 화면 데이터를 다시 받는�
 | 이벤트 | 다시 받을 것 |
 |---|---|
 | `pin.created`, `pin.published` | 핀 목록(페이로드로 갱신), `GET /maps/{mapId}/counts` |
-| `pin.updated` | 핀 목록의 그 핀(페이로드로 갱신 — 승격이면 이름·좌표가 새로 생기므로 지도 마커와 상세를 같이 갱신). 분류가 바뀌었으면 `GET /maps/{mapId}/counts`, `GET /maps/{mapId}/recommend/readiness` (#466) |
+| `pin.updated` | 핀 목록의 그 핀(페이로드로 갱신 — 승격이면 이름·좌표가 새로 생기므로 지도 마커와 상세를 같이 갱신). `GET /maps/{mapId}/shortlist`(`ShortlistItem`이 핀을 담고 있어, 확정된 핀의 메모 수정과 승격(#763)이 확정 탭에도 보여야 한다, #777). 분류가 바뀌었으면 `GET /maps/{mapId}/counts`, `GET /maps/{mapId}/recommend/readiness` (#466) |
 | `pin.deleted` | 핀 목록(페이로드로 갱신), `GET /maps/{mapId}/counts`, `GET /maps/{mapId}/recommend/readiness` |
 | `reaction.changed` | 핀 목록의 그 핀(페이로드로 갱신), `GET /maps/{mapId}/counts`, `GET /pins/{pinId}/reactions`(열려 있으면), `GET /maps/{mapId}/recommend/readiness` |
 | `member.joined` | `GET /maps/{mapId}`, `GET /maps/{mapId}/members` |
@@ -100,10 +100,10 @@ SSE 구독 권한(구성원인가)은 **구독을 시작할 때 한 번만** 본
 | 이벤트 | 보낸 뒤 닫는 연결 |
 |---|---|
 | `map.deleted` | 그 지도의 모든 구독(전체 채널, 개인 채널) |
-| `map.updated`, `owner.changed` | 그 지도의 모든 구독(전체 채널, 개인 채널) |
 | `member.left` | 그 지도에서 `user_id`(나간 사람, 또는 탈퇴해 방장이 넘어간 사람)의 구독(전체 채널, 개인 채널). 다른 구성원의 연결은 그대로 둔다 |
 
-- 그래서 전체 채널 구독도 누가 구독했는지(`user_id`)를 기억해야 한다. 지금은 개인 채널만 기억한다.
+- 그래서 전체 채널 구독도 누가 구독했는지(`user_id`)를 기억한다. realtime이 두 채널 모두 구독한 사람을 기억한다(#369).
+- 나간 사람이 다시 초대를 수락하고 곧바로 구독하면, 폴러가 아직 처리하지 않은 예전 `member.left`가 새 구독을 닫을 수 있다(폴링 간격 0.5초 안의 일). EventSource가 다시 붙으면 구성원이라 200이므로 그대로 둔다(#369).
 - 닫힌 뒤 같은 사람이 다시 구독하면 구독 시작 검사에서 404다(삭제된 지도, 또는 구성원이 아님). 다시 초대를 수락하면 새로 구독할 수 있다.
 - 탈퇴했지만 방장이 아니었던 지도의 연결은 이 표에 없다. 그 지도에는 이벤트가 나가지 않는다(탈퇴 처리는 반응과 근거 줄만 지운다). 세션이 무효가 되므로 다음 재연결에서 401로 끊긴다.
 

@@ -142,6 +142,7 @@ describe("에러 시나리오", () => {
     expect(body.code).toBe("NO_RESULTS");
     expect(body.detail.funnel.length).toBeGreaterThan(0);
     expect(body.detail.funnel.map((f: { label: string }) => f.label)).toContain("추천 가능 아님 제거");
+    expect(body.detail.external_search.url).toMatch(/^https:\/\/map\.kakao\.com\/link\/search\//); // #798
   });
 
   it("retry-limit — 10회 초과 시 429 RETRY_LIMIT(detail에 attempt_limit)", async () => {
@@ -439,6 +440,15 @@ describe("#466·#473·#474 — 핀 수정, 지도를 눌러 핀, 링크 해석",
     expect((await send("/pins/nope/resolve", "POST", { place_name: "x", lat: 1, lng: 1 })).status).toBe(404);
   });
 
+  it("POST /pins/{id}/resolve: 확정 리스트에 든 live 핀도 승격하고 확정은 그대로다(#763)", async () => {
+    const live = await (await send("/maps/map_1/pins", "POST", { source: "live", category: "관광지", kakao_place_id: "kakao:live-763", search_query: "광안리" })).json();
+    expect((await send("/maps/map_1/shortlist", "POST", { pin_id: live.id })).status).toBe(201);
+    const pin = await (await send(`/pins/${live.id}/resolve`, "POST", { place_name: "광안리 해변", lat: 35.1532, lng: 129.1186 })).json();
+    expect(pin).toMatchObject({ id: live.id, source: "db", kind: "확정", place_name: "광안리 해변" });
+    const items = await (await fetch(`${BASE}/maps/map_1/shortlist`)).json();
+    expect(items.some((i: { pin: { id: string } }) => i.pin.id === live.id)).toBe(true);
+  });
+
   it("GET /places/nearest: 100m 안 자체 DB 장소만 가까운 순, 없으면 빈 배열, lat·lng 없으면 422", async () => {
     const near = await (await fetch(`${BASE}/places/nearest?lat=35.1631&lng=129.1639`)).json();
     expect(near.map((p: { place_name: string }) => p.place_name)).toEqual(["해운대 밀면"]);
@@ -660,7 +670,7 @@ describe("#470·#10 — 알림함·알림 설정, 서비스 피드백", () => {
 
   it("알림 설정: 종류 전부를 돌려주고 보낸 것만 바꾼다, 모르는 종류·빈 목록은 422", async () => {
     const prefs = await (await fetch(`${BASE}/me/notification-prefs`)).json();
-    expect(prefs.prefs.map((p: { type: string }) => p.type)).toEqual(["pin_reaction", "member_joined", "owner_changed", "map_deleted", "my_ai_pin_published"]);
+    expect(prefs.prefs.map((p: { type: string }) => p.type)).toEqual(["pin_reaction", "member_joined", "owner_changed", "map_deleted"]);
     expect(prefs.prefs.every((p: { enabled: boolean }) => p.enabled)).toBe(true);
     const put = await (await send("/me/notification-prefs", "PUT", { prefs: [{ type: "pin_reaction", enabled: false }] })).json();
     expect(put.prefs.find((p: { type: string }) => p.type === "pin_reaction").enabled).toBe(false);
@@ -1037,6 +1047,9 @@ describe("#360 — 반응은 ♥/🚫 둘뿐, 추천은 ♥/🚫 의견이 달�
     expect(r["음식점"]).toMatchObject({ ready: true, required_count: 1 });
     expect(r["음식점"].answered_count).toBeGreaterThanOrEqual(1);
     expect(r["관광지"]).toMatchObject({ ready: false, answered_count: 0, required_count: 1 });
+    expect(r["음식점"].curated_nearby).toBeGreaterThan(0); // #798 — 정예가 있으면 링크 없음
+    expect(r["음식점"].external_search).toBeUndefined();
+    expect(r["관광지"].curated_nearby).toBeUndefined(); // 의견 핀이 없으면 기본 지역이 없다
   });
 
   it("의견 핀이 없는 카테고리로 run을 만들면 409 NOT_READY", async () => {

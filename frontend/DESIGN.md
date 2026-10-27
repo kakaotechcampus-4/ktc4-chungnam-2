@@ -297,6 +297,7 @@ components:
 | 알림 | `showToast` (+ 「되돌리기」·「다시 시도」 동작) | `features/shell/toast` |
 | 사람 | `Avatar` (회색 면 + 첫 글자, 32·44) | `ui/Avatar` |
 | AI가 말하는 머리 | `AiHeader` (핑고 + `tag-ai`) | `features/recommend/Readiness` |
+| 핑고 밖에서 찾는 출구 | `ExternalSearchLink` 「카카오맵에서 더 찾아보기」(새 창) + 12 ink-500 「검색어 ‘…’」. 색·크기는 놓이는 자리가 준다 | `features/recommend/ExternalSearchLink` |
 | 반대 기호 | `AgainstMark` (lucide Ban) | `ui/AgainstMark` |
 | AI 코스 작업 기록(한 줄 · 이해 카드) | `WorkLog` | `features/course/WorkLog` |
 | AI 코스 날짜별 카드 | `DayCard` (`CourseRun` 안) | `features/course/CourseRun` |
@@ -356,6 +357,7 @@ components:
 
 ### 빈 결과 (AI 0곳)
 - 「반경 넓히기」가 유일한 채움 버튼이다. 사람이 누르는 버튼이라 가드레일 4와 맞는다. 「근거 고치기」는 외곽선이고, 「직접 찍기」는 brand-600 글자 링크다(#299).
+- 서버가 카카오맵 검색 링크를 주면(#798) 두 버튼 아래 같은 묶음에 `ExternalSearchLink`(`btn-outline btn-lg`, 두 칸 폭)를 둔다. 결과가 적을 때는 후보 목록 아래 `btn-outline btn-md`, 추천 준비에서 그 지역에 정예 장소가 없을 때는 추천 버튼 위 `Notice`(「이 지역은 아직 핑고 추천 장소가 없어요」) 안 `btn-outline btn-sm`이다. 추천 버튼은 막지 않는다. 기준 숫자(몇 곳 미만)는 화면에 적지 않고 링크가 있는지만 본다.
 
 ### 핑고
 캐릭터 시안(`PINGO_캐디.pdf`, 2026-10-19)의 평면 2D 기본형이다. 흰 몸 + 핑고 파랑 모자·머리 핀 + ink-300 외곽선이다. 시트·패널 안에서는 3D 렌더가 겉돌아서 평면만 쓴다. 표정은 그 화면의 상황으로 고른다.

@@ -120,7 +120,7 @@ def test_list_members_marks_creator_as_owner_and_joiner_as_member(app_client):
 
 
 def test_list_members_includes_display_name_when_user_row_exists(app_client, db_session):
-    """auth.api.display_names 배선(maps/for_Root.md 항목 5 해결) 회귀 테스트 — 실제 users
+    """auth.api.display_names 배선 회귀 테스트 — 실제 users
     행이 있으면 display_name이 채워져야 한다(인증이 users 행을 요구하므로(#126)
     행이 없는 구성원은 탈퇴 등으로 행이 사라진 경우뿐이다)."""
     ensure_users(db_session, "user_1", display_names={"user_1": "철수"})

@@ -52,14 +52,13 @@ class Pin(Base):
 
     # id는 이 모듈이 전적으로 소유하므로 UUID로 발급한다.
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # map_id/created_by/place_id: auth·maps·places가 아직 없어 ID 형식(UUID vs 문자열)이 정해지지
-    # 않았다. 그 모듈들이 오기 전까지는 String으로 받아 형식을 강제하지 않는다 — FK도 그때 건다(루트 보고 대상).
+    # map_id/created_by/place_id: String이고 다른 모듈 테이블을 가리키므로 FK를 걸지 않는다(docs/architecture.md 1절, #760).
     map_id: Mapped[str] = mapped_column(String, nullable=False)
     category: Mapped[str] = mapped_column(Category, nullable=False)
     kind: Mapped[str] = mapped_column(PinKind, nullable=False)
     origin: Mapped[str] = mapped_column(PinOrigin, nullable=False)
     # #195: places.id(자체 DB 장소)의 문자열. 이름은 places.name에서 읽는다(핀에 저장하지 않는다 —
-    # 카카오 응답의 이름·좌표는 저장 금지, #53). DB FK·UUID 타입은 걸지 않았다 — for_Root.md 참고.
+    # 카카오 응답의 이름·좌표는 저장 금지, #53). DB FK·UUID 타입은 걸지 않았다(#760).
     # #382: 실시간 핀(source='live')은 place_id·geom이 NULL이다 — 아래 CHECK가 source와 짝을 강제한다.
     place_id: Mapped[str | None] = mapped_column(String, nullable=True)
     # 매칭된 places.geom의 복사(자체 데이터). 사용자가 보낸 좌표와 카카오 응답 좌표는 저장하지 않는다.
@@ -113,7 +112,7 @@ class Reaction(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pin_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pins.id"), nullable=False)
-    # users(id) 대상 테이블이 아직 없다 — FK는 걸지 않는다. map_id와 같은 이유로 String.
+    # users(id): String이고 다른 모듈 테이블을 가리키므로 FK를 걸지 않는다(docs/architecture.md 1절, #760).
     user_id: Mapped[str] = mapped_column(String, nullable=False)
     type: Mapped[str] = mapped_column(ReactionType, nullable=False)
     reason_text: Mapped[str | None] = mapped_column(String, nullable=True)

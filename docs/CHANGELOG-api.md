@@ -2,6 +2,69 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-28, 카카오맵 검색 링크 (#798)
+
+정예 장소가 없거나 적은 지역에서 사람이 핀고 밖에서 직접 찾는 출구다(멘토 조언). 서버는 카카오를 부르지 않고 저장하지 않는다. 검색어 규칙은 `docs/constraints.md` 「카카오맵 검색 링크」.
+
+- 새 스키마 `ExternalSearch {query, url}`(`https://map.kakao.com/link/search/{검색어}`).
+- `RecommendResult.external_search`: 후보가 3곳 미만일 때만.
+- `NO_RESULTS`의 `detail.external_search`: 후보가 0곳일 때.
+- `Readiness.curated_nearby`: 기본 지역에서 넓히기 상한(30분) 안의 정예 장소 수. 의견 핀이 없으면 없다. 0이면 `Readiness.external_search`도 온다.
+- `Candidate.place_url`(새 필드), `Pin.place_url`(설명 변경): 카카오 장소 페이지가 기록되지 않았으면 `{장소 이름} {동네}` 검색 링크다. 이제 거의 모든 자체 DB 장소에 「카카오맵에서 보기」가 붙는다.
+- 서버 구현: places #799, recommend #800, pins #801. 그 전까지 실서버에는 새 필드가 없다(모두 선택 필드). 목 서버는 이미 내려 준다(지역 이름에 "춘천"이 든 지도는 `curated_nearby` 0).
+- FE(#802):
+  - 결과 0곳 화면과 결과가 적을 때 「카카오맵에서 더 찾아보기」(새 창, `query`를 함께 보여 준다)를 기존 버튼 옆에 둔다.
+  - readiness의 `curated_nearby`가 0이면 추천 버튼 옆에 안내와 같은 링크를 둔다. 추천 버튼은 막지 않는다.
+  - 결과 카드의 「카카오맵에서 보기」는 `place_source.url` 대신 `place_url`을 쓴다.
+  - 기준 숫자(3곳)는 화면에 적지 않는다.
+
+## 2026-10-27 (아홉 번째), 구성원 충족 집계에 조건별 상태를 더한다 (#796, 제안 — 팀 동의 전)
+
+- `MemberFulfillment.by_member[].conditions[]`를 더했다(선택 필드). 조건마다 `fact_key`, `fact_label`, `evidence_line_id`, `status`(`met`/`unmet`/`needs_check`)다. `satisfied`/`total`과 `by_member[].satisfied`는 그대로(호환용)다.
+- 표시 범위: 직접 쓴 조건(근거 줄이 있는 선호·실격)은 세 상태를 모두 내리고, ♥에서 나온 선호는 `met`만 내린다. 키 없는 반대는 넣지 않는다.
+- 순위와 추천 포함 여부는 바뀌지 않는다(표시용).
+- 서버는 아직 이 필드를 채우지 않는다(recommend 담당, #796). 목 서버 시드에는 예시를 넣었다.
+- FE: 팀 동의 뒤 카드에 「내 조건 2/3 충족」과 조건별 ✓·✗·「? 확인 필요」를 보인다. `conditions`가 없으면 지금 표시로 둔다.
+
+## 2026-10-27 (여덟 번째), 깔때기 「반경 밖 제거」가 실제 수를 센다 (#792)
+
+- 스키마 변경 없음. 깔때기(`last_funnel`, `NO_RESULTS`의 `detail.funnel`)의 「반경 밖 제거」가 이제 지금 반경 밖이고 넓히기 상한(도보 30분) 안인 장소 수다. 전에는 후보 풀을 지금 반경 안에서만 가져와 늘 0이었다.
+- 추천 결과는 그대로 지금 반경 안에서만 나온다(가드레일 4). 바뀌는 것은 이 단계의 숫자뿐이고, 이미 상한(30분)인 run은 계속 0이다.
+- 반경 조언(`GET /runs/{runId}/advice`의 `kind=radius`)이 이제 실서버에서 나온다(이 단계에서 5곳 이상 빠질 때).
+- FE: 할 일 없음.
+
+## 2026-10-27 (일곱 번째), 스테이징 전용 QA 로그인 (#788)
+
+- `POST /auth/qa-login`을 더했다. `PINGO_ENV=staging`이고 `QA_LOGIN_SECRET`이 있는 서버에만 있다. 헤더 `X-QA-Login-Secret`이 맞으면 새 사용자를 만들고 세션 쿠키를 준다. QA 하네스가 실제 HTTP로 핵심 흐름을 돌릴 때 쓴다(멘토 조언).
+- 서버 구현은 #789다. 운영에는 경로가 없다.
+- FE: 할 일 없음. 쓰지 않는다.
+
+## 2026-10-27 (여섯 번째), my_ai_pin_published를 enum에서 뺐다 (#778)
+
+- `NotificationType`에서 `my_ai_pin_published`를 뺐다(#764 결정, 서버와 함께). `GET /me/notification-prefs`에 이 종류가 더 오지 않고, 이 값을 `PUT /me/notification-prefs`로 보내면 422다.
+- FE 할 일 없음(쓰지 않는다).
+
+## 2026-10-27 (다섯 번째), Pin.source_run_id를 지운다, my_ai_pin_published는 지우기로 한다, 확정된 실시간 핀도 승격한다 (#761, #762, #763, #764)
+
+- `Pin.source_run_id`를 지웠다(#761). 서버가 채운 적이 없는 칸이다. 목 서버의 run 목록 `published_count`도 실서버처럼 `candidates.published_pin_id`로 센다.
+- `NotificationType`의 `my_ai_pin_published`를 지우기로 했다(#764). 「지도에 올리기」는 요청자 본인만 누를 수 있어 만들어지지 않는다. enum은 서버와 함께 #778에서 뺀다. 그 전까지 `GET /me/notification-prefs`에 이 종류가 한 줄 온다.
+- `POST /pins/{pinId}/resolve`: 확정 리스트에 든 실시간 핀도 승격한다(#763). 확정 항목과 `kind`는 그대로이고 동선은 다음 「동선 짜주기」 때 들어간다. 서버는 #776에서 바뀐다(그 전까지 확정된 실시간 핀은 변화 없이 200). 목 서버는 이미 이렇게 동작한다.
+- `EvidenceLine.author_display_name`: 설명을 더했다. 핀 작성자와 같은 규칙(탈퇴한 구성원, 나간 구성원, 실명)이다. 서버는 #762에서 채운다(그 전까지 실서버에서 빈다).
+- `MemberFulfillment.by_member[].display_name`: 서버는 채우지 않는다고 적었다(#762). 지금 FE처럼 `user_id`로 구성원 목록에서 찾는다.
+- FE:
+  - 실시간 핀의 위치를 찾으면 resolve를 자동으로 부른다(#777).
+  - `source_run_id`, `my_ai_pin_published`는 FE가 쓰지 않아 바뀌는 코드가 없다.
+
+## 2026-10-27 (네 번째), 설명을 서버 동작에 맞춘다 (#757)
+
+- 스키마 모양은 그대로이고 설명만 고쳤다. 서버는 이미 이렇게 동작한다(옛 for_Root.md에만 있던 것을 옮겼다).
+  - `UserUpdateRequest.display_name`: 앞뒤 공백을 지운 뒤 1~50자이고 지운 값을 저장한다. 공백뿐이면 422(#160)
+  - `PlaceSearchResult.place_id`: 자체 DB 장소는 `own:<uuid>` 형태도 온다(#474)
+  - `PATCH /runs/{runId}/evidence`: 남이 쓴 줄을 빼려는 토글이 하나라도 섞이면 요청 전체가 403이고 아무것도 바뀌지 않는다(#108)
+  - `AgentSplitPref.label` 예시: 키 표시 이름 그대로("조용한 곳")
+- `docs/events.md`「구독을 끊는 경우」에서 `map.updated`, `owner.changed` 행을 지웠다. 서버는 두 이벤트 뒤에 연결을 끊지 않는다(같은 문서의 `owner.changed` 설명과 같다).
+- FE: 할 일 없음.
+
 ## 2026-10-27 (세 번째), 추천 막힘 조언은 서버 코드가 정한다, 실패는 500 (#749, #750)
 
 - 스키마 변경 없음(`RunAdvice` 그대로). `GET /runs/{runId}/advice`는 모델을 부르지 않고 서버 코드가 종류, 버튼, 문장을 정한다. 응답이 빨라지고(모델 대기 평균 5.6초가 없어진다), 같은 상황이면 같은 조언이다. 문장은 고정 문구에 숫자와 조건 이름 조각이다.

@@ -20,7 +20,8 @@ users(                                -- 사람. 다른 모듈은 이 id만 가�
 )
 
 user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사람(users)과 나눈다
-  id uuid, user_id → users.id, provider('kakao'), provider_user_id, created_at
+  id uuid, user_id → users.id, provider('kakao'|'qa'), provider_user_id, created_at
+                                        -- 'qa'는 스테이징 전용 QA 로그인(POST /auth/qa-login)이 만든다. provider_user_id는 새 uuid(#788, #789)
   unique(provider, provider_user_id)    -- 카카오 계정 하나는 사람 하나에만
   unique(user_id, provider)             -- 한 사람에 카카오는 하나
 )
@@ -30,7 +31,7 @@ user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사
 -- 예전 users.provider, provider_user_id, is_guest는 이 리비전에서 지운다(카카오 사용자는 user_identities로 옮긴다).
 
 maps(
-  id, title, start_date, end_date, member_count_expected,
+  id, title, start_date, end_date,     -- member_count_expected는 쓰지 않아 지웠다(#760, #775)
   region_label NULL, region_center geography(Point) NULL,   -- 9/28 #22 변경(PR #132, 루트 검증
                                                              -- 후 승인): 지역 검색(선택). 둘 다
                                                              -- 있거나 둘 다 없음
@@ -56,6 +57,7 @@ memberships(
 invites(
   token, map_id, created_by, expires_at, used_count,
   created_at, revoked_at            -- revoked_at: 방장이 끈 시각(NULL이면 켜짐, #467). map_id 인덱스
+                                    -- expires_at = 발급 시각 + 7일(maps.core.INVITE_TTL). 링크를 다시 받으면 유효한 기존 링크를 그대로 줘 기간을 늘리지 않는다(#467)
 )
 ```
 
@@ -68,7 +70,7 @@ pins(
   id, map_id, category('음식점'|'카페'|'숙소'|'관광지'|'기타'),  -- 정의는 backend/common/categories.py(#280). v1 핀은 음식점·카페·관광지만
   kind('일반'|'AI추천'|'확정'),        -- 확정이 나머지 둘을 덮어쓴다(5-2)
   origin('direct'|'ai'),               -- kind와 별개. 원래 태생은 안 바뀐다(4절: 반대 많아도 모양 불변)
-  place_id null references places(id), -- 2026-10-01 결정(#191): 자체 DB 핀(source='db')은 자체 DB 장소를 가리킨다.
+  place_id null,                       -- places.id. 모듈 경계라 FK 없음(#760). 2026-10-01 결정(#191): 자체 DB 핀(source='db')은 자체 DB 장소를 가리킨다.
                                         -- 이름은 places.name에서 가져온다 — 핀에 따로 저장하지 않는다(place_name 컬럼은 없앤다).
                                         -- 카카오 응답의 이름·좌표는 저장하지 않는다. #382: source='live'(실시간 핀)는 place_id가 NULL이다.
   source('db'|'live'),                 -- #382. live = 자체 DB에 없는 장소를 사람이 남긴 핀. AI 핀(origin='ai')은 항상 db
@@ -77,15 +79,11 @@ pins(
   memo null,                           -- #382 live만. 사용자가 남긴 한마디(최대 200자)
   geom null geography(Point,4326),     -- 매칭된 places.geom의 복사(자체 데이터). 사용자가 카카오 지도에서 지정한 좌표와 카카오 응답 좌표는 저장하지 않는다. live 핀은 NULL
   visibility('public'|'private'),      -- v1은 항상 public. 이 값으로 분기하지 않는다(#273). 비공개 AI 후보는 pins가 아니라 candidates 행이고, 게시할 때 처음부터 public 핀으로 만든다. 칸은 마이그레이션 때문에 남기고, Pin 스키마를 크게 바꿀 때 같이 지운다
-  source_run_id null,                  -- #57 결정: recommend_runs.id를 게시 시점에 한 번만
-                                        -- 써넣는 불투명 참조값(추적·표시용). FK 제약은 걸지 않고
-                                        -- pins는 이 값을 절대 다시 읽어 recommend를 조회하지
-                                        -- 않는다("모듈 간 접근은 함수/API로만" 원칙은 실시간
-                                        -- 조회 금지가 핵심이지, 게시 시점 1회성 값 복사를 막지
-                                        -- 않는다 — candidates.lat/lng 비정규화와 같은 논리).
   checks jsonb null,                   -- #57 결정: candidate.checks를 게시 시점에 복사(가드레일
                                         -- 5, 게시 후에도 조건별 충족 체크가 유지돼야 함). run·
                                         -- candidate가 나중에 지워지거나 바뀌어도 이 값은 안 바뀐다.
+  reason null, member_fulfillment jsonb null, place_source jsonb null,
+                                        -- #157: AI 추천 핀을 게시할 때 candidate 값을 복사한다(가드레일 5). 직접 찍은 핀은 NULL
   created_by, created_at, deleted_at
 )
   unique(map_id, place_id) where deleted_at is null   -- 중복 핀 판정(가드레일 6). 판정 기준은 #33(보류)에서 별도 확정
@@ -167,7 +165,7 @@ places(
                                         -- 정예(사람이 직접 조사·납품한 데이터)인가(2026-10-16). `--authoritative` 적재가 켠다.
                                         -- 이름·분류·라벨을 인허가 커버리지가 덮지 못하게 하고, AI 추천 후보 풀의 기준이다(아래).
                                         -- 한 번 true가 되면 커버리지 적재가 끄지 않는다. 처음 채울 때는 "출처(label_source)가 NULL인
-                                        -- 라벨 행을 가진 장소 = 정예"로 되메운다(places/for_Root.md #can_recommend 조사 결과).
+                                        -- 라벨 행을 가진 장소 = 정예"로 되메운다(마이그레이션 0034_places_curated).
                                         -- AI 추천 후보 풀은 curated=true인 장소만이다(2026-10-24 원칙: 정예가 아닌 데이터는 핀을 꽂을 수 있는
                                         -- 최소 정보일 뿐이다). 따로 저장한 칸(can_recommend)은 #743에서 없앴다(마이그레이션 0040): 규칙이 curated와
                                         -- 같은 값인데 따로 저장하면 규칙을 바꿀 때 재계산을 잊어 옛 값이 남는다(멘토 리뷰 #680). 후보 조회
@@ -266,6 +264,8 @@ recommend_runs(
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
                                          -- 않도록 마지막 execute/widen/retry의 깔때기 표를
                                          -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.
+  default_radius_walk_min int default 15,  -- #158: 기본값 원의 지금 도보 분. regions.radius_m은 여기서 파생(분×80m).
+                                         -- docs/constraints.md "반경 넓히기 상수"
   created_at
 )
 
@@ -295,6 +295,7 @@ regions(
                                          -- 압축 논리. 실제 PostGIS 연산이 필요해지면(예: 핀-지역
                                          -- 포함 판정을 DB 레벨로 옮길 때) geom 컬럼을 추가하는
                                          -- 별도 마이그레이션으로 되돌린다.
+  anchor_points jsonb default '[]',     -- #112: 원을 만든 기준 핀 좌표 [[lat, lng], ...]. 상위 3곳 동점 처리의 거리 평균에 쓴다
   confirmed boolean, confirmed_at
 )
 
@@ -306,6 +307,8 @@ candidates(
                                          -- place_id로 조회하는 방향으로 재검토
   rank, checks jsonb,                   -- 조건별 충족 체크(가드레일 5)
   member_fulfillment jsonb,
+  reason text null, place_source jsonb null,  -- #158: 이유 한 줄(core.build_reason, 모델 호출 없음)과 출처 {provider, url?}.
+                                         -- 게시 때 pins로 복사(가드레일 5)
   published_pin_id null,                -- 5-5-1 게시 후 연결
   created_at
 )
@@ -316,7 +319,7 @@ candidates(
   -- 2. 게시는 pins.unique(map_id, place_id) where deleted_at is null 제약과 만난다 — 같은
   --    장소에 이미 핀(수동이든 이전 게시든)이 있으면 게시 INSERT가 충돌한다. 409로 처리할지
   --    기존 핀과 병합할지 정해야 한다.
-  -- 3. pins.source_run_id/checks는 write-once다 — 핀 수정 엔드포인트가 생기면 그 요청
+  -- 3. pins.checks는 write-once다 — 핀 수정 엔드포인트가 생기면 그 요청
   --    스키마에서 반드시 제외한다(클라이언트가 덮어쓸 수 없게).
 
 exclusions(
@@ -389,7 +392,7 @@ agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 
   tool_calls jsonb,                   -- 도구 입력과 결과. 사유 글은 reaction_id와 글자 수로 바꿔 남긴다
   verification jsonb null, tokens_in, tokens_out,
   outcome('no_signal'|'blocked'|'silent'|'unknown'|'invalid_schema'|'invalid_claims'|'model_failed'|'stale'
-          |'suggested'|'summarized'|'advised'|'trip_ended'|'map_deleted'),
+          |'suggested'|'summarized'|'advised'|'trip_ended'|'map_deleted'|'error'),   -- error: 예외로 끝남(#677)
   outcome_detail jsonb null
 )
   index(map_id, started_at)
@@ -414,7 +417,7 @@ agent_suggestion_views(               -- 사용자별 열람. 버튼의 점(has_
 )
 
 agent_reason_summaries(               -- 우리 조건 요약. 카테고리마다 최신본 하나를 덮어쓴다
-  map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸(키, 개수, 서버 문구)과 근거 reaction_id. 사유 원문 없음
+  map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸(키, 개수, 문구 종류)과 근거 reaction_id. 사유 원문 없음
   based_on_reaction_count, run_id null, updated_at,
   primary key(map_id, category)
 )
@@ -468,9 +471,9 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 ```
 notifications(                        -- 사용자별 알림함. 수신자마다 한 행
   id, user_id, map_id,                -- map_id는 FK 없음(지도가 삭제돼도 알림은 남는다)
-  type,                               -- NotificationType 5종(api-spec)
+  type,                               -- NotificationType(api-spec). my_ai_pin_published는 만들어지지 않아 지웠다(#764)
   map_title,                          -- 만들 때의 제목 스냅샷
-  pin_id nullable,                    -- pin_reaction·my_ai_pin_published만. FK 없음
+  pin_id nullable,                    -- pin_reaction만. FK 없음
   message,                            -- 서버가 만든 문장. 반대 사유·메모는 넣지 않는다
   created_at, read_at nullable,
   index (user_id, created_at desc), index (user_id) where read_at is null
@@ -513,7 +516,7 @@ feedback(                             -- 서비스 피드백. 저장만 한다
 | shortlist | `shortlist_items.added_by` | 없음 |
 | notifications | `notifications.user_id` | `notification_prefs`는 카카오 계정 것을 쓰고 게스트 것은 지운다 |
 | feedback | `feedback.user_id` | 없음 |
-| agent | `agent_suggestion_views.user_id`, `agent_course_runs.requested_by`, `agent_settings.updated_by`, `agent_suggestions.resolved_by` | 같은 제안을 둘 다 열람했으면 게스트 것을 지운다. 같은 지도에 둘 다 진행 중인 코스 요청이 있으면 게스트 것을 지운다(진행 중은 지도당 한 사람에 하나). 코스 하루 상한은 합치지 않는다(추천 횟수와 같다) |
+| agent | `agent_suggestion_views.user_id`, `agent_course_runs.requested_by`, `agent_settings.updated_by`, `agent_suggestions.resolved_by` | 같은 제안을 둘 다 열람했으면 게스트 것을 지운다. 같은 지도에 둘 다 진행 중인 코스 요청이 있으면 게스트 것을 지운다(진행 중은 지도당 한 사람에 하나). 코스 하루 상한은 그날 행 수로 세므로(`requested_by`, `created_at`) 그날 옮긴 코스는 카카오 계정의 횟수에 들어간다. 다음 자정(KST)에 풀린다(#755) |
 | auth | 마지막에 게스트 행을 `deleted_at`으로 지운다(탈퇴처럼 반응·근거를 지우지는 않는다 — 이미 옮겼다) | — |
 
 합치기로 사용자가 보는 이름이 게스트 이름에서 카카오 계정의 이름으로 바뀐다(구성원 목록과 핀 작성자 표시는 다시 불러오면 된다).
@@ -568,7 +571,8 @@ event_log(
   시점에 candidate에서 복사(가드레일 5). 위 `pins` 테이블에 반영. 이유: `source_run_id`는 이미
   목 서버(`contracts/mocks`)가 쓰고 있어 없애면 FE 쪽 재작업이 필요하고,
   `candidates.lat/lng` 비정규화와 같은 논리로 "1회성 복사"는 "실시간 모듈 간 조회 금지" 원칙과
-  충돌하지 않는다.
+  충돌하지 않는다. 2026-10-27 #761에서 `source_run_id`는 지웠다: 구현된 적이 없고, 게시 수는
+  `candidates.published_pin_id`로 센다(#469). `checks`는 그대로다.
 - **`Candidate.permissions` 필드 추가 여부** — #64. 추가하는 쪽으로 확정: 이미 있는 공용
   `Permissions` 스키마에 `can_publish`를 추가하고 `Candidate`가 이를 참조한다(`Pin`/`EvidenceLine`
   등 다른 리소스와 같은 패턴). "FE가 권한 규칙을 재구현하지 않는다"(permissions.md) 원칙과

@@ -5,11 +5,8 @@ maps 소유(auth/CLAUDE.md "책임" 참고).
 users는 사람이고 user_identities는 로그인 수단이다(#694). 다른 모듈은 users.id만 가리킨다.
 게스트 = 로그인 수단이 없는 사용자이고, is_guest는 저장하지 않고 users를 읽을 때 계산한다.
 
-id는 다른 모듈들이 이미 String으로 참조를 걸어둔 형식과 맞춘다(maps.models::Map.created_by,
-pins.models::Pin.created_by 등 — 전부 "users(id) — auth 도착 시 FK" 주석과 함께 String으로
-유보돼 있었다). FK 추가는 이번 리비전 범위 밖이다(auth/for_Root.md 보고 대상 — 각 모듈이
-이미 들고 있는 dev 값이 실제 users.id와 일치한다는 보장이 없어, 백필 없이 FK를 걸면 그
-모듈들이 먼저 깨진다).
+id는 다른 모듈들이 String으로 들고 있는 형식과 맞춘다(maps.models::Map.created_by,
+pins.models::Pin.created_by 등). 다른 모듈의 이 열들에는 FK를 걸지 않는다(docs/architecture.md 1절, #760).
 """
 
 import uuid
@@ -37,7 +34,7 @@ class UserIdentity(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     # users는 탈퇴해도 soft delete라 CASCADE는 서비스에서 일어나지 않는다. 테스트 정리처럼 users 행을 실제로 지울 때만 따라 지운다
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    provider: Mapped[str] = mapped_column(String, nullable=False)  # 'kakao'뿐이지만 값 제약은 서비스 계층에서
+    provider: Mapped[str] = mapped_column(String, nullable=False)  # 'kakao'|'qa'(스테이징 전용, #788). 값 제약은 서비스 계층에서
     provider_user_id: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

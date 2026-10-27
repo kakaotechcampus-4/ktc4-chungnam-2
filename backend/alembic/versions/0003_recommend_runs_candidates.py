@@ -8,7 +8,7 @@ FK는 users(id)/maps(id)/places(id) 대상 테이블이 아직 없어 걸지 않
 
 candidates.lat/lng는 docs/data-model.md의 candidates 정의(117-159행)엔 없는 컬럼이다 —
 recommend/models.py 모듈 docstring에 이유를 적었다(places 온디맨드 조회가 아직 없어 pins.geom과
-같은 이유로 denormalize). for_Root.md에 별도 보고.
+같은 이유로 denormalize). data-model.md candidates 절에 반영.
 
 Revision ID: 0003_recommend_runs_candidates
 Revises: 0002_event_log
