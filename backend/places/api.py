@@ -180,6 +180,33 @@ def search_nearby_own(category: str, areas: Sequence[Area], *, db: Session | Non
         return repository.search_nearby_own(s, category, areas)
 
 
+def count_curated(category: str, areas: Sequence[Area], *, db: Session | None = None) -> int:
+    """원들 안의 영업 중(status='open') 정예(curated) 장소 수(#799). 원 처리는 search_nearby_own과 같고 쿼리 한 번이다.
+    음식점·카페·관광지 밖이거나 원이 없으면 0. 읽기 전용."""
+    if category not in matching.OWN_CATEGORIES:
+        return 0
+    with _session(db) as s:
+        return repository.count_curated(s, category, areas)
+
+
+# ---- 동네와 카카오맵 검색 링크 (#798, #799) — 카카오를 부르지 않고 저장하지 않는다. 규칙은 places.core 한 곳 ----
+
+def neighborhood(address: str | None) -> str | None:
+    """주소 → "{시·군·구} {괄호 안 동(읍·면)}"(예 "해운대구 우동"). 괄호가 없으면 시·군·구까지, 주소가 없으면 None."""
+    return core.neighborhood(address)
+
+
+def kakao_search_url(query: str) -> str:
+    """카카오맵 검색 링크 "https://map.kakao.com/link/search/" + URL 인코딩한 검색어. 이 형식을 다른 곳에서 다시 적지 않는다."""
+    return core.kakao_search_url(query)
+
+
+def place_link(place: PlaceInfo) -> str | None:
+    """get_places 결과 하나의 「카카오맵에서 보기」 링크. 기록된 카카오 장소 URL이 있으면 그것, 없으면 "{이름} {동네}"
+    검색 링크(동네가 없으면 이름만). 이름이 없으면 None. recommend(결과 카드)와 pins(핀 상세)가 부른다."""
+    return core.place_link(place.name, place.address, place.kakao_place_url)
+
+
 def get_ad_places(db: Session, *, place_ids: Sequence[str], center: tuple[float, float], radius_m: float,
                   categories: Sequence[str]) -> list[dict]:
     """추천 탭 광고용(docs/ads.md 5·6절, #645). 주어진 place_id 중 status=open, category in categories,

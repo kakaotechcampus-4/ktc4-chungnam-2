@@ -309,20 +309,35 @@ def get_places(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceInfo]:
     if not ids:
         return {}
     lat, lng = _lat_lng()
-    rows = db.execute(select(Place.id, Place.name, Place.category, Place.kakao_place_url, Place.source, Place.curated, lat, lng).where(Place.id.in_(ids))).all()
-    return {str(r.id): PlaceInfo(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_url, r.source, r.curated) for r in rows}
+    rows = db.execute(select(Place.id, Place.name, Place.category, Place.kakao_place_url, Place.source, Place.curated, Place.address, lat, lng)
+                      .where(Place.id.in_(ids))).all()
+    return {str(r.id): PlaceInfo(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_url, r.source, r.curated, r.address) for r in rows}
+
+
+def _in_any_area(areas: Sequence[Area]):
+    """원 여러 개 중 하나라도 안에 있는가. 원이 겹쳐도 장소는 한 번이다(OR)."""
+    return or_(*(func.ST_DWithin(Place.geom, _geog(a.lat, a.lng), a.radius_m) for a in areas))
 
 
 def search_nearby_own(db: Session, category: str, areas: Sequence[Area]) -> list[PlaceRef]:
     if not areas:
         return []
     lat, lng = _lat_lng()
-    circles = [func.ST_DWithin(Place.geom, _geog(a.lat, a.lng), a.radius_m) for a in areas]
     # PlaceRef.can_recommend(추천 후보 풀에 넣어도 되는가)는 places.curated 그대로다 — 규칙이 바뀌면 이 쿼리 한 곳만 고친다(#743)
     rows = db.execute(
-        select(Place.id, lat, lng, Place.curated).where(Place.status == "open", Place.category == category, or_(*circles))
+        select(Place.id, lat, lng, Place.curated).where(Place.status == "open", Place.category == category, _in_any_area(areas))
     ).all()
     return [PlaceRef(str(r.id), r.lat, r.lng, r.curated) for r in rows]
+
+
+def count_curated(db: Session, category: str, areas: Sequence[Area]) -> int:
+    """원들 안의 영업 중 정예 장소 수(#799). 원 처리는 search_nearby_own과 같다."""
+    if not areas:
+        return 0
+    return db.scalar(
+        select(func.count()).select_from(Place)
+        .where(Place.status == "open", Place.category == category, Place.curated.is_(True), _in_any_area(areas))
+    )
 
 
 def get_ad_places(db: Session, place_ids: Sequence[str], center: tuple[float, float], radius_m: float,

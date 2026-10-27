@@ -349,6 +349,38 @@ def test_search_nearby_own_returns_coordinates(loaded):
     assert (ref.lat, ref.lng) == pytest.approx((37.5512, 126.9882), abs=1e-5)
 
 
+
+# ---- count_curated (#799) ----
+
+def test_count_curated_counts_open_curated_places_in_any_area(loaded):
+    p1, p2 = _pid(loaded, "permit", "P001"), _pid(loaded, "permit", "P002")
+    loaded.execute(Place.__table__.update().where(Place.id.in_([p1, p2])).values(curated=True))
+    near = Area(37.5445, 127.0561, 300)
+    assert api.count_curated("음식점", [near], db=loaded) == 2
+    assert api.count_curated("음식점", [near, Area(37.5446, 127.0562, 300)], db=loaded) == 2   # 원이 겹쳐도 한 번
+    assert api.count_curated("카페", [near], db=loaded) == 0      # P010은 정예가 아니다
+    loaded.execute(Place.__table__.update().where(Place.id == p2).values(status="closed"))
+    assert api.count_curated("음식점", [near], db=loaded) == 1    # 폐업은 세지 않는다
+    assert api.count_curated("음식점", [], db=loaded) == 0
+    assert api.count_curated("숙소", [near], db=loaded) == 0
+
+
+def test_count_curated_uses_one_query(loaded):
+    from sqlalchemy import event
+
+    count = {"n": 0}
+    event.listen(loaded.get_bind(), "before_cursor_execute", lambda *a, **k: count.__setitem__("n", count["n"] + 1))
+    api.count_curated("음식점", [Area(37.5445, 127.0561, 300), Area(37.5796, 126.9770, 300)], db=loaded)
+    assert count["n"] == 1
+
+
+def test_get_places_carries_address_for_place_link(loaded):
+    pid = _pid(loaded, "permit", "P001")
+    info = api.get_places([pid], db=loaded)[pid]
+    assert info.address == "서울특별시 성동구 아차산로 1"   # 도로명 주소, 괄호 없음 → 시·군·구까지
+    assert api.place_link(info) == api.kakao_search_url("성수 칼국수 성동구")
+
+
 # ---- get_facts ----
 
 def test_get_facts_returns_labels_as_stored_including_unknown(loaded):
