@@ -16,6 +16,23 @@ const REQUIRED_OPINION_PINS = 1;
 const MANUAL_PER_REQUEST = 5;
 const MANUAL_PER_RUN = 10;
 
+// #798 카카오맵 검색 링크 — 실서버는 docs/constraints.md 「카카오맵 검색 링크」 표로 말을 고른다. 목 서버는 카테고리 말만 쓴다.
+const CATEGORY_SEARCH_WORD: Record<string, string> = { 음식점: "맛집", 카페: "카페", 관광지: "가볼만한곳" };
+const EXTERNAL_SEARCH_BELOW = 3; // 후보가 이 수 미만이면 external_search(실서버 기준과 같은 값, 화면에는 적지 않는다)
+
+function externalSearch(query: string) {
+  return { query, url: `https://map.kakao.com/link/search/${encodeURIComponent(query)}` };
+}
+
+function town(mapId: string | undefined) {
+  return (mapId && store.maps[mapId]?.region?.label) || "제주시";
+}
+
+// 지역 이름에 "춘천"이 들어간 지도는 정예 장소가 없는 지역으로 흉내 낸다(curated_nearby 0)
+function curatedNearby(mapId: string) {
+  return town(mapId).includes("춘천") ? 0 : 12;
+}
+
 function opinionPinCount(mapId: string, category: string) {
   return Object.values(store.pins).filter(
     (p) => p.map_id === mapId && p.category === category && p.visibility === "public" && p.id && (store.reactions[p.id] ?? []).length > 0,
@@ -42,10 +59,15 @@ function ensureCandidates(runId: string) {
 export const recommendHandlers = [
   http.get("*/maps/:mapId/recommend/readiness", ({ params }) => {
     const mapId = params.mapId as string;
-    const result: Record<string, { ready: boolean; answered_count: number; required_count: number }> = {};
+    const result: Record<string, Record<string, unknown>> = {};
     for (const category of RECOMMEND_CATEGORIES) {
       const answered = opinionPinCount(mapId, category);
       result[category] = { ready: answered >= REQUIRED_OPINION_PINS, answered_count: answered, required_count: REQUIRED_OPINION_PINS };
+      if (answered > 0) { // 의견 핀이 있어야 기본 지역이 있다(#798)
+        const curated = curatedNearby(mapId);
+        result[category].curated_nearby = curated;
+        if (curated === 0) result[category].external_search = externalSearch(`${town(mapId)} ${CATEGORY_SEARCH_WORD[category]}`);
+      }
     }
     return HttpResponse.json(result);
   }),
@@ -173,7 +195,12 @@ export const recommendHandlers = [
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
     if (run.status !== "done") return apiError(409, "RUN_NOT_FINISHED", "아직 끝나지 않았거나 실패한 추천이에요", { status: run.status }); // #469
-    const candidates = store.candidates[runId] ?? [];
+    const regionTown = town(run.map_id);
+    const search = externalSearch(`${regionTown} ${CATEGORY_SEARCH_WORD[run.category] ?? ""}`.trim());
+    // 「카카오맵에서 보기」 — 장소 페이지가 없으면 이름 + 동네 검색 링크(#798)
+    const candidates = (store.candidates[runId] ?? []).map((c) => ({
+      ...c, place_url: c.place_url ?? c.place_source?.url ?? externalSearch(`${c.place_name} ${regionTown}`).url,
+    }));
     const funnel = [
       { label: "카테고리 후보 풀", removed_count: 0 },
       { label: "반경 밖 제거", removed_count: 3 },
@@ -183,9 +210,12 @@ export const recommendHandlers = [
       { label: "이미 제안·거절됨", removed_count: 1 },
     ];
     if (candidates.length === 0) {
-      return apiError(404, "NO_RESULTS", "필터에 걸리는 핀이 없어요", { funnel });
+      return apiError(404, "NO_RESULTS", "필터에 걸리는 핀이 없어요", { funnel, external_search: search });
     }
-    return HttpResponse.json({ run_id: runId, funnel, regions: store.regions[runId] ?? [], candidates });
+    return HttpResponse.json({
+      run_id: runId, funnel, regions: store.regions[runId] ?? [], candidates,
+      ...(candidates.length < EXTERNAL_SEARCH_BELOW ? { external_search: search } : {}),
+    });
   }),
 
   http.post("*/runs/:runId/widen", ({ params }) => {

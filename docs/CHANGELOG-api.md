@@ -2,6 +2,22 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-28, 카카오맵 검색 링크 (#798)
+
+정예 장소가 없거나 적은 지역에서 사람이 핀고 밖에서 직접 찾는 출구다(멘토 조언). 서버는 카카오를 부르지 않고 저장하지 않는다. 검색어 규칙은 `docs/constraints.md` 「카카오맵 검색 링크」.
+
+- 새 스키마 `ExternalSearch {query, url}`(`https://map.kakao.com/link/search/{검색어}`).
+- `RecommendResult.external_search`: 후보가 3곳 미만일 때만.
+- `NO_RESULTS`의 `detail.external_search`: 후보가 0곳일 때.
+- `Readiness.curated_nearby`: 기본 지역에서 넓히기 상한(30분) 안의 정예 장소 수. 의견 핀이 없으면 없다. 0이면 `Readiness.external_search`도 온다.
+- `Candidate.place_url`(새 필드), `Pin.place_url`(설명 변경): 카카오 장소 페이지가 기록되지 않았으면 `{장소 이름} {동네}` 검색 링크다. 이제 거의 모든 자체 DB 장소에 「카카오맵에서 보기」가 붙는다.
+- 서버 구현: places #799, recommend #800, pins #801. 그 전까지 실서버에는 새 필드가 없다(모두 선택 필드). 목 서버는 이미 내려 준다(지역 이름에 "춘천"이 든 지도는 `curated_nearby` 0).
+- FE(#802):
+  - 결과 0곳 화면과 결과가 적을 때 「카카오맵에서 더 찾아보기」(새 창, `query`를 함께 보여 준다)를 기존 버튼 옆에 둔다.
+  - readiness의 `curated_nearby`가 0이면 추천 버튼 옆에 안내와 같은 링크를 둔다. 추천 버튼은 막지 않는다.
+  - 결과 카드의 「카카오맵에서 보기」는 `place_source.url` 대신 `place_url`을 쓴다.
+  - 기준 숫자(3곳)는 화면에 적지 않는다.
+
 ## 2026-10-27 (아홉 번째), 구성원 충족 집계에 조건별 상태를 더한다 (#796, 제안 — 팀 동의 전)
 
 - `MemberFulfillment.by_member[].conditions[]`를 더했다(선택 필드). 조건마다 `fact_key`, `fact_label`, `evidence_line_id`, `status`(`met`/`unmet`/`needs_check`)다. `satisfied`/`total`과 `by_member[].satisfied`는 그대로(호환용)다.
