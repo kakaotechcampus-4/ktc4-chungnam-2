@@ -22,6 +22,7 @@ from common.events import EventLog
 from main import app
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
+from places import api as places_api
 
 
 def _insert_pin(db_session, *, map_id="map_1", place_id=None, created_by="user_1",
@@ -107,11 +108,50 @@ def test_create_pin_records_kakao_id_and_url_on_the_place_and_returns_place_url(
     assert listed[0]["place_url"] == "https://place.map.kakao.com/1001" and listed[0]["place_name"] == "성수 칼국수"
 
 
-def test_create_pin_with_non_kakao_id_records_nothing_and_omits_place_url(app_client, fake_places):
+def test_create_pin_with_non_kakao_id_records_nothing_and_links_name_search(app_client, fake_places):
     resp = app_client.post("/maps/map_1/pins", json={**KALGUKSU, "place_id": "naver:77"}, cookies=_auth())
     assert resp.status_code == 201
-    assert "place_url" not in resp.json()
+    assert resp.json()["place_url"] == places_api.kakao_search_url("성수 칼국수")   # #801 — 장소 페이지가 없으면 이름 검색
     assert fake_places._row(fake_places.place_id("seongsu-kalguksu")).kakao_place_id is None
+
+
+# #801 — 자체 DB 핀의 place_url은 places.api.place_link가 정한다(기록된 카카오 URL, 없으면 "{이름} {동네}" 검색).
+SEONGSU_ADDRESS = "서울특별시 성동구 성수이로 10 (성수동2가)"
+
+
+def _listed_place_url(app_client, fake_places, *, kakao_place_url, address):
+    row = fake_places._row(fake_places.place_id("seongsu-kalguksu"))
+    row.kakao_place_url, row.address = kakao_place_url, address
+    resp = app_client.post("/maps/map_1/pins", json={**KALGUKSU, "place_id": "naver:77"}, cookies=_auth())
+    assert resp.status_code == 201
+    listed = app_client.get("/maps/map_1/pins", cookies=_auth()).json()
+    assert listed[0]["place_url"] == resp.json()["place_url"]   # 만들 때와 목록이 같은 규칙
+    return listed[0]["place_url"]
+
+
+def test_db_pin_place_url_keeps_recorded_kakao_url(app_client, fake_places):
+    url = _listed_place_url(app_client, fake_places, kakao_place_url="https://place.map.kakao.com/1001", address=SEONGSU_ADDRESS)
+    assert url == "https://place.map.kakao.com/1001"
+
+
+def test_db_pin_place_url_without_kakao_url_searches_name_and_neighborhood(app_client, fake_places):
+    url = _listed_place_url(app_client, fake_places, kakao_place_url=None, address=SEONGSU_ADDRESS)
+    assert url == places_api.kakao_search_url("성수 칼국수 성동구 성수동2가")
+
+
+def test_db_pin_place_url_without_address_searches_name_only(app_client, fake_places):
+    url = _listed_place_url(app_client, fake_places, kakao_place_url=None, address=None)
+    assert url == places_api.kakao_search_url("성수 칼국수")
+
+
+def test_published_ai_pin_place_url_uses_the_same_place_link(db_session, fake_places):
+    from pins import api as pins_api
+
+    place_id = fake_places.place_id("seongsu-kalguksu")
+    fake_places._row(place_id).address = SEONGSU_ADDRESS
+    mutation = pins_api.create_ai_pin(db_session, map_id="map_1", category="음식점", place_id=place_id,
+                                      lat=37.5445, lng=127.0561, created_by="user_1")
+    assert mutation.event.payload["place_url"] == places_api.kakao_search_url("성수 칼국수 성동구 성수동2가")
 
 
 def test_create_pin_without_matching_place_is_422_place_not_supported(app_client, db_session, fake_places):
