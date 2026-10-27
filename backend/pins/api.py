@@ -172,6 +172,13 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
     return core.to_pin_response(record, principal)
 
 
+def author_display_names(db: Session, author_ids: list[str], current_member_ids: set[str]) -> dict[str, str | None]:
+    """작성자 id 배치의 표시 이름(#369 핀 작성자 규칙) — 탈퇴했으면 '탈퇴한 구성원', 이 지도에서 나갔으면
+    '나간 구성원', 아니면 실명. recommend 근거 줄 작성자(#762)가 규칙을 복사하지 않고 이것을 부른다.
+    current_member_ids는 호출부가 maps.api.DbMembershipGateway.current_member_ids(map_id)로 한 번 구해 넘긴다."""
+    return service.author_display_names(db, author_ids, current_member_ids)
+
+
 def count_public_pins_by_map(db: Session, map_ids: Sequence[str]) -> dict[str, int]:
     """maps(#313)가 Map.pin_count·InviteSummary.pin_count에 쓴다 — 삭제되지 않은 공개 핀 수.
     핀이 없는 지도는 0이다. 쿼리는 한 번이다. 비공개 핀(남의 AI 후보)은 세지 않는다(가드레일 1) —
