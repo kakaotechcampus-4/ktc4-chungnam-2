@@ -7,7 +7,7 @@ import { usePinSelection } from '@/features/map/usePinSelection'
 import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
 import { useLivePinResolver } from '@/features/map/livePlaces'
-import { usePinsQuery } from '@/features/map/queries'
+import { usePinsQuery, useResolveLivePin } from '@/features/map/queries'
 import { useMapEvents } from '@/features/map/realtime'
 import { usePinFilters } from '@/features/map/usePinFilters'
 import MapSwitcher from '@/features/maps/MapSwitcher'
@@ -49,7 +49,7 @@ export default function MapLayout() {
   const { data: allPins = [] } = usePinsQuery(mapId)
   const mapInfo = useMapQuery(mapId).data
   const memberCount = mapInfo?.memberCount ?? 0
-  useLivePinResolver(allPins, mapInfo?.regionCenter)
+  useLivePinResolver(allPins, mapInfo?.regionCenter, useResolveLivePin(mapId))
   const desktop = useIsDesktop()
   const panelW = useIsPc() ? PANEL_W.pc : PANEL_W.tablet
   const panelOpen = useSheetStore((s) => s.panelOpen)
