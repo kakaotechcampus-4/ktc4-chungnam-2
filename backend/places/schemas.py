@@ -69,6 +69,7 @@ class PlaceInfo:
     kakao_place_url: str | None = None
     source: str | None = None   # 데이터 출처 — "permit"(인허가 공공데이터) | "tourapi"(한국관광공사). 가드레일 5 출처 표시용(#242)
     curated: bool = False       # 정예(사람이 직접 조사·납품, places.curated) — 출처를 "정예 조사"로 표시할 때 쓴다(#681). 기본 False라 기존 호출자는 그대로다
+    address: str | None = None  # 자체 DB 주소 — 장소 링크의 동네를 자를 때 쓴다(places.api.place_link, #799). 응답에 그대로 싣지 않는다
 
 
 @dataclass(frozen=True)

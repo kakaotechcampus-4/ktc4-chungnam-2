@@ -114,7 +114,8 @@ class FakePlaces:
         for pid in place_ids:
             row = self._row(pid)
             if row is not None:
-                out[pid] = PlaceInfo(pid, row.name, row.lat, row.lng, row.category, row.kakao_place_url, row.source, row.curated)
+                out[pid] = PlaceInfo(pid, row.name, row.lat, row.lng, row.category, row.kakao_place_url, row.source, row.curated,
+                                     row.address)
         return out
 
     def get_hours(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceHours]:
@@ -132,6 +133,15 @@ class FakePlaces:
             if r.status == "open" and r.category == category
             and any(haversine_distance_m(a.lat, a.lng, r.lat, r.lng) <= a.radius_m for a in areas)
         ]
+
+    def count_curated(self, category: str, areas: Sequence[Area], *, db: Session | None = None) -> int:
+        if category not in OWN_CATEGORIES:
+            return 0
+        return sum(
+            1 for r in self.rows
+            if r.status == "open" and r.curated and r.category == category
+            and any(haversine_distance_m(a.lat, a.lng, r.lat, r.lng) <= a.radius_m for a in areas)
+        )
 
     def get_facts(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, list[FactLabel]]:
         return {pid: list(self.facts.get(pid, [])) for pid in place_ids}   # 라벨이 없으면 빈 리스트
@@ -156,7 +166,7 @@ class FakePlaces:
         """places.api의 공개 함수(링크 해석용 2개 포함)를 이 대역으로 바꾼다(pytest monkeypatch)."""
         from places import api
 
-        for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "get_facts", "get_hours",
+        for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "count_curated", "get_facts", "get_hours",
                      "get_week_open_status",
                      "own_places_near", "own_places_by_kakao_id"):
             monkeypatch.setattr(api, name, getattr(self, name))
