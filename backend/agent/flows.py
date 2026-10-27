@@ -183,12 +183,12 @@ def run_tick(
             try:
                 with _write(session_factory) as db:
                     service.release_lease(db, claim.map_id)
-            except Exception:   # 못 풀어도 LEASE_SEC 뒤에는 다른 실행이 가져간다(12.5)
-                log.exception("agent release_lease 실패 map_id=%s", claim.map_id)
+            except Exception as exc:   # 못 풀어도 LEASE_SEC 뒤에는 다른 실행이 가져간다(12.5)
+                log.warning("agent release_lease 실패 map_id=%s error=%s", claim.map_id, type(exc).__name__)
     try:
         daily_cleanup_if_due(now, session_factory=session_factory)
-    except Exception:
-        log.exception("agent 보존 정리 실패")
+    except Exception as exc:   # 마친 날짜를 적지 않았으니 다음 tick이 다시 한다
+        log.warning("agent 보존 정리 실패 error=%s", type(exc).__name__)
     deferred_by_budget = len(claims) - len(observed)
     log.log(logging.WARNING if deferred_by_budget else logging.INFO,
             "agent tick due=%d observed=%d deferred_by_max=%d deferred_by_budget=%d elapsed_ms=%d",
@@ -210,14 +210,14 @@ def _observe_claimed(
         observe_map(claim.map_id, now, trigger=claim.trigger, session_factory=session_factory, gateway=gateway,
                     trace=trace)
     except Exception as exc:
-        log.exception("agent observe_map 실패 map_id=%s stage=%s", claim.map_id, trace.stage)
+        log.error("agent observe_map 실패 map_id=%s stage=%s error=%s", claim.map_id, trace.stage, type(exc).__name__)
         try:
             with _write(session_factory) as db:
                 service.insert_run(db, map_id=claim.map_id, trigger=claim.trigger, **trace.error_fields(exc, now))
                 retry_at = core.error_retry_at(now, service.error_streak(db, claim.map_id))
                 service.advance_cursor(db, claim.map_id, claim.seq, next_check_at=retry_at, observed_at=now)
-        except Exception:
-            log.exception("agent 관찰 실패 기록 실패 map_id=%s", claim.map_id)
+        except Exception as record_exc:
+            log.error("agent 관찰 실패 기록 실패 map_id=%s error=%s", claim.map_id, type(record_exc).__name__)
 
 
 _cleanup_done_on: date | None = None   # 이 프로세스가 보존 정리를 마친 KST 날짜
@@ -252,8 +252,8 @@ def fill_decided_within_24h(now: datetime, *, session_factory: SessionFactory = 
         try:
             with _write(session_factory) as db:
                 filled += _fill_decided_for_map(db, map_id, created_before)
-        except Exception:
-            log.exception("agent decided_within_24h 채우기 실패 map_id=%s", map_id)
+        except Exception as exc:
+            log.warning("agent decided_within_24h 채우기 실패 map_id=%s error=%s", map_id, type(exc).__name__)
     return filled
 
 
@@ -688,7 +688,7 @@ def advise_run(
             }
         draft = core.choose_run_advice(run_id, funnel, lines, sims, next_factor)
     except Exception as exc:
-        log.exception("agent 조언 실패 run_id=%s", run_id)
+        log.error("agent 조언 실패 run_id=%s error=%s", run_id, type(exc).__name__)
         with _write(session_factory) as db:   # 조언 행은 쓰지 않는다 — 다음 요청이 다시 만든다
             service.insert_run(
                 db, map_id=meta["map_id"], started_at=now, trigger="run_advice", used_model=False,
