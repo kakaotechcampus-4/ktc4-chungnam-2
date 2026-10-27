@@ -3643,7 +3643,7 @@ export interface components {
             search_query?: string;
             /** @description 자체 DB 장소의 이름 (#191). 핀에 따로 저장하지 않고 장소에서 가져온다. live 핀에는 없다(#382) — 화면이 실시간 검색 결과에서 읽는다 */
             place_name?: string;
-            /** @description 카카오 장소 페이지 링크. **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 자체 DB 핀은 매칭된 장소에 기록된 URL(저장 허용), 실시간 핀(source=live)은 kakao_place_id로 응답 때 만든다(저장하지 않음, #445). 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 필드를 생략한다 */
+            /** @description 카카오 장소 페이지 링크. **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 자체 DB 핀은 매칭된 장소에 기록된 URL(저장 허용), 실시간 핀(source=live)은 kakao_place_id로 응답 때 만든다(저장하지 않음, #445). 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 `{장소 이름} {동네}` 카카오맵 검색 링크다(#798, #801). 이름도 주소도 없으면 필드를 생략한다 */
             place_url?: string;
             /** @description 핀을 찍은 구성원의 user_id (#26) */
             created_by: string;
@@ -3717,6 +3717,10 @@ export interface components {
             answered_count?: number;
             /** @description 항상 1. 구성원 수에 비례하던 ceil(N/2)는 폐기했다(#360). 필드를 남긴 것은 FE 호환(「의견 핀 0/1」 표기)용이다 */
             required_count?: number;
+            /** @description 추천 기본 지역(그 카테고리 의견 핀들의 중심)에서 반경 넓히기 상한(도보 30분) 안의 추천 가능 장소(정예) 수(#798). 의견 핀이 없어 기본 지역이 없으면 필드가 없다. 0이면 추천해도 결과가 0곳이다 — 화면은 추천 버튼을 막지 않고 external_search를 함께 보여 준다 */
+            curated_nearby?: number;
+            /** @description curated_nearby가 0일 때만 */
+            external_search?: components["schemas"]["ExternalSearch"];
         };
         EvidenceLine: {
             id: string;
@@ -3846,6 +3850,8 @@ export interface components {
             reason: string;
             member_fulfillment: components["schemas"]["MemberFulfillment"];
             place_source?: components["schemas"]["PlaceSource"];
+            /** @description 「카카오맵에서 보기」 링크(#798). 장소에 기록된 카카오 장소 페이지가 있으면 그것, 없으면 `{장소 이름} {동네}` 카카오맵 검색 링크다. 이름도 주소도 없으면 필드가 없다. 외부 브라우저로 연다(앱 안 WebView 금지) */
+            place_url?: string;
             /** @enum {string} */
             visibility: "private" | "published";
             /** @description 게시하기 전에는 null이거나 필드가 없다 */
@@ -3861,6 +3867,19 @@ export interface components {
             }[];
             regions: components["schemas"]["Region"][];
             candidates: components["schemas"]["Candidate"][];
+            /** @description 후보가 3곳 미만일 때만(#798). 기준값은 서버가 정한다 — 화면에 숫자를 적지 않는다 */
+            external_search?: components["schemas"]["ExternalSearch"];
+        };
+        /**
+         * @description 카카오맵 검색 링크(#798). 핀고에 결과가 없거나 적을 때 사람이 밖에서 직접 찾는 출구다 — AI 추천 결과가 아니다. 서버는 카카오를 부르지 않고 저장하지 않는다(#53).
+         *     검색어 규칙은 docs/constraints.md 「카카오맵 검색 링크」: `{동네} {말}`, 말은 원함 조건 하나(표에 있는 키) 또는 카테고리 말. 사유 원문은 들어가지 않는다.
+         *     **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관)
+         */
+        ExternalSearch: {
+            /** @description 검색어. 화면에 그대로 보여 준다(예 "춘천 한식") */
+            query: string;
+            /** @description https://map.kakao.com/link/search/ + 검색어 */
+            url: string;
         };
         ShortlistItem: {
             id: string;
@@ -4404,7 +4423,10 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 필터 통과 후보 0개 (6절 "결과 0개") */
+        /**
+         * @description 필터 통과 후보 0개 (6절 "결과 0개"). `detail.funnel`(단계별로 빠진 수)과 `detail.external_search`(ExternalSearch, 카카오맵 검색 링크, #798)가 온다.
+         *     화면은 반경 넓히기, 근거 고치기와 함께 「카카오맵에서 더 찾아보기」를 보여 준다
+         */
         NoResults: {
             headers: {
                 [name: string]: unknown;

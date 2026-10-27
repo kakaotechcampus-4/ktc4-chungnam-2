@@ -142,6 +142,7 @@ describe("에러 시나리오", () => {
     expect(body.code).toBe("NO_RESULTS");
     expect(body.detail.funnel.length).toBeGreaterThan(0);
     expect(body.detail.funnel.map((f: { label: string }) => f.label)).toContain("추천 가능 아님 제거");
+    expect(body.detail.external_search.url).toMatch(/^https:\/\/map\.kakao\.com\/link\/search\//); // #798
   });
 
   it("retry-limit — 10회 초과 시 429 RETRY_LIMIT(detail에 attempt_limit)", async () => {
@@ -1046,6 +1047,9 @@ describe("#360 — 반응은 ♥/🚫 둘뿐, 추천은 ♥/🚫 의견이 달�
     expect(r["음식점"]).toMatchObject({ ready: true, required_count: 1 });
     expect(r["음식점"].answered_count).toBeGreaterThanOrEqual(1);
     expect(r["관광지"]).toMatchObject({ ready: false, answered_count: 0, required_count: 1 });
+    expect(r["음식점"].curated_nearby).toBeGreaterThan(0); // #798 — 정예가 있으면 링크 없음
+    expect(r["음식점"].external_search).toBeUndefined();
+    expect(r["관광지"].curated_nearby).toBeUndefined(); // 의견 핀이 없으면 기본 지역이 없다
   });
 
   it("의견 핀이 없는 카테고리로 run을 만들면 409 NOT_READY", async () => {
