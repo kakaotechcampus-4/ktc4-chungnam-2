@@ -167,7 +167,7 @@ places(
                                         -- 정예(사람이 직접 조사·납품한 데이터)인가(2026-10-16). `--authoritative` 적재가 켠다.
                                         -- 이름·분류·라벨을 인허가 커버리지가 덮지 못하게 하고, AI 추천 후보 풀의 기준이다(아래).
                                         -- 한 번 true가 되면 커버리지 적재가 끄지 않는다. 처음 채울 때는 "출처(label_source)가 NULL인
-                                        -- 라벨 행을 가진 장소 = 정예"로 되메운다(places/for_Root.md #can_recommend 조사 결과).
+                                        -- 라벨 행을 가진 장소 = 정예"로 되메운다(마이그레이션 0034_places_curated).
                                         -- AI 추천 후보 풀은 curated=true인 장소만이다(2026-10-24 원칙: 정예가 아닌 데이터는 핀을 꽂을 수 있는
                                         -- 최소 정보일 뿐이다). 따로 저장한 칸(can_recommend)은 #743에서 없앴다(마이그레이션 0040): 규칙이 curated와
                                         -- 같은 값인데 따로 저장하면 규칙을 바꿀 때 재계산을 잊어 옛 값이 남는다(멘토 리뷰 #680). 후보 조회
@@ -513,7 +513,7 @@ feedback(                             -- 서비스 피드백. 저장만 한다
 | shortlist | `shortlist_items.added_by` | 없음 |
 | notifications | `notifications.user_id` | `notification_prefs`는 카카오 계정 것을 쓰고 게스트 것은 지운다 |
 | feedback | `feedback.user_id` | 없음 |
-| agent | `agent_suggestion_views.user_id`, `agent_course_runs.requested_by`, `agent_settings.updated_by`, `agent_suggestions.resolved_by` | 같은 제안을 둘 다 열람했으면 게스트 것을 지운다. 같은 지도에 둘 다 진행 중인 코스 요청이 있으면 게스트 것을 지운다(진행 중은 지도당 한 사람에 하나). 코스 하루 상한은 합치지 않는다(추천 횟수와 같다) |
+| agent | `agent_suggestion_views.user_id`, `agent_course_runs.requested_by`, `agent_settings.updated_by`, `agent_suggestions.resolved_by` | 같은 제안을 둘 다 열람했으면 게스트 것을 지운다. 같은 지도에 둘 다 진행 중인 코스 요청이 있으면 게스트 것을 지운다(진행 중은 지도당 한 사람에 하나). 코스 하루 상한은 그날 행 수로 세므로(`requested_by`, `created_at`) 그날 옮긴 코스는 카카오 계정의 횟수에 들어간다. 다음 자정(KST)에 풀린다(#755) |
 | auth | 마지막에 게스트 행을 `deleted_at`으로 지운다(탈퇴처럼 반응·근거를 지우지는 않는다 — 이미 옮겼다) | — |
 
 합치기로 사용자가 보는 이름이 게스트 이름에서 카카오 계정의 이름으로 바뀐다(구성원 목록과 핀 작성자 표시는 다시 불러오면 된다).

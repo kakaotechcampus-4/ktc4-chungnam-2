@@ -643,6 +643,8 @@ def run_tick(now: datetime) -> None:
     service.daily_cleanup_if_due(now)    # 하루 한 번: agent_runs 30일 초과분 삭제
 ```
 
+끝날 때 처리량을 숫자로만 한 줄 남긴다(#756): 차례였던 지도 수(`due`), 관찰한 수, `TICK_MAX_MAPS`로 미룬 수, 시간 예산(`TICK_BUDGET_SEC`, #677)으로 미룬 수, 걸린 ms. 지도 id는 넣지 않는다. 시간 예산으로 미룬 지도가 있으면 warning이다. 읽는 법은 `deploy_rules.md`「배포 뒤 볼 지표」.
+
 event_log를 읽는 곳은 realtime뿐이다(data-model.md common 절). 그래서 claim_maps는 event_log를 조인하지 않고 두 단계로 나눈다(2026-10-15 개정).
 
 1. `realtime.api.latest_seq_by_map(db)`로 지도별 가장 큰 seq와 그 이벤트의 created_at을 받는다(event_log 보존 24시간 안의 지도만). 커서 행이 없는 지도는 이때 upsert한다.
@@ -1130,7 +1132,7 @@ FE 담당
 - 서비스 전체 일일 상한: 크레딧 잔량과 run당 토큰 측정값으로 정한다. 정하기 전까지는 지도 상한만 적용한다.
 - reasoning_effort: 진단 호출은 none으로 고정이다. 엘리스 API의 chat.completions는 도구 호출을 reasoning_effort=none일 때만 받는다(기본값과 low는 400, #532 확인). low가 필요하면 /v1/responses로 옮겨야 한다(확인 안 함). 우선순위 호출은 #534 비교(none 100%, low 88%, 기본값 90%) 뒤 코드 규칙으로 옮겨 없어졌다(#582). temperature=0은 받지 않는다.
 - 요약의 모델 호출: 고정 문구로 정했다(2026-10-16). 맞춤 문장이 필요한지는 #588에서 운영 기록을 보고 판단한다.
-- 처리량: `TICK_MAX_MAPS`와 동시 처리 수. 진단 소요 시간과 요청 타임아웃을 보고 정한다.
+- 처리량: `TICK_MAX_MAPS`와 동시 처리 수. 진단 소요 시간과 요청 타임아웃, 배포 뒤 tick 로그(#756)를 보고 정한다. 시간 예산은 150초로 둔다(#754).
 - 병렬 도구 호출: 지금은 끈다(`parallel_tool_calls=False`, #532에서 동작 확인). 켰을 때의 이득은 #534에서 본다.
 - 처리량 참고: live 시험에서 우선순위와 진단(요청 4번)을 합쳐 약 18초였다(#532). 요청 타임아웃은 15초다.
 
