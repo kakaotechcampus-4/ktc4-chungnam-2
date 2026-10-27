@@ -108,5 +108,5 @@ def test_purge_old_deletes_past_ninety_days_regardless_of_read_state_or_map(db_s
 
     assert api.purge_old(db_session, now=now) == {"notifications": 2}
     assert set(db_session.execute(select(Notification.id)).scalars()) == {fresh.id, edge.id}
-    assert len(service.get_prefs(db_session, user_id="u1").prefs) == 5                  # 설정은 그대로
+    assert service.get_prefs(db_session, user_id="u1").prefs[0].enabled is False        # 설정은 그대로
     assert api.purge_old(db_session, now=now, older_than_days=5) == {"notifications": 2}   # 기간을 바꿀 수 있다

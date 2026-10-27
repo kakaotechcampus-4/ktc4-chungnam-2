@@ -1777,11 +1777,11 @@ components:
 
     NotificationType:
       type: string
-      enum: [pin_reaction, member_joined, owner_changed, map_deleted, my_ai_pin_published]
+      enum: [pin_reaction, member_joined, owner_changed, map_deleted]
       description: |
         알림 종류 (#470). `pin_reaction` 내 핀에 반응이 달림, `member_joined` 내 지도에 새 구성원(방장에게만),
         `owner_changed` 내가 방장이 됨(직접 넘김·위임 모두), `map_deleted` 내가 속한 지도가 삭제됨.
-        `my_ai_pin_published`는 지운다(#764, 서버와 함께 #778에서 enum에서 뺀다). 「지도에 올리기」는 요청자 본인만 누를 수 있어 만들어지지 않는다. FE는 이 종류를 쓰지 않는다.
+        `my_ai_pin_published`는 지웠다(#764). 「지도에 올리기」는 요청자 본인만 누를 수 있어 만들어지지 않는다. FE는 이 종류를 쓰지 않는다.
         지도 복구(#464)·강퇴(#8)는 그 기능이 들어올 때 종류를 더한다.
 
     Notification:
