@@ -23,6 +23,11 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {}
 
+# 특정 환경에서만 붙는 경로 — main.py가 설정을 보고 include한다. 테스트 앱(PINGO_ENV=test)에는 없어야 한다.
+ENV_ONLY: dict[tuple[str, str], str] = {
+    ("post", "/auth/qa-login"): "스테이징 전용 QA 로그인(#788). staging 설정으로 만든 앱은 auth 테스트(#789)가 본다",
+}
+
 # 스펙에 없어도 되는 라우트(운영/문서용).
 NOT_IN_SPEC = {"/health", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 
@@ -46,7 +51,7 @@ def _implemented_operations() -> set[tuple[str, str]]:
 
 
 def test_spec_endpoints_missing_from_backend_are_exactly_the_known_ones():
-    missing = _spec_operations() - _implemented_operations()
+    missing = _spec_operations() - _implemented_operations() - set(ENV_ONLY)
     unexpected = missing - set(KNOWN_MISSING)
     stale = set(KNOWN_MISSING) - missing
     assert not unexpected, f"스펙에 있는데 백엔드에 없는 엔드포인트(추적 안 됨): {sorted(unexpected)}"
@@ -60,3 +65,9 @@ def test_backend_has_no_undocumented_endpoints():
         if p not in NOT_IN_SPEC
     }
     assert not extra, f"백엔드에는 있는데 docs/api-spec.yaml에 없는 엔드포인트: {sorted(extra)}"
+
+
+def test_env_only_endpoints_are_not_mounted_in_the_test_app():
+    """스테이징 전용 경로가 기본 앱에 붙어 있으면 prod에도 붙을 수 있다는 신호다."""
+    mounted = set(ENV_ONLY) & _implemented_operations()
+    assert not mounted, f"환경 전용 경로가 테스트 앱에 붙어 있다: {sorted(mounted)}"

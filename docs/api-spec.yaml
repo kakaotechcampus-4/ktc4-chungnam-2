@@ -111,6 +111,32 @@ paths:
         "422": { description: "검증 실패 (VALIDATION_ERROR) — 이름이 비었거나 50자 초과", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /auth/qa-login:
+    post:
+      tags: [auth]
+      summary: |
+        **스테이징 전용** QA 로그인 (#788, #789). FE는 쓰지 않는다. QA 하네스가 실제 HTTP로 핵심 흐름을 돌릴 때 카카오 로그인 없이 사용자를 만든다.
+        - 서버가 `PINGO_ENV=staging`이고 `QA_LOGIN_SECRET`이 있을 때만 이 경로가 있다. 그 밖의 환경(운영 포함)에는 경로가 없어 404다. 운영에 `QA_LOGIN_SECRET`이 있으면 서버가 뜨지 않는다.
+        - 헤더 `X-QA-Login-Secret`이 서버의 `QA_LOGIN_SECRET`과 같아야 한다. 다르거나 없으면 403 `FORBIDDEN`.
+        - 부를 때마다 새 사용자를 만든다. 로그인 수단은 `provider='qa'`라 게스트가 아니고(`is_guest=false`) 지도를 만들 수 있다. 응답에 카카오 로그인과 같은 세션 쿠키가 실린다.
+        - 스테이징과 운영은 `SESSION_SECRET`이 다르다. 여기서 받은 쿠키는 운영에서 401이다.
+      security: []   # 로그인 전에 부르는 API
+      parameters:
+        - { name: X-QA-Login-Secret, in: header, required: true, schema: { type: string }, description: "스테이징의 QA_LOGIN_SECRET. 저장소·로그·채팅에 남기지 않는다" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QaLoginRequest" }
+      responses:
+        "201":
+          description: 새 사용자를 만들었다. `Set-Cookie`로 세션 발급
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — 이름이 비었거나 50자 초과", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
   /auth/me:
     get:
       tags: [auth]
@@ -1622,6 +1648,13 @@ components:
       properties:
         display_name: { type: string, minLength: 1, maxLength: 50, description: "게스트로 보일 이름. 앞뒤 공백을 지운 뒤 비어 있으면 422" }
         invite_token: { type: string, description: "들어갈 지도의 초대 토큰(GET /invites/{token}으로 요약을 본 그 토큰)" }
+
+    QaLoginRequest:
+      type: object
+      required: [display_name]
+      additionalProperties: false
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 50, description: "QA 사용자의 표시 이름. 앞뒤 공백을 지운 뒤 비어 있으면 422" }
 
     GuestJoinResult:
       type: object

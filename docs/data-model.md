@@ -20,7 +20,8 @@ users(                                -- 사람. 다른 모듈은 이 id만 가�
 )
 
 user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사람(users)과 나눈다
-  id uuid, user_id → users.id, provider('kakao'), provider_user_id, created_at
+  id uuid, user_id → users.id, provider('kakao'|'qa'), provider_user_id, created_at
+                                        -- 'qa'는 스테이징 전용 QA 로그인(POST /auth/qa-login)이 만든다. provider_user_id는 새 uuid(#788, #789)
   unique(provider, provider_user_id)    -- 카카오 계정 하나는 사람 하나에만
   unique(user_id, provider)             -- 한 사람에 카카오는 하나
 )
