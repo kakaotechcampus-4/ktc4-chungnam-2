@@ -1,14 +1,22 @@
 """#501 — POST /pins/{pinId}/resolve: 실시간 핀을 자체 DB 핀으로 승격. 핀 id·반응·확정 항목은 그대로, 힌트는 어디에도 남기지 않는다.
 
-짝 없음·이미 db 핀·AI/확정 핀은 200 변화 없음·이벤트 없음. 같은 지도에 그 장소 핀이 이미 있으면 409 PIN_DUPLICATE(자동 병합 금지).
+짝 없음·이미 db 핀(AI 추천 핀은 늘 db)은 200 변화 없음·이벤트 없음. 확정된 live 핀도 승격한다(#763).
+같은 지도에 그 장소 핀이 이미 있으면 409 PIN_DUPLICATE(자동 병합 금지). 동시에 두 번 불러도 늦은 쪽은 200이다(#776).
 """
 
 import logging
+import threading
+import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 
+from authz.core import Principal
+from common.events import EventLog
+from pins import service
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
+from pins.schemas import PinResolveRequest
 from pins.tests.test_pins_api import CAFE, KALGUKSU, _auth, _events, _insert_pin
 
 LIVE = {"source": "live", "category": "음식점", "kakao_place_id": "kakao:1001", "search_query": "성수 칼국수", "memo": "점심"}
@@ -76,13 +84,21 @@ def test_ai_or_confirmed_pin_is_unchanged(app_client, db_session):
     assert _events(db_session, type="pin.updated") == []
 
 
-def test_confirmed_live_pin_is_not_promoted(app_client, db_session):
+def test_confirmed_live_pin_is_promoted_and_stays_confirmed(app_client, db_session):
+    """#763 — 확정 리스트에 든 live 핀도 승격한다. 종류·확정 항목은 그대로다."""
     pin = _live(app_client)
-    _row(db_session, pin["id"]).kind = "확정"
-    db_session.commit()
+    added = app_client.post("/maps/map_1/shortlist", json={"pin_id": pin["id"]}, cookies=_auth())
+    assert added.status_code == 201, added.text
+    before = len(_events(db_session, type="pin.updated"))
     resp = _resolve(app_client, pin["id"])
-    assert resp.status_code == 200 and resp.json()["source"] == "live"
-    assert _events(db_session, type="pin.updated") == []
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == pin["id"] and body["source"] == "db" and body["kind"] == "확정"
+    row = _row(db_session, pin["id"])
+    assert row.source == "db" and row.place_id and row.kind == "확정"
+    items = app_client.get("/maps/map_1/shortlist", cookies=_auth()).json()
+    assert [(i["id"], i["pin"]["id"], i["pin"]["source"]) for i in items] == [(added.json()["id"], pin["id"], "db")]
+    assert len(_events(db_session, type="pin.updated")) == before + 1
 
 
 def test_existing_pin_for_that_place_is_409_and_nothing_merges(app_client, db_session):
@@ -133,3 +149,53 @@ def test_create_passes_address_to_matcher_without_storing_it(app_client, fake_pl
     assert resp.status_code == 201 and seen == [SECRET_ADDRESS]
     assert SECRET_ADDRESS not in resp.text and SECRET_ADDRESS not in caplog.text
     assert app_client.post("/maps/map_1/pins", json={**CAFE, "address": "가" * 201}, cookies=_auth()).status_code == 422
+
+
+def test_concurrent_resolve_of_the_same_pin_promotes_once(test_engine, fake_places):
+    """#776 — FE가 위치를 찾을 때마다 부르므로 두 구성원이 같은 핀을 동시에 부를 수 있다. 두 요청 모두 live 핀을 읽은 뒤
+    승격에 들어가게 맞춘다. 먼저 잠근 쪽이 승격하고, 늦은 쪽은 잠금이 풀린 뒤 다시 읽어 이미 db 핀으로 보고 200을 낸다.
+    자기 자신을 가리키는 409나 500이 없고 pin.updated는 한 번이다. 커밋이 필요해 별도 연결 둘을 쓰고 끝나면 지운다."""
+    map_id = f"map_race_{uuid.uuid4().hex[:8]}"
+    pin_id = uuid.uuid4()
+    with Session(test_engine) as s:
+        s.add(PinRow(id=pin_id, map_id=map_id, category="음식점", kind="일반", origin="direct", source="live",
+                     kakao_place_id="kakao:1001", search_query="성수 칼국수", visibility="public", created_by="user_1"))
+        s.commit()
+
+    both_loaded = threading.Barrier(2, timeout=10)
+    results: dict[str, object] = {}
+
+    def call(user_id: str) -> None:
+        with Session(test_engine) as s:
+            try:
+                pin = s.get(PinRow, pin_id)
+                both_loaded.wait()   # 둘 다 live 핀을 읽은 뒤에 승격으로 들어간다
+                resolved = service.resolve_pin(
+                    s, pin, Principal(user_id=user_id, map_id=map_id, role="member"), {"user_1", "user_2"},
+                    PinResolveRequest(**HINT),
+                )
+                s.commit()
+                results[user_id] = resolved
+            except Exception as exc:  # noqa: BLE001 — 스레드 안의 예외를 본 스레드에서 단언한다
+                s.rollback()
+                results[user_id] = exc
+
+    threads = [threading.Thread(target=call, args=(u,)) for u in ("user_1", "user_2")]
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+        assert not any(t.is_alive() for t in threads)
+        assert all(not isinstance(r, Exception) for r in results.values()), results
+        assert {r.id for r in results.values()} == {str(pin_id)} and {r.source for r in results.values()} == {"db"}
+        with Session(test_engine) as s:
+            row = s.get(PinRow, pin_id)
+            assert row.source == "db" and row.place_id
+            updated = s.execute(select(EventLog).where(EventLog.map_id == map_id, EventLog.type == "pin.updated")).scalars().all()
+            assert len(updated) == 1
+    finally:
+        with Session(test_engine) as s:
+            s.execute(delete(EventLog).where(EventLog.map_id == map_id))
+            s.execute(delete(PinRow).where(PinRow.id == pin_id))
+            s.commit()

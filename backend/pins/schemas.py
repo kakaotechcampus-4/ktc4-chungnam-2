@@ -2,8 +2,7 @@
 docs/api-spec.yaml의 pins 태그 스키마와 1:1로 맞춘다.
 Pin의 place_name은 생성 요청(PinCreateRequest.place_name)에서 그대로 저장한다(루트 결정,
 2026-09-23). checks는 게시(pins.api.create_ai_pin) 시점에 candidate.checks를 그대로 복사해
-채운다(#57/#124 결정, 가드레일 5). created_by_display_name/source_run_id는
-여전히 places/auth/recommend 모듈 연동이 더 필요해 채울 수 없다 — Optional로 두고 라우터에서
+채운다(#57/#124 결정, 가드레일 5). 값이 없는 Optional 칸은 라우터가
 response_model_exclude_none으로 생략한다.
 
 Permissions는 여기서 정의하지 않는다 — Pin·EvidenceLine·ShortlistItem이 공유하는 스키마라
@@ -194,7 +193,6 @@ class Pin(BaseModel):
     created_by_display_name: str | None = None
     created_at: datetime | None = None   # 지도에 올라온 시각(AI 추천 핀은 「지도에 올리기」 시각) — 서버가 채우면 항상 있다
     checks: list[Check] | None = None
-    source_run_id: str | None = None
     reason: str | None = None
     member_fulfillment: MemberFulfillment | None = None
     place_source: PlaceSource | None = None
