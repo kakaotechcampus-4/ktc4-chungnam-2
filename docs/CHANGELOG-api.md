@@ -2,6 +2,11 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-10-27 (여섯 번째), my_ai_pin_published를 enum에서 뺐다 (#778)
+
+- `NotificationType`에서 `my_ai_pin_published`를 뺐다(#764 결정, 서버와 함께). `GET /me/notification-prefs`에 이 종류가 더 오지 않고, 이 값을 `PUT /me/notification-prefs`로 보내면 422다.
+- FE 할 일 없음(쓰지 않는다).
+
 ## 2026-10-27 (다섯 번째), Pin.source_run_id를 지운다, my_ai_pin_published는 지우기로 한다, 확정된 실시간 핀도 승격한다 (#761, #762, #763, #764)
 
 - `Pin.source_run_id`를 지웠다(#761). 서버가 채운 적이 없는 칸이다. 목 서버의 run 목록 `published_count`도 실서버처럼 `candidates.published_pin_id`로 센다.

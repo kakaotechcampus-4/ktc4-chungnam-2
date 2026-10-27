@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-NotificationType = Literal["pin_reaction", "member_joined", "owner_changed", "map_deleted", "my_ai_pin_published"]
+NotificationType = Literal["pin_reaction", "member_joined", "owner_changed", "map_deleted"]
 
 
 class Notification(BaseModel):

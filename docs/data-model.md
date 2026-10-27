@@ -470,7 +470,7 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 ```
 notifications(                        -- 사용자별 알림함. 수신자마다 한 행
   id, user_id, map_id,                -- map_id는 FK 없음(지도가 삭제돼도 알림은 남는다)
-  type,                               -- NotificationType(api-spec). my_ai_pin_published는 만들어지지 않아 지운다(#764, #778)
+  type,                               -- NotificationType(api-spec). my_ai_pin_published는 만들어지지 않아 지웠다(#764)
   map_title,                          -- 만들 때의 제목 스냅샷
   pin_id nullable,                    -- pin_reaction만. FK 없음
   message,                            -- 서버가 만든 문장. 반대 사유·메모는 넣지 않는다

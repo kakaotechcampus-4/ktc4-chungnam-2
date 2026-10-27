@@ -669,7 +669,7 @@ describe("#470·#10 — 알림함·알림 설정, 서비스 피드백", () => {
 
   it("알림 설정: 종류 전부를 돌려주고 보낸 것만 바꾼다, 모르는 종류·빈 목록은 422", async () => {
     const prefs = await (await fetch(`${BASE}/me/notification-prefs`)).json();
-    expect(prefs.prefs.map((p: { type: string }) => p.type)).toEqual(["pin_reaction", "member_joined", "owner_changed", "map_deleted", "my_ai_pin_published"]);
+    expect(prefs.prefs.map((p: { type: string }) => p.type)).toEqual(["pin_reaction", "member_joined", "owner_changed", "map_deleted"]);
     expect(prefs.prefs.every((p: { enabled: boolean }) => p.enabled)).toBe(true);
     const put = await (await send("/me/notification-prefs", "PUT", { prefs: [{ type: "pin_reaction", enabled: false }] })).json();
     expect(put.prefs.find((p: { type: string }) => p.type === "pin_reaction").enabled).toBe(false);
