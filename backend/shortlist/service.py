@@ -145,7 +145,7 @@ def replace_routes(db: Session, *, map_id: str, routes: list[Route]) -> list[Rou
 def list_routes(db: Session, *, map_id: str) -> list[RouteRow]:
     # region_label("구역 N")로 정렬 — routing.compute_routes가 만드는 지역 수는 v1 실사용
     # 범위에서 한 자릿수를 벗어나지 않을 것으로 보고 문자열 정렬을 그대로 쓴다(구역 10 이상이면
-    # "구역 10"이 "구역 2"보다 앞에 오는 사전식 정렬 함정이 있음 — for_Root.md에 남김).
+    # "구역 10"이 "구역 2"보다 앞에 오는 사전식 정렬 함정이 있음, #768).
     return list(
         db.execute(
             select(RouteRow).where(RouteRow.map_id == map_id).order_by(RouteRow.region_label)

@@ -113,6 +113,8 @@ from datetime import timedelta
 TICK_INTERVAL_SEC = 300            # tick 주기
 LEASE_SEC = 180                    # 관찰 lease
 TICK_MAX_MAPS = 6                  # tick당 처리 지도 수. 관찰 최악 약 16초(#534) × 10이 lease 180초에 가까워 6으로(#582)
+TICK_BUDGET_SEC = LEASE_SEC - 30   # 150초. 시작 뒤 이만큼 지나면 남은 지도는 관찰하지 않고 lease만 푼다(#677, #754)
+ERROR_RETRY_DELAYS = (timedelta(minutes=30), timedelta(hours=2), timedelta(hours=6))   # 관찰이 연속 1, 2, 3회 이상 예외로 끝난 지도를 다시 보는 간격(#677, 초안)
 SHADOW_DIAGNOSES = ()              # 이 유형의 제안은 저장만 하고 내보내지 않는다. 코드 유형은 #531, 모델 유형은 #582부터 노출(#534 평가)
 AGENT_LOOP_IN_PROCESS = settings.agent_loop_in_process   # 환경 변수 AGENT_LOOP_IN_PROCESS=1로 켠다. 기본 꺼짐 (12.1)
 
@@ -371,14 +373,14 @@ version 1의 principles(프롬프트용 원칙 3개)는 모델 호출이 없어�
 
 ## 8. 우리 조건 요약
 
-카테고리마다 새 사유가 3개 쌓이거나(`SUMMARY_NEW_REASONS`) 새 구성원이 지도에서 첫 반응을 남기면, 모델이 그 카테고리의 조건 요약을 갱신한다. 요약 갱신은 모델을 부르지 않아 모델 사용으로 세지 않는다(고정 문구, 2026-10-16). 요약은 바텀시트에 항상 있고 점이나 알림은 없다.
+카테고리마다 새 사유가 3개 쌓이거나(`SUMMARY_NEW_REASONS`), 새 구성원이 지도에서 첫 반응을 남기거나, 지난 요약이 본 사유가 사라지면(반응 삭제, 지도 나가기 #369, 사유 지움) 코드가 그 카테고리의 조건 요약을 갱신한다(`core.summary_changes`, #586). 요약 갱신은 모델을 부르지 않아 모델 사용으로 세지 않는다(고정 문구, 2026-10-16). 요약은 바텀시트에 항상 있고 점이나 알림은 없다.
 
 - 사유가 있는 반응: reason_text가 있거나 reason_chip_ids가 비어 있지 않은 반응. `pins.api.list_reasoned_reactions`가 이미 이 기준으로 돌려준다(글과 칩을 따로, #412).
 - 삭제된 핀의 사유도 넣는다. 추천이 삭제된 핀의 사유를 계속 쓰므로(#243) 요약도 같은 기준을 따라야 둘이 어긋나지 않는다.
-- 새 사유 수: 현재 그 카테고리의 사유 있는 반응 수 - `agent_reason_summaries.based_on_reaction_count`
+- 새 사유 수: 지금 사유 있는 반응 중 지난 요약이 보지 않은 것. reaction_id 집합으로 센다. 개수 뺄셈은 반응이 지워진 뒤 새 사유를 놓친다(#586).
 - 흐름: `flows.update_summary` → 도구(get_reasons, structure_reasons, compare_reasons) → 칸 나누기(코드) → 구체화 요청 문장(고정 문구) → upsert → `agent.summary_updated`. 모델을 부르지 않는다
 - 쓰기는 지도 제안과 별도 트랜잭션, 별도 `agent_runs` 행(trigger=summary)이다.
-- 지도 모델 사용 상한에 도달했으면 갱신하지 않고 다음 날로 미룬다. 한 관찰에서는 카테고리 하나만 갱신한다(초안).
+- 모델 사용 상한은 보지 않는다(used_model=false). 한 관찰에서는 카테고리 하나(`core.pick_summary`)만 갱신하고, 남은 카테고리가 있으면 커서를 지금으로 당겨 다음 tick에 이어 간다(#586).
 
 요약은 다섯 칸이다. 칸을 나누는 것은 코드이고, 기준은 ②가 낸 근거 줄(키, 방향, 배지)이다.
 
@@ -422,6 +424,8 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 ## 9. 추천 막힘 조언
 
 결과가 3곳 미만이거나(`BLOCKED_RUN_MAX_RESULTS`) 같은 사람이 같은 카테고리 run을 3회 이상 만든(`BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS`) 완료 run의 결과 화면에, 더 많이 추천받는 방법을 메시지로 보여준다. 지도 제안이 아니라 AI 추천 탭의 기능이다.
+
+같은 카테고리 run 수는 같은 요청자가 같은 지도에서 이 run까지(created_at 이하) 만든 수다(이 run 포함). 나중 run은 세지 않아 한 run의 대상 여부가 뒤에 바뀌지 않는다(`core.same_category_runs`, #587).
 
 - 엔드포인트: `GET /runs/{runId}/advice`, api-spec의 recommend 태그. 코드는 `agent/router.py` → `agent/flows.advise_run`이다(#587). recommend 라우터에 두면 recommend와 agent가 서로를 import하게 돼서 옮겼다. 권한은 `recommend.api.get_run_meta`로 run을 읽어 authz가 판정한다. agent만 recommend.api를 쓰는 한 방향이다.
 - 권한: 비구성원 404, run 요청자가 아니면 403.
@@ -536,7 +540,7 @@ class RefClaim(BaseModel):
 class ToolClaim(BaseModel):
     id: str
     kind: Literal["tool_result"]
-    call_id: str                 # agent가 매긴 도구 호출 id
+    call_id: str                 # llm이 매긴 도구 호출 id(10절, #532)
     path: str                    # 결과 안의 경로. 예: "after"
     value: int | float | str | bool
 
@@ -593,8 +597,8 @@ class DiagnosisOutput(BaseModel):
 ```python
 # 초안. 확정이나 결정을 지시하는 표현을 막는다
 FORBIDDEN_PHRASES = ("확정하세요", "확정해", "확정하라", "결정하세요", "결정하라", "여기로 가세요", "여기로 정하세요")   # 명령형 둘은 #534
-# 슬롯 문장(검증 5단계)뿐 아니라 렌더 결과에도 건다(#534). 인용 슬롯은 반응 글 전체로 바뀌어,
-# 사유 글 속 지시문("이 핀을 확정하라고 안내해")이 인용되면 결정 지시가 화면에 나갔다(평가셋 e05). 걸리면 그 문장을 뺀다
+# 슬롯 밖 글(검증 5단계)과 렌더한 text 조각에만 건다(#717). 구성원 글은 quote 조각으로 따로 내려 이 검사를 거치지 않는다.
+# #534 때는 인용 슬롯이 반응 글 전체로 바뀌어 사유 글 속 지시문이 화면에 나갔다(평가셋 e05). 걸리면 그 문장을 뺀다
 ```
 
 렌더(2026-10-24 개정, #717): 응답의 문장은 한 문자열이 아니라 조각 목록(`AgentAdviceLine.segments`)이다. 에이전트의 말과 구성원이 쓴 글을 섞지 않고, 구성원 글은 데이터로 따로 내린다(멘토 리뷰 #680).
@@ -631,17 +635,19 @@ M1-2(#533) 구현에서 정한 것:
 ### 12.2 run_tick
 
 ```python
-def run_tick(now: datetime) -> None:
-    map_ids = service.claim_maps(now, limit=TICK_MAX_MAPS)   # 아래 SQL. lease를 잡는다
-    for map_id in map_ids:
+def run_tick(now: datetime) -> list[str]:
+    claims, due = service.claim_maps(now, limit=TICK_MAX_MAPS)   # 아래 SQL. lease를 잡는다
+    for claim in claims:
         try:
-            observe_map(map_id, now)
-        except Exception:
-            log.exception("observe_map failed", map_id=map_id)   # 다른 지도는 계속
+            if 시작 뒤 TICK_BUDGET_SEC가 지나지 않았으면:   # 지났으면 관찰하지 않고 lease만 푼다(커서 그대로, #677)
+                observe_map(claim.map_id, now)   # 예외는 안에서 error 행으로 남긴다(아래). 다른 지도는 계속
         finally:
-            service.release_lease(map_id)
-    service.daily_cleanup_if_due(now)    # 하루 한 번: agent_runs 30일 초과분 삭제
+            service.release_lease(claim.map_id)
+    daily_cleanup_if_due(now)    # 하루 한 번: agent_runs 30일 초과분 삭제
+    처리량 로그 한 줄(#756)
 ```
+
+관찰이 예외로 끝나면 agent_runs에 outcome=error 한 행을 남긴다(#677). `outcome_detail`은 단계와 예외 클래스 이름(`{stage, error}`)뿐이고 예외 메시지는 남기지 않는다. 단계는 expire, snapshot, detect, draft, model, verify, save, summary다. 진단을 부른 뒤의 실패면 used_model=true와 그때까지의 사용량을 남겨 지도 상한에 센다. 커서는 claim 때 본 seq로 올리고, 다음 관찰은 그 지도의 연속 실패 수에 따라 `ERROR_RETRY_DELAYS` 뒤다.
 
 끝날 때 처리량을 숫자로만 한 줄 남긴다(#756): 차례였던 지도 수(`due`), 관찰한 수, `TICK_MAX_MAPS`로 미룬 수, 시간 예산(`TICK_BUDGET_SEC`, #677)으로 미룬 수, 걸린 ms. 지도 id는 넣지 않는다. 시간 예산으로 미룬 지도가 있으면 warning이다. 읽는 법은 `deploy_rules.md`「배포 뒤 볼 지표」.
 
@@ -821,7 +827,7 @@ seq 비교로 하지 않는 이유는 seq에 커밋 순서 구멍이 생길 수 
 - 만료: 관찰 시작 시 `expires_at < now`인 활성 제안을 expired로 바꾸고 agent.resolved를 낸다.
 - 무효화: 신호가 사라졌거나 evidence_hash가 바뀐 활성 제안은 superseded로 바꾼다. 신호가 남아 있으면 같은 관찰에서 새 제안이 나올 수 있다.
 - 모드를 끄면 활성 제안을 superseded로 바꾼다. 다시 켜면 `next_check_at = now`로 두어 다음 tick에 관찰한다.
-- `decided_within_24h`: 하루 한 번 정리 때, 생성 후 24시간이 지난 제안에 대해 확정이 생겼는지 계산해 채운다(#613). category_gap과 stall은 그 카테고리의 핀, split은 그 핀, no_reaction은 제안이 가리킨 핀 중 하나가 제안 시각부터 24시간 안에 확정됐으면 참이다. **판정은 정리 시점까지 남아 있는 확정 항목 기준이다.** 24시간 안에 확정했다가 정리 전에 리스트에서 빼면 거짓으로 남는다. 확정 이력을 따로 두지 않아서이고, 결정을 도왔는지 대략 보는 지표라 이 오차는 받아들였다(2026-10-19).
+- `decided_within_24h`: 하루 한 번 정리 때, 생성 후 24시간이 지난 제안에 대해 확정이 생겼는지 계산해 채운다(#613). category_gap과 stall은 그 카테고리의 핀, split은 그 핀, no_reaction은 제안이 가리킨 핀 중 하나가 제안 시각부터 24시간 안에 확정됐으면 참이다. **판정은 정리 시점까지 남아 있는 확정 항목 기준이다.** 24시간 안에 확정했다가 정리 전에 리스트에서 빼면 거짓으로 남는다. 확정 이력을 따로 두지 않아서이고, 결정을 도왔는지 대략 보는 지표라 이 오차는 받아들였다(2026-10-19). 삭제된 핀은 분류를 읽지 못해(`pins.api.list_reaction_matrix`는 살아 있는 공개 핀만) category_gap과 stall에서 세지 않는다. 확정 핀을 지우면 확정 항목도 지워져(#235) 드물어서 같은 오차로 받아들인다(#613).
 - 보존: 하루 한 번 `agent_runs`의 30일 초과분을 지운다.
 - 지도 정리: 삭제한 지 30일이 지난 지도를 지우는 작업(`python -m maps.purge`, #431)이 모듈마다 `purge_map_data`를 부른다. agent도 `agent.api.purge_map_data`를 열어 agent_* 7개 테이블의 그 지도 행을 지운다.
 - 탈퇴: 반응과 근거 줄은 탈퇴 때 실제로 지운다(#155). agent 테이블에는 사유 원문이 없으므로(2절 13번) 반응이 지워지면 인용도 렌더되지 않는다. `agent.api.delete_by_user(db, *, user_id, map_ids)`(#513)는 그 사람의 열람 기록을 지우고, 안전장치로 map_ids 지도의 요약을 지우고 agent_runs의 tool_calls와 verification을 비운다. 탈퇴 흐름이 `maps.api.lock_member_maps`로 잡은 지도 목록을 넘긴다(#512). 요약은 다음 관찰에서 다시 만든다.
@@ -875,7 +881,8 @@ CREATE TABLE agent_runs (
 );
 CREATE INDEX ix_agent_runs_map_started ON agent_runs (map_id, started_at);
 -- outcome: no_signal | blocked | silent | unknown | invalid_schema | invalid_claims | model_failed
---          | stale | suggested | summarized | advised | trip_ended | map_deleted
+--          | stale | suggested | summarized | advised | trip_ended | map_deleted | error
+-- error: 관찰이나 조언이 예외로 끝남. outcome_detail은 단계와 예외 클래스 이름뿐(#677, 12.2)
 -- model_failed: 모델 호출 실패나 타임아웃(AgentCallFailed, #532). 이유는 outcome_detail. 재요청하지 않고 침묵한다
 
 -- 바텀시트에 뜨는 지도 제안
@@ -917,7 +924,7 @@ CREATE TABLE agent_suggestion_views (
 CREATE TABLE agent_reason_summaries (
   map_id                   text NOT NULL,
   category                 text NOT NULL,
-  summary                  jsonb NOT NULL,   -- 다섯 칸의 키, 개수, 근거 reaction_id, 서버 문구. 사유 원문 없음
+  summary                  jsonb NOT NULL,   -- 다섯 칸의 키, 개수, 근거 reaction_id, 문구 종류(requests, notices). 사유 원문 없음
   based_on_reaction_count  integer NOT NULL,
   run_id                   uuid NULL,
   updated_at               timestamptz NOT NULL DEFAULT now(),
@@ -964,7 +971,7 @@ CREATE TABLE agent_run_advice (
 
 | type | 언제 | 페이로드 |
 | --- | --- | --- |
-| agent.suggested | 제안 저장 | AgentSuggestion: id, diagnosis, category, title, analysis, advice[{text, is_guess}], actions[{index, type, label, params}], created_at, expires_at |
+| agent.suggested | 제안 저장 | AgentSuggestion: id, diagnosis, category, title, analysis, advice[{segments, is_guess}], actions[{index, type, label, params}], created_at, expires_at |
 | agent.resolved | 수락, 닫기, 만료, 무효화 | suggestion_id, status, resolved_action_type 또는 null |
 | agent.summary_updated | 우리 조건 요약 갱신 | AgentSummary: category, 다섯 칸, updated_at |
 | agent.settings_changed | 모드 변경 | enabled, updated_by |
@@ -1036,7 +1043,7 @@ FE는 슬롯을 다루지 않는다. 서버가 렌더한 조각을 차례로 이
 `core.py`가 순수 함수라 대부분은 지도 상태 픽스처를 넣고 기대 신호와 정책 결과를 확인하는 단위 테스트로 짠다. llm은 스키마에 맞는 스텁으로 대신한다.
 
 1. **비공개 데이터 유출 금지 (가장 중요한 테스트).** DB에 남의 run, 후보, run의 근거 줄, 제외 목록을 넣고 다음을 확인한다: 스냅샷에 없음, 모든 지도 제안용 도구 결과에 없음, `diagnosis_input` 직렬화 결과에 그 id와 텍스트가 없음.
-2. 조건 완화와 키 없는 사유: soft_relax에서 run 요청자 본인 줄에만 open_evidence가 붙고, 남의 줄을 가리키는 open_evidence는 검증에서 제거된다. 알러지 낱말이 든 사유와 「비싸요」 칩은 not_filtered 칸으로 가고, 구체화 요청 문장이 붙으면 제거되며, 원문이 렌더되지 않는다. 「너무 멀어요」는 vague_fixable로 간다.
+2. 조건 완화와 키 없는 사유: soft_relax에서 run 요청자 본인 줄에만 open_evidence가 붙고, 남의 줄에는 코드가 open_evidence를 붙이지 않는다(9.1). 알러지 낱말이 든 사유와 「비싸요」 칩은 not_filtered 칸으로 가고, 구체화 요청 문장을 붙이지 않으며, 원문이 렌더되지 않는다. 「너무 멀어요」는 vague_fixable로 간다.
 3. 검증: 지어낸 count → claim 제거 → 필수 claim 없음 → invalid_claims. 원문에 없는 quote 제거. 슬롯 밖 숫자 문장 제거. 구성원 표시 이름이 든 문장 제거. 허용되지 않은 행동 제거. FORBIDDEN_PHRASES 문장 제거.
 4. 탐지기 경계: 유형마다 성립 직전과 직후 픽스처. 정체는 활동 기준만, 시간 기준만, 둘 다인 경우. 갈림은 ♥1:🚫3 불성립, 전원 응답 즉시. 충돌 종류는 같은 키 반대 방향이면 same_axis, 다른 키면 different_axes, 키 있는 사유가 한쪽에 없으면 unclear. 반응 공백은 자기 핀 제외, 합류 시각 기준. 카테고리 공백은 핀을 만들 수 없는 카테고리(숙소, 기타) 제외.
 5. 기준 시간: 이벤트 6개 미만이면 3시간 × D-day 계수, clamp 하한 1시간과 상한 12시간, D-day 경계(15, 14, 4, 3, 여행 중).
@@ -1047,7 +1054,7 @@ FE는 슬롯을 다루지 않는다. 서버가 렌더한 조각을 차례로 이
 10. lease: 동시에 두 run_tick이 돌아도 같은 지도는 한 번만 관찰한다.
 11. 세션: llm 스텁이 호출되는 동안 열린 DB 세션이 없다.
 12. 권한: 비구성원 404. advice는 요청자가 아니면 403. accept와 dismiss 경합 시 두 번째는 409.
-13. 추천 막힘 조언: 같은 run에 동시 요청이 와도 저장은 한 번이고 두 요청 모두 같은 결과를 돌려준다. 모델은 두 번 불릴 수 있다(막으려면 "만드는 중" 상태 칸이 필요해 하지 않았다, #587).
+13. 추천 막힘 조언: 같은 run에 동시 요청이 와도 저장은 한 번이고 두 요청 모두 같은 결과를 돌려준다. 계산은 두 번 돌 수 있다(막으려면 "만드는 중" 상태 칸이 필요해 하지 않았다, #587). 모델 호출은 없다(#750).
 14. 여행 종료와 지도 삭제: end_date 다음 날부터 관찰하지 않고 outcome=trip_ended로 끝난다. 삭제된 지도는 outcome=map_deleted로 끝나고, 모델 호출 중 삭제되면 저장 단계에서 아무것도 쓰지 않는다.
 15. shadow: `SHADOW_DIAGNOSES`에 든 유형의 제안은 저장되지만 이벤트가 없고 GET 응답에 나오지 않으며 view, accept, dismiss는 404다.
 16. 정리와 원문: `purge_map_data`가 그 지도의 agent_* 행을 모두 지운다. 픽스처 반응의 글이 관찰과 요약과 조언을 거친 뒤 어떤 agent_* 행의 직렬화에도 들어 있지 않다(2절 13번). 반응을 지우면 그 인용 문장이 응답에서 빠진다. 모델 문장이 슬롯 밖에서 사유를 옮겨 쓰면 문장이 제거된다.
@@ -1133,7 +1140,7 @@ FE 담당
 - reasoning_effort: 진단 호출은 none으로 고정이다. 엘리스 API의 chat.completions는 도구 호출을 reasoning_effort=none일 때만 받는다(기본값과 low는 400, #532 확인). low가 필요하면 /v1/responses로 옮겨야 한다(확인 안 함). 우선순위 호출은 #534 비교(none 100%, low 88%, 기본값 90%) 뒤 코드 규칙으로 옮겨 없어졌다(#582). temperature=0은 받지 않는다.
 - 요약의 모델 호출: 고정 문구로 정했다(2026-10-16). 맞춤 문장이 필요한지는 #588에서 운영 기록을 보고 판단한다.
 - 처리량: `TICK_MAX_MAPS`와 동시 처리 수. 진단 소요 시간과 요청 타임아웃, 배포 뒤 tick 로그(#756)를 보고 정한다. 시간 예산은 150초로 둔다(#754).
-- 병렬 도구 호출: 지금은 끈다(`parallel_tool_calls=False`, #532에서 동작 확인). 켰을 때의 이득은 #534에서 본다.
+- 병렬 도구 호출: 지금은 끈다(`parallel_tool_calls=False`, #532에서 동작 확인). #534에서는 재지 않았다. 진단 1회가 평균 도구 1.5회, 요청 2.5번이라 켜도 왕복 하나를 아끼는 정도다.
 - 처리량 참고: live 시험에서 우선순위와 진단(요청 4번)을 합쳐 약 18초였다(#532). 요청 타임아웃은 15초다.
 
 멘토 리뷰에 가져갈 것: 커서와 lease, 저장 트랜잭션 경계, 개발용 반복 작업의 상주 상태.

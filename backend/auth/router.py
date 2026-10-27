@@ -3,9 +3,7 @@ docs/api-spec.yaml `auth` 태그 4개 엔드포인트.
 
 `/auth/kakao/login`·`/auth/kakao/callback`은 로그인 전 경로라 인증 의존성이 없는 별도 라우터
 (`public_router`)에 둔다 — 전역 `security: [cookieAuth]`가 이 경로에는 적용되면 안 된다는
-점은 이미 `mentor-review-plan.md`가 결정했지만, `docs/api-spec.yaml:28-38`에는 아직
-`security: []`가 반영돼 있지 않다(auth/for_Root.md "루트 확인·결정 필요" 1번, 이번에도
-재확인함 — YAML은 손대지 않고 라우터 배선으로만 실제 동작을 맞춘다).
+점은 `docs/api-spec.yaml`의 두 경로에 `security: []`로 적혀 있다(PR #71 멘토 리뷰).
 
 나머지 3개(`/me`, `/logout`, `/withdraw`)는 `router`에 묶는다 — `dependencies=[Depends(
 get_current_user)]`가 라우터 선언 자체에 박혀 있어 개별 엔드포인트가 인증을 따로 기억할

@@ -266,7 +266,7 @@ def _fill_decided_for_map(db: Session, map_id: str, created_before: datetime) ->
         return 0
     category_of: dict[str, str] = {}
     if any(t.diagnosis in core.CATEGORY_DECIDED for t in targets):
-        # 공개된 살아 있는 핀만 분류가 나온다. 삭제된 핀의 분류를 주는 pins.api 함수는 없다(for_Root.md #613)
+        # 공개된 살아 있는 핀만 분류가 나온다. 삭제된 핀은 세지 않는다(agent-v2 12.9, #613)
         category_of = {p["pin_id"]: p["category"] for p in pins_api.list_reaction_matrix(db, map_id=map_id)}
     confirmations = [
         core.Confirmation(pin_id=i["pin_id"], category=category_of.get(i["pin_id"]), added_at=i["added_at"])

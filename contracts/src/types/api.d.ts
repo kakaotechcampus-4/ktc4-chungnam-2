@@ -1915,7 +1915,7 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md).
+         * 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md). 남이 쓴 줄이 하나라도 섞이면 요청 전체가 403 FORBIDDEN이고 아무것도 바뀌지 않는다(#108).
          *     '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
          *     한 요청에 글 5개까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 글은 10개까지다(뺀 것도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
          */
@@ -3214,7 +3214,7 @@ export interface components {
             map: components["schemas"]["Map"];
         };
         UserUpdateRequest: {
-            /** @description 계정 단위 표시 이름 (2026-09-30 결정) */
+            /** @description 계정 단위 표시 이름 (2026-09-30 결정). 앞뒤 공백을 지운 뒤 1~50자이고 지운 값을 저장한다(#160). 공백뿐이면 422 */
             display_name: string;
         };
         Map: {
@@ -3528,7 +3528,7 @@ export interface components {
         };
         /** @description GET /places/search 한 건 — **화면 표시용이며 서버에 저장되지 않는다**. 핀을 만들 때 place_id·place_name·lat·lng·category를 그대로 POST /maps/{mapId}/pins로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는 매칭 힌트로 쓴다 */
         PlaceSearchResult: {
-            /** @description "<소스>:<소스 내 id>" 형태(예 kakao:1234). 불투명 값으로 취급한다 */
+            /** @description "<소스>:<소스 내 id>" 형태(예 kakao:1234, 자체 DB 장소는 own:<uuid>). 불투명 값으로 취급한다 */
             place_id: string;
             /** @description POST /maps/{mapId}/pins의 place_name과 같은 이름 — 그대로 보낸다 */
             place_name: string;
@@ -3927,7 +3927,7 @@ export interface components {
         };
         AgentSplitPref: {
             fact_key?: string;
-            /** @description 예: "조용함" */
+            /** @description 예: "조용한 곳"(키 표시 이름 그대로, #586) */
             label: string;
             want_count: number;
             avoid_count: number;

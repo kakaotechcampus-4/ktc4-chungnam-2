@@ -287,7 +287,8 @@ def _find_live_pin_for_place(
     db: Session, map_id: str, place_id: str, *, hint_kakao_id: str | None = None, exclude_pin_id: uuid.UUID | None = None,
 ) -> str | None:
     """자체 DB 장소 place_id와 같은 가게를 이미 가리키는 이 지도의 실시간 핀 id(#569). 기준은 카카오 장소 ID뿐이다 —
-    요청 힌트의 카카오 ID가 그 핀의 것이거나, 그 핀의 카카오 ID가 기록된 자체 DB 장소가 place_id일 때. 이름·좌표는 보지 않는다."""
+    요청 힌트의 카카오 ID가 그 핀의 것이거나, 그 핀의 카카오 ID가 기록된 자체 DB 장소가 place_id일 때. 이름·좌표는 보지 않는다.
+    조회로 막아 DB 유니크가 아니다 — 같은 가게를 live와 db로 동시에 만들면 둘 다 생길 수 있다(받아들인 한계)."""
     query = select(PinRow.id, PinRow.kakao_place_id).where(
         PinRow.map_id == map_id, PinRow.deleted_at.is_(None), PinRow.source == "live", PinRow.kakao_place_id.is_not(None),
     ).order_by(PinRow.created_at, PinRow.id)
@@ -479,7 +480,8 @@ def _author_pin_response(db: Session, pin_row: PinRow, principal: Principal) -> 
 
 def update_pin(db: Session, pin: PinRow, principal: Principal, req: PinUpdateRequest) -> Pin:
     """PATCH /pins/{pinId}(#466) — 메모·분류만 바꾼다. 장소·근거·종류 필드는 이 함수가 건드리지 않는다.
-    수정과 pin.updated 이벤트는 같은 트랜잭션에 기록된다."""
+    수정과 pin.updated 이벤트는 같은 트랜잭션에 기록된다. 분류 수정과 반응이 동시에 오면 반응 수 확인을 지나칠 수
+    있다(받아들인 한계, #466)."""
     reaction_count = db.execute(
         select(func.count()).select_from(ReactionRow).where(ReactionRow.pin_id == pin.id)
     ).scalar_one()

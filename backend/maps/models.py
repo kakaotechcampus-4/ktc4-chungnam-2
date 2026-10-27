@@ -46,8 +46,7 @@ class Map(Base):
     start_date: Mapped[date] = mapped_column(nullable=False)
     end_date: Mapped[date] = mapped_column(nullable=False)
     # API 대응 필드가 없다 — MapCreateRequest에도 Map 응답에도 없다. data-model.md가 선언한
-    # 컬럼이라 스키마는 맞추되 이 모듈은 절대 쓰지 않는다(항상 NULL). #32 확정 전까지 보류
-    # (maps/for_Root.md 참고).
+    # 컬럼이라 스키마는 맞추되 이 모듈은 절대 쓰지 않는다(항상 NULL). 지울지는 #760.
     member_count_expected: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # 지역 검색(선택) — 9/28 #22 변경(PR #132, 루트 검증 후 승인). 둘 다 NULL이거나 둘 다
     # 값이 있어야 한다(아래 CHECK). 없으면 지금처럼 첫 핀 좌표로 지역을 정한다.

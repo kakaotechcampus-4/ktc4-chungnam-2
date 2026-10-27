@@ -1,6 +1,6 @@
 """recommend 모듈 두 번째 리비전 — evidence_lines, regions, exclusions 테이블 + candidates에
 지연됐던 region_id FK 추가(regions가 이제 생겼다) + recommend_runs.last_funnel 추가
-(recommend/#108 코어 파이프라인, recommend/for_Root.md 참고).
+(recommend #108 코어 파이프라인).
 
 FK는 users(id)/maps(id) 대상 테이블이 이제 존재하지만(0005_maps/0006_users) 걸지 않는다 —
 그 두 리비전이 남긴 이유와 동일하다: 기존 dev 값(예: "map_1", "user_1")이 실제 maps.id/users.id
@@ -11,7 +11,7 @@ candidates.region_id는 이번엔 대상 테이블(regions)이 이 리비전 안
 
 regions.geom(docs/data-model.md의 geography 컬럼)은 만들지 않는다 — recommend/models.py
 모듈 docstring에 이유를 적었다(places 없이 label을 만들 방법이 없어 병합된 원(중심+반경)을
-평범한 float로 저장, PostGIS 대신). for_Root.md에 별도 보고.
+평범한 float로 저장, PostGIS 대신). data-model.md regions의 "#108 확정".
 
 Revision ID: 0008_evidence_regions_excl
 Revises: 0007_routes

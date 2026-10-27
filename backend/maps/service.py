@@ -164,7 +164,7 @@ def create_map(db: Session, *, req: MapCreateRequest, creator_id: str, creator_i
 
     seeding 프리시딩 잡을 여기서 큐잉하지 않는다: architecture.md 3절은 그 잡의 지역을
     "첫 핀 좌표로 확정"한다고 정의하는데, 이 시점엔 핀이 0개라 region을 채울 방법이 없다
-    (maps/CLAUDE.md 완료 정의와의 모순 — maps/for_Root.md 항목 2로 보고). 로그만 찍는 no-op
+    (트리거 위치는 #35에서 정한다). 로그만 찍는 no-op
     훅은 완료 정의 체크박스만 채우는 가짜 구현이라 만들지 않는다."""
     core.check_can_create_map(creator_is_guest)
     new_map = core.validate_map_create(req.title, req.start_date, req.end_date, req.region)
@@ -220,9 +220,8 @@ def list_maps(db: Session, *, user_id: str) -> list[Map]:
     member_count·permissions는 지도별로 따로 쿼리하지 않는다 — _rosters가 이번 결과에 나온
     map_id 전체를 한 번에 읽는다. region_lat/region_lng도 이 목록 쿼리 자체의
     SELECT 절에 포함시켜서(join이 아니라 같은 행의 계산 컬럼) 지도당 추가 쿼리가 없다.
-    confirmed_count는 shortlist_api.count_confirmed에 배치 버전이 없어 지도당 한 번씩
-    호출한다 — 이 모듈이 shortlist/api.py를 소유하지 않아 여기서 배치화할 수 없다(maps/for_Root.md
-    보고 대상). next_owner는 목록에서 채우지 않는다(스펙)."""
+    confirmed_count는 지도마다 shortlist_api.count_confirmed를 부른다. 내 지도는 MAP_LIMIT개까지라
+    그대로 둔다. next_owner는 목록에서 채우지 않는다(스펙)."""
     lat_col, lng_col = _region_lat_lng_columns()
     rows = db.execute(
         select(MapRow, lat_col, lng_col)
@@ -279,7 +278,7 @@ def create_invite(db: Session, *, map_id: str, creator_id: str, base_url: str) -
     토큰이 계속 늘지 않게). 남이 만든 링크는 재사용하지 않는다. 호출부가 새로 만들었으면 201, 재사용이면 200.
 
     base_url은 router가 만든 값을 그대로 받는다 — settings.frontend_base_url이 있으면
-    그 값(FE 오리진, 루트 확정 2026-09-23 — maps/for_Root.md 항목 6 해결), 없으면 예전처럼
+    그 값(FE 오리진, 2026-09-23), 없으면 예전처럼
     request.base_url(백엔드 자신의 주소). 결과 URL은 `/invites/{token}` 경로를 프론트의
     "초대 수락 화면"(#4 잔여 항목)이 받아서 POST /invites/{token}/accept를 호출하는 걸
     전제로 한다."""
@@ -368,6 +367,8 @@ def get_invite_summary(db: Session, *, token: str) -> InviteSummary:
 
 def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
     """순서가 핵심이다 — 존재·만료 확인 → 멤버십 upsert → used_count/이벤트(실제 가입 시에만).
+    받아들인 한계: maps 행을 잠그지 않아 지도 삭제와 동시에 수락되면 멤버십 행이 남을 수 있고, 수락 두 건이
+    동시에 오면 지도 상한(MAP_LIMIT)을 넘을 수 있다. 둘 다 드물어 잠금을 두지 않았다.
     ON CONFLICT DO NOTHING을 쓴다(DO UPDATE 아님) — owner가 자기 초대를 열어도 role이
     조용히 'member'로 강등되지 않는다. shortlist/service.py::add_item의 savepoint+rollback
     패턴을 여기선 쓰지 않는다 — 그 패턴의 db.rollback()은 같은 요청의 앞선 쓰기를 전부

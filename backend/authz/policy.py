@@ -41,10 +41,10 @@ POLICY: Mapping[str, RoleSpec] = {
                                         # 최종기획안 5-5). run.requested_by 본인 제한 없음.
                                         # 개별 근거 줄 비활성화(evidence.disable)는 그 줄
                                         # 작성자 본인만(author).
-                "invite.create",  # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
+                "invite.create",  # 초대 링크 발급 — "구성원 누구나" (#4 결정)
                 "map.leave",  # 지도 나가기(#369). 넘길 사람이 없는 방장 차단은 역할이 아니라 지도 상태라
                                # 여기 넣지 않고 maps/core.py가 판정한다(409 OWNER_CANNOT_LEAVE)
-                "route.recalculate",  # 동선 재계산 — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
+                "route.recalculate",  # 동선 재계산 — "구성원 누구나" (#103 결정)
                 "agent.toggle",  # 계획 보조 에이전트 모드 켜고 끄기(v2, docs/agent-v2.md)
                 "agent.suggestion.resolve",  # 지도 제안 수락·닫기(v2). 지도 단위
                 "course.request",  # AI 코스 짜기 요청(#334, #580 결정 전 브랜치 초안). 구성원 누구나, 하루 상한은 서비스가 센다
@@ -81,7 +81,7 @@ POLICY: Mapping[str, RoleSpec] = {
 # permissions.md에는 액션이 어떤 리소스 종류에 쓰이는지가 없다 — 없으면
 # can(user, "recommend.publish", Resource(type="pin", ...))처럼 액션과 무관한 리소스 종류에 대해
 # 판정을 묻는 타입 혼동이 조용히 통과한다. 이 표는 정본을 "좁히기만" 한다(정본에 없는 액션을
-# 허용하지 않고, 정본에 있는 액션의 유효 대상만 못 박는다) — for_Root.md에 정본 승격 여부 확인 요청.
+# 허용하지 않고, 정본에 있는 액션의 유효 대상만 못 박는다) — 정본 승격 여부는 #66에서 정한다.
 ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "pin.create": frozenset({"map"}),
     "pin.delete": frozenset({"pin"}),

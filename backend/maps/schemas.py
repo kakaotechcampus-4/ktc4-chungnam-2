@@ -76,8 +76,7 @@ class Map(BaseModel):
     member_count: int
     # 삭제되지 않은 공개 핀 수 — pins.api.count_public_pins_by_map으로 센다(#313).
     pin_count: int | None = None
-    # shortlist_items 개수 — shortlist에 api.py가 없어 이번 PR은 계산하지 않는다
-    # (maps/for_Root.md 항목 5). 값이 없다는 사실 자체를 0으로 흐리지 않는다.
+    # shortlist_items 개수 — shortlist.api.count_confirmed로 채운다. 못 구하면 0이 아니라 None이다.
     confirmed_count: int | None = None
 
 
@@ -117,7 +116,7 @@ class Member(BaseModel):
     # owner = 방장, 나머지 member. memberships.role이 정본이다(#369) — 위임되면 바뀌어서
     # 지도를 만든 사람(maps.created_by)과 다를 수 있다.
     role: Literal["owner", "member"] | None = None
-    # users 테이블이 없다(auth #4) — 채울 수 없다.
+    # auth.api.display_names로 채운다(탈퇴자는 '탈퇴한 구성원').
     display_name: str | None = None
-    # 접속 상태 추적이 realtime에 아직 없다 — 채울 수 없다(maps/for_Root.md 항목 5).
+    # v1은 접속 상태를 추적하지 않아 늘 비운다(docs/events.md member.presence).
     online: bool | None = None

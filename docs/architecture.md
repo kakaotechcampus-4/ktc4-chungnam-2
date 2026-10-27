@@ -39,6 +39,9 @@
 | `llm` | 모델 호출 2곳(② 사유 구조화, ③-a-1 라벨링) + 프롬프트 + 구조화 출력 스키마 | 8절, #99 | (외부 LLM API) |
 | `shortlist` | 확정 리스트 추가/제외, 동선 계산(모델 미사용) | 5-3, 5-10 | `pins` |
 | `realtime` | SSE 채널(전체/개인), `event_log` 폴링·재동기화 | 5-5-1 | — |
+| `notifications` | 앱 안 알림함과 알림 설정(#470). 다른 모듈은 이벤트를 쓰는 같은 트랜잭션에서 `notifications.api.notify`를 수신자마다 부르고, 문장은 `compose_message`로 만든다 | 신규(v2) | — |
+| `feedback` | 서비스 피드백 저장(#10). 읽는 API는 없다 | 신규(v2) | — |
+| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 각 모듈 api의 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth` (api.py만) |
 | `ads` | 추천 탭 광고: 기간 광고 관리, 선택(코드), 노출과 클릭의 날짜별 집계(docs/ads.md, #642) | 신규 | `places`, `recommend`, `pins` (api.py만. `recommend`는 `ads`를 import하지 않는다) |
 
 `의존` 열은 실제 import를 기준으로 적는다(2026-09-23 기준, #113). 계획상 필요할 것 같은 의존을 미리 적지 않는다 — 표와 코드가 어긋나면 표를 믿을 수 없게 된다.
@@ -299,7 +302,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 | 함수 | 쓰는 곳 | 하는 일 |
 |---|---|---|
 | `match_place(hint) -> PlaceMatch \| None` | pins(핀 생성) | 힌트(`kakao_place_id`, `name`, `lat`, `lng`, `category`)에 맞는 **자체 DB 장소 한 건**을 찾는다. 읽기 전용. 반경 상한(기본 300m)·후보 수 상한·분류 일치·이름 일치를 모두 만족할 때만 돌려준다. 동명 점포가 여럿이면 이름 일치 + 거리 순으로 한 건, **확신이 낮으면 `None`**(엉뚱한 곳에 핀이 꽂히는 것보다 거절이 낫다) |
-| `record_kakao_match(place_id, kakao_place_id, kakao_place_url) -> None` | pins(핀 생성 같은 트랜잭션) | 매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(`places.kakao_*`). **첫 값 유지**(#248) — 이미 다른 ID가 있으면 덮어쓰지 않고, 같은 ID면 확인 일자만 갱신한다. pins는 `kakao:<숫자 1~20자리>`일 때만 부른다(형식이 틀리면 매칭은 하되 기록하지 않는다) |
+| `record_kakao_match(place_id, kakao_place_id, kakao_place_url) -> None` | pins(핀 생성 같은 트랜잭션) | 매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(`places.kakao_*`). **첫 값 유지**(#248) — 이미 다른 ID가 있으면 덮어쓰지 않고, 같은 ID면 확인 일자만 갱신한다. pins는 `kakao:<숫자 1~20자리>`일 때만 부른다(형식이 틀리면 매칭은 하되 기록하지 않는다). 없는 `place_id`면 `KeyError`다(호출 쪽이 매칭된 id만 넘긴다) |
 | `pinnable_flags(hints) -> list[bool]` | 검색 응답(`GET /places/search`) | 힌트마다 `match_place`가 성공할지 읽기만 해서 계산한다. **카카오 ID를 기록하지 않는다**(`record_kakao_match`와 분리) |
 | `get_places(place_ids) -> dict[str, PlaceInfo]` | pins(핀 응답), recommend(후보 응답) | `name`, `lat`, `lng`, `category`, `kakao_place_url`을 배치로 조회(N+1 금지). 없는 ID는 키에서 빠진다 |
 | `search_nearby_own(category, areas) -> list[PlaceRef]` | recommend(후보 풀) | 반경 안의 **영업 중**(`status='open'`) 장소의 `place_id`·좌표. 카테고리는 음식점·카페·관광지 |

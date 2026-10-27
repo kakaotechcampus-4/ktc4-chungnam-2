@@ -56,6 +56,7 @@ memberships(
 invites(
   token, map_id, created_by, expires_at, used_count,
   created_at, revoked_at            -- revoked_at: 방장이 끈 시각(NULL이면 켜짐, #467). map_id 인덱스
+                                    -- expires_at = 발급 시각 + 7일(maps.core.INVITE_TTL). 링크를 다시 받으면 유효한 기존 링크를 그대로 줘 기간을 늘리지 않는다(#467)
 )
 ```
 
@@ -86,6 +87,8 @@ pins(
   checks jsonb null,                   -- #57 결정: candidate.checks를 게시 시점에 복사(가드레일
                                         -- 5, 게시 후에도 조건별 충족 체크가 유지돼야 함). run·
                                         -- candidate가 나중에 지워지거나 바뀌어도 이 값은 안 바뀐다.
+  reason null, member_fulfillment jsonb null, place_source jsonb null,
+                                        -- #157: AI 추천 핀을 게시할 때 candidate 값을 복사한다(가드레일 5). 직접 찍은 핀은 NULL
   created_by, created_at, deleted_at
 )
   unique(map_id, place_id) where deleted_at is null   -- 중복 핀 판정(가드레일 6). 판정 기준은 #33(보류)에서 별도 확정
@@ -266,6 +269,8 @@ recommend_runs(
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
                                          -- 않도록 마지막 execute/widen/retry의 깔때기 표를
                                          -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.
+  default_radius_walk_min int default 15,  -- #158: 기본값 원의 지금 도보 분. regions.radius_m은 여기서 파생(분×80m).
+                                         -- docs/constraints.md "반경 넓히기 상수"
   created_at
 )
 
@@ -295,6 +300,7 @@ regions(
                                          -- 압축 논리. 실제 PostGIS 연산이 필요해지면(예: 핀-지역
                                          -- 포함 판정을 DB 레벨로 옮길 때) geom 컬럼을 추가하는
                                          -- 별도 마이그레이션으로 되돌린다.
+  anchor_points jsonb default '[]',     -- #112: 원을 만든 기준 핀 좌표 [[lat, lng], ...]. 상위 3곳 동점 처리의 거리 평균에 쓴다
   confirmed boolean, confirmed_at
 )
 
@@ -306,6 +312,8 @@ candidates(
                                          -- place_id로 조회하는 방향으로 재검토
   rank, checks jsonb,                   -- 조건별 충족 체크(가드레일 5)
   member_fulfillment jsonb,
+  reason text null, place_source jsonb null,  -- #158: 이유 한 줄(core.build_reason, 모델 호출 없음)과 출처 {provider, url?}.
+                                         -- 게시 때 pins로 복사(가드레일 5)
   published_pin_id null,                -- 5-5-1 게시 후 연결
   created_at
 )
@@ -389,7 +397,7 @@ agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 
   tool_calls jsonb,                   -- 도구 입력과 결과. 사유 글은 reaction_id와 글자 수로 바꿔 남긴다
   verification jsonb null, tokens_in, tokens_out,
   outcome('no_signal'|'blocked'|'silent'|'unknown'|'invalid_schema'|'invalid_claims'|'model_failed'|'stale'
-          |'suggested'|'summarized'|'advised'|'trip_ended'|'map_deleted'),
+          |'suggested'|'summarized'|'advised'|'trip_ended'|'map_deleted'|'error'),   -- error: 예외로 끝남(#677)
   outcome_detail jsonb null
 )
   index(map_id, started_at)
@@ -414,7 +422,7 @@ agent_suggestion_views(               -- 사용자별 열람. 버튼의 점(has_
 )
 
 agent_reason_summaries(               -- 우리 조건 요약. 카테고리마다 최신본 하나를 덮어쓴다
-  map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸(키, 개수, 서버 문구)과 근거 reaction_id. 사유 원문 없음
+  map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸(키, 개수, 문구 종류)과 근거 reaction_id. 사유 원문 없음
   based_on_reaction_count, run_id null, updated_at,
   primary key(map_id, category)
 )

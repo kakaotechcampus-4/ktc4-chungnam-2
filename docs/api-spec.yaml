@@ -889,7 +889,7 @@ paths:
     patch:
       tags: [recommend]
       summary: |
-        근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md).
+        근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md). 남이 쓴 줄이 하나라도 섞이면 요청 전체가 403 FORBIDDEN이고 아무것도 바뀌지 않는다(#108).
         '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
         한 요청에 글 5개까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 글은 10개까지다(뺀 것도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
       parameters: [ { $ref: "#/components/parameters/RunId" } ]
@@ -1633,12 +1633,11 @@ components:
       type: object
       required: [display_name]
       properties:
-        display_name: { type: string, minLength: 1, maxLength: 50, description: "계정 단위 표시 이름 (2026-09-30 결정)" }
+        display_name: { type: string, minLength: 1, maxLength: 50, description: "계정 단위 표시 이름 (2026-09-30 결정). 앞뒤 공백을 지운 뒤 1~50자이고 지운 값을 저장한다(#160). 공백뿐이면 422" }
 
     Map:
       type: object
-      # confirmed_count만 없을 수 있다 — shortlist/api.py::count_confirmed()가 없어 이 모듈이
-      # 못 채운다(maps/for_Root.md 5번). region은 애초에 선택 입력이라 없을 수 있다(#22).
+      # region만 없을 수 있다(선택 입력, #22). confirmed_count는 shortlist.api.count_confirmed로 채운다.
       # 나머지는 maps/core.py::to_map_response가 항상 채운다.
       required: [id, title, start_date, end_date, member_count, pin_count, permissions]
       properties:
@@ -1963,7 +1962,7 @@ components:
       description: GET /places/search 한 건 — **화면 표시용이며 서버에 저장되지 않는다**. 핀을 만들 때 place_id·place_name·lat·lng·category를 그대로 POST /maps/{mapId}/pins로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는 매칭 힌트로 쓴다
       required: [place_id, place_name, lat, lng]
       properties:
-        place_id: { type: string, description: "\"<소스>:<소스 내 id>\" 형태(예 kakao:1234). 불투명 값으로 취급한다" }
+        place_id: { type: string, description: "\"<소스>:<소스 내 id>\" 형태(예 kakao:1234, 자체 DB 장소는 own:<uuid>). 불투명 값으로 취급한다" }
         place_name: { type: string, maxLength: 100, description: "POST /maps/{mapId}/pins의 place_name과 같은 이름 — 그대로 보낸다" }
         lat: { type: number, minimum: -90, maximum: 90 }
         lng: { type: number, minimum: -180, maximum: 180 }
@@ -1989,8 +1988,8 @@ components:
 
     Pin:
       type: object
-      # place_name·created_by_display_name·checks·source_run_id만 없을 수 있다 —
-      # places·maps·recommend가 없어 pins/core.py::to_pin_response가 못 채운다(pins/for_Root.md 6번).
+      # place_name은 자체 DB 장소를 못 읽으면, checks·reason 등은 AI 추천 핀이 아니면 없다.
+      # source_run_id는 아직 채우지 않는다(#761).
       # lat·lng는 실시간 핀(source=live, #382)에 없다 — 서버가 카카오 좌표를 저장하지 않는다. 나머지는 항상 채운다.
       required: [id, map_id, category, kind, visibility, created_by, created_at, reaction_summary, permissions]
       properties:
@@ -2397,7 +2396,7 @@ components:
       required: [label, want_count, avoid_count]
       properties:
         fact_key: { type: string }
-        label: { type: string, description: "예: \"조용함\"" }
+        label: { type: string, description: "예: \"조용한 곳\"(키 표시 이름 그대로, #586)" }
         want_count: { type: integer, minimum: 1 }
         avoid_count: { type: integer, minimum: 1 }
 

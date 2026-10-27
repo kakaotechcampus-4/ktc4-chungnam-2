@@ -7,7 +7,7 @@ users는 사람이고 user_identities는 로그인 수단이다(#694). 다른 �
 
 id는 다른 모듈들이 이미 String으로 참조를 걸어둔 형식과 맞춘다(maps.models::Map.created_by,
 pins.models::Pin.created_by 등 — 전부 "users(id) — auth 도착 시 FK" 주석과 함께 String으로
-유보돼 있었다). FK 추가는 이번 리비전 범위 밖이다(auth/for_Root.md 보고 대상 — 각 모듈이
+유보돼 있었다). FK 추가는 이번 리비전 범위 밖이다(#760 — 각 모듈이
 이미 들고 있는 dev 값이 실제 users.id와 일치한다는 보장이 없어, 백필 없이 FK를 걸면 그
 모듈들이 먼저 깨진다).
 """

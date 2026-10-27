@@ -10,7 +10,7 @@
 - 목록은 상위 TOOL_RESULT_MAX_ITEMS(30)개와 총계(total)로 자른다. 같은 입력이면 같은 순서다.
 - 오류는 결과로 돌려준다: 허용되지 않은 도구나 없는 대상은 {"error": "NOT_FOUND"}, ②가 실패하면
   {"error": "UNAVAILABLE"}. 상한(LIMIT_EXCEEDED)은 llm이 강제한다(#532).
-- 인자는 llm/for_Root.md(#532)의 표대로 온다. map_id는 모델이 고르지 않고 여기서 관찰 중인 지도로 채운다. 선택 칸은 null.
+- 인자는 llm.prompts의 도구 설명(parameters)대로 온다(agent-v2 10절, #532). map_id는 모델이 고르지 않고 여기서 관찰 중인 지도로 채운다. 선택 칸은 null.
 
 기록(10절, 2절 13번): `ToolContext.calls`가 agent_runs.tool_calls에 들어간다. 결과 안의 사유 글은 남기지 않고
 `text_len`(글자 수)로 바꾼다 — 모델에 준 결과에는 글이 그대로 있고, 저장할 때만 바꾼다. 검증용 원래 결과는

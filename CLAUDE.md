@@ -8,7 +8,7 @@
 - **backend/<module>/** (모듈마다 별도 Claude Code): `backend/CLAUDE.md` + 모듈 `CLAUDE.md`를 따른다. 루트 스펙(`docs/api-spec.yaml`·`data-model.md`·`constraints.md`)대로 구현하고 단위 테스트 통과까지가 책임이다.
 - **frontend/**: `frontend/CLAUDE.md`를 따른다. 루트 계약을 임의로 바꾸지 않는다.
 - 서브 디렉토리는 자기 `CLAUDE.md`를 먼저 읽는다. 거기 없는 결정(모듈 간 계약, DB 스키마, 실격 조건 값, 화면 구조)과 스펙이 틀렸다는 판단은 루트에 보고한다.
-- 보고와 요청은 자리를 나눈다(#757). 작업 보고는 PR 본문, 루트 확인 요청과 다른 모듈에 하는 api 요청은 GitHub 이슈, 결정은 decision 이슈와 정본 문서, 다른 모듈이 부르는 법은 그 모듈 `api.py`의 함수 설명과 `docs/architecture.md`에 둔다. 정본 문서는 이슈 번호를 근거로 가리킨다. `for_Root.md`에는 새로 쓰지 않는다(옮기는 중, #757).
+- 보고와 요청은 자리를 나눈다(#757). 작업 보고는 PR 본문, 루트 확인 요청과 다른 모듈에 하는 api 요청은 GitHub 이슈, 결정은 decision 이슈와 정본 문서, 다른 모듈이 부르는 법은 그 모듈 `api.py`의 함수 설명과 `docs/architecture.md`에 둔다. 정본 문서는 이슈 번호를 근거로 가리킨다. 모듈마다 두던 `for_Root.md`는 #757에서 없앴다.
 
 ## 작업 착수 프로토콜 (루트)
 
