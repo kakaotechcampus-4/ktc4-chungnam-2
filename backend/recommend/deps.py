@@ -11,7 +11,7 @@ fact_key가 unknown이 된다(architecture.md 3절 — 라벨 없이도 unknown_
 전제 그대로).
 
 **실제 모드(#190)**: `Real*` 게이트웨이는 places.api의 자체 DB 함수(search_nearby_own·get_places·
-get_facts)에만 위임한다. 요청 중 모델 호출도 카카오 원자료도 이 경로에 없다.
+count_curated·get_facts)에만 위임한다. 요청 중 모델 호출도 카카오 원자료도 이 경로에 없다.
 """
 
 from typing import Any, Mapping, Sequence
@@ -24,7 +24,7 @@ from common.database import get_db_session
 from common.settings import settings
 from llm import api as llm_api
 from places import api as places_api
-from places.schemas import Area, FactLabel
+from places.schemas import Area, FactLabel, PlaceInfo
 from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway, PlaceStub
 
 
@@ -46,9 +46,11 @@ class DevPlaceSearchGateway:
             for i, (dlat, dlng) in enumerate(self._OFFSETS)
         ]
 
+    def get_places(self, place_ids: Sequence[str]) -> Mapping[str, PlaceInfo]:
+        return {}  # 합성 place_id라 이름도 주소도 없다
 
-    def get_names(self, place_ids: Sequence[str]) -> Mapping[str, str]:
-        return {}  # 합성 place_id라 이름이 없다
+    def count_curated(self, *, category: str, circles: Sequence[Circle]) -> int:
+        return len(self._OFFSETS) if circles else 0  # search_nearby가 지어내는 자리 수와 같게
 
 
 class DevPlaceFactsGateway:
@@ -80,8 +82,12 @@ class RealPlaceSearchGateway:
         infos = places_api.get_places([r.place_id for r in refs], db=self._db) if refs else {}
         return [PlaceStub(place_id=r.place_id, lat=r.lat, lng=r.lng, source=_place_source(infos.get(r.place_id)), can_recommend=r.can_recommend) for r in refs]
 
-    def get_names(self, place_ids: Sequence[str]) -> Mapping[str, str]:
-        return {pid: info.name for pid, info in places_api.get_places(list(place_ids), db=self._db).items()}
+    def get_places(self, place_ids: Sequence[str]) -> Mapping[str, PlaceInfo]:
+        return places_api.get_places(list(place_ids), db=self._db)
+
+    def count_curated(self, *, category: str, circles: Sequence[Circle]) -> int:
+        areas = [Area(lat=c.anchor_lat, lng=c.anchor_lng, radius_m=c.radius_m) for c in circles]
+        return places_api.count_curated(category, areas, db=self._db)
 
 
 class RealPlaceFactsGateway:

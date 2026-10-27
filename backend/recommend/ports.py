@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
 from llm.schemas import EvidenceLine
-from places.schemas import FactLabel
+from places.schemas import FactLabel, PlaceInfo
 
 
 @dataclass(frozen=True)
@@ -41,8 +41,12 @@ class PlaceSearchGateway(Protocol):
 
     def search_nearby(self, *, category: str, circles: Sequence[Circle]) -> list[PlaceStub]: ...
 
-    def get_names(self, place_ids: Sequence[str]) -> Mapping[str, str]:
-        """후보 응답의 place_name용 — 없는 ID는 키에서 빠진다."""
+    def get_places(self, place_ids: Sequence[str]) -> Mapping[str, PlaceInfo]:
+        """places.api.get_places 그대로 — 후보 응답의 이름과 장소 링크, 검색어의 동네(주소)가 쓴다. 없는 ID는 키에서 빠진다."""
+        ...
+
+    def count_curated(self, *, category: str, circles: Sequence[Circle]) -> int:
+        """원들 안의 영업 중 정예 장소 수(places.api.count_curated, #799) — readiness의 curated_nearby."""
         ...
 
 

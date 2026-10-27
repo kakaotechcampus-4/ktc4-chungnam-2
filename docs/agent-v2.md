@@ -140,7 +140,7 @@ CATEGORY_GAP_MIN_CONFIRMED = 2
 
 SUMMARY_NEW_REASONS = 3
 
-BLOCKED_RUN_MAX_RESULTS = 3        # 결과가 이 값 미만이면 추천 막힘
+BLOCKED_RUN_MAX_RESULTS = 3        # 결과가 이 값 미만이면 추천 막힘. 값은 recommend.schemas.FEW_RESULTS를 받는다(결과의 카카오맵 검색 링크 기준과 같다, #800)
 BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS = 3   # 또는 같은 사람이 같은 카테고리 run을 이 값 이상 만들었으면 (초안)
 # 재시도 상한(attempt_no)은 개인 단위, 카테고리 무관, 10회다(#31, 2026-10-15 5→10회). attempt_no로 세면 다른 카테고리 시도가 섞인다. 그래서 같은 카테고리 run 수를 따로 센다(GET /maps/{mapId}/runs의 기록, #469).
 

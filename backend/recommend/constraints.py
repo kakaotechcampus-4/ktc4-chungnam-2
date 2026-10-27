@@ -271,6 +271,46 @@ FACT_LABELS: dict[str, str] = {
 }
 
 
+# 카카오맵 검색 링크의 말(#798, #800) — docs/constraints.md 「카카오맵 검색 링크」의 두 표가 정본이다. 검색어는
+# core.external_search_query가 만든다. integration/test_policy_tables.py가 두 표의 모든 행과 같은지 본다.
+CATEGORY_SEARCH_WORDS: dict[str, str] = {
+    "음식점": "맛집",
+    "카페": "카페",
+    "관광지": "가볼만한곳",
+}
+CONDITION_SEARCH_WORDS: dict[str, str] = {
+    "pet_friendly": "애견동반",
+    "cuisine_korean": "한식",
+    "cuisine_chinese": "중식",
+    "cuisine_japanese": "일식",
+    "cuisine_western": "양식",
+    "cuisine_bunsik": "분식",
+    "cuisine_chicken_pub": "치킨",
+    "cuisine_bbq": "고기집",
+    "cuisine_gopchang": "곱창",
+    "cuisine_foreign": "아시아음식",
+    "cuisine_raw_fish": "횟집",
+    "cuisine_buffet": "뷔페",
+    "long_established": "노포",
+    "serves_alcohol": "술집",
+    "vegetarian_friendly": "비건",
+    "bakery": "베이커리",
+    "good_view": "전망대",
+    "traditional_hanok": "한옥",
+    "waterside": "호수",
+    "forest": "수목원",
+    "walkable": "산책로",
+    "hands_on": "체험",
+    "exhibition": "미술관",
+    "performance": "공연장",
+    "shopping": "시장",
+    "kid_friendly": "키즈",
+    "cherry_blossom": "벚꽃",
+    "water_play": "물놀이",
+    "winter_spot": "스케이트장",
+}
+
+
 def hard_fact_keys_for(category: str) -> list[str]:
     return sorted(key for key, spec in HARD_REGISTRY.items() if category in spec.categories)
 

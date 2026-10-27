@@ -643,6 +643,35 @@ def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions)
     assert not problems, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(problems)
 
 
+def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client):
+    """카카오맵 검색 링크(#798, #800) — readiness의 curated_nearby·external_search, 결과가 적을 때의 external_search, 결과 카드의
+    place_url. 추천의 장소 Gateway를 실제 구현(places.api → FakePlaces)으로 꽂는다. FakePlaces 샘플은 정예도 주소도 없어
+    readiness는 0곳 + 링크(동네는 지도의 지역 이름), 결과는 지도에 없는 성수 음식점 1곳 + 링크다."""
+    from recommend import deps as recommend_deps
+
+    app_client.app.dependency_overrides[recommend_deps.get_place_search_gateway] = lambda: recommend_deps.RealPlaceSearchGateway()
+    app_client.app.dependency_overrides[recommend_deps.get_place_facts_gateway] = lambda: recommend_deps.RealPlaceFactsGateway()
+    a, _b, problems = clients
+    map_id = a.post("/maps", json={"title": "성수", "start_date": "2026-12-01", "end_date": "2026-12-02",
+                                   "region": {"label": "성수동", "lat": 37.5445, "lng": 127.0561}}).json()["id"]
+    pin_id = a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-kalguksu")).json()["id"]
+    assert a.put(f"/pins/{pin_id}/reaction", json={"type": "like"}).status_code == 200
+
+    readiness = a.get(f"/maps/{map_id}/recommend/readiness").json()
+    assert readiness["음식점"]["curated_nearby"] == 0
+    assert readiness["음식점"]["external_search"]["query"] == "성수동 맛집"
+    assert "curated_nearby" not in readiness["카페"]   # 의견 핀이 없다
+
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
+    assert a.post(f"/runs/{run_id}/execute").status_code == 202
+    result = a.get(f"/runs/{run_id}/result").json()
+    [candidate] = result["candidates"]
+    assert candidate["place_url"].startswith("https://map.kakao.com/link/search/")
+    assert result["external_search"]["query"] == "성수동 맛집"
+    assert not problems, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(problems)
+
+
 def test_notification_responses_match_the_openapi_spec(clients, db_session):
     """알림함·알림 설정(#470) — 다른 모듈의 호출 연결은 아직 없으므로 notify를 직접 불러 알림을 만든다.
     행위자 본인 제외와 꺼 둔 종류 거르기, 읽음 처리, 페이지 넘기기까지 응답이 Notification·NotificationList 스키마에 맞는다."""

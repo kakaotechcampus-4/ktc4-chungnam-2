@@ -63,6 +63,14 @@ def get_map_title(db: Session, map_id: str) -> str | None:
     return service.get_map_title(db, map_id=map_id)
 
 
+def get_map_region_label(db: Session, map_id: str) -> str | None:
+    """지도의 지역 이름(지도 만들기의 지역 검색 결과 label, #22). 지역을 안 정했거나 없거나 삭제된 지도는 None. 읽기 전용 —
+    recommend의 카카오맵 검색어가 핀 주소에서 동네를 못 찾았을 때 쓴다(#800)."""
+    return db.execute(
+        select(MapRow.region_label).where(MapRow.id == map_id, MapRow.deleted_at.is_(None))
+    ).scalar_one_or_none()
+
+
 def get_map_for_agent(db: Session, map_id: str) -> dict | None:
     """agent 스냅샷(docs/agent-v2.md 12.7, #522)이 부른다. 읽기 전용, 커밋하지 않는다.
     `{map_id, start_date, end_date, deleted: bool, members: [{user_id, joined_at}]}`. 구성원은 지금 구성원만

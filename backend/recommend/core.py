@@ -12,9 +12,10 @@ recommend.publish가 있다). 이 파일에 남는 건 run/candidate/evidence/re
 
 import hashlib
 import math
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Any, Collection, Mapping, Sequence
+from typing import Any, Collection, Iterable, Mapping, Sequence
 
 from common.errors import AppError
 from common.geo import WALKING_SPEED_M_PER_MIN, haversine_distance_m
@@ -338,6 +339,36 @@ def evidence_line_use(
     if badge not in ("required", "preferred"):
         return False, "no_direction"
     return False, "not_for_category"
+
+
+# ---------------------------------------------------------------- 카카오맵 검색 링크 (#798, #800)
+# docs/constraints.md 「카카오맵 검색 링크」. 링크 형식과 동네 자르기는 places.api가 정한다 — 여기는 검색어의 말과 동네 고르기만.
+
+EXTERNAL_SEARCH_QUERY_MAX = 100  # api-spec ExternalSearch.query maxLength
+
+
+def external_search_query(
+    area: str | None, category: str, lines: Sequence[tuple[str, str | None, bool | None]], off_season: Collection[str],
+) -> str:
+    """검색어 "{동네} {말}". lines는 이번 run의 활성 근거 줄 (badge, fact_key, wants)를 근거 줄 순서로 — 사유 원문은 받지
+    않는다(#717). 말은 쓰이는 줄(evidence_line_use) 중 원함 방향(wants가 참)이고 조건 말 표에 있는 키의 말 하나(첫째),
+    없으면 카테고리 말이다. 동네가 없거나 붙이면 검색어 상한을 넘으면 말만 쓴다."""
+    word = next(
+        (
+            constraints.CONDITION_SEARCH_WORDS[fact_key] for badge, fact_key, wants in lines
+            if wants is True and fact_key in constraints.CONDITION_SEARCH_WORDS
+            and evidence_line_use(badge, fact_key, wants, category, off_season)[0]
+        ),
+        constraints.CATEGORY_SEARCH_WORDS[category],
+    )
+    query = f"{area} {word}" if area else word
+    return query if len(query) <= EXTERNAL_SEARCH_QUERY_MAX else word
+
+
+def most_common_area(areas: Iterable[str | None]) -> str | None:
+    """가장 많이 나온 동네(None은 세지 않는다). 같은 수면 가나다순으로 앞의 것이라 입력 순서와 무관하다. 없으면 None."""
+    counts = Counter(area for area in areas if area)
+    return min(counts, key=lambda area: (-counts[area], area)) if counts else None
 
 
 MAX_SHOWN_PREFERENCE_CHECKS = 5  # 결과 카드에 보이는 충족한 선호 체크 수(docs/constraints.md "결과 카드에 선호 조건을 보이는 법", #681-4)

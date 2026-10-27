@@ -26,8 +26,11 @@ class _FakePlaceSearch:
     def search_nearby(self, *, category, circles):
         return self._places
 
-    def get_names(self, place_ids):
+    def get_places(self, place_ids):
         return {}
+
+    def count_curated(self, *, category, circles):
+        return len(self._places)
 
 
 class _FakePlaceFacts:
