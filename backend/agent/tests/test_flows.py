@@ -8,6 +8,8 @@
 """
 
 import json
+import logging
+import re
 import threading
 import uuid
 from datetime import timedelta
@@ -473,9 +475,17 @@ def test_one_failing_map_does_not_stop_others(world, monkeypatch):
     assert _cursor(world, bad).lease_until is None and _cursor(world, good).lease_until is None
 
 
-def test_tick_over_its_time_budget_only_releases_the_remaining_leases(world):
+def _tick_log(caplog, maps) -> tuple[int, dict[str, int]]:
+    """run_tick 끝의 처리량 한 줄(#756) — (레벨, 이름 → 숫자). 숫자만 있고 지도 id는 없어야 한다."""
+    [record] = [r for r in caplog.records if r.getMessage().startswith("agent tick due=")]
+    message = record.getMessage()
+    assert not [m for m in maps if m in message]
+    return record.levelno, {k: int(v) for k, v in re.findall(r"(\w+)=(\d+)", message)}
+
+
+def test_tick_over_its_time_budget_only_releases_the_remaining_leases(world, caplog):
     """시작 뒤 TICK_BUDGET_SEC(LEASE_SEC − 30초)가 지나면 남은 지도는 관찰하지 않고 lease만 푼다(#677). 커서가 그대로라
-    다음 tick에 다시 잡힌다."""
+    다음 tick에 다시 잡힌다. 끝의 처리량 로그는 예산으로 미룬 수를 warning으로 남긴다(#756)."""
     maps = [world.gap_map() for _ in range(3)]
     for m in maps:
         world.event(m)
@@ -484,7 +494,8 @@ def test_tick_over_its_time_budget_only_releases_the_remaining_leases(world):
     def clock():
         return next(readings, float(constants.TICK_BUDGET_SEC))
 
-    observed = flows.run_tick(world.now, session_factory=world.factory, clock=clock)
+    with caplog.at_level(logging.INFO, logger="pingo.agent"):
+        observed = flows.run_tick(world.now, session_factory=world.factory, clock=clock)
 
     assert len(observed) == 1
     skipped = [m for m in maps if m not in observed]
@@ -493,7 +504,31 @@ def test_tick_over_its_time_budget_only_releases_the_remaining_leases(world):
         cur = _cursor(world, m)
         assert (cur.lease_until, cur.last_seen_seq, cur.next_check_at) == (None, 0, None)
         assert world.rows(AgentRun, map_id=m) == []
+    level, counts = _tick_log(caplog, maps)
+    assert level == logging.WARNING
+    assert counts["due"] >= 3   # 같은 DB에 남은 다른 지도도 차례면 센다. TICK_MAX_MAPS는 픽스처가 1000
+    assert counts == {"due": counts["due"], "observed": 1, "deferred_by_max": 0,
+                      "deferred_by_budget": counts["due"] - 1, "elapsed_ms": constants.TICK_BUDGET_SEC * 1000}
     assert set(skipped) <= set(tick(world, after=timedelta(minutes=5)))
+
+
+def test_tick_over_max_maps_logs_the_maps_left_for_later(world, monkeypatch, caplog):
+    """TICK_MAX_MAPS를 넘는 지도는 고르지 않는다. 끝의 처리량 로그에 차례였던 수와 미룬 수가 info로 남는다(#756)."""
+    monkeypatch.setattr(flows, "TICK_MAX_MAPS", 1)
+    maps = [world.gap_map() for _ in range(3)]
+    for m in maps:
+        world.event(m)
+    readings = iter([0.0, 0.0, 0.25])   # tick 시작, 고른 지도 하나, 끝
+
+    with caplog.at_level(logging.INFO, logger="pingo.agent"):
+        observed = flows.run_tick(world.now, session_factory=world.factory, clock=lambda: next(readings))
+
+    assert len(observed) == 1
+    level, counts = _tick_log(caplog, maps)
+    assert level == logging.INFO
+    assert counts["due"] >= 3   # 같은 DB에 남은 다른 지도도 차례면 센다
+    assert counts == {"due": counts["due"], "observed": 1, "deferred_by_max": counts["due"] - 1,
+                      "deferred_by_budget": 0, "elapsed_ms": 250}
 
 
 # ---------------------------------------------------------------- 10. lease
@@ -526,18 +561,18 @@ def test_locked_and_leased_cursor_is_skipped(world):
     map_id = world.gap_map()
     world.event(map_id)
     with world.factory() as p:   # 커서 행을 미리 만들어 둔다 — 아래 a의 미커밋 upsert를 b가 기다리지 않게
-        for claim in service.claim_maps(p, world.now, limit=1000):
+        for claim in service.claim_maps(p, world.now, limit=1000).claims:
             service.release_lease(p, claim.map_id)
         p.commit()
     with world.factory() as a, world.factory() as b:
-        assert [c.map_id for c in service.claim_maps(a, world.now, limit=1000) if c.map_id == map_id] == [map_id]
-        assert map_id not in [c.map_id for c in service.claim_maps(b, world.now, limit=1000)]   # 잠김
+        assert [c.map_id for c in service.claim_maps(a, world.now, limit=1000).claims if c.map_id == map_id] == [map_id]
+        assert map_id not in [c.map_id for c in service.claim_maps(b, world.now, limit=1000).claims]   # 잠김
         b.rollback()
         a.commit()
-        assert map_id not in [c.map_id for c in service.claim_maps(b, world.now, limit=1000)]   # lease
+        assert map_id not in [c.map_id for c in service.claim_maps(b, world.now, limit=1000).claims]   # lease
         b.rollback()
         later = world.now + timedelta(seconds=constants.LEASE_SEC + 1)
-        assert map_id in [c.map_id for c in service.claim_maps(b, later, limit=1000)]   # lease가 지나면 다시
+        assert map_id in [c.map_id for c in service.claim_maps(b, later, limit=1000).claims]   # lease가 지나면 다시
         b.rollback()
 
 
