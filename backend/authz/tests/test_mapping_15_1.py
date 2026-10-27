@@ -2,8 +2,7 @@
 docs/permissions.md "15-1 표와의 매핑" 절의 5개 행 전부를 검증한다.
 
 주의: backend/authz/CLAUDE.md의 완료 정의는 "4개 행"이라고 적혀 있지만 실제 docs/permissions.md의
-표는 5행이다(반경 조정 행이 별도로 있다) — for_Root.md에 문서 불일치로 보고했고, 여기서는 5행
-전부를 덮는다.
+표는 5행이다(반경 조정 행이 별도로 있다). 여기서는 5행 전부를 덮는다.
 """
 
 from authz.core import Principal, Resource, can

@@ -9,8 +9,8 @@
 - 동선 재계산은 `POST /maps/{mapId}/route`(「동선 짜주기」) **수동 트리거로만** 일어난다
   (`docs/api-spec.yaml`, `docs/events.md:30` — 확정 리스트 변경만으로는 `route.recalculated`를
   발행하지 않는다). 이전 버전의 이 문서는 "확정 리스트 변경 시 즉시 재계산"이라고 서술했으나
-  `docs/api-spec.yaml`이 정본이라 여기를 그 기준으로 고쳤다(mentor-review-plan.md PR #71
-  멘토 리뷰 대응, for_Root.md 참고).
+  `docs/api-spec.yaml`이 정본이라 여기를 그 기준으로 고쳤다(PR #71
+  멘토 리뷰 대응).
 
 ## 왜 "AI 동선 짜주기"가 아닌가
 
@@ -20,14 +20,13 @@
 
 - `visit_order` 수동 정렬은 `docs/data-model.md`("9/4 회의로 해결된 것")에서 허용으로 이미
   확정됐다 — 동선(routes 테이블, #103)과는 무관한 별개 컬럼이라 자동 계산과 충돌하지 않는다.
-  `PUT /maps/{mapId}/shortlist/order` 자체의 구현은 별도 이슈.
+  `PUT /maps/{mapId}/shortlist/order`는 #142에서 구현했다.
 - ~~지역 클러스터링은 recommend의 5-6-1 로직을 재사용한다~~ — #103에서 루트가 "지역 클러스터링
   기준(거리 임계값 등)은 구현하면서 정하되 근거를 PR에 남겨라"고 위임해 재검토했다. recommend는
   아직 이런 클러스터링 유틸이 없고, recommend의 문제(사람이 선언한 반경 원들의 교집합/합집합)와
   이 모듈의 문제(이미 확정된 핀들의 지리적 근접도)는 서로 다른 계산이라 공용화 대상이 아니라고
   판단했다 — `shortlist/routing.py`에 거리 임계값 기반 단일 연결 클러스터링을 자체 구현
-  (`for_Root.md` 근거 참고). 이후 recommend 쪽에도 비슷한 유틸이 필요해지면 그때 공용화를
-  재검토한다.
+  (근거 #103). 추천과 묶는 기준을 하나로 맞추는 일은 #274(v2)다.
 
 ## 완료 정의
 

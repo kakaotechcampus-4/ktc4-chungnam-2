@@ -4,8 +4,34 @@ import { apiError } from "../util";
 import { buildCandidates, buildEvidenceLines, buildRegions } from "../seed";
 import { RECOMMEND_CATEGORIES } from "../categories";
 
+/** 한 사람이 한 지도에서 추천을 받을 수 있는 횟수(#31, 2026-10-15 5→10). 서버가 attempt_limit으로 내려 준다. */
+export const ATTEMPT_LIMIT = 10;
+
+/** run을 만든 시각 — 지난 추천 기록(#469)의 created_at. 목 서버 메모리에만 있다. */
+const runCreatedAt: Record<string, string> = {};
+
 // 2026-10-07(#360): 카테고리에 ♥/🚫 의견이 달린 핀이 1개 이상이면 열린다. 구성원 수와 무관 — 혼자 쓰는 지도도 같다.
 const REQUIRED_OPINION_PINS = 1;
+// 「+」 직접 추가 상한(#707, docs/api-spec.yaml EvidencePatchRequest, errors.md EVIDENCE_LIMIT)
+const MANUAL_PER_REQUEST = 5;
+const MANUAL_PER_RUN = 10;
+
+// #798 카카오맵 검색 링크 — 실서버는 docs/constraints.md 「카카오맵 검색 링크」 표로 말을 고른다. 목 서버는 카테고리 말만 쓴다.
+const CATEGORY_SEARCH_WORD: Record<string, string> = { 음식점: "맛집", 카페: "카페", 관광지: "가볼만한곳" };
+const EXTERNAL_SEARCH_BELOW = 3; // 후보가 이 수 미만이면 external_search(실서버 기준과 같은 값, 화면에는 적지 않는다)
+
+function externalSearch(query: string) {
+  return { query, url: `https://map.kakao.com/link/search/${encodeURIComponent(query)}` };
+}
+
+function town(mapId: string | undefined) {
+  return (mapId && store.maps[mapId]?.region?.label) || "제주시";
+}
+
+// 지역 이름에 "춘천"이 들어간 지도는 정예 장소가 없는 지역으로 흉내 낸다(curated_nearby 0)
+function curatedNearby(mapId: string) {
+  return town(mapId).includes("춘천") ? 0 : 12;
+}
 
 function opinionPinCount(mapId: string, category: string) {
   return Object.values(store.pins).filter(
@@ -33,12 +59,42 @@ function ensureCandidates(runId: string) {
 export const recommendHandlers = [
   http.get("*/maps/:mapId/recommend/readiness", ({ params }) => {
     const mapId = params.mapId as string;
-    const result: Record<string, { ready: boolean; answered_count: number; required_count: number }> = {};
+    const result: Record<string, Record<string, unknown>> = {};
     for (const category of RECOMMEND_CATEGORIES) {
       const answered = opinionPinCount(mapId, category);
       result[category] = { ready: answered >= REQUIRED_OPINION_PINS, answered_count: answered, required_count: REQUIRED_OPINION_PINS };
+      if (answered > 0) { // 의견 핀이 있어야 기본 지역이 있다(#798)
+        const curated = curatedNearby(mapId);
+        result[category].curated_nearby = curated;
+        if (curated === 0) result[category].external_search = externalSearch(`${town(mapId)} ${CATEGORY_SEARCH_WORD[category]}`);
+      }
     }
     return HttpResponse.json(result);
+  }),
+
+  // #469 지난 추천 기록 — 내가 요청한 run만(가드레일 1), 최근순. 결과는 GET /runs/{id}/result로 다시 연다.
+  http.get("*/maps/:mapId/runs", ({ params, request }) => {
+    const mapId = params.mapId as string;
+    if (!store.maps[mapId]) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    const url = new URL(request.url);
+    const category = url.searchParams.get("category");
+    const limit = Number(url.searchParams.get("limit") ?? 20);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) return apiError(422, "VALIDATION_ERROR", "limit은 1~50");
+    const list = Object.values(store.runs)
+      .filter((r) => r.map_id === mapId && store.runRequestedBy[r.id] === ME_USER_ID && (!category || r.category === category))
+      .map((r) => ({
+        id: r.id,
+        map_id: r.map_id,
+        category: r.category,
+        status: r.status,
+        attempt_no: r.attempt_no,
+        attempt_limit: ATTEMPT_LIMIT,
+        created_at: runCreatedAt[r.id] ?? new Date(0).toISOString(),
+        candidate_count: r.status === "done" ? (store.candidates[r.id] ?? []).length : 0,
+        published_count: (store.candidates[r.id] ?? []).filter((c) => c.published_pin_id).length, // 실서버처럼 candidates.published_pin_id로 센다(#469, #761)
+      }))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return HttpResponse.json(list.slice(0, limit));
   }),
 
   http.post("*/maps/:mapId/runs", async ({ params, request }) => {
@@ -55,10 +111,11 @@ export const recommendHandlers = [
     const runId = nextId("run");
     store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1 };
     store.runRequestedBy[runId] = ME_USER_ID;
+    runCreatedAt[runId] = new Date().toISOString();
     // ② 사유 → 실격/선호/반경 구조화 (목 서버에서는 시드 데이터로 대체 — 실제 구조화는 backend/llm 담당)
     store.evidenceLines[runId] = buildEvidenceLines(runId);
     store.regions[runId] = buildRegions();
-    return HttpResponse.json(store.runs[runId], { status: 202 });
+    return HttpResponse.json({ ...store.runs[runId], attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
   http.get("*/runs/:runId/evidence", ({ params }) => {
@@ -75,19 +132,33 @@ export const recommendHandlers = [
       toggle?: { id: string; is_active: boolean }[];
       add?: { text: string }[];
     };
+    // #707 — 「+」는 한 요청에 글 5개, run 하나에 글 10개(뺀 것 포함). 근거 줄이 아니라 글 수로 세고, 한 요청 안의 같은 글은
+    // 하나로 친다. 서버는 모델을 부르기 전에 검사한다
+    const raw = body.add ?? [];
+    if (raw.length > MANUAL_PER_REQUEST) {
+      return apiError(422, "VALIDATION_ERROR", `한 번에 ${MANUAL_PER_REQUEST}개까지 추가할 수 있습니다`);
+    }
+    const adds = [...new Map(raw.map((a) => [a.text, a])).values()];
+    const used = store.manualEvidenceCount[runId] ?? 0;
+    if (used + adds.length > MANUAL_PER_RUN) {
+      return apiError(409, "EVIDENCE_LIMIT", "직접 추가한 근거 상한을 넘었습니다", { limit: MANUAL_PER_RUN, used });
+    }
+    store.manualEvidenceCount[runId] = used + adds.length;
     for (const t of body.toggle ?? []) {
       const line = lines.find((l) => l.id === t.id);
       // 5-5: 자기가 쓴 것만 뺄 수 있다
       if (line && line.author_id === ME_USER_ID) line.is_active = t.is_active;
     }
-    for (const a of body.add ?? []) {
+    for (const a of adds) {
       lines.push({
         id: nextId("evi"),
         author_id: ME_USER_ID,
         author_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
         text: a.text,
-        badge: "reference",
+        badge: "preferred", // #707 — 「+」는 선호. 목 서버는 ②를 흉내 내지 않아 키 없이 둔다
         fact_key: null,
+        enforced: false, // 키 없는 줄은 후보를 걸러 주지 않는다(#720)
+        not_enforced_reason: "no_key", // #740
         is_active: true,
         permissions: { can_disable: true },
       });
@@ -116,25 +187,35 @@ export const recommendHandlers = [
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
     ensureCandidates(runId);
     run.status = "done";
-    return HttpResponse.json(run, { status: 202 });
+    return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
   http.get("*/runs/:runId/result", ({ params }) => {
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
-    const candidates = store.candidates[runId] ?? [];
+    if (run.status !== "done") return apiError(409, "RUN_NOT_FINISHED", "아직 끝나지 않았거나 실패한 추천이에요", { status: run.status }); // #469
+    const regionTown = town(run.map_id);
+    const search = externalSearch(`${regionTown} ${CATEGORY_SEARCH_WORD[run.category] ?? ""}`.trim());
+    // 「카카오맵에서 보기」 — 장소 페이지가 없으면 이름 + 동네 검색 링크(#798)
+    const candidates = (store.candidates[runId] ?? []).map((c) => ({
+      ...c, place_url: c.place_url ?? c.place_source?.url ?? externalSearch(`${c.place_name} ${regionTown}`).url,
+    }));
     const funnel = [
       { label: "카테고리 후보 풀", removed_count: 0 },
       { label: "반경 밖 제거", removed_count: 3 },
       { label: "영업 종료 제거", removed_count: 1 },
+      { label: "추천 가능 아님 제거", removed_count: 2 }, // 라벨이 적어 추천 풀에서 빠진 장소(places.can_recommend=false, 2026-10-15)
       { label: "실격 조건 제거", removed_count: candidates.length === 0 ? 8 : 3 },
       { label: "이미 제안·거절됨", removed_count: 1 },
     ];
     if (candidates.length === 0) {
-      return apiError(404, "NO_RESULTS", "필터에 걸리는 핀이 없어요", { funnel });
+      return apiError(404, "NO_RESULTS", "필터에 걸리는 핀이 없어요", { funnel, external_search: search });
     }
-    return HttpResponse.json({ run_id: runId, funnel, regions: store.regions[runId] ?? [], candidates });
+    return HttpResponse.json({
+      run_id: runId, funnel, regions: store.regions[runId] ?? [], candidates,
+      ...(candidates.length < EXTERNAL_SEARCH_BELOW ? { external_search: search } : {}),
+    });
   }),
 
   http.post("*/runs/:runId/widen", ({ params }) => {
@@ -149,22 +230,22 @@ export const recommendHandlers = [
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
     store.candidates[runId] = buildCandidates(regionLabel);
     run.status = "done";
-    return HttpResponse.json(run, { status: 202 });
+    return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
   http.post("*/runs/:runId/retry", ({ params }) => {
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
-    if ((run.attempt_no ?? 1) >= 5) {
-      return apiError(429, "RETRY_LIMIT", "5번까지만 찾습니다", { attempt_no: run.attempt_no });
+    if ((run.attempt_no ?? 1) >= ATTEMPT_LIMIT) {
+      return apiError(429, "RETRY_LIMIT", `${ATTEMPT_LIMIT}번까지만 찾습니다`, { attempt_no: run.attempt_no, attempt_limit: ATTEMPT_LIMIT });
     }
     run.attempt_no = (run.attempt_no ?? 1) + 1;
     run.status = "done";
     // 3절: 현재 뜬 대안 전체가 제외목록에 들어가고(목 서버는 별도 exclusions 컬렉션 없이 교체로 표현) 새로 채운다
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
     store.candidates[runId] = buildCandidates(regionLabel);
-    return HttpResponse.json(run, { status: 202 });
+    return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
   http.post("*/candidates/:candidateId/publish", ({ params }) => {
@@ -186,9 +267,8 @@ export const recommendHandlers = [
       created_by: ME_USER_ID, // 목 서버는 단일 사용자 시뮬레이션이라 run 요청자 = 나
       created_at: new Date().toISOString(), // 「지도에 올리기」를 누른 시각
       checks: cand.checks, // 가드레일 5: 게시 후에도 근거를 그대로 유지
-      source_run_id: runId,
       reaction_summary: { like: 0, against: 0 },
-      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true },
+      permissions: { can_react: true, can_revert: true, can_add_to_shortlist: true, can_remove_from_shortlist: false, can_delete: true, can_edit: false },
     };
     store.pins[pinId] = pin;
     store.reactions[pinId] = [];

@@ -8,12 +8,13 @@ import unicodedata
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import text, update
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
     PLACES, _pin, fake_planner, members, own_db, place_ids, real_client,
 )
 from places import repository
+from places.models import Place
 from places.ingest import LabelRow, PlaceRow
 
 NOW = datetime(2026, 10, 2, tzinfo=timezone.utc)
@@ -22,6 +23,8 @@ NOW = datetime(2026, 10, 2, tzinfo=timezone.utc)
 def _extra_place(db, sid, name, lat, lng, facts):
     repository.upsert_places(db, [PlaceRow("permit", sid, name, "음식점", f"서울 {sid}", None, lat, lng, "open")])
     repository.upsert_facts(db, [LabelRow("permit", sid, k, v, "known", 3, NOW) for k, v in facts.items()])
+    db.flush()
+    db.execute(update(Place).where(Place.source_id == sid).values(curated=True))  # 추천 후보 풀에 들어가게(#558)
     db.flush()
 
 

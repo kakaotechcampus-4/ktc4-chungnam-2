@@ -1,0 +1,13 @@
+# 우선순위 정책 (docs/agent-v2.md 7절). version 2는 2026-10-16 PM 승인. 변경은 PR + PM 승인.
+# 로더는 agent/core.py의 load_policy. weights에는 diagnosis 4종이 모두 있어야 한다.
+# 순서는 코드 규칙이 정한다(core.fallback_order, #582). version 1의 principles(프롬프트용 원칙)는 모델 호출이 없어져 지웠다.
+version: 2
+rules:
+  urgent_dday: 3       # 출발이 이 일수 이내면 확정 리스트 공백(category_gap)을 맨 앞으로
+  never_first: []      # 1순위가 될 수 없는 diagnosis
+  always_first: []     # 있으면 항상 1순위인 diagnosis
+weights:               # 기본 정렬 기준
+  stall: 3
+  split: 3
+  category_gap: 2
+  no_reaction: 1

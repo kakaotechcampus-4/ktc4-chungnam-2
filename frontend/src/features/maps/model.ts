@@ -3,6 +3,7 @@ import type { components } from '@pingo/contracts/src/types/api'
 import { ApiError } from '@/api'
 
 export type MapDto = components['schemas']['Map']
+export type MapListDto = components['schemas']['MapList']
 export type MapCreateRequest = components['schemas']['MapCreateRequest']
 export type MemberDto = components['schemas']['Member']
 export type InviteDto = components['schemas']['Invite']
@@ -73,20 +74,42 @@ export function toMapView(map: MapDto): MapView {
   }
 }
 
+/** 내 지도 목록과 상한(#623). 상한은 서버가 내려 준 값만 쓴다. */
+export type MapListView = {
+  items: MapView[]
+  limit: number
+  /** 상한까지 찼다 — 「새 지도」를 막는다. */
+  full: boolean
+}
+
+export function toMapListView(list: MapListDto): MapListView {
+  return { items: list.items.map(toMapView), limit: list.limit, full: list.items.length >= list.limit }
+}
+
+/** 상한이라 「새 지도 만들기」를 막았을 때 곁에 두는 안내(지도 목록, PC 지도 바꾸기 메뉴). */
+export const MAP_LIMIT_HINT = '다른 지도를 나가거나 삭제하면 다시 만들 수 있어요'
+
 /** 초대 수락 실패 문구. 코드와 문구는 docs/errors.md 표를 따른다. */
 const INVITE_ERROR_MESSAGES: Record<string, string> = {
   INVITE_NOT_FOUND: '유효하지 않은 초대 링크예요',
   INVITE_EXPIRED: '초대 링크가 만료됐어요. 초대한 분께 새 링크를 요청하세요',
-  MAP_LIMIT: '지도는 10개까지 만들거나 참여할 수 있어요. 다른 지도를 나가거나 삭제한 뒤 다시 시도해 주세요',
 }
 
-/** 지도 만들기 실패 문구. 10개를 넘으면 409 MAP_LIMIT(#369). */
+/** 상한 숫자는 화면이 들고 있지 않는다 — 409 MAP_LIMIT 응답의 detail.limit만 쓴다(멘토 리뷰 #380). */
+function mapLimitMessage(err: ApiError): string {
+  const limit = typeof err.detail?.limit === 'number' ? `${err.detail.limit}개까지` : '정해진 개수까지'
+  return `지도는 ${limit} 만들거나 참여할 수 있어요. 다른 지도를 나가거나 삭제한 뒤 다시 시도해 주세요`
+}
+
+/** 지도 만들기 실패 문구. 상한을 넘으면 409 MAP_LIMIT(#369). */
 export function createMapErrorMessage(err: unknown): string {
-  return err instanceof ApiError && err.code === 'MAP_LIMIT' ? INVITE_ERROR_MESSAGES.MAP_LIMIT : '지도를 만들지 못했어요'
+  return err instanceof ApiError && err.code === 'MAP_LIMIT' ? mapLimitMessage(err) : '지도를 만들지 못했어요'
 }
 
 export function inviteErrorMessage(err: unknown): string {
-  return (err instanceof ApiError && INVITE_ERROR_MESSAGES[err.code]) || '참여하지 못했어요'
+  if (!(err instanceof ApiError)) return '참여하지 못했어요'
+  if (err.code === 'MAP_LIMIT') return mapLimitMessage(err)
+  return INVITE_ERROR_MESSAGES[err.code] ?? '참여하지 못했어요'
 }
 
 export type InviteView = { title: string; dates: string; memberCount: number; pinCount: number; inviter: string }

@@ -6,10 +6,10 @@ import pytest
 
 from places import api, matching
 from places.matching import Candidate, name_score, normalize_name, pick_match
-from places.schemas import Area, FactLabel, PlaceHint, PlaceInfo, PlaceMatch, PlaceRef
+from places.schemas import Area, FactLabel, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef
 from places.testing import FakePlaces, sample_id
 
-FUNCS = ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "get_facts")
+FUNCS = ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "count_curated", "get_facts", "get_hours", "get_week_open_status")
 
 
 @pytest.fixture()
@@ -42,6 +42,21 @@ def test_dataclasses_are_frozen():
 def test_install_replaces_api_functions(fake, monkeypatch):
     fake.install(monkeypatch)
     assert api.match_place(_hint()).name == "성수 칼국수"
+
+
+def test_get_hours_fake_defaults_to_empty_and_returns_only_given_places(fake, monkeypatch):
+    kal, cafe = sample_id("seongsu-kalguksu"), sample_id("seongsu-cafe-a")
+    assert fake.get_hours([kal, cafe]) == {}   # 기본은 모름 — 실제 구현처럼 행 없는 장소는 키에서 빠진다
+    given = PlaceHours(closed_days=["월"])
+    fake.hours[kal] = given
+    assert fake.get_hours([kal, cafe, "없는-id"]) == {kal: given}
+
+
+def test_install_routes_get_hours_to_the_fake_not_the_db(fake, monkeypatch):
+    kal = sample_id("seongsu-kalguksu")
+    fake.hours[kal] = PlaceHours(hours={"월": [["11:00", "21:00"]]})
+    fake.install(monkeypatch)
+    assert api.get_hours([kal]) == {kal: fake.hours[kal]}   # db 없이도 호출된다 — place_hours 테이블이 없는 DB로 가지 않는다
 
 
 # ---- match_place ----

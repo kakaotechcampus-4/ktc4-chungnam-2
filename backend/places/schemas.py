@@ -28,6 +28,7 @@ class PlaceRef:
     place_id: str
     lat: float
     lng: float
+    can_recommend: bool = True   # 추천 후보 풀에 넣어도 되는가(places.curated 그대로, #743). search_nearby_own만 실제 값을 채운다 — 기본 True라 다른 호출자는 그대로다
 
 
 # ---- 자체 장소 DB 공개 함수의 입출력 (docs/architecture.md "places 공개 함수 계약", #189·#190·#195) ----
@@ -42,6 +43,7 @@ class PlaceHint:
     lat: float
     lng: float
     category: str
+    address: str | None = None   # 선택 — 이름 유사도를 보완하는 비교용(#500). 비교에만 쓰고 저장·로깅하지 않는다(#53)
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,8 @@ class PlaceInfo:
     category: str
     kakao_place_url: str | None = None
     source: str | None = None   # 데이터 출처 — "permit"(인허가 공공데이터) | "tourapi"(한국관광공사). 가드레일 5 출처 표시용(#242)
+    curated: bool = False       # 정예(사람이 직접 조사·납품, places.curated) — 출처를 "정예 조사"로 표시할 때 쓴다(#681). 기본 False라 기존 호출자는 그대로다
+    address: str | None = None  # 자체 DB 주소 — 장소 링크의 동네를 자를 때 쓴다(places.api.place_link, #799). 응답에 그대로 싣지 않는다
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,16 @@ class FactLabel:
 
 
 @dataclass(frozen=True)
+class PlaceHours:
+    """get_hours의 결과 — place_hours 그대로(#690). None인 칸은 모름. 판정은 core.is_open_on이 한다."""
+
+    hours: dict[str, list[list[str]]] | None = None   # {"월": [["11:00","21:00"]], …}, 빈 목록 = 휴무, "26:00" = 다음 날 02:00
+    closed_days: list[str] | None = None               # 매주 쉬는 요일, [] = 연중무휴
+    closed_note: str | None = None                     # 표시용 — 판단에 쓰지 않는다
+    hours_note: str | None = None
+
+
+@dataclass(frozen=True)
 class ResolvedCoords:
     place_id: str
     lat: float
@@ -87,7 +101,7 @@ class ResolvedCoords:
 # ---- GET /places/search 응답 (docs/api-spec.yaml PlaceSearchResult, #180) ----
 
 class PlaceSourceInfo(BaseModel):
-    provider: Literal["kakao", "naver", "google"]
+    provider: Literal["kakao", "naver", "google", "permit", "tourapi"]
     url: str | None = None
 
 
@@ -100,3 +114,13 @@ class PlaceSearchResult(BaseModel):
     address: str | None = None
     place_source: PlaceSourceInfo | None = None
     pinnable: bool | None = None   # 자체 DB에 짝이 있어 핀으로 만들 수 있는가(#238). 계산 못 했으면 생략
+
+
+# ---- POST /places/from-link 응답 (docs/api-spec.yaml LinkParseResult, #474) ----
+
+class LinkParseResult(BaseModel):
+    provider: Literal["google", "kakao"]
+    name_hint: str | None = None          # 구글 링크에 든 이름(사용자가 붙인 값). 카카오 링크에는 없다
+    kakao_place_id: str | None = None     # 카카오 링크의 장소 ID — 저장이 허용된 유일한 카카오 값
+    matches: list[PlaceSearchResult]      # 자체 DB 장소만(pinnable=true). 없으면 빈 배열
+    needs_search_query: bool

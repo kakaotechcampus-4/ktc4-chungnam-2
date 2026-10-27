@@ -33,7 +33,7 @@ def test_creator_is_owner_and_created_by_me_on_create_detail_and_list(app_client
     created = _create_map(app_client)
     assert _roles(created) == ("owner", True)
     assert _roles(app_client.get(f"/maps/{created['id']}", cookies=_auth("user_1")).json()) == ("owner", True)
-    [listed] = app_client.get("/maps", cookies=_auth("user_1")).json()
+    [listed] = app_client.get("/maps", cookies=_auth("user_1")).json()["items"]
     assert _roles(listed) == ("owner", True)
 
 
@@ -44,7 +44,7 @@ def test_joined_member_is_member_and_not_creator_on_accept_detail_and_list(app_c
     accepted = app_client.post(f"/invites/{token}/accept", cookies=_auth("user_2"))
     assert _roles(accepted.json()) == ("member", False)
     assert _roles(app_client.get(f"/maps/{map_id}", cookies=_auth("user_2")).json()) == ("member", False)
-    [listed] = app_client.get("/maps", cookies=_auth("user_2")).json()
+    [listed] = app_client.get("/maps", cookies=_auth("user_2")).json()["items"]
     assert _roles(listed) == ("member", False)
 
 
@@ -69,7 +69,7 @@ def test_after_handing_over_owner_the_creator_is_member_but_still_created_by_me(
 
     mine = app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()
     assert _roles(mine) == ("member", True)
-    [listed] = app_client.get("/maps", cookies=_auth("user_1")).json()
+    [listed] = app_client.get("/maps", cookies=_auth("user_1")).json()["items"]
     assert _roles(listed) == ("member", True)
 
     new_owner = app_client.get(f"/maps/{map_id}", cookies=_auth("user_2")).json()

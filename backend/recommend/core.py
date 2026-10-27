@@ -12,8 +12,10 @@ recommend.publish가 있다). 이 파일에 남는 건 run/candidate/evidence/re
 
 import hashlib
 import math
+from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Collection, Mapping, Sequence
+from datetime import date, timedelta
+from typing import Any, Collection, Iterable, Mapping, Sequence
 
 from common.errors import AppError
 from common.geo import WALKING_SPEED_M_PER_MIN, haversine_distance_m
@@ -23,7 +25,10 @@ from recommend.models import RecommendRun
 from recommend.ports import Circle
 from recommend.schemas import Check
 
-ATTEMPT_LIMIT = 5  # docs/data-model.md #31 확정: 개인 단위, 카테고리 무관, 상한 5회
+ATTEMPT_LIMIT = 10  # #31: 지도 안에서 구성원 각자, 카테고리 무관, 팀 합산 상한 없음. 5→10회 상향(2026-10-15, #558)
+# #707 — run 하나에 「+」로 직접 추가하는 글은 10개까지(×로 뺀 것도 센다). 「+」도 ②로 모델을 불러서다. 출발값이고,
+# 사람 단위 크레딧(#432)이 정해지면 거기서 센다. 한 요청 5줄은 schemas.EvidencePatchRequest가 422로 막는다.
+MANUAL_EVIDENCE_LIMIT = 10
 # 반경 넓히기 상수 — docs/constraints.md "반경 넓히기 상수" 절 그대로(조정 가능한 상수, 바꿀
 # 때 루트에게 알린다). 기본값 원은 도보 15분에서 시작해 한 번에 5분씩, 30분까지.
 DEFAULT_RADIUS_WALK_MIN = 15
@@ -37,7 +42,7 @@ def check_run_ready(run: RecommendRun) -> None:
     done이 아닌 나머지 상태(collecting_evidence/awaiting_region_confirm/executing/failed)를
     전부 동일하게 취급한다 — mentor-review-plan.md 실패 매핑 표는 "run이 아직 완료 안 됨"
     하나로만 다뤘다. failed를 다른 코드로 구분할지는 이 계획 범위 밖의 결정이라 루트 확인이
-    필요하다(for_Root.md에 기록)."""
+    필요하다. v1은 failed를 쓰지 않는다(실패하면 롤백, docs/events.md "v1에서 발행하지 않는 이벤트")."""
     if run.status != "done":
         raise AppError("NOT_READY")
 
@@ -61,7 +66,7 @@ def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> l
     한다) 이 함수는 순수 병합/정렬만 한다.
 
     reaction_lines: badge='required'(반대) 등 반응에서 파생된 근거(source='reaction').
-    manual_lines: 사용자가 직접 추가한 근거(source='manual', badge='reference').
+    manual_lines: 사용자가 직접 추가한 근거(source='manual', badge='preferred', #707).
     둘 다 EvidenceLine 생성에 바로 쓸 수 있는 dict(author_id/source/text/badge/fact_key/...)
     shape라고 전제한다 — DB insert 자체는 service.py가 한다(이 함수는 순서만 정한다: 반응
     유래 근거를 먼저, 수동 추가를 뒤에 — "-"로 뺄 수 있는 자기 근거를 찾기 쉽게 원 작성
@@ -69,18 +74,27 @@ def assemble_evidence(reaction_lines: list[dict], manual_lines: list[dict]) -> l
     return [*reaction_lines, *manual_lines]
 
 
+REQUIRED_WANTED_CHIP_IDS = frozenset({"sight_inaccessible"})  # #617 — 취향이 아니라 필요 조건이라 원함이어도 required
+
+
 def demote_wanted_place_identity(lines: Sequence[dict], category: str) -> list[dict]:
-    """docs/constraints.md "🚫 사유 안의 음식 종류 '원함'은 선호다"(#422): required이면서 wants=true이고 키가
-    가게의 정체(음식점 cuisine_*)인 줄은 배지를 preferred로 내린다. wants=false·다른 키·다른 배지는 그대로다.
-    글 줄·칩 줄 모두 같은 규칙이라 ②가 낸 줄과 칩 줄을 합친 뒤에 한 번 건다. 원본은 바꾸지 않는다."""
+    """docs/constraints.md "🚫 사유 안의 원함은 선호다"(#422, #617): required이면서 wants=true인 줄 중 아래는 배지를
+    preferred로 내린다. 글 줄은 키가 가게의 정체(음식점 cuisine_*)일 때만, 칩 줄(chip_id가 있음)은 전부 — 단
+    REQUIRED_WANTED_CHIP_IDS의 칩은 그대로다. wants=false·다른 배지·키 없는 칩은 그대로다.
+    ②가 낸 줄과 칩 줄을 합친 뒤에 한 번 건다. 원본은 바꾸지 않는다. 이름은 agent가 recommend.api로 불러 그대로 둔다."""
     return [
-        {**line, "badge": "preferred"}
-        if line.get("badge") == "required"
-        and line.get("wants") is True
-        and constraints.is_place_identity_key(category, line.get("fact_key"))
-        else line
+        {**line, "badge": "preferred"} if _demotes(line, category) else line
         for line in lines
     ]
+
+
+def _demotes(line: dict, category: str) -> bool:
+    if line.get("badge") != "required" or line.get("wants") is not True:
+        return False
+    chip_id = line.get("chip_id")
+    if chip_id:
+        return chip_id not in REQUIRED_WANTED_CHIP_IDS
+    return constraints.is_place_identity_key(category, line.get("fact_key"))
 
 
 def circles_all_overlap(circles: list[Circle]) -> bool:
@@ -134,6 +148,13 @@ def next_default_radius_walk_min(current_walk_min: int) -> int:
     if current_walk_min >= WIDEN_LIMIT_MIN:
         raise AppError("WIDEN_LIMIT", detail={"default_radius_walk_min": current_walk_min})
     return min(current_walk_min + WIDEN_STEP_MIN, WIDEN_LIMIT_MIN)
+
+
+def pool_radius_factor(current_walk_min: int) -> float:
+    """후보 풀을 가져오는 원의 배율 = 상한 도보 분 / 지금 도보 분(#792). 반경 넓히기가 갈 수 있는 끝까지만 가져와야
+    「반경 밖 제거」가 지금 반경 밖(상한 안)의 장소를 센다 — 지금 반경으로 가져오면 늘 0이다. 결과는 여전히 지금 반경
+    안에서만 나오고(is_within_any_region), 상한 밖은 풀에도 없다(가드레일 4). 이미 상한이면 1이다."""
+    return max(WIDEN_LIMIT_MIN / current_walk_min, 1.0)
 
 
 def is_within_any_region(lat: float, lng: float, regions: list[Circle]) -> bool:
@@ -262,10 +283,160 @@ def to_satisfaction_checks(checks: Sequence[Check], directions: Mapping[str, boo
         if wants is None or check.confidence != "known":
             shown.append(check)
             continue
-        satisfied = check.passed == wants
+        satisfied = _meets(check, wants)
         label = condition_label(check.fact_key, satisfied=satisfied, wants=wants)
         shown.append(check.model_copy(update={"passed": satisfied, "label": label}))
     return shown
+
+
+def _meets(check: Check, wants: bool | None) -> bool:
+    """known 체크가 그 사람 조건을 만족하는가. 방향 없는 키(hard)는 passed(통과) 그대로, 방향이 있는 soft 키는
+    라벨 참거짓 == wants(#237). 근거 줄 표시(`to_satisfaction_checks`)와 구성원 충족 집계가 같이 쓴다."""
+    return check.passed if wants is None else check.passed == wants
+
+
+# 계절 키의 시즌 달(docs/constraints.md 계절 규칙, #681-6). 여행 기간이 이 달과 하루라도 겹칠 때만 그 키를 쓴다.
+SEASON_MONTHS: dict[str, frozenset[int]] = {
+    "cherry_blossom": frozenset({3, 4}),
+    "autumn_foliage": frozenset({10, 11}),
+    "water_play": frozenset({6, 7, 8}),
+    "winter_spot": frozenset({12, 1, 2}),
+}
+
+
+def out_of_season_keys(start: date | None, end: date | None) -> frozenset[str]:
+    """여행 기간(start~end, 양 끝 포함)이 시즌 달과 하루도 안 겹치는 계절 키. 날짜가 하나라도 없으면 비어 있다(모두 쓴다).
+    시즌이 통째로 달 단위라 달만 비교하면 하루 단위 겹침과 같다. 연말연시에 걸친 기간도 달을 차례로 센다."""
+    if start is None or end is None:
+        return frozenset()
+    if end < start:
+        start, end = end, start
+    months: set[int] = set()
+    year, month = start.year, start.month
+    while (year, month) <= (end.year, end.month) and len(months) < 12:
+        months.add(month)
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return frozenset(key for key, season in SEASON_MONTHS.items() if not season & months)
+
+
+def evidence_line_use(
+    badge: str, fact_key: str | None, wants: bool | None, category: str, off_season: Collection[str],
+) -> tuple[bool, str | None]:
+    """근거 줄이 이번 실행에서 실제로 쓰이는지 (enforced, not_enforced_reason)으로 정한다(#740). 파이프라인이 줄을 고르는
+    기준이자 근거 응답이 보이는 값이라 이 함수 하나가 정한다. 이유는 no_key → off_season → 배지별 순서로 고른다:
+    required+hard 키는 카테고리에 맞아야, soft 키(required·preferred)는 방향(wants)이 있어야 쓰인다.
+    그 밖(hard도 soft도 아닌 키, preferred인 hard 키)은 not_for_category, reference는 no_direction."""
+    if fact_key is None:
+        return False, "no_key"
+    if fact_key in off_season:
+        return False, "off_season"
+    if badge == "required" and fact_key in constraints.HARD_REGISTRY:
+        if fact_key in constraints.hard_fact_keys_for(category):
+            return True, None
+        return False, "not_for_category"
+    if badge in ("required", "preferred") and fact_key in constraints.SOFT_FACT_KEYS:
+        return (True, None) if wants is not None else (False, "no_direction")
+    if badge not in ("required", "preferred"):
+        return False, "no_direction"
+    return False, "not_for_category"
+
+
+# ---------------------------------------------------------------- 카카오맵 검색 링크 (#798, #800)
+# docs/constraints.md 「카카오맵 검색 링크」. 링크 형식과 동네 자르기는 places.api가 정한다 — 여기는 검색어의 말과 동네 고르기만.
+
+EXTERNAL_SEARCH_QUERY_MAX = 100  # api-spec ExternalSearch.query maxLength
+
+
+def external_search_query(
+    area: str | None, category: str, lines: Sequence[tuple[str, str | None, bool | None]], off_season: Collection[str],
+) -> str:
+    """검색어 "{동네} {말}". lines는 이번 run의 활성 근거 줄 (badge, fact_key, wants)를 근거 줄 순서로 — 사유 원문은 받지
+    않는다(#717). 말은 쓰이는 줄(evidence_line_use) 중 원함 방향(wants가 참)이고 조건 말 표에 있는 키의 말 하나(첫째),
+    없으면 카테고리 말이다. 동네가 없거나 붙이면 검색어 상한을 넘으면 말만 쓴다."""
+    word = next(
+        (
+            constraints.CONDITION_SEARCH_WORDS[fact_key] for badge, fact_key, wants in lines
+            if wants is True and fact_key in constraints.CONDITION_SEARCH_WORDS
+            and evidence_line_use(badge, fact_key, wants, category, off_season)[0]
+        ),
+        constraints.CATEGORY_SEARCH_WORDS[category],
+    )
+    query = f"{area} {word}" if area else word
+    return query if len(query) <= EXTERNAL_SEARCH_QUERY_MAX else word
+
+
+def most_common_area(areas: Iterable[str | None]) -> str | None:
+    """가장 많이 나온 동네(None은 세지 않는다). 같은 수면 가나다순으로 앞의 것이라 입력 순서와 무관하다. 없으면 None."""
+    counts = Counter(area for area in areas if area)
+    return min(counts, key=lambda area: (-counts[area], area)) if counts else None
+
+
+MAX_SHOWN_PREFERENCE_CHECKS = 5  # 결과 카드에 보이는 충족한 선호 체크 수(docs/constraints.md "결과 카드에 선호 조건을 보이는 법", #681-4)
+
+
+def preference_weights(
+    hearted_places: "Sequence[HeartedPlace]",
+    criteria: Mapping[str, bool],
+    preferred_authors: Mapping[str, frozenset[str]] | None = None,
+    avoided_authors: Mapping[str, frozenset[str]] | None = None,
+) -> dict[str, int]:
+    """선호 키마다 "충족하면 점수를 얼마나 주는가" — `score_candidates`가 키 하나에 더하는 값과 같다. 카드에 보일
+    선호를 점수 기여가 큰 순으로 고르는 데만 쓴다(#681-4). 피하겠다고 쓴 키는 피한 것을 충족으로 보이므로 그 점수다."""
+    preferred_authors = preferred_authors or {}
+    avoided_authors = avoided_authors or {}
+    support = _member_support(hearted_places, preferred_authors, avoided_authors)
+    empty: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset())
+    weights: dict[str, int] = {}
+    for fact_key, wanted in criteria.items():
+        if wanted is True:
+            supporting, opposing = support.get(fact_key, empty)
+            weights[fact_key] = _points(supporting, preferred_authors.get(fact_key, frozenset())) - _points(
+                opposing, avoided_authors.get(fact_key, frozenset())
+            )
+    for fact_key, authors in avoided_authors.items():
+        weights.setdefault(fact_key, WRITTEN_PREFERENCE_POINTS * len(authors))
+    return weights
+
+
+def limit_preference_checks(
+    checks: Sequence[Check], *, required_soft_keys: Collection[str], weights: Mapping[str, int],
+    limit: int = MAX_SHOWN_PREFERENCE_CHECKS,
+) -> list[Check]:
+    """결과 카드에 실을 체크 — 「? 확인 필요」·「✗ …아님」은 실격 조건(hard, 🚫 사유로 낸 soft 키 `required_soft_keys`)의
+    모름·거짓에만 붙이고, 선호(soft)는 충족한(known+passed) 것만 점수 기여 큰 순으로 `limit`줄까지 싣는다(#681-4).
+    `to_satisfaction_checks`를 거친 체크를 받는다(passed = 그 사람 조건을 만족하는가). 순서는 원래 순서를 지킨다.
+    "외 N개"는 싣지 않는다(docs/constraints.md "결과 카드에 선호 조건을 보이는 법", 2026-10-24 결정)."""
+    keep_always = [
+        c for c in checks if c.fact_key not in constraints.SOFT_FACT_KEYS or c.fact_key in required_soft_keys
+    ]
+    met = [c for c in checks if c not in keep_always and c.confidence == "known" and c.passed]
+    top = sorted(met, key=lambda c: -weights.get(c.fact_key, 0))[:limit]   # sorted는 안정 — 동점은 원래 순서
+    return [c for c in checks if c in keep_always or c in top]
+
+
+def trip_weekdays(start: date | None, end: date | None) -> list[int]:
+    """여행 기간(start~end, 양 끝 포함)에 들어 있는 요일(0=월 … 6=일). 날짜가 하나라도 없으면 빈 목록(= 영업 판정을 안 한다).
+    7일을 넘기면 모든 요일이라 7일까지만 센다."""
+    if start is None or end is None:
+        return []
+    if end < start:
+        start, end = end, start
+    days = min((end - start).days + 1, 7)
+    return sorted({(start + timedelta(days=i)).weekday() for i in range(days)})
+
+
+def trip_open_status(week_status: Mapping[int, str] | None, weekdays: Sequence[int]) -> str:
+    """여행 요일들에서 이 장소의 영업 여부 → "closed"(모든 여행 요일이 closed) | "open"(하나라도 open) | "unknown".
+    요일별 상태는 places.api.get_week_open_status가 정한다(규칙은 한 곳). 여기서는 여행 요일에 모아 쓸 뿐이다."""
+    if not weekdays or not week_status:
+        return "unknown"
+    statuses = [week_status.get(day, "unknown") for day in weekdays]
+    if all(status == "closed" for status in statuses):
+        return "closed"
+    return "open" if "open" in statuses else "unknown"
+
+
+RANKING_STAGE = "상위 3곳 선정"  # 깔때기의 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다
 
 
 def funnel_counts(stage_removed: list[tuple[str, int]]) -> list[dict]:
@@ -274,18 +445,23 @@ def funnel_counts(stage_removed: list[tuple[str, int]]) -> list[dict]:
     return [{"label": label, "removed_count": removed} for label, removed in stage_removed]
 
 
+def passed_count(result_count: int, funnel: Sequence[Mapping[str, Any]]) -> int:
+    """필터를 모두 통과한 곳의 수 — 상위 3곳을 고르기 전(#587). 결과 수 + RANKING_STAGE 단계 탈락. 결과 수는 최대 3이라
+    "조건을 바꾸면 몇 곳이 더 남나"는 이 수로 비교한다. 단계 라벨은 이 모듈이 정하고 읽으므로 밖에서 라벨 글자를 볼 일이 없다."""
+    return result_count + sum(e["removed_count"] for e in funnel if e["label"] == RANKING_STAGE)
+
+
 def check_retry_limit(attempt_no: int) -> None:
-    """재시도 상한(#31: 개인 단위, 카테고리 무관, 상한 5회). attempt_no는 다음 시도를 실행하기
-    *전* 현재까지의 시도 횟수 — 이미 상한에 도달했으면(이번이 6번째가 될 것이므로) 429."""
+    """재시도 상한(#31: 개인 단위, 카테고리 무관, 상한 ATTEMPT_LIMIT회). attempt_no는 다음 시도를 실행하기
+    *전* 현재까지의 시도 횟수 — 이미 상한에 도달했으면 429. detail에 상한도 싣는다(FE가 숫자를 하드코딩하지 않는다)."""
     if attempt_no >= ATTEMPT_LIMIT:
-        raise AppError("RETRY_LIMIT", detail={"attempt_no": attempt_no})
+        raise AppError("RETRY_LIMIT", detail={"attempt_no": attempt_no, "attempt_limit": ATTEMPT_LIMIT})
 
 
 # ============================================================================
 # #112 — 선호 순위 점수 계산과 상위 3곳 선정 (#99 후속, ③-b)
 #
-# 규칙 정본은 이슈 #112 본문("할 일" 절, docs/constraints.md에 아직 옮겨지지 않은 상태 —
-# for_Root.md에 문서 갭으로 보고). 아래 세 함수가 이슈의 1~3단계에 각각 대응한다.
+# 규칙 정본은 docs/constraints.md "선호 점수 계산 (③-b)" 절(#112). 아래 세 함수가 이슈의 1~3단계에 각각 대응한다.
 # ============================================================================
 
 
@@ -322,7 +498,9 @@ def filter_heart_signals(hearted_places: Sequence[HeartedPlace], category: str) 
 
     'unused' 키는 뺀다. 'two_or_more' 키는 known+참인 ♥ 핀이 `HEART_SIGNAL_MIN_TRUE_PLACES`곳 미만이면 그 키를
     참·거짓 모두 뺀다(신호가 없으면 반대 신호도 없다). 직접 쓴 선호 사유는 여기를 거치지 않는다. 걸러진 목록을
-    기준·점수·충족 집계·이유에 똑같이 넘겨야 ♥ 신호가 한 곳에서만 빠지는 일이 없다."""
+    기준·점수·충족 집계·이유에 똑같이 넘겨야 ♥ 신호가 한 곳에서만 빠지는 일이 없다.
+    그 카테고리 soft 키가 아닌 라벨(옛 라벨, hard 키)은 표를 보기 전에 참·거짓 모두 뺀다(#738)."""
+    soft_keys = set(constraints.soft_fact_keys_for(category))
     true_places: dict[str, int] = {}
     for place in hearted_places:
         for check in place.checks:
@@ -330,6 +508,8 @@ def filter_heart_signals(hearted_places: Sequence[HeartedPlace], category: str) 
                 true_places[check.fact_key] = true_places.get(check.fact_key, 0) + 1
 
     def keep(fact_key: str) -> bool:
+        if fact_key not in soft_keys:
+            return False
         use = constraints.heart_signal_use(category, fact_key)
         if use == "unused":
             return False
@@ -355,7 +535,7 @@ def build_preference_criteria(
        조사 안 된 라벨은 애초에 신호가 없다).
     ② 참/거짓으로 답할 수 없는 라벨은 뺀다 — 소프트 키만 쓰므로 따로 거를 키가 없다(가격대는 #423에서 뺐다).
     ③ ♥ 받은 "장소" 개수(사람 수가 아니다)로 값이 갈리면 많은 쪽을 택한다. 정확히 반반이면
-       —이슈 본문이 이 경우를 정하지 않아 이 세션이 임시로 정함(for_Root.md 보고)— 신호가
+       (docs/constraints.md "입력 — 선호 프로필" 3번, #112) 신호가
        없다고 보고 그 라벨 자체를 기준에서 뺀다.
     ④ 이번 run에서 활성 실격 사유로 이미 쓰인 라벨(`disqualifying_fact_keys`)은 뺀다 — 통과한
        후보 전부가 이미 같은 값이라 점수 차이를 못 만든다.
@@ -484,22 +664,25 @@ def build_member_fulfillment(
     hearted_places: Sequence[HeartedPlace],
     criteria: Mapping[str, bool],
     preferred_authors: Mapping[str, frozenset[str]] | None = None,
-    disqualifier_authors: Collection[str] = (),
+    disqualifier_conditions: Mapping[str, Collection[tuple[str, bool | None]]] | None = None,
 ) -> dict:
     """가드레일5 "구성원 충족 집계" — api-spec.yaml `MemberFulfillment` 모양 그대로
-    `{satisfied, total, by_member}`을 돌려준다.
+    `{satisfied, total, by_member}`을 돌려준다. 확인한 조건 기준으로 센다(#620).
 
-    - **total** = 조건을 남긴 구성원 수. 조건 = 이번 선호 기준(`criteria`가 True인 fact_key)
-      중 그 구성원이 지지한(그 값의 장소에 ♥했거나 선호 사유로 쓴) 것. 조건이 하나도 없는
-      구성원은 집계 대상이 아니다(♥만 누르고 기준에 안 든 사람, 반대만 한 사람).
-    - **satisfied** = 자기 조건을 *전부* 이 후보가 known+참으로 충족한 구성원 수. 일부만
-      맞으면 충족으로 세지 않는다(구성원 만족을 부풀리지 않는다).
-    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다.
-    - 실격 사유를 낸 구성원(`disqualifier_authors`, #255)도 total에 센다. 이 후보는 실격을 통과했으므로 그
-      구성원의 조건은 충족이다 — 선호가 하나도 없는 run에서도 "N명 중 N명"이 남는다. 선호 조건도 가진
-      구성원은 위 규칙(전부 충족해야 충족)을 그대로 따른다."""
+    - **total** = 확인할 수 있는 조건을 남긴 구성원 수. 조건은 두 가지다.
+      1) 선호: 이번 선호 기준(`criteria`가 True인 fact_key) 중 그 구성원이 지지한(그 값의 장소에 ♥했거나 선호
+         사유로 쓴) 것.
+      2) 반대: 그 구성원이 낸 키 있는 실격 사유(`disqualifier_conditions` = 구성원 → {(fact_key, wants)}).
+         hard 키는 wants=None, 방향이 있는 soft 키는 그 방향이다.
+      조건이 하나도 없는 구성원은 집계 대상이 아니다(♥만 누르고 기준에 안 든 사람, 키 없는 반대 사유만 남긴 사람 —
+      알러지 글이나 「취향이 아니에요」는 아무것도 확인하지 않았다).
+    - **satisfied** = 자기 조건을 *전부* 이 후보가 known으로 충족한 구성원 수. 선호는 known+참, 반대는 known이고
+      `_meets`(hard는 통과, soft는 방향에 맞음). 라벨이 모름(「확인 필요」)이면 실격 필터는 통과시켜도 충족으로
+      세지 않는다. 일부만 맞으면 충족으로 세지 않는다(구성원 만족을 부풀리지 않는다).
+    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다."""
     support = _member_support(hearted_places, preferred_authors)
     met = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
+    known_checks = {c.fact_key: c for c in candidate_checks if c.confidence == "known"}
     conditions: dict[str, set[str]] = {}
     for fact_key, wanted in criteria.items():
         if wanted is not True:
@@ -507,11 +690,16 @@ def build_member_fulfillment(
         supporting, _opposing = support.get(fact_key, (frozenset(), frozenset()))
         for member_id in supporting:
             conditions.setdefault(member_id, set()).add(fact_key)
-    for member_id in disqualifier_authors:
-        conditions.setdefault(member_id, set())  # 선호 조건이 없으면 빈 집합 → 후보가 실격을 통과했으니 충족
+    against = {member_id: set(keys) for member_id, keys in (disqualifier_conditions or {}).items() if keys}
     by_member = [
-        {"user_id": member_id, "satisfied": fact_keys <= met}
-        for member_id, fact_keys in sorted(conditions.items())
+        {
+            "user_id": member_id,
+            "satisfied": conditions.get(member_id, set()) <= met and all(
+                fact_key in known_checks and _meets(known_checks[fact_key], wants)
+                for fact_key, wants in against.get(member_id, ())
+            ),
+        }
+        for member_id in sorted(conditions.keys() | against.keys())
     ]
     return {
         "satisfied": sum(1 for entry in by_member if entry["satisfied"]),
@@ -520,13 +708,12 @@ def build_member_fulfillment(
     }
 
 
-def build_reason(
-    candidate_checks: Sequence[Check], criteria: Mapping[str, bool], member_fulfillment: Mapping,
-) -> str:
+def build_reason(candidate_checks: Sequence[Check], criteria: Mapping[str, bool]) -> str:
     """Candidate.reason — 실제로 통과한 체크와 충족한 선호 라벨에서 조립한 한 줄(가드레일 5).
     모델을 부르지 않는다. 두 종류만 말한다: 1) 이번 run의 활성 실격 조건 중 known으로 통과한
-    것 2) 선호 기준(criteria) 중 이 후보가 known+참인 것(+ 몇 명이 충족했는지). 표시 이름이
-    없는 키는 말하지 않는다 — 안 본 것을 통과했다고 하지 않기 위해서다. 말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지
+    것 2) 선호 기준(criteria) 중 이 후보가 known+참인 것. 몇 명이 충족했는지는 말하지 않는다 — 구성원은 자기 조건을
+    전부 충족해야 세는데 이 줄은 하나라도 맞는 라벨을 나열해서 "충족: 양식 (0/1명)"처럼 어긋난다(#631). 인원은
+    카드의 member_fulfillment가 따로 보여 준다. 표시 이름이 없는 키는 말하지 않는다 — 안 본 것을 통과했다고 하지 않기 위해서다. 말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지
     않는다)."""
     known_passed = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
     disqualifier_labels = [
@@ -546,11 +733,7 @@ def build_reason(
     if disqualifier_labels:
         parts.append("실격 조건 통과: " + ", ".join(disqualifier_labels))
     if preference_labels:
-        text = "선호 충족: " + ", ".join(preference_labels)
-        total = member_fulfillment.get("total", 0)
-        if total:
-            text += f" ({member_fulfillment.get('satisfied', 0)}/{total}명)"
-        parts.append(text)
+        parts.append("선호 충족: " + ", ".join(preference_labels))
     return " · ".join(parts) if parts else "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
 
 

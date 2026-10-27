@@ -40,7 +40,7 @@ export default function ShortlistList({
             <button
               type="button"
               aria-label={`${item.pin.place_name} 순서 바꾸기 (위·아래 화살표)`}
-              className="cursor-grab touch-none p-1 text-ink-400"
+              className="-my-2 -mr-2 flex size-11 shrink-0 cursor-grab touch-none items-center justify-center text-ink-400"
               onPointerDown={(e) => {
                 startY.current = e.clientY
                 setDrag({ index: i, dy: 0 })
@@ -57,7 +57,7 @@ export default function ShortlistList({
                 if (e.key === 'ArrowDown' && i < items.length - 1) onReorder(i, i + 1)
               }}
             >
-              <GripVertical size={18} />
+              <GripVertical size={20} aria-hidden="true" />
             </button>
           }
         />
@@ -96,18 +96,23 @@ function SwipeRow({
       className="relative overflow-hidden rounded-xl"
       style={lifted !== null ? { transform: `translateY(${lifted}px)`, zIndex: 10, boxShadow: '0 4px 12px rgba(20,22,31,.18)' } : undefined}
     >
+      {/* 닫혀 있을 땐 숨긴다 — 줄 뒤에 깔린 진회색이 둥근 모서리 틈으로 비쳐 테두리가 지저분해 보인다. */}
       <button
         type="button"
         onClick={onRemove}
         tabIndex={open ? 0 : -1}
         style={{ width: SWIPE_W }}
-        className="absolute inset-y-0 right-0 flex flex-col items-center justify-center gap-0.5 bg-ink-600 text-xs font-bold text-white"
+        // 숨길 때는 줄이 제자리로 미끄러져 돌아온 뒤(200ms)에 숨는다. 보일 때는 바로 보인다.
+        className={`absolute inset-y-0 right-0 flex flex-col items-center justify-center gap-0.5 bg-ink-600 text-xs font-bold text-white transition-[visibility] duration-200 ${
+          x === 0 && !swiping ? 'invisible' : ''
+        }`}
       >
-        <Trash2 size={18} aria-hidden="true" /> 빼기
+        <Trash2 size={20} aria-hidden="true" /> 빼기
       </button>
+      {/* 줄 자체도 둥글게 — 네모 테두리를 둥근 li 가 잘라 모서리 테두리가 끊겨 보였다. */}
       <div
         style={{ transform: `translateX(${x}px)` }}
-        className={`relative flex items-center gap-3 border border-ink-200 bg-white p-3 ${swiping ? '' : 'transition-transform duration-200'}`}
+        className={`relative flex items-center gap-3 rounded-xl border border-ink-200 bg-white p-3 ${swiping ? '' : 'transition-transform duration-200'}`}
         onPointerDown={(e) => {
           if ((e.target as HTMLElement).closest('button')) return
           swipe.current = { x: e.clientX, base: open ? -SWIPE_W : 0 }
@@ -148,7 +153,7 @@ function SwipeRow({
           </p>
         </div>
         {item.permissions.can_remove_from_shortlist && (
-          <button type="button" onClick={onRemove} className="shrink-0 text-xs text-ink-500">
+          <button type="button" onClick={onRemove} className="btn-text shrink-0 text-xs">
             확정 해제
           </button>
         )}

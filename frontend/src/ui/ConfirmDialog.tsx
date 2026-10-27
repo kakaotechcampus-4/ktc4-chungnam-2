@@ -42,22 +42,22 @@ export default function ConfirmDialog({
   return (
     <AlertDialog.Root open onOpenChange={(open) => !open && onCancel()}>
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className="fixed inset-0 z-50 bg-scrim" />
+        <AlertDialog.Overlay className="enter-fade fixed inset-0 z-50 bg-scrim" />
         <AlertDialog.Content className="fixed inset-0 z-50 flex items-center justify-center p-6 outline-none">
-          <div className="w-full max-w-sm space-y-2 rounded-2xl bg-white p-5">
-            <AlertDialog.Title className="text-lg font-bold text-ink-900">{title}</AlertDialog.Title>
-            {detail && <div className="rounded-lg bg-ink-50 p-3 text-sm">{detail}</div>}
+          <div className="enter-pop w-full max-w-sm space-y-2 rounded-2xl bg-white p-5">
+            <AlertDialog.Title className="break-keep text-title font-bold text-ink-900">{title}</AlertDialog.Title>
+            {detail && <div className="rounded-xl bg-ink-50 p-3 text-sm">{detail}</div>}
             <AlertDialog.Description className="text-sm text-ink-600">{body}</AlertDialog.Description>
             {note && <p className="text-xs text-ink-500">{note}</p>}
             {children}
             <div className="grid grid-cols-2 gap-2 pt-2">
-              <AlertDialog.Cancel className="rounded-lg border border-ink-300 py-2.5 text-sm font-semibold">{cancel}</AlertDialog.Cancel>
+              <AlertDialog.Cancel className="btn-neutral btn-md">{cancel}</AlertDialog.Cancel>
               {/* AlertDialog.Action 은 누르자마자 닫혀서 쓰지 않는다 — 처리 중에도 창을 띄워 두는 곳이 있다(반경 넓히기). */}
               <button
                 type="button"
                 onClick={onOk}
                 disabled={pending}
-                className={`btn-primary py-2.5 text-sm ${danger ? 'bg-[var(--action-danger)]' : ''}`}
+                className={`${danger ? 'btn-danger' : 'btn-primary'} btn-md`}
               >
                 {ok}
               </button>

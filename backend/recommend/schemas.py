@@ -4,9 +4,10 @@ shortlist와 같은 재사용 원칙) — 이 모듈은 candidate 전용 permiss
 채울 때도 authz.core.can()을 그대로 부른다(recommend/service.py 참고).
 """
 
-from typing import Literal
+from datetime import datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from authz.schemas import Permissions
 from common import categories
@@ -25,10 +26,19 @@ class Check(BaseModel):
     needs_check: bool
 
 
+class ExternalSearch(BaseModel):
+    """카카오맵 검색 링크(#798) — 결과가 없거나 적을 때 사람이 밖에서 찾는 출구. AI 추천 결과가 아니다."""
+    query: str = Field(max_length=100)
+    url: str = Field(max_length=2000)
+
+
 class Readiness(BaseModel):
     ready: bool
     answered_count: int
     required_count: int
+    # 기본 지역에서 넓히기 상한 안의 정예 장소 수(#798). 의견 핀이 없어 기본 지역이 없으면 둘 다 없다
+    curated_nearby: int | None = Field(default=None, ge=0)
+    external_search: ExternalSearch | None = None  # curated_nearby가 0일 때만
 
 
 class RunCreateRequest(BaseModel):
@@ -41,18 +51,36 @@ class RecommendRun(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
+    attempt_limit: int  # 한 사람이 한 지도에서 받을 수 있는 횟수 상한(core.ATTEMPT_LIMIT)
     default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한 30
+
+
+class RunSummary(BaseModel):
+    """GET /maps/{mapId}/runs 한 건(#469) — 내가 요청한 run만 온다."""
+    id: str
+    map_id: str
+    category: Category
+    status: RunStatus
+    attempt_no: int
+    attempt_limit: int  # RecommendRun.attempt_limit과 같다
+    created_at: datetime
+    candidate_count: int = Field(ge=0)  # 마지막 시도의 후보 수. done이 아니면 0
+    published_count: int = Field(ge=0)  # 그 run에서 게시한 후보 수
 
 
 class EvidenceLine(BaseModel):
     id: str
     author_id: str
-    author_display_name: str | None = None  # auth 없어 못 채움(pins/for_Root.md와 같은 갭)
+    author_display_name: str | None = None
     text: str = Field(max_length=140)
     badge: Badge
     fact_key: str | None = None
     fact_label: str | None = None  # fact_key의 표시 이름("한식") — constraints.FACT_LABELS
     wants: bool | None = None  # 이 특징이 있는 장소를 원하는가(#228). None = 모름
+    # 후보를 거르거나 점수 매기는 데 실제로 쓰이는 줄인가(#720, #740) — core.evidence_line_use가 파이프라인과 같은 기준으로 정한다.
+    # 끈 줄(is_active=false)도 켜면 쓰이는지를 보인다. 쓰이지 않으면 이유(not_enforced_reason)가 따라온다. 응답에는 항상 채워 내려 준다.
+    enforced: bool | None = None
+    not_enforced_reason: Literal["no_key", "no_direction", "not_for_category", "off_season"] | None = None
     is_active: bool
     permissions: Permissions
 
@@ -62,13 +90,18 @@ class EvidenceToggleEntry(BaseModel):
     is_active: bool
 
 
+EVIDENCE_ADD_PER_REQUEST = 5   # 「+」 한 번에 글 5개까지(docs/api-spec.yaml add.maxItems, #707). run 하나 상한은 core.MANUAL_EVIDENCE_LIMIT
+
+
 class EvidenceAddEntry(BaseModel):
-    text: str = Field(max_length=140)
+    # 앞뒤 공백을 뗀 뒤 1~140자 — 빈 값·공백만은 422(#707, #716)
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=140)]
 
 
 class EvidencePatchRequest(BaseModel):
     toggle: list[EvidenceToggleEntry] = Field(default_factory=list)
-    add: list[EvidenceAddEntry] = Field(default_factory=list)
+    # 한 요청 5개(api-spec maxItems, 넘으면 422 VALIDATION_ERROR, #707). run 하나 상한은 core.MANUAL_EVIDENCE_LIMIT(글 수).
+    add: list[EvidenceAddEntry] = Field(default_factory=list, max_length=EVIDENCE_ADD_PER_REQUEST)
 
 
 class Region(BaseModel):
@@ -84,7 +117,7 @@ class RegionConfirmRequest(BaseModel):
 
 class MemberFulfillmentEntry(BaseModel):
     user_id: str
-    display_name: str | None = None  # auth 없어 못 채움(EvidenceLine.author_display_name과 같은 갭)
+    display_name: str | None = None  # 서버는 채우지 않는다. FE가 user_id로 구성원 목록에서 찾는다(#762)
     satisfied: bool
 
 
@@ -111,9 +144,16 @@ class Candidate(BaseModel):
     reason: str | None = None
     member_fulfillment: MemberFulfillment | None = None
     place_source: PlaceSource | None = None
+    place_url: str | None = Field(default=None, max_length=2000)  # 「카카오맵에서 보기」(places.api.place_link, #798)
     visibility: Literal["private", "published"]
     published_pin_id: str | None = None
     permissions: Permissions
+
+
+# 후보가 이 값 미만이면 결과가 적다 — RecommendResult.external_search를 싣는 기준(#798). agent의 추천 막힘 기준
+# (agent.constants.BLOCKED_RUN_MAX_RESULTS)도 이 값을 받는다(#800). recommend.api가 아니라 여기 두는 이유: agent.constants는
+# auth 경로(auth.service → agent.api)에 있어 recommend.api를 import하면 순환한다.
+FEW_RESULTS = 3
 
 
 class FunnelEntry(BaseModel):
@@ -126,3 +166,4 @@ class RecommendResult(BaseModel):
     funnel: list[FunnelEntry]
     regions: list[Region]
     candidates: list[Candidate]
+    external_search: ExternalSearch | None = None  # 후보가 FEW_RESULTS곳 미만일 때만(#798)

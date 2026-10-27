@@ -9,8 +9,8 @@ import uuid
 from datetime import datetime
 
 from geoalchemy2 import Geography
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, SmallInteger, String, Text, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum, ForeignKey, SmallInteger, String, Text, UniqueConstraint, func, text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from common import categories
@@ -37,6 +37,8 @@ class Place(Base):
     # GiST 인덱스는 geoalchemy2가 spatial_index(기본 True)로 만든다 — idx_places_geom.
     geom = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
     status: Mapped[str] = mapped_column(PlaceStatus, nullable=False, server_default="open")
+    # 정예(사람이 직접 조사·납품한 데이터)인가 — `--authoritative` 적재가 켜고 한 번 true면 끄지 않는다. docs/data-model.md places 절.
+    curated: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     # 사용자가 검색해서 고를 때 한 건씩 매칭한 결과. 카카오 응답의 이름·주소·좌표는 저장하지 않는다.
     kakao_place_id: Mapped[str | None] = mapped_column(String, nullable=True)
     kakao_place_url: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -68,3 +70,20 @@ class PlaceFact(Base):
     labeled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (CheckConstraint("source_layer IN (1, 2, 3)", name="ck_place_facts_source_layer"),)
+
+
+class PlaceHours(Base):
+    """영업시간·휴무일(#690). 칸이 없으면 행이 없다 = 모름. 모양은 docs/data-model.md place_hours 절."""
+
+    __tablename__ = "place_hours"
+
+    place_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("places.id", ondelete="CASCADE"), primary_key=True
+    )
+    hours = mapped_column(JSONB(none_as_null=True), nullable=True)   # {"월": [["11:00","21:00"]], …} 요일 7개, 빈 목록 = 휴무, "26:00" = 다음 날 02:00
+    closed_days = mapped_column(ARRAY(Text), nullable=True)           # 매주 쉬는 요일. [] = 연중무휴, NULL = 모름
+    closed_note: Mapped[str | None] = mapped_column(Text, nullable=True)   # 표시용 원문 — 판단에 쓰지 않는다
+    hours_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

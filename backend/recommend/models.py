@@ -3,7 +3,7 @@
 `recommend_runs`/`candidates`는 이미 있었고(PR #71 멘토 리뷰 대응, publish_candidate 슬라이스),
 이번에 `evidence_lines`/`regions`/`exclusions`를 추가한다.
 
-**data-model.md 대비 실제 구현 차이 (for_Root.md에 정리)**:
+**data-model.md에 반영된 #108 결정**:
 - `candidates.lat`/`lng` — 기존 세션이 이미 추가(위 이유 그대로 유지). `region_id`는 이제
   `regions` 테이블이 생겼으므로 FK를 건다(이전엔 컬럼만 있었다).
 - `regions`에 `label`(String)·`center_lat`/`center_lng`/`radius_m`(Float/Integer)을 추가하고
@@ -11,8 +11,7 @@
   `Region` 스키마가 `label`을 요구하는데 리버스 지오코딩(장소명 조회)을 해줄 `places`가 없어
   "N번째 지역" 같은 라벨을 만들 수조차 없다 — 대신 병합된 원(중심+반경)을 평범한 float
   컬럼으로 저장한다(PostGIS geography 대신). `candidates.lat/lng`와 같은 종류의 차원 압축
-  결정이다(for_Root.md에 명시적으로 보고 — geom 컬럼을 아예 안 둔 건 이전 세션의 "컬럼만
-  더 둔다"보다 한 단계 더 나간 이탈이라 루트 확인이 더 필요하다).
+  결정이다(data-model.md regions의 "#108 확정").
 
 category/status는 pins.models의 동명 개념과 값이 같지만, 별도 Postgres ENUM 타입 이름
 (recommend_category/recommend_run_status/...)을 쓴다 — recommend/CLAUDE.md "pins.models를
@@ -31,11 +30,13 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -58,16 +59,14 @@ class RecommendRun(Base):
     __tablename__ = "recommend_runs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # map_id/requested_by: auth·maps가 아직 없어 String으로 받는다(pins.models와 같은 이유,
-    # FK는 그 모듈들이 오면 건다 — 루트 보고 대상).
+    # map_id/requested_by: String이고 다른 모듈 테이블을 가리키므로 FK를 걸지 않는다(docs/architecture.md 1절, #760).
     map_id: Mapped[str] = mapped_column(String, nullable=False)
     category: Mapped[str] = mapped_column(Category, nullable=False)
     requested_by: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(RunStatus, nullable=False)
     attempt_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    # data-model.md엔 없는 컬럼 — GET /runs/{runId}/result(깔때기 표)가 매번 재계산하지
-    # 않도록 마지막 execute/widen/retry 결과를 저장해둔다(candidates.lat/lng와 같은 종류의
-    # 결정, for_Root.md에 보고). funnel은 파생값이라 정본은 항상 마지막 실행 결과다.
+    # data-model.md recommend_runs.last_funnel(#108) — GET /runs/{runId}/result(깔때기 표)가 매번 재계산하지
+    # 않도록 마지막 execute/widen/retry 결과를 저장해둔다. funnel은 파생값이라 정본은 항상 마지막 실행 결과다.
     # 반경 넓히기 누적 상태(docs/constraints.md "반경 넓히기 상수") — 기본값 원의 현재 도보
     # 시간(분). 응답 RecommendRun.default_radius_walk_min의 정본이다(#158). regions.radius_m은
     # 이 값에서 파생되지만, 사람이 명시한 원이 생기면 그 원은 이 값과 무관하므로 따로 둔다.
@@ -75,14 +74,18 @@ class RecommendRun(Base):
     last_funnel: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+    # 지난 추천 기록(#469) — 마이그레이션 0028과 같다.
+    __table_args__ = (
+        Index("ix_recommend_runs_map_requester_created", "map_id", "requested_by", text("created_at DESC")),
+    )
+
 
 class Candidate(Base):
     __tablename__ = "candidates"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("recommend_runs.id"), nullable=False)
-    # places(id) 대상 테이블은 있지만 아직 어떤 모듈도 실제로 채우지 않는다 — pins.place_id와
-    # 같은 이유로 FK를 걸지 않는다(루트 보고 대상).
+    # places(id): 다른 모듈 테이블을 가리키므로 FK를 걸지 않는다(docs/architecture.md 1절, #760).
     place_id: Mapped[str] = mapped_column(String, nullable=False)
     region_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("regions.id"), nullable=True)
     # 위 모듈 docstring 참고 — data-model.md엔 없는 컬럼, pins.geom과 같은 이유로 denormalize.
@@ -139,7 +142,7 @@ class Region(Base):
     # #112(선호 순위 3단계, 동네 배분 tie-break)가 추가 — 이 무리를 만든 "기준 핀"들의
     # 좌표(merge_circles로 병합되기 전 원본 anchor 목록, [[lat, lng], ...]). v1은 항상 단일
     # 기본값 원이라 이 목록이 곧 그 카테고리 핀 전체의 좌표다(flows.py::_default_circle 참고).
-    # data-model.md엔 없는 컬럼 — candidates.lat/lng와 같은 종류의 결정(for_Root.md 보고).
+    # data-model.md regions.anchor_points(#112).
     anchor_points: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

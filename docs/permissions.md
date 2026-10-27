@@ -15,6 +15,7 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     - pin.create
     - pin.delete               # "구성원 누구나" (9/4 결정 #25)
     - pin.react               # ♥/🚫 등록·수정
+    - pin.resolve             # 실시간 핀을 자체 DB 핀으로 승격(#501) — 구성원 누구나. 힌트는 저장하지 않는다
     - pin.revert               # 반응으로 바뀐 상태 되돌리기 — "누구나" (15-1)
     - shortlist.add
     - shortlist.remove         # "구성원 누구나" (5-3, 15-1)
@@ -23,22 +24,28 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     - recommend.evidence       # run 하위 근거(조회·토글·추가) — 구성원 누구나(#32 결정: "근거
                                 # 목록은 구성원별로 한 줄씩 따로 뜬다", 최종기획안 5-5). 개별
                                 # 줄 비활성화만 그 줄 작성자 본인 제한(아래 author 참고)
-    - invite.create            # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
+    - invite.create            # 초대 링크 발급 — "구성원 누구나" (#4 결정)
     - map.leave                # 지도 나가기(#369). 방장도 member라 이 액션을 갖는다. 넘길 사람이 없는
                                 # 방장을 막는 건 역할이 아니라 지도 상태라 여기 넣지 않고 maps 코어가 판정한다(409 OWNER_CANNOT_LEAVE)
-    - route.recalculate        # 동선 재계산(5-10) — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
+    - route.recalculate        # 동선 재계산(5-10) — "구성원 누구나" (#103 결정)
+    - agent.toggle             # 계획 보조 에이전트 모드 켜고 끄기(v2, docs/agent-v2.md). 구성원 누구나
+    - agent.suggestion.resolve # 지도 제안 수락·닫기(v2). 구성원 누구나, 지도 단위로 모두에게서 닫힌다
+    - course.request           # AI 코스 짜기 요청(#334, #580 결정 전 브랜치 초안). 구성원 누구나. 하루 상한(5회)은 서비스가 센다
 
 author:                       # evidence_line·candidate·run을 만든 당사자에게 얹히는 추가 범위
   scope:
     evidence_line: own         # 자기가 쓴 줄만
     candidate: own              # 자기가 요청한 run의 후보만
     run: own                    # 자기가 요청한 run만
+    pin: own                    # 자기가 찍은 핀만(#466)
   actions:
     - evidence.disable          # '-'로 빼기 — "자기가 쓴 것만" (5-5)
     - recommend.manage          # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
                                  # run.requested_by 본인만. 가드레일1: 대안은 요청한 사람에게만
                                  # 먼저 보인다 — 게시 전 run은 본인 것만 조작·열람
     - recommend.publish         # 「지도에 올리기」 — candidate.requested_by 본인만
+    - pin.edit                  # 핀 메모·분류 수정(#466) — 핀을 찍은 사람만. AI 추천·확정 핀 제외는 역할이 아니라 핀 상태라 pins 코어가 판정한다
+    - course.view               # AI 코스 run 조회(#334) — run.requested_by 본인만. 가드레일 1: 코스는 요청한 사람에게만 보인다
 
 owner:                        # 방장. 처음엔 지도 생성자, 위임되면 바뀐다(#369). 판단 정본은 memberships.role
                               # (maps.created_by는 "만든 사람" 기록일 뿐 방장 판단에 쓰지 않는다). member 전체 + 아래 추가
@@ -48,9 +55,18 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
     - member.kick               # v2, #8
     - map.settings.edit
     - map.delete                # 지도 삭제(#369). 방장만. soft delete라 모든 구성원에게서 사라진다
+    - invite.revoke             # 초대 링크 목록 보기·끄기(#467). 방장만. 발급(invite.create)은 구성원 누구나
+    - owner.transfer            # 방장 직접 넘기기(#468). 방장만
 ```
 
 역할은 배타적이지 않고 누적된다 — 한 사용자는 `member` + (자기 evidence·candidate·run에 한해) `author` + (자기 지도에 한해) `owner`를 동시에 가질 수 있다. 판정은 "이 액션이 이 리소스의 scope 안에 있는가"로 계산한다.
+
+## 게스트 (v2, #472)
+
+게스트(로그인 수단이 없는 사용자, `CurrentUser.is_guest`, #694)는 **새 롤이 아니다.** 초대로 들어간 지도에서는 일반 `member`와 똑같이 움직이고(핀·반응·추천·확정 리스트·초대 수락, 같은 상한) 아래 두 가지만 막는다. 롤이 아니라 계정 속성이라 `authz/policy.py`·`Permissions`는 바뀌지 않는다.
+
+- **지도 만들기 불가** — `POST /maps` → 403 `GUEST_NOT_ALLOWED`(maps 라우터가 `CurrentUser.is_guest`로 판정).
+- **방장이 될 수 없다** — `pick_successor`(나가기·탈퇴 위임)가 게스트를 후보에서 뺀다. 직접 넘기기 대상이 게스트면 422 `OWNER_TARGET_INVALID`. 방장이 혼자이고 남은 사람이 게스트뿐이면 나가기는 409 `OWNER_CANNOT_LEAVE`(탈퇴는 지도 삭제).
 
 ## API 계약과의 연결
 
@@ -85,17 +101,28 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 |---|---|
 | 확정 리스트 추가·제외 — 구성원 누구나 | `member.actions: [shortlist.add, shortlist.remove]` |
 | 핀 삭제 — 구성원 누구나 (9/4 결정 #25) | `member.actions: [pin.delete]` |
+| 실시간 핀 승격 — 구성원 누구나 (#501) | `member.actions: [pin.resolve]` |
 | 근거 리스트에서 항목 빼기 — 자기가 쓴 것만 | `author.scope.evidence_line: own`, `author.actions: [evidence.disable]` |
 | 핀 되돌리기 — 구성원 누구나 | `member.actions: [pin.revert]` |
 | 반경 조정 — 별도 권한 불필요 | 반경 사유도 `evidence_line`이므로 위 규칙을 그대로 상속. 별도 액션 없음 |
+| 핀 메모·분류 수정 — 찍은 사람만 (#466) | `author.scope.pin: own`, `author.actions: [pin.edit]`, 응답 `permissions.can_edit` |
 | 초대 링크 발급 — 구성원 누구나 (#4) | `member.actions: [invite.create]` |
+| 지도 제목·날짜·지역 수정 — 방장만 (#465) | `owner.actions: [map.settings.edit]`, 응답 `permissions.can_edit` |
+| 초대 링크 목록·끄기 — 방장만 (#467) | `owner.actions: [invite.revoke]` |
+| 방장 직접 넘기기 — 방장만 (#468) | `owner.actions: [owner.transfer]` |
 | 동선 재계산 — 구성원 누구나 (#103) | `member.actions: [route.recalculate]` |
+| 계획 보조 에이전트 모드 켜고 끄기 — 구성원 누구나 (v2, #510) | `member.actions: [agent.toggle]` |
+| 지도 제안 수락·닫기 — 구성원 누구나 (v2, #510) | `member.actions: [agent.suggestion.resolve]`. 열람 기록과 상태 조회는 구성원이면 되고 별도 액션이 없다 |
+| 추천 막힘 조언 조회 — 요청한 본인만 (v2, #510) | 기존 `author.actions: [recommend.manage]`를 쓴다(run 결과 조회와 같은 범위) |
+| 추천 탭 광고 조회, 광고 클릭 기록 — 구성원 누구나 (#642, docs/ads.md) | 새 액션 없음. 조회 전용 GET과 같이 지도 구성원 확인(`require_map_member`)만 한다. 클릭 기록은 집계 증가뿐이라 도메인 액션으로 보지 않는다 |
+| AI 코스 짜기 요청 — 구성원 누구나 (#334, #580 결정 전 초안) | `member.actions: [course.request]`. 하루 상한은 권한이 아니라 서비스 상태라 여기 넣지 않고 429 `COURSE_LIMIT`로 판정한다 |
+| AI 코스 run 조회 — 요청한 본인만 (#334) | `author.scope.run: own`, `author.actions: [course.view]`. 「내 마지막 코스」(`GET /maps/{mapId}/courses/latest`)는 구성원이면 되고(자기 run만 돌려준다) 별도 액션이 없다 |
 | AI 추천 run 근거 조회·토글·추가 — 구성원 누구나 (#108, #32, 최종기획안 5-5) | `member.actions: [recommend.evidence]` (개별 줄 비활성화만 `author.actions: [evidence.disable]`) |
 | AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `author.scope.run: own`, `author.actions: [recommend.manage]` |
 
 ## v2 확장 지점
 
-`owner.actions`에 `member.kick`이 이미 자리를 잡아뒀다 — #8 구현 시 `authz`에 액션 하나만 추가하면 되고 다른 모듈은 건드리지 않는다. 이게 멘토가 말한 "역할 추가가 쉽다"의 실제 이득이다.
+`owner.actions`에 `member.kick`이 이미 자리를 잡아뒀다(`invite.revoke`·`owner.transfer`는 #467·#468에서 같은 방식으로 더했다) — #8 구현 시 `authz`에 액션 하나만 추가하면 되고 다른 모듈은 건드리지 않는다. 이게 멘토가 말한 "역할 추가가 쉽다"의 실제 이득이다.
 
 ## 권한을 어디서 강제하는가
 

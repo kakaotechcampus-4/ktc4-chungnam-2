@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from agent import api as agent_api
 from maps import api as maps_api
 from maps.models import Map as MapRow
 from pins import api as pins_api
@@ -30,7 +31,10 @@ DEFAULT_OLDER_THAN_DAYS = 30
 
 # 자식 → 부모 순서. shortlist_items가 pins를, recommend 자식들이 recommend_runs를, reactions가 pins를,
 # memberships·invites가 maps를 참조한다. event_log는 FK가 없지만 지도가 사라지기 전에 지운다.
+# agent_* 테이블은 다른 모듈 테이블을 참조하지 않고 참조받지도 않아 순서와 무관하다(#512) — 맨 앞에 둔다.
 PURGE_STEPS: tuple[Callable[..., dict[str, int]], ...] = (
+    agent_api.purge_map_data,
+    agent_api.purge_course_runs,
     shortlist_api.purge_map_data,
     recommend_api.purge_map_data,
     pins_api.purge_map_data,

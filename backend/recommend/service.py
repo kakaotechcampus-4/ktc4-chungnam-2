@@ -9,7 +9,7 @@ flows.py 모듈 docstring 참고). event_log 기록만 예외다 — architectur
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,35 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str, at
     db.add(run)
     db.flush()
     return run
+
+
+def list_runs_for_requester(
+    db: Session, *, map_id: str, requested_by: str, category: str | None, limit: int,
+) -> list[tuple[RecommendRun, int, int]]:
+    """지난 추천 기록(#469) — (run, 후보 수, 게시 수). **requested_by가 본인인 run만**(가드레일 1). created_at 내림차순.
+    후보·게시 수는 한 쿼리에서 집계한다(N+1 금지). 후보 수는 done이 아니면 0이다 — 진행 중·실패 run의 후보는 보여 주지 않는다."""
+    counts = (
+        select(
+            Candidate.run_id.label("run_id"),
+            func.count().label("candidate_count"),
+            func.count(Candidate.published_pin_id).label("published_count"),
+        )
+        .group_by(Candidate.run_id)
+        .subquery()
+    )
+    query = (
+        select(RecommendRun, func.coalesce(counts.c.candidate_count, 0), func.coalesce(counts.c.published_count, 0))
+        .outerjoin(counts, counts.c.run_id == RecommendRun.id)
+        .where(RecommendRun.map_id == map_id, RecommendRun.requested_by == requested_by)
+        .order_by(RecommendRun.created_at.desc(), RecommendRun.id.desc())
+        .limit(limit)
+    )
+    if category is not None:
+        query = query.where(RecommendRun.category == category)
+    return [
+        (run, candidate_count if run.status == "done" else 0, published_count)
+        for run, candidate_count, published_count in db.execute(query).all()
+    ]
 
 
 def max_attempt_no_for_requester(db: Session, *, map_id: str, requested_by: str) -> int:
@@ -122,14 +151,34 @@ def add_reaction_evidence(db: Session, *, run_id: uuid.UUID, lines: list[dict]) 
 def add_manual_evidence(
     db: Session, *, run_id: uuid.UUID, author_id: str, text: str, fact_key: str | None = None, wants: bool | None = None,
 ) -> EvidenceLine:
-    """「+」로 직접 추가한 줄 — 배지는 reference 고정. fact_key·wants는 ②(plan_evidence)가 붙인 값이다(#254)."""
+    """「+」로 직접 추가한 줄 — 배지는 preferred 고정(#707, ♥ 사유와 같은 규칙: 순위 점수에만 들어가고 후보를 거르지
+    않는다). fact_key·wants는 ②(plan_evidence)가 붙인 값이다(#254) — 못 붙였으면 근거 줄에만 남고 효과가 없다."""
     line = EvidenceLine(
         run_id=run_id, author_id=author_id, source="manual", text=text,
-        badge="reference", fact_key=fact_key, wants=wants, is_active=True,
+        badge="preferred", fact_key=fact_key, wants=wants, is_active=True,
     )
     db.add(line)
     db.flush()
     return line
+
+
+def count_manual_entries(db: Session, run_id: uuid.UUID) -> int:
+    """이 run에 「+」로 추가한 글 수(#707) — ×로 뺀 줄도 센다. 글 하나에 조건이 여럿이면 줄이 여럿이라(#419)
+    (text, created_at)으로 묶어 센다. created_at은 트랜잭션 시작 시각이라 한 요청에서 넣은 줄은 모두 같다 — 이 전제가
+    깨지면(행마다 다른 시각) 줄 수로 세는 것과 같아져 더 엄격해진다. 한 요청 안의 같은 글은 flows가 미리 하나로 줄인다."""
+    entries = (
+        select(EvidenceLine.text, EvidenceLine.created_at)
+        .where(EvidenceLine.run_id == run_id, EvidenceLine.source == "manual")
+        .distinct()
+        .subquery()
+    )
+    return db.execute(select(func.count()).select_from(entries)).scalar_one()
+
+
+def lock_run(db: Session, run_id: uuid.UUID) -> None:
+    """run 행을 FOR UPDATE로 잠근다 — 같은 run에 동시에 온 「+」 요청이 상한을 함께 넘지 못하게(#707, 멘토 리뷰 #380).
+    잠금은 트랜잭션 끝(session_scope 커밋·롤백)에 풀린다."""
+    db.execute(select(RecommendRun.id).where(RecommendRun.id == run_id).with_for_update())
 
 
 def get_evidence_or_none(db: Session, evidence_id: str) -> EvidenceLine | None:
@@ -264,6 +313,29 @@ def list_excluded_place_ids(db: Session, *, map_id: str, requested_by: str) -> s
     return set(rows)
 
 
+def last_run_at_by_category(db: Session, *, map_id: str) -> dict[str, datetime]:
+    """카테고리 → 그 카테고리 가장 최근 run의 created_at(#522). run이 없는 카테고리는 키가 없다."""
+    rows = db.execute(
+        select(RecommendRun.category, func.max(RecommendRun.created_at))
+        .where(RecommendRun.map_id == map_id)
+        .group_by(RecommendRun.category)
+    ).all()
+    return {category: created_at for category, created_at in rows}
+
+
+def latest_run_place_ids(db: Session, *, map_id: str, requested_by: str, category: str | None = None) -> set[str]:
+    """요청자의 이 지도 최신 run(카테고리마다 하나, category가 있으면 그것만)의 후보 place_id(#646)."""
+    latest = (
+        select(RecommendRun.id)
+        .where(RecommendRun.map_id == map_id, RecommendRun.requested_by == requested_by)
+        .distinct(RecommendRun.category)
+        .order_by(RecommendRun.category, RecommendRun.created_at.desc(), RecommendRun.id.desc())
+    )
+    if category is not None:
+        latest = latest.where(RecommendRun.category == category)
+    return set(db.execute(select(Candidate.place_id).where(Candidate.run_id.in_(latest))).scalars())
+
+
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(#431) — 이 지도들의 추천 기록을 지운다. 테이블 이름 → 지운 행 수. 자식(근거 줄·후보·지역·
     제외)부터 지우고 run을 마지막에 지운다(전부 recommend_runs를 참조, 후보는 지역도 참조해서 지역보다 먼저)."""
@@ -277,4 +349,30 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
         "regions": db.execute(delete(Region).where(Region.run_id.in_(run_ids))).rowcount,
         "exclusions": db.execute(delete(Exclusion).where(Exclusion.map_id.in_(map_ids))).rowcount,
         "recommend_runs": db.execute(delete(RecommendRun).where(RecommendRun.map_id.in_(map_ids))).rowcount,
+    }
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기(#560) — from_user의 run 요청자·근거 줄 작성자·제외 요청자를 to_user로 옮긴다. 테이블 이름 →
+    옮긴(제외는 겹쳐서 지운 것 제외) 행 수. 같은 (지도, 장소) 제외가 to_user에게 이미 있으면 from_user 것을 지운다
+    (uq_exclusions_map_requester_place, 카카오 계정 쪽이 이긴다). attempt_no는 건드리지 않는다. 후보에는 요청자
+    열이 없다(run의 requested_by를 따른다). 커밋하지 않는다."""
+    if from_user_id == to_user_id:
+        return {"recommend_runs": 0, "evidence_lines": 0, "exclusions": 0}
+    kept = select(Exclusion.map_id, Exclusion.place_id).where(Exclusion.requested_by == to_user_id)
+    db.execute(
+        delete(Exclusion).where(
+            Exclusion.requested_by == from_user_id, tuple_(Exclusion.map_id, Exclusion.place_id).in_(kept)
+        )
+    )
+    return {
+        "recommend_runs": db.execute(
+            update(RecommendRun).where(RecommendRun.requested_by == from_user_id).values(requested_by=to_user_id)
+        ).rowcount,
+        "evidence_lines": db.execute(
+            update(EvidenceLine).where(EvidenceLine.author_id == from_user_id).values(author_id=to_user_id)
+        ).rowcount,
+        "exclusions": db.execute(
+            update(Exclusion).where(Exclusion.requested_by == from_user_id).values(requested_by=to_user_id)
+        ).rowcount,
     }

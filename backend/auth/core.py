@@ -62,34 +62,59 @@ def new_state() -> str:
     return secrets.token_urlsafe(32)
 
 
-def _sign_state(state: str, issued_at: int, secret: str) -> str:
-    return _sign(f"{_STATE_PURPOSE}:{state}.{issued_at}", secret)
+def _sign_state(state: str, issued_at: int, secret: str, guest_user_id: str | None = None) -> str:
+    # 게스트 id도 서명 대상이다 — 값을 빼거나 바꾸면 서명이 어긋난다(#560).
+    guest_part = f".{guest_user_id}" if guest_user_id else ""
+    return _sign(f"{_STATE_PURPOSE}:{state}.{issued_at}{guest_part}", secret)
 
 
-def create_state_cookie_value(state: str, *, secret: str, issued_at: int) -> str:
-    """`state.발급시각.서명` — 로그인 시작 때 HttpOnly 쿠키에 넣는다."""
-    return f"{state}.{issued_at}.{_sign_state(state, issued_at, secret)}"
+def create_state_cookie_value(state: str, *, secret: str, issued_at: int, guest_user_id: str | None = None) -> str:
+    """`state.발급시각.서명` — 로그인 시작 때 HttpOnly 쿠키에 넣는다. 게스트가 시작했으면
+    `state.발급시각.게스트id.서명`(#560) — 콜백이 어느 게스트 기록을 합칠지 서버가 서명해 들고 간다."""
+    if guest_user_id is not None and (not guest_user_id or "." in guest_user_id):
+        raise ValueError("guest_user_id는 비어 있거나 '.'를 포함할 수 없다")
+    signature = _sign_state(state, issued_at, secret, guest_user_id)
+    if guest_user_id:
+        return f"{state}.{issued_at}.{guest_user_id}.{signature}"
+    return f"{state}.{issued_at}.{signature}"
+
+
+class StateClaims(NamedTuple):
+    guest_user_id: str | None
+
+
+def parse_state(cookie_value: str | None, state_param: str | None, *, secret: str, now: int,
+                ttl_seconds: int = STATE_TTL_SECONDS) -> StateClaims | None:
+    """콜백의 `state` 쿼리가 이 브라우저가 시작한 로그인의 값인지 확인하고, 쿠키에 실린 게스트 id를 꺼낸다.
+    둘 중 하나가 없거나, 쿠키 서명이 틀리거나 만료됐거나, 두 값이 다르면 None. 어느 경우인지는 구분해 알리지
+    않는다(parse_session_token과 같은 이유 — 위조 시도에 오라클을 주지 않는다)."""
+    if not cookie_value or not state_param:
+        return None
+    parts = cookie_value.split(".")
+    if len(parts) == 3:
+        state, issued_at_raw, signature = parts
+        guest_user_id = None
+    elif len(parts) == 4:
+        state, issued_at_raw, guest_user_id, signature = parts
+        if not guest_user_id:
+            return None
+    else:
+        return None
+    if not state or not issued_at_raw.isdigit():
+        return None
+    issued_at = int(issued_at_raw)
+    if not hmac.compare_digest(_sign_state(state, issued_at, secret, guest_user_id), signature):
+        return None
+    if now < issued_at or now - issued_at > ttl_seconds:
+        return None
+    if not hmac.compare_digest(state.encode("utf-8"), state_param.encode("utf-8")):
+        return None
+    return StateClaims(guest_user_id)
 
 
 def verify_state(cookie_value: str | None, state_param: str | None, *, secret: str, now: int,
                  ttl_seconds: int = STATE_TTL_SECONDS) -> bool:
-    """콜백의 `state` 쿼리가 이 브라우저가 시작한 로그인의 값인지 확인한다. 둘 중 하나가 없거나,
-    쿠키 서명이 틀리거나 만료됐거나, 두 값이 다르면 False. 어느 경우인지는 구분해 알리지 않는다
-    (parse_session_token과 같은 이유 — 위조 시도에 오라클을 주지 않는다)."""
-    if not cookie_value or not state_param:
-        return False
-    parts = cookie_value.split(".")
-    if len(parts) != 3:
-        return False
-    state, issued_at_raw, signature = parts
-    if not state or not issued_at_raw.isdigit():
-        return False
-    issued_at = int(issued_at_raw)
-    if not hmac.compare_digest(_sign_state(state, issued_at, secret), signature):
-        return False
-    if now < issued_at or now - issued_at > ttl_seconds:
-        return False
-    return hmac.compare_digest(state.encode("utf-8"), state_param.encode("utf-8"))
+    return parse_state(cookie_value, state_param, secret=secret, now=now, ttl_seconds=ttl_seconds) is not None
 
 
 def kakao_authorize_url(*, client_id: str, redirect_uri: str, state: str) -> str:
@@ -116,3 +141,11 @@ def display_name_from_kakao_profile(profile: dict) -> str:
     if nickname:
         return nickname
     return f"user_{profile['id']}"
+
+
+GUEST_LIMIT_PER_INVITE = 10   # 초대 토큰 하나로 만들 수 있는 게스트 수(#472)
+LAST_SEEN_REFRESH_SECONDS = 60 * 60 * 24   # last_seen_at은 하루 한 번만 갱신한다
+
+
+def should_refresh_last_seen(last_seen_at: datetime | None, now: datetime) -> bool:
+    return last_seen_at is None or (now - last_seen_at).total_seconds() >= LAST_SEEN_REFRESH_SECONDS

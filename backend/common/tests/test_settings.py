@@ -61,8 +61,8 @@ def test_prod_refuses_default_session_secret():
 
 
 def test_unknown_environment_is_rejected():
-    with pytest.raises(ConfigError, match="staging"):
-        _settings(environment="staging")
+    with pytest.raises(ConfigError, match="stage"):
+        _settings(environment="stage")
 
 
 def test_prod_refuses_empty_cors_origins_with_no_regex():
@@ -280,3 +280,110 @@ def test_main_quiets_http_client_loggers():
 
     assert logging.getLogger("httpx").level == logging.WARNING
     assert logging.getLogger("httpcore").level == logging.WARNING
+
+
+def test_agent_loop_is_off_by_default(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    monkeypatch.delenv("AGENT_LOOP_IN_PROCESS", raising=False)
+    assert Settings.from_env().agent_loop_in_process is False
+
+
+@pytest.mark.parametrize("raw, expected", [("1", True), ("true", True), ("TRUE", True), ("0", False), ("no", False)])
+def test_agent_loop_reads_env(monkeypatch, raw, expected):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    monkeypatch.setenv("AGENT_LOOP_IN_PROCESS", raw)
+    assert Settings.from_env().agent_loop_in_process is expected
+
+
+# ---- staging(#788): prod와 같은 가드, QA 로그인 비밀값 ----
+
+
+@pytest.mark.parametrize("overrides, match", [
+    ({"places_mode": "dev"}, "places"),
+    ({"llm_mode": "dev"}, "llm"),
+    ({"cors_allow_origins": ("*",)}, "CORS_ALLOW_ORIGINS"),
+    ({"cors_allow_origin_regex": "http://localhost"}, "CORS_ALLOW_ORIGIN_REGEX"),
+    ({"cors_allow_origins": ()}, "CORS_ALLOW_ORIGINS"),
+    ({"session_secret": "change-me-before-deploy"}, "SESSION_SECRET"),
+    ({"session_secret": ""}, "SESSION_SECRET"),
+    ({"frontend_base_url": ""}, "FRONTEND_BASE_URL"),
+])
+def test_staging_gets_the_prod_guards(overrides, match):
+    with pytest.raises(ConfigError, match=match):
+        _settings(environment="staging", **overrides)
+
+
+def test_staging_with_strict_values_starts():
+    s = _settings(environment="staging", qa_login_secret="qa")
+
+    assert s.is_prod is False   # is_prod는 운영만이다(Secure 쿠키, 어댑터 2차 검사)
+    assert s.qa_login_enabled is True
+
+
+def test_prod_refuses_qa_login_secret():
+    with pytest.raises(ConfigError, match="QA_LOGIN_SECRET"):
+        _settings(qa_login_secret="qa")
+
+
+def test_from_env_prod_with_qa_login_secret_is_refused(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "prod")
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
+    monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
+    monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
+    monkeypatch.setenv("QA_LOGIN_SECRET", "qa")
+
+    with pytest.raises(ConfigError, match="QA_LOGIN_SECRET"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("environment, secret, expected", [
+    ("staging", "qa", True),
+    ("staging", "", False),
+    ("prod", "", False),
+    ("dev", "qa", False),
+    ("test", "qa", False),
+])
+def test_qa_login_is_enabled_only_in_staging_with_a_secret(environment, secret, expected):
+    assert _settings(environment=environment, qa_login_secret=secret).qa_login_enabled is expected
+
+
+def _staging_env(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "staging")
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://staging.pingo.example")
+    monkeypatch.setenv("SESSION_SECRET", "a-staging-secret")
+    monkeypatch.setenv("FRONTEND_BASE_URL", "https://staging.pingo.example")
+    for name in ("CORS_ALLOW_ORIGIN_REGEX", "QA_LOGIN_SECRET"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_from_env_staging_uses_the_strict_defaults(monkeypatch):
+    _staging_env(monkeypatch)
+    monkeypatch.setenv("QA_LOGIN_SECRET", "qa")
+
+    s = Settings.from_env()
+
+    assert (s.places_mode, s.llm_mode) == ("real", "real")
+    assert s.cors_allow_origin_regex is None
+    assert s.qa_login_secret == "qa" and s.qa_login_enabled
+
+
+def test_from_env_staging_without_qa_login_secret_has_qa_login_off(monkeypatch):
+    _staging_env(monkeypatch)
+
+    assert Settings.from_env().qa_login_enabled is False
+
+
+def test_from_env_staging_has_no_frontend_base_url_default(monkeypatch):
+    _staging_env(monkeypatch)
+    monkeypatch.delenv("FRONTEND_BASE_URL")
+
+    with pytest.raises(ConfigError, match="FRONTEND_BASE_URL"):
+        Settings.from_env()
+
+
+def test_from_env_staging_refuses_default_session_secret(monkeypatch):
+    _staging_env(monkeypatch)
+    monkeypatch.delenv("SESSION_SECRET")
+
+    with pytest.raises(ConfigError, match="SESSION_SECRET"):
+        Settings.from_env()

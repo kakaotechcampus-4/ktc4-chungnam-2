@@ -54,9 +54,19 @@ npm test             # vitest — smoke.test.ts
 docker-compose up -d                  # PostgreSQL+PostGIS, Redis
 cp .env.example .env                  # 없으면. 값은 커밋하지 않는다
 python -m alembic upgrade head        # 마이그레이션 체인이 head 하나여야 한다
-# 자체 장소 DB 적재(한 번, 약 4분) — 파일은 저장소 밖에 둔다(.gitignore). 안 하면 검색·핀·추천이 모두 빈다
-python -m places.load restaurants --file <restaurant_seoul_curated.csv> --labels <restaurant_seoul_curated_labels.json> --dry-run   # 리포트 확인 후 --dry-run을 뺀다
-python -m places.load cafes --file <cafe_seoul_curated.csv> --labels <cafe_seoul_curated_labels.json|.csv> --dry-run          # 카페(분류 '카페'). 좌표 없는 행·모르는 업태는 건너뛰고 건수를 보고한다
+# 자체 장소 DB 적재(한 번, 약 5분) — 파일은 저장소 밖에 둔다(.gitignore). 안 하면 검색·핀·추천이 모두 빈다. 윈도는 먼저 `PYTHONUTF8=1`
+# 데이터: 정예DB 공유본 2026-10-25(S=<공유본>/서울). 순서와 지역(v2), 새 DB에서 시작하는 이유는 deploy_rules.md "장소 데이터 적재"
+# 정예는 반드시 --authoritative — places.curated=true를 켠다. 빼면 정예로 표시되지 않아 AI 추천 후보에서 빠진다(후보 풀 = curated, #743)
+python -m places.load restaurants --authoritative --file $S/음식점/final_restaurant_places_hotspot.csv --labels $S/음식점/seoul_restaurant_labels_hotspot.json --dry-run   # 리포트 확인 후 --dry-run을 뺀다
+python -m places.load cafes --authoritative --file $S/카페/cafe_seoul_curated.csv --labels $S/카페/cafe_seoul_curated_labels.json   # 음식점 다음 — 두 파일에 겹치는 6곳을 카페로 둔다(#507 결정 ①)
+python -m places.load tourapi --authoritative --file $S/관광지/tourist_seoul_places.json --labels $S/관광지/tourist_seoul_curated_labels.csv   # 관광지 라벨은 CSV. JSON은 형식이 달라 전부 건너뛴다
+# (선택) 인허가 커버리지(#499) — 파일 3개를 --file로 한 번에, 다음 라벨 파일
+python -m places.load permit --encoding cp949 --file $S/인허가_커버리지/식품_휴게음식점_서울특별시.csv --file $S/인허가_커버리지/식품_일반음식점_서울특별시.csv --file $S/인허가_커버리지/식품_제과점영업_서울특별시.csv
+python -m places.load restaurant-labels --file $S/인허가_커버리지/permit_cover_labels.json
+# 영업시간·휴무일(#690) — 장소를 넣은 뒤
+python -m places.load place-hours --file $S/음식점/seoul_restaurant_labels_hotspot.json
+python -m places.load place-hours --file $S/카페/cafe_seoul_curated_labels.json
+python -m places.load place-hours --file $S/관광지/tourist_seoul_closed_days.json
 python -m uvicorn main:asgi_app --port 8000
 ```
 `backend/.env`에 채울 값 (**localhost로 통일** — `127.0.0.1`과 섞으면 쿠키가 안 붙는다):
@@ -92,7 +102,7 @@ VITE_KAKAO_MAP_KEY=<JavaScript 키>
 | 5 | 같은 핀이 다른 창에 **실시간으로** 나타남 | SSE `pin.created`. 같은 장소를 또 찍으면 409 `PIN_DUPLICATE`. 지도 길게 눌러 찍기·링크로 찍기는 없다(v1에서 뺌, 보내면 422) | 다른 창에 안 뜨면 `GET /maps/{id}/events` 연결(401/CORS) |
 | 6 | 핀 상세: ♥/🚫 남기기, 의견 목록, 내 반응 취소 | 🚫는 사유 없으면 422 `EVIDENCE_REQUIRED`. (숙소는 v1에서 핀 자체를 만들 수 없다) | `my_reaction`, 반응 요약이 바로 갱신되는지 |
 | 7 | 추천 받기(음식점) → 근거 확인 → 실행 | 준비 미달이면 409 `NOT_READY`. 후보는 **요청자에게만** 점선 핀. 후보 카드에 이유·체크·구성원 충족·출처 | 다른 구성원 화면에 후보가 보이면 가드레일 1 위반 — 즉시 이슈 |
-| 8 | 반경 넓히기 ×4, 다시 추천 | 15→20→25→30분, 네 번째는 409 `WIDEN_LIMIT`. 재시도 5회 초과는 429 `RETRY_LIMIT` | |
+| 8 | 반경 넓히기 ×4, 다시 추천 | 15→20→25→30분, 네 번째는 409 `WIDEN_LIMIT`. 재시도 10회 초과(지도 안 구성원 각자)는 429 `RETRY_LIMIT` | |
 | 9 | 「지도에 올리기」 | 모든 구성원에게 핀이 나타나고 이유·체크가 **게시 뒤에도 유지** | |
 | 10 | 확정 리스트 추가/제외, 순서 바꾸기, 동선 | 순서 변경은 동선을 바꾸지 않음. 동선은 「동선 짜주기」로만 | |
 | 11 | 이름 변경, 로그아웃 → 다른 탭 요청 | 로그아웃 이후 이전 쿠키는 401(모든 기기 세션 종료) | |

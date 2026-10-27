@@ -1,0 +1,53 @@
+# import-linter 설정만 둔다(#731). backend는 설치하는 패키지가 아니고, pytest 설정은 pytest.ini가 따로 있다.
+# INI(.importlinter)가 아니라 TOML인 이유: INI는 OS 기본 인코딩으로 읽혀 Windows(cp949)에서 한국어 주석이 깨진다.
+#
+# 실행: backend에서 `lint-imports`. CI는 backend-test의 pytest job에서 돈다.
+# 모듈 사이 규칙은 둘로 나뉘어 있다.
+# - 층(이 파일): common, auth, authz는 기능 모듈을 import하지 않는다.
+# - api, schemas만(integration/test_import_rules.py): 다른 모듈의 models, service 등은 가져오지 않는다.
+#   import-linter에는 "모듈마다 api, schemas만 공개"를 한 줄로 적는 계약이 없어 그쪽은 테스트로 둔다.
+# 모듈 목록(root_packages)과 층의 모듈이 backend 디렉토리와 같은지는 test_import_rules.py가 본다.
+
+[tool.importlinter]
+root_packages = [
+    "ads", "agent", "auth", "authz", "common", "feedback", "llm", "maintenance", "maps", "notifications",
+    "pins", "places", "realtime", "recommend", "seeding", "shortlist",
+]
+include_external_packages = false
+
+[[tool.importlinter.contracts]]
+id = "lower-layers"
+name = "common, auth, authz는 기능 모듈을 import하지 않는다"
+type = "layers"
+# 위가 위층이다. 첫 줄의 기능 모듈끼리는 서로 api로 부를 수 있다(":"는 서로 독립이 아니라는 뜻).
+layers = [
+    "ads : agent : feedback : llm : maintenance : maps : notifications : pins : places : realtime : recommend : seeding : shortlist",
+    "authz",
+    "auth",
+    "common",
+]
+# 매칭되지 않는 줄이 있으면 실패한다(import-linter 기본값). 고쳐진 예외를 지우지 않으면 CI가 알려 준다.
+ignore_imports = [
+    # 테스트는 층 검사에서 뺀다(test_import_rules.py와 같다).
+    "**.tests.** -> **",
+
+    # 알려진 예외 1. 계정 수명 조율(탈퇴 WITHDRAW_STEPS, 게스트 합치기 MERGE_STEPS)이 auth에 있다.
+    # 다시 볼 조건: 계정 수명 정리 이슈를 시작할 때(CLAUDE.md "한 곳이어야 하는 것"의 계정 수명 줄),
+    # 또는 사용자 id 열을 가진 모듈이 하나 더 늘 때.
+    "auth.service -> agent.api",
+    "auth.service -> feedback.api",
+    "auth.service -> maps.api",
+    "auth.service -> notifications.api",
+    "auth.service -> pins.api",
+    "auth.service -> recommend.api",
+    "auth.service -> shortlist.api",
+
+    # 알려진 예외 2. 게스트 참여 응답(POST /auth/guest)이 들어간 지도를 함께 싣는다.
+    # 다시 볼 조건: auth의 응답 스키마를 고칠 때.
+    "auth.schemas -> maps.schemas",
+    "auth.service -> maps.schemas",
+
+    # 알려진 예외 3. 멤버십 조회는 authz/ports.py의 Protocol로 뒤집혀 있고, 구현(maps)을 꽂는 배선만 여기 있다.
+    # 다시 볼 조건: authz/deps.py를 고칠 때(배선을 main.py로 옮길 수 있는지 본다).
+    "authz.deps -> maps.api",
+]

@@ -2,8 +2,7 @@
 docs/api-spec.yaml의 pins 태그 스키마와 1:1로 맞춘다.
 Pin의 place_name은 생성 요청(PinCreateRequest.place_name)에서 그대로 저장한다(루트 결정,
 2026-09-23). checks는 게시(pins.api.create_ai_pin) 시점에 candidate.checks를 그대로 복사해
-채운다(#57/#124 결정, 가드레일 5). created_by_display_name/source_run_id는
-여전히 places/auth/recommend 모듈 연동이 더 필요해 채울 수 없다 — Optional로 두고 라우터에서
+채운다(#57/#124 결정, 가드레일 5). 값이 없는 Optional 칸은 라우터가
 response_model_exclude_none으로 생략한다.
 
 Permissions는 여기서 정의하지 않는다 — Pin·EvidenceLine·ShortlistItem이 공유하는 스키마라
@@ -13,10 +12,11 @@ authz가 소유한다(#56 이관, mentor-review-plan.md). pins는 authz의 것�
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from authz.schemas import Permissions
 from common import categories
+from places.schemas import LinkParseResult
 
 Category = Literal[categories.all_categories()]  # 스펙의 Category(common/categories.py, #280)
 PinKind = Literal["일반", "AI추천", "확정"]
@@ -82,11 +82,85 @@ class PinCreateSearch(BaseModel):
     place_name: str = Field(max_length=100)
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
+    address: str | None = Field(default=None, max_length=200)   # 선택 — 이름이 비슷한 점포를 가르는 보조 힌트(#501). 저장·로깅하지 않는다
 
 
 # 스펙 PinCreateRequest = oneOf(PinCreateSearch, PinCreateLive). source로 갈린다 — live는 extra=forbid라
 # 이름·좌표가 섞이면 live에서 떨어지고, search는 source=live를 받지 않아 둘 다 실패한다(422).
 PinCreateRequest = PinCreateLive | PinCreateSearch
+
+
+class LinkPreviewRequest(BaseModel):
+    """카톡 대화에서 화면이 뽑은 지도 링크(#577, 스펙 LinkPreviewRequest) — URL만 받는다. 대화 원문은 서버로 오지 않는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    urls: list[Annotated[str, Field(min_length=1, max_length=2000)]] = Field(min_length=1, max_length=10)
+
+
+class LinkPreviewItem(BaseModel):
+    index: int
+    status: Literal["ok", "error"]
+    result: LinkParseResult | None = None
+    error_code: Literal["LINK_NOT_SUPPORTED", "LINK_UNRESOLVED"] | None = None
+    already_pinned_pin_id: str | None = None
+
+
+class LinkPreviewResult(BaseModel):
+    items: list[LinkPreviewItem]
+
+
+class BulkPinRequest(BaseModel):
+    """핀 일괄 생성(#577, 스펙 BulkPinRequest). 항목은 항목마다 따로 검증한다 — 하나가 틀려도 나머지는 처리된다(그 항목은 rejected)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pins: list[dict] = Field(min_length=1, max_length=30)
+
+
+class BulkPinError(BaseModel):
+    code: str
+    message: str | None = None
+    detail: dict | None = None
+
+
+class BulkPinItemResult(BaseModel):
+    index: int
+    status: Literal["created", "duplicate", "rejected"]
+    pin: "Pin | None" = None
+    error: BulkPinError | None = None
+
+
+class BulkPinResult(BaseModel):
+    results: list[BulkPinItemResult]
+
+
+class PinResolveRequest(BaseModel):
+    """실시간 핀 승격(#501, 스펙 PinResolveRequest)의 매칭 힌트 — 전부 저장하지도 로깅하지도 않는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    place_name: str = Field(min_length=1, max_length=100)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    address: str | None = Field(default=None, max_length=200)
+
+
+class PinUpdateRequest(BaseModel):
+    """핀 수정(#466, 스펙 PinUpdateRequest) — 보낸 필드만 바꾼다. 빈 객체는 422. 그 밖의 필드(장소·근거 등)는 받지 않는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    memo: str | None = Field(default=None, max_length=200)   # 빈 문자열이면 지운다
+    category: Category | None = None   # live 핀만, 반응이 없을 때만 — core.validate_update
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self):
+        if not self.model_fields_set:
+            raise ValueError("수정할 필드(memo, category)가 하나는 있어야 해요")
+        if any(getattr(self, name) is None for name in self.model_fields_set):
+            raise ValueError("memo와 category는 null일 수 없어요 — 메모는 빈 문자열로 지운다")
+        return self
 
 
 class Reaction(BaseModel):
@@ -119,7 +193,6 @@ class Pin(BaseModel):
     created_by_display_name: str | None = None
     created_at: datetime | None = None   # 지도에 올라온 시각(AI 추천 핀은 「지도에 올리기」 시각) — 서버가 채우면 항상 있다
     checks: list[Check] | None = None
-    source_run_id: str | None = None
     reason: str | None = None
     member_fulfillment: MemberFulfillment | None = None
     place_source: PlaceSource | None = None

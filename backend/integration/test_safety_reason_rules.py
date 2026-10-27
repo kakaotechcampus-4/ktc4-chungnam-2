@@ -2,18 +2,20 @@
 사유 방향 규칙과 구성원 충족 집계(G1, #246) 재현 테스트.
 
 - 매운맛·기름진 메뉴는 취향 키다(#378). 좋아한다는 사유(`wants=true`)는 실격이 아니고, 🚫 사유는 라벨이 참인 곳만 실격이다.
-- `member_fulfillment.total`은 실격 사유를 낸 구성원도 센다.
+- `member_fulfillment.total`은 키 있는 실격 사유를 낸 구성원도 센다. 키 없는 사유만 낸 구성원은 빠진다(#620).
 - 알러지 같은 안전 조건 규칙(배지와 무관하게 실격, D11)은 #425에서 없앴다 — 이 파일의 알러지 테스트도 지웠다.
 """
 
 from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy import update
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
     PLACES, _pin, plan_with, members, own_db, place_ids, real_client,
 )
 from places import repository
+from places.models import Place
 from places.ingest import LabelRow, PlaceRow
 
 NOW = datetime(2026, 10, 2, tzinfo=timezone.utc)
@@ -22,6 +24,8 @@ NOW = datetime(2026, 10, 2, tzinfo=timezone.utc)
 def _extra_place(db, sid, name, lat, lng, facts):
     repository.upsert_places(db, [PlaceRow("permit", sid, name, "음식점", f"서울 {sid}", None, lat, lng, "open")])
     repository.upsert_facts(db, [LabelRow("permit", sid, k, v, "known", 3, NOW) for k, v in facts.items()])
+    db.flush()
+    db.execute(update(Place).where(Place.source_id == sid).values(curated=True))  # 추천 후보 풀에 들어가게(#558)
     db.flush()
 
 
@@ -81,8 +85,13 @@ def test_member_fulfillment_counts_members_who_left_disqualifying_reasons(member
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     cands = a.get(f"/runs/{run_id}/result").json()["candidates"]
     assert cands
-    fulfillment = cands[0].get("member_fulfillment") or {}
-    assert fulfillment.get("total") == 2 and fulfillment.get("satisfied") == 2, fulfillment
+    # 이 대역 ②는 "한식 말고"에 키를 붙이지 않는다 — 키 없는 반대만 낸 a는 집계에서 빠진다(#620). b의 매운맛 피함은
+    # 라벨이 known이고 통과일 때만 충족이다(모름은 「확인 필요」라 미충족).
+    for cand in cands:
+        spicy = next(ch for ch in cand["checks"] if ch["fact_key"] == "spicy_focused")
+        fulfillment = cand.get("member_fulfillment") or {}
+        assert fulfillment.get("total") == 1, fulfillment
+        assert fulfillment["by_member"] == [{"user_id": "user_b", "satisfied": spicy["confidence"] == "known"}], (spicy, fulfillment)
 
 
 

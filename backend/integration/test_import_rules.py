@@ -4,7 +4,8 @@
 규칙이 문서에만 있으면 세션이 바뀔 때마다 어긴다(recommend가 llm.service를 직접 부른 게 그 사례, #219에서 고침). 정적 검사라
 DB 없이 돌고, 어긴 import를 CI가 바로 잡는다.
 
-- 수평 레이어(common·auth·authz)는 어디서든 직접 import 가능.
+- 수평 레이어(common·auth·authz)는 어디서든 직접 import 가능. 거꾸로 그 셋이 기능 모듈을 import하지 않는지(층)는
+  import-linter가 본다(backend/pyproject.toml, #731). 여기서는 그 설정의 모듈 목록이 디렉토리와 같은지만 본다.
 - 다른 모듈은 `api`(데이터 조회·변경)와 `schemas`(응답 타입)만 import한다. `models`·`service`를 비롯한 나머지는 금지.
 - 자기 모듈 안, 테스트(`tests/`·`conftest.py`·`testing.py`), `integration/`, `alembic/`, `main.py`는 검사하지 않는다
   (Alembic은 모든 모듈의 models를 읽어야 하고, main은 모든 라우터를 조립한다).
@@ -82,3 +83,35 @@ def test_cross_module_imports_follow_the_rule():
 def test_known_violations_are_still_violations():
     stale = sorted(set(KNOWN_VIOLATIONS) - set(_violations()))
     assert not stale, f"고쳐진 위반이 KNOWN_VIOLATIONS에 남아 있다 — 지운다: {stale}"
+
+
+def _import_linter_config() -> dict:
+    try:
+        import tomllib
+    except ModuleNotFoundError:   # Python 3.10(CI)은 import-linter가 함께 까는 tomli를 쓴다
+        import tomli as tomllib
+    return tomllib.loads((BACKEND / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["importlinter"]
+
+
+def test_import_linter_sees_every_module_in_a_layer():
+    """새 모듈을 만들고 pyproject.toml에 넣지 않으면 import-linter는 그 모듈을 아예 보지 않는다(조용히 통과)."""
+    config = _import_linter_config()
+    layers = next(c for c in config["contracts"] if c["id"] == "lower-layers")["layers"]
+    in_layers = {name.strip() for layer in layers for name in layer.split(":")}
+    modules = _modules()
+    assert set(config["root_packages"]) == modules, (
+        f"backend/pyproject.toml root_packages와 모듈 디렉토리가 다르다: 빠짐 {sorted(modules - set(config['root_packages']))}, "
+        f"없는 모듈 {sorted(set(config['root_packages']) - modules)}"
+    )
+    assert in_layers == modules, f"층(layers)에 없는 모듈 — 기능 모듈이면 첫 줄에 넣는다: {sorted(modules - in_layers)}"
+
+
+def test_recommend_never_imports_ads():
+    """광고는 추천의 후보와 순위에 들어가지 않는다(docs/ads.md 2절 2번, 11절 14번). api.py도 안 되고 테스트도 예외가 아니다 —
+    import 방향은 ads → recommend 한쪽뿐이다."""
+    found = sorted(
+        path.relative_to(BACKEND).as_posix()
+        for path in (BACKEND / "recommend").rglob("*.py")
+        if "__pycache__" not in path.parts and any(top == "ads" for top, _ in _imported_modules(path))
+    )
+    assert not found, f"recommend가 ads를 import했다: {found}"

@@ -30,6 +30,7 @@ POLICY: Mapping[str, RoleSpec] = {
                 "pin.create",
                 "pin.delete",  # "구성원 누구나" (9/4 결정 #25)
                 "pin.react",
+                "pin.resolve",  # 실시간 핀 승격(#501)
                 "pin.revert",
                 "shortlist.add",
                 "shortlist.remove",  # "구성원 누구나" (5-3, 15-1)
@@ -40,21 +41,26 @@ POLICY: Mapping[str, RoleSpec] = {
                                         # 최종기획안 5-5). run.requested_by 본인 제한 없음.
                                         # 개별 근거 줄 비활성화(evidence.disable)는 그 줄
                                         # 작성자 본인만(author).
-                "invite.create",  # 초대 링크 발급 — "구성원 누구나" (#4 결정, maps/for_Root.md 항목 4)
+                "invite.create",  # 초대 링크 발급 — "구성원 누구나" (#4 결정)
                 "map.leave",  # 지도 나가기(#369). 넘길 사람이 없는 방장 차단은 역할이 아니라 지도 상태라
                                # 여기 넣지 않고 maps/core.py가 판정한다(409 OWNER_CANNOT_LEAVE)
-                "route.recalculate",  # 동선 재계산 — "구성원 누구나" (#103 결정, shortlist/for_Root.md 1번)
+                "route.recalculate",  # 동선 재계산 — "구성원 누구나" (#103 결정)
+                "agent.toggle",  # 계획 보조 에이전트 모드 켜고 끄기(v2, docs/agent-v2.md)
+                "agent.suggestion.resolve",  # 지도 제안 수락·닫기(v2). 지도 단위
+                "course.request",  # AI 코스 짜기 요청(#334, #580 결정 전 브랜치 초안). 구성원 누구나, 하루 상한은 서비스가 센다
             }
         ),
     ),
     "author": RoleSpec(
-        scope={"evidence_line": "own", "candidate": "own", "run": "own"},
+        scope={"evidence_line": "own", "candidate": "own", "run": "own", "pin": "own"},
         actions=frozenset(
             {
                 "evidence.disable",  # '-'로 빼기 — "자기가 쓴 것만" (5-5)
                 "recommend.manage",  # run 하위 실행계(지역확인·실행·결과조회·반경넓히기·재시도) —
                                       # run.requested_by 본인만(가드레일1)
                 "recommend.publish",  # 「지도에 올리기」 — candidate.requested_by 본인만
+                "pin.edit",  # 핀 메모·분류 수정(#466) — 찍은 사람만. AI 추천·확정 핀 제외는 pins 코어가 판정
+                "course.view",  # AI 코스 run 조회(#334) — run.requested_by 본인만(가드레일 1)
             }
         ),
     ),
@@ -65,6 +71,8 @@ POLICY: Mapping[str, RoleSpec] = {
                 "member.kick",  # v2, #8
                 "map.settings.edit",
                 "map.delete",  # 지도 삭제(#369). 방장만, soft delete
+                "invite.revoke",  # 초대 링크 목록·끄기(#467). 방장만
+                "owner.transfer",  # 방장 직접 넘기기(#468). 방장만
             }
         ),
     ),
@@ -73,12 +81,14 @@ POLICY: Mapping[str, RoleSpec] = {
 # permissions.md에는 액션이 어떤 리소스 종류에 쓰이는지가 없다 — 없으면
 # can(user, "recommend.publish", Resource(type="pin", ...))처럼 액션과 무관한 리소스 종류에 대해
 # 판정을 묻는 타입 혼동이 조용히 통과한다. 이 표는 정본을 "좁히기만" 한다(정본에 없는 액션을
-# 허용하지 않고, 정본에 있는 액션의 유효 대상만 못 박는다) — for_Root.md에 정본 승격 여부 확인 요청.
+# 허용하지 않고, 정본에 있는 액션의 유효 대상만 못 박는다) — 정본 승격 여부는 #66에서 정한다.
 ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "pin.create": frozenset({"map"}),
     "pin.delete": frozenset({"pin"}),
     "pin.react": frozenset({"pin"}),
+    "pin.resolve": frozenset({"pin"}),
     "pin.revert": frozenset({"pin"}),
+    "pin.edit": frozenset({"pin"}),
     # add의 대상은 pin이다 — POST /maps/{mapId}/shortlist의 본문이 {pin_id}.
     "shortlist.add": frozenset({"pin"}),
     # remove만 두 종류를 받는다. 실행 경로는 DELETE /shortlist/{itemId}(shortlist_item)이지만,
@@ -96,5 +106,12 @@ ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "map.delete": frozenset({"map"}),
     "map.leave": frozenset({"map"}),
     "invite.create": frozenset({"map"}),
+    "invite.revoke": frozenset({"map"}),
+    "owner.transfer": frozenset({"map"}),
     "route.recalculate": frozenset({"map"}),
+    # 제안은 지도에 딸린다 — 제안 id로 지도를 찾아 Resource(type="map", ...)으로 판정한다(agent 모듈의 loader)
+    "agent.toggle": frozenset({"map"}),
+    "agent.suggestion.resolve": frozenset({"map"}),
+    "course.request": frozenset({"map"}),
+    "course.view": frozenset({"run"}),  # agent/course/loaders.py::load_course_run이 Resource(type="run", ...)로 채운다
 }

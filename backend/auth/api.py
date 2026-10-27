@@ -1,9 +1,10 @@
 """
 다른 모듈이 auth를 부르는 유일한 접점(docs/architecture.md §1.1 "교차 모듈 쓰기는
-<module>/api.py를 통해서만"). 지금은 배치 표시이름 조회 하나뿐이다.
+<module>/api.py를 통해서만"). 배치 조회(표시이름·탈퇴·게스트 판정)를 제공한다.
 """
 
 from collections.abc import Sequence
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,7 +15,7 @@ WITHDRAWN_DISPLAY_NAME = "탈퇴한 구성원"
 
 
 def display_names(db: Session, user_ids: Sequence[str]) -> dict[str, str]:
-    """maps.for_Root.md 항목5(Member.display_name)·pins의 created_by_display_name이 쓴다.
+    """maps의 Member.display_name과 pins의 created_by_display_name이 쓴다.
     배치 조회 — N명 표시에 N번 쿼리하지 않는다. 탈퇴(deleted_at)한 사용자는 실명 대신
     WITHDRAWN_DISPLAY_NAME("탈퇴한 구성원")을 돌려준다 — 남는 핀·확정 항목의 작성자 표시가
     사라지지는 않되 탈퇴자의 이름은 노출하지 않는다(#155 결정, pins·maps가 이 값을 그대로 쓴다)."""
@@ -33,3 +34,20 @@ def withdrawn_user_ids(db: Session, user_ids: Sequence[str]) -> set[str]:
         select(User.id).where(User.id.in_(user_ids), User.deleted_at.is_not(None))
     ).scalars().all()
     return set(rows)
+
+
+def guest_user_ids(db: Session, user_ids: Sequence[str]) -> set[str]:
+    """주어진 user_id 중 게스트(로그인 수단이 없는 사용자, #694)만 돌려준다(#472) — maps가 후임 판정·방장 넘기기
+    대상 검사에 쓴다. withdrawn_user_ids와 같은 배치 조회. users 행이 없는 id는 게스트가 아니다."""
+    if not user_ids:
+        return set()
+    rows = db.execute(select(User.id).where(User.id.in_(user_ids), User.is_guest)).scalars().all()
+    return set(rows)
+
+
+def purge_inactive_guests(db: Session, now: datetime, older_than_days: int = 90) -> int:
+    """90일(기본) 쓰지 않은 게스트 계정을 정리한다(#472) — 탈퇴와 같은 규칙(반응·근거·알림 삭제, 핀은 남고
+    작성자는 '탈퇴한 구성원'). 지운 수를 돌려준다. 커밋하지 않는다. 호출 연결(정리 명령)은 #168."""
+    from auth import service   # 지연 import — maps.service가 auth.api를 import해 순환이 된다
+
+    return service.purge_inactive_guests(db, now=now, older_than_days=older_than_days)

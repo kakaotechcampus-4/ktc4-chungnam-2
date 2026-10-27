@@ -1,5 +1,5 @@
 """네이버 지역 검색 API(무료 검색 API) — 2순위. 좌표 검색이 없다: 키워드만 받고 최대 5건을 준다.
-그래서 nearby는 "카테고리 키워드로 검색 후 반경으로 거르기"뿐이다(약하다 — for_Root.md 참고)."""
+그래서 nearby는 "카테고리 키워드로 검색 후 반경으로 거르기"뿐이다(약하다. v1은 끈다: PLACES_SOURCES=kakao)."""
 
 from __future__ import annotations
 

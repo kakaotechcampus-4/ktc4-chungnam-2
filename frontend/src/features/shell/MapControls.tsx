@@ -66,7 +66,7 @@ export default function MapControls({
       hidden={hidden}
       style={{ right: CONTROLS.right }}
       // 고정일 때 부모(지도 영역 덧칠)는 지도를 끌 수 있게 누름을 통과시킨다. 버튼만 다시 받는다.
-      className={`absolute ${docked ? 'bottom-4' : 'bottom-[calc(100%+12px)]'} flex flex-col rounded-xl bg-white shadow-md transition-opacity ${
+      className={`absolute ${docked ? 'bottom-4' : 'bottom-[calc(100%+12px)]'} flex flex-col rounded-xl bg-white shadow-float transition-opacity ${
         fading ? 'pointer-events-none opacity-0 duration-150' : `${docked ? 'pointer-events-auto ' : ''}opacity-100 delay-800 duration-300`
       }`}
     >

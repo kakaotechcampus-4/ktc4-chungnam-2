@@ -5,7 +5,7 @@ import uuid  # noqa: F401
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from auth.testing import session_cookie
 from common.events import EventLog
@@ -42,6 +42,9 @@ def own_db(db_session):
         LabelRow("permit", sid, key, value, "known", 3, NOW)
         for sid, (_, _, _, facts) in PLACES.items() for key, value in facts.items()
     ])
+    db_session.flush()
+    # 이 테스트들은 추천 후보 풀을 시험한다 — DB 기본값(curated=false)이면 풀에서 빠지므로 정예로 켠다(후보 풀 = curated, #558, #743).
+    db_session.execute(update(Place).values(curated=True))
     db_session.flush()
     return db_session
 

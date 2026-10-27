@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMeQuery } from '@/features/auth/queries'
 
 import { acceptInvite, createInvite, createMap, deleteMap, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, leaveMap } from './api'
-import { inviteProblem, toInviteView, toMapHeaderView, toMapView, toMemberView, type MapCreateRequest } from './model'
+import { inviteProblem, toInviteView, toMapHeaderView, toMapListView, toMemberView, type MapCreateRequest } from './model'
 
 export const mapKeys = {
   all: ['maps'] as const,
@@ -11,12 +11,12 @@ export const mapKeys = {
   members: (mapId: string) => ['maps', mapId, 'members'] as const,
 }
 
-/** 내 지도 목록 (#24). */
+/** 내 지도 목록과 상한 (#24, #623). */
 export function useMapsQuery() {
   return useQuery({
     queryKey: mapKeys.all,
     queryFn: fetchMaps,
-    select: (maps) => maps.map(toMapView),
+    select: toMapListView,
   })
 }
 
@@ -76,16 +76,6 @@ export function useMembersQuery(mapId: string) {
     queryKey: mapKeys.members(mapId),
     queryFn: () => fetchMembers(mapId),
     select: (members) => members.map((m) => toMemberView(m, myUserId)),
-  })
-}
-
-/** 초대 링크는 열 때마다 새로 받지 않는다 — 프로필 모달을 여닫을 때마다 토큰이 늘어나지 않게. */
-export function useInviteQuery(mapId: string, enabled: boolean) {
-  return useQuery({
-    queryKey: ['maps', mapId, 'invite'],
-    queryFn: () => createInvite(mapId),
-    enabled,
-    staleTime: Infinity,
   })
 }
 

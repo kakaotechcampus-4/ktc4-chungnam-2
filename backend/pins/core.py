@@ -11,7 +11,8 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
-from authz.core import Principal, Resource, permissions_for
+from authz.core import Principal, Resource, can, permissions_for
+from authz.schemas import Permissions
 from common import categories
 from common.errors import AppError
 from common.events import Event
@@ -21,6 +22,7 @@ from pins.schemas import (
     Pin,
     PinCreateLive,
     PinCreateSearch,
+    PinUpdateRequest,
     PlaceSource,
     Reaction,
     ReactionSummary,
@@ -71,6 +73,26 @@ def validate_live_create(req: PinCreateLive) -> None:
         raise AppError("VALIDATION_ERROR", LIVE_CATEGORY_MESSAGE)
     if not req.kakao_place_id.strip() or not req.search_query.strip():
         raise AppError("VALIDATION_ERROR", "kakao_place_id와 search_query에는 내용이 있어야 해요")
+
+
+PIN_NOT_EDITABLE_MESSAGE = "AI 추천 핀과 확정 핀은 고칠 수 없어요"
+CATEGORY_NOT_EDITABLE_MESSAGE = "자체 DB 장소의 분류는 장소가 정해요. 분류는 직접 찍은 핀에서만 바꿀 수 있어요"
+CATEGORY_HAS_REACTIONS_MESSAGE = "의견이 달린 핀은 분류를 바꿀 수 없어요"
+
+
+def validate_update(*, kind: str, source: str, reaction_count: int, req: PinUpdateRequest) -> None:
+    """핀 수정(#466)이 받아들여지는지. AI 추천·확정 핀은 403(can_edit=false와 같은 판정), 분류는 live 핀의
+    음식점·카페·관광지만, 반응이 하나라도 있으면 422. 403을 먼저 본다 — 못 고치는 핀에서는 값을 따지지 않는다."""
+    if kind != "일반":
+        raise AppError("FORBIDDEN", PIN_NOT_EDITABLE_MESSAGE)
+    if "category" not in req.model_fields_set:
+        return
+    if source != "live":
+        raise AppError("VALIDATION_ERROR", CATEGORY_NOT_EDITABLE_MESSAGE)
+    if not categories.is_pinnable(req.category):
+        raise AppError("VALIDATION_ERROR", LIVE_CATEGORY_MESSAGE)
+    if reaction_count > 0:
+        raise AppError("VALIDATION_ERROR", CATEGORY_HAS_REACTIONS_MESSAGE)
 
 
 def validate_category_matches(requested: str, place_category: str) -> None:
@@ -142,8 +164,7 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
     """place_name·place_url·created_by_display_name·checks는 호출부가 채워 넘긴 값을 그대로 싣는다(각각
     places.api.get_places(자체 DB 이름·카카오 URL), auth.api.display_names, pins.checks 컬럼 — checks는 #57/#124 결정:
     게시 시점에 candidate.checks를 pins로 복사해두므로 여기서도 그 값을 그대로 옮긴다, 가드레일
-    5 "게시된 뒤에도 유지"). source_run_id는 여전히 recommend 연동이 더
-    필요해 채울 수 없다 — None으로 두면 라우터가 response_model_exclude_none으로 생략한다.
+    5 "게시된 뒤에도 유지").
     permissions는 authz.core.permissions_for가 계산 — principal은 호출부(service.list_pins 등)가
     한 번만 만들어 그대로 내려보낸다(추가 멤버십 쿼리 없음)."""
     return Pin(
@@ -172,14 +193,22 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
             like=record.reaction_counts.like,
             against=record.reaction_counts.against,
         ),
-        permissions=permissions_for(
-            principal,
-            Resource(
-                type="pin", map_id=record.map_id, author_id=record.created_by,
-                kind=record.kind, category=record.category,
-            ),
-        ),
+        permissions=pin_permissions(principal, record),
     )
+
+
+def can_edit_pin(principal: Principal, resource: Resource) -> bool:
+    """핀 메모·분류 수정(#466)은 찍은 사람만(authz pin.edit)이고, AI 추천·확정 핀은 그 사람도 못 한다 —
+    역할이 아니라 핀 상태라 여기서 판정한다(can_add_to_shortlist의 kind 게이팅과 같은 자리)."""
+    return can(principal, "pin.edit", resource) and resource.kind == "일반"
+
+
+def pin_permissions(principal: Principal, record: PinRecord) -> Permissions:
+    resource = Resource(
+        type="pin", map_id=record.map_id, author_id=record.created_by,
+        kind=record.kind, category=record.category,
+    )
+    return permissions_for(principal, resource).model_copy(update={"can_edit": can_edit_pin(principal, resource)})
 
 
 def _public_pin_payload(pin: Pin) -> dict:
@@ -196,6 +225,11 @@ def pin_published_event(pin: Pin) -> Event:
     """docs/events.md pin.published — recommend의 「지도에 올리기」 전용(pin_created_event와
     페이로드는 같고 type만 다르다)."""
     return Event(map_id=pin.map_id, channel="public", type="pin.published", payload=_public_pin_payload(pin))
+
+
+def pin_updated_event(pin: Pin) -> Event:
+    """docs/events.md pin.updated — 페이로드는 pin.created와 같은 Pin이다(#466)."""
+    return Event(map_id=pin.map_id, channel="public", type="pin.updated", payload=_public_pin_payload(pin))
 
 
 def pin_deleted_event(pin_id: str, map_id: str) -> Event:

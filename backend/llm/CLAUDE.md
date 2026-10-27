@@ -11,9 +11,23 @@
    - **검색 기반 보강(2026-09-07 결정, `architecture.md` 3절)**: `seeding`이 비동기 보강 큐에서 이 함수를 부를 때는 검색 도구(우리 소스 재조회 우선, 오픈 웹검색은 최후·안전조건엔 도메인 제한)를 붙여서 호출할 수 있다. 이때도 모델은 라벨만 만든다 — 도구로 늘어난 건 "정보를 더 찾을지" 판단뿐이고, 그 결과에도 근거 대조·unknown 규칙이 그대로 적용된다.
 3. **③-b** 선호 순위 채점 — 실격 통과분만 입력받아 순위만 매긴다
 
+**v2 계획 보조 에이전트 호출(#509, 2026-10-15 결정, `docs/agent-v2.md`)**: `agent_diagnose`(도구 콜백 포함). 신호 순위(`agent_prioritize`)는 #582에서, 추천 막힘 조언(`agent_advise_run`)은 #749에서 코드로 옮김(agent의 `core.fallback_order`, 조언 절차). 요약의 구체화 문장은 고정 문구라 모델 함수가 없다(2026-10-16, #588에서 재검토). 요청 밖 백그라운드 관찰에서 `agent` 모듈이 부르고, 실제 모델과 고정 응답 스텁 중 무엇을 쓸지는 `agent/deps.py`의 Gateway가 고른다. 모델은 사유의 키와 방향을 따로 내지 않는다(②가 한다). 숫자와 인용은 claim 슬롯으로만 쓰고, 검증 실패면 재요청 없이 침묵한다(명세 11절).
+
+지금 열린 것(`llm/api.py`): `agent_diagnose(diagnosis_input, *, tool_runner, planner)`(#532).
+- planner는 ②처럼 부르는 쪽이 넘긴다. 스텁 `fixed_diagnosis_planner`(get_reasons를 한 번 부르고 늘 silent), 실제 `real_diagnosis_planner`.
+- 도구 대화에는 시간 예산도 있다(#677): 왕복을 시작할 때 대화 시작부터 `DIAGNOSIS_TIME_BUDGET_SEC`(40초)가 지났으면 그 왕복은 `tool_choice="none"`이다. 진행 중인 요청은 끊지 않는다. 시계는 `_model_diagnosis_planner(clock=)`로 바꾼다.
+- 실패(호출 실패, 타임아웃, 스키마 검증 실패)는 예외가 아니라 `AgentCallFailed(reason, detail)`로 돌려준다. 다시 묻지 않는다. 여기서는 스키마 검증까지만 하고, claim·문장·행동 검증은 agent의 core가 한다.
+- 도구는 agent가 넘기는 `tool_runner(call_id, name, args)`로만 실행한다. call_id(t1, t2 …)는 이 모듈이 매긴다. 진단 1회당 5회, 그중 structure_reasons 1회(`prompts.DIAGNOSIS_MAX_TOOL_CALLS`, `STRUCTURE_REASONS_MAX_CALLS`)를 넘는 호출은 실행하지 않고 `LIMIT_EXCEEDED`를, 유형에 없는 도구는 `NOT_FOUND`를 도구 결과로 돌려준다. 상한을 다 쓰면 `tool_choice="none"`으로 답을 받는다. 도구 설명과 유형별 허용 목록은 `prompts.AGENT_TOOL_SPECS`, `DIAGNOSIS_TOOLS`이고, map_id는 모델이 고르지 않는다(agent가 채운다).
+- gpt-6-luna는 chat.completions에서 도구를 `reasoning_effort="none"`일 때만 받는다(2026-10-15 확인). 진단 호출은 none 고정이다.
+- 평가셋은 `llm/tests/eval_agent/`(지도 상태 24건, 지어낸 사유 글만). 프롬프트를 바꾸면 `python -m llm.tests.eval_agent.run_eval`로 진단을 다시 재고 `prompt_version`을 올린다. 결과(`results/`)는 커밋하지 않는다. 우선순위 케이스는 모델 없이 `core.fallback_order` 기대값 테스트로 돈다(`test_eval_cases.py`, #582).
+- 지시문 케이스는 `expect.decision_phrases`에 결정 지시 기대 문구를 적는다(#717). 러너는 그 문구가 모델 원문의 슬롯 밖 글과 렌더된 text 조각에 나온 횟수를 센다 — 금지어 목록이 아니라 케이스 문구로 판정해 목록 밖 표현도 잡는다. 인용 조각(구성원 글)에 들어간 것은 참고로만 센다.
+- 엘리스 strict 구조화 출력은 `oneOf`를 거절한다. 출력 스키마에 discriminator를 걸지 않는다(`schemas.Claim`).
+
+**v2 동선 에이전트 호출(#580, 2026-10-21 결정, #334)**: `course_set_goals`(요청 한 줄 → 목표 6종, 인용은 원문 대조), `course_direct_turn`(지휘: optimize·lock·ask_requester·finish 중 하나를 답변 형식으로 고름, 도구를 `tools`로 주지 않는다). `agent/course`가 사람의 요청으로 부르고, 계산·검증은 그쪽 코드가 한다. 모델 입력은 별칭(p1, d1)만이고 이름·좌표·id를 넣지 않는다. 실패는 재요청하지 않고 코드 기준선이 그 단계를 대신한다.
+
 ## 하지 않는 것
 
-- **위 호출 외에 모델을 부르지 않는다.** 동선 계산(5-10)에 모델을 쓰지 않는다 — 순수 계산이며 `shortlist` 모듈이 코드로 한다. 카톡 대화 해석에도 쓰지 않는다(5-9, v2에서도 정규식만 — "안정적으로 못 한다"는 기획안 판단 유지).
+- **위 호출(②, ③-a-1, v2 계획 보조 에이전트, v2 동선 에이전트) 외에 모델을 부르지 않는다.** 실패한 호출을 다시 부르지도 않는다. 동선 계산(5-10 「동선 보기」, v2 「AI 코스 짜기」의 코스 계산 모두)에 모델을 쓰지 않는다 — 순수 계산이며 코드가 한다. 모델은 동선 에이전트에서 사람의 말을 목표로 바꾸고 계산 도구를 고를 뿐이다. 카톡 대화 해석에도 쓰지 않는다(5-9, v2에서도 정규식만 — "안정적으로 못 한다"는 기획안 판단 유지).
 - 실격 판정 자체(하드 제약 통과/실패 결정)는 하지 않는다 — 모델은 라벨만 만들고, 그 라벨로 거르는 건 `recommend`의 코드다(가드레일 7).
 
 ## 넘지 말 것

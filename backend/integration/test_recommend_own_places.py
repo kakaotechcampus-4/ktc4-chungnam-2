@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from authz.core import Principal
 from places import load
@@ -95,6 +95,9 @@ def own_db(db_session):
     load.load_permit(db_session, FIXTURES / "permit_sample.csv", crs="EPSG:5174", encoding=None)
     load.load_tourapi(db_session, FIXTURES / "tourapi_items.json")
     load.load_labels(db_session, FIXTURES / "labels.csv", constraints=CONSTRAINTS, encoding=None)
+    # 적재 직후 값은 기본 false라 후보 풀이 비는다 — 이 테스트는 풀 연결을 보므로 추천 가능으로 켠다(#558).
+    db_session.execute(update(Place).values(curated=True))
+    db_session.flush()
     return db_session
 
 

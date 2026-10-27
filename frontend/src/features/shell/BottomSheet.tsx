@@ -56,7 +56,8 @@ export default function BottomSheet({
       <section aria-label="탭 내용" className="relative flex min-h-0 flex-1 flex-col bg-white">
         {top}
         {banner}
-        <div className="shrink-0 px-4 pb-2 pt-4">{header}</div>
+        {/* 위 여백은 패널 헤더의 pb-1(포커스 테두리 자리)과 합쳐 16px. */}
+        <div className="shrink-0 px-4 pb-2 pt-3">{header}</div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6">{children}</div>
       </section>
     )
@@ -115,7 +116,7 @@ export default function BottomSheet({
         top: dragging ? `calc(${STAGE_TOP[stage]} + ${dragY}px)` : STAGE_TOP[stage],
         bottom: SHEET_BOTTOM,
       }}
-      className={`fixed inset-x-0 z-30 flex flex-col rounded-t-2xl bg-white shadow-[0_-2px_12px_rgba(20,22,31,0.08)] ${
+      className={`fixed inset-x-0 z-30 flex flex-col rounded-t-2xl bg-white shadow-sheet ${
         dragging ? '' : 'transition-[top] duration-300 ease-out motion-reduce:transition-none'
       }`}
     >

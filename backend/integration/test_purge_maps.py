@@ -1,6 +1,6 @@
 """삭제한 지 오래된 지도 정리(#431, docs/architecture.md 1.4절) — 되돌릴 수 없는 작업이라 "무엇을 지우지 않는가"를
 지우는 것만큼 꼼꼼히 본다. 지도 4개(오래전 삭제 / 정확히 30일 전 삭제 / 최근 삭제 / 살아 있음)를 같은 두 사용자가
-실제 API로 만들고, 12개 테이블 전부에 행이 있는 상태에서 정리 명령을 돌린다."""
+실제 API로 만들고, 12개 테이블과 agent_* 7개 테이블(#512) 전부에 행이 있는 상태에서 정리 명령을 돌린다."""
 
 import contextlib
 import io
@@ -11,6 +11,16 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, update
 
+from agent.models import (
+    AgentCursor,
+    AgentReasonSummary,
+    AgentRun,
+    AgentRunAdvice,
+    AgentSettings,
+    AgentSuggestion,
+    AgentSuggestionView,
+)
+from agent.tests import rows as agent_rows
 from auth.models import User
 from auth.testing import session_cookie
 from common.events import EventLog
@@ -28,6 +38,9 @@ NOW = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
 TABLE_NAMES = [
     "shortlist_items", "routes", "evidence_lines", "candidates", "regions", "exclusions", "recommend_runs",
     "reactions", "pins", "event_log", "invites", "memberships", "maps",
+    # agent(#512) — 다른 모듈 테이블을 참조하지 않아 정리 순서와 무관하다
+    "agent_suggestion_views", "agent_suggestions", "agent_run_advice", "agent_reason_summaries",
+    "agent_runs", "agent_cursors", "agent_settings",
 ]
 
 
@@ -57,6 +70,7 @@ def _rows_by_map(db, map_id: str) -> dict[str, int]:
     """한 지도에 딸린 테이블의 행 수. 자식 테이블은 핀·run을 거쳐 센다."""
     pin_ids = select(Pin.id).where(Pin.map_id == map_id)
     run_ids = select(RecommendRun.id).where(RecommendRun.map_id == map_id)
+    suggestion_ids = select(AgentSuggestion.id).where(AgentSuggestion.map_id == map_id)
 
     def count(model, *where):
         return db.execute(select(func.count()).select_from(model).where(*where)).scalar_one()
@@ -75,6 +89,13 @@ def _rows_by_map(db, map_id: str) -> dict[str, int]:
         "invites": count(Invite, Invite.map_id == map_id),
         "memberships": count(Membership, Membership.map_id == map_id),
         "maps": count(Map, Map.id == map_id),
+        "agent_suggestion_views": count(AgentSuggestionView, AgentSuggestionView.suggestion_id.in_(suggestion_ids)),
+        "agent_suggestions": count(AgentSuggestion, AgentSuggestion.map_id == map_id),
+        "agent_run_advice": count(AgentRunAdvice, AgentRunAdvice.map_id == map_id),
+        "agent_reason_summaries": count(AgentReasonSummary, AgentReasonSummary.map_id == map_id),
+        "agent_runs": count(AgentRun, AgentRun.map_id == map_id),
+        "agent_cursors": count(AgentCursor, AgentCursor.map_id == map_id),
+        "agent_settings": count(AgentSettings, AgentSettings.map_id == map_id),
     }
 
 
@@ -115,6 +136,7 @@ def _build_map(a, b, db, pin_body, title: str) -> str:
     db.add(EvidenceLine(run_id=run.id, author_id="user_a", source="manual", text="t", badge="preferred"))
     db.add(Exclusion(map_id=map_id, category="음식점", place_id=f"ex_{title}", reason="dismissed",
                      run_id=run.id, requested_by="user_a"))
+    agent_rows.fill_map(db, map_id)   # agent_* 7개 테이블에 하나씩(열람은 둘)
     db.commit()
 
     rows = _rows_by_map(db, map_id)
@@ -199,7 +221,7 @@ def test_other_maps_of_the_same_users_survive_with_their_members_and_pins(world,
     a, _ = clients
     _run(db_session, "--older-than-days", "30")
 
-    assert {m["id"] for m in a.get("/maps").json()} == {world["live"]}
+    assert {m["id"] for m in a.get("/maps").json()["items"]} == {world["live"]}
     assert a.get(f"/maps/{world['live']}/pins").status_code == 200
     assert len(a.get(f"/maps/{world['live']}/members").json()) == 2
     assert db_session.get(User, "user_a") is not None

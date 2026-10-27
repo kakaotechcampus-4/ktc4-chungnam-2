@@ -43,8 +43,9 @@ def test_create_live_pin_returns_201_without_name_or_coordinates(app_client):
     assert body["kind"] == "일반" and body["visibility"] == "public"
     assert body["created_by"] == "user_1" and body["created_at"]
     assert body["reaction_summary"] == {"like": 0, "against": 0}
-    for absent in ("lat", "lng", "place_name", "place_url", "checks"):
+    for absent in ("lat", "lng", "place_name", "checks"):
         assert absent not in body
+    assert body["place_url"] == "https://place.map.kakao.com/9001"   # #445 — 저장하지 않고 응답 때 만든다
 
 
 def test_create_live_pin_stores_only_allowed_values(app_client, db_session):
@@ -166,6 +167,20 @@ def test_list_pins_returns_live_and_db_pins_together(app_client, db_session):
     assert len(listed) == 2
     assert listed[live["id"]]["source"] == "live" and "lat" not in listed[live["id"]]
     assert sum(1 for p in listed.values() if p["source"] == "db" and "lat" in p) == 1
+
+
+def test_live_pin_place_url_in_list_and_detail_and_non_kakao_id_omits_it(app_client, db_session):
+    live = _post_live(app_client).json()
+    other = _post_live(app_client, kakao_place_id="naver:77").json()
+    url = "https://place.map.kakao.com/9001"
+    listed = {p["id"]: p for p in app_client.get("/maps/map_1/pins", cookies=_auth()).json()}
+    assert listed[live["id"]]["place_url"] == url
+    assert "place_url" not in listed[other["id"]]
+    principal = Principal(user_id="user_1", map_id="map_1", role="member")
+    detail = pins_api.get_pin_response_for_viewer(db_session, pin_id=live["id"], viewer_id="user_1", principal=principal)
+    assert detail.place_url == url
+    detail_other = pins_api.get_pin_response_for_viewer(db_session, pin_id=other["id"], viewer_id="user_1", principal=principal)
+    assert detail_other.place_url is None
 
 
 def test_list_filters_and_counts_include_live_pins(app_client):

@@ -8,7 +8,7 @@ None으로 둔다. 라우터가 response_model_exclude_none=True를 쓰므로 �
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from authz.schemas import Permissions
 
@@ -28,6 +28,28 @@ class MapCreateRequest(BaseModel):
     start_date: date
     end_date: date
     region: MapRegion | None = None
+
+
+class OwnerTransferRequest(BaseModel):
+    """POST /maps/{mapId}/owner(#468) — 새 방장이 될 지금 구성원."""
+
+    user_id: str
+
+class MapUpdateRequest(BaseModel):
+    """PATCH /maps/{mapId}(#465) — 보낸 필드만 바꾼다. 값을 안 보낸 필드는 None이다. 빈 객체와
+    명시적 null은 422다(null로 region을 지우는 건 지원하지 않는다 — 바꾸기만)."""
+
+    title: str | None = Field(default=None, max_length=100)
+    start_date: date | None = None
+    end_date: date | None = None
+    region: MapRegion | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_value(self):
+        sent = {name: getattr(self, name) for name in self.model_fields_set}
+        if not sent or any(value is None for value in sent.values()):
+            raise ValueError("바꿀 필드를 하나 이상 보내야 하고 값은 null일 수 없습니다")
+        return self
 
 
 class NextOwner(BaseModel):
@@ -54,15 +76,26 @@ class Map(BaseModel):
     member_count: int
     # 삭제되지 않은 공개 핀 수 — pins.api.count_public_pins_by_map으로 센다(#313).
     pin_count: int | None = None
-    # shortlist_items 개수 — shortlist에 api.py가 없어 이번 PR은 계산하지 않는다
-    # (maps/for_Root.md 항목 5). 값이 없다는 사실 자체를 0으로 흐리지 않는다.
+    # shortlist_items 개수 — shortlist.api.count_confirmed로 채운다. 못 구하면 0이 아니라 None이다.
     confirmed_count: int | None = None
+
+
+class MapList(BaseModel):
+    """GET /maps(#623) — 내 지도 목록과 상한. 2026-10-19 전에는 Map 배열이었다."""
+
+    items: list[Map]
+    # maps/core.py::MAP_LIMIT — 409 MAP_LIMIT의 detail.limit과 같은 값이다.
+    limit: int
 
 
 class Invite(BaseModel):
     token: str
     url: str
     expires_at: datetime
+    # 아래 셋은 목록(GET /maps/{mapId}/invites)에서만 채운다(#467).
+    created_at: datetime | None = None
+    created_by_display_name: str | None = Field(default=None, max_length=50)
+    used_count: int | None = Field(default=None, ge=0)
 
 
 class InviteSummary(BaseModel):
@@ -83,7 +116,7 @@ class Member(BaseModel):
     # owner = 방장, 나머지 member. memberships.role이 정본이다(#369) — 위임되면 바뀌어서
     # 지도를 만든 사람(maps.created_by)과 다를 수 있다.
     role: Literal["owner", "member"] | None = None
-    # users 테이블이 없다(auth #4) — 채울 수 없다.
+    # auth.api.display_names로 채운다(탈퇴자는 '탈퇴한 구성원').
     display_name: str | None = None
-    # 접속 상태 추적이 realtime에 아직 없다 — 채울 수 없다(maps/for_Root.md 항목 5).
+    # v1은 접속 상태를 추적하지 않아 늘 비운다(docs/events.md member.presence).
     online: bool | None = None

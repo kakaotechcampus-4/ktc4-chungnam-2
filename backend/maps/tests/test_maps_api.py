@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import select, update
 
 from auth.testing import ensure_users, session_cookie
+from maps.core import MAP_LIMIT
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
 
@@ -119,7 +120,7 @@ def test_list_members_marks_creator_as_owner_and_joiner_as_member(app_client):
 
 
 def test_list_members_includes_display_name_when_user_row_exists(app_client, db_session):
-    """auth.api.display_names 배선(maps/for_Root.md 항목 5 해결) 회귀 테스트 — 실제 users
+    """auth.api.display_names 배선 회귀 테스트 — 실제 users
     행이 있으면 display_name이 채워져야 한다(인증이 users 행을 요구하므로(#126)
     행이 없는 구성원은 탈퇴 등으로 행이 사라진 경우뿐이다)."""
     ensure_users(db_session, "user_1", display_names={"user_1": "철수"})
@@ -191,7 +192,20 @@ def test_get_map_with_region_round_trips(app_client):
 def test_list_maps_without_membership_is_empty(app_client):
     resp = app_client.get("/maps", cookies=_auth("user_lonely"))
     assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.json() == {"items": [], "limit": MAP_LIMIT}
+
+
+def test_list_maps_limit_matches_the_map_limit_409_detail(app_client):
+    """목록의 limit과 409 MAP_LIMIT의 detail.limit은 같은 값이다(#623) — 화면이 둘 중 무엇을 읽든
+    같은 상한을 보여 준다."""
+    for i in range(MAP_LIMIT):
+        _create_map(app_client, user_id="user_1", title=f"지도 {i}")
+    over = app_client.post("/maps", json=_create_body(), cookies=_auth("user_1"))
+    assert (over.status_code, over.json()["code"]) == (409, "MAP_LIMIT")
+
+    mine = app_client.get("/maps", cookies=_auth("user_1")).json()
+    assert mine["limit"] == over.json()["detail"]["limit"] == MAP_LIMIT
+    assert len(mine["items"]) == MAP_LIMIT
 
 
 def test_list_maps_without_cookie_is_401(app_client):
@@ -216,7 +230,7 @@ def test_list_maps_returns_only_my_maps_most_recent_first(app_client, db_session
     resp = app_client.get("/maps", cookies=_auth("user_1"))
     assert resp.status_code == 200
     body = resp.json()
-    assert [m["id"] for m in body] == [second["id"], first["id"]]
+    assert [m["id"] for m in body["items"]] == [second["id"], first["id"]]
 
 
 def test_list_maps_member_count_has_no_n_plus_one(app_client):
@@ -229,7 +243,7 @@ def test_list_maps_member_count_has_no_n_plus_one(app_client):
     app_client.post(f"/invites/{invite['token']}/accept", cookies=_auth("user_2"))
 
     resp = app_client.get("/maps", cookies=_auth("user_1"))
-    body = {m["id"]: m for m in resp.json()}
+    body = {m["id"]: m for m in resp.json()["items"]}
     assert body[map_a["id"]]["member_count"] == 2
     assert body[map_b["id"]]["member_count"] == 1
 
@@ -245,7 +259,7 @@ def test_list_maps_includes_region_when_present(app_client):
     ).json()
     without_region = _create_map(app_client, title="지역 없는 여행")
 
-    body = {m["id"]: m for m in app_client.get("/maps", cookies=_auth()).json()}
+    body = {m["id"]: m for m in app_client.get("/maps", cookies=_auth()).json()["items"]}
     assert body[with_region["id"]]["region"] == {
         "label": "부산", "lat": pytest.approx(35.1), "lng": pytest.approx(129.0)
     }
@@ -313,7 +327,7 @@ def test_withdrawn_member_is_excluded_from_member_count_and_members(app_client, 
     _withdraw(db_session, "user_2")
 
     assert app_client.get(f"/maps/{map_id}", cookies=_auth("user_1")).json()["member_count"] == 1
-    listed = app_client.get("/maps", cookies=_auth("user_1")).json()
+    listed = app_client.get("/maps", cookies=_auth("user_1")).json()["items"]
     assert [m["member_count"] for m in listed if m["id"] == map_id] == [1]
     assert count_members(db_session, map_id) == 1
     # 구성원 목록도 탈퇴자를 뺀다(#439) — 길이가 member_count와 같다
