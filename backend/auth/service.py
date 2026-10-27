@@ -8,6 +8,7 @@ auth/core.py(순수 함수)에 있다(docs/code-quality.md 기능형 코어/명�
 
 import logging
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -168,6 +169,12 @@ def login_guest_with_kakao_code(db: Session, *, code: str, guest_user_id: str) -
     return claim_guest(
         db, guest_user_id=guest_user_id, provider="kakao", provider_user_id=provider_user_id, display_name=display_name,
     )
+
+
+def create_qa_user(db: Session, *, display_name: str) -> User:
+    """스테이징 전용 QA 로그인(#788) — 부를 때마다 새 사용자와 로그인 수단(provider='qa', 새 uuid)을 만든다.
+    수단이 있으니 게스트가 아니다. 카카오 첫 로그인과 같은 생성 경로를 쓴다."""
+    return find_or_create_user(db, provider="qa", provider_user_id=str(uuid.uuid4()), display_name=display_name)
 
 
 def get_active_user_or_401(db: Session, *, user_id: str) -> User:

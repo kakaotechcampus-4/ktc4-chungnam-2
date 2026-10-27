@@ -17,7 +17,7 @@
 
 순서대로 한다.
 
-1. 환경 변수를 맞춘다. 키 목록은 `backend/.env.example`이다(DATABASE_URL, REDIS_URL, KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET, KAKAO_REDIRECT_URI, FRONTEND_BASE_URL, FRONTEND_LOGIN_REDIRECT_URL, SESSION_SECRET, PINGO_ENV, CORS_ALLOW_ORIGINS, PLACES_MODE, ELICE_ML_API_BASE_URL, ELICE_ML_API_KEY, LLM_MODE). 배포는 `PINGO_ENV=prod`다. 값은 저장소나 채팅에 남기지 않는다. 새 키를 더한 PR은 이 목록도 고친다.
+1. 환경 변수를 맞춘다. 키 목록은 `backend/.env.example`이다(DATABASE_URL, REDIS_URL, KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET, KAKAO_REDIRECT_URI, FRONTEND_BASE_URL, FRONTEND_LOGIN_REDIRECT_URL, SESSION_SECRET, PINGO_ENV, CORS_ALLOW_ORIGINS, PLACES_MODE, ELICE_ML_API_BASE_URL, ELICE_ML_API_KEY, LLM_MODE, QA_LOGIN_SECRET — 스테이징 전용, 운영에는 넣지 않는다). 배포는 `PINGO_ENV=prod`다. 값은 저장소나 채팅에 남기지 않는다. 새 키를 더한 PR은 이 목록도 고친다.
 2. 마이그레이션을 올린다: `python -m alembic upgrade head`(backend에서). head는 하나여야 하고 CI(backend-test)가 같은 명령으로 확인한다.
 3. 코드를 배포한다.
 4. 아래 "데이터가 바뀔 때"에 해당하는 단계가 이번 배포에 있는지 확인한다.

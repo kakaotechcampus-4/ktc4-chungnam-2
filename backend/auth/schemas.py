@@ -30,11 +30,14 @@ class UserResponse(BaseModel):
     is_guest: bool = False   # 스펙 User.is_guest — 항상 내려 보낸다(없으면 false로 보는 쪽도 호환)
 
 
-class UserUpdateRequest(BaseModel):
-    """PATCH /auth/me 요청 — api-spec.yaml의 UserUpdateRequest(1~50자). 앞뒤 공백을 먼저
-    걷어낸 뒤 길이를 재므로 공백만 든 값은 빈 값과 같이 422가 된다."""
+# 표시 이름 — 앞뒤 공백을 먼저 걷어낸 뒤 1~50자. 공백만 든 값은 빈 값과 같이 422다.
+DisplayName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
 
-    display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+
+class UserUpdateRequest(BaseModel):
+    """PATCH /auth/me 요청 — api-spec.yaml의 UserUpdateRequest(1~50자)."""
+
+    display_name: DisplayName
 
 
 class GuestJoinRequest(BaseModel):
@@ -42,8 +45,16 @@ class GuestJoinRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+    display_name: DisplayName
     invite_token: str
+
+
+class QaLoginRequest(BaseModel):
+    """POST /auth/qa-login 요청 — api-spec.yaml의 QaLoginRequest. 스테이징 전용(#788)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: DisplayName
 
 
 class GuestJoinResult(BaseModel):

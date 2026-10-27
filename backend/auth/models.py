@@ -34,7 +34,7 @@ class UserIdentity(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     # users는 탈퇴해도 soft delete라 CASCADE는 서비스에서 일어나지 않는다. 테스트 정리처럼 users 행을 실제로 지울 때만 따라 지운다
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    provider: Mapped[str] = mapped_column(String, nullable=False)  # 'kakao'뿐이지만 값 제약은 서비스 계층에서
+    provider: Mapped[str] = mapped_column(String, nullable=False)  # 'kakao'|'qa'(스테이징 전용, #788). 값 제약은 서비스 계층에서
     provider_user_id: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
