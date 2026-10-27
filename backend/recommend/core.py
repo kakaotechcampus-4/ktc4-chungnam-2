@@ -15,7 +15,7 @@ import math
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Any, Collection, Iterable, Mapping, Sequence
+from typing import Any, Collection, Iterable, Mapping, NamedTuple, Sequence
 
 from common.errors import AppError
 from common.geo import WALKING_SPEED_M_PER_MIN, haversine_distance_m
@@ -319,26 +319,35 @@ def out_of_season_keys(start: date | None, end: date | None) -> frozenset[str]:
     return frozenset(key for key, season in SEASON_MONTHS.items() if not season & months)
 
 
+class LineUse(NamedTuple):
+    enforced: bool
+    not_enforced_reason: str | None
+    effect: str | None   # 쓰이면 "filter"(후보를 거른다, required) | "score"(점수만, preferred), 안 쓰이면 None(#751)
+
+
 def evidence_line_use(
     badge: str, fact_key: str | None, wants: bool | None, category: str, off_season: Collection[str],
-) -> tuple[bool, str | None]:
-    """근거 줄이 이번 실행에서 실제로 쓰이는지 (enforced, not_enforced_reason)으로 정한다(#740). 파이프라인이 줄을 고르는
+) -> LineUse:
+    """근거 줄이 이번 실행에서 실제로 쓰이는지와 어떻게 쓰이는지를 정한다(#740, #751). 파이프라인이 줄을 고르는
     기준이자 근거 응답이 보이는 값이라 이 함수 하나가 정한다. 이유는 no_key → off_season → 배지별 순서로 고른다:
     required+hard 키는 카테고리에 맞아야, soft 키(required·preferred)는 방향(wants)이 있어야 쓰인다.
-    그 밖(hard도 soft도 아닌 키, preferred인 hard 키)은 not_for_category, reference는 no_direction."""
+    그 밖(hard도 soft도 아닌 키, preferred인 hard 키)은 not_for_category, reference는 no_direction.
+    쓰이는 required 줄은 실격 필터(_hard_fact_keys_from, _soft_requirements_from)에, preferred 줄은 점수에 들어간다."""
     if fact_key is None:
-        return False, "no_key"
+        return LineUse(False, "no_key", None)
     if fact_key in off_season:
-        return False, "off_season"
+        return LineUse(False, "off_season", None)
     if badge == "required" and fact_key in constraints.HARD_REGISTRY:
         if fact_key in constraints.hard_fact_keys_for(category):
-            return True, None
-        return False, "not_for_category"
+            return LineUse(True, None, "filter")
+        return LineUse(False, "not_for_category", None)
     if badge in ("required", "preferred") and fact_key in constraints.SOFT_FACT_KEYS:
-        return (True, None) if wants is not None else (False, "no_direction")
+        if wants is None:
+            return LineUse(False, "no_direction", None)
+        return LineUse(True, None, "filter" if badge == "required" else "score")
     if badge not in ("required", "preferred"):
-        return False, "no_direction"
-    return False, "not_for_category"
+        return LineUse(False, "no_direction", None)
+    return LineUse(False, "not_for_category", None)
 
 
 # ---------------------------------------------------------------- 카카오맵 검색 링크 (#798, #800)
@@ -436,19 +445,41 @@ def trip_open_status(week_status: Mapping[int, str] | None, weekdays: Sequence[i
     return "open" if "open" in statuses else "unknown"
 
 
-RANKING_STAGE = "상위 3곳 선정"  # 깔때기의 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다
+# 5-6 깔때기 단계 (키, 라벨) — 표의 순서가 깔때기 순서다(#751). 라벨은 화면에 보이고 last_funnel에 저장되는 글자, 키는
+# recommend.api를 읽는 모듈이 단계를 찾는 이름이다. 라벨을 바꾸면 옛 라벨로 저장된 깔때기는 키를 못 찾는다(None).
+FUNNEL_STAGES: tuple[tuple[str, str], ...] = (
+    ("pool", "카테고리 후보 풀"),
+    ("radius", "반경 밖 제거"),
+    ("closed", "영업 종료 제거"),
+    ("not_recommendable", "추천 가능 아님 제거"),
+    ("disqualify", "실격 조건 제거"),
+    ("excluded", "이미 제안·거절됨"),
+    ("ranking", "상위 3곳 선정"),   # 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다
+)
 
 
-def funnel_counts(stage_removed: list[tuple[str, int]]) -> list[dict]:
-    """5-6 깔때기 표 — (라벨, 이번 단계에서 제거된 수) 쌍의 리스트를 api-spec.yaml
-    FunnelEntry 모양으로 그대로 옮긴다."""
-    return [{"label": label, "removed_count": removed} for label, removed in stage_removed]
+def funnel_counts(removed: Mapping[str, int]) -> list[dict]:
+    """5-6 깔때기 표 — 단계 키 → 이번 단계에서 제거된 수를 FUNNEL_STAGES 순서대로 api-spec.yaml FunnelEntry 모양
+    ({label, removed_count})으로 옮긴다. 저장 값과 HTTP 응답에는 키가 없다(keyed_funnel이 api에서 붙인다)."""
+    return [{"label": label, "removed_count": removed[key]} for key, label in FUNNEL_STAGES]
+
+
+def funnel_stage_key(label: str) -> str | None:
+    """깔때기 라벨 → 단계 키. 표에 없는 라벨(옛 문구 등)은 None."""
+    return next((key for key, stage_label in FUNNEL_STAGES if stage_label == label), None)
+
+
+def keyed_funnel(funnel: Sequence[Mapping[str, Any]]) -> list[dict]:
+    """저장 모양 깔때기 `[{label, removed_count}]`의 사본에 단계마다 key를 붙인다 — recommend.api가 내주는 모양(#751)."""
+    return [
+        {"key": funnel_stage_key(e["label"]), "label": e["label"], "removed_count": e["removed_count"]} for e in funnel
+    ]
 
 
 def passed_count(result_count: int, funnel: Sequence[Mapping[str, Any]]) -> int:
-    """필터를 모두 통과한 곳의 수 — 상위 3곳을 고르기 전(#587). 결과 수 + RANKING_STAGE 단계 탈락. 결과 수는 최대 3이라
-    "조건을 바꾸면 몇 곳이 더 남나"는 이 수로 비교한다. 단계 라벨은 이 모듈이 정하고 읽으므로 밖에서 라벨 글자를 볼 일이 없다."""
-    return result_count + sum(e["removed_count"] for e in funnel if e["label"] == RANKING_STAGE)
+    """필터를 모두 통과한 곳의 수 — 상위 3곳을 고르기 전(#587). 결과 수 + ranking 단계 탈락. 결과 수는 최대 3이라
+    "조건을 바꾸면 몇 곳이 더 남나"는 이 수로 비교한다."""
+    return result_count + sum(e["removed_count"] for e in funnel if funnel_stage_key(e["label"]) == "ranking")
 
 
 def check_retry_limit(attempt_no: int) -> None:
