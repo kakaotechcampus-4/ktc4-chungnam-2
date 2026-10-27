@@ -42,7 +42,8 @@ def latest_run_place_ids(db: Session, *, map_id: str, requested_by: str, categor
 def get_readiness(db: Session, *, map_id: str, category: str) -> dict:
     """agent의 반대 후 정체 진단(docs/agent-v2.md 6.2, 10절 get_readiness, #530)이 부른다 — 그 카테고리가 추천
     준비(⓪)를 통과했나. `{ready, answered_count, required_count}`, `GET /maps/{mapId}/recommend/readiness`의 한
-    카테고리 값과 같다(같은 함수 flows.readiness_for_category). 권한은 보지 않는다(agent가 구성원 범위에서 부른다).
+    카테고리 값에서 정예 장소 수(curated_nearby, external_search, #798)를 뺀 것과 같다(같은 함수
+    flows.readiness_for_category). 권한은 보지 않는다(agent가 구성원 범위에서 부른다).
     추천 대상이 아닌 카테고리(숙소·기타)는 ValueError — 라우터 응답에도 그 키가 없다. 읽기 전용, 커밋하지 않는다."""
     if category not in categories.recommendable():
         raise ValueError(f"추천 대상이 아닌 카테고리: {category}")

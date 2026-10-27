@@ -21,7 +21,7 @@ from pins.models import Reaction as ReactionRow
 from recommend import constraints, core, flows, service
 from recommend.models import Candidate, Exclusion, RecommendRun, Region
 from recommend.models import EvidenceLine as EvidenceLineRow
-from places.schemas import FactLabel
+from places.schemas import FactLabel, PlaceInfo
 from recommend.deps import DevEvidencePlanGateway
 from recommend.ports import PlaceStub
 
@@ -97,9 +97,17 @@ class _FakePlaceSearch:
     def search_nearby(self, *, category, circles):
         return self._places
 
-    def get_names(self, place_ids):
-        return {p.place_id: f"이름-{p.place_id}" for p in self._places if p.place_id in set(place_ids)}
+    def get_places(self, place_ids):
+        return {
+            p.place_id: PlaceInfo(p.place_id, f"이름-{p.place_id}", p.lat, p.lng, "음식점")
+            for p in self._places if p.place_id in set(place_ids)
+        }
 
+    def count_curated(self, *, category, circles):
+        return len(self._places)
+
+
+CURATED_ONE = _FakePlaceSearch([PlaceStub(place_id="p1", lat=35.1, lng=129.0)])   # readiness의 정예 장소 수 1(#798)
 
 class _FakePlaceFacts:
     """{place_id: {fact_key: value}}를 place_facts 라벨(known)로 바꿔 돌려준다. 없는 장소·키는 라벨 없음 = unknown."""
@@ -480,9 +488,9 @@ def test_get_readiness_counts_opinion_pins_per_category(db_session):
     _react(db_session, pin, user_id="user_1", type="like")
     _react(db_session, pin, user_id="user_2", type="like")   # 같은 핀의 의견 둘 — 핀 1곳
 
-    readiness = flows.get_readiness(db_session, map_id="map_1")
+    readiness = flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)
 
-    assert readiness["음식점"] == {"ready": True, "answered_count": 1, "required_count": 1}
+    assert readiness["음식점"] == {"ready": True, "answered_count": 1, "required_count": 1, "curated_nearby": 1}
     assert readiness["카페"] == {"ready": False, "answered_count": 0, "required_count": 1}
 
 
@@ -491,8 +499,8 @@ def test_get_readiness_opens_for_a_solo_map_with_one_opinion_pin(db_session):
     pin = _make_pin(db_session, category="카페")
     _react(db_session, pin, user_id="user_1", type="like")
 
-    readiness = flows.get_readiness(db_session, map_id="map_1")
-    assert readiness["카페"] == {"ready": True, "answered_count": 1, "required_count": 1}
+    readiness = flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)
+    assert readiness["카페"] == {"ready": True, "answered_count": 1, "required_count": 1, "curated_nearby": 1}
 
 
 def test_get_readiness_ignores_opinions_of_non_members_and_deleted_pins(db_session):
@@ -503,7 +511,7 @@ def test_get_readiness_ignores_opinions_of_non_members_and_deleted_pins(db_sessi
     alive = _make_pin(db_session, category="음식점")
     _react(db_session, alive, user_id="left_user", type="against", reason_text="멀어요")   # 나간 사람
 
-    readiness = flows.get_readiness(db_session, map_id="map_1")
+    readiness = flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)
     assert readiness["음식점"]["answered_count"] == 0 and readiness["음식점"]["ready"] is False
 
 
@@ -782,7 +790,8 @@ def test_readiness_counts_a_live_pin_with_an_opinion(db_session):
     live_pin = _make_live_pin(db_session, category="카페")
     _react(db_session, live_pin, user_id="user_1", type="like")
 
-    assert flows.get_readiness(db_session, map_id="map_1")["카페"] == {
+    # 좌표가 없어 기본 지역이 없다 — 정예 장소 수(#798)를 내지 않는다
+    assert flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)["카페"] == {
         "ready": True, "answered_count": 1, "required_count": 1,
     }
 

@@ -26,10 +26,19 @@ class Check(BaseModel):
     needs_check: bool
 
 
+class ExternalSearch(BaseModel):
+    """카카오맵 검색 링크(#798) — 결과가 없거나 적을 때 사람이 밖에서 찾는 출구. AI 추천 결과가 아니다."""
+    query: str = Field(max_length=100)
+    url: str = Field(max_length=2000)
+
+
 class Readiness(BaseModel):
     ready: bool
     answered_count: int
     required_count: int
+    # 기본 지역에서 넓히기 상한 안의 정예 장소 수(#798). 의견 핀이 없어 기본 지역이 없으면 둘 다 없다
+    curated_nearby: int | None = Field(default=None, ge=0)
+    external_search: ExternalSearch | None = None  # curated_nearby가 0일 때만
 
 
 class RunCreateRequest(BaseModel):
@@ -135,9 +144,16 @@ class Candidate(BaseModel):
     reason: str | None = None
     member_fulfillment: MemberFulfillment | None = None
     place_source: PlaceSource | None = None
+    place_url: str | None = Field(default=None, max_length=2000)  # 「카카오맵에서 보기」(places.api.place_link, #798)
     visibility: Literal["private", "published"]
     published_pin_id: str | None = None
     permissions: Permissions
+
+
+# 후보가 이 값 미만이면 결과가 적다 — RecommendResult.external_search를 싣는 기준(#798). agent의 추천 막힘 기준
+# (agent.constants.BLOCKED_RUN_MAX_RESULTS)도 이 값을 받는다(#800). recommend.api가 아니라 여기 두는 이유: agent.constants는
+# auth 경로(auth.service → agent.api)에 있어 recommend.api를 import하면 순환한다.
+FEW_RESULTS = 3
 
 
 class FunnelEntry(BaseModel):
@@ -150,3 +166,4 @@ class RecommendResult(BaseModel):
     funnel: list[FunnelEntry]
     regions: list[Region]
     candidates: list[Candidate]
+    external_search: ExternalSearch | None = None  # 후보가 FEW_RESULTS곳 미만일 때만(#798)

@@ -64,9 +64,12 @@ def _run_response(run) -> RecommendRunResponse:
     )
 
 
-@router.get("/maps/{mapId}/recommend/readiness", response_model=dict[str, Readiness])
-def get_readiness(mapId: str = Path(...), _principal: Principal = RecommendForMap, db: Session = DbSession):
-    return flows.get_readiness(db, map_id=mapId)
+@router.get("/maps/{mapId}/recommend/readiness", response_model=dict[str, Readiness], response_model_exclude_none=True)
+def get_readiness(
+    mapId: str = Path(...), _principal: Principal = RecommendForMap, db: Session = DbSession,
+    place_search: PlaceSearchGateway = PlaceSearchGatewayDep,
+):
+    return flows.get_readiness(db, map_id=mapId, place_search=place_search)
 
 
 @router.get("/maps/{mapId}/runs", response_model=list[RunSummary])
