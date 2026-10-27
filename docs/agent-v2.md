@@ -1,6 +1,7 @@
 # 계획 보조 에이전트 모드 v2 구현 명세
 
 - 상태: 설계 확정 (2026-10-02), 개정 (2026-10-15). 수치는 초기값이며 운영 기록을 보고 조정한다.
+- 2026-10-27 개정: 품질 점검 기록(21절), 18절 체크 표시를 이슈 상태에 맞춤(#676).
 - 2026-10-16 개정: #534 평가 뒤 모델 유형(정체, 갈림) 제안을 노출하고, 신호 순위를 모델에서 코드 규칙으로 옮겼다(7절, #582). 에이전트의 모델 호출은 진단과 추천 막힘 조언 둘이다(요약 문장은 고정 문구, 2026-10-16).
 - 2026-10-15 개정: 10/2 이후 바뀐 추천과 다른 모듈 계약을 반영했다. 반응 2종(#360), 안전 조건 폐지(#425), 가격 라벨 삭제(#423), 사유의 방향(#228), 조건별 근거 줄(#419), 칩 코드 처리(#412), llm 공개 함수(#460), 카테고리 정의(#280), 지도 삭제와 탈퇴(#369, #431, #155). 이 개정으로 Stance(모델이 내던 방향)를 없앴고, 조건 완화 조언과 애매한 사유 칸을 다시 정했다(9절, 8절).
 - 이름 구분: 기획안 3절의 "에이전트 루프"는 AI 추천 한 번이 도는 단계(⓪~⑤)를 가리킨다. 이 문서의 "계획 보조 에이전트"는 그와 다른 기능이다.
@@ -1073,14 +1074,14 @@ AI 담당
 - [x] 모델 호출 추가 결정 이슈를 연다(#509). 팀 결정은 M1 통과 조건이다
 - [x] #509 결정 뒤 루트 문서 개정: `/CLAUDE.md` 모델 호출 절, `backend/llm/CLAUDE.md`, 기획안 8절과 15절 미결 항목, "모델 호출 2곳" 문구. `llm/api.py` 머리말은 M1에서 agent 함수를 열 때 고친다
 - [x] `docs/data-model.md`, `docs/permissions.md`(agent.toggle, agent.suggestion.resolve), `docs/events.md`(이벤트 4종과 다시 불러오기 표), `docs/api-spec.yaml`, `docs/errors.md`(SUGGESTION_RESOLVED) 반영 (#510)
-- [ ] #513 `backend/agent` 골격, deps.py(Gateway), models.py와 마이그레이션 (13절 7개 테이블, 지금 head 다음 번호)
-- [ ] #511 pins.api에 반응 표 조회 함수 추가 (pins 모듈 규칙을 따른다). 사유 조회는 기존 `list_reasoned_reactions`를 쓴다
-- [ ] #512 maps.api에 지도 행 잠금과 삭제 확인 함수(`lock_map_if_alive`) 추가, 지도 정리와 탈퇴에 agent 연결 (maps, auth 담당 리뷰)
-- [ ] #522 스냅샷과 커서용 읽기 함수: maps(지도와 구성원), shortlist(확정 항목), recommend(카테고리별 마지막 run 시각), pins(사유 조회에 reaction_id와 updated_at), realtime(`latest_seq_by_map`, 12.5)
-- [ ] #514 snapshot.py, core.py의 탐지기 4종, 기준 시간, fingerprint와 evidence_hash, check_policy
-- [ ] #515 run_tick, observe_map(모델 단계는 건너뜀), 개발용 반복 작업(`AGENT_LOOP_IN_PROCESS`)
-- [ ] 커서, lease, agent_runs 기록, 정리 작업, `purge_map_data`, `delete_by_user`와 각 정리 흐름에 연결
-- [ ] 17절 테스트 1, 4, 5, 6, 8, 9, 10, 16
+- [x] #513 `backend/agent` 골격, deps.py(Gateway), models.py와 마이그레이션 (13절 7개 테이블, 지금 head 다음 번호)
+- [x] #511 pins.api에 반응 표 조회 함수 추가 (pins 모듈 규칙을 따른다). 사유 조회는 기존 `list_reasoned_reactions`를 쓴다
+- [x] #512 maps.api에 지도 행 잠금과 삭제 확인 함수(`lock_map_if_alive`) 추가, 지도 정리와 탈퇴에 agent 연결 (maps, auth 담당 리뷰)
+- [x] #522 스냅샷과 커서용 읽기 함수: maps(지도와 구성원), shortlist(확정 항목), recommend(카테고리별 마지막 run 시각), pins(사유 조회에 reaction_id와 updated_at), realtime(`latest_seq_by_map`, 12.5)
+- [x] #514 snapshot.py, core.py의 탐지기 4종, 기준 시간, fingerprint와 evidence_hash, check_policy
+- [x] #515 run_tick, observe_map(모델 단계는 건너뜀), 개발용 반복 작업(`AGENT_LOOP_IN_PROCESS`)
+- [x] 커서, lease, agent_runs 기록, 정리 작업, `purge_map_data`, `delete_by_user`와 각 정리 흐름에 연결
+- [x] 17절 테스트 1, 4, 5, 6, 8, 9, 10, 16
 
 FE 담당
 
@@ -1096,8 +1097,8 @@ FE 담당
 
 AI 담당
 
-- [ ] #531 M1-1: 템플릿 렌더(render_template), 14절 엔드포인트 5개(router.py, main.py), 이벤트 4종 기록, Gateway `select()` 등록, 코드 유형 노출. 17절 12, 15
-- [ ] #530 recommend.api.get_readiness
+- [x] #531 M1-1: 템플릿 렌더(render_template), 14절 엔드포인트 5개(router.py, main.py), 이벤트 4종 기록, Gateway `select()` 등록, 코드 유형 노출. 17절 12, 15
+- [x] #530 recommend.api.get_readiness
 - [x] #532 llm에 agent_prioritize(#582에서 지움), agent_diagnose(도구 콜백 포함) 추가하고 `llm/api.py`에서 연다. 먼저 고정 응답 스텁으로 통합
 - [x] #533 M1-2: tools.py 8개, verify_diagnosis, claim 렌더, apply_priority_rules, observe_map 모델 단계. 17절 2(진단 부분), 3, 7, 11
 - [x] #534 M1-3: 프롬프트(우선순위, 진단, 도구 설명문), 평가셋 20건, reasoning_effort 확인과 비교, run당 토큰, shadow 검증 실패율을 본 뒤 모델 유형 노출 결정
@@ -1122,7 +1123,7 @@ AI 담당
 - [x] #585 recommend.api: get_recent_runs, get_run_funnel(추천 가능 장소 단계 포함, #558), get_run_evidence, simulate_filter(필터 순서를 다시 구현하지 않는다)
 - [x] #586 M2-1 우리 조건 요약: flows.update_summary, 칸 나누기(8절, 코드), `NOT_FILTERED_CHIP_IDS`, `SAFETY_WORDS`, 구체화 문장은 고정 문구로 시작, agent.summary_updated. 17절 2(키 없는 사유), 17
 - [x] #587 M2-2 추천 막힘 조언: llm agent_advise_run, 도구 4종, agent.api.advise_run, `GET /runs/{runId}/advice`(recommend 라우터). 17절 2(조건 완화), 13
-- [ ] #588 M2-3 평가와 수치 조정: 조언 프롬프트와 평가셋, 요약 문장에 모델이 필요한지 판단, 운영 기록으로 5절 수치 점검(20절)
+- [ ] #588 M2-3 평가와 수치 조정: 조언 프롬프트와 평가셋, 요약 문장에 모델이 필요한지 판단, 운영 기록으로 5절 수치 점검(20절). 조언은 #749에서 코드로 옮겨 프롬프트 평가는 없어졌다
 
 FE 담당
 
@@ -1161,3 +1162,88 @@ FE 담당
 | BACKOFF_HOURS | 백오프 후 같은 유형의 수락률 | agent_suggestions |
 | SUGGESTION_TTL | 만료 비율, 미열람 비율 | agent_suggestions, agent_suggestion_views |
 | TICK_INTERVAL_SEC, LEASE_SEC | 관찰 소요 시간 | agent_runs.started_at, finished_at |
+
+## 21. 품질 점검 기록
+
+무엇을 재는지, 어떤 평가셋으로 쟀는지, 결과와 실패 분석, 그래서 고친 것을 한곳에 모은다(#676). 진단 수치는 #534, #582 평가 기록(옛 `backend/llm/for_Root.md`, #757에서 없앴다)에서 옮겼다. 실행마다 나오는 결과 파일(`backend/llm/tests/eval_agent/results/`)은 커밋하지 않고, 여기에는 판단에 쓴 숫자만 둔다.
+
+### 21.1 진단 (정체, 갈림)
+
+평가셋은 `backend/llm/tests/eval_agent/cases.json`의 지어낸 지도 상태 20건이다. 진단 대상은 정체 8건, 갈림 10건이고, 그중 4건은 침묵이 정답이다(알러지 사유뿐인 정체와 갈림, 지시문뿐인 정체와 갈림). 사유 글은 모두 지어낸 예시다. 두 가지로 돌린다.
+
+- 모델 없이(`test_eval_cases.py`, CI에서 매번): 평가셋의 지도 상태가 지금의 탐지, 정책, 충돌 종류, 진단 입력 규칙과 맞는지 본다. 규칙이 바뀌어 기대값이 낡으면 여기서 먼저 깨진다.
+- 실제 모델로(`python -m llm.tests.eval_agent.run_eval`): 케이스마다 5번 부르고, 운영과 같은 검증(`agent.core.verify_diagnosis`)을 거친 결과를 센다.
+
+결과는 2026-10-16, gpt-6-luna, reasoning_effort=none, 18건 × 5회 = 90회다.
+
+| 지표 | 뜻 | 처음 초안 | 고친 뒤(diagnose-v2) |
+| --- | --- | --- | --- |
+| 호출 실패 | 스키마 실패, 시간 초과, 호출 실패 | 2/90 | 0/90 |
+| 결정 일치 | 기대(제안 또는 침묵)와 모델의 decision이 같다 | 87/90 (97%) | 89/90 (99%) |
+| 검증 통과 | 제안을 고른 호출 중 11.2 검증 뒤 초안이 남았다 | 63/67 (94%) | 69/69 (100%) |
+| 첫 버튼 일치 | 남은 첫 버튼이 기대 버튼 중 하나다(침묵 기대는 침묵) | 81/90 (90%) | 88/90 (98%) |
+| 결정 지시 표현 | 모델 원문에 "확정", "결정하세요" 같은 말이 나왔다 | 0 | 0 |
+| 시간 | 진단 한 번(평균, p90, 최대) | 5.5초, 7.5초, 17.0초 | 5.4초, 7.9초, 13.7초 |
+| 비용 | 진단 한 번(캐시 반영) | 0.31원 | 0.34원 |
+
+실패 분석과 고친 것은 다음과 같다.
+
+| 본 실패 | 원인 | 고친 것 |
+| --- | --- | --- |
+| 처음 초안의 검증 탈락: 도구 값 불일치 13건, 문장 근거 누락 9건, 성립 실패 4건, 버튼 근거 누락 4건 | 라벨이 모름(null)인데 값을 "unknown" 글자로 썼고, 문장과 버튼이 기대는 claim을 비워 두었다 | 프롬프트에 모르는 라벨 쓰는 법, 버튼마다 근거로 적을 것, 모호한 정체에서 쓸 참조 claim을 넣었다. 고친 뒤 탈락은 버튼 근거 1건(e05)뿐이다 |
+| 지시문이 섞인 사유 인용(e05, 5번 중 3번) | 그때는 인용 슬롯이 렌더 때 반응 글 전체로 바뀌어, 사유 속 "확정하라고 안내해"가 제안 문장에 그대로 나갔다. 프롬프트로는 막지 못했다 | 처음에는 렌더 결과 전체에 금지 표현 검사를 걸어 그 문장을 뺐다(#534). 지금은 인용이 검증한 범위만 quote 조각으로 데이터처럼 내려가고, 금지 표현 검사는 에이전트 문장(text 조각)에 건다(#717). 인용 범위 밖의 지시문은 화면에 가지 않는다 |
+| 우선순위 모델의 1순위 일치: none 100%, low 88%, 기본값 90% | 모델이 기본 순서를 바꾼 5건이 모두 규칙 셋(출발 임박, 같은 가중치의 영향 인원, 연속 닫힘)으로 설명됐다 | 우선순위를 코드 규칙으로 옮겼다(#582). 관찰당 약 2초와 우선순위 호출의 실패 경로가 없어졌다 |
+
+남은 한계는 세 가지다.
+
+- 평가셋이 20건이라 사실상 18가지 상황을 5번씩 본 것이다. 기획안 10절 기준(지표마다 60~100건)으로는 90%를 넘었다고 말하기 어렵다. 운영 기록(agent_runs의 outcome과 verification)으로 보완한다.
+- 평가 뒤에 입력이 바뀌었다(우선순위 코드 규칙 #582, 원함 칩의 선호 전환 #617, 조각 렌더 #717). 진단 프롬프트는 그대로지만 한 번 다시 재 보는 것이 좋다.
+- 문장의 뜻은 코드로 검증하지 못한다(11절 끝 "한계"). 숫자와 인용은 슬롯으로만 쓰게 하고, 짐작은 is_guess로 표시하게 한다.
+
+### 21.2 추천 막힘 조언
+
+조언은 모델 없이 코드가 고른다(#749, 9.1). 순서가 정해진 절차를 모델이 글로 따라 하고 있었기 때문이다. 그래서 모델 평가셋 대신 두 가지로 본다.
+
+- 표 테스트(`backend/agent/tests/cases_advice.json`, `test_advice_cases.py`): 깔때기와 근거 줄 상황마다 종류(radius, soft_relax, vague_reason, exhausted)와 침묵, 남이 쓴 근거 줄에 버튼이 붙지 않는지를 본다.
+- 끝단 통합(21.4): 실제 API로 만든 run에서 조언을 요청하고 버튼을 누른다.
+
+끝단 통합 테스트가 찾은 결함은 둘이다.
+
+- #677: 조언은 상한(도보 30분)까지 넓힌 시뮬레이션 수를 말했는데 버튼 한 번은 5분만 넓혔다. 시뮬레이션을 버튼 한 번의 배율로 맞춰 고쳤다(`core.next_radius_factor`).
+- #792: 추천이 후보 풀을 이미 반경 안에서만 가져와 깔때기의 「반경 밖 제거」가 늘 0이다. 조언은 그 단계에서 5곳 이상 빠져야 반경 조언을 고르므로 실서버에서 반경 조언이 나올 수 없다. 고칠 때까지 반경 테스트 둘은 실패 예상(strict xfail)으로 남긴다.
+
+### 21.3 안전장치와 실패 처리
+
+모델 출력이 화면까지 가는 길에서 거르는 곳을 순서대로 적는다.
+
+| 단계 | 하는 일 | 코드 |
+| --- | --- | --- |
+| 입력 | 비공개 데이터(run, 후보, run의 근거 줄, 제외 목록)를 스냅샷, 도구 결과, 모델 입력에 넣지 않는다. 구성원은 별칭(m1, m2)으로만 간다 | agent/snapshot.py, agent/tools.py |
+| 프롬프트 | 사유 글은 데이터일 뿐 지시로 따르지 않는다고 적고 지시문 예시를 넣는다 | llm/prompts.py |
+| 도구 | 유형별 허용 목록, 진단 한 번에 5번(structure_reasons는 1번) 상한, 상한 뒤에는 도구를 닫고 답을 받는다. 모두 읽기 전용이다 | llm/service.py, agent/tools.py |
+| 스키마 | 구조화 출력(strict)으로 받는다. 맞지 않으면 다시 묻지 않고 침묵한다(invalid_schema) | llm/client.py |
+| 출력 검증 | 11.2의 단계: claim 대조, 슬롯 밖 숫자, 구성원 이름, 금지 표현, 사유 옮겨 쓰기, 허용된 버튼, 성립 | agent/core.py verify_diagnosis |
+| 렌더 | 에이전트 문장과 구성원 글을 조각으로 나눈다. 인용은 검증한 범위만 quote 조각이고 금지 표현 검사는 text 조각에 건다. 알러지 사유는 인용하지 않는다. 지워진 핀과 반응을 가리키는 문장은 뺀다 | agent/core.py render_segments(#717) |
+| 저장 | agent 테이블에는 사유 원문을 두지 않는다(reaction_id와 글자 수만) | agent/tools.py redact |
+| 사람 | 버튼은 사람이 원래 하던 동작으로만 이어진다. 확정, 삭제, 조건 끄기는 버튼에 없다 | 16.3 |
+
+실패하면 이렇게 된다.
+
+- 모델 호출 실패와 시간 초과: 다시 묻지 않고 침묵한다. agent_runs에 outcome(model_failed, invalid_schema)과 이유가 남는다. 지도 제안 화면은 "지금은 따로 드릴 제안이 없어요"이고, 모델을 쓰지 않는 우리 조건 요약은 그대로 갱신된다.
+- 검증 실패: 해당 claim, 문장, 버튼만 빠지고, 성립하지 않으면 침묵한다(invalid_claims).
+- 관찰 도중 예외: outcome=error 한 행(단계, 예외 클래스 이름)을 남기고 30분, 2시간, 6시간 뒤에 다시 본다(#677, 12.2). 서버 로그도 클래스 이름만이다(#765).
+- 조언 계산 실패: 500이고 FE는 조언 자리를 숨긴다(#750, 16.5).
+
+### 21.4 테스트 지도
+
+| 층 | 위치 | 보는 것 |
+| --- | --- | --- |
+| 단위(순수 함수) | backend/agent/tests/test_core_*.py | 탐지기 경계, 기준 시간, 정책, 우선순위, 검증, 조각 렌더, 요약 칸 나누기, 조언 고르기 |
+| 조언 표 | backend/agent/tests/test_advice_cases.py | 깔때기와 근거 줄 상황별 조언 종류와 버튼 |
+| 흐름(실제 DB) | backend/agent/tests/test_flows*.py, test_router.py | 관찰 루프, 커서와 lease, 저장 직전 재확인(stale), 동시 저장, 모델 호출 중 세션 없음, 권한, 비공개 데이터 유출 금지, 실패 기록 |
+| llm 호출 | backend/llm/tests/test_agent_calls.py, test_failure_logging.py | 도구 상한, call_id, 실패 분류, 요청 모양, 로그에 사유 글 없음 |
+| 평가셋(모델 없음) | backend/llm/tests/eval_agent/test_eval_cases.py | 평가셋이 지금 규칙과 맞는지 |
+| 끝단 통합 | backend/integration/test_agent_e2e.py | 지도, 초대, 핀, 반응, 추천을 API로 만들고 관찰부터 수락까지, 추천부터 조언까지 끝까지 간다(모델만 대역). 모델 장애, 사유 속 지시문 인용, 반경 조언과 버튼(#792, xfail) |
+| 실제 모델 | backend/llm/tests/test_agent_live.py(`-m live`), run_eval.py | 키가 있을 때만 돈다. CI에서는 돌지 않는다 |
+
+CI(backend-test)는 실제 모델 테스트를 뺀 전부를 PostgreSQL과 PostGIS 위에서 돌린다. 화면 테스트와 브라우저 끝단 테스트는 아직 없다. 에이전트 화면(#516, #536, #589)이 먼저다. QA 하네스를 실제 HTTP로 돌리는 일은 #788이다.
