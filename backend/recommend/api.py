@@ -151,7 +151,7 @@ def simulate_filter(
 
     장소 검색·라벨 Gateway는 생략하면 실행(라우터)과 같은 것을 고른다(recommend.deps, dev는 스텁). 쓰지 않는다 —
     run·후보·근거 줄·지역·제외 목록·last_funnel 모두 그대로다. 그 run의 근거 줄이 아닌 id는 NOT_FOUND, radius_factor가
-    0 이하면 ValueError. 권한 판정 없음(위 주석)."""
+    0 이하이거나 반경 넓히기 상한(widen_limit_walk_min / default_radius_walk_min)을 넘으면 ValueError(#792). 권한 판정 없음(위 주석)."""
     return flows.simulate_filter(
         db, run_id=run_id, radius_factor=radius_factor, disable_line_ids=disable_line_ids,
         place_search=place_search or deps.get_place_search_gateway(),

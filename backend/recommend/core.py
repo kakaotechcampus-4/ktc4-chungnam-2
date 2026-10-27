@@ -149,6 +149,13 @@ def next_default_radius_walk_min(current_walk_min: int) -> int:
     return min(current_walk_min + WIDEN_STEP_MIN, WIDEN_LIMIT_MIN)
 
 
+def pool_radius_factor(current_walk_min: int) -> float:
+    """후보 풀을 가져오는 원의 배율 = 상한 도보 분 / 지금 도보 분(#792). 반경 넓히기가 갈 수 있는 끝까지만 가져와야
+    「반경 밖 제거」가 지금 반경 밖(상한 안)의 장소를 센다 — 지금 반경으로 가져오면 늘 0이다. 결과는 여전히 지금 반경
+    안에서만 나오고(is_within_any_region), 상한 밖은 풀에도 없다(가드레일 4). 이미 상한이면 1이다."""
+    return max(WIDEN_LIMIT_MIN / current_walk_min, 1.0)
+
+
 def is_within_any_region(lat: float, lng: float, regions: list[Circle]) -> bool:
     """5-6 1단계(반경) — 확정된 지역(들) 중 하나라도 안에 있으면 통과. 지역이 여러 개(각각
     찾기, accept_union)면 OR 조건이다."""
