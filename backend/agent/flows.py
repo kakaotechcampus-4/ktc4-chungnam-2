@@ -165,11 +165,14 @@ def run_tick(
     (예외로 끝난 것 포함)을 돌려준다. gateway가 없으면 deps.get_llm_gateway()(LLM_MODE로 고른 것).
 
     시간 예산(#677): 시작 뒤 TICK_BUDGET_SEC(LEASE_SEC − 30초)가 지나면 남은 지도는 관찰하지 않고 lease만 푼다 — 관찰이
-    lease 시간을 넘겨 다른 실행이 같은 지도를 잡지 않게 한다. 남은 지도는 커서가 그대로라 다음 tick에 다시 잡힌다."""
+    lease 시간을 넘겨 다른 실행이 같은 지도를 잡지 않게 한다. 남은 지도는 커서가 그대로라 다음 tick에 다시 잡힌다.
+
+    끝날 때 처리량을 숫자로만 한 줄 남긴다(#756) — 차례였던 지도 수, 관찰한 수, TICK_MAX_MAPS로 미룬 수, 시간 예산으로
+    미룬 수, 걸린 ms. 지도 id와 사용자 데이터는 넣지 않는다. 예산으로 미룬 지도가 있으면 warning이다."""
     started = clock()
     gateway = gateway or deps.get_llm_gateway()
     with _write(session_factory) as db:
-        claims = service.claim_maps(db, now, limit=TICK_MAX_MAPS)
+        claims, due = service.claim_maps(db, now, limit=TICK_MAX_MAPS)
     observed = []
     for claim in claims:
         try:
@@ -182,13 +185,14 @@ def run_tick(
                     service.release_lease(db, claim.map_id)
             except Exception:   # 못 풀어도 LEASE_SEC 뒤에는 다른 실행이 가져간다(12.5)
                 log.exception("agent release_lease 실패 map_id=%s", claim.map_id)
-    if len(observed) < len(claims):
-        log.warning("agent tick 시간 예산 %d초를 넘겨 지도 %d개는 관찰하지 않았다", TICK_BUDGET_SEC,
-                    len(claims) - len(observed))
     try:
         daily_cleanup_if_due(now, session_factory=session_factory)
     except Exception:
         log.exception("agent 보존 정리 실패")
+    deferred_by_budget = len(claims) - len(observed)
+    log.log(logging.WARNING if deferred_by_budget else logging.INFO,
+            "agent tick due=%d observed=%d deferred_by_max=%d deferred_by_budget=%d elapsed_ms=%d",
+            due, len(observed), max(due - len(claims), 0), deferred_by_budget, round((clock() - started) * 1000))
     return observed
 
 
