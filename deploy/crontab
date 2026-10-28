@@ -1,0 +1,20 @@
+# 서버의 예약 실행(#168). 설치: crontab /srv/pingo/deploy/crontab (배포 사용자, docker 그룹)
+# 시각은 서버 시간대(bootstrap.sh가 Asia/Seoul로 맞춘다). 두 번 돌아도 안전한 작업만 둔다.
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# 배포는 cron이 아니라 GitHub Actions가 SSM으로 부른다(.github/workflows/deploy.yml)
+
+# 정기 정리: 지도(삭제 30일 뒤), 알림(90일), 게스트(90일 미사용) — maintenance.run
+30 3 * * * /srv/pingo/deploy/run.sh prod python -m maintenance.run >> /srv/pingo/logs/maintenance-prod.log 2>&1
+40 3 * * * /srv/pingo/deploy/run.sh staging python -m maintenance.run >> /srv/pingo/logs/maintenance-staging.log 2>&1
+
+# 운영 DB 덤프(14일 보관)
+0 4 * * * /srv/pingo/deploy/backup.sh prod >> /srv/pingo/logs/backup.log 2>&1
+
+# DuckDNS 주소 갱신 — 서버에 고정 IP(Elastic IP)를 붙여 두어 쓰지 않는다. 고정 IP를 떼면 다시 켠다
+# */5 * * * * /srv/pingo/deploy/duckdns.sh >> /srv/pingo/logs/duckdns.log 2>&1
+
+# 에이전트 관찰 tick — python -m agent.tick이 생기면(#812) 켜고, env의 AGENT_LOOP_IN_PROCESS를 지운다
+# */5 * * * * /srv/pingo/deploy/run.sh prod python -m agent.tick >> /srv/pingo/logs/agent-tick-prod.log 2>&1
+# */5 * * * * /srv/pingo/deploy/run.sh staging python -m agent.tick >> /srv/pingo/logs/agent-tick-staging.log 2>&1

@@ -1,0 +1,7 @@
+# frontend/Dockerfile 전용 무시 규칙(빌드 맥락은 저장소 루트 — frontend가 ../contracts의 타입을 경로로 불러온다).
+*
+!frontend
+!contracts
+frontend/node_modules
+frontend/dist
+contracts/node_modules

@@ -1,0 +1,15 @@
+# 화면 정적 파일 서버(이미지 안). HTTPS와 /api 나누기는 앞단 Caddy(deploy/Caddyfile)가 한다.
+:80 {
+	root * /srv
+	encode zstd gzip
+
+	# 해시가 붙은 빌드 산출물은 오래 캐시하고, index.html은 매번 새로 받는다(배포 뒤 옛 화면이 남지 않게)
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+	@html path / /index.html
+	header @html Cache-Control "no-cache"
+
+	# 화면 주소(/maps/... 등)는 모두 index.html로 — 화면 라우터가 처리한다
+	try_files {path} /index.html
+	file_server
+}
