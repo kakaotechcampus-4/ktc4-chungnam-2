@@ -86,6 +86,18 @@ def test_kakao_login_redirects_to_kakao_with_state_and_sets_signed_state_cookie(
     assert "max-age=600" in set_cookie
 
 
+def test_state_cookie_reaches_callback_behind_api_prefix(app_client, kakao_configured, monkeypatch):
+    """배포는 앞단이 /api를 벗겨 넘긴다(#819). 브라우저는 /api/auth/kakao/callback으로 돌아오므로 쿠키 경로도 그쪽이어야 한다."""
+    import auth.router as router_module
+
+    monkeypatch.setattr(router_module, "settings", dataclasses.replace(
+        router_module.settings, kakao_redirect_uri="https://pingo.example.org/api/auth/kakao/callback",
+    ))
+    resp = app_client.get("/auth/kakao/login", follow_redirects=False)
+
+    assert "path=/api/auth/kakao;" in resp.headers["set-cookie"].lower()
+
+
 def test_kakao_login_uses_a_fresh_state_each_time(app_client, kakao_configured):
     assert _start_login(app_client) != _start_login(_other_browser(app_client))
 
