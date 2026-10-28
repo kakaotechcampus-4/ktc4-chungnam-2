@@ -72,7 +72,7 @@ def _guest_merged(resp) -> str | None:
 def _callback_with_signed_state(client, cookie_value):
     """서버가 시작한 적 없는 조합의 state 쿠키로 콜백을 호출한다(쿠키의 state 값은 "st")."""
     client.cookies.clear()
-    client.cookies.set("kakao_oauth_state", cookie_value, path="/auth/kakao")
+    client.cookies.set("kakao_oauth_state", cookie_value, path="/")
     return _callback(client, code="auth-code", state="st")
 
 
@@ -352,7 +352,7 @@ def test_forged_guest_id_in_state_cookie_is_invalid_state_and_merges_nothing(app
     _start_login(app_client)   # 게스트 아닌 시작
     state, issued_at, signature = _state_cookie_value(app_client).split(".")
     app_client.cookies.clear()   # 진짜 쿠키가 같이 실리지 않게 비운다
-    app_client.cookies.set("kakao_oauth_state", f"{state}.{issued_at}.victim.{signature}", path="/auth/kakao")   # 서명 없이 게스트 id를 붙임
+    app_client.cookies.set("kakao_oauth_state", f"{state}.{issued_at}.victim.{signature}", path="/")   # 서명 없이 게스트 id를 붙임
 
     resp = _callback(app_client, code="auth-code", state=state)
 

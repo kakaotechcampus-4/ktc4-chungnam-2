@@ -351,7 +351,7 @@ def test_callback_with_tampered_or_expired_state_cookie_is_rejected(app_client, 
     )
     for value, state in ((forged, "forged-state"), (expired, "old-state")):
         client = _other_browser(app_client)
-        client.cookies.set("kakao_oauth_state", value, path="/auth/kakao")
+        client.cookies.set("kakao_oauth_state", value, path="/")
         resp = _callback(client, code="auth-code", state=state)
         _assert_rejected_without_login(resp, db_session)
 
@@ -380,7 +380,7 @@ def test_state_cookie_is_cleared_on_failure_too(app_client, monkeypatch, kakao_c
 def test_state_cookie_is_not_a_session(app_client, kakao_configured):
     """state 쿠키 값을 session 쿠키로 보내도 로그인되지 않는다 — 용도가 다른 서명이다."""
     _start_login(app_client)
-    state_cookie_value = app_client.cookies.get("kakao_oauth_state", path="/auth/kakao")
+    state_cookie_value = app_client.cookies.get("kakao_oauth_state", path="/")
 
     resp = _other_browser(app_client).get("/auth/me", cookies={"session": state_cookie_value})
 

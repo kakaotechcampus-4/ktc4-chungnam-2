@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "session"
 STATE_COOKIE = "kakao_oauth_state"
-# 콜백(/auth/kakao/callback)에만 실리면 되므로 경로를 좁힌다. 지울 때도 같은 경로여야 지워진다.
-STATE_COOKIE_PATH = "/auth/kakao"
+# 경로를 좁히지 않는다. 앞단 프록시가 앞에 붙이는 경로(배포의 /api)는 브라우저 주소에만 있어서, 좁힌 경로는 콜백에 실리지 않았다(#168).
+# 10분짜리 일회용이라 다른 요청에 같이 실려도 괜찮다. 지울 때도 같은 경로여야 지워진다.
+STATE_COOKIE_PATH = "/"
 
 # IP당 시간당 게스트 가입 시도 상한(인메모리, 인스턴스마다 센다). 성공·실패 모두 센다.
 GUEST_JOIN_PER_HOUR = 10
