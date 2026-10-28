@@ -1,0 +1,60 @@
+name: staging-check
+# 배포된 스테이징 주소에서 핵심 흐름을 실제 HTTP로 돈다(QA 하네스, #788, #168). 멘토: 통과한 커밋에만 태그를 단다.
+# 하네스는 서버의 스테이징 API 컨테이너 안에서 돈다 — QA 로그인 비밀(QA_LOGIN_SECRET)이 서버 밖으로 나오지 않는다.
+# 요청은 공개 주소(https://staging.../api)로 나가므로 Caddy, HTTPS, 쿠키까지 실제 경로를 지난다.
+# 매일 한 번 돌고, 릴리스 전에는 손으로 돌린다(deploy_rules.md 「배포할 때마다」).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 하네스 파일을 가져올 브랜치나 커밋(보통 스테이징에 올린 것과 같게)
+        type: string
+        default: develop
+      cases:
+        description: "돌릴 케이스 ID(빈칸이면 전부, 예: A01 S06)"
+        type: string
+        default: ""
+  schedule:
+    - cron: "0 21 * * *"   # 매일 06:00 KST
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: staging-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 입력 확인
+        env:
+          REF: ${{ inputs.ref || 'develop' }}
+          CASES: ${{ inputs.cases || '' }}
+        run: |
+          [[ "$REF" =~ ^[0-9A-Za-z._/-]+$ ]] || { echo "ref 형식이 이상하다"; exit 1; }
+          [[ "$CASES" =~ ^[0-9A-Za-z\ ]*$ ]] || { echo "케이스 ID는 영문과 숫자"; exit 1; }
+          echo "REF=$REF" >> "$GITHUB_ENV"
+          echo "CASES=$CASES" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/actions
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/ktc-github-deploy
+          aws-region: ap-northeast-2
+
+      - uses: ./.github/actions/ssm-run
+        with:
+          instance-id: ${{ vars.EC2_INSTANCE_ID }}
+          comment: staging-check ${{ env.REF }}
+          timeout-seconds: "1800"
+          command: >-
+            cd /srv/pingo/deploy &&
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ env.REF }}/qa/harness/run_api_cases.py |
+            docker compose exec -T api-staging python - --base-url https://staging.pingopingo.duckdns.org/api ${{ env.CASES }}

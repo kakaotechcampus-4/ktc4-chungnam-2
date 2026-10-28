@@ -8,19 +8,67 @@
 - 같은 값을 두 곳에 저장해서 재계산 단계가 생기면, 먼저 저장한 칸을 없애고 원본을 바로 읽을 수 있는지 본다(#743). 재계산 단계는 그래도 필요할 때만 둔다.
 - 확인되지 않은 것은 "미정"이나 "아직 없음"으로 적고 이슈 번호를 단다.
 
-## 지금 상태
+## 배포 구성 (2026-10-28 결정, #168)
 
-- 배포 환경은 아직 정하지 않았다. Dockerfile과 Cloud Run 설정이 저장소에 없다(#168). 방향은 `docs/architecture.md` 6절이다(main 병합 시 Cloud Run).
-- 서버는 인스턴스 하나를 전제로 한다. 서버가 시작할 때 진행 중으로 남은 AI 코스 run을 모두 끝낸다(`agent.course.service.interrupt_unfinished_runs`). 인스턴스가 둘 이상이면 새 인스턴스가 옛 인스턴스에서 아직 도는 run을 끊는다. 늘리기 전에 #168에서 작업 큐(Cloud Tasks)를 정한다.
+멘토 리뷰(「남은 2주」, 「배포」 절)를 받아 정했다. 서버는 부트캠프가 준 AWS 서버 1대(t3.medium, 2 vCPU, 4GB, 디스크 50GB, Ubuntu 24.04, 서울 리전, 2026-11-20까지)다. 사용 규칙은 운영진 안내를 따른다 — 접속은 SSM으로만 하고 22번 포트를 열지 않는다, GitHub Actions는 OIDC 역할(`ktc-github-deploy`)로 붙는다.
+
+| 결정 | 선택 | 이유 | 다시 볼 조건 |
+|---|---|---|---|
+| 배치 | 서버 1대에 Docker Compose(`deploy/compose.yml`). 맨 앞의 Caddy가 HTTPS(Let's Encrypt 자동)를 맡는다 | 서버가 1대뿐이다. 인증서 발급과 갱신이 자동이다 | 서버가 늘 때 |
+| 주소 | 운영 `pingopingo.duckdns.org`, 스테이징 `staging.pingopingo.duckdns.org`(DuckDNS 무료, 하위 이름은 자동으로 같은 IP). 서버에 고정 IP(Elastic IP 3.38.14.223)를 붙였다 | 소셜 로그인은 IP 주소를 redirect로 받지 않는다. 고정 IP라 서버를 껐다 켜도 주소가 산다 | 이름을 바꿀 때 |
+| 한 주소로 서빙 | 환경마다 `/api/*`는 API(앞의 `/api`를 떼고 넘긴다), 나머지는 화면 정적 파일. 화면은 `VITE_API_BASE_URL=/api`로 빌드한다 | 세션 쿠키가 `SameSite=lax`라 화면과 API가 같은 사이트여야 로그인이 된다. CORS도 필요 없다. 백엔드 경로는 그대로다 | — |
+| 환경 | 운영과 스테이징을 같은 서버에서 나눈다(컨테이너, DB 이름, 비밀값이 다르다) | 멘토 「환경 분리」. 서버가 1대다 | 서버를 더 받을 때 |
+| DB | 서버 안 PostgreSQL 17 + PostGIS 컨테이너(`compose.db.yml`), DB `pingo_prod`, `pingo_staging` | RDS는 운영진 승인이 필요하다(신청함). 승인 전에도 배포를 시작한다 | RDS가 승인되면 옮긴다(덤프 후 복원, `compose.db.yml` 빼기, `DATABASE_URL` 교체) |
+| 프로세스 | 환경마다 API 프로세스 1개(uvicorn 워커 1) | 메모리 요청 상한, 서버 시작 시 정리, 관찰 lease가 이 전제에서 안전하다. 4GB에 두 환경이 들어간다 | 응답이 느려지거나 워커를 늘릴 때. 그 전에 아래 「타협」을 고친다 |
+| 이미지 | GitHub Actions가 API, 화면 이미지를 만들어 팀 계정 ECR(`pingo-api`, `pingo-web`, 최근 40개 보관)에 올린다(`.github/workflows/images.yml`). 태그는 `sha-<7자리>`, 브랜치 이름, `v0.x.y` | 빌드와 배포를 나눈다(멘토). 서버는 자기 역할로 ECR에서 받는다(저장한 비밀 없음) | — |
+| 배포 | `.github/workflows/deploy.yml`이 OIDC 역할로 SSM 명령을 보내 서버의 `deploy/deploy.sh <환경> <태그>`를 돌린다. develop은 이미지가 만들어지면 스테이징에 자동, 운영은 사람이 v 태그를 골라 수동 | 22번 포트와 서버 키가 없다. 운영은 태그를 골라 올린다(멘토) | — |
+| 확인 | 스테이징에서 QA 하네스(`qa/harness/run_api_cases.py --base-url`)로 핵심 흐름을 돈다. 통과한 `main` 커밋에만 태그를 단다 | 멘토 「배포된 주소의 핵심 흐름 테스트, 통과한 커밋에만 태그」 | — |
+| 비밀 | 서버의 `deploy/env/*.env`(권한 600). 세션 비밀, DB 비밀번호, QA 비밀은 서버에서 만들었고 외부 키(카카오, 엘리스)만 옮겼다. 저장소, 이미지, 채팅에 남기지 않는다 | 서버 1대에 가장 단순하다 | 사람이나 서버가 늘 때 SSM 파라미터 스토어 |
+| 주기 작업 | 서버 cron(`deploy/crontab`). 두 번 돌아도 안전한 작업만 둔다 | 멘토 「주기 작업은 바깥에서 부르되 두 번 돌아도 안전하게」 | — |
+
+### 타협과 다시 볼 조건
+
+멘토: 이유가 빠진 타협은 나중에 원래 그런 구조로 읽힌다. 프로세스나 서버를 늘리기 전에 아래를 먼저 고친다.
+
+| 타협 | 왜 지금은 괜찮나 | 다시 볼 때 |
+|---|---|---|
+| 요청 상한 5곳(`common.ratelimit`)이 메모리에서 센다 | 환경마다 프로세스가 하나다. 배포로 다시 뜨면 셈이 처음부터다 | 워커나 서버를 늘리기 전에 같은 모양(`SlidingWindowLimiter`)으로 Postgres에 옮긴다 |
+| 서버 시작 시 진행 중인 AI 코스 run을 모두 끝낸다(`interrupt_unfinished_runs`) | 프로세스가 하나라 끝내는 run은 모두 죽은 프로세스의 것이다 | 프로세스가 둘 이상이면 다른 프로세스의 run을 끊는다 — 마지막 진행이 오래된 run만 끝내게 고친다(#813) |
+| AI 코스 계산이 응답 뒤 `BackgroundTasks`로 돈다 | 서버(VM)는 요청이 끝나도 CPU를 준다. 배포로 다시 뜨면 그 run은 위 정리로 끝난다 | 작업 큐로 옮길 때 |
+| 관찰 tick이 프로세스 안 반복 작업(`AGENT_LOOP_IN_PROCESS=1`)으로 돈다 | 프로세스가 하나라 한 번만 돈다 | 관찰 tick 명령(`python -m agent.tick`)과 lease fencing이 생기면 cron으로 옮긴다(#812) |
+| DB가 같은 서버에 있고 덤프도 같은 디스크에 있다 | 시연까지의 데이터다 | RDS 승인, 또는 덤프를 S3로 보낸다 |
+
+## 서버 처음 준비
+
+한 번만 한다. 2026-10-28에 했다.
+
+1. 이 PC에 AWS CLI와 Session Manager 플러그인을 설치하고 SSO 프로필을 만든다(운영진 안내). 콘솔에서는 EC2 → 연결 → Session Manager.
+2. 서버에 고정 IP를 붙이고 보안 그룹은 80과 443만 연다(22번은 열지 않는다). DuckDNS의 IP를 고정 IP로 맞춘다.
+3. ECR 저장소 `pingo-api`, `pingo-web`을 만든다.
+4. `sudo bash deploy/bootstrap.sh ubuntu <계정ID>.dkr.ecr.ap-northeast-2.amazonaws.com` — Docker, compose, ECR 도우미, cron, 서울 시간대, 스왑 2GB, `/srv/pingo` 폴더.
+5. `/srv/pingo/deploy`에 `deploy/` 파일을 놓고(이후로는 배포 때 `sync.sh`가 맞춘다) `.env`(`.env.example` 참고)와 `env/prod.env`, `env/staging.env`, `env/db.env`(견본 `env/*.example`)를 만든다.
+6. `docker compose up -d db` → 환경마다 마이그레이션 → 장소 적재(아래 「장소 데이터 적재」, 서버에서는 `deploy/load-places.sh <환경> /srv/pingo/data/places`) → `deploy.sh`로 앱을 올린다.
+7. `crontab /srv/pingo/deploy/crontab`.
+8. 카카오 Developers에 두 주소의 Redirect URI(`https://<주소>/api/auth/kakao/callback`)와 Web 사이트 도메인을 등록한다.
 
 ## 배포할 때마다
 
-순서대로 한다.
+- **스테이징**: develop에 머지하면 `images.yml`이 이미지를 만들고 스테이징에 올린다. 따로 할 일이 없다.
+- **운영(릴리스)**: 1) develop → main PR(멘토 리뷰)을 머지한다. 2) Actions의 `deploy`를 스테이징, `sha-<main 커밋 7자리>`로 돌린다. 3) Actions의 `staging-check`(QA 하네스를 서버의 스테이징 컨테이너 안에서 공개 주소로 돈다, 비밀은 서버 밖으로 나오지 않는다)를 그 커밋으로 돌린다. 매일 06:00에도 develop으로 돈다. 4) 통과하면 그 main 커밋에 `v0.x.y` 태그를 단다 → `images.yml`이 그 태그로 이미지를 만든다. 5) `deploy`를 운영, `v0.x.y`로 돌린다. 운영은 배포 직전에 DB를 덤프한다(`deploy/backup.sh`).
+- **롤백**: `deploy`를 운영, 이전 `v` 태그로 돌린다. 버그는 그 버전 위에서 고치지 않고 develop에서 고쳐 다음 버전으로 올린다(멘토). 건강 확인에 실패한 배포는 `deploy.sh`가 이전 태그로 되돌린다.
+- **환경 변수를 바꿀 때**: 서버의 `deploy/env/<환경>.env`를 고치고 그 환경을 다시 올린다. 새 키를 더한 PR은 `backend/.env.example`과 `deploy/env/*.env.example`을 같이 고친다. 값은 저장소나 채팅에 남기지 않는다.
+- 이번 배포에 아래 「데이터가 바뀔 때」 단계가 있는지 확인한다. 마이그레이션 head는 하나여야 하고 CI(backend-test)가 확인한다.
 
-1. 환경 변수를 맞춘다. 키 목록은 `backend/.env.example`이다(DATABASE_URL, REDIS_URL, KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET, KAKAO_REDIRECT_URI, FRONTEND_BASE_URL, FRONTEND_LOGIN_REDIRECT_URL, SESSION_SECRET, PINGO_ENV, CORS_ALLOW_ORIGINS, PLACES_MODE, ELICE_ML_API_BASE_URL, ELICE_ML_API_KEY, LLM_MODE, QA_LOGIN_SECRET — 스테이징 전용, 운영에는 넣지 않는다). 배포는 `PINGO_ENV=prod`다. 값은 저장소나 채팅에 남기지 않는다. 새 키를 더한 PR은 이 목록도 고친다.
-2. 마이그레이션을 올린다: `python -m alembic upgrade head`(backend에서). head는 하나여야 하고 CI(backend-test)가 같은 명령으로 확인한다.
-3. 코드를 배포한다.
-4. 아래 "데이터가 바뀔 때"에 해당하는 단계가 이번 배포에 있는지 확인한다.
+## 스키마를 바꿀 때
+
+운영은 이전 태그로 돌아갈 수 있어야 한다. 그래서 테이블 변경은 이전 버전의 코드도 새 스키마에서 돌게 나눠서 한다(expand/contract, 멘토).
+
+1. **늘리기(expand)**: 칸, 테이블, 인덱스를 더한다. 새 칸은 비어도 되거나 기본값이 있다. 이전 코드는 새 칸을 모른 채 돈다.
+2. 새 코드를 배포한다. 새 코드는 새 칸을 쓰고, 필요하면 옛 칸에도 같이 쓴다.
+3. **줄이기(contract)**: 다음 버전에서 옛 칸을 지운다. 지우는 마이그레이션은 그 칸을 읽는 코드가 운영에서 모두 빠진 뒤에만 넣는다.
+
+- 칸 이름이나 뜻을 바꾸는 것은 「새 칸 더하기 → 옮기기 → 옛 칸 지우기」로 나눈다.
+- API는 하위 호환으로 바꾼다. 필드는 더하기만 하고, 지우기는 화면이 쓰지 않게 된 다음에 한다.
 
 ## 데이터가 바뀔 때
 
@@ -48,7 +96,7 @@
 
 ## 스테이징
 
-운영과 같은 방식으로 배포하고 실제 사용자는 없는 시험 서버다. QA 하네스(`qa/harness/run_api_cases.py --base-url`)가 이 주소로 핵심 흐름을 실제 HTTP로 돌린다(#788). 배포 환경은 #168에서 정한다. 그 전에는 로컬 `uvicorn`을 `PINGO_ENV=staging`으로 띄워 같은 방식으로 돌린다.
+운영과 같은 방식으로 배포하고 실제 사용자는 없는 시험 서버다(`https://staging.pingopingo.duckdns.org`). QA 하네스(`qa/harness/run_api_cases.py --base-url`)가 이 주소로 핵심 흐름을 실제 HTTP로 돌린다(#788). 로컬에서는 `uvicorn`을 `PINGO_ENV=staging`으로 띄워 같은 방식으로 돌린다.
 
 - `PINGO_ENV=staging`. 운영과 같은 기동 가드를 받는다(스텁 금지, CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`).
 - `SESSION_SECRET`은 운영과 다른 값이다. 스테이징에서 만든 세션 쿠키가 운영에서 통하지 않게 한다.
@@ -60,8 +108,9 @@
 
 | 작업 | 명령 | 주기 | 상태 |
 |---|---|---|---|
-| 정기 정리: 지도(삭제 30일 후), 알림(90일), 게스트(90일 미사용) | `python -m maintenance.run` | 미정(하루 한 번을 제안) | 스케줄러 미정(#168) |
-| v2 계획 보조 에이전트 관찰 | `POST /internal/agent/tick` | 5분(`docs/agent-v2.md` 12.1) | 엔드포인트와 예약 모두 아직 없음(#535). 개발과 시연은 `AGENT_LOOP_IN_PROCESS=1`로 서버 안에서 돈다 |
+| 정기 정리: 지도(삭제 30일 후), 알림(90일), 게스트(90일 미사용) | `deploy/run.sh <환경> python -m maintenance.run` | 하루 한 번(03:30 운영, 03:40 스테이징) | 서버 cron(`deploy/crontab`) |
+| 운영 DB 덤프 | `deploy/backup.sh prod` | 하루 한 번(04:00), 14일 보관 | 서버 cron. 운영 배포 직전에도 한다 |
+| v2 계획 보조 에이전트 관찰 | 지금은 프로세스 안 반복 작업(`AGENT_LOOP_IN_PROCESS=1`) | 5분(`docs/agent-v2.md` 12.1) | 관찰 tick 명령과 lease fencing이 생기면 cron으로 옮긴다(위 「타협」, #812) |
 | agent 일일 정리 | 없음 | 서버 안에서 돈다 | 따로 예약하지 않는다(`backend/maintenance/CLAUDE.md`) |
 
 ## 배포 뒤 볼 지표
@@ -76,12 +125,8 @@
 ## 배포 전에 정할 것
 
 - `event_log` 오래된 행 삭제: 읽기는 24시간으로 자르지만(`realtime.service.RETENTION`) 지우는 작업은 아직 없다. `created_at` 인덱스는 삭제용으로 있다. 정기 정리(`maintenance.run`)에 단계로 넣을지 정한다.
-- 배포 환경, 비밀 관리, 프리뷰 배포(#168).
 - 세션 쿠키의 `Secure`는 prod에서만 붙는다(`settings.is_prod`). 로컬 http로 하네스를 돌리려고 staging은 붙이지 않는다. https 스테이징을 배포하면 staging도 붙일지 정한다(#168, #788).
-- 관찰 tick 엔드포인트와 예약(#535).
 - prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`만 본다. 카카오 키(`KAKAO_CLIENT_ID/SECRET/REDIRECT_URI`)와 `ELICE_ML_API_KEY`가 비어도 서버가 뜨고 첫 호출에서야 실패한다. 가드에 넣을지 정한다(#168).
-- 게스트 가입 IP 상한(`POST /auth/guest`)은 `request.client.host`를 본다. 프록시 뒤(Cloud Run)에서는 uvicorn `--proxy-headers`와 `--forwarded-allow-ips`를 켠다. 안 켜면 모든 사용자가 한 IP로 보여 상한을 함께 쓴다(#168, #472).
-- 호출 상한(`common.ratelimit`: 장소 검색, 링크 해석, 핀 링크 미리보기)은 인메모리라 인스턴스마다 따로 센다. 인스턴스를 늘리면 실제 상한이 그 수만큼 커진다(#168).
-- `/places/nearest`의 쿼리스트링(누른 좌표)은 uvicorn 접근 로그에서만 가린다(`places/logguard.py`). 앞단 프록시의 요청 로그는 따로 막는다(#168, #473).
+- `/places/nearest`의 쿼리스트링(누른 좌표)은 uvicorn 접근 로그에서만 가린다(`places/logguard.py`). 앞단 Caddy는 접근 로그를 켜지 않는다(`deploy/Caddyfile`, #473). 켜야 하면 쿼리스트링을 지우는 형식으로 켠다.
 - 비로그인 `GET /invites/{token}`에는 호출 상한이 없다. 토큰이 256비트라 추측은 비현실적이지만, 넣을지 정한다(#168).
 - 개발 중 로컬 DB에 쌓인 카카오 좌표와 이름은 배포 전에 지운다(`docs/architecture.md`, #53). 배포 DB를 로컬 DB에서 복사하지 않는다.
