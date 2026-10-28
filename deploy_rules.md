@@ -15,7 +15,7 @@
 | 결정 | 선택 | 이유 | 다시 볼 조건 |
 |---|---|---|---|
 | 배치 | 서버 1대에 Docker Compose(`deploy/compose.yml`). 맨 앞의 Caddy가 HTTPS(Let's Encrypt 자동)를 맡는다 | 서버가 1대뿐이다. 인증서 발급과 갱신이 자동이다 | 서버가 늘 때 |
-| 주소 | 운영 `pingopingo.duckdns.org`, 스테이징 `staging.pingopingo.duckdns.org`(DuckDNS 무료, 하위 이름은 자동으로 같은 IP). 서버에 고정 IP(Elastic IP 3.38.14.223)를 붙였다 | 소셜 로그인은 IP 주소를 redirect로 받지 않는다. 고정 IP라 서버를 껐다 켜도 주소가 산다 | 이름을 바꿀 때 |
+| 주소 | 운영 `ktc-pingopingo.duckdns.org`, 스테이징 `staging.ktc-pingopingo.duckdns.org`(DuckDNS 무료, 하위 이름은 자동으로 같은 IP). 서버에 고정 IP(Elastic IP 3.38.14.223)를 붙였다 | 소셜 로그인은 IP 주소를 redirect로 받지 않는다. 고정 IP라 서버를 껐다 켜도 주소가 산다. 처음 등록하려던 `pingopingo`는 다른 계정이 이미 쓰고 있어 `ktc-pingopingo`로 바꿨다(2026-10-28) | 이름을 바꿀 때 |
 | 한 주소로 서빙 | 환경마다 `/api/*`는 API(앞의 `/api`를 떼고 넘긴다), 나머지는 화면 정적 파일. 화면은 `VITE_API_BASE_URL=/api`로 빌드한다 | 세션 쿠키가 `SameSite=lax`라 화면과 API가 같은 사이트여야 로그인이 된다. CORS도 필요 없다. 백엔드 경로는 그대로다 | — |
 | 환경 | 운영과 스테이징을 같은 서버에서 나눈다(컨테이너, DB 이름, 비밀값이 다르다) | 멘토 「환경 분리」. 서버가 1대다 | 서버를 더 받을 때 |
 | DB | 서버 안 PostgreSQL 17 + PostGIS 컨테이너(`compose.db.yml`), DB `pingo_prod`, `pingo_staging` | RDS는 운영진 승인이 필요하다(신청함). 승인 전에도 배포를 시작한다 | RDS가 승인되면 옮긴다(덤프 후 복원, `compose.db.yml` 빼기, `DATABASE_URL` 교체) |
@@ -96,7 +96,7 @@
 
 ## 스테이징
 
-운영과 같은 방식으로 배포하고 실제 사용자는 없는 시험 서버다(`https://staging.pingopingo.duckdns.org`). QA 하네스(`qa/harness/run_api_cases.py --base-url`)가 이 주소로 핵심 흐름을 실제 HTTP로 돌린다(#788). 로컬에서는 `uvicorn`을 `PINGO_ENV=staging`으로 띄워 같은 방식으로 돌린다.
+운영과 같은 방식으로 배포하고 실제 사용자는 없는 시험 서버다(`https://staging.ktc-pingopingo.duckdns.org`). QA 하네스(`qa/harness/run_api_cases.py --base-url`)가 이 주소로 핵심 흐름을 실제 HTTP로 돌린다(#788). 로컬에서는 `uvicorn`을 `PINGO_ENV=staging`으로 띄워 같은 방식으로 돌린다.
 
 - `PINGO_ENV=staging`. 운영과 같은 기동 가드를 받는다(스텁 금지, CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`).
 - `SESSION_SECRET`은 운영과 다른 값이다. 스테이징에서 만든 세션 쿠키가 운영에서 통하지 않게 한다.

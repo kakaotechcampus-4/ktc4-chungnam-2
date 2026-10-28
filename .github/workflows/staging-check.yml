@@ -57,4 +57,4 @@ jobs:
           command: >-
             cd /srv/pingo/deploy &&
             curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ env.REF }}/qa/harness/run_api_cases.py |
-            docker compose exec -T api-staging python - --base-url https://staging.pingopingo.duckdns.org/api ${{ env.CASES }}
+            docker compose exec -T api-staging python - --base-url https://staging.ktc-pingopingo.duckdns.org/api ${{ env.CASES }}
