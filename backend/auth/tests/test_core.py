@@ -2,6 +2,8 @@
 
 from datetime import datetime, timezone
 
+import pytest
+
 from auth import core
 from auth.core import create_session_token, is_revoked, display_name_from_kakao_profile, parse_session_token
 
@@ -122,6 +124,15 @@ def test_new_state_is_random_and_has_no_token_separator():
     values = {core.new_state() for _ in range(50)}
     assert len(values) == 50
     assert all("." not in v and len(v) >= 32 for v in values)
+
+
+@pytest.mark.parametrize("redirect_uri, path", [
+    ("http://localhost:8000/auth/kakao/callback", "/auth/kakao"),
+    ("https://staging.example.org/api/auth/kakao/callback", "/api/auth/kakao"),   # 앞단이 /api를 벗겨 넘김(#819)
+    ("", "/"),
+])
+def test_state_cookie_path_is_parent_of_public_callback(redirect_uri, path):
+    assert core.state_cookie_path(redirect_uri) == path
 
 
 def test_kakao_authorize_url_encodes_parameters():

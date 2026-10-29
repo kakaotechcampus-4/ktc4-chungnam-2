@@ -86,6 +86,18 @@ def test_kakao_login_redirects_to_kakao_with_state_and_sets_signed_state_cookie(
     assert "max-age=600" in set_cookie
 
 
+def test_state_cookie_reaches_callback_behind_api_prefix(app_client, kakao_configured, monkeypatch):
+    """배포는 앞단이 /api를 벗겨 넘긴다(#819). 브라우저는 /api/auth/kakao/callback으로 돌아오므로 쿠키 경로도 그쪽이어야 한다."""
+    import auth.router as router_module
+
+    monkeypatch.setattr(router_module, "settings", dataclasses.replace(
+        router_module.settings, kakao_redirect_uri="https://pingo.example.org/api/auth/kakao/callback",
+    ))
+    resp = app_client.get("/auth/kakao/login", follow_redirects=False)
+
+    assert "path=/api/auth/kakao;" in resp.headers["set-cookie"].lower()
+
+
 def test_kakao_login_uses_a_fresh_state_each_time(app_client, kakao_configured):
     assert _start_login(app_client) != _start_login(_other_browser(app_client))
 
@@ -351,7 +363,7 @@ def test_callback_with_tampered_or_expired_state_cookie_is_rejected(app_client, 
     )
     for value, state in ((forged, "forged-state"), (expired, "old-state")):
         client = _other_browser(app_client)
-        client.cookies.set("kakao_oauth_state", value, path="/")
+        client.cookies.set("kakao_oauth_state", value, path="/auth/kakao")
         resp = _callback(client, code="auth-code", state=state)
         _assert_rejected_without_login(resp, db_session)
 
@@ -380,7 +392,7 @@ def test_state_cookie_is_cleared_on_failure_too(app_client, monkeypatch, kakao_c
 def test_state_cookie_is_not_a_session(app_client, kakao_configured):
     """state 쿠키 값을 session 쿠키로 보내도 로그인되지 않는다 — 용도가 다른 서명이다."""
     _start_login(app_client)
-    state_cookie_value = app_client.cookies.get("kakao_oauth_state", path="/")
+    state_cookie_value = app_client.cookies.get("kakao_oauth_state", path="/auth/kakao")
 
     resp = _other_browser(app_client).get("/auth/me", cookies={"session": state_cookie_value})
 

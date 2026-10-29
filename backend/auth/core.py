@@ -8,7 +8,7 @@ import hmac
 import secrets
 from datetime import datetime
 from typing import NamedTuple
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 KAKAO_AUTHORIZE_URL = "https://kauth.kakao.com/oauth/authorize"
 STATE_TTL_SECONDS = 60 * 10  # 로그인 시작 → 카카오 동의 → 콜백까지 걸리는 시간. 짧게 둔다.
@@ -120,6 +120,12 @@ def verify_state(cookie_value: str | None, state_param: str | None, *, secret: s
 def kakao_authorize_url(*, client_id: str, redirect_uri: str, state: str) -> str:
     query = urlencode({"response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri, "state": state})
     return f"{KAKAO_AUTHORIZE_URL}?{query}"
+
+
+def state_cookie_path(redirect_uri: str) -> str:
+    """state 쿠키를 콜백에만 싣는 경로. 배포는 앞단이 /api를 벗겨 넘기므로(#819) 서버 안 경로가 아니라
+    브라우저가 보는 콜백 주소의 부모 경로를 쓴다."""
+    return urlsplit(redirect_uri).path.rsplit("/", 1)[0] or "/"
 
 
 def is_revoked(issued_at: int, sessions_valid_after: datetime | None) -> bool:

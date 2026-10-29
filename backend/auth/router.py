@@ -29,9 +29,6 @@ logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "session"
 STATE_COOKIE = "kakao_oauth_state"
-# 경로를 좁히지 않는다. 앞단 프록시가 앞에 붙이는 경로(배포의 /api)는 브라우저 주소에만 있어서, 좁힌 경로는 콜백에 실리지 않았다(#168).
-# 10분짜리 일회용이라 다른 요청에 같이 실려도 괜찮다. 지울 때도 같은 경로여야 지워진다.
-STATE_COOKIE_PATH = "/"
 
 # IP당 시간당 게스트 가입 시도 상한(인메모리, 인스턴스마다 센다). 성공·실패 모두 센다.
 GUEST_JOIN_PER_HOUR = 10
@@ -54,7 +51,8 @@ def _set_session_cookie(response: Response, user_id: str) -> None:
 
 
 def _clear_state_cookie(response: Response) -> None:
-    response.delete_cookie(STATE_COOKIE, path=STATE_COOKIE_PATH)
+    # 심을 때와 같은 경로여야 지워진다
+    response.delete_cookie(STATE_COOKIE, path=core.state_cookie_path(settings.kakao_redirect_uri))
 
 
 @public_router.get("/kakao/login")
@@ -78,7 +76,7 @@ def get_kakao_login(session: str | None = Cookie(default=None), db: Session = Db
             guest_user_id=service.live_guest_id_for_session(db, session),
         ),
         max_age=core.STATE_TTL_SECONDS,
-        path=STATE_COOKIE_PATH,
+        path=core.state_cookie_path(settings.kakao_redirect_uri),
         httponly=True,
         secure=settings.is_prod,
         samesite="lax",   # 카카오에서 콜백으로 돌아오는 건 최상위 GET 이동이라 Lax 쿠키가 같이 온다
