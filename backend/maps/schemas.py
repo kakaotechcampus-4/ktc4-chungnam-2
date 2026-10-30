@@ -88,6 +88,27 @@ class MapList(BaseModel):
     limit: int
 
 
+class TrashedMap(BaseModel):
+    """삭제한 지도 한 건(#464) — 복구하면 Map이 된다. docs/api-spec.yaml TrashedMap과 1:1."""
+
+    id: str
+    title: str
+    start_date: date
+    end_date: date
+    region: MapRegion | None = None
+    member_count: int | None = Field(default=None, ge=0)
+    pin_count: int | None = Field(default=None, ge=0)
+    deleted_at: datetime
+    # deleted_at + 30일. 이 시각 뒤에는 복구할 수 없고 정리 작업이 지운다.
+    purge_at: datetime
+    days_left: int = Field(ge=0)
+
+
+class TrashedMapList(BaseModel):
+    items: list[TrashedMap]
+    retention_days: int
+
+
 class Invite(BaseModel):
     token: str
     url: str
