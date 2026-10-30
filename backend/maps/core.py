@@ -360,6 +360,15 @@ def is_purge_due(deleted_at: datetime, now: datetime) -> bool:
     return deleted_at <= now - TRASH_RETENTION
 
 
+def check_can_restore(role: Role | None, map_id: str, user_id: str) -> None:
+    """복구 권한 판정(#464) — 비구성원은 404, 구성원인데 map.restore가 안 되면 403. 라우터의 restorable_map(요청 초입)과
+    restore_map(지도 행을 잠근 뒤)이 같은 함수로 판정한다."""
+    if role is None:
+        raise AppError("NOT_FOUND")
+    if not can(Principal(user_id=user_id, map_id=map_id, role=role), "map.restore", Resource(type="map", map_id=map_id)):
+        raise AppError("FORBIDDEN")
+
+
 def check_restorable(deleted_at: datetime, now: datetime) -> None:
     if is_purge_due(deleted_at, now):
         raise AppError("MAP_PURGED")

@@ -416,3 +416,54 @@ def test_a_concurrent_create_and_restore_cannot_cross_the_limit(test_engine):
             assert service._my_map_count(session, user_id) == MAP_LIMIT
     finally:
         _cleanup(test_engine, user_id)
+
+
+def test_restore_rechecks_the_role_after_locking_when_ownership_moves_in_between(test_engine):
+    """A가 복구 권한 판정을 통과한 뒤 A→B 방장 위임이 끼어들면, 잠금을 얻은 복구는 지금 역할(member)로 403이다.
+    위임 쪽이 지도 행을 쥔 채 복구가 잠금에서 기다리는 순서를 만든다."""
+    factory = sessionmaker(bind=test_engine)
+    a, (map_id,), _ = _committed_owner_with_deleted_maps(test_engine, 1)
+    b = f"concurrent_{uuid.uuid4().hex[:8]}"
+    with factory() as session:
+        ensure_users(session, b)
+        session.add(MembershipRow(map_id=map_id, user_id=b, role="member"))
+        session.commit()
+    holder = factory()
+    try:
+        holder.execute(select(MapRow.id).where(MapRow.id == map_id).with_for_update())   # 위임이 지도 행을 잠근 상태
+        outcome = {}
+
+        def restore_as_a():
+            session = factory()
+            try:
+                outcome["result"] = service.restore_map(session, map_id=map_id, user_id=a)
+                session.commit()
+            except Exception as exc:  # noqa: BLE001
+                session.rollback()
+                outcome["result"] = exc
+            finally:
+                session.close()
+
+        thread = threading.Thread(target=restore_as_a)
+        thread.start()
+        thread.join(timeout=1)
+        assert thread.is_alive()   # 복구는 잠금에서 기다린다 — 아직 아무것도 판정하지 못했다
+        holder.execute(update(MembershipRow).where(MembershipRow.map_id == map_id, MembershipRow.user_id == a).values(role="member"))
+        holder.execute(update(MembershipRow).where(MembershipRow.map_id == map_id, MembershipRow.user_id == b).values(role="owner"))
+        holder.commit()
+        thread.join(timeout=15)
+
+        assert getattr(outcome["result"], "code", None) == "FORBIDDEN", outcome
+        with factory() as session:
+            assert session.execute(select(MapRow.deleted_at).where(MapRow.id == map_id)).scalar_one() is not None
+            assert session.execute(
+                select(func.count()).select_from(EventLog).where(EventLog.type == "map.restored", EventLog.map_id == map_id)
+            ).scalar_one() == 0
+    finally:
+        holder.close()
+        _cleanup(test_engine, a)
+        with factory() as session:
+            session.execute(delete(MembershipRow).where(MembershipRow.user_id == b))
+            session.execute(delete(UserIdentity).where(UserIdentity.user_id == b))
+            session.execute(delete(User).where(User.id == b))
+            session.commit()

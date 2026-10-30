@@ -20,9 +20,8 @@ from fastapi import APIRouter, Depends, Path, Request, Response
 
 from auth.deps import get_current_user
 from auth.schemas import CurrentUser
-from authz.core import Principal, Resource, can
+from authz.core import Principal
 from authz.guard import require_map_member, require_on_map
-from common.errors import AppError
 from common.settings import settings
 from maps import core, flows, service
 from maps.deps import DbSession
@@ -52,14 +51,11 @@ def restorable_map(
 ) -> Principal:
     """map.restore 판정(#464). require_on_map을 못 쓴다 — 그 가드의 게이트웨이는 삭제된 지도의 역할을 None으로
     돌려줘서(일반 경로는 404) 삭제된 지도를 복구하려는 방장이 항상 404가 된다. 그래서 삭제 여부와 무관하게
-    memberships.role을 읽고 판정은 같은 정책 표(authz.can)로 한다. 비구성원·없는 지도는 404, 구성원은 403."""
+    memberships.role을 읽고 판정은 같은 정책 표(authz.can)로 한다. 비구성원·없는 지도는 404, 구성원은 403.
+    이 판정은 잠금 없이 읽은 값이라 service.restore_map이 지도 행을 잠근 뒤 한 번 더 한다."""
     role = service.role_in_map(db, map_id=mapId, user_id=user.user_id)
-    if role is None:
-        raise AppError("NOT_FOUND")
-    principal = Principal(user_id=user.user_id, map_id=mapId, role=role)
-    if not can(principal, "map.restore", Resource(type="map", map_id=mapId)):
-        raise AppError("FORBIDDEN")
-    return principal
+    core.check_can_restore(role, mapId, user.user_id)
+    return Principal(user_id=user.user_id, map_id=mapId, role=role)
 
 
 MapToRestore = Depends(restorable_map)  # 방장만 — 구성원 403, 비구성원·정리된 지도 404

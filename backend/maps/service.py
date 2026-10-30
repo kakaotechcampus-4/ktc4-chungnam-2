@@ -502,7 +502,7 @@ def list_trash(db: Session, *, user_id: str, now: datetime) -> list[TrashedMap]:
 
 def restore_map(db: Session, *, map_id: str, user_id: str) -> Map:
     """삭제한 지도 복구(#464) — deleted_at만 비운다. 구성원·핀·반응·초대·확정 리스트·추천 기록은 정리 작업이
-    30일 전엔 건드리지 않아 그대로다. 방장인지는 라우터의 restorable_map이 이미 봤다.
+    30일 전엔 건드리지 않아 그대로다. 방장인지는 라우터의 restorable_map이 먼저 보고, 여기서 지도 행을 잠근 뒤 한 번 더 본다.
     삭제된 지도를 읽는 전용 함수는 두지 않았다 — 이미 복구된 지도도 200이어야 해서 삭제 여부와 무관하게 행을
     잠그고 deleted_at을 본다(get_map_or_404의 삭제 필터는 그대로). 순서: 지도 행 잠금 → 이미 복구됐으면 그대로 돌려줌 → 30일 판정(지금 시각, 정리 작업 실행에 기대지 않는다) →
     사용자 단위 잠금 후 지도 수 상한 → 복구와 map.restored를 같은 트랜잭션에. 같은 지도의 동시 복구는 이 잠금에서 줄을 서고 뒤의
@@ -510,6 +510,9 @@ def restore_map(db: Session, *, map_id: str, user_id: str) -> Map:
     map_row = db.execute(select(MapRow).where(MapRow.id == map_id).with_for_update()).scalar_one_or_none()
     if map_row is None:
         raise AppError("NOT_FOUND")
+    # 라우터의 판정은 잠금 없이 읽은 값이다 — 그 사이에 방장 위임과 삭제가 끼어들면 이미 구성원이 된 사람이
+    # 남의 삭제를 되돌리게 된다. 잠근 뒤의 지금 역할로 다시 판정한다.
+    core.check_can_restore(role_in_map(db, map_id=map_id, user_id=user_id), map_id, user_id)
     if map_row.deleted_at is not None:
         core.check_restorable(map_row.deleted_at, datetime.now(timezone.utc))
         _lock_map_count(db, user_id)
