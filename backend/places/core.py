@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 from urllib.parse import quote
 
 
@@ -19,6 +19,46 @@ def parse_minutes(clock: str) -> int:
     if not sep or not h.isdigit() or not m.isdigit() or len(m) != 2 or int(m) > 59:
         raise ValueError(f"HH:MM 형식이 아니다: {clock!r}")
     return int(h) * 60 + int(m)
+
+
+def _valid_spans(spans: Any) -> bool:
+    """한 요일의 [[여는, 닫는], …]이 모두 "HH:MM"이고 시작 < 끝(자정 넘김은 24를 더한 값)인가. 빈 목록(= 휴무)은 맞다."""
+    if not isinstance(spans, list):
+        return False
+    for span in spans:
+        if not isinstance(span, (list, tuple)) or len(span) != 2:
+            return False
+        try:
+            start, end = parse_minutes(span[0]), parse_minutes(span[1])
+        except (ValueError, AttributeError):
+            return False
+        if not 0 <= start < _DAY or not start < end <= 2 * _DAY:
+            return False
+    return True
+
+
+def valid_hours(raw: Any) -> dict | None:
+    """요일 7개 모두에 맞는 [[여는, 닫는], …]이 있으면 그대로, 아니면 None(= 모름). 적재(ingest)가 쓴다."""
+    if not isinstance(raw, dict) or set(raw) != set(WEEKDAYS) or not all(_valid_spans(v) for v in raw.values()):
+        return None
+    return {day: [[a, b] for a, b in raw[day]] for day in WEEKDAYS}
+
+
+def clean_hours(raw: Any) -> dict | None:
+    """원본 hours를 읽는 순수 API용(places.api.week_open_status 등) — 요일별로 거른다: 요일 이름이 아니거나 구간 형식이
+    틀린 칸은 없는 값(모름)으로 치고, 맞는 요일만 남긴다. 일부 요일만 있는 hours는 그대로 허용한다(없는 요일은 closed_days가 정한다).
+    잘못된 값이 「영업」으로 새지 않게 한다(#747). 남은 요일이 없으면 None."""
+    if not isinstance(raw, dict):
+        return None
+    kept = {day: [[a, b] for a, b in raw[day]] for day in WEEKDAYS if day in raw and _valid_spans(raw[day])}
+    return kept or None
+
+
+def valid_closed_days(raw: Any) -> list[str] | None:
+    """["월", "수"]처럼 허용된 요일 이름만 든 목록이면 중복을 없애 돌려주고, 아니면 None(= 모름). []는 그대로 [](매일 영업)."""
+    if not isinstance(raw, list) or any(d not in WEEKDAYS for d in raw):
+        return None
+    return list(dict.fromkeys(raw))
 
 
 def is_open_on(hours: dict | None, closed_days: list[str] | None, weekday: int, minutes: int) -> str:
@@ -67,7 +107,8 @@ def day_open_status(hours: dict | None, closed_days: list[str] | None, weekday: 
 
 
 def week_open_status(hours: dict | None, closed_days: list[str] | None) -> dict[int, str]:
-    """7요일 전부의 day_open_status → {0..6: 상태}."""
+    """7요일 전부의 day_open_status → {0..6: 상태}. 형식이 틀린 hours·closed_days는 없는 값(모름)으로 본다(clean_hours·valid_closed_days)."""
+    hours, closed_days = clean_hours(hours), valid_closed_days(closed_days)
     return {d: day_open_status(hours, closed_days, d) for d in range(7)}
 
 

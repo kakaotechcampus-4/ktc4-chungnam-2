@@ -372,3 +372,34 @@ def test_get_open_status_on_weekdays_omits_places_without_a_row(db_session, tmp_
     assert api.get_open_status_on_weekdays([r1, r2], [0], db=db_session) == {r1: "closed"}
     assert api.get_open_status_on_weekdays([r1], [0, 1], db=db_session) == {r1: "open"}
     assert api.get_open_status_on_weekdays([], [0], db=db_session) == {}
+
+
+# ---- 잘못된 원본 값은 모름이다 (#885 검수) ----
+
+@pytest.mark.parametrize("hours, closed_days", [
+    (None, ["월요일"]),                                   # 허용 형식이 아닌 요일 이름
+    (None, "월"),                                         # 목록이 아니다
+    (None, ["월", 3]),
+    ({"월": [["잘못된 시각", "잘못된 시각"]]}, None),      # 시각 형식이 틀리다
+    ({"월": [["09:00"]]}, None),                          # 구간이 두 칸이 아니다
+    ({"월": [["18:00", "09:00"]]}, None),                 # 시작이 끝보다 늦다
+    ({"월": "09:00-18:00"}, None),                        # 목록이 아니다
+    ({"Mon": [["09:00", "18:00"]]}, None),                # 요일 이름이 아니다
+    ("월 영업", None),
+])
+def test_malformed_raw_values_are_unknown_not_open(hours, closed_days):
+    assert api.week_open_status(hours, closed_days) == {d: "unknown" for d in range(7)}
+    assert api.open_status_on_weekdays(hours, closed_days, [0, 1, 2]) == "unknown"
+
+
+def test_a_malformed_day_is_dropped_but_the_good_days_and_closed_days_still_apply():
+    hours = {"월": [["잘못된 시각", "?"]], "화": [["09:00", "18:00"]]}
+    got = api.week_open_status(hours, ["수"])
+    assert got[0] == "open"       # 월은 hours에서 빠졌고 closed_days에도 없다 → closed_days가 있으니 영업
+    assert got[1] == "open" and got[2] == "closed"
+
+
+def test_core_valid_helpers_are_what_ingest_uses():
+    assert core.valid_closed_days(["월", "월", "화"]) == ["월", "화"] and core.valid_closed_days([]) == []
+    assert core.valid_hours(_week(월=[["09:00", "18:00"]])) is not None
+    assert core.valid_hours({"월": []}) is None   # 7요일이 다 있어야 한다(적재용)
