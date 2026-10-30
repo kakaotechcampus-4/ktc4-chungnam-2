@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, afterEach, describe, expect, it } from "vitest";
 import { server } from "./node";
 import { resetScenario } from "./scenarios";
-import { store } from "./store";
+import { ME_USER_ID, store } from "./store";
 import { MAP_LIMIT } from "./handlers/maps";
 
 const BASE = "https://api.pingo.example.com";
@@ -1480,5 +1480,68 @@ describe("#811 — 「추천 받기」 연타 방어: Idempotency-Key", () => {
     const res = await create("in-progress-key");
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("REQUEST_IN_PROGRESS");
+  });
+});
+
+describe("#855 — 탈퇴 후 재가입: 7일 안에는 새 계정 또는 되살리기를 고른다", () => {
+  const pending = () => fetch(`${BASE}/auth/pending`);
+  const choose = (choice: unknown) => fetch(`${BASE}/auth/pending`, { method: "POST", body: JSON.stringify({ choice }) });
+
+  it("복구 기간 안의 탈퇴 계정이면 카카오 콜백이 로그인 대신 선택 화면(login_pending)으로 보낸다", async () => {
+    resetScenario("withdrawn-relogin");
+    const res = await fetch(`${BASE}/auth/kakao/callback`, { redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/?login_pending=withdrawn_account"); // 쿼리에 이름·id·날짜가 없다
+  });
+
+  it("선택 안내(GET /auth/pending)에 남은 날수가 있다 — 탈퇴 2일 뒤면 5일 남음", async () => {
+    resetScenario("withdrawn-relogin");
+    const info = await pending().then((r) => r.json());
+    expect(info).toMatchObject({ display_name: "탈퇴했던 나", days_left: 5 });
+    expect(new Date(info.restore_until).getTime() - new Date(info.withdrawn_at).getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it("선택 전에는 로그인된 상태가 아니다(/auth/me 401) — 선택하면 로그인된다", async () => {
+    resetScenario("withdrawn-relogin");
+    expect((await fetch(`${BASE}/auth/me`)).status).toBe(401);
+    expect((await choose("restore")).status).toBe(200);
+    expect((await fetch(`${BASE}/auth/me`)).status).toBe(200);
+  });
+
+  it("restore는 같은 계정(같은 id) 200, restart는 **새 사용자**(다른 id) 201이다. 선택하면 대기가 끝나 재전송은 404 NO_PENDING_LOGIN", async () => {
+    resetScenario("withdrawn-relogin");
+    const before = (await fetch(`${BASE}/maps`).then((r) => r.json()).then((j) => j)).items; // 시드 지도 참여
+    expect(before.length).toBeGreaterThan(0);
+    const restored = await choose("restore");
+    expect(restored.status).toBe(200);
+    const restoredUser = await restored.json();
+    expect(restoredUser.id).toBe(ME_USER_ID); // 같은 계정
+    const again = await choose("restore");
+    expect(again.status).toBe(404);
+    expect((await again.json()).code).toBe("NO_PENDING_LOGIN");
+
+    resetScenario("withdrawn-relogin");
+    const restarted = await choose("restart");
+    expect(restarted.status).toBe(201);
+    expect((await restarted.json()).id).not.toBe(ME_USER_ID); // 새 사용자 — 기존 계정은 정리됨
+    expect((await pending()).status).toBe(404);
+  });
+
+  it("choice 말고 다른 필드를 보내면 422(additionalProperties: false)", async () => {
+    resetScenario("withdrawn-relogin");
+    const res = await fetch(`${BASE}/auth/pending`, { method: "POST", body: JSON.stringify({ choice: "restore", extra: 1 }) });
+    expect(res.status).toBe(422);
+    expect((await pending()).status).toBe(200); // 잘못된 요청은 대기를 끝내지 않는다
+  });
+
+  it("choice가 restart·restore가 아니면 422이고, 대기가 없으면 어떤 호출이든 404 NO_PENDING_LOGIN", async () => {
+    resetScenario("withdrawn-relogin");
+    expect((await choose("later")).status).toBe(422);
+    expect((await pending()).status).toBe(200); // 잘못된 요청은 대기를 끝내지 않는다
+    resetScenario("happy-path");
+    const res = await pending();
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("NO_PENDING_LOGIN");
+    expect((await choose("restore")).status).toBe(404);
   });
 });

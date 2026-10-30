@@ -22,6 +22,7 @@ SKIP_FILES = {"common/errors.py"}   # 목록을 정의하는 자리
 KNOWN_UNRAISED: dict[str, str] = {
     "IDEMPOTENCY_CONFLICT": "#48의 첫 적용처는 POST /maps/{mapId}/runs로 정했다 — 서버 구현 전(#811 2/3). 구현되면 지운다",
     "REQUEST_IN_PROGRESS": "같은 Idempotency-Key의 첫 요청 처리 중 — 서버 구현 전(#811 2/3). 구현되면 지운다",
+    "NO_PENDING_LOGIN": "탈퇴 계정 재로그인 선택(GET·POST /auth/pending) — 서버 구현 전(#857). 구현되면 지운다",
 }
 
 
