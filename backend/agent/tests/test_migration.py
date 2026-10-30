@@ -25,7 +25,7 @@ from agent.tests.conftest import BASE_DATABASE_URL, TEST_DB_NAME, replace_dbname
 
 BACKEND = Path(__file__).resolve().parents[2]
 REVISION = "0030_agent_cursor_drop_gap_seq"   # agent 마지막 마이그레이션(뒤에 다른 모듈 것이 붙어도 된다)
-LEASE_REVISION = "0045_agent_cursor_lease_token"
+LEASE_REVISION = "0047_agent_cursor_lease_token"
 TABLES_REVISION = "0029_agent_tables"
 PREVIOUS = "0025_invite_revoke"
 MODELS = (AgentSettings, AgentCursor, AgentRun, AgentSuggestion, AgentSuggestionView, AgentReasonSummary, AgentRunAdvice)
@@ -83,7 +83,7 @@ def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_u
         for model in MODELS:
             columns = {c["name"] for c in inspector.get_columns(model.__tablename__)}
             expected = set(model.__table__.columns.keys()) - ({"lease_token"} if model is AgentCursor else set())
-            assert columns == expected, model.__tablename__   # lease_token은 0045가 더한다(아래)
+            assert columns == expected, model.__tablename__   # lease_token은 0047이 더한다(아래)
 
         indexes = {i["name"]: i for i in inspector.get_indexes("agent_suggestions")}
         active = indexes["uq_agent_suggestions_active"]
@@ -106,7 +106,7 @@ def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_u
         with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:
             conn.execute(insert, {"status": "active"})
 
-        # 0045가 lease_token을 더하고, 내리면 지운다(#812)
+        # 0047이 lease_token을 더하고, 내리면 지운다(#812)
         command.upgrade(cfg, LEASE_REVISION)
         assert "lease_token" in {c["name"] for c in sa.inspect(engine).get_columns("agent_cursors")}
         command.downgrade(cfg, REVISION)

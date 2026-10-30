@@ -2,8 +2,8 @@
 
 lease를 잡을 때 새 uuid를 쓰고, 해제·커서 전진·결과 저장은 그 값이 아직 같을 때만 한다.
 
-Revision ID: 0045_agent_cursor_lease_token
-Revises: 0044_places_name_norm
+Revision ID: 0047_agent_cursor_lease_token
+Revises: 0046_run_applied_evidence
 Create Date: 2026-10-30
 
 """
@@ -14,8 +14,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0045_agent_cursor_lease_token"
-down_revision: Union[str, None] = "0044_places_name_norm"
+revision: str = "0047_agent_cursor_lease_token"
+down_revision: Union[str, None] = "0046_run_applied_evidence"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
