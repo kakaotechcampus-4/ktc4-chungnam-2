@@ -41,8 +41,11 @@ public_router = APIRouter(prefix="/auth", tags=["auth"])
 router = APIRouter(prefix="/auth", tags=["auth"], dependencies=[Depends(get_current_user)])
 
 
-def _set_session_cookie(response: Response, user_id: str) -> None:
-    token = core.create_session_token(user_id, secret=settings.session_secret, issued_at=int(time.time()))
+def _set_session_cookie(response: Response, user_id: str, *, sessions_valid_after=None) -> None:
+    token = core.create_session_token(
+        user_id, secret=settings.session_secret,
+        issued_at=core.new_session_issued_at(int(time.time()), sessions_valid_after),
+    )
     response.set_cookie(
         SESSION_COOKIE,
         token,
@@ -200,7 +203,7 @@ def post_pending(
     else:
         row = service.restart_account(db, claims=claims)
         response.status_code = 201
-    _set_session_cookie(response, row.id)
+    _set_session_cookie(response, row.id, sessions_valid_after=row.sessions_valid_after)
     _clear_pending_cookie(response)
     return _user_response(row)
 

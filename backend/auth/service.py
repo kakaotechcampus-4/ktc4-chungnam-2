@@ -359,10 +359,12 @@ def get_pending_account(db: Session, *, claims: core.PendingClaims) -> dict:
 
 def restore_account(db: Session, *, claims: core.PendingClaims) -> User:
     """POST /auth/pending restore — 기존 계정을 되살린다. 계정·핀 작성자 표시·남아 있던 지도 멤버십이 돌아오고 반응·근거·알림은
-    돌아오지 않는다(탈퇴 때 지웠다, #855). 탈퇴 전에 복사된 세션은 계속 무효다. 커밋하지 않는다."""
+    돌아오지 않는다(탈퇴 때 지웠다, #855). 탈퇴 전에 복사된 세션은 계속 무효다 — sessions_valid_after는 내리지 않는다.
+    새 세션의 발급 시각은 호출부가 core.new_session_issued_at으로 정한다. 커밋하지 않는다."""
     user, now = _pending_target(db, claims, lock=True)
+    if user.sessions_valid_after is None:   # 이 기능 전에 탈퇴한 행 — 탈퇴 시각 이전에 발급된 토큰을 죽인다
+        user.sessions_valid_after = user.deleted_at
     user.deleted_at = None
-    user.sessions_valid_after = core.restored_sessions_valid_after(user.sessions_valid_after, now)
     db.flush()
     return user
 

@@ -368,36 +368,76 @@ def test_purge_leaves_a_living_account_alone(db_session):
 
 # ---- 복구가 남기는 sessions_valid_after (같은 초 경계) ----
 
-def test_restore_keeps_the_withdrawal_value_when_it_is_older_than_this_second():
-    withdrawn = NOW - timedelta(hours=1)
-    assert core.restored_sessions_valid_after(withdrawn, NOW) == withdrawn
+def test_new_session_is_issued_now_when_the_withdrawal_value_is_older_than_this_second():
+    assert core.new_session_issued_at(2_000, None) == 2_000
+    assert core.new_session_issued_at(2_000, datetime.fromtimestamp(1_000, timezone.utc)) == 2_000
 
 
-@pytest.mark.parametrize("existing", [None, NOW, NOW.replace(microsecond=999_999), NOW + timedelta(seconds=3)])
-def test_restore_never_leaves_a_value_that_kills_a_session_issued_this_second(existing):
-    """고정 시계 — 탈퇴와 복구가 같은 초여도 복구 직후 발급한 새 세션(issued_at = 지금 초)은 통하고 그 앞 초의 토큰은 죽는다."""
-    now = NOW.replace(microsecond=250_000)
-    value = core.restored_sessions_valid_after(existing, now)
-    assert not core.is_revoked(int(now.timestamp()), value)
-    assert core.is_revoked(int(now.timestamp()) - 1, value)
+def test_new_session_goes_to_the_next_second_when_withdrawal_and_restore_share_a_second():
+    """고정 시계 — 탈퇴 값(T)은 내리지 않는다. 그 초에 발급된 옛 토큰(T)은 계속 거절되고, 새 토큰은 T+1이라 통한다."""
+    withdrawn = datetime.fromtimestamp(5_000.4, timezone.utc)
+    issued_at = core.new_session_issued_at(5_000, withdrawn)
+    assert issued_at == 5_001
+    assert core.is_revoked(5_000, withdrawn)            # 탈퇴 직전 그 초에 발급된 토큰
+    assert core.is_revoked(4_000, withdrawn)
+    assert not core.is_revoked(issued_at, withdrawn)    # 복구 뒤 새 토큰
 
 
-def test_withdraw_then_restore_in_the_same_second_leaves_a_working_session(app_client, db_session):
-    """탈퇴 → 복구 → /auth/me가 같은 초에 일어나도 200이다. 탈퇴 전에 복사된 토큰은 계속 401."""
-    create_kakao_user(db_session, "same", provider_user_id="s1", display_name="영희")
-    stale = session_cookie("same")
-    row = service.withdraw_user(db_session, user_id="same")
-    claims = core.PendingClaims("same", "kakao", core.deleted_at_stamp(row.deleted_at))
-    service.restore_account(db_session, claims=claims)
+def test_next_second_session_is_accepted_but_a_far_future_one_is_not():
+    near = core.create_session_token("u1", secret=SECRET, issued_at=5_001)
+    far = core.create_session_token("u1", secret=SECRET, issued_at=5_100)
+    assert core.parse_session_token(near, secret=SECRET, now=5_000) is not None
+    assert core.parse_session_token(far, secret=SECRET, now=5_000) is None
+
+
+def test_restore_in_the_same_second_keeps_the_stale_token_dead_and_the_new_one_working(app_client, db_session):
+    """같은 초에 탈퇴한 계정을 복구해도 탈퇴 직전 그 초의 토큰은 401, 복구 뒤 새 세션은 200이다(#855)."""
+    now = datetime.now(timezone.utc)
+    create_kakao_user(db_session, "same", provider_user_id="s1", display_name="영희", deleted_at=now, sessions_valid_after=now)
     db_session.commit()
+    stale = {"session": core.create_session_token("same", secret=_secret(), issued_at=int(now.timestamp()))}
+    cookie = core.create_pending_cookie_value("same", "kakao", now, secret=_secret(), issued_at=int(now.timestamp()))
+    client = _other(app_client)
 
-    assert _other(app_client).get("/auth/me", cookies=session_cookie("same")).status_code == 200
-    # stale는 탈퇴 직전에 발급돼 지금 초와 같을 수 있다 — 한 초 앞 토큰으로 본다
-    old_token = {"session": core.create_session_token(
-        "same", secret=_secret(), issued_at=int(datetime.now(timezone.utc).timestamp()) - 2,
-    )}
-    assert _other(app_client).get("/auth/me", cookies=old_token).status_code == 401
-    del stale
+    resp = client.post("/auth/pending", json={"choice": "restore"}, cookies={"pending_account": cookie})
+
+    assert resp.status_code == 200
+    assert client.get("/auth/me").status_code == 200
+    assert _other(app_client).get("/auth/me", cookies=stale).status_code == 401
+    assert db_session.get(User, "same").sessions_valid_after == now   # 값을 내리지 않았다
+
+
+def test_restore_of_a_row_without_sessions_valid_after_uses_the_withdrawal_time(db_session):
+    """이 기능 전에 탈퇴한 행은 sessions_valid_after가 없다 — 복구가 탈퇴 시각을 넣어 그 이전 토큰을 죽인다."""
+    old = _withdrawn_account(db_session)
+    old.sessions_valid_after = None
+    db_session.flush()
+    deleted_at = old.deleted_at
+
+    service.restore_account(db_session, claims=core.PendingClaims("old", "kakao", core.deleted_at_stamp(deleted_at)))
+
+    assert db_session.get(User, "old").sessions_valid_after == deleted_at
+
+
+# ---- 선택 대기 쿠키의 형식 오류는 모두 None ----
+
+@pytest.mark.parametrize("mutate", [
+    lambda c: c.replace(c.split(".")[2], "²"),                      # isdigit()은 참, int()는 실패
+    lambda c: c.replace(c.split(".")[3], "١٢٣"),                    # 아랍-인도 숫자
+    lambda c: c[: c.rindex(".") + 1] + "서명",                       # 비ASCII 서명
+    lambda c: c[: c.rindex(".") + 1],                                # 빈 서명
+    lambda c: c + "\x00",
+])
+def test_pending_cookie_with_malformed_fields_is_none_not_an_exception(mutate):
+    assert core.parse_pending_cookie(mutate(_cookie()), secret=SECRET, now=1100) is None
+
+
+def test_pending_endpoint_with_a_malformed_cookie_is_404_not_500(app_client):
+    """브라우저가 latin-1 바이트를 그대로 보내는 경우 — 서버는 그 값을 '²' 같은 문자로 읽는다."""
+    client = _other(app_client)
+    for value in ("u.kakao.²." + "1" * 10 + ".sig", "u.kakao.1.1.sigé"):
+        resp = client.get("/auth/pending", headers={"cookie": ("pending_account=" + value).encode("latin-1")})
+        assert resp.status_code == 404 and resp.json()["code"] == "NO_PENDING_LOGIN"
 
 
 # ---- 잠금을 기다리는 사이 기한이 지나는 경우(실제 두 DB 연결) ----
