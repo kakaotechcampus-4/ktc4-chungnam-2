@@ -18,7 +18,7 @@
 | 주소 | 운영 `ktc-pingopingo.duckdns.org`, 스테이징 `staging.ktc-pingopingo.duckdns.org`(DuckDNS 무료, 하위 이름은 자동으로 같은 IP). 서버에 고정 IP(Elastic IP 3.38.14.223)를 붙였다 | 소셜 로그인은 IP 주소를 redirect로 받지 않는다. 고정 IP라 서버를 껐다 켜도 주소가 산다. 처음 등록하려던 `pingopingo`는 다른 계정이 이미 쓰고 있어 `ktc-pingopingo`로 바꿨다(2026-10-28) | 이름을 바꿀 때 |
 | 한 주소로 서빙 | 환경마다 `/api/*`는 API(앞의 `/api`를 떼고 넘긴다), 나머지는 화면 정적 파일. 화면은 `VITE_API_BASE_URL=/api`로 빌드한다. API는 `UVICORN_ROOT_PATH=/api`(`deploy/compose.yml`)로 자기 공개 경로를 안다(`/docs`, 접근 로그) | 세션 쿠키가 `SameSite=lax`라 화면과 API가 같은 사이트여야 로그인이 된다. CORS도 필요 없다. 백엔드 경로는 그대로다 | — |
 | 환경 | 운영과 스테이징을 같은 서버에서 나눈다(컨테이너, DB 이름, 비밀값이 다르다) | 멘토 「환경 분리」. 서버가 1대다 | 서버를 더 받을 때 |
-| DB | 서버 안 PostgreSQL 17 + PostGIS 컨테이너(`compose.db.yml`), DB `pingo_prod`, `pingo_staging` | RDS는 운영진 승인이 필요하다(신청함). 승인 전에도 배포를 시작한다 | RDS가 승인되면 옮긴다(덤프 후 복원, `compose.db.yml` 빼기, `DATABASE_URL` 교체) |
+| DB | RDS(PostgreSQL 17.11, PostGIS 3.5.6, 2026-10-30 승인) 한 대에 DB `pingo_prod`, `pingo_staging`. 앱은 환경마다 전용 계정(`pingo_prod_app`, `pingo_staging_app`)으로 SSL(`sslmode=require`)로 붙는다. 옮기기 전까지는 서버 안 PostgreSQL 컨테이너(`compose.db.yml`)다. 옮기는 법은 아래 「RDS로 옮기기」(#873) | 자동 백업 7일, 삭제 방지, 팀 EC2에서만 접속. 마스터 비밀번호는 Secrets Manager가 30일마다 바꾸므로 앱은 마스터를 쓰지 않는다. 앱 계정은 자기 DB만 열어 환경이 나뉜다 | 2026-11-20(AWS 종료) |
 | 프로세스 | 환경마다 API 프로세스 1개(uvicorn 워커 1) | 메모리 요청 상한, 서버 시작 시 정리, 관찰 lease가 이 전제에서 안전하다. 4GB에 두 환경이 들어간다 | 응답이 느려지거나 워커를 늘릴 때. 그 전에 아래 「타협」을 고친다 |
 | 이미지 | GitHub Actions가 API, 화면 이미지를 만들어 팀 계정 ECR(`pingo-api`, `pingo-web`, 최근 40개 보관)에 올린다(`.github/workflows/images.yml`). 태그는 `sha-<7자리>`, 브랜치 이름, `v0.x.y` | 빌드와 배포를 나눈다(멘토). 서버는 자기 역할로 ECR에서 받는다(저장한 비밀 없음) | — |
 | 배포 | `.github/workflows/deploy.yml`이 OIDC 역할로 SSM 명령을 보내 서버의 `deploy/deploy.sh <환경> <태그>`를 돌린다. develop은 이미지가 만들어지면 스테이징에 자동, 운영은 사람이 v 태그를 골라 수동 | 22번 포트와 서버 키가 없다. 운영은 태그를 골라 올린다(멘토) | — |
@@ -36,7 +36,8 @@
 | 서버 시작 시 진행 중인 AI 코스 run을 모두 끝낸다(`interrupt_unfinished_runs`) | 프로세스가 하나라 끝내는 run은 모두 죽은 프로세스의 것이다 | 프로세스가 둘 이상이면 다른 프로세스의 run을 끊는다 — 마지막 진행이 오래된 run만 끝내게 고친다(#813) |
 | AI 코스 계산이 응답 뒤 `BackgroundTasks`로 돈다 | 서버(VM)는 요청이 끝나도 CPU를 준다. 배포로 다시 뜨면 그 run은 위 정리로 끝난다 | 작업 큐로 옮길 때 |
 | 관찰 tick이 프로세스 안 반복 작업(`AGENT_LOOP_IN_PROCESS=1`)으로 돈다 | 프로세스가 하나라 한 번만 돈다 | 관찰 tick 명령(`python -m agent.tick`)과 lease fencing이 생기면 cron으로 옮긴다(#812) |
-| DB가 같은 서버에 있고 덤프도 같은 디스크에 있다 | 시연까지의 데이터다 | RDS 승인, 또는 덤프를 S3로 보낸다 |
+| DB가 같은 서버에 있고 덤프도 같은 디스크에 있다 | 시연까지의 데이터다 | RDS로 옮기면 풀린다(#873, RDS 자동 백업). 옮긴 뒤에도 `backup.sh` 덤프는 서버 디스크에 쌓인다 |
+| 운영과 스테이징이 RDS 한 대를 나눠 쓴다 | DB와 계정이 나뉘어 서로 열지 못한다. 부하가 작다 | 스테이징 부하(측정, QA)가 운영 응답을 늦추면 |
 
 ## 서버 처음 준비
 
@@ -50,6 +51,33 @@
 6. `docker compose up -d db` → 환경마다 마이그레이션 → 장소 적재(아래 「장소 데이터 적재」, 서버에서는 `deploy/load-places.sh <환경> /srv/pingo/data/places`) → `deploy.sh`로 앱을 올린다.
 7. `crontab /srv/pingo/deploy/crontab`.
 8. 카카오 Developers에 두 주소의 Redirect URI(`https://<주소>/api/auth/kakao/callback`)와 Web 사이트 도메인을 등록한다.
+
+## RDS로 옮기기 (#873)
+
+한 번만 한다. 스테이징을 먼저 옮기고 확인한 뒤 운영을 옮긴다. 운영은 옮기는 동안(덤프, 복원, 행 수 대조) 몇 분 열리지 않으니 사용자가 없는 시간에 한다.
+
+1. **첫 설정(사람이 한 번)**: 콘솔 EC2 → 연결 → Session Manager로 서버에 들어가 `cd /srv/pingo/deploy`. `.env`에 `RDS_HOST=<엔드포인트>`를 적고 `./rds-setup.sh`. 마스터(`pingo_admin`) 비밀번호를 물으면 Secrets Manager의 값을 붙여 넣는다(화면에 안 보인다). 스크립트가 `rds/setup.sql`로 환경별 앱 계정, DB `pingo_staging`, 확장(`postgis`, `pg_trgm`)을 만들고, 출력 끝에 두 DB의 `postgis_full_version()`을 보인다. 앱 계정 비밀번호는 스크립트가 만들어 `env/<환경>.env`의 `RDS_DATABASE_URL`에만 적는다. 마스터 비밀번호는 저장하지 않는다.
+2. **스테이징 옮기기**: Actions `move-to-rds`를 `staging`, `move`로 돌린다. API 정지 → 덤프(`backup.sh`) → RDS에 복원(확장과 `spatial_ref_sys`는 빼고, 소유자는 앱 계정) → 표마다 행 수 대조 → `DATABASE_URL` 교체(옛 파일은 `env/staging.env.before-rds`) → 재시작 → 건강 확인. 실패하면 `DATABASE_URL`을 바꾸지 않은 채 API를 다시 올린다.
+3. **확인**: Actions `staging-check`를 돌린다.
+4. **운영 옮기기**: `move-to-rds`를 `prod`, `move`, confirm에 `prod move`로 돌린다. 이어서 운영 주소에서 로그인과 지도를 한 번 열어 본다.
+5. **마무리**: 두 환경이 모두 RDS면 `move-to-rds`를 `finish`(confirm `finish`)로 돌린다. 서버 안 DB 컨테이너를 멈추고 `.env`의 `COMPOSE_FILE`에서 `compose.db.yml`을 뺀다. 볼륨(`pgdata`)은 지우지 않는다.
+
+- **되돌리기**: `move-to-rds`를 그 환경, `rollback`으로 돌린다. 서버 안 DB(마무리로 멈췄으면 다시 켠다)와 옮기기 전 `DATABASE_URL`로 돌아간다. 옮긴 뒤 RDS에 쓴 데이터는 따라오지 않는다.
+- **실패했을 때**: 복원 중 실패면 단일 트랜잭션이라 RDS는 비어 있어 그대로 다시 돌리면 된다. 복원 뒤 행 수 대조에서 실패했으면 RDS에 테이블이 남아 다음 move가 거절한다 — 그 환경의 앱 계정으로 `DROP OWNED BY pingo_<환경>_app;`(확장은 마스터 것이라 남는다)을 하고 다시 돌린다.
+- 첫 설정이 중간에 실패하면(계정은 만들었는데 DB에서 멈춤 등) `setup.sql`을 그대로 다시 돌릴 수 없다. 만들어진 것을 마스터로 확인해 지우고 다시 돌린다.
+- 로컬 리허설(2026-10-30, `pingo_eval` 크기 그대로: 장소 199,211곳, 라벨 약 191만 건): 슈퍼유저가 아닌 마스터 역할로 `setup.sql`의 계정·소유자·접속 권한 단계 통과(postgis 생성만 RDS의 `rds_superuser` 몫), 앱 계정으로 복원 22초, 표 33개 행 수 일치, 앱 계정으로 PostGIS 거리 질의·pg_trgm 유사도·`alembic upgrade head` 통과, 운영 계정은 스테이징 DB에 접속 거절.
+- 옮긴 뒤 `deploy.sh`의 마이그레이션은 앱 계정으로 돈다. 새 확장이 필요한 마이그레이션은 마스터로 확장을 먼저 만든다(앱 계정은 만들 수 없다).
+
+### 기록 (2026-10-30)
+
+- 첫 설정(`rds-setup.sh`) 완료. 스테이징 19:10에 옮김(표 33개 일치, 그 뒤 staging-check PASS 71·FAIL 0, INFO와 SKIP은 옮기기 전과 같음). 운영 19:20에 옮김(표 32개 일치 — 운영은 0043 전 버전이라 하나 적다, 열리지 않은 시간 약 36초).
+- 스테이징 이전은 성공했지만 마지막 기록 줄의 버그로 실패 표시가 났다(#875에서 고침).
+- **운영 배포 예외**: 옮긴 뒤 운영 로그인이 안 됐다. RDS 문제가 아니라 운영 이미지가 #819(카카오 state 쿠키 경로) 수정 전 코드라, 쿠키가 `/auth/kakao`에 붙어 `/api/auth/kakao/callback`으로 돌아올 때 브라우저가 보내지 않았다(옮기기 전부터 같은 상태). `deploy` 워크플로는 운영에 `v` 태그만 받아서, Session Manager에서 `./deploy.sh prod sha-17dd07d`(develop, 스테이징과 같은 이미지)로 직접 올렸다. RDS 앱 계정으로 백업, 마이그레이션(0043)까지 통과했고 로그인과 지도 열기를 확인했다. 다음 정식 릴리스(develop → main → `v` 태그)부터 규칙대로 돌아간다.
+- `finish`(19:33) 뒤 서버의 모든 `docker compose` 명령이 `depends on undefined service "db"`로 실패했다. `compose.yml`의 API가 `depends_on: db (required: false)`를 갖고 있었는데, Compose v5는 정의되지 않은 서비스는 required가 false여도 거절한다. 돌던 컨테이너는 영향이 없었다. DB 의존을 `compose.db.yml`로 옮겨 고쳤다(#877). 머지하면 스테이징 배포의 `sync.sh`가 서버 파일을 맞춘다.
+
+### AWS가 끝나기 전에(2026-11-20)
+
+서버와 RDS가 함께 끝난다. 그 전에 운영 DB 덤프(`backup.sh prod`)를 받아 저장소 밖에 보관한다. 시연은 그 뒤에도 로컬(`docs/demo-guide.md`)에서 돈다. RDS는 삭제 방지가 켜져 있어 지우려면 운영진에게 요청한다.
 
 ## 배포할 때마다
 
@@ -108,7 +136,7 @@
 
 | 작업 | 명령 | 주기 | 상태 |
 |---|---|---|---|
-| 정기 정리: 지도(삭제 30일 후), 알림(90일), 게스트(90일 미사용) | `deploy/run.sh <환경> python -m maintenance.run` | 하루 한 번(03:30 운영, 03:40 스테이징) | 서버 cron(`deploy/crontab`) |
+| 정기 정리: 지도(삭제 30일 후), 알림(90일), 게스트(90일 미사용), 모델 호출 사용량 `llm_calls`(30일, #870) | `deploy/run.sh <환경> python -m maintenance.run` | 하루 한 번(03:30 운영, 03:40 스테이징) | 서버 cron(`deploy/crontab`) |
 | 운영 DB 덤프 | `deploy/backup.sh prod` | 하루 한 번(04:00), 14일 보관 | 서버 cron. 운영 배포 직전에도 한다 |
 | v2 계획 보조 에이전트 관찰 | 지금은 프로세스 안 반복 작업(`AGENT_LOOP_IN_PROCESS=1`) | 5분(`docs/agent-v2.md` 12.1) | 관찰 tick 명령과 lease fencing이 생기면 cron으로 옮긴다(위 「타협」, #812) |
 | agent 일일 정리 | 없음 | 서버 안에서 돈다 | 따로 예약하지 않는다(`backend/maintenance/CLAUDE.md`) |

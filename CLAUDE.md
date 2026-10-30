@@ -61,7 +61,7 @@
 | fact_key 목록 | `docs/constraints.md` | 코드·프롬프트 안의 키 목록 복사본 |
 | 응답 필드 | `docs/api-spec.yaml` | 스펙에 없는 필드를 라우터가 반환 |
 | 계정 수명(탈퇴, 게스트 합치기) | 정리 전. `auth/service.py`의 `WITHDRAW_STEPS`와 `MERGE_STEPS`, 각 모듈 `api.py`의 `reassign_user`와 `delete_by_user` | 사용자 id 열을 새로 만들면서 두 목록을 건드리지 않음, JSONB 안에 사용자 id를 담음(`test_user_data_lists.py`가 못 봄) |
-| 모델 호출 계량 | 정리 전. 지도 하루 상한 `agent/constants.py`(세는 곳 `agent/core.py`), 코스 하루 상한과 지휘 횟수 `agent/course/constants.py`(세는 곳 `agent/course/service.py`), 호출 1회의 도구 상한 `llm/prompts.py`와 `llm/service.py`의 `_ToolBudget` | 새 모델 호출이 자기 상한 상수와 세는 쿼리를 따로 만듦 |
+| 모델 호출 계량 | 정리 전. 호출 1건의 사용량·비용 기록은 `llm_calls` 한 곳이다(출구 `llm/client.py`, 라벨은 `llm.api.usage_context`, 단가는 `common/settings.py`, #870). 지도 하루 상한 `agent/constants.py`(세는 곳 `agent/core.py`), 코스 하루 상한과 지휘 횟수 `agent/course/constants.py`(세는 곳 `agent/course/service.py`), 호출 1회의 도구 상한 `llm/prompts.py`와 `llm/service.py`의 `_ToolBudget` | 새 모델 호출이 자기 상한 상수와 세는 쿼리를 따로 만듦 |
 | 조건의 세기(실격, 선호) | 정리 전(#732). 줄이 이번 추천에 쓰이는지는 `recommend/core.py`의 `evidence_line_use` 한 곳이다(#740, 파이프라인, 근거 응답, agent가 함께 쓴다). 그 밖에 19곳이 `test_condition_strength_sites.py`의 목록에 있다(`recommend/flows.py`, `recommend/core.py`, `recommend/service.py`, `agent/core.py`, `agent/tools.py`). 칩의 배지는 `docs/constraints.md` 칩 표의 배지 열 | badge를 `"required"`, `"preferred"` 글자와 비교함, `SOFT_FACT_KEYS`나 `HARD_REGISTRY`를 `recommend/constraints.py` 밖에서 읽음 |
 | 사용자 글의 렌더 | 정리 전. agent 조언은 조각으로 내림(`agent/core.py`의 `render_segments`, #717). 알림 문장 `notifications/core.py`의 `compose_message`, 코스의 요청 원문 조각과 작업 기록(`agent/course`)은 아직 문장에 섞음 | 서버 문장 f-string 안에 사유, 검색어, 표시 이름 |
 | 사람과 로그인 수단 | `auth`: `users`(사람)와 `user_identities`(로그인 수단, #694) | 다른 모듈이 `is_guest`나 provider를 직접 판정함, `users`에 로그인 수단 열을 더함 |

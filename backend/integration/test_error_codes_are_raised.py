@@ -20,6 +20,7 @@ SKIP_FILES = {"common/errors.py"}   # 목록을 정의하는 자리
 
 # 코드 -> 추적 이슈. 비어 가는 것이 정상이다.
 KNOWN_UNRAISED: dict[str, str] = {
+    "MAP_PURGED": "삭제한 지도 복구(POST /maps/{mapId}/restore) — 서버 구현 전(#464). 구현되면 지운다",
     "IDEMPOTENCY_CONFLICT": "#48의 첫 적용처는 POST /maps/{mapId}/runs로 정했다 — 서버 구현 전(#811 2/3). 구현되면 지운다",
     "REQUEST_IN_PROGRESS": "같은 Idempotency-Key의 첫 요청 처리 중 — 서버 구현 전(#811 2/3). 구현되면 지운다",
 }

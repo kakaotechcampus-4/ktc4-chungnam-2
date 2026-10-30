@@ -181,6 +181,23 @@ def test_observation_summarizes_five_sections_and_announces(world, client):
     assert all(t not in state.text for t in ALL_TEXTS)   # 알러지 원문을 포함해 사유 글이 응답에 없다
 
 
+def test_summary_structuring_carries_server_usage_label(world):
+    """요약의 ②는 사용량 기록(llm_calls, #870)에 agent_summary로 남는다. 서버 호출이라 user_id가 없다."""
+    from llm import usage
+
+    map_id, _ = _five_section_map(world)
+    labels = []
+
+    class Labelled(KeyedGateway):
+        def structure(self, raw):
+            labels.append(usage.current_label())
+            return super().structure(raw)
+
+    observe(world, map_id, gateway=Labelled())
+
+    assert labels and all((l.feature, l.map_id, l.user_id) == ("agent_summary", map_id, None) for l in labels)
+
+
 def test_no_agent_table_holds_reason_text_or_member(world):
     """요약을 거친 뒤 agent_* 어느 행에도 사유 글과 user_id가 없다(2절 13번, 11번)."""
     map_id, _ = _five_section_map(world)

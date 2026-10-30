@@ -23,6 +23,7 @@ from common.errors import AppError
 from common.settings import settings
 from maps.schemas import Map
 from feedback import api as feedback_api
+from llm import api as llm_api
 from maps import api as maps_api
 from notifications import api as notifications_api
 from pins import api as pins_api
@@ -256,6 +257,8 @@ WITHDRAW_STEPS = (
     ("agent", lambda db, user_id, map_ids: agent_api.delete_course_runs_by_user(db, user_id=user_id)),
     ("feedback", lambda db, user_id, map_ids: feedback_api.anonymize_by_user(db, user_id=user_id)),
     ("notifications", lambda db, user_id, map_ids: notifications_api.delete_by_user(db, user_id=user_id)),
+    # 모델 호출 사용량(#870)은 행을 남기고 user_id만 비운다 — 비용 통계는 사람 없이도 쓴다
+    ("llm", lambda db, user_id, map_ids: llm_api.anonymize_by_user(db, user_id=user_id)),
 )
 
 
@@ -405,6 +408,7 @@ MERGE_STEPS = (
     ("notifications", notifications_api),
     ("feedback", feedback_api),
     ("agent", agent_api),
+    ("llm", llm_api),
 )
 
 
