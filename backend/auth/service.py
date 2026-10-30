@@ -363,21 +363,35 @@ def get_pending_account(db: Session, *, claims: core.PendingClaims) -> dict:
     }
 
 
+def _wait_until_after(valid_after: datetime, deleted_at: datetime) -> None:
+    """지금 초가 valid_after의 초보다 뒤가 될 때까지 기다린다 — 그래야 지금 발급하는 세션 토큰이 is_revoked(같은 초 포함)를 통과한다.
+    돌 때마다 시계를 한 번 읽어 「지금 초 > valid_after의 초」와 7일 기한을 다시 확인한다. 총 대기는 time.monotonic()으로
+    _MAX_RESTORE_WAIT_SECONDS까지다 — 시계가 거꾸로 가거나 valid_after가 한참 앞이면 상한에서 INTERNAL_ERROR(재시도 가능, 아직
+    아무것도 쓰지 않았다). 기다리는 사이 기한이 지나면 NO_PENDING_LOGIN."""
+    boundary = int(valid_after.timestamp())
+    give_up_at = time.monotonic() + _MAX_RESTORE_WAIT_SECONDS
+    while True:
+        now_ts = time.time()   # 한 번만 읽는다 — 두 번 읽으면 그 사이 초 경계를 넘어 음수가 나온다
+        if not core.is_restorable(deleted_at, datetime.fromtimestamp(now_ts, timezone.utc)):
+            raise AppError("NO_PENDING_LOGIN")
+        if int(now_ts) > boundary:
+            return
+        remaining = give_up_at - time.monotonic()
+        if remaining <= 0:
+            raise AppError("INTERNAL_ERROR", "잠시 뒤 다시 시도해 주세요")
+        time.sleep(max(0.0, min(boundary + 1 - now_ts, remaining)))
+
+
 def restore_account(db: Session, *, claims: core.PendingClaims) -> User:
     """POST /auth/pending restore — 기존 계정을 되살린다. 계정·핀 작성자 표시·남아 있던 지도 멤버십이 돌아오고 반응·근거·알림은
     돌아오지 않는다(탈퇴 때 지웠다, #855). 탈퇴 전에 복사된 세션은 계속 무효다 — sessions_valid_after는 내리지 않는다.
-    새 토큰은 발급 시각이 sessions_valid_after보다 뒤여야 통하므로(is_revoked는 같은 초를 거절한다), 탈퇴와 같은 초에 복구하면
-    다음 초가 될 때까지 최대 1초 기다린 뒤 진행한다(잠금을 쥔 채, 사람이 한 초 안에 탈퇴→로그인→복구하는 일은 없어 드물다).
-    미래 시각의 토큰은 만들지 않는다. 커밋하지 않는다."""
-    user, now = _pending_target(db, claims, lock=True)
-    if user.sessions_valid_after is None:   # 이 기능 전에 탈퇴한 행 — 탈퇴 시각 이전에 발급된 토큰을 죽인다
-        user.sessions_valid_after = user.deleted_at
-    next_second = int(user.sessions_valid_after.timestamp()) + 1
-    if time.time() < next_second:
-        time.sleep(min(next_second - time.time(), _MAX_RESTORE_WAIT_SECONDS))
-        now = _now()
-        if not core.is_restorable(user.deleted_at, now):   # 기다리는 사이 기한이 지났다
-            raise AppError("NO_PENDING_LOGIN")
+    새 토큰은 발급 시각이 sessions_valid_after보다 뒤여야 통하므로, 탈퇴와 같은 초에 복구하면 다음 초가 될 때까지 기다린 뒤
+    진행한다(_wait_until_after — 잠금을 쥔 채, 사람이 한 초 안에 탈퇴→로그인→복구하는 일은 없어 드물다). 미래 시각의 토큰은
+    만들지 않는다. 기다림에 실패하면 아무것도 쓰지 않은 채 예외다. 커밋하지 않는다."""
+    user, _ = _pending_target(db, claims, lock=True)
+    valid_after = user.sessions_valid_after or user.deleted_at   # 값이 없는 행은 이 기능 전에 탈퇴한 것 — 탈퇴 시각 이전 토큰을 죽인다
+    _wait_until_after(valid_after, user.deleted_at)
+    user.sessions_valid_after = valid_after
     user.deleted_at = None
     db.flush()
     return user

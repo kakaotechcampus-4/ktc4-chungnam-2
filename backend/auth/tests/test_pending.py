@@ -373,14 +373,22 @@ class _FakeClock:
 
     def __init__(self, start: float):
         self.now = start
+        self.mono = 0.0
         self.slept: list[float] = []
+        self.wall_follows_sleep = True   # False면 벽시계가 멈춘다(역행·정지 흉내) — monotonic만 간다
 
     def time(self) -> float:
         return self.now
 
+    def monotonic(self) -> float:
+        return self.mono
+
     def sleep(self, seconds: float) -> None:
+        assert seconds >= 0, "음수 sleep"
         self.slept.append(seconds)
-        self.now += seconds
+        self.mono += seconds
+        if self.wall_follows_sleep:
+            self.now += seconds
 
 
 @pytest.fixture()
@@ -390,7 +398,7 @@ def clock(monkeypatch):
     from auth import deps, router
 
     fake = _FakeClock(1_800_000_000.4)
-    namespace = SimpleNamespace(time=fake.time, sleep=fake.sleep)
+    namespace = SimpleNamespace(time=fake.time, sleep=fake.sleep, monotonic=fake.monotonic)
     for module in (service, router, deps):
         monkeypatch.setattr(module, "time", namespace)
     return fake
@@ -596,3 +604,75 @@ def test_pending_endpoint_with_a_very_long_number_cookie_is_404(app_client):
     assert client.get("/auth/pending", cookies={"pending_account": value}).status_code == 404
     resp = client.post("/auth/pending", json={"choice": "restore"}, cookies={"pending_account": value})
     assert resp.status_code == 404 and resp.json()["code"] == "NO_PENDING_LOGIN"
+
+
+# ---- 기다림의 경계: 시계 역행·정지, 초 경계 넘김 ----
+
+def _withdrawn_at(db_session, user_id, clock, *, valid_after_offset=0.0):
+    deleted_at = datetime.fromtimestamp(clock.now, timezone.utc)
+    create_kakao_user(
+        db_session, user_id, provider_user_id=f"w_{user_id}", display_name="영희",
+        deleted_at=deleted_at, sessions_valid_after=datetime.fromtimestamp(clock.now + valid_after_offset, timezone.utc),
+    )
+    return deleted_at, core.PendingClaims(user_id, "kakao", core.deleted_at_stamp(deleted_at))
+
+
+def test_wait_never_sleeps_a_negative_time_when_the_second_rolls_over_between_reads(db_session, clock):
+    """초 경계 직전(.999)에 읽어도 sleep 인자는 음수가 아니다 — 시계를 한 번만 읽어 남은 시간을 구한다."""
+    clock.now = 1_800_000_000.999
+    _, claims = _withdrawn_at(db_session, "edge1", clock)
+    reads = iter([clock.now, clock.now + 0.002])   # 두 번 읽으면 두 번째는 다음 초
+
+    def flipping_time():
+        return next(reads, clock.now)
+
+    from types import SimpleNamespace
+
+    from auth import service as svc
+
+    svc.time = SimpleNamespace(time=flipping_time, sleep=clock.sleep, monotonic=clock.monotonic)   # clock 픽스처가 되돌린다
+    user = service.restore_account(db_session, claims=claims)
+
+    assert user.deleted_at is None and all(s >= 0 for s in clock.slept)
+
+
+def test_clock_going_backwards_gives_up_with_a_retryable_error_and_leaves_the_account_alone(db_session, clock):
+    """valid_after가 지금보다 2초 넘게 앞선 경우(시계 역행)엔 총 2초(monotonic)까지만 기다리고, 복구하지 않고 재시도 가능한 오류."""
+    from common.errors import AppError
+
+    deleted_at, claims = _withdrawn_at(db_session, "back", clock, valid_after_offset=5.0)
+    clock.wall_follows_sleep = False
+
+    with pytest.raises(AppError) as exc:
+        service.restore_account(db_session, claims=claims)
+
+    assert exc.value.code == "INTERNAL_ERROR" and exc.value.code != "NO_PENDING_LOGIN"
+    assert sum(clock.slept) <= 2.0 + 1e-9
+    row = db_session.get(User, "back")
+    assert row.deleted_at == deleted_at   # 계정 상태 그대로
+    assert row.sessions_valid_after == datetime.fromtimestamp(clock.now + 5.0, timezone.utc)
+
+
+def test_far_ahead_valid_after_is_waited_out_when_the_clock_catches_up_in_time(db_session, clock):
+    """valid_after가 1.5초 앞이어도 벽시계가 따라가면(상한 2초 안) 기다린 뒤 복구한다."""
+    _, claims = _withdrawn_at(db_session, "ahead", clock, valid_after_offset=1.5)
+
+    user = service.restore_account(db_session, claims=claims)
+
+    assert user.deleted_at is None and int(clock.now) > int(user.sessions_valid_after.timestamp())
+
+
+def test_period_ending_during_a_slow_wait_is_rechecked_each_round(db_session, clock):
+    """기다리는 도중 기한이 지나면(여러 번 돌 때마다 다시 확인) NO_PENDING_LOGIN이다."""
+    from common.errors import AppError
+
+    now = datetime.fromtimestamp(clock.now, timezone.utc)
+    deleted_at = now - timedelta(days=core.ACCOUNT_RESTORE_DAYS) + timedelta(seconds=0.5)
+    create_kakao_user(db_session, "slow", provider_user_id="w_slow", deleted_at=deleted_at,
+                      sessions_valid_after=datetime.fromtimestamp(clock.now + 1.2, timezone.utc))
+    claims = core.PendingClaims("slow", "kakao", core.deleted_at_stamp(deleted_at))
+
+    with pytest.raises(AppError) as exc:
+        service.restore_account(db_session, claims=claims)
+
+    assert exc.value.code == "NO_PENDING_LOGIN" and db_session.get(User, "slow").deleted_at is not None
