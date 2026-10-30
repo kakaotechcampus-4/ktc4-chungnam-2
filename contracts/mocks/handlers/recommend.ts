@@ -110,6 +110,11 @@ export const recommendHandlers = [
   http.post("*/maps/:mapId/runs", async ({ params, request }) => {
     const mapId = params.mapId as string;
     const body = (await request.json()) as { category: string; execute?: boolean };
+    // #811 — 같은 Idempotency-Key는 첫 요청이 만든 run을 그대로 돌려준다. 마법 키 in-progress-key는 첫 요청이 아직 모델을 기다리는 중인 상태를 낸다
+    const idemKey = request.headers.get("Idempotency-Key");
+    if (idemKey === "in-progress-key") return apiError(409, "REQUEST_IN_PROGRESS", "같은 요청을 처리하고 있어요. 잠시 뒤 다시 확인할게요");
+    const seen = idemKey ? store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] : undefined;
+    if (seen && store.runs[seen]) return HttpResponse.json({ ...store.runs[seen], attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
     const answered = opinionPinCount(mapId, body.category);
     if (answered < REQUIRED_OPINION_PINS) {
       return apiError(409, "NOT_READY", `의견 핀 ${answered}곳 · ${REQUIRED_OPINION_PINS - answered}곳 더 필요`, {
@@ -121,6 +126,7 @@ export const recommendHandlers = [
     const runId = nextId("run");
     store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1 };
     store.runRequestedBy[runId] = ME_USER_ID;
+    if (idemKey) store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] = runId;
     runCreatedAt[runId] = new Date().toISOString();
     // ② 사유 → 실격/선호/반경 구조화 (목 서버에서는 시드 데이터로 대체 — 실제 구조화는 backend/llm 담당)
     store.evidenceLines[runId] = buildEvidenceLines(runId);

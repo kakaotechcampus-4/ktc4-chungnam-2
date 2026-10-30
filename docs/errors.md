@@ -8,6 +8,7 @@
 | `MAP_EMPTY` | 200(빈 배열) | 핀이 하나도 없음 | "아직 아무도 핀을 찍지 않았어요" + 입력 경로 3개 |
 | `NO_RESULTS` | 404 | 필터 통과 후보 0개(**이전에 올린 후보까지 합쳐 하나도 없을 때만** — 게시 후보가 남아 있으면 200 + `new_count: 0`, #845) | "필터에 걸리는 핀이 없어요" / 어느 조건이 몇 곳 걸렀는지(`detail.funnel`) + 이번에 쓴 근거(`detail.applied_evidence`·`detail.no_applied_conditions`, #845) + 반경넓히기/근거고치기/직접찍기 + 카카오맵에서 더 찾아보기(`detail.external_search`, #798) |
 | `NOT_READY` | 409 | 추천 준비 미달 — 그 카테고리에 ♥/🚫 의견이 달린 핀이 없음(2026-10-07, #360) | "의견 핀 0곳 · 1곳 더 필요" |
+| `REQUEST_IN_PROGRESS` | 409 | 같은 `Idempotency-Key`의 첫 요청이 아직 처리 중(`POST /maps/{mapId}/runs`, 모델 대기, #811) | 진행 표시를 유지하고 잠시 뒤 같은 키로 다시 보낸다 |
 | `EVIDENCE_REQUIRED` | 422 | 반대 반응에 사유 없음 | 등록 버튼 비활성화 (가드레일 3) |
 | `EVIDENCE_LIMIT` | 409 | 근거 확인 화면에서 「+」로 직접 추가한 글이 run 하나에 10개를 넘음(뺀 것 포함, #707). 글 하나에 조건이 여럿이어서 근거 줄이 여럿 생겨도 글 1개로 센다. `detail`에 `{ limit, used }`(글 수). 한 요청에 글 5개 초과는 422 `VALIDATION_ERROR` | "직접 추가는 10개까지예요" + 「+」 비활성 |
 | `PIN_DUPLICATE` | 409 | 이미 지도에 있는 장소 | 중복 핀 안내 UI |

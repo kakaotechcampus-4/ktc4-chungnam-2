@@ -96,6 +96,7 @@ export interface StoreState {
   runs: Record<string, RecommendRun>; // runId -> run
   runRequestedBy: Record<string, string>; // runId -> user_id (run 요청자 기록)
   appliedEvidence: Record<string, unknown[]>; // runId -> 마지막 실행이 실제로 쓴 근거 줄(#845 스냅샷)
+  idempotencyKeys: Record<string, string>; // 요청자:키 -> runId (#811 Idempotency-Key)
   lastNewCount: Record<string, number>; // runId -> 마지막 실행이 새로 찾은 후보 수(#845, 그 뒤 게시해도 안 바뀐다)
   candidates: Record<string, Candidate[]>; // runId -> candidates
   shortlist: Record<string, ShortlistItem[]>; // mapId -> items
@@ -129,6 +130,7 @@ function emptyState(): StoreState {
     runRequestedBy: {},
     appliedEvidence: {},
     lastNewCount: {},
+    idempotencyKeys: {},
     candidates: {},
     shortlist: {},
     routes: {},

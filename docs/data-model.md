@@ -275,6 +275,16 @@ recommend_runs(
   created_at
 )
 
+idempotency_keys(                      -- #811: 「추천 받기」 연타·재전송을 한 번으로 묶는다. 모델 호출 전에 INSERT
+  id, requested_by,                     -- 요청자별로 키가 따로다(다른 사람의 같은 키는 영향 없음)
+  scope('recommend.run'),               -- 지금은 POST /maps/{mapId}/runs만. 다른 요청에 쓸 때 값을 더한다
+  key,                                  -- Idempotency-Key 헤더 값(8~64자)
+  run_id null,                          -- 첫 요청이 만든 run. NULL이면 아직 모델을 기다리는 중(→ 같은 키는 409 REQUEST_IN_PROGRESS)
+  created_at,
+  unique(requested_by, scope, key)
+)
+-- 모델 실패(500)로 run을 못 만들면 이 행을 지워 같은 키의 재시도를 허용한다. 24시간이 지난 행은 maintenance가 정리한다(개인정보는 아니다 — 키는 화면이 만든 uuid).
+
 evidence_lines(
   id, run_id, author_id,                -- "자기가 쓴 것만 뺄 수 있다"(5-5) — author_id로 권한 판정
   source('reaction'|'manual'),

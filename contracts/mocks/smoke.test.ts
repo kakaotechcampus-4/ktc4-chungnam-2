@@ -1419,3 +1419,29 @@ describe("#845 — 추천 흐름: 근거 확인 없이 결과 먼저", () => {
     expect(after.new_count).toBeLessThan(after.candidates.length);
   });
 });
+
+describe("#811 — 「추천 받기」 연타 방어: Idempotency-Key", () => {
+  const create = (key?: string) =>
+    fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: key ? { "Idempotency-Key": key } : {}, body: JSON.stringify({ category: "음식점", execute: true }) });
+
+  it("같은 키로 다시 보내면 첫 요청이 만든 run을 그대로 돌려주고 run도 횟수도 더 생기지 않는다", async () => {
+    const first = await create("click-0001-uuid").then((r) => r.json());
+    const second = await create("click-0001-uuid").then((r) => r.json());
+    expect(second.id).toBe(first.id);
+    const list = await fetch(`${BASE}/maps/map_1/runs`).then((r) => r.json());
+    expect(list).toHaveLength(1);
+  });
+
+  it("키가 다르거나 없으면 새 run이다(구FE 호환 — 방어 없음)", async () => {
+    const a = await create("click-0002-a").then((r) => r.json());
+    const b = await create("click-0002-b").then((r) => r.json());
+    const c = await create().then((r) => r.json());
+    expect(new Set([a.id, b.id, c.id]).size).toBe(3);
+  });
+
+  it("첫 요청이 아직 모델을 기다리는 중이면 409 REQUEST_IN_PROGRESS(마법 키)이고, NOT_READY와 코드로 구분된다", async () => {
+    const res = await create("in-progress-key");
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("REQUEST_IN_PROGRESS");
+  });
+});
