@@ -64,6 +64,17 @@ def _ensure_test_db_with_postgis():
     yield
 
 
+@pytest.fixture(autouse=True)
+def llm_usage_rows(monkeypatch):
+    """모델 호출 사용량(llm_calls, #870)은 기본으로 DB(SessionLocal = 개발 DB)에 쓴다. 테스트에서는 메모리 목록으로 받는다.
+    기록을 보는 테스트는 이 픽스처를 인자로 받아 목록을 읽고, DB에 쓰는 경로를 보는 테스트는 llm.usage.sink를 다시 바꾼다."""
+    from llm import usage
+
+    rows: list[dict] = []
+    monkeypatch.setattr(usage, "sink", rows.append)
+    return rows
+
+
 # ---- live 마커: 실제 외부 API를 부르는 테스트는 기본 실행에서 뺀다 ----
 # 돌리려면 `PINGO_TEST_DOTENV=1 python -m pytest -m live places` (키가 .env에 있어야 하고, 구글 등은 과금된다).
 

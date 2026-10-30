@@ -19,6 +19,7 @@ import agent.models  # noqa: F401 — 지도 정리·탈퇴가 agent_* 테이블
 import auth.models  # noqa: F401
 import common.events  # noqa: F401
 import feedback.models  # noqa: F401 — 탈퇴가 feedback.user_id를 비우고, 계약 테스트가 피드백 응답을 본다(#10)
+import llm.models  # noqa: F401 — 탈퇴·합치기가 llm_calls.user_id를 다루고, 사용량 기록 테스트가 쓴다(#870)
 import maps.models  # noqa: F401
 import notifications.models  # noqa: F401
 import pins.models  # noqa: F401

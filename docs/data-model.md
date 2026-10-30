@@ -503,6 +503,38 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 
 ---
 
+## llm_calls (모델 호출 사용량, #870, 마이그레이션 0043)
+
+> llm 모듈이 쓰는 테이블 1개. 모델 호출 1건 = 1행이다. 기록은 출구(`llm/client.py`의 `call_planner`, `_agent_parse`) 한 곳에서 하고,
+> 왜 불렀는지와 지도·사람·실행은 부르는 쪽이 `llm.api.usage_context`로 붙인다. 감싸지 않은 호출(평가 스크립트)은 남지 않는다.
+> **사유 원문, 요청 원문, 응답 본문은 저장하지 않는다.** 숫자와 분류만이다. 기록 실패는 본 기능을 막지 않는다(별도 세션, 예외는 로그만).
+> `agent_runs`, `agent_course_runs`의 `tokens_in/out`(실행 1건 합계)은 그대로 둔다. 겹침 정리는 측정 뒤 따로 한다.
+
+```
+llm_calls(
+  id uuid,
+  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'course'),   -- 왜 불렀는지
+  call('plan_evidence'|'agent_diagnose'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
+  trace_id uuid,                      -- 같은 usage_context 안의 호출. run_id가 아직 없는 호출(추천 ②, 진단)도 실행 1번으로 묶는다
+  map_id null, user_id null,          -- user_id는 사용자가 부른 호출만. 서버 호출(진단, 요약)은 null
+  run_id null,                        -- evidence_add는 recommend_runs.id, course는 agent_course_runs.id. 추천 ②와 진단은 null
+  model, prompt_version null,         -- ②는 프롬프트 버전 상수가 없어 null
+  input_tokens, cached_input_tokens, cache_write_tokens, output_tokens,   -- 입력은 캐시 몫과 캐시 쓰기 할증 포함, 출력은 추론 토큰 포함
+  cost_krw numeric(12,4),             -- 기록 시점 단가(common.settings의 LLM_PRICE_*)로 계산. 할증이 input_tokens에 있어 cache_write_tokens는 따로 더하지 않는다
+  outcome('ok'|'refusal'|'empty'|'timeout'|'invalid_schema'|'call_failed'), ok bool,
+  elapsed_ms, created_at
+)
+index ix_llm_calls_created (created_at)
+index ix_llm_calls_map_created (map_id, created_at)
+index ix_llm_calls_user_created (user_id, created_at)
+index ix_llm_calls_trace (trace_id)
+```
+
+- 캐시 토큰은 엘리스 게이트웨이 응답의 `usage.prompt_tokens_details.cached_tokens`다(2026-10-30 확인). 캐시 미스면 게이트웨이가 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고한다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 엘리스 청구서와 대조해야 한다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
+- 탈퇴는 행을 남기고 `user_id`만 비운다(비용 통계는 사람 없이도 쓴다, `llm.api.anonymize_by_user`). 게스트 합치기는 `user_id`를 옮긴다. 30일 지난 행은 정기 정리(`maintenance.run`의 `llm_calls`)가 지운다. 지도 정리는 행을 지우지 않는다(map_id만 남고 가리키는 지도가 없다).
+
+---
+
 ## notifications / feedback (v2, #470, #10)
 
 > v2. 계약만 먼저 올렸고 마이그레이션은 구현 PR이 그때의 head 다음 번호로 만든다(번호를 문서에 못 박지 않는다 — agent·maps 마이그레이션과 겹친다). 이슈 본문의 `0026`은 옛 초안이다.
@@ -557,6 +589,7 @@ feedback(                             -- 서비스 피드백. 저장만 한다
 | notifications | `notifications.user_id` | `notification_prefs`는 카카오 계정 것을 쓰고 게스트 것은 지운다 |
 | feedback | `feedback.user_id` | 없음 |
 | agent | `agent_suggestion_views.user_id`, `agent_course_runs.requested_by`, `agent_settings.updated_by`, `agent_suggestions.resolved_by` | 같은 제안을 둘 다 열람했으면 게스트 것을 지운다. 같은 지도에 둘 다 진행 중인 코스 요청이 있으면 게스트 것을 지운다(진행 중은 지도당 한 사람에 하나). 코스 하루 상한은 그날 행 수로 세므로(`requested_by`, `created_at`) 그날 옮긴 코스는 카카오 계정의 횟수에 들어간다. 다음 자정(KST)에 풀린다(#755) |
+| llm | `llm_calls.user_id` | 없음(#870) |
 | auth | 마지막에 게스트 행을 `deleted_at`으로 지운다(탈퇴처럼 반응·근거를 지우지는 않는다 — 이미 옮겼다) | — |
 
 합치기로 사용자가 보는 이름이 게스트 이름에서 카카오 계정의 이름으로 바뀐다(구성원 목록과 핀 작성자 표시는 다시 불러오면 된다).
