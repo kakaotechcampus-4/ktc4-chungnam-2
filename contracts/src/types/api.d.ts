@@ -1910,7 +1910,7 @@ export interface paths {
          *     한 번의 클릭이 모델 호출과 결과까지 가므로 연타·재전송 방어(#811)가 먼저 있어야 한다.
          *     **`Idempotency-Key` 요청 헤더(선택, #811)**: 화면이 사용자가 「추천 받기」를 시작할 때 키(uuid)를 만들어 성공·실패가 나올 때까지 같은 키로 보낸다(연타·재전송은 같은 키).
          *     서버는 모델을 부르기 **전에** (요청자, 키)를 기록한다. 같은 키로 다시 오면 — 첫 요청이 이미 run을 만들었으면 **그 run을 그대로**(같은 응답) 돌려주고, 아직 모델을 기다리는 중이면 409 `REQUEST_IN_PROGRESS`(화면은 잠시 뒤 같은 키로 다시 보낸다).
-         *     첫 요청이 모델 실패(500) 등으로 run을 못 만들었으면 키를 지워 같은 키의 재시도를 허용한다. 키가 없으면 지금처럼 방어가 없다(구FE 호환). 키는 24시간 보관한다. 다른 요청자의 같은 키는 서로 영향이 없다.
+         *     첫 요청이 모델 실패(500) 등으로 run을 못 만들었으면 키를 지워 같은 키의 재시도를 허용한다. **같은 키로 다른 요청 본문(예: 다른 카테고리)을 보내면 409 `IDEMPOTENCY_CONFLICT`다** — 키를 재사용한 화면의 버그 신호다(#48이 정하던 멱등키 v1의 첫 적용처가 이 엔드포인트다). 키가 없으면 지금처럼 방어가 없다(구FE 호환). 키는 24시간 보관한다. 다른 요청자의 같은 키는 서로 영향이 없다.
          */
         post: {
             parameters: {
@@ -1946,7 +1946,7 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendRun"];
                     };
                 };
-                /** @description NOT_READY(추천 준비 미달 — 해당 카테고리에 ♥/🚫 의견이 달린 핀이 없다) 또는 REQUEST_IN_PROGRESS(같은 `Idempotency-Key`의 첫 요청이 아직 처리 중이다 — 화면은 잠시 뒤 같은 키로 다시 보낸다, #811) */
+                /** @description NOT_READY(추천 준비 미달 — 해당 카테고리에 ♥/🚫 의견이 달린 핀이 없다) · REQUEST_IN_PROGRESS(같은 `Idempotency-Key`의 첫 요청이 아직 처리 중이다 — 화면은 잠시 뒤 같은 키로 다시 보낸다, #811) · IDEMPOTENCY_CONFLICT(같은 키로 다른 요청 본문 — 키를 재사용한 화면의 버그 신호). `code`로 구분한다 */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -4689,7 +4689,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 동일 Idempotency-Key로 다른 바디를 보냄 — 재시도 로직 버그 신호. 붙일 엔드포인트는 */
+        /** @description 동일 Idempotency-Key로 다른 바디를 보냄 — 재시도 로직 버그 신호. 첫 적용처는 `POST /maps/{mapId}/runs`(#811, */
         IdempotencyConflict: {
             headers: {
                 [name: string]: unknown;

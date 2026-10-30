@@ -1439,6 +1439,13 @@ describe("#811 — 「추천 받기」 연타 방어: Idempotency-Key", () => {
     expect(new Set([a.id, b.id, c.id]).size).toBe(3);
   });
 
+  it("같은 키로 다른 요청 본문(다른 카테고리)을 보내면 409 IDEMPOTENCY_CONFLICT다 — 키를 재사용한 화면의 버그 신호", async () => {
+    expect((await create("click-0003-uuid")).status).toBe(202);
+    const res = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0003-uuid" }, body: JSON.stringify({ category: "카페", execute: true }) });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("IDEMPOTENCY_CONFLICT");
+  });
+
   it("첫 요청이 아직 모델을 기다리는 중이면 409 REQUEST_IN_PROGRESS(마법 키)이고, NOT_READY와 코드로 구분된다", async () => {
     const res = await create("in-progress-key");
     expect(res.status).toBe(409);

@@ -279,6 +279,7 @@ idempotency_keys(                      -- #811: 「추천 받기」 연타·재�
   id, requested_by,                     -- 요청자별로 키가 따로다(다른 사람의 같은 키는 영향 없음)
   scope('recommend.run'),               -- 지금은 POST /maps/{mapId}/runs만. 다른 요청에 쓸 때 값을 더한다
   key,                                  -- Idempotency-Key 헤더 값(8~64자)
+  request_hash,                         -- 요청 본문(category, execute)의 해시. 같은 키로 다른 본문이면 409 IDEMPOTENCY_CONFLICT(#48)
   run_id null,                          -- 첫 요청이 만든 run. NULL이면 아직 모델을 기다리는 중(→ 같은 키는 409 REQUEST_IN_PROGRESS)
   created_at,
   unique(requested_by, scope, key)

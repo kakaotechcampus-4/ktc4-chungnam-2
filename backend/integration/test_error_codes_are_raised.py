@@ -20,7 +20,8 @@ SKIP_FILES = {"common/errors.py"}   # 목록을 정의하는 자리
 
 # 코드 -> 추적 이슈. 비어 가는 것이 정상이다.
 KNOWN_UNRAISED: dict[str, str] = {
-    "IDEMPOTENCY_CONFLICT": "#48 멱등키 v1 적용 여부 결정 대기",
+    "IDEMPOTENCY_CONFLICT": "#48의 첫 적용처는 POST /maps/{mapId}/runs로 정했다 — 서버 구현 전(#811 2/3). 구현되면 지운다",
+    "REQUEST_IN_PROGRESS": "같은 Idempotency-Key의 첫 요청 처리 중 — 서버 구현 전(#811 2/3). 구현되면 지운다",
 }
 
 

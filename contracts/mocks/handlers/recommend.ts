@@ -114,6 +114,10 @@ export const recommendHandlers = [
     const idemKey = request.headers.get("Idempotency-Key");
     if (idemKey === "in-progress-key") return apiError(409, "REQUEST_IN_PROGRESS", "같은 요청을 처리하고 있어요. 잠시 뒤 다시 확인할게요");
     const seen = idemKey ? store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] : undefined;
+    // 같은 키로 다른 본문(다른 카테고리)은 IDEMPOTENCY_CONFLICT — 키를 재사용한 화면의 버그 신호
+    if (seen && store.runs[seen] && store.runs[seen].category !== body.category) {
+      return apiError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 키로 다른 요청을 보냈어요");
+    }
     if (seen && store.runs[seen]) return HttpResponse.json({ ...store.runs[seen], attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
     const answered = opinionPinCount(mapId, body.category);
     if (answered < REQUIRED_OPINION_PINS) {

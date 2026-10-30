@@ -7,7 +7,8 @@
 한 번의 클릭이 모델 호출과 결과까지 가게 되어(#845) 연타·재전송의 비용이 커졌다. 서버가 「같은 입력」을 추측하는 방식(시간 창, 사유 해시)은 사용자가 의도적으로 두 번 누른 것과 구별하지 못하고 모델을 기다리는 동안 DB 잠금을 쥐어야 해서, **화면이 의도를 말하는 키**로 정했다.
 
 - `POST /maps/{mapId}/runs`에 요청 헤더 `Idempotency-Key`(선택, 8~64자, uuid 권장)를 더했다. 화면은 「추천 받기」를 시작할 때 키를 만들어 성공·실패가 나올 때까지 **같은 키**로 보낸다. 서버는 모델을 부르기 전에 (요청자, 키)를 기록한다. 같은 키로 다시 오면 첫 요청이 만든 run을 그대로 돌려주고, 아직 모델을 기다리는 중이면 **409 `REQUEST_IN_PROGRESS`**(새 에러 코드, 잠시 뒤 같은 키로 다시). 모델 실패면 키를 지워 재시도를 허용한다. 키가 없으면 지금처럼(구FE 호환). 보관 24시간.
-- `POST /maps/{mapId}/runs`의 409는 이제 `NOT_READY`와 `REQUEST_IN_PROGRESS` 둘이다(`detail`/`code`로 구분).
+- **같은 키로 다른 요청 본문(예: 다른 카테고리)을 보내면 409 `IDEMPOTENCY_CONFLICT`**(이미 카탈로그에 있던 코드). 멱등키를 v1에 어디에 붙일지 정하지 못해 기다리던 #48의 **첫 적용처가 이 엔드포인트**로 정해졌다.
+- `POST /maps/{mapId}/runs`의 409는 이제 `NOT_READY`, `REQUEST_IN_PROGRESS`, `IDEMPOTENCY_CONFLICT` 셋이다(`code`로 구분).
 - `POST /candidates/{id}/publish`: 이미 이 후보로 만든 핀이면 그 핀을 200으로 돌려준다 — **동시에 온 두 요청도 같다**(전에는 동시 게시의 둘째가 409 `PIN_DUPLICATE`였다). 같은 장소를 직접 찍은 핀과의 충돌은 그대로 409 `PIN_DUPLICATE`.
 - `docs/data-model.md`에 `idempotency_keys` 표를 더했다(24시간 보관, maintenance가 정리).
 - 서버: recommend(#811 2/3). 그 전까지 실서버는 헤더를 무시한다(선택 헤더라 안전). 목 서버는 같은 키를 같은 run으로 돌려주고, 마법 키 `in-progress-key`로 409를 낸다.
