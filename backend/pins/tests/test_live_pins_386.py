@@ -4,6 +4,8 @@
 좌표·place_id가 없는 핀을 건너뛰어야 한다.
 """
 
+import uuid
+
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -134,7 +136,8 @@ def test_ai_pin_is_always_db(db_session):
         db_session, map_id="map_1", category="음식점", place_id="place_ai", lat=37.54, lng=127.05, created_by="user_1",
     )
     assert mutation.pin.origin == "ai" and mutation.pin.source == "db"
-    assert mutation.pin.place_id == "place_ai" and mutation.pin.geom is not None
+    assert mutation.pin.place_id == "place_ai"
+    assert db_session.get(PinRow, uuid.UUID(mutation.pin.id)).geom is not None
 
 
 def test_check_constraint_rejects_inconsistent_source_rows(db_session):
