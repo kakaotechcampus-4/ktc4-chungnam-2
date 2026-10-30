@@ -840,6 +840,14 @@ describe("#180 — GET /places/search (이름 검색)", () => {
     expect(items[0].place_id).toBe("kakao:mock-2");
   });
 
+  it("#822 핀 가능한(pinnable) 결과가 항상 먼저 온다 — 핀 못 찍는 결과 뒤에 핀 가능한 결과가 오지 않는다", async () => {
+    for (const q of ["곱창", "해운대", "광안리", "성수"]) {
+      const items: { pinnable: boolean }[] = await search("q=" + encodeURIComponent(q)).then((r) => r.json());
+      const firstBlocked = items.findIndex((i) => !i.pinnable);
+      if (firstBlocked >= 0) expect(items.slice(firstBlocked).every((i) => !i.pinnable), q).toBe(true);
+    }
+  });
+
   it("검증 실패는 422 — 빈 검색어, 51자, lat만 보냄, limit 범위 밖", async () => {
     for (const qs of ["q=", "q=" + "가".repeat(51), "q=a&lat=35", "q=a&limit=16"]) {
       const res = await search(qs);
