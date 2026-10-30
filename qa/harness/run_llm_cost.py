@@ -22,6 +22,7 @@
   정체 진단까지 본다. 지도 하루 모델 상한(구성원 수 × 4)이 있어 진단은 지도마다 하루 그 수까지다.
 
 실행(스크립트를 실제로 돌리는 것은 확인 뒤에 한다)
+  GitHub Actions의 llm-cost(손으로 실행)가 아래 컨테이너 실행을 대신한다 — 시나리오, 기다릴 분, 리포트만 다시 볼 지도를 입력으로 받는다.
   스테이징 컨테이너 안에서(QA_LOGIN_SECRET과 DATABASE_URL이 컨테이너에 있다. staging-check와 같은 방식):
     cd /srv/pingo/deploy && docker compose exec -T api-staging python - --base-url https://staging.ktc-pingopingo.duckdns.org/api \\
       < /path/to/run_llm_cost.py
@@ -415,6 +416,7 @@ def main(argv: list[str]) -> int:
         wait_for_diagnosis(maps, since, wait_min)
     print(report(load_calls(maps, since), names))
     print(f"\n다시 리포트(1시간 뒤 정체 진단까지): python - {rerun}")
+    print(f"  Actions llm-cost 입력: report={','.join(f'{k}={v}' for k, v in maps.items())}  since={since.isoformat()}")
     return 0
 
 
