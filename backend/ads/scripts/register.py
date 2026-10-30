@@ -25,9 +25,9 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ads.core import STATS_TZ
 from ads.models import Ad
 from common import categories
+from common.kst import KST
 from places import api as places_api
 
 COLUMNS = ("place_id", "starts_at", "ends_at", "memo")
@@ -52,7 +52,7 @@ class RegisterError(Exception):
 
 def _parse_time(raw: str) -> datetime:
     value = datetime.fromisoformat(raw.strip())
-    return value if value.tzinfo is not None else value.replace(tzinfo=STATS_TZ)
+    return value if value.tzinfo is not None else value.replace(tzinfo=KST)
 
 
 def parse_csv(text: str) -> tuple[list[AdDraft], list[str]]:
