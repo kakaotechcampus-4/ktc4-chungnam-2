@@ -90,7 +90,8 @@ move() {
   restart_api
   if wait_healthy; then
     log "완료 — RDS로 돈다(되돌리기: ./move-to-rds.sh $env_name rollback)"
-    echo "$(date '+%F %T') $env_name db -> rds ok ($dump)" >> deploy-history.log
+    # 덤프 경로는 transfer(별도 프로세스)의 로그에 있다 — 여기서는 모른다
+    echo "$(date '+%F %T') $env_name db -> rds ok" >> deploy-history.log
   else
     log "건강 확인 실패 — 옮기기 전으로 되돌린다"
     cp -p "$backup" "$env_file"
