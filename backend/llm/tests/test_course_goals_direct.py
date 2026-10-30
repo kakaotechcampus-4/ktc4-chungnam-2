@@ -95,7 +95,7 @@ class TestGoals:
     def test_prompt_lists_all_kinds_and_forbids_inventing(self):
         for kind in ("day_indoor", "night_end", "daily_walk_low", "day_light", "place_on_day", "together", "day_has", "performance", "unmatched", "그대로"):
             assert kind in COURSE_GOALS_PROMPT
-        assert COURSE_GOALS_PROMPT_VERSION == "course-goals-v2"
+        assert COURSE_GOALS_PROMPT_VERSION == "course-goals-v3"
 
 
 class TestDirect:

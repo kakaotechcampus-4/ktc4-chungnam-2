@@ -12,7 +12,13 @@ from common.settings import settings
 
 DATABASE_URL = settings.database_url   # 이름은 그대로 둔다 — 밖에서 import하는 곳이 있을 수 있다
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_pre_ping=settings.db_pool_pre_ping,
+    pool_recycle=settings.db_pool_recycle_s,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

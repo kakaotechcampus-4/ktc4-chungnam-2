@@ -22,8 +22,6 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
-    ("get", "/auth/pending"): "탈퇴 계정 재로그인 선택 안내 — 서버 구현 전(#857). 구현되면 지운다",
-    ("post", "/auth/pending"): "탈퇴 계정 재로그인 선택(restart·restore) — 서버 구현 전(#857). 구현되면 지운다",
     ("get", "/places/external-search"): "장소 검색 결과 없음의 카카오맵 링크 — 서버 구현 전(#903). 구현되면 지운다",
 }
 
