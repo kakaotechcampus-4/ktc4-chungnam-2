@@ -1461,16 +1461,21 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
     sourced, bare = by_place["sourced"], by_place["bare"]
     assert sourced.reason == "실격 조건 통과: 붐비는 대형 장소 아님 · 선호 충족: 조용함"
     # user_1은 실격 사유(너무 붐벼요)를 냈고 후보가 통과했으니 충족(#255). 이유 문장은 인원을 말하지 않는다(#631).
-    assert sourced.member_fulfillment == {"satisfied": 2, "total": 2, "by_member": [
+    assert _satisfied_view(sourced.member_fulfillment) == {"satisfied": 2, "total": 2, "by_member": [
         {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": True},
     ]}
     assert sourced.place_source == source
     # 조용함을 모르는 후보 — 구성원은 집계 대상이지만 충족으로 세지 않고, 안 본 것을 이유로 들지 않는다.
     assert bare.reason == "실격 조건 통과: 붐비는 대형 장소 아님"
-    assert bare.member_fulfillment == {"satisfied": 1, "total": 2, "by_member": [
+    assert _satisfied_view(bare.member_fulfillment) == {"satisfied": 1, "total": 2, "by_member": [
         {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": False},
     ]}
     assert bare.place_source is None  # 출처를 못 얻으면 지어내지 않는다
+
+
+def _satisfied_view(fulfillment: dict) -> dict:
+    """satisfied·total·by_member.satisfied만 — conditions(#805)는 표시용이라 이 판정 테스트에서는 벗기고 따로 본다."""
+    return {**fulfillment, "by_member": [{k: v for k, v in e.items() if k != "conditions"} for e in fulfillment["by_member"]]}
 
 
 def _run_with_mixed_against_reasons(db_session):
@@ -1502,12 +1507,42 @@ def test_member_fulfillment_counts_only_checked_conditions(db_session):
     """#620 — 키 없는 반대(알러지 글, 「취향이 아니에요」)만 남긴 구성원은 total에 없다. 매운맛 피함은 라벨 known 거짓이면
     충족, 모름이면 미충족이다. 반대와 선호를 둘 다 가진 구성원(user_4)은 둘 다 충족해야 충족이다."""
     _run, by_place = _run_with_mixed_against_reasons(db_session)
-    assert by_place["mild"].member_fulfillment == {"satisfied": 2, "total": 2, "by_member": [
+    assert _satisfied_view(by_place["mild"].member_fulfillment) == {"satisfied": 2, "total": 2, "by_member": [
         {"user_id": "user_3", "satisfied": True}, {"user_id": "user_4", "satisfied": True},
     ]}
-    assert by_place["unknown_spicy"].member_fulfillment == {"satisfied": 0, "total": 2, "by_member": [
+    assert _satisfied_view(by_place["unknown_spicy"].member_fulfillment) == {"satisfied": 0, "total": 2, "by_member": [
         {"user_id": "user_3", "satisfied": False}, {"user_id": "user_4", "satisfied": False},
     ]}
+
+
+def test_member_fulfillment_conditions_carry_status_and_evidence_line_ids(db_session):
+    """#805 — 직접 쓴 조건은 근거 줄 id와 세 상태를 모두 내리고, 키 없는 반대(user_1·user_2)는 구성원 자체가 없다.
+    매운맛 라벨이 모름이면 needs_check(실격 필터는 통과, satisfied는 거짓 그대로)."""
+    run, by_place = _run_with_mixed_against_reasons(db_session)
+    line_id = {(e.author_id, e.fact_key): str(e.id) for e in service.list_evidence(db_session, str(run.id)) if e.fact_key}
+
+    def condition(fact_key, user, status):
+        return {"fact_key": fact_key, "fact_label": constraints.FACT_LABELS[fact_key],
+                "evidence_line_id": line_id[(user, fact_key)], "status": status}
+
+    def conditions(place_id):
+        return {e["user_id"]: e["conditions"] for e in by_place[place_id].member_fulfillment["by_member"]}
+
+    assert conditions("mild") == {
+        "user_3": [condition("spicy_focused", "user_3", "met")],
+        "user_4": [condition("spicy_focused", "user_4", "met"), condition("quiet", "user_4", "met")],
+    }
+    assert conditions("unknown_spicy")["user_3"] == [condition("spicy_focused", "user_3", "needs_check")]
+    assert by_place["unknown_spicy"].member_fulfillment["satisfied"] == 0
+
+
+def test_published_pin_keeps_member_conditions(db_session):
+    """#805 — 게시 때 핀으로 복사하는 집계(pins 스키마 검증)가 conditions를 떨어뜨리지 않는다."""
+    from pins.schemas import MemberFulfillment
+    _run, by_place = _run_with_mixed_against_reasons(db_session)
+    fulfillment = by_place["mild"].member_fulfillment
+    copied = MemberFulfillment.model_validate(fulfillment).model_dump(exclude_none=True)
+    assert [e["conditions"] for e in copied["by_member"]] == [e["conditions"] for e in fulfillment["by_member"]]
 
 
 def test_member_fulfillment_preference_only_run_is_unchanged(db_session):
@@ -1523,7 +1558,7 @@ def test_member_fulfillment_preference_only_run_is_unchanged(db_session):
         place_facts=_FakePlaceFacts({"quiet": {"quiet": True}}),
     )
     by_place = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
-    assert by_place["quiet"].member_fulfillment == {"satisfied": 1, "total": 1, "by_member": [
+    assert _satisfied_view(by_place["quiet"].member_fulfillment) == {"satisfied": 1, "total": 1, "by_member": [
         {"user_id": "user_2", "satisfied": True},
     ]}
     assert by_place["unknown"].member_fulfillment["satisfied"] == 0 and by_place["unknown"].member_fulfillment["total"] == 1

@@ -603,6 +603,11 @@ def _run_pipeline(
         if line.badge == "preferred":
             by_direction = preferred_authors if line.wants else avoided_authors
             by_direction.setdefault(line.fact_key, set()).add(line.author_id)
+    # 충족 집계의 conditions[]에 붙일 근거 줄 id(#805) — 조건을 만든 줄만: 쓰이는 required 줄, 원함 방향 preferred 줄. 실격이 먼저.
+    written_line_ids: dict[tuple[str, str], str] = {}
+    for line in sorted(used_lines, key=lambda used: used.badge != "required"):
+        if line.badge == "required" or (line.badge == "preferred" and line.wants):
+            written_line_ids.setdefault((line.author_id, line.fact_key), str(line.id))
     preferred_authors_frozen = {key: frozenset(authors) for key, authors in preferred_authors.items()}
     avoided_authors_frozen = {key: frozenset(authors) for key, authors in avoided_authors.items()}
     # 선호 라벨 체크는 이 카테고리에 적용되는 키 + 사람이 직접 원한 키만 붙인다 — 50여 개를 전부 붙이면
@@ -699,6 +704,7 @@ def _run_pipeline(
         checks = checks_by_place[place_id]
         fulfillment = core.build_member_fulfillment(
             checks, hearted_places, criteria, preferred_authors_frozen, disqualifier_conditions,
+            written_line_ids,
         )
         candidates_data.append({
             "place_id": place_id, "region_id": region_id, "lat": place.lat, "lng": place.lng,

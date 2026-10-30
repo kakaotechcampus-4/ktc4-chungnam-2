@@ -115,10 +115,18 @@ class RegionConfirmRequest(BaseModel):
     accept_union: bool = False
 
 
+class MemberCondition(BaseModel):
+    fact_key: str
+    fact_label: str | None = Field(default=None, max_length=30)   # 서버가 주는 표시 이름만. 사용자 글은 담지 않는다(#717)
+    evidence_line_id: str | None = None   # 직접 쓴 근거 줄의 id, ♥에서 나왔으면 None
+    status: Literal["met", "unmet", "needs_check"]
+
+
 class MemberFulfillmentEntry(BaseModel):
     user_id: str
     display_name: str | None = None  # 서버는 채우지 않는다. FE가 user_id로 구성원 목록에서 찾는다(#762)
     satisfied: bool
+    conditions: list[MemberCondition] | None = None   # 조건별 상태(#805). 없으면 구버전 서버 — satisfied만 쓴다
 
 
 class MemberFulfillment(BaseModel):
