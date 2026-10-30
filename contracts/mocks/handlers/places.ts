@@ -97,6 +97,9 @@ export const placesHandlers = [
       found = [...found].sort((a, b) => distanceScore(a, lat, lng) - distanceScore(b, lat, lng));
     }
     // pinnable: 자체 DB에 짝이 있어 핀이 될 수 있는가 — 목 서버는 카테고리의 pinnable(숙소·기타 false)과 NOT_IN_OWN_DB 를 본다
-    return HttpResponse.json(found.slice(0, limit).map((p) => ({ ...p, pinnable: !NOT_IN_OWN_DB.has(p.place_id) && (!p.category || CATEGORY_RULES[p.category].pinnable) }))); // 0개는 빈 배열 그대로(가드레일 2)
+    // #822: 자체 DB 짝이 있는(핀 가능) 결과가 먼저다. 각 묶음 안은 위의 순서(거리 순)를 그대로 둔다.
+    const flagged = found.map((p) => ({ ...p, pinnable: !NOT_IN_OWN_DB.has(p.place_id) && (!p.category || CATEGORY_RULES[p.category].pinnable) }));
+    const ordered = [...flagged.filter((p) => p.pinnable), ...flagged.filter((p) => !p.pinnable)];
+    return HttpResponse.json(ordered.slice(0, limit)); // 0개는 빈 배열 그대로(가드레일 2)
   }),
 ];

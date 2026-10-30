@@ -840,6 +840,30 @@ describe("#180 — GET /places/search (이름 검색)", () => {
     expect(items[0].place_id).toBe("kakao:mock-2");
   });
 
+  it("#822 핀 가능한(pinnable) 결과가 먼저 온다 — 거리상 더 가까운 핀 불가 결과(숙소)보다도 앞이다", async () => {
+    // 광안리 게스트하우스(숙소, 핀 불가)가 광안리 해변(관광지)보다 이 좌표에 더 가깝다. 거리 순만 쓰면 숙소가 먼저 온다.
+    const items: { place_id: string; pinnable: boolean }[] = await search("q=" + encodeURIComponent("광안리") + "&lat=35.1547&lng=129.1191").then((r) => r.json());
+    const ids = items.map((i) => i.place_id);
+    expect(ids).toContain("kakao:mock-3");
+    expect(ids).toContain("kakao:mock-4");
+    expect(items.find((i) => i.place_id === "kakao:mock-4")?.pinnable).toBe(false);
+    expect(ids.indexOf("kakao:mock-3")).toBeLessThan(ids.indexOf("kakao:mock-4"));
+  });
+
+  it("#822 어떤 검색이든 핀 불가 결과 뒤에 핀 가능 결과가 오지 않는다", async () => {
+    for (const qs of ["q=" + encodeURIComponent("광안리") + "&lat=35.1547&lng=129.1191", "q=" + encodeURIComponent("해운대") + "&lat=35.1587&lng=129.1604", "q=" + encodeURIComponent("곱창")]) {
+      const items: { pinnable: boolean; lat: number; lng: number }[] = await search(qs).then((r) => r.json());
+      const firstBlocked = items.findIndex((i) => !i.pinnable);
+      if (firstBlocked >= 0) expect(items.slice(firstBlocked).every((i) => !i.pinnable), qs).toBe(true);
+    }
+  });
+
+  it("#822 limit이 묶음을 가르지 않는다 — limit=1이면 핀 가능한 결과 하나만 온다", async () => {
+    const items: { place_id: string; pinnable: boolean }[] = await search("q=" + encodeURIComponent("광안리") + "&lat=35.1547&lng=129.1191&limit=1").then((r) => r.json());
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ place_id: "kakao:mock-3", pinnable: true });
+  });
+
   it("검증 실패는 422 — 빈 검색어, 51자, lat만 보냄, limit 범위 밖", async () => {
     for (const qs of ["q=", "q=" + "가".repeat(51), "q=a&lat=35", "q=a&limit=16"]) {
       const res = await search(qs);
