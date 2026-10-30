@@ -1114,6 +1114,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/places/external-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 장소 검색에서 결과가 없을 때의 카카오맵 검색 링크(#902). 사용자가 친 검색어 **그대로** 카카오맵 검색으로 넘기는 출구다 — AI 추천 결과가 아니다.
+         *     링크는 서버가 만든다(형식은 `places.api.kakao_search_url` 한 곳, 화면은 그리기만 한다). 서버는 카카오를 부르지 않고 검색어를 저장하거나 로그에 남기지 않는다(#53).
+         *     화면은 `GET /places/search`가 빈 배열일 때만 부른다. 응답은 추천 결과의 외부 검색과 같은 `ExternalSearch`라 같은 컴포넌트로 그린다. 외부 브라우저로 연다(카카오 약관).
+         *     로그인만 필요하고 지도 구성원 여부는 보지 않는다.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description 사용자가 장소 검색에 친 검색어. 앞뒤 공백을 걷은 뒤 1~50자(`/places/search`의 q와 같다) */
+                    q: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ExternalSearch"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description VALIDATION_ERROR — q가 비었거나 50자 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/categories/{category}/reason-chips": {
         parameters: {
             query?: never;
@@ -4153,7 +4207,8 @@ export interface components {
         };
         /**
          * @description 카카오맵 검색 링크(#798). 핀고에 결과가 없거나 적을 때 사람이 밖에서 직접 찾는 출구다 — AI 추천 결과가 아니다. 서버는 카카오를 부르지 않고 저장하지 않는다(#53).
-         *     검색어 규칙은 docs/constraints.md 「카카오맵 검색 링크」: `{동네} {말}`, 말은 원함 조건 하나(표에 있는 키) 또는 카테고리 말. 사유 원문은 들어가지 않는다.
+         *     검색어 규칙은 docs/constraints.md 「카카오맵 검색 링크」. 추천(결과, readiness)은 `{동네} {카테고리 말}`(#902 — 원함 조건의 말을 고르던 조건 말 표는 #904에서 지운다), 장소 단위는 `{장소 이름} {동네}`, 장소 검색 결과 없음(`GET /places/external-search`)은 사용자가 친 검색어 그대로다. 다른 구성원의 사유 원문은 들어가지 않는다.
+         *     다른 서비스(네이버 지도 등)를 붙일 때는 링크 목록 필드를 더하는 확장으로 한다(#902, `url`은 유지).
          *     **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관)
          */
         ExternalSearch: {

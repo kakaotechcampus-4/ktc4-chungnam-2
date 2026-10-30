@@ -842,6 +842,24 @@ describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
   });
 });
 
+describe("#902 — GET /places/external-search (장소 검색 결과 없음의 카카오맵 링크)", () => {
+  const ext = (q: string) => fetch(`${BASE}/places/external-search?q=${encodeURIComponent(q)}`);
+
+  it("사용자가 친 검색어 그대로 카카오맵 검색 링크를 만든다", async () => {
+    const res = await ext("  성수 칼국수 & 수제비 ");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      query: "성수 칼국수 & 수제비",
+      url: "https://map.kakao.com/link/search/" + encodeURIComponent("성수 칼국수 & 수제비"),
+    });
+  });
+
+  it("검색어가 비었거나 50자를 넘으면 422", async () => {
+    expect((await ext("   ")).status).toBe(422);
+    expect((await ext("가".repeat(51))).status).toBe(422);
+  });
+});
+
 describe("#180 — GET /places/search (이름 검색)", () => {
   const search = (qs: string) => fetch(`${BASE}/places/search?${qs}`);
 
