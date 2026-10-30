@@ -43,14 +43,35 @@ export function evidenceLabel(line: EvidenceLineDto): string {
   return line.fact_label
 }
 
-/** 근거 확인 화면의 세 구역(최종기획안 5-5). 꼭 = 구성원별 줄, 선호 = 해시태그로 합침, 참고 = 원문 인용. */
+/**
+ * 근거 확인 화면의 구역(최종기획안 5-5). 꼭 = 구성원별 줄, 선호 = 해시태그로 합침, 참고 = 원문 인용.
+ * 꼭·선호 줄 중 추천이 쓰지 않는 줄(enforced=false)은 unused 로 따로 모은다 — 「꼭」으로 보이면 걸러질 거라고 믿는다(#742).
+ * enforced 가 없으면 쓰이는 줄로 본다(구버전 서버).
+ */
 export function groupEvidence(lines: EvidenceLineDto[]) {
   const active = lines.filter((l) => l.is_active)
+  const pick = (badge: EvidenceLineDto['badge'], enforced: boolean) =>
+    active.filter((l) => l.badge === badge && (l.enforced !== false) === enforced)
   return {
-    required: active.filter((l) => l.badge === 'required'),
-    preferred: active.filter((l) => l.badge === 'preferred'),
+    required: pick('required', true),
+    preferred: pick('preferred', true),
     reference: active.filter((l) => l.badge === 'reference'),
+    unused: [...pick('required', false), ...pick('preferred', false)],
   }
+}
+
+/** 추천이 쓰지 않는 줄의 이유 한 줄(docs/api-spec.yaml EvidenceLine.not_enforced_reason, #740). */
+export function notEnforcedNote(line: EvidenceLineDto): string {
+  if (line.not_enforced_reason === 'no_key') return '걸러지지 않아요. 가게에 직접 확인해 주세요' // 가드레일 8
+  if (line.not_enforced_reason === 'off_season') return '이번 여행 기간에는 해당 없어요'
+  return '이번 추천에 쓰이지 않아요'
+}
+
+/** 「+」 직접 추가 상한(409 EVIDENCE_LIMIT, #707). 숫자는 서버 detail.limit 만 쓴다. 다른 오류면 null. */
+export function evidenceLimitMessage(err: unknown): string | null {
+  if (!(err instanceof ApiError) || err.code !== 'EVIDENCE_LIMIT') return null
+  const limit = err.detail?.limit
+  return typeof limit === 'number' ? `직접 추가는 ${limit}개까지예요` : '직접 추가는 더 할 수 없어요'
 }
 
 /** docs/errors.md — run 시작·실행 실패 문구. */

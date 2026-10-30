@@ -9,18 +9,32 @@ import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import ConfirmDialog from '@/ui/ConfirmDialog'
+import Notice from '@/ui/Notice'
 import Pingo from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
+import TextField from '@/ui/TextField'
 
 import { useAiStore } from './aiStore'
-import { evidenceLabel, groupEvidence, type EvidenceLineDto, type RecommendRunDto, type RegionDto } from './model'
+import {
+  evidenceLabel,
+  evidenceLimitMessage,
+  groupEvidence,
+  notEnforcedNote,
+  type EvidenceLineDto,
+  type RecommendRunDto,
+  type RegionDto,
+} from './model'
 import { useConfirmRegionsMutation, useEvidenceQuery, useExecuteRunMutation, usePatchEvidenceMutation } from './queries'
+
+/** 「+」 글 한 줄 길이(docs/api-spec.yaml EvidencePatchRequest.add[].text, 앞뒤 공백을 뗀 뒤 1~140자). */
+const ADD_TEXT_MAX = 140
 
 /**
  * 근거 확인(Figma 6절, 최종기획안 5-5). 모델이 사유를 어떻게 읽었는지 보여 주고 사람이 고치게 한다.
  * - 꼭 지켜야 하는 조건: 구성원별 줄. 내 것만 × 로 뺀다(빼기 전에 한 번 묻는다)
  * - 가능하면 맞춰주세요: 해시태그로 합친다. 내 몫이 든 태그에만 ×
  * - 지금까지 나온 의견에서: 원문 인용
+ * - 이번 추천에 쓰이지 않는 조건: 추천이 거르거나 점수에 쓰지 않는 줄과 그 이유(#742). 알러지처럼 키가 없는 줄이 여기 온다
  * 제약을 AI가 임의로 완화하지 않는다(가드레일 4) — 빼는 건 언제나 사람이다.
  */
 export default function EvidenceScreen({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
@@ -33,6 +47,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
   const [conflict, setConflict] = useState<RegionDto[] | null>(null)
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
+  const [addLimit, setAddLimit] = useState<string | null>(null)
   const groups = groupEvidence(evidence.data ?? [])
   const busy = confirm.isPending
   const desktop = useIsDesktop()
@@ -142,6 +157,27 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
           </section>
         )}
 
+        {groups.unused.length > 0 && (
+          <section className="space-y-2">
+            <h2 className="text-sm font-bold text-ink-900">이번 추천에 쓰이지 않는 조건</h2>
+            {groups.unused.map((line) => (
+              <div key={line.id} className="flex items-center gap-3 rounded-xl border border-ink-200 p-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-label text-ink-500">{line.author_display_name}</p>
+                  <p className="font-bold text-ink-900">{evidenceLabel(line)}</p>
+                  <p className="mt-0.5 text-sm text-ink-700">{notEnforcedNote(line)}</p>
+                </div>
+                {/* 거르지 않는 줄이라 빼기 전에 묻지 않는다 — 되돌리기 토스트만. */}
+                {line.permissions.can_disable && (
+                  <button type="button" aria-label={`${evidenceLabel(line)} 빼기`} onClick={() => toggle([line], false)} className="hit-44 text-ink-500">
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </section>
+        )}
+
         {groups.reference.length > 0 && (
           <section className="space-y-2">
             <h2 className="text-sm font-bold text-ink-900">지금까지 나온 의견에서</h2>
@@ -153,7 +189,9 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
           </section>
         )}
 
-        {adding ? (
+        {addLimit ? (
+          <Notice>{addLimit}</Notice>
+        ) : adding ? (
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -164,21 +202,29 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
                     setDraft('')
                     setAdding(false)
                   },
-                  onError: () => showToast('조건을 더하지 못했어요'),
+                  onError: (err) => {
+                    // 상한(409 EVIDENCE_LIMIT)이면 입력을 닫고 이유를 남긴다. 숫자는 응답 detail.limit 에서(#720).
+                    const limit = evidenceLimitMessage(err)
+                    if (!limit) return showToast('조건을 더하지 못했어요')
+                    setAddLimit(limit)
+                    setAdding(false)
+                  },
                 })
             }}
-            className="field"
+            className="flex items-center gap-2"
           >
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              maxLength={140}
-              autoFocus
-              aria-label="조건 더하기"
-              placeholder="예: 비 오면 실내로 가고 싶어요"
-              className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-ink-500"
-            />
-            <button type="submit" disabled={patch.isPending} className="btn-link shrink-0 text-sm">
+            <div className="min-w-0 flex-1">
+              <TextField
+                value={draft}
+                onChange={setDraft}
+                maxLength={ADD_TEXT_MAX}
+                autoFocus
+                label="조건 더하기"
+                clearLabel="조건 지우기"
+                placeholder="예: 비 오면 실내로 가고 싶어요"
+              />
+            </div>
+            <button type="submit" disabled={patch.isPending || !draft.trim()} className="btn-link shrink-0 text-sm">
               더하기
             </button>
           </form>
