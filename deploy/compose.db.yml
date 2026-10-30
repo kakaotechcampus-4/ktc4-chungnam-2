@@ -1,6 +1,6 @@
 # 서버 안의 PostgreSQL(PostGIS) — RDS가 승인되기 전까지의 타협이다(deploy_rules.md 「타협과 다시 볼 조건」).
 # 운영과 스테이징은 DB 이름으로 나눈다(pingo_prod, pingo_staging). 바깥 포트는 열지 않는다(같은 compose 네트워크에서만).
-# RDS로 옮기면 .env의 COMPOSE_FILE에서 이 파일을 빼고, env/*.env의 DATABASE_URL을 RDS 주소로 바꾼다.
+# RDS로 옮기면 .env의 COMPOSE_FILE에서 이 파일을 빼고, env/*.env의 DATABASE_URL을 RDS 주소로 바꾼다 — move-to-rds.sh가 한다(#873).
 services:
   db:
     image: postgis/postgis:17-3.5-alpine
