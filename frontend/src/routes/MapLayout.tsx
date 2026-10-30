@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, NavLink, Outlet, useMatch, useNavigate, useParams } from 'react-router'
 import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Users, type LucideIcon } from 'lucide-react'
 
+import AgentButton from '@/features/agent/AgentButton'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
@@ -374,6 +375,7 @@ export default function MapLayout() {
           </div>
           <PanelToggle open={panelOpen} onToggle={() => setPanelOpen(!panelOpen)} />
           <MapControls docked hidden={modalOpen} fading={mapMoving} active={activeControl} onPress={onControl} />
+          {onMarkingTab && <AgentButton docked mapId={mapId} hidden={modalOpen} fading={mapMoving} />}
           {!modalOpen && <Toaster docked controlsVisible={!mapMoving} />}
         </div>
       )}
