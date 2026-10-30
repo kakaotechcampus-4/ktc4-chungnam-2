@@ -20,7 +20,6 @@ SKIP_FILES = {"common/errors.py"}   # 목록을 정의하는 자리
 
 # 코드 -> 추적 이슈. 비어 가는 것이 정상이다.
 KNOWN_UNRAISED: dict[str, str] = {
-    "NO_PENDING_LOGIN": "탈퇴 계정 재로그인 선택(GET·POST /auth/pending) — 서버 구현 전(#857). 구현되면 지운다",
 }
 
 
