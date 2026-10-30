@@ -23,7 +23,7 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
     ("get", "/maps/trash"): "삭제한 지도 목록(방장, 30일 안) — 서버 구현 전(#464). 구현되면 지운다",
-    ("post", "/maps/{mapId}/restore"): "삭제한 지도 복구(방장, 30일 안) — 서버 구현 전(#464). 구현되면 지운다",
+    ("post", "/maps/{}/restore"): "삭제한 지도 복구(방장, 30일 안) — 서버 구현 전(#464). 구현되면 지운다",
     ("get", "/auth/pending"): "탈퇴 계정 재로그인 선택 안내 — 서버 구현 전(#857). 구현되면 지운다",
     ("post", "/auth/pending"): "탈퇴 계정 재로그인 선택(restart·restore) — 서버 구현 전(#857). 구현되면 지운다",
 }
