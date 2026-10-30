@@ -36,6 +36,7 @@ from agent.course.intake import Excluded, PinInput, TripBuild, build_trip
 from agent.course.models import ACTIVE_STATUSES, AgentCourseRun
 from agent.course.ports import OpeningHoursGateway
 from common.errors import AppError
+from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
 from places import api as places_api
@@ -130,6 +131,8 @@ class CourseJob:
     run_id: str
     build: TripBuild
     request_text: str
+    map_id: str            # 사용량 기록(llm_calls, #870)의 라벨
+    requested_by: str
 
 
 def fail_stale_runs(
@@ -197,7 +200,7 @@ def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseR
             db.add(row)
     except IntegrityError:      # 동시 요청이 확인을 함께 통과했다 — 부분 유니크 인덱스가 하나만 남긴다
         raise AppError("COURSE_IN_PROGRESS") from None
-    return CourseJob(str(row.id), build, text)
+    return CourseJob(str(row.id), build, text, map_id=map_id, requested_by=requested_by)
 
 
 # ---------------------------------------------------------------- 실행 (백그라운드)
@@ -220,11 +223,12 @@ def execute_run(
         if not started:      # 그 사이 지워졌거나 INTERRUPTED로 끝났다
             return
         try:
-            computed = runner.run_course(
-                job.build, job.request_text,
-                goals_planner=llm.goals_planner, direct_planner=llm.direct_planner, gateway=gateway,
-                on_step=progress_writer(session_factory, run_id),
-            )
+            with llm_api.usage_context("course", map_id=job.map_id, user_id=job.requested_by, run_id=job.run_id):
+                computed = runner.run_course(
+                    job.build, job.request_text,
+                    goals_planner=llm.goals_planner, direct_planner=llm.direct_planner, gateway=gateway,
+                    on_step=progress_writer(session_factory, run_id),
+                )
             values = _done_values(computed)
         except Exception as exc:   # noqa: BLE001 — 엔진 오류가 run을 running으로 남기면 안 된다. 클래스 이름만 로그(사유·요청 원문 금지)
             log.warning("course run %s 실패: %s", job.run_id, type(exc).__name__)

@@ -36,6 +36,7 @@ ignore_imports = [
     # 또는 사용자 id 열을 가진 모듈이 하나 더 늘 때.
     "auth.service -> agent.api",
     "auth.service -> feedback.api",
+    "auth.service -> llm.api",   # 모델 호출 사용량 llm_calls.user_id(#870)
     "auth.service -> maps.api",
     "auth.service -> notifications.api",
     "auth.service -> pins.api",

@@ -1,0 +1,64 @@
+name: move-to-rds
+# 서버 안 DB를 RDS로 옮긴다(#873). 서버의 deploy/move-to-rds.sh를 SSM으로 돌린다(deploy와 같은 방식). 손으로만 돌린다.
+# 먼저 사람이 Session Manager에서 deploy/rds-setup.sh를 한 번 돌려 둔다(마스터 비밀번호가 필요해 여기서 하지 않는다).
+# 순서: staging move → staging-check → prod move → finish. 되돌리기는 rollback. 절차는 deploy_rules.md 「RDS로 옮기기」.
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: 환경(finish는 무시한다)
+        type: choice
+        options: [staging, prod]
+      action:
+        description: "move: 옮기기, rollback: 서버 안 DB로 되돌리기, finish: 두 환경을 옮긴 뒤 서버 안 DB 컨테이너 멈추기"
+        type: choice
+        options: [move, rollback, finish]
+      confirm:
+        description: "운영(prod)이나 finish면 확인으로 「<환경> <동작>」을 그대로 적는다(예: prod move)"
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: move-to-rds
+  cancel-in-progress: false
+
+jobs:
+  move:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 입력 확인
+        env:
+          ENV_NAME: ${{ inputs.env }}
+          ACTION: ${{ inputs.action }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$ACTION" = finish ]; then
+            [ "$CONFIRM" = "finish" ] || [ "$CONFIRM" = "$ENV_NAME finish" ] || { echo "finish는 confirm에 finish를 적는다"; exit 1; }
+            echo "ARGS=finish" >> "$GITHUB_ENV"
+          else
+            if [ "$ENV_NAME" = prod ]; then
+              [ "$CONFIRM" = "prod $ACTION" ] || { echo "운영은 confirm에 「prod $ACTION」을 적는다"; exit 1; }
+            fi
+            echo "ARGS=$ENV_NAME $ACTION" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/actions
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/ktc-github-deploy
+          aws-region: ap-northeast-2
+
+      - uses: ./.github/actions/ssm-run
+        with:
+          instance-id: ${{ vars.EC2_INSTANCE_ID }}
+          comment: move-to-rds ${{ env.ARGS }}
+          timeout-seconds: "2400"
+          command: cd /srv/pingo/deploy && ./move-to-rds.sh ${{ env.ARGS }}

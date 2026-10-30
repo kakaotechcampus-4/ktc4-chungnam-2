@@ -415,10 +415,13 @@ def _draft(
         map_id=map_id, snap=snap, allowed=llm_api.DIAGNOSIS_TOOLS[top.diagnosis], session_factory=session_factory,
         structure=gateway.structure, now=now,
     )
-    comparison = _comparison(ctx, top)
-    reply = _call_model(trace, ctx.calls, lambda: gateway.diagnose(
-        core.diagnosis_input(top, snap, comparison), tool_runner=ctx.run,
-    ))
+    # 사용량 기록(#870): 진단 왕복과 그 안의 ②(사전 비교, 도구)가 한 trace다. 서버 호출이라 user_id가 없고, agent_runs 행은
+    # 아직 없어 run_id도 없다
+    with llm_api.usage_context("agent_diagnose", map_id=map_id):
+        comparison = _comparison(ctx, top)
+        reply = _call_model(trace, ctx.calls, lambda: gateway.diagnose(
+            core.diagnosis_input(top, snap, comparison), tool_runner=ctx.run,
+        ))
     trace.stage = "verify"
     out = reply.result
     which = {"signal_id": top.id, "diagnosis": top.diagnosis}
@@ -497,7 +500,9 @@ def update_summary(
     ctx = tools.ToolContext(map_id=map_id, snap=snap, allowed=(), session_factory=session_factory,
                             structure=gateway.structure, now=now)
     try:
-        stored, outcome, detail = core.summarize_reasons(tools.summary_reasons(ctx, category)), "summarized", None
+        with llm_api.usage_context("agent_summary", map_id=map_id):   # #870 — ②를 부르지만 지도 상한에는 세지 않는다
+            reasons = tools.summary_reasons(ctx, category)
+        stored, outcome, detail = core.summarize_reasons(reasons), "summarized", None
     except llm_api.PlanEvidenceFailed as exc:
         log.warning("agent 요약 실패(②) map_id=%s category=%s", map_id, category)
         stored, outcome, detail = None, "model_failed", {"reason": "structure_failed", "detail": type(exc).__name__}
