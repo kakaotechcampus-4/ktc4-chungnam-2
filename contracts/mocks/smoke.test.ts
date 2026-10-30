@@ -1446,13 +1446,10 @@ describe("#811 — 「추천 받기」 연타 방어: Idempotency-Key", () => {
     const otherExecute = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0005-uuid" }, body: JSON.stringify({ category: "음식점" }) });
     expect(otherExecute.status).toBe(409);
     expect((await otherExecute.json()).code).toBe("IDEMPOTENCY_CONFLICT");
-    const maps: { id: string }[] = await fetch(`${BASE}/maps`).then((r) => r.json()).then((j) => j.items ?? j);
-    const other = maps.find((m) => m.id !== "map_1");
-    if (other) {
-      const res = await fetch(`${BASE}/maps/${other.id}/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0005-uuid" }, body: JSON.stringify({ category: "음식점", execute: true }) });
-      expect([409, 404]).toContain(res.status); // 다른 지도의 run을 200/202로 돌려주면 안 된다
-      expect(res.status).not.toBe(202);
-    }
+    // 목 서버는 지도 존재를 따지지 않는다 — 같은 키·같은 본문이라도 다른 지도면 그 지도의 run이 아닌 첫 run을 돌려주면 안 된다
+    const otherMap = await fetch(`${BASE}/maps/map_other/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0005-uuid" }, body: JSON.stringify({ category: "음식점", execute: true }) });
+    expect(otherMap.status).toBe(409);
+    expect((await otherMap.json()).code).toBe("IDEMPOTENCY_CONFLICT");
   });
 
   it("같은 후보를 두 번 게시해도 핀은 하나이고 둘째는 같은 핀을 200으로 받는다", async () => {
