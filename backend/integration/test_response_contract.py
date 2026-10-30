@@ -31,6 +31,8 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("GET", "/maps/{mapId}/events/me"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/auth/pending"): "서버 구현 전(#857) — 구현되면 auth 통합 테스트로 옮기고 지운다",
     ("POST", "/auth/pending"): "서버 구현 전(#857) — 구현되면 auth 통합 테스트로 옮기고 지운다",
+    ("GET", "/maps/trash"): "서버 구현 전(#464) — 구현되면 maps 통합 테스트로 옮기고 지운다",
+    ("POST", "/maps/{mapId}/restore"): "서버 구현 전(#464) — 구현되면 maps 통합 테스트로 옮기고 지운다",
     ("POST", "/auth/qa-login"): "스테이징 전용 — 테스트 앱에 없다(#788), staging 설정 앱으로 auth 테스트가 본다(#789)",
 }
 
