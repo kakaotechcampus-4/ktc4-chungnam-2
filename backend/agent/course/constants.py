@@ -41,6 +41,9 @@ THOUGHT_MAX_CHARS = 120
 
 # 부드러운 목표
 MEALS_PER_DAY_MAX = 2
+# 하루 식사 장소의 최소 수(선호). 식당 수가 날짜 수 이상이면 날마다 이만큼, 모자라면 가능한 많은 날에 이만큼 둔다(core.meal_cover).
+# 시간 배정을 하지 않아 아침·점심·저녁을 나누지 않고 하루 식사 장소 수로 본다. 위반이 아니라 선호이고 장소를 더하거나 빼지 않는다(#918).
+MEALS_PER_DAY_MIN = 1
 MEAL_CATEGORY = "음식점"
 CAFE_CATEGORY = "카페"
 TOUR_CATEGORY = "관광지"
