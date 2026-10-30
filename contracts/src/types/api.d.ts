@@ -514,6 +514,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/trash": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * **내가 방장인 삭제된 지도**(#464) — 복구할 수 있는 지도 목록. 삭제한 지 30일 안인 것만, 최근 삭제순. 방장이 아닌 사람의 삭제된 지도는 오지 않는다(삭제된 지도는 구성원에게도 없는 지도다).
+         *     `purge_at`(= `deleted_at` + 30일)까지만 복구할 수 있다. 목록에는 복구 가능한 것만 오고, 기한이 지난 것은 빠진다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 없으면 items는 빈 배열 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TrashedMapList"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}": {
         parameters: {
             query?: never;
@@ -550,6 +589,7 @@ export interface paths {
         /**
          * 지도 삭제 — 방장만 (#369, docs/permissions.md map.delete). soft delete라 모든 구성원에게서 사라진다.
          *     이후 이 지도와 지도에 딸린 모든 경로, 이 지도의 초대 토큰은 404다. 전체 채널에 map.deleted를 보낸다(docs/events.md).
+         *     **삭제한 지 30일 안이면 방장이 복구할 수 있다**(#464): `GET /maps/trash`로 찾고 `POST /maps/{mapId}/restore`. 30일이 지나면 정리 작업(`maps.purge`)이 지도와 딸린 데이터를 실제로 지운다.
          */
         delete: {
             parameters: {
@@ -617,6 +657,62 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/maps/{mapId}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * **삭제한 지도 복구 — 방장만, 삭제한 지 30일 안에만**(#464, docs/permissions.md map.restore). `deleted_at`을 비운다 — 구성원·핀·반응·초대·확정 리스트·추천 기록은 삭제 때 그대로이므로 따로 복원할 것이 없다(탈퇴한 사람은 계속 구성원에서 빠진다, #245).
+         *     - 내가 이미 지도 20개(만든 것과 참여한 것 합산)이면 409 `MAP_LIMIT` — 복구도 새 지도를 늘리는 일이다.
+         *     - 삭제한 지 30일이 지났는데 정리 작업이 아직 안 돌았으면 410 `MAP_PURGED`(복구할 수 없다). 이미 정리돼 행이 없으면 404다.
+         *     - **이미 복구된 지도면 그 지도를 200으로 돌려준다**(연타 안전). 방장이 아니면 403, 내가 구성원이 아니거나 없는 지도면 404.
+         *     - 전체 채널에 `map.restored`를 보낸다(docs/events.md). 삭제 때 구성원의 연결은 닫혔으므로 대부분의 구성원은 다음에 `GET /maps`를 열 때 지도를 다시 본다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 복구됨(또는 이미 복구돼 있음). 복구한 지도 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Map"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["MapLimit"];
+                /** @description MAP_PURGED — 삭제한 지 30일이 지나 복구할 수 없다 */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/maps/{mapId}/members/me": {
@@ -3426,6 +3522,32 @@ export interface components {
         UserUpdateRequest: {
             /** @description 계정 단위 표시 이름 (2026-09-30 결정). 앞뒤 공백을 지운 뒤 1~50자이고 지운 값을 저장한다(#160). 공백뿐이면 422 */
             display_name: string;
+        };
+        /** @description 삭제한 지도 한 건(#464). 복구하면 `Map`이 된다 */
+        TrashedMap: {
+            id: string;
+            title: string;
+            /** Format: date */
+            start_date: string;
+            /** Format: date */
+            end_date: string;
+            region?: components["schemas"]["MapRegion"];
+            member_count?: number;
+            pin_count?: number;
+            /** Format: date-time */
+            deleted_at: string;
+            /**
+             * Format: date-time
+             * @description 이 시각 뒤에는 복구할 수 없고 정리 작업이 지운다(삭제 + 30일)
+             */
+            purge_at: string;
+            /** @description 남은 날수(올림, 서버가 계산). 화면은 「N일 안에 복구할 수 있어요」 */
+            days_left: number;
+        };
+        TrashedMapList: {
+            items: components["schemas"]["TrashedMap"][];
+            /** @description 복구 가능 기간(일). 지금 30 */
+            retention_days: number;
         };
         Map: {
             id: string;

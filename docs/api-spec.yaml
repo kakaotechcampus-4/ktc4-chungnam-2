@@ -252,6 +252,19 @@ paths:
               schema: { $ref: "#/components/schemas/Map" }
         "409": { $ref: "#/components/responses/MapLimit" }
 
+  /maps/trash:
+    get:
+      tags: [maps]
+      summary: |
+        **내가 방장인 삭제된 지도**(#464) — 복구할 수 있는 지도 목록. 삭제한 지 30일 안인 것만, 최근 삭제순. 방장이 아닌 사람의 삭제된 지도는 오지 않는다(삭제된 지도는 구성원에게도 없는 지도다).
+        `purge_at`(= `deleted_at` + 30일)까지만 복구할 수 있다. 목록에는 복구 가능한 것만 오고, 기한이 지난 것은 빠진다.
+      responses:
+        "200":
+          description: OK. 없으면 items는 빈 배열
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrashedMapList" }
+
   /maps/{mapId}:
     get:
       tags: [maps]
@@ -290,11 +303,37 @@ paths:
       summary: |
         지도 삭제 — 방장만 (#369, docs/permissions.md map.delete). soft delete라 모든 구성원에게서 사라진다.
         이후 이 지도와 지도에 딸린 모든 경로, 이 지도의 초대 토큰은 404다. 전체 채널에 map.deleted를 보낸다(docs/events.md).
+        **삭제한 지 30일 안이면 방장이 복구할 수 있다**(#464): `GET /maps/trash`로 찾고 `POST /maps/{mapId}/restore`. 30일이 지나면 정리 작업(`maps.purge`)이 지도와 딸린 데이터를 실제로 지운다.
       parameters: [ { $ref: "#/components/parameters/MapId" } ]
       responses:
         "204": { description: 삭제됨 }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /maps/{mapId}/restore:
+    post:
+      tags: [maps]
+      summary: |
+        **삭제한 지도 복구 — 방장만, 삭제한 지 30일 안에만**(#464, docs/permissions.md map.restore). `deleted_at`을 비운다 — 구성원·핀·반응·초대·확정 리스트·추천 기록은 삭제 때 그대로이므로 따로 복원할 것이 없다(탈퇴한 사람은 계속 구성원에서 빠진다, #245).
+        - 내가 이미 지도 20개(만든 것과 참여한 것 합산)이면 409 `MAP_LIMIT` — 복구도 새 지도를 늘리는 일이다.
+        - 삭제한 지 30일이 지났는데 정리 작업이 아직 안 돌았으면 410 `MAP_PURGED`(복구할 수 없다). 이미 정리돼 행이 없으면 404다.
+        - **이미 복구된 지도면 그 지도를 200으로 돌려준다**(연타 안전). 방장이 아니면 403, 내가 구성원이 아니거나 없는 지도면 404.
+        - 전체 채널에 `map.restored`를 보낸다(docs/events.md). 삭제 때 구성원의 연결은 닫혔으므로 대부분의 구성원은 다음에 `GET /maps`를 열 때 지도를 다시 본다.
+      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      responses:
+        "200":
+          description: 복구됨(또는 이미 복구돼 있음). 복구한 지도
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Map" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/MapLimit" }
+        "410":
+          description: MAP_PURGED — 삭제한 지 30일이 지나 복구할 수 없다
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /maps/{mapId}/members/me:
     delete:
@@ -1759,6 +1798,29 @@ components:
       required: [display_name]
       properties:
         display_name: { type: string, minLength: 1, maxLength: 50, description: "계정 단위 표시 이름 (2026-09-30 결정). 앞뒤 공백을 지운 뒤 1~50자이고 지운 값을 저장한다(#160). 공백뿐이면 422" }
+
+    TrashedMap:
+      type: object
+      description: 삭제한 지도 한 건(#464). 복구하면 `Map`이 된다
+      required: [id, title, start_date, end_date, deleted_at, purge_at, days_left]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        region: { $ref: "#/components/schemas/MapRegion" }
+        member_count: { type: integer, minimum: 0 }
+        pin_count: { type: integer, minimum: 0 }
+        deleted_at: { type: string, format: date-time }
+        purge_at: { type: string, format: date-time, description: "이 시각 뒤에는 복구할 수 없고 정리 작업이 지운다(삭제 + 30일)" }
+        days_left: { type: integer, minimum: 0, description: "남은 날수(올림, 서버가 계산). 화면은 「N일 안에 복구할 수 있어요」" }
+
+    TrashedMapList:
+      type: object
+      required: [items, retention_days]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/TrashedMap" } }
+        retention_days: { type: integer, description: "복구 가능 기간(일). 지금 30" }
 
     Map:
       type: object

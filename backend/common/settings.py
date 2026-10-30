@@ -117,6 +117,11 @@ class Settings:
     elice_ml_api_base_url: str = ""
     elice_ml_api_key: str = ""
     llm_model: str = "gpt-6-luna"
+    # 모델 단가(원/100만 토큰, #870). llm_calls.cost_krw를 계산하는 유일한 자리다. 캐시 입력은 입력 토큰 중 게이트웨이가
+    # prompt_tokens_details.cached_tokens로 알려 준 몫이다. 엘리스 Serverless gpt-6-luna 기준(2026-10-30).
+    llm_price_input_krw_per_m: float = 141.0
+    llm_price_cached_input_krw_per_m: float = 14.0
+    llm_price_output_krw_per_m: float = 708.0
     # 로그 레벨(LOG_LEVEL). main.py가 logging.basicConfig에 넘긴다(#390).
     log_level: str = "INFO"
     # places 실시간 연결(#34a) — 지도 API 키 2종. 기본값 ""는 위 kakao_*와 같은 이유(dev에서 키 없이도
@@ -218,6 +223,9 @@ class Settings:
             elice_ml_api_base_url=_env("ELICE_ML_API_BASE_URL", ""),
             elice_ml_api_key=_env("ELICE_ML_API_KEY", ""),
             llm_model=_env("LLM_MODEL", "gpt-6-luna"),
+            llm_price_input_krw_per_m=_float("LLM_PRICE_INPUT_KRW_PER_M", 141.0),
+            llm_price_cached_input_krw_per_m=_float("LLM_PRICE_CACHED_INPUT_KRW_PER_M", 14.0),
+            llm_price_output_krw_per_m=_float("LLM_PRICE_OUTPUT_KRW_PER_M", 708.0),
             log_level=_log_level(),
             kakao_rest_api_key=_env("KAKAO_REST_API_KEY", "") or _env("KAKAO_CLIENT_ID", ""),
             naver_search_client_id=_env("NAVER_SEARCH_CLIENT_ID", ""),

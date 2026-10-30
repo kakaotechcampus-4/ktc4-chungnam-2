@@ -1,10 +1,11 @@
 """정기 정리 러너(#168). 사용법:
 
-    python -m maintenance.run [--dry-run] [--only maps|notifications|guests|idempotency]
+    python -m maintenance.run [--dry-run] [--only maps|notifications|guests|llm_calls|idempotency]
 
-한 번 돌리면 ① 삭제한 지 30일 지난 지도 ② 90일 지난 알림 ③ 90일 안 쓴 게스트 ④ 24시간 지난 「추천 받기」 멱등 키(run이 연결된 것)를 차례로 지운다. 실제 삭제는 각
-모듈이 한다(`maps.api.purge_deleted_maps`, `notifications.api.purge_old`, `auth.api.purge_inactive_guests`,
-`recommend.api.purge_idempotency_keys`) — 여기는 부르기만 한다.
+한 번 돌리면 ① 삭제한 지 30일 지난 지도 ② 90일 지난 알림 ③ 90일 안 쓴 게스트 ④ 30일 지난 모델 호출 사용량(#870)
+⑤ 24시간 지난 「추천 받기」 멱등 키(run이 연결된 것, #811)를 차례로 지운다.
+실제 삭제는 각 모듈이 한다(`maps.api.purge_deleted_maps`, `notifications.api.purge_old`, `auth.api.purge_inactive_guests`,
+`llm.api.purge_old`, `recommend.api.purge_idempotency_keys`) — 여기는 부르기만 한다.
 
 - 단계마다 별도 세션·트랜잭션·커밋이다. 한 단계가 실패하면 그 단계만 되돌리고 다음으로 넘어간다. 실패는 로그에 단계
   이름과 에러 타입만 남긴다(메시지에는 사용자 데이터가 섞일 수 있다). 하나라도 실패하면 종료 코드는 1이다.
@@ -46,6 +47,12 @@ def purge_guests(db: Session, now: datetime) -> dict[str, int]:
     return {"guests": auth_api.purge_inactive_guests(db, now)}
 
 
+def purge_llm_calls(db: Session, now: datetime) -> dict[str, int]:
+    from llm import api as llm_api
+
+    return llm_api.purge_old(db, now=now)
+
+
 def purge_idempotency_keys(db: Session, now: datetime) -> dict[str, int]:
     from recommend import api as recommend_api
 
@@ -56,6 +63,7 @@ STEPS: dict[str, Step] = {
     "maps": purge_maps,
     "notifications": purge_notifications,
     "guests": purge_guests,
+    "llm_calls": purge_llm_calls,
     "idempotency": purge_idempotency_keys,
 }
 

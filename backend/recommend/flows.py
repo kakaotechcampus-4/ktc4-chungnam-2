@@ -53,6 +53,7 @@ from authz.schemas import Permissions
 from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
+from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
 from pins.schemas import Pin
@@ -370,7 +371,9 @@ def _create_run(
     text_inputs = [_evidence_from_reaction(r) for r in raw_reactions if r["reason_text"] is not None]
     if text_inputs:
         db.rollback()  # 모델을 기다리는 동안 읽기 트랜잭션이 연결을 잡고 있지 않게 한다(#275). 저장이 아니라 연결 반환이다.
-    planned = evidence_planner.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
+    # ② — 느린 호출이라 run INSERT보다 먼저(#208). 그래서 사용량 기록(#870)에는 run_id가 없다(trace_id로 묶는다)
+    with llm_api.usage_context("recommend_run", map_id=map_id, user_id=requested_by):
+        planned = evidence_planner.plan_evidence(text_inputs) if text_inputs else []
     reaction_lines = _reaction_evidence_lines(raw_reactions, [[line.model_dump() for line in group] for group in planned])
     merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422, #617
 
@@ -441,7 +444,7 @@ def patch_evidence(
     constrained) — 권한 없는 토글이 섞여 있으면 요청 전체를 403으로 거절한다(api-spec.yaml이
     이 엔드포인트에 Forbidden을 명시함 — "버튼이 애초에 disabled였어야 했다"는 신호)."""
     run = service.get_run_or_404(db, run_id)
-    run_uuid = run.id
+    run_uuid, run_map_id = run.id, run.map_id   # 롤백 뒤에 run을 읽으면 트랜잭션이 다시 열린다 — 미리 꺼내 둔다
     # 읽기(존재·권한 검사) → 롤백 → 모델 → 쓰기 순서다(#275). 모델을 기다리는 동안 트랜잭션도 연결도 잡지 않는다.
     validated: list[tuple[uuid.UUID, bool]] = []
     for evidence_id, is_active in toggles:
@@ -463,10 +466,11 @@ def patch_evidence(
     planned: list = []
     if adds:
         db.rollback()  # 읽기 트랜잭션을 끝내 연결을 돌려준다(#275). 저장이 아니다.
-        planned = evidence_planner.plan_evidence([
-            {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "preferred", "fact_key": None}
-            for text in adds
-        ])
+        with llm_api.usage_context("evidence_add", map_id=run_map_id, user_id=principal.user_id, run_id=str(run_uuid)):
+            planned = evidence_planner.plan_evidence([
+                {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "preferred", "fact_key": None}
+                for text in adds
+            ])
         # 위 검사는 롤백으로 잠금 없이 끝났다. 같은 run에 동시에 온 요청이 함께 상한을 넘지 않게 run 행을 잠그고
         # 다시 센다 — 이때 걸리면 모델은 이미 불렸지만 줄은 남지 않는다(멘토 리뷰 #380: 여러 행에 걸친 상한).
         service.lock_run(db, run_uuid)
