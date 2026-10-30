@@ -158,7 +158,8 @@ class Settings:
     db_max_overflow: int = 10
     db_pool_pre_ping: bool = True
     db_pool_recycle_s: int = -1          # 초. 음수면 연결을 재활용하지 않는다
-    # 세션·state 쿠키의 Secure(#810). auth/router.py의 set_cookie 두 곳이 읽는다. from_env는 staging·prod에서 참,
+    # 세션·state 쿠키의 Secure(#810). 설정 정의만 끝났고 실제 쿠키에 Secure를 거는 일은 auth 후속이다
+    # (auth/router.py의 set_cookie 두 곳이 아직 secure=settings.is_prod다). from_env는 staging·prod에서 참,
     # 그 밖에서 거짓을 기본으로 준다. 직접 만든 Settings의 기본값은 안전한 쪽(참)이다.
     cookie_secure: bool = True
 
@@ -171,6 +172,14 @@ class Settings:
             raise ConfigError(f"PLACES_SOURCES에 모르는 소스가 있다: {unknown_sources} — {PLACE_SOURCE_NAMES} 중에서 고른다")
         if self.environment == "prod" and self.qa_login_secret:
             raise ConfigError("prod에 QA_LOGIN_SECRET이 있다 — 스테이징 전용이다(#788). 운영 환경 변수에서 지운다")
+        # 풀 값은 환경과 무관하게 막는다. 0과 음수는 SQLAlchemy에서 연결 무제한이라 DB max_connections를 넘길 수 있다(#810).
+        # 무제한은 허용하지 않는다 — deploy_rules.md「DB 연결 수」의 계산식이 상한을 전제로 한다.
+        if self.db_pool_size < 1:
+            raise ConfigError(f"DB_POOL_SIZE={self.db_pool_size} — 1 이상이어야 한다(0 이하는 연결 무제한)")
+        if self.db_max_overflow < 0:
+            raise ConfigError(f"DB_MAX_OVERFLOW={self.db_max_overflow} — 0 이상이어야 한다(음수는 연결 무제한)")
+        if self.db_pool_recycle_s != -1 and self.db_pool_recycle_s < 1:
+            raise ConfigError(f"DB_POOL_RECYCLE_S={self.db_pool_recycle_s} — -1(재활용 안 함) 또는 1 이상이어야 한다")
         if self.environment not in _STRICT_ENVIRONMENTS:
             return
         env = f"PINGO_ENV={self.environment}"
@@ -207,7 +216,7 @@ class Settings:
         for port, names in needed.items():
             if getattr(self, f"{port}_mode") != "real":
                 continue
-            missing = [n for n in names if not getattr(self, n.lower())]
+            missing = [n for n in names if not getattr(self, n.lower()).strip()]   # 공백만 있는 값도 빈 값이다
             if missing:
                 raise ConfigError(f"{env}에서 {port.upper()}_MODE=real인데 {', '.join(missing)}이(가) 비어있다")
 

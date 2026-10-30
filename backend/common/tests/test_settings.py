@@ -490,3 +490,52 @@ def test_invalid_cookie_secure_is_rejected(monkeypatch):
 
     with pytest.raises(ConfigError, match="COOKIE_SECURE"):
         Settings.from_env()
+
+
+@pytest.mark.parametrize("field", [k.lower() for k in _EXTERNAL_KEYS])
+@pytest.mark.parametrize("blank", ["   ", "\t", "\n", " \t\n "])
+def test_real_mode_refuses_whitespace_only_external_key(field, blank):
+    with pytest.raises(ConfigError, match=field.upper()) as exc:
+        _settings(**{field: blank})
+
+    assert "ksecret" not in str(exc.value) and "elice-key" not in str(exc.value)   # 오류에는 변수명만 든다
+
+
+@pytest.mark.parametrize("name", list(_EXTERNAL_KEYS))
+def test_from_env_refuses_whitespace_only_external_key(monkeypatch, name):
+    monkeypatch.setenv("PINGO_ENV", "prod")
+    monkeypatch.setenv("SESSION_SECRET", "real-secret")
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
+    monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
+    monkeypatch.setenv(name, " \t ")
+
+    with pytest.raises(ConfigError, match=name):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("size,overflow,recycle", [(1, 0, -1), (1, 0, 1), (50, 100, 3600)])
+def test_pool_boundary_values_are_accepted(size, overflow, recycle):
+    s = _settings(db_pool_size=size, db_max_overflow=overflow, db_pool_recycle_s=recycle)
+
+    assert (s.db_pool_size, s.db_max_overflow, s.db_pool_recycle_s) == (size, overflow, recycle)
+
+
+@pytest.mark.parametrize("name,value", [
+    ("DB_POOL_SIZE", "0"), ("DB_POOL_SIZE", "-1"),
+    ("DB_MAX_OVERFLOW", "-1"), ("DB_MAX_OVERFLOW", "-2"),
+    ("DB_POOL_RECYCLE_S", "0"), ("DB_POOL_RECYCLE_S", "-2"),
+])
+def test_pool_out_of_range_is_rejected(monkeypatch, name, value):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ConfigError, match=name):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("value", ["maybe", "2", "yes"])
+def test_invalid_pool_pre_ping_is_rejected(monkeypatch, value):
+    monkeypatch.setenv("DB_POOL_PRE_PING", value)
+
+    with pytest.raises(ConfigError, match="DB_POOL_PRE_PING"):
+        Settings.from_env()
