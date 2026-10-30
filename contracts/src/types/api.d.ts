@@ -1902,7 +1902,13 @@ export interface paths {
             };
         };
         put?: never;
-        /** run 생성 — 근거 조립 시작 (①②) */
+        /**
+         * run 생성 — 근거 조립(①②). **`execute: true`면 근거를 모은 뒤 곧바로 첫 검색까지 한 요청에서 끝낸다**(#845 — 근거 확인 화면 없이 결과 먼저).
+         *     이때 서버가 ②(쓴 사유가 있을 때만 모델) → 실격 필터·선호 순위(③)까지 실행하고 `status: done`인 run을 돌려준다. 결과는 `GET /runs/{runId}/result`.
+         *     모델이 실패하면 결과도 run도 만들지 않고 횟수도 쓰지 않는다(500 `RECOMMEND_FAILED`) — 근거 없는 추천을 내지 않는다.
+         *     `execute`를 생략하거나 false면 지금까지처럼 근거 조립만 하고 `collecting_evidence`로 둔다(전환 기간용, 이어서 `POST /runs/{runId}/execute`).
+         *     한 번의 클릭이 모델 호출과 결과까지 가므로 연타·재전송 방어(#811)가 먼저 있어야 한다.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -1916,11 +1922,16 @@ export interface paths {
                 content: {
                     "application/json": {
                         category: components["schemas"]["RecommendCategory"];
+                        /**
+                         * @description true면 근거 조립 뒤 곧바로 첫 검색까지 실행해 done run을 돌려준다(#845). 새 화면은 항상 true
+                         * @default false
+                         */
+                        execute?: boolean;
                     };
                 };
             };
             responses: {
-                /** @description run 생성됨, 근거 조립 진행 중 (SSE run.progress로 진행 상태 전달) */
+                /** @description run 생성됨. `execute: true`이면 `status: done`(첫 결과가 있다), 아니면 근거 조립 진행 중(SSE run.progress로 진행 상태 전달) */
                 202: {
                     headers: {
                         [name: string]: unknown;
@@ -1979,6 +1990,8 @@ export interface paths {
          * 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md). 남이 쓴 줄이 하나라도 섞이면 요청 전체가 403 FORBIDDEN이고 아무것도 바뀌지 않는다(#108).
          *     '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
          *     한 요청에 글 5개까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 글은 10개까지다(뺀 것도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
+         *     **이 지도에서 추천 횟수(10회)를 다 쓴 요청자는 근거를 고칠 수 없다**(`×`·`＋` 모두 429 `RETRY_LIMIT`, #845 결정) — 고쳐도 다시 추천할 수 없기 때문이다. 이 검사는 모델을 부르기 전에 한다. 조회(`GET .../evidence`, `GET .../result`)는 상한 뒤에도 된다.
+         *     고친 근거는 **「다시 추천 받기」(`POST /runs/{runId}/retry`)가 읽어 반영한다**. 이미 보인 결과는 바뀌지 않고, 그 결과에 쓴 근거는 `RecommendResult.applied_evidence`가 따로 보여 준다.
          */
         patch: {
             parameters: {
@@ -2007,6 +2020,7 @@ export interface paths {
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
                 409: components["responses"]["EvidenceLimit"];
+                429: components["responses"]["RetryLimit"];
                 500: components["responses"]["RecommendFailed"];
             };
         };
@@ -2207,6 +2221,8 @@ export interface paths {
         put?: never;
         /**
          * 「다시 추천 받기」. 현재 뜬 대안 전체를 제외목록에 넣고 새로 찾는다 (3절, 루프가 닫힌다).
+         *     **같은 run의 현재 활성 근거로 다시 찾는다 — `×`로 뺀 줄은 빠지고 `＋`로 더한 줄은 들어간다. 이 요청은 모델을 부르지 않는다**(`＋`의 모델 호출은 그 글을 더할 때 이미 났다). 사람 말로는 「수정한 조건으로, 지금 후보를 제외하고 다시 추천」이다. 마음에 드는 후보는 「지도에 올리기」로 보존한다(게시된 후보는 제외되지 않고 그대로 남는다, #845).
+         *     run에 **고정되는 입력**: 구조화한 근거 줄과 기본 지역. **실행 때마다 다시 읽는 입력**: ♥ 기반 선호, 여행 날짜에 따른 영업·계절 판정, 제외목록.
          *     10회 상한(지도 안에서 구성원 각자, 카테고리 무관) 초과 시 429 RETRY_LIMIT (#31, 2026-10-15 5→10회). 응답의 attempt_no와 attempt_limit으로 현재 몇 번째인지 노출한다.
          */
         post: {
@@ -3770,7 +3786,10 @@ export interface components {
             id: string;
             map_id: string;
             category: components["schemas"]["RecommendCategory"];
-            /** @enum {string} */
+            /**
+             * @description `collecting_evidence`는 더 이상 「사용자가 근거를 확인하는 중」이 아니다(#845 — 확인 단계는 없어졌다). `POST /maps/{mapId}/runs`가 `execute: true` 없이 만든 run이거나 서버 장애로 첫 실행 전에 멈춘 run으로, 열면 `POST /runs/{runId}/execute`로 이어서 실행한다. 결과가 있는 건 `done`뿐
+             * @enum {string}
+             */
             status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
             /** @description 이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 attempt_limit */
             attempt_no: number;
@@ -3870,6 +3889,15 @@ export interface components {
             candidates: components["schemas"]["Candidate"][];
             /** @description 후보가 3곳 미만일 때만(#798). 기준값은 서버가 정한다 — 화면에 숫자를 적지 않는다 */
             external_search?: components["schemas"]["ExternalSearch"];
+            /**
+             * @description **이번 결과에 실제로 쓴 근거**(실행 시점의 스냅샷, #845). `GET /runs/{runId}/evidence`는 지금 값이라 고친 뒤에는 달라지지만, 이 값은 이 결과를 만든 실행(`execute`·`retry`·`widen`) 때 활성이던 줄 그대로(`enforced`·`not_enforced_reason` 포함)다.
+             *     화면은 「이 조건으로 찾았어요」에 이 값을 보이고, 고쳤지만 아직 적용 전인 줄은 `GET .../evidence`와 비교해 따로 표시한다. 예전 run에는 없다.
+             */
+            applied_evidence?: components["schemas"]["EvidenceLine"][];
+            /** @description 활성이고 추천이 실제로 쓰는(`enforced=true`) **사유 근거**가 하나도 없다. 줄을 다 껐거나 남은 줄이 모두 `enforced=false`일 때 true. 화면은 「적용된 사유 조건이 없어요」라고 알린다 — ♥ 기반 선호, 반경·영업·제외 필터는 그래도 적용되므로 「조건 없는 추천」이라 쓰지 않는다. 판정은 `applied_evidence`가 아니라 서버가 한다 */
+            no_applied_conditions?: boolean;
+            /** @description **이번 실행에서 새로 찾은 후보 수**. `candidates`에는 이전에 지도에 올린(`visibility: published`) 후보가 남아 있을 수 있어 `candidates`의 길이와 다르다. 이번 검색이 0건이면 0(게시 후보가 남아 있어도). 화면은 「이번엔 새로 찾은 곳이 없어요」와 「이미 지도에 올린 곳」을 구분해 보인다 */
+            new_count?: number;
         };
         /**
          * @description 카카오맵 검색 링크(#798). 핀고에 결과가 없거나 적을 때 사람이 밖에서 직접 찾는 출구다 — AI 추천 결과가 아니다. 서버는 카카오를 부르지 않고 저장하지 않는다(#53).
@@ -4425,7 +4453,7 @@ export interface components {
             };
         };
         /**
-         * @description 필터 통과 후보 0개 (6절 "결과 0개"). `detail.funnel`(단계별로 빠진 수)과 `detail.external_search`(ExternalSearch, 카카오맵 검색 링크, #798)가 온다.
+         * @description 필터 통과 후보 0개 (6절 "결과 0개"). **이전에 지도에 올린 후보까지 포함해 후보가 하나도 없을 때만** 온다 — 게시한 후보가 남아 있으면 200이고 `RecommendResult.new_count`가 0이다(#845). `detail.funnel`(단계별로 빠진 수)과 `detail.external_search`(ExternalSearch, 카카오맵 검색 링크, #798)가 온다.
          *     화면은 반경 넓히기, 근거 고치기와 함께 「카카오맵에서 더 찾아보기」를 보여 준다
          */
         NoResults: {

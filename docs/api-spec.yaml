@@ -899,7 +899,7 @@ paths:
                 execute: { type: boolean, default: false, description: "true면 근거 조립 뒤 곧바로 첫 검색까지 실행해 done run을 돌려준다(#845). 새 화면은 항상 true" }
       responses:
         "202":
-          description: run 생성됨. `execute: true`이면 `status: done`(첫 결과가 있다), 아니면 근거 조립 진행 중(SSE run.progress로 진행 상태 전달)
+          description: "run 생성됨. `execute: true`이면 `status: done`(첫 결과가 있다), 아니면 근거 조립 진행 중(SSE run.progress로 진행 상태 전달)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecommendRun" }
