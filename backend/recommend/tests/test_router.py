@@ -81,6 +81,20 @@ def test_create_run_for_accommodation_is_422(app_client, db_session):
     assert resp.status_code == 422
 
 
+def test_idempotency_key_header_returns_the_same_run_and_rejects_a_short_key(app_client, db_session):
+    """#811 — 같은 Idempotency-Key로 두 번 보내면 같은 run(202), 8자 미만 키는 422. 키가 없으면 매번 새 run."""
+    _seed_ready_map(db_session)
+    headers = {"Idempotency-Key": "click-0001-abcdef"}
+    first = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, headers=headers, cookies=_auth())
+    second = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, headers=headers, cookies=_auth())
+    assert first.status_code == second.status_code == 202
+    assert first.json()["id"] == second.json()["id"] and second.json()["attempt_no"] == 1
+    assert app_client.post("/maps/map_1/runs", json={"category": "음식점"}, headers={"Idempotency-Key": "short"},
+                           cookies=_auth()).status_code == 422
+    third = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth())
+    assert third.json()["id"] != first.json()["id"]
+
+
 def test_widen_returns_run_with_default_radius_and_409_at_limit(app_client, db_session):
     _seed_ready_map(db_session)
     created = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth()).json()

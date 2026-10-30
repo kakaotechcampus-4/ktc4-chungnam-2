@@ -177,3 +177,9 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     테이블 이름 → 옮긴 행 수를 돌려준다. 제외가 (지도, 장소)로 겹치면 from_user 것을 지운다. 멱등이고 같은 id면
     아무것도 하지 않는다. 커밋하지 않는다."""
     return service.reassign_user(db, from_user_id=from_user_id, to_user_id=to_user_id)
+
+
+def purge_idempotency_keys(db: Session, *, now: datetime) -> int:
+    """maintenance가 부른다 — 24시간이 지난 「추천 받기」 멱등 키 행(run이 연결된 것, 그리고 24시간 넘게 이어받지 않은
+    미완료 예약)을 지우고 지운 수를 돌려준다(#811). 진행 중인 예약은 남는다. 커밋하지 않는다."""
+    return service.purge_idempotency_keys(db, now=now)
