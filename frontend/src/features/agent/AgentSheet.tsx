@@ -11,6 +11,7 @@ import Switch from '@/ui/Switch'
 
 import { useRunAgentAction } from './actions'
 import AdviceText from './AdviceText'
+import SummarySection from './SummarySection'
 import { CONFLICT_LABEL, splitAdvice, type AgentAnalysisDto, type AgentSuggestionDto } from './model'
 import {
   useAcceptSuggestionMutation,
@@ -21,7 +22,7 @@ import {
 } from './queries'
 
 /**
- * 「핑고 AI 조언」 바텀시트(agent-v2 16.2). 위에서부터 모드 스위치 → 지금 제안(0개 또는 1개).
+ * 「핑고 AI 조언」 바텀시트(agent-v2 16.2). 위에서부터 모드 스위치 → 지금 제안(0개 또는 1개) → 우리 조건 요약.
  * 제안은 지도 단위라 구성원 모두에게 같다. 에이전트는 아무것도 직접 하지 않고, 버튼은 사람이 하던 동작의 지름길이다.
  */
 export default function AgentSheet({ mapId, onClose }: { mapId: string; onClose: () => void }) {
@@ -64,6 +65,7 @@ export default function AgentSheet({ mapId, onClose }: { mapId: string; onClose:
         )}
         {state && enabled && state.active_suggestion && <Suggestion mapId={mapId} suggestion={state.active_suggestion} onDone={onClose} />}
         {state && enabled && !state.active_suggestion && <AiHeader title="지금은 따로 드릴 제안이 없어요" sub="막힌 곳이 보이면 여기에 알려 드릴게요" />}
+        {state && enabled && <SummarySection mapId={mapId} summaries={state.summaries} onDone={onClose} />}
       </div>
     </ModalSheet>
   )
