@@ -56,6 +56,12 @@ function ensureCandidates(runId: string) {
   return store.candidates[runId];
 }
 
+/** #845 — 마지막 실행(execute·retry·widen)이 실제로 쓴 근거의 스냅샷. 근거를 고쳐도 이미 보인 결과의 「이 조건으로 찾았어요」는 안 바뀐다. */
+const appliedEvidence: Record<string, unknown[]> = {};
+function snapshotEvidence(runId: string) {
+  appliedEvidence[runId] = (store.evidenceLines[runId] ?? []).filter((l) => l.is_active).map((l) => ({ ...l }));
+}
+
 export const recommendHandlers = [
   http.get("*/maps/:mapId/recommend/readiness", ({ params }) => {
     const mapId = params.mapId as string;
@@ -99,7 +105,7 @@ export const recommendHandlers = [
 
   http.post("*/maps/:mapId/runs", async ({ params, request }) => {
     const mapId = params.mapId as string;
-    const body = (await request.json()) as { category: string };
+    const body = (await request.json()) as { category: string; execute?: boolean };
     const answered = opinionPinCount(mapId, body.category);
     if (answered < REQUIRED_OPINION_PINS) {
       return apiError(409, "NOT_READY", `의견 핀 ${answered}곳 · ${REQUIRED_OPINION_PINS - answered}곳 더 필요`, {
@@ -115,6 +121,13 @@ export const recommendHandlers = [
     // ② 사유 → 실격/선호/반경 구조화 (목 서버에서는 시드 데이터로 대체 — 실제 구조화는 backend/llm 담당)
     store.evidenceLines[runId] = buildEvidenceLines(runId);
     store.regions[runId] = buildRegions();
+    if (body.execute) {
+      // #845 — 근거 확인 없이 곧바로 첫 검색까지: 근거를 모은 뒤 실행해 done run을 돌려준다
+      store.regions[runId].forEach((r) => (r.confirmed = true));
+      ensureCandidates(runId);
+      snapshotEvidence(runId);
+      store.runs[runId].status = "done";
+    }
     return HttpResponse.json({ ...store.runs[runId], attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
@@ -128,6 +141,11 @@ export const recommendHandlers = [
     const runId = params.runId as string;
     const lines = store.evidenceLines[runId];
     if (!lines) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
+    // #845 — 추천 횟수를 다 쓴 요청자는 근거를 고칠 수 없다(×·＋ 모두). 모델을 부르기 전에 거절한다
+    const attemptNo = store.runs[runId]?.attempt_no ?? 1;
+    if (attemptNo >= ATTEMPT_LIMIT) {
+      return apiError(429, "RETRY_LIMIT", `${ATTEMPT_LIMIT}번까지만 찾습니다`, { attempt_no: attemptNo, attempt_limit: ATTEMPT_LIMIT });
+    }
     const body = (await request.json()) as {
       toggle?: { id: string; is_active: boolean }[];
       add?: { text: string }[];
@@ -186,6 +204,7 @@ export const recommendHandlers = [
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
     ensureCandidates(runId);
+    snapshotEvidence(runId);
     run.status = "done";
     return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
@@ -212,8 +231,12 @@ export const recommendHandlers = [
     if (candidates.length === 0) {
       return apiError(404, "NO_RESULTS", "필터에 걸리는 핀이 없어요", { funnel, external_search: search });
     }
+    const applied = (appliedEvidence[runId] ?? []) as { enforced?: boolean }[];
     return HttpResponse.json({
       run_id: runId, funnel, regions: store.regions[runId] ?? [], candidates,
+      applied_evidence: applied, // #845 — 이번 결과에 실제 쓴 근거(실행 시점의 스냅샷)
+      no_applied_conditions: !applied.some((l) => l.enforced !== false), // 활성이고 쓰이는 사유 근거가 0개
+      new_count: candidates.filter((c) => c.visibility !== "published").length, // 이전에 올린 후보는 따로
       ...(candidates.length < EXTERNAL_SEARCH_BELOW ? { external_search: search } : {}),
     });
   }),
@@ -229,6 +252,7 @@ export const recommendHandlers = [
     // 가드레일 4·5-6-1: 기본값 원만 넓힌다 — 목 서버는 재계산 결과로 후보를 다시 채워 넣는다
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
     store.candidates[runId] = buildCandidates(regionLabel);
+    snapshotEvidence(runId);
     run.status = "done";
     return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
@@ -243,8 +267,11 @@ export const recommendHandlers = [
     run.attempt_no = (run.attempt_no ?? 1) + 1;
     run.status = "done";
     // 3절: 현재 뜬 대안 전체가 제외목록에 들어가고(목 서버는 별도 exclusions 컬렉션 없이 교체로 표현) 새로 채운다
+    // #845 — 지금 활성인 근거로 다시 찾는다(모델 호출 없음). 이미 올린 후보는 남기고 새 후보를 채운다
+    const kept = (store.candidates[runId] ?? []).filter((c) => c.visibility === "published");
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
-    store.candidates[runId] = buildCandidates(regionLabel);
+    store.candidates[runId] = [...kept, ...buildCandidates(regionLabel)];
+    snapshotEvidence(runId);
     return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 

@@ -261,6 +261,10 @@ recommend_runs(
                                          -- 한 카운터를 공유), 상한 10회(3→5→10회, 2026-10-15: 지도 안에서 구성원 각자). 한
                                          -- 사람이 상한에 도달해도 다른 사람의 추천 시도에는
                                          -- 영향 없음.
+  applied_evidence jsonb null,          -- #845: 마지막 execute/widen/retry가 **실제로 쓴 근거 줄**의 스냅샷(줄 id·작성자·방향·badge·
+                                         --   enforced·not_enforced_reason·is_active). evidence_lines는 편집하면 바뀌지만 이 값은 그 결과를 만든
+                                         --   실행 때의 값이라 「이 조건으로 찾았어요」가 정확하다. 파생값(다음 실행이 덮는다). 작성자가
+                                         --   탈퇴하면 그 사람의 줄과 함께 지운다(evidence_lines와 같은 정리 규칙). RecommendResult.applied_evidence
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
                                          -- 않도록 마지막 execute/widen/retry의 깔때기 표를
                                          -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.
