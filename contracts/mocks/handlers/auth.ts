@@ -63,19 +63,26 @@ export const authHandlers = [
 
   http.post("*/auth/pending", async ({ request }) => {
     const body = (await request.json().catch(() => ({}))) as { choice?: string };
+    // additionalProperties: false — choice 말고 다른 필드가 오면 거절한다
+    if (Object.keys(body).some((k) => k !== "choice")) return apiError(422, "VALIDATION_ERROR", "알 수 없는 필드가 있어요");
     if (body.choice !== "restart" && body.choice !== "restore") return apiError(422, "VALIDATION_ERROR", "choice는 restart 또는 restore여야 해요");
     if (!store.pendingLogin) return apiError(404, "NO_PENDING_LOGIN", "선택 시간이 지났어요. 카카오로 다시 시작해 주세요");
     const user = store.users[ME_USER_ID];
+    store.pendingLogin = null; // 쿠키가 지워진다 — 같은 선택의 재전송은 404
     if (body.choice === "restore") {
-      store.pendingLogin = null; // 쿠키가 지워진다 — 같은 선택의 재전송은 404
+      // 되살리면 같은 계정(같은 id)이고 남아 있던 지도 참여가 돌아온다
       return HttpResponse.json(user, { status: 200 });
     }
-    // restart: 새 계정(기존 계정은 즉시 정리). 목 서버는 단일 사용자라 같은 사용자를 새 계정처럼 돌려준다
-    store.pendingLogin = null;
-    return HttpResponse.json(user, { status: 201 });
+    // restart: **새 사용자**(다른 id, 지도 참여 없음). 기존 계정은 즉시 정리돼 되살릴 수 없다
+    const id = nextId("u_new");
+    const fresh = { ...user, id, display_name: user.display_name, is_guest: false } as typeof user;
+    store.users[id] = fresh;
+    return HttpResponse.json(fresh, { status: 201 });
   }),
 
   http.get("*/auth/me", () => {
+    // #855 선택 대기 중에는 아직 로그인된 상태가 아니다(세션 없음)
+    if (store.pendingLogin) return apiError(401, "UNAUTHORIZED", "로그인이 필요합니다");
     const user = store.users[ME_USER_ID];
     if (!user) return apiError(401, "UNAUTHORIZED", "로그인이 필요합니다");
     return HttpResponse.json(user);
