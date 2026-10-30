@@ -1,0 +1,84 @@
+name: llm-cost
+# 모델 호출 비용 측정(#870, BM 크레딧 설계). 스테이징에서 여행 시나리오를 실제 HTTP로 돌리고 llm_calls로 리포트를 낸다.
+# 하네스(qa/harness/run_llm_cost.py)는 서버의 스테이징 API 컨테이너 안에서 돈다 — QA 로그인 비밀(QA_LOGIN_SECRET)과
+# DATABASE_URL이 서버 밖으로 나오지 않는다(staging-check와 같은 방식). 실제 모델을 부르니 사람이 손으로만 돌린다.
+#
+# - 시나리오 실행: scenarios(빈칸이면 light normal split 전부), wait_min(관찰 tick의 진단을 기다리는 분)
+# - 리포트만 다시: report에 「light=<map_id>,normal=<map_id>,split=<map_id>」, since에 ISO 시각(실행 출력 끝에 찍힌다).
+#   반대 뒤 정체 진단은 최소 1시간 조용해야 잡히므로 실행 1시간쯤 뒤에 리포트만 다시 돌린다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 하네스 파일을 가져올 브랜치나 커밋(보통 스테이징에 올린 것과 같게)
+        type: string
+        default: develop
+      scenarios:
+        description: "돌릴 시나리오(빈칸이면 전부, 예: light normal)"
+        type: string
+        default: ""
+      wait_min:
+        description: 진단을 기다리는 분(0이면 기다리지 않는다)
+        type: string
+        default: "12"
+      report:
+        description: "리포트만 다시 볼 지도(light=<id>,normal=<id>,split=<id>). 채우면 시나리오를 돌리지 않는다"
+        type: string
+        default: ""
+      since:
+        description: 리포트만 다시 볼 때 그 실행의 시작 시각(ISO)
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: llm-cost
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 입력 확인
+        env:
+          REF: ${{ inputs.ref }}
+          SCENARIOS: ${{ inputs.scenarios }}
+          WAIT_MIN: ${{ inputs.wait_min }}
+          REPORT: ${{ inputs.report }}
+          SINCE: ${{ inputs.since }}
+        run: |
+          [[ "$REF" =~ ^[0-9A-Za-z._/-]+$ ]] || { echo "ref 형식이 이상하다"; exit 1; }
+          [[ "$SCENARIOS" =~ ^[a-z\ ]*$ ]] || { echo "시나리오 이름은 영문 소문자"; exit 1; }
+          [[ "$WAIT_MIN" =~ ^[0-9]{1,2}$ ]] || { echo "wait_min은 0~99"; exit 1; }
+          [[ "$REPORT" =~ ^[a-z0-9=,-]*$ ]] || { echo "report는 이름=지도id를 쉼표로"; exit 1; }
+          [[ "$SINCE" =~ ^[0-9T:.+-]*$ ]] || { echo "since는 ISO 시각"; exit 1; }
+          if [ -n "$REPORT" ]; then
+            [ -n "$SINCE" ] || { echo "report에는 since가 필요하다"; exit 1; }
+            echo "ARGS=--report $REPORT --since $SINCE" >> "$GITHUB_ENV"
+          else
+            echo "ARGS=--base-url https://staging.ktc-pingopingo.duckdns.org/api --wait-min $WAIT_MIN $SCENARIOS" >> "$GITHUB_ENV"
+          fi
+          echo "REF=$REF" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/actions
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/ktc-github-deploy
+          aws-region: ap-northeast-2
+
+      - uses: ./.github/actions/ssm-run
+        with:
+          instance-id: ${{ vars.EC2_INSTANCE_ID }}
+          comment: llm-cost ${{ env.REF }}
+          timeout-seconds: "3000"
+          command: >-
+            cd /srv/pingo/deploy &&
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ env.REF }}/qa/harness/run_llm_cost.py |
+            docker compose exec -T -e PYTHONUTF8=1 api-staging python - ${{ env.ARGS }}
