@@ -439,8 +439,8 @@ def latest_run_place_ids(db: Session, *, map_id: str, requested_by: str, categor
 
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(#431) — 이 지도들의 추천 기록을 지운다. 테이블 이름 → 지운 행 수. 자식(근거 줄·후보·지역·
-    제외)부터 지우고 run을 마지막에 지운다(전부 recommend_runs를 참조, 후보는 지역도 참조해서 지역보다 먼저)."""
-    names = ["evidence_lines", "candidates", "regions", "exclusions", "recommend_runs"]
+    제외·멱등 키)부터 지우고 run을 마지막에 지운다(전부 recommend_runs를 참조, 후보는 지역도 참조해서 지역보다 먼저)."""
+    names = ["evidence_lines", "candidates", "regions", "exclusions", "idempotency_keys", "recommend_runs"]
     if not map_ids:
         return dict.fromkeys(names, 0)
     run_ids = select(RecommendRun.id).where(RecommendRun.map_id.in_(map_ids))
@@ -449,6 +449,8 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
         "candidates": db.execute(delete(Candidate).where(Candidate.run_id.in_(run_ids))).rowcount,
         "regions": db.execute(delete(Region).where(Region.run_id.in_(run_ids))).rowcount,
         "exclusions": db.execute(delete(Exclusion).where(Exclusion.map_id.in_(map_ids))).rowcount,
+        # run이 연결된 키 행(#811) — FK가 cascade여도 여기서 명시한다. run이 아직 없는 예약(NULL)은 지도 정보가 없어 남고 24시간 안에 만료된다.
+        "idempotency_keys": db.execute(delete(IdempotencyKey).where(IdempotencyKey.run_id.in_(run_ids))).rowcount,
         "recommend_runs": db.execute(delete(RecommendRun).where(RecommendRun.map_id.in_(map_ids))).rowcount,
     }
 
@@ -456,7 +458,8 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
 def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
     """게스트 합치기(#560) — from_user의 run 요청자·근거 줄 작성자·제외 요청자를 to_user로 옮긴다. 테이블 이름 →
     옮긴(제외는 겹쳐서 지운 것 제외) 행 수. 같은 (지도, 장소) 제외가 to_user에게 이미 있으면 from_user 것을 지운다
-    (uq_exclusions_map_requester_place, 카카오 계정 쪽이 이긴다). attempt_no는 건드리지 않는다. 후보에는 요청자
+    (uq_exclusions_map_requester_place, 카카오 계정 쪽이 이긴다). 멱등 키(#811)도 요청자를 옮기고, (범위, 키)가 겹치면
+    from_user 것을 지운다(uq_idempotency_keys). attempt_no는 건드리지 않는다. 후보에는 요청자
     열이 없다(run의 requested_by를 따른다). 커밋하지 않는다."""
     if from_user_id == to_user_id:
         return {"recommend_runs": 0, "evidence_lines": 0, "exclusions": 0, "idempotency_keys": 0}

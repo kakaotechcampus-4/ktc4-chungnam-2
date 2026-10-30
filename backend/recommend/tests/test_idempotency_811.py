@@ -268,3 +268,30 @@ def test_reassign_user_moves_keys_and_drops_overlapping_ones(env):
             select(IdempotencyKey.requested_by, IdempotencyKey.key).where(IdempotencyKey.key.in_(["key-shared-01", "key-only-from"]))
         ).all()
     assert sorted(tuple(r) for r in rows) == [(USER, "key-only-from"), (USER, "key-shared-01")]
+
+
+def test_purge_map_data_removes_keys_linked_to_the_maps_runs_but_keeps_others(env):
+    """지도 정리(#431)는 그 지도 run에 연결된 키 행을 지운다 — 다른 지도의 키와 아직 run이 없는 예약은 남는다."""
+    Session, create = env
+    planner = _Planner()
+    create(planner, map_id="idem_map_k", key="key-purge-map1")
+    create(planner, map_id="idem_map_l", key="key-purge-map2")
+    with Session() as db:
+        db.add(IdempotencyKey(requested_by=USER, scope=core.IDEMPOTENCY_SCOPE, key="key-pending-01", request_hash="h"))
+        db.commit()
+    with Session() as db:
+        removed = service.purge_map_data(db, map_ids=["idem_map_k"])
+        db.commit()
+    assert removed["idempotency_keys"] == 1 and removed["recommend_runs"] == 1
+    with Session() as db:
+        keys = set(db.execute(select(IdempotencyKey.key).where(IdempotencyKey.requested_by == USER)).scalars())
+    assert keys == {"key-purge-map2", "key-pending-01"}
+
+
+def test_withdraw_keeps_keys_and_the_lists_name_recommend_in_both_steps():
+    """탈퇴는 키 행을 그대로 둔다(models.IdempotencyKey 설명) — 근거 줄만 지운다. recommend는 탈퇴·합치기 목록에 모두 있다."""
+    from auth import service as auth_service
+
+    assert "recommend" in {name for name, _ in auth_service.WITHDRAW_STEPS}
+    assert "recommend" in {name for name, _ in auth_service.MERGE_STEPS}
+    assert not hasattr(api, "delete_idempotency_keys_by_user")   # 지우기로 바꾸면 탈퇴 목록과 이 테스트를 함께 고친다
