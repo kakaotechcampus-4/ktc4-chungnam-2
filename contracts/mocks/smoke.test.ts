@@ -1420,6 +1420,69 @@ describe("#845 — 추천 흐름: 근거 확인 없이 결과 먼저", () => {
   });
 });
 
+describe("#811 — 「추천 받기」 연타 방어: Idempotency-Key", () => {
+  const create = (key?: string) =>
+    fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: key ? { "Idempotency-Key": key } : {}, body: JSON.stringify({ category: "음식점", execute: true }) });
+
+  it("같은 키로 다시 보내면 첫 요청이 만든 run을 그대로 돌려주고 run도 횟수도 더 생기지 않는다", async () => {
+    const first = await create("click-0001-uuid").then((r) => r.json());
+    const second = await create("click-0001-uuid").then((r) => r.json());
+    expect(second.id).toBe(first.id);
+    const list = await fetch(`${BASE}/maps/map_1/runs`).then((r) => r.json());
+    expect(list).toHaveLength(1);
+    expect(second.attempt_no).toBe(1); // 횟수도 더 늘지 않았다
+  });
+
+  it("재사용은 최초 응답의 복제가 아니라 같은 run의 지금 상태다 — 그 사이 retry로 바뀐 attempt_no가 보인다", async () => {
+    const first = await create("click-0004-uuid").then((r) => r.json());
+    expect((await fetch(`${BASE}/runs/${first.id}/retry`, { method: "POST" })).status).toBe(202);
+    const again = await create("click-0004-uuid").then((r) => r.json());
+    expect(again.id).toBe(first.id);
+    expect(again.attempt_no).toBe(2);
+  });
+
+  it("같은 키로 다른 지도나 다른 execute를 보내면 409 IDEMPOTENCY_CONFLICT — 다른 지도의 run을 돌려주지 않는다", async () => {
+    expect((await create("click-0005-uuid")).status).toBe(202);
+    const otherExecute = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0005-uuid" }, body: JSON.stringify({ category: "음식점" }) });
+    expect(otherExecute.status).toBe(409);
+    expect((await otherExecute.json()).code).toBe("IDEMPOTENCY_CONFLICT");
+    // 목 서버는 지도 존재를 따지지 않는다 — 같은 키·같은 본문이라도 다른 지도면 그 지도의 run이 아닌 첫 run을 돌려주면 안 된다
+    const otherMap = await fetch(`${BASE}/maps/map_other/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0005-uuid" }, body: JSON.stringify({ category: "음식점", execute: true }) });
+    expect(otherMap.status).toBe(409);
+    expect((await otherMap.json()).code).toBe("IDEMPOTENCY_CONFLICT");
+  });
+
+  it("같은 후보를 두 번 게시해도 핀은 하나이고 둘째는 같은 핀을 200으로 받는다", async () => {
+    const run = await create("click-0006-uuid").then((r) => r.json());
+    const result = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    const id = result.candidates[0].id;
+    const a = await fetch(`${BASE}/candidates/${id}/publish`, { method: "POST" });
+    const b = await fetch(`${BASE}/candidates/${id}/publish`, { method: "POST" });
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect((await a.json()).id).toBe((await b.json()).id);
+  });
+
+  it("키가 다르거나 없으면 새 run이다(구FE 호환 — 방어 없음)", async () => {
+    const a = await create("click-0002-a").then((r) => r.json());
+    const b = await create("click-0002-b").then((r) => r.json());
+    const c = await create().then((r) => r.json());
+    expect(new Set([a.id, b.id, c.id]).size).toBe(3);
+  });
+
+  it("같은 키로 다른 요청 본문(다른 카테고리)을 보내면 409 IDEMPOTENCY_CONFLICT다 — 키를 재사용한 화면의 버그 신호", async () => {
+    expect((await create("click-0003-uuid")).status).toBe(202);
+    const res = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0003-uuid" }, body: JSON.stringify({ category: "카페", execute: true }) });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("IDEMPOTENCY_CONFLICT");
+  });
+
+  it("첫 요청이 아직 모델을 기다리는 중이면 409 REQUEST_IN_PROGRESS(마법 키)이고, NOT_READY와 코드로 구분된다", async () => {
+    const res = await create("in-progress-key");
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("REQUEST_IN_PROGRESS");
+  });
+});
+
 describe("#855 — 탈퇴 후 재가입: 7일 안에는 새 계정 또는 되살리기를 고른다", () => {
   const pending = () => fetch(`${BASE}/auth/pending`);
   const choose = (choice: unknown) => fetch(`${BASE}/auth/pending`, { method: "POST", body: JSON.stringify({ choice }) });

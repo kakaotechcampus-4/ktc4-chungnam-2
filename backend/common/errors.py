@@ -23,6 +23,7 @@ CATALOG: dict[str, tuple[int, str]] = {
     "MAP_EMPTY": (200, "핀이 아직 없습니다"),
     "NO_RESULTS": (404, "필터를 통과한 후보가 없습니다"),
     "NOT_READY": (409, "추천 준비가 덜 됐습니다"),
+    "REQUEST_IN_PROGRESS": (409, "같은 요청을 처리하고 있습니다"),
     "EVIDENCE_REQUIRED": (422, "사유가 필요합니다"),
     "EVIDENCE_LIMIT": (409, "직접 추가한 근거 줄 상한을 넘었습니다"),
     "PIN_DUPLICATE": (409, "이미 지도에 있는 장소입니다"),

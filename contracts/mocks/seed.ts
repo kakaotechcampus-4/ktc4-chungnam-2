@@ -121,6 +121,7 @@ export function buildBaseState(): StoreState {
     runRequestedBy: {},
     appliedEvidence: {},
     lastNewCount: {},
+    idempotencyKeys: {},
     pendingLogin: null,
     candidates: {},
     shortlist: { [mapId]: [] },

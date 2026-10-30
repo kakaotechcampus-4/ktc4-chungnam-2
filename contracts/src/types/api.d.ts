@@ -1998,11 +1998,18 @@ export interface paths {
          *     모델이 실패하면 결과도 run도 만들지 않고 횟수도 쓰지 않는다(500 `RECOMMEND_FAILED`) — 근거 없는 추천을 내지 않는다.
          *     `execute`를 생략하거나 false면 지금까지처럼 근거 조립만 하고 `collecting_evidence`로 둔다(전환 기간용, 이어서 `POST /runs/{runId}/execute`).
          *     한 번의 클릭이 모델 호출과 결과까지 가므로 연타·재전송 방어(#811)가 먼저 있어야 한다.
+         *     **`Idempotency-Key` 요청 헤더(선택, #811)**: 화면이 사용자가 「추천 받기」를 시작할 때 키(uuid)를 만들어 성공·실패가 나올 때까지 같은 키로 보낸다(연타·재전송은 같은 키).
+         *     서버는 모델을 부르기 **전에** (요청자, 키)를 기록한다. 같은 키로 다시 오면 — 첫 요청이 이미 run을 만들었으면 **그 run을 그대로**(같은 응답) 돌려주고, 아직 모델을 기다리는 중이면 409 `REQUEST_IN_PROGRESS`(화면은 잠시 뒤 같은 키로 다시 보낸다).
+         *     첫 요청이 모델 실패(500) 등으로 run을 못 만들었으면 키를 지워 같은 키의 재시도를 허용한다. **요청의 동일성은 (지도, `category`, `execute`)로 본다**(`execute` 생략은 false와 같다). 같은 키로 **다른 지도나 다른 본문**(예: 다른 카테고리)을 보내면 409 `IDEMPOTENCY_CONFLICT`다 — 키를 재사용한 화면의 버그 신호다(#48이 정하던 멱등키 v1의 첫 적용처가 이 엔드포인트다). 같은 키의 재사용은 **최초 응답을 복제하는 것이 아니라 같은 run id를 지금 상태 그대로** 돌려준다(그 뒤 `execute`·`retry`로 상태·`attempt_no`가 바뀌었으면 바뀐 값). 재사용 전에도 지도 접근 권한을 다시 확인한다.
+         *     **처리 기한 90초**: 첫 요청이 run을 못 만든 채 90초가 지나면(프로세스 종료·취소 등) 중단된 것으로 보고 새 요청이 이어받는다. 늦게 끝난 쪽의 저장은 거절된다(예약 소유자만 run을 저장한다). 키가 없으면 지금처럼 방어가 없다(구FE 호환). 키는 24시간 보관한다. 다른 요청자의 같은 키는 서로 영향이 없다.
          */
         post: {
             parameters: {
                 query?: never;
-                header?: never;
+                header?: {
+                    /** @description 같은 「추천 받기」 시도의 연타·재전송을 한 번으로 묶는 키(uuid 권장). 없으면 방어가 없다 */
+                    "Idempotency-Key"?: string;
+                };
                 path: {
                     mapId: components["parameters"]["MapId"];
                 };
@@ -2030,7 +2037,15 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendRun"];
                     };
                 };
-                409: components["responses"]["NotReady"];
+                /** @description NOT_READY(추천 준비 미달 — 해당 카테고리에 ♥/🚫 의견이 달린 핀이 없다) · REQUEST_IN_PROGRESS(같은 `Idempotency-Key`의 첫 요청이 아직 처리 중이다 — 화면은 잠시 뒤 같은 키로 다시 보낸다, #811) · IDEMPOTENCY_CONFLICT(같은 키로 다른 요청 본문 — 키를 재사용한 화면의 버그 신호). `code`로 구분한다 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
                 429: components["responses"]["RetryLimit"];
                 500: components["responses"]["RecommendFailed"];
             };
@@ -2415,7 +2430,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 「지도에 올리기」 — 비공개 후보를 전체 채널에 공개, 핀으로 전환 (5-5-1, 가드레일 1) */
+        /**
+         * 「지도에 올리기」 — 비공개 후보를 전체 채널에 공개, 핀으로 전환 (5-5-1, 가드레일 1).
+         *     **이미 이 후보로 만든 핀이면 그 핀을 200으로 돌려준다 — 동시에 온 두 요청도 같다**(#811; 연타하면 핀 하나, 둘째는 첫째가 만든 핀을 받는다). 같은 장소를 직접 찍은 핀과 겹치면 그대로 409 `PIN_DUPLICATE`다.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -4792,7 +4810,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 동일 Idempotency-Key로 다른 바디를 보냄 — 재시도 로직 버그 신호. 붙일 엔드포인트는 */
+        /** @description 동일 Idempotency-Key로 다른 바디를 보냄 — 재시도 로직 버그 신호. 첫 적용처는 `POST /maps/{mapId}/runs`(#811, */
         IdempotencyConflict: {
             headers: {
                 [name: string]: unknown;
