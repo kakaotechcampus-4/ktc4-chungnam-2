@@ -14,17 +14,21 @@ authz/guard.py::require_on_map·require_map_member가 이 이름을 하드코딩
 2026-09-28, #24).
 """
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, Path, Request, Response
 
 from auth.deps import get_current_user
 from auth.schemas import CurrentUser
-from authz.core import Principal
+from authz.core import Principal, Resource, can
 from authz.guard import require_map_member, require_on_map
+from common.errors import AppError
 from common.settings import settings
 from maps import core, flows, service
 from maps.deps import DbSession
 from maps.schemas import (
     Invite, InviteSummary, Map, MapCreateRequest, MapList, MapUpdateRequest, Member, OwnerTransferRequest,
+    TrashedMapList,
 )
 
 router = APIRouter(tags=["maps"], dependencies=[Depends(get_current_user)])
@@ -43,6 +47,24 @@ MapToDelete = Depends(require_on_map("map.delete"))  # 방장만 — 구성원 4
 MapToLeave = Depends(require_on_map("map.leave"))  # 넘길 사람이 없는 방장 409는 maps.core가 판정
 
 
+def restorable_map(
+    mapId: str = Path(...), user: CurrentUser = Depends(get_current_user), db=DbSession,
+) -> Principal:
+    """map.restore 판정(#464). require_on_map을 못 쓴다 — 그 가드의 게이트웨이는 삭제된 지도의 역할을 None으로
+    돌려줘서(일반 경로는 404) 삭제된 지도를 복구하려는 방장이 항상 404가 된다. 그래서 삭제 여부와 무관하게
+    memberships.role을 읽고 판정은 같은 정책 표(authz.can)로 한다. 비구성원·없는 지도는 404, 구성원은 403."""
+    role = service.role_in_map(db, map_id=mapId, user_id=user.user_id)
+    if role is None:
+        raise AppError("NOT_FOUND")
+    principal = Principal(user_id=user.user_id, map_id=mapId, role=role)
+    if not can(principal, "map.restore", Resource(type="map", map_id=mapId)):
+        raise AppError("FORBIDDEN")
+    return principal
+
+
+MapToRestore = Depends(restorable_map)  # 방장만 — 구성원 403, 비구성원·정리된 지도 404
+
+
 @router.get("/maps", response_model=MapList, response_model_exclude_none=True)
 def get_maps(
     user: CurrentUser = Depends(get_current_user),
@@ -50,6 +72,16 @@ def get_maps(
 ):
     # 상한을 함께 내려 화면이 "n / limit"을 그리고 상한이면 「새 지도」를 미리 막는다(#623).
     return MapList(items=service.list_maps(db, user_id=user.user_id), limit=core.MAP_LIMIT)
+
+
+# /maps/trash는 /maps/{mapId}보다 앞에 둔다 — 경로 파라미터가 "trash"를 먹지 않게.
+@router.get("/maps/trash", response_model=TrashedMapList, response_model_exclude_none=True)
+def get_trash(
+    user: CurrentUser = Depends(get_current_user),
+    db=DbSession,
+):
+    items = service.list_trash(db, user_id=user.user_id, now=datetime.now(timezone.utc))
+    return TrashedMapList(items=items, retention_days=core.TRASH_RETENTION.days)
 
 
 @router.post("/maps", response_model=Map, response_model_exclude_none=True, status_code=201)
@@ -87,6 +119,15 @@ def delete_map(
     db=DbSession,
 ):
     service.delete_map(db, map_id=mapId, actor_id=principal.user_id)
+
+
+@router.post("/maps/{mapId}/restore", response_model=Map, response_model_exclude_none=True)
+def restore_map(
+    mapId: str = Path(...),
+    principal: Principal = MapToRestore,
+    db=DbSession,
+):
+    return service.restore_map(db, map_id=mapId, user_id=principal.user_id)
 
 
 @router.post("/maps/{mapId}/owner", response_model=Map, response_model_exclude_none=True)

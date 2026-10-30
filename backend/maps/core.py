@@ -13,12 +13,15 @@ from authz.policy import Role
 from authz.schemas import Permissions
 from common.errors import AppError
 from common.events import Event
-from maps.schemas import Invite, InviteSummary, Map, MapRegion, Member, NextOwner
+from maps.schemas import Invite, InviteSummary, Map, MapRegion, Member, NextOwner, TrashedMap
 
 WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 
 # 내 지도 상한(#369 15번) — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다.
 MAP_LIMIT = 20
+
+# 삭제한 지도를 복구할 수 있는 기간(#464). 정리 작업(maps.purge)이 지우는 기준과 같은 값이다 — 한 곳에서 정한다.
+TRASH_RETENTION = timedelta(days=30)
 
 # 초대 링크 유효 기간 7일. 정본은 docs/data-model.md invites 절(목서버 contracts/mocks/handlers/maps.ts와 같다).
 INVITE_TTL = timedelta(days=7)
@@ -349,6 +352,41 @@ def member_joined_event(map_id: str, member: Member) -> Event:
         type="member.joined",
         payload=member.model_dump(exclude_none=True),
     )
+
+
+def is_purge_due(deleted_at: datetime, now: datetime) -> bool:
+    """삭제한 지 30일이 됐으면 True — 정리 작업이 아직 안 돌았어도 복구할 수 없다(#464). maps.purge가
+    지우는 조건(deleted_at <= now - 30일)과 같다."""
+    return deleted_at <= now - TRASH_RETENTION
+
+
+def check_restorable(deleted_at: datetime, now: datetime) -> None:
+    if is_purge_due(deleted_at, now):
+        raise AppError("MAP_PURGED")
+
+
+def days_left(deleted_at: datetime, now: datetime) -> int:
+    """복구까지 남은 날수(올림). 지금 복구할 수 있는 지도는 1 이상이다."""
+    remaining = deleted_at + TRASH_RETENTION - now
+    return max(0, -(-remaining // timedelta(days=1)))
+
+
+def to_trashed_map(
+    record: MapRecord, *, deleted_at: datetime, now: datetime, member_count: int, pin_count: int,
+) -> TrashedMap:
+    region = None
+    if record.region_label is not None:
+        region = MapRegion(label=record.region_label, lat=record.region_lat, lng=record.region_lng)
+    return TrashedMap(
+        id=record.id, title=record.title, start_date=record.start_date, end_date=record.end_date,
+        region=region, member_count=member_count, pin_count=pin_count, deleted_at=deleted_at,
+        purge_at=deleted_at + TRASH_RETENTION, days_left=days_left(deleted_at, now),
+    )
+
+
+def map_restored_event(map_id: str) -> Event:
+    """docs/events.md map.restored — public 채널. 복구와 같은 트랜잭션에 기록한다(#464)."""
+    return Event(map_id=map_id, channel="public", type="map.restored", payload={"map_id": map_id})
 
 
 def map_deleted_event(map_id: str) -> Event:
