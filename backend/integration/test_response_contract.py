@@ -29,10 +29,7 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/maps/{mapId}/events/me"): "SSE 스트림 — realtime 테스트가 담당",
-    ("GET", "/auth/pending"): "서버 구현 전(#857) — 구현되면 auth 통합 테스트로 옮기고 지운다",
-    ("POST", "/auth/pending"): "서버 구현 전(#857) — 구현되면 auth 통합 테스트로 옮기고 지운다",
-    ("GET", "/maps/trash"): "서버 구현 전(#464) — 구현되면 maps 통합 테스트로 옮기고 지운다",
-    ("POST", "/maps/{mapId}/restore"): "서버 구현 전(#464) — 구현되면 maps 통합 테스트로 옮기고 지운다",
+    ("GET", "/places/external-search"): "서버 구현 전(#903) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
     ("POST", "/auth/qa-login"): "스테이징 전용 — 테스트 앱에 없다(#788), staging 설정 앱으로 auth 테스트가 본다(#789)",
 }
 
@@ -388,6 +385,42 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
+def test_pending_login_responses_match_the_openapi_spec(app_client, db_session):
+    """탈퇴 계정 재로그인 선택(#855, #857) — 안내 200, 선택 200(restore)·201(restart), 404 NO_PENDING_LOGIN, 422."""
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from auth import core
+    from auth.testing import create_kakao_user
+    from common.settings import settings
+
+    def pending_client(user_id, kakao_id, problems):
+        deleted_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        create_kakao_user(db_session, user_id, provider_user_id=kakao_id, display_name="영희", deleted_at=deleted_at)
+        db_session.commit()
+        cookie = core.create_pending_cookie_value(
+            user_id, "kakao", deleted_at, secret=settings.session_secret, issued_at=int(time.time()),
+        )
+        return _Checked(TestClient(app_client.app, cookies={"pending_account": cookie}), problems)
+
+    problems: list[str] = []
+    restoring = pending_client("pending_restore", "p1", problems)
+    assert restoring.get("/auth/pending").status_code == 200
+    assert restoring.post("/auth/pending", json={"choice": "nope"}).status_code == 422
+    assert restoring.post("/auth/pending", json={"choice": "restore"}).status_code == 200
+    assert restoring.get("/auth/pending").status_code == 404           # 이미 선택했다 — 같은 쿠키는 통하지 않는다
+
+    restarting = pending_client("pending_restart", "p2", problems)
+    assert restarting.post("/auth/pending", json={"choice": "restart"}).status_code == 201
+
+    no_cookie = _Checked(TestClient(app_client.app), problems)
+    assert no_cookie.get("/auth/pending").status_code == 404
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
 def test_feedback_responses_match_the_openapi_spec(clients):
     """서비스 피드백(#10) — 201 영수증과 422·401 에러 봉투, 시간당 상한 429."""
     a, _b, problems = clients
@@ -421,6 +454,28 @@ def test_map_leave_and_delete_match_the_openapi_spec(clients):
     assert a.delete(f"/maps/{map_id}/members/me").status_code == 409     # 혼자 남은 방장
     assert a.delete(f"/maps/{map_id}").status_code == 204
     assert a.get(f"/maps/{map_id}").status_code == 404
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
+def test_map_restore_and_trash_match_the_openapi_spec(clients):
+    """삭제한 지도 복구(#464) — 휴지통 목록(TrashedMapList), 복구 200(Map)과 연타 200, 에러 봉투(구성원 403, 모르는 지도 404)."""
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "강릉", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+    assert a.delete(f"/maps/{map_id}").status_code == 204
+
+    trash = a.get("/maps/trash")
+    assert trash.status_code == 200
+    assert [m["id"] for m in trash.json()["items"]] == [map_id]
+    assert b.get("/maps/trash").json()["items"] == []        # 방장이 아닌 사람의 휴지통은 비어 있다
+    assert b.post(f"/maps/{map_id}/restore").status_code == 403
+    assert a.post("/maps/no_such_map/restore").status_code == 404
+    assert a.post(f"/maps/{map_id}/restore").status_code == 200
+    assert a.post(f"/maps/{map_id}/restore").status_code == 200   # 연타 안전
+    assert a.get("/maps/trash").json()["items"] == []
 
     unique = list(dict.fromkeys(problems))
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)

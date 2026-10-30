@@ -73,6 +73,15 @@ def _float(name: str, default: float) -> float:
         raise ConfigError(f"{name}={raw!r} — 숫자여야 한다") from None
 
 
+def _bool(name: str, default: bool) -> bool:
+    raw = _env(name, "1" if default else "0").lower()
+    if raw in ("1", "true"):
+        return True
+    if raw in ("0", "false"):
+        return False
+    raise ConfigError(f"{name}={raw!r} — 1|true|0|false 중 하나여야 한다")
+
+
 def _mode(name: str, default: AdapterMode) -> AdapterMode:
     value = _env(name, default)
     if value not in get_args(AdapterMode):
@@ -143,6 +152,16 @@ class Settings:
     # 스테이징 전용 QA 로그인(POST /auth/qa-login, #788)의 비밀값. staging에서 값이 있을 때만 그 경로가 붙는다(qa_login_enabled).
     # prod에 값이 있으면 아래 __post_init__이 서버를 세운다.
     qa_login_secret: str = ""
+    # DB 커넥션 풀(#810). 기본값은 SQLAlchemy 기본(풀 5 + 넘침 10 = 프로세스당 최대 15, 재활용 없음)과 같다.
+    # 연결 수 계산은 deploy_rules.md「DB 연결 수」. pre_ping은 DB 컨테이너가 다시 뜬 뒤 끊긴 연결을 쓰지 않게 기본으로 켠다.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_pre_ping: bool = True
+    db_pool_recycle_s: int = -1          # 초. 음수면 연결을 재활용하지 않는다
+    # 세션·state 쿠키의 Secure(#810). 설정 정의만 끝났고 실제 쿠키에 Secure를 거는 일은 auth 후속이다
+    # (auth/router.py의 set_cookie 두 곳이 아직 secure=settings.is_prod다). from_env는 staging·prod에서 참,
+    # 그 밖에서 거짓을 기본으로 준다. 직접 만든 Settings의 기본값은 안전한 쪽(참)이다.
+    cookie_secure: bool = True
 
     def __post_init__(self) -> None:
         # 잘못된 Settings는 애초에 "만들어질 수 없다" — 호출 순서에 기대지 않는 게 핵심이다.
@@ -153,6 +172,14 @@ class Settings:
             raise ConfigError(f"PLACES_SOURCES에 모르는 소스가 있다: {unknown_sources} — {PLACE_SOURCE_NAMES} 중에서 고른다")
         if self.environment == "prod" and self.qa_login_secret:
             raise ConfigError("prod에 QA_LOGIN_SECRET이 있다 — 스테이징 전용이다(#788). 운영 환경 변수에서 지운다")
+        # 풀 값은 환경과 무관하게 막는다. 0과 음수는 SQLAlchemy에서 연결 무제한이라 DB max_connections를 넘길 수 있다(#810).
+        # 무제한은 허용하지 않는다 — deploy_rules.md「DB 연결 수」의 계산식이 상한을 전제로 한다.
+        if self.db_pool_size < 1:
+            raise ConfigError(f"DB_POOL_SIZE={self.db_pool_size} — 1 이상이어야 한다(0 이하는 연결 무제한)")
+        if self.db_max_overflow < 0:
+            raise ConfigError(f"DB_MAX_OVERFLOW={self.db_max_overflow} — 0 이상이어야 한다(음수는 연결 무제한)")
+        if self.db_pool_recycle_s != -1 and self.db_pool_recycle_s < 1:
+            raise ConfigError(f"DB_POOL_RECYCLE_S={self.db_pool_recycle_s} — -1(재활용 안 함) 또는 1 이상이어야 한다")
         if self.environment not in _STRICT_ENVIRONMENTS:
             return
         env = f"PINGO_ENV={self.environment}"
@@ -181,6 +208,17 @@ class Settings:
             raise ConfigError(f"{env}에서 SESSION_SECRET이 기본값이다")
         if not self.frontend_base_url:
             raise ConfigError(f"{env}에서 FRONTEND_BASE_URL이 비어있다 — 초대 링크·로그인 리다이렉트가 백엔드 자신의 주소로 샌다")
+        # 외부 키는 실제 모드일 때만 필요하다. 비어 있으면 첫 호출에서야 실패하니 기동에서 막는다(#810).
+        needed = {
+            "places": ("KAKAO_CLIENT_ID", "KAKAO_CLIENT_SECRET", "KAKAO_REDIRECT_URI"),
+            "llm": ("ELICE_ML_API_BASE_URL", "ELICE_ML_API_KEY"),
+        }
+        for port, names in needed.items():
+            if getattr(self, f"{port}_mode") != "real":
+                continue
+            missing = [n for n in names if not getattr(self, n.lower()).strip()]   # 공백만 있는 값도 빈 값이다
+            if missing:
+                raise ConfigError(f"{env}에서 {port.upper()}_MODE=real인데 {', '.join(missing)}이(가) 비어있다")
 
     @property
     def is_prod(self) -> bool:
@@ -238,6 +276,11 @@ class Settings:
             feedback_per_hour=_int("FEEDBACK_PER_HOUR", 10),
             agent_loop_in_process=_env("AGENT_LOOP_IN_PROCESS", "0").lower() in ("1", "true"),
             qa_login_secret=_env("QA_LOGIN_SECRET", ""),
+            db_pool_size=_int("DB_POOL_SIZE", 5),
+            db_max_overflow=_int("DB_MAX_OVERFLOW", 10),
+            db_pool_pre_ping=_bool("DB_POOL_PRE_PING", True),
+            db_pool_recycle_s=_int("DB_POOL_RECYCLE_S", -1),
+            cookie_secure=_bool("COOKIE_SECURE", strict),
             frontend_base_url=frontend_base_url,
             frontend_login_redirect_url=_env(
                 "FRONTEND_LOGIN_REDIRECT_URL",

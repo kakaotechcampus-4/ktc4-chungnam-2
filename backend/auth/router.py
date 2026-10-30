@@ -20,7 +20,9 @@ from starlette.responses import RedirectResponse
 
 from auth import core, service
 from auth.deps import DbSession, get_current_user
-from auth.schemas import CurrentUser, GuestJoinRequest, GuestJoinResult, UserResponse, UserUpdateRequest
+from auth.schemas import (
+    CurrentUser, GuestJoinRequest, GuestJoinResult, PendingAccount, PendingChoiceRequest, UserResponse, UserUpdateRequest,
+)
 from common.errors import AppError
 from common.ratelimit import SlidingWindowLimiter
 from common.settings import settings
@@ -29,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "session"
 STATE_COOKIE = "kakao_oauth_state"
+PENDING_COOKIE = "pending_account"
 
 # IP당 시간당 게스트 가입 시도 상한(인메모리, 인스턴스마다 센다). 성공·실패 모두 센다.
 GUEST_JOIN_PER_HOUR = 10
@@ -45,7 +48,7 @@ def _set_session_cookie(response: Response, user_id: str) -> None:
         token,
         max_age=core.SESSION_TTL_SECONDS,
         httponly=True,
-        secure=settings.is_prod,  # dev(http://localhost)에서는 Secure 쿠키가 저장되지 않는다
+        secure=settings.cookie_secure,  # dev(http://localhost)에서는 Secure 쿠키가 저장되지 않는다(COOKIE_SECURE, #810)
         samesite="lax",
     )
 
@@ -78,19 +81,31 @@ def get_kakao_login(session: str | None = Cookie(default=None), db: Session = Db
         max_age=core.STATE_TTL_SECONDS,
         path=core.state_cookie_path(settings.kakao_redirect_uri),
         httponly=True,
-        secure=settings.is_prod,
+        secure=settings.cookie_secure,
         samesite="lax",   # 카카오에서 콜백으로 돌아오는 건 최상위 GET 이동이라 Lax 쿠키가 같이 온다
     )
     return redirect
 
 
-def _login_redirect(*, error: str | None = None, guest_merged: bool | None = None) -> RedirectResponse:
-    """진입점으로 302. 실패면 `login_error`, 게스트 전환이면 `guest_merged`를 붙이고(주소에 있던 쿼리·조각은 보존,
-    같은 이름의 값만 대체), state 쿠키는 어느 쪽이든 지운다."""
+def _pending_cookie_path() -> str:
+    return core.pending_cookie_path(settings.kakao_redirect_uri)
+
+
+def _clear_pending_cookie(response: Response) -> None:
+    response.delete_cookie(PENDING_COOKIE, path=_pending_cookie_path())   # 심을 때와 같은 경로여야 지워진다
+
+
+def _login_redirect(
+    *, error: str | None = None, guest_merged: bool | None = None, login_pending: str | None = None,
+) -> RedirectResponse:
+    """진입점으로 302. 실패면 `login_error`, 게스트 전환이면 `guest_merged`, 탈퇴 계정 선택 대기면 `login_pending`을
+    붙이고(주소에 있던 쿼리·조각은 보존, 같은 이름의 값만 대체), state 쿠키는 어느 쪽이든 지운다."""
     url = settings.frontend_login_redirect_url
     added = []
     if error is not None:
         added.append(("login_error", error))
+    if login_pending is not None:
+        added.append(("login_pending", login_pending))
     if guest_merged is not None:
         added.append(("guest_merged", "true" if guest_merged else "false"))
     if added:
@@ -127,6 +142,24 @@ def get_kakao_callback(
             )
         else:
             user, guest_merged = service.login_with_kakao_code(db, code=code), None
+    except service.WithdrawnAccountPending as pending:
+        # 복구 기간 안의 탈퇴 계정 — 세션을 만들지 않고 선택 대기 쿠키만 내린다. 게스트가 시작했어도 기록은 합치지 않는다(#855)
+        redirect = _login_redirect(
+            login_pending="withdrawn_account", guest_merged=False if state_claims.guest_user_id else None,
+        )
+        redirect.set_cookie(
+            PENDING_COOKIE,
+            core.create_pending_cookie_value(
+                pending.user.id, pending.provider, pending.user.deleted_at,
+                secret=settings.session_secret, issued_at=int(time.time()),
+            ),
+            max_age=core.PENDING_TTL_SECONDS,
+            path=_pending_cookie_path(),
+            httponly=True,
+            secure=settings.cookie_secure,
+            samesite="lax",
+        )
+        return redirect
     except service.KakaoApiError as exc:
         logger.warning("kakao login failed: reason=%s kakao_status=%s", exc.detail.get("reason"), exc.detail.get("kakao_status"))
         return _login_redirect(error="kakao_failed")
@@ -137,6 +170,39 @@ def get_kakao_callback(
     redirect = _login_redirect(guest_merged=guest_merged)
     _set_session_cookie(redirect, user.id)
     return redirect
+
+
+def _pending_claims(pending_cookie: str | None) -> core.PendingClaims:
+    claims = core.parse_pending_cookie(pending_cookie, secret=settings.session_secret, now=int(time.time()))
+    if claims is None:
+        raise AppError("NO_PENDING_LOGIN")
+    return claims
+
+
+@public_router.get("/pending", response_model=PendingAccount)
+def get_pending(pending_cookie: str | None = Cookie(default=None, alias=PENDING_COOKIE), db: Session = DbSession):
+    """탈퇴한 계정으로 로그인하려는 중의 안내(#855) — 세션 없이 콜백이 내린 선택 대기 쿠키로 부른다."""
+    return service.get_pending_account(db, claims=_pending_claims(pending_cookie))
+
+
+@public_router.post("/pending", response_model=UserResponse)
+def post_pending(
+    body: PendingChoiceRequest, request: Request, response: Response,
+    pending_cookie: str | None = Cookie(default=None, alias=PENDING_COOKIE), db: Session = DbSession,
+):
+    """선택(#855): `restart`는 새 계정(201), `restore`는 기존 계정 되살리기(200). 둘 다 세션을 내리고 선택 대기 쿠키를 지운다.
+    본문은 application/json만 받는다 — 헤더 없는 교차 사이트 POST가 쿠키를 싣고 오지 못하게 SameSite=Lax와 함께 막는다."""
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+        raise AppError("VALIDATION_ERROR", "본문은 application/json이어야 합니다")
+    claims = _pending_claims(pending_cookie)
+    if body.choice == "restore":
+        row = service.restore_account(db, claims=claims)
+    else:
+        row = service.restart_account(db, claims=claims)
+        response.status_code = 201
+    _set_session_cookie(response, row.id)
+    _clear_pending_cookie(response)
+    return _user_response(row)
 
 
 @public_router.post("/guest", response_model=GuestJoinResult, response_model_exclude_none=True, status_code=201)

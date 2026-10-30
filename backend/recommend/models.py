@@ -72,6 +72,11 @@ class RecommendRun(Base):
     # 이 값에서 파생되지만, 사람이 명시한 원이 생기면 그 원은 이 값과 무관하므로 따로 둔다.
     default_radius_walk_min: Mapped[int] = mapped_column(Integer, nullable=False, default=15, server_default="15")
     last_funnel: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # #845, #847 — 마지막 execute/widen/retry가 실제로 쓴 근거 줄의 스냅샷(줄 id·작성자·글·방향·badge·enforced·사유)과 새로 찾은
+    # 후보 수. 둘 다 파생값(다음 실행이 덮는다). 스냅샷에 작성자 id와 사용자 글이 들어가므로 탈퇴·지도 나가기 때 그 사람의 줄을
+    # 빼고(`service.delete_evidence_lines_by_author*`), 게스트 합치기는 작성자를 옮긴다(`service.reassign_user`).
+    applied_evidence: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    last_new_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # 지난 추천 기록(#469) — 마이그레이션 0028과 같다.
@@ -162,3 +167,28 @@ class Exclusion(Base):
     # #42 확정: 개인 단위 — requested_by가 unique 제약에 들어간다(map_id만으로는 부족).
     requested_by: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class IdempotencyKey(Base):
+    """「추천 받기」 연타·재전송 방어(#811, docs/data-model.md idempotency_keys). 예약은 모델 호출 전에 독립 트랜잭션으로
+    커밋한다. run_id가 NULL이면 첫 요청이 아직 모델을 기다리는 중이고, 처리 기한이 지나면 새 요청이 이어받아 attempt를
+    올린다 — run 저장(run_id 연결)은 자기 세대일 때만 성공한다."""
+
+    __tablename__ = "idempotency_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    requested_by: Mapped[str] = mapped_column(String, nullable=False)
+    scope: Mapped[str] = mapped_column(String, nullable=False)
+    key: Mapped[str] = mapped_column(String, nullable=False)
+    request_hash: Mapped[str] = mapped_column(String, nullable=False)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("recommend_runs.id", ondelete="CASCADE"), nullable=True,
+    )
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("requested_by", "scope", "key", name="uq_idempotency_keys"),
+        Index("ix_idempotency_keys_created_at", "created_at"),
+    )
