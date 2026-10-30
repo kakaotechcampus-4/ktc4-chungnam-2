@@ -5,7 +5,7 @@ PATH=/usr/local/bin:/usr/bin:/bin
 
 # 배포는 cron이 아니라 GitHub Actions가 SSM으로 부른다(.github/workflows/deploy.yml)
 
-# 정기 정리: 지도(삭제 30일 뒤), 알림(90일), 게스트(90일 미사용) — maintenance.run
+# 정기 정리: 지도(삭제 30일 뒤), 알림(90일), 게스트(90일 미사용), 모델 호출 사용량(30일, #870) — maintenance.run
 30 3 * * * /srv/pingo/deploy/run.sh prod python -m maintenance.run >> /srv/pingo/logs/maintenance-prod.log 2>&1
 40 3 * * * /srv/pingo/deploy/run.sh staging python -m maintenance.run >> /srv/pingo/logs/maintenance-staging.log 2>&1
 
