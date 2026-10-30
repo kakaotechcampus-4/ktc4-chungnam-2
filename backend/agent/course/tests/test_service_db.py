@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select, update
 
+from agent import core as agent_core
 from agent.course import api as course_api, service
 from agent.course.api_schemas import CourseRequest
 from agent.course.constants import COURSE_DAILY_LIMIT, MAX_PLACES, STARTUP_ORPHAN_AFTER
@@ -105,7 +106,7 @@ def test_daily_limit_counts_runs_since_kst_midnight(world, places):
     map_id, _ = confirmed_map(world, places, 3)
     now = datetime(2026, 10, 21, 3, 0, tzinfo=timezone.utc)                    # KST 12:00
     kst_midnight = datetime(2026, 10, 20, 15, 0, tzinfo=timezone.utc)
-    assert service.kst_day_start(now) == kst_midnight
+    assert agent_core.kst_day_start(now) == kst_midnight
     with world.factory() as db:
         for i in range(COURSE_DAILY_LIMIT):
             db.add(AgentCourseRun(map_id=map_id, requested_by=world.uid("u1"), status="done", input={}, snapshot_at=now,
@@ -320,3 +321,20 @@ def test_purge_and_delete_by_user(world, places):
         db.commit()
     assert row(world, b2.run_id) is None and row(world, b1.run_id) is not None
 
+
+def test_course_day_boundary_is_kst_midnight(world, places):
+    map_id, _ = confirmed_map(world, places, 3)
+    before = datetime(2026, 10, 29, 14, 59, 59, tzinfo=timezone.utc)           # KST 10-29 23:59:59
+    after = datetime(2026, 10, 29, 15, 0, 0, tzinfo=timezone.utc)              # KST 10-30 00:00:00
+    assert agent_core.kst_day_start(before) == datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc)
+    assert agent_core.kst_day_start(after) == after
+    with world.factory() as db:
+        for i in range(COURSE_DAILY_LIMIT):
+            db.add(AgentCourseRun(map_id=map_id, requested_by=world.uid("u1"), status="done", input={}, snapshot_at=before,
+                                  snapshot_pin_ids=[], created_at=before - timedelta(minutes=i)))
+        db.commit()
+    with world.factory() as db:
+        with pytest.raises(AppError) as e:
+            service.request_course(db, map_id=map_id, requested_by=world.uid("u1"), body=CourseRequest(), now=before)
+        assert code_of(e) == "COURSE_LIMIT"
+        assert service.request_course(db, map_id=map_id, requested_by=world.uid("u1"), body=CourseRequest(), now=after)

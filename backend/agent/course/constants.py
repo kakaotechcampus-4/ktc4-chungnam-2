@@ -77,7 +77,6 @@ CLIMB_MAX_STEPS = 60               # optimize 한 번이 채택하는 수리의 
 
 # 서비스 경로(AI 코스 짜기 API, #334 — 팀 결정 #580 전 브랜치 초안). 전부 초안이다
 COURSE_DAILY_LIMIT = 5             # 사용자당 하루 요청 수. 하루 = KST 자정에 초기화
-COURSE_DAY_BOUNDARY_TZ = "Asia/Seoul"
 COURSE_DAYS_MAX = 14               # 한 번에 짜는 여행 날짜 수 상한(지도 기간이 더 길면 앞 14일만)
 MEMBER_WALK_MIN, MEMBER_WALK_MAX = 10, 480   # member_constraints.daily_walk_max의 값(분) 범위
 EXCLUDED_OVER_LIMIT = "OVER_LIMIT"

@@ -18,16 +18,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from agent import core as agent_core
 from agent.course import runner, worklog
 from agent.course.api_schemas import CourseRequest, CourseRun
 from agent.course.constants import (
-    COURSE_DAILY_LIMIT, COURSE_DAY_BOUNDARY_TZ, COURSE_DAYS_MAX, STARTUP_ORPHAN_AFTER, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE,
+    COURSE_DAILY_LIMIT, COURSE_DAYS_MAX, STARTUP_ORPHAN_AFTER, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE,
     MAX_PLACES, MIN_PLACES,
 )
 from agent.course.core import MemberConstraint
@@ -116,13 +116,6 @@ def build_input(snapshot: Snapshot, body: CourseRequest) -> TripBuild:
     return TripBuild(built.trip, built.excluded + over)
 
 
-def kst_day_start(now: datetime) -> datetime:
-    """now가 속한 KST 날짜의 자정(UTC aware). 하루 상한은 이 시각부터 센다."""
-    tz = ZoneInfo(COURSE_DAY_BOUNDARY_TZ)
-    local = now.astimezone(tz)
-    return datetime(local.year, local.month, local.day, tzinfo=tz).astimezone(timezone.utc)
-
-
 # ---------------------------------------------------------------- 요청
 
 @dataclass(frozen=True)
@@ -187,7 +180,7 @@ def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseR
     active = _active_run(db, map_id, requested_by)
     if active is not None:
         raise AppError("COURSE_IN_PROGRESS", detail={"course_run_id": str(active.id)})
-    used = count_since(db, requested_by=requested_by, since=kst_day_start(now))
+    used = count_since(db, requested_by=requested_by, since=agent_core.kst_day_start(now))
     if used >= COURSE_DAILY_LIMIT:
         raise AppError("COURSE_LIMIT", detail={"limit": COURSE_DAILY_LIMIT, "used": used})
     text = (body.request_text or "").strip()
