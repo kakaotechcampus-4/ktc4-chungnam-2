@@ -31,6 +31,9 @@ export function routeSummary(routes: RouteDto[]): string {
 export type RouteDrawing = {
   stops: { n: number; lat: number; lng: number }[]
   legs: { from: { lat: number; lng: number }; to: { lat: number; lng: number }; label: string }[]
+  /** 선 색 토큰 이름(예: '--course-day-2')과 카카오 선 모양. 없으면 「동선 보기」 모양(brand-600 실선, 골드 번호). AI 코스가 날짜를 가른다. */
+  color?: string
+  style?: string
 }
 
 /** 지도에 그릴 동선 — 경로선(직선), 순서 번호, 구간 "약 N분". 좌표는 핀에서 찾는다. 좌표가 없는 핀(실시간 핀)은 서버 동선에도 없지만 여기서도 걸러 둔다. */

@@ -47,7 +47,7 @@ export default function MapCanvas({
   selectedPinId?: string | null
   /** 장소 검색 결과(Figma 4절) — 파란 번호 원으로 띄운다. 핀이 아니다. */
   results?: SearchMarker[]
-  /** 확정 탭 「동선 보기」 — 경로선·순서 번호·구간 시간. */
+  /** 확정 탭 「동선 보기」 또는 AI 코스 지도 보기 — 경로선·순서 번호·구간 시간. */
   route?: RouteDrawing[]
   onSelect: (pinId: string) => void
   onReady: (controller: MapController) => void
@@ -180,6 +180,7 @@ export default function MapCanvas({
   }, [results, ready])
 
   // 동선(Figma 7절): brand-600 4px 직선, 순서 번호는 골드 + 갈색 숫자, 구간 "약 N분" 흰 알약.
+  // AI 코스(#683)는 날짜마다 색과 선 모양을 달리하고, 번호 원과 알약 테두리도 그날 색이다.
   useEffect(() => {
     const m = mapRef.current
     if (!ready || !m) return
@@ -191,26 +192,32 @@ export default function MapCanvas({
       drawn.push(o)
     }
     for (const r of route) {
-      const line = new maps.Polyline({
-        path: r.stops.map((s) => new maps.LatLng(s.lat, s.lng)),
-        strokeWeight: 4,
-        strokeColor: getComputedStyle(document.documentElement).getPropertyValue('--brand-600').trim() || '#2A57C4',
-        strokeOpacity: 1,
-      })
-      line.setMap(map)
-      drawn.push(line)
+      const color = `var(${r.color ?? '--brand-600'})`
+      if (r.stops.length >= 2) {
+        const line = new maps.Polyline({
+          path: r.stops.map((s) => new maps.LatLng(s.lat, s.lng)),
+          strokeWeight: r.color ? 5 : 4,
+          strokeColor: getComputedStyle(document.documentElement).getPropertyValue(r.color ?? '--brand-600').trim() || '#2A57C4',
+          strokeOpacity: 1,
+          strokeStyle: r.style ?? 'solid',
+        })
+        line.setMap(map)
+        drawn.push(line)
+      }
       for (const s of r.stops) {
         const el = document.createElement('span')
         el.textContent = String(s.n)
+        const fill = r.color ? `background:${color};color:#fff` : 'background:var(--pin-confirmed);color:var(--pin-confirmed-mark)'
         el.style.cssText =
-          'display:flex;width:18px;height:18px;align-items:center;justify-content:center;border-radius:50%;background:var(--pin-confirmed);color:var(--pin-confirmed-mark);border:2px solid #fff;font:700 11px/1 var(--font-sans);transform:translate(14px,-34px)'
+          `display:flex;width:18px;height:18px;align-items:center;justify-content:center;border-radius:50%;${fill};border:2px solid #fff;font:700 11px/1 var(--font-sans);transform:translate(14px,-34px)`
         overlay(s.lat, s.lng, el)
       }
       for (const l of r.legs) {
         const el = document.createElement('span')
         el.textContent = l.label
+        const text = r.color ? color : 'var(--brand-700)'
         el.style.cssText =
-          'padding:2px 8px;border-radius:999px;background:#fff;border:1px solid var(--brand-600);color:var(--brand-700);font:700 11px/1.4 var(--font-sans);white-space:nowrap'
+          `padding:2px 8px;border-radius:999px;background:#fff;border:1px solid ${color};color:${text};font:700 11px/1.4 var(--font-sans);white-space:nowrap`
         overlay((l.from.lat + l.to.lat) / 2, (l.from.lng + l.to.lng) / 2, el)
       }
     }

@@ -70,6 +70,11 @@
   --pin-confirmed-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
   --confirmed-bg:         #FFF6DB;   /* 「★ 확정 리스트에 넣기」 바탕 */
 
+  /* AI 코스 날짜별 경로선(#683). 흰 바탕 대비 4.5:1 이상 — 번호 원 흰 글자와 알약 글자에 그대로 쓴다. 넷째 날부터 색이 돌고 선 모양이 갈라 준다 */
+  --course-day-1: var(--brand-600);
+  --course-day-2: #8A3FB8;
+  --course-day-3: #0E7A6E;
+
   /* ── 반응 · 지도 밖 UI 전용 ──────────── */
   --reaction-good:    var(--good-line);
   --reaction-adjust:  var(--warn-line);
