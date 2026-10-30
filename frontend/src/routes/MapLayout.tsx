@@ -49,7 +49,7 @@ const PANEL_SLIDE_MS = 300
 export default function MapLayout() {
   const { mapId = '' } = useParams()
   const navigate = useNavigate()
-  const { selectedPinId } = usePinSelection()
+  const { selectedPinId, selectPin } = usePinSelection()
   const { data: allPins = [] } = usePinsQuery(mapId)
   const mapInfo = useMapQuery(mapId).data
   const memberCount = mapInfo?.memberCount ?? 0
@@ -83,11 +83,13 @@ export default function MapLayout() {
     if (search.query === null) setSearchText('')
   }
   const found = usePlaceSearchQuery(search.query, search.near).data
-  // 검색 결과 번호 원 — 결과나 선택이 바뀔 때만 다시 그린다.
+  // 검색 결과 파란 핀 — 결과나 선택이 바뀔 때만 다시 그린다.
   const searchMarkers = useMemo(
     () =>
       (found ?? []).map((r, i) => ({
         n: i + 1,
+        name: r.place_name,
+        category: r.category,
         lat: r.lat,
         lng: r.lng,
         selected: r.place_id === search.selectedId,
@@ -207,6 +209,14 @@ export default function MapLayout() {
     controller.current?.focusPin(c.lat, c.lng)
   }, [candidateFocus, result, mapReady])
 
+  // 지도 빈 곳을 누르면 고른 것을 푼다 — 핀 상세(마킹·확정 탭)는 목록으로, 검색은 결과 목록으로, AI 후보는 강조만 푼다.
+  // 지도는 그대로 둔다.
+  function onMapClick() {
+    if (selectedPinId) selectPin(null)
+    if (useSearchStore.getState().selectedId) useSearchStore.getState().select(null)
+    if (useAiStore.getState().focus) useAiStore.getState().blurCandidate()
+  }
+
   const onMovingChange = useCallback(
     (moving: boolean) => {
       setMapMoving(moving)
@@ -284,10 +294,13 @@ export default function MapLayout() {
         // 확정 탭에서 누른 핀은 확정 탭 안에서 연다(「‹ 확정된 장소」로 돌아온다).
         onSelect={(pinId) => {
           setPanelOpen(true)
+          // 검색 결과를 보다가 핀을 고르면 매달린 핑고는 들어간다.
+          useSearchStore.getState().select(null)
           navigate(`/maps/${mapId}${onShortlistTab ? '/shortlist' : ''}?pin=${encodeURIComponent(pinId)}`)
         }}
         onReady={onMapReady}
         onMovingChange={onMovingChange}
+        onMapClick={onMapClick}
         leftInset={mapLeft}
       />
 

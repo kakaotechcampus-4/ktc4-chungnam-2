@@ -16,6 +16,8 @@ type AiState = {
    */
   focus: { id: string; n: number } | null
   focusCandidate: (candidateId: string) => void
+  /** 지도 빈 곳을 누르면 고른 후보를 푼다. */
+  blurCandidate: () => void
 }
 
 export const useAiStore = create<AiState>((set) => ({
@@ -24,4 +26,5 @@ export const useAiStore = create<AiState>((set) => ({
   setRun: (mapId, run) => set((s) => ({ runs: { ...s.runs, [mapId]: run }, focus: null })),
   focus: null,
   focusCandidate: (id) => set((s) => ({ focus: { id, n: (s.focus?.n ?? 0) + 1 } })),
+  blurCandidate: () => set({ focus: null }),
 }))

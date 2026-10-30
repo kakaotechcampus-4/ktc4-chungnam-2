@@ -51,8 +51,9 @@ declare namespace kakao.maps {
   }
 
   namespace event {
-    function addListener(target: Map, type: 'dragstart' | 'idle', handler: () => void): void
-    function removeListener(target: Map, type: 'dragstart' | 'idle', handler: () => void): void
+    /** click 은 지도 빈 곳을 눌렀을 때만 온다 — clickable 오버레이(핀 등)를 누르거나 끌고 놓으면 오지 않는다. */
+    function addListener(target: Map, type: 'dragstart' | 'idle' | 'click', handler: () => void): void
+    function removeListener(target: Map, type: 'dragstart' | 'idle' | 'click', handler: () => void): void
   }
 
   class CustomOverlay {
