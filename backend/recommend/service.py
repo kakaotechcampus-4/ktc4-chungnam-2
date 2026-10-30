@@ -275,9 +275,20 @@ def lock_run(db: Session, run_id: uuid.UUID) -> None:
     바꾼 값을 읽도록 이미 읽어 둔 run 객체도 새로 채운다. 잠금은 트랜잭션 끝(session_scope 커밋·롤백)에 풀린다.
 
     잠금 순서(교착 방지, #811): run → 요청자 횟수(`lock_requester_attempts`) → 후보 행. 거꾸로 잡지 않는다."""
+    # 결과를 읽어야 populate_existing이 이미 읽어 둔 run 객체를 새로 채운다(ORM은 행을 읽을 때 채운다 — 잠금만으로는 안 채워진다)
     db.execute(
         select(RecommendRun).where(RecommendRun.id == run_id).with_for_update().execution_options(populate_existing=True)
-    )
+    ).scalar_one_or_none()
+
+
+def lock_run_shared(db: Session, run_id: uuid.UUID) -> None:
+    """결과 조회(GET result)가 run 행을 FOR SHARE로 잠근 뒤 읽는다(#848). 진행 중인 execute·retry·widen(FOR UPDATE)이 있으면 그
+    커밋까지 기다리고, 그 뒤 읽는 run 행·후보·스냅샷은 모두 그 실행 뒤의 값이다 — READ COMMITTED에서 run을 읽은 뒤 동시 retry가 커밋하면
+    이전 실행의 applied_evidence·new_count와 새 후보가 섞이던 것을 막는다. 읽는 동안은 새 실행이 기다린다(짧다). 이미 읽어 둔 run
+    객체도 새로 채운다. 잠금은 트랜잭션 끝에 풀린다."""
+    db.execute(   # 결과를 읽어야 이미 읽어 둔 run 객체가 새로 채워진다(lock_run과 같다)
+        select(RecommendRun).where(RecommendRun.id == run_id).with_for_update(read=True).execution_options(populate_existing=True)
+    ).scalar_one_or_none()
 
 
 def lock_requester_attempts(db: Session, *, map_id: str, requested_by: str) -> None:

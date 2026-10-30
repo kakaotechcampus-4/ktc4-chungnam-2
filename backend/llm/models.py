@@ -12,7 +12,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, Numeric, String, func
+from sqlalchemy import Boolean, DateTime, Index, Integer, Numeric, String, false, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -57,5 +57,9 @@ class LlmCall(Base):
     cost_krw: Mapped[float] = mapped_column(Numeric(12, 4, asdecimal=False), nullable=False, default=0, server_default="0")
     outcome: Mapped[str] = mapped_column(String, nullable=False)   # OUTCOMES
     ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # #848 — 이 호출이 처리한 입력 수(② 묶음 크기, 다른 호출은 NULL)와, 성공했지만 결과가 쓰이지 않은 호출 표시. 한 trace의
+    # 뒤 묶음이 실패하거나 시간 상한을 넘으면 앞 묶음, 모델 뒤 run 저장·상한 재검사가 실패하면 그 trace의 성공 호출이 버려진 비용이다.
+    batch_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    discarded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
     elapsed_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

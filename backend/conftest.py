@@ -72,7 +72,24 @@ def llm_usage_rows(monkeypatch):
 
     rows: list[dict] = []
     monkeypatch.setattr(usage, "sink", rows.append)
+    # 버려진 호출 표시(#848)도 DB에 쓰지 않는다 — 표시한 trace_id를 llm_usage_discards 픽스처가 모은다
+    monkeypatch.setattr(usage, "discard_sink", lambda trace_ids: rows_discarded.extend(trace_ids))
     return rows
+
+
+rows_discarded: list = []
+
+
+@pytest.fixture(autouse=True)
+def _reset_discarded():
+    rows_discarded.clear()
+    yield
+
+
+@pytest.fixture
+def llm_usage_discards():
+    """mark_discarded가 표시한 trace_id 목록(#848). llm_usage_rows와 같은 방식으로 DB 대신 메모리에 받는다."""
+    return rows_discarded
 
 
 # ---- live 마커: 실제 외부 API를 부르는 테스트는 기본 실행에서 뺀다 ----

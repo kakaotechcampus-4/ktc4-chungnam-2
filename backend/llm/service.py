@@ -20,6 +20,7 @@ import unicodedata
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
 
 from common.errors import AppError
+from llm import usage as usage_log
 from llm.client import (
     LlmCallError, call_agent_diagnosis_turn, call_course_direct, call_course_goals, call_course_turn,
     call_planner, get_client, metering,
@@ -165,16 +166,29 @@ def passthrough_planner(raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[E
 # 엘리스 게이트웨이가 비스트리밍 응답을 2000토큰으로 제한한다(#325). 사유 한 줄의 응답(text 에코 + 조건
 # 몇 개)이 70토큰 안팎이라 한 호출에 10개씩만 보낸다. 묶음은 순차로 부른다(동시 호출은 상한·429 위험).
 PLAN_BATCH_SIZE = 10
+# 묶음 호출 누적 시간 상한(#848). 호출마다 15초 타임아웃이라 묶음이 많으면 create 전체가 끝나지 않을 수 있다 — 누적이 이 시간을
+# 넘으면 남은 묶음은 부르지 않고 실패로 올린다(PlanEvidenceFailed → RECOMMEND_FAILED, run·횟수 없음). 이미 부른 묶음의 비용은
+# 버려진 호출로 표시한다. 상한은 묶음 사이에서만 본다 — 시작한 호출은 자기 타임아웃(15초)까지 간다.
+PLAN_TOTAL_BUDGET_SECONDS = 30
 
 
 def _model_planner(client: Any, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[EvidenceLine]]:
     passthrough_planner(raw_reasons)  # 입력 shape부터 검증 — 깨진 입력으로 모델을 부르지 않는다
     groups: list[list[EvidenceLine]] = []
-    for start in range(0, len(raw_reasons), PLAN_BATCH_SIZE):
-        batch = raw_reasons[start:start + PLAN_BATCH_SIZE]
-        # index는 묶음마다 0부터라 묶음 단위로 합친다. 한 묶음이 실패하면 LlmCallError·ValueError가
-        # 그대로 올라간다 — 부분 결과를 지어내지 않는다.
-        groups.extend(merge_planned(batch, call_planner(client, batch)))
+    started = time.monotonic()
+    try:
+        for index, start in enumerate(range(0, len(raw_reasons), PLAN_BATCH_SIZE)):
+            if index > 0 and time.monotonic() - started >= PLAN_TOTAL_BUDGET_SECONDS:
+                raise LlmCallError(f"사유 구조화가 시간 상한({PLAN_TOTAL_BUDGET_SECONDS}초)을 넘었다")
+            batch = raw_reasons[start:start + PLAN_BATCH_SIZE]
+            # index는 묶음마다 0부터라 묶음 단위로 합친다. 한 묶음이 실패하면 LlmCallError·ValueError가
+            # 그대로 올라간다 — 부분 결과를 지어내지 않는다.
+            groups.extend(merge_planned(batch, call_planner(client, batch)))
+    except (LlmCallError, ValueError):
+        label = usage_log.current_label()   # 앞 묶음(과 응답을 합치다 실패한 묶음)의 성공 호출은 결과가 쓰이지 않는다
+        if label is not None:
+            usage_log.mark_discarded(label.trace_id)
+        raise
     return groups
 
 

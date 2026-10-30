@@ -18,6 +18,9 @@ agent/deps.py)가 planner 인자로 고른다.
 - 탈퇴(auth의 WITHDRAW_STEPS): anonymize_by_user — 행은 남기고 user_id만 비운다(비용 통계).
 - 게스트 합치기(auth의 MERGE_STEPS): reassign_user.
 - 보존: purge_old(30일, maintenance가 부른다).
+- 버려진 비용(#848): ② 묶음 중 일부가 실패하거나 누적 시간 상한(PLAN_TOTAL_BUDGET_SECONDS)을 넘으면 그 trace의 성공 호출을 discarded로
+  표시한다(llm이 한다). 모델 뒤에 run·근거 저장이 실패한 경우는 부르는 쪽이 `mark_discarded(label.trace_id)`로 표시한다. 호출마다
+  batch_size(② 묶음 크기)가 남아 묶음 수는 trace당 plan_evidence 행 수다.
 """
 
 from datetime import datetime
@@ -63,10 +66,11 @@ __all__ = [
     "CourseTurn", "CourseTurnPlanner", "agent_course_turn", "real_course_turn_planner",
     "CourseGoalSet", "CourseGoalsPlanner", "course_set_goals", "fixed_course_goals_planner", "real_course_goals_planner",
     "CourseDirectTurn", "CourseDirectPlanner", "course_direct_turn", "real_course_direct_planner",
-    "usage_context", "anonymize_by_user", "reassign_user", "purge_old",
+    "usage_context", "mark_discarded", "anonymize_by_user", "reassign_user", "purge_old",
 ]
 
 usage_context = _usage.usage_context
+mark_discarded = _usage.mark_discarded   # 모델은 불렸는데 결과가 저장되지 않은 호출을 표시한다(#848). trace_id는 usage_context가 준 라벨의 것
 
 
 def anonymize_by_user(db: Session, *, user_id: str) -> int:
