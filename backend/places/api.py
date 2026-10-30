@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Any, Sequence
 
@@ -127,7 +127,10 @@ def record_kakao_match(place_id: str, kakao_place_id: str, kakao_place_url: str,
 
 
 def pinnable_flags(hints: Sequence[PlaceHint], *, db: Session | None = None) -> list[bool]:
-    """힌트마다 match_place가 성공할지 읽기만 해서 계산한다. 카카오 ID를 기록하지 않는다. 쿼리 한 번(#238)."""
+    """힌트마다 match_place가 성공할지 읽기만 해서 계산한다. 카카오 ID를 기록하지 않는다. 쿼리 한 번(#238).
+
+    주소는 선택 힌트라 핀 생성 요청이 안 보낼 수도 있다(#815 — 화면은 아직 안 보낸다). 그래서 주소 없이도 같은 답이 나올 때만
+    True다: 주소가 있어야 구제되는 힌트는 False. 「검색에서 pinnable=true면 핀 생성이 된다」가 주소를 보내든 안 보내든 지켜진다."""
     own = [i for i, h in enumerate(hints) if h.category in matching.OWN_CATEGORIES]
     flags = [False] * len(hints)
     if not own:
@@ -135,7 +138,8 @@ def pinnable_flags(hints: Sequence[PlaceHint], *, db: Session | None = None) -> 
     with _session(db) as s:
         candidates = repository.find_candidates_many(s, [hints[i] for i in own])
     for i, cands in zip(own, candidates):
-        flags[i] = matching.pick_match(hints[i], cands) is not None
+        flags[i] = matching.pick_match(hints[i], cands) is not None and (
+            hints[i].address is None or matching.pick_match(replace(hints[i], address=None), cands) is not None)
     return flags
 
 

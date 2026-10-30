@@ -858,6 +858,15 @@ describe("#180 — GET /places/search (이름 검색)", () => {
     }
   });
 
+  it("#835 이름 일치 정도가 거리보다 앞선다 — 앞부분 일치(해운대 …)가 더 가까운 부분 일치(광안리 해변)보다 먼저 온다", async () => {
+    // 「해」: 해운대 밀면·해운대 바다 카페는 앞부분 일치, 광안리 해변은 부분 일치. 광안리 해변이 이 좌표에 훨씬 가깝다.
+    const items: { place_id: string }[] = await search("q=" + encodeURIComponent("해") + "&lat=35.1532&lng=129.1186").then((r) => r.json());
+    const ids = items.map((i) => i.place_id);
+    expect(ids).toContain("kakao:mock-3");
+    expect(ids.indexOf("kakao:mock-3")).toBeGreaterThan(ids.indexOf("kakao:mock-1"));
+    expect(ids.indexOf("kakao:mock-3")).toBeGreaterThan(ids.indexOf("kakao:mock-2"));
+  });
+
   it("#822 limit이 묶음을 가르지 않는다 — limit=1이면 핀 가능한 결과 하나만 온다", async () => {
     const items: { place_id: string; pinnable: boolean }[] = await search("q=" + encodeURIComponent("광안리") + "&lat=35.1547&lng=129.1191&limit=1").then((r) => r.json());
     expect(items).toHaveLength(1);

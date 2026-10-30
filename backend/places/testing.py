@@ -13,7 +13,7 @@ search_nearby_own은 영업 중인 장소만, get_places는 없는 ID를 키에�
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Sequence
 
 from common.geo import haversine_distance_m
@@ -107,7 +107,8 @@ class FakePlaces:
             row.kakao_place_id, row.kakao_place_url = kakao_place_id, kakao_place_url
 
     def pinnable_flags(self, hints: Sequence[PlaceHint], *, db: Session | None = None) -> list[bool]:
-        return [self.match_place(h) is not None for h in hints]   # 읽기만 한다 — 카카오 ID를 기록하지 않는다
+        # 읽기만 한다 — 카카오 ID를 기록하지 않는다. 주소 없이도 매칭돼야 True(실제 구현과 같다, #815)
+        return [self.match_place(h) is not None and self.match_place(replace(h, address=None)) is not None for h in hints]
 
     def get_places(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceInfo]:
         out: dict[str, PlaceInfo] = {}
