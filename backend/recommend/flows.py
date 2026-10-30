@@ -329,9 +329,11 @@ def create_run(
     traces: list[uuid.UUID] = []   # ②를 부른 trace — run이 저장되지 못하면 버려진 비용으로 표시한다(#848)
 
     def create() -> RecommendRun:
-        run = _create_run(
-            db, map_id=map_id, category=category, requested_by=requested_by, evidence_planner=evidence_planner, traces=traces,
-        )
+        with llm_api.plan_deadline():   # create 시작에서 한 번 정한 deadline — ② 묶음 호출 전체가 30초 안에 끝난다(#848)
+            run = _create_run(
+                db, map_id=map_id, category=category, requested_by=requested_by, evidence_planner=evidence_planner,
+                traces=traces,
+            )
         if execute:   # #845, #847 — 근거 조립 뒤 같은 요청·같은 트랜잭션에서 첫 검색까지. 어디서 실패하든 run·횟수가 함께 되돌아간다
             assert place_search is not None and place_facts is not None   # 호출부(라우터) 계약
             service.lock_run(db, run.id)

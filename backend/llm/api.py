@@ -51,6 +51,7 @@ from llm.service import (
     agent_diagnose,
     fixed_diagnosis_planner,
     passthrough_planner,
+    plan_deadline,
     plan_evidence,
     real_course_turn_planner,
     real_diagnosis_planner,
@@ -66,7 +67,7 @@ __all__ = [
     "CourseTurn", "CourseTurnPlanner", "agent_course_turn", "real_course_turn_planner",
     "CourseGoalSet", "CourseGoalsPlanner", "course_set_goals", "fixed_course_goals_planner", "real_course_goals_planner",
     "CourseDirectTurn", "CourseDirectPlanner", "course_direct_turn", "real_course_direct_planner",
-    "usage_context", "mark_discarded", "anonymize_by_user", "reassign_user", "purge_old",
+    "usage_context", "mark_discarded", "plan_deadline", "anonymize_by_user", "reassign_user", "purge_old",
 ]
 
 usage_context = _usage.usage_context

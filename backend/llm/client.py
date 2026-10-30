@@ -125,7 +125,11 @@ def _record(
     )
 
 
-def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]]) -> PlanningOutput:
+PER_CALL_TIMEOUT_SECONDS = _TIMEOUT_SECONDS   # 호출 하나의 타임아웃(클라이언트 기본). 호출 쪽이 남은 시간으로 더 줄일 수 있다(#848)
+
+
+def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]], *, timeout: float | None = None) -> PlanningOutput:
+    """② 한 묶음 호출. timeout이 있으면 이 호출의 타임아웃을 그 값으로 줄인다(create 시간 상한의 남은 시간, #848) — 없으면 클라이언트 기본이다."""
     started = time.monotonic()
     try:
         completion = client.chat.completions.parse(
@@ -135,6 +139,7 @@ def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]]) -> PlanningO
                 {"role": "user", "content": _user_payload(reasons)},
             ],
             response_format=PlanningOutput,
+            **({} if timeout is None else {"timeout": timeout}),
         )
         message = completion.choices[0].message
     except Exception as exc:  # noqa: BLE001 — 예상 못 한 예외도 원인 타입만 남기고 같은 실패로 올린다
