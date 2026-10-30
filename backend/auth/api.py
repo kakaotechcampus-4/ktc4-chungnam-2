@@ -50,3 +50,11 @@ def purge_inactive_guests(db: Session, now: datetime, older_than_days: int = 90)
     from auth import service   # 지연 import — maps.service가 auth.api를 import해 순환이 된다
 
     return service.purge_inactive_guests(db, now=now, older_than_days=older_than_days)
+
+
+def purge_withdrawn_accounts(db: Session, now: datetime) -> int:
+    """복구 기간(7일)이 지난 탈퇴 계정의 개인정보를 정리한다(#855) — 로그인 수단 삭제, 이름·last_seen_at·게스트 토큰 비움.
+    users 행은 남는다. 정리한 수를 돌려준다. 멱등. 커밋하지 않는다. 호출은 maintenance 정리 러너(#857 3/3)."""
+    from auth import service   # 지연 import — maps.service가 auth.api를 import해 순환이 된다
+
+    return service.purge_withdrawn_accounts(db, now=now)

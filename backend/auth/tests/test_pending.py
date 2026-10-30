@@ -457,3 +457,74 @@ def test_choice_waiting_on_the_lock_is_rejected_if_the_period_ends_meanwhile(tes
 
     assert outcome == {"result": "NO_PENDING_LOGIN"}
     assert row_deleted_at is not None   # 되살려지지 않았다
+
+
+# ---- 정기 정리(purge_withdrawn_accounts) ----
+
+def _identity_count(db_session, user_id):
+    return db_session.query(UserIdentity).filter_by(user_id=user_id).count()
+
+
+def test_purge_withdrawn_accounts_wipes_only_accounts_past_the_period(db_session):
+    now = datetime.now(timezone.utc)
+    create_kakao_user(db_session, "past", provider_user_id="a", display_name="영희", last_seen_at=now, deleted_at=now - timedelta(days=7, hours=1))
+    create_kakao_user(db_session, "inside", provider_user_id="b", display_name="민수", deleted_at=now - timedelta(days=6, hours=23))
+    create_kakao_user(db_session, "alive", provider_user_id="c", display_name="철수")
+
+    assert service.purge_withdrawn_accounts(db_session, now=now) == 1
+
+    assert db_session.get(User, "past").display_name == core.WITHDRAWN_DISPLAY_NAME and _identity_count(db_session, "past") == 0
+    assert db_session.get(User, "inside").display_name == "민수" and _identity_count(db_session, "inside") == 1
+    assert db_session.get(User, "alive").display_name == "철수" and _identity_count(db_session, "alive") == 1
+
+
+def test_purge_withdrawn_accounts_is_idempotent_and_skips_already_purged(db_session):
+    now = datetime.now(timezone.utc)
+    create_kakao_user(db_session, "past", provider_user_id="a", deleted_at=now - timedelta(days=8))
+    create_kakao_user(db_session, "done", provider_user_id="d", deleted_at=now - timedelta(days=9))
+    service.purge_withdrawn_user(db_session, user_id="done")
+
+    assert service.purge_withdrawn_accounts(db_session, now=now) == 1
+    assert service.purge_withdrawn_accounts(db_session, now=now) == 0
+
+
+def test_purge_withdrawn_accounts_covers_withdrawn_guests(db_session):
+    now = datetime.now(timezone.utc)
+    create_guest(db_session, "g1", guest_invite_token="tok", last_seen_at=now, deleted_at=now - timedelta(days=8))
+
+    assert service.purge_withdrawn_accounts(db_session, now=now) == 1
+
+    row = db_session.get(User, "g1")
+    assert row.display_name == core.WITHDRAWN_DISPLAY_NAME and row.guest_invite_token is None and row.last_seen_at is None
+
+
+def test_purge_withdrawn_accounts_leaves_no_personal_data_in_users_or_identities(db_session):
+    now = datetime.now(timezone.utc)
+    create_kakao_user(db_session, "past", provider_user_id="kakao-secret-id", display_name="개인이름", deleted_at=now - timedelta(days=8))
+
+    service.purge_withdrawn_accounts(db_session, now=now)
+
+    rows = db_session.execute(select(User.display_name)).scalars().all()
+    assert "개인이름" not in rows
+    assert db_session.execute(select(UserIdentity).where(UserIdentity.provider_user_id == "kakao-secret-id")).first() is None
+
+
+def test_purged_account_can_not_be_chosen_any_more(db_session):
+    from common.errors import AppError
+
+    now = datetime.now(timezone.utc)
+    row = create_kakao_user(db_session, "past", provider_user_id="a", deleted_at=now - timedelta(days=8))
+    claims = core.PendingClaims("past", "kakao", core.deleted_at_stamp(row.deleted_at))
+    service.purge_withdrawn_accounts(db_session, now=now)
+
+    with pytest.raises(AppError) as exc:
+        service.restore_account(db_session, claims=claims)
+    assert exc.value.code == "NO_PENDING_LOGIN"
+
+
+def test_api_purge_withdrawn_accounts_delegates_to_the_service(db_session):
+    from auth import api as auth_api
+
+    now = datetime.now(timezone.utc)
+    create_kakao_user(db_session, "past", provider_user_id="a", deleted_at=now - timedelta(days=8))
+    assert auth_api.purge_withdrawn_accounts(db_session, now) == 1
