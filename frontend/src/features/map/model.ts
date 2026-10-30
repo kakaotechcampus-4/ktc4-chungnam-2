@@ -103,6 +103,8 @@ export type PinCardView = {
   meta: string
   counts: Record<ReactionType | 'unknown', number>
   mine: ReactionType | null
+  /** 확정 리스트에 든 핀. 카드에선 「의견 남기기」보다 먼저 보인다(#859). */
+  confirmed: boolean
 }
 
 /** 카드 한 장. 미확인(?)은 구성원 수에서 반응한 사람을 뺀 값이다. */
@@ -121,6 +123,7 @@ export function toPinCard(pin: Pin, memberCount: number, myId?: string): PinCard
       .join(' · '),
     counts: { ...s, unknown: Math.max(0, memberCount - participants(pin)) },
     mine: asReactionType(pin.my_reaction?.type),
+    confirmed: pin.kind === '확정',
   }
 }
 

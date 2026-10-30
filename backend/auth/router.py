@@ -48,7 +48,7 @@ def _set_session_cookie(response: Response, user_id: str) -> None:
         token,
         max_age=core.SESSION_TTL_SECONDS,
         httponly=True,
-        secure=settings.is_prod,  # dev(http://localhost)에서는 Secure 쿠키가 저장되지 않는다
+        secure=settings.cookie_secure,  # dev(http://localhost)에서는 Secure 쿠키가 저장되지 않는다(COOKIE_SECURE, #810)
         samesite="lax",
     )
 
@@ -81,7 +81,7 @@ def get_kakao_login(session: str | None = Cookie(default=None), db: Session = Db
         max_age=core.STATE_TTL_SECONDS,
         path=core.state_cookie_path(settings.kakao_redirect_uri),
         httponly=True,
-        secure=settings.is_prod,
+        secure=settings.cookie_secure,
         samesite="lax",   # 카카오에서 콜백으로 돌아오는 건 최상위 GET 이동이라 Lax 쿠키가 같이 온다
     )
     return redirect
@@ -156,7 +156,7 @@ def get_kakao_callback(
             max_age=core.PENDING_TTL_SECONDS,
             path=_pending_cookie_path(),
             httponly=True,
-            secure=settings.is_prod,
+            secure=settings.cookie_secure,
             samesite="lax",
         )
         return redirect

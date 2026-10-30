@@ -72,6 +72,11 @@ class RecommendRun(Base):
     # 이 값에서 파생되지만, 사람이 명시한 원이 생기면 그 원은 이 값과 무관하므로 따로 둔다.
     default_radius_walk_min: Mapped[int] = mapped_column(Integer, nullable=False, default=15, server_default="15")
     last_funnel: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # #845, #847 — 마지막 execute/widen/retry가 실제로 쓴 근거 줄의 스냅샷(줄 id·작성자·글·방향·badge·enforced·사유)과 새로 찾은
+    # 후보 수. 둘 다 파생값(다음 실행이 덮는다). 스냅샷에 작성자 id와 사용자 글이 들어가므로 탈퇴·지도 나가기 때 그 사람의 줄을
+    # 빼고(`service.delete_evidence_lines_by_author*`), 게스트 합치기는 작성자를 옮긴다(`service.reassign_user`).
+    applied_evidence: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    last_new_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # 지난 추천 기록(#469) — 마이그레이션 0028과 같다.

@@ -13,6 +13,8 @@ import { useMapEvents } from '@/features/map/realtime'
 import { usePinFilters } from '@/features/map/usePinFilters'
 import MapSwitcher from '@/features/maps/MapSwitcher'
 import { useMapQuery } from '@/features/maps/queries'
+import { useAiStore } from '@/features/recommend/aiStore'
+import { useResultQuery } from '@/features/recommend/queries'
 import { usePlaceSearchQuery } from '@/features/search/queries'
 import { toRouteDrawings } from '@/features/shortlist/model'
 import { useRouteQuery } from '@/features/shortlist/queries'
@@ -98,6 +100,38 @@ export default function MapLayout() {
     [found, search.selectedId],
   )
 
+  // AI 추천 탭에선 올리기 전 후보를 점선 핀으로 그린다(#843). 요청한 사람의 화면에만 있고 지도(핀 목록)는 바꾸지 않는다(가드레일 1).
+  // 올린 후보는 이미 핀으로 떠 있어서 빼고, 좌표가 없는 후보도 뺀다. 결과는 추천 탭과 같은 캐시를 본다.
+  const onRecommendTab = useMatch('/maps/:mapId/recommend') !== null
+  const run = useAiStore((s) => s.runs[mapId])
+  const result = useResultQuery(run?.status === 'done' ? run : undefined).data
+  const candidateFocus = useAiStore((s) => s.focus)
+  const candidates = useMemo(
+    () =>
+      onRecommendTab && run?.status === 'done'
+        ? (result?.candidates ?? []).flatMap((c) =>
+            c.visibility === 'published' || c.lat == null || c.lng == null
+              ? []
+              : [
+                  {
+                    id: c.id,
+                    rank: c.rank,
+                    name: c.place_name ?? '',
+                    lat: c.lat,
+                    lng: c.lng,
+                    selected: c.id === candidateFocus?.id,
+                    onClick: () => {
+                      useAiStore.getState().focusCandidate(c.id)
+                      // 접힌 패널에선 고른 카드를 볼 곳이 없다(넓은 화면).
+                      useSheetStore.getState().setPanelOpen(true)
+                    },
+                  },
+                ],
+          )
+        : [],
+    [onRecommendTab, run?.status, result, candidateFocus?.id],
+  )
+
   function submitSearch(e: React.FormEvent) {
     e.preventDefault()
     const q = searchText.trim()
@@ -129,9 +163,29 @@ export default function MapLayout() {
     setModalOpen(open)
   }
 
+  // 주소로 바로 연 핀(새로고침·공유 링크)은 지도가 뜬 뒤에야 옮길 수 있어서, 준비됐다는 걸 state 로도 둔다.
+  const [mapReady, setMapReady] = useState(false)
   const onMapReady = useCallback((c: MapController) => {
     controller.current = c
+    setMapReady(true)
   }, [])
+
+  // 핀을 고르면(?pin=) 지도가 그 핀으로 간다(#843). 목록·지도 핀·검색 결과·확정 탭 어디서 골랐든 여기 한 곳이다.
+  // 검색 결과·AI 후보는 핀이 아니라 아래 effect 가 같은 focusPin 을 부른다.
+  // 같은 핀으로 목록이 다시 와도(실시간·의견 등록) 다시 옮기지 않는다. 고르기를 풀면 지도는 그대로 둔다.
+  const focusedPinId = useRef<string | null>(null)
+  useEffect(() => {
+    if (!selectedPinId) {
+      focusedPinId.current = null
+      return
+    }
+    if (!mapReady || focusedPinId.current === selectedPinId) return
+    const pin = allPins.find((p) => p.id === selectedPinId)
+    // 자리가 아직 없는 핀(실시간 핀 해석 전)은 자리가 생기면 그때 옮긴다.
+    if (!pin || !isPlaced(pin)) return
+    focusedPinId.current = selectedPinId
+    controller.current?.focusPin(pin.lat, pin.lng)
+  }, [selectedPinId, allPins, mapReady])
 
   // 결과가 오면 결과 전체가, 하나를 고르면 그 장소가 보이게 지도를 옮긴다.
   useEffect(() => {
@@ -139,8 +193,19 @@ export default function MapLayout() {
   }, [found])
   useEffect(() => {
     const r = found?.find((f) => f.place_id === search.selectedId)
-    if (r) controller.current?.panTo(r.lat, r.lng)
+    if (r) controller.current?.focusPin(r.lat, r.lng)
   }, [found, search.selectedId])
+
+  // AI 후보를 고르면(카드·지도 점선 핀) 그 후보로 간다(#843). 올린 후보는 그 자리의 핀으로 간다.
+  // 결과를 다시 받아도 같은 선택이면 다시 옮기지 않는다.
+  const focusedCandidate = useRef<typeof candidateFocus>(null)
+  useEffect(() => {
+    if (!candidateFocus || !mapReady || focusedCandidate.current === candidateFocus) return
+    const c = result?.candidates.find((r) => r.id === candidateFocus.id)
+    if (c?.lat == null || c.lng == null) return
+    focusedCandidate.current = candidateFocus
+    controller.current?.focusPin(c.lat, c.lng)
+  }, [candidateFocus, result, mapReady])
 
   const onMovingChange = useCallback(
     (moving: boolean) => {
@@ -214,6 +279,7 @@ export default function MapLayout() {
         selectedPinId={selectedPinId}
         memberCount={memberCount}
         results={searchMarkers}
+        candidates={candidates}
         route={routeDrawings}
         // 확정 탭에서 누른 핀은 확정 탭 안에서 연다(「‹ 확정된 장소」로 돌아온다).
         onSelect={(pinId) => {

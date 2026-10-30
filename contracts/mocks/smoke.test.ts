@@ -134,6 +134,30 @@ describe("에러 시나리오", () => {
     expect(body.detail).toEqual({ limit: 10, used: 10 }); // 같은 글 1 + 4 + 5
   });
 
+  it("「+」 같은 글 재추가는 새 줄도, 글 수도 늘리지 않는다 — 뺐던 줄은 다시 켠다(#848)", async () => {
+    const run = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점" }) }).then((r) => r.json());
+    const patch = (body: object) => fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify(body) }).then((r) => r.json());
+    const first = await patch({ add: [{ text: "조용한 곳" }] });
+    const mine = first.filter((l: { text: string }) => l.text === "조용한 곳");
+    expect(mine).toHaveLength(1);
+    // 공백만 다른 같은 글 — 새 줄이 생기지 않는다
+    const again = await patch({ add: [{ text: "  조용한   곳 " }] });
+    expect(again.filter((l: { text: string }) => l.text.trim() === "조용한 곳" || l.text.replace(/\s+/g, " ").trim() === "조용한 곳")).toHaveLength(1);
+    expect(again).toHaveLength(first.length);
+    // 뺐다가 다시 추가하면 같은 줄이 다시 켜진다
+    await patch({ toggle: [{ id: mine[0].id, is_active: false }] });
+    const back = await patch({ add: [{ text: "조용한 곳" }] });
+    const line = back.find((l: { id: string }) => l.id === mine[0].id);
+    expect(line.is_active).toBe(true);
+    expect(back).toHaveLength(first.length);
+    // 글 수 상한에 세지 않는다: 재추가를 여러 번 해도 새 글 10개를 더 추가할 수 있다(이미 1개 + 9개)
+    for (let i = 0; i < 12; i++) await patch({ add: [{ text: "조용한 곳" }] });
+    const nine = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify({ add: ["a", "b", "c", "d", "e"].map((text) => ({ text })) }) });
+    expect(nine.status).toBe(200);
+    const more = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify({ add: ["f", "g", "h", "i"].map((text) => ({ text })) }) });
+    expect(more.status).toBe(200);
+  });
+
   it("no-results — 결과 0개는 404 NO_RESULTS", async () => {
     resetScenario("no-results");
     const res = await fetch(`${BASE}/runs/run_no_results/result`);
@@ -817,6 +841,24 @@ describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
     const over = await post(`/runs/${runId}/widen`);
     expect(over.status).toBe(409);
     expect((await over.json()).code).toBe("WIDEN_LIMIT");
+  });
+});
+
+describe("#902 — GET /places/external-search (장소 검색 결과 없음의 카카오맵 링크)", () => {
+  const ext = (q: string) => fetch(`${BASE}/places/external-search?q=${encodeURIComponent(q)}`);
+
+  it("사용자가 친 검색어 그대로 카카오맵 검색 링크를 만든다", async () => {
+    const res = await ext("  성수 칼국수 & 수제비 ");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      query: "성수 칼국수 & 수제비",
+      url: "https://map.kakao.com/link/search/" + encodeURIComponent("성수 칼국수 & 수제비"),
+    });
+  });
+
+  it("검색어가 비었거나 50자를 넘으면 422", async () => {
+    expect((await ext("   ")).status).toBe(422);
+    expect((await ext("가".repeat(51))).status).toBe(422);
   });
 });
 

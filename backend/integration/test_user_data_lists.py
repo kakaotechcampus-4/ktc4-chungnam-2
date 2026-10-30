@@ -17,6 +17,8 @@
 이 테스트가 못 보는 것: JSONB 안의 사용자 id. pins.member_fulfillment와 candidates.member_fulfillment의 by_member[].user_id는
 게시 시점의 충족 집계 사본이고 게스트 합치기에서 옮기지 않는다(2026-10-24 확인). 집계를 게시 뒤에 다시 계산하게 바뀌거나 by_member를
 화면이 사람 식별에 쓰기 시작하면 다시 본다.
+recommend_runs.applied_evidence(#847)의 작성자 id는 JSONB지만 탈퇴·나가기는 그 사람 줄을 빼고 합치기는 작성자를 옮긴다
+(recommend/tests/test_first_run_847.py가 본다).
 """
 
 import importlib

@@ -95,6 +95,23 @@ def test_idempotency_key_header_returns_the_same_run_and_rejects_a_short_key(app
     assert third.json()["id"] != first.json()["id"]
 
 
+def test_post_run_with_execute_returns_a_done_run_and_the_result_carries_the_snapshot(app_client, db_session):
+    """#845·#847 — execute: true는 근거 조립 뒤 곧바로 첫 검색까지 한 요청에서 끝낸다(202, status done). 결과(또는 0건의 NO_RESULTS
+    detail)에 이번에 쓴 근거 스냅샷과 조건 0개 고지가 있다. execute를 생략하면 지금까지처럼 collecting_evidence다."""
+    _seed_ready_map(db_session)
+    legacy = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth())
+    assert legacy.status_code == 202 and legacy.json()["status"] == "collecting_evidence"
+
+    created = app_client.post("/maps/map_1/runs", json={"category": "음식점", "execute": True}, cookies=_auth())
+    assert created.status_code == 202 and created.json()["status"] == "done"
+    result = app_client.get(f"/runs/{created.json()['id']}/result", cookies=_auth())
+    body = result.json()["detail"] if result.status_code == 404 else result.json()
+    assert result.status_code in (200, 404)
+    assert body["applied_evidence"] == [] and body["no_applied_conditions"] is True   # ♥만 있어 사유 근거가 없다
+    if result.status_code == 200:
+        assert body["new_count"] == len(body["candidates"])
+
+
 def test_widen_returns_run_with_default_radius_and_409_at_limit(app_client, db_session):
     _seed_ready_map(db_session)
     created = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth()).json()

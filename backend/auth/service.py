@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import delete, exists, func, select, text, update
+from sqlalchemy import and_, delete, exists, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -320,6 +320,46 @@ def purge_withdrawn_user(db: Session, *, user_id: str) -> None:
         )
     )
     db.expire_all()   # 벌크 UPDATE·DELETE는 이미 읽은 행을 갱신하지 않는다
+
+
+def purge_withdrawn_accounts(db: Session, *, now: datetime, limit: int = core.WITHDRAWN_PURGE_BATCH) -> int:
+    """복구 기간(7일)이 지난 탈퇴 계정 중 아직 개인정보가 남은 것을 정리하고(purge_withdrawn_user) 정리한 수를 돌려준다(#855).
+    개인정보가 남았다는 건 로그인 수단이 있거나, 이름이 「탈퇴한 구성원」이 아니거나, last_seen_at·guest_invite_token이 남았다는 뜻이라
+    이미 정리된 껍데기는 건너뛴다 — 여러 번 돌려도 같은 결과다. 게스트도 같다.
+
+    한 번에 limit개까지만 읽고 처리한다 — 계정마다 로그인 수단의 advisory 잠금(콜백·선택과 같은 잠금)을 트랜잭션 끝까지 쥐므로
+    대량이면 잠금이 쌓인다. 정리된 계정은 다음 실행의 후보에서 빠지므로 나머지는 다음 실행이 이어 처리한다. 잠금을 잡고 다시 읽어
+    그 사이 되살려졌거나 다른 실행이 먼저 정리한 계정(개인정보가 이미 없다)은 건너뛰고 세지 않는다. 커밋하지 않는다."""
+    cutoff = now - timedelta(days=core.ACCOUNT_RESTORE_DAYS)
+    due = and_(
+        User.deleted_at.is_not(None), User.deleted_at <= cutoff,
+        or_(
+            exists().where(UserIdentity.user_id == User.id),
+            User.display_name != core.WITHDRAWN_DISPLAY_NAME,
+            User.last_seen_at.is_not(None),
+            User.guest_invite_token.is_not(None),
+        ),
+    )
+    candidates = db.execute(select(User.id).where(due).order_by(User.id).limit(limit)).scalars().all()
+    purged = 0
+    for user_id in candidates:
+        identities = db.execute(
+            select(UserIdentity.provider, UserIdentity.provider_user_id).where(UserIdentity.user_id == user_id)
+            .order_by(UserIdentity.provider, UserIdentity.provider_user_id)
+        ).all()
+        for provider, provider_user_id in identities:
+            _lock_login_identity(db, provider=provider, provider_user_id=provider_user_id)
+        # 잠금 뒤 같은 조건으로 다시 읽는다 — 그 사이 복구·정리됐으면 행이 나오지 않는다
+        still_due = db.execute(
+            select(User.id).where(User.id == user_id, due).execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if still_due is None:
+            continue
+        purge_withdrawn_user(db, user_id=user_id)
+        purged += 1
+    if purged:
+        logger.info("withdrawn accounts purged: count=%d", purged)   # 건수만 — 식별자·이름은 남기지 않는다
+    return purged
 
 
 def _pending_target(db: Session, claims: core.PendingClaims, *, lock: bool) -> tuple[User, datetime]:
