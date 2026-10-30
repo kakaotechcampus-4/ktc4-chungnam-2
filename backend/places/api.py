@@ -284,7 +284,7 @@ def get_facts(place_ids: Sequence[str], *, db: Session | None = None) -> dict[st
 
 
 def get_hours(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceHours]:
-    """place_hours를 배치로 조회한다(#690). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용. 판정은 places.core.is_open_on."""
+    """place_hours를 배치로 조회한다(#690). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용. 요일 단위 판정은 get_week_open_status."""
     with _session(db) as s:
         return repository.get_hours(s, place_ids)
 
@@ -297,6 +297,17 @@ def week_open_status(hours: dict | None, closed_days: list[str] | None) -> dict[
 def get_week_open_status(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, dict[int, str]]:
     """place_hours를 한 번에 읽어 장소별 요일 판정을 돌려준다(#747). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용."""
     return {pid: core.week_open_status(h.hours, h.closed_days) for pid, h in get_hours(place_ids, db=db).items()}
+
+
+def open_status_on_weekdays(hours: dict | None, closed_days: list[str] | None, weekdays: Sequence[int]) -> str:
+    """여러 요일(여행 기간 등)에서의 영업 여부(#747) — "closed"(모든 요일이 closed) | "open"(하나라도 open) | "unknown".
+    DB 없이 원본 hours·closed_days를 읽는 쪽이 쓴다. weekdays는 0=월 … 6=일(date.weekday()). 요일별 규칙은 week_open_status와 같다."""
+    return core.open_status_on_weekdays(core.week_open_status(hours, closed_days), weekdays)
+
+
+def get_open_status_on_weekdays(place_ids: Sequence[str], weekdays: Sequence[int], *, db: Session | None = None) -> dict[str, str]:
+    """장소별 open_status_on_weekdays를 place_hours 한 번 조회로(#747). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용."""
+    return {pid: core.open_status_on_weekdays(week, weekdays) for pid, week in get_week_open_status(place_ids, db=db).items()}
 
 
 # ---- 지도 링크 해석 (POST /places/from-link, #474) ----

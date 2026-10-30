@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Mapping, Sequence
 from urllib.parse import quote
 
 
@@ -22,6 +23,8 @@ def parse_minutes(clock: str) -> int:
 
 def is_open_on(hours: dict | None, closed_days: list[str] | None, weekday: int, minutes: int) -> str:
     """그 요일·시각에 영업 중인가 → "open" | "closed" | "unknown". docs/constraints.md「영업 중 판정」.
+    시각 단위 판정이다 — 지금 운영 코드는 요일 단위(day_open_status)만 쓰고, 시간 배정이 없는 v1은 이 함수를 부르지 않는다. 요일 단위와
+    closed_days의 읽기가 다르다(여기서 closed_days에 없으면 모름, day_open_status는 영업).
 
     weekday는 0=월 … 6=일, minutes는 자정부터의 분(0~1439). hours는 {"월": [["11:00","21:00"]], …}, 빈 목록 = 휴무.
     - hours가 있으면 오늘 구간 안(시작 <= t < 끝)이거나 어제 구간 중 24:00을 넘는 꼬리 안이면 open, 아니면 closed.
@@ -66,6 +69,17 @@ def day_open_status(hours: dict | None, closed_days: list[str] | None, weekday: 
 def week_open_status(hours: dict | None, closed_days: list[str] | None) -> dict[int, str]:
     """7요일 전부의 day_open_status → {0..6: 상태}."""
     return {d: day_open_status(hours, closed_days, d) for d in range(7)}
+
+
+def open_status_on_weekdays(week_status: Mapping[int, str] | None, weekdays: Sequence[int]) -> str:
+    """여러 요일(여행 기간 등)에서의 영업 여부 → "closed"(모든 요일이 closed) | "open"(하나라도 open) | "unknown"(그 밖).
+    week_status는 week_open_status의 결과. 상태가 없거나 요일이 없으면 모름 (#747)."""
+    if not weekdays or not week_status:
+        return "unknown"
+    statuses = [week_status.get(d, "unknown") for d in weekdays]
+    if all(s == "closed" for s in statuses):
+        return "closed"
+    return "open" if "open" in statuses else "unknown"
 
 
 # ---------------------------------------------------------------- 동네와 카카오맵 검색 링크 (#798, #799)

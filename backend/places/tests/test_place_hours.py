@@ -342,3 +342,33 @@ def test_get_week_open_status_omits_places_without_a_row(db_session, tmp_path):
     assert set(got) == {r1}
     assert got[r1][0] == "closed" and got[r1][1] == "open"
     assert api.get_week_open_status([], db=db_session) == {}
+
+
+# ---- 여러 요일의 영업 여부 (#747) ----
+
+@pytest.mark.parametrize("hours, closed_days, weekdays, expected", [
+    (_week(월=[["09:00", "18:00"]]), None, [0], "open"),
+    (_week(월=[["09:00", "18:00"]]), None, [1, 2], "closed"),          # 쓰인 요일은 모두 닫았다
+    (_week(월=[["09:00", "18:00"]]), None, [0, 1, 2], "open"),         # 하나라도 열면 open
+    (None, ["월"], [0], "closed"),
+    (None, ["월"], [0, 1], "open"),                                    # 휴무가 아닌 요일은 영업
+    (None, None, [0, 1], "unknown"),                                   # 칸이 비어 있다
+    (None, ["월"], [], "unknown"),                                     # 요일이 없으면 모름
+])
+def test_open_status_on_weekdays_pure_rule(hours, closed_days, weekdays, expected):
+    assert api.open_status_on_weekdays(hours, closed_days, weekdays) == expected
+
+
+def test_open_status_on_weekdays_unknown_days_do_not_count_as_closed():
+    assert core.open_status_on_weekdays({0: "closed", 1: "unknown"}, [0, 1]) == "unknown"
+    assert core.open_status_on_weekdays({0: "closed"}, [0, 3]) == "unknown"   # 상태에 없는 요일은 모름
+    assert core.open_status_on_weekdays(None, [0]) == "unknown"
+
+
+def test_get_open_status_on_weekdays_omits_places_without_a_row(db_session, tmp_path):
+    _seed(db_session, ("permit", "R1"), ("permit", "R2"))
+    load.load_place_hours(db_session, _write(tmp_path, [_entry("rest_R1", {"closed_days": ["월"]})]))
+    r1, r2 = _pid(db_session, "permit", "R1"), _pid(db_session, "permit", "R2")
+    assert api.get_open_status_on_weekdays([r1, r2], [0], db=db_session) == {r1: "closed"}
+    assert api.get_open_status_on_weekdays([r1], [0, 1], db=db_session) == {r1: "open"}
+    assert api.get_open_status_on_weekdays([], [0], db=db_session) == {}
