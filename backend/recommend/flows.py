@@ -445,6 +445,15 @@ def _check_manual_evidence_limit(db: Session, run_id: uuid.UUID, *, adding: int)
         raise AppError("EVIDENCE_LIMIT", detail={"limit": core.MANUAL_EVIDENCE_LIMIT, "used": used})
 
 
+def _manual_texts_by_author(db: Session, run_id: uuid.UUID, author_id: str) -> dict[str, list]:
+    """이 run에서 이 사람이 「+」로 쓴 글(정규화한 글 → 그 글의 줄들, ×로 뺀 줄 포함). 같은 글 재추가의 멱등 판정(#848)이 쓴다.
+    글 하나에 조건이 여럿이면 줄이 여럿이다(#419)."""
+    by_text: dict[str, list] = {}
+    for line in service.list_manual_lines_by_author(db, run_id, author_id):
+        by_text.setdefault(core.normalize_manual_text(line.text), []).append(line)
+    return by_text
+
+
 def patch_evidence(
     db: Session, *, run_id: str, principal: Principal,
     toggles: list[tuple[str, bool]], adds: list[str], evidence_planner: EvidencePlanGateway,
@@ -468,8 +477,13 @@ def patch_evidence(
     # 부르기 전에 거절한다. 횟수는 retry의 상한 검사와 같은 값(그 요청자가 이 지도에서 만든 모든 run의 최댓값)이다.
     if validated or adds:
         core.check_retry_limit(service.max_attempt_no_for_requester(db, map_id=run_map_id, requested_by=run_requested_by))
-    # 한 요청 안의 같은 글은 하나로 줄인다 — 상한은 (글, 요청)으로 세므로 반복한 글이 ②에만 여러 번 들어가지 않게(#707).
-    adds = list(dict.fromkeys(adds))
+    # 한 요청 안의 같은 글은 하나로 줄인다(공백만 다른 글도 같은 글) — 상한은 (글, 요청)으로 세므로 반복한 글이 ②에만 여러 번
+    # 들어가지 않게(#707). 같은 run에서 같은 사람이 이미 쓴 글(×로 뺀 것 포함)을 다시 보내면 새 줄도 모델 호출도 글 수 상한도 없이
+    # 그 줄을 그대로 돌려주고 뺀 줄이면 다시 켠다(#848). 다른 사람의 같은 글은 별개의 줄이다. 모델에는 새 글만 보낸다.
+    requested = list(dict.fromkeys(core.normalize_manual_text(text) for text in adds))
+    already = _manual_texts_by_author(db, run_uuid, principal.user_id)
+    repeated = [text for text in requested if text in already]
+    adds = [text for text in requested if text not in already]
     # 「+」 상한(#707)은 모델을 부르기 전에 본다 — 넘는 요청은 ②를 부르지 않는다.
     if adds:
         _check_manual_evidence_limit(db, run_uuid, adding=len(adds))
@@ -484,7 +498,7 @@ def patch_evidence(
                 {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "preferred", "fact_key": None}
                 for text in adds
             ])
-    if validated or adds:
+    if validated or adds or repeated:
         # 위 검사들은 잠금 없이 끝났다(모델을 기다리는 동안 트랜잭션을 잡지 않는다). 같은 run에 동시에 온 요청이 함께 상한을 넘지
         # 않게 run 행을 잠그고 다시 센다 — 이때 걸리면 모델은 이미 불렸지만 줄은 남지 않는다(멘토 리뷰 #380: 여러 행에 걸친 상한).
         # 횟수 상한도 저장 직전에 다시 검사한다 — 위 검사(모델 앞)와 쓰기 사이에 같은 요청자의 retry·다른 run 생성이 10회째를 커밋했을 수
@@ -492,16 +506,24 @@ def patch_evidence(
         service.lock_run(db, run_uuid)
         service.lock_requester_attempts(db, map_id=run_map_id, requested_by=run_requested_by)
         core.check_retry_limit(service.max_attempt_no_for_requester(db, map_id=run_map_id, requested_by=run_requested_by))
-    if adds:
-        _check_manual_evidence_limit(db, run_uuid, adding=len(adds))
+    # 잠근 뒤 다시 읽는다 — 모델을 기다리는 사이 같은 글이 다른 요청(연타·재전송)으로 이미 저장됐을 수 있다. 그 글은 새 줄을 더하지 않고
+    # 그 줄을 쓴다(모델 결과는 버린다).
+    already = _manual_texts_by_author(db, run_uuid, principal.user_id)
+    planned_by_text = dict(zip(adds, planned)) if adds else {}
+    to_add = [text for text in adds if text not in already]
+    if to_add:
+        _check_manual_evidence_limit(db, run_uuid, adding=len(to_add))
     for line_id, is_active in validated:
         service.set_evidence_active(db, line_id, is_active)
-    if adds:
-        for text, group in zip(adds, planned):
-            for line in group:
-                service.add_manual_evidence(
-                    db, run_id=run_uuid, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
-                )
+    for text in [*repeated, *(text for text in adds if text in already)]:   # 뺐던 줄이면 다시 켠다
+        for line in already[text]:
+            if not line.is_active:
+                service.set_evidence_active(db, line.id, True)
+    for text in to_add:
+        for line in planned_by_text[text]:
+            service.add_manual_evidence(
+                db, run_id=run_uuid, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
+            )
     return _evidence_responses(db, run, principal)
 
 

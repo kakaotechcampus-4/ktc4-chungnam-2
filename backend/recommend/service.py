@@ -256,6 +256,16 @@ def add_manual_evidence(
     return line
 
 
+def list_manual_lines_by_author(db: Session, run_id: uuid.UUID, author_id: str) -> list[EvidenceLine]:
+    """이 run에서 이 사람이 「+」로 추가한 줄 전부 — ×로 뺀 줄도 포함한다(같은 글 재추가의 멱등 판정, #848)."""
+    return list(db.execute(
+        select(EvidenceLine)
+        .where(EvidenceLine.run_id == run_id, EvidenceLine.author_id == author_id, EvidenceLine.source == "manual")
+        .order_by(EvidenceLine.created_at, EvidenceLine.seq)
+        .execution_options(populate_existing=True)   # 잠근 뒤 다시 읽을 때 다른 요청이 바꾼 is_active를 본다
+    ).scalars().all())
+
+
 def count_manual_entries(db: Session, run_id: uuid.UUID) -> int:
     """이 run에 「+」로 추가한 글 수(#707) — ×로 뺀 줄도 센다. 글 하나에 조건이 여럿이면 줄이 여럿이라(#419)
     (text, created_at)으로 묶어 센다. created_at은 트랜잭션 시작 시각이라 한 요청에서 넣은 줄은 모두 같다 — 이 전제가
