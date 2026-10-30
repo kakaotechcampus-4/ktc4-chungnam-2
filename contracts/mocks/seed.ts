@@ -119,6 +119,8 @@ export function buildBaseState(): StoreState {
     regions: {},
     runs: {},
     runRequestedBy: {},
+    appliedEvidence: {},
+    lastNewCount: {},
     candidates: {},
     shortlist: { [mapId]: [] },
     routes: {},

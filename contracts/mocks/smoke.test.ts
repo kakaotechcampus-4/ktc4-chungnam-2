@@ -143,6 +143,9 @@ describe("에러 시나리오", () => {
     expect(body.detail.funnel.length).toBeGreaterThan(0);
     expect(body.detail.funnel.map((f: { label: string }) => f.label)).toContain("추천 가능 아님 제거");
     expect(body.detail.external_search.url).toMatch(/^https:\/\/map\.kakao\.com\/link\/search\//); // #798
+    // #845 — 후보가 하나도 없는 결과에도 이번에 쓴 근거가 실린다(0건일 때 「이 조건으로 찾았어요」를 보일 자리)
+    expect(Array.isArray(body.detail.applied_evidence)).toBe(true);
+    expect(typeof body.detail.no_applied_conditions).toBe("boolean");
   });
 
   it("retry-limit — 10회 초과 시 429 RETRY_LIMIT(detail에 attempt_limit)", async () => {
@@ -1333,5 +1336,86 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
     expect(res.status).toBe(429);
     expect((await res.json()).detail).toEqual({ limit: 5, used: 5 });
+  });
+});
+
+describe("#845 — 추천 흐름: 근거 확인 없이 결과 먼저", () => {
+  const post = (path: string, body?: unknown) => fetch(`${BASE}${path}`, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
+  const create = (execute?: boolean) => post("/maps/map_1/runs", { category: "음식점", ...(execute === undefined ? {} : { execute }) }).then((r) => r.json());
+
+  it("execute: true면 근거를 모은 뒤 곧바로 첫 검색까지 해서 done run을 돌려주고, 결과에 쓴 근거 스냅샷이 있다", async () => {
+    const run = await create(true);
+    expect(run.status).toBe("done");
+    const result = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(result.applied_evidence.length).toBeGreaterThan(0);
+    expect(result.applied_evidence.every((l: { is_active: boolean }) => l.is_active)).toBe(true);
+    expect(result.no_applied_conditions).toBe(false);
+    expect(result.new_count).toBe(result.candidates.length);
+  });
+
+  it("execute를 생략하면 지금처럼 collecting_evidence로 두고, 결과는 아직 없다(409 RUN_NOT_FINISHED)", async () => {
+    const run = await create();
+    expect(run.status).toBe("collecting_evidence");
+    const res = await fetch(`${BASE}/runs/${run.id}/result`);
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("RUN_NOT_FINISHED");
+  });
+
+  it("고친 근거는 retry가 반영하고, 이미 보인 결과의 스냅샷은 retry 전까지 그대로다(모델 호출 없이 횟수 +1)", async () => {
+    const run = await create(true);
+    const lines: { id: string; is_active: boolean; permissions: { can_disable: boolean } }[] = await fetch(`${BASE}/runs/${run.id}/evidence`).then((r) => r.json());
+    const mine = lines.find((l) => l.permissions.can_disable)!;
+    const patched = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify({ toggle: [{ id: mine.id, is_active: false }] }) });
+    expect(patched.status).toBe(200);
+    const before = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(before.applied_evidence.some((l: { id: string }) => l.id === mine.id)).toBe(true); // 고쳤지만 아직 적용 전
+    const retried = await post(`/runs/${run.id}/retry`).then((r) => r.json());
+    expect(retried.attempt_no).toBe(2);
+    const after = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(after.applied_evidence.some((l: { id: string }) => l.id === mine.id)).toBe(false);
+  });
+
+  it("추천 횟수를 다 쓰면 근거 수정(×·＋)은 429 RETRY_LIMIT이고, 조회는 된다", async () => {
+    const run = await create(true);
+    for (let n = 1; n < 10; n++) expect((await post(`/runs/${run.id}/retry`)).status).toBe(202);
+    expect((await post(`/runs/${run.id}/retry`)).status).toBe(429);
+    const lines: { id: string }[] = await fetch(`${BASE}/runs/${run.id}/evidence`).then((r) => r.json());
+    for (const body of [{ toggle: [{ id: lines[0].id, is_active: false }] }, { add: [{ text: "조용했으면 좋겠어요" }] }]) {
+      const res = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify(body) });
+      expect(res.status).toBe(429);
+      expect((await res.json()).code).toBe("RETRY_LIMIT");
+    }
+    expect((await fetch(`${BASE}/runs/${run.id}/evidence`)).status).toBe(200);
+    expect((await fetch(`${BASE}/runs/${run.id}/result`)).status).toBe(200);
+  });
+
+  it("횟수는 요청자·지도 단위다 — 다른 run에서 10회를 다 썼으면 과거 run의 근거도 429 RETRY_LIMIT", async () => {
+    const older = await create(true); // 이 run의 attempt_no는 낮지만
+    const other = await create(true);
+    for (let n = 1; n < 10; n++) expect((await post(`/runs/${other.id}/retry`)).status).toBe(202);
+    const lines: { id: string }[] = await fetch(`${BASE}/runs/${older.id}/evidence`).then((r) => r.json());
+    for (const body of [{ toggle: [{ id: lines[0].id, is_active: false }] }, { add: [{ text: "조용했으면 좋겠어요" }] }]) {
+      const res = await fetch(`${BASE}/runs/${older.id}/evidence`, { method: "PATCH", body: JSON.stringify(body) });
+      expect(res.status).toBe(429);
+      expect((await res.json()).code).toBe("RETRY_LIMIT");
+    }
+  });
+
+  it("이미 지도에 올린 후보는 retry 뒤에도 남고, new_count는 마지막 실행이 새로 찾은 수라 게시해도 바뀌지 않는다", async () => {
+    const run = await create(true);
+    const first = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    const found = first.new_count; // 첫 실행이 찾은 수
+    expect(found).toBe(first.candidates.length);
+    const published = first.candidates[0];
+    expect((await post(`/candidates/${published.id}/publish`)).status).toBeLessThan(300);
+    const sameRun = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(sameRun.new_count).toBe(found); // 게시해도 「이번 실행이 새로 찾은 수」는 그대로 — 「다 올려서 남은 게 없음」과 「이번 검색 0건」을 가른다
+    await post(`/runs/${run.id}/retry`);
+    const after = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    const names: string[] = after.candidates.map((c: { place_name: string }) => c.place_name);
+    expect(names.filter((n) => n === published.place_name)).toHaveLength(1); // 올린 장소는 새 후보로 다시 나오지 않는다
+    expect(after.candidates.find((c: { id: string }) => c.id === published.id)?.visibility).toBe("published"); // 같은 후보가 그대로 남는다
+    expect(after.new_count).toBe(after.candidates.length - 1); // 이번 실행이 새로 찾은 수 = 올린 1곳을 뺀 나머지
+    expect(after.new_count).toBeLessThan(after.candidates.length);
   });
 });

@@ -95,6 +95,8 @@ export interface StoreState {
   regions: Record<string, Region[]>; // runId -> regions
   runs: Record<string, RecommendRun>; // runId -> run
   runRequestedBy: Record<string, string>; // runId -> user_id (run 요청자 기록)
+  appliedEvidence: Record<string, unknown[]>; // runId -> 마지막 실행이 실제로 쓴 근거 줄(#845 스냅샷)
+  lastNewCount: Record<string, number>; // runId -> 마지막 실행이 새로 찾은 후보 수(#845, 그 뒤 게시해도 안 바뀐다)
   candidates: Record<string, Candidate[]>; // runId -> candidates
   shortlist: Record<string, ShortlistItem[]>; // mapId -> items
   routes: Record<string, Route[]>; // mapId -> 마지막으로 계산된 동선 (#30, POST로만 갱신)
@@ -125,6 +127,8 @@ function emptyState(): StoreState {
     regions: {},
     runs: {},
     runRequestedBy: {},
+    appliedEvidence: {},
+    lastNewCount: {},
     candidates: {},
     shortlist: {},
     routes: {},
