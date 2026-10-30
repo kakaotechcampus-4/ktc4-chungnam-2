@@ -388,26 +388,46 @@ def _nearest_stmt(lat: float, lng: float, category: str | None, radius_m: float,
     return stmt
 
 
-def search_open_by_query(db: Session, query: str, near: tuple[float, float] | None, limit: int, offset: int = 0) -> list[NearestRow]:
-    """장소 검색(#822): 영업 중 장소 중 이름이 검색어를 품은 곳 → 주소가 품은 곳 순.
-    각 묶음 안은 정예 먼저, 좌표가 있으면 가까운 순, 없으면 이름순(같으면 id). 좌표는 정렬에만 쓰고 남기지 않는다.
+REGION_RADIUS_M = 30_000.0   # 장소 검색의 지역 구역(#835) — 지도 중심에서 이 안이 먼저다. 값은 docs/api-spec.yaml /places/search 정렬 규칙
+_NAME_NO_PAREN = r"[(\[（][^)\]）]*[)\]）]"
+_NAME_NON_WORD = r"[^0-9a-zA-Z가-힣]"
+
+
+def search_open_by_query(
+    db: Session, query: str, near: tuple[float, float] | None, limit: int, offset: int = 0, zone: str = "all",
+) -> list[NearestRow]:
+    """장소 검색(#822, #835): 이름 또는 주소가 검색어를 품은 영업 중 장소. 순서는 이름 일치 정도(완전 > 앞부분 > 부분 > 주소만,
+    괄호·공백·기호 무시) → 가까운 순(좌표가 없으면 정예 먼저, 이름순) → 정예 먼저 → id. 좌표는 정렬에만 쓰고 남기지 않는다.
+    zone: near는 지도 중심에서 REGION_RADIUS_M 안(GiST로 먼저 거른다), far는 그 밖, all은 구분 없음. near 없이 near/far를 주면 빈 결과.
     offset으로 이어 읽을 수 있다 — 정렬이 전 순서라 페이지가 겹치거나 빠지지 않는다."""
     needle = query.strip()
-    if not needle or limit <= 0:
+    if not needle or limit <= 0 or (zone != "all" and near is None):
         return []
     escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     pattern = f"%{escaped}%"
     in_name = Place.name.ilike(pattern, escape="\\")
     in_address = Place.address.ilike(pattern, escape="\\")
+    norm_name = func.lower(func.regexp_replace(func.regexp_replace(Place.name, _NAME_NO_PAREN, "", "g"), _NAME_NON_WORD, "", "g"))
+    nq = matching.normalize_name(needle)   # 숫자·영문·한글만 남아 LIKE 와일드카드가 없다
+    if nq:
+        rank = case((norm_name == nq, 0), (norm_name.like(f"{nq}%"), 1), (in_name, 2), else_=3)
+    else:
+        rank = case((in_name, 2), else_=3)   # 검색어가 기호뿐이면 정규화 비교를 못 한다
     p_lat, p_lng = _lat_lng()
-    order = [case((in_name, 0), else_=1), Place.curated.desc()]
-    order += [func.ST_Distance(Place.geom, _geog(*near))] if near else [Place.name.collate("C")]
+    where = [Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES), or_(in_name, in_address)]
+    if near is not None:
+        within = func.ST_DWithin(Place.geom, _geog(*near), REGION_RADIUS_M)
+        if zone == "near":
+            where.append(within)
+        elif zone == "far":
+            where.append(~within)
+    if near is not None:
+        order = [rank, func.ST_Distance(Place.geom, _geog(*near)), Place.curated.desc()]
+    else:
+        order = [rank, Place.curated.desc(), Place.name.collate("C")]
     stmt = (
         select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng, Place.kakao_place_id)
-        .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES), or_(in_name, in_address))
-        .order_by(*order, Place.id)
-        .limit(limit)
-        .offset(offset)
+        .where(*where).order_by(*order, Place.id).limit(limit).offset(offset)
     )
     return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng, r.kakao_place_id) for r in db.execute(stmt).all()]
 

@@ -170,15 +170,19 @@ _SEARCH_MAX_PAGES = 5   # pick_match가 거절한 곳이 많아도 limit을 채�
 
 
 def search_own_for_query(query: str, near: tuple[float, float] | None, limit: int, *, db: Session | None = None) -> list[OwnSearchHit]:
-    """장소 검색(#822)의 자체 DB 몫: 이름·주소가 검색어와 맞는 영업 중 장소(이름 일치 → 주소 일치, 각 안에서 정예 먼저,
-    좌표가 있으면 가까운 순). 핀으로 만들 수 있는 곳만 pinnable=True로 최대 limit곳. 핀 가능한 곳이 limit개 모이거나
-    후보가 바닥날 때까지(최대 _SEARCH_MAX_PAGES 페이지) 이어 읽는다. 카카오 값을 쓰지 않는다. 읽기 전용."""
+    """장소 검색(#822, #835)의 자체 DB 몫. 좌표가 있으면 지역 구역(30km 안)을 먼저 채우고 limit에 못 미칠 때만 먼 구역으로 잇는다.
+    각 구역 안의 순서는 repository.search_open_by_query(이름 일치 정도 → 가까운 순 → 정예). 핀으로 만들 수 있는 곳만 pinnable=True로
+    최대 limit곳. 구역마다 핀 가능한 곳이 모이거나 후보가 바닥날 때까지(최대 _SEARCH_MAX_PAGES 페이지) 이어 읽는다.
+    카카오 값을 쓰지 않는다. 읽기 전용."""
     hits: list[OwnSearchHit] = []
     with _session(db) as s:
-        for page in range(_SEARCH_MAX_PAGES):
-            rows = repository.search_open_by_query(s, query, near, limit, offset=page * limit)
-            hits += [OwnSearchHit(_to_search_result(r), r.kakao_place_id) for r in _pinnable_rows(s, rows)]
-            if len(hits) >= limit or len(rows) < limit:
+        for zone in ("near", "far") if near else ("all",):
+            for page in range(_SEARCH_MAX_PAGES):
+                rows = repository.search_open_by_query(s, query, near, limit, offset=page * limit, zone=zone)
+                hits += [OwnSearchHit(_to_search_result(r), r.kakao_place_id) for r in _pinnable_rows(s, rows)]
+                if len(hits) >= limit or len(rows) < limit:
+                    break
+            if len(hits) >= limit:
                 break
     return hits[:limit]
 
