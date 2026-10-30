@@ -15,6 +15,6 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # DuckDNS 주소 갱신 — 서버에 고정 IP(Elastic IP)를 붙여 두어 쓰지 않는다. 고정 IP를 떼면 다시 켠다
 # */5 * * * * /srv/pingo/deploy/duckdns.sh >> /srv/pingo/logs/duckdns.log 2>&1
 
-# 에이전트 관찰 tick — python -m agent.tick이 생기면(#812) 켜고, env의 AGENT_LOOP_IN_PROCESS를 지운다
-# */5 * * * * /srv/pingo/deploy/run.sh prod python -m agent.tick >> /srv/pingo/logs/agent-tick-prod.log 2>&1
-# */5 * * * * /srv/pingo/deploy/run.sh staging python -m agent.tick >> /srv/pingo/logs/agent-tick-staging.log 2>&1
+# 에이전트 관찰 tick(#812) — 지도마다 lease와 token으로 잡아 두 번 겹쳐 돌아도 안전하다. env에 AGENT_LOOP_IN_PROCESS를 두지 않는다
+*/5 * * * * /srv/pingo/deploy/run.sh prod python -m agent.tick >> /srv/pingo/logs/agent-tick-prod.log 2>&1
+*/5 * * * * /srv/pingo/deploy/run.sh staging python -m agent.tick >> /srv/pingo/logs/agent-tick-staging.log 2>&1
