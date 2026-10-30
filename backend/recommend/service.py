@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from sqlalchemy import delete, func, select, text, tuple_, update
+from sqlalchemy import and_, delete, func, or_, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -143,13 +143,22 @@ def release_idempotency_key(db: Session, *, reservation_id: uuid.UUID, generatio
     )
 
 
+def _expired_idempotency_keys(now: datetime):
+    """24시간이 지난 키 행의 조건(#811). run이 연결된 행은 만든 지 24시간(created_at), 연결되지 않은 예약(run_id NULL)은
+    현재 세대의 예약 시각(started_at — 이어받을 때 갱신된다)이 24시간 지난 것이다. 진행 중인 예약과 최근에 이어받은 예약은
+    started_at이 최근이라 지워지지 않는다. 예약만 커밋하고 프로세스가 죽어 run이 영영 안 이어진 행이 남아 그 키가 24시간
+    뒤에도 IDEMPOTENCY_CONFLICT를 내는 일을 막는다."""
+    cutoff = now - core.IDEMPOTENCY_RETENTION
+    return or_(
+        and_(IdempotencyKey.run_id.is_not(None), IdempotencyKey.created_at < cutoff),
+        and_(IdempotencyKey.run_id.is_(None), IdempotencyKey.started_at < cutoff),
+    )
+
+
 def purge_idempotency_keys(db: Session, *, now: datetime) -> int:
-    """24시간이 지난 키 행을 지운다(maintenance) — run_id가 있는 행만. 진행 중인 예약(run_id NULL)은 건드리지 않는다."""
-    return db.execute(
-        delete(IdempotencyKey).where(
-            IdempotencyKey.run_id.is_not(None), IdempotencyKey.created_at < now - core.IDEMPOTENCY_RETENTION,
-        )
-    ).rowcount
+    """24시간이 지난 키 행을 지운다(maintenance). run이 연결된 행과 오래 방치된 미완료 예약을 지운다(조건은
+    `_expired_idempotency_keys`)."""
+    return db.execute(delete(IdempotencyKey).where(_expired_idempotency_keys(now))).rowcount
 
 
 def get_run_or_404(db: Session, run_id: str) -> RecommendRun:
@@ -437,7 +446,7 @@ def latest_run_place_ids(db: Session, *, map_id: str, requested_by: str, categor
     return set(db.execute(select(Candidate.place_id).where(Candidate.run_id.in_(latest))).scalars())
 
 
-def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+def purge_map_data(db: Session, *, map_ids: list[str], now: datetime | None = None) -> dict[str, int]:
     """지도 정리(#431) — 이 지도들의 추천 기록을 지운다. 테이블 이름 → 지운 행 수. 자식(근거 줄·후보·지역·
     제외·멱등 키)부터 지우고 run을 마지막에 지운다(전부 recommend_runs를 참조, 후보는 지역도 참조해서 지역보다 먼저)."""
     names = ["evidence_lines", "candidates", "regions", "exclusions", "idempotency_keys", "recommend_runs"]
@@ -449,8 +458,11 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
         "candidates": db.execute(delete(Candidate).where(Candidate.run_id.in_(run_ids))).rowcount,
         "regions": db.execute(delete(Region).where(Region.run_id.in_(run_ids))).rowcount,
         "exclusions": db.execute(delete(Exclusion).where(Exclusion.map_id.in_(map_ids))).rowcount,
-        # run이 연결된 키 행(#811) — FK가 cascade여도 여기서 명시한다. run이 아직 없는 예약(NULL)은 지도 정보가 없어 남고 24시간 안에 만료된다.
-        "idempotency_keys": db.execute(delete(IdempotencyKey).where(IdempotencyKey.run_id.in_(run_ids))).rowcount,
+        # 키 행(#811): 이 지도 run에 연결된 것(FK가 cascade여도 여기서 명시한다)과, 지도 정보가 없는 미완료 예약(run_id NULL)
+        # 중 24시간이 지난 것. 최근·진행 중인 예약은 maintenance의 기준(`_expired_idempotency_keys`)과 같아서 남는다.
+        "idempotency_keys": db.execute(delete(IdempotencyKey).where(or_(
+            IdempotencyKey.run_id.in_(run_ids), and_(IdempotencyKey.run_id.is_(None), _expired_idempotency_keys(now or datetime.now(timezone.utc))),
+        ))).rowcount,
         "recommend_runs": db.execute(delete(RecommendRun).where(RecommendRun.map_id.in_(map_ids))).rowcount,
     }
 

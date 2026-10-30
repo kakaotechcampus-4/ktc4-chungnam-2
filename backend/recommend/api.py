@@ -180,6 +180,6 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
 
 
 def purge_idempotency_keys(db: Session, *, now: datetime) -> int:
-    """maintenance가 부른다 — 24시간이 지난 「추천 받기」 멱등 키 행(run이 연결된 것만)을 지우고 지운 수를 돌려준다(#811).
-    커밋하지 않는다."""
+    """maintenance가 부른다 — 24시간이 지난 「추천 받기」 멱등 키 행(run이 연결된 것, 그리고 24시간 넘게 이어받지 않은
+    미완료 예약)을 지우고 지운 수를 돌려준다(#811). 진행 중인 예약은 남는다. 커밋하지 않는다."""
     return service.purge_idempotency_keys(db, now=now)

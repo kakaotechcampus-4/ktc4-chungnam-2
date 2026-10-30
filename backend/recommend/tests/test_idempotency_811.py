@@ -234,23 +234,34 @@ def test_no_key_keeps_the_old_behavior(env):
 
 # ---------- 정리·합치기 ----------
 
-def test_purge_removes_only_old_rows_that_have_a_run(env):
+def test_purge_removes_old_linked_rows_and_abandoned_reservations_but_keeps_live_ones(env):
+    """24시간 기준: run이 연결된 행은 created_at, 미완료 예약(run_id NULL)은 started_at. 오래 방치된 예약은 지우고(그 키가
+    영영 IDEMPOTENCY_CONFLICT를 내지 않게), 진행 중이거나 최근에 이어받은 예약은 남긴다."""
     Session, create = env
     planner = _Planner()
     create(planner, map_id="idem_map_j", key="key-purge-old")
     create(planner, map_id="idem_map_j", key="key-purge-new")
-    old = datetime.now(timezone.utc) - core.IDEMPOTENCY_RETENTION - timedelta(hours=1)
+    now = datetime.now(timezone.utc)
+    old = now - core.IDEMPOTENCY_RETENTION - timedelta(hours=1)
+
+    def pending(key, *, created_at, started_at):
+        return IdempotencyKey(requested_by=USER, scope=core.IDEMPOTENCY_SCOPE, key=key, request_hash="h",
+                              created_at=created_at, started_at=started_at)
+
     with Session() as db:
-        db.add(IdempotencyKey(requested_by=USER, scope=core.IDEMPOTENCY_SCOPE, key="key-pending-old", request_hash="h",
-                              created_at=old))   # 진행 중(run_id NULL)인 옛 예약은 남긴다
+        db.add_all([
+            pending("key-pending-old", created_at=old, started_at=old),            # 방치된 예약 — 지운다
+            pending("key-pending-live", created_at=now, started_at=now),            # 진행 중 — 남긴다
+            pending("key-pending-taken", created_at=old, started_at=now),           # 오래전 만들었지만 최근 이어받음 — 남긴다
+        ])
         db.execute(update(IdempotencyKey).where(IdempotencyKey.key == "key-purge-old").values(created_at=old))
         db.commit()
     with Session() as db:
-        assert api.purge_idempotency_keys(db, now=datetime.now(timezone.utc)) == 1
+        assert api.purge_idempotency_keys(db, now=now) == 2
         db.commit()
     with Session() as db:
         keys = set(db.execute(select(IdempotencyKey.key).where(IdempotencyKey.requested_by == USER)).scalars())
-    assert keys == {"key-purge-new", "key-pending-old"}
+    assert keys == {"key-purge-new", "key-pending-live", "key-pending-taken"}
 
 
 def test_reassign_user_moves_keys_and_drops_overlapping_ones(env):
@@ -270,28 +281,58 @@ def test_reassign_user_moves_keys_and_drops_overlapping_ones(env):
     assert sorted(tuple(r) for r in rows) == [(USER, "key-only-from"), (USER, "key-shared-01")]
 
 
-def test_purge_map_data_removes_keys_linked_to_the_maps_runs_but_keeps_others(env):
-    """지도 정리(#431)는 그 지도 run에 연결된 키 행을 지운다 — 다른 지도의 키와 아직 run이 없는 예약은 남는다."""
+def test_purge_map_data_removes_linked_keys_and_expired_reservations_but_keeps_live_ones(env):
+    """지도 정리(#431)는 그 지도 run에 연결된 키 행과, maintenance와 같은 기준으로 만료된 미완료 예약을 지운다 — 다른 지도의 키와
+    진행 중인 예약은 남는다."""
     Session, create = env
     planner = _Planner()
     create(planner, map_id="idem_map_k", key="key-purge-map1")
     create(planner, map_id="idem_map_l", key="key-purge-map2")
+    now = datetime.now(timezone.utc)
+    old = now - core.IDEMPOTENCY_RETENTION - timedelta(hours=1)
     with Session() as db:
-        db.add(IdempotencyKey(requested_by=USER, scope=core.IDEMPOTENCY_SCOPE, key="key-pending-01", request_hash="h"))
+        db.add_all([
+            IdempotencyKey(requested_by=USER, scope=core.IDEMPOTENCY_SCOPE, key="key-pending-01", request_hash="h"),
+            IdempotencyKey(requested_by=USER, scope=core.IDEMPOTENCY_SCOPE, key="key-pending-02", request_hash="h",
+                           created_at=old, started_at=old),
+        ])
         db.commit()
     with Session() as db:
         removed = service.purge_map_data(db, map_ids=["idem_map_k"])
         db.commit()
-    assert removed["idempotency_keys"] == 1 and removed["recommend_runs"] == 1
+    assert removed["idempotency_keys"] == 2 and removed["recommend_runs"] == 1
     with Session() as db:
         keys = set(db.execute(select(IdempotencyKey.key).where(IdempotencyKey.requested_by == USER)).scalars())
     assert keys == {"key-purge-map2", "key-pending-01"}
 
 
-def test_withdraw_keeps_keys_and_the_lists_name_recommend_in_both_steps():
-    """탈퇴는 키 행을 그대로 둔다(models.IdempotencyKey 설명) — 근거 줄만 지운다. recommend는 탈퇴·합치기 목록에 모두 있다."""
+def test_withdraw_keeps_completed_keys_and_pending_reservations(db_session):
+    """탈퇴는 키 행을 그대로 둔다(models.IdempotencyKey 설명) — 실제 탈퇴 흐름을 돌려도 완료된 키와 미완료 예약이 남는다.
+    근거 줄은 지워진다(같은 흐름의 recommend 단계). recommend는 탈퇴·합치기 목록에 모두 있다."""
     from auth import service as auth_service
+    from auth.testing import create_kakao_user
 
+    create_kakao_user(db_session, "idem_withdrawer")
+    run = RecommendRun(map_id="idem_map_w", category="음식점", requested_by="idem_withdrawer", status="done")
+    db_session.add(run)
+    db_session.flush()
+    db_session.add(EvidenceLineRow(run_id=run.id, author_id="idem_withdrawer", source="reaction", text="글", badge="required"))
+    db_session.add_all([
+        IdempotencyKey(requested_by="idem_withdrawer", scope=core.IDEMPOTENCY_SCOPE, key="key-done-0001",
+                       request_hash="h", run_id=run.id),
+        IdempotencyKey(requested_by="idem_withdrawer", scope=core.IDEMPOTENCY_SCOPE, key="key-pending-w1", request_hash="h"),
+    ])
+    db_session.flush()
+
+    auth_service.withdraw_user(db_session, user_id="idem_withdrawer")
+
+    keys = set(db_session.execute(
+        select(IdempotencyKey.key).where(IdempotencyKey.requested_by == "idem_withdrawer")).scalars())
+    assert keys == {"key-done-0001", "key-pending-w1"}
+    assert _count_in(db_session, EvidenceLineRow, EvidenceLineRow.author_id == "idem_withdrawer") == 0
     assert "recommend" in {name for name, _ in auth_service.WITHDRAW_STEPS}
     assert "recommend" in {name for name, _ in auth_service.MERGE_STEPS}
-    assert not hasattr(api, "delete_idempotency_keys_by_user")   # 지우기로 바꾸면 탈퇴 목록과 이 테스트를 함께 고친다
+
+
+def _count_in(db, model, *conditions):
+    return db.execute(select(func.count()).select_from(model).where(*conditions)).scalar_one()
