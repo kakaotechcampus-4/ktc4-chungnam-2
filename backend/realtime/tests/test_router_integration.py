@@ -119,3 +119,100 @@ async def test_private_events_never_leaks_other_users_row(db_session):
     finally:
         await emitter
         await agen.aclose()
+
+
+class _Alive:
+    async def is_disconnected(self) -> bool:
+        return False
+
+
+def _put(map_id, row):
+    for sub in dispatcher._subscribers.get(map_id, []):
+        if sub.wants(row):
+            sub.queue.put_nowait(row)
+
+
+@pytest.mark.asyncio
+async def test_ping_is_sent_without_id_when_idle(monkeypatch):
+    monkeypatch.setattr(router_module, "PING_INTERVAL", 0.05)
+    response = await public_events(request=_Alive(), mapId="ping-map", user=CurrentUser(user_id="user-a"), last_event_id=None)
+    agen = response.body_iterator
+    try:
+        for _ in range(2):   # 간격마다 반복해서 나온다
+            chunk = await asyncio.wait_for(agen.__anext__(), timeout=1)
+            assert chunk == 'event: control\ndata: {"type": "ping"}\n\n'
+            assert "id:" not in chunk
+    finally:
+        await agen.aclose()
+    assert "ping-map" not in dispatcher._subscribers
+
+
+@pytest.mark.asyncio
+async def test_ping_is_not_mixed_into_replay(db_session, monkeypatch):
+    monkeypatch.setattr(router_module, "PING_INTERVAL", 60.0)
+    old = EventLog(map_id="ping-replay", channel="public", type="pin.created", payload={"n": 1})
+    db_session.add(old)
+    db_session.flush()
+    response = await public_events(request=_Alive(), mapId="ping-replay", user=CurrentUser(user_id="user-a"), last_event_id=str(old.seq - 1))
+    agen = response.body_iterator
+    try:
+        chunk = await asyncio.wait_for(agen.__anext__(), timeout=1)
+        assert f"id: {old.seq}\n" in chunk and "ping" not in chunk
+        # 재전송이 끝난 뒤에는 이벤트가 없으니 다음 청크는 (긴 간격 동안) 나오지 않는다.
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(agen.__anext__(), timeout=0.2)
+    finally:
+        await agen.aclose()
+
+
+@pytest.mark.asyncio
+async def test_event_between_pings_is_delivered_and_not_lost(monkeypatch):
+    monkeypatch.setattr(router_module, "PING_INTERVAL", 0.05)
+    response = await public_events(request=_Alive(), mapId="ping-live", user=CurrentUser(user_id="user-a"), last_event_id=None)
+    agen = response.body_iterator
+    try:
+        first = await asyncio.wait_for(agen.__anext__(), timeout=1)
+        assert "ping" in first
+        # 타임아웃 경계 근처로 여러 건을 연달아 넣는다 — 하나도 빠지면 안 된다.
+        for n in range(5):
+            _put("ping-live", EventLog(map_id="ping-live", channel="public", type="pin.reacted", payload={"n": n}))
+            await asyncio.sleep(0.05)
+        got = []
+        while len(got) < 5:
+            chunk = await asyncio.wait_for(agen.__anext__(), timeout=1)
+            if "ping" not in chunk:
+                got.append(chunk)
+        assert [f'"n": {n}' in c for n, c in enumerate(got)] == [True] * 5
+    finally:
+        await agen.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["public", "private"])
+async def test_closed_subscription_ends_ping_loop(monkeypatch, channel):
+    monkeypatch.setattr(router_module, "PING_INTERVAL", 0.05)
+    if channel == "public":
+        response = await public_events(request=_Alive(), mapId="ping-close", user=CurrentUser(user_id="user-a"), last_event_id=None)
+    else:
+        response = await private_events(
+            request=_Alive(), mapId="ping-close", user=CurrentUser(user_id="user-a"), last_event_id=None
+        )
+    agen = response.body_iterator
+    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
+    dispatcher.close_subscriptions()
+    try:
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(agen.__anext__(), timeout=1)
+    finally:
+        dispatcher.finish_shutdown()
+    assert "ping-close" not in dispatcher._subscribers
+
+
+@pytest.mark.asyncio
+async def test_disconnect_while_waiting_ends_ping_loop(monkeypatch):
+    monkeypatch.setattr(router_module, "PING_INTERVAL", 0.05)
+    response = await public_events(request=_FakeRequest(), mapId="ping-dc", user=CurrentUser(user_id="user-a"), last_event_id=None)
+    agen = response.body_iterator
+    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
+    with pytest.raises(StopAsyncIteration):   # 다음 반복의 is_disconnected()가 True
+        await asyncio.wait_for(agen.__anext__(), timeout=1)
