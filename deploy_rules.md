@@ -87,6 +87,12 @@
 - **환경 변수를 바꿀 때**: 서버의 `deploy/env/<환경>.env`를 고치고 그 환경을 다시 올린다. 새 키를 더한 PR은 `backend/.env.example`과 `deploy/env/*.env.example`을 같이 고친다. 값은 저장소나 채팅에 남기지 않는다.
 - 이번 배포에 아래 「데이터가 바뀔 때」 단계가 있는지 확인한다. 마이그레이션 head는 하나여야 하고 CI(backend-test)가 확인한다.
 
+## DB 연결 수
+
+API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 설정은 `common/settings.py`의 `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_PRE_PING`, `DB_POOL_RECYCLE_S`, #810). 기본은 풀 5 + 넘침 10, `pool_pre_ping`은 켬이다. 풀은 1 이상, 넘침은 0 이상, 재활용은 -1 또는 1 이상만 받고 그 밖은 기동에서 막는다(0 이하는 SQLAlchemy에서 연결 무제한이다). 이 계산이 DB의 `max_connections`를 넘지 않게 맞춘다.
+
+`환경 2 × 프로세스 1 × (풀 + 넘침) + 작업 여유 ≤ DB max_connections` — 서버 안 DB는 `max_connections`가 60이라 2 × 1 × 15 = 30에 정리·백업·psql 작업 여유가 들어간다. 프로세스(워커)를 늘리면 곱하는 수가 늘어나니 풀 값을 같이 줄인다. RDS는 인스턴스 크기에 따른 `max_connections`를 확인하고 같은 식으로 센다.
+
 ## 스키마를 바꿀 때
 
 운영은 이전 태그로 돌아갈 수 있어야 한다. 그래서 테이블 변경은 이전 버전의 코드도 새 스키마에서 돌게 나눠서 한다(expand/contract, 멘토).
@@ -155,8 +161,8 @@
 ## 배포 전에 정할 것
 
 - `event_log` 오래된 행 삭제: 읽기는 24시간으로 자르지만(`realtime.service.RETENTION`) 지우는 작업은 아직 없다. `created_at` 인덱스는 삭제용으로 있다. 정기 정리(`maintenance.run`)에 단계로 넣을지 정한다.
-- 세션 쿠키의 `Secure`는 prod에서만 붙는다(`settings.is_prod`). 로컬 http로 하네스를 돌리려고 staging은 붙이지 않는다. https 스테이징을 배포하면 staging도 붙일지 정한다(#168, #788).
-- prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`만 본다. 카카오 키(`KAKAO_CLIENT_ID/SECRET/REDIRECT_URI`)와 `ELICE_ML_API_KEY`가 비어도 서버가 뜨고 첫 호출에서야 실패한다. 가드에 넣을지 정한다(#168).
+- 세션 쿠키의 `Secure`는 설정 `COOKIE_SECURE`가 정한다(#810). 기본은 staging, prod에서 켬이고 dev, test에서 끔이다. 아직은 설정 정의만 끝났다. 실제 쿠키에 Secure를 거는 일(`settings.cookie_secure` 사용)은 auth 후속이고, 그때 응답의 `Set-Cookie`도 검증한다. 로컬 http로 staging을 띄워 하네스를 돌릴 때만 `COOKIE_SECURE=0`으로 끈다. 배포된 서버의 env에는 적지 않는다.
+- staging, prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`에 더해 `PLACES_MODE=real`이면 카카오 키(`KAKAO_CLIENT_ID/SECRET/REDIRECT_URI`), `LLM_MODE=real`이면 `ELICE_ML_API_BASE_URL`, `ELICE_ML_API_KEY`가 비었을 때 서버를 세운다(#810).
 - `/places/nearest`의 쿼리스트링(누른 좌표)은 uvicorn 접근 로그에서만 가린다(`places/logguard.py`). 앞단 Caddy는 접근 로그를 켜지 않는다(`deploy/Caddyfile`, #473). 켜야 하면 쿼리스트링을 지우는 형식으로 켠다.
 - 비로그인 `GET /invites/{token}`에는 호출 상한이 없다. 토큰이 256비트라 추측은 비현실적이지만, 넣을지 정한다(#168).
 - 개발 중 로컬 DB에 쌓인 카카오 좌표와 이름은 배포 전에 지운다(`docs/architecture.md`, #53). 배포 DB를 로컬 DB에서 복사하지 않는다.
