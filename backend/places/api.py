@@ -166,19 +166,37 @@ class OwnSearchHit:
     kakao_place_id: str | None
 
 
+TIER_NAME_PREFIX, TIER_NAME_PART, TIER_REST = repository.TIER_NAME_PREFIX, repository.TIER_NAME_PART, repository.TIER_REST
 _SEARCH_MAX_PAGES = 5   # pick_match가 거절한 곳이 많아도 limit을 채우려 이어 읽는 최대 페이지 수(페이지 크기 = limit)
 
 
+_Stage = tuple[int, tuple[float | None, float | None], float | None]   # (계층, 거리 띠, 계층 3에서 뺄 부분 일치 반경)
+
+
+def _search_stages(near: tuple[float, float] | None) -> list[_Stage]:
+    """계약의 순서(docs/api-spec.yaml /places/search 정렬 규칙)를 그대로 내는 읽기 순서.
+    좌표가 있으면 지역 구역(30km 안)의 모든 계층이 먼 구역보다 먼저다. 계층 2(부분 일치)는 가까운 순이라 가까운 띠(3km)를 먼저 읽고
+    모자랄 때만 다음으로 가도 결과가 같다(가까운 띠의 장소가 어차피 더 앞이다). 다음은 계층 3 한 번으로 부분 일치(3km 밖)와
+    주소 일치를 일치 정도 순으로 얻는다 — 비싼 전체 훑기를 구역마다 한 번만 한다. 계층 1은 인덱스라 띠를 나누지 않는다."""
+    if near is None:
+        return [(TIER_NAME_PREFIX, (None, None), None), (TIER_REST, (None, None), None)]
+    close, region = repository.NEAR_RADIUS_M, repository.REGION_RADIUS_M
+    return [
+        (TIER_NAME_PREFIX, (None, region), None), (TIER_NAME_PART, (None, close), None), (TIER_REST, (None, region), close),
+        (TIER_NAME_PREFIX, (region, None), None), (TIER_REST, (region, None), None),
+    ]
+
+
 def search_own_for_query(query: str, near: tuple[float, float] | None, limit: int, *, db: Session | None = None) -> list[OwnSearchHit]:
-    """장소 검색(#822, #835)의 자체 DB 몫. 좌표가 있으면 지역 구역(30km 안)을 먼저 채우고 limit에 못 미칠 때만 먼 구역으로 잇는다.
-    각 구역 안의 순서는 repository.search_open_by_query(이름 일치 정도 → 가까운 순 → 정예). 핀으로 만들 수 있는 곳만 pinnable=True로
-    최대 limit곳. 구역마다 핀 가능한 곳이 모이거나 후보가 바닥날 때까지(최대 _SEARCH_MAX_PAGES 페이지) 이어 읽는다.
+    """장소 검색(#822, #835)의 자체 DB 몫. 이름 일치 정도 계층(완전·앞부분 > 부분 > 주소만) 순으로, 좌표가 있으면 지역 구역(30km 안)을
+    먼저, 먼 구역은 limit에 못 미칠 때만 읽는다(_search_stages). 각 단계 안은 가까운 순 → 정예. 핀으로 만들 수 있는 곳만
+    pinnable=True로 최대 limit곳. 단계마다 핀 가능한 곳이 모이거나 후보가 바닥날 때까지(최대 _SEARCH_MAX_PAGES 페이지) 이어 읽는다.
     카카오 값을 쓰지 않는다. 읽기 전용."""
     hits: list[OwnSearchHit] = []
     with _session(db) as s:
-        for zone in ("near", "far") if near else ("all",):
+        for tier, band, skip in _search_stages(near):
             for page in range(_SEARCH_MAX_PAGES):
-                rows = repository.search_open_by_query(s, query, near, limit, offset=page * limit, zone=zone)
+                rows = repository.search_open_by_query(s, query, near, limit, offset=page * limit, tier=tier, band=band, skip_part_within=skip)
                 hits += [OwnSearchHit(_to_search_result(r), r.kakao_place_id) for r in _pinnable_rows(s, rows)]
                 if len(hits) >= limit or len(rows) < limit:
                     break
