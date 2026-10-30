@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import exists, func, select, text, update
+from sqlalchemy import delete, exists, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -111,11 +111,45 @@ def _find_user(db: Session, *, provider: str, provider_user_id: str) -> User | N
     ).scalar_one_or_none()
 
 
-def _reject_if_withdrawn(row: User) -> User:
-    if row.deleted_at is not None:
-        # 탈퇴한 계정으로 재로그인 — 되살리지 않고 막는다(docs/data-model.md auth 절, #409).
-        raise AppError("UNAUTHORIZED", "탈퇴한 계정입니다")
-    return row
+class WithdrawnAccountPending(Exception):
+    """로그인하려는 카카오 계정이 복구 기간(7일) 안의 탈퇴 계정에 붙어 있다(#855). 세션을 만들지 않고 사용자에게
+    「새 계정으로 시작 / 기존 계정 되살리기」를 고르게 한다 — 콜백이 이 예외를 받아 선택 대기 쿠키를 내린다.
+    오류가 아니라 정상 분기라 AppError가 아니다(콜백의 일반 실패 처리에 걸리지 않게)."""
+
+    def __init__(self, user: User, provider: str):
+        super().__init__("withdrawn account pending")   # 식별자·이름은 메시지에 넣지 않는다
+        self.user = user
+        self.provider = provider
+
+
+def _lock_login_identity(db: Session, *, provider: str, provider_user_id: str) -> None:
+    """같은 로그인 수단으로 들어온 로그인·선택·정리를 한 줄로 세운다(트랜잭션 끝까지). 잠근 뒤에 다시 읽어야 한다."""
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"login_identity:{provider}:{provider_user_id}"})
+
+
+def _find_user_fresh(db: Session, *, provider: str, provider_user_id: str) -> User | None:
+    """_find_user와 같되 이미 읽어 둔 행을 DB 값으로 갱신한다 — 잠금을 기다리는 동안 다른 요청이 바꾼 상태를 본다."""
+    return db.execute(
+        select(User).join(UserIdentity, UserIdentity.user_id == User.id)
+        .where(UserIdentity.provider == provider, UserIdentity.provider_user_id == provider_user_id)
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+
+
+def _settle_withdrawn(db: Session, row: User, *, provider: str, provider_user_id: str) -> User | None:
+    """로그인 수단에 탈퇴한 사용자가 붙어 있을 때(#855). 복구 기간 안이면 WithdrawnAccountPending, 기간이 지났는데 아직
+    정리되지 않았으면 그 자리에서 정리한다(정리 작업의 실행 시각과 무관하게 지금 시각으로 판정한다). 정리했거나 이미
+    정리돼 수단이 없으면 None — 호출부가 새 계정으로 진행한다. 잠금을 기다리는 사이 되살려졌으면 그 사용자."""
+    _lock_login_identity(db, provider=provider, provider_user_id=provider_user_id)
+    current = _find_user_fresh(db, provider=provider, provider_user_id=provider_user_id)
+    if current is None:
+        return None
+    if current.deleted_at is None:
+        return current
+    if core.is_restorable(current.deleted_at, datetime.now(timezone.utc)):
+        raise WithdrawnAccountPending(current, provider)
+    purge_withdrawn_user(db, user_id=current.id)
+    return None
 
 
 def _is_identity_conflict(exc: IntegrityError) -> bool:
@@ -124,7 +158,8 @@ def _is_identity_conflict(exc: IntegrityError) -> bool:
 
 
 def find_or_create_user(db: Session, *, provider: str, provider_user_id: str, display_name: str) -> User:
-    """로그인 수단으로 사용자를 찾고, 없으면 사용자와 수단을 한 세이브포인트에서 함께 만든다(#694).
+    """로그인 수단으로 사용자를 찾고, 없으면 사용자와 수단을 한 세이브포인트에서 함께 만든다(#694). 탈퇴한 사용자면
+    복구 기간 안은 WithdrawnAccountPending, 기간이 지났으면 정리하고 새로 만든다(#855).
 
     같은 카카오 계정의 첫 로그인이 동시에 두 번 들어오면 둘 다 "없다"고 보고 INSERT한다 —
     유일 제약(IDENTITY_CONSTRAINT)이 계정 분열은 막지만, 나중 요청의 위반을 안 잡으면
@@ -134,7 +169,11 @@ def find_or_create_user(db: Session, *, provider: str, provider_user_id: str, di
     함께 만든 users 행도 사라진다. 오류 코드와 제약 이름을 함께 확인해서 다른 무결성 오류는 삼키지 않는다."""
     row = _find_user(db, provider=provider, provider_user_id=provider_user_id)
     if row is not None:
-        return _reject_if_withdrawn(row)
+        if row.deleted_at is None:
+            return row
+        settled = _settle_withdrawn(db, row, provider=provider, provider_user_id=provider_user_id)
+        if settled is not None:
+            return settled
     row = User(display_name=display_name)
     try:
         with db.begin_nested():
@@ -146,7 +185,11 @@ def find_or_create_user(db: Session, *, provider: str, provider_user_id: str, di
         if _is_identity_conflict(exc):
             existing = _find_user(db, provider=provider, provider_user_id=provider_user_id)
             if existing is not None:
-                return _reject_if_withdrawn(existing)
+                if existing.deleted_at is None:
+                    return existing
+                settled = _settle_withdrawn(db, existing, provider=provider, provider_user_id=provider_user_id)
+                if settled is not None:
+                    return settled
         raise
     return row
 
@@ -218,7 +261,8 @@ WITHDRAW_STEPS = (
 
 def withdraw_user(db: Session, *, user_id: str) -> User:
     """탈퇴 처리(12절, #155) — users 행은 soft delete, 그 사람의 반응·근거 줄은 삭제하고 피드백은 작성자 연결만 끊는다(#10).
-    로그인 수단(user_identities)은 지우지 않는다 — 같은 카카오 계정의 재로그인을 막는 근거다(#409).
+    로그인 수단(user_identities)은 복구 기간(7일) 동안 지우지 않는다 — 같은 카카오 계정의 재로그인을 탈퇴 계정으로
+    알아보는 근거다(#855). 7일 뒤 정리(purge_withdrawn_user)가 지운다.
 
     반응·근거 줄·멤버십은 다른 모듈 테이블이라 각 모듈의 공개 함수(api.py)로만 바꾼다(WITHDRAW_STEPS). 핀·확정 리스트
     항목은 남고, 작성자 표시는 auth.api.display_names가 "탈퇴한 구성원"으로 내려준다.
@@ -230,7 +274,9 @@ def withdraw_user(db: Session, *, user_id: str) -> User:
     row = get_active_user_or_401(db, user_id=user_id)
     for _, step in WITHDRAW_STEPS:
         step(db, user_id, map_ids)
-    row.deleted_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    row.deleted_at = now
+    row.sessions_valid_after = now   # 탈퇴 전에 복사된 세션 토큰이 복구 뒤에 되살아나지 않게(#855)
     db.flush()
     return row
 
@@ -251,6 +297,87 @@ def join_as_guest(db: Session, *, display_name: str, invite_token: str) -> tuple
     db.add(row)
     db.flush()
     return row, maps_api.accept_invite(db, token=invite_token, user_id=row.id)
+
+
+def purge_withdrawn_user(db: Session, *, user_id: str) -> None:
+    """탈퇴한 계정의 개인정보를 지운다(#855) — 로그인 수단 삭제, 표시 이름을 「탈퇴한 구성원」으로, last_seen_at·
+    guest_invite_token 비움. users 행은 남긴다(다른 모듈의 created_by가 이 id를 가리킨다). 멱등이다.
+    다른 모듈에 복사된 이름의 비식별화는 따로 부른다(데이터 모델 「탈퇴 후 7일 정리 대상」). 커밋하지 않는다."""
+    withdrawn = select(User.id).where(User.id == user_id, User.deleted_at.is_not(None))   # 살아 있는 계정은 건드리지 않는다
+    db.execute(delete(UserIdentity).where(UserIdentity.user_id.in_(withdrawn)))
+    db.execute(
+        update(User).where(User.id.in_(withdrawn)).values(
+            display_name=core.WITHDRAWN_DISPLAY_NAME, last_seen_at=None, guest_invite_token=None,
+        )
+    )
+    db.expire_all()   # 벌크 UPDATE·DELETE는 이미 읽은 행을 갱신하지 않는다
+
+
+def _pending_target(db: Session, claims: core.PendingClaims, *, now: datetime, lock: bool) -> tuple[User, UserIdentity]:
+    """선택 대기 쿠키가 지금도 이 한 번의 선택에 해당하는지 서버 상태와 대조한다 — 사용자가 탈퇴 상태이고, 탈퇴 시각이
+    쿠키와 같고, 로그인 수단이 아직 붙어 있고, 복구 기간 안이다. 하나라도 어긋나면(복구·정리·다음 탈퇴 회차·기한 지남)
+    NO_PENDING_LOGIN. lock이면 그 수단의 잠금을 잡고 다시 읽는다."""
+    def load() -> tuple[User, UserIdentity] | None:
+        row = db.execute(
+            select(User, UserIdentity).join(UserIdentity, UserIdentity.user_id == User.id)
+            .where(User.id == claims.user_id, UserIdentity.provider == claims.provider)
+            .execution_options(populate_existing=True)
+        ).first()
+        return None if row is None else (row[0], row[1])
+
+    found = load()
+    if found is not None and lock:
+        _lock_login_identity(db, provider=claims.provider, provider_user_id=found[1].provider_user_id)
+        found = load()
+    if found is None:
+        raise AppError("NO_PENDING_LOGIN")
+    user, identity = found
+    if (
+        user.deleted_at is None
+        or core.deleted_at_stamp(user.deleted_at) != claims.deleted_stamp
+        or not core.is_restorable(user.deleted_at, now)
+    ):
+        raise AppError("NO_PENDING_LOGIN")
+    return user, identity
+
+
+def get_pending_account(db: Session, *, claims: core.PendingClaims) -> dict:
+    """GET /auth/pending — 선택 화면에 쓸 값. 쓰기도 잠금도 없다."""
+    now = datetime.now(timezone.utc)
+    user, _ = _pending_target(db, claims, now=now, lock=False)
+    return {
+        "display_name": user.display_name,
+        "withdrawn_at": user.deleted_at,
+        "restore_until": core.restore_deadline(user.deleted_at),
+        "days_left": core.restore_days_left(user.deleted_at, now),
+    }
+
+
+def restore_account(db: Session, *, claims: core.PendingClaims) -> User:
+    """POST /auth/pending restore — 기존 계정을 되살린다. 계정·핀 작성자 표시·남아 있던 지도 멤버십이 돌아오고 반응·근거·알림은
+    돌아오지 않는다(탈퇴 때 지웠다, #855). 탈퇴 전에 복사된 세션은 계속 무효다. 커밋하지 않는다."""
+    now = datetime.now(timezone.utc)
+    user, _ = _pending_target(db, claims, now=now, lock=True)
+    user.deleted_at = None
+    # 새 세션이 같은 초에 발급돼도 통과하게 1초 앞에 둔다(is_revoked는 같은 초를 거절한다). 탈퇴 때 올린 값(sessions_valid_after)이
+    # 이미 그 전의 모든 토큰을 죽였고, 탈퇴한 동안에는 이 사용자의 토큰이 발급되지 않으므로 이 값이 더 느슨해지지는 않는다.
+    user.sessions_valid_after = max(user.sessions_valid_after or now, now - timedelta(seconds=1))
+    db.flush()
+    return user
+
+
+def restart_account(db: Session, *, claims: core.PendingClaims) -> User:
+    """POST /auth/pending restart — 새 사용자를 만들고 로그인 수단을 그 사용자에게 옮긴 뒤 기존 계정을 즉시 정리한다(되살릴 수 없다).
+    같은 카카오 식별자는 한 사용자에게만 붙을 수 있어 둘이 함께 있을 수 없다. 새 사용자의 표시 이름은 기존 이름을 이어 받는다
+    (이 요청에는 카카오 프로필이 없다). 한 트랜잭션, 커밋하지 않는다."""
+    now = datetime.now(timezone.utc)
+    old, _ = _pending_target(db, claims, now=now, lock=True)
+    new = User(display_name=old.display_name)
+    db.add(new)
+    db.flush()
+    db.execute(update(UserIdentity).where(UserIdentity.user_id == old.id).values(user_id=new.id))
+    purge_withdrawn_user(db, user_id=old.id)
+    return db.get(User, new.id)
 
 
 def purge_inactive_guests(db: Session, *, now: datetime, older_than_days: int) -> int:
@@ -347,14 +474,16 @@ def claim_guest(
     - 게스트가 아니면(이미 합쳐짐·탈퇴) 보통 로그인과 같고 guest_merged는 None
 
     붙이기가 예상 밖으로 실패하면 보통 로그인으로 사용자를 찾거나 만들고 False — 카카오 로그인은 성공이고 게스트 기록은
-    남는다. 탈퇴한 카카오 계정은 지금처럼 막는다(#409, AppError). 커밋하지 않는다."""
+    남는다. 탈퇴한 카카오 계정이 복구 기간 안이면 WithdrawnAccountPending(#855)이다. 커밋하지 않는다."""
     def login() -> User:
         return find_or_create_user(db, provider=provider, provider_user_id=provider_user_id, display_name=display_name)
 
     existing = _find_user(db, provider=provider, provider_user_id=provider_user_id)
-    if existing is not None:
-        _reject_if_withdrawn(existing)
-    else:
+    if existing is not None and existing.deleted_at is not None:
+        # 탈퇴한 계정 — 복구 기간 안이면 WithdrawnAccountPending(게스트 기록은 합치지 않는다), 기간이 지났으면 정리돼
+        # 그 수단은 처음 쓰는 것과 같다(게스트에 붙인다). 그 사이 되살려졌으면 그 사용자로 합친다.
+        existing = _settle_withdrawn(db, existing, provider=provider, provider_user_id=provider_user_id)
+    if existing is None:
         try:
             attached = _attach_identity_to_guest(
                 db, guest_user_id=guest_user_id, provider=provider, provider_user_id=provider_user_id,

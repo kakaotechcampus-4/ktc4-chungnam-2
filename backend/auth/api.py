@@ -9,9 +9,8 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from auth.core import WITHDRAWN_DISPLAY_NAME
 from auth.models import User
-
-WITHDRAWN_DISPLAY_NAME = "탈퇴한 구성원"
 
 
 def display_names(db: Session, user_ids: Sequence[str]) -> dict[str, str]:
