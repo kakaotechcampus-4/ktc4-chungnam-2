@@ -377,3 +377,101 @@ def test_guest_merge_moves_the_snapshot_author_too(db_session):
     result = api.reassign_user(db_session, from_user_id="guest_1", to_user_id="kakao_1")
     assert result["evidence_lines"] == 1
     assert sorted(_snapshot_authors(db_session, run)) == ["kakao_1", "user_1"]
+
+
+# ---------- 모델을 기다리는 사이 10회째가 커밋되는 경합 ----------
+
+def test_plus_is_rejected_at_save_time_when_the_tenth_attempt_commits_while_the_model_runs(test_engine, monkeypatch):
+    """9회 상태에서 「＋」가 모델 앞 검사를 통과한 뒤, 모델을 기다리는 사이 같은 요청자의 retry·다른 run 생성이 10회째를 커밋한다.
+    저장 직전의 재검사(run → 요청자 횟수 잠금 → 상한)가 없으면 상한 뒤에도 근거가 저장돼 성공한다."""
+    Session = sessionmaker(bind=test_engine)
+    run_id, other_run_id = uuid.uuid4(), uuid.uuid4()
+    setup = Session()
+    setup.add_all([
+        RecommendRun(id=run_id, map_id="map_race_847", category="음식점", requested_by="racer_847", status="done",
+                     attempt_no=core.ATTEMPT_LIMIT - 1),
+        RecommendRun(id=other_run_id, map_id="map_race_847", category="카페", requested_by="racer_847", status="done",
+                     attempt_no=1),
+    ])
+    setup.commit()
+    setup.close()
+
+    in_model, release = threading.Event(), threading.Event()
+
+    class SlowPlanner:
+        def plan_evidence(self, raw):
+            in_model.set()
+            release.wait(10)
+            return PLANNER.plan_evidence(raw)
+
+    outcome: list[str] = []
+
+    def plus():
+        session = Session()
+        principal = Principal(user_id="racer_847", map_id="map_race_847", role="member")
+        try:
+            flows.patch_evidence(session, run_id=str(run_id), principal=principal, toggles=[], adds=["조용한 곳"],
+                                 evidence_planner=SlowPlanner())
+            session.commit()
+            outcome.append("ok")
+        except AppError as exc:
+            session.rollback()
+            outcome.append(exc.code)
+        finally:
+            session.close()
+
+    thread = threading.Thread(target=plus)
+    thread.start()
+    try:
+        assert in_model.wait(5)   # 모델 앞 검사(9회)는 통과했고 모델을 기다리는 중이다
+        concurrent = Session()
+        concurrent.execute(update(RecommendRun).where(RecommendRun.id == other_run_id).values(attempt_no=core.ATTEMPT_LIMIT))
+        concurrent.commit()   # 다른 run의 10회째가 커밋됐다
+        concurrent.close()
+    finally:
+        release.set()
+        thread.join()
+
+    verify = Session()
+    try:
+        assert outcome == ["RETRY_LIMIT"]
+        assert _count_session(verify, EvidenceLineRow, EvidenceLineRow.run_id == run_id) == 0   # 아무것도 저장되지 않았다
+    finally:
+        verify.execute(delete(EvidenceLineRow).where(EvidenceLineRow.run_id == run_id))
+        verify.execute(delete(RecommendRun).where(RecommendRun.id.in_([run_id, other_run_id])))
+        verify.commit()
+        verify.close()
+
+
+def _count_session(db, model, *conditions):
+    return db.execute(select(func.count()).select_from(model).where(*conditions)).scalar_one()
+
+
+# ---------- 계절 판정은 실행마다 한 번 ----------
+
+def test_the_season_decision_is_computed_once_per_run_and_shared_by_the_pipeline_and_the_snapshot(db_session, monkeypatch):
+    """여행 날짜가 파이프라인의 계절 조회와 스냅샷의 계절 조회 사이에 바뀌면 실제로 적용한 계절 조건과 저장하는 enforced가
+    어긋난다. 실행마다 한 번만 읽어 둘이 같은 값을 쓴다."""
+    _make_members(db_session, user_ids=["user_1"])
+    run = _run_with(db_session, [
+        _crowded_line(),
+        {"author_id": "user_1", "source": "reaction", "text": "벚꽃 좋아", "badge": "preferred",
+         "fact_key": "cherry_blossom", "wants": True},
+    ], category="관광지")
+    answers = iter([frozenset(), frozenset({"cherry_blossom"}), frozenset({"cherry_blossom"}), frozenset({"cherry_blossom"})])
+    calls = []
+
+    def changing_dates(db, map_id):
+        calls.append(map_id)
+        return next(answers)   # 첫 조회는 시즌 안, 이후 조회는 시즌 밖(그 사이 여행 날짜가 바뀐 것처럼)
+
+    monkeypatch.setattr(flows, "_out_of_season_keys", changing_dates)
+    flows.execute_run(
+        db_session, run_id=str(run.id),
+        place_search=_FakePlaceSearch(_places("a")), place_facts=_FakePlaceFacts({"a": {"is_crowded_large": False, "cherry_blossom": True}}),
+    )
+
+    assert len(calls) == 1   # 파이프라인과 스냅샷이 같은 한 번의 조회를 쓴다
+    snapshot = {entry["fact_key"]: entry for entry in run.applied_evidence}
+    assert snapshot["cherry_blossom"]["enforced"] is True and snapshot["cherry_blossom"]["not_enforced_reason"] is None
+    assert run.last_new_count == 1

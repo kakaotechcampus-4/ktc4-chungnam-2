@@ -484,9 +484,15 @@ def patch_evidence(
                 {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "preferred", "fact_key": None}
                 for text in adds
             ])
-        # 위 검사는 롤백으로 잠금 없이 끝났다. 같은 run에 동시에 온 요청이 함께 상한을 넘지 않게 run 행을 잠그고
-        # 다시 센다 — 이때 걸리면 모델은 이미 불렸지만 줄은 남지 않는다(멘토 리뷰 #380: 여러 행에 걸친 상한).
+    if validated or adds:
+        # 위 검사들은 잠금 없이 끝났다(모델을 기다리는 동안 트랜잭션을 잡지 않는다). 같은 run에 동시에 온 요청이 함께 상한을 넘지
+        # 않게 run 행을 잠그고 다시 센다 — 이때 걸리면 모델은 이미 불렸지만 줄은 남지 않는다(멘토 리뷰 #380: 여러 행에 걸친 상한).
+        # 횟수 상한도 저장 직전에 다시 검사한다 — 위 검사(모델 앞)와 쓰기 사이에 같은 요청자의 retry·다른 run 생성이 10회째를 커밋했을 수
+        # 있다. 잠금 순서는 run → 요청자 횟수(service.lock_run)라 retry와 같고, 걸리면 모델은 불렸어도 아무것도 저장하지 않는다.
         service.lock_run(db, run_uuid)
+        service.lock_requester_attempts(db, map_id=run_map_id, requested_by=run_requested_by)
+        core.check_retry_limit(service.max_attempt_no_for_requester(db, map_id=run_map_id, requested_by=run_requested_by))
+    if adds:
         _check_manual_evidence_limit(db, run_uuid, adding=len(adds))
     for line_id, is_active in validated:
         service.set_evidence_active(db, line_id, is_active)
@@ -618,6 +624,7 @@ def _run_pipeline(
     db: Session, run: RecommendRun, *,
     regions: Sequence[_PipelineRegion], active_lines: Sequence[EvidenceLineRow],
     place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway, excluded_place_ids: set[str],
+    off_season: frozenset[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """5-6 실격 필터 순서(반경→영업종료→실격조건→중복제외→정렬)를 그대로 지킨다
     (recommend/CLAUDE.md "넘지 말 것" — 순서가 funnel 표의 의미를 결정한다). 지역과 활성 근거 줄은 인자로 받는다
@@ -648,7 +655,10 @@ def _run_pipeline(
 
     # 계절 키는 여행 기간이 시즌과 겹칠 때만 쓴다(#681-6) — 시즌 밖이면 직접 쓴 사유도 이번 실행에서 없는 셈 친다(점수 0,
     # 후보를 거르지 않고, 이유·체크에도 안 나온다). 날짜가 없으면 모두 쓴다.
-    off_season = _out_of_season_keys(db, run.map_id)
+    # `off_season`은 실행(_search_and_store)이 한 번 계산해 넘긴다 — 파이프라인과 스냅샷이 같은 판정을 쓰게(#847). 안 넘기는
+    # 호출(시뮬레이션)은 여기서 읽는다.
+    if off_season is None:
+        off_season = _out_of_season_keys(db, run.map_id)
     active_lines = [line for line in active_lines if line.fact_key not in off_season]
     # 아래 조건·점수는 쓰이는 줄(core.evidence_line_use)에서만 만든다 — 근거 응답의 enforced와 같은 기준이다(#740).
     used_lines = _used_lines(active_lines, run.category, off_season)
@@ -856,10 +866,10 @@ def _search_and_store(
     (docs/api-spec.yaml retry 설명)."""
     excluded = _excluded_place_ids(db, run)
     regions, active_lines = _pipeline_inputs(db, run)
-    off_season = _out_of_season_keys(db, run.map_id)
+    off_season = _out_of_season_keys(db, run.map_id)   # 실행마다 한 번 — 파이프라인이 적용한 계절 판정과 스냅샷이 어긋나지 않게
     candidates_data, funnel = _run_pipeline(
         db, run, regions=regions, active_lines=active_lines,
-        place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
+        place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded, off_season=off_season,
     )
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
