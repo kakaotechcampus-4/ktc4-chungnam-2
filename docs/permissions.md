@@ -55,6 +55,7 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
     - member.kick               # v2, #8
     - map.settings.edit
     - map.delete                # 지도 삭제(#369). 방장만. soft delete라 모든 구성원에게서 사라진다
+    - map.restore               # 삭제한 지도 복구(#464). 방장만, 삭제한 지 30일 안에만. 삭제된 지도는 일반 지도 조회가 404라 복구용 조회(get_deleted_map)를 따로 둔다
     - invite.revoke             # 초대 링크 목록 보기·끄기(#467). 방장만. 발급(invite.create)은 구성원 누구나
     - owner.transfer            # 방장 직접 넘기기(#468). 방장만
 ```

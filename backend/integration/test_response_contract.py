@@ -424,6 +424,28 @@ def test_map_leave_and_delete_match_the_openapi_spec(clients):
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
+def test_map_restore_and_trash_match_the_openapi_spec(clients):
+    """삭제한 지도 복구(#464) — 휴지통 목록(TrashedMapList), 복구 200(Map)과 연타 200, 에러 봉투(구성원 403, 모르는 지도 404)."""
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "강릉", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+    assert a.delete(f"/maps/{map_id}").status_code == 204
+
+    trash = a.get("/maps/trash")
+    assert trash.status_code == 200
+    assert [m["id"] for m in trash.json()["items"]] == [map_id]
+    assert b.get("/maps/trash").json()["items"] == []        # 방장이 아닌 사람의 휴지통은 비어 있다
+    assert b.post(f"/maps/{map_id}/restore").status_code == 403
+    assert a.post("/maps/no_such_map/restore").status_code == 404
+    assert a.post(f"/maps/{map_id}/restore").status_code == 200
+    assert a.post(f"/maps/{map_id}/restore").status_code == 200   # 연타 안전
+    assert a.get("/maps/trash").json()["items"] == []
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
 def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
     """실시간 핀(#386, 스펙 PinCreateLive) — 응답에 좌표·이름이 없어도 Pin 스키마에 맞고, 목록·확정 항목·동선까지 같다."""
     a, b, problems = clients
