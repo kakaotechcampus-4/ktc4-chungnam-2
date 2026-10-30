@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import delete, exists, func, select, text, update
+from sqlalchemy import delete, exists, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -320,6 +320,40 @@ def purge_withdrawn_user(db: Session, *, user_id: str) -> None:
         )
     )
     db.expire_all()   # 벌크 UPDATE·DELETE는 이미 읽은 행을 갱신하지 않는다
+
+
+def purge_withdrawn_accounts(db: Session, *, now: datetime) -> int:
+    """복구 기간(7일)이 지난 탈퇴 계정 중 아직 개인정보가 남은 것을 정리하고(purge_withdrawn_user) 정리한 수를 돌려준다(#855).
+    개인정보가 남았다는 건 로그인 수단이 있거나, 이름이 「탈퇴한 구성원」이 아니거나, last_seen_at·guest_invite_token이 남았다는 뜻이라
+    이미 정리된 껍데기는 건너뛴다 — 여러 번 돌려도 같은 결과다. 게스트도 같다. 계정마다 그 로그인 수단의 잠금을 잡고 다시 읽어,
+    그 사이 복구·정리된 계정은 건너뛴다(콜백·선택과 같은 잠금). 커밋하지 않는다."""
+    carries_data = or_(
+        exists().where(UserIdentity.user_id == User.id),
+        User.display_name != core.WITHDRAWN_DISPLAY_NAME,
+        User.last_seen_at.is_not(None),
+        User.guest_invite_token.is_not(None),
+    )
+    candidates = db.execute(
+        select(User.id).where(
+            User.deleted_at.is_not(None), User.deleted_at <= now - timedelta(days=core.ACCOUNT_RESTORE_DAYS), carries_data,
+        ).order_by(User.id)
+    ).scalars().all()
+    purged = 0
+    for user_id in candidates:
+        identities = db.execute(
+            select(UserIdentity.provider, UserIdentity.provider_user_id).where(UserIdentity.user_id == user_id)
+            .order_by(UserIdentity.provider, UserIdentity.provider_user_id)
+        ).all()
+        for provider, provider_user_id in identities:
+            _lock_login_identity(db, provider=provider, provider_user_id=provider_user_id)
+        row = db.execute(select(User).where(User.id == user_id).execution_options(populate_existing=True)).scalar_one()
+        if row.deleted_at is None or core.is_restorable(row.deleted_at, now):
+            continue   # 그 사이 되살려졌다
+        purge_withdrawn_user(db, user_id=user_id)
+        purged += 1
+    if purged:
+        logger.info("withdrawn accounts purged: count=%d", purged)   # 건수만 — 식별자·이름은 남기지 않는다
+    return purged
 
 
 def _pending_target(db: Session, claims: core.PendingClaims, *, lock: bool) -> tuple[User, datetime]:
