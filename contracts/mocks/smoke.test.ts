@@ -1419,3 +1419,47 @@ describe("#845 — 추천 흐름: 근거 확인 없이 결과 먼저", () => {
     expect(after.new_count).toBeLessThan(after.candidates.length);
   });
 });
+
+describe("#855 — 탈퇴 후 재가입: 7일 안에는 새 계정 또는 되살리기를 고른다", () => {
+  const pending = () => fetch(`${BASE}/auth/pending`);
+  const choose = (choice: unknown) => fetch(`${BASE}/auth/pending`, { method: "POST", body: JSON.stringify({ choice }) });
+
+  it("복구 기간 안의 탈퇴 계정이면 카카오 콜백이 로그인 대신 선택 화면(login_pending)으로 보낸다", async () => {
+    resetScenario("withdrawn-relogin");
+    const res = await fetch(`${BASE}/auth/kakao/callback`, { redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/?login_pending=withdrawn_account"); // 쿼리에 이름·id·날짜가 없다
+  });
+
+  it("선택 안내(GET /auth/pending)에 남은 날수가 있다 — 탈퇴 2일 뒤면 5일 남음", async () => {
+    resetScenario("withdrawn-relogin");
+    const info = await pending().then((r) => r.json());
+    expect(info).toMatchObject({ display_name: "탈퇴했던 나", days_left: 5 });
+    expect(new Date(info.restore_until).getTime() - new Date(info.withdrawn_at).getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it("restore는 200, restart는 201이고 둘 다 User를 돌려준다. 선택하면 대기가 끝나 재전송은 404 NO_PENDING_LOGIN", async () => {
+    resetScenario("withdrawn-relogin");
+    const restored = await choose("restore");
+    expect(restored.status).toBe(200);
+    expect(await restored.json()).toMatchObject({ id: expect.any(String), display_name: expect.any(String) });
+    const again = await choose("restore");
+    expect(again.status).toBe(404);
+    expect((await again.json()).code).toBe("NO_PENDING_LOGIN");
+
+    resetScenario("withdrawn-relogin");
+    expect((await choose("restart")).status).toBe(201);
+    expect((await pending()).status).toBe(404);
+  });
+
+  it("choice가 restart·restore가 아니면 422이고, 대기가 없으면 어떤 호출이든 404 NO_PENDING_LOGIN", async () => {
+    resetScenario("withdrawn-relogin");
+    expect((await choose("later")).status).toBe(422);
+    expect((await pending()).status).toBe(200); // 잘못된 요청은 대기를 끝내지 않는다
+    resetScenario("happy-path");
+    const res = await pending();
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("NO_PENDING_LOGIN");
+    expect((await choose("restore")).status).toBe(404);
+  });
+});
