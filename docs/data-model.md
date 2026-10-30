@@ -279,12 +279,16 @@ idempotency_keys(                      -- #811: 「추천 받기」 연타·재�
   id, requested_by,                     -- 요청자별로 키가 따로다(다른 사람의 같은 키는 영향 없음)
   scope('recommend.run'),               -- 지금은 POST /maps/{mapId}/runs만. 다른 요청에 쓸 때 값을 더한다
   key,                                  -- Idempotency-Key 헤더 값(8~64자)
-  request_hash,                         -- 요청 본문(category, execute)의 해시. 같은 키로 다른 본문이면 409 IDEMPOTENCY_CONFLICT(#48)
+  request_hash,                         -- (map_id, category, execute — execute 생략은 false로 정규화)의 해시. 같은 키로 다른 지도·다른 본문이면 409 IDEMPOTENCY_CONFLICT(#48)
   run_id null,                          -- 첫 요청이 만든 run. NULL이면 아직 모델을 기다리는 중(→ 같은 키는 409 REQUEST_IN_PROGRESS)
-  created_at,
+  attempt int default 1,                -- 예약 세대. 처리 기한(90초)이 지나 이어받으면 +1 — run 저장은 자기 세대일 때만 성공한다(늦게 끝난 쪽은 저장 거절)
+  created_at, started_at,               -- started_at: 현재 세대의 예약 시각(기한 판정 기준)
   unique(requested_by, scope, key)
 )
--- 모델 실패(500)로 run을 못 만들면 이 행을 지워 같은 키의 재시도를 허용한다. 24시간이 지난 행은 maintenance가 정리한다(개인정보는 아니다 — 키는 화면이 만든 uuid).
+-- **예약은 모델 호출 전에 독립 트랜잭션으로 커밋한다**: 요청이 끝날 때 커밋하는 기존 규칙(session_scope)과 모델 호출 전 rollback에 묻히면 다른 요청이 보지 못하거나
+--   미커밋 unique 때문에 둘째 INSERT가 모델이 끝날 때까지 기다린다(그러면 즉시 409 REQUEST_IN_PROGRESS가 안 나온다). 예약을 가진 요청만 모델을 부르고, run INSERT와
+--   run_id 연결은 한 트랜잭션이다. 모델 실패(500)로 run을 못 만들면 자기 세대의 행만 지워 같은 키의 재시도를 허용한다.
+-- 24시간이 지난 행은 maintenance가 정리한다(개인정보는 아니다 — 키는 화면이 만든 uuid). 정리는 run_id가 있는 행만 지운다(진행 중인 예약은 건드리지 않는다).
 
 evidence_lines(
   id, run_id, author_id,                -- "자기가 쓴 것만 뺄 수 있다"(5-5) — author_id로 권한 판정

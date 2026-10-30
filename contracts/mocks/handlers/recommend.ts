@@ -114,11 +114,12 @@ export const recommendHandlers = [
     const idemKey = request.headers.get("Idempotency-Key");
     if (idemKey === "in-progress-key") return apiError(409, "REQUEST_IN_PROGRESS", "같은 요청을 처리하고 있어요. 잠시 뒤 다시 확인할게요");
     const seen = idemKey ? store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] : undefined;
-    // 같은 키로 다른 본문(다른 카테고리)은 IDEMPOTENCY_CONFLICT — 키를 재사용한 화면의 버그 신호
-    if (seen && store.runs[seen] && store.runs[seen].category !== body.category) {
+    // 요청의 동일성 = (지도, category, execute — 생략은 false). 다르면 IDEMPOTENCY_CONFLICT — 키를 재사용한 화면의 버그 신호
+    if (seen && (seen.mapId !== mapId || seen.category !== body.category || seen.execute !== Boolean(body.execute))) {
       return apiError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 키로 다른 요청을 보냈어요");
     }
-    if (seen && store.runs[seen]) return HttpResponse.json({ ...store.runs[seen], attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
+    // 같은 키의 재사용은 최초 응답의 복제가 아니라 같은 run의 지금 상태다
+    if (seen && store.runs[seen.runId]) return HttpResponse.json({ ...store.runs[seen.runId], attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
     const answered = opinionPinCount(mapId, body.category);
     if (answered < REQUIRED_OPINION_PINS) {
       return apiError(409, "NOT_READY", `의견 핀 ${answered}곳 · ${REQUIRED_OPINION_PINS - answered}곳 더 필요`, {
@@ -130,7 +131,7 @@ export const recommendHandlers = [
     const runId = nextId("run");
     store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1 };
     store.runRequestedBy[runId] = ME_USER_ID;
-    if (idemKey) store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] = runId;
+    if (idemKey) store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] = { runId, mapId, category: body.category, execute: Boolean(body.execute) };
     runCreatedAt[runId] = new Date().toISOString();
     // ② 사유 → 실격/선호/반경 구조화 (목 서버에서는 시드 데이터로 대체 — 실제 구조화는 backend/llm 담당)
     store.evidenceLines[runId] = buildEvidenceLines(runId);
@@ -296,6 +297,9 @@ export const recommendHandlers = [
     const found = findCandidateRun(candidateId);
     if (!found) return apiError(404, "NOT_FOUND", "후보를 찾을 수 없습니다");
     const { runId, cand } = found;
+    // #811 — 이미 이 후보로 만든 핀이면 그 핀을 200으로 돌려준다(동시에 온 요청도 같다). 핀은 하나, 이벤트도 한 번
+    const existing = cand.published_pin_id ? store.pins[cand.published_pin_id] : undefined;
+    if (existing) return HttpResponse.json(existing);
     const run = store.runs[runId];
     const pinId = nextId("pin");
     const pin: Pin = {

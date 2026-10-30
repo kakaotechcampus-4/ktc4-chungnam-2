@@ -1430,6 +1430,39 @@ describe("#811 — 「추천 받기」 연타 방어: Idempotency-Key", () => {
     expect(second.id).toBe(first.id);
     const list = await fetch(`${BASE}/maps/map_1/runs`).then((r) => r.json());
     expect(list).toHaveLength(1);
+    expect(second.attempt_no).toBe(1); // 횟수도 더 늘지 않았다
+  });
+
+  it("재사용은 최초 응답의 복제가 아니라 같은 run의 지금 상태다 — 그 사이 retry로 바뀐 attempt_no가 보인다", async () => {
+    const first = await create("click-0004-uuid").then((r) => r.json());
+    expect((await fetch(`${BASE}/runs/${first.id}/retry`, { method: "POST" })).status).toBe(202);
+    const again = await create("click-0004-uuid").then((r) => r.json());
+    expect(again.id).toBe(first.id);
+    expect(again.attempt_no).toBe(2);
+  });
+
+  it("같은 키로 다른 지도나 다른 execute를 보내면 409 IDEMPOTENCY_CONFLICT — 다른 지도의 run을 돌려주지 않는다", async () => {
+    expect((await create("click-0005-uuid")).status).toBe(202);
+    const otherExecute = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0005-uuid" }, body: JSON.stringify({ category: "음식점" }) });
+    expect(otherExecute.status).toBe(409);
+    expect((await otherExecute.json()).code).toBe("IDEMPOTENCY_CONFLICT");
+    const maps: { id: string }[] = await fetch(`${BASE}/maps`).then((r) => r.json()).then((j) => j.items ?? j);
+    const other = maps.find((m) => m.id !== "map_1");
+    if (other) {
+      const res = await fetch(`${BASE}/maps/${other.id}/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0005-uuid" }, body: JSON.stringify({ category: "음식점", execute: true }) });
+      expect([409, 404]).toContain(res.status); // 다른 지도의 run을 200/202로 돌려주면 안 된다
+      expect(res.status).not.toBe(202);
+    }
+  });
+
+  it("같은 후보를 두 번 게시해도 핀은 하나이고 둘째는 같은 핀을 200으로 받는다", async () => {
+    const run = await create("click-0006-uuid").then((r) => r.json());
+    const result = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    const id = result.candidates[0].id;
+    const a = await fetch(`${BASE}/candidates/${id}/publish`, { method: "POST" });
+    const b = await fetch(`${BASE}/candidates/${id}/publish`, { method: "POST" });
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect((await a.json()).id).toBe((await b.json()).id);
   });
 
   it("키가 다르거나 없으면 새 run이다(구FE 호환 — 방어 없음)", async () => {
