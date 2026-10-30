@@ -3,8 +3,8 @@
 정규형은 places.matching.normalize_name과 같은 규칙이다: 괄호 안·공백·기호를 지우고 소문자.
 생성 열(STORED)이라 적재 코드가 쓰지 않고 이름이 바뀌면 따라 바뀐다. 기존 행은 열을 더할 때 채워진다.
 
-Revision ID: 0043_places_name_norm
-Revises: 0042_places_trgm_search
+Revision ID: 0044_places_name_norm
+Revises: 0043_llm_calls
 Create Date: 2026-10-31
 
 """
@@ -13,8 +13,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0043_places_name_norm"
-down_revision: Union[str, None] = "0042_places_trgm_search"
+revision: str = "0044_places_name_norm"
+down_revision: Union[str, None] = "0043_llm_calls"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
