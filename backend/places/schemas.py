@@ -91,13 +91,6 @@ class PlaceHours:
     hours_note: str | None = None
 
 
-@dataclass(frozen=True)
-class ResolvedCoords:
-    place_id: str
-    lat: float
-    lng: float
-
-
 # ---- GET /places/search 응답 (docs/api-spec.yaml PlaceSearchResult, #180) ----
 
 class PlaceSourceInfo(BaseModel):
