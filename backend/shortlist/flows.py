@@ -5,7 +5,7 @@ pins.api를 부른다 — service.py는 pins를 모른다.
 
 인가는 이 파일이 아니라 router.py가 authz.guard.require_with_principal(loader)로 이미 끝낸
 뒤에 호출된다(authz/tests/test_rule_a_static.py — resolve_principal은 authz.guard 밖에서
-직접 부르지 않는다). 여기서는 이미 검증된 pin_row/item_row/principal만 받아 pins.api 호출과
+직접 부르지 않는다). 여기서는 이미 검증된 pin/item_row/principal만 받아 pins.api 호출과
 shortlist_items 쓰기를 조립한다.
 """
 
@@ -17,12 +17,12 @@ from shortlist import core, routing, service
 from shortlist.schemas import Route, ShortlistItem
 
 
-def confirm_pin(db, *, pin_row, principal) -> ShortlistItem:
-    map_id, pin_id = pin_row.map_id, str(pin_row.id)
+def confirm_pin(db, *, pin, principal) -> ShortlistItem:
+    map_id, pin_id = pin.map_id, pin.id
 
     row, created = service.add_item(db, map_id=map_id, pin_id=pin_id, added_by=principal.user_id)
-    pin = pins_api.get_pin_response_for_viewer(db, pin_id=pin_id, viewer_id=principal.user_id, principal=principal)
-    item = core.to_shortlist_item_response(row, pin, principal)
+    pin_response = pins_api.get_pin_response_for_viewer(db, pin_id=pin_id, viewer_id=principal.user_id, principal=principal)
+    item = core.to_shortlist_item_response(row, pin_response, principal)
     if not created:
         return item  # 멱등 빠른 경로 — pins.kind 재변경도 이벤트도 없다
 
