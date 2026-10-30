@@ -342,3 +342,80 @@ def test_get_week_open_status_omits_places_without_a_row(db_session, tmp_path):
     assert set(got) == {r1}
     assert got[r1][0] == "closed" and got[r1][1] == "open"
     assert api.get_week_open_status([], db=db_session) == {}
+
+
+# ---- 여러 요일의 영업 여부 (#747) ----
+
+@pytest.mark.parametrize("hours, closed_days, weekdays, expected", [
+    (_week(월=[["09:00", "18:00"]]), None, [0], "open"),
+    (_week(월=[["09:00", "18:00"]]), None, [1, 2], "closed"),          # 쓰인 요일은 모두 닫았다
+    (_week(월=[["09:00", "18:00"]]), None, [0, 1, 2], "open"),         # 하나라도 열면 open
+    (None, ["월"], [0], "closed"),
+    (None, ["월"], [0, 1], "open"),                                    # 휴무가 아닌 요일은 영업
+    (None, None, [0, 1], "unknown"),                                   # 칸이 비어 있다
+    (None, ["월"], [], "unknown"),                                     # 요일이 없으면 모름
+])
+def test_open_status_on_weekdays_pure_rule(hours, closed_days, weekdays, expected):
+    assert api.open_status_on_weekdays(hours, closed_days, weekdays) == expected
+
+
+def test_open_status_on_weekdays_unknown_days_do_not_count_as_closed():
+    assert core.open_status_on_weekdays({0: "closed", 1: "unknown"}, [0, 1]) == "unknown"
+    assert core.open_status_on_weekdays({0: "closed"}, [0, 3]) == "unknown"   # 상태에 없는 요일은 모름
+    assert core.open_status_on_weekdays(None, [0]) == "unknown"
+
+
+def test_get_open_status_on_weekdays_omits_places_without_a_row(db_session, tmp_path):
+    _seed(db_session, ("permit", "R1"), ("permit", "R2"))
+    load.load_place_hours(db_session, _write(tmp_path, [_entry("rest_R1", {"closed_days": ["월"]})]))
+    r1, r2 = _pid(db_session, "permit", "R1"), _pid(db_session, "permit", "R2")
+    assert api.get_open_status_on_weekdays([r1, r2], [0], db=db_session) == {r1: "closed"}
+    assert api.get_open_status_on_weekdays([r1], [0, 1], db=db_session) == {r1: "open"}
+    assert api.get_open_status_on_weekdays([], [0], db=db_session) == {}
+
+
+# ---- 잘못된 원본 값은 모름이다 (#885 검수) ----
+
+@pytest.mark.parametrize("hours, closed_days", [
+    (None, ["월요일"]),                                   # 허용 형식이 아닌 요일 이름
+    (None, "월"),                                         # 목록이 아니다
+    (None, ["월", 3]),
+    ({"월": [["잘못된 시각", "잘못된 시각"]]}, None),      # 시각 형식이 틀리다
+    ({"월": [["09:00"]]}, None),                          # 구간이 두 칸이 아니다
+    ({"월": [["18:00", "09:00"]]}, None),                 # 시작이 끝보다 늦다
+    ({"월": "09:00-18:00"}, None),                        # 목록이 아니다
+    ({"Mon": [["09:00", "18:00"]]}, None),                # 요일 이름이 아니다
+    ("월 영업", None),
+])
+def test_malformed_raw_values_are_unknown_not_open(hours, closed_days):
+    assert api.week_open_status(hours, closed_days) == {d: "unknown" for d in range(7)}
+    assert api.open_status_on_weekdays(hours, closed_days, [0, 1, 2]) == "unknown"
+
+
+def test_a_malformed_day_is_dropped_but_the_good_days_and_closed_days_still_apply():
+    hours = {"월": [["잘못된 시각", "?"]], "화": [["09:00", "18:00"]]}
+    got = api.week_open_status(hours, ["수"])
+    assert got[0] == "open"       # 월은 hours에서 빠졌고 closed_days에도 없다 → closed_days가 있으니 영업
+    assert got[1] == "open" and got[2] == "closed"
+
+
+def test_core_valid_helpers_are_what_ingest_uses():
+    assert core.valid_closed_days(["월", "월", "화"]) == ["월", "화"] and core.valid_closed_days([]) == []
+    assert core.valid_hours(_week(월=[["09:00", "18:00"]])) is not None
+    assert core.valid_hours({"월": []}) is None   # 7요일이 다 있어야 한다(적재용)
+
+
+@pytest.mark.parametrize("clock", ["0009:00", "9:00", "09:0", "09:000", " 09:00", "09:00 ", "９:００", "09-00", "+9:00", "٠٩:٠٠"])
+def test_raw_api_reads_a_clock_that_is_not_exactly_hh_mm_as_unknown(clock):
+    hours = {"월": [[clock, "18:00"]]}
+    assert api.week_open_status(hours, None) == {d: "unknown" for d in range(7)}
+    hours = {"월": [["09:00", clock]]}
+    assert api.week_open_status(hours, None) == {d: "unknown" for d in range(7)}
+
+
+def test_raw_api_still_accepts_midnight_crossing_hh_mm():
+    assert api.week_open_status({"금": [["18:00", "26:00"]]}, None)[4] == "open"
+
+
+def test_ingest_keeps_its_own_clock_range():
+    assert core.valid_hours(_week(월=[["9:00", "18:00"]])) is not None   # 적재 규칙은 그대로(parse_minutes가 받는 범위)
