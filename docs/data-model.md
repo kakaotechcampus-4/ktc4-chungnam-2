@@ -16,6 +16,12 @@ users(                                -- 사람. 다른 모듈은 이 id만 가�
                                              -- 카카오 수단을 붙이면(게스트 전환) 비운다. 상한에서 빠진다
   last_seen_at timestamptz null,             -- 게스트 정리 기준: 90일 쓰지 않으면 정리 작업(#168)이 지운다. 세션을 쓸 때 하루 한 번 갱신
   created_at, deleted_at            -- 탈퇴 시 users만 soft delete. 반응·근거 줄은 hard delete, 핀은 유지하고 작성자는 '탈퇴한 구성원'으로 표시 (12절, #155)
+                                    --   deleted_at이 복구 기간(7일, #855)의 기준이다. 7일이 지나면 정리 작업이 이 행의 개인정보를 모두 지운다: display_name을
+                                    --   '탈퇴한 구성원'으로 덮고 last_seen_at·guest_invite_token을 비우며 user_identities를 지운다. 행 자체는 남긴다(핀 created_by·멤버십 등
+                                    --   다른 모듈의 포인터가 가리키는 껍데기). 남는 id는 그 자체로 이름·식별자가 아니지만 **연결 가능한 값이라 「개인정보가 없다」고
+                                    --   단정하지 않는다** — 아래 「탈퇴 후 7일 정리 대상」 표가 이름이 복사된 곳까지 정한다. 정리는 멱등이다.
+                                    --   복구 기한은 정리 작업과 무관하게 `now >= deleted_at + 7일`로 판정한다(콜백·GET·POST 모두). 기한이 지난 미정리 계정을 콜백이 만나면 그 자리에서 정리.
+                                    --   탈퇴와 복구는 sessions_valid_after를 현재 시각으로 올린다 — 탈퇴 전에 복사된 세션 토큰이 복구 뒤 되살아나지 않게.
   sessions_valid_after timestamptz null   -- 로그아웃 시각. 이 시각 이전(같은 초 포함)에 발급된 세션 토큰은 무효, NULL이면 전부 유효 (#129)
 )
 
@@ -27,7 +33,20 @@ user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사
 )
 -- 게스트(v2 #472) = 로그인 수단이 없는 사용자. 세션 쿠키로만 들어온다. is_guest는 저장하지 않고 "수단이 하나도 없는가"로
 --   계산한다(CurrentUser.is_guest, GET /auth/me). 저장하면 수단을 붙일 때 함께 고치는 것을 빠뜨릴 수 있다.
--- 탈퇴(deleted_at)해도 수단은 지우지 않는다. 같은 카카오 계정의 재로그인을 "탈퇴한 계정"으로 막는 근거다(#409).
+-- 탈퇴(deleted_at)해도 수단은 **복구 기간(7일) 동안** 지우지 않는다(#855). 같은 카카오 계정의 재로그인을 탈퇴 계정으로 알아보는 근거다: 7일 안이면 선택
+--   (GET·POST /auth/pending — 새 계정으로 시작하면 이 수단을 새 사용자에게 옮기고 기존 계정은 그 즉시 정리, 되살리면 deleted_at을 비운다), 7일 뒤에는
+--   정리 작업이 수단을 지워서 같은 카카오 계정은 곧바로 새 사용자가 된다. 되살리면 **남아 있던 지도 멤버십(#245)이 돌아오고**(방장 자리는 위임돼 일반 구성원으로) 반응·근거·알림은 돌아오지 않는다.
+--
+-- 탈퇴 후 7일 정리 대상 (#855 — 「개인정보를 모두 지운다」는 users·user_identities만이 아니라 이름이 복사된 곳까지다. BE(auth)가 모듈별로 감사해 이 표를 확정한다)
+--   users            : display_name → '탈퇴한 구성원', last_seen_at·guest_invite_token 삭제 (행은 남김)
+--   user_identities  : 삭제
+--   세션             : 탈퇴·복구 시 sessions_valid_after로 무효화(저장된 세션 행이 없다)
+--   반응·근거 줄·알림(본인 것)·agent 열람 기록·코스 요청: 탈퇴 때 이미 삭제(WITHDRAW_STEPS)
+--   피드백           : 작성자 연결은 탈퇴 때 끊김. 본문은 남긴다(사용자가 쓴 글 — 개인정보처리방침에 밝힌다)
+--   멤버십           : 행은 남긴다(#245, 구성원 표시는 '탈퇴한 구성원')
+--   **이름이 복사된 곳**(감사 필요): 추천 후보·게시 핀의 member_fulfillment.by_member[].display_name·user_id, 다른 구성원의 알림 문장에 박힌 행위자 이름, agent 요약·제안의 본문,
+--                       초대 링크의 만든 사람 표시. → 정리 때 '탈퇴한 구성원'으로 덮는다(write-once 규칙과 조정은 BE가 이슈로 올린다)
+--   로그·이벤트      : 표시 이름·카카오 식별자를 남기지 않는다(이미 규칙). 이벤트 payload의 display_name은 보존기간(24시간) 뒤 사라진다
 -- 예전 users.provider, provider_user_id, is_guest는 이 리비전에서 지운다(카카오 사용자는 user_identities로 옮긴다).
 
 maps(
@@ -261,6 +280,12 @@ recommend_runs(
                                          -- 한 카운터를 공유), 상한 10회(3→5→10회, 2026-10-15: 지도 안에서 구성원 각자). 한
                                          -- 사람이 상한에 도달해도 다른 사람의 추천 시도에는
                                          -- 영향 없음.
+  applied_evidence jsonb null,          -- #845: 마지막 execute/widen/retry가 **실제로 쓴 근거 줄**의 스냅샷(줄 id·작성자·방향·badge·
+                                         --   enforced·not_enforced_reason·is_active). evidence_lines는 편집하면 바뀌지만 이 값은 그 결과를 만든
+                                         --   실행 때의 값이라 「이 조건으로 찾았어요」가 정확하다. 파생값(다음 실행이 덮는다). 작성자가
+                                         --   탈퇴하면 그 사람의 줄과 함께 지운다(evidence_lines와 같은 정리 규칙). RecommendResult.applied_evidence
+  last_new_count int null,              -- #845: 마지막 execute/widen/retry가 새로 찾은 후보 수(RecommendResult.new_count). 그 뒤에 일부를 게시해도
+                                         --   바뀌지 않는다 — 「이번 검색이 0건」과 「다 올려서 남은 게 없음」을 가른다. 파생값(다음 실행이 덮는다).
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
                                          -- 않도록 마지막 execute/widen/retry의 깔때기 표를
                                          -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.
@@ -268,6 +293,21 @@ recommend_runs(
                                          -- docs/constraints.md "반경 넓히기 상수"
   created_at
 )
+
+idempotency_keys(                      -- #811: 「추천 받기」 연타·재전송을 한 번으로 묶는다. 모델 호출 전에 INSERT
+  id, requested_by,                     -- 요청자별로 키가 따로다(다른 사람의 같은 키는 영향 없음)
+  scope('recommend.run'),               -- 지금은 POST /maps/{mapId}/runs만. 다른 요청에 쓸 때 값을 더한다
+  key,                                  -- Idempotency-Key 헤더 값(8~64자)
+  request_hash,                         -- (map_id, category, execute — execute 생략은 false로 정규화)의 해시. 같은 키로 다른 지도·다른 본문이면 409 IDEMPOTENCY_CONFLICT(#48)
+  run_id null,                          -- 첫 요청이 만든 run. NULL이면 아직 모델을 기다리는 중(→ 같은 키는 409 REQUEST_IN_PROGRESS)
+  attempt int default 1,                -- 예약 세대. 처리 기한(90초)이 지나 이어받으면 +1 — run 저장은 자기 세대일 때만 성공한다(늦게 끝난 쪽은 저장 거절)
+  created_at, started_at,               -- started_at: 현재 세대의 예약 시각(기한 판정 기준)
+  unique(requested_by, scope, key)
+)
+-- **예약은 모델 호출 전에 독립 트랜잭션으로 커밋한다**: 요청이 끝날 때 커밋하는 기존 규칙(session_scope)과 모델 호출 전 rollback에 묻히면 다른 요청이 보지 못하거나
+--   미커밋 unique 때문에 둘째 INSERT가 모델이 끝날 때까지 기다린다(그러면 즉시 409 REQUEST_IN_PROGRESS가 안 나온다). 예약을 가진 요청만 모델을 부르고, run INSERT와
+--   run_id 연결은 한 트랜잭션이다. 모델 실패(500)로 run을 못 만들면 자기 세대의 행만 지워 같은 키의 재시도를 허용한다.
+-- 24시간이 지난 행은 maintenance가 정리한다(개인정보는 아니다 — 키는 화면이 만든 uuid). 정리는 run_id가 있는 행만 지운다(진행 중인 예약은 건드리지 않는다).
 
 evidence_lines(
   id, run_id, author_id,                -- "자기가 쓴 것만 뺄 수 있다"(5-5) — author_id로 권한 판정
@@ -463,6 +503,38 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 
 ---
 
+## llm_calls (모델 호출 사용량, #870, 마이그레이션 0043)
+
+> llm 모듈이 쓰는 테이블 1개. 모델 호출 1건 = 1행이다. 기록은 출구(`llm/client.py`의 `call_planner`, `_agent_parse`) 한 곳에서 하고,
+> 왜 불렀는지와 지도·사람·실행은 부르는 쪽이 `llm.api.usage_context`로 붙인다. 감싸지 않은 호출(평가 스크립트)은 남지 않는다.
+> **사유 원문, 요청 원문, 응답 본문은 저장하지 않는다.** 숫자와 분류만이다. 기록 실패는 본 기능을 막지 않는다(별도 세션, 예외는 로그만).
+> `agent_runs`, `agent_course_runs`의 `tokens_in/out`(실행 1건 합계)은 그대로 둔다. 겹침 정리는 측정 뒤 따로 한다.
+
+```
+llm_calls(
+  id uuid,
+  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'course'),   -- 왜 불렀는지
+  call('plan_evidence'|'agent_diagnose'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
+  trace_id uuid,                      -- 같은 usage_context 안의 호출. run_id가 아직 없는 호출(추천 ②, 진단)도 실행 1번으로 묶는다
+  map_id null, user_id null,          -- user_id는 사용자가 부른 호출만. 서버 호출(진단, 요약)은 null
+  run_id null,                        -- evidence_add는 recommend_runs.id, course는 agent_course_runs.id. 추천 ②와 진단은 null
+  model, prompt_version null,         -- ②는 프롬프트 버전 상수가 없어 null
+  input_tokens, cached_input_tokens, cache_write_tokens, output_tokens,   -- 입력은 캐시 몫과 캐시 쓰기 할증 포함, 출력은 추론 토큰 포함
+  cost_krw numeric(12,4),             -- 기록 시점 단가(common.settings의 LLM_PRICE_*)로 계산. 할증이 input_tokens에 있어 cache_write_tokens는 따로 더하지 않는다
+  outcome('ok'|'refusal'|'empty'|'timeout'|'invalid_schema'|'call_failed'), ok bool,
+  elapsed_ms, created_at
+)
+index ix_llm_calls_created (created_at)
+index ix_llm_calls_map_created (map_id, created_at)
+index ix_llm_calls_user_created (user_id, created_at)
+index ix_llm_calls_trace (trace_id)
+```
+
+- 캐시 토큰은 엘리스 게이트웨이 응답의 `usage.prompt_tokens_details.cached_tokens`다(2026-10-30 확인). 캐시 미스면 게이트웨이가 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고한다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 엘리스 청구서와 대조해야 한다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
+- 탈퇴는 행을 남기고 `user_id`만 비운다(비용 통계는 사람 없이도 쓴다, `llm.api.anonymize_by_user`). 게스트 합치기는 `user_id`를 옮긴다. 30일 지난 행은 정기 정리(`maintenance.run`의 `llm_calls`)가 지운다. 지도 정리는 행을 지우지 않는다(map_id만 남고 가리키는 지도가 없다).
+
+---
+
 ## notifications / feedback (v2, #470, #10)
 
 > v2. 계약만 먼저 올렸고 마이그레이션은 구현 PR이 그때의 head 다음 번호로 만든다(번호를 문서에 못 박지 않는다 — agent·maps 마이그레이션과 겹친다). 이슈 본문의 `0026`은 옛 초안이다.
@@ -517,6 +589,7 @@ feedback(                             -- 서비스 피드백. 저장만 한다
 | notifications | `notifications.user_id` | `notification_prefs`는 카카오 계정 것을 쓰고 게스트 것은 지운다 |
 | feedback | `feedback.user_id` | 없음 |
 | agent | `agent_suggestion_views.user_id`, `agent_course_runs.requested_by`, `agent_settings.updated_by`, `agent_suggestions.resolved_by` | 같은 제안을 둘 다 열람했으면 게스트 것을 지운다. 같은 지도에 둘 다 진행 중인 코스 요청이 있으면 게스트 것을 지운다(진행 중은 지도당 한 사람에 하나). 코스 하루 상한은 그날 행 수로 세므로(`requested_by`, `created_at`) 그날 옮긴 코스는 카카오 계정의 횟수에 들어간다. 다음 자정(KST)에 풀린다(#755) |
+| llm | `llm_calls.user_id` | 없음(#870) |
 | auth | 마지막에 게스트 행을 `deleted_at`으로 지운다(탈퇴처럼 반응·근거를 지우지는 않는다 — 이미 옮겼다) | — |
 
 합치기로 사용자가 보는 이름이 게스트 이름에서 카카오 계정의 이름으로 바뀐다(구성원 목록과 핀 작성자 표시는 다시 불러오면 된다).

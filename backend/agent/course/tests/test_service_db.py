@@ -163,6 +163,31 @@ def test_execute_run_saves_the_view_and_marks_done(world, places):
     assert r.steps[0]["stage"] == "이해"
 
 
+def test_model_calls_carry_the_requester_usage_label(world, places):
+    """목표 세우기와 지휘 턴은 사용량 기록(llm_calls, #870)에 course로 남는다 — 요청자, 지도, 코스 run이 붙고 한 trace다."""
+    from llm import usage
+
+    map_id, _ = confirmed_map(world, places, 4)
+    job = request(world, map_id, body=CourseRequest(request_text=TEXT))
+    labels = []
+    queue = direct_planner()
+
+    def labelled_goals(goals_input):
+        labels.append(usage.current_label())
+        return goals_planner(goals_input)
+
+    def labelled_direct(turn_input):
+        labels.append(usage.current_label())
+        return queue(turn_input)
+
+    service.execute_run(job, session_factory=world.factory, llm=CourseLlm(labelled_goals, labelled_direct),
+                        gateway=NullOpeningHours())
+
+    assert len(labels) >= 2
+    assert {(l.feature, l.map_id, l.user_id, l.run_id) for l in labels} == {("course", map_id, world.uid("u1"), job.run_id)}
+    assert len({l.trace_id for l in labels}) == 1
+
+
 def test_steps_grow_in_short_transactions_while_the_run_is_running(world, places):
     map_id, _ = confirmed_map(world, places, 4)
     job = request(world, map_id, body=CourseRequest(request_text=TEXT))

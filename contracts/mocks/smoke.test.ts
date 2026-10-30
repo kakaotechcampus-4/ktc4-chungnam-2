@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, afterEach, describe, expect, it } from "vitest";
 import { server } from "./node";
 import { resetScenario } from "./scenarios";
-import { store } from "./store";
+import { ME_USER_ID, store } from "./store";
 import { MAP_LIMIT } from "./handlers/maps";
 
 const BASE = "https://api.pingo.example.com";
@@ -143,6 +143,9 @@ describe("에러 시나리오", () => {
     expect(body.detail.funnel.length).toBeGreaterThan(0);
     expect(body.detail.funnel.map((f: { label: string }) => f.label)).toContain("추천 가능 아님 제거");
     expect(body.detail.external_search.url).toMatch(/^https:\/\/map\.kakao\.com\/link\/search\//); // #798
+    // #845 — 후보가 하나도 없는 결과에도 이번에 쓴 근거가 실린다(0건일 때 「이 조건으로 찾았어요」를 보일 자리)
+    expect(Array.isArray(body.detail.applied_evidence)).toBe(true);
+    expect(typeof body.detail.no_applied_conditions).toBe("boolean");
   });
 
   it("retry-limit — 10회 초과 시 429 RETRY_LIMIT(detail에 attempt_limit)", async () => {
@@ -1333,5 +1336,212 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
     expect(res.status).toBe(429);
     expect((await res.json()).detail).toEqual({ limit: 5, used: 5 });
+  });
+});
+
+describe("#845 — 추천 흐름: 근거 확인 없이 결과 먼저", () => {
+  const post = (path: string, body?: unknown) => fetch(`${BASE}${path}`, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
+  const create = (execute?: boolean) => post("/maps/map_1/runs", { category: "음식점", ...(execute === undefined ? {} : { execute }) }).then((r) => r.json());
+
+  it("execute: true면 근거를 모은 뒤 곧바로 첫 검색까지 해서 done run을 돌려주고, 결과에 쓴 근거 스냅샷이 있다", async () => {
+    const run = await create(true);
+    expect(run.status).toBe("done");
+    const result = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(result.applied_evidence.length).toBeGreaterThan(0);
+    expect(result.applied_evidence.every((l: { is_active: boolean }) => l.is_active)).toBe(true);
+    expect(result.no_applied_conditions).toBe(false);
+    expect(result.new_count).toBe(result.candidates.length);
+  });
+
+  it("execute를 생략하면 지금처럼 collecting_evidence로 두고, 결과는 아직 없다(409 RUN_NOT_FINISHED)", async () => {
+    const run = await create();
+    expect(run.status).toBe("collecting_evidence");
+    const res = await fetch(`${BASE}/runs/${run.id}/result`);
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("RUN_NOT_FINISHED");
+  });
+
+  it("고친 근거는 retry가 반영하고, 이미 보인 결과의 스냅샷은 retry 전까지 그대로다(모델 호출 없이 횟수 +1)", async () => {
+    const run = await create(true);
+    const lines: { id: string; is_active: boolean; permissions: { can_disable: boolean } }[] = await fetch(`${BASE}/runs/${run.id}/evidence`).then((r) => r.json());
+    const mine = lines.find((l) => l.permissions.can_disable)!;
+    const patched = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify({ toggle: [{ id: mine.id, is_active: false }] }) });
+    expect(patched.status).toBe(200);
+    const before = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(before.applied_evidence.some((l: { id: string }) => l.id === mine.id)).toBe(true); // 고쳤지만 아직 적용 전
+    const retried = await post(`/runs/${run.id}/retry`).then((r) => r.json());
+    expect(retried.attempt_no).toBe(2);
+    const after = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(after.applied_evidence.some((l: { id: string }) => l.id === mine.id)).toBe(false);
+  });
+
+  it("추천 횟수를 다 쓰면 근거 수정(×·＋)은 429 RETRY_LIMIT이고, 조회는 된다", async () => {
+    const run = await create(true);
+    for (let n = 1; n < 10; n++) expect((await post(`/runs/${run.id}/retry`)).status).toBe(202);
+    expect((await post(`/runs/${run.id}/retry`)).status).toBe(429);
+    const lines: { id: string }[] = await fetch(`${BASE}/runs/${run.id}/evidence`).then((r) => r.json());
+    for (const body of [{ toggle: [{ id: lines[0].id, is_active: false }] }, { add: [{ text: "조용했으면 좋겠어요" }] }]) {
+      const res = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify(body) });
+      expect(res.status).toBe(429);
+      expect((await res.json()).code).toBe("RETRY_LIMIT");
+    }
+    expect((await fetch(`${BASE}/runs/${run.id}/evidence`)).status).toBe(200);
+    expect((await fetch(`${BASE}/runs/${run.id}/result`)).status).toBe(200);
+  });
+
+  it("횟수는 요청자·지도 단위다 — 다른 run에서 10회를 다 썼으면 과거 run의 근거도 429 RETRY_LIMIT", async () => {
+    const older = await create(true); // 이 run의 attempt_no는 낮지만
+    const other = await create(true);
+    for (let n = 1; n < 10; n++) expect((await post(`/runs/${other.id}/retry`)).status).toBe(202);
+    const lines: { id: string }[] = await fetch(`${BASE}/runs/${older.id}/evidence`).then((r) => r.json());
+    for (const body of [{ toggle: [{ id: lines[0].id, is_active: false }] }, { add: [{ text: "조용했으면 좋겠어요" }] }]) {
+      const res = await fetch(`${BASE}/runs/${older.id}/evidence`, { method: "PATCH", body: JSON.stringify(body) });
+      expect(res.status).toBe(429);
+      expect((await res.json()).code).toBe("RETRY_LIMIT");
+    }
+  });
+
+  it("이미 지도에 올린 후보는 retry 뒤에도 남고, new_count는 마지막 실행이 새로 찾은 수라 게시해도 바뀌지 않는다", async () => {
+    const run = await create(true);
+    const first = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    const found = first.new_count; // 첫 실행이 찾은 수
+    expect(found).toBe(first.candidates.length);
+    const published = first.candidates[0];
+    expect((await post(`/candidates/${published.id}/publish`)).status).toBeLessThan(300);
+    const sameRun = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(sameRun.new_count).toBe(found); // 게시해도 「이번 실행이 새로 찾은 수」는 그대로 — 「다 올려서 남은 게 없음」과 「이번 검색 0건」을 가른다
+    await post(`/runs/${run.id}/retry`);
+    const after = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    const names: string[] = after.candidates.map((c: { place_name: string }) => c.place_name);
+    expect(names.filter((n) => n === published.place_name)).toHaveLength(1); // 올린 장소는 새 후보로 다시 나오지 않는다
+    expect(after.candidates.find((c: { id: string }) => c.id === published.id)?.visibility).toBe("published"); // 같은 후보가 그대로 남는다
+    expect(after.new_count).toBe(after.candidates.length - 1); // 이번 실행이 새로 찾은 수 = 올린 1곳을 뺀 나머지
+    expect(after.new_count).toBeLessThan(after.candidates.length);
+  });
+});
+
+describe("#811 — 「추천 받기」 연타 방어: Idempotency-Key", () => {
+  const create = (key?: string) =>
+    fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: key ? { "Idempotency-Key": key } : {}, body: JSON.stringify({ category: "음식점", execute: true }) });
+
+  it("같은 키로 다시 보내면 첫 요청이 만든 run을 그대로 돌려주고 run도 횟수도 더 생기지 않는다", async () => {
+    const first = await create("click-0001-uuid").then((r) => r.json());
+    const second = await create("click-0001-uuid").then((r) => r.json());
+    expect(second.id).toBe(first.id);
+    const list = await fetch(`${BASE}/maps/map_1/runs`).then((r) => r.json());
+    expect(list).toHaveLength(1);
+    expect(second.attempt_no).toBe(1); // 횟수도 더 늘지 않았다
+  });
+
+  it("재사용은 최초 응답의 복제가 아니라 같은 run의 지금 상태다 — 그 사이 retry로 바뀐 attempt_no가 보인다", async () => {
+    const first = await create("click-0004-uuid").then((r) => r.json());
+    expect((await fetch(`${BASE}/runs/${first.id}/retry`, { method: "POST" })).status).toBe(202);
+    const again = await create("click-0004-uuid").then((r) => r.json());
+    expect(again.id).toBe(first.id);
+    expect(again.attempt_no).toBe(2);
+  });
+
+  it("같은 키로 다른 지도나 다른 execute를 보내면 409 IDEMPOTENCY_CONFLICT — 다른 지도의 run을 돌려주지 않는다", async () => {
+    expect((await create("click-0005-uuid")).status).toBe(202);
+    const otherExecute = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0005-uuid" }, body: JSON.stringify({ category: "음식점" }) });
+    expect(otherExecute.status).toBe(409);
+    expect((await otherExecute.json()).code).toBe("IDEMPOTENCY_CONFLICT");
+    // 목 서버는 지도 존재를 따지지 않는다 — 같은 키·같은 본문이라도 다른 지도면 그 지도의 run이 아닌 첫 run을 돌려주면 안 된다
+    const otherMap = await fetch(`${BASE}/maps/map_other/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0005-uuid" }, body: JSON.stringify({ category: "음식점", execute: true }) });
+    expect(otherMap.status).toBe(409);
+    expect((await otherMap.json()).code).toBe("IDEMPOTENCY_CONFLICT");
+  });
+
+  it("같은 후보를 두 번 게시해도 핀은 하나이고 둘째는 같은 핀을 200으로 받는다", async () => {
+    const run = await create("click-0006-uuid").then((r) => r.json());
+    const result = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    const id = result.candidates[0].id;
+    const a = await fetch(`${BASE}/candidates/${id}/publish`, { method: "POST" });
+    const b = await fetch(`${BASE}/candidates/${id}/publish`, { method: "POST" });
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect((await a.json()).id).toBe((await b.json()).id);
+  });
+
+  it("키가 다르거나 없으면 새 run이다(구FE 호환 — 방어 없음)", async () => {
+    const a = await create("click-0002-a").then((r) => r.json());
+    const b = await create("click-0002-b").then((r) => r.json());
+    const c = await create().then((r) => r.json());
+    expect(new Set([a.id, b.id, c.id]).size).toBe(3);
+  });
+
+  it("같은 키로 다른 요청 본문(다른 카테고리)을 보내면 409 IDEMPOTENCY_CONFLICT다 — 키를 재사용한 화면의 버그 신호", async () => {
+    expect((await create("click-0003-uuid")).status).toBe(202);
+    const res = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0003-uuid" }, body: JSON.stringify({ category: "카페", execute: true }) });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("IDEMPOTENCY_CONFLICT");
+  });
+
+  it("첫 요청이 아직 모델을 기다리는 중이면 409 REQUEST_IN_PROGRESS(마법 키)이고, NOT_READY와 코드로 구분된다", async () => {
+    const res = await create("in-progress-key");
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("REQUEST_IN_PROGRESS");
+  });
+});
+
+describe("#855 — 탈퇴 후 재가입: 7일 안에는 새 계정 또는 되살리기를 고른다", () => {
+  const pending = () => fetch(`${BASE}/auth/pending`);
+  const choose = (choice: unknown) => fetch(`${BASE}/auth/pending`, { method: "POST", body: JSON.stringify({ choice }) });
+
+  it("복구 기간 안의 탈퇴 계정이면 카카오 콜백이 로그인 대신 선택 화면(login_pending)으로 보낸다", async () => {
+    resetScenario("withdrawn-relogin");
+    const res = await fetch(`${BASE}/auth/kakao/callback`, { redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/?login_pending=withdrawn_account"); // 쿼리에 이름·id·날짜가 없다
+  });
+
+  it("선택 안내(GET /auth/pending)에 남은 날수가 있다 — 탈퇴 2일 뒤면 5일 남음", async () => {
+    resetScenario("withdrawn-relogin");
+    const info = await pending().then((r) => r.json());
+    expect(info).toMatchObject({ display_name: "탈퇴했던 나", days_left: 5 });
+    expect(new Date(info.restore_until).getTime() - new Date(info.withdrawn_at).getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it("선택 전에는 로그인된 상태가 아니다(/auth/me 401) — 선택하면 로그인된다", async () => {
+    resetScenario("withdrawn-relogin");
+    expect((await fetch(`${BASE}/auth/me`)).status).toBe(401);
+    expect((await choose("restore")).status).toBe(200);
+    expect((await fetch(`${BASE}/auth/me`)).status).toBe(200);
+  });
+
+  it("restore는 같은 계정(같은 id) 200, restart는 **새 사용자**(다른 id) 201이다. 선택하면 대기가 끝나 재전송은 404 NO_PENDING_LOGIN", async () => {
+    resetScenario("withdrawn-relogin");
+    const before = (await fetch(`${BASE}/maps`).then((r) => r.json()).then((j) => j)).items; // 시드 지도 참여
+    expect(before.length).toBeGreaterThan(0);
+    const restored = await choose("restore");
+    expect(restored.status).toBe(200);
+    const restoredUser = await restored.json();
+    expect(restoredUser.id).toBe(ME_USER_ID); // 같은 계정
+    const again = await choose("restore");
+    expect(again.status).toBe(404);
+    expect((await again.json()).code).toBe("NO_PENDING_LOGIN");
+
+    resetScenario("withdrawn-relogin");
+    const restarted = await choose("restart");
+    expect(restarted.status).toBe(201);
+    expect((await restarted.json()).id).not.toBe(ME_USER_ID); // 새 사용자 — 기존 계정은 정리됨
+    expect((await pending()).status).toBe(404);
+  });
+
+  it("choice 말고 다른 필드를 보내면 422(additionalProperties: false)", async () => {
+    resetScenario("withdrawn-relogin");
+    const res = await fetch(`${BASE}/auth/pending`, { method: "POST", body: JSON.stringify({ choice: "restore", extra: 1 }) });
+    expect(res.status).toBe(422);
+    expect((await pending()).status).toBe(200); // 잘못된 요청은 대기를 끝내지 않는다
+  });
+
+  it("choice가 restart·restore가 아니면 422이고, 대기가 없으면 어떤 호출이든 404 NO_PENDING_LOGIN", async () => {
+    resetScenario("withdrawn-relogin");
+    expect((await choose("later")).status).toBe(422);
+    expect((await pending()).status).toBe(200); // 잘못된 요청은 대기를 끝내지 않는다
+    resetScenario("happy-path");
+    const res = await pending();
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("NO_PENDING_LOGIN");
+    expect((await choose("restore")).status).toBe(404);
   });
 });

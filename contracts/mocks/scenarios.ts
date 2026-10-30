@@ -5,7 +5,7 @@
 import { ME_USER_ID, nextId, resetIdCounter, resetStore, type StoreState } from "./store";
 import { buildBaseState, buildCandidates, buildEvidenceLines, buildRegions, SEED_MAP_ID } from "./seed";
 
-export type ScenarioName = "empty" | "happy-path" | "no-results" | "retry-limit" | "region-conflict" | "guest";
+export type ScenarioName = "empty" | "happy-path" | "no-results" | "retry-limit" | "region-conflict" | "guest" | "withdrawn-relogin";
 
 /** 6절 "핀이 하나도 없음" 화면 — 지도만 있고 핀은 0개 */
 function buildEmpty(): StoreState {
@@ -86,6 +86,13 @@ function buildGuest(): StoreState {
   return state;
 }
 
+/** #855 탈퇴한 계정으로 다시 로그인 — 복구 기간(7일) 안이라 카카오 콜백이 선택 화면으로 보낸다. 선택 전에는 로그인된 상태가 아니다. */
+function buildWithdrawnRelogin(): StoreState {
+  const state = buildBaseState();
+  state.pendingLogin = { display_name: "탈퇴했던 나", withdrawn_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString() };
+  return state;
+}
+
 const BUILDERS: Record<ScenarioName, () => StoreState> = {
   empty: buildEmpty,
   "happy-path": buildHappyPath,
@@ -93,6 +100,7 @@ const BUILDERS: Record<ScenarioName, () => StoreState> = {
   "retry-limit": buildRetryLimit,
   "region-conflict": buildRegionConflict,
   guest: buildGuest,
+  "withdrawn-relogin": buildWithdrawnRelogin,
 };
 
 export function resetScenario(name: ScenarioName) {

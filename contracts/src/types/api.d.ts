@@ -73,8 +73,10 @@ export interface paths {
                  * @description **성공이든 실패든 항상 302다** — 이 경로는 fetch가 아니라 브라우저 이동이라 JSON을 돌려주면 사용자가 그대로 본다(2026-10-04).
                  *     성공: 진입점(`FRONTEND_LOGIN_REDIRECT_URL`)으로, 세션 쿠키와 함께.
                  *     **게스트 전환이었으면(#560, #694)** 같은 주소에 쿼리 `guest_merged=true`(게스트 기록이 카카오 계정으로 이어졌다) 또는 `guest_merged=false`(잇지 못했다 — 카카오 로그인은 성공했고 게스트 기록은 그대로 남아 있다. 사용자에게 알리고, 게스트 쿠키는 이미 카카오 세션으로 바뀌었으니 다시 하지 않는다)를 붙인다. 처음 쓰는 카카오 계정이면 게스트 계정에 카카오 로그인을 붙여 사용자 id와 표시 이름이 그대로이고, 이미 쓰던 카카오 계정이면 그 계정으로 기록을 옮긴다(이름은 그 계정 것). 게스트가 아닌 로그인에는 붙이지 않는다.
+                 *     **탈퇴한 계정이 복구 기간(탈퇴 후 7일) 안이면 로그인하지 않는다**(#855): 세션 쿠키를 만들지 않고 서명한 짧은 수명(10분)의 `pending_account` 쿠키(HttpOnly, **SameSite=Lax**, 운영은 Secure, **경로는 state 쿠키와 같은 규칙** — 브라우저가 보는 콜백 주소의 부모 경로. 배포는 앞단이 `/api`를 벗기므로 서버 안 경로가 아니다, #819)를 내려 같은 주소에 쿼리 `?login_pending=withdrawn_account`를 붙여 돌려보낸다. **쿠키 값은 이 한 번의 선택에만 묶인다**: 용도(`pending_account`)·사용자 id·로그인 수단·그 사용자의 탈퇴 시각(`deleted_at`)을 서명에 넣고, 서버가 선택 때 현재 상태와 맞는지 확인한다 — 그래서 복구·정리된 뒤나 다음 탈퇴 회차에는 같은 쿠키가 통하지 않는다(지웠다는 사실에 기대지 않는다). 쿼리에 이름·id·날짜를 싣지 않는다. 화면은 `GET /auth/pending`으로 안내를 받아 사용자가 「새 계정으로 시작」과 「기존 계정 되살리기」 중 고르게 하고 `POST /auth/pending`으로 보낸다. **복구 기한은 정리 작업의 실행과 무관하게 지금 시각으로 판정한다**(콜백·`GET`·`POST` 모두 `deleted_at` + 7일). 기한이 지났는데 아직 정리되지 않은 탈퇴 계정을 콜백이 만나면 그 자리에서 정리한 뒤(`restart`와 같은 정리) 선택 없이 새 계정으로 로그인한다(일반 성공). 이미 정리된 계정이면 같다.
+                 *     **게스트가 시작한 로그인**(게스트 전환, #560)이 복구 기간 안의 탈퇴 계정에 닿으면 이번에는 게스트 기록을 합치지 않는다(`guest_merged=false`와 같은 상태 — 카카오 로그인만 되고 게스트 기록은 그대로 남는다). 선택 뒤 로그인은 선택한 계정으로 한다. 게스트 전환 합치기와 복구 선택을 한 흐름으로 합치는 것은 v1에 없다.
                  *     실패: 같은 주소에 쿼리 `?login_error=<값>`을 붙여 돌려보내고 세션 쿠키는 만들지 않는다. state 쿠키는 성공·실패 모두 지운다.
-                 *     `login_error` 값: `cancelled`(사용자가 카카오 화면에서 취소), `invalid_state`(state 쿠키와 다르거나 없음 — 처음부터 다시), `kakao_failed`(카카오 토큰 교환·프로필 조회 실패), `withdrawn`(이 카카오 계정은 탈퇴 처리된 계정이다 — 다시 시도해도 같다. 탈퇴 계정을 되살리지 않는 정책은 그대로, #409), `server_error`(그 밖의 실패).
+                 *     `login_error` 값: `cancelled`(사용자가 카카오 화면에서 취소), `invalid_state`(state 쿠키와 다르거나 없음 — 처음부터 다시), `kakao_failed`(카카오 토큰 교환·프로필 조회 실패), `server_error`(그 밖의 실패).
                  */
                 302: {
                     headers: {
@@ -86,6 +88,93 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * **탈퇴한 계정으로 로그인하려는 중의 안내**(#855). 카카오 콜백이 `?login_pending=withdrawn_account`로 돌려보낸 직후, 화면이 선택 화면을 그리려고 부른다.
+         *     세션 없이(콜백이 내린 `pending_account` 쿠키로) 부른다. 쿠키가 없거나 만료(10분)·변조됐거나 이미 선택·정리됐으면 404 `NO_PENDING_LOGIN`이다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PendingAccount"];
+                    };
+                };
+                404: components["responses"]["NoPendingLogin"];
+            };
+        };
+        put?: never;
+        /**
+         * **선택**: `restart`는 새 계정을 만들고(새 사용자와 로그인 수단) **기존 계정을 즉시 정리한다 — 같은 카카오 식별자는 한 사용자에게만 붙을 수 있어서 둘이 함께 있을 수 없고, 정리된 계정은 되살릴 수 없다**(201). `restore`는 기존 계정을 되살린다(200 — 계정과 핀 작성자 표시만 돌아온다).
+         *     둘 다 세션 쿠키를 내리고 `pending_account` 쿠키를 지운다. 응답은 `User`다. **같은 선택의 재전송과 이미 쓴 쿠키는 404 `NO_PENDING_LOGIN`이다** — 쿠키 값이 `deleted_at`에 묶여 있어 복구·정리 뒤에는 서버가 거절한다. 선택과 정리는 같은 카카오 식별자 단위 잠금·한 트랜잭션이라 동시 `restore`·`restart`는 한쪽만 이긴다(나머지는 404).
+         *     **본문은 JSON만 받는다**(`Content-Type: application/json`) — 폼 제출 같은 교차 사이트 POST가 쿠키를 싣고 오지 못하게 SameSite=Lax와 함께 막는다. `restart`는 **기존 계정을 되살릴 수 없게 정리하는 파괴적 동작**이라 화면이 최종 제출 전에 한 번 더 확인한다(`기존 계정은 바로 삭제되고 되살릴 수 없어요`). 게스트에게는 해당 없다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PendingChoiceRequest"];
+                };
+            };
+            responses: {
+                /** @description 기존 계정을 되살렸다(`restore`). `Set-Cookie`로 세션 발급 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["User"];
+                    };
+                };
+                /** @description 새 계정을 만들었다(`restart`). 기존 계정은 정리됐다. `Set-Cookie`로 세션 발급 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["User"];
+                    };
+                };
+                404: components["responses"]["NoPendingLogin"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — choice가 restart·restore가 아님 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -338,6 +427,7 @@ export interface paths {
         /**
          * 탈퇴 (12절, #155 결정). users 행은 soft delete, 반응·반대 사유·근거 줄은 삭제한다.
          *     그 사람이 찍은 핀과 확정 리스트 항목은 남고, 작성자(created_by_display_name)는 "탈퇴한 구성원"으로 내려간다.
+         *     **재가입과 복구(#855)**: 탈퇴 직후 동작은 그대로다(반응·근거·알림은 즉시 지워지고, **지도 멤버십 행은 남는다**(#245) — 구성원 수와 목록에서만 빠진다. 방장이던 지도는 후임에게 위임되거나 삭제된다). 탈퇴 후 **7일 동안** 같은 카카오 계정으로 로그인하면 「새 계정으로 시작」 또는 「기존 계정 되살리기」를 고를 수 있다(`GET·POST /auth/pending`). **되살리면 계정과 내가 찍은 핀의 작성자 표시, 그리고 남아 있던 지도 참여(방장 자리는 위임됐으므로 일반 구성원으로)가 돌아온다. 지워진 반응·근거 줄·알림은 돌아오지 않는다.** 탈퇴와 복구는 둘 다 `sessions_valid_after`를 현재 시각으로 올려 **그 이전에 발급된 모든 세션을 영구 무효화한다**(탈퇴 전에 복사된 30일 토큰이 복구 뒤 되살아나지 않게). 복구 뒤에는 새로 발급한 세션만 유효하다. **7일이 지나면 정리 작업이 개인정보를 지운다**(`docs/data-model.md` 「탈퇴 후 7일 정리 대상」 표 — 로그인 식별자·표시 이름뿐 아니라 다른 곳에 복사된 이름도 비식별화한다). users 행은 껍데기로 남고 지도 멤버십·핀의 작성자 표시는 「탈퇴한 구성원」이다.
          */
         post: {
             parameters: {
@@ -1902,11 +1992,24 @@ export interface paths {
             };
         };
         put?: never;
-        /** run 생성 — 근거 조립 시작 (①②) */
+        /**
+         * run 생성 — 근거 조립(①②). **`execute: true`면 근거를 모은 뒤 곧바로 첫 검색까지 한 요청에서 끝낸다**(#845 — 근거 확인 화면 없이 결과 먼저).
+         *     이때 서버가 ②(쓴 사유가 있을 때만 모델) → 실격 필터·선호 순위(③)까지 실행하고 `status: done`인 run을 돌려준다. 결과는 `GET /runs/{runId}/result`.
+         *     모델이 실패하면 결과도 run도 만들지 않고 횟수도 쓰지 않는다(500 `RECOMMEND_FAILED`) — 근거 없는 추천을 내지 않는다.
+         *     `execute`를 생략하거나 false면 지금까지처럼 근거 조립만 하고 `collecting_evidence`로 둔다(전환 기간용, 이어서 `POST /runs/{runId}/execute`).
+         *     한 번의 클릭이 모델 호출과 결과까지 가므로 연타·재전송 방어(#811)가 먼저 있어야 한다.
+         *     **`Idempotency-Key` 요청 헤더(선택, #811)**: 화면이 사용자가 「추천 받기」를 시작할 때 키(uuid)를 만들어 성공·실패가 나올 때까지 같은 키로 보낸다(연타·재전송은 같은 키).
+         *     서버는 모델을 부르기 **전에** (요청자, 키)를 기록한다. 같은 키로 다시 오면 — 첫 요청이 이미 run을 만들었으면 **그 run을 그대로**(같은 응답) 돌려주고, 아직 모델을 기다리는 중이면 409 `REQUEST_IN_PROGRESS`(화면은 잠시 뒤 같은 키로 다시 보낸다).
+         *     첫 요청이 모델 실패(500) 등으로 run을 못 만들었으면 키를 지워 같은 키의 재시도를 허용한다. **요청의 동일성은 (지도, `category`, `execute`)로 본다**(`execute` 생략은 false와 같다). 같은 키로 **다른 지도나 다른 본문**(예: 다른 카테고리)을 보내면 409 `IDEMPOTENCY_CONFLICT`다 — 키를 재사용한 화면의 버그 신호다(#48이 정하던 멱등키 v1의 첫 적용처가 이 엔드포인트다). 같은 키의 재사용은 **최초 응답을 복제하는 것이 아니라 같은 run id를 지금 상태 그대로** 돌려준다(그 뒤 `execute`·`retry`로 상태·`attempt_no`가 바뀌었으면 바뀐 값). 재사용 전에도 지도 접근 권한을 다시 확인한다.
+         *     **처리 기한 90초**: 첫 요청이 run을 못 만든 채 90초가 지나면(프로세스 종료·취소 등) 중단된 것으로 보고 새 요청이 이어받는다. 늦게 끝난 쪽의 저장은 거절된다(예약 소유자만 run을 저장한다). 키가 없으면 지금처럼 방어가 없다(구FE 호환). 키는 24시간 보관한다. 다른 요청자의 같은 키는 서로 영향이 없다.
+         */
         post: {
             parameters: {
                 query?: never;
-                header?: never;
+                header?: {
+                    /** @description 같은 「추천 받기」 시도의 연타·재전송을 한 번으로 묶는 키(uuid 권장). 없으면 방어가 없다 */
+                    "Idempotency-Key"?: string;
+                };
                 path: {
                     mapId: components["parameters"]["MapId"];
                 };
@@ -1916,11 +2019,16 @@ export interface paths {
                 content: {
                     "application/json": {
                         category: components["schemas"]["RecommendCategory"];
+                        /**
+                         * @description true면 근거 조립 뒤 곧바로 첫 검색까지 실행해 done run을 돌려준다(#845). 새 화면은 항상 true
+                         * @default false
+                         */
+                        execute?: boolean;
                     };
                 };
             };
             responses: {
-                /** @description run 생성됨, 근거 조립 진행 중 (SSE run.progress로 진행 상태 전달) */
+                /** @description run 생성됨. `execute: true`이면 `status: done`(첫 결과가 있다), 아니면 근거 조립 진행 중(SSE run.progress로 진행 상태 전달) */
                 202: {
                     headers: {
                         [name: string]: unknown;
@@ -1929,7 +2037,15 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendRun"];
                     };
                 };
-                409: components["responses"]["NotReady"];
+                /** @description NOT_READY(추천 준비 미달 — 해당 카테고리에 ♥/🚫 의견이 달린 핀이 없다) · REQUEST_IN_PROGRESS(같은 `Idempotency-Key`의 첫 요청이 아직 처리 중이다 — 화면은 잠시 뒤 같은 키로 다시 보낸다, #811) · IDEMPOTENCY_CONFLICT(같은 키로 다른 요청 본문 — 키를 재사용한 화면의 버그 신호). `code`로 구분한다 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
                 429: components["responses"]["RetryLimit"];
                 500: components["responses"]["RecommendFailed"];
             };
@@ -1979,6 +2095,8 @@ export interface paths {
          * 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md). 남이 쓴 줄이 하나라도 섞이면 요청 전체가 403 FORBIDDEN이고 아무것도 바뀌지 않는다(#108).
          *     '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
          *     한 요청에 글 5개까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 글은 10개까지다(뺀 것도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
+         *     **이 지도에서 추천 횟수(10회)를 다 쓴 요청자는 근거를 고칠 수 없다**(`×`·`＋` 모두 429 `RETRY_LIMIT`, #845 결정) — 고쳐도 다시 추천할 수 없기 때문이다. 횟수는 run이 아니라 **요청자·지도 단위**(그 사람이 이 지도에서 만든 어느 run이든 합쳐서)라, 다른 run에서 횟수를 다 썼으면 이 run의 근거도 못 고친다(`retry`의 상한 검사와 같은 값). 이 검사는 모델을 부르기 전에 한다. 조회(`GET .../evidence`, `GET .../result`)는 상한 뒤에도 된다.
+         *     고친 근거는 **「다시 추천 받기」(`POST /runs/{runId}/retry`)가 읽어 반영한다**. 이미 보인 결과는 바뀌지 않고, 그 결과에 쓴 근거는 `RecommendResult.applied_evidence`가 따로 보여 준다.
          */
         patch: {
             parameters: {
@@ -2007,6 +2125,7 @@ export interface paths {
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
                 409: components["responses"]["EvidenceLimit"];
+                429: components["responses"]["RetryLimit"];
                 500: components["responses"]["RecommendFailed"];
             };
         };
@@ -2207,6 +2326,8 @@ export interface paths {
         put?: never;
         /**
          * 「다시 추천 받기」. 현재 뜬 대안 전체를 제외목록에 넣고 새로 찾는다 (3절, 루프가 닫힌다).
+         *     **같은 run의 현재 활성 근거로 다시 찾는다 — `×`로 뺀 줄은 빠지고 `＋`로 더한 줄은 들어간다. 이 요청은 모델을 부르지 않는다**(`＋`의 모델 호출은 그 글을 더할 때 이미 났다). 사람 말로는 「수정한 조건으로, 지금 후보를 제외하고 다시 추천」이다. 마음에 드는 후보는 「지도에 올리기」로 보존한다(게시된 후보는 제외되지 않고 그대로 남는다, #845).
+         *     run에 **고정되는 입력**: 구조화한 근거 줄과 기본 지역. **실행 때마다 다시 읽는 입력**: ♥ 기반 선호, 여행 날짜에 따른 영업·계절 판정, 제외목록.
          *     10회 상한(지도 안에서 구성원 각자, 카테고리 무관) 초과 시 429 RETRY_LIMIT (#31, 2026-10-15 5→10회). 응답의 attempt_no와 attempt_limit으로 현재 몇 번째인지 노출한다.
          */
         post: {
@@ -2309,7 +2430,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 「지도에 올리기」 — 비공개 후보를 전체 채널에 공개, 핀으로 전환 (5-5-1, 가드레일 1) */
+        /**
+         * 「지도에 올리기」 — 비공개 후보를 전체 채널에 공개, 핀으로 전환 (5-5-1, 가드레일 1).
+         *     **이미 이 후보로 만든 핀이면 그 핀을 200으로 돌려준다 — 동시에 온 두 요청도 같다**(#811; 연타하면 핀 하나, 둘째는 첫째가 만든 핀을 받는다). 같은 장소를 직접 찍은 핀과 겹치면 그대로 409 `PIN_DUPLICATE`다.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -3269,6 +3393,27 @@ export interface components {
             /** @description 들어갈 지도의 초대 토큰(GET /invites/{token}으로 요약을 본 그 토큰) */
             invite_token: string;
         };
+        /** @description 「탈퇴한 계정이 있어요」 선택 화면에 쓰는 값(#855). 세션이 없는 상태라 개인정보는 이 사람이 방금 카카오로 증명한 자기 계정의 이름과 날짜뿐이다 */
+        PendingAccount: {
+            /** @description 탈퇴한 계정의 표시 이름 */
+            display_name: string;
+            /** Format: date-time */
+            withdrawn_at: string;
+            /**
+             * Format: date-time
+             * @description 이 시각까지 되살릴 수 있다(탈퇴 + 7일). 지나면 정리 작업이 계정 정보를 모두 지운다
+             */
+            restore_until: string;
+            /** @description 남은 날수(올림, 서버가 계산). 화면은 「N일 안에 되살릴 수 있어요」 */
+            days_left: number;
+        };
+        PendingChoiceRequest: {
+            /**
+             * @description `restart` 새 계정으로 시작(기존 계정은 즉시 정리) · `restore` 기존 계정 되살리기
+             * @enum {string}
+             */
+            choice: "restart" | "restore";
+        };
         QaLoginRequest: {
             /** @description QA 사용자의 표시 이름. 앞뒤 공백을 지운 뒤 비어 있으면 422 */
             display_name: string;
@@ -3770,7 +3915,10 @@ export interface components {
             id: string;
             map_id: string;
             category: components["schemas"]["RecommendCategory"];
-            /** @enum {string} */
+            /**
+             * @description `collecting_evidence`는 더 이상 「사용자가 근거를 확인하는 중」이 아니다(#845 — 확인 단계는 없어졌다). `POST /maps/{mapId}/runs`가 `execute: true` 없이 만든 run이거나 서버 장애로 첫 실행 전에 멈춘 run으로, 열면 `POST /runs/{runId}/execute`로 이어서 실행한다. 결과가 있는 건 `done`뿐
+             * @enum {string}
+             */
             status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
             /** @description 이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 attempt_limit */
             attempt_no: number;
@@ -3870,6 +4018,15 @@ export interface components {
             candidates: components["schemas"]["Candidate"][];
             /** @description 후보가 3곳 미만일 때만(#798). 기준값은 서버가 정한다 — 화면에 숫자를 적지 않는다 */
             external_search?: components["schemas"]["ExternalSearch"];
+            /**
+             * @description **이번 결과에 실제로 쓴 근거**(실행 시점의 스냅샷, #845). `GET /runs/{runId}/evidence`는 지금 값이라 고친 뒤에는 달라지지만, 이 값은 이 결과를 만든 실행(`execute`·`retry`·`widen`) 때 활성이던 줄 그대로(`enforced`·`not_enforced_reason` 포함)다.
+             *     화면은 「이 조건으로 찾았어요」에 이 값을 보이고, 고쳤지만 아직 적용 전인 줄은 `GET .../evidence`와 비교해 따로 표시한다. 예전 run에는 없다.
+             */
+            applied_evidence?: components["schemas"]["EvidenceLine"][];
+            /** @description 활성이고 추천이 실제로 쓰는(`enforced=true`) **사유 근거**가 하나도 없다. 줄을 다 껐거나 남은 줄이 모두 `enforced=false`일 때 true. 화면은 「적용된 사유 조건이 없어요」라고 알린다 — ♥ 기반 선호, 반경·영업·제외 필터는 그래도 적용되므로 「조건 없는 추천」이라 쓰지 않는다. 판정은 `applied_evidence`가 아니라 서버가 한다 */
+            no_applied_conditions?: boolean;
+            /** @description **마지막 실행(`execute`·`retry`·`widen`)이 새로 찾은 후보 수**. 그 뒤에 일부를 지도에 올려도 바뀌지 않는다(다음 실행이 덮는다). `candidates`에는 이전에 지도에 올린(`visibility: published`) 후보가 남아 있을 수 있어 `candidates`의 길이와 다르다. 마지막 검색이 0건이면 0(게시 후보가 남아 있어도). 화면은 「이번엔 새로 찾은 곳이 없어요」와 「이미 지도에 올린 곳」을 구분해 보인다 */
+            new_count?: number;
         };
         /**
          * @description 카카오맵 검색 링크(#798). 핀고에 결과가 없거나 적을 때 사람이 밖에서 직접 찾는 출구다 — AI 추천 결과가 아니다. 서버는 카카오를 부르지 않고 저장하지 않는다(#53).
@@ -4425,7 +4582,7 @@ export interface components {
             };
         };
         /**
-         * @description 필터 통과 후보 0개 (6절 "결과 0개"). `detail.funnel`(단계별로 빠진 수)과 `detail.external_search`(ExternalSearch, 카카오맵 검색 링크, #798)가 온다.
+         * @description 필터 통과 후보 0개 (6절 "결과 0개"). **이전에 지도에 올린 후보까지 포함해 후보가 하나도 없을 때만** 온다 — 게시한 후보가 남아 있으면 200이고 `RecommendResult.new_count`가 0이다(#845). `detail.funnel`(단계별로 빠진 수)과 `detail.external_search`(ExternalSearch, 카카오맵 검색 링크, #798)가 온다. **`detail.applied_evidence`·`detail.no_applied_conditions`**(200의 `RecommendResult`와 같은 값, #845)도 와서 화면이 0건일 때도 「이 조건으로 찾았어요」를 보일 수 있다.
          *     화면은 반경 넓히기, 근거 고치기와 함께 「카카오맵에서 더 찾아보기」를 보여 준다
          */
         NoResults: {
@@ -4477,6 +4634,15 @@ export interface components {
         };
         /** @description 만료된 초대 토큰 (INVITE_EXPIRED) */
         InviteExpired: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 선택 대기 중인 탈퇴 계정 로그인이 없다 — 쿠키가 없거나 만료(10분)·변조됐거나 이미 선택·정리됨(#855). 화면은 「선택 시간이 지났어요. 카카오로 다시 시작해 주세요」를 보이고 로그인 화면으로 보낸다 */
+        NoPendingLogin: {
             headers: {
                 [name: string]: unknown;
             };
@@ -4644,7 +4810,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 동일 Idempotency-Key로 다른 바디를 보냄 — 재시도 로직 버그 신호. 붙일 엔드포인트는 */
+        /** @description 동일 Idempotency-Key로 다른 바디를 보냄 — 재시도 로직 버그 신호. 첫 적용처는 `POST /maps/{mapId}/runs`(#811, */
         IdempotencyConflict: {
             headers: {
                 [name: string]: unknown;
