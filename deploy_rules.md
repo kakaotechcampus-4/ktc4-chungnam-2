@@ -73,6 +73,7 @@
 - 첫 설정(`rds-setup.sh`) 완료. 스테이징 19:10에 옮김(표 33개 일치, 그 뒤 staging-check PASS 71·FAIL 0, INFO와 SKIP은 옮기기 전과 같음). 운영 19:20에 옮김(표 32개 일치 — 운영은 0043 전 버전이라 하나 적다, 열리지 않은 시간 약 36초).
 - 스테이징 이전은 성공했지만 마지막 기록 줄의 버그로 실패 표시가 났다(#875에서 고침).
 - **운영 배포 예외**: 옮긴 뒤 운영 로그인이 안 됐다. RDS 문제가 아니라 운영 이미지가 #819(카카오 state 쿠키 경로) 수정 전 코드라, 쿠키가 `/auth/kakao`에 붙어 `/api/auth/kakao/callback`으로 돌아올 때 브라우저가 보내지 않았다(옮기기 전부터 같은 상태). `deploy` 워크플로는 운영에 `v` 태그만 받아서, Session Manager에서 `./deploy.sh prod sha-17dd07d`(develop, 스테이징과 같은 이미지)로 직접 올렸다. RDS 앱 계정으로 백업, 마이그레이션(0043)까지 통과했고 로그인과 지도 열기를 확인했다. 다음 정식 릴리스(develop → main → `v` 태그)부터 규칙대로 돌아간다.
+- `finish`(19:33) 뒤 서버의 모든 `docker compose` 명령이 `depends on undefined service "db"`로 실패했다. `compose.yml`의 API가 `depends_on: db (required: false)`를 갖고 있었는데, Compose v5는 정의되지 않은 서비스는 required가 false여도 거절한다. 돌던 컨테이너는 영향이 없었다. DB 의존을 `compose.db.yml`로 옮겨 고쳤다(#877). 머지하면 스테이징 배포의 `sync.sh`가 서버 파일을 맞춘다.
 
 ### AWS가 끝나기 전에(2026-11-20)
 
