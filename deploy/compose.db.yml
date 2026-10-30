@@ -31,5 +31,15 @@ services:
       timeout: 5s
       retries: 10
 
+  # API는 이 파일을 함께 쓸 때만 DB를 기다린다(compose.yml에 두면 RDS 구성에서 설정이 깨진다, #873)
+  api-prod:
+    depends_on:
+      db:
+        condition: service_healthy
+  api-staging:
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata:
