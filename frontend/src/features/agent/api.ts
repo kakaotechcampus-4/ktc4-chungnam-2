@@ -1,6 +1,6 @@
 import { api } from '@/api'
 
-import type { AgentActionDto, AgentSettingsDto, AgentStateDto } from './model'
+import type { AgentActionDto, AgentSettingsDto, AgentStateDto, RunAdviceDto } from './model'
 
 export const fetchAgent = (mapId: string) => api<AgentStateDto>(`/maps/${mapId}/agent`)
 
@@ -15,3 +15,6 @@ export const acceptSuggestion = (id: string, actionIndex: number) =>
   api<{ action: AgentActionDto }>(`/agent/suggestions/${id}/accept`, { method: 'POST', body: JSON.stringify({ action_index: actionIndex }) })
 
 export const dismissSuggestion = (id: string) => api<void>(`/agent/suggestions/${id}/dismiss`, { method: 'POST' })
+
+/** 대상이 아니거나 낼 조언이 없으면 204 라서 null — react-query 는 undefined 를 data 로 받지 않는다. */
+export const fetchRunAdvice = async (runId: string) => (await api<RunAdviceDto | undefined>(`/runs/${runId}/advice`)) ?? null

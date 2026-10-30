@@ -110,3 +110,30 @@ describe('agent.* 이벤트(페이로드로 고침, 멱등)', () => {
     expect(get()).toMatchObject({ settings: { enabled: false, updated_by: 'user_2' }, active_suggestion: null, has_unseen: false })
   })
 })
+
+describe('우리 조건 요약(#589)', () => {
+  it('이름 없이 개수만, 비어 있지 않은 칸만, 추천 대상 카테고리엔 추천 버튼', async () => {
+    setup()
+    expect(await screen.findByText('우리 조건 요약')).toBeInTheDocument()
+    expect(screen.getByText('매운 곳 제외 · 1명')).toBeInTheDocument()
+    expect(screen.getByText('횟집 원함 · 2명')).toBeInTheDocument()
+    expect(screen.getByText('체인점 · 원함 1 / 피함 1')).toBeInTheDocument()
+    expect(screen.getByText('더 적어 주면 반영돼요 · 1건')).toBeInTheDocument()
+    expect(screen.getByText('추천이 거르지 않아요 · 1건')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '이 조건으로 음식점 추천 받기' })).toBeInTheDocument()
+  })
+
+  it('agent.summary_updated 는 그 카테고리만 갈아끼우고 점은 켜지 않는다', async () => {
+    const client = new QueryClient()
+    const base = await fetchAgent(MAP)
+    client.setQueryData(agentKeys.state(MAP), { ...base, has_unseen: false })
+    const on = agentEventHandlers(client, MAP)
+    const food = { ...base.summaries[0], must_keep: [] }
+    const cafe = { ...base.summaries[0], category: '카페' as const }
+    on['agent.summary_updated'](new MessageEvent('message', { data: JSON.stringify(food) }))
+    on['agent.summary_updated'](new MessageEvent('message', { data: JSON.stringify(cafe) }))
+    const s = client.getQueryData<AgentStateDto>(agentKeys.state(MAP))!
+    expect(s.summaries.map((x) => [x.category, x.must_keep.length])).toEqual([['음식점', 0], ['카페', 1]])
+    expect(s.has_unseen).toBe(false)
+  })
+})

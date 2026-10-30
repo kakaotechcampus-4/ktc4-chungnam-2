@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ExternalLink, MessageSquare, RotateCw, Users } from 'lucide-react'
 
 import { ApiError } from '@/api'
+import RunAdvice from '@/features/agent/RunAdvice'
 import type { MemberView } from '@/features/maps/model'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
@@ -110,6 +111,7 @@ export function ResultsBody({
       </button>
       {/* 알러지는 거르지 않는다 — 데이터로 보장할 수 없어서 사유와 상관없이 항상 안내한다(#425) */}
       <p className="text-xs text-ink-500">알러지가 있다면 가게에 직접 확인해 주세요</p>
+      <RunAdvice mapId={mapId} run={run} widen={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />} />
       {/* 원한 조건에 맞는 곳이 반경 안에 없으면 다른 곳만 보여 주지 않고 이유를 말한다. 넓히는 건 사람이다(가드레일 4). */}
       {missing.length > 0 && (
         <Notice action={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />}>
@@ -262,6 +264,8 @@ export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string;
   return (
     <div className="space-y-3">
       <FunnelTable funnel={funnel} left={0} />
+      {/* 아래에 같은 버튼이 있어서 조언은 문장만 보인다. */}
+      <RunAdvice mapId={mapId} run={run} />
       <div className="grid grid-cols-2 gap-2">
         <WidenButton mapId={mapId} run={run} className="btn-primary btn-lg" />
         <button type="button" onClick={onFixEvidence} className="btn-outline btn-lg">

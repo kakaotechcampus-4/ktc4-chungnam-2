@@ -3,12 +3,13 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tansta
 import { ApiError } from '@/api'
 import { showToast } from '@/features/shell/toast'
 
-import { acceptSuggestion, dismissSuggestion, fetchAgent, putAgentSettings, viewSuggestion } from './api'
-import { withoutSuggestion, type AgentSettingsDto, type AgentStateDto, type AgentSuggestionDto } from './model'
+import { acceptSuggestion, dismissSuggestion, fetchAgent, fetchRunAdvice, putAgentSettings, viewSuggestion } from './api'
+import { withSummary, withoutSuggestion, type AgentSettingsDto, type AgentStateDto, type AgentSummaryDto, type AgentSuggestionDto } from './model'
 
 /** ['maps', mapId] 아래에 두지 않는다 — 지도 상세를 무효화할 때(member.joined 등) 같이 다시 받지 않게. */
 export const agentKeys = {
   state: (mapId: string) => ['agent', mapId] as const,
+  advice: (runId: string) => ['runs', runId, 'advice'] as const,
 }
 
 /** 「핑고 AI 조언」 상태. 지도에 들어오면 받고, 이후는 agent.* 이벤트 페이로드로 고친다(docs/events.md). */
@@ -89,6 +90,8 @@ export function agentEventHandlers(queryClient: QueryClient, mapId: string): Rec
       const suggestion = data<AgentSuggestionDto>(e)
       update((s) => (s.active_suggestion?.id === suggestion.id ? s : { ...s, active_suggestion: suggestion, has_unseen: true }))
     },
+    // 요약 갱신은 점을 켜지 않는다.
+    'agent.summary_updated': (e) => update((s) => withSummary(s, data<AgentSummaryDto>(e))),
     'agent.resolved': (e) => update((s) => withoutSuggestion(s, data<{ suggestion_id: string }>(e).suggestion_id)),
     'agent.settings_changed': (e) => {
       const { enabled, updated_by } = data<Pick<AgentSettingsDto, 'enabled' | 'updated_by'>>(e)
@@ -99,4 +102,18 @@ export function agentEventHandlers(queryClient: QueryClient, mapId: string): Rec
       }))
     },
   }
+}
+
+/**
+ * 추천 막힘 조언(agent-v2 16.5). run 당 한 번 만들어 저장되니 다시 받지 않는다. 대상이 아니면 204(null).
+ * 실패(500)는 다음 요청이 다시 만든다 — 조언 자리를 숨기고 기록만 남긴다.
+ */
+export function useRunAdviceQuery(runId: string) {
+  return useQuery({
+    queryKey: agentKeys.advice(runId),
+    queryFn: () => fetchRunAdvice(runId),
+    staleTime: Infinity,
+    retry: false,
+    refetchOnWindowFocus: false,
+  })
 }
