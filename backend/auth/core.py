@@ -11,6 +11,16 @@ from datetime import datetime, timedelta
 from typing import NamedTuple
 from urllib.parse import urlencode, urlsplit
 
+_MAX_SECONDS_DIGITS = 12    # 초 단위 시각(현재 10자리)
+_MAX_MICROS_DIGITS = 20     # 마이크로초 단위 시각(현재 16자리)
+
+
+def _is_ascii_digits(value: str, *, max_len: int) -> bool:
+    """쿠키·토큰의 숫자 칸 검사. str.isdigit()은 '²' 같은 문자도 참이라 int()가 실패하고, 아주 긴 숫자열은 정수 변환 한도(ValueError)로
+    실패한다 — ASCII 숫자만, 길이 상한 안에서만 받아 int()가 예외를 내지 않게 한다."""
+    return 0 < len(value) <= max_len and value.isascii() and value.isdigit()
+
+
 KAKAO_AUTHORIZE_URL = "https://kauth.kakao.com/oauth/authorize"
 STATE_TTL_SECONDS = 60 * 10  # 로그인 시작 → 카카오 동의 → 콜백까지 걸리는 시간. 짧게 둔다.
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 30  # 30일. 세션 테이블이 없어(data-model.md) 무상태 토큰의 자체 만료로 대신한다.
@@ -41,7 +51,7 @@ def parse_session_token(token: str, *, secret: str, now: int, ttl_seconds: int =
     if len(parts) != 3:
         return None
     user_id, issued_at_raw, signature = parts
-    if not user_id or not issued_at_raw.isdigit():
+    if not user_id or not _is_ascii_digits(issued_at_raw, max_len=_MAX_SECONDS_DIGITS):
         return None
     payload = f"{user_id}.{issued_at_raw}"
     if not hmac.compare_digest(_sign(payload, secret), signature):
@@ -101,7 +111,7 @@ def parse_state(cookie_value: str | None, state_param: str | None, *, secret: st
             return None
     else:
         return None
-    if not state or not issued_at_raw.isdigit():
+    if not state or not _is_ascii_digits(issued_at_raw, max_len=_MAX_SECONDS_DIGITS):
         return None
     issued_at = int(issued_at_raw)
     if not hmac.compare_digest(_sign_state(state, issued_at, secret, guest_user_id), signature):
@@ -176,6 +186,8 @@ def create_pending_cookie_value(user_id: str, provider: str, deleted_at: datetim
     return f"{user_id}.{provider}.{stamp}.{issued_at}.{_sign_pending(user_id, provider, stamp, issued_at, secret)}"
 
 
+
+
 def parse_pending_cookie(cookie_value: str | None, *, secret: str, now: int, ttl_seconds: int = PENDING_TTL_SECONDS) -> PendingClaims | None:
     """서명·형식·만료를 확인해 (사용자, 수단, 탈퇴 시각)을 돌려준다. 어느 경우인지는 구분해 알리지 않는다.
     서버가 현재 상태와 맞는지는 호출부가 따로 대조한다(복구·정리·다음 탈퇴 회차 거절)."""
@@ -185,10 +197,11 @@ def parse_pending_cookie(cookie_value: str | None, *, secret: str, now: int, ttl
     if len(parts) != 5:
         return None
     user_id, provider, stamp_raw, issued_at_raw, signature = parts
-    if not user_id or not provider or not stamp_raw.isdigit() or not issued_at_raw.isdigit():
+    if not user_id or not provider or not _is_ascii_digits(stamp_raw, max_len=_MAX_MICROS_DIGITS) or not _is_ascii_digits(issued_at_raw, max_len=_MAX_SECONDS_DIGITS):
         return None
     stamp, issued_at = int(stamp_raw), int(issued_at_raw)
-    if not hmac.compare_digest(_sign_pending(user_id, provider, stamp, issued_at, secret), signature):
+    expected = _sign_pending(user_id, provider, stamp, issued_at, secret)
+    if not hmac.compare_digest(expected.encode("utf-8"), signature.encode("utf-8")):   # 비ASCII 서명도 TypeError 없이 불일치
         return None
     if now < issued_at or now - issued_at > ttl_seconds:
         return None
@@ -199,17 +212,6 @@ def pending_cookie_path(redirect_uri: str) -> str:
     """선택 대기 쿠키를 `/auth/pending`에 싣는 경로 — state 쿠키 경로(`.../auth/kakao`)의 부모(`.../auth`).
     같은 규칙으로 브라우저가 보는 주소에서 구하므로 앞단이 /api를 벗겨도 맞는다(#819)."""
     return state_cookie_path(redirect_uri).rsplit("/", 1)[0] or "/"
-
-
-def restored_sessions_valid_after(existing: datetime | None, now: datetime) -> datetime:
-    """복구가 남기는 sessions_valid_after. 탈퇴 때 올린 값이 이미 그 전의 모든 토큰을 죽였고 탈퇴한 동안에는 이 사용자의 토큰이
-    발급되지 않으므로 그 값을 그대로 둔다. 다만 is_revoked가 같은 초를 거절하므로, 그 값이 복구와 같은 초(또는 이후)면
-    방금 발급한 새 세션까지 죽는다 — 그때만 지금 초의 한 초 앞으로 내린다(지금 초에 발급된 토큰은 남는 대신 그 앞의 토큰은 모두
-    죽는다). 값이 없는 옛 탈퇴 행도 같은 값으로 채운다."""
-    boundary = now.replace(microsecond=0) - timedelta(seconds=1)
-    if existing is None or int(existing.timestamp()) >= int(now.timestamp()):
-        return boundary
-    return existing
 
 
 def is_revoked(issued_at: int, sessions_valid_after: datetime | None) -> bool:

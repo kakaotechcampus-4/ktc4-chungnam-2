@@ -8,15 +8,13 @@
 import random
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from typing import Any
 
-from ads.constants import AD_SLOTS, AD_STATS_TZ
+from ads.constants import AD_SLOTS
 from common import categories
+from common.kst import kst_date
 
-# Asia/Seoul은 서머타임이 없어 +9 고정 오프셋과 같다. zoneinfo는 Windows에서 tzdata 패키지가 있어야 해서 쓰지 않는다
-# (agent.core.KST와 같은 방식).
-STATS_TZ = timezone(timedelta(hours=9), AD_STATS_TZ)
 _NAME_MAX = 100      # api-spec AdPlace.name maxLength
 _ADDRESS_MAX = 200   # api-spec AdPlace.address maxLength
 
@@ -61,8 +59,8 @@ def on_map(place: Mapping[str, Any], *, db_place_ids: Collection[str], live_kaka
 
 
 def stat_date(now: datetime) -> date:
-    """집계 날짜 — AD_STATS_TZ 기준."""
-    return now.astimezone(STATS_TZ).date()
+    """집계 날짜 — AD_STATS_TZ(Asia/Seoul) 기준. 하루를 자르는 계산은 common.kst 한 곳이다(#766)."""
+    return kst_date(now)
 
 
 def to_item(ad: ActiveAd, place: Mapping[str, Any], *, on_map: bool) -> dict:

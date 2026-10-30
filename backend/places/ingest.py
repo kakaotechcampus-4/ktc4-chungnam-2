@@ -13,6 +13,8 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Any, Iterable, Iterator, Mapping
 
+from places import core   # 순수 함수만 쓴다(core는 places의 다른 모듈을 부르지 않는다)
+
 # ---------------------------------------------------------------- 공통
 
 KOREA_LAT = (33.0, 39.0)
@@ -412,35 +414,6 @@ class HoursRow:
     hours_note: str | None
 
 
-def _valid_hours(raw: Any) -> dict | None:
-    """요일 7개 모두에 [[여는, 닫는], …]이 있고 시각이 "HH:MM"(자정 넘김은 24 더함)이면 그대로, 아니면 None."""
-    from places import core   # 순수 함수만 쓴다
-
-    if not isinstance(raw, dict) or set(raw) != set(core.WEEKDAYS):
-        return None
-    for spans in raw.values():
-        if not isinstance(spans, list):
-            return None
-        for span in spans:
-            if not isinstance(span, (list, tuple)) or len(span) != 2:
-                return None
-            try:
-                start, end = core.parse_minutes(span[0]), core.parse_minutes(span[1])
-            except (ValueError, AttributeError):
-                return None
-            if not 0 <= start < 24 * 60 or not start < end <= 48 * 60:
-                return None
-    return {day: [[a, b] for a, b in raw[day]] for day in core.WEEKDAYS}
-
-
-def _valid_closed_days(raw: Any) -> list[str] | None:
-    from places import core
-
-    if not isinstance(raw, list) or any(d not in core.WEEKDAYS for d in raw):
-        return None
-    return list(dict.fromkeys(raw))
-
-
 def _note(raw: Any) -> str | None:
     text = str(raw).strip() if raw is not None else ""
     return text or None
@@ -468,8 +441,8 @@ def parse_hours_entries(entries: Iterable[Mapping[str, Any]], *, seoul_only: boo
         if seoul_only and addr and not addr.startswith("서울"):
             report.skip("서울 아님(--all-regions로 허용)")
             continue
-        hours = _valid_hours(body.get("hours"))
-        closed_days = _valid_closed_days(body.get("closed_days"))
+        hours = core.valid_hours(body.get("hours"))
+        closed_days = core.valid_closed_days(body.get("closed_days"))
         bad_hours += body.get("hours") not in (None, {}) and hours is None   # 그 칸만 버린다 — 다른 칸이 있으면 행은 넣는다
         bad_closed += body.get("closed_days") is not None and closed_days is None
         closed_note, hours_note = _note(body.get("closed_note")), _note(body.get("hours_note"))

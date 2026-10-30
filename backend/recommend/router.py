@@ -21,7 +21,7 @@ docs/api-spec.yaml의 recommend 태그 엔드포인트 전체(#108 + PR #71 publ
   authz.guard.require()를 직접 호출한다(PR #71 결정, Rule A 대응 — flows.py 모듈 docstring 참고).
 """
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Header, Path, Query
 from sqlalchemy.orm import Session
 
 from auth.deps import get_current_user
@@ -83,9 +83,11 @@ def get_runs(
 
 @router.post("/maps/{mapId}/runs", response_model=RecommendRunResponse, status_code=202)
 def post_run(body: RunCreateRequest, mapId: str = Path(...), principal: Principal = RunToCreate, db: Session = DbSession,
-             evidence_planner: EvidencePlanGateway = EvidencePlanGatewayDep):
+             evidence_planner: EvidencePlanGateway = EvidencePlanGatewayDep,
+             idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=64)):
     run = flows.create_run(
         db, map_id=mapId, category=body.category, requested_by=principal.user_id, evidence_planner=evidence_planner,
+        idempotency_key=idempotency_key,
     )
     return _run_response(run)
 
