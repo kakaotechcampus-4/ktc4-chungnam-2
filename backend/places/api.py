@@ -20,7 +20,7 @@ from places.ratelimit import SlidingWindowLimiter
 from places.samples import search_samples
 from places.matching import Candidate
 from places.schemas import (
-    Area, FactLabel, LinkParseResult, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult, PlaceSourceInfo, ResolvedCoords,
+    Area, FactLabel, LinkParseResult, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult, PlaceSourceInfo,
 )
 from places.service import PlaceService, to_result
 from places.sources.base import PlaceSource
@@ -31,11 +31,6 @@ log = logging.getLogger("pingo.places")
 _STATS = CallStats()
 search_limiter = SlidingWindowLimiter(settings.places_search_per_min)   # 사용자당 분당 상한, 인메모리
 link_limiter = SlidingWindowLimiter(settings.places_search_per_min)     # POST /places/from-link — 검색과 같은 상한, 따로 센다(#474)
-
-
-def call_counts() -> dict[str, int]:
-    """소스별 실제 HTTP 호출 횟수(프로세스 누적)."""
-    return _STATS.snapshot()
 
 
 def build_sources(http: SourceHttp) -> dict[str, PlaceSource]:
@@ -54,18 +49,6 @@ def _service() -> PlaceService:
     log.info("places.sources order=%s", ", ".join(
         f"{s.name}({'key' if s.is_configured() else 'NO KEY'})" for s in ordered))
     return PlaceService(ordered)
-
-
-def search_nearby(category: str, areas: Sequence[Area]) -> list[PlaceRef]:
-    return _service().search_nearby(category, areas)
-
-
-def get_raw_facts(place_id: str) -> dict[str, Any]:
-    return _service().get_raw_facts(place_id)
-
-
-def resolve_place(source: str, place_id: str | None, lat: float | None, lng: float | None) -> ResolvedCoords:
-    return _service().resolve(source, place_id, lat, lng)
 
 
 def _is_dev() -> bool:

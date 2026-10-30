@@ -28,7 +28,6 @@ def test_recommend_gateway_converts_circles_and_results(monkeypatch):
         return [PlaceRef("5b0e2f3a-0000-0000-0000-000000000001", 37.5, 127.0)]
 
     monkeypatch.setattr(api, "search_nearby_own", fake_search)
-    monkeypatch.setattr(api, "search_nearby", lambda *a, **k: (_ for _ in ()).throw(AssertionError("카카오 실시간 경로")))
     place_id = "5b0e2f3a-0000-0000-0000-000000000001"
     monkeypatch.setattr(api, "get_places", lambda ids, *, db=None: {
         place_id: PlaceInfo(place_id, "카페", 37.5, 127.0, "카페", "https://place.map.kakao.com/1", "permit"),
