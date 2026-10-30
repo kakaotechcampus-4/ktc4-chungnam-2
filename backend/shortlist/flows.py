@@ -97,7 +97,7 @@ def recalculate_route(db, *, map_id: str) -> list[Route]:
 
     routes = routing.compute_routes(points)
     service.replace_routes(db, map_id=map_id, routes=routes)
-    # DB에 쓴 뒤 같은 정렬(region_label 오름차순)로 다시 읽어 이벤트·응답 둘 다 GET과 순서를
+    # DB에 쓴 뒤 같은 정렬(구역 번호 오름차순)로 다시 읽어 이벤트·응답 둘 다 GET과 순서를
     # 맞춘다 — routing.compute_routes가 만든 순서(계산 순)와 list_routes의 정렬 기준이 다르면
     # POST 직후 응답이 바로 이어지는 GET과 어긋난다(Antigravity 검수 지적).
     saved_routes = [core.to_route_response(row) for row in service.list_routes(db, map_id=map_id)]
