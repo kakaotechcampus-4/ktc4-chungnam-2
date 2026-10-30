@@ -141,7 +141,9 @@ describe("에러 시나리오", () => {
     const body = await res.json();
     expect(body.code).toBe("NO_RESULTS");
     expect(body.detail.funnel.length).toBeGreaterThan(0);
-    expect(body.detail.funnel.map((f: { label: string }) => f.label)).toContain("추천 가능 아님 제거");
+    // #912: 후보 풀이 처음부터 정예 장소라 「추천 가능 아님 제거」 단계가 없다
+    expect(body.detail.funnel.map((f: { label: string }) => f.label)).not.toContain("추천 가능 아님 제거");
+    expect(body.detail.funnel.map((f: { label: string }) => f.label)).toContain("반경 밖 제거");
     expect(body.detail.external_search.url).toMatch(/^https:\/\/map\.kakao\.com\/link\/search\//); // #798
     // #845 — 후보가 하나도 없는 결과에도 이번에 쓴 근거가 실린다(0건일 때 「이 조건으로 찾았어요」를 보일 자리)
     expect(Array.isArray(body.detail.applied_evidence)).toBe(true);
