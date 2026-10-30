@@ -78,8 +78,50 @@ paths:
             **성공이든 실패든 항상 302다** — 이 경로는 fetch가 아니라 브라우저 이동이라 JSON을 돌려주면 사용자가 그대로 본다(2026-10-04).
             성공: 진입점(`FRONTEND_LOGIN_REDIRECT_URL`)으로, 세션 쿠키와 함께.
             **게스트 전환이었으면(#560, #694)** 같은 주소에 쿼리 `guest_merged=true`(게스트 기록이 카카오 계정으로 이어졌다) 또는 `guest_merged=false`(잇지 못했다 — 카카오 로그인은 성공했고 게스트 기록은 그대로 남아 있다. 사용자에게 알리고, 게스트 쿠키는 이미 카카오 세션으로 바뀌었으니 다시 하지 않는다)를 붙인다. 처음 쓰는 카카오 계정이면 게스트 계정에 카카오 로그인을 붙여 사용자 id와 표시 이름이 그대로이고, 이미 쓰던 카카오 계정이면 그 계정으로 기록을 옮긴다(이름은 그 계정 것). 게스트가 아닌 로그인에는 붙이지 않는다.
+            **탈퇴한 계정이 복구 기간(탈퇴 후 7일) 안이면 로그인하지 않는다**(#855): 세션 쿠키를 만들지 않고 서명한 짧은 수명(10분)의 `pending_account` 쿠키(HttpOnly, **SameSite=Lax**, 운영은 Secure, **경로는 state 쿠키와 같은 규칙** — 브라우저가 보는 콜백 주소의 부모 경로. 배포는 앞단이 `/api`를 벗기므로 서버 안 경로가 아니다, #819)를 내려 같은 주소에 쿼리 `?login_pending=withdrawn_account`를 붙여 돌려보낸다. **쿠키 값은 이 한 번의 선택에만 묶인다**: 용도(`pending_account`)·사용자 id·로그인 수단·그 사용자의 탈퇴 시각(`deleted_at`)을 서명에 넣고, 서버가 선택 때 현재 상태와 맞는지 확인한다 — 그래서 복구·정리된 뒤나 다음 탈퇴 회차에는 같은 쿠키가 통하지 않는다(지웠다는 사실에 기대지 않는다). 쿼리에 이름·id·날짜를 싣지 않는다. 화면은 `GET /auth/pending`으로 안내를 받아 사용자가 「새 계정으로 시작」과 「기존 계정 되살리기」 중 고르게 하고 `POST /auth/pending`으로 보낸다. **복구 기한은 정리 작업의 실행과 무관하게 지금 시각으로 판정한다**(콜백·`GET`·`POST` 모두 `deleted_at` + 7일). 기한이 지났는데 아직 정리되지 않은 탈퇴 계정을 콜백이 만나면 그 자리에서 정리한 뒤(`restart`와 같은 정리) 선택 없이 새 계정으로 로그인한다(일반 성공). 이미 정리된 계정이면 같다.
+            **게스트가 시작한 로그인**(게스트 전환, #560)이 복구 기간 안의 탈퇴 계정에 닿으면 이번에는 게스트 기록을 합치지 않는다(`guest_merged=false`와 같은 상태 — 카카오 로그인만 되고 게스트 기록은 그대로 남는다). 선택 뒤 로그인은 선택한 계정으로 한다. 게스트 전환 합치기와 복구 선택을 한 흐름으로 합치는 것은 v1에 없다.
             실패: 같은 주소에 쿼리 `?login_error=<값>`을 붙여 돌려보내고 세션 쿠키는 만들지 않는다. state 쿠키는 성공·실패 모두 지운다.
-            `login_error` 값: `cancelled`(사용자가 카카오 화면에서 취소), `invalid_state`(state 쿠키와 다르거나 없음 — 처음부터 다시), `kakao_failed`(카카오 토큰 교환·프로필 조회 실패), `withdrawn`(이 카카오 계정은 탈퇴 처리된 계정이다 — 다시 시도해도 같다. 탈퇴 계정을 되살리지 않는 정책은 그대로, #409), `server_error`(그 밖의 실패).
+            `login_error` 값: `cancelled`(사용자가 카카오 화면에서 취소), `invalid_state`(state 쿠키와 다르거나 없음 — 처음부터 다시), `kakao_failed`(카카오 토큰 교환·프로필 조회 실패), `server_error`(그 밖의 실패).
+
+  /auth/pending:
+    get:
+      tags: [auth]
+      summary: |
+        **탈퇴한 계정으로 로그인하려는 중의 안내**(#855). 카카오 콜백이 `?login_pending=withdrawn_account`로 돌려보낸 직후, 화면이 선택 화면을 그리려고 부른다.
+        세션 없이(콜백이 내린 `pending_account` 쿠키로) 부른다. 쿠키가 없거나 만료(10분)·변조됐거나 이미 선택·정리됐으면 404 `NO_PENDING_LOGIN`이다.
+      security: []   # 로그인 전에 부르는 API
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PendingAccount" }
+        "404": { $ref: "#/components/responses/NoPendingLogin" }
+    post:
+      tags: [auth]
+      summary: |
+        **선택**: `restart`는 새 계정을 만들고(새 사용자와 로그인 수단) **기존 계정을 즉시 정리한다 — 같은 카카오 식별자는 한 사용자에게만 붙을 수 있어서 둘이 함께 있을 수 없고, 정리된 계정은 되살릴 수 없다**(201). `restore`는 기존 계정을 되살린다(200 — 계정과 핀 작성자 표시만 돌아온다).
+        둘 다 세션 쿠키를 내리고 `pending_account` 쿠키를 지운다. 응답은 `User`다. **같은 선택의 재전송과 이미 쓴 쿠키는 404 `NO_PENDING_LOGIN`이다** — 쿠키 값이 `deleted_at`에 묶여 있어 복구·정리 뒤에는 서버가 거절한다. 선택과 정리는 같은 카카오 식별자 단위 잠금·한 트랜잭션이라 동시 `restore`·`restart`는 한쪽만 이긴다(나머지는 404).
+        **본문은 JSON만 받는다**(`Content-Type: application/json`) — 폼 제출 같은 교차 사이트 POST가 쿠키를 싣고 오지 못하게 SameSite=Lax와 함께 막는다. `restart`는 **기존 계정을 되살릴 수 없게 정리하는 파괴적 동작**이라 화면이 최종 제출 전에 한 번 더 확인한다(`기존 계정은 바로 삭제되고 되살릴 수 없어요`). 게스트에게는 해당 없다.
+      security: []   # 로그인 전에 부르는 API
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PendingChoiceRequest" }
+      responses:
+        "200":
+          description: 기존 계정을 되살렸다(`restore`). `Set-Cookie`로 세션 발급
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "201":
+          description: 새 계정을 만들었다(`restart`). 기존 계정은 정리됐다. `Set-Cookie`로 세션 발급
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "404": { $ref: "#/components/responses/NoPendingLogin" }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — choice가 restart·restore가 아님", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /auth/guest:
     post:
@@ -181,6 +223,7 @@ paths:
       summary: |
         탈퇴 (12절, #155 결정). users 행은 soft delete, 반응·반대 사유·근거 줄은 삭제한다.
         그 사람이 찍은 핀과 확정 리스트 항목은 남고, 작성자(created_by_display_name)는 "탈퇴한 구성원"으로 내려간다.
+        **재가입과 복구(#855)**: 탈퇴 직후 동작은 그대로다(반응·근거·알림은 즉시 지워지고, **지도 멤버십 행은 남는다**(#245) — 구성원 수와 목록에서만 빠진다. 방장이던 지도는 후임에게 위임되거나 삭제된다). 탈퇴 후 **7일 동안** 같은 카카오 계정으로 로그인하면 「새 계정으로 시작」 또는 「기존 계정 되살리기」를 고를 수 있다(`GET·POST /auth/pending`). **되살리면 계정과 내가 찍은 핀의 작성자 표시, 그리고 남아 있던 지도 참여(방장 자리는 위임됐으므로 일반 구성원으로)가 돌아온다. 지워진 반응·근거 줄·알림은 돌아오지 않는다.** 탈퇴와 복구는 둘 다 `sessions_valid_after`를 현재 시각으로 올려 **그 이전에 발급된 모든 세션을 영구 무효화한다**(탈퇴 전에 복사된 30일 토큰이 복구 뒤 되살아나지 않게). 복구 뒤에는 새로 발급한 세션만 유효하다. **7일이 지나면 정리 작업이 개인정보를 지운다**(`docs/data-model.md` 「탈퇴 후 7일 정리 대상」 표 — 로그인 식별자·표시 이름뿐 아니라 다른 곳에 복사된 이름도 비식별화한다). users 행은 껍데기로 남고 지도 멤버십·핀의 작성자 표시는 「탈퇴한 구성원」이다.
       responses: { "204": { description: 탈퇴 처리됨 } }
 
   # ---------- maps ----------
@@ -1512,6 +1555,11 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    NoPendingLogin:
+      description: 선택 대기 중인 탈퇴 계정 로그인이 없다 — 쿠키가 없거나 만료(10분)·변조됐거나 이미 선택·정리됨(#855). 화면은 「선택 시간이 지났어요. 카카오로 다시 시작해 주세요」를 보이고 로그인 화면으로 보낸다
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     InviteGone:
       description: 쓸 수 없는 초대 토큰 — 만료됐다(INVITE_EXPIRED) 또는 방장이 껐다(INVITE_REVOKED, #467). 코드로 구분한다
       content:
@@ -1662,6 +1710,23 @@ components:
       properties:
         display_name: { type: string, minLength: 1, maxLength: 50, description: "게스트로 보일 이름. 앞뒤 공백을 지운 뒤 비어 있으면 422" }
         invite_token: { type: string, description: "들어갈 지도의 초대 토큰(GET /invites/{token}으로 요약을 본 그 토큰)" }
+
+    PendingAccount:
+      type: object
+      description: 「탈퇴한 계정이 있어요」 선택 화면에 쓰는 값(#855). 세션이 없는 상태라 개인정보는 이 사람이 방금 카카오로 증명한 자기 계정의 이름과 날짜뿐이다
+      required: [display_name, withdrawn_at, restore_until, days_left]
+      properties:
+        display_name: { type: string, description: "탈퇴한 계정의 표시 이름" }
+        withdrawn_at: { type: string, format: date-time }
+        restore_until: { type: string, format: date-time, description: "이 시각까지 되살릴 수 있다(탈퇴 + 7일). 지나면 정리 작업이 계정 정보를 모두 지운다" }
+        days_left: { type: integer, minimum: 0, description: "남은 날수(올림, 서버가 계산). 화면은 「N일 안에 되살릴 수 있어요」" }
+
+    PendingChoiceRequest:
+      type: object
+      required: [choice]
+      additionalProperties: false
+      properties:
+        choice: { type: string, enum: [restart, restore], description: "`restart` 새 계정으로 시작(기존 계정은 즉시 정리) · `restore` 기존 계정 되살리기" }
 
     QaLoginRequest:
       type: object
