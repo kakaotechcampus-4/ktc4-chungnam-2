@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")   # weekday 0=월 … 6=일 (datetime.date.weekday()와 같다)
 _DAY = 24 * 60
+_CLOCK = re.compile(r"[0-9]{2}:[0-9]{2}")   # 원본 API의 시각 글자 — "9:00"·"0009:00"·"09:0"은 아니다
 
 
 def parse_minutes(clock: str) -> int:
@@ -21,12 +22,15 @@ def parse_minutes(clock: str) -> int:
     return int(h) * 60 + int(m)
 
 
-def _valid_spans(spans: Any) -> bool:
-    """한 요일의 [[여는, 닫는], …]이 모두 "HH:MM"이고 시작 < 끝(자정 넘김은 24를 더한 값)인가. 빈 목록(= 휴무)은 맞다."""
+def _valid_spans(spans: Any, *, strict_clock: bool = False) -> bool:
+    """한 요일의 [[여는, 닫는], …]이 모두 "HH:MM"이고 시작 < 끝(자정 넘김은 24를 더한 값)인가. 빈 목록(= 휴무)은 맞다.
+    strict_clock이면 시각 글자가 정확히 두 자리:두 자리여야 한다(원본 API용). 적재는 parse_minutes가 받는 범위를 그대로 쓴다."""
     if not isinstance(spans, list):
         return False
     for span in spans:
         if not isinstance(span, (list, tuple)) or len(span) != 2:
+            return False
+        if strict_clock and not all(isinstance(c, str) and _CLOCK.fullmatch(c) for c in span):
             return False
         try:
             start, end = parse_minutes(span[0]), parse_minutes(span[1])
@@ -50,7 +54,7 @@ def clean_hours(raw: Any) -> dict | None:
     잘못된 값이 「영업」으로 새지 않게 한다(#747). 남은 요일이 없으면 None."""
     if not isinstance(raw, dict):
         return None
-    kept = {day: [[a, b] for a, b in raw[day]] for day in WEEKDAYS if day in raw and _valid_spans(raw[day])}
+    kept = {day: [[a, b] for a, b in raw[day]] for day in WEEKDAYS if day in raw and _valid_spans(raw[day], strict_clock=True)}
     return kept or None
 
 

@@ -403,3 +403,19 @@ def test_core_valid_helpers_are_what_ingest_uses():
     assert core.valid_closed_days(["월", "월", "화"]) == ["월", "화"] and core.valid_closed_days([]) == []
     assert core.valid_hours(_week(월=[["09:00", "18:00"]])) is not None
     assert core.valid_hours({"월": []}) is None   # 7요일이 다 있어야 한다(적재용)
+
+
+@pytest.mark.parametrize("clock", ["0009:00", "9:00", "09:0", "09:000", " 09:00", "09:00 ", "９:００", "09-00", "+9:00", "٠٩:٠٠"])
+def test_raw_api_reads_a_clock_that_is_not_exactly_hh_mm_as_unknown(clock):
+    hours = {"월": [[clock, "18:00"]]}
+    assert api.week_open_status(hours, None) == {d: "unknown" for d in range(7)}
+    hours = {"월": [["09:00", clock]]}
+    assert api.week_open_status(hours, None) == {d: "unknown" for d in range(7)}
+
+
+def test_raw_api_still_accepts_midnight_crossing_hh_mm():
+    assert api.week_open_status({"금": [["18:00", "26:00"]]}, None)[4] == "open"
+
+
+def test_ingest_keeps_its_own_clock_range():
+    assert core.valid_hours(_week(월=[["9:00", "18:00"]])) is not None   # 적재 규칙은 그대로(parse_minutes가 받는 범위)
