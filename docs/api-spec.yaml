@@ -2451,7 +2451,7 @@ components:
             properties:
               label: { type: string }
               removed_count: { type: integer }
-          description: "5-6 깔때기 표. 2026-10-15부터 「영업 종료 제거」 다음에 「추천 가능 아님 제거」 단계가 있다(places.can_recommend=false인 장소를 후보 풀에서 뺀 수, docs/data-model.md)"
+          description: "5-6 깔때기 표. 단계: 카테고리 후보 풀 → 반경 밖 제거 → 영업 종료 제거 → 실격 조건 제거 → 이미 제안·거절됨 → 상위 3곳 선정. 후보 풀은 넓히기 상한 안의 영업 중인 추천 가능(정예) 장소라, 「반경 밖 제거」는 넓히면 들어올 수 있는 최대 수다(#912). 2026-10-15~#913 구현 전에는 「영업 종료 제거」 다음에 「추천 가능 아님 제거」가 있었다 — 그때 저장된 결과에는 그 줄이 남아 있고, 화면은 받은 표를 그대로 그린다"
         regions:
           type: array
           items: { $ref: "#/components/schemas/Region" }

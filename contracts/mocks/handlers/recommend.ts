@@ -249,7 +249,7 @@ export const recommendHandlers = [
       { label: "카테고리 후보 풀", removed_count: 0 },
       { label: "반경 밖 제거", removed_count: 3 },
       { label: "영업 종료 제거", removed_count: 1 },
-      { label: "추천 가능 아님 제거", removed_count: 2 }, // 라벨이 적어 추천 풀에서 빠진 장소(places.can_recommend=false, 2026-10-15)
+      // 「추천 가능 아님 제거」는 없다 — 후보 풀이 처음부터 정예 장소다(#912)
       { label: "실격 조건 제거", removed_count: candidates.length === 0 ? 8 : 3 },
       { label: "이미 제안·거절됨", removed_count: 1 },
     ];
