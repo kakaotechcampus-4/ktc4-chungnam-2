@@ -114,6 +114,13 @@ def publish_candidate(
         #    200, 이벤트 없음. get_pin_response_for_viewer가 NOT_FOUND를 던지면(핀이 그
         #    사이 삭제된 극단적 경우) 그대로 전파한다 — 정직한 실패가 낫다.
 
+    # 같은 run의 실행·재시도·넓히기·후보 교체와 겹치지 않게 run을 잠그고, 기다린 사이 바뀐 후보를 다시 읽는다(#811).
+    # 후보가 그 사이 교체돼 사라졌으면 여기서 404다. 잠금은 커밋까지 가서 게시 INSERT와 후보 링크가 한 덩어리로 보인다.
+    service.lock_run(db, run.id)
+    candidate, run = service.load_candidate_with_run(db, candidate_id)
+    if candidate.published_pin_id is not None:
+        return _published_pin_response(db, pin_id=str(candidate.published_pin_id), requester_id=requester_id, run=run)
+
     core.check_run_ready(run)  # 4) 409 NOT_READY
 
     mutation = pins_api.create_ai_pin(
@@ -328,7 +335,9 @@ def create_run(
     merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422, #617
 
     # LLM 대기 중 같은 사용자의 동시 요청이 상한(#31)에 도달시켰을 수 있다 — INSERT 직전에 다시 읽어
-    # 경합 구간을 수 ms로 줄인다(첫 검사는 모델을 부르기 전에 막는 빠른 실패용).
+    # 경합 구간을 수 ms로 줄인다(첫 검사는 모델을 부르기 전에 막는 빠른 실패용). 이 검사부터 INSERT까지는 (지도, 요청자)
+    # 횟수 잠금 안에서 끝낸다 — 서로 다른 요청이 같은 attempt_no를 쓰거나 상한을 함께 넘지 못하게(#811).
+    service.lock_requester_attempts(db, map_id=map_id, requested_by=requested_by)
     current_max = service.max_attempt_no_for_requester(db, map_id=map_id, requested_by=requested_by)
     core.check_retry_limit(current_max)
     run = service.create_run(db, map_id=map_id, category=category, requested_by=requested_by, attempt_no=current_max + 1)
@@ -783,6 +792,7 @@ def execute_run(
 ) -> RecommendRun:
     """POST /runs/{runId}/execute — 실격 필터(③-a-2) + 선호 순위(③-b) + 대안 반영(④)."""
     run = service.get_run_or_404(db, run_id)
+    service.lock_run(db, run.id)   # 같은 run의 다른 실행과 후보 교체를 직렬화한다(#811)
     excluded = _excluded_place_ids(db, run)
     regions, active_lines = _pipeline_inputs(db, run)
     candidates_data, funnel = _run_pipeline(
@@ -805,6 +815,7 @@ def widen_run(
     저장된 원 전부가 기본값 원이다. 명시적 원이 생기면 그 원은 여기서 건드리지 않도록 좁혀야
     한다(docs/constraints.md "반경 넓히기 상수", #274)."""
     run = service.get_run_or_404(db, run_id)
+    service.lock_run(db, run.id)   # 같은 run의 다른 실행과 후보 교체를 직렬화한다(#811)
     regions = service.list_regions(db, run_id)
     if not regions:
         raise AppError("NOT_READY")
@@ -835,6 +846,8 @@ def retry_run(
     """POST /runs/{runId}/retry (3절) — 현재 뜬(아직 게시 안 된) 대안 전체를 제외목록에
     넣고 새로 찾는다. 상한 도달 시 429 RETRY_LIMIT(#31)."""
     run = service.get_run_or_404(db, run_id)
+    service.lock_run(db, run.id)   # run 먼저, 그다음 횟수 잠금(교착 방지 순서, service.lock_run)
+    service.lock_requester_attempts(db, map_id=run.map_id, requested_by=run.requested_by)
     # run.attempt_no(이 run 자신의 값)가 아니라 그 사람의 전체 run 중 최댓값을 본다 — #31은
     # 개인 단위 공유 카운터라, 오래된(attempt_no가 낮은) run으로 retry를 걸면 그 run 자신의
     # 값만 통과해서 사실상 상한을 우회할 수 있었다(루트 수정, 2026-09-23 — Antigravity 검수로
