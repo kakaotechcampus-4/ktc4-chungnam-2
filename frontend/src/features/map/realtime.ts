@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQueryClient, type InvalidateQueryFilters } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 
+import { agentEventHandlers } from '@/features/agent/queries'
 import { useMeQuery } from '@/features/auth/queries'
 import { mapKeys } from '@/features/maps/queries'
 import { recommendKeys } from '@/features/recommend/queries'
@@ -34,7 +35,7 @@ const REACTION_WORD: Record<ReactionType, string> = { like: '좋음', against: '
 /**
  * docs/events.md "이벤트별로 화면이 다시 받을 것"(#449) 그대로. 이벤트나 화면 데이터를 더하면 events.md 표와 같이 고친다.
  * 키는 앞부분이 같으면 함께 무효화된다(TanStack) — 지도 상세는 구성원, 핀 목록은 집계까지 덮지만 표대로 다 적는다.
- * agent.* 는 #536에서 더한다.
+ * agent.* 는 표가 아니라 페이로드로 고친다(apply, features/agent).
  */
 function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
   const pins = { queryKey: pinKeys.list(mapId) }
@@ -125,6 +126,7 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       'pin.deleted': remove,
       'reaction.changed': reaction,
       'map.deleted': mapDeleted,
+      ...agentEventHandlers(queryClient, mapId),
     }
     const table = refetchTable(mapId)
     for (const type of new Set([...Object.keys(apply), ...Object.keys(table)])) {

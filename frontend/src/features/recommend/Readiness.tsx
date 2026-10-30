@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { Check } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import { CHANGED, START_PARAM } from '@/features/agent/actions'
+import { showToast } from '@/features/shell/toast'
 import Notice from '@/ui/Notice'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
@@ -82,6 +85,10 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const [picked, setPicked] = useState<RecommendCategory | null>(null)
   const chosen = picked && cards.find((c) => c.category === picked)?.ready ? picked : firstReady
   const search = cards.find((c) => c.category === chosen)?.externalSearch
+  useAgentStart(cards, (category) => {
+    setPicked(category)
+    create.mutate(category, { onError: () => showToast(CHANGED) })
+  })
 
   if (readiness.isPending) return <PingoLoading label="준비 상태를 확인하는 중…" />
   if (readiness.error) return <ErrorText message="추천 준비 상태를 불러오지 못했어요" error={readiness.error} />
@@ -119,6 +126,32 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
       </button>
     </div>
   )
+}
+
+/**
+ * 「핑고 AI 조언」 버튼(open_recommend)으로 들어오면 주소의 카테고리로 손으로 누를 때와 같은 추천을 한 번 시작한다(agent-v2 16.3).
+ * 그새 준비가 풀렸으면 시작하지 않고 「상황이 바뀌었어요」.
+ */
+function useAgentStart(cards: ReadinessCard[], start: (category: RecommendCategory) => void) {
+  const [params, setParams] = useSearchParams()
+  const wanted = params.get(START_PARAM)
+  // 한 번만 시작한다 — cards·start 는 렌더마다 새로 만들어져 효과가 자주 돌고, 개발 모드(StrictMode)는 두 번 돈다.
+  const started = useRef<string | null>(null)
+  const ready = cards.length > 0
+  useEffect(() => {
+    if (!wanted || !ready || started.current === wanted) return
+    started.current = wanted
+    setParams(
+      (p) => {
+        p.delete(START_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+    const card = cards.find((c) => c.category === wanted)
+    if (card?.ready) start(card.category)
+    else showToast(CHANGED)
+  }, [wanted, ready, cards, setParams, start])
 }
 
 function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; selected: boolean; wide: boolean; onPick: () => void }) {
