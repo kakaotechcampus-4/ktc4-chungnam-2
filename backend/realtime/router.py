@@ -4,6 +4,7 @@
 
 import asyncio
 import json
+from contextlib import aclosing
 
 from fastapi import APIRouter, Depends, Header, Path, Request
 from fastapi.responses import StreamingResponse
@@ -90,8 +91,10 @@ async def public_events(
         # 전체 채널도 누가 구독했는지 남긴다 — member.left 뒤 그 사람의 구독만 닫기 위해서.
         sub = dispatcher.subscribe(mapId, channel="public", user_id=user.user_id)
         try:
-            async for chunk in _stream_live(request, sub):
-                yield chunk
+            # 바깥이 닫히면 안쪽도 즉시 닫아 대기 중인 get 태스크 취소가 GC 시점으로 밀리지 않게 한다.
+            async with aclosing(_stream_live(request, sub)) as live:
+                async for chunk in live:
+                    yield chunk
         finally:
             dispatcher.unsubscribe(mapId, sub)
 
@@ -119,8 +122,10 @@ async def private_events(
                     yield _sse_format(row)
         sub = dispatcher.subscribe(mapId, channel="private", user_id=user.user_id)
         try:
-            async for chunk in _stream_live(request, sub):
-                yield chunk
+            # 바깥이 닫히면 안쪽도 즉시 닫아 대기 중인 get 태스크 취소가 GC 시점으로 밀리지 않게 한다.
+            async with aclosing(_stream_live(request, sub)) as live:
+                async for chunk in live:
+                    yield chunk
         finally:
             dispatcher.unsubscribe(mapId, sub)
 
