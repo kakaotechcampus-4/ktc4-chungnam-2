@@ -344,6 +344,14 @@ def set_last_funnel(db: Session, run: RecommendRun, funnel: list[dict]) -> None:
     db.flush()
 
 
+def set_run_outcome(db: Session, run: RecommendRun, *, applied_evidence: list[dict], new_count: int) -> None:
+    """마지막 실행(execute·retry·widen)의 근거 스냅샷과 새로 찾은 후보 수를 저장한다(#845, #847). 다음 실행이 덮는다.
+    new_count는 게시 후보를 뺀, 이번 실행이 새로 만든 후보 수라 그 뒤에 게시해도 바뀌지 않는다."""
+    run.applied_evidence = applied_evidence
+    run.last_new_count = new_count
+    db.flush()
+
+
 def bump_attempt_no(db: Session, run: RecommendRun) -> int:
     """#31은 개인 단위 공유 카운터다 — 이 run 자신의 attempt_no만 1 올리면(예전 버전) 그
     사람의 다른(더 최근) run이 이미 써둔 더 큰 값을 무시하고 낮은 값으로 되돌아갈 수 있다
@@ -364,19 +372,38 @@ def set_default_radius_walk_min(db: Session, run: RecommendRun, walk_min: int) -
     db.flush()
 
 
+_DROP_AUTHOR_FROM_SNAPSHOT = """
+UPDATE recommend_runs SET applied_evidence = COALESCE((
+    SELECT jsonb_agg(entry ORDER BY position) FROM jsonb_array_elements(applied_evidence) WITH ORDINALITY AS t(entry, position)
+    WHERE entry->>'author_id' <> :user_id
+), '[]'::jsonb)
+WHERE applied_evidence IS NOT NULL
+  AND EXISTS (SELECT 1 FROM jsonb_array_elements(applied_evidence) AS entry WHERE entry->>'author_id' = :user_id)
+"""
+
+
+def _drop_author_from_snapshots(db: Session, *, user_id: str, map_id: str | None = None) -> None:
+    """근거 줄을 지울 때 실행 스냅샷(recommend_runs.applied_evidence, #847) 안의 그 사람 줄도 뺀다 — 스냅샷에 작성자 id와 사용자
+    글이 들어 있어 그대로 두면 지운 글이 결과 응답에 남는다. map_id가 있으면 그 지도의 run만."""
+    db.execute(text(_DROP_AUTHOR_FROM_SNAPSHOT + (" AND map_id = :map_id" if map_id else "")),
+               {"user_id": user_id, **({"map_id": map_id} if map_id else {})})
+
+
 def delete_evidence_lines_by_author(db: Session, *, user_id: str) -> int:
-    """탈퇴 — 이 사용자가 쓴 근거 줄(모든 run)을 지우고 지운 개수를 돌려준다."""
+    """탈퇴 — 이 사용자가 쓴 근거 줄(모든 run)을 지우고 지운 개수를 돌려준다. 실행 스냅샷 안의 그 사람 줄도 뺀다(#847)."""
     result = db.execute(delete(EvidenceLine).where(EvidenceLine.author_id == user_id))
+    _drop_author_from_snapshots(db, user_id=user_id)
     db.flush()
     return result.rowcount
 
 
 def delete_evidence_lines_by_author_in_map(db: Session, *, user_id: str, map_id: str) -> int:
-    """지도 나가기(#369) — 이 사용자가 그 지도의 run에 쓴 근거 줄만 지운다."""
+    """지도 나가기(#369) — 이 사용자가 그 지도의 run에 쓴 근거 줄만 지운다. 그 지도 run의 실행 스냅샷에서도 뺀다(#847)."""
     run_ids_on_map = select(RecommendRun.id).where(RecommendRun.map_id == map_id)
     result = db.execute(
         delete(EvidenceLine).where(EvidenceLine.author_id == user_id, EvidenceLine.run_id.in_(run_ids_on_map))
     )
+    _drop_author_from_snapshots(db, user_id=user_id, map_id=map_id)
     db.flush()
     return result.rowcount
 
@@ -475,6 +502,14 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     열이 없다(run의 requested_by를 따른다). 커밋하지 않는다."""
     if from_user_id == to_user_id:
         return {"recommend_runs": 0, "evidence_lines": 0, "exclusions": 0, "idempotency_keys": 0}
+    db.execute(text("""
+        UPDATE recommend_runs SET applied_evidence = (
+            SELECT jsonb_agg(CASE WHEN entry->>'author_id' = :from_user THEN entry || jsonb_build_object('author_id', CAST(:to_user AS text))
+                                  ELSE entry END ORDER BY position)
+            FROM jsonb_array_elements(applied_evidence) WITH ORDINALITY AS t(entry, position))
+        WHERE applied_evidence IS NOT NULL
+          AND EXISTS (SELECT 1 FROM jsonb_array_elements(applied_evidence) AS entry WHERE entry->>'author_id' = :from_user)
+    """), {"from_user": from_user_id, "to_user": to_user_id})   # 스냅샷의 작성자도 옮긴다(#847) — 근거 줄을 옮기는 것과 같다
     kept_keys = select(IdempotencyKey.scope, IdempotencyKey.key).where(IdempotencyKey.requested_by == to_user_id)
     db.execute(   # (범위, 키)가 겹치면 from_user 것을 지운다 — uq_idempotency_keys, 키는 24시간짜리라 잃어도 상관없다(#811)
         delete(IdempotencyKey).where(

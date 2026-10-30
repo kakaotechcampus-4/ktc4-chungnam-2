@@ -350,6 +350,27 @@ def evidence_line_use(
     return LineUse(False, "not_for_category", None)
 
 
+def applied_evidence_entries(lines: Sequence[Any], category: str, off_season: Collection[str]) -> list[dict]:
+    """실행(execute·retry·widen) 시점에 활성이던 근거 줄의 스냅샷 항목(#845, #847). `lines`는 활성 줄을 근거 순서로(id, author_id,
+    text, badge, fact_key, wants 속성). enforced·not_enforced_reason은 근거 응답과 파이프라인이 쓰는 `evidence_line_use` 한
+    곳에서 정한다. 사유 글과 작성자 id가 들어가므로 recommend_runs.applied_evidence에만 저장한다(탈퇴·합치기가 따라온다)."""
+    entries = []
+    for line in lines:
+        use = evidence_line_use(line.badge, line.fact_key, line.wants, category, off_season)
+        entries.append({
+            "id": str(line.id), "author_id": line.author_id, "text": line.text, "badge": line.badge,
+            "fact_key": line.fact_key, "wants": line.wants, "enforced": use.enforced,
+            "not_enforced_reason": use.not_enforced_reason, "is_active": True,
+        })
+    return entries
+
+
+def no_applied_conditions(entries: Sequence[Mapping[str, Any]]) -> bool:
+    """활성이고 추천이 실제로 쓰는(enforced) 사유 근거가 하나도 없는가(#845). 줄을 다 껐거나 남은 줄이 모두 enforced=false면
+    참이다. 판정은 스냅샷 항목의 enforced 값이라 근거 응답·파이프라인과 같은 기준이다(♥ 선호·반경·영업·제외 필터는 따로 남는다)."""
+    return not any(entry["enforced"] for entry in entries)
+
+
 # ---------------------------------------------------------------- 카카오맵 검색 링크 (#798, #800)
 # docs/constraints.md 「카카오맵 검색 링크」. 링크 형식과 동네 자르기는 places.api가 정한다 — 여기는 검색어의 말과 동네 고르기만.
 

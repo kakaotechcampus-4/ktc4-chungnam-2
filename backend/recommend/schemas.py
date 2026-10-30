@@ -43,6 +43,7 @@ class Readiness(BaseModel):
 
 class RunCreateRequest(BaseModel):
     category: Category
+    execute: bool = False   # true면 근거 조립 뒤 곧바로 첫 검색까지 한 요청에서 끝낸다(#845, #847). 생략은 false
 
 
 class RecommendRun(BaseModel):
@@ -175,3 +176,8 @@ class RecommendResult(BaseModel):
     regions: list[Region]
     candidates: list[Candidate]
     external_search: ExternalSearch | None = None  # 후보가 FEW_RESULTS곳 미만일 때만(#798)
+    # #845: 이번 결과에 실제로 쓴 근거(실행 시점 스냅샷), 쓰이는 사유 근거가 0개인지, 마지막 실행이 새로 찾은 수.
+    # 스냅샷이 없는 예전 run에는 세 필드 모두 없다.
+    applied_evidence: list[EvidenceLine] | None = None
+    no_applied_conditions: bool | None = None
+    new_count: int | None = Field(default=None, ge=0)
