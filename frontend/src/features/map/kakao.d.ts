@@ -36,13 +36,15 @@ declare namespace kakao.maps {
     /** 여백(px) 안쪽으로 맞춘다 — 위·오른쪽·아래·왼쪽. */
     setBounds(bounds: LatLngBounds, paddingTop?: number, paddingRight?: number, paddingBottom?: number, paddingLeft?: number): void
     setCenter(latlng: LatLng): void
+    /** 부드럽게 옮긴다. 화면보다 먼 거리는 애니메이션 없이 바로 옮긴다. */
     panTo(latlng: LatLng): void
     /** 지도 가운데를 픽셀만큼 옮긴다. */
     panBy(dx: number, dy: number): void
     getCenter(): LatLng
     /** 확대 레벨. 작을수록 가깝다(1 이 가장 가깝다). */
     getLevel(): number
-    setLevel(level: number): void
+    /** anchor 를 주면 그 좌표가 화면에서 제자리에 있는 채로 확대·축소한다. */
+    setLevel(level: number, options?: { animate?: boolean | { duration: number }; anchor?: LatLng }): void
     getProjection(): MapProjection
     /** 지도 틀 크기를 CSS 로 바꾼 뒤 부른다. 창 크기 변경(resize)에는 SDK 가 알아서 부른다. */
     relayout(): void

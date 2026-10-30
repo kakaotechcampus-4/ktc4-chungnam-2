@@ -110,13 +110,14 @@ export function useRetryMutation(mapId: string) {
  * (run.candidates_ready·run.failed 이벤트를 기다리지 않는다 — docs/events.md).
  * 0곳(NO_RESULTS)·실패(RECOMMEND_FAILED)는 답이 정해진 것이라 다시 묻지 않는다.
  */
-export function useResultQuery(run: RecommendRunDto) {
+/** run 이 없으면 묻지 않는다 — 지도(MapLayout)가 AI 후보를 그리려고 같은 캐시를 볼 때(#843). */
+export function useResultQuery(run: RecommendRunDto | undefined) {
   return useQuery({
-    queryKey: [...recommendKeys.result(run.id), run.attempt_no, run.default_radius_walk_min],
-    queryFn: () => fetchResult(run.id),
+    queryKey: [...recommendKeys.result(run?.id ?? ''), run?.attempt_no, run?.default_radius_walk_min],
+    queryFn: () => fetchResult(run!.id),
     retry: (count, err) => !(err instanceof ApiError && ['NO_RESULTS', 'RECOMMEND_FAILED', 'FORBIDDEN'].includes(err.code)) && count < 1,
     // v1 은 실행이 요청 안에서 끝난다 — 실행 중에 결과를 물으면 끝나기 전 상태(0곳 등)가 올 수 있어 묻지 않는다(#349).
-    enabled: run.status !== 'executing' && run.status !== 'failed',
+    enabled: !!run && run.status !== 'executing' && run.status !== 'failed',
   })
 }
 

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { createMarkerLayer, type MarkerLayer } from './markerLayer'
+import { createCandidateMarkerElement, markSelected } from './pinMarker'
 import { isDesktopNow } from '@/features/shell/useIsDesktop'
 import type { RouteDrawing } from '@/features/shortlist/model'
 import Pingo from '@/ui/Pingo'
@@ -18,12 +19,18 @@ const VISIBLE_TOP = 170
 /** 핀을 고르면 이 레벨까지 다가간다 — 골목과 이웃 핀이 보이는 축척. 이미 더 가까우면 그대로 둔다(#843). */
 const FOCUS_LEVEL = 3
 
+/** 확대 애니메이션 시간(ms). 옮기기는 카카오 panTo 의 기본 시간을 쓴다. */
+const ZOOM_MS = 300
+
 export type SearchMarker = { n: number; lat: number; lng: number; selected: boolean; onClick: () => void }
 
-/** 지도 버튼(현재 위치·최근 핀·전체 핀)·검색·핀 선택이 지도를 움직이는 통로. */
+/** 올리기 전 AI 후보(#843) — 요청한 사람의 화면에만 점선 핀으로 그린다. */
+export type CandidateMarker = { id: string; rank: number; name: string; lat: number; lng: number; selected: boolean; onClick: () => void }
+
+/** 지도 버튼(현재 위치·최근 핀·전체 핀)·검색·핀·AI 후보 선택이 지도를 움직이는 통로. */
 export type MapController = {
   panTo: (lat: number, lng: number) => void
-  /** 고른 핀으로 옮기고, 멀리 보고 있었으면 FOCUS_LEVEL 까지 확대한다. */
+  /** 고른 곳으로 부드럽게 옮기고, 멀리 보고 있었으면 FOCUS_LEVEL 까지 부드럽게 확대한다. */
   focusPin: (lat: number, lng: number) => void
   getCenter: () => { lat: number; lng: number }
   fitPins: (points: { lat: number; lng: number }[]) => void
@@ -39,6 +46,7 @@ export default function MapCanvas({
   memberCount,
   selectedPinId = null,
   results = [],
+  candidates = [],
   route = [],
   onSelect,
   onReady,
@@ -52,6 +60,8 @@ export default function MapCanvas({
   selectedPinId?: string | null
   /** 장소 검색 결과(Figma 4절) — 파란 번호 원으로 띄운다. 핀이 아니다. */
   results?: SearchMarker[]
+  /** AI 추천 탭의 올리기 전 후보. 핀이 아니다. */
+  candidates?: CandidateMarker[]
   /** 확정 탭 「동선 보기」 또는 AI 코스 지도 보기 — 경로선·순서 번호·구간 시간. */
   route?: RouteDrawing[]
   onSelect: (pinId: string) => void
@@ -87,30 +97,70 @@ export default function MapCanvas({
         const layer = createMarkerLayer(maps, map, (pinId) => callbacks.current.onSelect(pinId))
         layerRef.current = layer
 
-        const onDragStart = () => callbacks.current.onMovingChange(true)
+        // focusPin 이 옮기기를 마치고 확대하려고 기다리는 중이면 그 idle 처리기.
+        let pendingZoom: (() => void) | null = null
+        const cancelZoom = () => {
+          if (pendingZoom) maps.event.removeListener(map, 'idle', pendingZoom)
+          pendingZoom = null
+        }
+
+        const onDragStart = () => {
+          // 옮기는 도중에 사용자가 지도를 잡으면 뒤늦게 확대하지 않는다.
+          cancelZoom()
+          callbacks.current.onMovingChange(true)
+        }
         const onIdle = () => callbacks.current.onMovingChange(false)
         maps.event.addListener(map, 'dragstart', onDragStart)
         maps.event.addListener(map, 'idle', onIdle)
         detach = () => {
+          cancelZoom()
           maps.event.removeListener(map, 'dragstart', onDragStart)
           maps.event.removeListener(map, 'idle', onIdle)
         }
 
         mapRef.current = { maps, map }
-        // 지도 가운데는 2단계 시트 뒤에 숨는다. 검색창 아래 ~ 시트 윗변 사이 가운데로 오게 아래로 더 민다.
+        // 지도 가운데는 2단계 시트 뒤에 숨는다. 고른 곳은 검색창 아래 ~ 시트 윗변 사이 가운데에 오게 가운데보다 이만큼(px) 위에 둔다.
         // 넓은 화면은 지도 영역에 가리는 시트가 없어서 가운데 그대로다.
-        const centerOn = (lat: number, lng: number) => {
-          map.setCenter(new maps.LatLng(lat, lng))
-          if (isDesktopNow()) return
+        const sheetLift = () => {
+          if (isDesktopNow()) return 0
           const h = window.innerHeight
-          map.panBy(0, Math.round(h / 2 - (VISIBLE_TOP + h * 0.41) / 2))
+          return Math.round(h / 2 - (VISIBLE_TOP + h * 0.41) / 2)
         }
         callbacks.current.onReady({
-          panTo: centerOn,
+          panTo: (lat, lng) => {
+            map.setCenter(new maps.LatLng(lat, lng))
+            map.panBy(0, sheetLift())
+          },
+          // 옮기고 나서 고른 곳을 붙든 채(anchor) 확대한다. 한꺼번에 하면 확대 중심이 화면 밖일 수 있다.
           focusPin: (lat, lng) => {
-            // 레벨을 먼저 바꾼다 — 시트 보정(panBy)은 픽셀이라 바뀐 축척에서 재야 한다.
-            if (map.getLevel() > FOCUS_LEVEL) map.setLevel(FOCUS_LEVEL)
-            centerOn(lat, lng)
+            cancelZoom()
+            const target = new maps.LatLng(lat, lng)
+            const zoomIn = map.getLevel() > FOCUS_LEVEL
+            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+              if (zoomIn) map.setLevel(FOCUS_LEVEL)
+              map.setCenter(target)
+              map.panBy(0, sheetLift())
+              return
+            }
+            const zoom = () => map.setLevel(FOCUS_LEVEL, { anchor: target, animate: { duration: ZOOM_MS } })
+            // 고른 곳이 보이는 자리에 오게 하는 가운데(지금 축척 기준).
+            const proj = map.getProjection()
+            const p = proj.containerPointFromCoords(target)
+            const c = proj.containerPointFromCoords(map.getCenter())
+            const lift = sheetLift()
+            // 이미 그 자리면 옮길 게 없어서 idle 이 오지 않는다 — 바로 확대한다.
+            if (Math.hypot(p.x - c.x, p.y + lift - c.y) < 1) {
+              if (zoomIn) zoom()
+              return
+            }
+            if (zoomIn) {
+              pendingZoom = () => {
+                cancelZoom()
+                zoom()
+              }
+              maps.event.addListener(map, 'idle', pendingZoom)
+            }
+            map.panTo(proj.coordsFromContainerPoint(new maps.Point(p.x, p.y + lift)))
           },
           getCenter: () => {
             const c = map.getCenter()
@@ -189,6 +239,26 @@ export default function MapCanvas({
     })
     return () => overlays.forEach((o) => o.setMap(null))
   }, [results, ready])
+
+  // AI 후보 점선 핀. 많아야 몇 곳이고 결과·선택이 바뀔 때만 와서 검색 결과처럼 매번 새로 그린다. 고른 후보는 핀 위로 올린다.
+  useEffect(() => {
+    const m = mapRef.current
+    if (!ready || !m) return
+    const overlays = candidates.map((c) => {
+      const el = createCandidateMarkerElement(c, c.onClick)
+      if (c.selected) markSelected(el, c.name, true)
+      const overlay = new m.maps.CustomOverlay({
+        position: new m.maps.LatLng(c.lat, c.lng),
+        content: el,
+        yAnchor: 1,
+        clickable: true,
+        zIndex: c.selected ? 11 : 4,
+      })
+      overlay.setMap(m.map)
+      return overlay
+    })
+    return () => overlays.forEach((o) => o.setMap(null))
+  }, [candidates, ready])
 
   // 동선(Figma 7절): brand-600 4px 직선, 순서 번호는 골드 + 갈색 숫자, 구간 "약 N분" 흰 알약.
   // AI 코스(#683)는 날짜마다 색과 선 모양을 달리하고, 번호 원과 알약 테두리도 그날 색이다.
