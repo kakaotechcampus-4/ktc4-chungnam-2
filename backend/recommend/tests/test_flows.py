@@ -401,9 +401,8 @@ def test_publish_candidate_guard_update_conflict_rolls_back_pin_insert(db_sessio
 
 
 def test_concurrent_publish_same_candidate_produces_exactly_one_pin(test_engine, monkeypatch):
-    """동시에 두 요청을 보내 같은 후보를 게시하는 시나리오(세션 두 개로 흉내) — 하나는
-    200(생성), 다른 하나는 409 PIN_DUPLICATE(PIN_DUPLICATE가 아니다). 최종적으로
-    pins 행은 정확히 1개. db_session(세이브포인트, 롤백 전용) 대신 test_engine에 직접
+    """동시에 두 요청을 보내 같은 후보를 게시하는 시나리오(세션 두 개로 흉내) — 둘 다 200이고 같은 핀을
+    돌려받는다(run 잠금 뒤 멱등 경로, #811). 최종적으로 pins 행은 정확히 1개. db_session(세이브포인트, 롤백 전용) 대신 test_engine에 직접
     연결한다 — 실제 유니크 제약 락 경합을 재현하려면 진짜 커밋이 필요하다.
 
     스레드 시작 시점만 맞추는 barrier로는 실제 경합이 안 났다(로컬 DB 왕복이 빨라 한 스레드가
@@ -430,9 +429,13 @@ def test_concurrent_publish_same_candidate_produces_exactly_one_pin(test_engine,
 
     original_load = service.load_candidate_with_run
 
+    first_load = threading.local()
+
     def _load_then_sync_before_insert(db, candidate_id):
         result = original_load(db, candidate_id)
-        insert_barrier.wait(timeout=5)  # 둘 다 published_pin_id=None을 읽은 뒤에야 동시에 푼다
+        if not getattr(first_load, "done", False):   # 스레드마다 첫 읽기에서만 맞춘다 — 둘째 읽기는 run 잠금 뒤다(#811)
+            first_load.done = True
+            insert_barrier.wait(timeout=5)  # 둘 다 published_pin_id=None을 읽은 뒤에야 동시에 푼다
         return result
 
     monkeypatch.setattr(service, "load_candidate_with_run", _load_then_sync_before_insert)
@@ -458,11 +461,10 @@ def test_concurrent_publish_same_candidate_produces_exactly_one_pin(test_engine,
     for t in threads:
         t.join()
 
-    oks = [r for r in results if r[0] == "ok"]
-    errors = [r for r in results if r[0] == "error"]
-    assert len(oks) == 1
-    assert len(errors) == 1
-    assert errors[0][1] == "PIN_DUPLICATE"
+    # run 잠금(#811) 뒤에는 둘째 요청이 잠금을 기다렸다가 첫째가 만든 핀을 멱등 경로로 돌려받는다(200, 같은 핀) —
+    # 전에는 둘째가 INSERT까지 가서 409 PIN_DUPLICATE였다. 핀은 여전히 정확히 1개다.
+    assert [r[0] for r in results] == ["ok", "ok"]
+    assert results[0][1] == results[1][1]
 
     verify = Session()
     try:
@@ -2497,3 +2499,122 @@ def test_get_result_before_done_is_409_run_not_finished(db_session, status):
     with pytest.raises(AppError) as error:
         flows.get_result(db_session, run_id=str(run.id), principal=principal, place_search=_FakePlaceSearch([]))
     assert error.value.code == "RUN_NOT_FINISHED"
+
+
+# ============================================================================
+# #811 — 횟수 원자성과 같은 run 직렬화 (진짜 커밋·진짜 잠금이 필요해 test_engine에 직접 연결한다)
+# ============================================================================
+
+def _run_threads(target, count=2):
+    threads = [threading.Thread(target=target, args=(i,)) for i in range(count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+
+def test_concurrent_creates_do_not_share_an_attempt_number_or_pass_the_limit(test_engine, monkeypatch):
+    """9회를 쓴 요청자에게 다른 요청 둘이 동시에 온다 — 둘 다 모델 앞 검사(9)를 통과하지만 횟수 잠금 뒤 다시 읽으므로
+    하나만 10회째가 되고 다른 하나는 RETRY_LIMIT이다(전엔 둘 다 attempt_no 10으로 만들어졌다)."""
+    from recommend.ports import Circle
+
+    Session = sessionmaker(bind=test_engine)
+    map_id, user = "map_race_811", "racer_811"
+    setup = Session()
+    old_run_id = uuid.uuid4()
+    setup.add(RecommendRun(id=old_run_id, map_id=map_id, category="카페", requested_by=user, status="done",
+                           attempt_no=core.ATTEMPT_LIMIT - 1))
+    setup.commit()
+    setup.close()
+
+    monkeypatch.setattr(flows, "readiness_for_category", lambda db, **kw: {"ready": True})
+    monkeypatch.setattr(flows, "_default_circle_and_anchors",
+                        lambda db, **kw: (Circle(anchor_lat=35.0, anchor_lng=129.0, radius_m=1000), [(35.0, 129.0)]))
+    sync = threading.Barrier(2)
+
+    def reactions(db, **kw):
+        try:
+            sync.wait(timeout=5)   # 둘 다 첫 상한 검사를 통과한 뒤에 쓰기로 넘어간다
+        except threading.BrokenBarrierError:
+            pass
+        return []
+
+    monkeypatch.setattr(flows.pins_api, "list_reasoned_reactions", reactions)
+    results: list[str] = []
+
+    def _attempt(_i):
+        session = Session()
+        try:
+            flows.create_run(session, map_id=map_id, category="카페", requested_by=user, evidence_planner=PLANNER)
+            session.commit()
+            results.append("ok")
+        except AppError as exc:
+            session.rollback()
+            results.append(exc.code)
+        finally:
+            session.close()
+
+    _run_threads(_attempt)
+
+    verify = Session()
+    try:
+        assert sorted(results) == ["RETRY_LIMIT", "ok"]
+        numbers = sorted(verify.execute(select(RecommendRun.attempt_no).where(
+            RecommendRun.map_id == map_id, RecommendRun.requested_by == user)).scalars().all())
+        assert numbers == [core.ATTEMPT_LIMIT - 1, core.ATTEMPT_LIMIT]
+    finally:
+        ids = verify.execute(select(RecommendRun.id).where(RecommendRun.map_id == map_id)).scalars().all()
+        verify.execute(delete(Region).where(Region.run_id.in_(ids)))
+        verify.execute(delete(EvidenceLineRow).where(EvidenceLineRow.run_id.in_(ids)))
+        verify.execute(delete(RecommendRun).where(RecommendRun.id.in_(ids)))
+        verify.commit()
+        verify.close()
+
+
+def test_concurrent_executes_on_one_run_leave_a_single_candidate_set(test_engine, monkeypatch):
+    """같은 run의 execute가 동시에 두 번 와도 후보 교체가 겹치지 않는다 — 잠금이 없으면 둘 다 지운 뒤 둘 다 넣어
+    후보가 두 배가 되고 순위가 겹친다."""
+    Session = sessionmaker(bind=test_engine)
+    run_id = uuid.uuid4()
+    setup = Session()
+    setup.add(RecommendRun(id=run_id, map_id="map_race_811b", category="카페", requested_by="racer", status="collecting_evidence"))
+    setup.flush()
+    setup.add(Region(run_id=run_id, signature="sig", label="기본 반경", center_lat=35.0, center_lng=129.0,
+                     radius_m=2000, anchor_points=[[35.0, 129.0]], confirmed=True))
+    setup.commit()
+    setup.close()
+
+    places = [PlaceStub(place_id=f"race_{i}", lat=35.0005 + i * 0.0001, lng=129.0005) for i in range(2)]
+    real_pipeline = flows._run_pipeline
+    sync = threading.Barrier(2)
+
+    def pipeline(*args, **kwargs):
+        try:
+            sync.wait(timeout=1.5)   # 잠금이 있으면 둘째가 못 와서 깨진다 — 그게 정상이다
+        except threading.BrokenBarrierError:
+            pass
+        return real_pipeline(*args, **kwargs)
+
+    monkeypatch.setattr(flows, "_run_pipeline", pipeline)
+
+    def _attempt(_i):
+        session = Session()
+        try:
+            flows.execute_run(session, run_id=str(run_id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts())
+            session.commit()
+        finally:
+            session.close()
+
+    _run_threads(_attempt)
+
+    verify = Session()
+    try:
+        rows = verify.execute(select(Candidate.place_id, Candidate.rank).where(Candidate.run_id == run_id)).all()
+        assert sorted(place_id for place_id, _rank in rows) == ["race_0", "race_1"]
+        assert len({rank for _place_id, rank in rows}) == len(rows)
+    finally:
+        verify.execute(delete(Candidate).where(Candidate.run_id == run_id))
+        verify.execute(delete(Region).where(Region.run_id == run_id))
+        verify.execute(delete(RecommendRun).where(RecommendRun.id == run_id))
+        verify.commit()
+        verify.close()
