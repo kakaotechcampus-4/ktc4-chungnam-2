@@ -9,7 +9,7 @@ flows.py 모듈 docstring 참고). event_log 기록만 예외다 — architectur
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select, tuple_, update
+from sqlalchemy import delete, func, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -87,12 +87,12 @@ def load_candidate_with_run(db: Session, candidate_id: str) -> tuple[Candidate, 
     except ValueError:
         raise AppError("NOT_FOUND") from None
     candidate = db.execute(
-        select(Candidate).where(Candidate.id == candidate_uuid)
+        select(Candidate).where(Candidate.id == candidate_uuid).execution_options(populate_existing=True)
     ).scalar_one_or_none()
     if candidate is None:
         raise AppError("NOT_FOUND")
     run = db.execute(
-        select(RecommendRun).where(RecommendRun.id == candidate.run_id)
+        select(RecommendRun).where(RecommendRun.id == candidate.run_id).execution_options(populate_existing=True)
     ).scalar_one_or_none()
     if run is None:
         raise AppError("NOT_FOUND")
@@ -177,8 +177,23 @@ def count_manual_entries(db: Session, run_id: uuid.UUID) -> int:
 
 def lock_run(db: Session, run_id: uuid.UUID) -> None:
     """run 행을 FOR UPDATE로 잠근다 — 같은 run에 동시에 온 「+」 요청이 상한을 함께 넘지 못하게(#707, 멘토 리뷰 #380).
-    잠금은 트랜잭션 끝(session_scope 커밋·롤백)에 풀린다."""
-    db.execute(select(RecommendRun.id).where(RecommendRun.id == run_id).with_for_update())
+    실행·재시도·반경 넓히기·게시도 같은 잠금을 잡아 후보 교체와 겹치지 않게 한다(#811). 기다리는 사이 다른 요청이
+    바꾼 값을 읽도록 이미 읽어 둔 run 객체도 새로 채운다. 잠금은 트랜잭션 끝(session_scope 커밋·롤백)에 풀린다.
+
+    잠금 순서(교착 방지, #811): run → 요청자 횟수(`lock_requester_attempts`) → 후보 행. 거꾸로 잡지 않는다."""
+    db.execute(
+        select(RecommendRun).where(RecommendRun.id == run_id).with_for_update().execution_options(populate_existing=True)
+    )
+
+
+def lock_requester_attempts(db: Session, *, map_id: str, requested_by: str) -> None:
+    """이 지도에서 이 사람의 추천 횟수(`attempt_no`)를 검사·소비하는 구간을 직렬화한다(#811). 횟수는 run 행이 아니라
+    (지도, 요청자) 단위라 행 잠금으로는 못 막는다 — 트랜잭션 범위 advisory lock이다. 잠그고 나서 최댓값을 읽고, 상한을
+    검사하고, INSERT·UPDATE까지 같은 트랜잭션에서 끝내야 두 요청이 같은 번호를 쓰지 않는다. 모델을 기다리는 동안에는
+    잡지 않는다(모델 뒤 쓰기 구간만)."""
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": f"recommend_attempt:{map_id}:{requested_by}"},
+    )
 
 
 def get_evidence_or_none(db: Session, evidence_id: str) -> EvidenceLine | None:
@@ -241,6 +256,7 @@ def bump_attempt_no(db: Session, run: RecommendRun) -> int:
     (아래 버그 설명 참고). 항상 "이 사람의 현재 최댓값 + 1"로 맞춘다(루트 수정, 2026-09-23 —
     Antigravity 검수로 발견: retry_run이 이 run 자신의 attempt_no만 보고 상한을 검사해서,
     오래된(attempt_no가 낮은) run을 골라 재시도하면 사실상 상한을 무제한 우회할 수 있었다)."""
+    lock_requester_attempts(db, map_id=run.map_id, requested_by=run.requested_by)
     current_max = max_attempt_no_for_requester(db, map_id=run.map_id, requested_by=run.requested_by)
     run.attempt_no = current_max + 1
     db.flush()
