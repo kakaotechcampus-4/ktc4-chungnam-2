@@ -364,3 +364,96 @@ def test_purge_leaves_a_living_account_alone(db_session):
 
     assert db_session.get(User, "u1").display_name == "영희"
     assert db_session.execute(select(UserIdentity).where(UserIdentity.user_id == "u1")).first() is not None
+
+
+# ---- 복구가 남기는 sessions_valid_after (같은 초 경계) ----
+
+def test_restore_keeps_the_withdrawal_value_when_it_is_older_than_this_second():
+    withdrawn = NOW - timedelta(hours=1)
+    assert core.restored_sessions_valid_after(withdrawn, NOW) == withdrawn
+
+
+@pytest.mark.parametrize("existing", [None, NOW, NOW.replace(microsecond=999_999), NOW + timedelta(seconds=3)])
+def test_restore_never_leaves_a_value_that_kills_a_session_issued_this_second(existing):
+    """고정 시계 — 탈퇴와 복구가 같은 초여도 복구 직후 발급한 새 세션(issued_at = 지금 초)은 통하고 그 앞 초의 토큰은 죽는다."""
+    now = NOW.replace(microsecond=250_000)
+    value = core.restored_sessions_valid_after(existing, now)
+    assert not core.is_revoked(int(now.timestamp()), value)
+    assert core.is_revoked(int(now.timestamp()) - 1, value)
+
+
+def test_withdraw_then_restore_in_the_same_second_leaves_a_working_session(app_client, db_session):
+    """탈퇴 → 복구 → /auth/me가 같은 초에 일어나도 200이다. 탈퇴 전에 복사된 토큰은 계속 401."""
+    create_kakao_user(db_session, "same", provider_user_id="s1", display_name="영희")
+    stale = session_cookie("same")
+    row = service.withdraw_user(db_session, user_id="same")
+    claims = core.PendingClaims("same", "kakao", core.deleted_at_stamp(row.deleted_at))
+    service.restore_account(db_session, claims=claims)
+    db_session.commit()
+
+    assert _other(app_client).get("/auth/me", cookies=session_cookie("same")).status_code == 200
+    # stale는 탈퇴 직전에 발급돼 지금 초와 같을 수 있다 — 한 초 앞 토큰으로 본다
+    old_token = {"session": core.create_session_token(
+        "same", secret=_secret(), issued_at=int(datetime.now(timezone.utc).timestamp()) - 2,
+    )}
+    assert _other(app_client).get("/auth/me", cookies=old_token).status_code == 401
+    del stale
+
+
+# ---- 잠금을 기다리는 사이 기한이 지나는 경우(실제 두 DB 연결) ----
+
+def test_choice_waiting_on_the_lock_is_rejected_if_the_period_ends_meanwhile(test_engine):
+    """기한 2.5초 전에 도착한 선택이 식별자 잠금에서 기다리다 기한이 지난 뒤 잠금을 얻으면 거절된다(404). 기한은 잠금을 얻은 뒤
+    지금 시각으로 판정한다."""
+    import threading
+    import time
+
+    from sqlalchemy import text
+    from sqlalchemy.orm import sessionmaker
+
+    from common.errors import AppError
+
+    factory = sessionmaker(bind=test_engine)
+    deleted_at = datetime.now(timezone.utc) - timedelta(days=core.ACCOUNT_RESTORE_DAYS) + timedelta(seconds=2.5)
+    with factory() as setup:
+        create_kakao_user(setup, "lockwait", provider_user_id="lw1", display_name="영희", deleted_at=deleted_at)
+        setup.commit()
+    claims = core.PendingClaims("lockwait", "kakao", core.deleted_at_stamp(deleted_at))
+    outcome: dict = {}
+
+    def choose():
+        with factory() as db:
+            try:
+                service.restore_account(db, claims=claims)
+                db.commit()
+                outcome["result"] = "restored"
+            except AppError as exc:
+                db.rollback()
+                outcome["result"] = exc.code
+
+    holder = test_engine.connect()
+    try:
+        tx = holder.begin()
+        holder.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": "login_identity:kakao:lw1"})
+        worker = threading.Thread(target=choose)
+        worker.start()
+        for _ in range(100):   # 선택이 정말 잠금에서 기다릴 때까지
+            waiting = holder.execute(text("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted")).scalar()
+            if waiting:
+                break
+            time.sleep(0.05)
+        assert waiting, "선택이 잠금을 기다리지 않았다"
+        assert core.is_restorable(deleted_at, datetime.now(timezone.utc))   # 기다리기 시작할 때는 기한 안이었다
+        time.sleep(3)                                                        # 기다리는 사이 기한이 지난다
+        tx.rollback()
+        worker.join(timeout=10)
+    finally:
+        holder.close()
+        with factory() as cleanup:
+            cleanup.execute(text("DELETE FROM user_identities WHERE user_id = 'lockwait'"))
+            row_deleted_at = cleanup.get(User, "lockwait").deleted_at
+            cleanup.execute(text("DELETE FROM users WHERE id = 'lockwait'"))
+            cleanup.commit()
+
+    assert outcome == {"result": "NO_PENDING_LOGIN"}
+    assert row_deleted_at is not None   # 되살려지지 않았다

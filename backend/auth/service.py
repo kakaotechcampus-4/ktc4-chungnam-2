@@ -313,10 +313,11 @@ def purge_withdrawn_user(db: Session, *, user_id: str) -> None:
     db.expire_all()   # 벌크 UPDATE·DELETE는 이미 읽은 행을 갱신하지 않는다
 
 
-def _pending_target(db: Session, claims: core.PendingClaims, *, now: datetime, lock: bool) -> tuple[User, UserIdentity]:
+def _pending_target(db: Session, claims: core.PendingClaims, *, lock: bool) -> tuple[User, datetime]:
     """선택 대기 쿠키가 지금도 이 한 번의 선택에 해당하는지 서버 상태와 대조한다 — 사용자가 탈퇴 상태이고, 탈퇴 시각이
     쿠키와 같고, 로그인 수단이 아직 붙어 있고, 복구 기간 안이다. 하나라도 어긋나면(복구·정리·다음 탈퇴 회차·기한 지남)
-    NO_PENDING_LOGIN. lock이면 그 수단의 잠금을 잡고 다시 읽는다."""
+    NO_PENDING_LOGIN. lock이면 그 수단의 잠금을 잡고 다시 읽는다. 기한은 **잠금을 얻고 다시 읽은 뒤의** 지금 시각으로 판정한다 —
+    잠금을 기다리는 사이 기한이 지났으면 거절한다. (사용자, 판정에 쓴 지금 시각)을 돌려준다."""
     def load() -> tuple[User, UserIdentity] | None:
         row = db.execute(
             select(User, UserIdentity).join(UserIdentity, UserIdentity.user_id == User.id)
@@ -331,20 +332,20 @@ def _pending_target(db: Session, claims: core.PendingClaims, *, now: datetime, l
         found = load()
     if found is None:
         raise AppError("NO_PENDING_LOGIN")
-    user, identity = found
+    user, _ = found
+    now = datetime.now(timezone.utc)
     if (
         user.deleted_at is None
         or core.deleted_at_stamp(user.deleted_at) != claims.deleted_stamp
         or not core.is_restorable(user.deleted_at, now)
     ):
         raise AppError("NO_PENDING_LOGIN")
-    return user, identity
+    return user, now
 
 
 def get_pending_account(db: Session, *, claims: core.PendingClaims) -> dict:
     """GET /auth/pending — 선택 화면에 쓸 값. 쓰기도 잠금도 없다."""
-    now = datetime.now(timezone.utc)
-    user, _ = _pending_target(db, claims, now=now, lock=False)
+    user, now = _pending_target(db, claims, lock=False)
     return {
         "display_name": user.display_name,
         "withdrawn_at": user.deleted_at,
@@ -356,12 +357,9 @@ def get_pending_account(db: Session, *, claims: core.PendingClaims) -> dict:
 def restore_account(db: Session, *, claims: core.PendingClaims) -> User:
     """POST /auth/pending restore — 기존 계정을 되살린다. 계정·핀 작성자 표시·남아 있던 지도 멤버십이 돌아오고 반응·근거·알림은
     돌아오지 않는다(탈퇴 때 지웠다, #855). 탈퇴 전에 복사된 세션은 계속 무효다. 커밋하지 않는다."""
-    now = datetime.now(timezone.utc)
-    user, _ = _pending_target(db, claims, now=now, lock=True)
+    user, now = _pending_target(db, claims, lock=True)
     user.deleted_at = None
-    # 새 세션이 같은 초에 발급돼도 통과하게 1초 앞에 둔다(is_revoked는 같은 초를 거절한다). 탈퇴 때 올린 값(sessions_valid_after)이
-    # 이미 그 전의 모든 토큰을 죽였고, 탈퇴한 동안에는 이 사용자의 토큰이 발급되지 않으므로 이 값이 더 느슨해지지는 않는다.
-    user.sessions_valid_after = max(user.sessions_valid_after or now, now - timedelta(seconds=1))
+    user.sessions_valid_after = core.restored_sessions_valid_after(user.sessions_valid_after, now)
     db.flush()
     return user
 
@@ -370,8 +368,7 @@ def restart_account(db: Session, *, claims: core.PendingClaims) -> User:
     """POST /auth/pending restart — 새 사용자를 만들고 로그인 수단을 그 사용자에게 옮긴 뒤 기존 계정을 즉시 정리한다(되살릴 수 없다).
     같은 카카오 식별자는 한 사용자에게만 붙을 수 있어 둘이 함께 있을 수 없다. 새 사용자의 표시 이름은 기존 이름을 이어 받는다
     (이 요청에는 카카오 프로필이 없다). 한 트랜잭션, 커밋하지 않는다."""
-    now = datetime.now(timezone.utc)
-    old, _ = _pending_target(db, claims, now=now, lock=True)
+    old, _ = _pending_target(db, claims, lock=True)
     new = User(display_name=old.display_name)
     db.add(new)
     db.flush()

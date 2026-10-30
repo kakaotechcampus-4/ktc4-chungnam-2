@@ -201,6 +201,17 @@ def pending_cookie_path(redirect_uri: str) -> str:
     return state_cookie_path(redirect_uri).rsplit("/", 1)[0] or "/"
 
 
+def restored_sessions_valid_after(existing: datetime | None, now: datetime) -> datetime:
+    """복구가 남기는 sessions_valid_after. 탈퇴 때 올린 값이 이미 그 전의 모든 토큰을 죽였고 탈퇴한 동안에는 이 사용자의 토큰이
+    발급되지 않으므로 그 값을 그대로 둔다. 다만 is_revoked가 같은 초를 거절하므로, 그 값이 복구와 같은 초(또는 이후)면
+    방금 발급한 새 세션까지 죽는다 — 그때만 지금 초의 한 초 앞으로 내린다(지금 초에 발급된 토큰은 남는 대신 그 앞의 토큰은 모두
+    죽는다). 값이 없는 옛 탈퇴 행도 같은 값으로 채운다."""
+    boundary = now.replace(microsecond=0) - timedelta(seconds=1)
+    if existing is None or int(existing.timestamp()) >= int(now.timestamp()):
+        return boundary
+    return existing
+
+
 def is_revoked(issued_at: int, sessions_valid_after: datetime | None) -> bool:
     """로그아웃이 기록한 sessions_valid_after 이전(같은 초 포함)에 발급된 토큰이면 True.
     토큰 발급 시각은 초 단위라, 로그아웃과 같은 초에 복사된 토큰도 막으려고 `<=`로 비교한다 —
