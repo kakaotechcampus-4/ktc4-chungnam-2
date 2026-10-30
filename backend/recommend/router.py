@@ -84,10 +84,11 @@ def get_runs(
 @router.post("/maps/{mapId}/runs", response_model=RecommendRunResponse, status_code=202)
 def post_run(body: RunCreateRequest, mapId: str = Path(...), principal: Principal = RunToCreate, db: Session = DbSession,
              evidence_planner: EvidencePlanGateway = EvidencePlanGatewayDep,
+             place_search: PlaceSearchGateway = PlaceSearchGatewayDep, place_facts: PlaceFactsGateway = PlaceFactsGatewayDep,
              idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=64)):
     run = flows.create_run(
         db, map_id=mapId, category=body.category, requested_by=principal.user_id, evidence_planner=evidence_planner,
-        idempotency_key=idempotency_key,
+        idempotency_key=idempotency_key, execute=body.execute, place_search=place_search, place_facts=place_facts,
     )
     return _run_response(run)
 
