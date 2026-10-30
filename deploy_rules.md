@@ -23,6 +23,7 @@
 | 이미지 | GitHub Actions가 API, 화면 이미지를 만들어 팀 계정 ECR(`pingo-api`, `pingo-web`, 최근 40개 보관)에 올린다(`.github/workflows/images.yml`). 태그는 `sha-<7자리>`, 브랜치 이름, `v0.x.y` | 빌드와 배포를 나눈다(멘토). 서버는 자기 역할로 ECR에서 받는다(저장한 비밀 없음) | — |
 | 배포 | `.github/workflows/deploy.yml`이 OIDC 역할로 SSM 명령을 보내 서버의 `deploy/deploy.sh <환경> <태그>`를 돌린다. develop은 이미지가 만들어지면 스테이징에 자동, 운영은 사람이 v 태그를 골라 수동 | 22번 포트와 서버 키가 없다. 운영은 태그를 골라 올린다(멘토) | — |
 | 확인 | 스테이징에서 QA 하네스(`qa/harness/run_api_cases.py --base-url`)로 핵심 흐름을 돈다. 통과한 `main` 커밋에만 태그를 단다 | 멘토 「배포된 주소의 핵심 흐름 테스트, 통과한 커밋에만 태그」 | — |
+| 환경 맞추기 | 운영, CI, 로컬, 배포 도구가 같은 Python(3.12)과 PostgreSQL/PostGIS(17 / 3.5)를 쓴다. Python은 `backend/.python-version`이 정본이고 CI가 읽는다. 이미지, CI, 로컬, 배포 스크립트의 버전과 아래 DB 줄의 운영 버전은 `backend/integration/test_env_parity.py`가 대조한다(#916) | CI는 운영에서 돌 것을 미리 확인하는 곳이라 환경이 다르면 운영을 대신하지 못한다(멘토). 처음에는 CI만 3.10, PostGIS 16이었다 | 버전을 올릴 때 — 한쪽만 올리면 테스트가 실패한다 |
 | 비밀 | 서버의 `deploy/env/*.env`(권한 600). 세션 비밀, DB 비밀번호, QA 비밀은 서버에서 만들었고 외부 키(카카오, 엘리스)만 옮겼다. 저장소, 이미지, 채팅에 남기지 않는다 | 서버 1대에 가장 단순하다 | 사람이나 서버가 늘 때 SSM 파라미터 스토어 |
 | 주기 작업 | 서버 cron(`deploy/crontab`). 두 번 돌아도 안전한 작업만 둔다 | 멘토 「주기 작업은 바깥에서 부르되 두 번 돌아도 안전하게」 | — |
 
