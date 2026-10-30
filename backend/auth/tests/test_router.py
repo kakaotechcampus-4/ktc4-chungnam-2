@@ -298,15 +298,21 @@ def test_success_keeps_entry_url_untouched(app_client, monkeypatch, kakao_config
     assert _callback(app_client, code="auth-code", state=state).headers["location"] == entry
 
 
-def test_withdrawn_account_login_is_redirected_not_json(app_client, db_session, monkeypatch, kakao_configured):
-    """탈퇴 계정의 재로그인도 JSON이 아니라 302다. server_error로 간다(login_error=withdrawn은 #409에서 취소, 2026-10-08)."""
+def test_withdrawn_account_login_is_redirected_to_the_choice_not_logged_in(app_client, db_session, monkeypatch, kakao_configured):
+    """복구 기간 안의 탈퇴 계정은 302로 `login_pending=withdrawn_account`, 세션 쿠키 없이 선택 대기 쿠키만(#855)."""
     from datetime import datetime, timezone
 
     _mock_kakao_login(monkeypatch, kakao_id=77)
     create_kakao_user(db_session, provider_user_id="77", display_name="탈퇴자", deleted_at=datetime.now(timezone.utc))
     state = _start_login(app_client)
 
-    _assert_failed_with(_callback(app_client, code="auth-code", state=state), "server_error")
+    resp = _callback(app_client, code="auth-code", state=state)
+
+    assert resp.status_code == 302
+    query = parse_qs(urlparse(resp.headers["location"]).query)
+    assert query == {"login_pending": ["withdrawn_account"]}   # 이름·id·날짜는 주소에 싣지 않는다
+    assert _login_error(resp) is None and not _has_session_cookie(resp)
+    assert any(c.startswith("pending_account=") for c in resp.headers.get_list("set-cookie"))
 
 
 def _assert_rejected_without_login(resp, db_session):

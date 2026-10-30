@@ -213,3 +213,13 @@ def test_reorder_items_rejects_set_mismatch(db_session):
     with pytest.raises(AppError) as exc:
         service.reorder_items(db_session, map_id="map_1", item_ids=[str(row.id), str(row.id)])
     assert exc.value.code == "VALIDATION_ERROR"
+
+
+def test_list_routes_sorts_region_numbers_numerically(db_session):
+    """구역이 10개를 넘어도 "구역 10"이 "구역 2"보다 앞에 오지 않는다(#768)."""
+    routes = [_route(region_label=f"구역 {n}") for n in (10, 2, 1, 11, 3)]
+    service.replace_routes(db_session, map_id="map_1", routes=routes)
+
+    labels = [row.region_label for row in service.list_routes(db_session, map_id="map_1")]
+
+    assert labels == ["구역 1", "구역 2", "구역 3", "구역 10", "구역 11"]

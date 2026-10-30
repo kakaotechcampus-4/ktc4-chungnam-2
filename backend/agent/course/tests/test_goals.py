@@ -189,6 +189,24 @@ class TestVerifyGoalSet:
                                              self.goal(kind="daily_walk_low", day=None), self.goal(kind="together", places=["p1", "p2"])]
         assert len(self.verify(many).goals) == GOALS_MAX
 
+    def test_one_sentence_two_requests_both_pass_with_per_clause_quotes(self):
+        """#899 v3 모양: 한 문장에서 조각마다 목표 하나. 뒤 조각이 앞 조각의 날짜를 이어받아 있다."""
+        text = "마지막 날엔 장소 가고, 밤엔 야경 보고 싶어요"
+        goals = [self.goal(kind="place_on_day", day="d2", places=["p2"], quote="마지막 날엔 장소 가고"),
+                 self.goal(kind="night_end", day="d2", quote="밤엔 야경 보고 싶어요")]
+        v = G.verify_goal_set(self.tr, text, SimpleNamespace(goals=goals, unmatched=[]))
+        assert v.goals == (Goal("place_on_day", "d2", ("p2",)), Goal("night_end", "d2")) and v.dropped == () and v.unmatched == ()
+
+    def test_shortened_name_is_ok_only_if_the_alias_exists(self):
+        """줄임말을 별칭으로 잇는 건 모델의 일이다. 코드는 그 별칭이 확정 리스트에 있는지만 본다(이름 비교를 하지 않는다)."""
+        text = "첫날엔 줄임말 가고 싶어요"
+        ok = G.verify_goal_set(self.tr, text, SimpleNamespace(
+            goals=[self.goal(kind="place_on_day", day="d1", places=["p1"], quote="첫날엔 줄임말 가고 싶어요")], unmatched=[]))
+        assert ok.goals == (Goal("place_on_day", "d1", ("p1",)),)
+        made_up = G.verify_goal_set(self.tr, text, SimpleNamespace(
+            goals=[self.goal(kind="place_on_day", day="d1", places=["p9"], quote="첫날엔 줄임말 가고 싶어요")], unmatched=[]))
+        assert made_up.goals == () and made_up.unmatched == ("첫날엔 줄임말 가고 싶어요",)
+
     def test_input_has_names_and_day_words(self):
         inp = G.goals_input(self.tr, self.TEXT)
         assert inp["last_day"] == "d2" and inp["first_day"] == "d1" and inp["days"][0] == {"day": "d1", "weekday": "월요일"}

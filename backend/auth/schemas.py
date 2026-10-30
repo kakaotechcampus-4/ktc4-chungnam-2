@@ -6,7 +6,8 @@ UserResponse는 반대로 계약용이다 — api-spec.yaml의 User 스키마(id
 """
 
 from dataclasses import dataclass
-from typing import Annotated
+from datetime import datetime
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
@@ -62,3 +63,20 @@ class GuestJoinResult(BaseModel):
 
     user: UserResponse
     map: Map
+
+
+class PendingAccount(BaseModel):
+    """GET /auth/pending 응답 — api-spec.yaml의 PendingAccount(#855)."""
+
+    display_name: str
+    withdrawn_at: datetime
+    restore_until: datetime
+    days_left: int
+
+
+class PendingChoiceRequest(BaseModel):
+    """POST /auth/pending 요청 — api-spec.yaml의 PendingChoiceRequest."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    choice: Literal["restart", "restore"]
