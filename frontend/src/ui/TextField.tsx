@@ -12,6 +12,7 @@ export default function TextField({
   label,
   clearLabel,
   id,
+  autoFocus,
 }: {
   value: string
   onChange: (value: string) => void
@@ -21,6 +22,7 @@ export default function TextField({
   label?: string
   clearLabel: string
   id?: string
+  autoFocus?: boolean
 }) {
   return (
     <div className="field">
@@ -29,6 +31,7 @@ export default function TextField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         maxLength={maxLength}
+        autoFocus={autoFocus}
         placeholder={placeholder}
         aria-label={label}
         className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-ink-500"

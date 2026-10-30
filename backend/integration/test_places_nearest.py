@@ -141,6 +141,7 @@ def test_uvicorn_access_log_drops_the_query_string_of_nearest_only():
 
     redacted = line("/places/nearest?lat=37.5445&lng=127.0561")
     assert "37.5445" not in redacted and "127.0561" not in redacted and "[redacted]" in redacted
+    assert "37.5445" not in line("/api/places/nearest?lat=37.5445&lng=127.0561")   # 배포의 --root-path /api
     assert "q=%EC%84%B1" in line("/places/search?q=%EC%84%B1")   # 다른 경로는 그대로
     assert line("/places/nearest") == '127.0.0.1:1 - "GET /places/nearest HTTP/1.1" 200'
 

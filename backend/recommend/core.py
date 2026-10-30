@@ -696,6 +696,7 @@ def build_member_fulfillment(
     criteria: Mapping[str, bool],
     preferred_authors: Mapping[str, frozenset[str]] | None = None,
     disqualifier_conditions: Mapping[str, Collection[tuple[str, bool | None]]] | None = None,
+    written_line_ids: Mapping[tuple[str, str], str] | None = None,
 ) -> dict:
     """가드레일5 "구성원 충족 집계" — api-spec.yaml `MemberFulfillment` 모양 그대로
     `{satisfied, total, by_member}`을 돌려준다. 확인한 조건 기준으로 센다(#620).
@@ -710,7 +711,11 @@ def build_member_fulfillment(
     - **satisfied** = 자기 조건을 *전부* 이 후보가 known으로 충족한 구성원 수. 선호는 known+참, 반대는 known이고
       `_meets`(hard는 통과, soft는 방향에 맞음). 라벨이 모름(「확인 필요」)이면 실격 필터는 통과시켜도 충족으로
       세지 않는다. 일부만 맞으면 충족으로 세지 않는다(구성원 만족을 부풀리지 않는다).
-    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다."""
+    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다.
+    - **conditions**(#805, 표시용) = 구성원마다 조건별 상태. `written_line_ids`((구성원, fact_key) → 직접 쓴 근거 줄 id)에
+      있는 조건은 met·unmet·needs_check를 모두 내리고, ♥에서만 나온 선호는 met만 내린다. 위 두 갈래에 든 조건만
+      담는다(키 없는 반대는 없다). satisfied·total·순위에는 영향이 없다."""
+    line_ids = written_line_ids or {}
     support = _member_support(hearted_places, preferred_authors)
     met = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
     known_checks = {c.fact_key: c for c in candidate_checks if c.confidence == "known"}
@@ -729,6 +734,9 @@ def build_member_fulfillment(
                 fact_key in known_checks and _meets(known_checks[fact_key], wants)
                 for fact_key, wants in against.get(member_id, ())
             ),
+            "conditions": _member_condition_entries(
+                member_id, conditions.get(member_id, set()), against.get(member_id, set()), known_checks, line_ids,
+            ),
         }
         for member_id in sorted(conditions.keys() | against.keys())
     ]
@@ -737,6 +745,40 @@ def build_member_fulfillment(
         "total": len(by_member),
         "by_member": by_member,
     }
+
+
+def _member_condition_entries(
+    member_id: str,
+    preferences: Collection[str],
+    disqualifiers: Collection[tuple[str, bool | None]],
+    known_checks: Mapping[str, Check],
+    line_ids: Mapping[tuple[str, str], str],
+) -> list[dict]:
+    """한 구성원의 conditions[] (#805). 상태는 satisfied와 같은 판정(`_meets`, known 여부)을 쓴다 — 모름이면 needs_check.
+    같은 키는 한 줄만(실격이 먼저). ♥에서만 나온 선호(근거 줄 없음)는 met일 때만 담아 숨은 조건이 미충족으로 뜨지 않게 한다."""
+    entries: list[dict] = []
+    seen: set[str] = set()
+
+    def add(fact_key: str, wants: bool | None, *, written: bool) -> None:
+        check = known_checks.get(fact_key)
+        status = "needs_check" if check is None else ("met" if _meets(check, wants) else "unmet")
+        if not written and status != "met":
+            return
+        seen.add(fact_key)
+        entries.append({
+            "fact_key": fact_key,
+            "fact_label": constraints.FACT_LABELS.get(fact_key),
+            "evidence_line_id": line_ids.get((member_id, fact_key)),
+            "status": status,
+        })
+
+    for fact_key, wants in sorted(disqualifiers, key=lambda condition: condition[0]):
+        if fact_key not in seen:
+            add(fact_key, wants, written=True)
+    for fact_key in sorted(preferences):
+        if fact_key not in seen:
+            add(fact_key, True, written=(member_id, fact_key) in line_ids)
+    return entries
 
 
 def build_reason(candidate_checks: Sequence[Check], criteria: Mapping[str, bool]) -> str:

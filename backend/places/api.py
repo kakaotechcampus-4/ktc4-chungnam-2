@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Any, Sequence
 
@@ -126,7 +127,10 @@ def record_kakao_match(place_id: str, kakao_place_id: str, kakao_place_url: str,
 
 
 def pinnable_flags(hints: Sequence[PlaceHint], *, db: Session | None = None) -> list[bool]:
-    """힌트마다 match_place가 성공할지 읽기만 해서 계산한다. 카카오 ID를 기록하지 않는다. 쿼리 한 번(#238)."""
+    """힌트마다 match_place가 성공할지 읽기만 해서 계산한다. 카카오 ID를 기록하지 않는다. 쿼리 한 번(#238).
+
+    주소는 선택 힌트라 핀 생성 요청이 안 보낼 수도 있다(#815 — 화면은 아직 안 보낸다). 그래서 주소 없이도 같은 답이 나올 때만
+    True다: 주소가 있어야 구제되는 힌트는 False. 「검색에서 pinnable=true면 핀 생성이 된다」가 주소를 보내든 안 보내든 지켜진다."""
     own = [i for i, h in enumerate(hints) if h.category in matching.OWN_CATEGORIES]
     flags = [False] * len(hints)
     if not own:
@@ -134,7 +138,8 @@ def pinnable_flags(hints: Sequence[PlaceHint], *, db: Session | None = None) -> 
     with _session(db) as s:
         candidates = repository.find_candidates_many(s, [hints[i] for i in own])
     for i, cands in zip(own, candidates):
-        flags[i] = matching.pick_match(hints[i], cands) is not None
+        flags[i] = matching.pick_match(hints[i], cands) is not None and (
+            hints[i].address is None or matching.pick_match(replace(hints[i], address=None), cands) is not None)
     return flags
 
 
@@ -150,20 +155,53 @@ def nearest_own_places(lat: float, lng: float, category: str | None, *, db: Sess
         return []   # 숙소·기타는 자체 DB에 없다
     with _session(db) as s:
         rows = repository.find_nearest(s, lat, lng, category, NEAREST_RADIUS_M, _NEAREST_FETCH)
-        if not rows:
-            return []
-        # 핀 생성이 같은 힌트(자기 이름·좌표)로 match_place를 부르므로, 거기서 거절될 곳(동명 점포 등)은 미리 뺀다
-        hints = [PlaceHint(f"own:{r.place_id}", r.name, r.lat, r.lng, r.category) for r in rows]
-        candidates = repository.find_candidates_many(s, hints)
-    flags = [matching.pick_match(h, c) is not None for h, c in zip(hints, candidates)]
-    return [
-        PlaceSearchResult(
-            place_id=f"own:{r.place_id}", place_name=r.name[:100], lat=r.lat, lng=r.lng, category=r.category,
-            address=r.address[:200] if r.address else None,
-            place_source=PlaceSourceInfo(provider=r.source), pinnable=True,
-        )
-        for r, ok in zip(rows, flags) if ok
-    ][:NEAREST_MAX]
+        return [_to_search_result(r) for r in _pinnable_rows(s, rows)][:NEAREST_MAX]
+
+
+@dataclass(frozen=True)
+class OwnSearchHit:
+    """장소 검색(#822)의 자체 DB 결과 한 건. kakao_place_id는 카카오 결과와 같은 가게인지 가리는 내부 값이라 응답에 싣지 않는다."""
+
+    result: PlaceSearchResult
+    kakao_place_id: str | None
+
+
+_SEARCH_MAX_PAGES = 5   # pick_match가 거절한 곳이 많아도 limit을 채우려 이어 읽는 최대 페이지 수(페이지 크기 = limit)
+
+
+def search_own_for_query(query: str, near: tuple[float, float] | None, limit: int, *, db: Session | None = None) -> list[OwnSearchHit]:
+    """장소 검색(#822, #835)의 자체 DB 몫. 좌표가 있으면 지역 구역(30km 안)을 먼저 채우고 limit에 못 미칠 때만 먼 구역으로 잇는다.
+    각 구역 안의 순서는 repository.search_open_by_query(이름 일치 정도 → 가까운 순 → 정예). 핀으로 만들 수 있는 곳만 pinnable=True로
+    최대 limit곳. 구역마다 핀 가능한 곳이 모이거나 후보가 바닥날 때까지(최대 _SEARCH_MAX_PAGES 페이지) 이어 읽는다.
+    카카오 값을 쓰지 않는다. 읽기 전용."""
+    hits: list[OwnSearchHit] = []
+    with _session(db) as s:
+        for zone in ("near", "far") if near else ("all",):
+            for page in range(_SEARCH_MAX_PAGES):
+                rows = repository.search_open_by_query(s, query, near, limit, offset=page * limit, zone=zone)
+                hits += [OwnSearchHit(_to_search_result(r), r.kakao_place_id) for r in _pinnable_rows(s, rows)]
+                if len(hits) >= limit or len(rows) < limit:
+                    break
+            if len(hits) >= limit:
+                break
+    return hits[:limit]
+
+
+def _pinnable_rows(s: Session, rows: Sequence[repository.NearestRow]) -> list[repository.NearestRow]:
+    """핀 생성이 같은 힌트(자기 이름·좌표)로 match_place를 부르므로, 거기서 거절될 곳(동명 점포 등)은 미리 뺀다."""
+    if not rows:
+        return []
+    hints = [PlaceHint(f"own:{r.place_id}", r.name, r.lat, r.lng, r.category) for r in rows]
+    candidates = repository.find_candidates_many(s, hints)
+    return [r for r, h, c in zip(rows, hints, candidates) if matching.pick_match(h, c) is not None]
+
+
+def _to_search_result(r: repository.NearestRow) -> PlaceSearchResult:
+    return PlaceSearchResult(
+        place_id=f"own:{r.place_id}", place_name=r.name[:100], lat=r.lat, lng=r.lng, category=r.category,
+        address=r.address[:200] if r.address else None,
+        place_source=PlaceSourceInfo(provider=r.source), pinnable=True,
+    )
 
 
 def get_places(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceInfo]:

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, NavLink, Outlet, useMatch, useNavigate, useParams } from 'react-router'
 import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Users, type LucideIcon } from 'lucide-react'
 
+import AgentButton from '@/features/agent/AgentButton'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
@@ -16,6 +17,7 @@ import { usePlaceSearchQuery } from '@/features/search/queries'
 import { toRouteDrawings } from '@/features/shortlist/model'
 import { useRouteQuery } from '@/features/shortlist/queries'
 import { useRouteStore } from '@/features/shortlist/routeStore'
+import { useCourseMapStore } from '@/features/course/courseMapStore'
 import { useSearchStore } from '@/features/search/searchStore'
 import { PANEL_W, RAIL_W, TAB_BAR_H } from '@/features/shell/layout'
 import MapControls, { type ControlKey } from '@/features/shell/MapControls'
@@ -62,7 +64,12 @@ export default function MapLayout() {
   const pins = onShortlistTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters, memberCount)
   const routeOn = useRouteStore((s) => s.on) && onShortlistTab
   const routes = useRouteQuery(mapId, routeOn).data
-  const routeDrawings = useMemo(() => (routeOn && routes ? toRouteDrawings(routes, allPins) : []), [routeOn, routes, allPins])
+  const course = useCourseMapStore()
+  // 「동선 보기」가 켜져 있으면 그게, 아니면 이 지도의 AI 코스(#683)가 확정 탭에서 선을 긋는다.
+  const routeDrawings = useMemo(
+    () => (routeOn && routes ? toRouteDrawings(routes, allPins) : onShortlistTab && course.mapId === mapId ? course.days : []),
+    [routeOn, routes, allPins, onShortlistTab, course.mapId, course.days, mapId],
+  )
   const markingStage = useSheetStore((s) => s.stages.map)
   const setStage = useSheetStore((s) => s.setStage)
   const search = useSearchStore()
@@ -374,6 +381,7 @@ export default function MapLayout() {
           </div>
           <PanelToggle open={panelOpen} onToggle={() => setPanelOpen(!panelOpen)} />
           <MapControls docked hidden={modalOpen} fading={mapMoving} active={activeControl} onPress={onControl} />
+          {onMarkingTab && <AgentButton docked mapId={mapId} hidden={modalOpen} fading={mapMoving} />}
           {!modalOpen && <Toaster docked controlsVisible={!mapMoving} />}
         </div>
       )}

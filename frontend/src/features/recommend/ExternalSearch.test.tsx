@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, within } from '@testing-library/react'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import type { ReactNode } from 'react'
+import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { ApiError } from '@/api'
@@ -22,7 +23,11 @@ afterAll(() => server.close())
 
 function renderWithClient(ui: ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  )
 }
 
 const run = (id: string) => ({ id, category: '음식점', attempt_no: 1, status: 'done' }) as RecommendRunDto
