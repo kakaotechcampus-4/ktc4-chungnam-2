@@ -142,6 +142,7 @@ def state_cookie_path(redirect_uri: str) -> str:
 # ---- 탈퇴 계정 복구 기간과 선택 대기 쿠키(#855, #857) ----
 WITHDRAWN_DISPLAY_NAME = "탈퇴한 구성원"   # 탈퇴한 사람의 표시 이름. 정리된 계정의 users 행에도 이 값이 남는다
 ACCOUNT_RESTORE_DAYS = 7
+WITHDRAWN_PURGE_BATCH = 500   # 정리 한 번에 처리하는 계정 수 상한 — 계정마다 잠금을 쥐므로 나눠 처리한다
 PENDING_TTL_SECONDS = 60 * 10   # 콜백 → 선택 화면 → 제출까지. state 쿠키와 같이 짧게 둔다.
 _PENDING_PURPOSE = "pending_account"
 _SECONDS_PER_DAY = 60 * 60 * 24
