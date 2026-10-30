@@ -162,3 +162,28 @@ class Exclusion(Base):
     # #42 확정: 개인 단위 — requested_by가 unique 제약에 들어간다(map_id만으로는 부족).
     requested_by: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class IdempotencyKey(Base):
+    """「추천 받기」 연타·재전송 방어(#811, docs/data-model.md idempotency_keys). 예약은 모델 호출 전에 독립 트랜잭션으로
+    커밋한다. run_id가 NULL이면 첫 요청이 아직 모델을 기다리는 중이고, 처리 기한이 지나면 새 요청이 이어받아 attempt를
+    올린다 — run 저장(run_id 연결)은 자기 세대일 때만 성공한다."""
+
+    __tablename__ = "idempotency_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    requested_by: Mapped[str] = mapped_column(String, nullable=False)
+    scope: Mapped[str] = mapped_column(String, nullable=False)
+    key: Mapped[str] = mapped_column(String, nullable=False)
+    request_hash: Mapped[str] = mapped_column(String, nullable=False)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("recommend_runs.id", ondelete="CASCADE"), nullable=True,
+    )
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("requested_by", "scope", "key", name="uq_idempotency_keys"),
+        Index("ix_idempotency_keys_created_at", "created_at"),
+    )

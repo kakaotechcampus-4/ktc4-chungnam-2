@@ -8,13 +8,15 @@ flows.py 모듈 docstring 참고). event_log 기록만 예외다 — architectur
 
 import uuid
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from sqlalchemy import delete, func, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from common.errors import AppError
-from recommend.models import Candidate, EvidenceLine, Exclusion, RecommendRun, Region
+from recommend import core
+from recommend.models import Candidate, EvidenceLine, Exclusion, IdempotencyKey, RecommendRun, Region
 
 
 def create_run(db: Session, *, map_id: str, category: str, requested_by: str, attempt_no: int) -> RecommendRun:
@@ -65,6 +67,89 @@ def max_attempt_no_for_requester(db: Session, *, map_id: str, requested_by: str)
         )
     ).scalar_one()
     return result or 0
+
+
+# ---------- idempotency keys (#811) ----------
+
+class Reservation(NamedTuple):
+    outcome: str   # "owner"(이 요청이 모델을 부른다) | core.ReservationDecision 중 conflict·reuse·in_progress
+    id: uuid.UUID
+    generation: int
+    run_id: uuid.UUID | None
+
+
+def reserve_idempotency_key(
+    db: Session, *, requested_by: str, key: str, request_hash: str, now: datetime,
+) -> Reservation:
+    """모델을 부르기 **전에** (요청자, 범위, 키)를 기록한다. 호출부가 독립 세션으로 부르고 바로 커밋한다 — 요청 세션에
+    넣으면 모델 호출 전 rollback에 사라지거나, 둘째 INSERT가 첫째의 커밋(모델이 끝날 때)까지 기다린다. 커밋하지 않는다.
+    새 행이면 owner. 이미 있으면 `core.reservation_decision`대로: 기한이 지난 미완료 예약은 FOR UPDATE로 잡고 세대를
+    올려 owner가 된다(이어받기). 그 사이 owner가 행을 지워 읽을 게 없으면 한 번 더 시도한다."""
+    for _ in range(3):
+        inserted = db.execute(
+            pg_insert(IdempotencyKey)
+            .values(
+                id=uuid.uuid4(), requested_by=requested_by, scope=core.IDEMPOTENCY_SCOPE, key=key,
+                request_hash=request_hash, attempt=1, started_at=now,
+            )
+            .on_conflict_do_nothing(constraint="uq_idempotency_keys")
+            .returning(IdempotencyKey.id)
+        ).scalar_one_or_none()
+        if inserted is not None:
+            return Reservation("owner", inserted, 1, None)
+        existing = db.execute(
+            select(IdempotencyKey)
+            .where(
+                IdempotencyKey.requested_by == requested_by, IdempotencyKey.scope == core.IDEMPOTENCY_SCOPE,
+                IdempotencyKey.key == key,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if existing is None:
+            continue
+        decision = core.reservation_decision(
+            stored_hash=existing.request_hash, request_hash=request_hash, run_id=existing.run_id,
+            started_at=existing.started_at, now=now,
+        )
+        if decision == "takeover":
+            existing.attempt += 1
+            existing.started_at = now
+            db.flush()
+            return Reservation("owner", existing.id, existing.attempt, None)
+        return Reservation(decision, existing.id, existing.attempt, existing.run_id)
+    raise AppError("REQUEST_IN_PROGRESS")
+
+
+def link_idempotency_key(db: Session, *, reservation_id: uuid.UUID, generation: int, run_id: uuid.UUID) -> None:
+    """run을 만든 트랜잭션이 키 행에 run_id를 잇는다 — 자기 세대이고 아직 비어 있을 때만. rowcount가 0이면 처리 기한이
+    지나 다른 요청이 이어받은 것이라(늦게 끝난 쪽) 저장을 거절한다: 예외로 이 트랜잭션이 통째로 되돌아간다."""
+    result = db.execute(
+        update(IdempotencyKey)
+        .where(IdempotencyKey.id == reservation_id, IdempotencyKey.attempt == generation, IdempotencyKey.run_id.is_(None))
+        .values(run_id=run_id)
+    )
+    if result.rowcount == 0:
+        raise AppError("REQUEST_IN_PROGRESS")
+
+
+def release_idempotency_key(db: Session, *, reservation_id: uuid.UUID, generation: int) -> None:
+    """run을 못 만든 요청(모델 실패 등)이 자기 세대의 예약만 지워 같은 키의 재시도를 허용한다. 이어받은 쪽의 행이나 run이
+    이미 이어진 행은 건드리지 않는다. 호출부가 독립 세션으로 부르고 커밋한다."""
+    db.execute(
+        delete(IdempotencyKey).where(
+            IdempotencyKey.id == reservation_id, IdempotencyKey.attempt == generation, IdempotencyKey.run_id.is_(None),
+        )
+    )
+
+
+def purge_idempotency_keys(db: Session, *, now: datetime) -> int:
+    """24시간이 지난 키 행을 지운다(maintenance) — run_id가 있는 행만. 진행 중인 예약(run_id NULL)은 건드리지 않는다."""
+    return db.execute(
+        delete(IdempotencyKey).where(
+            IdempotencyKey.run_id.is_not(None), IdempotencyKey.created_at < now - core.IDEMPOTENCY_RETENTION,
+        )
+    ).rowcount
 
 
 def get_run_or_404(db: Session, run_id: str) -> RecommendRun:
@@ -374,7 +459,13 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     (uq_exclusions_map_requester_place, 카카오 계정 쪽이 이긴다). attempt_no는 건드리지 않는다. 후보에는 요청자
     열이 없다(run의 requested_by를 따른다). 커밋하지 않는다."""
     if from_user_id == to_user_id:
-        return {"recommend_runs": 0, "evidence_lines": 0, "exclusions": 0}
+        return {"recommend_runs": 0, "evidence_lines": 0, "exclusions": 0, "idempotency_keys": 0}
+    kept_keys = select(IdempotencyKey.scope, IdempotencyKey.key).where(IdempotencyKey.requested_by == to_user_id)
+    db.execute(   # (범위, 키)가 겹치면 from_user 것을 지운다 — uq_idempotency_keys, 키는 24시간짜리라 잃어도 상관없다(#811)
+        delete(IdempotencyKey).where(
+            IdempotencyKey.requested_by == from_user_id, tuple_(IdempotencyKey.scope, IdempotencyKey.key).in_(kept_keys)
+        )
+    )
     kept = select(Exclusion.map_id, Exclusion.place_id).where(Exclusion.requested_by == to_user_id)
     db.execute(
         delete(Exclusion).where(
@@ -390,5 +481,8 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
         ).rowcount,
         "exclusions": db.execute(
             update(Exclusion).where(Exclusion.requested_by == from_user_id).values(requested_by=to_user_id)
+        ).rowcount,
+        "idempotency_keys": db.execute(
+            update(IdempotencyKey).where(IdempotencyKey.requested_by == from_user_id).values(requested_by=to_user_id)
         ).rowcount,
     }

@@ -14,8 +14,8 @@ import hashlib
 import math
 from collections import Counter
 from dataclasses import dataclass
-from datetime import date, timedelta
-from typing import Any, Collection, Iterable, Mapping, NamedTuple, Sequence
+from datetime import date, datetime, timedelta
+from typing import Any, Collection, Iterable, Literal, Mapping, NamedTuple, Sequence
 
 from common.errors import AppError
 from common.geo import WALKING_SPEED_M_PER_MIN, haversine_distance_m
@@ -480,6 +480,32 @@ def passed_count(result_count: int, funnel: Sequence[Mapping[str, Any]]) -> int:
     """필터를 모두 통과한 곳의 수 — 상위 3곳을 고르기 전(#587). 결과 수 + ranking 단계 탈락. 결과 수는 최대 3이라
     "조건을 바꾸면 몇 곳이 더 남나"는 이 수로 비교한다."""
     return result_count + sum(e["removed_count"] for e in funnel if funnel_stage_key(e["label"]) == "ranking")
+
+
+# ---------------------------------------------------------------- 추천 받기 멱등 키 (#811, docs/data-model.md idempotency_keys)
+
+IDEMPOTENCY_SCOPE = "recommend.run"           # POST /maps/{mapId}/runs. 다른 요청에 쓰려면 값을 더한다
+IDEMPOTENCY_DEADLINE = timedelta(seconds=90)  # 처리 기한 — 첫 요청이 run을 못 만든 채 이 시간이 지나면 새 요청이 이어받는다
+IDEMPOTENCY_RETENTION = timedelta(hours=24)   # run이 연결된 행의 보관 기간(maintenance가 정리)
+
+ReservationDecision = Literal["conflict", "reuse", "in_progress", "takeover"]
+
+
+def idempotency_request_hash(map_id: str, category: str, execute: bool = False) -> str:
+    """요청 동일성 = (지도, category, execute — 생략은 false). 같은 키로 이 값이 다르면 IDEMPOTENCY_CONFLICT다."""
+    return hashlib.sha256(f"{map_id}{category}{int(bool(execute))}".encode()).hexdigest()
+
+
+def reservation_decision(
+    *, stored_hash: str, request_hash: str, run_id: object | None, started_at: datetime, now: datetime,
+) -> ReservationDecision:
+    """이미 있는 키 행을 만난 요청이 할 일. 본문이 다르면 conflict, run이 이미 있으면 reuse(같은 run의 현재 상태),
+    run이 아직 없고 처리 기한 안이면 in_progress(409), 기한이 지났으면 takeover(이어받기 — 늦게 끝난 쪽의 저장은 거절된다)."""
+    if stored_hash != request_hash:
+        return "conflict"
+    if run_id is not None:
+        return "reuse"
+    return "takeover" if now - started_at >= IDEMPOTENCY_DEADLINE else "in_progress"
 
 
 def check_retry_limit(attempt_no: int) -> None:

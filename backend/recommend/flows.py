@@ -312,8 +312,48 @@ def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: 
 
 def create_run(
     db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
+    idempotency_key: str | None = None,
 ) -> RecommendRun:
-    """POST /maps/{mapId}/runs — run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
+    """POST /maps/{mapId}/runs. `Idempotency-Key`가 없으면 `_create_run` 그대로(구FE). 있으면 같은 키의 연타·재전송을
+    한 번으로 묶는다(#811, docs/data-model.md idempotency_keys):
+
+    1) 모델을 부르기 전에 (요청자, 키)를 **독립 트랜잭션**으로 기록하고 커밋한다. 요청 세션에 넣으면 모델 호출 전
+       rollback에 사라지거나 둘째 INSERT가 첫째의 커밋까지 기다린다. 예약을 가진 요청만 모델을 부른다.
+    2) 이미 있는 키: 본문(지도, category, execute)이 다르면 409 IDEMPOTENCY_CONFLICT, run이 이미 있으면 그 run의 **현재
+       상태**를 돌려준다(최초 응답 복제 아님. 같은 요청자·같은 지도라 라우터의 지도 구성원 검사가 이 요청에도 이미 통과했다),
+       아직 모델을 기다리는 중이면 409 REQUEST_IN_PROGRESS, 처리 기한(90초)이 지났으면 이어받는다.
+    3) run_id 연결은 run을 만든 트랜잭션의 **맨 끝**에서 한다 — 자기 세대일 때만 성공하고(늦게 끝난 쪽은 거절),
+       실패 정리가 이 행의 잠금과 부딪치지 않는다. run을 못 만들면 자기 세대의 예약만 지워 재시도를 허용한다."""
+    if idempotency_key is None:
+        return _create_run(db, map_id=map_id, category=category, requested_by=requested_by, evidence_planner=evidence_planner)
+    request_hash = core.idempotency_request_hash(map_id, category)   # execute는 #847이 더한다(생략 = false)
+    with Session(bind=db.get_bind()) as reservation_db:   # 요청 세션과 다른 연결 — 요청의 커밋·롤백과 무관하게 바로 보인다
+        reservation = service.reserve_idempotency_key(
+            reservation_db, requested_by=requested_by, key=idempotency_key, request_hash=request_hash,
+            now=datetime.now(timezone.utc),
+        )
+        reservation_db.commit()
+    if reservation.outcome == "conflict":
+        raise AppError("IDEMPOTENCY_CONFLICT")
+    if reservation.outcome == "in_progress":
+        raise AppError("REQUEST_IN_PROGRESS")
+    if reservation.outcome == "reuse":
+        return service.get_run_or_404(db, str(reservation.run_id))
+    try:
+        run = _create_run(db, map_id=map_id, category=category, requested_by=requested_by, evidence_planner=evidence_planner)
+        service.link_idempotency_key(db, reservation_id=reservation.id, generation=reservation.generation, run_id=run.id)
+    except BaseException:
+        with Session(bind=db.get_bind()) as release_db:
+            service.release_idempotency_key(release_db, reservation_id=reservation.id, generation=reservation.generation)
+            release_db.commit()
+        raise
+    return run
+
+
+def _create_run(
+    db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
+) -> RecommendRun:
+    """run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
     안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 재시도 상한(#31) 3) run INSERT
     4) 반응 → 근거 구조화(글은 llm.api.plan_evidence, 칩은 코드 #412) 5) run INSERT → evidence_lines INSERT 6) 기본값
     지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
