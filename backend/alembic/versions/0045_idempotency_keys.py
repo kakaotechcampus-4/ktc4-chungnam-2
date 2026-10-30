@@ -4,8 +4,8 @@
 run_id가 NULL이면 아직 모델을 기다리는 중이다. 처리 기한(90초)이 지나면 새 요청이 이어받아 attempt(세대)를 올린다.
 run을 지우면(지도 정리) 키 행도 함께 지운다.
 
-Revision ID: 0044_idempotency_keys
-Revises: 0043_llm_calls
+Revision ID: 0045_idempotency_keys
+Revises: 0044_places_name_norm
 Create Date: 2026-10-30
 
 """
@@ -16,8 +16,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0044_idempotency_keys"
-down_revision: Union[str, None] = "0043_llm_calls"
+revision: str = "0045_idempotency_keys"
+down_revision: Union[str, None] = "0044_places_name_norm"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
