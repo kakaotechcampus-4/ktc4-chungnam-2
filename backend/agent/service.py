@@ -132,6 +132,7 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
 class Claim(NamedTuple):
     map_id: str
     trigger: str        # activity(새 이벤트) | time(시간 점검)
+    token: str          # lease 주인 표시(#812). 해제, 커서 전진, 결과 저장은 이 값이 아직 같을 때만 한다
     seq: int | None     # 고를 때 본 그 지도의 가장 큰 event_log seq. 보존 24시간 안에 이벤트가 없으면 None
 
 
@@ -177,27 +178,49 @@ def claim_maps(db: Session, now: datetime, *, limit: int) -> Claimed:
         .limit(limit)
         .with_for_update(of=AgentCursor, skip_locked=True)
     ).scalars().all()
-    if map_ids:
+    tokens = {m: uuid.uuid4() for m in map_ids}
+    for m, token in tokens.items():
         db.execute(
-            update(AgentCursor).where(AgentCursor.map_id.in_(map_ids))
-            .values(lease_until=now + timedelta(seconds=LEASE_SEC))
+            update(AgentCursor).where(AgentCursor.map_id == m)
+            .values(lease_until=now + timedelta(seconds=LEASE_SEC), lease_token=token)
         )
-    claims = [Claim(m, "activity" if m in changed else "time", latest[m][0] if m in latest else None) for m in map_ids]
+    claims = [
+        Claim(m, "activity" if m in changed else "time", str(tokens[m]), latest[m][0] if m in latest else None)
+        for m in map_ids
+    ]
     return Claimed(claims, due_count)
 
 
-def release_lease(db: Session, map_id: str) -> None:
-    db.execute(update(AgentCursor).where(AgentCursor.map_id == map_id).values(lease_until=None))
+def lease_held(db: Session, map_id: str, token: str) -> bool:
+    """이 token이 아직 그 지도 lease의 주인인가. 커서 행을 잠가 확인하므로 이 트랜잭션이 끝날 때까지 다른 실행이
+    lease를 바꾸지 못한다(fencing, #812). 호출부는 결과를 저장하기 전에 부른다."""
+    return db.execute(
+        select(AgentCursor.map_id).where(AgentCursor.map_id == map_id, AgentCursor.lease_token == uuid.UUID(token))
+        .with_for_update()
+    ).first() is not None
+
+
+def release_lease(db: Session, map_id: str, token: str) -> None:
+    """lease를 푼다. 그새 다른 실행이 다시 잡았으면(token이 다르면) 건드리지 않는다."""
+    db.execute(
+        update(AgentCursor).where(AgentCursor.map_id == map_id, AgentCursor.lease_token == uuid.UUID(token))
+        .values(lease_until=None, lease_token=None)
+    )
 
 
 def advance_cursor(
     db: Session, map_id: str, seq: int | None, *, next_check_at: datetime | None, observed_at: datetime,
+    token: str | None = None,
 ) -> None:
     """커서 = 본 것 중 가장 큰 seq(#525). 뒤로 가지 않는다 — seq가 없거나(보존 24시간 안에 이벤트 없음) 더 작으면
-    그대로 둔다. 구멍은 추적하지 않는다. 행이 없으면(지도 정리가 먼저 지움) 아무것도 하지 않는다."""
+    그대로 둔다. 구멍은 추적하지 않는다. 행이 없으면(지도 정리가 먼저 지움) 아무것도 하지 않는다. token이 있으면 그 lease가
+    아직 같을 때만 올린다(#812)."""
     last_seen = AgentCursor.last_seen_seq if seq is None else func.greatest(AgentCursor.last_seen_seq, seq)
+    where = [AgentCursor.map_id == map_id]
+    if token is not None:
+        where.append(AgentCursor.lease_token == uuid.UUID(token))
     db.execute(
-        update(AgentCursor).where(AgentCursor.map_id == map_id)
+        update(AgentCursor).where(*where)
         .values(last_seen_seq=last_seen, next_check_at=next_check_at, last_observed_at=observed_at)
     )
 

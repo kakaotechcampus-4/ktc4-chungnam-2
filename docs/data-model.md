@@ -419,7 +419,8 @@ agent_settings(                       -- 지도별 모드. 행이 없으면 켜�
 agent_cursors(                        -- 관찰 흐름만 쓴다. 지도별 책갈피와 다음 점검 시각, 중복 실행 방지 자리표
   map_id primary key,
   last_seen_seq bigint default 0,     -- 관찰 때 본 가장 큰 event_log seq(구멍은 추적하지 않는다, agent-v2.md 12.5)
-  last_observed_at null, next_check_at null, lease_until null
+  last_observed_at null, next_check_at null, lease_until null,
+  lease_token uuid null              -- lease 주인 표시(fencing, #812). 잡을 때 새 값, 해제·커서 전진·저장은 같을 때만
                                       -- gap_seq는 0030에서 지웠다(#515)
 )
 

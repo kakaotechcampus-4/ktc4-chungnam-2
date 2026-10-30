@@ -35,7 +35,6 @@
 | 요청 상한 5곳(`common.ratelimit`)이 메모리에서 센다 | 환경마다 프로세스가 하나다. 배포로 다시 뜨면 셈이 처음부터다 | 워커나 서버를 늘리기 전에 같은 모양(`SlidingWindowLimiter`)으로 Postgres에 옮긴다 |
 | 서버 시작 시 진행 중인 AI 코스 run을 모두 끝낸다(`interrupt_unfinished_runs`) | 프로세스가 하나라 끝내는 run은 모두 죽은 프로세스의 것이다 | 프로세스가 둘 이상이면 다른 프로세스의 run을 끊는다 — 마지막 진행이 오래된 run만 끝내게 고친다(#813) |
 | AI 코스 계산이 응답 뒤 `BackgroundTasks`로 돈다 | 서버(VM)는 요청이 끝나도 CPU를 준다. 배포로 다시 뜨면 그 run은 위 정리로 끝난다 | 작업 큐로 옮길 때 |
-| 관찰 tick이 프로세스 안 반복 작업(`AGENT_LOOP_IN_PROCESS=1`)으로 돈다 | 프로세스가 하나라 한 번만 돈다 | 관찰 tick 명령(`python -m agent.tick`)과 lease fencing이 생기면 cron으로 옮긴다(#812) |
 | DB가 같은 서버에 있고 덤프도 같은 디스크에 있다 | 시연까지의 데이터다 | RDS로 옮기면 풀린다(#873, RDS 자동 백업). 옮긴 뒤에도 `backup.sh` 덤프는 서버 디스크에 쌓인다 |
 | 운영과 스테이징이 RDS 한 대를 나눠 쓴다 | DB와 계정이 나뉘어 서로 열지 못한다. 부하가 작다 | 스테이징 부하(측정, QA)가 운영 응답을 늦추면 |
 
@@ -138,7 +137,7 @@
 |---|---|---|---|
 | 정기 정리: 지도(삭제 30일 후), 알림(90일), 게스트(90일 미사용), 모델 호출 사용량 `llm_calls`(30일, #870) | `deploy/run.sh <환경> python -m maintenance.run` | 하루 한 번(03:30 운영, 03:40 스테이징) | 서버 cron(`deploy/crontab`) |
 | 운영 DB 덤프 | `deploy/backup.sh prod` | 하루 한 번(04:00), 14일 보관 | 서버 cron. 운영 배포 직전에도 한다 |
-| v2 계획 보조 에이전트 관찰 | 지금은 프로세스 안 반복 작업(`AGENT_LOOP_IN_PROCESS=1`) | 5분(`docs/agent-v2.md` 12.1) | 관찰 tick 명령과 lease fencing이 생기면 cron으로 옮긴다(위 「타협」, #812) |
+| v2 계획 보조 에이전트 관찰 | cron이 `python -m agent.tick`을 부른다(#812). 지도마다 lease와 token으로 겹쳐 돌아도 안전하다 | 5분(`docs/agent-v2.md` 12.1) | 서버 cron |
 | agent 일일 정리 | 없음 | 서버 안에서 돈다 | 따로 예약하지 않는다(`backend/maintenance/CLAUDE.md`) |
 
 ## 배포 뒤 볼 지표
