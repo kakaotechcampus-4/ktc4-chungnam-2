@@ -15,11 +15,16 @@ const FALLBACK_CENTER = { lat: 37.5665, lng: 126.978 }
 /** 검색창·칩 아래, 지도가 가려지지 않기 시작하는 높이(px). */
 const VISIBLE_TOP = 170
 
+/** 핀을 고르면 이 레벨까지 다가간다 — 골목과 이웃 핀이 보이는 축척. 이미 더 가까우면 그대로 둔다(#843). */
+const FOCUS_LEVEL = 3
+
 export type SearchMarker = { n: number; lat: number; lng: number; selected: boolean; onClick: () => void }
 
-/** 지도 버튼(현재 위치·최근 핀·전체 핀)·검색이 지도를 움직이는 통로. */
+/** 지도 버튼(현재 위치·최근 핀·전체 핀)·검색·핀 선택이 지도를 움직이는 통로. */
 export type MapController = {
   panTo: (lat: number, lng: number) => void
+  /** 고른 핀으로 옮기고, 멀리 보고 있었으면 FOCUS_LEVEL 까지 확대한다. */
+  focusPin: (lat: number, lng: number) => void
   getCenter: () => { lat: number; lng: number }
   fitPins: (points: { lat: number; lng: number }[]) => void
 }
@@ -92,14 +97,20 @@ export default function MapCanvas({
         }
 
         mapRef.current = { maps, map }
+        // 지도 가운데는 2단계 시트 뒤에 숨는다. 검색창 아래 ~ 시트 윗변 사이 가운데로 오게 아래로 더 민다.
+        // 넓은 화면은 지도 영역에 가리는 시트가 없어서 가운데 그대로다.
+        const centerOn = (lat: number, lng: number) => {
+          map.setCenter(new maps.LatLng(lat, lng))
+          if (isDesktopNow()) return
+          const h = window.innerHeight
+          map.panBy(0, Math.round(h / 2 - (VISIBLE_TOP + h * 0.41) / 2))
+        }
         callbacks.current.onReady({
-          // 지도 가운데는 2단계 시트 뒤에 숨는다. 검색창 아래 ~ 시트 윗변 사이 가운데로 오게 아래로 더 민다.
-          // 넓은 화면은 지도 영역에 가리는 시트가 없어서 가운데 그대로다.
-          panTo: (lat, lng) => {
-            map.setCenter(new maps.LatLng(lat, lng))
-            if (isDesktopNow()) return
-            const h = window.innerHeight
-            map.panBy(0, Math.round(h / 2 - (VISIBLE_TOP + h * 0.41) / 2))
+          panTo: centerOn,
+          focusPin: (lat, lng) => {
+            // 레벨을 먼저 바꾼다 — 시트 보정(panBy)은 픽셀이라 바뀐 축척에서 재야 한다.
+            if (map.getLevel() > FOCUS_LEVEL) map.setLevel(FOCUS_LEVEL)
+            centerOn(lat, lng)
           },
           getCenter: () => {
             const c = map.getCenter()

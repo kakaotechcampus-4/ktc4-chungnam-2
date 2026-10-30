@@ -129,9 +129,28 @@ export default function MapLayout() {
     setModalOpen(open)
   }
 
+  // 주소로 바로 연 핀(새로고침·공유 링크)은 지도가 뜬 뒤에야 옮길 수 있어서, 준비됐다는 걸 state 로도 둔다.
+  const [mapReady, setMapReady] = useState(false)
   const onMapReady = useCallback((c: MapController) => {
     controller.current = c
+    setMapReady(true)
   }, [])
+
+  // 핀을 고르면(?pin=) 지도가 그 핀으로 간다(#843). 목록·지도 핀·검색 결과·확정 탭 어디서 골랐든 여기 한 곳이다.
+  // 같은 핀으로 목록이 다시 와도(실시간·의견 등록) 다시 옮기지 않는다. 고르기를 풀면 지도는 그대로 둔다.
+  const focusedPinId = useRef<string | null>(null)
+  useEffect(() => {
+    if (!selectedPinId) {
+      focusedPinId.current = null
+      return
+    }
+    if (!mapReady || focusedPinId.current === selectedPinId) return
+    const pin = allPins.find((p) => p.id === selectedPinId)
+    // 자리가 아직 없는 핀(실시간 핀 해석 전)은 자리가 생기면 그때 옮긴다.
+    if (!pin || !isPlaced(pin)) return
+    focusedPinId.current = selectedPinId
+    controller.current?.focusPin(pin.lat, pin.lng)
+  }, [selectedPinId, allPins, mapReady])
 
   // 결과가 오면 결과 전체가, 하나를 고르면 그 장소가 보이게 지도를 옮긴다.
   useEffect(() => {

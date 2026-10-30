@@ -40,6 +40,9 @@ declare namespace kakao.maps {
     /** 지도 가운데를 픽셀만큼 옮긴다. */
     panBy(dx: number, dy: number): void
     getCenter(): LatLng
+    /** 확대 레벨. 작을수록 가깝다(1 이 가장 가깝다). */
+    getLevel(): number
+    setLevel(level: number): void
     getProjection(): MapProjection
     /** 지도 틀 크기를 CSS 로 바꾼 뒤 부른다. 창 크기 변경(resize)에는 SDK 가 알아서 부른다. */
     relayout(): void
