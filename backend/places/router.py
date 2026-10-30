@@ -50,17 +50,18 @@ def search_places(
     api.check_search_rate(user.user_id)
     near = (lat, lng) if lat is not None and lng is not None else None
     own = _search_own(query, near, limit, db)
+    own_results = [h.result for h in own]
     if len(own) >= limit:
-        return own[:limit]   # 자체 DB만으로 채워졌으면 카카오를 부르지 않는다(#822)
+        return own_results[:limit]   # 자체 DB만으로 채워졌으면 카카오를 부르지 않는다(#822)
     try:
         results = api.search_by_name(query, near, _FETCH_LIMIT)
     except AppError as exc:
         if exc.code == "PLACES_UNAVAILABLE" and own:
-            return own   # 카카오가 죽어도 자체 DB 결과는 낸다
+            return own_results   # 카카오가 죽어도 자체 DB 결과는 낸다
         raise
     _fill_pinnable(results, db)
     results = _drop_same_places(_own_db_first(results), own)
-    return (own + results)[:limit]
+    return (own_results + results)[:limit]
 
 
 @router.get("/places/nearest", response_model=list[PlaceSearchResult], response_model_exclude_none=True)
@@ -91,7 +92,7 @@ def parse_link(
     return api.parse_link(body.url, db=db)
 
 
-def _search_own(query: str, near: tuple[float, float] | None, limit: int, db: Session) -> list[PlaceSearchResult]:
+def _search_own(query: str, near: tuple[float, float] | None, limit: int, db: Session) -> list[api.OwnSearchHit]:
     """자체 DB 몫(#822). 못 읽으면 카카오 결과만으로 검색을 살린다."""
     try:
         return api.search_own_for_query(query, near, limit, db=db)
@@ -100,21 +101,24 @@ def _search_own(query: str, near: tuple[float, float] | None, limit: int, db: Se
         return []
 
 
-def _drop_same_places(kakao: list[PlaceSearchResult], own: list[PlaceSearchResult]) -> list[PlaceSearchResult]:
-    """이미 자체 DB 결과로 실은 가게와 같은 카카오 결과를 뺀다. 같은 가게인지는 핀 생성의 매칭 규칙(pick_match)을 그대로 쓴다."""
+def _drop_same_places(kakao: list[PlaceSearchResult], own: list[api.OwnSearchHit]) -> list[PlaceSearchResult]:
+    """이미 자체 DB 결과로 실은 가게와 같은 카카오 결과를 뺀다. 같은 가게인지는 핀 생성의 매칭 규칙(pick_match)을 그대로 쓴다:
+    기록된 카카오 ID가 같고 분류가 같으면 이름·거리와 무관하게 같은 가게, 아니면 반경 안에서 이름 비교."""
     if not own:
         return kakao
     candidates = [
-        matching.Candidate(r.place_id.removeprefix("own:"), r.place_name, r.lat, r.lng, r.category or "", address=r.address)
-        for r in own
+        matching.Candidate(h.result.place_id.removeprefix("own:"), h.result.place_name, h.result.lat, h.result.lng,
+                           h.result.category or "", h.kakao_place_id, address=h.result.address)
+        for h in own
     ]
     kept = []
     for r in kakao:
         hint = PlaceHint(r.place_id, r.place_name, r.lat, r.lng, r.category or "", address=r.address)
-        nearby = [
-            replace(c, distance_m=geo.haversine_distance_m(r.lat, r.lng, c.lat, c.lng)) for c in candidates
-            if geo.haversine_distance_m(r.lat, r.lng, c.lat, c.lng) <= matching.MAX_RADIUS_M
-        ]
+        nearby = []
+        for c in candidates:
+            dist = geo.haversine_distance_m(r.lat, r.lng, c.lat, c.lng)
+            if dist <= matching.MAX_RADIUS_M or c.kakao_place_id == r.place_id:   # 카카오 ID 일치는 반경 밖이어도 본다
+                nearby.append(replace(c, distance_m=dist))
         if matching.pick_match(hint, nearby) is None:
             kept.append(r)
     return kept

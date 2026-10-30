@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Sequence
 
@@ -150,35 +151,49 @@ def nearest_own_places(lat: float, lng: float, category: str | None, *, db: Sess
         return []   # 숙소·기타는 자체 DB에 없다
     with _session(db) as s:
         rows = repository.find_nearest(s, lat, lng, category, NEAREST_RADIUS_M, _NEAREST_FETCH)
-        return _pinnable_results(s, rows)[:NEAREST_MAX]
+        return [_to_search_result(r) for r in _pinnable_rows(s, rows)][:NEAREST_MAX]
 
 
-def search_own_for_query(query: str, near: tuple[float, float] | None, limit: int, *, db: Session | None = None) -> list[PlaceSearchResult]:
+@dataclass(frozen=True)
+class OwnSearchHit:
+    """장소 검색(#822)의 자체 DB 결과 한 건. kakao_place_id는 카카오 결과와 같은 가게인지 가리는 내부 값이라 응답에 싣지 않는다."""
+
+    result: PlaceSearchResult
+    kakao_place_id: str | None
+
+
+_SEARCH_MAX_PAGES = 5   # pick_match가 거절한 곳이 많아도 limit을 채우려 이어 읽는 최대 페이지 수(페이지 크기 = limit)
+
+
+def search_own_for_query(query: str, near: tuple[float, float] | None, limit: int, *, db: Session | None = None) -> list[OwnSearchHit]:
     """장소 검색(#822)의 자체 DB 몫: 이름·주소가 검색어와 맞는 영업 중 장소(이름 일치 → 주소 일치, 각 안에서 정예 먼저,
-    좌표가 있으면 가까운 순). 핀으로 만들 수 있는 곳만 pinnable=True로 최대 limit곳. 카카오 값을 쓰지 않는다. 읽기 전용."""
+    좌표가 있으면 가까운 순). 핀으로 만들 수 있는 곳만 pinnable=True로 최대 limit곳. 핀 가능한 곳이 limit개 모이거나
+    후보가 바닥날 때까지(최대 _SEARCH_MAX_PAGES 페이지) 이어 읽는다. 카카오 값을 쓰지 않는다. 읽기 전용."""
+    hits: list[OwnSearchHit] = []
     with _session(db) as s:
-        rows = repository.search_open_by_query(s, query, near, limit * _SEARCH_OVERFETCH)
-        return _pinnable_results(s, rows)[:limit]
+        for page in range(_SEARCH_MAX_PAGES):
+            rows = repository.search_open_by_query(s, query, near, limit, offset=page * limit)
+            hits += [OwnSearchHit(_to_search_result(r), r.kakao_place_id) for r in _pinnable_rows(s, rows)]
+            if len(hits) >= limit or len(rows) < limit:
+                break
+    return hits[:limit]
 
 
-_SEARCH_OVERFETCH = 2   # pick_match가 거절한 곳을 빼도 limit을 채우도록 더 읽는다
-
-
-def _pinnable_results(s: Session, rows: Sequence[repository.NearestRow]) -> list[PlaceSearchResult]:
+def _pinnable_rows(s: Session, rows: Sequence[repository.NearestRow]) -> list[repository.NearestRow]:
     """핀 생성이 같은 힌트(자기 이름·좌표)로 match_place를 부르므로, 거기서 거절될 곳(동명 점포 등)은 미리 뺀다."""
     if not rows:
         return []
     hints = [PlaceHint(f"own:{r.place_id}", r.name, r.lat, r.lng, r.category) for r in rows]
     candidates = repository.find_candidates_many(s, hints)
-    flags = [matching.pick_match(h, c) is not None for h, c in zip(hints, candidates)]
-    return [
-        PlaceSearchResult(
-            place_id=f"own:{r.place_id}", place_name=r.name[:100], lat=r.lat, lng=r.lng, category=r.category,
-            address=r.address[:200] if r.address else None,
-            place_source=PlaceSourceInfo(provider=r.source), pinnable=True,
-        )
-        for r, ok in zip(rows, flags) if ok
-    ]
+    return [r for r, h, c in zip(rows, hints, candidates) if matching.pick_match(h, c) is not None]
+
+
+def _to_search_result(r: repository.NearestRow) -> PlaceSearchResult:
+    return PlaceSearchResult(
+        place_id=f"own:{r.place_id}", place_name=r.name[:100], lat=r.lat, lng=r.lng, category=r.category,
+        address=r.address[:200] if r.address else None,
+        place_source=PlaceSourceInfo(provider=r.source), pinnable=True,
+    )
 
 
 def get_places(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceInfo]:

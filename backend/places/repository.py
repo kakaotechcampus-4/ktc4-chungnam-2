@@ -53,6 +53,7 @@ class NearestRow:
     source: str
     lat: float
     lng: float
+    kakao_place_id: str | None = None   # 장소 검색(#822)이 카카오 결과와 같은 가게인지 가리는 데만 쓴다. 응답에 싣지 않는다
 
 
 @dataclass(frozen=True)
@@ -387,9 +388,10 @@ def _nearest_stmt(lat: float, lng: float, category: str | None, radius_m: float,
     return stmt
 
 
-def search_open_by_query(db: Session, query: str, near: tuple[float, float] | None, limit: int) -> list[NearestRow]:
+def search_open_by_query(db: Session, query: str, near: tuple[float, float] | None, limit: int, offset: int = 0) -> list[NearestRow]:
     """장소 검색(#822): 영업 중 장소 중 이름이 검색어를 품은 곳 → 주소가 품은 곳 순.
-    각 묶음 안은 정예 먼저, 좌표가 있으면 가까운 순, 없으면 이름순. 좌표는 정렬에만 쓰고 남기지 않는다."""
+    각 묶음 안은 정예 먼저, 좌표가 있으면 가까운 순, 없으면 이름순(같으면 id). 좌표는 정렬에만 쓰고 남기지 않는다.
+    offset으로 이어 읽을 수 있다 — 정렬이 전 순서라 페이지가 겹치거나 빠지지 않는다."""
     needle = query.strip()
     if not needle or limit <= 0:
         return []
@@ -401,12 +403,13 @@ def search_open_by_query(db: Session, query: str, near: tuple[float, float] | No
     order = [case((in_name, 0), else_=1), Place.curated.desc()]
     order += [func.ST_Distance(Place.geom, _geog(*near))] if near else [Place.name.collate("C")]
     stmt = (
-        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng)
+        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng, Place.kakao_place_id)
         .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES), or_(in_name, in_address))
         .order_by(*order, Place.id)
         .limit(limit)
+        .offset(offset)
     )
-    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng) for r in db.execute(stmt).all()]
+    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng, r.kakao_place_id) for r in db.execute(stmt).all()]
 
 
 def get_facts(db: Session, place_ids: Sequence[str]) -> dict[str, list[FactLabel]]:

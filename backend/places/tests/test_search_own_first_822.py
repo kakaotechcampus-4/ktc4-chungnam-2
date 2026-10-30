@@ -138,3 +138,24 @@ def test_no_results_is_an_empty_list(db_session, kakao):
 def test_like_wildcards_in_query_are_literal(db_session, kakao):
     _add(db_session, _row("J1", "안국 식당"))
     assert _search(db_session, q="%") == []
+
+
+def test_pinnable_places_behind_many_rejected_ones_still_fill_the_limit(db_session, kakao):
+    # 이름 순으로 앞선 네 쌍(8곳)은 동명 점포가 붙어 있어 pick_match가 거절한다 — 뒤의 핀 가능한 곳으로 limit을 채우고 카카오는 안 부른다
+    pairs = [r for i in range(4) for r in (
+        _row(f"P{i}a", f"안국 쌍{i}", lat=37.5700 + i * 0.01), _row(f"P{i}b", f"안국 쌍{i}", lat=37.5700 + i * 0.01 + 0.00002))]
+    singles = [_row(f"S{i}", f"안국 홑{i}", lat=37.5500 + i * 0.01) for i in range(3)]
+    _add(db_session, *pairs, *singles)
+    out = _search(db_session, limit=3)
+    assert [r.place_id for r in out] == [_pid(db_session, f"S{i}") for i in range(3)]
+    assert kakao.calls == 0
+
+
+def test_kakao_result_with_the_recorded_kakao_id_is_the_same_shop_even_when_name_and_place_differ(db_session, kakao):
+    _add(db_session, _row("K1", "오레노 라멘안국"))
+    db_session.execute(Place.__table__.update().where(Place.source_id == "K1").values(kakao_place_id="kakao:777"))
+    db_session.flush()
+    kakao.results = [_kakao("kakao:777", "오레노라멘 인사점", lat=37.5805, lng=126.9850), _kakao("kakao:8", "딴 곳")]   # 500m 가까이 떨어져 있다
+    out = _search(db_session)
+    assert [r.place_id for r in out] == [_pid(db_session, "K1"), "kakao:8"]
+    assert not any("kakao_place_id" in r.model_dump() for r in out)
