@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from geoalchemy2 import Geography, Geometry, WKTElement
-from sqlalchemy import Float, cast, func, literal, null, or_, select, union_all, update
+from sqlalchemy import Float, case, cast, func, literal, null, or_, select, union_all, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -385,6 +385,28 @@ def _nearest_stmt(lat: float, lng: float, category: str | None, radius_m: float,
     if category is not None:
         stmt = stmt.where(Place.category == category)
     return stmt
+
+
+def search_open_by_query(db: Session, query: str, near: tuple[float, float] | None, limit: int) -> list[NearestRow]:
+    """장소 검색(#822): 영업 중 장소 중 이름이 검색어를 품은 곳 → 주소가 품은 곳 순.
+    각 묶음 안은 정예 먼저, 좌표가 있으면 가까운 순, 없으면 이름순. 좌표는 정렬에만 쓰고 남기지 않는다."""
+    needle = query.strip()
+    if not needle or limit <= 0:
+        return []
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{escaped}%"
+    in_name = Place.name.ilike(pattern, escape="\\")
+    in_address = Place.address.ilike(pattern, escape="\\")
+    p_lat, p_lng = _lat_lng()
+    order = [case((in_name, 0), else_=1), Place.curated.desc()]
+    order += [func.ST_Distance(Place.geom, _geog(*near))] if near else [Place.name.collate("C")]
+    stmt = (
+        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng)
+        .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES), or_(in_name, in_address))
+        .order_by(*order, Place.id)
+        .limit(limit)
+    )
+    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng) for r in db.execute(stmt).all()]
 
 
 def get_facts(db: Session, place_ids: Sequence[str]) -> dict[str, list[FactLabel]]:

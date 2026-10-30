@@ -150,11 +150,26 @@ def nearest_own_places(lat: float, lng: float, category: str | None, *, db: Sess
         return []   # 숙소·기타는 자체 DB에 없다
     with _session(db) as s:
         rows = repository.find_nearest(s, lat, lng, category, NEAREST_RADIUS_M, _NEAREST_FETCH)
-        if not rows:
-            return []
-        # 핀 생성이 같은 힌트(자기 이름·좌표)로 match_place를 부르므로, 거기서 거절될 곳(동명 점포 등)은 미리 뺀다
-        hints = [PlaceHint(f"own:{r.place_id}", r.name, r.lat, r.lng, r.category) for r in rows]
-        candidates = repository.find_candidates_many(s, hints)
+        return _pinnable_results(s, rows)[:NEAREST_MAX]
+
+
+def search_own_for_query(query: str, near: tuple[float, float] | None, limit: int, *, db: Session | None = None) -> list[PlaceSearchResult]:
+    """장소 검색(#822)의 자체 DB 몫: 이름·주소가 검색어와 맞는 영업 중 장소(이름 일치 → 주소 일치, 각 안에서 정예 먼저,
+    좌표가 있으면 가까운 순). 핀으로 만들 수 있는 곳만 pinnable=True로 최대 limit곳. 카카오 값을 쓰지 않는다. 읽기 전용."""
+    with _session(db) as s:
+        rows = repository.search_open_by_query(s, query, near, limit * _SEARCH_OVERFETCH)
+        return _pinnable_results(s, rows)[:limit]
+
+
+_SEARCH_OVERFETCH = 2   # pick_match가 거절한 곳을 빼도 limit을 채우도록 더 읽는다
+
+
+def _pinnable_results(s: Session, rows: Sequence[repository.NearestRow]) -> list[PlaceSearchResult]:
+    """핀 생성이 같은 힌트(자기 이름·좌표)로 match_place를 부르므로, 거기서 거절될 곳(동명 점포 등)은 미리 뺀다."""
+    if not rows:
+        return []
+    hints = [PlaceHint(f"own:{r.place_id}", r.name, r.lat, r.lng, r.category) for r in rows]
+    candidates = repository.find_candidates_many(s, hints)
     flags = [matching.pick_match(h, c) is not None for h, c in zip(hints, candidates)]
     return [
         PlaceSearchResult(
@@ -163,7 +178,7 @@ def nearest_own_places(lat: float, lng: float, category: str | None, *, db: Sess
             place_source=PlaceSourceInfo(provider=r.source), pinnable=True,
         )
         for r, ok in zip(rows, flags) if ok
-    ][:NEAREST_MAX]
+    ]
 
 
 def get_places(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceInfo]:
