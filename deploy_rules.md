@@ -16,7 +16,7 @@
 |---|---|---|---|
 | 배치 | 서버 1대에 Docker Compose(`deploy/compose.yml`). 맨 앞의 Caddy가 HTTPS(Let's Encrypt 자동)를 맡는다 | 서버가 1대뿐이다. 인증서 발급과 갱신이 자동이다 | 서버가 늘 때 |
 | 주소 | 운영 `ktc-pingopingo.duckdns.org`, 스테이징 `staging.ktc-pingopingo.duckdns.org`(DuckDNS 무료, 하위 이름은 자동으로 같은 IP). 서버에 고정 IP(Elastic IP 3.38.14.223)를 붙였다 | 소셜 로그인은 IP 주소를 redirect로 받지 않는다. 고정 IP라 서버를 껐다 켜도 주소가 산다. 처음 등록하려던 `pingopingo`는 다른 계정이 이미 쓰고 있어 `ktc-pingopingo`로 바꿨다(2026-10-28) | 이름을 바꿀 때 |
-| 한 주소로 서빙 | 환경마다 `/api/*`는 API(앞의 `/api`를 떼고 넘긴다), 나머지는 화면 정적 파일. 화면은 `VITE_API_BASE_URL=/api`로 빌드한다 | 세션 쿠키가 `SameSite=lax`라 화면과 API가 같은 사이트여야 로그인이 된다. CORS도 필요 없다. 백엔드 경로는 그대로다 | — |
+| 한 주소로 서빙 | 환경마다 `/api/*`는 API(앞의 `/api`를 떼고 넘긴다), 나머지는 화면 정적 파일. 화면은 `VITE_API_BASE_URL=/api`로 빌드한다. API는 `UVICORN_ROOT_PATH=/api`(`deploy/compose.yml`)로 자기 공개 경로를 안다(`/docs`, 접근 로그) | 세션 쿠키가 `SameSite=lax`라 화면과 API가 같은 사이트여야 로그인이 된다. CORS도 필요 없다. 백엔드 경로는 그대로다 | — |
 | 환경 | 운영과 스테이징을 같은 서버에서 나눈다(컨테이너, DB 이름, 비밀값이 다르다) | 멘토 「환경 분리」. 서버가 1대다 | 서버를 더 받을 때 |
 | DB | 서버 안 PostgreSQL 17 + PostGIS 컨테이너(`compose.db.yml`), DB `pingo_prod`, `pingo_staging` | RDS는 운영진 승인이 필요하다(신청함). 승인 전에도 배포를 시작한다 | RDS가 승인되면 옮긴다(덤프 후 복원, `compose.db.yml` 빼기, `DATABASE_URL` 교체) |
 | 프로세스 | 환경마다 API 프로세스 1개(uvicorn 워커 1) | 메모리 요청 상한, 서버 시작 시 정리, 관찰 lease가 이 전제에서 안전하다. 4GB에 두 환경이 들어간다 | 응답이 느려지거나 워커를 늘릴 때. 그 전에 아래 「타협」을 고친다 |

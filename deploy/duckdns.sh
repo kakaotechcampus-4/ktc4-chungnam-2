@@ -4,4 +4,4 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 token=$(cat ../secrets/duckdns_token)
-curl -fsS "https://www.duckdns.org/update?domains=pingopingo&token=${token}&ip=" -o /dev/null
+curl -fsS "https://www.duckdns.org/update?domains=ktc-pingopingo&token=${token}&ip=" -o /dev/null
