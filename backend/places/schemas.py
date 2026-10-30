@@ -83,7 +83,7 @@ class FactLabel:
 
 @dataclass(frozen=True)
 class PlaceHours:
-    """get_hours의 결과 — place_hours 그대로(#690). None인 칸은 모름. 판정은 core.is_open_on이 한다."""
+    """get_hours의 결과 — place_hours 그대로(#690). None인 칸은 모름. 요일 단위 판정은 core.day_open_status."""
 
     hours: dict[str, list[list[str]]] | None = None   # {"월": [["11:00","21:00"]], …}, 빈 목록 = 휴무, "26:00" = 다음 날 02:00
     closed_days: list[str] | None = None               # 매주 쉬는 요일, [] = 연중무휴
