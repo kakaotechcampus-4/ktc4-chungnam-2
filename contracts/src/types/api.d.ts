@@ -1990,7 +1990,7 @@ export interface paths {
          * 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md). 남이 쓴 줄이 하나라도 섞이면 요청 전체가 403 FORBIDDEN이고 아무것도 바뀌지 않는다(#108).
          *     '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
          *     한 요청에 글 5개까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 글은 10개까지다(뺀 것도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
-         *     **이 지도에서 추천 횟수(10회)를 다 쓴 요청자는 근거를 고칠 수 없다**(`×`·`＋` 모두 429 `RETRY_LIMIT`, #845 결정) — 고쳐도 다시 추천할 수 없기 때문이다. 이 검사는 모델을 부르기 전에 한다. 조회(`GET .../evidence`, `GET .../result`)는 상한 뒤에도 된다.
+         *     **이 지도에서 추천 횟수(10회)를 다 쓴 요청자는 근거를 고칠 수 없다**(`×`·`＋` 모두 429 `RETRY_LIMIT`, #845 결정) — 고쳐도 다시 추천할 수 없기 때문이다. 횟수는 run이 아니라 **요청자·지도 단위**(그 사람이 이 지도에서 만든 어느 run이든 합쳐서)라, 다른 run에서 횟수를 다 썼으면 이 run의 근거도 못 고친다(`retry`의 상한 검사와 같은 값). 이 검사는 모델을 부르기 전에 한다. 조회(`GET .../evidence`, `GET .../result`)는 상한 뒤에도 된다.
          *     고친 근거는 **「다시 추천 받기」(`POST /runs/{runId}/retry`)가 읽어 반영한다**. 이미 보인 결과는 바뀌지 않고, 그 결과에 쓴 근거는 `RecommendResult.applied_evidence`가 따로 보여 준다.
          */
         patch: {
@@ -3896,7 +3896,7 @@ export interface components {
             applied_evidence?: components["schemas"]["EvidenceLine"][];
             /** @description 활성이고 추천이 실제로 쓰는(`enforced=true`) **사유 근거**가 하나도 없다. 줄을 다 껐거나 남은 줄이 모두 `enforced=false`일 때 true. 화면은 「적용된 사유 조건이 없어요」라고 알린다 — ♥ 기반 선호, 반경·영업·제외 필터는 그래도 적용되므로 「조건 없는 추천」이라 쓰지 않는다. 판정은 `applied_evidence`가 아니라 서버가 한다 */
             no_applied_conditions?: boolean;
-            /** @description **이번 실행에서 새로 찾은 후보 수**. `candidates`에는 이전에 지도에 올린(`visibility: published`) 후보가 남아 있을 수 있어 `candidates`의 길이와 다르다. 이번 검색이 0건이면 0(게시 후보가 남아 있어도). 화면은 「이번엔 새로 찾은 곳이 없어요」와 「이미 지도에 올린 곳」을 구분해 보인다 */
+            /** @description **마지막 실행(`execute`·`retry`·`widen`)이 새로 찾은 후보 수**. 그 뒤에 일부를 지도에 올려도 바뀌지 않는다(다음 실행이 덮는다). `candidates`에는 이전에 지도에 올린(`visibility: published`) 후보가 남아 있을 수 있어 `candidates`의 길이와 다르다. 마지막 검색이 0건이면 0(게시 후보가 남아 있어도). 화면은 「이번엔 새로 찾은 곳이 없어요」와 「이미 지도에 올린 곳」을 구분해 보인다 */
             new_count?: number;
         };
         /**
@@ -4453,7 +4453,7 @@ export interface components {
             };
         };
         /**
-         * @description 필터 통과 후보 0개 (6절 "결과 0개"). **이전에 지도에 올린 후보까지 포함해 후보가 하나도 없을 때만** 온다 — 게시한 후보가 남아 있으면 200이고 `RecommendResult.new_count`가 0이다(#845). `detail.funnel`(단계별로 빠진 수)과 `detail.external_search`(ExternalSearch, 카카오맵 검색 링크, #798)가 온다.
+         * @description 필터 통과 후보 0개 (6절 "결과 0개"). **이전에 지도에 올린 후보까지 포함해 후보가 하나도 없을 때만** 온다 — 게시한 후보가 남아 있으면 200이고 `RecommendResult.new_count`가 0이다(#845). `detail.funnel`(단계별로 빠진 수)과 `detail.external_search`(ExternalSearch, 카카오맵 검색 링크, #798)가 온다. **`detail.applied_evidence`·`detail.no_applied_conditions`**(200의 `RecommendResult`와 같은 값, #845)도 와서 화면이 0건일 때도 「이 조건으로 찾았어요」를 보일 수 있다.
          *     화면은 반경 넓히기, 근거 고치기와 함께 「카카오맵에서 더 찾아보기」를 보여 준다
          */
         NoResults: {

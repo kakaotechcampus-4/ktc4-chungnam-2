@@ -265,6 +265,8 @@ recommend_runs(
                                          --   enforced·not_enforced_reason·is_active). evidence_lines는 편집하면 바뀌지만 이 값은 그 결과를 만든
                                          --   실행 때의 값이라 「이 조건으로 찾았어요」가 정확하다. 파생값(다음 실행이 덮는다). 작성자가
                                          --   탈퇴하면 그 사람의 줄과 함께 지운다(evidence_lines와 같은 정리 규칙). RecommendResult.applied_evidence
+  last_new_count int null,              -- #845: 마지막 execute/widen/retry가 새로 찾은 후보 수(RecommendResult.new_count). 그 뒤에 일부를 게시해도
+                                         --   바뀌지 않는다 — 「이번 검색이 0건」과 「다 올려서 남은 게 없음」을 가른다. 파생값(다음 실행이 덮는다).
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
                                          -- 않도록 마지막 execute/widen/retry의 깔때기 표를
                                          -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.

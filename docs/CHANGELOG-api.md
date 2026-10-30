@@ -8,9 +8,9 @@
 
 - `POST /maps/{mapId}/runs`: 요청에 `execute: boolean`(기본 false)을 더했다. true면 서버가 근거 조립(②) 뒤 **곧바로 첫 검색까지 실행**하고 `status: done`을 돌려준다. 모델 실패 시 결과도 run도 횟수도 없다(현행). 생략하면 지금과 같다(전환 기간용).
 - `RecommendRun.status`의 `collecting_evidence`는 더 이상 「사용자가 확인하는 중」이 아니다. `execute` 없이 만든 run이거나 장애로 첫 실행 전에 멈춘 run이며, 열면 `POST /runs/{id}/execute`로 이어서 실행한다.
-- `RecommendResult`에 `applied_evidence`(이번 결과에 **실제 쓴** 근거 줄의 스냅샷, `EvidenceLine[]`), `no_applied_conditions`(활성이고 쓰이는 사유 근거가 0개), `new_count`(이번 실행에서 새로 찾은 후보 수 — 이전에 올린 후보는 따로)를 더했다(모두 선택 필드).
-- `NO_RESULTS`는 이전에 지도에 올린 후보까지 포함해 후보가 하나도 없을 때만 온다. 게시 후보가 남은 채 새 검색이 0건이면 200이고 `new_count: 0`이다.
-- `PATCH /runs/{id}/evidence`: **추천 횟수(10회)를 다 쓴 요청자는 `×`·`＋` 모두 429 `RETRY_LIMIT`**(모델을 부르기 전에). 고쳐도 다시 추천할 수 없기 때문이다. 조회는 상한 뒤에도 된다.
+- `RecommendResult`에 `applied_evidence`(이번 결과에 **실제 쓴** 근거 줄의 스냅샷, `EvidenceLine[]`), `no_applied_conditions`(활성이고 쓰이는 사유 근거가 0개), `new_count`(**마지막 실행이 새로 찾은 후보 수** — 그 뒤에 일부를 게시해도 안 바뀐다, 이전에 올린 후보는 따로)를 더했다(모두 선택 필드).
+- `NO_RESULTS`는 이전에 지도에 올린 후보까지 포함해 후보가 하나도 없을 때만 온다. 게시 후보가 남은 채 새 검색이 0건이면 200이고 `new_count: 0`이다. 404의 `detail`에도 `applied_evidence`·`no_applied_conditions`를 싣는다(0건일 때도 「이 조건으로 찾았어요」를 보이려고).
+- `PATCH /runs/{id}/evidence`: **추천 횟수(10회)를 다 쓴 요청자는 `×`·`＋` 모두 429 `RETRY_LIMIT`**(모델을 부르기 전에). 횟수는 run이 아니라 요청자·지도 단위라 다른 run에서 다 썼어도 같다. 고쳐도 다시 추천할 수 없기 때문이다. 조회는 상한 뒤에도 된다.
 - `POST /runs/{id}/retry` 설명: 같은 run의 현재 활성 근거로 다시 찾고 **모델을 부르지 않는다**(`＋`의 모델 호출은 그 글을 더할 때 났다). 「수정한 조건으로, 지금 후보를 제외하고 다시 추천」. 게시한 후보는 제외되지 않는다. 같은 run에 **고정되는 입력**(구조화 근거, 기본 지역)과 **실행마다 다시 읽는 입력**(♥ 선호, 여행 날짜 판정, 제외목록)을 설명에 적었다.
 - 서버 구현: recommend(#847, #811 선행). 그 전까지 실서버는 `execute`를 무시하고 새 필드를 안 준다(모두 선택 필드라 안전하다). 목 서버는 이미 새 동작을 내려 준다.
 - FE(#849): 추천 받기 → `execute: true` → 결과 + 「이 조건으로 찾았어요」 패널(`applied_evidence`). 근거 수정은 결과 화면 패널에서(`×` 모델 없음, `＋` 그 글만 모델), 「다시 추천 받기」는 기존 retry. 상한을 다 쓰면 패널은 읽기 전용(429 `RETRY_LIMIT`). `no_applied_conditions`면 「적용된 사유 조건이 없어요」, `new_count`가 0이면 「이번엔 새로 찾은 곳이 없어요」를 보인다. 새 필드가 없으면(구서버) 지금 표시로 둔다.

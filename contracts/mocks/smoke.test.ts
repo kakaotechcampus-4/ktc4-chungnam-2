@@ -143,6 +143,9 @@ describe("에러 시나리오", () => {
     expect(body.detail.funnel.length).toBeGreaterThan(0);
     expect(body.detail.funnel.map((f: { label: string }) => f.label)).toContain("추천 가능 아님 제거");
     expect(body.detail.external_search.url).toMatch(/^https:\/\/map\.kakao\.com\/link\/search\//); // #798
+    // #845 — 후보가 하나도 없는 결과에도 이번에 쓴 근거가 실린다(0건일 때 「이 조건으로 찾았어요」를 보일 자리)
+    expect(Array.isArray(body.detail.applied_evidence)).toBe(true);
+    expect(typeof body.detail.no_applied_conditions).toBe("boolean");
   });
 
   it("retry-limit — 10회 초과 시 429 RETRY_LIMIT(detail에 attempt_limit)", async () => {
@@ -1386,14 +1389,33 @@ describe("#845 — 추천 흐름: 근거 확인 없이 결과 먼저", () => {
     expect((await fetch(`${BASE}/runs/${run.id}/result`)).status).toBe(200);
   });
 
-  it("이미 지도에 올린 후보는 retry 뒤에도 남고, new_count는 새로 찾은 후보만 센다", async () => {
+  it("횟수는 요청자·지도 단위다 — 다른 run에서 10회를 다 썼으면 과거 run의 근거도 429 RETRY_LIMIT", async () => {
+    const older = await create(true); // 이 run의 attempt_no는 낮지만
+    const other = await create(true);
+    for (let n = 1; n < 10; n++) expect((await post(`/runs/${other.id}/retry`)).status).toBe(202);
+    const lines: { id: string }[] = await fetch(`${BASE}/runs/${older.id}/evidence`).then((r) => r.json());
+    for (const body of [{ toggle: [{ id: lines[0].id, is_active: false }] }, { add: [{ text: "조용했으면 좋겠어요" }] }]) {
+      const res = await fetch(`${BASE}/runs/${older.id}/evidence`, { method: "PATCH", body: JSON.stringify(body) });
+      expect(res.status).toBe(429);
+      expect((await res.json()).code).toBe("RETRY_LIMIT");
+    }
+  });
+
+  it("이미 지도에 올린 후보는 retry 뒤에도 남고, new_count는 마지막 실행이 새로 찾은 수라 게시해도 바뀌지 않는다", async () => {
     const run = await create(true);
     const first = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
-    expect((await post(`/candidates/${first.candidates[0].id}/publish`)).status).toBeLessThan(300);
+    const found = first.new_count; // 첫 실행이 찾은 수
+    expect(found).toBe(first.candidates.length);
+    const published = first.candidates[0];
+    expect((await post(`/candidates/${published.id}/publish`)).status).toBeLessThan(300);
+    const sameRun = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(sameRun.new_count).toBe(found); // 게시해도 「이번 실행이 새로 찾은 수」는 그대로 — 「다 올려서 남은 게 없음」과 「이번 검색 0건」을 가른다
     await post(`/runs/${run.id}/retry`);
     const after = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
-    expect(after.candidates.some((c: { visibility: string }) => c.visibility === "published")).toBe(true);
-    expect(after.new_count).toBe(after.candidates.filter((c: { visibility: string }) => c.visibility !== "published").length);
+    const names: string[] = after.candidates.map((c: { place_name: string }) => c.place_name);
+    expect(names.filter((n) => n === published.place_name)).toHaveLength(1); // 올린 장소는 새 후보로 다시 나오지 않는다
+    expect(after.candidates.find((c: { id: string }) => c.id === published.id)?.visibility).toBe("published"); // 같은 후보가 그대로 남는다
+    expect(after.new_count).toBe(after.candidates.length - 1); // 이번 실행이 새로 찾은 수 = 올린 1곳을 뺀 나머지
     expect(after.new_count).toBeLessThan(after.candidates.length);
   });
 });
