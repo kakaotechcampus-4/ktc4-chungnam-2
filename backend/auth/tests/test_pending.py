@@ -366,45 +366,125 @@ def test_purge_leaves_a_living_account_alone(db_session):
     assert db_session.execute(select(UserIdentity).where(UserIdentity.user_id == "u1")).first() is not None
 
 
-# ---- 복구가 남기는 sessions_valid_after (같은 초 경계) ----
+# ---- 복구가 남기는 sessions_valid_after (같은 초 경계, 고정 시계) ----
 
-def test_new_session_is_issued_now_when_the_withdrawal_value_is_older_than_this_second():
-    assert core.new_session_issued_at(2_000, None) == 2_000
-    assert core.new_session_issued_at(2_000, datetime.fromtimestamp(1_000, timezone.utc)) == 2_000
+class _FakeClock:
+    """service·router·deps가 읽는 시계를 한 번에 고정한다. sleep은 시계를 그만큼 앞으로 보낸다."""
 
+    def __init__(self, start: float):
+        self.now = start
+        self.slept: list[float] = []
 
-def test_new_session_goes_to_the_next_second_when_withdrawal_and_restore_share_a_second():
-    """고정 시계 — 탈퇴 값(T)은 내리지 않는다. 그 초에 발급된 옛 토큰(T)은 계속 거절되고, 새 토큰은 T+1이라 통한다."""
-    withdrawn = datetime.fromtimestamp(5_000.4, timezone.utc)
-    issued_at = core.new_session_issued_at(5_000, withdrawn)
-    assert issued_at == 5_001
-    assert core.is_revoked(5_000, withdrawn)            # 탈퇴 직전 그 초에 발급된 토큰
-    assert core.is_revoked(4_000, withdrawn)
-    assert not core.is_revoked(issued_at, withdrawn)    # 복구 뒤 새 토큰
+    def time(self) -> float:
+        return self.now
 
-
-def test_next_second_session_is_accepted_but_a_far_future_one_is_not():
-    near = core.create_session_token("u1", secret=SECRET, issued_at=5_001)
-    far = core.create_session_token("u1", secret=SECRET, issued_at=5_100)
-    assert core.parse_session_token(near, secret=SECRET, now=5_000) is not None
-    assert core.parse_session_token(far, secret=SECRET, now=5_000) is None
+    def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
 
 
-def test_restore_in_the_same_second_keeps_the_stale_token_dead_and_the_new_one_working(app_client, db_session):
-    """같은 초에 탈퇴한 계정을 복구해도 탈퇴 직전 그 초의 토큰은 401, 복구 뒤 새 세션은 200이다(#855)."""
-    now = datetime.now(timezone.utc)
-    create_kakao_user(db_session, "same", provider_user_id="s1", display_name="영희", deleted_at=now, sessions_valid_after=now)
+@pytest.fixture()
+def clock(monkeypatch):
+    from types import SimpleNamespace
+
+    from auth import deps, router
+
+    fake = _FakeClock(1_800_000_000.4)
+    namespace = SimpleNamespace(time=fake.time, sleep=fake.sleep)
+    for module in (service, router, deps):
+        monkeypatch.setattr(module, "time", namespace)
+    return fake
+
+
+def _token(user_id, issued_at):
+    return {"session": core.create_session_token(user_id, secret=_secret(), issued_at=issued_at)}
+
+
+def _pending(user_id, deleted_at, clock):
+    return {"pending_account": core.create_pending_cookie_value(
+        user_id, "kakao", deleted_at, secret=_secret(), issued_at=int(clock.now),
+    )}
+
+
+def _withdraw_now(db_session, user_id, clock):
+    row = service.withdraw_user(db_session, user_id=user_id)
+    assert row.sessions_valid_after == row.deleted_at == datetime.fromtimestamp(clock.now, timezone.utc)
     db_session.commit()
-    stale = {"session": core.create_session_token("same", secret=_secret(), issued_at=int(now.timestamp()))}
-    cookie = core.create_pending_cookie_value("same", "kakao", now, secret=_secret(), issued_at=int(now.timestamp()))
+    return row
+
+
+def test_restore_in_the_same_second_waits_for_the_next_second_and_issues_no_future_token(app_client, db_session, clock):
+    """탈퇴와 같은 초에 복구하면 다음 초까지 기다린 뒤 진행한다. 탈퇴 직전 그 초의 토큰은 401, 복구 뒤 새 토큰은 200,
+    새 토큰의 발급 시각은 미래가 아니다(#855)."""
+    create_kakao_user(db_session, "same", provider_user_id="s1", display_name="영희")
+    stale = _token("same", int(clock.now))
+    row = _withdraw_now(db_session, "same", clock)
     client = _other(app_client)
 
-    resp = client.post("/auth/pending", json={"choice": "restore"}, cookies={"pending_account": cookie})
+    resp = client.post("/auth/pending", json={"choice": "restore"}, cookies=_pending("same", row.deleted_at, clock))
 
     assert resp.status_code == 200
+    assert len(clock.slept) == 1 and 0 < clock.slept[0] <= 1   # 최대 1초
+    assert int(clock.now) == int(row.sessions_valid_after.timestamp()) + 1
+    token = client.cookies.get("session")
+    claims = core.parse_session_token(token, secret=_secret(), now=int(clock.now))
+    assert claims is not None and claims.issued_at <= int(clock.now)   # 미래 iat가 아니다
     assert client.get("/auth/me").status_code == 200
     assert _other(app_client).get("/auth/me", cookies=stale).status_code == 401
-    assert db_session.get(User, "same").sessions_valid_after == now   # 값을 내리지 않았다
+    assert db_session.get(User, "same").sessions_valid_after == row.sessions_valid_after   # 값을 내리지 않았다
+
+
+def test_restore_after_the_second_has_passed_does_not_wait(app_client, db_session, clock):
+    create_kakao_user(db_session, "late", provider_user_id="l1", display_name="영희")
+    row = _withdraw_now(db_session, "late", clock)
+    clock.now += 5
+    client = _other(app_client)
+
+    assert client.post("/auth/pending", json={"choice": "restore"}, cookies=_pending("late", row.deleted_at, clock)).status_code == 200
+    assert clock.slept == []
+
+
+def test_logout_right_after_a_same_second_restore_kills_the_restored_session(app_client, db_session, clock):
+    """복구 토큰이 로그아웃 뒤에도 사는 일이 없다 — 로그아웃은 평소처럼 동작한다."""
+    create_kakao_user(db_session, "out", provider_user_id="o1", display_name="영희")
+    row = _withdraw_now(db_session, "out", clock)
+    client = _other(app_client)
+    assert client.post("/auth/pending", json={"choice": "restore"}, cookies=_pending("out", row.deleted_at, clock)).status_code == 200
+    restored = {"session": client.cookies.get("session")}
+
+    assert client.post("/auth/logout").status_code == 204
+
+    assert _other(app_client).get("/auth/me", cookies=restored).status_code == 401
+
+
+def test_withdraw_and_restore_repeated_in_the_same_second_never_revives_an_earlier_token(app_client, db_session, clock):
+    """탈퇴·복구를 반복해도 직전 회차의 토큰은 되살아나지 않는다."""
+    create_kakao_user(db_session, "loop", provider_user_id="p1", display_name="영희")
+    seen: list[dict] = []
+    for _ in range(3):
+        row = _withdraw_now(db_session, "loop", clock)
+        client = _other(app_client)
+        assert client.post("/auth/pending", json={"choice": "restore"}, cookies=_pending("loop", row.deleted_at, clock)).status_code == 200
+        current = {"session": client.cookies.get("session")}
+        assert _other(app_client).get("/auth/me", cookies=current).status_code == 200
+        for earlier in seen:
+            assert _other(app_client).get("/auth/me", cookies=earlier).status_code == 401
+        seen.append(current)
+        # 복구 직후 같은 초 안에 다시 탈퇴한다 — 시계는 앞으로만 간다
+
+
+def test_restore_waiting_for_the_next_second_is_rejected_if_the_period_ended_meanwhile(db_session, clock):
+    """기한 1초 직전의 복구가 다음 초를 기다리는 사이 기한이 지나면 거절한다."""
+    from common.errors import AppError
+
+    deleted_at = datetime.fromtimestamp(clock.now, timezone.utc) - timedelta(days=core.ACCOUNT_RESTORE_DAYS) + timedelta(seconds=0.3)
+    create_kakao_user(db_session, "edge", provider_user_id="e1", deleted_at=deleted_at, sessions_valid_after=datetime.fromtimestamp(clock.now, timezone.utc))
+    claims = core.PendingClaims("edge", "kakao", core.deleted_at_stamp(deleted_at))
+
+    with pytest.raises(AppError) as exc:
+        service.restore_account(db_session, claims=claims)
+
+    assert exc.value.code == "NO_PENDING_LOGIN" and db_session.get(User, "edge").deleted_at is not None
 
 
 def test_restore_of_a_row_without_sessions_valid_after_uses_the_withdrawal_time(db_session):
@@ -497,3 +577,22 @@ def test_choice_waiting_on_the_lock_is_rejected_if_the_period_ends_meanwhile(tes
 
     assert outcome == {"result": "NO_PENDING_LOGIN"}
     assert row_deleted_at is not None   # 되살려지지 않았다
+
+
+# ---- 아주 긴 숫자열·비ASCII 숫자는 어느 토큰에서도 예외가 아니라 None ----
+
+@pytest.mark.parametrize("digits", ["1" * 4301, "1" * 13, "²", "١٢٣"])
+def test_long_or_non_ascii_digit_fields_are_rejected_without_an_exception(digits):
+    pending = f"u1.kakao.{digits}.1000.sig"
+    assert core.parse_pending_cookie(pending, secret=SECRET, now=1100) is None
+    assert core.parse_pending_cookie(f"u1.kakao.1.{digits}.sig", secret=SECRET, now=1100) is None
+    assert core.parse_session_token(f"u1.{digits}.sig", secret=SECRET, now=1100) is None
+    assert core.parse_state(f"st.{digits}.sig", "st", secret=SECRET, now=1100) is None
+
+
+def test_pending_endpoint_with_a_very_long_number_cookie_is_404(app_client):
+    client = _other(app_client)
+    value = "u.kakao." + "1" * 4301 + ".1000.sig"
+    assert client.get("/auth/pending", cookies={"pending_account": value}).status_code == 404
+    resp = client.post("/auth/pending", json={"choice": "restore"}, cookies={"pending_account": value})
+    assert resp.status_code == 404 and resp.json()["code"] == "NO_PENDING_LOGIN"

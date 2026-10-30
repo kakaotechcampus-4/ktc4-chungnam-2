@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 KAKAO_USERINFO_URL = "https://kapi.kakao.com/v2/user/me"
 _HTTP_TIMEOUT_SECONDS = 5.0
+_MAX_RESTORE_WAIT_SECONDS = 2.0   # 복구가 다음 초를 기다리는 상한(보통 1초 미만)
 
 
 class KakaoApiError(AppError):
@@ -123,6 +124,11 @@ class WithdrawnAccountPending(Exception):
         self.provider = provider
 
 
+def _now() -> datetime:
+    """지금 시각. time.time()에서 만든다 — 세션 발급·검증(router·deps)이 읽는 시계와 같아서 테스트가 한 번에 고정할 수 있다."""
+    return datetime.fromtimestamp(time.time(), timezone.utc)
+
+
 def _lock_login_identity(db: Session, *, provider: str, provider_user_id: str) -> None:
     """같은 로그인 수단으로 들어온 로그인·선택·정리를 한 줄로 세운다(트랜잭션 끝까지). 잠근 뒤에 다시 읽어야 한다."""
     db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"login_identity:{provider}:{provider_user_id}"})
@@ -147,7 +153,7 @@ def _settle_withdrawn(db: Session, row: User, *, provider: str, provider_user_id
         return None
     if current.deleted_at is None:
         return current
-    if core.is_restorable(current.deleted_at, datetime.now(timezone.utc)):
+    if core.is_restorable(current.deleted_at, _now()):
         raise WithdrawnAccountPending(current, provider)
     purge_withdrawn_user(db, user_id=current.id)
     return None
@@ -241,7 +247,7 @@ def update_display_name(db: Session, *, user_id: str, display_name: str) -> User
 def revoke_sessions(db: Session, *, user_id: str) -> None:
     """로그아웃 — 지금까지 발급된 모든 세션 토큰을 무효화한다(쿠키 삭제만으로는 이미 복사된
     토큰이 살아있다). UPDATE라 행이 없어도(dev 스텁 사용자) 실패하지 않는다."""
-    db.execute(update(User).where(User.id == user_id).values(sessions_valid_after=datetime.now(timezone.utc)))
+    db.execute(update(User).where(User.id == user_id).values(sessions_valid_after=_now()))
 
 
 # 탈퇴(#155)에서 그 사람의 기록을 다루는 모듈 단계. (모듈 이름, fn(db, user_id, map_ids)) — 이 순서로 부른다.
@@ -277,7 +283,7 @@ def withdraw_user(db: Session, *, user_id: str) -> User:
     row = get_active_user_or_401(db, user_id=user_id)
     for _, step in WITHDRAW_STEPS:
         step(db, user_id, map_ids)
-    now = datetime.now(timezone.utc)
+    now = _now()
     row.deleted_at = now
     row.sessions_valid_after = now   # 탈퇴 전에 복사된 세션 토큰이 복구 뒤에 되살아나지 않게(#855)
     db.flush()
@@ -336,7 +342,7 @@ def _pending_target(db: Session, claims: core.PendingClaims, *, lock: bool) -> t
     if found is None:
         raise AppError("NO_PENDING_LOGIN")
     user, _ = found
-    now = datetime.now(timezone.utc)
+    now = _now()
     if (
         user.deleted_at is None
         or core.deleted_at_stamp(user.deleted_at) != claims.deleted_stamp
@@ -360,10 +366,18 @@ def get_pending_account(db: Session, *, claims: core.PendingClaims) -> dict:
 def restore_account(db: Session, *, claims: core.PendingClaims) -> User:
     """POST /auth/pending restore — 기존 계정을 되살린다. 계정·핀 작성자 표시·남아 있던 지도 멤버십이 돌아오고 반응·근거·알림은
     돌아오지 않는다(탈퇴 때 지웠다, #855). 탈퇴 전에 복사된 세션은 계속 무효다 — sessions_valid_after는 내리지 않는다.
-    새 세션의 발급 시각은 호출부가 core.new_session_issued_at으로 정한다. 커밋하지 않는다."""
+    새 토큰은 발급 시각이 sessions_valid_after보다 뒤여야 통하므로(is_revoked는 같은 초를 거절한다), 탈퇴와 같은 초에 복구하면
+    다음 초가 될 때까지 최대 1초 기다린 뒤 진행한다(잠금을 쥔 채, 사람이 한 초 안에 탈퇴→로그인→복구하는 일은 없어 드물다).
+    미래 시각의 토큰은 만들지 않는다. 커밋하지 않는다."""
     user, now = _pending_target(db, claims, lock=True)
     if user.sessions_valid_after is None:   # 이 기능 전에 탈퇴한 행 — 탈퇴 시각 이전에 발급된 토큰을 죽인다
         user.sessions_valid_after = user.deleted_at
+    next_second = int(user.sessions_valid_after.timestamp()) + 1
+    if time.time() < next_second:
+        time.sleep(min(next_second - time.time(), _MAX_RESTORE_WAIT_SECONDS))
+        now = _now()
+        if not core.is_restorable(user.deleted_at, now):   # 기다리는 사이 기한이 지났다
+            raise AppError("NO_PENDING_LOGIN")
     user.deleted_at = None
     db.flush()
     return user
@@ -523,7 +537,7 @@ def merge_guest_into(db: Session, *, guest_user_id: str, to_user_id: str) -> boo
             for step, module_api in MERGE_STEPS:
                 module_api.reassign_user(db, from_user_id=guest_user_id, to_user_id=to_user_id)
             step = "auth"
-            guest.deleted_at = datetime.now(timezone.utc)
+            guest.deleted_at = _now()
             db.flush()
     except Exception as exc:  # noqa: BLE001 — 합치기 실패가 카카오 로그인 성공을 막으면 안 된다
         logger.error("guest merge failed: step=%s error=%s", step, type(exc).__name__)
