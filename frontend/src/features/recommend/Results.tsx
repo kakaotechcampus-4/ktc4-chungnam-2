@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ExternalLink, MessageSquare, RotateCw, Users } from 'lucide-react'
 
 import { ApiError } from '@/api'
@@ -133,14 +133,41 @@ export function ResultsBody({
   )
 }
 
+/**
+ * 카드를 누르면 지도가 그 후보로 간다(#843). 안의 버튼·링크는 자기 일만 한다. 키보드로는 제목 버튼으로 간다.
+ * 지도에서 후보 점선 핀을 눌러도 같은 후보가 골라지고, 그 카드가 보이게 스크롤한다.
+ */
 function CandidateCard({ mapId, run, c, members }: { mapId: string; run: RecommendRunDto; c: CandidateDto; members: MemberView[] }) {
+  const selected = useAiStore((s) => s.focus?.id === c.id)
+  const focusN = useAiStore((s) => (s.focus?.id === c.id ? s.focus.n : 0))
+  const focus = () => useAiStore.getState().focusCandidate(c.id)
+  const ref = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (focusN) ref.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [focusN])
   return (
-    <article className="space-y-2 rounded-xl border-[1.5px] border-brand-300 bg-brand-50 p-3.5">
+    <article
+      ref={ref}
+      onClick={(e) => {
+        if (!(e.target as HTMLElement).closest('a, button')) focus()
+      }}
+      className={`cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-brand-50 p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
+    >
       <header className="flex items-center gap-2">
         <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
           {c.rank}
         </span>
-        <h3 className="min-w-0 flex-1 truncate text-title font-bold text-ink-900">{c.place_name}</h3>
+        <h3 className="min-w-0 flex-1 text-title font-bold text-ink-900">
+          <button
+            type="button"
+            onClick={focus}
+            aria-label={`${c.place_name} 지도에서 보기`}
+            aria-current={selected || undefined}
+            className="block w-full truncate text-left"
+          >
+            {c.place_name}
+          </button>
+        </h3>
         {c.region_label && <span className="tag border border-brand-300 bg-white text-brand-700">{c.region_label} 기준</span>}
       </header>
       <p className="text-xs text-ink-600">{run.category}</p>

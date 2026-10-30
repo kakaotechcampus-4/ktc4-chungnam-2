@@ -66,8 +66,8 @@ def get_shortlist(
     status_code=201,
 )
 def post_shortlist(confirmed=PinToConfirm, db: Session = DbSession):
-    pin_row, principal = confirmed
-    return flows.confirm_pin(db, pin_row=pin_row, principal=principal)
+    pin, principal = confirmed
+    return flows.confirm_pin(db, pin=pin, principal=principal)
 
 
 @router.get("/maps/{mapId}/shortlist/export")

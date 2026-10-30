@@ -514,6 +514,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/trash": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * **내가 방장인 삭제된 지도**(#464) — 복구할 수 있는 지도 목록. 삭제한 지 30일 안인 것만, 최근 삭제순. 방장이 아닌 사람의 삭제된 지도는 오지 않는다(삭제된 지도는 구성원에게도 없는 지도다).
+         *     `purge_at`(= `deleted_at` + 30일)까지만 복구할 수 있다. 목록에는 복구 가능한 것만 오고, 기한이 지난 것은 빠진다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 없으면 items는 빈 배열 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TrashedMapList"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}": {
         parameters: {
             query?: never;
@@ -550,6 +589,7 @@ export interface paths {
         /**
          * 지도 삭제 — 방장만 (#369, docs/permissions.md map.delete). soft delete라 모든 구성원에게서 사라진다.
          *     이후 이 지도와 지도에 딸린 모든 경로, 이 지도의 초대 토큰은 404다. 전체 채널에 map.deleted를 보낸다(docs/events.md).
+         *     **삭제한 지 30일 안이면 방장이 복구할 수 있다**(#464): `GET /maps/trash`로 찾고 `POST /maps/{mapId}/restore`. 30일이 지나면 정리 작업(`maps.purge`)이 지도와 딸린 데이터를 실제로 지운다.
          */
         delete: {
             parameters: {
@@ -617,6 +657,62 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/maps/{mapId}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * **삭제한 지도 복구 — 방장만, 삭제한 지 30일 안에만**(#464, docs/permissions.md map.restore). `deleted_at`을 비운다 — 구성원·핀·반응·초대·확정 리스트·추천 기록은 삭제 때 그대로이므로 따로 복원할 것이 없다(탈퇴한 사람은 계속 구성원에서 빠진다, #245).
+         *     - 내가 이미 지도 20개(만든 것과 참여한 것 합산)이면 409 `MAP_LIMIT` — 복구도 새 지도를 늘리는 일이다.
+         *     - 삭제한 지 30일이 지났는데 정리 작업이 아직 안 돌았으면 410 `MAP_PURGED`(복구할 수 없다). 이미 정리돼 행이 없으면 404다.
+         *     - **이미 복구된 지도면 그 지도를 200으로 돌려준다**(연타 안전). 방장이 아니면 403, 내가 구성원이 아니거나 없는 지도면 404.
+         *     - 전체 채널에 `map.restored`를 보낸다(docs/events.md). 삭제 때 구성원의 연결은 닫혔으므로 대부분의 구성원은 다음에 `GET /maps`를 열 때 지도를 다시 본다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 복구됨(또는 이미 복구돼 있음). 복구한 지도 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Map"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["MapLimit"];
+                /** @description MAP_PURGED — 삭제한 지 30일이 지나 복구할 수 없다 */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/maps/{mapId}/members/me": {
@@ -2095,6 +2191,7 @@ export interface paths {
          * 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md). 남이 쓴 줄이 하나라도 섞이면 요청 전체가 403 FORBIDDEN이고 아무것도 바뀌지 않는다(#108).
          *     '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
          *     한 요청에 글 5개까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 글은 10개까지다(뺀 것도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
+         *     **같은 글을 다시 추가해도 안전하다**(#848): 같은 run에서 **같은 사람이 이미 쓴 글**(앞뒤 공백을 자르고 안의 연속 공백을 하나로 본 같은 글)을 `add`에 다시 보내면 새 줄을 만들지 않는다. 그 줄을 응답에 그대로 두고(뺐던 줄이면 다시 켠다), **모델을 부르지 않고 글 수 상한에도 세지 않는다**. 응답이 유실돼 재전송하거나 연타해도 같은 줄 하나다. 다른 사람이 쓴 같은 글은 별개의 줄이다.
          *     **이 지도에서 추천 횟수(10회)를 다 쓴 요청자는 근거를 고칠 수 없다**(`×`·`＋` 모두 429 `RETRY_LIMIT`, #845 결정) — 고쳐도 다시 추천할 수 없기 때문이다. 횟수는 run이 아니라 **요청자·지도 단위**(그 사람이 이 지도에서 만든 어느 run이든 합쳐서)라, 다른 run에서 횟수를 다 썼으면 이 run의 근거도 못 고친다(`retry`의 상한 검사와 같은 값). 이 검사는 모델을 부르기 전에 한다. 조회(`GET .../evidence`, `GET .../result`)는 상한 뒤에도 된다.
          *     고친 근거는 **「다시 추천 받기」(`POST /runs/{runId}/retry`)가 읽어 반영한다**. 이미 보인 결과는 바뀌지 않고, 그 결과에 쓴 근거는 `RecommendResult.applied_evidence`가 따로 보여 준다.
          */
@@ -3426,6 +3523,32 @@ export interface components {
         UserUpdateRequest: {
             /** @description 계정 단위 표시 이름 (2026-09-30 결정). 앞뒤 공백을 지운 뒤 1~50자이고 지운 값을 저장한다(#160). 공백뿐이면 422 */
             display_name: string;
+        };
+        /** @description 삭제한 지도 한 건(#464). 복구하면 `Map`이 된다 */
+        TrashedMap: {
+            id: string;
+            title: string;
+            /** Format: date */
+            start_date: string;
+            /** Format: date */
+            end_date: string;
+            region?: components["schemas"]["MapRegion"];
+            member_count?: number;
+            pin_count?: number;
+            /** Format: date-time */
+            deleted_at: string;
+            /**
+             * Format: date-time
+             * @description 이 시각 뒤에는 복구할 수 없고 정리 작업이 지운다(삭제 + 30일)
+             */
+            purge_at: string;
+            /** @description 남은 날수(올림, 서버가 계산). 화면은 「N일 안에 복구할 수 있어요」 */
+            days_left: number;
+        };
+        TrashedMapList: {
+            items: components["schemas"]["TrashedMap"][];
+            /** @description 복구 가능 기간(일). 지금 30 */
+            retention_days: number;
         };
         Map: {
             id: string;

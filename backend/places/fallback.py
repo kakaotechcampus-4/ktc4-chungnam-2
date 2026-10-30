@@ -15,24 +15,6 @@ from places.sources.base import ENRICHABLE_FIELDS, NameSearchable, PlaceSource, 
 log = logging.getLogger("pingo.places")
 
 
-def search_with_fallback(
-    sources: Sequence[PlaceSource], *, category: str, lat: float, lng: float, radius_m: int
-) -> list[RawPlace]:
-    for src in sources:
-        if not src.is_configured():
-            log.info("places.skip source=%s reason=no_key", src.name)
-            continue
-        try:
-            found = src.search_nearby(category=category, lat=lat, lng=lng, radius_m=radius_m)
-        except SourceError as exc:
-            log.warning("places.fallback source=%s reason=%s", src.name, exc)
-            continue
-        if found:
-            return found
-        log.info("places.fallback source=%s reason=empty", src.name)
-    return []
-
-
 def enrich(place: RawPlace, sources: Sequence[PlaceSource], wanted: frozenset[str] = ENRICHABLE_FIELDS) -> RawPlace:
     """비어 있는 wanted 필드를 우선순위 순으로 채운다. 다 채워지면 멈춘다."""
     for src in sources:

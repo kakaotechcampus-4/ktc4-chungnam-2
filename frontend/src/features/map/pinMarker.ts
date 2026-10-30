@@ -46,3 +46,46 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
   el.addEventListener('click', onClick)
   return el
 }
+
+/**
+ * 올리기 전 AI 후보(#843). 요청한 사람의 AI 추천 탭에서만 화면에 그린다 — 서버의 지도는 바꾸지 않는다(가드레일 1).
+ * AI 추천 핀 모양에 카드와 같은 순위 숫자를 머리에 넣는다.
+ */
+export function createCandidateMarkerElement(c: { rank: number; name: string }, onClick: () => void): HTMLElement {
+  const shape = shapeOf('AI추천', 0)
+  const el = document.createElement('button')
+  el.type = 'button'
+  el.setAttribute('aria-label', `AI 추천 ${c.rank}위 · ${c.name}`)
+  el.style.cssText =
+    'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
+  el.innerHTML = `
+    <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true">
+      <path d="${PIN_PATH}" stroke-linejoin="round"
+            style="fill:${shape.fill};stroke:${shape.stroke};stroke-width:${shape.width};stroke-dasharray:${shape.dash}" />
+      <text x="12" y="13.2" text-anchor="middle" style="font:700 9px var(--font-sans);fill:var(--ink-900)">${c.rank}</text>
+    </svg>`
+  el.addEventListener('click', onClick)
+  return el
+}
+
+/** 고른 핀·후보를 크게(1.25배)·흰 후광·이름 말풍선으로 보인다(#308). 맨 위로 올리는 건 오버레이 쪽 일이다. */
+export function markSelected(el: HTMLElement, name: string, on: boolean) {
+  const svg = el.querySelector('svg')
+  if (svg) {
+    svg.style.transformOrigin = '50% 100%'
+    svg.style.transform = on ? 'scale(1.25)' : ''
+    svg.style.filter = on ? 'drop-shadow(0 0 2px #fff) drop-shadow(0 0 2px #fff)' : ''
+  }
+  el.querySelector('[data-pin-name]')?.remove()
+  if (!on) return
+  const label = document.createElement('span')
+  label.dataset.pinName = ''
+  // 이름은 textContent 로만 넣는다(마크업으로 해석되지 않게).
+  label.textContent = name
+  label.setAttribute('aria-hidden', 'true')
+  label.style.cssText =
+    'position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;padding:2px 8px;border-radius:8px;' +
+    'background:#fff;color:var(--ink-900);font-size:0.75rem;font-weight:700;line-height:1.4;white-space:nowrap;box-shadow:0 1px 4px rgba(20,22,31,.18)'
+  el.style.position = 'relative'
+  el.appendChild(label)
+}

@@ -270,6 +270,10 @@
     .tag-bad {
         @apply bg-[var(--bad-bg)] text-[var(--bad-text)];
     }
+    /* 확정 골드 — 마킹된 장소 목록의 「✓ 확정됨」(#859). */
+    .tag-confirmed {
+        @apply bg-[var(--confirmed-bg)] text-[var(--pin-confirmed-mark)];
+    }
 
     /* 칩 — 누르는 알약(카테고리·지역·사유·동선 보기). 켜짐은 aria-pressed 로 정하고 채우지 않는다.
        반대 사유는 chip-against 를 더해 켜짐을 반대 세트로 칠한다(#299 — 파랑으로 켜지 않는다). */

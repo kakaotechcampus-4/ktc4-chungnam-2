@@ -134,6 +134,30 @@ describe("에러 시나리오", () => {
     expect(body.detail).toEqual({ limit: 10, used: 10 }); // 같은 글 1 + 4 + 5
   });
 
+  it("「+」 같은 글 재추가는 새 줄도, 글 수도 늘리지 않는다 — 뺐던 줄은 다시 켠다(#848)", async () => {
+    const run = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점" }) }).then((r) => r.json());
+    const patch = (body: object) => fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify(body) }).then((r) => r.json());
+    const first = await patch({ add: [{ text: "조용한 곳" }] });
+    const mine = first.filter((l: { text: string }) => l.text === "조용한 곳");
+    expect(mine).toHaveLength(1);
+    // 공백만 다른 같은 글 — 새 줄이 생기지 않는다
+    const again = await patch({ add: [{ text: "  조용한   곳 " }] });
+    expect(again.filter((l: { text: string }) => l.text.trim() === "조용한 곳" || l.text.replace(/\s+/g, " ").trim() === "조용한 곳")).toHaveLength(1);
+    expect(again).toHaveLength(first.length);
+    // 뺐다가 다시 추가하면 같은 줄이 다시 켜진다
+    await patch({ toggle: [{ id: mine[0].id, is_active: false }] });
+    const back = await patch({ add: [{ text: "조용한 곳" }] });
+    const line = back.find((l: { id: string }) => l.id === mine[0].id);
+    expect(line.is_active).toBe(true);
+    expect(back).toHaveLength(first.length);
+    // 글 수 상한에 세지 않는다: 재추가를 여러 번 해도 새 글 10개를 더 추가할 수 있다(이미 1개 + 9개)
+    for (let i = 0; i < 12; i++) await patch({ add: [{ text: "조용한 곳" }] });
+    const nine = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify({ add: ["a", "b", "c", "d", "e"].map((text) => ({ text })) }) });
+    expect(nine.status).toBe(200);
+    const more = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify({ add: ["f", "g", "h", "i"].map((text) => ({ text })) }) });
+    expect(more.status).toBe(200);
+  });
+
   it("no-results — 결과 0개는 404 NO_RESULTS", async () => {
     resetScenario("no-results");
     const res = await fetch(`${BASE}/runs/run_no_results/result`);
@@ -1543,5 +1567,58 @@ describe("#855 — 탈퇴 후 재가입: 7일 안에는 새 계정 또는 되살
     expect(res.status).toBe(404);
     expect((await res.json()).code).toBe("NO_PENDING_LOGIN");
     expect((await choose("restore")).status).toBe(404);
+  });
+});
+
+describe("#464 — 삭제한 지도 복구: 30일 안, 방장만", () => {
+  const trash = () => fetch(`${BASE}/maps/trash`).then((r) => r.json());
+  const restore = (id: string) => fetch(`${BASE}/maps/${id}/restore`, { method: "POST" });
+
+  it("삭제한 지도는 휴지통에 오고(남은 날수 30일) 복구하면 지도 목록으로 돌아온다. 복구 뒤에는 휴지통에서 빠진다", async () => {
+    const mine = await fetch(`${BASE}/maps`).then((r) => r.json());
+    const id = mine.items[0].id;
+    expect((await fetch(`${BASE}/maps/${id}`, { method: "DELETE" })).status).toBe(204);
+    expect((await fetch(`${BASE}/maps/${id}`)).status).toBe(404); // 삭제된 지도는 일반 조회가 404
+    const listed = await trash();
+    expect(listed.retention_days).toBe(30);
+    expect(listed.items.map((m: { id: string }) => m.id)).toContain(id);
+    expect(listed.items.find((m: { id: string }) => m.id === id)).toMatchObject({ days_left: 30 });
+    const res = await restore(id);
+    expect(res.status).toBe(200);
+    expect((await res.json()).id).toBe(id);
+    expect((await fetch(`${BASE}/maps/${id}`)).status).toBe(200);
+    expect((await trash()).items.map((m: { id: string }) => m.id)).not.toContain(id);
+  });
+
+  it("이미 복구된 지도를 다시 복구해도 200(연타 안전), 모르는 지도는 404", async () => {
+    const mine = await fetch(`${BASE}/maps`).then((r) => r.json());
+    const id = mine.items[0].id;
+    await fetch(`${BASE}/maps/${id}`, { method: "DELETE" });
+    expect((await restore(id)).status).toBe(200);
+    expect((await restore(id)).status).toBe(200);
+    expect((await restore("map_unknown")).status).toBe(404);
+  });
+
+  it("삭제한 지 30일이 지난 지도는 휴지통 목록에서 빠지고 복구는 410 MAP_PURGED", async () => {
+    store.maps["map_purged"] = { ...store.maps["map_1"], id: "map_purged" } as never;
+    store.members["map_purged"] = store.members["map_1"];
+    await fetch(`${BASE}/maps/map_purged`, { method: "DELETE" });
+    expect((await trash()).items.map((m: { id: string }) => m.id)).not.toContain("map_purged");
+    const res = await restore("map_purged");
+    expect(res.status).toBe(410);
+    expect((await res.json()).code).toBe("MAP_PURGED");
+  });
+
+  it("복구하면 지도가 이미 20개일 때 409 MAP_LIMIT", async () => {
+    const mine = await fetch(`${BASE}/maps`).then((r) => r.json());
+    const id = mine.items[0].id;
+    await fetch(`${BASE}/maps/${id}`, { method: "DELETE" });
+    for (let n = 0; n < MAP_LIMIT; n++) {
+      const created = await fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: `채우기 ${n}`, start_date: "2026-11-10", end_date: "2026-11-12" }) });
+      if (created.status !== 201) break;
+    }
+    const res = await restore(id);
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("MAP_LIMIT");
   });
 });
