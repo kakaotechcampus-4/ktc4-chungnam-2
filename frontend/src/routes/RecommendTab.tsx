@@ -2,6 +2,8 @@ import { useState } from 'react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
+import AdArea from '@/features/ads/AdArea'
+import { useRecommendAds } from '@/features/ads/queries'
 import { useMembersQuery } from '@/features/maps/queries'
 import { useAiStore } from '@/features/recommend/aiStore'
 import EvidenceScreen from '@/features/recommend/EvidenceScreen'
@@ -29,6 +31,8 @@ import { josa } from '@/ui/josa'
 export default function RecommendTab() {
   const { mapId } = useShell()
   const run = useAiStore((s) => s.runs[mapId])
+  // 광고 조회는 탭을 연 동안 한 번이다 — 안의 화면이 바뀌어도(근거 확인처럼 광고가 없는 화면 포함) 여기서 붙잡아 둔다.
+  useRecommendAds(mapId)
 
   if (run && (run.status === 'collecting_evidence' || run.status === 'awaiting_region_confirm')) {
     return <EvidenceScreen mapId={mapId} run={run} />
@@ -39,7 +43,10 @@ export default function RecommendTab() {
   // 혼자 쓰는 지도도 같은 조건으로 추천을 받는다(2026-10-07, #360) — 구성원 수로 막지 않는다.
   return (
     <TabSheet tab="recommend" header={<ReadinessHeader mapId={mapId} />}>
-      <ReadinessBody mapId={mapId} />
+      <div className="pb-[100px]">
+        <ReadinessBody mapId={mapId} />
+        <AdArea mapId={mapId} />
+      </div>
     </TabSheet>
   )
 }
@@ -59,7 +66,11 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   const failed = run.status === 'failed' || (result.error instanceof ApiError && result.error.code === 'RECOMMEND_FAILED')
   const tab = (header: React.ReactNode, body: React.ReactNode) => (
     <TabSheet tab="recommend" header={header}>
-      {body}
+      {/* 광고는 추천 전·진행·결과·0곳·실패 모두에서 맨 아래에 따로 놓인다(docs/ads.md 4절). */}
+      <div className="pb-[100px]">
+        {body}
+        <AdArea mapId={mapId} hide={result.data?.candidates} />
+      </div>
     </TabSheet>
   )
 

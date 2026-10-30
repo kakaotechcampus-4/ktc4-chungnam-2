@@ -179,7 +179,7 @@ export default function MapLayout() {
     setActiveControl(key)
   }
 
-  const context: ShellContext = { mapId, activeControl, onControl, connection }
+  const context: ShellContext = { mapId, activeControl, onControl, connection, getCenter: () => controller.current?.getCenter() ?? null }
   // 3단계에서는 칩이 시트 제목 아래로 옮겨 간다(MapTab). 넓은 화면엔 단계가 없다. 검색 중에는 숨긴다(Figma 규칙).
   const chipsShown = onMarkingTab && (desktop || markingStage !== 3) && !search.query
   const fade = mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'

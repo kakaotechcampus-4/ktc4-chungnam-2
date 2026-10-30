@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { ExternalLink } from 'lucide-react'
 
-import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { useLivePlaceStore } from '@/features/map/livePlaces'
 import type { Pin } from '@/features/map/model'
@@ -13,7 +12,7 @@ import EmptyState from '@/ui/EmptyState'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 
-import { toSearchResult, type SearchResultView } from './model'
+import { pinErrorMessage, toSearchResult, type SearchResultView } from './model'
 import { searchErrorMessage, usePlaceSearchQuery } from './queries'
 import { useSearchStore } from './searchStore'
 
@@ -214,11 +213,4 @@ function PinItButton({ result, filled = false, pending, onPin }: { result: Searc
       {pending ? '찍는 중…' : '핀 찍기'}
     </button>
   )
-}
-
-/** docs/errors.md — 핀 만들기 실패. */
-function pinErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.code === 'PIN_DUPLICATE') return '이미 지도에 있는 장소예요'
-  if (err instanceof ApiError && err.code === 'PLACE_NOT_SUPPORTED') return '아직 지원하지 않는 장소예요'
-  return '핀을 찍지 못했어요'
 }
