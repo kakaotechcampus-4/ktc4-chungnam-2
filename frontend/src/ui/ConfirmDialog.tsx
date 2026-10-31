@@ -47,8 +47,9 @@ export default function ConfirmDialog({
           <div className="enter-pop w-full max-w-sm space-y-2 rounded-2xl bg-white p-5">
             <AlertDialog.Title className="break-keep text-title font-bold text-ink-900">{title}</AlertDialog.Title>
             {detail && <div className="rounded-xl bg-ink-50 p-3 text-sm">{detail}</div>}
-            <AlertDialog.Description className="text-sm text-ink-600">{body}</AlertDialog.Description>
-            {note && <p className="text-xs text-ink-500">{note}</p>}
+            {/* 한글은 기본이 글자 단위 줄바꿈이라 320px 에서 「되살 / 릴」처럼 낱말이 갈린다 — 제목처럼 낱말 단위로 바꾼다. */}
+            <AlertDialog.Description className="break-keep text-sm text-ink-600">{body}</AlertDialog.Description>
+            {note && <p className="break-keep text-xs text-ink-500">{note}</p>}
             {children}
             <div className="grid grid-cols-2 gap-2 pt-2">
               <AlertDialog.Cancel className="btn-neutral btn-md">{cancel}</AlertDialog.Cancel>
