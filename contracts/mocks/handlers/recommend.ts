@@ -3,8 +3,12 @@ import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError } from "../util";
 import { buildCandidates, buildEvidenceLines, buildRegions } from "../seed";
 import { RECOMMEND_CATEGORIES } from "../categories";
+import { chargeCredit, creditGate } from "./credits";
 
-/** 한 사람이 한 지도에서 추천을 받을 수 있는 횟수(#31, 2026-10-15 5→10). 서버가 attempt_limit으로 내려 준다. */
+/**
+ * 응답의 attempt_limit 값(폐지 예정, #432 D4 — 계약에서 지우는 건 #954). 횟수 상한은 크레딧으로 바뀌어 목 서버는 더 이상 429 RETRY_LIMIT을 내지 않는다.
+ * FE가 아직 이 필드를 읽고 있어(#952에서 정리) 값만 남긴다.
+ */
 export const ATTEMPT_LIMIT = 10;
 
 /** run을 만든 시각 — 지난 추천 기록(#469)의 created_at. 목 서버 메모리에만 있다. */
@@ -128,7 +132,11 @@ export const recommendHandlers = [
         required_count: REQUIRED_OPINION_PINS,
       });
     }
+    // #432 — 준비 확인 뒤, 모델(②) 전에 크레딧을 본다. 게스트 403, 모자라면 402 — 둘 다 run을 만들지 않는다
+    const blocked = creditGate("recommend_run");
+    if (blocked) return blocked;
     const runId = nextId("run");
+    chargeCredit("recommend_run", runId); // 실서버는 run 저장과 같은 트랜잭션. 같은 Idempotency-Key의 재사용은 위에서 돌아가 다시 빠지지 않는다
     store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1 };
     store.runRequestedBy[runId] = ME_USER_ID;
     if (idemKey) store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] = { runId, mapId, category: body.category, execute: Boolean(body.execute) };
@@ -155,13 +163,7 @@ export const recommendHandlers = [
     const runId = params.runId as string;
     const lines = store.evidenceLines[runId];
     if (!lines) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
-    // #845 — 추천 횟수를 다 쓴 요청자는 근거를 고칠 수 없다(×·＋ 모두). 모델을 부르기 전에 거절한다
-    // 횟수는 run이 아니라 요청자·지도 단위다 — 같은 지도에서 만든 어느 run이든 10회를 다 쓴 요청자는 과거 run의 근거도 못 고친다
-    const mapId = store.runs[runId]?.map_id;
-    const attemptNo = Math.max(1, ...Object.values(store.runs).filter((r) => r.map_id === mapId).map((r) => r.attempt_no ?? 1));
-    if (attemptNo >= ATTEMPT_LIMIT) {
-      return apiError(429, "RETRY_LIMIT", `${ATTEMPT_LIMIT}번까지만 찾습니다`, { attempt_no: attemptNo, attempt_limit: ATTEMPT_LIMIT });
-    }
+    // #845의 「횟수를 다 쓴 요청자는 근거를 못 고친다」는 상한과 함께 없어졌다(#432 D3·D5 — 근거 고치기는 크레딧을 쓰지 않는다)
     const body = (await request.json()) as {
       toggle?: { id: string; is_active: boolean }[];
       add?: { text: string }[];
@@ -285,9 +287,7 @@ export const recommendHandlers = [
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
-    if ((run.attempt_no ?? 1) >= ATTEMPT_LIMIT) {
-      return apiError(429, "RETRY_LIMIT", `${ATTEMPT_LIMIT}번까지만 찾습니다`, { attempt_no: run.attempt_no, attempt_limit: ATTEMPT_LIMIT });
-    }
+    // 「다시 추천 받기」는 크레딧을 쓰지 않고 횟수 상한도 없다(#432 D3·D5). attempt_no는 계속 센다
     run.attempt_no = (run.attempt_no ?? 1) + 1;
     run.status = "done";
     // 3절: 현재 뜬 대안 전체가 제외목록에 들어가고(목 서버는 별도 exclusions 컬렉션 없이 교체로 표현) 새로 채운다

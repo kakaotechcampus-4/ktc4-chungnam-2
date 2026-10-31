@@ -61,7 +61,7 @@
 | fact_key 목록 | `docs/constraints.md` | 코드·프롬프트 안의 키 목록 복사본 |
 | 응답 필드 | `docs/api-spec.yaml` | 스펙에 없는 필드를 라우터가 반환 |
 | 계정 수명(탈퇴, 게스트 합치기) | 정리 전. `auth/service.py`의 `WITHDRAW_STEPS`와 `MERGE_STEPS`, 각 모듈 `api.py`의 `reassign_user`와 `delete_by_user` | 사용자 id 열을 새로 만들면서 두 목록을 건드리지 않음, JSONB 안에 사용자 id를 담음(`test_user_data_lists.py`가 못 봄) |
-| 모델 호출 계량 | 정리 전. 호출 1건의 사용량·비용 기록은 `llm_calls` 한 곳이다(출구 `llm/client.py`, 라벨은 `llm.api.usage_context`, 단가는 `common/settings.py`, #870). 지도 하루 상한 `agent/constants.py`(세는 곳 `agent/core.py`), 코스 하루 상한과 지휘 횟수 `agent/course/constants.py`(세는 곳 `agent/course/service.py`), 호출 1회의 도구 상한 `llm/prompts.py`와 `llm/service.py`의 `_ToolBudget` | 새 모델 호출이 자기 상한 상수와 세는 쿼리를 따로 만듦 |
+| 모델 호출 계량 | 정리 전. 호출 1건의 사용량·비용 기록은 `llm_calls` 한 곳이다(출구 `llm/client.py`, 라벨은 `llm.api.usage_context`, 단가는 `common/settings.py`, #870). 사람이 누른 AI 실행(추천 받기, 코스 짜기)의 사용 한도는 크레딧이다 — 가격표 `credits/constants.py`, 확인·차감·환불은 `credits.api`(#432, `docs/credits-reviews.md`). 지도 하루 상한 `agent/constants.py`(세는 곳 `agent/core.py`), 코스 지휘 횟수 `agent/course/constants.py`, 호출 1회의 도구 상한 `llm/prompts.py`와 `llm/service.py`의 `_ToolBudget` | 새 모델 호출이 자기 상한 상수와 세는 쿼리를 따로 만듦, 기능마다 횟수 상한을 새로 둠, 가격 숫자를 `credits` 밖에 적음 |
 | 조건의 세기(실격, 선호) | 정리 전(#732). 줄이 이번 추천에 쓰이는지는 `recommend/core.py`의 `evidence_line_use` 한 곳이다(#740, 파이프라인, 근거 응답, agent가 함께 쓴다). 그 밖에 19곳이 `test_condition_strength_sites.py`의 목록에 있다(`recommend/flows.py`, `recommend/core.py`, `recommend/service.py`, `agent/core.py`, `agent/tools.py`). 칩의 배지는 `docs/constraints.md` 칩 표의 배지 열 | badge를 `"required"`, `"preferred"` 글자와 비교함, `SOFT_FACT_KEYS`나 `HARD_REGISTRY`를 `recommend/constraints.py` 밖에서 읽음 |
 | 사용자 글의 렌더 | 정리 전. agent 조언은 조각으로 내림(`agent/core.py`의 `render_segments`, #717). 알림 문장 `notifications/core.py`의 `compose_message`, 코스의 요청 원문 조각과 작업 기록(`agent/course`)은 아직 문장에 섞음 | 서버 문장 f-string 안에 사유, 검색어, 표시 이름 |
 | 사람과 로그인 수단 | `auth`: `users`(사람)와 `user_identities`(로그인 수단, #694) | 다른 모듈이 `is_guest`나 provider를 직접 판정함, `users`에 로그인 수단 열을 더함 |
@@ -103,13 +103,15 @@ v1에서 요청 중 모델 호출은 **② 사유 구조화 하나**다(GPT-6 Lu
 
 v2 계획 보조 에이전트(`docs/agent-v2.md`)는 요청 밖 백그라운드 관찰에서 모델을 부른다(#509, 2026-10-15 결정): 반대 후 정체와 의견 갈림의 진단(agent_diagnose). AI 추천 결과가 적을 때의 조언은 2026-10-27에 코드로 옮겼다(#749, 순서가 정해진 절차라 모델이 글로 적힌 절차를 따라 하고 있었다). 막힌 곳 찾기, 개입 정책, 신호 순위(#534 평가 뒤 모델에서 옮김, #582), 요약의 칸 나누기와 구체화 요청 문장(고정 문구, 2026-10-16 결정, 모델이 필요한지는 #588에서 재검토), 의견 갈림의 충돌 종류는 코드다. 지도 상한은 하루 (구성원 수 × 4)회다.
 
-v2 동선 에이전트(「AI 코스 짜기」, #334)는 사람이 요청할 때 모델을 부른다(#580, 2026-10-21 결정): 요청 한 줄을 목표로 바꾸는 목표 세우기(course_set_goals)와 코드 최적화를 부리는 지휘(course_direct). 코스 계산, 휴무·도보 판정, 질문을 열지, 화면 문장 검증은 코드다. 모델 호출은 코스 1번에 목표 1 + 지휘 최대 5(평균 3), 한 사람 하루 5회까지다. 결과는 요청자에게만 보이고 확정 리스트·`visit_order`·지도를 바꾸지 않는다. 날짜별 순서와 이동시간까지만 다루고 시간 배정은 하지 않는다. 확정 탭의 「동선 보기」(5-10)는 그대로 코드다.
+v2 동선 에이전트(「AI 코스 짜기」, #334)는 사람이 요청할 때 모델을 부른다(#580, 2026-10-21 결정): 요청 한 줄을 목표로 바꾸는 목표 세우기(course_set_goals)와 코드 최적화를 부리는 지휘(course_direct). 코스 계산, 휴무·도보 판정, 질문을 열지, 화면 문장 검증은 코드다. 모델 호출은 코스 1번에 목표 1 + 지휘 최대 5(평균 3)이고, 코스 1번에 크레딧 1을 쓴다(하루 5회 상한은 #432에서 크레딧으로 바뀌었다). 결과는 요청자에게만 보이고 확정 리스트·`visit_order`·지도를 바꾸지 않는다. 날짜별 순서와 이동시간까지만 다루고 시간 배정은 하지 않는다. 확정 탭의 「동선 보기」(5-10)는 그대로 코드다.
+
+사람이 누른 AI 실행은 크레딧을 쓴다(#432, 2026-11-01 결정, `docs/credits-reviews.md`): 「추천 받기」와 「AI 코스 짜기」 1번에 1. 다시 추천, 근거 고치기, 백그라운드 관찰은 쓰지 않는다. 정식 계정은 30으로 시작하고 장소 후기를 그 장소에 처음 쓰면 10을 받는다. 게스트는 AI 추천과 코스를 쓰지 않는다. 기능마다 횟수 상한을 새로 두지 않는다.
 
 ## 용어·스코프
 
 - 용어: 반응(♥ 좋음/🚫 반대/? 미확인) · 핀 종류(확정/일반/AI 추천) · 「지도에 올리기」 · 카테고리 · 제약(실격/선호) · 확정 리스트. 쓰지 않는 말: 장소 카드·보드·칸반·여행방. 장소는 핀, 공간은 지도.
 - **v1 안**: 공동 지도·초대·소셜 로그인·핀 반응/사유·실격 필터·대안 추천·확정 리스트·동선 순서(시간 배정 없음). 핀은 검색 결과로만 만들고 자체 장소 DB(음식점·카페·관광지, 서울)에 짝이 있어야 한다. 카카오 응답은 저장·캐시·모델 입력 금지(#53).
-- **v2**: 카톡 내보내기 파싱, 구성원 강퇴, 서비스 피드백, 게스트 참여, 다크 모드, 숙소, 링크·길게 눌러 핀 찍기, 모델 라벨링, 추천 탭 광고(`docs/ads.md`), 서울 밖 장소 DB(대전·춘천·광주·대구·부산, 정예DB 공유본 2026-10-25, 적재는 `deploy_rules.md`).
+- **v2**: 카톡 내보내기 파싱, 구성원 강퇴, 서비스 피드백, 게스트 참여, 다크 모드, 숙소, 링크·길게 눌러 핀 찍기, 모델 라벨링, 추천 탭 광고(`docs/ads.md`), 크레딧과 장소 후기(`docs/credits-reviews.md`, #432), 서울 밖 장소 DB(대전·춘천·광주·대구·부산, 정예DB 공유본 2026-10-25, 적재는 `deploy_rules.md`).
 - **범위 밖(요청받아도 만들지 않는다)**: 항공·숙박 예약·경비 정산·자체 채팅·SNS·전체 일정 자동생성·시간 배정·실시간 위치공유·환율·날씨·AI의 최종 장소 결정·인스타/블로그 링크 파싱.
 
 ## 문서 지도
@@ -130,6 +132,7 @@ v2 동선 에이전트(「AI 코스 짜기」, #334)는 사람이 요청할 때 
 | `frontend/DESIGN.md` | 화면 디자인 규칙 — 글자·반경·컴포넌트·지도 핀·지도 버튼·토스트, Do/Don't(Impeccable 스킬이 읽음) |
 | `frontend/PRODUCT.md` | 제품 요약 — 사용자·제약·말투·접근성 기준(정본은 기획안, Impeccable 스킬이 읽음) |
 | `docs/ads.md` | 추천 탭 광고 — 선택 규칙, 노출과 클릭 집계, 관리 스크립트 |
+| `docs/credits-reviews.md` | 크레딧과 장소 후기 — 지급·차감·환불, 가격표 자리, 후기 규칙, 모듈 연결점, 결정(#432) |
 | `docs/agent-v2.md` | v2 계획 보조 에이전트 구현 명세 — 탐지, 제안, 우리 조건 요약, 추천 막힘 조언. 모델 호출은 #509에서 결정 |
 | `docs/execution-order.md` | 이슈 실행 순서 초안 |
 | `docs/team-setup-guide.md` | 팀원용 설치·실행 설명서 — 도구 설치·키 넣기(`.env`)·데이터 넣기·켜기·막혔을 때(비개발자용) |
