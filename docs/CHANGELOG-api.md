@@ -2,6 +2,22 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-01, 크레딧과 장소 후기 — 횟수 상한을 크레딧으로 (#432)
+
+결정 #432(명세 `docs/credits-reviews.md`). 기능마다 따로 두던 횟수 상한(추천 지도·사람당 10회, 코스 하루 5회)을 사람마다 하나인 크레딧으로 바꾼다. 정식 계정은 30으로 시작하고 「추천 받기」·「AI 코스 짜기」 1번에 1씩 쓴다. 다시 추천·근거 고치기는 쓰지 않는다. 장소 후기를 그 장소에 처음 쓰면 10을 받는다. 게스트는 AI 추천·코스·크레딧·후기 쓰기를 쓸 수 없다.
+
+**새로 생김**
+- `GET /credits/me` → `CreditBalance { balance, prices { recommend_run, course }, review_reward }`. 화면은 가격과 보상 숫자를 여기서만 읽는다.
+- 장소 후기 4개(핀으로 부른다, 서버가 장소를 찾는다): `GET /pins/{pinId}/reviews`(`ReviewPage` — `summary`, `limits.body_max`, `mine`, `items`, `next_cursor`), `PUT /pins/{pinId}/reviews/me`(`ReviewUpsertRequest` → `ReviewSaved { review, credited, balance }`), `DELETE /pins/{pinId}/reviews/me`, `POST /reviews/{reviewId}/reports`. **작성자 이름·id는 없다** — `ReviewItem.is_mine`으로 「나」/「핑고 사용자」. 실시간 핀은 422 `PLACE_NOT_SUPPORTED`.
+- 에러 `CREDIT_INSUFFICIENT`(402, `detail { required, balance }`). `GUEST_NOT_ALLOWED`(403) 범위를 넓히고 `detail { initial_credits }`를 더한다.
+- `POST /maps/{mapId}/runs`, `POST /maps/{mapId}/courses`에 402·403.
+
+**폐지 예정(`deprecated`, 지우는 건 #954)** — `RecommendRun.attempt_limit`, `RunSummary.attempt_limit`, 429 `RETRY_LIMIT`, 429 `COURSE_LIMIT`. FE가 생성 타입으로 `attempt_limit`을 읽고 있어 지금 지우면 develop의 FE 빌드가 깨진다. 서버(#949, #950)와 FE(#952)가 안 쓰게 된 뒤 지운다. `attempt_no`는 남는다.
+
+**목 서버** — 크레딧 차감(추천 생성·코스 접수, 같은 `Idempotency-Key`는 한 번), 402·403, 후기 4개 경로(시드: 첫 음식점 핀 장소에 후기 2개), 시나리오 `credits-empty`(잔액 0). **목 서버는 이제 `RETRY_LIMIT`·`COURSE_LIMIT`을 내지 않는다** — 응답의 `attempt_limit`(10)만 남겨 둔다. 시나리오 `retry-limit`은 이름만 남는다(#952에서 화면 목록 정리).
+
+**구현** — credits #948, recommend #949, course #950, reviews #951, FE #952(크레딧)·#953(후기). 서버 구현 전까지 새 경로 5개와 `CREDIT_INSUFFICIENT`는 알려진 목록(`KNOWN_MISSING`, `KNOWN_UNCOVERED`, `KNOWN_UNRAISED`)에 이슈 번호와 함께 있다.
+
 ## 2026-10-31, `POST /auth/pending` 설명 정정 — 되살리면 지도 참여도 돌아온다 (#858)
 
 `restore` 설명에 첫 판의 「계정과 핀 작성자 표시만 돌아온다」가 남아 있었다. 2026-10-30 (여섯 번째)의 정정(탈퇴해도 멤버십 행은 남아 복구하면 지도 참여가 돌아온다, 서버 `auth.service.restore_account`)에 맞췄다. 동작과 응답 모양은 그대로다. FE(#858) 확인 창 문구는 이미 정정된 내용이다. FE 세션이 찾았다(PR #927).

@@ -70,6 +70,18 @@ export interface CourseRunEntity {
   snapshot_pin_ids: string[];
 }
 
+/** 장소 후기(#432). place_key는 목 서버가 places.id 대신 쓰는 값(자체 DB 핀의 이름@좌표, handlers/credits.ts). */
+export interface ReviewEntity {
+  id: string;
+  place_key: string;
+  user_id: string;
+  rating: number;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  hidden: boolean; // 관리 스크립트가 숨긴 후기(#432 D8) — 목록·평균·개수·mine에서 빠진다
+}
+
 /** 목 서버에서 "나"로 취급하는 사용자. 기획안 6절 시나리오의 요청자다. */
 export const ME_USER_ID = "u_me";
 
@@ -115,6 +127,10 @@ export interface StoreState {
   notifications: Schemas["Notification"][]; // 내 알림함(#470) — 목 서버는 단일 사용자라 나만 있다
   notificationPrefs: Record<string, boolean>; // 알림 종류 -> 켜짐. 없으면 켜짐
   feedback: { id: string; user_id: string; message: string; category: string; map_id?: string; created_at: string }[]; // #10
+  credits: Record<string, number>; // user_id -> 잔액(#432). 없으면 처음 지급량(handlers/credits.ts INITIAL_CREDITS)
+  creditRefs: string[]; // 원장 ref_id — 같은 실행·같은 장소 후기 보상을 두 번 하지 않는다
+  reviews: Record<string, ReviewEntity>; // reviewId -> 후기
+  reviewReports: Record<string, string[]>; // reviewId -> 신고한 user_id
 }
 
 function emptyState(): StoreState {
@@ -150,6 +166,10 @@ function emptyState(): StoreState {
     notifications: [],
     notificationPrefs: {},
     feedback: [],
+    credits: {},
+    creditRefs: [],
+    reviews: {},
+    reviewReports: {},
   };
 }
 

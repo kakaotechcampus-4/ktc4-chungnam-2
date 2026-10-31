@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw";
 import { ME_USER_ID, nextId, store, type CourseRunEntity, type CourseRunMock } from "../store";
 import { apiError } from "../util";
+import { chargeCredit, creditGate } from "./credits";
 
 /**
  * AI 코스 짜기(#334, 팀 결정 #580 전 초안). 실서버 구현 전이라 목 서버가 계약을 먼저 연다.
@@ -9,7 +10,7 @@ import { apiError } from "../util";
  * 영업시간을 아직 모르는 실서버와 같게 모든 장소가 「확인 필요」다(checks, needs_check).
  */
 
-const DAILY_LIMIT = 5; // 사용자당 하루 요청 상한(KST 자정 초기화) — 목 서버는 시나리오가 바뀔 때까지 센다
+// 하루 상한(429 COURSE_LIMIT)은 크레딧으로 바뀌었다(#432 D3). 목 서버의 코스는 실패하지 않아 환불(refundCredit)을 부를 자리가 없다
 const MIN_PLACES = 2;
 const WALK_M_PER_MIN = 80;
 const WALK_MAX_M = 2_000; // 서버 초안 규칙: 직선거리 2km 이하는 walk, 넘으면 transit
@@ -137,9 +138,11 @@ export const courseHandlers = [
     const mine = Object.values(store.courseRuns).filter((e) => e.requested_by === ME_USER_ID);
     const active = mine.find((e) => e.run.map_id === mapId && (e.run.status === "queued" || e.run.status === "running"));
     if (active) return apiError(409, "COURSE_IN_PROGRESS", "이미 짜는 중인 코스가 있습니다", { course_run_id: active.run.id });
-    if (mine.length >= DAILY_LIMIT) return apiError(429, "COURSE_LIMIT", "하루 코스 요청 상한을 넘었습니다", { limit: DAILY_LIMIT, used: mine.length });
+    const blocked = creditGate("course"); // #432 — 게스트 403, 모자라면 402. 모델 전에
+    if (blocked) return blocked;
     const run = buildRun(mapId, requestText, routable, excluded);
     run.id = nextId("course");
+    chargeCredit("course", run.id);
     run.status = "queued";
     store.courseRuns[run.id] = { run, requested_by: ME_USER_ID, polls: 0, snapshot_pin_ids: allIds };
     return HttpResponse.json({ course_run_id: run.id }, { status: 202 });

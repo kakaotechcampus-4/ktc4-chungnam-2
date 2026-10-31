@@ -138,6 +138,22 @@ export function buildBaseState(): StoreState {
     ],
     notificationPrefs: {},
     feedback: [],
+    credits: {},
+    creditRefs: [],
+    ...buildReviewsState(pins[pinFood1]),
+  };
+}
+
+/** 장소 후기(#432) — 첫 음식점 핀의 장소에 다른 사람 후기 둘. 다른 지도 사람이 쓴 것일 수 있어 작성자 이름은 없다 */
+function buildReviewsState(pin: StoreState["pins"][string]): Pick<StoreState, "reviews" | "reviewReports"> {
+  const key = `${pin.place_name}@${pin.lat},${pin.lng}`;
+  const review = (id: string, user_id: string, rating: number, body: string, at: string) => ({ id, place_key: key, user_id, rating, body, created_at: at, updated_at: at, hidden: false });
+  return {
+    reviews: {
+      review_1: review("review_1", "u_2", 5, "국물이 진하고 아침 일찍 열어요", minutesAgo(60 * 24 * 3)),
+      review_2: review("review_2", "u_other_map", 4, "줄이 길지만 회전이 빨라요", minutesAgo(60 * 24)),
+    },
+    reviewReports: {},
   };
 }
 

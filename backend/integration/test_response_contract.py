@@ -30,6 +30,11 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/maps/{mapId}/events/me"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/places/external-search"): "서버 구현 전(#903) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
+    ("GET", "/credits/me"): "서버 구현 전(#948) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
+    ("GET", "/pins/{pinId}/reviews"): "서버 구현 전(#951) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
+    ("PUT", "/pins/{pinId}/reviews/me"): "서버 구현 전(#951) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
+    ("DELETE", "/pins/{pinId}/reviews/me"): "서버 구현 전(#951) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
+    ("POST", "/reviews/{reviewId}/reports"): "서버 구현 전(#951) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
     ("POST", "/auth/qa-login"): "스테이징 전용 — 테스트 앱에 없다(#788), staging 설정 앱으로 auth 테스트가 본다(#789)",
 }
 
