@@ -64,11 +64,17 @@
   --pin-stroke:     #D02A2A;
   --pin-fill-empty: var(--ink-200);
   --pin-fill-full:  #D02A2A;
+  --pin-dot:        #8F1D1D;   /* 일반 핀 머리 가운데 점. 테두리 빨강보다 어둡게 — 회색 속·빨강 속 어디서나 보인다 */
   --pin-confirmed:        #F5B301;   /* 확정 핀 속 (#149) */
   --pin-confirmed-mark:   #6B4500;   /* 확정 핀 ♥ · 순서 번호 글자 */
   --pin-confirmed-stroke: #FFFFFF;   /* 3px. 바다·어두운 타일 위 가시성. 밝은 땅 위는 바깥 갈색 1px(--pin-confirmed-mark)이 맡는다(#299) */
   --pin-confirmed-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
   --confirmed-bg:         #FFF6DB;   /* 「★ 확정 리스트에 넣기」 바탕 */
+
+  /* AI 코스 날짜별 경로선(#683). 흰 바탕 대비 4.5:1 이상 — 번호 원 흰 글자와 알약 글자에 그대로 쓴다. 넷째 날부터 색이 돌고 선 모양이 갈라 준다 */
+  --course-day-1: var(--brand-600);
+  --course-day-2: #8A3FB8;
+  --course-day-3: #0E7A6E;
 
   /* ── 반응 · 지도 밖 UI 전용 ──────────── */
   --reaction-good:    var(--good-line);

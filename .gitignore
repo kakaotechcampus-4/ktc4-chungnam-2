@@ -101,3 +101,9 @@ tourist_seoul_*.json
 
 # 동선 에이전트 평가 지도 — 정예 라벨·장소 이름이 들어 있어(저장소는 public) 로컬에만 둔다. 스크립트만 커밋한다.
 backend/agent/course/eval/data/
+
+# ── 배포 서버(#168) — 서버에만 두는 값. 견본(*.example)만 커밋한다 ──
+deploy/env/*.env
+deploy/secrets/
+deploy/backups/
+deploy/deploy-history.log

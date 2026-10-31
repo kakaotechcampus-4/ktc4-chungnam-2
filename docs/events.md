@@ -31,6 +31,7 @@
 | `route.recalculated` | `Route[]` | **「동선 짜주기」 실행 시** (#30, `POST /maps/{mapId}/route`). 확정 리스트 변경만으로는 발행하지 않는다 |
 | `member.joined` | `Member` | 초대 수락 |
 | `member.left` | `{ map_id, user_id, new_owner_user_id \| null }` | 구성원이 지도에서 나감(#369). **방장이 계정을 탈퇴해 그 지도의 방장이 위임된 경우에도 보낸다**(`user_id`는 탈퇴한 사람, 2026-10-07 결정). 방장이 나가거나 탈퇴해 위임됐으면 `new_owner_user_id`에 새 방장, 아니면 null. 탈퇴했는데 넘길 사람이 없어 지도가 삭제되면 이 이벤트 대신 `map.deleted`만 보낸다. 받은 FE는 핀 목록(작성자 표시 포함), 핀 참여율, `FilterCounts`, readiness를 다시 불러온다. 나간 사람의 반응 삭제마다 따로 이벤트를 보내지 않는다 |
+| `map.restored` | `{ map_id }` | 방장이 삭제한 지도를 복구함(#464). 복구와 같은 트랜잭션에 기록된다. 삭제 때 구성원의 연결이 닫혔으므로 대부분은 다음에 지도 목록을 열 때 본다(복구한 방장의 다른 탭이나 재연결한 구독자용) |
 | `map.deleted` | `{ map_id }` | 방장이 지도를 삭제함(#369). 삭제와 같은 트랜잭션에 기록된다. realtime은 이미 연결된 구독자에게 이 이벤트를 보낸 뒤 연결을 닫는다(삭제된 지도는 새 구독이 404라 이 순서가 아니면 마지막 이벤트가 전달되지 않는다). 받은 FE는 내 지도 목록으로 돌아간다 |
 | `map.updated` | `{ map_id, title, start_date, end_date, region? }` | 방장이 지도 제목·날짜·지역을 고침(#465). 수정과 같은 트랜잭션에 기록된다. 요청자 기준 값(`permissions` 등)은 싣지 않는다. 받은 FE는 지도 상세 캐시를 갱신한다 |
 | `owner.changed` | `{ map_id, from_user_id, to_user_id }` | 방장이 직접 방장을 넘김(#468). 두 사람 모두 지도에 남는다 — **`member.left`를 재사용하지 않는다**(나간 것으로 오해해 SSE를 닫는다). 받은 FE는 지도 상세·구성원 목록(`role`)을 다시 불러온다 |
@@ -73,6 +74,7 @@ FE는 이벤트를 받으면 아래 표대로 화면 데이터를 다시 받는�
 | `owner.changed` | `GET /maps/{mapId}`, `GET /maps/{mapId}/members`(방장 표시, #468) |
 | `map.updated` | 지도 상세(페이로드로 갱신), `GET /maps`(내 지도 목록의 제목과 날짜, #465) |
 | `map.deleted` | 지도 화면을 닫고 내 지도 목록(`GET /maps`)으로 |
+| `map.restored` | 내 지도 목록(`GET /maps`)과 휴지통(`GET /maps/trash`)을 다시 받는다 |
 | `shortlist.changed` | `GET /maps/{mapId}/shortlist`, `GET /maps/{mapId}/pins`(확정 핀 표시) |
 | `route.recalculated` | 동선(페이로드 `Route[]`로 갱신, 또는 `GET /maps/{mapId}/route`) |
 | `agent.suggested` | 에이전트 상태의 지금 제안(페이로드로 갱신). 시트가 열려 있으면 `POST /agent/suggestions/{id}/view`, 닫혀 있으면 점을 켠다 |
@@ -139,7 +141,11 @@ SSE 구독 권한(구성원인가)은 **구독을 시작할 때 한 번만** 본
    연결에만 간다. 전체 채널 쿼리는 `channel='public'`으로 고정돼 코드 레벨에서 섞이지 않는다.
 7. **다중 탭.** 탭마다 별도 SSE 연결이고 각자 같은 이벤트 사본을 받는다. 서버는 탭을 구분하지
    않는다 — 3번의 멱등 적용 규칙이 이미 이걸 안전하게 만든다.
-8. **v1 한계.** 폴러는 인스턴스 안 백그라운드 태스크다. Cloud Run은
+8. **연결 점검(ping, #821).** 이벤트가 없는 동안 연결이 조용히 죽으면(노트북 절전, Wi-Fi 전환, 공유기·NAT의 유휴 연결 정리) 브라우저는 끊긴 줄 모르고 「열림」 상태로 계속 기다린다 — 새로고침 말고는 복구할 방법이 없다. 그래서:
+   - **서버**는 두 채널 모두 20초마다 `event: control` / `data: {"type":"ping"}` 한 건을 보낸다. `id:` 줄은 붙이지 않는다(`Last-Event-ID`를 건드리지 않고, `event_log`에도 쓰지 않는다). 주석 줄(`: ping`)은 브라우저 `EventSource` API가 화면에 알려 주지 않아 쓸 수 없다.
+   - **화면**은 이벤트든 ping이든 **60초 넘게 아무것도 못 받으면** 그 연결을 닫고 새로 맺는다. 맺기 전에 핀 목록·집계·확정 리스트를 REST로 다시 받는다(`reconnect()`와 같은 동작 — 끊긴 동안 놓친 변화는 재전송이 안 될 수 있다). 이 사이에는 「연결이 끊겼어요. 다시 연결하는 중…」 띠를 보인다. 탭이 숨겨져 있는 동안은 타이머가 늦게 돌 수 있으니, 탭이 다시 보일 때(`visibilitychange`)에도 같은 점검을 한다.
+   - `control`의 `type`은 `replay_truncated`와 `ping` 둘이다. 화면은 모르는 `type`을 무시한다.
+9. **v1 한계.** 폴러는 인스턴스 안 백그라운드 태스크다. Cloud Run은
    `--min-instances=1 --max-instances=1 --no-cpu-throttling`으로 띄운다. 인스턴스가 여러 개여도
    각자 폴링해 각자 구독자에게 보내므로 정합성은 깨지지 않지만, v1에서는 검증하지 않는다.
    PostgreSQL `LISTEN/NOTIFY`나 Redis pub/sub은 지연을 줄이는 다음 단계 후보로 남겨둔다(둘 다

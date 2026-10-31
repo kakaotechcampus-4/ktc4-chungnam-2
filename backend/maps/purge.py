@@ -21,13 +21,14 @@ from sqlalchemy.orm import Session
 
 from agent import api as agent_api
 from maps import api as maps_api
+from maps import core
 from maps.models import Map as MapRow
 from pins import api as pins_api
 from realtime import api as realtime_api
 from recommend import api as recommend_api
 from shortlist import api as shortlist_api
 
-DEFAULT_OLDER_THAN_DAYS = 30
+DEFAULT_OLDER_THAN_DAYS = core.TRASH_RETENTION.days  # 복구 가능 기간과 같다(#464)
 
 # 자식 → 부모 순서. shortlist_items가 pins를, recommend 자식들이 recommend_runs를, reactions가 pins를,
 # memberships·invites가 maps를 참조한다. event_log는 FK가 없지만 지도가 사라지기 전에 지운다.

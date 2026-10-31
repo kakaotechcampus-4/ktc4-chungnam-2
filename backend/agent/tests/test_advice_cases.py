@@ -92,9 +92,9 @@ def test_simulation_numbers_are_consistent(case):
     for raw in case["lines"]:
         if raw.get("gain", 0) > 0:
             assert raw["kind"] == "condition" and raw.get("active", True) and raw.get("badge", "required") == "required"
-    assert sum(raw.get("gain", 0) for raw in case["lines"]) <= funnel.get(core.DISQUALIFY_STAGE, 0)
+    assert sum(raw.get("gain", 0) for raw in case["lines"]) <= funnel.get("disqualify", 0)
     gains = {int(k): v for k, v in case.get("radius_gain", {}).items()}
-    assert max(gains.values(), default=0) <= funnel.get(core.RADIUS_STAGE, 0)
+    assert max(gains.values(), default=0) <= funnel.get("radius", 0)
     assert all(case["walk_min"] < minutes <= fxa.WIDEN_LIMIT_MIN for minutes in gains)
 
 
@@ -114,6 +114,16 @@ def test_code_decides_as_expected(case):
     assert _button_lines(draft) == {world.line_id(i) for i in e.get("button_lines", [])}
     if draft.kind in ("soft_relax", "vague_reason"):
         assert _mentioned_lines(world, draft) == {world.line_id(i) for i in e["mention"]}
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c["id"] for c in CASES])
+def test_funnel_label_text_does_not_change_the_advice(case):
+    """깔때기 단계는 key로 찾는다(#751) — 라벨 글자가 바뀌어도 key가 같으면 시뮬레이션, 종류, claim(funnel.N 경로 포함)이 같다."""
+    world, relabeled = fxa.build(case), fxa.build(case)
+    for entry in relabeled.funnel["funnel"]:
+        entry["label"] = f"바뀐 문구 {entry['key']}"
+
+    assert relabeled.advise() == world.advise()
 
 
 @pytest.mark.parametrize("case", SUGGEST, ids=[c["id"] for c in SUGGEST])
@@ -174,7 +184,7 @@ def test_exhausted_first_needs_no_simulation(prefix):
 def test_soft_relax_simulates_each_relaxable_line_once():
     """반경 단계가 작으면(ADVICE_CLEAR_DROP 미만) 반경은 시뮬레이션하지 않고, 조건 줄은 켜진 줄만 하나씩 끈다."""
     world = fxa.build(_by_id("a08"))
-    assert dict(world.case["funnel"])[core.RADIUS_STAGE] < ADVICE_CLEAR_DROP
+    assert dict(world.case["funnel"])["radius"] < ADVICE_CLEAR_DROP
 
     _, wanted = world.advise()
 

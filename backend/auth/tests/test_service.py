@@ -92,14 +92,17 @@ def test_login_fails_loudly_when_kakao_userinfo_fails(db_session, monkeypatch):
     assert exc.value.code == "UNAUTHORIZED"
 
 
-def test_withdrawn_user_cannot_log_in_again(db_session, monkeypatch):
+def test_withdrawn_user_login_waits_for_a_choice_within_the_restore_period(db_session, monkeypatch):
+    """복구 기간(7일) 안의 탈퇴 계정은 로그인하지 않고 선택을 기다린다(#855) — 새 계정도 만들지 않는다."""
     _mock_kakao_success(monkeypatch, kakao_id=99, nickname="영희")
     user = service.login_with_kakao_code(db_session, code="auth-code")
     service.withdraw_user(db_session, user_id=user.id)
+    users_before = db_session.query(User).count()
 
-    with pytest.raises(AppError) as exc:
+    with pytest.raises(service.WithdrawnAccountPending) as exc:
         service.login_with_kakao_code(db_session, code="auth-code-again")
-    assert exc.value.code == "UNAUTHORIZED"
+    assert exc.value.user.id == user.id and exc.value.provider == "kakao"
+    assert db_session.query(User).count() == users_before
 
 
 def test_get_active_user_or_401_rejects_unknown_user(db_session):
@@ -153,15 +156,24 @@ def test_withdraw_user_locks_member_maps_before_anything_else(db_session, monkey
     assert all(uid == "user_1" for _, uid in calls)
 
 
-def test_withdraw_keeps_the_login_identity_so_the_account_stays_blocked(db_session):
-    """탈퇴해도 수단은 남는다 — 같은 카카오 계정의 재로그인을 막는 근거다(#409, #694)."""
+def test_withdraw_keeps_the_login_identity_for_the_restore_period(db_session):
+    """탈퇴해도 수단은 복구 기간 동안 남는다 — 같은 카카오 계정의 재로그인을 탈퇴 계정으로 알아보는 근거다(#855, #694)."""
     create_kakao_user(db_session, "user_1", provider_user_id="pu1")
 
     service.withdraw_user(db_session, user_id="user_1")
 
     assert _identities(db_session, "user_1") == [("kakao", "pu1")]
-    with pytest.raises(AppError):
+    with pytest.raises(service.WithdrawnAccountPending):
         service.find_or_create_user(db_session, provider="kakao", provider_user_id="pu1", display_name="다시")
+
+
+def test_withdraw_raises_sessions_valid_after_so_earlier_tokens_die(db_session):
+    """탈퇴 전에 복사된 세션 토큰이 복구 뒤에 되살아나지 않게 탈퇴가 sessions_valid_after를 올린다(#855)."""
+    create_kakao_user(db_session, "user_1")
+
+    row = service.withdraw_user(db_session, user_id="user_1")
+
+    assert row.sessions_valid_after == row.deleted_at
 
 
 def test_withdraw_steps_are_also_merge_steps():
@@ -227,15 +239,14 @@ def test_concurrent_first_login_returns_the_row_created_by_the_other_request(db_
     assert db_session.query(User).count() == users_before   # 세이브포인트와 함께 users 행도 되돌아갔다
 
 
-def test_concurrent_first_login_still_rejects_withdrawn_account(db_session, monkeypatch):
+def test_concurrent_first_login_still_waits_for_a_choice_on_a_withdrawn_account(db_session, monkeypatch):
     from datetime import datetime, timezone
 
     create_kakao_user(db_session, provider_user_id="778", display_name="x", deleted_at=datetime.now(timezone.utc))
     _simulate_lost_race(monkeypatch)
 
-    with pytest.raises(AppError) as exc:
+    with pytest.raises(service.WithdrawnAccountPending):
         service.find_or_create_user(db_session, provider="kakao", provider_user_id="778", display_name="x")
-    assert exc.value.code == "UNAUTHORIZED"
 
 
 def test_other_integrity_errors_are_not_swallowed(db_session):
@@ -293,11 +304,11 @@ def test_network_error_is_kakao_api_error_and_hides_request_details(db_session, 
     assert "auth-code" not in str(exc.value)
 
 
-def test_withdrawn_account_is_not_a_kakao_api_error(db_session, monkeypatch):
+def test_withdrawn_account_pending_is_not_a_kakao_api_error(db_session, monkeypatch):
     _mock_kakao_success(monkeypatch, kakao_id=98, nickname="영희")
     user = service.login_with_kakao_code(db_session, code="c")
     service.withdraw_user(db_session, user_id=user.id)
 
-    with pytest.raises(AppError) as exc:
+    with pytest.raises(service.WithdrawnAccountPending) as exc:
         service.login_with_kakao_code(db_session, code="c2")
-    assert not isinstance(exc.value, service.KakaoApiError)
+    assert not isinstance(exc.value, (service.KakaoApiError, AppError))

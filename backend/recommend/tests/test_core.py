@@ -274,12 +274,23 @@ def test_apply_disqualifier_filters_ignores_soft_checks_even_when_not_passed():
 
 # ---------- funnel_counts ----------
 
-def test_funnel_counts_maps_pairs_to_dicts():
-    result = core.funnel_counts([("카테고리 후보 풀", 0), ("반경 밖 제거", 3)])
-    assert result == [
-        {"label": "카테고리 후보 풀", "removed_count": 0},
-        {"label": "반경 밖 제거", "removed_count": 3},
-    ]
+def test_funnel_counts_lays_out_stages_in_table_order_without_keys():
+    removed = {key: i for i, (key, _) in enumerate(core.FUNNEL_STAGES)}
+    result = core.funnel_counts(dict(reversed(removed.items())))   # 넘긴 순서와 무관하게 표 순서다
+    assert result == [{"label": label, "removed_count": removed[key]} for key, label in core.FUNNEL_STAGES]
+
+
+def test_funnel_counts_needs_every_stage():
+    with pytest.raises(KeyError):
+        core.funnel_counts({"radius": 3})
+
+
+def test_keyed_funnel_finds_keys_from_labels_and_none_for_unknown_ones():
+    stored = [*core.funnel_counts({key: 1 for key, _ in core.FUNNEL_STAGES}), {"label": "옛 단계", "removed_count": 2}]
+    keyed = core.keyed_funnel(stored)
+    assert [e["key"] for e in keyed] == [*(key for key, _ in core.FUNNEL_STAGES), None]
+    assert [{"label": e["label"], "removed_count": e["removed_count"]} for e in keyed] == stored
+    assert "key" not in stored[0]   # 사본이다
 
 
 # ---------- check_retry_limit ----------
@@ -305,6 +316,10 @@ def test_check_retry_limit_raises_at_or_above_limit(attempt_no):
 
 def _check(fact_key: str, *, passed: bool = True, confidence: str = "known") -> Check:
     return Check(fact_key=fact_key, label=str(passed), passed=passed, confidence=confidence, needs_check=False)
+
+
+def _cond(fact_key: str, status: str, line_id: str | None = None) -> dict:
+    return {"fact_key": fact_key, "fact_label": constraints.FACT_LABELS.get(fact_key), "evidence_line_id": line_id, "status": status}
 
 
 def _place(*checks: Check, members: frozenset[str] = frozenset({"u1"})) -> core.HeartedPlace:
@@ -513,7 +528,10 @@ def test_build_member_fulfillment_has_spec_shape_with_satisfied_total_by_member(
     result = core.build_member_fulfillment([_check("quiet", passed=True)], hearted, criteria)
     assert result == {
         "satisfied": 2, "total": 2,
-        "by_member": [{"user_id": "u1", "satisfied": True}, {"user_id": "u2", "satisfied": True}],
+        "by_member": [
+            {"user_id": "u1", "satisfied": True, "conditions": [_cond("quiet", "met")]},
+            {"user_id": "u2", "satisfied": True, "conditions": [_cond("quiet", "met")]},
+        ],
     }
 
 
@@ -521,7 +539,9 @@ def test_build_member_fulfillment_counts_member_with_unmet_condition_in_total_on
     criteria = {"quiet": True}
     hearted = [_place(_check("quiet", passed=True), members=frozenset({"u1"}))]
     result = core.build_member_fulfillment([_check("quiet", passed=False)], hearted, criteria)  # 후보가 안 조용함
-    assert result == {"satisfied": 0, "total": 1, "by_member": [{"user_id": "u1", "satisfied": False}]}
+    assert result == {"satisfied": 0, "total": 1, "by_member": [
+        {"user_id": "u1", "satisfied": False, "conditions": []},   # ♥만 나온 선호의 미충족은 보이지 않는다(#805)
+    ]}
 
 
 def test_build_member_fulfillment_requires_all_of_a_members_conditions():
@@ -552,7 +572,9 @@ def test_build_member_fulfillment_includes_preference_author():
     result = core.build_member_fulfillment(
         [_check("quiet", passed=True)], [], {"quiet": True}, {"quiet": frozenset({"u9"})},
     )
-    assert result == {"satisfied": 1, "total": 1, "by_member": [{"user_id": "u9", "satisfied": True}]}
+    assert result == {"satisfied": 1, "total": 1, "by_member": [
+        {"user_id": "u9", "satisfied": True, "conditions": [_cond("quiet", "met")]},
+    ]}
 
 
 def test_preference_author_is_not_offset_by_their_own_opposing_heart():
@@ -854,7 +876,8 @@ def test_member_fulfillment_counts_keyed_disqualifier_known_pass_as_satisfied():
         checks, [], {}, disqualifier_conditions={"u2": {("spicy_focused", False)}, "u1": {("is_crowded_large", None)}},
     )
     assert result == {"satisfied": 2, "total": 2, "by_member": [
-        {"user_id": "u1", "satisfied": True}, {"user_id": "u2", "satisfied": True},
+        {"user_id": "u1", "satisfied": True, "conditions": [_cond("is_crowded_large", "met")]},
+        {"user_id": "u2", "satisfied": True, "conditions": [_cond("spicy_focused", "met")]},
     ]}
 
 
@@ -1002,23 +1025,87 @@ def test_written_preference_outweighs_other_heart_labels():
 
 
 @pytest.mark.parametrize("badge, fact_key, wants, category, off_season, expected", [
-    ("required", "is_crowded_large", None, "카페", (), (True, None)),                 # hard 키는 방향이 없어도 쓰인다
-    ("required", "quiet", False, "카페", (), (True, None)),                           # soft 키 + 방향
-    ("preferred", "quiet", True, "음식점", (), (True, None)),
-    ("required", None, None, "카페", (), (False, "no_key")),
-    ("required", "quiet", None, "카페", (), (False, "no_direction")),
-    ("preferred", "quiet", None, "카페", (), (False, "no_direction")),
-    ("required", "is_crowded_large", None, "음식점", (), (False, "not_for_category")),
-    ("preferred", "is_crowded_large", True, "카페", (), (False, "not_for_category")),   # preferred는 soft 키만
-    ("required", "no_such_key", True, "카페", (), (False, "not_for_category")),
-    ("required", "cherry_blossom", True, "관광지", ("cherry_blossom",), (False, "off_season")),
-    ("reference", "quiet", True, "카페", (), (False, "no_direction")),
+    ("required", "is_crowded_large", None, "카페", (), (True, None, "filter")),         # hard 키는 방향이 없어도 쓰인다
+    ("required", "quiet", False, "카페", (), (True, None, "filter")),                   # soft 키 + 방향, required는 거른다
+    ("preferred", "quiet", True, "음식점", (), (True, None, "score")),                  # preferred는 점수만
+    ("required", None, None, "카페", (), (False, "no_key", None)),
+    ("required", "quiet", None, "카페", (), (False, "no_direction", None)),
+    ("preferred", "quiet", None, "카페", (), (False, "no_direction", None)),
+    ("required", "is_crowded_large", None, "음식점", (), (False, "not_for_category", None)),
+    ("preferred", "is_crowded_large", True, "카페", (), (False, "not_for_category", None)),   # preferred는 soft 키만
+    ("required", "no_such_key", True, "카페", (), (False, "not_for_category", None)),
+    ("required", "cherry_blossom", True, "관광지", ("cherry_blossom",), (False, "off_season", None)),
+    ("reference", "quiet", True, "카페", (), (False, "no_direction", None)),
 ])
-def test_evidence_line_use_picks_the_reason(badge, fact_key, wants, category, off_season, expected):
+def test_evidence_line_use_picks_the_reason_and_effect(badge, fact_key, wants, category, off_season, expected):
     assert core.evidence_line_use(badge, fact_key, wants, category, off_season) == expected
 
 
 def test_evidence_line_use_reason_order_is_no_key_then_off_season_then_category():
-    assert core.evidence_line_use("required", None, None, "음식점", {"x"}) == (False, "no_key")
-    assert core.evidence_line_use("required", "is_crowded_large", None, "음식점", {"is_crowded_large"}) == (False, "off_season")
-    assert core.evidence_line_use("required", "is_crowded_large", None, "음식점", ()) == (False, "not_for_category")
+    assert core.evidence_line_use("required", None, None, "음식점", {"x"}).not_enforced_reason == "no_key"
+    assert core.evidence_line_use("required", "is_crowded_large", None, "음식점", {"is_crowded_large"}).not_enforced_reason == "off_season"
+    assert core.evidence_line_use("required", "is_crowded_large", None, "음식점", ()).not_enforced_reason == "not_for_category"
+
+
+def test_evidence_line_use_keeps_the_enforced_first_shape():
+    """인덱스 [0]으로 enforced를 읽는 호출부(flows._used_lines)가 그대로 돈다."""
+    use = core.evidence_line_use("preferred", "quiet", True, "카페", ())
+    assert use[0] is use.enforced is True
+    assert (use.not_enforced_reason, use.effect) == (None, "score")
+
+
+# ---------- member_fulfillment.by_member[].conditions (#805) ----------
+
+def _conditions(result: dict, user_id: str) -> list[dict]:
+    return next(e for e in result["by_member"] if e["user_id"] == user_id)["conditions"]
+
+
+def test_conditions_written_disqualifier_gives_all_three_statuses_with_line_id():
+    unknown = core.build_check("is_crowded_large", "pass", known=False, value=None, passes=True)
+    checks = [_label_check("spicy_focused", value=True), _label_check("quiet", value=False), unknown]
+    result = core.build_member_fulfillment(
+        checks, [], {},
+        disqualifier_conditions={
+            "u1": {("spicy_focused", False), ("quiet", True), ("is_crowded_large", None)},
+        },
+        written_line_ids={("u1", "spicy_focused"): "L1", ("u1", "quiet"): "L2", ("u1", "is_crowded_large"): "L3"},
+    )
+    assert _conditions(result, "u1") == [
+        _cond("is_crowded_large", "needs_check", "L3"),  # 모름 → needs_check (unknown_policy는 그대로)
+        _cond("quiet", "unmet", "L2"),                    # known이고 방향이 틀림
+        _cond("spicy_focused", "unmet", "L1"),            # 매운맛 피함인데 라벨 참
+    ]
+    assert result["satisfied"] == 0 and result["total"] == 1
+
+
+def test_conditions_written_preference_shows_unmet_and_needs_check_but_heart_only_shows_met():
+    checks = [_label_check("quiet", value=False), _label_check("cuisine_korean", value=True), _label_check("bakery")]
+    hearted = [_place(_check("cuisine_korean"), _check("bakery"), members=frozenset({"u2"}))]
+    criteria = {"quiet": True, "cuisine_korean": True, "bakery": True}
+    result = core.build_member_fulfillment(
+        checks, hearted, criteria, {"quiet": frozenset({"u1"}), "bakery": frozenset({"u1"})},
+        written_line_ids={("u1", "quiet"): "L1", ("u1", "bakery"): "L2"},
+    )
+    assert _conditions(result, "u1") == [_cond("bakery", "needs_check", "L2"), _cond("quiet", "unmet", "L1")]
+    # ♥에서만 나온 선호: met(한식)만 보이고 라벨이 모름인 bakery는 빠진다. satisfied는 모름이 있어 거짓 그대로.
+    assert _conditions(result, "u2") == [_cond("cuisine_korean", "met")]
+    assert {e["user_id"]: e["satisfied"] for e in result["by_member"]} == {"u1": False, "u2": False}
+
+
+def test_conditions_heart_only_unmet_is_hidden_and_keyless_member_is_absent():
+    hearted = [_place(_check("quiet"), members=frozenset({"u1"}))]
+    result = core.build_member_fulfillment(
+        [_check("quiet", passed=False)], hearted, {"quiet": True}, disqualifier_conditions={"u2": set()},
+    )
+    assert _conditions(result, "u1") == []
+    assert [e["user_id"] for e in result["by_member"]] == ["u1"]   # 키 없는 반대만 낸 u2는 넣지 않는다
+
+
+def test_conditions_do_not_change_satisfied_or_total():
+    checks = [_check("quiet", passed=True), _label_check("spicy_focused")]
+    args = (checks, [], {"quiet": True}, {"quiet": frozenset({"u1", "u2"})})
+    kwargs = {"disqualifier_conditions": {"u1": {("spicy_focused", False)}}}
+    plain = core.build_member_fulfillment(*args, **kwargs)
+    with_ids = core.build_member_fulfillment(*args, **kwargs, written_line_ids={("u1", "quiet"): "L1"})
+    strip = lambda r: (r["satisfied"], r["total"], [(e["user_id"], e["satisfied"]) for e in r["by_member"]])
+    assert strip(plain) == strip(with_ids) == (1, 2, [("u1", False), ("u2", True)])

@@ -488,3 +488,5 @@ if __name__ == "__main__":
     count = {v: sum(1 for r in RESULTS if r[1] == v) for v in ("PASS", "FAIL", "SKIP")}
     print(f"\n합계({BASE_URL or '로컬'}): PASS {count['PASS']} / FAIL {count['FAIL']} / SKIP {count['SKIP']}"
           f" / INFO·ERR {len(RESULTS) - sum(count.values())}")
+    # CI(staging-check)가 통과 여부를 읽는다 — FAIL이나 하네스 오류(ERR)가 있으면 실패로 끝낸다
+    sys.exit(1 if count["FAIL"] or any(r[1] == "ERR" for r in RESULTS) else 0)

@@ -5,7 +5,7 @@ import type { Pin } from '@/features/map/model'
 
 import { kakaoTrafficUrl } from '@/features/shortlist/model'
 
-import { createErrorMessage, daySummary, dayStops, dayTitle, goalState, inProgressRunId, isFinished, legLabel, pinNames, pinPoints, requestBody, transitLink, understandBody, walkLinks } from './model'
+import { courseDrawings, createErrorMessage, dayLine, daySummary, dayStops, dayTitle, goalState, inProgressRunId, isFinished, legLabel, pinNames, pinPoints, requestBody, transitLink, understandBody, walkLinks } from './model'
 
 const err = (code: string, detail?: Record<string, unknown>) => new ApiError(409, { code, message: code, detail })
 
@@ -123,5 +123,18 @@ describe('course model', () => {
     expect(url).toBe(`https://map.kakao.com/link/by/traffic/${encodeURIComponent('가 나 다')},37.1,127.1/${encodeURIComponent('라')},37.2,127.2`)
     expect(url).toBe(kakaoTrafficUrl({ name: '가,나/다', lat: 37.1, lng: 127.1 }, { name: '라', lat: 37.2, lng: 127.2 }))
     expect(transitLink(stops[1], stops[2])).toBeNull() // 도착 좌표 모름
+  })
+
+  it('지도 코스는 날짜마다 색·선 모양이 다르고, 좌표를 아는 장소만 그날 순서 번호로 잇는다', () => {
+    const pins = [pin('a', '가', 37.1, 127.1), pin('b', '나'), pin('c', '다', 37.3, 127.3), pin('d', '라', 37.4, 127.4)]
+    const run = { days: [{ ...day(['a', 'b', 'c'], ['walk', 'walk']), date: '2026-10-03' }, { ...day(['d'], []), date: '2026-10-04' }] }
+    const [first, second] = courseDrawings(run, pinPoints(pins))
+    expect(second.stops).toEqual([{ n: 1, lat: 37.4, lng: 127.4 }]) // 1곳뿐인 날도 번호 원은 있다
+    expect(second.color).not.toBe(first.color)
+    expect(courseDrawings({ days: [{ ...day(['b'], []), date: '2026-10-05' }] }, pinPoints(pins))).toEqual([]) // 좌표 모르는 곳뿐인 날
+    expect(first.stops.map((s) => s.n)).toEqual([1, 3]) // 좌표 모르는 2번은 건너뛰되 번호는 그날 순서
+    expect(first.legs).toEqual([]) // 구간 양 끝 좌표를 다 아는 구간이 없다
+    const lines = Array.from({ length: 12 }, (_, i) => dayLine(i))
+    expect(new Set(lines.map((l) => `${l.color}${l.style}`)).size).toBe(12)
   })
 })

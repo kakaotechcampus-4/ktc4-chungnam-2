@@ -49,9 +49,8 @@ def own_places(monkeypatch):
 
 
 def _forbid_kakao_paths(monkeypatch, calls: list[str]):
-    """카카오 실시간 경로(search_nearby/get_raw_facts/resolve_place/search_by_name)를 부르면 기록한다."""
-    for name in ("search_nearby", "get_raw_facts", "resolve_place", "search_by_name"):
-        monkeypatch.setattr(places_api, name, lambda *a, _n=name, **k: calls.append(_n) or [])
+    """카카오 실시간 경로(search_by_name)를 부르면 기록한다. 나머지 실시간 함수(search_nearby 등)는 #773에서 지웠다."""
+    monkeypatch.setattr(places_api, "search_by_name", lambda *a, **k: calls.append("search_by_name") or [])
 
 
 def test_kakao_values_never_reach_llm_or_db_through_a_recommend_run(db_session, wired, own_places, monkeypatch):
@@ -93,8 +92,9 @@ def test_kakao_values_never_reach_llm_or_db_through_a_recommend_run(db_session, 
 def test_real_facts_gateway_exposes_no_raw_facts_and_holds_no_state(wired):
     assert not hasattr(RealPlaceFactsGateway, "get_raw_facts")     # 원자료를 내주는 메서드가 없다
     assert not hasattr(RealPlaceSearchGateway, "resolve_place")
+    for name in ("search_nearby", "get_raw_facts", "resolve_place", "call_counts"):
+        assert not hasattr(places_api, name), name                 # 카카오 실시간 함수는 places.api에 없다(#773)
     wired.search_by_name("가게", None, 5)
-    wired.search_nearby("음식점", [])
     assert set(vars(wired)) == {"_sources"}                        # 메모리에도 응답을 쥐고 있지 않다
 
 

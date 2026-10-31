@@ -14,8 +14,8 @@ import hashlib
 import math
 from collections import Counter
 from dataclasses import dataclass
-from datetime import date, timedelta
-from typing import Any, Collection, Iterable, Mapping, Sequence
+from datetime import date, datetime, timedelta
+from typing import Any, Collection, Iterable, Literal, Mapping, NamedTuple, Sequence
 
 from common.errors import AppError
 from common.geo import WALKING_SPEED_M_PER_MIN, haversine_distance_m
@@ -319,26 +319,61 @@ def out_of_season_keys(start: date | None, end: date | None) -> frozenset[str]:
     return frozenset(key for key, season in SEASON_MONTHS.items() if not season & months)
 
 
+class LineUse(NamedTuple):
+    enforced: bool
+    not_enforced_reason: str | None
+    effect: str | None   # 쓰이면 "filter"(후보를 거른다, required) | "score"(점수만, preferred), 안 쓰이면 None(#751)
+
+
 def evidence_line_use(
     badge: str, fact_key: str | None, wants: bool | None, category: str, off_season: Collection[str],
-) -> tuple[bool, str | None]:
-    """근거 줄이 이번 실행에서 실제로 쓰이는지 (enforced, not_enforced_reason)으로 정한다(#740). 파이프라인이 줄을 고르는
+) -> LineUse:
+    """근거 줄이 이번 실행에서 실제로 쓰이는지와 어떻게 쓰이는지를 정한다(#740, #751). 파이프라인이 줄을 고르는
     기준이자 근거 응답이 보이는 값이라 이 함수 하나가 정한다. 이유는 no_key → off_season → 배지별 순서로 고른다:
     required+hard 키는 카테고리에 맞아야, soft 키(required·preferred)는 방향(wants)이 있어야 쓰인다.
-    그 밖(hard도 soft도 아닌 키, preferred인 hard 키)은 not_for_category, reference는 no_direction."""
+    그 밖(hard도 soft도 아닌 키, preferred인 hard 키)은 not_for_category, reference는 no_direction.
+    쓰이는 required 줄은 실격 필터(_hard_fact_keys_from, _soft_requirements_from)에, preferred 줄은 점수에 들어간다."""
     if fact_key is None:
-        return False, "no_key"
+        return LineUse(False, "no_key", None)
     if fact_key in off_season:
-        return False, "off_season"
+        return LineUse(False, "off_season", None)
     if badge == "required" and fact_key in constraints.HARD_REGISTRY:
         if fact_key in constraints.hard_fact_keys_for(category):
-            return True, None
-        return False, "not_for_category"
+            return LineUse(True, None, "filter")
+        return LineUse(False, "not_for_category", None)
     if badge in ("required", "preferred") and fact_key in constraints.SOFT_FACT_KEYS:
-        return (True, None) if wants is not None else (False, "no_direction")
+        if wants is None:
+            return LineUse(False, "no_direction", None)
+        return LineUse(True, None, "filter" if badge == "required" else "score")
     if badge not in ("required", "preferred"):
-        return False, "no_direction"
-    return False, "not_for_category"
+        return LineUse(False, "no_direction", None)
+    return LineUse(False, "not_for_category", None)
+
+
+def normalize_manual_text(text: str) -> str:
+    """「+」로 추가한 글의 같은 글 판정 기준(#848) — 앞뒤 공백을 자르고 안의 연속 공백을 하나로 본다. 저장도 이 모양으로 한다."""
+    return " ".join(text.split())
+
+
+def applied_evidence_entries(lines: Sequence[Any], category: str, off_season: Collection[str]) -> list[dict]:
+    """실행(execute·retry·widen) 시점에 활성이던 근거 줄의 스냅샷 항목(#845, #847). `lines`는 활성 줄을 근거 순서로(id, author_id,
+    text, badge, fact_key, wants 속성). enforced·not_enforced_reason은 근거 응답과 파이프라인이 쓰는 `evidence_line_use` 한
+    곳에서 정한다. 사유 글과 작성자 id가 들어가므로 recommend_runs.applied_evidence에만 저장한다(탈퇴·합치기가 따라온다)."""
+    entries = []
+    for line in lines:
+        use = evidence_line_use(line.badge, line.fact_key, line.wants, category, off_season)
+        entries.append({
+            "id": str(line.id), "author_id": line.author_id, "text": line.text, "badge": line.badge,
+            "fact_key": line.fact_key, "wants": line.wants, "enforced": use.enforced,
+            "not_enforced_reason": use.not_enforced_reason, "is_active": True,
+        })
+    return entries
+
+
+def no_applied_conditions(entries: Sequence[Mapping[str, Any]]) -> bool:
+    """활성이고 추천이 실제로 쓰는(enforced) 사유 근거가 하나도 없는가(#845). 줄을 다 껐거나 남은 줄이 모두 enforced=false면
+    참이다. 판정은 스냅샷 항목의 enforced 값이라 근거 응답·파이프라인과 같은 기준이다(♥ 선호·반경·영업·제외 필터는 따로 남는다)."""
+    return not any(entry["enforced"] for entry in entries)
 
 
 # ---------------------------------------------------------------- 카카오맵 검색 링크 (#798, #800)
@@ -436,19 +471,67 @@ def trip_open_status(week_status: Mapping[int, str] | None, weekdays: Sequence[i
     return "open" if "open" in statuses else "unknown"
 
 
-RANKING_STAGE = "상위 3곳 선정"  # 깔때기의 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다
+# 5-6 깔때기 단계 (키, 라벨) — 표의 순서가 깔때기 순서다(#751). 라벨은 화면에 보이고 last_funnel에 저장되는 글자, 키는
+# recommend.api를 읽는 모듈이 단계를 찾는 이름이다. 라벨을 바꾸면 옛 라벨로 저장된 깔때기는 키를 못 찾는다(None).
+FUNNEL_STAGES: tuple[tuple[str, str], ...] = (
+    ("pool", "카테고리 후보 풀"),
+    ("radius", "반경 밖 제거"),
+    ("closed", "영업 종료 제거"),
+    ("not_recommendable", "추천 가능 아님 제거"),
+    ("disqualify", "실격 조건 제거"),
+    ("excluded", "이미 제안·거절됨"),
+    ("ranking", "상위 3곳 선정"),   # 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다
+)
 
 
-def funnel_counts(stage_removed: list[tuple[str, int]]) -> list[dict]:
-    """5-6 깔때기 표 — (라벨, 이번 단계에서 제거된 수) 쌍의 리스트를 api-spec.yaml
-    FunnelEntry 모양으로 그대로 옮긴다."""
-    return [{"label": label, "removed_count": removed} for label, removed in stage_removed]
+def funnel_counts(removed: Mapping[str, int]) -> list[dict]:
+    """5-6 깔때기 표 — 단계 키 → 이번 단계에서 제거된 수를 FUNNEL_STAGES 순서대로 api-spec.yaml FunnelEntry 모양
+    ({label, removed_count})으로 옮긴다. 저장 값과 HTTP 응답에는 키가 없다(keyed_funnel이 api에서 붙인다)."""
+    return [{"label": label, "removed_count": removed[key]} for key, label in FUNNEL_STAGES]
+
+
+def funnel_stage_key(label: str) -> str | None:
+    """깔때기 라벨 → 단계 키. 표에 없는 라벨(옛 문구 등)은 None."""
+    return next((key for key, stage_label in FUNNEL_STAGES if stage_label == label), None)
+
+
+def keyed_funnel(funnel: Sequence[Mapping[str, Any]]) -> list[dict]:
+    """저장 모양 깔때기 `[{label, removed_count}]`의 사본에 단계마다 key를 붙인다 — recommend.api가 내주는 모양(#751)."""
+    return [
+        {"key": funnel_stage_key(e["label"]), "label": e["label"], "removed_count": e["removed_count"]} for e in funnel
+    ]
 
 
 def passed_count(result_count: int, funnel: Sequence[Mapping[str, Any]]) -> int:
-    """필터를 모두 통과한 곳의 수 — 상위 3곳을 고르기 전(#587). 결과 수 + RANKING_STAGE 단계 탈락. 결과 수는 최대 3이라
-    "조건을 바꾸면 몇 곳이 더 남나"는 이 수로 비교한다. 단계 라벨은 이 모듈이 정하고 읽으므로 밖에서 라벨 글자를 볼 일이 없다."""
-    return result_count + sum(e["removed_count"] for e in funnel if e["label"] == RANKING_STAGE)
+    """필터를 모두 통과한 곳의 수 — 상위 3곳을 고르기 전(#587). 결과 수 + ranking 단계 탈락. 결과 수는 최대 3이라
+    "조건을 바꾸면 몇 곳이 더 남나"는 이 수로 비교한다."""
+    return result_count + sum(e["removed_count"] for e in funnel if funnel_stage_key(e["label"]) == "ranking")
+
+
+# ---------------------------------------------------------------- 추천 받기 멱등 키 (#811, docs/data-model.md idempotency_keys)
+
+IDEMPOTENCY_SCOPE = "recommend.run"           # POST /maps/{mapId}/runs. 다른 요청에 쓰려면 값을 더한다
+IDEMPOTENCY_DEADLINE = timedelta(seconds=90)  # 처리 기한 — 첫 요청이 run을 못 만든 채 이 시간이 지나면 새 요청이 이어받는다
+IDEMPOTENCY_RETENTION = timedelta(hours=24)   # run이 연결된 행의 보관 기간(maintenance가 정리)
+
+ReservationDecision = Literal["conflict", "reuse", "in_progress", "takeover"]
+
+
+def idempotency_request_hash(map_id: str, category: str, execute: bool = False) -> str:
+    """요청 동일성 = (지도, category, execute — 생략은 false). 같은 키로 이 값이 다르면 IDEMPOTENCY_CONFLICT다."""
+    return hashlib.sha256(f"{map_id}{category}{int(bool(execute))}".encode()).hexdigest()
+
+
+def reservation_decision(
+    *, stored_hash: str, request_hash: str, run_id: object | None, started_at: datetime, now: datetime,
+) -> ReservationDecision:
+    """이미 있는 키 행을 만난 요청이 할 일. 본문이 다르면 conflict, run이 이미 있으면 reuse(같은 run의 현재 상태),
+    run이 아직 없고 처리 기한 안이면 in_progress(409), 기한이 지났으면 takeover(이어받기 — 늦게 끝난 쪽의 저장은 거절된다)."""
+    if stored_hash != request_hash:
+        return "conflict"
+    if run_id is not None:
+        return "reuse"
+    return "takeover" if now - started_at >= IDEMPOTENCY_DEADLINE else "in_progress"
 
 
 def check_retry_limit(attempt_no: int) -> None:
@@ -665,6 +748,7 @@ def build_member_fulfillment(
     criteria: Mapping[str, bool],
     preferred_authors: Mapping[str, frozenset[str]] | None = None,
     disqualifier_conditions: Mapping[str, Collection[tuple[str, bool | None]]] | None = None,
+    written_line_ids: Mapping[tuple[str, str], str] | None = None,
 ) -> dict:
     """가드레일5 "구성원 충족 집계" — api-spec.yaml `MemberFulfillment` 모양 그대로
     `{satisfied, total, by_member}`을 돌려준다. 확인한 조건 기준으로 센다(#620).
@@ -679,7 +763,11 @@ def build_member_fulfillment(
     - **satisfied** = 자기 조건을 *전부* 이 후보가 known으로 충족한 구성원 수. 선호는 known+참, 반대는 known이고
       `_meets`(hard는 통과, soft는 방향에 맞음). 라벨이 모름(「확인 필요」)이면 실격 필터는 통과시켜도 충족으로
       세지 않는다. 일부만 맞으면 충족으로 세지 않는다(구성원 만족을 부풀리지 않는다).
-    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다."""
+    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다.
+    - **conditions**(#805, 표시용) = 구성원마다 조건별 상태. `written_line_ids`((구성원, fact_key) → 직접 쓴 근거 줄 id)에
+      있는 조건은 met·unmet·needs_check를 모두 내리고, ♥에서만 나온 선호는 met만 내린다. 위 두 갈래에 든 조건만
+      담는다(키 없는 반대는 없다). satisfied·total·순위에는 영향이 없다."""
+    line_ids = written_line_ids or {}
     support = _member_support(hearted_places, preferred_authors)
     met = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
     known_checks = {c.fact_key: c for c in candidate_checks if c.confidence == "known"}
@@ -698,6 +786,9 @@ def build_member_fulfillment(
                 fact_key in known_checks and _meets(known_checks[fact_key], wants)
                 for fact_key, wants in against.get(member_id, ())
             ),
+            "conditions": _member_condition_entries(
+                member_id, conditions.get(member_id, set()), against.get(member_id, set()), known_checks, line_ids,
+            ),
         }
         for member_id in sorted(conditions.keys() | against.keys())
     ]
@@ -706,6 +797,40 @@ def build_member_fulfillment(
         "total": len(by_member),
         "by_member": by_member,
     }
+
+
+def _member_condition_entries(
+    member_id: str,
+    preferences: Collection[str],
+    disqualifiers: Collection[tuple[str, bool | None]],
+    known_checks: Mapping[str, Check],
+    line_ids: Mapping[tuple[str, str], str],
+) -> list[dict]:
+    """한 구성원의 conditions[] (#805). 상태는 satisfied와 같은 판정(`_meets`, known 여부)을 쓴다 — 모름이면 needs_check.
+    같은 키는 한 줄만(실격이 먼저). ♥에서만 나온 선호(근거 줄 없음)는 met일 때만 담아 숨은 조건이 미충족으로 뜨지 않게 한다."""
+    entries: list[dict] = []
+    seen: set[str] = set()
+
+    def add(fact_key: str, wants: bool | None, *, written: bool) -> None:
+        check = known_checks.get(fact_key)
+        status = "needs_check" if check is None else ("met" if _meets(check, wants) else "unmet")
+        if not written and status != "met":
+            return
+        seen.add(fact_key)
+        entries.append({
+            "fact_key": fact_key,
+            "fact_label": constraints.FACT_LABELS.get(fact_key),
+            "evidence_line_id": line_ids.get((member_id, fact_key)),
+            "status": status,
+        })
+
+    for fact_key, wants in sorted(disqualifiers, key=lambda condition: condition[0]):
+        if fact_key not in seen:
+            add(fact_key, wants, written=True)
+    for fact_key in sorted(preferences):
+        if fact_key not in seen:
+            add(fact_key, True, written=(member_id, fact_key) in line_ids)
+    return entries
 
 
 def build_reason(candidate_checks: Sequence[Check], criteria: Mapping[str, bool]) -> str:

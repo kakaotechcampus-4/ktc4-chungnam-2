@@ -45,6 +45,8 @@
 | `feedback` | 서비스 피드백 저장(#10). 읽는 API는 없다 | 신규(v2) | — |
 | `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 각 모듈 api의 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth` (api.py만) |
 | `ads` | 추천 탭 광고: 기간 광고 관리, 선택(코드), 노출과 클릭의 날짜별 집계(docs/ads.md, #642) | 신규 | `places`, `recommend`, `pins` (api.py만. `recommend`는 `ads`를 import하지 않는다) |
+| `credits` | 사람마다 하나인 AI 실행 크레딧: 잔액·원장, 가격표(`credits/constants.py` 한 곳), 확인·차감·환불·후기 보상(docs/credits-reviews.md, #432). 다른 모듈은 `credits.api`만 부른다 | 신규(v2, 구현 #948) | `auth` (api.py만, 게스트 판정) |
+| `reviews` | 자체 DB 장소에 붙는 후기(별점 + 글), 신고, 숨김 스크립트(docs/credits-reviews.md, #432). 핀으로 부르고 장소를 찾는다 | 신규(v2, 구현 #951) | `pins`, `credits` (api.py만) |
 
 `의존` 열은 실제 import를 기준으로 적는다(2026-09-23 기준, #113). 계획상 필요할 것 같은 의존을 미리 적지 않는다 — 표와 코드가 어긋나면 표를 믿을 수 없게 된다.
 
@@ -251,7 +253,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 지도 삭제(#369)는 `maps.deleted_at`만 찍는다. 그대로 두면 핀·반응·추천 기록이 계속 쌓여 지웠다 다시 만들어도 저장 공간이 줄지 않는다(멘토 리뷰 PR #380). 그래서 **삭제한 지 30일이 지난 지도**와 딸린 데이터를 실제로 지우는 정리 작업을 둔다.
 
-- **보존 기간 30일, 그 사이 복구 기능은 없다**(v1). 30일은 사용 데이터 없이 정한 출발값이다.
+- **보존 기간 30일, 그 사이 방장이 복구할 수 있다**(#464 — `GET /maps/trash`, `POST /maps/{mapId}/restore`). 30일은 사용 데이터 없이 정한 출발값이다. 복구는 `deleted_at`만 비우면 되도록 정리 작업이 건드리지 않은 데이터가 모두 그대로 있다.
 - **모듈은 자기 테이블만 지운다.** 각 모듈이 `api.py`에 "이 지도들의 데이터 지우기" 공개 함수를 두고, maps의 정리 작업이 자식 테이블부터 순서대로 부른다. 외래키가 연쇄 삭제가 아니고(`NO ACTION`) `map_id`에 외래키가 아예 없는 테이블도 있어서 순서를 지켜 직접 지운다.
 - 지우는 테이블 12개: maps·memberships·invites(maps), pins·reactions(pins), shortlist_items·routes(shortlist), recommend_runs·candidates·evidence_lines·regions·exclusions(recommend), event_log(realtime). **`places`·`place_facts`는 지도에 속하지 않으므로 지우지 않는다.**
 - 실행은 손으로 돌리는 명령이다(`python -m maps.purge --older-than-days 30 [--dry-run]`). 지금 코드에는 예약 실행 장치가 없고, 예약은 배포 환경을 정할 때 붙인다(#168). `--dry-run`은 지울 지도 수와 테이블별 행 수만 보여 준다.
@@ -319,7 +321,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 - **`db` 선택 키워드 인자(#199에서 추가, 6개 함수 전부 `*, db: Session | None = None`)**: `db=db`를 넘기면 그 요청 트랜잭션에 참여한다(커밋은 호출한 쪽이 한다). **pins는 `record_kakao_match`를 반드시 `db=db`로 부른다** — 핀 생성과 같은 트랜잭션이어야 한다. 안 넘기면 places가 짧은 세션을 직접 열어 쓰고 닫는다(읽기 전용 호출은 충분하지만 호출마다 연결을 쓴다). `FakePlaces`도 같은 인자를 받는다.
 - `place_id`는 문자열(`places.id`의 UUID). 타입은 `places/schemas.py`의 불변 dataclass: `PlaceHint`, `PlaceMatch`, `PlaceInfo`, `PlaceRef`, `FactLabel`.
 - **카카오 원자료는 이 함수들의 입출력 어디에도 없다.** `kakao_place_id`·`kakao_place_url`만 예외(저장 허용 범위).
-- 기존 `places.api`의 실시간 카카오 검색(`search_by_name`, 표시용)과 `get_raw_facts`(항상 빈 값)는 그대로 둔다. `search_nearby`(카카오 실시간 후보 풀)와 `resolve_place`는 recommend·pins가 위 함수로 옮겨 가면 지운다(#190, #195).
+- `places.api`의 실시간 카카오 검색은 `search_by_name`(표시용) 하나만 남는다. 옛 `search_nearby`(카카오 실시간 후보 풀)·`resolve_place`·`get_raw_facts`·`call_counts`는 부르는 곳이 없어 지웠다(#190, #195, #773).
 
 ### 층2 차원 압축 설계
 
@@ -402,5 +404,5 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 "6명은 적은 인원이 아니다. PR에서 테스트되는 것 + 병합 시 문제없는지 확인 — 참조 없이 어긋나는 부분이 빌드 깨짐으로 잡힌다. 배포 데모가 커밋마다 올라가면 백엔드가 프론트 환경을 구성하지 않고도 확인할 수 있다."
 
 - PR 파이프라인: 단위 테스트 + `docs/api-spec.yaml` 검증(lint) + 계약 테스트(구현이 스펙과 일치하는지)
-- main 병합 시: Cloud Run으로 배포 (컨테이너만 올리면 되므로 인프라 관리 부담이 적다 — 멘토도 "편한 걸 쓰면 된다"고 확인)
+- 배포(2026-10-28 결정, #168): 부트캠프가 준 AWS 서버 1대에 Docker Compose로 운영과 스테이징을 함께 올린다. 이미지는 GitHub Actions가 ECR에 만들고, develop은 스테이징에 자동, 운영은 `main` 커밋의 v 태그를 골라 올린다(OIDC + SSM, 22번 포트 없음). 구성, 이유, 타협과 다시 볼 조건은 `deploy_rules.md` 「배포 구성」. 처음 방향이던 Cloud Run은 서버를 받으면서 접었다
 - 프리뷰: PR마다 임시 환경 또는 최소한 목 서버(`docs/openapi-workflow.md`)로 프론트가 항상 최신 계약을 볼 수 있게 한다

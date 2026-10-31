@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQueryClient, type InvalidateQueryFilters } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 
+import { agentEventHandlers } from '@/features/agent/queries'
 import { useMeQuery } from '@/features/auth/queries'
 import { mapKeys } from '@/features/maps/queries'
 import { recommendKeys } from '@/features/recommend/queries'
@@ -34,7 +35,7 @@ const REACTION_WORD: Record<ReactionType, string> = { like: '좋음', against: '
 /**
  * docs/events.md "이벤트별로 화면이 다시 받을 것"(#449) 그대로. 이벤트나 화면 데이터를 더하면 events.md 표와 같이 고친다.
  * 키는 앞부분이 같으면 함께 무효화된다(TanStack) — 지도 상세는 구성원, 핀 목록은 집계까지 덮지만 표대로 다 적는다.
- * agent.* 는 #536에서 더한다.
+ * agent.* 는 표가 아니라 페이로드로 고친다(apply, features/agent).
  */
 function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
   const pins = { queryKey: pinKeys.list(mapId) }
@@ -76,6 +77,8 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
   const myUserId = useMeQuery().data?.id
   const [state, setState] = useState<ConnectionState>('open')
   const [attempt, setAttempt] = useState(0)
+  // 사람이 「다시 연결」을 눌러 맺는 중인지. 그 연결이 또 실패하면 알린다.
+  const manual = useRef(false)
 
   useEffect(() => {
     const key = pinKeys.list(mapId)
@@ -125,6 +128,7 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       'pin.deleted': remove,
       'reaction.changed': reaction,
       'map.deleted': mapDeleted,
+      ...agentEventHandlers(queryClient, mapId),
     }
     const table = refetchTable(mapId)
     for (const type of new Set([...Object.keys(apply), ...Object.keys(table)])) {
@@ -133,12 +137,18 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
         for (const filters of table[type] ?? []) void queryClient.invalidateQueries(filters)
       })
     }
-    source.onopen = () => setState('open')
+    source.onopen = () => {
+      manual.current = false
+      setState('open')
+    }
     source.onerror = () => {
       if (leaving || closedByServer) return
       // CLOSED 는 브라우저가 재연결을 포기한 상태(인증 실패 등). 조용히 넘기지 않는다.
       if (source.readyState === EventSource.CLOSED) {
         console.error('[realtime] 실시간 연결이 닫혔어요', mapId)
+        // 「다시 연결」을 눌렀는데 또 실패했다 — 띠만 돌아오면 눌러도 안 되는 것처럼 보인다.
+        if (manual.current) showToast('아직 연결되지 않았어요. 잠시 뒤 다시 눌러 주세요')
+        manual.current = false
         setState('closed')
       } else {
         setState('reconnecting')
@@ -148,8 +158,14 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
   }, [mapId, myUserId, queryClient, navigate, attempt])
 
   const reconnect = () => {
-    // 끊긴 동안 놓친 변화는 이벤트로 다시 오지 않을 수 있어 목록을 새로 받는다.
-    void queryClient.invalidateQueries({ queryKey: pinKeys.list(mapId) })
+    // 끊긴 동안 놓친 변화는 이벤트로 다시 오지 않을 수 있어 새로 받는다(docs/events.md 전달 보장 8번).
+    for (const queryKey of [pinKeys.list(mapId), pinKeys.counts(mapId), shortlistKeys.list(mapId)]) {
+      void queryClient.invalidateQueries({ queryKey })
+    }
+    // Firefox 와 앞단 Caddy 를 거친 연결은 첫 데이터(서버 ping, 최대 20초)가 와야 열린다.
+    // 그동안 버튼을 거둬 다시 눌러 처음부터 맺는 일을 막는다.
+    manual.current = true
+    setState('reconnecting')
     setAttempt((n) => n + 1)
   }
 

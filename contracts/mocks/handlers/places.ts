@@ -77,6 +77,13 @@ export const placesHandlers = [
     return apiError(422, "LINK_NOT_SUPPORTED", "구글맵·카카오맵 링크만 붙일 수 있어요"); // 네이버·인스타·블로그 등
   }),
 
+  // #902: 장소 검색 결과 없음의 카카오맵 링크 — 사용자가 친 검색어 그대로. 링크 형식은 서버(places.api.kakao_search_url)와 같다
+  http.get("*/places/external-search", ({ request }) => {
+    const q = (new URL(request.url).searchParams.get("q") ?? "").trim();
+    if (q.length < 1 || q.length > 50) return apiError(422, "VALIDATION_ERROR", "검색어는 1~50자로 입력해 주세요");
+    return HttpResponse.json({ query: q, url: `https://map.kakao.com/link/search/${encodeURIComponent(q)}` });
+  }),
+
   http.get("*/places/search", ({ request }) => {
     const url = new URL(request.url);
     const q = (url.searchParams.get("q") ?? "").trim();
@@ -91,12 +98,21 @@ export const placesHandlers = [
     if (q === "__unavailable__") return apiError(503, "PLACES_UNAVAILABLE", "지금은 장소를 검색할 수 없어요");
 
     let found = SEED_PLACES.filter((p) => p.place_name.includes(q));
+    // #835: 좌표가 있으면 30km 안(지역 구역)이 먼저, 각 구역 안에서 이름 일치 정도(완전 > 앞부분 > 부분) → 가까운 순. 없으면 일치 정도 → 이름순.
+    const norm = (s: string) => s.replace(/\([^)]*\)/g, "").replace(/[\s\p{P}]/gu, "").toLowerCase();
+    const tier = (p: PlaceSearchResult) => (norm(p.place_name) === norm(q) ? 0 : norm(p.place_name).startsWith(norm(q)) ? 1 : 2);
     if (latRaw !== null && lngRaw !== null) {
       const lat = Number(latRaw);
       const lng = Number(lngRaw);
-      found = [...found].sort((a, b) => distanceScore(a, lat, lng) - distanceScore(b, lat, lng));
+      const far = (p: PlaceSearchResult) => (meters(lat, lng, p.lat, p.lng) > 30000 ? 1 : 0);
+      found = [...found].sort((a, b) => far(a) - far(b) || tier(a) - tier(b) || distanceScore(a, lat, lng) - distanceScore(b, lat, lng));
+    } else {
+      found = [...found].sort((a, b) => tier(a) - tier(b) || a.place_name.localeCompare(b.place_name, "ko"));
     }
     // pinnable: 자체 DB에 짝이 있어 핀이 될 수 있는가 — 목 서버는 카테고리의 pinnable(숙소·기타 false)과 NOT_IN_OWN_DB 를 본다
-    return HttpResponse.json(found.slice(0, limit).map((p) => ({ ...p, pinnable: !NOT_IN_OWN_DB.has(p.place_id) && (!p.category || CATEGORY_RULES[p.category].pinnable) }))); // 0개는 빈 배열 그대로(가드레일 2)
+    // #822: 자체 DB 짝이 있는(핀 가능) 결과가 먼저다. 각 묶음 안은 위의 순서(거리 순)를 그대로 둔다.
+    const flagged = found.map((p) => ({ ...p, pinnable: !NOT_IN_OWN_DB.has(p.place_id) && (!p.category || CATEGORY_RULES[p.category].pinnable) }));
+    const ordered = [...flagged.filter((p) => p.pinnable), ...flagged.filter((p) => !p.pinnable)];
+    return HttpResponse.json(ordered.slice(0, limit)); // 0개는 빈 배열 그대로(가드레일 2)
   }),
 ];

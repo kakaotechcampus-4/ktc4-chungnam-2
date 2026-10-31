@@ -16,6 +16,12 @@ users(                                -- 사람. 다른 모듈은 이 id만 가�
                                              -- 카카오 수단을 붙이면(게스트 전환) 비운다. 상한에서 빠진다
   last_seen_at timestamptz null,             -- 게스트 정리 기준: 90일 쓰지 않으면 정리 작업(#168)이 지운다. 세션을 쓸 때 하루 한 번 갱신
   created_at, deleted_at            -- 탈퇴 시 users만 soft delete. 반응·근거 줄은 hard delete, 핀은 유지하고 작성자는 '탈퇴한 구성원'으로 표시 (12절, #155)
+                                    --   deleted_at이 복구 기간(7일, #855)의 기준이다. 7일이 지나면 정리 작업이 이 행의 개인정보를 모두 지운다: display_name을
+                                    --   '탈퇴한 구성원'으로 덮고 last_seen_at·guest_invite_token을 비우며 user_identities를 지운다. 행 자체는 남긴다(핀 created_by·멤버십 등
+                                    --   다른 모듈의 포인터가 가리키는 껍데기). 남는 id는 그 자체로 이름·식별자가 아니지만 **연결 가능한 값이라 「개인정보가 없다」고
+                                    --   단정하지 않는다** — 아래 「탈퇴 후 7일 정리 대상」 표가 이름이 복사된 곳까지 정한다. 정리는 멱등이다.
+                                    --   복구 기한은 정리 작업과 무관하게 `now >= deleted_at + 7일`로 판정한다(콜백·GET·POST 모두). 기한이 지난 미정리 계정을 콜백이 만나면 그 자리에서 정리.
+                                    --   탈퇴와 복구는 sessions_valid_after를 현재 시각으로 올린다 — 탈퇴 전에 복사된 세션 토큰이 복구 뒤 되살아나지 않게.
   sessions_valid_after timestamptz null   -- 로그아웃 시각. 이 시각 이전(같은 초 포함)에 발급된 세션 토큰은 무효, NULL이면 전부 유효 (#129)
 )
 
@@ -27,7 +33,20 @@ user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사
 )
 -- 게스트(v2 #472) = 로그인 수단이 없는 사용자. 세션 쿠키로만 들어온다. is_guest는 저장하지 않고 "수단이 하나도 없는가"로
 --   계산한다(CurrentUser.is_guest, GET /auth/me). 저장하면 수단을 붙일 때 함께 고치는 것을 빠뜨릴 수 있다.
--- 탈퇴(deleted_at)해도 수단은 지우지 않는다. 같은 카카오 계정의 재로그인을 "탈퇴한 계정"으로 막는 근거다(#409).
+-- 탈퇴(deleted_at)해도 수단은 **복구 기간(7일) 동안** 지우지 않는다(#855). 같은 카카오 계정의 재로그인을 탈퇴 계정으로 알아보는 근거다: 7일 안이면 선택
+--   (GET·POST /auth/pending — 새 계정으로 시작하면 이 수단을 새 사용자에게 옮기고 기존 계정은 그 즉시 정리, 되살리면 deleted_at을 비운다), 7일 뒤에는
+--   정리 작업이 수단을 지워서 같은 카카오 계정은 곧바로 새 사용자가 된다. 되살리면 **남아 있던 지도 멤버십(#245)이 돌아오고**(방장 자리는 위임돼 일반 구성원으로) 반응·근거·알림은 돌아오지 않는다.
+--
+-- 탈퇴 후 7일 정리 대상 (#855 — 「개인정보를 모두 지운다」는 users·user_identities만이 아니라 이름이 복사된 곳까지다. BE(auth)가 모듈별로 감사해 이 표를 확정한다)
+--   users            : display_name → '탈퇴한 구성원', last_seen_at·guest_invite_token 삭제 (행은 남김)
+--   user_identities  : 삭제
+--   세션             : 탈퇴·복구 시 sessions_valid_after로 무효화(저장된 세션 행이 없다)
+--   반응·근거 줄·알림(본인 것)·agent 열람 기록·코스 요청: 탈퇴 때 이미 삭제(WITHDRAW_STEPS)
+--   피드백           : 작성자 연결은 탈퇴 때 끊김. 본문은 남긴다(사용자가 쓴 글 — 개인정보처리방침에 밝힌다)
+--   멤버십           : 행은 남긴다(#245, 구성원 표시는 '탈퇴한 구성원')
+--   **이름이 복사된 곳**(감사 필요): 추천 후보·게시 핀의 member_fulfillment.by_member[].display_name·user_id, 다른 구성원의 알림 문장에 박힌 행위자 이름, agent 요약·제안의 본문,
+--                       초대 링크의 만든 사람 표시. → 정리 때 '탈퇴한 구성원'으로 덮는다(write-once 규칙과 조정은 BE가 이슈로 올린다)
+--   로그·이벤트      : 표시 이름·카카오 식별자를 남기지 않는다(이미 규칙). 이벤트 payload의 display_name은 보존기간(24시간) 뒤 사라진다
 -- 예전 users.provider, provider_user_id, is_guest는 이 리비전에서 지운다(카카오 사용자는 user_identities로 옮긴다).
 
 maps(
@@ -37,7 +56,7 @@ maps(
                                                              -- 있거나 둘 다 없음
   created_by, created_at,              -- created_by는 "만든 사람" 기록일 뿐 방장 판단에 쓰지 않는다(#369, 방장 정본은 memberships.role)
   deleted_at timestamptz null          -- #369: 방장이 삭제하면 찍는다(soft delete). 찍히면 모든 조회 경로에서 없는 지도(404)로 보인다.
-                                       --   #431(2026-10-10): 삭제한 지 30일이 지나면 정리 작업(`python -m maps.purge`)이 지도와 딸린 데이터를 실제로 지운다. v1에는 복구 기능이 없다.
+                                       --   #431(2026-10-10): 삭제한 지 30일이 지나면 정리 작업(`python -m maps.purge`)이 지도와 딸린 데이터를 실제로 지운다. **삭제한 지 30일 안이면 방장이 복구할 수 있다**(`POST /maps/{mapId}/restore`, #464) — `deleted_at`을 비우면 구성원·핀·반응·초대·확정 리스트·추천 기록은 그대로 돌아온다.
                                        --   → docs/architecture.md 「지도 삭제와 정리」
 )
   CHECK (end_date >= start_date)   -- 9/4 결정 #22: 여행 제목 + 시작일·종료일. day_count는 폐기
@@ -170,6 +189,8 @@ places(
                                         -- 최소 정보일 뿐이다). 따로 저장한 칸(can_recommend)은 #743에서 없앴다(마이그레이션 0040): 규칙이 curated와
                                         -- 같은 값인데 따로 저장하면 규칙을 바꿀 때 재계산을 잊어 옛 값이 남는다(멘토 리뷰 #680). 후보 조회
                                         -- (places.repository.search_nearby_own)가 curated를 바로 읽는다. 직접 찍은 핀·검색·링크에는 영향이 없다.
+                                        -- **#880에서 없앤다**(데모 뒤, #886): 한 번 true면 내려가지 않아 다음 판에서 빠진 장소가 후보에 남는다
+                                        -- (멘토 리뷰). 추천 후보 여부는 아래 「출처 기록」의 지금 판 정예 기록으로 읽는다.
   kakao_place_id null, kakao_place_url null, kakao_matched_at null,
                                         -- 사용자가 검색해서 고를 때 한 건씩 매칭한 결과. 허용 범위: 카카오 장소 ID·URL·확인 일자.
                                         -- 카카오 응답의 이름·주소·좌표는 저장하지 않는다(#53)
@@ -232,6 +253,31 @@ place_hours(                            -- v2 #690(2026-10-24): 영업시간·�
 
 압축된 판정값만 저장하고 원본 숫자(가격 등)는 저장하지 않는다(architecture.md 2절, 차원 압축). 가격 라벨은 v1에서 뺐다(#423).
 
+### 출처 기록과 같은 가게 합치기 (#880 결정 2026-10-30, 구현은 데모 뒤 #886 #887 #888)
+
+장소 데이터는 어디서 오든 부분적이라, 출처가 달라도 같은 가게의 정보는 한 장소에 모은다(멘토 리뷰). 지금은 (출처, 원본 번호)로만 합쳐서 같은 가게가 인허가 두 번호나 관광지와 인허가에 있으면 두 장소가 된다. 2026-10-25판 측정: 아래 기준으로 약 700쌍, 그중 정예가 낀 쌍 약 120.
+
+```
+place_sources(                          -- 장소 하나에 여러 줄. 출처 = 인허가, TourAPI, 정예DB
+  place_id references places(id),
+  source('permit'|'tourapi'|'curated'), -- curated = 데이터 담당의 정예DB(원본 번호는 인허가 관리번호나 TourAPI 콘텐츠 ID)
+  source_id,
+  edition,                              -- 받은 데이터의 판(예: '2026-10-25')
+  unique(source, source_id, edition)
+)
+place_editions(                         -- 적재 기록. 지금 판 = 그 출처에서 completed인 가장 최근 판
+  source, edition, loaded_at, completed boolean
+)
+```
+
+- **판 완료**: 정예 한 판은 명령 여러 개(음식점, 카페, 관광지, 지역마다)로 나눠 들어간다. 명령마다 판을 완료로 치면 중간에 일부 분류가 추천 후보에서 빠지므로, 적재 명령은 판을 완료로 만들지 않고 **판을 끝내는 단계**를 따로 둔다. 그 단계가 돌기 전까지 지금 판은 이전 판 그대로다(2026-10-30 #886 시험 구현에서 확인).
+- **영업 종료는 장소 단위로 판단한다**: 같은 가게로 합친 장소에는 인허가 번호가 여럿 붙을 수 있다. 번호 하나가 폐업이거나 파일에서 빠졌다고 장소를 닫지 않고, 붙은 인허가 번호가 **모두** 폐업이거나 빠졌을 때만 닫는다(인허가 폐업 행, `--close-missing` 둘 다).
+- **추천 후보** = 지금 판의 `curated` 출처 기록이 있는 장소. 판정은 places 안 한 곳이다(#743). 이번 판에 없는 정예 장소는 추천 후보에서만 빠지고 검색, 핀, 이미 있는 핀과 반응은 그대로다. 영업 종료는 인허가 쪽(`--close-missing`)으로만 정한다.
+- **같은 가게 판정**(적재와 합치기가 쓴다): 이름이 같다(띄어쓰기와 기호만 무시하고 괄호 안, 로마 숫자, 숫자는 남긴다) + 50m 안 + 주소가 다르지 않다 + 분류가 같다. 분류가 갈린 쌍과 후보가 둘 이상인 쌍은 자동으로 합치지 않고 검토 목록에 낸다(사람이 재분류한 뒤 합친다, 기본값은 정예 쪽 분류). 검색 짝짓기(`places/matching.py`, 300m와 이름 점수, 주소가 같으면 0.5까지)는 사용자가 고른 한 곳을 찾는 규칙이라 그대로 두고 여기 쓰지 않는다 — 그 기준으로는 같은 건물의 다른 가게 1만여 쌍이 함께 잡혔다.
+- **이미 있는 중복**도 합친다(#888). 남길 장소는 정예 기록이 있는 쪽, 같으면 먼저 만든 쪽. 핀, 추천(후보, 제외 목록), 광고는 각자 `reassign_place`로 장소 id를 옮긴다(#887). 같은 지도에 두 장소 모두 핀이 있으면 그 쌍은 합치지 않고 검토 목록에 둔다.
+- **분류**: 인허가는 업태로 나눈다(`places/ingest.py`). 베이커리(제과점영업)는 카페다(#880).
+- 장소 id는 합치기 말고는 바뀌지 않는다. 새 판은 제자리에서 갱신한다(deploy_rules.md 「장소 데이터 적재」).
+
 ---
 
 ## seeding (신규, architecture.md 3절)
@@ -261,6 +307,12 @@ recommend_runs(
                                          -- 한 카운터를 공유), 상한 10회(3→5→10회, 2026-10-15: 지도 안에서 구성원 각자). 한
                                          -- 사람이 상한에 도달해도 다른 사람의 추천 시도에는
                                          -- 영향 없음.
+  applied_evidence jsonb null,          -- #845: 마지막 execute/widen/retry가 **실제로 쓴 근거 줄**의 스냅샷(줄 id·작성자·방향·badge·
+                                         --   enforced·not_enforced_reason·is_active). evidence_lines는 편집하면 바뀌지만 이 값은 그 결과를 만든
+                                         --   실행 때의 값이라 「이 조건으로 찾았어요」가 정확하다. 파생값(다음 실행이 덮는다). 작성자가
+                                         --   탈퇴하면 그 사람의 줄과 함께 지운다(evidence_lines와 같은 정리 규칙). RecommendResult.applied_evidence
+  last_new_count int null,              -- #845: 마지막 execute/widen/retry가 새로 찾은 후보 수(RecommendResult.new_count). 그 뒤에 일부를 게시해도
+                                         --   바뀌지 않는다 — 「이번 검색이 0건」과 「다 올려서 남은 게 없음」을 가른다. 파생값(다음 실행이 덮는다).
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
                                          -- 않도록 마지막 execute/widen/retry의 깔때기 표를
                                          -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.
@@ -268,6 +320,21 @@ recommend_runs(
                                          -- docs/constraints.md "반경 넓히기 상수"
   created_at
 )
+
+idempotency_keys(                      -- #811: 「추천 받기」 연타·재전송을 한 번으로 묶는다. 모델 호출 전에 INSERT
+  id, requested_by,                     -- 요청자별로 키가 따로다(다른 사람의 같은 키는 영향 없음)
+  scope('recommend.run'),               -- 지금은 POST /maps/{mapId}/runs만. 다른 요청에 쓸 때 값을 더한다
+  key,                                  -- Idempotency-Key 헤더 값(8~64자)
+  request_hash,                         -- (map_id, category, execute — execute 생략은 false로 정규화)의 해시. 같은 키로 다른 지도·다른 본문이면 409 IDEMPOTENCY_CONFLICT(#48)
+  run_id null,                          -- 첫 요청이 만든 run. NULL이면 아직 모델을 기다리는 중(→ 같은 키는 409 REQUEST_IN_PROGRESS)
+  attempt int default 1,                -- 예약 세대. 처리 기한(90초)이 지나 이어받으면 +1 — run 저장은 자기 세대일 때만 성공한다(늦게 끝난 쪽은 저장 거절)
+  created_at, started_at,               -- started_at: 현재 세대의 예약 시각(기한 판정 기준)
+  unique(requested_by, scope, key)
+)
+-- **예약은 모델 호출 전에 독립 트랜잭션으로 커밋한다**: 요청이 끝날 때 커밋하는 기존 규칙(session_scope)과 모델 호출 전 rollback에 묻히면 다른 요청이 보지 못하거나
+--   미커밋 unique 때문에 둘째 INSERT가 모델이 끝날 때까지 기다린다(그러면 즉시 409 REQUEST_IN_PROGRESS가 안 나온다). 예약을 가진 요청만 모델을 부르고, run INSERT와
+--   run_id 연결은 한 트랜잭션이다. 모델 실패(500)로 run을 못 만들면 자기 세대의 행만 지워 같은 키의 재시도를 허용한다.
+-- 24시간이 지난 행은 maintenance가 정리한다(개인정보는 아니다 — 키는 화면이 만든 uuid). 정리는 run_id가 있는 행만 지운다(진행 중인 예약은 건드리지 않는다).
 
 evidence_lines(
   id, run_id, author_id,                -- "자기가 쓴 것만 뺄 수 있다"(5-5) — author_id로 권한 판정
@@ -379,7 +446,8 @@ agent_settings(                       -- 지도별 모드. 행이 없으면 켜�
 agent_cursors(                        -- 관찰 흐름만 쓴다. 지도별 책갈피와 다음 점검 시각, 중복 실행 방지 자리표
   map_id primary key,
   last_seen_seq bigint default 0,     -- 관찰 때 본 가장 큰 event_log seq(구멍은 추적하지 않는다, agent-v2.md 12.5)
-  last_observed_at null, next_check_at null, lease_until null
+  last_observed_at null, next_check_at null, lease_until null,
+  lease_token uuid null              -- lease 주인 표시(fencing, #812). 잡을 때 새 값, 해제·커서 전진·저장은 같을 때만
                                       -- gap_seq는 0030에서 지웠다(#515)
 )
 
@@ -463,6 +531,94 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 
 ---
 
+## llm_calls (모델 호출 사용량, #870, 마이그레이션 0043)
+
+> llm 모듈이 쓰는 테이블 1개. 모델 호출 1건 = 1행이다. 기록은 출구(`llm/client.py`의 `call_planner`, `_agent_parse`) 한 곳에서 하고,
+> 왜 불렀는지와 지도·사람·실행은 부르는 쪽이 `llm.api.usage_context`로 붙인다. 감싸지 않은 호출(평가 스크립트)은 남지 않는다.
+> **사유 원문, 요청 원문, 응답 본문은 저장하지 않는다.** 숫자와 분류만이다. 기록 실패는 본 기능을 막지 않는다(별도 세션, 예외는 로그만).
+> `agent_runs`, `agent_course_runs`의 `tokens_in/out`(실행 1건 합계)은 그대로 둔다. 겹침 정리는 측정 뒤 따로 한다.
+
+```
+llm_calls(
+  id uuid,
+  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'course'),   -- 왜 불렀는지
+  call('plan_evidence'|'agent_diagnose'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
+  trace_id uuid,                      -- 같은 usage_context 안의 호출. run_id가 아직 없는 호출(추천 ②, 진단)도 실행 1번으로 묶는다
+  map_id null, user_id null,          -- user_id는 사용자가 부른 호출만. 서버 호출(진단, 요약)은 null
+  run_id null,                        -- evidence_add는 recommend_runs.id, course는 agent_course_runs.id. 추천 ②와 진단은 null
+  model, prompt_version null,         -- ②는 프롬프트 버전 상수가 없어 null
+  input_tokens, cached_input_tokens, cache_write_tokens, output_tokens,   -- 입력은 캐시 몫과 캐시 쓰기 할증 포함, 출력은 추론 토큰 포함
+  cost_krw numeric(12,4),             -- 기록 시점 단가(common.settings의 LLM_PRICE_*)로 계산. 할증이 input_tokens에 있어 cache_write_tokens는 따로 더하지 않는다
+  outcome('ok'|'refusal'|'empty'|'timeout'|'invalid_schema'|'call_failed'), ok bool,
+  elapsed_ms, created_at
+)
+index ix_llm_calls_created (created_at)
+index ix_llm_calls_map_created (map_id, created_at)
+index ix_llm_calls_user_created (user_id, created_at)
+index ix_llm_calls_trace (trace_id)
+```
+
+- 캐시 토큰은 엘리스 게이트웨이 응답의 `usage.prompt_tokens_details.cached_tokens`다(2026-10-30 확인). 캐시 미스면 게이트웨이가 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고한다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 엘리스 청구서와 대조해야 한다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
+- 탈퇴는 행을 남기고 `user_id`만 비운다(비용 통계는 사람 없이도 쓴다, `llm.api.anonymize_by_user`). 게스트 합치기는 `user_id`를 옮긴다. 30일 지난 행은 정기 정리(`maintenance.run`의 `llm_calls`)가 지운다. 지도 정리는 행을 지우지 않는다(map_id만 남고 가리키는 지도가 없다).
+
+---
+
+## credits (크레딧, #432, docs/credits-reviews.md — 구현 #948)
+
+> credits 모듈이 쓰는 테이블 2개. **원본은 원장(`credit_ledger`)이다.** `credit_accounts.balance`는 원장 합을 담아 두는 값으로, 행 잠금(`SELECT ... FOR UPDATE`)과 `CHECK (balance >= 0)`을 걸 자리라서 둔다. 잔액을 바꾸는 함수는 원장 행과 `balance`를 같은 트랜잭션에서 함께 바꾸고, 둘이 같은지는 테스트가 본다.
+> 계정 행은 처음 쓰기(차감, 후기 보상) 때 만들고 그때 `initial` +30을 같이 남긴다. 행이 없으면 읽기는 30으로 본다. 게스트에는 만들지 않는다. 가격은 `credits/constants.py` 한 곳이다.
+
+```
+credit_accounts(
+  user_id varchar PK,                 -- FK 없음(모듈 경계, #760)
+  balance integer NOT NULL CHECK (balance >= 0),   -- 원장 합
+  updated_at timestamptz NOT NULL default now()
+)
+credit_ledger(
+  id uuid PK,
+  user_id varchar NOT NULL,
+  delta integer NOT NULL,
+  reason('initial'|'spend'|'refund'|'review') NOT NULL,   -- 페이즈 2 구매는 'purchase', 광고 충전은 'ad'로 같은 표에 더한다
+  ref_id varchar NOT NULL UNIQUE,     -- initial:<user> · <feature>:<run_id> · refund:<차감 ref_id> · review:<user>:<place_id>
+  created_at timestamptz NOT NULL default now()
+)
+index ix_credit_ledger_user_reason_created (user_id, reason, created_at)
+```
+
+- `ref_id` UNIQUE가 멱등을 맡는다 — 같은 실행 이중 차감, 이중 환불, 같은 장소 후기 보상 두 번이 구조적으로 막힌다.
+- 탈퇴 때는 남기고, 복구 기간(7일)이 지나 정리할 때(`auth.service.purge_withdrawn_user`) 계정과 원장을 지운다(`credits.api.delete_by_user`, #948 검수). 7일 안에 되살리면 잔액이 그대로 돌아온다 — 탈퇴 때 지우면 되살린 계정이 30으로 다시 시작해 반복으로 채울 수 있었다. 게스트 합치기는 옮기지 않는다 — 게스트는 계정이 없고, 혹시 있으면 지운다(초기 지급 두 번 방지).
+
+## reviews (장소 후기, #432, docs/credits-reviews.md — 구현 #951)
+
+> reviews 모듈이 쓰는 테이블 2개. 후기는 핀이 아니라 **자체 DB 장소(`places.id`)에 붙는다** — 같은 장소의 후기는 어느 지도의 핀에서 봐도 같다. `place_id`와 사용자 id 열은 FK 없음(#760, `ads.place_id` 선례).
+> 응답에 작성자 이름·id를 싣지 않는다(#432 결정 B). 후기 글은 모델·로그로 보내지 않는다.
+
+```
+reviews(
+  id uuid PK,
+  place_id varchar NOT NULL,
+  user_id varchar NOT NULL,
+  rating smallint NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  body text NOT NULL CHECK (char_length(body) BETWEEN 1 AND 500),   -- 앞뒤 공백을 걷은 뒤
+  created_at timestamptz NOT NULL default now(),
+  updated_at timestamptz NOT NULL default now(),
+  hidden_at timestamptz NULL,         -- 관리 스크립트로만(reviews/scripts/hide.py). 숨기면 목록·평균·개수·mine에서 빠진다
+  UNIQUE (place_id, user_id)          -- 한 사람이 한 장소에 하나
+)
+index ix_reviews_place_created (place_id, created_at DESC, id DESC) WHERE hidden_at IS NULL
+review_reports(
+  review_id uuid NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+  reporter_id varchar NOT NULL,
+  created_at timestamptz NOT NULL default now(),
+  PRIMARY KEY (review_id, reporter_id)   -- 한 사람 한 번
+)
+```
+
+- 탈퇴는 후기를 남기고(작성자 이름은 원래 보이지 않는다) 그 사람이 한 신고를 지운다. 게스트 합치기는 옮길 것이 없다(게스트는 쓰기·신고를 못 한다, 멱등 no-op).
+- 사용자 id 열 4개(`credit_accounts.user_id`, `credit_ledger.user_id`, `reviews.user_id`, `review_reports.reporter_id`)는 `integration/test_user_data_lists.py`에 등록한다.
+
+---
+
 ## notifications / feedback (v2, #470, #10)
 
 > v2. 계약만 먼저 올렸고 마이그레이션은 구현 PR이 그때의 head 다음 번호로 만든다(번호를 문서에 못 박지 않는다 — agent·maps 마이그레이션과 겹친다). 이슈 본문의 `0026`은 옛 초안이다.
@@ -517,6 +673,7 @@ feedback(                             -- 서비스 피드백. 저장만 한다
 | notifications | `notifications.user_id` | `notification_prefs`는 카카오 계정 것을 쓰고 게스트 것은 지운다 |
 | feedback | `feedback.user_id` | 없음 |
 | agent | `agent_suggestion_views.user_id`, `agent_course_runs.requested_by`, `agent_settings.updated_by`, `agent_suggestions.resolved_by` | 같은 제안을 둘 다 열람했으면 게스트 것을 지운다. 같은 지도에 둘 다 진행 중인 코스 요청이 있으면 게스트 것을 지운다(진행 중은 지도당 한 사람에 하나). 코스 하루 상한은 그날 행 수로 세므로(`requested_by`, `created_at`) 그날 옮긴 코스는 카카오 계정의 횟수에 들어간다. 다음 자정(KST)에 풀린다(#755) |
+| llm | `llm_calls.user_id` | 없음(#870) |
 | auth | 마지막에 게스트 행을 `deleted_at`으로 지운다(탈퇴처럼 반응·근거를 지우지는 않는다 — 이미 옮겼다) | — |
 
 합치기로 사용자가 보는 이름이 게스트 이름에서 카카오 계정의 이름으로 바뀐다(구성원 목록과 핀 작성자 표시는 다시 불러오면 된다).
@@ -553,7 +710,7 @@ event_log(
 
 ## 열린 항목 (결정 이슈로 별도 확정 — 이 문서는 자리만 잡음)
 
-- 중복 핀 "같은 곳" 판정 기준 (source_id 동일 / 좌표 반경 N m / 이름 유사도) — #33, 보류
+- 중복 핀 "같은 곳" 판정 기준 (source_id 동일 / 좌표 반경 N m / 이름 유사도) — #33. 장소 쪽에서 같은 가게를 한 장소로 합치기로 정했다(#880, 위 「출처 기록과 같은 가게 합치기」). 그러면 핀 중복은 지금처럼 같은 장소 id로 판정하면 된다
 - ~~N(구성원 수)의 정의~~ — 2026-10-07 해소(#360): 추천 열림은 ♥/🚫 의견이 달린 핀 1개 이상이라 임계값 N이 없고, 핀 참여율의 분모는 지도 전체 구성원 수다
 - 재시도 상한의 집계 단위(#31), 제안·거절 이력의 단위(#42) — 아래 "팀이 결정한 것" 참고(2026-09-22 확정)
 

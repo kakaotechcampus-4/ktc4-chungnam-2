@@ -1,11 +1,29 @@
 import { api, ApiError } from '@/api'
 
-import type { UserDto } from './model'
+import type { GuestJoinResult, PendingAccountDto, PendingChoice, UserDto } from './model'
 
 export const fetchMe = () => api<UserDto>('/auth/me')
 
+/** 내 표시 이름 수정 — 계정 하나에 이름 하나라 모든 지도에 같이 바뀐다(2026-09-30). 서버가 앞뒤 공백을 지운다. */
+export const updateMe = (displayName: string) =>
+  api<UserDto>('/auth/me', { method: 'PATCH', body: JSON.stringify({ display_name: displayName }) })
+
 export function isUnauthorized(err: unknown) {
   return err instanceof ApiError && err.status === 401
+}
+
+/**
+ * 탈퇴 계정 재로그인의 선택 안내와 선택(#855). 세션이 아니라 콜백이 내린 `pending_account` 쿠키(10분)로 부른다.
+ * 선택은 JSON 본문으로만 보낸다 — `api()` 가 본문이 있으면 Content-Type 을 붙인다.
+ */
+export const fetchPendingAccount = () => api<PendingAccountDto>('/auth/pending')
+
+export const choosePendingAccount = (choice: PendingChoice) =>
+  api<UserDto>('/auth/pending', { method: 'POST', body: JSON.stringify({ choice }) })
+
+/** 쿠키가 없거나 만료·이미 선택됨 — 고를 게 없으니 카카오로 다시 시작한다. */
+export function isNoPendingLogin(err: unknown) {
+  return err instanceof ApiError && err.code === 'NO_PENDING_LOGIN'
 }
 
 /**
@@ -16,6 +34,13 @@ export function kakaoLoginUrl(): string {
   const base = import.meta.env.VITE_API_BASE_URL
   return base ? `${base}/auth/kakao/login` : '/'
 }
+
+/**
+ * 게스트로 참여(#472) — 이름만 입력해 그 초대의 지도에 바로 들어간다(계정 만들기와 초대 수락이 한 요청).
+ * 응답과 함께 세션 쿠키가 온다. 로그인 전에만 부른다.
+ */
+export const joinAsGuest = (displayName: string, inviteToken: string) =>
+  api<GuestJoinResult>('/auth/guest', { method: 'POST', body: JSON.stringify({ display_name: displayName, invite_token: inviteToken }) })
 
 export const logout = () => api<void>('/auth/logout', { method: 'POST' })
 

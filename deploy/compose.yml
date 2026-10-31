@@ -1,0 +1,62 @@
+# 서버 1대 구성(#168) — 운영과 스테이징을 같은 서버에서 나눠 돌린다. 이유와 다시 볼 조건은 deploy_rules.md 「배포 구성」.
+# 이미지 태그(PROD_TAG, STAGING_TAG)와 주소(SITE_DOMAIN)는 같은 폴더의 .env에 있다(.env.example 참고).
+# 비밀값은 env/prod.env, env/staging.env에만 둔다(저장소, 이미지에 넣지 않는다).
+name: pingo
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-api: &api
+  restart: unless-stopped
+  logging: *logging
+  stop_grace_period: 15s
+  environment:
+    # Caddy가 /api를 떼고 넘긴다(Caddyfile). 앱이 자기 공개 경로를 알게 한다(/docs, 접근 로그)
+    UVICORN_ROOT_PATH: /api
+  # DB 의존(depends_on db)은 compose.db.yml에 있다. 여기 두면 db가 정의되지 않은 RDS 구성에서 compose가 설정 전체를
+  # 거절한다(required: false여도 "undefined service", Compose v5, #873)
+
+x-web: &web
+  restart: unless-stopped
+  logging: *logging
+
+services:
+  # HTTPS(Let's Encrypt 자동)와 주소 나누기: /api/* → API, 나머지 → 화면
+  edge:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    logging: *logging
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?SITE_DOMAIN을 .env에 적는다}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  api-prod:
+    <<: *api
+    image: ${REGISTRY:?}/pingo-api:${PROD_TAG:?}
+    env_file: [./env/prod.env]
+
+  web-prod:
+    <<: *web
+    image: ${REGISTRY:?}/pingo-web:${PROD_TAG:?}
+
+  api-staging:
+    <<: *api
+    image: ${REGISTRY:?}/pingo-api:${STAGING_TAG:?}
+    env_file: [./env/staging.env]
+
+  web-staging:
+    <<: *web
+    image: ${REGISTRY:?}/pingo-web:${STAGING_TAG:?}
+
+volumes:
+  caddy_data:
+  caddy_config:

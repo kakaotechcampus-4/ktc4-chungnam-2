@@ -37,18 +37,21 @@ export default function PinList({
 
 /**
  * 아직 의견을 안 남긴 카드는 흰 바탕 + 파란 테두리 + 「의견 남기기」로 할 일을 보여준다(할 일 표시는 브랜드 파랑만).
+ * 확정된 카드는 같은 자리에 골드 테두리 + 「✓ 확정됨」이다. 의견을 안 남겼어도 확정 표시가 먼저다(#859).
  * 내가 고른 반응은 그 반응 색 칩으로 감싸고 "· 나"를 붙인다 — "내 선택" 배지는 쓰지 않는다.
  */
 function PinCard({ card, onSelect }: { card: PinCardView; onSelect: () => void }) {
-  const todo = card.mine === null
+  const todo = !card.confirmed && card.mine === null
+  const border = card.confirmed
+    ? 'border-[1.5px] border-[var(--pin-confirmed)]'
+    : todo
+      ? 'border-[1.5px] border-brand-600'
+      : 'border border-ink-200'
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`w-full rounded-xl p-3.5 text-left ${todo ? 'border-[1.5px] border-brand-600 bg-white' : 'border border-ink-200 bg-white'}`}
-    >
+    <button type="button" onClick={onSelect} className={`w-full rounded-xl bg-white p-3.5 text-left ${border}`}>
       <div className="flex items-start justify-between gap-2">
         <p className="truncate font-bold text-ink-900">{card.name}</p>
+        {card.confirmed && <span className="tag tag-confirmed">✓ 확정됨</span>}
         {todo && (
           <span className="shrink-0 rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-semibold text-brand-600">의견 남기기</span>
         )}

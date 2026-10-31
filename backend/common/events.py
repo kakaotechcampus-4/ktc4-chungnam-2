@@ -25,7 +25,7 @@ class Event:
     map_id: str
     channel: Channel
     type: str                              # docs/events.md 11종 중 하나
-    payload: dict
+    payload: dict | list                   # route.recalculated만 Route[](list)를 싣는다(docs/events.md). 나머지는 객체다
     recipient_user_id: str | None = None   # channel="private"일 때만 채운다
 
     def __post_init__(self) -> None:
@@ -48,7 +48,7 @@ class EventLog(Base):
     channel: Mapped[str] = mapped_column(Enum("public", "private", name="event_channel"), nullable=False)
     recipient_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     type: Mapped[str] = mapped_column(String, nullable=False)
-    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    payload: Mapped[dict | list] = mapped_column(JSONB, nullable=False)
     # PostgreSQL의 now()는 트랜잭션 시작 시각이다(문 실행 시각이 아님) — 같은 트랜잭션에서 여러
     # 이벤트를 기록하면 created_at이 전부 같은 값이 된다(2차 DeepSeek 재검수가 문서화 누락을
     # 지적). 정렬·순서 판단은 반드시 seq를 쓴다 — created_at은 보존기간 삭제(§index)용일 뿐,

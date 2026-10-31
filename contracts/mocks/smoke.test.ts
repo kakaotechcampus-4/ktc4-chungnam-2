@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, afterEach, describe, expect, it } from "vitest";
 import { server } from "./node";
 import { resetScenario } from "./scenarios";
-import { store } from "./store";
+import { ME_USER_ID, store } from "./store";
 import { MAP_LIMIT } from "./handlers/maps";
 
 const BASE = "https://api.pingo.example.com";
@@ -134,6 +134,30 @@ describe("에러 시나리오", () => {
     expect(body.detail).toEqual({ limit: 10, used: 10 }); // 같은 글 1 + 4 + 5
   });
 
+  it("「+」 같은 글 재추가는 새 줄도, 글 수도 늘리지 않는다 — 뺐던 줄은 다시 켠다(#848)", async () => {
+    const run = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점" }) }).then((r) => r.json());
+    const patch = (body: object) => fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify(body) }).then((r) => r.json());
+    const first = await patch({ add: [{ text: "조용한 곳" }] });
+    const mine = first.filter((l: { text: string }) => l.text === "조용한 곳");
+    expect(mine).toHaveLength(1);
+    // 공백만 다른 같은 글 — 새 줄이 생기지 않는다
+    const again = await patch({ add: [{ text: "  조용한   곳 " }] });
+    expect(again.filter((l: { text: string }) => l.text.trim() === "조용한 곳" || l.text.replace(/\s+/g, " ").trim() === "조용한 곳")).toHaveLength(1);
+    expect(again).toHaveLength(first.length);
+    // 뺐다가 다시 추가하면 같은 줄이 다시 켜진다
+    await patch({ toggle: [{ id: mine[0].id, is_active: false }] });
+    const back = await patch({ add: [{ text: "조용한 곳" }] });
+    const line = back.find((l: { id: string }) => l.id === mine[0].id);
+    expect(line.is_active).toBe(true);
+    expect(back).toHaveLength(first.length);
+    // 글 수 상한에 세지 않는다: 재추가를 여러 번 해도 새 글 10개를 더 추가할 수 있다(이미 1개 + 9개)
+    for (let i = 0; i < 12; i++) await patch({ add: [{ text: "조용한 곳" }] });
+    const nine = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify({ add: ["a", "b", "c", "d", "e"].map((text) => ({ text })) }) });
+    expect(nine.status).toBe(200);
+    const more = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify({ add: ["f", "g", "h", "i"].map((text) => ({ text })) }) });
+    expect(more.status).toBe(200);
+  });
+
   it("no-results — 결과 0개는 404 NO_RESULTS", async () => {
     resetScenario("no-results");
     const res = await fetch(`${BASE}/runs/run_no_results/result`);
@@ -141,17 +165,20 @@ describe("에러 시나리오", () => {
     const body = await res.json();
     expect(body.code).toBe("NO_RESULTS");
     expect(body.detail.funnel.length).toBeGreaterThan(0);
-    expect(body.detail.funnel.map((f: { label: string }) => f.label)).toContain("추천 가능 아님 제거");
+    // #912: 후보 풀이 처음부터 정예 장소라 「추천 가능 아님 제거」 단계가 없다
+    expect(body.detail.funnel.map((f: { label: string }) => f.label)).not.toContain("추천 가능 아님 제거");
+    expect(body.detail.funnel.map((f: { label: string }) => f.label)).toContain("반경 밖 제거");
     expect(body.detail.external_search.url).toMatch(/^https:\/\/map\.kakao\.com\/link\/search\//); // #798
+    // #845 — 후보가 하나도 없는 결과에도 이번에 쓴 근거가 실린다(0건일 때 「이 조건으로 찾았어요」를 보일 자리)
+    expect(Array.isArray(body.detail.applied_evidence)).toBe(true);
+    expect(typeof body.detail.no_applied_conditions).toBe("boolean");
   });
 
-  it("retry-limit — 10회 초과 시 429 RETRY_LIMIT(detail에 attempt_limit)", async () => {
+  it("retry-limit(폐지 예정, #432) — 10회째 run도 상한 없이 다시 추천된다", async () => {
     resetScenario("retry-limit");
     const res = await fetch(`${BASE}/runs/run_retry_limit/retry`, { method: "POST" });
-    expect(res.status).toBe(429);
-    const body = await res.json();
-    expect(body.code).toBe("RETRY_LIMIT");
-    expect(body.detail).toMatchObject({ attempt_no: 10, attempt_limit: 10 });
+    expect(res.status).toBe(202);
+    expect((await res.json()).attempt_no).toBe(11);
   });
 
   it("region-conflict — 확인 없이 confirm하면 409 REGION_CONFLICT", async () => {
@@ -815,6 +842,24 @@ describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
   });
 });
 
+describe("#902 — GET /places/external-search (장소 검색 결과 없음의 카카오맵 링크)", () => {
+  const ext = (q: string) => fetch(`${BASE}/places/external-search?q=${encodeURIComponent(q)}`);
+
+  it("사용자가 친 검색어 그대로 카카오맵 검색 링크를 만든다", async () => {
+    const res = await ext("  성수 칼국수 & 수제비 ");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      query: "성수 칼국수 & 수제비",
+      url: "https://map.kakao.com/link/search/" + encodeURIComponent("성수 칼국수 & 수제비"),
+    });
+  });
+
+  it("검색어가 비었거나 50자를 넘으면 422", async () => {
+    expect((await ext("   ")).status).toBe(422);
+    expect((await ext("가".repeat(51))).status).toBe(422);
+  });
+});
+
 describe("#180 — GET /places/search (이름 검색)", () => {
   const search = (qs: string) => fetch(`${BASE}/places/search?${qs}`);
 
@@ -838,6 +883,39 @@ describe("#180 — GET /places/search (이름 검색)", () => {
     const res = await search("q=" + encodeURIComponent("해운대") + "&lat=35.1587&lng=129.1604");
     const items = await res.json();
     expect(items[0].place_id).toBe("kakao:mock-2");
+  });
+
+  it("#822 핀 가능한(pinnable) 결과가 먼저 온다 — 거리상 더 가까운 핀 불가 결과(숙소)보다도 앞이다", async () => {
+    // 광안리 게스트하우스(숙소, 핀 불가)가 광안리 해변(관광지)보다 이 좌표에 더 가깝다. 거리 순만 쓰면 숙소가 먼저 온다.
+    const items: { place_id: string; pinnable: boolean }[] = await search("q=" + encodeURIComponent("광안리") + "&lat=35.1547&lng=129.1191").then((r) => r.json());
+    const ids = items.map((i) => i.place_id);
+    expect(ids).toContain("kakao:mock-3");
+    expect(ids).toContain("kakao:mock-4");
+    expect(items.find((i) => i.place_id === "kakao:mock-4")?.pinnable).toBe(false);
+    expect(ids.indexOf("kakao:mock-3")).toBeLessThan(ids.indexOf("kakao:mock-4"));
+  });
+
+  it("#822 어떤 검색이든 핀 불가 결과 뒤에 핀 가능 결과가 오지 않는다", async () => {
+    for (const qs of ["q=" + encodeURIComponent("광안리") + "&lat=35.1547&lng=129.1191", "q=" + encodeURIComponent("해운대") + "&lat=35.1587&lng=129.1604", "q=" + encodeURIComponent("곱창")]) {
+      const items: { pinnable: boolean; lat: number; lng: number }[] = await search(qs).then((r) => r.json());
+      const firstBlocked = items.findIndex((i) => !i.pinnable);
+      if (firstBlocked >= 0) expect(items.slice(firstBlocked).every((i) => !i.pinnable), qs).toBe(true);
+    }
+  });
+
+  it("#835 이름 일치 정도가 거리보다 앞선다 — 앞부분 일치(해운대 …)가 더 가까운 부분 일치(광안리 해변)보다 먼저 온다", async () => {
+    // 「해」: 해운대 밀면·해운대 바다 카페는 앞부분 일치, 광안리 해변은 부분 일치. 광안리 해변이 이 좌표에 훨씬 가깝다.
+    const items: { place_id: string }[] = await search("q=" + encodeURIComponent("해") + "&lat=35.1532&lng=129.1186").then((r) => r.json());
+    const ids = items.map((i) => i.place_id);
+    expect(ids).toContain("kakao:mock-3");
+    expect(ids.indexOf("kakao:mock-3")).toBeGreaterThan(ids.indexOf("kakao:mock-1"));
+    expect(ids.indexOf("kakao:mock-3")).toBeGreaterThan(ids.indexOf("kakao:mock-2"));
+  });
+
+  it("#822 limit이 묶음을 가르지 않는다 — limit=1이면 핀 가능한 결과 하나만 온다", async () => {
+    const items: { place_id: string; pinnable: boolean }[] = await search("q=" + encodeURIComponent("광안리") + "&lat=35.1547&lng=129.1191&limit=1").then((r) => r.json());
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ place_id: "kakao:mock-3", pinnable: true });
   });
 
   it("검증 실패는 422 — 빈 검색어, 51자, lat만 보냄, limit 범위 밖", async () => {
@@ -1286,7 +1364,7 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     expect((await fetch(`${BASE}/maps/no_such_map/courses`, { method: "POST" })).status).toBe(404);
   });
 
-  it("하루 5번을 넘기면 429 COURSE_LIMIT", async () => {
+  it("하루 상한이 없다 — 6번째 코스도 접수되고, 한 번에 크레딧 1씩 빠진다(#432)", async () => {
     await confirm("pin_1");
     await confirm("pin_2");
     for (let i = 0; i < 5; i += 1) {
@@ -1298,7 +1376,360 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
       await fetch(`${BASE}/course-runs/${course_run_id}`); // done
     }
     const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
-    expect(res.status).toBe(429);
-    expect((await res.json()).detail).toEqual({ limit: 5, used: 5 });
+    expect(res.status).toBe(202);
+    expect((await fetch(`${BASE}/credits/me`).then((r) => r.json())).balance).toBe(30 - 6);
+  });
+});
+
+describe("#845 — 추천 흐름: 근거 확인 없이 결과 먼저", () => {
+  const post = (path: string, body?: unknown) => fetch(`${BASE}${path}`, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
+  const create = (execute?: boolean) => post("/maps/map_1/runs", { category: "음식점", ...(execute === undefined ? {} : { execute }) }).then((r) => r.json());
+
+  it("execute: true면 근거를 모은 뒤 곧바로 첫 검색까지 해서 done run을 돌려주고, 결과에 쓴 근거 스냅샷이 있다", async () => {
+    const run = await create(true);
+    expect(run.status).toBe("done");
+    const result = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(result.applied_evidence.length).toBeGreaterThan(0);
+    expect(result.applied_evidence.every((l: { is_active: boolean }) => l.is_active)).toBe(true);
+    expect(result.no_applied_conditions).toBe(false);
+    expect(result.new_count).toBe(result.candidates.length);
+  });
+
+  it("execute를 생략하면 지금처럼 collecting_evidence로 두고, 결과는 아직 없다(409 RUN_NOT_FINISHED)", async () => {
+    const run = await create();
+    expect(run.status).toBe("collecting_evidence");
+    const res = await fetch(`${BASE}/runs/${run.id}/result`);
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("RUN_NOT_FINISHED");
+  });
+
+  it("고친 근거는 retry가 반영하고, 이미 보인 결과의 스냅샷은 retry 전까지 그대로다(모델 호출 없이 횟수 +1)", async () => {
+    const run = await create(true);
+    const lines: { id: string; is_active: boolean; permissions: { can_disable: boolean } }[] = await fetch(`${BASE}/runs/${run.id}/evidence`).then((r) => r.json());
+    const mine = lines.find((l) => l.permissions.can_disable)!;
+    const patched = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify({ toggle: [{ id: mine.id, is_active: false }] }) });
+    expect(patched.status).toBe(200);
+    const before = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(before.applied_evidence.some((l: { id: string }) => l.id === mine.id)).toBe(true); // 고쳤지만 아직 적용 전
+    const retried = await post(`/runs/${run.id}/retry`).then((r) => r.json());
+    expect(retried.attempt_no).toBe(2);
+    const after = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(after.applied_evidence.some((l: { id: string }) => l.id === mine.id)).toBe(false);
+  });
+
+  it("횟수 상한이 없다(#432 D3·D5) — 11번째 다시 추천과 그 뒤의 근거 수정(×·＋)도 되고, 크레딧은 처음 1만 빠진다", async () => {
+    const run = await create(true);
+    for (let n = 1; n <= 10; n++) expect((await post(`/runs/${run.id}/retry`)).status).toBe(202);
+    const lines: { id: string }[] = await fetch(`${BASE}/runs/${run.id}/evidence`).then((r) => r.json());
+    for (const body of [{ toggle: [{ id: lines[0].id, is_active: false }] }, { add: [{ text: "조용했으면 좋겠어요" }] }]) {
+      const res = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify(body) });
+      expect(res.status).toBe(200);
+    }
+    expect((await fetch(`${BASE}/credits/me`).then((r) => r.json())).balance).toBe(29);
+  });
+
+  it("이미 지도에 올린 후보는 retry 뒤에도 남고, new_count는 마지막 실행이 새로 찾은 수라 게시해도 바뀌지 않는다", async () => {
+    const run = await create(true);
+    const first = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    const found = first.new_count; // 첫 실행이 찾은 수
+    expect(found).toBe(first.candidates.length);
+    const published = first.candidates[0];
+    expect((await post(`/candidates/${published.id}/publish`)).status).toBeLessThan(300);
+    const sameRun = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    expect(sameRun.new_count).toBe(found); // 게시해도 「이번 실행이 새로 찾은 수」는 그대로 — 「다 올려서 남은 게 없음」과 「이번 검색 0건」을 가른다
+    await post(`/runs/${run.id}/retry`);
+    const after = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    const names: string[] = after.candidates.map((c: { place_name: string }) => c.place_name);
+    expect(names.filter((n) => n === published.place_name)).toHaveLength(1); // 올린 장소는 새 후보로 다시 나오지 않는다
+    expect(after.candidates.find((c: { id: string }) => c.id === published.id)?.visibility).toBe("published"); // 같은 후보가 그대로 남는다
+    expect(after.new_count).toBe(after.candidates.length - 1); // 이번 실행이 새로 찾은 수 = 올린 1곳을 뺀 나머지
+    expect(after.new_count).toBeLessThan(after.candidates.length);
+  });
+});
+
+describe("#811 — 「추천 받기」 연타 방어: Idempotency-Key", () => {
+  const create = (key?: string) =>
+    fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: key ? { "Idempotency-Key": key } : {}, body: JSON.stringify({ category: "음식점", execute: true }) });
+
+  it("같은 키로 다시 보내면 첫 요청이 만든 run을 그대로 돌려주고 run도 횟수도 더 생기지 않는다", async () => {
+    const first = await create("click-0001-uuid").then((r) => r.json());
+    const second = await create("click-0001-uuid").then((r) => r.json());
+    expect(second.id).toBe(first.id);
+    const list = await fetch(`${BASE}/maps/map_1/runs`).then((r) => r.json());
+    expect(list).toHaveLength(1);
+    expect(second.attempt_no).toBe(1); // 횟수도 더 늘지 않았다
+  });
+
+  it("재사용은 최초 응답의 복제가 아니라 같은 run의 지금 상태다 — 그 사이 retry로 바뀐 attempt_no가 보인다", async () => {
+    const first = await create("click-0004-uuid").then((r) => r.json());
+    expect((await fetch(`${BASE}/runs/${first.id}/retry`, { method: "POST" })).status).toBe(202);
+    const again = await create("click-0004-uuid").then((r) => r.json());
+    expect(again.id).toBe(first.id);
+    expect(again.attempt_no).toBe(2);
+  });
+
+  it("같은 키로 다른 지도나 다른 execute를 보내면 409 IDEMPOTENCY_CONFLICT — 다른 지도의 run을 돌려주지 않는다", async () => {
+    expect((await create("click-0005-uuid")).status).toBe(202);
+    const otherExecute = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0005-uuid" }, body: JSON.stringify({ category: "음식점" }) });
+    expect(otherExecute.status).toBe(409);
+    expect((await otherExecute.json()).code).toBe("IDEMPOTENCY_CONFLICT");
+    // 목 서버는 지도 존재를 따지지 않는다 — 같은 키·같은 본문이라도 다른 지도면 그 지도의 run이 아닌 첫 run을 돌려주면 안 된다
+    const otherMap = await fetch(`${BASE}/maps/map_other/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0005-uuid" }, body: JSON.stringify({ category: "음식점", execute: true }) });
+    expect(otherMap.status).toBe(409);
+    expect((await otherMap.json()).code).toBe("IDEMPOTENCY_CONFLICT");
+  });
+
+  it("같은 후보를 두 번 게시해도 핀은 하나이고 둘째는 같은 핀을 200으로 받는다", async () => {
+    const run = await create("click-0006-uuid").then((r) => r.json());
+    const result = await fetch(`${BASE}/runs/${run.id}/result`).then((r) => r.json());
+    const id = result.candidates[0].id;
+    const a = await fetch(`${BASE}/candidates/${id}/publish`, { method: "POST" });
+    const b = await fetch(`${BASE}/candidates/${id}/publish`, { method: "POST" });
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect((await a.json()).id).toBe((await b.json()).id);
+  });
+
+  it("키가 다르거나 없으면 새 run이다(구FE 호환 — 방어 없음)", async () => {
+    const a = await create("click-0002-a").then((r) => r.json());
+    const b = await create("click-0002-b").then((r) => r.json());
+    const c = await create().then((r) => r.json());
+    expect(new Set([a.id, b.id, c.id]).size).toBe(3);
+  });
+
+  it("같은 키로 다른 요청 본문(다른 카테고리)을 보내면 409 IDEMPOTENCY_CONFLICT다 — 키를 재사용한 화면의 버그 신호", async () => {
+    expect((await create("click-0003-uuid")).status).toBe(202);
+    const res = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers: { "Idempotency-Key": "click-0003-uuid" }, body: JSON.stringify({ category: "카페", execute: true }) });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("IDEMPOTENCY_CONFLICT");
+  });
+
+  it("첫 요청이 아직 모델을 기다리는 중이면 409 REQUEST_IN_PROGRESS(마법 키)이고, NOT_READY와 코드로 구분된다", async () => {
+    const res = await create("in-progress-key");
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("REQUEST_IN_PROGRESS");
+  });
+});
+
+describe("#855 — 탈퇴 후 재가입: 7일 안에는 새 계정 또는 되살리기를 고른다", () => {
+  const pending = () => fetch(`${BASE}/auth/pending`);
+  const choose = (choice: unknown) => fetch(`${BASE}/auth/pending`, { method: "POST", body: JSON.stringify({ choice }) });
+
+  it("복구 기간 안의 탈퇴 계정이면 카카오 콜백이 로그인 대신 선택 화면(login_pending)으로 보낸다", async () => {
+    resetScenario("withdrawn-relogin");
+    const res = await fetch(`${BASE}/auth/kakao/callback`, { redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/?login_pending=withdrawn_account"); // 쿼리에 이름·id·날짜가 없다
+  });
+
+  it("선택 안내(GET /auth/pending)에 남은 날수가 있다 — 탈퇴 2일 뒤면 5일 남음", async () => {
+    resetScenario("withdrawn-relogin");
+    const info = await pending().then((r) => r.json());
+    expect(info).toMatchObject({ display_name: "탈퇴했던 나", days_left: 5 });
+    expect(new Date(info.restore_until).getTime() - new Date(info.withdrawn_at).getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it("선택 전에는 로그인된 상태가 아니다(/auth/me 401) — 선택하면 로그인된다", async () => {
+    resetScenario("withdrawn-relogin");
+    expect((await fetch(`${BASE}/auth/me`)).status).toBe(401);
+    expect((await choose("restore")).status).toBe(200);
+    expect((await fetch(`${BASE}/auth/me`)).status).toBe(200);
+  });
+
+  it("restore는 같은 계정(같은 id) 200, restart는 **새 사용자**(다른 id) 201이다. 선택하면 대기가 끝나 재전송은 404 NO_PENDING_LOGIN", async () => {
+    resetScenario("withdrawn-relogin");
+    const before = (await fetch(`${BASE}/maps`).then((r) => r.json()).then((j) => j)).items; // 시드 지도 참여
+    expect(before.length).toBeGreaterThan(0);
+    const restored = await choose("restore");
+    expect(restored.status).toBe(200);
+    const restoredUser = await restored.json();
+    expect(restoredUser.id).toBe(ME_USER_ID); // 같은 계정
+    const again = await choose("restore");
+    expect(again.status).toBe(404);
+    expect((await again.json()).code).toBe("NO_PENDING_LOGIN");
+
+    resetScenario("withdrawn-relogin");
+    const restarted = await choose("restart");
+    expect(restarted.status).toBe(201);
+    expect((await restarted.json()).id).not.toBe(ME_USER_ID); // 새 사용자 — 기존 계정은 정리됨
+    expect((await pending()).status).toBe(404);
+  });
+
+  it("choice 말고 다른 필드를 보내면 422(additionalProperties: false)", async () => {
+    resetScenario("withdrawn-relogin");
+    const res = await fetch(`${BASE}/auth/pending`, { method: "POST", body: JSON.stringify({ choice: "restore", extra: 1 }) });
+    expect(res.status).toBe(422);
+    expect((await pending()).status).toBe(200); // 잘못된 요청은 대기를 끝내지 않는다
+  });
+
+  it("choice가 restart·restore가 아니면 422이고, 대기가 없으면 어떤 호출이든 404 NO_PENDING_LOGIN", async () => {
+    resetScenario("withdrawn-relogin");
+    expect((await choose("later")).status).toBe(422);
+    expect((await pending()).status).toBe(200); // 잘못된 요청은 대기를 끝내지 않는다
+    resetScenario("happy-path");
+    const res = await pending();
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("NO_PENDING_LOGIN");
+    expect((await choose("restore")).status).toBe(404);
+  });
+});
+
+describe("#464 — 삭제한 지도 복구: 30일 안, 방장만", () => {
+  const trash = () => fetch(`${BASE}/maps/trash`).then((r) => r.json());
+  const restore = (id: string) => fetch(`${BASE}/maps/${id}/restore`, { method: "POST" });
+
+  it("삭제한 지도는 휴지통에 오고(남은 날수 30일) 복구하면 지도 목록으로 돌아온다. 복구 뒤에는 휴지통에서 빠진다", async () => {
+    const mine = await fetch(`${BASE}/maps`).then((r) => r.json());
+    const id = mine.items[0].id;
+    expect((await fetch(`${BASE}/maps/${id}`, { method: "DELETE" })).status).toBe(204);
+    expect((await fetch(`${BASE}/maps/${id}`)).status).toBe(404); // 삭제된 지도는 일반 조회가 404
+    const listed = await trash();
+    expect(listed.retention_days).toBe(30);
+    expect(listed.items.map((m: { id: string }) => m.id)).toContain(id);
+    expect(listed.items.find((m: { id: string }) => m.id === id)).toMatchObject({ days_left: 30 });
+    const res = await restore(id);
+    expect(res.status).toBe(200);
+    expect((await res.json()).id).toBe(id);
+    expect((await fetch(`${BASE}/maps/${id}`)).status).toBe(200);
+    expect((await trash()).items.map((m: { id: string }) => m.id)).not.toContain(id);
+  });
+
+  it("이미 복구된 지도를 다시 복구해도 200(연타 안전), 모르는 지도는 404", async () => {
+    const mine = await fetch(`${BASE}/maps`).then((r) => r.json());
+    const id = mine.items[0].id;
+    await fetch(`${BASE}/maps/${id}`, { method: "DELETE" });
+    expect((await restore(id)).status).toBe(200);
+    expect((await restore(id)).status).toBe(200);
+    expect((await restore("map_unknown")).status).toBe(404);
+  });
+
+  it("삭제한 지 30일이 지난 지도는 휴지통 목록에서 빠지고 복구는 410 MAP_PURGED", async () => {
+    store.maps["map_purged"] = { ...store.maps["map_1"], id: "map_purged" } as never;
+    store.members["map_purged"] = store.members["map_1"];
+    await fetch(`${BASE}/maps/map_purged`, { method: "DELETE" });
+    expect((await trash()).items.map((m: { id: string }) => m.id)).not.toContain("map_purged");
+    const res = await restore("map_purged");
+    expect(res.status).toBe(410);
+    expect((await res.json()).code).toBe("MAP_PURGED");
+  });
+
+  it("복구하면 지도가 이미 20개일 때 409 MAP_LIMIT", async () => {
+    const mine = await fetch(`${BASE}/maps`).then((r) => r.json());
+    const id = mine.items[0].id;
+    await fetch(`${BASE}/maps/${id}`, { method: "DELETE" });
+    for (let n = 0; n < MAP_LIMIT; n++) {
+      const created = await fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: `채우기 ${n}`, start_date: "2026-11-10", end_date: "2026-11-12" }) });
+      if (created.status !== 201) break;
+    }
+    const res = await restore(id);
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("MAP_LIMIT");
+  });
+});
+
+describe("#432 — 크레딧", () => {
+  const credits = () => fetch(`${BASE}/credits/me`);
+  const createRun = (headers: Record<string, string> = {}) =>
+    fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers, body: JSON.stringify({ category: "음식점", execute: true }) });
+
+  it("처음엔 30이고 가격표와 후기 보상을 응답으로 내린다", async () => {
+    expect(await credits().then((r) => r.json())).toEqual({ balance: 30, prices: { recommend_run: 1, course: 1 }, review_reward: 10 });
+  });
+
+  it("추천 받기는 1을 쓰고, 같은 Idempotency-Key 재전송과 다시 추천은 더 쓰지 않는다", async () => {
+    const first = await createRun({ "Idempotency-Key": "key-credits-1" }).then((r) => r.json());
+    await createRun({ "Idempotency-Key": "key-credits-1" });
+    await fetch(`${BASE}/runs/${first.id}/retry`, { method: "POST" });
+    expect((await credits().then((r) => r.json())).balance).toBe(29);
+  });
+
+  it("준비 미달(409)이면 run도 차감도 없다", async () => {
+    const res = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "관광지", execute: true }) });
+    expect(res.status).toBe(409);
+    expect((await credits().then((r) => r.json())).balance).toBe(30);
+  });
+
+  it("credits-empty — 추천은 402 CREDIT_INSUFFICIENT(detail에 required, balance)이고 run을 만들지 않는다", async () => {
+    resetScenario("credits-empty");
+    const before = Object.keys(store.runs).length;
+    const run = await createRun();
+    expect(run.status).toBe(402);
+    expect(await run.json()).toMatchObject({ code: "CREDIT_INSUFFICIENT", detail: { required: 1, balance: 0 } });
+    expect(Object.keys(store.runs).length).toBe(before);
+  });
+
+  it("게스트 — 잔액 조회·추천은 403 GUEST_NOT_ALLOWED이고 detail.initial_credits를 내린다", async () => {
+    resetScenario("guest");
+    for (const res of [await credits(), await createRun()]) {
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({ code: "GUEST_NOT_ALLOWED", detail: { initial_credits: 30 } });
+    }
+  });
+});
+
+describe("#432 — 장소 후기", () => {
+  const reviews = (pinId = "pin_1") => fetch(`${BASE}/pins/${pinId}/reviews`);
+  const put = (body: unknown, pinId = "pin_1") => fetch(`${BASE}/pins/${pinId}/reviews/me`, { method: "PUT", body: JSON.stringify(body) });
+
+  it("목록은 평균·개수·글 상한을 내리고, 작성자 이름·id는 없다(is_mine만)", async () => {
+    const page = await reviews().then((r) => r.json());
+    expect(page.summary).toEqual({ average_rating: 4.5, count: 2 });
+    expect(page.limits).toEqual({ body_max: 500 });
+    expect(page.mine).toBeUndefined();
+    for (const item of page.items) {
+      expect(item.is_mine).toBe(false);
+      expect(Object.keys(item).sort()).toEqual(["body", "created_at", "id", "is_mine", "rating", "updated_at"]);
+    }
+  });
+
+  it("처음 쓰면 10을 받고, 고치거나 지웠다 다시 써도 다시 받지 않는다", async () => {
+    const first = await put({ rating: 5, body: "  국물 최고  " }).then((r) => r.json());
+    expect(first).toMatchObject({ credited: 10, balance: 40, review: { rating: 5, body: "국물 최고" } });
+    expect((await put({ rating: 3, body: "다시 가니 평범" }).then((r) => r.json())).credited).toBe(0);
+    expect((await fetch(`${BASE}/pins/pin_1/reviews/me`, { method: "DELETE" })).status).toBe(204);
+    expect((await put({ rating: 4, body: "또 씀" }).then((r) => r.json())).credited).toBe(0);
+    const page = await reviews().then((r) => r.json());
+    expect(page.mine).toMatchObject({ rating: 4, body: "또 씀" });
+    expect(page.items.filter((i: { is_mine: boolean }) => i.is_mine)).toHaveLength(1);
+  });
+
+  it("별점 0·6, 공백 글, 501자는 422 VALIDATION_ERROR, 500자는 된다", async () => {
+    for (const body of [{ rating: 0, body: "a" }, { rating: 6, body: "a" }, { rating: 3, body: "   " }, { rating: 3, body: "가".repeat(501) }]) {
+      const res = await put(body);
+      expect(res.status).toBe(422);
+      expect((await res.json()).code).toBe("VALIDATION_ERROR");
+    }
+    expect((await put({ rating: 3, body: "가".repeat(500) })).status).toBe(200);
+  });
+
+  it("실시간 핀은 422 PLACE_NOT_SUPPORTED, 없는 핀은 404", async () => {
+    store.pins["pin_live"] = { ...store.pins["pin_1"], id: "pin_live", source: "live", kakao_place_id: "k1" };
+    const live = await reviews("pin_live");
+    expect(live.status).toBe(422);
+    expect((await live.json()).code).toBe("PLACE_NOT_SUPPORTED");
+    expect((await reviews("no_such_pin")).status).toBe(404);
+  });
+
+  it("신고는 멱등(204 두 번, 한 명), 내 후기는 422, 없는 후기는 404", async () => {
+    const report = (id: string) => fetch(`${BASE}/reviews/${id}/reports`, { method: "POST" });
+    expect((await report("review_1")).status).toBe(204);
+    expect((await report("review_1")).status).toBe(204);
+    expect(store.reviewReports["review_1"]).toEqual([ME_USER_ID]);
+    const mine = await put({ rating: 5, body: "내 후기" }).then((r) => r.json());
+    expect((await report(mine.review.id)).status).toBe(422);
+    expect((await report("no_such_review")).status).toBe(404);
+  });
+
+  it("숨긴 후기는 목록·평균·개수에서 빠진다", async () => {
+    store.reviews["review_2"].hidden = true;
+    const page = await reviews().then((r) => r.json());
+    expect(page.summary).toEqual({ average_rating: 5, count: 1 });
+    expect(page.items.map((i: { id: string }) => i.id)).toEqual(["review_1"]);
+  });
+
+  it("게스트는 읽을 수 있지만 쓰기·신고는 403 GUEST_NOT_ALLOWED", async () => {
+    resetScenario("guest");
+    expect((await reviews()).status).toBe(200);
+    expect((await put({ rating: 5, body: "좋아요" })).status).toBe(403);
+    expect((await fetch(`${BASE}/reviews/review_1/reports`, { method: "POST" })).status).toBe(403);
   });
 });

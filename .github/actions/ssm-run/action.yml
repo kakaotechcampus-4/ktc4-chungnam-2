@@ -1,0 +1,49 @@
+name: ssm-run
+description: >
+  팀 서버에서 셸 명령 하나를 SSM으로 돌리고 끝날 때까지 기다린 뒤 출력을 보여 준다(#168). 22번 포트와 키 없이 OIDC 역할로 부른다.
+  명령은 ubuntu 사용자로 돈다. 앞 단계에서 aws-actions/configure-aws-credentials로 인증해 둔다.
+  명령은 pipefail로 돈다 — `curl … | python -`에서 curl이 실패하면 빈 입력을 받은 python이 0으로 끝나 성공으로 보였다(멘토 리뷰).
+inputs:
+  instance-id:
+    description: 서버 인스턴스 ID
+    required: true
+  command:
+    description: 서버에서 돌릴 한 줄 명령(작은따옴표를 쓰지 않는다)
+    required: true
+  comment:
+    description: SSM 기록에 남길 설명
+    required: true
+  timeout-seconds:
+    description: 서버에서 기다릴 최대 시간
+    default: "1200"
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        INSTANCE_ID: ${{ inputs.instance-id }}
+        COMMAND: ${{ inputs.command }}
+        COMMENT: ${{ inputs.comment }}
+        TIMEOUT: ${{ inputs.timeout-seconds }}
+      run: |
+        # 파이프의 어느 단계든 실패하면 명령 전체가 실패한다(기본은 마지막 단계의 종료 코드만 남는다)
+        jq -n --arg c "sudo -iu ubuntu bash -lc 'set -o pipefail; $COMMAND'" '{commands: [$c]}' > "$RUNNER_TEMP/ssm-params.json"
+        cmd=$(aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript \
+                --comment "$COMMENT" --timeout-seconds 60 \
+                --parameters "file://$RUNNER_TEMP/ssm-params.json" \
+                --query Command.CommandId --output text)
+        echo "SSM 명령 $cmd"
+        status=Pending
+        deadline=$(( $(date +%s) + TIMEOUT + 60 ))
+        while [ "$(date +%s)" -lt "$deadline" ]; do
+          sleep 5
+          status=$(aws ssm get-command-invocation --command-id "$cmd" --instance-id "$INSTANCE_ID" \
+                     --query Status --output text 2>/dev/null || echo Pending)
+          case "$status" in Success|Failed|Cancelled|TimedOut) break ;; esac
+        done
+        echo "== 서버 출력"
+        aws ssm get-command-invocation --command-id "$cmd" --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text || true
+        echo "== 서버 오류 출력"
+        aws ssm get-command-invocation --command-id "$cmd" --instance-id "$INSTANCE_ID" --query StandardErrorContent --output text || true
+        echo "상태: $status"
+        [ "$status" = Success ]

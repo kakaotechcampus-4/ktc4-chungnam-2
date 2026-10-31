@@ -99,43 +99,45 @@ def get_run_meta(db: Session, *, run_id: str) -> dict:
 
 def get_run_funnel(db: Session, *, run_id: str) -> dict:
     """마지막 실행(execute/widen/retry)의 `{result_count, funnel, passed_count}` — simulate_filter의 before·after와 같은 모양.
-    funnel은 저장한 깔때기 `[{label, removed_count}]`(recommend_runs.last_funnel) 그대로이고 「추천 가능 아님 제거」(#558) 단계도
-    저장된 대로 들어 있다. result_count는 get_run_meta와 같은 기준(후보 수, done이 아니면 0), passed_count는 필터를 모두
+    funnel은 저장한 깔때기(recommend_runs.last_funnel)에 단계 키를 붙인 `[{key, label, removed_count}]`(core.keyed_funnel, #751)이고
+    「추천 가능 아님 제거」(#558) 단계도 저장된 대로 들어 있다. 단계는 key(core.FUNNEL_STAGES)로 찾는다 — 라벨 글자는 화면
+    문구라 바뀔 수 있고, 표에 없는 옛 라벨이면 key는 None이다. result_count는 get_run_meta와 같은 기준(후보 수, done이 아니면 0), passed_count는 필터를 모두
     통과한 곳의 수(상위 3곳을 고르기 전, core.passed_count, #587). 실행 전이면 funnel []·0·0. 사본이라 고쳐도 행에 영향이
     없다. 권한 판정 없음(위 주석)."""
     run = service.get_run_or_404(db, run_id)
-    funnel = [{"label": entry["label"], "removed_count": entry["removed_count"]} for entry in run.last_funnel or []]
+    funnel = core.keyed_funnel(run.last_funnel or [])
     result_count = _result_count(db, run)
     return {"result_count": result_count, "funnel": funnel, "passed_count": core.passed_count(result_count, funnel)}
 
 
 def get_run_evidence(db: Session, *, run_id: str) -> list[dict]:
     """그 run의 근거 줄 전부(비활성 포함) `[{line_id, text, badge, fact_key, wants, is_active, author_id, chip_id, enforced,
-    not_enforced_reason}]`, 근거 줄 정본 순서(created_at, seq). 요청자 본인 줄인지는 agent가 author_id로 판단한다. chip_id(칩에서
+    not_enforced_reason, effect}]`, 근거 줄 정본 순서(created_at, seq). 요청자 본인 줄인지는 agent가 author_id로 판단한다. chip_id(칩에서
     나온 줄만, 아니면 None)는 agent가 키 없는 줄 중 「비싸요」처럼 추천이 거르지 않는 줄을 가르는 데 쓴다(#587). enforced와
-    not_enforced_reason은 근거 응답과 같다(core.evidence_line_use, #740) — 끈 줄도 켜면 쓰이는지를 보인다. 권한 판정 없음(위 주석)."""
+    not_enforced_reason은 근거 응답과 같다(core.evidence_line_use, #740) — 끈 줄도 켜면 쓰이는지를 보인다. effect는 쓰이는 줄이
+    후보를 거르는지("filter") 점수만 주는지("score"), 안 쓰이면 None(#751) — 근거 응답에는 없다. 권한 판정 없음(위 주석)."""
     run = service.get_run_or_404(db, run_id)
     off_season = flows._out_of_season_keys(db, run.map_id)
     rows = []
     for line in service.list_evidence(db, str(run.id)):
-        enforced, reason = core.evidence_line_use(line.badge, line.fact_key, line.wants, run.category, off_season)
+        use = core.evidence_line_use(line.badge, line.fact_key, line.wants, run.category, off_season)
         rows.append({
             "line_id": str(line.id), "text": line.text, "badge": line.badge, "fact_key": line.fact_key,
             "wants": line.wants, "is_active": line.is_active, "author_id": line.author_id, "chip_id": line.chip_id,
-            "enforced": enforced, "not_enforced_reason": reason,
+            "enforced": use.enforced, "not_enforced_reason": use.not_enforced_reason, "effect": use.effect,
         })
     return rows
 
 
 def evidence_line_uses(db: Session, *, map_id: str, category: str, lines: Sequence[dict]) -> list[dict]:
     """run 없이 쓰는 근거 줄 판정(#740) — `lines`는 `[{badge, fact_key, wants}]`, 같은 순서로 `[{enforced,
-    not_enforced_reason}]`를 돌려준다. 파이프라인과 근거 응답이 쓰는 같은 함수(core.evidence_line_use)이고, 여행 기간 밖
+    not_enforced_reason, effect}]`를 돌려준다(effect는 get_run_evidence와 같다, #751). 파이프라인과 근거 응답이 쓰는 같은 함수(core.evidence_line_use)이고, 여행 기간 밖
     계절 키는 그 지도의 기간으로 본다. 권한 판정 없음. 읽기 전용, 커밋하지 않는다."""
     off_season = flows._out_of_season_keys(db, map_id)
     results = []
     for line in lines:
-        enforced, reason = core.evidence_line_use(line["badge"], line.get("fact_key"), line.get("wants"), category, off_season)
-        results.append({"enforced": enforced, "not_enforced_reason": reason})
+        use = core.evidence_line_use(line["badge"], line.get("fact_key"), line.get("wants"), category, off_season)
+        results.append({"enforced": use.enforced, "not_enforced_reason": use.not_enforced_reason, "effect": use.effect})
     return results
 
 
@@ -144,7 +146,7 @@ def simulate_filter(
     place_search: PlaceSearchGateway | None = None, place_facts: PlaceFactsGateway | None = None,
 ) -> dict:
     """실격 필터를 입력만 바꿔 다시 돌린다(flows.simulate_filter — 필터를 다시 구현하지 않는다). `{before, after}`,
-    각각 `{result_count, funnel[{label, removed_count}], passed_count}`. passed_count는 필터를 모두 통과한 곳의 수(상위 3곳을
+    각각 `{result_count, funnel[{key, label, removed_count}], passed_count}`(funnel은 get_run_funnel과 같은 모양). passed_count는 필터를 모두 통과한 곳의 수(상위 3곳을
     고르기 전, #587)라 결과 수(최대 3)와 달리 조건을 바꾼 효과를 그대로 비교할 수 있다. before는 지금 저장된 지역·활성 근거 줄로 다시 돌린 값이라
     그 사이 바뀐 것이 없으면 마지막 실행 결과와 같다. after는 지역 반경에 radius_factor를 곱하고 disable_line_ids를
     비활성으로 본다. 이미 제안·거절한 곳은 실행 때와 같이 뺀다(가드레일 6). 라벨을 모르는 가게는 실행 때처럼
@@ -175,3 +177,9 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     테이블 이름 → 옮긴 행 수를 돌려준다. 제외가 (지도, 장소)로 겹치면 from_user 것을 지운다. 멱등이고 같은 id면
     아무것도 하지 않는다. 커밋하지 않는다."""
     return service.reassign_user(db, from_user_id=from_user_id, to_user_id=to_user_id)
+
+
+def purge_idempotency_keys(db: Session, *, now: datetime) -> int:
+    """maintenance가 부른다 — 24시간이 지난 「추천 받기」 멱등 키 행(run이 연결된 것, 그리고 24시간 넘게 이어받지 않은
+    미완료 예약)을 지우고 지운 수를 돌려준다(#811). 진행 중인 예약은 남는다. 커밋하지 않는다."""
+    return service.purge_idempotency_keys(db, now=now)

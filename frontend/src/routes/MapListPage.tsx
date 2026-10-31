@@ -7,7 +7,10 @@ import { readPendingInvite } from '@/features/auth/pendingInvite'
 import { useMeQuery } from '@/features/auth/queries'
 import AccountSheet, { AccountMenu } from '@/features/maps/AccountSheet'
 import { MAP_LIMIT_HINT, type MapListView, type MapView } from '@/features/maps/model'
-import { useMapsQuery } from '@/features/maps/queries'
+import { useMapsQuery, useTrashQuery } from '@/features/maps/queries'
+import TrashSheet from '@/features/maps/TrashSheet'
+import NotificationBell from '@/features/notifications/NotificationBell'
+import { hasSeenWelcome } from '@/features/onboarding/welcomeSeen'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import Avatar from '@/ui/Avatar'
@@ -30,10 +33,14 @@ export default function MapListPage() {
   const me = useMeQuery().data
   const desktop = useIsDesktop()
   const [accountOpen, setAccountOpen] = useState(false)
+  const trash = useTrashQuery().data
+  const [trashOpen, setTrashOpen] = useState(false)
 
   const invited = (maps ?? []).filter((m) => m.createdByMe === false)
   const mine = (maps ?? []).filter((m) => m.createdByMe !== false)
 
+  // 이 기기에서 처음이면 기능 소개부터 — 끝나면 여기로 돌아와 초대가 있으면 그리로 간다.
+  if (!hasSeenWelcome()) return <Navigate to="/welcome" replace />
   if (pendingInvite) return <Navigate to={`/invites/${pendingInvite}`} replace />
 
   return (
@@ -47,17 +54,21 @@ export default function MapListPage() {
           {desktop ? (
             <div className="flex shrink-0 items-center gap-3">
               <NewMapLink className="btn-md" blockedBy={full ? limitHintId : undefined} />
+              <NotificationBell />
               <AccountMenu maps={maps ?? []} name={me?.display_name} />
             </div>
           ) : (
-            <button
-              type="button"
-              aria-label="계정"
-              onClick={() => setAccountOpen(true)}
-              className="hit-44 rounded-full"
-            >
-              <Avatar name={me?.display_name} />
-            </button>
+            <div className="flex shrink-0 items-center gap-3">
+              <NotificationBell />
+              <button
+                type="button"
+                aria-label="계정"
+                onClick={() => setAccountOpen(true)}
+                className="hit-44 rounded-full"
+              >
+                <Avatar name={me?.display_name} />
+              </button>
+            </div>
           )}
         </header>
 
@@ -84,10 +95,18 @@ export default function MapListPage() {
           </div>
         )}
 
+        {/* 휴지통 입구는 복구할 지도가 있을 때만(#479). 목록 끝의 조용한 글자 버튼 — 채움 버튼은 「새 지도 만들기」 하나다. */}
+        {trash && trash.items.length > 0 && (
+          <button type="button" onClick={() => setTrashOpen(true)} className="btn-text mt-4 self-center text-sm underline">
+            휴지통 · 삭제한 지도 {trash.items.length}개
+          </button>
+        )}
+
         {/* 모바일은 엄지가 닿는 바닥에 붙는다. 넓은 화면은 헤더 오른쪽에 있다. */}
         {!desktop && <NewMapLink className="btn-lg sticky bottom-6 mt-4" blockedBy={full ? limitHintId : undefined} />}
       </div>
 
+      {trashOpen && trash && <TrashSheet trash={trash} onClose={() => setTrashOpen(false)} />}
       {accountOpen && !desktop && <AccountSheet maps={maps ?? []} onClose={() => setAccountOpen(false)} />}
       {/* 넓은 화면 계정 메뉴의 「링크 복사」 토스트 자리 — 화면 바닥 가운데. 모바일은 계정 시트가 토스트를 갖고 있다. */}
       {desktop && (

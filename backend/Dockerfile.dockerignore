@@ -1,0 +1,13 @@
+# backend/Dockerfile 전용 무시 규칙(빌드 맥락은 저장소 루트). 필요한 것만 넣는다.
+*
+!backend
+!docs/constraints.md
+backend/.venv
+backend/**/__pycache__
+backend/**/*.pyc
+backend/.pytest_cache
+backend/.env
+backend/.env.*
+backend/env.demo.example
+backend/integration
+backend/**/tests/eval_agent/results

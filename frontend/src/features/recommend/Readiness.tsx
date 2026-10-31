@@ -1,14 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { Check } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import { CHANGED, START_PARAM } from '@/features/agent/actions'
+import { showToast } from '@/features/shell/toast'
 import Notice from '@/ui/Notice'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
 
 import ExternalSearchLink from './ExternalSearchLink'
 import { runErrorMessage, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
-import { useCreateRunMutation, useReadinessQuery } from './queries'
+import { useAttemptsQuery, useCreateRunMutation, useReadinessQuery } from './queries'
 
 /** AI 탭 시트 머리글 — 핑고 + 「AI」 배지. 표정은 그 화면의 상황을 따른다(Pingo.tsx). */
 export function AiHeader({ title, sub, mood }: { title: string; sub: string; mood?: PingoMood }) {
@@ -37,10 +40,10 @@ export function ReadinessHeader({ mapId }: { mapId: string }) {
   )
 }
 
-/** 실행 단계(실격 거르기·순위는 코드가 한다 — 가드레일 7). */
+/** 다시 추천·반경 넓히기 단계 — 모델 없이 코드만 돈다(실격 거르기·순위는 코드가 한다 — 가드레일 7). */
 const RUN_STEPS = ['반경 안 후보를 모으는 중', '꼭 지켜야 하는 조건으로 거르는 중', '구성원 선호로 순서를 정하는 중']
-/** run 만들기 단계 — 사유를 조건으로 정리하는 건 AI(②) 한 번뿐이다(CLAUDE.md 모델 호출). */
-const COLLECT_STEPS = ['구성원 의견을 모으는 중', 'AI가 사유를 조건으로 정리하는 중', '확인할 조건을 준비하는 중']
+/** 「추천받기」 단계 — 사유를 조건으로 정리(AI ②, 한 번뿐)하고 곧바로 찾는다(#845). */
+const START_STEPS = ['AI가 의견을 조건으로 정리하는 중', '조건에 맞는 곳을 찾는 중', '구성원 선호로 순서를 정하는 중']
 const STEP_MS = 3000
 
 /**
@@ -77,11 +80,18 @@ export function ProgressBody({ steps = RUN_STEPS }: { steps?: string[] }) {
 export function ReadinessBody({ mapId }: { mapId: string }) {
   const readiness = useReadinessQuery(mapId)
   const create = useCreateRunMutation(mapId)
+  // 남은 횟수를 못 받아도 버튼은 막지 않는다 — 최종 판정은 서버(429 RETRY_LIMIT)다.
+  const attempts = useAttemptsQuery(mapId).data
+  const spent = attempts?.left === 0
   const cards = readiness.data ? toReadinessCards(readiness.data) : []
   const firstReady = cards.find((c) => c.ready)?.category ?? null
   const [picked, setPicked] = useState<RecommendCategory | null>(null)
   const chosen = picked && cards.find((c) => c.category === picked)?.ready ? picked : firstReady
   const search = cards.find((c) => c.category === chosen)?.externalSearch
+  useAgentStart(cards, (category) => {
+    setPicked(category)
+    create.start(category, { onError: () => showToast(CHANGED) })
+  })
 
   if (readiness.isPending) return <PingoLoading label="준비 상태를 확인하는 중…" />
   if (readiness.error) return <ErrorText message="추천 준비 상태를 불러오지 못했어요" error={readiness.error} />
@@ -102,8 +112,9 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
       <p className="text-label text-ink-500">* 카테고리마다 좋음·반대 의견이 달린 핀이 1곳 이상이면 추천을 받을 수 있어요.</p>
       {/* 사유가 곧 추천 조건이 된다(②) — 의견이 많을수록 거르고 고를 근거가 늘어난다. */}
       <p className="text-label text-ink-500">* 핀에 의견을 많이 남길수록 추천이 더 정확해져요.</p>
-      {/* run 을 만들 때 AI가 사유를 조건으로 정리한다(②) — 5~12초 걸린다(백엔드 안내). 그동안 진행을 보인다. */}
-      {create.isPending && <ProgressBody steps={COLLECT_STEPS} />}
+      {/* 사유 정리(②)와 첫 검색을 한 요청에서 끝낸다(#845) — 몇 초 걸린다. 그동안 진행을 보인다. */}
+      {create.isPending && <ProgressBody steps={START_STEPS} />}
+      {/* 실패하면 run 이 생기지 않고 횟수도 쓰지 않는다 — 같은 버튼을 다시 누르면 새 시도다. */}
       {create.error && <ErrorText message={runErrorMessage(create.error)} error={create.error} />}
       {/* 의견 핀 근처에 정예 장소가 없으면 추천해도 0곳이다 — 막지 않고 밖에서 찾는 길을 같이 둔다(#798). */}
       {search && (
@@ -111,14 +122,46 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
       )}
       <button
         type="button"
-        disabled={!chosen || create.isPending}
-        onClick={() => chosen && create.mutate(chosen)}
+        disabled={!chosen || create.isPending || spent}
+        onClick={() => chosen && create.start(chosen)}
         className="btn-primary btn-lg w-full"
       >
-        {create.isPending ? '조건을 모으는 중…' : chosen ? `${chosen} 추천받기` : '아직 추천할 수 있는 곳이 없어요'}
+        {create.isPending ? '추천을 찾는 중…' : chosen ? `${chosen} 추천받기` : '아직 추천할 수 있는 곳이 없어요'}
       </button>
+      {/* 상한은 지도마다 한 사람 기준, 카테고리와 상관없이 센다(#31). 숫자는 서버 값이다. */}
+      {attempts && (
+        <p className="text-center text-label text-ink-500">
+          {spent ? `이 지도에서 추천을 ${attempts.limit}번 모두 받았어요` : `이 지도에서 추천 ${attempts.left}번 남았어요 (${attempts.limit}번까지)`}
+        </p>
+      )}
     </div>
   )
+}
+
+/**
+ * 「핑고 AI 조언」 버튼(open_recommend)으로 들어오면 주소의 카테고리로 손으로 누를 때와 같은 추천을 한 번 시작한다(agent-v2 16.3).
+ * 그새 준비가 풀렸으면 시작하지 않고 「상황이 바뀌었어요」.
+ */
+function useAgentStart(cards: ReadinessCard[], start: (category: RecommendCategory) => void) {
+  const [params, setParams] = useSearchParams()
+  const wanted = params.get(START_PARAM)
+  // 한 번만 시작한다 — cards·start 는 렌더마다 새로 만들어져 효과가 자주 돌고, 개발 모드(StrictMode)는 두 번 돈다.
+  const started = useRef<string | null>(null)
+  const ready = cards.length > 0
+  useEffect(() => {
+    if (!wanted || !ready || started.current === wanted) return
+    started.current = wanted
+    setParams(
+      (p) => {
+        p.delete(START_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+    const card = cards.find((c) => c.category === wanted)
+    if (card?.ready) start(card.category)
+    else showToast(CHANGED)
+  }, [wanted, ready, cards, setParams, start])
 }
 
 function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; selected: boolean; wide: boolean; onPick: () => void }) {

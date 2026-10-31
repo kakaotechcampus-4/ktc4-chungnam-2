@@ -1,0 +1,25 @@
+# 앞단 프록시(#168). 환경마다 한 주소에서 화면과 API를 함께 낸다 — 세션 쿠키가 SameSite=lax라 화면과 API가 같은 사이트여야
+# 로그인이 된다. /api/*는 앞의 /api를 떼고 API로, 나머지는 화면으로 보낸다(백엔드 경로는 그대로).
+# 접근 로그는 켜지 않는다 — /places/nearest의 쿼리스트링(누른 좌표)이 남는다(#473).
+
+(app) {
+	encode zstd gzip
+	handle_path /api/* {
+		reverse_proxy {args[0]}:8000 {
+			# SSE(/maps/{id}/events)를 모아 두지 않고 바로 흘려보낸다
+			flush_interval -1
+		}
+	}
+	handle {
+		reverse_proxy {args[1]}:80
+	}
+}
+
+{$SITE_DOMAIN} {
+	import app api-prod web-prod
+}
+
+staging.{$SITE_DOMAIN} {
+	header X-Robots-Tag "noindex, nofollow"
+	import app api-staging web-staging
+}
