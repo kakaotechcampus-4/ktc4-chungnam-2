@@ -4,6 +4,7 @@ import { Share } from 'lucide-react'
 import ErrorText from '@/ErrorText'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import { useMeQuery } from '@/features/auth/queries'
+import FeedbackSheet from '@/features/feedback/FeedbackSheet'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
 import { DeleteMapConfirm, LeaveMapConfirm } from '@/features/maps/MapLifecycle'
 import { useShareInvite } from '@/features/maps/useShareInvite'
@@ -12,7 +13,7 @@ import Avatar from '@/ui/Avatar'
 import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
 
-type Confirm = 'logout' | 'leave' | 'delete' | null
+type Confirm = 'logout' | 'leave' | 'delete' | 'feedback' | null
 
 /**
  * 프로필 모달(Figma 8절, 모바일). 탭 시트가 아니라 모달이다 — 탭 시트 자리에 띄우면 켜진 탭과 내용이 어긋난다.
@@ -48,6 +49,7 @@ function ProfileConfirm({ mapId, which, onCancel }: { mapId: string; which: Conf
   if (which === 'logout') return <LogoutConfirm onCancel={onCancel} />
   if (which === 'leave') return <LeaveMapConfirm mapId={mapId} nextOwnerName={map?.nextOwnerName} onCancel={onCancel} />
   if (which === 'delete' && map) return <DeleteMapConfirm mapId={mapId} title={map.title} onCancel={onCancel} />
+  if (which === 'feedback') return <FeedbackSheet mapId={mapId} onClose={onCancel} />
   return null
 }
 
@@ -146,6 +148,9 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
           로그아웃
         </button>
       </div>
+      <button type="button" onClick={() => onConfirm('feedback')} className="btn-text mt-3 w-full text-center text-body">
+        핑고핑고에 의견 보내기
+      </button>
     </>
   )
 }
