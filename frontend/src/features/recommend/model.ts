@@ -33,6 +33,12 @@ export function toReadinessCards(map: Partial<Record<RecommendCategory, Readines
   })
 }
 
+/** 준비 화면이 보고 있는 카테고리 — 고른 것이 준비됐으면 그것, 아니면 첫 준비 카테고리. 광고 영역도 이 값을 쓴다. */
+export function chosenCategory(cards: ReadinessCard[], picked: RecommendCategory | undefined): RecommendCategory | null {
+  if (picked && cards.find((c) => c.category === picked)?.ready) return picked
+  return cards.find((c) => c.ready)?.category ?? null
+}
+
 /**
  * 근거 줄 하나를 화면 말로. 서버가 사유를 해석한 방향(wants)을 같이 보여 줘야 틀렸을 때 사람이 뺄 수 있다(#228).
  * fact_label 이 없으면(해석 못 한 사유) 원문을 그대로 쓴다.

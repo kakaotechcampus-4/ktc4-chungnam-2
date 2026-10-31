@@ -140,7 +140,7 @@ export function ResultsBody({
           반경 안에서 ‘{missing.join('·')}’에 맞는 곳을 찾지 못해 다른 곳을 골랐어요. 반경을 넓혀 볼까요?
         </Notice>
       )}
-      <div className="space-y-3 pb-[100px]">
+      <div className="space-y-3">
         {fresh.length > 0 && (
           <ol className="space-y-3">
             {fresh.map((c) => (

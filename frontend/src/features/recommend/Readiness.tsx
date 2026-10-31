@@ -9,8 +9,9 @@ import Notice from '@/ui/Notice'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
 
+import { useAiStore } from './aiStore'
 import ExternalSearchLink from './ExternalSearchLink'
-import { runErrorMessage, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
+import { chosenCategory, runErrorMessage, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
 import { useAttemptsQuery, useCreateRunMutation, useReadinessQuery } from './queries'
 
 /** AI 탭 시트 머리글 — 핑고 + 「AI」 배지. 표정은 그 화면의 상황을 따른다(Pingo.tsx). */
@@ -84,12 +85,12 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const attempts = useAttemptsQuery(mapId).data
   const spent = attempts?.left === 0
   const cards = readiness.data ? toReadinessCards(readiness.data) : []
-  const firstReady = cards.find((c) => c.ready)?.category ?? null
-  const [picked, setPicked] = useState<RecommendCategory | null>(null)
-  const chosen = picked && cards.find((c) => c.category === picked)?.ready ? picked : firstReady
+  const picked = useAiStore((s) => s.picked[mapId])
+  const setPicked = useAiStore((s) => s.setPicked)
+  const chosen = chosenCategory(cards, picked)
   const search = cards.find((c) => c.category === chosen)?.externalSearch
   useAgentStart(cards, (category) => {
-    setPicked(category)
+    setPicked(mapId, category)
     create.start(category, { onError: () => showToast(CHANGED) })
   })
 
@@ -105,7 +106,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
             card={c}
             selected={c.category === chosen}
             wide={cards.length % 2 === 1 && i === cards.length - 1}
-            onPick={() => setPicked(c.category)}
+            onPick={() => setPicked(mapId, c.category)}
           />
         ))}
       </div>

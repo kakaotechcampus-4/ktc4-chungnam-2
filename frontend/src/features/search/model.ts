@@ -1,5 +1,6 @@
 import type { components } from '@pingo/contracts/src/types/api'
 
+import { ApiError } from '@/api'
 import { FILTER_CATEGORIES, isPlaced, type Pin } from '@/features/map/model'
 
 export type PlaceSearchResultDto = components['schemas']['PlaceSearchResult']
@@ -71,4 +72,11 @@ export function toSearchResult(r: PlaceSearchResultDto, center: LatLng | null, p
     far: center !== null && distanceM(center, r) > FAR_M,
     dto: r,
   }
+}
+
+/** docs/errors.md — 핀 만들기 실패. */
+export function pinErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.code === 'PIN_DUPLICATE') return '이미 지도에 있는 장소예요'
+  if (err instanceof ApiError && err.code === 'PLACE_NOT_SUPPORTED') return '아직 지원하지 않는 장소예요'
+  return '핀을 찍지 못했어요'
 }
