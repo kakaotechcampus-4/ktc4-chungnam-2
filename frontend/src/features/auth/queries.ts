@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { choosePendingAccount, fetchMe, fetchPendingAccount, isNoPendingLogin, isUnauthorized, logout, updateMe, withdraw } from './api'
+import { choosePendingAccount, fetchMe, fetchPendingAccount, isNoPendingLogin, isUnauthorized, joinAsGuest, logout, updateMe, withdraw } from './api'
 import type { PendingAccountDto, User } from './model'
 
 export const authKeys = {
@@ -57,6 +57,22 @@ export function useUpdateMeMutation() {
     onSuccess: (user) => {
       queryClient.setQueryData(authKeys.me, user)
       void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] !== authKeys.me[0] })
+    },
+  })
+}
+
+/**
+ * 게스트로 참여(#485). 응답의 `user`가 곧 로그인 상태라 그대로 넣고(401이던 캐시를 덮는다), 지도 목록은 다시 받는다.
+ * 성공하면 응답의 `map`으로 지도에 들어간다.
+ */
+export function useGuestJoinMutation(inviteToken: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (displayName: string) => joinAsGuest(displayName, inviteToken),
+    onSuccess: ({ user }) => {
+      queryClient.setQueryData(authKeys.me, user)
+      // mapKeys.all — maps가 auth를 가져다 쓰므로 여기서 maps를 import하지 않는다.
+      void queryClient.invalidateQueries({ queryKey: ['maps'] })
     },
   })
 }

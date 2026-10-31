@@ -7,8 +7,8 @@ import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
 
-import { mapChanges, tripReady, type MapHeaderView, type TripDraft } from './model'
-import { useDeleteMapMutation, useLeaveMapMutation, useUpdateMapMutation } from './queries'
+import { deleteMapBody, mapChanges, tripReady, type MapHeaderView, type MemberView, type TripDraft } from './model'
+import { useDeleteMapMutation, useLeaveMapMutation, useTransferOwnerMutation, useTrashQuery, useUpdateMapMutation } from './queries'
 import TripFields from './TripFields'
 
 /**
@@ -82,15 +82,16 @@ export function LeaveMapConfirm({ mapId, nextOwnerName, onCancel }: { mapId: str
   )
 }
 
-/** 지도 삭제 확인 창(방장만, #369). 모든 구성원에게서 사라진다. */
+/** 지도 삭제 확인 창(방장만, #369). 모든 구성원에게서 사라지고, 방장은 정해진 기간 안에 휴지통에서 복구할 수 있다(#464). */
 export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; title: string; onCancel: () => void }) {
   const navigate = useNavigate()
   const del = useDeleteMapMutation(mapId)
+  const retentionDays = useTrashQuery().data?.retentionDays
 
   return (
     <ConfirmDialog
       title="지도를 삭제할까요?"
-      body={`‘${title}’의 핀과 의견이 모든 구성원에게서 사라져요. 되돌릴 수 없어요.`}
+      body={deleteMapBody(title, retentionDays)}
       ok="삭제"
       danger
       pending={del.isPending}
@@ -98,13 +99,52 @@ export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; ti
       onOk={() =>
         del.mutate(undefined, {
           onSuccess: () => {
-            showToast('지도를 삭제했어요')
+            showToast('지도를 삭제했어요. 휴지통에서 복구할 수 있어요')
             navigate('/', { replace: true })
           },
         })
       }
     >
       {del.error && <ErrorText message="지도를 삭제하지 못했어요" error={del.error} />}
+    </ConfirmDialog>
+  )
+}
+
+/**
+ * 방장 넘기기 확인 창(방장만, #468). 넘긴 뒤 나는 구성원으로 남는다 — 나가기가 아니다.
+ * 넘길 수 있는 사람인지는 서버가 정한다. 그사이 나간 사람을 골랐으면 서버가 거절하고 구성원 목록이 새로 온다.
+ */
+export function TransferOwnerConfirm({ mapId, members, onCancel }: { mapId: string; members: MemberView[]; onCancel: () => void }) {
+  const transfer = useTransferOwnerMutation(mapId)
+  const [to, setTo] = useState<MemberView | null>(null)
+  const others = members.filter((m) => !m.isMe)
+
+  return (
+    <ConfirmDialog
+      title="누구에게 방장을 넘길까요?"
+      body="넘기면 나는 구성원으로 지도에 남아요."
+      ok={to ? `${to.name}님에게 넘기기` : '넘기기'}
+      pending={transfer.isPending || !to}
+      onCancel={onCancel}
+      onOk={() =>
+        to &&
+        transfer.mutate(to.userId, {
+          onSuccess: () => {
+            showToast(`${to.name}님이 새 방장이 됐어요`)
+            onCancel()
+          },
+          onError: () => setTo(null),
+        })
+      }
+    >
+      <div role="group" aria-label="새 방장" className="flex flex-wrap gap-2 pt-1">
+        {others.map((m) => (
+          <button key={m.userId} type="button" aria-pressed={to?.userId === m.userId} onClick={() => setTo(m)} className="chip">
+            {m.name}
+          </button>
+        ))}
+      </div>
+      {transfer.error && <ErrorText message="방장을 넘기지 못했어요. 구성원을 다시 골라 주세요" error={transfer.error} />}
     </ConfirmDialog>
   )
 }

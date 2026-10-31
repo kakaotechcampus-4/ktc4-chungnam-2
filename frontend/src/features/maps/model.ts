@@ -10,6 +10,8 @@ export type InviteDto = components['schemas']['Invite']
 export type InviteSummaryDto = components['schemas']['InviteSummary']
 export type MapRegion = components['schemas']['MapRegion']
 export type MapUpdateRequest = components['schemas']['MapUpdateRequest']
+export type TrashedMapListDto = components['schemas']['TrashedMapList']
+export type OwnerTransferRequest = components['schemas']['OwnerTransferRequest']
 
 export type MapView = Pick<MapDto, 'id' | 'title'> & {
   /** 지역 태그. 지도를 만들 때 고르지 않았으면 없다. */
@@ -22,12 +24,12 @@ export type MapView = Pick<MapDto, 'id' | 'title'> & {
   summary: string
 }
 
+/** "10.3 (토)" — 화면의 날짜 표기 하나. */
+const formatDay = (d: Date) => `${d.getMonth() + 1}.${d.getDate()} (${'일월화수목금토'[d.getDay()]})`
+
 /** "10.3 (토) ~ 10.5 (월)" — 프로필 모달 머리글(Figma 8절). */
 export function formatTripDates(start: string, end: string): string {
-  const fmt = (iso: string) => {
-    const d = new Date(`${iso}T00:00:00`)
-    return `${d.getMonth() + 1}.${d.getDate()} (${'일월화수목금토'[d.getDay()]})`
-  }
+  const fmt = (iso: string) => formatDay(new Date(`${iso}T00:00:00`))
   return start === end ? `${fmt(start)} 당일치기` : `${fmt(start)} ~ ${fmt(end)}`
 }
 
@@ -40,6 +42,8 @@ export type MapHeaderView = Pick<MapDto, 'id' | 'title'> & {
   memberCount: number
   /** 제목·날짜·지역 수정은 방장만(#465). */
   canEdit: boolean
+  /** 지금 내가 방장인가. 초대 링크 관리·방장 넘기기를 보일지 정한다(#467·#468 — 서버가 따로 권한 칸을 내리지 않는다). */
+  isOwner: boolean
   /** 지도 삭제는 방장만(#369). */
   canDelete: boolean
   /** 넘길 사람이 없는 방장은 나갈 수 없다 — 지도를 삭제해야 한다. */
@@ -60,6 +64,7 @@ export function toMapHeaderView(map: MapDto): MapHeaderView {
     region: map.region ?? undefined,
     memberCount: map.member_count,
     canEdit: map.permissions.can_edit === true,
+    isOwner: map.my_role === 'owner',
     regionCenter: map.region ? { lat: map.region.lat, lng: map.region.lng } : undefined,
     canDelete: map.permissions.can_delete === true,
     canLeave: map.permissions.can_leave !== false,
@@ -108,6 +113,14 @@ export function toMapView(map: MapDto): MapView {
   }
 }
 
+/** 켜진 초대 링크 한 줄(#467) — 「민수님이 만든 링크 · 2명 참여 · 11.7 (토)까지」. */
+export type InviteRowView = { token: string; label: string }
+
+export function toInviteRowView(invite: InviteDto): InviteRowView {
+  const by = invite.created_by_display_name ? `${invite.created_by_display_name}님이 만든 링크` : '초대 링크'
+  return { token: invite.token, label: `${by} · ${invite.used_count ?? 0}명 참여 · ${formatDay(new Date(invite.expires_at))}까지` }
+}
+
 /** 내 지도 목록과 상한(#623). 상한은 서버가 내려 준 값만 쓴다. */
 export type MapListView = {
   items: MapView[]
@@ -123,10 +136,42 @@ export function toMapListView(list: MapListDto): MapListView {
 /** 상한이라 「새 지도 만들기」를 막았을 때 곁에 두는 안내(지도 목록, PC 지도 바꾸기 메뉴). */
 export const MAP_LIMIT_HINT = '다른 지도를 나가거나 삭제하면 다시 만들 수 있어요'
 
+/** 휴지통(#464, #479). 기간(retentionDays)과 남은 날수(daysLeft)는 서버가 센다 — 화면은 날짜를 계산하지 않는다. */
+export type TrashView = {
+  retentionDays: number
+  items: { id: string; title: string; dates: string; daysLeft: number }[]
+}
+
+export function toTrashView(list: TrashedMapListDto): TrashView {
+  return {
+    retentionDays: list.retention_days,
+    items: list.items.map((m) => ({ id: m.id, title: m.title, dates: formatTripDates(m.start_date, m.end_date), daysLeft: m.days_left })),
+  }
+}
+
+/** 지도 삭제 확인 창의 안내. 기간을 아직 못 받았으면 숫자 없이 쓴다(상한 숫자처럼 화면이 들고 있지 않는다). */
+export function deleteMapBody(title: string, retentionDays?: number): string {
+  const when = retentionDays ? `${retentionDays}일 안에는` : '정해진 기간 안에는'
+  return `‘${title}’의 핀과 의견이 모든 구성원에게서 사라져요. ${when} 내 지도 목록의 휴지통에서 복구할 수 있어요.`
+}
+
+/**
+ * 복구 실패 문구. 복구도 지도를 하나 늘리는 일이라 상한(409 MAP_LIMIT)에 걸릴 수 있다.
+ * MAP_PURGED 문구는 docs/errors.md 그대로이고, 날수만 휴지통 응답의 retention_days로 채운다.
+ */
+export function restoreMapErrorMessage(err: unknown, retentionDays: number): string {
+  if (err instanceof ApiError && err.code === 'MAP_LIMIT') return mapLimitMessage(err)
+  if (err instanceof ApiError && err.code === 'MAP_PURGED') return `삭제한 지 ${retentionDays}일이 지나 복구할 수 없어요`
+  return '지도를 복구하지 못했어요'
+}
+
 /** 초대 수락 실패 문구. 코드와 문구는 docs/errors.md 표를 따른다. */
 const INVITE_ERROR_MESSAGES: Record<string, string> = {
   INVITE_NOT_FOUND: '유효하지 않은 초대 링크예요',
   INVITE_EXPIRED: '초대 링크가 만료됐어요. 초대한 분께 새 링크를 요청하세요',
+  // 게스트로 참여(#485)에서만 나는 코드. 문구는 docs/errors.md 표.
+  GUEST_LIMIT: '이 링크로는 더 입장할 수 없어요. 초대한 분께 새 링크를 요청하세요',
+  RATE_LIMITED: '요청이 너무 많아요. 잠시 뒤 다시 시도해 주세요',
 }
 
 /** 상한 숫자는 화면이 들고 있지 않는다 — 409 MAP_LIMIT 응답의 detail.limit만 쓴다(멘토 리뷰 #380). */
@@ -135,9 +180,12 @@ function mapLimitMessage(err: ApiError): string {
   return `지도는 ${limit} 만들거나 참여할 수 있어요. 다른 지도를 나가거나 삭제한 뒤 다시 시도해 주세요`
 }
 
-/** 지도 만들기 실패 문구. 상한을 넘으면 409 MAP_LIMIT(#369). */
+/** 지도 만들기 실패 문구. 상한을 넘으면 409 MAP_LIMIT(#369), 게스트면 403 GUEST_NOT_ALLOWED(#472, docs/errors.md 문구). */
 export function createMapErrorMessage(err: unknown): string {
-  return err instanceof ApiError && err.code === 'MAP_LIMIT' ? mapLimitMessage(err) : '지도를 만들지 못했어요'
+  if (!(err instanceof ApiError)) return '지도를 만들지 못했어요'
+  if (err.code === 'MAP_LIMIT') return mapLimitMessage(err)
+  if (err.code === 'GUEST_NOT_ALLOWED') return '지도를 만들려면 카카오로 로그인해 주세요'
+  return '지도를 만들지 못했어요'
 }
 
 export function inviteErrorMessage(err: unknown): string {

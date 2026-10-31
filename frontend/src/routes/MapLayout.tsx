@@ -12,10 +12,12 @@ import { usePinsQuery, useResolveLivePin } from '@/features/map/queries'
 import { useMapEvents } from '@/features/map/realtime'
 import { usePinFilters } from '@/features/map/usePinFilters'
 import MapSwitcher from '@/features/maps/MapSwitcher'
+import NotificationBell from '@/features/notifications/NotificationBell'
 import { useMapQuery } from '@/features/maps/queries'
 import { useAiStore } from '@/features/recommend/aiStore'
 import { useResultQuery } from '@/features/recommend/queries'
-import { usePlaceSearchQuery } from '@/features/search/queries'
+import { isLinkInput } from '@/features/search/model'
+import { useSourcePlacesQuery } from '@/features/search/queries'
 import { toRouteDrawings } from '@/features/shortlist/model'
 import { useRouteQuery } from '@/features/shortlist/queries'
 import { useRouteStore } from '@/features/shortlist/routeStore'
@@ -77,12 +79,12 @@ export default function MapLayout() {
   const search = useSearchStore()
   const [searchText, setSearchText] = useState('')
   // 결과 시트에서 「닫기」를 눌러도 입력칸에 글자가 남지 않게, 검색이 닫히면 같이 비운다(#351).
-  const [lastQuery, setLastQuery] = useState(search.query)
-  if (lastQuery !== search.query) {
-    setLastQuery(search.query)
-    if (search.query === null) setSearchText('')
+  const [lastSource, setLastSource] = useState(search.source)
+  if (lastSource !== search.source) {
+    setLastSource(search.source)
+    if (search.source === null) setSearchText('')
   }
-  const found = usePlaceSearchQuery(search.query, search.near).data
+  const found = useSourcePlacesQuery(search.source, search.near).data?.places
   // 검색 결과 파란 핀 — 결과나 선택이 바뀔 때만 다시 그린다.
   const searchMarkers = useMemo(
     () =>
@@ -140,7 +142,10 @@ export default function MapLayout() {
     if (!q) return
     // 검색은 마킹 탭의 일이다. 다른 탭에서 검색해도 마킹 탭으로 가서 결과를 보여준다.
     if (!onMarkingTab) navigate(`/maps/${mapId}`)
-    search.submit(q.slice(0, 50), controller.current?.getCenter() ?? null)
+    const center = controller.current?.getCenter() ?? null
+    // 지도 링크를 붙여넣었으면 이름 대신 링크로 장소를 찾는다(#487). 같은 결과 시트에서 핀을 찍는다.
+    if (isLinkInput(q)) search.openLink(q, center)
+    else search.submit(q.slice(0, 50), center)
     setStage('map', 2)
   }
 
@@ -209,12 +214,33 @@ export default function MapLayout() {
     controller.current?.focusPin(c.lat, c.lng)
   }, [candidateFocus, result, mapReady])
 
+  // 추천 결과가 오면(첫 추천·다시 추천·반경 넓히기마다 한 번) 후보 전체가 보이게 지도를 맞춘다. 올린 후보도 이번 결과라 같이 넣는다.
+  // 같은 결과를 다시 받거나(게시·새로고침) 탭을 오가도 다시 옮기지 않는다 — 사람이 옮겨 둔 지도를 뺏지 않게.
+  const fittedResult = useRef<string | null>(null)
+  useEffect(() => {
+    if (!onRecommendTab || !mapReady || !run || run.status !== 'done' || !result) return
+    const key = `${run.id}-${run.attempt_no}-${run.default_radius_walk_min ?? 0}`
+    if (fittedResult.current === key) return
+    const points = result.candidates.flatMap((c) => (c.lat == null || c.lng == null ? [] : [{ lat: c.lat, lng: c.lng }]))
+    if (!points.length) return
+    fittedResult.current = key
+    controller.current?.fitPins(points)
+  }, [onRecommendTab, mapReady, run, result])
+
   // 지도 빈 곳을 누르면 고른 것을 푼다 — 핀 상세(마킹·확정 탭)는 목록으로, 검색은 결과 목록으로, AI 후보는 강조만 푼다.
-  // 지도는 그대로 둔다.
-  function onMapClick() {
+  // 지도는 그대로 둔다. 푼 게 없으면(마킹 탭) 누른 자리 근처의 핀으로 만들 수 있는 장소를 찾는다(#486).
+  function onMapClick(at: { lat: number; lng: number } | null) {
+    const search = useSearchStore.getState()
+    const ai = useAiStore.getState()
+    const released = Boolean(selectedPinId || search.selectedId || ai.focus)
     if (selectedPinId) selectPin(null)
-    if (useSearchStore.getState().selectedId) useSearchStore.getState().select(null)
-    if (useAiStore.getState().focus) useAiStore.getState().blurCandidate()
+    if (search.selectedId) search.select(null)
+    if (ai.focus) ai.blurCandidate()
+    if (released || !at || !onMarkingTab) return
+    search.openTap(at)
+    setStage('map', 2)
+    // 접힌 패널에선 결과를 볼 곳이 없다(넓은 화면).
+    useSheetStore.getState().setPanelOpen(true)
   }
 
   const onMovingChange = useCallback(
@@ -263,7 +289,7 @@ export default function MapLayout() {
 
   const context: ShellContext = { mapId, activeControl, onControl, connection }
   // 3단계에서는 칩이 시트 제목 아래로 옮겨 간다(MapTab). 넓은 화면엔 단계가 없다. 검색 중에는 숨긴다(Figma 규칙).
-  const chipsShown = onMarkingTab && (desktop || markingStage !== 3) && !search.query
+  const chipsShown = onMarkingTab && (desktop || markingStage !== 3) && !search.source
   const fade = mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
   // 패널이 다 열려 자리 잡았는지. 접기 시작하면 바로 false, 펼치면 미끄러지기가 끝난 뒤 true.
   // - 지도 틀은 이때만 좁힌다. 그래야 패널이 미끄러지는 동안 그 뒤에 늘 지도가 깔려 있다
@@ -358,6 +384,8 @@ export default function MapLayout() {
             )}
             {/* 내 이니셜 원은 계정 버튼처럼 읽혀서, 구성원 아이콘 + 인원 수로 "이 지도의 정보·구성원"임을 보인다(#351). */}
             {/* 넓은 화면은 바닥 시트 대신 버튼 아래 메뉴로 연다 — 패널 옆 바닥 시트는 끌리지도 않는 손잡이만 남았다. */}
+            {/* 알림함(#483) — 다른 지도의 알림도 여기서 본다. */}
+            {desktop && <NotificationBell />}
             {desktop ? (
               <ProfileMenu
                 mapId={mapId}
@@ -373,15 +401,18 @@ export default function MapLayout() {
                 }
               />
             ) : (
-              <button
-                type="button"
-                aria-label={`지도 정보와 구성원 · ${memberCount}명`}
-                onClick={() => openProfile(true)}
-                className="pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-float"
-              >
-                <Users size={16} aria-hidden="true" />
-                {memberCount > 0 && memberCount}
-              </button>
+              <div className="flex items-center gap-3">
+                <NotificationBell floating />
+                <button
+                  type="button"
+                  aria-label={`지도 정보와 구성원 · ${memberCount}명`}
+                  onClick={() => openProfile(true)}
+                  className="pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-float"
+                >
+                  <Users size={16} aria-hidden="true" />
+                  {memberCount > 0 && memberCount}
+                </button>
+              </div>
             )}
           </div>
           {/* 지도 위에는 검색창만 둔다(FE 회의). 지도를 끄는 동안엔 지도에 집중하게 흐려진다. 검색 동작은 #293. */}
@@ -392,7 +423,7 @@ export default function MapLayout() {
             inert={!desktop && mapMoving}
             onSubmit={submitSearch}
             className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-white px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
-              search.query ? 'border-brand-600' : 'border-ink-200'
+              search.source ? 'border-brand-600' : 'border-ink-200'
             }${desktop ? '' : ` ${fade}`}`}
           >
             <input
@@ -401,8 +432,8 @@ export default function MapLayout() {
               enterKeyHint="search"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
-              maxLength={50}
-              placeholder="장소 검색하기"
+              maxLength={2000}
+              placeholder="장소 이름 또는 지도 링크"
               aria-label="장소 검색"
               className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-ink-500 [&::-webkit-search-cancel-button]:hidden"
             />

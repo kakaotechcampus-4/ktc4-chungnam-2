@@ -23,6 +23,7 @@ import {
   useShortlistQuery,
 } from '@/features/shortlist/queries'
 import { useRouteStore } from '@/features/shortlist/routeStore'
+import ShortlistExport from '@/features/shortlist/ShortlistExport'
 import ShortlistList from '@/features/shortlist/ShortlistList'
 import { josa } from '@/ui/josa'
 import EmptyState from '@/ui/EmptyState'
@@ -164,6 +165,7 @@ export default function ShortlistTab() {
           onReorder={(from, to) => reorder.mutate(move(items, from, to), { onError: () => showToast('순서를 바꾸지 못했어요') })}
         />
       )}
+      {items.length > 0 && <ShortlistExport mapId={mapId} />}
       {courseOpen && <CourseSheet mapId={mapId} onClose={() => setCourseOpen(false)} />}
     </TabSheet>
   )

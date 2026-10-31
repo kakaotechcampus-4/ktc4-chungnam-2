@@ -1,6 +1,6 @@
 import { api, ApiError } from '@/api'
 
-import type { PendingAccountDto, PendingChoice, UserDto } from './model'
+import type { GuestJoinResult, PendingAccountDto, PendingChoice, UserDto } from './model'
 
 export const fetchMe = () => api<UserDto>('/auth/me')
 
@@ -34,6 +34,13 @@ export function kakaoLoginUrl(): string {
   const base = import.meta.env.VITE_API_BASE_URL
   return base ? `${base}/auth/kakao/login` : '/'
 }
+
+/**
+ * 게스트로 참여(#472) — 이름만 입력해 그 초대의 지도에 바로 들어간다(계정 만들기와 초대 수락이 한 요청).
+ * 응답과 함께 세션 쿠키가 온다. 로그인 전에만 부른다.
+ */
+export const joinAsGuest = (displayName: string, inviteToken: string) =>
+  api<GuestJoinResult>('/auth/guest', { method: 'POST', body: JSON.stringify({ display_name: displayName, invite_token: inviteToken }) })
 
 export const logout = () => api<void>('/auth/logout', { method: 'POST' })
 
