@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import WithdrawConfirm from '@/features/auth/WithdrawConfirm'
 import { useMeQuery } from '@/features/auth/queries'
@@ -86,9 +87,13 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
         <Avatar name={me?.display_name} size={44} />
         <div>
           <p className="text-xl font-bold text-ink-900">{me?.display_name}</p>
-          <p className="text-xs text-ink-500">카카오로 로그인됨 · 지도 {maps.length}개</p>
+          <p className="text-xs text-ink-500">
+            {me?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '카카오로 로그인됨 · '}
+            지도 {maps.length}개
+          </p>
         </div>
       </div>
+      {me?.is_guest && <div className="-mt-2 mb-5"><GuestAccountNotice /></div>}
 
       {maps.length > 0 && (
         <>
