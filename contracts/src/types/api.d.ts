@@ -514,6 +514,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/trash": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * **내가 방장인 삭제된 지도**(#464) — 복구할 수 있는 지도 목록. 삭제한 지 30일 안인 것만, 최근 삭제순. 방장이 아닌 사람의 삭제된 지도는 오지 않는다(삭제된 지도는 구성원에게도 없는 지도다).
+         *     `purge_at`(= `deleted_at` + 30일)까지만 복구할 수 있다. 목록에는 복구 가능한 것만 오고, 기한이 지난 것은 빠진다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 없으면 items는 빈 배열 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TrashedMapList"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}": {
         parameters: {
             query?: never;
@@ -550,6 +589,7 @@ export interface paths {
         /**
          * 지도 삭제 — 방장만 (#369, docs/permissions.md map.delete). soft delete라 모든 구성원에게서 사라진다.
          *     이후 이 지도와 지도에 딸린 모든 경로, 이 지도의 초대 토큰은 404다. 전체 채널에 map.deleted를 보낸다(docs/events.md).
+         *     **삭제한 지 30일 안이면 방장이 복구할 수 있다**(#464): `GET /maps/trash`로 찾고 `POST /maps/{mapId}/restore`. 30일이 지나면 정리 작업(`maps.purge`)이 지도와 딸린 데이터를 실제로 지운다.
          */
         delete: {
             parameters: {
@@ -617,6 +657,62 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/maps/{mapId}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * **삭제한 지도 복구 — 방장만, 삭제한 지 30일 안에만**(#464, docs/permissions.md map.restore). `deleted_at`을 비운다 — 구성원·핀·반응·초대·확정 리스트·추천 기록은 삭제 때 그대로이므로 따로 복원할 것이 없다(탈퇴한 사람은 계속 구성원에서 빠진다, #245).
+         *     - 내가 이미 지도 20개(만든 것과 참여한 것 합산)이면 409 `MAP_LIMIT` — 복구도 새 지도를 늘리는 일이다.
+         *     - 삭제한 지 30일이 지났는데 정리 작업이 아직 안 돌았으면 410 `MAP_PURGED`(복구할 수 없다). 이미 정리돼 행이 없으면 404다.
+         *     - **이미 복구된 지도면 그 지도를 200으로 돌려준다**(연타 안전). 방장이 아니면 403, 내가 구성원이 아니거나 없는 지도면 404.
+         *     - 전체 채널에 `map.restored`를 보낸다(docs/events.md). 삭제 때 구성원의 연결은 닫혔으므로 대부분의 구성원은 다음에 `GET /maps`를 열 때 지도를 다시 본다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 복구됨(또는 이미 복구돼 있음). 복구한 지도 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Map"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["MapLimit"];
+                /** @description MAP_PURGED — 삭제한 지 30일이 지나 복구할 수 없다 */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/maps/{mapId}/members/me": {
@@ -1008,6 +1104,60 @@ export interface paths {
                 };
                 429: components["responses"]["RateLimited"];
                 503: components["responses"]["PlacesUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/places/external-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 장소 검색에서 결과가 없을 때의 카카오맵 검색 링크(#902). 사용자가 친 검색어 **그대로** 카카오맵 검색으로 넘기는 출구다 — AI 추천 결과가 아니다.
+         *     링크는 서버가 만든다(형식은 `places.api.kakao_search_url` 한 곳, 화면은 그리기만 한다). 서버는 카카오를 부르지 않고 검색어를 저장하거나 로그에 남기지 않는다(#53).
+         *     화면은 `GET /places/search`가 빈 배열일 때만 부른다. 응답은 추천 결과의 외부 검색과 같은 `ExternalSearch`라 같은 컴포넌트로 그린다. 외부 브라우저로 연다(카카오 약관).
+         *     로그인만 필요하고 지도 구성원 여부는 보지 않는다.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description 사용자가 장소 검색에 친 검색어. 앞뒤 공백을 걷은 뒤 1~50자(`/places/search`의 q와 같다) */
+                    q: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ExternalSearch"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description VALIDATION_ERROR — q가 비었거나 50자 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
             };
         };
         put?: never;
@@ -2095,6 +2245,7 @@ export interface paths {
          * 근거 토글('-') / 직접 추가('+') (5-5). '-'는 author 본인만 (permissions.md). 남이 쓴 줄이 하나라도 섞이면 요청 전체가 403 FORBIDDEN이고 아무것도 바뀌지 않는다(#108).
          *     '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
          *     한 요청에 글 5개까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 글은 10개까지다(뺀 것도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
+         *     **같은 글을 다시 추가해도 안전하다**(#848): 같은 run에서 **같은 사람이 이미 쓴 글**(앞뒤 공백을 자르고 안의 연속 공백을 하나로 본 같은 글)을 `add`에 다시 보내면 새 줄을 만들지 않는다. 그 줄을 응답에 그대로 두고(뺐던 줄이면 다시 켠다), **모델을 부르지 않고 글 수 상한에도 세지 않는다**. 응답이 유실돼 재전송하거나 연타해도 같은 줄 하나다. 다른 사람이 쓴 같은 글은 별개의 줄이다.
          *     **이 지도에서 추천 횟수(10회)를 다 쓴 요청자는 근거를 고칠 수 없다**(`×`·`＋` 모두 429 `RETRY_LIMIT`, #845 결정) — 고쳐도 다시 추천할 수 없기 때문이다. 횟수는 run이 아니라 **요청자·지도 단위**(그 사람이 이 지도에서 만든 어느 run이든 합쳐서)라, 다른 run에서 횟수를 다 썼으면 이 run의 근거도 못 고친다(`retry`의 상한 검사와 같은 값). 이 검사는 모델을 부르기 전에 한다. 조회(`GET .../evidence`, `GET .../result`)는 상한 뒤에도 된다.
          *     고친 근거는 **「다시 추천 받기」(`POST /runs/{runId}/retry`)가 읽어 반영한다**. 이미 보인 결과는 바뀌지 않고, 그 결과에 쓴 근거는 `RecommendResult.applied_evidence`가 따로 보여 준다.
          */
@@ -3427,6 +3578,32 @@ export interface components {
             /** @description 계정 단위 표시 이름 (2026-09-30 결정). 앞뒤 공백을 지운 뒤 1~50자이고 지운 값을 저장한다(#160). 공백뿐이면 422 */
             display_name: string;
         };
+        /** @description 삭제한 지도 한 건(#464). 복구하면 `Map`이 된다 */
+        TrashedMap: {
+            id: string;
+            title: string;
+            /** Format: date */
+            start_date: string;
+            /** Format: date */
+            end_date: string;
+            region?: components["schemas"]["MapRegion"];
+            member_count?: number;
+            pin_count?: number;
+            /** Format: date-time */
+            deleted_at: string;
+            /**
+             * Format: date-time
+             * @description 이 시각 뒤에는 복구할 수 없고 정리 작업이 지운다(삭제 + 30일)
+             */
+            purge_at: string;
+            /** @description 남은 날수(올림, 서버가 계산). 화면은 「N일 안에 복구할 수 있어요」 */
+            days_left: number;
+        };
+        TrashedMapList: {
+            items: components["schemas"]["TrashedMap"][];
+            /** @description 복구 가능 기간(일). 지금 30 */
+            retention_days: number;
+        };
         Map: {
             id: string;
             /** @description 요청자 기준. map 응답은 can_delete(방장만), can_leave(넘길 사람이 없는 방장은 false), can_edit(방장만)를 쓴다 (#369, #465) */
@@ -4009,7 +4186,7 @@ export interface components {
         };
         RecommendResult: {
             run_id: string;
-            /** @description 5-6 깔때기 표. 2026-10-15부터 「영업 종료 제거」 다음에 「추천 가능 아님 제거」 단계가 있다(places.can_recommend=false인 장소를 후보 풀에서 뺀 수, docs/data-model.md) */
+            /** @description 5-6 깔때기 표. 단계: 카테고리 후보 풀 → 반경 밖 제거 → 영업 종료 제거 → 실격 조건 제거 → 이미 제안·거절됨 → 상위 3곳 선정. 후보 풀은 넓히기 상한 안의 영업 중인 추천 가능(정예) 장소라, 「반경 밖 제거」는 넓히면 들어올 수 있는 최대 수다(#912). 2026-10-15~#913 구현 전에는 「영업 종료 제거」 다음에 「추천 가능 아님 제거」가 있었다 — 그때 저장된 결과에는 그 줄이 남아 있고, 화면은 받은 표를 그대로 그린다 */
             funnel: {
                 label: string;
                 removed_count: number;
@@ -4030,7 +4207,8 @@ export interface components {
         };
         /**
          * @description 카카오맵 검색 링크(#798). 핀고에 결과가 없거나 적을 때 사람이 밖에서 직접 찾는 출구다 — AI 추천 결과가 아니다. 서버는 카카오를 부르지 않고 저장하지 않는다(#53).
-         *     검색어 규칙은 docs/constraints.md 「카카오맵 검색 링크」: `{동네} {말}`, 말은 원함 조건 하나(표에 있는 키) 또는 카테고리 말. 사유 원문은 들어가지 않는다.
+         *     검색어 규칙은 docs/constraints.md 「카카오맵 검색 링크」. 추천(결과, readiness)은 `{동네} {카테고리 말}`(#902 — 원함 조건의 말을 고르던 조건 말 표는 #904에서 지운다), 장소 단위는 `{장소 이름} {동네}`, 장소 검색 결과 없음(`GET /places/external-search`)은 사용자가 친 검색어 그대로다. 다른 구성원의 사유 원문은 들어가지 않는다.
+         *     다른 서비스(네이버 지도 등)를 붙일 때는 링크 목록 필드를 더하는 확장으로 한다(#902, `url`은 유지).
          *     **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관)
          */
         ExternalSearch: {

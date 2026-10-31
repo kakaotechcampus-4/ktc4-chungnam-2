@@ -48,6 +48,23 @@ export const mapsHandlers = [
     return HttpResponse.json({ items: mine, limit: MAP_LIMIT }); // #623: 목록과 상한을 함께
   }),
 
+  // #464 내가 방장인 삭제된 지도 — 30일 안인 것만, 최근 삭제순
+  http.get("*/maps/trash", () => {
+    const retention = 30 * 86400000;
+    const items = Object.entries(store.trashedMaps)
+      .filter(([, t]) => t.members.some((m) => m.user_id === ME_USER_ID && m.role === "owner") && Date.now() - new Date(t.deleted_at).getTime() < retention)
+      .map(([id, t]) => {
+        const purgeAt = new Date(new Date(t.deleted_at).getTime() + retention);
+        return {
+          id, title: t.map.title, start_date: t.map.start_date, end_date: t.map.end_date, region: t.map.region,
+          member_count: t.members.length, deleted_at: t.deleted_at, purge_at: purgeAt.toISOString(),
+          days_left: Math.max(0, Math.ceil((purgeAt.getTime() - Date.now()) / 86400000)),
+        };
+      })
+      .sort((a, b) => b.deleted_at.localeCompare(a.deleted_at));
+    return HttpResponse.json({ items, retention_days: 30 });
+  }),
+
   http.post("*/maps", async ({ request }) => {
     const body = (await request.json()) as {
       title: string; start_date: string; end_date: string; region?: MapRegion;
@@ -123,9 +140,27 @@ export const mapsHandlers = [
     if (!getMapOr404(mapId) || !mine) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
     if (!isOwner(mapId)) return apiError(403, "FORBIDDEN", "방장만 지도를 삭제할 수 있어요");
     emitEvent(mapId, "public", "map.deleted", { map_id: mapId });
+    // #464 — 삭제한 지도는 30일 동안 휴지통에 있다(복구 가능). 마법 id map_purged는 31일 전에 삭제한 것으로 둔다
+    const ageDays = mapId === "map_purged" ? 31 : 0;
+    store.trashedMaps[mapId] = { map: store.maps[mapId], members: store.members[mapId] ?? [], deleted_at: new Date(Date.now() - ageDays * 86400000).toISOString() };
     delete store.maps[mapId];
     delete store.members[mapId];
     return new HttpResponse(null, { status: 204 });
+  }),
+
+  http.post("*/maps/:mapId/restore", ({ params }) => {
+    const mapId = params.mapId as string;
+    if (store.maps[mapId] && (store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID)) return HttpResponse.json(toMapResponse(store.maps[mapId])); // 이미 복구됨 — 연타 안전
+    const trashed = store.trashedMaps[mapId];
+    if (!trashed || !trashed.members.some((m) => m.user_id === ME_USER_ID)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    if (!trashed.members.some((m) => m.user_id === ME_USER_ID && m.role === "owner")) return apiError(403, "FORBIDDEN", "방장만 지도를 복구할 수 있어요");
+    if (Date.now() - new Date(trashed.deleted_at).getTime() >= 30 * 86400000) return apiError(410, "MAP_PURGED", "삭제한 지 30일이 지나 복구할 수 없어요");
+    if (myMapCount() >= MAP_LIMIT) return mapLimitError();
+    store.maps[mapId] = trashed.map;
+    store.members[mapId] = trashed.members;
+    delete store.trashedMaps[mapId];
+    emitEvent(mapId, "public", "map.restored", { map_id: mapId });
+    return HttpResponse.json(toMapResponse(store.maps[mapId]));
   }),
 
   // #369 지도 나가기 — 구성원 누구나. 방장이면 다음 사람에게 위임, 넘길 사람이 없으면 409.

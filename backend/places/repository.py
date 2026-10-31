@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from geoalchemy2 import Geography, Geometry, WKTElement
-from sqlalchemy import Float, case, cast, func, literal, null, or_, select, union_all, update
+from sqlalchemy import Float, and_, case, cast, false, func, literal, null, or_, select, union_all, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -389,42 +389,58 @@ def _nearest_stmt(lat: float, lng: float, category: str | None, radius_m: float,
 
 
 REGION_RADIUS_M = 30_000.0   # 장소 검색의 지역 구역(#835) — 지도 중심에서 이 안이 먼저다. 값은 docs/api-spec.yaml /places/search 정렬 규칙
-_NAME_NO_PAREN = r"[(\[（][^)\]）]*[)\]）]"
-_NAME_NON_WORD = r"[^0-9a-zA-Z가-힣]"
+NEAR_RADIUS_M = 3_000.0      # 지역 구역 안에서 부분·주소 일치를 먼저 읽는 가까운 띠. 순서는 그대로다(아래 search_open_by_query)
+
+TIER_NAME_PREFIX, TIER_NAME_PART, TIER_REST = 1, 2, 3   # 이름 일치 정도 계층. 1은 완전(1-0)·앞부분(1-1) 일치, 2는 부분 일치, 3(rest)은 부분 일치 + 주소만 일치
 
 
 def search_open_by_query(
-    db: Session, query: str, near: tuple[float, float] | None, limit: int, offset: int = 0, zone: str = "all",
+    db: Session, query: str, near: tuple[float, float] | None, limit: int, offset: int = 0,
+    *, tier: int, band: tuple[float | None, float | None] = (None, None), skip_part_within: float | None = None,
 ) -> list[NearestRow]:
-    """장소 검색(#822, #835): 이름 또는 주소가 검색어를 품은 영업 중 장소. 순서는 이름 일치 정도(완전 > 앞부분 > 부분 > 주소만,
-    괄호·공백·기호 무시) → 가까운 순(좌표가 없으면 정예 먼저, 이름순) → 정예 먼저 → id. 좌표는 정렬에만 쓰고 남기지 않는다.
-    zone: near는 지도 중심에서 REGION_RADIUS_M 안(GiST로 먼저 거른다), far는 그 밖, all은 구분 없음. near 없이 near/far를 주면 빈 결과.
-    offset으로 이어 읽을 수 있다 — 정렬이 전 순서라 페이지가 겹치거나 빠지지 않는다."""
+    """장소 검색(#822, #835)의 한 계층·한 띠. 영업 중 장소를 이름 일치 정도 계층별로 읽는다.
+    계층 1: 정규화한 이름(name_norm)이 검색어로 시작 — 완전 일치가 앞부분 일치보다 앞(인덱스 접두 검색, 2자도 빠르다).
+    계층 2: 이름에 검색어가 들었지만 계층 1이 아님(부분 일치).
+    계층 3(REST): 계층 2 + 주소에만 들었음(부분 일치가 주소 일치보다 앞). 한 번 훑어 둘을 같이 얻는다.
+    skip_part_within=m: 계층 3에서 지도 중심 m 이내의 계층 2(부분 일치)는 뺀다 — 앞서 계층 2로 읽은 것.
+    band=(lo, hi): 지도 중심에서 거리가 lo 초과 hi 이하인 장소만(None은 제한 없음, near가 있을 때만 뜻이 있다).
+    순서: 계층 1·3은 일치 정도 → 가까운 순 → 정예 → id, 계층 2는 가까운 순 → 정예 → id. 좌표가 없으면 가까운 순 대신 정예 → 이름순.
+    좌표는 정렬·거름에만 쓰고 남기지 않는다. offset으로 이어 읽을 수 있다(정렬이 전 순서).
+    계층·띠를 어떻게 이어 붙여 계약의 순서를 지키는지는 places.api.search_own_for_query."""
     needle = query.strip()
-    if not needle or limit <= 0 or (zone != "all" and near is None):
+    if not needle or limit <= 0:
         return []
-    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    pattern = f"%{escaped}%"
-    in_name = Place.name.ilike(pattern, escape="\\")
-    in_address = Place.address.ilike(pattern, escape="\\")
-    norm_name = func.lower(func.regexp_replace(func.regexp_replace(Place.name, _NAME_NO_PAREN, "", "g"), _NAME_NON_WORD, "", "g"))
     nq = matching.normalize_name(needle)   # 숫자·영문·한글만 남아 LIKE 와일드카드가 없다
-    if nq:
-        rank = case((norm_name == nq, 0), (norm_name.like(f"{nq}%"), 1), (in_name, 2), else_=3)
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    in_name = Place.name.ilike(f"%{escaped}%", escape="\\")
+    in_address = Place.address.ilike(f"%{escaped}%", escape="\\")
+    prefix = Place.name_norm.like(f"{nq}%") if nq else false()
+    where = [Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES)]
+    if tier == TIER_NAME_PREFIX:
+        if not nq:
+            return []
+        where.append(prefix)
+        rank = case((Place.name_norm == nq, 0), else_=1)
+    elif tier == TIER_NAME_PART:
+        where += [in_name, ~prefix]
+        rank = None
     else:
-        rank = case((in_name, 2), else_=3)   # 검색어가 기호뿐이면 정규화 비교를 못 한다
+        where += [~prefix, or_(in_name, in_address)]
+        rank = case((in_name, 0), else_=1)
+    order = [rank] if rank is not None else []
+    if near is not None:
+        point = _geog(*near)
+        lo, hi = band
+        if hi is not None:
+            where.append(func.ST_DWithin(Place.geom, point, hi))
+        if lo is not None:
+            where.append(~func.ST_DWithin(Place.geom, point, lo))
+        if skip_part_within is not None and tier == TIER_REST:
+            where.append(~and_(in_name, func.ST_DWithin(Place.geom, point, skip_part_within)))
+        order += [func.ST_Distance(Place.geom, point), Place.curated.desc()]
+    else:
+        order += [Place.curated.desc(), Place.name.collate("C")]
     p_lat, p_lng = _lat_lng()
-    where = [Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES), or_(in_name, in_address)]
-    if near is not None:
-        within = func.ST_DWithin(Place.geom, _geog(*near), REGION_RADIUS_M)
-        if zone == "near":
-            where.append(within)
-        elif zone == "far":
-            where.append(~within)
-    if near is not None:
-        order = [rank, func.ST_Distance(Place.geom, _geog(*near)), Place.curated.desc()]
-    else:
-        order = [rank, Place.curated.desc(), Place.name.collate("C")]
     stmt = (
         select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng, Place.kakao_place_id)
         .where(*where).order_by(*order, Place.id).limit(limit).offset(offset)

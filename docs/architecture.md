@@ -251,7 +251,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 지도 삭제(#369)는 `maps.deleted_at`만 찍는다. 그대로 두면 핀·반응·추천 기록이 계속 쌓여 지웠다 다시 만들어도 저장 공간이 줄지 않는다(멘토 리뷰 PR #380). 그래서 **삭제한 지 30일이 지난 지도**와 딸린 데이터를 실제로 지우는 정리 작업을 둔다.
 
-- **보존 기간 30일, 그 사이 복구 기능은 없다**(v1). 30일은 사용 데이터 없이 정한 출발값이다.
+- **보존 기간 30일, 그 사이 방장이 복구할 수 있다**(#464 — `GET /maps/trash`, `POST /maps/{mapId}/restore`). 30일은 사용 데이터 없이 정한 출발값이다. 복구는 `deleted_at`만 비우면 되도록 정리 작업이 건드리지 않은 데이터가 모두 그대로 있다.
 - **모듈은 자기 테이블만 지운다.** 각 모듈이 `api.py`에 "이 지도들의 데이터 지우기" 공개 함수를 두고, maps의 정리 작업이 자식 테이블부터 순서대로 부른다. 외래키가 연쇄 삭제가 아니고(`NO ACTION`) `map_id`에 외래키가 아예 없는 테이블도 있어서 순서를 지켜 직접 지운다.
 - 지우는 테이블 12개: maps·memberships·invites(maps), pins·reactions(pins), shortlist_items·routes(shortlist), recommend_runs·candidates·evidence_lines·regions·exclusions(recommend), event_log(realtime). **`places`·`place_facts`는 지도에 속하지 않으므로 지우지 않는다.**
 - 실행은 손으로 돌리는 명령이다(`python -m maps.purge --older-than-days 30 [--dry-run]`). 지금 코드에는 예약 실행 장치가 없고, 예약은 배포 환경을 정할 때 붙인다(#168). `--dry-run`은 지울 지도 수와 테이블별 행 수만 보여 준다.
@@ -319,7 +319,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 - **`db` 선택 키워드 인자(#199에서 추가, 6개 함수 전부 `*, db: Session | None = None`)**: `db=db`를 넘기면 그 요청 트랜잭션에 참여한다(커밋은 호출한 쪽이 한다). **pins는 `record_kakao_match`를 반드시 `db=db`로 부른다** — 핀 생성과 같은 트랜잭션이어야 한다. 안 넘기면 places가 짧은 세션을 직접 열어 쓰고 닫는다(읽기 전용 호출은 충분하지만 호출마다 연결을 쓴다). `FakePlaces`도 같은 인자를 받는다.
 - `place_id`는 문자열(`places.id`의 UUID). 타입은 `places/schemas.py`의 불변 dataclass: `PlaceHint`, `PlaceMatch`, `PlaceInfo`, `PlaceRef`, `FactLabel`.
 - **카카오 원자료는 이 함수들의 입출력 어디에도 없다.** `kakao_place_id`·`kakao_place_url`만 예외(저장 허용 범위).
-- 기존 `places.api`의 실시간 카카오 검색(`search_by_name`, 표시용)과 `get_raw_facts`(항상 빈 값)는 그대로 둔다. `search_nearby`(카카오 실시간 후보 풀)와 `resolve_place`는 recommend·pins가 위 함수로 옮겨 가면 지운다(#190, #195).
+- `places.api`의 실시간 카카오 검색은 `search_by_name`(표시용) 하나만 남는다. 옛 `search_nearby`(카카오 실시간 후보 풀)·`resolve_place`·`get_raw_facts`·`call_counts`는 부르는 곳이 없어 지웠다(#190, #195, #773).
 
 ### 층2 차원 압축 설계
 

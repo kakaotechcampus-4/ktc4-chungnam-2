@@ -37,6 +37,7 @@ CATALOG: dict[str, tuple[int, str]] = {
     "OWNER_CANNOT_LEAVE": (409, "넘길 사람이 없는 방장은 나갈 수 없습니다"),
     "GUEST_NOT_ALLOWED": (403, "게스트는 할 수 없는 일입니다"),
     "GUEST_LIMIT": (409, "이 초대 링크로 만들 수 있는 게스트 수를 넘었습니다"),
+    "MAP_PURGED": (410, "삭제한 지 30일이 지나 복구할 수 없습니다"),
     "NO_PENDING_LOGIN": (404, "선택을 기다리는 탈퇴 계정 로그인이 없습니다"),
     "INVITE_EXPIRED": (410, "만료된 초대 링크입니다"),
     "INVITE_REVOKED": (410, "방장이 끈 초대 링크입니다"),

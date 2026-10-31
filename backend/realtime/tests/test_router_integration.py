@@ -216,3 +216,25 @@ async def test_disconnect_while_waiting_ends_ping_loop(monkeypatch):
     assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
     with pytest.raises(StopAsyncIteration):   # 다음 반복의 is_disconnected()가 True
         await asyncio.wait_for(agen.__anext__(), timeout=1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["public", "private"])
+async def test_closing_outer_generator_cancels_pending_get_task(monkeypatch, channel):
+    """ping을 내보낸 채 멈춘 상태(안쪽 get 태스크가 살아 있다)에서 바깥을 aclose하면
+    안쪽 _stream_live도 즉시 닫혀 get 태스크가 취소된다 — GC를 기다리지 않는다."""
+    monkeypatch.setattr(router_module, "PING_INTERVAL", 0.05)
+    user = CurrentUser(user_id="user-a")
+    if channel == "public":
+        response = await public_events(request=_Alive(), mapId="ping-aclose", user=user, last_event_id=None)
+    else:
+        response = await private_events(request=_Alive(), mapId="ping-aclose", user=user, last_event_id=None)
+    agen = response.body_iterator
+    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
+    me = asyncio.current_task()
+    gets = [t for t in asyncio.all_tasks() if t is not me and "Queue.get" in repr(t.get_coro())]
+    assert len(gets) == 1
+    await agen.aclose()
+    await asyncio.sleep(0)   # 취소가 반영될 한 틱
+    assert gets[0].cancelled()
+    assert "ping-aclose" not in dispatcher._subscribers

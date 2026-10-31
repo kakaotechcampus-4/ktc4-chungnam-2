@@ -16,10 +16,8 @@ x-api: &api
   environment:
     # Caddy가 /api를 떼고 넘긴다(Caddyfile). 앱이 자기 공개 경로를 알게 한다(/docs, 접근 로그)
     UVICORN_ROOT_PATH: /api
-  depends_on:
-    db:
-      condition: service_healthy
-      required: false   # DB를 서버 밖(RDS)으로 옮기면 db 서비스가 없다(compose.db.yml을 빼면 된다)
+  # DB 의존(depends_on db)은 compose.db.yml에 있다. 여기 두면 db가 정의되지 않은 RDS 구성에서 compose가 설정 전체를
+  # 거절한다(required: false여도 "undefined service", Compose v5, #873)
 
 x-web: &web
   restart: unless-stopped

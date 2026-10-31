@@ -8,13 +8,15 @@ flows.py 모듈 docstring 참고). event_log 기록만 예외다 — architectur
 
 import uuid
 from datetime import datetime, timezone
+from typing import NamedTuple
 
-from sqlalchemy import delete, func, select, text, tuple_, update
+from sqlalchemy import and_, delete, func, or_, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from common.errors import AppError
-from recommend.models import Candidate, EvidenceLine, Exclusion, RecommendRun, Region
+from recommend import core
+from recommend.models import Candidate, EvidenceLine, Exclusion, IdempotencyKey, RecommendRun, Region
 
 
 def create_run(db: Session, *, map_id: str, category: str, requested_by: str, attempt_no: int) -> RecommendRun:
@@ -65,6 +67,98 @@ def max_attempt_no_for_requester(db: Session, *, map_id: str, requested_by: str)
         )
     ).scalar_one()
     return result or 0
+
+
+# ---------- idempotency keys (#811) ----------
+
+class Reservation(NamedTuple):
+    outcome: str   # "owner"(이 요청이 모델을 부른다) | core.ReservationDecision 중 conflict·reuse·in_progress
+    id: uuid.UUID
+    generation: int
+    run_id: uuid.UUID | None
+
+
+def reserve_idempotency_key(
+    db: Session, *, requested_by: str, key: str, request_hash: str, now: datetime,
+) -> Reservation:
+    """모델을 부르기 **전에** (요청자, 범위, 키)를 기록한다. 호출부가 독립 세션으로 부르고 바로 커밋한다 — 요청 세션에
+    넣으면 모델 호출 전 rollback에 사라지거나, 둘째 INSERT가 첫째의 커밋(모델이 끝날 때)까지 기다린다. 커밋하지 않는다.
+    새 행이면 owner. 이미 있으면 `core.reservation_decision`대로: 기한이 지난 미완료 예약은 FOR UPDATE로 잡고 세대를
+    올려 owner가 된다(이어받기). 그 사이 owner가 행을 지워 읽을 게 없으면 한 번 더 시도한다."""
+    for _ in range(3):
+        inserted = db.execute(
+            pg_insert(IdempotencyKey)
+            .values(
+                id=uuid.uuid4(), requested_by=requested_by, scope=core.IDEMPOTENCY_SCOPE, key=key,
+                request_hash=request_hash, attempt=1, started_at=now,
+            )
+            .on_conflict_do_nothing(constraint="uq_idempotency_keys")
+            .returning(IdempotencyKey.id)
+        ).scalar_one_or_none()
+        if inserted is not None:
+            return Reservation("owner", inserted, 1, None)
+        existing = db.execute(
+            select(IdempotencyKey)
+            .where(
+                IdempotencyKey.requested_by == requested_by, IdempotencyKey.scope == core.IDEMPOTENCY_SCOPE,
+                IdempotencyKey.key == key,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if existing is None:
+            continue
+        decision = core.reservation_decision(
+            stored_hash=existing.request_hash, request_hash=request_hash, run_id=existing.run_id,
+            started_at=existing.started_at, now=now,
+        )
+        if decision == "takeover":
+            existing.attempt += 1
+            existing.started_at = now
+            db.flush()
+            return Reservation("owner", existing.id, existing.attempt, None)
+        return Reservation(decision, existing.id, existing.attempt, existing.run_id)
+    raise AppError("REQUEST_IN_PROGRESS")
+
+
+def link_idempotency_key(db: Session, *, reservation_id: uuid.UUID, generation: int, run_id: uuid.UUID) -> None:
+    """run을 만든 트랜잭션이 키 행에 run_id를 잇는다 — 자기 세대이고 아직 비어 있을 때만. rowcount가 0이면 처리 기한이
+    지나 다른 요청이 이어받은 것이라(늦게 끝난 쪽) 저장을 거절한다: 예외로 이 트랜잭션이 통째로 되돌아간다."""
+    result = db.execute(
+        update(IdempotencyKey)
+        .where(IdempotencyKey.id == reservation_id, IdempotencyKey.attempt == generation, IdempotencyKey.run_id.is_(None))
+        .values(run_id=run_id)
+    )
+    if result.rowcount == 0:
+        raise AppError("REQUEST_IN_PROGRESS")
+
+
+def release_idempotency_key(db: Session, *, reservation_id: uuid.UUID, generation: int) -> None:
+    """run을 못 만든 요청(모델 실패 등)이 자기 세대의 예약만 지워 같은 키의 재시도를 허용한다. 이어받은 쪽의 행이나 run이
+    이미 이어진 행은 건드리지 않는다. 호출부가 독립 세션으로 부르고 커밋한다."""
+    db.execute(
+        delete(IdempotencyKey).where(
+            IdempotencyKey.id == reservation_id, IdempotencyKey.attempt == generation, IdempotencyKey.run_id.is_(None),
+        )
+    )
+
+
+def _expired_idempotency_keys(now: datetime):
+    """24시간이 지난 키 행의 조건(#811). run이 연결된 행은 만든 지 24시간(created_at), 연결되지 않은 예약(run_id NULL)은
+    현재 세대의 예약 시각(started_at — 이어받을 때 갱신된다)이 24시간 지난 것이다. 진행 중인 예약과 최근에 이어받은 예약은
+    started_at이 최근이라 지워지지 않는다. 예약만 커밋하고 프로세스가 죽어 run이 영영 안 이어진 행이 남아 그 키가 24시간
+    뒤에도 IDEMPOTENCY_CONFLICT를 내는 일을 막는다."""
+    cutoff = now - core.IDEMPOTENCY_RETENTION
+    return or_(
+        and_(IdempotencyKey.run_id.is_not(None), IdempotencyKey.created_at < cutoff),
+        and_(IdempotencyKey.run_id.is_(None), IdempotencyKey.started_at < cutoff),
+    )
+
+
+def purge_idempotency_keys(db: Session, *, now: datetime) -> int:
+    """24시간이 지난 키 행을 지운다(maintenance). run이 연결된 행과 오래 방치된 미완료 예약을 지운다(조건은
+    `_expired_idempotency_keys`)."""
+    return db.execute(delete(IdempotencyKey).where(_expired_idempotency_keys(now))).rowcount
 
 
 def get_run_or_404(db: Session, run_id: str) -> RecommendRun:
@@ -162,6 +256,16 @@ def add_manual_evidence(
     return line
 
 
+def list_manual_lines_by_author(db: Session, run_id: uuid.UUID, author_id: str) -> list[EvidenceLine]:
+    """이 run에서 이 사람이 「+」로 추가한 줄 전부 — ×로 뺀 줄도 포함한다(같은 글 재추가의 멱등 판정, #848)."""
+    return list(db.execute(
+        select(EvidenceLine)
+        .where(EvidenceLine.run_id == run_id, EvidenceLine.author_id == author_id, EvidenceLine.source == "manual")
+        .order_by(EvidenceLine.created_at, EvidenceLine.seq)
+        .execution_options(populate_existing=True)   # 잠근 뒤 다시 읽을 때 다른 요청이 바꾼 is_active를 본다
+    ).scalars().all())
+
+
 def count_manual_entries(db: Session, run_id: uuid.UUID) -> int:
     """이 run에 「+」로 추가한 글 수(#707) — ×로 뺀 줄도 센다. 글 하나에 조건이 여럿이면 줄이 여럿이라(#419)
     (text, created_at)으로 묶어 센다. created_at은 트랜잭션 시작 시각이라 한 요청에서 넣은 줄은 모두 같다 — 이 전제가
@@ -250,6 +354,14 @@ def set_last_funnel(db: Session, run: RecommendRun, funnel: list[dict]) -> None:
     db.flush()
 
 
+def set_run_outcome(db: Session, run: RecommendRun, *, applied_evidence: list[dict], new_count: int) -> None:
+    """마지막 실행(execute·retry·widen)의 근거 스냅샷과 새로 찾은 후보 수를 저장한다(#845, #847). 다음 실행이 덮는다.
+    new_count는 게시 후보를 뺀, 이번 실행이 새로 만든 후보 수라 그 뒤에 게시해도 바뀌지 않는다."""
+    run.applied_evidence = applied_evidence
+    run.last_new_count = new_count
+    db.flush()
+
+
 def bump_attempt_no(db: Session, run: RecommendRun) -> int:
     """#31은 개인 단위 공유 카운터다 — 이 run 자신의 attempt_no만 1 올리면(예전 버전) 그
     사람의 다른(더 최근) run이 이미 써둔 더 큰 값을 무시하고 낮은 값으로 되돌아갈 수 있다
@@ -270,19 +382,38 @@ def set_default_radius_walk_min(db: Session, run: RecommendRun, walk_min: int) -
     db.flush()
 
 
+_DROP_AUTHOR_FROM_SNAPSHOT = """
+UPDATE recommend_runs SET applied_evidence = COALESCE((
+    SELECT jsonb_agg(entry ORDER BY position) FROM jsonb_array_elements(applied_evidence) WITH ORDINALITY AS t(entry, position)
+    WHERE entry->>'author_id' <> :user_id
+), '[]'::jsonb)
+WHERE applied_evidence IS NOT NULL
+  AND EXISTS (SELECT 1 FROM jsonb_array_elements(applied_evidence) AS entry WHERE entry->>'author_id' = :user_id)
+"""
+
+
+def _drop_author_from_snapshots(db: Session, *, user_id: str, map_id: str | None = None) -> None:
+    """근거 줄을 지울 때 실행 스냅샷(recommend_runs.applied_evidence, #847) 안의 그 사람 줄도 뺀다 — 스냅샷에 작성자 id와 사용자
+    글이 들어 있어 그대로 두면 지운 글이 결과 응답에 남는다. map_id가 있으면 그 지도의 run만."""
+    db.execute(text(_DROP_AUTHOR_FROM_SNAPSHOT + (" AND map_id = :map_id" if map_id else "")),
+               {"user_id": user_id, **({"map_id": map_id} if map_id else {})})
+
+
 def delete_evidence_lines_by_author(db: Session, *, user_id: str) -> int:
-    """탈퇴 — 이 사용자가 쓴 근거 줄(모든 run)을 지우고 지운 개수를 돌려준다."""
+    """탈퇴 — 이 사용자가 쓴 근거 줄(모든 run)을 지우고 지운 개수를 돌려준다. 실행 스냅샷 안의 그 사람 줄도 뺀다(#847)."""
     result = db.execute(delete(EvidenceLine).where(EvidenceLine.author_id == user_id))
+    _drop_author_from_snapshots(db, user_id=user_id)
     db.flush()
     return result.rowcount
 
 
 def delete_evidence_lines_by_author_in_map(db: Session, *, user_id: str, map_id: str) -> int:
-    """지도 나가기(#369) — 이 사용자가 그 지도의 run에 쓴 근거 줄만 지운다."""
+    """지도 나가기(#369) — 이 사용자가 그 지도의 run에 쓴 근거 줄만 지운다. 그 지도 run의 실행 스냅샷에서도 뺀다(#847)."""
     run_ids_on_map = select(RecommendRun.id).where(RecommendRun.map_id == map_id)
     result = db.execute(
         delete(EvidenceLine).where(EvidenceLine.author_id == user_id, EvidenceLine.run_id.in_(run_ids_on_map))
     )
+    _drop_author_from_snapshots(db, user_id=user_id, map_id=map_id)
     db.flush()
     return result.rowcount
 
@@ -352,10 +483,10 @@ def latest_run_place_ids(db: Session, *, map_id: str, requested_by: str, categor
     return set(db.execute(select(Candidate.place_id).where(Candidate.run_id.in_(latest))).scalars())
 
 
-def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
+def purge_map_data(db: Session, *, map_ids: list[str], now: datetime | None = None) -> dict[str, int]:
     """지도 정리(#431) — 이 지도들의 추천 기록을 지운다. 테이블 이름 → 지운 행 수. 자식(근거 줄·후보·지역·
-    제외)부터 지우고 run을 마지막에 지운다(전부 recommend_runs를 참조, 후보는 지역도 참조해서 지역보다 먼저)."""
-    names = ["evidence_lines", "candidates", "regions", "exclusions", "recommend_runs"]
+    제외·멱등 키)부터 지우고 run을 마지막에 지운다(전부 recommend_runs를 참조, 후보는 지역도 참조해서 지역보다 먼저)."""
+    names = ["evidence_lines", "candidates", "regions", "exclusions", "idempotency_keys", "recommend_runs"]
     if not map_ids:
         return dict.fromkeys(names, 0)
     run_ids = select(RecommendRun.id).where(RecommendRun.map_id.in_(map_ids))
@@ -364,6 +495,11 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
         "candidates": db.execute(delete(Candidate).where(Candidate.run_id.in_(run_ids))).rowcount,
         "regions": db.execute(delete(Region).where(Region.run_id.in_(run_ids))).rowcount,
         "exclusions": db.execute(delete(Exclusion).where(Exclusion.map_id.in_(map_ids))).rowcount,
+        # 키 행(#811): 이 지도 run에 연결된 것(FK가 cascade여도 여기서 명시한다)과, 지도 정보가 없는 미완료 예약(run_id NULL)
+        # 중 24시간이 지난 것. 최근·진행 중인 예약은 maintenance의 기준(`_expired_idempotency_keys`)과 같아서 남는다.
+        "idempotency_keys": db.execute(delete(IdempotencyKey).where(or_(
+            IdempotencyKey.run_id.in_(run_ids), and_(IdempotencyKey.run_id.is_(None), _expired_idempotency_keys(now or datetime.now(timezone.utc))),
+        ))).rowcount,
         "recommend_runs": db.execute(delete(RecommendRun).where(RecommendRun.map_id.in_(map_ids))).rowcount,
     }
 
@@ -371,10 +507,25 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
 def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
     """게스트 합치기(#560) — from_user의 run 요청자·근거 줄 작성자·제외 요청자를 to_user로 옮긴다. 테이블 이름 →
     옮긴(제외는 겹쳐서 지운 것 제외) 행 수. 같은 (지도, 장소) 제외가 to_user에게 이미 있으면 from_user 것을 지운다
-    (uq_exclusions_map_requester_place, 카카오 계정 쪽이 이긴다). attempt_no는 건드리지 않는다. 후보에는 요청자
+    (uq_exclusions_map_requester_place, 카카오 계정 쪽이 이긴다). 멱등 키(#811)도 요청자를 옮기고, (범위, 키)가 겹치면
+    from_user 것을 지운다(uq_idempotency_keys). attempt_no는 건드리지 않는다. 후보에는 요청자
     열이 없다(run의 requested_by를 따른다). 커밋하지 않는다."""
     if from_user_id == to_user_id:
-        return {"recommend_runs": 0, "evidence_lines": 0, "exclusions": 0}
+        return {"recommend_runs": 0, "evidence_lines": 0, "exclusions": 0, "idempotency_keys": 0}
+    db.execute(text("""
+        UPDATE recommend_runs SET applied_evidence = (
+            SELECT jsonb_agg(CASE WHEN entry->>'author_id' = :from_user THEN entry || jsonb_build_object('author_id', CAST(:to_user AS text))
+                                  ELSE entry END ORDER BY position)
+            FROM jsonb_array_elements(applied_evidence) WITH ORDINALITY AS t(entry, position))
+        WHERE applied_evidence IS NOT NULL
+          AND EXISTS (SELECT 1 FROM jsonb_array_elements(applied_evidence) AS entry WHERE entry->>'author_id' = :from_user)
+    """), {"from_user": from_user_id, "to_user": to_user_id})   # 스냅샷의 작성자도 옮긴다(#847) — 근거 줄을 옮기는 것과 같다
+    kept_keys = select(IdempotencyKey.scope, IdempotencyKey.key).where(IdempotencyKey.requested_by == to_user_id)
+    db.execute(   # (범위, 키)가 겹치면 from_user 것을 지운다 — uq_idempotency_keys, 키는 24시간짜리라 잃어도 상관없다(#811)
+        delete(IdempotencyKey).where(
+            IdempotencyKey.requested_by == from_user_id, tuple_(IdempotencyKey.scope, IdempotencyKey.key).in_(kept_keys)
+        )
+    )
     kept = select(Exclusion.map_id, Exclusion.place_id).where(Exclusion.requested_by == to_user_id)
     db.execute(
         delete(Exclusion).where(
@@ -390,5 +541,8 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
         ).rowcount,
         "exclusions": db.execute(
             update(Exclusion).where(Exclusion.requested_by == from_user_id).values(requested_by=to_user_id)
+        ).rowcount,
+        "idempotency_keys": db.execute(
+            update(IdempotencyKey).where(IdempotencyKey.requested_by == from_user_id).values(requested_by=to_user_id)
         ).rowcount,
     }

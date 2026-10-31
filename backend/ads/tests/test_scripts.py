@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from sqlalchemy import select
 
 from ads.models import Ad
-from ads.scripts import deactivate, register
+from ads.scripts import deactivate, find_place, register
 from ads.tests.conftest import NOW
 from places.models import Place
 
@@ -138,6 +138,48 @@ def test_main_commits_all_or_nothing(factory, monkeypatch, tmp_path, capsys):
     finally:
         with factory() as db:
             db.execute(sa.delete(Ad))
+            db.execute(sa.delete(Place).where(Place.id == uuid.UUID(place_id)))
+            db.commit()
+
+
+# ---------------------------------------------------------------- 장소 찾기
+
+def test_find_place_matches_name_part_and_category_including_closed(world):
+    cafe = world.place("온도 커피 성수")
+    closed = world.place("온도 커피 폐업점", status="closed")
+    world.place("온도 식당", category="음식점")
+    world.place("다른 카페")
+    rows = find_place.find(world.db, "온도", category="카페")
+    assert {r["id"] for r in rows} == {cafe, closed}
+    assert {r["id"]: r["status"] for r in rows}[closed] == "closed"
+    assert {r["category"] for r in find_place.find(world.db, "온도")} == {"카페", "음식점"}
+
+
+def test_find_place_row_shows_id_name_address_status(world):
+    pid = world.place("온도 커피", address=None)
+    [row] = find_place.find(world.db, "온도 커피")
+    assert find_place.format_row(row) == f"{pid}	온도 커피	-	open"
+
+
+def test_find_place_main_prints_rows_and_fails_when_nothing_found(factory, monkeypatch, capsys):
+    import common.database
+
+    monkeypatch.setattr(common.database, "SessionLocal", factory)
+    name = f"찾기카페{uuid.uuid4().hex[:8]}"
+    with factory() as db:
+        place = Place(source="permit", source_id=f"ads-find-{uuid.uuid4().hex[:8]}", name=name, category="카페",
+                      geom="SRID=4326;POINT(127.0561 37.5445)", status="open")
+        db.add(place)
+        db.commit()
+        place_id = str(place.id)
+    try:
+        assert find_place.main([name[:-2], "--category", "카페"]) == 0
+        out = capsys.readouterr().out
+        assert place_id in out and name in out
+        assert find_place.main([name, "--category", "음식점"]) == 1
+        assert "찾지 못했다" in capsys.readouterr().err
+    finally:
+        with factory() as db:
             db.execute(sa.delete(Place).where(Place.id == uuid.UUID(place_id)))
             db.commit()
 

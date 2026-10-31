@@ -172,7 +172,17 @@ export const recommendHandlers = [
     if (raw.length > MANUAL_PER_REQUEST) {
       return apiError(422, "VALIDATION_ERROR", `한 번에 ${MANUAL_PER_REQUEST}개까지 추가할 수 있습니다`);
     }
-    const adds = [...new Map(raw.map((a) => [a.text, a])).values()];
+    // #848 — 같은 사람이 이미 쓴 같은 글(앞뒤 공백 제거, 연속 공백 하나로)을 다시 추가하면 새 줄이 아니다. 기존 줄을 다시 켜고
+    // 글 수에도 세지 않는다(서버는 모델도 부르지 않는다)
+    const norm = (s: string) => s.trim().replace(/\s+/g, " ");
+    const mine = lines.filter((l) => l.author_id === ME_USER_ID);
+    const fresh: { text: string }[] = [];
+    for (const a of raw) {
+      const existing = mine.find((l) => norm(l.text) === norm(a.text));
+      if (existing) existing.is_active = true;
+      else fresh.push(a);
+    }
+    const adds = [...new Map(fresh.map((a) => [norm(a.text), a])).values()];
     const used = store.manualEvidenceCount[runId] ?? 0;
     if (used + adds.length > MANUAL_PER_RUN) {
       return apiError(409, "EVIDENCE_LIMIT", "직접 추가한 근거 상한을 넘었습니다", { limit: MANUAL_PER_RUN, used });
@@ -239,7 +249,7 @@ export const recommendHandlers = [
       { label: "카테고리 후보 풀", removed_count: 0 },
       { label: "반경 밖 제거", removed_count: 3 },
       { label: "영업 종료 제거", removed_count: 1 },
-      { label: "추천 가능 아님 제거", removed_count: 2 }, // 라벨이 적어 추천 풀에서 빠진 장소(places.can_recommend=false, 2026-10-15)
+      // 「추천 가능 아님 제거」는 없다 — 후보 풀이 처음부터 정예 장소다(#912)
       { label: "실격 조건 제거", removed_count: candidates.length === 0 ? 8 : 3 },
       { label: "이미 제안·거절됨", removed_count: 1 },
     ];

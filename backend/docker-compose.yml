@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgis/postgis:17-3.4
+    image: postgis/postgis:17-3.5   # 운영(RDS)·CI와 같게(#916)
     environment:
       POSTGRES_USER: pingo
       POSTGRES_PASSWORD: pingo

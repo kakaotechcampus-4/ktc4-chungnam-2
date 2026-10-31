@@ -4,8 +4,8 @@
 
 ## 책임
 
-- `python -m maintenance.run [--dry-run] [--only maps|notifications|guests|llm_calls]` — 정기 정리를 한 번 돌린다.
-  지도(삭제 30일 후), 알림(90일), 게스트(90일 미사용). 배포 환경의 스케줄러가 이 명령을 부른다.
+- `python -m maintenance.run [--dry-run] [--only maps|notifications|guests|llm_calls|idempotency|withdrawn]` — 정기 정리를 한 번 돌린다.
+  지도(삭제 30일 후), 알림(90일), 게스트(90일 미사용), 탈퇴 계정(복구 기간 7일 뒤 개인정보, #857). 배포 환경의 스케줄러가 이 명령을 부른다.
 
 ## 하지 않는 것
 
