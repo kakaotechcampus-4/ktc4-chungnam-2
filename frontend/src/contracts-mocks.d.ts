@@ -19,6 +19,8 @@ declare module '@pingo/contracts/mocks/scenarios' {
     | 'no-results'
     | 'retry-limit'
     | 'region-conflict'
+    | 'guest'
+    | 'withdrawn-relogin'
 }
 
 declare module '@pingo/contracts/mocks/browser' {

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import type { ScenarioName } from '@pingo/contracts/mocks/scenarios'
 
@@ -9,7 +10,17 @@ const SCENARIOS: ScenarioName[] = [
   'no-results',
   'retry-limit',
   'region-conflict',
+  'guest',
+  'withdrawn-relogin',
 ]
+
+/**
+ * 목 모드의 카카오 버튼은 `/` 로 새로 읽어 시나리오가 처음으로 돌아간다. 콜백이 돌려보내는 주소로 대신 옮긴다.
+ * 탈퇴 계정 재로그인(#855)은 콜백이 `?login_pending=withdrawn_account` 를 붙인다.
+ */
+const CALLBACK_RETURN: Partial<Record<ScenarioName, string>> = {
+  'withdrawn-relogin': '/?login_pending=withdrawn_account',
+}
 
 /**
  * 개발 전용 목 서버 시나리오 전환 버튼. App 에서 `import.meta.env.DEV` 로 감싸 렌더한다.
@@ -17,6 +28,7 @@ const SCENARIOS: ScenarioName[] = [
  */
 export default function ScenarioSwitcher() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [current, setCurrent] = useState<ScenarioName>('happy-path')
   const [failed, setFailed] = useState<string | null>(null)
   // 접어 두면 지도 화면 상단 가운데 빈자리(‹와 프로필 사이)에 이름 하나만 보인다.
@@ -29,6 +41,8 @@ export default function ScenarioSwitcher() {
       resetScenario(name)
       // 스토어가 통째로 갈렸으니 캐시도 버린다. invalidate 로는 이전 결과가 잠깐 남는다.
       await queryClient.resetQueries()
+      const callbackReturn = CALLBACK_RETURN[name]
+      if (callbackReturn) navigate(callbackReturn)
       setCurrent(name)
       setOpen(false)
     } catch (err) {
