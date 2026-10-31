@@ -24,12 +24,14 @@ describe('course model', () => {
   })
 
   it('에러 코드별 문구와 진행 중 run id', () => {
-    expect(createErrorMessage(err('COURSE_LIMIT'))).toBe('오늘은 다 썼어요. 내일 다시 짤 수 있어요')
     expect(createErrorMessage(err('COURSE_NOT_ENOUGH_PLACES'))).toContain('2곳')
     expect(createErrorMessage(err('SOMETHING_ELSE'))).toBeNull()
+    // 크레딧 오류는 버튼 자리(CreditGate)가 말한다 — 여기서 문구를 만들지 않는다
+    expect(createErrorMessage(err('CREDIT_INSUFFICIENT'))).toBeNull()
+    expect(createErrorMessage(err('GUEST_NOT_ALLOWED'))).toBeNull()
     expect(inProgressRunId(err('COURSE_IN_PROGRESS', { course_run_id: 'course_1' }))).toBe('course_1')
     expect(inProgressRunId(err('COURSE_IN_PROGRESS'))).toBeNull()
-    expect(inProgressRunId(err('COURSE_LIMIT', { course_run_id: 'x' }))).toBeNull()
+    expect(inProgressRunId(err('CREDIT_INSUFFICIENT', { course_run_id: 'x' }))).toBeNull()
   })
 
   it('이해 카드는 문장 앞의 같은 제목을 한 번만 보인다', () => {

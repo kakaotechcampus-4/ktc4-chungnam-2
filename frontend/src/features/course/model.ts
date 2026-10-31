@@ -68,12 +68,13 @@ export function outcomeText(outcome: NonNullable<CourseRunDto['outcome']>): stri
 /** 실패 안내. 계약상 INTERRUPTED(서버 재시작·15분 초과)와 ENGINE_ERROR 는 같은 문구다. */
 export const FAILURE_TEXT = '코스 짜기가 중간에 끊겼어요'
 
-/** 코스 요청이 실패했을 때의 안내. 코드가 아닌 HTTP 만으로 갈리지 않는다(docs/errors.md). 모르는 코드는 null 이라 호출부가 ErrorText 로 보인다. */
+/**
+ * 코스 요청이 실패했을 때의 안내. 코드가 아닌 HTTP 만으로 갈리지 않는다(docs/errors.md). 모르는 코드는 null 이라 호출부가 ErrorText 로 보인다.
+ * 크레딧(402·게스트 403)은 여기서 말하지 않는다 — 버튼 자리의 CreditGate 가 보인다(#432).
+ */
 export function createErrorMessage(error: unknown): string | null {
   if (!(error instanceof ApiError)) return null
   switch (error.code) {
-    case 'COURSE_LIMIT':
-      return '오늘은 다 썼어요. 내일 다시 짤 수 있어요'
     case 'COURSE_NOT_ENOUGH_PLACES':
       return '확정 리스트에 위치를 아는 장소가 2곳 이상 있어야 코스를 짤 수 있어요'
     default:

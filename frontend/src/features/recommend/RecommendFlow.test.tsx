@@ -9,7 +9,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { useAiStore } from './aiStore'
 import { createRun, fetchResult, retryRun } from './api'
 import ConditionsCard from './ConditionsCard'
-import { EVIDENCE_LOCKED } from './EvidenceGroups'
 import type { RecommendResultDto, RecommendRunDto } from './model'
 import { ReadinessBody } from './Readiness'
 
@@ -78,33 +77,47 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     expect(within(removed).getByRole('button', { name: '매운맛 전문 다시 넣기' })).toBeInTheDocument()
   })
 
-  it('추천 받기 전에도 이 지도에서 남은 횟수가 보이고, 다 쓰면 버튼이 막힌다', async () => {
-    const view = renderWithClient(<ReadinessBody mapId={MAP} />)
-    expect(await screen.findByText('이 지도에서 추천 10번 남았어요 (10번까지)')).toBeInTheDocument()
-    view.unmount()
-
-    const { run } = await doneRun()
-    const again = renderWithClient(<ReadinessBody mapId={MAP} />)
-    expect(await screen.findByText('이 지도에서 추천 9번 남았어요 (10번까지)')).toBeInTheDocument()
-    again.unmount()
-
-    for (let n = 1; n < 10; n++) await retryRun(run.id)
+  it('버튼 아래에 가격과 남은 크레딧을 응답 값으로 보이고, 추천을 받으면 다시 받는다', async () => {
+    const credits = () => fetch(`http://localhost/credits/me`).then((r) => r.json())
+    const before = await credits()
     renderWithClient(<ReadinessBody mapId={MAP} />)
-    expect(await screen.findByText('이 지도에서 추천을 10번 모두 받았어요')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '음식점 추천받기' })).toBeDisabled()
+    expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용 · 남은 크레딧 ${before.balance}`)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
+    const left = before.balance - before.prices.recommend_run
+    expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용 · 남은 크레딧 ${left}`)).toBeInTheDocument()
   })
 
-  it('상한(10회)을 다 쓰면 카드는 읽기 전용이다 — × 와 조건 더하기가 없다', async () => {
+  it('402 는 크레딧 부족 안내와 「후기 쓰러 가기」(확정 탭) — run 은 생기지 않는다', async () => {
+    resetScenario('credits-empty')
+    const { review_reward } = await fetch(`http://localhost/credits/me`).then((r) => r.json())
+    renderWithClient(<ReadinessBody mapId={MAP} />)
+    await userEvent.click(await screen.findByRole('button', { name: '음식점 추천받기' }))
+
+    expect(await screen.findByText(`크레딧이 부족해요. 후기를 쓰면 ${review_reward} 크레딧을 드려요`)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '후기 쓰러 가기' })).toHaveAttribute('href', `/maps/${MAP}/shortlist`)
+    expect(screen.queryByText('추천을 시작하지 못했어요')).not.toBeInTheDocument()
+    expect(useAiStore.getState().runs[MAP]).toBeUndefined()
+  })
+
+  it('게스트는 처음부터 버튼 대신 카카오 안내 — 숫자는 403 detail 에서', async () => {
+    resetScenario('guest')
+    const { detail } = await fetch(`http://localhost/credits/me`).then((r) => r.json())
+    renderWithClient(<ReadinessBody mapId={MAP} />)
+
+    expect(await screen.findByText(`카카오로 로그인하면 ${detail.initial_credits} 크레딧을 드려요`)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /카카오로 계정 만들기/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /추천받기$/ })).not.toBeInTheDocument()
+  })
+
+  it('다시 추천을 여러 번 해도 조건 카드는 고칠 수 있다 — 횟수 상한이 없다(#432 D5)', async () => {
     const { run } = await doneRun()
     let last = run
-    for (let n = 1; n < 10; n++) last = await retryRun(run.id)
-    expect(last.attempt_no).toBe(10)
+    for (let n = 0; n < 10; n++) last = await retryRun(run.id)
     renderWithClient(<Card run={last} result={await fetchResult(run.id)} />)
 
-    expect(screen.getByText(EVIDENCE_LOCKED)).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /이 조건으로 찾았어요/ }))
-    expect(await screen.findByRole('heading', { name: '꼭 지킬 조건' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /빼기$/ })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '조건 더하기' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '매운맛 전문 빼기' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '조건 더하기' })).toBeInTheDocument()
   })
 })

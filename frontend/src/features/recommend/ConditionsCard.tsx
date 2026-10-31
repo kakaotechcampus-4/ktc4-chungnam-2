@@ -1,11 +1,10 @@
-import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import PingoLoading from '@/ui/PingoLoading'
 
-import EvidenceGroups, { EVIDENCE_LOCKED } from './EvidenceGroups'
-import { attemptLimit, type EvidenceLineDto, type RecommendRunDto } from './model'
+import EvidenceGroups from './EvidenceGroups'
+import type { EvidenceLineDto, RecommendRunDto } from './model'
 import { useEvidenceQuery } from './queries'
 
 /** 조건 줄(꼭·선호). 참고(원문 인용)는 조건이 아니다. */
@@ -16,7 +15,7 @@ const isUsed = (l: EvidenceLineDto) => isCondition(l) && l.enforced !== false
 /**
  * 「이 조건으로 찾았어요」(#849) — 결과 위 접힌 카드. 이번 결과에 실제 쓴 조건(applied_evidence 스냅숏)을 보여 주고,
  * 펼치면 그 자리에서 × ·＋ 로 고친다. 고친 것은 지금 결과에 안 쓰였으니 「아직 적용 전」으로 따로 보이고 「다시 추천」 때 반영된다.
- * 서버가 스냅숏을 안 주면(구버전) 지금 조건만 보인다. 상한(10회)을 다 쓰면 읽기 전용이다 — 서버도 편집을 막는다(429 RETRY_LIMIT).
+ * 서버가 스냅숏을 안 주면(구버전) 지금 조건만 보인다. 고치기에는 횟수 상한이 없다(#432 D5).
  * 펼침은 부르는 쪽이 갖는다 — 0곳 화면의 「조건 고치기」, 조언의 근거 버튼도 이 카드를 연다.
  */
 export default function ConditionsCard({
@@ -33,8 +32,6 @@ export default function ConditionsCard({
   onOpenChange: (open: boolean) => void
 }) {
   const evidence = useEvidenceQuery(run.id)
-  const [lockedByServer, setLockedByServer] = useState(false)
-  const readOnly = lockedByServer || run.attempt_no >= attemptLimit(run)
   const lines = evidence.data ?? []
 
   // 스냅숏과 지금 조건의 차이 = 고쳤지만 아직 결과에 안 쓰인 것. 스냅숏이 없으면 비교하지 않는다.
@@ -56,8 +53,7 @@ export default function ConditionsCard({
           <span className="block text-sm font-bold text-ink-900">
             이 조건으로 찾았어요 · {noApplied ? '적용된 사유 조건이 없어요' : `조건 ${count}개`}
           </span>
-          {/* 글은 꼭 필요한 한 줄만 — 고친 게 있을 때와 더 못 고칠 때(2026-10-31). */}
-          {readOnly && <span className="mt-0.5 block text-xs text-ink-500">{EVIDENCE_LOCKED}</span>}
+          {/* 글은 꼭 필요한 한 줄만 — 고친 게 있을 때(2026-10-31). */}
           {changed > 0 && (
             <span className="mt-1 block text-xs font-bold text-[var(--warn-text)]">고친 조건 {changed}개 · 다시 추천 때 반영</span>
           )}
@@ -76,10 +72,8 @@ export default function ConditionsCard({
             <EvidenceGroups
               runId={run.id}
               lines={lines}
-              readOnly={readOnly}
               pending={pending}
               removed={removed}
-              onLocked={() => setLockedByServer(true)}
             />
           )}
         </div>
