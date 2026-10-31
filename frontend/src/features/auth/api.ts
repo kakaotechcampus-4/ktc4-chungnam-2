@@ -1,11 +1,25 @@
 import { api, ApiError } from '@/api'
 
-import type { UserDto } from './model'
+import type { PendingAccountDto, PendingChoice, UserDto } from './model'
 
 export const fetchMe = () => api<UserDto>('/auth/me')
 
 export function isUnauthorized(err: unknown) {
   return err instanceof ApiError && err.status === 401
+}
+
+/**
+ * 탈퇴 계정 재로그인의 선택 안내와 선택(#855). 세션이 아니라 콜백이 내린 `pending_account` 쿠키(10분)로 부른다.
+ * 선택은 JSON 본문으로만 보낸다 — `api()` 가 본문이 있으면 Content-Type 을 붙인다.
+ */
+export const fetchPendingAccount = () => api<PendingAccountDto>('/auth/pending')
+
+export const choosePendingAccount = (choice: PendingChoice) =>
+  api<UserDto>('/auth/pending', { method: 'POST', body: JSON.stringify({ choice }) })
+
+/** 쿠키가 없거나 만료·이미 선택됨 — 고를 게 없으니 카카오로 다시 시작한다. */
+export function isNoPendingLogin(err: unknown) {
+  return err instanceof ApiError && err.code === 'NO_PENDING_LOGIN'
 }
 
 /**
