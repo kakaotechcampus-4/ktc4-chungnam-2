@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import { useMeQuery } from '@/features/auth/queries'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
@@ -136,7 +137,10 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
       <div className="mt-4 flex items-center justify-between border-t border-ink-200 pt-4">
         <div>
           <p className="text-sm font-bold text-ink-900">계정</p>
-          <p className="text-xs text-ink-500">카카오로 로그인됨 · {me.data?.display_name}</p>
+          <p className="text-xs text-ink-500">
+            {me.data?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '카카오로 로그인됨 · '}
+            {me.data?.display_name}
+          </p>
         </div>
         <button
           type="button"
@@ -146,6 +150,7 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
           로그아웃
         </button>
       </div>
+      {me.data?.is_guest && <GuestAccountNotice />}
     </>
   )
 }

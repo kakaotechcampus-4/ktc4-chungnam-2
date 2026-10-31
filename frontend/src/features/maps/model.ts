@@ -93,6 +93,9 @@ export const MAP_LIMIT_HINT = '다른 지도를 나가거나 삭제하면 다시
 const INVITE_ERROR_MESSAGES: Record<string, string> = {
   INVITE_NOT_FOUND: '유효하지 않은 초대 링크예요',
   INVITE_EXPIRED: '초대 링크가 만료됐어요. 초대한 분께 새 링크를 요청하세요',
+  // 게스트로 참여(#485)에서만 나는 코드. 문구는 docs/errors.md 표.
+  GUEST_LIMIT: '이 링크로는 더 입장할 수 없어요. 초대한 분께 새 링크를 요청하세요',
+  RATE_LIMITED: '요청이 너무 많아요. 잠시 뒤 다시 시도해 주세요',
 }
 
 /** 상한 숫자는 화면이 들고 있지 않는다 — 409 MAP_LIMIT 응답의 detail.limit만 쓴다(멘토 리뷰 #380). */
@@ -101,9 +104,12 @@ function mapLimitMessage(err: ApiError): string {
   return `지도는 ${limit} 만들거나 참여할 수 있어요. 다른 지도를 나가거나 삭제한 뒤 다시 시도해 주세요`
 }
 
-/** 지도 만들기 실패 문구. 상한을 넘으면 409 MAP_LIMIT(#369). */
+/** 지도 만들기 실패 문구. 상한을 넘으면 409 MAP_LIMIT(#369), 게스트면 403 GUEST_NOT_ALLOWED(#472, docs/errors.md 문구). */
 export function createMapErrorMessage(err: unknown): string {
-  return err instanceof ApiError && err.code === 'MAP_LIMIT' ? mapLimitMessage(err) : '지도를 만들지 못했어요'
+  if (!(err instanceof ApiError)) return '지도를 만들지 못했어요'
+  if (err.code === 'MAP_LIMIT') return mapLimitMessage(err)
+  if (err.code === 'GUEST_NOT_ALLOWED') return '지도를 만들려면 카카오로 로그인해 주세요'
+  return '지도를 만들지 못했어요'
 }
 
 export function inviteErrorMessage(err: unknown): string {
