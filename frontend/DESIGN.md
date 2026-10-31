@@ -305,6 +305,7 @@ components:
 | 핑고 밖에서 찾는 출구 | `ExternalSearchLink` 「카카오맵에서 더 찾아보기」(새 창) + 12 ink-500 「검색어 ‘…’」. 색·크기는 놓이는 자리가 준다 | `features/recommend/ExternalSearchLink` |
 | 반대 기호 | `AgainstMark` (lucide Ban) | `ui/AgainstMark` |
 | AI 코스 작업 기록(한 줄 · 이해 카드) | `WorkLog` | `features/course/WorkLog` |
+| 목록에서 여러 개 고르기 | `Checkbox` (상자 20px + 옆 글자, 줄 전체가 label이라 누르는 곳 44px · 켜짐은 `--action-fill`) | `ui/Checkbox` |
 | 켜고 끄기 | `Switch` (막대 44×24 · 누르는 곳 44, 켜짐 brand-600 · 꺼짐 ink-300) | `ui/Switch` |
 | 핑고 AI 조언 버튼(지도 왼쪽 아래) | `AgentButton` | `features/agent/AgentButton` |
 | 서버가 렌더한 에이전트 문장(조각) | `AdviceText` (quote는 `<q>` + ink-100 면, pin은 600 굵기) | `features/agent/AdviceText` |

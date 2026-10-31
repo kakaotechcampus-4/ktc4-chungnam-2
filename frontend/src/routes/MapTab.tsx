@@ -13,6 +13,7 @@ import PinList from '@/features/map/PinList'
 import { usePinFilters } from '@/features/map/usePinFilters'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import PinUnavailable from '@/features/map/PinUnavailable'
+import { ImportButton } from '@/features/kakaoImport/ImportSheet'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { useCountsQuery, usePinsQuery } from '@/features/map/queries'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
@@ -114,7 +115,10 @@ export default function MapTab() {
       tab="map"
       header={
         <>
-          <SheetTitle>마킹된 장소</SheetTitle>
+          <div className="flex items-center justify-between gap-2">
+            <SheetTitle>마킹된 장소</SheetTitle>
+            <ImportButton mapId={mapId} />
+          </div>
           {/* 넓은 화면은 단계가 없고 칩이 지도 영역 왼쪽 위에 있다(#338). */}
           {stage === 3 && !desktop && <CategoryChips value={filters.category} onChange={(c) => setFilter('category', c)} className="mt-2" />}
           {pins && pins.length > 0 && <PinFilterBar filters={filters} members={members} pins={pins} onChange={setFilter} />}
