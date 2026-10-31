@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { ApiError } from '@/api'
@@ -6,8 +7,8 @@ import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
 
-import { deleteMapBody } from './model'
-import { useDeleteMapMutation, useLeaveMapMutation, useTrashQuery } from './queries'
+import { deleteMapBody, type MemberView } from './model'
+import { useDeleteMapMutation, useLeaveMapMutation, useTransferOwnerMutation, useTrashQuery } from './queries'
 
 /**
  * 지도 나가기 확인 창(#369). 나가면 내 의견(반응·사유)은 지워지고 내가 찍은 핀은 '나간 구성원'의 핀으로 남는다.
@@ -70,6 +71,45 @@ export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; ti
       }
     >
       {del.error && <ErrorText message="지도를 삭제하지 못했어요" error={del.error} />}
+    </ConfirmDialog>
+  )
+}
+
+/**
+ * 방장 넘기기 확인 창(방장만, #468). 넘긴 뒤 나는 구성원으로 남는다 — 나가기가 아니다.
+ * 넘길 수 있는 사람인지는 서버가 정한다. 그사이 나간 사람을 골랐으면 서버가 거절하고 구성원 목록이 새로 온다.
+ */
+export function TransferOwnerConfirm({ mapId, members, onCancel }: { mapId: string; members: MemberView[]; onCancel: () => void }) {
+  const transfer = useTransferOwnerMutation(mapId)
+  const [to, setTo] = useState<MemberView | null>(null)
+  const others = members.filter((m) => !m.isMe)
+
+  return (
+    <ConfirmDialog
+      title="누구에게 방장을 넘길까요?"
+      body="넘기면 나는 구성원으로 지도에 남아요."
+      ok={to ? `${to.name}님에게 넘기기` : '넘기기'}
+      pending={transfer.isPending || !to}
+      onCancel={onCancel}
+      onOk={() =>
+        to &&
+        transfer.mutate(to.userId, {
+          onSuccess: () => {
+            showToast(`${to.name}님이 새 방장이 됐어요`)
+            onCancel()
+          },
+          onError: () => setTo(null),
+        })
+      }
+    >
+      <div role="group" aria-label="새 방장" className="flex flex-wrap gap-2 pt-1">
+        {others.map((m) => (
+          <button key={m.userId} type="button" aria-pressed={to?.userId === m.userId} onClick={() => setTo(m)} className="chip">
+            {m.name}
+          </button>
+        ))}
+      </div>
+      {transfer.error && <ErrorText message="방장을 넘기지 못했어요. 구성원을 다시 골라 주세요" error={transfer.error} />}
     </ConfirmDialog>
   )
 }

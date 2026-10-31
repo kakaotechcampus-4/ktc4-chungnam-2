@@ -1,6 +1,6 @@
 import { api } from '@/api'
 
-import type { InviteDto, InviteSummaryDto, MapCreateRequest, MapDto, MapListDto, MemberDto, TrashedMapListDto } from './model'
+import type { InviteDto, InviteSummaryDto, MapCreateRequest, MapDto, MapListDto, MemberDto, OwnerTransferRequest, TrashedMapListDto } from './model'
 
 /** 내 지도 목록과 상한(#623). 2026-10-19 전에는 Map 배열이었다. */
 export const fetchMaps = () => api<MapListDto>('/maps')
@@ -30,3 +30,13 @@ export const fetchMembers = (mapId: string) => api<MemberDto[]>(`/maps/${mapId}/
 export const createInvite = (mapId: string) => api<InviteDto>(`/maps/${mapId}/invite`, { method: 'POST' })
 
 export const fetchInviteSummary = (token: string) => api<InviteSummaryDto>(`/invites/${encodeURIComponent(token)}`)
+
+/** 지도의 켜진 초대 링크(방장만, #467). 끈 링크와 만료된 링크는 빠진다. */
+export const fetchInvites = (mapId: string) => api<InviteDto[]>(`/maps/${mapId}/invites`)
+
+/** 초대 링크 끄기(방장만, #467). 이미 참여한 사람은 그대로 남는다. */
+export const revokeInvite = (token: string) => api<void>(`/invites/${encodeURIComponent(token)}`, { method: 'DELETE' })
+
+/** 방장 넘기기(방장만, #468). 나는 구성원으로 남는다. */
+export const transferOwner = (mapId: string, body: OwnerTransferRequest) =>
+  api<MapDto>(`/maps/${mapId}/owner`, { method: 'POST', body: JSON.stringify(body) })

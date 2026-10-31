@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ExternalLink, MessageSquare, RotateCw, Users } from 'lucide-react'
 
 import { ApiError } from '@/api'
@@ -25,7 +25,7 @@ import {
   type RecommendResultDto,
   type RecommendRunDto,
 } from './model'
-import { useEvidenceQuery, useExecuteRunMutation, usePublishMutation, useRetryMutation, useWidenMutation } from './queries'
+import { useEvidencePatching, useEvidenceQuery, useExecuteRunMutation, usePublishMutation, useRetryMutation, useWidenMutation } from './queries'
 import { AiHeader } from './Readiness'
 
 const TONE = { pass: 'tag-good', check: 'tag-warn', fail: 'tag-bad' } as const
@@ -48,20 +48,28 @@ export function BackToReadiness({ mapId }: { mapId: string }) {
   return <PanelBackLink label="AI 추천" onBack={() => setRun(mapId, undefined)} />
 }
 
-/** 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 「↻ 다시 추천 · N번 남음」. */
+/**
+ * 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 「↻ 다시 추천 · N번 남음」. count 는 이번 실행이 새로 찾은 곳(new_count)이다.
+ * 다시 추천은 고친 조건으로, 지금 후보를 빼고 찾는다(#845). 조건을 고치는 요청이 끝나기 전에는 막는다 — 고친 게 빠진 채 찾지 않게.
+ */
 export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; run: RecommendRunDto; count: number; onLimit: () => void }) {
   const retry = useRetryMutation(mapId)
+  const patching = useEvidencePatching(run.id)
   const left = Math.max(0, attemptLimit(run) - run.attempt_no)
   return (
     <div>
       <BackToReadiness mapId={mapId} />
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <AiHeader title={`${run.category} 대안 ${count}곳을 찾았어요`} sub="나에게만 보여요 · 올린 곳만 모두에게 보여요" mood="happy" />
+          <AiHeader
+            title={count ? `${run.category} 대안 ${count}곳을 찾았어요` : '이번엔 새로 찾은 곳이 없어요'}
+            sub="나에게만 보여요 · 올린 곳만 모두에게 보여요"
+            mood={count ? 'happy' : 'sorry'}
+          />
         </div>
         <button
           type="button"
-          disabled={retry.isPending}
+          disabled={retry.isPending || patching}
           onClick={() =>
             // 남은 횟수가 없으면 보내지 않고 상한 화면으로(서버도 429 로 막는다). 그 밖의 결과는 요청 훅이 처리한다(#349).
             left === 0 ? onLimit() : retry.mutate(run)
@@ -71,9 +79,10 @@ export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; r
           <span className="flex items-center gap-1">
             <RotateCw size={12} aria-hidden="true" /> 다시 추천
           </span>
-          <span className="font-normal text-ink-500">{retry.isPending ? '찾는 중…' : `${left}번 남음`}</span>
+          <span className="font-normal text-ink-500">{retry.isPending ? '찾는 중…' : patching ? '조건 반영 중…' : `${left}번 남음`}</span>
         </button>
       </div>
+      {left > 0 && <p className="mt-1.5 text-label text-ink-500">다시 추천하면 고친 조건으로, 지금 후보를 빼고 찾아요</p>}
     </div>
   )
 }
@@ -81,20 +90,32 @@ export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; r
 /** 결과를 이미 보여 준 실행. 후보 상세에서 목록으로 돌아올 때는 다시 나타나지 않게 한다(#595). */
 const shownRuns = new Set<string>()
 
-/** 결과 목록(Figma 'AI 결과 탭'). 카드마다 이유·조건별 체크·구성원 충족·출처가 붙는다(가드레일 5). */
+/**
+ * 결과 목록(Figma 'AI 결과 탭'). 카드마다 이유·조건별 체크·구성원 충족·출처가 붙는다(가드레일 5).
+ * 맨 위는 「이 조건으로 찾았어요」 카드(conditions). 이번에 새로 찾은 곳과 이미 지도에 올린 곳을 나눠 보인다 —
+ * 다시 추천은 올린 곳을 남기고 나머지를 바꾸기 때문이다(#845). 새로 찾은 곳이 없으면 그렇게 말하고 넓히기·밖에서 찾기를 둔다.
+ */
 export function ResultsBody({
   mapId,
   run,
   result,
   members,
   onHow,
+  conditions,
+  onOpenConditions,
 }: {
   mapId: string
   run: RecommendRunDto
   result: RecommendResultDto
   members: MemberView[]
   onHow: () => void
+  conditions?: ReactNode
+  onOpenConditions?: () => void
 }) {
+  const fresh = result.candidates.filter((c) => c.visibility !== 'published')
+  const published = result.candidates.filter((c) => c.visibility === 'published')
+  // 「이번 검색 0건」과 「찾은 곳을 다 올려서 남은 게 없음」을 가른다 — new_count 는 올려도 줄지 않는다(구버전 서버면 남은 수로).
+  const noneFound = (result.new_count ?? fresh.length) === 0
   const removed = result.funnel.reduce((sum, f) => sum + f.removed_count, 0)
   const missing = missingWants(result.candidates, useEvidenceQuery(run.id).data ?? [])
   const [enter] = useState(() => !shownRuns.has(run.id))
@@ -103,6 +124,7 @@ export function ResultsBody({
   }, [run.id])
   return (
     <div className={`space-y-3 ${enter ? 'enter-fade' : ''}`}>
+      {conditions}
       <button type="button" onClick={onHow} className="flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
         <span>
           조건으로 {removed}곳 걸러냄 → 추천 {result.candidates.length}곳
@@ -111,7 +133,7 @@ export function ResultsBody({
       </button>
       {/* 알러지는 거르지 않는다 — 데이터로 보장할 수 없어서 사유와 상관없이 항상 안내한다(#425) */}
       <p className="text-xs text-ink-500">알러지가 있다면 가게에 직접 확인해 주세요</p>
-      <RunAdvice mapId={mapId} run={run} widen={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />} />
+      <RunAdvice mapId={mapId} run={run} widen={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />} onOpenEvidence={onOpenConditions} />
       {/* 원한 조건에 맞는 곳이 반경 안에 없으면 다른 곳만 보여 주지 않고 이유를 말한다. 넓히는 건 사람이다(가드레일 4). */}
       {missing.length > 0 && (
         <Notice action={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />}>
@@ -119,15 +141,34 @@ export function ResultsBody({
         </Notice>
       )}
       <div className="space-y-3 pb-[100px]">
-        <ol className="space-y-3">
-          {result.candidates.map((c) => (
-            <li key={c.id}>
-              <CandidateCard mapId={mapId} run={run} c={c} members={members} />
-            </li>
-          ))}
-        </ol>
+        {fresh.length > 0 && (
+          <ol className="space-y-3">
+            {fresh.map((c) => (
+              <li key={c.id}>
+                <CandidateCard mapId={mapId} run={run} c={c} members={members} />
+              </li>
+            ))}
+          </ol>
+        )}
+        {noneFound && (
+          <Notice action={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />}>
+            이번엔 새로 찾은 곳이 없어요. 조건을 고치거나 반경을 넓혀 다시 찾아볼 수 있어요
+          </Notice>
+        )}
         {/* 후보가 적으면 서버가 링크를 준다(#798). 기준 숫자는 서버가 정한다 — 화면은 링크가 있는지만 본다. */}
         {result.external_search && <ExternalSearchLink search={result.external_search} className="btn-outline btn-md w-full" />}
+        {published.length > 0 && (
+          <section className="space-y-3 pt-2">
+            <h3 className="text-sm font-bold text-ink-900">이미 지도에 올린 곳</h3>
+            <ol className="space-y-3">
+              {published.map((c) => (
+                <li key={c.id}>
+                  <CandidateCard mapId={mapId} run={run} c={c} members={members} />
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
       </div>
     </div>
   )
@@ -285,18 +326,31 @@ function FunnelTable({ funnel, left }: { funnel: FunnelRow[]; left: number }) {
  * 결과 0곳(Figma '결과 0곳'). 0곳은 0곳으로 보여준다(가드레일 2) — 무엇을 시도했는지 깔때기로 남긴다(가드레일 10).
  * 반경을 넓히는 건 사람이다(가드레일 4): 기본값 원만 넓히고, 사람이 쓴 반경은 그대로 둔다고 먼저 묻는다.
  */
-export function NoResults({ mapId, run, error, onFixEvidence }: { mapId: string; run: RecommendRunDto; error: unknown; onFixEvidence: () => void }) {
+export function NoResults({
+  mapId,
+  run,
+  error,
+  onFixEvidence,
+  conditions,
+}: {
+  mapId: string
+  run: RecommendRunDto
+  error: unknown
+  onFixEvidence: () => void
+  conditions?: ReactNode
+}) {
   const funnel = noResultsFunnel(error) ?? []
   const search = noResultsExternalSearch(error)
   return (
     <div className="space-y-3">
+      {conditions}
       <FunnelTable funnel={funnel} left={0} />
       {/* 아래에 같은 버튼이 있어서 조언은 문장만 보인다. */}
       <RunAdvice mapId={mapId} run={run} />
       <div className="grid grid-cols-2 gap-2">
         <WidenButton mapId={mapId} run={run} className="btn-primary btn-lg" />
         <button type="button" onClick={onFixEvidence} className="btn-outline btn-lg">
-          근거 고치기
+          조건 고치기
         </button>
         {/* 핑고 밖에서 찾는 출구(#798). 채움은 「반경 넓히기」 하나라 외곽선이다. */}
         {search && (
@@ -382,7 +436,6 @@ export function RetryLimit({ onBack }: { onBack: () => void }) {
     <div className="space-y-3">
       <ul className="list-inside list-disc space-y-1 rounded-xl border border-brand-300 bg-brand-50 p-3 text-sm text-ink-700">
         <li>지금 떠 있는 후보 중 괜찮은 곳을 지도에 올려 보세요</li>
-        <li>근거를 고치면 다른 결과가 나올 수 있어요</li>
         <li>검색창에서 직접 찾아 찍을 수도 있어요</li>
       </ul>
       <div className="grid grid-cols-2 gap-2">

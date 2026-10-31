@@ -9,6 +9,7 @@ import AccountSheet, { AccountMenu } from '@/features/maps/AccountSheet'
 import { MAP_LIMIT_HINT, type MapListView, type MapView } from '@/features/maps/model'
 import { useMapsQuery, useTrashQuery } from '@/features/maps/queries'
 import TrashSheet from '@/features/maps/TrashSheet'
+import NotificationBell from '@/features/notifications/NotificationBell'
 import { hasSeenWelcome } from '@/features/onboarding/welcomeSeen'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
@@ -53,17 +54,21 @@ export default function MapListPage() {
           {desktop ? (
             <div className="flex shrink-0 items-center gap-3">
               <NewMapLink className="btn-md" blockedBy={full ? limitHintId : undefined} />
+              <NotificationBell />
               <AccountMenu maps={maps ?? []} name={me?.display_name} />
             </div>
           ) : (
-            <button
-              type="button"
-              aria-label="계정"
-              onClick={() => setAccountOpen(true)}
-              className="hit-44 rounded-full"
-            >
-              <Avatar name={me?.display_name} />
-            </button>
+            <div className="flex shrink-0 items-center gap-3">
+              <NotificationBell />
+              <button
+                type="button"
+                aria-label="계정"
+                onClick={() => setAccountOpen(true)}
+                className="hit-44 rounded-full"
+              >
+                <Avatar name={me?.display_name} />
+              </button>
+            </div>
           )}
         </header>
 
