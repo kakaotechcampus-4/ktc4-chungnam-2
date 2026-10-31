@@ -11,7 +11,7 @@ describe('휴지통 문구 (#479) — 기간과 상한은 서버 값만 쓴다',
   })
   it('복구 상한은 detail.limit, 기간이 지나면 숫자 없이', () => {
     const limit = new ApiError(409, { code: 'MAP_LIMIT', message: '', detail: { limit: 20, count: 20 } })
-    expect(restoreMapErrorMessage(limit)).toContain('20개까지')
-    expect(restoreMapErrorMessage(new ApiError(410, { code: 'MAP_PURGED', message: '' }))).toBe('되살릴 수 있는 기간이 지났어요')
+    expect(restoreMapErrorMessage(limit, 30)).toContain('20개까지')
+    expect(restoreMapErrorMessage(new ApiError(410, { code: 'MAP_PURGED', message: '' }), 30)).toBe('삭제한 지 30일이 지나 복구할 수 없어요')
   })
 })

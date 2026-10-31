@@ -90,7 +90,7 @@ export default function MapListPage() {
           </div>
         )}
 
-        {/* 휴지통 입구는 되살릴 지도가 있을 때만(#479). 목록 끝의 조용한 글자 버튼 — 채움 버튼은 「새 지도 만들기」 하나다. */}
+        {/* 휴지통 입구는 복구할 지도가 있을 때만(#479). 목록 끝의 조용한 글자 버튼 — 채움 버튼은 「새 지도 만들기」 하나다. */}
         {trash && trash.items.length > 0 && (
           <button type="button" onClick={() => setTrashOpen(true)} className="btn-text mt-4 self-center text-sm underline">
             휴지통 · 삭제한 지도 {trash.items.length}개

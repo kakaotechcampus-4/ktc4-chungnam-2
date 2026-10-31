@@ -106,14 +106,17 @@ export function toTrashView(list: TrashedMapListDto): TrashView {
 /** 지도 삭제 확인 창의 안내. 기간을 아직 못 받았으면 숫자 없이 쓴다(상한 숫자처럼 화면이 들고 있지 않는다). */
 export function deleteMapBody(title: string, retentionDays?: number): string {
   const when = retentionDays ? `${retentionDays}일 안에는` : '정해진 기간 안에는'
-  return `‘${title}’의 핀과 의견이 모든 구성원에게서 사라져요. ${when} 내 지도 목록의 휴지통에서 되살릴 수 있어요.`
+  return `‘${title}’의 핀과 의견이 모든 구성원에게서 사라져요. ${when} 내 지도 목록의 휴지통에서 복구할 수 있어요.`
 }
 
-/** 복구 실패 문구. 복구도 지도를 하나 늘리는 일이라 상한(409 MAP_LIMIT)에 걸릴 수 있다. */
-export function restoreMapErrorMessage(err: unknown): string {
+/**
+ * 복구 실패 문구. 복구도 지도를 하나 늘리는 일이라 상한(409 MAP_LIMIT)에 걸릴 수 있다.
+ * MAP_PURGED 문구는 docs/errors.md 그대로이고, 날수만 휴지통 응답의 retention_days로 채운다.
+ */
+export function restoreMapErrorMessage(err: unknown, retentionDays: number): string {
   if (err instanceof ApiError && err.code === 'MAP_LIMIT') return mapLimitMessage(err)
-  if (err instanceof ApiError && err.code === 'MAP_PURGED') return '되살릴 수 있는 기간이 지났어요'
-  return '지도를 되살리지 못했어요'
+  if (err instanceof ApiError && err.code === 'MAP_PURGED') return `삭제한 지 ${retentionDays}일이 지나 복구할 수 없어요`
+  return '지도를 복구하지 못했어요'
 }
 
 /** 초대 수락 실패 문구. 코드와 문구는 docs/errors.md 표를 따른다. */

@@ -19,7 +19,7 @@ export const deleteMap = (mapId: string) => api<void>(`/maps/${mapId}`, { method
 /** 내가 방장인 삭제한 지도(#464). 복구할 수 있는 것만, 최근 삭제순. */
 export const fetchTrash = () => api<TrashedMapListDto>('/maps/trash')
 
-/** 삭제한 지도 되살리기(방장만, #464). 이미 되살렸으면 그 지도가 그대로 온다. */
+/** 삭제한 지도 복구(방장만, #464). 이미 복구했으면 그 지도가 그대로 온다. */
 export const restoreMap = (mapId: string) => api<MapDto>(`/maps/${mapId}/restore`, { method: 'POST' })
 
 /** 지도 나가기(구성원 누구나, #369). 내 의견은 지워지고 핀은 남는다. 방장이면 먼저 들어온 사람에게 방장이 넘어간다. */

@@ -62,7 +62,7 @@ export function useTrashQuery() {
   return useQuery({ queryKey: mapKeys.trash, queryFn: fetchTrash, select: toTrashView })
 }
 
-/** 되살리면 내 지도 목록과 휴지통이 같이 바뀐다. */
+/** 복구하면 내 지도 목록과 휴지통이 같이 바뀐다. */
 export function useRestoreMapMutation() {
   const queryClient = useQueryClient()
   return useMutation({

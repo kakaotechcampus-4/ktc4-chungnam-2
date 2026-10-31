@@ -46,7 +46,7 @@ export function LeaveMapConfirm({ mapId, nextOwnerName, onCancel }: { mapId: str
   )
 }
 
-/** 지도 삭제 확인 창(방장만, #369). 모든 구성원에게서 사라지고, 방장은 정해진 기간 안에 휴지통에서 되살릴 수 있다(#464). */
+/** 지도 삭제 확인 창(방장만, #369). 모든 구성원에게서 사라지고, 방장은 정해진 기간 안에 휴지통에서 복구할 수 있다(#464). */
 export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; title: string; onCancel: () => void }) {
   const navigate = useNavigate()
   const del = useDeleteMapMutation(mapId)
@@ -63,7 +63,7 @@ export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; ti
       onOk={() =>
         del.mutate(undefined, {
           onSuccess: () => {
-            showToast('지도를 삭제했어요. 휴지통에서 되살릴 수 있어요')
+            showToast('지도를 삭제했어요. 휴지통에서 복구할 수 있어요')
             navigate('/', { replace: true })
           },
         })
