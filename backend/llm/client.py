@@ -21,6 +21,7 @@ from typing import Any, Mapping, Optional, Sequence
 from openai import APITimeoutError, OpenAI
 
 from common.settings import settings
+from llm import usage as usage_log
 from llm.prompts import (
     AGENT_DIAGNOSE_PROMPT_VERSION, COURSE_DIRECT_PROMPT, COURSE_DIRECT_PROMPT_VERSION,
     COURSE_GOALS_PROMPT, COURSE_GOALS_PROMPT_VERSION, COURSE_TURN_PROMPT, COURSE_TURN_PROMPT_VERSION,
@@ -113,6 +114,13 @@ def _failure_fields(exc: BaseException) -> str:
     return " ".join(parts)
 
 
+def _record(call: str, prompt_version: Optional[str], completion: Any, outcome: str, started: float) -> None:
+    """llm_calls 한 행(#870). 실패한 호출도 남긴다 — 응답이 있었으면(잘린 응답, 거절) 그 토큰도 비용이다."""
+    usage_log.record_call(
+        call=call, prompt_version=prompt_version, completion=completion, outcome=outcome, elapsed_ms=_elapsed_ms(started),
+    )
+
+
 def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]]) -> PlanningOutput:
     started = time.monotonic()
     try:
@@ -130,14 +138,18 @@ def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]]) -> PlanningO
             "사유 구조화 호출 실패: model=%s batch=%d %s elapsed_ms=%d",
             settings.llm_model, len(reasons), _failure_fields(exc), _elapsed_ms(started),
         )
+        _record("plan_evidence", None, getattr(exc, "completion", None), _agent_failure_reason(exc), started)
         raise LlmCallError(f"사유 구조화 호출 실패: {type(exc).__name__}") from exc
     if getattr(message, "refusal", None):
         # 거절 문구(refusal 본문)는 모델 응답이라 남기지 않는다.
         log.warning("사유 구조화 거절: model=%s batch=%d elapsed_ms=%d", settings.llm_model, len(reasons), _elapsed_ms(started))
+        _record("plan_evidence", None, completion, "refusal", started)
         raise LlmCallError("모델이 사유 구조화를 거절했다")
     if message.parsed is None:
         log.warning("사유 구조화 빈 응답: model=%s batch=%d elapsed_ms=%d", settings.llm_model, len(reasons), _elapsed_ms(started))
+        _record("plan_evidence", None, completion, "empty", started)
         raise LlmCallError("구조화 응답이 비어 있다")
+    _record("plan_evidence", None, completion, "ok", started)
     usage = getattr(completion, "usage", None)
     log.info(
         "사유 구조화 성공: model=%s batch=%d elapsed_ms=%d prompt_tokens=%s completion_tokens=%s",
@@ -189,11 +201,12 @@ def _meter_response(completion: Any) -> None:
         usage.tokens_out += getattr(counts, "completion_tokens", None) or 0
 
 
-def _agent_parse(client: Any, *, what: str, context: str, prompt_version: str, **kwargs: Any) -> Any:
+def _agent_parse(client: Any, *, call: str, what: str, context: str, prompt_version: str, **kwargs: Any) -> Any:
     """에이전트 호출 한 번(chat.completions.parse). 응답 message를 돌려준다 — parsed가 있거나 도구 호출이 있다.
 
     로그는 ②와 같은 규칙이다(#390): 실패는 모델명·예외 클래스·status_code·request_id·소요 ms만, 성공은 토큰 수만 남긴다.
-    입력(신호, 사유)과 응답 본문은 남기지 않는다. 사용량은 응답이 오면 거절·빈 응답이어도 더한다(#564)."""
+    입력(신호, 사유)과 응답 본문은 남기지 않는다. 사용량은 응답이 오면 거절·빈 응답이어도 더한다(#564).
+    call은 llm_calls.call(#870)이다."""
     started = time.monotonic()
     _meter_request(prompt_version)
     try:
@@ -205,13 +218,17 @@ def _agent_parse(client: Any, *, what: str, context: str, prompt_version: str, *
             "%s 호출 실패: model=%s %s %s elapsed_ms=%d",
             what, settings.llm_model, context, _failure_fields(exc), _elapsed_ms(started),
         )
+        _record(call, prompt_version, getattr(exc, "completion", None), _agent_failure_reason(exc), started)
         raise LlmCallError(f"{what} 호출 실패: {type(exc).__name__}", reason=_agent_failure_reason(exc)) from exc
     if getattr(message, "refusal", None):
         log.warning("%s 거절: model=%s %s elapsed_ms=%d", what, settings.llm_model, context, _elapsed_ms(started))
+        _record(call, prompt_version, completion, "refusal", started)
         raise LlmCallError(f"모델이 {what}을 거절했다")
     if message.parsed is None and not getattr(message, "tool_calls", None):
         log.warning("%s 빈 응답: model=%s %s elapsed_ms=%d", what, settings.llm_model, context, _elapsed_ms(started))
+        _record(call, prompt_version, completion, "empty", started)
         raise LlmCallError("구조화 응답이 비어 있다", reason="invalid_schema")
+    _record(call, prompt_version, completion, "ok", started)
     usage = getattr(completion, "usage", None)
     log.info(
         "%s 성공: model=%s %s elapsed_ms=%d prompt_tokens=%s completion_tokens=%s",
@@ -231,7 +248,7 @@ def _agent_tool_turn(
     parallel_tool_calls=False: 병렬 도구 호출은 strict 인자 스키마가 보장되지 않는다(OpenAI 문서). 상한도 한 번에 하나씩
     세는 편이 단순하다. 엘리스 API는 이 값을 받는다(2026-10-15 확인)."""
     return _agent_parse(
-        client, what=what, context=f"turn={turn} tool_choice={tool_choice}",
+        client, call="agent_diagnose", what=what, context=f"turn={turn} tool_choice={tool_choice}",
         prompt_version=prompt_version,
         messages=list(messages),
         tools=list(tools),
@@ -256,7 +273,7 @@ def call_course_turn(client: Any, turn_input: Mapping[str, Any], *, turn: int) -
     """동선 에이전트 턴 한 번(#334). 도구를 tools로 주지 않고 CourseTurn.action으로 받는다 — 그래서 reasoning_effort를
     넘기지 않는다(우선순위 호출과 같다). 입력은 JSON 문자열로만 넘긴다(프롬프트에 섞지 않는다)."""
     message = _agent_parse(
-        client, what="동선 에이전트 턴", context=f"turn={turn}", prompt_version=COURSE_TURN_PROMPT_VERSION,
+        client, call="course_turn", what="동선 에이전트 턴", context=f"turn={turn}", prompt_version=COURSE_TURN_PROMPT_VERSION,
         messages=[
             {"role": "system", "content": COURSE_TURN_PROMPT},
             {"role": "user", "content": json.dumps(dict(turn_input), ensure_ascii=False, default=str)},
@@ -268,9 +285,11 @@ def call_course_turn(client: Any, turn_input: Mapping[str, Any], *, turn: int) -
     return message.parsed
 
 
-def _course_parse(client: Any, *, what: str, context: str, prompt_version: str, system: str, payload: Mapping[str, Any], fmt: Any) -> Any:
+def _course_parse(
+    client: Any, *, call: str, what: str, context: str, prompt_version: str, system: str, payload: Mapping[str, Any], fmt: Any,
+) -> Any:
     message = _agent_parse(
-        client, what=what, context=context, prompt_version=prompt_version,
+        client, call=call, what=what, context=context, prompt_version=prompt_version,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": json.dumps(dict(payload), ensure_ascii=False, default=str)},
@@ -285,7 +304,7 @@ def _course_parse(client: Any, *, what: str, context: str, prompt_version: str, 
 def call_course_goals(client: Any, goals_input: Mapping[str, Any]) -> CourseGoalSet:
     """요청 한 줄 → 목표(#334). 도구 없이 구조화 출력만 받는다."""
     return _course_parse(
-        client, what="동선 목표 세우기", context="goals", prompt_version=COURSE_GOALS_PROMPT_VERSION,
+        client, call="course_goals", what="동선 목표 세우기", context="goals", prompt_version=COURSE_GOALS_PROMPT_VERSION,
         system=COURSE_GOALS_PROMPT, payload=goals_input, fmt=CourseGoalSet,
     )
 
@@ -293,6 +312,6 @@ def call_course_goals(client: Any, goals_input: Mapping[str, Any]) -> CourseGoal
 def call_course_direct(client: Any, turn_input: Mapping[str, Any], *, turn: int) -> CourseDirectTurn:
     """지휘 턴 한 번(#334). 도구는 CourseDirectTurn.action으로 받는다."""
     return _course_parse(
-        client, what="동선 지휘 턴", context=f"turn={turn}", prompt_version=COURSE_DIRECT_PROMPT_VERSION,
+        client, call="course_direct", what="동선 지휘 턴", context=f"turn={turn}", prompt_version=COURSE_DIRECT_PROMPT_VERSION,
         system=COURSE_DIRECT_PROMPT, payload=turn_input, fmt=CourseDirectTurn,
     )

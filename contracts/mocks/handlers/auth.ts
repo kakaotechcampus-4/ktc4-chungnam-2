@@ -12,6 +12,10 @@ export const authHandlers = [
   }),
 
   http.get("*/auth/kakao/callback", () => {
+    // #855 탈퇴 계정이 복구 기간 안이면 로그인하지 않고(세션 없음) 선택 화면으로 보낸다. 쿼리에는 아무 개인정보도 싣지 않는다
+    if (store.pendingLogin) {
+      return new HttpResponse(null, { status: 302, headers: { Location: "/?login_pending=withdrawn_account" } });
+    }
     // #560 게스트가 카카오로 전환하면 기록을 합치고 guest_merged=true로 돌려보낸다(목 서버는 내 계정이 게스트가 아니게 된다)
     const me = store.users[ME_USER_ID];
     if (me?.is_guest) {
@@ -44,7 +48,41 @@ export const authHandlers = [
     return HttpResponse.json({ user: publicUser, map }, { status: 201 });
   }),
 
+  // #855 탈퇴 계정 재로그인 — 선택 안내와 선택. 세션 없이(콜백이 내린 pending_account 쿠키로) 부른다. 목 서버는 store.pendingLogin이 그 쿠키 역할이다.
+  http.get("*/auth/pending", () => {
+    const pending = store.pendingLogin;
+    if (!pending) return apiError(404, "NO_PENDING_LOGIN", "선택 시간이 지났어요. 카카오로 다시 시작해 주세요");
+    const restoreUntil = new Date(new Date(pending.withdrawn_at).getTime() + 7 * 24 * 60 * 60 * 1000);
+    return HttpResponse.json({
+      display_name: pending.display_name,
+      withdrawn_at: pending.withdrawn_at,
+      restore_until: restoreUntil.toISOString(),
+      days_left: Math.max(0, Math.ceil((restoreUntil.getTime() - Date.now()) / (24 * 60 * 60 * 1000))),
+    });
+  }),
+
+  http.post("*/auth/pending", async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { choice?: string };
+    // additionalProperties: false — choice 말고 다른 필드가 오면 거절한다
+    if (Object.keys(body).some((k) => k !== "choice")) return apiError(422, "VALIDATION_ERROR", "알 수 없는 필드가 있어요");
+    if (body.choice !== "restart" && body.choice !== "restore") return apiError(422, "VALIDATION_ERROR", "choice는 restart 또는 restore여야 해요");
+    if (!store.pendingLogin) return apiError(404, "NO_PENDING_LOGIN", "선택 시간이 지났어요. 카카오로 다시 시작해 주세요");
+    const user = store.users[ME_USER_ID];
+    store.pendingLogin = null; // 쿠키가 지워진다 — 같은 선택의 재전송은 404
+    if (body.choice === "restore") {
+      // 되살리면 같은 계정(같은 id)이고 남아 있던 지도 참여가 돌아온다
+      return HttpResponse.json(user, { status: 200 });
+    }
+    // restart: **새 사용자**(다른 id, 지도 참여 없음). 기존 계정은 즉시 정리돼 되살릴 수 없다
+    const id = nextId("u_new");
+    const fresh = { ...user, id, display_name: user.display_name, is_guest: false } as typeof user;
+    store.users[id] = fresh;
+    return HttpResponse.json(fresh, { status: 201 });
+  }),
+
   http.get("*/auth/me", () => {
+    // #855 선택 대기 중에는 아직 로그인된 상태가 아니다(세션 없음)
+    if (store.pendingLogin) return apiError(401, "UNAUTHORIZED", "로그인이 필요합니다");
     const user = store.users[ME_USER_ID];
     if (!user) return apiError(401, "UNAUTHORIZED", "로그인이 필요합니다");
     return HttpResponse.json(user);

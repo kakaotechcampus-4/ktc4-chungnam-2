@@ -1,10 +1,39 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { fetchMe, isUnauthorized, logout, withdraw } from './api'
-import type { User } from './model'
+import { choosePendingAccount, fetchMe, fetchPendingAccount, isNoPendingLogin, isUnauthorized, joinAsGuest, logout, updateMe, withdraw } from './api'
+import type { PendingAccountDto, User } from './model'
 
 export const authKeys = {
   me: ['me'] as const,
+  pending: ['auth', 'pending'] as const,
+}
+
+/**
+ * 탈퇴 계정 재로그인의 선택 안내(#855). 404 는 다시 물어도 404 다.
+ * 콜백에서 돌아올 때마다 새로 묻는다 — 지난번의 404 가 캐시에 남아 있으면 새 선택 화면이 열리자마자 닫힌다.
+ */
+export function usePendingAccountQuery() {
+  return useQuery<PendingAccountDto>({
+    queryKey: authKeys.pending,
+    queryFn: fetchPendingAccount,
+    gcTime: 0,
+    retry: (count, err) => !isNoPendingLogin(err) && count < 1,
+  })
+}
+
+/**
+ * 「새 계정으로 시작」·「기존 계정 되살리기」. 응답이 세션 쿠키와 함께 온 `User` 라 그대로 로그인 상태로 둔다.
+ * 그 전 캐시는 통째로 비운다 — 게스트로 시작한 로그인이었으면 게스트의 데이터가 남아 있을 수 있다.
+ */
+export function usePendingChoiceMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: choosePendingAccount,
+    onSuccess: (user) => {
+      queryClient.clear()
+      queryClient.setQueryData(authKeys.me, user)
+    },
+  })
 }
 
 /** 로그인 여부의 정본. 쿠키는 httpOnly 라 프론트가 직접 볼 수 없고, 이 응답이 401 이면 비로그인이다. */
@@ -14,6 +43,37 @@ export function useMeQuery() {
     queryFn: fetchMe,
     // 401 은 다시 물어도 401 이다.
     retry: (count, err) => !isUnauthorized(err) && count < 1,
+  })
+}
+
+/**
+ * 표시 이름 수정. 이름은 구성원 목록·핀 작성자·의견 곳곳에 실려 오고 바뀐 것을 알리는 이벤트가 없어서,
+ * 나를 바꾼 뒤 지금 화면이 보는 데이터를 모두 다시 받는다. 다른 구성원에게는 다음에 다시 받을 때 보인다.
+ */
+export function useUpdateMeMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: updateMe,
+    onSuccess: (user) => {
+      queryClient.setQueryData(authKeys.me, user)
+      void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] !== authKeys.me[0] })
+    },
+  })
+}
+
+/**
+ * 게스트로 참여(#485). 응답의 `user`가 곧 로그인 상태라 그대로 넣고(401이던 캐시를 덮는다), 지도 목록은 다시 받는다.
+ * 성공하면 응답의 `map`으로 지도에 들어간다.
+ */
+export function useGuestJoinMutation(inviteToken: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (displayName: string) => joinAsGuest(displayName, inviteToken),
+    onSuccess: ({ user }) => {
+      queryClient.setQueryData(authKeys.me, user)
+      // mapKeys.all — maps가 auth를 가져다 쓰므로 여기서 maps를 import하지 않는다.
+      void queryClient.invalidateQueries({ queryKey: ['maps'] })
+    },
   })
 }
 

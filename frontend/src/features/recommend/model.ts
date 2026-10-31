@@ -6,6 +6,7 @@ import { josa } from '@/ui/josa'
 export type RecommendCategory = components['schemas']['RecommendCategory']
 export type ReadinessDto = components['schemas']['Readiness']
 export type RecommendRunDto = components['schemas']['RecommendRun']
+export type RunSummaryDto = components['schemas']['RunSummary']
 export type EvidenceLineDto = components['schemas']['EvidenceLine']
 export type EvidencePatchRequest = components['schemas']['EvidencePatchRequest']
 export type RegionDto = components['schemas']['Region']
@@ -49,14 +50,35 @@ export function evidenceLabel(line: EvidenceLineDto): string {
   return line.fact_label
 }
 
-/** 근거 확인 화면의 세 구역(최종기획안 5-5). 꼭 = 구성원별 줄, 선호 = 해시태그로 합침, 참고 = 원문 인용. */
+/**
+ * 근거 확인 화면의 구역(최종기획안 5-5). 꼭 = 구성원별 줄, 선호 = 해시태그로 합침, 참고 = 원문 인용.
+ * 꼭·선호 줄 중 추천이 쓰지 않는 줄(enforced=false)은 unused 로 따로 모은다 — 「꼭」으로 보이면 걸러질 거라고 믿는다(#742).
+ * enforced 가 없으면 쓰이는 줄로 본다(구버전 서버).
+ */
 export function groupEvidence(lines: EvidenceLineDto[]) {
   const active = lines.filter((l) => l.is_active)
+  const pick = (badge: EvidenceLineDto['badge'], enforced: boolean) =>
+    active.filter((l) => l.badge === badge && (l.enforced !== false) === enforced)
   return {
-    required: active.filter((l) => l.badge === 'required'),
-    preferred: active.filter((l) => l.badge === 'preferred'),
+    required: pick('required', true),
+    preferred: pick('preferred', true),
     reference: active.filter((l) => l.badge === 'reference'),
+    unused: [...pick('required', false), ...pick('preferred', false)],
   }
+}
+
+/** 추천이 쓰지 않는 줄의 이유 한 줄(docs/api-spec.yaml EvidenceLine.not_enforced_reason, #740). */
+export function notEnforcedNote(line: EvidenceLineDto): string {
+  if (line.not_enforced_reason === 'no_key') return '걸러지지 않아요. 가게에 직접 확인해 주세요' // 가드레일 8
+  if (line.not_enforced_reason === 'off_season') return '이번 여행 기간에는 해당 없어요'
+  return '이번 추천에 쓰이지 않아요'
+}
+
+/** 「+」 직접 추가 상한(409 EVIDENCE_LIMIT, #707). 숫자는 서버 detail.limit 만 쓴다. 다른 오류면 null. */
+export function evidenceLimitMessage(err: unknown): string | null {
+  if (!(err instanceof ApiError) || err.code !== 'EVIDENCE_LIMIT') return null
+  const limit = err.detail?.limit
+  return typeof limit === 'number' ? `직접 추가는 ${limit}개까지예요` : '직접 추가는 더 할 수 없어요'
 }
 
 /** docs/errors.md — run 시작·실행 실패 문구. */
@@ -68,7 +90,8 @@ export function runErrorMessage(err: unknown): string {
       return `${limit}번까지만 찾습니다`
     }
     if (err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 근거를 고치거나 직접 찍어 보세요'
-    if (err.code === 'RECOMMEND_FAILED') return '의견을 조건으로 정리하지 못했어요. 남긴 의견은 그대로 있으니 잠시 뒤 다시 눌러 주세요'
+    if (err.code === 'RECOMMEND_FAILED') return '추천을 끝내지 못했어요. 남긴 의견은 그대로 있고 횟수도 쓰지 않았어요. 잠시 뒤 다시 눌러 주세요'
+    if (err.code === 'REQUEST_IN_PROGRESS') return '아직 추천을 찾고 있어요. 잠시 뒤 다시 눌러 주세요'
   }
   return '추천을 시작하지 못했어요'
 }
@@ -87,9 +110,28 @@ export function noResultsExternalSearch(err: unknown): ExternalSearchDto | undef
   return err.detail?.external_search as ExternalSearchDto | undefined
 }
 
+/** 0곳(404 NO_RESULTS)에도 그 결과에 쓴 조건 스냅숏이 detail 에 온다(#846). 구버전 서버는 없다. */
+export function noResultsApplied(err: unknown): { lines?: EvidenceLineDto[]; none?: boolean } {
+  if (!(err instanceof ApiError) || err.code !== 'NO_RESULTS') return {}
+  return {
+    lines: err.detail?.applied_evidence as EvidenceLineDto[] | undefined,
+    none: err.detail?.no_applied_conditions as boolean | undefined,
+  }
+}
+
 /** 추천 횟수 상한(#31, 지도 안 구성원 각자·카테고리 무관). 서버 값(attempt_limit)을 쓰고, 없으면(구버전 서버) 이 값. */
 const DEFAULT_ATTEMPT_LIMIT = 10
 export const attemptLimit = (run: RecommendRunDto) => run.attempt_limit ?? DEFAULT_ATTEMPT_LIMIT
+
+/**
+ * 이 지도에서 내가 쓴 추천 횟수(#31). 서버는 내 run 전체의 attempt_no 최댓값으로 센다(새 run 은 최댓값 + 1) —
+ * 목록이 최근 요청순이라 최댓값을 직접 구한다. 상한은 서버 값(attempt_limit), 없으면 구버전 서버다.
+ */
+export function toAttempts(runs: RunSummaryDto[]) {
+  const used = runs.reduce((max, r) => Math.max(max, r.attempt_no), 0)
+  const limit = runs[0]?.attempt_limit ?? DEFAULT_ATTEMPT_LIMIT
+  return { used, limit, left: Math.max(0, limit - used) }
+}
 
 /**
  * 원한 조건(wants=true 근거 줄)인데 추천한 곳 모두가 못 맞췄거나(passed=false) 모르는(needs_check) 조건의 이름.

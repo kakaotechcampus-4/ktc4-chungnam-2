@@ -18,16 +18,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from agent import core as agent_core
 from agent.course import runner, worklog
 from agent.course.api_schemas import CourseRequest, CourseRun
 from agent.course.constants import (
-    COURSE_DAILY_LIMIT, COURSE_DAY_BOUNDARY_TZ, COURSE_DAYS_MAX, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE,
+    COURSE_DAILY_LIMIT, COURSE_DAYS_MAX, STARTUP_ORPHAN_AFTER, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE,
     MAX_PLACES, MIN_PLACES,
 )
 from agent.course.core import MemberConstraint
@@ -36,6 +36,7 @@ from agent.course.intake import Excluded, PinInput, TripBuild, build_trip
 from agent.course.models import ACTIVE_STATUSES, AgentCourseRun
 from agent.course.ports import OpeningHoursGateway
 from common.errors import AppError
+from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
 from places import api as places_api
@@ -115,13 +116,6 @@ def build_input(snapshot: Snapshot, body: CourseRequest) -> TripBuild:
     return TripBuild(built.trip, built.excluded + over)
 
 
-def kst_day_start(now: datetime) -> datetime:
-    """now가 속한 KST 날짜의 자정(UTC aware). 하루 상한은 이 시각부터 센다."""
-    tz = ZoneInfo(COURSE_DAY_BOUNDARY_TZ)
-    local = now.astimezone(tz)
-    return datetime(local.year, local.month, local.day, tzinfo=tz).astimezone(timezone.utc)
-
-
 # ---------------------------------------------------------------- 요청
 
 @dataclass(frozen=True)
@@ -130,14 +124,17 @@ class CourseJob:
     run_id: str
     build: TripBuild
     request_text: str
+    map_id: str            # 사용량 기록(llm_calls, #870)의 라벨
+    requested_by: str
 
 
 def fail_stale_runs(
     db: Session, *, now: datetime, map_id: Optional[str] = None, requested_by: Optional[str] = None,
-    run_id: Optional[uuid.UUID] = None,
+    run_id: Optional[uuid.UUID] = None, after: timedelta = STALE_AFTER,
 ) -> int:
-    """STALE_AFTER를 넘겨 진행 중으로 남은 run을 INTERRUPTED로 끝낸다. 오래됐다는 판정은 여기 한 곳이다 — 요청(지도+사람)과
-    조회(run id, 또는 지도+사람)가 범위만 달리해서 부른다. 이미 끝난 run과 STALE_AFTER 안의 run은 걸리지 않는다. 커밋은 호출부."""
+    """`after`(기본 STALE_AFTER)를 넘겨 진행 중으로 남은 run을 INTERRUPTED로 끝낸다. 오래됐다는 판정은 여기 한 곳이다 — 요청(지도+사람)과
+    조회(run id, 또는 지도+사람)는 범위만 달리해서, 서버 시작은 전체 범위에 더 짧은 `after`로 부른다. 이미 끝난 run과 `after` 안의
+    run은 걸리지 않는다. 커밋은 호출부."""
     scope = [
         col == value for col, value in (
             (AgentCourseRun.map_id, map_id), (AgentCourseRun.requested_by, requested_by), (AgentCourseRun.id, run_id),
@@ -145,7 +142,7 @@ def fail_stale_runs(
     ]
     res = db.execute(
         update(AgentCourseRun)
-        .where(*scope, AgentCourseRun.status.in_(ACTIVE_STATUSES), AgentCourseRun.created_at < now - STALE_AFTER)
+        .where(*scope, AgentCourseRun.status.in_(ACTIVE_STATUSES), AgentCourseRun.created_at < now - after)
         .values(status="failed", failure_code="INTERRUPTED", finished_at=now)
     )
     return res.rowcount
@@ -183,7 +180,7 @@ def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseR
     active = _active_run(db, map_id, requested_by)
     if active is not None:
         raise AppError("COURSE_IN_PROGRESS", detail={"course_run_id": str(active.id)})
-    used = count_since(db, requested_by=requested_by, since=kst_day_start(now))
+    used = count_since(db, requested_by=requested_by, since=agent_core.kst_day_start(now))
     if used >= COURSE_DAILY_LIMIT:
         raise AppError("COURSE_LIMIT", detail={"limit": COURSE_DAILY_LIMIT, "used": used})
     text = (body.request_text or "").strip()
@@ -197,7 +194,7 @@ def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseR
             db.add(row)
     except IntegrityError:      # 동시 요청이 확인을 함께 통과했다 — 부분 유니크 인덱스가 하나만 남긴다
         raise AppError("COURSE_IN_PROGRESS") from None
-    return CourseJob(str(row.id), build, text)
+    return CourseJob(str(row.id), build, text, map_id=map_id, requested_by=requested_by)
 
 
 # ---------------------------------------------------------------- 실행 (백그라운드)
@@ -220,11 +217,12 @@ def execute_run(
         if not started:      # 그 사이 지워졌거나 INTERRUPTED로 끝났다
             return
         try:
-            computed = runner.run_course(
-                job.build, job.request_text,
-                goals_planner=llm.goals_planner, direct_planner=llm.direct_planner, gateway=gateway,
-                on_step=progress_writer(session_factory, run_id),
-            )
+            with llm_api.usage_context("course", map_id=job.map_id, user_id=job.requested_by, run_id=job.run_id):
+                computed = runner.run_course(
+                    job.build, job.request_text,
+                    goals_planner=llm.goals_planner, direct_planner=llm.direct_planner, gateway=gateway,
+                    on_step=progress_writer(session_factory, run_id),
+                )
             values = _done_values(computed)
         except Exception as exc:   # noqa: BLE001 — 엔진 오류가 run을 running으로 남기면 안 된다. 클래스 이름만 로그(사유·요청 원문 금지)
             log.warning("course run %s 실패: %s", job.run_id, type(exc).__name__)
@@ -268,13 +266,11 @@ def _done_values(c: runner.Computation) -> dict:
 
 
 def interrupt_unfinished_runs(session_factory: Callable[[], Session], *, now: Optional[datetime] = None) -> int:
-    """서버 시작 때 부른다 — 진행 중(queued·running)으로 남은 run을 INTERRUPTED로 끝낸다(백그라운드 작업은 프로세스와 함께 사라졌다).
-    인스턴스가 하나라는 전제다(여러 개로 늘리면 Cloud Tasks로 옮긴다, #168). 끝낸 수를 돌려준다."""
+    """서버 시작 때 부른다 — 죽은 프로세스가 남긴 진행 중(queued·running) run을 INTERRUPTED로 끝낸다. 시작한 지
+    STARTUP_ORPHAN_AFTER가 안 된 run은 다른 프로세스에서 아직 도는 것일 수 있어 두고, 오래됐다는 판정은 `fail_stale_runs`와
+    같다(임계만 짧다, #813). 남은 run은 STALE_AFTER 뒤 요청과 조회가 정리한다. 끝낸 수를 돌려준다."""
     with session_factory() as db:
-        n = db.execute(
-            update(AgentCourseRun).where(AgentCourseRun.status.in_(ACTIVE_STATUSES))
-            .values(status="failed", failure_code="INTERRUPTED", finished_at=now or datetime.now(timezone.utc))
-        ).rowcount
+        n = fail_stale_runs(db, now=now or datetime.now(timezone.utc), after=STARTUP_ORPHAN_AFTER)
         db.commit()
     return n
 

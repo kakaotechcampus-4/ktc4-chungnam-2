@@ -4,6 +4,7 @@
 """
 
 import logging
+from dataclasses import replace
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -15,8 +16,8 @@ from auth.deps import get_current_user
 from auth.schemas import CurrentUser
 from common.database import get_db_session
 from common.errors import AppError
-from common import categories
-from places import api, logguard
+from common import categories, geo
+from places import api, logguard, matching
 from places.schemas import LinkParseResult, PlaceHint, PlaceSearchResult
 
 logger = logging.getLogger(__name__)
@@ -48,9 +49,19 @@ def search_places(
         raise AppError("VALIDATION_ERROR", "lat과 lng는 함께 보내야 합니다")
     api.check_search_rate(user.user_id)
     near = (lat, lng) if lat is not None and lng is not None else None
-    results = api.search_by_name(query, near, _FETCH_LIMIT)
+    own = _search_own(query, near, limit, db)
+    own_results = [h.result for h in own]
+    if len(own) >= limit:
+        return own_results[:limit]   # 자체 DB만으로 채워졌으면 카카오를 부르지 않는다(#822)
+    try:
+        results = api.search_by_name(query, near, _FETCH_LIMIT)
+    except AppError as exc:
+        if exc.code == "PLACES_UNAVAILABLE" and own:
+            return own_results   # 카카오가 죽어도 자체 DB 결과는 낸다
+        raise
     _fill_pinnable(results, db)
-    return _own_db_first(results)[:limit]
+    results = _drop_same_places(_own_db_first(results), own)
+    return (own_results + results)[:limit]
 
 
 @router.get("/places/nearest", response_model=list[PlaceSearchResult], response_model_exclude_none=True)
@@ -79,6 +90,38 @@ def parse_link(
     """지도 링크 해석(#474) — 422 → 429 → 해석. 핀을 만들지 않고 아무것도 저장하지 않는다."""
     api.check_link_rate(user.user_id)
     return api.parse_link(body.url, db=db)
+
+
+def _search_own(query: str, near: tuple[float, float] | None, limit: int, db: Session) -> list[api.OwnSearchHit]:
+    """자체 DB 몫(#822). 못 읽으면 카카오 결과만으로 검색을 살린다."""
+    try:
+        return api.search_own_for_query(query, near, limit, db=db)
+    except SQLAlchemyError as exc:
+        logger.warning("자체 DB 검색 실패(%s) — 생략한다", type(exc).__name__)   # 타입만(SQL 파라미터에 검색어·좌표가 실린다)
+        return []
+
+
+def _drop_same_places(kakao: list[PlaceSearchResult], own: list[api.OwnSearchHit]) -> list[PlaceSearchResult]:
+    """이미 자체 DB 결과로 실은 가게와 같은 카카오 결과를 뺀다. 같은 가게인지는 핀 생성의 매칭 규칙(pick_match)을 그대로 쓴다:
+    기록된 카카오 ID가 같고 분류가 같으면 이름·거리와 무관하게 같은 가게, 아니면 반경 안에서 이름 비교."""
+    if not own:
+        return kakao
+    candidates = [
+        matching.Candidate(h.result.place_id.removeprefix("own:"), h.result.place_name, h.result.lat, h.result.lng,
+                           h.result.category or "", h.kakao_place_id, address=h.result.address)
+        for h in own
+    ]
+    kept = []
+    for r in kakao:
+        hint = PlaceHint(r.place_id, r.place_name, r.lat, r.lng, r.category or "", address=r.address)
+        nearby = []
+        for c in candidates:
+            dist = geo.haversine_distance_m(r.lat, r.lng, c.lat, c.lng)
+            if dist <= matching.MAX_RADIUS_M or c.kakao_place_id == r.place_id:   # 카카오 ID 일치는 반경 밖이어도 본다
+                nearby.append(replace(c, distance_m=dist))
+        if matching.pick_match(hint, nearby) is None:
+            kept.append(r)
+    return kept
 
 
 def _own_db_first(results: list[PlaceSearchResult]) -> list[PlaceSearchResult]:

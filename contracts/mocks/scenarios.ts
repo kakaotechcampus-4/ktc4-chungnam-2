@@ -5,7 +5,7 @@
 import { ME_USER_ID, nextId, resetIdCounter, resetStore, type StoreState } from "./store";
 import { buildBaseState, buildCandidates, buildEvidenceLines, buildRegions, SEED_MAP_ID } from "./seed";
 
-export type ScenarioName = "empty" | "happy-path" | "no-results" | "retry-limit" | "region-conflict" | "guest";
+export type ScenarioName = "empty" | "happy-path" | "no-results" | "retry-limit" | "region-conflict" | "guest" | "withdrawn-relogin" | "credits-empty";
 
 /** 6절 "핀이 하나도 없음" 화면 — 지도만 있고 핀은 0개 */
 function buildEmpty(): StoreState {
@@ -32,7 +32,7 @@ function buildNoResults(): StoreState {
   return state;
 }
 
-/** 6절 "재시도 3회 초과" — 이미 3회 시도한 run. 다음 /retry 호출은 429. */
+/** 폐지 예정(#432 D3, #954에서 지운다) — 10회째 run. 상한이 크레딧으로 바뀌어 이제 /retry도 그대로 된다. FE 시나리오 목록(#952)이 지울 때까지 이름만 남긴다 */
 function buildRetryLimit(): StoreState {
   const state = buildBaseState();
   const runId = "run_retry_limit";
@@ -79,10 +79,24 @@ function buildRegionConflict(): StoreState {
   return state;
 }
 
-/** #472 — 내가 게스트다. 지도 만들기는 403 GUEST_NOT_ALLOWED, 나머지 구성원 행동은 그대로 */
+/** #432 — 크레딧을 다 썼다. 추천 받기·코스 짜기는 402 CREDIT_INSUFFICIENT, 후기를 처음 쓰면 채워진다 */
+function buildCreditsEmpty(): StoreState {
+  const state = buildBaseState();
+  state.credits[ME_USER_ID] = 0;
+  return state;
+}
+
+/** #472 — 내가 게스트다. 지도 만들기·추천·코스·크레딧·후기 쓰기는 403 GUEST_NOT_ALLOWED(#432), 나머지 구성원 행동은 그대로 */
 function buildGuest(): StoreState {
   const state = buildBaseState();
   state.users[ME_USER_ID] = { ...state.users[ME_USER_ID], is_guest: true };
+  return state;
+}
+
+/** #855 탈퇴한 계정으로 다시 로그인 — 복구 기간(7일) 안이라 카카오 콜백이 선택 화면으로 보낸다. 선택 전에는 로그인된 상태가 아니다. */
+function buildWithdrawnRelogin(): StoreState {
+  const state = buildBaseState();
+  state.pendingLogin = { display_name: "탈퇴했던 나", withdrawn_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString() };
   return state;
 }
 
@@ -93,6 +107,8 @@ const BUILDERS: Record<ScenarioName, () => StoreState> = {
   "retry-limit": buildRetryLimit,
   "region-conflict": buildRegionConflict,
   guest: buildGuest,
+  "withdrawn-relogin": buildWithdrawnRelogin,
+  "credits-empty": buildCreditsEmpty,
 };
 
 export function resetScenario(name: ScenarioName) {

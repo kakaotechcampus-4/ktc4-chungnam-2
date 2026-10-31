@@ -3,8 +3,12 @@ import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError } from "../util";
 import { buildCandidates, buildEvidenceLines, buildRegions } from "../seed";
 import { RECOMMEND_CATEGORIES } from "../categories";
+import { chargeCredit, creditGate } from "./credits";
 
-/** 한 사람이 한 지도에서 추천을 받을 수 있는 횟수(#31, 2026-10-15 5→10). 서버가 attempt_limit으로 내려 준다. */
+/**
+ * 응답의 attempt_limit 값(폐지 예정, #432 D4 — 계약에서 지우는 건 #954). 횟수 상한은 크레딧으로 바뀌어 목 서버는 더 이상 429 RETRY_LIMIT을 내지 않는다.
+ * FE가 아직 이 필드를 읽고 있어(#952에서 정리) 값만 남긴다.
+ */
 export const ATTEMPT_LIMIT = 10;
 
 /** run을 만든 시각 — 지난 추천 기록(#469)의 created_at. 목 서버 메모리에만 있다. */
@@ -56,6 +60,16 @@ function ensureCandidates(runId: string) {
   return store.candidates[runId];
 }
 
+/** #845 — 마지막 실행(execute·retry·widen)이 실제로 쓴 근거의 스냅샷과 새로 찾은 후보 수. 근거를 고치거나 후보를 게시해도 이미 보인 결과의 설명은 안 바뀐다. */
+function snapshotRun(runId: string, newCount: number) {
+  store.appliedEvidence[runId] = (store.evidenceLines[runId] ?? []).filter((l) => l.is_active).map((l) => ({ ...l }));
+  store.lastNewCount[runId] = newCount;
+}
+function appliedFlags(runId: string) {
+  const applied = (store.appliedEvidence[runId] ?? []) as { enforced?: boolean }[];
+  return { applied_evidence: applied, no_applied_conditions: !applied.some((l) => l.enforced !== false) };
+}
+
 export const recommendHandlers = [
   http.get("*/maps/:mapId/recommend/readiness", ({ params }) => {
     const mapId = params.mapId as string;
@@ -99,7 +113,17 @@ export const recommendHandlers = [
 
   http.post("*/maps/:mapId/runs", async ({ params, request }) => {
     const mapId = params.mapId as string;
-    const body = (await request.json()) as { category: string };
+    const body = (await request.json()) as { category: string; execute?: boolean };
+    // #811 — 같은 Idempotency-Key는 첫 요청이 만든 run을 그대로 돌려준다. 마법 키 in-progress-key는 첫 요청이 아직 모델을 기다리는 중인 상태를 낸다
+    const idemKey = request.headers.get("Idempotency-Key");
+    if (idemKey === "in-progress-key") return apiError(409, "REQUEST_IN_PROGRESS", "같은 요청을 처리하고 있어요. 잠시 뒤 다시 확인할게요");
+    const seen = idemKey ? store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] : undefined;
+    // 요청의 동일성 = (지도, category, execute — 생략은 false). 다르면 IDEMPOTENCY_CONFLICT — 키를 재사용한 화면의 버그 신호
+    if (seen && (seen.mapId !== mapId || seen.category !== body.category || seen.execute !== Boolean(body.execute))) {
+      return apiError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 키로 다른 요청을 보냈어요");
+    }
+    // 같은 키의 재사용은 최초 응답의 복제가 아니라 같은 run의 지금 상태다
+    if (seen && store.runs[seen.runId]) return HttpResponse.json({ ...store.runs[seen.runId], attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
     const answered = opinionPinCount(mapId, body.category);
     if (answered < REQUIRED_OPINION_PINS) {
       return apiError(409, "NOT_READY", `의견 핀 ${answered}곳 · ${REQUIRED_OPINION_PINS - answered}곳 더 필요`, {
@@ -108,13 +132,24 @@ export const recommendHandlers = [
         required_count: REQUIRED_OPINION_PINS,
       });
     }
+    // #432 — 준비 확인 뒤, 모델(②) 전에 크레딧을 본다. 게스트 403, 모자라면 402 — 둘 다 run을 만들지 않는다
+    const blocked = creditGate("recommend_run");
+    if (blocked) return blocked;
     const runId = nextId("run");
+    chargeCredit("recommend_run", runId); // 실서버는 run 저장과 같은 트랜잭션. 같은 Idempotency-Key의 재사용은 위에서 돌아가 다시 빠지지 않는다
     store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1 };
     store.runRequestedBy[runId] = ME_USER_ID;
+    if (idemKey) store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] = { runId, mapId, category: body.category, execute: Boolean(body.execute) };
     runCreatedAt[runId] = new Date().toISOString();
     // ② 사유 → 실격/선호/반경 구조화 (목 서버에서는 시드 데이터로 대체 — 실제 구조화는 backend/llm 담당)
     store.evidenceLines[runId] = buildEvidenceLines(runId);
     store.regions[runId] = buildRegions();
+    if (body.execute) {
+      // #845 — 근거 확인 없이 곧바로 첫 검색까지: 근거를 모은 뒤 실행해 done run을 돌려준다
+      store.regions[runId].forEach((r) => (r.confirmed = true));
+      snapshotRun(runId, ensureCandidates(runId).length);
+      store.runs[runId].status = "done";
+    }
     return HttpResponse.json({ ...store.runs[runId], attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
@@ -128,6 +163,7 @@ export const recommendHandlers = [
     const runId = params.runId as string;
     const lines = store.evidenceLines[runId];
     if (!lines) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
+    // #845의 「횟수를 다 쓴 요청자는 근거를 못 고친다」는 상한과 함께 없어졌다(#432 D3·D5 — 근거 고치기는 크레딧을 쓰지 않는다)
     const body = (await request.json()) as {
       toggle?: { id: string; is_active: boolean }[];
       add?: { text: string }[];
@@ -138,7 +174,17 @@ export const recommendHandlers = [
     if (raw.length > MANUAL_PER_REQUEST) {
       return apiError(422, "VALIDATION_ERROR", `한 번에 ${MANUAL_PER_REQUEST}개까지 추가할 수 있습니다`);
     }
-    const adds = [...new Map(raw.map((a) => [a.text, a])).values()];
+    // #848 — 같은 사람이 이미 쓴 같은 글(앞뒤 공백 제거, 연속 공백 하나로)을 다시 추가하면 새 줄이 아니다. 기존 줄을 다시 켜고
+    // 글 수에도 세지 않는다(서버는 모델도 부르지 않는다)
+    const norm = (s: string) => s.trim().replace(/\s+/g, " ");
+    const mine = lines.filter((l) => l.author_id === ME_USER_ID);
+    const fresh: { text: string }[] = [];
+    for (const a of raw) {
+      const existing = mine.find((l) => norm(l.text) === norm(a.text));
+      if (existing) existing.is_active = true;
+      else fresh.push(a);
+    }
+    const adds = [...new Map(fresh.map((a) => [norm(a.text), a])).values()];
     const used = store.manualEvidenceCount[runId] ?? 0;
     if (used + adds.length > MANUAL_PER_RUN) {
       return apiError(409, "EVIDENCE_LIMIT", "직접 추가한 근거 상한을 넘었습니다", { limit: MANUAL_PER_RUN, used });
@@ -185,7 +231,7 @@ export const recommendHandlers = [
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
-    ensureCandidates(runId);
+    snapshotRun(runId, ensureCandidates(runId).length);
     run.status = "done";
     return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
@@ -205,15 +251,18 @@ export const recommendHandlers = [
       { label: "카테고리 후보 풀", removed_count: 0 },
       { label: "반경 밖 제거", removed_count: 3 },
       { label: "영업 종료 제거", removed_count: 1 },
-      { label: "추천 가능 아님 제거", removed_count: 2 }, // 라벨이 적어 추천 풀에서 빠진 장소(places.can_recommend=false, 2026-10-15)
+      // 「추천 가능 아님 제거」는 없다 — 후보 풀이 처음부터 정예 장소다(#912)
       { label: "실격 조건 제거", removed_count: candidates.length === 0 ? 8 : 3 },
       { label: "이미 제안·거절됨", removed_count: 1 },
     ];
     if (candidates.length === 0) {
-      return apiError(404, "NO_RESULTS", "필터에 걸리는 핀이 없어요", { funnel, external_search: search });
+      // #845 — 후보가 하나도 없는 결과에도 이번에 쓴 근거를 싣는다(「이 조건으로 찾았어요」를 보일 자리가 이 404뿐이다)
+      return apiError(404, "NO_RESULTS", "필터에 걸리는 핀이 없어요", { funnel, external_search: search, ...appliedFlags(runId) });
     }
     return HttpResponse.json({
       run_id: runId, funnel, regions: store.regions[runId] ?? [], candidates,
+      ...appliedFlags(runId), // #845 — 이번 결과에 실제 쓴 근거(실행 시점의 스냅샷)와 조건 0개 고지
+      new_count: store.lastNewCount[runId] ?? candidates.filter((c) => c.visibility !== "published").length, // 마지막 실행이 새로 찾은 수(그 뒤 게시해도 그대로)
       ...(candidates.length < EXTERNAL_SEARCH_BELOW ? { external_search: search } : {}),
     });
   }),
@@ -229,6 +278,7 @@ export const recommendHandlers = [
     // 가드레일 4·5-6-1: 기본값 원만 넓힌다 — 목 서버는 재계산 결과로 후보를 다시 채워 넣는다
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
     store.candidates[runId] = buildCandidates(regionLabel);
+    snapshotRun(runId, store.candidates[runId].length);
     run.status = "done";
     return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
@@ -237,14 +287,18 @@ export const recommendHandlers = [
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
-    if ((run.attempt_no ?? 1) >= ATTEMPT_LIMIT) {
-      return apiError(429, "RETRY_LIMIT", `${ATTEMPT_LIMIT}번까지만 찾습니다`, { attempt_no: run.attempt_no, attempt_limit: ATTEMPT_LIMIT });
-    }
+    // 「다시 추천 받기」는 크레딧을 쓰지 않고 횟수 상한도 없다(#432 D3·D5). attempt_no는 계속 센다
     run.attempt_no = (run.attempt_no ?? 1) + 1;
     run.status = "done";
     // 3절: 현재 뜬 대안 전체가 제외목록에 들어가고(목 서버는 별도 exclusions 컬렉션 없이 교체로 표현) 새로 채운다
+    // #845 — 지금 활성인 근거로 다시 찾는다(모델 호출 없음). 이미 올린 후보는 남기고 새 후보를 채운다
+    // 목 서버는 exclusions 컬렉션이 없어 새 후보를 같은 시드로 채운다 — 대신 **이미 올린 장소는 새 후보로 다시 나오지 않게** 뺀다
+    const kept = (store.candidates[runId] ?? []).filter((c) => c.visibility === "published");
+    const keptNames = new Set(kept.map((c) => c.place_name));
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
-    store.candidates[runId] = buildCandidates(regionLabel);
+    const fresh = buildCandidates(regionLabel).filter((c) => !keptNames.has(c.place_name));
+    store.candidates[runId] = [...kept, ...fresh];
+    snapshotRun(runId, fresh.length);
     return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
   }),
 
@@ -253,6 +307,9 @@ export const recommendHandlers = [
     const found = findCandidateRun(candidateId);
     if (!found) return apiError(404, "NOT_FOUND", "후보를 찾을 수 없습니다");
     const { runId, cand } = found;
+    // #811 — 이미 이 후보로 만든 핀이면 그 핀을 200으로 돌려준다(동시에 온 요청도 같다). 핀은 하나, 이벤트도 한 번
+    const existing = cand.published_pin_id ? store.pins[cand.published_pin_id] : undefined;
+    if (existing) return HttpResponse.json(existing);
     const run = store.runs[runId];
     const pinId = nextId("pin");
     const pin: Pin = {

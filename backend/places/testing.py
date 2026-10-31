@@ -13,7 +13,7 @@ search_nearby_own은 영업 중인 장소만, get_places는 없는 ID를 키에�
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Sequence
 
 from common.geo import haversine_distance_m
@@ -107,7 +107,8 @@ class FakePlaces:
             row.kakao_place_id, row.kakao_place_url = kakao_place_id, kakao_place_url
 
     def pinnable_flags(self, hints: Sequence[PlaceHint], *, db: Session | None = None) -> list[bool]:
-        return [self.match_place(h) is not None for h in hints]   # 읽기만 한다 — 카카오 ID를 기록하지 않는다
+        # 읽기만 한다 — 카카오 ID를 기록하지 않는다. 주소 없이도 매칭돼야 True(실제 구현과 같다, #815)
+        return [self.match_place(h) is not None and self.match_place(replace(h, address=None)) is not None for h in hints]
 
     def get_places(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceInfo]:
         out: dict[str, PlaceInfo] = {}
@@ -120,6 +121,9 @@ class FakePlaces:
 
     def get_hours(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceHours]:
         return {pid: self.hours[pid] for pid in place_ids if pid in self.hours}   # 행 없는 장소는 키에서 뺀다 — 실제 구현과 같다
+
+    def get_open_status_on_weekdays(self, place_ids: Sequence[str], weekdays: Sequence[int], *, db: Session | None = None) -> dict[str, str]:
+        return {pid: core.open_status_on_weekdays(week, weekdays) for pid, week in self.get_week_open_status(place_ids).items()}
 
     def get_week_open_status(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, dict[int, str]]:
         return {pid: core.week_open_status(h.hours, h.closed_days) for pid, h in self.get_hours(place_ids).items()}
@@ -167,7 +171,7 @@ class FakePlaces:
         from places import api
 
         for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "count_curated", "get_facts", "get_hours",
-                     "get_week_open_status",
+                     "get_week_open_status", "get_open_status_on_weekdays",
                      "own_places_near", "own_places_by_kakao_id"):
             monkeypatch.setattr(api, name, getattr(self, name))
         return self

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any, Mapping, Sequence
 from urllib.parse import quote
 
 
@@ -10,6 +11,7 @@ from urllib.parse import quote
 
 WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")   # weekday 0=월 … 6=일 (datetime.date.weekday()와 같다)
 _DAY = 24 * 60
+_CLOCK = re.compile(r"[0-9]{2}:[0-9]{2}")   # 원본 API의 시각 글자 — "9:00"·"0009:00"·"09:0"은 아니다
 
 
 def parse_minutes(clock: str) -> int:
@@ -20,8 +22,53 @@ def parse_minutes(clock: str) -> int:
     return int(h) * 60 + int(m)
 
 
+def _valid_spans(spans: Any, *, strict_clock: bool = False) -> bool:
+    """한 요일의 [[여는, 닫는], …]이 모두 "HH:MM"이고 시작 < 끝(자정 넘김은 24를 더한 값)인가. 빈 목록(= 휴무)은 맞다.
+    strict_clock이면 시각 글자가 정확히 두 자리:두 자리여야 한다(원본 API용). 적재는 parse_minutes가 받는 범위를 그대로 쓴다."""
+    if not isinstance(spans, list):
+        return False
+    for span in spans:
+        if not isinstance(span, (list, tuple)) or len(span) != 2:
+            return False
+        if strict_clock and not all(isinstance(c, str) and _CLOCK.fullmatch(c) for c in span):
+            return False
+        try:
+            start, end = parse_minutes(span[0]), parse_minutes(span[1])
+        except (ValueError, AttributeError):
+            return False
+        if not 0 <= start < _DAY or not start < end <= 2 * _DAY:
+            return False
+    return True
+
+
+def valid_hours(raw: Any) -> dict | None:
+    """요일 7개 모두에 맞는 [[여는, 닫는], …]이 있으면 그대로, 아니면 None(= 모름). 적재(ingest)가 쓴다."""
+    if not isinstance(raw, dict) or set(raw) != set(WEEKDAYS) or not all(_valid_spans(v) for v in raw.values()):
+        return None
+    return {day: [[a, b] for a, b in raw[day]] for day in WEEKDAYS}
+
+
+def clean_hours(raw: Any) -> dict | None:
+    """원본 hours를 읽는 순수 API용(places.api.week_open_status 등) — 요일별로 거른다: 요일 이름이 아니거나 구간 형식이
+    틀린 칸은 없는 값(모름)으로 치고, 맞는 요일만 남긴다. 일부 요일만 있는 hours는 그대로 허용한다(없는 요일은 closed_days가 정한다).
+    잘못된 값이 「영업」으로 새지 않게 한다(#747). 남은 요일이 없으면 None."""
+    if not isinstance(raw, dict):
+        return None
+    kept = {day: [[a, b] for a, b in raw[day]] for day in WEEKDAYS if day in raw and _valid_spans(raw[day], strict_clock=True)}
+    return kept or None
+
+
+def valid_closed_days(raw: Any) -> list[str] | None:
+    """["월", "수"]처럼 허용된 요일 이름만 든 목록이면 중복을 없애 돌려주고, 아니면 None(= 모름). []는 그대로 [](매일 영업)."""
+    if not isinstance(raw, list) or any(d not in WEEKDAYS for d in raw):
+        return None
+    return list(dict.fromkeys(raw))
+
+
 def is_open_on(hours: dict | None, closed_days: list[str] | None, weekday: int, minutes: int) -> str:
     """그 요일·시각에 영업 중인가 → "open" | "closed" | "unknown". docs/constraints.md「영업 중 판정」.
+    시각 단위 판정이다 — 지금 운영 코드는 요일 단위(day_open_status)만 쓰고, 시간 배정이 없는 v1은 이 함수를 부르지 않는다. 요일 단위와
+    closed_days의 읽기가 다르다(여기서 closed_days에 없으면 모름, day_open_status는 영업).
 
     weekday는 0=월 … 6=일, minutes는 자정부터의 분(0~1439). hours는 {"월": [["11:00","21:00"]], …}, 빈 목록 = 휴무.
     - hours가 있으면 오늘 구간 안(시작 <= t < 끝)이거나 어제 구간 중 24:00을 넘는 꼬리 안이면 open, 아니면 closed.
@@ -64,8 +111,20 @@ def day_open_status(hours: dict | None, closed_days: list[str] | None, weekday: 
 
 
 def week_open_status(hours: dict | None, closed_days: list[str] | None) -> dict[int, str]:
-    """7요일 전부의 day_open_status → {0..6: 상태}."""
+    """7요일 전부의 day_open_status → {0..6: 상태}. 형식이 틀린 hours·closed_days는 없는 값(모름)으로 본다(clean_hours·valid_closed_days)."""
+    hours, closed_days = clean_hours(hours), valid_closed_days(closed_days)
     return {d: day_open_status(hours, closed_days, d) for d in range(7)}
+
+
+def open_status_on_weekdays(week_status: Mapping[int, str] | None, weekdays: Sequence[int]) -> str:
+    """여러 요일(여행 기간 등)에서의 영업 여부 → "closed"(모든 요일이 closed) | "open"(하나라도 open) | "unknown"(그 밖).
+    week_status는 week_open_status의 결과. 상태가 없거나 요일이 없으면 모름 (#747)."""
+    if not weekdays or not week_status:
+        return "unknown"
+    statuses = [week_status.get(d, "unknown") for d in weekdays]
+    if all(s == "closed" for s in statuses):
+        return "closed"
+    return "open" if "open" in statuses else "unknown"
 
 
 # ---------------------------------------------------------------- 동네와 카카오맵 검색 링크 (#798, #799)

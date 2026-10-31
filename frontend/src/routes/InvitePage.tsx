@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { ChevronLeft } from 'lucide-react'
 
@@ -6,12 +6,14 @@ import ErrorText from '@/ErrorText'
 import { isUnauthorized } from '@/features/auth/api'
 import KakaoButton from '@/features/auth/KakaoButton'
 import { clearPendingInvite, savePendingInvite } from '@/features/auth/pendingInvite'
-import { useMeQuery } from '@/features/auth/queries'
+import { DISPLAY_NAME_MAX } from '@/features/auth/model'
+import { useGuestJoinMutation, useMeQuery } from '@/features/auth/queries'
 import { inviteErrorMessage, inviteProblem, type InviteView } from '@/features/maps/model'
 import { useAcceptInviteMutation, useInviteSummaryQuery } from '@/features/maps/queries'
 import EmptyState from '@/ui/EmptyState'
 import PingoLoading from '@/ui/PingoLoading'
 import MapIllustration from '@/ui/MapIllustration'
+import TextField from '@/ui/TextField'
 
 /**
  * 초대 수락 (#4, Figma 2절). 로그인 전(C-1)·로그인 후 구성원 아님(C-2)·만료(C-3).
@@ -71,6 +73,7 @@ export default function InvitePage() {
           <>
             <KakaoButton />
             <p className="text-xs text-ink-500">로그인하면 바로 이 지도에 참여해요</p>
+            <GuestJoin token={token} />
           </>
         ) : (
           <>
@@ -88,6 +91,47 @@ export default function InvitePage() {
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * 「이름만 입력하고 들어가기」(#485). 게스트 계정을 만들고 이 초대의 지도에 바로 들어간다(POST /auth/guest).
+ * 처음엔 버튼만 두고, 누르면 이름 칸이 열린다 — 카카오가 주 입구라 같은 무게로 펼쳐 두지 않는다.
+ */
+function GuestJoin({ token }: { token: string }) {
+  const navigate = useNavigate()
+  const join = useGuestJoinMutation(token)
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const trimmed = name.trim()
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="btn-neutral btn-md w-full">
+        이름만 입력하고 들어가기
+      </button>
+    )
+  }
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (!trimmed) return
+        join.mutate(trimmed, { onSuccess: ({ map }) => navigate(`/maps/${map.id}?onboarding=member`, { replace: true }) })
+      }}
+      className="space-y-2 rounded-xl border border-ink-200 bg-white p-3 text-left"
+    >
+      <label htmlFor="guest-name" className="block text-sm font-semibold text-ink-900">
+        구성원에게 보일 이름
+      </label>
+      <TextField id="guest-name" value={name} onChange={setName} maxLength={DISPLAY_NAME_MAX} placeholder="예: 지우" clearLabel="이름 지우기" autoFocus />
+      <p className="break-keep text-xs text-ink-500">게스트는 새 지도를 만들 수 없어요. 나중에 카카오로 계정을 만들면 기록이 이어져요</p>
+      {join.error && <ErrorText message={inviteErrorMessage(join.error)} error={join.error} />}
+      <button type="submit" disabled={!trimmed || join.isPending} className="btn-primary btn-md w-full">
+        {join.isPending ? '들어가는 중…' : '게스트로 참여하기'}
+      </button>
+    </form>
   )
 }
 

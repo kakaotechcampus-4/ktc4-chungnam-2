@@ -34,10 +34,18 @@ class Check(BaseModel):
     needs_check: bool
 
 
+class MemberCondition(BaseModel):
+    fact_key: str
+    fact_label: str | None = Field(default=None, max_length=30)
+    evidence_line_id: str | None = None
+    status: Literal["met", "unmet", "needs_check"]
+
+
 class MemberFulfillmentEntry(BaseModel):
     user_id: str
     display_name: str | None = None
     satisfied: bool
+    conditions: list[MemberCondition] | None = None   # #805 — recommend가 채운 값을 게시 때 그대로 복사한다
 
 
 class MemberFulfillment(BaseModel):

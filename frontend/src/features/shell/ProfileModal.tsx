@@ -2,17 +2,21 @@ import { useState, type ReactNode } from 'react'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import EditNameDialog from '@/features/auth/EditNameDialog'
+import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import { useMeQuery } from '@/features/auth/queries'
+import FeedbackSheet from '@/features/feedback/FeedbackSheet'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
-import { DeleteMapConfirm, LeaveMapConfirm } from '@/features/maps/MapLifecycle'
+import InviteLinks from '@/features/maps/InviteLinks'
+import { DeleteMapConfirm, EditMapDialog, LeaveMapConfirm, TransferOwnerConfirm } from '@/features/maps/MapLifecycle'
 import { useShareInvite } from '@/features/maps/useShareInvite'
 import Avatar from '@/ui/Avatar'
 
 import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
 
-type Confirm = 'logout' | 'leave' | 'delete' | null
+type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feedback' | null
 
 /**
  * 프로필 모달(Figma 8절, 모바일). 탭 시트가 아니라 모달이다 — 탭 시트 자리에 띄우면 켜진 탭과 내용이 어긋난다.
@@ -45,9 +49,14 @@ export function ProfileMenu({ mapId, trigger }: { mapId: string; trigger: ReactN
 
 function ProfileConfirm({ mapId, which, onCancel }: { mapId: string; which: Confirm; onCancel: () => void }) {
   const map = useMapQuery(mapId).data
+  const members = useMembersQuery(mapId).data
   if (which === 'logout') return <LogoutConfirm onCancel={onCancel} />
   if (which === 'leave') return <LeaveMapConfirm mapId={mapId} nextOwnerName={map?.nextOwnerName} onCancel={onCancel} />
   if (which === 'delete' && map) return <DeleteMapConfirm mapId={mapId} title={map.title} onCancel={onCancel} />
+  if (which === 'edit' && map) return <EditMapDialog map={map} onCancel={onCancel} />
+  if (which === 'name') return <EditNameDialog onCancel={onCancel} />
+  if (which === 'owner' && members) return <TransferOwnerConfirm mapId={mapId} members={members} onCancel={onCancel} />
+  if (which === 'feedback') return <FeedbackSheet mapId={mapId} onClose={onCancel} />
   return null
 }
 
@@ -55,17 +64,26 @@ function ProfileConfirm({ mapId, which, onCancel }: { mapId: string; which: Conf
 function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: Confirm) => void }) {
   const map = useMapQuery(mapId)
   const members = useMembersQuery(mapId)
-  const { url, status: inviteStatus, error: inviteError, retry: retryInvite, copied, copy, share } = useShareInvite(mapId)
+  const { url, token, status: inviteStatus, error: inviteError, retry: retryInvite, copied, copy, share } = useShareInvite(mapId)
+  const isOwner = map.data?.isOwner === true
   const me = useMeQuery()
 
   return (
     <>
       {map.data && (
-        <header className="mb-4">
-          <h2 className="text-xl font-bold text-ink-900">{map.data.title}</h2>
-          <p className="text-sm text-ink-500">
-            {map.data.dates} · 구성원 {map.data.memberCount}명
-          </p>
+        <header className="mb-4 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-xl font-bold text-ink-900">{map.data.title}</h2>
+            <p className="text-sm text-ink-500">
+              {map.data.dates} · 구성원 {map.data.memberCount}명
+            </p>
+          </div>
+          {/* 제목·날짜·지역 수정은 방장만(#465). */}
+          {map.data.canEdit && (
+            <button type="button" onClick={() => onConfirm('edit')} aria-label="지도 정보 수정" className="btn-link shrink-0">
+              수정
+            </button>
+          )}
         </header>
       )}
       {map.error && <ErrorText message="지도 정보를 불러오지 못했어요" error={map.error} />}
@@ -95,7 +113,17 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
         </div>
       )}
 
-      <h3 className="mb-2 mt-6 text-sm font-bold text-ink-900">구성원</h3>
+      {/* 내가 지금 보이는 링크를 껐으면 새 링크를 만든다. */}
+      {isOwner && <InviteLinks mapId={mapId} onRevoked={(t) => t === token && retryInvite()} />}
+
+      <div className="mb-2 mt-6 flex items-center justify-between">
+        <h3 className="text-sm font-bold text-ink-900">구성원</h3>
+        {isOwner && (members.data?.length ?? 0) > 1 && (
+          <button type="button" onClick={() => onConfirm('owner')} className="btn-link text-sm">
+            방장 넘기기
+          </button>
+        )}
+      </div>
       {members.error && <ErrorText message="구성원을 불러오지 못했어요" error={members.error} />}
       <ul className="space-y-3">
         {members.data?.map((m) => (
@@ -136,7 +164,13 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
       <div className="mt-4 flex items-center justify-between border-t border-ink-200 pt-4">
         <div>
           <p className="text-sm font-bold text-ink-900">계정</p>
-          <p className="text-xs text-ink-500">카카오로 로그인됨 · {me.data?.display_name}</p>
+          <p className="text-xs text-ink-500">
+            {me.data?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '카카오로 로그인됨 · '}
+            {me.data?.display_name}{' '}
+            <button type="button" onClick={() => onConfirm('name')} className="btn-link">
+              이름 바꾸기
+            </button>
+          </p>
         </div>
         <button
           type="button"
@@ -146,6 +180,10 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
           로그아웃
         </button>
       </div>
+      {me.data?.is_guest && <GuestAccountNotice />}
+      <button type="button" onClick={() => onConfirm('feedback')} className="btn-text mt-3 w-full text-center text-body">
+        핑고핑고에 의견 보내기
+      </button>
     </>
   )
 }

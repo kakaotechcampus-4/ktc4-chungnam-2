@@ -37,6 +37,7 @@ export default function CourseSheet({ mapId, onClose }: { mapId: string; onClose
         <div className="space-y-3">
           {redirected && <Notice>이미 짜는 중인 코스가 있어서 그걸 보여 드려요</Notice>}
           <CourseRun
+            mapId={mapId}
             runId={runId}
             names={names}
             points={points}

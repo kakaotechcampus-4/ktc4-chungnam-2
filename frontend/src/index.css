@@ -270,11 +270,15 @@
     .tag-bad {
         @apply bg-[var(--bad-bg)] text-[var(--bad-text)];
     }
+    /* 확정 골드 — 마킹된 장소 목록의 「✓ 확정됨」(#859). */
+    .tag-confirmed {
+        @apply bg-[var(--confirmed-bg)] text-[var(--pin-confirmed-mark)];
+    }
 
     /* 칩 — 누르는 알약(카테고리·지역·사유·동선 보기). 켜짐은 aria-pressed 로 정하고 채우지 않는다.
        반대 사유는 chip-against 를 더해 켜짐을 반대 세트로 칠한다(#299 — 파랑으로 켜지 않는다). */
     .chip {
-        @apply hit-y-44 inline-flex shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-3 py-1.5 text-body text-ink-700 disabled:bg-ink-50 disabled:text-ink-500;
+        @apply hit-y-44 inline-flex shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-3 py-1.5 text-body text-ink-700 disabled:bg-ink-50 disabled:text-ink-500 aria-disabled:bg-ink-50 aria-disabled:text-ink-500;
         &[aria-pressed='true'] {
             @apply border-brand-600 bg-brand-100 font-semibold text-brand-700;
         }
@@ -312,11 +316,31 @@
             animation: enter-pop 200ms cubic-bezier(0, 0, 0.2, 1);
         }
     }
+    /* 고른 검색 결과 핀: 한 번 튀었다가 1.25배에 머문다. 끝(아래 가운데)을 붙든 채 커진다. */
+    .pin-bounce {
+        transform-origin: 50% 100%;
+        transform: scale(1.25);
+        animation: pin-bounce 400ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    /* 고른 검색 결과를 끌어안는 핑고(MapCanvas). 원 뒤에서 올라오고, 풀리면 원 뒤로 내려간다. 손(pinMarker)은 다 올라올 즈음 나타난다. */
+    .pingo-rise {
+        animation: pingo-rise 300ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .pingo-sink {
+        animation: pingo-sink 200ms cubic-bezier(0, 0, 0.2, 1) forwards;
+    }
+    .pingo-hands {
+        animation: enter-fade 150ms cubic-bezier(0, 0, 0.2, 1) 200ms backwards;
+    }
     @media (prefers-reduced-motion: reduce) {
         .enter-fade,
         .enter-pop,
         .enter-drop,
-        .enter-sheet {
+        .enter-sheet,
+        .pin-bounce,
+        .pingo-rise,
+        .pingo-sink,
+        .pingo-hands {
             animation: none;
         }
     }
@@ -332,6 +356,17 @@
 }
 @keyframes enter-sheet {
     from { transform: translateY(100%); }
+}
+@keyframes pin-bounce {
+    from { transform: scale(1); }
+    45% { transform: scale(1.4); }
+    75% { transform: scale(1.15); }
+}
+@keyframes pingo-rise {
+    from { transform: translateY(100%); }
+}
+@keyframes pingo-sink {
+    to { transform: translateY(100%); }
 }
 
 /* 키보드 포커스는 불투명 2px(3:1 이상). shadcn 기본 outline-ring/50 은 흰 바탕에서 1.98:1이라 안 보였다(#299). */

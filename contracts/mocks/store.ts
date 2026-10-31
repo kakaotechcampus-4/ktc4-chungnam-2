@@ -70,6 +70,18 @@ export interface CourseRunEntity {
   snapshot_pin_ids: string[];
 }
 
+/** 장소 후기(#432). place_key는 목 서버가 places.id 대신 쓰는 값(자체 DB 핀의 이름@좌표, handlers/credits.ts). */
+export interface ReviewEntity {
+  id: string;
+  place_key: string;
+  user_id: string;
+  rating: number;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  hidden: boolean; // 관리 스크립트가 숨긴 후기(#432 D8) — 목록·평균·개수·mine에서 빠진다
+}
+
 /** 목 서버에서 "나"로 취급하는 사용자. 기획안 6절 시나리오의 요청자다. */
 export const ME_USER_ID = "u_me";
 
@@ -95,6 +107,11 @@ export interface StoreState {
   regions: Record<string, Region[]>; // runId -> regions
   runs: Record<string, RecommendRun>; // runId -> run
   runRequestedBy: Record<string, string>; // runId -> user_id (run 요청자 기록)
+  appliedEvidence: Record<string, unknown[]>; // runId -> 마지막 실행이 실제로 쓴 근거 줄(#845 스냅샷)
+  idempotencyKeys: Record<string, { runId: string; mapId: string; category: string; execute: boolean }>; // 요청자:키 -> 첫 요청(#811 Idempotency-Key)
+  pendingLogin: { display_name: string; withdrawn_at: string } | null; // #855 선택 대기 중인 탈퇴 계정(카카오 콜백이 ?login_pending=withdrawn_account로 돌려보낸 상태)
+  trashedMaps: Record<string, { map: StoreState["maps"][string]; members: StoreState["members"][string]; deleted_at: string }>; // #464 삭제한 지도(30일 안 복구)
+  lastNewCount: Record<string, number>; // runId -> 마지막 실행이 새로 찾은 후보 수(#845, 그 뒤 게시해도 안 바뀐다)
   candidates: Record<string, Candidate[]>; // runId -> candidates
   shortlist: Record<string, ShortlistItem[]>; // mapId -> items
   routes: Record<string, Route[]>; // mapId -> 마지막으로 계산된 동선 (#30, POST로만 갱신)
@@ -110,6 +127,10 @@ export interface StoreState {
   notifications: Schemas["Notification"][]; // 내 알림함(#470) — 목 서버는 단일 사용자라 나만 있다
   notificationPrefs: Record<string, boolean>; // 알림 종류 -> 켜짐. 없으면 켜짐
   feedback: { id: string; user_id: string; message: string; category: string; map_id?: string; created_at: string }[]; // #10
+  credits: Record<string, number>; // user_id -> 잔액(#432). 없으면 처음 지급량(handlers/credits.ts INITIAL_CREDITS)
+  creditRefs: string[]; // 원장 ref_id — 같은 실행·같은 장소 후기 보상을 두 번 하지 않는다
+  reviews: Record<string, ReviewEntity>; // reviewId -> 후기
+  reviewReports: Record<string, string[]>; // reviewId -> 신고한 user_id
 }
 
 function emptyState(): StoreState {
@@ -125,6 +146,11 @@ function emptyState(): StoreState {
     regions: {},
     runs: {},
     runRequestedBy: {},
+    appliedEvidence: {},
+    lastNewCount: {},
+    trashedMaps: {},
+    idempotencyKeys: {},
+    pendingLogin: null,
     candidates: {},
     shortlist: {},
     routes: {},
@@ -140,6 +166,10 @@ function emptyState(): StoreState {
     notifications: [],
     notificationPrefs: {},
     feedback: [],
+    credits: {},
+    creditRefs: [],
+    reviews: {},
+    reviewReports: {},
   };
 }
 

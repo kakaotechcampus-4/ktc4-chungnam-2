@@ -1,9 +1,9 @@
 import { useCallback, useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { createPin, deletePin, deleteReaction, fetchCounts, fetchPins, fetchReactions, fetchReasonChips, putReaction, resolvePin } from './api'
+import { createPin, deletePin, deleteReaction, fetchCounts, fetchPins, fetchReactions, fetchReasonChips, putReaction, resolvePin, updatePin } from './api'
 import { useLivePlaceStore, withLivePlace } from './livePlaces'
-import { withMyReaction, type Pin, type PinCategory, type PinCreateRequest, type PinResolveRequest, type ReactionRequest } from './model'
+import { withMyReaction, type Pin, type PinCategory, type PinCreateRequest, type PinResolveRequest, type PinUpdateRequest, type ReactionRequest } from './model'
 
 export const pinKeys = {
   list: (mapId: string) => ['pins', mapId] as const,
@@ -44,6 +44,18 @@ export function useDeletePinMutation(mapId: string, pinId: string) {
       void queryClient.invalidateQueries({ queryKey: ['shortlist', mapId] })
       void queryClient.invalidateQueries({ queryKey: ['recommend', mapId] })
     },
+  })
+}
+
+/**
+ * 핀 메모·분류 수정(#466). 목록의 그 핀만 응답으로 바로 바꾼다. 확정 리스트·집계·추천 준비는
+ * 내게도 오는 pin.updated를 받아 realtime의 표(refetchTable)대로 다시 받는다 — 다시 받을 목록을 여기에 또 적지 않는다.
+ */
+export function useUpdatePinMutation(mapId: string, pinId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: PinUpdateRequest) => updatePin(pinId, body),
+    onSuccess: (pin) => queryClient.setQueryData<Pin[]>(pinKeys.list(mapId), (pins) => pins?.map((p) => (p.id === pin.id ? pin : p))),
   })
 }
 

@@ -4,6 +4,16 @@ import { ApiError } from '@/api'
 import { FILTER_CATEGORIES, isPlaced, type Pin } from '@/features/map/model'
 
 export type PlaceSearchResultDto = components['schemas']['PlaceSearchResult']
+export type LinkParseResultDto = components['schemas']['LinkParseResult']
+
+/**
+ * 검색창에 붙여넣은 값이 링크인가(#487). 링크면 이름 검색 대신 서버가 링크를 해석한다.
+ * 구글맵·카카오맵인지는 서버가 정한다(LINK_NOT_SUPPORTED) — 화면은 http(s)인지만 본다.
+ */
+export const isLinkInput = (text: string) => /^https?:\/\/\S+$/i.test(text)
+
+/** 출처마다 받은 장소. 링크면 링크에서 읽은 단서(`link`)도 같이 둔다. */
+export type SourcePlaces = { places: PlaceSearchResultDto[]; link?: LinkParseResultDto }
 export type LatLng = { lat: number; lng: number }
 
 /** 두 좌표 사이 직선거리(m). 하버사인 — 검색 결과의 "350m" 표시용이라 이 정도면 충분하다. */

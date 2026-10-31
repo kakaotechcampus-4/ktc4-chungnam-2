@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Any, Sequence
 
@@ -19,7 +20,7 @@ from places.ratelimit import SlidingWindowLimiter
 from places.samples import search_samples
 from places.matching import Candidate
 from places.schemas import (
-    Area, FactLabel, LinkParseResult, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult, PlaceSourceInfo, ResolvedCoords,
+    Area, FactLabel, LinkParseResult, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult, PlaceSourceInfo,
 )
 from places.service import PlaceService, to_result
 from places.sources.base import PlaceSource
@@ -30,11 +31,6 @@ log = logging.getLogger("pingo.places")
 _STATS = CallStats()
 search_limiter = SlidingWindowLimiter(settings.places_search_per_min)   # 사용자당 분당 상한, 인메모리
 link_limiter = SlidingWindowLimiter(settings.places_search_per_min)     # POST /places/from-link — 검색과 같은 상한, 따로 센다(#474)
-
-
-def call_counts() -> dict[str, int]:
-    """소스별 실제 HTTP 호출 횟수(프로세스 누적)."""
-    return _STATS.snapshot()
 
 
 def build_sources(http: SourceHttp) -> dict[str, PlaceSource]:
@@ -53,18 +49,6 @@ def _service() -> PlaceService:
     log.info("places.sources order=%s", ", ".join(
         f"{s.name}({'key' if s.is_configured() else 'NO KEY'})" for s in ordered))
     return PlaceService(ordered)
-
-
-def search_nearby(category: str, areas: Sequence[Area]) -> list[PlaceRef]:
-    return _service().search_nearby(category, areas)
-
-
-def get_raw_facts(place_id: str) -> dict[str, Any]:
-    return _service().get_raw_facts(place_id)
-
-
-def resolve_place(source: str, place_id: str | None, lat: float | None, lng: float | None) -> ResolvedCoords:
-    return _service().resolve(source, place_id, lat, lng)
 
 
 def _is_dev() -> bool:
@@ -126,7 +110,10 @@ def record_kakao_match(place_id: str, kakao_place_id: str, kakao_place_url: str,
 
 
 def pinnable_flags(hints: Sequence[PlaceHint], *, db: Session | None = None) -> list[bool]:
-    """힌트마다 match_place가 성공할지 읽기만 해서 계산한다. 카카오 ID를 기록하지 않는다. 쿼리 한 번(#238)."""
+    """힌트마다 match_place가 성공할지 읽기만 해서 계산한다. 카카오 ID를 기록하지 않는다. 쿼리 한 번(#238).
+
+    주소는 선택 힌트라 핀 생성 요청이 안 보낼 수도 있다(#815 — 화면은 아직 안 보낸다). 그래서 주소 없이도 같은 답이 나올 때만
+    True다: 주소가 있어야 구제되는 힌트는 False. 「검색에서 pinnable=true면 핀 생성이 된다」가 주소를 보내든 안 보내든 지켜진다."""
     own = [i for i, h in enumerate(hints) if h.category in matching.OWN_CATEGORIES]
     flags = [False] * len(hints)
     if not own:
@@ -134,7 +121,8 @@ def pinnable_flags(hints: Sequence[PlaceHint], *, db: Session | None = None) -> 
     with _session(db) as s:
         candidates = repository.find_candidates_many(s, [hints[i] for i in own])
     for i, cands in zip(own, candidates):
-        flags[i] = matching.pick_match(hints[i], cands) is not None
+        flags[i] = matching.pick_match(hints[i], cands) is not None and (
+            hints[i].address is None or matching.pick_match(replace(hints[i], address=None), cands) is not None)
     return flags
 
 
@@ -150,20 +138,71 @@ def nearest_own_places(lat: float, lng: float, category: str | None, *, db: Sess
         return []   # 숙소·기타는 자체 DB에 없다
     with _session(db) as s:
         rows = repository.find_nearest(s, lat, lng, category, NEAREST_RADIUS_M, _NEAREST_FETCH)
-        if not rows:
-            return []
-        # 핀 생성이 같은 힌트(자기 이름·좌표)로 match_place를 부르므로, 거기서 거절될 곳(동명 점포 등)은 미리 뺀다
-        hints = [PlaceHint(f"own:{r.place_id}", r.name, r.lat, r.lng, r.category) for r in rows]
-        candidates = repository.find_candidates_many(s, hints)
-    flags = [matching.pick_match(h, c) is not None for h, c in zip(hints, candidates)]
+        return [_to_search_result(r) for r in _pinnable_rows(s, rows)][:NEAREST_MAX]
+
+
+@dataclass(frozen=True)
+class OwnSearchHit:
+    """장소 검색(#822)의 자체 DB 결과 한 건. kakao_place_id는 카카오 결과와 같은 가게인지 가리는 내부 값이라 응답에 싣지 않는다."""
+
+    result: PlaceSearchResult
+    kakao_place_id: str | None
+
+
+TIER_NAME_PREFIX, TIER_NAME_PART, TIER_REST = repository.TIER_NAME_PREFIX, repository.TIER_NAME_PART, repository.TIER_REST
+_SEARCH_MAX_PAGES = 5   # pick_match가 거절한 곳이 많아도 limit을 채우려 이어 읽는 최대 페이지 수(페이지 크기 = limit)
+
+
+_Stage = tuple[int, tuple[float | None, float | None], float | None]   # (계층, 거리 띠, 계층 3에서 뺄 부분 일치 반경)
+
+
+def _search_stages(near: tuple[float, float] | None) -> list[_Stage]:
+    """계약의 순서(docs/api-spec.yaml /places/search 정렬 규칙)를 그대로 내는 읽기 순서.
+    좌표가 있으면 지역 구역(30km 안)의 모든 계층이 먼 구역보다 먼저다. 계층 2(부분 일치)는 가까운 순이라 가까운 띠(3km)를 먼저 읽고
+    모자랄 때만 다음으로 가도 결과가 같다(가까운 띠의 장소가 어차피 더 앞이다). 다음은 계층 3 한 번으로 부분 일치(3km 밖)와
+    주소 일치를 일치 정도 순으로 얻는다 — 비싼 전체 훑기를 구역마다 한 번만 한다. 계층 1은 인덱스라 띠를 나누지 않는다."""
+    if near is None:
+        return [(TIER_NAME_PREFIX, (None, None), None), (TIER_REST, (None, None), None)]
+    close, region = repository.NEAR_RADIUS_M, repository.REGION_RADIUS_M
     return [
-        PlaceSearchResult(
-            place_id=f"own:{r.place_id}", place_name=r.name[:100], lat=r.lat, lng=r.lng, category=r.category,
-            address=r.address[:200] if r.address else None,
-            place_source=PlaceSourceInfo(provider=r.source), pinnable=True,
-        )
-        for r, ok in zip(rows, flags) if ok
-    ][:NEAREST_MAX]
+        (TIER_NAME_PREFIX, (None, region), None), (TIER_NAME_PART, (None, close), None), (TIER_REST, (None, region), close),
+        (TIER_NAME_PREFIX, (region, None), None), (TIER_REST, (region, None), None),
+    ]
+
+
+def search_own_for_query(query: str, near: tuple[float, float] | None, limit: int, *, db: Session | None = None) -> list[OwnSearchHit]:
+    """장소 검색(#822, #835)의 자체 DB 몫. 이름 일치 정도 계층(완전·앞부분 > 부분 > 주소만) 순으로, 좌표가 있으면 지역 구역(30km 안)을
+    먼저, 먼 구역은 limit에 못 미칠 때만 읽는다(_search_stages). 각 단계 안은 가까운 순 → 정예. 핀으로 만들 수 있는 곳만
+    pinnable=True로 최대 limit곳. 단계마다 핀 가능한 곳이 모이거나 후보가 바닥날 때까지(최대 _SEARCH_MAX_PAGES 페이지) 이어 읽는다.
+    카카오 값을 쓰지 않는다. 읽기 전용."""
+    hits: list[OwnSearchHit] = []
+    with _session(db) as s:
+        for tier, band, skip in _search_stages(near):
+            for page in range(_SEARCH_MAX_PAGES):
+                rows = repository.search_open_by_query(s, query, near, limit, offset=page * limit, tier=tier, band=band, skip_part_within=skip)
+                hits += [OwnSearchHit(_to_search_result(r), r.kakao_place_id) for r in _pinnable_rows(s, rows)]
+                if len(hits) >= limit or len(rows) < limit:
+                    break
+            if len(hits) >= limit:
+                break
+    return hits[:limit]
+
+
+def _pinnable_rows(s: Session, rows: Sequence[repository.NearestRow]) -> list[repository.NearestRow]:
+    """핀 생성이 같은 힌트(자기 이름·좌표)로 match_place를 부르므로, 거기서 거절될 곳(동명 점포 등)은 미리 뺀다."""
+    if not rows:
+        return []
+    hints = [PlaceHint(f"own:{r.place_id}", r.name, r.lat, r.lng, r.category) for r in rows]
+    candidates = repository.find_candidates_many(s, hints)
+    return [r for r, h, c in zip(rows, hints, candidates) if matching.pick_match(h, c) is not None]
+
+
+def _to_search_result(r: repository.NearestRow) -> PlaceSearchResult:
+    return PlaceSearchResult(
+        place_id=f"own:{r.place_id}", place_name=r.name[:100], lat=r.lat, lng=r.lng, category=r.category,
+        address=r.address[:200] if r.address else None,
+        place_source=PlaceSourceInfo(provider=r.source), pinnable=True,
+    )
 
 
 def get_places(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceInfo]:
@@ -228,7 +267,7 @@ def get_facts(place_ids: Sequence[str], *, db: Session | None = None) -> dict[st
 
 
 def get_hours(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, PlaceHours]:
-    """place_hours를 배치로 조회한다(#690). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용. 판정은 places.core.is_open_on."""
+    """place_hours를 배치로 조회한다(#690). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용. 요일 단위 판정은 get_week_open_status."""
     with _session(db) as s:
         return repository.get_hours(s, place_ids)
 
@@ -241,6 +280,17 @@ def week_open_status(hours: dict | None, closed_days: list[str] | None) -> dict[
 def get_week_open_status(place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, dict[int, str]]:
     """place_hours를 한 번에 읽어 장소별 요일 판정을 돌려준다(#747). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용."""
     return {pid: core.week_open_status(h.hours, h.closed_days) for pid, h in get_hours(place_ids, db=db).items()}
+
+
+def open_status_on_weekdays(hours: dict | None, closed_days: list[str] | None, weekdays: Sequence[int]) -> str:
+    """여러 요일(여행 기간 등)에서의 영업 여부(#747) — "closed"(모든 요일이 closed) | "open"(하나라도 open) | "unknown".
+    DB 없이 원본 hours·closed_days를 읽는 쪽이 쓴다. weekdays는 0=월 … 6=일(date.weekday()). 요일별 규칙은 week_open_status와 같다."""
+    return core.open_status_on_weekdays(core.week_open_status(hours, closed_days), weekdays)
+
+
+def get_open_status_on_weekdays(place_ids: Sequence[str], weekdays: Sequence[int], *, db: Session | None = None) -> dict[str, str]:
+    """장소별 open_status_on_weekdays를 place_hours 한 번 조회로(#747). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용."""
+    return {pid: core.open_status_on_weekdays(week, weekdays) for pid, week in get_week_open_status(place_ids, db=db).items()}
 
 
 # ---- 지도 링크 해석 (POST /places/from-link, #474) ----
