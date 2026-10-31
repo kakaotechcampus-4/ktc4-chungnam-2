@@ -1,4 +1,5 @@
-"""credits.api — docs/credits-reviews.md 12절 2~8. 1, 4의 GET은 test_router.py.
+"""credits.api — docs/credits-reviews.md 12절 2~8. 1, 4의 GET은 test_router.py, 7의 탈퇴·되살리기·7일 정리는
+test_account_lifecycle.py.
 
 값은 credits/constants.py에서 읽는다(가격표를 테스트에 다시 적지 않는다).
 """
@@ -105,6 +106,18 @@ def test_concurrent_first_charges_grant_initial_once(factory, committed_user):
         assert _account(s, committed_user).balance == INITIAL_CREDITS - 2 * PRICES[RUN]
 
 
+# get_balance -------------------------------------------------------------------------------------------------------
+
+def test_get_balance_reads_initial_without_account_then_follows_ledger(db_session, user):
+    assert api.get_balance(db_session, user_id=user) == INITIAL_CREDITS
+    assert _account(db_session, user) is None   # 읽기만
+
+    api.grant_review(db_session, user_id=user, place_id="p1")
+    left = api.charge(db_session, user_id=user, feature=RUN, run_id=_run_id())
+
+    assert api.get_balance(db_session, user_id=user) == left == INITIAL_CREDITS + REVIEW_REWARD - PRICES[RUN]
+
+
 # 3 ---------------------------------------------------------------------------------------------------------------
 
 def test_zero_balance_is_402_for_check_and_charge(db_session, user):
@@ -195,6 +208,7 @@ def test_review_reward_once_per_place(db_session, user):
 # 7 ---------------------------------------------------------------------------------------------------------------
 
 def test_delete_by_user_removes_account_and_ledger(db_session, user):
+    """7일 정리(auth.service.purge_withdrawn_user)가 부르는 함수."""
     api.charge(db_session, user_id=user, feature=RUN, run_id=_run_id())
     api.grant_review(db_session, user_id=user, place_id="p1")
 
@@ -227,10 +241,11 @@ def test_reassign_same_id_is_noop(db_session, user):
     assert _account(db_session, user) is not None
 
 
-def test_refund_after_withdrawal_is_false(db_session, user):
+def test_refund_after_seven_day_purge_is_false(db_session, user):
+    """7일 정리로 원장이 지워진 뒤의 환불은 돌려줄 차감이 없다(탈퇴만 한 동안은 원장이 남아 환불된다)."""
     run_id = _run_id()
     api.charge(db_session, user_id=user, feature=COURSE, run_id=run_id)
-    api.delete_by_user(db_session, user_id=user)
+    api.delete_by_user(db_session, user_id=user)   # purge_withdrawn_user가 부르는 것과 같다
 
     assert api.refund(db_session, feature=COURSE, run_id=run_id) is False
     assert _account(db_session, user) is None

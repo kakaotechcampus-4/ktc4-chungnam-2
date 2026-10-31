@@ -129,7 +129,7 @@ def _delete_user_rows(db: Session, user_id: str) -> dict[str, int]:
 
 
 def delete_by_user(db: Session, *, user_id: str) -> int:
-    """탈퇴 — 그 사람의 계정과 원장을 지운다. 지운 행 수."""
+    """탈퇴 7일 정리 — 그 사람의 계정과 원장을 지운다. 지운 행 수."""
     return sum(_delete_user_rows(db, user_id).values())
 
 

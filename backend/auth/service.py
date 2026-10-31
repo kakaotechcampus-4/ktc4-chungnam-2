@@ -253,6 +253,7 @@ def revoke_sessions(db: Session, *, user_id: str) -> None:
 
 # 탈퇴(#155)에서 그 사람의 기록을 다루는 모듈 단계. (모듈 이름, fn(db, user_id, map_ids)) — 이 순서로 부른다.
 # 합치기(MERGE_STEPS)와 짝이다: 여기 있는 모듈은 합치기에도 있어야 한다(#694, test_withdraw_steps_are_also_merge_steps).
+# credits는 여기 없다 — 탈퇴 때 남기고 7일 정리(purge_withdrawn_user)에서 지운다(#948).
 # 모듈 api는 호출 시점에 찾는다(테스트가 모듈 함수를 바꿔 끼운다).
 WITHDRAW_STEPS = (
     # 방장인 지도는 후임에게 넘기고, 넘길 사람이 없으면 지도를 삭제한다(#369 10번). 탈퇴자의 멤버십 행은 남는다(#245)
@@ -266,8 +267,6 @@ WITHDRAW_STEPS = (
     ("notifications", lambda db, user_id, map_ids: notifications_api.delete_by_user(db, user_id=user_id)),
     # 모델 호출 사용량(#870)은 행을 남기고 user_id만 비운다 — 비용 통계는 사람 없이도 쓴다
     ("llm", lambda db, user_id, map_ids: llm_api.anonymize_by_user(db, user_id=user_id)),
-    # 크레딧 계정과 원장(#948, docs/credits-reviews.md 6절). 계정 행이 없으면 처음 지급량으로 읽는다
-    ("credits", lambda db, user_id, map_ids: credits_api.delete_by_user(db, user_id=user_id)),
 )
 
 
@@ -314,8 +313,12 @@ def join_as_guest(db: Session, *, display_name: str, invite_token: str) -> tuple
 def purge_withdrawn_user(db: Session, *, user_id: str) -> None:
     """탈퇴한 계정의 개인정보를 지운다(#855) — 로그인 수단 삭제, 표시 이름을 「탈퇴한 구성원」으로, last_seen_at·
     guest_invite_token 비움. users 행은 남긴다(다른 모듈의 created_by가 이 id를 가리킨다). 멱등이다.
-    다른 모듈에 복사된 이름의 비식별화는 따로 부른다(데이터 모델 「탈퇴 후 7일 정리 대상」). 커밋하지 않는다."""
+    다른 모듈에 복사된 이름의 비식별화는 따로 부른다(데이터 모델 「탈퇴 후 7일 정리 대상」). 커밋하지 않는다.
+    크레딧 계정·원장도 여기서 지운다 — 탈퇴 때 지우면 되살린 계정이 처음 지급량으로 다시 시작한다(#948,
+    docs/credits-reviews.md 6절). 「새 계정으로 시작」(restart_account)도 이 함수를 거친다."""
     withdrawn = select(User.id).where(User.id == user_id, User.deleted_at.is_not(None))   # 살아 있는 계정은 건드리지 않는다
+    if db.execute(withdrawn).first() is not None:
+        credits_api.delete_by_user(db, user_id=user_id)
     db.execute(delete(UserIdentity).where(UserIdentity.user_id.in_(withdrawn)))
     db.execute(
         update(User).where(User.id.in_(withdrawn)).values(
