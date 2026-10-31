@@ -4,7 +4,7 @@ import { ExternalLink } from 'lucide-react'
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { useLivePlaceStore } from '@/features/map/livePlaces'
-import type { Pin } from '@/features/map/model'
+import { FILTER_CATEGORIES, type Pin, type PinCategory } from '@/features/map/model'
 import { useCreatePinMutation } from '@/features/map/queries'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import PanelBackLink from '@/features/shell/PanelBackLink'
@@ -12,19 +12,23 @@ import { showToast } from '@/features/shell/toast'
 import EmptyState from '@/ui/EmptyState'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
+import TextField from '@/ui/TextField'
 
 import { toSearchResult, type SearchResultView } from './model'
-import { searchErrorMessage, usePlaceSearchQuery } from './queries'
+import { searchErrorMessage, useSourcePlacesQuery } from './queries'
 import { useSearchStore } from './searchStore'
 
-/** 시트 제목 줄 — "'칼국수' 검색 결과 4곳" + 닫기(잠깐 하는 작업이라 「닫기」, Figma 뒤로가기 규칙). */
+/**
+ * 시트 제목 줄 — "'칼국수' 검색 결과 4곳" 또는 "링크에서 찾은 장소 1곳" + 닫기(잠깐 하는 작업이라 「닫기」, Figma 뒤로가기 규칙).
+ * 붙여넣은 링크 원문은 길어서 제목에 싣지 않는다.
+ */
 export function SearchResultsHeader({ count }: { count: number | null }) {
-  const { query, close } = useSearchStore()
+  const { source, close } = useSearchStore()
+  const n = count !== null ? ` ${count}곳` : ''
   return (
     <div className="flex items-center justify-between gap-2">
-      <SheetTitle>
-        ‘{query}’ 검색 결과{count !== null && ` ${count}곳`}
-      </SheetTitle>
+      {/* 링크에서 못 찾았으면 「0곳」 대신 이름을 묻거나 이름 검색을 권한다 — 제목은 링크의 장소로 둔다. */}
+      <SheetTitle>{source?.kind === 'name' ? <>‘{source.query}’ 검색 결과{n}</> : count ? <>링크에서 찾은 장소{n}</> : '링크의 장소'}</SheetTitle>
       <button type="button" onClick={close} className="btn-text shrink-0 text-sm">
         닫기
       </button>
@@ -34,11 +38,13 @@ export function SearchResultsHeader({ count }: { count: number | null }) {
 
 /** 검색 결과 목록·장소 상세(Figma 4절). 결과 0개는 0개로 보여준다(가드레일 2). */
 export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] }) {
-  const { query, near, selectedId, select, close } = useSearchStore()
-  const search = usePlaceSearchQuery(query, near)
+  const { source, near, selectedId, select, submit, close } = useSearchStore()
+  const search = useSourcePlacesQuery(source, near)
   const create = useCreatePinMutation(mapId)
   const { selectPin } = usePinSelection()
-  const results = (search.data ?? []).map((r) => toSearchResult(r, near, pins))
+  const results = (search.data?.places ?? []).map((r) => toSearchResult(r, near, pins))
+  const link = search.data?.link
+  const query = source?.kind === 'name' ? source.query : null
   const selected = results.find((r) => r.id === selectedId)
 
   function pinIt(r: SearchResultView) {
@@ -64,11 +70,11 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
    * 자체 DB에 없는 장소를 실시간 핀으로 남긴다(#382). 서버에는 카카오 장소 ID·검색어·메모·분류만 보내고,
    * 이름·좌표는 보내지 않는다(저장 불가). 방금 찍은 핀의 위치는 이미 손에 있으니 바로 얹는다 — 메모리에만 둔다.
    */
-  function pinLive(r: SearchResultView, memo: string) {
+  function pinLive(r: SearchResultView, { memo }: LiveInput) {
     const { place_id, lat, lng, category } = r.dto
     if (!category || !query) return
     create.mutate(
-      { source: 'live', category, kakao_place_id: place_id, search_query: query, ...(memo.trim() ? { memo: memo.trim() } : {}) },
+      { source: 'live', category, kakao_place_id: place_id, search_query: query, ...(memo ? { memo } : {}) },
       {
         onSuccess: (pin) => {
           useLivePlaceStore.getState().set(pin.id, { name: r.name, lat, lng })
@@ -81,24 +87,66 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
     )
   }
 
+  /**
+   * 카카오 링크인데 자체 DB에 짝이 없다(#474 needs_search_query). 카카오 응답을 가져오지 않아 이름도 분류도 모르니
+   * 사람이 이름(검색어)과 분류를 적는다. 서버에는 링크의 장소 ID·검색어·분류·메모만 보낸다. 위치는 지도를 열 때 검색어로 다시 찾는다.
+   */
+  function pinLinkLive(kakaoPlaceId: string, { memo, name, category }: LiveInput) {
+    if (!name || !category) return
+    create.mutate(
+      { source: 'live', category, kakao_place_id: kakaoPlaceId, search_query: name, ...(memo ? { memo } : {}) },
+      {
+        onSuccess: (pin) => {
+          showToast(`${name}${josa(name, '을', '를')} 지도에 남겼어요`)
+          close()
+          selectPin(pin.id)
+        },
+        onError: (err) => showToast(pinErrorMessage(err)),
+      },
+    )
+  }
+
   if (search.isPending) return <p className="text-sm text-ink-500">찾는 중…</p>
-  if (search.error) return <ErrorText message={searchErrorMessage(search.error)} error={search.error} />
+  if (search.error) {
+    return (
+      <div className="space-y-3">
+        <ErrorText message={searchErrorMessage(search.error)} error={search.error} />
+        {source?.kind === 'link' && <SearchAgainButton onClose={close} label="이름으로 검색하기" />}
+      </div>
+    )
+  }
+  if (link && results.length === 0 && link.needs_search_query && link.kakao_place_id) {
+    const kakaoPlaceId = link.kakao_place_id
+    return <LiveLeaveForm askName pending={create.isPending} onSubmit={(input) => pinLinkLive(kakaoPlaceId, input)} />
+  }
+  if (link && results.length === 0) {
+    const hint = link.name_hint
+    return (
+      <EmptyState
+        mood="sorry"
+        title="우리 장소 데이터에서 찾지 못했어요"
+        action={
+          hint ? (
+            <button type="button" onClick={() => submit(hint, near)} className="btn-outline btn-md">
+              링크 속 이름으로 찾아보기
+            </button>
+          ) : (
+            <SearchAgainButton onClose={close} label="이름으로 검색하기" />
+          )
+        }
+      >
+        {/* 링크 속 이름은 사용자가 붙인 값이라 문장에 섞지 않고 따로 보여 준다(#717). */}
+        {hint ? <q>{hint}</q> : '링크 대신 이름으로 찾아보세요'}
+      </EmptyState>
+    )
+  }
   if (results.length === 0) {
     return (
       // 다음 행동을 하나 둔다 — 검색어를 지우고 바로 다시 입력하게(#351).
       <EmptyState mood="sorry"
         title="찾는 장소가 없어요"
         action={
-          <button
-            type="button"
-            onClick={() => {
-              close()
-              document.getElementById('place-search')?.focus()
-            }}
-            className="btn-outline btn-md"
-          >
-            검색어 지우고 다시 찾기
-          </button>
+          <SearchAgainButton onClose={close} label="검색어 지우고 다시 찾기" />
         }
       >
         이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요
@@ -127,7 +175,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
           </div>
         )}
         {selected.canLeaveLive && !selected.alreadyPinned ? (
-          <LiveLeaveForm pending={create.isPending} onSubmit={(memo) => pinLive(selected, memo)} />
+          <LiveLeaveForm pending={create.isPending} onSubmit={(input) => pinLive(selected, input)} />
         ) : (
           <PinItButton result={selected} filled pending={create.isPending} onPin={() => pinIt(selected)} />
         )}
@@ -163,17 +211,58 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   )
 }
 
-const MEMO_MAX = 200
+/** 검색창을 비우고 다시 입력하게 한다(#351). */
+function SearchAgainButton({ onClose, label }: { onClose: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        onClose()
+        document.getElementById('place-search')?.focus()
+      }}
+      className="btn-outline btn-md"
+    >
+      {label}
+    </button>
+  )
+}
 
-/** 자체 DB에 없는 장소 — 장소 정보·AI 추천·동선에는 못 쓰지만 핀으로 남겨 의견을 나눌 수 있다(#382). 메모는 선택이다. */
-function LiveLeaveForm({ pending, onSubmit }: { pending: boolean; onSubmit: (memo: string) => void }) {
+const MEMO_MAX = 200
+const NAME_MAX = 100
+
+type LiveInput = { memo: string; name?: string; category?: PinCategory }
+
+/**
+ * 자체 DB에 없는 장소 — 장소 정보·AI 추천·동선에는 못 쓰지만 핀으로 남겨 의견을 나눌 수 있다(#382). 메모는 선택이다.
+ * `askName`이면(카카오 링크, #487) 이름과 분류도 받는다 — 지도를 열 때 그 이름으로 카카오에서 위치를 다시 찾는다.
+ */
+function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boolean; pending: boolean; onSubmit: (input: LiveInput) => void }) {
   const [memo, setMemo] = useState('')
+  const [name, setName] = useState('')
+  const [category, setCategory] = useState<PinCategory | null>(null)
+  const ready = !askName || (name.trim() !== '' && category !== null)
   return (
     <div className="space-y-2.5">
       <div className="rounded-xl bg-ink-50 p-3.5 text-body text-ink-700">
         <p className="font-semibold text-ink-900">우리 장소 데이터에 없는 곳이에요</p>
         <p className="mt-0.5">장소 정보와 조건 확인, AI 추천, 동선에는 쓰이지 않아요. 그래도 핀으로 남겨서 서로 의견을 나눌 수 있어요.</p>
       </div>
+      {askName && (
+        <>
+          <label className="block space-y-1.5">
+            <span className="block text-body font-bold text-ink-900">장소 이름</span>
+            <TextField value={name} onChange={setName} maxLength={NAME_MAX} placeholder="카카오맵에 나온 이름 그대로" clearLabel="이름 지우기" />
+          </label>
+          <p className="text-xs text-ink-500">지도를 열 때 이 이름으로 카카오맵에서 위치를 찾아요</p>
+          <div role="group" aria-label="분류" className="flex flex-wrap gap-2">
+            {FILTER_CATEGORIES.map((c) => (
+              <button key={c} type="button" aria-pressed={category === c} onClick={() => setCategory(c)} className="chip">
+                {c}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       <label className="block text-body font-bold text-ink-900" htmlFor="live-pin-memo">
         한마디 남기기 (선택)
       </label>
@@ -189,7 +278,12 @@ function LiveLeaveForm({ pending, onSubmit }: { pending: boolean; onSubmit: (mem
       <p className="text-right text-label text-ink-500">
         {memo.length}/{MEMO_MAX}
       </p>
-      <button type="button" onClick={() => onSubmit(memo)} disabled={pending} className="btn-primary btn-lg w-full">
+      <button
+        type="button"
+        onClick={() => onSubmit({ memo: memo.trim(), name: name.trim() || undefined, category: category ?? undefined })}
+        disabled={pending || !ready}
+        className="btn-primary btn-lg w-full"
+      >
         {pending ? '남기는 중…' : '그래도 핀 남기기'}
       </button>
     </div>
