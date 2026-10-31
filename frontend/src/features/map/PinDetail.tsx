@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useId, useRef, useState, type ReactNode } from 'react'
 import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
@@ -25,6 +25,8 @@ const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line
 }
 const TYPES: ReactionType[] = ['like', 'against']
 const TEXT_MAX = 140
+/** 서버가 같은 이유(EVIDENCE_REQUIRED)로 막을 때도 같은 문구다. */
+const MISSING_REASON = '반대 이유를 하나 이상 남겨 주세요'
 const MEMO_MAX = 200
 
 const PROMPT: Record<ReactionType, { title: string; placeholder: string }> = {
@@ -236,7 +238,8 @@ export function PinDetailBody({
 
       {/* 2단계에서 바로 보이게 「내 의견」을 구성원 의견보다 위에 둔다(#308). */}
       {pin.permissions.can_react ? (
-        <MyOpinion key={pin.my_reaction?.type ?? 'none'} pin={pin} mapId={mapId} chipOptions={chips.data ?? []} chipsError={chips.error} onDone={onDone} />
+        // 핀마다 새로 그린다. 의견을 취소해도 고른 의견·사유는 남겨 「의견 등록」만 다시 누르면 되돌아간다(#959).
+        <MyOpinion key={pin.id} pin={pin} mapId={mapId} chipOptions={chips.data ?? []} chipsError={chips.error} onDone={onDone} />
       ) : (
         // 숙소 핀은 반응을 받지 않는다(#154). v1엔 숙소 핀이 없지만 권한이 꺼져 오면 그린다.
         <p className="text-sm text-ink-500">이 장소에는 의견을 남길 수 없어요</p>
@@ -376,9 +379,19 @@ function MyOpinion({
   const [text, setText] = useState(saved?.reason_text ?? '')
   const react = useMyReactionMutation(mapId, pin)
   const missingReason = type === 'against' && chips.length === 0 && text.trim() === ''
+  // 사유 없이 반대를 누르면 버튼을 끄지 않고 이유를 입력칸 아래에 알린다 — 꺼진 버튼은 왜 막혔는지 읽히지 않는다(#959).
+  const [triedEmpty, setTriedEmpty] = useState(false)
+  const reasonRef = useRef<HTMLInputElement>(null)
+  const reasonErrorId = useId()
+  const showMissing = triedEmpty && missingReason
 
   function submit() {
-    if (!type || missingReason) return
+    if (!type) return
+    if (missingReason) {
+      setTriedEmpty(true)
+      reasonRef.current?.focus()
+      return
+    }
     const body = {
       type,
       ...(text.trim() ? { reason_text: text.trim() } : {}),
@@ -391,7 +404,7 @@ function MyOpinion({
       },
       onError: (err) =>
         showToast(
-          err instanceof ApiError && err.code === 'EVIDENCE_REQUIRED' ? '반대 이유를 하나 이상 남겨 주세요' : '의견을 등록하지 못했어요',
+          err instanceof ApiError && err.code === 'EVIDENCE_REQUIRED' ? MISSING_REASON : '의견을 등록하지 못했어요',
           { label: '다시 시도', onClick: submit },
         ),
     })
@@ -472,7 +485,14 @@ function MyOpinion({
             placeholder={PROMPT[type].placeholder}
             label={PROMPT[type].title}
             clearLabel="사유 지우기"
+            inputRef={reasonRef}
+            describedBy={showMissing ? reasonErrorId : undefined}
           />
+          {showMissing && (
+            <p id={reasonErrorId} className="text-xs font-semibold text-warn-text">
+              {MISSING_REASON}
+            </p>
+          )}
           {type === 'against' && <p className="text-label text-ink-500">자세히 적을수록 더 정확한 추천을 받을 수 있어요</p>}
         </div>
       )}
@@ -480,7 +500,7 @@ function MyOpinion({
       <button
         type="button"
         onClick={submit}
-        disabled={!type || missingReason || react.isPending}
+        disabled={!type || react.isPending}
         className="btn-primary btn-md w-full"
       >
         {react.isPending ? '등록하는 중…' : '의견 등록'}

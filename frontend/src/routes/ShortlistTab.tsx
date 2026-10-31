@@ -162,7 +162,14 @@ export default function ShortlistTab() {
           items={items}
           onOpen={setOpenPin}
           onRemove={removeItem}
-          onReorder={(from, to) => reorder.mutate(move(items, from, to), { onError: () => showToast('순서를 바꾸지 못했어요') })}
+          onReorder={(from, to) => {
+            const name = items[from].pin.place_name ?? '이 장소'
+            reorder.mutate(move(items, from, to), {
+              // 화면을 보지 않는 사람에게 옮긴 결과를 알림 영역(토스트)으로 알린다(#959).
+              onSuccess: () => showToast(`${name}${josa(name, '을', '를')} ${to + 1}번째로 옮겼어요`),
+              onError: () => showToast('순서를 바꾸지 못했어요'),
+            })
+          }}
         />
       )}
       {items.length > 0 && <ShortlistExport mapId={mapId} />}

@@ -1,3 +1,4 @@
+import type { Ref } from 'react'
 import { X } from 'lucide-react'
 
 /**
@@ -13,6 +14,8 @@ export default function TextField({
   clearLabel,
   id,
   autoFocus,
+  inputRef,
+  describedBy,
 }: {
   value: string
   onChange: (value: string) => void
@@ -23,11 +26,18 @@ export default function TextField({
   clearLabel: string
   id?: string
   autoFocus?: boolean
+  /** 안내·오류를 띄우고 입력칸으로 포커스를 보낼 때(#959). */
+  inputRef?: Ref<HTMLInputElement>
+  /** 입력칸 아래 안내·오류 글의 id. 있으면 그 글이 잘못된 입력이라는 뜻으로 함께 읽힌다. */
+  describedBy?: string
 }) {
   return (
     <div className="field">
       <input
         id={id}
+        ref={inputRef}
+        aria-describedby={describedBy}
+        aria-invalid={describedBy ? true : undefined}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         maxLength={maxLength}
