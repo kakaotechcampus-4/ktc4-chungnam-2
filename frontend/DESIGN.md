@@ -315,6 +315,7 @@ components:
 | 근거 줄 묶음과 고치기(꼭·선호·쓰이지 않는 조건·뺀 조건·참고, ×·＋·「아직 적용 전」) | `EvidenceGroups` | `features/recommend/EvidenceGroups` |
 | AI 코스 날짜별 카드 | `DayCard` (`CourseRun` 안) | `features/course/CourseRun` |
 | AI 코스 지도 범례(날짜별 선 견본 + 「끄기」) | `CourseMapLegend` | `features/course/CourseMapLegend` |
+| 확정 리스트 내보내기(글자 복사·txt·csv, 목록 아래 한 줄) | `ShortlistExport` (`btn-link` 셋 + 「내보내기」 머리) | `features/shortlist/ShortlistExport` |
 
 - **아이콘:** lucide 선 아이콘만 쓴다. 크기는 12(11~12px 글자 옆) · 14(13px 글자 옆) · 16(14~16px 글자 옆·작은 버튼) · 20(지도 버튼·큰 버튼·단독 아이콘 버튼) · 24(탭) 다섯 단계다.
 - **핑고 표정은 상황으로 고른다.** 표는 Components 「핑고」 절이다.
