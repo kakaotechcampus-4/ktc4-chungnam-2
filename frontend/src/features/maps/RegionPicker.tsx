@@ -21,11 +21,12 @@ export default function RegionPicker({
   return (
     <ModalSheet label="여행 지역 고르기" onClose={onClose}>
       <SheetTitle>여행 지역 (시·도)</SheetTitle>
-      <p className="mb-4 mt-1 text-sm text-ink-500">고르면 그 지역 장소 정보를 미리 준비해요. 지금은 서울만 찾을 수 있어요</p>
+      <p className="mb-4 mt-1 text-sm text-ink-500">고르면 그 지역 장소 정보를 미리 준비해요</p>
       <div className="flex flex-wrap gap-2">
         {REGIONS.map((region) => {
           const on = picked?.label === region.label
-          const open = AVAILABLE_REGIONS.has(region.label)
+          const open = region.label in AVAILABLE_REGIONS
+          const note = AVAILABLE_REGIONS[region.label]
           return (
             <button
               key={region.label}
@@ -36,6 +37,7 @@ export default function RegionPicker({
               className="chip"
             >
               {region.label}
+              {note && <span className="ml-1 text-xs">· {note}</span>}
               {!open && <span className="ml-1 text-xs">· 곧 열려요</span>}
             </button>
           )
