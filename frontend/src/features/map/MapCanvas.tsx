@@ -88,7 +88,8 @@ export default function MapCanvas({
   /** 사용자가 지도를 끌기 시작하면 true, 멈추면 false. */
   onMovingChange: (moving: boolean) => void
   /** 지도 빈 곳을 눌렀다(핀·후보·검색 결과를 누르거나 끌고 놓은 건 아니다). 고른 것을 푸는 자리다. */
-  onMapClick: () => void
+  /** 지도 빈 곳을 누름. 누른 자리는 화면 메모리에서만 쓴다(#486, 저장하지 않는다). */
+  onMapClick: (at: { lat: number; lng: number } | null) => void
   /** 지도 왼쪽을 가리는 패널 폭(px). 넓은 화면에서 패널이 열려 있을 때만 0이 아니다. */
   leftInset?: number
 }) {
@@ -131,7 +132,8 @@ export default function MapCanvas({
           callbacks.current.onMovingChange(true)
         }
         const onIdle = () => callbacks.current.onMovingChange(false)
-        const onClick = () => callbacks.current.onMapClick()
+        const onClick = (e?: { latLng: { getLat(): number; getLng(): number } }) =>
+          callbacks.current.onMapClick(e ? { lat: e.latLng.getLat(), lng: e.latLng.getLng() } : null)
         maps.event.addListener(map, 'dragstart', onDragStart)
         maps.event.addListener(map, 'idle', onIdle)
         maps.event.addListener(map, 'click', onClick)

@@ -28,7 +28,17 @@ export function SearchResultsHeader({ count }: { count: number | null }) {
   return (
     <div className="flex items-center justify-between gap-2">
       {/* 링크에서 못 찾았으면 「0곳」 대신 이름을 묻거나 이름 검색을 권한다 — 제목은 링크의 장소로 둔다. */}
-      <SheetTitle>{source?.kind === 'name' ? <>‘{source.query}’ 검색 결과{n}</> : count ? <>링크에서 찾은 장소{n}</> : '링크의 장소'}</SheetTitle>
+      <SheetTitle>
+        {source?.kind === 'name' ? (
+          <>‘{source.query}’ 검색 결과{n}</>
+        ) : source?.kind === 'tap' ? (
+          <>누른 곳 근처 장소{n}</>
+        ) : count ? (
+          <>링크에서 찾은 장소{n}</>
+        ) : (
+          '링크의 장소'
+        )}
+      </SheetTitle>
       <button type="button" onClick={close} className="btn-text shrink-0 text-sm">
         닫기
       </button>
@@ -137,6 +147,14 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
       >
         {/* 링크 속 이름은 사용자가 붙인 값이라 문장에 섞지 않고 따로 보여 준다(#717). */}
         {hint ? <q>{hint}</q> : '링크 대신 이름으로 찾아보세요'}
+      </EmptyState>
+    )
+  }
+  if (source?.kind === 'tap' && results.length === 0) {
+    // 지어내지 않는다(가드레일 2). 없으면 이름 검색으로 남기게 한다(api-spec GET /places/nearest).
+    return (
+      <EmptyState mood="sorry" title="누른 곳 가까이에 찍을 수 있는 장소가 없어요" action={<SearchAgainButton onClose={close} label="검색으로 남기기" />}>
+        가게 바로 위를 눌러 보거나, 이름으로 찾아보세요
       </EmptyState>
     )
   }

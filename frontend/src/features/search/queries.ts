@@ -2,18 +2,19 @@ import { useQuery } from '@tanstack/react-query'
 
 import { ApiError } from '@/api'
 
-import { parseLink, searchPlaces } from './api'
+import { nearestPlaces, parseLink, searchPlaces } from './api'
 import type { LatLng, SourcePlaces } from './model'
 import type { SearchSource } from './searchStore'
 
 async function fetchSource(source: SearchSource, near: LatLng | null): Promise<SourcePlaces> {
   if (source.kind === 'name') return { places: await searchPlaces(source.query, near) }
+  if (source.kind === 'tap') return { places: await nearestPlaces(source.at) }
   const link = await parseLink(source.url)
   return { places: link.matches, link }
 }
 
 /**
- * 결과 시트의 장소 — 이름 검색이든 링크(#487)든 같은 모양으로 받는다.
+ * 결과 시트의 장소 — 이름 검색이든 링크(#487)든 누른 자리(#486)든 같은 모양으로 받는다.
  * 같은 검색을 다시 열 때 다시 부르지 않게 잠깐만 기억한다(화면 메모리 안, 서버 저장 아님).
  * 422(링크를 못 읽음)·429(호출 상한)·503(검색 장애)은 다시 물어도 같아서 재시도하지 않는다.
  */
