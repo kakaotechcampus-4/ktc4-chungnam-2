@@ -306,6 +306,8 @@ components:
 | 패널·시트 안 이전 화면(넓은 화면에선 패널 헤더 ‹ 로 옮김) | `PanelBackLink` (모바일은 `BackButton`) | `features/shell/PanelBackLink` |
 | 알림 | `showToast` (+ 「되돌리기」·「다시 시도」 동작) | `features/shell/toast` |
 | 사람 | `Avatar` (회색 면 + 첫 글자, 32·44) | `ui/Avatar` |
+| 별점(보기·고르기, #953) | `StarRating` (`onChange` 없으면 보기 — 평균은 가까운 별 수로 칠하고 숫자는 옆 글자로. 있으면 별 하나가 라디오, 누르는 곳 44px. 켜짐 `--action-fill` · 꺼짐 `--line-control`, 골드는 확정 전용이라 쓰지 않는다) | `ui/StarRating` |
+| 핀 상세 장소 후기(자체 DB 핀만, #953) | `PlaceReviews` (「장소 후기」 + 평균·개수 + 「후기 쓰기」 `btn-outline btn-sm` · 목록 ink-50 면 줄마다 「나」/「핑고 사용자」·별·시각·「삭제」/「신고」 `btn-text` · 「더 보기」 `btn-link`), 작성은 `ReviewSheet`(사전 고지 + `StarRating` + 여러 줄 입력 + 글자 수). 댓글·좋아요·프로필은 없다(SNS 아님) | `features/reviews` |
 | 서비스 피드백(#10) | `FeedbackSheet` (분류 칩 + 여러 줄 입력 + 「보내기」, 계정 시트·지도 정보의 글자 버튼에서 연다) | `features/feedback/FeedbackSheet` |
 | AI가 말하는 머리 | `AiHeader` (핑고 + `tag-ai`) | `features/recommend/Readiness` |
 | 핑고 밖에서 찾는 출구 | `ExternalSearchLink` 「카카오맵에서 더 찾아보기」(새 창) + 12 ink-500 「검색어 ‘…’」. 색·크기는 놓이는 자리가 준다 | `features/recommend/ExternalSearchLink` |
