@@ -586,7 +586,7 @@ index ix_credit_ledger_user_reason_created (user_id, reason, created_at)
 ```
 
 - `ref_id` UNIQUE가 멱등을 맡는다 — 같은 실행 이중 차감, 이중 환불, 같은 장소 후기 보상 두 번이 구조적으로 막힌다.
-- 탈퇴는 계정과 원장을 지운다(`credits.api.delete_by_user`). 게스트 합치기는 옮기지 않는다 — 게스트는 계정이 없고, 혹시 있으면 지운다(초기 지급 두 번 방지).
+- 탈퇴 때는 남기고, 복구 기간(7일)이 지나 정리할 때(`auth.service.purge_withdrawn_user`) 계정과 원장을 지운다(`credits.api.delete_by_user`, #948 검수). 7일 안에 되살리면 잔액이 그대로 돌아온다 — 탈퇴 때 지우면 되살린 계정이 30으로 다시 시작해 반복으로 채울 수 있었다. 게스트 합치기는 옮기지 않는다 — 게스트는 계정이 없고, 혹시 있으면 지운다(초기 지급 두 번 방지).
 
 ## reviews (장소 후기, #432, docs/credits-reviews.md — 구현 #951)
 

@@ -42,6 +42,7 @@ NOT_MERGED: dict[tuple[str, str], str] = {
 # 모듈 -> 탈퇴 때 그 모듈의 사용자 기록을 지우지 않는 이유. 다시 볼 조건: 탈퇴 정책(#10, #155)이 바뀔 때.
 KEPT_ON_WITHDRAW: dict[str, str] = {
     "shortlist": "확정 리스트 항목은 지도의 결정이라 남기고, 담은 사람은 auth.api.display_names가 '탈퇴한 구성원'으로 보인다(#155)",
+    "credits": "되살리면 잔액이 돌아와야 한다 — 7일 정리(auth.service.purge_withdrawn_user) 때 지운다(#948)",
     "common": "event_log는 24시간 안의 것만 읽고, 탈퇴한 사람의 세션은 이미 끊겨 받을 사람이 없다. 오래된 행을 지우는 작업은 아직 없다(deploy_rules.md)",
 }
 
