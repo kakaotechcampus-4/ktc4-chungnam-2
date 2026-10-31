@@ -20,7 +20,6 @@ SKIP_FILES = {"common/errors.py"}   # 목록을 정의하는 자리
 
 # 코드 -> 추적 이슈. 비어 가는 것이 정상이다.
 KNOWN_UNRAISED: dict[str, str] = {
-    "CREDIT_INSUFFICIENT": "#948",   # 크레딧(#432) — credits 모듈 구현 전
 }
 
 

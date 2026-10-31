@@ -21,6 +21,7 @@ from auth import core
 from auth.models import IDENTITY_CONSTRAINT, User, UserIdentity
 from common.errors import AppError
 from common.settings import settings
+from credits import api as credits_api
 from maps.schemas import Map
 from feedback import api as feedback_api
 from llm import api as llm_api
@@ -265,6 +266,8 @@ WITHDRAW_STEPS = (
     ("notifications", lambda db, user_id, map_ids: notifications_api.delete_by_user(db, user_id=user_id)),
     # 모델 호출 사용량(#870)은 행을 남기고 user_id만 비운다 — 비용 통계는 사람 없이도 쓴다
     ("llm", lambda db, user_id, map_ids: llm_api.anonymize_by_user(db, user_id=user_id)),
+    # 크레딧 계정과 원장(#948, docs/credits-reviews.md 6절). 계정 행이 없으면 처음 지급량으로 읽는다
+    ("credits", lambda db, user_id, map_ids: credits_api.delete_by_user(db, user_id=user_id)),
 )
 
 
@@ -479,6 +482,7 @@ MERGE_STEPS = (
     ("feedback", feedback_api),
     ("agent", agent_api),
     ("llm", llm_api),
+    ("credits", credits_api),   # 옮기지 않고 게스트 쪽 행을 지운다(초기 지급 두 번 방지)
 )
 
 
