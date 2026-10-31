@@ -209,6 +209,19 @@ export default function MapLayout() {
     controller.current?.focusPin(c.lat, c.lng)
   }, [candidateFocus, result, mapReady])
 
+  // 추천 결과가 오면(첫 추천·다시 추천·반경 넓히기마다 한 번) 후보 전체가 보이게 지도를 맞춘다. 올린 후보도 이번 결과라 같이 넣는다.
+  // 같은 결과를 다시 받거나(게시·새로고침) 탭을 오가도 다시 옮기지 않는다 — 사람이 옮겨 둔 지도를 뺏지 않게.
+  const fittedResult = useRef<string | null>(null)
+  useEffect(() => {
+    if (!onRecommendTab || !mapReady || !run || run.status !== 'done' || !result) return
+    const key = `${run.id}-${run.attempt_no}-${run.default_radius_walk_min ?? 0}`
+    if (fittedResult.current === key) return
+    const points = result.candidates.flatMap((c) => (c.lat == null || c.lng == null ? [] : [{ lat: c.lat, lng: c.lng }]))
+    if (!points.length) return
+    fittedResult.current = key
+    controller.current?.fitPins(points)
+  }, [onRecommendTab, mapReady, run, result])
+
   // 지도 빈 곳을 누르면 고른 것을 푼다 — 핀 상세(마킹·확정 탭)는 목록으로, 검색은 결과 목록으로, AI 후보는 강조만 푼다.
   // 지도는 그대로 둔다.
   function onMapClick() {
