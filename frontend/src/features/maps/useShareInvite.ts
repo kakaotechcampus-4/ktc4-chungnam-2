@@ -52,5 +52,6 @@ export function useShareInvite(mapId: string) {
     }
   }
 
-  return { url, status, error: invite.error, retry, copied, copy, share }
+  // 방장이 이 링크를 끄면(#467) 화면에 남은 링크는 죽은 링크다 — 그 토큰으로 알아보고 새로 만든다.
+  return { url, token: invite.data?.token, status, error: invite.error, retry, copied, copy, share }
 }

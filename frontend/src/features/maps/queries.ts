@@ -2,13 +2,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useMeQuery } from '@/features/auth/queries'
 
-import { acceptInvite, createInvite, createMap, deleteMap, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, leaveMap } from './api'
-import { inviteProblem, toInviteView, toMapHeaderView, toMapListView, toMemberView, type MapCreateRequest } from './model'
+import { acceptInvite, createInvite, createMap, deleteMap, fetchInvites, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, leaveMap, revokeInvite, transferOwner } from './api'
+import { ApiError } from '@/api'
+
+import { inviteProblem, toInviteRowView, toInviteView, toMapHeaderView, toMapListView, toMemberView, type InviteDto, type MapCreateRequest, type MapDto } from './model'
 
 export const mapKeys = {
   all: ['maps'] as const,
   detail: (mapId: string) => ['maps', mapId] as const,
   members: (mapId: string) => ['maps', mapId, 'members'] as const,
+  // 지도 상세 키 아래라 구성원이 들어오면(member.joined) 참여 수도 같이 다시 받는다.
+  invites: (mapId: string) => ['maps', mapId, 'invites'] as const,
 }
 
 /** 내 지도 목록과 상한 (#24, #623). */
@@ -92,4 +96,38 @@ export function useInviteSummaryQuery(token: string) {
 /** 계정 시트의 "지도마다 링크 복사". 누를 때 만든다 — 목록을 열 때마다 지도 수만큼 링크를 만들지 않게. */
 export function useCreateInviteMutation() {
   return useMutation({ mutationFn: (mapId: string) => createInvite(mapId) })
+}
+
+/** 켜진 초대 링크 목록(방장, #467). 목록을 펼쳤을 때만 받는다. */
+export function useInvitesQuery(mapId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: mapKeys.invites(mapId),
+    queryFn: () => fetchInvites(mapId),
+    select: (invites) => invites.map(toInviteRowView),
+    enabled,
+  })
+}
+
+/** 초대 링크 끄기. 이벤트가 없어 목록에서 바로 뺀다. */
+export function useRevokeInviteMutation(mapId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: revokeInvite,
+    onSuccess: (_, token) => queryClient.setQueryData<InviteDto[]>(mapKeys.invites(mapId), (list) => list?.filter((i) => i.token !== token)),
+  })
+}
+
+/**
+ * 방장 넘기기(#468). 지도 상세만 응답으로 바로 바꾼다. 구성원 목록(방장 표시)은 내게도 오는 owner.changed를 받아
+ * realtime의 표(refetchTable)대로 다시 받는다. 고른 사람이 그사이 나갔으면(OWNER_TARGET_INVALID) 구성원을 다시 받아 고르게 한다(docs/errors.md).
+ */
+export function useTransferOwnerMutation(mapId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (userId: string) => transferOwner(mapId, { user_id: userId }),
+    onSuccess: (map) => queryClient.setQueryData<MapDto>(mapKeys.detail(mapId), map),
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'OWNER_TARGET_INVALID') void queryClient.invalidateQueries({ queryKey: mapKeys.members(mapId) })
+    },
+  })
 }
