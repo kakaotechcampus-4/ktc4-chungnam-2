@@ -1,6 +1,6 @@
 import { isDesktopNow } from '@/features/shell/useIsDesktop'
 
-import { createPinMarkerElement } from './pinMarker'
+import { createPinMarkerElement, markSelected } from './pinMarker'
 import { isPlaced, participationRatio, type Pin, type PlacedPin } from './model'
 
 export interface MarkerLayer {
@@ -52,25 +52,7 @@ export function createMarkerLayer(
     const el = elements.get(pinId)
     if (!overlay || !el) return
     overlay.setZIndex(on ? 10 : 0)
-    const svg = el.querySelector('svg')
-    if (svg) {
-      svg.style.transformOrigin = '50% 100%'
-      svg.style.transform = on ? 'scale(1.25)' : ''
-      svg.style.filter = on ? 'drop-shadow(0 0 2px #fff) drop-shadow(0 0 2px #fff)' : ''
-    }
-    el.querySelector('[data-pin-name]')?.remove()
-    if (on) {
-      const label = document.createElement('span')
-      label.dataset.pinName = ''
-      // 이름은 textContent 로만 넣는다(마크업으로 해석되지 않게).
-      label.textContent = names.get(pinId) ?? ''
-      label.setAttribute('aria-hidden', 'true')
-      label.style.cssText =
-        'position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;padding:2px 8px;border-radius:8px;' +
-        'background:#fff;color:var(--ink-900);font-size:0.75rem;font-weight:700;line-height:1.4;white-space:nowrap;box-shadow:0 1px 4px rgba(20,22,31,.18)'
-      el.style.position = 'relative'
-      el.appendChild(label)
-    }
+    markSelected(el, names.get(pinId) ?? '', on)
   }
 
   function drop(pinId: string) {

@@ -64,6 +64,7 @@
   --pin-stroke:     #D02A2A;
   --pin-fill-empty: var(--ink-200);
   --pin-fill-full:  #D02A2A;
+  --pin-dot:        #8F1D1D;   /* 일반 핀 머리 가운데 점. 테두리 빨강보다 어둡게 — 회색 속·빨강 속 어디서나 보인다 */
   --pin-confirmed:        #F5B301;   /* 확정 핀 속 (#149) */
   --pin-confirmed-mark:   #6B4500;   /* 확정 핀 ♥ · 순서 번호 글자 */
   --pin-confirmed-stroke: #FFFFFF;   /* 3px. 바다·어두운 타일 위 가시성. 밝은 땅 위는 바깥 갈색 1px(--pin-confirmed-mark)이 맡는다(#299) */

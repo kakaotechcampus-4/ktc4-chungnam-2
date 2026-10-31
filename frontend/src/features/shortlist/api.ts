@@ -1,6 +1,6 @@
-import { api } from '@/api'
+import { api, apiFile } from '@/api'
 
-import type { RouteDto, ShortlistItemDto } from './model'
+import type { ExportFormat, RouteDto, ShortlistItemDto } from './model'
 
 export const fetchShortlist = (mapId: string) => api<ShortlistItemDto[]>(`/maps/${mapId}/shortlist`)
 
@@ -17,3 +17,6 @@ export const calculateRoute = (mapId: string) => api<RouteDto[]>(`/maps/${mapId}
 
 /** 마지막으로 계산된 동선. 한 번도 계산하지 않았으면 빈 배열. */
 export const fetchRoute = (mapId: string) => api<RouteDto[]>(`/maps/${mapId}/route`)
+
+/** 확정 리스트 내보내기(#471) — 확정 순서대로 한 줄씩. 파일로 온다. */
+export const exportShortlist = (mapId: string, format: ExportFormat) => apiFile(`/maps/${mapId}/shortlist/export?format=${format}`)

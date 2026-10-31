@@ -29,6 +29,11 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/maps/{mapId}/events/me"): "SSE 스트림 — realtime 테스트가 담당",
+    ("GET", "/places/external-search"): "서버 구현 전(#903) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
+    ("GET", "/pins/{pinId}/reviews"): "서버 구현 전(#951) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
+    ("PUT", "/pins/{pinId}/reviews/me"): "서버 구현 전(#951) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
+    ("DELETE", "/pins/{pinId}/reviews/me"): "서버 구현 전(#951) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
+    ("POST", "/reviews/{reviewId}/reports"): "서버 구현 전(#951) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
     ("POST", "/auth/qa-login"): "스테이징 전용 — 테스트 앱에 없다(#788), staging 설정 앱으로 auth 테스트가 본다(#789)",
 }
 
@@ -436,6 +441,25 @@ def test_feedback_responses_match_the_openapi_spec(clients):
         assert a.post("/feedback", json={"message": "둘"}).status_code == 429
     finally:
         feedback_api.submit_limiter = SlidingWindowLimiter(10, window_s=3600.0)
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
+def test_credits_responses_match_the_openapi_spec(clients, db_session):
+    """크레딧 잔액(#948) — 정식 계정 200, 게스트 403 GUEST_NOT_ALLOWED(detail.initial_credits), 로그인 없음 401."""
+    from fastapi.testclient import TestClient
+
+    from auth.testing import create_guest
+
+    a, _b, problems = clients
+    assert a.get("/credits/me").status_code == 200
+    create_guest(db_session, "guest_c")
+    db_session.commit()
+    guest = _Checked(TestClient(a._c.app, cookies=session_cookie("guest_c")), problems)
+    denied = guest.get("/credits/me")
+    assert denied.status_code == 403 and denied.json()["code"] == "GUEST_NOT_ALLOWED"
+    assert _Checked(TestClient(a._c.app), problems).get("/credits/me").status_code == 401
 
     unique = list(dict.fromkeys(problems))
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)

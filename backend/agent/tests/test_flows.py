@@ -578,7 +578,7 @@ def test_locked_and_leased_cursor_is_skipped(world):
     world.event(map_id)
     with world.factory() as p:   # 커서 행을 미리 만들어 둔다 — 아래 a의 미커밋 upsert를 b가 기다리지 않게
         for claim in service.claim_maps(p, world.now, limit=1000).claims:
-            service.release_lease(p, claim.map_id)
+            service.release_lease(p, claim.map_id, claim.token)
         p.commit()
     with world.factory() as a, world.factory() as b:
         assert [c.map_id for c in service.claim_maps(a, world.now, limit=1000).claims if c.map_id == map_id] == [map_id]
@@ -590,6 +590,51 @@ def test_locked_and_leased_cursor_is_skipped(world):
         later = world.now + timedelta(seconds=constants.LEASE_SEC + 1)
         assert map_id in [c.map_id for c in service.claim_maps(b, later, limit=1000).claims]   # lease가 지나면 다시
         b.rollback()
+
+
+def _claim(world, at, map_id):
+    with world.factory() as db:
+        claim = next(c for c in service.claim_maps(db, at, limit=1000).claims if c.map_id == map_id)
+        db.commit()
+    return claim
+
+
+def test_expired_lease_holder_cannot_release_or_save_over_the_new_holder(world):
+    """앞 실행의 lease가 만료돼 뒤 실행이 같은 지도를 잡았다(#812). 앞 실행의 해제와 저장은 뒤 실행의 lease를 건드리지 않는다."""
+    map_id = world.gap_map()
+    world.event(map_id)
+    first = _claim(world, world.now, map_id)
+    later = world.now + timedelta(seconds=constants.LEASE_SEC + 1)
+    second = _claim(world, later, map_id)
+    assert first.token != second.token
+
+    with world.factory() as db:   # 앞 실행이 뒤늦게 해제한다
+        service.release_lease(db, map_id, first.token)
+        db.commit()
+    cursor = world.rows(AgentCursor, map_id=map_id)[0]
+    assert str(cursor.lease_token) == second.token and cursor.lease_until is not None
+
+    outcome = flows.observe_map(map_id, world.now, session_factory=world.factory, token=first.token)   # 앞 실행의 저장
+    assert outcome == "stale"
+    runs = world.rows(AgentRun, map_id=map_id)
+    assert [(r.outcome, r.outcome_detail) for r in runs] == [("stale", {"reason": "lease_lost"})]
+    assert world.rows(AgentSuggestion, map_id=map_id) == []
+    cursor = world.rows(AgentCursor, map_id=map_id)[0]
+    assert cursor.last_seen_seq == 0 and str(cursor.lease_token) == second.token
+
+    with world.factory() as db:   # 뒤 실행은 정상으로 해제한다
+        service.release_lease(db, map_id, second.token)
+        db.commit()
+    cursor = world.rows(AgentCursor, map_id=map_id)[0]
+    assert cursor.lease_token is None and cursor.lease_until is None
+
+
+def test_lease_holder_saves_and_advances_cursor(world):
+    map_id = world.gap_map()
+    seq = world.event(map_id)
+    claim = _claim(world, world.now, map_id)
+    flows.observe_map(map_id, world.now, session_factory=world.factory, token=claim.token)
+    assert world.rows(AgentCursor, map_id=map_id)[0].last_seen_seq == seq
 
 
 # ---------------------------------------------------------------- 14. 여행 종료, 지도 삭제

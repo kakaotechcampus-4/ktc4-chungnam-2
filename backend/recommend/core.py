@@ -350,6 +350,11 @@ def evidence_line_use(
     return LineUse(False, "not_for_category", None)
 
 
+def normalize_manual_text(text: str) -> str:
+    """「+」로 추가한 글의 같은 글 판정 기준(#848) — 앞뒤 공백을 자르고 안의 연속 공백을 하나로 본다. 저장도 이 모양으로 한다."""
+    return " ".join(text.split())
+
+
 def applied_evidence_entries(lines: Sequence[Any], category: str, off_season: Collection[str]) -> list[dict]:
     """실행(execute·retry·widen) 시점에 활성이던 근거 줄의 스냅샷 항목(#845, #847). `lines`는 활성 줄을 근거 순서로(id, author_id,
     text, badge, fact_key, wants 속성). enforced·not_enforced_reason은 근거 응답과 파이프라인이 쓰는 `evidence_line_use` 한

@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 
-import { useAiStore } from '@/features/recommend/aiStore'
 import type { RecommendRunDto } from '@/features/recommend/model'
 import { PingoMark } from '@/ui/Pingo'
 
@@ -10,12 +9,11 @@ import { useRunAdviceQuery } from './queries'
 /**
  * 추천 막힘 조언(agent-v2 9절, 16.5) — 결과가 적거나 같은 카테고리를 여러 번 받았을 때 더 받는 방법. 대상인지는 서버가 정한다.
  * 깔때기 아래에 둔다. 기다리는 동안 자리만 두고, 204·실패면 아무것도 없다.
- * 버튼은 둘뿐이다: widen_radius 는 화면의 「반경 넓히기」(확인 창 포함, 가드레일 4)를 그대로 받고, open_evidence 는 근거 확인으로 돌아간다.
- * `widen` 을 주지 않으면(0곳 화면처럼 이미 같은 버튼이 있을 때) 문장만 보인다.
+ * 버튼은 둘뿐이다: widen_radius 는 화면의 「반경 넓히기」(확인 창 포함, 가드레일 4)를 그대로 받고, open_evidence 는 결과 위
+ * 「이 조건으로 찾았어요」 카드를 연다(#849, `onOpenEvidence`). `widen` 을 주지 않으면(0곳 화면처럼 이미 같은 버튼이 있을 때) 문장만 보인다.
  */
-export default function RunAdvice({ mapId, run, widen }: { mapId: string; run: RecommendRunDto; widen?: ReactNode }) {
+export default function RunAdvice({ run, widen, onOpenEvidence }: { mapId: string; run: RecommendRunDto; widen?: ReactNode; onOpenEvidence?: () => void }) {
   const advice = useRunAdviceQuery(run.id)
-  const setRun = useAiStore((s) => s.setRun)
 
   if (advice.isPending) return <div aria-hidden="true" className="h-16 rounded-xl bg-ink-50" />
   if (advice.error) {
@@ -28,9 +26,9 @@ export default function RunAdvice({ mapId, run, widen }: { mapId: string; run: R
     ? advice.data.actions.map((a) =>
         a.type === 'widen_radius' ? (
           <span key={a.index}>{widen}</span>
-        ) : a.type === 'open_evidence' ? (
-          // ponytail: evidence_line_ids 강조는 아직 없다 — 근거 화면에 줄 강조가 생기면 넘긴다.
-          <button key={a.index} type="button" onClick={() => setRun(mapId, { ...run, status: 'collecting_evidence' })} className="btn-outline btn-sm">
+        ) : a.type === 'open_evidence' && onOpenEvidence ? (
+          // ponytail: evidence_line_ids 강조는 아직 없다 — 조건 카드에 줄 강조가 생기면 넘긴다.
+          <button key={a.index} type="button" onClick={onOpenEvidence} className="btn-outline btn-sm">
             {a.label}
           </button>
         ) : null,

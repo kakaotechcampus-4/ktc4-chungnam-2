@@ -6,9 +6,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select, update
 
+from agent import core as agent_core
 from agent.course import api as course_api, service
 from agent.course.api_schemas import CourseRequest
-from agent.course.constants import COURSE_DAILY_LIMIT, MAX_PLACES
+from agent.course.constants import COURSE_DAILY_LIMIT, MAX_PLACES, STARTUP_ORPHAN_AFTER
 from agent.course.gateways import CourseLlm, NullOpeningHours
 from agent.course.models import AgentCourseRun
 from agent.course.tests.conftest import confirmed_map
@@ -105,7 +106,7 @@ def test_daily_limit_counts_runs_since_kst_midnight(world, places):
     map_id, _ = confirmed_map(world, places, 3)
     now = datetime(2026, 10, 21, 3, 0, tzinfo=timezone.utc)                    # KST 12:00
     kst_midnight = datetime(2026, 10, 20, 15, 0, tzinfo=timezone.utc)
-    assert service.kst_day_start(now) == kst_midnight
+    assert agent_core.kst_day_start(now) == kst_midnight
     with world.factory() as db:
         for i in range(COURSE_DAILY_LIMIT):
             db.add(AgentCourseRun(map_id=map_id, requested_by=world.uid("u1"), status="done", input={}, snapshot_at=now,
@@ -251,8 +252,8 @@ def test_engine_error_fails_the_run_without_raising(world, places):
 
 def test_execute_skips_a_run_that_is_no_longer_queued(world, places):
     map_id, _ = confirmed_map(world, places, 3)
-    job = request(world, map_id)
-    assert service.interrupt_unfinished_runs(world.factory) >= 1
+    job = request(world, map_id, now=world.now - STARTUP_ORPHAN_AFTER - timedelta(minutes=1))
+    assert service.interrupt_unfinished_runs(world.factory, now=world.now) >= 1
 
     service.execute_run(job, session_factory=world.factory, llm=NO_MODEL, gateway=NullOpeningHours())
 
@@ -276,20 +277,26 @@ def test_late_finishing_run_does_not_overwrite_an_interrupted_one(world, places)
     assert (r.status, r.failure_code) == ("failed", "INTERRUPTED") and r.days == [] and r.outcome is None
 
 
-def test_interrupt_unfinished_marks_queued_and_running_only(world, places):
+def test_startup_interrupts_only_old_active_runs(world, places):
     map_id, _ = confirmed_map(world, places, 3)
-    queued = request(world, map_id)
-    running = request(world, map_id, user="u2")
+    old_age = world.now - STARTUP_ORPHAN_AFTER - timedelta(minutes=1)
+    old_queued = request(world, map_id, now=old_age)
+    old_running = request(world, map_id, user="u2", now=old_age)
+    recent_running = request(world, map_id, user="u3", now=world.now - timedelta(seconds=30))
     with world.factory() as db:
-        db.get(AgentCourseRun, uuid.UUID(running.run_id)).status = "running"
+        for job in (old_running, recent_running):
+            db.get(AgentCourseRun, uuid.UUID(job.run_id)).status = "running"
         db.add(AgentCourseRun(map_id=map_id, requested_by=world.uid("u1"), status="done", outcome="solved", input={},
-                              snapshot_at=world.now, snapshot_pin_ids=[]))
+                              snapshot_at=old_age, snapshot_pin_ids=[], created_at=old_age))
         db.commit()
 
-    n = service.interrupt_unfinished_runs(world.factory)
+    n = service.interrupt_unfinished_runs(world.factory, now=world.now)
 
-    assert n >= 2
-    assert {row(world, j.run_id).status for j in (queued, running)} == {"failed"}
+    assert n == 2
+    for job in (old_queued, old_running):
+        r = row(world, job.run_id)
+        assert (r.status, r.failure_code) == ("failed", "INTERRUPTED") and r.finished_at is not None
+    assert row(world, recent_running.run_id).status == "running"      # 다른 프로세스에서 도는 run은 둔다
     with world.factory() as db:
         assert db.execute(select(AgentCourseRun).where(AgentCourseRun.status == "done")).scalars().one().outcome == "solved"
 
@@ -313,3 +320,21 @@ def test_purge_and_delete_by_user(world, places):
         assert course_api.delete_by_user(db, user_id=world.uid("u2")) == {"agent_course_runs": 1}
         db.commit()
     assert row(world, b2.run_id) is None and row(world, b1.run_id) is not None
+
+
+def test_course_day_boundary_is_kst_midnight(world, places):
+    map_id, _ = confirmed_map(world, places, 3)
+    before = datetime(2026, 10, 29, 14, 59, 59, tzinfo=timezone.utc)           # KST 10-29 23:59:59
+    after = datetime(2026, 10, 29, 15, 0, 0, tzinfo=timezone.utc)              # KST 10-30 00:00:00
+    assert agent_core.kst_day_start(before) == datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc)
+    assert agent_core.kst_day_start(after) == after
+    with world.factory() as db:
+        for i in range(COURSE_DAILY_LIMIT):
+            db.add(AgentCourseRun(map_id=map_id, requested_by=world.uid("u1"), status="done", input={}, snapshot_at=before,
+                                  snapshot_pin_ids=[], created_at=before - timedelta(minutes=i)))
+        db.commit()
+    with world.factory() as db:
+        with pytest.raises(AppError) as e:
+            service.request_course(db, map_id=map_id, requested_by=world.uid("u1"), body=CourseRequest(), now=before)
+        assert code_of(e) == "COURSE_LIMIT"
+        assert service.request_course(db, map_id=map_id, requested_by=world.uid("u1"), body=CourseRequest(), now=after)

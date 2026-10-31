@@ -18,6 +18,7 @@ import agent.course.models  # noqa: F401
 import agent.models  # noqa: F401
 import auth.models  # noqa: F401
 import common.events  # noqa: F401
+import credits.models  # noqa: F401
 import feedback.models  # noqa: F401
 import llm.models  # noqa: F401
 import maps.models  # noqa: F401

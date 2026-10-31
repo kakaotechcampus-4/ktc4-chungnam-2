@@ -50,7 +50,7 @@ async function toApiError(res: Response): Promise<ApiError> {
  * `credentials: 'include'` 고정 — 인증은 httpOnly 쿠키이고 토큰을 프론트에 두지 않는다
  * (최종기획안 13절, api-spec.yaml 의 전역 cookieAuth).
  */
-export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+async function request(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
     credentials: 'include',
@@ -59,8 +59,35 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   })
-
   if (!res.ok) throw await toApiError(res)
+  return res
+}
+
+export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await request(path, init)
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
+}
+
+/**
+ * JSON 이 아니라 파일로 오는 응답(확정 리스트 내보내기 #484). 이름은 서버의 Content-Disposition 을 따른다.
+ * 서버가 다른 오리진이면 브라우저가 이 헤더를 가려서(CORS expose 없음) 이름이 없을 수 있다 — 부르는 쪽이 기본 이름을 둔다.
+ */
+export async function apiFile(path: string): Promise<{ blob: Blob; filename?: string }> {
+  const res = await request(path)
+  return { blob: await res.blob(), filename: filenameFrom(res.headers.get('Content-Disposition')) }
+}
+
+/** `filename*=UTF-8''<퍼센트 인코딩>`(RFC 5987)을 먼저, 없으면 `filename="..."`. */
+export function filenameFrom(disposition: string | null): string | undefined {
+  if (!disposition) return undefined
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim())
+    } catch {
+      // 잘못 인코딩된 이름은 아래 ASCII 이름으로 떨어진다.
+    }
+  }
+  return /filename="?([^";]+)"?/i.exec(disposition)?.[1]
 }

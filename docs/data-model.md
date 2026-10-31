@@ -446,7 +446,8 @@ agent_settings(                       -- 지도별 모드. 행이 없으면 켜�
 agent_cursors(                        -- 관찰 흐름만 쓴다. 지도별 책갈피와 다음 점검 시각, 중복 실행 방지 자리표
   map_id primary key,
   last_seen_seq bigint default 0,     -- 관찰 때 본 가장 큰 event_log seq(구멍은 추적하지 않는다, agent-v2.md 12.5)
-  last_observed_at null, next_check_at null, lease_until null
+  last_observed_at null, next_check_at null, lease_until null,
+  lease_token uuid null              -- lease 주인 표시(fencing, #812). 잡을 때 새 값, 해제·커서 전진·저장은 같을 때만
                                       -- gap_seq는 0030에서 지웠다(#515)
 )
 
@@ -559,6 +560,62 @@ index ix_llm_calls_trace (trace_id)
 
 - 캐시 토큰은 엘리스 게이트웨이 응답의 `usage.prompt_tokens_details.cached_tokens`다(2026-10-30 확인). 캐시 미스면 게이트웨이가 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고한다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 엘리스 청구서와 대조해야 한다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
 - 탈퇴는 행을 남기고 `user_id`만 비운다(비용 통계는 사람 없이도 쓴다, `llm.api.anonymize_by_user`). 게스트 합치기는 `user_id`를 옮긴다. 30일 지난 행은 정기 정리(`maintenance.run`의 `llm_calls`)가 지운다. 지도 정리는 행을 지우지 않는다(map_id만 남고 가리키는 지도가 없다).
+
+---
+
+## credits (크레딧, #432, docs/credits-reviews.md — 구현 #948)
+
+> credits 모듈이 쓰는 테이블 2개. **원본은 원장(`credit_ledger`)이다.** `credit_accounts.balance`는 원장 합을 담아 두는 값으로, 행 잠금(`SELECT ... FOR UPDATE`)과 `CHECK (balance >= 0)`을 걸 자리라서 둔다. 잔액을 바꾸는 함수는 원장 행과 `balance`를 같은 트랜잭션에서 함께 바꾸고, 둘이 같은지는 테스트가 본다.
+> 계정 행은 처음 쓰기(차감, 후기 보상) 때 만들고 그때 `initial` +30을 같이 남긴다. 행이 없으면 읽기는 30으로 본다. 게스트에는 만들지 않는다. 가격은 `credits/constants.py` 한 곳이다.
+
+```
+credit_accounts(
+  user_id varchar PK,                 -- FK 없음(모듈 경계, #760)
+  balance integer NOT NULL CHECK (balance >= 0),   -- 원장 합
+  updated_at timestamptz NOT NULL default now()
+)
+credit_ledger(
+  id uuid PK,
+  user_id varchar NOT NULL,
+  delta integer NOT NULL,
+  reason('initial'|'spend'|'refund'|'review') NOT NULL,   -- 페이즈 2 구매는 'purchase', 광고 충전은 'ad'로 같은 표에 더한다
+  ref_id varchar NOT NULL UNIQUE,     -- initial:<user> · <feature>:<run_id> · refund:<차감 ref_id> · review:<user>:<place_id>
+  created_at timestamptz NOT NULL default now()
+)
+index ix_credit_ledger_user_reason_created (user_id, reason, created_at)
+```
+
+- `ref_id` UNIQUE가 멱등을 맡는다 — 같은 실행 이중 차감, 이중 환불, 같은 장소 후기 보상 두 번이 구조적으로 막힌다.
+- 탈퇴 때는 남기고, 복구 기간(7일)이 지나 정리할 때(`auth.service.purge_withdrawn_user`) 계정과 원장을 지운다(`credits.api.delete_by_user`, #948 검수). 7일 안에 되살리면 잔액이 그대로 돌아온다 — 탈퇴 때 지우면 되살린 계정이 30으로 다시 시작해 반복으로 채울 수 있었다. 게스트 합치기는 옮기지 않는다 — 게스트는 계정이 없고, 혹시 있으면 지운다(초기 지급 두 번 방지).
+
+## reviews (장소 후기, #432, docs/credits-reviews.md — 구현 #951)
+
+> reviews 모듈이 쓰는 테이블 2개. 후기는 핀이 아니라 **자체 DB 장소(`places.id`)에 붙는다** — 같은 장소의 후기는 어느 지도의 핀에서 봐도 같다. `place_id`와 사용자 id 열은 FK 없음(#760, `ads.place_id` 선례).
+> 응답에 작성자 이름·id를 싣지 않는다(#432 결정 B). 후기 글은 모델·로그로 보내지 않는다.
+
+```
+reviews(
+  id uuid PK,
+  place_id varchar NOT NULL,
+  user_id varchar NOT NULL,
+  rating smallint NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  body text NOT NULL CHECK (char_length(body) BETWEEN 1 AND 500),   -- 앞뒤 공백을 걷은 뒤
+  created_at timestamptz NOT NULL default now(),
+  updated_at timestamptz NOT NULL default now(),
+  hidden_at timestamptz NULL,         -- 관리 스크립트로만(reviews/scripts/hide.py). 숨기면 목록·평균·개수·mine에서 빠진다
+  UNIQUE (place_id, user_id)          -- 한 사람이 한 장소에 하나
+)
+index ix_reviews_place_created (place_id, created_at DESC, id DESC) WHERE hidden_at IS NULL
+review_reports(
+  review_id uuid NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+  reporter_id varchar NOT NULL,
+  created_at timestamptz NOT NULL default now(),
+  PRIMARY KEY (review_id, reporter_id)   -- 한 사람 한 번
+)
+```
+
+- 탈퇴는 후기를 남기고(작성자 이름은 원래 보이지 않는다) 그 사람이 한 신고를 지운다. 게스트 합치기는 옮길 것이 없다(게스트는 쓰기·신고를 못 한다, 멱등 no-op).
+- 사용자 id 열 4개(`credit_accounts.user_id`, `credit_ledger.user_id`, `reviews.user_id`, `review_reports.reporter_id`)는 `integration/test_user_data_lists.py`에 등록한다.
 
 ---
 

@@ -10,7 +10,7 @@
 
 [tool.importlinter]
 root_packages = [
-    "ads", "agent", "auth", "authz", "common", "feedback", "llm", "maintenance", "maps", "notifications",
+    "ads", "agent", "auth", "authz", "common", "credits", "feedback", "llm", "maintenance", "maps", "notifications",
     "pins", "places", "realtime", "recommend", "seeding", "shortlist",
 ]
 include_external_packages = false
@@ -21,7 +21,7 @@ name = "common, auth, authz는 기능 모듈을 import하지 않는다"
 type = "layers"
 # 위가 위층이다. 첫 줄의 기능 모듈끼리는 서로 api로 부를 수 있다(":"는 서로 독립이 아니라는 뜻).
 layers = [
-    "ads : agent : feedback : llm : maintenance : maps : notifications : pins : places : realtime : recommend : seeding : shortlist",
+    "ads : agent : credits : feedback : llm : maintenance : maps : notifications : pins : places : realtime : recommend : seeding : shortlist",
     "authz",
     "auth",
     "common",
@@ -35,6 +35,7 @@ ignore_imports = [
     # 다시 볼 조건: 계정 수명 정리 이슈를 시작할 때(CLAUDE.md "한 곳이어야 하는 것"의 계정 수명 줄),
     # 또는 사용자 id 열을 가진 모듈이 하나 더 늘 때.
     "auth.service -> agent.api",
+    "auth.service -> credits.api",   # 크레딧 계정·원장(#948)
     "auth.service -> feedback.api",
     "auth.service -> llm.api",   # 모델 호출 사용량 llm_calls.user_id(#870)
     "auth.service -> maps.api",

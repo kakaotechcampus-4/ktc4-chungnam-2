@@ -3,6 +3,8 @@
 M0는 범위 B(순서 + 이동시간 검증)만 구현한다. 범위 A(시간 배정)의 상수는 결정(명세 2절) 뒤에 추가한다.
 """
 
+from datetime import timedelta
+
 COURSE_MODE = "B"
 MIN_PLACES, MAX_PLACES = 2, 30
 
@@ -75,8 +77,12 @@ CLIMB_MAX_STEPS = 60               # optimize 한 번이 채택하는 수리의 
 
 # 서비스 경로(AI 코스 짜기 API, #334 — 팀 결정 #580 전 브랜치 초안). 전부 초안이다
 COURSE_DAILY_LIMIT = 5             # 사용자당 하루 요청 수. 하루 = KST 자정에 초기화
-COURSE_DAY_BOUNDARY_TZ = "Asia/Seoul"
 COURSE_DAYS_MAX = 14               # 한 번에 짜는 여행 날짜 수 상한(지도 기간이 더 길면 앞 14일만)
 MEMBER_WALK_MIN, MEMBER_WALK_MAX = 10, 480   # member_constraints.daily_walk_max의 값(분) 범위
 EXCLUDED_OVER_LIMIT = "OVER_LIMIT"
 EXCLUDED_OVER_LIMIT_MESSAGE = f"한 번에 짤 수 있는 {MAX_PLACES}곳을 넘어 동선에서 빠졌어요"
+
+# 서버 시작 때 정리하는 run의 나이(#813). 한 run의 최악 시간은 모델 호출 (목표 1 + 지휘 DIRECT_MAX_TURNS)번 x 호출당 15초
+# (llm/client.py의 타임아웃, 재시도 없음) = 90초에 코드 계산이다. 5분은 그 3배 이상의 여유이고, 요청과 조회가 정리하는
+# STALE_AFTER(15분, service.py)보다 짧다. 이보다 어린 run은 다른 프로세스에서 도는 것일 수 있어 시작 정리가 건드리지 않는다.
+STARTUP_ORPHAN_AFTER = timedelta(minutes=5)

@@ -9,13 +9,25 @@ import type {
   RecommendResultDto,
   RecommendRunDto,
   RegionDto,
+  RunSummaryDto,
 } from './model'
 
 export const fetchReadiness = (mapId: string) =>
   api<Partial<Record<RecommendCategory, ReadinessDto>>>(`/maps/${mapId}/recommend/readiness`)
 
-export const createRun = (mapId: string, category: RecommendCategory) =>
-  api<RecommendRunDto>(`/maps/${mapId}/runs`, { method: 'POST', body: JSON.stringify({ category }) })
+/**
+ * 추천 시작(#845) — 사유 정리(모델)와 첫 검색을 한 요청에서 끝내고 done run 을 받는다(execute).
+ * key 는 한 번 누른 시도의 표시다(#811). 같은 시도의 재전송은 같은 키로, 다시 누르면 새 키로 보낸다.
+ */
+export const createRun = (mapId: string, category: RecommendCategory, key: string) =>
+  api<RecommendRunDto>(`/maps/${mapId}/runs`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': key },
+    body: JSON.stringify({ category, execute: true }),
+  })
+
+/** 내가 이 지도에서 요청한 run 목록(#469). 상한(10회)이라 많아야 10개 — 한 번에 받는다. */
+export const fetchMyRuns = (mapId: string) => api<RunSummaryDto[]>(`/maps/${mapId}/runs?limit=50`)
 
 export const fetchEvidence = (runId: string) => api<EvidenceLineDto[]>(`/runs/${runId}/evidence`)
 

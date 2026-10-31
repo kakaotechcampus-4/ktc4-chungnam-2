@@ -2,6 +2,46 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-01, 크레딧과 장소 후기 — 횟수 상한을 크레딧으로 (#432)
+
+결정 #432(명세 `docs/credits-reviews.md`). 기능마다 따로 두던 횟수 상한(추천 지도·사람당 10회, 코스 하루 5회)을 사람마다 하나인 크레딧으로 바꾼다. 정식 계정은 30으로 시작하고 「추천 받기」·「AI 코스 짜기」 1번에 1씩 쓴다. 다시 추천·근거 고치기는 쓰지 않는다. 장소 후기를 그 장소에 처음 쓰면 10을 받는다. 게스트는 AI 추천·코스·크레딧·후기 쓰기를 쓸 수 없다.
+
+**새로 생김**
+- `GET /credits/me` → `CreditBalance { balance, prices { recommend_run, course }, review_reward }`. 화면은 가격과 보상 숫자를 여기서만 읽는다.
+- 장소 후기 4개(핀으로 부른다, 서버가 장소를 찾는다): `GET /pins/{pinId}/reviews`(`ReviewPage` — `summary`, `limits.body_max`, `mine`, `items`, `next_cursor`), `PUT /pins/{pinId}/reviews/me`(`ReviewUpsertRequest` → `ReviewSaved { review, credited, balance }`), `DELETE /pins/{pinId}/reviews/me`, `POST /reviews/{reviewId}/reports`. **작성자 이름·id는 없다** — `ReviewItem.is_mine`으로 「나」/「핑고 사용자」. 실시간 핀은 422 `PLACE_NOT_SUPPORTED`.
+- 에러 `CREDIT_INSUFFICIENT`(402, `detail { required, balance }`). `GUEST_NOT_ALLOWED`(403) 범위를 넓히고 `detail { initial_credits }`를 더한다.
+- `POST /maps/{mapId}/runs`, `POST /maps/{mapId}/courses`에 402·403.
+
+**폐지 예정(`deprecated`, 지우는 건 #954)** — `RecommendRun.attempt_limit`, `RunSummary.attempt_limit`, 429 `RETRY_LIMIT`, 429 `COURSE_LIMIT`. FE가 생성 타입으로 `attempt_limit`을 읽고 있어 지금 지우면 develop의 FE 빌드가 깨진다. 서버(#949, #950)와 FE(#952)가 안 쓰게 된 뒤 지운다. `attempt_no`는 남는다.
+
+**목 서버** — 크레딧 차감(추천 생성·코스 접수, 같은 `Idempotency-Key`는 한 번), 402·403, 후기 4개 경로(시드: 첫 음식점 핀 장소에 후기 2개), 시나리오 `credits-empty`(잔액 0). **목 서버는 이제 `RETRY_LIMIT`·`COURSE_LIMIT`을 내지 않는다** — 응답의 `attempt_limit`(10)만 남겨 둔다. 시나리오 `retry-limit`은 이름만 남는다(#952에서 화면 목록 정리).
+
+**구현** — credits #948, recommend #949, course #950, reviews #951, FE #952(크레딧)·#953(후기). 서버 구현 전까지 새 경로 5개와 `CREDIT_INSUFFICIENT`는 알려진 목록(`KNOWN_MISSING`, `KNOWN_UNCOVERED`, `KNOWN_UNRAISED`)에 이슈 번호와 함께 있다.
+
+## 2026-10-31, `POST /auth/pending` 설명 정정 — 되살리면 지도 참여도 돌아온다 (#858)
+
+`restore` 설명에 첫 판의 「계정과 핀 작성자 표시만 돌아온다」가 남아 있었다. 2026-10-30 (여섯 번째)의 정정(탈퇴해도 멤버십 행은 남아 복구하면 지도 참여가 돌아온다, 서버 `auth.service.restore_account`)에 맞췄다. 동작과 응답 모양은 그대로다. FE(#858) 확인 창 문구는 이미 정정된 내용이다. FE 세션이 찾았다(PR #927).
+
+## 2026-10-30 (열한 번째), 추천 깔때기: 후보 풀을 정예 장소로, 「추천 가능 아님 제거」 단계 삭제 (#912)
+
+멘토 리뷰: 「반경 밖 제거」 수에 반경과 상관없이 정예 필터로 걸러질 장소까지 잡힌다. 풀이 넓히기 상한 안의 **모든** 장소라, 성수 음식점은 반경 밖 1,865곳 중 정예가 39곳뿐인데 화면은 "넓히면 1,865곳"으로 읽혔다. 결과 화면의 "조건으로 N곳 걸러냄"(깔때기 합)도 부풀려졌다.
+
+- 후보 풀은 넓히기 상한 안의 영업 중인 **추천 가능(정예)** 장소다. 「반경 밖 제거」는 넓히면 들어올 수 있는 최대 수가 된다.
+- 깔때기에서 「추천 가능 아님 제거」 단계가 빠진다. 응답 모양(`FunnelEntry {label, removed_count}`)은 같다. 그 전에 저장된 결과에는 그 줄이 남아 있다.
+- 추천 결과 후보는 바뀌지 않는다(같은 장소가 같은 순서로 걸러진다). 바뀌는 건 단계별 수다.
+- 서버: recommend(#913). 목 서버는 이번 PR에서 단계를 뺐다.
+- FE: 할 일 없음. 받은 표를 그대로 그린다. "조건으로 N곳 걸러냄"이 실제 조건으로 빠진 수에 가까워진다.
+
+## 2026-10-30 (열 번째), 장소 검색 결과 없음의 카카오맵 링크, 추천 검색어는 카테고리 말 하나로 (#902)
+
+멘토 리뷰: 처음 이야기한 출구는 **장소 검색에서 결과가 없을 때 사용자가 친 검색어 그대로 카카오맵 검색으로 넘기는 것**이었는데, 장소 검색의 결과 없음 화면에는 링크가 없었다. 추천 쪽 검색어의 말 목록(조건 말 표)은 관리 비용이 커서 덜어낸다.
+
+- 새 `GET /places/external-search?q=`: 200 + `ExternalSearch {query, url}`. `query`는 사용자가 친 검색어(앞뒤 공백을 걷은 그대로), `url`은 카카오맵 검색 링크. 링크는 서버가 만든다(`places.api.kakao_search_url` 한 곳). q는 `/places/search`와 같이 1~50자, 아니면 422. 로그인만 필요. 서버는 카카오를 부르지 않고 검색어를 저장하거나 로그에 남기지 않는다(#53).
+- 추천의 `ExternalSearch.query`가 `{동네} {카테고리 말}`로 바뀐다(예: "성수동 한식" → "성수동 맛집"). 응답 모양은 같다. `docs/constraints.md`의 조건 말 표는 구현과 함께 지운다(#904).
+- 밖으로 보내는 곳은 지금은 카카오맵 하나다. 다른 서비스를 붙일 때는 `ExternalSearch`에 링크 목록 필드를 더하는 확장으로 한다(`url` 유지).
+- 서버: places(#903), recommend(#904). 그 전까지 실서버에는 새 경로가 없다. 목 서버는 새 경로를 내려 준다.
+- FE(#905): 장소 검색이 빈 배열일 때 `GET /places/external-search`를 불러 이미 있는 `ExternalSearchLink`로 「카카오맵에서 찾아보기」를 그린다. 링크를 화면에서 만들지 않는다. 요청이 실패하면 링크만 숨긴다.
+
 ## 2026-10-30 (아홉 번째), 「＋」 같은 글 재추가의 멱등 (#848)
 
 「＋」는 글마다 모델을 불러 헛호출이 생기기 쉽다. 응답 유실 뒤 재전송, 연타, 같은 글을 다시 추가하는 경우를 한 줄로 묶는다.
