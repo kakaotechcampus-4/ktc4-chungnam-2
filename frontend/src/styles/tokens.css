@@ -68,7 +68,11 @@
   --pin-confirmed:        #F5B301;   /* 확정 핀 속 (#149) */
   --pin-confirmed-mark:   #6B4500;   /* 확정 핀 ♥ · 순서 번호 글자 */
   --pin-confirmed-stroke: #FFFFFF;   /* 3px. 바다·어두운 타일 위 가시성. 밝은 땅 위는 바깥 갈색 1px(--pin-confirmed-mark)이 맡는다(#299) */
-  --pin-confirmed-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  /* 카카오 바탕 지도 그림을 옅게(.map-base). 기본 지도의 가게·건물 표시는 API로 끌 수 없어서 우리 핀이 앞에 서게 그림만 누른다.
+     가까이 볼수록 옅어진다 — 이 값은 가장 옅을 때다. 멀리 볼 때는 그대로(MapCanvas 가 --map-fade 0~1 을 정한다) */
+  --map-tile-saturate:   0.45;
+  --map-tile-brightness: 1.04;
+  --map-tile-contrast:   0.92;
   --confirmed-bg:         #FFF6DB;   /* 「★ 확정 리스트에 넣기」 바탕 */
 
   /* AI 코스 날짜별 경로선(#683). 흰 바탕 대비 4.5:1 이상 — 번호 원 흰 글자와 알약 글자에 그대로 쓴다. 넷째 날부터 색이 돌고 선 모양이 갈라 준다 */
