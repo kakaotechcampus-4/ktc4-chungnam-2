@@ -6,6 +6,7 @@ import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import WithdrawConfirm from '@/features/auth/WithdrawConfirm'
 import { useMeQuery } from '@/features/auth/queries'
+import FeedbackSheet from '@/features/feedback/FeedbackSheet'
 import MenuPopover from '@/features/shell/MenuPopover'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
@@ -14,7 +15,7 @@ import Avatar from '@/ui/Avatar'
 import type { MapView } from './model'
 import { useCreateInviteMutation } from './queries'
 
-type Confirm = 'logout' | 'withdraw' | null
+type Confirm = 'logout' | 'withdraw' | 'feedback' | null
 
 /**
  * 내 지도 목록의 계정 시트(Figma 1절, 모바일). 넓은 화면은 같은 내용을 계정 버튼 아래 메뉴로 연다(AccountMenu).
@@ -55,6 +56,7 @@ export function AccountMenu({ maps, name }: { maps: MapView[]; name?: string }) 
 function AccountConfirm({ which, onCancel }: { which: Confirm; onCancel: () => void }) {
   if (which === 'logout') return <LogoutConfirm onCancel={onCancel} />
   if (which === 'withdraw') return <WithdrawConfirm onCancel={onCancel} />
+  if (which === 'feedback') return <FeedbackSheet onClose={onCancel} />
   return null
 }
 
@@ -116,10 +118,13 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
         </>
       )}
 
+      <button type="button" onClick={() => onConfirm('feedback')} className="btn-text mt-5 w-full text-center text-body">
+        핑고핑고에 의견 보내기
+      </button>
       <button
         type="button"
         onClick={() => onConfirm('logout')}
-        className="btn-neutral btn-md mt-5 w-full"
+        className="btn-neutral btn-md mt-2 w-full"
       >
         로그아웃
       </button>

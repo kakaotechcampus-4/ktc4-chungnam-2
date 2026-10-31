@@ -304,6 +304,7 @@ components:
 | 패널·시트 안 이전 화면(넓은 화면에선 패널 헤더 ‹ 로 옮김) | `PanelBackLink` (모바일은 `BackButton`) | `features/shell/PanelBackLink` |
 | 알림 | `showToast` (+ 「되돌리기」·「다시 시도」 동작) | `features/shell/toast` |
 | 사람 | `Avatar` (회색 면 + 첫 글자, 32·44) | `ui/Avatar` |
+| 서비스 피드백(#10) | `FeedbackSheet` (분류 칩 + 여러 줄 입력 + 「보내기」, 계정 시트·지도 정보의 글자 버튼에서 연다) | `features/feedback/FeedbackSheet` |
 | AI가 말하는 머리 | `AiHeader` (핑고 + `tag-ai`) | `features/recommend/Readiness` |
 | 핑고 밖에서 찾는 출구 | `ExternalSearchLink` 「카카오맵에서 더 찾아보기」(새 창) + 12 ink-500 「검색어 ‘…’」. 색·크기는 놓이는 자리가 준다 | `features/recommend/ExternalSearchLink` |
 | 반대 기호 | `AgainstMark` (lucide Ban) | `ui/AgainstMark` |
