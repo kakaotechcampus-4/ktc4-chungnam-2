@@ -35,13 +35,14 @@ export type SearchMarker = {
 }
 
 /**
- * 고른 검색 핀을 끌어안는 핑고의 자리(px, 좌표 = 꼬리 끝에서 위로). 검색 핀(pinMarker)이 1.25배로 머문 크기 기준이다.
- * - 원 가운데 27.5 · 원 위끝 46: 그림 32×38 에서 원 가운데 y16, 위끝 y1 을 1.25배
- * - 핑고(30px) 눈 바로 아래(위에서 19.5)에 원 위끝이 오게 → 핑고 위끝 66
+ * 고른 AI 후보 핀을 끌어안는 핑고의 자리(px, 좌표 = 핀 상자 아래끝에서 위로). 후보 핀(pinMarker)이 1.25배로 머문 크기 기준이다.
+ * - 후보 핀은 30×38 상자에 그림 24×32 를 1.1875배로 그린다. 머리 원은 가운데 y10 · 위끝 y2
+ * - 머리 가운데 (38 − 10×1.1875)×1.25 ≈ 32.7 · 머리 위끝 (38 − 2×1.1875)×1.25 ≈ 44.5
+ * - 핑고(30px) 눈 바로 아래(위에서 약 20)에 머리 위끝이 오게 → 핑고 위끝 64.5
  */
-const HUG = { size: 30, top: 66, circleMid: 27.5 }
+const HUG = { size: 30, top: 64.5, circleMid: 32.7 }
 
-/** 올리기 전 AI 후보(#843) — 요청한 사람의 화면에만 점선 핀으로 그린다. */
+/** 올리기 전 AI 후보(#843) — 요청한 사람의 화면에만 핑고 핀으로 그린다. */
 export type CandidateMarker = { id: string; rank: number; name: string; lat: number; lng: number; selected: boolean; onClick: () => void }
 
 /** 지도 버튼(현재 위치·최근 핀·전체 핀)·검색·핀·AI 후보 선택이 지도를 움직이는 통로. */
@@ -242,13 +243,14 @@ export default function MapCanvas({
     m.map.setCenter(proj.coordsFromContainerPoint(new m.maps.Point(p.x + delta / 2, p.y)))
   }, [leftInset])
 
-  // 검색 결과 파란 핀. 몇 개 안 되고 검색할 때마다 통째로 바뀌어서 매번 새로 그린다.
-  // 고를 때마다 다시 그리니 새로 고른 핀만 한 번 튄다(pin-bounce).
+  // 검색 결과 핀. 몇 개 안 되고 검색할 때마다 통째로 바뀌어서 매번 새로 그린다.
+  // 고를 때마다 다시 그리니 새로 고른 핀만 한 번 튄다(pin-bounce). 고른 핀은 다른 핀처럼 후광·이름 말풍선을 단다.
   useEffect(() => {
     const m = mapRef.current
     if (!ready || !m) return
     const overlays = results.map((r) => {
       const el = createSearchMarkerElement(r, r.onClick)
+      if (r.selected) markSelected(el, r.name, true)
       const overlay = new m.maps.CustomOverlay({
         position: new m.maps.LatLng(r.lat, r.lng),
         content: el,
@@ -262,16 +264,17 @@ export default function MapCanvas({
     return () => overlays.forEach((o) => o.setMap(null))
   }, [results, ready])
 
-  // 고른 검색 핀을 핑고가 위에서 끌어안는다. 몸은 원 뒤(zIndex 11 < 핀 12)에 두고, 원을 감싼 손은 핀이 앞에 그린다.
-  // 원 뒤에서 올라오고, 다른 결과를 고르거나 풀면 원 뒤로 내려간다 — 원 가운데 아래는 잘라서 원 밖으로 삐져나오지 않는다.
+  // 고른 AI 후보 핀을 핑고가 위에서 끌어안는다 — 핑고는 AI에만 나온다(PRODUCT.md). 몸은 핀 뒤(zIndex 11 < 핀 12)에 두고,
+  // 머리를 감싼 손은 핀이 앞에 그린다. 머리 뒤에서 올라오고, 다른 후보를 고르거나 풀면 머리 뒤로 내려간다 —
+  // 머리 가운데 아래는 잘라서 핀 밖으로 삐져나오지 않는다.
   // 들어가는 핑고와 올라오는 핑고가 잠깐 같이 있어도 된다. 핑고는 누름을 받지 않는다(아래 지도로 간다).
-  const hugAt = results.find((r) => r.selected)
+  const hugAt = candidates.find((c) => c.selected)
   const hugLat = hugAt?.lat
   const hugLng = hugAt?.lng
   useEffect(() => {
     const m = mapRef.current
     if (!ready || !m || hugLat == null || hugLng == null) return
-    // 바깥 상자의 아래끝이 좌표(꼬리 끝)다. 안쪽 상자가 핑고 위끝부터 원 가운데까지만 보인다.
+    // 바깥 상자의 아래끝이 좌표(핀 상자 아래끝)다. 안쪽 상자가 핑고 위끝부터 머리 가운데까지만 보인다.
     const box = document.createElement('div')
     box.style.cssText = `width:${HUG.size}px;height:${HUG.top}px;pointer-events:none;line-height:0`
     const clip = document.createElement('div')
@@ -296,7 +299,8 @@ export default function MapCanvas({
     }
   }, [hugLat, hugLng, ready])
 
-  // AI 후보 점선 핀. 많아야 몇 곳이고 결과·선택이 바뀔 때만 와서 검색 결과처럼 매번 새로 그린다. 고른 후보는 핀 위로 올린다.
+  // AI 후보 핑고 핀. 많아야 몇 곳이고 결과·선택이 바뀔 때만 와서 검색 결과처럼 매번 새로 그린다.
+  // 고른 후보는 핀 위로, 끌어안는 핑고(11)보다도 위로 올린다.
   useEffect(() => {
     const m = mapRef.current
     if (!ready || !m) return
@@ -308,7 +312,7 @@ export default function MapCanvas({
         content: el,
         yAnchor: 1,
         clickable: true,
-        zIndex: c.selected ? 11 : 4,
+        zIndex: c.selected ? 12 : 4,
       })
       overlay.setMap(m.map)
       return overlay

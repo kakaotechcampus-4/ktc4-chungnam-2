@@ -63,7 +63,8 @@ const CATEGORY_ICON: Record<SearchCategory, string> = {
 /**
  * 장소 검색 결과 — 빨간 원 + 흰 카테고리 아이콘, 아래 짧은 꼬리 끝이 좌표다(네이버 검색 핀처럼).
  * 물방울 핀과 모양이 달라서 아직 지도에 없는 곳으로 읽힌다. 숫자는 지도에 적지 않는다.
- * 고른 결과는 한 번 튀어 커지고(pin-bounce) 핑고가 위에서 끌어안는다 — 몸은 MapCanvas 가 원 뒤에, 손은 여기서 원 앞에 그린다.
+ * 고른 결과는 한 번 튀어 커진다(pin-bounce). 후광·이름 말풍선은 MapCanvas 가 markSelected 로 단다.
+ * 핑고는 붙이지 않는다 — 핑고가 나오면 AI가 말한 것이라(PRODUCT.md) 검색 결과엔 어울리지 않는다.
  */
 export function createSearchMarkerElement(
   r: { n: number; name: string; category?: SearchCategory; selected: boolean },
@@ -75,22 +76,14 @@ export function createSearchMarkerElement(
   if (r.selected) el.setAttribute('aria-current', 'true')
   el.style.cssText =
     'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
-  // 손은 원 윗변 양 어깨(위에서 ±40°)에 걸친다. 핑고(Pingo.tsx)의 흰 몸 + 외곽선과 같은 색이다.
-  const hands = r.selected
-    ? `<g class="pingo-hands" style="fill:#fff;stroke:var(--pingo-outline);stroke-width:1">
-        <ellipse cx="7" cy="5.3" rx="1.8" ry="2.8" transform="rotate(-40 7 5.3)" />
-        <ellipse cx="25" cy="5.3" rx="1.8" ry="2.8" transform="rotate(40 25 5.3)" />
-      </g>`
-    : ''
   el.innerHTML = `
-    <svg viewBox="0 0 32 38" width="32" height="38" aria-hidden="true" overflow="visible"
+    <svg viewBox="0 0 32 38" width="32" height="38" aria-hidden="true"
          style="filter:drop-shadow(0 1px 2px rgba(20,22,31,.3))"${r.selected ? ' class="pin-bounce"' : ''}>
       <path d="M11 26L16 36.5L21 26Z" stroke-linejoin="round" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
       <circle cx="16" cy="16" r="14" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
       <g transform="translate(9.5 9.5) scale(0.5417)" style="fill:none;stroke:#fff;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round">
         ${CATEGORY_ICON[r.category ?? '기타']}
       </g>
-      ${hands}
     </svg>`
   el.addEventListener('click', onClick)
   return el
@@ -103,16 +96,27 @@ const MARK_IN_HEAD = 'translate(5.3 3.6) scale(0.42)'
  * 올리기 전 AI 후보(#843). 요청한 사람의 AI 추천 탭에서만 화면에 그린다 — 서버의 지도는 바꾸지 않는다(가드레일 1).
  * 핑고 핀: brand-600 물방울 + 흰 테두리 + 머리에 흰 핑고 얼굴(하단 AI 탭 활성 모양과 같은 「파랑 채움 + 흰 얼굴」).
  * 카드와 같은 순위 숫자는 오른쪽 위 배지다. 「지도에 올리기」를 하면 일반 핀 모양의 핀이 된다.
+ * 고른 후보는 한 번 튀어 커지고(pin-bounce) 핑고가 위에서 머리를 끌어안는다 — 몸은 MapCanvas 가 핀 뒤에, 손은 여기서 앞에 그린다.
  */
-export function createCandidateMarkerElement(c: { rank: number; name: string }, onClick: () => void): HTMLElement {
+export function createCandidateMarkerElement(c: { rank: number; name: string; selected?: boolean }, onClick: () => void): HTMLElement {
   const { pin, hole, face, eyes } = PINGO_MARK
   const el = document.createElement('button')
   el.type = 'button'
   el.setAttribute('aria-label', `AI 추천 ${c.rank}위 · ${c.name}`)
   el.style.cssText =
     'position:relative;display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
+  // 손은 머리 원(가운데 12,10 · 반지름 8)의 양 어깨(위에서 ±40°)에 걸친다. 핑고(Pingo.tsx)의 흰 몸 + 외곽선과 같은 색이고,
+  // 크기는 화면에서 핑고 손과 같게(그림이 1.1875배로 그려져서 그만큼 나눈 값).
+  const hands = c.selected
+    ? `<g class="pingo-hands" style="fill:#fff;stroke:var(--pingo-outline);stroke-width:0.84">
+        <ellipse cx="6.86" cy="3.87" rx="1.52" ry="2.36" transform="rotate(-40 6.86 3.87)" />
+        <ellipse cx="17.14" cy="3.87" rx="1.52" ry="2.36" transform="rotate(40 17.14 3.87)" />
+      </g>`
+    : ''
+  // 순위 배지는 오른쪽 위다. 고르면 핑고 손이 그 자리라 커진 머리 오른쪽 옆으로 내린다.
   el.innerHTML = `
-    <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true" style="filter:drop-shadow(0 1px 2px rgba(20,22,31,.3))">
+    <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true" overflow="visible"
+         style="filter:drop-shadow(0 1px 2px rgba(20,22,31,.3))"${c.selected ? ' class="pin-bounce"' : ''}>
       <path d="${PIN_PATH}" stroke-linejoin="round" style="fill:var(--brand-600);stroke:#fff;stroke-width:2" />
       <g transform="${MARK_IN_HEAD}">
         <path d="${pin}" fill="#fff" />
@@ -120,8 +124,9 @@ export function createCandidateMarkerElement(c: { rank: number; name: string }, 
         <rect x="${face.x}" y="${face.y}" width="${face.w}" height="${face.h}" rx="${face.rx}" fill="#fff" />
         ${eyes.map((e) => `<ellipse cx="${e.cx}" cy="${e.cy}" rx="${e.rx}" ry="${e.ry}" style="fill:var(--ink-900)" />`).join('')}
       </g>
+      ${hands}
     </svg>
-    <span aria-hidden="true" style="position:absolute;left:25px;top:0;min-width:16px;height:16px;padding:0 3px;box-sizing:border-box;border-radius:8px;background:#fff;border:1.5px solid var(--brand-600);color:var(--brand-700);font:700 11px/13px var(--font-sans);text-align:center">${c.rank}</span>`
+    <span aria-hidden="true" style="position:absolute;left:${c.selected ? 30 : 25}px;top:${c.selected ? 12 : 0}px;min-width:16px;height:16px;padding:0 3px;box-sizing:border-box;border-radius:8px;background:#fff;border:1.5px solid var(--brand-600);color:var(--brand-700);font:700 11px/13px var(--font-sans);text-align:center">${c.rank}</span>`
   el.addEventListener('click', onClick)
   return el
 }

@@ -3,6 +3,7 @@ import { Search } from 'lucide-react'
 
 import AgainstMark from '@/ui/AgainstMark'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
+import { PINGO_MARK } from '@/ui/pingoMark'
 
 import { usePhaseLoop } from './usePhaseLoop'
 
@@ -60,7 +61,7 @@ function PingoAt({ x, y, w, mood }: { x: number; y: number; w: number; mood: Pin
 
 const PIN_PATH = 'M12 2C7.6 2 4 5.6 4 10c0 6 8 20 8 20s8-14 8-20c0-4.4-3.6-8-8-8z'
 
-/** 지도 핀(pinMarker 와 같은 물방울). 일반은 빨강 실선, 확정은 골드 + 순서 번호. */
+/** 지도 핀(pinMarker 와 같은 물방울). 일반은 빨강 실선 + 진한 점, 확정은 골드 + 순서 번호. */
 function ScenePin({ confirmed = false, n }: { confirmed?: boolean; n?: number }) {
   return (
     <svg viewBox="0 0 24 32" width="24" height="32" className="drop-shadow-[0_1px_2px_rgba(20,22,31,0.3)]">
@@ -76,8 +77,26 @@ function ScenePin({ confirmed = false, n }: { confirmed?: boolean; n?: number })
           {n}
         </text>
       ) : (
-        <circle cx="12" cy="10" r="3.2" fill="#fff" />
+        <circle cx="12" cy="10" r="3.2" fill="var(--pin-dot)" />
       )}
+    </svg>
+  )
+}
+
+/** 올리기 전 AI 후보 핀(pinMarker 의 핑고 핀과 같은 모양) — brand-600 물방울 + 머리에 흰 핑고 얼굴. */
+function SceneCandidatePin() {
+  const { pin, hole, face, eyes } = PINGO_MARK
+  return (
+    <svg viewBox="0 0 24 32" width="24" height="32" className="drop-shadow-[0_1px_2px_rgba(20,22,31,0.3)]">
+      <path d={PIN_PATH} strokeLinejoin="round" fill="var(--brand-600)" stroke="#fff" strokeWidth="2" />
+      <g transform="translate(5.3 3.6) scale(0.42)">
+        <path d={pin} fill="#fff" />
+        <circle cx={hole.cx} cy={hole.cy} r={hole.r} fill="var(--brand-600)" />
+        <rect x={face.x} y={face.y} width={face.w} height={face.h} rx={face.rx} fill="#fff" />
+        {eyes.map((e) => (
+          <ellipse key={e.cx} cx={e.cx} cy={e.cy} rx={e.rx} ry={e.ry} fill="var(--ink-900)" />
+        ))}
+      </g>
     </svg>
   )
 }
@@ -215,9 +234,8 @@ function AiScene() {
           [46, 62],
         ].map(([x, y]) => (
           <At key={`${x}`} x={x} y={y}>
-            <div className="enter-drop relative">
-              <ScenePin />
-              <span className="tag tag-ai absolute -right-5 -top-2">AI</span>
+            <div className="enter-drop">
+              <SceneCandidatePin />
             </div>
           </At>
         ))}
