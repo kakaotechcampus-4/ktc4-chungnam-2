@@ -84,6 +84,7 @@ from agent.router import router as agent_router  # noqa: E402
 from auth.qa_router import router as auth_qa_router  # noqa: E402
 from auth.router import public_router as auth_public_router  # noqa: E402
 from auth.router import router as auth_router  # noqa: E402
+from credits.router import router as credits_router  # noqa: E402
 from feedback.router import router as feedback_router  # noqa: E402
 from maps.router import public_router as maps_public_router  # noqa: E402
 from maps.router import router as maps_router  # noqa: E402
@@ -108,6 +109,7 @@ app.include_router(realtime_router)
 app.include_router(agent_router)
 app.include_router(course_router)
 app.include_router(ads_router)
+app.include_router(credits_router)
 if settings.qa_login_enabled:   # 스테이징 전용 QA 로그인(#788) — 그 밖의 환경(운영 포함)에는 경로가 없다
     app.include_router(auth_qa_router)
 
