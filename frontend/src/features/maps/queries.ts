@@ -2,15 +2,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useMeQuery } from '@/features/auth/queries'
 
-import { acceptInvite, createInvite, createMap, deleteMap, fetchInvites, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, leaveMap, revokeInvite, transferOwner } from './api'
+import { acceptInvite, createInvite, createMap, deleteMap, fetchInvites, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, fetchTrash, leaveMap, restoreMap, revokeInvite, transferOwner } from './api'
 import { ApiError } from '@/api'
 
-import { inviteProblem, toInviteRowView, toInviteView, toMapHeaderView, toMapListView, toMemberView, type InviteDto, type MapCreateRequest, type MapDto } from './model'
+import { inviteProblem, toInviteRowView, toInviteView, toMapHeaderView, toMapListView, toMemberView, toTrashView, type InviteDto, type MapCreateRequest, type MapDto } from './model'
 
 export const mapKeys = {
   all: ['maps'] as const,
   detail: (mapId: string) => ['maps', mapId] as const,
   members: (mapId: string) => ['maps', mapId, 'members'] as const,
+  trash: ['maps', 'trash'] as const,
   // 지도 상세 키 아래라 구성원이 들어오면(member.joined) 참여 수도 같이 다시 받는다.
   invites: (mapId: string) => ['maps', mapId, 'invites'] as const,
 }
@@ -47,9 +48,34 @@ function useLeaveCleanup() {
   }
 }
 
+/** 지운 지도는 휴지통으로 간다(#464) — 휴지통도 다시 받는다. */
 export function useDeleteMapMutation(mapId: string) {
   const cleanup = useLeaveCleanup()
-  return useMutation({ mutationFn: () => deleteMap(mapId), onSuccess: () => cleanup(mapId) })
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => deleteMap(mapId),
+    onSuccess: () => {
+      cleanup(mapId)
+      void queryClient.invalidateQueries({ queryKey: mapKeys.trash })
+    },
+  })
+}
+
+/** 휴지통(#464). 내 지도 목록에서 비어 있지 않을 때만 입구를 보인다. */
+export function useTrashQuery() {
+  return useQuery({ queryKey: mapKeys.trash, queryFn: fetchTrash, select: toTrashView })
+}
+
+/** 복구하면 내 지도 목록과 휴지통이 같이 바뀐다. */
+export function useRestoreMapMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: restoreMap,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true })
+      void queryClient.invalidateQueries({ queryKey: mapKeys.trash })
+    },
+  })
 }
 
 export function useLeaveMapMutation(mapId: string) {

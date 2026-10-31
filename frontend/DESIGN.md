@@ -300,6 +300,7 @@ components:
 | 아래에서 올라오는 모달 | `ModalSheet` | `features/shell/ModalSheet` |
 | 버튼 아래 메뉴(넓은 화면 계정·지도 정보) | `MenuPopover` (확인 창이 떠 있는 동안 열어 둠) | `features/shell/MenuPopover` |
 | 지도 바꾸기(넓은 화면 패널 제목) | `MapSwitcher` | `features/maps/MapSwitcher` |
+| 삭제한 지도 휴지통(목록 끝 `btn-text` 입구 + 바닥 시트, 줄마다 「복구」 `btn-outline btn-sm`) | `TrashSheet` | `features/maps/TrashSheet` |
 | 패널·시트 안 이전 화면(넓은 화면에선 패널 헤더 ‹ 로 옮김) | `PanelBackLink` (모바일은 `BackButton`) | `features/shell/PanelBackLink` |
 | 알림 | `showToast` (+ 「되돌리기」·「다시 시도」 동작) | `features/shell/toast` |
 | 사람 | `Avatar` (회색 면 + 첫 글자, 32·44) | `ui/Avatar` |

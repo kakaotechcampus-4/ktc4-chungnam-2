@@ -9,6 +9,7 @@ export type MemberDto = components['schemas']['Member']
 export type InviteDto = components['schemas']['Invite']
 export type InviteSummaryDto = components['schemas']['InviteSummary']
 export type MapRegion = components['schemas']['MapRegion']
+export type TrashedMapListDto = components['schemas']['TrashedMapList']
 export type OwnerTransferRequest = components['schemas']['OwnerTransferRequest']
 
 export type MapView = Pick<MapDto, 'id' | 'title'> & {
@@ -100,6 +101,35 @@ export function toMapListView(list: MapListDto): MapListView {
 
 /** 상한이라 「새 지도 만들기」를 막았을 때 곁에 두는 안내(지도 목록, PC 지도 바꾸기 메뉴). */
 export const MAP_LIMIT_HINT = '다른 지도를 나가거나 삭제하면 다시 만들 수 있어요'
+
+/** 휴지통(#464, #479). 기간(retentionDays)과 남은 날수(daysLeft)는 서버가 센다 — 화면은 날짜를 계산하지 않는다. */
+export type TrashView = {
+  retentionDays: number
+  items: { id: string; title: string; dates: string; daysLeft: number }[]
+}
+
+export function toTrashView(list: TrashedMapListDto): TrashView {
+  return {
+    retentionDays: list.retention_days,
+    items: list.items.map((m) => ({ id: m.id, title: m.title, dates: formatTripDates(m.start_date, m.end_date), daysLeft: m.days_left })),
+  }
+}
+
+/** 지도 삭제 확인 창의 안내. 기간을 아직 못 받았으면 숫자 없이 쓴다(상한 숫자처럼 화면이 들고 있지 않는다). */
+export function deleteMapBody(title: string, retentionDays?: number): string {
+  const when = retentionDays ? `${retentionDays}일 안에는` : '정해진 기간 안에는'
+  return `‘${title}’의 핀과 의견이 모든 구성원에게서 사라져요. ${when} 내 지도 목록의 휴지통에서 복구할 수 있어요.`
+}
+
+/**
+ * 복구 실패 문구. 복구도 지도를 하나 늘리는 일이라 상한(409 MAP_LIMIT)에 걸릴 수 있다.
+ * MAP_PURGED 문구는 docs/errors.md 그대로이고, 날수만 휴지통 응답의 retention_days로 채운다.
+ */
+export function restoreMapErrorMessage(err: unknown, retentionDays: number): string {
+  if (err instanceof ApiError && err.code === 'MAP_LIMIT') return mapLimitMessage(err)
+  if (err instanceof ApiError && err.code === 'MAP_PURGED') return `삭제한 지 ${retentionDays}일이 지나 복구할 수 없어요`
+  return '지도를 복구하지 못했어요'
+}
 
 /** 초대 수락 실패 문구. 코드와 문구는 docs/errors.md 표를 따른다. */
 const INVITE_ERROR_MESSAGES: Record<string, string> = {

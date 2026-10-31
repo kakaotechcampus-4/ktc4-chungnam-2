@@ -7,8 +7,8 @@ import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
 
-import type { MemberView } from './model'
-import { useDeleteMapMutation, useLeaveMapMutation, useTransferOwnerMutation } from './queries'
+import { deleteMapBody, type MemberView } from './model'
+import { useDeleteMapMutation, useLeaveMapMutation, useTransferOwnerMutation, useTrashQuery } from './queries'
 
 /**
  * 지도 나가기 확인 창(#369). 나가면 내 의견(반응·사유)은 지워지고 내가 찍은 핀은 '나간 구성원'의 핀으로 남는다.
@@ -47,15 +47,16 @@ export function LeaveMapConfirm({ mapId, nextOwnerName, onCancel }: { mapId: str
   )
 }
 
-/** 지도 삭제 확인 창(방장만, #369). 모든 구성원에게서 사라진다. */
+/** 지도 삭제 확인 창(방장만, #369). 모든 구성원에게서 사라지고, 방장은 정해진 기간 안에 휴지통에서 복구할 수 있다(#464). */
 export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; title: string; onCancel: () => void }) {
   const navigate = useNavigate()
   const del = useDeleteMapMutation(mapId)
+  const retentionDays = useTrashQuery().data?.retentionDays
 
   return (
     <ConfirmDialog
       title="지도를 삭제할까요?"
-      body={`‘${title}’의 핀과 의견이 모든 구성원에게서 사라져요. 되돌릴 수 없어요.`}
+      body={deleteMapBody(title, retentionDays)}
       ok="삭제"
       danger
       pending={del.isPending}
@@ -63,7 +64,7 @@ export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; ti
       onOk={() =>
         del.mutate(undefined, {
           onSuccess: () => {
-            showToast('지도를 삭제했어요')
+            showToast('지도를 삭제했어요. 휴지통에서 복구할 수 있어요')
             navigate('/', { replace: true })
           },
         })
