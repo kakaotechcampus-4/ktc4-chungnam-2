@@ -227,11 +227,19 @@ export default function MapLayout() {
   }, [onRecommendTab, mapReady, run, result])
 
   // 지도 빈 곳을 누르면 고른 것을 푼다 — 핀 상세(마킹·확정 탭)는 목록으로, 검색은 결과 목록으로, AI 후보는 강조만 푼다.
-  // 지도는 그대로 둔다.
-  function onMapClick() {
+  // 지도는 그대로 둔다. 푼 게 없으면(마킹 탭) 누른 자리 근처의 핀으로 만들 수 있는 장소를 찾는다(#486).
+  function onMapClick(at: { lat: number; lng: number } | null) {
+    const search = useSearchStore.getState()
+    const ai = useAiStore.getState()
+    const released = Boolean(selectedPinId || search.selectedId || ai.focus)
     if (selectedPinId) selectPin(null)
-    if (useSearchStore.getState().selectedId) useSearchStore.getState().select(null)
-    if (useAiStore.getState().focus) useAiStore.getState().blurCandidate()
+    if (search.selectedId) search.select(null)
+    if (ai.focus) ai.blurCandidate()
+    if (released || !at || !onMarkingTab) return
+    search.openTap(at)
+    setStage('map', 2)
+    // 접힌 패널에선 결과를 볼 곳이 없다(넓은 화면).
+    useSheetStore.getState().setPanelOpen(true)
   }
 
   const onMovingChange = useCallback(
