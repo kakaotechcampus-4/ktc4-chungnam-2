@@ -23,12 +23,12 @@ export default function ConfirmDialog({
   /** 제목 아래 회색 상자에 담는 목록·표. */
   detail?: ReactNode
   note?: string
-  /** 버튼 바로 위 — 실패 문구 같은 것. */
+  /** 버튼 바로 위 — 실패 문구, 수정 창의 입력칸(#480). 입력칸에서 Enter 를 누르면 확인과 같다. */
   children?: ReactNode
   cancel?: string
   ok: string
   danger?: boolean
-  /** 확인을 누른 뒤 처리 중이면 확인 버튼을 막는다. */
+  /** 확인을 누른 뒤 처리 중이거나 입력이 모자라면 확인 버튼을 막는다. */
   pending?: boolean
   onCancel: () => void
   onOk: () => void
@@ -44,7 +44,16 @@ export default function ConfirmDialog({
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="enter-fade fixed inset-0 z-50 bg-scrim" />
         <AlertDialog.Content className="fixed inset-0 z-50 flex items-center justify-center p-6 outline-none">
-          <div className="enter-pop w-full max-w-sm space-y-2 rounded-2xl bg-white p-5">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              // 포털 밖 React 트리의 form(지도 만들기 등)으로 제출이 올라가지 않게 막는다.
+              e.stopPropagation()
+              if (!pending) onOk()
+            }}
+            // 입력칸이 많은 수정 창(지도 정보)이 낮은 화면에서 넘치면 창 안에서 스크롤한다.
+            className="enter-pop max-h-full w-full max-w-sm space-y-2 overflow-y-auto rounded-2xl bg-white p-5"
+          >
             <AlertDialog.Title className="break-keep text-title font-bold text-ink-900">{title}</AlertDialog.Title>
             {detail && <div className="rounded-xl bg-ink-50 p-3 text-sm">{detail}</div>}
             {/* 한글은 기본이 글자 단위 줄바꿈이라 320px 에서 「되살 / 릴」처럼 낱말이 갈린다 — 제목처럼 낱말 단위로 바꾼다. */}
@@ -55,15 +64,14 @@ export default function ConfirmDialog({
               <AlertDialog.Cancel className="btn-neutral btn-md">{cancel}</AlertDialog.Cancel>
               {/* AlertDialog.Action 은 누르자마자 닫혀서 쓰지 않는다 — 처리 중에도 창을 띄워 두는 곳이 있다(반경 넓히기). */}
               <button
-                type="button"
-                onClick={onOk}
+                type="submit"
                 disabled={pending}
                 className={`${danger ? 'btn-danger' : 'btn-primary'} btn-md`}
               >
                 {ok}
               </button>
             </div>
-          </div>
+          </form>
         </AlertDialog.Content>
       </AlertDialog.Portal>
     </AlertDialog.Root>

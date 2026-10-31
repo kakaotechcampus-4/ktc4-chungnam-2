@@ -2,20 +2,21 @@ import { useState, type ReactNode } from 'react'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import EditNameDialog from '@/features/auth/EditNameDialog'
 import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import { useMeQuery } from '@/features/auth/queries'
 import FeedbackSheet from '@/features/feedback/FeedbackSheet'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
 import InviteLinks from '@/features/maps/InviteLinks'
-import { DeleteMapConfirm, LeaveMapConfirm, TransferOwnerConfirm } from '@/features/maps/MapLifecycle'
+import { DeleteMapConfirm, EditMapDialog, LeaveMapConfirm, TransferOwnerConfirm } from '@/features/maps/MapLifecycle'
 import { useShareInvite } from '@/features/maps/useShareInvite'
 import Avatar from '@/ui/Avatar'
 
 import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
 
-type Confirm = 'logout' | 'leave' | 'delete' | 'owner' | 'feedback' | null
+type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feedback' | null
 
 /**
  * 프로필 모달(Figma 8절, 모바일). 탭 시트가 아니라 모달이다 — 탭 시트 자리에 띄우면 켜진 탭과 내용이 어긋난다.
@@ -52,6 +53,8 @@ function ProfileConfirm({ mapId, which, onCancel }: { mapId: string; which: Conf
   if (which === 'logout') return <LogoutConfirm onCancel={onCancel} />
   if (which === 'leave') return <LeaveMapConfirm mapId={mapId} nextOwnerName={map?.nextOwnerName} onCancel={onCancel} />
   if (which === 'delete' && map) return <DeleteMapConfirm mapId={mapId} title={map.title} onCancel={onCancel} />
+  if (which === 'edit' && map) return <EditMapDialog map={map} onCancel={onCancel} />
+  if (which === 'name') return <EditNameDialog onCancel={onCancel} />
   if (which === 'owner' && members) return <TransferOwnerConfirm mapId={mapId} members={members} onCancel={onCancel} />
   if (which === 'feedback') return <FeedbackSheet mapId={mapId} onClose={onCancel} />
   return null
@@ -68,11 +71,19 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
   return (
     <>
       {map.data && (
-        <header className="mb-4">
-          <h2 className="text-xl font-bold text-ink-900">{map.data.title}</h2>
-          <p className="text-sm text-ink-500">
-            {map.data.dates} · 구성원 {map.data.memberCount}명
-          </p>
+        <header className="mb-4 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-xl font-bold text-ink-900">{map.data.title}</h2>
+            <p className="text-sm text-ink-500">
+              {map.data.dates} · 구성원 {map.data.memberCount}명
+            </p>
+          </div>
+          {/* 제목·날짜·지역 수정은 방장만(#465). */}
+          {map.data.canEdit && (
+            <button type="button" onClick={() => onConfirm('edit')} aria-label="지도 정보 수정" className="btn-link shrink-0">
+              수정
+            </button>
+          )}
         </header>
       )}
       {map.error && <ErrorText message="지도 정보를 불러오지 못했어요" error={map.error} />}
@@ -155,7 +166,10 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
           <p className="text-sm font-bold text-ink-900">계정</p>
           <p className="text-xs text-ink-500">
             {me.data?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '카카오로 로그인됨 · '}
-            {me.data?.display_name}
+            {me.data?.display_name}{' '}
+            <button type="button" onClick={() => onConfirm('name')} className="btn-link">
+              이름 바꾸기
+            </button>
           </p>
         </div>
         <button

@@ -9,6 +9,7 @@ export type MemberDto = components['schemas']['Member']
 export type InviteDto = components['schemas']['Invite']
 export type InviteSummaryDto = components['schemas']['InviteSummary']
 export type MapRegion = components['schemas']['MapRegion']
+export type MapUpdateRequest = components['schemas']['MapUpdateRequest']
 export type TrashedMapListDto = components['schemas']['TrashedMapList']
 export type OwnerTransferRequest = components['schemas']['OwnerTransferRequest']
 
@@ -34,7 +35,13 @@ export function formatTripDates(start: string, end: string): string {
 
 export type MapHeaderView = Pick<MapDto, 'id' | 'title'> & {
   dates: string
+  /** 수정 창의 처음 값(#480). */
+  startDate: string
+  endDate: string
+  region?: MapRegion
   memberCount: number
+  /** 제목·날짜·지역 수정은 방장만(#465). */
+  canEdit: boolean
   /** 지금 내가 방장인가. 초대 링크 관리·방장 넘기기를 보일지 정한다(#467·#468 — 서버가 따로 권한 칸을 내리지 않는다). */
   isOwner: boolean
   /** 지도 삭제는 방장만(#369). */
@@ -52,13 +59,40 @@ export function toMapHeaderView(map: MapDto): MapHeaderView {
     id: map.id,
     title: map.title,
     dates: formatTripDates(map.start_date, map.end_date),
+    startDate: map.start_date,
+    endDate: map.end_date,
+    region: map.region ?? undefined,
     memberCount: map.member_count,
+    canEdit: map.permissions.can_edit === true,
     isOwner: map.my_role === 'owner',
     regionCenter: map.region ? { lat: map.region.lat, lng: map.region.lng } : undefined,
     canDelete: map.permissions.can_delete === true,
     canLeave: map.permissions.can_leave !== false,
     nextOwnerName: map.next_owner?.display_name,
   }
+}
+
+/** 지도 만들기·수정 입력(TripFields). */
+export type TripDraft = { title: string; region: MapRegion | null; startDate: string; endDate: string }
+
+/** ISO 날짜 문자열은 사전순 비교가 곧 날짜 비교다. */
+export const tripDateError = (d: TripDraft) => Boolean(d.startDate && d.endDate && d.endDate < d.startDate)
+
+/** 빈 칸이 없고 종료일이 시작일보다 앞서지 않는다. 당일치기는 같은 날을 넣는다. */
+export const tripReady = (d: TripDraft) => d.title.trim() !== '' && d.startDate !== '' && d.endDate !== '' && !tripDateError(d)
+
+/** 지도 수정 본문 — 바뀐 칸만 보낸다(#465 부분 수정). 지역은 지우지 못하고 바꾸기만 한다. 바뀐 게 없으면 null. */
+export function mapChanges(
+  before: Pick<MapHeaderView, 'title' | 'startDate' | 'endDate' | 'region'>,
+  after: TripDraft,
+): MapUpdateRequest | null {
+  const body: MapUpdateRequest = {}
+  const title = after.title.trim()
+  if (title !== before.title) body.title = title
+  if (after.startDate !== before.startDate) body.start_date = after.startDate
+  if (after.endDate !== before.endDate) body.end_date = after.endDate
+  if (after.region && after.region.label !== before.region?.label) body.region = after.region
+  return Object.keys(body).length ? body : null
 }
 
 export type MemberView = { userId: string; name: string; initial: string; isMe: boolean; isOwner: boolean }

@@ -1,6 +1,6 @@
 import { api } from '@/api'
 
-import type { InviteDto, InviteSummaryDto, MapCreateRequest, MapDto, MapListDto, MemberDto, OwnerTransferRequest, TrashedMapListDto } from './model'
+import type { InviteDto, InviteSummaryDto, MapCreateRequest, MapDto, MapListDto, MapUpdateRequest, MemberDto, OwnerTransferRequest, TrashedMapListDto } from './model'
 
 /** 내 지도 목록과 상한(#623). 2026-10-19 전에는 Map 배열이었다. */
 export const fetchMaps = () => api<MapListDto>('/maps')
@@ -12,6 +12,10 @@ export const acceptInvite = (token: string) =>
   api<MapDto>(`/invites/${encodeURIComponent(token)}/accept`, { method: 'POST' })
 
 export const fetchMap = (mapId: string) => api<MapDto>(`/maps/${mapId}`)
+
+/** 지도 제목·날짜·지역 수정(방장만, #465). 바뀐 칸만 보낸다. */
+export const updateMap = (mapId: string, body: MapUpdateRequest) =>
+  api<MapDto>(`/maps/${mapId}`, { method: 'PATCH', body: JSON.stringify(body) })
 
 /** 지도 삭제(방장만, #369). 모든 구성원에게서 사라진다. */
 export const deleteMap = (mapId: string) => api<void>(`/maps/${mapId}`, { method: 'DELETE' })
