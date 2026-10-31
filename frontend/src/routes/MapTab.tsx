@@ -16,7 +16,7 @@ import PinUnavailable from '@/features/map/PinUnavailable'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { useCountsQuery, usePinsQuery } from '@/features/map/queries'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
-import { usePlaceSearchQuery } from '@/features/search/queries'
+import { useSourcePlacesQuery } from '@/features/search/queries'
 import { SearchResultsBody, SearchResultsHeader } from '@/features/search/SearchResults'
 import { useSearchStore } from '@/features/search/searchStore'
 import { useSheetStore } from '@/features/shell/sheetStore'
@@ -49,7 +49,7 @@ export default function MapTab() {
   if (sorted && order?.key !== orderKey) setOrder({ key: orderKey, ids: sorted.map((p) => p.id) })
   const shown = sorted && order?.key === orderKey ? order.ids.map((id) => sorted.find((p) => p.id === id)).filter((p) => p !== undefined) : sorted
   const search = useSearchStore()
-  const found = usePlaceSearchQuery(search.query, search.near).data
+  const found = useSourcePlacesQuery(search.source, search.near).data?.places
   const filtered = Boolean(filters.category || filters.createdBy || filters.kind || filters.opinion)
   const [params, setParams] = useSearchParams()
   const onboarding = params.get('onboarding') as OnboardingKind | null
@@ -81,7 +81,7 @@ export default function MapTab() {
   const unavailable = Boolean(selectedPinId) && !selectedPin && !isPending && !error
 
   // 검색은 잠깐 하는 작업이라 다른 화면(상세·온보딩)보다 앞에 온다. 닫으면 원래 화면으로 돌아간다.
-  if (search.query) {
+  if (search.source) {
     return (
       <TabSheet tab="map" header={<SearchResultsHeader count={found ? found.length : null} />}>
         <SearchResultsBody mapId={mapId} pins={pins ?? []} />
