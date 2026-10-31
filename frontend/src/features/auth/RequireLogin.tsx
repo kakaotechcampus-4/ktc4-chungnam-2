@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, Outlet, useSearchParams } from 'react-router'
 
-import { ChevronRight, CircleCheck, MapPin, MessageSquareText, Sparkles, Star, UserRound } from 'lucide-react'
+import { ChevronRight, CircleCheck, UserRound } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import { FEATURES } from '@/features/onboarding/features'
 import ModalSheet from '@/features/shell/ModalSheet'
 import MapIllustration from '@/ui/MapIllustration'
 import Pingo from '@/ui/Pingo'
@@ -52,14 +53,6 @@ function SessionGate() {
   }
   return <Outlet />
 }
-
-/** 쓰는 순서대로 — 핀 찍기 → 의견 → AI 대안 → 확정. 아이콘이 각 기능을 가리켜서 같은 체크를 반복하지 않는다. */
-const FEATURES = [
-  { Icon: MapPin, text: '가고 싶은 곳을 핀으로 찍어요' },
-  { Icon: MessageSquareText, text: '좋음·반대로 의견을 남겨요' },
-  { Icon: Sparkles, text: '반대가 있으면 AI가 대안을 찾아줘요' },
-  { Icon: Star, text: '정한 곳은 확정 리스트에 모아요' },
-]
 
 /**
  * 카카오 콜백이 진입점에 붙여 돌려보내는 쿼리 — 실패면 `?login_error=`(#315), 탈퇴 계정이면 `?login_pending=`(#855).

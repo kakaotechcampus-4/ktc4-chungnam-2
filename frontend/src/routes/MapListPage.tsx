@@ -8,6 +8,7 @@ import { useMeQuery } from '@/features/auth/queries'
 import AccountSheet, { AccountMenu } from '@/features/maps/AccountSheet'
 import { MAP_LIMIT_HINT, type MapListView, type MapView } from '@/features/maps/model'
 import { useMapsQuery } from '@/features/maps/queries'
+import { hasSeenWelcome } from '@/features/onboarding/welcomeSeen'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import Avatar from '@/ui/Avatar'
@@ -34,6 +35,8 @@ export default function MapListPage() {
   const invited = (maps ?? []).filter((m) => m.createdByMe === false)
   const mine = (maps ?? []).filter((m) => m.createdByMe !== false)
 
+  // 이 기기에서 처음이면 기능 소개부터 — 끝나면 여기로 돌아와 초대가 있으면 그리로 간다.
+  if (!hasSeenWelcome()) return <Navigate to="/welcome" replace />
   if (pendingInvite) return <Navigate to={`/invites/${pendingInvite}`} replace />
 
   return (
