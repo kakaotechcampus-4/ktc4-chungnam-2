@@ -15,8 +15,8 @@ import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 
 import { isLive, locationState, useLivePlaceStore } from './livePlaces'
-import { asReactionType, participants, toOpinions, type OpinionView, type Pin, type ReactionDto, type ReactionType, type ReasonChip } from './model'
-import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReasonChipsQuery } from './queries'
+import { asReactionType, FILTER_CATEGORIES, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
+import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReasonChipsQuery, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
@@ -25,6 +25,7 @@ const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line
 }
 const TYPES: ReactionType[] = ['like', 'against']
 const TEXT_MAX = 140
+const MEMO_MAX = 200
 
 const PROMPT: Record<ReactionType, { title: string; placeholder: string }> = {
   like: { title: '무엇이 좋았나요? (선택)', placeholder: '예: 국물이 진하고 양이 많아요' },
@@ -87,7 +88,7 @@ export function PinDetailHeader({
 
 /**
  * 실시간 핀(#382) — 자체 장소 데이터에 없는 곳을 사람이 남긴 핀. 조건 확인·AI 추천·동선에는 쓰이지 않는다.
- * 메모는 핀을 찍은 사람이 남긴 한마디다. 위치는 지도를 열 때마다 카카오에서 다시 찾는다(못 찾으면 지도에 안 뜬다).
+ * 위치는 지도를 열 때마다 카카오에서 다시 찾는다(못 찾으면 지도에 안 뜬다).
  */
 function LiveInfo({ pin }: { pin: Pin }) {
   const places = useLivePlaceStore((s) => s.places)
@@ -96,10 +97,79 @@ function LiveInfo({ pin }: { pin: Pin }) {
     <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-body">
       <p className="font-semibold text-ink-900">장소 정보가 없는 핀이에요</p>
       <p className="text-ink-600">우리 장소 데이터에 없는 곳이라 조건 확인·AI 추천·동선에는 쓰이지 않아요. 의견은 그대로 남길 수 있어요.</p>
-      {pin.memo && <p className="text-ink-900">“{pin.memo}”</p>}
       {state === 'loading' && <p className="text-ink-500">위치를 찾는 중이에요…</p>}
       {state === 'missing' && <p className="font-semibold text-warn-text">카카오에서 이 장소의 위치를 다시 찾지 못했어요. 지도에는 표시되지 않아요.</p>}
     </div>
+  )
+}
+
+/**
+ * 핀을 찍은 사람이 남긴 한마디(#466). 찍은 사람만 쓰고 고친다(`can_edit`) — AI 추천·확정 핀은 고칠 수 없다.
+ * 메모가 없고 고칠 수도 없으면 줄을 그리지 않는다.
+ */
+function PinMemo({ pin, mapId }: { pin: Pin; mapId: string }) {
+  const [editing, setEditing] = useState(false)
+  const canEdit = pin.permissions.can_edit === true
+  if (!pin.memo && !canEdit) return null
+  return (
+    <div className="flex items-start justify-between gap-2 text-body">
+      {pin.memo ? <p className="min-w-0 break-words text-ink-900">“{pin.memo}”</p> : <span />}
+      {canEdit && (
+        <button type="button" onClick={() => setEditing(true)} className="btn-link shrink-0">
+          {pin.memo ? '메모 수정' : '+ 메모 남기기'}
+        </button>
+      )}
+      {editing && <EditPinDialog pin={pin} mapId={mapId} onCancel={() => setEditing(false)} />}
+    </div>
+  )
+}
+
+/**
+ * 핀 메모·분류 수정 창(#480). 바뀐 칸만 보낸다. 빈 메모는 지우기다.
+ * 분류는 실시간 핀만 바꿀 수 있다 — 자체 DB 핀의 분류는 장소가 정한다. 의견이 달린 핀의 분류는 서버가 422로 막는다.
+ * 그 판정은 화면이 따로 하지 않고 서버 문구를 그대로 보여 준다(pinEditErrorMessage).
+ */
+function EditPinDialog({ pin, mapId, onCancel }: { pin: Pin; mapId: string; onCancel: () => void }) {
+  const update = useUpdatePinMutation(mapId, pin.id)
+  const [memo, setMemo] = useState(pin.memo ?? '')
+  const [category, setCategory] = useState<PinCategory>(pin.category)
+  const live = isLive(pin)
+
+  const body: PinUpdateRequest = {}
+  if (memo.trim() !== (pin.memo ?? '')) body.memo = memo.trim()
+  if (category !== pin.category) body.category = category
+  const changed = Object.keys(body).length > 0
+
+  return (
+    <ConfirmDialog
+      title={live ? '메모·분류 수정' : '메모 수정'}
+      body="이 핀을 찍은 사람만 고칠 수 있어요. 비우고 저장하면 메모가 지워져요."
+      ok="저장"
+      pending={update.isPending || !changed}
+      onCancel={onCancel}
+      onOk={() =>
+        update.mutate(body, {
+          onSuccess: () => {
+            showToast('핀을 고쳤어요')
+            onCancel()
+          },
+        })
+      }
+    >
+      <div className="pt-2">
+        <TextField value={memo} onChange={setMemo} maxLength={MEMO_MAX} label="메모" placeholder="예: 여기 곱창 맛있대" clearLabel="메모 지우기" />
+      </div>
+      {live && (
+        <div role="group" aria-label="분류" className="flex flex-wrap gap-2 pt-1">
+          {FILTER_CATEGORIES.map((c) => (
+            <button key={c} type="button" aria-pressed={category === c} onClick={() => setCategory(c)} className="chip">
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+      {update.error && <ErrorText message={pinEditErrorMessage(update.error)} error={update.error} />}
+    </ConfirmDialog>
   )
 }
 
@@ -136,6 +206,7 @@ export function PinDetailBody({
             </a>
           )}
         </p>
+        <PinMemo pin={pin} mapId={mapId} />
         {isLive(pin) && <LiveInfo pin={pin} />}
         {/* 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자로 꼭 적는다(colors.md 3절 한계). */}
         {memberCount > 0 && (

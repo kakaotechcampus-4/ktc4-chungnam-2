@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { choosePendingAccount, fetchMe, fetchPendingAccount, isNoPendingLogin, isUnauthorized, logout, withdraw } from './api'
+import { choosePendingAccount, fetchMe, fetchPendingAccount, isNoPendingLogin, isUnauthorized, logout, updateMe, withdraw } from './api'
 import type { PendingAccountDto, User } from './model'
 
 export const authKeys = {
@@ -43,6 +43,21 @@ export function useMeQuery() {
     queryFn: fetchMe,
     // 401 은 다시 물어도 401 이다.
     retry: (count, err) => !isUnauthorized(err) && count < 1,
+  })
+}
+
+/**
+ * 표시 이름 수정. 이름은 구성원 목록·핀 작성자·의견 곳곳에 실려 오고 바뀐 것을 알리는 이벤트가 없어서,
+ * 나를 바꾼 뒤 지금 화면이 보는 데이터를 모두 다시 받는다. 다른 구성원에게는 다음에 다시 받을 때 보인다.
+ */
+export function useUpdateMeMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: updateMe,
+    onSuccess: (user) => {
+      queryClient.setQueryData(authKeys.me, user)
+      void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] !== authKeys.me[0] })
+    },
   })
 }
 

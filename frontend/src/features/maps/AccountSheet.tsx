@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import EditNameDialog from '@/features/auth/EditNameDialog'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import WithdrawConfirm from '@/features/auth/WithdrawConfirm'
 import { useMeQuery } from '@/features/auth/queries'
@@ -13,7 +14,7 @@ import Avatar from '@/ui/Avatar'
 import type { MapView } from './model'
 import { useCreateInviteMutation } from './queries'
 
-type Confirm = 'logout' | 'withdraw' | null
+type Confirm = 'logout' | 'withdraw' | 'name' | null
 
 /**
  * 내 지도 목록의 계정 시트(Figma 1절, 모바일). 넓은 화면은 같은 내용을 계정 버튼 아래 메뉴로 연다(AccountMenu).
@@ -54,6 +55,7 @@ export function AccountMenu({ maps, name }: { maps: MapView[]; name?: string }) 
 function AccountConfirm({ which, onCancel }: { which: Confirm; onCancel: () => void }) {
   if (which === 'logout') return <LogoutConfirm onCancel={onCancel} />
   if (which === 'withdraw') return <WithdrawConfirm onCancel={onCancel} />
+  if (which === 'name') return <EditNameDialog onCancel={onCancel} />
   return null
 }
 
@@ -82,10 +84,13 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
     <>
       <div className="mb-5 flex items-center gap-3">
         <Avatar name={me?.display_name} size={44} />
-        <div>
+        <div className="min-w-0 flex-1">
           <p className="text-xl font-bold text-ink-900">{me?.display_name}</p>
           <p className="text-xs text-ink-500">카카오로 로그인됨 · 지도 {maps.length}개</p>
         </div>
+        <button type="button" onClick={() => onConfirm('name')} className="btn-link shrink-0">
+          이름 바꾸기
+        </button>
       </div>
 
       {maps.length > 0 && (

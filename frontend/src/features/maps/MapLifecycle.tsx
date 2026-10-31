@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { ApiError } from '@/api'
@@ -6,7 +7,43 @@ import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
 
-import { useDeleteMapMutation, useLeaveMapMutation } from './queries'
+import { mapChanges, tripReady, type MapHeaderView, type TripDraft } from './model'
+import { useDeleteMapMutation, useLeaveMapMutation, useUpdateMapMutation } from './queries'
+import TripFields from './TripFields'
+
+/**
+ * 지도 제목·날짜·지역 수정 창(방장만, #465·#480). 바뀐 칸만 보낸다. 지역은 바꾸기만 되고 지울 수 없다.
+ * 이미 받은 AI 추천 결과는 그대로라는 것을 미리 알린다(api-spec PATCH /maps/{mapId}).
+ */
+export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel: () => void }) {
+  const update = useUpdateMapMutation(map.id)
+  const [draft, setDraft] = useState<TripDraft>({ title: map.title, region: map.region ?? null, startDate: map.startDate, endDate: map.endDate })
+  const body = mapChanges(map, draft)
+
+  return (
+    <ConfirmDialog
+      title="지도 정보 수정"
+      body="바꾼 내용은 모든 구성원에게 바로 보여요. 이미 받은 AI 추천은 그대로 남아요."
+      ok="저장"
+      pending={update.isPending || !body || !tripReady(draft)}
+      onCancel={onCancel}
+      onOk={() =>
+        body &&
+        update.mutate(body, {
+          onSuccess: () => {
+            showToast('지도 정보를 고쳤어요')
+            onCancel()
+          },
+        })
+      }
+    >
+      <div className="pt-2">
+        <TripFields value={draft} onChange={setDraft} regionClearable={!map.region} />
+      </div>
+      {update.error && <ErrorText message="지도 정보를 고치지 못했어요" error={update.error} />}
+    </ConfirmDialog>
+  )
+}
 
 /**
  * 지도 나가기 확인 창(#369). 나가면 내 의견(반응·사유)은 지워지고 내가 찍은 핀은 '나간 구성원'의 핀으로 남는다.

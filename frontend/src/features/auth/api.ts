@@ -4,6 +4,10 @@ import type { PendingAccountDto, PendingChoice, UserDto } from './model'
 
 export const fetchMe = () => api<UserDto>('/auth/me')
 
+/** 내 표시 이름 수정 — 계정 하나에 이름 하나라 모든 지도에 같이 바뀐다(2026-09-30). 서버가 앞뒤 공백을 지운다. */
+export const updateMe = (displayName: string) =>
+  api<UserDto>('/auth/me', { method: 'PATCH', body: JSON.stringify({ display_name: displayName }) })
+
 export function isUnauthorized(err: unknown) {
   return err instanceof ApiError && err.status === 401
 }

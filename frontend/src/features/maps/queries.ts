@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useMeQuery } from '@/features/auth/queries'
 
-import { acceptInvite, createInvite, createMap, deleteMap, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, leaveMap } from './api'
-import { inviteProblem, toInviteView, toMapHeaderView, toMapListView, toMemberView, type MapCreateRequest } from './model'
+import { acceptInvite, createInvite, createMap, deleteMap, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, leaveMap, updateMap } from './api'
+import { inviteProblem, toInviteView, toMapHeaderView, toMapListView, toMemberView, type MapCreateRequest, type MapDto, type MapUpdateRequest } from './model'
 
 export const mapKeys = {
   all: ['maps'] as const,
@@ -26,6 +26,18 @@ export function useCreateMapMutation() {
   return useMutation({
     mutationFn: (body: MapCreateRequest) => createMap(body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: mapKeys.all }),
+  })
+}
+
+/**
+ * 지도 수정(방장, #465). 상세만 응답으로 바로 바꾼다. 내 지도 목록은 내게도 오는 map.updated를 받아
+ * realtime의 표(refetchTable)대로 다시 받는다.
+ */
+export function useUpdateMapMutation(mapId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: MapUpdateRequest) => updateMap(mapId, body),
+    onSuccess: (map) => queryClient.setQueryData<MapDto>(mapKeys.detail(mapId), map),
   })
 }
 
