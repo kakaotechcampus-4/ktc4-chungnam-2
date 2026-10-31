@@ -554,7 +554,8 @@ def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
     assert promoted.json()["id"] == other and promoted.json()["source"] == "db" and promoted.json()["place_name"] == bunsik["place_name"]
     assert promoted.json()["my_reaction"]["type"] == "like"                            # 반응은 그대로
     assert b.post(f"/pins/{other}/resolve", json=hint).status_code == 200              # 이미 db 핀 — 변화 없음
-    assert b.delete(f"/pins/{other}").status_code == 204
+    assert b.delete(f"/pins/{other}").status_code == 403                               # 남의 핀은 방장만(#965)
+    assert a.delete(f"/pins/{other}").status_code == 204
 
     # 카톡 대화 링크 일괄 핀 찍기(#577) — 미리보기(이미 있음·지원 안 함·짝 없음, 일부 실패해도 200)와 일괄 생성(created·duplicate·rejected)
     preview = a.post(f"/maps/{map_id}/pins/link-preview", json={"urls": [
