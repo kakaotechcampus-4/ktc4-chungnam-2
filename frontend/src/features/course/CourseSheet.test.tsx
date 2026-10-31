@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
+import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import CourseSheet from './CourseSheet'
@@ -25,11 +26,13 @@ beforeEach(async () => {
   }
 })
 
-function renderSheet() {
+function renderSheet(onClose: () => void = () => {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <CourseSheet mapId="map_1" onClose={() => {}} />
+      <MemoryRouter>
+        <CourseSheet mapId="map_1" onClose={onClose} />
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }
@@ -117,12 +120,46 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.queryByRole('button', { name: '다시 불러오기' })).not.toBeInTheDocument()
   })
 
-  it('429 는 「오늘은 다 썼어요」', async () => {
-    server.use(http.post('*/maps/:mapId/courses', () => error(429, 'COURSE_LIMIT', { limit: 5, used: 5 })))
+  it('버튼 아래에 가격과 남은 크레딧을 응답 값으로 보이고, 코스를 짜면 다시 받는다', async () => {
+    const credits = () => fetch(`${BASE}/credits/me`).then((r) => r.json())
+    const before = await credits()
     const user = userEvent.setup()
     renderSheet()
+    expect(await screen.findByText(`${before.prices.course} 크레딧 사용 · 남은 크레딧 ${before.balance}`)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '코스 짜기' }))
+    await screen.findByRole('list', { name: '작업 기록' })
+    const after = await credits()
+    expect(after.balance).toBe(before.balance - before.prices.course)
+  })
+
+  it('402 는 크레딧 부족 안내와 「후기 쓰러 가기」(확정 탭, 시트를 닫는다)', async () => {
+    resetScenario('credits-empty')
+    for (const pin_id of ['pin_1', 'pin_2']) {
+      await fetch(`${BASE}/maps/map_1/shortlist`, { method: 'POST', body: JSON.stringify({ pin_id }) })
+    }
+    const { review_reward } = await fetch(`${BASE}/credits/me`).then((r) => r.json())
+    const onClose = vi.fn()
+    const user = userEvent.setup()
+    renderSheet(onClose)
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('오늘은 다 썼어요')
+
+    expect(await screen.findByText(`크레딧이 부족해요. 후기를 쓰면 ${review_reward} 크레딧을 드려요`)).toBeInTheDocument()
+    expect(screen.queryByText(/코스를 요청하지 못했어요/)).not.toBeInTheDocument()
+    const link = screen.getByRole('link', { name: '후기 쓰러 가기' })
+    expect(link).toHaveAttribute('href', '/maps/map_1/shortlist')
+    await user.click(link)
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('게스트는 처음부터 버튼 대신 카카오 안내 — 숫자는 403 detail 에서', async () => {
+    resetScenario('guest')
+    const { detail } = await fetch(`${BASE}/credits/me`).then((r) => r.json())
+    renderSheet()
+
+    expect(await screen.findByText(`카카오로 로그인하면 ${detail.initial_credits} 크레딧을 드려요`)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /카카오로 계정 만들기/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '코스 짜기' })).not.toBeInTheDocument()
   })
 
   it('422 는 장소 부족 안내', async () => {
