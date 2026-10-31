@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { Ban, Check, Clock, Plus, Undo2, X } from 'lucide-react'
 
-import { ApiError } from '@/api'
 import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Notice from '@/ui/Notice'
@@ -12,9 +11,6 @@ import { usePatchEvidenceMutation } from './queries'
 
 /** 「+」 글 한 줄 길이(docs/api-spec.yaml EvidencePatchRequest.add[].text, 앞뒤 공백을 뗀 뒤 1~140자). */
 const ADD_TEXT_MAX = 140
-
-/** 상한(10회)을 다 쓰면 ×·＋도 서버가 막는다(429 RETRY_LIMIT, #845) — 결과 화면의 조건 카드가 읽기 전용이 된다. */
-export const EVIDENCE_LOCKED = '추천을 다 받아서 조건을 더 고칠 수 없어요'
 
 /**
  * 모델이 사유를 어떻게 읽었는지 묶어 보여 주고 사람이 고치게 한다(최종기획안 5-5). 결과 화면의 조건 카드와 지역 확인 화면이 같이 쓴다.
@@ -29,17 +25,13 @@ export const EVIDENCE_LOCKED = '추천을 다 받아서 조건을 더 고칠 수
 export default function EvidenceGroups({
   runId,
   lines,
-  readOnly = false,
   pending = () => false,
   removed = [],
-  onLocked,
 }: {
   runId: string
   lines: EvidenceLineDto[]
-  readOnly?: boolean
   pending?: (line: EvidenceLineDto) => boolean
   removed?: EvidenceLineDto[]
-  onLocked?: () => void
 }) {
   const patch = usePatchEvidenceMutation(runId)
   const [askRemove, setAskRemove] = useState<EvidenceLineDto | null>(null)
@@ -47,15 +39,7 @@ export default function EvidenceGroups({
   const [draft, setDraft] = useState('')
   const [addLimit, setAddLimit] = useState<string | null>(null)
   const groups = groupEvidence(lines)
-  const editable = (line: EvidenceLineDto) => !readOnly && line.permissions.can_disable
-
-  /** 상한을 다 쓴 뒤 보낸 편집이면 읽기 전용으로 바꾸고 알린다. 아니면 false. */
-  function locked(err: unknown) {
-    if (!(err instanceof ApiError) || err.code !== 'RETRY_LIMIT') return false
-    onLocked?.()
-    showToast(EVIDENCE_LOCKED)
-    return true
-  }
+  const editable = (line: EvidenceLineDto) => line.permissions.can_disable
 
   // 한 사유가 조건마다 줄로 나뉘어(#421) 같은 태그에 내 줄이 여럿일 수 있다 — 한 번에 같이 끄고 켠다.
   function toggle(target: EvidenceLineDto[], active: boolean) {
@@ -65,7 +49,7 @@ export default function EvidenceGroups({
         onSuccess: () =>
           !active &&
           showToast(`‘${evidenceLabel(target[0])}’을(를) 뺐어요`, { label: '되돌리기', onClick: () => toggle(target, true) }),
-        onError: (err) => locked(err) || showToast('조건을 바꾸지 못했어요'),
+        onError: () => showToast('조건을 바꾸지 못했어요'),
       },
     )
   }
@@ -128,7 +112,7 @@ export default function EvidenceGroups({
             chip(
               { ...all[0], fact_label: null, text: `#${tag}` },
               null,
-              !readOnly && mine.length > 0 ? () => toggle(mine, false) : undefined,
+              mine.length > 0 ? () => toggle(mine, false) : undefined,
             ),
           ),
         )}
@@ -167,7 +151,7 @@ export default function EvidenceGroups({
         </section>
       )}
 
-      {readOnly ? null : addLimit ? (
+      {addLimit ? (
         <Notice>{addLimit}</Notice>
       ) : adding ? (
         <form
@@ -183,7 +167,6 @@ export default function EvidenceGroups({
                   setAdding(false)
                 },
                 onError: (err) => {
-                  if (locked(err)) return
                   // 상한(409 EVIDENCE_LIMIT)이면 입력을 닫고 이유를 남긴다. 숫자는 응답 detail.limit 에서(#720).
                   const limit = evidenceLimitMessage(err)
                   if (!limit) return showToast('조건을 더하지 못했어요')

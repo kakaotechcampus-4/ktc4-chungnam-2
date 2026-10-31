@@ -9,7 +9,6 @@ import type {
   RecommendResultDto,
   RecommendRunDto,
   RegionDto,
-  RunSummaryDto,
 } from './model'
 
 export const fetchReadiness = (mapId: string) =>
@@ -25,9 +24,6 @@ export const createRun = (mapId: string, category: RecommendCategory, key: strin
     headers: { 'Idempotency-Key': key },
     body: JSON.stringify({ category, execute: true }),
   })
-
-/** 내가 이 지도에서 요청한 run 목록(#469). 상한(10회)이라 많아야 10개 — 한 번에 받는다. */
-export const fetchMyRuns = (mapId: string) => api<RunSummaryDto[]>(`/maps/${mapId}/runs?limit=50`)
 
 export const fetchEvidence = (runId: string) => api<EvidenceLineDto[]>(`/runs/${runId}/evidence`)
 

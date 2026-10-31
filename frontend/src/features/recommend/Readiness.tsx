@@ -9,9 +9,12 @@ import Notice from '@/ui/Notice'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
 
+import CreditGate from '@/features/credits/CreditGate'
+import { creditBlock } from '@/features/credits/model'
+
 import ExternalSearchLink from './ExternalSearchLink'
 import { runErrorMessage, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
-import { useAttemptsQuery, useCreateRunMutation, useReadinessQuery } from './queries'
+import { useCreateRunMutation, useReadinessQuery } from './queries'
 
 /** AI 탭 시트 머리글 — 핑고 + 「AI」 배지. 표정은 그 화면의 상황을 따른다(Pingo.tsx). */
 export function AiHeader({ title, sub, mood }: { title: string; sub: string; mood?: PingoMood }) {
@@ -80,9 +83,6 @@ export function ProgressBody({ steps = RUN_STEPS }: { steps?: string[] }) {
 export function ReadinessBody({ mapId }: { mapId: string }) {
   const readiness = useReadinessQuery(mapId)
   const create = useCreateRunMutation(mapId)
-  // 남은 횟수를 못 받아도 버튼은 막지 않는다 — 최종 판정은 서버(429 RETRY_LIMIT)다.
-  const attempts = useAttemptsQuery(mapId).data
-  const spent = attempts?.left === 0
   const cards = readiness.data ? toReadinessCards(readiness.data) : []
   const firstReady = cards.find((c) => c.ready)?.category ?? null
   const [picked, setPicked] = useState<RecommendCategory | null>(null)
@@ -90,7 +90,8 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const search = cards.find((c) => c.category === chosen)?.externalSearch
   useAgentStart(cards, (category) => {
     setPicked(category)
-    create.start(category, { onError: () => showToast(CHANGED) })
+    // 크레딧 때문이면(게스트·잔액 부족) 「상황이 바뀌었어요」가 아니다 — 버튼 자리의 안내가 말한다.
+    create.start(category, { onError: (err) => creditBlock(err) || showToast(CHANGED) })
   })
 
   if (readiness.isPending) return <PingoLoading label="준비 상태를 확인하는 중…" />
@@ -114,26 +115,22 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
       <p className="text-label text-ink-500">* 핀에 의견을 많이 남길수록 추천이 더 정확해져요.</p>
       {/* 사유 정리(②)와 첫 검색을 한 요청에서 끝낸다(#845) — 몇 초 걸린다. 그동안 진행을 보인다. */}
       {create.isPending && <ProgressBody steps={START_STEPS} />}
-      {/* 실패하면 run 이 생기지 않고 횟수도 쓰지 않는다 — 같은 버튼을 다시 누르면 새 시도다. */}
-      {create.error && <ErrorText message={runErrorMessage(create.error)} error={create.error} />}
+      {/* 실패하면 run 이 생기지 않고 크레딧도 쓰지 않는다 — 같은 버튼을 다시 누르면 새 시도다. 크레딧 오류는 CreditGate 가 보인다. */}
+      {create.error && !creditBlock(create.error) && <ErrorText message={runErrorMessage(create.error)} error={create.error} />}
       {/* 의견 핀 근처에 정예 장소가 없으면 추천해도 0곳이다 — 막지 않고 밖에서 찾는 길을 같이 둔다(#798). */}
       {search && (
         <Notice action={<ExternalSearchLink search={search} className="btn-outline btn-sm" />}>이 지역은 아직 핑고 추천 장소가 없어요</Notice>
       )}
-      <button
-        type="button"
-        disabled={!chosen || create.isPending || spent}
-        onClick={() => chosen && create.start(chosen)}
-        className="btn-primary btn-lg w-full"
-      >
-        {create.isPending ? '추천을 찾는 중…' : chosen ? `${chosen} 추천받기` : '아직 추천할 수 있는 곳이 없어요'}
-      </button>
-      {/* 상한은 지도마다 한 사람 기준, 카테고리와 상관없이 센다(#31). 숫자는 서버 값이다. */}
-      {attempts && (
-        <p className="text-center text-label text-ink-500">
-          {spent ? `이 지도에서 추천을 ${attempts.limit}번 모두 받았어요` : `이 지도에서 추천 ${attempts.left}번 남았어요 (${attempts.limit}번까지)`}
-        </p>
-      )}
+      <CreditGate feature="recommend_run" mapId={mapId} error={create.error}>
+        <button
+          type="button"
+          disabled={!chosen || create.isPending}
+          onClick={() => chosen && create.start(chosen)}
+          className="btn-primary btn-lg w-full"
+        >
+          {create.isPending ? '추천을 찾는 중…' : chosen ? `${chosen} 추천받기` : '아직 추천할 수 있는 곳이 없어요'}
+        </button>
+      </CreditGate>
     </div>
   )
 }
