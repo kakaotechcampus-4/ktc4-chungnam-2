@@ -67,11 +67,11 @@ describe('카카오맵에서 더 찾아보기(#798)', () => {
     expect(screen.queryByRole('link', { name: /카카오맵에서 더 찾아보기/ })).not.toBeInTheDocument()
   })
 
-  it('결과 0곳: 넓히기·근거 고치기와 같은 묶음에 링크', async () => {
+  it('결과 0곳: 넓히기·조건 고치기와 같은 묶음에 링크', async () => {
     const error = await noResultsError()
     renderWithClient(<NoResults mapId="map_1" run={run('run_no_results')} error={error} onFixEvidence={() => {}} />)
 
-    const group = screen.getByRole('button', { name: '근거 고치기' }).parentElement!
+    const group = screen.getByRole('button', { name: '조건 고치기' }).parentElement!
     expect(within(group).getByRole('button', { name: '반경 넓히기' })).toBeInTheDocument()
     expect(within(group).getByRole('link', { name: /카카오맵에서 더 찾아보기/ })).toBeInTheDocument()
     expectExternalLink(noResultsExternalSearch(error)!.query)
