@@ -155,10 +155,12 @@ review_reports
 
 ### 계정 수명 (`auth/service.py`)
 
-| 모듈 | `WITHDRAW_STEPS` | `MERGE_STEPS` (`reassign_user`) |
+| 모듈 | 탈퇴 | `MERGE_STEPS` (`reassign_user`) |
 |---|---|---|
-| credits | `delete_by_user`: 계정·원장 삭제 | 게스트는 계정이 없다. 혹시 있으면 옮기지 않고 지운다(초기 지급 두 번 방지) |
+| credits | **탈퇴 때는 남긴다**(`WITHDRAW_STEPS`에 없음, `KEPT_ON_WITHDRAW`에 이유). 복구 기간(7일)이 지나 정리할 때(`purge_withdrawn_user`) `delete_by_user`로 계정·원장을 지운다. 「새 계정으로 시작」도 기존 계정을 바로 정리하므로 그때 지운다 | 게스트는 계정이 없다. 혹시 있으면 옮기지 않고 지운다(초기 지급 두 번 방지) |
 | reviews | 후기는 남긴다(작성자 이름은 원래 보이지 않는다). 그 사람이 한 신고는 지운다 | 게스트는 후기·신고를 못 쓴다. 옮길 것 없음(멱등 no-op) |
+
+**탈퇴 때 크레딧을 남기는 이유**(#948 검수, 2026-11-01): 탈퇴 때 지우면, 7일 안에 되살린 계정(#855)은 계정 행이 없어 30으로 다시 시작한다. 탈퇴와 되살리기를 반복하면 크레딧이 계속 채워진다. 로그인 수단을 7일 남겨 두는 것과 같은 이유로 7일 정리 때 지운다. 되살리면 쓰던 잔액이 그대로 돌아온다.
 
 `integration/test_user_data_lists.py`에 새 사용자 id 열 4개(`credit_accounts.user_id`, `credit_ledger.user_id`, `reviews.user_id`, `review_reports.reporter_id`)를 등록한다.
 
@@ -249,7 +251,12 @@ def refund(db, *, feature: str, run_id: str) -> bool:
 def grant_review(db, *, user_id: str, place_id: str) -> int:
     """그 장소 첫 후기 보상. 받은 크레딧(10 또는 0). 게스트면 0(호출 전에 reviews가 막는다)."""
 
-def delete_by_user(db, *, user_id: str) -> int: ...
+def get_balance(db, *, user_id: str) -> int:
+    """읽기만. 지금 잔액. 계정 행이 없으면 INITIAL_CREDITS. reviews가 ReviewSaved.balance를 채운다."""
+
+def delete_by_user(db, *, user_id: str) -> int:
+    """계정·원장 삭제. 탈퇴 7일 뒤 정리(auth.service.purge_withdrawn_user)가 부른다 — 탈퇴 때는 부르지 않는다."""
+
 def reassign_user(db, *, from_user_id: str, to_user_id: str) -> dict[str, int]: ...
 ```
 
@@ -262,7 +269,9 @@ def reassign_user(db, *, from_user_id: str, to_user_id: str) -> dict[str, int]: 
 | `agent.course` | `service.request_course` | `COURSE_LIMIT` 검사 삭제. run id를 먼저 만들고 run INSERT와 같은 트랜잭션에서 `charge(feature="course")` | #950 |
 | `agent.course` | `execute_run` 실패 저장, `fail_stale_runs` | 결과 없이 끝난 run마다 `refund(feature="course")` | #950 |
 | `reviews` | `PUT .../reviews/me` 신규 작성 | 같은 트랜잭션에서 `grant_review` | #951 |
-| `auth.service` | `WITHDRAW_STEPS`, `MERGE_STEPS` | credits, reviews 추가 | #948, #951 |
+| `auth.service` | `purge_withdrawn_user`(7일 뒤 정리), `MERGE_STEPS` | credits 추가(탈퇴 때는 남긴다) | #948 |
+| `auth.service` | `WITHDRAW_STEPS`, `MERGE_STEPS` | reviews 추가 | #951 |
+| `reviews` | `PUT .../reviews/me` 응답 | `get_balance`로 `ReviewSaved.balance` | #951 |
 
 추천 순서를 지키는 이유: 추천은 ②를 run INSERT보다 먼저 부르고, 그 사이 읽기 트랜잭션을 롤백한다(#208, #275). 그래서 확인(읽기) → 모델 → 저장과 차감(쓰기)이다. `Idempotency-Key` 재전송은 `_create_run`을 다시 타지 않으므로 이중 차감이 없다.
 
@@ -292,6 +301,7 @@ def reassign_user(db, *, from_user_id: str, to_user_id: str) -> dict[str, int]: 
 | 리스크 | 지금의 대응 | 지표 |
 |---|---|---|
 | 후기 파밍(짧은 글로 크레딧 쌓기) | 한 장소 한 번 보상 | 사람당 하루 후기 수, 글 길이 분포 |
+| 재가입으로 30 다시 받기 | 막지 않는다 — 탈퇴 뒤 「새 계정으로 시작」은 새 사람이라 30을 받는다(30크레딧 ≈ 원가 ₩30). 되살리기는 잔액이 그대로라 이 경로가 아니다 | 탈퇴 뒤 새 계정으로 시작한 수, 그 계정들의 크레딧 사용량 |
 | 모델 비용(상한 제거) | 크레딧 소진 | `llm_calls` 사람당 하루 `cost_krw` |
 | 후기란 품질(욕설, 비방) | 신고 + `reports.py` 확인 + 숨김 스크립트 | 신고 수, 숨김 수, 신고에서 숨김까지 걸린 시간 |
 | 보상이 평점을 끌어올림 | 별점 무관 보상 + 사전 고지 | 첫 후기와 수정 후기의 평균 별점 차이 |
@@ -322,7 +332,7 @@ credits
 4. 게스트는 `check_can_spend`, `GET /credits/me` 모두 403(`detail.initial_credits = 30`), 계정 행 없음.
 5. `refund` 두 번 → 한 번만 들어간다. 차감 없는 run의 `refund`는 False.
 6. `grant_review` 같은 (user, place) 두 번 → 10, 0.
-7. 탈퇴 → 계정·원장 없음. 합치기 → 게스트 쪽 행 없음.
+7. 탈퇴 → 계정·원장이 남는다. 7일 안에 되살리면 잔액이 그대로다. 7일 정리(`purge_withdrawn_user`) → 계정·원장 없음. 「새 계정으로 시작」 → 기존 계정의 계정·원장 없음, 새 계정은 30. 합치기 → 게스트 쪽 행 없음.
 8. 차감·환불·보상을 섞어 돌린 뒤 사람마다 `balance` = 원장 `delta` 합.
 
 recommend
