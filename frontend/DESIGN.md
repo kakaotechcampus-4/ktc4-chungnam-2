@@ -308,6 +308,7 @@ components:
 | 목록에서 여러 개 고르기 | `Checkbox` (상자 20px + 옆 글자, 줄 전체가 label이라 누르는 곳 44px · 켜짐은 `--action-fill`) | `ui/Checkbox` |
 | 켜고 끄기 | `Switch` (막대 44×24 · 누르는 곳 44, 켜짐 brand-600 · 꺼짐 ink-300) | `ui/Switch` |
 | 핑고 AI 조언 버튼(지도 왼쪽 아래) | `AgentButton` | `features/agent/AgentButton` |
+| 알림 종 버튼 + 알림함·알림 설정 시트(#483) | `NotificationBell` (`floating`이면 지도 위 흰 원 + 그림자, 아니면 테두리 원. 안 읽은 수는 brand-600 숫자 배지, 99+) | `features/notifications/NotificationBell` |
 | 서버가 렌더한 에이전트 문장(조각) | `AdviceText` (quote는 `<q>` + ink-100 면, pin은 600 굵기) | `features/agent/AdviceText` |
 | 우리 조건 요약(카테고리 칩 + 칸) | `SummarySection` | `features/agent/SummarySection` |
 | 추천 막힘 조언(결과 깔때기 아래) | `RunAdvice` | `features/agent/RunAdvice` |

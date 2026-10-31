@@ -12,6 +12,7 @@ import { usePinsQuery, useResolveLivePin } from '@/features/map/queries'
 import { useMapEvents } from '@/features/map/realtime'
 import { usePinFilters } from '@/features/map/usePinFilters'
 import MapSwitcher from '@/features/maps/MapSwitcher'
+import NotificationBell from '@/features/notifications/NotificationBell'
 import { useMapQuery } from '@/features/maps/queries'
 import { useAiStore } from '@/features/recommend/aiStore'
 import { useResultQuery } from '@/features/recommend/queries'
@@ -383,6 +384,8 @@ export default function MapLayout() {
             )}
             {/* 내 이니셜 원은 계정 버튼처럼 읽혀서, 구성원 아이콘 + 인원 수로 "이 지도의 정보·구성원"임을 보인다(#351). */}
             {/* 넓은 화면은 바닥 시트 대신 버튼 아래 메뉴로 연다 — 패널 옆 바닥 시트는 끌리지도 않는 손잡이만 남았다. */}
+            {/* 알림함(#483) — 다른 지도의 알림도 여기서 본다. */}
+            {desktop && <NotificationBell />}
             {desktop ? (
               <ProfileMenu
                 mapId={mapId}
@@ -398,15 +401,18 @@ export default function MapLayout() {
                 }
               />
             ) : (
-              <button
-                type="button"
-                aria-label={`지도 정보와 구성원 · ${memberCount}명`}
-                onClick={() => openProfile(true)}
-                className="pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-float"
-              >
-                <Users size={16} aria-hidden="true" />
-                {memberCount > 0 && memberCount}
-              </button>
+              <div className="flex items-center gap-3">
+                <NotificationBell floating />
+                <button
+                  type="button"
+                  aria-label={`지도 정보와 구성원 · ${memberCount}명`}
+                  onClick={() => openProfile(true)}
+                  className="pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-float"
+                >
+                  <Users size={16} aria-hidden="true" />
+                  {memberCount > 0 && memberCount}
+                </button>
+              </div>
             )}
           </div>
           {/* 지도 위에는 검색창만 둔다(FE 회의). 지도를 끄는 동안엔 지도에 집중하게 흐려진다. 검색 동작은 #293. */}
