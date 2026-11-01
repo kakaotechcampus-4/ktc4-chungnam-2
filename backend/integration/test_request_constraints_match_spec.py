@@ -21,6 +21,11 @@ KEYS = ("maxItems", "minItems", "maxLength", "minLength", "maximum", "minimum")
 
 # (메서드, 경로, 필드.제약) -> 추적 이슈. 비어 가는 것이 정상이다.
 KNOWN_DRIFT: dict[tuple[str, str, str], str] = {
+    # #1048 pins 구현 때 지운다 — PinCreateSearch.link_ref(요청 모델에 같은 제약으로 넣는다)
+    ("POST", "/maps/{mapId}/pins", ".link_ref.external_id.maxLength"): "#1048",
+    ("POST", "/maps/{mapId}/pins", ".link_ref.external_id.minLength"): "#1048",
+    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].link_ref.external_id.maxLength"): "#1048",
+    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].link_ref.external_id.minLength"): "#1048",
 }
 
 

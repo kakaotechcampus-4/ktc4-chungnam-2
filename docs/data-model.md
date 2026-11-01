@@ -207,6 +207,28 @@ places(
 )
   unique(source, source_id)
 
+place_external_ids(                     -- #1048 카카오·네이버 장소 번호 → 자체 DB 장소. 카톡 링크가 번호뿐이라 한 번 이어진 짝을 다음 사람부터 한 번에 찍는다
+  id pk,
+  provider,                             -- 'kakao' | 'naver'
+  external_id,                          -- 번호만(예 'naver:1412566798'). 카카오 응답의 이름·좌표·주소는 저장하지 않는다(#53)
+  place_id references places(id),
+  source,                               -- 'hint' = 서버가 상호명+주소로 스스로 확정(즉시 신뢰) | 'user' = 사람이 고른 짝(아래 votes 2명 이상이어야 신뢰)
+  created_at
+)
+  unique(provider, external_id, place_id)
+  index(provider, external_id)
+  -- 같은 번호가 서로 다른 place_id에 이어진 행이 둘 이상이면 충돌이다 — 자동 매칭에서 뺀다(둘 다 후보로만).
+  -- 조회(places.api.parse_link): 신뢰된 단일 행이고 그 장소가 영업 중(status='open')일 때만 matches(matched_by='external_id').
+
+place_external_id_votes(                -- #1048 'user' 짝의 확인 횟수. 서로 다른 사용자 2명이 같은 짝을 확인해야 신뢰한다
+  external_id_row references place_external_ids(id),
+  voter_hash,                           -- HMAC(user_id) 단방향. 사용자 id를 그대로 두지 않는다. 계정당 한 표
+  created_at
+)
+  unique(external_id_row, voter_hash)
+  -- 탈퇴 7일 뒤 정리에서 voter_hash = HMAC(탈퇴 사용자 id)인 행을 지운다(auth 정리가 places.api.purge_external_id_votes를 부른다).
+  -- 번호표 자체는 지도·사용자와 무관한 공용 데이터라 지우지 않는다.
+
 place_facts(
   place_id references places(id),
   fact_key,                             -- 'spicy_focused' | 'cuisine_korean' | 'parking_available' | ... (price_bucket은 #423, contains_shellfish는 #425에서 뺐다)

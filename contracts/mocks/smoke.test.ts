@@ -636,7 +636,8 @@ describe("#9 — 카톡 대화에서 뽑은 링크 미리보기·핀 일괄 생�
     expect(items[0]).toMatchObject({ status: "ok", result: { provider: "google", name_hint: "해운대 밀면" } });
     expect(items[0].result.matches[0].place_name).toBe("해운대 밀면");
     expect(items[1].result.matches[0].place_name).toBe("해운대 바다 카페");
-    expect(items[2]).toMatchObject({ status: "error", error_code: "LINK_NOT_SUPPORTED" });
+    // #1048 — 네이버 링크도 받는다: 번호(external_id)만 읽고 matches는 번호표에 학습된 짝이 있을 때만
+    expect(items[2]).toMatchObject({ status: "ok", result: { provider: "naver", external_id: "naver:1", matches: [], needs_search_query: true } });
     expect(items[3].result).toMatchObject({ needs_search_query: true, kakao_place_id: "kakao:mock-6", matches: [] }); // 자체 DB에 없다
     expect(items[4].result.matches).toEqual([]); // 구글 링크인데 짝 없음 — 화면이 name_hint로 검색을 잇는다
     // 링크의 좌표·원문은 돌려주지 않는다(matches의 좌표는 자체 DB 장소의 값)
@@ -662,7 +663,7 @@ describe("#9 — 카톡 대화에서 뽑은 링크 미리보기·핀 일괄 생�
     expect(items[0].result.matches[0].place_name).toBe("해운대 밀면");
     expect(items[1]).toMatchObject({ status: "ok", result: { provider: "naver", matches: [] } });
     expect(items[1].result).not.toHaveProperty("matched_by");
-    expect(items[2]).toMatchObject({ status: "error", error_code: "LINK_NOT_SUPPORTED" });
+    expect(items[2]).toMatchObject({ status: "ok", result: { provider: "naver", matches: [], needs_search_query: true } }); // #1048 네이버는 힌트 없이도 번호를 읽는다
     expect(items[3].result).toMatchObject({ provider: "google", matched_by: "hint" });
     expect(items[3].result.matches[0].place_name).toBe("해운대 바다 카페");
     // hints 길이가 urls와 다르면 422, 빈 배열은 허용
@@ -670,6 +671,26 @@ describe("#9 — 카톡 대화에서 뽑은 링크 미리보기·핀 일괄 생�
     expect((await send("/maps/map_1/pins/link-preview", "POST", { urls: [googleLink("해운대 밀면")], hints: [] })).status).toBe(200);
     // 응답에 힌트(상호명·주소)를 되돌리지 않는다(짝을 찾은 장소의 값만)
     expect(JSON.stringify(items[1])).not.toContain("역삼");
+  });
+
+  it("link-preview(#1047·#1048): 번호표에 학습된 네이버 링크는 matches(external_id), 이름이 달라도 주소가 같은 한 곳은 address_candidates(자동 확정 아님)", async () => {
+    const r = await send("/maps/map_1/pins/link-preview", "POST", {
+      urls: ["https://naver.me/learned1", "https://naver.me/FvTH6o34", "https://naver.me/IDkVeMFP"],
+      hints: [null, { name: "법인명과 전혀 다른 간판", address: "부산 해운대구 우동" }, { name: "없는 가게", address: "대전 중구 어딘가 999" }],
+    });
+    expect(r.status).toBe(200);
+    const { items } = await r.json();
+    expect(items[0].result).toMatchObject({ provider: "naver", external_id: "naver:learned1", matched_by: "external_id", needs_search_query: false });
+    expect(items[0].result.matches).toHaveLength(1);
+    // 같은 주소의 단일 점포는 후보로만 — matches는 비어 있고 matched_by도 없다
+    expect(items[1].result.matches).toEqual([]);
+    expect(items[1].result).not.toHaveProperty("matched_by");
+    expect(items[1].result.address_candidates).toHaveLength(1);
+    expect(items[1].result.address_candidates[0].pinnable).toBe(true);
+    // 주소가 같은 곳이 없으면 후보도 없다(지어내지 않는다)
+    expect(items[2].result).not.toHaveProperty("address_candidates");
+    // 응답에 힌트를 되돌리지 않는다
+    expect(JSON.stringify(items)).not.toContain("어딘가");
   });
 
   it("link-preview: 이미 지도에 있는 장소는 already_pinned_pin_id, 빈 목록·10개 초과·없는 지도는 에러", async () => {

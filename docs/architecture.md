@@ -297,7 +297,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 ### `PlaceSource` 어댑터 (v1에서는 카카오 실시간 검색 하나)
 
-`backend/places`의 `PlaceSource` 어댑터는 **카카오 실시간 검색(표시용)**에만 쓴다. `NaverPlaceSource`는 코드에 남아 있지만 켜지 않는다(`PLACES_SOURCES=kakao`, #188에서 기본값을 이렇게 바꾼다). 구글 소스(`GooglePlaceSource`)는 쓰지 않아 #423 작업 중에 지웠다. 자체 DB의 적재와 검색은 어댑터가 아니라 `places` 모듈의 적재 스크립트와 DB 쿼리가 맡는다(#189).
+`backend/places`의 `PlaceSource` 어댑터는 **카카오 실시간 검색(표시용)**에만 쓴다. `NaverPlaceSource`는 코드에 남아 있지만 켜지 않는다(`PLACES_SOURCES=kakao`, #188에서 기본값을 이렇게 바꾼다). **예외 1건(#1048, 2026-11-02 사용자 결정)**: 카톡 링크 가져오기에서 `naver.me` **단축 링크의 리다이렉트를 한 번 따라가** 장소 번호(`pinId`)만 읽는다(`kko.to`·`maps.app.goo.gl`과 같은 처리). 네이버 지도 페이지 본문은 열지 않고, 네이버 검색·장소 API·스크래핑은 여전히 쓰지 않는다(robots.txt가 장소 페이지 접근을 막는다). 구글 소스(`GooglePlaceSource`)는 쓰지 않아 #423 작업 중에 지웠다. 자체 DB의 적재와 검색은 어댑터가 아니라 `places` 모듈의 적재 스크립트와 DB 쿼리가 맡는다(#189).
 
 ### `places` 공개 함수 계약 (v1, #189·#190·#195가 공유)
 
@@ -309,6 +309,9 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 | `record_kakao_match(place_id, kakao_place_id, kakao_place_url) -> None` | pins(핀 생성 같은 트랜잭션) | 매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(`places.kakao_*`). **첫 값 유지**(#248) — 이미 다른 ID가 있으면 덮어쓰지 않고, 같은 ID면 확인 일자만 갱신한다. pins는 `kakao:<숫자 1~20자리>`일 때만 부른다(형식이 틀리면 매칭은 하되 기록하지 않는다). 없는 `place_id`면 `KeyError`다(호출 쪽이 매칭된 id만 넘긴다) |
 | `pinnable_flags(hints) -> list[bool]` | 검색 응답(`GET /places/search`) | 힌트마다 `match_place`가 성공할지 읽기만 해서 계산한다. **카카오 ID를 기록하지 않는다**(`record_kakao_match`와 분리) |
 | `match_by_name_address(name, address, *, db=None) -> list[PlaceSearchResult]` | pins(`POST /maps/{mapId}/pins/link-preview`의 `hints`, #946) | 공유 글의 **상호명 + 주소**로 자체 DB 장소의 짝을 찾는다(좌표가 없다). 규칙은 `pick_match`와 같은 임계값을 쓰되 좌표(거리)가 없어 **주소가 같다고 확인된 후보만** 확정한다 — 입력 주소가 없거나 후보 주소를 비교할 수 없으면(도로명↔지번 등 모름) 빈 목록이다. 유일성은 주소가 다르다고 판명된 후보만 뺀 전부로 본다(점수가 1등과 5% 이내인 다른 후보가 있으면 거절). 후보는 `name_norm` 인덱스로 좁히고 50개를 넘으면 체인점 수준으로 보고 거절한다. 상호명·주소는 저장·로그하지 않는다. 짝이 하나로 확실할 때만 1개(`pinnable=true`) |
+| `match_address_candidates(address, *, db=None) -> list[PlaceSearchResult]` | pins(`link-preview`의 `address_candidates`, #1047) | **이름이 안 맞아도** 입력 주소와 같은 도로명주소(건물번호까지)에 영업 중인 음식점·카페·관광지가 **정확히 한 곳**이면 그 하나를 사람이 확인할 후보로 돌려준다(자동 확정 아님, 가드레일 2·4). 같은 주소에 둘 이상(다중 입점 건물)이거나 주소를 비교할 수 없으면 빈 목록. 주소는 짝 찾기에만 쓰고 저장·로그하지 않는다 |
+| `record_external_id(provider, external_id, place_id, *, source, voter_hash=None, db=None) -> None` | pins(`link_ref`가 오면 핀 생성과 같은 트랜잭션, 실패해도 핀은 만들어진다), places 내부(`parse_link`가 힌트로 스스로 확정한 짝, `source='hint'`) | 카카오·네이버 장소 번호 → 자체 DB 장소 짝을 번호표에 기록한다(#1048). `source='user'`는 `voter_hash`당 한 표이고 서로 다른 2표가 쌓여야 `parse_link`가 자동 매칭에 쓴다. 번호만 저장한다(#53) |
+| `purge_external_id_votes(voter_hash, *, db=None) -> int` | auth(탈퇴 7일 뒤 정리) | 탈퇴한 사용자의 번호표 표를 지운다(#1048). 멱등 |
 | `get_places(place_ids) -> dict[str, PlaceInfo]` | pins(핀 응답), recommend(후보 응답) | `name`, `lat`, `lng`, `category`, `kakao_place_url`, `address`를 배치로 조회(N+1 금지). 없는 ID는 키에서 빠진다. `address`는 `place_link`가 동네를 자를 때 쓰고 응답에 그대로 싣지 않는다 |
 | `search_nearby_own(category, areas) -> list[PlaceRef]` | recommend(후보 풀) | 반경 안의 **영업 중**(`status='open'`) 장소의 `place_id`·좌표. 카테고리는 음식점·카페·관광지 |
 | `count_curated(category, areas) -> int` | recommend(readiness의 `curated_nearby`) | 원들 안의 영업 중 정예(`curated`) 장소 수(#799). 원 처리는 `search_nearby_own`과 같고 쿼리 한 번이다 |
