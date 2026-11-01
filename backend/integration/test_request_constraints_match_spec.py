@@ -46,12 +46,6 @@ KNOWN_DRIFT: dict[tuple[str, str, str], str] = {
     ("POST", "/maps/{mapId}/pins/bulk", ".pins[].place_name.maxLength"): "#733",   # 스펙 100 / 서버 None
     ("POST", "/maps/{mapId}/pins/bulk", ".pins[].search_query.maxLength"): "#733",   # 스펙 100 / 서버 None
     ("POST", "/maps/{mapId}/pins/bulk", ".pins[].search_query.minLength"): "#733",   # 스펙 1 / 서버 None
-    # #946 link-preview 힌트: 계약만 먼저 병합됐다. pins 구현(feat/pins-link-hints-946)이 요청 모델에 같은 제약을 넣고 이 다섯 줄을 지운다
-    ("POST", "/maps/{mapId}/pins/link-preview", ".hints.maxItems"): "#946",   # 스펙 10 / 서버 None
-    ("POST", "/maps/{mapId}/pins/link-preview", ".hints[].address.maxLength"): "#946",   # 스펙 200 / 서버 None
-    ("POST", "/maps/{mapId}/pins/link-preview", ".hints[].address.minLength"): "#946",   # 스펙 1 / 서버 None
-    ("POST", "/maps/{mapId}/pins/link-preview", ".hints[].name.maxLength"): "#946",   # 스펙 100 / 서버 None
-    ("POST", "/maps/{mapId}/pins/link-preview", ".hints[].name.minLength"): "#946",   # 스펙 1 / 서버 None
 }
 
 
