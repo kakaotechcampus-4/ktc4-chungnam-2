@@ -580,6 +580,34 @@ describe("#9 — 카톡 대화에서 뽑은 링크 미리보기·핀 일괄 생�
     for (const item of items.filter((i: { result?: object }) => i.result)) { expect(item.result).not.toHaveProperty("lat"); expect(item.result).not.toHaveProperty("lng"); }
   });
 
+  it("link-preview 힌트(#946): 상호명·주소로 자체 DB 짝을 찾고, 네이버는 힌트가 있을 때만, 모호하면 비운다", async () => {
+    const naver = "https://naver.me/abcd";
+    const r = await send("/maps/map_1/pins/link-preview", "POST", {
+      urls: [naver, naver, naver, googleLink("없는 가게"), "https://place.map.kakao.com/mock-6"],
+      hints: [
+        { name: "해운대 밀면", address: "부산 해운대구 우동" },       // 짝 하나 — 찾음
+        { name: "해운대 밀면", address: "서울 강남구 역삼동" },       // 주소가 어긋남 — 비운다
+        null,                                                       // 네이버인데 힌트 없음
+        { name: "해운대 바다 카페", address: "부산 해운대구 중동" }, // 구글 링크인데 짝 없음 → 힌트로 찾음
+        { name: "성수 노포 곱창", address: "서울 성동구 성수동2가" }, // 카카오 링크, 자체 DB에 없음(NOT_IN_OWN_DB) — 힌트로도 못 찾음
+      ],
+    });
+    expect(r.status).toBe(200);
+    const { items } = await r.json();
+    expect(items[0]).toMatchObject({ status: "ok", result: { provider: "naver", matched_by: "hint" } });
+    expect(items[0].result.matches[0].place_name).toBe("해운대 밀면");
+    expect(items[1]).toMatchObject({ status: "ok", result: { provider: "naver", matches: [] } });
+    expect(items[1].result).not.toHaveProperty("matched_by");
+    expect(items[2]).toMatchObject({ status: "error", error_code: "LINK_NOT_SUPPORTED" });
+    expect(items[3].result).toMatchObject({ provider: "google", matched_by: "hint" });
+    expect(items[3].result.matches[0].place_name).toBe("해운대 바다 카페");
+    // hints 길이가 urls와 다르면 422, 빈 배열은 허용
+    expect((await send("/maps/map_1/pins/link-preview", "POST", { urls: [naver, naver], hints: [null] })).status).toBe(422);
+    expect((await send("/maps/map_1/pins/link-preview", "POST", { urls: [googleLink("해운대 밀면")], hints: [] })).status).toBe(200);
+    // 응답에 힌트(상호명·주소)를 되돌리지 않는다(짝을 찾은 장소의 값만)
+    expect(JSON.stringify(items[1])).not.toContain("역삼");
+  });
+
   it("link-preview: 이미 지도에 있는 장소는 already_pinned_pin_id, 빈 목록·10개 초과·없는 지도는 에러", async () => {
     const pin = await (await send("/maps/map_1/pins", "POST", { category: "음식점", place_id: "kakao:mock-1", place_name: "해운대 밀면", lat: 35.1631, lng: 129.1639 })).json();
     const { items } = await (await send("/maps/map_1/pins/link-preview", "POST", { urls: [googleLink("해운대 밀면")] })).json();
