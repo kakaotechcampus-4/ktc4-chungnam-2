@@ -170,7 +170,7 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
       disabled={!card.ready}
       aria-pressed={selected}
       onClick={onPick}
-      className={`rounded-xl border-[1.5px] p-3 text-left ${wide ? 'col-span-2' : ''} ${
+      className={`press rounded-xl border-[1.5px] p-3 text-left ${wide ? 'col-span-2' : ''} ${
         selected ? 'border-brand-600 bg-brand-50' : card.ready ? 'border-[var(--good-line)] bg-white' : 'border-[var(--warn-line)] bg-white'
       }`}
     >

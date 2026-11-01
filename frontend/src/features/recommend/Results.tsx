@@ -71,7 +71,7 @@ export function ResultsHeader({ mapId, run, count }: { mapId: string; run: Recom
           type="button"
           disabled={!!busy}
           onClick={() => retry.mutate(run)}
-          className="shrink-0 text-right text-xs font-bold text-brand-600 disabled:opacity-50"
+          className="press shrink-0 rounded-md text-right text-xs font-bold text-brand-600 disabled:opacity-50"
         >
           <span className="flex items-center gap-1">
             <RotateCw size={12} aria-hidden="true" /> 다시 추천
@@ -122,7 +122,7 @@ export function ResultsBody({
   return (
     <div className={`space-y-3 ${enter ? 'enter-fade' : ''}`}>
       {conditions}
-      <button type="button" onClick={onHow} className="flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
+      <button type="button" onClick={onHow} className="press flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
         <span>
           조건으로 {removed}곳 걸러냄 → 추천 {result.candidates.length}곳
         </span>
@@ -189,7 +189,7 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
       onClick={(e) => {
         if (!(e.target as HTMLElement).closest('a, button')) focus()
       }}
-      className={`cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-brand-50 p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
+      className={`press cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-brand-50 p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
     >
       <header className="flex items-center gap-2">
         <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
