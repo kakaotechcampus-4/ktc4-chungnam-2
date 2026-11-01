@@ -207,3 +207,116 @@ def test_a_successful_create_charges_once_and_edits_and_reruns_charge_nothing(en
     unchanged("widen")
     _in_new_session(Session, lambda db: flows.execute_run(db, run_id=str(run_id), **_search()))
     unchanged("execute")
+
+
+# ---------- 첫 실행이 0곳이면 쓴 크레딧을 돌려준다 (#1015, docs/credits-reviews.md 3.3) ----------
+# 환불은 그 run의 첫 실행에서만, 같은 트랜잭션에서 한다. retry·widen은 처음부터 차감이 없고 절대 환불하지 않는다.
+
+def _empty_search():
+    return {"place_search": _FakePlaceSearch([]), "place_facts": _FakePlaceFacts()}
+
+
+def _ledger(Session, reason: str) -> list[tuple[str, int]]:
+    with Session() as db:
+        rows = db.execute(select(CreditLedger.ref_id, CreditLedger.delta).where(
+            CreditLedger.user_id == USER, CreditLedger.reason == reason).order_by(CreditLedger.created_at)).all()
+    return [(ref_id, delta) for ref_id, delta in rows]
+
+
+def _spent_delta(Session) -> int:
+    return sum(delta for _ref, delta in _ledger(Session, "spend"))
+
+
+def test_first_search_with_no_candidates_refunds_in_the_same_transaction(env):
+    """① execute:true 첫 검색이 0곳 → 원장에 spend와 refund가 모두 남고 잔액이 원래대로다."""
+    Session, _reactions = env
+    start = _balance(Session)
+    run_id = _create(Session, execute=True, **_empty_search())
+
+    assert _spends(Session) == [f"recommend_run:{run_id}"]
+    [(refund_ref, refund_delta)] = _ledger(Session, "refund")
+    assert str(run_id) in refund_ref and refund_delta == -_spent_delta(Session)
+    assert _balance(Session) == start   # 쓴 만큼 돌려받았다
+
+
+def test_a_first_search_with_results_keeps_the_charge(env):
+    """② 첫 실행이 결과를 냈으면 환불이 없다."""
+    Session, _reactions = env
+    start = _balance(Session)
+    _create(Session, execute=True, **_search())
+    assert _ledger(Session, "refund") == []
+    assert _balance(Session) == start + _spent_delta(Session) < start
+
+
+def test_a_later_retry_with_no_results_does_not_refund_the_first_charge(env):
+    """③ 첫 실행이 결과를 냈다면 그 뒤 retry가 0건이어도 첫 차감은 그대로다."""
+    Session, _reactions = env
+    start = _balance(Session)
+    run_id = _create(Session, execute=True, **_search())
+    after_first = _balance(Session)
+
+    _in_new_session(Session, lambda db: flows.retry_run(db, run_id=str(run_id), **_empty_search()))
+
+    assert _ledger(Session, "refund") == [] and _spends(Session) == [f"recommend_run:{run_id}"]
+    assert _balance(Session) == after_first == start + _spent_delta(Session)
+
+
+def test_widen_with_no_results_never_refunds_and_never_refunds_twice_after_a_zero_first_run(env):
+    """④ widen 0건도 환불이 없다. 첫 실행이 0곳이라 한 번 환불된 뒤에는 retry·widen이 0건이어도 환불이 늘지 않는다."""
+    Session, _reactions = env
+    kept = _create(Session, execute=True, **_search())
+    _in_new_session(Session, lambda db: flows.widen_run(db, run_id=str(kept), **_empty_search()))
+    assert _ledger(Session, "refund") == []
+
+    start = _balance(Session)
+    zero_run = _create(Session, execute=True, **_empty_search(), idempotency_key="zero-run-key-1")
+    assert len(_ledger(Session, "refund")) == 1
+    balance = _balance(Session)
+    assert balance == start   # 두 번째 run의 차감은 환불됐다
+
+    _in_new_session(Session, lambda db: flows.retry_run(db, run_id=str(zero_run), **_empty_search()))
+    _in_new_session(Session, lambda db: flows.widen_run(db, run_id=str(zero_run), **_empty_search()))
+    assert len(_ledger(Session, "refund")) == 1 and _balance(Session) == balance
+
+
+def test_the_separate_execute_call_refunds_only_on_the_runs_first_execution(env):
+    """⑤ 따로 부르는 POST /runs/{id}/execute — 그 run의 첫 실행이 0곳이면 환불, 이미 실행한 run의 다시 실행은 환불하지 않는다."""
+    Session, _reactions = env
+    start = _balance(Session)
+    run_id = _create(Session)   # execute 없이 — 차감만 하고 collecting_evidence로 둔다
+    assert _spends(Session) == [f"recommend_run:{run_id}"] and _ledger(Session, "refund") == []
+
+    _in_new_session(Session, lambda db: flows.execute_run(db, run_id=str(run_id), **_empty_search()))
+    assert len(_ledger(Session, "refund")) == 1 and _balance(Session) == start
+
+    _in_new_session(Session, lambda db: flows.execute_run(db, run_id=str(run_id), **_empty_search()))   # 이미 실행한 run
+    assert len(_ledger(Session, "refund")) == 1
+
+    with_results = _create(Session)   # 첫 실행이 결과를 내는 run은 환불이 없다
+    _in_new_session(Session, lambda db: flows.execute_run(db, run_id=str(with_results), **_search()))
+    assert len(_ledger(Session, "refund")) == 1
+
+
+def test_an_idempotent_resend_does_not_refund_twice(env):
+    """⑥ 같은 Idempotency-Key 재전송은 같은 run이고 환불도 한 번이다."""
+    Session, _reactions = env
+    start = _balance(Session)
+    first = _create(Session, execute=True, idempotency_key="refund-key-0001", **_empty_search())
+    again = _create(Session, execute=True, idempotency_key="refund-key-0001", **_empty_search())
+
+    assert first == again
+    assert len(_ledger(Session, "refund")) == 1 and _spends(Session) == [f"recommend_run:{first}"]
+    assert _balance(Session) == start
+
+
+def test_a_refund_at_the_balance_cap_adds_nothing_but_still_leaves_its_ledger_row(env):
+    """⑦ 잔액 상한에서는 환불이 0이어도 refund 원장 줄(ref_id)이 남는다 — 그 run의 환불은 끝났다(멱등)."""
+    Session, _reactions = env
+    with Session() as db:
+        db.add(CreditAccount(user_id=USER, balance=31))   # 상한(30) 위에서 시작 — 차감 뒤 30, 환불로 더 채울 자리가 없다
+        db.commit()
+    run_id = _create(Session, execute=True, **_empty_search())
+
+    [(refund_ref, refund_delta)] = _ledger(Session, "refund")
+    assert str(run_id) in refund_ref and refund_delta == 0
+    assert _balance(Session) == 30
