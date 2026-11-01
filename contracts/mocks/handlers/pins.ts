@@ -1,7 +1,7 @@
 import { http, HttpResponse } from "msw";
 import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError, pinPermissions } from "../util";
-import { NOT_IN_OWN_DB, SEED_PLACES } from "./places";
+import { NOT_IN_OWN_DB, SEED_PLACES, isPinnable } from "./places";
 import { CATEGORY_RULES } from "../categories";
 import { chipsFor } from "../chips";
 
@@ -207,7 +207,7 @@ export const pinsHandlers = [
         const norm = (s: string) => s.replace(/[(\[（][^)\]）]*[)\]）]/g, "").replace(/[^0-9a-zA-Z가-힣]/g, "").toLowerCase();
         const agrees = (addr: string) => !hint.address || norm(addr).includes(norm(hint.address).slice(0, 6)) || norm(hint.address).includes(norm(addr).slice(0, 6));
         const found = SEED_PLACES.filter(
-          (p) => !NOT_IN_OWN_DB.has(p.place_id) && p.category !== "숙소" && p.category !== "기타" && norm(p.place_name) === norm(hint.name!) && agrees(p.address ?? ""),
+          (p) => isPinnable(p) && norm(p.place_name) === norm(hint.name!) && agrees(p.address ?? ""),
         );
         if (found.length === 1) {
           own = found[0];
