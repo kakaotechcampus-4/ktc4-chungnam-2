@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from authz.schemas import Permissions
 from common import categories
+from places.schemas import ExternalSearch   # 카카오맵 검색 링크 응답 — 정의는 places(#903), 추천 응답도 같은 타입
 
 Category = Literal[categories.recommendable()]  # 스펙의 RecommendCategory(common/categories.py, #280)
 RunStatus = Literal["collecting_evidence", "awaiting_region_confirm", "executing", "done", "failed"]
@@ -24,12 +25,6 @@ class Check(BaseModel):
     passed: bool
     confidence: LabelConfidence
     needs_check: bool
-
-
-class ExternalSearch(BaseModel):
-    """카카오맵 검색 링크(#798) — 결과가 없거나 적을 때 사람이 밖에서 찾는 출구. AI 추천 결과가 아니다."""
-    query: str = Field(max_length=100)
-    url: str = Field(max_length=2000)
 
 
 class Readiness(BaseModel):

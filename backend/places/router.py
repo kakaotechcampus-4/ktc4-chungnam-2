@@ -18,8 +18,7 @@ from common.database import get_db_session
 from common.errors import AppError
 from common import categories, geo
 from places import api, logguard, matching
-from recommend.schemas import ExternalSearch
-from places.schemas import LinkParseResult, PlaceHint, PlaceSearchResult
+from places.schemas import ExternalSearch, LinkParseResult, PlaceHint, PlaceSearchResult
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["places"])
