@@ -198,6 +198,8 @@ def restore_item(db: Session, *, map_id: str, pin_id: str, added_by: str) -> boo
     ).first()
     if exists is not None:
         return False
-    db.add(ShortlistItemRow(map_id=map_id, pin_id=uuid.UUID(pin_id), added_by=added_by))
+    # added_at 기본값 now()는 트랜잭션 시작 시각이다 — 잠금을 기다리는 사이 다른 트랜잭션이 항목을 추가·커밋하면
+    # 복구 항목이 더 과거가 되어 「맨 뒤」가 깨진다. 잠금을 얻은 뒤의 실제 시각을 쓴다.
+    db.add(ShortlistItemRow(map_id=map_id, pin_id=uuid.UUID(pin_id), added_by=added_by, added_at=func.clock_timestamp()))
     db.flush()
     return True

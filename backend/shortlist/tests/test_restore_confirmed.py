@@ -75,3 +75,17 @@ def test_many_items_have_no_limit(db_session):
 def test_missing_pin_is_404(db_session):
     with pytest.raises(AppError):
         api.restore_confirmed(db_session, pin_id="00000000-0000-0000-0000-000000000000")
+
+
+def test_restored_item_uses_clock_timestamp_not_transaction_start(db_session):
+    # 기본값 now()(트랜잭션 시작 시각)로 만든 항목보다 복구 항목의 added_at이 뒤다 — 잠금 대기 중 다른 추가가 끼어도 맨 뒤
+    existing = _pin(db_session, "m1", kind="확정")
+    db_session.add(ShortlistItem(map_id="m1", pin_id=existing.id, added_by="u1"))
+    back = _pin(db_session, "m1")
+    db_session.flush()
+
+    api.restore_confirmed(db_session, pin_id=str(back.id))
+
+    added = {i.pin_id: i.added_at for i in db_session.query(ShortlistItem).all()}
+    assert added[back.id] > added[existing.id]
+    assert service.list_items(db_session, map_id="m1")[-1].pin_id == back.id
