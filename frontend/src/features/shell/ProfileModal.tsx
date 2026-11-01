@@ -118,7 +118,7 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
 
       <div className="mb-2 mt-6 flex items-center justify-between">
         <h3 className="text-sm font-bold text-ink-900">구성원</h3>
-        {isOwner && (members.data?.length ?? 0) > 1 && (
+        {isOwner && members.data?.some((m) => !m.isMe && !m.isGuest) && (
           <button type="button" onClick={() => onConfirm('owner')} className="btn-link text-sm">
             방장 넘기기
           </button>
@@ -135,6 +135,7 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
               {m.isMe && <span className="ml-1 text-ink-500">(나)</span>}
             </span>
             {m.isOwner && <span className="tag tag-neutral">방장</span>}
+            {m.isGuest && <span className="tag tag-neutral">게스트</span>}
           </li>
         ))}
       </ul>
