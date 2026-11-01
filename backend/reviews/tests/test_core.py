@@ -1,10 +1,11 @@
-"""후기 순수 규칙 — 장소 찾기, 평균 반올림, 커서, 응답 조립. DB 없이 직접 부른다."""
+"""후기 순수 규칙 — 장소 찾기, 평균 반올림, 쪽 나누기, 응답 조립. DB 없이 직접 부른다. 커서 자체는 common/tests/test_cursor.py(#973)."""
 
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from common.cursor import decode_cursor
 from common.errors import AppError
 from reviews import core
 
@@ -34,19 +35,6 @@ def test_average_is_one_decimal_rounding_half_up(total, count, expected):
     assert core.average(total, count) == expected
 
 
-def test_cursor_round_trips():
-    review_id = uuid.uuid4()
-    assert core.decode_cursor(core.encode_cursor(T0, review_id)) == (T0, review_id)
-
-
-@pytest.mark.parametrize("cursor", ["nope", "%%%", core.encode_cursor(T0, uuid.uuid4())[:-3] + "!!!",
-                                    "MjAyNi0xMS0wMVQwMzowMDowMHxub3QtYS11dWlk"])
-def test_bad_cursor_is_validation_error(cursor):
-    with pytest.raises(AppError) as exc:
-        core.decode_cursor(cursor)
-    assert exc.value.code == "VALIDATION_ERROR"
-
-
 def test_page_marks_mine_and_cursor_points_at_last_shown():
     rows = [_row(i, "me" if i == 1 else "other") for i in range(4)]
 
@@ -54,7 +42,7 @@ def test_page_marks_mine_and_cursor_points_at_last_shown():
 
     assert [i["is_mine"] for i in items] == [False, True, False]
     assert "user_id" not in items[0]
-    assert core.decode_cursor(cursor) == (rows[2].created_at, rows[2].id)
+    assert decode_cursor(cursor) == (rows[2].created_at, rows[2].id)
 
 
 def test_page_without_more_rows_has_no_cursor():
