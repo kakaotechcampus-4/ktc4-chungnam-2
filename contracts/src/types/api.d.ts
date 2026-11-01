@@ -1574,7 +1574,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** 핀 삭제 — 지도 구성원 누구나 (#25, 9/4 결정). 요청자별 가능 여부는 Pin.permissions.can_delete */
+        /** 핀 삭제 — 찍은 사람과 방장 (#965, */
         delete: {
             parameters: {
                 query?: never;
@@ -1593,6 +1593,7 @@ export interface paths {
                     };
                     content?: never;
                 };
+                403: components["responses"]["Forbidden"];
             };
         };
         options?: never;

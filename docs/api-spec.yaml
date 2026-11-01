@@ -784,9 +784,11 @@ paths:
         "422": { description: "검증 실패 (VALIDATION_ERROR) — 빈 객체, 메모 200자 초과, db 핀의 분류 변경, 반응이 있는 핀의 분류 변경, 숙소·기타", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       tags: [pins]
-      summary: 핀 삭제 — 지도 구성원 누구나 (#25, 9/4 결정). 요청자별 가능 여부는 Pin.permissions.can_delete
+      summary: 핀 삭제 — 찍은 사람과 방장 (#965, #25 변경). 요청자별 가능 여부는 Pin.permissions.can_delete
       parameters: [ { $ref: "#/components/parameters/PinId" } ]
-      responses: { "204": { description: 삭제됨 } }
+      responses:
+        "204": { description: 삭제됨 }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /pins/{pinId}/resolve:
     post:

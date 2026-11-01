@@ -272,6 +272,7 @@ export const pinsHandlers = [
     const pinId = params.pinId as string;
     const pin = store.pins[pinId];
     if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    if (!pinPermissions(pin).can_delete) return apiError(403, "FORBIDDEN", "찍은 사람과 방장만 지울 수 있어요");
     delete store.pins[pinId];
     delete store.reactions[pinId];
     emitEvent(pin.map_id, "public", "pin.deleted", { pin_id: pinId });

@@ -18,7 +18,8 @@ export function pinPermissions(pin: Pin) {
     can_revert: true, // member.actions: pin.revert (구성원 누구나)
     can_add_to_shortlist: pin.kind !== "확정",
     can_remove_from_shortlist: pin.kind === "확정",
-    can_delete: true, // #25: 구성원 누구나
+    // #965: 찍은 사람과 방장(#25 「구성원 누구나」를 바꿈). 목 서버의 나는 시드 지도의 방장이다
+    can_delete: pin.created_by === ME_USER_ID || (store.members[pin.map_id] ?? []).some((m) => m.user_id === ME_USER_ID && m.role === "owner"),
     can_edit: pin.created_by === ME_USER_ID && pin.kind === "일반", // #466 pin.edit: 찍은 사람만, AI 추천·확정 핀은 제외
   };
 }

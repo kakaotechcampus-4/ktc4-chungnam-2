@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
-import { createMarkerLayer, type MarkerLayer } from './markerLayer'
+import { createMarkerLayer, mapFade, type MarkerLayer } from './markerLayer'
 import { createCandidateMarkerElement, createSearchMarkerElement, markSelected } from './pinMarker'
 import type { PlaceSearchResultDto } from '@/features/search/model'
 import { isDesktopNow } from '@/features/shell/useIsDesktop'
@@ -117,6 +117,10 @@ export default function MapCanvas({
           level: 5,
         })
         const layer = createMarkerLayer(maps, map, (pinId) => callbacks.current.onSelect(pinId))
+        // 가까이 볼수록 바탕 지도를 옅게 한다(index.css .map-base). 멀리 볼 땐 바탕 그대로다.
+        const container = containerRef.current
+        const fade = () => container.style.setProperty('--map-fade', String(mapFade(map.getLevel())))
+        fade()
         layerRef.current = layer
 
         // focusPin 이 옮기기를 마치고 확대하려고 기다리는 중이면 그 idle 처리기.
@@ -137,11 +141,13 @@ export default function MapCanvas({
         maps.event.addListener(map, 'dragstart', onDragStart)
         maps.event.addListener(map, 'idle', onIdle)
         maps.event.addListener(map, 'click', onClick)
+        maps.event.addListener(map, 'zoom_changed', fade)
         detach = () => {
           cancelZoom()
           maps.event.removeListener(map, 'dragstart', onDragStart)
           maps.event.removeListener(map, 'idle', onIdle)
           maps.event.removeListener(map, 'click', onClick)
+          maps.event.removeListener(map, 'zoom_changed', fade)
         }
 
         mapRef.current = { maps, map }
@@ -369,7 +375,7 @@ export default function MapCanvas({
 
   return (
     <div className="fixed inset-0 bg-ink-100" style={leftInset ? { left: leftInset } : undefined}>
-      <div ref={containerRef} className="h-full w-full" />
+      <div ref={containerRef} className="map-base h-full w-full" />
       {!ready && (
         <div className="absolute inset-x-0 top-32 flex flex-col items-center gap-1 px-4 text-center">
           {error ? (
