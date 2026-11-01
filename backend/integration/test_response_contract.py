@@ -21,7 +21,10 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 # 알고 있고 이슈로 추적 중인 응답 불일치. (표식 문자열들) -> 이슈. 새 불일치가 생기면 실패하고, 고쳐졌는데 남아 있어도 실패한다.
-KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
+KNOWN_DRIFT: dict[tuple[str, ...], str] = {
+    # #955 Member.is_guest: 계약만 먼저 병합됐다. maps 구현(feat/maps-member-is-guest-955)이 응답에 싣고 이 줄을 지운다
+    ("members", "is_guest"): "#955",
+}
 
 # 크레딧 계약 테스트(test_credits_responses_match_the_openapi_spec)만의 알려진 차이. 메인 테스트는 /credits/me를 부르지 않아
 # 위 KNOWN_DRIFT에 두면 「이미 고쳐졌다」로 걸린다. 비어 가는 것이 정상이다.

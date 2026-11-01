@@ -18,6 +18,8 @@ from notifications.tests.conftest import BASE_DATABASE_URL, TEST_DB_NAME, replac
 BACKEND = Path(__file__).resolve().parents[2]
 REVISION = "0031_notifications"
 PREVIOUS = "0030_agent_cursor_drop_gap_seq"
+ACTOR_REVISION = "0051_notification_actor_id"
+ACTOR_PREVIOUS = "0050_drop_course_user_index"
 MODELS = (Notification, NotificationPref)
 TABLES = {m.__tablename__ for m in MODELS}
 MIG_DB = f"{TEST_DB_NAME}_notif_mig"[:63]
@@ -66,10 +68,11 @@ def test_upgrade_matches_models_and_downgrade_removes_them(mig_url):
         for model in MODELS:
             migrated = {c["name"]: (c["nullable"], str(c["type"].compile(engine.dialect)))
                         for c in inspector.get_columns(model.__tablename__)}
-            declared = {c.name: (c.nullable, str(c.type.compile(engine.dialect))) for c in model.__table__.columns}
+            declared = {c.name: (c.nullable, str(c.type.compile(engine.dialect))) for c in model.__table__.columns
+                        if c.name != "actor_id"}      # actor_id는 0051이 더한다(아래 테스트)
             assert migrated == declared, model.__tablename__
         assert {i["name"] for i in inspector.get_indexes("notifications")} == {
-            "ix_notifications_user_created", "ix_notifications_user_unread"}
+            "ix_notifications_user_created", "ix_notifications_user_unread"}   # ix_notifications_actor는 0051
         unread = next(i for i in inspector.get_indexes("notifications") if i["name"] == "ix_notifications_user_unread")
         assert "read_at IS NULL" in unread["dialect_options"]["postgresql_where"]
         assert inspector.get_pk_constraint("notification_prefs")["constrained_columns"] == ["user_id", "type"]
@@ -84,3 +87,26 @@ def test_upgrade_matches_models_and_downgrade_removes_them(mig_url):
     finally:
         engine.dispose()
     command.upgrade(cfg, REVISION)      # 다시 올려도 깨지지 않는다
+
+
+def test_0051_adds_actor_id_column_and_partial_index_and_downgrades_cleanly(mig_url):
+    cfg = _config()
+    command.upgrade(cfg, ACTOR_REVISION)
+    engine = sa.create_engine(mig_url)
+    try:
+        inspector = sa.inspect(engine)
+        actor = next(c for c in inspector.get_columns("notifications") if c["name"] == "actor_id")
+        assert actor["nullable"]
+        index = next(i for i in inspector.get_indexes("notifications") if i["name"] == "ix_notifications_actor")
+        assert index["column_names"] == ["actor_id"]
+        assert "actor_id IS NOT NULL" in index["dialect_options"]["postgresql_where"]
+        assert not inspector.get_foreign_keys("notifications")
+    finally:
+        engine.dispose()
+
+    command.downgrade(cfg, ACTOR_PREVIOUS)
+    engine = sa.create_engine(mig_url)
+    try:
+        assert "actor_id" not in {c["name"] for c in sa.inspect(engine).get_columns("notifications")}
+    finally:
+        engine.dispose()
