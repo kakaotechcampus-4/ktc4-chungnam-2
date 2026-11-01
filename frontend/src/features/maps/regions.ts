@@ -25,8 +25,15 @@ export const REGIONS: MapRegion[] = [
 ]
 
 /**
- * v1 장소 데이터(자체 DB)가 있는 시·도. 다른 지역을 고르면 모든 검색이 「아직 지원하지 않는 장소예요」로 끝나서
- * 고르지 못하게 하고 「곧 열려요」로 보여 준다(#351, docs/demo-guide.md — 서울 음식점·카페만). 데이터가 늘면 여기에 더한다.
+ * 장소 데이터(자체 DB)가 있는 시·도와 덧붙일 말. 없는 지역을 고르면 모든 검색이 「아직 지원하지 않는 장소예요」로 끝나서
+ * 고르지 못하게 하고 「곧 열려요」로 보여 준다(#351). 서울 밖은 정예DB 공유본 2026-10-25판(#966, deploy_rules.md).
+ * 강원은 춘천 데이터만 있다. 데이터가 늘면 여기에 더한다.
  */
-export const AVAILABLE_REGIONS = new Set(['서울특별시'])
-
+export const AVAILABLE_REGIONS: Record<string, string | null> = {
+  서울특별시: null,
+  부산광역시: null,
+  대구광역시: null,
+  광주광역시: null,
+  대전광역시: null,
+  강원특별자치도: '춘천만',
+}
