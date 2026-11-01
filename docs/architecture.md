@@ -305,9 +305,10 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 | 함수 | 쓰는 곳 | 하는 일 |
 |---|---|---|
-| `match_place(hint) -> PlaceMatch \| None` | pins(핀 생성) | 힌트(`kakao_place_id`, `name`, `lat`, `lng`, `category`)에 맞는 **자체 DB 장소 한 건**을 찾는다. 읽기 전용. 반경 상한(기본 300m)·후보 수 상한·분류 일치·이름 일치를 모두 만족할 때만 돌려준다. 동명 점포가 여럿이면 이름 일치 + 거리 순으로 한 건, **확신이 낮으면 `None`**(엉뚱한 곳에 핀이 꽂히는 것보다 거절이 낫다) |
+| `match_place(hint) -> PlaceMatch \| None` | pins(핀 생성) | 힌트(`kakao_place_id`, `name`, `lat`, `lng`, `category`, `address`)에 맞는 **자체 DB 장소 한 건**을 찾는다. 읽기 전용. 반경 상한(300m)·후보 수 상한(20)·분류 일치·이름 일치(점수 0.8 이상)를 만족할 때만 돌려준다. **주소**가 있으면 주소가 다른 후보는 뺀다(`address_agreement`가 False) — 주소가 같으면 이름이 모자라도 0.5까지 구제한다. **동명 점포 모호성**: 1등과 점수가 5% 이내인 2등이 30m 안(주소 일치 여부가 같을 때)이면 거절한다. 판정 정본은 `places/matching.py`(`pick_match`) 한 곳이다. 모호하면 None(가드레일 2) |
 | `record_kakao_match(place_id, kakao_place_id, kakao_place_url) -> None` | pins(핀 생성 같은 트랜잭션) | 매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(`places.kakao_*`). **첫 값 유지**(#248) — 이미 다른 ID가 있으면 덮어쓰지 않고, 같은 ID면 확인 일자만 갱신한다. pins는 `kakao:<숫자 1~20자리>`일 때만 부른다(형식이 틀리면 매칭은 하되 기록하지 않는다). 없는 `place_id`면 `KeyError`다(호출 쪽이 매칭된 id만 넘긴다) |
 | `pinnable_flags(hints) -> list[bool]` | 검색 응답(`GET /places/search`) | 힌트마다 `match_place`가 성공할지 읽기만 해서 계산한다. **카카오 ID를 기록하지 않는다**(`record_kakao_match`와 분리) |
+| `match_by_name_address(name, address, *, db=None) -> list[PlaceSearchResult]` | pins(`POST /maps/{mapId}/pins/link-preview`의 `hints`, #946) | 공유 글의 **상호명 + 주소**로 자체 DB 장소의 짝을 찾는다(좌표가 없다). 규칙은 `pick_match`와 같은 임계값을 쓰되 좌표(거리)가 없어 **주소가 같다고 확인된 후보만** 확정한다 — 입력 주소가 없거나 후보 주소를 비교할 수 없으면(도로명↔지번 등 모름) 빈 목록이다. 유일성은 주소가 다르다고 판명된 후보만 뺀 전부로 본다(점수가 1등과 5% 이내인 다른 후보가 있으면 거절). 후보는 `name_norm` 인덱스로 좁히고 50개를 넘으면 체인점 수준으로 보고 거절한다. 상호명·주소는 저장·로그하지 않는다. 짝이 하나로 확실할 때만 1개(`pinnable=true`) |
 | `get_places(place_ids) -> dict[str, PlaceInfo]` | pins(핀 응답), recommend(후보 응답) | `name`, `lat`, `lng`, `category`, `kakao_place_url`, `address`를 배치로 조회(N+1 금지). 없는 ID는 키에서 빠진다. `address`는 `place_link`가 동네를 자를 때 쓰고 응답에 그대로 싣지 않는다 |
 | `search_nearby_own(category, areas) -> list[PlaceRef]` | recommend(후보 풀) | 반경 안의 **영업 중**(`status='open'`) 장소의 `place_id`·좌표. 카테고리는 음식점·카페·관광지 |
 | `count_curated(category, areas) -> int` | recommend(readiness의 `curated_nearby`) | 원들 안의 영업 중 정예(`curated`) 장소 수(#799). 원 처리는 `search_nearby_own`과 같고 쿼리 한 번이다 |
