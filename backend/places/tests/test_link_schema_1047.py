@@ -10,9 +10,10 @@ def _place(i: int) -> PlaceSearchResult:
     return PlaceSearchResult(place_id=f"own:{i}", place_name="가게", lat=37.5, lng=127.0, category="음식점", pinnable=True)
 
 
-def test_new_fields_default_to_nothing():
+def test_new_fields_default_to_nothing_and_are_left_out_of_the_response():
     result = LinkParseResult(provider="kakao", matches=[], needs_search_query=True)
-    assert result.external_id is None and result.address_candidates == [] and result.matched_by is None
+    assert "address_candidates" not in result.model_dump(exclude_none=True)
+    assert result.external_id is None and result.address_candidates is None and result.matched_by is None
 
 
 def test_old_shaped_payload_still_parses_and_new_values_are_accepted():
