@@ -1422,6 +1422,7 @@ export interface paths {
          *     항목마다 결과가 따로 온다(`items[i]`, `index`는 요청 `urls`의 순서) — 일부가 실패해도 요청은 200이다. 요청 형식 오류(빈 목록, 10개 초과, 2000자 초과)만 422.
          *     - `result.matches`가 있으면 그 장소로 `source: search` 핀(`bulk` 또는 `POST /maps/{mapId}/pins`). 없으면 구글 링크는 `result.name_hint`로 GET /places/search를 이어 가고, 카카오 링크는 `result.needs_search_query`(사용자가 이름을 입력해 `source: live`).
          *     - `already_pinned_pin_id`가 있으면 이미 지도에 있는 곳이다(자체 DB 핀이든 실시간 핀이든, #569와 같은 기준). 화면은 목록에서 빼고 "이미 있음"으로 보여 준다(가드레일 6).
+         *     **상호명·주소 힌트(#946)**: 지도 앱 공유 글이 정확히 세 줄(상호명, 주소, 링크)일 때 화면이 읽은 상호명·주소를 `hints`로 같이 보낼 수 있다(`hints[i]`는 `urls[i]`의 힌트, 없으면 `null`). 링크가 자체 DB 장소로 이어지지 않을 때(`matches`가 비었거나 네이버 링크일 때) 서버가 **상호명 + 주소로 자체 DB 장소의 짝**을 찾는다. 규칙은 이미 있는 같은 가게 맞추기와 같다(이름 일치 점수, 주소가 어긋나지 않음, 모호하면 거절). 짝이 **하나로 확실할 때만** `matches`에 넣고 `matched_by: hint`로 표시한다. 체인점·동명 가게처럼 둘 이상이거나 주소가 어긋나면 지어내지 않고 `matches: []`로 둔다(가드레일 2). 네이버 링크는 **서버가 링크를 열지 않는다**(장소 번호뿐이라 해석 불가) — 힌트가 있을 때만 `provider: naver`, 상호명·주소로 짝을 찾고, 힌트가 없으면 지금처럼 `LINK_NOT_SUPPORTED`다. 상호명·주소는 응답에 되돌리지 않고(짝을 찾은 장소의 값만 나간다) 서버도 저장·로그하지 않는다.
          *     응답에 링크의 좌표·원문 URL을 싣지 않고 서버도 남기지 않는다. 지도 구성원 누구나(`pin.create`, 게스트 포함). 사용자당 URL 수 기준 호출 상한이 있다(초과 시 429 `RATE_LIMITED`, 기본 분당 60개).
          */
         post: {
@@ -4129,8 +4130,16 @@ export interface components {
         };
         /** @description 링크에서 읽은 단서 (#474). 저장되지 않는다 */
         LinkParseResult: {
-            /** @enum {string} */
-            provider: "google" | "kakao";
+            /**
+             * @description naver는 link-preview에서 힌트(상호명·주소)와 함께 온 네이버 링크일 때만(#946) — 서버는 네이버 링크를 열지 않는다
+             * @enum {string}
+             */
+            provider: "google" | "kakao" | "naver";
+            /**
+             * @description matches를 어떻게 찾았는지(#946). link = 링크가 가리키는 장소(카카오 ID·구글 좌표와 이름), hint = 상호명·주소 힌트로 맞춘 짝. 화면이 「상호명·주소로 찾았어요」를 보일 때 쓴다. matches가 비었으면 없다
+             * @enum {string}
+             */
+            matched_by?: "link" | "hint";
             /** @description 구글 링크에 든 장소 이름(사용자가 붙인 링크의 값). 화면이 GET /places/search로 이어 가는 데 쓴다. 카카오 링크에는 없다 */
             name_hint?: string;
             /** @description 카카오 링크에서 뽑은 장소 ID(예 kakao:1234). 저장이 허용된 유일한 카카오 값 — live 핀의 kakao_place_id로 그대로 쓴다 */
@@ -4141,8 +4150,15 @@ export interface components {
             needs_search_query: boolean;
         };
         LinkPreviewRequest: {
-            /** @description 화면이 대화 텍스트에서 정규식으로 뽑은 지도 링크(구글맵·카카오맵). 대화 원문은 보내지 않는다 */
+            /** @description 화면이 대화 텍스트에서 정규식으로 뽑은 지도 링크(구글맵·카카오맵, 힌트가 있으면 네이버 지도). 대화 원문은 보내지 않는다 */
             urls: string[];
+            /** @description (#946, 선택) `urls[i]`의 상호명·주소 힌트. 길이는 `urls`와 같거나 비어 있어야 하고(다르면 422), 힌트가 없는 항목은 null이다. 서버가 상호명 + 주소로 자체 DB 짝을 찾는 데만 쓰고 저장·로그하지 않는다 */
+            hints?: ({
+                /** @description 공유 글의 상호명 */
+                name?: string;
+                /** @description 공유 글의 주소(없을 수 있다) */
+                address?: string;
+            } | null)[];
         };
         LinkPreviewItem: {
             /** @description 요청 `urls`의 순서(0부터) */
