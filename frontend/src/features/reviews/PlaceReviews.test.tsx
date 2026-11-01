@@ -6,6 +6,7 @@ import type { ReactNode } from 'react'
 import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
+import { creditKeys } from '@/features/credits/queries'
 import type { Pin } from '@/features/map/model'
 import { PinDetailBody } from '@/features/map/PinDetail'
 import { useToastStore } from '@/features/shell/toast'
@@ -24,8 +25,9 @@ afterEach(() => {
 })
 afterAll(() => server.close())
 
-function renderWithClient(ui: ReactNode) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+const newClient = () => new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+function renderWithClient(ui: ReactNode, client = newClient()) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>{ui}</MemoryRouter>
@@ -88,16 +90,19 @@ describe('장소 후기(#953)', () => {
     expect(await screen.findByText('줄이 길어졌어요')).toBeInTheDocument()
   })
 
-  it('잔액이 가득 차도(credits-full) 따로 알리지 않는다 — 같은 한 줄, 같은 토스트', async () => {
+  it('잔액이 가득 차면(credits-full) 보상 한 줄을 숨긴다 — 대신할 문구 없이, 토스트는 같다', async () => {
     resetScenario('credits-full')
-    const { review_reward } = await get<{ review_reward: number }>('/credits/me')
+    const credits = await get<{ balance: number; max_balance: number }>('/credits/me')
+    expect(credits.balance).toBeGreaterThanOrEqual(credits.max_balance)
+    const client = newClient()
     const user = userEvent.setup()
-    renderWithClient(<PlaceReviews pin={await pin1()} />)
+    renderWithClient(<PlaceReviews pin={await pin1()} />, client)
 
     await user.click(await screen.findByRole('button', { name: '후기 쓰기' }))
     const sheet = await screen.findByRole('dialog')
-    expect(await within(sheet).findByText(`후기를 작성하면 ${review_reward} 크레딧이 충전돼요`)).toBeInTheDocument()
-    expect(within(sheet).getAllByText(/크레딧/)).toHaveLength(1)
+    // 로딩 중에는 보이는 게 정상이라, 잔액 응답을 받은 뒤에 줄이 없는지 본다
+    await waitFor(() => expect(client.getQueryState(creditKeys.me)?.status).toBe('success'))
+    expect(within(sheet).queryByText(/크레딧/)).not.toBeInTheDocument()
     await writeReview(user, '4점', '가득 찼어도 써요')
     await waitFor(() => expect(toast()).toBe('후기를 저장했어요'))
   })

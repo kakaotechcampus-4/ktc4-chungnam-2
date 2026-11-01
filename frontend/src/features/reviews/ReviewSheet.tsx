@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 import ErrorText from '@/ErrorText'
 import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
-import { creditBlock, guestCreditText, reviewRewardText } from '@/features/credits/model'
+import { creditBlock, guestCreditText, reviewRewardText, showsReviewReward } from '@/features/credits/model'
 import { useCreditsQuery } from '@/features/credits/queries'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
@@ -15,7 +15,7 @@ import { useSaveReviewMutation } from './queries'
 /**
  * 후기 쓰기·고치기 시트(#953). 내 후기가 있으면 그 값으로 열어 고친다. 글 상한은 응답의 limits.body_max 다(숫자를 적지 않는다).
  * 크레딧 문구는 새 후기 작성 시트에만 한 줄이다(docs/credits-reviews.md 5절 「화면 문구」). 고치기 시트와 저장 토스트에는 없다 —
- * 받은 양(credited)은 보이지 않고, 잔액이 가득 차 덜 받는 경우도 따로 알리지 않는다.
+ * 받은 양(credited)은 보이지 않는다. 잔액이 가득 차 보상이 0이면 그 줄도 숨긴다(판정은 showsReviewReward).
  */
 export default function ReviewSheet({
   pinId,
@@ -54,7 +54,7 @@ export default function ReviewSheet({
     <ModalSheet label={title} onClose={onClose}>
       <SheetTitle>{title}</SheetTitle>
       <p className="mt-1 text-sm text-ink-500">{placeName}</p>
-      {!mine && <p className="mt-3 rounded-xl bg-ink-50 p-3 text-body text-ink-700">{reviewRewardText(credits.data?.review_reward)}</p>}
+      {!mine && showsReviewReward(credits.data) && <p className="mt-3 rounded-xl bg-ink-50 p-3 text-body text-ink-700">{reviewRewardText(credits.data?.review_reward)}</p>}
 
       <div className="mt-3">
         <StarRating value={rating} onChange={setRating} size={28} label="별점 고르기" />
