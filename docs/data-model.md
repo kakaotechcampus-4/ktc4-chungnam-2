@@ -705,7 +705,9 @@ event_log(
   type, payload jsonb, created_at timestamptz default now()
 )
   index(map_id, seq)                    -- 채널별 재전송 조회
-  index(created_at)                     -- 보존기간 삭제용
+  index(created_at)                     -- 보존기간 삭제용. **#1016(2026-11-01)**: 문서의 24시간은 재전송 읽기 창일 뿐 행을 지우는 코드가 없었다(지도 정리 때만 지워짐).
+                                        --   25시간(재전송 창 24시간 + 여유)이 지난 행을 maintenance가 지운다(realtime.api.purge_old_events). payload에 복사된 표시 이름(member.joined, reaction.changed)이
+                                        --   탈퇴 정리 뒤에도 남지 않게 하는 방법이다. user_id는 users 행(개인정보 없는 껍데기)이 남는 한 가명 식별자라 지우지 않는다.
   check ((channel='private') = (recipient_user_id is not null))
 ```
 
