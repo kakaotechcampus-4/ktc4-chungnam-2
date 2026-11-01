@@ -171,6 +171,30 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 | 운영 DB 덤프 | `deploy/backup.sh prod` | 하루 한 번(04:00), 14일 보관 | 서버 cron. 운영 배포 직전에도 한다 |
 | v2 계획 보조 에이전트 관찰 | cron이 `python -m agent.tick`을 부른다(#812). 지도마다 lease와 token으로 겹쳐 돌아도 안전하다 | 5분(`docs/agent-v2.md` 12.1) | 서버 cron |
 | agent 일일 정리 | 없음 | 서버 안에서 돈다 | 따로 예약하지 않는다(`backend/maintenance/CLAUDE.md`) |
+| 장소 후기 신고 확인 | 아래 「후기 신고 확인과 숨김」 | 매일(운영) | **사람이 한다.** 신고가 와도 알림이 없다 — 자동 알림은 아직 없다 |
+
+### 후기 신고 확인과 숨김
+
+장소 후기(#432, `docs/credits-reviews.md` 5절·10절)는 다른 지도 사람에게도 보이는 글이라 신고를 받는다. 관리 화면은 없고(D8) 서버에서 스크립트로 본다. 권리침해 게시물 임시조치는 요청을 받으면 지체 없이 해야 하므로 **운영은 매일 한 번 확인한다.** 신고만으로는 숨겨지지 않는다.
+
+1. 콘솔 EC2 → 연결 → Session Manager로 서버에 들어가 `cd /srv/pingo/deploy`.
+2. 신고 목록(숨기지 않은 후기, 신고 많은 순 20개):
+   ```
+   ./run.sh prod python -m reviews.scripts.reports
+   ./run.sh prod python -m reviews.scripts.reports --limit 50   # 더 보기
+   ./run.sh prod python -m reviews.scripts.reports --all        # 숨긴 것도 [숨김] 표시와 함께
+   ```
+   후기 id, 신고 수, 마지막 신고 시각, 장소 이름, 별점, 글이 나온다. 작성자와 신고자는 나오지 않는다(숨길지는 글로 정한다).
+3. 숨길 글이면(욕설, 비방, 개인정보, 장소와 무관한 글, 권리침해 주장):
+   ```
+   ./run.sh prod python -m reviews.scripts.hide <review_id>          # 숨기기
+   ./run.sh prod python -m reviews.scripts.hide <review_id> --undo   # 잘못 숨겼으면 되돌리기
+   ```
+   숨긴 후기는 목록·평균·개수에서 빠지고 작성자에게도 안 보인다. 작성자가 고치거나 지웠다 다시 써서 숨김을 풀 수 없다.
+
+- 스테이징은 `prod` 대신 `staging`.
+- **출력은 터미널에서만 본다.** 모르는 사람이 쓴 글이라 파일·디스코드·이슈로 옮기지 않는다. 판단을 남길 때는 후기 id만 적는다.
+- 하루 신고 수, 숨김 수, 신고에서 숨김까지 걸린 시간을 보는 SQL은 `backend/reviews/scripts/README.md`.
 
 ## 배포 뒤 볼 지표
 
