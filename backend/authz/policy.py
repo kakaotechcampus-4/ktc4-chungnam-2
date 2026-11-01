@@ -60,6 +60,7 @@ POLICY: Mapping[str, RoleSpec] = {
                 "recommend.publish",  # 「지도에 올리기」 — candidate.requested_by 본인만
                 "pin.edit",  # 핀 메모·분류 수정(#466) — 찍은 사람만. AI 추천·확정 핀 제외는 pins 코어가 판정
                 "pin.delete",  # 핀 삭제 — 찍은 사람과 방장(#965, #25 변경)
+                "pin.restore",  # 지운 핀 복구 — 찍은 사람(#864, 삭제 권한과 같다)
                 "course.view",  # AI 코스 run 조회(#334) — run.requested_by 본인만(가드레일 1)
             }
         ),
@@ -70,6 +71,7 @@ POLICY: Mapping[str, RoleSpec] = {
             {
                 "member.kick",  # v2, #8
                 "pin.delete",  # 남의 핀 삭제는 방장만 — 나간·탈퇴한 구성원의 핀 정리(#965)
+                "pin.restore",  # 남의 지운 핀 복구도 방장만(#864)
                 "map.settings.edit",
                 "map.delete",  # 지도 삭제(#369). 방장만, soft delete
                 "map.restore",  # 삭제한 지도 복구(#464). 방장만, 삭제한 지 30일 안. 삭제된 지도는 일반 조회가 404라 maps가 복구용 조회로 채운다
@@ -87,6 +89,7 @@ POLICY: Mapping[str, RoleSpec] = {
 ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "pin.create": frozenset({"map"}),
     "pin.delete": frozenset({"pin"}),
+    "pin.restore": frozenset({"pin"}),
     "pin.react": frozenset({"pin"}),
     "pin.resolve": frozenset({"pin"}),
     "pin.revert": frozenset({"pin"}),

@@ -295,10 +295,58 @@ export const pinsHandlers = [
     const pin = store.pins[pinId];
     if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
     if (!pinPermissions(pin).can_delete) return apiError(403, "FORBIDDEN", "찍은 사람과 방장만 지울 수 있어요");
+    // #864 — 삭제는 휴지통으로 옮기는 것이다: 의견은 그대로 두고, 확정이었다면 기억해 두고 확정 리스트에서 뺀다
+    const wasConfirmed = pin.kind === "확정" || (store.shortlist[pin.map_id] ?? []).some((i) => i.pin.id === pinId);
+    store.shortlist[pin.map_id] = (store.shortlist[pin.map_id] ?? []).filter((i) => i.pin.id !== pinId);
+    store.pinTrash[pinId] = { pin, reactions: store.reactions[pinId] ?? [], deleted_at: new Date().toISOString(), deleted_by: ME_USER_ID, was_confirmed: wasConfirmed };
     delete store.pins[pinId];
     delete store.reactions[pinId];
     emitEvent(pin.map_id, "public", "pin.deleted", { pin_id: pinId });
     return new HttpResponse(null, { status: 204 });
+  }),
+
+  // #864 핀 휴지통 — 내가 되살릴 수 있는 지운 핀(일반 구성원은 내가 찍은 것, 방장은 전부), 최근 삭제순
+  http.get("*/maps/:mapId/trash", ({ params }) => {
+    const mapId = params.mapId as string;
+    if (!store.maps[mapId]) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    const owner = (store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID && m.role === "owner");
+    const now = Date.now();
+    const items = Object.values(store.pinTrash)
+      .filter((t) => t.pin.map_id === mapId && (owner || t.pin.created_by === ME_USER_ID))
+      .sort((a, b) => b.deleted_at.localeCompare(a.deleted_at))
+      .map((t) => {
+        const purgeAt = new Date(new Date(t.deleted_at).getTime() + 30 * 86_400_000);
+        return {
+          pin: t.pin,
+          deleted_at: t.deleted_at,
+          deleted_by_name: store.users[t.deleted_by]?.display_name ?? "탈퇴한 구성원",
+          purge_at: purgeAt.toISOString(),
+          days_left: Math.max(0, Math.ceil((purgeAt.getTime() - now) / 86_400_000)),
+          was_confirmed: t.was_confirmed,
+        };
+      });
+    return HttpResponse.json({ items, retention_days: 30 });
+  }),
+
+  // #864 지운 핀 복구 — 찍은 사람과 방장. 같은 장소로 새 핀이 생겼으면 409 PIN_DUPLICATE
+  http.post("*/pins/:pinId/restore", ({ params }) => {
+    const pinId = params.pinId as string;
+    const live = store.pins[pinId];
+    if (live) return HttpResponse.json(live); // 이미 복구된 핀도 200(연타 안전)
+    const t = store.pinTrash[pinId];
+    if (!t) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    const owner = (store.members[t.pin.map_id] ?? []).some((m) => m.user_id === ME_USER_ID && m.role === "owner");
+    if (!(owner || t.pin.created_by === ME_USER_ID)) return apiError(403, "FORBIDDEN", "찍은 사람과 방장만 되살릴 수 있어요");
+    const dup = Object.values(store.pins).find(
+      (p) => p.map_id === t.pin.map_id && ((t.pin.kakao_place_id && p.kakao_place_id === t.pin.kakao_place_id) || (!!(t.pin as any)._place_id && (p as any)._place_id === (t.pin as any)._place_id)),
+    );
+    if (dup) return apiError(409, "PIN_DUPLICATE", "이미 지도에 있는 장소예요", { pin_id: dup.id });
+    const pin = { ...t.pin, permissions: pinPermissions(t.pin) };
+    store.pins[pinId] = pin;
+    store.reactions[pinId] = t.reactions;
+    delete store.pinTrash[pinId];
+    emitEvent(pin.map_id, "public", "pin.restored", pin);
+    return HttpResponse.json(pin);
   }),
 
   http.put("*/pins/:pinId/reaction", async ({ params, request }) => {

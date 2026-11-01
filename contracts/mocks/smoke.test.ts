@@ -115,6 +115,46 @@ describe("기획안 6절 핵심 시나리오 — happy path", () => {
   });
 });
 
+describe("핀 휴지통(#864)", () => {
+  const send = (path: string, method = "GET", body?: unknown) =>
+    fetch(`${BASE}${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const createPin = async (place: string) =>
+    (await send("/maps/map_1/pins", "POST", { source: "search", place_id: place, place_name: "제주 흑돼지 거리", lat: 33.5131, lng: 126.5296, category: "음식점" })).json();
+
+  it("삭제하면 휴지통으로 가고 복구하면 핀과 의견이 돌아온다", async () => {
+    const pins = await (await send("/maps/map_1/pins")).json();
+    const target = pins.find((p: { permissions: { can_delete: boolean } }) => p.permissions.can_delete);
+    await send(`/pins/${target.id}/reaction`, "PUT", { reaction: "like" });
+    expect((await send(`/pins/${target.id}`, "DELETE")).status).toBe(204);
+    const trash = await (await send("/maps/map_1/trash")).json();
+    expect(trash.retention_days).toBe(30);
+    const item = trash.items.find((i: { pin: { id: string } }) => i.pin.id === target.id);
+    expect(item).toMatchObject({ days_left: 30, was_confirmed: expect.any(Boolean) });
+    expect(new Date(item.purge_at).getTime() - new Date(item.deleted_at).getTime()).toBe(30 * 86_400_000);
+    const restored = await send(`/pins/${target.id}/restore`, "POST");
+    expect(restored.status).toBe(200);
+    expect((await restored.json()).id).toBe(target.id);
+    // 이미 복구된 핀도 200, 휴지통에서는 빠진다
+    expect((await send(`/pins/${target.id}/restore`, "POST")).status).toBe(200);
+    const after = await (await send("/maps/map_1/trash")).json();
+    expect(after.items.some((i: { pin: { id: string } }) => i.pin.id === target.id)).toBe(false);
+  });
+
+  it("없는 핀은 404, 지운 핀을 복구하기 전에 같은 장소로 새 핀을 찍으면 409 PIN_DUPLICATE", async () => {
+    expect((await send("/pins/nope/restore", "POST")).status).toBe(404);
+    expect((await send("/maps/nope/trash")).status).toBe(404);
+    const first = await createPin("kakao:mock-5");
+    await send(`/pins/${first.id}`, "DELETE");
+    const again = await createPin("kakao:mock-5");
+    expect(again.id).not.toBe(first.id);
+    const res = await send(`/pins/${first.id}/restore`, "POST");
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("PIN_DUPLICATE");
+    expect(body.detail.pin_id).toBe(again.id);
+  });
+});
+
 describe("에러 시나리오", () => {
   it("evidence-limit — 「+」는 선호로 붙고, 한 번에 글 5개, run 하나에 글 10개까지(#707)", async () => {
     const run = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점" }) }).then((r) => r.json());

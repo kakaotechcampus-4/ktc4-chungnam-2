@@ -107,7 +107,12 @@ pins(
                                         -- candidate가 나중에 지워지거나 바뀌어도 이 값은 안 바뀐다.
   reason null, member_fulfillment jsonb null, place_source jsonb null,
                                         -- #157: AI 추천 핀을 게시할 때 candidate 값을 복사한다(가드레일 5). 직접 찍은 핀은 NULL
-  created_by, created_at, deleted_at
+  created_by, created_at, deleted_at,
+  deleted_by text null, deleted_was_confirmed boolean null
+                                        -- #864(2026-11-01) 휴지통: 삭제는 soft delete이고 deleted_at이 찍힌 핀을 30일 동안 휴지통에 둔다. 찍은 사람과 방장이 복구한다(`pin.restore`).
+                                        --   deleted_by = 지운 사람 user id(탈퇴하면 표시만 「탈퇴한 구성원」), deleted_was_confirmed = 삭제 때 확정 리스트에 있었는가(복구 때 다시 올린다).
+                                        --   복구하면 deleted_at·deleted_by·deleted_was_confirmed를 비운다. 30일이 지나면 maintenance가 핀 행과 반응·메모를 영구 삭제한다(멱등).
+                                        --   휴지통에 있는 동안 같은 장소로 새 핀이 만들어질 수 있고(unique는 deleted_at is null만 본다), 그때 복구는 409 PIN_DUPLICATE다.
 )
   unique(map_id, place_id) where deleted_at is null   -- 중복 핀 판정(가드레일 6). 판정 기준은 #33(보류)에서 별도 확정
   unique(map_id, kakao_place_id) where deleted_at is null and kakao_place_id is not null   -- #382 live 핀 중복
