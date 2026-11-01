@@ -216,20 +216,15 @@ def _search_area(db: Session, *, map_id: str, category: str, place_search: Place
 
 def _external_search(
     db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway,
-    lines: Sequence[EvidenceLineRow] = (), off_season: Collection[str] = frozenset(),
 ) -> schemas.ExternalSearch:
-    """카카오맵 검색 링크(docs/constraints.md 「카카오맵 검색 링크」). lines는 이번 run의 활성 근거 줄(readiness는 run이
-    없어 빈 목록 = 카테고리 말). 사유 원문은 넘기지 않는다 — 키와 방향만(#717)."""
+    """카카오맵 검색 링크(docs/constraints.md 「카카오맵 검색 링크」) — 검색어는 `{동네} {카테고리 말}` 하나다(#904)."""
     area = _search_area(db, map_id=map_id, category=category, place_search=place_search)
-    query = core.external_search_query(area, category, [(line.badge, line.fact_key, line.wants) for line in lines], off_season)
+    query = core.external_search_query(area, category)
     return schemas.ExternalSearch(query=query, url=places_api.kakao_search_url(query))
 
 
 def _run_external_search(db: Session, run: RecommendRun, place_search: PlaceSearchGateway) -> schemas.ExternalSearch:
-    return _external_search(
-        db, map_id=run.map_id, category=run.category, place_search=place_search,
-        lines=service.list_active_evidence(db, run.id), off_season=_out_of_season_keys(db, run.map_id),
-    )
+    return _external_search(db, map_id=run.map_id, category=run.category, place_search=place_search)
 
 
 def readiness_for_category(db: Session, *, map_id: str, category: str) -> dict:
