@@ -26,11 +26,13 @@ _SCORE_TIE = 0.05
 
 _PAREN = re.compile(r"[\(\[（][^\)\]）]*[\)\]）]")
 _NON_WORD = re.compile(r"[^0-9a-z가-힣]")
-_ROAD_SPACE = re.compile(r"(로|길)\s+(\d+[가-힣]*(?:번길|안길|길))")   # "논현로 12길"·"아차산로 17안길" → 공백 제거
-# 도로명 + 건물번호. 도로명은 `XX로`·`XX길` 뒤에 번길·안길·`N길`·`N가길`·`N나길` 같은 분기 도로를 몇 단계든 이어 붙여 하나로 읽는다
-# (`아차산로17번길 4`의 17은 건물번호가 아니다 — 같은 번길의 다른 건물이 같은 주소가 되던 오탐, #1019). 이름과 숫자 사이 공백도 허용한다.
-_ROAD_ADDR = re.compile(
-    r"([가-힣]+(?:\s*\d+[가-힣]*)?(?:로|길)(?:\s*\d+[가-힣]*(?:번길|안길|길))*)\s*(\d+)(?:-(\d+))?")
+# 도로명 주소는 한 정규식의 백트래킹에 맡기지 않고 단계로 읽는다(#1019): ① 도로명 토큰 → ② 분기 도로(번길·안길·N길·N가길)를 끝까지 →
+# ③ 건물번호가 반드시 와야 한다. ③이 없으면 분기 번호를 건물번호로 되돌려 읽지 않고 도로명 주소가 아니라고 본다(모름).
+_BRANCH_END = r"\d+(?:\s*(?:번길|안길)|[가-힣]?길)(?![가-힣])"   # 17번길·17 번길·17안길·14길·5가길·12나길. 건물명의 「길」(100 한길빌딩)은 잇지 않는다
+_ROAD_HEAD = re.compile(   # 공백을 가로지르지 않는다. 뒤에 한글이 이어지면(한길빌딩) 도로명이 아니다
+    r"(?<![가-힣\d])(?:\d*[가-힣]+(?:로|길)(?![가-힣])|[가-힣]+(?=\s*" + _BRANCH_END + "))")   # 성수이로·1공단로·연무장(5가길 앞)
+_ROAD_BRANCH = re.compile(r"\s*" + _BRANCH_END)
+_ROAD_NUMBER = re.compile(r"\s*(?:지하\s*)?(\d+)(?:-(\d+))?(?:번지)?(?![가-힣\d]|-\d)")   # 101호처럼 한글·숫자가 이어지면 건물번호가 아니다
 _WS = re.compile(r"\s+")
 _LOT_ADDR = re.compile(r"([가-힣]+(?:\d가|동|리))\s*(\d+)(?:-(\d+))?")  # 법정동·리 + 지번
 
@@ -68,15 +70,30 @@ def name_score(a: str, b: str) -> float:
     return SequenceMatcher(None, na, nb).ratio()
 
 
+def _parse_road(text: str) -> str | None:
+    for head in _ROAD_HEAD.finditer(text):
+        pos, parts = head.end(), [head.group(0)]
+        while branch := _ROAD_BRANCH.match(text, pos):   # 분기 도로를 끝까지 — 되돌아가 건물번호로 읽지 않는다
+            parts.append(branch.group(0))
+            pos = branch.end()
+        number = _ROAD_NUMBER.match(text, pos)
+        if number:
+            main, sub = number.group(1).lstrip("0") or "0", number.group(2)
+            return f"{_WS.sub('', ''.join(parts))}|{main}" + (f"-{sub.lstrip('0') or '0'}" if sub else "")
+    return None
+
+
 def normalize_address(address: str) -> tuple[str, str] | None:
-    """주소를 비교 키 (종류, 값)으로 줄인다. 도로명(`성수이로 100`)이 있으면 그것, 없으면 지번(`성수동2가 300-1`).
-    시·구 이름·층·호·괄호 표기는 버린다. 읽어 낼 수 없으면 None."""
-    text = _ROAD_SPACE.sub(r"\1\2", _PAREN.sub(" ", address))
-    for kind, pattern in (("road", _ROAD_ADDR), ("lot", _LOT_ADDR)):
-        m = pattern.search(text)
-        if m:
-            main, sub = m.group(2).lstrip("0") or "0", m.group(3)
-            return kind, f"{_WS.sub('', m.group(1))}|{main}" + (f"-{sub.lstrip('0') or '0'}" if sub else "")
+    """주소를 비교 키 (종류, 값)으로 줄인다. 도로명(`성수이로 100`, `아차산로17번길 4`)이 있으면 그것, 없으면 지번(`성수동2가 300-1`).
+    시·구 이름·층·호·괄호 표기는 버린다. 읽어 낼 수 없으면 None. `을지로3가 100`의 3가는 도로명이 아니라 법정동이다."""
+    text = _PAREN.sub(" ", address)
+    road = _parse_road(text)
+    if road is not None:
+        return "road", road
+    m = _LOT_ADDR.search(text)
+    if m:
+        main, sub = m.group(2).lstrip("0") or "0", m.group(3)
+        return "lot", f"{m.group(1)}|{main}" + (f"-{sub.lstrip('0') or '0'}" if sub else "")
     return None
 
 

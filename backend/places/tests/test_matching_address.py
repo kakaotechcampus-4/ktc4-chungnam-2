@@ -136,3 +136,41 @@ def test_branch_roads_are_part_of_the_street(text, key):
 ])
 def test_address_agreement_on_branch_roads(a, b, expected):
     assert address_agreement(a, b) is expected
+
+
+# ---- 백트래킹으로 되살아나던 오탐(#1019 검수 반례) — 도로명은 단계로 읽는다 ----
+
+@pytest.mark.parametrize("text,key", [
+    ("서울 성동구 아차산로17번길 지하 4", ("road", "아차산로17번길|4")),
+    ("서울 성동구 아차산로17 번길 4", ("road", "아차산로17번길|4")),
+    ("경북 구미시 1공단로 10", ("road", "1공단로|10")),
+    ("경북 구미시 공단동 1공단로 10", ("road", "1공단로|10")),
+    ("서울 성동구 성수이로 100 한길빌딩 3층", ("road", "성수이로|100")),
+    ("서울 성동구 아차산로 17", ("road", "아차산로|17")),
+    ("서울 중구 을지로3가 100", ("lot", "을지로3가|100")),
+    ("서울 종로구 종로1가 24", ("lot", "종로1가|24")),
+])
+def test_staged_road_parse(text, key):
+    assert normalize_address(text) == key
+
+
+@pytest.mark.parametrize("text", [
+    "서울 성동구 아차산로17번길",            # 건물번호 없음 — 17은 번길 번호지 건물번호가 아니다
+    "서울 성동구 아차산로17 번길",
+    "서울 성동구 아차산로17번길 101호",      # 호수는 건물번호가 아니다
+])
+def test_branch_number_is_never_read_as_the_building_number(text):
+    assert normalize_address(text) is None
+
+
+@pytest.mark.parametrize("a,b,expected", [
+    ("서울 성동구 아차산로17번길 4", "서울 성동구 아차산로17번길 99", False),
+    ("서울 성동구 아차산로17번길 지하 4", "서울 성동구 아차산로17번길 지하 99", False),
+    ("서울 성동구 아차산로17번길 지하 4", "서울 성동구 아차산로 17", False),
+    ("서울 성동구 아차산로17번길", "서울 성동구 아차산로 17", None),               # 건물번호를 알 수 없다
+    ("서울 성동구 아차산로17 번길 4", "서울 성동구 아차산로17번길 4", True),
+    ("경북 구미시 1공단로 10", "경북 구미시 공단동 1공단로 10", True),
+    ("서울 성동구 성수이로 100 한길빌딩 3층", "서울 성동구 성수이로 100", True),
+])
+def test_agreement_on_the_agy_counterexamples(a, b, expected):
+    assert address_agreement(a, b) is expected
