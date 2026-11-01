@@ -113,7 +113,9 @@ class PlaceSearchResult(BaseModel):
 
 class LinkParseResult(BaseModel):
     provider: Literal["google", "kakao", "naver"]   # naver는 link-preview에서 상호명 힌트가 있을 때만(#946)
-    matched_by: Literal["link", "hint"] | None = None   # matches를 어떻게 찾았는지(#946). matches가 비면 없다
+    matched_by: Literal["link", "hint", "external_id"] | None = None   # matches를 어떻게 찾았는지(#946·#1048). matches가 비면 없다
+    external_id: str | None = Field(default=None, max_length=100)   # 링크에서 읽은 카카오·네이버 장소 번호(#1048). 번호만 담는다(#53)
+    address_candidates: list[PlaceSearchResult] | None = Field(default=None, max_length=3)   # matches가 빌 때 같은 주소의 한 곳(#1047). 자동 확정 아님, 안 채우면 응답에서 빠진다
     name_hint: str | None = None          # 구글 링크에 든 이름(사용자가 붙인 값). 카카오 링크에는 없다
     kakao_place_id: str | None = None     # 카카오 링크의 장소 ID — 저장이 허용된 유일한 카카오 값
     matches: list[PlaceSearchResult]      # 자체 DB 장소만(pinnable=true). 없으면 빈 배열
