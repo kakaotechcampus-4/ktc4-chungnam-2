@@ -202,7 +202,7 @@ def find_candidates(db: Session, hint_lat: float, hint_lng: float, category: str
                func.ST_Distance(Place.geom, point).label("dist"))
         .where(Place.status == "open", Place.category == category,
                func.ST_DWithin(Place.geom, point, matching.MAX_RADIUS_M))
-        .order_by(func.ST_Distance(Place.geom, point))
+        .order_by(func.ST_Distance(Place.geom, point), Place.id)   # find_candidates_many와 같은 키 — 거리가 같으면 id로 갈라 상한 경계가 검색과 같다(#815)
         .limit(matching.MAX_CANDIDATES)
     ).all()
     rows = list(near)
@@ -340,14 +340,18 @@ def _in_any_area(areas: Sequence[Area]):
     return or_(*(func.ST_DWithin(Place.geom, _geog(a.lat, a.lng), a.radius_m) for a in areas))
 
 
-def search_nearby_own(db: Session, category: str, areas: Sequence[Area]) -> list[PlaceRef]:
+def search_nearby_own(
+    db: Session, category: str, areas: Sequence[Area], *, recommendable_only: bool = False,
+) -> list[PlaceRef]:
     if not areas:
         return []
     lat, lng = _lat_lng()
-    # PlaceRef.can_recommend(추천 후보 풀에 넣어도 되는가)는 places.curated 그대로다 — 규칙이 바뀌면 이 쿼리 한 곳만 고친다(#743)
-    rows = db.execute(
-        select(Place.id, lat, lng, Place.curated).where(Place.status == "open", Place.category == category, _in_any_area(areas))
-    ).all()
+    # PlaceRef.can_recommend(추천 후보 풀에 넣어도 되는가)는 places.curated 그대로다 — 규칙이 바뀌면 이 쿼리 한 곳만 고친다(#743).
+    # recommendable_only면 그 조건을 SQL에서 건다(#913) — 후보 풀이 처음부터 정예 장소라 다른 모듈이 정예 여부를 다시 판정하지 않는다.
+    conditions = [Place.status == "open", Place.category == category, _in_any_area(areas)]
+    if recommendable_only:
+        conditions.append(Place.curated.is_(True))
+    rows = db.execute(select(Place.id, lat, lng, Place.curated).where(*conditions)).all()
     return [PlaceRef(str(r.id), r.lat, r.lng, r.curated) for r in rows]
 
 

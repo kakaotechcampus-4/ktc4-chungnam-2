@@ -45,6 +45,7 @@ author:                       # evidence_line·candidate·run을 만든 당사�
     - recommend.publish         # 「지도에 올리기」 — candidate.requested_by 본인만
     - pin.edit                  # 핀 메모·분류 수정(#466) — 핀을 찍은 사람만. AI 추천·확정 핀 제외는 역할이 아니라 핀 상태라 pins 코어가 판정한다
     - pin.delete                # 핀 삭제 — 찍은 사람(#965, 9/4 결정 #25 「구성원 누구나」를 바꿈). 방장은 owner에서 받는다
+    - pin.restore               # 지운 핀 복구 — 찍은 사람(#864, 삭제 권한과 같다). 방장은 owner에서 받는다
     - course.view               # AI 코스 run 조회(#334) — run.requested_by 본인만. 가드레일 1: 코스는 요청한 사람에게만 보인다
 
 owner:                        # 방장. 처음엔 지도 생성자, 위임되면 바뀐다(#369). 판단 정본은 memberships.role
@@ -54,6 +55,7 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
   actions:
     - member.kick               # v2, #8
     - pin.delete                # 남의 핀 삭제는 방장만(#965) — 나간·탈퇴한 구성원의 핀을 정리할 사람이 필요하다
+    - pin.restore               # 남의 지운 핀 복구도 방장만(#864) — 삭제 권한과 같다. 휴지통 목록도 이 권한이 있는 핀만 보인다
     - map.settings.edit
     - map.delete                # 지도 삭제(#369). 방장만. soft delete라 모든 구성원에게서 사라진다
     - map.restore               # 삭제한 지도 복구(#464). 방장만, 삭제한 지 30일 안에만. 삭제된 지도는 일반 지도 조회가 404라 복구용 조회(get_deleted_map)를 따로 둔다

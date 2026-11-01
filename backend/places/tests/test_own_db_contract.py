@@ -167,6 +167,13 @@ def test_search_nearby_own_has_no_lodging_or_etc(fake):
     assert fake.search_nearby_own("숙소", area) == [] and fake.search_nearby_own("기타", area) == []
 
 
+def test_search_nearby_own_recommendable_only_keeps_curated_places(fake):
+    area = [Area(37.5445, 127.0561, 5000)]
+    everyone = {r.place_id for r in fake.search_nearby_own("음식점", area)}
+    curated = {r.place_id for r in fake.search_nearby_own("음식점", area, recommendable_only=True)}
+    assert curated <= everyone and curated == {r.place_id for r in fake.rows if r.curated and r.place_id in everyone}
+
+
 def test_search_nearby_own_multiple_areas_is_union(fake):
     refs = fake.search_nearby_own("관광지", [Area(37.5444, 127.0374, 300), Area(37.5796, 126.9770, 300)])
     assert {r.place_id for r in refs} == {sample_id("seoul-forest"), sample_id("gyeongbok")}

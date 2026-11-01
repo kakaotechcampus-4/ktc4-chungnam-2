@@ -45,7 +45,7 @@ def own_places(monkeypatch):
     """자체 DB 대역(FakePlaces)을 places.api에 끼운다 — recommend 실행이 읽을 수 있는 건 이것뿐이다."""
     from places.testing import FakePlaces
 
-    return FakePlaces().install(monkeypatch)
+    return FakePlaces().curate_all().install(monkeypatch)   # 후보 풀은 정예 장소뿐이다(#913)
 
 
 def _forbid_kakao_paths(monkeypatch, calls: list[str]):

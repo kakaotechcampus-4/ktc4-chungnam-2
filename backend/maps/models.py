@@ -53,8 +53,15 @@ class Map(Base):
     # 방장이 지도를 삭제하면 찍는다(soft delete, #369). 찍힌 지도는 get_map_or_404·
     # DbMembershipGateway·list_maps·초대 조회가 모두 없는 지도로 답한다. 실제 파기는 범위 밖.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 탈퇴가 후임 없는 방장의 지도를 지웠으면 그 탈퇴자의 user id(#1000). 계정을 되살리면 이 표식으로 지도도 되살린다.
+    # 직접 지운 지도·살아 있는 지도는 NULL — delete_map과 restore_map이 매번 맞춘다. users 모듈 경계라 FK 없음(created_by와 같다).
+    deleted_by_withdrawal_of: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (
+        Index(
+            "ix_maps_deleted_by_withdrawal_of", "deleted_by_withdrawal_of",
+            postgresql_where=text("deleted_by_withdrawal_of IS NOT NULL"),
+        ),
         CheckConstraint("end_date >= start_date", name="ck_maps_date_order"),
         CheckConstraint(
             "(region_label IS NULL) = (region_center IS NULL)",

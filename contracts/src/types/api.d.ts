@@ -128,7 +128,7 @@ export interface paths {
         };
         put?: never;
         /**
-         * **선택**: `restart`는 새 계정을 만들고(새 사용자와 로그인 수단) **기존 계정을 즉시 정리한다 — 같은 카카오 식별자는 한 사용자에게만 붙을 수 있어서 둘이 함께 있을 수 없고, 정리된 계정은 되살릴 수 없다**(201). `restore`는 기존 계정을 되살린다(200 — 계정, 핀 작성자 표시, 남아 있던 지도 참여(방장 자리는 탈퇴 때 위임돼 일반 구성원)가 돌아오고, 지워진 반응·근거 줄·알림은 돌아오지 않는다. 탈퇴해도 멤버십 행은 남기 때문이다, #245).
+         * **선택**: `restart`는 새 계정을 만들고(새 사용자와 로그인 수단) **기존 계정을 즉시 정리한다 — 같은 카카오 식별자는 한 사용자에게만 붙을 수 있어서 둘이 함께 있을 수 없고, 정리된 계정은 되살릴 수 없다**(201). `restore`는 기존 계정을 되살린다(200 — 계정, 핀 작성자 표시, 남아 있던 지도 참여(방장 자리는 탈퇴 때 위임돼 일반 구성원)가 돌아오고, **방장이던 지도가 후임이 없어 탈퇴와 함께 삭제됐다면 그 지도도 돌아온다**(방장 자리 그대로, 지도 수 상한은 따지지 않는다, #1000). 지워진 반응·근거 줄·알림은 돌아오지 않는다. 탈퇴해도 멤버십 행은 남기 때문이다, #245).
          *     둘 다 세션 쿠키를 내리고 `pending_account` 쿠키를 지운다. 응답은 `User`다. **같은 선택의 재전송과 이미 쓴 쿠키는 404 `NO_PENDING_LOGIN`이다** — 쿠키 값이 `deleted_at`에 묶여 있어 복구·정리 뒤에는 서버가 거절한다. 선택과 정리는 같은 카카오 식별자 단위 잠금·한 트랜잭션이라 동시 `restore`·`restart`는 한쪽만 이긴다(나머지는 404).
          *     **본문은 JSON만 받는다**(`Content-Type: application/json`) — 폼 제출 같은 교차 사이트 POST가 쿠키를 싣고 오지 못하게 SameSite=Lax와 함께 막는다. `restart`는 **기존 계정을 되살릴 수 없게 정리하는 파괴적 동작**이라 화면이 최종 제출 전에 한 번 더 확인한다(`기존 계정은 바로 삭제되고 되살릴 수 없어요`). 게스트에게는 해당 없다.
          */
@@ -428,7 +428,7 @@ export interface paths {
         /**
          * 탈퇴 (12절, #155 결정). users 행은 soft delete, 반응·반대 사유·근거 줄은 삭제한다.
          *     그 사람이 찍은 핀과 확정 리스트 항목은 남고, 작성자(created_by_display_name)는 "탈퇴한 구성원"으로 내려간다.
-         *     **재가입과 복구(#855)**: 탈퇴 직후 동작은 그대로다(반응·근거·알림은 즉시 지워지고, **지도 멤버십 행은 남는다**(#245) — 구성원 수와 목록에서만 빠진다. 방장이던 지도는 후임에게 위임되거나 삭제된다). 탈퇴 후 **7일 동안** 같은 카카오 계정으로 로그인하면 「새 계정으로 시작」 또는 「기존 계정 되살리기」를 고를 수 있다(`GET·POST /auth/pending`). **되살리면 계정과 내가 찍은 핀의 작성자 표시, 그리고 남아 있던 지도 참여(방장 자리는 위임됐으므로 일반 구성원으로)가 돌아온다. 지워진 반응·근거 줄·알림은 돌아오지 않는다.** 탈퇴와 복구는 둘 다 `sessions_valid_after`를 현재 시각으로 올려 **그 이전에 발급된 모든 세션을 영구 무효화한다**(탈퇴 전에 복사된 30일 토큰이 복구 뒤 되살아나지 않게). 복구 뒤에는 새로 발급한 세션만 유효하다. **7일이 지나면 정리 작업이 개인정보를 지운다**(`docs/data-model.md` 「탈퇴 후 7일 정리 대상」 표 — 로그인 식별자·표시 이름뿐 아니라 다른 곳에 복사된 이름도 비식별화한다). users 행은 껍데기로 남고 지도 멤버십·핀의 작성자 표시는 「탈퇴한 구성원」이다.
+         *     **재가입과 복구(#855)**: 탈퇴 직후 동작은 그대로다(반응·근거·알림은 즉시 지워지고, **지도 멤버십 행은 남는다**(#245) — 구성원 수와 목록에서만 빠진다. 방장이던 지도는 후임에게 위임되거나 삭제된다). 탈퇴 후 **7일 동안** 같은 카카오 계정으로 로그인하면 「새 계정으로 시작」 또는 「기존 계정 되살리기」를 고를 수 있다(`GET·POST /auth/pending`). **되살리면 계정과 내가 찍은 핀의 작성자 표시, 그리고 남아 있던 지도 참여(방장 자리는 위임됐으므로 일반 구성원으로)가 돌아온다. 방장이던 지도가 후임이 없어 탈퇴와 함께 삭제됐다면 그 지도도 방장 자리 그대로 돌아온다**(탈퇴가 지운 지도만 — 그 전에 직접 삭제한 지도는 `POST /maps/{mapId}/restore`로만, 지도 수 상한은 따지지 않는다). **지워진 반응·근거 줄·알림은 돌아오지 않는다.** 탈퇴와 복구는 둘 다 `sessions_valid_after`를 현재 시각으로 올려 **그 이전에 발급된 모든 세션을 영구 무효화한다**(탈퇴 전에 복사된 30일 토큰이 복구 뒤 되살아나지 않게). 복구 뒤에는 새로 발급한 세션만 유효하다. **7일이 지나면 정리 작업이 개인정보를 지운다**(`docs/data-model.md` 「탈퇴 후 7일 정리 대상」 표 — 로그인 식별자·표시 이름뿐 아니라 다른 곳에 복사된 이름도 비식별화한다). users 행은 껍데기로 남고 지도 멤버십·핀의 작성자 표시는 「탈퇴한 구성원」이다.
          */
         post: {
             parameters: {
@@ -1406,6 +1406,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/{mapId}/trash": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 핀 휴지통 (#864) — **내가 되살릴 수 있는** 지운 핀(삭제한 지 30일 안). 일반 구성원은 **내가 찍은 핀**만, 방장은 이 지도의 지운 핀 전부. 남이 지운 것을 구경거리로 만들지 않는다(권한자만 본다). 최근 삭제순.
+         *     지도 구성원이면 누구나 부를 수 있다(빈 목록일 수 있다). 지운 지도는 일반 지도 조회처럼 404다(지도 자체의 복구는 `GET /maps/trash`).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PinTrash"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/pins/link-preview": {
         parameters: {
             query?: never;
@@ -1575,7 +1618,10 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** 핀 삭제 — 찍은 사람과 방장 (#965, */
+        /**
+         * 핀 삭제 — 찍은 사람과 방장 (#965, #25 변경). 요청자별 가능 여부는 Pin.permissions.can_delete.
+         *     **삭제는 휴지통으로 옮기는 것이다(#864)**: 핀 행은 30일 동안 남고(`pins.deleted_at`), ♥·🚫 의견과 사유도 그대로 있다. 확정 리스트에 있었다면 항목은 빠지고 「삭제 때 확정이었다」를 기억해 둔다(복구 때 다시 올린다). 삭제한 사람과 시각도 남는다. 지도에서는 즉시 사라지고 `pin.deleted` 이벤트가 나간다. 화면은 삭제 직후 「되돌리기」(= `POST /pins/{pinId}/restore`)를 보여 준다. 드래그 앤 드롭으로 휴지통에 버리는 것도 이 호출이다.
+         */
         delete: {
             parameters: {
                 query?: never;
@@ -1587,7 +1633,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description 삭제됨 */
+                /** @description 휴지통으로 옮겼다(30일 뒤 영구 삭제) */
                 204: {
                     headers: {
                         [name: string]: unknown;
@@ -1643,6 +1689,51 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/pins/{pinId}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 지운 핀 복구 (#864) — **찍은 사람과 방장**(`pin.restore`, 삭제 권한과 같다). 삭제한 지 30일 안인 핀만. 200 + `Pin`.
+         *     돌아오는 것: 핀(메모·분류), **♥·🚫 의견과 사유**, 삭제 때 확정이었다면 확정 리스트 항목(순서는 맨 뒤, 동선은 다시 계산된다). 삭제 중에 구성원이 탈퇴했다면 그 사람의 반응은 탈퇴 때 지워져서 돌아오지 않는다.
+         *     이미 복구된 핀이면 같은 핀을 200으로(연타 안전). **휴지통에 있는 동안 같은 장소로 새 핀이 만들어졌다면 409 `PIN_DUPLICATE`**(`detail.pin_id` = 지금 지도에 있는 핀)다 — 화면은 「이미 지도에 같은 장소가 있어요」를 보인다. 권한이 없으면 403, 없는 핀·30일이 지나 정리된 핀·복구할 수 있는 핀이 아닌 것은 404(남의 핀의 존재를 알리지 않는다). 이벤트 `pin.restored`(payload `Pin`).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    pinId: components["parameters"]["PinId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 복구됨(이미 복구된 핀도 200) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Pin"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["PinDuplicate"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/pins/{pinId}/resolve": {
@@ -4181,6 +4272,29 @@ export interface components {
             /** @description 요청 urls와 같은 개수, 같은 순서 */
             items: components["schemas"]["LinkPreviewItem"][];
         };
+        /** @description 휴지통의 핀 한 건(#864). 복구하면 `Pin`이 된다 */
+        TrashedPin: {
+            /** @description 지우기 전의 핀(메모·분류·장소). 의견 수(reaction_count 등)는 삭제 직전 값 */
+            pin: components["schemas"]["Pin"];
+            /** Format: date-time */
+            deleted_at: string;
+            /** @description 지운 사람의 표시 이름. 탈퇴했다면 「탈퇴한 구성원」 */
+            deleted_by_name?: string;
+            /**
+             * Format: date-time
+             * @description deleted_at + 30일. 이 시각 뒤에는 복구할 수 없고 정리 작업이 영구 삭제한다
+             */
+            purge_at: string;
+            /** @description 복구까지 남은 날수(올림). 지금 복구할 수 있으면 1 이상 */
+            days_left: number;
+            /** @description 삭제 때 확정 리스트에 있었는가. true면 복구 때 확정 리스트에 다시 올라간다 */
+            was_confirmed: boolean;
+        };
+        PinTrash: {
+            items: components["schemas"]["TrashedPin"][];
+            /** @description 보관 일수(30). 화면 문구에 쓴다 */
+            retention_days: number;
+        };
         BulkPinRequest: {
             /** @description POST /maps/{mapId}/pins의 요청 본문과 같은 항목 */
             pins: components["schemas"]["PinCreateRequest"][];
@@ -4898,7 +5012,7 @@ export interface components {
             event: string;
         };
         /** @description 전체 채널 이벤트 (docs/events.md). event 값으로 data 타입이 갈린다 */
-        PublicEvent: components["schemas"]["EvtPinCreated"] | components["schemas"]["EvtPinPublished"] | components["schemas"]["EvtPinDeleted"] | components["schemas"]["EvtPinUpdated"] | components["schemas"]["EvtReactionChanged"] | components["schemas"]["EvtShortlistChanged"] | components["schemas"]["EvtRouteRecalculated"] | components["schemas"]["EvtMemberJoined"] | components["schemas"]["EvtMemberLeft"] | components["schemas"]["EvtMapDeleted"] | components["schemas"]["EvtMapUpdated"] | components["schemas"]["EvtOwnerChanged"] | components["schemas"]["EvtAgentSuggested"] | components["schemas"]["EvtAgentResolved"] | components["schemas"]["EvtAgentSummaryUpdated"] | components["schemas"]["EvtAgentSettingsChanged"] | components["schemas"]["EvtMemberPresence"];
+        PublicEvent: components["schemas"]["EvtPinCreated"] | components["schemas"]["EvtPinPublished"] | components["schemas"]["EvtPinDeleted"] | components["schemas"]["EvtPinRestored"] | components["schemas"]["EvtPinUpdated"] | components["schemas"]["EvtReactionChanged"] | components["schemas"]["EvtShortlistChanged"] | components["schemas"]["EvtRouteRecalculated"] | components["schemas"]["EvtMemberJoined"] | components["schemas"]["EvtMemberLeft"] | components["schemas"]["EvtMapDeleted"] | components["schemas"]["EvtMapUpdated"] | components["schemas"]["EvtOwnerChanged"] | components["schemas"]["EvtAgentSuggested"] | components["schemas"]["EvtAgentResolved"] | components["schemas"]["EvtAgentSummaryUpdated"] | components["schemas"]["EvtAgentSettingsChanged"] | components["schemas"]["EvtMemberPresence"];
         /** @description 개인 채널 이벤트 (docs/events.md, 5-5-1) */
         PrivateEvent: components["schemas"]["EvtRunProgress"] | components["schemas"]["EvtRunCandidatesReady"] | components["schemas"]["EvtRunFailed"];
         EvtPinCreated: components["schemas"]["SseEnvelope"] & {
@@ -4922,6 +5036,12 @@ export interface components {
             data: {
                 pin_id: string;
             };
+        };
+        EvtPinRestored: components["schemas"]["SseEnvelope"] & {
+            /** @constant */
+            event: "pin.restored";
+            /** @description 복구된 핀(pin.created와 같은 모양). 화면은 목록에 다시 올린다 */
+            data: components["schemas"]["Pin"];
         };
         EvtReactionChanged: components["schemas"]["SseEnvelope"] & {
             /** @constant */

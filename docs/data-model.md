@@ -58,6 +58,10 @@ maps(
   deleted_at timestamptz null          -- #369: 방장이 삭제하면 찍는다(soft delete). 찍히면 모든 조회 경로에서 없는 지도(404)로 보인다.
                                        --   #431(2026-10-10): 삭제한 지 30일이 지나면 정리 작업(`python -m maps.purge`)이 지도와 딸린 데이터를 실제로 지운다. **삭제한 지 30일 안이면 방장이 복구할 수 있다**(`POST /maps/{mapId}/restore`, #464) — `deleted_at`을 비우면 구성원·핀·반응·초대·확정 리스트·추천 기록은 그대로 돌아온다.
                                        --   → docs/architecture.md 「지도 삭제와 정리」
+  deleted_by_withdrawal_of uuid null   -- #1000(2026-11-01): 방장이 탈퇴하면서 후임이 없어 지도를 같이 삭제한 경우(auth.WITHDRAW_STEPS의 maps 단계) 그 탈퇴자의 user id.
+                                       --   직접 지운 지도는 NULL이다. 7일 안에 계정을 되살리면(`POST /auth/pending` restore) auth가 maps.api.restore_maps_deleted_by_withdrawal로
+                                       --   이 값이 그 사용자인 지도를 deleted_at과 함께 비운다(`map.restored` 발행). 복구하지 않으면 30일 뒤 정리 작업이 지도를 지운다(마커도 함께).
+                                       --   새 계정으로 시작(restart)하면 기존 계정은 즉시 정리되므로 이 지도는 되살릴 사람이 없다(30일 뒤 정리).
 )
   CHECK (end_date >= start_date)   -- 9/4 결정 #22: 여행 제목 + 시작일·종료일. day_count는 폐기
   CHECK ((region_label IS NULL) = (region_center IS NULL))
@@ -103,7 +107,12 @@ pins(
                                         -- candidate가 나중에 지워지거나 바뀌어도 이 값은 안 바뀐다.
   reason null, member_fulfillment jsonb null, place_source jsonb null,
                                         -- #157: AI 추천 핀을 게시할 때 candidate 값을 복사한다(가드레일 5). 직접 찍은 핀은 NULL
-  created_by, created_at, deleted_at
+  created_by, created_at, deleted_at,
+  deleted_by text null, deleted_was_confirmed boolean null
+                                        -- #864(2026-11-01) 휴지통: 삭제는 soft delete이고 deleted_at이 찍힌 핀을 30일 동안 휴지통에 둔다. 찍은 사람과 방장이 복구한다(`pin.restore`).
+                                        --   deleted_by = 지운 사람 user id(탈퇴하면 표시만 「탈퇴한 구성원」), deleted_was_confirmed = 삭제 때 확정 리스트에 있었는가(복구 때 다시 올린다).
+                                        --   복구하면 deleted_at·deleted_by·deleted_was_confirmed를 비운다. 30일이 지나면 maintenance가 핀 행과 반응·메모를 영구 삭제한다(멱등).
+                                        --   휴지통에 있는 동안 같은 장소로 새 핀이 만들어질 수 있고(unique는 deleted_at is null만 본다), 그때 복구는 409 PIN_DUPLICATE다.
 )
   unique(map_id, place_id) where deleted_at is null   -- 중복 핀 판정(가드레일 6). 판정 기준은 #33(보류)에서 별도 확정
   unique(map_id, kakao_place_id) where deleted_at is null and kakao_place_id is not null   -- #382 live 핀 중복

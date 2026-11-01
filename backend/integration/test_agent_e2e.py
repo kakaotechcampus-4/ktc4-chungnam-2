@@ -314,6 +314,7 @@ def e2e(test_engine, fake_places, pin_body, monkeypatch):
     app.dependency_overrides[get_place_facts_gateway] = lambda: RealPlaceFactsGateway()
     monkeypatch.setattr(recommend_deps, "get_place_search_gateway", lambda: RealPlaceSearchGateway())
     monkeypatch.setattr(recommend_deps, "get_place_facts_gateway", lambda: RealPlaceFactsGateway())
+    fake_places.curate_all()   # 추천 후보 풀은 정예 장소뿐이다(#913) — 샘플 장소가 후보가 될 수 있어야 한다
     world = E2E(factory, model, fake_places, pin_body)
     try:
         with TestClient(app) as base:

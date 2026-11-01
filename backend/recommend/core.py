@@ -381,20 +381,10 @@ def no_applied_conditions(entries: Sequence[Mapping[str, Any]]) -> bool:
 EXTERNAL_SEARCH_QUERY_MAX = 100  # api-spec ExternalSearch.query maxLength
 
 
-def external_search_query(
-    area: str | None, category: str, lines: Sequence[tuple[str, str | None, bool | None]], off_season: Collection[str],
-) -> str:
-    """검색어 "{동네} {말}". lines는 이번 run의 활성 근거 줄 (badge, fact_key, wants)를 근거 줄 순서로 — 사유 원문은 받지
-    않는다(#717). 말은 쓰이는 줄(evidence_line_use) 중 원함 방향(wants가 참)이고 조건 말 표에 있는 키의 말 하나(첫째),
-    없으면 카테고리 말이다. 동네가 없거나 붙이면 검색어 상한을 넘으면 말만 쓴다."""
-    word = next(
-        (
-            constraints.CONDITION_SEARCH_WORDS[fact_key] for badge, fact_key, wants in lines
-            if wants is True and fact_key in constraints.CONDITION_SEARCH_WORDS
-            and evidence_line_use(badge, fact_key, wants, category, off_season)[0]
-        ),
-        constraints.CATEGORY_SEARCH_WORDS[category],
-    )
+def external_search_query(area: str | None, category: str) -> str:
+    """검색어 "{동네} {카테고리 말}"(#904). 근거 줄과 조건은 보지 않는다 — 카카오 검색은 말이 모두 맞아야 찾아서 조건 말을 더하면 결과가
+    거의 없고, 말 목록은 관리 비용이 크다(#902). 사유 원문도 받지 않는다(#717). 동네가 없거나 붙이면 검색어 상한을 넘으면 말만 쓴다."""
+    word = constraints.CATEGORY_SEARCH_WORDS[category]
     query = f"{area} {word}" if area else word
     return query if len(query) <= EXTERNAL_SEARCH_QUERY_MAX else word
 
@@ -476,7 +466,6 @@ FUNNEL_STAGES: tuple[tuple[str, str], ...] = (
     ("pool", "카테고리 후보 풀"),
     ("radius", "반경 밖 제거"),
     ("closed", "영업 종료 제거"),
-    ("not_recommendable", "추천 가능 아님 제거"),
     ("disqualify", "실격 조건 제거"),
     ("excluded", "이미 제안·거절됨"),
     ("ranking", "상위 3곳 선정"),   # 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다

@@ -111,6 +111,7 @@ export interface StoreState {
   idempotencyKeys: Record<string, { runId: string; mapId: string; category: string; execute: boolean }>; // 요청자:키 -> 첫 요청(#811 Idempotency-Key)
   pendingLogin: { display_name: string; withdrawn_at: string } | null; // #855 선택 대기 중인 탈퇴 계정(카카오 콜백이 ?login_pending=withdrawn_account로 돌려보낸 상태)
   trashedMaps: Record<string, { map: StoreState["maps"][string]; members: StoreState["members"][string]; deleted_at: string }>; // #464 삭제한 지도(30일 안 복구)
+  pinTrash: Record<string, { pin: Pin; reactions: Reaction[]; deleted_at: string; deleted_by: string; was_confirmed: boolean }>; // #864 지운 핀(30일 안 복구), pinId ->
   lastNewCount: Record<string, number>; // runId -> 마지막 실행이 새로 찾은 후보 수(#845, 그 뒤 게시해도 안 바뀐다)
   candidates: Record<string, Candidate[]>; // runId -> candidates
   shortlist: Record<string, ShortlistItem[]>; // mapId -> items
@@ -149,6 +150,7 @@ function emptyState(): StoreState {
     appliedEvidence: {},
     lastNewCount: {},
     trashedMaps: {},
+    pinTrash: {},
     idempotencyKeys: {},
     pendingLogin: null,
     candidates: {},
