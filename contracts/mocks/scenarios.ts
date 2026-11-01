@@ -5,7 +5,7 @@
 import { ME_USER_ID, nextId, resetIdCounter, resetStore, type StoreState } from "./store";
 import { buildBaseState, buildCandidates, buildEvidenceLines, buildRegions, SEED_MAP_ID } from "./seed";
 
-export type ScenarioName = "empty" | "happy-path" | "no-results" | "region-conflict" | "guest" | "withdrawn-relogin" | "credits-empty";
+export type ScenarioName = "empty" | "happy-path" | "no-results" | "region-conflict" | "guest" | "withdrawn-relogin" | "credits-empty" | "credits-full";
 
 /** 6절 "핀이 하나도 없음" 화면 — 지도만 있고 핀은 0개 */
 function buildEmpty(): StoreState {
@@ -68,6 +68,13 @@ function buildRegionConflict(): StoreState {
 }
 
 /** #432 — 크레딧을 다 썼다. 추천 받기·코스 짜기는 402 CREDIT_INSUFFICIENT, 후기를 처음 쓰면 채워진다 */
+/** #981 — 잔액이 상한(30)이다. 후기를 써도 크레딧을 받지 않는다(작성 시트가 미리 알린다) */
+function buildCreditsFull(): StoreState {
+  const state = buildBaseState();
+  state.credits[ME_USER_ID] = 30;
+  return state;
+}
+
 function buildCreditsEmpty(): StoreState {
   const state = buildBaseState();
   state.credits[ME_USER_ID] = 0;
@@ -96,6 +103,7 @@ const BUILDERS: Record<ScenarioName, () => StoreState> = {
   guest: buildGuest,
   "withdrawn-relogin": buildWithdrawnRelogin,
   "credits-empty": buildCreditsEmpty,
+  "credits-full": buildCreditsFull,
 };
 
 export function resetScenario(name: ScenarioName) {

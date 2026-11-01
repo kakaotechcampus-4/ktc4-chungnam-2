@@ -23,6 +23,12 @@ from referencing.jsonschema import DRAFT202012
 # 알고 있고 이슈로 추적 중인 응답 불일치. (표식 문자열들) -> 이슈. 새 불일치가 생기면 실패하고, 고쳐졌는데 남아 있어도 실패한다.
 KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
+# 크레딧 계약 테스트(test_credits_responses_match_the_openapi_spec)만의 알려진 차이. 메인 테스트는 /credits/me를 부르지 않아
+# 위 KNOWN_DRIFT에 두면 「이미 고쳐졌다」로 걸린다. 비어 가는 것이 정상이다.
+KNOWN_CREDITS_DRIFT: dict[tuple[str, ...], str] = {
+    ("/credits/me", "max_balance"): "#981",   # 잔액 상한 30 — 계약이 먼저 들어갔고 서버는 #981에서 채운다
+}
+
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
@@ -458,7 +464,10 @@ def test_credits_responses_match_the_openapi_spec(clients, db_session):
     assert _Checked(TestClient(a._c.app), problems).get("/credits/me").status_code == 401
 
     unique = list(dict.fromkeys(problems))
-    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+    unexpected = [p for p in unique if not any(all(s in p for s in marks) for marks in KNOWN_CREDITS_DRIFT)]
+    stale = [issue for marks, issue in KNOWN_CREDITS_DRIFT.items() if not any(all(s in p for s in marks) for p in unique)]
+    assert not unexpected, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unexpected)
+    assert not stale, f"이미 고쳐졌으니 KNOWN_CREDITS_DRIFT에서 지운다: {stale}"
 
 
 def test_reviews_responses_match_the_openapi_spec(clients, pin_body, db_session):
