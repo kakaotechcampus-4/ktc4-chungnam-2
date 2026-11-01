@@ -305,7 +305,9 @@ class TestPlanEvidenceWithModel:
         plan_evidence([_reason()], planner=_planner(client))
 
         [kwargs] = client.calls
-        assert set(kwargs) == {"model", "messages", "response_format"}
+        # timeout은 SDK의 요청별 클라이언트 옵션이다(요청 본문에 실리지 않는다) — create 시간 상한의 남은 시간으로 줄인 값(#848).
+        assert set(kwargs) == {"model", "messages", "response_format", "timeout"}
+        assert 0 < kwargs["timeout"] <= 15
         assert kwargs["model"] == settings.llm_model
         assert kwargs["response_format"] is PlanningOutput
 
