@@ -58,6 +58,10 @@ maps(
   deleted_at timestamptz null          -- #369: 방장이 삭제하면 찍는다(soft delete). 찍히면 모든 조회 경로에서 없는 지도(404)로 보인다.
                                        --   #431(2026-10-10): 삭제한 지 30일이 지나면 정리 작업(`python -m maps.purge`)이 지도와 딸린 데이터를 실제로 지운다. **삭제한 지 30일 안이면 방장이 복구할 수 있다**(`POST /maps/{mapId}/restore`, #464) — `deleted_at`을 비우면 구성원·핀·반응·초대·확정 리스트·추천 기록은 그대로 돌아온다.
                                        --   → docs/architecture.md 「지도 삭제와 정리」
+  deleted_by_withdrawal_of uuid null   -- #1000(2026-11-01): 방장이 탈퇴하면서 후임이 없어 지도를 같이 삭제한 경우(auth.WITHDRAW_STEPS의 maps 단계) 그 탈퇴자의 user id.
+                                       --   직접 지운 지도는 NULL이다. 7일 안에 계정을 되살리면(`POST /auth/pending` restore) auth가 maps.api.restore_maps_deleted_by_withdrawal로
+                                       --   이 값이 그 사용자인 지도를 deleted_at과 함께 비운다(`map.restored` 발행). 복구하지 않으면 30일 뒤 정리 작업이 지도를 지운다(마커도 함께).
+                                       --   새 계정으로 시작(restart)하면 기존 계정은 즉시 정리되므로 이 지도는 되살릴 사람이 없다(30일 뒤 정리).
 )
   CHECK (end_date >= start_date)   -- 9/4 결정 #22: 여행 제목 + 시작일·종료일. day_count는 폐기
   CHECK ((region_label IS NULL) = (region_center IS NULL))
