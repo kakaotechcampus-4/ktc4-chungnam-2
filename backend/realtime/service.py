@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session
 
 from common.events import EventLog
 
-RETENTION = timedelta(hours=24)
+RETENTION = timedelta(hours=24)   # 재전송 창 — 이 안의 행만 replay가 돌려준다
+PURGE_AFTER_HOURS = 25            # 지우는 기준은 재전송 창보다 1시간 길다(경계의 행을 replay가 읽는 중에 지우지 않게)
+PURGE_BATCH = 10_000              # 한 번에 지우는 행 상한 — 쌓인 게 많으면 여러 번 돌려 비운다
 
 
 @dataclass(frozen=True)
@@ -54,3 +56,11 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     if not map_ids:
         return {"event_log": 0}
     return {"event_log": db.execute(delete(EventLog).where(EventLog.map_id.in_(map_ids))).rowcount}
+
+
+def purge_old_events(db: Session, *, now: datetime, older_than_hours: int = PURGE_AFTER_HOURS) -> int:
+    """created_at이 now - older_than_hours보다 오래된 이벤트를 오래된 것부터 PURGE_BATCH행까지 지운다.
+    지운 행 수를 돌려준다. 지울 게 없으면 0(멱등)."""
+    cutoff = now - timedelta(hours=older_than_hours)
+    oldest = select(EventLog.seq).where(EventLog.created_at < cutoff).order_by(EventLog.seq).limit(PURGE_BATCH)
+    return db.execute(delete(EventLog).where(EventLog.seq.in_(oldest))).rowcount
