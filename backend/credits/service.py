@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from auth import api as auth_api
 from common.errors import AppError
 from credits import core
-from credits.constants import INITIAL_CREDITS, PRICES, REVIEW_REWARD
+from credits.constants import INITIAL_CREDITS, MAX_BALANCE, PRICES, REVIEW_REWARD
 from credits.models import CreditAccount, CreditLedger
 
 
@@ -39,7 +39,8 @@ def balance_of(db: Session, *, user_id: str) -> int:
 def get_my_credits(db: Session, *, user_id: str) -> dict:
     """GET /credits/me — 게스트는 403. 쓰지 않는다."""
     _reject_guest(db, user_id)
-    return {"balance": balance_of(db, user_id=user_id), "prices": dict(PRICES), "review_reward": REVIEW_REWARD}
+    return {"balance": balance_of(db, user_id=user_id), "max_balance": MAX_BALANCE, "prices": dict(PRICES),
+            "review_reward": REVIEW_REWARD}
 
 
 def check_can_spend(db: Session, *, user_id: str, feature: str) -> None:
@@ -93,7 +94,8 @@ def charge(db: Session, *, user_id: str, feature: str, run_id: str) -> int:
 
 
 def refund(db: Session, *, feature: str, run_id: str) -> bool:
-    """그 run의 차감을 돌려준다. 차감이 없었거나(또는 탈퇴로 지워졌거나) 이미 돌려줬으면 False."""
+    """그 run의 차감을 돌려준다 — 잔액 상한까지만(명세 3.6). 상한에 걸려 0이어도 refund 줄을 남기고 True(멱등).
+    차감이 없었거나(또는 7일 정리로 지워졌거나) 이미 돌려줬으면 False."""
     spend = core.spend_ref(feature, run_id)
     row = db.execute(select(CreditLedger.user_id, CreditLedger.delta).where(CreditLedger.ref_id == spend)).first()
     if row is None:
@@ -104,20 +106,23 @@ def refund(db: Session, *, feature: str, run_id: str) -> bool:
     refund_id = core.refund_ref(spend)
     if balance is None or _ledger_has(db, refund_id):
         return False
-    _apply(db, user_id=row.user_id, balance=balance, delta=-row.delta, reason="refund", ref_id=refund_id)
+    _apply(db, user_id=row.user_id, balance=balance, delta=core.capped_gain(-row.delta, balance), reason="refund",
+           ref_id=refund_id)
     return True
 
 
 def grant_review(db: Session, *, user_id: str, place_id: str) -> int:
-    """그 장소 첫 후기 보상. 받은 크레딧(REVIEW_REWARD 또는 0). 게스트는 0이고 계정을 만들지 않는다."""
+    """그 장소 첫 후기 보상 — 잔액 상한까지만(명세 3.6). 받은 크레딧(0~REVIEW_REWARD). 게스트는 0이고 계정을 만들지 않는다.
+    상한에 걸려 0이어도 원장에 그 장소 줄을 delta 0으로 남긴다 — 그 장소 보상은 끝이다(지웠다 다시 써서 받는 길을 막는다)."""
     if _is_guest(db, user_id):
         return 0
     balance = _lock_account(db, user_id)
     ref_id = core.review_ref(user_id, place_id)
     if _ledger_has(db, ref_id):
         return 0
-    _apply(db, user_id=user_id, balance=balance, delta=REVIEW_REWARD, reason="review", ref_id=ref_id)
-    return REVIEW_REWARD
+    gain = core.capped_gain(REVIEW_REWARD, balance)
+    _apply(db, user_id=user_id, balance=balance, delta=gain, reason="review", ref_id=ref_id)
+    return gain
 
 
 def _delete_user_rows(db: Session, user_id: str) -> dict[str, int]:

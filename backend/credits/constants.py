@@ -13,4 +13,7 @@ PRICES: dict[str, int] = {
     "course": 1,          # 「AI 코스 짜기」 POST /maps/{mapId}/courses
 }
 
-REVIEW_REWARD = 10   # 장소 후기를 그 장소에 처음 쓸 때. 상한 없음, 별점과 무관
+REVIEW_REWARD = 10   # 장소 후기를 그 장소에 처음 쓸 때. 후기 수 제한 없음, 별점과 무관. MAX_BALANCE까지만 채운다
+
+# 잔액 상한(명세 3.6절, #981). 후기 보상과 환불은 여기까지만 채운다(core.capped_gain). 이미 넘은 잔액은 깎지 않는다.
+MAX_BALANCE = 30

@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import func, select
 
 from credits import api as credits_api
-from credits.constants import INITIAL_CREDITS, REVIEW_REWARD
+from credits.constants import INITIAL_CREDITS, MAX_BALANCE, REVIEW_REWARD
 from credits.models import CreditAccount, CreditLedger
 from maps.models import Membership
 from pins.models import Pin
@@ -77,8 +77,17 @@ def test_body_at_max_length_is_saved_trimmed(world, trip):
 
 # 18 ---------------------------------------------------------------------------------------------------------------
 
+def _spend_to(db, user_id, target: int) -> int:
+    """잔액이 target 이하가 될 때까지 코스를 차감한다 — 보상이 잔액 상한(#981)에 걸리지 않게. 남은 잔액."""
+    balance = credits_api.get_balance(db, user_id=user_id)
+    while balance > target:
+        balance = credits_api.charge(db, user_id=user_id, feature="course", run_id=str(uuid.uuid4()))
+    return balance
+
+
 def test_first_save_credits_reward_then_edit_and_rewrite_credit_nothing(world, trip):
     a = world.client(trip["a"])
+    before = _spend_to(world.db, trip["a"], MAX_BALANCE - REVIEW_REWARD)
 
     first = _put(a, trip["pin_id"], rating=5, body="처음")
     edited = _put(a, trip["pin_id"], rating=2, body="다시 가 보니 별로")
@@ -87,13 +96,13 @@ def test_first_save_credits_reward_then_edit_and_rewrite_credit_nothing(world, t
 
     assert first.status_code == edited.status_code == rewritten.status_code == 200
     assert [r.json()["credited"] for r in (first, edited, rewritten)] == [REVIEW_REWARD, 0, 0]
-    assert first.json()["balance"] == INITIAL_CREDITS + REVIEW_REWARD
+    assert first.json()["balance"] == before + REVIEW_REWARD
     assert rewritten.json()["balance"] == first.json()["balance"]
     assert edited.json()["review"]["id"] == first.json()["review"]["id"]
     assert (edited.json()["review"]["rating"], edited.json()["review"]["body"]) == (2, "다시 가 보니 별로")
     assert edited.json()["review"]["created_at"] == first.json()["review"]["created_at"]
     reasons = world.db.execute(select(CreditLedger.reason).where(CreditLedger.user_id == trip["a"])).scalars().all()
-    assert sorted(reasons) == ["initial", "review"]
+    assert sorted(r for r in reasons if r != "spend") == ["initial", "review"]
 
 
 def test_balance_follows_existing_ledger(world, trip):
@@ -102,7 +111,7 @@ def test_balance_follows_existing_ledger(world, trip):
 
     r = _put(world.client(trip["a"]), trip["pin_id"])
 
-    assert r.json()["balance"] == before + REVIEW_REWARD
+    assert r.json()["balance"] == before + r.json()["credited"] == min(before + REVIEW_REWARD, MAX_BALANCE)   # 상한(#981)
 
 
 def test_delete_without_my_review_is_404(world, trip):

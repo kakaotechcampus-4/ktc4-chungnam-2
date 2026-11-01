@@ -25,9 +25,7 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 크레딧 계약 테스트(test_credits_responses_match_the_openapi_spec)만의 알려진 차이. 메인 테스트는 /credits/me를 부르지 않아
 # 위 KNOWN_DRIFT에 두면 「이미 고쳐졌다」로 걸린다. 비어 가는 것이 정상이다.
-KNOWN_CREDITS_DRIFT: dict[tuple[str, ...], str] = {
-    ("/credits/me", "max_balance"): "#981",   # 잔액 상한 30 — 계약이 먼저 들어갔고 서버는 #981에서 채운다
-}
+KNOWN_CREDITS_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
@@ -488,7 +486,7 @@ def test_reviews_responses_match_the_openapi_spec(clients, pin_body, db_session)
 
     assert a.get(f"/pins/{pin_id}/reviews").json()["summary"]["average_rating"] is None
     first = a.put(f"/pins/{pin_id}/reviews/me", json={"rating": 5, "body": "칼국수가 진해요"})
-    assert first.status_code == 200 and first.json()["credited"] > 0
+    assert first.status_code == 200 and first.json()["credited"] == 0   # 잔액 30 = 상한(#981)이라 보상 0
     assert a.put(f"/pins/{pin_id}/reviews/me", json={"rating": 4, "body": "다시 가도 좋아요"}).json()["credited"] == 0
     theirs = b.put(f"/pins/{pin_id}/reviews/me", json={"rating": 3, "body": "줄이 길어요"}).json()["review"]["id"]
     page = a.get(f"/pins/{pin_id}/reviews")
