@@ -45,6 +45,12 @@ def _sse_control_event(type_: str) -> str:
     return f"event: control\ndata: {json.dumps({'type': type_})}\n\n"
 
 
+# 새 연결의 첫 데이터. Firefox는 첫 데이터가 와야 open을 내고, 앞단 gzip 프록시도 첫 본문 바이트까지
+# 헤더를 붙들 수 있다. Last-Event-ID 없는 새 연결은 재전송할 게 없어 첫 ping이 20초 뒤였다(#925).
+# 재전송보다 먼저 보낸다 — DB 조회가 느려도 연결은 바로 열린다. 일반 ping과 같은 모양이다.
+_OPEN_PING = _sse_control_event("ping")
+
+
 async def _stream_live(request: Request, sub):
     """구독 큐를 비울 때까지 SSE 문자열을 내보낸다. PING_INTERVAL 동안 아무 이벤트도 없으면 ping.
     get 태스크를 ping 사이에도 유지한다 — wait_for로 get을 취소하면 막 꺼낸 행이 유실될 수 있다.
@@ -79,6 +85,7 @@ async def public_events(
     after_seq = _parse_last_event_id(last_event_id)
 
     async def gen():
+        yield _OPEN_PING   # 연결 직후 첫 바이트 — 20초 ping을 기다리게 하지 않는다(#925)
         if after_seq is not None:
             # 요청 스코프 db를 이 무기한 제너레이터 안까지 들고 있으면 SSE 연결이 살아있는 내내
             # 커넥션 풀에서 세션 하나를 붙들어맨다. 재전송 조회 하나만 짧게 쓰고 바로 닫는다.
@@ -112,6 +119,7 @@ async def private_events(
     after_seq = _parse_last_event_id(last_event_id)
 
     async def gen():
+        yield _OPEN_PING   # 연결 직후 첫 바이트 — 20초 ping을 기다리게 하지 않는다(#925)
         if after_seq is not None:
             with SessionLocal() as db:
                 result = service.replay(db, mapId, after_seq, "private")

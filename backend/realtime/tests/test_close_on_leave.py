@@ -43,7 +43,9 @@ async def _open(endpoint, map_id: str, user_id: str):
         request=_AliveRequest(), mapId=map_id, user=CurrentUser(user_id=user_id), last_event_id=None
     )
     agen = response.body_iterator
-    # 제너레이터는 첫 __anext__에서야 구독한다 — 큐 대기에 들어갈 때까지 돌려 둔다.
+    # 연결 직후 ping(#925)을 먼저 소비한다 — 이벤트 대기는 그다음 __anext__에서 시작된다.
+    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
+    # 제너레이터는 다음 __anext__에서야 구독한다 — 큐 대기에 들어갈 때까지 돌려 둔다.
     pending = asyncio.ensure_future(agen.__anext__())
     await asyncio.sleep(0)
     return agen, pending
