@@ -186,3 +186,18 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
         update(ShortlistItemRow).where(ShortlistItemRow.added_by == from_user_id).values(added_by=to_user_id)
     ).rowcount
     return {"shortlist_items": moved}
+
+
+def restore_item(db: Session, *, map_id: str, pin_id: str, added_by: str) -> bool:
+    """핀 휴지통 복구(#1013) — 확정 항목을 맨 뒤에 다시 만든다. 이미 있으면 False(멱등). add_item과 달리 먼저
+    확인하고 넣는다: 호출자(pins의 복구)가 같은 트랜잭션에 쓰던 것이 있어 IntegrityError 때의 db.rollback()을 쓸 수 없다.
+    visit_order는 NULL로 둔다 — list_items가 NULL을 수동 정렬된 항목 뒤에, 같은 NULL끼리는 added_at 순으로 놓으므로 맨 뒤다."""
+    lock_shortlist(db, map_id)
+    exists = db.execute(
+        select(ShortlistItemRow.id).where(ShortlistItemRow.map_id == map_id, ShortlistItemRow.pin_id == uuid.UUID(pin_id))
+    ).first()
+    if exists is not None:
+        return False
+    db.add(ShortlistItemRow(map_id=map_id, pin_id=uuid.UUID(pin_id), added_by=added_by))
+    db.flush()
+    return True
