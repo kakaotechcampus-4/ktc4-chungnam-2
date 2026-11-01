@@ -1,6 +1,6 @@
 """크레딧 순수 규칙 — 원장 ref_id 모양과 가격 찾기(docs/credits-reviews.md 3.3절). DB를 모른다."""
 
-from credits.constants import PRICES
+from credits.constants import MAX_BALANCE, PRICES
 
 
 def price_of(feature: str) -> int:
@@ -9,6 +9,11 @@ def price_of(feature: str) -> int:
         return PRICES[feature]
     except KeyError:
         raise ValueError(f"가격표(credits/constants.py PRICES)에 없는 feature: {feature}") from None
+
+
+def capped_gain(amount: int, balance: int) -> int:
+    """잔액 상한(MAX_BALANCE)까지만 채우는 양 — 후기 보상과 환불(명세 3.6절). 이미 상한 이상이면 0(깎지 않는다)."""
+    return max(0, min(amount, MAX_BALANCE - balance))
 
 
 def initial_ref(user_id: str) -> str:

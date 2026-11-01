@@ -3,7 +3,7 @@
 올라가기는 한 수(또는 묶음)씩 고치므로 "이 장소들은 한 날에 같이 가야 하고 저 장소들은 다른 날이어야 한다" 같은 큰 구조 변화는
 못 찾는다. 여기서는 장소 수가 작을 때(14곳 이하) 가능한 모든 날 배정을 따져서 하드 조건(도보 구간 상한·하루 도보 합계·하루 이동 합계·
 구성원 도보 상한)과 확인된 휴무를 모두 지키는 코스를 찾는다. 있으면 날 사이 대중교통 구간이 가장 적고(지역을 날마다 모으고) 그다음 날 사이
-장소 수가 고르고 그다음 현재 코스와 가장 덜 달라지는 것을 돌려주고(그 위에서 올라가기를 다시 한다), 없으면 없다는 것을 증명한 것이다.
+장소 수가 고르고 그다음 식당이 있는 날이 많고 그다음 현재 코스와 가장 덜 달라지는 것을 돌려주고(그 위에서 올라가기를 다시 한다), 없으면 없다는 것을 증명한 것이다.
 
 - 한 날의 장소 부분집합마다 (도보 분, 이동 분) 쌍의 파레토 최적 방문 순서를 구한다(비트마스크 DP). 두 상한을 함께 지키는 순서가 있는지 정확히 가린다.
 - 부분집합이 하루 상한(구성원 제약 포함)을 넘거나, 그날 쉬는 곳이 있거나, 고정(locks)과 어긋나면 그 날에는 쓸 수 없다.
@@ -18,7 +18,7 @@ from functools import lru_cache
 from typing import Mapping, Optional
 
 from agent.course import core
-from agent.course.constants import DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, LEG_MAX_MIN, MODE_TRANSIT, MODE_WALK
+from agent.course.constants import DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, LEG_MAX_MIN, MEAL_CATEGORY, MODE_TRANSIT, MODE_WALK
 
 REBUILD_MAX_COMPONENT = 14       # 묶음이 이보다 크면 정확한 탐색을 하지 않는다(2^14 부분집합)
 
@@ -115,11 +115,12 @@ def rebuild_walk_feasible(
     aliases = [p.alias for p in trip.places]
     index = {a: i for i, a in enumerate(aliases)}                      # 전체 비트마스크 자리
     where = {p: i for i, day in enumerate(current) for p in day}
+    cat = {p.alias: p.category for p in trip.places}
 
-    # 날마다 쓸 수 있는 (전체 비트마스크, 대중교통 구간 수, 장소 수의 제곱, 현재 코스와 다른 날에 놓인 장소 수, 방문 순서).
-    # 배정의 비용은 (날별 장소 수 제곱의 합, 대중교통 구간 수의 합, 옮겨지는 장소 수) — 고를 수 있는 배정 중 날 사이가 가장 고른 것,
-    # 같으면 하루에 한 지역에 가까운 것, 같으면 현재 코스에서 덜 옮기는 것
-    options: list[dict[int, list[tuple[int, int, int, int, tuple[str, ...]]]]] = [dict() for _ in range(n_days)]
+    # 날마다 쓸 수 있는 (전체 비트마스크, 대중교통 구간 수, 장소 수의 제곱, 식당 수, 현재 코스와 다른 날에 놓인 장소 수, 방문 순서).
+    # 배정의 비용은 (날별 장소 수 제곱의 합, 식당이 채운 날 수의 음수, 대중교통 구간 수의 합, 옮겨지는 장소 수) — 고를 수 있는 배정 중 날 사이가 가장 고른 것,
+    # 같으면 식당이 더 많은 날에 있는 것(core.meal_cover와 같은 순서, #918), 같으면 하루에 한 지역에 가까운 것, 같으면 현재 코스에서 덜 옮기는 것
+    options: list[dict[int, list[tuple[int, int, int, int, int, tuple[str, ...]]]]] = [dict() for _ in range(n_days)]
     for comp in comps:
         dp = _path_table(trip, comp)
         n = len(comp)
@@ -142,25 +143,26 @@ def rebuild_walk_feasible(
                 shift = sum(where[p] != d for p in members)
                 _, _, last, idx = min(fits, key=lambda e: (e[1], e[0], e[2]))
                 order = _order(comp, dp, sub, last, idx)
-                options[d].setdefault(low, []).append((full, core.day_transit_legs(trip, order), len(members) ** 2, shift, order))
+                meal_day = int(any(cat[p] == MEAL_CATEGORY for p in members))
+                options[d].setdefault(low, []).append((full, core.day_transit_legs(trip, order), len(members) ** 2, meal_day, shift, order))
     all_mask = (1 << len(aliases)) - 1
 
     @lru_cache(maxsize=None)
-    def best(remaining: int, used: int) -> Optional[tuple[tuple[int, int, int], tuple]]:
+    def best(remaining: int, used: int) -> Optional[tuple[tuple[int, int, int, int], tuple]]:
         if remaining == 0:
-            return (0, 0, 0), ()
+            return (0, 0, 0, 0), ()
         low = (remaining & -remaining).bit_length() - 1
-        found: Optional[tuple[tuple[int, int, int], tuple]] = None
+        found: Optional[tuple[tuple[int, int, int, int], tuple]] = None
         for d in range(n_days):
             if used >> d & 1:
                 continue
-            for full, transit, squared, shift, order in options[d].get(low, ()):
+            for full, transit, squared, meal_day, shift, order in options[d].get(low, ()):
                 if full & ~remaining:
                     continue
                 rest = best(remaining & ~full, used | 1 << d)
                 if rest is None:
                     continue
-                cand = ((rest[0][0] + squared, rest[0][1] + transit, rest[0][2] + shift), ((d, order), *rest[1]))
+                cand = ((rest[0][0] + squared, rest[0][1] - meal_day, rest[0][2] + transit, rest[0][3] + shift), ((d, order), *rest[1]))
                 if found is None or cand[0] < found[0]:
                     found = cand
         return found

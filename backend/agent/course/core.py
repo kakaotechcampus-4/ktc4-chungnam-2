@@ -24,6 +24,7 @@ from agent.course.constants import (
     LEG_MAX_MIN,
     MEAL_CATEGORY,
     MEALS_PER_DAY_MAX,
+    MEALS_PER_DAY_MIN,
     MODE_TRANSIT,
     MODE_WALK,
     NIGHT_LABEL,
@@ -308,6 +309,24 @@ def _cafe_pairs(cat: Mapping[str, str], day: Sequence[str]) -> int:
     return sum(cat[a] == CAFE_CATEGORY and cat[b] == CAFE_CATEGORY for a, b in zip(day, day[1:]))
 
 
+def day_meal_counts(trip: Trip, course: Course) -> list[int]:
+    """날마다 식당(MEAL_CATEGORY) 수."""
+    cat = {p.alias: p.category for p in trip.places}
+    return [sum(cat[p] == MEAL_CATEGORY for p in day) for day in course]
+
+
+def meal_less_days(trip: Trip, course: Course) -> list[int]:
+    """식사할 곳이 MEALS_PER_DAY_MIN곳에 못 미치는 날의 위치. 알림(확인 줄)이 쓴다 — 확정 리스트에 식당이 모자란 날."""
+    return [i for i, n in enumerate(day_meal_counts(trip, course)) if n < MEALS_PER_DAY_MIN]
+
+
+def meal_cover(trip: Trip, course: Course) -> int:
+    """식당이 없는데 채울 수 있었던 날 수(선호, 적을수록). 식당 총수가 몫(날짜 수 × 최소)보다 적으면 모자란 만큼은 어쩔 수 없어 세지 않는다.
+    0이면 식당을 이보다 고르게 나눌 수 없다."""
+    counts = day_meal_counts(trip, course)
+    return min(sum(counts), len(counts) * MEALS_PER_DAY_MIN) - sum(min(n, MEALS_PER_DAY_MIN) for n in counts)
+
+
 def soft_scores(trip: Trip, course: Course) -> dict[str, Optional[float]]:
     """코드가 계산만 한다. 가중치로 합치지 않는다 — 절충은 모델이 판단한다. 대상이 없는 목표는 None."""
     cat = {p.alias: p.category for p in trip.places}
@@ -341,6 +360,7 @@ def soft_scores(trip: Trip, course: Course) -> dict[str, Optional[float]]:
         "mono_category_days": mono_days,
         "no_tour_days": no_tour_days,
         "day_balance": max(counts) - min(counts),
+        "meal_cover": meal_cover(trip, course),
         "travel_total": course_travel(trip, course),
         "transit_legs": course_transit_legs(trip, course),
     }

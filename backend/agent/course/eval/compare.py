@@ -63,7 +63,8 @@ def score(sc: Scenario, course: Course, turns: int = 0) -> Score:
     violations = core.find_violations(sc.trip, course, sc.truth)
     confirmed = core.hard_score(violations)[0]
     unknown = len(core.find_checks(sc.trip, course, sc.truth))      # 진짜 영업시간으로도 모르는 곳(모드와 무관)
-    return Score(confirmed, unknown, core.soft_scores(sc.trip, course), turns)
+    soft = {**core.soft_scores(sc.trip, course), "meal_less_days": len(core.meal_less_days(sc.trip, course))}   # 식당 0곳인 날 수(평가용 열)
+    return Score(confirmed, unknown, soft, turns)
 
 
 def run_variants(sc: Scenario, decide: Optional[Callable] = None) -> dict[str, Score]:
@@ -99,6 +100,8 @@ def aggregate(results: Sequence[Mapping[str, Score]]) -> dict[str, dict[str, Opt
             "mono_category_days": _mean([s.soft["mono_category_days"] for s in rows]),
             "no_tour_days": _mean([s.soft["no_tour_days"] for s in rows]),
             "day_balance": _mean([s.soft["day_balance"] for s in rows]),
+            "meal_cover": _mean([s.soft["meal_cover"] for s in rows]),
+            "meal_less": _mean([s.soft["meal_less_days"] for s in rows]),
             "meal_per_day": _mean([s.soft["meal_per_day"] for s in rows]),
             "cafe_spacing": _mean([s.soft["cafe_spacing"] for s in rows]),
             "travel_total": _mean([s.soft["travel_total"] for s in rows]),
@@ -211,6 +214,8 @@ def aggregate_requests(results: Sequence[Mapping[str, RequestScore]]) -> dict[st
             "night_last": _mean([r.score.soft["night_last"] for r in rows]),
             "meal_per_day": _mean([r.score.soft["meal_per_day"] for r in rows]),
             "day_balance": _mean([r.score.soft["day_balance"] for r in rows]),
+            "meal_cover": _mean([r.score.soft["meal_cover"] for r in rows]),
+            "meal_less": _mean([r.score.soft["meal_less_days"] for r in rows]),
             "travel_total": _mean([r.score.soft["travel_total"] for r in rows]),
             "goals_exact": (sum(exact) / len(exact)) if exact else None,
             "trap_zero": (sum(trap) / len(trap)) if trap else None,

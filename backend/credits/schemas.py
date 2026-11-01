@@ -10,5 +10,6 @@ class CreditPrices(BaseModel):
 
 class CreditBalance(BaseModel):
     balance: int = Field(ge=0)
+    max_balance: int = Field(ge=0)
     prices: CreditPrices
     review_reward: int = Field(ge=0)
