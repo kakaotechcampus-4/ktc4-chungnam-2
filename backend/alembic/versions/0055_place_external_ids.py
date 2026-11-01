@@ -3,8 +3,8 @@
 카톡 링크는 장소 번호뿐이라 한 번 이어진 짝을 다음 사람부터 한 번에 찍는다. 번호만 저장한다(이름·좌표·주소 없음, 카카오 약관 #53).
 새 테이블 둘이라 기존 행에 영향이 없다(expand). 표(votes)는 voter_hash(사용자 id의 단방향 해시)당 한 표이고 탈퇴 정리가 지운다.
 
-Revision ID: 0054_place_external_ids
-Revises: 0053_maps_withdrawal_marker
+Revision ID: 0055_place_external_ids
+Revises: 0054_credit_ad_sessions
 Create Date: 2026-11-02
 
 """
@@ -15,8 +15,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0054_place_external_ids"
-down_revision: Union[str, None] = "0053_maps_withdrawal_marker"
+revision: str = "0055_place_external_ids"
+down_revision: Union[str, None] = "0054_credit_ad_sessions"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -67,9 +67,26 @@ def make_client(handler):
 
 def test_naver_me_is_followed_once_and_the_map_page_is_never_fetched():
     client, seen = make_client(lambda r: httpx.Response(307, headers={"location": MAP_URL}))
-    assert linkfetch.follow_short_link("https://naver.me/FvTH6o34", client=client, resolve=PUBLIC) == MAP_URL
+    resolved = linkfetch.follow_short_link("https://naver.me/FvTH6o34", client=client, resolve=PUBLIC)
+    assert resolved == MAP_URL
     [req] = seen   # map.naver.com 본문은 열지 않는다(Location 헤더만)
     assert req.headers["host"] == "naver.me"
+    parsed = linkparse.parse_resolved(resolved)
+    assert (parsed.provider, parsed.external_id) == ("naver", NID)
+
+
+@pytest.mark.parametrize("target", [
+    "https://naver.me/next", "https://kko.to/next", "https://naver.me/abc",
+    "https://maps.app.goo.gl/next", "https://place.map.kakao.com/1",
+])
+def test_naver_me_never_follows_another_short_link_or_another_provider(target, monkeypatch):
+    client, seen = make_client(lambda r: httpx.Response(307, headers={"location": target}))
+    follow = linkfetch.follow_short_link
+    monkeypatch.setattr(api, "_link_client", lambda: client)
+    monkeypatch.setattr(linkfetch, "follow_short_link", lambda url, *, client: follow(url, client=client, resolve=PUBLIC))
+    assert code_of(api.parse_link, "https://naver.me/abc") == "LINK_UNRESOLVED"
+    assert len(seen) == 1
+    assert seen[0].headers["host"] == "naver.me"
 
 
 def test_naver_me_redirecting_outside_the_allowlist_stops():

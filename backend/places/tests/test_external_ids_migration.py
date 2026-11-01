@@ -1,4 +1,4 @@
-"""마이그레이션 0054_place_external_ids up/down — 0053까지 올린 DB에 번호표 두 테이블이 생기고 내려가면 사라진다. models.py와 어긋나지 않았는지도 본다.
+"""마이그레이션 0055_place_external_ids up/down — 0054_credit_ad_sessions까지 올린 DB에 번호표 두 테이블이 생기고 내려가면 사라진다. models.py와 어긋나지 않았는지도 본다.
 
 다른 테스트와 테이블을 섞지 않도록 `<PINGO_TEST_DB>_extid_mig` DB를 따로 만들고 끝나면 지운다.
 """
@@ -12,8 +12,8 @@ from places.models import PlaceExternalId, PlaceExternalIdVote
 from places.tests import test_place_hours_migration as base
 from places.tests.conftest import BASE_DATABASE_URL, TEST_DB_NAME, _replace_dbname
 
-REVISION = "0054_place_external_ids"
-PREVIOUS = "0053_maps_withdrawal_marker"
+REVISION = "0055_place_external_ids"
+PREVIOUS = "0054_credit_ad_sessions"
 MIG_DB = f"{TEST_DB_NAME}_extid_mig"[:63]
 
 
@@ -47,6 +47,7 @@ def _tables(url):
 def test_revision_id_fits_and_follows_the_previous_head():
     assert len(REVISION) <= 32
     script = ScriptDirectory.from_config(base._config())
+    assert script.get_heads() == [REVISION]
     assert script.get_revision(REVISION).down_revision == PREVIOUS
 
 
@@ -54,7 +55,7 @@ def test_upgrade_creates_tables_matching_the_models_and_downgrade_drops_them(mig
     cfg = base._config()
     command.upgrade(cfg, PREVIOUS)
     assert _tables(mig_url) == {}
-    command.upgrade(cfg, REVISION)
+    command.upgrade(cfg, "head")
     assert _tables(mig_url) == {
         "place_external_ids": set(PlaceExternalId.__table__.c.keys()),
         "place_external_id_votes": set(PlaceExternalIdVote.__table__.c.keys()),
@@ -76,4 +77,5 @@ def test_upgrade_creates_tables_matching_the_models_and_downgrade_drops_them(mig
     engine.dispose()
     command.downgrade(cfg, PREVIOUS)
     assert _tables(mig_url) == {}
-    command.upgrade(cfg, REVISION)
+    command.upgrade(cfg, "head")
+    assert set(_tables(mig_url)) == {"place_external_ids", "place_external_id_votes"}
