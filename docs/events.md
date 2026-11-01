@@ -53,7 +53,7 @@
 
 - **`run.progress`·`run.failed`**: 추천 실행(`POST /runs/{id}/execute`·`/widen`·`/retry`)이 요청 안에서 동기로 끝나고, 이벤트는 요청 하나가 커밋될 때 한꺼번에 나간다 — 단계마다 보내도 끝에 한 번에 도착해 진행 표시가 되지 않고, 실패하면 트랜잭션이 롤백돼 `run.failed`도 저장되지 않는다. 그래서 v1에서는 보내지 않는다.
   - **진행 표시**는 프론트가 실행 요청이 돌아올 때까지(또는 결과 조회가 `done`이 될 때까지) 자체 애니메이션으로 보여 준다.
-  - **실패**는 실행 요청의 HTTP 응답(500 `RECOMMEND_FAILED`, 상한이면 429 `RETRY_LIMIT` 등)으로 받는다. 이벤트를 기다리지 않는다.
+  - **실패**는 실행 요청의 HTTP 응답(500 `RECOMMEND_FAILED`, 크레딧이 모자라면 402 `CREDIT_INSUFFICIENT` 등)으로 받는다. 이벤트를 기다리지 않는다.
   - 단계별 진행을 실시간으로 보여 주려면 실행을 백그라운드로 옮겨야 한다(v2 검토).
 - **`member.presence`**: 접속 상태 추적이 없다. `Member.online`은 비어 온다 — 접속 점은 그리지 않는다.
 - **`agent.*`**: v2 계획 보조 에이전트(docs/agent-v2.md)의 이벤트다. #531부터 코드 유형 제안(반응 공백, 카테고리 공백)의 `agent.suggested`, `agent.resolved`, `agent.settings_changed`가 발행된다. 모델 유형(정체, 갈림)은 #582부터 발행되고, `agent.summary_updated`는 #586부터 발행된다.

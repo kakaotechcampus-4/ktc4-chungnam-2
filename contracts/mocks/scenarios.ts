@@ -5,7 +5,7 @@
 import { ME_USER_ID, nextId, resetIdCounter, resetStore, type StoreState } from "./store";
 import { buildBaseState, buildCandidates, buildEvidenceLines, buildRegions, SEED_MAP_ID } from "./seed";
 
-export type ScenarioName = "empty" | "happy-path" | "no-results" | "retry-limit" | "region-conflict" | "guest" | "withdrawn-relogin" | "credits-empty";
+export type ScenarioName = "empty" | "happy-path" | "no-results" | "region-conflict" | "guest" | "withdrawn-relogin" | "credits-empty";
 
 /** 6절 "핀이 하나도 없음" 화면 — 지도만 있고 핀은 0개 */
 function buildEmpty(): StoreState {
@@ -29,18 +29,6 @@ function buildNoResults(): StoreState {
   state.evidenceLines[runId] = buildEvidenceLines(runId);
   state.regions[runId] = buildRegions();
   state.candidates[runId] = []; // 필터 통과 0곳
-  return state;
-}
-
-/** 폐지 예정(#432 D3, #954에서 지운다) — 10회째 run. 상한이 크레딧으로 바뀌어 이제 /retry도 그대로 된다. FE 시나리오 목록(#952)이 지울 때까지 이름만 남긴다 */
-function buildRetryLimit(): StoreState {
-  const state = buildBaseState();
-  const runId = "run_retry_limit";
-  state.runs[runId] = { id: runId, map_id: SEED_MAP_ID, category: "음식점", status: "done", attempt_no: 10 };
-  state.runRequestedBy[runId] = ME_USER_ID;
-  state.evidenceLines[runId] = buildEvidenceLines(runId);
-  state.regions[runId] = buildRegions();
-  state.candidates[runId] = buildCandidates("제주시 권역");
   return state;
 }
 
@@ -104,7 +92,6 @@ const BUILDERS: Record<ScenarioName, () => StoreState> = {
   empty: buildEmpty,
   "happy-path": buildHappyPath,
   "no-results": buildNoResults,
-  "retry-limit": buildRetryLimit,
   "region-conflict": buildRegionConflict,
   guest: buildGuest,
   "withdrawn-relogin": buildWithdrawnRelogin,

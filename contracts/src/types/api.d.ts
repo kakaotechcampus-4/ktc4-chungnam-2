@@ -2387,7 +2387,7 @@ export interface paths {
          *     첫 요청이 모델 실패(500) 등으로 run을 못 만들었으면 키를 지워 같은 키의 재시도를 허용한다. **요청의 동일성은 (지도, `category`, `execute`)로 본다**(`execute` 생략은 false와 같다). 같은 키로 **다른 지도나 다른 본문**(예: 다른 카테고리)을 보내면 409 `IDEMPOTENCY_CONFLICT`다 — 키를 재사용한 화면의 버그 신호다(#48이 정하던 멱등키 v1의 첫 적용처가 이 엔드포인트다). 같은 키의 재사용은 **최초 응답을 복제하는 것이 아니라 같은 run id를 지금 상태 그대로** 돌려준다(그 뒤 `execute`·`retry`로 상태·`attempt_no`가 바뀌었으면 바뀐 값). 재사용 전에도 지도 접근 권한을 다시 확인한다.
          *     **처리 기한 90초**: 첫 요청이 run을 못 만든 채 90초가 지나면(프로세스 종료·취소 등) 중단된 것으로 보고 새 요청이 이어받는다. 늦게 끝난 쪽의 저장은 거절된다(예약 소유자만 run을 저장한다). 키가 없으면 지금처럼 방어가 없다(구FE 호환). 키는 24시간 보관한다. 다른 요청자의 같은 키는 서로 영향이 없다.
          *     **크레딧(#432)**: run을 새로 만들면 크레딧 `prices.recommend_run`(1)이 빠진다(`GET /credits/me`). 잔액은 모델(②)을 부르기 **전에** 확인한다 — 모자라면 402 `CREDIT_INSUFFICIENT`이고 모델도 run도 없다. 차감은 run 저장과 같은 트랜잭션이라, 모델 실패(500)나 준비 미달(409) 등으로 run이 안 만들어지면 빠지지 않는다. 같은 `Idempotency-Key`의 재사용은 새 run이 아니라 다시 빠지지 않는다. 게스트는 추천을 받을 수 없다(403 `GUEST_NOT_ALLOWED`).
-         *     「다시 추천 받기」(`retry`)와 근거 고치기(`PATCH .../evidence`)는 크레딧을 쓰지 않는다. **횟수 상한(10회, 429 `RETRY_LIMIT`)은 폐지 예정이다**(#432 D3 — 서버는 #949에서 내지 않게 되고, 계약에서는 #954에서 지운다).
+         *     「다시 추천 받기」(`retry`)와 근거 고치기(`PATCH .../evidence`)는 크레딧을 쓰지 않는다. 추천 횟수 상한은 없다(#432 D3 — 전에는 지도·사람당 10회, 429 `RETRY_LIMIT`).
          */
         post: {
             parameters: {
@@ -2434,7 +2434,6 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                429: components["responses"]["RetryLimit"];
                 500: components["responses"]["RecommendFailed"];
             };
         };
@@ -2484,8 +2483,7 @@ export interface paths {
          *     '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
          *     한 요청에 글 5개까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 글은 10개까지다(뺀 것도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
          *     **같은 글을 다시 추가해도 안전하다**(#848): 같은 run에서 **같은 사람이 이미 쓴 글**(앞뒤 공백을 자르고 안의 연속 공백을 하나로 본 같은 글)을 `add`에 다시 보내면 새 줄을 만들지 않는다. 그 줄을 응답에 그대로 두고(뺐던 줄이면 다시 켠다), **모델을 부르지 않고 글 수 상한에도 세지 않는다**. 응답이 유실돼 재전송하거나 연타해도 같은 줄 하나다. 다른 사람이 쓴 같은 글은 별개의 줄이다.
-         *     근거 고치기는 크레딧을 쓰지 않는다(#432 D5, `＋`의 모델 호출은 run당 글 10개로 묶인다). **아래 횟수 상한은 폐지 예정이다**(#432 D3 — 서버는 #949에서 검사를 지우고, 계약에서는 #954에서 지운다).
-         *     **이 지도에서 추천 횟수(10회)를 다 쓴 요청자는 근거를 고칠 수 없다**(`×`·`＋` 모두 429 `RETRY_LIMIT`, #845 결정) — 고쳐도 다시 추천할 수 없기 때문이다. 횟수는 run이 아니라 **요청자·지도 단위**(그 사람이 이 지도에서 만든 어느 run이든 합쳐서)라, 다른 run에서 횟수를 다 썼으면 이 run의 근거도 못 고친다(`retry`의 상한 검사와 같은 값). 이 검사는 모델을 부르기 전에 한다. 조회(`GET .../evidence`, `GET .../result`)는 상한 뒤에도 된다.
+         *     근거 고치기는 크레딧을 쓰지 않고 횟수 상한도 없다(#432 D3·D5, `＋`의 모델 호출은 run당 글 10개로 묶인다). 전에는 추천 횟수(10회)를 다 쓴 요청자의 근거 고치기를 429 `RETRY_LIMIT`으로 막았다(#845).
          *     고친 근거는 **「다시 추천 받기」(`POST /runs/{runId}/retry`)가 읽어 반영한다**. 이미 보인 결과는 바뀌지 않고, 그 결과에 쓴 근거는 `RecommendResult.applied_evidence`가 따로 보여 준다.
          */
         patch: {
@@ -2515,7 +2513,6 @@ export interface paths {
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
                 409: components["responses"]["EvidenceLimit"];
-                429: components["responses"]["RetryLimit"];
                 500: components["responses"]["RecommendFailed"];
             };
         };
@@ -2718,8 +2715,7 @@ export interface paths {
          * 「다시 추천 받기」. 현재 뜬 대안 전체를 제외목록에 넣고 새로 찾는다 (3절, 루프가 닫힌다).
          *     **같은 run의 현재 활성 근거로 다시 찾는다 — `×`로 뺀 줄은 빠지고 `＋`로 더한 줄은 들어간다. 이 요청은 모델을 부르지 않는다**(`＋`의 모델 호출은 그 글을 더할 때 이미 났다). 사람 말로는 「수정한 조건으로, 지금 후보를 제외하고 다시 추천」이다. 마음에 드는 후보는 「지도에 올리기」로 보존한다(게시된 후보는 제외되지 않고 그대로 남는다, #845).
          *     run에 **고정되는 입력**: 구조화한 근거 줄과 기본 지역. **실행 때마다 다시 읽는 입력**: ♥ 기반 선호, 여행 날짜에 따른 영업·계절 판정, 제외목록.
-         *     크레딧을 쓰지 않는다(#432 D5 — 모델을 부르지 않는다).
-         *     10회 상한(지도 안에서 구성원 각자, 카테고리 무관) 초과 시 429 RETRY_LIMIT (#31, 2026-10-15 5→10회). 응답의 attempt_no와 attempt_limit으로 현재 몇 번째인지 노출한다. **이 상한과 `attempt_limit`은 폐지 예정이다**(#432 D3·D4 — 서버는 #949에서 검사를 지우고, 계약에서는 #954에서 지운다. `attempt_no`는 남는다).
+         *     크레딧을 쓰지 않고 횟수 상한도 없다(#432 D3·D5 — 모델을 부르지 않는다). 응답의 attempt_no로 지금 몇 번째 시도인지 노출한다(#811).
          */
         post: {
             parameters: {
@@ -2742,7 +2738,6 @@ export interface paths {
                     };
                 };
                 403: components["responses"]["Forbidden"];
-                429: components["responses"]["RetryLimit"];
             };
         };
         delete?: never;
@@ -3502,7 +3497,7 @@ export interface paths {
          *     코스는 요청한 본인에게만 보인다(가드레일 1). 확정 장소는 좌표를 아는 것만 센다(실시간 핀은 빠지고 excluded에 남는다). 한 번에 30곳까지, 여행 기간은 앞 14일까지 짠다.
          *     지도마다 내 진행 중 run은 하나다. request_text와 member_constraints는 모두 선택이다.
          *     **크레딧(#432)**: 요청이 접수되면(202) 크레딧 `prices.course`(1)이 빠진다. 잔액은 모델을 부르기 전에 확인한다(모자라면 402 `CREDIT_INSUFFICIENT`). 코스가 결과 없이 끝나면(failed — `ENGINE_ERROR`, `INTERRUPTED`) 돌려준다. 게스트는 코스를 짤 수 없다(403 `GUEST_NOT_ALLOWED`).
-         *     **하루 상한(사용자당 5번, 429 `COURSE_LIMIT`)은 폐지 예정이다**(#432 D3 — 서버는 #950에서 검사를 지우고, 계약에서는 #954에서 지운다).
+         *     하루 횟수 상한은 없다(#432 D3 — 전에는 사용자당 하루 5번, 429 `COURSE_LIMIT`).
          */
         post: {
             parameters: {
@@ -3541,7 +3536,6 @@ export interface paths {
                 404: components["responses"]["NotFound"];
                 409: components["responses"]["CourseInProgress"];
                 422: components["responses"]["CourseNotEnoughPlaces"];
-                429: components["responses"]["CourseLimit"];
             };
         };
         delete?: never;
@@ -4411,13 +4405,8 @@ export interface components {
              * @enum {string}
              */
             status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
-            /** @description 이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 attempt_limit */
+            /** @description 이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 없다(#432 — 크레딧으로 센다) */
             attempt_no: number;
-            /**
-             * @deprecated
-             * @description **폐지 예정**(#432 D4 — 횟수 상한이 크레딧으로 바뀐다. 새 화면은 읽지 않는다, 계약 삭제 #954). 한 사람이 한 지도에서 추천을 받을 수 있는 횟수 상한(2026-10-15부터 10). 서버가 채운다 — FE는 숫자를 하드코딩하지 말고 이 값으로 「n/10」을 그린다. 없으면 구버전 서버다
-             */
-            attempt_limit?: number;
             /** @description 기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (기본 15, 상한 30) */
             default_radius_walk_min?: number;
         };
@@ -4430,11 +4419,6 @@ export interface components {
             status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
             /** @description 지금까지의 시도 횟수(반경 넓히기·다시 추천 포함) */
             attempt_no: number;
-            /**
-             * @deprecated
-             * @description **폐지 예정**(#432 D4, 계약 삭제 #954). 시도 횟수 상한(RecommendRun.attempt_limit과 같다)
-             */
-            attempt_limit?: number;
             /**
              * Format: date-time
              * @description run을 만든 시각. 목록은 이 값의 내림차순
@@ -5184,15 +5168,6 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 재시도 상한(지도 안 구성원 각자 10회) 초과 (6절, #31, 2026-10-15 5→10회). detail.attempt_no, detail.attempt_limit. **폐지 예정**(#432 — 크레딧으로 바뀐다, 서버 #949, 계약 삭제 #954) */
-        RetryLimit: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["Error"];
-            };
-        };
         /** @description 크레딧이 모자람 (CREDIT_INSUFFICIENT, #432). detail에 { required, balance }. 모델을 부르기 전에 거절한다. 화면은 「크레딧이 부족해요. 후기를 쓰면 {review_reward} 크레딧을 드려요」(`GET /credits/me`의 값) */
         CreditInsufficient: {
             headers: {
@@ -5301,15 +5276,6 @@ export interface components {
         };
         /** @description run 하나에 직접 추가('+')한 글이 10개를 넘음(뺀 것 포함, EVIDENCE_LIMIT, */
         EvidenceLimit: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["Error"];
-            };
-        };
-        /** @description 사용자당 하루 5번(KST 자정 초기화)을 넘김 (COURSE_LIMIT, #334). detail에 { limit, used }. **폐지 예정**(#432 — 크레딧으로 바뀐다, 서버 #950, 계약 삭제 #954) */
-        CourseLimit: {
             headers: {
                 [name: string]: unknown;
             };

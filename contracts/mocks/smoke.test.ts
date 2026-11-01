@@ -174,13 +174,6 @@ describe("에러 시나리오", () => {
     expect(typeof body.detail.no_applied_conditions).toBe("boolean");
   });
 
-  it("retry-limit(폐지 예정, #432) — 10회째 run도 상한 없이 다시 추천된다", async () => {
-    resetScenario("retry-limit");
-    const res = await fetch(`${BASE}/runs/run_retry_limit/retry`, { method: "POST" });
-    expect(res.status).toBe(202);
-    expect((await res.json()).attempt_no).toBe(11);
-  });
-
   it("region-conflict — 확인 없이 confirm하면 409 REGION_CONFLICT", async () => {
     resetScenario("region-conflict");
     const res = await fetch(`${BASE}/runs/run_region_conflict/regions/confirm`, { method: "POST", body: "{}" });

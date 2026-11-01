@@ -47,7 +47,7 @@ POLICY: Mapping[str, RoleSpec] = {
                 "route.recalculate",  # 동선 재계산 — "구성원 누구나" (#103 결정)
                 "agent.toggle",  # 계획 보조 에이전트 모드 켜고 끄기(v2, docs/agent-v2.md)
                 "agent.suggestion.resolve",  # 지도 제안 수락·닫기(v2). 지도 단위
-                "course.request",  # AI 코스 짜기 요청(#334, #580 결정 전 브랜치 초안). 구성원 누구나, 하루 상한은 서비스가 센다
+                "course.request",  # AI 코스 짜기 요청(#334, #580 결정 전 브랜치 초안). 구성원 누구나. 1번에 크레딧 1(credits.api.charge, #432)
             }
         ),
     ),

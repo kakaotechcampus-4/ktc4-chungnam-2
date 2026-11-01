@@ -17,7 +17,7 @@ cd contracts && npm run gen:types   # docs/api-spec.yaml → contracts/src/types
 
 - `empty` — 6절 "핀이 하나도 없음"
 - `happy-path`(기본값) — 기획안 6절 핵심 시나리오 그대로(로그인→핀→반응→추천→근거→게시→확정)
-- `no-results` / `retry-limit` / `region-conflict` — `docs/errors.md`의 각 코드
+- `no-results` / `region-conflict` / `credits-empty` — `docs/errors.md`의 각 코드(`credits-empty`는 잔액 0, 402 `CREDIT_INSUFFICIENT`)
 
 프론트는 이 목 서버를 백엔드 대신 두고 개발한다. 실제 API가 준비되면 `worker.start()` 두 줄만 지우면 된다. `contracts/mocks/smoke.test.ts`가 6절 전체 흐름 + 4개 에러 시나리오를 자동 검증한다.
 
@@ -102,7 +102,7 @@ VITE_KAKAO_MAP_KEY=<JavaScript 키>
 | 5 | 같은 핀이 다른 창에 **실시간으로** 나타남 | SSE `pin.created`. 같은 장소를 또 찍으면 409 `PIN_DUPLICATE`. 지도 길게 눌러 찍기·링크로 찍기는 없다(v1에서 뺌, 보내면 422) | 다른 창에 안 뜨면 `GET /maps/{id}/events` 연결(401/CORS) |
 | 6 | 핀 상세: ♥/🚫 남기기, 의견 목록, 내 반응 취소 | 🚫는 사유 없으면 422 `EVIDENCE_REQUIRED`. (숙소는 v1에서 핀 자체를 만들 수 없다) | `my_reaction`, 반응 요약이 바로 갱신되는지 |
 | 7 | 추천 받기(음식점) → 곧바로 결과(`execute: true`, 근거는 결과 화면에서 수정 → 다시 추천) | 준비 미달이면 409 `NOT_READY`. 후보는 **요청자에게만** 점선 핀. 후보 카드에 이유·체크·구성원 충족·출처 | 다른 구성원 화면에 후보가 보이면 가드레일 1 위반 — 즉시 이슈 |
-| 8 | 반경 넓히기 ×4, 다시 추천 | 15→20→25→30분, 네 번째는 409 `WIDEN_LIMIT`. 재시도 10회 초과(지도 안 구성원 각자)는 429 `RETRY_LIMIT` | |
+| 8 | 반경 넓히기 ×4, 다시 추천 | 15→20→25→30분, 네 번째는 409 `WIDEN_LIMIT`. 다시 추천은 횟수 상한이 없다(#432) | |
 | 9 | 「지도에 올리기」 | 모든 구성원에게 핀이 나타나고 이유·체크가 **게시 뒤에도 유지** | |
 | 10 | 확정 리스트 추가/제외, 순서 바꾸기, 동선 | 순서 변경은 동선을 바꾸지 않음. 동선은 「동선 짜주기」로만 | |
 | 11 | 이름 변경, 로그아웃 → 다른 탭 요청 | 로그아웃 이후 이전 쿠키는 401(모든 기기 세션 종료) | |

@@ -5,12 +5,6 @@ import { buildCandidates, buildEvidenceLines, buildRegions } from "../seed";
 import { RECOMMEND_CATEGORIES } from "../categories";
 import { chargeCredit, creditGate } from "./credits";
 
-/**
- * 응답의 attempt_limit 값(폐지 예정, #432 D4 — 계약에서 지우는 건 #954). 횟수 상한은 크레딧으로 바뀌어 목 서버는 더 이상 429 RETRY_LIMIT을 내지 않는다.
- * FE가 아직 이 필드를 읽고 있어(#952에서 정리) 값만 남긴다.
- */
-export const ATTEMPT_LIMIT = 10;
-
 /** run을 만든 시각 — 지난 추천 기록(#469)의 created_at. 목 서버 메모리에만 있다. */
 const runCreatedAt: Record<string, string> = {};
 
@@ -102,7 +96,6 @@ export const recommendHandlers = [
         category: r.category,
         status: r.status,
         attempt_no: r.attempt_no,
-        attempt_limit: ATTEMPT_LIMIT,
         created_at: runCreatedAt[r.id] ?? new Date(0).toISOString(),
         candidate_count: r.status === "done" ? (store.candidates[r.id] ?? []).length : 0,
         published_count: (store.candidates[r.id] ?? []).filter((c) => c.published_pin_id).length, // 실서버처럼 candidates.published_pin_id로 센다(#469, #761)
@@ -123,7 +116,7 @@ export const recommendHandlers = [
       return apiError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 키로 다른 요청을 보냈어요");
     }
     // 같은 키의 재사용은 최초 응답의 복제가 아니라 같은 run의 지금 상태다
-    if (seen && store.runs[seen.runId]) return HttpResponse.json({ ...store.runs[seen.runId], attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
+    if (seen && store.runs[seen.runId]) return HttpResponse.json({ ...store.runs[seen.runId] }, { status: 202 });
     const answered = opinionPinCount(mapId, body.category);
     if (answered < REQUIRED_OPINION_PINS) {
       return apiError(409, "NOT_READY", `의견 핀 ${answered}곳 · ${REQUIRED_OPINION_PINS - answered}곳 더 필요`, {
@@ -150,7 +143,7 @@ export const recommendHandlers = [
       snapshotRun(runId, ensureCandidates(runId).length);
       store.runs[runId].status = "done";
     }
-    return HttpResponse.json({ ...store.runs[runId], attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
+    return HttpResponse.json({ ...store.runs[runId] }, { status: 202 });
   }),
 
   http.get("*/runs/:runId/evidence", ({ params }) => {
@@ -233,7 +226,7 @@ export const recommendHandlers = [
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
     snapshotRun(runId, ensureCandidates(runId).length);
     run.status = "done";
-    return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
+    return HttpResponse.json({ ...run }, { status: 202 });
   }),
 
   http.get("*/runs/:runId/result", ({ params }) => {
@@ -280,7 +273,7 @@ export const recommendHandlers = [
     store.candidates[runId] = buildCandidates(regionLabel);
     snapshotRun(runId, store.candidates[runId].length);
     run.status = "done";
-    return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
+    return HttpResponse.json({ ...run }, { status: 202 });
   }),
 
   http.post("*/runs/:runId/retry", ({ params }) => {
@@ -299,7 +292,7 @@ export const recommendHandlers = [
     const fresh = buildCandidates(regionLabel).filter((c) => !keptNames.has(c.place_name));
     store.candidates[runId] = [...kept, ...fresh];
     snapshotRun(runId, fresh.length);
-    return HttpResponse.json({ ...run, attempt_limit: ATTEMPT_LIMIT }, { status: 202 });
+    return HttpResponse.json({ ...run }, { status: 202 });
   }),
 
   http.post("*/candidates/:candidateId/publish", ({ params }) => {
