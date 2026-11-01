@@ -56,8 +56,20 @@ def _match_by_hint(hint: LinkHint | None) -> list:
         return []
 
 
+def _address_candidates(hint: LinkHint | None) -> list:
+    """같은 주소에 영업 중인 한 곳(#1047) — 이름이 달라도 「이 장소가 맞나요?」로 사람이 확인할 후보다(자동 확정 아님, 가드레일 2·4).
+    matches가 비었을 때만 부른다. 주소만 쓴다. 실패는 후보 없음 — 주소는 남기지 않는다."""
+    if hint is None or not hint.address:
+        return []
+    try:
+        return list(places_api.match_address_candidates(hint.address, db=None))[:3]
+    except Exception as exc:   # noqa: BLE001 — 후보는 덤이다. 메시지에 주소가 실릴 수 있어 타입만 남긴다
+        log.warning("link-preview 주소 후보 찾기 실패(%s)", type(exc).__name__)
+        return []
+
+
 def _parse_one(url: str, hint: LinkHint | None = None) -> LinkParseResult:
-    """링크 해석 + 힌트 짝(#946). 링크로 짝이 없거나 네이버 링크일 때만 힌트를 쓴다. 네이버 링크는 서버가 열지 않고,
+    """링크 해석 → 힌트 짝(#946) → 같은 주소 후보(#1047) 순. 링크로 짝이 없거나 네이버 링크일 때만 힌트를 쓴다. 네이버 링크는 서버가 열지 않고,
     상호명 힌트가 있을 때만 provider=naver로 받는다(없으면 LINK_NOT_SUPPORTED 그대로)."""
     try:
         result = places_api.parse_link(url, db=None)   # 스레드마다 자체 세션(places가 연다)
@@ -65,12 +77,15 @@ def _parse_one(url: str, hint: LinkHint | None = None) -> LinkParseResult:
         if exc.code != "LINK_NOT_SUPPORTED" or hint is None or not hint.name or not _is_naver_link(url):
             raise
         result = LinkParseResult(provider="naver", matches=[], needs_search_query=True)
-    if result.matches:
-        return result.model_copy(update={"matched_by": "link"})
+    if result.matches:   # places가 번호표로 채웠으면(matched_by=external_id) 덮어쓰지 않는다
+        return result if result.matched_by else result.model_copy(update={"matched_by": "link"})
     matches = _match_by_hint(hint)
     if matches:
         return result.model_copy(update={"matches": matches, "matched_by": "hint", "needs_search_query": False})
-    return result
+    if result.address_candidates:   # places가 구글 이름 속 주소로 이미 채웠다
+        return result
+    candidates = _address_candidates(hint)
+    return result.model_copy(update={"address_candidates": candidates}) if candidates else result
 
 
 def _already_pinned_pin_id(db: Session, map_id: str, result: LinkParseResult) -> str | None:
