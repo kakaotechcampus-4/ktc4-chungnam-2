@@ -44,7 +44,7 @@ user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사
 --   반응·근거 줄·알림(본인 것)·agent 열람 기록·코스 요청: 탈퇴 때 이미 삭제(WITHDRAW_STEPS)
 --   피드백           : 작성자 연결은 탈퇴 때 끊김. 본문은 남긴다(사용자가 쓴 글 — 개인정보처리방침에 밝힌다)
 --   멤버십           : 행은 남긴다(#245, 구성원 표시는 '탈퇴한 구성원')
---   **이름이 복사된 곳**(감사 필요): 추천 후보·게시 핀의 member_fulfillment.by_member[].display_name·user_id, 다른 구성원의 알림 문장에 박힌 행위자 이름, agent 요약·제안의 본문,
+--   **이름이 복사된 곳**(감사 필요): 추천 후보·게시 핀의 member_fulfillment.by_member[].display_name·user_id, 다른 구성원의 알림 문장에 박힌 행위자 이름(`notifications.api.anonymize_actor` — actor_id로 문장을 다시 만든다. **한계: actor_id 칸이 생기기 전에 쌓인 알림은 못 덮고 90일 뒤 정리로 사라진다**), agent 요약·제안의 본문,
 --                       초대 링크의 만든 사람 표시. → 정리 때 '탈퇴한 구성원'으로 덮는다(write-once 규칙과 조정은 BE가 이슈로 올린다)
 --   로그·이벤트      : 표시 이름·카카오 식별자를 남기지 않는다(이미 규칙). 이벤트 payload의 display_name은 보존기간(24시간) 뒤 사라진다
 -- 예전 users.provider, provider_user_id, is_guest는 이 리비전에서 지운다(카카오 사용자는 user_identities로 옮긴다).
@@ -631,9 +631,11 @@ notifications(                        -- 사용자별 알림함. 수신자마다
   type,                               -- NotificationType(api-spec). my_ai_pin_published는 만들어지지 않아 지웠다(#764)
   map_title,                          -- 만들 때의 제목 스냅샷
   pin_id nullable,                    -- pin_reaction만. FK 없음
+  actor_id nullable,                  -- 행위자(users.id 문자열, FK 없음, #857). 응답에 싣지 않는다. 탈퇴 7일 뒤 정리가 문장의 이름을 덮고 NULL로 비운다
+                                      --   이 칸이 생기기 전에 쌓인 알림은 NULL이다(못 덮는다 — 90일 뒤 정리로 사라진다)
   message,                            -- 서버가 만든 문장. 반대 사유·메모는 넣지 않는다
   created_at, read_at nullable,
-  index (user_id, created_at desc), index (user_id) where read_at is null
+  index (user_id, created_at desc), index (user_id) where read_at is null, index (actor_id) where actor_id is not null
 )
 notification_prefs(                   -- 행이 없으면 켜짐(기본값)
   user_id, type, enabled, primary key (user_id, type)
