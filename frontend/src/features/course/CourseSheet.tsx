@@ -120,7 +120,7 @@ function Entry({ mapId, onClose, onRun }: { mapId: string; onClose: () => void; 
       )}
       <div className="space-y-1">
         {/* 게스트는 버튼 대신 카카오 안내, 잔액이 모자라면 후기 안내(확정 탭은 이 시트 아래라 시트만 닫는다). */}
-        <CreditGate feature="course" mapId={mapId} error={create.error} onReview={onClose}>
+        <CreditGate feature="course" mapId={mapId} error={create.error} onReview={onClose} onCharged={create.reset}>
           <button type="submit" disabled={create.isPending} className="btn-primary btn-lg w-full">
             {create.isPending ? '요청하는 중…' : '코스 짜기'}
           </button>
