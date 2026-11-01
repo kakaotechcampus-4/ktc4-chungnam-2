@@ -55,12 +55,12 @@ def _rec(stage: str, role: str, who: str, text: str) -> StepRecord:
     return StepRecord(stage, role, who, text)
 
 
-# 결과(outcome) 값 → 화면 문장. 화면에 enum 글자를 그대로 내지 않는다.
+# 결과(outcome) 값 → 화면 문장. 화면에 enum 글자를 그대로 내지 않는다. {n}은 남은 확정 위반 수.
 OUTCOME_TEXT = {
     "solved": "확정 위반 없이 코스를 다 짰어요.",
     "solved_with_checks": "확정 위반은 없지만 영업 여부를 가게에 확인해야 하는 곳이 남았어요.",
-    "unresolved": "확정 위반이 남은 채로 끝났어요.",
-    "timeout": "시간이 다 되어 확정 위반이 남은 채로 끝났어요.",
+    "unresolved": "확정 위반이 {n}개 남은 채로 끝났어요.",
+    "timeout": "시간이 다 되어 확정 위반이 {n}개 남은 채로 끝났어요.",
 }
 
 
@@ -167,8 +167,7 @@ class Narrator:
         gave = [r.goal.id for r in result.goal_results if r.met is not True]
         out.append(_rec("결과", VERIFY, CODE, " ".join([
             goals_sentence(_labels(self.by_id, self.trip, met), _labels(self.by_id, self.trip, gave)),
-            _violations_sentence(core.hard_score(result.violations)[0]),
-            OUTCOME_TEXT.get(result.outcome, "결과를 정하지 못했어요."),
+            OUTCOME_TEXT.get(result.outcome, "결과를 정하지 못했어요.").format(n=core.hard_score(result.violations)[0]),
         ])))
         return out
 
