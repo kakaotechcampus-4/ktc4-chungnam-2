@@ -272,7 +272,7 @@ def test_kakao_link_with_an_own_db_match(own):
 def test_kakao_link_without_a_match_asks_for_a_search_query(own):
     result = places_api.parse_link("https://place.map.kakao.com/1234567")
     assert result.matches == [] and result.needs_search_query is True and result.kakao_place_id == "kakao:1234567"
-    assert result.model_dump(exclude_none=True).keys() == {"provider", "kakao_place_id", "external_id", "matches", "address_candidates", "needs_search_query"}
+    assert result.model_dump(exclude_none=True).keys() == {"provider", "kakao_place_id", "external_id", "matches", "needs_search_query"}
 
 
 def test_short_link_is_resolved_then_read(own, monkeypatch):
@@ -332,7 +332,7 @@ def test_route_returns_the_spec_shape(client, own):
     r = client.post("/places/from-link", json={"url": GOOGLE_PLACE})
     assert r.status_code == 200
     assert r.json() == {
-        "provider": "google", "name_hint": "성수 칼국수", "needs_search_query": False, "address_candidates": [],
+        "provider": "google", "name_hint": "성수 칼국수", "needs_search_query": False,
         "matches": [{"place_id": "own:p1", "place_name": "성수 칼국수", "lat": 37.5445, "lng": 127.0561,
                      "category": "음식점", "address": "서울 성동구 성수동 1", "pinnable": True}],
     }

@@ -1,5 +1,6 @@
 """네이버 링크 번호 읽기와 번호표(#1048) — 단축 링크 한 번 따라가기, 신뢰 규칙(hint 즉시·user 2표·충돌·폐업), 탈퇴 표 정리, 약관(번호만 저장)."""
 
+import dataclasses
 import logging
 
 import httpx
@@ -223,3 +224,23 @@ def test_fake_external_ids_follow_the_same_rules():
     fake.record_external_id("naver", NID, pid, source="user", voter_hash="b")
     assert [c.place_id for c in fake.own_places_by_external_id(NID)] == [pid]
     assert fake.purge_external_id_votes("a") == 1 and fake.own_places_by_external_id(NID) == []
+
+
+# ---- voter_hash ----
+
+def test_voter_hash_is_stable_one_way_and_per_user():
+    a, b = api.voter_hash("user-1"), api.voter_hash("user-2")
+    assert a == api.voter_hash("user-1") and a != b
+    assert len(a) == 64 and int(a, 16) >= 0 and "user-1" not in a
+
+
+def test_voter_hash_depends_on_the_secret(monkeypatch):
+    before = api.voter_hash("user-1")
+    monkeypatch.setattr(api, "settings", dataclasses.replace(api.settings, session_secret="another-secret"))
+    assert api.voter_hash("user-1") != before
+
+
+def test_voter_hash_and_secret_are_not_logged(caplog, monkeypatch):
+    with caplog.at_level(logging.DEBUG):
+        h = api.voter_hash("user-1")
+    assert h not in caplog.text and api.settings.session_secret not in caplog.text

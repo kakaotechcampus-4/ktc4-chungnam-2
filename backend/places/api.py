@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import re
 from contextlib import contextmanager
@@ -349,6 +351,15 @@ def _check_external_id(provider: str, external_id: str) -> None:
     m = _EXTERNAL_ID.fullmatch(external_id or "")
     if m is None or m.group(1) != provider:
         raise ValueError("번호 형식이 provider와 맞지 않는다")   # 번호 자체는 메시지에 싣지 않는다
+
+
+def voter_hash(user_id: str) -> str:
+    """번호표 표(`record_external_id(source='user', voter_hash=…)`·`purge_external_id_votes`)에 쓰는 사용자 id의 단방향 해시(#1048).
+    HMAC-SHA256 hex 64자 — 키는 SESSION_SECRET에서 용도 문자열로 파생하므로 키 자체는 어디에도 나가지 않고, 같은 사용자는 늘 같은 값이다
+    (계정당 한 표, 탈퇴 정리가 같은 값으로 지운다). 해시도 로그·응답에 싣지 않는다. SESSION_SECRET을 바꾸면 기존 표와 이어지지 않는다
+    (그 전 표는 탈퇴 정리로 지워지지 않고 남는다 — 표만이고 사용자와 이어 줄 수 없다)."""
+    key = hmac.new(settings.session_secret.encode("utf-8"), b"places.external_id_votes.v1", hashlib.sha256).digest()
+    return hmac.new(key, user_id.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def record_external_id(provider: str, external_id: str, place_id: str, *, source: str, voter_hash: str | None = None,
