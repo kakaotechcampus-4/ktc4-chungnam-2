@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from notifications import core, service
 from notifications.service import RETENTION_DAYS
 
-__all__ = ["RETENTION_DAYS", "compose_message", "delete_by_user", "notify", "purge_old", "reassign_user"]
+__all__ = ["RETENTION_DAYS", "anonymize_actor", "compose_message", "delete_by_user", "notify", "purge_old", "reassign_user"]
 
 
 def compose_message(type: str, *, actor_name: str | None = None, map_title: str | None = None,
@@ -55,3 +55,11 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     돌려준다. 알림 설정은 to_user 것을 유지하고 게스트 것은 지운다(게스트에만 있는 종류는 to_user에 그 종류가 없을 때만 옮김).
     멱등이고 같은 id면 아무것도 하지 않는다. 커밋하지 않는다."""
     return service.reassign_user(db, from_user_id=from_user_id, to_user_id=to_user_id)
+
+
+def anonymize_actor(db: Session, *, user_id: str) -> int:
+    """탈퇴 7일 뒤 개인정보 정리(#857)가 부른다 — `user_id`가 행위자인 알림(다른 구성원의 알림함)의 문장에 박힌 이름을
+    '탈퇴한 구성원'으로 다시 만들고, 덮은 행 수를 돌려준다. 멱등이다(다시 만든 뒤 행위자 표시를 비운다). 본인 알림은
+    탈퇴 때 `delete_by_user`가 이미 지웠다. 이 칸이 생기기 전에 쌓인 알림은 행위자를 몰라 못 덮는다(90일 뒤 정리로 사라진다).
+    커밋하지 않는다."""
+    return service.anonymize_actor(db, user_id=user_id)

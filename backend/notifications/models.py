@@ -28,6 +28,7 @@ class Notification(Base):
     __table_args__ = (
         Index("ix_notifications_user_created", "user_id", desc("created_at")),
         Index("ix_notifications_user_unread", "user_id", postgresql_where=text("read_at IS NULL")),
+        Index("ix_notifications_actor", "actor_id", postgresql_where=text("actor_id IS NOT NULL")),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -36,6 +37,8 @@ class Notification(Base):
     type: Mapped[str] = mapped_column(String, nullable=False)
     map_title: Mapped[str | None] = mapped_column(String, nullable=True)
     pin_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 행위자(이벤트를 일으킨 사람). 응답에는 싣지 않는다. 탈퇴 7일 뒤 정리(#857)가 이름 문장을 다시 만들고 NULL로 비운다.
+    actor_id: Mapped[str | None] = mapped_column(String, nullable=True)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
