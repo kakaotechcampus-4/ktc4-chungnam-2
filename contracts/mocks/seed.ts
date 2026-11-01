@@ -142,6 +142,8 @@ export function buildBaseState(): StoreState {
     feedback: [],
     credits: { [ME_USER_ID]: SEED_BALANCE }, // 시드의 나는 이미 크레딧을 10 썼다 — 상한(30) 아래라 후기 보상이 보인다. 가득 찬 상태는 시나리오 credits-full
     creditRefs: [],
+    adProvider: "fake", // 광고 보고 충전(#1037)은 테스트 광고 창으로. 열리는 모습은 잔액 0(시나리오 credits-empty)
+    adSessions: {},
     ...buildReviewsState(pins[pinFood1]),
   };
 }

@@ -1719,7 +1719,10 @@ describe("#432 — 크레딧", () => {
 
   it("새 계정은 30이고 가격표·후기 보상·잔액 상한을 응답으로 내린다", async () => {
     delete store.credits[ME_USER_ID]; // 행이 없는 새 계정
-    expect(await credits().then((r) => r.json())).toEqual({ balance: 30, max_balance: 30, prices: { recommend_run: 1, course: 1 }, review_reward: 10 });
+    expect(await credits().then((r) => r.json())).toEqual({
+      balance: 30, max_balance: 30, prices: { recommend_run: 1, course: 1 }, review_reward: 10,
+      ad: { available: false, reward: 10, used_today: 0, daily_max: 3, provider: "fake", unit_id: null },
+    });
   });
 
   it("추천 받기는 1을 쓰고, 같은 Idempotency-Key 재전송과 다시 추천은 더 쓰지 않는다", async () => {
@@ -1830,5 +1833,71 @@ describe("#432 — 장소 후기", () => {
     expect((await reviews()).status).toBe(200);
     expect((await put({ rating: 5, body: "좋아요" })).status).toBe(403);
     expect((await fetch(`${BASE}/reviews/review_1/reports`, { method: "POST" })).status).toBe(403);
+  });
+});
+
+describe("#1037 — 광고 보고 충전", () => {
+  const me = () => fetch(`${BASE}/credits/me`).then((r) => r.json());
+  const open = () => fetch(`${BASE}/credits/ad-sessions`, { method: "POST" });
+  const claim = (id: string) => fetch(`${BASE}/credits/ad-sessions/${id}/claim`, { method: "POST" });
+  const age = (id: string, seconds: number) => { store.adSessions[id].issued_at -= seconds * 1000; }; // 연 시각을 앞으로 당긴다
+
+  it("잔액이 있으면 available false, 열기는 409 not_needed. 광고가 꺼져 있으면 409 off", async () => {
+    expect((await me()).ad.available).toBe(false);
+    const res = await open();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "AD_REWARD_UNAVAILABLE", detail: { reason: "not_needed" } });
+    resetScenario("credits-empty");
+    store.adProvider = null;
+    expect((await me()).ad).toMatchObject({ available: false, provider: null });
+    expect(await (await open()).json()).toMatchObject({ code: "AD_REWARD_UNAVAILABLE", detail: { reason: "off" } });
+  });
+
+  it("잔액 0 — 열고, 7초 전에는 too_early, 지나면 10을 받고, 다시 받아도 같은 값", async () => {
+    resetScenario("credits-empty");
+    expect((await me()).ad.available).toBe(true);
+    const opened = await open();
+    expect(opened.status).toBe(201);
+    const { ad_session_id: id, claim_after_s } = await opened.json();
+    expect(claim_after_s).toBe(7);
+    const early = await claim(id);
+    expect(early.status).toBe(409);
+    expect((await early.json()).detail).toMatchObject({ reason: "too_early" });
+    age(id, 8);
+    expect(await (await claim(id)).json()).toEqual({ credited: 10, balance: 10 });
+    expect(await (await claim(id)).json()).toEqual({ credited: 10, balance: 10 });
+    expect((await me()).ad).toMatchObject({ available: false, used_today: 1 });
+  });
+
+  it("받지 않은 세션은 다시 열어도 같은 id이고, 하루 3번을 열면 4번째는 429(detail.limit)", async () => {
+    resetScenario("credits-empty");
+    const first = await (await open()).json();
+    expect((await (await open()).json()).ad_session_id).toBe(first.ad_session_id);
+    expect((await me()).ad.used_today).toBe(1);
+    // 시각을 옮기지 않고 받은 것으로만 표시한다(잔액은 그대로 0) — 자정 근처에 돌려도 하루 경계가 흔들리지 않게
+    const markClaimed = () => { for (const s of Object.values(store.adSessions)) s.claimed_at ??= Date.now(); };
+    markClaimed();
+    await open();
+    markClaimed();
+    await open();
+    markClaimed();
+    const fourth = await open();
+    expect(fourth.status).toBe(429);
+    expect(await fourth.json()).toMatchObject({ code: "AD_REWARD_LIMIT", detail: { limit: 3 } });
+  });
+
+  it("연 지 15분이 지나면 expired", async () => {
+    resetScenario("credits-empty");
+    const { ad_session_id: id } = await (await open()).json();
+    age(id, 901);
+    expect((await (await claim(id)).json()).detail).toEqual({ reason: "expired" });
+  });
+
+  it("남의 세션은 404, 게스트는 열기·받기 403", async () => {
+    resetScenario("credits-empty");
+    expect((await claim("00000000-0000-0000-0000-000000000000")).status).toBe(404);
+    resetScenario("guest");
+    expect((await open()).status).toBe(403);
+    expect((await claim("00000000-0000-0000-0000-000000000000")).status).toBe(403);
   });
 });

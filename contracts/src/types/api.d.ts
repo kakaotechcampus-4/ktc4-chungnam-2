@@ -2052,6 +2052,7 @@ export interface paths {
         /**
          * 내 크레딧 잔액과 가격표 (#432). 정식 계정은 30으로 시작한다 — 아직 한 번도 쓰지 않았으면 서버에 행이 없어도 30을 돌려준다(이 요청은 쓰지 않는다).
          *     **잔액 상한은 `max_balance`(30)다**(#981) — 후기 보상과 코스 환불은 상한까지만 채운다. 화면은 「남은 크레딧 N/{max_balance}」.
+         *     `ad`는 광고 보고 충전(#1037)이다 — 잔액이 바닥나면 `ad.available`이 true가 되고 `POST /credits/ad-sessions`로 연다.
          *     `prices`는 실행 1번에 빠지는 크레딧(추천 받기 `recommend_run`, 코스 짜기 `course`), `review_reward`는 장소 후기를 처음 쓸 때 받는 크레딧이다. 화면은 이 값으로 안내를 그리고 숫자를 적지 않는다.
          *     게스트는 크레딧이 없다 — 403 `GUEST_NOT_ALLOWED`, `detail.initial_credits`(카카오로 전환하면 받을 크레딧).
          */
@@ -2078,6 +2079,118 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credits/ad-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 광고 보고 충전 — 세션 열기 (#1037, docs/credits-reviews.md 3.7). 본문 없음. 크레딧이 바닥났을 때(`GET /credits/me`의 `ad.available`) 보상형 광고를 보기 전에 연다.
+         *     받지 않았고 만료되지 않은(15분) 내 세션이 있으면 **새로 만들지 않고 그것을 돌려준다**(하루 횟수를 쓰지 않는다, 201). `claim_after_s`는 지금부터 몇 초 뒤에 받을 수 있는지다(이어 받은 세션이면 남은 시간).
+         *     열 수 없으면 409 `AD_REWARD_UNAVAILABLE`(`detail.reason`: `off` 광고 꺼짐, `not_needed` 잔액이 가장 싼 가격 이상), 오늘(KST) 3번을 다 열었으면 429 `AD_REWARD_LIMIT`(`detail.limit`). 게스트는 403.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 열림(이어 받은 세션도 201) */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AdSession"];
+                    };
+                };
+                403: components["responses"]["GuestNotAllowed"];
+                /** @description AD_REWARD_UNAVAILABLE — detail { reason: off | not_needed }. 화면은 토스트 없이 크레딧을 다시 읽는다(버튼이 사라진다) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description AD_REWARD_LIMIT — 오늘 광고 충전을 다 썼다. detail { limit }(하루 횟수) */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credits/ad-sessions/{adSessionId}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 광고 보고 충전 — 보상 받기 (#1037, 3.7). 본문 없음. 광고를 끝까지 본 뒤, 세션을 연 지 7초(`AD_MIN_WATCH_S`)가 지나면 부른다.
+         *     보상은 `ad.reward`(10)를 **잔액 상한까지만**(3.6) 채운다 — 받을 때 잔액 조건은 다시 보지 않는다. **이미 받았으면 처음 결과를 그대로** 200(멱등).
+         *     웹 보상형 광고는 서버 검증이 없다 — 시청 완료는 화면이 알리는 것뿐이다(3.7 「서버 검증이 없다」).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    adSessionId: components["parameters"]["AdSessionId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 받음(이미 받았어도 200, 처음 값) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AdClaim"];
+                    };
+                };
+                403: components["responses"]["GuestNotAllowed"];
+                404: components["responses"]["NotFound"];
+                /** @description AD_REWARD_INVALID — detail { reason: too_early, retry_after_s }(그만큼 기다렸다 한 번 더) 또는 { reason: expired }(15분이 지났다 — 광고를 다시 본다) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -4167,6 +4280,37 @@ export interface components {
             };
             /** @description 장소 후기를 그 장소에 처음 쓸 때 받는 크레딧. 잔액 상한(max_balance)까지만 채운다 */
             review_reward: number;
+            ad: components["schemas"]["CreditAd"];
+        };
+        /** @description 광고 보고 충전(#1037, docs/credits-reviews.md 3.7). 화면은 available만 보고 버튼을 띄운다 — 잔액이나 횟수로 다시 판단하지 않는다 */
+        CreditAd: {
+            /** @description 지금 광고 충전을 열 수 있는가 — 광고가 켜져 있고, 잔액 < 가장 싼 가격이고, 오늘(KST) 연 세션 수 < daily_max */
+            available: boolean;
+            /** @description 1회 보상(10). 잔액 상한까지만 채운다 */
+            reward: number;
+            /** @description 오늘(KST) 연 세션 수 */
+            used_today: number;
+            /** @description 하루 세션 수(3) */
+            daily_max: number;
+            /**
+             * @description 광고 제공자. null이면 꺼짐. fake는 테스트 광고 창(운영에서는 쓰지 않는다)
+             * @enum {string|null}
+             */
+            provider: "fake" | "adsense" | "gpt" | null;
+            /** @description 광고 단위. adsense는 ca-pub-…/<슬롯 id>, gpt는 /<네트워크>/<단위>. fake·꺼짐이면 null */
+            unit_id: string | null;
+        };
+        AdSession: {
+            /** Format: uuid */
+            ad_session_id: string;
+            /** @description 지금부터 몇 초 뒤에 claim 할 수 있나(이어 받은 세션이면 남은 시간) */
+            claim_after_s: number;
+        };
+        AdClaim: {
+            /** @description 받은 크레딧. min(reward, max_balance - 받기 전 잔액), 0 아래로 가지 않는다 */
+            credited: number;
+            /** @description 받은 뒤 잔액 */
+            balance: number;
         };
         ReviewUpsertRequest: {
             rating: number;
@@ -5452,6 +5596,7 @@ export interface components {
         CandidateId: string;
         SuggestionId: string;
         ReviewId: string;
+        AdSessionId: string;
         /**
          * @description 브라우저 EventSource가 재연결 시 자동으로 보낸다. 이 seq 이후 이벤트만 재전송한다.
          *     event_log 보존기간을 넘긴 값이면 REST 재조회로 폴백한다 (docs/events.md).

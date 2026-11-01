@@ -28,6 +28,9 @@
 | `OWNER_TARGET_INVALID` | 422 | 방장을 넘길 수 없는 대상 — 지금 구성원이 아니거나 탈퇴했거나 나 자신(#468) | 구성원 목록을 다시 불러와 고르게 한다 |
 | `GUEST_NOT_ALLOWED` | 403 | 게스트(이름만 입력한 임시 계정, #472)가 못 하는 일 — 지도 만들기, AI 추천(`POST /maps/{mapId}/runs`)과 코스(`POST /maps/{mapId}/courses`), 크레딧 조회(`GET /credits/me`), 장소 후기 쓰기·신고(#432). 크레딧을 쓰는 기능과 후기에서는 `detail`에 `{ initial_credits }`(카카오로 전환하면 받을 크레딧). 그 밖의 구성원 행동은 막지 않는다 | "지도를 만들려면 카카오로 로그인해 주세요" / 크레딧·후기: "카카오로 로그인하면 {initial_credits} 크레딧을 드려요" + 카카오 전환 |
 | `GUEST_LIMIT` | 409 | 한 초대 링크로 만들 수 있는 게스트 수(10)를 넘음(#472) | "이 링크로는 더 입장할 수 없어요. 초대한 분께 새 링크를 요청하세요" |
+| `AD_REWARD_UNAVAILABLE` | 409 | 광고 보고 충전(`POST /credits/ad-sessions`, #1037)을 지금 열 수 없다. `detail`에 `{ reason }` — `off`(광고 꺼짐), `not_needed`(잔액이 가장 싼 가격 이상) | 토스트 없이 크레딧을 다시 읽는다(버튼이 사라진다) |
+| `AD_REWARD_LIMIT` | 429 | 오늘(KST) 광고 충전 세션을 다 열었다(#1037). `detail`에 `{ limit }` | 「오늘은 광고 충전을 {limit}번 모두 썼어요」 |
+| `AD_REWARD_INVALID` | 409 | 받을 수 없는 광고 세션(`POST /credits/ad-sessions/{id}/claim`, #1037). `detail`에 `{ reason: "too_early", retry_after_s }` 또는 `{ reason: "expired" }` | too_early: `retry_after_s` 뒤 한 번 더. expired: 「광고를 다시 봐 주세요」 |
 | `CREDIT_INSUFFICIENT` | 402 | 크레딧이 실행 가격보다 적다 — 추천 받기(`POST /maps/{mapId}/runs`)와 코스 짜기(`POST /maps/{mapId}/courses`), 모델을 부르기 전에 거절한다(#432). `detail`에 `{ required, balance }` | "크레딧이 부족해요. 후기를 쓰면 {review_reward} 크레딧을 드려요"(`GET /credits/me`의 값) + 「후기 쓰러 가기」 |
 | `NO_PENDING_LOGIN` | 404 | 선택 대기 중인 탈퇴 계정 로그인이 없다 — 쿠키가 없거나 만료(10분)·변조됐거나 이미 선택·정리됨(#855) | "선택 시간이 지났어요. 카카오로 다시 시작해 주세요" → 로그인 화면 |
 | `INVITE_EXPIRED` | 410 | 만료된 초대 토큰 | "초대 링크가 만료됐어요. 초대한 분께 새 링크를 요청하세요" |
