@@ -9,6 +9,7 @@ import { apiError } from "../util";
 export const INITIAL_CREDITS = 30;
 export const PRICES = { recommend_run: 1, course: 1 } as const;
 export const REVIEW_REWARD = 10;
+export const MAX_BALANCE = 30; // 잔액 상한(#981) — 후기 보상과 환불은 여기까지만 채운다
 const REVIEW_BODY_MAX = 500;
 const REVIEW_PAGE = 20;
 
@@ -39,7 +40,7 @@ export function refundCredit(feature: CreditFeature, runId: string) {
   const ref = `refund:${feature}:${runId}`;
   if (!store.creditRefs.includes(`${feature}:${runId}`) || store.creditRefs.includes(ref)) return false;
   store.creditRefs.push(ref);
-  store.credits[ME_USER_ID] = balance() + PRICES[feature];
+  store.credits[ME_USER_ID] = balance() + Math.max(0, Math.min(PRICES[feature], MAX_BALANCE - balance())); // 상한까지만(#981)
   return true;
 }
 
@@ -64,7 +65,7 @@ function reviewablePin(pinId: string) {
 export const creditsHandlers = [
   http.get("*/credits/me", () => {
     if (isGuest()) return guestError();
-    return HttpResponse.json({ balance: balance(), prices: PRICES, review_reward: REVIEW_REWARD });
+    return HttpResponse.json({ balance: balance(), max_balance: MAX_BALANCE, prices: PRICES, review_reward: REVIEW_REWARD });
   }),
 
   // 작성자 이름·id는 내리지 않는다(#432 결정 B) — is_mine만
@@ -112,9 +113,10 @@ export const creditsHandlers = [
     const ref = `review:${ME_USER_ID}:${found.key}`;
     let credited = 0;
     if (!store.creditRefs.includes(ref)) {
+      // 잔액 상한까지만 채운다(#981). 0이어도 ref를 남겨 그 장소 보상은 그걸로 끝난다
       store.creditRefs.push(ref);
-      store.credits[ME_USER_ID] = balance() + REVIEW_REWARD;
-      credited = REVIEW_REWARD;
+      credited = Math.max(0, Math.min(REVIEW_REWARD, MAX_BALANCE - balance()));
+      store.credits[ME_USER_ID] = balance() + credited;
     }
     return HttpResponse.json({ review: mine(review), credited, balance: balance() });
   }),

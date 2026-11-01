@@ -1959,6 +1959,7 @@ export interface paths {
         };
         /**
          * 내 크레딧 잔액과 가격표 (#432). 정식 계정은 30으로 시작한다 — 아직 한 번도 쓰지 않았으면 서버에 행이 없어도 30을 돌려준다(이 요청은 쓰지 않는다).
+         *     **잔액 상한은 `max_balance`(30)다**(#981) — 후기 보상과 코스 환불은 상한까지만 채운다. 화면은 「남은 크레딧 N/{max_balance}」.
          *     `prices`는 실행 1번에 빠지는 크레딧(추천 받기 `recommend_run`, 코스 짜기 `course`), `review_reward`는 장소 후기를 처음 쓸 때 받는 크레딧이다. 화면은 이 값으로 안내를 그리고 숫자를 적지 않는다.
          *     게스트는 크레딧이 없다 — 403 `GUEST_NOT_ALLOWED`, `detail.initial_credits`(카카오로 전환하면 받을 크레딧).
          */
@@ -2057,6 +2058,7 @@ export interface paths {
         /**
          * 내 후기 쓰기·고치기 (#432) — 한 사람이 한 장소에 하나. 정식 계정만(게스트 403 `GUEST_NOT_ALLOWED`). 방문 확인은 하지 않는다.
          *     그 장소에 **처음 쓰면 크레딧 `review_reward`(10)를 받는다** — 별점과 무관하고, 고치거나 지웠다 다시 써도 다시 받지 않는다. 받은 크레딧은 `credited`, 저장 뒤 잔액은 `balance`.
+         *     **잔액 상한(`GET /credits/me`의 `max_balance`, 30)까지만 채운다**(#981): 잔액 25면 `credited` 5, 30이면 0. **상한에 걸려 0을 받아도 그 장소 보상은 그걸로 끝난다** — 나중에 잔액이 줄어도 같은 장소로는 다시 받지 않는다.
          *     별점은 정수 1~5, 글은 앞뒤 공백을 걷은 뒤 1자 이상 `limits.body_max`(500)자 이하. 후기 글은 모델·추천·로그로 가지 않는다.
          */
         put: {
@@ -3497,7 +3499,7 @@ export interface paths {
          *     run을 queued로 저장하고 202를 돌려준다. 계산은 백그라운드에서 한다(보통 수 초에서 수십 초) — FE는 `GET /course-runs/{runId}`를 2초 간격으로 불러 status가 done이나 failed가 될 때까지 기다린다.
          *     코스는 요청한 본인에게만 보인다(가드레일 1). 확정 장소는 좌표를 아는 것만 센다(실시간 핀은 빠지고 excluded에 남는다). 한 번에 30곳까지, 여행 기간은 앞 14일까지 짠다.
          *     지도마다 내 진행 중 run은 하나다. request_text와 member_constraints는 모두 선택이다.
-         *     **크레딧(#432)**: 요청이 접수되면(202) 크레딧 `prices.course`(1)이 빠진다. 잔액은 모델을 부르기 전에 확인한다(모자라면 402 `CREDIT_INSUFFICIENT`). 코스가 결과 없이 끝나면(failed — `ENGINE_ERROR`, `INTERRUPTED`) 돌려준다. 게스트는 코스를 짤 수 없다(403 `GUEST_NOT_ALLOWED`).
+         *     **크레딧(#432)**: 요청이 접수되면(202) 크레딧 `prices.course`(1)이 빠진다. 잔액은 모델을 부르기 전에 확인한다(모자라면 402 `CREDIT_INSUFFICIENT`). 코스가 결과 없이 끝나면(failed — `ENGINE_ERROR`, `INTERRUPTED`) 돌려준다(잔액 상한 `max_balance`까지만, #981). 게스트는 코스를 짤 수 없다(403 `GUEST_NOT_ALLOWED`).
          *     하루 횟수 상한은 없다(#432 D3 — 전에는 사용자당 하루 5번, 429 `COURSE_LIMIT`).
          */
         post: {
@@ -4058,8 +4060,10 @@ export interface components {
         };
         /** @description 내 크레딧(#432). 가격과 보상은 서버 상수(credits/constants.py)에서 오고, 화면은 이 값만 쓴다 */
         CreditBalance: {
-            /** @description 지금 잔액. 한 번도 쓰지 않았으면 처음 지급량(30) */
+            /** @description 지금 잔액. 한 번도 쓰지 않았으면 처음 지급량(30). 보통 max_balance 이하다(상한 전에 쌓인 테스트 계정은 넘을 수 있다) */
             balance: number;
+            /** @description 잔액 상한(30, #981). 후기 보상과 코스 환불은 여기까지만 채운다. 화면은 「N/max_balance」로 그린다 */
+            max_balance: number;
             /** @description 실행 1번에 빠지는 크레딧 */
             prices: {
                 /** @description 「추천 받기」 1번(POST /maps/{mapId}/runs). 다시 추천·근거 고치기는 0 */
@@ -4067,7 +4071,7 @@ export interface components {
                 /** @description 「AI 코스 짜기」 1번(POST /maps/{mapId}/courses) */
                 course: number;
             };
-            /** @description 장소 후기를 그 장소에 처음 쓸 때 받는 크레딧 */
+            /** @description 장소 후기를 그 장소에 처음 쓸 때 받는 크레딧. 잔액 상한(max_balance)까지만 채운다 */
             review_reward: number;
         };
         ReviewUpsertRequest: {
@@ -4114,7 +4118,7 @@ export interface components {
         };
         ReviewSaved: {
             review: components["schemas"]["MyReview"];
-            /** @description 이번 저장으로 받은 크레딧. 그 장소에 처음 쓴 저장이면 review_reward, 아니면 0 */
+            /** @description 이번 저장으로 받은 크레딧. 그 장소에 처음 쓴 저장이면 min(review_reward, max_balance - 저장 전 잔액)(0 아래로 가지 않는다), 고치는 저장이면 0 */
             credited: number;
             /** @description 저장 뒤 잔액 */
             balance: number;

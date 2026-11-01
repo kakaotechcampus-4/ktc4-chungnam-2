@@ -3,6 +3,7 @@ import { server } from "./node";
 import { resetScenario } from "./scenarios";
 import { ME_USER_ID, store } from "./store";
 import { MAP_LIMIT } from "./handlers/maps";
+import { SEED_BALANCE } from "./seed";
 
 const BASE = "https://api.pingo.example.com";
 
@@ -1370,7 +1371,7 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     }
     const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
     expect(res.status).toBe(202);
-    expect((await fetch(`${BASE}/credits/me`).then((r) => r.json())).balance).toBe(30 - 6);
+    expect((await fetch(`${BASE}/credits/me`).then((r) => r.json())).balance).toBe(SEED_BALANCE - 6);
   });
 });
 
@@ -1418,7 +1419,7 @@ describe("#845 — 추천 흐름: 근거 확인 없이 결과 먼저", () => {
       const res = await fetch(`${BASE}/runs/${run.id}/evidence`, { method: "PATCH", body: JSON.stringify(body) });
       expect(res.status).toBe(200);
     }
-    expect((await fetch(`${BASE}/credits/me`).then((r) => r.json())).balance).toBe(29);
+    expect((await fetch(`${BASE}/credits/me`).then((r) => r.json())).balance).toBe(SEED_BALANCE - 1);
   });
 
   it("이미 지도에 올린 후보는 retry 뒤에도 남고, new_count는 마지막 실행이 새로 찾은 수라 게시해도 바뀌지 않는다", async () => {
@@ -1624,21 +1625,22 @@ describe("#432 — 크레딧", () => {
   const createRun = (headers: Record<string, string> = {}) =>
     fetch(`${BASE}/maps/map_1/runs`, { method: "POST", headers, body: JSON.stringify({ category: "음식점", execute: true }) });
 
-  it("처음엔 30이고 가격표와 후기 보상을 응답으로 내린다", async () => {
-    expect(await credits().then((r) => r.json())).toEqual({ balance: 30, prices: { recommend_run: 1, course: 1 }, review_reward: 10 });
+  it("새 계정은 30이고 가격표·후기 보상·잔액 상한을 응답으로 내린다", async () => {
+    delete store.credits[ME_USER_ID]; // 행이 없는 새 계정
+    expect(await credits().then((r) => r.json())).toEqual({ balance: 30, max_balance: 30, prices: { recommend_run: 1, course: 1 }, review_reward: 10 });
   });
 
   it("추천 받기는 1을 쓰고, 같은 Idempotency-Key 재전송과 다시 추천은 더 쓰지 않는다", async () => {
     const first = await createRun({ "Idempotency-Key": "key-credits-1" }).then((r) => r.json());
     await createRun({ "Idempotency-Key": "key-credits-1" });
     await fetch(`${BASE}/runs/${first.id}/retry`, { method: "POST" });
-    expect((await credits().then((r) => r.json())).balance).toBe(29);
+    expect((await credits().then((r) => r.json())).balance).toBe(SEED_BALANCE - 1);
   });
 
   it("준비 미달(409)이면 run도 차감도 없다", async () => {
     const res = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "관광지", execute: true }) });
     expect(res.status).toBe(409);
-    expect((await credits().then((r) => r.json())).balance).toBe(30);
+    expect((await credits().then((r) => r.json())).balance).toBe(SEED_BALANCE);
   });
 
   it("credits-empty — 추천은 402 CREDIT_INSUFFICIENT(detail에 required, balance)이고 run을 만들지 않는다", async () => {
@@ -1675,14 +1677,26 @@ describe("#432 — 장소 후기", () => {
   });
 
   it("처음 쓰면 10을 받고, 고치거나 지웠다 다시 써도 다시 받지 않는다", async () => {
+    store.credits[ME_USER_ID] = 15; // 크레딧을 써서 자리가 있다
     const first = await put({ rating: 5, body: "  국물 최고  " }).then((r) => r.json());
-    expect(first).toMatchObject({ credited: 10, balance: 40, review: { rating: 5, body: "국물 최고" } });
+    expect(first).toMatchObject({ credited: 10, balance: 25, review: { rating: 5, body: "국물 최고" } });
     expect((await put({ rating: 3, body: "다시 가니 평범" }).then((r) => r.json())).credited).toBe(0);
     expect((await fetch(`${BASE}/pins/pin_1/reviews/me`, { method: "DELETE" })).status).toBe(204);
     expect((await put({ rating: 4, body: "또 씀" }).then((r) => r.json())).credited).toBe(0);
     const page = await reviews().then((r) => r.json());
     expect(page.mine).toMatchObject({ rating: 4, body: "또 씀" });
     expect(page.items.filter((i: { is_mine: boolean }) => i.is_mine)).toHaveLength(1);
+  });
+
+  it("잔액 상한 30까지만 채운다(#981) — 25면 +5, 30이면 0이고 그 장소 보상은 그걸로 끝난다", async () => {
+    store.credits[ME_USER_ID] = 25;
+    expect((await put({ rating: 4, body: "좋아요" }).then((r) => r.json())).credited).toBe(5);
+    expect((await fetch(`${BASE}/credits/me`).then((r) => r.json())).balance).toBe(30);
+    resetScenario("credits-full"); // 잔액 30(상한)
+    expect((await put({ rating: 4, body: "가득 찼을 때" }).then((r) => r.json())).credited).toBe(0);
+    store.credits[ME_USER_ID] = 10; // 그 뒤 크레딧을 써도
+    await fetch(`${BASE}/pins/pin_1/reviews/me`, { method: "DELETE" });
+    expect((await put({ rating: 4, body: "다시 씀" }).then((r) => r.json())).credited).toBe(0); // 같은 장소로는 다시 받지 않는다
   });
 
   it("별점 0·6, 공백 글, 501자는 422 VALIDATION_ERROR, 500자는 된다", async () => {
