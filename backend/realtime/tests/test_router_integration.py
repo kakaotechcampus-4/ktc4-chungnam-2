@@ -238,3 +238,20 @@ async def test_closing_outer_generator_cancels_pending_get_task(monkeypatch, cha
     await asyncio.sleep(0)   # 취소가 반영될 한 틱
     assert gets[0].cancelled()
     assert "ping-aclose" not in dispatcher._subscribers
+
+
+_OPEN = 'event: control\ndata: {"type": "ping"}\n\n'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler", [public_events, private_events])
+async def test_first_byte_is_sent_immediately_on_new_connection(monkeypatch, handler):
+    """#925: 새 연결은 PING_INTERVAL을 기다리지 않고 바로 첫 ping을 낸다(id 없음)."""
+    monkeypatch.setattr(router_module, "PING_INTERVAL", 60.0)
+    response = await handler(request=_Alive(), mapId="open-now", user=CurrentUser(user_id="user-a"), last_event_id=None)
+    agen = response.body_iterator
+    try:
+        chunk = await asyncio.wait_for(agen.__anext__(), timeout=0.5)
+        assert chunk == _OPEN
+    finally:
+        await agen.aclose()
