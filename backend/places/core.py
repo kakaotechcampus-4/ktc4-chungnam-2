@@ -182,3 +182,17 @@ def place_link(name: str | None, address: str | None, kakao_place_url: str | Non
         return None
     area = neighborhood(address)
     return kakao_search_url(f"{name} {area}" if area else name)
+
+
+# ---- 번호표 신뢰 규칙(#1048) ----
+
+EXTERNAL_ID_USER_VOTES = 2   # 'user' 짝이 자동 매칭에 쓰이려면 서로 다른 사용자 표가 이만큼 필요하다
+
+
+def trusted_external_place(rows: list[tuple[str, str, int]]) -> str | None:
+    """번호 하나의 번호표 행들 [(place_id, source, 표 수)] 중 자동 매칭에 쓸 장소 id. 행이 정확히 하나이고 서버가 스스로 확정했거나
+    ('hint') 서로 다른 사용자 표가 EXTERNAL_ID_USER_VOTES 이상일 때만. 같은 번호가 서로 다른 장소에 이어진 행이 둘 이상이면 충돌이라 None."""
+    if len(rows) != 1:
+        return None
+    place_id, source, votes = rows[0]
+    return place_id if source == "hint" or votes >= EXTERNAL_ID_USER_VOTES else None
