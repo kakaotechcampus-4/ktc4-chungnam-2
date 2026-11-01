@@ -131,7 +131,7 @@ def test_list_members_includes_display_name_when_user_row_exists(app_client, db_
     resp = app_client.get(f"/maps/{body['id']}/members", cookies=_auth("user_1"))
     assert resp.status_code == 200
     members = resp.json()
-    assert members == [{"user_id": "user_1", "role": "owner", "display_name": "철수"}]
+    assert members == [{"user_id": "user_1", "role": "owner", "display_name": "철수", "is_guest": False}]
 
 
 def test_list_members_as_non_member_is_404(app_client):
