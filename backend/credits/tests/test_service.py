@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from auth.testing import create_guest, ensure_users
 from common.errors import AppError
 from credits import api
-from credits.constants import INITIAL_CREDITS, PRICES, REVIEW_REWARD
+from credits.constants import INITIAL_CREDITS, MAX_BALANCE, PRICES, REVIEW_REWARD
 from credits.models import CreditAccount, CreditLedger
 
 RUN = "recommend_run"
@@ -32,6 +32,18 @@ def _ledger(db, user_id):
     """그 사람의 원장 줄. 같은 트랜잭션의 줄은 created_at이 같아 순서가 없다 — 단언은 순서와 무관하게 한다."""
     return db.execute(select(CreditLedger.reason, CreditLedger.delta, CreditLedger.ref_id)
                       .where(CreditLedger.user_id == user_id)).all()
+
+
+def _ledger_sum(db, user_id) -> int:
+    return db.execute(select(func.sum(CreditLedger.delta)).where(CreditLedger.user_id == user_id)).scalar_one()
+
+
+def _spend_to(db, user_id, target: int) -> int:
+    """잔액이 target 이하가 될 때까지 추천을 차감한다. 남은 잔액."""
+    balance = api.get_balance(db, user_id=user_id)
+    while balance > target:
+        balance = api.charge(db, user_id=user_id, feature=RUN, run_id=_run_id())
+    return balance
 
 
 def _drain(db, user_id) -> None:
@@ -112,10 +124,10 @@ def test_get_balance_reads_initial_without_account_then_follows_ledger(db_sessio
     assert api.get_balance(db_session, user_id=user) == INITIAL_CREDITS
     assert _account(db_session, user) is None   # 읽기만
 
-    api.grant_review(db_session, user_id=user, place_id="p1")
     left = api.charge(db_session, user_id=user, feature=RUN, run_id=_run_id())
+    gained = api.grant_review(db_session, user_id=user, place_id="p1")
 
-    assert api.get_balance(db_session, user_id=user) == left == INITIAL_CREDITS + REVIEW_REWARD - PRICES[RUN]
+    assert api.get_balance(db_session, user_id=user) == left + gained == _account(db_session, user).balance
 
 
 # 3 ---------------------------------------------------------------------------------------------------------------
@@ -209,11 +221,81 @@ def test_refund_matches_feature(db_session, user):
 # 6 ---------------------------------------------------------------------------------------------------------------
 
 def test_review_reward_once_per_place(db_session, user):
+    _drain(db_session, user)   # 상한 밑에서 본다
+    start = _account(db_session, user).balance
+    assert start + 2 * REVIEW_REWARD <= MAX_BALANCE
+
     assert api.grant_review(db_session, user_id=user, place_id="p1") == REVIEW_REWARD
     assert api.grant_review(db_session, user_id=user, place_id="p1") == 0
     assert api.grant_review(db_session, user_id=user, place_id="p2") == REVIEW_REWARD
 
-    assert _account(db_session, user).balance == INITIAL_CREDITS + 2 * REVIEW_REWARD
+    assert _account(db_session, user).balance == start + 2 * REVIEW_REWARD
+
+
+# 6 잔액 상한(명세 3.6, #981) ------------------------------------------------------------------------------------------
+
+def test_review_at_max_credits_zero_but_closes_that_place(db_session, user):
+    """가득 찼을 때 쓴 후기는 0이고 원장에 delta 0으로 남는다 — 크레딧을 써서 줄어도 같은 장소로는 다시 받지 못한다."""
+    assert api.get_balance(db_session, user_id=user) == MAX_BALANCE
+
+    assert api.grant_review(db_session, user_id=user, place_id="p1") == 0
+    assert _account(db_session, user).balance == MAX_BALANCE
+    assert ("review", 0, f"review:{user}:p1") in {(r.reason, r.delta, r.ref_id) for r in _ledger(db_session, user)}
+
+    left = api.charge(db_session, user_id=user, feature=COURSE, run_id=_run_id())
+    assert left < MAX_BALANCE
+    assert api.grant_review(db_session, user_id=user, place_id="p1") == 0
+    assert _account(db_session, user).balance == left == _ledger_sum(db_session, user)
+
+
+def test_review_fills_only_up_to_max(db_session, user):
+    assert _spend_to(db_session, user, MAX_BALANCE - 5) == MAX_BALANCE - 5
+    assert REVIEW_REWARD > 5
+
+    assert api.grant_review(db_session, user_id=user, place_id="p1") == 5
+    assert _account(db_session, user).balance == MAX_BALANCE == _ledger_sum(db_session, user)
+
+
+def test_course_refund_fills_back_to_max(db_session, user):
+    run_id = _run_id()
+    left = api.charge(db_session, user_id=user, feature=COURSE, run_id=run_id)
+    assert left == MAX_BALANCE - PRICES[COURSE]
+
+    assert api.refund(db_session, feature=COURSE, run_id=run_id) is True
+    assert _account(db_session, user).balance == MAX_BALANCE == _ledger_sum(db_session, user)
+
+
+def test_refund_after_review_filled_max_returns_zero_once(db_session, user):
+    """차감 뒤 후기로 상한을 채운 상태의 환불은 0이다. 0이어도 refund 줄이 남아 두 번째는 False(멱등)."""
+    run_id = _run_id()
+    api.charge(db_session, user_id=user, feature=COURSE, run_id=run_id)
+    api.grant_review(db_session, user_id=user, place_id="p1")
+    assert _account(db_session, user).balance == MAX_BALANCE
+
+    assert api.refund(db_session, feature=COURSE, run_id=run_id) is True
+    assert api.refund(db_session, feature=COURSE, run_id=run_id) is False
+
+    assert _account(db_session, user).balance == MAX_BALANCE == _ledger_sum(db_session, user)
+    assert [(r.delta, r.ref_id) for r in _ledger(db_session, user) if r.reason == "refund"] == [
+        (0, f"refund:{COURSE}:{run_id}")]
+
+
+def test_balance_over_max_is_kept_and_gets_nothing(db_session, user):
+    """상한 전에 30을 넘게 쌓인 계정(스테이징 테스트)은 깎지 않는다 — 보상과 환불이 0이 될 뿐이다."""
+    over = MAX_BALANCE + 5
+    db_session.add(CreditAccount(user_id=user, balance=over))
+    db_session.add_all([CreditLedger(user_id=user, delta=INITIAL_CREDITS, reason="initial", ref_id=f"initial:{user}"),
+                        CreditLedger(user_id=user, delta=over - INITIAL_CREDITS, reason="review", ref_id=f"review:{user}:old")])
+    db_session.flush()
+
+    assert api.grant_review(db_session, user_id=user, place_id="p1") == 0
+    assert _account(db_session, user).balance == over
+
+    run_id = _run_id()
+    left = api.charge(db_session, user_id=user, feature=COURSE, run_id=run_id)
+    assert left > MAX_BALANCE
+    assert api.refund(db_session, feature=COURSE, run_id=run_id) is True
+    assert _account(db_session, user).balance == left == _ledger_sum(db_session, user)
 
 
 # 7 ---------------------------------------------------------------------------------------------------------------
@@ -282,5 +364,4 @@ def test_balance_equals_ledger_sum_after_mixed_operations(db_session):
     _drain(db_session, users[0])
 
     for uid in users:
-        total = db_session.execute(select(func.sum(CreditLedger.delta)).where(CreditLedger.user_id == uid)).scalar_one()
-        assert _account(db_session, uid).balance == total
+        assert _account(db_session, uid).balance == _ledger_sum(db_session, uid)

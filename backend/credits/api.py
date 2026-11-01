@@ -30,13 +30,14 @@ def charge(db: Session, *, user_id: str, feature: str, run_id: str) -> int:
 
 
 def refund(db: Session, *, feature: str, run_id: str) -> bool:
-    """결과 없이 끝난 실행의 차감을 돌려준다(코스 ENGINE_ERROR, INTERRUPTED). 멱등. 돌려줬으면 True,
-    차감이 없었거나 이미 돌려줬으면 False."""
+    """결과 없이 끝난 실행의 차감을 돌려준다(코스 ENGINE_ERROR, INTERRUPTED). 잔액 상한까지만 채운다(명세 3.6). 멱등.
+    환불을 처리했으면 True(상한에 걸려 0이어도), 차감이 없었거나 이미 돌려줬으면 False."""
     return service.refund(db, feature=feature, run_id=run_id)
 
 
 def grant_review(db: Session, *, user_id: str, place_id: str) -> int:
-    """그 장소 첫 후기 보상. 받은 크레딧(REVIEW_REWARD 또는 0). 게스트면 0(호출 전에 reviews가 막는다)."""
+    """그 장소 첫 후기 보상. 받은 크레딧(0~REVIEW_REWARD) — 잔액 상한까지만 채운다(명세 3.6). 상한에 걸려 0이어도 그 장소
+    보상은 끝이다. 이미 받은 장소면 0. 게스트면 0(호출 전에 reviews가 막는다)."""
     return service.grant_review(db, user_id=user_id, place_id=place_id)
 
 

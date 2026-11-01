@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from auth.testing import create_guest, ensure_users, session_cookie
 from credits import api
-from credits.constants import INITIAL_CREDITS, PRICES, REVIEW_REWARD
+from credits.constants import INITIAL_CREDITS, MAX_BALANCE, PRICES, REVIEW_REWARD
 from credits.models import CreditAccount
 
 
@@ -26,7 +26,8 @@ def test_without_account_returns_initial_and_writes_nothing(app_client, db_sessi
     r = _client(app_client, "credits_r1").get("/credits/me")
 
     assert r.status_code == 200
-    assert r.json() == {"balance": INITIAL_CREDITS, "prices": PRICES, "review_reward": REVIEW_REWARD}
+    assert r.json() == {"balance": INITIAL_CREDITS, "max_balance": MAX_BALANCE, "prices": PRICES,
+                        "review_reward": REVIEW_REWARD}
     assert db_session.execute(select(CreditAccount).where(CreditAccount.user_id == "credits_r1")).first() is None
 
 
