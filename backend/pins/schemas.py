@@ -98,12 +98,28 @@ class PinCreateSearch(BaseModel):
 PinCreateRequest = PinCreateLive | PinCreateSearch
 
 
+class LinkHint(BaseModel):
+    """공유 글에서 읽은 상호명·주소(#946, 스펙 LinkPreviewRequest.hints[]) — 서버는 자체 DB 짝 찾기에만 쓴다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    address: str | None = Field(default=None, min_length=1, max_length=200)
+
+
 class LinkPreviewRequest(BaseModel):
     """카톡 대화에서 화면이 뽑은 지도 링크(#577, 스펙 LinkPreviewRequest) — URL만 받는다. 대화 원문은 서버로 오지 않는다."""
 
     model_config = ConfigDict(extra="forbid")
 
     urls: list[Annotated[str, Field(min_length=1, max_length=2000)]] = Field(min_length=1, max_length=10)
+    hints: list[LinkHint | None] | None = Field(default=None, max_length=10)   # #946 — urls[i]의 상호명·주소. 저장·로그하지 않는다
+
+    @model_validator(mode="after")
+    def _hints_match_urls(self) -> "LinkPreviewRequest":
+        if self.hints and len(self.hints) != len(self.urls):
+            raise ValueError("hints 길이가 urls와 다릅니다")   # 입력값을 싣지 않는다
+        return self
 
 
 class LinkPreviewItem(BaseModel):
