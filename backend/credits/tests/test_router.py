@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from auth.testing import create_guest, ensure_users, session_cookie
 from credits import api
-from credits.constants import INITIAL_CREDITS, MAX_BALANCE, PRICES, REVIEW_REWARD
+from credits.constants import AD_DAILY_MAX, AD_REWARD, INITIAL_CREDITS, MAX_BALANCE, PRICES, REVIEW_REWARD
 from credits.models import CreditAccount
 
 
@@ -19,7 +19,7 @@ def test_requires_login(app_client):
     assert app_client.get("/credits/me").status_code == 401
 
 
-def test_without_account_returns_initial_and_writes_nothing(app_client, db_session):
+def test_without_account_returns_initial_and_writes_nothing(app_client, db_session, ad_off):
     ensure_users(db_session, "credits_r1")
     db_session.commit()
 
@@ -27,7 +27,9 @@ def test_without_account_returns_initial_and_writes_nothing(app_client, db_sessi
 
     assert r.status_code == 200
     assert r.json() == {"balance": INITIAL_CREDITS, "max_balance": MAX_BALANCE, "prices": PRICES,
-                        "review_reward": REVIEW_REWARD}
+                        "review_reward": REVIEW_REWARD,
+                        "ad": {"available": False, "reward": AD_REWARD, "used_today": 0, "daily_max": AD_DAILY_MAX,
+                               "provider": None, "unit_id": None}}
     assert db_session.execute(select(CreditAccount).where(CreditAccount.user_id == "credits_r1")).first() is None
 
 

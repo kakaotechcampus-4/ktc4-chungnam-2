@@ -22,8 +22,6 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
-    ("post", "/credits/ad-sessions"): "광고 보고 충전 — 서버 구현 전(#1038). 구현되면 지운다",
-    ("post", "/credits/ad-sessions/{}/claim"): "광고 보고 충전 — 서버 구현 전(#1038). 구현되면 지운다",
     ("get", "/maps/{}/trash"): "핀 휴지통 목록 — 서버 구현 전(#864). 구현되면 지운다",
     ("post", "/pins/{}/restore"): "지운 핀 복구 — 서버 구현 전(#864). 구현되면 지운다",
 }
