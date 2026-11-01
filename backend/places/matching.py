@@ -142,5 +142,49 @@ def pick_link_matches(name_hint: str, candidates: Sequence[Candidate]) -> list[C
     return kept[:LINK_MAX_MATCHES]
 
 
+HINT_MAX_CANDIDATES = 50   # 이름 일치 후보가 이만큼 넘으면 체인점 수준으로 흔한 이름이라 고르지 않는다(좌표가 없어 거리로 못 가린다)
+_HINT_MIN_PREFIX = 2
+
+
+def hint_name_keys(name: str) -> tuple[str, list[str]]:
+    """상호명 힌트로 자체 DB 후보를 좁히는 키(name_norm 기준). (정규형, 정규형의 2자 이상 앞부분들).
+    DB 이름이 힌트로 시작하거나(접두 검색) 힌트가 DB 이름으로 시작할 때(앞부분 정확 일치)만 후보다 — 둘 다 name_norm 인덱스를 탄다.
+    정규형이 비면 ("", [])."""
+    nq = normalize_name(name)
+    if not nq:
+        return "", []
+    return nq, [nq[:i] for i in range(_HINT_MIN_PREFIX, len(nq) + 1)]
+
+
+def pick_hint_match(name: str, address: str | None, candidates: Sequence[Candidate]) -> list[Candidate]:
+    """상호명·주소만 아는 힌트(좌표 없음, #946)의 짝. 짝이 하나로 확실할 때만 [그 하나], 아니면 [](가드레일 2).
+    pick_match는 좌표(거리)나 주소로 확정 근거를 얻는다. 여기는 좌표가 없으니 **주소가 같다고 확인된 후보만** 확정한다 —
+    입력 주소가 없거나 후보 주소를 비교할 수 없으면(모름) 이름만으로 확정하지 않는다. DB에 일부 지점만 있어 후보가 하나뿐이어도
+    그것이 같은 점포라는 근거가 못 된다(체인·흔한 이름).
+    유일성은 주소가 다르다(False)고 판명된 후보만 뺀 전부로 본다 — 주소가 같은 후보와 주소를 모르는 후보를 함께 겨룬다.
+    같은 이름 기준(strong ≥ NAME_MIN_SCORE, 주소가 같을 때만 ADDRESS_NAME_MIN_SCORE까지 구제)을 통과한 다른 후보의 점수가
+    1등과 _SCORE_TIE 이내(1등보다 높은 경우 포함)면 어느 쪽인지 알 수 없어 거절한다."""
+    if not address or not address.strip():
+        return []
+    rivals: list[tuple[float, bool, Candidate]] = []
+    for c in candidates:
+        if c.category not in OWN_CATEGORIES:
+            continue
+        agree = address_agreement(address, c.address)
+        if agree is False:
+            continue
+        score = name_score(name, c.name)
+        if score >= NAME_MIN_SCORE or (agree is True and score >= ADDRESS_NAME_MIN_SCORE):
+            rivals.append((score, agree is True, c))
+    confirmed = [r for r in rivals if r[1]]
+    if not confirmed:
+        return []
+    best_score, _, best = max(confirmed, key=lambda t: (t[0], t[2].place_id))
+    for score, _, other in rivals:
+        if other is not best and score >= best_score - _SCORE_TIE:
+            return []
+    return [best]
+
+
 def _match(c: Candidate) -> PlaceMatch:
     return PlaceMatch(place_id=c.place_id, name=c.name, lat=c.lat, lng=c.lng, category=c.category)

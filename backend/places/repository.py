@@ -280,6 +280,26 @@ def find_nearby_own(db: Session, lat_: float, lng_: float, radius_m: float, limi
     return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address) for r in rows]
 
 
+def find_by_name_hint(db: Session, name: str) -> list[Candidate]:
+    """상호명 힌트의 후보(#946): 영업 중 자체 DB 장소 중 name_norm이 힌트 정규형으로 시작하거나 힌트의 앞부분과 같은 곳.
+    둘 다 idx_places_name_norm(text_pattern_ops)을 탄다 — 좌표가 없어도 전체를 훑지 않는다. 분류 무관(음식점·카페·관광지).
+    HINT_MAX_CANDIDATES를 넘으면 빈 목록(너무 흔한 이름). 거리를 재지 않는다."""
+    nq, prefixes = matching.hint_name_keys(name)
+    if not nq:
+        return []
+    lat, lng = _lat_lng()
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES),
+               or_(Place.name_norm.like(f"{nq}%"), Place.name_norm.in_(prefixes)))
+        .order_by(Place.id)
+        .limit(matching.HINT_MAX_CANDIDATES + 1)
+    ).all()
+    if len(rows) > matching.HINT_MAX_CANDIDATES:
+        return []
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+
+
 def find_by_kakao_place_id(db: Session, kakao_place_id: str) -> list[Candidate]:
     """이미 이 카카오 장소 ID로 매칭된 영업 중 장소(링크 해석 #474)."""
     lat, lng = _lat_lng()
