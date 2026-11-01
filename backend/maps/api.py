@@ -71,6 +71,12 @@ def get_map_region_label(db: Session, map_id: str) -> str | None:
     ).scalar_one_or_none()
 
 
+def get_map_region_center(db: Session, map_id: str) -> tuple[float, float] | None:
+    """지도의 여행 지역 중심 (lat, lng)(#1059, docs/architecture.md). 지역을 안 정했거나 없거나 삭제된 지도는 None.
+    읽기 전용 — get_map_region_label과 같은 기준."""
+    return service.get_map_region_center(db, map_id)
+
+
 def get_map_for_agent(db: Session, map_id: str) -> dict | None:
     """agent 스냅샷(docs/agent-v2.md 12.7, #522)이 부른다. 읽기 전용, 커밋하지 않는다.
     `{map_id, start_date, end_date, deleted: bool, members: [{user_id, joined_at}]}`. 구성원은 지금 구성원만

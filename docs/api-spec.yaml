@@ -1291,7 +1291,7 @@ paths:
       tags: [recommend]
       summary: |
         반경 넓히기. 기본값 원만 확대한다 — 사람이 명시한 원(예 "숙소 기준 20분")은 자동으로 넓히지 않는다 (가드레일 4, 5-6-1).
-        한 번 누를 때마다 기본값 원의 도보 시간을 5분씩 늘린다(기본 15분 → 20분 → 25분 → 30분). 상한은 도보 30분이며 넘으면 409 WIDEN_LIMIT.
+        한 번 누를 때마다 기본값 원의 도보 시간을 5분씩 늘린다. 기본·상한은 카테고리별이다(#1055) — 음식점·카페 15분 → 30분, 관광지 25분 → 45분. 상한을 넘으면 409 WIDEN_LIMIT.
         폭·상한은 docs/constraints.md의 조정 가능한 상수다 — 응답 RecommendRun에 현재 기본 반경(default_radius_walk_min)을 실어 화면이 "다음은 몇 분"을 안내한다.
       parameters: [ { $ref: "#/components/parameters/RunId" } ]
       responses:
@@ -1826,7 +1826,7 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     WidenLimit:
-      description: 기본값 원이 이미 상한(도보 30분) — 더 넓힐 수 없음 (WIDEN_LIMIT). 「근거 고치기」/「직접 찍기」로 안내
+      description: 기본값 원이 이미 상한(음식점·카페 도보 30분, 관광지 45분, #1055) — 더 넓힐 수 없음 (WIDEN_LIMIT). 「근거 고치기」/「직접 찍기」로 안내
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -2618,7 +2618,7 @@ components:
         ready: { type: boolean, description: "answered_count >= required_count (2026-10-07, #360)" }
         answered_count: { type: integer, description: "그 카테고리에서 ♥ 또는 🚫 의견이 달린 핀의 수. 삭제된 핀·나간 구성원·탈퇴자의 반응은 세지 않는다. 혼자 쓰는 지도도 똑같다" }
         required_count: { type: integer, description: "항상 1. 구성원 수에 비례하던 ceil(N/2)는 폐기했다(#360). 필드를 남긴 것은 FE 호환(「의견 핀 0/1」 표기)용이다" }
-        curated_nearby: { type: integer, minimum: 0, description: "추천 기본 지역(그 카테고리 의견 핀들의 중심)에서 반경 넓히기 상한(도보 30분) 안의 추천 가능 장소(정예) 수(#798). 의견 핀이 없어 기본 지역이 없으면 필드가 없다. 0이면 추천해도 결과가 0곳이다 — 화면은 추천 버튼을 막지 않고 external_search를 함께 보여 준다" }
+        curated_nearby: { type: integer, minimum: 0, description: "추천 기본 지역(그 카테고리 의견 핀들의 중심)에서 반경 넓히기 상한(음식점·카페 도보 30분, 관광지 45분, #1055) 안의 추천 가능 장소(정예) 수(#798). 의견 핀이 없어 기본 지역이 없으면 필드가 없다. 0이면 추천해도 결과가 0곳이다 — 화면은 추천 버튼을 막지 않고 external_search를 함께 보여 준다" }
         external_search: { $ref: "#/components/schemas/ExternalSearch", description: "curated_nearby가 0일 때만" }
 
     EvidenceLine:
@@ -2678,7 +2678,7 @@ components:
         category: { $ref: "#/components/schemas/RecommendCategory" }
         status: { type: string, enum: [collecting_evidence, awaiting_region_confirm, executing, done, failed], description: "`collecting_evidence`는 더 이상 「사용자가 근거를 확인하는 중」이 아니다(#845 — 확인 단계는 없어졌다). `POST /maps/{mapId}/runs`가 `execute: true` 없이 만든 run이거나 서버 장애로 첫 실행 전에 멈춘 run으로, 열면 `POST /runs/{runId}/execute`로 이어서 실행한다. 결과가 있는 건 `done`뿐" }
         attempt_no: { type: integer, description: "이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 없다(#432 — 크레딧으로 센다)" }
-        default_radius_walk_min: { type: integer, description: "기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (기본 15, 상한 30)" }
+        default_radius_walk_min: { type: integer, description: "기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (음식점·카페 기본 15·상한 30, 관광지 기본 25·상한 45, #1055)" }
 
     RunSummary:
       type: object
@@ -2767,7 +2767,7 @@ components:
             properties:
               label: { type: string }
               removed_count: { type: integer }
-          description: "5-6 깔때기 표. 단계: 카테고리 후보 풀 → 반경 밖 제거 → 영업 종료 제거 → 실격 조건 제거 → 이미 제안·거절됨 → 상위 3곳 선정. 후보 풀은 넓히기 상한 안의 영업 중인 추천 가능(정예) 장소라, 「반경 밖 제거」는 넓히면 들어올 수 있는 최대 수다(#912). 2026-10-15~#913 구현 전에는 「영업 종료 제거」 다음에 「추천 가능 아님 제거」가 있었다 — 그때 저장된 결과에는 그 줄이 남아 있고, 화면은 받은 표를 그대로 그린다"
+          description: "5-6 깔때기 표. 단계: 카테고리 후보 풀 → 반경 밖 제거 → 영업 종료 제거 → 실격 조건 제거 → 이미 제안·거절됨 → 상위 3곳 선정. 후보 풀은 넓히기 상한 안의 영업 중인 추천 가능(정예) 장소라, 「반경 밖 제거」는 넓히면 들어올 수 있는 최대 수다(#912). 여행 지역과 다른 시·도의 장소도 「반경 밖 제거」로 센다(#1055 — 이 장소는 넓혀도 들어오지 않는다, constraints.md 「반경 넓히기 상수」). 2026-10-15~#913 구현 전에는 「영업 종료 제거」 다음에 「추천 가능 아님 제거」가 있었다 — 그때 저장된 결과에는 그 줄이 남아 있고, 화면은 받은 표를 그대로 그린다"
         regions:
           type: array
           items: { $ref: "#/components/schemas/Region" }
