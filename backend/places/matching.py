@@ -26,8 +26,12 @@ _SCORE_TIE = 0.05
 
 _PAREN = re.compile(r"[\(\[（][^\)\]）]*[\)\]）]")
 _NON_WORD = re.compile(r"[^0-9a-z가-힣]")
-_ROAD_SPACE = re.compile(r"(로)\s+(\d+(?:번)?길)")                       # "논현로 12길" → "논현로12길"
-_ROAD_ADDR = re.compile(r"([가-힣]+\d*(?:로|길))\s*(\d+)(?:-(\d+))?")   # 도로명 + 건물번호
+_ROAD_SPACE = re.compile(r"(로|길)\s+(\d+[가-힣]*(?:번길|안길|길))")   # "논현로 12길"·"아차산로 17안길" → 공백 제거
+# 도로명 + 건물번호. 도로명은 `XX로`·`XX길` 뒤에 번길·안길·`N길`·`N가길`·`N나길` 같은 분기 도로를 몇 단계든 이어 붙여 하나로 읽는다
+# (`아차산로17번길 4`의 17은 건물번호가 아니다 — 같은 번길의 다른 건물이 같은 주소가 되던 오탐, #1019). 이름과 숫자 사이 공백도 허용한다.
+_ROAD_ADDR = re.compile(
+    r"([가-힣]+(?:\s*\d+[가-힣]*)?(?:로|길)(?:\s*\d+[가-힣]*(?:번길|안길|길))*)\s*(\d+)(?:-(\d+))?")
+_WS = re.compile(r"\s+")
 _LOT_ADDR = re.compile(r"([가-힣]+(?:\d가|동|리))\s*(\d+)(?:-(\d+))?")  # 법정동·리 + 지번
 
 
@@ -72,7 +76,7 @@ def normalize_address(address: str) -> tuple[str, str] | None:
         m = pattern.search(text)
         if m:
             main, sub = m.group(2).lstrip("0") or "0", m.group(3)
-            return kind, f"{m.group(1)}|{main}" + (f"-{sub.lstrip('0') or '0'}" if sub else "")
+            return kind, f"{_WS.sub('', m.group(1))}|{main}" + (f"-{sub.lstrip('0') or '0'}" if sub else "")
     return None
 
 
