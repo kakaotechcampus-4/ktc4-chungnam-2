@@ -115,6 +115,30 @@ describe("기획안 6절 핵심 시나리오 — happy path", () => {
   });
 });
 
+describe("추천 0곳이면 크레딧을 쓰지 않는다(#1015)", () => {
+  it("no-results 시나리오: 새 run의 첫 실행이 0곳이면 차감이 환불돼 잔액이 그대로다", async () => {
+    resetScenario("no-results");
+    const before = (await (await fetch(`${BASE}/credits/me`)).json()).balance;
+    const res = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점", execute: true }) });
+    expect(res.status).toBe(202);
+    const run = await res.json();
+    const after = (await (await fetch(`${BASE}/credits/me`)).json()).balance;
+    expect(after).toBe(before);
+    const result = await fetch(`${BASE}/runs/${run.id}/result`);
+    expect(result.status).toBe(404);
+    expect((await result.json()).code).toBe("NO_RESULTS");
+  });
+
+  it("결과가 있으면 평소처럼 1 차감, 다시 추천은 차감도 환불도 없다", async () => {
+    const before = (await (await fetch(`${BASE}/credits/me`)).json()).balance;
+    const run = await (await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점", execute: true }) })).json();
+    const spent = (await (await fetch(`${BASE}/credits/me`)).json()).balance;
+    expect(spent).toBe(before - 1);
+    await fetch(`${BASE}/runs/${run.id}/retry`, { method: "POST" });
+    expect((await (await fetch(`${BASE}/credits/me`)).json()).balance).toBe(spent);
+  });
+});
+
 describe("핀 휴지통(#864)", () => {
   const send = (path: string, method = "GET", body?: unknown) =>
     fetch(`${BASE}${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
