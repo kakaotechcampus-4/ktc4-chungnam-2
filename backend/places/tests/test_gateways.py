@@ -23,12 +23,12 @@ def test_recommend_gateway_converts_circles_and_results(monkeypatch):
     """#190 — 후보 풀은 자체 DB(search_nearby_own)에서 온다. 카카오 실시간 search_nearby는 부르지 않는다."""
     got = {}
 
-    def fake_search(category, areas, *, db=None):
+    def fake_search(category, areas, *, recommendable_only=False, db=None):
         got["args"] = (category, list(areas))
+        got["recommendable_only"] = recommendable_only
         return [PlaceRef("5b0e2f3a-0000-0000-0000-000000000001", 37.5, 127.0)]
 
     monkeypatch.setattr(api, "search_nearby_own", fake_search)
-    monkeypatch.setattr(api, "search_nearby", lambda *a, **k: (_ for _ in ()).throw(AssertionError("카카오 실시간 경로")))
     place_id = "5b0e2f3a-0000-0000-0000-000000000001"
     monkeypatch.setattr(api, "get_places", lambda ids, *, db=None: {
         place_id: PlaceInfo(place_id, "카페", 37.5, 127.0, "카페", "https://place.map.kakao.com/1", "permit"),
@@ -38,6 +38,7 @@ def test_recommend_gateway_converts_circles_and_results(monkeypatch):
     assert stubs == [PlaceStub(place_id=place_id, lat=37.5, lng=127.0,
                                source={"provider": "permit", "url": "https://place.map.kakao.com/1"})]
     assert got["args"][0] == "카페" and got["args"][1][0].radius_m == 800
+    assert got["recommendable_only"] is True   # 후보 풀은 처음부터 정예 장소다(#913)
 
 
 def test_facts_gateway_delegates(monkeypatch):

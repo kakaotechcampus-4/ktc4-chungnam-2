@@ -5,7 +5,7 @@
 import { ME_USER_ID, nextId, resetIdCounter, resetStore, type StoreState } from "./store";
 import { buildBaseState, buildCandidates, buildEvidenceLines, buildRegions, SEED_MAP_ID } from "./seed";
 
-export type ScenarioName = "empty" | "happy-path" | "no-results" | "retry-limit" | "region-conflict" | "guest";
+export type ScenarioName = "empty" | "happy-path" | "no-results" | "region-conflict" | "guest" | "withdrawn-relogin" | "credits-empty" | "credits-full";
 
 /** 6절 "핀이 하나도 없음" 화면 — 지도만 있고 핀은 0개 */
 function buildEmpty(): StoreState {
@@ -29,18 +29,7 @@ function buildNoResults(): StoreState {
   state.evidenceLines[runId] = buildEvidenceLines(runId);
   state.regions[runId] = buildRegions();
   state.candidates[runId] = []; // 필터 통과 0곳
-  return state;
-}
-
-/** 6절 "재시도 3회 초과" — 이미 3회 시도한 run. 다음 /retry 호출은 429. */
-function buildRetryLimit(): StoreState {
-  const state = buildBaseState();
-  const runId = "run_retry_limit";
-  state.runs[runId] = { id: runId, map_id: SEED_MAP_ID, category: "음식점", status: "done", attempt_no: 10 };
-  state.runRequestedBy[runId] = ME_USER_ID;
-  state.evidenceLines[runId] = buildEvidenceLines(runId);
-  state.regions[runId] = buildRegions();
-  state.candidates[runId] = buildCandidates("제주시 권역");
+  state.forceNoResults = true; // #1015 이 시나리오에서 새로 만든 run의 첫 실행도 0곳 — 크레딧을 돌려준다
   return state;
 }
 
@@ -79,10 +68,31 @@ function buildRegionConflict(): StoreState {
   return state;
 }
 
-/** #472 — 내가 게스트다. 지도 만들기는 403 GUEST_NOT_ALLOWED, 나머지 구성원 행동은 그대로 */
+/** #432 — 크레딧을 다 썼다. 추천 받기·코스 짜기는 402 CREDIT_INSUFFICIENT, 후기를 처음 쓰면 채워진다 */
+/** #981 — 잔액이 상한(30)이다. 후기를 써도 크레딧을 받지 않는다(작성 시트가 미리 알린다) */
+function buildCreditsFull(): StoreState {
+  const state = buildBaseState();
+  state.credits[ME_USER_ID] = 30;
+  return state;
+}
+
+function buildCreditsEmpty(): StoreState {
+  const state = buildBaseState();
+  state.credits[ME_USER_ID] = 0;
+  return state;
+}
+
+/** #472 — 내가 게스트다. 지도 만들기·추천·코스·크레딧·후기 쓰기는 403 GUEST_NOT_ALLOWED(#432), 나머지 구성원 행동은 그대로 */
 function buildGuest(): StoreState {
   const state = buildBaseState();
   state.users[ME_USER_ID] = { ...state.users[ME_USER_ID], is_guest: true };
+  return state;
+}
+
+/** #855 탈퇴한 계정으로 다시 로그인 — 복구 기간(7일) 안이라 카카오 콜백이 선택 화면으로 보낸다. 선택 전에는 로그인된 상태가 아니다. */
+function buildWithdrawnRelogin(): StoreState {
+  const state = buildBaseState();
+  state.pendingLogin = { display_name: "탈퇴했던 나", withdrawn_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString() };
   return state;
 }
 
@@ -90,9 +100,11 @@ const BUILDERS: Record<ScenarioName, () => StoreState> = {
   empty: buildEmpty,
   "happy-path": buildHappyPath,
   "no-results": buildNoResults,
-  "retry-limit": buildRetryLimit,
   "region-conflict": buildRegionConflict,
   guest: buildGuest,
+  "withdrawn-relogin": buildWithdrawnRelogin,
+  "credits-empty": buildCreditsEmpty,
+  "credits-full": buildCreditsFull,
 };
 
 export function resetScenario(name: ScenarioName) {

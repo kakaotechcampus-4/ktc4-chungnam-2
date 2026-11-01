@@ -19,7 +19,7 @@
 | **Node.js 20 이상** | https://nodejs.org (LTS) | `node --version` | `v20` 이상 |
 | **Git** | https://git-scm.com | `git --version` | `git version 2...` |
 
-> ❗ **Python 3.13·3.14는 안 됩니다.** 서버 부품 두 개(`psycopg2-binary`, `pyproj`)가 3.12까지만 설치 파일이 있어서 5-1에서 설치가 실패합니다. 3.10·3.11은 됩니다.
+> ❗ **Python 3.13·3.14는 안 됩니다.** 서버 부품 두 개(`psycopg2-binary`, `pyproj`)가 3.12까지만 설치 파일이 있어서 5-1에서 설치가 실패합니다. 3.10·3.11도 설치는 되지만, 실제 서버와 자동 검사(CI)가 3.12라 **3.12를 쓰세요**.
 > 💡 다른 버전이 이미 깔려 있으면 3.12를 하나 더 설치하고, 이 문서의 `python`을 전부 `py -3.12`로 바꿔 쓰세요(예: `py -3.12 -m pip install -r requirements.txt`).
 > 💡 Python을 설치할 때 **"Add python.exe to PATH"** 체크박스를 꼭 켜세요. 안 켜면 `python` 명령이 안 먹습니다.
 > 💡 설치한 뒤에는 **PowerShell 창을 새로 열어야** 명령이 인식됩니다.

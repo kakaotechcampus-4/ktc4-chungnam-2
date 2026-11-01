@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from geoalchemy2 import Geography, Geometry, WKTElement
-from sqlalchemy import Float, cast, func, literal, null, or_, select, union_all, update
+from sqlalchemy import Float, and_, case, cast, false, func, literal, null, or_, select, union_all, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -53,6 +53,7 @@ class NearestRow:
     source: str
     lat: float
     lng: float
+    kakao_place_id: str | None = None   # 장소 검색(#822)이 카카오 결과와 같은 가게인지 가리는 데만 쓴다. 응답에 싣지 않는다
 
 
 @dataclass(frozen=True)
@@ -201,7 +202,7 @@ def find_candidates(db: Session, hint_lat: float, hint_lng: float, category: str
                func.ST_Distance(Place.geom, point).label("dist"))
         .where(Place.status == "open", Place.category == category,
                func.ST_DWithin(Place.geom, point, matching.MAX_RADIUS_M))
-        .order_by(func.ST_Distance(Place.geom, point))
+        .order_by(func.ST_Distance(Place.geom, point), Place.id)   # find_candidates_many와 같은 키 — 거리가 같으면 id로 갈라 상한 경계가 검색과 같다(#815)
         .limit(matching.MAX_CANDIDATES)
     ).all()
     rows = list(near)
@@ -279,6 +280,26 @@ def find_nearby_own(db: Session, lat_: float, lng_: float, radius_m: float, limi
     return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address) for r in rows]
 
 
+def find_by_name_hint(db: Session, name: str) -> list[Candidate]:
+    """상호명 힌트의 후보(#946): 영업 중 자체 DB 장소 중 name_norm이 힌트 정규형으로 시작하거나 힌트의 앞부분과 같은 곳.
+    둘 다 idx_places_name_norm(text_pattern_ops)을 탄다 — 좌표가 없어도 전체를 훑지 않는다. 분류 무관(음식점·카페·관광지).
+    HINT_MAX_CANDIDATES를 넘으면 빈 목록(너무 흔한 이름). 거리를 재지 않는다."""
+    nq, prefixes = matching.hint_name_keys(name)
+    if not nq:
+        return []
+    lat, lng = _lat_lng()
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES),
+               or_(Place.name_norm.like(f"{nq}%"), Place.name_norm.in_(prefixes)))
+        .order_by(Place.id)
+        .limit(matching.HINT_MAX_CANDIDATES + 1)
+    ).all()
+    if len(rows) > matching.HINT_MAX_CANDIDATES:
+        return []
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+
+
 def find_by_kakao_place_id(db: Session, kakao_place_id: str) -> list[Candidate]:
     """이미 이 카카오 장소 ID로 매칭된 영업 중 장소(링크 해석 #474)."""
     lat, lng = _lat_lng()
@@ -319,14 +340,18 @@ def _in_any_area(areas: Sequence[Area]):
     return or_(*(func.ST_DWithin(Place.geom, _geog(a.lat, a.lng), a.radius_m) for a in areas))
 
 
-def search_nearby_own(db: Session, category: str, areas: Sequence[Area]) -> list[PlaceRef]:
+def search_nearby_own(
+    db: Session, category: str, areas: Sequence[Area], *, recommendable_only: bool = False,
+) -> list[PlaceRef]:
     if not areas:
         return []
     lat, lng = _lat_lng()
-    # PlaceRef.can_recommend(추천 후보 풀에 넣어도 되는가)는 places.curated 그대로다 — 규칙이 바뀌면 이 쿼리 한 곳만 고친다(#743)
-    rows = db.execute(
-        select(Place.id, lat, lng, Place.curated).where(Place.status == "open", Place.category == category, _in_any_area(areas))
-    ).all()
+    # PlaceRef.can_recommend(추천 후보 풀에 넣어도 되는가)는 places.curated 그대로다 — 규칙이 바뀌면 이 쿼리 한 곳만 고친다(#743).
+    # recommendable_only면 그 조건을 SQL에서 건다(#913) — 후보 풀이 처음부터 정예 장소라 다른 모듈이 정예 여부를 다시 판정하지 않는다.
+    conditions = [Place.status == "open", Place.category == category, _in_any_area(areas)]
+    if recommendable_only:
+        conditions.append(Place.curated.is_(True))
+    rows = db.execute(select(Place.id, lat, lng, Place.curated).where(*conditions)).all()
     return [PlaceRef(str(r.id), r.lat, r.lng, r.curated) for r in rows]
 
 
@@ -385,6 +410,66 @@ def _nearest_stmt(lat: float, lng: float, category: str | None, radius_m: float,
     if category is not None:
         stmt = stmt.where(Place.category == category)
     return stmt
+
+
+REGION_RADIUS_M = 30_000.0   # 장소 검색의 지역 구역(#835) — 지도 중심에서 이 안이 먼저다. 값은 docs/api-spec.yaml /places/search 정렬 규칙
+NEAR_RADIUS_M = 3_000.0      # 지역 구역 안에서 부분·주소 일치를 먼저 읽는 가까운 띠. 순서는 그대로다(아래 search_open_by_query)
+
+TIER_NAME_PREFIX, TIER_NAME_PART, TIER_REST = 1, 2, 3   # 이름 일치 정도 계층. 1은 완전(1-0)·앞부분(1-1) 일치, 2는 부분 일치, 3(rest)은 부분 일치 + 주소만 일치
+
+
+def search_open_by_query(
+    db: Session, query: str, near: tuple[float, float] | None, limit: int, offset: int = 0,
+    *, tier: int, band: tuple[float | None, float | None] = (None, None), skip_part_within: float | None = None,
+) -> list[NearestRow]:
+    """장소 검색(#822, #835)의 한 계층·한 띠. 영업 중 장소를 이름 일치 정도 계층별로 읽는다.
+    계층 1: 정규화한 이름(name_norm)이 검색어로 시작 — 완전 일치가 앞부분 일치보다 앞(인덱스 접두 검색, 2자도 빠르다).
+    계층 2: 이름에 검색어가 들었지만 계층 1이 아님(부분 일치).
+    계층 3(REST): 계층 2 + 주소에만 들었음(부분 일치가 주소 일치보다 앞). 한 번 훑어 둘을 같이 얻는다.
+    skip_part_within=m: 계층 3에서 지도 중심 m 이내의 계층 2(부분 일치)는 뺀다 — 앞서 계층 2로 읽은 것.
+    band=(lo, hi): 지도 중심에서 거리가 lo 초과 hi 이하인 장소만(None은 제한 없음, near가 있을 때만 뜻이 있다).
+    순서: 계층 1·3은 일치 정도 → 가까운 순 → 정예 → id, 계층 2는 가까운 순 → 정예 → id. 좌표가 없으면 가까운 순 대신 정예 → 이름순.
+    좌표는 정렬·거름에만 쓰고 남기지 않는다. offset으로 이어 읽을 수 있다(정렬이 전 순서).
+    계층·띠를 어떻게 이어 붙여 계약의 순서를 지키는지는 places.api.search_own_for_query."""
+    needle = query.strip()
+    if not needle or limit <= 0:
+        return []
+    nq = matching.normalize_name(needle)   # 숫자·영문·한글만 남아 LIKE 와일드카드가 없다
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    in_name = Place.name.ilike(f"%{escaped}%", escape="\\")
+    in_address = Place.address.ilike(f"%{escaped}%", escape="\\")
+    prefix = Place.name_norm.like(f"{nq}%") if nq else false()
+    where = [Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES)]
+    if tier == TIER_NAME_PREFIX:
+        if not nq:
+            return []
+        where.append(prefix)
+        rank = case((Place.name_norm == nq, 0), else_=1)
+    elif tier == TIER_NAME_PART:
+        where += [in_name, ~prefix]
+        rank = None
+    else:
+        where += [~prefix, or_(in_name, in_address)]
+        rank = case((in_name, 0), else_=1)
+    order = [rank] if rank is not None else []
+    if near is not None:
+        point = _geog(*near)
+        lo, hi = band
+        if hi is not None:
+            where.append(func.ST_DWithin(Place.geom, point, hi))
+        if lo is not None:
+            where.append(~func.ST_DWithin(Place.geom, point, lo))
+        if skip_part_within is not None and tier == TIER_REST:
+            where.append(~and_(in_name, func.ST_DWithin(Place.geom, point, skip_part_within)))
+        order += [func.ST_Distance(Place.geom, point), Place.curated.desc()]
+    else:
+        order += [Place.curated.desc(), Place.name.collate("C")]
+    p_lat, p_lng = _lat_lng()
+    stmt = (
+        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng, Place.kakao_place_id)
+        .where(*where).order_by(*order, Place.id).limit(limit).offset(offset)
+    )
+    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng, r.kakao_place_id) for r in db.execute(stmt).all()]
 
 
 def get_facts(db: Session, place_ids: Sequence[str]) -> dict[str, list[FactLabel]]:

@@ -13,7 +13,6 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     map: own                 # 자신이 속한 지도
   actions:
     - pin.create
-    - pin.delete               # "구성원 누구나" (9/4 결정 #25)
     - pin.react               # ♥/🚫 등록·수정
     - pin.resolve             # 실시간 핀을 자체 DB 핀으로 승격(#501) — 구성원 누구나. 힌트는 저장하지 않는다
     - pin.revert               # 반응으로 바뀐 상태 되돌리기 — "누구나" (15-1)
@@ -45,6 +44,8 @@ author:                       # evidence_line·candidate·run을 만든 당사�
                                  # 먼저 보인다 — 게시 전 run은 본인 것만 조작·열람
     - recommend.publish         # 「지도에 올리기」 — candidate.requested_by 본인만
     - pin.edit                  # 핀 메모·분류 수정(#466) — 핀을 찍은 사람만. AI 추천·확정 핀 제외는 역할이 아니라 핀 상태라 pins 코어가 판정한다
+    - pin.delete                # 핀 삭제 — 찍은 사람(#965, 9/4 결정 #25 「구성원 누구나」를 바꿈). 방장은 owner에서 받는다
+    - pin.restore               # 지운 핀 복구 — 찍은 사람(#864, 삭제 권한과 같다). 방장은 owner에서 받는다
     - course.view               # AI 코스 run 조회(#334) — run.requested_by 본인만. 가드레일 1: 코스는 요청한 사람에게만 보인다
 
 owner:                        # 방장. 처음엔 지도 생성자, 위임되면 바뀐다(#369). 판단 정본은 memberships.role
@@ -53,8 +54,11 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
     map: own
   actions:
     - member.kick               # v2, #8
+    - pin.delete                # 남의 핀 삭제는 방장만(#965) — 나간·탈퇴한 구성원의 핀을 정리할 사람이 필요하다
+    - pin.restore               # 남의 지운 핀 복구도 방장만(#864) — 삭제 권한과 같다. 휴지통 목록도 이 권한이 있는 핀만 보인다
     - map.settings.edit
     - map.delete                # 지도 삭제(#369). 방장만. soft delete라 모든 구성원에게서 사라진다
+    - map.restore               # 삭제한 지도 복구(#464). 방장만, 삭제한 지 30일 안에만. 삭제된 지도는 일반 지도 조회가 404라 복구용 조회(get_deleted_map)를 따로 둔다
     - invite.revoke             # 초대 링크 목록 보기·끄기(#467). 방장만. 발급(invite.create)은 구성원 누구나
     - owner.transfer            # 방장 직접 넘기기(#468). 방장만
 ```
@@ -100,7 +104,7 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 | 기획안 15-1 행동 | 이 모델에서의 표현 |
 |---|---|
 | 확정 리스트 추가·제외 — 구성원 누구나 | `member.actions: [shortlist.add, shortlist.remove]` |
-| 핀 삭제 — 구성원 누구나 (9/4 결정 #25) | `member.actions: [pin.delete]` |
+| 핀 삭제 — 찍은 사람과 방장 (#965, #25 변경) | `author.scope.pin: own` + `author.actions: [pin.delete]`, `owner.actions: [pin.delete]`, 응답 `permissions.can_delete` |
 | 실시간 핀 승격 — 구성원 누구나 (#501) | `member.actions: [pin.resolve]` |
 | 근거 리스트에서 항목 빼기 — 자기가 쓴 것만 | `author.scope.evidence_line: own`, `author.actions: [evidence.disable]` |
 | 핀 되돌리기 — 구성원 누구나 | `member.actions: [pin.revert]` |

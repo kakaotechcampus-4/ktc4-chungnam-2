@@ -276,10 +276,10 @@ def test_module_without_reassign_user_fails_the_merge_instead_of_deleting_the_gu
     assert db_session.get(User, "g1").deleted_at is None
 
 
-def test_guest_login_into_a_withdrawn_kakao_account_is_rejected_and_keeps_the_guest(
+def test_guest_login_into_a_withdrawn_kakao_account_waits_for_a_choice_and_keeps_the_guest(
     app_client, db_session, monkeypatch, kakao_configured,
 ):
-    """탈퇴한 카카오 계정은 게스트가 시작해도 지금처럼 막는다(#409) — 붙이지도 합치지도 않는다."""
+    """복구 기간 안의 탈퇴한 카카오 계정은 게스트가 시작해도 선택을 기다린다(#855) — 붙이지도 합치지도 않는다."""
     create_kakao_user(db_session, "kw", provider_user_id="77", deleted_at=datetime.now(timezone.utc))
     _mock_kakao_login(monkeypatch, kakao_id=77)
     _seed_guest(db_session, "g1")
@@ -287,7 +287,9 @@ def test_guest_login_into_a_withdrawn_kakao_account_is_rejected_and_keeps_the_gu
 
     resp = _callback(app_client, code="auth-code", state=_start_login_as(app_client, "g1"))
 
-    assert _login_error(resp) == "server_error" and not _has_session_cookie(resp)
+    assert _login_error(resp) is None and not _has_session_cookie(resp)
+    assert parse_qs(urlparse(resp.headers["location"]).query)["login_pending"] == ["withdrawn_account"]
+    assert _guest_merged(resp) == "false"   # 합치지 않았다는 같은 상태
     assert calls == [] and _identities(db_session, "77") == ["kw"]
     assert db_session.get(User, "g1").deleted_at is None
 

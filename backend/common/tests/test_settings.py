@@ -12,11 +12,22 @@ import pytest
 from common.settings import ConfigError, Settings
 
 
+_EXTERNAL_KEYS = {
+    "KAKAO_CLIENT_ID": "kid", "KAKAO_CLIENT_SECRET": "ksecret", "KAKAO_REDIRECT_URI": "https://app.pingo.example/cb",
+    "ELICE_ML_API_BASE_URL": "https://ml.example", "ELICE_ML_API_KEY": "elice-key",
+}
+
+
 @pytest.fixture(autouse=True)
 def _nothing_decided(monkeypatch):
     """conftest가 PLACES_MODE·LLM_MODE를 dev로 고정해 둔다(#370) — 여기서는 "아무것도 정하지 않은 상태"를
     직접 만든다. 모드를 정하는 테스트는 각자 setenv한다."""
     for name in ("PLACES_MODE", "LLM_MODE", "LOG_LEVEL"):
+        monkeypatch.delenv(name, raising=False)
+    # 실제 모드의 외부 키(#810) — 키가 비는 경우만 각 테스트가 지운다.
+    for name, value in _EXTERNAL_KEYS.items():
+        monkeypatch.setenv(name, value)
+    for name in ("DB_POOL_SIZE", "DB_MAX_OVERFLOW", "DB_POOL_PRE_PING", "DB_POOL_RECYCLE_S", "COOKIE_SECURE"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -30,6 +41,8 @@ def _settings(**overrides):
         places_mode="real",
         llm_mode="real",
         frontend_base_url="https://app.pingo.example",
+        kakao_client_id="kid", kakao_client_secret="ksecret", kakao_redirect_uri="https://app.pingo.example/cb",
+        elice_ml_api_base_url="https://ml.example", elice_ml_api_key="elice-key",
     )
     base.update(overrides)
     return Settings(**base)
@@ -386,4 +399,143 @@ def test_from_env_staging_refuses_default_session_secret(monkeypatch):
     monkeypatch.delenv("SESSION_SECRET")
 
     with pytest.raises(ConfigError, match="SESSION_SECRET"):
+        Settings.from_env()
+
+
+# ---- 기동 가드: 실제 모드의 외부 키(#810) ----
+
+
+@pytest.mark.parametrize("environment", ["staging", "prod"])
+@pytest.mark.parametrize("overrides, match", [
+    ({"kakao_client_id": ""}, "KAKAO_CLIENT_ID"),
+    ({"kakao_client_secret": ""}, "KAKAO_CLIENT_SECRET"),
+    ({"kakao_redirect_uri": ""}, "KAKAO_REDIRECT_URI"),
+    ({"elice_ml_api_base_url": ""}, "ELICE_ML_API_BASE_URL"),
+    ({"elice_ml_api_key": ""}, "ELICE_ML_API_KEY"),
+])
+def test_strict_environments_refuse_empty_external_keys(environment, overrides, match):
+    with pytest.raises(ConfigError, match=match):
+        _settings(environment=environment, **overrides)
+
+
+def test_dev_and_test_allow_empty_external_keys():
+    for environment in ("dev", "test"):
+        _settings(environment=environment, places_mode="dev", llm_mode="dev",
+                  kakao_client_id="", elice_ml_api_key="")
+
+
+def test_from_env_prod_refuses_empty_kakao_key(monkeypatch):
+    _staging_env(monkeypatch)
+    monkeypatch.delenv("KAKAO_CLIENT_ID")
+
+    with pytest.raises(ConfigError, match="KAKAO_CLIENT_ID"):
+        Settings.from_env()
+
+
+# ---- DB 풀, 쿠키 Secure(#810) ----
+
+
+def test_from_env_pool_defaults_match_sqlalchemy_defaults():
+    s = Settings.from_env()
+
+    assert (s.db_pool_size, s.db_max_overflow, s.db_pool_pre_ping, s.db_pool_recycle_s) == (5, 10, True, -1)
+
+
+def test_from_env_reads_pool_overrides(monkeypatch):
+    monkeypatch.setenv("DB_POOL_SIZE", "3")
+    monkeypatch.setenv("DB_MAX_OVERFLOW", "2")
+    monkeypatch.setenv("DB_POOL_PRE_PING", "0")
+    monkeypatch.setenv("DB_POOL_RECYCLE_S", "1800")
+
+    s = Settings.from_env()
+
+    assert (s.db_pool_size, s.db_max_overflow, s.db_pool_pre_ping, s.db_pool_recycle_s) == (3, 2, False, 1800)
+
+
+def test_pool_values_reach_the_engine():
+    from common.database import engine
+    from common.settings import settings
+
+    assert engine.pool.size() == settings.db_pool_size
+    assert engine.pool._max_overflow == settings.db_max_overflow
+    assert engine.pool._pre_ping is settings.db_pool_pre_ping
+
+
+def test_invalid_pool_value_is_rejected(monkeypatch):
+    monkeypatch.setenv("DB_POOL_SIZE", "many")
+
+    with pytest.raises(ConfigError, match="DB_POOL_SIZE"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("environment, expected", [("dev", False), ("test", False), ("staging", True), ("prod", True)])
+def test_cookie_secure_default_follows_environment(monkeypatch, environment, expected):
+    _staging_env(monkeypatch)
+    monkeypatch.setenv("PINGO_ENV", environment)
+    monkeypatch.setenv("PLACES_MODE", "real")
+    monkeypatch.setenv("LLM_MODE", "real")
+
+    assert Settings.from_env().cookie_secure is expected
+
+
+def test_cookie_secure_can_be_turned_off_for_local_http_staging(monkeypatch):
+    _staging_env(monkeypatch)
+    monkeypatch.setenv("COOKIE_SECURE", "0")
+
+    assert Settings.from_env().cookie_secure is False
+
+
+def test_invalid_cookie_secure_is_rejected(monkeypatch):
+    monkeypatch.setenv("COOKIE_SECURE", "maybe")
+
+    with pytest.raises(ConfigError, match="COOKIE_SECURE"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("field", [k.lower() for k in _EXTERNAL_KEYS])
+@pytest.mark.parametrize("blank", ["   ", "\t", "\n", " \t\n "])
+def test_real_mode_refuses_whitespace_only_external_key(field, blank):
+    with pytest.raises(ConfigError, match=field.upper()) as exc:
+        _settings(**{field: blank})
+
+    assert "ksecret" not in str(exc.value) and "elice-key" not in str(exc.value)   # 오류에는 변수명만 든다
+
+
+@pytest.mark.parametrize("name", list(_EXTERNAL_KEYS))
+def test_from_env_refuses_whitespace_only_external_key(monkeypatch, name):
+    monkeypatch.setenv("PINGO_ENV", "prod")
+    monkeypatch.setenv("SESSION_SECRET", "real-secret")
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
+    monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
+    monkeypatch.setenv(name, " \t ")
+
+    with pytest.raises(ConfigError, match=name):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("size,overflow,recycle", [(1, 0, -1), (1, 0, 1), (50, 100, 3600)])
+def test_pool_boundary_values_are_accepted(size, overflow, recycle):
+    s = _settings(db_pool_size=size, db_max_overflow=overflow, db_pool_recycle_s=recycle)
+
+    assert (s.db_pool_size, s.db_max_overflow, s.db_pool_recycle_s) == (size, overflow, recycle)
+
+
+@pytest.mark.parametrize("name,value", [
+    ("DB_POOL_SIZE", "0"), ("DB_POOL_SIZE", "-1"),
+    ("DB_MAX_OVERFLOW", "-1"), ("DB_MAX_OVERFLOW", "-2"),
+    ("DB_POOL_RECYCLE_S", "0"), ("DB_POOL_RECYCLE_S", "-2"),
+])
+def test_pool_out_of_range_is_rejected(monkeypatch, name, value):
+    monkeypatch.setenv("PINGO_ENV", "dev")
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ConfigError, match=name):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("value", ["maybe", "2", "yes"])
+def test_invalid_pool_pre_ping_is_rejected(monkeypatch, value):
+    monkeypatch.setenv("DB_POOL_PRE_PING", value)
+
+    with pytest.raises(ConfigError, match="DB_POOL_PRE_PING"):
         Settings.from_env()

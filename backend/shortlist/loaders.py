@@ -27,7 +27,7 @@ from shortlist.schemas import ShortlistAddRequest
 @dataclass(frozen=True)
 class LoadedPinForConfirm:
     resource: Resource
-    obj: Any  # pins.models.Pin
+    obj: Any  # pins.api.PinRef
 
 
 def load_pin_for_confirm(
@@ -36,12 +36,12 @@ def load_pin_for_confirm(
     db: Session = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> LoadedPinForConfirm:
-    pin_row = pins_api.get_pin_for_viewer(db, pin_id=body.pin_id, viewer_id=user.user_id)
-    if pin_row.map_id != mapId:
+    pin = pins_api.get_pin_for_viewer(db, pin_id=body.pin_id, viewer_id=user.user_id)
+    if pin.map_id != mapId:
         raise AppError("NOT_FOUND")  # Rule B — 경로/바디 불일치는 authz를 부르기 전에 끝낸다
     return LoadedPinForConfirm(
-        resource=Resource(type="pin", map_id=pin_row.map_id, author_id=pin_row.created_by, kind=pin_row.kind),
-        obj=pin_row,
+        resource=Resource(type="pin", map_id=pin.map_id, author_id=pin.created_by, kind=pin.kind),
+        obj=pin,
     )
 
 

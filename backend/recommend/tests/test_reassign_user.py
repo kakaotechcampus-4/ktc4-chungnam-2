@@ -28,7 +28,7 @@ def test_moves_runs_lines_and_exclusions_keeping_attempt_no(db_session):
 
     result = api.reassign_user(db_session, from_user_id="guest", to_user_id="kakao")
 
-    assert result == {"recommend_runs": 1, "evidence_lines": 1, "exclusions": 1}
+    assert result == {"recommend_runs": 1, "evidence_lines": 1, "exclusions": 1, "idempotency_keys": 0}
     assert [(r.requested_by, r.attempt_no) for r in db_session.query(RecommendRun)] == [("kakao", 4)]
     assert [l.author_id for l in db_session.query(EvidenceLine)] == ["kakao"]
     assert [e.requested_by for e in db_session.query(Exclusion)] == ["kakao"]
@@ -56,7 +56,7 @@ def test_idempotent(db_session):
     api.reassign_user(db_session, from_user_id="guest", to_user_id="kakao")
 
     assert api.reassign_user(db_session, from_user_id="guest", to_user_id="kakao") == {
-        "recommend_runs": 0, "evidence_lines": 0, "exclusions": 0,
+        "recommend_runs": 0, "evidence_lines": 0, "exclusions": 0, "idempotency_keys": 0,
     }
 
 

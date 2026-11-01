@@ -32,13 +32,16 @@ def test_row1_shortlist_add_remove_member_anyone():
     assert can(non_member, "shortlist.remove", pin) is False
 
 
-# 2. 핀 삭제 — 구성원 누구나 (9/4 결정 #25)
+# 2. 핀 삭제 — 찍은 사람과 방장 (#965, 9/4 결정 #25를 바꿈)
 
 
-def test_row2_pin_delete_member_anyone_not_just_author():
+def test_row2_pin_delete_author_or_owner():
     member = _principal(role="member", user_id="user_1")
-    pin = _resource("pin", author_id="someone_else")
-    assert can(member, "pin.delete", pin) is True
+    owner = _principal(role="owner", user_id="user_2")
+    others = _resource("pin", author_id="someone_else")
+    assert can(member, "pin.delete", others) is False
+    assert can(member, "pin.delete", _resource("pin", author_id="user_1")) is True
+    assert can(owner, "pin.delete", others) is True
 
 
 # 3. 근거 리스트에서 항목 빼기 — 자기가 쓴 것만

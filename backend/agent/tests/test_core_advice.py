@@ -20,11 +20,14 @@ LABELS = {"spacious": "넓은 곳", "is_crowded_large": "붐비는 대형 장소
 NEXT = 20 / 15   # 도보 15분에서 버튼 한 번(5분) 넓힌 배율(#677)
 
 
-def raw_line(line_id, author, *, fact_key=None, wants=None, text="", active=True, chip_id=None, reason=None):
-    """recommend.api.get_run_evidence의 한 줄."""
-    return {"line_id": line_id, "author_id": author, "text": text, "badge": "required", "fact_key": fact_key,
-            "wants": wants, "is_active": active, "chip_id": chip_id, "enforced": fact_key is not None and reason is None,
-            "not_enforced_reason": reason if reason else (None if fact_key else "no_key")}
+def raw_line(line_id, author, *, fact_key=None, wants=None, text="", active=True, chip_id=None, reason=None,
+             badge="required", effect="filter"):
+    """recommend.api.get_run_evidence의 한 줄. effect는 쓰이는 줄에만 붙는다(선호 줄은 badge="preferred", effect="score")."""
+    enforced = fact_key is not None and reason is None
+    return {"line_id": line_id, "author_id": author, "text": text, "badge": badge, "fact_key": fact_key,
+            "wants": wants, "is_active": active, "chip_id": chip_id, "enforced": enforced,
+            "not_enforced_reason": reason if reason else (None if fact_key else "no_key"),
+            "effect": effect if enforced else None}
 
 
 RAW_LINES = [
@@ -36,10 +39,11 @@ LINES = core.advice_evidence(RAW_LINES, "u1", LABELS)
 
 
 def funnel(radius=0, disqualify=0, excluded=0, closed=0):
+    """recommend.api.get_run_funnel 모양. 라벨은 일부러 recommend의 화면 문구와 다르게 둔다 — 절차는 key만 본다(#751)."""
+    removed = {"radius": radius, "closed": closed, "disqualify": disqualify, "excluded": excluded}
+    keys = ("pool", "radius", "closed", "disqualify", "excluded", "ranking")
     return core.funnel_view({"result_count": 1, "passed_count": 1, "funnel": [
-        {"label": "카테고리 후보 풀", "removed_count": 0}, {"label": core.RADIUS_STAGE, "removed_count": radius},
-        {"label": "영업 종료 제거", "removed_count": closed}, {"label": core.DISQUALIFY_STAGE, "removed_count": disqualify},
-        {"label": core.EXCLUDED_STAGE, "removed_count": excluded}, {"label": "상위 3곳 선정", "removed_count": 0},
+        {"key": key, "label": f"단계 {key}", "removed_count": removed.get(key, 0)} for key in keys
     ]})
 
 
@@ -91,7 +95,8 @@ def test_next_radius_factor_is_not_rounded():
 def test_passed_and_gained_come_from_passed_count_not_the_stage_label(top_label):
     """passed는 recommend가 센 passed_count 그대로다 — 깔때기 라벨 문구가 바뀌어도 passed와 gained가 같다(#587)."""
     def outcome(removed_at_top, passed_count):
-        entries = [{"label": core.DISQUALIFY_STAGE, "removed_count": 4}, {"label": top_label, "removed_count": removed_at_top}]
+        entries = [{"key": "disqualify", "label": "실격 조건 제거", "removed_count": 4},
+                   {"key": "ranking", "label": top_label, "removed_count": removed_at_top}]
         return {"result_count": 3, "funnel": entries, "passed_count": passed_count}
 
     view = core.funnel_view(outcome(5, 8))
@@ -127,8 +132,8 @@ def test_evidence_lines_carry_only_own_flag_label_and_kind():
     ], "u1", LABELS)
 
     assert rows == [
-        {"line_id": "a", "own": True, "kind": "condition", "label": "넓은 곳 원함", "is_active": True},
-        {"line_id": "b", "own": False, "kind": "not_filtered", "label": None, "is_active": True},
+        {"line_id": "a", "own": True, "kind": "condition", "label": "넓은 곳 원함", "is_active": True, "effect": "filter"},
+        {"line_id": "b", "own": False, "kind": "not_filtered", "label": None, "is_active": True, "effect": None},
     ]   # 글, 쓴 사람 id는 절차에 들어가지 않는다
 
 
@@ -166,6 +171,24 @@ def test_relaxable_lines_are_active_named_conditions_up_to_the_cap():
     wanted = core.advice_simulations(funnel(disqualify=9), lines, NEXT)
 
     assert [w["disable_line_ids"] for w in wanted.values()] == [[f"c{i}"] for i in range(ADVICE_MAX_RELAX_LINES)]
+
+
+def test_preference_lines_ahead_do_not_push_out_the_disqualifying_line():
+    """점수만 주는 선호 줄(effect "score")은 꺼 보지 않는다 — 앞에 셋(ADVICE_MAX_RELAX_LINES)이 있어도 거르는 줄을 꺼 본다(#751)."""
+    lines = core.advice_evidence([
+        *[raw_line(f"pref{i}", "u1", fact_key="quiet", wants=True, badge="preferred", effect="score")
+          for i in range(ADVICE_MAX_RELAX_LINES)],
+        raw_line(OWN, "u1", fact_key="spacious", wants=True),
+    ], "u1", LABELS)
+
+    wanted = core.advice_simulations(funnel(disqualify=9), lines, NEXT)
+    draft = choose(funnel(disqualify=9), {"t2": sim(6, lines=[OWN])}, lines=lines)
+
+    assert wanted == {"t2": {"radius_factor": None, "disable_line_ids": [OWN]}}
+    assert draft.kind == "soft_relax"
+    assert [(c["path"], c["value"]) for c in draft.claims] == [
+        (f"lines.{ADVICE_MAX_RELAX_LINES}.label", "넓은 곳 원함"), ("gained", 6)]
+    assert draft.actions[0]["params"]["evidence_line_ids"] == [OWN]
 
 
 # ---------------------------------------------------------------- 종류 고르기

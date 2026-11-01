@@ -20,14 +20,14 @@ place_id,starts_at,ends_at,memo
 - 장소가 places에 있고 status가 open인지, 기간이 맞는지(시작 < 끝, 끝이 지금보다 뒤), 그 장소에 active 광고가 이미 없는지,
   CSV 안에 같은 장소가 두 번 없는지 본다. **하나라도 틀리면 아무것도 넣지 않는다.**
 
-장소 찾기(`find_place`, 이름으로 place_id 찾기)는 아직 없다(#769). places.api의 `search_own_by_name`(#674)은 있고 스크립트만 남았다.
-그동안은 아래 SQL로 찾는다(읽기 전용).
+## 장소 찾기
 
-```sql
-SELECT id, name, address, category, status FROM places
-WHERE name ILIKE '%온도 커피%' AND category = '카페'
-ORDER BY name LIMIT 20;
 ```
+python -m ads.scripts.find_place "온도 커피" --category 카페
+```
+
+이름 일부(대소문자 무시)로 places를 찾아 place_id, 이름, 주소, status를 출력한다. `--category`와 `--limit`(기본 20)은 선택이다.
+closed 장소도 나오니 등록에는 status가 open인 것만 쓴다. 읽기 전용이다.
 
 ## 내리기
 

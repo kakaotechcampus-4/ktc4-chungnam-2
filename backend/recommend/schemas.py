@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from authz.schemas import Permissions
 from common import categories
+from places.schemas import ExternalSearch   # 카카오맵 검색 링크 응답 — 정의는 places(#903), 추천 응답도 같은 타입
 
 Category = Literal[categories.recommendable()]  # 스펙의 RecommendCategory(common/categories.py, #280)
 RunStatus = Literal["collecting_evidence", "awaiting_region_confirm", "executing", "done", "failed"]
@@ -26,12 +27,6 @@ class Check(BaseModel):
     needs_check: bool
 
 
-class ExternalSearch(BaseModel):
-    """카카오맵 검색 링크(#798) — 결과가 없거나 적을 때 사람이 밖에서 찾는 출구. AI 추천 결과가 아니다."""
-    query: str = Field(max_length=100)
-    url: str = Field(max_length=2000)
-
-
 class Readiness(BaseModel):
     ready: bool
     answered_count: int
@@ -43,6 +38,7 @@ class Readiness(BaseModel):
 
 class RunCreateRequest(BaseModel):
     category: Category
+    execute: bool = False   # true면 근거 조립 뒤 곧바로 첫 검색까지 한 요청에서 끝낸다(#845, #847). 생략은 false
 
 
 class RecommendRun(BaseModel):
@@ -51,7 +47,6 @@ class RecommendRun(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
-    attempt_limit: int  # 한 사람이 한 지도에서 받을 수 있는 횟수 상한(core.ATTEMPT_LIMIT)
     default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한 30
 
 
@@ -62,7 +57,6 @@ class RunSummary(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
-    attempt_limit: int  # RecommendRun.attempt_limit과 같다
     created_at: datetime
     candidate_count: int = Field(ge=0)  # 마지막 시도의 후보 수. done이 아니면 0
     published_count: int = Field(ge=0)  # 그 run에서 게시한 후보 수
@@ -115,10 +109,18 @@ class RegionConfirmRequest(BaseModel):
     accept_union: bool = False
 
 
+class MemberCondition(BaseModel):
+    fact_key: str
+    fact_label: str | None = Field(default=None, max_length=30)   # 서버가 주는 표시 이름만. 사용자 글은 담지 않는다(#717)
+    evidence_line_id: str | None = None   # 직접 쓴 근거 줄의 id, ♥에서 나왔으면 None
+    status: Literal["met", "unmet", "needs_check"]
+
+
 class MemberFulfillmentEntry(BaseModel):
     user_id: str
     display_name: str | None = None  # 서버는 채우지 않는다. FE가 user_id로 구성원 목록에서 찾는다(#762)
     satisfied: bool
+    conditions: list[MemberCondition] | None = None   # 조건별 상태(#805). 없으면 구버전 서버 — satisfied만 쓴다
 
 
 class MemberFulfillment(BaseModel):
@@ -167,3 +169,8 @@ class RecommendResult(BaseModel):
     regions: list[Region]
     candidates: list[Candidate]
     external_search: ExternalSearch | None = None  # 후보가 FEW_RESULTS곳 미만일 때만(#798)
+    # #845: 이번 결과에 실제로 쓴 근거(실행 시점 스냅샷), 쓰이는 사유 근거가 0개인지, 마지막 실행이 새로 찾은 수.
+    # 스냅샷이 없는 예전 run에는 세 필드 모두 없다.
+    applied_evidence: list[EvidenceLine] | None = None
+    no_applied_conditions: bool | None = None
+    new_count: int | None = Field(default=None, ge=0)

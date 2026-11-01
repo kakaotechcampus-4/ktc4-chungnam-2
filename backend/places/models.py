@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 
 from geoalchemy2 import Geography
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum, ForeignKey, SmallInteger, String, Text, UniqueConstraint, func, text
+from sqlalchemy import Boolean, CheckConstraint, Computed, DateTime, Index, Enum, ForeignKey, SmallInteger, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +23,13 @@ PlaceStatus = Enum("open", "closed", name="place_status")
 FactConfidence = Enum("known", "unknown", name="fact_confidence")
 
 
+# 이름의 비교용 정규형(#835) — matching.normalize_name과 같은 규칙: 괄호 안·공백·기호를 지우고 소문자.
+# 생성 열이라 적재 코드는 쓰지 않는다. 장소 검색의 완전·앞부분 일치가 이 열의 접두 검색(text_pattern_ops btree)을 탄다.
+NAME_NORM_SQL = (
+    r"lower(regexp_replace(regexp_replace(name, '[(\[（][^)\]）]*[)\]）]', '', 'g'), '[^0-9a-zA-Z가-힣]', '', 'g'))"
+)
+
+
 class Place(Base):
     __tablename__ = "places"
 
@@ -32,6 +39,7 @@ class Place(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     category: Mapped[str] = mapped_column(PlaceCategory, nullable=False)
     address: Mapped[str | None] = mapped_column(String, nullable=True)
+    name_norm: Mapped[str] = mapped_column(Text, Computed(NAME_NORM_SQL, persisted=True))
     phone: Mapped[str | None] = mapped_column(String, nullable=True)
     # 좌표계가 위경도가 아니면 적재 시 변환해 넣는다. 좌표 없는 행은 적재하지 않으므로 NOT NULL.
     # GiST 인덱스는 geoalchemy2가 spatial_index(기본 True)로 만든다 — idx_places_geom.
@@ -48,7 +56,10 @@ class Place(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    __table_args__ = (UniqueConstraint("source", "source_id", name="uq_places_source_source_id"),)
+    __table_args__ = (
+        UniqueConstraint("source", "source_id", name="uq_places_source_source_id"),
+        Index("idx_places_name_norm", "name_norm", postgresql_ops={"name_norm": "text_pattern_ops"}),
+    )
 
 
 class PlaceFact(Base):

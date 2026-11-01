@@ -3,6 +3,8 @@
 shortlist/core.py로, pins 테이블을 건드리는 부분은 shortlist/flows.py(pins.api 경유)로 위임한다.
 """
 
+import re
+import sys
 import uuid
 
 from sqlalchemy import BigInteger, delete, func, select, update
@@ -142,15 +144,17 @@ def replace_routes(db: Session, *, map_id: str, routes: list[Route]) -> list[Rou
     return rows
 
 
+def _region_number(row: RouteRow) -> tuple[int, str]:
+    """"구역 N"의 N을 숫자로 뽑는다 — 문자열 정렬이면 "구역 10"이 "구역 2"보다 앞에 온다(#768).
+    숫자가 없는 라벨은 맨 뒤로 보내고 라벨 순으로 안정시킨다."""
+    match = re.search(r"\d+", row.region_label)
+    return (int(match.group()) if match else sys.maxsize, row.region_label)
+
+
 def list_routes(db: Session, *, map_id: str) -> list[RouteRow]:
-    # region_label("구역 N")로 정렬 — routing.compute_routes가 만드는 지역 수는 v1 실사용
-    # 범위에서 한 자릿수를 벗어나지 않을 것으로 보고 문자열 정렬을 그대로 쓴다(구역 10 이상이면
-    # "구역 10"이 "구역 2"보다 앞에 오는 사전식 정렬 함정이 있음, #768).
-    return list(
-        db.execute(
-            select(RouteRow).where(RouteRow.map_id == map_id).order_by(RouteRow.region_label)
-        ).scalars()
-    )
+    # 구역 수는 한 지도에 몇 개뿐이라 DB가 아니라 여기서 숫자 순으로 정렬한다.
+    rows = db.execute(select(RouteRow).where(RouteRow.map_id == map_id)).scalars()
+    return sorted(rows, key=_region_number)
 
 
 def list_items_for_agent(db: Session, *, map_id: str) -> list[dict]:

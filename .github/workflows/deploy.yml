@@ -1,0 +1,67 @@
+name: deploy
+# 서버에 한 환경을 고른 이미지 태그로 올린다(#168). 스테이징은 images.yml이 develop마다 부르고, 운영은 사람이 v 태그를 골라
+# 이 워크플로를 수동으로 돌린다. 롤백도 여기서 이전 태그를 고른다(deploy_rules.md 「배포할 때마다」).
+# 서버 접속은 OIDC + SSM이다 — 22번 포트도, 저장해 둔 키도 없다. 서버에서 하는 일은 deploy/sync.sh와 deploy/deploy.sh.
+# 저장소 변수: AWS_ACCOUNT_ID, EC2_INSTANCE_ID(비밀값이 아니다).
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 환경
+        type: choice
+        options: [staging, prod]
+        required: true
+      tag:
+        description: "이미지 태그 — 운영은 v0.x.y, 스테이징은 sha-1234567도 된다"
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      tag:
+        type: string
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 입력 확인
+        env:
+          ENV_NAME: ${{ inputs.environment }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          # 서버 명령에 들어가는 값이라 형식부터 막는다
+          [[ "$ENV_NAME" =~ ^(staging|prod)$ ]] || { echo "환경은 staging 또는 prod"; exit 1; }
+          [[ "$TAG" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|sha-[0-9a-f]{7})$ ]] || { echo "태그 형식: v0.x.y 또는 sha-1234567"; exit 1; }
+          if [ "$ENV_NAME" = prod ] && [[ "$TAG" != v* ]]; then
+            echo "운영에는 v 태그만 올린다(태그는 스테이징에서 핵심 흐름 테스트를 통과한 main 커밋에만 단다)"; exit 1
+          fi
+          echo "REF=${TAG#sha-}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/actions
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/ktc-github-deploy
+          aws-region: ap-northeast-2
+
+      # deploy 파일은 올릴 이미지와 같은 커밋에서 받는다(v 태그는 그 태그, sha-는 그 커밋)
+      - uses: ./.github/actions/ssm-run
+        with:
+          instance-id: ${{ vars.EC2_INSTANCE_ID }}
+          comment: deploy ${{ inputs.environment }} ${{ inputs.tag }}
+          command: cd /srv/pingo/deploy && ./sync.sh ${{ env.REF }} && ./deploy.sh ${{ inputs.environment }} ${{ inputs.tag }}

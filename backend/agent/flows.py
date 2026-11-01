@@ -182,7 +182,7 @@ def run_tick(
         finally:
             try:
                 with _write(session_factory) as db:
-                    service.release_lease(db, claim.map_id)
+                    service.release_lease(db, claim.map_id, claim.token)
             except Exception as exc:   # 못 풀어도 LEASE_SEC 뒤에는 다른 실행이 가져간다(12.5)
                 log.warning("agent release_lease 실패 map_id=%s error=%s", claim.map_id, type(exc).__name__)
     try:
@@ -208,14 +208,18 @@ def _observe_claimed(
     trace = _Trace("expire")
     try:
         observe_map(claim.map_id, now, trigger=claim.trigger, session_factory=session_factory, gateway=gateway,
-                    trace=trace)
+                    trace=trace, token=claim.token)
     except Exception as exc:
         log.error("agent observe_map 실패 map_id=%s stage=%s error=%s", claim.map_id, trace.stage, type(exc).__name__)
         try:
             with _write(session_factory) as db:
+                if not service.lease_held(db, claim.map_id, claim.token):   # lease를 잃었다. 기록도 커서도 건드리지 않는다
+                    log.warning("agent lease 잃음 map_id=%s stage=%s", claim.map_id, trace.stage)
+                    return
                 service.insert_run(db, map_id=claim.map_id, trigger=claim.trigger, **trace.error_fields(exc, now))
                 retry_at = core.error_retry_at(now, service.error_streak(db, claim.map_id))
-                service.advance_cursor(db, claim.map_id, claim.seq, next_check_at=retry_at, observed_at=now)
+                service.advance_cursor(db, claim.map_id, claim.seq, next_check_at=retry_at, observed_at=now,
+                                       token=claim.token)
         except Exception as record_exc:
             log.error("agent 관찰 실패 기록 실패 map_id=%s error=%s", claim.map_id, type(record_exc).__name__)
 
@@ -279,10 +283,12 @@ def _fill_decided_for_map(db: Session, map_id: str, created_before: datetime) ->
 
 def observe_map(
     map_id: str, now: datetime, *, trigger: str = "activity", session_factory: SessionFactory = SessionLocal,
-    gateway: deps.AgentLlmGateway | None = None, trace: _Trace | None = None,
+    gateway: deps.AgentLlmGateway | None = None, trace: _Trace | None = None, token: str | None = None,
 ) -> str | None:
     """지도 하나를 관찰하고 agent_runs에 남긴 outcome을 돌려준다. 저장 단계에서 지도가 삭제된 것을 보면 아무것도
-    쓰지 않고 None(머리말의 outcome 목록). 예외는 그대로 올린다 — 어디까지 갔는지는 trace에 남는다(run_tick이 error 행을
+    쓰지 않고 None(머리말의 outcome 목록). token은 run_tick이 잡은 lease의 주인 표시다(#812) — 저장할 때 그 lease가 아직
+    내 것이 아니면(오래 걸린 사이 다른 실행이 다시 잡았다) 결과를 저장하지 않고 stale 행만 남긴다. 직접 부르면(token 없음) 확인하지
+    않는다. 예외는 그대로 올린다 — 어디까지 갔는지는 trace에 남는다(run_tick이 error 행을
     쓴다, #677)."""
     started = time.monotonic()
     gateway = gateway or deps.get_llm_gateway()
@@ -294,6 +300,12 @@ def observe_map(
             "trigger": trigger, "snapshot_at": now, "snapshot_seq": snap.latest_seq if snap else None,
             "used_model": False, "outcome": outcome, **extra,
         }
+
+    def lease_lost(db: Session, snap: snapshot.Snapshot | None) -> str:
+        db.flush()
+        service.insert_run(db, **run_fields(snap, "stale", outcome_detail={"reason": "lease_lost"}))
+        log.warning("agent lease 잃음 map_id=%s", map_id)
+        return "stale"
 
     # 1. 만료 정리 (짧은 쓰기) + agent.resolved
     trace.stage = "expire"
@@ -312,8 +324,11 @@ def observe_map(
     if ended is not None:   # 끝난 지도는 관찰하지 않는다. 새 이벤트가 와야 다시 잡히고, 그때도 바로 끝난다
         trace.stage = "save"
         with _write(session_factory) as db:
+            if token is not None and not service.lease_held(db, map_id, token):
+                return lease_lost(db, snap)
             service.insert_run(db, **run_fields(snap, ended))
-            service.advance_cursor(db, map_id, snap.latest_seq if snap else None, next_check_at=None, observed_at=now)
+            service.advance_cursor(db, map_id, snap.latest_seq if snap else None, next_check_at=None, observed_at=now,
+                                   token=token)
         return ended
 
     # 3. 탐지와 활성 제안 무효화 판단 (순수)
@@ -340,6 +355,8 @@ def observe_map(
     # 7. 재확인과 저장 (짧은 쓰기 트랜잭션). 이벤트도 같은 트랜잭션
     trace.stage = "save"
     with _write(session_factory) as db:
+        if token is not None and not service.lease_held(db, map_id, token):   # 커서 행을 잠근 뒤 지도 행을 잠근다
+            return lease_lost(db, snap)
         if not maps_api.lock_map_if_alive(db, map_id):   # 지도 행 잠금 + 삭제 확인(#435, #512)
             return None                                   # 관찰 중 지도가 삭제됐다. 아무것도 쓰지 않는다
         if chosen is not None and not _still_there(db, chosen, map_id, now, th):
@@ -372,7 +389,7 @@ def observe_map(
                     _announce_suggested(db, map_id, inserted)
         service.advance_cursor(
             db, map_id, snap.latest_seq, next_check_at=_next_check(snap, hist, now, th, new_expires_at),
-            observed_at=now,
+            observed_at=now, token=token,
         )
     trace.model_recorded()   # 진단의 모델 사용은 위 행에 남았다. 요약에서 실패해도 다시 세지 않는다
 
@@ -415,10 +432,13 @@ def _draft(
         map_id=map_id, snap=snap, allowed=llm_api.DIAGNOSIS_TOOLS[top.diagnosis], session_factory=session_factory,
         structure=gateway.structure, now=now,
     )
-    comparison = _comparison(ctx, top)
-    reply = _call_model(trace, ctx.calls, lambda: gateway.diagnose(
-        core.diagnosis_input(top, snap, comparison), tool_runner=ctx.run,
-    ))
+    # 사용량 기록(#870): 진단 왕복과 그 안의 ②(사전 비교, 도구)가 한 trace다. 서버 호출이라 user_id가 없고, agent_runs 행은
+    # 아직 없어 run_id도 없다
+    with llm_api.usage_context("agent_diagnose", map_id=map_id):
+        comparison = _comparison(ctx, top)
+        reply = _call_model(trace, ctx.calls, lambda: gateway.diagnose(
+            core.diagnosis_input(top, snap, comparison), tool_runner=ctx.run,
+        ))
     trace.stage = "verify"
     out = reply.result
     which = {"signal_id": top.id, "diagnosis": top.diagnosis}
@@ -497,7 +517,9 @@ def update_summary(
     ctx = tools.ToolContext(map_id=map_id, snap=snap, allowed=(), session_factory=session_factory,
                             structure=gateway.structure, now=now)
     try:
-        stored, outcome, detail = core.summarize_reasons(tools.summary_reasons(ctx, category)), "summarized", None
+        with llm_api.usage_context("agent_summary", map_id=map_id):   # #870 — ②를 부르지만 지도 상한에는 세지 않는다
+            reasons = tools.summary_reasons(ctx, category)
+        stored, outcome, detail = core.summarize_reasons(reasons), "summarized", None
     except llm_api.PlanEvidenceFailed as exc:
         log.warning("agent 요약 실패(②) map_id=%s category=%s", map_id, category)
         stored, outcome, detail = None, "model_failed", {"reason": "structure_failed", "detail": type(exc).__name__}

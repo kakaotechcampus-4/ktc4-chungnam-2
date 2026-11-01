@@ -39,43 +39,6 @@ def place(source="kakao", **kw):
     return RawPlace(**base)
 
 
-SEARCH = dict(category="음식점", lat=37.5, lng=127.0, radius_m=500)
-
-
-# ---- 검색 폴백 ----
-
-def test_first_source_with_results_wins_and_later_ones_are_not_called():
-    k, n, g = FakeSource("kakao", nearby=[place()]), FakeSource("naver"), FakeSource("other")
-    assert len(fallback.search_with_fallback([k, n, g], **SEARCH)) == 1
-    assert (k.nearby_calls, n.nearby_calls, g.nearby_calls) == (1, 0, 0)
-
-
-def test_falls_to_naver_when_kakao_fails():
-    k = FakeSource("kakao", fail=True)
-    n = FakeSource("naver", nearby=[place("naver")])
-    g = FakeSource("other")
-    assert fallback.search_with_fallback([k, n, g], **SEARCH)[0].source == "naver"
-    assert g.nearby_calls == 0
-
-
-def test_falls_through_empty_results_to_the_last_source():
-    k, n = FakeSource("kakao"), FakeSource("naver")
-    g = FakeSource("other", nearby=[place("other")])
-    assert fallback.search_with_fallback([k, n, g], **SEARCH)[0].source == "other"
-
-
-def test_source_without_key_is_skipped_without_calling():
-    k = FakeSource("kakao", configured=False, nearby=[place()])
-    n = FakeSource("naver", nearby=[place("naver")])
-    assert fallback.search_with_fallback([k, n], **SEARCH)[0].source == "naver"
-    assert k.nearby_calls == 0
-
-
-def test_all_sources_failing_returns_empty_not_error():
-    srcs = [FakeSource(n, fail=True) for n in ("kakao", "naver", "other")]
-    assert fallback.search_with_fallback(srcs, **SEARCH) == []   # 결과 0개는 0개 — 지어내지 않는다
-
-
 # ---- 보완(enrich) ----
 
 def test_already_filled_fields_are_not_asked_again():

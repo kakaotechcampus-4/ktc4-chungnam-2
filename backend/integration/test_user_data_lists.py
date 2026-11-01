@@ -7,7 +7,7 @@
 계정으로 합칠 때는 여전히 이 목록을 탄다.
 
 이 테스트는 목록이 테이블을 따라가는지 본다. 테이블은 모델 메타데이터(Base.metadata)에서 읽는다.
-- 사용자 id를 담는 열(user_id, author_id, *_by)을 가진 테이블의 모듈은 MERGE_STEPS에 있다. 옮기지 않는 열은 NOT_MERGED에
+- 사용자 id를 담는 열(user_id, author_id, reporter_id, *_by)을 가진 테이블의 모듈은 MERGE_STEPS에 있다. 옮기지 않는 열은 NOT_MERGED에
   이유와 함께 적는다
 - 그 모듈은 WITHDRAW_STEPS에도 있다. 탈퇴 때 그 모듈 기록을 그대로 두면 KEPT_ON_WITHDRAW에 이유와 함께 적는다
 - WITHDRAW_STEPS의 모듈은 MERGE_STEPS에도 있다(auth/tests의 같은 검사를 여기서도 본다 — 목록 셋을 한 파일에서 읽게)
@@ -17,6 +17,8 @@
 이 테스트가 못 보는 것: JSONB 안의 사용자 id. pins.member_fulfillment와 candidates.member_fulfillment의 by_member[].user_id는
 게시 시점의 충족 집계 사본이고 게스트 합치기에서 옮기지 않는다(2026-10-24 확인). 집계를 게시 뒤에 다시 계산하게 바뀌거나 by_member를
 화면이 사람 식별에 쓰기 시작하면 다시 본다.
+recommend_runs.applied_evidence(#847)의 작성자 id는 JSONB지만 탈퇴·나가기는 그 사람 줄을 빼고 합치기는 작성자를 옮긴다
+(recommend/tests/test_first_run_847.py가 본다).
 """
 
 import importlib
@@ -26,7 +28,7 @@ from pathlib import Path
 from common.database import Base
 
 BACKEND = Path(__file__).resolve().parents[1]
-USER_COLUMN = re.compile(r"^(user_id|author_id|recipient_user_id|[a-z_]+_by)$")
+USER_COLUMN = re.compile(r"^(user_id|author_id|recipient_user_id|reporter_id|[a-z_]+_by)$")
 
 # auth는 합치기를 하는 쪽이다(users, user_identities는 auth가 직접 다룬다).
 MERGER = "auth"
@@ -40,6 +42,7 @@ NOT_MERGED: dict[tuple[str, str], str] = {
 # 모듈 -> 탈퇴 때 그 모듈의 사용자 기록을 지우지 않는 이유. 다시 볼 조건: 탈퇴 정책(#10, #155)이 바뀔 때.
 KEPT_ON_WITHDRAW: dict[str, str] = {
     "shortlist": "확정 리스트 항목은 지도의 결정이라 남기고, 담은 사람은 auth.api.display_names가 '탈퇴한 구성원'으로 보인다(#155)",
+    "credits": "되살리면 잔액이 돌아와야 한다 — 7일 정리(auth.service.purge_withdrawn_user) 때 지운다(#948)",
     "common": "event_log는 24시간 안의 것만 읽고, 탈퇴한 사람의 세션은 이미 끊겨 받을 사람이 없다. 오래된 행을 지우는 작업은 아직 없다(deploy_rules.md)",
 }
 

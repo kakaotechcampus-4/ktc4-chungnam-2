@@ -120,6 +120,13 @@ def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
     return service.accept_invite(db, token=token, user_id=user_id)
 
 
+def restore_maps_deleted_by_withdrawal(db: Session, *, user_id: str, now: datetime) -> list[str]:
+    """탈퇴 계정 복구(#855)가 부른다(#1000) — 이 사람의 탈퇴가 후임 없어 지운 지도 중 삭제한 지 30일 안인 것을 되살린다.
+    방장 자리는 그대로이고 지도 수 상한은 따지지 않는다. `map.restored`를 같은 트랜잭션에 기록한다. 멱등 — 두 번째 호출은 빈 목록.
+    직접 지운 지도와 위임된 지도는 건드리지 않는다. 커밋은 호출자. 되살린 map_id 목록."""
+    return service.restore_maps_deleted_by_withdrawal(db, user_id=user_id, now=now)
+
+
 def purge_deleted_maps(db: Session, *, now: datetime, older_than_days: int) -> dict[str, int]:
     """정기 정리(#168)가 부른다 — 삭제한 지 `older_than_days`일이 지난 지도와 딸린 데이터를 지운다(`maps.purge`의 로직).
     테이블 이름 → 지운 행 수, 지운 지도 수는 `maps` 키가 아니라 `deleted_maps`에 담는다. 커밋은 호출자."""

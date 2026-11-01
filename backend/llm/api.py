@@ -12,8 +12,22 @@
 
 고정 응답 스텁(dev)과 실제 모델(real) 중 무엇을 쓸지는 이 모듈이 아니라 받는 쪽의 Gateway(recommend/deps.py,
 agent/deps.py)가 planner 인자로 고른다.
+
+사용량 기록(#870): 모델 호출 1건마다 llm_calls 한 행이 남는다. 부르는 쪽은 호출을 `usage_context(feature, map_id=, user_id=, run_id=)`로
+감싼다 — feature는 llm.models.FEATURES 중 하나, user_id는 사용자가 부른 호출에만 넣는다. 감싸지 않은 호출은 기록되지 않는다.
+- 탈퇴(auth의 WITHDRAW_STEPS): anonymize_by_user — 행은 남기고 user_id만 비운다(비용 통계).
+- 게스트 합치기(auth의 MERGE_STEPS): reassign_user.
+- 보존: purge_old(30일, maintenance가 부른다).
+- 버려진 비용(#848): ② 묶음 중 일부가 실패하거나 누적 시간 상한(PLAN_TOTAL_BUDGET_SECONDS)을 넘으면 그 trace의 성공 호출을 discarded로
+  표시한다(llm이 한다). 모델 뒤에 run·근거 저장이 실패한 경우는 부르는 쪽이 `mark_discarded(label.trace_id)`로 표시한다. 호출마다
+  batch_size(② 묶음 크기)가 남아 묶음 수는 trace당 plan_evidence 행 수다.
 """
 
+from datetime import datetime
+
+from sqlalchemy.orm import Session
+
+from llm import usage as _usage
 from llm.prompts import DIAGNOSIS_TOOLS
 from llm.schemas import (
     AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
@@ -37,6 +51,7 @@ from llm.service import (
     agent_diagnose,
     fixed_diagnosis_planner,
     passthrough_planner,
+    plan_deadline,
     plan_evidence,
     real_course_turn_planner,
     real_diagnosis_planner,
@@ -52,4 +67,23 @@ __all__ = [
     "CourseTurn", "CourseTurnPlanner", "agent_course_turn", "real_course_turn_planner",
     "CourseGoalSet", "CourseGoalsPlanner", "course_set_goals", "fixed_course_goals_planner", "real_course_goals_planner",
     "CourseDirectTurn", "CourseDirectPlanner", "course_direct_turn", "real_course_direct_planner",
+    "usage_context", "mark_discarded", "plan_deadline", "anonymize_by_user", "reassign_user", "purge_old",
 ]
+
+usage_context = _usage.usage_context
+mark_discarded = _usage.mark_discarded   # 모델은 불렸는데 결과가 저장되지 않은 호출을 표시한다(#848). trace_id는 usage_context가 준 라벨의 것
+
+
+def anonymize_by_user(db: Session, *, user_id: str) -> int:
+    """계정 탈퇴가 부른다 — 그 사람의 llm_calls 행은 남기고 user_id만 비운다(비용 통계는 유지). 바꾼 행 수."""
+    return _usage.anonymize_by_user(db, user_id=user_id)
+
+
+def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
+    """게스트 합치기가 부른다 — from_user의 llm_calls 행을 to_user로 옮긴다(충돌 없음, 멱등, 커밋은 호출자)."""
+    return _usage.reassign_user(db, from_user_id=from_user_id, to_user_id=to_user_id)
+
+
+def purge_old(db: Session, *, now: datetime, older_than_days: int = _usage.RETENTION_DAYS) -> dict[str, int]:
+    """보존 기간(30일)이 지난 llm_calls 행을 지운다. maintenance.run이 부른다. 테이블 → 지운 행 수."""
+    return _usage.purge_old(db, now=now, older_than_days=older_than_days)

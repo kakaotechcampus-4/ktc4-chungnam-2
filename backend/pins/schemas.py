@@ -12,7 +12,7 @@ authz가 소유한다(#56 이관, mentor-review-plan.md). pins는 authz의 것�
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SkipValidation, model_serializer, model_validator
 
 from authz.schemas import Permissions
 from common import categories
@@ -34,10 +34,18 @@ class Check(BaseModel):
     needs_check: bool
 
 
+class MemberCondition(BaseModel):
+    fact_key: str
+    fact_label: str | None = Field(default=None, max_length=30)
+    evidence_line_id: str | None = None
+    status: Literal["met", "unmet", "needs_check"]
+
+
 class MemberFulfillmentEntry(BaseModel):
     user_id: str
     display_name: str | None = None
     satisfied: bool
+    conditions: list[MemberCondition] | None = None   # #805 — recommend가 채운 값을 게시 때 그대로 복사한다
 
 
 class MemberFulfillment(BaseModel):
@@ -77,7 +85,7 @@ class PinCreateSearch(BaseModel):
 
     category: Category
     source: PinSource = "search"
-    link_url: str | None = None
+    link_url: str | None = Field(default=None, max_length=2000)   # v1은 값이 있으면 422(core) — 길이는 스펙과 맞춘다(#733)
     place_id: str = Field(max_length=100)
     place_name: str = Field(max_length=100)
     lat: float = Field(ge=-90, le=90)
@@ -90,12 +98,28 @@ class PinCreateSearch(BaseModel):
 PinCreateRequest = PinCreateLive | PinCreateSearch
 
 
+class LinkHint(BaseModel):
+    """공유 글에서 읽은 상호명·주소(#946, 스펙 LinkPreviewRequest.hints[]) — 서버는 자체 DB 짝 찾기에만 쓴다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    address: str | None = Field(default=None, min_length=1, max_length=200)
+
+
 class LinkPreviewRequest(BaseModel):
     """카톡 대화에서 화면이 뽑은 지도 링크(#577, 스펙 LinkPreviewRequest) — URL만 받는다. 대화 원문은 서버로 오지 않는다."""
 
     model_config = ConfigDict(extra="forbid")
 
     urls: list[Annotated[str, Field(min_length=1, max_length=2000)]] = Field(min_length=1, max_length=10)
+    hints: list[LinkHint | None] | None = Field(default=None, max_length=10)   # #946 — urls[i]의 상호명·주소. 저장·로그하지 않는다
+
+    @model_validator(mode="after")
+    def _hints_match_urls(self) -> "LinkPreviewRequest":
+        if self.hints and len(self.hints) != len(self.urls):
+            raise ValueError("hints 길이가 urls와 다릅니다")   # 입력값을 싣지 않는다
+        return self
 
 
 class LinkPreviewItem(BaseModel):
@@ -115,7 +139,9 @@ class BulkPinRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    pins: list[dict] = Field(min_length=1, max_length=30)
+    # 항목 모양은 스펙(PinCreateRequest)대로 문서에 싣되 검증은 건너뛴다 — 항목은 bulk_create_pins가 하나씩 검증해
+    # 틀린 항목만 rejected로 돌려준다(요청 전체를 422로 떨어뜨리지 않는다). 그래서 서비스에는 원본 dict가 온다(#733).
+    pins: list[Annotated[PinCreateRequest, SkipValidation]] = Field(min_length=1, max_length=30)
 
 
 class BulkPinError(BaseModel):

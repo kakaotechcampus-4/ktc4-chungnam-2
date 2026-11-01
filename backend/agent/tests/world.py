@@ -17,6 +17,7 @@ from agent import core
 from auth.models import User
 from auth.testing import ensure_users
 from common.events import EventLog
+from credits import api as credits_api
 from maps.models import Map, Membership
 from pins.models import Pin, Reaction
 from places.schemas import PlaceInfo
@@ -203,6 +204,8 @@ class World:
             db.execute(delete(Membership).where(Membership.map_id.in_(ids)))
             db.execute(delete(EventLog).where(EventLog.map_id.in_(ids)))
             db.execute(delete(Map).where(Map.id.in_(ids)))
+            for user_id in self.user_ids:          # 코스 요청이 만든 크레딧 계정·원장(#950)
+                credits_api.delete_by_user(db, user_id=user_id)
             db.execute(delete(User).where(User.id.in_(self.user_ids)))
             db.commit()
 

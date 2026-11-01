@@ -7,6 +7,7 @@ import { useSheetStore, type TabKey } from './sheetStore'
 import { useIsDesktop } from './useIsDesktop'
 import { TriangleAlert } from 'lucide-react'
 
+import AgentButton from '@/features/agent/AgentButton'
 import type { ConnectionState } from '@/features/map/realtime'
 
 import Toaster from './Toaster'
@@ -28,7 +29,7 @@ export default function TabSheet({
   expandOnScroll?: boolean
   children: ReactNode
 }) {
-  const { activeControl, onControl, connection } = useShell()
+  const { mapId, activeControl, onControl, connection } = useShell()
   const desktop = useIsDesktop()
   const stage = useSheetStore((s) => s.stages[tab])
   const setStage = useSheetStore((s) => s.setStage)
@@ -50,6 +51,8 @@ export default function TabSheet({
         !desktop && (
           <>
             <MapControls hidden={controlsHidden} fading={mapMoving} active={activeControl} onPress={onControl} onCrampedChange={setCramped} />
+            {/* 「핑고 AI 조언」은 마킹 탭 지도 왼쪽 아래(agent-v2 16.1). */}
+            {tab === 'map' && <AgentButton mapId={mapId} hidden={controlsHidden} fading={mapMoving} />}
             {!modalOpen && <Toaster controlsVisible={!controlsHidden && !mapMoving} inside={stage === 3} />}
           </>
         )

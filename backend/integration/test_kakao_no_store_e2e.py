@@ -65,7 +65,8 @@ def test_no_kakao_value_is_stored_logged_or_sent_to_the_model(members, place_ids
     caplog.set_level(logging.DEBUG)
 
     # 1) 검색 — 화면 표시용이라 응답에는 카카오 값이 있어도 된다(저장만 안 된다)
-    found = a.get("/places/search", params={"q": "성수 한식집", "lat": 37.5445, "lng": 127.0561})
+    #    검색어는 자체 DB의 이름·주소에 안 걸리는 것이어야 한다 — 걸리면 자체 DB 결과가 먼저 나오고 같은 가게인 카카오 결과는 빠져(#822) 대조군이 사라진다
+    found = a.get("/places/search", params={"q": "카카오전용검색어ZZ", "lat": 37.5445, "lng": 127.0561})
     assert found.status_code == 200, found.text
     [hit] = found.json()
     assert hit["lat"] == 37.54471234, "대조군 — 카카오 대역의 값이 검색 응답에는 나온다"

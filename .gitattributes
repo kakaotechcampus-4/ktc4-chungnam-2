@@ -21,3 +21,7 @@
 # 셸 스크립트·git hook 은 CRLF 면 실행이 실패하니 LF 로 고정하는 게 좋습니다:
 #   *.sh        text eol=lf
 #   .githooks/* text eol=lf
+
+# 서버(Linux)에서 도는 배포 파일은 줄 끝을 LF로 고정한다 — CRLF면 cron과 bash가 읽지 못한다(#168)
+deploy/** text eol=lf
+*.sh text eol=lf

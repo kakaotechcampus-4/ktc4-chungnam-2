@@ -13,12 +13,15 @@ from authz.policy import Role
 from authz.schemas import Permissions
 from common.errors import AppError
 from common.events import Event
-from maps.schemas import Invite, InviteSummary, Map, MapRegion, Member, NextOwner
+from maps.schemas import Invite, InviteSummary, Map, MapRegion, Member, NextOwner, TrashedMap
 
 WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 
 # 내 지도 상한(#369 15번) — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다.
 MAP_LIMIT = 20
+
+# 삭제한 지도를 복구할 수 있는 기간(#464). 정리 작업(maps.purge)이 지우는 기준과 같은 값이다 — 한 곳에서 정한다.
+TRASH_RETENTION = timedelta(days=30)
 
 # 초대 링크 유효 기간 7일. 정본은 docs/data-model.md invites 절(목서버 contracts/mocks/handlers/maps.ts와 같다).
 INVITE_TTL = timedelta(days=7)
@@ -332,13 +335,14 @@ def to_map_response(
 
 
 def to_member_response(
-    user_id: str, *, role: Role, display_name: str | None, online: bool | None
+    user_id: str, *, role: Role, display_name: str | None, online: bool | None, is_guest: bool
 ) -> Member:
     """role은 memberships.role 그대로다(#369 11번 — maps.created_by로 판정하지 않는다).
     display_name은 auth.api.display_names로 채운다(탈퇴자는 '탈퇴한 구성원', #155).
     online은 여전히 채울 데이터 출처가 없다(realtime에 presence 없음, #32 별건) — user_id로
-    대체하거나 False로 채우지 않는다(그럴싸해 보이는 거짓 fallback이다)."""
-    return Member(user_id=user_id, role=role, display_name=display_name, online=online)
+    대체하거나 False로 채우지 않는다(그럴싸해 보이는 거짓 fallback이다).
+    is_guest는 호출부가 auth.api.guest_user_ids로 구한 값을 넘긴다(#955) — 방장 넘기기 검사(check_owner_target)와 같은 판정이다."""
+    return Member(user_id=user_id, role=role, display_name=display_name, online=online, is_guest=is_guest)
 
 
 def member_joined_event(map_id: str, member: Member) -> Event:
@@ -349,6 +353,50 @@ def member_joined_event(map_id: str, member: Member) -> Event:
         type="member.joined",
         payload=member.model_dump(exclude_none=True),
     )
+
+
+def is_purge_due(deleted_at: datetime, now: datetime) -> bool:
+    """삭제한 지 30일이 됐으면 True — 정리 작업이 아직 안 돌았어도 복구할 수 없다(#464). maps.purge가
+    지우는 조건(deleted_at <= now - 30일)과 같다."""
+    return deleted_at <= now - TRASH_RETENTION
+
+
+def check_can_restore(role: Role | None, map_id: str, user_id: str) -> None:
+    """복구 권한 판정(#464) — 비구성원은 404, 구성원인데 map.restore가 안 되면 403. 라우터의 restorable_map(요청 초입)과
+    restore_map(지도 행을 잠근 뒤)이 같은 함수로 판정한다."""
+    if role is None:
+        raise AppError("NOT_FOUND")
+    if not can(Principal(user_id=user_id, map_id=map_id, role=role), "map.restore", Resource(type="map", map_id=map_id)):
+        raise AppError("FORBIDDEN")
+
+
+def check_restorable(deleted_at: datetime, now: datetime) -> None:
+    if is_purge_due(deleted_at, now):
+        raise AppError("MAP_PURGED")
+
+
+def days_left(deleted_at: datetime, now: datetime) -> int:
+    """복구까지 남은 날수(올림). 지금 복구할 수 있는 지도는 1 이상이다."""
+    remaining = deleted_at + TRASH_RETENTION - now
+    return max(0, -(-remaining // timedelta(days=1)))
+
+
+def to_trashed_map(
+    record: MapRecord, *, deleted_at: datetime, now: datetime, member_count: int, pin_count: int,
+) -> TrashedMap:
+    region = None
+    if record.region_label is not None:
+        region = MapRegion(label=record.region_label, lat=record.region_lat, lng=record.region_lng)
+    return TrashedMap(
+        id=record.id, title=record.title, start_date=record.start_date, end_date=record.end_date,
+        region=region, member_count=member_count, pin_count=pin_count, deleted_at=deleted_at,
+        purge_at=deleted_at + TRASH_RETENTION, days_left=days_left(deleted_at, now),
+    )
+
+
+def map_restored_event(map_id: str) -> Event:
+    """docs/events.md map.restored — public 채널. 복구와 같은 트랜잭션에 기록한다(#464)."""
+    return Event(map_id=map_id, channel="public", type="map.restored", payload={"map_id": map_id})
 
 
 def map_deleted_event(map_id: str) -> Event:

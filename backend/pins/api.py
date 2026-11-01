@@ -31,8 +31,32 @@ _ChecksAdapter = TypeAdapter(list[Check])
 
 
 @dataclass(frozen=True)
+class PinRef:
+    """다른 모듈이 핀을 가리킬 때 필요한 칸만 — ORM 행(PinRow)을 모듈 밖으로 내보내지 않는다(#772).
+    pins 테이블이 바뀌어도 호출부로 번지지 않게 하려는 경계다."""
+    id: str
+    map_id: str
+    category: str
+    kind: str
+    origin: str
+    visibility: str
+    created_by: str
+    source: str
+    place_id: str | None
+    checks: list[dict] | None
+
+
+def _pin_ref(row: PinRow) -> PinRef:
+    return PinRef(
+        id=str(row.id), map_id=row.map_id, category=row.category, kind=row.kind, origin=row.origin,
+        visibility=row.visibility, created_by=row.created_by, source=row.source, place_id=row.place_id,
+        checks=row.checks,
+    )
+
+
+@dataclass(frozen=True)
 class PinMutation:
-    pin: PinRow           # 호출자가 응답 조립에 쓸 수 있는 값
+    pin: PinRef           # 호출자가 응답 조립에 쓸 수 있는 값
     event: Event | None    # 호출자가 record_event로 같은 커밋에 넣는다(호출자 책임)
 
 
@@ -116,7 +140,7 @@ def create_ai_pin(
     # recommend가 매번 type만 고쳐 새 Event를 만드는 우회가 필요해진다(recommend/flows.py에
     # 남아있던 것 — 이 수정으로 그 우회를 지웠다).
     event = core.pin_published_event(pin)
-    return PinMutation(pin=pin_row, event=event)
+    return PinMutation(pin=_pin_ref(pin_row), event=event)
 
 
 def public_pin_payload(pin: Pin) -> dict:
@@ -132,7 +156,7 @@ def mark_confirmed(db: Session, *, pin_id: str, map_id: str) -> PinMutation:
         raise AppError("NOT_FOUND")   # authz Rule B와 같은 원칙 — 교차 지도 참조는 404
     pin_row.kind = "확정"
     db.flush()
-    return PinMutation(pin=pin_row, event=None)   # shortlist.changed는 shortlist가 직접 기록
+    return PinMutation(pin=_pin_ref(pin_row), event=None)   # shortlist.changed는 shortlist가 직접 기록
 
 
 def unmark_confirmed(db: Session, *, pin_id: str, map_id: str) -> PinMutation:
@@ -142,13 +166,25 @@ def unmark_confirmed(db: Session, *, pin_id: str, map_id: str) -> PinMutation:
         raise AppError("NOT_FOUND")
     pin_row.kind = core.kind_after_unconfirm(pin_row.origin)
     db.flush()
-    return PinMutation(pin=pin_row, event=None)
+    return PinMutation(pin=_pin_ref(pin_row), event=None)
 
 
-def get_pin_for_viewer(db: Session, *, pin_id: str, viewer_id: str) -> PinRow:
+def get_pin_for_viewer(db: Session, *, pin_id: str, viewer_id: str) -> PinRef:
     """존재 확인. 없으면 404 NOT_FOUND. viewer_id는 호출부 호환을 위해 남긴다(v1은 private 핀이 없어
     보는 사람에 따라 달라지지 않는다)."""
-    return service.get_pin_or_404(db, pin_id)
+    return _pin_ref(service.get_pin_or_404(db, pin_id))
+
+
+def has_place_pin_on_member_map(db: Session, *, user_id: str, place_id: str) -> bool:
+    """reviews의 후기 신고(#951)가 쓴다 — 이 사용자가 구성원인 지도에 이 place_id를 가리키는 핀(삭제되지 않은)이 있는가. 읽기 전용.
+    후기는 장소에 붙어 여러 지도의 핀에서 보이므로, 「그 후기를 볼 수 있는 사람」은 이 질문으로 정해진다(docs/credits-reviews.md 7절).
+    구성원 판정은 핀 경로의 authz guard와 같은 DbMembershipGateway.get_role이다(삭제된 지도는 구성원 없음). 그 장소 핀이 있는
+    지도마다 묻고 처음 맞는 곳에서 멈춘다 — pins는 maps 테이블을 조인하지 않는다(모듈 경계)."""
+    map_ids = db.execute(
+        select(PinRow.map_id).where(PinRow.place_id == place_id, PinRow.deleted_at.is_(None)).distinct()
+    ).scalars().all()
+    gateway = maps_api.DbMembershipGateway(db)
+    return any(gateway.get_role(map_id, user_id) is not None for map_id in map_ids)
 
 
 def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, principal: Principal) -> Pin:
@@ -157,7 +193,7 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
     테이블을 직접 쿼리하지 않고도 목록 화면(service.list_pins)과 같은 모양의 Pin을 받는다 —
     pins/service.py의 비공개 헬퍼(_lat_lng_columns·_reaction_counts_for_pin)를 같은 모듈
     안에서만 재사용한다."""
-    pin_row = get_pin_for_viewer(db, pin_id=pin_id, viewer_id=viewer_id)
+    pin_row = service.get_pin_or_404(db, pin_id)   # 같은 존재 규칙 — 아래 헬퍼가 행 자체를 쓴다
     lat_col, lng_col = service._lat_lng_columns()
     lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()
     reaction_counts = service._reaction_counts_for_pin(db, pin_row.id)

@@ -30,7 +30,7 @@ def test_purge_deletes_only_target_maps_records(db_session):
 
     result = api.purge_map_data(db_session, map_ids=["gone"])
 
-    assert result == {"evidence_lines": 1, "candidates": 2, "regions": 1, "exclusions": 1, "recommend_runs": 1}
+    assert result == {"evidence_lines": 1, "candidates": 2, "regions": 1, "exclusions": 1, "idempotency_keys": 0, "recommend_runs": 1}
     assert _remaining(db_session) == {name: 1 if name != "candidates" else 2 for name in _remaining(db_session)}
     assert [r.map_id for r in db_session.query(RecommendRun).all()] == ["keep"]
 

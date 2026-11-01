@@ -1,13 +1,10 @@
 """
 순수 함수 — DB·시계 없이 입력만으로 결과가 정해지는 것(docs/code-quality.md 기능형 코어).
-알림 종류·문장 틀, 커서, 설정 합치기, 문자열 자르기.
+알림 종류·문장 틀, 설정 합치기, 문자열 자르기. 목록 커서는 common.cursor 한 곳이다(#973).
 """
 
-import base64
-import binascii
 import uuid
 from collections.abc import Iterable, Sequence
-from datetime import datetime
 
 # api-spec NotificationType의 선언 순서 — GET /me/notification-prefs가 이 순서로 돌려준다
 TYPES: tuple[str, ...] = ("pin_reaction", "member_joined", "owner_changed", "map_deleted")
@@ -16,6 +13,7 @@ MESSAGE_MAX = 200     # api-spec Notification.message maxLength
 MAP_TITLE_MAX = 100   # api-spec Notification.map_title maxLength
 
 DEFAULT_ACTOR = "구성원"
+WITHDRAWN_ACTOR = "탈퇴한 구성원"   # 탈퇴 정리(#857) 뒤 행위자 이름 자리
 
 # 문장은 서버가 만든다. 반대 사유 원문·핀 메모를 받는 자리를 일부러 두지 않는다 — 문장 틀에 넣을 수 있는 값은
 # 행위자 이름·지도 제목·반응 종류뿐이다.
@@ -41,28 +39,21 @@ def compose_message(type: str, *, actor_name: str | None = None, map_title: str 
     return clip(text, MESSAGE_MAX)
 
 
+def anonymize_message(type: str, message: str) -> str:
+    """행위자 이름이 든 알림 문장을 '탈퇴한 구성원'으로 다시 만든다. 이름이 없는 종류는 그대로.
+    pin_reaction의 반응 종류는 문장 끝 틀에서 되찾는다(이름은 틀 앞에 있어서 이름이 틀을 흉내 내도 끝으로 가른다)."""
+    if type == "pin_reaction":
+        reaction = next((r for r, phrase in (("like", "♥를"), ("against", "🚫 반대를"))
+                         if message.endswith(f"님이 내 핀에 {phrase} 남겼어요")), None)
+        return compose_message(type, actor_name=WITHDRAWN_ACTOR, reaction=reaction)
+    if type == "member_joined":
+        return compose_message(type, actor_name=WITHDRAWN_ACTOR)
+    return message
+
+
 def clip(text: str, limit: int) -> str:
     """limit자를 넘으면 자르고 …를 붙인다(결과도 limit자 이하)."""
     return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-def encode_cursor(created_at: datetime, notification_id: uuid.UUID) -> str:
-    """`before` 값 — 클라이언트에는 뜻 없는 문자열이다. URL에 그대로 실어도 되도록 base64url로 만든다."""
-    raw = f"{created_at.isoformat()}|{notification_id}"
-    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
-
-
-def decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
-    """encode_cursor의 역. 형식이 틀리면 ValueError."""
-    try:
-        padded = cursor + "=" * (-len(cursor) % 4)
-        iso, _, raw_id = base64.urlsafe_b64decode(padded.encode()).decode().partition("|")
-        created_at = datetime.fromisoformat(iso)
-        if created_at.tzinfo is None:
-            raise ValueError("시각에 시간대가 없다")
-        return created_at, uuid.UUID(raw_id)
-    except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
-        raise ValueError(f"잘못된 before 커서: {cursor!r}") from exc
 
 
 def parse_ids(ids: Iterable[str]) -> list[uuid.UUID]:

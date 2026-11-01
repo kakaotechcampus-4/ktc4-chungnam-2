@@ -432,6 +432,28 @@ def test_failed_diagnosis_still_records_usage_spent(world):
     assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v1", 500, 80)
 
 
+def test_diagnosis_and_its_structuring_carry_one_server_usage_label(world):
+    """사용량 기록(llm_calls, #870)의 라벨 — 진단 왕복과 그 안의 ②(split 사전 비교)가 같은 trace의 agent_diagnose다. 서버 호출이라
+    user_id가 없다."""
+    from llm import usage
+
+    map_id, _, _, _ = _split_map(world)
+    seen: dict[str, usage.UsageLabel | None] = {}
+
+    class Labelled(FakeGateway):
+        def structure(self, raw):
+            seen["structure"] = usage.current_label()
+            return super().structure(raw)
+
+    gateway = Labelled(diagnose=good_split, on_call=lambda what: seen.setdefault(what, usage.current_label()))
+    assert observe(world, map_id, gateway) == "suggested"
+
+    diagnose, structure = seen["diagnose"], seen["structure"]
+    assert (diagnose.feature, diagnose.map_id, diagnose.user_id) == ("agent_diagnose", map_id, None)
+    assert structure.trace_id == diagnose.trace_id
+    assert usage.current_label() is None
+
+
 def test_stub_and_code_only_runs_leave_usage_empty(world):
     stall_map, _, _ = _stall_map(world)
     gap_map = world.gap_map()

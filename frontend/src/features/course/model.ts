@@ -2,7 +2,7 @@ import type { components } from '@pingo/contracts/src/types/api'
 
 import { ApiError } from '@/api'
 import { isPlaced, type Pin } from '@/features/map/model'
-import { KAKAO_ROUTE_MAX, kakaoTrafficUrl, kakaoWalkUrl, type KakaoPoint } from '@/features/shortlist/model'
+import { KAKAO_ROUTE_MAX, kakaoTrafficUrl, kakaoWalkUrl, type KakaoPoint, type RouteDrawing } from '@/features/shortlist/model'
 
 export type CourseRunDto = components['schemas']['CourseRun']
 export type CourseStepDto = components['schemas']['CourseStep']
@@ -68,12 +68,13 @@ export function outcomeText(outcome: NonNullable<CourseRunDto['outcome']>): stri
 /** 실패 안내. 계약상 INTERRUPTED(서버 재시작·15분 초과)와 ENGINE_ERROR 는 같은 문구다. */
 export const FAILURE_TEXT = '코스 짜기가 중간에 끊겼어요'
 
-/** 코스 요청이 실패했을 때의 안내. 코드가 아닌 HTTP 만으로 갈리지 않는다(docs/errors.md). 모르는 코드는 null 이라 호출부가 ErrorText 로 보인다. */
+/**
+ * 코스 요청이 실패했을 때의 안내. 코드가 아닌 HTTP 만으로 갈리지 않는다(docs/errors.md). 모르는 코드는 null 이라 호출부가 ErrorText 로 보인다.
+ * 크레딧(402·게스트 403)은 여기서 말하지 않는다 — 버튼 자리의 CreditGate 가 보인다(#432).
+ */
 export function createErrorMessage(error: unknown): string | null {
   if (!(error instanceof ApiError)) return null
   switch (error.code) {
-    case 'COURSE_LIMIT':
-      return '오늘은 다 썼어요. 내일 다시 짤 수 있어요'
     case 'COURSE_NOT_ENOUGH_PLACES':
       return '확정 리스트에 위치를 아는 장소가 2곳 이상 있어야 코스를 짤 수 있어요'
     default:
@@ -166,4 +167,33 @@ export function walkLinks(stops: DayStop[]): DayLink[] {
 /** 대중교통 구간의 길찾기 링크(출발 → 도착). 좌표를 모르면 null. */
 export function transitLink(from: DayStop, to: DayStop | undefined): string | null {
   return from.point && to?.point ? kakaoTrafficUrl(from.point, to.point) : null
+}
+
+/**
+ * 날짜별 경로선 모양(#683). 색만으로 가르지 않게 선 모양도 같이 바꾼다 — 색 3개, 모양 4개가 서로 다른 주기로 돌아 열둘째 날까지 겹치지 않는다.
+ * dash 는 범례 그림(SVG stroke-dasharray)이고 style 은 카카오 Polyline 이름이다.
+ */
+const DAY_COLORS = ['--course-day-1', '--course-day-2', '--course-day-3']
+const DAY_STYLES = [
+  { style: 'solid', dash: '' },
+  { style: 'longdash', dash: '10 5' },
+  { style: 'shortdash', dash: '5 4' },
+  { style: 'longdashdot', dash: '10 4 2 4' },
+]
+export const dayLine = (index: number) => ({ color: DAY_COLORS[index % DAY_COLORS.length], ...DAY_STYLES[index % DAY_STYLES.length] })
+
+/** 지도에 그릴 날짜별 코스. 좌표를 아는 장소만 잇고, 번호는 그날 방문 순서다. 한 곳뿐인 날은 번호 원만, 좌표를 아는 곳이 없는 날은 뺀다. */
+export type CourseDrawing = RouteDrawing & { title: string; dash: string }
+
+export function courseDrawings(run: Pick<CourseRunDto, 'days'>, points: Map<string, { lat: number; lng: number }>): CourseDrawing[] {
+  return run.days.flatMap((day, i) => {
+    const stops = dayStops(day, new Map(), points)
+    const placed = stops.flatMap((s, n) => (s.point ? [{ n: n + 1, lat: s.point.lat, lng: s.point.lng }] : []))
+    if (placed.length === 0) return []
+    const legs = stops.flatMap((s, n) => {
+      const to = stops[n + 1]
+      return s.leg && s.point && to?.point ? [{ from: s.point, to: to.point, label: legLabel(s.leg) }] : []
+    })
+    return [{ title: dayTitle(day.date, i), stops: placed, legs, ...dayLine(i) }]
+  })
 }

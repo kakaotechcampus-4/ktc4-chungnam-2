@@ -2,7 +2,9 @@
 개인 채널은 반드시 인증된 본인 user_id로만 구독한다(realtime/CLAUDE.md "가장 중요한 테스트").
 """
 
+import asyncio
 import json
+from contextlib import aclosing
 
 from fastapi import APIRouter, Depends, Header, Path, Request
 from fastapi.responses import StreamingResponse
@@ -14,6 +16,10 @@ from common.database import SessionLocal
 from common.events import EventLog
 from realtime import service
 from realtime.dispatcher import CLOSED, dispatcher
+
+# 이벤트가 없는 동안 연결이 조용히 죽어도 브라우저는 모른다 — 이 간격마다 ping을 보내 화면이
+# 죽은 연결을 감지하게 한다(docs/events.md 전달 보장 8번, #821). 테스트에서 줄일 수 있게 상수로 둔다.
+PING_INTERVAL = 20.0
 
 router = APIRouter(tags=["realtime"], dependencies=[Depends(get_current_user)])
 
@@ -39,6 +45,35 @@ def _sse_control_event(type_: str) -> str:
     return f"event: control\ndata: {json.dumps({'type': type_})}\n\n"
 
 
+# 새 연결의 첫 데이터. Firefox는 첫 데이터가 와야 open을 내고, 앞단 gzip 프록시도 첫 본문 바이트까지
+# 헤더를 붙들 수 있다. Last-Event-ID 없는 새 연결은 재전송할 게 없어 첫 ping이 20초 뒤였다(#925).
+# 재전송보다 먼저 보낸다 — DB 조회가 느려도 연결은 바로 열린다. 일반 ping과 같은 모양이다.
+_OPEN_PING = _sse_control_event("ping")
+
+
+async def _stream_live(request: Request, sub):
+    """구독 큐를 비울 때까지 SSE 문자열을 내보낸다. PING_INTERVAL 동안 아무 이벤트도 없으면 ping.
+    get 태스크를 ping 사이에도 유지한다 — wait_for로 get을 취소하면 막 꺼낸 행이 유실될 수 있다.
+    ping은 id 없이, event_log를 거치지 않고 여기서만 만든다(Last-Event-ID·재전송에 섞이지 않는다)."""
+    get_task: asyncio.Future | None = None
+    try:
+        while not await request.is_disconnected():
+            if get_task is None:
+                get_task = asyncio.ensure_future(sub.queue.get())
+            done, _ = await asyncio.wait({get_task}, timeout=PING_INTERVAL)
+            if not done:
+                yield _sse_control_event("ping")
+                continue
+            row = get_task.result()
+            get_task = None
+            if row is CLOSED:   # 서버 종료·지도 삭제·나가기 — 대기를 풀고 스스로 빠져나온다
+                break
+            yield _sse_format(row)   # Subscription.wants()가 이미 dispatcher._tick에서 걸러줌
+    finally:
+        if get_task is not None:
+            get_task.cancel()
+
+
 # 비구성원은 404 — 지도가 있는지도 알리지 않는다(docs/permissions.md). 재전송도 이 게이트 뒤라 구성원만.
 @router.get("/maps/{mapId}/events", dependencies=[Depends(require_map_member())])
 async def public_events(
@@ -50,6 +85,7 @@ async def public_events(
     after_seq = _parse_last_event_id(last_event_id)
 
     async def gen():
+        yield _OPEN_PING   # 연결 직후 첫 바이트 — 20초 ping을 기다리게 하지 않는다(#925)
         if after_seq is not None:
             # 요청 스코프 db를 이 무기한 제너레이터 안까지 들고 있으면 SSE 연결이 살아있는 내내
             # 커넥션 풀에서 세션 하나를 붙들어맨다. 재전송 조회 하나만 짧게 쓰고 바로 닫는다.
@@ -62,11 +98,10 @@ async def public_events(
         # 전체 채널도 누가 구독했는지 남긴다 — member.left 뒤 그 사람의 구독만 닫기 위해서.
         sub = dispatcher.subscribe(mapId, channel="public", user_id=user.user_id)
         try:
-            while not await request.is_disconnected():
-                row = await sub.queue.get()
-                if row is CLOSED:   # 서버 종료, 또는 지도 삭제·나가기 뒤 끊기 — 스스로 빠져나온다
-                    break
-                yield _sse_format(row)   # Subscription.wants()가 이미 dispatcher._tick에서 걸러줌
+            # 바깥이 닫히면 안쪽도 즉시 닫아 대기 중인 get 태스크 취소가 GC 시점으로 밀리지 않게 한다.
+            async with aclosing(_stream_live(request, sub)) as live:
+                async for chunk in live:
+                    yield chunk
         finally:
             dispatcher.unsubscribe(mapId, sub)
 
@@ -84,6 +119,7 @@ async def private_events(
     after_seq = _parse_last_event_id(last_event_id)
 
     async def gen():
+        yield _OPEN_PING   # 연결 직후 첫 바이트 — 20초 ping을 기다리게 하지 않는다(#925)
         if after_seq is not None:
             with SessionLocal() as db:
                 result = service.replay(db, mapId, after_seq, "private")
@@ -94,11 +130,10 @@ async def private_events(
                     yield _sse_format(row)
         sub = dispatcher.subscribe(mapId, channel="private", user_id=user.user_id)
         try:
-            while not await request.is_disconnected():
-                row = await sub.queue.get()
-                if row is CLOSED:
-                    break
-                yield _sse_format(row)
+            # 바깥이 닫히면 안쪽도 즉시 닫아 대기 중인 get 태스크 취소가 GC 시점으로 밀리지 않게 한다.
+            async with aclosing(_stream_live(request, sub)) as live:
+                async for chunk in live:
+                    yield chunk
         finally:
             dispatcher.unsubscribe(mapId, sub)
 

@@ -12,13 +12,18 @@
  */
 
 declare module '@pingo/contracts/mocks/scenarios' {
-  /** contracts/mocks/scenarios.ts 의 ScenarioName 과 같아야 한다. 늘어나면 여기도 추가. */
+  /**
+   * contracts/mocks/scenarios.ts 의 ScenarioName 에서 화면이 쓰는 것. 늘어나면 여기도 추가.
+   */
   export type ScenarioName =
     | 'empty'
     | 'happy-path'
     | 'no-results'
-    | 'retry-limit'
     | 'region-conflict'
+    | 'guest'
+    | 'withdrawn-relogin'
+    | 'credits-empty'
+    | 'credits-full'
 }
 
 declare module '@pingo/contracts/mocks/browser' {

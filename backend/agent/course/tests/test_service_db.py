@@ -1,4 +1,4 @@
-"""AI 코스 짜기 서비스(service.py) — 실제 DB, 모델은 스텁이다. 요청 검증, 상한, 실행, 정리."""
+"""AI 코스 짜기 서비스(service.py) — 실제 DB, 모델은 스텁이다. 요청 검증, 크레딧 차감·환불, 실행, 정리."""
 
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -8,12 +8,14 @@ from sqlalchemy import select, update
 
 from agent.course import api as course_api, service
 from agent.course.api_schemas import CourseRequest
-from agent.course.constants import COURSE_DAILY_LIMIT, MAX_PLACES
+from agent.course.constants import MAX_PLACES, STARTUP_ORPHAN_AFTER
 from agent.course.gateways import CourseLlm, NullOpeningHours
 from agent.course.models import AgentCourseRun
 from agent.course.tests.conftest import confirmed_map
 from agent.course.tests.test_runner import TEXT, direct_planner, goals_planner
+from auth.testing import make_guest
 from common.errors import AppError
+from credits import api as credits_api
 
 NO_MODEL = CourseLlm(goals_planner=None, direct_planner=None)
 
@@ -34,6 +36,33 @@ def row(world, run_id):
 
 def code_of(excinfo) -> str:
     return excinfo.value.code
+
+
+def balance(world, user="u1") -> int:
+    with world.factory() as db:
+        return credits_api.get_balance(db, user_id=world.uid(user))
+
+
+def drain(world, user="u1") -> None:
+    """크레딧을 0으로 만든다 — 코스 run 없이 차감만 한다(원장과 잔액이 맞는 채로)."""
+    with world.factory() as db:
+        while True:
+            try:
+                credits_api.charge(db, user_id=world.uid(user), feature="course", run_id=str(uuid.uuid4()))
+            except AppError:
+                break
+        db.commit()
+
+
+def runs_of(world, user="u1") -> list[AgentCourseRun]:
+    with world.factory() as db:
+        return db.execute(select(AgentCourseRun).where(AgentCourseRun.requested_by == world.uid(user))).scalars().all()
+
+
+def finish(world, run_id) -> None:
+    with world.factory() as db:
+        db.get(AgentCourseRun, uuid.UUID(run_id)).status = "done"
+        db.commit()
 
 
 # ---------------------------------------------------------------- 요청
@@ -101,25 +130,102 @@ def test_stale_active_run_is_failed_instead_of_blocking_forever(world, places):
     assert row(world, new.run_id).status == "queued"
 
 
-def test_daily_limit_counts_runs_since_kst_midnight(world, places):
+def test_request_charges_one_credit_for_the_run(world, places):
     map_id, _ = confirmed_map(world, places, 3)
-    now = datetime(2026, 10, 21, 3, 0, tzinfo=timezone.utc)                    # KST 12:00
-    kst_midnight = datetime(2026, 10, 20, 15, 0, tzinfo=timezone.utc)
-    assert service.kst_day_start(now) == kst_midnight
+    before = balance(world)
+
+    job = request(world, map_id)
+
+    assert balance(world) == before - 1
+    with world.factory() as db:                    # 차감은 그 run에 묶였다 — 그 run id로 돌려줄 수 있다
+        assert credits_api.refund(db, feature="course", run_id=job.run_id) is True
+        db.rollback()
+
+
+def test_sixth_request_passes_without_a_daily_limit(world, places):
+    """하루 5회 상한은 크레딧으로 바뀌었다(#432 D3, 명세 12절 14). 잔액이 있으면 몇 번째든 통과한다."""
+    map_id, _ = confirmed_map(world, places, 3)
+    before = balance(world)
+    for _ in range(6):
+        finish(world, request(world, map_id).run_id)          # 끝내야 다음 요청이 COURSE_IN_PROGRESS에 막히지 않는다
+
+    assert len(runs_of(world)) == 6 and balance(world) == before - 6
+
+
+def test_insufficient_credit_is_402_and_leaves_no_run(world, places):
+    map_id, _ = confirmed_map(world, places, 3)
+    drain(world)
+
+    with pytest.raises(AppError) as e:
+        request(world, map_id)
+
+    assert code_of(e) == "CREDIT_INSUFFICIENT" and e.value.detail == {"required": 1, "balance": 0}
+    assert runs_of(world) == []
+
+
+def test_guest_is_403_and_leaves_no_run(world, places):
+    map_id, _ = confirmed_map(world, places, 3)
     with world.factory() as db:
-        for i in range(COURSE_DAILY_LIMIT):
-            db.add(AgentCourseRun(map_id=map_id, requested_by=world.uid("u1"), status="done", input={}, snapshot_at=now,
-                                  snapshot_pin_ids=[], created_at=kst_midnight + timedelta(minutes=i)))
-        db.add(AgentCourseRun(map_id=map_id, requested_by=world.uid("u1"), status="done", input={}, snapshot_at=now,
-                              snapshot_pin_ids=[], created_at=kst_midnight - timedelta(minutes=1)))   # 어제 KST 23:59 — 세지 않는다
+        make_guest(db, world.uid("u1"))
         db.commit()
 
     with pytest.raises(AppError) as e:
-        request(world, map_id, now=now)
-    assert code_of(e) == "COURSE_LIMIT" and e.value.detail == {"limit": 5, "used": 5}
+        request(world, map_id)
 
-    assert request(world, map_id, user="u2", now=now)                           # 다른 사람은 따로 센다
-    assert request(world, map_id, now=kst_midnight + timedelta(days=1, minutes=1))   # 다음 KST 날은 다시 5번
+    assert code_of(e) == "GUEST_NOT_ALLOWED" and "initial_credits" in e.value.detail
+    assert runs_of(world) == []
+
+
+def test_in_progress_409_does_not_charge(world, places):
+    map_id, _ = confirmed_map(world, places, 3)
+    request(world, map_id)
+    after_first = balance(world)
+
+    with pytest.raises(AppError):
+        request(world, map_id)
+
+    assert balance(world) == after_first
+
+
+def test_interrupted_run_is_refunded_once(world, places):
+    """INTERRUPTED로 끝난 run의 크레딧이 돌아온다. 두 번 끝내도(요청, 조회, 서버 시작) 한 번만(명세 12절 15)."""
+    map_id, _ = confirmed_map(world, places, 3)
+    before = balance(world)
+    old = request(world, map_id, now=world.now - service.STALE_AFTER - timedelta(minutes=1))
+    assert balance(world) == before - 1
+
+    with world.factory() as db:
+        assert service.fail_stale_runs(db, run_id=uuid.UUID(old.run_id), now=world.now) == 1
+        db.commit()
+    assert balance(world) == before
+
+    with world.factory() as db:                    # 이미 끝난 run은 다시 걸리지 않고, 환불을 직접 다시 불러도 늘지 않는다
+        assert service.fail_stale_runs(db, run_id=uuid.UUID(old.run_id), now=world.now) == 0
+        service.refund_credit(db, uuid.UUID(old.run_id))
+        db.commit()
+    assert balance(world) == before
+
+
+def test_startup_interrupt_refunds_each_run(world, places):
+    map_id, _ = confirmed_map(world, places, 3)
+    old_age = world.now - STARTUP_ORPHAN_AFTER - timedelta(minutes=1)
+    before = {u: balance(world, u) for u in ("u1", "u2")}
+    for u in ("u1", "u2"):
+        request(world, map_id, user=u, now=old_age)
+
+    assert service.interrupt_unfinished_runs(world.factory, now=world.now) == 2
+
+    assert {u: balance(world, u) for u in ("u1", "u2")} == before
+
+
+def test_stale_run_on_new_request_is_refunded_and_new_one_charged(world, places):
+    map_id, _ = confirmed_map(world, places, 3)
+    before = balance(world)
+    request(world, map_id, now=world.now - service.STALE_AFTER - timedelta(minutes=1))
+
+    request(world, map_id)                          # 오래된 run을 끝내며 돌려주고, 새 run에 1을 뺀다
+
+    assert balance(world) == before - 1
 
 
 def test_member_constraint_day_outside_trip_is_422(world, places):
@@ -161,6 +267,31 @@ def test_execute_run_saves_the_view_and_marks_done(world, places):
     assert placed == sorted(pin_ids[:4])
     assert [e["pin_id"] for e in r.excluded] == [pin_ids[4]] and len(r.checks) == 4
     assert r.steps[0]["stage"] == "이해"
+
+
+def test_model_calls_carry_the_requester_usage_label(world, places):
+    """목표 세우기와 지휘 턴은 사용량 기록(llm_calls, #870)에 course로 남는다 — 요청자, 지도, 코스 run이 붙고 한 trace다."""
+    from llm import usage
+
+    map_id, _ = confirmed_map(world, places, 4)
+    job = request(world, map_id, body=CourseRequest(request_text=TEXT))
+    labels = []
+    queue = direct_planner()
+
+    def labelled_goals(goals_input):
+        labels.append(usage.current_label())
+        return goals_planner(goals_input)
+
+    def labelled_direct(turn_input):
+        labels.append(usage.current_label())
+        return queue(turn_input)
+
+    service.execute_run(job, session_factory=world.factory, llm=CourseLlm(labelled_goals, labelled_direct),
+                        gateway=NullOpeningHours())
+
+    assert len(labels) >= 2
+    assert {(l.feature, l.map_id, l.user_id, l.run_id) for l in labels} == {("course", map_id, world.uid("u1"), job.run_id)}
+    assert len({l.trace_id for l in labels}) == 1
 
 
 def test_steps_grow_in_short_transactions_while_the_run_is_running(world, places):
@@ -224,10 +355,40 @@ def test_engine_error_fails_the_run_without_raising(world, places):
     assert "비밀" not in str(r.__dict__)
 
 
+def test_engine_error_refunds_the_credit_once(world, places):
+    """ENGINE_ERROR로 끝난 run의 크레딧이 돌아온다. 뒤이은 정리가 다시 끝내려 해도 한 번만(명세 12절 15)."""
+    map_id, _ = confirmed_map(world, places, 3)
+    before = balance(world)
+    job = request(world, map_id, now=world.now - service.STALE_AFTER - timedelta(minutes=1))
+
+    class Boom:
+        def get_opening_hours(self, place_ids):
+            raise RuntimeError("boom")
+
+    service.execute_run(job, session_factory=world.factory, llm=NO_MODEL, gateway=Boom())
+    assert balance(world) == before
+
+    with world.factory() as db:                    # 이미 failed라 정리에 걸리지 않고, 환불을 다시 불러도 늘지 않는다
+        assert service.fail_stale_runs(db, run_id=uuid.UUID(job.run_id), now=world.now) == 0
+        service.refund_credit(db, uuid.UUID(job.run_id))
+        db.commit()
+    assert balance(world) == before
+
+
+def test_done_run_keeps_the_charge(world, places):
+    map_id, _ = confirmed_map(world, places, 3)
+    before = balance(world)
+    job = request(world, map_id)
+
+    service.execute_run(job, session_factory=world.factory, llm=NO_MODEL, gateway=NullOpeningHours())
+
+    assert row(world, job.run_id).status == "done" and balance(world) == before - 1
+
+
 def test_execute_skips_a_run_that_is_no_longer_queued(world, places):
     map_id, _ = confirmed_map(world, places, 3)
-    job = request(world, map_id)
-    assert service.interrupt_unfinished_runs(world.factory) >= 1
+    job = request(world, map_id, now=world.now - STARTUP_ORPHAN_AFTER - timedelta(minutes=1))
+    assert service.interrupt_unfinished_runs(world.factory, now=world.now) >= 1
 
     service.execute_run(job, session_factory=world.factory, llm=NO_MODEL, gateway=NullOpeningHours())
 
@@ -251,20 +412,26 @@ def test_late_finishing_run_does_not_overwrite_an_interrupted_one(world, places)
     assert (r.status, r.failure_code) == ("failed", "INTERRUPTED") and r.days == [] and r.outcome is None
 
 
-def test_interrupt_unfinished_marks_queued_and_running_only(world, places):
+def test_startup_interrupts_only_old_active_runs(world, places):
     map_id, _ = confirmed_map(world, places, 3)
-    queued = request(world, map_id)
-    running = request(world, map_id, user="u2")
+    old_age = world.now - STARTUP_ORPHAN_AFTER - timedelta(minutes=1)
+    old_queued = request(world, map_id, now=old_age)
+    old_running = request(world, map_id, user="u2", now=old_age)
+    recent_running = request(world, map_id, user="u3", now=world.now - timedelta(seconds=30))
     with world.factory() as db:
-        db.get(AgentCourseRun, uuid.UUID(running.run_id)).status = "running"
+        for job in (old_running, recent_running):
+            db.get(AgentCourseRun, uuid.UUID(job.run_id)).status = "running"
         db.add(AgentCourseRun(map_id=map_id, requested_by=world.uid("u1"), status="done", outcome="solved", input={},
-                              snapshot_at=world.now, snapshot_pin_ids=[]))
+                              snapshot_at=old_age, snapshot_pin_ids=[], created_at=old_age))
         db.commit()
 
-    n = service.interrupt_unfinished_runs(world.factory)
+    n = service.interrupt_unfinished_runs(world.factory, now=world.now)
 
-    assert n >= 2
-    assert {row(world, j.run_id).status for j in (queued, running)} == {"failed"}
+    assert n == 2
+    for job in (old_queued, old_running):
+        r = row(world, job.run_id)
+        assert (r.status, r.failure_code) == ("failed", "INTERRUPTED") and r.finished_at is not None
+    assert row(world, recent_running.run_id).status == "running"      # 다른 프로세스에서 도는 run은 둔다
     with world.factory() as db:
         assert db.execute(select(AgentCourseRun).where(AgentCourseRun.status == "done")).scalars().one().outcome == "solved"
 

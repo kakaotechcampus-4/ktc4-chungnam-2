@@ -59,6 +59,11 @@ def _kept_text(by_id: dict[str, goals_mod.Goal], trip: core.Trip, ids: Sequence[
     return ", ".join(goals_mod.label(trip, by_id[i]) for i in ids if i in by_id) or "없음"
 
 
+def meal_less_text(trip: core.Trip, day_index: int) -> str:
+    """식사할 곳이 없는 날의 확인 문장. 정하는 곳은 core.meal_less_days 하나다."""
+    return f"{core.day_label(trip, core.day_alias(day_index))}에는 식사할 곳이 확정 리스트에 없어요"
+
+
 class Narrator:
     """지휘 루프의 단계를 하나씩 받아 작업 기록으로 바꾼다. 앞 단계에서 세는 값(짜기 횟수 등)을 들고 있어서 단계 순서대로 불러야 한다.
     진행 중 저장(on_step)과 끝난 뒤 한 번에 찍기(render)가 같은 코드를 쓴다."""
@@ -132,6 +137,8 @@ class Narrator:
         if result.chosen.walk_infeasible:
             out.append(_rec("결과", COMPUTE, CODE, f"도보 구간 {LEG_MAX_MIN}분·하루 도보 {DAY_WALK_MAX_MIN}분·하루 이동 {DAY_TRAVEL_MAX_MIN}분(대중교통 포함, 약) 상한과 "
                             "구성원 조건, 확인된 휴무를 모두 지키는 순서는 이 장소 구성으로는 없다는 것을 모든 경우를 따져 확인했어요 — 장소나 날짜 수가 바뀌어야 풀려요"))
+        for i in core.meal_less_days(self.trip, result.course):     # 식당이 없는 날 알림(#918) — 장소를 더하거나 빼지 않고 알리기만 한다
+            out.append(_rec("확인", VERIFY, CODE, meal_less_text(self.trip, i)))
         met = [r.goal.id for r in result.goal_results if r.met is True]
         out.append(_rec("결과", VERIFY, CODE, f"지킨 목표: {_kept_text(self.by_id, self.trip, met)} · 확정 위반 "
                         f"{core.hard_score(result.violations)[0]} · 결과 {result.outcome}"))

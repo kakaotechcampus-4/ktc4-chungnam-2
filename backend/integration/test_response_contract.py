@@ -21,14 +21,22 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 # 알고 있고 이슈로 추적 중인 응답 불일치. (표식 문자열들) -> 이슈. 새 불일치가 생기면 실패하고, 고쳐졌는데 남아 있어도 실패한다.
-KNOWN_DRIFT: dict[tuple[str, ...], str] = {}
+KNOWN_DRIFT: dict[tuple[str, ...], str] = {
+}
+
+# 크레딧 계약 테스트(test_credits_responses_match_the_openapi_spec)만의 알려진 차이. 메인 테스트는 /credits/me를 부르지 않아
+# 위 KNOWN_DRIFT에 두면 「이미 고쳐졌다」로 걸린다. 비어 가는 것이 정상이다.
+KNOWN_CREDITS_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
+    ("GET", "/maps/{mapId}/trash"): "핀 휴지통 목록 — 서버 구현 전(#864, 이슈 #1013). 구현되면 지운다",
+    ("POST", "/pins/{pinId}/restore"): "지운 핀 복구 — 서버 구현 전(#864, 이슈 #1013). 구현되면 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/maps/{mapId}/events/me"): "SSE 스트림 — realtime 테스트가 담당",
+    ("GET", "/places/external-search"): "서버 구현 전(#903) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
     ("POST", "/auth/qa-login"): "스테이징 전용 — 테스트 앱에 없다(#788), staging 설정 앱으로 auth 테스트가 본다(#789)",
 }
 
@@ -384,6 +392,42 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
+def test_pending_login_responses_match_the_openapi_spec(app_client, db_session):
+    """탈퇴 계정 재로그인 선택(#855, #857) — 안내 200, 선택 200(restore)·201(restart), 404 NO_PENDING_LOGIN, 422."""
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from auth import core
+    from auth.testing import create_kakao_user
+    from common.settings import settings
+
+    def pending_client(user_id, kakao_id, problems):
+        deleted_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        create_kakao_user(db_session, user_id, provider_user_id=kakao_id, display_name="영희", deleted_at=deleted_at)
+        db_session.commit()
+        cookie = core.create_pending_cookie_value(
+            user_id, "kakao", deleted_at, secret=settings.session_secret, issued_at=int(time.time()),
+        )
+        return _Checked(TestClient(app_client.app, cookies={"pending_account": cookie}), problems)
+
+    problems: list[str] = []
+    restoring = pending_client("pending_restore", "p1", problems)
+    assert restoring.get("/auth/pending").status_code == 200
+    assert restoring.post("/auth/pending", json={"choice": "nope"}).status_code == 422
+    assert restoring.post("/auth/pending", json={"choice": "restore"}).status_code == 200
+    assert restoring.get("/auth/pending").status_code == 404           # 이미 선택했다 — 같은 쿠키는 통하지 않는다
+
+    restarting = pending_client("pending_restart", "p2", problems)
+    assert restarting.post("/auth/pending", json={"choice": "restart"}).status_code == 201
+
+    no_cookie = _Checked(TestClient(app_client.app), problems)
+    assert no_cookie.get("/auth/pending").status_code == 404
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
 def test_feedback_responses_match_the_openapi_spec(clients):
     """서비스 피드백(#10) — 201 영수증과 422·401 에러 봉투, 시간당 상한 429."""
     a, _b, problems = clients
@@ -405,6 +449,76 @@ def test_feedback_responses_match_the_openapi_spec(clients):
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
+def test_credits_responses_match_the_openapi_spec(clients, db_session):
+    """크레딧 잔액(#948) — 정식 계정 200, 게스트 403 GUEST_NOT_ALLOWED(detail.initial_credits), 로그인 없음 401."""
+    from fastapi.testclient import TestClient
+
+    from auth.testing import create_guest
+
+    a, _b, problems = clients
+    assert a.get("/credits/me").status_code == 200
+    create_guest(db_session, "guest_c")
+    db_session.commit()
+    guest = _Checked(TestClient(a._c.app, cookies=session_cookie("guest_c")), problems)
+    denied = guest.get("/credits/me")
+    assert denied.status_code == 403 and denied.json()["code"] == "GUEST_NOT_ALLOWED"
+    assert _Checked(TestClient(a._c.app), problems).get("/credits/me").status_code == 401
+
+    unique = list(dict.fromkeys(problems))
+    unexpected = [p for p in unique if not any(all(s in p for s in marks) for marks in KNOWN_CREDITS_DRIFT)]
+    stale = [issue for marks, issue in KNOWN_CREDITS_DRIFT.items() if not any(all(s in p for s in marks) for p in unique)]
+    assert not unexpected, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unexpected)
+    assert not stale, f"이미 고쳐졌으니 KNOWN_CREDITS_DRIFT에서 지운다: {stale}"
+
+
+def test_reviews_responses_match_the_openapi_spec(clients, pin_body, db_session):
+    """장소 후기(#951) — 빈 목록(평균 null)과 후기 있는 목록(mine), 저장 200(첫 저장·수정), 지우기 204, 신고 204, 그리고
+    에러 봉투(실시간 핀·별점·커서 422, 게스트 403, 내 후기 신고 422, 없는 후기·지운 뒤 다시 지우기 404, 로그인 없음 401)."""
+    from fastapi.testclient import TestClient
+
+    from auth.testing import create_guest
+    from maps.models import Membership
+
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "성수", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+    pin_id = a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-kalguksu")).json()["id"]
+    live_id = a.post(f"/maps/{map_id}/pins", json={"source": "live", "category": "음식점", "kakao_place_id": "kakao:951",
+                                                     "search_query": "성수 곱창"}).json()["id"]
+
+    assert a.get(f"/pins/{pin_id}/reviews").json()["summary"]["average_rating"] is None
+    first = a.put(f"/pins/{pin_id}/reviews/me", json={"rating": 5, "body": "칼국수가 진해요"})
+    assert first.status_code == 200 and first.json()["credited"] == 0   # 잔액 30 = 상한(#981)이라 보상 0
+    assert a.put(f"/pins/{pin_id}/reviews/me", json={"rating": 4, "body": "다시 가도 좋아요"}).json()["credited"] == 0
+    theirs = b.put(f"/pins/{pin_id}/reviews/me", json={"rating": 3, "body": "줄이 길어요"}).json()["review"]["id"]
+    page = a.get(f"/pins/{pin_id}/reviews")
+    assert page.status_code == 200 and page.json()["mine"]["id"] == first.json()["review"]["id"]
+
+    assert a.get(f"/pins/{live_id}/reviews").json()["code"] == "PLACE_NOT_SUPPORTED"
+    assert a.put(f"/pins/{live_id}/reviews/me", json={"rating": 5, "body": "x"}).status_code == 422
+    assert a.put(f"/pins/{pin_id}/reviews/me", json={"rating": 6, "body": "x"}).status_code == 422
+    assert a.get(f"/pins/{pin_id}/reviews", params={"cursor": "nope"}).status_code == 422
+
+    assert a.post(f"/reviews/{theirs}/reports").status_code == 204
+    assert a.post(f"/reviews/{first.json()['review']['id']}/reports").status_code == 422
+    assert a.post(f"/reviews/{uuid.uuid4()}/reports").status_code == 404
+
+    create_guest(db_session, "guest_r")
+    db_session.add(Membership(map_id=map_id, user_id="guest_r", role="member"))
+    db_session.commit()
+    guest = _Checked(TestClient(a._c.app, cookies=session_cookie("guest_r")), problems)
+    assert guest.put(f"/pins/{pin_id}/reviews/me", json={"rating": 5, "body": "x"}).json()["code"] == "GUEST_NOT_ALLOWED"
+    assert guest.post(f"/reviews/{theirs}/reports").status_code == 403
+
+    assert a.delete(f"/pins/{pin_id}/reviews/me").status_code == 204
+    assert a.delete(f"/pins/{pin_id}/reviews/me").status_code == 404
+    assert _Checked(TestClient(a._c.app), problems).get(f"/pins/{pin_id}/reviews").status_code == 401
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
 def test_map_leave_and_delete_match_the_openapi_spec(clients):
     """지도 나가기·삭제(#369) — 성공 204와 에러 봉투(구성원의 삭제 403, 넘길 사람 없는 방장의 나가기 409, 삭제 뒤 404)."""
     a, b, problems = clients
@@ -417,6 +531,28 @@ def test_map_leave_and_delete_match_the_openapi_spec(clients):
     assert a.delete(f"/maps/{map_id}/members/me").status_code == 409     # 혼자 남은 방장
     assert a.delete(f"/maps/{map_id}").status_code == 204
     assert a.get(f"/maps/{map_id}").status_code == 404
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
+def test_map_restore_and_trash_match_the_openapi_spec(clients):
+    """삭제한 지도 복구(#464) — 휴지통 목록(TrashedMapList), 복구 200(Map)과 연타 200, 에러 봉투(구성원 403, 모르는 지도 404)."""
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "강릉", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+    assert a.delete(f"/maps/{map_id}").status_code == 204
+
+    trash = a.get("/maps/trash")
+    assert trash.status_code == 200
+    assert [m["id"] for m in trash.json()["items"]] == [map_id]
+    assert b.get("/maps/trash").json()["items"] == []        # 방장이 아닌 사람의 휴지통은 비어 있다
+    assert b.post(f"/maps/{map_id}/restore").status_code == 403
+    assert a.post("/maps/no_such_map/restore").status_code == 404
+    assert a.post(f"/maps/{map_id}/restore").status_code == 200
+    assert a.post(f"/maps/{map_id}/restore").status_code == 200   # 연타 안전
+    assert a.get("/maps/trash").json()["items"] == []
 
     unique = list(dict.fromkeys(problems))
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
@@ -472,7 +608,8 @@ def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
     assert promoted.json()["id"] == other and promoted.json()["source"] == "db" and promoted.json()["place_name"] == bunsik["place_name"]
     assert promoted.json()["my_reaction"]["type"] == "like"                            # 반응은 그대로
     assert b.post(f"/pins/{other}/resolve", json=hint).status_code == 200              # 이미 db 핀 — 변화 없음
-    assert b.delete(f"/pins/{other}").status_code == 204
+    assert b.delete(f"/pins/{other}").status_code == 403                               # 남의 핀은 방장만(#965)
+    assert a.delete(f"/pins/{other}").status_code == 204
 
     # 카톡 대화 링크 일괄 핀 찍기(#577) — 미리보기(이미 있음·지원 안 함·짝 없음, 일부 실패해도 200)와 일괄 생성(created·duplicate·rejected)
     preview = a.post(f"/maps/{map_id}/pins/link-preview", json={"urls": [
@@ -643,10 +780,11 @@ def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions)
     assert not problems, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(problems)
 
 
-def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client):
+def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client, fake_places):
     """카카오맵 검색 링크(#798, #800) — readiness의 curated_nearby·external_search, 결과가 적을 때의 external_search, 결과 카드의
     place_url. 추천의 장소 Gateway를 실제 구현(places.api → FakePlaces)으로 꽂는다. FakePlaces 샘플은 정예도 주소도 없어
-    readiness는 0곳 + 링크(동네는 지도의 지역 이름), 결과는 지도에 없는 성수 음식점 1곳 + 링크다."""
+    readiness는 0곳 + 링크(동네는 지도의 지역 이름)다. 그 뒤 샘플을 정예로 지정하면(후보 풀은 정예 장소뿐, #913) 결과는 지도에 없는
+    성수 음식점 1곳 + 링크다."""
     from recommend import deps as recommend_deps
 
     app_client.app.dependency_overrides[recommend_deps.get_place_search_gateway] = lambda: recommend_deps.RealPlaceSearchGateway()
@@ -661,6 +799,7 @@ def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client
     assert readiness["음식점"]["curated_nearby"] == 0
     assert readiness["음식점"]["external_search"]["query"] == "성수동 맛집"
     assert "curated_nearby" not in readiness["카페"]   # 의견 핀이 없다
+    fake_places.curate_all()   # 이제부터 샘플 장소가 추천 후보 풀에 들어간다
 
     run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
     assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200

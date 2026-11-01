@@ -53,6 +53,8 @@ from authz.schemas import Permissions
 from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
+from credits import api as credits_api
+from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
 from pins.schemas import Pin
@@ -114,6 +116,13 @@ def publish_candidate(
         #    200, 이벤트 없음. get_pin_response_for_viewer가 NOT_FOUND를 던지면(핀이 그
         #    사이 삭제된 극단적 경우) 그대로 전파한다 — 정직한 실패가 낫다.
 
+    # 같은 run의 실행·재시도·넓히기·후보 교체와 겹치지 않게 run을 잠그고, 기다린 사이 바뀐 후보를 다시 읽는다(#811).
+    # 후보가 그 사이 교체돼 사라졌으면 여기서 404다. 잠금은 커밋까지 가서 게시 INSERT와 후보 링크가 한 덩어리로 보인다.
+    service.lock_run(db, run.id)
+    candidate, run = service.load_candidate_with_run(db, candidate_id)
+    if candidate.published_pin_id is not None:
+        return _published_pin_response(db, pin_id=str(candidate.published_pin_id), requester_id=requester_id, run=run)
+
     core.check_run_ready(run)  # 4) 409 NOT_READY
 
     mutation = pins_api.create_ai_pin(
@@ -156,7 +165,7 @@ def list_runs(
     return [
         schemas.RunSummary(
             id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
-            attempt_limit=core.ATTEMPT_LIMIT, created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
+            created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
         )
         for run, candidate_count, published_count in service.list_runs_for_requester(
             db, map_id=map_id, requested_by=requested_by, category=category, limit=limit,
@@ -207,20 +216,15 @@ def _search_area(db: Session, *, map_id: str, category: str, place_search: Place
 
 def _external_search(
     db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway,
-    lines: Sequence[EvidenceLineRow] = (), off_season: Collection[str] = frozenset(),
 ) -> schemas.ExternalSearch:
-    """카카오맵 검색 링크(docs/constraints.md 「카카오맵 검색 링크」). lines는 이번 run의 활성 근거 줄(readiness는 run이
-    없어 빈 목록 = 카테고리 말). 사유 원문은 넘기지 않는다 — 키와 방향만(#717)."""
+    """카카오맵 검색 링크(docs/constraints.md 「카카오맵 검색 링크」) — 검색어는 `{동네} {카테고리 말}` 하나다(#904)."""
     area = _search_area(db, map_id=map_id, category=category, place_search=place_search)
-    query = core.external_search_query(area, category, [(line.badge, line.fact_key, line.wants) for line in lines], off_season)
+    query = core.external_search_query(area, category)
     return schemas.ExternalSearch(query=query, url=places_api.kakao_search_url(query))
 
 
 def _run_external_search(db: Session, run: RecommendRun, place_search: PlaceSearchGateway) -> schemas.ExternalSearch:
-    return _external_search(
-        db, map_id=run.map_id, category=run.category, place_search=place_search,
-        lines=service.list_active_evidence(db, run.id), off_season=_out_of_season_keys(db, run.map_id),
-    )
+    return _external_search(db, map_id=run.map_id, category=run.category, place_search=place_search)
 
 
 def readiness_for_category(db: Session, *, map_id: str, category: str) -> dict:
@@ -305,33 +309,99 @@ def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: 
 
 def create_run(
     db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
+    idempotency_key: str | None = None, execute: bool = False,
+    place_search: PlaceSearchGateway | None = None, place_facts: PlaceFactsGateway | None = None,
 ) -> RecommendRun:
-    """POST /maps/{mapId}/runs — run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
-    안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 재시도 상한(#31) 3) run INSERT
-    4) 반응 → 근거 구조화(글은 llm.api.plan_evidence, 칩은 코드 #412) 5) run INSERT → evidence_lines INSERT 6) 기본값
-    지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
-    트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다."""
+    """POST /maps/{mapId}/runs. `Idempotency-Key`가 없으면 `_create_run` 그대로(구FE). 있으면 같은 키의 연타·재전송을
+    한 번으로 묶는다(#811, docs/data-model.md idempotency_keys):
+
+    1) 모델을 부르기 전에 (요청자, 키)를 **독립 트랜잭션**으로 기록하고 커밋한다. 요청 세션에 넣으면 모델 호출 전
+       rollback에 사라지거나 둘째 INSERT가 첫째의 커밋까지 기다린다. 예약을 가진 요청만 모델을 부른다.
+    2) 이미 있는 키: 본문(지도, category, execute)이 다르면 409 IDEMPOTENCY_CONFLICT, run이 이미 있으면 그 run의 **현재
+       상태**를 돌려준다(최초 응답 복제 아님. 같은 요청자·같은 지도라 라우터의 지도 구성원 검사가 이 요청에도 이미 통과했다),
+       아직 모델을 기다리는 중이면 409 REQUEST_IN_PROGRESS, 처리 기한(90초)이 지났으면 이어받는다.
+    3) run_id 연결은 run을 만든 트랜잭션의 **맨 끝**에서 한다 — 자기 세대일 때만 성공하고(늦게 끝난 쪽은 거절),
+       실패 정리가 이 행의 잠금과 부딪치지 않는다. run을 못 만들면 자기 세대의 예약만 지워 재시도를 허용한다."""
+    traces: list[uuid.UUID] = []   # ②를 부른 trace — run이 저장되지 못하면 버려진 비용으로 표시한다(#848)
+
+    def create() -> RecommendRun:
+        with llm_api.plan_deadline():   # create 시작에서 한 번 정한 deadline — ② 묶음 호출 전체가 30초 안에 끝난다(#848)
+            run = _create_run(
+                db, map_id=map_id, category=category, requested_by=requested_by, evidence_planner=evidence_planner,
+                traces=traces,
+            )
+        if execute:   # #845, #847 — 근거 조립 뒤 같은 요청·같은 트랜잭션에서 첫 검색까지. 어디서 실패하든 run·횟수·크레딧 차감이 함께 되돌아간다
+            assert place_search is not None and place_facts is not None   # 호출부(라우터) 계약
+            service.lock_run(db, run.id)
+            _search_and_store(db, run, place_search=place_search, place_facts=place_facts, first_run=True)
+        return run
+
+    if idempotency_key is None:
+        try:
+            return create()
+        except BaseException:
+            llm_api.mark_discarded(traces)
+            raise
+    request_hash = core.idempotency_request_hash(map_id, category, execute)
+    with Session(bind=db.get_bind()) as reservation_db:   # 요청 세션과 다른 연결 — 요청의 커밋·롤백과 무관하게 바로 보인다
+        reservation = service.reserve_idempotency_key(
+            reservation_db, requested_by=requested_by, key=idempotency_key, request_hash=request_hash,
+            now=datetime.now(timezone.utc),
+        )
+        reservation_db.commit()
+    if reservation.outcome == "conflict":
+        raise AppError("IDEMPOTENCY_CONFLICT")
+    if reservation.outcome == "in_progress":
+        raise AppError("REQUEST_IN_PROGRESS")
+    if reservation.outcome == "reuse":
+        return service.get_run_or_404(db, str(reservation.run_id))
+    try:
+        run = create()
+        service.link_idempotency_key(db, reservation_id=reservation.id, generation=reservation.generation, run_id=run.id)
+    except BaseException:
+        llm_api.mark_discarded(traces)
+        with Session(bind=db.get_bind()) as release_db:
+            service.release_idempotency_key(release_db, reservation_id=reservation.id, generation=reservation.generation)
+            release_db.commit()
+        raise
+    return run
+
+
+def _create_run(
+    db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
+    traces: list[uuid.UUID] | None = None,
+) -> RecommendRun:
+    """run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
+    안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 크레딧 확인(읽기, 게스트 403·부족 402, #432)
+    3) 반응 → 근거 구조화(글은 llm.api.plan_evidence, 칩은 코드 #412) 4) run INSERT + 크레딧 차감(같은 트랜잭션)
+    5) evidence_lines INSERT 6) 기본값 지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
+    트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다. 뒤에서 실패해도 차감이 run과 함께 롤백되므로
+    실패에는 환불 경로가 없다. 환불은 한 곳뿐이다 — 그 run의 **첫 실행이 후보 0곳**일 때 `_search_and_store`가 같은 트랜잭션에서
+    돌려준다(#1015, docs/credits-reviews.md 3.3). `Idempotency-Key` 재전송은 이 함수를 다시 타지 않는다."""
     readiness = readiness_for_category(db, map_id=map_id, category=category)
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
-
-    current_max = service.max_attempt_no_for_requester(db, map_id=map_id, requested_by=requested_by)
-    core.check_retry_limit(current_max)  # #31 — 카테고리 무관 개인 단위 카운터가 이미 상한이면 새 run도 막는다
+    credits_api.check_can_spend(db, user_id=requested_by, feature="recommend_run")   # 모델(②) 전에 막는다(#949)
 
     raw_reactions = pins_api.list_reasoned_reactions(db, map_id=map_id, category=category)
     # ②에는 사람이 쓴 글만 보낸다(#412) — 칩은 키·방향이 정해져 있어 코드가 줄을 만든다. 글이 없으면 ② 호출도 없다.
     text_inputs = [_evidence_from_reaction(r) for r in raw_reactions if r["reason_text"] is not None]
     if text_inputs:
         db.rollback()  # 모델을 기다리는 동안 읽기 트랜잭션이 연결을 잡고 있지 않게 한다(#275). 저장이 아니라 연결 반환이다.
-    planned = evidence_planner.plan_evidence(text_inputs) if text_inputs else []  # ② — 느린 호출이라 run INSERT보다 먼저(#208)
+    # ② — 느린 호출이라 run INSERT보다 먼저(#208). 그래서 사용량 기록(#870)에는 run_id가 없다(trace_id로 묶는다)
+    with llm_api.usage_context("recommend_run", map_id=map_id, user_id=requested_by) as label:
+        planned = evidence_planner.plan_evidence(text_inputs) if text_inputs else []
+    if text_inputs and traces is not None:
+        traces.append(label.trace_id)   # 모델은 불렸다 — 뒤 단계가 실패하면 호출자가 이 trace를 버려진 비용으로 표시한다(#848)
     reaction_lines = _reaction_evidence_lines(raw_reactions, [[line.model_dump() for line in group] for group in planned])
     merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422, #617
 
-    # LLM 대기 중 같은 사용자의 동시 요청이 상한(#31)에 도달시켰을 수 있다 — INSERT 직전에 다시 읽어
-    # 경합 구간을 수 ms로 줄인다(첫 검사는 모델을 부르기 전에 막는 빠른 실패용).
+    # 번호를 읽고 INSERT하기까지는 (지도, 요청자) 횟수 잠금 안에서 끝낸다 — 동시 요청이 같은 attempt_no를 쓰지 못하게(#811).
+    service.lock_requester_attempts(db, map_id=map_id, requested_by=requested_by)
     current_max = service.max_attempt_no_for_requester(db, map_id=map_id, requested_by=requested_by)
-    core.check_retry_limit(current_max)
     run = service.create_run(db, map_id=map_id, category=category, requested_by=requested_by, attempt_no=current_max + 1)
+    # 모델을 기다리는 사이 잔액이 줄었으면 여기서 402다(모델은 이미 불렸다 — 드문 경합으로 받아들인다, credits.api.charge)
+    credits_api.charge(db, user_id=requested_by, feature="recommend_run", run_id=str(run.id))
     service.add_reaction_evidence(db, run_id=run.id, lines=merged)
 
     default_region = _default_circle_and_anchors(db, map_id=map_id, category=category)
@@ -349,13 +419,13 @@ def create_run(
 def _evidence_response(
     line, principal: Principal, *, category: str, off_season: frozenset[str], author_names: Mapping[str, str | None],
 ) -> schemas.EvidenceLine:
-    enforced, not_enforced_reason = core.evidence_line_use(line.badge, line.fact_key, line.wants, category, off_season)
+    use = core.evidence_line_use(line.badge, line.fact_key, line.wants, category, off_season)
     resource = Resource(type="evidence_line", map_id=principal.map_id, author_id=line.author_id)
-    return schemas.EvidenceLine(
+    return schemas.EvidenceLine(   # effect는 HTTP 응답에 내지 않는다(recommend.api만, #751)
         id=str(line.id), author_id=line.author_id, author_display_name=author_names.get(line.author_id),
         text=line.text, badge=line.badge,
         fact_key=line.fact_key, fact_label=constraints.FACT_LABELS.get(line.fact_key) if line.fact_key else None,
-        wants=line.wants, enforced=enforced, not_enforced_reason=not_enforced_reason, is_active=line.is_active,
+        wants=line.wants, enforced=use.enforced, not_enforced_reason=use.not_enforced_reason, is_active=line.is_active,
         permissions=Permissions(can_disable=can(principal, "evidence.disable", resource)),
     )
 
@@ -384,6 +454,15 @@ def _check_manual_evidence_limit(db: Session, run_id: uuid.UUID, *, adding: int)
         raise AppError("EVIDENCE_LIMIT", detail={"limit": core.MANUAL_EVIDENCE_LIMIT, "used": used})
 
 
+def _manual_texts_by_author(db: Session, run_id: uuid.UUID, author_id: str) -> dict[str, list]:
+    """이 run에서 이 사람이 「+」로 쓴 글(정규화한 글 → 그 글의 줄들, ×로 뺀 줄 포함). 같은 글 재추가의 멱등 판정(#848)이 쓴다.
+    글 하나에 조건이 여럿이면 줄이 여럿이다(#419)."""
+    by_text: dict[str, list] = {}
+    for line in service.list_manual_lines_by_author(db, run_id, author_id):
+        by_text.setdefault(core.normalize_manual_text(line.text), []).append(line)
+    return by_text
+
+
 def patch_evidence(
     db: Session, *, run_id: str, principal: Principal,
     toggles: list[tuple[str, bool]], adds: list[str], evidence_planner: EvidencePlanGateway,
@@ -392,7 +471,7 @@ def patch_evidence(
     constrained) — 권한 없는 토글이 섞여 있으면 요청 전체를 403으로 거절한다(api-spec.yaml이
     이 엔드포인트에 Forbidden을 명시함 — "버튼이 애초에 disabled였어야 했다"는 신호)."""
     run = service.get_run_or_404(db, run_id)
-    run_uuid = run.id
+    run_uuid, run_map_id = run.id, run.map_id   # 롤백 뒤에 run을 읽으면 트랜잭션이 다시 열린다 — 미리 꺼내 둔다
     # 읽기(존재·권한 검사) → 롤백 → 모델 → 쓰기 순서다(#275). 모델을 기다리는 동안 트랜잭션도 연결도 잡지 않는다.
     validated: list[tuple[uuid.UUID, bool]] = []
     for evidence_id, is_active in toggles:
@@ -403,8 +482,13 @@ def patch_evidence(
         if not can(principal, "evidence.disable", resource):
             raise AppError("FORBIDDEN")
         validated.append((line.id, is_active))
-    # 한 요청 안의 같은 글은 하나로 줄인다 — 상한은 (글, 요청)으로 세므로 반복한 글이 ②에만 여러 번 들어가지 않게(#707).
-    adds = list(dict.fromkeys(adds))
+    # 한 요청 안의 같은 글은 하나로 줄인다(공백만 다른 글도 같은 글) — 상한은 (글, 요청)으로 세므로 반복한 글이 ②에만 여러 번
+    # 들어가지 않게(#707). 같은 run에서 같은 사람이 이미 쓴 글(×로 뺀 것 포함)을 다시 보내면 새 줄도 모델 호출도 글 수 상한도 없이
+    # 그 줄을 그대로 돌려주고 뺀 줄이면 다시 켠다(#848). 다른 사람의 같은 글은 별개의 줄이다. 모델에는 새 글만 보낸다.
+    requested = list(dict.fromkeys(core.normalize_manual_text(text) for text in adds))
+    already = _manual_texts_by_author(db, run_uuid, principal.user_id)
+    repeated = [text for text in requested if text in already]
+    adds = [text for text in requested if text not in already]
     # 「+」 상한(#707)은 모델을 부르기 전에 본다 — 넘는 요청은 ②를 부르지 않는다.
     if adds:
         _check_manual_evidence_limit(db, run_uuid, adding=len(adds))
@@ -412,24 +496,42 @@ def patch_evidence(
     # 보인다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다 — 모델이 쓰기보다 먼저라 행이 안 남는다).
     # 글 하나에 조건이 여럿이면 같은 글로 조건마다 줄 하나다(#419).
     planned: list = []
+    trace_id: uuid.UUID | None = None
     if adds:
         db.rollback()  # 읽기 트랜잭션을 끝내 연결을 돌려준다(#275). 저장이 아니다.
-        planned = evidence_planner.plan_evidence([
-            {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "preferred", "fact_key": None}
-            for text in adds
-        ])
-        # 위 검사는 롤백으로 잠금 없이 끝났다. 같은 run에 동시에 온 요청이 함께 상한을 넘지 않게 run 행을 잠그고
-        # 다시 센다 — 이때 걸리면 모델은 이미 불렸지만 줄은 남지 않는다(멘토 리뷰 #380: 여러 행에 걸친 상한).
-        service.lock_run(db, run_uuid)
-        _check_manual_evidence_limit(db, run_uuid, adding=len(adds))
-    for line_id, is_active in validated:
-        service.set_evidence_active(db, line_id, is_active)
-    if adds:
-        for text, group in zip(adds, planned):
-            for line in group:
+        with llm_api.usage_context("evidence_add", map_id=run_map_id, user_id=principal.user_id, run_id=str(run_uuid)) as label:
+            planned = evidence_planner.plan_evidence([
+                {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "preferred", "fact_key": None}
+                for text in adds
+            ])
+        trace_id = label.trace_id
+    try:
+        if validated or adds or repeated:
+            # 위 검사들은 잠금 없이 끝났다(모델을 기다리는 동안 트랜잭션을 잡지 않는다). 같은 run에 동시에 온 요청이 함께 상한을 넘지
+            # 않게 run 행을 잠그고 다시 센다 — 이때 걸리면 모델은 이미 불렸지만 줄은 남지 않는다(멘토 리뷰 #380: 여러 행에 걸친 상한).
+            service.lock_run(db, run_uuid)
+        # 잠근 뒤 다시 읽는다 — 모델을 기다리는 사이 같은 글이 다른 요청(연타·재전송)으로 이미 저장됐을 수 있다. 그 글은 새 줄을 더하지 않고
+        # 그 줄을 쓴다(모델 결과는 버린다).
+        already = _manual_texts_by_author(db, run_uuid, principal.user_id)
+        planned_by_text = dict(zip(adds, planned)) if adds else {}
+        to_add = [text for text in adds if text not in already]
+        if to_add:
+            _check_manual_evidence_limit(db, run_uuid, adding=len(to_add))
+        for line_id, is_active in validated:
+            service.set_evidence_active(db, line_id, is_active)
+        for text in [*repeated, *(text for text in adds if text in already)]:   # 뺐던 줄이면 다시 켠다
+            for line in already[text]:
+                if not line.is_active:
+                    service.set_evidence_active(db, line.id, True)
+        for text in to_add:
+            for line in planned_by_text[text]:
                 service.add_manual_evidence(
                     db, run_id=run_uuid, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
                 )
+    except BaseException:
+        if trace_id is not None:   # 모델은 불렸는데 저장이 안 됐다(글 수 상한 재검사 등) — 버려진 비용으로 표시한다(#848)
+            llm_api.mark_discarded(trace_id)
+        raise
     return _evidence_responses(db, run, principal)
 
 
@@ -552,6 +654,7 @@ def _run_pipeline(
     db: Session, run: RecommendRun, *,
     regions: Sequence[_PipelineRegion], active_lines: Sequence[EvidenceLineRow],
     place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway, excluded_place_ids: set[str],
+    off_season: frozenset[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """5-6 실격 필터 순서(반경→영업종료→실격조건→중복제외→정렬)를 그대로 지킨다
     (recommend/CLAUDE.md "넘지 말 것" — 순서가 funnel 표의 의미를 결정한다). 지역과 활성 근거 줄은 인자로 받는다
@@ -575,14 +678,12 @@ def _run_pipeline(
     unknown_open_check = core.build_check("is_open", "pass", known=False, value=None, passes=True)
     known_open_check = core.build_check("is_open", "pass", known=True, value=True, passes=True)
 
-    # 추천 가능 아님 제거 — 영업 종료 다음 단계. 모두 빠져 0개여도 0개로 보여 준다(반경·기준을 완화하지 않는다).
-    recommendable = [p for p in within_radius if p.can_recommend]
-    removed_not_recommendable = len(within_radius) - len(recommendable)
-    within_radius = recommendable
-
     # 계절 키는 여행 기간이 시즌과 겹칠 때만 쓴다(#681-6) — 시즌 밖이면 직접 쓴 사유도 이번 실행에서 없는 셈 친다(점수 0,
     # 후보를 거르지 않고, 이유·체크에도 안 나온다). 날짜가 없으면 모두 쓴다.
-    off_season = _out_of_season_keys(db, run.map_id)
+    # `off_season`은 실행(_search_and_store)이 한 번 계산해 넘긴다 — 파이프라인과 스냅샷이 같은 판정을 쓰게(#847). 안 넘기는
+    # 호출(시뮬레이션)은 여기서 읽는다.
+    if off_season is None:
+        off_season = _out_of_season_keys(db, run.map_id)
     active_lines = [line for line in active_lines if line.fact_key not in off_season]
     # 아래 조건·점수는 쓰이는 줄(core.evidence_line_use)에서만 만든다 — 근거 응답의 enforced와 같은 기준이다(#740).
     used_lines = _used_lines(active_lines, run.category, off_season)
@@ -603,6 +704,11 @@ def _run_pipeline(
         if line.badge == "preferred":
             by_direction = preferred_authors if line.wants else avoided_authors
             by_direction.setdefault(line.fact_key, set()).add(line.author_id)
+    # 충족 집계의 conditions[]에 붙일 근거 줄 id(#805) — 조건을 만든 줄만: 쓰이는 required 줄, 원함 방향 preferred 줄. 실격이 먼저.
+    written_line_ids: dict[tuple[str, str], str] = {}
+    for line in sorted(used_lines, key=lambda used: used.badge != "required"):
+        if line.badge == "required" or (line.badge == "preferred" and line.wants):
+            written_line_ids.setdefault((line.author_id, line.fact_key), str(line.id))
     preferred_authors_frozen = {key: frozenset(authors) for key, authors in preferred_authors.items()}
     avoided_authors_frozen = {key: frozenset(authors) for key, authors in avoided_authors.items()}
     # 선호 라벨 체크는 이 카테고리에 적용되는 키 + 사람이 직접 원한 키만 붙인다 — 50여 개를 전부 붙이면
@@ -699,6 +805,7 @@ def _run_pipeline(
         checks = checks_by_place[place_id]
         fulfillment = core.build_member_fulfillment(
             checks, hearted_places, criteria, preferred_authors_frozen, disqualifier_conditions,
+            written_line_ids,
         )
         candidates_data.append({
             "place_id": place_id, "region_id": region_id, "lat": place.lat, "lng": place.lng,
@@ -714,15 +821,14 @@ def _run_pipeline(
             "reason": core.build_reason(checks, criteria),
             "place_source": dict(place.source) if place.source else None,
         })
-    funnel = core.funnel_counts([
-        ("카테고리 후보 풀", 0),
-        ("반경 밖 제거", removed_radius),
-        ("영업 종료 제거", removed_open),
-        ("추천 가능 아님 제거", removed_not_recommendable),
-        ("실격 조건 제거", removed_disqualify),
-        ("이미 제안·거절됨", removed_exclusions),
-        (core.RANKING_STAGE, removed_ranking),
-    ])
+    funnel = core.funnel_counts({
+        "pool": 0,
+        "radius": removed_radius,
+        "closed": removed_open,
+        "disqualify": removed_disqualify,
+        "excluded": removed_exclusions,
+        "ranking": removed_ranking,
+    })
     return candidates_data, funnel
 
 
@@ -772,22 +878,52 @@ def _excluded_place_ids(db: Session, run: RecommendRun, *, record_dismissed: boo
     ) | set(disliked) | pins_api.list_place_ids_on_map(db, map_id=run.map_id) | live_pin_place_ids
 
 
-def execute_run(
-    db: Session, *, run_id: str, place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
+def _search_and_store(
+    db: Session, run: RecommendRun, *, place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
+    first_run: bool = False,
 ) -> RecommendRun:
-    """POST /runs/{runId}/execute — 실격 필터(③-a-2) + 선호 순위(③-b) + 대안 반영(④)."""
-    run = service.get_run_or_404(db, run_id)
+    """execute·widen·retry·최초 실행(create_run execute=true)이 같이 쓰는 꼬리 — 제외목록을 읽고, 저장된 지역·활성 근거로
+    파이프라인을 돌려 게시 안 된 후보를 교체하고, 깔때기·**실행 스냅샷**(applied_evidence, new_count, #847)을 저장해 done으로
+    만든다. 스냅샷은 이 실행이 쓴 근거(활성 줄, enforced 포함)와 새로 찾은 후보 수라 이후에 근거를 고쳐도 이 결과의 설명은
+    그대로다. 호출부가 run을 잠근 뒤 부른다(#811).
+
+    run에 고정되는 입력은 구조화한 근거 줄과 기본 지역이고, 실행마다 다시 읽는 입력은 ♥ 선호·여행 날짜 판정·제외목록이다
+    (docs/api-spec.yaml retry 설명).
+
+    first_run은 이 run의 **첫 실행**일 때만 참이다(create_run execute=true, 한 번도 실행하지 않은 run의 execute). 첫 실행이 후보를
+    하나도 못 찾으면(NO_RESULTS와 같은 기준) 같은 트랜잭션에서 크레딧을 환불한다(#1015, docs/credits-reviews.md 3.3). retry·widen은
+    first_run이 아니라 절대 환불하지 않는다 — 처음부터 차감이 없고, 첫 실행이 결과를 냈다면 그 차감은 그대로다."""
     excluded = _excluded_place_ids(db, run)
     regions, active_lines = _pipeline_inputs(db, run)
+    off_season = _out_of_season_keys(db, run.map_id)   # 실행마다 한 번 — 파이프라인이 적용한 계절 판정과 스냅샷이 어긋나지 않게
     candidates_data, funnel = _run_pipeline(
         db, run, regions=regions, active_lines=active_lines,
-        place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
+        place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded, off_season=off_season,
     )
     candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
     service.set_last_funnel(db, run, funnel)
+    service.set_run_outcome(
+        db, run, applied_evidence=core.applied_evidence_entries(active_lines, run.category, off_season),
+        new_count=len(candidates),
+    )
     service.set_run_status(db, run, "done")
     record_event(db, _candidates_ready_event(db, run, candidates, place_search))
+    if first_run and not service.list_candidates(db, str(run.id)):   # 첫 실행이라 게시된 후보는 없다 — 0곳이면 쓴 크레딧을 돌려준다
+        credits_api.refund(db, feature="recommend_run", run_id=str(run.id))   # 멱등(원장 ref_id UNIQUE), 잔액 상한까지만 채운다
     return run
+
+
+def execute_run(
+    db: Session, *, run_id: str, place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
+) -> RecommendRun:
+    """POST /runs/{runId}/execute — 실격 필터(③-a-2) + 선호 순위(③-b) + 대안 반영(④). 첫 실행 전에 멈춘
+    `collecting_evidence` run(과거 데이터, 장애)도 이 호출로 이어서 실행한다(#845)."""
+    run = service.get_run_or_404(db, run_id)
+    service.lock_run(db, run.id)   # 같은 run의 다른 실행과 후보 교체를 직렬화한다(#811)
+    # 한 번도 실행이 끝나지 않은 run — 0곳이면 환불(#1015). 상태(collecting_evidence 등)로 판정하지 않는다: 지역 확인(confirm_regions)이 검색 없이
+    # 상태를 executing으로 바꾸고, 실패한 실행은 롤백돼 상태가 그대로이기 때문이다. 실행이 끝났다는 기록(last_new_count)과 후보 유무만 본다.
+    first_run = run.last_new_count is None and not service.list_candidates(db, str(run.id))
+    return _search_and_store(db, run, place_search=place_search, place_facts=place_facts, first_run=first_run)
 
 
 def widen_run(
@@ -799,6 +935,7 @@ def widen_run(
     저장된 원 전부가 기본값 원이다. 명시적 원이 생기면 그 원은 여기서 건드리지 않도록 좁혀야
     한다(docs/constraints.md "반경 넓히기 상수", #274)."""
     run = service.get_run_or_404(db, run_id)
+    service.lock_run(db, run.id)   # 같은 run의 다른 실행과 후보 교체를 직렬화한다(#811)
     regions = service.list_regions(db, run_id)
     if not regions:
         raise AppError("NOT_READY")
@@ -810,31 +947,17 @@ def widen_run(
     service.set_default_radius_walk_min(db, run, next_walk_min)
 
     service.set_run_status(db, run, "executing")
-    excluded = _excluded_place_ids(db, run)
-    regions, active_lines = _pipeline_inputs(db, run)
-    candidates_data, funnel = _run_pipeline(
-        db, run, regions=regions, active_lines=active_lines,
-        place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
-    )
-    candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
-    service.set_last_funnel(db, run, funnel)
-    service.set_run_status(db, run, "done")
-    record_event(db, _candidates_ready_event(db, run, candidates, place_search))
-    return run
+    return _search_and_store(db, run, place_search=place_search, place_facts=place_facts)
 
 
 def retry_run(
     db: Session, *, run_id: str, place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
 ) -> RecommendRun:
     """POST /runs/{runId}/retry (3절) — 현재 뜬(아직 게시 안 된) 대안 전체를 제외목록에
-    넣고 새로 찾는다. 상한 도달 시 429 RETRY_LIMIT(#31)."""
+    넣고 새로 찾는다. 모델을 부르지 않아 크레딧을 쓰지 않고 횟수 상한도 없다(#432 D5, #949)."""
     run = service.get_run_or_404(db, run_id)
-    # run.attempt_no(이 run 자신의 값)가 아니라 그 사람의 전체 run 중 최댓값을 본다 — #31은
-    # 개인 단위 공유 카운터라, 오래된(attempt_no가 낮은) run으로 retry를 걸면 그 run 자신의
-    # 값만 통과해서 사실상 상한을 우회할 수 있었다(루트 수정, 2026-09-23 — Antigravity 검수로
-    # 발견). bump_attempt_no도 같은 기준으로 다시 계산해 맞춘다.
-    current_max = service.max_attempt_no_for_requester(db, map_id=run.map_id, requested_by=run.requested_by)
-    core.check_retry_limit(current_max)
+    service.lock_run(db, run.id)   # run 먼저, 그다음 횟수 잠금(교착 방지 순서, service.lock_run)
+    service.lock_requester_attempts(db, map_id=run.map_id, requested_by=run.requested_by)
 
     current_candidates = service.list_candidates(db, run_id)
     unpublished_place_ids = [c.place_id for c in current_candidates if c.published_pin_id is None]
@@ -843,18 +966,7 @@ def retry_run(
         reason="proposed", run_id=run.id, requested_by=run.requested_by,
     )
     service.bump_attempt_no(db, run)
-
-    excluded = _excluded_place_ids(db, run)
-    regions, active_lines = _pipeline_inputs(db, run)
-    candidates_data, funnel = _run_pipeline(
-        db, run, regions=regions, active_lines=active_lines,
-        place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
-    )
-    candidates = service.replace_unpublished_candidates(db, run_id=run.id, candidates_data=candidates_data)
-    service.set_last_funnel(db, run, funnel)
-    service.set_run_status(db, run, "done")
-    record_event(db, _candidates_ready_event(db, run, candidates, place_search))
-    return run
+    return _search_and_store(db, run, place_search=place_search, place_facts=place_facts)
 
 
 def simulate_filter(
@@ -887,7 +999,7 @@ def simulate_filter(
             place_search=place_search, place_facts=place_facts, excluded_place_ids=excluded,
         )
         return {
-            "result_count": len(candidates_data), "funnel": funnel,
+            "result_count": len(candidates_data), "funnel": core.keyed_funnel(funnel),
             "passed_count": core.passed_count(len(candidates_data), funnel),
         }
 
@@ -920,22 +1032,63 @@ def _candidate_response(
     )
 
 
+def _applied_evidence_responses(db: Session, run: RecommendRun, principal: Principal) -> list[schemas.EvidenceLine]:
+    """저장된 실행 스냅샷(applied_evidence)을 응답 모양으로 — enforced·사유는 실행 때 값 그대로다. 작성자 이름과 permissions는
+    조회하는 지금 기준이다(이름은 탈퇴·나간 사람 규칙 #369/#762, can_disable은 본인 줄만)."""
+    entries = run.applied_evidence or []
+    current_member_ids = maps_api.DbMembershipGateway(db).current_member_ids(run.map_id)
+    author_names = pins_api.author_display_names(db, [entry["author_id"] for entry in entries], current_member_ids)
+    responses = []
+    for entry in entries:
+        resource = Resource(type="evidence_line", map_id=principal.map_id, author_id=entry["author_id"])
+        responses.append(schemas.EvidenceLine(
+            id=entry["id"], author_id=entry["author_id"], author_display_name=author_names.get(entry["author_id"]),
+            text=entry["text"], badge=entry["badge"], fact_key=entry["fact_key"],
+            fact_label=constraints.FACT_LABELS.get(entry["fact_key"]) if entry["fact_key"] else None,
+            wants=entry["wants"], enforced=entry["enforced"], not_enforced_reason=entry["not_enforced_reason"],
+            is_active=entry["is_active"], permissions=Permissions(can_disable=can(principal, "evidence.disable", resource)),
+        ))
+    return responses
+
+
+def _applied_evidence_fields(db: Session, run: RecommendRun, principal: Principal) -> dict:
+    """RecommendResult와 NO_RESULTS detail이 같이 싣는 스냅샷 필드(#845). 스냅샷이 없는 예전 run은 빈 dict라 필드를 생략한다."""
+    if run.applied_evidence is None:
+        return {}
+    return {
+        "applied_evidence": _applied_evidence_responses(db, run, principal),
+        "no_applied_conditions": core.no_applied_conditions(run.applied_evidence),
+        **({"new_count": run.last_new_count} if run.last_new_count is not None else {}),
+    }
+
+
 def get_result(
     db: Session, *, run_id: str, principal: Principal, place_search: PlaceSearchGateway,
 ) -> schemas.RecommendResult:
     """GET /runs/{runId}/result — funnel은 마지막 execute/widen/retry가 저장해둔 값을 그대로
     쓴다(재계산하지 않는다 — GET은 부작용이 없어야 한다). 후보가 schemas.FEW_RESULTS곳 미만이면 카카오맵 검색 링크를
-    싣는다(0곳이면 NO_RESULTS detail, #798) — 검색어는 지금 활성 근거 줄로 만든다."""
+    싣는다(0곳이면 NO_RESULTS detail, #798) — 검색어는 지금 활성 근거 줄로 만든다.
+
+    후보는 이전에 지도에 올린 것(visibility=published)을 포함한다. NO_RESULTS는 게시 후보까지 합쳐 후보가 하나도 없을 때만
+    나고(#845), 이번 검색이 0건이어도 게시 후보가 남아 있으면 200이고 new_count가 0이다. applied_evidence(이번 결과에 쓴 근거),
+    no_applied_conditions, new_count는 마지막 실행의 스냅샷이다(NO_RESULTS detail에도 같은 값). 읽기 전에 run 행을 FOR SHARE로
+    잠가 진행 중인 실행이 끝난 뒤의 값만 본다(service.lock_run_shared)."""
     run = service.get_run_or_404(db, run_id)
+    service.lock_run_shared(db, run.id)   # 진행 중인 실행의 커밋을 기다린 뒤 읽는다 — run 행·후보·스냅샷이 같은 실행의 것이다(#848)
     if run.status != "done":
         raise AppError("RUN_NOT_FINISHED", detail={"status": run.status})  # #469 — 결과는 done일 때만 있다
     regions = service.list_regions(db, run_id)
     region_labels = {r.id: r.label for r in regions}
     candidates = service.list_candidates(db, run_id)
     funnel = run.last_funnel or []
+    snapshot = _applied_evidence_fields(db, run, principal)
     if not candidates:
         external = _run_external_search(db, run, place_search)
-        raise AppError("NO_RESULTS", detail={"funnel": funnel, "external_search": external.model_dump()})
+        detail = {"funnel": funnel, "external_search": external.model_dump()}
+        if snapshot:
+            detail["applied_evidence"] = [line.model_dump(mode="json", exclude_none=True) for line in snapshot["applied_evidence"]]
+            detail["no_applied_conditions"] = snapshot["no_applied_conditions"]
+        raise AppError("NO_RESULTS", detail=detail)
     # 후보 이름과 링크는 places(자체 DB)에서 온다 — candidates에는 place_id·좌표만 저장한다(#190).
     places = place_search.get_places([c.place_id for c in candidates])
     return schemas.RecommendResult(
@@ -944,4 +1097,5 @@ def get_result(
         regions=[_region_response(r) for r in regions],
         candidates=[_candidate_response(c, run, principal, region_labels, places) for c in candidates],
         external_search=_run_external_search(db, run, place_search) if len(candidates) < schemas.FEW_RESULTS else None,
+        **snapshot,
     )

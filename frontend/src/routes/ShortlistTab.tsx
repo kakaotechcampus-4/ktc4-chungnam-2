@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import CourseMapLegend from '@/features/course/CourseMapLegend'
 import CourseSheet from '@/features/course/CourseSheet'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import { useEnrichPin } from '@/features/map/livePlaces'
@@ -22,6 +23,7 @@ import {
   useShortlistQuery,
 } from '@/features/shortlist/queries'
 import { useRouteStore } from '@/features/shortlist/routeStore'
+import ShortlistExport from '@/features/shortlist/ShortlistExport'
 import ShortlistList from '@/features/shortlist/ShortlistList'
 import { josa } from '@/ui/josa'
 import EmptyState from '@/ui/EmptyState'
@@ -109,27 +111,32 @@ export default function ShortlistTab() {
     <TabSheet
       tab="shortlist"
       header={
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <SheetTitle>확정된 장소 모아보기</SheetTitle>
-            <p className="mt-0.5 text-xs text-ink-500">{shortlist.isPending ? '불러오는 중…' : subtitle}</p>
-          </div>
-          {items.length > 0 && (
-            <div className="flex shrink-0 gap-2">
-              <button type="button" onClick={openCourse} className="chip">
-                AI 코스 짜기
-              </button>
-              <button
-                type="button"
-                aria-pressed={routeOn}
-                onClick={toggleRoute}
-                className="chip"
-              >
-                동선 보기{routeOn && ' ✓'}
-              </button>
+        <>
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <SheetTitle>확정된 장소 모아보기</SheetTitle>
+              <p className="mt-0.5 text-xs text-ink-500">{shortlist.isPending ? '불러오는 중…' : subtitle}</p>
             </div>
-          )}
-        </div>
+            {items.length > 0 && (
+              <div className="flex shrink-0 gap-2">
+                {/* 2곳 미만이면 비활성으로 보이되 누르면 이유를 토스트로 알린다(동선 보기와 같다). */}
+                <button type="button" aria-disabled={routable < 2} onClick={openCourse} className="chip">
+                  AI 코스 짜기
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={routeOn}
+                  aria-disabled={!routeOn && routable < 2}
+                  onClick={toggleRoute}
+                  className="chip"
+                >
+                  동선 보기{routeOn && ' ✓'}
+                </button>
+              </div>
+            )}
+          </div>
+          <CourseMapLegend mapId={mapId} />
+        </>
       }
     >
       {shortlist.error && <ErrorText message="확정 리스트를 불러오지 못했어요" error={shortlist.error} />}
@@ -155,9 +162,17 @@ export default function ShortlistTab() {
           items={items}
           onOpen={setOpenPin}
           onRemove={removeItem}
-          onReorder={(from, to) => reorder.mutate(move(items, from, to), { onError: () => showToast('순서를 바꾸지 못했어요') })}
+          onReorder={(from, to) => {
+            const name = items[from].pin.place_name ?? '이 장소'
+            reorder.mutate(move(items, from, to), {
+              // 화면을 보지 않는 사람에게 옮긴 결과를 알림 영역(토스트)으로 알린다(#959).
+              onSuccess: () => showToast(`${name}${josa(name, '을', '를')} ${to + 1}번째로 옮겼어요`),
+              onError: () => showToast('순서를 바꾸지 못했어요'),
+            })
+          }}
         />
       )}
+      {items.length > 0 && <ShortlistExport mapId={mapId} />}
       {courseOpen && <CourseSheet mapId={mapId} onClose={() => setCourseOpen(false)} />}
     </TabSheet>
   )

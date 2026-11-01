@@ -6,7 +6,7 @@ RawPlace(소스 응답 원형)는 places 내부 타입이라 여기 없다 — �
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from common import categories
 
@@ -83,19 +83,12 @@ class FactLabel:
 
 @dataclass(frozen=True)
 class PlaceHours:
-    """get_hours의 결과 — place_hours 그대로(#690). None인 칸은 모름. 판정은 core.is_open_on이 한다."""
+    """get_hours의 결과 — place_hours 그대로(#690). None인 칸은 모름. 요일 단위 판정은 core.day_open_status."""
 
     hours: dict[str, list[list[str]]] | None = None   # {"월": [["11:00","21:00"]], …}, 빈 목록 = 휴무, "26:00" = 다음 날 02:00
     closed_days: list[str] | None = None               # 매주 쉬는 요일, [] = 연중무휴
     closed_note: str | None = None                     # 표시용 — 판단에 쓰지 않는다
     hours_note: str | None = None
-
-
-@dataclass(frozen=True)
-class ResolvedCoords:
-    place_id: str
-    lat: float
-    lng: float
 
 
 # ---- GET /places/search 응답 (docs/api-spec.yaml PlaceSearchResult, #180) ----
@@ -119,8 +112,16 @@ class PlaceSearchResult(BaseModel):
 # ---- POST /places/from-link 응답 (docs/api-spec.yaml LinkParseResult, #474) ----
 
 class LinkParseResult(BaseModel):
-    provider: Literal["google", "kakao"]
+    provider: Literal["google", "kakao", "naver"]   # naver는 link-preview에서 상호명 힌트가 있을 때만(#946)
+    matched_by: Literal["link", "hint"] | None = None   # matches를 어떻게 찾았는지(#946). matches가 비면 없다
     name_hint: str | None = None          # 구글 링크에 든 이름(사용자가 붙인 값). 카카오 링크에는 없다
     kakao_place_id: str | None = None     # 카카오 링크의 장소 ID — 저장이 허용된 유일한 카카오 값
     matches: list[PlaceSearchResult]      # 자체 DB 장소만(pinnable=true). 없으면 빈 배열
     needs_search_query: bool
+
+
+class ExternalSearch(BaseModel):
+    """카카오맵 검색 링크(#798, #902) — 결과가 없거나 적을 때 사람이 밖에서 찾는 출구. AI 추천 결과가 아니다.
+    링크는 places.api.kakao_search_url이 만든다. 추천 응답(recommend)도 이 타입을 쓴다."""
+    query: str = Field(max_length=100)
+    url: str = Field(max_length=2000)

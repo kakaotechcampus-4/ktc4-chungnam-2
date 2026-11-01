@@ -68,8 +68,8 @@ def test_step_receives_now():
     assert seen == [NOW]
 
 
-def test_default_steps_are_the_three_stages():
-    assert list(run.STEPS) == ["maps", "notifications", "guests"]
+def test_default_steps_are_the_seven_stages():
+    assert list(run.STEPS) == ["maps", "notifications", "guests", "llm_calls", "idempotency", "withdrawn", "events"]
 
 
 def test_format_report_shows_map_count_apart_from_rows():

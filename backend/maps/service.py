@@ -8,19 +8,22 @@ import secrets
 from datetime import datetime, timezone
 
 from geoalchemy2 import Geometry
-from sqlalchemy import cast, delete, func, select, update
+from sqlalchemy import cast, delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from auth import api as auth_api
 from authz.core import Principal
+from authz.policy import Role
 from common.errors import AppError
 from common.events import record_event
 from maps import core
 from maps.models import Invite as InviteRow
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
-from maps.schemas import Invite, InviteSummary, Map, MapCreateRequest, MapUpdateRequest, Member
+from maps.schemas import (
+    Invite, InviteSummary, Map, MapCreateRequest, MapUpdateRequest, Member, TrashedMap,
+)
 from notifications import api as notifications_api
 from pins import api as pins_api
 from shortlist import api as shortlist_api
@@ -106,6 +109,14 @@ def get_map_title(db: Session, *, map_id: str) -> str | None:
     ).scalar_one_or_none()
 
 
+def role_in_map(db: Session, *, map_id: str, user_id: str) -> Role | None:
+    """memberships.role 정본 — 지도가 삭제됐는지와 무관하다. 삭제된 지도의 방장을 가리는 복구 경로용(#464).
+    DbMembershipGateway.get_role은 삭제된 지도를 None으로 돌려줘서(일반 경로는 404) 여기서 쓸 수 없다."""
+    return db.execute(
+        select(MembershipRow.role).where(MembershipRow.map_id == map_id, MembershipRow.user_id == user_id)
+    ).scalar_one_or_none()
+
+
 def notify_owner_changed(db: Session, *, map_row: MapRow, new_owner_id: str, actor_id: str) -> None:
     """새 방장에게 owner_changed 알림(#470). 직접 넘기기·나가기·탈퇴 위임이 같은 트랜잭션에서 부른다."""
     notifications_api.notify(
@@ -158,6 +169,12 @@ def _my_map_count(db: Session, user_id: str) -> int:
     ).scalar_one()
 
 
+def _lock_map_count(db: Session, user_id: str) -> None:
+    """이 사람의 지도 수를 늘리는 일(새 지도, 삭제한 지도 복구)을 줄 세운다(#464) — 사용자 단위 advisory 잠금,
+    트랜잭션 끝에 풀린다. 지도 행 잠금만으로는 서로 다른 지도의 동시 복구가 둘 다 상한 직전의 수를 읽는다."""
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"map_count:{user_id}"})
+
+
 def create_map(db: Session, *, req: MapCreateRequest, creator_id: str, creator_is_guest: bool = False) -> Map:
     """maps 행 + owner 멤버십 행을 같은 트랜잭션에 만든다. 멤버십이 빠지면 생성자가 자기
     지도의 비구성원이 되어 이후 모든 요청이 404가 된다 — 테스트가 DB를 직접 확인한다.
@@ -168,6 +185,7 @@ def create_map(db: Session, *, req: MapCreateRequest, creator_id: str, creator_i
     훅은 완료 정의 체크박스만 채우는 가짜 구현이라 만들지 않는다."""
     core.check_can_create_map(creator_is_guest)
     new_map = core.validate_map_create(req.title, req.start_date, req.end_date, req.region)
+    _lock_map_count(db, creator_id)
     core.check_map_limit(_my_map_count(db, creator_id))
 
     map_row = MapRow(
@@ -401,7 +419,9 @@ def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
     map_row = get_map_or_404(db, invite_row.map_id)
     if created:
         # 방금 넣은 행은 언제나 member다(위 insert). maps.created_by로 판정하지 않는다(#369 11번).
-        member = core.to_member_response(user_id, role="member", display_name=name, online=None)
+        member = core.to_member_response(
+            user_id, role="member", display_name=name, online=None, is_guest=user_id in auth_api.guest_user_ids(db, [user_id])
+        )
         record_event(db, core.member_joined_event(invite_row.map_id, member))
         roster, _ = roster_of(db, invite_row.map_id)
         owner_id = next((m.user_id for m in roster if m.role == "owner"), None)
@@ -423,20 +443,26 @@ def list_members(db: Session, *, map_id: str) -> list[Member]:
     )
     # 배치 조회 — N명에 N번 쿼리하지 않는다(auth.api.display_names 자체가 배치용으로 설계됨).
     names = auth_api.display_names(db, [m.user_id for m in entries])
+    guests = guest_ids_of(db, entries)
     return [
         core.to_member_response(
-            m.user_id, role=m.role, display_name=names.get(m.user_id), online=None
+            m.user_id, role=m.role, display_name=names.get(m.user_id), online=None, is_guest=m.user_id in guests
         )
         for m in entries
     ]
 
 
-def delete_map(db: Session, *, map_id: str, actor_id: str | None = None) -> None:
+def delete_map(
+    db: Session, *, map_id: str, actor_id: str | None = None, withdrawn_user_id: str | None = None
+) -> None:
     """soft delete(#369 5번). 방장인지는 라우터의 require_on_map("map.delete")가 이미 봤다.
     map.deleted는 같은 트랜잭션에 기록한다 — 커밋되면 삭제와 이벤트가 함께 보인다.
-    삭제한 사람(actor_id)을 뺀 남은 구성원에게 map_deleted 알림을 쓴다(#470). 탈퇴자는 받지 않는다."""
+    삭제한 사람(actor_id)을 뺀 남은 구성원에게 map_deleted 알림을 쓴다(#470). 탈퇴자는 받지 않는다.
+    withdrawn_user_id는 탈퇴가 후임 없는 지도를 지울 때만 준다(#1000) — 표식으로 남겨 계정 복구가 되살린다. 직접 삭제는 None이라
+    예전 표식이 남아 있어도 지운다(복구했다가 다시 직접 지운 지도가 계정 복구 때 돌아오면 안 된다)."""
     map_row = get_map_or_404(db, map_id, for_update=True)
     map_row.deleted_at = datetime.now(timezone.utc)
+    map_row.deleted_by_withdrawal_of = withdrawn_user_id
     db.flush()
     record_event(db, core.map_deleted_event(map_id))
     roster, withdrawn = roster_of(db, map_id)
@@ -448,6 +474,62 @@ def delete_map(db: Session, *, map_id: str, actor_id: str | None = None) -> None
             db, user_id=member.user_id, type="map_deleted", map_id=map_id, map_title=map_row.title,
             message=message, actor_id=actor_id,
         )
+
+
+def list_trash(db: Session, *, user_id: str, now: datetime) -> list[TrashedMap]:
+    """내가 방장인 삭제된 지도 중 복구할 수 있는 것, 최근 삭제순(#464). 방장은 memberships.role 정본이라
+    위임된 뒤라면 새 방장에게 보인다. 기한이 지난 지도는 정리 작업이 아직 안 돌았어도 뺀다."""
+    lat_col, lng_col = _region_lat_lng_columns()
+    rows = db.execute(
+        select(MapRow, lat_col, lng_col)
+        .join(MembershipRow, MembershipRow.map_id == MapRow.id)
+        .where(
+            MembershipRow.user_id == user_id, MembershipRow.role == "owner",
+            MapRow.deleted_at.is_not(None), MapRow.deleted_at > now - core.TRASH_RETENTION,
+        )
+        .order_by(MapRow.deleted_at.desc(), MapRow.id)
+    ).all()
+    if not rows:
+        return []
+    map_ids = [map_row.id for map_row, _, _ in rows]
+    rosters, withdrawn = _rosters(db, map_ids)
+    pin_counts = _pin_counts(db, map_ids)
+    return [
+        core.to_trashed_map(
+            core.MapRecord(
+                id=map_row.id, title=map_row.title, start_date=map_row.start_date, end_date=map_row.end_date,
+                created_by=map_row.created_by, region_label=map_row.region_label,
+                region_lat=region_lat, region_lng=region_lng,
+            ),
+            deleted_at=map_row.deleted_at, now=now,
+            member_count=_active_count(rosters[map_row.id], withdrawn), pin_count=pin_counts[map_row.id],
+        )
+        for map_row, region_lat, region_lng in rows
+    ]
+
+
+def restore_map(db: Session, *, map_id: str, user_id: str) -> Map:
+    """삭제한 지도 복구(#464) — deleted_at만 비운다. 구성원·핀·반응·초대·확정 리스트·추천 기록은 정리 작업이
+    30일 전엔 건드리지 않아 그대로다. 방장인지는 라우터의 restorable_map이 먼저 보고, 여기서 지도 행을 잠근 뒤 한 번 더 본다.
+    삭제된 지도를 읽는 전용 함수는 두지 않았다 — 이미 복구된 지도도 200이어야 해서 삭제 여부와 무관하게 행을
+    잠그고 deleted_at을 본다(get_map_or_404의 삭제 필터는 그대로). 순서: 지도 행 잠금 → 이미 복구됐으면 그대로 돌려줌 → 30일 판정(지금 시각, 정리 작업 실행에 기대지 않는다) →
+    사용자 단위 잠금 후 지도 수 상한 → 복구와 map.restored를 같은 트랜잭션에. 같은 지도의 동시 복구는 이 잠금에서 줄을 서고 뒤의
+    요청은 이미 복구된 지도로 200을 받는다. 지도가 없으면 404(정리됨)."""
+    map_row = db.execute(select(MapRow).where(MapRow.id == map_id).with_for_update()).scalar_one_or_none()
+    if map_row is None:
+        raise AppError("NOT_FOUND")
+    # 라우터의 판정은 잠금 없이 읽은 값이다 — 그 사이에 방장 위임과 삭제가 끼어들면 이미 구성원이 된 사람이
+    # 남의 삭제를 되돌리게 된다. 잠근 뒤의 지금 역할로 다시 판정한다.
+    core.check_can_restore(role_in_map(db, map_id=map_id, user_id=user_id), map_id, user_id)
+    if map_row.deleted_at is not None:
+        core.check_restorable(map_row.deleted_at, datetime.now(timezone.utc))
+        _lock_map_count(db, user_id)
+        core.check_map_limit(_my_map_count(db, user_id))
+        map_row.deleted_at = None
+        map_row.deleted_by_withdrawal_of = None   # 복구했으니 표식이 남아 있으면 안 된다(#1000)
+        db.flush()
+        record_event(db, core.map_restored_event(map_id))
+    return _map_response(db, map_row, viewer_id=user_id, with_next_owner=True)
 
 
 def roster_of(db: Session, map_id: str) -> tuple[list[core.MembershipEntry], set[str]]:
@@ -567,11 +649,35 @@ def transfer_or_delete_owned_maps(db: Session, *, user_id: str) -> None:
             continue  # 잠그기 전에 다른 요청이 이미 넘겼다
         successor = core.pick_successor(roster, withdrawn, user_id, guests=guest_ids_of(db, roster))
         if successor is None:
-            delete_map(db, map_id=map_id, actor_id=user_id)   # 탈퇴자는 아직 withdrawn에 없어 actor로 거른다
+            # 탈퇴자는 아직 withdrawn에 없어 actor로 거른다. 표식은 계정 복구(#855)가 이 지도를 되살리는 근거다(#1000).
+            delete_map(db, map_id=map_id, actor_id=user_id, withdrawn_user_id=user_id)
         else:
             transfer_owner(db, map_id=map_id, from_user_id=user_id, to_user_id=successor)
             record_event(db, core.member_left_event(map_id, user_id, successor))
             notify_owner_changed(db, map_row=map_row, new_owner_id=successor, actor_id=user_id)
+
+
+def restore_maps_deleted_by_withdrawal(db: Session, *, user_id: str, now: datetime) -> list[str]:
+    """탈퇴 계정 복구(#855, auth.restore_account가 부른다) — 이 사람의 탈퇴가 지운 지도 중 삭제한 지 30일 안인 것을 되살린다(#1000).
+    deleted_at과 표식을 비우고 map.restored를 같은 트랜잭션에 기록한다. 방장 자리는 그대로(memberships.role 그대로)이고 지도 수 상한은
+    따지지 않는다 — 탈퇴 전에 가졌던 지도다. 30일은 복구 경로(#464)와 같은 core.is_purge_due다. 멱등 — 되살린 지도는 표식이 비어
+    다시 안 잡힌다. 지도 id 순으로 잠가 동시 요청과 줄을 선다. 커밋은 호출자. 되살린 map_id 목록을 돌려준다."""
+    rows = db.execute(
+        select(MapRow)
+        .where(MapRow.deleted_by_withdrawal_of == user_id, MapRow.deleted_at.is_not(None))
+        .order_by(MapRow.id)
+        .with_for_update()
+    ).scalars().all()
+    restored = []
+    for map_row in rows:
+        if core.is_purge_due(map_row.deleted_at, now):
+            continue   # 기한이 지났다 — 정리 작업이 지운다(표식도 함께)
+        map_row.deleted_at = None
+        map_row.deleted_by_withdrawal_of = None
+        db.flush()
+        record_event(db, core.map_restored_event(map_row.id))
+        restored.append(map_row.id)
+    return restored
 
 
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:

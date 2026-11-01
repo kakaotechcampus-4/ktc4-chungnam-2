@@ -81,6 +81,37 @@ def test_create_run_for_accommodation_is_422(app_client, db_session):
     assert resp.status_code == 422
 
 
+def test_idempotency_key_header_returns_the_same_run_and_rejects_a_short_key(app_client, db_session):
+    """#811 — 같은 Idempotency-Key로 두 번 보내면 같은 run(202), 8자 미만 키는 422. 키가 없으면 매번 새 run."""
+    _seed_ready_map(db_session)
+    headers = {"Idempotency-Key": "click-0001-abcdef"}
+    first = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, headers=headers, cookies=_auth())
+    second = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, headers=headers, cookies=_auth())
+    assert first.status_code == second.status_code == 202
+    assert first.json()["id"] == second.json()["id"] and second.json()["attempt_no"] == 1
+    assert app_client.post("/maps/map_1/runs", json={"category": "음식점"}, headers={"Idempotency-Key": "short"},
+                           cookies=_auth()).status_code == 422
+    third = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth())
+    assert third.json()["id"] != first.json()["id"]
+
+
+def test_post_run_with_execute_returns_a_done_run_and_the_result_carries_the_snapshot(app_client, db_session):
+    """#845·#847 — execute: true는 근거 조립 뒤 곧바로 첫 검색까지 한 요청에서 끝낸다(202, status done). 결과(또는 0건의 NO_RESULTS
+    detail)에 이번에 쓴 근거 스냅샷과 조건 0개 고지가 있다. execute를 생략하면 지금까지처럼 collecting_evidence다."""
+    _seed_ready_map(db_session)
+    legacy = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth())
+    assert legacy.status_code == 202 and legacy.json()["status"] == "collecting_evidence"
+
+    created = app_client.post("/maps/map_1/runs", json={"category": "음식점", "execute": True}, cookies=_auth())
+    assert created.status_code == 202 and created.json()["status"] == "done"
+    result = app_client.get(f"/runs/{created.json()['id']}/result", cookies=_auth())
+    body = result.json()["detail"] if result.status_code == 404 else result.json()
+    assert result.status_code in (200, 404)
+    assert body["applied_evidence"] == [] and body["no_applied_conditions"] is True   # ♥만 있어 사유 근거가 없다
+    if result.status_code == 200:
+        assert body["new_count"] == len(body["candidates"])
+
+
 def test_widen_returns_run_with_default_radius_and_409_at_limit(app_client, db_session):
     _seed_ready_map(db_session)
     created = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth()).json()
@@ -172,6 +203,8 @@ def test_full_golden_path_run_to_execute_to_result_to_publish(app_client, db_ses
 
     result = app_client.get(f"/runs/{run_id}/result", cookies=_auth())
     assert result.status_code == 200
+    # 깔때기 단계 키는 recommend.api만 내준다 — HTTP 응답은 스펙(FunnelEntry) 그대로(#751)
+    assert {key for entry in result.json()["funnel"] for key in entry} == {"label", "removed_count"}
     candidates = result.json()["candidates"]
     assert len(candidates) > 0  # DevPlaceSearchGateway가 항상 최소 몇 개는 채운다
     assert candidates[0]["permissions"]["can_publish"] is True
@@ -314,6 +347,7 @@ def test_evidence_response_marks_enforced_by_fact_key_720(app_client, db_session
     assert lines["한식 말고"].get("not_enforced_reason") is None
     assert lines["새우 알레르기"].get("not_enforced_reason") == "no_key"
     assert lines["그냥 분위기 좋은 곳"].get("not_enforced_reason") == "no_key"
+    assert all("effect" not in line for line in lines.values())   # effect는 recommend.api만 내준다(#751)
 
 
 def _evidence_run_with_three_authors(app_client, db_session) -> str:

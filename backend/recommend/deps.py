@@ -78,9 +78,10 @@ class RealPlaceSearchGateway:
 
     def search_nearby(self, *, category: str, circles: Sequence[Circle]) -> list[PlaceStub]:
         areas = [Area(lat=c.anchor_lat, lng=c.anchor_lng, radius_m=c.radius_m) for c in circles]
-        refs = places_api.search_nearby_own(category, areas, db=self._db)
+        # 후보 풀은 처음부터 추천 가능(정예) 장소다(#913) — places가 SQL에서 거르고 recommend는 정예 여부를 다시 판정하지 않는다
+        refs = places_api.search_nearby_own(category, areas, recommendable_only=True, db=self._db)
         infos = places_api.get_places([r.place_id for r in refs], db=self._db) if refs else {}
-        return [PlaceStub(place_id=r.place_id, lat=r.lat, lng=r.lng, source=_place_source(infos.get(r.place_id)), can_recommend=r.can_recommend) for r in refs]
+        return [PlaceStub(place_id=r.place_id, lat=r.lat, lng=r.lng, source=_place_source(infos.get(r.place_id))) for r in refs]
 
     def get_places(self, place_ids: Sequence[str]) -> Mapping[str, PlaceInfo]:
         return places_api.get_places(list(place_ids), db=self._db)

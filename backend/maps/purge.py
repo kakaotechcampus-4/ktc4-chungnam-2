@@ -21,13 +21,14 @@ from sqlalchemy.orm import Session
 
 from agent import api as agent_api
 from maps import api as maps_api
+from maps import core
 from maps.models import Map as MapRow
 from pins import api as pins_api
 from realtime import api as realtime_api
 from recommend import api as recommend_api
 from shortlist import api as shortlist_api
 
-DEFAULT_OLDER_THAN_DAYS = 30
+DEFAULT_OLDER_THAN_DAYS = core.TRASH_RETENTION.days  # 복구 가능 기간과 같다(#464)
 
 # 자식 → 부모 순서. shortlist_items가 pins를, recommend 자식들이 recommend_runs를, reactions가 pins를,
 # memberships·invites가 maps를 참조한다. event_log는 FK가 없지만 지도가 사라지기 전에 지운다.
@@ -57,16 +58,20 @@ def format_report(map_count: int, counts: dict[str, int], *, dry_run: bool) -> s
     return "\n".join(lines)
 
 
-def find_expired_map_ids(db: Session, *, now: datetime, older_than_days: int) -> list[str]:
+def find_expired_map_ids(db: Session, *, now: datetime, older_than_days: int, lock: bool = False) -> list[str]:
+    """lock=True면 대상 지도 행을 id 순으로 FOR UPDATE 잠근다 — 복구(maps.restore_map·restore_maps_deleted_by_withdrawal)가 같은 행을
+    쥐고 있으면 끝나기를 기다렸다가 조건(deleted_at이 찍혀 있고 기한이 지났다)을 다시 본다. 방금 복구된 지도는 빠진다.
+    잠그지 않으면 자식 데이터를 지운 뒤 마지막 지도 DELETE만 잠금을 기다려, 복구가 커밋된 지도의 행이 지워진다."""
     cutoff = purge_cutoff(now, older_than_days)
-    return list(db.execute(
-        select(MapRow.id).where(MapRow.deleted_at.is_not(None), MapRow.deleted_at <= cutoff).order_by(MapRow.id)
-    ).scalars().all())
+    stmt = select(MapRow.id).where(MapRow.deleted_at.is_not(None), MapRow.deleted_at <= cutoff).order_by(MapRow.id)
+    if lock:
+        stmt = stmt.with_for_update()
+    return list(db.execute(stmt).scalars().all())
 
 
 def purge(db: Session, *, now: datetime, older_than_days: int) -> tuple[int, dict[str, int]]:
     """대상 지도의 데이터를 순서대로 지우고 (지도 수, 테이블 → 지운 행 수)를 돌려준다. 커밋하지 않는다."""
-    map_ids = find_expired_map_ids(db, now=now, older_than_days=older_than_days)
+    map_ids = find_expired_map_ids(db, now=now, older_than_days=older_than_days, lock=True)
     counts: dict[str, int] = {}
     for step in PURGE_STEPS:
         counts.update(step(db, map_ids=map_ids))

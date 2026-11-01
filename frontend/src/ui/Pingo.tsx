@@ -1,5 +1,7 @@
 import { useId } from 'react'
 
+import { PINGO_MARK } from './pingoMark'
+
 /**
  * 핑고 — 서비스의 안내자(DESIGN.md 「핑고」). 캐릭터 시안(PINGO_캐디.pdf)의 평면 2D 기본형을 SVG로 옮겼다.
  * 시트·패널 안에서는 3D 렌더가 겉돌아서 평면만 쓴다(2026-10-19).
@@ -9,8 +11,9 @@ import { useId } from 'react'
  * - thinking AI가 결과를 찾는 중(THINKING) · walk 응답을 기다리는 로딩(WALK CYCLE, PingoLoading)
  * - sorry 결과 없음(NO SUGGESTION) · error 실패(ERROR) · alert 의견 부족·주의(「Color Variation」 ALERT, 모자만 분홍)
  * - fly 로그인 화면의 첫인상 — 망토를 두르고 지도 위를 날아간다(시안에 없는 자세라 기본형을 기울여 만들었다)
+ * - hug 고른 검색 결과 핀을 위에서 끌어안는다(지도, 시안에 없는 자세). 팔은 그리지 않는다 — 원을 감싼 손은 핀이 앞에서 그린다(pinMarker)
  */
-export type PingoMood = 'default' | 'wave' | 'happy' | 'thinking' | 'walk' | 'sorry' | 'error' | 'alert' | 'fly'
+export type PingoMood = 'default' | 'wave' | 'happy' | 'thinking' | 'walk' | 'sorry' | 'error' | 'alert' | 'fly' | 'hug'
 
 const BODY = 'M32 16C43 16 49 23.5 49.5 33C50 38 51.5 42 51 46C50 53 42 57 32 57C22 57 14 53 13 46C12.5 42 14 38 14.5 33C15 23.5 21 16 32 16Z'
 const LINE = { stroke: 'var(--pingo-outline)', strokeWidth: 1.3 }
@@ -29,6 +32,7 @@ const ARMS: Record<PingoMood, [Arm, Arm]> = {
   thinking: [[13.5, 43, 3.6, 7.5, 15], [41, 45.5, 5.5, 3.4, -15]],
   // 앞팔은 주먹을 앞으로 뻗고(슈퍼맨), 뒷팔은 몸에 붙여 뒤로 넘긴다.
   fly: [[14, 45, 3.4, 7.5, 25], [52, 21, 3.4, 8, 25]],
+  hug: [[13.5, 43, 3.6, 7.5, 15], [50.5, 43, 3.6, 7.5, -15]],
 }
 
 /** 날 때만 몸을 앞으로 기울이고 망토·바람 줄이 붙어서 그림 틀을 넓힌다. */
@@ -43,6 +47,7 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
   const cap = mood === 'alert' ? 'var(--pingo-alert)' : 'var(--pingo-body)'
   const [left, right] = ARMS[mood]
   const front = mood === 'thinking' || fly
+  const armless = mood === 'hug'
   const arm = ([cx, cy, rx, ry, r]: Arm) => (
     <ellipse cx={cx} cy={cy} rx={rx} ry={ry} transform={`rotate(${r} ${cx} ${cy})`} fill="white" {...LINE} />
   )
@@ -71,8 +76,8 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
       )}
       {/* 발을 뺀 나머지는 발밑을 축으로 좌우로 기우뚱한다. */}
       <g className={walk ? 'motion-safe:animate-pingo-waddle' : undefined} style={walk ? { transformOrigin: '32px 58px' } : undefined}>
-        {!peek && arm(left)}
-        {!peek && !front && arm(right)}
+        {!peek && !armless && arm(left)}
+        {!peek && !front && !armless && arm(right)}
         <clipPath id={clip}>
           <path d={BODY} />
         </clipPath>
@@ -104,6 +109,7 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
 function Face({ mood }: { mood: PingoMood }) {
   switch (mood) {
     case 'happy':
+    case 'hug':
       return <path d="M24.6 37Q27 33.6 29.4 37M34.6 37Q37 33.6 39.4 37" {...FACE} />
     case 'sorry':
       return <path d="M24.6 38Q27 34.6 29.4 38M34.6 38Q37 34.6 39.4 38M25 31.6L28.6 30.6M35.4 30.6L39 31.6" {...FACE} />
@@ -128,13 +134,15 @@ function Face({ mood }: { mood: PingoMood }) {
 export function PingoMark({ size = 28, tone = 'blue' }: { size?: number; tone?: 'blue' | 'white' }) {
   const face = tone === 'white' ? 'white' : 'var(--pingo-body)'
   const hole = tone === 'white' ? 'var(--brand-600)' : 'white'
+  const { pin, hole: h, face: f, eyes } = PINGO_MARK
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className="shrink-0">
-      <path d="M16 10.5C13.9 8.6 13 7.3 13 6A3 3 0 0 1 19 6C19 7.3 18.1 8.6 16 10.5Z" fill={face} />
-      <circle cx="16" cy="6" r="1.1" fill={hole} />
-      <rect x="5" y="11.5" width="22" height="17" rx="7" fill={face} />
-      <ellipse cx="12.5" cy="20" rx="1.3" ry="1.9" fill="var(--ink-900)" />
-      <ellipse cx="19.5" cy="20" rx="1.3" ry="1.9" fill="var(--ink-900)" />
+      <path d={pin} fill={face} />
+      <circle cx={h.cx} cy={h.cy} r={h.r} fill={hole} />
+      <rect x={f.x} y={f.y} width={f.w} height={f.h} rx={f.rx} fill={face} />
+      {eyes.map((e) => (
+        <ellipse key={e.cx} cx={e.cx} cy={e.cy} rx={e.rx} ry={e.ry} fill="var(--ink-900)" />
+      ))}
     </svg>
   )
 }

@@ -91,7 +91,8 @@ def test_member_fulfillment_counts_members_who_left_disqualifying_reasons(member
         spicy = next(ch for ch in cand["checks"] if ch["fact_key"] == "spicy_focused")
         fulfillment = cand.get("member_fulfillment") or {}
         assert fulfillment.get("total") == 1, fulfillment
-        assert fulfillment["by_member"] == [{"user_id": "user_b", "satisfied": spicy["confidence"] == "known"}], (spicy, fulfillment)
+        by_member = [{k: v for k, v in e.items() if k != "conditions"} for e in fulfillment["by_member"]]   # conditions는 표시용(#805)
+        assert by_member == [{"user_id": "user_b", "satisfied": spicy["confidence"] == "known"}], (spicy, fulfillment)
 
 
 

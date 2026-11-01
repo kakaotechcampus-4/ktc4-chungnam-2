@@ -1,13 +1,17 @@
 import { useState } from 'react'
-import { Bus, ExternalLink } from 'lucide-react'
+import { Bus, ExternalLink, Map as MapIcon } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { AiHeader } from '@/features/recommend/Readiness'
+import { useSheetStore } from '@/features/shell/sheetStore'
 import { KAKAO_ROUTE_MAX } from '@/features/shortlist/model'
+import { useRouteStore } from '@/features/shortlist/routeStore'
 import Notice from '@/ui/Notice'
 import PingoLoading from '@/ui/PingoLoading'
 
+import { useCourseMapStore } from './courseMapStore'
 import {
+  courseDrawings,
   daySummary,
   dayStops,
   dayTitle,
@@ -29,7 +33,7 @@ import WorkLog from './WorkLog'
  */
 type Points = Map<string, { lat: number; lng: number }>
 
-export default function CourseRun({ runId, names, points, onRetry, onClose }: { runId: string; names: Map<string, string>; points: Points; onRetry: () => void; onClose: () => void }) {
+export default function CourseRun({ mapId, runId, names, points, onRetry, onClose }: { mapId: string; runId: string; names: Map<string, string>; points: Points; onRetry: () => void; onClose: () => void }) {
   const query = useCourseRunQuery(runId)
   const run = query.data
 
@@ -52,7 +56,7 @@ export default function CourseRun({ runId, names, points, onRetry, onClose }: { 
     return <PingoLoading label="코스를 불러오는 중…" />
   }
 
-  if (run.status === 'done') return <Result run={run} names={names} points={points} onRetry={onRetry} onClose={onClose} />
+  if (run.status === 'done') return <Result mapId={mapId} run={run} names={names} points={points} onRetry={onRetry} onClose={onClose} />
   if (run.status === 'failed') return <Failed run={run} onRetry={onRetry} onClose={onClose} />
   // 진행 중에 조회가 실패하면(이전 data 는 남는다) 폴링이 멈추므로, 진행 화면 아래에서 다시 불러오게 한다.
   return <Progress run={run} error={query.isError ? query.error : null} onRetryLoad={() => void query.refetch()} />
@@ -101,8 +105,20 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
-function Result({ run, names, points, onRetry, onClose }: { run: CourseRunDto; names: Map<string, string>; points: Points; onRetry: () => void; onClose: () => void }) {
+function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string; run: CourseRunDto; names: Map<string, string>; points: Points; onRetry: () => void; onClose: () => void }) {
   const [showLog, setShowLog] = useState(false)
+  const drawings = courseDrawings(run, points)
+  const showCourse = useCourseMapStore((s) => s.show)
+  const setRouteOn = useRouteStore((s) => s.set)
+  const setStage = useSheetStore((s) => s.setStage)
+
+  // 지도에 날짜별 선을 긋고 시트는 절반으로 내려 지도와 범례가 함께 보이게 한다. 「동선 보기」 선과 같은 자리라 그건 끈다.
+  function showOnMap() {
+    setRouteOn(false)
+    showCourse(mapId, drawings)
+    setStage('shortlist', 2)
+    onClose()
+  }
   const name = (pinId: string) => names.get(pinId) ?? '이 장소'
   const anyCheck = run.checks.length > 0 || run.days.some((d) => d.slots.some((s) => s.needs_check))
 
@@ -150,6 +166,11 @@ function Result({ run, names, points, onRetry, onClose }: { run: CourseRunDto; n
         </div>
         <p className="text-label text-ink-500">이동 시간은 직선거리로 어림한 값이에요. 정확한 길은 카카오맵에서 확인하세요</p>
         {anyCheck && <p className="text-label text-ink-500">영업 여부를 모르는 장소는 가게에 직접 확인해 주세요</p>}
+        {drawings.length > 0 && (
+          <button type="button" onClick={showOnMap} className="btn-outline btn-md w-full">
+            <MapIcon size={16} aria-hidden="true" /> 지도에서 날짜별로 보기
+          </button>
+        )}
       </Section>
 
       {run.violations.length > 0 && (

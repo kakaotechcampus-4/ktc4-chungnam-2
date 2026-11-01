@@ -26,9 +26,27 @@ _SCORE_TIE = 0.05
 
 _PAREN = re.compile(r"[\(\[（][^\)\]）]*[\)\]）]")
 _NON_WORD = re.compile(r"[^0-9a-z가-힣]")
-_ROAD_SPACE = re.compile(r"(로)\s+(\d+(?:번)?길)")                       # "논현로 12길" → "논현로12길"
-_ROAD_ADDR = re.compile(r"([가-힣]+\d*(?:로|길))\s*(\d+)(?:-(\d+))?")   # 도로명 + 건물번호
-_LOT_ADDR = re.compile(r"([가-힣]+(?:\d가|동|리))\s*(\d+)(?:-(\d+))?")  # 법정동·리 + 지번
+# 도로명 주소는 한 정규식의 백트래킹에 맡기지 않고 단계로 읽는다(#1019): ① 도로명 토큰 → ② 분기 도로(번길·안길·N길·N가길) 최대 한 번 →
+# ③ 건물번호가 반드시 와야 한다. ③이 없으면 분기 번호를 건물번호로 되돌려 읽지 않고 도로명 주소가 아니라고 본다(모름).
+# 범위를 일부러 좁혔다 — 미탐(None)은 「하나씩 찍기」로 가는 안전한 쪽이고 오탐은 엉뚱한 핀이다. 실제 적재 주소는 `아차산로17번길 4`처럼 붙여 쓴다.
+#  - 분기 접미사 앞에 공백이 낀 표기(`14 길`, `17 번길`, `5 가길`)는 읽지 않는다: 도로명 주소도 지번도 아니다(None).
+#  - 분기 접미사의 한글은 도로명주소법의 가지번호(가나다라마바사아자차카타파하)뿐이다. `꽃길`·`한길`은 분기가 아니라 건물·지명이다.
+_BRANCH_CHAR = "가나다라마바사아자차카타파하"
+_BRANCH_SUFFIX = rf"(?:번길|안길|[{_BRANCH_CHAR}]?길)"
+_BRANCH_BARE = rf"{_BRANCH_SUFFIX}(?![가-힣])"             # 번길·안길·가길·길 — 단독으로는 도로명이 아니다
+_BRANCH_TOKEN = rf"\d+{_BRANCH_SUFFIX}(?![가-힣])"         # 17번길·14길·5가길(붙여 쓴 것만)
+_NOT_ADMIN = "".join(f"(?<!{x})" for x in ("특별시", "광역시", "특별자치시", "특별자치도")) + "(?<![도시군구읍면])"   # 행정구역 이름(성동구)을 도로명으로 삼키지 않는다
+_ROAD_HEAD = re.compile(   # 공백을 가로지르지 않는다. 뒤에 한글이 이어지면(한길빌딩) 도로명이 아니다
+    rf"(?<![가-힣\d])(?!{_BRANCH_TOKEN})(?!{_BRANCH_BARE})"   # 분기 토큰·접미사 단독은 head가 될 수 없다
+    r"(?:\d*[가-힣]+\d*(?:로|길)(?![가-힣])"                      # 성수이로·중앙1로·1공단로·테헤란로14길
+    rf"|[가-힣]+\d+{_BRANCH_SUFFIX}(?![가-힣])"                    # 상도13가길·연무장5가길(이름에 붙은 분기)
+    rf"|[가-힣]+{_NOT_ADMIN}(?=\s+{_BRANCH_TOKEN}))")             # 연무장 5가길(이름 뒤 공백 분기, 행정구역 이름은 제외)
+_ROAD_BRANCH = re.compile(rf"\s*{_BRANCH_TOKEN}")
+_HEAD_HAS_BRANCH = re.compile(rf"\d+{_BRANCH_SUFFIX}$")
+_NUMBER_TAIL = rf"(?:번지)?(?![가-힣a-zA-Z\d]|-\d|\s*{_BRANCH_BARE})"   # 101호·1F처럼 한글·영문·숫자가 이어지거나 공백 뒤 분기 접미사가 오면 건물번호·지번이 아니다
+_ROAD_NUMBER = re.compile(r"\s*(?:지하\s*)?(\d+)(?:-(\d+))?" + _NUMBER_TAIL)
+_WS = re.compile(r"\s+")
+_LOT_ADDR = re.compile(r"(?<![가-힣\d])([가-힣]+(?:\d가|동|리))\s*(\d+)(?:-(\d+))?" + _NUMBER_TAIL)   # 법정동·리 + 지번(`산` 번지는 읽지 않는다 — 일반 번지와 다른 필지)
 
 
 @dataclass(frozen=True)
@@ -64,15 +82,34 @@ def name_score(a: str, b: str) -> float:
     return SequenceMatcher(None, na, nb).ratio()
 
 
+def _parse_road(text: str) -> str | None:
+    for head in _ROAD_HEAD.finditer(text):
+        if re.search(r"\d\s*$", text[: head.start()]):
+            continue   # 번지 숫자 바로 뒤의 말(100 꽃길)은 도로명이 아니다
+        pos, parts = head.end(), [head.group(0)]
+        if not _HEAD_HAS_BRANCH.search(head.group(0)):
+            branch = _ROAD_BRANCH.match(text, pos)   # 분기 도로는 최대 한 번 — 되돌아가 건물번호로 읽지 않는다
+            if branch:
+                parts.append(branch.group(0))
+                pos = branch.end()
+        number = _ROAD_NUMBER.match(text, pos)
+        if number:
+            main, sub = number.group(1).lstrip("0") or "0", number.group(2)
+            return f"{_WS.sub('', ''.join(parts))}|{main}" + (f"-{sub.lstrip('0') or '0'}" if sub else "")
+    return None
+
+
 def normalize_address(address: str) -> tuple[str, str] | None:
-    """주소를 비교 키 (종류, 값)으로 줄인다. 도로명(`성수이로 100`)이 있으면 그것, 없으면 지번(`성수동2가 300-1`).
-    시·구 이름·층·호·괄호 표기는 버린다. 읽어 낼 수 없으면 None."""
-    text = _ROAD_SPACE.sub(r"\1\2", _PAREN.sub(" ", address))
-    for kind, pattern in (("road", _ROAD_ADDR), ("lot", _LOT_ADDR)):
-        m = pattern.search(text)
-        if m:
-            main, sub = m.group(2).lstrip("0") or "0", m.group(3)
-            return kind, f"{m.group(1)}|{main}" + (f"-{sub.lstrip('0') or '0'}" if sub else "")
+    """주소를 비교 키 (종류, 값)으로 줄인다. 도로명(`성수이로 100`, `아차산로17번길 4`)이 있으면 그것, 없으면 지번(`성수동2가 300-1`).
+    시·구 이름·층·호·괄호 표기는 버린다. 읽어 낼 수 없으면 None. `을지로3가 100`의 3가는 도로명이 아니라 법정동이다."""
+    text = _PAREN.sub(" ", address)
+    road = _parse_road(text)
+    if road is not None:
+        return "road", road
+    m = _LOT_ADDR.search(text)
+    if m:
+        main, sub = m.group(2).lstrip("0") or "0", m.group(3)
+        return "lot", f"{m.group(1)}|{main}" + (f"-{sub.lstrip('0') or '0'}" if sub else "")
     return None
 
 
@@ -140,6 +177,50 @@ def pick_link_matches(name_hint: str, candidates: Sequence[Candidate]) -> list[C
     kept = [c for c in candidates if c.category in OWN_CATEGORIES and name_score(name_hint, c.name) >= NAME_MIN_SCORE]
     kept.sort(key=lambda c: (c.distance_m if c.distance_m is not None else math.inf, c.place_id))
     return kept[:LINK_MAX_MATCHES]
+
+
+HINT_MAX_CANDIDATES = 50   # 이름 일치 후보가 이만큼 넘으면 체인점 수준으로 흔한 이름이라 고르지 않는다(좌표가 없어 거리로 못 가린다)
+_HINT_MIN_PREFIX = 2
+
+
+def hint_name_keys(name: str) -> tuple[str, list[str]]:
+    """상호명 힌트로 자체 DB 후보를 좁히는 키(name_norm 기준). (정규형, 정규형의 2자 이상 앞부분들).
+    DB 이름이 힌트로 시작하거나(접두 검색) 힌트가 DB 이름으로 시작할 때(앞부분 정확 일치)만 후보다 — 둘 다 name_norm 인덱스를 탄다.
+    정규형이 비면 ("", [])."""
+    nq = normalize_name(name)
+    if not nq:
+        return "", []
+    return nq, [nq[:i] for i in range(_HINT_MIN_PREFIX, len(nq) + 1)]
+
+
+def pick_hint_match(name: str, address: str | None, candidates: Sequence[Candidate]) -> list[Candidate]:
+    """상호명·주소만 아는 힌트(좌표 없음, #946)의 짝. 짝이 하나로 확실할 때만 [그 하나], 아니면 [](가드레일 2).
+    pick_match는 좌표(거리)나 주소로 확정 근거를 얻는다. 여기는 좌표가 없으니 **주소가 같다고 확인된 후보만** 확정한다 —
+    입력 주소가 없거나 후보 주소를 비교할 수 없으면(모름) 이름만으로 확정하지 않는다. DB에 일부 지점만 있어 후보가 하나뿐이어도
+    그것이 같은 점포라는 근거가 못 된다(체인·흔한 이름).
+    유일성은 주소가 다르다(False)고 판명된 후보만 뺀 전부로 본다 — 주소가 같은 후보와 주소를 모르는 후보를 함께 겨룬다.
+    같은 이름 기준(strong ≥ NAME_MIN_SCORE, 주소가 같을 때만 ADDRESS_NAME_MIN_SCORE까지 구제)을 통과한 다른 후보의 점수가
+    1등과 _SCORE_TIE 이내(1등보다 높은 경우 포함)면 어느 쪽인지 알 수 없어 거절한다."""
+    if not address or not address.strip():
+        return []
+    rivals: list[tuple[float, bool, Candidate]] = []
+    for c in candidates:
+        if c.category not in OWN_CATEGORIES:
+            continue
+        agree = address_agreement(address, c.address)
+        if agree is False:
+            continue
+        score = name_score(name, c.name)
+        if score >= NAME_MIN_SCORE or (agree is True and score >= ADDRESS_NAME_MIN_SCORE):
+            rivals.append((score, agree is True, c))
+    confirmed = [r for r in rivals if r[1]]
+    if not confirmed:
+        return []
+    best_score, _, best = max(confirmed, key=lambda t: (t[0], t[2].place_id))
+    for score, _, other in rivals:
+        if other is not best and score >= best_score - _SCORE_TIE:
+            return []
+    return [best]
 
 
 def _match(c: Candidate) -> PlaceMatch:

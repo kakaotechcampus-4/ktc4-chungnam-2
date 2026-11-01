@@ -18,7 +18,8 @@ class StripQueryFilter(logging.Filter):
         args = record.args
         if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
             path, sep, _ = args[2].partition("?")
-            if sep and path.rstrip("/") in SENSITIVE_PATHS:
+            # 앞단 프록시 경로(--root-path /api)가 붙어 찍히므로 끝으로 맞춘다(#168)
+            if sep and path.rstrip("/").endswith(SENSITIVE_PATHS):
                 record.args = (*args[:2], path + "?[redacted]", *args[3:])
         return True
 
