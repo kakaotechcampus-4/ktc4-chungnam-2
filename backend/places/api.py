@@ -318,6 +318,17 @@ def own_places_by_kakao_id(kakao_place_id: str, *, db: Session | None = None) ->
         return repository.find_by_kakao_place_id(s, kakao_place_id)
 
 
+def match_by_name_address(name: str, address: str | None, *, db: Session | None = None) -> list[PlaceSearchResult]:
+    """공유 글의 상호명·주소로 자체 DB 짝 찾기(#946). 짝이 하나로 확실할 때만 1개를, 아니면 빈 목록(가드레일 2 — 체인점·동명·주소 어긋남).
+    분류는 음식점·카페·관광지 모두. 규칙은 matching(이름 점수·주소 일치·모호하면 거절)을 그대로 쓰고 후보는 name_norm 인덱스로 좁힌다.
+    주소는 짝 찾기에만 쓴다 — 상호명·주소를 로그·예외에 남기지 않고 저장하지 않는다. 읽기 전용. 응답 모양은 링크 해석의 matches와 같다."""
+    if not name or not name.strip():
+        return []
+    with _session(db) as s:
+        candidates = repository.find_by_name_hint(s, name)
+    return [_to_link_match(c) for c in matching.pick_hint_match(name, address, candidates)]
+
+
 def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
     """구글맵·카카오맵 링크 → 단서. 허용 호스트가 아니면 LINK_NOT_SUPPORTED, 단축 링크를 못 열었거나 장소를 못 찾으면 LINK_UNRESOLVED."""
     parts = linkparse.split_url(url)

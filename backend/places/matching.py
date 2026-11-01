@@ -142,5 +142,48 @@ def pick_link_matches(name_hint: str, candidates: Sequence[Candidate]) -> list[C
     return kept[:LINK_MAX_MATCHES]
 
 
+HINT_MAX_CANDIDATES = 50   # 이름 일치 후보가 이만큼 넘으면 체인점 수준으로 흔한 이름이라 고르지 않는다(좌표가 없어 거리로 못 가린다)
+_HINT_MIN_PREFIX = 2
+
+
+def hint_name_keys(name: str) -> tuple[str, list[str]]:
+    """상호명 힌트로 자체 DB 후보를 좁히는 키(name_norm 기준). (정규형, 정규형의 2자 이상 앞부분들).
+    DB 이름이 힌트로 시작하거나(접두 검색) 힌트가 DB 이름으로 시작할 때(앞부분 정확 일치)만 후보다 — 둘 다 name_norm 인덱스를 탄다.
+    정규형이 비면 ("", [])."""
+    nq = normalize_name(name)
+    if not nq:
+        return "", []
+    return nq, [nq[:i] for i in range(_HINT_MIN_PREFIX, len(nq) + 1)]
+
+
+def pick_hint_match(name: str, address: str | None, candidates: Sequence[Candidate]) -> list[Candidate]:
+    """상호명·주소만 아는 힌트(좌표 없음, #946)의 짝. 짝이 하나로 확실할 때만 [그 하나], 아니면 [](가드레일 2).
+    규칙은 pick_match와 같다 — 이름 점수·주소 일치(다르면 제외, 같으면 이름이 모자라도 구제)·이름이 비슷한 2등이 있으면 거절.
+    다른 점은 좌표가 없어 거리로 동명 점포를 가리지 못하는 것뿐이라, 같은 쪽에서 점수가 비슷한 2등이 있으면 그냥 거절한다.
+    분류는 가리지 않는다(OWN_CATEGORIES 안의 후보만 온다)."""
+    strong: list[tuple[float, bool, Candidate]] = []
+    rescued: list[tuple[float, bool, Candidate]] = []
+    for c in candidates:
+        if c.category not in OWN_CATEGORIES:
+            continue
+        agree = address_agreement(address, c.address)
+        if agree is False:
+            continue
+        score = name_score(name, c.name)
+        if score >= NAME_MIN_SCORE:
+            strong.append((score, agree is True, c))
+        elif agree is True and score >= ADDRESS_NAME_MIN_SCORE:
+            rescued.append((score, True, c))
+    scored = strong or rescued
+    if not scored:
+        return []
+    scored.sort(key=lambda t: (not t[1], -t[0], t[2].place_id))
+    best_score, best_addr, best = scored[0]
+    for score, addr, _ in scored[1:]:
+        if addr == best_addr and best_score - score <= _SCORE_TIE:
+            return []
+    return [best]
+
+
 def _match(c: Candidate) -> PlaceMatch:
     return PlaceMatch(place_id=c.place_id, name=c.name, lat=c.lat, lng=c.lng, category=c.category)

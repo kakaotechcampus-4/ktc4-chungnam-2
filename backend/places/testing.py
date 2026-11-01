@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Sequence
 from common.geo import haversine_distance_m
 from places import core, matching
 from places.matching import OWN_CATEGORIES, Candidate
-from places.schemas import Area, FactLabel, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef
+from places.schemas import Area, FactLabel, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef, PlaceSearchResult
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -161,6 +161,19 @@ class FakePlaces:
     def own_places_by_kakao_id(self, kakao_place_id: str, *, db: Session | None = None) -> list[Candidate]:
         return [self._candidate(r, None) for r in self.rows if r.status == "open" and r.kakao_place_id == kakao_place_id]
 
+    def match_by_name_address(self, name: str, address: str | None, *, db: Session | None = None) -> list[PlaceSearchResult]:
+        nq, prefixes = matching.hint_name_keys(name)
+        if not nq:
+            return []
+        cands = [self._candidate(r, None) for r in self.rows
+                 if r.status == "open" and r.category in OWN_CATEGORIES
+                 and (matching.normalize_name(r.name).startswith(nq) or matching.normalize_name(r.name) in prefixes)]
+        if len(cands) > matching.HINT_MAX_CANDIDATES:
+            return []
+        return [PlaceSearchResult(place_id=c.kakao_place_id or f"own:{c.place_id}", place_name=c.name[:100], lat=c.lat, lng=c.lng,
+                                  category=c.category, address=c.address[:200] if c.address else None, pinnable=True)
+                for c in matching.pick_hint_match(name, address, cands)]
+
     # ---- 편의 ----
 
     def place_id(self, key: str) -> str:
@@ -172,7 +185,7 @@ class FakePlaces:
 
         for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "count_curated", "get_facts", "get_hours",
                      "get_week_open_status", "get_open_status_on_weekdays",
-                     "own_places_near", "own_places_by_kakao_id"):
+                     "own_places_near", "own_places_by_kakao_id", "match_by_name_address"):
             monkeypatch.setattr(api, name, getattr(self, name))
         return self
 
