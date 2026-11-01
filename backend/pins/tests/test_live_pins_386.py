@@ -220,9 +220,10 @@ def test_live_pin_takes_reactions_and_against_still_needs_a_reason(app_client):
     assert pin["my_reaction"]["type"] == "against"
 
 
-def test_live_pin_can_be_deleted_by_a_member(app_client):
+def test_live_pin_can_be_deleted_by_its_author(app_client):
     pin_id = _post_live(app_client).json()["id"]
-    assert app_client.delete(f"/pins/{pin_id}", cookies=_auth("user_2")).status_code == 204
+    assert app_client.delete(f"/pins/{pin_id}", cookies=_auth("user_2")).status_code == 403  # 남의 핀(#965)
+    assert app_client.delete(f"/pins/{pin_id}", cookies=_auth()).status_code == 204
     assert app_client.get("/maps/map_1/pins", cookies=_auth()).json() == []
 
 

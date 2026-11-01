@@ -83,11 +83,12 @@ def test_unknown_action_returns_false():
 # --- member 액션 ---
 
 
-def test_member_pin_delete_regardless_of_authorship():
-    """9/4 결정 #25 — 핀 삭제는 구성원 누구나. 작성자가 아니어도 True."""
+def test_member_pin_delete_only_own_pin():
+    """#965(#25 변경) — 구성원은 자기가 찍은 핀만 지운다."""
     user = _principal(role="member", user_id="user_1")
-    pin = _resource("pin", author_id="someone_else")
-    assert can(user, "pin.delete", pin) is True
+    assert can(user, "pin.delete", _resource("pin", author_id="user_1")) is True
+    assert can(user, "pin.delete", _resource("pin", author_id="someone_else")) is False
+    assert can(user, "pin.delete", _resource("pin")) is False  # 작성자 없음(탈퇴 등)
 
 
 def test_member_pin_revert():
@@ -118,7 +119,7 @@ def test_shortlist_add_not_valid_for_shortlist_item():
 
 def test_owner_inherits_member_actions():
     user = _principal(role="owner")
-    assert can(user, "pin.delete", _resource("pin")) is True
+    assert can(user, "pin.delete", _resource("pin", author_id="someone_else")) is True  # #965
     assert can(user, "shortlist.add", _resource("pin")) is True
 
 
