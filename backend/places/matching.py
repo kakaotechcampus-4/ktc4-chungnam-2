@@ -158,11 +158,15 @@ def hint_name_keys(name: str) -> tuple[str, list[str]]:
 
 def pick_hint_match(name: str, address: str | None, candidates: Sequence[Candidate]) -> list[Candidate]:
     """상호명·주소만 아는 힌트(좌표 없음, #946)의 짝. 짝이 하나로 확실할 때만 [그 하나], 아니면 [](가드레일 2).
-    규칙은 pick_match와 같다 — 이름 점수·주소 일치(다르면 제외, 같으면 이름이 모자라도 구제)·이름이 비슷한 2등이 있으면 거절.
-    다른 점은 좌표가 없어 거리로 동명 점포를 가리지 못하는 것뿐이라, 같은 쪽에서 점수가 비슷한 2등이 있으면 그냥 거절한다.
-    분류는 가리지 않는다(OWN_CATEGORIES 안의 후보만 온다)."""
-    strong: list[tuple[float, bool, Candidate]] = []
-    rescued: list[tuple[float, bool, Candidate]] = []
+    pick_match는 좌표(거리)나 주소로 확정 근거를 얻는다. 여기는 좌표가 없으니 **주소가 같다고 확인된 후보만** 확정한다 —
+    입력 주소가 없거나 후보 주소를 비교할 수 없으면(모름) 이름만으로 확정하지 않는다. DB에 일부 지점만 있어 후보가 하나뿐이어도
+    그것이 같은 점포라는 근거가 못 된다(체인·흔한 이름).
+    유일성은 주소가 다르다(False)고 판명된 후보만 뺀 전부로 본다 — 주소가 같은 후보와 주소를 모르는 후보를 함께 겨룬다.
+    같은 이름 기준(strong ≥ NAME_MIN_SCORE, 주소가 같을 때만 ADDRESS_NAME_MIN_SCORE까지 구제)을 통과한 다른 후보의 점수가
+    1등과 _SCORE_TIE 이내(1등보다 높은 경우 포함)면 어느 쪽인지 알 수 없어 거절한다."""
+    if not address or not address.strip():
+        return []
+    rivals: list[tuple[float, bool, Candidate]] = []
     for c in candidates:
         if c.category not in OWN_CATEGORIES:
             continue
@@ -170,17 +174,14 @@ def pick_hint_match(name: str, address: str | None, candidates: Sequence[Candida
         if agree is False:
             continue
         score = name_score(name, c.name)
-        if score >= NAME_MIN_SCORE:
-            strong.append((score, agree is True, c))
-        elif agree is True and score >= ADDRESS_NAME_MIN_SCORE:
-            rescued.append((score, True, c))
-    scored = strong or rescued
-    if not scored:
+        if score >= NAME_MIN_SCORE or (agree is True and score >= ADDRESS_NAME_MIN_SCORE):
+            rivals.append((score, agree is True, c))
+    confirmed = [r for r in rivals if r[1]]
+    if not confirmed:
         return []
-    scored.sort(key=lambda t: (not t[1], -t[0], t[2].place_id))
-    best_score, best_addr, best = scored[0]
-    for score, addr, _ in scored[1:]:
-        if addr == best_addr and best_score - score <= _SCORE_TIE:
+    best_score, _, best = max(confirmed, key=lambda t: (t[0], t[2].place_id))
+    for score, _, other in rivals:
+        if other is not best and score >= best_score - _SCORE_TIE:
             return []
     return [best]
 
