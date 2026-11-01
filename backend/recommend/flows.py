@@ -64,7 +64,7 @@ from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
 from recommend.models import EvidenceLine as EvidenceLineRow
 from recommend.models import RecommendRun
-from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
+from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway, PlaceStub
 from recommend.schemas import Check
 
 
@@ -639,6 +639,25 @@ def _pipeline_inputs(
     return regions, active_lines
 
 
+def _within_trip_sido(
+    db: Session, map_id: str, regions: Sequence[_PipelineRegion], places: list[PlaceStub], place_search: PlaceSearchGateway,
+) -> list[PlaceStub]:
+    """여행 지역과 다른 시·도의 후보를 뺀다(#1055, #1059) — 깔때기에서는 「반경 밖 제거」로 센다. 판정은 places.api(sido, sido_at)만
+    쓴다. 여행 지역의 시·도는 지도 여행 지역 중심, 없으면 기본 지역 중심(그 카테고리 핀들의 중심)으로 이 실행에서 한 번 정한다.
+    어느 한쪽이라도 None이면 거르지 않는다(모름을 실격으로 읽지 않는다). 주소는 한 번에 배치 조회(N+1 금지)."""
+    infos = place_search.get_places([p.place_id for p in places]) if places else {}
+    place_sido = {pid: places_api.sido(info.address) for pid, info in infos.items()}
+    if not any(place_sido.values()):
+        return places
+    center = maps_api.get_map_region_center(db, map_id) or (
+        (regions[0].center_lat, regions[0].center_lng) if regions else None
+    )
+    trip_sido = places_api.sido_at(*center, db=db) if center else None
+    if trip_sido is None:
+        return places
+    return [p for p in places if place_sido.get(p.place_id) in (None, trip_sido)]
+
+
 def _out_of_season_keys(db: Session, map_id: str) -> frozenset[str]:
     """이 지도의 여행 기간과 시즌이 안 겹치는 계절 키(core.out_of_season_keys). 지도를 못 읽으면 모두 쓴다."""
     info = maps_api.get_map_for_agent(db, map_id)
@@ -664,6 +683,7 @@ def _run_pipeline(
     pool = place_search.search_nearby(category=run.category, circles=pool_circles)
 
     within_radius = [p for p in pool if core.is_within_any_region(p.lat, p.lng, circles)]
+    within_radius = _within_trip_sido(db, run.map_id, regions, within_radius, place_search)
     removed_radius = len(pool) - len(within_radius)
 
     # 영업 종료 제거(#690) — 여행 기간의 모든 요일이 휴무인 장소만 뺀다. 하루라도 영업하면 통과, 정보가 없으면 통과 +
