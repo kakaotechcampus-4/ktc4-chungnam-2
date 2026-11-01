@@ -809,15 +809,15 @@ def test_create_run_with_only_live_pins_has_no_anchor_so_not_ready(db_session):
     assert exc_info.value.code == "NOT_READY"
 
 
-def test_create_run_raises_retry_limit_when_already_exhausted(db_session):
+def test_create_run_passes_after_the_old_attempt_limit(db_session):
+    """추천 횟수 상한(10회)은 크레딧으로 바뀌어 없다(#432, #949) — 11번째 추천도 429 없이 만들어지고 번호는 이어진다."""
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="카페")
     _react(db_session, pin, user_id="user_1", type="like")
     _make_run(db_session, map_id="map_1", requested_by="user_1", category="음식점", attempt_no=10)
 
-    with pytest.raises(AppError) as exc_info:
-        flows.create_run(db_session, map_id="map_1", category="카페", requested_by="user_1", evidence_planner=PLANNER)  # 카테고리 무관(#31)
-    assert exc_info.value.code == "RETRY_LIMIT"
+    run = flows.create_run(db_session, map_id="map_1", category="카페", requested_by="user_1", evidence_planner=PLANNER)
+    assert run.attempt_no == 11   # 번호는 카테고리 무관 개인 단위로 계속 매긴다(#31, #811)
 
 
 # ---------- evidence ----------
@@ -1226,26 +1226,6 @@ def test_create_run_leaves_no_run_row_when_planning_fails(db_session, monkeypatc
     assert db_session.execute(select(func.count()).select_from(RecommendRun)).scalar_one() == 0
 
 
-def test_create_run_rechecks_retry_limit_after_planning(db_session, monkeypatch):
-    """#208 — LLM 대기 중 동시 요청이 상한(5)에 도달시키면 INSERT 직전 재검사가 429로 막는다."""
-    _make_members(db_session, user_ids=["user_1"])
-    pin = _make_pin(db_session, category="음식점")
-    _react(db_session, pin, user_id="user_1", type="against", reason_text="너무 매워요")
-    real_plan = PLANNER.plan_evidence
-
-    def plan_while_other_request_hits_limit(lines):
-        _make_run(db_session, map_id="map_1", requested_by="user_1", category="카페", attempt_no=10)
-        return real_plan(lines)
-
-    monkeypatch.setattr(PLANNER, "plan_evidence", plan_while_other_request_hits_limit)
-    with pytest.raises(AppError) as exc_info:
-        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
-    assert exc_info.value.code == "RETRY_LIMIT"
-    assert db_session.execute(
-        select(func.count()).select_from(RecommendRun).where(RecommendRun.category == "음식점")
-    ).scalar_one() == 0
-
-
 def test_execute_run_with_no_candidates_then_get_result_is_no_results(db_session):
     run = _make_run(db_session, status="collecting_evidence")
     _make_region(db_session, run)
@@ -1619,38 +1599,33 @@ def test_retry_run_excludes_previous_unpublished_candidates_and_bumps_attempt(db
     assert published.place_id in remaining_place_ids  # 게시된 후보는 그대로 유지
 
 
-def test_retry_run_raises_retry_limit_when_exhausted(db_session):
+def test_retry_run_passes_after_the_old_attempt_limit(db_session):
+    """「다시 찾기」도 횟수 상한이 없다(#949). 모델을 부르지 않아 크레딧도 쓰지 않는다(#432 D5)."""
     run = _make_run(db_session, status="done", attempt_no=10)
     _make_region(db_session, run)
-    with pytest.raises(AppError) as exc_info:
-        flows.retry_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts())
-    assert exc_info.value.code == "RETRY_LIMIT"
+    updated = flows.retry_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts())
+    assert updated.attempt_no == 11
 
 
-def test_retry_run_checks_requesters_true_max_not_this_runs_own_attempt_no(db_session):
-    """루트 수정(2026-09-23) — #31은 개인 단위 공유 카운터인데, retry_run이 이 run 자신의
-    attempt_no만 봐서, 오래된(attempt_no가 낮은) run으로 retry를 걸면 상한을 우회할 수 있었다
-    (Antigravity 검수로 발견). 같은 사람의 다른 run이 이미 상한(5)에 도달했으면, 더 오래된
-    run(attempt_no=1)으로 retry를 시도해도 막혀야 한다."""
+def test_retry_run_numbers_from_the_requesters_true_max_not_this_runs_own_attempt_no(db_session):
+    """#31 번호는 개인 단위 공유 카운터다 — 오래된(attempt_no가 낮은) run으로 retry해도 그 사람의 최댓값 다음 번호를 쓴다."""
     old_run = _make_run(db_session, status="done", attempt_no=1, category="음식점")
     _make_region(db_session, old_run, radius_m=1000)
     _make_run(db_session, status="done", attempt_no=10, category="카페")  # 같은 사람의 최신 run
 
-    with pytest.raises(AppError) as exc_info:
-        flows.retry_run(
-            db_session, run_id=str(old_run.id),
-            place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts(),
-        )
-    assert exc_info.value.code == "RETRY_LIMIT"
+    updated = flows.retry_run(
+        db_session, run_id=str(old_run.id), place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts(),
+    )
+    assert updated.attempt_no == 11
 
 
-# ---------- #558 — 시도 상한 10회, 추천 가능 아님 제거 ----------
+# ---------- #558 — 시도 번호(상한은 #949에서 없앴다), 추천 가능 아님 제거 ----------
 
 def _try_create(db_session, user_id):
     return flows.create_run(db_session, map_id="map_1", category="카페", requested_by=user_id, evidence_planner=PLANNER)
 
 
-def test_create_run_allows_tenth_attempt_and_blocks_eleventh_without_touching_others(db_session):
+def test_create_run_keeps_numbering_past_ten_without_touching_others(db_session):
     _make_members(db_session, user_ids=["user_1", "user_2"])
     pin = _make_pin(db_session, category="카페")
     _react(db_session, pin, user_id="user_1", type="like")
@@ -1658,20 +1633,16 @@ def test_create_run_allows_tenth_attempt_and_blocks_eleventh_without_touching_ot
     _make_run(db_session, requested_by="user_1", category="음식점", attempt_no=9)
     _make_run(db_session, requested_by="user_2", category="음식점", attempt_no=10)
 
-    assert _try_create(db_session, "user_1").attempt_no == 10   # 9회까지 한 사람의 10번째는 통과
-    with pytest.raises(AppError) as exc_info:                   # 이제 10회를 채웠으니 다음은 429
-        _try_create(db_session, "user_1")
-    assert exc_info.value.code == "RETRY_LIMIT"
-    assert exc_info.value.detail == {"attempt_no": 10, "attempt_limit": 10}
-    with pytest.raises(AppError):                               # user_2는 자기 10회로 막힘
-        _try_create(db_session, "user_2")
+    assert _try_create(db_session, "user_1").attempt_no == 10
+    assert _try_create(db_session, "user_1").attempt_no == 11   # 옛 상한(10)을 넘어도 429가 아니다(#949)
+    assert _try_create(db_session, "user_2").attempt_no == 11   # 사람마다 따로 센다
 
 
-def test_other_members_attempts_do_not_count_toward_my_limit(db_session):
+def test_other_members_attempts_do_not_count_toward_my_numbering(db_session):
     _make_members(db_session, user_ids=["user_1", "user_2"])
     pin = _make_pin(db_session, category="카페")
     _react(db_session, pin, user_id="user_2", type="like")
-    _make_run(db_session, requested_by="user_1", category="음식점", attempt_no=10)  # 팀 합산 상한은 없다
+    _make_run(db_session, requested_by="user_1", category="음식점", attempt_no=10)  # 번호는 팀 합산이 아니다
 
     assert _try_create(db_session, "user_2").attempt_no == 1
 
@@ -2513,9 +2484,10 @@ def _run_threads(target, count=2):
         t.join()
 
 
-def test_concurrent_creates_do_not_share_an_attempt_number_or_pass_the_limit(test_engine, monkeypatch):
-    """9회를 쓴 요청자에게 다른 요청 둘이 동시에 온다 — 둘 다 모델 앞 검사(9)를 통과하지만 횟수 잠금 뒤 다시 읽으므로
-    하나만 10회째가 되고 다른 하나는 RETRY_LIMIT이다(전엔 둘 다 attempt_no 10으로 만들어졌다)."""
+def test_concurrent_creates_do_not_share_an_attempt_number(test_engine, monkeypatch):
+    """9회를 쓴 요청자에게 다른 요청 둘이 동시에 온다 — 횟수 잠금 뒤 다시 읽으므로 둘이 같은 attempt_no를 쓰지 않는다(#811).
+    상한이 없어져(#949) 둘 다 만들어지고, 크레딧은 run마다 한 번씩 빠진다."""
+    from credits.models import CreditAccount, CreditLedger
     from recommend.ports import Circle
 
     Session = sessionmaker(bind=test_engine)
@@ -2534,7 +2506,7 @@ def test_concurrent_creates_do_not_share_an_attempt_number_or_pass_the_limit(tes
 
     def reactions(db, **kw):
         try:
-            sync.wait(timeout=5)   # 둘 다 첫 상한 검사를 통과한 뒤에 쓰기로 넘어간다
+            sync.wait(timeout=5)   # 둘 다 같은 최댓값(9)을 볼 수 있는 자리까지 온 뒤에 쓰기로 넘어간다
         except threading.BrokenBarrierError:
             pass
         return []
@@ -2558,15 +2530,20 @@ def test_concurrent_creates_do_not_share_an_attempt_number_or_pass_the_limit(tes
 
     verify = Session()
     try:
-        assert sorted(results) == ["RETRY_LIMIT", "ok"]
+        assert results == ["ok", "ok"]
         numbers = sorted(verify.execute(select(RecommendRun.attempt_no).where(
             RecommendRun.map_id == map_id, RecommendRun.requested_by == user)).scalars().all())
-        assert numbers == [core.ATTEMPT_LIMIT - 1, core.ATTEMPT_LIMIT]
+        assert numbers == [core.ATTEMPT_LIMIT - 1, core.ATTEMPT_LIMIT, core.ATTEMPT_LIMIT + 1]
+        spends = verify.execute(select(CreditLedger.delta).where(
+            CreditLedger.user_id == user, CreditLedger.reason == "spend")).scalars().all()
+        assert spends == [-1, -1]
     finally:
         ids = verify.execute(select(RecommendRun.id).where(RecommendRun.map_id == map_id)).scalars().all()
         verify.execute(delete(Region).where(Region.run_id.in_(ids)))
         verify.execute(delete(EvidenceLineRow).where(EvidenceLineRow.run_id.in_(ids)))
         verify.execute(delete(RecommendRun).where(RecommendRun.id.in_(ids)))
+        verify.execute(delete(CreditLedger).where(CreditLedger.user_id == user))
+        verify.execute(delete(CreditAccount).where(CreditAccount.user_id == user))
         verify.commit()
         verify.close()
 

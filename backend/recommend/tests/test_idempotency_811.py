@@ -10,6 +10,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import sessionmaker
 
 from common.errors import AppError
+from credits.models import CreditAccount, CreditLedger
 from llm.schemas import EvidenceLine as PlannedLine
 from recommend import api, core, flows, service
 from recommend.models import EvidenceLine as EvidenceLineRow
@@ -108,6 +109,8 @@ def env(test_engine, monkeypatch):
     cleanup.execute(delete(Region).where(Region.run_id.in_(run_ids)))
     cleanup.execute(delete(EvidenceLineRow).where(EvidenceLineRow.run_id.in_(run_ids)))
     cleanup.execute(delete(RecommendRun).where(RecommendRun.id.in_(run_ids)))
+    cleanup.execute(delete(CreditLedger).where(CreditLedger.user_id.in_([USER, *OTHER_USERS])))   # run 저장과 함께 커밋된 차감(#949)
+    cleanup.execute(delete(CreditAccount).where(CreditAccount.user_id.in_([USER, *OTHER_USERS])))
     cleanup.commit()
     cleanup.close()
 
@@ -115,6 +118,13 @@ def env(test_engine, monkeypatch):
 def _count(Session, model, *conditions):
     with Session() as db:
         return db.execute(select(func.count()).select_from(model).where(*conditions)).scalar_one()
+
+
+def _spent_runs(Session, user=USER) -> list[str]:
+    """그 사람의 추천 차감 원장(#949). ref_id = recommend_run:<run_id>."""
+    with Session() as db:
+        return list(db.execute(select(CreditLedger.ref_id).where(
+            CreditLedger.user_id == user, CreditLedger.reason == "spend")).scalars())
 
 
 def test_same_key_twice_reuses_the_run_and_calls_the_model_once(env):
@@ -127,6 +137,7 @@ def test_same_key_twice_reuses_the_run_and_calls_the_model_once(env):
     assert _count(Session, RecommendRun, RecommendRun.map_id == "idem_map_a") == 1
     with Session() as db:   # 시도 횟수도 한 번만 썼다
         assert service.max_attempt_no_for_requester(db, map_id="idem_map_a", requested_by=USER) == 1
+    assert _spent_runs(Session) == [f"recommend_run:{first}"]   # 재전송은 _create_run을 다시 타지 않아 차감도 한 번(#949)
 
 
 def test_reuse_returns_the_current_state_of_the_run_not_a_copy_of_the_first_response(env):
@@ -191,9 +202,11 @@ def test_model_failure_releases_the_key_so_the_same_key_can_retry(env):
     assert failed.value.code == "RECOMMEND_FAILED"
     assert _count(Session, IdempotencyKey, IdempotencyKey.requested_by == USER) == 0
     assert _count(Session, RecommendRun, RecommendRun.map_id == "idem_map_g") == 0   # run도 횟수도 없다
+    assert _spent_runs(Session) == []   # 모델 실패면 차감도 없다(차감은 run 저장과 같은 트랜잭션)
     run_id = create(planner, map_id="idem_map_g")
     assert planner.calls == 2
     assert _count(Session, RecommendRun, RecommendRun.id == run_id) == 1
+    assert _spent_runs(Session) == [f"recommend_run:{run_id}"]
 
 
 def test_expired_reservation_is_taken_over_and_the_late_finisher_cannot_save(env):
@@ -222,6 +235,7 @@ def test_expired_reservation_is_taken_over_and_the_late_finisher_cannot_save(env
     with Session() as db:
         key = db.execute(select(IdempotencyKey).where(IdempotencyKey.requested_by == USER)).scalar_one()
     assert key.run_id == taker_run and key.attempt == 2
+    assert _spent_runs(Session) == [f"recommend_run:{taker_run}"]   # 거절된 늦은 쪽의 차감은 run과 함께 롤백됐다
 
 
 def test_no_key_keeps_the_old_behavior(env):
