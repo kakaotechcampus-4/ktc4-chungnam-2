@@ -11,7 +11,7 @@
 - 가격표와 지급량 — `constants.py` 한 곳(`INITIAL_CREDITS`, `PRICES`, `REVIEW_REWARD`)
 - 게스트 판정 — `auth.api.guest_user_ids` 한 곳. 부르는 쪽이 `is_guest`를 넘기지 않는다
 - `GET /credits/me`
-- `api.py`: `check_can_spend`, `charge`, `refund`, `grant_review`, `get_balance`, `delete_by_user`, `reassign_user`
+- `api.py`: `check_can_spend`, `charge`, `refund`, `grant_review`, `get_balance`, `reject_guest`, `delete_by_user`, `reassign_user`
 - 탈퇴 때는 남기고 7일 정리(`auth.service.purge_withdrawn_user`)에서 지운다 — 되살리면 잔액이 그대로다(#948)
 
 ## 하지 않는 것

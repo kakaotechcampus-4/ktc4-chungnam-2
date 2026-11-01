@@ -30,10 +30,6 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/maps/{mapId}/events/me"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/places/external-search"): "서버 구현 전(#903) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
-    ("GET", "/pins/{pinId}/reviews"): "서버 구현 전(#951) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
-    ("PUT", "/pins/{pinId}/reviews/me"): "서버 구현 전(#951) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
-    ("DELETE", "/pins/{pinId}/reviews/me"): "서버 구현 전(#951) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
-    ("POST", "/reviews/{reviewId}/reports"): "서버 구현 전(#951) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
     ("POST", "/auth/qa-login"): "스테이징 전용 — 테스트 앱에 없다(#788), staging 설정 앱으로 auth 테스트가 본다(#789)",
 }
 
@@ -460,6 +456,54 @@ def test_credits_responses_match_the_openapi_spec(clients, db_session):
     denied = guest.get("/credits/me")
     assert denied.status_code == 403 and denied.json()["code"] == "GUEST_NOT_ALLOWED"
     assert _Checked(TestClient(a._c.app), problems).get("/credits/me").status_code == 401
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
+def test_reviews_responses_match_the_openapi_spec(clients, pin_body, db_session):
+    """장소 후기(#951) — 빈 목록(평균 null)과 후기 있는 목록(mine), 저장 200(첫 저장·수정), 지우기 204, 신고 204, 그리고
+    에러 봉투(실시간 핀·별점·커서 422, 게스트 403, 내 후기 신고 422, 없는 후기·지운 뒤 다시 지우기 404, 로그인 없음 401)."""
+    from fastapi.testclient import TestClient
+
+    from auth.testing import create_guest
+    from maps.models import Membership
+
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "성수", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+    pin_id = a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-kalguksu")).json()["id"]
+    live_id = a.post(f"/maps/{map_id}/pins", json={"source": "live", "category": "음식점", "kakao_place_id": "kakao:951",
+                                                     "search_query": "성수 곱창"}).json()["id"]
+
+    assert a.get(f"/pins/{pin_id}/reviews").json()["summary"]["average_rating"] is None
+    first = a.put(f"/pins/{pin_id}/reviews/me", json={"rating": 5, "body": "칼국수가 진해요"})
+    assert first.status_code == 200 and first.json()["credited"] > 0
+    assert a.put(f"/pins/{pin_id}/reviews/me", json={"rating": 4, "body": "다시 가도 좋아요"}).json()["credited"] == 0
+    theirs = b.put(f"/pins/{pin_id}/reviews/me", json={"rating": 3, "body": "줄이 길어요"}).json()["review"]["id"]
+    page = a.get(f"/pins/{pin_id}/reviews")
+    assert page.status_code == 200 and page.json()["mine"]["id"] == first.json()["review"]["id"]
+
+    assert a.get(f"/pins/{live_id}/reviews").json()["code"] == "PLACE_NOT_SUPPORTED"
+    assert a.put(f"/pins/{live_id}/reviews/me", json={"rating": 5, "body": "x"}).status_code == 422
+    assert a.put(f"/pins/{pin_id}/reviews/me", json={"rating": 6, "body": "x"}).status_code == 422
+    assert a.get(f"/pins/{pin_id}/reviews", params={"cursor": "nope"}).status_code == 422
+
+    assert a.post(f"/reviews/{theirs}/reports").status_code == 204
+    assert a.post(f"/reviews/{first.json()['review']['id']}/reports").status_code == 422
+    assert a.post(f"/reviews/{uuid.uuid4()}/reports").status_code == 404
+
+    create_guest(db_session, "guest_r")
+    db_session.add(Membership(map_id=map_id, user_id="guest_r", role="member"))
+    db_session.commit()
+    guest = _Checked(TestClient(a._c.app, cookies=session_cookie("guest_r")), problems)
+    assert guest.put(f"/pins/{pin_id}/reviews/me", json={"rating": 5, "body": "x"}).json()["code"] == "GUEST_NOT_ALLOWED"
+    assert guest.post(f"/reviews/{theirs}/reports").status_code == 403
+
+    assert a.delete(f"/pins/{pin_id}/reviews/me").status_code == 204
+    assert a.delete(f"/pins/{pin_id}/reviews/me").status_code == 404
+    assert _Checked(TestClient(a._c.app), problems).get(f"/pins/{pin_id}/reviews").status_code == 401
 
     unique = list(dict.fromkeys(problems))
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)

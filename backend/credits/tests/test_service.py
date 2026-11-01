@@ -164,6 +164,17 @@ def test_guest_is_403_with_initial_credits_and_gets_no_account(db_session, guest
     assert _account(db_session, guest) is None
 
 
+def test_reject_guest_is_403_for_guest_and_passes_member_without_writing(db_session, guest, user):
+    """reviews가 후기 쓰기·신고 전에 부르는 게스트 거절(#951). initial_credits는 여기서만 정해진다."""
+    with pytest.raises(AppError) as exc:
+        api.reject_guest(db_session, user_id=guest)
+    api.reject_guest(db_session, user_id=user)
+
+    assert (exc.value.code, exc.value.status) == ("GUEST_NOT_ALLOWED", 403)
+    assert exc.value.detail == {"initial_credits": INITIAL_CREDITS}
+    assert _account(db_session, guest) is None and _account(db_session, user) is None
+
+
 def test_guest_review_reward_is_zero_without_account(db_session, guest):
     assert api.grant_review(db_session, user_id=guest, place_id="p1") == 0
     assert _account(db_session, guest) is None
