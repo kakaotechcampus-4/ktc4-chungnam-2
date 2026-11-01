@@ -5,16 +5,20 @@
 """
 
 import csv
+import io
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.engine import make_url
 
 from agent import label_sample, tools
 from agent.models import AgentRun, AgentSuggestion
 from agent.tests.test_flows_model import AGAINST_TEXT, LIKE_TEXT, FakeGateway, _split_map, good_split, observe
 from agent.tests.world import World, fake_places, real_now
+from common import database, settings as settings_module
 from places import api as places_api
 
 LIVE_QUERY = "망원동비밀검색어국수"
@@ -120,3 +124,73 @@ def test_only_local_db(url, local):
 def test_refuses_csv_inside_repo(tmp_path):
     assert label_sample.inside_repo(label_sample.REPO_ROOT / "backend" / "labels.csv")
     assert not label_sample.inside_repo(tmp_path / "labels.csv")
+
+
+def test_repo_check_is_skipped_without_git(tmp_path):
+    """이미지 안에는 .git이 없다 — REPO_ROOT가 /가 되어도 모든 경로를 막지 않는다(#1072 후속)."""
+    root = tmp_path / "app"
+    root.mkdir()
+    assert not label_sample.inside_repo(root / "labels.csv", root)
+    (root / ".git").mkdir()
+    assert label_sample.inside_repo(root / "labels.csv", root)
+
+
+# ---------------------------------------------------------------- 스테이징 허용(#1072 후속, 명세 21.5)
+
+LOCAL = "postgresql://pingo:pw@localhost:5432/pingo"
+REMOTE = "postgresql://pingo:pw@db.example.rds.amazonaws.com:5432/pingo"
+
+
+@pytest.mark.parametrize("url, staging, environment, allowed", [
+    (REMOTE, True, "staging", True),     # 스테이징 컨테이너 안에서 --staging
+    (REMOTE, True, "prod", False),       # 운영에서는 --staging을 줘도 거부
+    (LOCAL, True, "prod", False),
+    (REMOTE, True, "dev", False),
+    (REMOTE, False, "staging", False),   # 선택지 없이 로컬이 아니면 거부
+    (REMOTE, False, "prod", False),
+    (LOCAL, False, "dev", True),
+])
+def test_db_refusal(url, staging, environment, allowed):
+    assert (label_sample.db_refusal(url, staging=staging, environment=environment) is None) is allowed
+
+
+@pytest.fixture()
+def run_main(factory, monkeypatch):
+    """main을 테스트 DB로 돌린다. url과 environment로 DB 주소와 PINGO_ENV를 바꾼다."""
+    monkeypatch.setattr(database, "SessionLocal", factory)
+
+    def run(argv, *, url=LOCAL, environment="dev"):
+        monkeypatch.setattr(database, "engine", SimpleNamespace(url=make_url(url)))
+        monkeypatch.setattr(settings_module, "settings", SimpleNamespace(environment=environment))
+        return label_sample.main(argv)
+    return run
+
+
+@pytest.mark.parametrize("argv, url, environment, code", [
+    (["--staging"], REMOTE, "staging", 0),
+    (["--staging"], REMOTE, "prod", 2),
+    ([], REMOTE, "staging", 2),
+    ([], REMOTE, "dev", 2),
+])
+def test_main_allows_remote_db_only_with_staging(run_main, tmp_path, argv, url, environment, code):
+    out = tmp_path / "labels.csv"
+
+    assert run_main([*argv, "--out", str(out)], url=url, environment=environment) == code
+    assert out.exists() is (code == 0)
+
+
+def test_out_dash_writes_csv_to_stdout(world, run_main, capsys):
+    """--out -면 CSV는 표준 출력, 안내 문구는 표준 오류로 간다 — 리다이렉트한 파일에 CSV만 남는다."""
+    split_map, _, _, _ = _split_map(world)
+    assert observe(world, split_map, FakeGateway(diagnose=good_split)) == "suggested"
+
+    assert run_main(["--out", "-"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out.startswith(label_sample.BOM)
+    rows = list(csv.reader(io.StringIO(captured.out.removeprefix(label_sample.BOM))))
+    assert tuple(rows[0]) == label_sample.HEADER
+    assert "split" in [r[1] for r in rows[1:]]
+    for secret in (AGAINST_TEXT, LIKE_TEXT, world.prefix):
+        assert secret not in captured.out
+    assert "저장: 표준 출력" in captured.err
