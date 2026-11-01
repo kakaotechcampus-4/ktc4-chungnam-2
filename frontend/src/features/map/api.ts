@@ -1,6 +1,6 @@
 import { api } from '@/api'
 
-import type { PinCategory, PinCreateRequest, PinDto, PinResolveRequest, ReactionDto, ReactionRequest, ReasonChip, FilterCounts } from './model'
+import type { PinCategory, PinCreateRequest, PinDto, PinResolveRequest, PinUpdateRequest, ReactionDto, ReactionRequest, ReasonChip, FilterCounts } from './model'
 
 export const fetchPins = (mapId: string) => api<PinDto[]>(`/maps/${mapId}/pins`)
 
@@ -16,6 +16,10 @@ export const createPin = (mapId: string, body: PinCreateRequest) =>
 
 /** 핀 삭제 — 구성원 누구나 남의 핀도 지울 수 있다(기획안 #25). */
 export const deletePin = (pinId: string) => api<void>(`/pins/${pinId}`, { method: 'DELETE' })
+
+/** 핀 메모·분류 수정(찍은 사람만, #466). 분류는 반응이 없는 실시간 핀만 바꿀 수 있다. */
+export const updatePin = (pinId: string, body: PinUpdateRequest) =>
+  api<PinDto>(`/pins/${pinId}`, { method: 'PATCH', body: JSON.stringify(body) })
 
 /** 실시간 핀 승격(#501). 짝이 없으면 핀이 그대로(source=live) 온다. */
 export const resolvePin = (pinId: string, body: PinResolveRequest) =>

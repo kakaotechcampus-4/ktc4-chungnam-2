@@ -747,3 +747,70 @@ def test_period_ending_during_a_slow_wait_is_rechecked_each_round(db_session, cl
         service.restore_account(db_session, claims=claims)
 
     assert exc.value.code == "NO_PENDING_LOGIN" and db_session.get(User, "slow").deleted_at is not None
+
+
+
+# ---- 정리의 처리 상한과 잠금 뒤 재확인 ----
+
+def test_purge_withdrawn_accounts_stops_at_the_limit_and_the_next_run_continues(db_session):
+    now = datetime.now(timezone.utc)
+    for n in range(5):
+        create_kakao_user(db_session, f"b{n}", provider_user_id=f"bk{n}", display_name="영희", deleted_at=now - timedelta(days=8))
+
+    counts = [service.purge_withdrawn_accounts(db_session, now=now, limit=2) for _ in range(4)]
+
+    assert counts == [2, 2, 1, 0]
+    assert db_session.query(UserIdentity).count() == 0
+
+
+def test_purge_withdrawn_accounts_default_limit_is_the_batch_constant():
+    import inspect
+
+    assert inspect.signature(service.purge_withdrawn_accounts).parameters["limit"].default == core.WITHDRAWN_PURGE_BATCH == 500
+
+
+def test_account_purged_by_another_run_while_waiting_for_the_lock_is_skipped_and_not_counted(test_engine):
+    """두 DB 연결 — 후보 조회 뒤 한 계정의 잠금을 앞선 실행이 쥐고 먼저 정리·커밋하면, 기다린 쪽은 다시 읽고 그 계정을 건너뛴다."""
+    import threading
+    import time
+
+    from sqlalchemy import text
+    from sqlalchemy.orm import sessionmaker
+
+    factory = sessionmaker(bind=test_engine)
+    now = datetime.now(timezone.utc)
+    ids = ("xa1", "xa2")
+    with factory() as setup:
+        for user_id in ids:
+            create_kakao_user(setup, user_id, provider_user_id=f"k_{user_id}", display_name="영희", deleted_at=now - timedelta(days=8))
+        setup.commit()
+    result: dict = {}
+
+    def second_run():
+        with factory() as db:
+            result["count"] = service.purge_withdrawn_accounts(db, now=now)
+            db.commit()
+
+    first = factory()
+    try:
+        # 앞선 실행: 첫 계정의 잠금을 쥔다(후보 조회는 이미 끝났다고 보고, 정리는 아직)
+        service._lock_login_identity(first, provider="kakao", provider_user_id="k_xa1")
+        worker = threading.Thread(target=second_run)
+        worker.start()
+        for _ in range(100):
+            waiting = first.execute(text("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted")).scalar()
+            if waiting:
+                break
+            time.sleep(0.05)
+        assert waiting, "두 번째 실행이 잠금을 기다리지 않았다"
+        service.purge_withdrawn_user(first, user_id="xa1")   # 앞선 실행이 먼저 정리하고 커밋한다
+        first.commit()
+        worker.join(timeout=10)
+    finally:
+        first.close()
+        with factory() as cleanup:
+            cleanup.execute(text("DELETE FROM user_identities WHERE user_id IN ('xa1', 'xa2')"))
+            cleanup.execute(text("DELETE FROM users WHERE id IN ('xa1', 'xa2')"))
+            cleanup.commit()
+
+    assert result == {"count": 1}   # xa1은 앞선 실행이 정리했다 — 건너뛰고 세지 않는다. xa2만 센다

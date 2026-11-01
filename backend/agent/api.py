@@ -42,8 +42,7 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     테이블 이름 → 행 수를 돌려준다. 충돌하면 카카오 쪽이 이긴다. 멱등, 같은 id면 아무것도 안 한다. 커밋하지 않는다.
 
     - agent_suggestion_views.user_id: 같은 제안을 둘 다 열람했으면 게스트 것을 지운다(`agent_suggestion_views_dropped`)
-    - agent_course_runs.requested_by: 같은 지도에 둘 다 진행 중이면 게스트의 진행 중 run을 지운다(`agent_course_runs_dropped`).
-      하루 상한은 합치지 않는다
+    - agent_course_runs.requested_by: 같은 지도에 둘 다 진행 중이면 게스트의 진행 중 run을 지운다(`agent_course_runs_dropped`)
     - agent_settings.updated_by, agent_suggestions.resolved_by: 그대로 바꾼다
 
     순서 제약은 없다(agent는 다른 모듈 테이블을 읽지 않는다)."""

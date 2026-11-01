@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import delete, exists, func, or_, select, text, update
+from sqlalchemy import and_, delete, exists, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ from auth import core
 from auth.models import IDENTITY_CONSTRAINT, User, UserIdentity
 from common.errors import AppError
 from common.settings import settings
+from credits import api as credits_api
 from maps.schemas import Map
 from feedback import api as feedback_api
 from llm import api as llm_api
@@ -28,6 +29,7 @@ from maps import api as maps_api
 from notifications import api as notifications_api
 from pins import api as pins_api
 from recommend import api as recommend_api
+from reviews import api as reviews_api
 from shortlist import api as shortlist_api
 
 logger = logging.getLogger(__name__)
@@ -252,6 +254,7 @@ def revoke_sessions(db: Session, *, user_id: str) -> None:
 
 # 탈퇴(#155)에서 그 사람의 기록을 다루는 모듈 단계. (모듈 이름, fn(db, user_id, map_ids)) — 이 순서로 부른다.
 # 합치기(MERGE_STEPS)와 짝이다: 여기 있는 모듈은 합치기에도 있어야 한다(#694, test_withdraw_steps_are_also_merge_steps).
+# credits는 여기 없다 — 탈퇴 때 남기고 7일 정리(purge_withdrawn_user)에서 지운다(#948).
 # 모듈 api는 호출 시점에 찾는다(테스트가 모듈 함수를 바꿔 끼운다).
 WITHDRAW_STEPS = (
     # 방장인 지도는 후임에게 넘기고, 넘길 사람이 없으면 지도를 삭제한다(#369 10번). 탈퇴자의 멤버십 행은 남는다(#245)
@@ -265,6 +268,8 @@ WITHDRAW_STEPS = (
     ("notifications", lambda db, user_id, map_ids: notifications_api.delete_by_user(db, user_id=user_id)),
     # 모델 호출 사용량(#870)은 행을 남기고 user_id만 비운다 — 비용 통계는 사람 없이도 쓴다
     ("llm", lambda db, user_id, map_ids: llm_api.anonymize_by_user(db, user_id=user_id)),
+    # 장소 후기(#951)는 남기고(작성자 이름은 원래 보이지 않는다) 그 사람이 한 신고만 지운다
+    ("reviews", lambda db, user_id, map_ids: reviews_api.delete_reports_by_user(db, user_id=user_id)),
 )
 
 
@@ -311,8 +316,12 @@ def join_as_guest(db: Session, *, display_name: str, invite_token: str) -> tuple
 def purge_withdrawn_user(db: Session, *, user_id: str) -> None:
     """탈퇴한 계정의 개인정보를 지운다(#855) — 로그인 수단 삭제, 표시 이름을 「탈퇴한 구성원」으로, last_seen_at·
     guest_invite_token 비움. users 행은 남긴다(다른 모듈의 created_by가 이 id를 가리킨다). 멱등이다.
-    다른 모듈에 복사된 이름의 비식별화는 따로 부른다(데이터 모델 「탈퇴 후 7일 정리 대상」). 커밋하지 않는다."""
+    다른 모듈에 복사된 이름의 비식별화는 따로 부른다(데이터 모델 「탈퇴 후 7일 정리 대상」). 커밋하지 않는다.
+    크레딧 계정·원장도 여기서 지운다 — 탈퇴 때 지우면 되살린 계정이 처음 지급량으로 다시 시작한다(#948,
+    docs/credits-reviews.md 6절). 「새 계정으로 시작」(restart_account)도 이 함수를 거친다."""
     withdrawn = select(User.id).where(User.id == user_id, User.deleted_at.is_not(None))   # 살아 있는 계정은 건드리지 않는다
+    if db.execute(withdrawn).first() is not None:
+        credits_api.delete_by_user(db, user_id=user_id)
     db.execute(delete(UserIdentity).where(UserIdentity.user_id.in_(withdrawn)))
     db.execute(
         update(User).where(User.id.in_(withdrawn)).values(
@@ -322,22 +331,25 @@ def purge_withdrawn_user(db: Session, *, user_id: str) -> None:
     db.expire_all()   # 벌크 UPDATE·DELETE는 이미 읽은 행을 갱신하지 않는다
 
 
-def purge_withdrawn_accounts(db: Session, *, now: datetime) -> int:
+def purge_withdrawn_accounts(db: Session, *, now: datetime, limit: int = core.WITHDRAWN_PURGE_BATCH) -> int:
     """복구 기간(7일)이 지난 탈퇴 계정 중 아직 개인정보가 남은 것을 정리하고(purge_withdrawn_user) 정리한 수를 돌려준다(#855).
     개인정보가 남았다는 건 로그인 수단이 있거나, 이름이 「탈퇴한 구성원」이 아니거나, last_seen_at·guest_invite_token이 남았다는 뜻이라
-    이미 정리된 껍데기는 건너뛴다 — 여러 번 돌려도 같은 결과다. 게스트도 같다. 계정마다 그 로그인 수단의 잠금을 잡고 다시 읽어,
-    그 사이 복구·정리된 계정은 건너뛴다(콜백·선택과 같은 잠금). 커밋하지 않는다."""
-    carries_data = or_(
-        exists().where(UserIdentity.user_id == User.id),
-        User.display_name != core.WITHDRAWN_DISPLAY_NAME,
-        User.last_seen_at.is_not(None),
-        User.guest_invite_token.is_not(None),
+    이미 정리된 껍데기는 건너뛴다 — 여러 번 돌려도 같은 결과다. 게스트도 같다.
+
+    한 번에 limit개까지만 읽고 처리한다 — 계정마다 로그인 수단의 advisory 잠금(콜백·선택과 같은 잠금)을 트랜잭션 끝까지 쥐므로
+    대량이면 잠금이 쌓인다. 정리된 계정은 다음 실행의 후보에서 빠지므로 나머지는 다음 실행이 이어 처리한다. 잠금을 잡고 다시 읽어
+    그 사이 되살려졌거나 다른 실행이 먼저 정리한 계정(개인정보가 이미 없다)은 건너뛰고 세지 않는다. 커밋하지 않는다."""
+    cutoff = now - timedelta(days=core.ACCOUNT_RESTORE_DAYS)
+    due = and_(
+        User.deleted_at.is_not(None), User.deleted_at <= cutoff,
+        or_(
+            exists().where(UserIdentity.user_id == User.id),
+            User.display_name != core.WITHDRAWN_DISPLAY_NAME,
+            User.last_seen_at.is_not(None),
+            User.guest_invite_token.is_not(None),
+        ),
     )
-    candidates = db.execute(
-        select(User.id).where(
-            User.deleted_at.is_not(None), User.deleted_at <= now - timedelta(days=core.ACCOUNT_RESTORE_DAYS), carries_data,
-        ).order_by(User.id)
-    ).scalars().all()
+    candidates = db.execute(select(User.id).where(due).order_by(User.id).limit(limit)).scalars().all()
     purged = 0
     for user_id in candidates:
         identities = db.execute(
@@ -346,9 +358,12 @@ def purge_withdrawn_accounts(db: Session, *, now: datetime) -> int:
         ).all()
         for provider, provider_user_id in identities:
             _lock_login_identity(db, provider=provider, provider_user_id=provider_user_id)
-        row = db.execute(select(User).where(User.id == user_id).execution_options(populate_existing=True)).scalar_one()
-        if row.deleted_at is None or core.is_restorable(row.deleted_at, now):
-            continue   # 그 사이 되살려졌다
+        # 잠금 뒤 같은 조건으로 다시 읽는다 — 그 사이 복구·정리됐으면 행이 나오지 않는다
+        still_due = db.execute(
+            select(User.id).where(User.id == user_id, due).execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if still_due is None:
+            continue
         purge_withdrawn_user(db, user_id=user_id)
         purged += 1
     if purged:
@@ -473,6 +488,8 @@ MERGE_STEPS = (
     ("feedback", feedback_api),
     ("agent", agent_api),
     ("llm", llm_api),
+    ("credits", credits_api),   # 옮기지 않고 게스트 쪽 행을 지운다(초기 지급 두 번 방지)
+    ("reviews", reviews_api),   # 옮길 것이 없다 — 게스트는 후기·신고를 못 쓴다(멱등 no-op)
 )
 
 

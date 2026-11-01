@@ -4,6 +4,8 @@ import { isPlaced, type Pin } from '@/features/map/model'
 
 export type ShortlistItemDto = components['schemas']['ShortlistItem']
 export type RouteDto = components['schemas']['Route']
+/** 내보내기 형식(#471). 기본 이름에도 쓴다. */
+export type ExportFormat = 'txt' | 'csv'
 
 /** 동선 순서 표시는 확정 리스트 순서(visit_order)를 따른다. 정하지 않은 항목은 뒤로. */
 export function sortItems(items: ShortlistItemDto[]): ShortlistItemDto[] {

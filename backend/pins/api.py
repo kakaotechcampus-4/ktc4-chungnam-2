@@ -175,6 +175,18 @@ def get_pin_for_viewer(db: Session, *, pin_id: str, viewer_id: str) -> PinRef:
     return _pin_ref(service.get_pin_or_404(db, pin_id))
 
 
+def has_place_pin_on_member_map(db: Session, *, user_id: str, place_id: str) -> bool:
+    """reviews의 후기 신고(#951)가 쓴다 — 이 사용자가 구성원인 지도에 이 place_id를 가리키는 핀(삭제되지 않은)이 있는가. 읽기 전용.
+    후기는 장소에 붙어 여러 지도의 핀에서 보이므로, 「그 후기를 볼 수 있는 사람」은 이 질문으로 정해진다(docs/credits-reviews.md 7절).
+    구성원 판정은 핀 경로의 authz guard와 같은 DbMembershipGateway.get_role이다(삭제된 지도는 구성원 없음). 그 장소 핀이 있는
+    지도마다 묻고 처음 맞는 곳에서 멈춘다 — pins는 maps 테이블을 조인하지 않는다(모듈 경계)."""
+    map_ids = db.execute(
+        select(PinRow.map_id).where(PinRow.place_id == place_id, PinRow.deleted_at.is_(None)).distinct()
+    ).scalars().all()
+    gateway = maps_api.DbMembershipGateway(db)
+    return any(gateway.get_role(map_id, user_id) is not None for map_id in map_ids)
+
+
 def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, principal: Principal) -> Pin:
     """shortlist(ShortlistItem.pin 조립)가 쓰는 완성형 핀 조회 — get_pin_for_viewer와 같은
     존재·가시성 규칙 위에 lat/lng·반응 집계·permissions까지 채운다. 다른 모듈이 pins·reactions

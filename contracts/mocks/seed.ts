@@ -138,10 +138,28 @@ export function buildBaseState(): StoreState {
     ],
     notificationPrefs: {},
     feedback: [],
+    credits: { [ME_USER_ID]: SEED_BALANCE }, // 시드의 나는 이미 크레딧을 10 썼다 — 상한(30) 아래라 후기 보상이 보인다. 가득 찬 상태는 시나리오 credits-full
+    creditRefs: [],
+    ...buildReviewsState(pins[pinFood1]),
+  };
+}
+
+/** 장소 후기(#432) — 첫 음식점 핀의 장소에 다른 사람 후기 둘. 다른 지도 사람이 쓴 것일 수 있어 작성자 이름은 없다 */
+function buildReviewsState(pin: StoreState["pins"][string]): Pick<StoreState, "reviews" | "reviewReports"> {
+  const key = `${pin.place_name}@${pin.lat},${pin.lng}`;
+  const review = (id: string, user_id: string, rating: number, body: string, at: string) => ({ id, place_key: key, user_id, rating, body, created_at: at, updated_at: at, hidden: false });
+  return {
+    reviews: {
+      review_1: review("review_1", "u_2", 5, "국물이 진하고 아침 일찍 열어요", minutesAgo(60 * 24 * 3)),
+      review_2: review("review_2", "u_other_map", 4, "줄이 길지만 회전이 빨라요", minutesAgo(60 * 24)),
+    },
+    reviewReports: {},
   };
 }
 
 export const SEED_MAP_ID = "map_1";
+/** 시드의 내 크레딧 잔액(#981). 새 계정(행 없음)은 30이고, 시드의 나는 이미 10을 쓴 상태다. */
+export const SEED_BALANCE = 20;
 export const SEED_PIN_FOOD_1 = "pin_1";
 export const SEED_PIN_FOOD_2 = "pin_2";
 export const SEED_PIN_CAFE_1 = "pin_3";

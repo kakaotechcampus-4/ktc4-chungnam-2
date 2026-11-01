@@ -78,12 +78,9 @@ export function evidenceLimitMessage(err: unknown): string | null {
 export function runErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.code === 'NOT_READY') return '아직 의견이 달린 핀이 없어요. 핀에 ♥나 반대 의견을 남기면 다시 눌러 주세요'
-    if (err.code === 'RETRY_LIMIT') {
-      const limit = typeof err.detail?.attempt_limit === 'number' ? err.detail.attempt_limit : DEFAULT_ATTEMPT_LIMIT
-      return `${limit}번까지만 찾습니다`
-    }
     if (err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 근거를 고치거나 직접 찍어 보세요'
-    if (err.code === 'RECOMMEND_FAILED') return '의견을 조건으로 정리하지 못했어요. 남긴 의견은 그대로 있으니 잠시 뒤 다시 눌러 주세요'
+    if (err.code === 'RECOMMEND_FAILED') return '추천을 끝내지 못했어요. 남긴 의견은 그대로 있고 크레딧도 쓰지 않았어요. 잠시 뒤 다시 눌러 주세요'
+    if (err.code === 'REQUEST_IN_PROGRESS') return '아직 추천을 찾고 있어요. 잠시 뒤 다시 눌러 주세요'
   }
   return '추천을 시작하지 못했어요'
 }
@@ -102,9 +99,14 @@ export function noResultsExternalSearch(err: unknown): ExternalSearchDto | undef
   return err.detail?.external_search as ExternalSearchDto | undefined
 }
 
-/** 추천 횟수 상한(#31, 지도 안 구성원 각자·카테고리 무관). 서버 값(attempt_limit)을 쓰고, 없으면(구버전 서버) 이 값. */
-const DEFAULT_ATTEMPT_LIMIT = 10
-export const attemptLimit = (run: RecommendRunDto) => run.attempt_limit ?? DEFAULT_ATTEMPT_LIMIT
+/** 0곳(404 NO_RESULTS)에도 그 결과에 쓴 조건 스냅숏이 detail 에 온다(#846). 구버전 서버는 없다. */
+export function noResultsApplied(err: unknown): { lines?: EvidenceLineDto[]; none?: boolean } {
+  if (!(err instanceof ApiError) || err.code !== 'NO_RESULTS') return {}
+  return {
+    lines: err.detail?.applied_evidence as EvidenceLineDto[] | undefined,
+    none: err.detail?.no_applied_conditions as boolean | undefined,
+  }
+}
 
 /**
  * 원한 조건(wants=true 근거 줄)인데 추천한 곳 모두가 못 맞췄거나(passed=false) 모르는(needs_check) 조건의 이름.

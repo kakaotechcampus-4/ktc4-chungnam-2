@@ -3,6 +3,8 @@ import { Calendar } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 
 import ErrorText from '@/ErrorText'
+import CreditGate from '@/features/credits/CreditGate'
+import { creditBlock } from '@/features/credits/model'
 import { usePinsQuery } from '@/features/map/queries'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { useMapQuery } from '@/features/maps/queries'
@@ -51,6 +53,7 @@ export default function CourseSheet({ mapId, onClose }: { mapId: string; onClose
       ) : (
         <Entry
           mapId={mapId}
+          onClose={onClose}
           onRun={(id, fromInProgress = false) => {
             setRedirected(fromInProgress)
             setRunId(id)
@@ -61,7 +64,7 @@ export default function CourseSheet({ mapId, onClose }: { mapId: string; onClose
   )
 }
 
-function Entry({ mapId, onRun }: { mapId: string; onRun: (runId: string, fromInProgress?: boolean) => void }) {
+function Entry({ mapId, onClose, onRun }: { mapId: string; onClose: () => void; onRun: (runId: string, fromInProgress?: boolean) => void }) {
   const [text, setText] = useState('')
   const queryClient = useQueryClient()
   const map = useMapQuery(mapId).data
@@ -112,11 +115,16 @@ function Entry({ mapId, onRun }: { mapId: string; onRun: (runId: string, fromInP
         <TextField id="course-request" value={text} onChange={setText} maxLength={REQUEST_MAX} placeholder="둘째 날은 실내 위주로" clearLabel="요청 지우기" />
       </div>
       {known && <p role="alert" className="text-sm text-warn-text">{known}</p>}
-      {create.error && !known && !inProgressRunId(create.error) && <ErrorText message="코스를 요청하지 못했어요" error={create.error} />}
+      {create.error && !known && !inProgressRunId(create.error) && !creditBlock(create.error) && (
+        <ErrorText message="코스를 요청하지 못했어요" error={create.error} />
+      )}
       <div className="space-y-1">
-        <button type="submit" disabled={create.isPending} className="btn-primary btn-lg w-full">
-          {create.isPending ? '요청하는 중…' : '코스 짜기'}
-        </button>
+        {/* 게스트는 버튼 대신 카카오 안내, 잔액이 모자라면 후기 안내(확정 탭은 이 시트 아래라 시트만 닫는다). */}
+        <CreditGate feature="course" mapId={mapId} error={create.error} onReview={onClose}>
+          <button type="submit" disabled={create.isPending} className="btn-primary btn-lg w-full">
+            {create.isPending ? '요청하는 중…' : '코스 짜기'}
+          </button>
+        </CreditGate>
         {latest && (
           <div className="flex justify-center">
             <button type="button" onClick={openLatest} className="btn-link text-sm">

@@ -3,12 +3,13 @@ name: backend-test
 # 백엔드 전체 pytest(모듈 단위 + backend/integration). develop 필수 검사다(#278) — 실패하면 PR이 머지되지 않는다.
 # PR에서는 항상 시작하고, 관련 파일이 안 바뀌었으면 pytest job을 건너뛴다(건너뛴 job은 통과로 보고된다).
 # 테스트가 직접 읽어 코드와 대조하는 문서(constraints.md, permissions.md, errors.md, api-spec.yaml)와 목 서버(contracts/mocks, #280)도 관련 파일이다.
+# 배포 파일(deploy/)도 관련 파일이다 — 운영과 CI·로컬의 Python, PostGIS 버전을 대조한다(test_env_parity, #916).
 on:
   pull_request:
     branches: [develop, main]
   push:
     branches: [develop]
-    paths: ["backend/**", "docs/api-spec.yaml", "docs/constraints.md", "docs/permissions.md", "docs/errors.md", "contracts/mocks/**"]
+    paths: ["backend/**", "docs/api-spec.yaml", "docs/constraints.md", "docs/permissions.md", "docs/errors.md", "contracts/mocks/**", "deploy/**", ".github/workflows/backend-test.yml"]
 
 jobs:
   changes:
@@ -30,6 +31,7 @@ jobs:
               - "docs/errors.md"
               - "contracts/mocks/**"
               - ".github/workflows/backend-test.yml"
+              - "deploy/**"
 
   pytest:
     needs: changes
@@ -37,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgis/postgis:16-3.4
+        image: postgis/postgis:17-3.5   # 운영(RDS PostgreSQL 17, PostGIS 3.5)과 같게(#916). 한쪽만 바꾸면 test_env_parity가 실패한다
         env:
           POSTGRES_USER: pingo
           POSTGRES_PASSWORD: pingo
@@ -56,7 +58,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version-file: backend/.python-version   # 운영 이미지(backend/Dockerfile)와 같은 버전(#916)
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt

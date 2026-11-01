@@ -1,71 +1,36 @@
 import { useState } from 'react'
-import { Ban, Check, ChevronLeft, X } from 'lucide-react'
+import { ChevronLeft } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { TAB_BAR_H } from '@/features/shell/layout'
 import { usePanelBack } from '@/features/shell/panelBack'
-import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import ConfirmDialog from '@/ui/ConfirmDialog'
-import Notice from '@/ui/Notice'
 import Pingo from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
-import TextField from '@/ui/TextField'
 
 import { useAiStore } from './aiStore'
-import {
-  evidenceLabel,
-  evidenceLimitMessage,
-  groupEvidence,
-  notEnforcedNote,
-  type EvidenceLineDto,
-  type RecommendRunDto,
-  type RegionDto,
-} from './model'
-import { useConfirmRegionsMutation, useEvidenceQuery, useExecuteRunMutation, usePatchEvidenceMutation } from './queries'
-
-/** 「+」 글 한 줄 길이(docs/api-spec.yaml EvidencePatchRequest.add[].text, 앞뒤 공백을 뗀 뒤 1~140자). */
-const ADD_TEXT_MAX = 140
+import EvidenceGroups from './EvidenceGroups'
+import type { RecommendRunDto, RegionDto } from './model'
+import { useConfirmRegionsMutation, useEvidenceQuery, useExecuteRunMutation } from './queries'
 
 /**
- * 근거 확인(Figma 6절, 최종기획안 5-5). 모델이 사유를 어떻게 읽었는지 보여 주고 사람이 고치게 한다.
- * - 꼭 지켜야 하는 조건: 구성원별 줄. 내 것만 × 로 뺀다(빼기 전에 한 번 묻는다)
- * - 가능하면 맞춰주세요: 해시태그로 합친다. 내 몫이 든 태그에만 ×
- * - 지금까지 나온 의견에서: 원문 인용
- * - 이번 추천에 쓰이지 않는 조건: 추천이 거르거나 점수에 쓰지 않는 줄과 그 이유(#742). 알러지처럼 키가 없는 줄이 여기 온다
- * 제약을 AI가 임의로 완화하지 않는다(가드레일 4) — 빼는 건 언제나 사람이다.
+ * 지역 확인 대기(awaiting_region_confirm) 전용 화면. 추천은 결과부터 보여 주고 조건은 결과 화면에서 고친다(#845) —
+ * 이 화면은 사람이 쓴 반경 사유끼리 안 겹쳐 실행 전에 물어야 할 때만 남는다(5-6-1, v1에선 도달하지 않는다).
+ * 조건 목록·×·＋ 는 결과 화면의 조건 카드와 같은 부품(EvidenceGroups)이다.
  */
 export default function EvidenceScreen({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   const evidence = useEvidenceQuery(run.id)
-  const patch = usePatchEvidenceMutation(run.id)
   const confirm = useConfirmRegionsMutation(run.id)
   const execute = useExecuteRunMutation(mapId)
   const setRun = useAiStore((s) => s.setRun)
-  const [askRemove, setAskRemove] = useState<EvidenceLineDto | null>(null)
   const [conflict, setConflict] = useState<RegionDto[] | null>(null)
-  const [adding, setAdding] = useState(false)
-  const [draft, setDraft] = useState('')
-  const [addLimit, setAddLimit] = useState<string | null>(null)
-  const groups = groupEvidence(evidence.data ?? [])
   const busy = confirm.isPending
   const desktop = useIsDesktop()
   // 넓은 화면은 이 화면 머리의 ‹ 대신 패널 헤더 ‹ 가 추천을 그만두고 AI 추천으로 돌아간다.
   usePanelBack('AI 추천', () => setRun(mapId, undefined), desktop)
-
-  // 한 사유가 조건마다 줄로 나뉘어(#421) 같은 태그에 내 줄이 여럿일 수 있다 — 한 번에 같이 끄고 켠다.
-  function toggle(lines: EvidenceLineDto[], active: boolean) {
-    patch.mutate(
-      { toggle: lines.map((l) => ({ id: l.id, is_active: active })) },
-      {
-        onSuccess: () =>
-          !active &&
-          showToast(`‘${evidenceLabel(lines[0])}’을(를) 뺐어요`, { label: '되돌리기', onClick: () => toggle(lines, true) }),
-        onError: () => showToast('조건을 바꾸지 못했어요'),
-      },
-    )
-  }
 
   function start(acceptUnion: boolean) {
     confirm.mutate(acceptUnion, {
@@ -113,126 +78,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
         {evidence.isPending && <PingoLoading label="조건을 정리하는 중…" />}
         {evidence.error && <ErrorText message="조건을 불러오지 못했어요" error={evidence.error} />}
 
-        {groups.required.length > 0 && (
-          <section className="space-y-2">
-            <h2 className="text-sm font-bold text-ink-900">꼭 지켜야 하는 조건</h2>
-            {groups.required.map((line) => (
-              <div key={line.id} className="flex items-center gap-3 rounded-xl border border-ink-200 p-3">
-                {/* 묶음은 badge로 정한다 — 🚫에서 나왔다고 반대 조건인 게 아니고, ♥ 쪽 "꼭 ○○여야 해"도 여기 온다(#231·#427). */}
-                {line.wants === true ? (
-                  <Check size={16} className="shrink-0 text-[var(--good-line)]" aria-hidden="true" />
-                ) : (
-                  <Ban size={16} className="shrink-0 text-[var(--bad-line)]" aria-hidden="true" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="text-label text-ink-500">{line.author_display_name}</p>
-                  <p className="font-bold text-ink-900">{evidenceLabel(line)}</p>
-                </div>
-                {line.permissions.can_disable && (
-                  <button type="button" aria-label={`${evidenceLabel(line)} 빼기`} onClick={() => setAskRemove(line)} className="hit-44 text-ink-500">
-                    <X size={16} />
-                  </button>
-                )}
-              </div>
-            ))}
-          </section>
-        )}
-
-        {groups.preferred.length > 0 && (
-          <section className="space-y-2">
-            <h2 className="text-sm font-bold text-ink-900">가능하면 맞춰주세요</h2>
-            <div className="flex flex-wrap gap-2">
-              {/* 같은 태그는 하나로 합친다. 내 몫이 하나라도 있으면 × 를 붙인다. */}
-              {mergeTags(groups.preferred).map(({ tag, mine }) => (
-                <span key={tag} className="flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-sm font-semibold text-brand-700">
-                  #{tag}
-                  {mine.length > 0 && (
-                    <button type="button" aria-label={`#${tag} 빼기`} onClick={() => toggle(mine, false)} className="hit-44">
-                      <X size={14} />
-                    </button>
-                  )}
-                </span>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {groups.unused.length > 0 && (
-          <section className="space-y-2">
-            <h2 className="text-sm font-bold text-ink-900">이번 추천에 쓰이지 않는 조건</h2>
-            {groups.unused.map((line) => (
-              <div key={line.id} className="flex items-center gap-3 rounded-xl border border-ink-200 p-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-label text-ink-500">{line.author_display_name}</p>
-                  <p className="font-bold text-ink-900">{evidenceLabel(line)}</p>
-                  <p className="mt-0.5 text-sm text-ink-700">{notEnforcedNote(line)}</p>
-                </div>
-                {/* 거르지 않는 줄이라 빼기 전에 묻지 않는다 — 되돌리기 토스트만. */}
-                {line.permissions.can_disable && (
-                  <button type="button" aria-label={`${evidenceLabel(line)} 빼기`} onClick={() => toggle([line], false)} className="hit-44 text-ink-500">
-                    <X size={16} />
-                  </button>
-                )}
-              </div>
-            ))}
-          </section>
-        )}
-
-        {groups.reference.length > 0 && (
-          <section className="space-y-2">
-            <h2 className="text-sm font-bold text-ink-900">지금까지 나온 의견에서</h2>
-            {groups.reference.map((line) => (
-              <blockquote key={line.id} className="rounded-xl bg-ink-50 p-3 text-sm text-ink-700">
-                <p className="text-label text-ink-500">{line.author_display_name}</p>“{line.text}”
-              </blockquote>
-            ))}
-          </section>
-        )}
-
-        {addLimit ? (
-          <Notice>{addLimit}</Notice>
-        ) : adding ? (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              const text = draft.trim()
-              if (!text) return
-              patch.mutate({ add: [{ text }] }, {
-                  onSuccess: () => {
-                    setDraft('')
-                    setAdding(false)
-                  },
-                  onError: (err) => {
-                    // 상한(409 EVIDENCE_LIMIT)이면 입력을 닫고 이유를 남긴다. 숫자는 응답 detail.limit 에서(#720).
-                    const limit = evidenceLimitMessage(err)
-                    if (!limit) return showToast('조건을 더하지 못했어요')
-                    setAddLimit(limit)
-                    setAdding(false)
-                  },
-                })
-            }}
-            className="flex items-center gap-2"
-          >
-            <div className="min-w-0 flex-1">
-              <TextField
-                value={draft}
-                onChange={setDraft}
-                maxLength={ADD_TEXT_MAX}
-                autoFocus
-                label="조건 더하기"
-                clearLabel="조건 지우기"
-                placeholder="예: 비 오면 실내로 가고 싶어요"
-              />
-            </div>
-            <button type="submit" disabled={patch.isPending || !draft.trim()} className="btn-link shrink-0 text-sm">
-              더하기
-            </button>
-          </form>
-        ) : (
-          <button type="button" onClick={() => setAdding(true)} className="btn-link mx-auto flex text-sm">
-            조건 더하기
-          </button>
-        )}
+        {evidence.data && <EvidenceGroups runId={run.id} lines={evidence.data} />}
 
         {confirm.error && !(confirm.error instanceof ApiError && confirm.error.code === 'REGION_CONFLICT') && (
           <ErrorText message="지역을 확인하지 못했어요" error={confirm.error} />
@@ -250,21 +96,6 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
         </button>
       </div>
 
-      {askRemove && (
-        <ConfirmDialog
-          title="꼭 지켜야 하는 조건을 뺄까요?"
-          body={`‘${evidenceLabel(askRemove)}’을(를) 빼면 이번 추천에서 이 조건으로 거르지 않아요.`}
-          note="내가 쓴 조건만 뺄 수 있어요. 다른 구성원의 조건은 그대로 남아요."
-          cancel="그대로 두기"
-          ok="빼기"
-          danger
-          onCancel={() => setAskRemove(null)}
-          onOk={() => {
-            toggle([askRemove], false)
-            setAskRemove(null)
-          }}
-        />
-      )}
       {conflict && (
         <ConfirmDialog
           title="두 조건을 동시에 만족하는 곳이 없어요"
@@ -287,16 +118,4 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
       )}
     </div>
   )
-}
-
-/** 같은 태그는 하나로 합친다. mine = 그 태그에 든 내 줄(뺄 수 있는 줄) 전부. */
-function mergeTags(lines: EvidenceLineDto[]) {
-  const tags = new Map<string, EvidenceLineDto[]>()
-  for (const line of lines) {
-    const tag = evidenceLabel(line)
-    const mine = tags.get(tag) ?? []
-    if (line.permissions.can_disable) mine.push(line)
-    tags.set(tag, mine)
-  }
-  return [...tags].map(([tag, mine]) => ({ tag, mine }))
 }
