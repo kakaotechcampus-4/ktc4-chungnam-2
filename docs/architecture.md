@@ -318,12 +318,16 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 | `count_curated(category, areas) -> int` | recommend(readiness의 `curated_nearby`) | 원들 안의 영업 중 정예(`curated`) 장소 수(#799). 원 처리는 `search_nearby_own`과 같고 쿼리 한 번이다 |
 | `place_link(place: PlaceInfo) -> str \| None` | recommend(결과 카드), pins(핀 상세) | 「카카오맵에서 보기」 링크(#798, #799). 기록된 카카오 장소 URL이 있으면 그것, 없으면 `{이름} {동네}` 카카오맵 검색 링크(동네가 없으면 이름만), 이름이 없으면 `None`. 카카오를 부르지 않는다 |
 | `neighborhood(address) -> str \| None`, `kakao_search_url(query) -> str` | recommend(지역 단위 검색어와 링크) | 동네는 주소의 시·군·구와 괄호 안 동(읍·면), 괄호가 없으면 시·군·구까지. 검색 링크 형식(`https://map.kakao.com/link/search/` + URL 인코딩)은 `places.core` 한 곳이다 — 다른 모듈은 이 글자를 다시 적지 않는다(`docs/constraints.md` 「카카오맵 검색 링크」) |
+| `sido(address) -> str \| None` | recommend(관광지 후보를 여행 지역 시·도 안으로, #1055·#1059) | 주소의 시·도를 **짧은 이름 하나로 정규화**해 돌려준다("서울특별시 …"와 "서울 …"은 같은 값, "경기도"·"강원특별자치도"·"강원도"도 각각 하나로, 2026 통합 "전남광주통합특별시"도 처리). 이름 표는 함수 설명에 둔다. 규칙은 `places.core`의 시·도 판정(`_SIDO_SHORT`·`_is_sido`, `neighborhood`가 쓰는 것) 한 곳이다. 못 찾으면 `None`. 순수 함수 |
+| `sido_at(lat, lng, *, db=None) -> str \| None` | recommend(여행 지역 중심이나 핀 중심의 시·도, #1059) | 좌표의 시·도. 방법은 places가 정한다(예: 가장 가까운 자체 DB 장소 주소의 `sido`). 못 정하면 `None`. **호출하는 쪽은 `None`이면 거르지 않는다**(모름을 실격으로 읽지 않는다, #1059 루트 결정) |
 | `get_hours(place_ids) -> dict[str, PlaceHours]` | places 안(`get_week_open_status`), 상세 표시 | `place_hours`의 `hours`·`closed_days`·`closed_note`·`hours_note`를 배치로 조회(#690). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용. 영업 여부 판정은 아래 두 함수를 쓴다 |
 | `get_week_open_status(place_ids) -> dict[str, dict[int, str]]` | recommend(「영업 종료 제거」), AI 코스(휴무 요일) | 장소별 요일 판정 `{0=월 … 6=일: open/closed/unknown}`(#747). place_hours를 배치로 읽는다. 행이 없는 장소는 키에서 뺀다(= 모름). 판정 규칙은 `places.core.day_open_status` 한 곳이다(`docs/constraints.md`「영업 중 판정」). 다른 모듈은 요일 이름, 시각 파싱, 자정 넘김을 다시 계산하지 않는다 |
 | `week_open_status(hours, closed_days) -> dict[int, str]` | AI 코스 평가 스크립트(원본 파일을 읽는 쪽) | 위와 같은 판정을 DB 없이 원본 칸에 적용하는 순수 함수(#747) |
 | `get_facts(place_ids) -> dict[str, list[FactLabel]]` | recommend(라벨) | `place_facts`의 `fact_key`·`value`·`confidence`를 그대로(없으면 빈 리스트). 호출하는 쪽이 `unknown_policy`를 적용한다 |
 
 - **`db` 선택 키워드 인자(#199에서 추가, 6개 함수 전부 `*, db: Session | None = None`)**: `db=db`를 넘기면 그 요청 트랜잭션에 참여한다(커밋은 호출한 쪽이 한다). **pins는 `record_kakao_match`를 반드시 `db=db`로 부른다** — 핀 생성과 같은 트랜잭션이어야 한다. 안 넘기면 places가 짧은 세션을 직접 열어 쓰고 닫는다(읽기 전용 호출은 충분하지만 호출마다 연결을 쓴다). `FakePlaces`도 같은 인자를 받는다.
+- **`maps.api.get_map_region_center(db, map_id) -> tuple[float, float] | None`**(#1059): 지도 여행 지역(`maps.region_center`)의 (lat, lng). 여행 지역을 안 고른 지도는 `None`이다. recommend는 이것이 있으면 `places.api.sido_at`으로 여행 지역의 시·도를 정하고, 없으면 기본 지역 중심(그 카테고리 의견 핀들의 중심)으로 정한다.
+- `sido`·`sido_at`은 `places.testing.FakePlaces`에도 같은 시그니처로 있다(recommend가 대역으로 테스트한다).
 - `place_id`는 문자열(`places.id`의 UUID). 타입은 `places/schemas.py`의 불변 dataclass: `PlaceHint`, `PlaceMatch`, `PlaceInfo`, `PlaceRef`, `FactLabel`.
 - **카카오 원자료는 이 함수들의 입출력 어디에도 없다.** `kakao_place_id`·`kakao_place_url`만 예외(저장 허용 범위).
 - `places.api`의 실시간 카카오 검색은 `search_by_name`(표시용) 하나만 남는다. 옛 `search_nearby`(카카오 실시간 후보 풀)·`resolve_place`·`get_raw_facts`·`call_counts`는 부르는 곳이 없어 지웠다(#190, #195, #773).

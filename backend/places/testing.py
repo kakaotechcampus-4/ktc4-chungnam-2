@@ -162,6 +162,16 @@ class FakePlaces:
         return [Candidate(r.place_id, r.name, r.lat, r.lng, r.category, r.kakao_place_id,
                           haversine_distance_m(lat, lng, r.lat, r.lng), r.address) for r in near]
 
+    def sido(self, address: str | None) -> str | None:
+        return core.sido(address)
+
+    def sido_at(self, lat: float, lng: float, *, db: Session | None = None) -> str | None:
+        # 실제 구현과 같은 규칙. 샘플 장소는 주소가 없어 None(= 모름)이다 — 시·도를 보려면 행에 address를 넣는다
+        from places.api import SIDO_AT_RADIUS_M
+
+        near = self.own_places_near(lat, lng, SIDO_AT_RADIUS_M, len(self.rows))
+        return next((v for v in (core.sido(c.address) for c in near) if v), None)
+
     def own_places_by_kakao_id(self, kakao_place_id: str, *, db: Session | None = None) -> list[Candidate]:
         return [self._candidate(r, None) for r in self.rows if r.status == "open" and r.kakao_place_id == kakao_place_id]
 
@@ -234,7 +244,7 @@ class FakePlaces:
         from places import api
 
         for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "count_curated", "get_facts", "get_hours",
-                     "get_week_open_status", "get_open_status_on_weekdays",
+                     "get_week_open_status", "get_open_status_on_weekdays", "sido", "sido_at",
                      "own_places_near", "own_places_by_kakao_id", "match_by_name_address", "match_address_candidates", "record_external_id", "purge_external_id_votes", "own_places_by_external_id"):
             monkeypatch.setattr(api, name, getattr(self, name))
         return self

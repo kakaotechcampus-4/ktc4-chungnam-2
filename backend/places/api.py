@@ -242,6 +242,25 @@ def neighborhood(address: str | None) -> str | None:
     return core.neighborhood(address)
 
 
+def sido(address: str | None) -> str | None:
+    """주소의 시·도를 짧은 이름 하나로("서울특별시 …"와 "서울 …"은 둘 다 "서울"). 못 찾으면 None. 순수 함수.
+    이름 표는 places.core.sido 설명에 있다 — 광주·전남은 2026 통합으로 "전남광주" 한 값이다(#1059)."""
+    return core.sido(address)
+
+
+SIDO_AT_RADIUS_M = 10_000.0   # sido_at이 장소를 찾는 반경. 이 안에 주소 있는 자체 DB 장소가 없으면 None
+_SIDO_AT_FETCH = 5            # 가장 가까운 곳의 주소가 비어도 다음 곳으로 정하도록 조금 더 읽는다
+
+
+def sido_at(lat: float, lng: float, *, db: Session | None = None) -> str | None:
+    """좌표의 시·도(sido와 같은 짧은 이름). 10km 안에서 가장 가까운 영업 중 자체 DB 장소 주소의 시·도로 정한다.
+    못 정하면 None — 부르는 쪽은 None이면 거르지 않는다(#1059). 읽기 전용, 좌표를 남기지 않는다."""
+    # ponytail: 경계 근처 좌표는 건너편 시·도 장소가 더 가까우면 그쪽으로 나온다. 행정 경계 폴리곤이 생기면 그것으로 바꾼다
+    with _session(db) as s:
+        rows = repository.find_nearby_own(s, lat, lng, SIDO_AT_RADIUS_M, _SIDO_AT_FETCH)
+    return next((v for v in (core.sido(r.address) for r in rows) if v), None)
+
+
 def kakao_search_url(query: str) -> str:
     """카카오맵 검색 링크 "https://map.kakao.com/link/search/" + URL 인코딩한 검색어. 이 형식을 다른 곳에서 다시 적지 않는다."""
     return core.kakao_search_url(query)
