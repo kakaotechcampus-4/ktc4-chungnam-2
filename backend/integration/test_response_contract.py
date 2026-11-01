@@ -213,7 +213,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     found = a.post("/places/from-link", json={"url": google_link})
     assert found.status_code == 200 and len(found.json()["matches"]) == 1
     assert a.post("/places/from-link", json={"url": "https://place.map.kakao.com/1234567"}).json()["needs_search_query"] is True
-    assert a.post("/places/from-link", json={"url": "https://naver.me/abc"}).status_code == 422   # LINK_NOT_SUPPORTED
+    assert a.post("/places/from-link", json={"url": "https://blog.naver.com/abc"}).status_code == 422   # LINK_NOT_SUPPORTED
     assert a.post("/places/from-link", json={"url": ""}).status_code == 422
 
     pin_ids = []
@@ -655,7 +655,7 @@ def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
 
     # 카톡 대화 링크 일괄 핀 찍기(#577) — 미리보기(이미 있음·지원 안 함·짝 없음, 일부 실패해도 200)와 일괄 생성(created·duplicate·rejected)
     preview = a.post(f"/maps/{map_id}/pins/link-preview", json={"urls": [
-        "https://place.map.kakao.com/555", "https://naver.me/abc", "https://place.map.kakao.com/1234567"]})
+        "https://place.map.kakao.com/555", "https://blog.naver.com/abc", "https://place.map.kakao.com/1234567"]})
     assert preview.status_code == 200, preview.text
     items = preview.json()["items"]
     assert [i["status"] for i in items] == ["ok", "error", "ok"] and items[1]["error_code"] == "LINK_NOT_SUPPORTED"
