@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from agent import deps, flows, tools
+from agent import constants, deps, flows, tools
 from agent.models import AgentCursor, AgentRun, AgentSuggestion
 from agent.schemas import AgentCallFailed, AgentReply, AgentUsage, DiagnosisOutput
 from agent.schemas import AgentSuggestion as AgentSuggestionSchema
@@ -525,6 +525,63 @@ def test_failure_after_saving_does_not_count_the_diagnosis_twice(world, monkeypa
     assert world.one(AgentSuggestion, map_id=map_id).status == "active"
     # 한 관찰에 지도 관찰 행과 error 행이 함께 있어도 예외로 끝난 관찰 하나로 센다 — 30분 뒤
     assert world.one(AgentCursor, map_id=map_id).next_check_at == world.now + timedelta(minutes=30)
+
+
+# ---------------------------------------------------------------- lease를 잃은 관찰의 모델 사용 (12.3, #1072)
+
+def _claim(world, at, map_id):
+    with world.factory() as db:
+        claim = next(c for c in flows.service.claim_maps(db, at, limit=1000).claims if c.map_id == map_id)
+        db.commit()
+    return claim
+
+
+def _steal_lease(world, map_id):
+    """lease가 만료된 뒤 다른 실행이 같은 지도를 잡는다(#812)."""
+    return _claim(world, world.now + timedelta(seconds=constants.LEASE_SEC + 1), map_id)
+
+
+def test_lease_lost_after_the_diagnosis_counts_toward_the_cap(world, factory):
+    """진단을 부른 뒤 저장 전에 lease를 잃으면 stale 행에 used_model=true와 그때까지의 사용량을 남긴다 — 그 호출도 지도
+    상한에 센다(12.3 「상한이 세는 것」, #1072)."""
+    map_id, _, _ = _stall_map(world)
+    first = _claim(world, world.now, map_id)
+    gateway = FakeGateway(
+        diagnose=good_stall,
+        on_call=lambda what: _steal_lease(world, map_id) if what == "diagnose_done" else None,
+        diagnosis_usage=AgentUsage(model=LUNA, prompt_version="diagnose-v2", tokens_in=900, tokens_out=200),
+    )
+    assert _model_runs_today(world, map_id) == 0
+
+    outcome = flows.observe_map(map_id, world.now, session_factory=world.factory, gateway=gateway, token=first.token)
+
+    assert outcome == "stale"
+    assert gateway.calls == ["diagnose"]
+    run = world.one(AgentRun, map_id=map_id)
+    assert (run.trigger, run.outcome, run.outcome_detail) == ("activity", "stale", {"reason": "lease_lost"})
+    assert run.used_model is True
+    assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v2", 900, 200)
+    assert [c["name"] for c in run.tool_calls] == ["get_readiness"]
+    assert world.rows(AgentSuggestion, map_id=map_id) == []
+    assert AGAINST_TEXT not in _dump_agent_rows(factory)
+    assert _model_runs_today(world, map_id) == 1
+
+
+def test_lease_lost_without_the_diagnosis_does_not_count(world):
+    """진단을 부르지 않은 관찰(코드 유형)이 lease를 잃으면 stale 행은 used_model=false 그대로다."""
+    map_id = world.gap_map()   # 코드 유형 신호 둘
+    world.event(map_id)
+    first = _claim(world, world.now, map_id)
+    _steal_lease(world, map_id)
+    gateway = FakeGateway()
+
+    outcome = flows.observe_map(map_id, world.now, session_factory=world.factory, gateway=gateway, token=first.token)
+
+    assert outcome == "stale"
+    assert gateway.calls == []
+    run = world.one(AgentRun, map_id=map_id)
+    assert (run.outcome, run.used_model, run.model, run.tokens_in, run.tool_calls) == ("stale", False, None, 0, [])
+    assert _model_runs_today(world, map_id) == 0
 
 
 def test_split_analysis_axis_names_come_from_recommend_labels(world):
