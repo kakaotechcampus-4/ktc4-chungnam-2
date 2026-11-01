@@ -11,14 +11,14 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from geoalchemy2 import Geography, Geometry, WKTElement
-from sqlalchemy import Float, and_, case, cast, false, func, literal, null, or_, select, union_all, update
+from sqlalchemy import Float, and_, case, cast, delete, false, func, literal, null, or_, select, union_all, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from places import matching
 from places.ingest import HoursRow, LabelRow, PlaceRow
 from places.matching import Candidate
-from places.models import Place, PlaceFact, PlaceHours
+from places.models import Place, PlaceExternalId, PlaceExternalIdVote, PlaceFact, PlaceHours
 from places.schemas import Area, FactLabel, PlaceHint, PlaceHours as PlaceHoursInfo, PlaceInfo, PlaceRef
 
 _CHUNK = 1000
@@ -343,6 +343,56 @@ def record_kakao_match(db: Session, place_id: str, kakao_place_id: str, kakao_pl
         return
     place.kakao_matched_at = func.now()
     db.flush()
+
+
+def upsert_external_id(db: Session, provider: str, external_id: str, place_id: str, source: str, voter_hash: str | None) -> None:
+    """번호표에 짝 하나를 기록한다(#1048). 같은 짝이 이미 있으면 그 행을 쓴다 — 'hint'는 'user' 행을 신뢰 행으로 올리고, 'user'는 표 한 장을
+    더한다(voter_hash당 한 표). 없는 place_id면 KeyError. 번호만 저장한다."""
+    pid = _uuid(place_id)
+    if db.get(Place, pid) is None:
+        raise KeyError(place_id)
+    values = {"provider": provider, "external_id": external_id, "place_id": pid, "source": source}
+    db.execute(pg_insert(PlaceExternalId).values(**values).on_conflict_do_nothing(constraint="uq_place_external_ids_pair"))
+    row = db.execute(select(PlaceExternalId).where(
+        PlaceExternalId.provider == provider, PlaceExternalId.external_id == external_id, PlaceExternalId.place_id == pid)).scalar_one()
+    if source == "hint" and row.source != "hint":
+        row.source = "hint"
+    if source == "user" and voter_hash:
+        db.execute(pg_insert(PlaceExternalIdVote).values(external_id_row=row.id, voter_hash=voter_hash)
+                   .on_conflict_do_nothing(index_elements=["external_id_row", "voter_hash"]))
+    db.flush()
+
+
+def external_id_rows(db: Session, provider: str, external_id: str) -> list[tuple[str, str, int]]:
+    """번호 하나의 번호표 행 [(place_id, source, 표 수)]."""
+    votes = func.count(PlaceExternalIdVote.voter_hash)
+    rows = db.execute(
+        select(PlaceExternalId.place_id, PlaceExternalId.source, votes)
+        .outerjoin(PlaceExternalIdVote, PlaceExternalIdVote.external_id_row == PlaceExternalId.id)
+        .where(PlaceExternalId.provider == provider, PlaceExternalId.external_id == external_id)
+        .group_by(PlaceExternalId.id, PlaceExternalId.place_id, PlaceExternalId.source)
+        .order_by(PlaceExternalId.id)
+    ).all()
+    return [(str(r[0]), r[1], int(r[2])) for r in rows]
+
+
+def purge_external_id_votes(db: Session, voter_hash: str) -> int:
+    """탈퇴한 사용자의 표를 지운다(#1048). 번호표 행은 공용 데이터라 남긴다. 지운 표 수."""
+    return db.execute(delete(PlaceExternalIdVote).where(PlaceExternalIdVote.voter_hash == voter_hash)).rowcount or 0
+
+
+def find_open_by_ids(db: Session, place_ids: Sequence[str]) -> list[Candidate]:
+    """주어진 id 중 영업 중인 음식점·카페·관광지(번호표가 가리키는 장소, #1048). 읽기 전용."""
+    ids = [u for u in (_uuid_or_none(p) for p in place_ids) if u is not None]
+    if not ids:
+        return []
+    lat, lng = _lat_lng()
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        .where(Place.id.in_(ids), Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES))
+        .order_by(Place.id)
+    ).all()
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
 
 
 def get_places(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceInfo]:
