@@ -23,7 +23,7 @@ from recommend.models import Candidate, Exclusion, RecommendRun, Region
 from recommend.models import EvidenceLine as EvidenceLineRow
 from places.schemas import FactLabel, PlaceInfo
 from recommend.deps import DevEvidencePlanGateway
-from recommend.ports import PlaceStub
+from recommend.ports import Circle, PlaceStub
 
 # ② 대역 — 테스트가 monkeypatch.setattr(PLANNER, "plan_evidence", ...)로 바꿔 끼운다(#219). 기본은 dev 통과 스텁.
 PLANNER = DevEvidencePlanGateway()
@@ -1648,13 +1648,13 @@ def test_other_members_attempts_do_not_count_toward_my_numbering(db_session):
     assert _try_create(db_session, "user_2").attempt_no == 1
 
 
-def test_execute_run_drops_not_recommendable_places_and_shows_funnel_step(db_session):
+def test_the_funnel_has_no_not_recommendable_stage_and_radius_counts_only_the_pool(db_session):
+    """후보 풀은 처음부터 정예 장소다(#913) — 깔때기에 「추천 가능 아님 제거」가 없고, 「반경 밖 제거」는 풀(정예) 중 반경 밖 수다."""
     run = _make_run(db_session, status="collecting_evidence", category="카페")
     _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
     places = [
         PlaceStub(place_id="ok_place", lat=35.0005, lng=129.0005),
-        PlaceStub(place_id="no_rec_a", lat=35.0005, lng=129.0006, can_recommend=False),
-        PlaceStub(place_id="no_rec_b", lat=35.0004, lng=129.0004, can_recommend=False),
+        PlaceStub(place_id="far_place", lat=40.0, lng=135.0),   # 풀(정예)에 있지만 반경 밖
     ]
 
     updated = flows.execute_run(
@@ -1663,21 +1663,39 @@ def test_execute_run_drops_not_recommendable_places_and_shows_funnel_step(db_ses
 
     assert [c.place_id for c in service.list_candidates(db_session, str(run.id))] == ["ok_place"]
     labels = [entry["label"] for entry in updated.last_funnel]
-    assert labels.index("추천 가능 아님 제거") == labels.index("영업 종료 제거") + 1
-    assert {e["label"]: e["removed_count"] for e in updated.last_funnel}["추천 가능 아님 제거"] == 2
+    assert "추천 가능 아님 제거" not in labels and labels == [label for _, label in core.FUNNEL_STAGES]
+    assert {e["label"]: e["removed_count"] for e in updated.last_funnel}["반경 밖 제거"] == 1
 
 
-def test_execute_run_with_only_not_recommendable_places_shows_zero_results(db_session):
+def test_an_empty_pool_shows_zero_results_without_relaxing_anything(db_session):
     run = _make_run(db_session, status="collecting_evidence", category="카페")
     _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
-    places = [PlaceStub(place_id="no_rec", lat=35.0005, lng=129.0005, can_recommend=False)]
 
     updated = flows.execute_run(
-        db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts(),
+        db_session, run_id=str(run.id), place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts(),
     )
 
     assert service.list_candidates(db_session, str(run.id)) == []   # 반경·기준을 완화해 채우지 않는다
-    assert {e["label"]: e["removed_count"] for e in updated.last_funnel}["추천 가능 아님 제거"] == 1
+    assert all(entry["removed_count"] == 0 for entry in updated.last_funnel)
+
+
+def test_the_real_gateway_asks_places_for_recommendable_places_only(monkeypatch):
+    """후보 풀의 정예 판정은 places 한 곳이다 — recommend는 recommendable_only=True를 넘기고 정예 여부를 다시 판정하지 않는다(#913)."""
+    from places.schemas import PlaceRef
+    from recommend import deps
+
+    seen = {}
+
+    def fake_search(category, areas, **kwargs):
+        seen.update(kwargs)
+        return [PlaceRef("p1", 35.0, 129.0)]
+
+    monkeypatch.setattr(deps.places_api, "search_nearby_own", fake_search)
+    monkeypatch.setattr(deps.places_api, "get_places", lambda ids, **kw: {})
+    stubs = deps.RealPlaceSearchGateway().search_nearby(
+        category="카페", circles=[Circle(anchor_lat=35.0, anchor_lng=129.0, radius_m=1000)],
+    )
+    assert seen["recommendable_only"] is True and [s.place_id for s in stubs] == ["p1"]
 
 
 # ---------- #569 — 실시간 핀이 가리키는 가게는 후보에서 뺀다 ----------

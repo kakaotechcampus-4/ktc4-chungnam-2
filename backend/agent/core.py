@@ -1492,7 +1492,8 @@ def render_summary(
 # 13번). 조건을 끄는 것은 사람이다(가드레일 4): 버튼은 근거 확인 화면과 반경 넓히기로만 이어진다.
 
 # recommend 깔때기의 단계 키(recommend.core.FUNNEL_STAGES, #751). 라벨 글자는 화면 문구라 보지 않는다. 사람이 바꿀 수 있는 세
-# 단계(반경 밖 제거, 실격 조건 제거, 이미 제안·거절됨)만 종류를 고르는 데 쓴다 — closed와 not_recommendable은 쓰지 않는다.
+# 단계(반경 밖 제거, 실격 조건 제거, 이미 제안·거절됨)만 종류를 고르는 데 쓴다 — closed는 쓰지 않는다. 「추천 가능 아님 제거」 단계는
+# #913에서 없앴다(후보 풀이 처음부터 정예 장소다). 그 전에 저장된 깔때기의 그 줄은 키가 없어(None) 여기서 걸러진다.
 # 탈락 수가 같으면 이 순서로 본다
 ADVICE_STAGES = ("radius", "disqualify", "excluded")
 # claim이 가리키는 읽기(agent_runs.tool_calls의 call_id). 시뮬레이션은 t2부터 매긴다(advice_simulations)

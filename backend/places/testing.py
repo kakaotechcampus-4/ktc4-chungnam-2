@@ -128,13 +128,15 @@ class FakePlaces:
     def get_week_open_status(self, place_ids: Sequence[str], *, db: Session | None = None) -> dict[str, dict[int, str]]:
         return {pid: core.week_open_status(h.hours, h.closed_days) for pid, h in self.get_hours(place_ids).items()}
 
-    def search_nearby_own(self, category: str, areas: Sequence[Area], *, db: Session | None = None) -> list[PlaceRef]:
+    def search_nearby_own(
+        self, category: str, areas: Sequence[Area], *, recommendable_only: bool = False, db: Session | None = None,
+    ) -> list[PlaceRef]:
         if category not in OWN_CATEGORIES:
             return []
         return [
             PlaceRef(r.place_id, r.lat, r.lng)
             for r in self.rows
-            if r.status == "open" and r.category == category
+            if r.status == "open" and r.category == category and (r.curated or not recommendable_only)
             and any(haversine_distance_m(a.lat, a.lng, r.lat, r.lng) <= a.radius_m for a in areas)
         ]
 
@@ -178,6 +180,12 @@ class FakePlaces:
 
     def place_id(self, key: str) -> str:
         return sample_id(key)
+
+    def curate_all(self) -> "FakePlaces":
+        """샘플 장소를 모두 정예로 지정한다 — 추천 후보 풀은 처음부터 정예 장소라(#913, search_nearby_own(recommendable_only=True)) 추천을
+        끝까지 돌리는 테스트는 장소가 후보가 될 수 있어야 한다. 샘플 기본값(정예 아님)은 readiness의 curated_nearby 0곳을 보는 테스트가 쓴다."""
+        self.rows = [replace(row, curated=True) for row in self.rows]
+        return self
 
     def install(self, monkeypatch) -> "FakePlaces":
         """places.api의 공개 함수(링크 해석용 2개 포함)를 이 대역으로 바꾼다(pytest monkeypatch)."""

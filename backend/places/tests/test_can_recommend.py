@@ -28,6 +28,19 @@ def test_search_nearby_own_carries_curated_as_can_recommend(db_session):
     assert refs[str(yes.id)].can_recommend is True and refs[str(no.id)].can_recommend is False
 
 
+def test_recommendable_only_returns_curated_places_and_the_default_returns_all(db_session):
+    """추천 후보 풀은 처음부터 정예 장소다(#913) — 정예 판정은 places의 SQL 한 곳이고, 정예 아닌 장소는 반경 안팎과 상관없이 안 나온다."""
+    yes = _place(db_session, "정예", curated=True, dlat=0.0001)
+    no_inside = _place(db_session, "비정예 반경 안", dlat=0.0002)
+    no_outside = _place(db_session, "비정예 반경 밖", dlat=0.05)   # 반경 500m 밖
+    area = [Area(LAT, LNG, 500)]
+    assert {r.place_id for r in api.search_nearby_own("음식점", area, recommendable_only=True, db=db_session)} == {str(yes.id)}
+    assert {r.place_id for r in api.search_nearby_own("음식점", area, db=db_session)} == {str(yes.id), str(no_inside.id)}   # 기본은 그대로
+    wide = [Area(LAT, LNG, 10000)]
+    assert {r.place_id for r in api.search_nearby_own("음식점", wide, recommendable_only=True, db=db_session)} == {str(yes.id)}
+    assert str(no_outside.id) not in {r.place_id for r in api.search_nearby_own("음식점", wide, recommendable_only=True, db=db_session)}
+
+
 def test_a_curated_change_is_seen_without_any_recompute(db_session):
     p = _place(db_session, "가게")
     area = [Area(LAT, LNG, 500)]

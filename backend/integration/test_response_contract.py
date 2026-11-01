@@ -778,10 +778,11 @@ def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions)
     assert not problems, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(problems)
 
 
-def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client):
+def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client, fake_places):
     """카카오맵 검색 링크(#798, #800) — readiness의 curated_nearby·external_search, 결과가 적을 때의 external_search, 결과 카드의
     place_url. 추천의 장소 Gateway를 실제 구현(places.api → FakePlaces)으로 꽂는다. FakePlaces 샘플은 정예도 주소도 없어
-    readiness는 0곳 + 링크(동네는 지도의 지역 이름), 결과는 지도에 없는 성수 음식점 1곳 + 링크다."""
+    readiness는 0곳 + 링크(동네는 지도의 지역 이름)다. 그 뒤 샘플을 정예로 지정하면(후보 풀은 정예 장소뿐, #913) 결과는 지도에 없는
+    성수 음식점 1곳 + 링크다."""
     from recommend import deps as recommend_deps
 
     app_client.app.dependency_overrides[recommend_deps.get_place_search_gateway] = lambda: recommend_deps.RealPlaceSearchGateway()
@@ -796,6 +797,7 @@ def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client
     assert readiness["음식점"]["curated_nearby"] == 0
     assert readiness["음식점"]["external_search"]["query"] == "성수동 맛집"
     assert "curated_nearby" not in readiness["카페"]   # 의견 핀이 없다
+    fake_places.curate_all()   # 이제부터 샘플 장소가 추천 후보 풀에 들어간다
 
     run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
     assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
