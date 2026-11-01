@@ -202,7 +202,7 @@ def find_candidates(db: Session, hint_lat: float, hint_lng: float, category: str
                func.ST_Distance(Place.geom, point).label("dist"))
         .where(Place.status == "open", Place.category == category,
                func.ST_DWithin(Place.geom, point, matching.MAX_RADIUS_M))
-        .order_by(func.ST_Distance(Place.geom, point))
+        .order_by(func.ST_Distance(Place.geom, point), Place.id)   # find_candidates_many와 같은 키 — 거리가 같으면 id로 갈라 상한 경계가 검색과 같다(#815)
         .limit(matching.MAX_CANDIDATES)
     ).all()
     rows = list(near)

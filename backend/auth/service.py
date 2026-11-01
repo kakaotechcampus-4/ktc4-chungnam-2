@@ -317,11 +317,13 @@ def purge_withdrawn_user(db: Session, *, user_id: str) -> None:
     """탈퇴한 계정의 개인정보를 지운다(#855) — 로그인 수단 삭제, 표시 이름을 「탈퇴한 구성원」으로, last_seen_at·
     guest_invite_token 비움. users 행은 남긴다(다른 모듈의 created_by가 이 id를 가리킨다). 멱등이다.
     다른 모듈에 복사된 이름의 비식별화는 따로 부른다(데이터 모델 「탈퇴 후 7일 정리 대상」). 커밋하지 않는다.
+    남의 알림에 복사된 이 사람의 이름도 여기서 「탈퇴한 구성원」으로 다시 만든다(notifications.api.anonymize_actor, #857).
     크레딧 계정·원장도 여기서 지운다 — 탈퇴 때 지우면 되살린 계정이 처음 지급량으로 다시 시작한다(#948,
     docs/credits-reviews.md 6절). 「새 계정으로 시작」(restart_account)도 이 함수를 거친다."""
     withdrawn = select(User.id).where(User.id == user_id, User.deleted_at.is_not(None))   # 살아 있는 계정은 건드리지 않는다
     if db.execute(withdrawn).first() is not None:
         credits_api.delete_by_user(db, user_id=user_id)
+        notifications_api.anonymize_actor(db, user_id=user_id)   # 남의 알림에 복사된 행위자 이름(#857)
     db.execute(delete(UserIdentity).where(UserIdentity.user_id.in_(withdrawn)))
     db.execute(
         update(User).where(User.id.in_(withdrawn)).values(
