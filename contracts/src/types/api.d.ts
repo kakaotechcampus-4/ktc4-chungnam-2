@@ -1466,6 +1466,7 @@ export interface paths {
          *     - `result.matches`가 있으면 그 장소로 `source: search` 핀(`bulk` 또는 `POST /maps/{mapId}/pins`). 없으면 구글 링크는 `result.name_hint`로 GET /places/search를 이어 가고, 카카오 링크는 `result.needs_search_query`(사용자가 이름을 입력해 `source: live`).
          *     - `already_pinned_pin_id`가 있으면 이미 지도에 있는 곳이다(자체 DB 핀이든 실시간 핀이든, #569와 같은 기준). 화면은 목록에서 빼고 "이미 있음"으로 보여 준다(가드레일 6).
          *     **상호명·주소 힌트(#946)**: 지도 앱 공유 글이 정확히 세 줄(상호명, 주소, 링크)일 때 화면이 읽은 상호명·주소를 `hints`로 같이 보낼 수 있다(`hints[i]`는 `urls[i]`의 힌트, 없으면 `null`). 링크가 자체 DB 장소로 이어지지 않을 때(`matches`가 비었거나 네이버 링크일 때) 서버가 **상호명 + 주소로 자체 DB 장소의 짝**을 찾는다. 규칙은 이미 있는 같은 가게 맞추기와 같다(이름 일치 점수, 주소가 어긋나지 않음, 모호하면 거절). 짝이 **하나로 확실할 때만** `matches`에 넣고 `matched_by: hint`로 표시한다. 체인점·동명 가게처럼 둘 이상이거나 주소가 어긋나면 지어내지 않고 `matches: []`로 둔다(가드레일 2). 네이버 링크는 **서버가 링크를 열지 않는다**(장소 번호뿐이라 해석 불가) — 힌트가 있을 때만 `provider: naver`, 상호명·주소로 짝을 찾고, 힌트가 없으면 지금처럼 `LINK_NOT_SUPPORTED`다. 상호명·주소는 응답에 되돌리지 않고(짝을 찾은 장소의 값만 나간다) 서버도 저장·로그하지 않는다.
+         *     **실제 공유 글 모양과 4단 해결(#1019·#1047·#1048)**: 네이버 지도(`[네이버지도]` 머리줄·상호명·주소·링크)와 카카오맵(`[카카오맵] 상호명`·주소·링크)은 공유 글에 상호명·주소가 같이 오므로 화면이 `hints`로 보낸다. 구글 공유 링크(`maps.app.goo.gl`)는 **좌표 없이 이름만** 담고(이름에 주소가 들어 있기도 하다 — 서버가 시·도로 시작하는 주소와 상호로 나눠 힌트 경로를 태운다), 카카오·네이버 링크는 번호뿐이다. 서버는 번호 → 번호표(`matched_by: external_id`) → 힌트(`matched_by: hint`) → 같은 주소 후보(`address_candidates`) 순으로 찾고, 서버가 **이름+주소로 스스로 확정한** 짝은 번호표에 캐시한다(지도·사용자에게 보이는 쓰기가 아니다 — 아래 「쓰기 없음」은 지도 기준). 그래도 없으면 화면이 카카오 키워드 검색으로 이어 간다(주소가 같은 결과 하나면 자동 선택, 아니면 후보 목록 — 자동 확정 금지).
          *     응답에 링크의 좌표·원문 URL을 싣지 않고 서버도 남기지 않는다. 지도 구성원 누구나(`pin.create`, 게스트 포함). 사용자당 URL 수 기준 호출 상한이 있다(초과 시 429 `RATE_LIMITED`, 기본 분당 60개).
          */
         post: {
@@ -4368,15 +4369,19 @@ export interface components {
         /** @description 링크에서 읽은 단서 (#474). 저장되지 않는다 */
         LinkParseResult: {
             /**
-             * @description naver는 link-preview에서 힌트(상호명·주소)와 함께 온 네이버 링크일 때만(#946) — 서버는 네이버 링크를 열지 않는다
+             * @description naver 링크는 서버가 단축 링크(`naver.me`)를 **한 번만 따라가** 장소 번호(`external_id`)를 읽는다(#1048) — 네이버 지도 페이지의 본문은 열지 않는다. 번호만으로는 이름·좌표를 모르므로 `matches`는 번호표(학습된 짝)나 힌트(상호명·주소, #946)로만 채워진다
              * @enum {string}
              */
             provider: "google" | "kakao" | "naver";
             /**
-             * @description matches를 어떻게 찾았는지(#946). link = 링크가 가리키는 장소(카카오 ID·구글 좌표와 이름), hint = 상호명·주소 힌트로 맞춘 짝. 화면이 「상호명·주소로 찾았어요」를 보일 때 쓴다. matches가 비었으면 없다
+             * @description matches를 어떻게 찾았는지(#946·#1048). link = 링크가 가리키는 장소(카카오 ID·구글 좌표와 이름), hint = 상호명·주소 힌트로 맞춘 짝, external_id = 이전에 확인된 카카오·네이버 장소 번호표(#1048). 화면이 「상호명·주소로 찾았어요」「이미 확인된 장소예요」를 보일 때 쓴다. matches가 비었으면 없다
              * @enum {string}
              */
-            matched_by?: "link" | "hint";
+            matched_by?: "link" | "hint" | "external_id";
+            /** @description 링크에서 읽은 카카오·네이버 장소 번호(#1048, 예 `naver:1412566798`, `kakao:909739262`). 화면이 핀을 만들 때 `PinCreateSearch.link_ref`로 그대로 돌려 보낸다. 구글 링크에는 없다. 번호만 담는다 — 이름·좌표·주소는 담지 않는다(카카오 약관, #53) */
+            external_id?: string;
+            /** @description (#1047) `matches`가 비었을 때, 힌트 주소와 **같은 도로명주소(건물번호까지)에 영업 중인 음식점·카페·관광지가 정확히 한 곳**이면 그 장소. 이름이 안 맞아도(인허가 법인명과 간판 상호가 다른 경우) 주소가 같다. **자동 확정이 아니다** — 화면은 「이 장소가 맞나요?」로 사람이 확인하게 하고 미리 체크하지 않는다(가드레일 2·4). 같은 주소에 둘 이상이면 비어 있다. 생략될 수 있다 */
+            address_candidates?: components["schemas"]["PlaceSearchResult"][];
             /** @description 구글 링크에 든 장소 이름(사용자가 붙인 링크의 값). 화면이 GET /places/search로 이어 가는 데 쓴다. 카카오 링크에는 없다 */
             name_hint?: string;
             /** @description 카카오 링크에서 뽑은 장소 ID(예 kakao:1234). 저장이 허용된 유일한 카카오 값 — live 핀의 kakao_place_id로 그대로 쓴다 */
@@ -4387,9 +4392,9 @@ export interface components {
             needs_search_query: boolean;
         };
         LinkPreviewRequest: {
-            /** @description 화면이 대화 텍스트에서 정규식으로 뽑은 지도 링크(구글맵·카카오맵, 힌트가 있으면 네이버 지도). 대화 원문은 보내지 않는다 */
+            /** @description 화면이 대화 텍스트에서 정규식으로 뽑은 지도 링크(구글맵·카카오맵·네이버 지도 — `naver.me`·`map.naver.com`·`m.place.naver.com`, #1048). 대화 원문은 보내지 않는다 */
             urls: string[];
-            /** @description (#946, 선택) `urls[i]`의 상호명·주소 힌트. 길이는 `urls`와 같거나 비어 있어야 하고(다르면 422), 힌트가 없는 항목은 null이다. 서버가 상호명 + 주소로 자체 DB 짝을 찾는 데만 쓰고 저장·로그하지 않는다 */
+            /** @description (#946, 선택) `urls[i]`의 상호명·주소 힌트 — 네이버·카카오 공유 글에서 읽은 것(구글은 이름만이라 보통 null). 길이는 `urls`와 같거나 비어 있어야 하고(다르면 422), 힌트가 없는 항목은 null이다. 서버가 상호명 + 주소로 자체 DB 짝을 찾는 데만 쓰고 저장·로그하지 않는다 */
             hints?: ({
                 /** @description 공유 글의 상호명 */
                 name?: string;
@@ -4489,6 +4494,12 @@ export interface components {
              * @enum {string}
              */
             source: "link" | "search" | "coordinate";
+            /** @description (#1048, 선택) 카톡 가져오기에서 사람이 고른 장소가 **어느 카카오·네이버 링크에서 왔는지**. `POST /maps/{mapId}/pins/link-preview` 응답의 `provider`·`external_id`를 그대로 돌려 보낸다. 서버가 "이 번호 = 이 장소" 표를 쌓는 데만 쓴다(서로 다른 사용자 2명이 같은 짝을 확인하면 다음부터 자동 매칭). 잘못 보내도 핀 생성은 막히지 않고 표에만 반영되지 않는다. 핀에 저장되지 않는다 */
+            link_ref?: {
+                /** @enum {string} */
+                provider: "kakao" | "naver";
+                external_id: string;
+            };
             /** @description v1에서는 받지 않음 — 보내면 422 (#147). v2 카톡 내보내기용으로 남겨 둔 필드 */
             link_url?: string;
             /** @description source=search의 **매칭 힌트** — GET /places/search 결과의 place_id(카카오 장소 ID)를 그대로. 저장하지 않는다 */
