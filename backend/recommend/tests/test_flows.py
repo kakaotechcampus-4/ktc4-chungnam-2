@@ -27,6 +27,7 @@ from recommend.ports import PlaceStub
 
 # ② 대역 — 테스트가 monkeypatch.setattr(PLANNER, "plan_evidence", ...)로 바꿔 끼운다(#219). 기본은 dev 통과 스텁.
 PLANNER = DevEvidencePlanGateway()
+OLD_ATTEMPT_LIMIT = 10   # 예전 추천 횟수 상한(#558). 상한은 크레딧으로 바뀌어 없다(#432, #949) — 넘어도 통과하는지 보려고 남긴다
 
 
 def _make_run(db_session, **overrides):
@@ -1647,11 +1648,6 @@ def test_other_members_attempts_do_not_count_toward_my_numbering(db_session):
     assert _try_create(db_session, "user_2").attempt_no == 1
 
 
-def test_run_history_carries_attempt_limit(db_session):
-    _make_run(db_session, attempt_no=3)
-    assert [h.attempt_limit for h in _history(db_session)] == [10]
-
-
 def test_execute_run_drops_not_recommendable_places_and_shows_funnel_step(db_session):
     run = _make_run(db_session, status="collecting_evidence", category="카페")
     _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
@@ -2495,7 +2491,7 @@ def test_concurrent_creates_do_not_share_an_attempt_number(test_engine, monkeypa
     setup = Session()
     old_run_id = uuid.uuid4()
     setup.add(RecommendRun(id=old_run_id, map_id=map_id, category="카페", requested_by=user, status="done",
-                           attempt_no=core.ATTEMPT_LIMIT - 1))
+                           attempt_no=OLD_ATTEMPT_LIMIT - 1))
     setup.commit()
     setup.close()
 
@@ -2533,7 +2529,7 @@ def test_concurrent_creates_do_not_share_an_attempt_number(test_engine, monkeypa
         assert results == ["ok", "ok"]
         numbers = sorted(verify.execute(select(RecommendRun.attempt_no).where(
             RecommendRun.map_id == map_id, RecommendRun.requested_by == user)).scalars().all())
-        assert numbers == [core.ATTEMPT_LIMIT - 1, core.ATTEMPT_LIMIT, core.ATTEMPT_LIMIT + 1]
+        assert numbers == [OLD_ATTEMPT_LIMIT - 1, OLD_ATTEMPT_LIMIT, OLD_ATTEMPT_LIMIT + 1]
         spends = verify.execute(select(CreditLedger.delta).where(
             CreditLedger.user_id == user, CreditLedger.reason == "spend")).scalars().all()
         assert spends == [-1, -1]

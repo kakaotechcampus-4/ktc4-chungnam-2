@@ -27,7 +27,6 @@
   모델(②) 전에 `credits.api.check_can_spend`, run INSERT와 같은 트랜잭션에서 `credits.api.charge`를 부른다. 가격 숫자는
   여기 적지 않는다(`credits/constants.py`). 「다시 찾기」·「근거 고치기」는 크레딧을 쓰지 않는다. 추천에는 환불 경로가 없다
   (실패하면 run과 차감이 함께 롤백된다). `attempt_no`와 `lock_requester_attempts`(#811)는 번호를 매기려고 남긴다.
-  `core.ATTEMPT_LIMIT`은 응답의 `attempt_limit`(폐지 예정)을 채우는 값으로만 남고 #954에서 지운다.
 
 ## 완료 정의
 
