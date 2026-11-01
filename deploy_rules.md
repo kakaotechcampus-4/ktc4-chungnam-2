@@ -160,6 +160,7 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 - `PINGO_ENV=staging`. 운영과 같은 기동 가드를 받는다(스텁 금지, CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`).
 - `SESSION_SECRET`은 운영과 다른 값이다. 스테이징에서 만든 세션 쿠키가 운영에서 통하지 않게 한다.
 - `QA_LOGIN_SECRET`이 있을 때만 `POST /auth/qa-login`이 붙는다(#789). 운영에는 이 값을 넣지 않는다. 넣으면 서버가 뜨지 않는다.
+- `CREDIT_AD_PROVIDER=fake`면 잔액 부족 안내에 「광고 보고 크레딧 받기」가 뜨고 테스트 광고 창(7초)을 연다(docs/credits-reviews.md 3.7, #1037). 비우면 버튼이 없다. 확인은 잔액이 크레딧 가격보다 적은 계정으로 한다. 운영에 `fake`를 넣으면 서버가 뜨지 않는다(#1038). 운영은 비워 두고, 실제 광고(`adsense`, `gpt`)는 화면에 그 제공자가 생긴 뒤 켠다(아직 없음).
 - DB는 운영과 나눈다. 운영 DB를 복사하지 않는다(실사용자 데이터, #53).
 - 값은 저장소나 채팅에 남기지 않는다.
 
