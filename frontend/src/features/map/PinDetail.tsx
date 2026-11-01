@@ -5,6 +5,8 @@ import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import type { MemberView } from '@/features/maps/model'
 import { useMeQuery } from '@/features/auth/queries'
+import { hasReviews } from '@/features/reviews/model'
+import PlaceReviews from '@/features/reviews/PlaceReviews'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation } from '@/features/shortlist/queries'
@@ -248,6 +250,14 @@ export function PinDetailBody({
         <ErrorText message="구성원 의견을 불러오지 못했어요" error={reactions.error} />
       ) : (
         reactions.data && <Opinions {...toOpinions(reactions.data, members, chips.data)} />
+      )}
+
+      {/* 장소 후기는 자체 DB 장소 핀에만(#953). 실시간 핀은 장소 정보가 없어 후기를 붙일 수 없다. */}
+      {hasReviews(pin) && (
+        <>
+          <div className="-mx-4 h-1.5 bg-ink-100" />
+          <PlaceReviews pin={pin} />
+        </>
       )}
 
       {pin.permissions.can_delete && <DeletePin pin={pin} mapId={mapId} onDone={onDone} />}
