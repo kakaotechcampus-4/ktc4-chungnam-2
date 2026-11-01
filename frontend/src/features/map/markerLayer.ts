@@ -1,5 +1,6 @@
 import { isDesktopNow } from '@/features/shell/useIsDesktop'
 
+import { fitPadding } from './camera'
 import { createPinMarkerElement, markSelected, setPinLabel, showPinLabel } from './pinMarker'
 import { isPlaced, participationRatio, type Pin, type PlacedPin } from './model'
 
@@ -8,7 +9,7 @@ export interface MarkerLayer {
   sync(pins: Pin[], memberCount: number): void
   /** 상세를 연 핀을 크게·맨 위로·이름과 함께 보여 준다. null 이면 해제. */
   select(pinId: string | null): void
-  /** 점(핀·검색 결과) 전체가 들어오도록 시야를 맞춘다. */
+  /** 점 전체가 들어오도록 시야를 바로 맞춘다(지도를 처음 열 때). */
   fit(points: { lat: number; lng: number }[]): void
   destroy(): void
 }
@@ -188,10 +189,9 @@ export function createMarkerLayer(
         placed += 1
       }
       if (placed === 0) return
-      // 넓은 화면은 지도 영역에 시트가 없다. 위는 칩, 오른쪽은 지도 버튼만 비킨다(#338).
-      if (isDesktopNow()) return map.setBounds(bounds, 64, 76, 32, 32)
-      // 위는 검색창·칩, 아래는 2단계 시트가 덮는다. 그 바깥에 핀이 오도록 여백을 둔다.
-      map.setBounds(bounds, 170, 64, Math.round(window.innerHeight * 0.62), 32)
+      // 지도를 처음 열 때만 쓴다 — 아직 본 화면이 없어서 바로 맞춘다. 그 뒤의 맞추기는 MapCanvas 가 나눠서 움직인다(#1026).
+      const pad = fitPadding(window.innerHeight, isDesktopNow())
+      map.setBounds(bounds, pad.top, pad.right, pad.bottom, pad.left)
     },
 
     destroy() {

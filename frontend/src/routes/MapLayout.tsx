@@ -281,7 +281,8 @@ export default function MapLayout() {
       const who = [pin.created_by_display_name, timeAgo(pin.created_at)].filter(Boolean).join(' · ')
       showToast(`가장 최근 핀 · ${pin.place_name ?? '이름 없는 핀'} (${who})`)
     } else {
-      map.fitPins(placed)
+      // 누른 사람이 원한 것이라 이미 다 보여도 맞춘다(#1026).
+      map.fitPins(placed, { force: true })
       showToast(`핀 ${placed.length}곳을 모두 보여 줘요`)
     }
     setActiveControl(key)
