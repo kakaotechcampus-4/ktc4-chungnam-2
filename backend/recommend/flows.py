@@ -333,7 +333,7 @@ def create_run(
         if execute:   # #845, #847 — 근거 조립 뒤 같은 요청·같은 트랜잭션에서 첫 검색까지. 어디서 실패하든 run·횟수·크레딧 차감이 함께 되돌아간다
             assert place_search is not None and place_facts is not None   # 호출부(라우터) 계약
             service.lock_run(db, run.id)
-            _search_and_store(db, run, place_search=place_search, place_facts=place_facts)
+            _search_and_store(db, run, place_search=place_search, place_facts=place_facts, first_run=True)
         return run
 
     if idempotency_key is None:
@@ -376,7 +376,8 @@ def _create_run(
     3) 반응 → 근거 구조화(글은 llm.api.plan_evidence, 칩은 코드 #412) 4) run INSERT + 크레딧 차감(같은 트랜잭션)
     5) evidence_lines INSERT 6) 기본값 지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
     트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다. 뒤에서 실패해도 차감이 run과 함께 롤백되므로
-    추천에는 환불 경로가 없다(docs/credits-reviews.md 3.3). `Idempotency-Key` 재전송은 이 함수를 다시 타지 않는다."""
+    실패에는 환불 경로가 없다. 환불은 한 곳뿐이다 — 그 run의 **첫 실행이 후보 0곳**일 때 `_search_and_store`가 같은 트랜잭션에서
+    돌려준다(#1015, docs/credits-reviews.md 3.3). `Idempotency-Key` 재전송은 이 함수를 다시 타지 않는다."""
     readiness = readiness_for_category(db, map_id=map_id, category=category)
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
@@ -879,6 +880,7 @@ def _excluded_place_ids(db: Session, run: RecommendRun, *, record_dismissed: boo
 
 def _search_and_store(
     db: Session, run: RecommendRun, *, place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
+    first_run: bool = False,
 ) -> RecommendRun:
     """execute·widen·retry·최초 실행(create_run execute=true)이 같이 쓰는 꼬리 — 제외목록을 읽고, 저장된 지역·활성 근거로
     파이프라인을 돌려 게시 안 된 후보를 교체하고, 깔때기·**실행 스냅샷**(applied_evidence, new_count, #847)을 저장해 done으로
@@ -886,7 +888,11 @@ def _search_and_store(
     그대로다. 호출부가 run을 잠근 뒤 부른다(#811).
 
     run에 고정되는 입력은 구조화한 근거 줄과 기본 지역이고, 실행마다 다시 읽는 입력은 ♥ 선호·여행 날짜 판정·제외목록이다
-    (docs/api-spec.yaml retry 설명)."""
+    (docs/api-spec.yaml retry 설명).
+
+    first_run은 이 run의 **첫 실행**일 때만 참이다(create_run execute=true, 한 번도 실행하지 않은 run의 execute). 첫 실행이 후보를
+    하나도 못 찾으면(NO_RESULTS와 같은 기준) 같은 트랜잭션에서 크레딧을 환불한다(#1015, docs/credits-reviews.md 3.3). retry·widen은
+    first_run이 아니라 절대 환불하지 않는다 — 처음부터 차감이 없고, 첫 실행이 결과를 냈다면 그 차감은 그대로다."""
     excluded = _excluded_place_ids(db, run)
     regions, active_lines = _pipeline_inputs(db, run)
     off_season = _out_of_season_keys(db, run.map_id)   # 실행마다 한 번 — 파이프라인이 적용한 계절 판정과 스냅샷이 어긋나지 않게
@@ -902,6 +908,8 @@ def _search_and_store(
     )
     service.set_run_status(db, run, "done")
     record_event(db, _candidates_ready_event(db, run, candidates, place_search))
+    if first_run and not service.list_candidates(db, str(run.id)):   # 첫 실행이라 게시된 후보는 없다 — 0곳이면 쓴 크레딧을 돌려준다
+        credits_api.refund(db, feature="recommend_run", run_id=str(run.id))   # 멱등(원장 ref_id UNIQUE), 잔액 상한까지만 채운다
     return run
 
 
@@ -912,7 +920,10 @@ def execute_run(
     `collecting_evidence` run(과거 데이터, 장애)도 이 호출로 이어서 실행한다(#845)."""
     run = service.get_run_or_404(db, run_id)
     service.lock_run(db, run.id)   # 같은 run의 다른 실행과 후보 교체를 직렬화한다(#811)
-    return _search_and_store(db, run, place_search=place_search, place_facts=place_facts)
+    # 한 번도 실행이 끝나지 않은 run — 0곳이면 환불(#1015). 상태(collecting_evidence 등)로 판정하지 않는다: 지역 확인(confirm_regions)이 검색 없이
+    # 상태를 executing으로 바꾸고, 실패한 실행은 롤백돼 상태가 그대로이기 때문이다. 실행이 끝났다는 기록(last_new_count)과 후보 유무만 본다.
+    first_run = run.last_new_count is None and not service.list_candidates(db, str(run.id))
+    return _search_and_store(db, run, place_search=place_search, place_facts=place_facts, first_run=first_run)
 
 
 def widen_run(
