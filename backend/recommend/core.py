@@ -476,7 +476,6 @@ FUNNEL_STAGES: tuple[tuple[str, str], ...] = (
     ("pool", "카테고리 후보 풀"),
     ("radius", "반경 밖 제거"),
     ("closed", "영업 종료 제거"),
-    ("not_recommendable", "추천 가능 아님 제거"),
     ("disqualify", "실격 조건 제거"),
     ("excluded", "이미 제안·거절됨"),
     ("ranking", "상위 3곳 선정"),   # 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다

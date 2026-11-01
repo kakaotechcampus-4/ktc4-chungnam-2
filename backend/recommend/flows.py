@@ -682,11 +682,6 @@ def _run_pipeline(
     unknown_open_check = core.build_check("is_open", "pass", known=False, value=None, passes=True)
     known_open_check = core.build_check("is_open", "pass", known=True, value=True, passes=True)
 
-    # 추천 가능 아님 제거 — 영업 종료 다음 단계. 모두 빠져 0개여도 0개로 보여 준다(반경·기준을 완화하지 않는다).
-    recommendable = [p for p in within_radius if p.can_recommend]
-    removed_not_recommendable = len(within_radius) - len(recommendable)
-    within_radius = recommendable
-
     # 계절 키는 여행 기간이 시즌과 겹칠 때만 쓴다(#681-6) — 시즌 밖이면 직접 쓴 사유도 이번 실행에서 없는 셈 친다(점수 0,
     # 후보를 거르지 않고, 이유·체크에도 안 나온다). 날짜가 없으면 모두 쓴다.
     # `off_season`은 실행(_search_and_store)이 한 번 계산해 넘긴다 — 파이프라인과 스냅샷이 같은 판정을 쓰게(#847). 안 넘기는
@@ -834,7 +829,6 @@ def _run_pipeline(
         "pool": 0,
         "radius": removed_radius,
         "closed": removed_open,
-        "not_recommendable": removed_not_recommendable,
         "disqualify": removed_disqualify,
         "excluded": removed_exclusions,
         "ranking": removed_ranking,

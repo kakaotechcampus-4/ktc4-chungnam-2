@@ -211,12 +211,16 @@ def get_places(place_ids: Sequence[str], *, db: Session | None = None) -> dict[s
         return repository.get_places(s, place_ids)
 
 
-def search_nearby_own(category: str, areas: Sequence[Area], *, db: Session | None = None) -> list[PlaceRef]:
-    """반경 안의 영업 중(status='open') 장소의 place_id·좌표. 분류는 음식점·카페·관광지."""
+def search_nearby_own(
+    category: str, areas: Sequence[Area], *, recommendable_only: bool = False, db: Session | None = None,
+) -> list[PlaceRef]:
+    """반경 안의 영업 중(status='open') 장소의 place_id·좌표. 분류는 음식점·카페·관광지.
+    recommendable_only=True면 추천 가능(정예) 장소만 SQL에서 가져온다(#913) — recommend의 후보 풀이 쓴다. 정예 판정은 places 안
+    한 곳(repository의 curated 조건)이다."""
     if category not in matching.OWN_CATEGORIES:
         return []
     with _session(db) as s:
-        return repository.search_nearby_own(s, category, areas)
+        return repository.search_nearby_own(s, category, areas, recommendable_only=recommendable_only)
 
 
 def count_curated(category: str, areas: Sequence[Area], *, db: Session | None = None) -> int:
