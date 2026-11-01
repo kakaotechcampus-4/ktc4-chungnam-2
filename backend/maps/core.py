@@ -335,13 +335,14 @@ def to_map_response(
 
 
 def to_member_response(
-    user_id: str, *, role: Role, display_name: str | None, online: bool | None
+    user_id: str, *, role: Role, display_name: str | None, online: bool | None, is_guest: bool
 ) -> Member:
     """role은 memberships.role 그대로다(#369 11번 — maps.created_by로 판정하지 않는다).
     display_name은 auth.api.display_names로 채운다(탈퇴자는 '탈퇴한 구성원', #155).
     online은 여전히 채울 데이터 출처가 없다(realtime에 presence 없음, #32 별건) — user_id로
-    대체하거나 False로 채우지 않는다(그럴싸해 보이는 거짓 fallback이다)."""
-    return Member(user_id=user_id, role=role, display_name=display_name, online=online)
+    대체하거나 False로 채우지 않는다(그럴싸해 보이는 거짓 fallback이다).
+    is_guest는 호출부가 auth.api.guest_user_ids로 구한 값을 넘긴다(#955) — 방장 넘기기 검사(check_owner_target)와 같은 판정이다."""
+    return Member(user_id=user_id, role=role, display_name=display_name, online=online, is_guest=is_guest)
 
 
 def member_joined_event(map_id: str, member: Member) -> Event:

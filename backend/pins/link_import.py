@@ -7,6 +7,7 @@ URL·링크 좌표·장소 이름은 응답과 로그 어디에도 남기지 않
 import logging
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor, wait
+from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
@@ -19,7 +20,7 @@ from places import api as places_api
 from places.schemas import LinkParseResult
 from pins import service
 from pins.schemas import (
-    BulkPinError, BulkPinItemResult, BulkPinResult, LinkPreviewItem, LinkPreviewResult, PinCreateRequest,
+    BulkPinError, BulkPinItemResult, BulkPinResult, LinkHint, LinkPreviewItem, LinkPreviewResult, PinCreateRequest,
 )
 
 log = logging.getLogger("pingo.pins.link_import")
@@ -36,8 +37,40 @@ def check_link_preview_rate(user_id: str, url_count: int) -> None:
         raise AppError("RATE_LIMITED")
 
 
-def _parse_one(url: str) -> LinkParseResult:
-    return places_api.parse_link(url, db=None)   # 스레드마다 자체 세션(places가 연다)
+def _is_naver_link(url: str) -> bool:
+    try:
+        host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    return host == "naver.me" or host == "naver.com" or host.endswith(".naver.com")
+
+
+def _match_by_hint(hint: LinkHint | None) -> list:
+    """상호명 + 주소로 자체 DB 짝(#946). 주소가 없으면 부르지 않는다(places도 빈 목록). 실패는 짝 없음 — 상호명·주소는 남기지 않는다."""
+    if hint is None or not hint.name or not hint.address:
+        return []
+    try:
+        return places_api.match_by_name_address(hint.name, hint.address, db=None)
+    except Exception as exc:   # noqa: BLE001 — 힌트는 덤이다. 메시지에 힌트가 실릴 수 있어 타입만 남긴다
+        log.warning("link-preview 힌트 짝 찾기 실패(%s)", type(exc).__name__)
+        return []
+
+
+def _parse_one(url: str, hint: LinkHint | None = None) -> LinkParseResult:
+    """링크 해석 + 힌트 짝(#946). 링크로 짝이 없거나 네이버 링크일 때만 힌트를 쓴다. 네이버 링크는 서버가 열지 않고,
+    상호명 힌트가 있을 때만 provider=naver로 받는다(없으면 LINK_NOT_SUPPORTED 그대로)."""
+    try:
+        result = places_api.parse_link(url, db=None)   # 스레드마다 자체 세션(places가 연다)
+    except AppError as exc:
+        if exc.code != "LINK_NOT_SUPPORTED" or hint is None or not hint.name or not _is_naver_link(url):
+            raise
+        result = LinkParseResult(provider="naver", matches=[], needs_search_query=True)
+    if result.matches:
+        return result.model_copy(update={"matched_by": "link"})
+    matches = _match_by_hint(hint)
+    if matches:
+        return result.model_copy(update={"matches": matches, "matched_by": "hint", "needs_search_query": False})
+    return result
 
 
 def _already_pinned_pin_id(db: Session, map_id: str, result: LinkParseResult) -> str | None:
@@ -58,11 +91,12 @@ def _already_pinned_pin_id(db: Session, map_id: str, result: LinkParseResult) ->
     return None
 
 
-def preview_links(db: Session, map_id: str, urls: list[str]) -> LinkPreviewResult:
+def preview_links(db: Session, map_id: str, urls: list[str], hints: list[LinkHint | None] | None = None) -> LinkPreviewResult:
     """POST /maps/{mapId}/pins/link-preview — 쓰기 없음. 링크마다 parse_link를 스레드 5개로 병렬 실행하고 마감을 넘긴 항목은
     LINK_UNRESOLVED로 둔다. 항목 하나의 실패는 그 항목만 error다."""
     pool = ThreadPoolExecutor(max_workers=PREVIEW_WORKERS, thread_name_prefix="link-preview")
-    futures: list[Future] = [pool.submit(_parse_one, url) for url in urls]
+    per_url_hints = hints or [None] * len(urls)   # 길이는 요청 모델이 urls와 맞춘다
+    futures: list[Future] = [pool.submit(_parse_one, url, hint) for url, hint in zip(urls, per_url_hints)]
     wait(futures, timeout=PREVIEW_DEADLINE_S)
     pool.shutdown(wait=False, cancel_futures=True)   # 마감을 넘긴 해석은 기다리지 않는다(결과는 버린다)
 

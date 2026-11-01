@@ -211,12 +211,16 @@ def get_places(place_ids: Sequence[str], *, db: Session | None = None) -> dict[s
         return repository.get_places(s, place_ids)
 
 
-def search_nearby_own(category: str, areas: Sequence[Area], *, db: Session | None = None) -> list[PlaceRef]:
-    """반경 안의 영업 중(status='open') 장소의 place_id·좌표. 분류는 음식점·카페·관광지."""
+def search_nearby_own(
+    category: str, areas: Sequence[Area], *, recommendable_only: bool = False, db: Session | None = None,
+) -> list[PlaceRef]:
+    """반경 안의 영업 중(status='open') 장소의 place_id·좌표. 분류는 음식점·카페·관광지.
+    recommendable_only=True면 추천 가능(정예) 장소만 SQL에서 가져온다(#913) — recommend의 후보 풀이 쓴다. 정예 판정은 places 안
+    한 곳(repository의 curated 조건)이다."""
     if category not in matching.OWN_CATEGORIES:
         return []
     with _session(db) as s:
-        return repository.search_nearby_own(s, category, areas)
+        return repository.search_nearby_own(s, category, areas, recommendable_only=recommendable_only)
 
 
 def count_curated(category: str, areas: Sequence[Area], *, db: Session | None = None) -> int:
@@ -316,6 +320,18 @@ def own_places_by_kakao_id(kakao_place_id: str, *, db: Session | None = None) ->
     """이미 이 카카오 장소 ID로 매칭된 영업 중 자체 DB 장소. 읽기 전용."""
     with _session(db) as s:
         return repository.find_by_kakao_place_id(s, kakao_place_id)
+
+
+def match_by_name_address(name: str, address: str | None, *, db: Session | None = None) -> list[PlaceSearchResult]:
+    """공유 글의 상호명·주소로 자체 DB 짝 찾기(#946). 짝이 하나로 확실할 때만 1개를, 아니면 빈 목록(가드레일 2 — 체인점·동명·주소 어긋남).
+    **주소가 있어야 하고 주소가 같다고 확인된 장소만** 확정한다(주소 없음·비교 불가는 빈 목록 — 후보가 하나뿐이어도 같은 점포라는 근거가 못 된다).
+    분류는 음식점·카페·관광지 모두. 규칙은 matching(이름 점수·주소 일치·모호하면 거절)을 그대로 쓰고 후보는 name_norm 인덱스로 좁힌다.
+    주소는 짝 찾기에만 쓴다 — 상호명·주소를 로그·예외에 남기지 않고 저장하지 않는다. 읽기 전용. 응답 모양은 링크 해석의 matches와 같다."""
+    if not name or not name.strip():
+        return []
+    with _session(db) as s:
+        candidates = repository.find_by_name_hint(s, name)
+    return [_to_link_match(c) for c in matching.pick_hint_match(name, address, candidates)]
 
 
 def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:

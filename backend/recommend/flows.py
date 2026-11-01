@@ -216,20 +216,15 @@ def _search_area(db: Session, *, map_id: str, category: str, place_search: Place
 
 def _external_search(
     db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway,
-    lines: Sequence[EvidenceLineRow] = (), off_season: Collection[str] = frozenset(),
 ) -> schemas.ExternalSearch:
-    """카카오맵 검색 링크(docs/constraints.md 「카카오맵 검색 링크」). lines는 이번 run의 활성 근거 줄(readiness는 run이
-    없어 빈 목록 = 카테고리 말). 사유 원문은 넘기지 않는다 — 키와 방향만(#717)."""
+    """카카오맵 검색 링크(docs/constraints.md 「카카오맵 검색 링크」) — 검색어는 `{동네} {카테고리 말}` 하나다(#904)."""
     area = _search_area(db, map_id=map_id, category=category, place_search=place_search)
-    query = core.external_search_query(area, category, [(line.badge, line.fact_key, line.wants) for line in lines], off_season)
+    query = core.external_search_query(area, category)
     return schemas.ExternalSearch(query=query, url=places_api.kakao_search_url(query))
 
 
 def _run_external_search(db: Session, run: RecommendRun, place_search: PlaceSearchGateway) -> schemas.ExternalSearch:
-    return _external_search(
-        db, map_id=run.map_id, category=run.category, place_search=place_search,
-        lines=service.list_active_evidence(db, run.id), off_season=_out_of_season_keys(db, run.map_id),
-    )
+    return _external_search(db, map_id=run.map_id, category=run.category, place_search=place_search)
 
 
 def readiness_for_category(db: Session, *, map_id: str, category: str) -> dict:
@@ -327,8 +322,14 @@ def create_run(
        아직 모델을 기다리는 중이면 409 REQUEST_IN_PROGRESS, 처리 기한(90초)이 지났으면 이어받는다.
     3) run_id 연결은 run을 만든 트랜잭션의 **맨 끝**에서 한다 — 자기 세대일 때만 성공하고(늦게 끝난 쪽은 거절),
        실패 정리가 이 행의 잠금과 부딪치지 않는다. run을 못 만들면 자기 세대의 예약만 지워 재시도를 허용한다."""
+    traces: list[uuid.UUID] = []   # ②를 부른 trace — run이 저장되지 못하면 버려진 비용으로 표시한다(#848)
+
     def create() -> RecommendRun:
-        run = _create_run(db, map_id=map_id, category=category, requested_by=requested_by, evidence_planner=evidence_planner)
+        with llm_api.plan_deadline():   # create 시작에서 한 번 정한 deadline — ② 묶음 호출 전체가 30초 안에 끝난다(#848)
+            run = _create_run(
+                db, map_id=map_id, category=category, requested_by=requested_by, evidence_planner=evidence_planner,
+                traces=traces,
+            )
         if execute:   # #845, #847 — 근거 조립 뒤 같은 요청·같은 트랜잭션에서 첫 검색까지. 어디서 실패하든 run·횟수·크레딧 차감이 함께 되돌아간다
             assert place_search is not None and place_facts is not None   # 호출부(라우터) 계약
             service.lock_run(db, run.id)
@@ -336,7 +337,11 @@ def create_run(
         return run
 
     if idempotency_key is None:
-        return create()
+        try:
+            return create()
+        except BaseException:
+            llm_api.mark_discarded(traces)
+            raise
     request_hash = core.idempotency_request_hash(map_id, category, execute)
     with Session(bind=db.get_bind()) as reservation_db:   # 요청 세션과 다른 연결 — 요청의 커밋·롤백과 무관하게 바로 보인다
         reservation = service.reserve_idempotency_key(
@@ -354,6 +359,7 @@ def create_run(
         run = create()
         service.link_idempotency_key(db, reservation_id=reservation.id, generation=reservation.generation, run_id=run.id)
     except BaseException:
+        llm_api.mark_discarded(traces)
         with Session(bind=db.get_bind()) as release_db:
             service.release_idempotency_key(release_db, reservation_id=reservation.id, generation=reservation.generation)
             release_db.commit()
@@ -363,6 +369,7 @@ def create_run(
 
 def _create_run(
     db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
+    traces: list[uuid.UUID] | None = None,
 ) -> RecommendRun:
     """run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
     안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 크레딧 확인(읽기, 게스트 403·부족 402, #432)
@@ -381,8 +388,10 @@ def _create_run(
     if text_inputs:
         db.rollback()  # 모델을 기다리는 동안 읽기 트랜잭션이 연결을 잡고 있지 않게 한다(#275). 저장이 아니라 연결 반환이다.
     # ② — 느린 호출이라 run INSERT보다 먼저(#208). 그래서 사용량 기록(#870)에는 run_id가 없다(trace_id로 묶는다)
-    with llm_api.usage_context("recommend_run", map_id=map_id, user_id=requested_by):
+    with llm_api.usage_context("recommend_run", map_id=map_id, user_id=requested_by) as label:
         planned = evidence_planner.plan_evidence(text_inputs) if text_inputs else []
+    if text_inputs and traces is not None:
+        traces.append(label.trace_id)   # 모델은 불렸다 — 뒤 단계가 실패하면 호출자가 이 trace를 버려진 비용으로 표시한다(#848)
     reaction_lines = _reaction_evidence_lines(raw_reactions, [[line.model_dump() for line in group] for group in planned])
     merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422, #617
 
@@ -486,35 +495,42 @@ def patch_evidence(
     # 보인다. 실패 시 동작은 create_run과 같다(PlanEvidenceFailed를 그대로 올린다 — 모델이 쓰기보다 먼저라 행이 안 남는다).
     # 글 하나에 조건이 여럿이면 같은 글로 조건마다 줄 하나다(#419).
     planned: list = []
+    trace_id: uuid.UUID | None = None
     if adds:
         db.rollback()  # 읽기 트랜잭션을 끝내 연결을 돌려준다(#275). 저장이 아니다.
-        with llm_api.usage_context("evidence_add", map_id=run_map_id, user_id=principal.user_id, run_id=str(run_uuid)):
+        with llm_api.usage_context("evidence_add", map_id=run_map_id, user_id=principal.user_id, run_id=str(run_uuid)) as label:
             planned = evidence_planner.plan_evidence([
                 {"author_id": principal.user_id, "source": "manual", "text": text, "badge": "preferred", "fact_key": None}
                 for text in adds
             ])
-    if validated or adds or repeated:
-        # 위 검사들은 잠금 없이 끝났다(모델을 기다리는 동안 트랜잭션을 잡지 않는다). 같은 run에 동시에 온 요청이 함께 상한을 넘지
-        # 않게 run 행을 잠그고 다시 센다 — 이때 걸리면 모델은 이미 불렸지만 줄은 남지 않는다(멘토 리뷰 #380: 여러 행에 걸친 상한).
-        service.lock_run(db, run_uuid)
-    # 잠근 뒤 다시 읽는다 — 모델을 기다리는 사이 같은 글이 다른 요청(연타·재전송)으로 이미 저장됐을 수 있다. 그 글은 새 줄을 더하지 않고
-    # 그 줄을 쓴다(모델 결과는 버린다).
-    already = _manual_texts_by_author(db, run_uuid, principal.user_id)
-    planned_by_text = dict(zip(adds, planned)) if adds else {}
-    to_add = [text for text in adds if text not in already]
-    if to_add:
-        _check_manual_evidence_limit(db, run_uuid, adding=len(to_add))
-    for line_id, is_active in validated:
-        service.set_evidence_active(db, line_id, is_active)
-    for text in [*repeated, *(text for text in adds if text in already)]:   # 뺐던 줄이면 다시 켠다
-        for line in already[text]:
-            if not line.is_active:
-                service.set_evidence_active(db, line.id, True)
-    for text in to_add:
-        for line in planned_by_text[text]:
-            service.add_manual_evidence(
-                db, run_id=run_uuid, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
-            )
+        trace_id = label.trace_id
+    try:
+        if validated or adds or repeated:
+            # 위 검사들은 잠금 없이 끝났다(모델을 기다리는 동안 트랜잭션을 잡지 않는다). 같은 run에 동시에 온 요청이 함께 상한을 넘지
+            # 않게 run 행을 잠그고 다시 센다 — 이때 걸리면 모델은 이미 불렸지만 줄은 남지 않는다(멘토 리뷰 #380: 여러 행에 걸친 상한).
+            service.lock_run(db, run_uuid)
+        # 잠근 뒤 다시 읽는다 — 모델을 기다리는 사이 같은 글이 다른 요청(연타·재전송)으로 이미 저장됐을 수 있다. 그 글은 새 줄을 더하지 않고
+        # 그 줄을 쓴다(모델 결과는 버린다).
+        already = _manual_texts_by_author(db, run_uuid, principal.user_id)
+        planned_by_text = dict(zip(adds, planned)) if adds else {}
+        to_add = [text for text in adds if text not in already]
+        if to_add:
+            _check_manual_evidence_limit(db, run_uuid, adding=len(to_add))
+        for line_id, is_active in validated:
+            service.set_evidence_active(db, line_id, is_active)
+        for text in [*repeated, *(text for text in adds if text in already)]:   # 뺐던 줄이면 다시 켠다
+            for line in already[text]:
+                if not line.is_active:
+                    service.set_evidence_active(db, line.id, True)
+        for text in to_add:
+            for line in planned_by_text[text]:
+                service.add_manual_evidence(
+                    db, run_id=run_uuid, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
+                )
+    except BaseException:
+        if trace_id is not None:   # 모델은 불렸는데 저장이 안 됐다(글 수 상한 재검사 등) — 버려진 비용으로 표시한다(#848)
+            llm_api.mark_discarded(trace_id)
+        raise
     return _evidence_responses(db, run, principal)
 
 
@@ -660,11 +676,6 @@ def _run_pipeline(
     within_radius = open_places
     unknown_open_check = core.build_check("is_open", "pass", known=False, value=None, passes=True)
     known_open_check = core.build_check("is_open", "pass", known=True, value=True, passes=True)
-
-    # 추천 가능 아님 제거 — 영업 종료 다음 단계. 모두 빠져 0개여도 0개로 보여 준다(반경·기준을 완화하지 않는다).
-    recommendable = [p for p in within_radius if p.can_recommend]
-    removed_not_recommendable = len(within_radius) - len(recommendable)
-    within_radius = recommendable
 
     # 계절 키는 여행 기간이 시즌과 겹칠 때만 쓴다(#681-6) — 시즌 밖이면 직접 쓴 사유도 이번 실행에서 없는 셈 친다(점수 0,
     # 후보를 거르지 않고, 이유·체크에도 안 나온다). 날짜가 없으면 모두 쓴다.
@@ -813,7 +824,6 @@ def _run_pipeline(
         "pool": 0,
         "radius": removed_radius,
         "closed": removed_open,
-        "not_recommendable": removed_not_recommendable,
         "disqualify": removed_disqualify,
         "excluded": removed_exclusions,
         "ranking": removed_ranking,
@@ -1050,8 +1060,10 @@ def get_result(
 
     후보는 이전에 지도에 올린 것(visibility=published)을 포함한다. NO_RESULTS는 게시 후보까지 합쳐 후보가 하나도 없을 때만
     나고(#845), 이번 검색이 0건이어도 게시 후보가 남아 있으면 200이고 new_count가 0이다. applied_evidence(이번 결과에 쓴 근거),
-    no_applied_conditions, new_count는 마지막 실행의 스냅샷이다(NO_RESULTS detail에도 같은 값)."""
+    no_applied_conditions, new_count는 마지막 실행의 스냅샷이다(NO_RESULTS detail에도 같은 값). 읽기 전에 run 행을 FOR SHARE로
+    잠가 진행 중인 실행이 끝난 뒤의 값만 본다(service.lock_run_shared)."""
     run = service.get_run_or_404(db, run_id)
+    service.lock_run_shared(db, run.id)   # 진행 중인 실행의 커밋을 기다린 뒤 읽는다 — run 행·후보·스냅샷이 같은 실행의 것이다(#848)
     if run.status != "done":
         raise AppError("RUN_NOT_FINISHED", detail={"status": run.status})  # #469 — 결과는 done일 때만 있다
     regions = service.list_regions(db, run_id)

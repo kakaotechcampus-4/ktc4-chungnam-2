@@ -1,7 +1,7 @@
 """카카오맵 검색 링크(#798, #800) — 결과가 적을 때, 결과 없음, 추천 준비, 결과 카드 링크.
 
 규칙은 docs/constraints.md 「카카오맵 검색 링크」. 표 값과 문서 표가 같은지는 integration/test_policy_tables.py가 본다 —
-여기서는 표에 있는 키와 없는 키를 constraints 표에서 꺼내 쓰고 말을 다시 적지 않는다.
+여기서는 카테고리 말을 constraints 표에서 꺼내 쓰고 말을 다시 적지 않는다. 검색어는 `{동네} {카테고리 말}` 하나다(#904).
 """
 
 import uuid
@@ -19,61 +19,32 @@ from recommend.tests.test_flows import _make_candidate, _make_members, _make_pin
 
 CATEGORY = "음식점"
 CATEGORY_WORD = constraints.CATEGORY_SEARCH_WORDS[CATEGORY]
-IN_TABLE = "cuisine_korean"            # 조건 말 표에 있는 soft 키
-IN_TABLE_2 = "long_established"
-NOT_IN_TABLE = "quiet"                 # soft 키지만 조건 말 표에 없다(꾸밈말이라 결과가 거의 없다)
-SEASONAL = "cherry_blossom"            # 조건 말 표에 있는 계절 키
+WANTED = "cuisine_korean"              # 원함 방향 사유의 키 — 이제 검색어에 영향이 없다
 AUTHOR = Principal(user_id="user_1", map_id="map_1", role="member")
 
 
-def _query(lines, *, area="성수동", off_season=frozenset()):
-    return core.external_search_query(area, CATEGORY, lines, off_season)
+def _query(category=CATEGORY, *, area="성수동"):
+    return core.external_search_query(area, category)
 
 
 # ---------- 검색어 (core.external_search_query) ----------
 
-def test_wanted_condition_in_table_replaces_category_word():
-    assert _query([("preferred", IN_TABLE, True)]) == f"성수동 {constraints.CONDITION_SEARCH_WORDS[IN_TABLE]}"
+@pytest.mark.parametrize("category", sorted(constraints.CATEGORY_SEARCH_WORDS))
+def test_query_is_area_and_the_category_word(category):
+    assert _query(category) == f"성수동 {constraints.CATEGORY_SEARCH_WORDS[category]}"
 
 
-def test_without_conditions_uses_category_word():
-    assert _query([]) == f"성수동 {CATEGORY_WORD}"
-
-
-def test_key_not_in_table_is_not_used_even_if_wanted():
-    assert NOT_IN_TABLE in constraints.SOFT_FACT_KEYS and NOT_IN_TABLE not in constraints.CONDITION_SEARCH_WORDS
-    assert _query([("preferred", NOT_IN_TABLE, True)]) == f"성수동 {CATEGORY_WORD}"
-
-
-@pytest.mark.parametrize("wants", [False, None])
-def test_not_wanted_or_unknown_direction_is_not_used(wants):
-    """「한식 말고」(wants=False)로 한식을 찾지 않는다. 방향을 모르는 줄도 쓰지 않는다."""
-    assert _query([("required", IN_TABLE, wants)]) == f"성수동 {CATEGORY_WORD}"
-
-
-def test_line_without_key_is_not_used():
-    assert _query([("required", None, True)]) == f"성수동 {CATEGORY_WORD}"
-
-
-def test_only_one_word_first_in_evidence_order():
-    """말은 하나다 — 카카오 검색은 말이 모두 맞아야 찾는다. 근거 줄 순서로 첫째."""
-    lines = [("preferred", NOT_IN_TABLE, True), ("preferred", IN_TABLE_2, True), ("required", IN_TABLE, True)]
-    assert _query(lines) == f"성수동 {constraints.CONDITION_SEARCH_WORDS[IN_TABLE_2]}"
-
-
-def test_line_not_used_this_run_is_skipped():
-    """쓰이는 줄인지는 core.evidence_line_use가 정한다 — 여행 기간 밖 계절 키는 이번 추천에 안 쓰인다."""
-    lines = [("preferred", SEASONAL, True), ("preferred", IN_TABLE, True)]
-    assert _query(lines, off_season=frozenset({SEASONAL})) == f"성수동 {constraints.CONDITION_SEARCH_WORDS[IN_TABLE]}"
-    assert _query(lines) == f"성수동 {constraints.CONDITION_SEARCH_WORDS[SEASONAL]}"
+def test_there_is_no_condition_word_table_anymore():
+    """조건 말 표는 #902에서 없앴다(#904) — 검색어는 근거 줄을 보지 않는다."""
+    assert not hasattr(constraints, "CONDITION_SEARCH_WORDS")
 
 
 def test_without_area_only_the_word():
-    assert _query([], area=None) == CATEGORY_WORD
+    assert _query(area=None) == CATEGORY_WORD
 
 
 def test_too_long_area_is_dropped_to_fit_the_query_limit():
-    assert _query([], area="가" * core.EXTERNAL_SEARCH_QUERY_MAX) == CATEGORY_WORD
+    assert _query(area="가" * core.EXTERNAL_SEARCH_QUERY_MAX) == CATEGORY_WORD
 
 
 def test_most_common_area_ignores_none_and_breaks_ties_by_name():
@@ -200,13 +171,14 @@ def _wanted_line(db_session, run, fact_key, wants=True):
 
 
 @pytest.mark.parametrize("count", range(1, schemas.FEW_RESULTS))
-def test_few_results_carry_search_link_from_wanted_condition(db_session, count):
+def test_few_results_carry_the_area_and_category_word_link_whatever_the_conditions(db_session, count):
+    """결과가 적을 때의 검색어는 근거 줄과 상관없이 `{동네} {카테고리 말}`이다(#904). 사유 원문은 링크에 없다."""
     run, _rows = _done_run(db_session, candidates=count)
-    _wanted_line(db_session, run, IN_TABLE)
+    _wanted_line(db_session, run, WANTED)
 
     result = flows.get_result(db_session, run_id=str(run.id), principal=AUTHOR, place_search=_Places())
 
-    assert result.external_search.model_dump() == _search(f"춘천 {constraints.CONDITION_SEARCH_WORDS[IN_TABLE]}")
+    assert result.external_search.model_dump() == _search(f"춘천 {CATEGORY_WORD}")
     assert "사유" not in result.external_search.query
 
 
@@ -220,7 +192,7 @@ def test_enough_results_have_no_search_link(db_session):
 
 def test_no_results_detail_carries_funnel_and_search_link(db_session):
     run, _rows = _done_run(db_session, candidates=0)
-    _wanted_line(db_session, run, IN_TABLE, wants=False)   # 「한식 말고」 — 카테고리 말로 찾는다
+    _wanted_line(db_session, run, WANTED, wants=False)
 
     with pytest.raises(AppError) as exc_info:
         flows.get_result(db_session, run_id=str(run.id), principal=AUTHOR, place_search=_Places())
@@ -230,17 +202,6 @@ def test_no_results_detail_carries_funnel_and_search_link(db_session):
         "funnel": [{"label": "반경 밖 제거", "removed_count": 2}],
         "external_search": _search(f"춘천 {CATEGORY_WORD}"),
     }
-
-
-def test_inactive_line_is_not_used_for_the_word(db_session):
-    run, _rows = _done_run(db_session, candidates=1)
-    _wanted_line(db_session, run, IN_TABLE)
-    for line in service.list_evidence(db_session, str(run.id)):
-        service.set_evidence_active(db_session, line.id, False)
-
-    result = flows.get_result(db_session, run_id=str(run.id), principal=AUTHOR, place_search=_Places())
-
-    assert result.external_search.query == f"춘천 {CATEGORY_WORD}"
 
 
 # ---------- 결과 카드 링크(Candidate.place_url) ----------

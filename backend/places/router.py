@@ -18,7 +18,7 @@ from common.database import get_db_session
 from common.errors import AppError
 from common import categories, geo
 from places import api, logguard, matching
-from places.schemas import LinkParseResult, PlaceHint, PlaceSearchResult
+from places.schemas import ExternalSearch, LinkParseResult, PlaceHint, PlaceSearchResult
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["places"])
@@ -31,6 +31,16 @@ class LinkParseRequest(BaseModel):
 
 _MAX_QUERY_LEN = 50
 _FETCH_LIMIT = 15   # limit(최대 15)과 같다 — 카카오에서 이만큼 받아 정렬한 뒤 limit으로 자른다(#488)
+
+
+@router.get("/places/external-search", response_model=ExternalSearch)
+def external_search(q: str = Query(...), user: CurrentUser = Depends(get_current_user)):
+    """장소 검색 결과가 없을 때의 카카오맵 검색 링크(#903). 검색어는 /places/search와 같은 검증. 카카오를 부르지 않고
+    검색어를 저장·로깅하지 않는다. 링크 형식은 api.kakao_search_url 한 곳."""
+    query = q.strip()
+    if not 1 <= len(query) <= _MAX_QUERY_LEN:
+        raise AppError("VALIDATION_ERROR", f"검색어는 앞뒤 공백을 뺀 1~{_MAX_QUERY_LEN}자여야 합니다")
+    return ExternalSearch(query=query, url=api.kakao_search_url(query))
 
 
 @router.get("/places/search", response_model=list[PlaceSearchResult], response_model_exclude_none=True)

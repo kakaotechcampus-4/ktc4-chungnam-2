@@ -114,14 +114,22 @@ def _failure_fields(exc: BaseException) -> str:
     return " ".join(parts)
 
 
-def _record(call: str, prompt_version: Optional[str], completion: Any, outcome: str, started: float) -> None:
-    """llm_calls 한 행(#870). 실패한 호출도 남긴다 — 응답이 있었으면(잘린 응답, 거절) 그 토큰도 비용이다."""
+def _record(
+    call: str, prompt_version: Optional[str], completion: Any, outcome: str, started: float, batch_size: Optional[int] = None,
+) -> None:
+    """llm_calls 한 행(#870). 실패한 호출도 남긴다 — 응답이 있었으면(잘린 응답, 거절) 그 토큰도 비용이다. batch_size는 ②가
+    한 호출에 보낸 사유 수(#848)."""
     usage_log.record_call(
         call=call, prompt_version=prompt_version, completion=completion, outcome=outcome, elapsed_ms=_elapsed_ms(started),
+        batch_size=batch_size,
     )
 
 
-def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]]) -> PlanningOutput:
+PER_CALL_TIMEOUT_SECONDS = _TIMEOUT_SECONDS   # 호출 하나의 타임아웃(클라이언트 기본). 호출 쪽이 남은 시간으로 더 줄일 수 있다(#848)
+
+
+def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]], *, timeout: float | None = None) -> PlanningOutput:
+    """② 한 묶음 호출. timeout이 있으면 이 호출의 타임아웃을 그 값으로 줄인다(create 시간 상한의 남은 시간, #848) — 없으면 클라이언트 기본이다."""
     started = time.monotonic()
     try:
         completion = client.chat.completions.parse(
@@ -131,6 +139,7 @@ def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]]) -> PlanningO
                 {"role": "user", "content": _user_payload(reasons)},
             ],
             response_format=PlanningOutput,
+            **({} if timeout is None else {"timeout": timeout}),
         )
         message = completion.choices[0].message
     except Exception as exc:  # noqa: BLE001 — 예상 못 한 예외도 원인 타입만 남기고 같은 실패로 올린다
@@ -138,18 +147,18 @@ def call_planner(client: Any, reasons: Sequence[Mapping[str, Any]]) -> PlanningO
             "사유 구조화 호출 실패: model=%s batch=%d %s elapsed_ms=%d",
             settings.llm_model, len(reasons), _failure_fields(exc), _elapsed_ms(started),
         )
-        _record("plan_evidence", None, getattr(exc, "completion", None), _agent_failure_reason(exc), started)
+        _record("plan_evidence", None, getattr(exc, "completion", None), _agent_failure_reason(exc), started, len(reasons))
         raise LlmCallError(f"사유 구조화 호출 실패: {type(exc).__name__}") from exc
     if getattr(message, "refusal", None):
         # 거절 문구(refusal 본문)는 모델 응답이라 남기지 않는다.
         log.warning("사유 구조화 거절: model=%s batch=%d elapsed_ms=%d", settings.llm_model, len(reasons), _elapsed_ms(started))
-        _record("plan_evidence", None, completion, "refusal", started)
+        _record("plan_evidence", None, completion, "refusal", started, len(reasons))
         raise LlmCallError("모델이 사유 구조화를 거절했다")
     if message.parsed is None:
         log.warning("사유 구조화 빈 응답: model=%s batch=%d elapsed_ms=%d", settings.llm_model, len(reasons), _elapsed_ms(started))
-        _record("plan_evidence", None, completion, "empty", started)
+        _record("plan_evidence", None, completion, "empty", started, len(reasons))
         raise LlmCallError("구조화 응답이 비어 있다")
-    _record("plan_evidence", None, completion, "ok", started)
+    _record("plan_evidence", None, completion, "ok", started, len(reasons))
     usage = getattr(completion, "usage", None)
     log.info(
         "사유 구조화 성공: model=%s batch=%d elapsed_ms=%d prompt_tokens=%s completion_tokens=%s",

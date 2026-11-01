@@ -22,8 +22,6 @@ from referencing.jsonschema import DRAFT202012
 
 # 알고 있고 이슈로 추적 중인 응답 불일치. (표식 문자열들) -> 이슈. 새 불일치가 생기면 실패하고, 고쳐졌는데 남아 있어도 실패한다.
 KNOWN_DRIFT: dict[tuple[str, ...], str] = {
-    # #955 Member.is_guest: 계약만 먼저 병합됐다. maps 구현(feat/maps-member-is-guest-955)이 응답에 싣고 이 줄을 지운다
-    ("members", "is_guest"): "#955",
 }
 
 # 크레딧 계약 테스트(test_credits_responses_match_the_openapi_spec)만의 알려진 차이. 메인 테스트는 /credits/me를 부르지 않아
@@ -32,6 +30,8 @@ KNOWN_CREDITS_DRIFT: dict[tuple[str, ...], str] = {}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
+    ("GET", "/maps/{mapId}/trash"): "핀 휴지통 목록 — 서버 구현 전(#864, 이슈 #1013). 구현되면 지운다",
+    ("POST", "/pins/{pinId}/restore"): "지운 핀 복구 — 서버 구현 전(#864, 이슈 #1013). 구현되면 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
@@ -780,10 +780,11 @@ def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions)
     assert not problems, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(problems)
 
 
-def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client):
+def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client, fake_places):
     """카카오맵 검색 링크(#798, #800) — readiness의 curated_nearby·external_search, 결과가 적을 때의 external_search, 결과 카드의
     place_url. 추천의 장소 Gateway를 실제 구현(places.api → FakePlaces)으로 꽂는다. FakePlaces 샘플은 정예도 주소도 없어
-    readiness는 0곳 + 링크(동네는 지도의 지역 이름), 결과는 지도에 없는 성수 음식점 1곳 + 링크다."""
+    readiness는 0곳 + 링크(동네는 지도의 지역 이름)다. 그 뒤 샘플을 정예로 지정하면(후보 풀은 정예 장소뿐, #913) 결과는 지도에 없는
+    성수 음식점 1곳 + 링크다."""
     from recommend import deps as recommend_deps
 
     app_client.app.dependency_overrides[recommend_deps.get_place_search_gateway] = lambda: recommend_deps.RealPlaceSearchGateway()
@@ -798,6 +799,7 @@ def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client
     assert readiness["음식점"]["curated_nearby"] == 0
     assert readiness["음식점"]["external_search"]["query"] == "성수동 맛집"
     assert "curated_nearby" not in readiness["카페"]   # 의견 핀이 없다
+    fake_places.curate_all()   # 이제부터 샘플 장소가 추천 후보 풀에 들어간다
 
     run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
     assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200

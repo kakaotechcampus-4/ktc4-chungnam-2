@@ -103,17 +103,21 @@ def test_map_response_includes_confirmed_count_when_known():
 def test_member_response_omits_display_name_and_online_when_unknown():
     """user_id로 display_name을 대체하거나 online=False로 채우면 그럴싸해 보이는 거짓
     fallback이 된다 — 둘 다 응답에서 빠져야 한다."""
-    response = core.to_member_response("user_1", role="owner", display_name=None, online=None)
-    assert response.model_dump(exclude_none=True) == {"user_id": "user_1", "role": "owner"}
+    response = core.to_member_response("user_1", role="owner", display_name=None, online=None, is_guest=False)
+    assert response.model_dump(exclude_none=True) == {"user_id": "user_1", "role": "owner", "is_guest": False}
+
+
+def test_member_response_carries_is_guest_as_given():
+    assert core.to_member_response("g", role="member", display_name=None, online=None, is_guest=True).is_guest is True
 
 
 def test_member_joined_event_shape():
-    member = Member(user_id="user_2", display_name=None, online=None)
+    member = Member(user_id="user_2", display_name=None, online=None, is_guest=False)
     event = core.member_joined_event("map_1", member)
     assert event.channel == "public"
     assert event.type == "member.joined"
     assert event.recipient_user_id is None
-    assert event.payload == {"user_id": "user_2"}
+    assert event.payload == {"user_id": "user_2", "is_guest": False}
 
 
 def test_membership_role_enum_matches_authz_policy_role():
