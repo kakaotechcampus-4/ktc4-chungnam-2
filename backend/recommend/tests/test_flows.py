@@ -547,7 +547,8 @@ def test_create_run_succeeds_assembles_evidence_and_default_region(db_session):
     assert regions[0].confirmed is True
     assert regions[0].center_lat == pytest.approx(35.2)
     assert regions[0].center_lng == pytest.approx(129.3)
-    assert regions[0].radius_m == flows.DEFAULT_REGION_RADIUS_M
+    assert regions[0].radius_m == core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)
+    assert run.default_radius_walk_min == core.DEFAULT_RADIUS_WALK_MIN
 
 
 def _no_plan_call(raw):
