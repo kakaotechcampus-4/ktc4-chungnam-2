@@ -121,6 +121,7 @@ export function buildBaseState(): StoreState {
     runRequestedBy: {},
     appliedEvidence: {},
     lastNewCount: {},
+    forceNoResults: false,
     trashedMaps: {},
     pinTrash: {},
     idempotencyKeys: {},

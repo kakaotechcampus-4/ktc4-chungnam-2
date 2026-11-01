@@ -29,6 +29,7 @@ function buildNoResults(): StoreState {
   state.evidenceLines[runId] = buildEvidenceLines(runId);
   state.regions[runId] = buildRegions();
   state.candidates[runId] = []; // 필터 통과 0곳
+  state.forceNoResults = true; // #1015 이 시나리오에서 새로 만든 run의 첫 실행도 0곳 — 크레딧을 돌려준다
   return state;
 }
 

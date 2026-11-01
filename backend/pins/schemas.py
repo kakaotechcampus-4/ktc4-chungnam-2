@@ -12,7 +12,7 @@ authz가 소유한다(#56 이관, mentor-review-plan.md). pins는 authz의 것�
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SkipValidation, model_serializer, model_validator
 
 from authz.schemas import Permissions
 from common import categories
@@ -85,7 +85,7 @@ class PinCreateSearch(BaseModel):
 
     category: Category
     source: PinSource = "search"
-    link_url: str | None = None
+    link_url: str | None = Field(default=None, max_length=2000)   # v1은 값이 있으면 422(core) — 길이는 스펙과 맞춘다(#733)
     place_id: str = Field(max_length=100)
     place_name: str = Field(max_length=100)
     lat: float = Field(ge=-90, le=90)
@@ -139,7 +139,9 @@ class BulkPinRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    pins: list[dict] = Field(min_length=1, max_length=30)
+    # 항목 모양은 스펙(PinCreateRequest)대로 문서에 싣되 검증은 건너뛴다 — 항목은 bulk_create_pins가 하나씩 검증해
+    # 틀린 항목만 rejected로 돌려준다(요청 전체를 422로 떨어뜨리지 않는다). 그래서 서비스에는 원본 dict가 온다(#733).
+    pins: list[Annotated[PinCreateRequest, SkipValidation]] = Field(min_length=1, max_length=30)
 
 
 class BulkPinError(BaseModel):
