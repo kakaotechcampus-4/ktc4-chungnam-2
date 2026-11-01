@@ -21,6 +21,7 @@ SKIP_FILES = {"common/errors.py"}   # 목록을 정의하는 자리
 # 코드 -> 추적 이슈. 비어 가는 것이 정상이다.
 KNOWN_UNRAISED: dict[str, str] = {
     "RETRY_LIMIT": "#954",   # 추천 횟수 상한은 크레딧으로 바뀌어 내지 않는다(#949). 카탈로그·계약에서 지우는 건 #954
+    "COURSE_LIMIT": "#954",   # 코스 하루 상한은 #950에서 없앴다. 계약(errors.md, api-spec)에서 지우는 일
 }
 
 

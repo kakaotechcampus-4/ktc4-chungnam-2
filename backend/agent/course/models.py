@@ -28,7 +28,7 @@ class AgentCourseRun(Base):
     __tablename__ = "agent_course_runs"
     __table_args__ = (
         Index("ix_agent_course_runs_map_user", "map_id", "requested_by", "created_at"),
-        Index("ix_agent_course_runs_user_created", "requested_by", "created_at"),   # 하루 상한을 센다
+        Index("ix_agent_course_runs_user_created", "requested_by", "created_at"),   # 하루 상한을 세던 자리. 상한은 #950에서 없앴고 인덱스는 남겼다(지우려면 마이그레이션)
         # 내 진행 중 run은 지도당 하나(COURSE_IN_PROGRESS). 동시 요청이 확인을 함께 통과해도 DB가 막는다
         Index(
             "uq_agent_course_runs_active", "map_id", "requested_by", unique=True,
