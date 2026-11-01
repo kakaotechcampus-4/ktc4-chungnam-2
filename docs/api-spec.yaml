@@ -2008,9 +2008,10 @@ components:
       type: object
       # display_name·online만 없을 수 있다 — auth(#4)의 users 테이블, realtime의 presence가
       # 아직 없어 못 채운다(maps/core.py::to_member_response). user_id는 항상 채운다.
-      required: [user_id, role]
+      required: [user_id, role, is_guest]
       properties:
         user_id: { type: string }
+        is_guest: { type: boolean, description: "로그인 수단이 없는 게스트(그 브라우저에서만 이어지는 임시 계정)인가(#955). 서버는 게스트에게 방장을 넘기지 않는다(OWNER_TARGET_INVALID) — 화면이 방장 넘기기 목록에서 빼고 이름 옆에 「게스트」를 붙이는 데 쓴다. 계산 값이라 저장하지 않는다(CurrentUser.is_guest와 같은 판정)" }
         role: { type: string, enum: [owner, member], description: "owner = 방장, 나머지는 member. memberships.role 기준이라 방장이 나가 위임되면 바뀐다(지도를 만든 사람과 다를 수 있다, #369). 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)" }
         display_name: { type: string, maxLength: 50 } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
         online: { type: boolean }
