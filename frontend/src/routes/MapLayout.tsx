@@ -385,7 +385,7 @@ export default function MapLayout() {
             {/* 내 이니셜 원은 계정 버튼처럼 읽혀서, 구성원 아이콘 + 인원 수로 "이 지도의 정보·구성원"임을 보인다(#351). */}
             {/* 넓은 화면은 바닥 시트 대신 버튼 아래 메뉴로 연다 — 패널 옆 바닥 시트는 끌리지도 않는 손잡이만 남았다. */}
             {/* 알림함(#483) — 다른 지도의 알림도 여기서 본다. */}
-            {desktop && <NotificationBell />}
+            {desktop && <NotificationBell currentMapId={mapId} />}
             {desktop ? (
               <ProfileMenu
                 mapId={mapId}
@@ -402,7 +402,7 @@ export default function MapLayout() {
               />
             ) : (
               <div className="flex items-center gap-3">
-                <NotificationBell floating />
+                <NotificationBell floating currentMapId={mapId} />
                 <button
                   type="button"
                   aria-label={`지도 정보와 구성원 · ${memberCount}명`}
