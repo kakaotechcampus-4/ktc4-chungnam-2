@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -322,16 +323,65 @@ def own_places_by_kakao_id(kakao_place_id: str, *, db: Session | None = None) ->
         return repository.find_by_kakao_place_id(s, kakao_place_id)
 
 
-def match_by_name_address(name: str, address: str | None, *, db: Session | None = None) -> list[PlaceSearchResult]:
+def match_by_name_address(name: str, address: str | None, *, external_id: str | None = None, db: Session | None = None) -> list[PlaceSearchResult]:
     """공유 글의 상호명·주소로 자체 DB 짝 찾기(#946). 짝이 하나로 확실할 때만 1개를, 아니면 빈 목록(가드레일 2 — 체인점·동명·주소 어긋남).
     **주소가 있어야 하고 주소가 같다고 확인된 장소만** 확정한다(주소 없음·비교 불가는 빈 목록 — 후보가 하나뿐이어도 같은 점포라는 근거가 못 된다).
     분류는 음식점·카페·관광지 모두. 규칙은 matching(이름 점수·주소 일치·모호하면 거절)을 그대로 쓰고 후보는 name_norm 인덱스로 좁힌다.
-    주소는 짝 찾기에만 쓴다 — 상호명·주소를 로그·예외에 남기지 않고 저장하지 않는다. 읽기 전용. 응답 모양은 링크 해석의 matches와 같다."""
+    `external_id`(링크에서 읽은 `kakao:…`·`naver:…` 번호)를 함께 주면 서버가 스스로 확정한 짝을 번호표에 source='hint'로 기록한다(#1048) —
+    다음 사람은 같은 링크로 한 번에 찍힌다. 이때만 쓰기가 있고(호출 쪽 트랜잭션에 참여, 커밋하지 않는다) 번호 형식이 틀리면 기록만 건너뛴다.
+    주소는 짝 찾기에만 쓴다 — 상호명·주소·번호를 로그·예외에 남기지 않고 저장하지 않는다. 응답 모양은 링크 해석의 matches와 같다."""
     if not name or not name.strip():
         return []
     with _session(db) as s:
         candidates = repository.find_by_name_hint(s, name)
-    return [_to_link_match(c) for c in matching.pick_hint_match(name, address, candidates)]
+        picked = matching.pick_hint_match(name, address, candidates)
+        if picked and external_id:
+            m = _EXTERNAL_ID.fullmatch(external_id)
+            if m is not None:
+                repository.upsert_external_id(s, m.group(1), external_id, picked[0].place_id, "hint", None)
+    return [_to_link_match(c) for c in picked]
+
+
+_EXTERNAL_ID = re.compile(r"(kakao|naver):\d{1,20}")
+
+
+def _check_external_id(provider: str, external_id: str) -> None:
+    m = _EXTERNAL_ID.fullmatch(external_id or "")
+    if m is None or m.group(1) != provider:
+        raise ValueError("번호 형식이 provider와 맞지 않는다")   # 번호 자체는 메시지에 싣지 않는다
+
+
+def record_external_id(provider: str, external_id: str, place_id: str, *, source: str, voter_hash: str | None = None,
+                       db: Session | None = None) -> None:
+    """카카오·네이버 장소 번호 → 자체 DB 장소 짝을 번호표에 기록한다(#1048). 번호만 저장한다 — 이름·좌표·주소는 저장하지 않는다(#53).
+    source='hint'(서버가 상호명·주소로 스스로 확정)는 즉시 신뢰, source='user'(사람이 고른 짝)는 voter_hash(사용자 id의 단방향 해시)당 한 표이고
+    서로 다른 2표가 쌓여야 parse_link가 자동 매칭에 쓴다. 같은 번호가 다른 장소에 이어지면 충돌이라 둘 다 자동 매칭에서 빠진다.
+    provider·번호·source가 잘못됐거나 user인데 voter_hash가 없으면 ValueError, 없는 place_id면 KeyError — 호출 쪽(pins)이 핀 생성을 막지 않고 넘긴다.
+    커밋하지 않는다(db를 넘기면 호출 쪽 트랜잭션에 참여)."""
+    if provider not in ("kakao", "naver") or source not in ("hint", "user") or (source == "user" and not voter_hash):
+        raise ValueError("provider·source·voter_hash가 계약에 맞지 않는다")
+    _check_external_id(provider, external_id)
+    with _session(db) as s:
+        repository.upsert_external_id(s, provider, external_id, place_id, source, voter_hash)
+
+
+def purge_external_id_votes(voter_hash: str, *, db: Session | None = None) -> int:
+    """탈퇴한 사용자의 번호표 표를 지운다(#1048, auth의 탈퇴 7일 뒤 정리가 부른다). 번호표 행은 공용 데이터라 남긴다. 멱등 — 지운 표 수."""
+    if not voter_hash:
+        return 0
+    with _session(db) as s:
+        return repository.purge_external_id_votes(s, voter_hash)
+
+
+def own_places_by_external_id(external_id: str, *, db: Session | None = None) -> list[Candidate]:
+    """번호표가 가리키는 자체 DB 장소(#1048). 신뢰된 단일 행이고 그 장소가 영업 중일 때만 한 곳, 아니면 빈 목록(충돌·표 부족·폐업·번호표에 없음).
+    번호 형식이 아니면 빈 목록. 읽기 전용."""
+    m = _EXTERNAL_ID.fullmatch(external_id or "")
+    if m is None:
+        return []
+    with _session(db) as s:
+        place_id = core.trusted_external_place(repository.external_id_rows(s, m.group(1), external_id))
+        return repository.find_open_by_ids(s, [place_id]) if place_id else []
 
 
 def match_address_candidates(address: str, *, db: Session | None = None) -> list[PlaceSearchResult]:
@@ -363,8 +413,19 @@ def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
 
     if parsed.provider == "kakao":
         found = own_places_by_kakao_id(parsed.kakao_place_id, db=db)[: matching.LINK_MAX_MATCHES]
+        matched_by = None   # 카카오 ID로 기록된 장소는 「링크가 가리키는 장소」 — 호출 쪽(pins)이 link로 표시한다
+        if not found:   # 번호표에서 이어진 짝(#1048) — places.kakao_place_id 조회와 합친다
+            found = own_places_by_external_id(parsed.kakao_place_id, db=db)[: matching.LINK_MAX_MATCHES]
+            matched_by = "external_id" if found else None
         result = LinkParseResult(
-            provider="kakao", kakao_place_id=parsed.kakao_place_id,
+            provider="kakao", kakao_place_id=parsed.kakao_place_id, external_id=parsed.kakao_place_id, matched_by=matched_by,
+            matches=[_to_link_match(c) for c in found], needs_search_query=not found,
+        )
+    elif parsed.provider == "naver":
+        # 번호뿐인 링크 — 이름·좌표를 모르니 번호표로만 찾는다(#1048). 없으면 호출 쪽이 힌트(상호명·주소)나 검색으로 잇는다
+        found = own_places_by_external_id(parsed.external_id, db=db)[: matching.LINK_MAX_MATCHES]
+        result = LinkParseResult(
+            provider="naver", external_id=parsed.external_id, matched_by="external_id" if found else None,
             matches=[_to_link_match(c) for c in found], needs_search_query=not found,
         )
     else:
