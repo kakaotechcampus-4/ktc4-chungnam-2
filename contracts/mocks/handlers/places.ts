@@ -33,7 +33,7 @@ function meters(aLat: number, aLng: number, bLat: number, bLng: number) {
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
   return 2 * 6371000 * Math.asin(Math.sqrt(h));
 }
-const isPinnable = (p: PlaceSearchResult) => !NOT_IN_OWN_DB.has(p.place_id) && (!p.category || CATEGORY_RULES[p.category].pinnable);
+export const isPinnable = (p: PlaceSearchResult) => !NOT_IN_OWN_DB.has(p.place_id) && (!p.category || CATEGORY_RULES[p.category].pinnable);
 /** 반경 100m 안 자체 DB 장소를 가까운 순 최대 5곳(#473, #474) */
 function ownDbNear(lat: number, lng: number, category?: string | null) {
   return SEED_PLACES.filter((p) => isPinnable(p) && (!category || p.category === category))
