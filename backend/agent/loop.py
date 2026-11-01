@@ -1,5 +1,5 @@
 """개발용 관찰 반복 작업(docs/agent-v2.md 12.1). `AGENT_LOOP_IN_PROCESS=True`일 때만 lifespan에서 띄워
-`TICK_INTERVAL_SEC`마다 `flows.run_tick`을 부른다. 배포는 Cloud Scheduler → `POST /internal/agent/tick`(M1)이다.
+`TICK_INTERVAL_SEC`마다 `flows.run_tick`을 부른다. 배포는 서버 cron이 `python -m agent.tick`을 부른다(#812).
 
 main.py lifespan은 `start()`와 `stop()`만 부른다. 종료 순서(#130)는 agent 정지 대기 → dispatcher 정지 → SSE 정리 →
 연결 풀 닫기다. realtime/dispatcher.py처럼 취소가 아니라 정지 신호로 멈춰, 스레드에서 도는 tick이 끝난 뒤에 풀이

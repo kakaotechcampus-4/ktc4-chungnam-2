@@ -22,6 +22,7 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
+    ("get", "/places/external-search"): "장소 검색 결과 없음의 카카오맵 링크 — 서버 구현 전(#903). 구현되면 지운다",
 }
 
 # 특정 환경에서만 붙는 경로 — main.py가 설정을 보고 include한다. 테스트 앱(PINGO_ENV=test)에는 없어야 한다.

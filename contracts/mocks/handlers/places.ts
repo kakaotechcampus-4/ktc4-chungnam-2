@@ -77,6 +77,13 @@ export const placesHandlers = [
     return apiError(422, "LINK_NOT_SUPPORTED", "구글맵·카카오맵 링크만 붙일 수 있어요"); // 네이버·인스타·블로그 등
   }),
 
+  // #902: 장소 검색 결과 없음의 카카오맵 링크 — 사용자가 친 검색어 그대로. 링크 형식은 서버(places.api.kakao_search_url)와 같다
+  http.get("*/places/external-search", ({ request }) => {
+    const q = (new URL(request.url).searchParams.get("q") ?? "").trim();
+    if (q.length < 1 || q.length > 50) return apiError(422, "VALIDATION_ERROR", "검색어는 1~50자로 입력해 주세요");
+    return HttpResponse.json({ query: q, url: `https://map.kakao.com/link/search/${encodeURIComponent(q)}` });
+  }),
+
   http.get("*/places/search", ({ request }) => {
     const url = new URL(request.url);
     const q = (url.searchParams.get("q") ?? "").trim();

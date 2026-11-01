@@ -53,6 +53,7 @@ from authz.schemas import Permissions
 from common import categories
 from common.errors import AppError
 from common.events import Event, record_event
+from credits import api as credits_api
 from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
@@ -164,7 +165,7 @@ def list_runs(
     return [
         schemas.RunSummary(
             id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
-            attempt_limit=core.ATTEMPT_LIMIT, created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
+            created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
         )
         for run, candidate_count, published_count in service.list_runs_for_requester(
             db, map_id=map_id, requested_by=requested_by, category=category, limit=limit,
@@ -334,7 +335,7 @@ def create_run(
                 db, map_id=map_id, category=category, requested_by=requested_by, evidence_planner=evidence_planner,
                 traces=traces,
             )
-        if execute:   # #845, #847 — 근거 조립 뒤 같은 요청·같은 트랜잭션에서 첫 검색까지. 어디서 실패하든 run·횟수가 함께 되돌아간다
+        if execute:   # #845, #847 — 근거 조립 뒤 같은 요청·같은 트랜잭션에서 첫 검색까지. 어디서 실패하든 run·횟수·크레딧 차감이 함께 되돌아간다
             assert place_search is not None and place_facts is not None   # 호출부(라우터) 계약
             service.lock_run(db, run.id)
             _search_and_store(db, run, place_search=place_search, place_facts=place_facts)
@@ -376,16 +377,15 @@ def _create_run(
     traces: list[uuid.UUID] | None = None,
 ) -> RecommendRun:
     """run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
-    안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 재시도 상한(#31) 3) run INSERT
-    4) 반응 → 근거 구조화(글은 llm.api.plan_evidence, 칩은 코드 #412) 5) run INSERT → evidence_lines INSERT 6) 기본값
-    지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
-    트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다."""
+    안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 크레딧 확인(읽기, 게스트 403·부족 402, #432)
+    3) 반응 → 근거 구조화(글은 llm.api.plan_evidence, 칩은 코드 #412) 4) run INSERT + 크레딧 차감(같은 트랜잭션)
+    5) evidence_lines INSERT 6) 기본값 지역 INSERT. 모델 호출(최대 15초+재시도)이 끝난 뒤에야 INSERT한다(#208) — 그동안 쓰기
+    트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다. 뒤에서 실패해도 차감이 run과 함께 롤백되므로
+    추천에는 환불 경로가 없다(docs/credits-reviews.md 3.3). `Idempotency-Key` 재전송은 이 함수를 다시 타지 않는다."""
     readiness = readiness_for_category(db, map_id=map_id, category=category)
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
-
-    current_max = service.max_attempt_no_for_requester(db, map_id=map_id, requested_by=requested_by)
-    core.check_retry_limit(current_max)  # #31 — 카테고리 무관 개인 단위 카운터가 이미 상한이면 새 run도 막는다
+    credits_api.check_can_spend(db, user_id=requested_by, feature="recommend_run")   # 모델(②) 전에 막는다(#949)
 
     raw_reactions = pins_api.list_reasoned_reactions(db, map_id=map_id, category=category)
     # ②에는 사람이 쓴 글만 보낸다(#412) — 칩은 키·방향이 정해져 있어 코드가 줄을 만든다. 글이 없으면 ② 호출도 없다.
@@ -400,13 +400,12 @@ def _create_run(
     reaction_lines = _reaction_evidence_lines(raw_reactions, [[line.model_dump() for line in group] for group in planned])
     merged = core.assemble_evidence(core.demote_wanted_place_identity(reaction_lines, category), [])  # #422, #617
 
-    # LLM 대기 중 같은 사용자의 동시 요청이 상한(#31)에 도달시켰을 수 있다 — INSERT 직전에 다시 읽어
-    # 경합 구간을 수 ms로 줄인다(첫 검사는 모델을 부르기 전에 막는 빠른 실패용). 이 검사부터 INSERT까지는 (지도, 요청자)
-    # 횟수 잠금 안에서 끝낸다 — 서로 다른 요청이 같은 attempt_no를 쓰거나 상한을 함께 넘지 못하게(#811).
+    # 번호를 읽고 INSERT하기까지는 (지도, 요청자) 횟수 잠금 안에서 끝낸다 — 동시 요청이 같은 attempt_no를 쓰지 못하게(#811).
     service.lock_requester_attempts(db, map_id=map_id, requested_by=requested_by)
     current_max = service.max_attempt_no_for_requester(db, map_id=map_id, requested_by=requested_by)
-    core.check_retry_limit(current_max)
     run = service.create_run(db, map_id=map_id, category=category, requested_by=requested_by, attempt_no=current_max + 1)
+    # 모델을 기다리는 사이 잔액이 줄었으면 여기서 402다(모델은 이미 불렸다 — 드문 경합으로 받아들인다, credits.api.charge)
+    credits_api.charge(db, user_id=requested_by, feature="recommend_run", run_id=str(run.id))
     service.add_reaction_evidence(db, run_id=run.id, lines=merged)
 
     default_region = _default_circle_and_anchors(db, map_id=map_id, category=category)
@@ -459,6 +458,15 @@ def _check_manual_evidence_limit(db: Session, run_id: uuid.UUID, *, adding: int)
         raise AppError("EVIDENCE_LIMIT", detail={"limit": core.MANUAL_EVIDENCE_LIMIT, "used": used})
 
 
+def _manual_texts_by_author(db: Session, run_id: uuid.UUID, author_id: str) -> dict[str, list]:
+    """이 run에서 이 사람이 「+」로 쓴 글(정규화한 글 → 그 글의 줄들, ×로 뺀 줄 포함). 같은 글 재추가의 멱등 판정(#848)이 쓴다.
+    글 하나에 조건이 여럿이면 줄이 여럿이다(#419)."""
+    by_text: dict[str, list] = {}
+    for line in service.list_manual_lines_by_author(db, run_id, author_id):
+        by_text.setdefault(core.normalize_manual_text(line.text), []).append(line)
+    return by_text
+
+
 def patch_evidence(
     db: Session, *, run_id: str, principal: Principal,
     toggles: list[tuple[str, bool]], adds: list[str], evidence_planner: EvidencePlanGateway,
@@ -467,7 +475,7 @@ def patch_evidence(
     constrained) — 권한 없는 토글이 섞여 있으면 요청 전체를 403으로 거절한다(api-spec.yaml이
     이 엔드포인트에 Forbidden을 명시함 — "버튼이 애초에 disabled였어야 했다"는 신호)."""
     run = service.get_run_or_404(db, run_id)
-    run_uuid, run_map_id, run_requested_by = run.id, run.map_id, run.requested_by   # 롤백 뒤에 run을 읽으면 트랜잭션이 다시 열린다 — 미리 꺼내 둔다
+    run_uuid, run_map_id = run.id, run.map_id   # 롤백 뒤에 run을 읽으면 트랜잭션이 다시 열린다 — 미리 꺼내 둔다
     # 읽기(존재·권한 검사) → 롤백 → 모델 → 쓰기 순서다(#275). 모델을 기다리는 동안 트랜잭션도 연결도 잡지 않는다.
     validated: list[tuple[uuid.UUID, bool]] = []
     for evidence_id, is_active in toggles:
@@ -478,12 +486,13 @@ def patch_evidence(
         if not can(principal, "evidence.disable", resource):
             raise AppError("FORBIDDEN")
         validated.append((line.id, is_active))
-    # 추천 횟수(요청자·지도 단위, 10회)를 다 쓴 run은 근거를 고칠 수 없다(×·＋ 모두, #845) — 고쳐도 다시 추천할 수 없다. 모델을
-    # 부르기 전에 거절한다. 횟수는 retry의 상한 검사와 같은 값(그 요청자가 이 지도에서 만든 모든 run의 최댓값)이다.
-    if validated or adds:
-        core.check_retry_limit(service.max_attempt_no_for_requester(db, map_id=run_map_id, requested_by=run_requested_by))
-    # 한 요청 안의 같은 글은 하나로 줄인다 — 상한은 (글, 요청)으로 세므로 반복한 글이 ②에만 여러 번 들어가지 않게(#707).
-    adds = list(dict.fromkeys(adds))
+    # 한 요청 안의 같은 글은 하나로 줄인다(공백만 다른 글도 같은 글) — 상한은 (글, 요청)으로 세므로 반복한 글이 ②에만 여러 번
+    # 들어가지 않게(#707). 같은 run에서 같은 사람이 이미 쓴 글(×로 뺀 것 포함)을 다시 보내면 새 줄도 모델 호출도 글 수 상한도 없이
+    # 그 줄을 그대로 돌려주고 뺀 줄이면 다시 켠다(#848). 다른 사람의 같은 글은 별개의 줄이다. 모델에는 새 글만 보낸다.
+    requested = list(dict.fromkeys(core.normalize_manual_text(text) for text in adds))
+    already = _manual_texts_by_author(db, run_uuid, principal.user_id)
+    repeated = [text for text in requested if text in already]
+    adds = [text for text in requested if text not in already]
     # 「+」 상한(#707)은 모델을 부르기 전에 본다 — 넘는 요청은 ②를 부르지 않는다.
     if adds:
         _check_manual_evidence_limit(db, run_uuid, adding=len(adds))
@@ -501,26 +510,30 @@ def patch_evidence(
             ])
         trace_id = label.trace_id
     try:
-        if validated or adds:
+        if validated or adds or repeated:
             # 위 검사들은 잠금 없이 끝났다(모델을 기다리는 동안 트랜잭션을 잡지 않는다). 같은 run에 동시에 온 요청이 함께 상한을 넘지
             # 않게 run 행을 잠그고 다시 센다 — 이때 걸리면 모델은 이미 불렸지만 줄은 남지 않는다(멘토 리뷰 #380: 여러 행에 걸친 상한).
-            # 횟수 상한도 저장 직전에 다시 검사한다 — 위 검사(모델 앞)와 쓰기 사이에 같은 요청자의 retry·다른 run 생성이 10회째를 커밋했을 수
-            # 있다. 잠금 순서는 run → 요청자 횟수(service.lock_run)라 retry와 같고, 걸리면 모델은 불렸어도 아무것도 저장하지 않는다.
             service.lock_run(db, run_uuid)
-            service.lock_requester_attempts(db, map_id=run_map_id, requested_by=run_requested_by)
-            core.check_retry_limit(service.max_attempt_no_for_requester(db, map_id=run_map_id, requested_by=run_requested_by))
-        if adds:
-            _check_manual_evidence_limit(db, run_uuid, adding=len(adds))
+        # 잠근 뒤 다시 읽는다 — 모델을 기다리는 사이 같은 글이 다른 요청(연타·재전송)으로 이미 저장됐을 수 있다. 그 글은 새 줄을 더하지 않고
+        # 그 줄을 쓴다(모델 결과는 버린다).
+        already = _manual_texts_by_author(db, run_uuid, principal.user_id)
+        planned_by_text = dict(zip(adds, planned)) if adds else {}
+        to_add = [text for text in adds if text not in already]
+        if to_add:
+            _check_manual_evidence_limit(db, run_uuid, adding=len(to_add))
         for line_id, is_active in validated:
             service.set_evidence_active(db, line_id, is_active)
-        if adds:
-            for text, group in zip(adds, planned):
-                for line in group:
-                    service.add_manual_evidence(
-                        db, run_id=run_uuid, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
-                    )
+        for text in [*repeated, *(text for text in adds if text in already)]:   # 뺐던 줄이면 다시 켠다
+            for line in already[text]:
+                if not line.is_active:
+                    service.set_evidence_active(db, line.id, True)
+        for text in to_add:
+            for line in planned_by_text[text]:
+                service.add_manual_evidence(
+                    db, run_id=run_uuid, author_id=principal.user_id, text=text, fact_key=line.fact_key, wants=line.wants,
+                )
     except BaseException:
-        if trace_id is not None:   # 모델은 불렸는데 저장이 안 됐다(상한 재검사·EVIDENCE_LIMIT 등) — 버려진 비용으로 표시한다(#848)
+        if trace_id is not None:   # 모델은 불렸는데 저장이 안 됐다(글 수 상한 재검사 등) — 버려진 비용으로 표시한다(#848)
             llm_api.mark_discarded(trace_id)
         raise
     return _evidence_responses(db, run, principal)
@@ -941,16 +954,10 @@ def retry_run(
     db: Session, *, run_id: str, place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
 ) -> RecommendRun:
     """POST /runs/{runId}/retry (3절) — 현재 뜬(아직 게시 안 된) 대안 전체를 제외목록에
-    넣고 새로 찾는다. 상한 도달 시 429 RETRY_LIMIT(#31)."""
+    넣고 새로 찾는다. 모델을 부르지 않아 크레딧을 쓰지 않고 횟수 상한도 없다(#432 D5, #949)."""
     run = service.get_run_or_404(db, run_id)
     service.lock_run(db, run.id)   # run 먼저, 그다음 횟수 잠금(교착 방지 순서, service.lock_run)
     service.lock_requester_attempts(db, map_id=run.map_id, requested_by=run.requested_by)
-    # run.attempt_no(이 run 자신의 값)가 아니라 그 사람의 전체 run 중 최댓값을 본다 — #31은
-    # 개인 단위 공유 카운터라, 오래된(attempt_no가 낮은) run으로 retry를 걸면 그 run 자신의
-    # 값만 통과해서 사실상 상한을 우회할 수 있었다(루트 수정, 2026-09-23 — Antigravity 검수로
-    # 발견). bump_attempt_no도 같은 기준으로 다시 계산해 맞춘다.
-    current_max = service.max_attempt_no_for_requester(db, map_id=run.map_id, requested_by=run.requested_by)
-    core.check_retry_limit(current_max)
 
     current_candidates = service.list_candidates(db, run_id)
     unpublished_place_ids = [c.place_id for c in current_candidates if c.published_pin_id is None]

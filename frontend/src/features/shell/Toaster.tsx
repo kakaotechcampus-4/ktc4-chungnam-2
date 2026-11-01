@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { CONTROLS } from './layout'
 
@@ -27,6 +27,14 @@ export default function Toaster({
   const [mode, setMode] = useState<'center' | 'raised' | 'narrow'>('center')
   const toast = useToastStore((s) => s.toast)
   const dismiss = useToastStore((s) => s.dismiss)
+  const pause = useToastStore((s) => s.pause)
+  const resume = useToastStore((s) => s.resume)
+  // 손가락·마우스·포커스가 토스트에 있는 동안은 사라지지 않는다(#959). 토스트 id 로 기억해서,
+  // 「되돌리기」로 상자가 손 아래에서 사라져도(떠남 이벤트 없음) 다음 토스트가 멈춘 채 남지 않는다.
+  const [hoverId, setHoverId] = useState<number | null>(null)
+  const [focusId, setFocusId] = useState<number | null>(null)
+  const held = toast !== null && (hoverId === toast.id || focusId === toast.id)
+  useEffect(() => (held ? pause() : resume()), [held, toast?.id, pause, resume])
   useLayoutEffect(() => {
     const box = boxRef.current
     if (!box || inside || !controlsVisible) return setMode('center')
@@ -42,8 +50,7 @@ export default function Toaster({
     setMode(!docked && canRaise() ? 'raised' : 'narrow')
   }, [toast, inside, controlsVisible, docked])
 
-  if (!toast) return null
-
+  // 알림 영역(role=status)은 늘 깔아 둔다. 영역과 글자가 함께 생기면 스크린리더가 놓친다(#959).
   return (
     <div
       role="status"
@@ -53,26 +60,33 @@ export default function Toaster({
         right: mode === 'narrow' ? CONTROLS.right + CONTROLS.size + 8 : undefined,
       }}
       className={`pointer-events-none absolute left-4 right-4 z-10 flex justify-center transition-opacity duration-300 ${
-        toast.leaving ? 'opacity-0' : 'opacity-100'
+        toast?.leaving ? 'opacity-0' : 'opacity-100'
       }`}
     >
-      <div
-        ref={boxRef}
-        className="pointer-events-auto flex max-w-[361px] items-center gap-3 rounded-xl bg-[var(--toast-bg)] px-4 py-2.5 text-sm text-white backdrop-blur-[12px]">
-        <span className="line-clamp-2 break-keep [text-wrap:balance]">{toast.message}</span>
-        {toast.action && (
-          <button
-            type="button"
-            onClick={() => {
-              toast.action?.onClick()
-              dismiss(toast.id)
-            }}
-            className="shrink-0 font-bold text-white underline underline-offset-2"
-          >
-            {toast.action.label}
-          </button>
-        )}
-      </div>
+      {toast && (
+        <div
+          ref={boxRef}
+          onPointerEnter={() => setHoverId(toast.id)}
+          onPointerLeave={() => setHoverId(null)}
+          onFocus={() => setFocusId(toast.id)}
+          onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setFocusId(null)}
+          className="pointer-events-auto flex max-w-[361px] items-center gap-3 rounded-xl bg-[var(--toast-bg)] px-4 py-2.5 text-sm text-white backdrop-blur-[12px]"
+        >
+          <span className="line-clamp-2 break-keep [text-wrap:balance]">{toast.message}</span>
+          {toast.action && (
+            <button
+              type="button"
+              onClick={() => {
+                toast.action?.onClick()
+                dismiss(toast.id)
+              }}
+              className="shrink-0 font-bold text-white underline underline-offset-2"
+            >
+              {toast.action.label}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

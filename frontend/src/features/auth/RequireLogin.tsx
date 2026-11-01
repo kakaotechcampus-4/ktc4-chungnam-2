@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, Outlet, useSearchParams } from 'react-router'
 
-import { ChevronRight, CircleCheck, MapPin, MessageSquareText, Sparkles, Star, UserRound } from 'lucide-react'
+import { ChevronRight, CircleCheck, UserRound } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import { FEATURES } from '@/features/onboarding/features'
 import ModalSheet from '@/features/shell/ModalSheet'
+import { showToast } from '@/features/shell/toast'
 import MapIllustration from '@/ui/MapIllustration'
 import Pingo from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
@@ -13,10 +15,35 @@ import Wordmark from '@/ui/Wordmark'
 
 import { isUnauthorized } from './api'
 import KakaoButton from './KakaoButton'
+import { guestMergedMessage } from './model'
+import PendingAccountScreen from './PendingAccountScreen'
+import { readPendingInvite } from './pendingInvite'
 import { useMeQuery } from './queries'
 
-/** 로그인해야 볼 수 있는 화면들을 감싼다. 비로그인이면 그 자리에 로그인 화면을 띄운다. */
+/** docs/errors.md NO_PENDING_LOGIN — 선택 쿠키(10분)가 만료됐거나 이미 골랐다. */
+const PENDING_EXPIRED = '선택 시간이 지났어요. 카카오로 다시 시작해 주세요'
+
+/**
+ * 로그인해야 볼 수 있는 화면들을 감싼다. 비로그인이면 그 자리에 로그인 화면을 띄운다.
+ * 탈퇴한 계정으로 다시 로그인했으면(`?login_pending=withdrawn_account`, #855) 세션보다 먼저 선택 화면을 띄운다 —
+ * 고르기 전에는 로그인이 아니라서 지도·내 지도 목록으로 보내지 않는다. 게스트로 시작한 로그인이면 게스트 세션이 아직 남아 있다.
+ */
 export default function RequireLogin() {
+  const [params] = useSearchParams()
+  const [pending, setPending] = useState<'choose' | 'expired' | null>(null)
+  // 처음 그릴 때뿐 아니라 이 화면에 머문 채 붙어 와도 받는다(목 서버 시나리오 전환이 콜백 대신 붙인다). 주소에서 지우면 다시 걸리지 않는다.
+  if (params.get('login_pending') === 'withdrawn_account' && pending !== 'choose') setPending('choose')
+  useStripParam('login_pending')
+  useGuestMergedToast()
+  const done = useCallback(() => setPending(null), [])
+  const expired = useCallback(() => setPending('expired'), [])
+
+  if (pending === 'choose') return <PendingAccountScreen onDone={done} onExpired={expired} />
+  if (pending === 'expired') return <LoginScreen notice={PENDING_EXPIRED} />
+  return <SessionGate />
+}
+
+function SessionGate() {
   const { isPending, error } = useMeQuery()
 
   if (isPending) return <PingoLoading label="로그인 상태를 확인하는 중…" className="min-h-dvh justify-center" />
@@ -31,27 +58,34 @@ export default function RequireLogin() {
   return <Outlet />
 }
 
-/** 쓰는 순서대로 — 핀 찍기 → 의견 → AI 대안 → 확정. 아이콘이 각 기능을 가리켜서 같은 체크를 반복하지 않는다. */
-const FEATURES = [
-  { Icon: MapPin, text: '가고 싶은 곳을 핀으로 찍어요' },
-  { Icon: MessageSquareText, text: '좋음·반대로 의견을 남겨요' },
-  { Icon: Sparkles, text: '반대가 있으면 AI가 대안을 찾아줘요' },
-  { Icon: Star, text: '정한 곳은 확정 리스트에 모아요' },
-]
-
 /**
- * 카카오 로그인이 실패하면 서버가 진입점에 `?login_error=`를 붙여 돌려보낸다(#315).
- * 처음 한 번 읽고 주소에서는 지운다 — 새로고침해도 같은 안내가 다시 뜨지 않게.
+ * 카카오 콜백이 진입점에 붙여 돌려보내는 쿼리 — 실패면 `?login_error=`(#315), 탈퇴 계정이면 `?login_pending=`(#855).
+ * 부르는 쪽이 먼저 읽고, 주소에서는 지운다 — 새로고침해도 같은 안내가 다시 뜨지 않게.
  */
-function useLoginError(): string | null {
+function useStripParam(name: 'login_error' | 'login_pending' | 'guest_merged') {
   const [params, setParams] = useSearchParams()
-  const [code] = useState(() => params.get('login_error'))
   useEffect(() => {
-    if (!params.has('login_error')) return
+    if (!params.has(name)) return
     const next = new URLSearchParams(params)
-    next.delete('login_error')
+    next.delete(name)
     setParams(next, { replace: true })
-  }, [params, setParams])
+  }, [name, params, setParams])
+}
+
+/** 게스트가 카카오로 전환하고 돌아오면(`?guest_merged=`, #560) 기록이 이어졌는지 한 번 알린다. */
+function useGuestMergedToast() {
+  const [params] = useSearchParams()
+  const [message] = useState(() => guestMergedMessage(params.get('guest_merged')))
+  useStripParam('guest_merged')
+  useEffect(() => {
+    if (message) showToast(message)
+  }, [message])
+}
+
+function useLoginError(): string | null {
+  const [params] = useSearchParams()
+  const [code] = useState(() => params.get('login_error'))
+  useStripParam('login_error')
   if (!code) return null
   return code === 'cancelled' ? '로그인을 취소했어요' : '로그인하지 못했어요. 다시 시도해 주세요'
 }
@@ -59,9 +93,10 @@ function useLoginError(): string | null {
 /**
  * 로그인(랜딩) — 위에서부터 이름 → 날아가는 핑고 → 시작 버튼 둘 → 할 수 있는 일 → 약관 동의 줄.
  * 768px 이상은 종이 배경 가운데 입구 카드다(#602). 1024px 이상은 왼쪽에 이름·핑고를 크게, 오른쪽 카드에 나머지를 둔다.
+ * `notice` 는 다른 화면이 넘겨 준 안내(탈퇴 계정 선택 시간 만료)다. 실패 안내와 같은 자리에 같은 모양으로 뜬다.
  */
-function LoginScreen() {
-  const loginError = useLoginError()
+function LoginScreen({ notice }: { notice?: string }) {
+  const loginError = useLoginError() ?? notice ?? null
   const [sheet, setSheet] = useState<'guest' | 'terms' | null>(null)
   const close = () => setSheet(null)
   return (
@@ -81,7 +116,7 @@ function LoginScreen() {
         <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500 lg:mt-0">3초면 시작! 카카오에서 이름을 받아서 활용해요</p>
         {/* 빨강은 핀·🚫·되돌릴 수 없는 동작 전용이라(영역 분리 규칙) 로그인 실패는 주의색이다. */}
         {loginError && (
-          <p role="alert" className="mt-3 rounded-xl border border-[var(--warn-line)] bg-[var(--warn-bg)] px-3 py-2.5 text-center text-sm font-semibold text-[var(--warn-text)]">
+          <p role="alert" className="mt-3 text-balance break-keep rounded-xl border border-[var(--warn-line)] bg-[var(--warn-bg)] px-3 py-2.5 text-center text-sm font-semibold text-[var(--warn-text)]">
             {loginError}
           </p>
         )}
@@ -148,8 +183,10 @@ function LoginHero() {
 /**
  * 게스트 참여(v2, #472·#485)는 초대 링크로만 들어간다 — 서버가 초대 토큰 없이는 게스트를 만들지 않는다.
  * 그래서 입구에서는 방법만 알려 주고, 이름 입력은 초대 화면이 받는다(#485).
+ * 초대 링크로 왔다가 카카오 로그인을 그만두고 여기로 돌아왔으면 그 초대로 돌아가는 버튼을 둔다.
  */
 function GuestSheet({ onClose }: { onClose: () => void }) {
+  const [invite] = useState(readPendingInvite)
   return (
     <ModalSheet label="게스트로 시작하기" onClose={onClose}>
       <div className="flex items-center gap-3">
@@ -164,7 +201,12 @@ function GuestSheet({ onClose }: { onClose: () => void }) {
         <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />새 지도를 만들려면 카카오로 로그인해야 해요</li>
         <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />90일 동안 쓰지 않으면 기록이 정리돼요</li>
       </ul>
-      <button type="button" onClick={onClose} className="btn-neutral btn-lg mt-5 w-full">
+      {invite && (
+        <Link to={`/invites/${encodeURIComponent(invite)}`} className="btn-primary btn-lg mt-5 w-full">
+          받은 초대로 돌아가 이름 입력하기
+        </Link>
+      )}
+      <button type="button" onClick={onClose} className={`btn-neutral btn-lg w-full ${invite ? 'mt-2' : 'mt-5'}`}>
         닫기
       </button>
     </ModalSheet>

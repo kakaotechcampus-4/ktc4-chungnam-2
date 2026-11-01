@@ -11,6 +11,7 @@ import MapListPage from '@/routes/MapListPage'
 import MapTab from '@/routes/MapTab'
 import RecommendTab from '@/routes/RecommendTab'
 import ShortlistTab from '@/routes/ShortlistTab'
+import WelcomePage from '@/routes/WelcomePage'
 
 export default function App() {
   return (
@@ -28,6 +29,8 @@ export default function App() {
         <Route element={<RequireLogin />}>
           {/* 로그인 직후 진입점 = 내 지도 목록 (#24) */}
           <Route path="/" element={<MapListPage />} />
+          {/* 첫 로그인 온보딩 — 목록이 처음 열릴 때 한 번 이리 보낸다 */}
+          <Route path="/welcome" element={<WelcomePage />} />
           <Route path="/maps/new" element={<MapCreatePage />} />
           <Route path="/maps/:mapId" element={<MapRoute />}>
             <Route index element={<MapTab />} />

@@ -38,7 +38,7 @@ def test_pin_member_general_kind():
     assert dumped == {
         "can_react": True,
         "can_revert": True,
-        "can_delete": True,
+        "can_delete": False,  # 작성자가 아닌 구성원 — 찍은 사람과 방장만(#965)
         "can_add_to_shortlist": True,
         "can_remove_from_shortlist": False,
     }

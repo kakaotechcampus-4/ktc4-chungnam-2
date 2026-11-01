@@ -1,5 +1,7 @@
 import type { components } from '@pingo/contracts/src/types/api'
 
+import { ApiError } from '@/api'
+
 export type PinDto = components['schemas']['Pin']
 /** 지금은 응답 그대로다. 화면용으로 바꿀 게 생기면(반응 집계 등) 여기서 바꾸고 화면은 그대로 둔다. */
 export type Pin = PinDto
@@ -103,6 +105,8 @@ export type PinCardView = {
   meta: string
   counts: Record<ReactionType | 'unknown', number>
   mine: ReactionType | null
+  /** 확정 리스트에 든 핀. 카드에선 「의견 남기기」보다 먼저 보인다(#859). */
+  confirmed: boolean
 }
 
 /** 카드 한 장. 미확인(?)은 구성원 수에서 반응한 사람을 뺀 값이다. */
@@ -121,12 +125,22 @@ export function toPinCard(pin: Pin, memberCount: number, myId?: string): PinCard
       .join(' · '),
     counts: { ...s, unknown: Math.max(0, memberCount - participants(pin)) },
     mine: asReactionType(pin.my_reaction?.type),
+    confirmed: pin.kind === '확정',
   }
 }
 
 export type PinCreateRequest = components['schemas']['PinCreateRequest']
 /** 실시간 핀 승격의 매칭 힌트(#501). 서버도 화면도 저장하지 않는다. */
 export type PinResolveRequest = components['schemas']['PinResolveRequest']
+export type PinUpdateRequest = components['schemas']['PinUpdateRequest']
+
+/**
+ * 핀 수정 실패 문구(#466). 무엇이 안 되는지(의견이 달린 핀의 분류 등)는 서버가 정하고 문구까지 내려 준다 —
+ * 화면이 같은 규칙을 다시 판정하지 않고 422 문구를 그대로 쓴다(멘토 리뷰 #680).
+ */
+export function pinEditErrorMessage(err: unknown): string {
+  return err instanceof ApiError && err.code === 'VALIDATION_ERROR' ? err.message : '핀을 고치지 못했어요'
+}
 export type ReactionDto = components['schemas']['Reaction']
 export type ReactionRequest = components['schemas']['ReactionRequest']
 /** 반대 사유 칩(최종기획안 5-1-1). 목록은 서버가 카테고리별로 준다 — 화면엔 label, 요청엔 id. */

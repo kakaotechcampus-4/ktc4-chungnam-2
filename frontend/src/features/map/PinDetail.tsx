@@ -1,10 +1,12 @@
-import { useState, type ReactNode } from 'react'
+import { useId, useRef, useState, type ReactNode } from 'react'
 import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import type { MemberView } from '@/features/maps/model'
 import { useMeQuery } from '@/features/auth/queries'
+import { hasReviews } from '@/features/reviews/model'
+import PlaceReviews from '@/features/reviews/PlaceReviews'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation } from '@/features/shortlist/queries'
@@ -15,8 +17,8 @@ import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 
 import { isLive, locationState, useLivePlaceStore } from './livePlaces'
-import { asReactionType, participants, toOpinions, type OpinionView, type Pin, type ReactionDto, type ReactionType, type ReasonChip } from './model'
-import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReasonChipsQuery } from './queries'
+import { asReactionType, FILTER_CATEGORIES, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
+import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReasonChipsQuery, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
@@ -25,6 +27,9 @@ const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line
 }
 const TYPES: ReactionType[] = ['like', 'against']
 const TEXT_MAX = 140
+/** 서버가 같은 이유(EVIDENCE_REQUIRED)로 막을 때도 같은 문구다. */
+const MISSING_REASON = '반대 이유를 하나 이상 남겨 주세요'
+const MEMO_MAX = 200
 
 const PROMPT: Record<ReactionType, { title: string; placeholder: string }> = {
   like: { title: '무엇이 좋았나요? (선택)', placeholder: '예: 국물이 진하고 양이 많아요' },
@@ -87,7 +92,7 @@ export function PinDetailHeader({
 
 /**
  * 실시간 핀(#382) — 자체 장소 데이터에 없는 곳을 사람이 남긴 핀. 조건 확인·AI 추천·동선에는 쓰이지 않는다.
- * 메모는 핀을 찍은 사람이 남긴 한마디다. 위치는 지도를 열 때마다 카카오에서 다시 찾는다(못 찾으면 지도에 안 뜬다).
+ * 위치는 지도를 열 때마다 카카오에서 다시 찾는다(못 찾으면 지도에 안 뜬다).
  */
 function LiveInfo({ pin }: { pin: Pin }) {
   const places = useLivePlaceStore((s) => s.places)
@@ -96,10 +101,79 @@ function LiveInfo({ pin }: { pin: Pin }) {
     <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-body">
       <p className="font-semibold text-ink-900">장소 정보가 없는 핀이에요</p>
       <p className="text-ink-600">우리 장소 데이터에 없는 곳이라 조건 확인·AI 추천·동선에는 쓰이지 않아요. 의견은 그대로 남길 수 있어요.</p>
-      {pin.memo && <p className="text-ink-900">“{pin.memo}”</p>}
       {state === 'loading' && <p className="text-ink-500">위치를 찾는 중이에요…</p>}
       {state === 'missing' && <p className="font-semibold text-warn-text">카카오에서 이 장소의 위치를 다시 찾지 못했어요. 지도에는 표시되지 않아요.</p>}
     </div>
+  )
+}
+
+/**
+ * 핀을 찍은 사람이 남긴 한마디(#466). 찍은 사람만 쓰고 고친다(`can_edit`) — AI 추천·확정 핀은 고칠 수 없다.
+ * 메모가 없고 고칠 수도 없으면 줄을 그리지 않는다.
+ */
+function PinMemo({ pin, mapId }: { pin: Pin; mapId: string }) {
+  const [editing, setEditing] = useState(false)
+  const canEdit = pin.permissions.can_edit === true
+  if (!pin.memo && !canEdit) return null
+  return (
+    <div className="flex items-start justify-between gap-2 text-body">
+      {pin.memo ? <p className="min-w-0 break-words text-ink-900">“{pin.memo}”</p> : <span />}
+      {canEdit && (
+        <button type="button" onClick={() => setEditing(true)} className="btn-link shrink-0">
+          {pin.memo ? '메모 수정' : '+ 메모 남기기'}
+        </button>
+      )}
+      {editing && <EditPinDialog pin={pin} mapId={mapId} onCancel={() => setEditing(false)} />}
+    </div>
+  )
+}
+
+/**
+ * 핀 메모·분류 수정 창(#480). 바뀐 칸만 보낸다. 빈 메모는 지우기다.
+ * 분류는 실시간 핀만 바꿀 수 있다 — 자체 DB 핀의 분류는 장소가 정한다. 의견이 달린 핀의 분류는 서버가 422로 막는다.
+ * 그 판정은 화면이 따로 하지 않고 서버 문구를 그대로 보여 준다(pinEditErrorMessage).
+ */
+function EditPinDialog({ pin, mapId, onCancel }: { pin: Pin; mapId: string; onCancel: () => void }) {
+  const update = useUpdatePinMutation(mapId, pin.id)
+  const [memo, setMemo] = useState(pin.memo ?? '')
+  const [category, setCategory] = useState<PinCategory>(pin.category)
+  const live = isLive(pin)
+
+  const body: PinUpdateRequest = {}
+  if (memo.trim() !== (pin.memo ?? '')) body.memo = memo.trim()
+  if (category !== pin.category) body.category = category
+  const changed = Object.keys(body).length > 0
+
+  return (
+    <ConfirmDialog
+      title={live ? '메모·분류 수정' : '메모 수정'}
+      body="이 핀을 찍은 사람만 고칠 수 있어요. 비우고 저장하면 메모가 지워져요."
+      ok="저장"
+      pending={update.isPending || !changed}
+      onCancel={onCancel}
+      onOk={() =>
+        update.mutate(body, {
+          onSuccess: () => {
+            showToast('핀을 고쳤어요')
+            onCancel()
+          },
+        })
+      }
+    >
+      <div className="pt-2">
+        <TextField value={memo} onChange={setMemo} maxLength={MEMO_MAX} label="메모" placeholder="예: 여기 곱창 맛있대" clearLabel="메모 지우기" />
+      </div>
+      {live && (
+        <div role="group" aria-label="분류" className="flex flex-wrap gap-2 pt-1">
+          {FILTER_CATEGORIES.map((c) => (
+            <button key={c} type="button" aria-pressed={category === c} onClick={() => setCategory(c)} className="chip">
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+      {update.error && <ErrorText message={pinEditErrorMessage(update.error)} error={update.error} />}
+    </ConfirmDialog>
   )
 }
 
@@ -136,6 +210,7 @@ export function PinDetailBody({
             </a>
           )}
         </p>
+        <PinMemo pin={pin} mapId={mapId} />
         {isLive(pin) && <LiveInfo pin={pin} />}
         {/* 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자로 꼭 적는다(colors.md 3절 한계). */}
         {memberCount > 0 && (
@@ -165,7 +240,8 @@ export function PinDetailBody({
 
       {/* 2단계에서 바로 보이게 「내 의견」을 구성원 의견보다 위에 둔다(#308). */}
       {pin.permissions.can_react ? (
-        <MyOpinion key={pin.my_reaction?.type ?? 'none'} pin={pin} mapId={mapId} chipOptions={chips.data ?? []} chipsError={chips.error} onDone={onDone} />
+        // 핀마다 새로 그린다. 의견을 취소해도 고른 의견·사유는 남겨 「의견 등록」만 다시 누르면 되돌아간다(#959).
+        <MyOpinion key={pin.id} pin={pin} mapId={mapId} chipOptions={chips.data ?? []} chipsError={chips.error} onDone={onDone} />
       ) : (
         // 숙소 핀은 반응을 받지 않는다(#154). v1엔 숙소 핀이 없지만 권한이 꺼져 오면 그린다.
         <p className="text-sm text-ink-500">이 장소에는 의견을 남길 수 없어요</p>
@@ -177,6 +253,14 @@ export function PinDetailBody({
         <ErrorText message="구성원 의견을 불러오지 못했어요" error={reactions.error} />
       ) : (
         reactions.data && <Opinions {...toOpinions(reactions.data, members, chips.data)} />
+      )}
+
+      {/* 장소 후기는 자체 DB 장소 핀에만(#953). 실시간 핀은 장소 정보가 없어 후기를 붙일 수 없다. */}
+      {hasReviews(pin) && (
+        <>
+          <div className="-mx-4 h-1.5 bg-ink-100" />
+          <PlaceReviews pin={pin} />
+        </>
       )}
 
       {pin.permissions.can_delete && <DeletePin pin={pin} mapId={mapId} onDone={onDone} />}
@@ -305,9 +389,19 @@ function MyOpinion({
   const [text, setText] = useState(saved?.reason_text ?? '')
   const react = useMyReactionMutation(mapId, pin)
   const missingReason = type === 'against' && chips.length === 0 && text.trim() === ''
+  // 사유 없이 반대를 누르면 버튼을 끄지 않고 이유를 입력칸 아래에 알린다 — 꺼진 버튼은 왜 막혔는지 읽히지 않는다(#959).
+  const [triedEmpty, setTriedEmpty] = useState(false)
+  const reasonRef = useRef<HTMLInputElement>(null)
+  const reasonErrorId = useId()
+  const showMissing = triedEmpty && missingReason
 
   function submit() {
-    if (!type || missingReason) return
+    if (!type) return
+    if (missingReason) {
+      setTriedEmpty(true)
+      reasonRef.current?.focus()
+      return
+    }
     const body = {
       type,
       ...(text.trim() ? { reason_text: text.trim() } : {}),
@@ -320,7 +414,7 @@ function MyOpinion({
       },
       onError: (err) =>
         showToast(
-          err instanceof ApiError && err.code === 'EVIDENCE_REQUIRED' ? '반대 이유를 하나 이상 남겨 주세요' : '의견을 등록하지 못했어요',
+          err instanceof ApiError && err.code === 'EVIDENCE_REQUIRED' ? MISSING_REASON : '의견을 등록하지 못했어요',
           { label: '다시 시도', onClick: submit },
         ),
     })
@@ -401,7 +495,14 @@ function MyOpinion({
             placeholder={PROMPT[type].placeholder}
             label={PROMPT[type].title}
             clearLabel="사유 지우기"
+            inputRef={reasonRef}
+            describedBy={showMissing ? reasonErrorId : undefined}
           />
+          {showMissing && (
+            <p id={reasonErrorId} className="text-xs font-semibold text-warn-text">
+              {MISSING_REASON}
+            </p>
+          )}
           {type === 'against' && <p className="text-label text-ink-500">자세히 적을수록 더 정확한 추천을 받을 수 있어요</p>}
         </div>
       )}
@@ -409,7 +510,7 @@ function MyOpinion({
       <button
         type="button"
         onClick={submit}
-        disabled={!type || missingReason || react.isPending}
+        disabled={!type || react.isPending}
         className="btn-primary btn-md w-full"
       >
         {react.isPending ? '등록하는 중…' : '의견 등록'}

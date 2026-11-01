@@ -2,7 +2,7 @@
 기능형 코어 — 순수 함수만 둔다(docs/code-quality.md). DB·게이트웨이를 건드리지 않고,
 이미 로드된 값을 받아 판정·조립만 한다. #108(코어 파이프라인) 범위의 순수 함수 전체를
 여기 모은다: check_readiness/assemble_evidence/region_signature/apply_disqualifier_filters/
-funnel_counts/widen_radius/check_retry_limit + 이들을 뒷받침하는 원(Circle) 계산.
+funnel_counts/widen_radius + 이들을 뒷받침하는 원(Circle) 계산.
 
 멤버십·작성자(author) 판정은 여기 두지 않는다 — authz.resolve_principal(gateway 호출, I/O)와
 authz.can()이 이미 그 판정을 갖고 있다(authz/policy.py의 author.actions에
@@ -25,9 +25,8 @@ from recommend.models import RecommendRun
 from recommend.ports import Circle
 from recommend.schemas import Check
 
-ATTEMPT_LIMIT = 10  # #31: 지도 안에서 구성원 각자, 카테고리 무관, 팀 합산 상한 없음. 5→10회 상향(2026-10-15, #558)
 # #707 — run 하나에 「+」로 직접 추가하는 글은 10개까지(×로 뺀 것도 센다). 「+」도 ②로 모델을 불러서다. 출발값이고,
-# 사람 단위 크레딧(#432)이 정해지면 거기서 센다. 한 요청 5줄은 schemas.EvidencePatchRequest가 422로 막는다.
+# 크레딧(#432) 뒤에도 남는 보호다(「+」는 크레딧을 쓰지 않는다, docs/credits-reviews.md 4절). 한 요청 5줄은 schemas.EvidencePatchRequest가 422로 막는다.
 MANUAL_EVIDENCE_LIMIT = 10
 # 반경 넓히기 상수 — docs/constraints.md "반경 넓히기 상수" 절 그대로(조정 가능한 상수, 바꿀
 # 때 루트에게 알린다). 기본값 원은 도보 15분에서 시작해 한 번에 5분씩, 30분까지.
@@ -350,6 +349,11 @@ def evidence_line_use(
     return LineUse(False, "not_for_category", None)
 
 
+def normalize_manual_text(text: str) -> str:
+    """「+」로 추가한 글의 같은 글 판정 기준(#848) — 앞뒤 공백을 자르고 안의 연속 공백을 하나로 본다. 저장도 이 모양으로 한다."""
+    return " ".join(text.split())
+
+
 def applied_evidence_entries(lines: Sequence[Any], category: str, off_season: Collection[str]) -> list[dict]:
     """실행(execute·retry·widen) 시점에 활성이던 근거 줄의 스냅샷 항목(#845, #847). `lines`는 활성 줄을 근거 순서로(id, author_id,
     text, badge, fact_key, wants 속성). enforced·not_enforced_reason은 근거 응답과 파이프라인이 쓰는 `evidence_line_use` 한
@@ -527,13 +531,6 @@ def reservation_decision(
     if run_id is not None:
         return "reuse"
     return "takeover" if now - started_at >= IDEMPOTENCY_DEADLINE else "in_progress"
-
-
-def check_retry_limit(attempt_no: int) -> None:
-    """재시도 상한(#31: 개인 단위, 카테고리 무관, 상한 ATTEMPT_LIMIT회). attempt_no는 다음 시도를 실행하기
-    *전* 현재까지의 시도 횟수 — 이미 상한에 도달했으면 429. detail에 상한도 싣는다(FE가 숫자를 하드코딩하지 않는다)."""
-    if attempt_no >= ATTEMPT_LIMIT:
-        raise AppError("RETRY_LIMIT", detail={"attempt_no": attempt_no, "attempt_limit": ATTEMPT_LIMIT})
 
 
 # ============================================================================

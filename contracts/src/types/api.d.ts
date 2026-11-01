@@ -128,7 +128,7 @@ export interface paths {
         };
         put?: never;
         /**
-         * **선택**: `restart`는 새 계정을 만들고(새 사용자와 로그인 수단) **기존 계정을 즉시 정리한다 — 같은 카카오 식별자는 한 사용자에게만 붙을 수 있어서 둘이 함께 있을 수 없고, 정리된 계정은 되살릴 수 없다**(201). `restore`는 기존 계정을 되살린다(200 — 계정과 핀 작성자 표시만 돌아온다).
+         * **선택**: `restart`는 새 계정을 만들고(새 사용자와 로그인 수단) **기존 계정을 즉시 정리한다 — 같은 카카오 식별자는 한 사용자에게만 붙을 수 있어서 둘이 함께 있을 수 없고, 정리된 계정은 되살릴 수 없다**(201). `restore`는 기존 계정을 되살린다(200 — 계정, 핀 작성자 표시, 남아 있던 지도 참여(방장 자리는 탈퇴 때 위임돼 일반 구성원)가 돌아오고, 지워진 반응·근거 줄·알림은 돌아오지 않는다. 탈퇴해도 멤버십 행은 남기 때문이다, #245).
          *     둘 다 세션 쿠키를 내리고 `pending_account` 쿠키를 지운다. 응답은 `User`다. **같은 선택의 재전송과 이미 쓴 쿠키는 404 `NO_PENDING_LOGIN`이다** — 쿠키 값이 `deleted_at`에 묶여 있어 복구·정리 뒤에는 서버가 거절한다. 선택과 정리는 같은 카카오 식별자 단위 잠금·한 트랜잭션이라 동시 `restore`·`restart`는 한쪽만 이긴다(나머지는 404).
          *     **본문은 JSON만 받는다**(`Content-Type: application/json`) — 폼 제출 같은 교차 사이트 POST가 쿠키를 싣고 오지 못하게 SameSite=Lax와 함께 막는다. `restart`는 **기존 계정을 되살릴 수 없게 정리하는 파괴적 동작**이라 화면이 최종 제출 전에 한 번 더 확인한다(`기존 계정은 바로 삭제되고 되살릴 수 없어요`). 게스트에게는 해당 없다.
          */
@@ -194,7 +194,8 @@ export interface paths {
          * 게스트로 참여 — 이름만 입력하는 임시 계정 (#472, v2). 로그인 전에 호출하고, 초대 토큰으로 **그 지도에 바로 들어간다**(계정 생성과 초대 수락이 한 요청이다).
          *     응답에 세션 쿠키가 실린다(카카오 로그인과 같은 httpOnly 쿠키). 이미 로그인한 상태면 호출하지 않는다.
          *     - 게스트는 `User.is_guest=true`다. 지도를 **만들 수 없다**(`POST /maps` → 403 `GUEST_NOT_ALLOWED`). 방장이 될 수도 없다(나가기·탈퇴 위임의 후임으로 뽑히지 않고, 직접 넘기기 대상이면 422 `OWNER_TARGET_INVALID`).
-         *     - 그 밖의 구성원 행동(핀·반응·추천·확정 리스트·초대 수락)은 일반 구성원과 같고 **같은 상한**이 걸린다(추천 10회 등).
+         *     - **AI 추천과 코스, 크레딧, 장소 후기 쓰기·신고는 쓸 수 없다**(#432, 403 `GUEST_NOT_ALLOWED`, `detail.initial_credits` — 카카오로 전환하면 받을 크레딧). 크레딧은 정식 계정에만 있다(`docs/credits-reviews.md`).
+         *     - 그 밖의 구성원 행동(핀·반응·확정 리스트·초대 수락·후기 읽기)은 일반 구성원과 같다.
          *     - 어뷰즈 방어: 초대 토큰 하나로 만들 수 있는 게스트는 최대 10명(초과 시 409 `GUEST_LIMIT`), IP·시간당 호출 상한(429 `RATE_LIMITED`).
          *     - 만료·꺼진 초대 토큰은 초대 수락과 같은 에러(404 `INVITE_NOT_FOUND`, 410 `INVITE_EXPIRED`·`INVITE_REVOKED`). 그 지도가 이미 20개 상한이면 해당 없음(게스트는 새 계정이라 0개에서 시작).
          *     - 세션은 30일, 90일 동안 쓰지 않은 게스트 계정은 정리 작업(#168)이 지운다. 탈퇴·삭제 규칙은 일반 사용자와 같다.
@@ -1114,6 +1115,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/places/external-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 장소 검색에서 결과가 없을 때의 카카오맵 검색 링크(#902). 사용자가 친 검색어 **그대로** 카카오맵 검색으로 넘기는 출구다 — AI 추천 결과가 아니다.
+         *     링크는 서버가 만든다(형식은 `places.api.kakao_search_url` 한 곳, 화면은 그리기만 한다). 서버는 카카오를 부르지 않고 검색어를 저장하거나 로그에 남기지 않는다(#53).
+         *     화면은 `GET /places/search`가 빈 배열일 때만 부른다. 응답은 추천 결과의 외부 검색과 같은 `ExternalSearch`라 같은 컴포넌트로 그린다. 외부 브라우저로 연다(카카오 약관).
+         *     로그인만 필요하고 지도 구성원 여부는 보지 않는다.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description 사용자가 장소 검색에 친 검색어. 앞뒤 공백을 걷은 뒤 1~50자(`/places/search`의 q와 같다) */
+                    q: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ExternalSearch"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description VALIDATION_ERROR — q가 비었거나 50자 초과 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/categories/{category}/reason-chips": {
         parameters: {
             query?: never;
@@ -1519,7 +1574,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** 핀 삭제 — 지도 구성원 누구나 (#25, 9/4 결정). 요청자별 가능 여부는 Pin.permissions.can_delete */
+        /** 핀 삭제 — 찍은 사람과 방장 (#965, */
         delete: {
             parameters: {
                 query?: never;
@@ -1538,6 +1593,7 @@ export interface paths {
                     };
                     content?: never;
                 };
+                403: components["responses"]["Forbidden"];
             };
         };
         options?: never;
@@ -1894,6 +1950,241 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/credits/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 내 크레딧 잔액과 가격표 (#432). 정식 계정은 30으로 시작한다 — 아직 한 번도 쓰지 않았으면 서버에 행이 없어도 30을 돌려준다(이 요청은 쓰지 않는다).
+         *     **잔액 상한은 `max_balance`(30)다**(#981) — 후기 보상과 코스 환불은 상한까지만 채운다. 화면은 「남은 크레딧 N/{max_balance}」.
+         *     `prices`는 실행 1번에 빠지는 크레딧(추천 받기 `recommend_run`, 코스 짜기 `course`), `review_reward`는 장소 후기를 처음 쓸 때 받는 크레딧이다. 화면은 이 값으로 안내를 그리고 숫자를 적지 않는다.
+         *     게스트는 크레딧이 없다 — 403 `GUEST_NOT_ALLOWED`, `detail.initial_credits`(카카오로 전환하면 받을 크레딧).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CreditBalance"];
+                    };
+                };
+                403: components["responses"]["GuestNotAllowed"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pins/{pinId}/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 그 핀이 가리키는 장소의 후기 (#432). 자체 DB 장소 핀(`source: db`)만 — 실시간 핀은 422 `PLACE_NOT_SUPPORTED`. 핀을 볼 수 있는 사람(그 지도 구성원) 누구나, 게스트 포함.
+         *     후기는 장소에 붙는다 — 같은 장소를 가리키는 다른 지도의 핀에서도 같은 후기가 보인다(다른 지도 사람이 쓴 후기 포함). **작성자 이름은 내리지 않는다**(`is_mine`만, 화면은 「나」/「핑고 사용자」).
+         *     최신순 20개씩, `next_cursor`로 다음 쪽. 숨긴 후기는 목록·평균·개수·`mine`에서 빠진다. 글 길이 상한은 `limits.body_max`로 내린다.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 앞 쪽 응답의 next_cursor. 없으면 첫 쪽 */
+                    cursor?: string;
+                };
+                header?: never;
+                path: {
+                    pinId: components["parameters"]["PinId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReviewPage"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                /** @description PLACE_NOT_SUPPORTED(실시간 핀 — 자체 DB 장소가 없어 후기를 붙일 곳이 없다) · VALIDATION_ERROR(잘못된 cursor) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pins/{pinId}/reviews/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 내 후기 쓰기·고치기 (#432) — 한 사람이 한 장소에 하나. 정식 계정만(게스트 403 `GUEST_NOT_ALLOWED`). 방문 확인은 하지 않는다.
+         *     그 장소에 **처음 쓰면 크레딧 `review_reward`(10)를 받는다** — 별점과 무관하고, 고치거나 지웠다 다시 써도 다시 받지 않는다. 받은 크레딧은 `credited`, 저장 뒤 잔액은 `balance`.
+         *     **잔액 상한(`GET /credits/me`의 `max_balance`, 30)까지만 채운다**(#981): 잔액 25면 `credited` 5, 30이면 0. **상한에 걸려 0을 받아도 그 장소 보상은 그걸로 끝난다** — 나중에 잔액이 줄어도 같은 장소로는 다시 받지 않는다.
+         *     별점은 정수 1~5, 글은 앞뒤 공백을 걷은 뒤 1자 이상 `limits.body_max`(500)자 이하. 후기 글은 모델·추천·로그로 가지 않는다.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    pinId: components["parameters"]["PinId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ReviewUpsertRequest"];
+                };
+            };
+            responses: {
+                /** @description 저장됨 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReviewSaved"];
+                    };
+                };
+                403: components["responses"]["GuestNotAllowed"];
+                404: components["responses"]["NotFound"];
+                /** @description PLACE_NOT_SUPPORTED(실시간 핀) · VALIDATION_ERROR(별점이 1~5 정수가 아님, 공백뿐인 글, 500자 초과) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** 내 후기 지우기 (#432). 받은 크레딧은 그대로이고, 다시 써도 크레딧을 다시 받지 않는다 */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    pinId: components["parameters"]["PinId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 지워짐 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description NOT_FOUND — 핀이 없거나 비구성원이거나, 이 장소에 내 후기가 없다 */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reviews/{reviewId}/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 후기 신고 (#432) — 후기마다 한 사람 한 번, 이미 신고했어도 204(멱등). 정식 계정만(게스트 403). 내 후기는 신고할 수 없다(422 `VALIDATION_ERROR`).
+         *     그 후기를 볼 수 있는 사람만 — 그 장소를 가리키는 핀이 있는 지도의 구성원이어야 한다. 아니거나 없는·숨긴 후기면 404.
+         *     신고만으로 숨기지 않는다. 사람이 관리 스크립트로 보고 숨긴다(#432 D8).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    reviewId: components["parameters"]["ReviewId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 신고됨(이미 신고했어도 같다) */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                403: components["responses"]["GuestNotAllowed"];
+                404: components["responses"]["NotFound"];
+                /** @description VALIDATION_ERROR — 내 후기 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pins/{pinId}/reaction": {
         parameters: {
             query?: never;
@@ -2098,6 +2389,8 @@ export interface paths {
          *     서버는 모델을 부르기 **전에** (요청자, 키)를 기록한다. 같은 키로 다시 오면 — 첫 요청이 이미 run을 만들었으면 **그 run을 그대로**(같은 응답) 돌려주고, 아직 모델을 기다리는 중이면 409 `REQUEST_IN_PROGRESS`(화면은 잠시 뒤 같은 키로 다시 보낸다).
          *     첫 요청이 모델 실패(500) 등으로 run을 못 만들었으면 키를 지워 같은 키의 재시도를 허용한다. **요청의 동일성은 (지도, `category`, `execute`)로 본다**(`execute` 생략은 false와 같다). 같은 키로 **다른 지도나 다른 본문**(예: 다른 카테고리)을 보내면 409 `IDEMPOTENCY_CONFLICT`다 — 키를 재사용한 화면의 버그 신호다(#48이 정하던 멱등키 v1의 첫 적용처가 이 엔드포인트다). 같은 키의 재사용은 **최초 응답을 복제하는 것이 아니라 같은 run id를 지금 상태 그대로** 돌려준다(그 뒤 `execute`·`retry`로 상태·`attempt_no`가 바뀌었으면 바뀐 값). 재사용 전에도 지도 접근 권한을 다시 확인한다.
          *     **처리 기한 90초**: 첫 요청이 run을 못 만든 채 90초가 지나면(프로세스 종료·취소 등) 중단된 것으로 보고 새 요청이 이어받는다. 늦게 끝난 쪽의 저장은 거절된다(예약 소유자만 run을 저장한다). 키가 없으면 지금처럼 방어가 없다(구FE 호환). 키는 24시간 보관한다. 다른 요청자의 같은 키는 서로 영향이 없다.
+         *     **크레딧(#432)**: run을 새로 만들면 크레딧 `prices.recommend_run`(1)이 빠진다(`GET /credits/me`). 잔액은 모델(②)을 부르기 **전에** 확인한다 — 모자라면 402 `CREDIT_INSUFFICIENT`이고 모델도 run도 없다. 차감은 run 저장과 같은 트랜잭션이라, 모델 실패(500)나 준비 미달(409) 등으로 run이 안 만들어지면 빠지지 않는다. 같은 `Idempotency-Key`의 재사용은 새 run이 아니라 다시 빠지지 않는다. 게스트는 추천을 받을 수 없다(403 `GUEST_NOT_ALLOWED`).
+         *     「다시 추천 받기」(`retry`)와 근거 고치기(`PATCH .../evidence`)는 크레딧을 쓰지 않는다. 추천 횟수 상한은 없다(#432 D3 — 전에는 지도·사람당 10회, 429 `RETRY_LIMIT`).
          */
         post: {
             parameters: {
@@ -2133,6 +2426,8 @@ export interface paths {
                         "application/json": components["schemas"]["RecommendRun"];
                     };
                 };
+                402: components["responses"]["CreditInsufficient"];
+                403: components["responses"]["GuestNotAllowed"];
                 /** @description NOT_READY(추천 준비 미달 — 해당 카테고리에 ♥/🚫 의견이 달린 핀이 없다) · REQUEST_IN_PROGRESS(같은 `Idempotency-Key`의 첫 요청이 아직 처리 중이다 — 화면은 잠시 뒤 같은 키로 다시 보낸다, #811) · IDEMPOTENCY_CONFLICT(같은 키로 다른 요청 본문 — 키를 재사용한 화면의 버그 신호). `code`로 구분한다 */
                 409: {
                     headers: {
@@ -2142,7 +2437,6 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                429: components["responses"]["RetryLimit"];
                 500: components["responses"]["RecommendFailed"];
             };
         };
@@ -2192,7 +2486,7 @@ export interface paths {
          *     '+'로 추가한 줄은 ②(사유 구조화)가 키와 방향을 붙여 선호(`badge: preferred`)가 된다. 순위 점수에만 반영되고 후보를 거르지 않는다(#707, ♥ 사유와 같은 규칙).
          *     한 요청에 글 5개까지(`add` maxItems, 넘으면 422 VALIDATION_ERROR), run 하나에 직접 추가한 글은 10개까지다(뺀 것도 센다, 넘으면 409 EVIDENCE_LIMIT). 상한은 모델을 부르기 전에 검사한다.
          *     **같은 글을 다시 추가해도 안전하다**(#848): 같은 run에서 **같은 사람이 이미 쓴 글**(앞뒤 공백을 자르고 안의 연속 공백을 하나로 본 같은 글)을 `add`에 다시 보내면 새 줄을 만들지 않는다. 그 줄을 응답에 그대로 두고(뺐던 줄이면 다시 켠다), **모델을 부르지 않고 글 수 상한에도 세지 않는다**. 응답이 유실돼 재전송하거나 연타해도 같은 줄 하나다. 다른 사람이 쓴 같은 글은 별개의 줄이다.
-         *     **이 지도에서 추천 횟수(10회)를 다 쓴 요청자는 근거를 고칠 수 없다**(`×`·`＋` 모두 429 `RETRY_LIMIT`, #845 결정) — 고쳐도 다시 추천할 수 없기 때문이다. 횟수는 run이 아니라 **요청자·지도 단위**(그 사람이 이 지도에서 만든 어느 run이든 합쳐서)라, 다른 run에서 횟수를 다 썼으면 이 run의 근거도 못 고친다(`retry`의 상한 검사와 같은 값). 이 검사는 모델을 부르기 전에 한다. 조회(`GET .../evidence`, `GET .../result`)는 상한 뒤에도 된다.
+         *     근거 고치기는 크레딧을 쓰지 않고 횟수 상한도 없다(#432 D3·D5, `＋`의 모델 호출은 run당 글 10개로 묶인다). 전에는 추천 횟수(10회)를 다 쓴 요청자의 근거 고치기를 429 `RETRY_LIMIT`으로 막았다(#845).
          *     고친 근거는 **「다시 추천 받기」(`POST /runs/{runId}/retry`)가 읽어 반영한다**. 이미 보인 결과는 바뀌지 않고, 그 결과에 쓴 근거는 `RecommendResult.applied_evidence`가 따로 보여 준다.
          */
         patch: {
@@ -2222,7 +2516,6 @@ export interface paths {
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
                 409: components["responses"]["EvidenceLimit"];
-                429: components["responses"]["RetryLimit"];
                 500: components["responses"]["RecommendFailed"];
             };
         };
@@ -2425,7 +2718,7 @@ export interface paths {
          * 「다시 추천 받기」. 현재 뜬 대안 전체를 제외목록에 넣고 새로 찾는다 (3절, 루프가 닫힌다).
          *     **같은 run의 현재 활성 근거로 다시 찾는다 — `×`로 뺀 줄은 빠지고 `＋`로 더한 줄은 들어간다. 이 요청은 모델을 부르지 않는다**(`＋`의 모델 호출은 그 글을 더할 때 이미 났다). 사람 말로는 「수정한 조건으로, 지금 후보를 제외하고 다시 추천」이다. 마음에 드는 후보는 「지도에 올리기」로 보존한다(게시된 후보는 제외되지 않고 그대로 남는다, #845).
          *     run에 **고정되는 입력**: 구조화한 근거 줄과 기본 지역. **실행 때마다 다시 읽는 입력**: ♥ 기반 선호, 여행 날짜에 따른 영업·계절 판정, 제외목록.
-         *     10회 상한(지도 안에서 구성원 각자, 카테고리 무관) 초과 시 429 RETRY_LIMIT (#31, 2026-10-15 5→10회). 응답의 attempt_no와 attempt_limit으로 현재 몇 번째인지 노출한다.
+         *     크레딧을 쓰지 않고 횟수 상한도 없다(#432 D3·D5 — 모델을 부르지 않는다). 응답의 attempt_no로 지금 몇 번째 시도인지 노출한다(#811).
          */
         post: {
             parameters: {
@@ -2448,7 +2741,6 @@ export interface paths {
                     };
                 };
                 403: components["responses"]["Forbidden"];
-                429: components["responses"]["RetryLimit"];
             };
         };
         delete?: never;
@@ -3206,7 +3498,9 @@ export interface paths {
          * 「AI 코스 짜기」 요청 — 구성원 누구나(course.request). 확정 리스트를 지도 기간의 날짜별 방문 순서로 짠다.
          *     run을 queued로 저장하고 202를 돌려준다. 계산은 백그라운드에서 한다(보통 수 초에서 수십 초) — FE는 `GET /course-runs/{runId}`를 2초 간격으로 불러 status가 done이나 failed가 될 때까지 기다린다.
          *     코스는 요청한 본인에게만 보인다(가드레일 1). 확정 장소는 좌표를 아는 것만 센다(실시간 핀은 빠지고 excluded에 남는다). 한 번에 30곳까지, 여행 기간은 앞 14일까지 짠다.
-         *     하루 상한은 사용자당 5번(KST 자정 초기화)이고 지도마다 내 진행 중 run은 하나다. request_text와 member_constraints는 모두 선택이다.
+         *     지도마다 내 진행 중 run은 하나다. request_text와 member_constraints는 모두 선택이다.
+         *     **크레딧(#432)**: 요청이 접수되면(202) 크레딧 `prices.course`(1)이 빠진다. 잔액은 모델을 부르기 전에 확인한다(모자라면 402 `CREDIT_INSUFFICIENT`). 코스가 결과 없이 끝나면(failed — `ENGINE_ERROR`, `INTERRUPTED`) 돌려준다(잔액 상한 `max_balance`까지만, #981). 게스트는 코스를 짤 수 없다(403 `GUEST_NOT_ALLOWED`).
+         *     하루 횟수 상한은 없다(#432 D3 — 전에는 사용자당 하루 5번, 429 `COURSE_LIMIT`).
          */
         post: {
             parameters: {
@@ -3232,11 +3526,19 @@ export interface paths {
                         "application/json": components["schemas"]["CourseRunCreated"];
                     };
                 };
-                403: components["responses"]["Forbidden"];
+                402: components["responses"]["CreditInsufficient"];
+                /** @description FORBIDDEN(권한 없는 액션, docs/permissions.md) · GUEST_NOT_ALLOWED(게스트, #432 — `detail.initial_credits`). `code`로 구분한다 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
                 404: components["responses"]["NotFound"];
                 409: components["responses"]["CourseInProgress"];
                 422: components["responses"]["CourseNotEnoughPlaces"];
-                429: components["responses"]["CourseLimit"];
             };
         };
         delete?: never;
@@ -3756,6 +4058,71 @@ export interface components {
             /** Format: date-time */
             created_at: string;
         };
+        /** @description 내 크레딧(#432). 가격과 보상은 서버 상수(credits/constants.py)에서 오고, 화면은 이 값만 쓴다 */
+        CreditBalance: {
+            /** @description 지금 잔액. 한 번도 쓰지 않았으면 처음 지급량(30). 보통 max_balance 이하다(상한 전에 쌓인 테스트 계정은 넘을 수 있다) */
+            balance: number;
+            /** @description 잔액 상한(30, #981). 후기 보상과 코스 환불은 여기까지만 채운다. 화면은 「N/max_balance」로 그린다 */
+            max_balance: number;
+            /** @description 실행 1번에 빠지는 크레딧 */
+            prices: {
+                /** @description 「추천 받기」 1번(POST /maps/{mapId}/runs). 다시 추천·근거 고치기는 0 */
+                recommend_run: number;
+                /** @description 「AI 코스 짜기」 1번(POST /maps/{mapId}/courses) */
+                course: number;
+            };
+            /** @description 장소 후기를 그 장소에 처음 쓸 때 받는 크레딧. 잔액 상한(max_balance)까지만 채운다 */
+            review_reward: number;
+        };
+        ReviewUpsertRequest: {
+            rating: number;
+            /** @description 앞뒤 공백을 걷은 뒤 1자 이상. 상한은 ReviewPage.limits.body_max */
+            body: string;
+        };
+        MyReview: {
+            id: string;
+            rating: number;
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description 후기 한 건. **작성자 이름·id는 없다**(#432 결정 B) — 화면은 is_mine이면 「나」, 아니면 「핑고 사용자」 */
+        ReviewItem: {
+            id: string;
+            rating: number;
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            is_mine: boolean;
+        };
+        ReviewPage: {
+            summary: {
+                /** @description 숨김 제외 평균 별점, 소수 첫째 자리. 후기가 없으면 null */
+                average_rating: number | null;
+                count: number;
+            };
+            limits: {
+                /** @description 후기 글 길이 상한(500). 화면은 이 값을 쓴다 */
+                body_max: number;
+            };
+            /** @description 내 후기(숨김이 아니면). 없으면 필드가 없다. items에도 is_mine=true로 들어 있다 */
+            mine?: components["schemas"]["MyReview"];
+            /** @description 최신순(created_at, id 내림차순) 20개까지 */
+            items: components["schemas"]["ReviewItem"][];
+            /** @description 다음 쪽이 있으면. 없으면 필드가 없다 */
+            next_cursor?: string;
+        };
+        ReviewSaved: {
+            review: components["schemas"]["MyReview"];
+            /** @description 이번 저장으로 받은 크레딧. 그 장소에 처음 쓴 저장이면 min(review_reward, max_balance - 저장 전 잔액)(0 아래로 가지 않는다), 고치는 저장이면 0 */
+            credited: number;
+            /** @description 저장 뒤 잔액 */
+            balance: number;
+        };
         LinkParseRequest: {
             /** @description 사용자가 붙여넣은 지도 링크. http(s)만 */
             url: string;
@@ -4043,10 +4410,8 @@ export interface components {
              * @enum {string}
              */
             status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
-            /** @description 이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 attempt_limit */
+            /** @description 이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 없다(#432 — 크레딧으로 센다) */
             attempt_no: number;
-            /** @description 한 사람이 한 지도에서 추천을 받을 수 있는 횟수 상한(2026-10-15부터 10). 서버가 채운다 — FE는 숫자를 하드코딩하지 말고 이 값으로 「n/10」을 그린다. 없으면 구버전 서버다 */
-            attempt_limit?: number;
             /** @description 기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (기본 15, 상한 30) */
             default_radius_walk_min?: number;
         };
@@ -4059,8 +4424,6 @@ export interface components {
             status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
             /** @description 지금까지의 시도 횟수(반경 넓히기·다시 추천 포함) */
             attempt_no: number;
-            /** @description 시도 횟수 상한(RecommendRun.attempt_limit과 같다) */
-            attempt_limit?: number;
             /**
              * Format: date-time
              * @description run을 만든 시각. 목록은 이 값의 내림차순
@@ -4132,7 +4495,7 @@ export interface components {
         };
         RecommendResult: {
             run_id: string;
-            /** @description 5-6 깔때기 표. 2026-10-15부터 「영업 종료 제거」 다음에 「추천 가능 아님 제거」 단계가 있다(places.can_recommend=false인 장소를 후보 풀에서 뺀 수, docs/data-model.md) */
+            /** @description 5-6 깔때기 표. 단계: 카테고리 후보 풀 → 반경 밖 제거 → 영업 종료 제거 → 실격 조건 제거 → 이미 제안·거절됨 → 상위 3곳 선정. 후보 풀은 넓히기 상한 안의 영업 중인 추천 가능(정예) 장소라, 「반경 밖 제거」는 넓히면 들어올 수 있는 최대 수다(#912). 2026-10-15~#913 구현 전에는 「영업 종료 제거」 다음에 「추천 가능 아님 제거」가 있었다 — 그때 저장된 결과에는 그 줄이 남아 있고, 화면은 받은 표를 그대로 그린다 */
             funnel: {
                 label: string;
                 removed_count: number;
@@ -4153,7 +4516,8 @@ export interface components {
         };
         /**
          * @description 카카오맵 검색 링크(#798). 핀고에 결과가 없거나 적을 때 사람이 밖에서 직접 찾는 출구다 — AI 추천 결과가 아니다. 서버는 카카오를 부르지 않고 저장하지 않는다(#53).
-         *     검색어 규칙은 docs/constraints.md 「카카오맵 검색 링크」: `{동네} {말}`, 말은 원함 조건 하나(표에 있는 키) 또는 카테고리 말. 사유 원문은 들어가지 않는다.
+         *     검색어 규칙은 docs/constraints.md 「카카오맵 검색 링크」. 추천(결과, readiness)은 `{동네} {카테고리 말}`(#902 — 원함 조건의 말을 고르던 조건 말 표는 #904에서 지운다), 장소 단위는 `{장소 이름} {동네}`, 장소 검색 결과 없음(`GET /places/external-search`)은 사용자가 친 검색어 그대로다. 다른 구성원의 사유 원문은 들어가지 않는다.
+         *     다른 서비스(네이버 지도 등)를 붙일 때는 링크 목록 필드를 더하는 확장으로 한다(#902, `url`은 유지).
          *     **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관)
          */
         ExternalSearch: {
@@ -4809,8 +5173,17 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 재시도 상한(지도 안 구성원 각자 10회) 초과 (6절, */
-        RetryLimit: {
+        /** @description 크레딧이 모자람 (CREDIT_INSUFFICIENT, #432). detail에 { required, balance }. 모델을 부르기 전에 거절한다. 화면은 「크레딧이 부족해요. 후기를 쓰면 {review_reward} 크레딧을 드려요」(`GET /credits/me`의 값) */
+        CreditInsufficient: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 게스트가 못 하는 일 (GUEST_NOT_ALLOWED, #472·#432). 크레딧을 쓰는 기능(추천·코스·잔액 조회)과 후기 쓰기·신고에서는 detail에 { initial_credits } — 카카오로 전환하면 받을 크레딧이다. 화면은 「카카오로 로그인하면 {initial_credits} 크레딧을 드려요」 */
+        GuestNotAllowed: {
             headers: {
                 [name: string]: unknown;
             };
@@ -4915,15 +5288,6 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 사용자당 하루 5번(KST 자정 초기화)을 넘김 (COURSE_LIMIT, */
-        CourseLimit: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["Error"];
-            };
-        };
         /** @description 이 지도에서 내가 요청한 코스를 아직 짜는 중 (COURSE_IN_PROGRESS, */
         CourseInProgress: {
             headers: {
@@ -4949,6 +5313,7 @@ export interface components {
         RunId: string;
         CandidateId: string;
         SuggestionId: string;
+        ReviewId: string;
         /**
          * @description 브라우저 EventSource가 재연결 시 자동으로 보낸다. 이 seq 이후 이벤트만 재전송한다.
          *     event_log 보존기간을 넘긴 값이면 REST 재조회로 폴백한다 (docs/events.md).

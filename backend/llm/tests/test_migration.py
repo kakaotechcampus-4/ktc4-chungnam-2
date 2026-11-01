@@ -1,4 +1,4 @@
-"""마이그레이션 0043_llm_calls(#870)와 0047_llm_calls_batch_discard(#848) up/down — 빈 DB에 올리고 내렸다 다시 올린다. models.py와
+"""마이그레이션 0043_llm_calls(#870)와 0051_llm_calls_batch_discard(#848) up/down — 빈 DB에 올리고 내렸다 다시 올린다. models.py와
 어긋나지 않았는지도 본다.
 
 `<PINGO_TEST_DB>_llm_mig` DB를 따로 만들고 끝나면 지운다(agent/course/tests/test_migration.py와 같은 방식).
@@ -16,8 +16,8 @@ from llm.models import LlmCall
 
 BACKEND = Path(__file__).resolve().parents[2]
 REVISION, PREVIOUS = "0043_llm_calls", "0042_places_trgm_search"
-BATCH_REVISION, BATCH_PREVIOUS = "0047_llm_calls_batch_discard", "0046_run_applied_evidence"
-BATCH_COLUMNS = {"batch_size", "discarded"}   # 0047이 더한 열
+BATCH_REVISION, BATCH_PREVIOUS = "0051_llm_calls_batch_discard", "0050_drop_course_user_index"
+BATCH_COLUMNS = {"batch_size", "discarded"}   # 0051이 더한 열
 MIG_DB = f"{TEST_DB_NAME}_llm_mig"[:63]
 
 

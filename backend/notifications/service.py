@@ -10,6 +10,7 @@ from sqlalchemy import delete, func, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from common.cursor import decode_cursor, encode_cursor
 from common.errors import AppError
 from notifications import core
 from notifications.models import Notification as NotificationRow
@@ -53,15 +54,15 @@ def list_notifications(db: Session, *, user_id: str, limit: int, before: str | N
         query = query.where(NotificationRow.read_at.is_(None))
     if before is not None:
         try:
-            cursor_at, cursor_id = core.decode_cursor(before)
-        except ValueError as exc:
-            raise AppError("VALIDATION_ERROR", "before 값이 올바르지 않습니다") from exc
+            cursor_at, cursor_id = decode_cursor(before)
+        except ValueError:
+            raise AppError("VALIDATION_ERROR", "before 값이 올바르지 않습니다") from None
         query = query.where(tuple_(NotificationRow.created_at, NotificationRow.id) < tuple_(cursor_at, cursor_id))
     rows = db.execute(
         query.order_by(NotificationRow.created_at.desc(), NotificationRow.id.desc()).limit(limit + 1)
     ).scalars().all()
     page = rows[:limit]
-    next_before = core.encode_cursor(page[-1].created_at, page[-1].id) if len(rows) > limit else None
+    next_before = encode_cursor(page[-1].created_at, page[-1].id) if len(rows) > limit else None
     return NotificationList(
         items=[_to_schema(row) for row in page],
         unread_count=unread_count(db, user_id=user_id),

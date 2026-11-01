@@ -58,7 +58,7 @@ def test_get_pins_permissions_matches_kind_shortlist_direction(app_client, db_se
     assert perms_by_kind["일반"]["can_remove_from_shortlist"] is False
     assert perms_by_kind["확정"]["can_add_to_shortlist"] is False
     assert perms_by_kind["확정"]["can_remove_from_shortlist"] is True
-    # member면 react/revert/delete는 kind와 무관하게 전부 True.
+    # member면 react/revert는 kind와 무관하게 True. delete는 자기가 찍은 핀이라 True(#965).
     assert perms_by_kind["일반"]["can_react"] is True
     assert perms_by_kind["일반"]["can_delete"] is True
 
@@ -91,7 +91,7 @@ def test_permissions_for_pin_matches_original_matrix(kind, role):
     assert dumped == {
         "can_react": is_member,
         "can_revert": is_member,
-        "can_delete": is_member,
+        "can_delete": False,  # 남의 핀은 찍은 사람과 방장만(#965) — 여기 principal은 둘 다 아니다
         "can_add_to_shortlist": is_member and kind != "확정",
         "can_remove_from_shortlist": is_member and kind == "확정",
     }

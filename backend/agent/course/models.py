@@ -1,4 +1,4 @@
-"""동선 에이전트(AI 코스 짜기)가 소유하는 테이블 1개 — `agent_course_runs`(마이그레이션 0037, #334, 팀 결정 #580 전 브랜치 초안).
+"""동선 에이전트(AI 코스 짜기)가 소유하는 테이블 1개 — `agent_course_runs`(마이그레이션 0037, 인덱스 하나 삭제 0050 #976, #334, 팀 결정 #580 전 브랜치 초안).
 
 - `map_id`, `requested_by`는 다른 모듈처럼 문자열이고 FK가 없다(agent 테이블과 같은 관례).
 - run은 요청자 본인 것이다(가드레일 1). 다른 구성원에게 보이지 않는다.
@@ -28,7 +28,6 @@ class AgentCourseRun(Base):
     __tablename__ = "agent_course_runs"
     __table_args__ = (
         Index("ix_agent_course_runs_map_user", "map_id", "requested_by", "created_at"),
-        Index("ix_agent_course_runs_user_created", "requested_by", "created_at"),   # 하루 상한을 센다
         # 내 진행 중 run은 지도당 하나(COURSE_IN_PROGRESS). 동시 요청이 확인을 함께 통과해도 DB가 막는다
         Index(
             "uq_agent_course_runs_active", "map_id", "requested_by", unique=True,
