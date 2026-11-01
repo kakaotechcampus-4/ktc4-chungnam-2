@@ -100,3 +100,150 @@ def test_fake_places_uses_same_address_rule():
     ])
     assert fake.match_place(_hint()) is None
     assert fake.match_place(_hint(address="서울특별시 성동구 성수이로 100")).place_id == fake.place_id("b")
+
+
+# ---- 분기 도로(번길·안길·N길·N가길)는 도로명의 일부다(#1019) ----
+
+@pytest.mark.parametrize("text,key", [
+    ("서울 성동구 아차산로17번길 4", ("road", "아차산로17번길|4")),
+    ("서울 성동구 아차산로 17번길 4", ("road", "아차산로17번길|4")),
+    ("서울 성동구 아차산로 17안길 4", ("road", "아차산로17안길|4")),
+    ("서울 강남구 테헤란로14길 5", ("road", "테헤란로14길|5")),
+    ("서울 성동구 연무장5길 9", ("road", "연무장5길|9")),
+    ("서울 성동구 연무장5가길 7", ("road", "연무장5가길|7")),
+    ("서울 성동구 연무장 5가길 7", ("road", "연무장5가길|7")),
+    ("서울 영등포구 수유로12나길 3", ("road", "수유로12나길|3")),
+    ("서울 성동구 아차산로17번길 4-1", ("road", "아차산로17번길|4-1")),
+    ("서울 성동구 성수이로 100", ("road", "성수이로|100")),   # 기존 표기는 그대로
+])
+def test_branch_roads_are_part_of_the_street(text, key):
+    assert normalize_address(text) == key
+
+
+@pytest.mark.parametrize("a,b,expected", [
+    ("서울 성동구 아차산로17번길 4", "서울 성동구 아차산로17번길 99", False),     # 같은 번길의 다른 건물 — 예전엔 True였다
+    ("서울 성동구 아차산로17번길 4", "서울특별시 성동구 아차산로 17번길 4 (성수동)", True),
+    ("서울 성동구 아차산로17번길 4", "서울 성동구 아차산로18번길 4", False),       # 다른 번길
+    ("서울 성동구 아차산로 17안길 4", "서울 성동구 아차산로17안길 5", False),
+    ("서울 성동구 아차산로 17안길 4", "서울 성동구 아차산로17번길 4", False),      # 안길과 번길은 다른 길
+    ("서울 강남구 테헤란로14길 5", "서울 강남구 테헤란로14길 6", False),
+    ("서울 강남구 테헤란로14길 5", "서울 강남구 테헤란로 14길 5", True),
+    ("서울 성동구 연무장5길 9", "서울 성동구 연무장5길 10", False),
+    ("서울 성동구 연무장5가길 7", "서울 성동구 연무장 5가길 7", True),
+    ("서울 성동구 연무장5가길 7", "서울 성동구 연무장6가길 7", False),             # 예전엔 둘 다 "가길|7"
+    ("서울 영등포구 수유로12나길 3", "서울 영등포구 수유로12나길 4", False),
+    ("서울 성동구 아차산로17번길 4", "서울 성동구 아차산로 4", False),             # 번길 위 4번지와 큰길 4번지
+])
+def test_address_agreement_on_branch_roads(a, b, expected):
+    assert address_agreement(a, b) is expected
+
+
+# ---- 백트래킹으로 되살아나던 오탐(#1019 검수 반례) — 도로명은 단계로 읽는다 ----
+
+@pytest.mark.parametrize("text,key", [
+    ("서울 성동구 아차산로17번길 지하 4", ("road", "아차산로17번길|4")),
+    ("경북 구미시 1공단로 10", ("road", "1공단로|10")),
+    ("경북 구미시 공단동 1공단로 10", ("road", "1공단로|10")),
+    ("서울 성동구 성수이로 100 한길빌딩 3층", ("road", "성수이로|100")),
+    ("서울 성동구 아차산로 17", ("road", "아차산로|17")),
+    ("서울 중구 을지로3가 100", ("lot", "을지로3가|100")),
+    ("서울 종로구 종로1가 24", ("lot", "종로1가|24")),
+])
+def test_staged_road_parse(text, key):
+    assert normalize_address(text) == key
+
+
+@pytest.mark.parametrize("text", [
+    "서울 성동구 아차산로17번길",            # 건물번호 없음 — 17은 번길 번호지 건물번호가 아니다
+    "서울 성동구 아차산로17 번길",
+    "서울 성동구 아차산로17번길 101호",      # 호수는 건물번호가 아니다
+])
+def test_branch_number_is_never_read_as_the_building_number(text):
+    assert normalize_address(text) is None
+
+
+@pytest.mark.parametrize("a,b,expected", [
+    ("서울 성동구 아차산로17번길 4", "서울 성동구 아차산로17번길 99", False),
+    ("서울 성동구 아차산로17번길 지하 4", "서울 성동구 아차산로17번길 지하 99", False),
+    ("서울 성동구 아차산로17번길 지하 4", "서울 성동구 아차산로 17", False),
+    ("서울 성동구 아차산로17번길", "서울 성동구 아차산로 17", None),               # 건물번호를 알 수 없다
+    ("서울 성동구 아차산로17 번길 4", "서울 성동구 아차산로17번길 4", None),   # 공백 낀 분기 표기는 읽지 않는다(3차 결정)
+    ("경북 구미시 1공단로 10", "경북 구미시 공단동 1공단로 10", True),
+    ("서울 성동구 성수이로 100 한길빌딩 3층", "서울 성동구 성수이로 100", True),
+])
+def test_agreement_on_the_agy_counterexamples(a, b, expected):
+    assert address_agreement(a, b) is expected
+
+
+# ---- 2차 검수 반례(#1019): 한글+숫자+로 회귀, 지번 fallback 오탐, 분기 번호 앞 공백, 산 번지 ----
+
+@pytest.mark.parametrize("text,key", [
+    ("경기 평택시 중앙1로 5", ("road", "중앙1로|5")),
+    ("부산 해운대구 센텀1로 25", ("road", "센텀1로|25")),
+    ("부산 해운대구 마린시티1로 7", ("road", "마린시티1로|7")),
+    ("경기 평택시 중앙1로 12번길 5", ("road", "중앙1로12번길|5")),
+    ("서울 성동구 성수동2가 300-1", ("lot", "성수동2가|300-1")),
+])
+def test_review2_keys(text, key):
+    assert normalize_address(text) == key
+
+
+@pytest.mark.parametrize("text", [
+    "서울 성동구 17번길 4",                      # 성동구는 도로명이 아니다, 번길 단독도 도로명이 아니다
+    "경북 구미시 공단동 1공단로 101호",           # 호수가 지번(공단동 1)으로 읽히지 않는다
+    "서울 종로구 인사동10길 101호",
+    "서울 중구 을지로3가 101호",
+    "서울 성동구 아차산로17번길 가동 101호",
+    "서울 성동구 성수동2가 산 300-1",             # 산 번지는 일반 번지와 다른 필지라 읽지 않는다
+])
+def test_review2_unreadable_is_none(text):
+    assert normalize_address(text) is None
+
+
+@pytest.mark.parametrize("a,b,expected", [
+    ("경기 평택시 중앙1로 5", "경기 평택시 중앙1로 99", False),
+    ("부산 해운대구 상동1로 10", "부산 해운대구 상동1로 99", False),                    # 예전엔 False였는데 지번 fallback이 True로 만들었다
+    ("경기 평택시 중앙1로 12번길 5", "경기 안산시 공단1로 12번길 5", False),            # 다른 도로
+    ("서울 성동구 성수이로 100 한길빌딩 3층", "서울 성동구 성수이로 100", True),
+    ("서울 성동구 성수이로 100 꽃길", "서울 성동구 성수이로 100", True),             # 꽃길은 가지번호가 아니라 분기가 아니다
+])
+def test_review2_agreement(a, b, expected):
+    assert address_agreement(a, b) is expected
+
+
+# ---- 3차 검수(#1019): 범위를 좁혀 안전한 쪽(None)으로 — 공백 낀 분기 표기는 읽지 않고, 분기 한글은 가지번호뿐이다 ----
+
+@pytest.mark.parametrize("text,key", [
+    ("서울 동작구 상도13가길 5", ("road", "상도13가길|5")),
+    ("인천 연수구 송도1길 5", ("road", "송도1길|5")),
+    ("서울 성동구 성수이로 100 꽃길 2", ("road", "성수이로|100")),
+    ("서울 성동구 성수이로 100 한길 2", ("road", "성수이로|100")),
+    ("서울 강남구 테헤란로14길 5 한길 2", ("road", "테헤란로14길|5")),
+    ("서울 성동구 성수동 100 꽃길 2", ("lot", "성수동|100")),
+])
+def test_round3_keys(text, key):
+    assert normalize_address(text) == key
+
+
+@pytest.mark.parametrize("text", [
+    "서울 성동구 아차산로 17 번길 4",        # 접미사 앞 공백 — 번길|4가 head로 잡히지 않는다
+    "서울 성동구 17 번길 4",
+    "서울 성동구 아차산로 5 가길 7",
+    "서울 강남구 테헤란로 14 길 5",
+    "서울 종로구 인사동 10 길 101호",         # 지번(인사동 10)으로 낚이지 않는다
+    "서울 성동구 성수동2가 17 번길 101호",
+    "서울 성동구 아차산로17번길 1F",          # 영문이 이어지면 건물번호가 아니다
+    "인천 연수구 송도 1길 5",                 # 공백 표기는 지원하지 않는다
+])
+def test_round3_unreadable_is_none(text):
+    assert normalize_address(text) is None
+
+
+@pytest.mark.parametrize("a,b,expected", [
+    ("서울 성동구 아차산로 5 가길 7", "서울 성동구 아차산로 6 가길 7", None),         # 예전엔 True
+    ("서울 성동구 성수이로 100 꽃길 2", "서울 성동구 성수이로 100", True),
+    ("서울 강남구 테헤란로14길 5 한길 2", "서울 강남구 테헤란로14길 5", True),
+    ("서울 동작구 상도13가길 5", "서울 동작구 상도13가길 6", False),
+])
+def test_round3_agreement(a, b, expected):
+    assert address_agreement(a, b) is expected
