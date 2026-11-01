@@ -67,6 +67,7 @@ async def test_public_events_replays_then_streams_live_event(db_session):
 
     emitter = asyncio.create_task(_emit_live_event_soon())
     try:
+        assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 연결 직후 ping(#925)
         chunk = await asyncio.wait_for(agen.__anext__(), timeout=1)
         assert "pin.reacted" in chunk
     finally:
@@ -112,6 +113,7 @@ async def test_private_events_never_leaks_other_users_row(db_session):
 
     emitter = asyncio.create_task(_emit_wrong_then_right_recipient())
     try:
+        assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 연결 직후 ping(#925)
         chunk = await asyncio.wait_for(agen.__anext__(), timeout=1)
         # user-b가 받은 첫 청크가 user-a용("x")이 아니라 user-b용("y")이어야 한다 — 새지 않았다는 증거.
         assert "event: y\n" in chunk
@@ -156,6 +158,8 @@ async def test_ping_is_not_mixed_into_replay(db_session, monkeypatch):
     response = await public_events(request=_Alive(), mapId="ping-replay", user=CurrentUser(user_id="user-a"), last_event_id=str(old.seq - 1))
     agen = response.body_iterator
     try:
+        # 연결 직후 ping(#925)이 재전송보다 앞이다. 그 뒤 다음 청크가 재전송 이벤트이고 ping이 섞이지 않는다.
+        assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
         chunk = await asyncio.wait_for(agen.__anext__(), timeout=1)
         assert f"id: {old.seq}\n" in chunk and "ping" not in chunk
         # 재전송이 끝난 뒤에는 이벤트가 없으니 다음 청크는 (긴 간격 동안) 나오지 않는다.
@@ -171,7 +175,8 @@ async def test_event_between_pings_is_delivered_and_not_lost(monkeypatch):
     response = await public_events(request=_Alive(), mapId="ping-live", user=CurrentUser(user_id="user-a"), last_event_id=None)
     agen = response.body_iterator
     try:
-        first = await asyncio.wait_for(agen.__anext__(), timeout=1)
+        assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 연결 직후 ping(#925)
+        first = await asyncio.wait_for(agen.__anext__(), timeout=1)   # 구독 뒤 간격 ping — 이후에야 구독돼 있다
         assert "ping" in first
         # 타임아웃 경계 근처로 여러 건을 연달아 넣는다 — 하나도 빠지면 안 된다.
         for n in range(5):
@@ -198,7 +203,8 @@ async def test_closed_subscription_ends_ping_loop(monkeypatch, channel):
             request=_Alive(), mapId="ping-close", user=CurrentUser(user_id="user-a"), last_event_id=None
         )
     agen = response.body_iterator
-    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
+    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 연결 직후 ping(#925)
+    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 구독 뒤 간격 ping
     dispatcher.close_subscriptions()
     try:
         with pytest.raises(StopAsyncIteration):
@@ -213,7 +219,8 @@ async def test_disconnect_while_waiting_ends_ping_loop(monkeypatch):
     monkeypatch.setattr(router_module, "PING_INTERVAL", 0.05)
     response = await public_events(request=_FakeRequest(), mapId="ping-dc", user=CurrentUser(user_id="user-a"), last_event_id=None)
     agen = response.body_iterator
-    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
+    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 연결 직후 ping(#925)
+    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 구독 뒤 간격 ping
     with pytest.raises(StopAsyncIteration):   # 다음 반복의 is_disconnected()가 True
         await asyncio.wait_for(agen.__anext__(), timeout=1)
 
@@ -230,7 +237,8 @@ async def test_closing_outer_generator_cancels_pending_get_task(monkeypatch, cha
     else:
         response = await private_events(request=_Alive(), mapId="ping-aclose", user=user, last_event_id=None)
     agen = response.body_iterator
-    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
+    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 연결 직후 ping(#925)
+    assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 구독 뒤 간격 ping
     me = asyncio.current_task()
     gets = [t for t in asyncio.all_tasks() if t is not me and "Queue.get" in repr(t.get_coro())]
     assert len(gets) == 1
@@ -238,3 +246,20 @@ async def test_closing_outer_generator_cancels_pending_get_task(monkeypatch, cha
     await asyncio.sleep(0)   # 취소가 반영될 한 틱
     assert gets[0].cancelled()
     assert "ping-aclose" not in dispatcher._subscribers
+
+
+_OPEN = 'event: control\ndata: {"type": "ping"}\n\n'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler", [public_events, private_events])
+async def test_first_byte_is_sent_immediately_on_new_connection(monkeypatch, handler):
+    """#925: 새 연결은 PING_INTERVAL을 기다리지 않고 바로 첫 ping을 낸다(id 없음)."""
+    monkeypatch.setattr(router_module, "PING_INTERVAL", 60.0)
+    response = await handler(request=_Alive(), mapId="open-now", user=CurrentUser(user_id="user-a"), last_event_id=None)
+    agen = response.body_iterator
+    try:
+        chunk = await asyncio.wait_for(agen.__anext__(), timeout=0.5)
+        assert chunk == _OPEN
+    finally:
+        await agen.aclose()
