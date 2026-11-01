@@ -248,7 +248,7 @@ def _preview_with_hints(app_client, urls, hints):
 # ---- #946 힌트로 자체 DB 짝 찾기 ----
 
 def _stub_hint_match(monkeypatch, result, calls=None):
-    def match(name, address, *, db=None):
+    def match(name, address, *, external_id=None, db=None):
         if calls is not None:
             calls.append((name, address))
         return result
@@ -293,16 +293,24 @@ def test_ambiguous_hint_leaves_matches_empty(app_client, monkeypatch):
     assert item["result"]["matches"] == [] and item["result"]["needs_search_query"] is True
 
 
-def test_naver_link_needs_a_name_hint_and_is_never_fetched(app_client, monkeypatch):
-    _stub_parse(monkeypatch, {})   # 네이버는 parse_link가 LINK_NOT_SUPPORTED
-    _stub_hint_match(monkeypatch, [_match("own:abc")])
+def test_naver_link_uses_places_result_with_or_without_hint(app_client, monkeypatch):
     url = "https://naver.me/abc123"
+    _stub_parse(monkeypatch, {url: LinkParseResult(provider="naver", external_id="naver:123", matches=[], needs_search_query=True)})
+    _stub_hint_match(monkeypatch, [_match("own:abc")])
     bare = _preview_with_hints(app_client, [url], [None]).json()["items"][0]
-    assert bare["status"] == "error" and bare["error_code"] == "LINK_NOT_SUPPORTED"
+    assert bare["status"] == "ok" and bare["result"]["needs_search_query"] is True
+    assert bare["result"]["external_id"] == "naver:123"
     hinted = _preview_hinted(app_client, url, {"name": "성수 칼국수", "address": "서울 성동구"})
     assert hinted["result"]["provider"] == "naver" and hinted["result"]["matched_by"] == "hint"
     nameless = _preview_hinted(app_client, url, {"address": "서울 성동구"})
-    assert nameless["status"] == "error"
+    assert nameless["status"] == "ok" and nameless["result"]["matches"] == []
+
+
+def test_unsupported_naver_link_is_not_fabricated_from_hint(app_client, monkeypatch):
+    _stub_parse(monkeypatch, {})
+    _stub_hint_match(monkeypatch, [_match("own:abc")])
+    item = _preview_hinted(app_client, "https://map.naver.com/unsupported", {"name": "성수 칼국수", "address": "서울"})
+    assert item["status"] == "error" and item["error_code"] == "LINK_NOT_SUPPORTED"
 
 
 def test_non_naver_unsupported_link_stays_unsupported_even_with_hint(app_client, monkeypatch):
@@ -314,7 +322,7 @@ def test_non_naver_unsupported_link_stays_unsupported_even_with_hint(app_client,
 
 def test_hint_text_is_never_logged(app_client, monkeypatch, caplog):
     _stub_parse(monkeypatch, {"k": LinkParseResult(provider="kakao", matches=[], needs_search_query=True)})
-    def boom(name, address, *, db=None):
+    def boom(name, address, *, external_id=None, db=None):
         raise RuntimeError(f"{name} {address}")
     monkeypatch.setattr("places.api.match_by_name_address", boom)
     with caplog.at_level(logging.DEBUG):

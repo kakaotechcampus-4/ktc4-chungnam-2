@@ -79,12 +79,22 @@ class PinCreateLive(BaseModel):
     memo: str | None = Field(default=None, max_length=200)
 
 
+class PinLinkRef(BaseModel):
+    """#1048 번호표 학습 입력 — 핀에는 저장하지 않는다. 번호 형식 판단은 places가 맡는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["kakao", "naver"]
+    external_id: str = Field(min_length=1, max_length=100)
+
+
 class PinCreateSearch(BaseModel):
     """place_id·place_name·lat·lng·category는 **저장하지 않는 매칭 힌트**다(#191, 스펙 PinCreateSearch).
     서버가 같은 자체 DB 장소를 찾아 그 장소의 값으로 핀을 만든다. source를 생략하거나 search로 보낸다."""
 
     category: Category
     source: PinSource = "search"
+    link_ref: PinLinkRef | None = None
     link_url: str | None = Field(default=None, max_length=2000)   # v1은 값이 있으면 422(core) — 길이는 스펙과 맞춘다(#733)
     place_id: str = Field(max_length=100)
     place_name: str = Field(max_length=100)
