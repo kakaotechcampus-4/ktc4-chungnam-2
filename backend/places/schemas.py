@@ -112,7 +112,8 @@ class PlaceSearchResult(BaseModel):
 # ---- POST /places/from-link 응답 (docs/api-spec.yaml LinkParseResult, #474) ----
 
 class LinkParseResult(BaseModel):
-    provider: Literal["google", "kakao"]
+    provider: Literal["google", "kakao", "naver"]   # naver는 link-preview에서 상호명 힌트가 있을 때만(#946)
+    matched_by: Literal["link", "hint"] | None = None   # matches를 어떻게 찾았는지(#946). matches가 비면 없다
     name_hint: str | None = None          # 구글 링크에 든 이름(사용자가 붙인 값). 카카오 링크에는 없다
     kakao_place_id: str | None = None     # 카카오 링크의 장소 ID — 저장이 허용된 유일한 카카오 값
     matches: list[PlaceSearchResult]      # 자체 DB 장소만(pinnable=true). 없으면 빈 배열
