@@ -19,6 +19,7 @@ from recommend.tests.test_flows import PLANNER, _make_members, _make_run
 
 ME = Principal(user_id="user_1", map_id="map_1", role="member")
 OTHER = Principal(user_id="user_2", map_id="map_1", role="member")
+OLD_ATTEMPT_LIMIT = 10   # 예전 추천 횟수 상한(#558). 상한은 크레딧으로 바뀌어 없다(#432, #949)
 
 
 class _Planner:
@@ -135,7 +136,7 @@ def test_stored_text_is_normalized(db_session, run):
 def test_a_resend_past_the_old_attempt_limit_still_reuses_the_line(db_session):
     """추천 횟수 상한은 없어졌다(#949) — 시도 번호가 옛 상한(10)을 넘은 run에서도 같은 글 재전송은 새 줄도 모델 호출도 없이 통과한다."""
     _make_members(db_session, user_ids=["user_1"])
-    late_run = _make_run(db_session, status="done", category="음식점", attempt_no=core.ATTEMPT_LIMIT + 1)
+    late_run = _make_run(db_session, status="done", category="음식점", attempt_no=OLD_ATTEMPT_LIMIT + 1)
     service.add_manual_evidence(db_session, run_id=late_run.id, author_id="user_1", text="조용한 곳")
     db_session.commit()
     _lines, planner = _add(db_session, late_run, "조용한 곳")

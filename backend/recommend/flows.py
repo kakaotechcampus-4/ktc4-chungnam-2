@@ -165,7 +165,7 @@ def list_runs(
     return [
         schemas.RunSummary(
             id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
-            attempt_limit=core.ATTEMPT_LIMIT, created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
+            created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
         )
         for run, candidate_count, published_count in service.list_runs_for_requester(
             db, map_id=map_id, requested_by=requested_by, category=category, limit=limit,

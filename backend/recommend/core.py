@@ -25,9 +25,6 @@ from recommend.models import RecommendRun
 from recommend.ports import Circle
 from recommend.schemas import Check
 
-# 폐지 예정, #954에서 지운다. 응답의 attempt_limit(deprecated)을 채우는 값으로만 남는다 — 추천 횟수 상한은 크레딧으로 바뀌어
-# 검사하지 않는다(#432, #949). attempt_no 번호는 계속 매긴다(#811).
-ATTEMPT_LIMIT = 10
 # #707 — run 하나에 「+」로 직접 추가하는 글은 10개까지(×로 뺀 것도 센다). 「+」도 ②로 모델을 불러서다. 출발값이고,
 # 크레딧(#432) 뒤에도 남는 보호다(「+」는 크레딧을 쓰지 않는다, docs/credits-reviews.md 4절). 한 요청 5줄은 schemas.EvidencePatchRequest가 422로 막는다.
 MANUAL_EVIDENCE_LIMIT = 10

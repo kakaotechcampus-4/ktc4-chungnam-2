@@ -21,6 +21,7 @@ from recommend.tests.test_flows import (
 
 USER = "user_1"
 PRINCIPAL = Principal(user_id=USER, map_id="map_1", role="member")
+OLD_ATTEMPT_LIMIT = 10   # 예전 추천 횟수 상한(#558). 상한은 크레딧으로 바뀌어 없다(#432, #949)
 
 
 def _crowded_line(author="user_1", **overrides):
@@ -323,7 +324,7 @@ class _CountingPlanner:
 def test_evidence_edits_pass_after_the_requester_went_past_the_old_attempt_limit(db_session):
     """추천 횟수 상한(10회)은 크레딧으로 바뀌어 없다(#432, #949) — 11번째 시도의 run에서도 ×·＋가 429 없이 저장된다."""
     _make_members(db_session, user_ids=["user_1"])
-    run = _run_with(db_session, [_crowded_line()], status="done", attempt_no=core.ATTEMPT_LIMIT + 1)
+    run = _run_with(db_session, [_crowded_line()], status="done", attempt_no=OLD_ATTEMPT_LIMIT + 1)
     db_session.commit()   # 「+」는 모델 앞에서 읽기 트랜잭션을 롤백한다 — 준비한 데이터는 커밋된 상태여야 한다
     line = service.list_active_evidence(db_session, run.id)[0]
     planner = _CountingPlanner()

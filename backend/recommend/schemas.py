@@ -52,7 +52,6 @@ class RecommendRun(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
-    attempt_limit: int  # 폐지 예정(deprecated, #954에서 지운다). 서버는 이 값으로 막지 않는다(#949) — core.ATTEMPT_LIMIT
     default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한 30
 
 
@@ -63,7 +62,6 @@ class RunSummary(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
-    attempt_limit: int  # RecommendRun.attempt_limit과 같다
     created_at: datetime
     candidate_count: int = Field(ge=0)  # 마지막 시도의 후보 수. done이 아니면 0
     published_count: int = Field(ge=0)  # 그 run에서 게시한 후보 수
