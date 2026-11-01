@@ -7,7 +7,7 @@
 - recommend `flows._create_run`(#949): 모델 전에 check_can_spend, run 저장과 같은 트랜잭션에서 charge
 - agent.course(#950): run INSERT와 같은 트랜잭션에서 charge, 결과 없이 끝난 run에 refund
 - reviews(#951): 첫 후기 저장과 같은 트랜잭션에서 grant_review
-- reviews(#951): ReviewSaved.balance에 get_balance
+- reviews(#951): ReviewSaved.balance에 get_balance, 후기 쓰기·신고 전에 reject_guest
 - auth.service: 탈퇴 7일 정리 purge_withdrawn_user(delete_by_user), 게스트 합치기 MERGE_STEPS(reassign_user)
 """
 
@@ -38,6 +38,12 @@ def refund(db: Session, *, feature: str, run_id: str) -> bool:
 def grant_review(db: Session, *, user_id: str, place_id: str) -> int:
     """그 장소 첫 후기 보상. 받은 크레딧(REVIEW_REWARD 또는 0). 게스트면 0(호출 전에 reviews가 막는다)."""
     return service.grant_review(db, user_id=user_id, place_id=place_id)
+
+
+def reject_guest(db: Session, *, user_id: str) -> None:
+    """읽기만. 게스트면 403 GUEST_NOT_ALLOWED(detail.initial_credits — 카카오로 전환하면 받을 크레딧). reviews(#951)가 후기 쓰기·
+    신고 전에 부른다. 게스트 판정과 initial_credits 숫자를 credits 한 곳에 두려고 연다(명세 3.1, 3.5)."""
+    service._reject_guest(db, user_id)
 
 
 def get_balance(db: Session, *, user_id: str) -> int:

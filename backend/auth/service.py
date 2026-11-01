@@ -29,6 +29,7 @@ from maps import api as maps_api
 from notifications import api as notifications_api
 from pins import api as pins_api
 from recommend import api as recommend_api
+from reviews import api as reviews_api
 from shortlist import api as shortlist_api
 
 logger = logging.getLogger(__name__)
@@ -267,6 +268,8 @@ WITHDRAW_STEPS = (
     ("notifications", lambda db, user_id, map_ids: notifications_api.delete_by_user(db, user_id=user_id)),
     # 모델 호출 사용량(#870)은 행을 남기고 user_id만 비운다 — 비용 통계는 사람 없이도 쓴다
     ("llm", lambda db, user_id, map_ids: llm_api.anonymize_by_user(db, user_id=user_id)),
+    # 장소 후기(#951)는 남기고(작성자 이름은 원래 보이지 않는다) 그 사람이 한 신고만 지운다
+    ("reviews", lambda db, user_id, map_ids: reviews_api.delete_reports_by_user(db, user_id=user_id)),
 )
 
 
@@ -486,6 +489,7 @@ MERGE_STEPS = (
     ("agent", agent_api),
     ("llm", llm_api),
     ("credits", credits_api),   # 옮기지 않고 게스트 쪽 행을 지운다(초기 지급 두 번 방지)
+    ("reviews", reviews_api),   # 옮길 것이 없다 — 게스트는 후기·신고를 못 쓴다(멱등 no-op)
 )
 
 
