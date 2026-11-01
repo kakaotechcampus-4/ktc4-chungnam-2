@@ -83,18 +83,20 @@ def test_chips_only_runs_call_no_model_so_there_is_nothing_to_mark(db_session, m
 
 
 def test_a_plus_rejected_at_save_time_marks_its_model_call_as_discarded(db_session, llm_usage_discards):
-    """모델을 기다리는 사이 10회째가 커밋돼 저장 직전 재검사에서 RETRY_LIMIT이면, 이미 나간 모델 호출은 버려진 비용이다."""
+    """모델을 기다리는 사이 같은 run의 글 수가 상한에 닿아 저장 직전 재검사에서 EVIDENCE_LIMIT이면, 이미 나간 모델 호출은 버려진 비용이다."""
     _make_members(db_session, user_ids=["user_1"])
-    run = _make_run(db_session, status="done", category="음식점", attempt_no=core.ATTEMPT_LIMIT - 1)
-    db_session.commit()
+    run = _make_run(db_session, status="done", category="음식점", attempt_no=1)
+    for i in range(core.MANUAL_EVIDENCE_LIMIT - 1):
+        service.add_manual_evidence(db_session, run_id=run.id, author_id="user_2", text=f"다른 사람의 글 {i}")
+    db_session.commit()   # 9개 — 모델 앞 검사(9+1)는 통과한다
 
-    def tenth_attempt_commits():
-        db_session.execute(update(RecommendRun).where(RecommendRun.id == run.id).values(attempt_no=core.ATTEMPT_LIMIT))
+    def another_plus_commits():   # 모델을 기다리는 사이 다른 요청이 10번째 글을 저장했다
+        service.add_manual_evidence(db_session, run_id=run.id, author_id="user_2", text="그 사이 들어온 글")
 
-    planner = _TracePlanner(side_effect=tenth_attempt_commits)
-    with pytest.raises(AppError) as limit:
+    planner = _TracePlanner(side_effect=another_plus_commits)
+    with pytest.raises(AppError) as full:
         flows.patch_evidence(db_session, run_id=str(run.id), principal=PRINCIPAL, toggles=[], adds=["조용한 곳"], evidence_planner=planner)
-    assert limit.value.code == "RETRY_LIMIT"
+    assert full.value.code == "EVIDENCE_LIMIT"
     assert llm_usage_discards == planner.trace_ids and len(planner.trace_ids) == 1
 
 
