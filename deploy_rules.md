@@ -208,6 +208,23 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 | 진단 실패 비율 | `select outcome, count(*) from agent_runs where used_model and trigger in ('activity', 'time') and started_at > now() - interval '1 day' group by 1` 에서 model_failed와 invalid_schema ÷ 전체 | 20% 이상이면 모델 제공자 상태를 본다(#1072). 진단만 실패하고 다른 기능은 돈다. 진단 전체를 끄는 장치는 두지 않았다(`docs/agent-v2.md` 21.3) |
 | 관찰 예외 | `select outcome_detail->>'stage', outcome_detail->>'error', count(*) from agent_runs where outcome = 'error' and started_at > now() - interval '1 day' group by 1, 2` | 1건부터 본다(#1072). 코드 오류다. 그 지도는 30분, 2시간, 6시간 뒤 다시 관찰된다 |
 
+### 에이전트 개입 라벨링 표본 (#1072)
+
+v2 지도 제안이 쓸모 있었는지(탐지 정밀도, `docs/agent-v2.md` 21.5)를 재려고 스테이징의 제안 표본을 뽑아 사람이 라벨을 붙인다. QA로 지도가 쌓인 뒤 한다. **운영에서는 돌리지 않는다**(운영 DB를 밖으로 옮기지 않는다, #53). 명령은 PINGO_ENV가 staging이 아니면 `--staging`을 거부한다(#1076).
+
+1. 콘솔 EC2 → 연결 → Session Manager로 서버에 들어가 `cd /srv/pingo/deploy`.
+2. 표본 뽑기(유형마다 25건까지, 같은 seed면 같은 표본):
+   ```
+   ./run.sh staging python -m agent.label_sample --staging --out - > /tmp/agent-labels.csv
+   ./run.sh staging python -m agent.label_sample --staging --per-type 40 --seed 3 --out - > /tmp/agent-labels.csv
+   ```
+   유형별 건수는 화면(표준 오류)에 나오고 파일에는 CSV만 간다. 모두 0이면 아직 관찰된 제안이 없는 것이다.
+3. 파일 가져오기: 브라우저 터미널에는 내려받기가 없어 `cat /tmp/agent-labels.csv`로 띄워 복사하고, 이 PC에서 `.csv`로 저장한다. 엑셀에서 한글이 깨지면 데이터 → 텍스트/CSV에서 UTF-8로 연다.
+4. 서버의 파일 지우기: `rm /tmp/agent-labels.csv`. CSV는 저장소에 커밋하지 않는다.
+5. 「개입할 만했나」와 메모 칸을 채우고(판정 기준은 `docs/agent-v2.md` 21.5), 유형별 수를 21.5 표에 옮긴다.
+
+CSV에는 사유 원문, 구성원 이름, 인용 글, 실시간 핀 검색어가 없다. 인용은 「[인용]」, 핀 이름은 「[핀]」으로 바뀌어 나온다(`agent/label_sample.py`).
+
 ## 배포 전에 정할 것
 
 - `event_log` 오래된 행 삭제: 읽기는 24시간으로 자르지만(`realtime.service.RETENTION`) 지우는 작업은 아직 없다. `created_at` 인덱스는 삭제용으로 있다. 정기 정리(`maintenance.run`)에 단계로 넣을지 정한다.
