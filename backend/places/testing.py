@@ -169,12 +169,21 @@ class FakePlaces:
             return []
         cands = [self._candidate(r, None) for r in self.rows
                  if r.status == "open" and r.category in OWN_CATEGORIES
-                 and (matching.normalize_name(r.name).startswith(nq) or matching.normalize_name(r.name) in prefixes)]
+                 and (matching.normalize_name(r.name).startswith(tuple(matching.hint_like_prefixes(name)))
+                      or matching.normalize_name(r.name) in prefixes)]
         if len(cands) > matching.HINT_MAX_CANDIDATES:
             return []
         return [PlaceSearchResult(place_id=c.kakao_place_id or f"own:{c.place_id}", place_name=c.name[:100], lat=c.lat, lng=c.lng,
                                   category=c.category, address=c.address[:200] if c.address else None, pinnable=True)
                 for c in matching.pick_hint_match(name, address, cands)]
+
+    def match_address_candidates(self, address: str, *, db: Session | None = None) -> list[PlaceSearchResult]:
+        if matching.address_search_term(address or "") is None:
+            return []
+        cands = [self._candidate(r, None) for r in self.rows if r.status == "open" and r.category in OWN_CATEGORIES]
+        return [PlaceSearchResult(place_id=c.kakao_place_id or f"own:{c.place_id}", place_name=c.name[:100], lat=c.lat, lng=c.lng,
+                                  category=c.category, address=c.address[:200] if c.address else None, pinnable=True)
+                for c in matching.pick_address_candidate(address, cands)]
 
     # ---- 편의 ----
 
@@ -193,7 +202,7 @@ class FakePlaces:
 
         for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "count_curated", "get_facts", "get_hours",
                      "get_week_open_status", "get_open_status_on_weekdays",
-                     "own_places_near", "own_places_by_kakao_id", "match_by_name_address"):
+                     "own_places_near", "own_places_by_kakao_id", "match_by_name_address", "match_address_candidates"):
             monkeypatch.setattr(api, name, getattr(self, name))
         return self
 
