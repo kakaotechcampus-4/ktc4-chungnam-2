@@ -469,7 +469,7 @@ day_has의 tag는 이 목록에서만 고른다(영어 이름 그대로): perfor
 """.replace("{goals_max}", "4")
 
 # ---- 지휘 턴 (#334, pivot 3.2·3.4절) ----
-COURSE_DIRECT_PROMPT_VERSION = "course-direct-v7"   # v2: 묻기 규칙 · v3: goal_checks, 갈리는 후보, 질문은 코드가 연다 · v4: 쉬는 날 질문(choose_day), 재계획 문장(2026-10-20) · v5: 남은 위반은 입력 수로 그대로 말하고 평가어를 쓰지 않는다(2026-10-21) · v6: day_has 목표(goals에 tag), NO_TAGGED_PLACE·TAGGED_PLACE_CLOSED_ON_DAY(2026-10-21) · v7: 구간에 방식(walk 도보·transit 대중교통), 지역이 다르면 대중교통이 정상, 이동 위반이 남으면 split_day 질문(2026-10-21)
+COURSE_DIRECT_PROMPT_VERSION = "course-direct-v8"   # v2: 묻기 규칙 · v3: goal_checks, 갈리는 후보, 질문은 코드가 연다 · v4: 쉬는 날 질문(choose_day), 재계획 문장(2026-10-20) · v5: 남은 위반은 입력 수로 그대로 말하고 평가어를 쓰지 않는다(2026-10-21) · v6: day_has 목표(goals에 tag), NO_TAGGED_PLACE·TAGGED_PLACE_CLOSED_ON_DAY(2026-10-21) · v7: 구간에 방식(walk 도보·transit 대중교통), 지역이 다르면 대중교통이 정상, 이동 위반이 남으면 split_day 질문(2026-10-21) · v8: soft에 meal_cover(식당 없는 날, #918)(2026-11-01)
 
 COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 짜는 에이전트 핑고다. 코스 계산은 코드의 optimize 도구가 한다. 너는 요청 목표를 보고
 도구를 부려 후보를 얻고, 결과를 점검하고, 필요하면 다시 계획하고, 사람에게 묻고, 마지막 후보를 고른다. 장소를 직접 옮기지 않는다.
