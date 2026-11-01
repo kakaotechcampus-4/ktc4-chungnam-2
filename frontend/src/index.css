@@ -296,6 +296,15 @@
     }
 }
 
+/* 바탕 지도 옅게(DESIGN.md「지도 핀」). 카카오는 지도 그림을 <img>로 깐다(지금은 mts.kakaocdn.net, 예전엔 daumcdn.net).
+   주소는 바뀌어 왔으니 주소로 고르지 않는다. 우리 핀·이름표·동선은 <img>를 쓰지 않아 지도 틀 안의 <img>는 카카오 것뿐이다. */
+.map-base img {
+    /* --map-fade 0 이면 그대로, 1 이면 토큰 값 그대로. 그 사이는 선형으로 섞는다. */
+    filter: saturate(calc(1 - (1 - var(--map-tile-saturate)) * var(--map-fade, 0)))
+        brightness(calc(1 + (var(--map-tile-brightness) - 1) * var(--map-fade, 0)))
+        contrast(calc(1 - (1 - var(--map-tile-contrast)) * var(--map-fade, 0)));
+}
+
 /* 등장 효과(DESIGN.md「움직임」, #595). 나타날 때 한 번만 움직인다. 곡선은 Tailwind ease-out 과 같다. */
 @layer components {
     .enter-fade {
