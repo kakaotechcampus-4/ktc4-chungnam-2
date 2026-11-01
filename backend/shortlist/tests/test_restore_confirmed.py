@@ -1,5 +1,8 @@
 """api.restore_confirmed(#1013) — 삭제 때 확정이었던 핀을 확정 리스트 맨 뒤로 되올린다."""
 
+import uuid
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from common.errors import AppError
@@ -7,11 +10,14 @@ from pins.models import Pin
 from shortlist import api, service
 from shortlist.models import ShortlistItem
 
+# 테스트 트랜잭션 안에서는 now()가 늘 같아서, 이미 있던 항목은 과거 시각으로 둔다(실제로는 복구가 나중 트랜잭션이다)
+_PAST = datetime.now(timezone.utc) - timedelta(days=1)
+
 
 def _pin(db, map_id, *, kind="일반", created_by="u1", deleted=False):
     pin = Pin(
         map_id=map_id, category="음식점", kind=kind, origin="direct", source="live",
-        kakao_place_id=f"kakao_{map_id}_{created_by}_{kind}_{id(object())}", search_query="맛집", visibility="public",
+        kakao_place_id=f"kakao_{map_id}_{created_by}_{kind}_{uuid.uuid4().hex}", search_query="맛집", visibility="public",
         created_by=created_by,
     )
     db.add(pin)
@@ -20,7 +26,7 @@ def _pin(db, map_id, *, kind="일반", created_by="u1", deleted=False):
 
 
 def _confirm(db, map_id, pin, order=None):
-    db.add(ShortlistItem(map_id=map_id, pin_id=pin.id, added_by="u1", visit_order=order))
+    db.add(ShortlistItem(map_id=map_id, pin_id=pin.id, added_by="u1", visit_order=order, added_at=_PAST))
     db.flush()
 
 

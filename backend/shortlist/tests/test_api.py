@@ -44,3 +44,32 @@ def test_count_confirmed_decreases_after_removal(db_session):
     service.delete_item(db_session, item_id=str(row.id))
 
     assert api.count_confirmed(db_session, map_id="map_1") == 0
+
+
+def _principal(map_id="map_1"):
+    from authz.core import Principal
+    return Principal(user_id="user_1", map_id=map_id, role="owner")
+
+
+def test_remove_for_deleted_pin_returns_true_when_confirmed_item_removed(db_session):
+    pin = _insert_pin(db_session)
+    service.add_item(db_session, map_id="map_1", pin_id=str(pin.id), added_by="user_1")
+    db_session.commit()
+
+    assert api.remove_for_deleted_pin(db_session, map_id="map_1", pin_id=str(pin.id), principal=_principal()) is True
+    assert api.count_confirmed(db_session, map_id="map_1") == 0
+
+
+def test_remove_for_deleted_pin_returns_false_when_not_confirmed(db_session):
+    pin = _insert_pin(db_session)
+
+    assert api.remove_for_deleted_pin(db_session, map_id="map_1", pin_id=str(pin.id), principal=_principal()) is False
+
+
+def test_remove_for_deleted_pin_is_idempotent(db_session):
+    pin = _insert_pin(db_session)
+    service.add_item(db_session, map_id="map_1", pin_id=str(pin.id), added_by="user_1")
+    db_session.commit()
+    api.remove_for_deleted_pin(db_session, map_id="map_1", pin_id=str(pin.id), principal=_principal())
+
+    assert api.remove_for_deleted_pin(db_session, map_id="map_1", pin_id=str(pin.id), principal=_principal()) is False

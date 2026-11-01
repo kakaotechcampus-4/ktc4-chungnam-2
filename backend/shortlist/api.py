@@ -24,11 +24,13 @@ def count_confirmed(db: Session, *, map_id: str) -> int:
     ).scalar_one()
 
 
-def remove_for_deleted_pin(db: Session, *, map_id: str, pin_id: str, principal: Principal) -> None:
+def remove_for_deleted_pin(db: Session, *, map_id: str, pin_id: str, principal: Principal) -> bool:
     """핀을 삭제하기 **직전에** pins가 부른다(#235). 그 핀이 확정 리스트에 있으면 항목을 같은
     트랜잭션에서 지우고 shortlist.changed(removed)를 낸다 — 안 지우면 확정 리스트 조회가 삭제된
     핀 때문에 통째로 404가 되고 confirmed_count가 어긋난다. 핀이 아직 읽혀야 이벤트 페이로드(핀 응답)를
     만들 수 있어서 소프트 삭제보다 먼저 부른다. 확정 항목이 없으면 아무것도 하지 않는다.
+    지운 항목이 있었으면 True, 없었으면 False를 돌려준다 — pins가 `deleted_was_confirmed`로 기록해 복구(restore_confirmed, #1013)
+    때 확정으로 되올린다. 같은 핀을 다시 부르면 False(멱등).
     동선(route.recalculated)은 확정 리스트 변경만으로는 발행하지 않는다(docs/events.md) —
     일반 제외(DELETE /shortlist/{itemId})와 같은 규칙이다."""
     item_row = db.execute(
@@ -36,6 +38,7 @@ def remove_for_deleted_pin(db: Session, *, map_id: str, pin_id: str, principal: 
     ).scalar_one_or_none()
     if item_row is not None:
         flows.unconfirm_pin(db, item_row=item_row, principal=principal)
+    return item_row is not None
 
 
 def list_items_for_agent(db: Session, *, map_id: str) -> list[dict]:
