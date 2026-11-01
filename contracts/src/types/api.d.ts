@@ -3921,6 +3921,8 @@ export interface components {
         };
         Member: {
             user_id: string;
+            /** @description 로그인 수단이 없는 게스트(그 브라우저에서만 이어지는 임시 계정)인가(#955). 서버는 게스트에게 방장을 넘기지 않는다(OWNER_TARGET_INVALID) — 화면이 방장 넘기기 목록에서 빼고 이름 옆에 「게스트」를 붙이는 데 쓴다. 계산 값이라 저장하지 않는다(CurrentUser.is_guest와 같은 판정) */
+            is_guest: boolean;
             /**
              * @description owner = 방장, 나머지는 member. memberships.role 기준이라 방장이 나가 위임되면 바뀐다(지도를 만든 사람과 다를 수 있다, #369). 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)
              * @enum {string}

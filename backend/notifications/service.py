@@ -40,7 +40,7 @@ def notify(db: Session, *, user_id: str, type: str, map_id: str, map_title: str 
     row = NotificationRow(
         user_id=user_id, type=type, map_id=map_id,
         map_title=core.clip(map_title, core.MAP_TITLE_MAX) if map_title else None,
-        pin_id=pin_id, message=core.clip(message, core.MESSAGE_MAX),
+        pin_id=pin_id, message=core.clip(message, core.MESSAGE_MAX), actor_id=actor_id,
     )
     db.add(row)
     db.flush()
@@ -133,6 +133,17 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
         update(PrefRow).where(PrefRow.user_id == from_user_id).values(user_id=to_user_id)
     ).rowcount
     return {"notifications": moved, "notification_prefs": prefs_moved}
+
+
+def anonymize_actor(db: Session, *, user_id: str) -> int:
+    """탈퇴 7일 뒤 정리(#857) — `user_id`가 행위자인 알림의 이름을 '탈퇴한 구성원'으로 다시 만든다. 덮은 행 수.
+    다시 만든 뒤 actor_id를 비워서 멱등하다. actor_id가 NULL인 옛 알림은 못 덮는다(90일 뒤 정리로 사라진다)."""
+    rows = db.execute(select(NotificationRow).where(NotificationRow.actor_id == user_id)).scalars().all()
+    for row in rows:
+        row.message = core.anonymize_message(row.type, row.message)
+        row.actor_id = None
+    db.flush()
+    return len(rows)
 
 
 def purge_old(db: Session, *, now: datetime, older_than_days: int = RETENTION_DAYS) -> dict[str, int]:

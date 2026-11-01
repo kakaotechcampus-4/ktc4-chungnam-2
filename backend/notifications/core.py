@@ -13,6 +13,7 @@ MESSAGE_MAX = 200     # api-spec Notification.message maxLength
 MAP_TITLE_MAX = 100   # api-spec Notification.map_title maxLength
 
 DEFAULT_ACTOR = "구성원"
+WITHDRAWN_ACTOR = "탈퇴한 구성원"   # 탈퇴 정리(#857) 뒤 행위자 이름 자리
 
 # 문장은 서버가 만든다. 반대 사유 원문·핀 메모를 받는 자리를 일부러 두지 않는다 — 문장 틀에 넣을 수 있는 값은
 # 행위자 이름·지도 제목·반응 종류뿐이다.
@@ -36,6 +37,18 @@ def compose_message(type: str, *, actor_name: str | None = None, map_title: str 
     else:
         raise ValueError(f"모르는 알림 종류: {type!r}")
     return clip(text, MESSAGE_MAX)
+
+
+def anonymize_message(type: str, message: str) -> str:
+    """행위자 이름이 든 알림 문장을 '탈퇴한 구성원'으로 다시 만든다. 이름이 없는 종류는 그대로.
+    pin_reaction의 반응 종류는 문장 끝 틀에서 되찾는다(이름은 틀 앞에 있어서 이름이 틀을 흉내 내도 끝으로 가른다)."""
+    if type == "pin_reaction":
+        reaction = next((r for r, phrase in (("like", "♥를"), ("against", "🚫 반대를"))
+                         if message.endswith(f"님이 내 핀에 {phrase} 남겼어요")), None)
+        return compose_message(type, actor_name=WITHDRAWN_ACTOR, reaction=reaction)
+    if type == "member_joined":
+        return compose_message(type, actor_name=WITHDRAWN_ACTOR)
+    return message
 
 
 def clip(text: str, limit: int) -> str:
