@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 
 import auth.models  # noqa: F401 — pins.api(create_ai_pin)가 auth.api를 부른다
 import common.events  # noqa: F401
+import credits.models  # noqa: F401 — flows._create_run이 크레딧을 확인·차감한다(#949)
 import maps.models  # noqa: F401
 import pins.models  # noqa: F401
 import recommend.models  # noqa: F401

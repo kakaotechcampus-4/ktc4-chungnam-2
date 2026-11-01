@@ -52,7 +52,7 @@ class RecommendRun(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
-    attempt_limit: int  # 한 사람이 한 지도에서 받을 수 있는 횟수 상한(core.ATTEMPT_LIMIT)
+    attempt_limit: int  # 폐지 예정(deprecated, #954에서 지운다). 서버는 이 값으로 막지 않는다(#949) — core.ATTEMPT_LIMIT
     default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한 30
 
 

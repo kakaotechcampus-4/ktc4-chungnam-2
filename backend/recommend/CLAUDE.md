@@ -23,8 +23,11 @@
 
 - **`docs/constraints.md`의 `unknown_policy`를 그대로 적용한다.** 안전 조건이 unknown인데 통과시키는 코드를 짜면 최우선 성공지표(실격 위반율 0%)가 깨진다 — 이 부분은 반드시 계약 테스트로 고정한다.
 - 5-6 실격 필터 순서(반경→영업종료→실격조건→중복제외→정렬)를 바꾸지 않는다. 순서가 깔때기 표시(funnel)의 의미를 결정한다.
-- 재시도 상한(#31 확정, 2026-09-22): 개인(requested_by) 단위·카테고리 무관·10회(2026-10-15 5→10, #558, 3회 잠정치에서
-  상향). `core.ATTEMPT_LIMIT` 참고.
+- 추천 횟수 상한은 없다. 「추천 받기」 1번에 크레딧 1이다(#432, #949, `docs/credits-reviews.md`): `flows._create_run`이
+  모델(②) 전에 `credits.api.check_can_spend`, run INSERT와 같은 트랜잭션에서 `credits.api.charge`를 부른다. 가격 숫자는
+  여기 적지 않는다(`credits/constants.py`). 「다시 찾기」·「근거 고치기」는 크레딧을 쓰지 않는다. 추천에는 환불 경로가 없다
+  (실패하면 run과 차감이 함께 롤백된다). `attempt_no`와 `lock_requester_attempts`(#811)는 번호를 매기려고 남긴다.
+  `core.ATTEMPT_LIMIT`은 응답의 `attempt_limit`(폐지 예정)을 채우는 값으로만 남고 #954에서 지운다.
 
 ## 완료 정의
 
