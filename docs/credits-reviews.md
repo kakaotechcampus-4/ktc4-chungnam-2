@@ -1,7 +1,7 @@
 # 크레딧과 장소 후기 — 구현 명세
 
 > 추천 탭 광고의 `docs/ads.md`와 같은 기능 명세다. 정본은 여전히 `docs/api-spec.yaml`·`docs/data-model.md`·`docs/errors.md`이고, 이 문서와 다르면 그쪽을 따른다.
-> 상태: 결정 반영 (2026-11-01, #432). 작업은 #948~#954.
+> 상태: 구현 완료 (2026-11-01, #432). 작업은 #948~#954.
 
 ## 0. 한 줄 요약
 
@@ -78,15 +78,15 @@
 
 | 장치 | 지금 | 결정 |
 |---|---|---|
-| `COURSE_LIMIT` / `COURSE_DAILY_LIMIT` | 코스 사람당 하루 5회 | 삭제(#950). 계약은 폐지 예정으로 두고 #954에서 지운다 |
-| `RETRY_LIMIT` / `ATTEMPT_LIMIT` | 추천 지도·사람당 10회 (새 추천, 다시 찾기, 근거 고치기 모두 검사) | 삭제(#949). 계약은 폐지 예정으로 두고 #954에서 지운다 |
+| `COURSE_LIMIT` / `COURSE_DAILY_LIMIT` | 코스 사람당 하루 5회 | 삭제(서버 #950, 계약 #954) |
+| `RETRY_LIMIT` / `ATTEMPT_LIMIT` | 추천 지도·사람당 10회 (새 추천, 다시 찾기, 근거 고치기 모두 검사) | 삭제(서버 #949, 계약 #954. 서버 응답의 `attempt_limit` 값은 recommend 후속에서 지운다) |
 | `attempt_no` 열과 `lock_requester_attempts` | 시도 번호, 같은 번호 중복 방지(#811) | **유지** (번호는 계속 매긴다) |
-| 응답의 `attempt_limit` | FE가 "N/10회" 표시 | 폐지 예정(`deprecated`). FE가 안 쓰게 된 뒤(#952) #954에서 지운다 |
+| 응답의 `attempt_limit` | FE가 "N/10회" 표시 | 삭제(FE #952, 계약 #954) |
 | `COURSE_IN_PROGRESS`, `REQUEST_IN_PROGRESS`, `Idempotency-Key` | 진행 중 중복 막기 | 유지 |
 | `MANUAL_EVIDENCE_LIMIT` (`EVIDENCE_LIMIT`) | 직접 추가 글 run당 10개 | 유지 |
 | 지도 하루 모델 상한 | 구성원 수 × 4 (백그라운드) | 유지 |
 
-계약을 한 번에 지우지 않는 이유: FE는 생성된 타입으로 `attempt_limit`을 읽고 있어서, 스펙에서 먼저 지우면 develop의 FE 빌드가 깨진다. 서버도 구현 PR 전까지 `RETRY_LIMIT`을 낸다. 그래서 새 것을 먼저 더하고(이 문서의 계약 PR), 각 구현이 옛 것을 쓰지 않게 된 뒤 지운다(#954).
+계약을 한 번에 지우지 않았던 이유: FE는 생성된 타입으로 `attempt_limit`을 읽고 있어서, 스펙에서 먼저 지우면 develop의 FE 빌드가 깨진다. 서버도 구현 PR 전까지 `RETRY_LIMIT`을 낸다. 그래서 새 것을 먼저 더하고(이 문서의 계약 PR), 각 구현이 옛 것을 쓰지 않게 된 뒤 지운다(#954).
 
 상한이 사라진 뒤 무료로 남는 경로(#432 D5):
 - 「다시 찾기」(`POST /runs/{runId}/retry`): 자체 DB 검색뿐, 모델 호출 없음.
@@ -217,10 +217,10 @@ FE는 자체 `places.id`를 모른다(`Pin` 응답에 없다). 그래서 핀으�
 
 | 엔드포인트 | 변경 |
 |---|---|
-| `POST /maps/{mapId}/runs` | 402 `CREDIT_INSUFFICIENT`, 403 `GUEST_NOT_ALLOWED` 추가. 429 `RETRY_LIMIT` 폐지 예정 |
-| `POST /runs/{runId}/retry`, `PATCH /runs/{runId}/evidence` | 429 `RETRY_LIMIT` 폐지 예정. 차감 없음 |
-| `RecommendRun`, `RunSummary` | `attempt_limit` 폐지 예정. `attempt_no`는 유지 |
-| `POST /maps/{mapId}/courses` | 402, 403 `GUEST_NOT_ALLOWED` 추가. 429 `COURSE_LIMIT` 폐지 예정 |
+| `POST /maps/{mapId}/runs` | 402 `CREDIT_INSUFFICIENT`, 403 `GUEST_NOT_ALLOWED` 추가. 429 `RETRY_LIMIT` 삭제(#954) |
+| `POST /runs/{runId}/retry`, `PATCH /runs/{runId}/evidence` | 429 `RETRY_LIMIT` 삭제(#954). 차감 없음 |
+| `RecommendRun`, `RunSummary` | `attempt_limit` 삭제(#954). `attempt_no`는 유지 |
+| `POST /maps/{mapId}/courses` | 402, 403 `GUEST_NOT_ALLOWED` 추가. 429 `COURSE_LIMIT` 삭제(#954) |
 
 ### 에러 코드 (`docs/errors.md`)
 
@@ -229,7 +229,7 @@ FE는 자체 `places.id`를 모른다(`Pin` 응답에 없다). 그래서 핀으�
 | `CREDIT_INSUFFICIENT` | 402 | 신규. `detail { required, balance }` |
 | `GUEST_NOT_ALLOWED` | 403 | 범위 확대: 지도 만들기 + 추천·코스·잔액 조회(`detail { initial_credits }`) + 후기 쓰기·신고 |
 | `PLACE_NOT_SUPPORTED` | 422 | 범위 확대: live 핀의 후기 |
-| `COURSE_LIMIT`, `RETRY_LIMIT` | 429 | 폐지 예정(#954에서 삭제) |
+| `COURSE_LIMIT`, `RETRY_LIMIT` | 429 | 삭제(#954) |
 
 ## 8. 모듈과 연결점
 
@@ -290,8 +290,8 @@ def reassign_user(db, *, from_user_id: str, to_user_id: str) -> dict[str, int]: 
 | C | 공개 후기는 SNS가 아니다 | 같은 장소의 후기를 지도와 상관없이 보여 준다. 팔로우·댓글·프로필·피드 없음. 기획안 11절에 반영 |
 | D1 | 후기 엔드포인트를 핀 id로 연다 | `Pin` 응답에 `places.id`를 새로 노출하지 않는다 |
 | D2 | 새 모듈 `credits`, `reviews`와 import-linter 예외 | 위 8절 |
-| D3 | `COURSE_LIMIT`, `RETRY_LIMIT` 삭제 | 폐지 예정으로 표시한 뒤 #954에서 지운다 |
-| D4 | 응답의 `attempt_limit` 삭제 | 폐지 예정으로 표시한 뒤 #954에서 지운다. `attempt_no`는 유지 |
+| D3 | `COURSE_LIMIT`, `RETRY_LIMIT` 삭제 | 폐지 예정으로 표시한 뒤 구현(#949, #950)을 거쳐 #954에서 지웠다 |
+| D4 | 응답의 `attempt_limit` 삭제 | FE(#952)가 안 쓰게 된 뒤 #954에서 지웠다. `attempt_no`는 유지 |
 | D5 | 다시 찾기·근거 고치기는 상한 없이 무료 | 모델 비용은 ＋의 ②뿐이고 run당 글 10개로 묶인다 |
 | D6 | 추천 환불 경로 | 없다(3.3). v1 추천은 실패하면 롤백한다 |
 | D8 | 후기 숨김은 스크립트로만 | `reports.py`(신고 목록)와 `hide.py`. 자동 숨김 기준은 나중에 |

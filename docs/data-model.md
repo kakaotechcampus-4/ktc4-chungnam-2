@@ -522,7 +522,7 @@ agent_course_runs(
   created_at, finished_at null
 )
 index ix_agent_course_runs_map_user (map_id, requested_by, created_at)
-index ix_agent_course_runs_user_created (requested_by, created_at)       -- 하루 상한(5회, KST 자정) 집계
+index ix_agent_course_runs_user_created (requested_by, created_at)       -- 쓰는 곳 없음(하루 상한은 #950에서 없앴다). 다음 agent 마이그레이션 때 지운다(#954)
 unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queued','running')   -- 내 진행 중 run은 지도당 하나 → 409 COURSE_IN_PROGRESS
 ```
 
