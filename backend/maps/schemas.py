@@ -141,3 +141,6 @@ class Member(BaseModel):
     display_name: str | None = None
     # v1은 접속 상태를 추적하지 않아 늘 비운다(docs/events.md member.presence).
     online: bool | None = None
+    # 게스트(로그인 수단이 없는 임시 계정, #472) 여부(#955). 판정은 auth.api.guest_user_ids 한 곳이다.
+    # 화면이 「게스트」 표시와 방장 넘기기 후보에서 빼는 데 쓴다.
+    is_guest: bool

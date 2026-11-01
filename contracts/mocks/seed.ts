@@ -19,10 +19,10 @@ export function buildBaseState(): StoreState {
 
   const members: StoreState["members"] = {
     [mapId]: [
-      { user_id: ME_USER_ID, role: "owner", display_name: "황경", online: true },
-      { user_id: "u_2", role: "member", display_name: "박서영", online: true },
-      { user_id: "u_3", role: "member", display_name: "김도현", online: false },
-      { user_id: "u_4", role: "member", display_name: "이유빈", online: false },
+      { user_id: ME_USER_ID, role: "owner", display_name: "황경", online: true, is_guest: false },
+      { user_id: "u_2", role: "member", display_name: "박서영", online: true, is_guest: false },
+      { user_id: "u_3", role: "member", display_name: "김도현", online: false, is_guest: false },
+      { user_id: "u_4", role: "member", display_name: "이유빈", online: false, is_guest: true },
     ],
   };
 

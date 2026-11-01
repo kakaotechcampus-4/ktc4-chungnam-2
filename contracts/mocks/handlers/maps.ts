@@ -83,7 +83,7 @@ export const mapsHandlers = [
       confirmed_count: 0,
       created_by: ME_USER_ID,
     };
-    store.members[mapId] = [{ user_id: ME_USER_ID, role: "owner", display_name: store.users[ME_USER_ID]?.display_name ?? "나", online: true }];
+    store.members[mapId] = [{ user_id: ME_USER_ID, role: "owner", display_name: store.users[ME_USER_ID]?.display_name ?? "나", online: true, is_guest: false }];
     store.shortlist[mapId] = [];
     // architecture.md 3절: 지도 생성 시 프리시딩 잡을 큐잉한다 — 목 서버에서는 즉시 "완료된 것처럼" 취급.
     // 지역(#22)이 있으면 그걸로, 없으면 첫 핀 좌표로 확정한다는 트리거 자체는 목 서버가 흉내낼
@@ -258,7 +258,7 @@ export const mapsHandlers = [
     const members = store.members[invite.mapId] ?? (store.members[invite.mapId] = []);
     if (!members.some((m) => m.user_id === ME_USER_ID)) {
       if (myMapCount() >= MAP_LIMIT) return mapLimitError(); // 이미 구성원이면 새 참여가 아니라 막지 않는다
-      members.push({ user_id: ME_USER_ID, role: "member", display_name: store.users[ME_USER_ID]?.display_name ?? "나", online: true });
+      members.push({ user_id: ME_USER_ID, role: "member", display_name: store.users[ME_USER_ID]?.display_name ?? "나", online: true, is_guest: false });
       map.member_count = members.length;
       invite.used_count = (invite.used_count ?? 0) + 1;
     }

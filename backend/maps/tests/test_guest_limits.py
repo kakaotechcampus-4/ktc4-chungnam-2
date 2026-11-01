@@ -116,3 +116,61 @@ def test_withdrawing_owner_skips_guests_or_deletes_the_map(app_client, db_sessio
     assert _roles(db_session, shared) == {"user_1": "member", GUEST: "member", "user_2": "owner"}
     assert db_session.get(MapRow, only_guest).deleted_at is not None
     assert len(_events(db_session, only_guest, "map.deleted")) == 1
+
+
+# --- #955 구성원 목록의 게스트 여부 ---
+
+def _members(app_client, map_id, viewer="user_1"):
+    resp = app_client.get(f"/maps/{map_id}/members", cookies=_auth(viewer))
+    assert resp.status_code == 200, resp.text
+    return {m["user_id"]: m for m in resp.json()}
+
+
+def test_member_list_marks_guests_and_only_guests(app_client, db_session):
+    _make_guest(db_session)
+    map_id = _create_map(app_client)
+    _join(app_client, map_id, "user_2", GUEST)
+
+    members = _members(app_client, map_id)
+
+    assert {uid: m["is_guest"] for uid, m in members.items()} == {"user_1": False, "user_2": False, GUEST: True}
+
+
+def test_guest_sees_the_same_flags(app_client, db_session):
+    """보는 사람에 따라 달라지지 않는다 — 내 줄만 「게스트」로 보이던 문제(#955)."""
+    _make_guest(db_session)
+    map_id = _create_map(app_client)
+    _join(app_client, map_id, GUEST)
+    assert _members(app_client, map_id, GUEST) == _members(app_client, map_id, "user_1")
+
+
+def test_is_guest_matches_who_the_owner_transfer_rejects(app_client, db_session):
+    """화면이 is_guest로 후보에서 빼는 사람과 서버가 OWNER_TARGET_INVALID로 거르는 사람이 같다."""
+    _make_guest(db_session)
+    map_id = _create_map(app_client)
+    _join(app_client, map_id, "user_2", GUEST)
+    members = _members(app_client, map_id)
+
+    for user_id, member in members.items():
+        if user_id == "user_1":
+            continue
+        resp = _transfer(app_client, map_id, user_id)
+        rejected = resp.status_code == 422 and resp.json()["code"] == "OWNER_TARGET_INVALID"
+        assert rejected == member["is_guest"], (user_id, resp.text)
+        if resp.status_code == 200:
+            break   # user_2가 방장이 됐다 — 이후는 검사하지 않는다
+
+
+def test_member_joined_event_carries_is_guest(app_client, db_session):
+    _make_guest(db_session)
+    map_id = _create_map(app_client)
+    _join(app_client, map_id, "user_2", GUEST)
+    payloads = {e.payload["user_id"]: e.payload for e in _events(db_session, map_id, "member.joined")}
+    assert payloads["user_2"]["is_guest"] is False
+    assert payloads[GUEST]["is_guest"] is True
+
+
+def test_a_withdrawn_member_is_not_listed_so_no_flag_is_left_dangling(app_client, db_session):
+    map_id = _create_map(app_client)
+    _join(app_client, map_id, "user_2")
+    assert set(_members(app_client, map_id)) == {"user_1", "user_2"}
