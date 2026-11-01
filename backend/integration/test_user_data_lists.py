@@ -7,7 +7,7 @@
 계정으로 합칠 때는 여전히 이 목록을 탄다.
 
 이 테스트는 목록이 테이블을 따라가는지 본다. 테이블은 모델 메타데이터(Base.metadata)에서 읽는다.
-- 사용자 id를 담는 열(user_id, author_id, *_by)을 가진 테이블의 모듈은 MERGE_STEPS에 있다. 옮기지 않는 열은 NOT_MERGED에
+- 사용자 id를 담는 열(user_id, author_id, reporter_id, *_by)을 가진 테이블의 모듈은 MERGE_STEPS에 있다. 옮기지 않는 열은 NOT_MERGED에
   이유와 함께 적는다
 - 그 모듈은 WITHDRAW_STEPS에도 있다. 탈퇴 때 그 모듈 기록을 그대로 두면 KEPT_ON_WITHDRAW에 이유와 함께 적는다
 - WITHDRAW_STEPS의 모듈은 MERGE_STEPS에도 있다(auth/tests의 같은 검사를 여기서도 본다 — 목록 셋을 한 파일에서 읽게)
@@ -28,7 +28,7 @@ from pathlib import Path
 from common.database import Base
 
 BACKEND = Path(__file__).resolve().parents[1]
-USER_COLUMN = re.compile(r"^(user_id|author_id|recipient_user_id|[a-z_]+_by)$")
+USER_COLUMN = re.compile(r"^(user_id|author_id|recipient_user_id|reporter_id|[a-z_]+_by)$")
 
 # auth는 합치기를 하는 쪽이다(users, user_identities는 auth가 직접 다룬다).
 MERGER = "auth"

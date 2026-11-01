@@ -25,6 +25,7 @@ import maps.models  # noqa: F401
 import notifications.models  # noqa: F401
 import pins.models  # noqa: F401
 import recommend.models  # noqa: F401
+import reviews.models  # noqa: F401
 import shortlist.models  # noqa: F401
 
 import places.models  # noqa: F401
