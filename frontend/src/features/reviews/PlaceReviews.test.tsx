@@ -6,6 +6,7 @@ import type { ReactNode } from 'react'
 import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
+import { creditKeys } from '@/features/credits/queries'
 import type { Pin } from '@/features/map/model'
 import { PinDetailBody } from '@/features/map/PinDetail'
 import { useToastStore } from '@/features/shell/toast'
@@ -24,8 +25,9 @@ afterEach(() => {
 })
 afterAll(() => server.close())
 
-function renderWithClient(ui: ReactNode) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+const newClient = () => new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+function renderWithClient(ui: ReactNode, client = newClient()) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>{ui}</MemoryRouter>
@@ -61,15 +63,16 @@ describe('장소 후기(#953)', () => {
     expect(screen.queryByRole('button', { name: '더 보기' })).not.toBeInTheDocument()
   })
 
-  it('첫 저장은 크레딧을 받고(credited) 수정은 받지 않는다 — 내 후기는 「나」, 신고 대신 삭제', async () => {
+  it('작성 시트에만 보상 한 줄 — 토스트는 「후기를 저장했어요」, 고치기 시트엔 크레딧 문구 없음. 내 후기는 「나」, 신고 대신 삭제', async () => {
     const before = await get<{ balance: number; review_reward: number }>('/credits/me')
     const user = userEvent.setup()
     renderWithClient(<PlaceReviews pin={await pin1()} />)
 
     await user.click(await screen.findByRole('button', { name: '후기 쓰기' }))
-    expect(screen.getByText('후기를 쓰면 크레딧을 드려요. 별점과 상관없이 같아요.')).toBeInTheDocument()
+    expect(await within(await screen.findByRole('dialog')).findByText(`후기를 작성하면 ${before.review_reward} 크레딧이 충전돼요`)).toBeInTheDocument()
     await writeReview(user, '5점', '아침에 가기 좋아요')
-    await waitFor(() => expect(toast()).toBe(`${before.review_reward} 크레딧을 받았어요`))
+    await waitFor(() => expect(toast()).toBe('후기를 저장했어요'))
+    // 받는 양은 서버가 정한다 — 화면은 credited 를 보이지 않을 뿐 잔액은 늘었다.
     expect((await get<{ balance: number }>('/credits/me')).balance).toBe(before.balance + before.review_reward)
 
     const mine = (await screen.findByText('나')).closest('li')!
@@ -79,10 +82,29 @@ describe('장소 후기(#953)', () => {
 
     // 수정 — 내 후기 값으로 열린다
     await user.click(screen.getByRole('button', { name: '내 후기 고치기' }))
-    expect(within(await screen.findByRole('dialog')).getByRole('radio', { name: '5점' })).toHaveAttribute('aria-checked', 'true')
+    const editSheet = await screen.findByRole('dialog')
+    expect(within(editSheet).getByRole('radio', { name: '5점' })).toHaveAttribute('aria-checked', 'true')
+    expect(within(editSheet).queryByText(/크레딧/)).not.toBeInTheDocument()
     await writeReview(user, '3점', '줄이 길어졌어요')
     await waitFor(() => expect(toast()).toBe('후기를 저장했어요'))
     expect(await screen.findByText('줄이 길어졌어요')).toBeInTheDocument()
+  })
+
+  it('잔액이 가득 차면(credits-full) 보상 한 줄을 숨긴다 — 대신할 문구 없이, 토스트는 같다', async () => {
+    resetScenario('credits-full')
+    const credits = await get<{ balance: number; max_balance: number }>('/credits/me')
+    expect(credits.balance).toBeGreaterThanOrEqual(credits.max_balance)
+    const client = newClient()
+    const user = userEvent.setup()
+    renderWithClient(<PlaceReviews pin={await pin1()} />, client)
+
+    await user.click(await screen.findByRole('button', { name: '후기 쓰기' }))
+    const sheet = await screen.findByRole('dialog')
+    // 로딩 중에는 보이는 게 정상이라, 잔액 응답을 받은 뒤에 줄이 없는지 본다
+    await waitFor(() => expect(client.getQueryState(creditKeys.me)?.status).toBe('success'))
+    expect(within(sheet).queryByText(/크레딧/)).not.toBeInTheDocument()
+    await writeReview(user, '4점', '가득 찼어도 써요')
+    await waitFor(() => expect(toast()).toBe('후기를 저장했어요'))
   })
 
   it('글 상한은 응답의 limits.body_max — 별점과 글이 있어야 저장할 수 있다', async () => {
@@ -102,13 +124,15 @@ describe('장소 후기(#953)', () => {
     expect(save).toBeEnabled()
   })
 
-  it('내 후기 삭제는 한 번 묻고 지운다', async () => {
+  it('내 후기 삭제는 한 번 묻고 지운다 — 확인창에 크레딧 문구 없음', async () => {
     await fetch(`${BASE}/pins/pin_1/reviews/me`, { method: 'PUT', body: JSON.stringify({ rating: 4, body: '지울 후기' }) })
     const user = userEvent.setup()
     renderWithClient(<PlaceReviews pin={await pin1()} />)
 
     await user.click(within((await screen.findByText('지울 후기')).closest('li')!).getByRole('button', { name: '삭제' }))
-    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: '삭제' }))
+    const confirm = await screen.findByRole('alertdialog')
+    expect(within(confirm).queryByText(/크레딧/)).not.toBeInTheDocument()
+    await user.click(within(confirm).getByRole('button', { name: '삭제' }))
     await waitFor(() => expect(screen.queryByText('지울 후기')).not.toBeInTheDocument())
     expect(screen.getByRole('button', { name: '후기 쓰기' })).toBeInTheDocument()
   })

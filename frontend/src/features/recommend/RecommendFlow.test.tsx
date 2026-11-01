@@ -77,15 +77,15 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     expect(within(removed).getByRole('button', { name: '매운맛 전문 다시 넣기' })).toBeInTheDocument()
   })
 
-  it('버튼 아래에 가격과 남은 크레딧을 응답 값으로 보이고, 추천을 받으면 다시 받는다', async () => {
+  it('버튼 아래에 가격과 남은 크레딧 N/상한을 응답 값으로 보이고, 추천을 받으면 다시 받는다', async () => {
     const credits = () => fetch(`http://localhost/credits/me`).then((r) => r.json())
     const before = await credits()
     renderWithClient(<ReadinessBody mapId={MAP} />)
-    expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용 · 남은 크레딧 ${before.balance}`)).toBeInTheDocument()
+    expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용 · 남은 크레딧 ${before.balance}/${before.max_balance}`)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
     const left = before.balance - before.prices.recommend_run
-    expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용 · 남은 크레딧 ${left}`)).toBeInTheDocument()
+    expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용 · 남은 크레딧 ${left}/${before.max_balance}`)).toBeInTheDocument()
   })
 
   it('402 는 크레딧 부족 안내와 「후기 쓰러 가기」(확정 탭) — run 은 생기지 않는다', async () => {

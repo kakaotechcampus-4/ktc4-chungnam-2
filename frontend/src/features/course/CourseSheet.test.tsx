@@ -120,12 +120,12 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.queryByRole('button', { name: '다시 불러오기' })).not.toBeInTheDocument()
   })
 
-  it('버튼 아래에 가격과 남은 크레딧을 응답 값으로 보이고, 코스를 짜면 다시 받는다', async () => {
+  it('버튼 아래에 가격과 남은 크레딧 N/상한을 응답 값으로 보이고, 코스를 짜면 다시 받는다', async () => {
     const credits = () => fetch(`${BASE}/credits/me`).then((r) => r.json())
     const before = await credits()
     const user = userEvent.setup()
     renderSheet()
-    expect(await screen.findByText(`${before.prices.course} 크레딧 사용 · 남은 크레딧 ${before.balance}`)).toBeInTheDocument()
+    expect(await screen.findByText(`${before.prices.course} 크레딧 사용 · 남은 크레딧 ${before.balance}/${before.max_balance}`)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '코스 짜기' }))
     await screen.findByRole('list', { name: '작업 기록' })

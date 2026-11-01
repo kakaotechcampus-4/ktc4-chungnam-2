@@ -23,10 +23,6 @@ export const authorLabel = (item: Pick<ReviewItemDto, 'is_mine'>) => (item.is_mi
 export const summaryText = (summary: ReviewPageDto['summary']) =>
   summary.average_rating === null ? '아직 후기가 없어요' : `${summary.average_rating} · 후기 ${summary.count}개`
 
-/** 저장 뒤 토스트. 처음 쓴 저장이면 받은 크레딧을 알린다(숫자는 응답의 credited). */
-export const savedText = (saved: Pick<ReviewSavedDto, 'credited'>) =>
-  saved.credited > 0 ? `${saved.credited} 크레딧을 받았어요` : '후기를 저장했어요'
-
 /** 글은 앞뒤 공백을 걷은 뒤 1자 이상. 상한은 입력칸이 limits.body_max로 막는다. */
 export const canSave = (rating: number | null, body: string) => rating !== null && body.trim() !== ''
 
