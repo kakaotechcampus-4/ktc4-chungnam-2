@@ -369,6 +369,7 @@ def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
         )
     else:
         found = []
+        address_candidates = None
         split = matching.split_address_and_name(parsed.name_hint or "")
         if split is not None:   # 구글 이름이 「주소 + 상호」면 힌트 경로로(#1047) — 좌표 없이 상호명·주소로 짝을 찾는다
             hinted = match_by_name_address(split[1], split[0], db=db)
@@ -376,12 +377,14 @@ def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
                 result = LinkParseResult(provider="google", name_hint=parsed.name_hint, matches=hinted, matched_by="hint", needs_search_query=False)
                 log.info("places.link provider=google matches=%d", len(hinted))
                 return result
+            address_candidates = match_address_candidates(split[0], db=db) or None   # 이름은 안 맞아도 같은 주소의 한 곳 — 사람이 확인할 후보
         if parsed.lat is not None and parsed.lng is not None:
             near = own_places_near(parsed.lat, parsed.lng, matching.LINK_MATCH_RADIUS_M, matching.MAX_CANDIDATES, db=db)
             found = matching.pick_link_matches(parsed.name_hint, near)
         result = LinkParseResult(
             provider="google", name_hint=parsed.name_hint,
             matches=[_to_link_match(c) for c in found], needs_search_query=False,
+            address_candidates=None if found else address_candidates,
         )
     log.info("places.link provider=%s matches=%d", result.provider, len(result.matches))
     return result
