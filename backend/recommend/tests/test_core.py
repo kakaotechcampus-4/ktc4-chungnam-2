@@ -181,11 +181,11 @@ def test_next_default_radius_walk_min_at_limit_raises_widen_limit():
 
 
 def test_radius_walk_mins_tourist_spot_starts_wider_and_widens_further():
-    # #1055 — 관광지만 기본 30분·상한 45분, 음식점·카페는 15/30 그대로.
+    # #1055 — 관광지만 기본 25분·상한 45분, 음식점·카페는 15/30 그대로.
     assert core.radius_walk_mins("음식점") == core.radius_walk_mins("카페") == (15, 30)
-    assert core.radius_walk_mins("관광지") == (30, 45)
-    assert core.next_default_radius_walk_min(30, "관광지") == 35
-    assert core.pool_radius_factor(30, "관광지") == 1.5
+    assert core.radius_walk_mins("관광지") == (25, 45)
+    assert core.next_default_radius_walk_min(25, "관광지") == 30
+    assert core.pool_radius_factor(25, "관광지") == 1.8
     with pytest.raises(AppError):
         core.next_default_radius_walk_min(45, "관광지")
 

@@ -35,7 +35,7 @@ WIDEN_STEP_MIN = 5
 WIDEN_LIMIT_MIN = 30
 # 카테고리별 (기본, 상한) 도보 분 — 여기 없는 카테고리는 위 값이다. 관광지는 반경 안 후보가 적어 넓게 시작한다(#1055).
 # 쓰는 곳은 radius_walk_mins(category)로 받는다.
-_RADIUS_WALK_MIN_BY_CATEGORY: dict[str, tuple[int, int]] = {"관광지": (30, 45)}
+_RADIUS_WALK_MIN_BY_CATEGORY: dict[str, tuple[int, int]] = {"관광지": (25, 45)}
 
 
 def radius_walk_mins(category: str) -> tuple[int, int]:
