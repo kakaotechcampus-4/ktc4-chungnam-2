@@ -110,6 +110,7 @@ export interface StoreState {
   appliedEvidence: Record<string, unknown[]>; // runId -> 마지막 실행이 실제로 쓴 근거 줄(#845 스냅샷)
   idempotencyKeys: Record<string, { runId: string; mapId: string; category: string; execute: boolean }>; // 요청자:키 -> 첫 요청(#811 Idempotency-Key)
   pendingLogin: { display_name: string; withdrawn_at: string } | null; // #855 선택 대기 중인 탈퇴 계정(카카오 콜백이 ?login_pending=withdrawn_account로 돌려보낸 상태)
+  forceNoResults: boolean; // #1015 시나리오 no-results: 새 run의 첫 실행이 후보 0곳이다(그러면 크레딧을 돌려준다)
   trashedMaps: Record<string, { map: StoreState["maps"][string]; members: StoreState["members"][string]; deleted_at: string }>; // #464 삭제한 지도(30일 안 복구)
   pinTrash: Record<string, { pin: Pin; reactions: Reaction[]; deleted_at: string; deleted_by: string; was_confirmed: boolean }>; // #864 지운 핀(30일 안 복구), pinId ->
   lastNewCount: Record<string, number>; // runId -> 마지막 실행이 새로 찾은 후보 수(#845, 그 뒤 게시해도 안 바뀐다)
@@ -130,6 +131,8 @@ export interface StoreState {
   feedback: { id: string; user_id: string; message: string; category: string; map_id?: string; created_at: string }[]; // #10
   credits: Record<string, number>; // user_id -> 잔액(#432). 없으면 처음 지급량(handlers/credits.ts INITIAL_CREDITS)
   creditRefs: string[]; // 원장 ref_id — 같은 실행·같은 장소 후기 보상을 두 번 하지 않는다
+  adProvider: "fake" | "adsense" | "gpt" | null; // 광고 보고 충전(#1037) 제공자. null이면 꺼짐
+  adSessions: Record<string, { id: string; user_id: string; issued_at: number; claimed_at?: number; credited?: number }>; // id -> 광고 세션(issued_at은 ms)
   reviews: Record<string, ReviewEntity>; // reviewId -> 후기
   reviewReports: Record<string, string[]>; // reviewId -> 신고한 user_id
 }
@@ -149,6 +152,7 @@ function emptyState(): StoreState {
     runRequestedBy: {},
     appliedEvidence: {},
     lastNewCount: {},
+    forceNoResults: false,
     trashedMaps: {},
     pinTrash: {},
     idempotencyKeys: {},
@@ -170,6 +174,8 @@ function emptyState(): StoreState {
     feedback: [],
     credits: {},
     creditRefs: [],
+    adProvider: null,
+    adSessions: {},
     reviews: {},
     reviewReports: {},
   };

@@ -3,7 +3,7 @@ import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError } from "../util";
 import { buildCandidates, buildEvidenceLines, buildRegions } from "../seed";
 import { RECOMMEND_CATEGORIES } from "../categories";
-import { chargeCredit, creditGate } from "./credits";
+import { chargeCredit, creditGate, refundCredit } from "./credits";
 
 /** run을 만든 시각 — 지난 추천 기록(#469)의 created_at. 목 서버 메모리에만 있다. */
 const runCreatedAt: Record<string, string> = {};
@@ -49,7 +49,7 @@ function findCandidateRun(candidateId: string) {
 function ensureCandidates(runId: string) {
   if (!(runId in store.candidates)) {
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
-    store.candidates[runId] = buildCandidates(regionLabel);
+    store.candidates[runId] = store.forceNoResults ? [] : buildCandidates(regionLabel);
   }
   return store.candidates[runId];
 }
@@ -140,8 +140,10 @@ export const recommendHandlers = [
     if (body.execute) {
       // #845 — 근거 확인 없이 곧바로 첫 검색까지: 근거를 모은 뒤 실행해 done run을 돌려준다
       store.regions[runId].forEach((r) => (r.confirmed = true));
-      snapshotRun(runId, ensureCandidates(runId).length);
+      const found = ensureCandidates(runId).length;
+      snapshotRun(runId, found);
       store.runs[runId].status = "done";
+      if (found === 0) refundCredit("recommend_run", runId); // #1015 첫 실행이 0곳이면 같은 트랜잭션에서 돌려준다
     }
     return HttpResponse.json({ ...store.runs[runId] }, { status: 202 });
   }),
@@ -224,8 +226,11 @@ export const recommendHandlers = [
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
-    snapshotRun(runId, ensureCandidates(runId).length);
+    const firstExecution = !(runId in store.lastNewCount);
+    const found = ensureCandidates(runId).length;
+    snapshotRun(runId, found);
     run.status = "done";
+    if (firstExecution && found === 0) refundCredit("recommend_run", runId); // #1015 첫 실행만(재추천·반경 넓히기는 차감이 없다)
     return HttpResponse.json({ ...run }, { status: 202 });
   }),
 

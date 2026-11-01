@@ -207,6 +207,28 @@ places(
 )
   unique(source, source_id)
 
+place_external_ids(                     -- #1048 카카오·네이버 장소 번호 → 자체 DB 장소. 카톡 링크가 번호뿐이라 한 번 이어진 짝을 다음 사람부터 한 번에 찍는다
+  id pk,
+  provider,                             -- 'kakao' | 'naver'
+  external_id,                          -- 번호만(예 'naver:1412566798'). 카카오 응답의 이름·좌표·주소는 저장하지 않는다(#53)
+  place_id references places(id),
+  source,                               -- 'hint' = 서버가 상호명+주소로 스스로 확정(즉시 신뢰) | 'user' = 사람이 고른 짝(아래 votes 2명 이상이어야 신뢰)
+  created_at
+)
+  unique(provider, external_id, place_id)
+  index(provider, external_id)
+  -- 같은 번호가 서로 다른 place_id에 이어진 행이 둘 이상이면 충돌이다 — 자동 매칭에서 뺀다(둘 다 후보로만).
+  -- 조회(places.api.parse_link): 신뢰된 단일 행이고 그 장소가 영업 중(status='open')일 때만 matches(matched_by='external_id').
+
+place_external_id_votes(                -- #1048 'user' 짝의 확인 횟수. 서로 다른 사용자 2명이 같은 짝을 확인해야 신뢰한다
+  external_id_row references place_external_ids(id),
+  voter_hash,                           -- HMAC(user_id) 단방향. 사용자 id를 그대로 두지 않는다. 계정당 한 표
+  created_at
+)
+  unique(external_id_row, voter_hash)
+  -- 탈퇴 7일 뒤 정리에서 voter_hash = HMAC(탈퇴 사용자 id)인 행을 지운다(auth 정리가 places.api.purge_external_id_votes를 부른다).
+  -- 번호표 자체는 지도·사용자와 무관한 공용 데이터라 지우지 않는다.
+
 place_facts(
   place_id references places(id),
   fact_key,                             -- 'spicy_focused' | 'cuisine_korean' | 'parking_available' | ... (price_bucket은 #423, contains_shellfish는 #425에서 뺐다)
@@ -587,11 +609,19 @@ credit_ledger(
   id uuid PK,
   user_id varchar NOT NULL,
   delta integer NOT NULL,
-  reason('initial'|'spend'|'refund'|'review') NOT NULL,   -- 페이즈 2 구매는 'purchase', 광고 충전은 'ad'로 같은 표에 더한다
+  reason('initial'|'spend'|'refund'|'review'|'ad') NOT NULL,   -- ad = 광고 보고 충전(#1037). 페이즈 2 구매는 'purchase'로 같은 표에 더한다
   ref_id varchar NOT NULL UNIQUE,     -- initial:<user> · <feature>:<run_id> · refund:<차감 ref_id> · review:<user>:<place_id>
   created_at timestamptz NOT NULL default now()
 )
 index ix_credit_ledger_user_reason_created (user_id, reason, created_at)
+credit_ad_sessions(                 -- 광고 보고 충전(docs/credits-reviews.md 3.7, #1038)
+  id uuid PK,
+  user_id varchar NOT NULL,          -- FK 없음(#760)
+  issued_at timestamptz NOT NULL default now(),   -- 하루 횟수(KST)는 이것으로 센다
+  claimed_at timestamptz NULL,
+  credited integer NULL             -- 받을 때 들어간 양(0~AD_REWARD). 멱등 응답에 쓴다
+)
+index ix_credit_ad_sessions_user_issued (user_id, issued_at)
 ```
 
 - `ref_id` UNIQUE가 멱등을 맡는다 — 같은 실행 이중 차감, 이중 환불, 같은 장소 후기 보상 두 번이 구조적으로 막힌다.
@@ -705,7 +735,9 @@ event_log(
   type, payload jsonb, created_at timestamptz default now()
 )
   index(map_id, seq)                    -- 채널별 재전송 조회
-  index(created_at)                     -- 보존기간 삭제용
+  index(created_at)                     -- 보존기간 삭제용. **#1016(2026-11-01)**: 문서의 24시간은 재전송 읽기 창일 뿐 행을 지우는 코드가 없었다(지도 정리 때만 지워짐).
+                                        --   25시간(재전송 창 24시간 + 여유)이 지난 행을 maintenance가 지운다(realtime.api.purge_old_events). payload에 복사된 표시 이름(member.joined, reaction.changed)이
+                                        --   탈퇴 정리 뒤에도 남지 않게 하는 방법이다. user_id는 users 행(개인정보 없는 껍데기)이 남는 한 가명 식별자라 지우지 않는다.
   check ((channel='private') = (recipient_user_id is not null))
 ```
 

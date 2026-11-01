@@ -96,7 +96,7 @@ def post_link_preview(
 ):
     """422 → 404(비구성원) → 429 → 해석. 쓰기 없음."""
     link_import.check_link_preview_rate(principal.user_id, len(body.urls))
-    return link_import.preview_links(db, mapId, body.urls)
+    return link_import.preview_links(db, mapId, body.urls, body.hints)
 
 
 @router.post("/maps/{mapId}/pins/bulk", response_model=BulkPinResult, response_model_exclude_none=True)

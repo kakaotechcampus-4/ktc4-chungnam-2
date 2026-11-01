@@ -22,3 +22,9 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(maps.purge, #431)가 부른다 — 이 지도들의 event_log만 지우고 테이블 이름 → 지운 행 수를
     돌려준다. 커밋하지 않는다."""
     return service.purge_map_data(db, map_ids=map_ids)
+
+
+def purge_old_events(db: Session, *, now: datetime, older_than_hours: int = 25) -> int:
+    """maintenance가 부른다(#1016) — 재전송 창(24시간)을 지난 event_log 행을 지운다(기본 25시간 전까지).
+    한 번에 1만 행까지만 지우니 남았으면 다음 실행이 이어서 지운다. 지울 게 없으면 0. 커밋하지 않는다."""
+    return service.purge_old_events(db, now=now, older_than_hours=older_than_hours)

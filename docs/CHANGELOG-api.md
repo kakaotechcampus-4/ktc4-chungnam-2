@@ -2,6 +2,27 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-02 (카톡 가져오기), 번호→장소 번호표·같은 주소 후보·네이버 링크 (#1047·#1048)
+
+사용자 결정(2026-11-02): 「카톡으로 핀 깔기」는 복잡도를 감수하고 사용자 편의를 우선한다. 실제 카톡 공유 글로 시험한 결과를 반영한다(#1019).
+
+- **`LinkParseResult`**: `matched_by`에 `external_id`(번호표로 찾음) 추가, 선택 필드 `external_id`(링크에서 읽은 카카오·네이버 번호), 선택 필드 `address_candidates`(같은 주소의 단일 점포, 사람이 확인하는 후보 — 자동 확정 아님). `provider: naver`의 뜻이 바뀐다: 이제 서버가 `naver.me` 단축 링크를 한 번 따라가 번호를 읽는다(페이지 본문은 열지 않는다).
+- **`PinCreateSearch.link_ref`**(선택, `{provider: kakao|naver, external_id}`): link-preview 응답의 값을 핀 생성에 그대로 돌려 보낸다. 핀에 저장되지 않고 서버의 번호표 학습에만 쓰인다(서로 다른 사용자 2명이 같은 짝을 확인하면 자동 매칭).
+- **`POST /maps/{mapId}/pins/link-preview` 설명**: 실제 공유 글 모양(네이버·카카오·구글)과 4단 해결 순서를 적었다. 서버가 힌트로 스스로 확정한 짝은 번호표에 캐시한다.
+- 하위호환: 새 응답 필드는 모두 선택이라 기존 FE는 무시해도 된다. `link_ref`는 선택 요청 필드.
+- 서버: places(#1047 주소 후보·지점 접미사·구글 이름 속 주소 분리, #1048 번호표·`naver.me`), pins(`link_ref` 기록 호출). 그 전까지 실서버는 새 필드를 보내지 않고 `link_ref`는 무시한다. 목 서버는 새 시나리오를 낸다.
+- FE: #1046(공유 글 읽기·4단 해결·네이버 링크). 새 필드 없이도 구현 가능하다.
+
+## 2026-11-02, 광고 보고 크레딧 충전 — `CreditBalance.ad`, 광고 세션 열기·받기 (#1037)
+
+명세 `docs/credits-reviews.md` 3.7절, 결정 #432(2026-11-02 코멘트). 크레딧이 바닥나면 보상형 광고를 끝까지 보고 10을 받는다(상한 30까지, 사람당 KST 하루 3번, 연 뒤 7초).
+
+- `CreditBalance.ad`(필수, `CreditAd { available, reward, used_today, daily_max, provider, unit_id }`). 화면은 `available`만 본다.
+- `POST /credits/ad-sessions`(201 `AdSession { ad_session_id, claim_after_s }`, 받지 않은 세션은 이어 받는다), `POST /credits/ad-sessions/{adSessionId}/claim`(200 `AdClaim { credited, balance }`, 멱등).
+- 오류 `AD_REWARD_UNAVAILABLE`(409, `reason`), `AD_REWARD_LIMIT`(429, `limit`), `AD_REWARD_INVALID`(409, `reason`, `retry_after_s`).
+- 목 서버: `ad` 블록(기본 `provider: "fake"`), 두 경로. 광고가 열리는 모습은 시나리오 `credits-empty`(잔액 0). 받기 전 7초를 지킨다.
+- 서버 구현 전까지 두 경로와 세 오류 코드, `/credits/me`의 `ad`는 알려진 목록에 #1038로 있다. 화면은 #1039.
+
 ## 2026-11-01 (다섯 번째), 후기 화면의 크레딧 문구를 한 줄로 (#982)
 
 계약은 그대로다. 화면 문구만 정한다(`docs/credits-reviews.md` 5절 「화면 문구」): 새 후기 작성 시트에 「후기를 작성하면 {review_reward} 크레딧이 충전돼요」 한 줄만 두고(잔액이 `max_balance` 이상이면 숨긴다 — #985 검수), 고치기·삭제·저장 토스트에는 크레딧 얘기를 넣지 않는다. 받은 양을 보여 주려고 `ReviewSaved.credited`를 화면에 쓰지 않아도 된다(필드는 그대로 내린다).
@@ -72,6 +93,15 @@
 - 밖으로 보내는 곳은 지금은 카카오맵 하나다. 다른 서비스를 붙일 때는 `ExternalSearch`에 링크 목록 필드를 더하는 확장으로 한다(`url` 유지).
 - 서버: places(#903), recommend(#904). 그 전까지 실서버에는 새 경로가 없다. 목 서버는 새 경로를 내려 준다.
 - FE(#905): 장소 검색이 빈 배열일 때 `GET /places/external-search`를 불러 이미 있는 `ExternalSearchLink`로 「카카오맵에서 찾아보기」를 그린다. 링크를 화면에서 만들지 않는다. 요청이 실패하면 링크만 숨긴다.
+
+## 2026-11-01 (여섯 번째), 추천 결과가 0곳이면 크레딧을 쓰지 않는다 (#1015)
+
+사용자 결정(2026-11-01): 「추천 받기」의 첫 실행이 후보를 하나도 못 찾으면(결과 0곳, `NO_RESULTS`) 차감한 크레딧을 돌려준다. 이전에는 0곳도 결과로 보고 환불하지 않았다(`docs/credits-reviews.md` 3.3).
+
+- `POST /maps/{mapId}/runs`(`execute: true`)와 `POST /runs/{runId}/execute`: 첫 실행이 후보 0곳이면 같은 트랜잭션에서 그 run의 차감이 환불된다. 응답 모양·상태 코드는 그대로(결과 조회의 404 `NO_RESULTS`도 그대로). 잔액(`GET /credits/me`)은 환불 때문에 원래 값으로 돌아온다.
+- 재추천(`retry`)·반경 넓히기(`widen`)는 처음부터 차감이 없어서 환불도 없다. 첫 실행이 결과를 냈다면 그 뒤 재추천이 0건이어도 첫 실행의 차감은 그대로다.
+- 서버: recommend(#1015, `credits.api.refund(feature="recommend_run")`를 첫 실행 0곳일 때 부름). 그 전까지 실서버는 0곳에도 차감한다. 목 서버는 0곳 시나리오(`no-results`)에서 차감하지 않는다.
+- FE: 0곳 결과 화면에 「크레딧은 쓰이지 않았어요」를 붙여도 좋다(선택). 잔액은 `GET /credits/me`를 다시 받으면 된다.
 
 ## 2026-11-01 (다섯 번째), 핀 휴지통: 지운 핀을 30일 동안 되살릴 수 있다 (#864)
 
