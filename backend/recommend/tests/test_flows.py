@@ -4,6 +4,7 @@
 
 import threading
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -167,6 +168,59 @@ def test_is_open_removes_only_places_closed_every_trip_day_and_counts_them_in_th
     assert open_check("closed_one")["confidence"] == "known" and open_check("closed_one")["needs_check"] is False
     assert open_check("no_row")["needs_check"] is True      # 행이 없으면 통과 + 「영업 여부 확인 필요」
     assert open_check("no_info")["needs_check"] is False    # closed_days에 없는 요일은 영업한다(places 규칙)
+
+
+class _FakePlaceSearchWithAddress(_FakePlaceSearch):
+    """get_places가 주소를 싣는 가짜 — 시·도 제한(#1055)은 이 주소를 places.api.sido로 판정한다."""
+
+    def __init__(self, places, addresses):
+        super().__init__(places)
+        self._addresses = addresses
+
+    def get_places(self, place_ids):
+        return {pid: replace(info, address=self._addresses.get(pid)) for pid, info in super().get_places(place_ids).items()}
+
+
+def _run_with_sido(db_session, monkeypatch, *, place_rows, map_region_center=None):
+    """기본 지역 중심은 (35.0, 129.0). 반경 안 후보 3곳: busan(부산 주소)·gimhae(경남 주소)·no_addr(주소 없음).
+    여행 지역의 시·도는 FakePlaces.sido_at이 place_rows 주소로 정한다."""
+    from places.testing import FakePlaces
+
+    FakePlaces(rows=place_rows).install(monkeypatch)
+    monkeypatch.setattr(flows.maps_api, "get_map_region_center", lambda db, map_id: map_region_center)
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    places = [PlaceStub(place_id=pid, lat=35.0005, lng=129.0005) for pid in ("busan", "gimhae", "no_addr")]
+    search = _FakePlaceSearchWithAddress(places, {"busan": "부산광역시 강서구 대저동 1", "gimhae": "경상남도 김해시 대동면 1"})
+    flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=_FakePlaceFacts())
+    db_session.refresh(run)
+    removed = {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"]
+    return {c.place_id for c in service.list_candidates(db_session, str(run.id))}, removed
+
+
+def _sido_row(key, lat, lng, address):
+    from places.testing import _Row
+
+    return _Row(key, key, lat, lng, "음식점", address=address)
+
+
+def test_sido_filter_uses_pin_center_without_map_region_and_counts_other_sido_as_out_of_radius(db_session, monkeypatch):
+    kept, removed = _run_with_sido(db_session, monkeypatch, place_rows=[_sido_row("hub", 35.0, 129.0, "부산 강서구 대저동")])
+    assert kept == {"busan", "no_addr"}   # 다른 시·도(경남)는 빠지고, 주소가 없으면 거르지 않는다
+    assert removed == 1
+
+
+def test_sido_filter_prefers_map_region_center(db_session, monkeypatch):
+    rows = [_sido_row("hub", 35.0, 129.0, "부산 강서구 대저동"), _sido_row("far", 35.5, 128.5, "경상남도 밀양시 내일동")]
+    kept, removed = _run_with_sido(db_session, monkeypatch, place_rows=rows, map_region_center=(35.5, 128.5))
+    assert kept == {"gimhae", "no_addr"}
+    assert removed == 1
+
+
+def test_sido_filter_removes_nobody_when_trip_sido_unknown(db_session, monkeypatch):
+    kept, removed = _run_with_sido(db_session, monkeypatch, place_rows=[])   # 근처에 주소 있는 장소가 없어 sido_at이 None
+    assert kept == {"busan", "gimhae", "no_addr"}
+    assert removed == 0
 
 
 def test_is_open_without_hours_lookup_removes_nobody(db_session):
