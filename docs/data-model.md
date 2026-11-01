@@ -347,7 +347,7 @@ recommend_runs(
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
                                          -- 않도록 마지막 execute/widen/retry의 깔때기 표를
                                          -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.
-  default_radius_walk_min int default 15,  -- #158: 기본값 원의 지금 도보 분. regions.radius_m은 여기서 파생(분×80m).
+  default_radius_walk_min int default 15,  -- #158: 기본값 원의 지금 도보 분. run을 만들 때 카테고리 기본값을 넣는다(관광지 25, 그 밖 15 — #1055, recommend.core.radius_walk_mins). regions.radius_m은 여기서 파생(분×80m).
                                          -- docs/constraints.md "반경 넓히기 상수"
   created_at
 )
