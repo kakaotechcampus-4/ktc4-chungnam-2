@@ -291,11 +291,29 @@ def find_by_name_hint(db: Session, name: str) -> list[Candidate]:
     rows = db.execute(
         select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
         .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES),
-               or_(Place.name_norm.like(f"{nq}%"), Place.name_norm.in_(prefixes)))
+               or_(*(Place.name_norm.like(f"{t}%") for t in matching.hint_like_prefixes(name)), Place.name_norm.in_(prefixes)))
         .order_by(Place.id)
         .limit(matching.HINT_MAX_CANDIDATES + 1)
     ).all()
     if len(rows) > matching.HINT_MAX_CANDIDATES:
+        return []
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+
+
+def find_by_address_term(db: Session, term: str) -> list[Candidate]:
+    """주소 후보 조회(#1047): 영업 중 자체 DB 장소 중 주소에 도로명 앞부분(term)이 든 곳. idx_places_address_trgm(GIN)을 탄다 — 3자 이상이면
+    인덱스, 두 글자 도로명은 붙여 쓴 도로명 전체(`명동8가길`)로 받는다. 같은 도로명이 ADDRESS_CANDIDATE_MAX_ROWS를 넘으면 유일성을 말할 수
+    없어 빈 목록. 건물번호까지 같은지는 호출 쪽이 address_agreement로 거른다. 분류는 음식점·카페·관광지."""
+    escaped = term.replace("\\", "\\\\").replace("%", "\%").replace("_", "\_")
+    lat, lng = _lat_lng()
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES),
+               Place.address.ilike(f"%{escaped}%", escape="\\"))
+        .order_by(Place.id)
+        .limit(matching.ADDRESS_CANDIDATE_MAX_ROWS + 1)
+    ).all()
+    if len(rows) > matching.ADDRESS_CANDIDATE_MAX_ROWS:
         return []
     return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
 

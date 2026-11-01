@@ -334,6 +334,18 @@ def match_by_name_address(name: str, address: str | None, *, db: Session | None 
     return [_to_link_match(c) for c in matching.pick_hint_match(name, address, candidates)]
 
 
+def match_address_candidates(address: str, *, db: Session | None = None) -> list[PlaceSearchResult]:
+    """이름이 안 맞아도 같은 도로명주소(건물번호까지)에 영업 중인 음식점·카페·관광지가 **정확히 한 곳**이면 그 하나(#1047).
+    자동 확정이 아니라 사람이 「이 장소가 맞나요?」로 확인할 후보다(가드레일 2·4). 같은 주소에 둘 이상(다중 입점 건물)이거나 주소를 비교할 수
+    없으면(도로명주소가 아님·건물번호 없음) 빈 목록. 주소는 짝 찾기에만 쓰고 저장·로그하지 않는다. 읽기 전용. 응답 모양은 matches와 같다."""
+    term = matching.address_search_term(address or "")
+    if term is None:
+        return []
+    with _session(db) as s:
+        candidates = repository.find_by_address_term(s, term)
+    return [_to_link_match(c) for c in matching.pick_address_candidate(address, candidates)]
+
+
 def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
     """구글맵·카카오맵 링크 → 단서. 허용 호스트가 아니면 LINK_NOT_SUPPORTED, 단축 링크를 못 열었거나 장소를 못 찾으면 LINK_UNRESOLVED."""
     parts = linkparse.split_url(url)
@@ -357,6 +369,13 @@ def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
         )
     else:
         found = []
+        split = matching.split_address_and_name(parsed.name_hint or "")
+        if split is not None:   # 구글 이름이 「주소 + 상호」면 힌트 경로로(#1047) — 좌표 없이 상호명·주소로 짝을 찾는다
+            hinted = match_by_name_address(split[1], split[0], db=db)
+            if hinted:
+                result = LinkParseResult(provider="google", name_hint=parsed.name_hint, matches=hinted, matched_by="hint", needs_search_query=False)
+                log.info("places.link provider=google matches=%d", len(hinted))
+                return result
         if parsed.lat is not None and parsed.lng is not None:
             near = own_places_near(parsed.lat, parsed.lng, matching.LINK_MATCH_RADIUS_M, matching.MAX_CANDIDATES, db=db)
             found = matching.pick_link_matches(parsed.name_hint, near)
