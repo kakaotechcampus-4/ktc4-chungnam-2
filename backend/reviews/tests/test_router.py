@@ -195,6 +195,23 @@ def test_editing_a_hidden_review_keeps_it_hidden(world, trip):
     assert a.get(f"/pins/{trip['pin_id']}/reviews").json()["summary"]["count"] == 0
 
 
+def test_hidden_review_cannot_be_deleted_so_rewriting_keeps_it_hidden(world, trip):
+    """지우고 다시 써서 관리자가 숨긴 글을 되살리지 못한다(#972 검수)."""
+    mine = world.review(trip["place_id"], trip["a"], body="숨길 글")
+    set_hidden(world.db, mine, hidden=True)
+    a = world.client(trip["a"])
+
+    deleted = a.delete(f"/pins/{trip['pin_id']}/reviews/me")
+    rewritten = _put(a, trip["pin_id"], body="다시 쓴 글")
+    page = a.get(f"/pins/{trip['pin_id']}/reviews").json()
+
+    assert deleted.status_code == 404 and deleted.json()["code"] == "NOT_FOUND"
+    assert rewritten.status_code == 200 and rewritten.json()["review"]["id"] == mine
+    assert rewritten.json()["credited"] == 0
+    assert page["summary"]["count"] == 0 and page["items"] == [] and "mine" not in page
+    assert world.db.get(Review, uuid.UUID(mine)).hidden_at is not None
+
+
 # 22 ---------------------------------------------------------------------------------------------------------------
 
 def test_same_place_on_another_map_shows_the_same_reviews(world, trip):

@@ -85,8 +85,12 @@ def save_mine(db: Session, *, place_id: str, user_id: str, rating: int, body: st
 
 
 def delete_mine(db: Session, *, place_id: str, user_id: str) -> None:
-    """DELETE /pins/{pinId}/reviews/me — 내 후기가 없으면 404. 받은 크레딧은 그대로다. 신고 행은 FK CASCADE로 같이 지워진다."""
-    deleted = db.execute(delete(Review).where(Review.place_id == place_id, Review.user_id == user_id)).rowcount
+    """DELETE /pins/{pinId}/reviews/me — 내 후기가 없으면 404. 받은 크레딧은 그대로다. 신고 행은 FK CASCADE로 같이 지워진다.
+    숨긴 후기는 작성자도 지울 수 없다(내 후기가 없는 것과 같은 404) — 지우고 다시 쓰면 숨김 없는 새 후기가 되어 관리자가 숨긴 글이
+    되살아나기 때문이다(#972 검수). 다시 쓰면 save_mine이 숨긴 행을 고치므로 숨김이 유지된다."""
+    deleted = db.execute(
+        delete(Review).where(Review.place_id == place_id, Review.user_id == user_id, _VISIBLE)
+    ).rowcount
     if deleted == 0:
         raise AppError("NOT_FOUND")
 
