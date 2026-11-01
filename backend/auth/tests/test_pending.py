@@ -13,6 +13,8 @@ from sqlalchemy import select
 from auth import core, service
 from auth.models import User, UserIdentity
 from auth.testing import create_guest, create_kakao_user, session_cookie
+from notifications import api as notifications_api
+from notifications.models import Notification
 from auth.tests.test_router import (  # noqa: F401 — kakao_configured는 픽스처
     _callback, _has_session_cookie, _mock_kakao_login, _start_login, kakao_configured,
 )
@@ -355,6 +357,25 @@ def test_purge_clears_the_guest_invite_token_too(db_session):
 
     row = db_session.get(User, "g1")
     assert row.guest_invite_token is None and row.last_seen_at is None
+
+
+def test_purge_anonymizes_the_actor_name_in_other_peoples_notifications(db_session):
+    """탈퇴 정리는 남의 알림에 복사된 이 사람의 이름도 다시 만든다(#857). 살아 있는 계정의 행위자 알림은 그대로."""
+    create_kakao_user(db_session, "gone", provider_user_id="pg", display_name="영희", last_seen_at=NOW, deleted_at=NOW)
+    create_kakao_user(db_session, "live", provider_user_id="pl", display_name="철수")
+    msg = notifications_api.compose_message("member_joined", actor_name="영희")
+    gone = notifications_api.notify(db_session, user_id="other", type="member_joined", map_id="m1", map_title="부산",
+                                    message=msg, actor_id="gone")
+    kept = notifications_api.notify(db_session, user_id="other", type="member_joined", map_id="m1", map_title="부산",
+                                    message=notifications_api.compose_message("member_joined", actor_name="철수"),
+                                    actor_id="live")
+
+    service.purge_withdrawn_user(db_session, user_id="gone")
+    service.purge_withdrawn_user(db_session, user_id="live")   # 살아 있는 계정은 건드리지 않는다
+
+    db_session.expire_all()
+    assert db_session.get(Notification, gone).message == "탈퇴한 구성원님이 지도에 들어왔어요"
+    assert db_session.get(Notification, kept).message == "철수님이 지도에 들어왔어요"
 
 
 def test_purge_leaves_a_living_account_alone(db_session):

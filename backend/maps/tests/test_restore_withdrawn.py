@@ -12,7 +12,7 @@ from maps.core import MAP_LIMIT
 from maps.models import Map as MapRow
 from maps.tests.test_delete_leave_api import _auth, _create_map, _events, _fill_to_limit, _join, _roles
 
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(timezone.utc)   # 모듈이 불러와질 때의 시각 — 경계 테스트는 이 값과 _restore의 now를 같게 쓴다(실행 시각에 기대면 흔들린다)
 
 
 def _withdraw_owner(db_session, user_id="user_1"):
@@ -21,7 +21,7 @@ def _withdraw_owner(db_session, user_id="user_1"):
 
 
 def _restore(db_session, user_id="user_1", now=None):
-    restored = maps_api.restore_maps_deleted_by_withdrawal(db_session, user_id=user_id, now=now or datetime.now(timezone.utc))
+    restored = maps_api.restore_maps_deleted_by_withdrawal(db_session, user_id=user_id, now=now or NOW)
     db_session.commit()
     return restored
 
@@ -147,3 +147,63 @@ def test_purge_removes_a_marked_map_with_its_marker(app_client, db_session):
     assert db_session.get(MapRow, alone) is None
     assert _restore(db_session) == []
     assert db_session.execute(select(func.count()).select_from(EventLog).where(EventLog.map_id == alone, EventLog.type == "map.restored")).scalar_one() == 0
+
+
+# --- 복구와 정리의 경쟁(Codex 검수) ---
+
+def test_purge_skips_a_map_restored_while_it_waited_for_the_row_lock(test_engine):
+    """복구가 지도 행을 쥔 채 정리가 기다리다가, 복구가 커밋된 뒤 그 지도를 건너뛴다 — 방금 복구한 지도를 정리가 지우면 안 된다.
+    커밋되는 별도 연결 두 개로 만든다(db_session은 커밋하지 않아 잠금을 관찰할 수 없다)."""
+    import threading
+
+    from sqlalchemy.orm import sessionmaker
+
+    from maps import purge
+    from maps.models import Membership as MembershipRow
+
+    factory = sessionmaker(bind=test_engine)
+    now = datetime.now(timezone.utc)
+    with factory() as session:
+        row = MapRow(title="경쟁", start_date=now.date(), end_date=now.date(), created_by="race_user",
+                     deleted_at=now - core.TRASH_RETENTION - timedelta(days=1))
+        session.add(row)
+        session.flush()
+        session.add(MembershipRow(map_id=row.id, user_id="race_user", role="owner"))
+        session.commit()
+        map_id = row.id
+
+    holder = factory()
+    try:
+        holder.execute(select(MapRow.id).where(MapRow.id == map_id).with_for_update())   # 복구가 행을 쥔 상태
+        outcome = {}
+
+        def run_purge():
+            session = factory()
+            try:
+                outcome["result"] = purge.purge(session, now=now, older_than_days=core.TRASH_RETENTION.days)
+                session.commit()
+            except Exception as exc:  # noqa: BLE001
+                session.rollback()
+                outcome["result"] = exc
+            finally:
+                session.close()
+
+        thread = threading.Thread(target=run_purge)
+        thread.start()
+        thread.join(timeout=1)
+        assert thread.is_alive()   # 정리는 잠금에서 기다린다 — 자식 데이터를 아직 지우지 못했다
+        holder.execute(update(MapRow).where(MapRow.id == map_id).values(deleted_at=None, deleted_by_withdrawal_of=None))
+        holder.commit()   # 복구 커밋
+        thread.join(timeout=15)
+
+        assert not isinstance(outcome["result"], Exception), outcome
+        assert outcome["result"][0] == 0   # 복구된 지도는 정리 대상이 아니다
+        with factory() as session:
+            assert session.get(MapRow, map_id) is not None
+            assert session.execute(select(func.count()).select_from(MembershipRow).where(MembershipRow.map_id == map_id)).scalar_one() == 1
+    finally:
+        holder.close()
+        with factory() as session:
+            session.execute(MembershipRow.__table__.delete().where(MembershipRow.map_id == map_id))
+            session.execute(MapRow.__table__.delete().where(MapRow.id == map_id))
+            session.commit()

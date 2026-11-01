@@ -2,8 +2,10 @@
 
 핀 생성 요청은 주소를 안 보낼 수도 있다(화면은 아직 안 보낸다). 그래서 pinnable은 주소 없이도 매칭될 때만 true다."""
 
+import uuid
+
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from places import api, ingest, repository
 from places.models import Place
@@ -52,3 +54,21 @@ def test_pinnable_flag_agrees_with_every_way_a_pin_request_can_come(db_session, 
 def test_pinnable_true_when_name_matches_even_without_address(db_session):
     _own(db_session, ("O1", "오레노 라멘안국", ADDRESS))
     assert api.pinnable_flags([_hint("오레노 라멘안국", ADDRESS)], db=db_session) == [True]
+
+
+def test_candidate_cap_boundary_is_the_same_for_search_and_create(db_session):
+    """거리가 정확히 같은 장소가 상한(20)을 넘으면 어느 20곳을 후보로 볼지가 검색(find_candidates_many)과 생성(find_candidates)에서 같다."""
+    from places import matching
+
+    n = matching.MAX_CANDIDATES + 1
+    for i in reversed(range(n)):   # id 역순으로 넣어 저장 순서가 id 순서와 다르게 한다. 전부 같은 좌표 — 거리가 같다. id가 작은 순으로 20곳만 후보다
+        db_session.add(Place(id=uuid.UUID(int=i + 1), source="permit", source_id=f"T{i}", name=f"경계 식당 {i:02d}", category="음식점",
+                             geom=func.ST_SetSRID(func.ST_MakePoint(126.9850, 37.5760), 4326), status="open"))
+    db_session.flush()
+    hint = _hint("경계 식당 00", None, kakao_place_id=None)
+    created = repository.find_candidates(db_session, hint.lat, hint.lng, hint.category, None)
+    searched = repository.find_candidates_many(db_session, [hint])[0]
+    assert [c.place_id for c in created] == [c.place_id for c in searched]   # 같은 후보, 같은 순서
+    assert [c.place_id for c in created] == [str(uuid.UUID(int=i + 1)) for i in range(matching.MAX_CANDIDATES)]   # 21번째(id 최대)가 잘린다
+    last = _hint(f"경계 식당 {n - 1:02d}", None, kakao_place_id=None)   # 잘린 곳 — 검색은 pinnable=false, 생성도 거절이어야 한다
+    assert api.pinnable_flags([last], db=db_session) == [False] and api.match_place(last, db=db_session) is None
