@@ -438,13 +438,16 @@ def restore_account(db: Session, *, claims: core.PendingClaims) -> User:
     돌아오지 않는다(탈퇴 때 지웠다, #855). 탈퇴 전에 복사된 세션은 계속 무효다 — sessions_valid_after는 내리지 않는다.
     새 토큰은 발급 시각이 sessions_valid_after보다 뒤여야 통하므로, 탈퇴와 같은 초에 복구하면 다음 초가 될 때까지 기다린 뒤
     진행한다(_wait_until_after — 잠금을 쥔 채, 사람이 한 초 안에 탈퇴→로그인→복구하는 일은 없어 드물다). 미래 시각의 토큰은
-    만들지 않는다. 기다림에 실패하면 아무것도 쓰지 않은 채 예외다. 커밋하지 않는다."""
-    user, _ = _pending_target(db, claims, lock=True)
+    만들지 않는다. 기다림에 실패하면 아무것도 쓰지 않은 채 예외다. 커밋하지 않는다.
+    탈퇴가 후임 없이 지운 내 지도는 같은 트랜잭션에서 되살린다(maps.api.restore_maps_deleted_by_withdrawal, #1000) —
+    잠금 뒤에 읽은 시각(now)을 넘긴다. 위임된 지도는 일반 구성원으로 돌아온 채 그대로고, restart는 부르지 않는다."""
+    user, now = _pending_target(db, claims, lock=True)
     valid_after = user.sessions_valid_after or user.deleted_at   # 값이 없는 행은 이 기능 전에 탈퇴한 것 — 탈퇴 시각 이전 토큰을 죽인다
     _wait_until_after(valid_after, user.deleted_at)
     user.sessions_valid_after = valid_after
     user.deleted_at = None
     db.flush()
+    maps_api.restore_maps_deleted_by_withdrawal(db, user_id=user.id, now=now)   # 후임이 없어 탈퇴와 함께 지워진 내 지도(#1000)
     return user
 
 
