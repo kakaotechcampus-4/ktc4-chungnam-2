@@ -26,8 +26,6 @@ KNOWN_DRIFT: dict[tuple[str, str, str], str] = {
     ("PATCH", "/maps/{mapId}", ".region.lng.maximum"): "#733",   # 스펙 180 / 서버 None
     ("PATCH", "/maps/{mapId}", ".region.lng.minimum"): "#733",   # 스펙 -180 / 서버 None
     ("PATCH", "/maps/{mapId}", ".title.minLength"): "#733",   # 스펙 1 / 서버 None
-    ("POST", "/feedback", ".message.maxLength"): "#733",   # 스펙 1000 / 서버 None
-    ("POST", "/feedback", ".message.minLength"): "#733",   # 스펙 1 / 서버 None
     ("POST", "/maps", ".region.lat.maximum"): "#733",   # 스펙 90 / 서버 None
     ("POST", "/maps", ".region.lat.minimum"): "#733",   # 스펙 -90 / 서버 None
     ("POST", "/maps", ".region.lng.maximum"): "#733",   # 스펙 180 / 서버 None
