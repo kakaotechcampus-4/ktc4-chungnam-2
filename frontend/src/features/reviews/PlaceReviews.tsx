@@ -128,13 +128,12 @@ export default function PlaceReviews({ pin }: { pin: Pin }) {
 
 const guestOf = (block: CreditBlock | null) => (block?.kind === 'guest' ? block : null)
 
-/** 내 후기 지우기. 받은 크레딧은 그대로이고 다시 써도 다시 받지 않는다(api-spec DELETE /pins/{pinId}/reviews/me). */
+/** 내 후기 지우기. 확인창에 크레딧 얘기는 넣지 않는다(docs/credits-reviews.md 5절 「화면 문구」). */
 function DeleteMine({ pinId, onDone }: { pinId: string; onDone: () => void }) {
   const del = useDeleteReviewMutation(pinId)
   return (
     <ConfirmDialog
       title="내 후기를 지울까요?"
-      body="받은 크레딧은 그대로예요. 다시 써도 크레딧을 다시 받지는 않아요."
       ok="삭제"
       danger
       pending={del.isPending}

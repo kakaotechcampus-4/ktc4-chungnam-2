@@ -61,15 +61,16 @@ describe('장소 후기(#953)', () => {
     expect(screen.queryByRole('button', { name: '더 보기' })).not.toBeInTheDocument()
   })
 
-  it('첫 저장은 크레딧을 받고(credited) 수정은 받지 않는다 — 내 후기는 「나」, 신고 대신 삭제', async () => {
+  it('작성 시트에만 보상 한 줄 — 토스트는 「후기를 저장했어요」, 고치기 시트엔 크레딧 문구 없음. 내 후기는 「나」, 신고 대신 삭제', async () => {
     const before = await get<{ balance: number; review_reward: number }>('/credits/me')
     const user = userEvent.setup()
     renderWithClient(<PlaceReviews pin={await pin1()} />)
 
     await user.click(await screen.findByRole('button', { name: '후기 쓰기' }))
-    expect(screen.getByText('후기를 쓰면 크레딧을 드려요. 별점과 상관없이 같아요.')).toBeInTheDocument()
+    expect(await within(await screen.findByRole('dialog')).findByText(`후기를 작성하면 ${before.review_reward} 크레딧이 충전돼요`)).toBeInTheDocument()
     await writeReview(user, '5점', '아침에 가기 좋아요')
-    await waitFor(() => expect(toast()).toBe(`${before.review_reward} 크레딧을 받았어요`))
+    await waitFor(() => expect(toast()).toBe('후기를 저장했어요'))
+    // 받는 양은 서버가 정한다 — 화면은 credited 를 보이지 않을 뿐 잔액은 늘었다.
     expect((await get<{ balance: number }>('/credits/me')).balance).toBe(before.balance + before.review_reward)
 
     const mine = (await screen.findByText('나')).closest('li')!
@@ -79,10 +80,26 @@ describe('장소 후기(#953)', () => {
 
     // 수정 — 내 후기 값으로 열린다
     await user.click(screen.getByRole('button', { name: '내 후기 고치기' }))
-    expect(within(await screen.findByRole('dialog')).getByRole('radio', { name: '5점' })).toHaveAttribute('aria-checked', 'true')
+    const editSheet = await screen.findByRole('dialog')
+    expect(within(editSheet).getByRole('radio', { name: '5점' })).toHaveAttribute('aria-checked', 'true')
+    expect(within(editSheet).queryByText(/크레딧/)).not.toBeInTheDocument()
     await writeReview(user, '3점', '줄이 길어졌어요')
     await waitFor(() => expect(toast()).toBe('후기를 저장했어요'))
     expect(await screen.findByText('줄이 길어졌어요')).toBeInTheDocument()
+  })
+
+  it('잔액이 가득 차도(credits-full) 따로 알리지 않는다 — 같은 한 줄, 같은 토스트', async () => {
+    resetScenario('credits-full')
+    const { review_reward } = await get<{ review_reward: number }>('/credits/me')
+    const user = userEvent.setup()
+    renderWithClient(<PlaceReviews pin={await pin1()} />)
+
+    await user.click(await screen.findByRole('button', { name: '후기 쓰기' }))
+    const sheet = await screen.findByRole('dialog')
+    expect(await within(sheet).findByText(`후기를 작성하면 ${review_reward} 크레딧이 충전돼요`)).toBeInTheDocument()
+    expect(within(sheet).getAllByText(/크레딧/)).toHaveLength(1)
+    await writeReview(user, '4점', '가득 찼어도 써요')
+    await waitFor(() => expect(toast()).toBe('후기를 저장했어요'))
   })
 
   it('글 상한은 응답의 limits.body_max — 별점과 글이 있어야 저장할 수 있다', async () => {
@@ -102,13 +119,15 @@ describe('장소 후기(#953)', () => {
     expect(save).toBeEnabled()
   })
 
-  it('내 후기 삭제는 한 번 묻고 지운다', async () => {
+  it('내 후기 삭제는 한 번 묻고 지운다 — 확인창에 크레딧 문구 없음', async () => {
     await fetch(`${BASE}/pins/pin_1/reviews/me`, { method: 'PUT', body: JSON.stringify({ rating: 4, body: '지울 후기' }) })
     const user = userEvent.setup()
     renderWithClient(<PlaceReviews pin={await pin1()} />)
 
     await user.click(within((await screen.findByText('지울 후기')).closest('li')!).getByRole('button', { name: '삭제' }))
-    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: '삭제' }))
+    const confirm = await screen.findByRole('alertdialog')
+    expect(within(confirm).queryByText(/크레딧/)).not.toBeInTheDocument()
+    await user.click(within(confirm).getByRole('button', { name: '삭제' }))
     await waitFor(() => expect(screen.queryByText('지울 후기')).not.toBeInTheDocument())
     expect(screen.getByRole('button', { name: '후기 쓰기' })).toBeInTheDocument()
   })

@@ -12,6 +12,7 @@ const SCENARIOS: ScenarioName[] = [
   'guest',
   'withdrawn-relogin',
   'credits-empty',
+  'credits-full',
 ]
 
 /**

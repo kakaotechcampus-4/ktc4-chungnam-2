@@ -14,7 +14,6 @@
 declare module '@pingo/contracts/mocks/scenarios' {
   /**
    * contracts/mocks/scenarios.ts 의 ScenarioName 에서 화면이 쓰는 것. 늘어나면 여기도 추가.
-   * 'retry-limit' 은 상한이 크레딧으로 바뀌어(#432) 쓰지 않는다 — 원본에서는 #954 가 지운다.
    */
   export type ScenarioName =
     | 'empty'
@@ -24,6 +23,7 @@ declare module '@pingo/contracts/mocks/scenarios' {
     | 'guest'
     | 'withdrawn-relogin'
     | 'credits-empty'
+    | 'credits-full'
 }
 
 declare module '@pingo/contracts/mocks/browser' {

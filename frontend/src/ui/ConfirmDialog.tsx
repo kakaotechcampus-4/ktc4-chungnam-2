@@ -19,7 +19,8 @@ export default function ConfirmDialog({
   onOk,
 }: {
   title: string
-  body: string
+  /** 없으면 제목만 묻는다(내 후기 지우기). */
+  body?: string
   /** 제목 아래 회색 상자에 담는 목록·표. */
   detail?: ReactNode
   note?: string
@@ -43,7 +44,11 @@ export default function ConfirmDialog({
     <AlertDialog.Root open onOpenChange={(open) => !open && onCancel()}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="enter-fade fixed inset-0 z-50 bg-scrim" />
-        <AlertDialog.Content className="fixed inset-0 z-50 flex items-center justify-center p-6 outline-none">
+        {/* 설명이 없으면 Radix 에 알려 aria-describedby 경고를 끈다. */}
+        <AlertDialog.Content
+          {...(body === undefined && { 'aria-describedby': undefined })}
+          className="fixed inset-0 z-50 flex items-center justify-center p-6 outline-none"
+        >
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -57,7 +62,7 @@ export default function ConfirmDialog({
             <AlertDialog.Title className="break-keep text-title font-bold text-ink-900">{title}</AlertDialog.Title>
             {detail && <div className="rounded-xl bg-ink-50 p-3 text-sm">{detail}</div>}
             {/* 한글은 기본이 글자 단위 줄바꿈이라 320px 에서 「되살 / 릴」처럼 낱말이 갈린다 — 제목처럼 낱말 단위로 바꾼다. */}
-            <AlertDialog.Description className="break-keep text-sm text-ink-600">{body}</AlertDialog.Description>
+            {body !== undefined && <AlertDialog.Description className="break-keep text-sm text-ink-600">{body}</AlertDialog.Description>}
             {note && <p className="break-keep text-xs text-ink-500">{note}</p>}
             {children}
             <div className="grid grid-cols-2 gap-2 pt-2">
