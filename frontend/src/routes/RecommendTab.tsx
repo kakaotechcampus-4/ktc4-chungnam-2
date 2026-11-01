@@ -6,7 +6,7 @@ import { useMembersQuery } from '@/features/maps/queries'
 import { useAiStore } from '@/features/recommend/aiStore'
 import ConditionsCard from '@/features/recommend/ConditionsCard'
 import EvidenceScreen from '@/features/recommend/EvidenceScreen'
-import { attemptLimit, noResultsApplied, noResultsFunnel, type RecommendRunDto } from '@/features/recommend/model'
+import { noResultsApplied, noResultsFunnel, type RecommendRunDto } from '@/features/recommend/model'
 import { useExecuteRunMutation, useResultQuery } from '@/features/recommend/queries'
 import { AiHeader, ProgressBody, ReadinessBody, ReadinessHeader } from '@/features/recommend/Readiness'
 import {
@@ -16,7 +16,6 @@ import {
   NoResults,
   ResultsBody,
   ResultsHeader,
-  RetryLimit,
 } from '@/features/recommend/Results'
 import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
@@ -63,7 +62,7 @@ function ResumeRun({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   )
 }
 
-type View = { kind: 'list' } | { kind: 'how' } | { kind: 'limit' }
+type View = { kind: 'list' } | { kind: 'how' }
 
 function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   const result = useResultQuery(run)
@@ -87,16 +86,6 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   // 실행 중이면 다른 무엇보다 먼저 '진행 중'이다 — 같은 시도의 예전 결과(0곳·실패)가 캐시에 남아 있어도 덮는다(#349).
   if (run.status === 'executing') {
     return tab(<AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" mood="thinking" />, <ProgressBody />)
-  }
-  if (view.kind === 'limit') {
-    return tab(
-      <>
-        <BackToReadiness mapId={mapId} />
-        {/* 상한은 사람마다, 카테고리와 상관없이 센다(#31). */}
-        <AiHeader title={`추천은 ${attemptLimit(run)}번까지만 받을 수 있어요`} sub={`이 지도에서 추천을 ${attemptLimit(run)}번 모두 받았어요`} />
-      </>,
-      <RetryLimit onBack={back} />,
-    )
   }
   if (failed) {
     return tab(
@@ -137,7 +126,7 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   // 머리글의 수는 이번 실행이 새로 찾은 곳이다(new_count, 올려도 줄지 않는다) — 이미 올린 곳은 목록 아래에 따로 보인다(#849).
   const found = data.new_count ?? data.candidates.filter((c) => c.visibility !== 'published').length
   return tab(
-    <ResultsHeader mapId={mapId} run={run} count={found} onLimit={() => setView({ kind: 'limit' })} />,
+    <ResultsHeader mapId={mapId} run={run} count={found} />,
     <ResultsBody
       mapId={mapId}
       run={run}

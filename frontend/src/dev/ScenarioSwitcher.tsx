@@ -8,10 +8,10 @@ const SCENARIOS: ScenarioName[] = [
   'happy-path',
   'empty',
   'no-results',
-  'retry-limit',
   'region-conflict',
   'guest',
   'withdrawn-relogin',
+  'credits-empty',
 ]
 
 /**

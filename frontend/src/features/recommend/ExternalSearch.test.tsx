@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { ApiError } from '@/api'
 
-import { fetchResult } from './api'
+import { createRun, fetchResult } from './api'
 import { noResultsExternalSearch, type RecommendRunDto } from './model'
 import { ReadinessBody } from './Readiness'
 import { NoResults, ResultsBody } from './Results'
@@ -78,9 +78,9 @@ describe('카카오맵에서 더 찾아보기(#798)', () => {
   })
 
   it('결과가 있으면 서버가 링크를 줄 때만 목록 아래에 두고, 카드는 place_url 로 카카오맵을 연다', async () => {
-    resetScenario('retry-limit')
-    const result = await fetchResult('run_retry_limit')
-    const r = run('run_retry_limit')
+    const done = await createRun('map_1', '음식점', crypto.randomUUID())
+    const result = await fetchResult(done.id)
+    const r = run(done.id)
 
     const view = renderWithClient(<ResultsBody mapId="map_1" run={r} result={result} members={[]} onHow={() => {}} />)
     expect(result.external_search).toBeUndefined() // 목 결과는 후보가 넉넉하다
