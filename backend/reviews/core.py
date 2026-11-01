@@ -1,12 +1,12 @@
-"""후기 순수 규칙 — 후기를 붙일 장소 찾기, 목록 커서, 응답 조립(docs/credits-reviews.md 5절, 7절). DB를 모른다."""
+"""후기 순수 규칙 — 후기를 붙일 장소 찾기, 목록 쪽 나누기, 응답 조립(docs/credits-reviews.md 5절, 7절). DB를 모른다.
+커서 형식은 common.cursor 한 곳이다(#973)."""
 
-import base64
-import binascii
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 
+from common.cursor import encode_cursor
 from common.errors import AppError
 
 
@@ -33,25 +33,6 @@ def average(total: int, count: int) -> float | None:
     if count == 0:
         return None
     return float((Decimal(total) / Decimal(count)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
-
-
-def encode_cursor(created_at: datetime, review_id: uuid.UUID) -> str:
-    """next_cursor — 화면에는 뜻 없는 문자열이다. URL에 그대로 실어도 되게 base64url로 만든다."""
-    raw = f"{created_at.isoformat()}|{review_id}"
-    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
-
-
-def decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
-    """encode_cursor의 역. 형식이 틀리면 422 VALIDATION_ERROR."""
-    try:
-        padded = cursor + "=" * (-len(cursor) % 4)
-        iso, _, raw_id = base64.urlsafe_b64decode(padded.encode()).decode().partition("|")
-        created_at = datetime.fromisoformat(iso)
-        if created_at.tzinfo is None:
-            raise ValueError("시각에 시간대가 없다")
-        return created_at, uuid.UUID(raw_id)
-    except (binascii.Error, UnicodeDecodeError, ValueError):
-        raise AppError("VALIDATION_ERROR", "cursor 형식이 올바르지 않습니다") from None
 
 
 def my_review(row: ReviewRow) -> dict:

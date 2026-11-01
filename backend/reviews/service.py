@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from common.cursor import decode_cursor
 from common.errors import AppError
 from credits import api as credits_api
 from pins import api as pins_api
@@ -38,9 +39,12 @@ def _summary(db: Session, place_id: str) -> dict:
 
 def list_page(db: Session, *, place_id: str, viewer_id: str, cursor: str | None) -> dict:
     """GET /pins/{pinId}/reviews — ReviewPage. 최신순(created_at, id 내림차순) PAGE_SIZE개. mine은 첫 쪽이든 아니든 싣는다."""
-    after = core.decode_cursor(cursor) if cursor else None
     query = select(*_ROW_COLUMNS).where(Review.place_id == place_id, _VISIBLE)
-    if after is not None:
+    if cursor:
+        try:
+            after = decode_cursor(cursor)
+        except ValueError:
+            raise AppError("VALIDATION_ERROR", "cursor 형식이 올바르지 않습니다") from None
         query = query.where(tuple_(Review.created_at, Review.id) < tuple_(*after))
     rows = [_row(r) for r in db.execute(
         query.order_by(Review.created_at.desc(), Review.id.desc()).limit(PAGE_SIZE + 1)
