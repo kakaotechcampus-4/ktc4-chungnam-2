@@ -131,6 +131,8 @@ export interface StoreState {
   feedback: { id: string; user_id: string; message: string; category: string; map_id?: string; created_at: string }[]; // #10
   credits: Record<string, number>; // user_id -> 잔액(#432). 없으면 처음 지급량(handlers/credits.ts INITIAL_CREDITS)
   creditRefs: string[]; // 원장 ref_id — 같은 실행·같은 장소 후기 보상을 두 번 하지 않는다
+  adProvider: "fake" | "adsense" | "gpt" | null; // 광고 보고 충전(#1037) 제공자. null이면 꺼짐
+  adSessions: Record<string, { id: string; user_id: string; issued_at: number; claimed_at?: number; credited?: number }>; // id -> 광고 세션(issued_at은 ms)
   reviews: Record<string, ReviewEntity>; // reviewId -> 후기
   reviewReports: Record<string, string[]>; // reviewId -> 신고한 user_id
 }
@@ -172,6 +174,8 @@ function emptyState(): StoreState {
     feedback: [],
     credits: {},
     creditRefs: [],
+    adProvider: null,
+    adSessions: {},
     reviews: {},
     reviewReports: {},
   };

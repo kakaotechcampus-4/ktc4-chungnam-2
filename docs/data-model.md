@@ -587,11 +587,19 @@ credit_ledger(
   id uuid PK,
   user_id varchar NOT NULL,
   delta integer NOT NULL,
-  reason('initial'|'spend'|'refund'|'review') NOT NULL,   -- 페이즈 2 구매는 'purchase', 광고 충전은 'ad'로 같은 표에 더한다
+  reason('initial'|'spend'|'refund'|'review'|'ad') NOT NULL,   -- ad = 광고 보고 충전(#1037). 페이즈 2 구매는 'purchase'로 같은 표에 더한다
   ref_id varchar NOT NULL UNIQUE,     -- initial:<user> · <feature>:<run_id> · refund:<차감 ref_id> · review:<user>:<place_id>
   created_at timestamptz NOT NULL default now()
 )
 index ix_credit_ledger_user_reason_created (user_id, reason, created_at)
+credit_ad_sessions(                 -- 광고 보고 충전(docs/credits-reviews.md 3.7, #1038)
+  id uuid PK,
+  user_id varchar NOT NULL,          -- FK 없음(#760)
+  issued_at timestamptz NOT NULL default now(),   -- 하루 횟수(KST)는 이것으로 센다
+  claimed_at timestamptz NULL,
+  credited integer NULL             -- 받을 때 들어간 양(0~AD_REWARD). 멱등 응답에 쓴다
+)
+index ix_credit_ad_sessions_user_issued (user_id, issued_at)
 ```
 
 - `ref_id` UNIQUE가 멱등을 맡는다 — 같은 실행 이중 차감, 이중 환불, 같은 장소 후기 보상 두 번이 구조적으로 막힌다.

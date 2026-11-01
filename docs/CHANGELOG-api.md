@@ -2,6 +2,16 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-02, 광고 보고 크레딧 충전 — `CreditBalance.ad`, 광고 세션 열기·받기 (#1037)
+
+명세 `docs/credits-reviews.md` 3.7절, 결정 #432(2026-11-02 코멘트). 크레딧이 바닥나면 보상형 광고를 끝까지 보고 10을 받는다(상한 30까지, 사람당 KST 하루 3번, 연 뒤 7초).
+
+- `CreditBalance.ad`(필수, `CreditAd { available, reward, used_today, daily_max, provider, unit_id }`). 화면은 `available`만 본다.
+- `POST /credits/ad-sessions`(201 `AdSession { ad_session_id, claim_after_s }`, 받지 않은 세션은 이어 받는다), `POST /credits/ad-sessions/{adSessionId}/claim`(200 `AdClaim { credited, balance }`, 멱등).
+- 오류 `AD_REWARD_UNAVAILABLE`(409, `reason`), `AD_REWARD_LIMIT`(429, `limit`), `AD_REWARD_INVALID`(409, `reason`, `retry_after_s`).
+- 목 서버: `ad` 블록(기본 `provider: "fake"`), 두 경로. 광고가 열리는 모습은 시나리오 `credits-empty`(잔액 0). 받기 전 7초를 지킨다.
+- 서버 구현 전까지 두 경로와 세 오류 코드, `/credits/me`의 `ad`는 알려진 목록에 #1038로 있다. 화면은 #1039.
+
 ## 2026-11-01 (다섯 번째), 후기 화면의 크레딧 문구를 한 줄로 (#982)
 
 계약은 그대로다. 화면 문구만 정한다(`docs/credits-reviews.md` 5절 「화면 문구」): 새 후기 작성 시트에 「후기를 작성하면 {review_reward} 크레딧이 충전돼요」 한 줄만 두고(잔액이 `max_balance` 이상이면 숨긴다 — #985 검수), 고치기·삭제·저장 토스트에는 크레딧 얘기를 넣지 않는다. 받은 양을 보여 주려고 `ReviewSaved.credited`를 화면에 쓰지 않아도 된다(필드는 그대로 내린다).

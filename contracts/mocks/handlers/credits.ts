@@ -10,6 +10,11 @@ export const INITIAL_CREDITS = 30;
 export const PRICES = { recommend_run: 1, course: 1 } as const;
 export const REVIEW_REWARD = 10;
 export const MAX_BALANCE = 30; // 잔액 상한(#981) — 후기 보상과 환불은 여기까지만 채운다
+// 광고 보고 충전(#1037, docs/credits-reviews.md 3.7) — 실서버 credits/constants.py와 같은 값
+export const AD_REWARD = 10;
+export const AD_DAILY_MAX = 3;
+export const AD_MIN_WATCH_S = 7;
+export const AD_SESSION_TTL_S = 900;
 const REVIEW_BODY_MAX = 500;
 const REVIEW_PAGE = 20;
 
@@ -62,10 +67,65 @@ function reviewablePin(pinId: string) {
   return { key: placeKey(pin) };
 }
 
+/** KST 오늘 0시(ms). 하루 횟수는 이 뒤에 연 세션 수다(실서버 common/kst.py의 kst_day_start) */
+const kstDayStart = (now: number) => {
+  const kst = now + 9 * 3600_000;
+  return kst - (kst % 86_400_000) - 9 * 3600_000;
+};
+const myAdSessions = () => Object.values(store.adSessions).filter((a) => a.user_id === ME_USER_ID);
+const adUsedToday = (now = Date.now()) => myAdSessions().filter((a) => a.issued_at >= kstDayStart(now)).length;
+const adNeeded = () => balance() < Math.min(...Object.values(PRICES));
+/** GET /credits/me의 ad — 화면은 available만 본다 */
+function adBlock(now = Date.now()) {
+  const used = adUsedToday(now);
+  return {
+    available: store.adProvider !== null && adNeeded() && used < AD_DAILY_MAX,
+    reward: AD_REWARD,
+    used_today: used,
+    daily_max: AD_DAILY_MAX,
+    provider: store.adProvider,
+    unit_id: null,
+  };
+}
+
 export const creditsHandlers = [
+  // 광고 보고 충전 — 세션 열기(#1037). 받지 않은 세션이 있으면 그것을 돌려준다(하루 횟수를 쓰지 않는다)
+  http.post("*/credits/ad-sessions", () => {
+    if (isGuest()) return guestError();
+    if (store.adProvider === null) return apiError(409, "AD_REWARD_UNAVAILABLE", "지금은 광고로 크레딧을 받을 수 없습니다", { reason: "off" });
+    const now = Date.now();
+    const open = myAdSessions().find((a) => a.claimed_at === undefined && now - a.issued_at < AD_SESSION_TTL_S * 1000);
+    if (open) {
+      return HttpResponse.json({ ad_session_id: open.id, claim_after_s: Math.max(0, Math.ceil(AD_MIN_WATCH_S - (now - open.issued_at) / 1000)) }, { status: 201 });
+    }
+    if (!adNeeded()) return apiError(409, "AD_REWARD_UNAVAILABLE", "지금은 광고로 크레딧을 받을 수 없습니다", { reason: "not_needed" });
+    if (adUsedToday(now) >= AD_DAILY_MAX) return apiError(429, "AD_REWARD_LIMIT", "오늘 광고 충전 횟수를 다 썼습니다", { limit: AD_DAILY_MAX });
+    const id = crypto.randomUUID();
+    store.adSessions[id] = { id, user_id: ME_USER_ID, issued_at: now };
+    return HttpResponse.json({ ad_session_id: id, claim_after_s: AD_MIN_WATCH_S }, { status: 201 });
+  }),
+
+  // 보상 받기 — 연 지 7초 뒤, 15분 안. 이미 받았으면 처음 결과 그대로(멱등). 잔액 상한까지만 채운다
+  http.post("*/credits/ad-sessions/:adSessionId/claim", ({ params }) => {
+    if (isGuest()) return guestError();
+    const s = store.adSessions[params.adSessionId as string];
+    if (!s || s.user_id !== ME_USER_ID) return apiError(404, "NOT_FOUND", "광고 세션을 찾을 수 없습니다");
+    if (s.claimed_at !== undefined) return HttpResponse.json({ credited: s.credited ?? 0, balance: balance() });
+    const elapsed = (Date.now() - s.issued_at) / 1000;
+    if (elapsed >= AD_SESSION_TTL_S) return apiError(409, "AD_REWARD_INVALID", "받을 수 없는 광고 세션입니다", { reason: "expired" });
+    if (elapsed < AD_MIN_WATCH_S) {
+      return apiError(409, "AD_REWARD_INVALID", "받을 수 없는 광고 세션입니다", { reason: "too_early", retry_after_s: Math.ceil(AD_MIN_WATCH_S - elapsed) });
+    }
+    const credited = Math.max(0, Math.min(AD_REWARD, MAX_BALANCE - balance()));
+    store.creditRefs.push(`ad:${s.id}`);
+    store.credits[ME_USER_ID] = balance() + credited;
+    Object.assign(s, { claimed_at: Date.now(), credited });
+    return HttpResponse.json({ credited, balance: balance() });
+  }),
+
   http.get("*/credits/me", () => {
     if (isGuest()) return guestError();
-    return HttpResponse.json({ balance: balance(), max_balance: MAX_BALANCE, prices: PRICES, review_reward: REVIEW_REWARD });
+    return HttpResponse.json({ balance: balance(), max_balance: MAX_BALANCE, prices: PRICES, review_reward: REVIEW_REWARD, ad: adBlock() });
   }),
 
   // 작성자 이름·id는 내리지 않는다(#432 결정 B) — is_mine만
