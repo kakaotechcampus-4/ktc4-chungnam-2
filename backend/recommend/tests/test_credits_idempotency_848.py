@@ -320,3 +320,64 @@ def test_a_refund_at_the_balance_cap_adds_nothing_but_still_leaves_its_ledger_ro
     [(refund_ref, refund_delta)] = _ledger(Session, "refund")
     assert str(run_id) in refund_ref and refund_delta == 0
     assert _balance(Session) == 30
+
+
+# ---------- 지역 확인을 거친 첫 실행 (#1015 검수) ----------
+# `regions/confirm`은 검색 없이 상태를 executing으로 바꾼다. 「첫 실행」은 상태가 아니라 실행이 끝난 기록(last_new_count)과 후보 유무로 본다.
+
+def _confirm(Session, run_id):
+    _in_new_session(Session, lambda db: flows.confirm_regions(db, run_id=str(run_id), accept_union=False))
+
+
+def test_first_execute_after_region_confirm_with_no_results_refunds(env):
+    """execute:false로 만들고 지역을 확인한 뒤(상태 executing) 첫 execute가 0곳이어도 환불한다."""
+    Session, _reactions = env
+    start = _balance(Session)
+    run_id = _create(Session)   # 차감만 하고 첫 검색은 아직 없다
+    _confirm(Session, run_id)
+    with Session() as db:
+        assert db.get(RecommendRun, run_id).status == "executing"   # 상태 기준이면 첫 실행을 놓치는 자리
+
+    _in_new_session(Session, lambda db: flows.execute_run(db, run_id=str(run_id), **_empty_search()))
+
+    assert len(_ledger(Session, "refund")) == 1 and _balance(Session) == start
+
+
+def test_a_failed_first_execute_then_a_zero_result_retry_of_execute_refunds_exactly_once(env, monkeypatch):
+    """첫 execute가 실패해(롤백) 상태가 그대로여도, 다시 부른 execute가 0곳이면 환불은 정확히 한 번이다."""
+    Session, _reactions = env
+    start = _balance(Session)
+    run_id = _create(Session)
+    _confirm(Session, run_id)
+
+    real_pipeline = flows._run_pipeline
+    calls = []
+
+    def flaky(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("검색 장애")
+        return real_pipeline(*args, **kwargs)
+
+    monkeypatch.setattr(flows, "_run_pipeline", flaky)
+    with pytest.raises(RuntimeError):
+        _in_new_session(Session, lambda db: flows.execute_run(db, run_id=str(run_id), **_empty_search()))
+    assert _ledger(Session, "refund") == [] and _balance(Session) == start + _spent_delta(Session)   # 실패는 환불도 실행 기록도 남기지 않는다
+
+    _in_new_session(Session, lambda db: flows.execute_run(db, run_id=str(run_id), **_empty_search()))
+    assert len(_ledger(Session, "refund")) == 1 and _balance(Session) == start
+    _in_new_session(Session, lambda db: flows.execute_run(db, run_id=str(run_id), **_empty_search()))   # 이미 실행한 run
+    assert len(_ledger(Session, "refund")) == 1
+
+
+def test_a_zero_result_retry_after_a_confirmed_first_execute_with_results_does_not_refund(env):
+    """지역 확인을 거친 첫 execute가 결과를 냈다면 그 뒤 재추천(retry) 0건은 환불이 없다."""
+    Session, _reactions = env
+    run_id = _create(Session)
+    _confirm(Session, run_id)
+    _in_new_session(Session, lambda db: flows.execute_run(db, run_id=str(run_id), **_search()))
+    after_first = _balance(Session)
+
+    _in_new_session(Session, lambda db: flows.retry_run(db, run_id=str(run_id), **_empty_search()))
+
+    assert _ledger(Session, "refund") == [] and _balance(Session) == after_first

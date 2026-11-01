@@ -920,7 +920,9 @@ def execute_run(
     `collecting_evidence` run(과거 데이터, 장애)도 이 호출로 이어서 실행한다(#845)."""
     run = service.get_run_or_404(db, run_id)
     service.lock_run(db, run.id)   # 같은 run의 다른 실행과 후보 교체를 직렬화한다(#811)
-    first_run = run.status == "collecting_evidence" and run.last_new_count is None   # 한 번도 실행하지 않은 run — 0곳이면 환불(#1015)
+    # 한 번도 실행이 끝나지 않은 run — 0곳이면 환불(#1015). 상태(collecting_evidence 등)로 판정하지 않는다: 지역 확인(confirm_regions)이 검색 없이
+    # 상태를 executing으로 바꾸고, 실패한 실행은 롤백돼 상태가 그대로이기 때문이다. 실행이 끝났다는 기록(last_new_count)과 후보 유무만 본다.
+    first_run = run.last_new_count is None and not service.list_candidates(db, str(run.id))
     return _search_and_store(db, run, place_search=place_search, place_facts=place_facts, first_run=first_run)
 
 
