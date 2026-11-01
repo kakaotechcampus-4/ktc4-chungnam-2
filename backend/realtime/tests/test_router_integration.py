@@ -158,6 +158,8 @@ async def test_ping_is_not_mixed_into_replay(db_session, monkeypatch):
     response = await public_events(request=_Alive(), mapId="ping-replay", user=CurrentUser(user_id="user-a"), last_event_id=str(old.seq - 1))
     agen = response.body_iterator
     try:
+        # 연결 직후 ping(#925)이 재전송보다 앞이다. 그 뒤 다음 청크가 재전송 이벤트이고 ping이 섞이지 않는다.
+        assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
         chunk = await asyncio.wait_for(agen.__anext__(), timeout=1)
         assert f"id: {old.seq}\n" in chunk and "ping" not in chunk
         # 재전송이 끝난 뒤에는 이벤트가 없으니 다음 청크는 (긴 간격 동안) 나오지 않는다.
