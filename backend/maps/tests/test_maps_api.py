@@ -107,7 +107,7 @@ def test_list_members_returns_only_honest_fields(app_client):
     # online을 채울 데이터 출처가 없다 — 응답에 키 자체가 없어야 한다
     # (False로 채우는 거짓 fallback을 만들지 않았다는 증거). display_name은 users 행에서 온다.
     for m in members:
-        assert set(m.keys()) == {"user_id", "role", "display_name"}
+        assert set(m.keys()) == {"user_id", "role", "display_name", "is_guest"}
 
 
 def test_list_members_marks_creator_as_owner_and_joiner_as_member(app_client):

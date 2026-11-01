@@ -419,7 +419,9 @@ def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
     map_row = get_map_or_404(db, invite_row.map_id)
     if created:
         # 방금 넣은 행은 언제나 member다(위 insert). maps.created_by로 판정하지 않는다(#369 11번).
-        member = core.to_member_response(user_id, role="member", display_name=name, online=None)
+        member = core.to_member_response(
+            user_id, role="member", display_name=name, online=None, is_guest=user_id in auth_api.guest_user_ids(db, [user_id])
+        )
         record_event(db, core.member_joined_event(invite_row.map_id, member))
         roster, _ = roster_of(db, invite_row.map_id)
         owner_id = next((m.user_id for m in roster if m.role == "owner"), None)
@@ -441,9 +443,10 @@ def list_members(db: Session, *, map_id: str) -> list[Member]:
     )
     # 배치 조회 — N명에 N번 쿼리하지 않는다(auth.api.display_names 자체가 배치용으로 설계됨).
     names = auth_api.display_names(db, [m.user_id for m in entries])
+    guests = guest_ids_of(db, entries)
     return [
         core.to_member_response(
-            m.user_id, role=m.role, display_name=names.get(m.user_id), online=None
+            m.user_id, role=m.role, display_name=names.get(m.user_id), online=None, is_guest=m.user_id in guests
         )
         for m in entries
     ]
