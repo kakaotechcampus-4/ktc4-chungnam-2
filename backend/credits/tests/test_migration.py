@@ -90,3 +90,33 @@ def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_u
         assert TABLES <= set(sa.inspect(engine).get_table_names())
     finally:
         engine.dispose()
+
+
+AD_REVISION = "0054_credit_ad_sessions"
+AD_PREVIOUS = "0053_maps_withdrawal_marker"
+
+
+def test_ad_sessions_migration_matches_model_and_downgrades(mig_url):
+    """0054 — credit_ad_sessions(명세 6절, #1038). 칸 이름, (user_id, issued_at) 인덱스, FK 없음."""
+    from alembic.script import ScriptDirectory
+
+    from credits.models import CreditAdSession
+
+    cfg = _config()
+    assert ScriptDirectory.from_config(cfg).get_revision(AD_REVISION).down_revision == AD_PREVIOUS
+    command.upgrade(cfg, AD_REVISION)
+    engine = sa.create_engine(mig_url)
+    try:
+        inspector = sa.inspect(engine)
+        table = CreditAdSession.__tablename__
+        assert {c["name"] for c in inspector.get_columns(table)} == set(CreditAdSession.__table__.columns.keys())
+        assert inspector.get_foreign_keys(table) == []
+        [index] = [i for i in inspector.get_indexes(table) if i["name"] == "ix_credit_ad_sessions_user_issued"]
+        assert index["column_names"] == ["user_id", "issued_at"]
+
+        command.downgrade(cfg, AD_PREVIOUS)
+        assert table not in sa.inspect(engine).get_table_names()
+        command.upgrade(cfg, AD_REVISION)
+        assert table in sa.inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
