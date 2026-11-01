@@ -2878,7 +2878,7 @@ export interface paths {
         put?: never;
         /**
          * 반경 넓히기. 기본값 원만 확대한다 — 사람이 명시한 원(예 "숙소 기준 20분")은 자동으로 넓히지 않는다 (가드레일 4, 5-6-1).
-         *     한 번 누를 때마다 기본값 원의 도보 시간을 5분씩 늘린다(기본 15분 → 20분 → 25분 → 30분). 상한은 도보 30분이며 넘으면 409 WIDEN_LIMIT.
+         *     한 번 누를 때마다 기본값 원의 도보 시간을 5분씩 늘린다. 기본·상한은 카테고리별이다(#1055) — 음식점·카페 15분 → 30분, 관광지 25분 → 45분. 상한을 넘으면 409 WIDEN_LIMIT.
          *     폭·상한은 docs/constraints.md의 조정 가능한 상수다 — 응답 RecommendRun에 현재 기본 반경(default_radius_walk_min)을 실어 화면이 "다음은 몇 분"을 안내한다.
          */
         post: {
@@ -4640,7 +4640,7 @@ export interface components {
             answered_count?: number;
             /** @description 항상 1. 구성원 수에 비례하던 ceil(N/2)는 폐기했다(#360). 필드를 남긴 것은 FE 호환(「의견 핀 0/1」 표기)용이다 */
             required_count?: number;
-            /** @description 추천 기본 지역(그 카테고리 의견 핀들의 중심)에서 반경 넓히기 상한(도보 30분) 안의 추천 가능 장소(정예) 수(#798). 의견 핀이 없어 기본 지역이 없으면 필드가 없다. 0이면 추천해도 결과가 0곳이다 — 화면은 추천 버튼을 막지 않고 external_search를 함께 보여 준다 */
+            /** @description 추천 기본 지역(그 카테고리 의견 핀들의 중심)에서 반경 넓히기 상한(음식점·카페 도보 30분, 관광지 45분, #1055) 안의 추천 가능 장소(정예) 수(#798). 의견 핀이 없어 기본 지역이 없으면 필드가 없다. 0이면 추천해도 결과가 0곳이다 — 화면은 추천 버튼을 막지 않고 external_search를 함께 보여 준다 */
             curated_nearby?: number;
             /** @description curated_nearby가 0일 때만 */
             external_search?: components["schemas"]["ExternalSearch"];
@@ -4699,7 +4699,7 @@ export interface components {
             status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
             /** @description 이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 없다(#432 — 크레딧으로 센다) */
             attempt_no: number;
-            /** @description 기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (기본 15, 상한 30) */
+            /** @description 기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (음식점·카페 기본 15·상한 30, 관광지 기본 25·상한 45, #1055) */
             default_radius_walk_min?: number;
         };
         /** @description 지난 추천 기록 한 건 (#469). 내가 요청한 run만 온다 */
@@ -5457,7 +5457,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 기본값 원이 이미 상한(도보 30분) — 더 넓힐 수 없음 (WIDEN_LIMIT). 「근거 고치기」/「직접 찍기」로 안내 */
+        /** @description 기본값 원이 이미 상한(음식점·카페 도보 30분, 관광지 45분, */
         WidenLimit: {
             headers: {
                 [name: string]: unknown;
