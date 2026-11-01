@@ -498,7 +498,7 @@ agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조�
 
 ---
 
-## agent_course_runs (AI 코스 짜기, #334 — 팀 결정 #580 전 브랜치 초안, 마이그레이션 0037)
+## agent_course_runs (AI 코스 짜기, #334 — 팀 결정 #580 전 브랜치 초안, 마이그레이션 0037, 0050)
 
 > 동선 에이전트(`backend/agent/course/`)가 쓰는 테이블 1개. `map_id`, `requested_by`는 문자열이고 FK가 없다. run은 요청자 본인 것이다(가드레일 1).
 > **장소 이름과 좌표는 저장하지 않는다.** 핀은 `pin_id`로만 가리킨다(화면 문장에 들어간 이름은 코드가 렌더한 문장 안에만 있다). 사유 원문도 없다 —
@@ -522,7 +522,7 @@ agent_course_runs(
   created_at, finished_at null
 )
 index ix_agent_course_runs_map_user (map_id, requested_by, created_at)
-index ix_agent_course_runs_user_created (requested_by, created_at)       -- 쓰는 곳 없음(하루 상한은 #950에서 없앴다). 다음 agent 마이그레이션 때 지운다(#954)
+-- ix_agent_course_runs_user_created(requested_by, created_at)는 코스 하루 상한을 세던 인덱스라 0050에서 지웠다(#976, 상한은 #950에서 크레딧으로)
 unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queued','running')   -- 내 진행 중 run은 지도당 하나 → 409 COURSE_IN_PROGRESS
 ```
 
