@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Sequence
@@ -304,7 +305,8 @@ def find_by_address_term(db: Session, term: str) -> list[Candidate]:
     """주소 후보 조회(#1047): 영업 중 자체 DB 장소 중 주소에 도로명 앞부분(term)이 든 곳. idx_places_address_trgm(GIN)을 탄다 — 3자 이상이면
     인덱스, 두 글자 도로명은 붙여 쓴 도로명 전체(`명동8가길`)로 받는다. 같은 도로명이 ADDRESS_CANDIDATE_MAX_ROWS를 넘으면 유일성을 말할 수
     없어 빈 목록. 건물번호까지 같은지는 호출 쪽이 address_agreement로 거른다. 분류는 음식점·카페·관광지."""
-    escaped = term.replace("\\", "\\\\").replace("%", "\%").replace("_", "\_")
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    escaped = re.sub(r"(?<=[가-힣])(?=\d)|(?<=\d)(?=[가-힣])", "%", escaped)   # 정규화 키가 공백을 무시하므로 `명동8가길`은 `명동 8가길`도 읽는다
     lat, lng = _lat_lng()
     rows = db.execute(
         select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)

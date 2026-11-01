@@ -206,6 +206,15 @@ _PROVINCE = re.compile(
 _FLOOR_TAIL = re.compile(r"^(?:[\s,]*(?:지하|B)?\s*\d+\s*(?:층|호))+")   # 주소 뒤의 층·호 꼬리
 
 
+def branch_suffix(name: str) -> str | None:
+    """이름의 지점 접미사 낱말(정규형): 마지막 낱말이 「점」으로 끝나면 그 낱말(명동본점), 낱말이 하나뿐이면 끝의 본점·분점. 없으면 None."""
+    words = _PAREN.sub(" ", name).split()
+    if len(words) >= 2 and words[-1].endswith("점"):
+        return normalize_name(words[-1])
+    m = _BRANCH_NAME_SUFFIX.search(" ".join(words))
+    return m.group(0) if m and len(words) == 1 and len(words[0]) > len(m.group(0)) else None
+
+
 def strip_branch_suffix(name: str) -> str:
     """지점 접미사를 뗀 이름(비교 전용): 마지막 낱말이 「점」으로 끝나면(명동본점·성수점·안국역점) 그 낱말을 떼고, 낱말이 하나뿐이면
     끝의 본점·분점만 뗀다. 점이 아닌 이름은 그대로. 주소가 같다고 확인된 경우에만 쓴다 — 이름만으로는 다른 지점을 가르지 못한다."""
@@ -246,10 +255,40 @@ def address_search_term(address: str) -> str | None:
 ADDRESS_CANDIDATE_MAX_ROWS = 2000   # 같은 도로명이 이만큼 넘으면 유일성을 말할 수 없어 빈 목록
 
 
+_SIDO = {
+    "서울": "서울", "서울특별시": "서울", "부산": "부산", "부산광역시": "부산", "대구": "대구", "대구광역시": "대구", "인천": "인천", "인천광역시": "인천",
+    "광주": "광주", "광주광역시": "광주", "대전": "대전", "대전광역시": "대전", "울산": "울산", "울산광역시": "울산", "세종": "세종",
+    "세종특별자치시": "세종", "경기": "경기", "경기도": "경기", "강원": "강원", "강원도": "강원", "강원특별자치도": "강원",
+    "충북": "충북", "충청북도": "충북", "충남": "충남", "충청남도": "충남", "전북": "전북", "전라북도": "전북", "전북특별자치도": "전북",
+    "전남": "전남", "전라남도": "전남", "경북": "경북", "경상북도": "경북", "경남": "경남", "경상남도": "경남",
+    "제주": "제주", "제주도": "제주", "제주특별자치도": "제주",
+}
+
+
+def address_region(address: str | None) -> tuple[str | None, str | None]:
+    """주소 앞머리의 (시·도, 시·군·구). 시·도는 줄임말(서울/서울특별시, 충남/충청남도)을 같은 값으로 본다. 읽지 못하면 None."""
+    tokens = [t for t in _PAREN.sub(" ", address or "").split() if t != "대한민국"]
+    sido = _SIDO.get(tokens[0]) if tokens else None
+    if sido is None:
+        return None, None
+    gu = tokens[1] if len(tokens) > 1 and tokens[1][-1:] in ("시", "군", "구") else None
+    return sido, gu
+
+
+def same_region(a: str | None, b: str | None) -> bool:
+    """이름 근거가 없는 경로용: 시·도가 둘 다 읽히고 같아야 하고, 시·군·구가 둘 다 있으면 같아야 한다. 하나라도 읽을 수 없으면 False."""
+    (sido_a, gu_a), (sido_b, gu_b) = address_region(a), address_region(b)
+    if sido_a is None or sido_a != sido_b:
+        return False
+    return gu_a is None or gu_b is None or gu_a == gu_b
+
+
 def pick_address_candidate(address: str, candidates: Sequence[Candidate]) -> list[Candidate]:
     """같은 도로명주소(건물번호까지)에 영업 중인 후보가 정확히 한 곳일 때만 [그 곳](이름은 보지 않는다). 둘 이상(다중 입점)이거나
-    주소를 비교할 수 없으면 []. 자동 확정이 아니라 사람이 확인할 후보다."""
-    same = [c for c in candidates if c.category in OWN_CATEGORIES and address_agreement(address, c.address) is True]
+    주소를 비교할 수 없으면 []. 자동 확정이 아니라 사람이 확인할 후보다.
+    도로명 키는 시·구 이름을 버리므로 이름 근거가 없는 이 경로에서는 시·도(와 시·군·구)가 어긋나거나 입력의 시·도를 후보에서 확인할 수 없는
+    후보를 뺀다 — 서로 다른 지역의 같은 도로명·번호(대전 중앙로 48 ↔ 제주 중앙로 48)를 같은 곳으로 보지 않는다."""
+    same = [c for c in candidates if c.category in OWN_CATEGORIES and address_agreement(address, c.address) is True and same_region(address, c.address)]
     return same if len(same) == 1 else []
 
 
@@ -280,10 +319,14 @@ def pick_hint_match(name: str, address: str | None, candidates: Sequence[Candida
         agree = address_agreement(address, c.address)
         if agree is False:
             continue
+        mine, theirs = branch_suffix(name), branch_suffix(c.name)
+        if agree is True and mine and theirs and mine != theirs:
+            continue   # 둘 다 지점명이 있고 다르다(왕비집 명동본점 ↔ 왕비집 신세계점) — 같은 건물의 다른 지점이라 이름이 비슷해도 확정하지 않는다
         score = name_score(name, c.name)
-        if agree is True and score < NAME_MIN_SCORE:   # 주소가 같다고 확인된 때만 지점 접미사를 뗀 이름으로 겨룬다(왕비집 명동본점 ↔ 왕비집)
-            stripped = normalize_name(strip_branch_suffix(name))
-            if len(stripped) >= 2 and stripped == normalize_name(strip_branch_suffix(c.name)):
+        if agree is True and score < NAME_MIN_SCORE and (mine or theirs) and not (mine and theirs):
+            # 주소가 같다고 확인된 때만, 한쪽에만 지점 접미사가 있으면 그것을 뗀 이름이 다른 쪽과 같을 때 이름 일치로 본다(왕비집 명동본점 ↔ 왕비집)
+            base_in, base_db = normalize_name(strip_branch_suffix(name)), normalize_name(strip_branch_suffix(c.name))
+            if len(base_in) >= 2 and base_in == base_db:
                 score = 1.0
         if score >= NAME_MIN_SCORE or (agree is True and score >= ADDRESS_NAME_MIN_SCORE):
             rivals.append((score, agree is True, c))
