@@ -11,7 +11,7 @@ import { useMembersQuery } from '@/features/maps/queries'
 import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
-import { KAKAO_ROUTE_MAX, kakaoDirectionsUrl, move, routeSummary, type RouteDto, type ShortlistItemDto } from '@/features/shortlist/model'
+import { KAKAO_ROUTE_MAX, kakaoDirectionsUrl, move, routableCount, routeSummary, type RouteDto, type ShortlistItemDto } from '@/features/shortlist/model'
 import {
   useAddToShortlistMutation,
   useRemoveFromShortlistMutation,
@@ -45,7 +45,7 @@ export default function ShortlistTab() {
   // 확정 리스트 항목의 핀은 핀 목록 밖에서 온다 — 실시간 핀(#382)의 이름·좌표를 같은 값으로 얹는다.
   const items = (shortlist.data ?? []).map((i) => ({ ...i, pin: enrich(i.pin) }))
   // 서버는 좌표를 모르는 실시간 핀을 동선에서 뺀다 — 동선 계산 대상은 그 밖의 항목이다.
-  const routable = items.filter((i) => i.pin.source !== 'live').length
+  const routable = routableCount(items)
   const hasLive = routable < items.length
   const openPin = pins.find((p) => p.id === params.get('pin'))
 

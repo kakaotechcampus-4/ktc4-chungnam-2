@@ -68,7 +68,7 @@ export default function MapLayout() {
   const onMarkingTab = useMatch('/maps/:mapId') !== null
   const onShortlistTab = useMatch('/maps/:mapId/shortlist') !== null
   const onCourseTab = useMatch('/maps/:mapId/course') !== null
-  // AI 코스 탭은 확정 리스트로 짜는 곳이라 지도도 확정 탭과 같게 본다(확정 핀만, 핀을 누르면 확정 탭 상세).
+  // AI 코스 탭은 확정 리스트로 짜는 곳이라 지도도 확정 탭과 같게 본다(확정 핀만). 핀을 누르면 그 탭 안에서 상세를 연다.
   const onConfirmedTab = onShortlistTab || onCourseTab
   // 마커와 목록이 같은 필터를 본다. 확정·코스 탭은 확정 핀만, 다른 탭엔 필터가 없어 전부 보인다.
   const pins = onConfirmedTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters, memberCount)
@@ -354,7 +354,8 @@ export default function MapLayout() {
           setPanelOpen(true)
           // 검색 결과를 보다가 핀을 고르면 매달린 핑고는 들어간다.
           useSearchStore.getState().select(null)
-          navigate(`/maps/${mapId}${onConfirmedTab ? '/shortlist' : ''}?pin=${encodeURIComponent(pinId)}`)
+          // 코스 탭은 코스 탭 안에서 연다 — 확정 탭으로 넘어가면 코스 선이 사라진다(#1127 리뷰).
+          navigate(`/maps/${mapId}${onCourseTab ? '/course' : onShortlistTab ? '/shortlist' : ''}?pin=${encodeURIComponent(pinId)}`)
         }}
         onReady={onMapReady}
         onMovingChange={onMovingChange}

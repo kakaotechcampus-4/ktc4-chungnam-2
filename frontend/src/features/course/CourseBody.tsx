@@ -9,6 +9,7 @@ import { creditBlock } from '@/features/credits/model'
 import { usePinsQuery } from '@/features/map/queries'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { useMapQuery } from '@/features/maps/queries'
+import { routableCount } from '@/features/shortlist/model'
 import { useShortlistQuery } from '@/features/shortlist/queries'
 import Notice from '@/ui/Notice'
 import EmptyState from '@/ui/EmptyState'
@@ -36,9 +37,8 @@ export default function CourseBody({ mapId }: { mapId: string }) {
   const all = [...items.map((i) => enrich(i.pin)), ...pins]
   const names = pinNames(all)
   const points = pinPoints(all)
-  // 코스는 위치를 아는 확정 장소가 2곳부터다(실시간 핀은 좌표를 저장하지 않는다 — 확정 탭 「동선 보기」와 같은 기준).
-  // 서버 MIN_PLACES·intake.build_trip 과 같은 규칙의 복사본이다 — 서버가 값을 내리면(루트 검수 #1127 ② 4번) 그 값으로 바꾼다.
-  const routable = items.filter((i) => i.pin.source !== 'live').length
+  // 코스는 위치를 아는 확정 장소가 2곳부터다 — 확정 탭 「동선 보기」와 같은 함수로 센다.
+  const routable = routableCount(items)
 
   if (viewing) {
     return (
@@ -52,11 +52,14 @@ export default function CourseBody({ mapId }: { mapId: string }) {
   return <Entry mapId={mapId} routable={routable} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />
 }
 
+/** 코스는 위치를 아는 확정 장소가 2곳부터다 — 안내 화면 제목과 버튼 아래 이유가 같은 말이다. */
+const NOT_ENOUGH = '확정된 장소가 2곳부터 코스를 짤 수 있어요'
+
 /** 위치를 아는 확정 장소가 2곳 미만이면 입력 대신 이유와 확정 탭으로 가는 길을 보인다(예전에는 칩을 누르면 토스트로 알렸다). */
 function NotEnough({ mapId }: { mapId: string }) {
   return (
     <EmptyState
-      title="확정된 장소가 2곳부터 코스를 짤 수 있어요"
+      title={NOT_ENOUGH}
       action={
         <Link to={`/maps/${mapId}/shortlist`} className="btn-outline btn-md">
           확정된 장소 보기
@@ -72,7 +75,8 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
   const [text, setText] = useState('')
   const queryClient = useQueryClient()
   const map = useMapQuery(mapId).data
-  const latest = useLatestCourseQuery(mapId).data
+  const latestQuery = useLatestCourseQuery(mapId)
+  const latest = latestQuery.data
   const create = useCreateCourseMutation(mapId)
   const known = createErrorMessage(create.error)
 
@@ -93,6 +97,8 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
     onRun(latest.id)
   }
 
+  // 최근 코스를 받기 전에 안내 화면을 먼저 띄우면 받은 뒤 입력 화면으로 바뀌며 깜빡인다(#1127 리뷰).
+  if (routable < 2 && latestQuery.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
   if (routable < 2 && !latest) return <NotEnough mapId={mapId} />
 
   return (
@@ -127,6 +133,8 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
             {create.isPending ? '요청하는 중…' : '코스 짜기'}
           </button>
         </CreditGate>
+        {/* 최근 코스가 있어 입력 화면이 보이지만 장소가 모자라면, 회색 버튼 아래에 이유를 적는다(#1127 리뷰). */}
+        {routable < 2 && <p className="text-center text-xs text-ink-500">{NOT_ENOUGH}</p>}
         {latest && (
           <div className="flex justify-center">
             <button type="button" onClick={openLatest} className="btn-link text-sm">

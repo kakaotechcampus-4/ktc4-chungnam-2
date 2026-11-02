@@ -246,4 +246,35 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.queryByText('영업시간 확인됨')).not.toBeInTheDocument()
     expect(screen.getByText('영업시간을 모르는 1곳은 가게에 확인해 주세요')).toBeInTheDocument()
   })
+
+  it('확정 장소가 2곳 미만이어도 최근 코스가 있으면 입력 화면 — 회색 버튼 아래에 이유를 적는다(#1127 리뷰)', async () => {
+    resetScenario('happy-path') // 확정 리스트가 빈 상태로
+    const done = {
+      id: 'run_old', map_id: 'map_1', status: 'done', outcome: 'solved', failure_code: null, goals: [], unmatched: [],
+      steps: [], days: [], violations: [], checks: [], excluded: [], snapshot_at: '2026-10-21T00:00:00Z', stale: true,
+      created_at: '2026-10-21T00:00:00Z', finished_at: '2026-10-21T00:00:00Z',
+    }
+    server.use(http.get('*/maps/:mapId/courses/latest', () => HttpResponse.json(done)))
+    renderSheet()
+    expect(await screen.findByRole('button', { name: '코스 짜기' })).toBeDisabled()
+    expect(screen.getByText('확정된 장소가 2곳부터 코스를 짤 수 있어요')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '최근 코스 보기' })).toBeInTheDocument()
+  })
+
+  it('확정 장소가 모자랄 때 최근 코스를 받는 동안에는 안내 화면을 먼저 띄우지 않는다 — 「불러오는 중…」', async () => {
+    resetScenario('happy-path')
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    server.use(
+      http.get('*/maps/:mapId/courses/latest', async () => {
+        await gate
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderSheet()
+    expect(await screen.findByText('불러오는 중…')).toBeInTheDocument()
+    expect(screen.queryByText('확정된 장소가 2곳부터 코스를 짤 수 있어요')).not.toBeInTheDocument()
+    release()
+    expect(await screen.findByText('확정된 장소가 2곳부터 코스를 짤 수 있어요')).toBeInTheDocument()
+  })
 })
