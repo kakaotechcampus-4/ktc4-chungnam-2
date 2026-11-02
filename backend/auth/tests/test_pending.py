@@ -8,11 +8,15 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from auth import core, service
 from auth.models import User, UserIdentity
 from auth.testing import create_guest, create_kakao_user, session_cookie
+from notifications import api as notifications_api
+from places import api as places_api
+from places.models import Place, PlaceExternalIdVote
+from notifications.models import Notification
 from auth.tests.test_router import (  # noqa: F401 — kakao_configured는 픽스처
     _callback, _has_session_cookie, _mock_kakao_login, _start_login, kakao_configured,
 )
@@ -355,6 +359,25 @@ def test_purge_clears_the_guest_invite_token_too(db_session):
 
     row = db_session.get(User, "g1")
     assert row.guest_invite_token is None and row.last_seen_at is None
+
+
+def test_purge_anonymizes_the_actor_name_in_other_peoples_notifications(db_session):
+    """탈퇴 정리는 남의 알림에 복사된 이 사람의 이름도 다시 만든다(#857). 살아 있는 계정의 행위자 알림은 그대로."""
+    create_kakao_user(db_session, "gone", provider_user_id="pg", display_name="영희", last_seen_at=NOW, deleted_at=NOW)
+    create_kakao_user(db_session, "live", provider_user_id="pl", display_name="철수")
+    msg = notifications_api.compose_message("member_joined", actor_name="영희")
+    gone = notifications_api.notify(db_session, user_id="other", type="member_joined", map_id="m1", map_title="부산",
+                                    message=msg, actor_id="gone")
+    kept = notifications_api.notify(db_session, user_id="other", type="member_joined", map_id="m1", map_title="부산",
+                                    message=notifications_api.compose_message("member_joined", actor_name="철수"),
+                                    actor_id="live")
+
+    service.purge_withdrawn_user(db_session, user_id="gone")
+    service.purge_withdrawn_user(db_session, user_id="live")   # 살아 있는 계정은 건드리지 않는다
+
+    db_session.expire_all()
+    assert db_session.get(Notification, gone).message == "탈퇴한 구성원님이 지도에 들어왔어요"
+    assert db_session.get(Notification, kept).message == "철수님이 지도에 들어왔어요"
 
 
 def test_purge_leaves_a_living_account_alone(db_session):
@@ -814,3 +837,87 @@ def test_account_purged_by_another_run_while_waiting_for_the_lock_is_skipped_and
             cleanup.commit()
 
     assert result == {"count": 1}   # xa1은 앞선 실행이 정리했다 — 건너뛰고 세지 않는다. xa2만 센다
+
+
+# ---- 외부 장소 번호표 확인 표(#1062) ----
+
+_NID = "naver:1412566798"
+
+
+def _vote(db_session, user_id, place_id):
+    places_api.record_external_id("naver", _NID, place_id, source="user", voter_hash=places_api.voter_hash(user_id), db=db_session)
+
+
+def _votes_of(db_session, user_id):
+    return db_session.execute(
+        select(func.count()).select_from(PlaceExternalIdVote).where(PlaceExternalIdVote.voter_hash == places_api.voter_hash(user_id))
+    ).scalar_one()
+
+
+def _voted_world(db_session, *, ago=timedelta(days=8)):
+    """탈퇴한 old, 살아 있는 live가 같은 번호에 한 표씩 던진 상태. 번호표는 두 표로 신뢰된다."""
+    place = Place(source="permit", source_id="v1", name="성수 칼국수", category="음식점", address="서울 성동구 성수이로 100",
+                  status="open", geom=func.ST_SetSRID(func.ST_MakePoint(127.05, 37.54), 4326))
+    db_session.add(place)
+    db_session.flush()
+    pid = str(place.id)
+    _withdrawn_account(db_session, ago=ago)
+    create_kakao_user(db_session, "live", provider_user_id="pl", display_name="철수")
+    _vote(db_session, "old", pid)
+    _vote(db_session, "live", pid)
+    return pid
+
+
+def test_votes_of_a_withdrawn_account_are_kept_until_the_final_purge(db_session):
+    pid = _voted_world(db_session)
+    create_kakao_user(db_session, "fresh", provider_user_id="pf", display_name="영희")
+    _vote(db_session, "fresh", pid)
+
+    service.withdraw_user(db_session, user_id="fresh")
+    service.purge_withdrawn_accounts(db_session, now=datetime.now(timezone.utc))
+
+    assert _votes_of(db_session, "fresh") == 1   # 복구 기간 안 — 표를 지우지 않는다
+
+
+def test_final_purge_deletes_only_that_users_votes_and_is_idempotent(db_session):
+    pid = _voted_world(db_session)
+    now = datetime.now(timezone.utc)
+
+    assert service.purge_withdrawn_accounts(db_session, now=now) == 1
+    assert service.purge_withdrawn_accounts(db_session, now=now) == 0   # 두 번째는 할 일이 없다
+    service.purge_withdrawn_user(db_session, user_id="old")             # 직접 다시 불러도 같은 결과
+
+    assert _votes_of(db_session, "old") == 0
+    assert _votes_of(db_session, "live") == 1   # 다른 사용자 표는 남는다
+    assert places_api.purge_external_id_votes(places_api.voter_hash("old"), db=db_session) == 0
+    # 번호표 행은 공용이라 남고, 2표가 1표가 되면 자동 신뢰가 풀린다
+    assert places_api.own_places_by_external_id(_NID, db=db_session) == []
+    assert db_session.execute(select(func.count()).select_from(PlaceExternalIdVote)).scalar_one() == 1
+    assert pid
+
+
+def test_purge_leaves_a_living_accounts_votes_alone(db_session):
+    _voted_world(db_session)
+
+    service.purge_withdrawn_user(db_session, user_id="live")   # 살아 있는 계정은 건드리지 않는다
+
+    assert _votes_of(db_session, "live") == 1
+
+
+def test_restart_also_purges_the_votes(app_client, db_session, monkeypatch, kakao_configured):
+    _voted_world(db_session, ago=timedelta(hours=1))   # restart는 복구 기간 안에서 고른다 — 7일을 기다리지 않고 즉시 정리
+    _login_to_pending(app_client, monkeypatch)
+
+    assert _choose(app_client, "restart").status_code == 201
+
+    assert _votes_of(db_session, "old") == 0
+    assert _votes_of(db_session, "live") == 1
+
+
+def test_purge_logs_no_user_id_or_voter_hash(db_session, caplog):
+    _voted_world(db_session)
+
+    with caplog.at_level("DEBUG"):
+        service.purge_withdrawn_accounts(db_session, now=datetime.now(timezone.utc))
+
+    assert places_api.voter_hash("old") not in caplog.text and "old" not in caplog.text.split()

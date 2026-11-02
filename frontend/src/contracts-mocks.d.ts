@@ -12,15 +12,18 @@
  */
 
 declare module '@pingo/contracts/mocks/scenarios' {
-  /** contracts/mocks/scenarios.ts 의 ScenarioName 과 같아야 한다. 늘어나면 여기도 추가. */
+  /**
+   * contracts/mocks/scenarios.ts 의 ScenarioName 에서 화면이 쓰는 것. 늘어나면 여기도 추가.
+   */
   export type ScenarioName =
     | 'empty'
     | 'happy-path'
     | 'no-results'
-    | 'retry-limit'
     | 'region-conflict'
     | 'guest'
     | 'withdrawn-relogin'
+    | 'credits-empty'
+    | 'credits-full'
 }
 
 declare module '@pingo/contracts/mocks/browser' {
@@ -49,6 +52,8 @@ declare module '@pingo/contracts/mocks/node' {
     use(...handlers: import('msw').RequestHandler[]): void
     events: {
       on(type: 'request:start', listener: (args: { request: Request }) => void): void
+      /** 목 서버가 돌려준 응답을 본다(광고 세션 id 처럼 응답에서만 아는 값, #1039). response 는 clone() 해서 읽는다. */
+      on(type: 'response:mocked', listener: (args: { request: Request; response: Response }) => void): void
       removeAllListeners(): void
     }
   }

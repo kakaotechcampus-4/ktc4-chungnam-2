@@ -26,6 +26,7 @@ class Candidate:
     priority: tuple[str, ...]              # 이 후보를 만든 목표 순서
     focus: Optional[str] = None            # 이 목표를 다른 목표보다 먼저 지킨 "집중" 후보(None이면 목표 수를 최대로 지킨 후보)
     walk_infeasible: bool = False          # 확정 위반이 남았고, 도보·확정 휴무를 모두 지키는 코스가 없다는 것이 증명됨(못 찾은 게 아니라 없다)
+    balanced: bool = False                 # 요청 목표 없이 기준선(이동, 날짜 균형)으로 짠 비교용 후보(#1131 C안)
 
 
 def look_up_unknowns(state: State, gateway: OpeningHoursGateway) -> State:
@@ -104,6 +105,8 @@ def optimize(
     """(조회와 고정을 반영한 상태, 후보 1~3개). 후보는 목표가 서로 갈리게 만든다: 우선순위대로 목표 수를 최대로 지키는 후보 하나와,
     목표 하나를 맨 앞에 두고 다른 목표보다 먼저 지키는 "집중" 후보(우선순위 앞쪽 목표 순서로 최대 CANDIDATES_MAX-1개).
     목표별 met 벡터가 같은 후보는 합치고(먼저 만든 쪽을 남김), 시작보다 확정 위반이 늘어난 코스는 내지 않는다.
+    목표가 있는데 코스가 다른 후보가 하나뿐이면 목표 없이 기준선으로 짠 "균형" 후보를 하나 더 낸다(#1131 C안 — 얻고 잃는 것을 견줄 수
+    있게). 코스가 같으면 내지 않는다(지어내지 않는다). 모두 CANDIDATES_MAX 안이다.
     상태의 course는 시작 코스 그대로다(후보를 고르는 것은 지휘 쪽) — 단 조회·고정 반영은 상태에 남는다."""
     start = apply_locks(look_up_unknowns(state, gateway), locks or {})
     ceiling = core.hard_score(start.violations)[0]
@@ -123,4 +126,8 @@ def optimize(
     if not out:                                   # 후보가 모두 걸러진 경우 — 시작 코스에서 한 번 올라간다
         done, proven = climb_and_rebuild(start)
         out.append(Candidate("c1", done.course, done.violations, (), walk_infeasible=proven))
+    if start.goals and len({c.course for c in out}) < 2 and len(out) < CANDIDATES_MAX:
+        done, proven = climb_and_rebuild(replace(start, goals=(), priority=(), strict_priority=False))
+        if core.hard_score(done.violations)[0] <= ceiling and all(done.course != c.course for c in out):
+            out.append(Candidate(f"c{len(out) + 1}", done.course, done.violations, (), walk_infeasible=proven, balanced=True))
     return replace(start, priority=tuple(priority), strict_priority=False), tuple(out)

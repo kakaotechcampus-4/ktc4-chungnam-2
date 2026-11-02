@@ -5,6 +5,8 @@ M0는 범위 B(순서 + 이동시간 검증)만 구현한다. 범위 A(시간 �
 
 from datetime import timedelta
 
+from common import categories
+
 COURSE_MODE = "B"
 MIN_PLACES, MAX_PLACES = 2, 30
 
@@ -43,6 +45,9 @@ THOUGHT_MAX_CHARS = 120
 
 # 부드러운 목표
 MEALS_PER_DAY_MAX = 2
+# 하루 식사 장소의 최소 수(선호). 식당 수가 날짜 수 이상이면 날마다 이만큼, 모자라면 가능한 많은 날에 이만큼 둔다(core.meal_cover).
+# 시간 배정을 하지 않아 아침·점심·저녁을 나누지 않고 하루 식사 장소 수로 본다. 위반이 아니라 선호이고 장소를 더하거나 빼지 않는다(#918).
+MEALS_PER_DAY_MIN = 1
 MEAL_CATEGORY = "음식점"
 CAFE_CATEGORY = "카페"
 TOUR_CATEGORY = "관광지"
@@ -55,6 +60,17 @@ FORBIDDEN_PHRASES = ("빼세요", "삭제하세요", "확정하세요", "여기�
 REQUEST_TEXT_MAX_CHARS = 100
 GOALS_MAX = 4
 INDOOR_LABEL = "is_indoor"
+# 지도 근거 → 지도 목표 후보(#1131 B안). 우리 조건 요약(agent_reason_summaries)의 (fact_key, 원함 여부) → 목표 종류. 키는
+# docs/constraints.md 관광지 라벨 표의 이름이다. 날은 모델이 고른다. 알러지 같은 안전 조건은 키가 없어 여기 오지 않는다.
+# 확정 장소에 야경 라벨(NIGHT_LABEL)이 있어도 night_end 후보다(goals.map_candidates). 대응을 바꾸려면 이 표만 고친다.
+MAP_GOAL_KEYS: dict[tuple[str, bool], str] = {
+    ("accessible", True): "daily_walk_low",
+    ("walkable", False): "daily_walk_low",
+    ("hiking", False): "daily_walk_low",
+    (INDOOR_LABEL, True): "day_indoor",
+    (NIGHT_LABEL, True): "night_end",
+}
+MAP_SUMMARY_SECTIONS = ("must_keep", "common_prefs")    # 요약에서 읽는 칸 — 갈린 선호(split_prefs)와 키 없는 칸은 목표가 되지 않는다
 INDOOR_MET_RATIO = 0.7             # day_indoor: 라벨을 아는 장소 중 실내 비율이 이 이상이면 충족
 # day_has(day, tag): 그날 코스에 그 라벨이 참인 장소가 하나 이상. tag → (장소 라벨 키, 화면에 쓰는 말). 전부 docs/constraints.md 관광지 라벨이고
 # 서비스가 Place.labels로 읽는 키(confidence=known, value=true)다. 모델은 이 tag 이름만 고르고, 이 밖의 말은 unmatched다.
@@ -67,16 +83,23 @@ DAY_HAS_TAGS: dict[str, tuple[str, str]] = {
     "walkable": ("walkable", "산책"),
     "kid_friendly": ("kid_friendly", "아이와 가기 좋은"),
     "heritage": ("heritage_tour", "고궁·유적"),
+    "korean_food": ("cuisine_korean", "한식"),
 }
+# day_has의 카테고리 종류(#1094): 그날 코스에 그 카테고리 장소가 하나 이상. tag → (카테고리, 화면에 쓰는 말). 카테고리 이름은
+# common/categories.py의 것이어야 하고(아래 검사), tag 이름은 라벨 tag와 겹치지 않는다. 카테고리는 핀마다 항상 알아 "모름"이 없다.
+DAY_HAS_CATEGORY_TAGS: dict[str, tuple[str, str]] = {
+    "cafe": ("카페", "카페"),
+    "restaurant": ("음식점", "음식점"),
+}
+assert not set(DAY_HAS_CATEGORY_TAGS) & set(DAY_HAS_TAGS)
+assert all(c in categories.recommendable() for c, _ in DAY_HAS_CATEGORY_TAGS.values())
 DAILY_WALK_LOW_MAX_MIN = 60        # daily_walk_low: 하루 도보 합계의 최대가 이 이하면 충족
 # 지휘 턴(pivot 3절)
 DIRECT_MAX_TURNS = 5
 CANDIDATES_MAX = 3
-ASK_MAX = 2
 CLIMB_MAX_STEPS = 60               # optimize 한 번이 채택하는 수리의 최대 수
 
 # 서비스 경로(AI 코스 짜기 API, #334 — 팀 결정 #580 전 브랜치 초안). 전부 초안이다
-COURSE_DAILY_LIMIT = 5             # 사용자당 하루 요청 수. 하루 = KST 자정에 초기화
 COURSE_DAYS_MAX = 14               # 한 번에 짜는 여행 날짜 수 상한(지도 기간이 더 길면 앞 14일만)
 MEMBER_WALK_MIN, MEMBER_WALK_MAX = 10, 480   # member_constraints.daily_walk_max의 값(분) 범위
 EXCLUDED_OVER_LIMIT = "OVER_LIMIT"

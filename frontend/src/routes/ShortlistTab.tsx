@@ -1,10 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
-import CourseMapLegend from '@/features/course/CourseMapLegend'
-import CourseSheet from '@/features/course/CourseSheet'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import type { Pin } from '@/features/map/model'
@@ -13,7 +11,7 @@ import { useMembersQuery } from '@/features/maps/queries'
 import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
-import { KAKAO_ROUTE_MAX, kakaoDirectionsUrl, move, routeSummary, type RouteDto, type ShortlistItemDto } from '@/features/shortlist/model'
+import { KAKAO_ROUTE_MAX, kakaoDirectionsUrl, move, routableCount, routeSummary, type RouteDto, type ShortlistItemDto } from '@/features/shortlist/model'
 import {
   useAddToShortlistMutation,
   useRemoveFromShortlistMutation,
@@ -43,12 +41,11 @@ export default function ShortlistTab() {
   const add = useAddToShortlistMutation(mapId)
   const reorder = useReorderShortlistMutation(mapId)
   const [params, setParams] = useSearchParams()
-  const [courseOpen, setCourseOpen] = useState(false)
   const enrich = useEnrichPin()
   // 확정 리스트 항목의 핀은 핀 목록 밖에서 온다 — 실시간 핀(#382)의 이름·좌표를 같은 값으로 얹는다.
   const items = (shortlist.data ?? []).map((i) => ({ ...i, pin: enrich(i.pin) }))
   // 서버는 좌표를 모르는 실시간 핀을 동선에서 뺀다 — 동선 계산 대상은 그 밖의 항목이다.
-  const routable = items.filter((i) => i.pin.source !== 'live').length
+  const routable = routableCount(items)
   const hasLive = routable < items.length
   const openPin = pins.find((p) => p.id === params.get('pin'))
 
@@ -73,10 +70,6 @@ export default function ShortlistTab() {
     setRouteOn(!routeOn)
   }
 
-  function openCourse() {
-    if (routable < 2) return showToast('위치를 아는 장소가 2곳부터 코스를 짤 수 있어요')
-    setCourseOpen(true)
-  }
 
   function removeItem(item: ShortlistItemDto) {
     const name = item.pin.place_name ?? '이 장소'
@@ -119,10 +112,7 @@ export default function ShortlistTab() {
             </div>
             {items.length > 0 && (
               <div className="flex shrink-0 gap-2">
-                {/* 2곳 미만이면 비활성으로 보이되 누르면 이유를 토스트로 알린다(동선 보기와 같다). */}
-                <button type="button" aria-disabled={routable < 2} onClick={openCourse} className="chip">
-                  AI 코스 짜기
-                </button>
+                {/* AI 코스 짜기는 따로 탭이다(「AI 코스」) — 여기엔 「동선 보기」만 둔다. */}
                 <button
                   type="button"
                   aria-pressed={routeOn}
@@ -135,7 +125,6 @@ export default function ShortlistTab() {
               </div>
             )}
           </div>
-          <CourseMapLegend mapId={mapId} />
         </>
       }
     >
@@ -162,11 +151,17 @@ export default function ShortlistTab() {
           items={items}
           onOpen={setOpenPin}
           onRemove={removeItem}
-          onReorder={(from, to) => reorder.mutate(move(items, from, to), { onError: () => showToast('순서를 바꾸지 못했어요') })}
+          onReorder={(from, to) => {
+            const name = items[from].pin.place_name ?? '이 장소'
+            reorder.mutate(move(items, from, to), {
+              // 화면을 보지 않는 사람에게 옮긴 결과를 알림 영역(토스트)으로 알린다(#959).
+              onSuccess: () => showToast(`${name}${josa(name, '을', '를')} ${to + 1}번째로 옮겼어요`),
+              onError: () => showToast('순서를 바꾸지 못했어요'),
+            })
+          }}
         />
       )}
       {items.length > 0 && <ShortlistExport mapId={mapId} />}
-      {courseOpen && <CourseSheet mapId={mapId} onClose={() => setCourseOpen(false)} />}
     </TabSheet>
   )
 }

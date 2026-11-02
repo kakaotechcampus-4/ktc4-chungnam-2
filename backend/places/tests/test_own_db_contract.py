@@ -9,7 +9,7 @@ from places.matching import Candidate, name_score, normalize_name, pick_match
 from places.schemas import Area, FactLabel, PlaceHint, PlaceHours, PlaceInfo, PlaceMatch, PlaceRef
 from places.testing import FakePlaces, sample_id
 
-FUNCS = ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "count_curated", "get_facts", "get_hours", "get_week_open_status", "get_open_status_on_weekdays")
+FUNCS = ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "count_curated", "get_facts", "get_hours", "get_week_open_status", "get_open_status_on_weekdays", "match_by_name_address", "match_address_candidates", "record_external_id", "purge_external_id_votes")
 
 
 @pytest.fixture()
@@ -165,6 +165,13 @@ def test_search_nearby_own_excludes_closed_and_other_categories(fake):
 def test_search_nearby_own_has_no_lodging_or_etc(fake):
     area = [Area(37.5445, 127.0561, 5000)]
     assert fake.search_nearby_own("숙소", area) == [] and fake.search_nearby_own("기타", area) == []
+
+
+def test_search_nearby_own_recommendable_only_keeps_curated_places(fake):
+    area = [Area(37.5445, 127.0561, 5000)]
+    everyone = {r.place_id for r in fake.search_nearby_own("음식점", area)}
+    curated = {r.place_id for r in fake.search_nearby_own("음식점", area, recommendable_only=True)}
+    assert curated <= everyone and curated == {r.place_id for r in fake.rows if r.curated and r.place_id in everyone}
 
 
 def test_search_nearby_own_multiple_areas_is_union(fake):

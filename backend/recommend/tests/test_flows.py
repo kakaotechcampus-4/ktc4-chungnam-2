@@ -4,6 +4,7 @@
 
 import threading
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -23,10 +24,11 @@ from recommend.models import Candidate, Exclusion, RecommendRun, Region
 from recommend.models import EvidenceLine as EvidenceLineRow
 from places.schemas import FactLabel, PlaceInfo
 from recommend.deps import DevEvidencePlanGateway
-from recommend.ports import PlaceStub
+from recommend.ports import Circle, PlaceStub
 
 # ② 대역 — 테스트가 monkeypatch.setattr(PLANNER, "plan_evidence", ...)로 바꿔 끼운다(#219). 기본은 dev 통과 스텁.
 PLANNER = DevEvidencePlanGateway()
+OLD_ATTEMPT_LIMIT = 10   # 예전 추천 횟수 상한(#558). 상한은 크레딧으로 바뀌어 없다(#432, #949) — 넘어도 통과하는지 보려고 남긴다
 
 
 def _make_run(db_session, **overrides):
@@ -166,6 +168,59 @@ def test_is_open_removes_only_places_closed_every_trip_day_and_counts_them_in_th
     assert open_check("closed_one")["confidence"] == "known" and open_check("closed_one")["needs_check"] is False
     assert open_check("no_row")["needs_check"] is True      # 행이 없으면 통과 + 「영업 여부 확인 필요」
     assert open_check("no_info")["needs_check"] is False    # closed_days에 없는 요일은 영업한다(places 규칙)
+
+
+class _FakePlaceSearchWithAddress(_FakePlaceSearch):
+    """get_places가 주소를 싣는 가짜 — 시·도 제한(#1055)은 이 주소를 places.api.sido로 판정한다."""
+
+    def __init__(self, places, addresses):
+        super().__init__(places)
+        self._addresses = addresses
+
+    def get_places(self, place_ids):
+        return {pid: replace(info, address=self._addresses.get(pid)) for pid, info in super().get_places(place_ids).items()}
+
+
+def _run_with_sido(db_session, monkeypatch, *, place_rows, map_region_center=None):
+    """기본 지역 중심은 (35.0, 129.0). 반경 안 후보 3곳: busan(부산 주소)·gimhae(경남 주소)·no_addr(주소 없음).
+    여행 지역의 시·도는 FakePlaces.sido_at이 place_rows 주소로 정한다."""
+    from places.testing import FakePlaces
+
+    FakePlaces(rows=place_rows).install(monkeypatch)
+    monkeypatch.setattr(flows.maps_api, "get_map_region_center", lambda db, map_id: map_region_center)
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    places = [PlaceStub(place_id=pid, lat=35.0005, lng=129.0005) for pid in ("busan", "gimhae", "no_addr")]
+    search = _FakePlaceSearchWithAddress(places, {"busan": "부산광역시 강서구 대저동 1", "gimhae": "경상남도 김해시 대동면 1"})
+    flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=_FakePlaceFacts())
+    db_session.refresh(run)
+    removed = {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"]
+    return {c.place_id for c in service.list_candidates(db_session, str(run.id))}, removed
+
+
+def _sido_row(key, lat, lng, address):
+    from places.testing import _Row
+
+    return _Row(key, key, lat, lng, "음식점", address=address)
+
+
+def test_sido_filter_uses_pin_center_without_map_region_and_counts_other_sido_as_out_of_radius(db_session, monkeypatch):
+    kept, removed = _run_with_sido(db_session, monkeypatch, place_rows=[_sido_row("hub", 35.0, 129.0, "부산 강서구 대저동")])
+    assert kept == {"busan", "no_addr"}   # 다른 시·도(경남)는 빠지고, 주소가 없으면 거르지 않는다
+    assert removed == 1
+
+
+def test_sido_filter_prefers_map_region_center(db_session, monkeypatch):
+    rows = [_sido_row("hub", 35.0, 129.0, "부산 강서구 대저동"), _sido_row("far", 35.5, 128.5, "경상남도 밀양시 내일동")]
+    kept, removed = _run_with_sido(db_session, monkeypatch, place_rows=rows, map_region_center=(35.5, 128.5))
+    assert kept == {"gimhae", "no_addr"}
+    assert removed == 1
+
+
+def test_sido_filter_removes_nobody_when_trip_sido_unknown(db_session, monkeypatch):
+    kept, removed = _run_with_sido(db_session, monkeypatch, place_rows=[])   # 근처에 주소 있는 장소가 없어 sido_at이 None
+    assert kept == {"busan", "gimhae", "no_addr"}
+    assert removed == 0
 
 
 def test_is_open_without_hours_lookup_removes_nobody(db_session):
@@ -546,7 +601,8 @@ def test_create_run_succeeds_assembles_evidence_and_default_region(db_session):
     assert regions[0].confirmed is True
     assert regions[0].center_lat == pytest.approx(35.2)
     assert regions[0].center_lng == pytest.approx(129.3)
-    assert regions[0].radius_m == flows.DEFAULT_REGION_RADIUS_M
+    assert regions[0].radius_m == core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)
+    assert run.default_radius_walk_min == core.DEFAULT_RADIUS_WALK_MIN
 
 
 def _no_plan_call(raw):
@@ -809,15 +865,15 @@ def test_create_run_with_only_live_pins_has_no_anchor_so_not_ready(db_session):
     assert exc_info.value.code == "NOT_READY"
 
 
-def test_create_run_raises_retry_limit_when_already_exhausted(db_session):
+def test_create_run_passes_after_the_old_attempt_limit(db_session):
+    """추천 횟수 상한(10회)은 크레딧으로 바뀌어 없다(#432, #949) — 11번째 추천도 429 없이 만들어지고 번호는 이어진다."""
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="카페")
     _react(db_session, pin, user_id="user_1", type="like")
     _make_run(db_session, map_id="map_1", requested_by="user_1", category="음식점", attempt_no=10)
 
-    with pytest.raises(AppError) as exc_info:
-        flows.create_run(db_session, map_id="map_1", category="카페", requested_by="user_1", evidence_planner=PLANNER)  # 카테고리 무관(#31)
-    assert exc_info.value.code == "RETRY_LIMIT"
+    run = flows.create_run(db_session, map_id="map_1", category="카페", requested_by="user_1", evidence_planner=PLANNER)
+    assert run.attempt_no == 11   # 번호는 카테고리 무관 개인 단위로 계속 매긴다(#31, #811)
 
 
 # ---------- evidence ----------
@@ -1226,26 +1282,6 @@ def test_create_run_leaves_no_run_row_when_planning_fails(db_session, monkeypatc
     assert db_session.execute(select(func.count()).select_from(RecommendRun)).scalar_one() == 0
 
 
-def test_create_run_rechecks_retry_limit_after_planning(db_session, monkeypatch):
-    """#208 — LLM 대기 중 동시 요청이 상한(5)에 도달시키면 INSERT 직전 재검사가 429로 막는다."""
-    _make_members(db_session, user_ids=["user_1"])
-    pin = _make_pin(db_session, category="음식점")
-    _react(db_session, pin, user_id="user_1", type="against", reason_text="너무 매워요")
-    real_plan = PLANNER.plan_evidence
-
-    def plan_while_other_request_hits_limit(lines):
-        _make_run(db_session, map_id="map_1", requested_by="user_1", category="카페", attempt_no=10)
-        return real_plan(lines)
-
-    monkeypatch.setattr(PLANNER, "plan_evidence", plan_while_other_request_hits_limit)
-    with pytest.raises(AppError) as exc_info:
-        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
-    assert exc_info.value.code == "RETRY_LIMIT"
-    assert db_session.execute(
-        select(func.count()).select_from(RecommendRun).where(RecommendRun.category == "음식점")
-    ).scalar_one() == 0
-
-
 def test_execute_run_with_no_candidates_then_get_result_is_no_results(db_session):
     run = _make_run(db_session, status="collecting_evidence")
     _make_region(db_session, run)
@@ -1619,38 +1655,33 @@ def test_retry_run_excludes_previous_unpublished_candidates_and_bumps_attempt(db
     assert published.place_id in remaining_place_ids  # 게시된 후보는 그대로 유지
 
 
-def test_retry_run_raises_retry_limit_when_exhausted(db_session):
+def test_retry_run_passes_after_the_old_attempt_limit(db_session):
+    """「다시 찾기」도 횟수 상한이 없다(#949). 모델을 부르지 않아 크레딧도 쓰지 않는다(#432 D5)."""
     run = _make_run(db_session, status="done", attempt_no=10)
     _make_region(db_session, run)
-    with pytest.raises(AppError) as exc_info:
-        flows.retry_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts())
-    assert exc_info.value.code == "RETRY_LIMIT"
+    updated = flows.retry_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts())
+    assert updated.attempt_no == 11
 
 
-def test_retry_run_checks_requesters_true_max_not_this_runs_own_attempt_no(db_session):
-    """루트 수정(2026-09-23) — #31은 개인 단위 공유 카운터인데, retry_run이 이 run 자신의
-    attempt_no만 봐서, 오래된(attempt_no가 낮은) run으로 retry를 걸면 상한을 우회할 수 있었다
-    (Antigravity 검수로 발견). 같은 사람의 다른 run이 이미 상한(5)에 도달했으면, 더 오래된
-    run(attempt_no=1)으로 retry를 시도해도 막혀야 한다."""
+def test_retry_run_numbers_from_the_requesters_true_max_not_this_runs_own_attempt_no(db_session):
+    """#31 번호는 개인 단위 공유 카운터다 — 오래된(attempt_no가 낮은) run으로 retry해도 그 사람의 최댓값 다음 번호를 쓴다."""
     old_run = _make_run(db_session, status="done", attempt_no=1, category="음식점")
     _make_region(db_session, old_run, radius_m=1000)
     _make_run(db_session, status="done", attempt_no=10, category="카페")  # 같은 사람의 최신 run
 
-    with pytest.raises(AppError) as exc_info:
-        flows.retry_run(
-            db_session, run_id=str(old_run.id),
-            place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts(),
-        )
-    assert exc_info.value.code == "RETRY_LIMIT"
+    updated = flows.retry_run(
+        db_session, run_id=str(old_run.id), place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts(),
+    )
+    assert updated.attempt_no == 11
 
 
-# ---------- #558 — 시도 상한 10회, 추천 가능 아님 제거 ----------
+# ---------- #558 — 시도 번호(상한은 #949에서 없앴다), 추천 가능 아님 제거 ----------
 
 def _try_create(db_session, user_id):
     return flows.create_run(db_session, map_id="map_1", category="카페", requested_by=user_id, evidence_planner=PLANNER)
 
 
-def test_create_run_allows_tenth_attempt_and_blocks_eleventh_without_touching_others(db_session):
+def test_create_run_keeps_numbering_past_ten_without_touching_others(db_session):
     _make_members(db_session, user_ids=["user_1", "user_2"])
     pin = _make_pin(db_session, category="카페")
     _react(db_session, pin, user_id="user_1", type="like")
@@ -1658,36 +1689,27 @@ def test_create_run_allows_tenth_attempt_and_blocks_eleventh_without_touching_ot
     _make_run(db_session, requested_by="user_1", category="음식점", attempt_no=9)
     _make_run(db_session, requested_by="user_2", category="음식점", attempt_no=10)
 
-    assert _try_create(db_session, "user_1").attempt_no == 10   # 9회까지 한 사람의 10번째는 통과
-    with pytest.raises(AppError) as exc_info:                   # 이제 10회를 채웠으니 다음은 429
-        _try_create(db_session, "user_1")
-    assert exc_info.value.code == "RETRY_LIMIT"
-    assert exc_info.value.detail == {"attempt_no": 10, "attempt_limit": 10}
-    with pytest.raises(AppError):                               # user_2는 자기 10회로 막힘
-        _try_create(db_session, "user_2")
+    assert _try_create(db_session, "user_1").attempt_no == 10
+    assert _try_create(db_session, "user_1").attempt_no == 11   # 옛 상한(10)을 넘어도 429가 아니다(#949)
+    assert _try_create(db_session, "user_2").attempt_no == 11   # 사람마다 따로 센다
 
 
-def test_other_members_attempts_do_not_count_toward_my_limit(db_session):
+def test_other_members_attempts_do_not_count_toward_my_numbering(db_session):
     _make_members(db_session, user_ids=["user_1", "user_2"])
     pin = _make_pin(db_session, category="카페")
     _react(db_session, pin, user_id="user_2", type="like")
-    _make_run(db_session, requested_by="user_1", category="음식점", attempt_no=10)  # 팀 합산 상한은 없다
+    _make_run(db_session, requested_by="user_1", category="음식점", attempt_no=10)  # 번호는 팀 합산이 아니다
 
     assert _try_create(db_session, "user_2").attempt_no == 1
 
 
-def test_run_history_carries_attempt_limit(db_session):
-    _make_run(db_session, attempt_no=3)
-    assert [h.attempt_limit for h in _history(db_session)] == [10]
-
-
-def test_execute_run_drops_not_recommendable_places_and_shows_funnel_step(db_session):
+def test_the_funnel_has_no_not_recommendable_stage_and_radius_counts_only_the_pool(db_session):
+    """후보 풀은 처음부터 정예 장소다(#913) — 깔때기에 「추천 가능 아님 제거」가 없고, 「반경 밖 제거」는 풀(정예) 중 반경 밖 수다."""
     run = _make_run(db_session, status="collecting_evidence", category="카페")
     _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
     places = [
         PlaceStub(place_id="ok_place", lat=35.0005, lng=129.0005),
-        PlaceStub(place_id="no_rec_a", lat=35.0005, lng=129.0006, can_recommend=False),
-        PlaceStub(place_id="no_rec_b", lat=35.0004, lng=129.0004, can_recommend=False),
+        PlaceStub(place_id="far_place", lat=40.0, lng=135.0),   # 풀(정예)에 있지만 반경 밖
     ]
 
     updated = flows.execute_run(
@@ -1696,21 +1718,39 @@ def test_execute_run_drops_not_recommendable_places_and_shows_funnel_step(db_ses
 
     assert [c.place_id for c in service.list_candidates(db_session, str(run.id))] == ["ok_place"]
     labels = [entry["label"] for entry in updated.last_funnel]
-    assert labels.index("추천 가능 아님 제거") == labels.index("영업 종료 제거") + 1
-    assert {e["label"]: e["removed_count"] for e in updated.last_funnel}["추천 가능 아님 제거"] == 2
+    assert "추천 가능 아님 제거" not in labels and labels == [label for _, label in core.FUNNEL_STAGES]
+    assert {e["label"]: e["removed_count"] for e in updated.last_funnel}["반경 밖 제거"] == 1
 
 
-def test_execute_run_with_only_not_recommendable_places_shows_zero_results(db_session):
+def test_an_empty_pool_shows_zero_results_without_relaxing_anything(db_session):
     run = _make_run(db_session, status="collecting_evidence", category="카페")
     _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
-    places = [PlaceStub(place_id="no_rec", lat=35.0005, lng=129.0005, can_recommend=False)]
 
     updated = flows.execute_run(
-        db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts(),
+        db_session, run_id=str(run.id), place_search=_FakePlaceSearch([]), place_facts=_FakePlaceFacts(),
     )
 
     assert service.list_candidates(db_session, str(run.id)) == []   # 반경·기준을 완화해 채우지 않는다
-    assert {e["label"]: e["removed_count"] for e in updated.last_funnel}["추천 가능 아님 제거"] == 1
+    assert all(entry["removed_count"] == 0 for entry in updated.last_funnel)
+
+
+def test_the_real_gateway_asks_places_for_recommendable_places_only(monkeypatch):
+    """후보 풀의 정예 판정은 places 한 곳이다 — recommend는 recommendable_only=True를 넘기고 정예 여부를 다시 판정하지 않는다(#913)."""
+    from places.schemas import PlaceRef
+    from recommend import deps
+
+    seen = {}
+
+    def fake_search(category, areas, **kwargs):
+        seen.update(kwargs)
+        return [PlaceRef("p1", 35.0, 129.0)]
+
+    monkeypatch.setattr(deps.places_api, "search_nearby_own", fake_search)
+    monkeypatch.setattr(deps.places_api, "get_places", lambda ids, **kw: {})
+    stubs = deps.RealPlaceSearchGateway().search_nearby(
+        category="카페", circles=[Circle(anchor_lat=35.0, anchor_lng=129.0, radius_m=1000)],
+    )
+    assert seen["recommendable_only"] is True and [s.place_id for s in stubs] == ["p1"]
 
 
 # ---------- #569 — 실시간 핀이 가리키는 가게는 후보에서 뺀다 ----------
@@ -2513,9 +2553,10 @@ def _run_threads(target, count=2):
         t.join()
 
 
-def test_concurrent_creates_do_not_share_an_attempt_number_or_pass_the_limit(test_engine, monkeypatch):
-    """9회를 쓴 요청자에게 다른 요청 둘이 동시에 온다 — 둘 다 모델 앞 검사(9)를 통과하지만 횟수 잠금 뒤 다시 읽으므로
-    하나만 10회째가 되고 다른 하나는 RETRY_LIMIT이다(전엔 둘 다 attempt_no 10으로 만들어졌다)."""
+def test_concurrent_creates_do_not_share_an_attempt_number(test_engine, monkeypatch):
+    """9회를 쓴 요청자에게 다른 요청 둘이 동시에 온다 — 횟수 잠금 뒤 다시 읽으므로 둘이 같은 attempt_no를 쓰지 않는다(#811).
+    상한이 없어져(#949) 둘 다 만들어지고, 크레딧은 run마다 한 번씩 빠진다."""
+    from credits.models import CreditAccount, CreditLedger
     from recommend.ports import Circle
 
     Session = sessionmaker(bind=test_engine)
@@ -2523,7 +2564,7 @@ def test_concurrent_creates_do_not_share_an_attempt_number_or_pass_the_limit(tes
     setup = Session()
     old_run_id = uuid.uuid4()
     setup.add(RecommendRun(id=old_run_id, map_id=map_id, category="카페", requested_by=user, status="done",
-                           attempt_no=core.ATTEMPT_LIMIT - 1))
+                           attempt_no=OLD_ATTEMPT_LIMIT - 1))
     setup.commit()
     setup.close()
 
@@ -2534,7 +2575,7 @@ def test_concurrent_creates_do_not_share_an_attempt_number_or_pass_the_limit(tes
 
     def reactions(db, **kw):
         try:
-            sync.wait(timeout=5)   # 둘 다 첫 상한 검사를 통과한 뒤에 쓰기로 넘어간다
+            sync.wait(timeout=5)   # 둘 다 같은 최댓값(9)을 볼 수 있는 자리까지 온 뒤에 쓰기로 넘어간다
         except threading.BrokenBarrierError:
             pass
         return []
@@ -2558,15 +2599,20 @@ def test_concurrent_creates_do_not_share_an_attempt_number_or_pass_the_limit(tes
 
     verify = Session()
     try:
-        assert sorted(results) == ["RETRY_LIMIT", "ok"]
+        assert results == ["ok", "ok"]
         numbers = sorted(verify.execute(select(RecommendRun.attempt_no).where(
             RecommendRun.map_id == map_id, RecommendRun.requested_by == user)).scalars().all())
-        assert numbers == [core.ATTEMPT_LIMIT - 1, core.ATTEMPT_LIMIT]
+        assert numbers == [OLD_ATTEMPT_LIMIT - 1, OLD_ATTEMPT_LIMIT, OLD_ATTEMPT_LIMIT + 1]
+        spends = verify.execute(select(CreditLedger.delta).where(
+            CreditLedger.user_id == user, CreditLedger.reason == "spend")).scalars().all()
+        assert spends == [-1, -1]
     finally:
         ids = verify.execute(select(RecommendRun.id).where(RecommendRun.map_id == map_id)).scalars().all()
         verify.execute(delete(Region).where(Region.run_id.in_(ids)))
         verify.execute(delete(EvidenceLineRow).where(EvidenceLineRow.run_id.in_(ids)))
         verify.execute(delete(RecommendRun).where(RecommendRun.id.in_(ids)))
+        verify.execute(delete(CreditLedger).where(CreditLedger.user_id == user))
+        verify.execute(delete(CreditAccount).where(CreditAccount.user_id == user))
         verify.commit()
         verify.close()
 

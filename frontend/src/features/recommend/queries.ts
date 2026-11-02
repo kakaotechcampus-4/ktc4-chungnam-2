@@ -2,6 +2,7 @@ import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/
 
 import { useAiStore } from './aiStore'
 import { ApiError } from '@/api'
+import { invalidateCredits } from '@/features/credits/queries'
 import { pinKeys } from '@/features/map/queries'
 import type { Pin } from '@/features/map/model'
 import { showToast } from '@/features/shell/toast'
@@ -11,7 +12,6 @@ import {
   createRun,
   executeRun,
   fetchEvidence,
-  fetchMyRuns,
   fetchReadiness,
   fetchResult,
   patchEvidence,
@@ -19,24 +19,18 @@ import {
   retryRun,
   widenRun,
 } from './api'
-import { runErrorMessage, toAttempts, type EvidencePatchRequest, type RecommendCategory, type RecommendResultDto, type RecommendRunDto } from './model'
+import { runErrorMessage, type EvidencePatchRequest, type RecommendCategory, type RecommendResultDto, type RecommendRunDto } from './model'
 
 export const recommendKeys = {
   readiness: (mapId: string) => ['recommend', mapId, 'readiness'] as const,
   evidence: (runId: string) => ['runs', runId, 'evidence'] as const,
   result: (runId: string) => ['runs', runId, 'result'] as const,
   evidencePatch: (runId: string) => ['runs', runId, 'evidence-patch'] as const,
-  myRuns: (mapId: string) => ['recommend', mapId, 'my-runs'] as const,
 }
 
 /** 카테고리별 추천 가능 여부(5-4). 의견이 바뀌면 달라지니 탭을 열 때마다 다시 본다. */
 export function useReadinessQuery(mapId: string) {
   return useQuery({ queryKey: recommendKeys.readiness(mapId), queryFn: () => fetchReadiness(mapId), refetchOnMount: 'always' })
-}
-
-/** 이 지도에서 남은 추천 횟수 — 추천 받기 전(준비 화면)에도 보인다. 횟수를 쓰는 요청이 끝나면 다시 받는다. */
-export function useAttemptsQuery(mapId: string) {
-  return useQuery({ queryKey: recommendKeys.myRuns(mapId), queryFn: () => fetchMyRuns(mapId), select: toAttempts })
 }
 
 /** 서버가 아직 같은 키의 첫 요청을 처리 중이다(409 REQUEST_IN_PROGRESS) — 진행 표시를 두고 같은 키로 다시 묻는다(#811). */
@@ -58,7 +52,8 @@ export function useCreateRunMutation(mapId: string) {
     retryDelay: IN_PROGRESS_WAIT_MS,
     onSuccess: (run) => {
       setRun(mapId, run)
-      void queryClient.invalidateQueries({ queryKey: recommendKeys.myRuns(mapId) })
+      // 「추천받기」 1번에 크레딧을 쓴다(#432). 다시 추천·넓히기·근거 고치기는 쓰지 않아 아래 훅은 다시 받지 않는다.
+      void invalidateCredits(queryClient)
     },
   })
   const start = (category: RecommendCategory, opts?: { onError?: (err: Error) => void }) =>
@@ -86,7 +81,6 @@ function useRunningMutation(mapId: string, fn: (runId: string) => Promise<Recomm
     onSuccess: (run) => {
       // 실패 뒤 「다시 시도」로 성공하면 같은 run·같은 시도 번호라 예전(실패) 결과가 캐시에 남아 있을 수 있다 — 새로 받는다.
       void queryClient.invalidateQueries({ queryKey: recommendKeys.result(run.id) })
-      void queryClient.invalidateQueries({ queryKey: recommendKeys.myRuns(mapId) })
       setRun(mapId, run)
     },
     onError: (err, _run, ctx) => {

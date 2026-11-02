@@ -8,6 +8,10 @@
 잡지 않는다. 읽은 장소 정보(이름·좌표)는 메모리의 `CourseJob`에만 있고 DB에 남지 않는다.
 
 질문에는 답을 받지 않는다(엔진이 답이 없으면 기본값으로 이어 간다). 그래서 waiting_input 상태도 답 API도 없다.
+
+크레딧(#432, docs/credits-reviews.md 3.3): 요청이 run을 저장하는 트랜잭션에서 `credits.api.charge`로 가격만큼 뺀다. 모델은 접수 뒤
+백그라운드에서 부르므로 이 차감이 잔액 확인을 겸한다(모자라면 402, 게스트 403 — run도 남지 않는다). 결과 없이 끝난 run
+(`ENGINE_ERROR`, `INTERRUPTED`)은 끝내는 트랜잭션에서 `credits.api.refund`로 돌려준다. 가격 숫자는 credits가 든다.
 """
 
 from __future__ import annotations
@@ -19,16 +23,16 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from agent import core as agent_core
-from agent.course import runner, worklog
+from agent import service as agent_service
+from agent.course import goals as goals_mod, runner, worklog
 from agent.course.api_schemas import CourseRequest, CourseRun
 from agent.course.constants import (
-    COURSE_DAILY_LIMIT, COURSE_DAYS_MAX, STARTUP_ORPHAN_AFTER, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE,
-    MAX_PLACES, MIN_PLACES,
+    COURSE_DAYS_MAX, STARTUP_ORPHAN_AFTER, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE,
+    MAP_SUMMARY_SECTIONS, MAX_PLACES, MIN_PLACES,
 )
 from agent.course.core import MemberConstraint
 from agent.course.gateways import CourseLlm
@@ -36,13 +40,17 @@ from agent.course.intake import Excluded, PinInput, TripBuild, build_trip
 from agent.course.models import ACTIVE_STATUSES, AgentCourseRun
 from agent.course.ports import OpeningHoursGateway
 from common.errors import AppError
+from credits import api as credits_api
 from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
 from places import api as places_api
+from recommend import api as recommend_api
 from shortlist import api as shortlist_api
 
 log = logging.getLogger("pingo.agent.course")
+
+CREDIT_FEATURE = "course"      # credits 가격표의 키(= llm_calls.feature 라벨). 가격은 credits/constants.py에서 찾는다
 
 # 진행 중으로 남은 run이 이 시간을 넘기면 죽은 것으로 보고 끝낸다 — 서버 재시작이 정리해 주지 못한 경우(여러 인스턴스 등)에도
 # 사용자가 영영 COURSE_IN_PROGRESS에 막히지 않게 한다. 모델 호출 상한(약 1분)보다 충분히 길다
@@ -126,26 +134,50 @@ class CourseJob:
     request_text: str
     map_id: str            # 사용량 기록(llm_calls, #870)의 라벨
     requested_by: str
+    map_items: tuple[goals_mod.SummaryItem, ...] = ()     # 우리 조건 요약 줄(지도 목표 후보의 근거, #1131 B안)
+
+
+def read_map_items(db: Session, map_id: str) -> tuple[goals_mod.SummaryItem, ...]:
+    """우리 조건 요약(agent_reason_summaries)을 코스가 읽는 자리 — 여기 한 곳이다(#1131 B안). 같은 agent 모듈의 `service.list_summaries`를
+    부르고, 요약에서 키·방향·사람 수만 꺼낸다(MAP_SUMMARY_SECTIONS 칸). 요약에는 사유 원문과 구성원이 없다(명세 2절 13번). 표시 이름은
+    recommend.api.fact_labels(근거 줄·요약 화면과 같은 이름). 어느 키가 목표가 되는지는 goals.map_candidates가 MAP_GOAL_KEYS로 고른다."""
+    labels = recommend_api.fact_labels()
+    return tuple(
+        goals_mod.SummaryItem(row.category, item["fact_key"], bool(item["wants"]), int(item["member_count"]),
+                              labels.get(item["fact_key"], item["fact_key"]))
+        for row in agent_service.list_summaries(db, map_id)
+        for section in MAP_SUMMARY_SECTIONS
+        for item in (row.summary or {}).get(section, ())
+        if item.get("wants") is not None
+    )
 
 
 def fail_stale_runs(
     db: Session, *, now: datetime, map_id: Optional[str] = None, requested_by: Optional[str] = None,
     run_id: Optional[uuid.UUID] = None, after: timedelta = STALE_AFTER,
 ) -> int:
-    """`after`(기본 STALE_AFTER)를 넘겨 진행 중으로 남은 run을 INTERRUPTED로 끝낸다. 오래됐다는 판정은 여기 한 곳이다 — 요청(지도+사람)과
-    조회(run id, 또는 지도+사람)는 범위만 달리해서, 서버 시작은 전체 범위에 더 짧은 `after`로 부른다. 이미 끝난 run과 `after` 안의
-    run은 걸리지 않는다. 커밋은 호출부."""
+    """`after`(기본 STALE_AFTER)를 넘겨 진행 중으로 남은 run을 INTERRUPTED로 끝내고 그 run마다 크레딧을 돌려준다. 오래됐다는 판정은
+    여기 한 곳이다 — 요청(지도+사람)과 조회(run id, 또는 지도+사람)는 범위만 달리해서, 서버 시작은 전체 범위에 더 짧은 `after`로 부른다.
+    이미 끝난 run과 `after` 안의 run은 걸리지 않는다. 환불은 끝내기와 같은 트랜잭션이고 멱등이다(#950). 끝낸 수. 커밋은 호출부."""
     scope = [
         col == value for col, value in (
             (AgentCourseRun.map_id, map_id), (AgentCourseRun.requested_by, requested_by), (AgentCourseRun.id, run_id),
         ) if value is not None
     ]
-    res = db.execute(
+    ended = db.execute(
         update(AgentCourseRun)
         .where(*scope, AgentCourseRun.status.in_(ACTIVE_STATUSES), AgentCourseRun.created_at < now - after)
         .values(status="failed", failure_code="INTERRUPTED", finished_at=now)
-    )
-    return res.rowcount
+        .returning(AgentCourseRun.id)
+    ).scalars().all()
+    for ended_id in ended:
+        refund_credit(db, ended_id)
+    return len(ended)
+
+
+def refund_credit(db: Session, run_id: uuid.UUID) -> None:
+    """결과 없이 끝난 run의 차감을 돌려준다. 멱등 — 이미 돌려줬거나 차감이 없던 run(#950 전 run)은 그대로 둔다. 커밋은 호출부."""
+    credits_api.refund(db, feature=CREDIT_FEATURE, run_id=str(run_id))
 
 
 def _active_run(db: Session, map_id: str, requested_by: str) -> Optional[AgentCourseRun]:
@@ -157,18 +189,12 @@ def _active_run(db: Session, map_id: str, requested_by: str) -> Optional[AgentCo
     ).scalar_one_or_none()
 
 
-def count_since(db: Session, *, requested_by: str, since: datetime) -> int:
-    return db.execute(
-        select(func.count()).select_from(AgentCourseRun)
-        .where(AgentCourseRun.requested_by == requested_by, AgentCourseRun.created_at >= since)
-    ).scalar_one()
-
-
 def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseRequest, now: datetime) -> CourseJob:
-    """검증하고 run을 queued로 저장한다(커밋은 호출부). 422 → 409 → 429 순서로 확인한다.
+    """검증하고 run을 queued로 저장하며 같은 트랜잭션에서 크레딧을 뺀다(커밋은 호출부). 422 → 409 → 403·402 순서로 확인한다.
 
-    확정 장소 부족 422 `COURSE_NOT_ENOUGH_PLACES`, 내 진행 중 run이 있으면 409 `COURSE_IN_PROGRESS`, 오늘 5번을 넘기면
-    429 `COURSE_LIMIT`. 지도가 없거나 삭제됐으면 404."""
+    확정 장소 부족 422 `COURSE_NOT_ENOUGH_PLACES`, 내 진행 중 run이 있으면 409 `COURSE_IN_PROGRESS`, 게스트면 403
+    `GUEST_NOT_ALLOWED`, 잔액이 모자라면 402 `CREDIT_INSUFFICIENT`(둘 다 credits.api.charge가 낸다 — 호출부가 롤백하므로 run도
+    남지 않는다). 지도가 없거나 삭제됐으면 404."""
     snapshot = read_snapshot(db, map_id)
     if snapshot is None:
         raise AppError("NOT_FOUND")
@@ -180,9 +206,6 @@ def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseR
     active = _active_run(db, map_id, requested_by)
     if active is not None:
         raise AppError("COURSE_IN_PROGRESS", detail={"course_run_id": str(active.id)})
-    used = count_since(db, requested_by=requested_by, since=agent_core.kst_day_start(now))
-    if used >= COURSE_DAILY_LIMIT:
-        raise AppError("COURSE_LIMIT", detail={"limit": COURSE_DAILY_LIMIT, "used": used})
     text = (body.request_text or "").strip()
     row = AgentCourseRun(
         id=uuid.uuid4(), map_id=map_id, requested_by=requested_by, status="queued", created_at=now, snapshot_at=now,
@@ -194,7 +217,8 @@ def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseR
             db.add(row)
     except IntegrityError:      # 동시 요청이 확인을 함께 통과했다 — 부분 유니크 인덱스가 하나만 남긴다
         raise AppError("COURSE_IN_PROGRESS") from None
-    return CourseJob(str(row.id), build, text, map_id=map_id, requested_by=requested_by)
+    credits_api.charge(db, user_id=requested_by, feature=CREDIT_FEATURE, run_id=str(row.id))
+    return CourseJob(str(row.id), build, text, map_id=map_id, requested_by=requested_by, map_items=read_map_items(db, map_id))
 
 
 # ---------------------------------------------------------------- 실행 (백그라운드)
@@ -202,7 +226,8 @@ def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseR
 def execute_run(
     job: CourseJob, *, session_factory: Callable[[], Session], llm: CourseLlm, gateway: OpeningHoursGateway,
 ) -> None:
-    """queued run을 돌려 결과를 저장한다. 예외를 밖으로 던지지 않는다(백그라운드라 받을 곳이 없다).
+    """queued run을 돌려 결과를 저장한다. 예외를 밖으로 던지지 않는다(백그라운드라 받을 곳이 없다). ENGINE_ERROR로 끝나면 크레딧을
+    돌려준다. 저장까지 실패해 running으로 남은 run은 fail_stale_runs가 INTERRUPTED로 끝내며 돌려준다.
 
     세션은 짧게 여러 번이다: ① running 표시, ② 단계가 생길 때마다 steps 저장(progress_writer), ③ 결과 저장. 사이에서 모델을
     부른다 — 그동안 연결을 잡지 않는다."""
@@ -219,7 +244,7 @@ def execute_run(
         try:
             with llm_api.usage_context("course", map_id=job.map_id, user_id=job.requested_by, run_id=job.run_id):
                 computed = runner.run_course(
-                    job.build, job.request_text,
+                    job.build, job.request_text, map_items=job.map_items,
                     goals_planner=llm.goals_planner, direct_planner=llm.direct_planner, gateway=gateway,
                     on_step=progress_writer(session_factory, run_id),
                 )
@@ -228,10 +253,12 @@ def execute_run(
             log.warning("course run %s 실패: %s", job.run_id, type(exc).__name__)
             values = {"status": "failed", "failure_code": "ENGINE_ERROR"}
         with session_factory() as db:
-            db.execute(
+            saved = db.execute(
                 update(AgentCourseRun).where(AgentCourseRun.id == run_id, AgentCourseRun.status == "running")
                 .values(finished_at=datetime.now(timezone.utc), **values)
-            )
+            ).rowcount
+            if saved and values["status"] == "failed":     # 결과 없이 끝났다 — 끝내기와 같은 트랜잭션에서 돌려준다
+                refund_credit(db, run_id)
             db.commit()
     except Exception as exc:   # noqa: BLE001 — DB 오류 등. 남은 running은 STALE_AFTER 뒤 다음 요청이 정리한다
         log.warning("course run %s 저장 실패: %s", job.run_id, type(exc).__name__)
@@ -268,7 +295,7 @@ def _done_values(c: runner.Computation) -> dict:
 def interrupt_unfinished_runs(session_factory: Callable[[], Session], *, now: Optional[datetime] = None) -> int:
     """서버 시작 때 부른다 — 죽은 프로세스가 남긴 진행 중(queued·running) run을 INTERRUPTED로 끝낸다. 시작한 지
     STARTUP_ORPHAN_AFTER가 안 된 run은 다른 프로세스에서 아직 도는 것일 수 있어 두고, 오래됐다는 판정은 `fail_stale_runs`와
-    같다(임계만 짧다, #813). 남은 run은 STALE_AFTER 뒤 요청과 조회가 정리한다. 끝낸 수를 돌려준다."""
+    같다(임계만 짧다, #813) — 크레딧 환불도 거기서 한다. 남은 run은 STALE_AFTER 뒤 요청과 조회가 정리한다. 끝낸 수를 돌려준다."""
     with session_factory() as db:
         n = fail_stale_runs(db, now=now or datetime.now(timezone.utc), after=STARTUP_ORPHAN_AFTER)
         db.commit()
@@ -323,8 +350,8 @@ def delete_by_user(db: Session, *, user_id: str) -> dict[str, int]:
 def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:
     """게스트 합치기(#694) — from_user가 요청한 run을 to_user 것으로 옮긴다. 커밋은 호출자.
     진행 중은 지도당 한 사람에 하나(uq_agent_course_runs_active)라서, 같은 지도에 둘 다 진행 중이면 from_user의 진행 중 run을
-    지운다(to_user 쪽이 이긴다). 백그라운드 실행은 그 run이 지워졌으면 아무것도 쓰지 않는다(execute_run). 하루 상한은 합치지
-    않는다 — 옮긴 run도 created_at대로 to_user의 오늘 횟수에 들어간다. 멱등, 같은 id면 아무것도 안 한다."""
+    지운다(to_user 쪽이 이긴다). 백그라운드 실행은 그 run이 지워졌으면 아무것도 쓰지 않는다(execute_run). 멱등, 같은 id면
+    아무것도 안 한다."""
     if from_user_id == to_user_id:
         return {"agent_course_runs": 0, "agent_course_runs_dropped": 0}
     to_user_active_maps = select(AgentCourseRun.map_id).where(

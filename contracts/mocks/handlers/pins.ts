@@ -1,7 +1,7 @@
 import { http, HttpResponse } from "msw";
 import { ME_USER_ID, emitEvent, nextId, store, type Pin } from "../store";
 import { apiError, pinPermissions } from "../util";
-import { NOT_IN_OWN_DB, SEED_PLACES } from "./places";
+import { NOT_IN_OWN_DB, SEED_PLACES, isPinnable } from "./places";
 import { CATEGORY_RULES } from "../categories";
 import { chipsFor } from "../chips";
 
@@ -169,19 +169,37 @@ export const pinsHandlers = [
   http.post("*/maps/:mapId/pins/link-preview", async ({ params, request }) => {
     const mapId = params.mapId as string;
     if (!store.maps[mapId]) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
-    const body = (await request.json()) as { urls?: string[] };
+    const body = (await request.json()) as { urls?: string[]; hints?: ({ name?: string; address?: string } | null)[] };
     if (!body.urls?.length || body.urls.length > 10 || body.urls.some((u) => typeof u !== "string" || !u || u.length > 2000)) {
       return apiError(422, "VALIDATION_ERROR", "링크는 1~10개, 각각 2000자 이하여야 해요");
     }
+    // #946 — 상호명·주소 힌트: 길이는 urls와 같거나 비어 있어야 한다
+    if (body.hints && body.hints.length > 0 && body.hints.length !== body.urls.length) {
+      return apiError(422, "VALIDATION_ERROR", "hints는 urls와 같은 길이여야 해요");
+    }
     const items = body.urls.map((url, index) => {
+      const hint = body.hints?.[index] ?? null;
       let host = "";
       try { host = new URL(url).hostname; } catch { return { index, status: "error", error_code: "LINK_NOT_SUPPORTED" }; }
       const isGoogle = /(^|\.)google\.[a-z.]+$/.test(host) || host === "maps.app.goo.gl" || host === "goo.gl";
       const isKakao = host === "place.map.kakao.com" || host === "map.kakao.com" || host === "kko.to";
-      if (!isGoogle && !isKakao) return { index, status: "error", error_code: "LINK_NOT_SUPPORTED" };
+      // 네이버: 서버가 naver.me 단축 링크를 한 번 따라가 번호만 읽는다(#1048). 번호표에 학습된 짝이 있으면 바로 matches
+      const isNaver = /(^|\.)naver\.(com|me)$/.test(host);
+      if (!isGoogle && !isKakao && !isNaver) return { index, status: "error", error_code: "LINK_NOT_SUPPORTED" };
       let own: (typeof SEED_PLACES)[number] | undefined;
       let result: Record<string, unknown>;
-      if (isKakao) {
+      if (isNaver) {
+        const code = new URL(url).pathname.split("/").filter(Boolean).pop() ?? "";
+        // 목 서버 시나리오: 코드가 `learned`로 시작하면 번호표에 이미 학습된 짝(첫 시드 장소)
+        own = code.startsWith("learned") ? SEED_PLACES.find((p) => isPinnable(p)) : undefined;
+        result = {
+          provider: "naver",
+          external_id: `naver:${code}`,
+          matches: own ? [{ ...own, pinnable: true }] : [],
+          ...(own ? { matched_by: "external_id" } : {}),
+          needs_search_query: !own,
+        };
+      } else if (isKakao) {
         const id = url.match(/place\.map\.kakao\.com\/(\w[\w-]*)/)?.[1] ?? new URL(url).searchParams.get("itemId");
         if (!id) return { index, status: "error", error_code: "LINK_UNRESOLVED" };
         own = SEED_PLACES.find((p) => p.place_id === `kakao:${id}` && !NOT_IN_OWN_DB.has(p.place_id));
@@ -193,6 +211,25 @@ export const pinsHandlers = [
         own = SEED_PLACES.find((p) => p.place_name === hint && !NOT_IN_OWN_DB.has(p.place_id));
         result = { provider: "google", name_hint: hint, matches: own ? [{ ...own, pinnable: true }] : [], needs_search_query: false };
       }
+      // #946 — 링크가 자체 DB로 이어지지 않으면 상호명 + 주소로 짝을 찾는다. 짝이 하나로 확실할 때만(체인점·동명은 비운다, 가드레일 2)
+      if (!own && hint?.name) {
+        const norm = (s: string) => s.replace(/[(\[（][^)\]）]*[)\]）]/g, "").replace(/[^0-9a-zA-Z가-힣]/g, "").toLowerCase();
+        const agrees = (addr: string) => !hint.address || norm(addr).includes(norm(hint.address).slice(0, 6)) || norm(hint.address).includes(norm(addr).slice(0, 6));
+        const found = SEED_PLACES.filter(
+          (p) => isPinnable(p) && norm(p.place_name) === norm(hint.name!) && agrees(p.address ?? ""),
+        );
+        if (found.length === 1) {
+          own = found[0];
+          result = { ...result, matches: [{ ...own, pinnable: true }], matched_by: "hint", needs_search_query: false };
+        } else if (found.length === 0 && hint.address) {
+          // #1047 — 이름은 안 맞아도 같은 도로명주소(건물번호까지)에 영업 중인 곳이 정확히 하나면 사람이 확인할 후보로(자동 확정 아님)
+          const roadKey = (a: string) => a.replace(/^\S+\s/, "").replace(/[,(].*$/, "").replace(/\s+(지하|\d+층).*$/, "").replace(/\s/g, "");
+          const key = roadKey(hint.address);
+          const sameAddr = SEED_PLACES.filter((p) => isPinnable(p) && key !== "" && roadKey(p.address ?? "") === key);
+          if (sameAddr.length === 1) result = { ...result, address_candidates: [{ ...sameAddr[0], pinnable: true }] };
+        }
+      }
+      if (result.matches && (result.matches as unknown[]).length > 0 && !result.matched_by) result = { ...result, matched_by: "link" };
       const already = Object.values(store.pins).find(
         (p) => p.map_id === mapId && ((own && (p as any)._place_id === own.place_id) || (isKakao && p.kakao_place_id === (result.kakao_place_id as string))),
       );
@@ -272,10 +309,59 @@ export const pinsHandlers = [
     const pinId = params.pinId as string;
     const pin = store.pins[pinId];
     if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    if (!pinPermissions(pin).can_delete) return apiError(403, "FORBIDDEN", "찍은 사람과 방장만 지울 수 있어요");
+    // #864 — 삭제는 휴지통으로 옮기는 것이다: 의견은 그대로 두고, 확정이었다면 기억해 두고 확정 리스트에서 뺀다
+    const wasConfirmed = pin.kind === "확정" || (store.shortlist[pin.map_id] ?? []).some((i) => i.pin.id === pinId);
+    store.shortlist[pin.map_id] = (store.shortlist[pin.map_id] ?? []).filter((i) => i.pin.id !== pinId);
+    store.pinTrash[pinId] = { pin, reactions: store.reactions[pinId] ?? [], deleted_at: new Date().toISOString(), deleted_by: ME_USER_ID, was_confirmed: wasConfirmed };
     delete store.pins[pinId];
     delete store.reactions[pinId];
     emitEvent(pin.map_id, "public", "pin.deleted", { pin_id: pinId });
     return new HttpResponse(null, { status: 204 });
+  }),
+
+  // #864 핀 휴지통 — 내가 되살릴 수 있는 지운 핀(일반 구성원은 내가 찍은 것, 방장은 전부), 최근 삭제순
+  http.get("*/maps/:mapId/trash", ({ params }) => {
+    const mapId = params.mapId as string;
+    if (!store.maps[mapId]) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    const owner = (store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID && m.role === "owner");
+    const now = Date.now();
+    const items = Object.values(store.pinTrash)
+      .filter((t) => t.pin.map_id === mapId && (owner || t.pin.created_by === ME_USER_ID))
+      .sort((a, b) => b.deleted_at.localeCompare(a.deleted_at))
+      .map((t) => {
+        const purgeAt = new Date(new Date(t.deleted_at).getTime() + 30 * 86_400_000);
+        return {
+          pin: t.pin,
+          deleted_at: t.deleted_at,
+          deleted_by_name: store.users[t.deleted_by]?.display_name ?? "탈퇴한 구성원",
+          purge_at: purgeAt.toISOString(),
+          days_left: Math.max(0, Math.ceil((purgeAt.getTime() - now) / 86_400_000)),
+          was_confirmed: t.was_confirmed,
+        };
+      });
+    return HttpResponse.json({ items, retention_days: 30 });
+  }),
+
+  // #864 지운 핀 복구 — 찍은 사람과 방장. 같은 장소로 새 핀이 생겼으면 409 PIN_DUPLICATE
+  http.post("*/pins/:pinId/restore", ({ params }) => {
+    const pinId = params.pinId as string;
+    const live = store.pins[pinId];
+    if (live) return HttpResponse.json(live); // 이미 복구된 핀도 200(연타 안전)
+    const t = store.pinTrash[pinId];
+    if (!t) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    const owner = (store.members[t.pin.map_id] ?? []).some((m) => m.user_id === ME_USER_ID && m.role === "owner");
+    if (!(owner || t.pin.created_by === ME_USER_ID)) return apiError(403, "FORBIDDEN", "찍은 사람과 방장만 되살릴 수 있어요");
+    const dup = Object.values(store.pins).find(
+      (p) => p.map_id === t.pin.map_id && ((t.pin.kakao_place_id && p.kakao_place_id === t.pin.kakao_place_id) || (!!(t.pin as any)._place_id && (p as any)._place_id === (t.pin as any)._place_id)),
+    );
+    if (dup) return apiError(409, "PIN_DUPLICATE", "이미 지도에 있는 장소예요", { pin_id: dup.id });
+    const pin = { ...t.pin, permissions: pinPermissions(t.pin) };
+    store.pins[pinId] = pin;
+    store.reactions[pinId] = t.reactions;
+    delete store.pinTrash[pinId];
+    emitEvent(pin.map_id, "public", "pin.restored", pin);
+    return HttpResponse.json(pin);
   }),
 
   http.put("*/pins/:pinId/reaction", async ({ params, request }) => {

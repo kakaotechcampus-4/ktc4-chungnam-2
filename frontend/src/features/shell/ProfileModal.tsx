@@ -180,7 +180,7 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
           로그아웃
         </button>
       </div>
-      {me.data?.is_guest && <GuestAccountNotice />}
+      {me.data?.is_guest && <div className="mt-3"><GuestAccountNotice /></div>}
       <button type="button" onClick={() => onConfirm('feedback')} className="btn-text mt-3 w-full text-center text-body">
         핑고핑고에 의견 보내기
       </button>

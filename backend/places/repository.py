@@ -5,19 +5,20 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Sequence
 
 from geoalchemy2 import Geography, Geometry, WKTElement
-from sqlalchemy import Float, and_, case, cast, false, func, literal, null, or_, select, union_all, update
+from sqlalchemy import Float, and_, case, cast, delete, false, func, literal, null, or_, select, union_all, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from places import matching
 from places.ingest import HoursRow, LabelRow, PlaceRow
 from places.matching import Candidate
-from places.models import Place, PlaceFact, PlaceHours
+from places.models import Place, PlaceExternalId, PlaceExternalIdVote, PlaceFact, PlaceHours
 from places.schemas import Area, FactLabel, PlaceHint, PlaceHours as PlaceHoursInfo, PlaceInfo, PlaceRef
 
 _CHUNK = 1000
@@ -202,7 +203,7 @@ def find_candidates(db: Session, hint_lat: float, hint_lng: float, category: str
                func.ST_Distance(Place.geom, point).label("dist"))
         .where(Place.status == "open", Place.category == category,
                func.ST_DWithin(Place.geom, point, matching.MAX_RADIUS_M))
-        .order_by(func.ST_Distance(Place.geom, point))
+        .order_by(func.ST_Distance(Place.geom, point), Place.id)   # find_candidates_many와 같은 키 — 거리가 같으면 id로 갈라 상한 경계가 검색과 같다(#815)
         .limit(matching.MAX_CANDIDATES)
     ).all()
     rows = list(near)
@@ -280,6 +281,45 @@ def find_nearby_own(db: Session, lat_: float, lng_: float, radius_m: float, limi
     return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address) for r in rows]
 
 
+def find_by_name_hint(db: Session, name: str) -> list[Candidate]:
+    """상호명 힌트의 후보(#946): 영업 중 자체 DB 장소 중 name_norm이 힌트 정규형으로 시작하거나 힌트의 앞부분과 같은 곳.
+    둘 다 idx_places_name_norm(text_pattern_ops)을 탄다 — 좌표가 없어도 전체를 훑지 않는다. 분류 무관(음식점·카페·관광지).
+    HINT_MAX_CANDIDATES를 넘으면 빈 목록(너무 흔한 이름). 거리를 재지 않는다."""
+    nq, prefixes = matching.hint_name_keys(name)
+    if not nq:
+        return []
+    lat, lng = _lat_lng()
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES),
+               or_(*(Place.name_norm.like(f"{t}%") for t in matching.hint_like_prefixes(name)), Place.name_norm.in_(prefixes)))
+        .order_by(Place.id)
+        .limit(matching.HINT_MAX_CANDIDATES + 1)
+    ).all()
+    if len(rows) > matching.HINT_MAX_CANDIDATES:
+        return []
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+
+
+def find_by_address_term(db: Session, term: str) -> list[Candidate]:
+    """주소 후보 조회(#1047): 영업 중 자체 DB 장소 중 주소에 도로명 앞부분(term)이 든 곳. idx_places_address_trgm(GIN)을 탄다 — 3자 이상이면
+    인덱스, 두 글자 도로명은 붙여 쓴 도로명 전체(`명동8가길`)로 받는다. 같은 도로명이 ADDRESS_CANDIDATE_MAX_ROWS를 넘으면 유일성을 말할 수
+    없어 빈 목록. 건물번호까지 같은지는 호출 쪽이 address_agreement로 거른다. 분류는 음식점·카페·관광지."""
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    escaped = re.sub(r"(?<=[가-힣])(?=\d)|(?<=\d)(?=[가-힣])", "%", escaped)   # 정규화 키가 공백을 무시하므로 `명동8가길`은 `명동 8가길`도 읽는다
+    lat, lng = _lat_lng()
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES),
+               Place.address.ilike(f"%{escaped}%", escape="\\"))
+        .order_by(Place.id)
+        .limit(matching.ADDRESS_CANDIDATE_MAX_ROWS + 1)
+    ).all()
+    if len(rows) > matching.ADDRESS_CANDIDATE_MAX_ROWS:
+        return []
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+
+
 def find_by_kakao_place_id(db: Session, kakao_place_id: str) -> list[Candidate]:
     """이미 이 카카오 장소 ID로 매칭된 영업 중 장소(링크 해석 #474)."""
     lat, lng = _lat_lng()
@@ -305,6 +345,56 @@ def record_kakao_match(db: Session, place_id: str, kakao_place_id: str, kakao_pl
     db.flush()
 
 
+def upsert_external_id(db: Session, provider: str, external_id: str, place_id: str, source: str, voter_hash: str | None) -> None:
+    """번호표에 짝 하나를 기록한다(#1048). 같은 짝이 이미 있으면 그 행을 쓴다 — 'hint'는 'user' 행을 신뢰 행으로 올리고, 'user'는 표 한 장을
+    더한다(voter_hash당 한 표). 없는 place_id면 KeyError. 번호만 저장한다."""
+    pid = _uuid(place_id)
+    if db.get(Place, pid) is None:
+        raise KeyError(place_id)
+    values = {"provider": provider, "external_id": external_id, "place_id": pid, "source": source}
+    db.execute(pg_insert(PlaceExternalId).values(**values).on_conflict_do_nothing(constraint="uq_place_external_ids_pair"))
+    row = db.execute(select(PlaceExternalId).where(
+        PlaceExternalId.provider == provider, PlaceExternalId.external_id == external_id, PlaceExternalId.place_id == pid)).scalar_one()
+    if source == "hint" and row.source != "hint":
+        row.source = "hint"
+    if source == "user" and voter_hash:
+        db.execute(pg_insert(PlaceExternalIdVote).values(external_id_row=row.id, voter_hash=voter_hash)
+                   .on_conflict_do_nothing(index_elements=["external_id_row", "voter_hash"]))
+    db.flush()
+
+
+def external_id_rows(db: Session, provider: str, external_id: str) -> list[tuple[str, str, int]]:
+    """번호 하나의 번호표 행 [(place_id, source, 표 수)]."""
+    votes = func.count(PlaceExternalIdVote.voter_hash)
+    rows = db.execute(
+        select(PlaceExternalId.place_id, PlaceExternalId.source, votes)
+        .outerjoin(PlaceExternalIdVote, PlaceExternalIdVote.external_id_row == PlaceExternalId.id)
+        .where(PlaceExternalId.provider == provider, PlaceExternalId.external_id == external_id)
+        .group_by(PlaceExternalId.id, PlaceExternalId.place_id, PlaceExternalId.source)
+        .order_by(PlaceExternalId.id)
+    ).all()
+    return [(str(r[0]), r[1], int(r[2])) for r in rows]
+
+
+def purge_external_id_votes(db: Session, voter_hash: str) -> int:
+    """탈퇴한 사용자의 표를 지운다(#1048). 번호표 행은 공용 데이터라 남긴다. 지운 표 수."""
+    return db.execute(delete(PlaceExternalIdVote).where(PlaceExternalIdVote.voter_hash == voter_hash)).rowcount or 0
+
+
+def find_open_by_ids(db: Session, place_ids: Sequence[str]) -> list[Candidate]:
+    """주어진 id 중 영업 중인 음식점·카페·관광지(번호표가 가리키는 장소, #1048). 읽기 전용."""
+    ids = [u for u in (_uuid_or_none(p) for p in place_ids) if u is not None]
+    if not ids:
+        return []
+    lat, lng = _lat_lng()
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        .where(Place.id.in_(ids), Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES))
+        .order_by(Place.id)
+    ).all()
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+
+
 def get_places(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceInfo]:
     ids = [u for u in (_uuid_or_none(p) for p in place_ids) if u is not None]
     if not ids:
@@ -320,14 +410,18 @@ def _in_any_area(areas: Sequence[Area]):
     return or_(*(func.ST_DWithin(Place.geom, _geog(a.lat, a.lng), a.radius_m) for a in areas))
 
 
-def search_nearby_own(db: Session, category: str, areas: Sequence[Area]) -> list[PlaceRef]:
+def search_nearby_own(
+    db: Session, category: str, areas: Sequence[Area], *, recommendable_only: bool = False,
+) -> list[PlaceRef]:
     if not areas:
         return []
     lat, lng = _lat_lng()
-    # PlaceRef.can_recommend(추천 후보 풀에 넣어도 되는가)는 places.curated 그대로다 — 규칙이 바뀌면 이 쿼리 한 곳만 고친다(#743)
-    rows = db.execute(
-        select(Place.id, lat, lng, Place.curated).where(Place.status == "open", Place.category == category, _in_any_area(areas))
-    ).all()
+    # PlaceRef.can_recommend(추천 후보 풀에 넣어도 되는가)는 places.curated 그대로다 — 규칙이 바뀌면 이 쿼리 한 곳만 고친다(#743).
+    # recommendable_only면 그 조건을 SQL에서 건다(#913) — 후보 풀이 처음부터 정예 장소라 다른 모듈이 정예 여부를 다시 판정하지 않는다.
+    conditions = [Place.status == "open", Place.category == category, _in_any_area(areas)]
+    if recommendable_only:
+        conditions.append(Place.curated.is_(True))
+    rows = db.execute(select(Place.id, lat, lng, Place.curated).where(*conditions)).all()
     return [PlaceRef(str(r.id), r.lat, r.lng, r.curated) for r in rows]
 
 

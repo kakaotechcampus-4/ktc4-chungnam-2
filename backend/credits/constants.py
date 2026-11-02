@@ -13,4 +13,13 @@ PRICES: dict[str, int] = {
     "course": 1,          # 「AI 코스 짜기」 POST /maps/{mapId}/courses
 }
 
-REVIEW_REWARD = 10   # 장소 후기를 그 장소에 처음 쓸 때. 상한 없음, 별점과 무관
+REVIEW_REWARD = 10   # 장소 후기를 그 장소에 처음 쓸 때. 후기 수 제한 없음, 별점과 무관. MAX_BALANCE까지만 채운다
+
+# 잔액 상한(명세 3.6절, #981). 후기 보상과 환불은 여기까지만 채운다(core.capped_gain). 이미 넘은 잔액은 깎지 않는다.
+MAX_BALANCE = 30
+
+# 광고 보고 충전(명세 3.7절, #1037). 값을 바꾸면 3.7절 표도 같이 고친다.
+AD_REWARD = 10           # 1회 보상. 잔액 상한까지만 채운다(core.capped_gain, 3.6)
+AD_DAILY_MAX = 3         # 사람당 KST 하루 세션 수. 세션을 열 때 센다
+AD_MIN_WATCH_S = 7       # 세션을 연 뒤 이만큼(초) 지나야 받을 수 있다
+AD_SESSION_TTL_S = 900   # 연 세션은 이 안(초)에 받아야 한다

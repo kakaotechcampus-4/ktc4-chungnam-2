@@ -5,7 +5,7 @@
 import { ME_USER_ID, nextId, resetIdCounter, resetStore, type StoreState } from "./store";
 import { buildBaseState, buildCandidates, buildEvidenceLines, buildRegions, SEED_MAP_ID } from "./seed";
 
-export type ScenarioName = "empty" | "happy-path" | "no-results" | "retry-limit" | "region-conflict" | "guest" | "withdrawn-relogin" | "credits-empty";
+export type ScenarioName = "empty" | "happy-path" | "no-results" | "region-conflict" | "guest" | "withdrawn-relogin" | "credits-empty" | "credits-full";
 
 /** 6절 "핀이 하나도 없음" 화면 — 지도만 있고 핀은 0개 */
 function buildEmpty(): StoreState {
@@ -29,18 +29,7 @@ function buildNoResults(): StoreState {
   state.evidenceLines[runId] = buildEvidenceLines(runId);
   state.regions[runId] = buildRegions();
   state.candidates[runId] = []; // 필터 통과 0곳
-  return state;
-}
-
-/** 폐지 예정(#432 D3, #954에서 지운다) — 10회째 run. 상한이 크레딧으로 바뀌어 이제 /retry도 그대로 된다. FE 시나리오 목록(#952)이 지울 때까지 이름만 남긴다 */
-function buildRetryLimit(): StoreState {
-  const state = buildBaseState();
-  const runId = "run_retry_limit";
-  state.runs[runId] = { id: runId, map_id: SEED_MAP_ID, category: "음식점", status: "done", attempt_no: 10 };
-  state.runRequestedBy[runId] = ME_USER_ID;
-  state.evidenceLines[runId] = buildEvidenceLines(runId);
-  state.regions[runId] = buildRegions();
-  state.candidates[runId] = buildCandidates("제주시 권역");
+  state.forceNoResults = true; // #1015 이 시나리오에서 새로 만든 run의 첫 실행도 0곳 — 크레딧을 돌려준다
   return state;
 }
 
@@ -80,6 +69,13 @@ function buildRegionConflict(): StoreState {
 }
 
 /** #432 — 크레딧을 다 썼다. 추천 받기·코스 짜기는 402 CREDIT_INSUFFICIENT, 후기를 처음 쓰면 채워진다 */
+/** #981 — 잔액이 상한(30)이다. 후기를 써도 크레딧을 받지 않는다(작성 시트가 미리 알린다) */
+function buildCreditsFull(): StoreState {
+  const state = buildBaseState();
+  state.credits[ME_USER_ID] = 30;
+  return state;
+}
+
 function buildCreditsEmpty(): StoreState {
   const state = buildBaseState();
   state.credits[ME_USER_ID] = 0;
@@ -104,11 +100,11 @@ const BUILDERS: Record<ScenarioName, () => StoreState> = {
   empty: buildEmpty,
   "happy-path": buildHappyPath,
   "no-results": buildNoResults,
-  "retry-limit": buildRetryLimit,
   "region-conflict": buildRegionConflict,
   guest: buildGuest,
   "withdrawn-relogin": buildWithdrawnRelogin,
   "credits-empty": buildCreditsEmpty,
+  "credits-full": buildCreditsFull,
 };
 
 export function resetScenario(name: ScenarioName) {

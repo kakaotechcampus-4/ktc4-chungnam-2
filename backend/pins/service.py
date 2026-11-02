@@ -7,6 +7,7 @@
 분기·계산 로직은 여기 두지 않고 pins/core.py로 위임한다.
 """
 
+import logging
 import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -38,12 +39,30 @@ from pins.schemas import (
     PinCreateRequest,
     PinCreateSearch,
     PinKind,
+    PinLinkRef,
     PinResolveRequest,
     PinUpdateRequest,
     Reaction,
     ReactionRequest,
     ReactionSummary,
 )
+
+log = logging.getLogger("pingo.pins.service")
+
+
+def _record_link_ref(db: Session, link_ref: PinLinkRef | None, place_id: str, user_id: str) -> None:
+    """번호표 기록은 핀과 함께 커밋하되 실패는 SAVEPOINT 안에서만 되돌린다(#1048)."""
+    if link_ref is None:
+        return
+    try:
+        with db.begin_nested():
+            places_api.record_external_id(
+                link_ref.provider, link_ref.external_id, place_id,
+                source="user", voter_hash=places_api.voter_hash(user_id), db=db,
+            )
+            db.flush()   # 지연된 쓰기 실패도 이 SAVEPOINT에서 복구한다
+    except Exception as exc:   # noqa: BLE001 — 부가 기록 실패가 핀 생성을 막지 않는다
+        log.warning("핀 번호표 기록 실패(%s)", type(exc).__name__)
 
 
 def _lat_lng_columns():
@@ -392,6 +411,8 @@ def _create_db_pin(
     kakao_url = core.kakao_place_url(req.place_id)
     if kakao_url is not None:
         places_api.record_kakao_match(match.place_id, req.place_id, kakao_url, db=db)
+
+    _record_link_ref(db, req.link_ref, match.place_id, principal.user_id)
 
     lat_col, lng_col = _lat_lng_columns()
     lat, lng = db.execute(select(lat_col, lng_col).where(PinRow.id == pin_row.id)).one()

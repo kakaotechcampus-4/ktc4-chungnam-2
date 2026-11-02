@@ -19,10 +19,10 @@ export function buildBaseState(): StoreState {
 
   const members: StoreState["members"] = {
     [mapId]: [
-      { user_id: ME_USER_ID, role: "owner", display_name: "황경", online: true },
-      { user_id: "u_2", role: "member", display_name: "박서영", online: true },
-      { user_id: "u_3", role: "member", display_name: "김도현", online: false },
-      { user_id: "u_4", role: "member", display_name: "이유빈", online: false },
+      { user_id: ME_USER_ID, role: "owner", display_name: "황경", online: true, is_guest: false },
+      { user_id: "u_2", role: "member", display_name: "박서영", online: true, is_guest: false },
+      { user_id: "u_3", role: "member", display_name: "김도현", online: false, is_guest: false },
+      { user_id: "u_4", role: "member", display_name: "이유빈", online: false, is_guest: true },
     ],
   };
 
@@ -121,7 +121,9 @@ export function buildBaseState(): StoreState {
     runRequestedBy: {},
     appliedEvidence: {},
     lastNewCount: {},
+    forceNoResults: false,
     trashedMaps: {},
+    pinTrash: {},
     idempotencyKeys: {},
     pendingLogin: null,
     candidates: {},
@@ -138,8 +140,10 @@ export function buildBaseState(): StoreState {
     ],
     notificationPrefs: {},
     feedback: [],
-    credits: {},
+    credits: { [ME_USER_ID]: SEED_BALANCE }, // 시드의 나는 이미 크레딧을 10 썼다 — 상한(30) 아래라 후기 보상이 보인다. 가득 찬 상태는 시나리오 credits-full
     creditRefs: [],
+    adProvider: "fake", // 광고 보고 충전(#1037)은 테스트 광고 창으로. 열리는 모습은 잔액 0(시나리오 credits-empty)
+    adSessions: {},
     ...buildReviewsState(pins[pinFood1]),
   };
 }
@@ -158,6 +162,8 @@ function buildReviewsState(pin: StoreState["pins"][string]): Pick<StoreState, "r
 }
 
 export const SEED_MAP_ID = "map_1";
+/** 시드의 내 크레딧 잔액(#981). 새 계정(행 없음)은 30이고, 시드의 나는 이미 10을 쓴 상태다. */
+export const SEED_BALANCE = 20;
 export const SEED_PIN_FOOD_1 = "pin_1";
 export const SEED_PIN_FOOD_2 = "pin_2";
 export const SEED_PIN_CAFE_1 = "pin_3";

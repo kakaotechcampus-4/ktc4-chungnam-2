@@ -20,33 +20,7 @@ SPEC = yaml.safe_load((Path(__file__).resolve().parents[2] / "docs" / "api-spec.
 KEYS = ("maxItems", "minItems", "maxLength", "minLength", "maximum", "minimum")
 
 # (메서드, 경로, 필드.제약) -> 추적 이슈. 비어 가는 것이 정상이다.
-KNOWN_DRIFT: dict[tuple[str, str, str], str] = {
-    ("PATCH", "/maps/{mapId}", ".region.lat.maximum"): "#733",   # 스펙 90 / 서버 None
-    ("PATCH", "/maps/{mapId}", ".region.lat.minimum"): "#733",   # 스펙 -90 / 서버 None
-    ("PATCH", "/maps/{mapId}", ".region.lng.maximum"): "#733",   # 스펙 180 / 서버 None
-    ("PATCH", "/maps/{mapId}", ".region.lng.minimum"): "#733",   # 스펙 -180 / 서버 None
-    ("PATCH", "/maps/{mapId}", ".title.minLength"): "#733",   # 스펙 1 / 서버 None
-    ("POST", "/feedback", ".message.maxLength"): "#733",   # 스펙 1000 / 서버 None
-    ("POST", "/feedback", ".message.minLength"): "#733",   # 스펙 1 / 서버 None
-    ("POST", "/maps", ".region.lat.maximum"): "#733",   # 스펙 90 / 서버 None
-    ("POST", "/maps", ".region.lat.minimum"): "#733",   # 스펙 -90 / 서버 None
-    ("POST", "/maps", ".region.lng.maximum"): "#733",   # 스펙 180 / 서버 None
-    ("POST", "/maps", ".region.lng.minimum"): "#733",   # 스펙 -180 / 서버 None
-    ("POST", "/maps/{mapId}/pins", ".link_url.maxLength"): "#733",   # 스펙 2000 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].address.maxLength"): "#733",   # 스펙 200 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].kakao_place_id.maxLength"): "#733",   # 스펙 100 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].kakao_place_id.minLength"): "#733",   # 스펙 1 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].lat.maximum"): "#733",   # 스펙 90 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].lat.minimum"): "#733",   # 스펙 -90 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].link_url.maxLength"): "#733",   # 스펙 2000 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].lng.maximum"): "#733",   # 스펙 180 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].lng.minimum"): "#733",   # 스펙 -180 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].memo.maxLength"): "#733",   # 스펙 200 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].place_id.maxLength"): "#733",   # 스펙 100 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].place_name.maxLength"): "#733",   # 스펙 100 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].search_query.maxLength"): "#733",   # 스펙 100 / 서버 None
-    ("POST", "/maps/{mapId}/pins/bulk", ".pins[].search_query.minLength"): "#733",   # 스펙 1 / 서버 None
-}
+KNOWN_DRIFT: dict[tuple[str, str, str], str] = {}
 
 
 def _resolve(doc: dict, node):

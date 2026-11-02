@@ -19,6 +19,7 @@ from recommend.tests.test_flows import PLANNER, _make_members, _make_run
 
 ME = Principal(user_id="user_1", map_id="map_1", role="member")
 OTHER = Principal(user_id="user_2", map_id="map_1", role="member")
+OLD_ATTEMPT_LIMIT = 10   # 예전 추천 횟수 상한(#558). 상한은 크레딧으로 바뀌어 없다(#432, #949)
 
 
 class _Planner:
@@ -132,15 +133,15 @@ def test_stored_text_is_normalized(db_session, run):
     assert [line.text for line in _manual(db_session, run)] == ["조용한 곳"]
 
 
-def test_a_resend_at_the_attempt_limit_is_still_rejected_before_anything_changes(db_session):
-    """횟수를 다 쓴 요청자는 근거를 고칠 수 없다 — 같은 글 재전송도 요청이라 429다(상한 검사는 멱등 판정보다 앞이다)."""
+def test_a_resend_past_the_old_attempt_limit_still_reuses_the_line(db_session):
+    """추천 횟수 상한은 없어졌다(#949) — 시도 번호가 옛 상한(10)을 넘은 run에서도 같은 글 재전송은 새 줄도 모델 호출도 없이 통과한다."""
     _make_members(db_session, user_ids=["user_1"])
-    limit_run = _make_run(db_session, status="done", category="음식점", attempt_no=core.ATTEMPT_LIMIT)
-    service.add_manual_evidence(db_session, run_id=limit_run.id, author_id="user_1", text="조용한 곳")
+    late_run = _make_run(db_session, status="done", category="음식점", attempt_no=OLD_ATTEMPT_LIMIT + 1)
+    service.add_manual_evidence(db_session, run_id=late_run.id, author_id="user_1", text="조용한 곳")
     db_session.commit()
-    with pytest.raises(AppError) as rejected:
-        _add(db_session, limit_run, "조용한 곳")
-    assert rejected.value.code == "RETRY_LIMIT"
+    _lines, planner = _add(db_session, late_run, "조용한 곳")
+    assert planner.calls == 0
+    assert [line.text for line in _manual(db_session, late_run)] == ["조용한 곳"]
 
 
 # ---------- 동시에 같은 글이 두 번 (진짜 PostgreSQL) ----------

@@ -1,7 +1,6 @@
-"""core.py — 문장, 커서, 설정 합치기. DB가 필요 없다."""
+"""core.py — 문장, 설정 합치기. DB가 필요 없다. 커서는 common/tests/test_cursor.py(#973)."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -41,28 +40,6 @@ def test_unknown_type_is_rejected():
     with pytest.raises(ValueError):
         core.compose_message("pin_deleted")
     assert core.is_known_type("pin_reaction") and not core.is_known_type("pin_deleted")
-
-
-def test_cursor_roundtrip_is_url_safe():
-    at = datetime(2026, 10, 15, 12, 30, 1, 123456, tzinfo=timezone(timedelta(hours=9)))
-    nid = uuid.uuid4()
-    cursor = core.encode_cursor(at, nid)
-    assert all(c.isalnum() or c in "-_" for c in cursor)    # '+'·'='가 없어 쿼리 문자열에 그대로 실을 수 있다
-    assert core.decode_cursor(cursor) == (at, nid)
-
-
-@pytest.mark.parametrize("bad", ["", "!!!", "aGVsbG8", "MjAyNi0xMC0xNXxub3QtYS11dWlk"])
-def test_bad_cursor_raises_value_error(bad):
-    with pytest.raises(ValueError):
-        core.decode_cursor(bad)
-
-
-def test_cursor_without_timezone_is_rejected():
-    import base64
-
-    raw = base64.urlsafe_b64encode(f"2026-10-15T12:00:00|{uuid.uuid4()}".encode()).decode()
-    with pytest.raises(ValueError):
-        core.decode_cursor(raw)
 
 
 def test_parse_ids_drops_malformed_ids():

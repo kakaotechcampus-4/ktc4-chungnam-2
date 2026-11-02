@@ -109,6 +109,7 @@ sink: Callable[[dict[str, Any]], None] = _write_row
 
 def record_call(
     *, call: str, prompt_version: Optional[str], completion: Any, outcome: str, elapsed_ms: int,
+    batch_size: Optional[int] = None,
 ) -> None:
     """출구가 응답마다 부른다. completion은 응답(실패면 예외에 붙은 응답이나 None). 예외를 밖으로 던지지 않는다."""
     label = _label.get()
@@ -123,11 +124,34 @@ def record_call(
         "input_tokens": counts.input_tokens, "cached_input_tokens": counts.cached_input_tokens,
         "cache_write_tokens": counts.cache_write_tokens, "output_tokens": counts.output_tokens,
         "cost_krw": cost_krw(counts), "outcome": outcome, "ok": outcome == "ok", "elapsed_ms": elapsed_ms,
+        "batch_size": batch_size,
     }
     try:
         sink(row)
     except Exception as exc:  # noqa: BLE001 — 기록 실패가 모델 호출 결과를 바꾸면 안 된다. 클래스 이름만 남긴다
         log.warning("llm_calls 기록 실패: feature=%s call=%s %s", label.feature, call, type(exc).__name__)
+
+
+def _mark_rows(trace_ids: list[uuid.UUID]) -> None:
+    with SessionLocal() as db:
+        db.execute(update(LlmCall).where(LlmCall.trace_id.in_(trace_ids), LlmCall.ok.is_(True)).values(discarded=True))
+        db.commit()
+
+
+# 표시를 쓰는 곳. 기본은 DB다. 테스트는 sink처럼 바꿔 끼운다.
+discard_sink: Callable[[list[uuid.UUID]], None] = _mark_rows
+
+
+def mark_discarded(trace_ids: "list[uuid.UUID] | uuid.UUID | None") -> None:
+    """이 trace들의 성공한 호출을 「결과가 쓰이지 않았다」로 표시한다(#848) — 모델 비용은 나갔는데 run·근거가 저장되지 않은 경우다.
+    기록 실패는 본 기능의 오류를 가리지 않게 클래스 이름만 로그로 남긴다. 원문·키는 다루지 않는다."""
+    ids = [trace_ids] if isinstance(trace_ids, uuid.UUID) else list(trace_ids or [])
+    if not ids:
+        return
+    try:
+        discard_sink(ids)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("llm_calls 폐기 표시 실패: %s", type(exc).__name__)
 
 
 # ---- 계정 수명과 보존 (api.py가 연다) ----

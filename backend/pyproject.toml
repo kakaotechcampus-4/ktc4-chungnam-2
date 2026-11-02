@@ -11,7 +11,7 @@
 [tool.importlinter]
 root_packages = [
     "ads", "agent", "auth", "authz", "common", "credits", "feedback", "llm", "maintenance", "maps", "notifications",
-    "pins", "places", "realtime", "recommend", "seeding", "shortlist",
+    "pins", "places", "realtime", "recommend", "reviews", "seeding", "shortlist",
 ]
 include_external_packages = false
 
@@ -21,7 +21,7 @@ name = "common, auth, authz는 기능 모듈을 import하지 않는다"
 type = "layers"
 # 위가 위층이다. 첫 줄의 기능 모듈끼리는 서로 api로 부를 수 있다(":"는 서로 독립이 아니라는 뜻).
 layers = [
-    "ads : agent : credits : feedback : llm : maintenance : maps : notifications : pins : places : realtime : recommend : seeding : shortlist",
+    "ads : agent : credits : feedback : llm : maintenance : maps : notifications : pins : places : realtime : recommend : reviews : seeding : shortlist",
     "authz",
     "auth",
     "common",
@@ -41,7 +41,9 @@ ignore_imports = [
     "auth.service -> maps.api",
     "auth.service -> notifications.api",
     "auth.service -> pins.api",
+    "auth.service -> places.api",   # 외부 장소 번호표 확인 표(#1062). #452에서 탈퇴 흐름을 auth 밖으로 옮길 때 함께 정리
     "auth.service -> recommend.api",
+    "auth.service -> reviews.api",   # 장소 후기 신고 reporter_id(#951)
     "auth.service -> shortlist.api",
 
     # 알려진 예외 2. 게스트 참여 응답(POST /auth/guest)이 들어간 지도를 함께 싣는다.

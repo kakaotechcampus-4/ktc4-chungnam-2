@@ -5,7 +5,7 @@ import type { Pin } from '@/features/map/model'
 
 import { kakaoTrafficUrl } from '@/features/shortlist/model'
 
-import { courseDrawings, createErrorMessage, dayLine, daySummary, dayStops, dayTitle, goalState, inProgressRunId, isFinished, legLabel, pinNames, pinPoints, requestBody, transitLink, understandBody, walkLinks } from './model'
+import { courseDrawings, createErrorMessage, dayLine, daySummary, dayStops, dayTitle, goalState, inProgressRunId, isFinished, legLabel, pinNames, pinPoints, requestBody, showHoursKnown, transitLink, uncheckedPlaceCount, understandBody, walkLinks } from './model'
 
 const err = (code: string, detail?: Record<string, unknown>) => new ApiError(409, { code, message: code, detail })
 
@@ -24,12 +24,14 @@ describe('course model', () => {
   })
 
   it('에러 코드별 문구와 진행 중 run id', () => {
-    expect(createErrorMessage(err('COURSE_LIMIT'))).toBe('오늘은 다 썼어요. 내일 다시 짤 수 있어요')
     expect(createErrorMessage(err('COURSE_NOT_ENOUGH_PLACES'))).toContain('2곳')
     expect(createErrorMessage(err('SOMETHING_ELSE'))).toBeNull()
+    // 크레딧 오류는 버튼 자리(CreditGate)가 말한다 — 여기서 문구를 만들지 않는다
+    expect(createErrorMessage(err('CREDIT_INSUFFICIENT'))).toBeNull()
+    expect(createErrorMessage(err('GUEST_NOT_ALLOWED'))).toBeNull()
     expect(inProgressRunId(err('COURSE_IN_PROGRESS', { course_run_id: 'course_1' }))).toBe('course_1')
     expect(inProgressRunId(err('COURSE_IN_PROGRESS'))).toBeNull()
-    expect(inProgressRunId(err('COURSE_LIMIT', { course_run_id: 'x' }))).toBeNull()
+    expect(inProgressRunId(err('CREDIT_INSUFFICIENT', { course_run_id: 'x' }))).toBeNull()
   })
 
   it('이해 카드는 문장 앞의 같은 제목을 한 번만 보인다', () => {
@@ -70,10 +72,11 @@ describe('course model', () => {
       },
       names,
     )
-    expect(stops.map((s) => [s.name, s.leg, s.needsCheck])).toEqual([
-      ['가', { mode: 'walk', minutes: 7 }, true],
-      ['나', { mode: 'transit', minutes: 3 }, false],
-      ['이 장소', null, true],
+    // 영업시간 확인됨은 서버 needs_check 의 반대다
+    expect(stops.map((s) => [s.name, s.leg, s.hoursKnown])).toEqual([
+      ['가', { mode: 'walk', minutes: 7 }, false],
+      ['나', { mode: 'transit', minutes: 3 }, true],
+      ['이 장소', null, false],
     ])
   })
 
@@ -136,5 +139,17 @@ describe('course model', () => {
     expect(first.legs).toEqual([]) // 구간 양 끝 좌표를 다 아는 구간이 없다
     const lines = Array.from({ length: 12 }, (_, i) => dayLine(i))
     expect(new Set(lines.map((l) => `${l.color}${l.style}`)).size).toBe(12)
+  })
+})
+
+describe('영업시간 표시(루트 검수 #1127)', () => {
+  it('그날 쉬는 장소 위반이 하나라도 있으면 「영업시간 확인됨」을 숨긴다 — 위반에 pin_id 가 없어 어느 곳인지 모른다', () => {
+    expect(showHoursKnown({ violations: [] })).toBe(true)
+    expect(showHoursKnown({ violations: [{ kind: 'travel', text: '도보가 길어요' }] })).toBe(true)
+    expect(showHoursKnown({ violations: [{ kind: 'closed', text: '○○은 둘째 날에 쉬는 날이에요' }] })).toBe(false)
+  })
+  it('영업시간을 모르는 장소 수는 장소로 센다 — 같은 장소가 여러 날이어도 한 곳', () => {
+    expect(uncheckedPlaceCount({ checks: [] })).toBe(0)
+    expect(uncheckedPlaceCount({ checks: [{ pin_id: 'a', text: '' }, { pin_id: 'a', text: '' }, { pin_id: 'b', text: '' }] })).toBe(2)
   })
 })

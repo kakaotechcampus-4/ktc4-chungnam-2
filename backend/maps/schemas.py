@@ -19,8 +19,9 @@ class MapRegion(BaseModel):
     있는 반쪽짜리 region은 만들지 않는다(maps/core.py::validate_map_create가 검증)."""
 
     label: str = Field(max_length=100)
-    lat: float
-    lng: float
+    # docs/api-spec.yaml MapRegion과 같은 범위(#733). core.validate_map_create도 같은 값을 막는다 — 둘 다 422 VALIDATION_ERROR.
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
 
 
 class MapCreateRequest(BaseModel):
@@ -39,7 +40,7 @@ class MapUpdateRequest(BaseModel):
     """PATCH /maps/{mapId}(#465) — 보낸 필드만 바꾼다. 값을 안 보낸 필드는 None이다. 빈 객체와
     명시적 null은 422다(null로 region을 지우는 건 지원하지 않는다 — 바꾸기만)."""
 
-    title: str | None = Field(default=None, max_length=100)
+    title: str | None = Field(default=None, min_length=1, max_length=100)  # 스펙 minLength 1(#733)
     start_date: date | None = None
     end_date: date | None = None
     region: MapRegion | None = None
@@ -141,3 +142,6 @@ class Member(BaseModel):
     display_name: str | None = None
     # v1은 접속 상태를 추적하지 않아 늘 비운다(docs/events.md member.presence).
     online: bool | None = None
+    # 게스트(로그인 수단이 없는 임시 계정, #472) 여부(#955). 판정은 auth.api.guest_user_ids 한 곳이다.
+    # 화면이 「게스트」 표시와 방장 넘기기 후보에서 빼는 데 쓴다.
+    is_guest: bool

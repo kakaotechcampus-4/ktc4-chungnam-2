@@ -1,7 +1,7 @@
 import type { PlaceSearchResultDto } from '@/features/search/model'
 import { PINGO_MARK } from '@/ui/pingoMark'
 
-import type { Pin } from './model'
+import { kindLabel, type Pin } from './model'
 
 type PinKind = Pin['kind']
 
@@ -14,8 +14,8 @@ const HEART = 'M12 14.2l-.6-.5C9.3 11.8 8 10.6 8 9.2 8 8.1 8.9 7.2 10 7.2c.6 0 1
  * - 일반·AI 추천: 빨강 실선 테두리 + 속은 참여율만큼 회색→빨강(oklch 로 섞어야 중간이 탁해지지 않는다)
  *   + 머리 가운데 진한 빨간 점. AI 추천은 「지도에 올리기」로 모두의 핀이 된 뒤라 일반 핀과 같게 그린다.
  *   올리기 전 후보만 핑고 핀으로 따로 그린다(createCandidateMarkerElement).
- * - 확정: 골드 채움 + 흰 테두리 3px + 그 바깥 갈색 1px + 그림자 + 갈색 ♥. 참여율과 무관하다.
- *   밝은 땅 위에선 흰 테두리가 묻혀서(실측 1.2:1) 갈색 선이 가시성을 맡는다(#299)
+ * - 확정: 골드 채움 + 흰 테두리 3px + 그 바깥 갈색 윤곽선 1px + 갈색 ♥. 참여율과 무관하다.
+ *   밝은 땅 위에선 흰 테두리가 묻혀서(실측 1.2:1) 갈색 윤곽선이 가시성을 맡는다(#299). 그림자는 없다 — 이름표처럼 윤곽선으로 가른다
  * 구성원별 색 구분은 없다(#26).
  */
 function shapeOf(kind: PinKind, ratio: number) {
@@ -33,10 +33,9 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
   const el = document.createElement('button')
   el.type = 'button'
   // 장소 이름은 setAttribute 로만 넣는다 — innerHTML 로 들어가면 이름이 마크업으로 해석된다.
-  el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'} · ${pin.kind} 핀`)
+  el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'} · ${kindLabel(pin.kind)} 핀`)
   el.style.cssText =
-    'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;' +
-    (pin.kind === '확정' ? 'filter:drop-shadow(var(--pin-confirmed-shadow));' : '')
+    'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
   el.innerHTML = `
     <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true">
       ${pin.kind === '확정' ? `<path d="${PIN_PATH}" stroke-linejoin="round" style="fill:none;stroke:var(--pin-confirmed-mark);stroke-width:5" />` : ''}
@@ -131,6 +130,27 @@ export function createCandidateMarkerElement(c: { rank: number; name: string; se
   return el
 }
 
+/**
+ * 지도 빈 곳을 누른 자리의 「이 근처 장소 찾기」 말풍선(#1028). 누르자마자 검색하지 않고 한 번 더 묻는다 — 어느 탭이든 같다.
+ * 아래 작은 점이 누른 자리다(오버레이 yAnchor 1 → 점 가운데가 좌표). 버튼은 btn-outline btn-sm 부품이다.
+ */
+export function createTapBubbleElement(onPress: () => void): HTMLElement {
+  const box = document.createElement('div')
+  box.className = 'enter-pop'
+  box.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;transform-origin:50% 100%'
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'btn-outline btn-sm shadow-float'
+  button.textContent = '이 근처 장소 찾기'
+  button.addEventListener('click', onPress)
+  const dot = document.createElement('span')
+  dot.setAttribute('aria-hidden', 'true')
+  dot.style.cssText =
+    'width:12px;height:12px;margin-bottom:-6px;border-radius:9999px;background:var(--brand-600);border:2px solid #fff;box-shadow:0 1px 3px rgba(20,22,31,.3)'
+  box.append(button, dot)
+  return box
+}
+
 /** 고른 핀·후보를 크게(1.25배)·흰 후광·이름 말풍선으로 보인다(#308). 맨 위로 올리는 건 오버레이 쪽 일이다. */
 export function markSelected(el: HTMLElement, name: string, on: boolean) {
   const svg = el.querySelector('svg')
@@ -139,16 +159,34 @@ export function markSelected(el: HTMLElement, name: string, on: boolean) {
     svg.style.transform = on ? 'scale(1.25)' : ''
     svg.style.filter = on ? 'drop-shadow(0 0 2px #fff) drop-shadow(0 0 2px #fff)' : ''
   }
+  setPinLabel(el, name, on ? 'selected' : null)
+}
+
+/**
+ * 핀 아래 이름표.
+ * - quiet: 지도에 찍힌 핀은 누르지 않아도 이름이 보인다. 작은 흰 알약이고 길면 말줄임한다. 겹치면 markerLayer 가 숨긴다
+ * - selected: 고른 핀·후보의 말풍선(#308). 더 굵고 그림자가 진하고, 이름을 다 보인다
+ * - null: 떼어 낸다(검색 결과·AI 후보는 고를 때만 이름이 있다)
+ * 이름은 textContent 로만 넣는다(마크업으로 해석되지 않게). 읽는 이름은 버튼 aria-label 이 이미 갖고 있어 aria-hidden 이다.
+ */
+export function setPinLabel(el: HTMLElement, name: string, mode: 'quiet' | 'selected' | null) {
   el.querySelector('[data-pin-name]')?.remove()
-  if (!on) return
+  if (!mode || !name) return
   const label = document.createElement('span')
-  label.dataset.pinName = ''
-  // 이름은 textContent 로만 넣는다(마크업으로 해석되지 않게).
+  label.dataset.pinName = mode
   label.textContent = name
   label.setAttribute('aria-hidden', 'true')
   label.style.cssText =
-    'position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;padding:2px 8px;border-radius:8px;' +
-    'background:#fff;color:var(--ink-900);font-size:0.75rem;font-weight:700;line-height:1.4;white-space:nowrap;box-shadow:0 1px 4px rgba(20,22,31,.18)'
+    // 그림자 대신 윤곽선 1px — 옅게 깐 바탕 지도 위에서 경계가 또렷하다. 테두리만큼 안쪽 여백을 줄여 크기는 그대로다.
+    'position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;padding:1px 7px;border-radius:8px;' +
+    'border:1px solid var(--ink-300);background:#fff;color:var(--ink-900);font-size:0.75rem;line-height:1.4;white-space:nowrap;pointer-events:none;' +
+    (mode === 'selected' ? 'font-weight:700' : 'font-weight:600;max-width:8em;overflow:hidden;text-overflow:ellipsis')
   el.style.position = 'relative'
   el.appendChild(label)
+}
+
+/** 이름표를 겹침 정리로 숨기거나 다시 보인다. 폭을 재야 해서 display 대신 visibility 로 숨긴다. */
+export function showPinLabel(el: HTMLElement, show: boolean) {
+  const label = el.querySelector<HTMLElement>('[data-pin-name]')
+  if (label) label.style.visibility = show ? '' : 'hidden'
 }

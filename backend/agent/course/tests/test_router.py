@@ -8,12 +8,12 @@ from datetime import timedelta
 
 from fastapi.testclient import TestClient
 
-from agent.course.constants import COURSE_DAILY_LIMIT
 from agent.course.gateways import CourseLlm
 from agent.course.models import AgentCourseRun
 from agent.course.tests.conftest import confirmed_map
 from agent.course.tests.test_runner import TEXT, direct_planner, goals_planner
-from auth.testing import ensure_users
+from auth.testing import ensure_users, make_guest
+from credits import api as credits_api
 
 
 def outsider(world, name="x"):
@@ -85,7 +85,7 @@ def test_request_runs_in_background_and_get_returns_done(world, places, client):
     assert goal["label"].startswith("둘째 날 (") and goal["label"].endswith(")은 실내 위주로")
     assert body["unmatched"] == ["웨이팅 없는 곳으로"]
     step = body["steps"][0]
-    assert (step["stage"], step["role"], step["by"], step["by_detail"]) == ("이해", "해석", "ai", None) and step["text"].endswith("「웨이팅 없는 곳으로」는 그대로는 판단할 수 없어요")
+    assert (step["stage"], step["role"], step["by"], step["by_detail"]) == ("이해", "해석", "ai", None) and step["text"].endswith("「웨이팅 없는 곳으로」는 그대로는 판단할 수 없어요.")
     assert sorted(s["pin_id"] for d in body["days"] for s in d["slots"]) == sorted(pin_ids[:4])
     assert [e["pin_id"] for e in body["excluded"]] == [pin_ids[4]] and body["excluded"][0]["reason"] == "NO_COORDINATES"
     assert len(body["checks"]) == 4 and body["violations"] == [] and body["stale"] is False
@@ -159,17 +159,45 @@ def test_in_progress_is_409_with_run_id(world, places, client):
     assert res.json()["detail"] == {"course_run_id": running}
 
 
-def test_daily_limit_is_429_after_five_runs(world, places, client):
+def test_sixth_course_is_202_without_a_daily_limit(world, places, client):
+    """하루 5회 상한은 크레딧으로 바뀌었다(#432, 명세 12절 14)."""
     map_id, _ = confirmed_map(world, places, 3)
     u1 = client("u1")
-    for _ in range(COURSE_DAILY_LIMIT):
+    with world.factory() as db:
+        before = credits_api.get_balance(db, user_id=world.uid("u1"))
+    for _ in range(6):
         assert u1.post(f"/maps/{map_id}/courses").status_code == 202        # 매번 끝까지 돌아 다음 요청이 막히지 않는다
+    with world.factory() as db:
+        assert credits_api.get_balance(db, user_id=world.uid("u1")) == before - 6
 
-    res = u1.post(f"/maps/{map_id}/courses")
 
-    assert res.status_code == 429 and res.json()["code"] == "COURSE_LIMIT"
-    assert res.json()["detail"] == {"limit": 5, "used": 5}
-    assert client("u2").post(f"/maps/{map_id}/courses").status_code == 202
+def test_no_credit_is_402_with_required_and_balance(world, places, client):
+    map_id, _ = confirmed_map(world, places, 3)
+    with world.factory() as db:
+        while True:
+            try:
+                credits_api.charge(db, user_id=world.uid("u1"), feature="course", run_id=str(uuid.uuid4()))
+            except Exception:  # noqa: BLE001 — 0이 되면 402
+                break
+        db.commit()
+
+    res = client("u1").post(f"/maps/{map_id}/courses")
+
+    assert res.status_code == 402 and res.json()["code"] == "CREDIT_INSUFFICIENT"
+    assert res.json()["detail"] == {"required": 1, "balance": 0}
+    assert client("u1").get(f"/maps/{map_id}/courses/latest").status_code == 204      # run이 남지 않았다
+
+
+def test_guest_is_403_guest_not_allowed(world, places, client):
+    map_id, _ = confirmed_map(world, places, 3)
+    with world.factory() as db:
+        make_guest(db, world.uid("u1"))
+        db.commit()
+
+    res = client("u1").post(f"/maps/{map_id}/courses")
+
+    assert res.status_code == 403 and res.json()["code"] == "GUEST_NOT_ALLOWED"
+    assert set(res.json()["detail"]) == {"initial_credits"}
 
 
 def test_request_body_validation_is_422(world, places, client):

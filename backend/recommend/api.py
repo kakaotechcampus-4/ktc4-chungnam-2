@@ -85,14 +85,14 @@ def get_recent_runs(db: Session, *, run_id: str, limit: int = 10) -> list[dict]:
 def get_run_meta(db: Session, *, run_id: str) -> dict:
     """그 run 자신의 정보 `{run_id, map_id, category, requested_by, status, result_count, created_at,
     default_radius_walk_min, widen_limit_walk_min, widen_step_walk_min}`(#587). agent가 조언 대상인지(완료, 결과 수)와 요청자
-    본인인지, 반경 넓히기 상한(도보 30분, core.WIDEN_LIMIT_MIN)을 넘는 배율인지, 반경 넓히기 한 번(도보 5분,
+    본인인지, 반경 넓히기 상한(카테고리별, core.radius_walk_mins)을 넘는 배율인지, 반경 넓히기 한 번(도보 5분,
     core.WIDEN_STEP_MIN)이 몇 배율인지(#677) 본다. result_count는 get_recent_runs와 같은 기준(후보 수, done이 아니면 0).
     권한 판정 없음(위 주석)."""
     run = service.get_run_or_404(db, run_id)
     return {
         "run_id": str(run.id), "map_id": run.map_id, "category": run.category, "requested_by": run.requested_by,
         "status": run.status, "result_count": _result_count(db, run), "created_at": run.created_at,
-        "default_radius_walk_min": run.default_radius_walk_min, "widen_limit_walk_min": core.WIDEN_LIMIT_MIN,
+        "default_radius_walk_min": run.default_radius_walk_min, "widen_limit_walk_min": core.radius_walk_mins(run.category)[1],
         "widen_step_walk_min": core.WIDEN_STEP_MIN,
     }
 
@@ -100,8 +100,9 @@ def get_run_meta(db: Session, *, run_id: str) -> dict:
 def get_run_funnel(db: Session, *, run_id: str) -> dict:
     """마지막 실행(execute/widen/retry)의 `{result_count, funnel, passed_count}` — simulate_filter의 before·after와 같은 모양.
     funnel은 저장한 깔때기(recommend_runs.last_funnel)에 단계 키를 붙인 `[{key, label, removed_count}]`(core.keyed_funnel, #751)이고
-    「추천 가능 아님 제거」(#558) 단계도 저장된 대로 들어 있다. 단계는 key(core.FUNNEL_STAGES)로 찾는다 — 라벨 글자는 화면
-    문구라 바뀔 수 있고, 표에 없는 옛 라벨이면 key는 None이다. result_count는 get_run_meta와 같은 기준(후보 수, done이 아니면 0), passed_count는 필터를 모두
+    단계는 key(core.FUNNEL_STAGES)로 찾는다 — 라벨 글자는 화면 문구라 바뀔 수 있고, 표에 없는 옛 라벨이면 key는 None이다.
+    후보 풀이 처음부터 정예 장소가 된(#913) 뒤로 「추천 가능 아님 제거」 단계는 없다 — 그 전에 저장된 깔때기에는 그 줄이 그대로 남아
+    있고(key None), agent는 그 단계를 보지 않는다. result_count는 get_run_meta와 같은 기준(후보 수, done이 아니면 0), passed_count는 필터를 모두
     통과한 곳의 수(상위 3곳을 고르기 전, core.passed_count, #587). 실행 전이면 funnel []·0·0. 사본이라 고쳐도 행에 영향이
     없다. 권한 판정 없음(위 주석)."""
     run = service.get_run_or_404(db, run_id)

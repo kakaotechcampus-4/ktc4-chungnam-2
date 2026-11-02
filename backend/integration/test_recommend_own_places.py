@@ -45,7 +45,7 @@ def _setup_run(db_session, *, required_fact_key: str | None, wants: bool | None 
 # ---------- 1) FakePlaces ----------
 
 def test_fake_places_unknown_taste_label_passes_with_needs_check_known_pass_is_kept(db_session, monkeypatch, no_label_place):
-    fake = FakePlaces().install(monkeypatch)
+    fake = FakePlaces().curate_all().install(monkeypatch)
     run = _setup_run(db_session, required_fact_key="spicy_focused", wants=False)   # 🚫 "매워요" — 취향 키(#378)
 
     flows.execute_run(db_session, run_id=str(run.id),
@@ -62,7 +62,7 @@ def test_fake_places_unknown_taste_label_passes_with_needs_check_known_pass_is_k
 
 
 def test_fake_places_pass_policy_unknown_stays_with_needs_check(db_session, monkeypatch, no_label_place):
-    fake = FakePlaces().install(monkeypatch)
+    fake = FakePlaces().curate_all().install(monkeypatch)
     run = _setup_run(db_session, required_fact_key="is_crowded_large")   # 음식점엔 적용 안 되는 키 → 활성 실격 없음
 
     flows.execute_run(db_session, run_id=str(run.id),
@@ -73,7 +73,7 @@ def test_fake_places_pass_policy_unknown_stays_with_needs_check(db_session, monk
 
 
 def test_candidate_name_and_coordinates_come_from_places(db_session, monkeypatch, no_label_place):
-    fake = FakePlaces().install(monkeypatch)
+    fake = FakePlaces().curate_all().install(monkeypatch)
     run = _setup_run(db_session, required_fact_key=None)
     flows.execute_run(db_session, run_id=str(run.id),
                       place_search=RealPlaceSearchGateway(), place_facts=RealPlaceFactsGateway())

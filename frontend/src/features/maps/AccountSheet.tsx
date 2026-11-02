@@ -98,7 +98,7 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
           이름 바꾸기
         </button>
       </div>
-      {me?.is_guest && <div className="-mt-2 mb-5"><GuestAccountNotice /></div>}
+      {me?.is_guest && <div className="mb-5 mt-1"><GuestAccountNotice /></div>}
 
       {maps.length > 0 && (
         <>

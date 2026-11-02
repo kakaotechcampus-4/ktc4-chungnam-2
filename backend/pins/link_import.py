@@ -19,7 +19,7 @@ from places import api as places_api
 from places.schemas import LinkParseResult
 from pins import service
 from pins.schemas import (
-    BulkPinError, BulkPinItemResult, BulkPinResult, LinkPreviewItem, LinkPreviewResult, PinCreateRequest,
+    BulkPinError, BulkPinItemResult, BulkPinResult, LinkHint, LinkPreviewItem, LinkPreviewResult, PinCreateRequest,
 )
 
 log = logging.getLogger("pingo.pins.link_import")
@@ -36,12 +36,47 @@ def check_link_preview_rate(user_id: str, url_count: int) -> None:
         raise AppError("RATE_LIMITED")
 
 
-def _parse_one(url: str) -> LinkParseResult:
-    return places_api.parse_link(url, db=None)   # 스레드마다 자체 세션(places가 연다)
+def _match_by_hint(hint: LinkHint | None, external_id: str | None) -> list:
+    """상호명 + 주소로 자체 DB 짝(#946). 주소가 없으면 부르지 않는다(places도 빈 목록). 실패는 짝 없음 — 상호명·주소는 남기지 않는다."""
+    if hint is None or not hint.name or not hint.address:
+        return []
+    try:
+        return places_api.match_by_name_address(hint.name, hint.address, external_id=external_id, db=None)
+    except Exception as exc:   # noqa: BLE001 — 힌트는 덤이다. 메시지에 힌트가 실릴 수 있어 타입만 남긴다
+        log.warning("link-preview 힌트 짝 찾기 실패(%s)", type(exc).__name__)
+        return []
+
+
+def _address_candidates(hint: LinkHint | None) -> list:
+    """같은 주소에 영업 중인 한 곳(#1047) — 이름이 달라도 「이 장소가 맞나요?」로 사람이 확인할 후보다(자동 확정 아님, 가드레일 2·4).
+    matches가 비었을 때만 부른다. 주소만 쓴다. 실패는 후보 없음 — 주소는 남기지 않는다."""
+    if hint is None or not hint.address:
+        return []
+    try:
+        return list(places_api.match_address_candidates(hint.address, db=None))[:3]
+    except Exception as exc:   # noqa: BLE001 — 후보는 덤이다. 메시지에 주소가 실릴 수 있어 타입만 남긴다
+        log.warning("link-preview 주소 후보 찾기 실패(%s)", type(exc).__name__)
+        return []
+
+
+def _parse_one(url: str, hint: LinkHint | None = None) -> LinkParseResult:
+    """places의 링크 해석 → 힌트 짝(#946·#1048) → 같은 주소 후보(#1047) 순."""
+    result = places_api.parse_link(url, db=None)   # 스레드마다 자체 세션(places가 연다)
+    if result.matches:   # places가 번호표로 채웠으면(matched_by=external_id) 덮어쓰지 않는다
+        return result if result.matched_by else result.model_copy(update={"matched_by": "link"})
+    matches = _match_by_hint(hint, result.external_id)
+    if matches:
+        return result.model_copy(update={"matches": matches, "matched_by": "hint", "needs_search_query": False})
+    if result.address_candidates:   # places가 구글 이름 속 주소로 이미 채웠다
+        return result
+    candidates = _address_candidates(hint)
+    return result.model_copy(update={"address_candidates": candidates}) if candidates else result
 
 
 def _already_pinned_pin_id(db: Session, map_id: str, result: LinkParseResult) -> str | None:
     """그 링크의 장소가 이 지도에 이미 핀으로 있으면 그 핀 id — #569와 같은 기준(pins.service의 판정 재사용)."""
+    if not result.matches and result.address_candidates:
+        return None   # 주소 후보는 사람이 확정하기 전이라 링크 항목에 「이미 있음」을 붙이지 않는다
     place_ids: list[str] = []
     for match in result.matches:
         if match.place_id.startswith("own:"):
@@ -58,11 +93,12 @@ def _already_pinned_pin_id(db: Session, map_id: str, result: LinkParseResult) ->
     return None
 
 
-def preview_links(db: Session, map_id: str, urls: list[str]) -> LinkPreviewResult:
+def preview_links(db: Session, map_id: str, urls: list[str], hints: list[LinkHint | None] | None = None) -> LinkPreviewResult:
     """POST /maps/{mapId}/pins/link-preview — 쓰기 없음. 링크마다 parse_link를 스레드 5개로 병렬 실행하고 마감을 넘긴 항목은
     LINK_UNRESOLVED로 둔다. 항목 하나의 실패는 그 항목만 error다."""
     pool = ThreadPoolExecutor(max_workers=PREVIEW_WORKERS, thread_name_prefix="link-preview")
-    futures: list[Future] = [pool.submit(_parse_one, url) for url in urls]
+    per_url_hints = hints or [None] * len(urls)   # 길이는 요청 모델이 urls와 맞춘다
+    futures: list[Future] = [pool.submit(_parse_one, url, hint) for url, hint in zip(urls, per_url_hints)]
     wait(futures, timeout=PREVIEW_DEADLINE_S)
     pool.shutdown(wait=False, cancel_futures=True)   # 마감을 넘긴 해석은 기다리지 않는다(결과는 버린다)
 

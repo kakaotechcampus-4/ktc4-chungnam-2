@@ -2,7 +2,7 @@
 기능형 코어 — 순수 함수만 둔다(docs/code-quality.md). DB·게이트웨이를 건드리지 않고,
 이미 로드된 값을 받아 판정·조립만 한다. #108(코어 파이프라인) 범위의 순수 함수 전체를
 여기 모은다: check_readiness/assemble_evidence/region_signature/apply_disqualifier_filters/
-funnel_counts/widen_radius/check_retry_limit + 이들을 뒷받침하는 원(Circle) 계산.
+funnel_counts/widen_radius + 이들을 뒷받침하는 원(Circle) 계산.
 
 멤버십·작성자(author) 판정은 여기 두지 않는다 — authz.resolve_principal(gateway 호출, I/O)와
 authz.can()이 이미 그 판정을 갖고 있다(authz/policy.py의 author.actions에
@@ -25,15 +25,22 @@ from recommend.models import RecommendRun
 from recommend.ports import Circle
 from recommend.schemas import Check
 
-ATTEMPT_LIMIT = 10  # #31: 지도 안에서 구성원 각자, 카테고리 무관, 팀 합산 상한 없음. 5→10회 상향(2026-10-15, #558)
 # #707 — run 하나에 「+」로 직접 추가하는 글은 10개까지(×로 뺀 것도 센다). 「+」도 ②로 모델을 불러서다. 출발값이고,
-# 사람 단위 크레딧(#432)이 정해지면 거기서 센다. 한 요청 5줄은 schemas.EvidencePatchRequest가 422로 막는다.
+# 크레딧(#432) 뒤에도 남는 보호다(「+」는 크레딧을 쓰지 않는다, docs/credits-reviews.md 4절). 한 요청 5줄은 schemas.EvidencePatchRequest가 422로 막는다.
 MANUAL_EVIDENCE_LIMIT = 10
 # 반경 넓히기 상수 — docs/constraints.md "반경 넓히기 상수" 절 그대로(조정 가능한 상수, 바꿀
 # 때 루트에게 알린다). 기본값 원은 도보 15분에서 시작해 한 번에 5분씩, 30분까지.
 DEFAULT_RADIUS_WALK_MIN = 15
 WIDEN_STEP_MIN = 5
 WIDEN_LIMIT_MIN = 30
+# 카테고리별 (기본, 상한) 도보 분 — 여기 없는 카테고리는 위 값이다. 관광지는 반경 안 후보가 적어 넓게 시작한다(#1055).
+# 쓰는 곳은 radius_walk_mins(category)로 받는다.
+_RADIUS_WALK_MIN_BY_CATEGORY: dict[str, tuple[int, int]] = {"관광지": (25, 45)}
+
+
+def radius_walk_mins(category: str) -> tuple[int, int]:
+    """카테고리의 (기본 반경, 넓히기 상한) 도보 분(#1055). 이 값을 정하는 곳은 여기 하나다."""
+    return _RADIUS_WALK_MIN_BY_CATEGORY.get(category, (DEFAULT_RADIUS_WALK_MIN, WIDEN_LIMIT_MIN))
 
 
 def check_run_ready(run: RecommendRun) -> None:
@@ -140,21 +147,22 @@ def radius_m_for_walk_min(walk_min: int) -> int:
     return walk_min * WALKING_SPEED_M_PER_MIN
 
 
-def next_default_radius_walk_min(current_walk_min: int) -> int:
+def next_default_radius_walk_min(current_walk_min: int, category: str) -> int:
     """반경 넓히기(5-6-1, 가드레일4) — 기본값 원의 다음 도보 시간. 이미 상한이면 409
     WIDEN_LIMIT — 상한을 넘겨 완화하는 건 AI도 코드도 하지 않는다(사람이 「근거 고치기」/
     「직접 찍기」로 간다). "사람이 명시한 원은 넓히지 않는다"는 구분은 이 함수가 아니라 호출부가
     넘기는 대상에 달려 있다(flows.widen_run)."""
-    if current_walk_min >= WIDEN_LIMIT_MIN:
+    _default, limit = radius_walk_mins(category)
+    if current_walk_min >= limit:
         raise AppError("WIDEN_LIMIT", detail={"default_radius_walk_min": current_walk_min})
-    return min(current_walk_min + WIDEN_STEP_MIN, WIDEN_LIMIT_MIN)
+    return min(current_walk_min + WIDEN_STEP_MIN, limit)
 
 
-def pool_radius_factor(current_walk_min: int) -> float:
+def pool_radius_factor(current_walk_min: int, category: str) -> float:
     """후보 풀을 가져오는 원의 배율 = 상한 도보 분 / 지금 도보 분(#792). 반경 넓히기가 갈 수 있는 끝까지만 가져와야
     「반경 밖 제거」가 지금 반경 밖(상한 안)의 장소를 센다 — 지금 반경으로 가져오면 늘 0이다. 결과는 여전히 지금 반경
     안에서만 나오고(is_within_any_region), 상한 밖은 풀에도 없다(가드레일 4). 이미 상한이면 1이다."""
-    return max(WIDEN_LIMIT_MIN / current_walk_min, 1.0)
+    return max(radius_walk_mins(category)[1] / current_walk_min, 1.0)
 
 
 def is_within_any_region(lat: float, lng: float, regions: list[Circle]) -> bool:
@@ -382,20 +390,10 @@ def no_applied_conditions(entries: Sequence[Mapping[str, Any]]) -> bool:
 EXTERNAL_SEARCH_QUERY_MAX = 100  # api-spec ExternalSearch.query maxLength
 
 
-def external_search_query(
-    area: str | None, category: str, lines: Sequence[tuple[str, str | None, bool | None]], off_season: Collection[str],
-) -> str:
-    """검색어 "{동네} {말}". lines는 이번 run의 활성 근거 줄 (badge, fact_key, wants)를 근거 줄 순서로 — 사유 원문은 받지
-    않는다(#717). 말은 쓰이는 줄(evidence_line_use) 중 원함 방향(wants가 참)이고 조건 말 표에 있는 키의 말 하나(첫째),
-    없으면 카테고리 말이다. 동네가 없거나 붙이면 검색어 상한을 넘으면 말만 쓴다."""
-    word = next(
-        (
-            constraints.CONDITION_SEARCH_WORDS[fact_key] for badge, fact_key, wants in lines
-            if wants is True and fact_key in constraints.CONDITION_SEARCH_WORDS
-            and evidence_line_use(badge, fact_key, wants, category, off_season)[0]
-        ),
-        constraints.CATEGORY_SEARCH_WORDS[category],
-    )
+def external_search_query(area: str | None, category: str) -> str:
+    """검색어 "{동네} {카테고리 말}"(#904). 근거 줄과 조건은 보지 않는다 — 카카오 검색은 말이 모두 맞아야 찾아서 조건 말을 더하면 결과가
+    거의 없고, 말 목록은 관리 비용이 크다(#902). 사유 원문도 받지 않는다(#717). 동네가 없거나 붙이면 검색어 상한을 넘으면 말만 쓴다."""
+    word = constraints.CATEGORY_SEARCH_WORDS[category]
     query = f"{area} {word}" if area else word
     return query if len(query) <= EXTERNAL_SEARCH_QUERY_MAX else word
 
@@ -477,7 +475,6 @@ FUNNEL_STAGES: tuple[tuple[str, str], ...] = (
     ("pool", "카테고리 후보 풀"),
     ("radius", "반경 밖 제거"),
     ("closed", "영업 종료 제거"),
-    ("not_recommendable", "추천 가능 아님 제거"),
     ("disqualify", "실격 조건 제거"),
     ("excluded", "이미 제안·거절됨"),
     ("ranking", "상위 3곳 선정"),   # 마지막 단계(③-b). 이 단계 앞까지가 실격 필터다
@@ -532,13 +529,6 @@ def reservation_decision(
     if run_id is not None:
         return "reuse"
     return "takeover" if now - started_at >= IDEMPOTENCY_DEADLINE else "in_progress"
-
-
-def check_retry_limit(attempt_no: int) -> None:
-    """재시도 상한(#31: 개인 단위, 카테고리 무관, 상한 ATTEMPT_LIMIT회). attempt_no는 다음 시도를 실행하기
-    *전* 현재까지의 시도 횟수 — 이미 상한에 도달했으면 429. detail에 상한도 싣는다(FE가 숫자를 하드코딩하지 않는다)."""
-    if attempt_no >= ATTEMPT_LIMIT:
-        raise AppError("RETRY_LIMIT", detail={"attempt_no": attempt_no, "attempt_limit": ATTEMPT_LIMIT})
 
 
 # ============================================================================
@@ -712,7 +702,8 @@ def score_candidates(
     criteria[fact_key] is True이고 후보 자신도 그 라벨이 known+True일 때만("양쪽 다 참일 때만")
     점수를 준다. 더하는 값은 (지지 점수 − 반대 점수)다. 지지·반대 구성원 한 사람이 직접 쓴 사유의
     작성자면 `WRITTEN_PREFERENCE_POINTS`, ♥로만 나왔으면 `HEART_PREFERENCE_POINTS`다(#414).
-    조사 안 된(unknown) 라벨은 0점 — 감점도 없다.
+    조사 안 된(unknown) 라벨은 0점 — 감점도 없다. 직접 쓴 선호(`preferred_authors`)가 후보에서 확인된 거짓(known+False)이면
+    작성자 한 사람당 `WRITTEN_PREFERENCE_POINTS`씩 깎는다(#1055). ♥에서만 이어받은 선호는 거짓이어도 0점이다.
 
     `avoided_authors`(fact_key → "있는 곳은 피하고 싶다"고 선호로 쓴 구성원, #231)는 그 키를 가진 후보에서
     한 사람당 `WRITTEN_PREFERENCE_POINTS`씩 깎는다. 기준(criteria)이 그 키를 True로 두지 않았어도 깎는다(피하는
@@ -725,7 +716,11 @@ def score_candidates(
     for place_id, checks in candidate_checks_by_place.items():
         total = 0
         for check in checks:
-            if check.confidence != "known" or not check.passed:
+            if check.confidence != "known":
+                continue
+            if not check.passed:
+                # 직접 쓴 선호가 확인된 거짓이면 깎는다(#1055). ♥에서 이어받은 선호는 깎지 않는다.
+                total -= WRITTEN_PREFERENCE_POINTS * len(preferred_authors.get(check.fact_key, ()))
                 continue
             if criteria.get(check.fact_key) is True:
                 supporting, opposing = support.get(check.fact_key, empty)

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from authz.schemas import Permissions
 from common import categories
+from places.schemas import ExternalSearch   # 카카오맵 검색 링크 응답 — 정의는 places(#903), 추천 응답도 같은 타입
 
 Category = Literal[categories.recommendable()]  # 스펙의 RecommendCategory(common/categories.py, #280)
 RunStatus = Literal["collecting_evidence", "awaiting_region_confirm", "executing", "done", "failed"]
@@ -24,12 +25,6 @@ class Check(BaseModel):
     passed: bool
     confidence: LabelConfidence
     needs_check: bool
-
-
-class ExternalSearch(BaseModel):
-    """카카오맵 검색 링크(#798) — 결과가 없거나 적을 때 사람이 밖에서 찾는 출구. AI 추천 결과가 아니다."""
-    query: str = Field(max_length=100)
-    url: str = Field(max_length=2000)
 
 
 class Readiness(BaseModel):
@@ -52,8 +47,7 @@ class RecommendRun(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
-    attempt_limit: int  # 한 사람이 한 지도에서 받을 수 있는 횟수 상한(core.ATTEMPT_LIMIT)
-    default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한 30
+    default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한은 카테고리별(core.radius_walk_mins)
 
 
 class RunSummary(BaseModel):
@@ -63,7 +57,6 @@ class RunSummary(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
-    attempt_limit: int  # RecommendRun.attempt_limit과 같다
     created_at: datetime
     candidate_count: int = Field(ge=0)  # 마지막 시도의 후보 수. done이 아니면 0
     published_count: int = Field(ge=0)  # 그 run에서 게시한 후보 수

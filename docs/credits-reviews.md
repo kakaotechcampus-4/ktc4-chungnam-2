@@ -1,17 +1,17 @@
 # 크레딧과 장소 후기 — 구현 명세
 
 > 추천 탭 광고의 `docs/ads.md`와 같은 기능 명세다. 정본은 여전히 `docs/api-spec.yaml`·`docs/data-model.md`·`docs/errors.md`이고, 이 문서와 다르면 그쪽을 따른다.
-> 상태: 결정 반영 (2026-11-01, #432). 작업은 #948~#954.
+> 상태: 구현 완료 (2026-11-01, #432). 작업은 #948~#954.
 
 ## 0. 한 줄 요약
 
-기능별 사용 상한(코스 하루 5회, 추천 지도·사람당 10회)을 없앤다. 정식 계정은 크레딧 30으로 시작하고, 사람이 누른 AI 실행(추천, 코스)마다 1씩 빠진다. 실행이 결과 없이 끝나면 돌려준다. 재충전은 장소 후기를 처음 쓸 때 +10 하나뿐이다. 광고 충전은 하지 않는다. 게스트는 AI 추천과 코스를 쓰지 않는다.
+기능별 사용 상한(코스 하루 5회, 추천 지도·사람당 10회)을 없앤다. 정식 계정은 크레딧 30으로 시작하고, 사람이 누른 AI 실행(추천, 코스)마다 1씩 빠진다. 실행이 결과 없이 끝나면 돌려준다. 재충전은 장소 후기를 처음 쓸 때 +10, 그리고 잔액이 바닥났을 때 광고를 끝까지 보면 +10(하루 3번, 3.7, #1037)이다. **잔액 상한은 30이다**(3.6, #981) — 보상과 환불은 30까지만 채운다. 게스트는 AI 추천과 코스를 쓰지 않는다.
 
 ## 1. 배경
 
 - 페이즈 1 목표: 크레딧이 여행 1건 계획에 불편을 주지 않는다. 페이즈 2에서 유료 크레딧으로 수익화한다.
 - 모델 원가(실측, #870): 실행 1번 평균 추천 ₩0.86, 코스 ₩0.92, 「+」 근거 추가 ₩0.12. 6명이 의견이 갈린 여행도 사람당 약 ₩2. 1크레딧 ≈ 원가 ₩1.
-- 그래서 크레딧은 원가 회수 장치가 아니라 가치 표시와 후기 유도 장치다. 후기 보상에는 상한을 두지 않는다(비용 통제 장치가 아님을 감수).
+- 그래서 크레딧은 원가 회수 장치가 아니라 가치 표시와 후기 유도 장치다. 후기 보상 횟수에는 상한을 두지 않는다(비용 통제 장치가 아님을 감수). 잔액은 30을 넘지 않는다(3.6).
 - 상한이 지도마다였던 탓에 지도를 지우고 다시 만들면 횟수가 다시 생겼다(#432, 멘토 리뷰 #380). 사람마다 세는 크레딧이 그 구멍을 닫는다.
 
 ## 2. 용어
@@ -46,9 +46,9 @@
 
 - **차감은 실행을 저장하는 트랜잭션 안에서** 한다. 저장이 실패하면 차감도 같이 롤백된다 → 그 경우 환불이 필요 없다.
 - **모델 호출 전에 잔액을 읽기만으로 확인**한다(`check_can_spend`). 모자라면 모델을 부르기 전에 402.
-- **환불**: 실행 행은 커밋됐는데 결과 없이 끝난 경우만. 코스의 `ENGINE_ERROR`, `INTERRUPTED`.
-- **추천에는 환불 경로가 없다**(#432 D6). v1 추천은 `failed`를 쓰지 않고 실패하면 롤백한다(`recommend/core.py` 설명, `docs/events.md` 「v1에서 발행하지 않는 이벤트」). 차감이 같은 트랜잭션이라 같이 롤백된다. 나중에 커밋 뒤 `failed`로 끝나는 경로가 생기면 그때 `refund(feature="recommend_run")`를 단다.
-- 결과 0곳(`NO_RESULTS`)은 결과다(가드레일 2). 환불하지 않는다.
+- **환불**: 실행 행은 커밋됐는데 결과 없이 끝난 경우만. 코스의 `ENGINE_ERROR`, `INTERRUPTED`. 돌려주는 양도 잔액 상한까지다(3.6).
+- **추천의 환불은 「첫 실행이 0곳」 하나뿐이다**(#1015, 아래). 그 밖에는 환불 경로가 없다(#432 D6). v1 추천은 `failed`를 쓰지 않고 실패하면 롤백한다(`recommend/core.py` 설명, `docs/events.md` 「v1에서 발행하지 않는 이벤트」). 차감이 같은 트랜잭션이라 같이 롤백된다. 나중에 커밋 뒤 `failed`로 끝나는 경로가 생기면 그때 `refund(feature="recommend_run")`를 단다.
+- **결과 0곳(`NO_RESULTS`)이면 차감하지 않는다(2026-11-01 사용자 결정 #1015, 이전의 「환불하지 않는다」를 바꿈).** 「추천 받기」의 **첫 실행**(run을 만든 요청의 검색)이 후보를 하나도 못 찾으면 같은 트랜잭션에서 그 run의 차감을 돌려준다(`refund(feature="recommend_run")`). 결과 0곳은 여전히 결과다(가드레일 2 — 지어내지 않고 0개로 보여 준다). 다만 사람이 얻은 게 없는데 크레딧을 쓰게 하지 않는다. **재추천(`retry`)·반경 넓히기(`widen`)는 처음부터 차감하지 않으므로 환불도 없다**(첫 실행 뒤 재추천이 0건이어도 첫 실행의 차감은 그대로다). 환불은 잔액 상한까지만 채운다(3.6)고 같다.
 - 멱등: 원장 `ref_id` UNIQUE. 같은 실행 이중 차감, 이중 환불, 같은 장소 후기 보상 두 번이 구조적으로 막힌다.
 
 | `ref_id` | reason | delta |
@@ -57,10 +57,11 @@
 | `recommend_run:<run_id>`, `course:<run_id>` | `spend` | -가격 |
 | `refund:<차감 ref_id>` | `refund` | +가격 |
 | `review:<user_id>:<place_id>` | `review` | +10 |
+| `ad:<ad_session_id>` | `ad` | +10(상한까지, 3.7) |
 
 페이즈 2의 구매는 reason `purchase`로 같은 원장에 더한다(지금은 만들지 않는다).
 
-광고 충전은 이 작업(크레딧 전환, 후기)이 끝난 뒤 따로 한다. 그때도 같은 원장에 reason `ad`, `ref_id = ad:<광고 세션 id>`로 더하고, 보상은 `credits.api`에 함수 하나(`grant_ad`)를 여는 것으로 끝나게 둔다. 지금 단계에서 미리 만들지 않는다.
+광고 충전은 3.7절이다. 같은 원장에 reason `ad`로 더한다.
 
 ### 3.4 잔액과 동시성
 
@@ -71,22 +72,87 @@
 
 - 잔액 부족: `402 CREDIT_INSUFFICIENT`, `detail = { required, balance }`.
   - 화면: "크레딧이 부족해요. 후기를 쓰면 {review_reward} 크레딧을 드려요" + 「후기 쓰러 가기」(확정 탭으로). `review_reward`는 `GET /credits/me`에서 받는다.
+  - `ad.available`이고 광고가 준비됐으면 그 아래에 고지 한 줄 「광고를 끝까지 보면 {ad.reward} 크레딧을 드려요 · 오늘 {ad.daily_max - ad.used_today}번 남음」과 「광고 보고 {ad.reward} 크레딧 받기」(3.7).
 - 게스트(추천, 코스, `GET /credits/me`): `403 GUEST_NOT_ALLOWED`, `detail = { initial_credits }`.
   - 화면: "카카오로 로그인하면 {initial_credits} 크레딧을 드려요" + 카카오 전환. 게스트는 `GET /credits/me`를 받을 수 없으므로 숫자는 이 `detail`에서만 온다(정책 값을 화면에 적지 않는다, #733).
+
+### 3.6 잔액 상한 (2026-11-01, #981)
+
+스테이징 확인 뒤 정했다. 30(`MAX_BALANCE`, `credits/constants.py`)은 처음 지급량이자 **잔액 상한**이다. 화면은 `GET /credits/me`의 `max_balance`로 「N/30」을 그린다.
+
+- **후기 보상은 상한까지만 채운다**: `min(REVIEW_REWARD, MAX_BALANCE - 잔액)`, 0 아래로 가지 않는다. 25면 +5, 30이면 0.
+- **상한에 걸려 0을 받아도 그 장소의 보상은 그걸로 끝난다.** 원장에 `review:<user>:<place>`를 delta 0으로 남긴다. 남기지 않으면 가득 찼을 때 써 두고, 크레딧이 줄면 지웠다 다시 써서 받는 길이 생긴다. 화면은 이 경우를 따로 알리지 않는다(아래 「화면 문구」).
+- **코스 환불도 상한까지만**: 차감 뒤 후기로 30을 채운 상태에서 환불되면 넘을 수 있어서다. 0이어도 refund ref_id를 남겨 멱등을 지킨다.
+- 상한 전에 30을 넘게 쌓인 잔액(스테이징 테스트 계정)은 깎지 않는다. 보상과 환불이 0이 될 뿐이다. 운영에는 상한 전 크레딧이 없다.
+- 잃는 것: 처음 30을 쓰기 전에는 후기 보상이 0이라, 첫 사용자에게는 후기 보상이 보이지 않는다.
+
+### 3.7 광고 보고 충전 (2026-11-02, #1037)
+
+크레딧이 바닥나 AI 실행을 못 할 때, 보상형 광고를 끝까지 보면 크레딧을 준다. 후기 쓰기(5절)와 함께 두 번째 충전 길이다. 광고 충전은 `credits` 모듈이 혼자 한다 — 추천 탭의 장소 광고(`docs/ads.md`, `ads` 모듈)와 주고받는 것이 없다.
+
+**값** (정하는 곳: `credits/constants.py`)
+
+| 상수 | 값 | 뜻 |
+|---|---|---|
+| `AD_REWARD` | 10 | 1회 보상. 잔액 상한까지만(3.6, `core.capped_gain`) |
+| `AD_DAILY_MAX` | 3 | 사람당 KST 하루 세션 수. 세션을 **열 때** 센다 |
+| `AD_MIN_WATCH_S` | 7 | 세션을 연 뒤 이만큼 지나야 보상을 받을 수 있다 |
+| `AD_SESSION_TTL_S` | 900 | 연 세션은 15분 안에 받아야 한다 |
+
+**언제 열리나** — 아래가 모두 맞을 때만 `GET /credits/me`의 `ad.available = true`. 화면은 이 판단을 다시 하지 않고 `available`만 본다(#733).
+
+1. 정식 계정(게스트는 `GET /credits/me` 자체가 403).
+2. 광고 설정이 켜져 있다(`credit_ad_provider`가 비어 있지 않음, 아래 「설정」).
+3. 잔액 < 가장 싼 가격(`min(PRICES.values())`). 지금은 잔액 0일 때다. 가격이 바뀌어도 이 규칙 하나로 따라간다.
+4. 오늘(KST, `common/kst.py`의 `kst_day_start`) 연 세션 수 < `AD_DAILY_MAX`.
+
+**흐름**
+
+```
+화면: 402를 받았고 ad.available → 광고를 미리 불러 둔다 → 준비되면 버튼
+사용자: 「광고 보고 10 크레딧 받기」
+화면 → POST /credits/ad-sessions            → 201 { ad_session_id, claim_after_s }
+화면: 광고 표시 → 끝까지 봄(viewed)
+화면: 연 뒤 claim_after_s 가 지날 때까지 기다림
+화면 → POST /credits/ad-sessions/{id}/claim → 200 { credited, balance }
+화면: 크레딧 다시 읽기, 토스트 「10 크레딧을 받았어요」
+```
+
+**세션 규칙**
+
+- **열 때**: 계정 행을 잠그고(같은 사람의 요청이 줄을 선다) 위 1~4를 다시 본다. 단, 받지 않았고 만료되지 않은 세션이 이미 있으면 **새로 만들지 않고 그것을 돌려준다**(하루 횟수를 쓰지 않는다, 잔액·횟수 검사보다 먼저 본다). 광고를 닫았거나 광고가 안 떴을 때 다시 눌러도 횟수가 줄지 않는 이유다.
+- **받을 때**: 내 세션이 아니면 404. 연 지 `AD_MIN_WATCH_S` 전이면 409 `AD_REWARD_INVALID`(`reason: "too_early"`, `retry_after_s`). `AD_SESSION_TTL_S`가 지났으면 409 `AD_REWARD_INVALID`(`reason: "expired"`). 이미 받았으면 **처음 결과를 그대로** 200(멱등).
+- 받을 때는 잔액 조건(3번)을 다시 보지 않는다. 연 사이에 후기로 잔액이 올랐으면 상한까지만 채워진다(3.6).
+- 원장: reason `ad`, `ref_id = ad:<세션 id>`, delta = `capped_gain(AD_REWARD, 잔액)`. 0이어도 줄을 남긴다(3.6과 같은 이유). 잔액을 바꾸는 길은 지금처럼 `_apply` 하나다.
+
+**설정** (`common/settings.py`, 환경 변수)
+
+| 설정 | 값 | 뜻 |
+|---|---|---|
+| `credit_ad_provider` | `""` (기본) | 끔. `ad.available`은 항상 false, 세션 열기는 409 `AD_REWARD_UNAVAILABLE`(`reason: "off"`) |
+| | `fake` | 테스트 광고 창(로컬, 스테이징). **운영(`PINGO_ENV=prod`)에서 `fake`면 앱이 뜨지 않는다**(설정 검증) |
+| | `adsense`, `gpt` | 실제 광고(광고 계정이 열린 뒤 화면 쪽 제공자를 채운다) |
+| `credit_ad_unit_id` | 문자열 | 광고 단위. adsense는 `ca-pub-…/<슬롯 id>`, gpt는 `/<네트워크>/<단위>`. fake는 비워 둔다 |
+
+광고 단위는 응답(`ad.unit_id`)으로 내린다. 화면 빌드 변수에 넣지 않는다(스테이징과 운영이 같은 빌드를 쓴다). 운영은 설정이 비어 있어 버튼이 보이지 않는다 — 광고 때문에 출시가 막히지 않는다.
+
+**웹 보상형 광고에는 서버 검증이 없다.** 웹 보상형 광고는 서버 측 검증을 지원하지 않고(앱 전용), 시청 완료는 브라우저 이벤트로만 온다. 그래서 광고를 안 보고 `claim`을 직접 부르는 길을 막을 수 없다. 막는 대신 줄인다: 잔액이 바닥일 때만, 하루 3번, 연 뒤 7초, 상한 30. 최악은 사람당 하루 30크레딧(원가 약 ₩30)이고 이 위험을 받아들인다(10절).
+
+**구글 보상형 광고 정책**: 사용자가 직접 눌러야 시작하고(자동 재생 금지), 누르기 전에 무엇을 보면 무엇을 받는지 보여 주고(화면의 고지 한 줄), 보상은 이 서비스 안에서만 쓰이며 남에게 줄 수 없다. 이 서비스의 크레딧은 이 조건에 맞는다.
 
 ## 4. 없애는 상한과 남기는 보호
 
 | 장치 | 지금 | 결정 |
 |---|---|---|
-| `COURSE_LIMIT` / `COURSE_DAILY_LIMIT` | 코스 사람당 하루 5회 | 삭제(#950). 계약은 폐지 예정으로 두고 #954에서 지운다 |
-| `RETRY_LIMIT` / `ATTEMPT_LIMIT` | 추천 지도·사람당 10회 (새 추천, 다시 찾기, 근거 고치기 모두 검사) | 삭제(#949). 계약은 폐지 예정으로 두고 #954에서 지운다 |
+| `COURSE_LIMIT` / `COURSE_DAILY_LIMIT` | 코스 사람당 하루 5회 | 삭제(서버 #950, 계약 #954) |
+| `RETRY_LIMIT` / `ATTEMPT_LIMIT` | 추천 지도·사람당 10회 (새 추천, 다시 찾기, 근거 고치기 모두 검사) | 삭제(서버 #949, 계약 #954. 서버 응답의 `attempt_limit` 값은 recommend 후속에서 지운다) |
 | `attempt_no` 열과 `lock_requester_attempts` | 시도 번호, 같은 번호 중복 방지(#811) | **유지** (번호는 계속 매긴다) |
-| 응답의 `attempt_limit` | FE가 "N/10회" 표시 | 폐지 예정(`deprecated`). FE가 안 쓰게 된 뒤(#952) #954에서 지운다 |
+| 응답의 `attempt_limit` | FE가 "N/10회" 표시 | 삭제(FE #952, 계약 #954) |
 | `COURSE_IN_PROGRESS`, `REQUEST_IN_PROGRESS`, `Idempotency-Key` | 진행 중 중복 막기 | 유지 |
 | `MANUAL_EVIDENCE_LIMIT` (`EVIDENCE_LIMIT`) | 직접 추가 글 run당 10개 | 유지 |
 | 지도 하루 모델 상한 | 구성원 수 × 4 (백그라운드) | 유지 |
 
-계약을 한 번에 지우지 않는 이유: FE는 생성된 타입으로 `attempt_limit`을 읽고 있어서, 스펙에서 먼저 지우면 develop의 FE 빌드가 깨진다. 서버도 구현 PR 전까지 `RETRY_LIMIT`을 낸다. 그래서 새 것을 먼저 더하고(이 문서의 계약 PR), 각 구현이 옛 것을 쓰지 않게 된 뒤 지운다(#954).
+계약을 한 번에 지우지 않았던 이유: FE는 생성된 타입으로 `attempt_limit`을 읽고 있어서, 스펙에서 먼저 지우면 develop의 FE 빌드가 깨진다. 서버도 구현 PR 전까지 `RETRY_LIMIT`을 낸다. 그래서 새 것을 먼저 더하고(이 문서의 계약 PR), 각 구현이 옛 것을 쓰지 않게 된 뒤 지운다(#954).
 
 상한이 사라진 뒤 무료로 남는 경로(#432 D5):
 - 「다시 찾기」(`POST /runs/{runId}/retry`): 자체 DB 검색뿐, 모델 호출 없음.
@@ -105,13 +171,13 @@
 | 별점 | 필수, 정수 1~5 |
 | 글 | 필수, 앞뒤 공백을 걷은 뒤 1자 이상 500자 이하(`REVIEW_BODY_MAX = 500`). 어기면 `422 VALIDATION_ERROR` |
 | 개수 | 한 사람이 한 장소에 하나. 수정·삭제 가능 |
-| 보상 | 그 장소에 처음 쓸 때 +10. 상한 없음. 별점과 무관. 수정은 보상 없음. 지웠다 다시 써도 `ref_id`가 같아 보상 없음 |
+| 보상 | 그 장소에 처음 쓸 때 +10, **잔액 상한 30까지만**(3.6 — 25면 +5, 30이면 0, 0이어도 그 장소 보상은 끝). 보상 횟수 상한 없음. 별점과 무관. 수정은 보상 없음. 지웠다 다시 써도 `ref_id`가 같아 보상 없음 |
 | 공개 | 평균 별점(소수 첫째 자리), 후기 수, 최신순 목록 |
 | 신고 | 후기마다 한 사람 한 번(멱등). 자기 후기는 신고 불가(422 `VALIDATION_ERROR`) |
 | 숨김 | 관리 스크립트로만(#432 D8). `reviews/scripts/reports.py`로 신고가 많은 순으로 보고, `reviews/scripts/hide.py`로 숨기거나 되돌린다. 숨긴 후기는 목록·평균·개수에서 빠진다. 작성자 본인에게도 안 보인다. 신고 수로 자동 숨기는 기준은 실제 데이터를 본 뒤 정한다 |
 | 모델 | 후기 글은 추천, ②, 에이전트에 보내지 않는다. `place_facts`를 바꾸지 않는다 |
 | 로그 | 후기 글을 로그에 남기지 않는다(`backend/CLAUDE.md` 실패 로그 규칙) |
-| 사전 고지 | 작성 시트에 "후기를 쓰면 크레딧을 드려요. 별점과 상관없이 같아요." |
+| 화면 문구 | **새 후기 작성 시트에만 한 줄**: 「후기를 작성하면 {review_reward} 크레딧이 충전돼요」(숫자는 `GET /credits/me`). **잔액이 상한 이상(`balance >= max_balance`)이면 이 줄을 보이지 않는다** — 모든 계정이 30(상한)에서 시작해, 크레딧을 쓰기 전에 쓴 첫 후기는 0이기 때문이다(#985 검수). 고치기 시트, 삭제 확인창, 저장 토스트에는 크레딧 얘기를 넣지 않는다(토스트는 「후기를 저장했어요」). 2026-11-01 결정 — 안내를 단순하게 두는 대신, 상한 바로 아래이거나 이미 보상을 받은 장소면 문구보다 적게(0 포함) 받는 경우를 감수한다 |
 
 **후기는 SNS가 아니다**(#432 결정 C, 기획안 11절). 후기는 장소에 붙는 정보이고, 팔로우·댓글·좋아요·프로필·피드가 없으며 작성자 이름을 보이지 않는다. 후기에 댓글이나 작성자 프로필을 붙이자는 요청은 범위 밖(SNS)이다. 다만 모르는 사람이 쓴 글을 보여 주는 것이라 신고와 숨김 운영이 필요하다(10절).
 
@@ -129,10 +195,18 @@ credit_ledger
   id          uuid PK
   user_id     varchar  NOT NULL
   delta       integer  NOT NULL
-  reason      varchar  NOT NULL   -- initial | spend | refund | review
+  reason      varchar  NOT NULL   -- initial | spend | refund | review | ad
   ref_id      varchar  NOT NULL UNIQUE
   created_at  timestamptz NOT NULL default now()
   INDEX (user_id, reason, created_at)
+
+credit_ad_sessions                 -- 광고 보고 충전(3.7, #1038)
+  id          uuid PK
+  user_id     varchar  NOT NULL                 -- FK 없음(#760)
+  issued_at   timestamptz NOT NULL default now()
+  claimed_at  timestamptz NULL
+  credited    integer  NULL                      -- 받을 때 들어간 양(0~AD_REWARD). 멱등 응답에 쓴다
+  INDEX (user_id, issued_at)
 
 reviews
   id          uuid PK
@@ -157,7 +231,7 @@ review_reports
 
 | 모듈 | 탈퇴 | `MERGE_STEPS` (`reassign_user`) |
 |---|---|---|
-| credits | **탈퇴 때는 남긴다**(`WITHDRAW_STEPS`에 없음, `KEPT_ON_WITHDRAW`에 이유). 복구 기간(7일)이 지나 정리할 때(`purge_withdrawn_user`) `delete_by_user`로 계정·원장을 지운다. 「새 계정으로 시작」도 기존 계정을 바로 정리하므로 그때 지운다 | 게스트는 계정이 없다. 혹시 있으면 옮기지 않고 지운다(초기 지급 두 번 방지) |
+| credits | **탈퇴 때는 남긴다**(`WITHDRAW_STEPS`에 없음, `KEPT_ON_WITHDRAW`에 이유). 복구 기간(7일)이 지나 정리할 때(`purge_withdrawn_user`) `delete_by_user`로 계정·원장·광고 세션을 지운다. 「새 계정으로 시작」도 기존 계정을 바로 정리하므로 그때 지운다 | 게스트는 계정이 없다. 혹시 있으면 옮기지 않고 지운다(초기 지급 두 번 방지) |
 | reviews | 후기는 남긴다(작성자 이름은 원래 보이지 않는다). 그 사람이 한 신고는 지운다 | 게스트는 후기·신고를 못 쓴다. 옮길 것 없음(멱등 no-op) |
 
 **탈퇴 때 크레딧을 남기는 이유**(#948 검수, 2026-11-01): 탈퇴 때 지우면, 7일 안에 되살린 계정(#855)은 계정 행이 없어 30으로 다시 시작한다. 탈퇴와 되살리기를 반복하면 크레딧이 계속 채워진다. 로그인 수단을 7일 남겨 두는 것과 같은 이유로 7일 정리 때 지운다. 되살리면 쓰던 잔액이 그대로 돌아온다.
@@ -173,8 +247,16 @@ review_reports
 `GET /credits/me` → 200 `CreditBalance`
 
 ```json
-{ "balance": 27, "prices": { "recommend_run": 1, "course": 1 }, "review_reward": 10 }
+{ "balance": 27, "max_balance": 30, "prices": { "recommend_run": 1, "course": 1 }, "review_reward": 10,
+  "ad": { "available": false, "reward": 10, "used_today": 0, "daily_max": 3, "provider": "fake", "unit_id": null } }
 ```
+
+`ad`는 광고 보고 충전(3.7)이다. `available`만 보고 버튼을 띄운다. `provider`가 null이면 꺼짐.
+
+| 메서드와 경로 | 본문 | 성공 | 실패 |
+|---|---|---|---|
+| `POST /credits/ad-sessions` | — | 201 `AdSession { ad_session_id, claim_after_s }`(받지 않은 세션을 이어 받아도 201, `claim_after_s`는 남은 초) | 403 `GUEST_NOT_ALLOWED`, 409 `AD_REWARD_UNAVAILABLE`, 429 `AD_REWARD_LIMIT` |
+| `POST /credits/ad-sessions/{adSessionId}/claim` | — | 200 `AdClaim { credited, balance }`(이미 받았어도 200, 처음 값) | 403 `GUEST_NOT_ALLOWED`, 404(없거나 남의 세션), 409 `AD_REWARD_INVALID` |
 
 게스트는 403 `GUEST_NOT_ALLOWED`(`detail.initial_credits`). 계정 행이 없으면 `balance = 30`(쓰지 않음).
 
@@ -202,7 +284,7 @@ FE는 자체 `places.id`를 모른다(`Pin` 응답에 없다). 그래서 핀으�
 }
 // ReviewSaved
 { "review": { "id": "…", "rating": 5, "body": "…", "created_at": "…", "updated_at": "…" },
-  "credited": 10, "balance": 40 }
+  "credited": 3, "balance": 30 }
 ```
 
 - `summary.average_rating`: 후기가 없으면 `null`. 숨김 제외.
@@ -210,17 +292,17 @@ FE는 자체 `places.id`를 모른다(`Pin` 응답에 없다). 그래서 핀으�
 - `mine`: 내 후기(숨김이 아니면). 없으면 필드 생략. `items`에도 `is_mine = true`로 들어 있다.
 - 작성자 이름 필드는 없다(결정 B). 화면이 `is_mine`으로 「나」/「핑고 사용자」를 고른다.
 - 페이지: 20개, `(created_at, id)` 내림차순 커서.
-- `credited`: 처음 쓴 저장이면 10, 수정이면 0. `balance`: 저장 뒤 잔액.
+- `credited`: 처음 쓴 저장이면 `min(10, 30 - 저장 전 잔액)`(위 예시는 27에서 +3), 수정이면 0. `balance`: 저장 뒤 잔액.
 - `POST /reviews/{reviewId}/reports`는 후기 id로 부른다. 신고하는 사람이 그 후기를 볼 수 있어야 한다 — 그 장소를 가리키는 핀이 있는 지도의 구성원이어야 하고, 아니면 404다.
 
 ### 기존 엔드포인트 변경
 
 | 엔드포인트 | 변경 |
 |---|---|
-| `POST /maps/{mapId}/runs` | 402 `CREDIT_INSUFFICIENT`, 403 `GUEST_NOT_ALLOWED` 추가. 429 `RETRY_LIMIT` 폐지 예정 |
-| `POST /runs/{runId}/retry`, `PATCH /runs/{runId}/evidence` | 429 `RETRY_LIMIT` 폐지 예정. 차감 없음 |
-| `RecommendRun`, `RunSummary` | `attempt_limit` 폐지 예정. `attempt_no`는 유지 |
-| `POST /maps/{mapId}/courses` | 402, 403 `GUEST_NOT_ALLOWED` 추가. 429 `COURSE_LIMIT` 폐지 예정 |
+| `POST /maps/{mapId}/runs` | 402 `CREDIT_INSUFFICIENT`, 403 `GUEST_NOT_ALLOWED` 추가. 429 `RETRY_LIMIT` 삭제(#954) |
+| `POST /runs/{runId}/retry`, `PATCH /runs/{runId}/evidence` | 429 `RETRY_LIMIT` 삭제(#954). 차감 없음 |
+| `RecommendRun`, `RunSummary` | `attempt_limit` 삭제(#954). `attempt_no`는 유지 |
+| `POST /maps/{mapId}/courses` | 402, 403 `GUEST_NOT_ALLOWED` 추가. 429 `COURSE_LIMIT` 삭제(#954) |
 
 ### 에러 코드 (`docs/errors.md`)
 
@@ -229,11 +311,14 @@ FE는 자체 `places.id`를 모른다(`Pin` 응답에 없다). 그래서 핀으�
 | `CREDIT_INSUFFICIENT` | 402 | 신규. `detail { required, balance }` |
 | `GUEST_NOT_ALLOWED` | 403 | 범위 확대: 지도 만들기 + 추천·코스·잔액 조회(`detail { initial_credits }`) + 후기 쓰기·신고 |
 | `PLACE_NOT_SUPPORTED` | 422 | 범위 확대: live 핀의 후기 |
-| `COURSE_LIMIT`, `RETRY_LIMIT` | 429 | 폐지 예정(#954에서 삭제) |
+| `AD_REWARD_UNAVAILABLE` | 409 | 신규(3.7). 지금 광고 충전을 열 수 없다. `detail { reason: "off" \| "not_needed" }` |
+| `AD_REWARD_LIMIT` | 429 | 신규(3.7). 오늘 횟수를 다 썼다. `detail { limit }` |
+| `AD_REWARD_INVALID` | 409 | 신규(3.7). 받을 수 없는 세션. `detail { reason: "too_early", retry_after_s }` 또는 `{ reason: "expired" }` |
+| `COURSE_LIMIT`, `RETRY_LIMIT` | 429 | 삭제(#954) |
 
 ## 8. 모듈과 연결점
 
-새 모듈 2개(#432 D2). 가격과 게스트 크레딧 규칙은 `credits`, 후기 규칙은 `reviews`가 한 곳에서 정한다.
+새 모듈 2개(#432 D2). 가격과 게스트 크레딧 규칙은 `credits`, 후기 규칙은 `reviews`가 한 곳에서 정한다. 광고 충전(3.7)은 `credits` 라우터 안에서 끝나고 다른 모듈이 부르지 않으므로 `credits.api`는 바뀌지 않는다(예전에 계획한 `grant_ad`는 필요 없어졌다).
 
 ### `credits.api` (다른 모듈이 부르는 유일한 접점)
 
@@ -290,21 +375,24 @@ def reassign_user(db, *, from_user_id: str, to_user_id: str) -> dict[str, int]: 
 | C | 공개 후기는 SNS가 아니다 | 같은 장소의 후기를 지도와 상관없이 보여 준다. 팔로우·댓글·프로필·피드 없음. 기획안 11절에 반영 |
 | D1 | 후기 엔드포인트를 핀 id로 연다 | `Pin` 응답에 `places.id`를 새로 노출하지 않는다 |
 | D2 | 새 모듈 `credits`, `reviews`와 import-linter 예외 | 위 8절 |
-| D3 | `COURSE_LIMIT`, `RETRY_LIMIT` 삭제 | 폐지 예정으로 표시한 뒤 #954에서 지운다 |
-| D4 | 응답의 `attempt_limit` 삭제 | 폐지 예정으로 표시한 뒤 #954에서 지운다. `attempt_no`는 유지 |
+| D3 | `COURSE_LIMIT`, `RETRY_LIMIT` 삭제 | 폐지 예정으로 표시한 뒤 구현(#949, #950)을 거쳐 #954에서 지웠다 |
+| D4 | 응답의 `attempt_limit` 삭제 | FE(#952)가 안 쓰게 된 뒤 #954에서 지웠다. `attempt_no`는 유지 |
 | D5 | 다시 찾기·근거 고치기는 상한 없이 무료 | 모델 비용은 ＋의 ②뿐이고 run당 글 10개로 묶인다 |
 | D6 | 추천 환불 경로 | 없다(3.3). v1 추천은 실패하면 롤백한다 |
 | D8 | 후기 숨김은 스크립트로만 | `reports.py`(신고 목록)와 `hide.py`. 자동 숨김 기준은 나중에 |
+| 상한 | 잔액 상한 30(2026-11-01 추가, #981) | 보상·환불은 30까지만, 상한에 걸려 0을 받아도 그 장소 보상은 끝(3.6) |
+| 광고 | 광고 보고 충전(2026-11-02, #1037) | 잔액 바닥일 때만, +10, 하루 3번, 서버 세션 + 7초, 광고는 설정으로 끄고 켠다(3.7) |
 
 ## 10. 리스크와 지켜볼 지표
 
 | 리스크 | 지금의 대응 | 지표 |
 |---|---|---|
-| 후기 파밍(짧은 글로 크레딧 쌓기) | 한 장소 한 번 보상 | 사람당 하루 후기 수, 글 길이 분포 |
+| 후기 파밍(짧은 글로 크레딧 쌓기) | 한 장소 한 번 보상, 잔액 상한 30(3.6) | 사람당 하루 후기 수, 글 길이 분포 |
 | 재가입으로 30 다시 받기 | 막지 않는다 — 탈퇴 뒤 「새 계정으로 시작」은 새 사람이라 30을 받는다(30크레딧 ≈ 원가 ₩30). 되살리기는 잔액이 그대로라 이 경로가 아니다 | 탈퇴 뒤 새 계정으로 시작한 수, 그 계정들의 크레딧 사용량 |
 | 모델 비용(상한 제거) | 크레딧 소진 | `llm_calls` 사람당 하루 `cost_krw` |
+| 광고를 안 보고 claim(웹 보상형은 서버 검증이 없다) | 잔액 바닥일 때만, 하루 3번, 연 뒤 7초, 상한 30(3.7) | 하루 받은 세션 수 대 광고 보고서의 보상형 노출 수 |
 | 후기란 품질(욕설, 비방) | 신고 + `reports.py` 확인 + 숨김 스크립트 | 신고 수, 숨김 수, 신고에서 숨김까지 걸린 시간 |
-| 보상이 평점을 끌어올림 | 별점 무관 보상 + 사전 고지 | 첫 후기와 수정 후기의 평균 별점 차이 |
+| 보상이 평점을 끌어올림 | 별점 무관 보상(화면 문구에서 「별점과 상관없이」는 뺐다 — 출시 전 추천·보증 표시 자문 때 다시 본다) | 첫 후기와 수정 후기의 평균 별점 차이 |
 
 출시 전 법률 확인(자문 필요): 정보통신망법 권리침해 게시물 임시조치(요청을 받으면 지체 없이 — 신고를 매일 확인한다), 공정위 「추천·보증 심사지침」의 경제적 이해관계 표시(추천 탭 장소 광고와 겹치는 장소 포함).
 
@@ -331,7 +419,7 @@ credits
 3. 잔액 0에서 `check_can_spend`, `charge` 모두 402, `detail = { required: 1, balance: 0 }`.
 4. 게스트는 `check_can_spend`, `GET /credits/me` 모두 403(`detail.initial_credits = 30`), 계정 행 없음.
 5. `refund` 두 번 → 한 번만 들어간다. 차감 없는 run의 `refund`는 False.
-6. `grant_review` 같은 (user, place) 두 번 → 10, 0.
+6. `grant_review` 같은 (user, place) 두 번 → 10, 0. 잔액 30에서 → 0(원장에 delta 0, 그 뒤 잔액이 줄어도 같은 장소 → 0). 25에서 → 5. 29에서 코스 환불 → 30. 30을 넘은 계정 → 보상 0.
 7. 탈퇴 → 계정·원장이 남는다. 7일 안에 되살리면 잔액이 그대로다. 7일 정리(`purge_withdrawn_user`) → 계정·원장 없음. 「새 계정으로 시작」 → 기존 계정의 계정·원장 없음, 새 계정은 30. 합치기 → 게스트 쪽 행 없음.
 8. 차감·환불·보상을 섞어 돌린 뒤 사람마다 `balance` = 원장 `delta` 합.
 
@@ -347,9 +435,18 @@ course
 15. `ENGINE_ERROR`, `INTERRUPTED`로 끝난 run의 크레딧이 돌아오고, 두 번 끝내도 한 번만.
 16. 게스트의 코스 요청은 403.
 
+광고 충전(3.7, #1038)
+25. 광고 설정이 꺼져 있으면 `ad.available` false, 세션 열기 409 `AD_REWARD_UNAVAILABLE`(off).
+26. 잔액 1 이상이면 available false, 열기 409 not_needed. 잔액 0이면 available true.
+27. 하루 3번 연 뒤 4번째는 429 `AD_REWARD_LIMIT`(`detail.limit = 3`). KST 자정이 지나면 다시 열린다(시각 주입, 14:59Z 경계).
+28. 받지 않은 세션이 있으면 다시 열어도 같은 id이고 `used_today`는 그대로다.
+29. 7초 전 claim → 409 too_early(`retry_after_s`), 7초 뒤 → credited 10, 원장 `ad:<id>` 한 줄, 잔액 10.
+30. claim 두 번 → 둘 다 200 같은 credited, 원장 한 줄. 남의 세션 → 404. 15분 지남 → 409 expired.
+31. 연 뒤 후기로 잔액이 25가 됐을 때 claim → credited 5(상한). 게스트는 열기·받기 모두 403, 행 없음. 원장 합 = balance(8)가 ad 줄이 있어도 통과.
+
 reviews
 17. 별점 0·6, 공백 글, 501자 → 422. 500자 → 200.
-18. 첫 저장 `credited = 10`, 수정 `credited = 0`, 삭제 뒤 다시 쓰기 `credited = 0`.
+18. 첫 저장 `credited = min(10, 30 - 잔액)`, 수정 `credited = 0`, 삭제 뒤 다시 쓰기 `credited = 0`.
 19. live 핀 → 422 `PLACE_NOT_SUPPORTED`. 비구성원 → 404(핀 조회와 같은 규칙).
 20. 게스트 PUT·신고 → 403, 후기 행·신고 행·원장 없음.
 21. 숨긴 후기는 목록·평균·개수·`mine`에서 빠진다.

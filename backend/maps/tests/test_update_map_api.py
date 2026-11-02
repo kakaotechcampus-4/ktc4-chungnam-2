@@ -120,3 +120,11 @@ def test_validate_map_update_merges_with_current_values():
     assert (merged.title, merged.end_date, merged.region) == ("옛", date(2026, 10, 20), None)
     with pytest.raises(AppError):
         validate_map_update(current, title=None, start_date=date(2026, 10, 13), end_date=None, region=None)
+
+
+@pytest.mark.parametrize("body", [{"title": ""}, {"region": {"label": "부산", "lat": 0, "lng": 180.5}}])
+def test_patch_rejects_what_the_spec_forbids_with_validation_error(app_client, body):
+    """스펙 제약(title minLength 1, region lat/lng 범위, #733)이 요청 모델에서 막힌다 — 코드는 그대로 422 VALIDATION_ERROR."""
+    map_id = _create_map(app_client)
+    resp = _patch(app_client, map_id, body)
+    assert (resp.status_code, resp.json()["code"]) == (422, "VALIDATION_ERROR")

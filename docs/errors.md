@@ -14,8 +14,7 @@
 | `PIN_DUPLICATE` | 409 | 이미 지도에 있는 장소 | 중복 핀 안내 UI |
 | `AI_PIN_PRIVATE` | 404 | 「지도에 올리기」(`POST /candidates/{id}/publish`) 전용. 구성원이어도 요청자가 아닌 사람이 남의 후보를 게시하려 할 때, 후보의 존재를 숨기려고 404로 답한다. 핀 API는 이 코드를 내지 않는다(v1은 private 핀이 없다) | "비공개 AI 핀 접근 시 안내" |
 | `REGION_CONFLICT` | 409 | 반경 사유끼리 안 겹침 | "두 조건을 동시에 만족하는 곳이 없어요" 확인창 (5-6-1) |
-| `RETRY_LIMIT` | 429 | **폐지 예정**(#432 D3 — 횟수 상한이 크레딧으로 바뀐다. 서버는 #949에서 내지 않게 되고, 이 줄은 #954에서 지운다). 재시도 상한 초과 — 지도 안에서 구성원 각자 10회, 카테고리·run 무관(요청자·지도 단위) (#31, 2026-10-15 5→10회 상향) — **상한을 다 쓴 요청자의 근거 수정(`PATCH /runs/{id}/evidence`, `×`·`＋`)도 같은 코드로 거절한다**(#845, 모델을 부르기 전에) | "10번까지만 찾습니다" (FE는 `detail.attempt_limit`으로 숫자를 그린다) |
-| `WIDEN_LIMIT` | 409 | 반경 넓히기가 이미 상한(기본값 원 도보 30분) | "더 넓히면 여행지를 벗어나요" + 근거 고치기/직접 찍기 |
+| `WIDEN_LIMIT` | 409 | 반경 넓히기가 이미 상한(기본값 원 도보 30분, 관광지 45분 — #1055) | "더 넓히면 여행지를 벗어나요" + 근거 고치기/직접 찍기 |
 | `REACTION_NOT_ALLOWED` | 422 | 숙소 핀에 반응 요청 (#154) | 숙소 핀엔 반응 UI를 애초에 그리지 않음 — 보이면 FE 버그 신호 |
 | `INVITE_NOT_FOUND` | 404 | 없거나 잘못된 초대 토큰. 삭제된 지도의 토큰도 여기에 해당한다(#369) | "유효하지 않은 초대 링크예요" |
 | `MAP_LIMIT` | 409 | 내 지도가 이미 20개인데(#433에서 10→20) 지도를 만들거나 초대를 수락하거나 삭제한 지도를 복구함(#464). 만들거나 참여한 지도를 합산하고, 삭제된 지도와 나간 지도는 세지 않는다. `detail`에 `{ limit, count }`(#369) | "지도는 10개까지 만들거나 참여할 수 있어요" + 나가기·삭제 안내 |
@@ -29,12 +28,14 @@
 | `OWNER_TARGET_INVALID` | 422 | 방장을 넘길 수 없는 대상 — 지금 구성원이 아니거나 탈퇴했거나 나 자신(#468) | 구성원 목록을 다시 불러와 고르게 한다 |
 | `GUEST_NOT_ALLOWED` | 403 | 게스트(이름만 입력한 임시 계정, #472)가 못 하는 일 — 지도 만들기, AI 추천(`POST /maps/{mapId}/runs`)과 코스(`POST /maps/{mapId}/courses`), 크레딧 조회(`GET /credits/me`), 장소 후기 쓰기·신고(#432). 크레딧을 쓰는 기능과 후기에서는 `detail`에 `{ initial_credits }`(카카오로 전환하면 받을 크레딧). 그 밖의 구성원 행동은 막지 않는다 | "지도를 만들려면 카카오로 로그인해 주세요" / 크레딧·후기: "카카오로 로그인하면 {initial_credits} 크레딧을 드려요" + 카카오 전환 |
 | `GUEST_LIMIT` | 409 | 한 초대 링크로 만들 수 있는 게스트 수(10)를 넘음(#472) | "이 링크로는 더 입장할 수 없어요. 초대한 분께 새 링크를 요청하세요" |
+| `AD_REWARD_UNAVAILABLE` | 409 | 광고 보고 충전(`POST /credits/ad-sessions`, #1037)을 지금 열 수 없다. `detail`에 `{ reason }` — `off`(광고 꺼짐), `not_needed`(잔액이 가장 싼 가격 이상) | 토스트 없이 크레딧을 다시 읽는다(버튼이 사라진다) |
+| `AD_REWARD_LIMIT` | 429 | 오늘(KST) 광고 충전 세션을 다 열었다(#1037). `detail`에 `{ limit }` | 「오늘은 광고 충전을 {limit}번 모두 썼어요」 |
+| `AD_REWARD_INVALID` | 409 | 받을 수 없는 광고 세션(`POST /credits/ad-sessions/{id}/claim`, #1037). `detail`에 `{ reason: "too_early", retry_after_s }` 또는 `{ reason: "expired" }` | too_early: `retry_after_s` 뒤 한 번 더. expired: 「광고를 다시 봐 주세요」 |
 | `CREDIT_INSUFFICIENT` | 402 | 크레딧이 실행 가격보다 적다 — 추천 받기(`POST /maps/{mapId}/runs`)와 코스 짜기(`POST /maps/{mapId}/courses`), 모델을 부르기 전에 거절한다(#432). `detail`에 `{ required, balance }` | "크레딧이 부족해요. 후기를 쓰면 {review_reward} 크레딧을 드려요"(`GET /credits/me`의 값) + 「후기 쓰러 가기」 |
 | `NO_PENDING_LOGIN` | 404 | 선택 대기 중인 탈퇴 계정 로그인이 없다 — 쿠키가 없거나 만료(10분)·변조됐거나 이미 선택·정리됨(#855) | "선택 시간이 지났어요. 카카오로 다시 시작해 주세요" → 로그인 화면 |
 | `INVITE_EXPIRED` | 410 | 만료된 초대 토큰 | "초대 링크가 만료됐어요. 초대한 분께 새 링크를 요청하세요" |
 | `PLACE_NOT_SUPPORTED` | 422 | `source: search`인데 검색 결과와 짝이 되는 자체 DB 장소가 없음 (핀 만들기, #191). 실시간 핀(`source: live`)의 장소 후기 — 후기를 붙일 자체 DB 장소가 없다(#432) | "장소 정보가 없는 핀이에요" — 「그래도 핀 남기기」(`source: live`, #382)로 다시 보낸다. 후기: 실시간 핀에는 후기 영역을 그리지 않는다 |
 | `COURSE_NOT_ENOUGH_PLACES` | 422 | AI 코스 짜기(`POST /maps/{mapId}/courses`, #334)에서 코스를 짤 확정 장소가 2곳 미만. 좌표를 알 수 없는 실시간 핀은 세지 않는다. `detail`에 `{ min, count }` | 「AI 코스 짜기」 버튼 비활성화 + "확정 리스트에 장소를 2곳 이상 담아 주세요" |
-| `COURSE_LIMIT` | 429 | **폐지 예정**(#432 D3 — 크레딧으로 바뀐다. 서버는 #950에서 내지 않게 되고, 이 줄은 #954에서 지운다). 사용자당 하루(KST 자정 초기화) 코스 요청 5회 초과. `detail`에 `{ limit, used }` | "오늘은 5번까지 코스를 짤 수 있어요" |
 | `COURSE_IN_PROGRESS` | 409 | 같은 지도에서 내가 요청한 코스를 아직 짜는 중. `detail`에 `{ course_run_id }` | 진행 화면(`GET /course-runs/{runId}`)으로 이동 |
 | `RATE_LIMITED` | 429 | 사용자당 호출 상한 초과(현재 장소 검색, #180) | "너무 빨리 검색하고 있어요. 잠시 뒤 다시 시도해 주세요" |
 | `PLACES_UNAVAILABLE` | 503 | 지도 API 검색이 전부 실패(키 없음·장애·호출 상한, #180) | "지금은 장소를 검색할 수 없어요. 잠시 뒤 다시 시도해 주세요" / 좌표로 찍기는 계속 가능 |
@@ -52,4 +53,4 @@
 ## 규칙
 
 - 위 표에 없는 신규 화면 상태가 필요해지면 **먼저 코드를 여기 추가**하고 나서 구현한다 — 화면이 코드보다 먼저 생기면 FE·BE가 각자 다른 이름을 붙이게 된다.
-- `detail`에는 화면이 바로 쓸 수 있는 구조화 값을 넣는다. 예: `NO_RESULTS`의 `detail.funnel`, `RETRY_LIMIT`의 `detail.attempt_no`·`detail.attempt_limit`.
+- `detail`에는 화면이 바로 쓸 수 있는 구조화 값을 넣는다. 예: `NO_RESULTS`의 `detail.funnel`, `CREDIT_INSUFFICIENT`의 `detail.required`·`detail.balance`.

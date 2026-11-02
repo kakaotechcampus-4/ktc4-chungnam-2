@@ -6,13 +6,23 @@ import { josa } from '@/ui/josa'
 export type RecommendCategory = components['schemas']['RecommendCategory']
 export type ReadinessDto = components['schemas']['Readiness']
 export type RecommendRunDto = components['schemas']['RecommendRun']
-export type RunSummaryDto = components['schemas']['RunSummary']
 export type EvidenceLineDto = components['schemas']['EvidenceLine']
 export type EvidencePatchRequest = components['schemas']['EvidencePatchRequest']
 export type RegionDto = components['schemas']['Region']
 export type RecommendResultDto = components['schemas']['RecommendResult']
 export type CandidateDto = components['schemas']['Candidate']
 export type ExternalSearchDto = components['schemas']['ExternalSearch']
+
+/**
+ * AI가 고른 장소의 근거(가드레일 5) — 후보(Candidate)와 그 후보를 지도에 올린 핀(Pin)이 같은 값을 갖는다.
+ * 후보 카드와 핀 상세가 같은 함수·부품(Evidence.tsx)으로 그린다(#1032). 핀에서는 AI 핀이 아니면 없다.
+ */
+export type AiEvidence = {
+  reason?: string
+  checks?: components['schemas']['Check'][]
+  member_fulfillment?: components['schemas']['MemberFulfillment']
+  place_source?: components['schemas']['PlaceSource']
+}
 
 /** AI 추천 대상 카테고리(#145 — 숙소는 추천 대상이 아니다). 순서는 화면 순서. */
 export const RECOMMEND_CATEGORIES: RecommendCategory[] = ['음식점', '카페', '관광지']
@@ -85,12 +95,8 @@ export function evidenceLimitMessage(err: unknown): string | null {
 export function runErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.code === 'NOT_READY') return '아직 의견이 달린 핀이 없어요. 핀에 ♥나 반대 의견을 남기면 다시 눌러 주세요'
-    if (err.code === 'RETRY_LIMIT') {
-      const limit = typeof err.detail?.attempt_limit === 'number' ? err.detail.attempt_limit : DEFAULT_ATTEMPT_LIMIT
-      return `${limit}번까지만 찾습니다`
-    }
     if (err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 근거를 고치거나 직접 찍어 보세요'
-    if (err.code === 'RECOMMEND_FAILED') return '추천을 끝내지 못했어요. 남긴 의견은 그대로 있고 횟수도 쓰지 않았어요. 잠시 뒤 다시 눌러 주세요'
+    if (err.code === 'RECOMMEND_FAILED') return '추천을 끝내지 못했어요. 남긴 의견은 그대로 있고 크레딧도 쓰지 않았어요. 잠시 뒤 다시 눌러 주세요'
     if (err.code === 'REQUEST_IN_PROGRESS') return '아직 추천을 찾고 있어요. 잠시 뒤 다시 눌러 주세요'
   }
   return '추천을 시작하지 못했어요'
@@ -119,20 +125,6 @@ export function noResultsApplied(err: unknown): { lines?: EvidenceLineDto[]; non
   }
 }
 
-/** 추천 횟수 상한(#31, 지도 안 구성원 각자·카테고리 무관). 서버 값(attempt_limit)을 쓰고, 없으면(구버전 서버) 이 값. */
-const DEFAULT_ATTEMPT_LIMIT = 10
-export const attemptLimit = (run: RecommendRunDto) => run.attempt_limit ?? DEFAULT_ATTEMPT_LIMIT
-
-/**
- * 이 지도에서 내가 쓴 추천 횟수(#31). 서버는 내 run 전체의 attempt_no 최댓값으로 센다(새 run 은 최댓값 + 1) —
- * 목록이 최근 요청순이라 최댓값을 직접 구한다. 상한은 서버 값(attempt_limit), 없으면 구버전 서버다.
- */
-export function toAttempts(runs: RunSummaryDto[]) {
-  const used = runs.reduce((max, r) => Math.max(max, r.attempt_no), 0)
-  const limit = runs[0]?.attempt_limit ?? DEFAULT_ATTEMPT_LIMIT
-  return { used, limit, left: Math.max(0, limit - used) }
-}
-
 /**
  * 원한 조건(wants=true 근거 줄)인데 추천한 곳 모두가 못 맞췄거나(passed=false) 모르는(needs_check) 조건의 이름.
  * 예: "곱창 먹고 싶어요"인데 반경 안에 곱창집이 없어 양식집만 나왔을 때 이유를 말해 주려고 쓴다.
@@ -152,19 +144,30 @@ export function missingWants(candidates: CandidateDto[], evidence: EvidenceLineD
     .map(([, label]) => label)
 }
 
+const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이버지도', google: '구글맵', permit: '인허가 공공데이터', tourapi: '한국관광공사' }
+
+/**
+ * 출처는 항상 붙는다(가드레일 5). 장소는 자체 DB에서만 오므로(#53) 제공처를 모르면 「확인 안 됨」 대신 그 사실을 적는다.
+ * 모르는 제공처 코드가 오면 코드를 그대로 보인다 — 지어내지 않는다(#406).
+ */
+export function sourceLabel(e: AiEvidence): string {
+  const p = e.place_source?.provider
+  return (p && PROVIDER[p]) ?? p ?? '핑고 장소 DB'
+}
+
 export type CheckView = { label: string; tone: 'pass' | 'check' | 'fail' }
 
 /** 조건별 충족 체크(가드레일 5). 모름(needs_check)은 통과가 아니라 "확인 필요"로 따로 보인다. */
-export function toChecks(c: CandidateDto): CheckView[] {
-  return c.checks.map((k) => ({ label: k.label, tone: !k.passed ? 'fail' : k.needs_check ? 'check' : 'pass' }))
+export function toChecks(e: AiEvidence): CheckView[] {
+  return (e.checks ?? []).map((k) => ({ label: k.label, tone: !k.passed ? 'fail' : k.needs_check ? 'check' : 'pass' }))
 }
 
 /**
  * 구성원 충족 한 줄(Figma 구성원 의견 표시 원칙) — "조건을 건 A·B 모두 통과 · C·D는 건 조건 없음".
  * by_member 에 없는 구성원은 조건을 걸지 않은 사람이다.
  */
-export function fulfillmentLine(c: CandidateDto, members: { userId: string; name: string; isMe: boolean }[]): string {
-  const by = c.member_fulfillment.by_member ?? []
+export function fulfillmentLine(e: AiEvidence, members: { userId: string; name: string; isMe: boolean }[]): string {
+  const by = e.member_fulfillment?.by_member ?? []
   const nameOf = (id: string, fallback?: string) => {
     const m = members.find((x) => x.userId === id)
     return m ? `${m.name}${m.isMe ? ' (나)' : ''}` : (fallback ?? '구성원')

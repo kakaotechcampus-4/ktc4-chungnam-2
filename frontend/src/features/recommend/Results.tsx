@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ExternalLink, MessageSquare, RotateCw, Users } from 'lucide-react'
+import { ExternalLink, RotateCw } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import RunAdvice from '@/features/agent/RunAdvice'
@@ -13,13 +13,11 @@ import SheetTitle from '@/ui/SheetTitle'
 
 import { useAiStore } from './aiStore'
 import ExternalSearchLink from './ExternalSearchLink'
+import { AiChecks, AiFulfillment, AiReason } from './Evidence'
 import {
-  attemptLimit,
-  fulfillmentLine,
   missingWants,
   noResultsExternalSearch,
   noResultsFunnel,
-  toChecks,
   type CandidateDto,
   type FunnelRow,
   type RecommendResultDto,
@@ -28,20 +26,6 @@ import {
 import { useEvidencePatching, useEvidenceQuery, useExecuteRunMutation, usePublishMutation, useRetryMutation, useWidenMutation } from './queries'
 import { AiHeader } from './Readiness'
 
-const TONE = { pass: 'tag-good', check: 'tag-warn', fail: 'tag-bad' } as const
-const MARK = { pass: '✓', check: '?', fail: '✗' } as const
-
-const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이버지도', google: '구글맵', permit: '인허가 공공데이터', tourapi: '한국관광공사' }
-
-/**
- * 출처는 항상 붙는다(가드레일 5). 장소는 자체 DB에서만 오므로(#53) 제공처를 모르면 「확인 안 됨」 대신 그 사실을 적는다.
- * 모르는 제공처 코드가 오면 코드를 그대로 보인다 — 지어내지 않는다(#406).
- */
-function sourceLabel(c: CandidateDto): string {
-  const p = c.place_source?.provider
-  return (p && PROVIDER[p]) ?? p ?? '핑고 장소 DB'
-}
-
 /** 시트 안 이전 화면(Figma '‹ AI 추천'). 결과에서 빠져나와 준비 판정으로 돌아간다. 넓은 화면은 패널 헤더 ‹ 다. */
 export function BackToReadiness({ mapId }: { mapId: string }) {
   const setRun = useAiStore((s) => s.setRun)
@@ -49,13 +33,14 @@ export function BackToReadiness({ mapId }: { mapId: string }) {
 }
 
 /**
- * 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 「↻ 다시 추천 · N번 남음」. count 는 이번 실행이 새로 찾은 곳(new_count)이다.
- * 다시 추천은 고친 조건으로, 지금 후보를 빼고 찾는다(#845). 조건을 고치는 요청이 끝나기 전에는 막는다 — 고친 게 빠진 채 찾지 않게.
+ * 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 「↻ 다시 추천」. count 는 이번 실행이 새로 찾은 곳(new_count)이다.
+ * 다시 추천은 고친 조건으로, 지금 후보를 빼고 찾는다(#845). 크레딧을 쓰지 않고 횟수 상한도 없다(#432 D5).
+ * 조건을 고치는 요청이 끝나기 전에는 막는다 — 고친 게 빠진 채 찾지 않게. 결과(실패 포함)는 요청 훅이 처리한다(#349).
  */
-export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; run: RecommendRunDto; count: number; onLimit: () => void }) {
+export function ResultsHeader({ mapId, run, count }: { mapId: string; run: RecommendRunDto; count: number }) {
   const retry = useRetryMutation(mapId)
   const patching = useEvidencePatching(run.id)
-  const left = Math.max(0, attemptLimit(run) - run.attempt_no)
+  const busy = retry.isPending ? '찾는 중…' : patching ? '조건 반영 중…' : null
   return (
     <div>
       <BackToReadiness mapId={mapId} />
@@ -69,20 +54,17 @@ export function ResultsHeader({ mapId, run, count, onLimit }: { mapId: string; r
         </div>
         <button
           type="button"
-          disabled={retry.isPending || patching}
-          onClick={() =>
-            // 남은 횟수가 없으면 보내지 않고 상한 화면으로(서버도 429 로 막는다). 그 밖의 결과는 요청 훅이 처리한다(#349).
-            left === 0 ? onLimit() : retry.mutate(run)
-          }
-          className="shrink-0 text-right text-xs font-bold text-brand-600 disabled:opacity-50"
+          disabled={!!busy}
+          onClick={() => retry.mutate(run)}
+          className="press shrink-0 rounded-md text-right text-xs font-bold text-brand-600 disabled:opacity-50"
         >
           <span className="flex items-center gap-1">
             <RotateCw size={12} aria-hidden="true" /> 다시 추천
           </span>
-          <span className="font-normal text-ink-500">{retry.isPending ? '찾는 중…' : patching ? '조건 반영 중…' : `${left}번 남음`}</span>
+          {busy && <span className="font-normal text-ink-500">{busy}</span>}
         </button>
       </div>
-      {left > 0 && <p className="mt-1.5 text-label text-ink-500">다시 추천하면 고친 조건으로, 지금 후보를 빼고 찾아요</p>}
+      <p className="mt-1.5 text-label text-ink-500">다시 추천하면 고친 조건으로, 지금 후보를 빼고 찾아요</p>
     </div>
   )
 }
@@ -125,7 +107,7 @@ export function ResultsBody({
   return (
     <div className={`space-y-3 ${enter ? 'enter-fade' : ''}`}>
       {conditions}
-      <button type="button" onClick={onHow} className="flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
+      <button type="button" onClick={onHow} className="press flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
         <span>
           조건으로 {removed}곳 걸러냄 → 추천 {result.candidates.length}곳
         </span>
@@ -192,7 +174,7 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
       onClick={(e) => {
         if (!(e.target as HTMLElement).closest('a, button')) focus()
       }}
-      className={`cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-brand-50 p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
+      className={`press cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-brand-50 p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
     >
       <header className="flex items-center gap-2">
         <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
@@ -212,13 +194,9 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
         {c.region_label && <span className="tag border border-brand-300 bg-white text-brand-700">{c.region_label} 기준</span>}
       </header>
       <p className="text-xs text-ink-600">{run.category}</p>
-      <Reason text={c.reason} />
-      <Checks c={c} />
-      <p className="flex items-center gap-1.5 text-xs font-bold text-brand-700">
-        <Users size={14} aria-hidden="true" /> {c.member_fulfillment.total}명 중 {c.member_fulfillment.satisfied}명 조건 충족
-        <span className="ml-auto font-normal text-ink-600">출처 · {sourceLabel(c)}</span>
-      </p>
-      <p className="text-xs text-ink-600">{fulfillmentLine(c, members)}</p>
+      <AiReason text={c.reason} />
+      <AiChecks evidence={c} />
+      <AiFulfillment evidence={c} members={members} />
       <div className="flex items-center justify-between">
         <PublishButton mapId={mapId} run={run} c={c} />
         {/* 사진·주소·영업시간은 카카오맵에서 본다 — 앱 안 WebView 금지(카카오 약관), 새 창으로.
@@ -230,29 +208,6 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
         )}
       </div>
     </article>
-  )
-}
-
-function Reason({ text }: { text: string }) {
-  return (
-    <p className="flex gap-2 rounded-xl border border-brand-300 bg-white p-2.5 text-body text-ink-900">
-      <MessageSquare size={14} className="mt-0.5 shrink-0 text-ink-500" aria-hidden="true" />
-      {text}
-    </p>
-  )
-}
-
-function Checks({ c }: { c: CandidateDto }) {
-  return (
-    <ul className="flex flex-wrap gap-1.5">
-      {toChecks(c).map((k) => (
-        <li key={k.label} className={`tag ${TONE[k.tone]}`}>
-          {MARK[k.tone]} {k.label}
-          {/* 라벨에 이미 「확인」이 들어 있으면 겹쳐 쓰지 않는다(「가격대 확인 필요 (확인 필요)」, #406). */}
-          {k.tone === 'check' && !k.label.includes('확인') && ' (확인 필요)'}
-        </li>
-      ))}
-    </ul>
   )
 }
 
@@ -399,7 +354,7 @@ function WidenButton({ mapId, run, className }: { mapId: string; run: RecommendR
           pending={widen.isPending}
           onCancel={() => setAsking(false)}
           onOk={() =>
-            // 진행 중 → 결과/실패/상한 안내는 요청 훅이 맡는다(#349).
+            // 진행 중 → 결과/실패 안내는 요청 훅이 맡는다(#349).
             widen.mutate(run, { onSettled: () => setAsking(false) })
           }
         />
@@ -426,26 +381,6 @@ export function Failed({ mapId, run }: { mapId: string; run: RecommendRunDto }) 
       >
         {execute.isPending ? '다시 찾는 중…' : '다시 시도'}
       </button>
-    </div>
-  )
-}
-
-/** 다시 추천 상한(Figma '다시 추천 상한', RETRY_LIMIT). */
-export function RetryLimit({ onBack }: { onBack: () => void }) {
-  return (
-    <div className="space-y-3">
-      <ul className="list-inside list-disc space-y-1 rounded-xl border border-brand-300 bg-brand-50 p-3 text-sm text-ink-700">
-        <li>지금 떠 있는 후보 중 괜찮은 곳을 지도에 올려 보세요</li>
-        <li>검색창에서 직접 찾아 찍을 수도 있어요</li>
-      </ul>
-      <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={onBack} className="btn-outline btn-lg">
-          후보 다시 보기
-        </button>
-        <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-outline btn-lg">
-          직접 찍기
-        </button>
-      </div>
     </div>
   )
 }

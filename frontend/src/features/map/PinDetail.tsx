@@ -1,10 +1,14 @@
-import { useState, type ReactNode } from 'react'
+import { useId, useRef, useState, type ReactNode } from 'react'
+import { useNavigate } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import type { MemberView } from '@/features/maps/model'
 import { useMeQuery } from '@/features/auth/queries'
+import { AiChecks, AiFulfillment, AiReason } from '@/features/recommend/Evidence'
+import { hasReviews } from '@/features/reviews/model'
+import PlaceReviews from '@/features/reviews/PlaceReviews'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation } from '@/features/shortlist/queries'
@@ -15,7 +19,8 @@ import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 
 import { isLive, locationState, useLivePlaceStore } from './livePlaces'
-import { asReactionType, FILTER_CATEGORIES, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
+import ReactionHelp from './ReactionHelp'
+import { asReactionType, FILTER_CATEGORIES, hasAiEvidence, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
 import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReasonChipsQuery, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
@@ -25,6 +30,8 @@ const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line
 }
 const TYPES: ReactionType[] = ['like', 'against']
 const TEXT_MAX = 140
+/** 서버가 같은 이유(EVIDENCE_REQUIRED)로 막을 때도 같은 문구다. */
+const MISSING_REASON = '반대 이유를 하나 이상 남겨 주세요'
 const MEMO_MAX = 200
 
 const PROMPT: Record<ReactionType, { title: string; placeholder: string }> = {
@@ -48,6 +55,7 @@ export function PinDetailHeader({
   onBack: () => void
 }) {
   const add = useAddToShortlistMutation(mapId)
+  const navigate = useNavigate()
   const confirmed = pin.kind === '확정'
 
   return (
@@ -55,7 +63,11 @@ export function PinDetailHeader({
       <PanelBackLink label={backLabel} onBack={onBack} />
       {/* 자리가 없으면(긴 이름·큰 글자) 확정 버튼이 제목 아래 줄로 내려간다(#406). */}
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
-        <SheetTitle>{pin.place_name ?? '이름 없는 장소'}</SheetTitle>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <SheetTitle>{pin.place_name ?? '이름 없는 장소'}</SheetTitle>
+          {/* AI 추천에서 올린 핀은 모두의 핀이 된 뒤에도 AI가 고른 곳임을 알린다(DESIGN.md 「지도 핀」, #1032). */}
+          {hasAiEvidence(pin) && <span className="tag tag-ai">AI</span>}
+        </span>
         {confirmed ? (
           <span className="btn-confirm btn-sm">
             ✓ 확정됨
@@ -70,7 +82,11 @@ export function PinDetailHeader({
                 add.mutate(pin.id, {
                   onSuccess: () => {
                     const name = pin.place_name ?? '이 장소'
-                    showToast(`${name}${josa(name, '을', '를')} 확정 리스트에 넣었어요`)
+                    // 넣은 뒤 어디로 가는지 보이게 확정 리스트로 가는 길을 같이 준다(#1030).
+                    showToast(`${name}${josa(name, '을', '를')} 확정 리스트에 넣었어요`, {
+                      label: '확정 리스트 보기',
+                      onClick: () => navigate(`/maps/${mapId}/shortlist`),
+                    })
                   },
                   onError: () => showToast('확정 리스트에 넣지 못했어요'),
                 })
@@ -107,6 +123,20 @@ function LiveInfo({ pin }: { pin: Pin }) {
  * 핀을 찍은 사람이 남긴 한마디(#466). 찍은 사람만 쓰고 고친다(`can_edit`) — AI 추천·확정 핀은 고칠 수 없다.
  * 메모가 없고 고칠 수도 없으면 줄을 그리지 않는다.
  */
+/**
+ * AI 추천에서 올린 핀의 근거(가드레일 5). 올리기 전 후보 카드와 같은 부품으로 같은 값을 그린다 — 올린 뒤에도 그대로 보인다(#1032).
+ */
+function AiPinEvidence({ pin, members }: { pin: Pin; members: MemberView[] }) {
+  return (
+    <section aria-label="AI 추천 근거" className="mt-2 space-y-2 rounded-xl border-[1.5px] border-brand-300 bg-brand-50 p-3">
+      <p className="text-xs font-bold text-brand-700">AI가 추천한 이유</p>
+      {pin.reason && <AiReason text={pin.reason} />}
+      <AiChecks evidence={pin} />
+      <AiFulfillment evidence={pin} members={members} />
+    </section>
+  )
+}
+
 function PinMemo({ pin, mapId }: { pin: Pin; mapId: string }) {
   const [editing, setEditing] = useState(false)
   const canEdit = pin.permissions.can_edit === true
@@ -208,6 +238,7 @@ export function PinDetailBody({
         </p>
         <PinMemo pin={pin} mapId={mapId} />
         {isLive(pin) && <LiveInfo pin={pin} />}
+        {hasAiEvidence(pin) && <AiPinEvidence pin={pin} members={members} />}
         {/* 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자로 꼭 적는다(colors.md 3절 한계). */}
         {memberCount > 0 && (
           <p className="text-xs font-bold text-ink-600">
@@ -223,20 +254,25 @@ export function PinDetailBody({
             >
               <span style={{ color: R[t].line }}>{R[t].mark}</span>
               <span className={mine === t ? '' : 'text-ink-900'}>{R[t].label}</span>
-              <span style={mine === t ? undefined : { color: R[t].text }}>{s[t]}</span>
+              <span style={mine === t ? undefined : { color: R[t].text }}>{s[t]}명</span>
               {mine === t && '· 나'}
             </span>
           ))}
           <span className="flex items-center gap-1 font-bold">
             <span className="text-ink-500">?</span> <span className="text-ink-900">미확인</span>
-            <span className="text-ink-600">{Math.max(0, memberCount - participants(pin))}</span>
+            <span className="text-ink-600">{Math.max(0, memberCount - participants(pin))}명</span>
+          </span>
+          {/* 「미확인」이 장소 정보가 확인 안 됐다는 말로 읽히지 않게 뜻을 그 자리에서 연다(#1030). */}
+          <span className="ml-auto">
+            <ReactionHelp />
           </span>
         </div>
       </div>
 
       {/* 2단계에서 바로 보이게 「내 의견」을 구성원 의견보다 위에 둔다(#308). */}
       {pin.permissions.can_react ? (
-        <MyOpinion key={pin.my_reaction?.type ?? 'none'} pin={pin} mapId={mapId} chipOptions={chips.data ?? []} chipsError={chips.error} onDone={onDone} />
+        // 핀마다 새로 그린다. 의견을 취소해도 고른 의견·사유는 남겨 「의견 등록」만 다시 누르면 되돌아간다(#959).
+        <MyOpinion key={pin.id} pin={pin} mapId={mapId} chipOptions={chips.data ?? []} chipsError={chips.error} onDone={onDone} />
       ) : (
         // 숙소 핀은 반응을 받지 않는다(#154). v1엔 숙소 핀이 없지만 권한이 꺼져 오면 그린다.
         <p className="text-sm text-ink-500">이 장소에는 의견을 남길 수 없어요</p>
@@ -248,6 +284,14 @@ export function PinDetailBody({
         <ErrorText message="구성원 의견을 불러오지 못했어요" error={reactions.error} />
       ) : (
         reactions.data && <Opinions {...toOpinions(reactions.data, members, chips.data)} />
+      )}
+
+      {/* 장소 후기는 자체 DB 장소 핀에만(#953). 실시간 핀은 장소 정보가 없어 후기를 붙일 수 없다. */}
+      {hasReviews(pin) && (
+        <>
+          <div className="-mx-4 h-1.5 bg-ink-100" />
+          <PlaceReviews pin={pin} />
+        </>
       )}
 
       {pin.permissions.can_delete && <DeletePin pin={pin} mapId={mapId} onDone={onDone} />}
@@ -376,9 +420,19 @@ function MyOpinion({
   const [text, setText] = useState(saved?.reason_text ?? '')
   const react = useMyReactionMutation(mapId, pin)
   const missingReason = type === 'against' && chips.length === 0 && text.trim() === ''
+  // 사유 없이 반대를 누르면 버튼을 끄지 않고 이유를 입력칸 아래에 알린다 — 꺼진 버튼은 왜 막혔는지 읽히지 않는다(#959).
+  const [triedEmpty, setTriedEmpty] = useState(false)
+  const reasonRef = useRef<HTMLInputElement>(null)
+  const reasonErrorId = useId()
+  const showMissing = triedEmpty && missingReason
 
   function submit() {
-    if (!type || missingReason) return
+    if (!type) return
+    if (missingReason) {
+      setTriedEmpty(true)
+      reasonRef.current?.focus()
+      return
+    }
     const body = {
       type,
       ...(text.trim() ? { reason_text: text.trim() } : {}),
@@ -391,7 +445,7 @@ function MyOpinion({
       },
       onError: (err) =>
         showToast(
-          err instanceof ApiError && err.code === 'EVIDENCE_REQUIRED' ? '반대 이유를 하나 이상 남겨 주세요' : '의견을 등록하지 못했어요',
+          err instanceof ApiError && err.code === 'EVIDENCE_REQUIRED' ? MISSING_REASON : '의견을 등록하지 못했어요',
           { label: '다시 시도', onClick: submit },
         ),
     })
@@ -431,8 +485,8 @@ function MyOpinion({
               role="radio"
               aria-checked={on}
               onClick={() => setType(t)}
-              className="flex flex-col items-center gap-0.5 rounded-xl border py-2"
-              style={on ? { background: R[t].bg, borderColor: R[t].line } : { background: 'var(--surface-card)', borderColor: 'var(--ink-200)' }}
+              className="press flex flex-col items-center gap-0.5 rounded-xl border py-2"
+              style={on ? { backgroundColor: R[t].bg, borderColor: R[t].line } : { backgroundColor: 'var(--surface-card)', borderColor: 'var(--ink-200)' }}
             >
               <span style={{ color: R[t].line }}>{R[t].mark}</span>
               <span className="text-xs font-bold" style={{ color: on ? R[t].text : 'var(--ink-600)' }}>
@@ -472,7 +526,14 @@ function MyOpinion({
             placeholder={PROMPT[type].placeholder}
             label={PROMPT[type].title}
             clearLabel="사유 지우기"
+            inputRef={reasonRef}
+            describedBy={showMissing ? reasonErrorId : undefined}
           />
+          {showMissing && (
+            <p id={reasonErrorId} className="text-xs font-semibold text-warn-text">
+              {MISSING_REASON}
+            </p>
+          )}
           {type === 'against' && <p className="text-label text-ink-500">자세히 적을수록 더 정확한 추천을 받을 수 있어요</p>}
         </div>
       )}
@@ -480,7 +541,7 @@ function MyOpinion({
       <button
         type="button"
         onClick={submit}
-        disabled={!type || missingReason || react.isPending}
+        disabled={!type || react.isPending}
         className="btn-primary btn-md w-full"
       >
         {react.isPending ? '등록하는 중…' : '의견 등록'}

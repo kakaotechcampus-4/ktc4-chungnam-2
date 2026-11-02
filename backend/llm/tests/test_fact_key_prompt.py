@@ -227,6 +227,14 @@ class TestWantsFixtures:
         assert {c["wants"] for c in WANTS_CASES} == {True, False, None}
         assert any(c["fact_key"] == "quiet" and c["wants"] is True and "싫" in c["text"] for c in WANTS_CASES)
 
+    def test_complaint_types_have_three_cases_each(self):
+        # #1078 할 일 1 — 🚫 없다는 불평, 🚫 정도 불평, 돌려 말하기·줄임말이 유형마다 3개 이상
+        complaints = [c for c in WANTS_CASES if c["note"].startswith("#1078")]
+        absent = [c for c in complaints if c["badge"] == "required" and c["wants"] is True and "짧은 불평" in c["note"]]
+        degree = [c for c in complaints if "정도 불평" in c["note"]]
+        indirect = [c for c in complaints if "돌려 말하기" in c["note"] or "줄임말" in c["note"]]
+        assert min(len(absent), len(degree), len(indirect)) >= 3
+
 
 # ── 줄 text 비교 정규화 — #249 ───────────────────────────────────────────────
 
@@ -299,6 +307,19 @@ class TestPromptDescribesOmittedKey:
         prompt = prompts.PLAN_EVIDENCE_PROMPT
         assert "초밥 먹고 싶어" in prompt and "라멘" in prompt and "돈가스" in prompt
         assert "cuisine_japanese" in prompt.split("음식 이름만 말해도")[1]
+
+    def test_short_complaint_reads_as_place_drawback(self):
+        # 🚫 "주차 안됨"이 주차되는 곳을 빼는 실격이 됐다(#1078) — 불평은 단점이고, 단점이 없는 곳을 원한다.
+        prompt = prompts.PLAN_EVIDENCE_PROMPT
+        assert "**그 장소의 단점**" in prompt
+        assert '"주차 안 돼요" → parking_available, wants=true' in prompt
+        assert '"대기 너무 길어요" → wait_short, wants=true' in prompt
+        assert '"너무 붐벼요" → is_crowded_large, wants=false' in prompt
+
+    def test_complaint_examples_are_not_eval_sentences(self):
+        # 예시를 평가셋 문장과 같게 쓰면 실호출 일치율이 외운 값이 된다(#1078).
+        rule_4 = prompts.PLAN_EVIDENCE_PROMPT.split("4. wants는")[1].split("5. 한 글에")[0]
+        assert not [c["text"] for c in WANTS_CASES if c["note"].startswith("#1078") and f'"{c["text"]}"' in rule_4]
 
     def test_allowance_with_hard_key_is_null(self):
         assert '"북적여도 괜찮아요" → is_crowded_large, wants=null' in prompts.PLAN_EVIDENCE_PROMPT

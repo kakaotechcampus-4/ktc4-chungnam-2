@@ -71,6 +71,12 @@ def get_map_region_label(db: Session, map_id: str) -> str | None:
     ).scalar_one_or_none()
 
 
+def get_map_region_center(db: Session, map_id: str) -> tuple[float, float] | None:
+    """지도의 여행 지역 중심 (lat, lng)(#1059, docs/architecture.md). 지역을 안 정했거나 없거나 삭제된 지도는 None.
+    읽기 전용 — get_map_region_label과 같은 기준."""
+    return service.get_map_region_center(db, map_id)
+
+
 def get_map_for_agent(db: Session, map_id: str) -> dict | None:
     """agent 스냅샷(docs/agent-v2.md 12.7, #522)이 부른다. 읽기 전용, 커밋하지 않는다.
     `{map_id, start_date, end_date, deleted: bool, members: [{user_id, joined_at}]}`. 구성원은 지금 구성원만
@@ -118,6 +124,13 @@ def accept_invite(db: Session, *, token: str, user_id: str) -> Map:
     """POST /invites/{token}/accept와 같은 흐름(#472, auth가 추가한 위임) — 구성원 가입, used_count, member.joined
     이벤트, 방장 알림까지 한 트랜잭션. 커밋은 호출자가 한다."""
     return service.accept_invite(db, token=token, user_id=user_id)
+
+
+def restore_maps_deleted_by_withdrawal(db: Session, *, user_id: str, now: datetime) -> list[str]:
+    """탈퇴 계정 복구(#855)가 부른다(#1000) — 이 사람의 탈퇴가 후임 없어 지운 지도 중 삭제한 지 30일 안인 것을 되살린다.
+    방장 자리는 그대로이고 지도 수 상한은 따지지 않는다. `map.restored`를 같은 트랜잭션에 기록한다. 멱등 — 두 번째 호출은 빈 목록.
+    직접 지운 지도와 위임된 지도는 건드리지 않는다. 커밋은 호출자. 되살린 map_id 목록."""
+    return service.restore_maps_deleted_by_withdrawal(db, user_id=user_id, now=now)
 
 
 def purge_deleted_maps(db: Session, *, now: datetime, older_than_days: int) -> dict[str, int]:

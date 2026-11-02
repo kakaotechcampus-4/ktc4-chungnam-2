@@ -1,7 +1,6 @@
 """#847 — 서버 최초 실행(create_run execute=true), 실행 스냅샷(applied_evidence·last_new_count), 새·게시 후보 구분,
-조건 0개 고지(no_applied_conditions), 근거 수정의 상한 거절(429 RETRY_LIMIT). 계약은 #845·#851(docs/api-spec.yaml)."""
+조건 0개 고지(no_applied_conditions), 옛 횟수 상한 뒤의 근거 수정(#949에서 상한을 없앴다). 계약은 #845·#851(docs/api-spec.yaml)."""
 
-import threading
 import uuid
 
 import pytest
@@ -11,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from authz.core import Principal
 from common.errors import AppError
 from common.events import EventLog
+from credits.models import CreditAccount, CreditLedger
 from recommend import api, constraints, core, flows, service
 from recommend.models import Candidate, IdempotencyKey, RecommendRun, Region
 from recommend.models import EvidenceLine as EvidenceLineRow
@@ -21,6 +21,7 @@ from recommend.tests.test_flows import (
 
 USER = "user_1"
 PRINCIPAL = Principal(user_id=USER, map_id="map_1", role="member")
+OLD_ATTEMPT_LIMIT = 10   # 예전 추천 횟수 상한(#558). 상한은 크레딧으로 바뀌어 없다(#432, #949)
 
 
 def _crowded_line(author="user_1", **overrides):
@@ -238,6 +239,8 @@ def real_env(test_engine, monkeypatch):
     cleanup.execute(delete(Region).where(Region.run_id.in_(run_ids)))
     cleanup.execute(delete(EvidenceLineRow).where(EvidenceLineRow.run_id.in_(run_ids)))
     cleanup.execute(delete(RecommendRun).where(RecommendRun.id.in_(run_ids)))
+    cleanup.execute(delete(CreditLedger).where(CreditLedger.user_id == "exec_user"))   # run 저장과 함께 커밋된 차감(#949)
+    cleanup.execute(delete(CreditAccount).where(CreditAccount.user_id == "exec_user"))
     cleanup.commit()
     cleanup.close()
 
@@ -268,6 +271,7 @@ def test_a_failure_during_the_first_search_leaves_no_run_no_attempt_and_frees_th
         session.close()
     assert _count(Session, RecommendRun, RecommendRun.map_id == "exec_map") == 0
     assert _count(Session, IdempotencyKey, IdempotencyKey.requested_by == "exec_user") == 0
+    assert _count(Session, CreditLedger, CreditLedger.user_id == "exec_user") == 0   # 차감도 run과 함께 롤백됐다(#949)
 
 
 def test_idempotent_execute_requests_reuse_the_same_done_run(real_env):
@@ -300,7 +304,7 @@ def test_idempotent_execute_requests_reuse_the_same_done_run(real_env):
     assert conflict.value.code == "IDEMPOTENCY_CONFLICT"
 
 
-# ---------- 상한 도달 뒤 근거 수정 거절 ----------
+# ---------- 옛 횟수 상한 뒤 근거 수정 (#949) ----------
 
 def _patch(db_session, run, *, toggles=(), adds=(), planner=PLANNER):
     return flows.patch_evidence(
@@ -317,34 +321,21 @@ class _CountingPlanner:
         return PLANNER.plan_evidence(raw)
 
 
-def test_evidence_edits_are_rejected_with_retry_limit_once_the_requester_used_all_attempts(db_session):
+def test_evidence_edits_pass_after_the_requester_went_past_the_old_attempt_limit(db_session):
+    """추천 횟수 상한(10회)은 크레딧으로 바뀌어 없다(#432, #949) — 11번째 시도의 run에서도 ×·＋가 429 없이 저장된다."""
     _make_members(db_session, user_ids=["user_1"])
-    run = _run_with(db_session, [_crowded_line()], status="done", attempt_no=core.ATTEMPT_LIMIT)
+    run = _run_with(db_session, [_crowded_line()], status="done", attempt_no=OLD_ATTEMPT_LIMIT + 1)
+    db_session.commit()   # 「+」는 모델 앞에서 읽기 트랜잭션을 롤백한다 — 준비한 데이터는 커밋된 상태여야 한다
     line = service.list_active_evidence(db_session, run.id)[0]
     planner = _CountingPlanner()
 
-    for kwargs in ({"toggles": [(str(line.id), False)]}, {"adds": ["조용한 곳"]}):
-        with pytest.raises(AppError) as limit:
-            _patch(db_session, run, planner=planner, **kwargs)
-        assert limit.value.code == "RETRY_LIMIT"
-    assert planner.calls == 0   # 모델을 부르기 전에 거절한다
-    assert service.list_active_evidence(db_session, run.id)[0].is_active is True   # 아무것도 바뀌지 않았다
-    assert len(flows.list_evidence(db_session, run_id=str(run.id), principal=PRINCIPAL)) == 1   # 조회는 된다
-
-
-def test_the_limit_is_per_requester_and_map_not_per_run_and_the_boundary_is_ten(db_session):
-    _make_members(db_session, user_ids=["user_1"])
-    _run_with(db_session, [_crowded_line()], status="done", attempt_no=core.ATTEMPT_LIMIT)   # 다른 run에서 다 썼다
-    other = _run_with(db_session, [_crowded_line()], status="done", attempt_no=1)
-    with pytest.raises(AppError) as limit:
-        _patch(db_session, other, adds=["조용한 곳"])
-    assert limit.value.code == "RETRY_LIMIT"
-
-    fresh = _run_with(db_session, [_crowded_line("user_9")], status="done", attempt_no=core.ATTEMPT_LIMIT - 1, requested_by="user_9")
-    db_session.commit()   # 「+」는 모델 앞에서 읽기 트랜잭션을 롤백한다 — 준비한 데이터는 커밋된 상태여야 한다
-    planner = _CountingPlanner()
-    _patch(db_session, fresh, adds=["조용한 곳"], planner=planner)   # 9회째까지는 고칠 수 있다(다른 요청자)
+    _patch(db_session, run, toggles=[(str(line.id), False)], planner=planner)
+    db_session.commit()   # 요청 끝의 커밋 — 다음 「+」 요청이 모델 앞에서 롤백한다
+    assert planner.calls == 0   # ×는 모델을 부르지 않는다
+    _patch(db_session, run, adds=["조용한 곳"], planner=planner)
     assert planner.calls == 1
+    texts = {entry.text: entry.is_active for entry in flows.list_evidence(db_session, run_id=str(run.id), principal=PRINCIPAL)}
+    assert texts == {line.text: False, "조용한 곳": True}
 
 
 # ---------- 탈퇴·나가기·합치기: 스냅샷 안의 사용자 id ----------
@@ -377,74 +368,6 @@ def test_guest_merge_moves_the_snapshot_author_too(db_session):
     result = api.reassign_user(db_session, from_user_id="guest_1", to_user_id="kakao_1")
     assert result["evidence_lines"] == 1
     assert sorted(_snapshot_authors(db_session, run)) == ["kakao_1", "user_1"]
-
-
-# ---------- 모델을 기다리는 사이 10회째가 커밋되는 경합 ----------
-
-def test_plus_is_rejected_at_save_time_when_the_tenth_attempt_commits_while_the_model_runs(test_engine, monkeypatch):
-    """9회 상태에서 「＋」가 모델 앞 검사를 통과한 뒤, 모델을 기다리는 사이 같은 요청자의 retry·다른 run 생성이 10회째를 커밋한다.
-    저장 직전의 재검사(run → 요청자 횟수 잠금 → 상한)가 없으면 상한 뒤에도 근거가 저장돼 성공한다."""
-    Session = sessionmaker(bind=test_engine)
-    run_id, other_run_id = uuid.uuid4(), uuid.uuid4()
-    setup = Session()
-    setup.add_all([
-        RecommendRun(id=run_id, map_id="map_race_847", category="음식점", requested_by="racer_847", status="done",
-                     attempt_no=core.ATTEMPT_LIMIT - 1),
-        RecommendRun(id=other_run_id, map_id="map_race_847", category="카페", requested_by="racer_847", status="done",
-                     attempt_no=1),
-    ])
-    setup.commit()
-    setup.close()
-
-    in_model, release = threading.Event(), threading.Event()
-
-    class SlowPlanner:
-        def plan_evidence(self, raw):
-            in_model.set()
-            release.wait(10)
-            return PLANNER.plan_evidence(raw)
-
-    outcome: list[str] = []
-
-    def plus():
-        session = Session()
-        principal = Principal(user_id="racer_847", map_id="map_race_847", role="member")
-        try:
-            flows.patch_evidence(session, run_id=str(run_id), principal=principal, toggles=[], adds=["조용한 곳"],
-                                 evidence_planner=SlowPlanner())
-            session.commit()
-            outcome.append("ok")
-        except AppError as exc:
-            session.rollback()
-            outcome.append(exc.code)
-        finally:
-            session.close()
-
-    thread = threading.Thread(target=plus)
-    thread.start()
-    try:
-        assert in_model.wait(5)   # 모델 앞 검사(9회)는 통과했고 모델을 기다리는 중이다
-        concurrent = Session()
-        concurrent.execute(update(RecommendRun).where(RecommendRun.id == other_run_id).values(attempt_no=core.ATTEMPT_LIMIT))
-        concurrent.commit()   # 다른 run의 10회째가 커밋됐다
-        concurrent.close()
-    finally:
-        release.set()
-        thread.join()
-
-    verify = Session()
-    try:
-        assert outcome == ["RETRY_LIMIT"]
-        assert _count_session(verify, EvidenceLineRow, EvidenceLineRow.run_id == run_id) == 0   # 아무것도 저장되지 않았다
-    finally:
-        verify.execute(delete(EvidenceLineRow).where(EvidenceLineRow.run_id == run_id))
-        verify.execute(delete(RecommendRun).where(RecommendRun.id.in_([run_id, other_run_id])))
-        verify.commit()
-        verify.close()
-
-
-def _count_session(db, model, *conditions):
-    return db.execute(select(func.count()).select_from(model).where(*conditions)).scalar_one()
 
 
 # ---------- 계절 판정은 실행마다 한 번 ----------

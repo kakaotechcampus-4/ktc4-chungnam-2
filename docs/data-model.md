@@ -40,11 +40,12 @@ user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사
 -- 탈퇴 후 7일 정리 대상 (#855 — 「개인정보를 모두 지운다」는 users·user_identities만이 아니라 이름이 복사된 곳까지다. BE(auth)가 모듈별로 감사해 이 표를 확정한다)
 --   users            : display_name → '탈퇴한 구성원', last_seen_at·guest_invite_token 삭제 (행은 남김)
 --   user_identities  : 삭제
+--   외부 장소 번호표 표(place_external_id_votes): 7일 정리에서 삭제(#1062). 복구 기간에는 남김. 한계: SESSION_SECRET을 바꾸기 전에 쌓인 표는 현재 해시로 찾지 못해 남는다
 --   세션             : 탈퇴·복구 시 sessions_valid_after로 무효화(저장된 세션 행이 없다)
 --   반응·근거 줄·알림(본인 것)·agent 열람 기록·코스 요청: 탈퇴 때 이미 삭제(WITHDRAW_STEPS)
 --   피드백           : 작성자 연결은 탈퇴 때 끊김. 본문은 남긴다(사용자가 쓴 글 — 개인정보처리방침에 밝힌다)
 --   멤버십           : 행은 남긴다(#245, 구성원 표시는 '탈퇴한 구성원')
---   **이름이 복사된 곳**(감사 필요): 추천 후보·게시 핀의 member_fulfillment.by_member[].display_name·user_id, 다른 구성원의 알림 문장에 박힌 행위자 이름, agent 요약·제안의 본문,
+--   **이름이 복사된 곳**(감사 필요): 추천 후보·게시 핀의 member_fulfillment.by_member[].display_name·user_id, 다른 구성원의 알림 문장에 박힌 행위자 이름(`notifications.api.anonymize_actor` — actor_id로 문장을 다시 만든다. **한계: actor_id 칸이 생기기 전에 쌓인 알림은 못 덮고 90일 뒤 정리로 사라진다**), agent 요약·제안의 본문,
 --                       초대 링크의 만든 사람 표시. → 정리 때 '탈퇴한 구성원'으로 덮는다(write-once 규칙과 조정은 BE가 이슈로 올린다)
 --   로그·이벤트      : 표시 이름·카카오 식별자를 남기지 않는다(이미 규칙). 이벤트 payload의 display_name은 보존기간(24시간) 뒤 사라진다
 -- 예전 users.provider, provider_user_id, is_guest는 이 리비전에서 지운다(카카오 사용자는 user_identities로 옮긴다).
@@ -58,6 +59,10 @@ maps(
   deleted_at timestamptz null          -- #369: 방장이 삭제하면 찍는다(soft delete). 찍히면 모든 조회 경로에서 없는 지도(404)로 보인다.
                                        --   #431(2026-10-10): 삭제한 지 30일이 지나면 정리 작업(`python -m maps.purge`)이 지도와 딸린 데이터를 실제로 지운다. **삭제한 지 30일 안이면 방장이 복구할 수 있다**(`POST /maps/{mapId}/restore`, #464) — `deleted_at`을 비우면 구성원·핀·반응·초대·확정 리스트·추천 기록은 그대로 돌아온다.
                                        --   → docs/architecture.md 「지도 삭제와 정리」
+  deleted_by_withdrawal_of uuid null   -- #1000(2026-11-01): 방장이 탈퇴하면서 후임이 없어 지도를 같이 삭제한 경우(auth.WITHDRAW_STEPS의 maps 단계) 그 탈퇴자의 user id.
+                                       --   직접 지운 지도는 NULL이다. 7일 안에 계정을 되살리면(`POST /auth/pending` restore) auth가 maps.api.restore_maps_deleted_by_withdrawal로
+                                       --   이 값이 그 사용자인 지도를 deleted_at과 함께 비운다(`map.restored` 발행). 복구하지 않으면 30일 뒤 정리 작업이 지도를 지운다(마커도 함께).
+                                       --   새 계정으로 시작(restart)하면 기존 계정은 즉시 정리되므로 이 지도는 되살릴 사람이 없다(30일 뒤 정리).
 )
   CHECK (end_date >= start_date)   -- 9/4 결정 #22: 여행 제목 + 시작일·종료일. day_count는 폐기
   CHECK ((region_label IS NULL) = (region_center IS NULL))
@@ -103,7 +108,12 @@ pins(
                                         -- candidate가 나중에 지워지거나 바뀌어도 이 값은 안 바뀐다.
   reason null, member_fulfillment jsonb null, place_source jsonb null,
                                         -- #157: AI 추천 핀을 게시할 때 candidate 값을 복사한다(가드레일 5). 직접 찍은 핀은 NULL
-  created_by, created_at, deleted_at
+  created_by, created_at, deleted_at,
+  deleted_by text null, deleted_was_confirmed boolean null
+                                        -- #864(2026-11-01) 휴지통: 삭제는 soft delete이고 deleted_at이 찍힌 핀을 30일 동안 휴지통에 둔다. 찍은 사람과 방장이 복구한다(`pin.restore`).
+                                        --   deleted_by = 지운 사람 user id(탈퇴하면 표시만 「탈퇴한 구성원」), deleted_was_confirmed = 삭제 때 확정 리스트에 있었는가(복구 때 다시 올린다).
+                                        --   복구하면 deleted_at·deleted_by·deleted_was_confirmed를 비운다. 30일이 지나면 maintenance가 핀 행과 반응·메모를 영구 삭제한다(멱등).
+                                        --   휴지통에 있는 동안 같은 장소로 새 핀이 만들어질 수 있고(unique는 deleted_at is null만 본다), 그때 복구는 409 PIN_DUPLICATE다.
 )
   unique(map_id, place_id) where deleted_at is null   -- 중복 핀 판정(가드레일 6). 판정 기준은 #33(보류)에서 별도 확정
   unique(map_id, kakao_place_id) where deleted_at is null and kakao_place_id is not null   -- #382 live 핀 중복
@@ -197,6 +207,28 @@ places(
   created_at, updated_at
 )
   unique(source, source_id)
+
+place_external_ids(                     -- #1048 카카오·네이버 장소 번호 → 자체 DB 장소. 카톡 링크가 번호뿐이라 한 번 이어진 짝을 다음 사람부터 한 번에 찍는다
+  id pk,
+  provider,                             -- 'kakao' | 'naver'
+  external_id,                          -- 번호만(예 'naver:1412566798'). 카카오 응답의 이름·좌표·주소는 저장하지 않는다(#53)
+  place_id references places(id),
+  source,                               -- 'hint' = 서버가 상호명+주소로 스스로 확정(즉시 신뢰) | 'user' = 사람이 고른 짝(아래 votes 2명 이상이어야 신뢰)
+  created_at
+)
+  unique(provider, external_id, place_id)
+  index(provider, external_id)
+  -- 같은 번호가 서로 다른 place_id에 이어진 행이 둘 이상이면 충돌이다 — 자동 매칭에서 뺀다(둘 다 후보로만).
+  -- 조회(places.api.parse_link): 신뢰된 단일 행이고 그 장소가 영업 중(status='open')일 때만 matches(matched_by='external_id').
+
+place_external_id_votes(                -- #1048 'user' 짝의 확인 횟수. 서로 다른 사용자 2명이 같은 짝을 확인해야 신뢰한다
+  external_id_row references place_external_ids(id),
+  voter_hash,                           -- HMAC(user_id) 단방향. 사용자 id를 그대로 두지 않는다. 계정당 한 표
+  created_at
+)
+  unique(external_id_row, voter_hash)
+  -- 탈퇴 7일 뒤 정리에서 voter_hash = HMAC(탈퇴 사용자 id)인 행을 지운다(auth 정리가 places.api.purge_external_id_votes를 부른다).
+  -- 번호표 자체는 지도·사용자와 무관한 공용 데이터라 지우지 않는다.
 
 place_facts(
   place_id references places(id),
@@ -316,7 +348,7 @@ recommend_runs(
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
                                          -- 않도록 마지막 execute/widen/retry의 깔때기 표를
                                          -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.
-  default_radius_walk_min int default 15,  -- #158: 기본값 원의 지금 도보 분. regions.radius_m은 여기서 파생(분×80m).
+  default_radius_walk_min int default 15,  -- #158: 기본값 원의 지금 도보 분. run을 만들 때 카테고리 기본값을 넣는다(관광지 25, 그 밖 15 — #1055, recommend.core.radius_walk_mins). regions.radius_m은 여기서 파생(분×80m).
                                          -- docs/constraints.md "반경 넓히기 상수"
   created_at
 )
@@ -498,7 +530,7 @@ agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조�
 
 ---
 
-## agent_course_runs (AI 코스 짜기, #334 — 팀 결정 #580 전 브랜치 초안, 마이그레이션 0037)
+## agent_course_runs (AI 코스 짜기, #334 — 팀 결정 #580 전 브랜치 초안, 마이그레이션 0037, 0050)
 
 > 동선 에이전트(`backend/agent/course/`)가 쓰는 테이블 1개. `map_id`, `requested_by`는 문자열이고 FK가 없다. run은 요청자 본인 것이다(가드레일 1).
 > **장소 이름과 좌표는 저장하지 않는다.** 핀은 `pin_id`로만 가리킨다(화면 문장에 들어간 이름은 코드가 렌더한 문장 안에만 있다). 사유 원문도 없다 —
@@ -522,7 +554,7 @@ agent_course_runs(
   created_at, finished_at null
 )
 index ix_agent_course_runs_map_user (map_id, requested_by, created_at)
-index ix_agent_course_runs_user_created (requested_by, created_at)       -- 하루 상한(5회, KST 자정) 집계
+-- ix_agent_course_runs_user_created(requested_by, created_at)는 코스 하루 상한을 세던 인덱스라 0050에서 지웠다(#976, 상한은 #950에서 크레딧으로)
 unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queued','running')   -- 내 진행 중 run은 지도당 하나 → 409 COURSE_IN_PROGRESS
 ```
 
@@ -558,7 +590,7 @@ index ix_llm_calls_user_created (user_id, created_at)
 index ix_llm_calls_trace (trace_id)
 ```
 
-- 캐시 토큰은 엘리스 게이트웨이 응답의 `usage.prompt_tokens_details.cached_tokens`다(2026-10-30 확인). 캐시 미스면 게이트웨이가 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고한다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 엘리스 청구서와 대조해야 한다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
+- 캐시 토큰은 응답의 `usage.prompt_tokens_details.cached_tokens`다(엘리스 게이트웨이에서 2026-10-30 확인. OpenAI 직접 호출로 바꾼 뒤(#1120)에도 같은 필드를 읽지만, 값의 의미는 청구서와 대조해 확인해야 한다). 엘리스 게이트웨이는 캐시 미스면 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고했다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 청구서(OpenAI 대시보드의 사용량)와 대조해야 한다. 이 25% 가산은 엘리스 게이트웨이의 보고 방식이라 OpenAI 직접 호출에서는 없을 수 있다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
 - 탈퇴는 행을 남기고 `user_id`만 비운다(비용 통계는 사람 없이도 쓴다, `llm.api.anonymize_by_user`). 게스트 합치기는 `user_id`를 옮긴다. 30일 지난 행은 정기 정리(`maintenance.run`의 `llm_calls`)가 지운다. 지도 정리는 행을 지우지 않는다(map_id만 남고 가리키는 지도가 없다).
 
 ---
@@ -578,14 +610,23 @@ credit_ledger(
   id uuid PK,
   user_id varchar NOT NULL,
   delta integer NOT NULL,
-  reason('initial'|'spend'|'refund'|'review') NOT NULL,   -- 페이즈 2 구매는 'purchase', 광고 충전은 'ad'로 같은 표에 더한다
+  reason('initial'|'spend'|'refund'|'review'|'ad') NOT NULL,   -- ad = 광고 보고 충전(#1037). 페이즈 2 구매는 'purchase'로 같은 표에 더한다
   ref_id varchar NOT NULL UNIQUE,     -- initial:<user> · <feature>:<run_id> · refund:<차감 ref_id> · review:<user>:<place_id>
   created_at timestamptz NOT NULL default now()
 )
 index ix_credit_ledger_user_reason_created (user_id, reason, created_at)
+credit_ad_sessions(                 -- 광고 보고 충전(docs/credits-reviews.md 3.7, #1038)
+  id uuid PK,
+  user_id varchar NOT NULL,          -- FK 없음(#760)
+  issued_at timestamptz NOT NULL default now(),   -- 하루 횟수(KST)는 이것으로 센다
+  claimed_at timestamptz NULL,
+  credited integer NULL             -- 받을 때 들어간 양(0~AD_REWARD). 멱등 응답에 쓴다
+)
+index ix_credit_ad_sessions_user_issued (user_id, issued_at)
 ```
 
 - `ref_id` UNIQUE가 멱등을 맡는다 — 같은 실행 이중 차감, 이중 환불, 같은 장소 후기 보상 두 번이 구조적으로 막힌다.
+- 잔액 상한 30(`credits/constants.py`의 `MAX_BALANCE`, #981). 후기 보상과 환불은 상한까지만 채우고, 상한에 걸려 0이어도 그 ref_id를 delta 0으로 남긴다(그 장소 보상은 끝). DB 제약으로 걸지 않는다 — 상한 전에 쌓인 잔액을 깎지 않기 때문이다.
 - 탈퇴 때는 남기고, 복구 기간(7일)이 지나 정리할 때(`auth.service.purge_withdrawn_user`) 계정과 원장을 지운다(`credits.api.delete_by_user`, #948 검수). 7일 안에 되살리면 잔액이 그대로 돌아온다 — 탈퇴 때 지우면 되살린 계정이 30으로 다시 시작해 반복으로 채울 수 있었다. 게스트 합치기는 옮기지 않는다 — 게스트는 계정이 없고, 혹시 있으면 지운다(초기 지급 두 번 방지).
 
 ## reviews (장소 후기, #432, docs/credits-reviews.md — 구현 #951)
@@ -630,9 +671,11 @@ notifications(                        -- 사용자별 알림함. 수신자마다
   type,                               -- NotificationType(api-spec). my_ai_pin_published는 만들어지지 않아 지웠다(#764)
   map_title,                          -- 만들 때의 제목 스냅샷
   pin_id nullable,                    -- pin_reaction만. FK 없음
+  actor_id nullable,                  -- 행위자(users.id 문자열, FK 없음, #857). 응답에 싣지 않는다. 탈퇴 7일 뒤 정리가 문장의 이름을 덮고 NULL로 비운다
+                                      --   이 칸이 생기기 전에 쌓인 알림은 NULL이다(못 덮는다 — 90일 뒤 정리로 사라진다)
   message,                            -- 서버가 만든 문장. 반대 사유·메모는 넣지 않는다
   created_at, read_at nullable,
-  index (user_id, created_at desc), index (user_id) where read_at is null
+  index (user_id, created_at desc), index (user_id) where read_at is null, index (actor_id) where actor_id is not null
 )
 notification_prefs(                   -- 행이 없으면 켜짐(기본값)
   user_id, type, enabled, primary key (user_id, type)
@@ -693,7 +736,9 @@ event_log(
   type, payload jsonb, created_at timestamptz default now()
 )
   index(map_id, seq)                    -- 채널별 재전송 조회
-  index(created_at)                     -- 보존기간 삭제용
+  index(created_at)                     -- 보존기간 삭제용. **#1016(2026-11-01)**: 문서의 24시간은 재전송 읽기 창일 뿐 행을 지우는 코드가 없었다(지도 정리 때만 지워짐).
+                                        --   25시간(재전송 창 24시간 + 여유)이 지난 행을 maintenance가 지운다(realtime.api.purge_old_events). payload에 복사된 표시 이름(member.joined, reaction.changed)이
+                                        --   탈퇴 정리 뒤에도 남지 않게 하는 방법이다. user_id는 users 행(개인정보 없는 껍데기)이 남는 한 가명 식별자라 지우지 않는다.
   check ((channel='private') = (recipient_user_id is not null))
 ```
 

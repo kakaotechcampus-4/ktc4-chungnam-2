@@ -90,4 +90,4 @@ def test_템플릿에는_병기_조사가_남지_않는다():
 def test_목표_문구와_질문은_받침에_맞는_조사를_쓴다():
     tr = trip(places=(place("p1", "관광지", 37.5, 127.0), place("p2", "카페", 37.5, 127.0)))
     assert G.label(tr, G.Goal("place_on_day", "d1", ("p1",))) == "장소P1이름을 첫째 날 (월)에"
-    assert G.label(tr, G.Goal("together", None, ("p1", "p2"))) == "장소P1이름 · 장소P2이름 같은 날"
+    assert G.label(tr, G.Goal("together", None, ("p1", "p2"))) == "장소P1이름, 장소P2이름 같은 날"
