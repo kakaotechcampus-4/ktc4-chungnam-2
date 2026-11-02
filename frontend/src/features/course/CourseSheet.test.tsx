@@ -123,7 +123,7 @@ describe('AI 코스 짜기 시트', () => {
   it('버튼 아래에 가격과 남은 크레딧 N/상한을 응답 값으로 보이고, 코스를 짜면 다시 받는다', async () => {
     const credits = () => fetch(`${BASE}/credits/me`).then((r) => r.json())
     const before = await credits()
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderSheet()
     expect(await screen.findByText(`${before.prices.course} 크레딧 사용 · 남은 크레딧 ${before.balance}/${before.max_balance}`)).toBeInTheDocument()
 
@@ -140,7 +140,7 @@ describe('AI 코스 짜기 시트', () => {
     }
     const { review_reward } = await fetch(`${BASE}/credits/me`).then((r) => r.json())
     const onClose = vi.fn()
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderSheet(onClose)
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
 
@@ -164,7 +164,7 @@ describe('AI 코스 짜기 시트', () => {
 
   it('422 는 장소 부족 안내', async () => {
     server.use(http.post('*/maps/:mapId/courses', () => error(422, 'COURSE_NOT_ENOUGH_PLACES', { min: 2, count: 1 })))
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderSheet()
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('2곳 이상')
@@ -181,7 +181,7 @@ describe('AI 코스 짜기 시트', () => {
         }),
       ),
     )
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderSheet()
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
     expect(await screen.findByText('코스를 만들지 못했어요')).toBeInTheDocument()
@@ -205,7 +205,7 @@ describe('AI 코스 짜기 시트', () => {
     first.unmount()
 
     server.use(http.get('*/maps/:mapId/courses/latest', () => HttpResponse.json(done)))
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderSheet()
     await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
     expect(await screen.findByText(/확정 리스트가 바뀌었어요/)).toBeInTheDocument()
