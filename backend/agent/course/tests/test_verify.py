@@ -254,3 +254,34 @@ class TestDayHasClaims:
         r = self.labeled_ref(with_perf=True)                                      # p1이 둘째 날(COURSE)이라 지켜진다
         assert verify.problems(r, "{d2}에 공연 장소를 넣는 목표를 지켰어요.") == []
         assert verify.problems(r, "공연 목표는 못 지켰어요.") != []
+
+
+class TestNoAskClaims:
+    """#1131: 묻지 않고 정한 문장 — 장소를 어느 날에 두었다/옮겼다는 주장과, 영업시간을 몰라 여는 것으로 봤다는 가정."""
+
+    def test_placement_claim_must_match_the_course(self):
+        r = ref()                                                                # p3는 둘째 날
+        assert verify.problems(r, "{d1} 이동이 길어서 {p3}를 {d2}로 옮겨 나눴어요.") == []
+        found = verify.problems(r, "{d1} 이동이 길어서 {p3}를 {d3}로 옮겨 나눴어요.")
+        assert any("배치를 말했지만 결과에서는 둘째 날" in f for f in found), found
+        assert verify.problems(r, "{p3}를 {d3}로 옮기면 이동이 줄어요.") == []      # 계획은 주장이 아니다
+
+    def test_model_assumption_sentence_checks_place_and_day(self):
+        r = ref(hours={**HOURS, "p5": {}})                                       # p5(셋째 날) 영업 여부 모름
+        assert verify.problems(r, "{p5}은 {d3} 영업시간을 몰라 여는 것으로 보고 정했어요.") == []
+        assert verify.problems(r, "{p5}은 {d2} 영업시간을 몰라 여는 것으로 보고 정했어요.") != []
+
+    def test_assumption_sentence_lists_only_unknown_places_on_their_day(self):
+        r = ref(hours={**HOURS, "p5": {}, "p2": {}})
+        assert sorted(verify.assumed_pairs(r)) == [("p2", "d1"), ("p5", "d3")]
+        text = verify.assumption_sentence(r)
+        assert text.startswith("영업시간을 모르는 곳은 묻지 않고 여는 것으로 보고 정했어요: ")
+        assert "첫째 날" in text and "장소P2이름" in text and text.index("장소P2이름") < text.index("장소P5이름")
+        assert verify.assumption_sentence(ref()) is None                         # 모르는 곳이 없으면 줄이 없다
+
+    def test_assumption_sentence_caps_names_per_day(self):
+        everyone = ref(hours={})
+        text = verify.assumption_sentence(everyone)
+        assert "외 " not in text                                                 # 하루 많아야 세 곳(COURSE 둘째 날이 셋)
+        many = ref(hours={}, course=(("p1", "p2", "p3", "p4", "p5"), ("p6",), ()))
+        assert "외 2곳" in verify.assumption_sentence(many)

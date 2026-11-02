@@ -246,12 +246,12 @@ export const recommendHandlers = [
       ...c, place_url: c.place_url ?? c.place_source?.url ?? externalSearch(`${c.place_name} ${regionTown}`).url,
     }));
     const funnel = [
-      { label: "카테고리 후보 풀", removed_count: 0 },
-      { label: "반경 밖 제거", removed_count: 3 },
-      { label: "영업 종료 제거", removed_count: 1 },
+      { key: "pool", label: "카테고리 후보 풀", removed_count: 0 },
+      { key: "radius", label: "반경 밖 제거", removed_count: 3 },
+      { key: "closed", label: "영업 종료 제거", removed_count: 1 },
       // 「추천 가능 아님 제거」는 없다 — 후보 풀이 처음부터 정예 장소다(#912)
-      { label: "실격 조건 제거", removed_count: candidates.length === 0 ? 8 : 3 },
-      { label: "이미 제안·거절됨", removed_count: 1 },
+      { key: "disqualify", label: "실격 조건 제거", removed_count: candidates.length === 0 ? 8 : 3 },
+      { key: "excluded", label: "이미 제안·거절됨", removed_count: 1 },
     ];
     if (candidates.length === 0) {
       // #845 — 후보가 하나도 없는 결과에도 이번에 쓴 근거를 싣는다(「이 조건으로 찾았어요」를 보일 자리가 이 404뿐이다)
