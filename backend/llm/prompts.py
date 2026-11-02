@@ -137,8 +137,9 @@ conditions·circle_radius_m에 영향을 주게 하지 않는다. 각 줄은 자
    음식 이름만 말해도 그 음식의 종류 키를 고른다. "초밥 먹고 싶어"·"라멘이 좋아"·"돈가스 먹자" → cuisine_japanese,
    "짜장면 먹자"·"마라탕 좋아" → cuisine_chinese, "파스타 먹자"·"스테이크가 좋아" → cuisine_western,
    "삼겹살 먹자"·"갈비 먹고 싶어" → cuisine_bbq, "곱창 먹자"·"막창 좋아" → cuisine_gopchang,
-   "김밥이랑 떡볶이" → cuisine_bunsik.
+   "김밥이랑 떡볶이" → cuisine_bunsik, "국밥 먹자"·"찌개 땡겨" → cuisine_korean.
    식당 조건도 같다. "술 한잔할 수 있는 곳" → serves_alcohol, "늦게까지 하는 식당" → open_late.
+   상황으로 말해도 그 특징을 고른다. "비 와도 갈 수 있는 곳" → is_indoor, "밤에 보면 예쁠 듯" → night_view.
    목록에 없는 특징만 말하는 글은 키를 고르지 않는다. 가격 키는 없다. 알러지 같은 안전 조건도 키가 없다
    (서비스가 판단하지 않고 본인이 가게에 직접 확인한다).
    예) "너무 비싸요"·"입장료가 비싸요"·"저 새우 알러지 있어요" → conditions 빈 목록.
@@ -164,6 +165,21 @@ conditions·circle_radius_m에 영향을 주게 하지 않는다. 각 줄은 자
    - "매운 것도 괜찮아" → spicy_focused, wants=null (허용일 뿐 원한다고 보기 어렵다)
    - "사람 북적이는 데는 질색" → is_crowded_large, wants=false
    - "북적여도 괜찮아요" → is_crowded_large, wants=null
+   badge가 required인 줄은 대개 🚫(반대) 반응의 사유, 곧 그 장소가 싫은 이유다. "~안 됨", "~없음", "너무 ~함"처럼
+   짧은 불평은 원하는 조건이 아니라 **그 장소의 단점**을 적은 것이다. 이때 wants는 "단점이 없는 곳을 원한다"로 읽는다.
+   - 특징이 없다·안 된다는 불평(안 됨·없음·불가·못 들어감·일찍 닫음) → 그 특징이 있는 곳을 원한다, wants=true
+   - 특징이 지나치다·있다는 불평(너무 매움·사람 많음·~임) → 그 특징이 있는 곳을 원하지 않는다, wants=false
+   - 정도를 불평하면(길다·시끄럽다·좁다·불편하다) 반대 뜻의 키를 골라 wants=true
+   - "~하기엔 좀"처럼 돌려 말한 불평도 그 특징이 모자라다는 뜻이다 → wants=true
+   불평 예)
+   - "주차 안 돼요" → parking_available, wants=true (주차가 안 되는 게 단점 — 주차되는 곳을 원한다)
+   - "반려견 출입 불가" → pet_friendly, wants=true
+   - "대기 너무 길어요" → wait_short, wants=true (대기가 긴 게 단점 — 대기가 짧은 곳을 원한다)
+   - "너무 좁아요" → spacious, wants=true
+   - "너무 붐벼요" → is_crowded_large, wants=false
+   - "유모차 끌고 가기엔 좀" → accessible, wants=true
+   - "카드 결제 안 됨" → conditions 빈 목록 (목록에 맞는 키가 없으면 불평이어도 키를 지어내지 않는다)
+   줄임말·구어체도 뜻으로 읽는다(ㄱㄱ = 가자, 땡김 = 먹고 싶다, 개~ = 아주).
    방향이 확실하지 않으면 wants는 null이다. 추측하지 않는다.
 5. 한 글에 서로 다른 조건이 여럿이면 conditions에 조건마다 하나씩 넣는다. 위 예시들은 조건이 하나인 글이다.
    조건이 여럿인 글 예)
