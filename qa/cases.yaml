@@ -38,8 +38,8 @@
 - {id: B01, layer: api, area: map, scenario: "지도 20개 생성 후 21번째 생성", expect: "MAP_LIMIT", status: pass}
 - {id: B02, layer: api, area: invite, scenario: "20개 보유자가 초대 수락", expect: "MAP_LIMIT, 안내 가능한 코드", status: pass}
 - {id: B03, layer: api, area: invite, scenario: "나간 뒤 개수 재집계 후 수락", expect: "200", status: pass}
-- {id: B04, layer: api, area: recommend, scenario: "한 구성원이 11번째 추천", expect: "429 RETRY_LIMIT + attempt_limit=10, 카테고리 섞어도 합산", status: pass}
-- {id: B05, layer: api, area: recommend, scenario: "다른 구성원의 시도 횟수는 독립", expect: "A가 10회여도 B는 가능", status: pass}
+- {id: B04, layer: api, area: recommend, scenario: "정식 계정이 31번째 추천(처음 30, 1번에 1, 횟수 상한은 #949에서 크레딧으로)", expect: "30번 202, 31번째 402 CREDIT_INSUFFICIENT + detail required=1·balance=0, 카테고리 섞어도 합산", status: pass}
+- {id: B05, layer: api, area: recommend, scenario: "다른 구성원의 크레딧은 독립", expect: "A 잔액이 0이어도 B는 202", status: pass}
 - {id: B06, layer: api, area: recommend, scenario: "반경 넓히기 상한 후 한 번 더", expect: "WIDEN_LIMIT", status: pass}
 - {id: B07, layer: api, area: recommend, scenario: "결과 0개 run에서 넓히기→재시도", expect: "NO_RESULTS 처리, 임의 완화 없음", status: untested}
 - {id: B08, layer: api, area: recommend, scenario: "execute 전에 result 조회", expect: "409 RUN_NOT_FINISHED", status: pass}
