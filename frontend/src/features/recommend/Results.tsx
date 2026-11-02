@@ -121,7 +121,7 @@ export function ResultsBody({
       {missing.length > 0 && (
         <Notice action={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />}>
           {hasExcluded(result.funnel)
-            ? `‘${missing.join('·')}’에 맞는 곳은 이미 다 보여 드렸어요. 반경을 넓혀 볼까요?`
+            ? `이미 보여 드린 곳을 빼면, 반경 안에 ‘${missing.join('·')}’에 맞는 곳이 더 없어요. 반경을 넓혀 볼까요?`
             : `반경 안에서 ‘${missing.join('·')}’에 맞는 곳을 찾지 못해 다른 곳을 골랐어요. 반경을 넓혀 볼까요?`}
         </Notice>
       )}
