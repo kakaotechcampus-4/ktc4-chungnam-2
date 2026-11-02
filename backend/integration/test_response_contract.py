@@ -685,7 +685,9 @@ def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
 
 def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     """v2 계획 보조 에이전트(#531) — 바텀시트 상태, 열람, 수락(422·409 포함), 닫기, 모드 끄고 켜기. 제안은 관찰 흐름의
-    저장 단계(스냅샷 → 탐지 → 템플릿 → 저장)를 이 테스트 세션에서 그대로 밟아 만든다(observe_map은 자기 세션을 연다)."""
+    저장 단계(스냅샷 → 탐지 → 템플릿 → 저장)를 이 테스트 세션에서 그대로 밟아 만든다(observe_map은 자기 세션을 연다).
+    지도 현황 문단(status)과 우리 데이터 확인(facts)이 실린 응답도 하나씩 본다(#1168)."""
+    from dataclasses import replace
     from datetime import datetime, timedelta, timezone
 
     from agent import core, service, snapshot
@@ -699,19 +701,21 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     empty = a.get(f"/maps/{map_id}/agent")
     assert empty.status_code == 200
     assert empty.json() == {"settings": {"enabled": True, "updated_by": None, "updated_at": None},
-                            "active_suggestion": None, "has_unseen": False, "summaries": []}
+                            "active_suggestion": None, "has_unseen": False, "summaries": [], "status": None}
 
+    pin_ids = {}
     for key in ("seongsu-kalguksu", "seongsu-bunsik"):   # 음식점만 2곳 확정 → 카페·관광지 공백(6.5)
-        pin_id = a.post(f"/maps/{map_id}/pins", json=pin_body(key)).json()["id"]
+        pin_ids[key] = pin_id = a.post(f"/maps/{map_id}/pins", json=pin_body(key)).json()["id"]
         assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pin_id}).status_code == 201
 
-    def suggest(category: str) -> str:
+    def suggest(category: str, facts=()) -> str:
         now = datetime.now(timezone.utc)
         snap = snapshot.build(db_session, map_id, now)
         sig = next(s for s in core.detect_all(snap, now, timedelta(hours=1))
                    if s.diagnosis == "category_gap" and s.category == category)
         sid = service.insert_suggestion(db_session, map_id=map_id, run_id=None, signal=sig,
-                                        draft=core.render_template(sig), now=now, shadow=False)
+                                        draft=replace(core.render_template(sig), facts=list(facts)), now=now,
+                                        shadow=False)
         db_session.commit()
         return str(sid)
 
@@ -734,6 +738,22 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     second = suggest("관광지")
     assert b.post(f"/agent/suggestions/{second}/dismiss").status_code == 204
     assert a.get(f"/maps/{map_id}/agent").json()["active_suggestion"] is None
+
+    # 우리 데이터 확인(6.6): 저장은 (pin_id, fact_key)만, 응답은 지금 라벨로 렌더한다. 샘플 장소의 oily_focused는 모름이다.
+    # 참·거짓(yes·no)은 api-spec enum에 따옴표가 없어 파이썬 검사가 참거짓으로 읽는다 — 루트 보고(agent/tests/test_flows_facts.py)
+    third = suggest("카페", facts=[{"pin_id": pin_ids["seongsu-kalguksu"], "fact_key": "oily_focused"}])
+    [fact] = a.get(f"/maps/{map_id}/agent").json()["active_suggestion"]["facts"]
+    assert (fact["fact_key"], fact["value"]) == ("oily_focused", "unknown")
+    assert [seg["kind"] for seg in fact["segments"]] == ["text", "pin", "text"]
+    assert b.post(f"/agent/suggestions/{third}/dismiss").status_code == 204
+
+    # 지도 현황 문단(8.2): 관찰 끝에서 저장된 것을 시트를 열 때 받는다
+    now = datetime.now(timezone.utc)
+    service.upsert_map_status(db_session, map_id=map_id, cells={"categories": []}, cells_hash="h", states=[],
+                              paragraph="음식점은 거의 정해졌어요. 카페부터 보면 좋겠어요.", run_id=None, now=now)
+    db_session.commit()
+    status = a.get(f"/maps/{map_id}/agent").json()["status"]
+    assert status["paragraph"] == "음식점은 거의 정해졌어요. 카페부터 보면 좋겠어요."
 
     off = b.put(f"/maps/{map_id}/agent/settings", json={"enabled": False})
     assert off.status_code == 200 and off.json()["enabled"] is False and off.json()["updated_by"] == "user_b"
