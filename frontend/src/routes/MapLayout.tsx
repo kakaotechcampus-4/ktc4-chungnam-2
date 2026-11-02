@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useMatch, useNavigate, useParams } from 'react-r
 import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Users, type LucideIcon } from 'lucide-react'
 
 import AgentButton from '@/features/agent/AgentButton'
+import { useMeQuery } from '@/features/auth/queries'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
@@ -22,6 +23,8 @@ import { toRouteDrawings } from '@/features/shortlist/model'
 import { useRouteQuery } from '@/features/shortlist/queries'
 import { useRouteStore } from '@/features/shortlist/routeStore'
 import { useCourseMapStore } from '@/features/course/courseMapStore'
+import { useRecentSearches } from '@/features/search/recentSearches'
+import RecentSearches from '@/features/search/RecentSearches'
 import { useSearchStore } from '@/features/search/searchStore'
 import { PANEL_W, RAIL_W, TAB_BAR_H } from '@/features/shell/layout'
 import MapControls, { type ControlKey } from '@/features/shell/MapControls'
@@ -78,6 +81,8 @@ export default function MapLayout() {
   const setStage = useSheetStore((s) => s.setStage)
   const search = useSearchStore()
   const [searchText, setSearchText] = useState('')
+  const [searchFocused, setSearchFocused] = useState(false)
+  const recent = useRecentSearches(useMeQuery().data?.id)
   // 결과 시트에서 「닫기」를 눌러도 입력칸에 글자가 남지 않게, 검색이 닫히면 같이 비운다(#351).
   const [lastSource, setLastSource] = useState(search.source)
   if (lastSource !== search.source) {
@@ -138,14 +143,20 @@ export default function MapLayout() {
 
   function submitSearch(e: React.FormEvent) {
     e.preventDefault()
-    const q = searchText.trim()
+    runSearch(searchText.trim())
+  }
+
+  function runSearch(q: string) {
     if (!q) return
     // 검색은 마킹 탭의 일이다. 다른 탭에서 검색해도 마킹 탭으로 가서 결과를 보여준다.
     if (!onMarkingTab) navigate(`/maps/${mapId}`)
     const center = controller.current?.getCenter() ?? null
     // 지도 링크를 붙여넣었으면 이름 대신 링크로 장소를 찾는다(#487). 같은 결과 시트에서 핀을 찍는다.
     if (isLinkInput(q)) search.openLink(q, center)
-    else search.submit(q.slice(0, 50), center)
+    else {
+      search.submit(q.slice(0, 50), center)
+      recent.add(q.slice(0, 50))
+    }
     setStage('map', 2)
   }
 
@@ -350,7 +361,8 @@ export default function MapLayout() {
         {/* 넓은 화면 pb-1: 검색창 포커스 테두리(바깥 4px)가 바로 아래 탭 내용(흰 바탕)에 덮이지 않게 자리를 둔다. */}
         <header
           data-map-header
-          className={desktop ? 'shrink-0 space-y-3 px-4 pb-1 pt-3' : 'pointer-events-none fixed inset-x-0 top-0 z-20 space-y-2 px-4 pt-3'}
+          // 최근 검색 목록이 열리면 바텀시트(z-30) 위쪽에 붙은 지도 버튼보다 위로 올린다.
+          className={desktop ? 'shrink-0 space-y-3 px-4 pb-1 pt-3' : `pointer-events-none fixed inset-x-0 top-0 ${searchFocused ? 'z-40' : 'z-20'} space-y-2 px-4 pt-3`}
         >
           <div className={desktop ? 'flex items-center gap-2' : 'flex items-center justify-between'}>
             {desktop ? (
@@ -418,30 +430,53 @@ export default function MapLayout() {
           {/* 지도 위에는 검색창만 둔다(FE 회의). 지도를 끄는 동안엔 지도에 집중하게 흐려진다. 검색 동작은 #293. */}
           {/* 검색 결과는 화면에 보여 주기만 한다(#53). Enter 나 돋보기를 눌렀을 때만 부른다(호출 상한, api-spec). */}
           {/* 넓은 화면은 패널 안이라 그림자·흐림이 없다(그림자는 지도 위에 떠 있는 것에만). */}
-          <form
-            role="search"
-            inert={!desktop && mapMoving}
-            onSubmit={submitSearch}
-            className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-white px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
-              search.source ? 'border-brand-600' : 'border-ink-200'
-            }${desktop ? '' : ` ${fade}`}`}
+          {/* 포커스가 검색창이나 최근 검색 목록 안에 있는 동안만 목록을 연다. Esc는 닫는다. */}
+          <div
+            className="relative"
+            onFocus={() => setSearchFocused(true)}
+            onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setSearchFocused(false)}
+            onKeyDown={(e) => e.key === 'Escape' && setSearchFocused(false)}
           >
-            <input
-              id="place-search"
-              type="search"
-              enterKeyHint="search"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              maxLength={2000}
-              placeholder="장소 이름 또는 지도 링크"
-              aria-label="장소 검색"
-              className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-ink-500 [&::-webkit-search-cancel-button]:hidden"
-            />
-            {searchText && <ClearButton label="검색어 지우기" onClick={clearSearch} />}
-            <button type="submit" aria-label="검색" className="hit-44 text-brand-600">
-              <Search size={20} />
-            </button>
-          </form>
+            <form
+              role="search"
+              inert={!desktop && mapMoving}
+              onSubmit={submitSearch}
+              className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-white px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
+                search.source ? 'border-brand-600' : 'border-ink-200'
+              }${desktop ? '' : ` ${fade}`}`}
+            >
+              <input
+                id="place-search"
+                type="search"
+                enterKeyHint="search"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                maxLength={2000}
+                placeholder="장소 이름 또는 지도 링크"
+                aria-label="장소 검색"
+                className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-ink-500 [&::-webkit-search-cancel-button]:hidden"
+              />
+              {searchText && <ClearButton label="검색어 지우기" onClick={clearSearch} />}
+              <button type="submit" aria-label="검색" className="hit-44 text-brand-600">
+                <Search size={20} />
+              </button>
+            </form>
+            {searchFocused && !searchText && recent.list.length > 0 && (
+              <RecentSearches
+                list={recent.list}
+                floating={!desktop}
+                onPick={(q) => {
+                  setSearchText(q)
+                  runSearch(q)
+                }}
+                onRemove={recent.remove}
+                onClear={() => {
+                  recent.clear()
+                  document.getElementById('place-search')?.focus()
+                }}
+              />
+            )}
+          </div>
           {!desktop && chipsShown && (
             <CategoryChips
               value={filters.category}
