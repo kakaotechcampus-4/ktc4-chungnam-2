@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.course import core, goals as G
-from agent.course.constants import DAILY_WALK_LOW_MAX_MIN, DAY_HAS_TAGS, GOALS_MAX
+from agent.course.constants import DAILY_WALK_LOW_MAX_MIN, DAY_HAS_CATEGORY_TAGS, DAY_HAS_TAGS, GOALS_MAX
 from agent.course.goals import Goal
 from agent.course.tests.fixtures import MON, TUE, place, trip
 
@@ -231,6 +231,24 @@ class TestDayHas:
         assert G.label(tr, self.PERF) == "둘째 날 (화)에 공연 장소 넣기"
         for tag, (key, noun) in DAY_HAS_TAGS.items():
             assert key and noun and G.label(tr, Goal("day_has", "d1", (), tag)).endswith(f"{noun} 장소 넣기")
+
+    def test_category_tags(self):
+        """#1094: 카페·음식점도 day_has로 받는다. 판정은 핀의 카테고리, 모름이 없다."""
+        from common import categories
+        assert not set(DAY_HAS_CATEGORY_TAGS) & set(DAY_HAS_TAGS)
+        assert all(c in categories.all_categories() for c, _ in DAY_HAS_CATEGORY_TAGS.values())
+        tr = t(A("p1", cat="카페"), A("p2"), A("p3", cat="음식점"))
+        cafe = Goal("day_has", "d2", (), "cafe")
+        assert G.normalize(tr, "day_has", "d2", [], "cafe")[0] == cafe
+        assert G.label(tr, cafe) == "둘째 날 (화)에 카페 장소 넣기"
+        assert G.evaluate(tr, (("p2",), ("p1",)), cafe).met is True
+        r = G.evaluate(tr, (("p1",), ("p2", "p3")), cafe)
+        assert r.met is False and r.gap == 1.0                    # 라벨을 몰라도 카테고리는 안다
+        assert G.check_goal(tr, {}, cafe)["feasible"] is True
+        assert G.check_goal(t(A("p1"), A("p2")), {}, cafe)["reasons"] == [G.NO_TAGGED_PLACE]
+        assert G.short_label(tr, cafe, True) == "카페 있음"
+        assert G.evaluate(t(A("p1", ("cuisine_korean",), "음식점"), A("p2")), (("p1",), ("p2",)),
+                          Goal("day_has", "d1", (), "korean_food")).met is True
 
     def test_evaluate(self):
         tr = t(A("p1", ("performance",)), A("p2", OUT), A("p3"))
