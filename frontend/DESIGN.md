@@ -177,7 +177,7 @@ components:
 - **좋음** (good-bg / good-line / good-text), **조율·주의** (warn-*), **반대** (bad-bg / pin-red / bad-text): 배경·선·글자가 한 세트다. 선 색을 글자에 쓰지 않는다.
 
 ### Named Rules
-**영역 분리 규칙.** 빨강 계열은 지도 위 핀과 반응 🚫, 되돌릴 수 없는 액션, 핑고 ALERT(모자·핀)에만 쓴다. 버튼·배지·면이 빨개지면 화면 전체가 경고처럼 보여서다. 입력 오류는 빨강이 아니라 주의색(warn-line 테두리 + warn-text 글자)이다.
+**영역 분리 규칙.** 빨강 계열은 지도 위 핀과 반응 🚫, 되돌릴 수 없는 액션, 핑고 ALERT(모자·핀), 알림 종의 안 읽음 점(`--notify-dot`, #1036)에만 쓴다. 버튼·배지·면이 빨개지면 화면 전체가 경고처럼 보여서다. 입력 오류는 빨강이 아니라 주의색(warn-line 테두리 + warn-text 글자)이다.
 
 **한 화면 한 채움 규칙.** 한 화면에 채운 버튼은 하나다. 나머지는 외곽선이나 글자 버튼으로 둔다.
 
@@ -317,7 +317,7 @@ components:
 | 목록에서 여러 개 고르기 | `Checkbox` (상자 20px + 옆 글자, 줄 전체가 label이라 누르는 곳 44px · 켜짐은 `--action-fill`) | `ui/Checkbox` |
 | 켜고 끄기 | `Switch` (막대 44×24 · 누르는 곳 44, 켜짐 brand-600 · 꺼짐 ink-300) | `ui/Switch` |
 | 핑고 AI 조언 버튼(지도 왼쪽 아래) | `AgentButton` | `features/agent/AgentButton` |
-| 알림 종 버튼 + 알림함·알림 설정 시트(#483) | `NotificationBell` (`floating`이면 지도 위 흰 원 + 그림자, 아니면 테두리 원. 안 읽은 수는 brand-600 숫자 배지, 99+) | `features/notifications/NotificationBell` |
+| 알림 종 버튼 + 알림함·알림 설정 시트(#483) | `NotificationBell` (`floating`이면 지도 위 흰 원 + 그림자, 아니면 테두리 원. 안 읽은 알림이 있으면 오른쪽 위에 빨간 점(`--notify-dot`, 흰 테두리). 개수는 스크린리더 이름과 알림함에서 읽는다) | `features/notifications/NotificationBell` |
 | 서버가 렌더한 에이전트 문장(조각) | `AdviceText` (quote는 `<q>` + ink-100 면, pin은 600 굵기) | `features/agent/AdviceText` |
 | 우리 조건 요약(카테고리 칩 + 칸) | `SummarySection` | `features/agent/SummarySection` |
 | 추천 막힘 조언(결과 깔때기 아래) | `RunAdvice` | `features/agent/RunAdvice` |

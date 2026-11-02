@@ -15,7 +15,8 @@ import { badgeText, mapOrigin, notificationTarget, prefLabel, type NotificationD
 import { useMarkReadMutation, useNotificationPrefsQuery, useNotificationsQuery, useUpdatePrefMutation } from './queries'
 
 /**
- * 종 버튼과 알림함(#483). 안 읽은 수는 파랑 배지(할 일 표시는 파랑, DESIGN.md)로 보인다.
+ * 종 버튼과 알림함(#483). 안 읽은 알림이 있으면 종 오른쪽 위에 빨간 점이 붙는다(앱 공통 관례, #1036).
+ * 개수는 점에 적지 않고 버튼 이름(「안 읽은 알림 n개」)과 알림함에서 읽는다.
  * `floating`은 지도 위(흰 원 + 그림자), 아니면 입구 화면·넓은 화면 패널 머리의 테두리 원이다.
  * `currentMapId`는 지도 화면에서 지금 보는 지도다. 주면 알림함이 이 지도와 다른 지도의 알림을 나눠 보인다(#1036).
  */
@@ -41,9 +42,7 @@ export default function NotificationBell({ floating = false, currentMapId }: { f
       >
         <Bell size={18} aria-hidden="true" />
         {badge && (
-          <span aria-hidden="true" className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-600 px-1 text-label text-white ring-2 ring-white">
-            {badge}
-          </span>
+          <span aria-hidden="true" className="absolute right-0.5 top-0.5 size-2 rounded-full bg-[var(--notify-dot)] ring-2 ring-white" />
         )}
       </button>
       {open && <NotificationSheet currentMapId={currentMapId} onClose={() => setOpen(false)} />}
