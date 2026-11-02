@@ -796,11 +796,225 @@ def b09():
           f"{n - 1 if n else '?'}번까지 통과, 다음은 429 RATE_LIMITED", f"{codes[-5:]} {r.text[:100]}")
 
 
+# ───────── 계정 수명·코스 환불·로그(#1125) — DB와 서버 함수를 직접 써서 로컬 전용이다. HTTP(스테이징)는 SKIP ─────────
+def _local_only(cid):
+    if BASE_URL:
+        rec(cid, "SKIP", "DB·서버 함수가 필요하다 — 로컬 모드에서 본다")
+    return bool(BASE_URL)
+
+
+def _sql(q, **p):
+    import sqlalchemy as sa
+    from common import database
+    with database.SessionLocal() as db:
+        return db.execute(sa.text(q), p).all()
+
+
+def _count(q, **p):
+    return _sql(q, **p)[0][0]
+
+
+def _withdraw_case(uid, c, with_data=True):
+    """탈퇴 전에 실제로 데이터가 있는 계정: 혼자 방장인 지도 + 핀 + 잔액을 30이 아닌 값(추천 3번)으로. (mid, 핀 수, 잔액)"""
+    mid = new_map(c); pin = add_pin(c, mid).json()["id"]
+    c.put(f"/pins/{pin}/reaction", json={"type": "like"})
+    for _ in range(3):
+        c.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+    return mid, len(c.get(f"/maps/{mid}/pins").json()), _credits(c)["balance"]
+
+
+def _pending_client(uid):
+    import time
+    from auth import core
+    from auth.service import WithdrawnAccountPending, find_or_create_user
+    from common import database
+    from common.settings import settings
+    with database.SessionLocal() as db:
+        try:
+            find_or_create_user(db, provider="kakao", provider_user_id=f"test_{uid}", display_name="x")
+            return None, "예외 없음(탈퇴 계정이 안 걸렸다)"
+        except WithdrawnAccountPending as e:
+            val = core.create_pending_cookie_value(e.user.id, e.provider, e.user.deleted_at, secret=settings.session_secret,
+                                                   issued_at=int(time.time()))
+    return client({"pending_account": val}), ""
+
+
+def l09():
+    if _local_only("L09"):
+        return
+    # 되살리기: 지도·핀·잔액이 탈퇴 전 값과 같다
+    uid, c = user(); mid, pins0, bal0 = _withdraw_case(uid, c)
+    cap = _credits(c)["max_balance"]
+    if not (pins0 == 1 and bal0 < cap):
+        rec("L09", "FAIL", f"전제 실패 — 핀 {pins0}개, 잔액 {bal0}/{cap}"); return
+    w = c.post("/auth/withdraw"); gone = c.get("/auth/me")
+    pc, why = _pending_client(uid)
+    if pc is None:
+        rec("L09", "FAIL", why); return
+    pend = pc.get("/auth/pending"); r = pc.post("/auth/pending", json={"choice": "restore"})
+    ok = w.status_code == 204 and gone.status_code == 401 and pend.status_code == 200 and r.status_code == 200 and r.json().get("id") == uid
+    m = pc.get(f"/maps/{mid}"); pins1 = len(pc.get(f"/maps/{mid}/pins").json()) if m.status_code == 200 else -1
+    bal1 = _credits(pc)["balance"] if r.status_code == 200 else -1
+    check("L09.restore", ok and m.status_code == 200 and pins1 == pins0 and bal1 == bal0,
+          f"탈퇴 204·세션 무효 401 → 되살리기 200, 지도·핀 {pins0}개·잔액 {bal0} 그대로",
+          f"withdraw {w.status_code}, me {gone.status_code}, pending {pend.status_code}, restore {r.status_code} {r.text[:80]}, 지도 {m.status_code}, 핀 {pins1}/{pins0}, 잔액 {bal1}/{bal0}")
+    # 새로 시작: 새 계정에 잔액은 처음 값, 옛 계정은 지워진다
+    uid2, c2 = user(); _, _, bal2 = _withdraw_case(uid2, c2)
+    c2.post("/auth/withdraw"); pc2, why = _pending_client(uid2)
+    if pc2 is None:
+        rec("L09.restart", "FAIL", why); return
+    r = pc2.post("/auth/pending", json={"choice": "restart"})
+    new = r.json().get("id") if r.status_code == 201 else None
+    bal3 = _credits(pc2)["balance"] if new else -1
+    old_rows = _count("select count(*) from credit_accounts where user_id=:u", u=uid2)
+    check("L09.restart", r.status_code == 201 and new and new != uid2 and bal2 < cap and bal3 == cap and old_rows == 0 and not pc2.get("/maps").json().get("items", pc2.get("/maps").json()),
+          f"새로 시작 201, 새 계정 잔액 {cap}(전 {bal2}), 옛 크레딧 계정 삭제, 지도 없음",
+          f"{r.status_code} {r.text[:80]}, 잔액 {bal3}/{cap}(전 {bal2}), 옛 계정 행 {old_rows}")
+
+
+def l10():
+    if _local_only("L10"):
+        return
+    from datetime import datetime, timedelta, timezone
+    from auth import api as auth_api
+    from common import database
+    xid, x = user(); uid, m = user(); mid = new_map(x)
+    m.post(f"/invites/{x.post(f'/maps/{mid}/invite').json()['token']}/accept")
+    pin = add_pin(m, mid).json()["id"]
+    m.put(f"/pins/{pin}/reaction", json={"type": "like"}); m.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+    _review(m, pin)
+    name = m.get("/auth/me").json()["display_name"]
+    q = lambda t: _count(f"select count(*) from {t} where user_id=:u", u=uid)
+    before = dict(acc=q("credit_accounts"), led=q("credit_ledger"), rev=q("reviews"), ident=_count("select count(*) from user_identities where user_id=:u", u=uid))
+    notified = name in str(x.get("/me/notifications").json())
+    if not (before["acc"] and before["led"] and before["rev"] and before["ident"]):
+        rec("L10", "FAIL", f"전제 실패 — {before}"); return
+    w = m.post("/auth/withdraw")
+    with database.SessionLocal() as db:
+        n_early = auth_api.purge_withdrawn_accounts(db, datetime.now(timezone.utc)); db.commit()   # 7일 전에는 정리되지 않는다
+    early = q("credit_accounts")
+    with database.SessionLocal() as db:
+        n = auth_api.purge_withdrawn_accounts(db, datetime.now(timezone.utc) + timedelta(days=8)); db.commit()
+    after = dict(acc=q("credit_accounts"), led=q("credit_ledger"), rev=q("reviews"),
+                 ident=_count("select count(*) from user_identities where user_id=:u", u=uid))
+    shown = _sql("select display_name from users where id=:u", u=uid)[0][0]
+    pins = x.get(f"/maps/{mid}/pins").json(); who = [p.get("created_by_display_name") for p in pins if p["id"] == pin]
+    check("L10", w.status_code == 204 and early == before["acc"] and n >= 1 and after["acc"] == 0 and after["led"] == 0
+          and after["rev"] == before["rev"] and after["ident"] == 0 and shown == "탈퇴한 구성원" and who == ["탈퇴한 구성원"],
+          "7일 전엔 그대로, 8일 뒤 크레딧 계정·원장·로그인 수단 삭제, 후기는 남음, 이름 「탈퇴한 구성원」(users, 핀 작성자)",
+          f"withdraw {w.status_code}, 전 {before}, 이른 정리 뒤 계정 {early}, 정리 {n}, 후 {after}, 이름 {shown}, 핀 작성자 {who}")
+    if not notified:
+        rec("L10.notify", "INFO", "방장 알림에 이름이 복사되지 않아 알림 비식별화는 못 봄")
+    else:
+        check("L10.notify", name not in str(x.get("/me/notifications").json()), "정리 뒤 방장 알림에 이름이 없다", "알림에 이름이 남아 있다")
+
+
+def l07():
+    if _local_only("L07"):
+        return
+    from auth.service import claim_guest
+    from common import database
+    oid, o = user(); mid = new_map(o); tok = o.post(f"/maps/{mid}/invite").json()["token"]
+    mid_user, mc = user()   # 카카오 수단이 있는 정식 사용자 M
+    _reset_guest_limiter()
+    g = client(); gr = g.post("/auth/guest", json={"display_name": "QA 게스트", "invite_token": tok})
+    if gr.status_code != 201:
+        rec("L07", "FAIL", f"게스트 생성 {gr.status_code}"); return
+    gid = gr.json().get("user", gr.json()).get("id") or g.get("/auth/me").json()["id"]
+    pin = add_pin(g, mid).json()["id"]; g.put(f"/pins/{pin}/reaction", json={"type": "like"})
+    st = lambda: dict(pin=_count("select count(*) from pins where id=:p and created_by=:u", p=pin, u=mid_user),
+                      react=_count("select count(*) from reactions where pin_id=:p and user_id=:u", p=pin, u=mid_user),
+                      member=_count("select count(*) from memberships where map_id=:m and user_id=:u", m=mid, u=mid_user))
+    before = st()
+    gdel = lambda: _sql("select deleted_at from users where id=:u", u=gid)[0][0]
+    if any(before.values()) or gdel() is not None or _count("select count(*) from pins where id=:p and created_by=:g", p=pin, g=gid) != 1:
+        rec("L07", "FAIL", f"전제 실패 — 합치기 전에 이미 M의 것: {before}"); return
+    def claim():
+        with database.SessionLocal() as db:
+            out = claim_guest(db, guest_user_id=gid, provider="kakao", provider_user_id=f"test_{mid_user}", display_name="QA 카카오")
+            db.commit()
+            return out[0].id, out[1]
+    first = claim(); a1 = st(); d1 = gdel(); second = claim(); a2 = st()
+    check("L07", first == (mid_user, True) and a1 == dict(pin=1, react=1, member=1) and d1 is not None and a2 == a1 and second[0] == mid_user and second[1] is None,
+          "핀·반응·구성원 자격이 M으로, 게스트 deleted_at, 다시 불러도 그대로(None)", f"첫 {first}, 뒤 {a1}, 게스트 지움 {d1}, 다시 {second} {a2}")
+
+
+def w10():
+    if _local_only("W10"):
+        return
+    from agent.course.gateways import get_opening_hours_gateway
+    uid, c = user(); mid = new_map(c); _two_shortlisted(c, mid)
+    led = lambda r: _count("select count(*) from credit_ledger where user_id=:u and reason=:r", u=uid, r=r)
+    class Boom:
+        def get_opening_hours(self, place_ids):
+            raise RuntimeError("boom")
+    app = _app(); b0 = _credits(c)["balance"]
+    app.dependency_overrides[get_opening_hours_gateway] = lambda: Boom()
+    try:
+        r = c.post(f"/maps/{mid}/courses", json={}); cid = r.json().get("course_run_id")
+    finally:
+        app.dependency_overrides.pop(get_opening_hours_gateway, None)
+    run = c.get(f"/course-runs/{cid}").json() if cid else {}
+    c.get(f"/course-runs/{cid}"); b1 = _credits(c)["balance"]
+    check("W10.engine", r.status_code == 202 and (run.get("status"), run.get("failure_code")) == ("failed", "ENGINE_ERROR")
+          and b1 == b0 and led("spend") == 1 and led("refund") == 1,
+          "엔진 실패 → failed ENGINE_ERROR, 잔액 그대로, 원장 차감 1·환불 1(GET 두 번 뒤에도)", f"{r.status_code} {run.get('status')} {run.get('failure_code')}, 잔액 {b0} → {b1}, 원장 차감 {led('spend')} 환불 {led('refund')}")
+    # 두 번째 run은 정상으로 끝낸 뒤 「15분 넘게 진행 중」으로 되돌려 INTERRUPTED 환불을 본다 — 환불이 아직 없던 run이라 증거가 된다
+    r = c.post(f"/maps/{mid}/courses", json={}); cid2 = r.json().get("course_run_id")
+    done = c.get(f"/course-runs/{cid2}").json().get("status") if cid2 else None
+    b2 = _credits(c)["balance"]
+    import sqlalchemy as sa
+    from common import database
+    with database.SessionLocal() as db:
+        db.execute(sa.text("update agent_course_runs set status='running', failure_code=null, finished_at=null, created_at=now()-interval '16 minutes' where id=:i"), {"i": cid2})
+        db.commit()
+    got = c.get(f"/course-runs/{cid2}").json(); c.get(f"/course-runs/{cid2}"); b3 = _credits(c)["balance"]
+    check("W10.interrupted", done == "done" and (got.get("status"), got.get("failure_code")) == ("failed", "INTERRUPTED")
+          and b3 == b2 + _credits(c)["prices"]["course"] and led("refund") == 2 and led("spend") == 2,
+          "오래 진행 중인 run → INTERRUPTED, 환불 한 번(GET 두 번), 원장 차감 2·환불 2", f"처음 {done}, 뒤 {got.get('status')} {got.get('failure_code')}, 잔액 {b2} → {b3}, 원장 차감 {led('spend')} 환불 {led('refund')}")
+
+
+def g01():
+    if _local_only("LOG01"):
+        return
+    import logging
+    secret = f"QA_SECRET_{uuid.uuid4().hex}"; probe = f"QA_PROBE_{uuid.uuid4().hex}"
+    seen = []
+    class Grab(logging.Handler):
+        def emit(self, rec_):
+            seen.append(" ".join([rec_.getMessage(), str(rec_.args), rec_.exc_text or "", str(rec_.exc_info[1]) if rec_.exc_info else ""]))
+    root = logging.getLogger(); h = Grab(); old = root.level; quiet = list(root.handlers)
+    for x in quiet:
+        x.setLevel(logging.WARNING)   # 화면에는 DEBUG를 찍지 않는다(잡기만 한다)
+    root.addHandler(h); root.setLevel(logging.DEBUG)
+    try:
+        logging.getLogger("qa.probe").info("probe %s", probe)   # 이 장치가 로그를 실제로 잡는지 — 못 잡으면 빈 통과다
+        _, c = user(); mid = new_map(c); pin = add_pin(c, mid).json()["id"]; pin2 = add_pin(c, mid, skip=1).json()["id"]
+        sent = [c.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": f"한식이 좋아요 {secret}"}),
+                c.put(f"/pins/{pin2}/reaction", json={"type": "against", "reason_text": f"별로예요 {secret}"}),
+                _review(c, pin, f"후기 {secret}"), c.get("/places/search", params={"q": secret}),
+                c.post("/feedback", json={"message": f"피드백 {secret}"})]
+        rid = c.post(f"/maps/{mid}/runs", json={"category": "음식점", "execute": True}).json().get("id")
+        if rid:
+            result(c, rid)
+    finally:
+        root.removeHandler(h); root.setLevel(old)
+        for x in quiet:
+            x.setLevel(logging.NOTSET)
+    ok_codes = [r.status_code for r in sent]
+    caught = any(probe in t for t in seen); leaks = [t[:80] for t in seen if secret in t]
+    check("LOG01", caught and all(x in (200, 201) for x in ok_codes) and not leaks,
+          f"로그 {len(seen)}줄에 사유·후기·검색어·피드백 원문 없음(요청 {ok_codes})",
+          f"장치가 로그를 잡음 {caught}, 요청 {ok_codes}, 새어 나간 로그 {len(leaks)}줄 {leaks[:2]}")
+
+
 CASES = {"A01": a01_a02, "A03": a03, "A04": a04_a05, "A06": a06_a09, "A10": a10_a12, "A13": a13_a14, "B01": b01_b03,
          "B04": b04_b08, "C01": c01_c05, "L01": l01_l04, "L05": l05_l06, "L02": l02_l03, "L08": l08, "S03": s03_s05, "S06": s06, "R3a": r3_widen_retry, "R3b": r3_concurrent_shortlist, "R3c": r3_search_edges, "R3d": r3_pin_unsupported_and_dup_ui_codes, "R3e": r3_evidence_enforced, "R3f": r3_republish_exclusion, "W01": w01_w07}
 
 CASES["P01"] = p01   # 사전 밖에 둔다 — 다른 PR이 사전 줄을 같이 고쳐도 충돌하지 않게
 for _k, _f in (("B07", b07), ("C02", c02), ("W08", w08_s07), ("W09", w09), ("C06", c06), ("S04", s04), ("B09", b09)):
+    CASES[_k] = _f
+for _k, _f in (("L07", l07), ("L09", l09), ("L10", l10), ("W10", w10), ("LOG01", g01)):
     CASES[_k] = _f
 
 if __name__ == "__main__":
