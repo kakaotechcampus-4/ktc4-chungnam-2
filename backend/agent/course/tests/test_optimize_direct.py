@@ -165,7 +165,9 @@ class TestDirectLoop:
         opt = {"tool": "optimize", "priority": [NIGHT_D1.id], "locks": []}
         decide = scripted(*([opt] * 5))
         result = direct.run_direct(state([NIGHT_D1]), decide=decide, hours=TRUE_HOURS)
-        assert len(acts(result)) <= 5 and G.evaluate(result.state.trip, result.course, NIGHT_D1).met is True
+        assert result.model_turns == 5 and G.evaluate(result.state.trip, result.course, NIGHT_D1).met is True
+        last = acts(result)[-1]                                       # 턴이 다 되면 코드가 고른 끝 단계가 기록에 남는다
+        assert last.by == "baseline" and last.call["tool"] == "finish" and last.result.data["candidate_id"] == result.chosen.candidate_id
 
     def test_lock_is_persistent_and_makes_old_candidates_stale(self):
         decide = scripted({"tool": "optimize", "priority": [], "locks": []}, {"tool": "lock", "place": "p1", "day": "d3"},

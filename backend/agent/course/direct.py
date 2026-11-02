@@ -28,6 +28,20 @@ Decide = Callable[[dict[str, Any]], CourseDirectTurn]
 OnStep = Callable[["DirectStep", "DirectState"], None]
 MODEL_FAILURES = (ValidationError, RuntimeError, TimeoutError)
 UNUSABLE_ERRORS = ("LIMIT_EXCEEDED",)       # 이 오류가 나면 그 턴은 코드 규칙이 대신한다. 그 밖의 오류는 메시지가 계획에 도움이 된다
+MODEL_FAILED = "MODEL_FAILED"               # 모델 턴이 실패해 코드가 이어받았다(substituted_for.error, #1131 D안)
+# 이어받은 원인의 종류 — 작업 기록 문구를 고르는 데만 쓴다. 예외 메시지와 모델 원문은 남기지 않는다
+TIMEOUT, BAD_FORMAT, NO_RESPONSE, UNUSABLE = "timeout", "format", "no_response", "unusable"
+_FAILURE_OF_REASON = {"timeout": TIMEOUT, "invalid_schema": BAD_FORMAT, "call_failed": NO_RESPONSE}   # llm AgentCallFailed.reason
+
+
+def failure_kind(exc: BaseException) -> str:
+    """모델 실패 예외 → 원인 종류. deps.ModelTurnFailed는 llm이 정한 reason을 들고 온다(.failure.reason)."""
+    reason = getattr(getattr(exc, "failure", None), "reason", None)
+    if reason in _FAILURE_OF_REASON:
+        return _FAILURE_OF_REASON[reason]
+    if isinstance(exc, TimeoutError):
+        return TIMEOUT
+    return BAD_FORMAT if isinstance(exc, ValidationError) else NO_RESPONSE
 RESOLVE_CLOSURE, RESOLVE_SPLIT = "resolve_closure", "resolve_split"     # 코드가 푸는 단계의 도구 이름(작업 기록이 이 이름으로 줄을 만든다)
 
 
@@ -91,6 +105,7 @@ def candidate_summary(state: State, c: Candidate) -> dict[str, Any]:
         "priority": list(c.priority),
         "hard": core.hard_summary(trip, state.hours, c.course, c.violations),
         "focus": c.focus,
+        "balanced": c.balanced,
         "goals": [{"id": r.goal.id, "met": r.met, "value": r.value} for r in goals_mod.evaluate_all(trip, c.course, state.goals)],
         "kept": [r.goal.id for r in goals_mod.evaluate_all(trip, c.course, state.goals) if r.met is True],
         "gave_up": [r.goal.id for r in goals_mod.evaluate_all(trip, c.course, state.goals) if r.met is not True],
@@ -314,6 +329,22 @@ def resolve_next(ds: DirectState, gateway: OpeningHoursGateway) -> Optional[Reso
         return resolve_split(ds, split, gateway)
     return None
 
+def _comparison(state: State, candidates: tuple[Candidate, ...]) -> dict[str, Any]:
+    """끝낼 때 견준 후보들(#1131 C안). 목표가 없으면 비교하지 않는다(모델 0회 경로). 별칭과 숫자만 — 작업 기록이 문장으로 만든다.
+    distinct는 코스가 서로 다른 후보 수, code_best는 코드 규칙으로 가장 나은 후보."""
+    if not state.goals:
+        return {}
+    rows = []
+    for c in candidates:
+        results = goals_mod.evaluate_all(state.trip, c.course, state.goals)
+        walk = _walk(state.trip, c.course)
+        rows.append({"candidate_id": c.candidate_id, "kept": [r.goal.id for r in results if r.met is True],
+                     "total": len(results), "confirmed": core.hard_score(c.violations)[0], "walk_day_max": walk["day_max"],
+                     "transit_legs": walk["transit_legs"], "focus": c.focus, "balanced": c.balanced})
+    return {"compare": rows, "distinct": len({c.course for c in candidates}),
+            "code_best": best_candidate(state, candidates).candidate_id}
+
+
 def execute(call, ds: DirectState, gateway: OpeningHoursGateway, by: str = "model") -> tuple[DirectState, ToolResult]:
     state, tool = ds.state, call.tool
     if isinstance(call, CourseOptimize):
@@ -351,7 +382,7 @@ def execute(call, ds: DirectState, gateway: OpeningHoursGateway, by: str = "mode
         least = min(core.hard_score(c.violations)[0] for c in ds.candidates)
         if core.hard_score(chosen.violations)[0] > least:
             return ds, _fail(tool, "WORSENS_HARD", "확정 위반이 더 적은 후보가 있다 — 그 후보를 고른다")
-        return ds, ToolResult(tool, ok=True, data={"candidate_id": chosen.candidate_id})
+        return ds, ToolResult(tool, ok=True, data={"candidate_id": chosen.candidate_id, **_comparison(state, ds.candidates)})
     raise TypeError(f"실행할 수 없는 도구 {type(call).__name__}")
 
 
@@ -431,14 +462,15 @@ def run_direct(
                 problem = core.thought_problem(ds.state.trip, reply.thought)
                 thought = None if problem else core.render_thought(ds.state.trip, reply.thought)
                 raw_thought = None if problem else reply.thought
-            except MODEL_FAILURES:
+            except MODEL_FAILURES as exc:                     # 이어받은 것을 작업 기록에 남긴다(#1131 D안)
                 call = None
+                substituted = {"call": None, "error": MODEL_FAILED, "failure": failure_kind(exc)}
         if call is None:
             call = _fallback_call(ds)
         before = ds
         new_ds, result = execute(call, ds, hours, by)
         if by == "model" and not result.ok and result.error in UNUSABLE_ERRORS:
-            substituted = {"call": call.model_dump(), "error": result.error}
+            substituted = {"call": call.model_dump(), "error": result.error, "failure": UNUSABLE}
             call, by, thought, problem = _fallback_call(ds), "baseline", None, None
             new_ds, result = execute(call, ds, hours, by)
         ds = new_ds
@@ -453,17 +485,17 @@ def run_direct(
             finished = True
             break
 
-    if not finished:                                            # 턴이 다 됐다 — 남은 것을 풀고 코드 규칙으로 고른다
+    if not finished:                                            # 턴이 다 됐다 — 남은 것을 풀고 코드 규칙으로 골라 끝낸다(끝 단계를 기록에 남긴다)
         resolve_all(len(steps), last)
         if not ds.candidates:
             ds, result = execute(_fallback_call(ds), ds, hours)
             emit(DirectStep(len(steps) + 1, "baseline", None, None,
                             CourseOptimize(tool="optimize", priority=[], locks=[]).model_dump(), result))
-    if finished:
-        chosen_id = steps[-1].result.data["candidate_id"]
-        chosen = next(c for c in ds.candidates if c.candidate_id == chosen_id)
-    else:
-        chosen = best_candidate(ds.state, ds.candidates)
+        call = _fallback_call(ds)
+        ds, result = execute(call, ds, hours)
+        emit(DirectStep(len(steps) + 1, "baseline", None, None, call.model_dump(), result))
+    chosen_id = steps[-1].result.data["candidate_id"]
+    chosen = next(c for c in ds.candidates if c.candidate_id == chosen_id)
     trip = ds.state.trip
     return DirectResult(
         outcome=core.outcome(chosen.violations, timed_out=False, checks=len(core.find_checks(trip, chosen.course, ds.state.hours))),
