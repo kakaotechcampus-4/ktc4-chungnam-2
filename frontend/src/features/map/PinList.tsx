@@ -48,7 +48,7 @@ function PinCard({ card, onSelect }: { card: PinCardView; onSelect: () => void }
       ? 'border-[1.5px] border-brand-600'
       : 'border border-ink-200'
   return (
-    <button type="button" onClick={onSelect} className={`w-full rounded-xl bg-white p-3.5 text-left ${border}`}>
+    <button type="button" onClick={onSelect} className={`press w-full rounded-xl bg-white p-3.5 text-left ${border}`}>
       <div className="flex items-start justify-between gap-2">
         <p className="truncate font-bold text-ink-900">{card.name}</p>
         {card.confirmed && <span className="tag tag-confirmed">✓ 확정됨</span>}

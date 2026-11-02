@@ -1,4 +1,4 @@
-"""optimize(강한 기준선 끝까지)와 지휘 루프 — 후보, 고정, 모델 없이 도는 길, 쓸 수 없는 호출 대행, 질문 카드."""
+"""optimize(강한 기준선 끝까지)와 지휘 루프 — 후보, 고정, 모델 없이 도는 길, 쓸 수 없는 호출 대행, 되묻지 않기(#1131)."""
 
 from agent.course import core, direct, goals as G, optimize as O
 from agent.course.goals import Goal
@@ -34,6 +34,10 @@ def scripted(*actions):
 
     decide.seen = seen
     return decide
+
+
+def cand(cid, course, violations=()):
+    return O.Candidate(cid, course, violations, ())
 
 
 class TestOptimize:
@@ -172,48 +176,44 @@ class TestDirectLoop:
         assert result.state.locks == {"p1": "d3"}
 
 
-class TestAsk:
-    def optimize_first(self):
-        return {"tool": "optimize", "priority": [NIGHT_D1.id], "locks": []}
+class TestNoAsk:
+    """되묻기(ask_requester)는 지휘 도구에 없다(#1131). 모델이 그런 답을 내면 스키마가 막고 그 턴은 코드가 대신한다."""
 
-    def test_pick_course_makes_a_card_with_default(self):
-        st = state([NIGHT_D1, Goal("day_light", "d1")])
-        ds = direct.DirectState(st, (O.Candidate("c1", START, (), ()), O.Candidate("c2", COURSE, (), ())))
-        call = turn(tool="ask_requester", kind="pick_course", options=["c2", "c1"]).action
-        ds, result = direct.execute(call, ds, TRUE_HOURS)
-        q = ds.questions[0]
-        assert result.ok and q.default == "c2" and q.text.startswith("2번 안은 ") and " 1번 안은 " in q.text and q.text.endswith("어느 쪽이 좋을까요?")
-        assert "하루 걷는 시간은 길어야" in q.text and ds.preferred == "c2"
-        assert result.data["default"] == "c2"
+    def test_schema_has_no_ask_tool(self):
+        import pytest
+        from pydantic import ValidationError
+        for kind in ("pick_course", "ask_closed_day", "choose_day", "split_day"):
+            with pytest.raises(ValidationError):
+                turn(tool="ask_requester", kind=kind, subject="p1", options=[])
 
-    def test_unanswered_default_is_used_when_the_model_never_finishes(self):
-        st = state([NIGHT_D1])
-        cands = (O.Candidate("c1", START, (), ()), O.Candidate("c2", START, (), ()))
-        assert direct.best_candidate(st, cands, preferred="c2").candidate_id == "c2"      # 동점이면 기본 선택지
-        assert direct.best_candidate(st, cands).candidate_id == "c1"
+    def test_an_ask_reply_is_a_model_failure_and_code_takes_the_turn(self):
+        from pydantic import ValidationError
 
-    def test_pick_course_needs_two_real_candidates(self):
-        decide = scripted(self.optimize_first(), {"tool": "ask_requester", "kind": "pick_course", "options": ["c1"]},
-                          {"tool": "finish", "candidate_id": "c1"})
-        assert direct.run_direct(state([NIGHT_D1]), decide=decide, hours=TRUE_HOURS).steps[2].result.error == "INVALID_MOVE"
+        def decide(_input):
+            CourseDirectTurn.model_validate({"thought": "물어볼게요", "action": {"tool": "ask_requester", "kind": "pick_course", "options": []}})
 
-    def test_ask_closed_day_only_for_places_with_unknown_hours(self):
-        known = {p: ALL_OPEN for p in ("p1", "p2", "p3", "p6")}           # p4·p5 모름
-        st = state([NIGHT_D1], hours=known)
-        decide = scripted({"tool": "ask_requester", "kind": "ask_closed_day", "subject": "p1"},
-                          {"tool": "ask_requester", "kind": "ask_closed_day", "subject": "p4"},
-                          {"tool": "optimize", "priority": [], "locks": []}, {"tool": "finish", "candidate_id": "c1"})
+        result = direct.run_direct(state([NIGHT_D1]), decide=decide, hours=TRUE_HOURS)
+        assert [s.by for s in acts(result)] == ["baseline", "baseline"] and result.model_turns == 0
+        assert issubclass(ValidationError, direct.MODEL_FAILURES)
+
+    def test_model_finish_is_kept_even_when_code_would_pick_another(self, monkeypatch):
+        goals = [NIGHT_D1, Goal("day_light", "d1")]
+        st = state(goals)
+        cands = (cand("c1", (("p1", "p2", "p6"), ("p3", "p4"), ("p5",))), cand("c2", (("p5",), ("p1", "p2", "p3"), ("p4", "p6"))))
+        monkeypatch.setattr(direct.opt, "optimize", lambda s, **kw: (s, cands))
+        other = "c2" if direct.best_candidate(st, cands).candidate_id == "c1" else "c1"
+        decide = scripted({"tool": "optimize", "priority": [], "locks": []}, {"tool": "finish", "candidate_id": other})
         result = direct.run_direct(st, decide=decide, hours=TRUE_HOURS)
-        assert acts(result)[0].result.error == "INVALID_ID"
-        assert result.questions[0].default == "모르겠어요" and "장소P4이름" in result.questions[0].text
+        assert result.chosen.candidate_id == other and "note" not in acts(result)[-1].result.data
 
-    def test_third_question_is_refused_and_code_takes_the_turn(self):
-        known = {p: ALL_OPEN for p in ("p1", "p2", "p3", "p6")}
-        ask = {"tool": "ask_requester", "kind": "ask_closed_day", "subject": "p4"}
-        decide = scripted(ask, ask, ask, {"tool": "finish", "candidate_id": "c1"})
-        result = direct.run_direct(state([NIGHT_D1], hours=known), decide=decide, hours=TRUE_HOURS)
-        sub = acts(result)[2]
-        assert len(result.questions) == 2 and sub.by == "baseline" and sub.substituted_for["error"] == "LIMIT_EXCEEDED"
+    def test_turns_running_out_code_picks_best_without_a_question(self, monkeypatch):
+        st = state([NIGHT_D1, Goal("day_light", "d1")])
+        cands = (cand("c1", (("p1", "p2", "p6"), ("p3", "p4"), ("p5",))), cand("c2", (("p5",), ("p1", "p2", "p3"), ("p4", "p6"))))
+        monkeypatch.setattr(direct.opt, "optimize", lambda s, **kw: (s, cands))
+        opt = {"tool": "optimize", "priority": [], "locks": []}
+        result = direct.run_direct(st, decide=scripted(*([opt] * 5)), hours=TRUE_HOURS)
+        assert result.chosen.candidate_id == direct.best_candidate(st, cands).candidate_id
+        assert result.model_turns == 5
 
 
 def test_finish_refuses_candidate_with_more_confirmed_violations():
@@ -225,70 +225,7 @@ def test_finish_refuses_candidate_with_more_confirmed_violations():
     assert result.error == "WORSENS_HARD"
 
 
-# ---- 코드가 여는 질문, check_goals, 작업 기록 ----
-
-def cand(cid, course, violations=()):
-    return O.Candidate(cid, course, violations, ())
-
-
-class TestAskTrigger:
-    def setup_method(self):
-        self.goals = [NIGHT_D1, Goal("day_light", "d1")]
-        self.st = state(self.goals)
-        # c1은 야경만, c2는 여유만 지킨다(목표가 갈린다). c3는 c1과 같은 met 벡터
-        # day_light 한도는 하루 1곳(6곳÷3일−1), 라벨이 있는 장소는 p6(야경)뿐이다
-        self.c1 = cand("c1", (("p1", "p2", "p6"), ("p3", "p4"), ("p5",)))          # 야경 충족, d1이 3곳이라 여유 미충족
-        self.c2 = cand("c2", (("p5",), ("p1", "p2", "p3"), ("p4", "p6")))          # d1 마지막 라벨 모름 → 야경 판단 불가, d1 1곳 → 여유 충족
-
-    def ds(self, candidates, calls=2, questions=()):
-        return direct.DirectState(self.st, tuple(candidates), tuple(questions), optimize_calls=calls)
-
-    def test_conditions_all_needed(self):
-        met = [r.met for r in G.evaluate_all(self.st.trip, self.c1.course, self.goals)]
-        met2 = [r.met for r in G.evaluate_all(self.st.trip, self.c2.course, self.goals)]
-        assert met == [True, False] and met2 == [None, True]
-        assert direct.ask_trigger(self.ds([self.c1, self.c2])) is not None
-        assert direct.ask_trigger(self.ds([self.c1, self.c2], calls=1)) is None           # optimize 2회 미만
-        assert direct.ask_trigger(self.ds([self.c1])) is None                             # 후보 하나
-        same = cand("c3", self.c1.course)
-        assert direct.ask_trigger(self.ds([self.c1, same])) is None                       # met 벡터가 같다
-        done = direct.Question("q1", "pick_course", None, ("c1", "c2"), "t", "c1")
-        assert direct.ask_trigger(self.ds([self.c1, self.c2], questions=[done])) is None  # 이미 물었다
-
-    def test_all_goals_met_means_no_question(self):
-        both = cand("c1", (("p6",), ("p1", "p2", "p3"), ("p4", "p5")))
-        assert [r.met for r in G.evaluate_all(self.st.trip, both.course, self.goals)] == [True, True]
-        assert direct.ask_trigger(self.ds([both, self.c2])) is None
-
-    def test_pair_starts_with_best_candidate_as_default(self):
-        pair = direct.ask_trigger(self.ds([self.c1, self.c2]))
-        assert pair[0] == direct.best_candidate(self.st, (self.c1, self.c2)).candidate_id and set(pair) == {"c1", "c2"}
-
-    def test_code_opens_the_question_when_model_finishes_and_default_wins(self, monkeypatch):
-        cands = (self.c1, self.c2)
-        monkeypatch.setattr(direct.opt, "optimize", lambda st, **kw: (st, cands))
-        other = "c2" if direct.best_candidate(self.st, cands).candidate_id == "c1" else "c1"
-        decide = scripted({"tool": "optimize", "priority": [], "locks": []}, {"tool": "optimize", "priority": [], "locks": []},
-                          {"tool": "finish", "candidate_id": other}, {"tool": "finish", "candidate_id": other})
-        result = direct.run_direct(self.st, decide=decide, hours=TRUE_HOURS)
-        asked = [s for s in acts(result) if s.call["tool"] == "ask_requester"]
-        assert len(asked) == 1 and asked[0].by == "code" and asked[0].substituted_for["error"] == "QUESTION_OPENED_BY_CODE"
-        assert len(result.questions) == 1 and result.questions[0].kind == "pick_course"
-        assert result.chosen.candidate_id == result.questions[0].default                  # 답이 없으니 기본 선택지로 이어 간다
-        assert acts(result)[-1].result.data["note"]
-
-    def test_must_ask_is_in_model_input_only_when_condition_holds(self):
-        on = direct.direct_input(self.ds([self.c1, self.c2]), None, 3, 0)["must_ask"]
-        assert on["kind"] == "pick_course" and len(on["candidates"]) == 2
-        assert direct.direct_input(self.ds([self.c1, self.c2], calls=1), None, 3, 0)["must_ask"] is None
-
-    def test_turns_running_out_also_opens_the_question(self, monkeypatch):
-        cands = (self.c1, self.c2)
-        monkeypatch.setattr(direct.opt, "optimize", lambda st, **kw: (st, cands))
-        opt = {"tool": "optimize", "priority": [], "locks": []}
-        result = direct.run_direct(self.st, decide=scripted(*([opt] * 5)), hours=TRUE_HOURS)
-        assert len(result.questions) == 1 and result.chosen.candidate_id == result.questions[0].default
-
+# ---- check_goals, 작업 기록 ----
 
 class TestCheckGoals:
     def labeled(self, specs, days=(MON, TUE), hours=None):
@@ -374,18 +311,35 @@ class TestWorklog:
         lines = worklog.render(st.trip, goals, ["웨이팅 없는 곳"], result)
         stages = [l.split("]")[0][1:] for l in lines]
         assert stages[0] == "이해" and "확인" in stages and stages.index("확인") < stages.index("짜기")
-        closing = [l.split("]")[0][1:] for l in lines if "식사할 곳이 확정 리스트에 없어요" not in l]      # 식당 없는 날 알림(#918)은 끝과 결과 사이에 끼므로 뺀다
-        assert "재계획" in stages and "질문" in stages and closing[-2:] == ["끝", "결과"]
+        closing = [l.split("]")[0][1:] for l in lines if "식사할 곳이" not in l]      # 식당 없는 날 알림(#918)은 끝과 결과 사이에 끼므로 뺀다
+        assert "재계획" in stages and "질문" not in stages and closing[-2:] == ["끝", "결과"]
         assert lines[0].startswith("[이해] 해석(모델)") and "「웨이팅 없는 곳」은 그대로는 판단할 수 없어요" in lines[0]
-        ask = next(l for l in lines if l.startswith("[질문]"))
-        assert "코드가 열음" in ask and "1번 안은 " in ask and "‘1번 안’" in ask and "이어 가요" in ask
         assert all("(" in l and ")" in l for l in lines)                            # 단계마다 누가
         # 코드가 만든 문장은 라벨과 값을 점으로 잇지 않고, 영문 글자(enum, 후보 id)를 그대로 내지 않는다(멘토 리뷰 #816)
         import re
-        made = [r.text for r in worklog.records(st.trip, goals, ["웨이팅 없는 곳"], result) if "코드" in r.who or r.stage in ("확인", "결과", "질문", "답")]
-        assert len(made) >= 6
+        made = [r.text for r in worklog.records(st.trip, goals, ["웨이팅 없는 곳"], result) if "코드" in r.who or r.stage in ("확인", "결과")]
+        assert len(made) >= 4
         for text in made:
             bare = re.sub(r"「[^」]*」|장소P\d이름", "", text)
             assert " · " not in text and "·" not in bare, text
             assert not re.search(r"[A-Za-z]", bare), text
         assert any("1번 안을 짰어요." in t for t in made) and not any(re.search(r"\bc\d\b", t) for t in made)
+
+    def test_unknown_hours_become_an_assumption_line_not_a_question(self):
+        from agent.course import worklog
+        known = {p: ALL_OPEN for p in ("p1", "p2", "p3", "p6")}           # p4·p5 영업 여부 모름
+        st = state([NIGHT_D1], hours=known)
+        result = direct.run_direct(st, decide=None, hours=_NoHours())
+        lines = worklog.render(st.trip, [NIGHT_D1], [], result)
+        assumed = [l for l in lines if l.startswith("[가정]")]
+        assert len(assumed) == 1 and "결정(코드)" in assumed[0] and "여는 것으로 보고 정했어요" in assumed[0]
+        assert "장소P4이름" in assumed[0] and "장소P5이름" in assumed[0] and "장소P1이름" not in assumed[0]
+        for p in ("p4", "p5"):                                               # 이름 옆 날짜는 결과 코스에서 그 장소가 있는 날이다
+            day = next(i for i, d in enumerate(result.course) if p in d)
+            assert core.day_label(st.trip, core.day_alias(day)) in assumed[0]
+        assert lines.index(assumed[0]) == len(lines) - 2 and "가게에 확인해 주세요" in lines[-1]
+
+
+class _NoHours:
+    def get_opening_hours(self, place_ids):
+        return {pid: None for pid in place_ids}

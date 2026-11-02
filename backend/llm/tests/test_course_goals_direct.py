@@ -42,10 +42,11 @@ class TestSchemas:
         with pytest.raises(ValueError):
             CourseDirectTurn.model_validate(bad)
 
-    def test_choose_day_is_an_ask_kind(self):
-        turn = CourseDirectTurn.model_validate({"thought": "x", "action": {"tool": "ask_requester", "kind": "choose_day",
-                                                                          "subject": "place_on_day:d1:p3", "options": ["d2", "d3"]}})
-        assert turn.action.kind == "choose_day" and turn.action.options == ["d2", "d3"]
+    def test_ask_requester_is_not_a_tool(self):
+        """되묻기는 #1131에서 뺐다 — 쉬는 날·이동 나누기는 agent.course 코드가 푼다."""
+        with pytest.raises(ValueError):
+            CourseDirectTurn.model_validate({"thought": "x", "action": {"tool": "ask_requester", "kind": "choose_day",
+                                                                        "subject": "place_on_day:d1:p3", "options": ["d2", "d3"]}})
 
     def test_goal_kind_is_limited_to_six(self):
         with pytest.raises(ValueError):
@@ -95,7 +96,7 @@ class TestGoals:
     def test_prompt_lists_all_kinds_and_forbids_inventing(self):
         for kind in ("day_indoor", "night_end", "daily_walk_low", "day_light", "place_on_day", "together", "day_has", "performance", "unmatched", "그대로"):
             assert kind in COURSE_GOALS_PROMPT
-        assert COURSE_GOALS_PROMPT_VERSION == "course-goals-v3"
+        assert COURSE_GOALS_PROMPT_VERSION == "course-goals-v6"
 
 
 class TestDirect:
@@ -113,11 +114,13 @@ class TestDirect:
             DIRECT_INPUT, planner=partial(llm_client.call_course_direct, FakeClient(RuntimeError("net")), turn=1))
         assert isinstance(reply.result, AgentCallFailed)
 
-    def test_prompt_describes_the_four_tools_and_the_rules(self):
-        for word in ("optimize", "lock", "ask_requester", "finish", "pick_course", "ask_closed_day", "met", "turns_left"):
+    def test_prompt_describes_the_three_tools_and_the_rules(self):
+        for word in ("optimize", "lock", "finish", "met", "turns_left"):
             assert word in COURSE_DIRECT_PROMPT
-        assert COURSE_DIRECT_PROMPT_VERSION == "course-direct-v8"
-        for word in ("goal_checks", "NO_NIGHT_PLACE", "must_ask", "optimize_calls", "kept", "gave_up", "focus", "코드가 연다", "묻지 않는다", "choose_day", "closed_day", "다시 짜 볼게요", "점검 통과", "남은 위반은 있는 그대로", "평가하지 않는다"):
+        for word in ("ask_requester", "must_ask", "pick_course", "ask_closed_day", "asks_left"):
+            assert word not in COURSE_DIRECT_PROMPT
+        assert COURSE_DIRECT_PROMPT_VERSION == "course-direct-v9"
+        for word in ("goal_checks", "NO_NIGHT_PLACE", "optimize_calls", "kept", "gave_up", "focus", "요청자에게 묻지 않는다", "resolve_closure", "resolve_split", "chosen_day", "다시 짜 볼게요", "점검 통과", "남은 위반은 있는 그대로", "평가하지 않는다"):
             assert word in COURSE_DIRECT_PROMPT
 
 

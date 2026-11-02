@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link, NavLink, Outlet, useMatch, useNavigate, useParams } from 'react-router'
+import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate, useParams } from 'react-router'
 import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Users, type LucideIcon } from 'lucide-react'
 
 import AgentButton from '@/features/agent/AgentButton'
 import { useMeQuery } from '@/features/auth/queries'
+import { ImportSheetHost } from '@/features/kakaoImport/ImportSheet'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
+import { mapTapAction } from '@/features/map/mapTap'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
@@ -54,6 +56,7 @@ const PANEL_SLIDE_MS = 300
 export default function MapLayout() {
   const { mapId = '' } = useParams()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const { selectedPinId, selectPin } = usePinSelection()
   const { data: allPins = [] } = usePinsQuery(mapId)
   const mapInfo = useMapQuery(mapId).data
@@ -238,27 +241,49 @@ export default function MapLayout() {
     controller.current?.fitPins(points)
   }, [onRecommendTab, mapReady, run, result])
 
-  // 지도 빈 곳을 누르면 고른 것을 푼다 — 핀 상세(마킹·확정 탭)는 목록으로, 검색은 결과 목록으로, AI 후보는 강조만 푼다.
-  // 지도는 그대로 둔다. 푼 게 없으면(마킹 탭) 누른 자리 근처의 핀으로 만들 수 있는 장소를 찾는다(#486).
+  // 지도 빈 곳 누르기는 어느 탭이든 같다(#1028, 멘토 리뷰 #816). 고른 것(핀 상세·검색 결과·AI 후보)이 있으면 풀고,
+  // 없으면 누른 자리에 「이 근처 장소 찾기」 말풍선을 띄운다 — 둘러보다 누른 것이 바로 검색이 되지 않게. 지도는 그대로 둔다.
+  const [tapAt, setTapAt] = useState<{ lat: number; lng: number } | null>(null)
+  // 탭을 바꾸거나 무엇을 고르거나 검색이 열리면 말풍선은 닫는다(렌더 중에 맞춘다 — 위 lastQuery 와 같은 방식).
+  const tapContext = `${pathname}|${selectedPinId}|${search.source ? 'search' : ''}|${candidateFocus?.id ?? ''}`
+  const [lastTapContext, setLastTapContext] = useState(tapContext)
+  if (lastTapContext !== tapContext) {
+    setLastTapContext(tapContext)
+    setTapAt(null)
+  }
   function onMapClick(at: { lat: number; lng: number } | null) {
     const search = useSearchStore.getState()
     const ai = useAiStore.getState()
-    const released = Boolean(selectedPinId || search.selectedId || ai.focus)
-    if (selectedPinId) selectPin(null)
-    if (search.selectedId) search.select(null)
-    if (ai.focus) ai.blurCandidate()
-    if (released || !at || !onMarkingTab) return
-    search.openTap(at)
+    const action = mapTapAction({ selected: Boolean(selectedPinId || search.selectedId || ai.focus), bubbleOpen: tapAt !== null, at })
+    if (action === 'release') {
+      if (selectedPinId) selectPin(null)
+      if (search.selectedId) search.select(null)
+      if (ai.focus) ai.blurCandidate()
+    }
+    setTapAt(action === 'open' ? at : null)
+  }
+  /** 말풍선을 누르면 마킹 탭에서 누른 자리 근처의 핀으로 만들 수 있는 장소를 찾는다(#486). */
+  function searchNearby(at: { lat: number; lng: number }) {
+    setTapAt(null)
+    if (!onMarkingTab) navigate(`/maps/${mapId}`)
+    useSearchStore.getState().openTap(at)
     setStage('map', 2)
     // 접힌 패널에선 결과를 볼 곳이 없다(넓은 화면).
     useSheetStore.getState().setPanelOpen(true)
   }
+  // AI 탭을 떠나면 후보 강조를 푼다 — 남아 있으면 다른 탭의 첫 누름이 보이지 않는 후보 풀기에 쓰인다.
+  useEffect(() => {
+    if (!onRecommendTab) useAiStore.getState().blurCandidate()
+  }, [onRecommendTab])
 
   const onMovingChange = useCallback(
     (moving: boolean) => {
       setMapMoving(moving)
-      // 사용자가 지도를 직접 옮기면 "최근 핀·전체 핀을 보는 중" 표시는 더 맞지 않다.
-      if (moving) setActiveControl(null)
+      // 사용자가 지도를 직접 옮기면 "최근 핀·전체 핀을 보는 중" 표시도, 누른 자리의 말풍선도 더 맞지 않다.
+      if (moving) {
+        setActiveControl(null)
+        setTapAt(null)
+      }
     },
     [setMapMoving],
   )
@@ -292,7 +317,8 @@ export default function MapLayout() {
       const who = [pin.created_by_display_name, timeAgo(pin.created_at)].filter(Boolean).join(' · ')
       showToast(`가장 최근 핀 · ${pin.place_name ?? '이름 없는 핀'} (${who})`)
     } else {
-      map.fitPins(placed)
+      // 누른 사람이 원한 것이라 이미 다 보여도 맞춘다(#1026).
+      map.fitPins(placed, { force: true })
       showToast(`핀 ${placed.length}곳을 모두 보여 줘요`)
     }
     setActiveControl(key)
@@ -338,6 +364,7 @@ export default function MapLayout() {
         onReady={onMapReady}
         onMovingChange={onMovingChange}
         onMapClick={onMapClick}
+        tapBubble={tapAt && { ...tapAt, onPress: () => searchNearby(tapAt) }}
         leftInset={mapLeft}
       />
 
@@ -373,7 +400,7 @@ export default function MapLayout() {
                   onClick={panelBack.onBack}
                   aria-label={backAriaLabel(panelBack.label)}
                   title={`‹ ${panelBack.label}`}
-                  className="hit-44 flex size-8 shrink-0 items-center justify-center rounded-full text-ink-900 hover:bg-ink-100"
+                  className="press hit-44 flex size-8 shrink-0 items-center justify-center rounded-full text-ink-900"
                 >
                   <ChevronLeft size={20} />
                 </button>
@@ -382,7 +409,7 @@ export default function MapLayout() {
               <Link
                 to="/"
                 aria-label="내 지도 목록으로"
-                className="pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-white text-ink-900 shadow-float"
+                className="press pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-white text-ink-900 shadow-float"
               >
                 <ChevronLeft size={20} />
               </Link>
@@ -405,7 +432,7 @@ export default function MapLayout() {
                   <button
                     type="button"
                     aria-label={`지도 정보와 구성원 · ${memberCount}명`}
-                    className="hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 text-sm font-bold text-brand-600 hover:bg-ink-50 data-[state=open]:border-brand-600 data-[state=open]:bg-brand-50"
+                    className="hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 text-sm font-bold text-brand-600 press data-[state=open]:border-brand-600 data-[state=open]:bg-brand-50"
                   >
                     <Users size={16} aria-hidden="true" />
                     {memberCount > 0 && memberCount}
@@ -419,7 +446,7 @@ export default function MapLayout() {
                   type="button"
                   aria-label={`지도 정보와 구성원 · ${memberCount}명`}
                   onClick={() => openProfile(true)}
-                  className="pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-float"
+                  className="press pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-float"
                 >
                   <Users size={16} aria-hidden="true" />
                   {memberCount > 0 && memberCount}
@@ -532,6 +559,8 @@ export default function MapLayout() {
       )}
 
       {profileOpen && !desktop && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
+      {/* 카톡 가져오기 시트는 탭 화면 밖 한 자리에서 그린다 — 목록 머리가 바뀌어도 함께 사라지지 않게(#1045). */}
+      <ImportSheetHost mapId={mapId} />
     </>
   )
 }
@@ -553,7 +582,7 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
       to={to}
       end={end}
       className={({ isActive }) =>
-        `flex flex-col items-center gap-0.5 pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
+        `press flex flex-col items-center gap-0.5 rounded-xl pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
       }
     >
       {icon}
@@ -568,7 +597,7 @@ function AiTabLink({ to, label }: { to: string; label: string }) {
     <NavLink
       to={to}
       className={({ isActive }) =>
-        `flex flex-col items-center gap-0.5 pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
+        `press flex flex-col items-center gap-0.5 rounded-xl pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
       }
     >
       {({ isActive }) => (
@@ -632,7 +661,7 @@ function RailTab({ to, end = false, label, icon }: { to: string; end?: boolean; 
       }}
       className={({ isActive }) =>
         `flex flex-col items-center gap-1 rounded-xl py-2.5 text-label font-medium break-keep ${
-          isActive ? 'bg-brand-50 text-brand-600' : 'text-ink-500 hover:bg-ink-50 hover:text-ink-700'
+          isActive ? 'press bg-brand-50 text-brand-600' : 'press text-ink-500 hover:text-ink-700'
         }`
       }
     >
@@ -657,7 +686,7 @@ function PanelToggle({ open, onToggle }: { open: boolean; onToggle: () => void }
       onClick={onToggle}
       className="pointer-events-auto absolute left-0 top-1/2 flex h-14 w-11 -translate-y-1/2 items-center"
     >
-      <span className="flex h-12 w-6 items-center justify-center rounded-r-lg border border-l-0 border-ink-200 bg-white text-ink-600 shadow-float">
+      <span className="press flex h-12 w-6 items-center justify-center rounded-r-lg border border-l-0 border-ink-200 bg-white text-ink-600 shadow-float">
         {open ? <ChevronsLeft size={16} aria-hidden="true" /> : <ChevronsRight size={16} aria-hidden="true" />}
       </span>
     </button>
