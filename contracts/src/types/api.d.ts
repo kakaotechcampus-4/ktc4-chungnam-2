@@ -4784,6 +4784,12 @@ export interface components {
             run_id: string;
             /** @description 5-6 깔때기 표. 단계: 카테고리 후보 풀 → 반경 밖 제거 → 영업 종료 제거 → 실격 조건 제거 → 이미 제안·거절됨 → 상위 3곳 선정. 후보 풀은 넓히기 상한 안의 영업 중인 추천 가능(정예) 장소라, 「반경 밖 제거」는 넓히면 들어올 수 있는 최대 수다(#912). 여행 지역과 다른 시·도의 장소도 「반경 밖 제거」로 센다(#1055 — 이 장소는 넓혀도 들어오지 않는다, constraints.md 「반경 넓히기 상수」). 2026-10-15~#913 구현 전에는 「영업 종료 제거」 다음에 「추천 가능 아님 제거」가 있었다 — 그때 저장된 결과에는 그 줄이 남아 있고, 화면은 받은 표를 그대로 그린다 */
             funnel: {
+                /**
+                 * @description 단계 키(#1146, #751). 화면이 단계를 찾을 때는 라벨 글자가 아니라 이 값을 본다. 단계 표에 없는 옛 라벨로 저장된 깔때기는 null. 이 필드가 없는 옛 서버 응답도 있다(선택 필드)
+                 * @enum {string|null}
+                 */
+                key?: "pool" | "radius" | "closed" | "disqualify" | "excluded" | "ranking" | null;
+                /** @description 화면에 그대로 보이는 단계 이름 */
                 label: string;
                 removed_count: number;
             }[];
@@ -5362,7 +5368,7 @@ export interface components {
             };
         };
         /**
-         * @description 필터 통과 후보 0개 (6절 "결과 0개"). **이전에 지도에 올린 후보까지 포함해 후보가 하나도 없을 때만** 온다 — 게시한 후보가 남아 있으면 200이고 `RecommendResult.new_count`가 0이다(#845). `detail.funnel`(단계별로 빠진 수)과 `detail.external_search`(ExternalSearch, 카카오맵 검색 링크, #798)가 온다. **`detail.applied_evidence`·`detail.no_applied_conditions`**(200의 `RecommendResult`와 같은 값, #845)도 와서 화면이 0건일 때도 「이 조건으로 찾았어요」를 보일 수 있다.
+         * @description 필터 통과 후보 0개 (6절 "결과 0개"). **이전에 지도에 올린 후보까지 포함해 후보가 하나도 없을 때만** 온다 — 게시한 후보가 남아 있으면 200이고 `RecommendResult.new_count`가 0이다(#845). `detail.funnel`(단계별로 빠진 수, 항목 모양은 `RecommendResult.funnel`과 같다 — `key` 포함, #1146)과 `detail.external_search`(ExternalSearch, 카카오맵 검색 링크, #798)가 온다. **`detail.applied_evidence`·`detail.no_applied_conditions`**(200의 `RecommendResult`와 같은 값, #845)도 와서 화면이 0건일 때도 「이 조건으로 찾았어요」를 보일 수 있다.
          *     화면은 반경 넓히기, 근거 고치기와 함께 「카카오맵에서 더 찾아보기」를 보여 준다
          */
         NoResults: {
