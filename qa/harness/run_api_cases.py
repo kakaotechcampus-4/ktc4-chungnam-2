@@ -524,7 +524,7 @@ def w01_w07():
     else:
         rt = z.post(f"/runs/{rid}/retry"); result(z, rid); b2 = _credits(z)["balance"]
         wd = z.post(f"/runs/{rid}/widen"); result(z, rid); b3 = _credits(z)["balance"]
-        check("W05", run.status_code == 202 and b0 == b1 == b2 == b3,
+        check("W05", run.status_code == rt.status_code == wd.status_code == 202 and b0 == b1 == b2 == b3,   # 거절된 요청은 잔액이 그대로여도 본 게 아니다
               f"첫 실행 0곳 차감 없음, 다시 추천({rt.status_code})·넓히기({wd.status_code})도 0", f"잔액 {b0} → {b1} → {b2} → {b3}")
 
     _reset_guest_limiter()
