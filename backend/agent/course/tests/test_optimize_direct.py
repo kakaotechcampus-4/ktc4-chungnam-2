@@ -374,7 +374,7 @@ class TestWorklog:
         lines = worklog.render(st.trip, goals, ["웨이팅 없는 곳"], result)
         stages = [l.split("]")[0][1:] for l in lines]
         assert stages[0] == "이해" and "확인" in stages and stages.index("확인") < stages.index("짜기")
-        closing = [l.split("]")[0][1:] for l in lines if "식사할 곳이 확정 리스트에 없어요" not in l]      # 식당 없는 날 알림(#918)은 끝과 결과 사이에 끼므로 뺀다
+        closing = [l.split("]")[0][1:] for l in lines if "식사할 곳이" not in l]      # 식당 없는 날 알림(#918)은 끝과 결과 사이에 끼므로 뺀다
         assert "재계획" in stages and "질문" in stages and closing[-2:] == ["끝", "결과"]
         assert lines[0].startswith("[이해] 해석(모델)") and "「웨이팅 없는 곳」은 그대로는 판단할 수 없어요" in lines[0]
         ask = next(l for l in lines if l.startswith("[질문]"))

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
 from agent.course import core, goals as goals_mod
-from agent.course.constants import DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, LEG_MAX_MIN
+from agent.course.constants import DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, LEG_MAX_MIN, MEAL_CATEGORY, MEALS_PER_DAY_MIN
 from agent.course.direct import DirectResult, DirectStep, Question
 from agent.course.korean import attach, candidate_name, goals_sentence
 
@@ -91,8 +91,12 @@ def _choices_text(shown: Sequence[str], default: str) -> str:
 
 
 def meal_less_text(trip: core.Trip, day_index: int) -> str:
-    """식사할 곳이 없는 날의 확인 문장. 정하는 곳은 core.meal_less_days 하나다."""
-    return f"{core.day_label(trip, core.day_alias(day_index))}에는 식사할 곳이 확정 리스트에 없어요."
+    """식사할 곳이 없는 날의 확인 문장. 정하는 곳은 core.meal_less_days 하나다. 리스트에 식당이 모자라 어쩔 수 없는 경우와, 날마다 둘 만큼 있는데 그날에
+    배정되지 않은 경우를 나눈다(#1008 K2) — 뒤쪽을 "리스트에 없다"고 쓰면 사실과 다르다."""
+    day = core.day_label(trip, core.day_alias(day_index))
+    if sum(p.category == MEAL_CATEGORY for p in trip.places) < len(trip.days) * MEALS_PER_DAY_MIN:      # 식당이 모자라 어쩔 수 없다
+        return f"{day}에는 식사할 곳이 확정 리스트에 없어요."
+    return f"{day}에는 식사할 곳이 배정되지 않았어요. 확정 리스트에는 있지만 다른 날에 놓였어요."
 
 
 class Narrator:
