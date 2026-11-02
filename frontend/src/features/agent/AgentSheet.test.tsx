@@ -157,6 +157,11 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
       ],
     },
   ]
+  const unknownFact: NonNullable<AgentSuggestionDto['facts']>[number] = {
+    fact_key: 'parking',
+    value: 'unknown',
+    segments: [{ kind: 'text', text: '우리 데이터로는 ' }, { kind: 'pin', pin_id: 'p1', text: '성수 카페' }, { kind: 'text', text: '이 주차할 수 있는 곳인지 몰라요' }],
+  }
 
   it('현황 문단은 모드 스위치 아래, 제안보다 위에 「AI」 배지와 서버 문단 그대로', () => {
     setup({ ...withStatus, active_suggestion: split })
@@ -201,6 +206,24 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
     expect(lines[0].querySelector('strong')).toHaveTextContent('성수 카페')
     const button = screen.getByRole('button', { name: '갈린 핀 보기' })
     expect(head.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  const lineIcons = () =>
+    [...screen.getByRole('heading', { name: '우리 데이터' }).parentElement!.querySelectorAll('li')].map((li) => li.querySelector('svg')!.getAttribute('class'))
+
+  it('참·거짓은 같은 「데이터」 아이콘 — ✓·✕로 판정하지 않는다(#1182)', () => {
+    setup(state({ ...split, facts }))
+    const [yes, no] = lineIcons()
+    expect(yes).toContain('lucide-database')
+    expect(no).toBe(yes)
+    expect(document.querySelector('.lucide-check, .lucide-x')).toBeNull()
+  })
+
+  it('모름만 물음표 아이콘(#1182)', () => {
+    setup(state({ ...split, facts: [facts[0], unknownFact] }))
+    const [yes, unknown] = lineIcons()
+    expect(yes).toContain('lucide-database')
+    expect(unknown).toMatch(/lucide-circle-(help|question-mark)/)
   })
 
   it('agent.suggested 로 온 제안의 facts도 다시 부르지 않고 그린다', async () => {
