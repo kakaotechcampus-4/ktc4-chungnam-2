@@ -248,7 +248,7 @@ def _preview_with_hints(app_client, urls, hints):
 # ---- #946 힌트로 자체 DB 짝 찾기 ----
 
 def _stub_hint_match(monkeypatch, result, calls=None):
-    def match(name, address, *, db=None):
+    def match(name, address, *, external_id=None, db=None):
         if calls is not None:
             calls.append((name, address))
         return result
@@ -293,16 +293,24 @@ def test_ambiguous_hint_leaves_matches_empty(app_client, monkeypatch):
     assert item["result"]["matches"] == [] and item["result"]["needs_search_query"] is True
 
 
-def test_naver_link_needs_a_name_hint_and_is_never_fetched(app_client, monkeypatch):
-    _stub_parse(monkeypatch, {})   # 네이버는 parse_link가 LINK_NOT_SUPPORTED
-    _stub_hint_match(monkeypatch, [_match("own:abc")])
+def test_naver_link_uses_places_result_with_or_without_hint(app_client, monkeypatch):
     url = "https://naver.me/abc123"
+    _stub_parse(monkeypatch, {url: LinkParseResult(provider="naver", external_id="naver:123", matches=[], needs_search_query=True)})
+    _stub_hint_match(monkeypatch, [_match("own:abc")])
     bare = _preview_with_hints(app_client, [url], [None]).json()["items"][0]
-    assert bare["status"] == "error" and bare["error_code"] == "LINK_NOT_SUPPORTED"
+    assert bare["status"] == "ok" and bare["result"]["needs_search_query"] is True
+    assert bare["result"]["external_id"] == "naver:123"
     hinted = _preview_hinted(app_client, url, {"name": "성수 칼국수", "address": "서울 성동구"})
     assert hinted["result"]["provider"] == "naver" and hinted["result"]["matched_by"] == "hint"
     nameless = _preview_hinted(app_client, url, {"address": "서울 성동구"})
-    assert nameless["status"] == "error"
+    assert nameless["status"] == "ok" and nameless["result"]["matches"] == []
+
+
+def test_unsupported_naver_link_is_not_fabricated_from_hint(app_client, monkeypatch):
+    _stub_parse(monkeypatch, {})
+    _stub_hint_match(monkeypatch, [_match("own:abc")])
+    item = _preview_hinted(app_client, "https://map.naver.com/unsupported", {"name": "성수 칼국수", "address": "서울"})
+    assert item["status"] == "error" and item["error_code"] == "LINK_NOT_SUPPORTED"
 
 
 def test_non_naver_unsupported_link_stays_unsupported_even_with_hint(app_client, monkeypatch):
@@ -314,10 +322,77 @@ def test_non_naver_unsupported_link_stays_unsupported_even_with_hint(app_client,
 
 def test_hint_text_is_never_logged(app_client, monkeypatch, caplog):
     _stub_parse(monkeypatch, {"k": LinkParseResult(provider="kakao", matches=[], needs_search_query=True)})
-    def boom(name, address, *, db=None):
+    def boom(name, address, *, external_id=None, db=None):
         raise RuntimeError(f"{name} {address}")
     monkeypatch.setattr("places.api.match_by_name_address", boom)
     with caplog.at_level(logging.DEBUG):
         item = _preview_hinted(app_client, "k", {"name": "비밀상호", "address": "비밀주소"})
     assert item["result"]["matches"] == []
     assert "비밀상호" not in caplog.text and "비밀주소" not in caplog.text
+
+
+# ---- #1047 같은 주소 후보 ----
+
+def _stub_candidates(monkeypatch, result, calls=None):
+    def candidates(address, *, db=None):
+        if calls is not None:
+            calls.append(address)
+        return result
+    monkeypatch.setattr("places.api.match_address_candidates", candidates, raising=False)
+
+
+def test_address_candidate_is_offered_only_when_matches_are_empty(app_client, monkeypatch):
+    _stub_parse(monkeypatch, {"k": LinkParseResult(provider="kakao", matches=[], needs_search_query=True)})
+    _stub_hint_match(monkeypatch, [])
+    calls = []
+    _stub_candidates(monkeypatch, [_match("own:cand", "라타르타")], calls)
+    item = _preview_hinted(app_client, "k", {"name": "크리스엄마의 치즈케이크", "address": "서울 종로구 창덕궁1길 39"})
+    result = item["result"]
+    assert [c["place_id"] for c in result["address_candidates"]] == ["own:cand"]
+    assert result["matches"] == [] and "matched_by" not in result and result["needs_search_query"] is True
+    assert calls == ["서울 종로구 창덕궁1길 39"]
+
+
+def test_hint_match_wins_over_address_candidates(app_client, monkeypatch):
+    _stub_parse(monkeypatch, {"k": LinkParseResult(provider="kakao", matches=[], needs_search_query=True)})
+    _stub_hint_match(monkeypatch, [_match("own:hint")])
+    calls = []
+    _stub_candidates(monkeypatch, [_match("own:cand")], calls)
+    item = _preview_hinted(app_client, "k", {"name": "성수 칼국수", "address": "서울"})
+    assert item["result"]["matched_by"] == "hint" and "address_candidates" not in item["result"] and calls == []
+
+
+def test_candidates_are_capped_at_three_and_need_an_address(app_client, monkeypatch):
+    _stub_parse(monkeypatch, {"k": LinkParseResult(provider="kakao", matches=[], needs_search_query=True)})
+    _stub_hint_match(monkeypatch, [])
+    calls = []
+    _stub_candidates(monkeypatch, [_match(f"own:{i}") for i in range(5)], calls)
+    assert len(_preview_hinted(app_client, "k", {"name": "x", "address": "서울"})["result"]["address_candidates"]) == 3
+    calls.clear()
+    assert "address_candidates" not in _preview_hinted(app_client, "k", {"name": "x"})["result"] and calls == []
+
+
+def test_candidates_provided_by_places_are_kept_and_numbered_matches_are_not_relabeled(app_client, monkeypatch):
+    google = LinkParseResult(provider="google", matches=[], needs_search_query=False, address_candidates=[_match("own:g")])
+    numbered = LinkParseResult(provider="naver", external_id="naver:1", matches=[_match("own:n")], matched_by="external_id",
+                               needs_search_query=False)
+    _stub_parse(monkeypatch, {"g": google, "n": numbered})
+    _stub_hint_match(monkeypatch, [])
+    calls = []
+    _stub_candidates(monkeypatch, [_match("own:other")], calls)
+    g = _preview_hinted(app_client, "g", {"name": "x", "address": "서울"})["result"]
+    n = _preview_hinted(app_client, "n", None)["result"]
+    assert [c["place_id"] for c in g["address_candidates"]] == ["own:g"] and calls == []
+    assert n["matched_by"] == "external_id" and n["external_id"] == "naver:1"
+
+
+def test_address_candidate_failure_and_logs_do_not_leak(app_client, monkeypatch, caplog):
+    _stub_parse(monkeypatch, {"k": LinkParseResult(provider="kakao", matches=[], needs_search_query=True)})
+    _stub_hint_match(monkeypatch, [])
+    def boom(address, *, db=None):
+        raise RuntimeError(address)
+    monkeypatch.setattr("places.api.match_address_candidates", boom, raising=False)
+    with caplog.at_level(logging.DEBUG):
+        item = _preview_hinted(app_client, "k", {"name": "비밀상호", "address": "비밀주소"})
+    assert "address_candidates" not in item["result"]
+    assert "비밀주소" not in caplog.text and "비밀상호" not in caplog.text

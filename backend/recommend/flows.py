@@ -64,7 +64,7 @@ from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
 from recommend.models import EvidenceLine as EvidenceLineRow
 from recommend.models import RecommendRun
-from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
+from recommend.ports import Circle, EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway, PlaceStub
 from recommend.schemas import Check
 
 
@@ -151,11 +151,6 @@ def publish_candidate(
 # ============================================================================
 
 CATEGORIES: tuple[str, ...] = categories.recommendable()  # common/categories.py(#280)
-# 기본값 원 반경(m) — 최종기획안.md 248행에 이미 정의돼 있다: "기본 반경(도보 15분에 해당하는
-# 거리)". common.geo.WALKING_SPEED_M_PER_MIN(도보 시간 근사 보정계수)으로 환산한다 — 루트
-# 검증 중 발견: 이전 버전은 이 스펙을 못 찾고 2000m(약 25분)를 임의로 썼었다. 계산식으로
-# 두면 나중에 WALKING_SPEED_M_PER_MIN이 바뀌어도 같이 맞다.
-DEFAULT_REGION_RADIUS_M = core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)  # 15분 * 80m/분 = 1200m
 
 
 def list_runs(
@@ -194,7 +189,7 @@ def _curated_nearby(
     if default_region is None:
         return {}
     circle, _anchors = default_region
-    pool_radius_m = round(circle.radius_m * core.pool_radius_factor(core.DEFAULT_RADIUS_WALK_MIN))
+    pool_radius_m = round(circle.radius_m * core.pool_radius_factor(core.radius_walk_mins(category)[0], category))
     count = place_search.count_curated(
         category=category, circles=[Circle(anchor_lat=circle.anchor_lat, anchor_lng=circle.anchor_lng, radius_m=pool_radius_m)],
     )
@@ -290,7 +285,9 @@ def _default_circle_and_anchors(
     anchors = [(lat, lng) for _, lat, lng in coordinates]
     center_lat = sum(lat for lat, _ in anchors) / len(anchors)
     center_lng = sum(lng for _, lng in anchors) / len(anchors)
-    circle = Circle(anchor_lat=center_lat, anchor_lng=center_lng, radius_m=DEFAULT_REGION_RADIUS_M)
+    # 기본 반경 = 카테고리의 기본 도보 분(core.radius_walk_mins, #1055)을 common.geo 보정계수로 환산한 거리
+    radius_m = core.radius_m_for_walk_min(core.radius_walk_mins(category)[0])
+    circle = Circle(anchor_lat=center_lat, anchor_lng=center_lng, radius_m=radius_m)
     return circle, anchors
 
 
@@ -628,7 +625,7 @@ def _pipeline_inputs(
     """저장된 지역과 활성 근거 줄을 _run_pipeline 입력으로 읽는다. 실행(execute/widen/retry)은 그대로 쓰고,
     시뮬레이션(#585)만 반경 배율과 비활성으로 볼 줄을 준다 — 사본과 거른 목록이라 행은 바뀌지 않는다.
     풀 반경은 배율과 무관하게 저장된 반경 × 넓히기 상한 배율이라 시뮬레이션도 실행과 같은 풀을 쓴다(#792)."""
-    pool_factor = core.pool_radius_factor(run.default_radius_walk_min)
+    pool_factor = core.pool_radius_factor(run.default_radius_walk_min, run.category)
     regions = [
         _PipelineRegion(
             id=r.id, label=r.label, center_lat=r.center_lat, center_lng=r.center_lng,
@@ -640,6 +637,25 @@ def _pipeline_inputs(
     ]
     active_lines = [line for line in service.list_active_evidence(db, run.id) if str(line.id) not in disable_line_ids]
     return regions, active_lines
+
+
+def _within_trip_sido(
+    db: Session, map_id: str, regions: Sequence[_PipelineRegion], places: list[PlaceStub], place_search: PlaceSearchGateway,
+) -> list[PlaceStub]:
+    """여행 지역과 다른 시·도의 후보를 뺀다(#1055, #1059) — 깔때기에서는 「반경 밖 제거」로 센다. 판정은 places.api(sido, sido_at)만
+    쓴다. 여행 지역의 시·도는 지도 여행 지역 중심, 없으면 기본 지역 중심(그 카테고리 핀들의 중심)으로 이 실행에서 한 번 정한다.
+    어느 한쪽이라도 None이면 거르지 않는다(모름을 실격으로 읽지 않는다). 주소는 한 번에 배치 조회(N+1 금지)."""
+    infos = place_search.get_places([p.place_id for p in places]) if places else {}
+    place_sido = {pid: places_api.sido(info.address) for pid, info in infos.items()}
+    if not any(place_sido.values()):
+        return places
+    center = maps_api.get_map_region_center(db, map_id) or (
+        (regions[0].center_lat, regions[0].center_lng) if regions else None
+    )
+    trip_sido = places_api.sido_at(*center, db=db) if center else None
+    if trip_sido is None:
+        return places
+    return [p for p in places if place_sido.get(p.place_id) in (None, trip_sido)]
 
 
 def _out_of_season_keys(db: Session, map_id: str) -> frozenset[str]:
@@ -667,6 +683,7 @@ def _run_pipeline(
     pool = place_search.search_nearby(category=run.category, circles=pool_circles)
 
     within_radius = [p for p in pool if core.is_within_any_region(p.lat, p.lng, circles)]
+    within_radius = _within_trip_sido(db, run.map_id, regions, within_radius, place_search)
     removed_radius = len(pool) - len(within_radius)
 
     # 영업 종료 제거(#690) — 여행 기간의 모든 요일이 휴무인 장소만 뺀다. 하루라도 영업하면 통과, 정보가 없으면 통과 +
@@ -929,7 +946,7 @@ def execute_run(
 def widen_run(
     db: Session, *, run_id: str, place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
 ) -> RecommendRun:
-    """POST /runs/{runId}/widen (5-6-1, 가드레일4) — 기본값 원을 +5분(도보) 넓힌다. 상한(30분)에
+    """POST /runs/{runId}/widen (5-6-1, 가드레일4) — 기본값 원을 +5분(도보) 넓힌다. 카테고리 상한(core.radius_walk_mins)에
     이미 닿았으면 409 WIDEN_LIMIT(core.next_default_radius_walk_min). v1은 사람이 명시한 원과
     기본값 원을 구분할 방법이 없어 — 반경 사유가 구조화되기 전이라 명시적 원이 저장되지 않는다 —
     저장된 원 전부가 기본값 원이다. 명시적 원이 생기면 그 원은 여기서 건드리지 않도록 좁혀야
@@ -939,7 +956,7 @@ def widen_run(
     regions = service.list_regions(db, run_id)
     if not regions:
         raise AppError("NOT_READY")
-    next_walk_min = core.next_default_radius_walk_min(run.default_radius_walk_min)  # 409 WIDEN_LIMIT
+    next_walk_min = core.next_default_radius_walk_min(run.default_radius_walk_min, run.category)  # 409 WIDEN_LIMIT
     radius_m = core.radius_m_for_walk_min(next_walk_min)
     for region in regions:
         widened = Circle(anchor_lat=region.center_lat, anchor_lng=region.center_lng, radius_m=radius_m)
@@ -982,7 +999,7 @@ def simulate_filter(
     if radius_factor is not None and not radius_factor > 0:
         raise ValueError(f"radius_factor는 0보다 커야 한다: {radius_factor}")
     run = service.get_run_or_404(db, run_id)
-    if radius_factor is not None and radius_factor > core.pool_radius_factor(run.default_radius_walk_min):
+    if radius_factor is not None and radius_factor > core.pool_radius_factor(run.default_radius_walk_min, run.category):
         raise ValueError(f"radius_factor가 넓히기 상한을 넘는다: {radius_factor}")
     try:
         disabled = frozenset(str(uuid.UUID(str(line_id))) for line_id in disable_line_ids)
@@ -1080,7 +1097,7 @@ def get_result(
     regions = service.list_regions(db, run_id)
     region_labels = {r.id: r.label for r in regions}
     candidates = service.list_candidates(db, run_id)
-    funnel = run.last_funnel or []
+    funnel = core.keyed_funnel(run.last_funnel or [])   # 키는 응답에서만 붙인다(#1146)
     snapshot = _applied_evidence_fields(db, run, principal)
     if not candidates:
         external = _run_external_search(db, run, place_search)

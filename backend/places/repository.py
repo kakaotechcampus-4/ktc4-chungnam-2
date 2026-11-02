@@ -5,19 +5,20 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Sequence
 
 from geoalchemy2 import Geography, Geometry, WKTElement
-from sqlalchemy import Float, and_, case, cast, false, func, literal, null, or_, select, union_all, update
+from sqlalchemy import Float, and_, case, cast, delete, false, func, literal, null, or_, select, union_all, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from places import matching
 from places.ingest import HoursRow, LabelRow, PlaceRow
 from places.matching import Candidate
-from places.models import Place, PlaceFact, PlaceHours
+from places.models import Place, PlaceExternalId, PlaceExternalIdVote, PlaceFact, PlaceHours
 from places.schemas import Area, FactLabel, PlaceHint, PlaceHours as PlaceHoursInfo, PlaceInfo, PlaceRef
 
 _CHUNK = 1000
@@ -291,11 +292,30 @@ def find_by_name_hint(db: Session, name: str) -> list[Candidate]:
     rows = db.execute(
         select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
         .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES),
-               or_(Place.name_norm.like(f"{nq}%"), Place.name_norm.in_(prefixes)))
+               or_(*(Place.name_norm.like(f"{t}%") for t in matching.hint_like_prefixes(name)), Place.name_norm.in_(prefixes)))
         .order_by(Place.id)
         .limit(matching.HINT_MAX_CANDIDATES + 1)
     ).all()
     if len(rows) > matching.HINT_MAX_CANDIDATES:
+        return []
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+
+
+def find_by_address_term(db: Session, term: str) -> list[Candidate]:
+    """주소 후보 조회(#1047): 영업 중 자체 DB 장소 중 주소에 도로명 앞부분(term)이 든 곳. idx_places_address_trgm(GIN)을 탄다 — 3자 이상이면
+    인덱스, 두 글자 도로명은 붙여 쓴 도로명 전체(`명동8가길`)로 받는다. 같은 도로명이 ADDRESS_CANDIDATE_MAX_ROWS를 넘으면 유일성을 말할 수
+    없어 빈 목록. 건물번호까지 같은지는 호출 쪽이 address_agreement로 거른다. 분류는 음식점·카페·관광지."""
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    escaped = re.sub(r"(?<=[가-힣])(?=\d)|(?<=\d)(?=[가-힣])", "%", escaped)   # 정규화 키가 공백을 무시하므로 `명동8가길`은 `명동 8가길`도 읽는다
+    lat, lng = _lat_lng()
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES),
+               Place.address.ilike(f"%{escaped}%", escape="\\"))
+        .order_by(Place.id)
+        .limit(matching.ADDRESS_CANDIDATE_MAX_ROWS + 1)
+    ).all()
+    if len(rows) > matching.ADDRESS_CANDIDATE_MAX_ROWS:
         return []
     return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
 
@@ -323,6 +343,56 @@ def record_kakao_match(db: Session, place_id: str, kakao_place_id: str, kakao_pl
         return
     place.kakao_matched_at = func.now()
     db.flush()
+
+
+def upsert_external_id(db: Session, provider: str, external_id: str, place_id: str, source: str, voter_hash: str | None) -> None:
+    """번호표에 짝 하나를 기록한다(#1048). 같은 짝이 이미 있으면 그 행을 쓴다 — 'hint'는 'user' 행을 신뢰 행으로 올리고, 'user'는 표 한 장을
+    더한다(voter_hash당 한 표). 없는 place_id면 KeyError. 번호만 저장한다."""
+    pid = _uuid(place_id)
+    if db.get(Place, pid) is None:
+        raise KeyError(place_id)
+    values = {"provider": provider, "external_id": external_id, "place_id": pid, "source": source}
+    db.execute(pg_insert(PlaceExternalId).values(**values).on_conflict_do_nothing(constraint="uq_place_external_ids_pair"))
+    row = db.execute(select(PlaceExternalId).where(
+        PlaceExternalId.provider == provider, PlaceExternalId.external_id == external_id, PlaceExternalId.place_id == pid)).scalar_one()
+    if source == "hint" and row.source != "hint":
+        row.source = "hint"
+    if source == "user" and voter_hash:
+        db.execute(pg_insert(PlaceExternalIdVote).values(external_id_row=row.id, voter_hash=voter_hash)
+                   .on_conflict_do_nothing(index_elements=["external_id_row", "voter_hash"]))
+    db.flush()
+
+
+def external_id_rows(db: Session, provider: str, external_id: str) -> list[tuple[str, str, int]]:
+    """번호 하나의 번호표 행 [(place_id, source, 표 수)]."""
+    votes = func.count(PlaceExternalIdVote.voter_hash)
+    rows = db.execute(
+        select(PlaceExternalId.place_id, PlaceExternalId.source, votes)
+        .outerjoin(PlaceExternalIdVote, PlaceExternalIdVote.external_id_row == PlaceExternalId.id)
+        .where(PlaceExternalId.provider == provider, PlaceExternalId.external_id == external_id)
+        .group_by(PlaceExternalId.id, PlaceExternalId.place_id, PlaceExternalId.source)
+        .order_by(PlaceExternalId.id)
+    ).all()
+    return [(str(r[0]), r[1], int(r[2])) for r in rows]
+
+
+def purge_external_id_votes(db: Session, voter_hash: str) -> int:
+    """탈퇴한 사용자의 표를 지운다(#1048). 번호표 행은 공용 데이터라 남긴다. 지운 표 수."""
+    return db.execute(delete(PlaceExternalIdVote).where(PlaceExternalIdVote.voter_hash == voter_hash)).rowcount or 0
+
+
+def find_open_by_ids(db: Session, place_ids: Sequence[str]) -> list[Candidate]:
+    """주어진 id 중 영업 중인 음식점·카페·관광지(번호표가 가리키는 장소, #1048). 읽기 전용."""
+    ids = [u for u in (_uuid_or_none(p) for p in place_ids) if u is not None]
+    if not ids:
+        return []
+    lat, lng = _lat_lng()
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        .where(Place.id.in_(ids), Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES))
+        .order_by(Place.id)
+    ).all()
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
 
 
 def get_places(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceInfo]:

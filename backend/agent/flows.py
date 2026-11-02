@@ -131,14 +131,21 @@ class _Trace:
     def model_recorded(self) -> None:
         self.used_model, self.tool_calls, self.usage = False, [], None
 
+    def model_fields(self) -> dict[str, Any]:
+        """아직 어느 행에도 남지 않은 모델 사용의 칸(used_model, tool_calls, 사용량). 진단을 불렀으면 used_model=true라
+        지도 상한에 센다(12.3) — error 행과 lease를 잃은 stale 행이 함께 쓴다(#1072)."""
+        return {
+            "used_model": self.used_model, "tool_calls": self.tool_calls,
+            **core.model_usage([self.usage] if self.usage is not None else []),
+        }
+
     def error_fields(self, exc: Exception, now: datetime) -> dict[str, Any]:
         """error 행의 칸. outcome_detail은 단계와 예외 클래스 이름뿐이다 — str(예외)에는 사유 글이나 SQL 값이 들어 있을 수
         있다. 모델을 이미 불렀으면 used_model=true와 그때까지의 사용량을 남겨 지도 상한에 센다(12.3)."""
         return {
             "started_at": now, "finished_at": now + timedelta(seconds=time.monotonic() - self.started),
-            "used_model": self.used_model, "tool_calls": self.tool_calls, "outcome": "error",
-            "outcome_detail": {"stage": self.stage, "error": type(exc).__name__},
-            **core.model_usage([self.usage] if self.usage is not None else []),
+            "outcome": "error", "outcome_detail": {"stage": self.stage, "error": type(exc).__name__},
+            **self.model_fields(),
         }
 
 
@@ -302,8 +309,11 @@ def observe_map(
         }
 
     def lease_lost(db: Session, snap: snapshot.Snapshot | None) -> str:
+        """lease를 잃었다 — 결과는 저장하지 않고 stale 행만 남긴다. 진단을 부른 뒤면 그 모델 사용을 이 행에 남겨 지도
+        상한에 센다(12.3, #1072). 진단 전이면 trace가 비어 있어 used_model=false다."""
         db.flush()
-        service.insert_run(db, **run_fields(snap, "stale", outcome_detail={"reason": "lease_lost"}))
+        service.insert_run(db, **run_fields(snap, "stale", outcome_detail={"reason": "lease_lost"},
+                                            **trace.model_fields()))
         log.warning("agent lease 잃음 map_id=%s", map_id)
         return "stale"
 

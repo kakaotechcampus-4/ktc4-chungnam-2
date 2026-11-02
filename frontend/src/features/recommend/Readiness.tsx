@@ -121,7 +121,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
       {search && (
         <Notice action={<ExternalSearchLink search={search} className="btn-outline btn-sm" />}>이 지역은 아직 핑고 추천 장소가 없어요</Notice>
       )}
-      <CreditGate feature="recommend_run" mapId={mapId} error={create.error}>
+      <CreditGate feature="recommend_run" mapId={mapId} error={create.error} onCharged={create.reset}>
         <button
           type="button"
           disabled={!chosen || create.isPending}
@@ -170,7 +170,7 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
       disabled={!card.ready}
       aria-pressed={selected}
       onClick={onPick}
-      className={`rounded-xl border-[1.5px] p-3 text-left ${wide ? 'col-span-2' : ''} ${
+      className={`press rounded-xl border-[1.5px] p-3 text-left ${wide ? 'col-span-2' : ''} ${
         selected ? 'border-brand-600 bg-brand-50' : card.ready ? 'border-[var(--good-line)] bg-white' : 'border-[var(--warn-line)] bg-white'
       }`}
     >

@@ -1,4 +1,4 @@
-"""maps.api.get_map_region_label(#800) — recommend의 카카오맵 검색어가 동네를 못 찾았을 때 읽는 지도의 지역 이름. 읽기만 한다."""
+"""maps.api.get_map_region_label(#800)·get_map_region_center(#1059) — 지도의 여행 지역 이름과 중심 좌표. 읽기만 한다."""
 
 from datetime import date, datetime, timezone
 
@@ -28,3 +28,14 @@ def test_none_without_region_missing_or_deleted_map(db_session):
     assert api.get_map_region_label(db_session, _seed(db_session)) is None
     assert api.get_map_region_label(db_session, "no_such_map") is None
     assert api.get_map_region_label(db_session, _seed(db_session, label="춘천", deleted=True)) is None
+
+
+def test_returns_region_center(db_session):
+    lat, lng = api.get_map_region_center(db_session, _seed(db_session, label="춘천"))
+    assert (round(lat, 6), round(lng, 6)) == (37.88, 127.73)
+
+
+def test_center_none_without_region_missing_or_deleted_map(db_session):
+    assert api.get_map_region_center(db_session, _seed(db_session)) is None
+    assert api.get_map_region_center(db_session, "no_such_map") is None
+    assert api.get_map_region_center(db_session, _seed(db_session, label="춘천", deleted=True)) is None

@@ -193,7 +193,7 @@ function SwipeRow({
               if (e.detail !== 0 && skipClick.current) return
               onOpen()
             }}
-            className="min-w-0 flex-1 select-none text-left"
+            className="press -mx-1.5 min-w-0 flex-1 select-none rounded-md px-1.5 text-left"
           >
             <p className="truncate font-bold text-ink-900">{item.pin.place_name}</p>
             <p className="truncate text-xs text-ink-500">

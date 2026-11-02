@@ -64,3 +64,22 @@ def fix_particle_after(word: str, rest: str) -> str:
     if not m:
         return rest
     return josa(word, _PAIR_OF[m.group(1)]) + rest[m.end(1):]
+
+
+def copula(word: str) -> str:
+    """서술 "이에요/예요"(받침이 있으면 이에요)."""
+    return "이에요" if _final(word)[0] else "예요"
+
+
+def candidate_name(candidate_id: str) -> str:
+    """후보 id(c1, c2 …)를 화면에서 부르는 이름("1번 안"). id는 데이터에 그대로 두고 화면 문장을 만들 때만 바꾼다. 모르는 모양이면 그대로 둔다."""
+    m = re.fullmatch(r"c(\d+)", candidate_id)
+    return f"{m.group(1)}번 안" if m else candidate_id
+
+
+def goals_sentence(kept: list[str], gave: list[str]) -> str:
+    """지킨 목표와 못 지킨 목표(화면 이름 목록)를 두 문장으로. 못 지킨 것이 없으면 두 번째 문장은 뺀다."""
+    def quoted(names: list[str]) -> str:
+        return ", ".join(f"‘{n}’" for n in names) + copula(names[-1])
+    first = f"지킨 목표는 {quoted(kept)}." if kept else "지킨 목표는 없어요."
+    return first + (f" 못 지킨 목표는 {quoted(gave)}." if gave else "")

@@ -47,7 +47,7 @@ class RecommendRun(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
-    default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한 30
+    default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한은 카테고리별(core.radius_walk_mins)
 
 
 class RunSummary(BaseModel):
@@ -159,6 +159,7 @@ FEW_RESULTS = 3
 
 
 class FunnelEntry(BaseModel):
+    key: str | None = None   # FUNNEL_STAGES 키. 표에 없는 옛 라벨은 None(#1146)
     label: str
     removed_count: int
 
