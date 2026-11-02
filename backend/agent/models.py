@@ -146,11 +146,13 @@ class AgentReasonSummary(Base):
 
 
 class AgentRunAdvice(Base):
-    """추천 막힘 조언. run당 1행. silent여도 빈 advice로 저장해 다시 만들지 않는다(명세 9절)."""
+    """추천 막힘 조언. (run, 결과 상태)당 1행(#1103). 넓히기·다시 추천은 같은 run id로 결과를 바꾸므로 결과가 달라지면 새 행이다.
+    silent여도 빈 advice로 저장해 같은 결과로는 다시 만들지 않는다(명세 9절). state_key는 core.advice_state_key."""
 
     __tablename__ = "agent_run_advice"
 
     run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)  # recommend_runs.id, FK 없음
+    state_key: Mapped[str] = mapped_column(String, primary_key=True, default="", server_default="")
     map_id: Mapped[str] = mapped_column(String, nullable=False)
     kind: Mapped[str | None] = mapped_column(String, nullable=True)
     claims: Mapped[list] = mapped_column(JSONB, nullable=False)

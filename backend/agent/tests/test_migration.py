@@ -82,7 +82,8 @@ def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_u
         assert TABLES <= _tables(engine)
         for model in MODELS:
             columns = {c["name"] for c in inspector.get_columns(model.__tablename__)}
-            expected = set(model.__table__.columns.keys()) - ({"lease_token"} if model is AgentCursor else set())
+            later_columns = {AgentCursor: {"lease_token"}, AgentRunAdvice: {"state_key"}}
+            expected = set(model.__table__.columns.keys()) - later_columns.get(model, set())
             assert columns == expected, model.__tablename__   # lease_token은 0047이 더한다(아래)
 
         indexes = {i["name"]: i for i in inspector.get_indexes("agent_suggestions")}
@@ -121,5 +122,35 @@ def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_u
 
         command.upgrade(cfg, REVISION)  # 다시 올려도 깨지지 않는다
         assert TABLES <= _tables(engine)
+    finally:
+        engine.dispose()
+
+
+def test_advice_state_key_migration_preserves_legacy_and_downgrades_latest(mig_url):
+    cfg = _config()
+    command.upgrade(cfg, "0055_place_external_ids")
+    engine = sa.create_engine(mig_url)
+    insert = sa.text(
+        "INSERT INTO agent_run_advice (run_id, map_id, claims, advice, actions, created_at) "
+        "VALUES ('00000000-0000-0000-0000-000000001103', 'm1103', '[]', '[]', '[]', '2026-11-01')"
+    )
+    try:
+        with engine.begin() as conn:
+            conn.execute(insert)
+        command.upgrade(cfg, "head")
+        inspector = sa.inspect(engine)
+        assert inspector.get_pk_constraint("agent_run_advice")["constrained_columns"] == ["run_id", "state_key"]
+        assert {c["name"] for c in inspector.get_columns("agent_run_advice")} == set(AgentRunAdvice.__table__.columns.keys())
+        with engine.begin() as conn:
+            assert conn.execute(sa.text("SELECT state_key FROM agent_run_advice")).scalar_one() == ""
+            conn.execute(sa.text(
+                "INSERT INTO agent_run_advice (run_id, state_key, map_id, kind, claims, advice, actions, created_at) "
+                "VALUES ('00000000-0000-0000-0000-000000001103', 'fresh', 'm1103', 'soft_relax', '[]', '[]', '[]', '2026-11-02')"
+            ))
+        command.downgrade(cfg, "0055_place_external_ids")
+        with engine.connect() as conn:
+            assert conn.execute(sa.text("SELECT kind FROM agent_run_advice")).scalars().all() == ["soft_relax"]
+        assert sa.inspect(engine).get_pk_constraint("agent_run_advice")["constrained_columns"] == ["run_id"]
+        command.upgrade(cfg, "head")
     finally:
         engine.dispose()

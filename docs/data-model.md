@@ -522,9 +522,11 @@ agent_reason_summaries(               -- 우리 조건 요약. 카테고리마�
   primary key(map_id, category)
 )
 
-agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조언이 없어도 빈 값으로 저장해 다시 만들지 않는다
-  run_id primary key,                 -- recommend_runs.id. 모듈 경계라 FK 없음
-  map_id, kind null, claims jsonb, advice jsonb, actions jsonb, agent_run_id null, created_at
+agent_run_advice(                     -- 추천 막힘 조언. 결과 상태당 1행(#1103), 같은 상태의 빈 조언도 유지한다
+  run_id,                            -- recommend_runs.id. 모듈 경계라 FK 없음
+  state_key text not null default '', -- agent.core.advice_state_key. 기존 빈 키는 다음 조회에 재생성
+  map_id, kind null, claims jsonb, advice jsonb, actions jsonb, agent_run_id null, created_at,
+  primary key(run_id, state_key)
 )
 ```
 
