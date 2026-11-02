@@ -58,6 +58,30 @@ def test_foreign_name_lowers_a_license_korean_true_but_chicken_and_bunsik_do_not
         assert cn.adjust_cuisine_labels(name, _license("cuisine_korean"))["cuisine_korean"]["value"] == "true"
 
 
+@pytest.mark.parametrize("name", ["연신내포항물회", "막내회집", "남대문막내횟집", "보길도활어회"])
+def test_korean_raw_fish_names_raise_raw_fish_but_keep_license_korean(name):
+    out = cn.adjust_cuisine_labels(name, _license("cuisine_korean"))
+    assert out["cuisine_raw_fish"]["value"] == "true" and out["cuisine_korean"]["value"] == "true"   # 회는 한국 음식 — 한식을 낮추지 않는다
+    assert out["cuisine_japanese"]["value"] == "unknown"
+
+
+def test_hyojadong_chobap_is_japanese_and_raw_fish_and_not_korean():
+    out = cn.adjust_cuisine_labels("효자동초밥", _license("cuisine_korean"))
+    assert (out["cuisine_japanese"]["value"], out["cuisine_raw_fish"]["value"], out["cuisine_korean"]["value"]) == ("true", "true", "unknown")
+
+
+@pytest.mark.parametrize("name", ["교동짬뽕", "왕짜장", "홍콩반점0410", "중화요리 일품", "마라촌 마라탕", "팜티진쌀국수", "도스타코스", "미스터케밥",
+                                  "메이드인시카고피자", "래빗홀 버거", "이한스시", "카라멘야", "댓짱돈까스", "연신내 이자카야"])
+def test_foreign_words_lower_a_license_korean_true(name):
+    assert cn.adjust_cuisine_labels(name, _license("cuisine_korean"))["cuisine_korean"]["value"] == "unknown"
+
+
+def test_every_foreign_word_is_a_rule_word_and_no_korean_food_word_is_foreign():
+    all_words = {w for words in cn.NAME_RULES.values() for w in words}
+    assert cn.FOREIGN_WORDS <= all_words
+    assert not cn.FOREIGN_WORDS & {"물회", "횟집", "회집", "활어", "김밥", "떡볶이", "치킨"}
+
+
 def test_a_non_license_korean_true_is_left_alone():
     labels = _license("cuisine_korean")
     labels["cuisine_korean"] = {"value": "true", "evidence": "모범음식점", "source": "mobum"}
@@ -133,6 +157,7 @@ def test_dry_run_writes_nothing_and_reports_counts(db_session, capsys):
 def test_apply_downgrades_false_raises_name_true_and_lowers_korean(db_session):
     sushi = _seed(db_session, "1", "갓덴스시")
     tofu = _seed(db_session, "2", "인사동두부마을")
+    cafe = _seed(db_session, "4", "피자 카페", category="카페")   # 카페는 cuisine_* 라벨 행이 있어도 적재와 같이 건드리지 않는다
     no_labels = Place(source="permit", source_id="3", name="피자 카페", category="카페", status="open",
                       geom=func.ST_SetSRID(func.ST_MakePoint(127.0, 37.5), 4326))   # cuisine_* 라벨이 없는 장소는 보지 않는다
     db_session.add(no_labels)
@@ -147,6 +172,9 @@ def test_apply_downgrades_false_raises_name_true_and_lowers_korean(db_session):
     c = _fact(db_session, tofu, "cuisine_chinese")
     assert (c.value, c.confidence, c.evidence, c.label_source) == (None, "unknown", None, None)
     assert db_session.scalar(select(func.count()).select_from(PlaceFact).where(PlaceFact.place_id == no_labels.id)) == 0   # 새 라벨 행을 만들지 않는다
+    for key in KEYS:   # --apply 뒤에도 카페의 라벨은 그대로(업종 유래 거짓도 known 그대로)
+        f = _fact(db_session, cafe, key)
+        assert (f.confidence, f.label_source) == ("known", "license_business_type") and f.value is (key == "cuisine_korean")
 
 
 def test_apply_is_idempotent_and_a_second_run_changes_nothing(db_session, capsys):

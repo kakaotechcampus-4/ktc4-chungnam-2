@@ -4,8 +4,8 @@
     python -m places.scripts.relabel_cuisine_1093 --apply    # 실제로 쓴다
 
 규칙: 업종(license_business_type) 유래 cuisine_* 거짓 → 모름(unknown), 가게 이름 규칙에 걸린 키 → 참(menu_keyword),
-이름이 외국 음식이면 업종 유래 한식 참 → 모름. cuisine_* 라벨 행이 이미 있는 장소(음식점)만 본다(정예 라벨을 가진 장소 — 새 라벨 행을 만들지 않는다).
-**스테이징·운영 DB에는 루트가 사용자 승인을 받은 뒤에만 --apply 한다.** 출력은 건수뿐이고 이름·접속 주소는 쓰지 않는다.
+이름이 외국 음식이면 업종 유래 한식 참 → 모름. 음식점 중 cuisine_* 라벨 행이 이미 있는 장소만 본다(적재 변환과 같은 범위 — 카페·관광지는 그대로, 새 라벨 행도 만들지 않는다).
+**스테이징·운영 DB에는 루트가 사용자 승인을 받은 뒤에만 --apply 한다 — 한적한 시간에, dry-run으로 건수를 확인한 뒤.** 2000행씩 나눠 쓰지만 커밋 전까지 행 잠금이 이어진다(8610곳 로컬 실측 약 45초). 출력은 건수뿐이고 이름·접속 주소는 쓰지 않는다.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from sqlalchemy import bindparam, func, select, update
 from sqlalchemy.orm import Session
 
 from common.database import SessionLocal
-from places import cuisine_names
+from places import cuisine_names, ingest
 from places.models import Place, PlaceFact
 
 BATCH = 2000
@@ -45,7 +45,7 @@ def plan_changes(db: Session) -> tuple[list[Change], int]:
     """(바꿀 라벨 목록, 훑은 음식점 수). 읽기만 한다."""
     rows = db.execute(
         select(PlaceFact, Place.name).join(Place, Place.id == PlaceFact.place_id)
-        .where(PlaceFact.fact_key.like("cuisine\\_%", escape="\\"))
+        .where(Place.category == ingest.RESTAURANT_CATEGORY, PlaceFact.fact_key.like("cuisine\\_%", escape="\\"))   # 적재 변환(rest_ 접두어)과 같은 범위
         .order_by(PlaceFact.place_id)
     ).all()
     by_place: dict = {}

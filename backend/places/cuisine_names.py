@@ -5,7 +5,8 @@
 - **업종 유래 `cuisine_*` 거짓은 모름(unknown)으로 낮춘다.** 이 키들은 모두 soft·`unknown_policy=pass`라 모름은 실격시키지 않는다(가드레일 8).
   업종으로 채운 「참」은 그대로 둔다.
 - **가게 이름 규칙이 걸리면 참으로 올린다**(스시·초밥 → 일식·회, 피자·버거 → 양식 …). 규칙 표는 아래 `NAME_RULES` 한 곳이다.
-- 이름이 외국 음식을 가리키는데 업종 유래 한식이 참이면(피자집이 업종 한식) 그 한식 참도 모름으로 낮춘다 — 「한식 말고」에서 피자집이 실격되지 않게.
+- 이름이 외국 음식 낱말(`FOREIGN_WORDS`)을 가리키는데 업종 유래 한식이 참이면(피자집이 업종 한식) 그 한식 참도 모름으로 낮춘다 — 「한식 말고」에서
+  피자집이 실격되지 않게. 물회·횟집·회집·활어(회는 한국 음식)·분식·치킨은 한식을 낮추지 않는다.
 `docs/constraints.md`의 `fact_key` 목록·`unknown_policy`는 바꾸지 않는다(값은 루트 소관).
 """
 
@@ -29,8 +30,15 @@ NAME_RULES: dict[str, tuple[str, ...]] = {
     "cuisine_foreign": ("쌀국수", "팟타이", "타코", "케밥"),
 }
 
-# 이름이 외국 음식을 가리킨다고 볼 키(업종 유래 한식 참을 낮추는 근거). 분식·치킨은 한국 음식이라 뺀다.
-_FOREIGN_KEYS = frozenset({"cuisine_japanese", "cuisine_raw_fish", "cuisine_western", "cuisine_chinese", "cuisine_foreign"})
+# 이름이 외국 음식을 가리킨다고 볼 **낱말**(업종 유래 한식 참을 낮추는 근거). 키가 아니라 걸린 낱말로 본다 — 물회·횟집·회집·활어는 cuisine_raw_fish를
+# 참으로 올리지만 한국 음식이라 한식을 낮추지 않는다. 분식·치킨도 한국 음식이라 뺀다. 한식 업종에서 흔한 짬뽕·짜장(한국식 중화)도 중식 낱말이라
+# 낮춘다 — 업종 한식 중 이 낱말이 걸리는 수는 PR 본문에 적었다(서울 8610곳 측정).
+FOREIGN_WORDS = frozenset({
+    "스시", "초밥", "라멘", "돈까스", "돈카츠", "이자카야", "텐동", "규동", "사시미",   # 일식
+    "피자", "버거", "스테이크", "파스타",                                          # 양식
+    "짬뽕", "중화요리", "반점", "마라탕", "짜장",                                   # 중식
+    "쌀국수", "팟타이", "타코", "케밥",                                            # 기타 외국
+})
 
 
 def name_hits(name: str) -> dict[str, str]:
@@ -61,7 +69,7 @@ def adjust_cuisine_labels(name: str, labels: Mapping[str, Mapping]) -> dict[str,
     for key, label in out.items():
         if _is_license_false(key, label):
             label.update(value="unknown", evidence="", source="")
-    foreign = _FOREIGN_KEYS & hits.keys()
+    foreign = FOREIGN_WORDS & set(hits.values())
     for key, word in hits.items():
         out[key] = {"value": "true", "evidence": f"가게 이름 '{word}'", "source": NAME_SOURCE}
     korean = out.get(KOREAN)

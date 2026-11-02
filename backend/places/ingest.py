@@ -345,6 +345,9 @@ class LabelRow:
     label_source: str | None = None  # 근거의 종류(license_business_type, 모범음식점 …)
 
 
+RESTAURANT_CATEGORY = "음식점"   # 음식점 납품본의 분류 — 음식 종류(cuisine_*) 라벨은 이 분류의 장소만 갖는다(갱신 스크립트 relabel_cuisine_1093도 이 값으로 가른다)
+
+
 def _parse_bool(raw: str) -> bool | None:
     return {"true": True, "false": False}.get(raw.strip().lower())
 
@@ -477,7 +480,7 @@ BAR_TYPES = frozenset({"정종/대포집/소주방", "감성주점"})
 
 def parse_curated_rows(
     rows: Iterable[Mapping[str, Any]], *, exclude_bars: bool = False, seoul_only: bool = True,
-    category: str = "음식점",
+    category: str = RESTAURANT_CATEGORY,
 ) -> tuple[list[PlaceRow], Report]:
     """업태를 가리지 않고 서울·좌표가 있는 행을 모두 category로 적재한다(업태가 비면 경고)."""
     report = Report()
