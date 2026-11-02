@@ -121,7 +121,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
       {search && (
         <Notice action={<ExternalSearchLink search={search} className="btn-outline btn-sm" />}>이 지역은 아직 핑고 추천 장소가 없어요</Notice>
       )}
-      <CreditGate feature="recommend_run" mapId={mapId} error={create.error}>
+      <CreditGate feature="recommend_run" mapId={mapId} error={create.error} onCharged={create.reset}>
         <button
           type="button"
           disabled={!chosen || create.isPending}

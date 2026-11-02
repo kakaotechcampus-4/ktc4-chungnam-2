@@ -296,6 +296,7 @@ components:
 | 서비스 이름(로고) | `Wordmark` 「pingopingo」 — pin ink-900 + go brand-600(12° 기울임). 높이만 정하고 글자로 다시 쓰지 않는다 | `ui/Wordmark` |
 | 확인 창 | `ConfirmDialog` (`danger`면 마지막 버튼이 빨강) | `ui/ConfirmDialog` |
 | 값을 고치는 창(지도 정보·핀 메모·이름, #480) | `ConfirmDialog` + `children`에 입력칸, 확인 글자는 「저장」. 바뀐 게 없으면 저장을 끈다. 입력칸에서 Enter가 저장이다 | `ui/ConfirmDialog` |
+| 보상형 광고 자리(테스트 광고, #1039) | `TestAdWindow` (전체 화면 · 포커스 가두기 · 바깥을 눌러도 닫히지 않음. 응답의 초만큼 센 뒤 「보상 받고 닫기」(채움), ✕·Esc는 언제나 닫는다 — 다 보기 전이면 보상 없음). 띄우는 것은 `features/credits/rewardedAd`의 제공자다. 광고 버튼은 잔액 부족 `Notice` 안 `btn-outline btn-sm` + 고지 한 줄 | `ui/TestAdWindow` |
 | 지도 제목·지역·날짜 입력(만들기·수정) | `TripFields` | `features/maps/TripFields` |
 | 카카오 로그인 버튼 | `KakaoButton` (노랑 #FEE500, 문구는 `label`로만 바꾼다 — 게스트 전환은 「카카오로 계정 만들기」) | `features/auth/KakaoButton` |
 | 게스트에게 카카오 계정 권하기(계정 줄 아래) | `GuestAccountNotice` (ink-50 면 + 한 줄 + `KakaoButton`). 게스트 표시는 `tag tag-neutral` 「게스트」 | `features/auth/GuestAccountNotice` |

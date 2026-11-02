@@ -20,8 +20,7 @@ SPEC = yaml.safe_load((Path(__file__).resolve().parents[2] / "docs" / "api-spec.
 KEYS = ("maxItems", "minItems", "maxLength", "minLength", "maximum", "minimum")
 
 # (메서드, 경로, 필드.제약) -> 추적 이슈. 비어 가는 것이 정상이다.
-KNOWN_DRIFT: dict[tuple[str, str, str], str] = {
-}
+KNOWN_DRIFT: dict[tuple[str, str, str], str] = {}
 
 
 def _resolve(doc: dict, node):
