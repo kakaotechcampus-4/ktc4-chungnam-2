@@ -182,8 +182,8 @@ class TestAsk:
         call = turn(tool="ask_requester", kind="pick_course", options=["c2", "c1"]).action
         ds, result = direct.execute(call, ds, TRUE_HOURS)
         q = ds.questions[0]
-        assert result.ok and q.default == "c2" and q.text.startswith("A: ") and " / B: " in q.text and q.text.endswith("어느 쪽?")
-        assert "하루 최대" in q.text and ds.preferred == "c2"
+        assert result.ok and q.default == "c2" and q.text.startswith("2번 안은 ") and " 1번 안은 " in q.text and q.text.endswith("어느 쪽이 좋을까요?")
+        assert "하루 걷는 시간은 길어야" in q.text and ds.preferred == "c2"
         assert result.data["default"] == "c2"
 
     def test_unanswered_default_is_used_when_the_model_never_finishes(self):
@@ -337,20 +337,20 @@ class TestCheckGoals:
         tr, h = self.labeled([("p1", "관광지", ())])
         assert self.check(tr, h, Goal("daily_walk_low"))["feasible"] is True
         none = self.check(*self.labeled([("p1", "관광지", ("quiet",))]), Goal("night_end", "d1"))
-        assert G.check_sentence(tr, none, Goal("night_end", "d1")).endswith("야경 명소가 이 리스트에 없어요")
+        assert G.check_sentence(tr, none, Goal("night_end", "d1")).endswith("야경 명소가 이 리스트에 없어요.")
 
     def test_day_has_without_and_with_a_tagged_place(self):
         goal = Goal("day_has", "d2", (), "performance")
         tr, h = self.labeled([("p1", "관광지", ("quiet",)), ("p2", "카페", ("quiet",))])
         none = self.check(tr, h, goal)
         assert none["feasible"] is False and none["reasons"] == [G.NO_TAGGED_PLACE] and none["facts"]["tagged_places"] == 0
-        assert G.check_sentence(tr, none, goal) == "둘째 날 (화)에 공연 장소 넣기: 확정 리스트에 공연 장소가 없어요"
+        assert G.check_sentence(tr, none, goal) == "‘둘째 날 (화)에 공연 장소 넣기’ 목표는 어려워 보여요. 확정 리스트에 공연 장소가 없어요."
         tr2, _ = self.labeled([("p1", "관광지", ("performance",)), ("p2", "카페", ("quiet",))])
         assert self.check(tr2, {"p1": ALL_OPEN}, goal)["feasible"] is True
         closed = {"p1": {TUE.weekday(): "closed"}}
         res = self.check(tr2, closed, goal)
         assert res["feasible"] is False and res["reasons"] == [G.TAGGED_PLACE_CLOSED_ON_DAY]
-        assert G.check_sentence(tr2, res, goal).endswith("공연 장소가 그날 모두 쉬어요")
+        assert G.check_sentence(tr2, res, goal).endswith("공연 장소가 그날 모두 쉬어요.")
         unknown = self.check(*self.labeled([("p1", "관광지", ())]), goal)
         assert unknown["feasible"] is None and unknown["reasons"] == [G.LABELS_UNKNOWN]
 
@@ -378,5 +378,14 @@ class TestWorklog:
         assert "재계획" in stages and "질문" in stages and closing[-2:] == ["끝", "결과"]
         assert lines[0].startswith("[이해] 해석(모델)") and "「웨이팅 없는 곳」은 그대로는 판단할 수 없어요" in lines[0]
         ask = next(l for l in lines if l.startswith("[질문]"))
-        assert "코드가 열음" in ask and "A: " in ask and "기본값" in ask
+        assert "코드가 열음" in ask and "1번 안은 " in ask and "‘1번 안’" in ask and "이어 가요" in ask
         assert all("(" in l and ")" in l for l in lines)                            # 단계마다 누가
+        # 코드가 만든 문장은 라벨과 값을 점으로 잇지 않고, 영문 글자(enum, 후보 id)를 그대로 내지 않는다(멘토 리뷰 #816)
+        import re
+        made = [r.text for r in worklog.records(st.trip, goals, ["웨이팅 없는 곳"], result) if "코드" in r.who or r.stage in ("확인", "결과", "질문", "답")]
+        assert len(made) >= 6
+        for text in made:
+            bare = re.sub(r"「[^」]*」|장소P\d이름", "", text)
+            assert " · " not in text and "·" not in bare, text
+            assert not re.search(r"[A-Za-z]", bare), text
+        assert any("1번 안을 짰어요." in t for t in made) and not any(re.search(r"\bc\d\b", t) for t in made)
