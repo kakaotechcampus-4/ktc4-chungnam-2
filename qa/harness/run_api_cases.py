@@ -1139,9 +1139,21 @@ def s01():
     if not _sse_ready(s3, "S01.bad_id", dl):
         s3.close(); return
     p4 = add_pin(a, mid, 3).json()["id"]
-    x = _sse_event(s3, dl); s3.close()
-    check("S01.bad_id", isinstance(x, dict) and x.get("event") == "pin.created" and json.loads(x["data"]).get("id") == p4,
-          "숫자가 아닌 Last-Event-ID는 무시 — 지금부터 새 핀만 받음", f"받은 것 {x}")
+    # 폴러가 구멍을 기다리며 앞 이벤트(2792·2793)를 늦게 내보낼 수 있다 — 그건 재전송이 아니라서 새 핀이 올 때까지 읽고,
+    # 기록한 id 이하(처음부터 재전송하면 오는 것)가 오지 않았는지 본다. ponytail: 직전 두 핀만 다시 보내는 서버는 못 거른다
+    seen = []
+    while True:
+        x = _sse_event(s3, dl)
+        if not isinstance(x, dict):
+            break
+        seen.append(x)
+        if x.get("event") == "pin.created" and json.loads(x["data"]).get("id") == p4:
+            break
+    s3.close()
+    old = [x.get("id") for x in seen if x.get("id", "").isdigit() and int(x["id"]) <= int(last)]
+    got4 = bool(seen) and seen[-1].get("event") == "pin.created" and json.loads(seen[-1]["data"]).get("id") == p4
+    check("S01.bad_id", got4 and not old, f"숫자가 아닌 Last-Event-ID는 무시 — 기록한 id {last} 이하 재전송 없이 새 핀을 받음",
+          f"새 핀 받음 {got4}, 기록한 id 이하로 온 것 {old}, 받은 것 {[x.get('id') for x in seen]}")
 
 
 def s02():
@@ -1168,7 +1180,9 @@ def s02():
     check("S02.leave_closed", r.status_code == 204 and end == "eof", f"나간 사람의 구독이 닫힘(받은 이벤트 {[e.get('event') for e in evs]})",
           f"나가기 {r.status_code}, 끝 모양 {end}(None=닫히지 않음), 이벤트 {[e.get('event') for e in evs]}")
     e = _sse_event(sa, dl)
-    left = isinstance(e, dict) and e.get("event") == "member.left" and json.loads(e["data"]).get("user_id") == buid
+    while isinstance(e, dict) and e.get("event") != "member.left":   # 초대 수락의 member.joined가 늦게 올 수 있다
+        e = _sse_event(sa, dl)
+    left = isinstance(e, dict) and json.loads(e["data"]).get("user_id") == buid
     after = sa.get(dl, 2)   # 남은 구성원의 구독은 열려 있다 — 2초 동안 닫힘(eof/err)이 없어야 한다
     check("S02.leave_others_stay", left and (after is None or after[0] == "ev"), "남은 구성원은 member.left를 받고 구독이 그대로", f"받은 것 {e}, 이어서 {after}")
     sa.close()
