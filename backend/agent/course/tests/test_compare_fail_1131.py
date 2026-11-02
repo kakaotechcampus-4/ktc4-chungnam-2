@@ -142,3 +142,34 @@ class TestFailures:
     def test_success_has_no_takeover_line(self):
         out = run_course(build(), TEXT, goals_planner=goals_planner, direct_planner=None, gateway=NullOpeningHours())
         assert not any(s["stage"] == "대행" for s in out.view.steps)
+
+
+class TestSameCourse:
+    """#1140 검수: 고른 안과 코스가 같은 후보는 비교 줄에 한 번만 나오고, 결정 이유에 그 후보 절이 없다."""
+
+    def run_with(self, monkeypatch, cands, finish):
+        st = state([P1_D3])
+        monkeypatch.setattr(direct.opt, "optimize", lambda s, **kw: (s, cands))
+        result = direct.run_direct(st, decide=scripted({"tool": "optimize", "priority": [], "locks": []},
+                                                       {"tool": "finish", "candidate_id": finish}), hours=TRUE_HOURS)
+        return st, result, lines(st, [P1_D3], result)
+
+    def test_a_duplicate_of_the_chosen_course_is_shown_once(self, monkeypatch):
+        _, real = O.optimize(state([P1_D3]), priority=[], gateway=TRUE_HOURS)
+        goal_course, balanced_course = real[0].course, real[1].course
+        cands = (O.Candidate("c1", goal_course, (), ()), O.Candidate("c2", balanced_course, (), (), balanced=True),
+                 O.Candidate("c3", goal_course, (), ()))
+        _, result, out = self.run_with(monkeypatch, cands, "c3")
+        data = next(s for s in result.steps if s.call.get("tool") == "finish").result.data
+        assert [r["candidate_id"] for r in data["compare"]] == ["c2", "c3"] and data["distinct"] == 2 and data["code_best"] == "c3"
+        compare = [l for l in out if l.startswith("[비교]")]
+        assert len(compare) == 2 and not any("1번 안" in l for l in compare)
+        end = next(l for l in out if l.startswith("[끝]"))
+        assert "1번 안" not in end and end.endswith("2번 안은 ‘장소P1이름을 셋째 날 (수)에’ 목표를 못 지켜서 3번 안으로 정했어요.")
+
+    def test_all_the_same_course_is_the_no_other_shape_line(self, monkeypatch):
+        course = O.optimize(state([P1_D3]), priority=[], gateway=TRUE_HOURS)[1][0].course
+        cands = (O.Candidate("c1", course, (), ()), O.Candidate("c2", course, (), ()))
+        _, _, out = self.run_with(monkeypatch, cands, "c2")
+        assert [l for l in out if l.startswith("[비교]")] == ["[비교] 검증(코드) 다른 짜임을 찾지 못했어요. 이 장소들로는 코스가 하나로 모여요."]
+        assert any(l.startswith("[끝]") and l.endswith("2번 안으로 정했어요.") for l in out)

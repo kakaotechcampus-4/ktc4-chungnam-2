@@ -329,20 +329,25 @@ def resolve_next(ds: DirectState, gateway: OpeningHoursGateway) -> Optional[Reso
         return resolve_split(ds, split, gateway)
     return None
 
-def _comparison(state: State, candidates: tuple[Candidate, ...]) -> dict[str, Any]:
+def _comparison(state: State, candidates: tuple[Candidate, ...], chosen_id: str) -> dict[str, Any]:
     """끝낼 때 견준 후보들(#1131 C안). 목표가 없으면 비교하지 않는다(모델 0회 경로). 별칭과 숫자만 — 작업 기록이 문장으로 만든다.
-    distinct는 코스가 서로 다른 후보 수, code_best는 코드 규칙으로 가장 나은 후보."""
+    코스가 같은 후보는 한 행만 남긴다(고른 후보와 같으면 고른 후보를, 아니면 먼저 만든 후보를) — 없는 차이를 쓰지 않는다.
+    distinct는 코스가 서로 다른 후보 수(남은 행 수와 같다), code_best는 코드 규칙으로 가장 나은 후보."""
     if not state.goals:
         return {}
-    rows = []
+    chosen = next(c for c in candidates if c.candidate_id == chosen_id)
+    kept: dict[core.Course, Candidate] = {chosen.course: chosen}
     for c in candidates:
+        kept.setdefault(c.course, c)
+    rows = []
+    for c in sorted(kept.values(), key=lambda c: candidates.index(c)):
         results = goals_mod.evaluate_all(state.trip, c.course, state.goals)
         walk = _walk(state.trip, c.course)
         rows.append({"candidate_id": c.candidate_id, "kept": [r.goal.id for r in results if r.met is True],
                      "total": len(results), "confirmed": core.hard_score(c.violations)[0], "walk_day_max": walk["day_max"],
                      "transit_legs": walk["transit_legs"], "focus": c.focus, "balanced": c.balanced})
     return {"compare": rows, "distinct": len({c.course for c in candidates}),
-            "code_best": best_candidate(state, candidates).candidate_id}
+            "code_best": kept[best_candidate(state, candidates).course].candidate_id}      # 남긴 행의 id로(같은 코스면 같은 안이다)
 
 
 def execute(call, ds: DirectState, gateway: OpeningHoursGateway, by: str = "model") -> tuple[DirectState, ToolResult]:
@@ -382,7 +387,7 @@ def execute(call, ds: DirectState, gateway: OpeningHoursGateway, by: str = "mode
         least = min(core.hard_score(c.violations)[0] for c in ds.candidates)
         if core.hard_score(chosen.violations)[0] > least:
             return ds, _fail(tool, "WORSENS_HARD", "확정 위반이 더 적은 후보가 있다 — 그 후보를 고른다")
-        return ds, ToolResult(tool, ok=True, data={"candidate_id": chosen.candidate_id, **_comparison(state, ds.candidates)})
+        return ds, ToolResult(tool, ok=True, data={"candidate_id": chosen.candidate_id, **_comparison(state, ds.candidates, chosen.candidate_id)})
     raise TypeError(f"실행할 수 없는 도구 {type(call).__name__}")
 
 
