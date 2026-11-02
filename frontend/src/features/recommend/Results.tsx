@@ -10,9 +10,9 @@ import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
 import Notice from '@/ui/Notice'
 import SheetTitle from '@/ui/SheetTitle'
+import ExternalSearchLink from '@/ui/ExternalSearchLink'
 
 import { useAiStore } from './aiStore'
-import ExternalSearchLink from './ExternalSearchLink'
 import { AiChecks, AiFulfillment, AiReason } from './Evidence'
 import {
   missingWants,

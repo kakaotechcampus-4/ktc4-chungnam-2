@@ -10,12 +10,13 @@ import { usePinSelection } from '@/features/map/usePinSelection'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import EmptyState from '@/ui/EmptyState'
+import ExternalSearchLink from '@/ui/ExternalSearchLink'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 
 import { livePinRequest, searchPinRequest, toSearchResult, type SearchResultView } from './model'
-import { searchErrorMessage, useSourcePlacesQuery } from './queries'
+import { searchErrorMessage, useExternalSearchQuery, useSourcePlacesQuery } from './queries'
 import { useSearchStore } from './searchStore'
 
 /**
@@ -158,19 +159,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
       </EmptyState>
     )
   }
-  if (results.length === 0) {
-    return (
-      // 다음 행동을 하나 둔다 — 검색어를 지우고 바로 다시 입력하게(#351).
-      <EmptyState mood="sorry"
-        title="찾는 장소가 없어요"
-        action={
-          <SearchAgainButton onClose={close} label="검색어 지우고 다시 찾기" />
-        }
-      >
-        이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요
-      </EmptyState>
-    )
-  }
+  if (results.length === 0) return <NoResults query={query} onClose={close} />
 
   if (selected) {
     return (
@@ -230,6 +219,32 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
 }
 
 /** 검색창을 비우고 다시 입력하게 한다(#351). */
+/**
+ * 이름 검색 0곳. 다음 행동은 검색어를 지우고 바로 다시 입력하기(#351)이고,
+ * 그 아래 친 검색어 그대로 카카오맵에서 찾는 출구를 둔다(#905, 새 창). 링크를 못 받으면 출구만 숨긴다.
+ */
+function NoResults({ query, onClose }: { query: string | null; onClose: () => void }) {
+  return (
+    <EmptyState
+      mood="sorry"
+      title="찾는 장소가 없어요"
+      action={
+        <div className="flex flex-col items-center gap-2">
+          <SearchAgainButton onClose={onClose} label="검색어 지우고 다시 찾기" />
+          {query && <KakaoMapExit query={query} />}
+        </div>
+      }
+    >
+      이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요
+    </EmptyState>
+  )
+}
+
+function KakaoMapExit({ query }: { query: string }) {
+  const { data } = useExternalSearchQuery(query)
+  return data ? <ExternalSearchLink search={data} className="btn-link text-sm" /> : null
+}
+
 function SearchAgainButton({ onClose, label }: { onClose: () => void; label: string }) {
   return (
     <button
