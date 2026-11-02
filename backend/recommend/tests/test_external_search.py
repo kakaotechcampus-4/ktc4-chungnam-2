@@ -199,7 +199,7 @@ def test_no_results_detail_carries_funnel_and_search_link(db_session):
 
     assert exc_info.value.code == "NO_RESULTS"
     assert exc_info.value.detail == {
-        "funnel": [{"label": "반경 밖 제거", "removed_count": 2}],
+        "funnel": [{"key": "radius", "label": "반경 밖 제거", "removed_count": 2}],
         "external_search": _search(f"춘천 {CATEGORY_WORD}"),
     }
 
@@ -242,3 +242,22 @@ def test_place_search_gateways_expose_places_and_curated_count():
     circle = Circle(anchor_lat=37.5, anchor_lng=127.0, radius_m=2400)
     assert dev.count_curated(category=CATEGORY, circles=[circle]) == len(dev.search_nearby(category=CATEGORY, circles=[circle]))
     assert dev.get_places([str(uuid.uuid4())]) == {}
+
+
+def test_result_and_no_results_funnel_entries_carry_stage_key_and_null_for_old_labels(db_session):
+    """#1146 — 결과 200과 0곳 404 모두 깔때기 항목에 FUNNEL_STAGES 키가 붙고, 표에 없는 옛 라벨은 null이다."""
+    run, _rows = _done_run(db_session, candidates=1)
+    run.last_funnel = [{"label": label, "removed_count": 1} for _key, label in core.FUNNEL_STAGES] + [
+        {"label": "옛 라벨", "removed_count": 0}
+    ]
+    expected = [key for key, _label in core.FUNNEL_STAGES] + [None]
+
+    result = flows.get_result(db_session, run_id=str(run.id), principal=AUTHOR, place_search=_Places())
+    assert [e.key for e in result.funnel] == expected
+
+    for row in _rows:
+        db_session.delete(row)
+    db_session.flush()
+    with pytest.raises(AppError) as exc_info:
+        flows.get_result(db_session, run_id=str(run.id), principal=AUTHOR, place_search=_Places())
+    assert [e["key"] for e in exc_info.value.detail["funnel"]] == expected

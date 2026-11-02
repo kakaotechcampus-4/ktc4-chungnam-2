@@ -485,14 +485,14 @@ agent_cursors(                        -- 관찰 흐름만 쓴다. 지도별 책�
 
 agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 끝나도 남긴다. 30일 보존
   id uuid, map_id, started_at, finished_at null,
-  trigger('activity'|'time'|'summary'|'run_advice'),
+  trigger('activity'|'time'|'summary'|'run_advice'|'status'),   -- status: 지도 현황 문단(#1152, agent-v2 8.2)
   snapshot_at null, snapshot_seq null,
   signals jsonb, blocked jsonb, priority jsonb null,
   policy_version null, prompt_version null, model null, used_model boolean,
   tool_calls jsonb,                   -- 도구 입력과 결과. 사유 글은 reaction_id와 글자 수로 바꿔 남긴다
   verification jsonb null, tokens_in, tokens_out,
   outcome('no_signal'|'blocked'|'silent'|'unknown'|'invalid_schema'|'invalid_claims'|'model_failed'|'stale'
-          |'suggested'|'summarized'|'advised'|'trip_ended'|'map_deleted'|'error'),   -- error: 예외로 끝남(#677)
+          |'suggested'|'summarized'|'advised'|'status_updated'|'trip_ended'|'map_deleted'|'error'),   -- error: 예외로 끝남(#677). status_updated: 현황 문단 저장(#1152)
   outcome_detail jsonb null
 )
   index(map_id, started_at)
@@ -506,7 +506,8 @@ agent_suggestions(                    -- 바텀시트의 지도 제안
   shadow boolean default false,       -- true면 저장만 하고 화면과 이벤트에 내지 않는다
   created_at, expires_at,             -- 24시간
   resolved_by null,                   -- 기록만. 화면과 이벤트에 싣지 않는다
-  resolved_at null, resolved_action jsonb null, decided_within_24h boolean null
+  resolved_at null, resolved_action jsonb null, decided_within_24h boolean null,
+  facts jsonb default '[]'             -- 우리 데이터 확인(#1152, agent-v2 6.6). [{pin_id, fact_key}]만, 값은 응답 때 places에서 다시 읽는다
 )
   unique(map_id) where status = 'active'   -- 지도당 활성 제안 하나
   index(map_id, fingerprint)
@@ -520,6 +521,14 @@ agent_reason_summaries(               -- 우리 조건 요약. 카테고리마�
   map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸(키, 개수, 문구 종류)과 근거 reaction_id. 사유 원문 없음
   based_on_reaction_count, run_id null, updated_at,
   primary key(map_id, category)
+)
+
+agent_map_status(                     -- 지도 현황 문단(#1152, agent-v2 8.2). 지도마다 최신본 하나를 덮어쓴다
+  map_id primary key, cells jsonb,     -- 코드가 계산한 칸(사실만)
+  cells_hash,                          -- 같으면 다시 만들지 않는다
+  states jsonb,                        -- 모델이 고른 카테고리별 상태
+  paragraph,                           -- 검증을 통과한 문단. 사유 원문·이름·장소 이름 없음
+  run_id null, updated_at
 )
 
 agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조언이 없어도 빈 값으로 저장해 다시 만들지 않는다
