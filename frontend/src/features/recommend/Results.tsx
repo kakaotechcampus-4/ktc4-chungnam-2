@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ExternalLink, MessageSquare, RotateCw, Users } from 'lucide-react'
+import { ExternalLink, RotateCw } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import RunAdvice from '@/features/agent/RunAdvice'
@@ -13,35 +13,18 @@ import SheetTitle from '@/ui/SheetTitle'
 
 import { useAiStore } from './aiStore'
 import ExternalSearchLink from './ExternalSearchLink'
+import { AiChecks, AiFulfillment, AiReason } from './Evidence'
 import {
-  fulfillmentLine,
-  memberConditions,
   missingWants,
   noResultsExternalSearch,
   noResultsFunnel,
-  toChecks,
   type CandidateDto,
-  type CheckView,
   type FunnelRow,
   type RecommendResultDto,
   type RecommendRunDto,
 } from './model'
 import { useEvidencePatching, useEvidenceQuery, useExecuteRunMutation, usePublishMutation, useRetryMutation, useWidenMutation } from './queries'
 import { AiHeader } from './Readiness'
-
-const TONE = { pass: 'tag-good', check: 'tag-warn', fail: 'tag-bad' } as const
-const MARK = { pass: '✓', check: '?', fail: '✗' } as const
-
-const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이버지도', google: '구글맵', permit: '인허가 공공데이터', tourapi: '한국관광공사' }
-
-/**
- * 출처는 항상 붙는다(가드레일 5). 장소는 자체 DB에서만 오므로(#53) 제공처를 모르면 「확인 안 됨」 대신 그 사실을 적는다.
- * 모르는 제공처 코드가 오면 코드를 그대로 보인다 — 지어내지 않는다(#406).
- */
-function sourceLabel(c: CandidateDto): string {
-  const p = c.place_source?.provider
-  return (p && PROVIDER[p]) ?? p ?? '핑고 장소 DB'
-}
 
 /** 시트 안 이전 화면(Figma '‹ AI 추천'). 결과에서 빠져나와 준비 판정으로 돌아간다. 넓은 화면은 패널 헤더 ‹ 다. */
 export function BackToReadiness({ mapId }: { mapId: string }) {
@@ -73,7 +56,7 @@ export function ResultsHeader({ mapId, run, count }: { mapId: string; run: Recom
           type="button"
           disabled={!!busy}
           onClick={() => retry.mutate(run)}
-          className="shrink-0 text-right text-xs font-bold text-brand-600 disabled:opacity-50"
+          className="press shrink-0 rounded-md text-right text-xs font-bold text-brand-600 disabled:opacity-50"
         >
           <span className="flex items-center gap-1">
             <RotateCw size={12} aria-hidden="true" /> 다시 추천
@@ -124,7 +107,7 @@ export function ResultsBody({
   return (
     <div className={`space-y-3 ${enter ? 'enter-fade' : ''}`}>
       {conditions}
-      <button type="button" onClick={onHow} className="flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
+      <button type="button" onClick={onHow} className="press flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
         <span>
           조건으로 {removed}곳 걸러냄 → 추천 {result.candidates.length}곳
         </span>
@@ -191,7 +174,7 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
       onClick={(e) => {
         if (!(e.target as HTMLElement).closest('a, button')) focus()
       }}
-      className={`cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-brand-50 p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
+      className={`press cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-brand-50 p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
     >
       <header className="flex items-center gap-2">
         <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
@@ -211,14 +194,9 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
         {c.region_label && <span className="tag border border-brand-300 bg-white text-brand-700">{c.region_label} 기준</span>}
       </header>
       <p className="text-xs text-ink-600">{run.category}</p>
-      <Reason text={c.reason} />
-      <Checks c={c} />
-      <p className="flex items-center gap-1.5 text-xs font-bold text-brand-700">
-        <Users size={14} aria-hidden="true" /> {c.member_fulfillment.total}명 중 {c.member_fulfillment.satisfied}명 조건 충족
-        <span className="ml-auto font-normal text-ink-600">출처 · {sourceLabel(c)}</span>
-      </p>
-      <p className="text-xs text-ink-600">{fulfillmentLine(c, members)}</p>
-      <MemberConditions c={c} members={members} />
+      <AiReason text={c.reason} />
+      <AiChecks evidence={c} />
+      <AiFulfillment evidence={c} members={members} />
       <div className="flex items-center justify-between">
         <PublishButton mapId={mapId} run={run} c={c} />
         {/* 사진·주소·영업시간은 카카오맵에서 본다 — 앱 안 WebView 금지(카카오 약관), 새 창으로.
@@ -230,60 +208,6 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
         )}
       </div>
     </article>
-  )
-}
-
-function Reason({ text }: { text: string }) {
-  return (
-    <p className="flex gap-2 rounded-xl border border-brand-300 bg-white p-2.5 text-body text-ink-900">
-      <MessageSquare size={14} className="mt-0.5 shrink-0 text-ink-500" aria-hidden="true" />
-      {text}
-    </p>
-  )
-}
-
-function Checks({ c }: { c: CandidateDto }) {
-  return <CheckTags checks={toChecks(c)} />
-}
-
-function CheckTags({ checks }: { checks: CheckView[] }) {
-  return (
-    <ul className="flex flex-wrap gap-1.5">
-      {checks.map((k) => (
-        <li key={k.label} className={`tag ${TONE[k.tone]}`}>
-          {MARK[k.tone]} {k.label}
-          {/* 라벨에 이미 「확인」이 들어 있으면 겹쳐 쓰지 않는다(「가격대 확인 필요 (확인 필요)」, #406). */}
-          {k.tone === 'check' && !k.label.includes('확인') && ' (확인 필요)'}
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-/**
- * 구성원마다 조건별 ✓·✗·확인 필요(#796). 구성원 수 × 조건 수만큼 태그가 늘어 카드가 길어지므로
- * 위 한 줄(「A 조건 2/3 충족」)만 늘 보이고 조건별 태그는 펼쳐서 본다. 구버전 서버(conditions 없음)면 아무것도 없다.
- */
-function MemberConditions({ c, members }: { c: CandidateDto; members: MemberView[] }) {
-  const [open, setOpen] = useState(false)
-  const rows = memberConditions(c, members)
-  if (!rows.length) return null
-  return (
-    <div className="space-y-2">
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="btn-link text-xs">
-        {open ? '구성원별 조건 접기' : '구성원별 조건 보기'}
-      </button>
-      {open && (
-        <ul className="space-y-2" aria-label="구성원별 조건">
-          {rows.map((m) => (
-            <li key={m.userId} className="space-y-1">
-              <p className="text-xs font-semibold text-ink-900">{m.name}</p>
-              <CheckTags checks={m.checks} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
   )
 }
 

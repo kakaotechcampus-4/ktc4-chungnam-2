@@ -47,7 +47,7 @@ export default function ConditionsCard({
         type="button"
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
-        className="flex w-full items-start gap-2 p-3 text-left"
+        className="press flex w-full items-start gap-2 rounded-xl p-3 text-left"
       >
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-bold text-ink-900">

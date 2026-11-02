@@ -28,6 +28,7 @@ from llm import api as llm_api
 from maps import api as maps_api
 from notifications import api as notifications_api
 from pins import api as pins_api
+from places import api as places_api
 from recommend import api as recommend_api
 from reviews import api as reviews_api
 from shortlist import api as shortlist_api
@@ -318,12 +319,15 @@ def purge_withdrawn_user(db: Session, *, user_id: str) -> None:
     guest_invite_token 비움. users 행은 남긴다(다른 모듈의 created_by가 이 id를 가리킨다). 멱등이다.
     다른 모듈에 복사된 이름의 비식별화는 따로 부른다(데이터 모델 「탈퇴 후 7일 정리 대상」). 커밋하지 않는다.
     남의 알림에 복사된 이 사람의 이름도 여기서 「탈퇴한 구성원」으로 다시 만든다(notifications.api.anonymize_actor, #857).
+    외부 장소 번호표에 남긴 그 사람의 확인 표도 여기서 지운다(places.api.purge_external_id_votes, #1062).
     크레딧 계정·원장도 여기서 지운다 — 탈퇴 때 지우면 되살린 계정이 처음 지급량으로 다시 시작한다(#948,
     docs/credits-reviews.md 6절). 「새 계정으로 시작」(restart_account)도 이 함수를 거친다."""
     withdrawn = select(User.id).where(User.id == user_id, User.deleted_at.is_not(None))   # 살아 있는 계정은 건드리지 않는다
     if db.execute(withdrawn).first() is not None:
         credits_api.delete_by_user(db, user_id=user_id)
         notifications_api.anonymize_actor(db, user_id=user_id)   # 남의 알림에 복사된 행위자 이름(#857)
+        # 외부 장소 번호표 확인 표(#1062) — 복구 기간에는 남기고 여기서만 지운다. 공용 번호표 행은 남는다. 해시는 로그에 남기지 않는다
+        places_api.purge_external_id_votes(places_api.voter_hash(user_id), db=db)
     db.execute(delete(UserIdentity).where(UserIdentity.user_id.in_(withdrawn)))
     db.execute(
         update(User).where(User.id.in_(withdrawn)).values(
