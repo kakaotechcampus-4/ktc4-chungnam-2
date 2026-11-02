@@ -4,6 +4,7 @@ core.thought_problem은 문장의 *모양*(슬롯 밖 숫자 금지, 금지 표�
   - 확정 위반이 없다/해결됐다/남았다(종류별: 휴무, 도보), 영업 확인이 끝났다/남았다
   - 요청 목표를 지켰다/못 지켰다(목표별: 야경, 실내, 걷기, 여유, 장소·날짜, 같은 날)
   - 어떤 장소가 어느 날에 쉬어요/열어요/가능해요
+  - 어떤 장소의 어느 날 영업 여부(「{p4}의 {d2} 영업 여부」) — 그 장소가 그 코스의 그날에 있는지(#1128)
   - 숫자 낱말(두 곳, 삼십 분 …)이 코드의 값에 없는 경우 — 숫자 글자는 이미 thought_problem이 막는다
 코드가 확인할 수 있는 주장이 틀리면 막는다. 코드가 확인할 수 없는 말(이유, 계획, 감상)은 그대로 둔다 — 보수적으로, 확실히 틀린 것만 막는다.
 막히면 모델을 다시 부르지 않고 코드 사실만으로 만든 문장(fact_sentence)으로 바꾼다. 문장 검사는 별칭 슬롯({p4}, {d2})이 든 원문에 한다.
@@ -27,6 +28,7 @@ _NO = r"없(?!는지|을지|을까|나\b|도록|게|으려|으면|다면|애|앨
 ZERO_RE = re.compile(_NO + r"|해결(?:됐|되었|돼|했|된)|해소(?:됐|되었|돼|했|된)|풀렸|풀린|사라졌|사라진|고쳤|고친|없앴|없앤")
 REMAIN_RE = re.compile(r"남아|남았|남은|있어|있는|있다|있네")
 CONDITIONAL_RE = re.compile(r"으면|다면|도록|려고|려면|지 않")
+PLAN_RE = re.compile(r"면(?=\s|$)|려고|려면|도록")      # 「{p4}를 {d2}로 옮기면」 — 아직 결과가 아닌 계획
 CLOSED_RE = re.compile(r"쉬|휴무|휴관|닫|영업하지 않|열지 않|안 열")
 OPEN_RE = re.compile(r"열(?!지)|영업(?!\s?(?:확인|여부))|운영")
 NEGATED_RE = re.compile(r"^.{0,4}(?:지 않|지 못|않|못)")
@@ -105,6 +107,7 @@ def problems(ref: Reference, text: str) -> list[str]:
             continue
         out += _violation_claims(ref, clause)
         out += _check_claims(ref, clause)
+        out += _check_day_claims(ref, clause)
         out += _goal_claims(ref, clause)
         out += _closed_day_claims(ref, text, clause)
     out += _number_claims(ref, text)
@@ -152,6 +155,25 @@ def _check_claims(ref: Reference, clause: str) -> list[str]:
     if not CHECK_DONE_RE.search(clause) and CHECK_LEFT_RE.search(clause) and not CONDITIONAL_RE.search(clause) and not unsure:
         return ["영업 확인이 남았다고 썼지만 확인이 필요한 곳이 없어요"]
     return []
+
+
+def _check_day_claims(ref: Reference, clause: str) -> list[str]:
+    """영업 확인 문장이 장소와 날짜를 함께 말하면(「{p4}의 {d2} 영업 여부가 확인되지 않아」) 그 장소가 그 코스의 그날에 있어야 한다.
+    장소마다 절 안에서 가장 가까운 날짜 슬롯과 짝짓는다. 날짜 슬롯이 없으면 볼 것이 없다."""
+    if not CHECK_TOPIC_RE.search(clause) or PLAN_RE.search(clause):
+        return []
+    slots = [(m.start(), m.group(1)) for m in SLOT.finditer(clause)]
+    days = [(pos, s) for pos, s in slots if s.startswith("d") and core.day_index(ref.trip, s) is not None]
+    out = []
+    for pos, place in slots:
+        if not days or not place.startswith("p") or not ref.trip.has_place(place):
+            continue
+        day = min(days, key=lambda d: abs(d[0] - pos))[1]
+        actual = ref.day_of(place)
+        if actual is not None and actual != day:
+            out.append(f"{ref.trip.place(place).name}의 {core.day_label(ref.trip, day)} 영업 여부를 말했지만 "
+                       f"결과에서는 {core.day_label(ref.trip, actual)}에 있어요")
+    return out
 
 
 def _goal_claims(ref: Reference, clause: str) -> list[str]:
