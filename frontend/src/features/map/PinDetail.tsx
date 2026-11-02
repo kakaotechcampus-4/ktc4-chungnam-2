@@ -485,8 +485,8 @@ function MyOpinion({
               role="radio"
               aria-checked={on}
               onClick={() => setType(t)}
-              className="flex flex-col items-center gap-0.5 rounded-xl border py-2"
-              style={on ? { background: R[t].bg, borderColor: R[t].line } : { background: 'var(--surface-card)', borderColor: 'var(--ink-200)' }}
+              className="press flex flex-col items-center gap-0.5 rounded-xl border py-2"
+              style={on ? { backgroundColor: R[t].bg, borderColor: R[t].line } : { backgroundColor: 'var(--surface-card)', borderColor: 'var(--ink-200)' }}
             >
               <span style={{ color: R[t].line }}>{R[t].mark}</span>
               <span className="text-xs font-bold" style={{ color: on ? R[t].text : 'var(--ink-600)' }}>

@@ -211,7 +211,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
           <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
             {i + 1}
           </span>
-          <button type="button" onClick={() => select(r.id)} className="min-w-0 flex-1 text-left">
+          <button type="button" onClick={() => select(r.id)} className="press -mx-1.5 min-w-0 flex-1 rounded-md px-1.5 text-left">
             <p className="truncate font-bold text-ink-900">{r.name}</p>
             <p className="truncate text-xs text-ink-500">{r.meta}</p>
             {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}

@@ -177,7 +177,7 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
           <li key={map.id}>
             <Link
               to={`/maps/${map.id}`}
-              className="block h-full rounded-xl border border-ink-200 bg-white p-4 transition-colors md:p-5 md:hover:border-brand-300"
+              className="press block h-full rounded-xl border border-ink-200 bg-white p-4 md:p-5 md:hover:border-brand-300"
             >
               <p className="flex items-center gap-2">
                 <span className="truncate text-title font-bold text-ink-900">{map.title}</span>
