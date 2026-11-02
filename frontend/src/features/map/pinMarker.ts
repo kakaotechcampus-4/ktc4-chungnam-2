@@ -130,6 +130,27 @@ export function createCandidateMarkerElement(c: { rank: number; name: string; se
   return el
 }
 
+/**
+ * 지도 빈 곳을 누른 자리의 「이 근처 장소 찾기」 말풍선(#1028). 누르자마자 검색하지 않고 한 번 더 묻는다 — 어느 탭이든 같다.
+ * 아래 작은 점이 누른 자리다(오버레이 yAnchor 1 → 점 가운데가 좌표). 버튼은 btn-outline btn-sm 부품이다.
+ */
+export function createTapBubbleElement(onPress: () => void): HTMLElement {
+  const box = document.createElement('div')
+  box.className = 'enter-pop'
+  box.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;transform-origin:50% 100%'
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'btn-outline btn-sm shadow-float'
+  button.textContent = '이 근처 장소 찾기'
+  button.addEventListener('click', onPress)
+  const dot = document.createElement('span')
+  dot.setAttribute('aria-hidden', 'true')
+  dot.style.cssText =
+    'width:12px;height:12px;margin-bottom:-6px;border-radius:9999px;background:var(--brand-600);border:2px solid #fff;box-shadow:0 1px 3px rgba(20,22,31,.3)'
+  box.append(button, dot)
+  return box
+}
+
 /** 고른 핀·후보를 크게(1.25배)·흰 후광·이름 말풍선으로 보인다(#308). 맨 위로 올리는 건 오버레이 쪽 일이다. */
 export function markSelected(el: HTMLElement, name: string, on: boolean) {
   const svg = el.querySelector('svg')

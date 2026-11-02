@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link, NavLink, Outlet, useMatch, useNavigate, useParams } from 'react-router'
+import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate, useParams } from 'react-router'
 import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Users, type LucideIcon } from 'lucide-react'
 
 import AgentButton from '@/features/agent/AgentButton'
 import { ImportSheetHost } from '@/features/kakaoImport/ImportSheet'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
+import { mapTapAction } from '@/features/map/mapTap'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
@@ -52,6 +53,7 @@ const PANEL_SLIDE_MS = 300
 export default function MapLayout() {
   const { mapId = '' } = useParams()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const { selectedPinId, selectPin } = usePinSelection()
   const { data: allPins = [] } = usePinsQuery(mapId)
   const mapInfo = useMapQuery(mapId).data
@@ -228,27 +230,49 @@ export default function MapLayout() {
     controller.current?.fitPins(points)
   }, [onRecommendTab, mapReady, run, result])
 
-  // 지도 빈 곳을 누르면 고른 것을 푼다 — 핀 상세(마킹·확정 탭)는 목록으로, 검색은 결과 목록으로, AI 후보는 강조만 푼다.
-  // 지도는 그대로 둔다. 푼 게 없으면(마킹 탭) 누른 자리 근처의 핀으로 만들 수 있는 장소를 찾는다(#486).
+  // 지도 빈 곳 누르기는 어느 탭이든 같다(#1028, 멘토 리뷰 #816). 고른 것(핀 상세·검색 결과·AI 후보)이 있으면 풀고,
+  // 없으면 누른 자리에 「이 근처 장소 찾기」 말풍선을 띄운다 — 둘러보다 누른 것이 바로 검색이 되지 않게. 지도는 그대로 둔다.
+  const [tapAt, setTapAt] = useState<{ lat: number; lng: number } | null>(null)
+  // 탭을 바꾸거나 무엇을 고르거나 검색이 열리면 말풍선은 닫는다(렌더 중에 맞춘다 — 위 lastQuery 와 같은 방식).
+  const tapContext = `${pathname}|${selectedPinId}|${search.source ? 'search' : ''}|${candidateFocus?.id ?? ''}`
+  const [lastTapContext, setLastTapContext] = useState(tapContext)
+  if (lastTapContext !== tapContext) {
+    setLastTapContext(tapContext)
+    setTapAt(null)
+  }
   function onMapClick(at: { lat: number; lng: number } | null) {
     const search = useSearchStore.getState()
     const ai = useAiStore.getState()
-    const released = Boolean(selectedPinId || search.selectedId || ai.focus)
-    if (selectedPinId) selectPin(null)
-    if (search.selectedId) search.select(null)
-    if (ai.focus) ai.blurCandidate()
-    if (released || !at || !onMarkingTab) return
-    search.openTap(at)
+    const action = mapTapAction({ selected: Boolean(selectedPinId || search.selectedId || ai.focus), bubbleOpen: tapAt !== null, at })
+    if (action === 'release') {
+      if (selectedPinId) selectPin(null)
+      if (search.selectedId) search.select(null)
+      if (ai.focus) ai.blurCandidate()
+    }
+    setTapAt(action === 'open' ? at : null)
+  }
+  /** 말풍선을 누르면 마킹 탭에서 누른 자리 근처의 핀으로 만들 수 있는 장소를 찾는다(#486). */
+  function searchNearby(at: { lat: number; lng: number }) {
+    setTapAt(null)
+    if (!onMarkingTab) navigate(`/maps/${mapId}`)
+    useSearchStore.getState().openTap(at)
     setStage('map', 2)
     // 접힌 패널에선 결과를 볼 곳이 없다(넓은 화면).
     useSheetStore.getState().setPanelOpen(true)
   }
+  // AI 탭을 떠나면 후보 강조를 푼다 — 남아 있으면 다른 탭의 첫 누름이 보이지 않는 후보 풀기에 쓰인다.
+  useEffect(() => {
+    if (!onRecommendTab) useAiStore.getState().blurCandidate()
+  }, [onRecommendTab])
 
   const onMovingChange = useCallback(
     (moving: boolean) => {
       setMapMoving(moving)
-      // 사용자가 지도를 직접 옮기면 "최근 핀·전체 핀을 보는 중" 표시는 더 맞지 않다.
-      if (moving) setActiveControl(null)
+      // 사용자가 지도를 직접 옮기면 "최근 핀·전체 핀을 보는 중" 표시도, 누른 자리의 말풍선도 더 맞지 않다.
+      if (moving) {
+        setActiveControl(null)
+        setTapAt(null)
+      }
     },
     [setMapMoving],
   )
@@ -329,6 +353,7 @@ export default function MapLayout() {
         onReady={onMapReady}
         onMovingChange={onMovingChange}
         onMapClick={onMapClick}
+        tapBubble={tapAt && { ...tapAt, onPress: () => searchNearby(tapAt) }}
         leftInset={mapLeft}
       />
 

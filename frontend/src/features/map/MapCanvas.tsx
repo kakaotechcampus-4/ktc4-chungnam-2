@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { allInside, fitCenter, fitLevel, fitPadding, zoomSteps } from './camera'
 import { createMarkerLayer, mapFade, type MarkerLayer } from './markerLayer'
-import { createCandidateMarkerElement, createSearchMarkerElement, markSelected } from './pinMarker'
+import { createCandidateMarkerElement, createSearchMarkerElement, createTapBubbleElement, markSelected } from './pinMarker'
 import type { PlaceSearchResultDto } from '@/features/search/model'
 import { isDesktopNow } from '@/features/shell/useIsDesktop'
 import type { RouteDrawing } from '@/features/shortlist/model'
@@ -72,6 +72,7 @@ export default function MapCanvas({
   onReady,
   onMovingChange,
   onMapClick,
+  tapBubble = null,
   leftInset = 0,
 }: {
   pins: Pin[]
@@ -92,6 +93,8 @@ export default function MapCanvas({
   /** 지도 빈 곳을 눌렀다(핀·후보·검색 결과를 누르거나 끌고 놓은 건 아니다). 고른 것을 푸는 자리다. */
   /** 지도 빈 곳을 누름. 누른 자리는 화면 메모리에서만 쓴다(#486, 저장하지 않는다). */
   onMapClick: (at: { lat: number; lng: number } | null) => void
+  /** 지도 빈 곳을 누른 자리에 띄우는 「이 근처 장소 찾기」 말풍선(#1028). 떠 있지 않으면 null. */
+  tapBubble?: { lat: number; lng: number; onPress: () => void } | null
   /** 지도 왼쪽을 가리는 패널 폭(px). 넓은 화면에서 패널이 열려 있을 때만 0이 아니다. */
   leftInset?: number
 }) {
@@ -320,6 +323,27 @@ export default function MapCanvas({
     })
     return () => overlays.forEach((o) => o.setMap(null))
   }, [results, ready])
+
+  // 「이 근처 장소 찾기」 말풍선(#1028). 누르는 일은 최신 것을 부르게 ref 로 둔다 — 자리가 그대로면 다시 그리지 않는다.
+  const tapPress = useRef<() => void>(() => {})
+  useLayoutEffect(() => {
+    if (tapBubble) tapPress.current = tapBubble.onPress
+  })
+  const tapLat = tapBubble?.lat
+  const tapLng = tapBubble?.lng
+  useEffect(() => {
+    const m = mapRef.current
+    if (!ready || !m || tapLat == null || tapLng == null) return
+    const overlay = new m.maps.CustomOverlay({
+      position: new m.maps.LatLng(tapLat, tapLng),
+      content: createTapBubbleElement(() => tapPress.current()),
+      yAnchor: 1,
+      clickable: true,
+      zIndex: 20,
+    })
+    overlay.setMap(m.map)
+    return () => overlay.setMap(null)
+  }, [tapLat, tapLng, ready])
 
   // 고른 AI 후보 핀을 핑고가 위에서 끌어안는다 — 핑고는 AI에만 나온다(PRODUCT.md). 몸은 핀 뒤(zIndex 11 < 핀 12)에 두고,
   // 머리를 감싼 손은 핀이 앞에 그린다. 머리 뒤에서 올라오고, 다른 후보를 고르거나 풀면 머리 뒤로 내려간다 —
