@@ -437,8 +437,6 @@ def s03_s05():
     rec("S03.read_unknown", "PASS" if r.status_code in (200, 204, 404, 422) else "FAIL", f"없는 알림 읽음 → {r.status_code}")
     r = a.get(f"/maps/{mid}/shortlist"); check("S05.empty", r.status_code == 200 and r.json() == [], "빈 확정 리스트 200 []", f"{r.status_code} {r.text[:80]}")
     r = a.get(f"/maps/{mid}/shortlist/export"); rec("S05.export_empty", "PASS" if r.status_code in (200, 409, 422) else "FAIL", f"빈 리스트 내보내기 → {r.status_code}")
-    for label, body in (("empty", {"message": ""}), ("long", {"message": "가" * 5000}), ("ok", {"message": "좋아요"})):
-        r = a.post("/feedback", json=body); rec(f"S04.{label}", "INFO", f"{r.status_code} {r.text[:80]}")
 
 
 def r3_widen_retry():
@@ -613,10 +611,197 @@ def w01_w07():
     check("W07", len(rows) == len(_W_USERS) and not bad, f"계정 {len(rows)}개 잔액 = 원장 합", f"계정 {len(rows)}/{len(_W_USERS)}, 어긋남 {bad}")
 
 
+# ───────── 남은 HTTP 케이스(#1114) — 숫자는 응답에서 받고, ♥는 사유 글 없이 남긴다(② 호출 없음) ─────────
+def _zero_run():
+    """0곳 run — 부산 지도에 서울 핀(W05와 같은 전제). (client, run_id, 결과 응답)"""
+    _, z = user(); zmid = new_map(z, region=BUSAN)
+    zp = add_pin(z, zmid).json()["id"]; z.put(f"/pins/{zp}/reaction", json={"type": "like"})
+    rid = z.post(f"/maps/{zmid}/runs", json={"category": "음식점", "execute": True}).json().get("id")
+    return z, rid, result(z, rid)
+
+
+def _no_results(r):
+    return r.status_code == 404 and r.json().get("code") == "NO_RESULTS" and "funnel" in (r.json().get("detail") or {})
+
+
+def b07():
+    z, rid, res = _zero_run()
+    if not _no_results(res):
+        rec("B07", "INFO", f"0곳을 만들지 못함({res.status_code} {res.text[:80]}) — 부산 지도·서울 핀 전제가 바뀌었는지 본다"); return
+    b0 = _credits(z)["balance"]; out = []
+    for step in ("widen", "retry"):
+        r = z.post(f"/runs/{rid}/{step}"); res = result(z, rid)
+        out.append((step, r.status_code, _no_results(res)))
+    b1 = _credits(z)["balance"]
+    check("B07", all(s == 202 and ok for _, s, ok in out) and b0 == b1,
+          "넓히기·다시 추천 202, 결과는 여전히 NO_RESULTS(funnel 있음), 잔액 그대로", f"{out}, 잔액 {b0} → {b1}")
+
+
+def c02():
+    _, c = user(); mid = new_map(c); pin = add_pin(c, mid).json()["id"]
+    c.put(f"/pins/{pin}/reaction", json={"type": "like"})
+    price = _credits(c)["prices"]["recommend_run"]
+    def post(key):
+        h = {"Idempotency-Key": key} if key else {}
+        return client(c.cookies).post(f"/maps/{mid}/runs", json={"category": "음식점"}, headers=h)
+    b0 = _credits(c)["balance"]
+    with ThreadPoolExecutor(2) as ex:
+        rs = list(ex.map(post, [None, None]))
+    b1 = _credits(c)["balance"]
+    check("C02.nokey", [r.status_code for r in rs] == [202, 202] and b0 - b1 == 2 * price,
+          f"키 없이 동시 2번 → 202 둘, {2 * price} 빠짐", f"{[(r.status_code, r.text[:60]) for r in rs]}, 잔액 {b0} → {b1}")
+    key = uuid.uuid4().hex
+    with ThreadPoolExecutor(2) as ex:
+        rs = list(ex.map(post, [key, key]))
+    # 같은 키 동시 요청은 하나가 처리 중이라 409 REQUEST_IN_PROGRESS를 받을 수 있다 — 그 뒤 같은 키로 다시 부르면 같은 run이다
+    ok = [r for r in rs if r.is_success]
+    busy = [r for r in rs if r.status_code == 409 and r.json().get("code") == "REQUEST_IN_PROGRESS"]
+    again = post(key)
+    b2 = _credits(c)["balance"]
+    ids = {r.json().get("id") for r in ok + [again] if r.is_success}
+    check("C02.key", ok and len(ok) + len(busy) == 2 and again.is_success and len(ids) == 1 and b1 - b2 == price,
+          f"같은 키 동시 2번 → 202와 처리 중 409만, 다시 부르면 같은 run, {price}만 빠짐",
+          f"{[(r.status_code, r.text[:60]) for r in rs]}, 재요청 {again.status_code}, run {len(ids)}개, 잔액 {b1} → {b2}")
+
+
+def _wait_course(c, cid):
+    deadline = time.monotonic() + 120
+    while True:
+        r = c.get(f"/course-runs/{cid}")
+        if r.json().get("status") in ("done", "failed") or time.monotonic() > deadline:
+            return r
+        time.sleep(2)
+
+
+def _two_shortlisted(c, mid, skips=(0, 1)):
+    for skip in skips:
+        pid = add_pin(c, mid, skip=skip).json()["id"]
+        c.post(f"/maps/{mid}/shortlist", json={"pin_id": pid})
+
+
+def w08_s07():
+    _, c = user(); mid = new_map(c)
+    price = _credits(c)["prices"]["course"]
+    # 핀 1개 → 422, 잔액 그대로
+    p0 = add_pin(c, mid).json()["id"]; c.post(f"/maps/{mid}/shortlist", json={"pin_id": p0})
+    b0 = _credits(c)["balance"]
+    r = c.post(f"/maps/{mid}/courses", json={})
+    check("W08.422", r.status_code == 422 and r.json().get("code") == "COURSE_NOT_ENOUGH_PLACES" and _credits(c)["balance"] == b0,
+          "확정 1곳 422 COURSE_NOT_ENOUGH_PLACES, 잔액 그대로", f"{r.status_code} {r.text[:100]}")
+    p1 = add_pin(c, mid, skip=1).json()["id"]; c.post(f"/maps/{mid}/shortlist", json={"pin_id": p1})
+    # S07 — 방장과 게스트. 게스트는 IP 시간당 상한(W06·L05와 합쳐 10명 안쪽)이라 1명만 만든다
+    _reset_guest_limiter()
+    tok = c.post(f"/maps/{mid}/invite").json()["token"]
+    g = client(); gr = g.post("/auth/guest", json={"display_name": "QA 게스트", "invite_token": tok})
+    if gr.status_code != 201:
+        rec("S07", "INFO", f"게스트를 만들지 못함({gr.status_code})")
+    else:
+        ms = c.get(f"/maps/{mid}/members").json()
+        check("S07", len(ms) == 2 and sorted(m.get("is_guest") for m in ms) == [False, True] and all("is_guest" in m for m in ms),
+              "구성원 2명, 방장 is_guest false·게스트 true", f"{[(m.get('role'), m.get('is_guest')) for m in ms]}")
+        r = g.post(f"/maps/{mid}/courses", json={})
+        check("W08.guest", r.status_code == 403 and r.json().get("code") == "GUEST_NOT_ALLOWED", "게스트 코스 403 GUEST_NOT_ALLOWED", f"{r.status_code} {r.text[:100]}")
+    # 2곳 → 202, 진행 중에 또 부르면 409(run이 빨리 끝났으면 새 run 202), 끝난 run마다 done=차감 / failed=환불
+    r = c.post(f"/maps/{mid}/courses", json={})
+    if r.status_code != 202:
+        rec("W08", "FAIL", f"코스 요청 {r.status_code} {r.text[:120]}"); return
+    ids = [r.json()["course_run_id"]]
+    again = c.post(f"/maps/{mid}/courses", json={})
+    if again.status_code == 202:   # 로컬 TestClient는 응답 전에 끝난다
+        ids.append(again.json()["course_run_id"])
+    runs = [_wait_course(c, i).json() for i in ids]; b1 = _credits(c)["balance"]
+    sts = [x.get("status") for x in runs]
+    busy = again.status_code == 409 and again.json().get("code") == "COURSE_IN_PROGRESS"
+    if not busy:
+        rec("W08.409", "SKIP" if again.status_code == 202 else "FAIL", f"진행 중 재요청 {again.status_code} — run이 이미 끝났다")
+    check("W08", all(x in ("done", "failed") for x in sts) and b1 == b0 - price * sts.count("done"),
+          f"{sts} → done마다 −{price}, failed는 환불", f"{sts} {[x.get('failure_code') for x in runs]}, 잔액 {b0} → {b1}")
+
+
+def w09():
+    _, c = user(); mid = new_map(c)
+    pin = add_pin(c, mid).json()["id"]; c.put(f"/pins/{pin}/reaction", json={"type": "like"})
+    me = _credits(c); price = me["prices"]["recommend_run"]
+    for _ in range(me["balance"] // price):
+        c.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+    _two_shortlisted(c, mid, (1, 2))   # 0번 장소는 ♥ 핀으로 이미 있다
+    r = c.post(f"/maps/{mid}/courses", json={}); d = r.json().get("detail") or {}
+    latest = c.get(f"/maps/{mid}/courses/latest")
+    check("W09", r.status_code == 402 and r.json().get("code") == "CREDIT_INSUFFICIENT" and d.get("required") == me["prices"]["course"]
+          and d.get("balance") == 0 and latest.status_code == 204,
+          "잔액 0 코스 402 CREDIT_INSUFFICIENT(required=course 가격, balance 0), run 안 남음(204)", f"{r.status_code} {r.text[:120]}, latest {latest.status_code}")
+
+
+def c06():
+    _, a = user(); mid = new_map(a); pin = add_pin(a, mid).json()["id"]
+    a.put(f"/pins/{pin}/reaction", json={"type": "like"})
+    a.post(f"/maps/{mid}/runs", json={"category": "음식점"})   # 새 계정은 잔액이 상한이라 보상이 0 — 1번 써서 상한 아래로 내린다(♥ 글 없음)
+    me = _credits(a); before = me["balance"]
+    want = min(me["review_reward"], me["max_balance"] - before)
+    def put(_):
+        return client(a.cookies).put(f"/pins/{pin}/reviews/me", json={"rating": 4, "body": "QA 동시 후기"})
+    with ThreadPoolExecutor(2) as ex:
+        rs = list(ex.map(put, range(2)))
+    mine = [x for x in a.get(f"/pins/{pin}/reviews").json().get("items", []) if x.get("is_mine")]
+    got = sum((r.json().get("credited") or 0) for r in rs if r.status_code == 200); after = _credits(a)["balance"]
+    check("C06.put", want > 0 and all(r.status_code == 200 for r in rs) and len(mine) == 1 and got == want and after == before + want,
+          f"동시 2번 저장 → 후기 1개, 보상 합 {got} = {want}, 잔액 {before} → {after}",
+          f"{[(r.status_code, r.text[:80]) for r in rs]}, 후기 {len(mine)}개, 보상 합 {got}/기대 {want}, 잔액 {before} → {after}")
+    rid = next(r.json()["review"]["id"] for r in rs if r.status_code == 200)
+    _, b = user(); bmid = new_map(b); add_pin(b, bmid)   # 같은 장소를 가리키는 핀이 있는 다른 지도의 구성원
+    def rep(_):
+        return client(b.cookies).post(f"/reviews/{rid}/reports")
+    with ThreadPoolExecutor(2) as ex:
+        rs = list(ex.map(rep, range(2)))
+    check("C06.report", [r.status_code for r in rs] == [204, 204], "같은 후기 신고 동시 2번 → 204 둘", f"{[(r.status_code, r.text[:80]) for r in rs]}")
+    r = a.post(f"/reviews/{rid}/reports")
+    check("C06.self", r.status_code == 422, "내 후기 신고 422", f"{r.status_code} {r.text[:100]}")
+    _reset_guest_limiter()
+    tok = a.post(f"/maps/{mid}/invite").json()["token"]
+    g = client(); gr = g.post("/auth/guest", json={"display_name": "QA 게스트", "invite_token": tok})
+    if gr.status_code != 201:
+        rec("C06.guest", "INFO", f"게스트를 만들지 못함({gr.status_code})"); return
+    r = g.post(f"/reviews/{rid}/reports")
+    check("C06.guest", r.status_code == 403 and r.json().get("code") == "GUEST_NOT_ALLOWED", "게스트 신고 403 GUEST_NOT_ALLOWED", f"{r.status_code} {r.text[:100]}")
+
+
+def _until_429(c, send, limit=40):
+    """429가 처음 나오는 번째(1부터)와 그 전의 코드 모음. 상한 값은 서버 설정이라 시험에 적지 않는다."""
+    codes = []
+    for _ in range(limit):
+        r = send(); codes.append(r.status_code)
+        if r.status_code == 429:
+            return len(codes), codes, r
+    return None, codes, r
+
+
+def s04():
+    _, a = user()
+    cases = {"empty": {"message": ""}, "spaces": {"message": "   "}, "1001": {"message": "가" * 1001},
+             "extra": {"message": "좋아요", "nope": 1}}
+    bad = {k: a.post("/feedback", json=b).status_code for k, b in cases.items()}
+    ok1000 = a.post("/feedback", json={"message": "가" * 1000}).status_code
+    check("S04.edge", all(v == 422 for v in bad.values()) and ok1000 == 201, "빈 글·공백·1001자·모르는 필드 422, 1000자 201", f"{bad}, 1000자 {ok1000}")
+    _, b = user()
+    n, codes, r = _until_429(b, lambda: b.post("/feedback", json={"message": "QA 피드백"}))
+    check("S04.limit", n is not None and n > 1 and set(codes[:-1]) == {201} and r.json().get("code") == "RATE_LIMITED",
+          f"{n - 1 if n else '?'}건까지 201, 다음은 429 RATE_LIMITED", f"{codes[-5:]} {r.text[:100]}")
+
+
+def b09():
+    _, c = user()
+    n, codes, r = _until_429(c, lambda: c.get("/places/search", params={"q": "카페", "lat": SEONGSU["lat"], "lng": SEONGSU["lng"]}))
+    # ponytail: 상한은 인스턴스 메모리라 스테이징이 한 대라는 전제다 — 여러 대면 40번 안에 못 볼 수 있다
+    check("B09", n is not None and n > 1 and set(codes[:-1]) <= {200, 503} and r.json().get("code") == "RATE_LIMITED",
+          f"{n - 1 if n else '?'}번까지 통과, 다음은 429 RATE_LIMITED", f"{codes[-5:]} {r.text[:100]}")
+
+
 CASES = {"A01": a01_a02, "A03": a03, "A04": a04_a05, "A06": a06_a09, "A10": a10_a12, "A13": a13_a14, "B01": b01_b03,
          "B04": b04_b08, "C01": c01_c05, "L01": l01_l04, "L05": l05_l06, "L02": l02_l03, "L08": l08, "S03": s03_s05, "S06": s06, "R3a": r3_widen_retry, "R3b": r3_concurrent_shortlist, "R3c": r3_search_edges, "R3d": r3_pin_unsupported_and_dup_ui_codes, "R3e": r3_evidence_enforced, "R3f": r3_republish_exclusion, "W01": w01_w07}
 
 CASES["P01"] = p01   # 사전 밖에 둔다 — 다른 PR이 사전 줄을 같이 고쳐도 충돌하지 않게
+for _k, _f in (("B07", b07), ("C02", c02), ("W08", w08_s07), ("W09", w09), ("C06", c06), ("S04", s04), ("B09", b09)):
+    CASES[_k] = _f
 
 if __name__ == "__main__":
     args = sys.argv[1:]

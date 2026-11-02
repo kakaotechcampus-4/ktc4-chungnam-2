@@ -41,12 +41,12 @@
 - {id: B04, layer: api, area: recommend, scenario: "정식 계정이 31번째 추천(처음 30, 1번에 1, 횟수 상한은 #949에서 크레딧으로)", expect: "30번 202, 31번째 402 CREDIT_INSUFFICIENT + detail required=1·balance=0, 카테고리 섞어도 합산", status: pass}
 - {id: B05, layer: api, area: recommend, scenario: "다른 구성원의 크레딧은 독립", expect: "A 잔액이 0이어도 B는 202", status: pass}
 - {id: B06, layer: api, area: recommend, scenario: "반경 넓히기 상한 후 한 번 더", expect: "WIDEN_LIMIT", status: pass}
-- {id: B07, layer: api, area: recommend, scenario: "결과 0개 run에서 넓히기→재시도", expect: "NO_RESULTS 처리, 임의 완화 없음", status: untested}
+- {id: B07, layer: api, area: recommend, scenario: "결과 0개 run에서 넓히기→재시도", expect: "넓히기·다시 추천 202, 결과는 여전히 NO_RESULTS(funnel 있음), 잔액 그대로", status: pass}
 - {id: B08, layer: api, area: recommend, scenario: "execute 전에 result 조회", expect: "409 RUN_NOT_FINISHED", status: pass}
 
 # ───────── 동시성·멱등(api) ─────────
 - {id: C01, layer: api, area: reaction, scenario: "같은 핀에 같은 사용자가 동시에 PUT 반응 2개", expect: "마지막 값 하나만 남음, 500 없음", status: pass}
-- {id: C02, layer: api, area: recommend, scenario: "create-run 연타(동시 2회)", expect: "시도 횟수 정확히 계산, 500 없음", status: untested}
+- {id: C02, layer: api, area: recommend, scenario: "create-run 연타(동시 2회)", expect: "키 없이 둘 다 202·잔액 −2, 같은 키는 같은 run·−1(동시 한쪽은 409 REQUEST_IN_PROGRESS 가능), 500 없음", status: pass}
 - {id: C03, layer: api, area: recommend, scenario: "execute 연타", expect: "한 번만 실행, 결과 일관", status: pass}
 - {id: C04, layer: api, area: recommend, scenario: "같은 후보 publish 2회(동시)", expect: "핀 하나, 이벤트 하나(멱등)", status: pass}
 - {id: C05, layer: api, area: shortlist, scenario: "같은 핀을 동시에 확정 리스트에 추가", expect: "중복 없음", status: pass}
@@ -65,7 +65,7 @@
 - {id: S01, layer: api, area: realtime, scenario: "SSE Last-Event-ID 재연결, 놓친 이벤트", expect: "놓친 이벤트 재전송 또는 새 스냅샷 안내", status: untested}
 - {id: S02, layer: api, area: realtime, scenario: "나가기/탈퇴/삭제 시 SSE 종료·map.deleted", expect: "스트림 정리", status: untested}
 - {id: S03, layer: api, area: notification, scenario: "알림 목록·읽음·선호", expect: "권한 경계(남의 알림 접근 불가)", status: pass}
-- {id: S04, layer: api, area: feedback, scenario: "피드백 제출 빈/긴/연타", expect: "422/429", status: untested}
+- {id: S04, layer: api, area: feedback, scenario: "피드백 제출 빈/긴/연타", expect: "빈·공백·1001자·모르는 필드 422, 1000자 201, 상한에서 429 RATE_LIMITED", status: pass}
 - {id: S05, layer: api, area: shortlist, scenario: "확정 리스트 내보내기·순서 변경 경계", expect: "빈 리스트, 1개, 많은 개수", status: pass}
 - {id: S06, layer: api, area: permission, scenario: "비구성원이 지도 리소스 접근", expect: "404(존재 노출 안 함)", status: pass}
 - {id: P01, layer: api, area: permission, scenario: "비구성원이 남의 지도·핀·후기·추천·후보·확정 리스트·초대 id로 경로마다 49개 요청(쓰기 포함, 본문은 유효하게, #1096). 핀 휴지통은 서버 구현 전(#864)", expect: "모두 앱 오류 본문이 있는 404(경로 없음 404는 실패), 끝나고 방장의 데이터 그대로(P01.kept)", status: pass}
@@ -78,6 +78,11 @@
 - {id: W05, layer: api, area: credits, scenario: "첫 실행 0곳(부산 지도에 서울 핀, #1055) 뒤 다시 추천·넓히기", expect: "잔액 그대로(#1015), 다시 추천·넓히기도 차감 없음", status: pass}
 - {id: W06, layer: api, area: credits, scenario: "게스트의 GET /credits/me와 추천 받기", expect: "403 GUEST_NOT_ALLOWED + detail.initial_credits(30)", status: pass}
 - {id: W07, layer: api, area: credits, scenario: "W01~W06에서 쓴 계정의 잔액과 원장 합(로컬만)", expect: "credit_accounts.balance = sum(credit_ledger.delta)", status: pass}
+- {id: W08, layer: api, area: credits, scenario: "코스 요청: 확정 1곳 422, 게스트 403, 2곳 202 → 진행 중 재요청 409, 끝나면 done −course / failed 환불", expect: "422·409는 잔액 그대로, done이면 −prices.course, failed면 그대로", status: pass}
+- {id: W09, layer: api, area: credits, scenario: "잔액 0 계정의 코스 요청", expect: "402 CREDIT_INSUFFICIENT(required=prices.course, balance 0), run 안 남음(latest 204)", status: pass}
+- {id: C06, layer: api, area: reviews, scenario: "후기 저장 동시 2번, 신고 동시 2번, 내 후기·게스트 신고", expect: "후기 1개·보상 한 번, 신고 204 둘, 내 후기 422, 게스트 403", status: pass}
+- {id: S07, layer: api, area: maps, scenario: "방장+게스트 구성원 목록의 is_guest", expect: "방장 false, 게스트 true, 모든 항목에 필드", status: pass}
+- {id: B09, layer: api, area: places, scenario: "새 사용자의 장소 검색 연속 호출", expect: "분당 상한 다음 호출이 429 RATE_LIMITED", status: pass}
 
 # ───────── UI(브라우저) ─────────
 - {id: U01, layer: ui, area: invite, scenario: "로그인 전 초대 링크 열기 → 로그인 → 수락 → 온보딩", expect: "pendingInvite 복원, 지도 진입", status: pass}
