@@ -8,7 +8,8 @@ export default function LegalPage({ doc }: { doc: LegalDocKey }) {
   const { title, intro, sections } = LEGAL_DOCS[doc]
   const meta: [string, string][] = [
     ['운영', LEGAL_META.operator],
-    ['개인정보 보호책임자', LEGAL_META.officer],
+    // 위치 약관은 같은 사람을 위치정보 관리책임자로 적는다(위치정보법).
+    [doc === 'location' ? '위치정보 관리책임자' : '개인정보 보호책임자', LEGAL_META.officer],
     ['연락처', LEGAL_META.contact],
     ['시행일', LEGAL_META.effectiveDate],
   ]
