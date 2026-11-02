@@ -40,6 +40,7 @@ user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사
 -- 탈퇴 후 7일 정리 대상 (#855 — 「개인정보를 모두 지운다」는 users·user_identities만이 아니라 이름이 복사된 곳까지다. BE(auth)가 모듈별로 감사해 이 표를 확정한다)
 --   users            : display_name → '탈퇴한 구성원', last_seen_at·guest_invite_token 삭제 (행은 남김)
 --   user_identities  : 삭제
+--   외부 장소 번호표 표(place_external_id_votes): 7일 정리에서 삭제(#1062). 복구 기간에는 남김. 한계: SESSION_SECRET을 바꾸기 전에 쌓인 표는 현재 해시로 찾지 못해 남는다
 --   세션             : 탈퇴·복구 시 sessions_valid_after로 무효화(저장된 세션 행이 없다)
 --   반응·근거 줄·알림(본인 것)·agent 열람 기록·코스 요청: 탈퇴 때 이미 삭제(WITHDRAW_STEPS)
 --   피드백           : 작성자 연결은 탈퇴 때 끊김. 본문은 남긴다(사용자가 쓴 글 — 개인정보처리방침에 밝힌다)

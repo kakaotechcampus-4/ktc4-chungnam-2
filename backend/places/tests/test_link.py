@@ -232,6 +232,7 @@ def own(monkeypatch):
     monkeypatch.setattr(places_api, "own_places_near", near)
     monkeypatch.setattr(places_api, "own_places_by_kakao_id", lambda kid, *, db=None: state["by_kakao"])
     monkeypatch.setattr(places_api, "own_places_by_external_id", lambda eid, *, db=None: state.get("by_external", []))   # 번호표(#1048)
+    monkeypatch.setattr(places_api, "_pinnable_candidates", lambda s, cands: list(cands))   # 핀 가능 검사는 DB가 필요하다 — 여기선 해석 로직만 본다(검사는 test_link_pinnable_815)
     return state
 
 
