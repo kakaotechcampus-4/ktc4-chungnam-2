@@ -5,6 +5,7 @@ import { ApiError } from '@/api'
 import {
   evidenceLimitMessage,
   groupEvidence,
+  hasExcluded,
   noResultsExternalSearch,
   notEnforcedNote,
   toReadinessCards,
@@ -71,5 +72,13 @@ describe('「+」 직접 추가 상한(#720)', () => {
     expect(evidenceLimitMessage(limitErr({ limit: 10, used: 10 }))).toBe('직접 추가는 10개까지예요')
     expect(evidenceLimitMessage(limitErr())).toBe('직접 추가는 더 할 수 없어요')
     expect(evidenceLimitMessage(err('VALIDATION_ERROR'))).toBeNull()
+  })
+})
+
+describe('후보를 다 보여 준 뒤의 안내(#1142)', () => {
+  it('excluded 단계가 0보다 크면 참, 0이거나 key가 없으면 거짓', () => {
+    expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 13 }])).toBe(true)
+    expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 0 }])).toBe(false)
+    expect(hasExcluded([{ label: '이미 제안·거절됨', removed_count: 13 }])).toBe(false)
   })
 })
