@@ -13,7 +13,7 @@ from typing import Any, Optional, Sequence
 
 from agent.course import core, goals as goals_mod, verify
 from agent.course.constants import DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, LEG_MAX_MIN, MEAL_CATEGORY, MEALS_PER_DAY_MIN
-from agent.course.direct import RESOLVE_CLOSURE, RESOLVE_SPLIT, DirectResult, DirectStep
+from agent.course.direct import BAD_FORMAT, NO_RESPONSE, RESOLVE_CLOSURE, RESOLVE_SPLIT, TIMEOUT, UNUSABLE, DirectResult, DirectStep
 from agent.course.korean import attach, candidate_name, goals_sentence
 
 MODEL, CODE, PERSON = "모델", "코드", "사람"
@@ -164,23 +164,75 @@ def _understood(
     return text
 
 
+# 모델이 실패해 코드가 이어받은 단계(#1131 D안). 원인 종류만 가르고 예외 메시지나 모델 원문은 쓰지 않는다
+FAILURE_TEXT = {
+    TIMEOUT: "모델 응답이 시간 안에 오지 않아",
+    BAD_FORMAT: "모델 응답의 형식이 맞지 않아",
+    NO_RESPONSE: "모델 응답이 없어",
+    UNUSABLE: "모델이 고른 도구를 더 쓸 수 없어",
+}
+_TAKEN_OVER = {"optimize": "이번 단계는 코드가 이어서 짰어요.", "finish": "이번 단계는 코드가 이어서 골랐어요."}
+GOALS_FAILED_TEXT = "목표를 세우지 못했어요. 요청 목표 없이 기본 기준으로 짜요."
+
+
+def _row_text(trip: core.Trip, by_id: dict[str, goals_mod.Goal], r: dict[str, Any]) -> str:
+    """비교 줄 하나(#1131 C안) — 후보의 성격, 지킨 목표 수, 확정 위반, 하루 최대 도보, 대중교통 구간. 숫자와 이름은 코드가 넣는다."""
+    style = ("요청 목표 없이 이동과 날짜 균형 먼저" if r["balanced"]
+             else f"‘{goals_mod.label(trip, by_id[r['focus']])}’ 먼저" if r["focus"] in by_id else "요청 목표를 최대한")
+    walk = f"하루 도보 최대 {r['walk_day_max']}분" if r["walk_day_max"] else "걷는 구간 없음"
+    return (f"{candidate_name(r['candidate_id'])}({style}): 목표 {r['total']}개 중 {len(r['kept'])}개 지킴, "
+            f"확정 위반 {r['confirmed']}개, {walk}, 대중교통 {r['transit_legs']}구간.")
+
+
+def _quoted(trip: core.Trip, by_id: dict[str, goals_mod.Goal], ids: Sequence[str]) -> str:
+    return ", ".join(f"‘{goals_mod.label(trip, by_id[i])}’" for i in ids if i in by_id)
+
+
+def decision_text(trip: core.Trip, by_id: dict[str, goals_mod.Goal], data: dict[str, Any]) -> str:
+    """끝 줄의 결정 이유 — 다른 후보마다 얻은 것과 잃은 것 한 마디씩(#1131 C안). 「2번 안은 걷기는 짧지만 ‘…’ 목표를 못 지켜서
+    1번 안으로 정했어요.」 고른 안이 코드 규칙으로도 가장 나으면 남은 차이를 「영업 확인, 목표 순서, 날짜 균형까지 견주면」으로 말하고,
+    모델이 다른 안을 골랐으면 그렇다고 쓴다. 코스가 같은 후보는 한 번만 본다."""
+    rows = {r["candidate_id"]: r for r in data["compare"]}
+    chosen = rows[data["candidate_id"]]
+    clauses = []
+    for o in data["compare"]:
+        if o is chosen:
+            continue
+        good = ([f"{_quoted(trip, by_id, [g for g in o['kept'] if g not in chosen['kept']])} 목표는 지키지만"]
+                if any(g not in chosen["kept"] for g in o["kept"]) else
+                ["걷기는 짧지만"] if o["walk_day_max"] < chosen["walk_day_max"] else
+                ["대중교통은 적지만"] if o["transit_legs"] < chosen["transit_legs"] else [])
+        missed = [g for g in chosen["kept"] if g not in o["kept"]]
+        bad = ("확정 위반이 더 남아서" if o["confirmed"] > chosen["confirmed"] else
+               f"{_quoted(trip, by_id, missed)} 목표를 못 지켜서" if missed else
+               "하루 걷는 시간이 더 길어서" if o["walk_day_max"] > chosen["walk_day_max"] else
+               "대중교통 구간이 더 많아서" if o["transit_legs"] > chosen["transit_legs"] else
+               "영업 확인, 목표 순서, 날짜 균형까지 견주면 덜 맞아서" if data["code_best"] == chosen["candidate_id"] else
+               "모델의 판단으로")
+        clauses.append(" ".join([attach(candidate_name(o["candidate_id"]), "은/는"), *good, bad]))
+    return f"{', '.join(clauses)} {attach(candidate_name(chosen['candidate_id']), '으로/로')} 정했어요."
+
+
 class Narrator:
     """지휘 루프의 단계를 하나씩 받아 작업 기록으로 바꾼다. 앞 단계에서 세는 값(짜기 횟수 등)을 들고 있어서 단계 순서대로 불러야 한다.
     진행 중 저장(on_step)과 끝난 뒤 한 번에 찍기(render)가 같은 코드를 쓴다."""
 
     def __init__(
         self, trip: core.Trip, goals: Sequence[goals_mod.Goal], unmatched: Sequence[str], *, understood_by: str = MODEL,
-        candidates: Sequence[goals_mod.MapCandidate] = (),
+        candidates: Sequence[goals_mod.MapCandidate] = (), goals_failure: Optional[str] = None,
     ):
+        """goals_failure: 목표 세우기 모델이 실패했으면 원인 종류(direct.failure_kind) — 코드가 이어받았다는 줄을 남긴다(#1131 D안)."""
         self.trip = trip
         self.by_id = {g.id: g for g in goals}
-        self._opening = _rec("이해", INTERPRET, understood_by, "이렇게 이해했어요: " + _understood(trip, goals, unmatched, candidates))
+        self._opening = [_rec("이해", INTERPRET, understood_by, "이렇게 이해했어요: " + _understood(trip, goals, unmatched, candidates))]
+        if goals_failure is not None:
+            self._opening.append(_rec("대행", INTERPRET, CODE, f"{FAILURE_TEXT[goals_failure]} {GOALS_FAILED_TEXT}"))
         self.optimized = 0
         self.redo = False                       # 코드가 쉬는 날·이동을 푼 뒤 처음 짜는 optimize는 "다시 짜기"다
         self.reviewing = False                  # 직전 단계가 후보를 돌려줬다 — 이번 모델 생각은 그 결과의 점검이다
 
     def opening(self) -> list[StepRecord]:
-        return [self._opening]
+        return list(self._opening)
 
     def step(self, step: DirectStep, *, goals: Sequence[goals_mod.Goal]) -> list[StepRecord]:
         """goals는 이 단계까지의 것(코드가 쉬는 날을 풀어 바뀐 목표도 이름을 붙일 수 있게)."""
@@ -190,9 +242,9 @@ class Narrator:
         if tool in (RESOLVE_CLOSURE, RESOLVE_SPLIT):
             self.redo = True
             return resolved_records(trip, by_id, step)
-        if step.substituted_for:
-            out.append(_rec("대행", DIRECT, CODE, f"모델의 {step.substituted_for['call'].get('tool')} 호출이 "
-                            f"{step.substituted_for['error']}라 코드 규칙이 대신 {attach(tool, '을/를')} 했어요"))
+        if step.substituted_for:                # 모델이 실패해 코드가 이어받았다(#1131 D안) — 원인 종류와 고정 문구만
+            out.append(_rec("대행", DIRECT, CODE, f"{FAILURE_TEXT[step.substituted_for.get('failure', NO_RESPONSE)]} "
+                            f"{_TAKEN_OVER.get(tool, '이번 단계는 코드가 이어받았어요.')}"))
         if tool == "check_goals":
             return out + [_rec("확인", VERIFY, CODE, sentence) for sentence in step.result.data["sentences"]]
         if step.thought:
@@ -215,9 +267,15 @@ class Narrator:
             out.append(_rec("고정", DIRECT, MODEL, "장소를 한 날에 고정했어요"))
         elif tool == "finish" and step.result.ok:
             self.reviewing = False
-            note = step.result.data.get("note")
-            out.append(_rec("끝", DIRECT, MODEL if step.by == "model" else CODE,
-                            f"{attach(candidate_name(step.result.data['candidate_id']), '으로/로')} 정했어요." + (f" {note}." if note else "")))
+            data = step.result.data
+            ended = f"{attach(candidate_name(data['candidate_id']), '으로/로')} 정했어요."
+            if data.get("compare") is not None:      # 목표가 있으면 견준 것을 남긴다(#1131 C안). 코스가 하나뿐이면 지어내지 않는다
+                if data["distinct"] < 2:
+                    out.append(_rec("비교", VERIFY, CODE, "다른 짜임을 찾지 못했어요. 이 장소들로는 코스가 하나로 모여요."))
+                else:
+                    out += [_rec("비교", VERIFY, CODE, _row_text(trip, by_id, r)) for r in data["compare"]]
+                    ended = decision_text(trip, by_id, data)
+            out.append(_rec("끝", DIRECT, MODEL if step.by == "model" else CODE, ended))
         return out
 
     def closing(self, result: DirectResult) -> list[StepRecord]:

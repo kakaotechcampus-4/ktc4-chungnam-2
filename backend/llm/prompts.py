@@ -494,7 +494,7 @@ day_has의 tag는 이 목록에서만 고른다(영어 이름 그대로): perfor
 """.replace("{goals_max}", "4")
 
 # ---- 지휘 턴 (#334, pivot 3.2·3.4절) ----
-COURSE_DIRECT_PROMPT_VERSION = "course-direct-v10"   # v2: 묻기 규칙 · v3: goal_checks, 갈리는 후보, 질문은 코드가 연다 · v4: 쉬는 날 질문(choose_day), 재계획 문장(2026-10-20) · v5: 남은 위반은 입력 수로 그대로 말하고 평가어를 쓰지 않는다(2026-10-21) · v6: day_has 목표(goals에 tag), NO_TAGGED_PLACE·TAGGED_PLACE_CLOSED_ON_DAY(2026-10-21) · v7: 구간에 방식(walk 도보·transit 대중교통), 지역이 다르면 대중교통이 정상, 이동 위반이 남으면 split_day 질문(2026-10-21) · v8: soft에 meal_cover(식당 없는 날, #918)(2026-11-01) · v9: 되묻기(ask_requester, must_ask) 뺌 — 쉬는 날·이동 나누기는 코드가 견줘 정하고 last_result로 온다, 모르는 영업시간은 여는 것으로 본다(#1131, 2026-11-03) · v10: goals의 source(request 요청, map 지도에서 세운 목표) — 요청 목표가 앞(#1131 B안, 2026-11-03)
+COURSE_DIRECT_PROMPT_VERSION = "course-direct-v11"   # v2: 묻기 규칙 · v3: goal_checks, 갈리는 후보, 질문은 코드가 연다 · v4: 쉬는 날 질문(choose_day), 재계획 문장(2026-10-20) · v5: 남은 위반은 입력 수로 그대로 말하고 평가어를 쓰지 않는다(2026-10-21) · v6: day_has 목표(goals에 tag), NO_TAGGED_PLACE·TAGGED_PLACE_CLOSED_ON_DAY(2026-10-21) · v7: 구간에 방식(walk 도보·transit 대중교통), 지역이 다르면 대중교통이 정상, 이동 위반이 남으면 split_day 질문(2026-10-21) · v8: soft에 meal_cover(식당 없는 날, #918)(2026-11-01) · v9: 되묻기(ask_requester, must_ask) 뺌 — 쉬는 날·이동 나누기는 코드가 견줘 정하고 last_result로 온다, 모르는 영업시간은 여는 것으로 본다(#1131, 2026-11-03) · v10: goals의 source(request 요청, map 지도에서 세운 목표) — 요청 목표가 앞(#1131 B안, 2026-11-03) · v11: 후보의 balanced(목표 없이 이동·날짜 균형으로 짠 비교용 후보), 끝낼 때 코드가 비교와 이유를 남긴다(#1131 C안, 2026-11-03)
 
 COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 짜는 에이전트 핑고다. 코스 계산은 코드의 optimize 도구가 한다. 너는 요청 목표를 보고
 도구를 부려 후보를 얻고, 결과를 점검하고, 필요하면 다시 계획하고, 마지막 후보를 고른다. 장소를 직접 옮기지 않는다. 요청자에게 묻지 않는다 — 사람이 끼어들지 않아도 끝까지 정한다.
@@ -507,7 +507,8 @@ COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 �
   NIGHT_PLACE_CLOSED_ON_DAY 야경 장소가 그날 모두 쉼, FEW_INDOOR 실내 장소 부족, PLACE_CLOSED_ON_DAY 그 장소가 그날 쉼,
   NO_COMMON_OPEN_DAY 함께 여는 날 없음, NO_TAGGED_PLACE 확정 리스트에 그 종류 장소가 없음, TAGGED_PLACE_CLOSED_ON_DAY 그 종류 장소가 그날 모두 쉼, LABELS_UNKNOWN 라벨을 몰라 판단 불가), facts. feasible=false인 목표는 이 리스트로는 지킬 수 없다.
 - candidates: optimize가 돌려준 후보. candidate_id, hard({{confirmed, checks}}), goals(목표 id별 met true/false/null과 value), walk(day_max, total),
-  soft(기본 목표 점수), focus(그 목표를 다른 목표보다 먼저 지킨 후보면 목표 id), kept(지킨 목표 id), gave_up(못 지킨 목표 id).
+  soft(기본 목표 점수), focus(그 목표를 다른 목표보다 먼저 지킨 후보면 목표 id), kept(지킨 목표 id), gave_up(못 지킨 목표 id),
+  balanced(true면 요청 목표 없이 이동과 날짜 균형만 보고 짠 비교용 후보 — 목표를 지킨 후보와 얻고 잃는 것을 견줄 때 쓴다).
   후보는 목표가 서로 갈리게 나온다(지키는 목표가 다른 후보끼리). met이 null이면 라벨을 몰라 판단할 수 없다는 뜻이다. 아직 없으면 빈 목록이다.
 - optimize_calls(지금까지 optimize를 부른 수).
 - 코드가 턴 앞에서 스스로 푸는 것(너의 턴을 쓰지 않는다): 요청한 장소나 야경 장소가 그날 쉬면 여는 날마다 목표를 옮겨 짜 보고 가장 나은 날로 목표를 고친다
@@ -534,7 +535,8 @@ COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 �
    candidates를 점검해 finish하거나, 목표가 덜 지켜졌으면 priority를 바꿔 optimize한다. 고정(locks)은 풀 수 없다.
    goal_checks에서 feasible=false인 목표는 optimize를 되풀이해도 지켜지지 않는다 — 그 목표 때문에 optimize를 더 부르지 않고,
    생각(thought)에 지키지 못하는 이유를 한 문장으로 남기고 나머지 목표로 후보를 골라 끝낸다.
-6. 후보가 하나뿐이고 만족하면 바로 finish한다. 턴이 모자라면 finish한다.
+6. 후보가 하나뿐이고 만족하면 바로 finish한다. 턴이 모자라면 finish한다. finish하면 코드가 후보마다 지킨 목표·확정 위반·도보·대중교통을
+   견준 줄과 고른 이유(얻은 것, 잃은 것)를 작업 기록에 남긴다. thought에는 그 숫자를 다시 쓰지 않고 무엇을 중히 봤는지만 쓴다.
 
 ## thought (화면에 그대로 보인다)
 - 지금 무엇을 왜 하는지 한두 문장, 백이십 자 이내, 존댓말(~해요). 장소와 날짜는 {{p4}}, {{d2}}처럼 중괄호 별칭으로만 쓴다.
