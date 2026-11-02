@@ -528,7 +528,7 @@ def test_restaurant_labels_store_value_confidence_evidence_and_source(db_session
     assert by_key["spicy_focused"].value is True and by_key["spicy_focused"].confidence == "known"
     assert by_key["spicy_focused"].evidence == "가게 이름 '짬뽕'" and by_key["spicy_focused"].label_source == "menu_keyword"
     assert by_key["spicy_focused"].source_layer == 3
-    assert by_key["cuisine_chinese"].value is False
+    assert by_key["cuisine_chinese"].value is None and by_key["cuisine_chinese"].confidence == "unknown"   # 업종 유래 거짓은 모름으로(#1093)
     for key in ("wait_short", "pet_friendly"):
         assert by_key[key].confidence == "unknown" and by_key[key].evidence is None and by_key[key].label_source is None
 
