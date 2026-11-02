@@ -133,7 +133,10 @@ def test_dry_run_writes_nothing_and_reports_counts(db_session, capsys):
 def test_apply_downgrades_false_raises_name_true_and_lowers_korean(db_session):
     sushi = _seed(db_session, "1", "갓덴스시")
     tofu = _seed(db_session, "2", "인사동두부마을")
-    cafe = _seed(db_session, "3", "피자 카페", category="카페")
+    no_labels = Place(source="permit", source_id="3", name="피자 카페", category="카페", status="open",
+                      geom=func.ST_SetSRID(func.ST_MakePoint(127.0, 37.5), 4326))   # cuisine_* 라벨이 없는 장소는 보지 않는다
+    db_session.add(no_labels)
+    db_session.flush()
     assert script.main(["--apply"], session_factory=lambda: _NoClose(db_session)) == 0
     db_session.expire_all()
     f = _fact(db_session, sushi, "cuisine_raw_fish")
@@ -143,7 +146,7 @@ def test_apply_downgrades_false_raises_name_true_and_lowers_korean(db_session):
     assert (k.value, k.confidence) == (True, "known")   # 업종 유래 참은 그대로
     c = _fact(db_session, tofu, "cuisine_chinese")
     assert (c.value, c.confidence, c.evidence, c.label_source) == (None, "unknown", None, None)
-    assert _fact(db_session, cafe, "cuisine_chinese").confidence == "known"   # 음식점만
+    assert db_session.scalar(select(func.count()).select_from(PlaceFact).where(PlaceFact.place_id == no_labels.id)) == 0   # 새 라벨 행을 만들지 않는다
 
 
 def test_apply_is_idempotent_and_a_second_run_changes_nothing(db_session, capsys):

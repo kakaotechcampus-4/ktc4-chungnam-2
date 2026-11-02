@@ -4,7 +4,7 @@
     python -m places.scripts.relabel_cuisine_1093 --apply    # 실제로 쓴다
 
 규칙: 업종(license_business_type) 유래 cuisine_* 거짓 → 모름(unknown), 가게 이름 규칙에 걸린 키 → 참(menu_keyword),
-이름이 외국 음식이면 업종 유래 한식 참 → 모름. 음식점 중 cuisine_* 라벨 행이 이미 있는 장소만 본다(정예 라벨을 가진 장소 — 새 라벨 행을 만들지 않는다).
+이름이 외국 음식이면 업종 유래 한식 참 → 모름. cuisine_* 라벨 행이 이미 있는 장소(음식점)만 본다(정예 라벨을 가진 장소 — 새 라벨 행을 만들지 않는다).
 **스테이징·운영 DB에는 루트가 사용자 승인을 받은 뒤에만 --apply 한다.** 출력은 건수뿐이고 이름·접속 주소는 쓰지 않는다.
 """
 
@@ -45,7 +45,7 @@ def plan_changes(db: Session) -> tuple[list[Change], int]:
     """(바꿀 라벨 목록, 훑은 음식점 수). 읽기만 한다."""
     rows = db.execute(
         select(PlaceFact, Place.name).join(Place, Place.id == PlaceFact.place_id)
-        .where(Place.category == "음식점", PlaceFact.fact_key.like("cuisine\\_%", escape="\\"))
+        .where(PlaceFact.fact_key.like("cuisine\\_%", escape="\\"))
         .order_by(PlaceFact.place_id)
     ).all()
     by_place: dict = {}
