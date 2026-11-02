@@ -15,7 +15,7 @@ import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 import TextArea from '@/ui/TextArea'
 
-import { toSearchResult, type SearchResultView } from './model'
+import { livePinRequest, searchPinRequest, toSearchResult, type SearchResultView } from './model'
 import { searchErrorMessage, useSourcePlacesQuery } from './queries'
 import { useSearchStore } from './searchStore'
 
@@ -59,14 +59,13 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   const selected = results.find((r) => r.id === selectedId)
 
   function pinIt(r: SearchResultView) {
-    const { place_id, place_name, lat, lng, category } = r.dto
-    if (!category) return
-    // 검색 결과는 매칭 힌트로 그대로 되돌려 보낸다 — 서버가 같은 자체 DB 장소를 찾는다(#191).
+    const req = searchPinRequest(r.dto)
+    if (!req) return
     create.mutate(
-      { source: 'search', place_id, place_name, lat, lng, category },
+      req,
       {
         onSuccess: (pin) => {
-          const name = pin.place_name ?? place_name
+          const name = pin.place_name ?? r.dto.place_name
           showToast(`${name}${josa(name, '을', '를')} 지도에 찍었어요`)
           close()
           // 새 핀은 0표라 목록 끝으로 간다. 다음 할 일은 그 핀에 의견 남기기라 바로 상세를 연다(#308).
@@ -82,10 +81,11 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
    * 이름·좌표는 보내지 않는다(저장 불가). 방금 찍은 핀의 위치는 이미 손에 있으니 바로 얹는다 — 메모리에만 둔다.
    */
   function pinLive(r: SearchResultView, { memo }: LiveInput) {
-    const { place_id, lat, lng, category } = r.dto
-    if (!category || !query) return
+    const { lat, lng } = r.dto
+    const req = query ? livePinRequest(r.dto, query, memo) : null
+    if (!req) return
     create.mutate(
-      { source: 'live', category, kakao_place_id: place_id, search_query: query, ...(memo ? { memo } : {}) },
+      req,
       {
         onSuccess: (pin) => {
           useLivePlaceStore.getState().set(pin.id, { name: r.name, lat, lng })
@@ -212,7 +212,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
           <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
             {i + 1}
           </span>
-          <button type="button" onClick={() => select(r.id)} className="min-w-0 flex-1 text-left">
+          <button type="button" onClick={() => select(r.id)} className="press -mx-1.5 min-w-0 flex-1 rounded-md px-1.5 text-left">
             <p className="truncate font-bold text-ink-900">{r.name}</p>
             <p className="truncate text-xs text-ink-500">{r.meta}</p>
             {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}

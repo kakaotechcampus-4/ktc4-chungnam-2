@@ -27,7 +27,7 @@ export default function MapSwitcher({ mapId, title }: { mapId: string; title?: s
     <DropdownMenu.Root>
       <DropdownMenu.Trigger
         aria-label={title ? `${title} · 다른 지도로 바꾸기` : '다른 지도로 바꾸기'}
-        className="group -ml-1.5 flex h-9 min-w-0 flex-1 items-center gap-1 rounded-lg px-1.5 text-left outline-none hover:bg-ink-100 focus-visible:outline-2 focus-visible:outline-[var(--line-focus)] data-[state=open]:bg-ink-100"
+        className="group -ml-1.5 flex h-9 min-w-0 flex-1 items-center gap-1 press rounded-lg px-1.5 text-left outline-none focus-visible:outline-2 focus-visible:outline-[var(--line-focus)] data-[state=open]:bg-ink-100"
       >
         <span className="truncate text-title font-bold text-ink-900">{title}</span>
         <ChevronDown size={16} aria-hidden="true" className="shrink-0 text-ink-500 transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none" />

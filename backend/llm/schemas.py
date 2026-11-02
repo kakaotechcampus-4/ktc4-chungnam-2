@@ -398,7 +398,7 @@ class CourseGoal(_CourseStrict):
     kind: Literal["day_indoor", "night_end", "daily_walk_low", "day_light", "place_on_day", "together", "day_has"]
     day: Optional[str] = None            # d1 … (day_indoor, night_end, day_light, place_on_day, day_has)
     places: list[str] = []               # p1 … (place_on_day 1개, together 2개)
-    tag: Optional[str] = None            # day_has만: 고정 목록(performance, exhibition, night_view, indoor, shopping, walkable, kid_friendly, heritage). 코드가 대조한다
+    tag: Optional[str] = None            # day_has만: 고정 목록(performance, exhibition, night_view, indoor, shopping, walkable, kid_friendly, heritage, korean_food, cafe, restaurant). 코드가 대조한다
     source: Literal["request", "reason"] = "request"    # reason(구성원 사유)은 이번 범위 밖 — 자리만 둔다
     quote: str = ""                      # source=request: 근거가 된 요청 문장 조각(코드가 원문 부분 문자열인지 대조)
     reaction_ids: list[str] = []         # source=reason: 근거 사유 별칭(r1 …). 이번 범위 밖
@@ -428,20 +428,12 @@ class CourseLockCall(_CourseStrict):
     day: str
 
 
-class CourseAskRequester(_CourseStrict):
-    """요청자에게 묻는다. 문구는 코드 템플릿이다 — 종류와 대상만 고른다."""
-    tool: Literal["ask_requester"]
-    kind: Literal["pick_course", "ask_closed_day", "choose_day", "split_day"]
-    subject: Optional[str] = None        # ask_closed_day: 장소 별칭, choose_day: 쉬는 날에 걸린 목표 id, split_day: 이동 위반이 남은 날 별칭
-    options: list[str] = []              # pick_course: 후보 id(c1, c2 …), choose_day: 여는 날 별칭, split_day: 나누기 선택지 id(m1, m2 …) — 첫 번째가 제안하는 기본값
-
-
 class CourseDirectFinish(_CourseStrict):
     tool: Literal["finish"]
     candidate_id: str
 
 
-CourseDirectCall = Union[CourseOptimize, CourseLockCall, CourseAskRequester, CourseDirectFinish]
+CourseDirectCall = Union[CourseOptimize, CourseLockCall, CourseDirectFinish]   # 되묻기(ask_requester)는 #1131에서 뺐다
 
 
 class CourseDirectTurn(_CourseStrict):
