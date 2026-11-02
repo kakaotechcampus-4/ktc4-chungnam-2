@@ -202,7 +202,7 @@ def goals_input(trip: Trip, request_text: str) -> dict:
 
 
 _PIECE_SPLIT = re.compile(r"[,.;!?·\n]|그리고")
-_FILLER = re.compile(r"감사합니다|감사해요|고맙습니다|고마워요|안녕하세요|잘 ?부탁(?:드립니다|드려요|해요)|해\s?주세요|해줘요?|부탁(?:해요|드려요|드립니다)?|짜\s?주세요|짜줘요?|싶어요|싶고|싶다|했으면|좋겠어요|좋겠고|코스|일정|여행|그리고|또|저는|우리는|이번|으로|에서|에는|에도|까지|부터|[은는이가을를에도와과로의]")
+_FILLER = re.compile(r"방문하고|방문해|방문|가보고|가\s?보고|가고|가서|들르고|둘러보고|감사합니다|감사해요|고맙습니다|고마워요|안녕하세요|잘 ?부탁(?:드립니다|드려요|해요)|해\s?주세요|해줘요?|부탁(?:해요|드려요|드립니다)?|짜\s?주세요|짜줘요?|싶어요|싶고|싶다|했으면|좋겠어요|좋겠고|코스|일정|여행|그리고|또|저는|우리는|이번|으로|에서|에는|에도|까지|부터|[은는이가을를에도와과로의]")
 
 
 def leftover_pieces(request_text: str, covered: Sequence[str]) -> list[str]:
@@ -227,16 +227,21 @@ def leftover_pieces(request_text: str, covered: Sequence[str]) -> list[str]:
 
 def unlisted_mentions(trip: Trip, request_text: str, goals: Sequence[Goal], quotes: Sequence[str]) -> list[str]:
     """목표 quote 안에 코스 장소의 이름이 있는데 그 장소가 어떤 목표의 places에도 없으면, 그 장소를 말한 조각(#1008 K1).
-    「마지막 날 밤에 N서울타워」 전체를 quote로 쓰고 야경 목표 하나만 내면 장소 요청이 말없이 사라지기 때문이다."""
+    「마지막 날 밤에 N서울타워」 전체를 quote로 쓰고 야경 목표 하나만 내면 장소 요청이 말없이 사라지기 때문이다.
+
+    이름이 겹치면 더 긴 이름이 그 말의 주인이다. 「서울숲」은 같은 quote에 있는 더 긴 이름(「서울숲 카페」)의 일부일 뿐이라 건너뛴다 —
+    긴 쪽이 목표에 쓰였으면 정상이고, 안 쓰였으면 긴 쪽이 따로 알려진다.
+    한계: 이름 전체가 quote에 글자 그대로 있을 때만 잡는다. 프롬프트가 허용하는 줄임말(「롯데월드」→「롯데월드 어드벤처」)은 이 검사가
+    못 본다. 별칭 표가 없어 코드가 줄임말을 장소에 잇지 않는 것이 규칙이다(장소를 잇는 것은 모델의 일)."""
     used = {p for g in goals for p in g.places}
+    named = [p for p in trip.places if len(p.name) >= 2 and any(p.name in q for q in quotes)]
     out: list[str] = []
-    for place in trip.places:
-        if place.alias in used or len(place.name) < 2:
+    for place in named:
+        if place.alias in used or any(o is not place and place.name in o.name and len(o.name) > len(place.name) for o in named):
             continue
-        if any(place.name in q for q in quotes):
-            clause = next((c.strip() for c in _PIECE_SPLIT.split(request_text) if place.name in c), "")
-            if clause and clause in request_text:
-                out.append(clause)
+        clause = next((c.strip() for c in _PIECE_SPLIT.split(request_text) if place.name in c), "")
+        if clause and clause in request_text:
+            out.append(clause)
     return out
 
 

@@ -105,6 +105,32 @@ class TestNamedPlaceDropped:
         assert "음식점·카페면 저녁·밤은 끼니·시간 말이라 place_on_day만" in COURSE_GOALS_PROMPT
 
 
+class TestOverlappingNames:
+    def tr(self):
+        return _named(_named(t(A("p1"), A("p2", cat="카페")), "p1", "서울숲"), "p2", "서울숲 카페")
+
+    def test_shorter_name_inside_a_used_longer_name_is_skipped(self):
+        text = "둘째 날 서울숲 카페 가고 싶어요"
+        v = _verify(self.tr(), text, [_goal("place_on_day", text, "d2", ["p2"])])
+        assert v.unmatched == ()
+
+    def test_unused_longer_name_is_reported_once(self):
+        text = "둘째 날 서울숲 카페 가고 싶어요"
+        v = _verify(self.tr(), text, [_goal("day_has", text, "d2", tag="cafe")])
+        assert v.unmatched == (text,)
+
+    def test_unrelated_short_name_is_still_reported(self):
+        tr = _named(self.tr(), "p1", "남산")
+        text = "둘째 날 남산, 서울숲 카페 가고 싶어요"
+        v = _verify(tr, text, [_goal("place_on_day", text, "d2", ["p2"])])
+        assert v.unmatched == ("둘째 날 남산",)
+
+
+def test_general_request_endings_are_not_leftover():
+    assert G.leftover_pieces("첫날 N서울타워 방문하고 싶어요", ["첫날 N서울타워"]) == []
+    assert G.leftover_pieces("첫날 N서울타워 가고 싶어요", ["첫날 N서울타워"]) == []
+
+
 def test_greetings_are_not_leftover():
     assert G.leftover_pieces("감사합니다", []) == [] and G.leftover_pieces("잘 부탁드립니다", []) == []
     assert G.leftover_pieces("첫날 감사합니다, 사진 많이 찍고 싶어요", ["첫날"]) == ["사진 많이 찍고 싶어요"]
