@@ -4,8 +4,9 @@ DB를 모른다. 모델 자리는 planner로 주입한다(llm.api의 fixed/real 
 이 함수(모델) → 쓰기 순서(backend/CLAUDE.md "모델 호출과 트랜잭션")를 지킬 수 있다.
 
 - 요청자에게 되묻지 않는다(#1131). 쉬는 날·이동이 넘치는 날은 엔진이 도구로 확인해 정하고, 모르는 영업시간은 가정 줄로 남긴다 — 대기 상태가 없다.
-- 요청 한 줄이 없으면 모델을 부르지 않는다(목표 0개 → 지휘 루프도 모델 없이 한 번 최적화). 목표 세우기가 실패하면 요청 전체가
-  "반영하지 못했어요"로 남고 코스는 기본 목표로 짠다.
+- 요청 한 줄이 없어도 지도 목표 후보(우리 조건 요약·장소 라벨, #1131 B안)가 있으면 목표 세우기를 부른다. 요청도 후보도 없으면 모델을
+  부르지 않는다(목표 0개 → 지휘 루프도 모델 없이 한 번 최적화). 목표 세우기가 실패하면 요청 전체가 "반영하지 못했어요"로 남고 코스는
+  기본 목표로 짠다.
 - 영업시간은 `OpeningHoursGateway`로 읽는다. 시작 스냅샷도 같은 게이트웨이에서 만든다(`start_hours`).
 """
 
@@ -13,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from agent.course import core, direct, goals as goals_mod, worklog
 from agent.course.constants import REQUEST_TEXT_MAX_CHARS
@@ -61,6 +62,7 @@ def run_course(
     goals_planner: Optional[Callable[[Mapping[str, Any]], Any]],
     direct_planner: Optional[Callable[[Mapping[str, Any]], Any]],
     gateway: OpeningHoursGateway, on_step: Optional[OnStepRecord] = None,
+    map_items: Sequence[goals_mod.SummaryItem] = (),
 ) -> Computation:
     """build.trip이 있어야 한다(too_few면 호출하지 않는다). 모델 호출 실패는 던지지 않는다 — 기준선이 대신한다.
 
@@ -69,20 +71,21 @@ def run_course(
     trip = build.trip
     assert trip is not None
     text = request_text.strip()[:REQUEST_TEXT_MAX_CHARS]
-    setter = GoalSetter(goals_planner) if goals_planner is not None and text else None
+    candidates = goals_mod.map_candidates(trip, map_items)
+    setter = GoalSetter(goals_planner) if goals_planner is not None and (text or candidates) else None
     decider = DirectDecider(direct_planner) if direct_planner is not None else None
     goals: tuple[goals_mod.Goal, ...] = ()
     unmatched: tuple[str, ...] = ()
     understood_by = worklog.MODEL
-    if text:
+    if text or (setter is not None and candidates):
         if setter is None:                       # 목표를 세울 모델 자리가 없다 — 요청 전체를 반영하지 못했다고 밝힌다
             unmatched, understood_by = _whole(text), "코드(목표 세우기 없음)"
         else:
             try:
-                verified = goals_mod.verify_goal_set(trip, text, setter(goals_mod.goals_input(trip, text)))
+                verified = goals_mod.verify_goal_set(trip, text, setter(goals_mod.goals_input(trip, text, candidates)), candidates)
                 goals, unmatched = verified.goals, verified.unmatched
             except ModelTurnFailed:
-                unmatched, understood_by = _whole(text), "코드(목표 세우기 실패)"
+                unmatched, understood_by = (_whole(text) if text else ()), "코드(목표 세우기 실패)"
 
     def emit(recs: list[worklog.StepRecord]) -> None:
         for rec in recs:
@@ -93,7 +96,7 @@ def run_course(
             except Exception as exc:   # noqa: BLE001 — 진행 저장 실패가 코스 계산을 멈추면 안 된다. 클래스 이름만 로그
                 log.warning("course 진행 기록 실패: %s", type(exc).__name__)
 
-    narrator = worklog.Narrator(trip, goals, unmatched, understood_by=understood_by)
+    narrator = worklog.Narrator(trip, goals, unmatched, understood_by=understood_by, candidates=candidates)
     records = narrator.opening()
     emit(records)
 
