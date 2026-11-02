@@ -653,7 +653,6 @@ def c02():
     key = uuid.uuid4().hex
     with ThreadPoolExecutor(2) as ex:
         rs = list(ex.map(post, [key, key]))
-    b2 = _credits(c)["balance"]
     # 같은 키 동시 요청은 하나가 처리 중이라 409 REQUEST_IN_PROGRESS를 받을 수 있다 — 그 뒤 같은 키로 다시 부르면 같은 run이다
     ok = [r for r in rs if r.is_success]
     busy = [r for r in rs if r.status_code == 409 and r.json().get("code") == "REQUEST_IN_PROGRESS"]
@@ -735,15 +734,19 @@ def w09():
 
 def c06():
     _, a = user(); mid = new_map(a); pin = add_pin(a, mid).json()["id"]
+    a.put(f"/pins/{pin}/reaction", json={"type": "like"})
+    a.post(f"/maps/{mid}/runs", json={"category": "음식점"})   # 새 계정은 잔액이 상한이라 보상이 0 — 1번 써서 상한 아래로 내린다(♥ 글 없음)
+    me = _credits(a); before = me["balance"]
+    want = min(me["review_reward"], me["max_balance"] - before)
     def put(_):
         return client(a.cookies).put(f"/pins/{pin}/reviews/me", json={"rating": 4, "body": "QA 동시 후기"})
     with ThreadPoolExecutor(2) as ex:
         rs = list(ex.map(put, range(2)))
     mine = [x for x in a.get(f"/pins/{pin}/reviews").json().get("items", []) if x.get("is_mine")]
-    reward = _credits(a)["review_reward"]
-    got = sum((r.json().get("credited") or 0) for r in rs if r.status_code == 200)
-    check("C06.put", all(r.status_code == 200 for r in rs) and len(mine) == 1 and got <= reward,
-          f"동시 2번 저장 → 후기 1개, 보상 합 {got} ≤ {reward}", f"{[(r.status_code, r.text[:80]) for r in rs]}, 후기 {len(mine)}개")
+    got = sum((r.json().get("credited") or 0) for r in rs if r.status_code == 200); after = _credits(a)["balance"]
+    check("C06.put", want > 0 and all(r.status_code == 200 for r in rs) and len(mine) == 1 and got == want and after == before + want,
+          f"동시 2번 저장 → 후기 1개, 보상 합 {got} = {want}, 잔액 {before} → {after}",
+          f"{[(r.status_code, r.text[:80]) for r in rs]}, 후기 {len(mine)}개, 보상 합 {got}/기대 {want}, 잔액 {before} → {after}")
     rid = next(r.json()["review"]["id"] for r in rs if r.status_code == 200)
     _, b = user(); bmid = new_map(b); add_pin(b, bmid)   # 같은 장소를 가리키는 핀이 있는 다른 지도의 구성원
     def rep(_):
