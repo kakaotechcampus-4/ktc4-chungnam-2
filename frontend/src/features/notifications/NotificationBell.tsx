@@ -35,7 +35,7 @@ export default function NotificationBell({ floating = false }: { floating?: bool
           void list.refetch()
         }}
         className={`hit-44 relative flex size-8 shrink-0 items-center justify-center rounded-full bg-white text-ink-900 ${
-          floating ? 'pointer-events-auto shadow-float' : 'border border-ink-200 hover:bg-ink-50'
+          floating ? 'press pointer-events-auto shadow-float' : 'press border border-ink-200'
         }`}
       >
         <Bell size={18} aria-hidden="true" />
@@ -96,7 +96,7 @@ function InboxView({ onClose, onSettings }: { onClose: () => void; onSettings: (
         {items.map((n) => (
           <li key={n.id}>
             {/* 문장은 서버가 만든 그대로 보인다 — 화면이 이름·사유를 끼워 문장을 짓지 않는다(#717). */}
-            <button type="button" onClick={() => open(n)} className="flex w-full items-start gap-2 px-4 py-3 text-left hover:bg-ink-50">
+            <button type="button" onClick={() => open(n)} className="press flex w-full items-start gap-2 px-4 py-3 text-left">
               <span aria-hidden="true" className={`mt-1.5 size-2 shrink-0 rounded-full ${n.read ? '' : 'bg-brand-600'}`} />
               <span className="min-w-0 flex-1">
                 <span className={`block text-body ${n.read ? 'text-ink-600' : 'font-semibold text-ink-900'}`}>

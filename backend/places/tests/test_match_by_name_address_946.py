@@ -111,9 +111,9 @@ def test_fake_ambiguous_chain_is_empty():
 
 # ---- DB: 후보를 name_norm 인덱스 조건으로 좁힌다 ----
 
-def _add(db, sid, name, category="카페", address=None, status="open"):
+def _add(db, sid, name, category="카페", address=None, status="open", lng=127.05):
     db.add(Place(source="permit", source_id=sid, name=name, category=category, address=address, status=status,
-                 geom=func.ST_SetSRID(func.ST_MakePoint(127.05, 37.54), 4326)))
+                 geom=func.ST_SetSRID(func.ST_MakePoint(lng, 37.54), 4326)))
     db.flush()
 
 
@@ -129,7 +129,7 @@ def test_db_candidates_by_name_prefix_and_leading_part(db_session):
 def test_db_match_unique_and_ambiguous(db_session):
     _add(db_session, "1", "유일 식당", "음식점", "서울 성동구 성수이로 100")
     _add(db_session, "2", "체인 카페", address="서울 성동구 성수이로 1")
-    _add(db_session, "3", "체인 카페", address="서울 성동구 아차산로 2")
+    _add(db_session, "3", "체인 카페", address="서울 성동구 아차산로 2", lng=127.2)   # 다른 동네 지점 — 같은 자리면 핀 생성이 주소 없이 가를 수 없다(#815)
     got = api.match_by_name_address("유일 식당", "서울특별시 성동구 성수이로 100", db=db_session)
     assert [r.place_name for r in got] == ["유일 식당"]
     assert api.match_by_name_address("체인 카페", None, db=db_session) == []

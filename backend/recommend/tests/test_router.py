@@ -203,8 +203,8 @@ def test_full_golden_path_run_to_execute_to_result_to_publish(app_client, db_ses
 
     result = app_client.get(f"/runs/{run_id}/result", cookies=_auth())
     assert result.status_code == 200
-    # 깔때기 단계 키는 recommend.api만 내준다 — HTTP 응답은 스펙(FunnelEntry) 그대로(#751)
-    assert {key for entry in result.json()["funnel"] for key in entry} == {"label", "removed_count"}
+    # 깔때기 항목은 스펙(FunnelEntry)대로 key를 싣는다(#1146)
+    assert {key for entry in result.json()["funnel"] for key in entry} == {"key", "label", "removed_count"}
     candidates = result.json()["candidates"]
     assert len(candidates) > 0  # DevPlaceSearchGateway가 항상 최소 몇 개는 채운다
     assert candidates[0]["permissions"]["can_publish"] is True

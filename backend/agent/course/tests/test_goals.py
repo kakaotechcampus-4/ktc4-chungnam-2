@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.course import core, goals as G
-from agent.course.constants import DAILY_WALK_LOW_MAX_MIN, DAY_HAS_TAGS, GOALS_MAX
+from agent.course.constants import DAILY_WALK_LOW_MAX_MIN, DAY_HAS_CATEGORY_TAGS, DAY_HAS_TAGS, GOALS_MAX
 from agent.course.goals import Goal
 from agent.course.tests.fixtures import MON, TUE, place, trip
 
@@ -171,17 +171,17 @@ class TestVerifyGoalSet:
 
     def test_quote_not_in_text_drops_goal(self):
         v = self.verify([self.goal(quote="야경 꼭 보여 주세요")])
-        assert v.goals == () and v.dropped and v.unmatched == ()
+        assert v.goals == () and v.dropped and v.unmatched == ("마지막 날 밤엔 야경 보고 싶어요", "웨이팅 없는 곳으로")   # 버려진 조각도 남는다(#1008 K1)
 
     def test_bad_parameters_drop_goal_and_move_its_quote_to_unmatched(self):
         v = self.verify([self.goal(day="d9")])
-        assert v.goals == () and v.unmatched == ("마지막 날 밤엔 야경 보고 싶어요",)
+        assert v.goals == () and v.unmatched == ("마지막 날 밤엔 야경 보고 싶어요", "웨이팅 없는 곳으로")
 
     def test_reason_source_is_out_of_scope(self):
         assert self.verify([self.goal(source="reason", reaction_ids=["r1"])]).goals == ()
 
     def test_unmatched_must_be_substring_of_request(self):
-        assert self.verify([], ["웨이팅 없는 곳으로", "가성비 좋게"]).unmatched == ("웨이팅 없는 곳으로",)
+        assert self.verify([], ["웨이팅 없는 곳으로", "가성비 좋게"]).unmatched == ("웨이팅 없는 곳으로", "마지막 날 밤엔 야경 보고 싶어요")
 
     def test_duplicates_merge_and_goal_count_is_capped(self):
         many = [self.goal(), self.goal()] + [self.goal(kind="place_on_day", day="d1", places=["p2"]),
@@ -232,6 +232,24 @@ class TestDayHas:
         for tag, (key, noun) in DAY_HAS_TAGS.items():
             assert key and noun and G.label(tr, Goal("day_has", "d1", (), tag)).endswith(f"{noun} 장소 넣기")
 
+    def test_category_tags(self):
+        """#1094: 카페·음식점도 day_has로 받는다. 판정은 핀의 카테고리, 모름이 없다."""
+        from common import categories
+        assert not set(DAY_HAS_CATEGORY_TAGS) & set(DAY_HAS_TAGS)
+        assert all(c in categories.all_categories() for c, _ in DAY_HAS_CATEGORY_TAGS.values())
+        tr = t(A("p1", cat="카페"), A("p2"), A("p3", cat="음식점"))
+        cafe = Goal("day_has", "d2", (), "cafe")
+        assert G.normalize(tr, "day_has", "d2", [], "cafe")[0] == cafe
+        assert G.label(tr, cafe) == "둘째 날 (화)에 카페 장소 넣기"
+        assert G.evaluate(tr, (("p2",), ("p1",)), cafe).met is True
+        r = G.evaluate(tr, (("p1",), ("p2", "p3")), cafe)
+        assert r.met is False and r.gap == 1.0                    # 라벨을 몰라도 카테고리는 안다
+        assert G.check_goal(tr, {}, cafe)["feasible"] is True
+        assert G.check_goal(t(A("p1"), A("p2")), {}, cafe)["reasons"] == [G.NO_TAGGED_PLACE]
+        assert G.short_label(tr, cafe, True) == "카페 있음"
+        assert G.evaluate(t(A("p1", ("cuisine_korean",), "음식점"), A("p2")), (("p1",), ("p2",)),
+                          Goal("day_has", "d1", (), "korean_food")).met is True
+
     def test_evaluate(self):
         tr = t(A("p1", ("performance",)), A("p2", OUT), A("p3"))
         assert G.evaluate(tr, (("p2",), ("p1", "p2")), self.PERF).met is True
@@ -246,9 +264,9 @@ class TestDayHas:
         mk = lambda tag: SimpleNamespace(kind="day_has", day="d2", places=[], tag=tag, source="request",
                                          quote="둘째 날 저녁엔 공연 보고 싶고", reaction_ids=[])
         ok = G.verify_goal_set(tr, text, SimpleNamespace(goals=[mk("performance")], unmatched=[]))
-        assert ok.goals == (self.PERF,) and ok.unmatched == ()
+        assert ok.goals == (self.PERF,) and ok.unmatched == ("많이 안 걸었으면 해요",)           # 목표로 안 쓰인 조각은 남는다(#1008 K1)
         bad = G.verify_goal_set(tr, text, SimpleNamespace(goals=[mk("opera")], unmatched=[]))
-        assert bad.goals == () and bad.unmatched == ("둘째 날 저녁엔 공연 보고 싶고",)
+        assert bad.goals == () and bad.unmatched == ("둘째 날 저녁엔 공연 보고 싶고", "많이 안 걸었으면 해요")
 
     def test_goals_with_same_day_and_different_tags_stay_distinct(self):
         tr = t(A("p1"))

@@ -99,7 +99,7 @@ class TestFactSentence:
     def test_names_remaining_violation(self):
         text = verify.fact_sentence(ref())
         assert text.startswith("확정 위반 1개가 남은 후보예요. 남은 위반: 장소P4이름이 둘째 날 (화) 휴무.")
-        assert "지킨 목표: 장소P1이름을 둘째 날 (화)에" in text and "못 지킨 목표" not in text
+        assert "지킨 목표는 ‘장소P1이름을 둘째 날 (화)에’예요." in text and "못 지킨 목표" not in text
 
     def test_zero_violations_and_checks(self):
         text = verify.fact_sentence(ref(hours={**{p.alias: ALL_OPEN for p in PLACES}, "p3": {}}))
@@ -204,7 +204,7 @@ class TestRoleLabels:
         lines = worklog.render(st.trip, [P1_D2], [], result)
         role = lambda stage, who=None: next(l for l in lines if l.startswith(f"[{stage}]") and (who is None or who in l)).split(" ")[1]
         assert role("이해").startswith("해석(") and role("확인").startswith("검증(코드)")
-        assert role("짜기", "후보").startswith("계산(코드)") and role("끝").startswith("지휘(모델)")
+        assert role("짜기", "번 안").startswith("계산(코드)") and role("끝").startswith("지휘(모델)")
         assert next(l for l in lines if l.startswith("[결과]")).split(" ")[1] == "검증(코드)"
 
 
@@ -254,3 +254,34 @@ class TestDayHasClaims:
         r = self.labeled_ref(with_perf=True)                                      # p1이 둘째 날(COURSE)이라 지켜진다
         assert verify.problems(r, "{d2}에 공연 장소를 넣는 목표를 지켰어요.") == []
         assert verify.problems(r, "공연 목표는 못 지켰어요.") != []
+
+
+class TestNoAskClaims:
+    """#1131: 묻지 않고 정한 문장 — 장소를 어느 날에 두었다/옮겼다는 주장과, 영업시간을 몰라 여는 것으로 봤다는 가정."""
+
+    def test_placement_claim_must_match_the_course(self):
+        r = ref()                                                                # p3는 둘째 날
+        assert verify.problems(r, "{d1} 이동이 길어서 {p3}를 {d2}로 옮겨 나눴어요.") == []
+        found = verify.problems(r, "{d1} 이동이 길어서 {p3}를 {d3}로 옮겨 나눴어요.")
+        assert any("배치를 말했지만 결과에서는 둘째 날" in f for f in found), found
+        assert verify.problems(r, "{p3}를 {d3}로 옮기면 이동이 줄어요.") == []      # 계획은 주장이 아니다
+
+    def test_model_assumption_sentence_checks_place_and_day(self):
+        r = ref(hours={**HOURS, "p5": {}})                                       # p5(셋째 날) 영업 여부 모름
+        assert verify.problems(r, "{p5}은 {d3} 영업시간을 몰라 여는 것으로 보고 정했어요.") == []
+        assert verify.problems(r, "{p5}은 {d2} 영업시간을 몰라 여는 것으로 보고 정했어요.") != []
+
+    def test_assumption_sentence_lists_only_unknown_places_on_their_day(self):
+        r = ref(hours={**HOURS, "p5": {}, "p2": {}})
+        assert sorted(verify.assumed_pairs(r)) == [("p2", "d1"), ("p5", "d3")]
+        text = verify.assumption_sentence(r)
+        assert text.startswith("영업시간을 모르는 곳은 묻지 않고 여는 것으로 보고 정했어요: ")
+        assert "첫째 날" in text and "장소P2이름" in text and text.index("장소P2이름") < text.index("장소P5이름")
+        assert verify.assumption_sentence(ref()) is None                         # 모르는 곳이 없으면 줄이 없다
+
+    def test_assumption_sentence_caps_names_per_day(self):
+        everyone = ref(hours={})
+        text = verify.assumption_sentence(everyone)
+        assert "외 " not in text                                                 # 하루 많아야 세 곳(COURSE 둘째 날이 셋)
+        many = ref(hours={}, course=(("p1", "p2", "p3", "p4", "p5"), ("p6",), ()))
+        assert "외 2곳" in verify.assumption_sentence(many)

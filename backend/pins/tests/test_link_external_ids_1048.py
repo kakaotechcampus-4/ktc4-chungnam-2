@@ -15,7 +15,7 @@ from places.models import Place, PlaceExternalId, PlaceExternalIdVote
 
 # app_client의 FakePlaces 설치 전에 공개 함수 원본을 보관한다.
 REAL_APIS = {name: getattr(places_api, name) for name in (
-    "match_by_name_address", "match_address_candidates", "record_external_id", "own_places_by_external_id",
+    "match_by_name_address", "match_address_candidates", "record_external_id", "own_places_by_external_id", "match_place",
 )}
 URL = "https://m.place.naver.com/restaurant/1412566798/home"
 REF = {"provider": "naver", "external_id": "naver:1412566798"}

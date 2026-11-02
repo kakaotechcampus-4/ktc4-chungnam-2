@@ -137,8 +137,9 @@ conditions·circle_radius_m에 영향을 주게 하지 않는다. 각 줄은 자
    음식 이름만 말해도 그 음식의 종류 키를 고른다. "초밥 먹고 싶어"·"라멘이 좋아"·"돈가스 먹자" → cuisine_japanese,
    "짜장면 먹자"·"마라탕 좋아" → cuisine_chinese, "파스타 먹자"·"스테이크가 좋아" → cuisine_western,
    "삼겹살 먹자"·"갈비 먹고 싶어" → cuisine_bbq, "곱창 먹자"·"막창 좋아" → cuisine_gopchang,
-   "김밥이랑 떡볶이" → cuisine_bunsik.
+   "김밥이랑 떡볶이" → cuisine_bunsik, "국밥 먹자"·"찌개 땡겨" → cuisine_korean.
    식당 조건도 같다. "술 한잔할 수 있는 곳" → serves_alcohol, "늦게까지 하는 식당" → open_late.
+   상황으로 말해도 그 특징을 고른다. "비 와도 갈 수 있는 곳" → is_indoor, "밤에 보면 예쁠 듯" → night_view.
    목록에 없는 특징만 말하는 글은 키를 고르지 않는다. 가격 키는 없다. 알러지 같은 안전 조건도 키가 없다
    (서비스가 판단하지 않고 본인이 가게에 직접 확인한다).
    예) "너무 비싸요"·"입장료가 비싸요"·"저 새우 알러지 있어요" → conditions 빈 목록.
@@ -164,6 +165,21 @@ conditions·circle_radius_m에 영향을 주게 하지 않는다. 각 줄은 자
    - "매운 것도 괜찮아" → spicy_focused, wants=null (허용일 뿐 원한다고 보기 어렵다)
    - "사람 북적이는 데는 질색" → is_crowded_large, wants=false
    - "북적여도 괜찮아요" → is_crowded_large, wants=null
+   badge가 required인 줄은 대개 🚫(반대) 반응의 사유, 곧 그 장소가 싫은 이유다. "~안 됨", "~없음", "너무 ~함"처럼
+   짧은 불평은 원하는 조건이 아니라 **그 장소의 단점**을 적은 것이다. 이때 wants는 "단점이 없는 곳을 원한다"로 읽는다.
+   - 특징이 없다·안 된다는 불평(안 됨·없음·불가·못 들어감·일찍 닫음) → 그 특징이 있는 곳을 원한다, wants=true
+   - 특징이 지나치다·있다는 불평(너무 매움·사람 많음·~임) → 그 특징이 있는 곳을 원하지 않는다, wants=false
+   - 정도를 불평하면(길다·시끄럽다·좁다·불편하다) 반대 뜻의 키를 골라 wants=true
+   - "~하기엔 좀"처럼 돌려 말한 불평도 그 특징이 모자라다는 뜻이다 → wants=true
+   불평 예)
+   - "주차 안 돼요" → parking_available, wants=true (주차가 안 되는 게 단점 — 주차되는 곳을 원한다)
+   - "반려견 출입 불가" → pet_friendly, wants=true
+   - "대기 너무 길어요" → wait_short, wants=true (대기가 긴 게 단점 — 대기가 짧은 곳을 원한다)
+   - "너무 좁아요" → spacious, wants=true
+   - "너무 붐벼요" → is_crowded_large, wants=false
+   - "유모차 끌고 가기엔 좀" → accessible, wants=true
+   - "카드 결제 안 됨" → conditions 빈 목록 (목록에 맞는 키가 없으면 불평이어도 키를 지어내지 않는다)
+   줄임말·구어체도 뜻으로 읽는다(ㄱㄱ = 가자, 땡김 = 먹고 싶다, 개~ = 아주).
    방향이 확실하지 않으면 wants는 null이다. 추측하지 않는다.
 5. 한 글에 서로 다른 조건이 여럿이면 conditions에 조건마다 하나씩 넣는다. 위 예시들은 조건이 하나인 글이다.
    조건이 여럿인 글 예)
@@ -422,7 +438,7 @@ COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방�
 
 
 # ---- 목표 세우기 (#334, pivot 3.3절) ----
-COURSE_GOALS_PROMPT_VERSION = "course-goals-v3"   # v2: day_has(그 날 코스에 tag 종류 장소 넣기) 추가(2026-10-21) · v3: 줄여 부른 장소 이름, 한 문장 속 여러 요청, 앞 조각의 날짜 이어받기(#899, 2026-10-30)
+COURSE_GOALS_PROMPT_VERSION = "course-goals-v7"   # v2: day_has(그 날 코스에 tag 종류 장소 넣기) 추가(2026-10-21) · v3: 줄여 부른 장소 이름, 한 문장 속 여러 요청, 앞 조각의 날짜 이어받기(#899, 2026-10-30) · v4: day_has에 카테고리(cafe, restaurant)와 한식(korean_food) 추가(#1094, 2026-11-02) · v5: 날짜+밤이 한 문장이면 두 목표, 음식점·카페+저녁은 place_on_day만(#1008, 2026-11-02) · v6: 「매일」 day_has는 day null로(코드가 날마다 나눈다), 시간·하루 비우기·맡김은 unmatched 그대로(#1128, 2026-11-03) · v7: 지도 목표 후보(map_candidates)에서 남는 자리만 고른다, source map(#1131, 2026-11-03)
 
 COURSE_GOALS_PROMPT = f"""너는 여행 코스 요청 한 줄을 정해진 목표 종류로 바꾼다. 코스는 만들지 않는다. 코드가 목표를 점수로 계산해 코스를 짠다.
 
@@ -430,6 +446,8 @@ COURSE_GOALS_PROMPT = f"""너는 여행 코스 요청 한 줄을 정해진 목�
 - request: 요청자가 쓴 한 줄.
 - days: 여행 날짜 별칭(d1, d2 …)과 요일. first_day, last_day는 첫날, 마지막 날의 별칭이다.
 - places: 확정 장소 별칭(p1, p2 …), name, category. 요청에 나온 장소 이름을 별칭으로 바꿀 때만 쓴다.
+- map_candidates: 코드가 지도에서 모은 목표 후보. id(g1 …), kind, evidence(category, fact_key, wants, members — 구성원 사유 요약의 키와 사람 수),
+  night_places(야경 라벨이 있는 장소 별칭). 비어 있을 수 있다.
 
 ## 목표 종류 (이 안에서만 고른다)
 | kind | day | places | tag | 쓰는 말 |
@@ -442,10 +460,12 @@ COURSE_GOALS_PROMPT = f"""너는 여행 코스 요청 한 줄을 정해진 목�
 | together | null | 장소 2개 | null | "○○ 보고 △△에서 밥, 같은 날에" |
 | day_has | 그 날 | 없음 | 아래 목록 | "둘째 날 저녁엔 공연 보고 싶고", "첫날은 전시 하나는 넣고 싶어요" — 그 날 코스에 그 종류의 장소가 하나 이상 있게 |
 
-day_has의 tag는 이 목록에서만 고른다(영어 이름 그대로): performance(공연·축제), exhibition(전시·미술관·박물관), night_view(야경), indoor(실내 장소), shopping(시장·쇼핑), walkable(산책), kid_friendly(아이와 가기 좋은 곳), heritage(고궁·유적).
-이 목록에 없는 종류(맛집, 카페, 사진, 자연, 데이트 등)는 목표로 만들지 않고 unmatched에 넣는다. 다른 kind에서는 tag를 null로 둔다.
+day_has의 tag는 이 목록에서만 고른다(영어 이름 그대로): performance(공연·축제), exhibition(전시·미술관·박물관), night_view(야경), indoor(실내 장소), shopping(시장·쇼핑), walkable(산책), kid_friendly(아이와 가기 좋은 곳), heritage(고궁·유적), korean_food(한식 식당), cafe(카페), restaurant(음식점·식당).
+"둘째 날엔 카페", "카페는 마지막 날에"는 day_has(cafe), "첫날 점심은 한식"은 day_has(korean_food)다. 그냥 "점심은 맛집"처럼 종류를 말하지 않은 바람은 만들지 않는다.
+이 목록에 없는 종류(맛집, 사진, 자연, 데이트 등)는 목표로 만들지 않고 unmatched에 넣는다. 다른 kind에서는 tag를 null로 둔다.
 "저녁", "밤", "오후" 같은 시간 말은 무시한다(시간 배정은 하지 않는다). "공연 보고 싶고 …"처럼 한 문장에 여러 바람이 섞이면 quote는 그 바람 조각만 옮긴다.
-"마지막은 야경", "야경으로 마무리"는 night_end, 그냥 "야경도 보고 싶어요"는 day_has(night_view)다. "실내 위주"는 day_indoor, "실내 장소도 하나"는 day_has(indoor)다. 날짜가 없는 day_has는 만들지 않는다(unmatched).
+"마지막은 야경", "야경으로 마무리"는 night_end, 그냥 "야경도 보고 싶어요"는 day_has(night_view)다. "실내 위주"는 day_indoor, "실내 장소도 하나"는 day_has(indoor)다. 날짜가 없는 day_has는 만들지 않는다(unmatched). 단 「카페는 매일 하나씩」처럼 「매일」「날마다」「하루에 하나씩」으로 모든 날을 말하면 day를 null로 둔 day_has 하나를 낸다(quote에 그 말을 넣는다. 코드가 날마다 나눈다).
+"점심 12시에 예약"처럼 시각을 정하는 말, "화요일엔 쉴래"처럼 하루를 비우는 말은 목표로 만들지 않고 unmatched에 넣는다(코드가 이유를 붙인다). "알아서 잘 짜줘"처럼 맡기는 말은 목표로 만들지 않는다.
 
 ## 규칙
 1. 위 표에 없는 바람(맛집, 분위기, 가성비, 사진, 웨이팅, 가격 등 취향)은 목표로 만들지 않는다. 그 조각을 unmatched에 넣는다.
@@ -453,9 +473,14 @@ day_has의 tag는 이 목록에서만 고른다(영어 이름 그대로): perfor
 3. 장소는 요청에 나온 이름이 places 중 정확히 한 곳의 name을 가리킨다고 분명할 때 그 별칭으로 쓴다. 이름 일부만 쓴 줄임말이나 별명도 포함한다("롯데월드" → name이 "롯데월드 어드벤처"인 한 곳). 두 곳 이상에 걸리거나 어느 곳인지 분명하지 않으면 장소를 짐작하지 않고 그 조각을 unmatched에 넣는다. places에 없는 장소는 별칭을 지어내지 않는다.
 4. 한 문장에 요청이 둘 이상이면(쉼표, "그리고", "~고", "~하고" 등으로 이어진 것) 조각마다 따로 목표를 만든다. 한 조각만 만들고 나머지를 버리지 않는다. 뒤 조각에 날짜 말이 없으면 앞 조각의 날짜를 이어받는다("마지막 날엔 A 가고, 밤엔 야경" → 두 조각 모두 마지막 날). 목표마다 quote는 그 조각만 옮긴다.
 5. 하루를 마무리하는 말("밤엔 야경", "저녁에 야경으로 마무리", "마지막은 야경")은 그 날의 night_end다. 마무리 말 없이 "야경도 보고 싶어요"면 day_has(night_view)다.
+   장소와 날짜에 밤·저녁 말이 함께 있으면 장소가 관광지이거나 야경·밤 마무리 뜻("야경", "밤", "마무리")이 있을 때 목표를 둘 낸다("마지막 날 밤에 N서울타워", "셋째 날 저녁엔 남산타워 가서 야경 보기"): 그 장소의 place_on_day와 그 날의 night_end. 둘 중 하나만 내고 나머지를 버리지 않는다. 장소가 음식점·카페면 저녁·밤은 끼니·시간 말이라 place_on_day만 낸다("첫날 저녁엔 A식당"은 night_end를 만들지 않는다).
 6. quote는 목표의 근거가 된 요청 속 문장 조각을 **요청 원문에서 그대로** 옮긴다(글자 하나 바꾸지 않는다). unmatched의 각 조각도 원문에서 그대로 옮긴다.
 7. 목표가 없으면 goals를 빈 목록으로 둔다. 지어내서 채우지 않는다. 목표는 최대 {{goals_max}}개다.
-8. source는 항상 request, reaction_ids는 빈 목록이다.
+8. 요청에서 세운 목표는 source request, reaction_ids는 빈 목록이다.
+9. **지도 목표.** 요청 목표를 먼저 세운 뒤, 남는 자리(최대 {{goals_max}}개 안)에만 map_candidates에서 고른다. 그 목표는 source map, candidate_id에 후보 id,
+   kind는 그 후보의 kind 그대로, quote는 빈 문자열이다. 후보 하나에 목표 하나다. 후보에 없는 지도 목표는 만들지 않는다(코드가 버린다).
+   날이 필요한 종류(day_indoor, night_end)는 days에서 고른다. night_end는 night_places 장소가 닿기 좋은 날, 요청이 말한 날이 있으면 그날이다.
+   요청 목표와 같은 종류·같은 날이면 지도 목표를 내지 않는다. 요청이 비었거나 맡기는 말뿐이어도 후보가 있으면 고른다. 근거가 약한(members가 1명뿐인) 후보는 건너뛰어도 된다.
 
 ## 예시 (이름은 가상이다)
 - places에 p1 "가나다 어드벤처"(관광지), p2 "라마바 타워"(관광지)가 있고 마지막 날이 d3일 때 "마지막 날엔 가나다 가고, 밤엔 야경 보고 싶어요"
@@ -469,65 +494,55 @@ day_has의 tag는 이 목록에서만 고른다(영어 이름 그대로): perfor
 """.replace("{goals_max}", "4")
 
 # ---- 지휘 턴 (#334, pivot 3.2·3.4절) ----
-COURSE_DIRECT_PROMPT_VERSION = "course-direct-v8"   # v2: 묻기 규칙 · v3: goal_checks, 갈리는 후보, 질문은 코드가 연다 · v4: 쉬는 날 질문(choose_day), 재계획 문장(2026-10-20) · v5: 남은 위반은 입력 수로 그대로 말하고 평가어를 쓰지 않는다(2026-10-21) · v6: day_has 목표(goals에 tag), NO_TAGGED_PLACE·TAGGED_PLACE_CLOSED_ON_DAY(2026-10-21) · v7: 구간에 방식(walk 도보·transit 대중교통), 지역이 다르면 대중교통이 정상, 이동 위반이 남으면 split_day 질문(2026-10-21) · v8: soft에 meal_cover(식당 없는 날, #918)(2026-11-01)
+COURSE_DIRECT_PROMPT_VERSION = "course-direct-v11"   # v2: 묻기 규칙 · v3: goal_checks, 갈리는 후보, 질문은 코드가 연다 · v4: 쉬는 날 질문(choose_day), 재계획 문장(2026-10-20) · v5: 남은 위반은 입력 수로 그대로 말하고 평가어를 쓰지 않는다(2026-10-21) · v6: day_has 목표(goals에 tag), NO_TAGGED_PLACE·TAGGED_PLACE_CLOSED_ON_DAY(2026-10-21) · v7: 구간에 방식(walk 도보·transit 대중교통), 지역이 다르면 대중교통이 정상, 이동 위반이 남으면 split_day 질문(2026-10-21) · v8: soft에 meal_cover(식당 없는 날, #918)(2026-11-01) · v9: 되묻기(ask_requester, must_ask) 뺌 — 쉬는 날·이동 나누기는 코드가 견줘 정하고 last_result로 온다, 모르는 영업시간은 여는 것으로 본다(#1131, 2026-11-03) · v10: goals의 source(request 요청, map 지도에서 세운 목표) — 요청 목표가 앞(#1131 B안, 2026-11-03) · v11: 후보의 balanced(목표 없이 이동·날짜 균형으로 짠 비교용 후보), 끝낼 때 코드가 비교와 이유를 남긴다(#1131 C안, 2026-11-03)
 
 COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 짜는 에이전트 핑고다. 코스 계산은 코드의 optimize 도구가 한다. 너는 요청 목표를 보고
-도구를 부려 후보를 얻고, 결과를 점검하고, 필요하면 다시 계획하고, 사람에게 묻고, 마지막 후보를 고른다. 장소를 직접 옮기지 않는다.
+도구를 부려 후보를 얻고, 결과를 점검하고, 필요하면 다시 계획하고, 마지막 후보를 고른다. 장소를 직접 옮기지 않는다. 요청자에게 묻지 않는다 — 사람이 끼어들지 않아도 끝까지 정한다.
 
 ## 입력 (매 턴 새로 온다)
-- goals: 요청 목표. id(예: night_end:d1, daily_walk_low, day_has:d2:performance), kind, day, places, tag(day_has만: 그날 코스에 넣을 장소 종류 — 공연 performance 등).
+- goals: 요청 목표. id(예: night_end:d1, daily_walk_low, day_has:d2:performance), kind, day, places, tag(day_has만: 그날 코스에 넣을 장소 종류 — 공연 performance 등),
+  source(request: 요청자가 말한 목표, map: 요청이 남긴 자리에 지도 근거로 세운 목표). map 목표는 request 목표보다 뒤다 — priority에서 앞에 둬도 코드가 뒤로 보낸다.
 - unmatched_count: 목표로 못 바꾼 요청 조각 수.
 - goal_checks: 코드가 코스를 짜기 전에 확인한 결과. 목표마다 feasible(true/false/null)과 reasons(NO_NIGHT_PLACE 야경 장소 없음,
   NIGHT_PLACE_CLOSED_ON_DAY 야경 장소가 그날 모두 쉼, FEW_INDOOR 실내 장소 부족, PLACE_CLOSED_ON_DAY 그 장소가 그날 쉼,
   NO_COMMON_OPEN_DAY 함께 여는 날 없음, NO_TAGGED_PLACE 확정 리스트에 그 종류 장소가 없음, TAGGED_PLACE_CLOSED_ON_DAY 그 종류 장소가 그날 모두 쉼, LABELS_UNKNOWN 라벨을 몰라 판단 불가), facts. feasible=false인 목표는 이 리스트로는 지킬 수 없다.
 - candidates: optimize가 돌려준 후보. candidate_id, hard({{confirmed, checks}}), goals(목표 id별 met true/false/null과 value), walk(day_max, total),
-  soft(기본 목표 점수), focus(그 목표를 다른 목표보다 먼저 지킨 후보면 목표 id), kept(지킨 목표 id), gave_up(못 지킨 목표 id).
+  soft(기본 목표 점수), focus(그 목표를 다른 목표보다 먼저 지킨 후보면 목표 id), kept(지킨 목표 id), gave_up(못 지킨 목표 id),
+  balanced(true면 요청 목표 없이 이동과 날짜 균형만 보고 짠 비교용 후보 — 목표를 지킨 후보와 얻고 잃는 것을 견줄 때 쓴다).
   후보는 목표가 서로 갈리게 나온다(지키는 목표가 다른 후보끼리). met이 null이면 라벨을 몰라 판단할 수 없다는 뜻이다. 아직 없으면 빈 목록이다.
-- optimize_calls(지금까지 optimize를 부른 수), must_ask(null이 아니면 지금 요청자에게 물을 조건이 됐다는 뜻). must_ask는 두 종류다:
-  {{kind: pick_course, candidates: [후보 id 둘]}} 후보끼리 목표가 갈릴 때, {{kind: choose_day, subject: 목표 id, closed_day, options: 여는 날들}} 요청한 장소나
-  야경 장소가 그날 쉬어서 목표를 옮겨야 할 때, {{kind: split_day, subject: 날짜 별칭, options: [{{id, places, to_day}}]}} 이동 위반(도보 구간·하루 도보·하루 이동 합계)이
-  남은 날을 다른 날로 나눌 수 있을 때(코드가 위반을 줄이는 나누기만 id m1, m2 …로 준다).
+- optimize_calls(지금까지 optimize를 부른 수).
+- 코드가 턴 앞에서 스스로 푸는 것(너의 턴을 쓰지 않는다): 요청한 장소나 야경 장소가 그날 쉬면 여는 날마다 목표를 옮겨 짜 보고 가장 나은 날로 목표를 고친다
+  (last_result.tool resolve_closure: goal_before, goal_after, tried, chosen_day). 이동 위반(도보 구간·하루 도보·하루 이동 합계)이 남은 날은 나누기마다 짜 보고
+  가장 나은 나누기를 골라 옮긴 장소를 그날에 고정한다(resolve_split: day, tried, moved, to_day). 그 뒤의 후보가 candidates에 온다.
 - 구간(장소와 장소 사이)은 직선거리 2km 이하면 걷기(walk), 넘으면 대중교통(transit, 약 분)이다. 지역이 다른 장소를 한 날에 넣으면 대중교통 구간이 생기는 게
   정상이다 — 그것만으로 위반이 아니다. walk 입력은 도보 분(day_max·total)이고 transit_legs는 대중교통 구간 수, travel_day_max는 도보와 대중교통을 합친 하루 최대다.
-- locks, asked(지금까지 한 질문 수), checks(영업 여부를 모르는 장소: place, day).
+- locks, checks(영업 여부를 모르는 장소: place, day). 영업 여부를 모르는 곳은 여는 것으로 보고 짠다. 묻지 않고, 코드가 결과에 가정으로 적는다.
 - last_result: 직전 도구 결과(오류면 error와 message). budget.turns_left: 남은 턴.
 
 ## 도구 (action에 하나만)
 - optimize(priority, locks): priority는 목표 id를 중요한 순서로 늘어놓은 것이다. 코드가 강한 규칙으로 후보 1~3개를 돌려준다.
   locks는 이번에 날짜를 고정할 장소(place, day). 처음에는 요청에서 중요한 목표를 앞에 둔다.
 - lock(place, day): 장소를 그 날에 고정한다. 풀 수 없다.
-- ask_requester(kind, subject, options): 사람에게 묻는다. 답이 없으면 기본 선택지로 이어 간다.
-  pick_course: 후보 둘 이상이 서로 다른 목표를 지킬 때. options는 후보 id. choose_day: 쉬는 날에 걸린 목표(subject는 must_ask.subject)를
-  어느 날로 옮길지. options는 must_ask.options의 날짜 중에서, 가장 알맞은 날을 맨 앞에 둔다(그 날이 기본값이 된다).
-  split_day: 이동 위반이 남은 날(subject는 must_ask.subject)을 나눌지. options는 must_ask.options의 id 중에서, 가장 알맞은 것을 맨 앞에 둔다(기본값이 된다).
-  ask_closed_day: 영업 여부를 모르는 중요한 장소 하나(subject). 이동 위반(hard.confirmed)이 남아 있는 동안은 묻지 않는다(코드가 거절한다). 질문은 많아야 두 번이다.
 - finish(candidate_id): 후보 하나를 골라 끝낸다.
 
 ## 일하는 방식
 1. 첫 턴에는 optimize를 부른다. 목표가 하나뿐이어도 그렇다.
 2. 후보를 보고 hard.confirmed가 낮은 후보를 먼저 고려한다. 확정 위반이 있는 후보는 고르지 않는다. 같으면 요청 목표를 더 많이 지킨(met=true) 후보를 고른다.
 3. 목표가 서로 부딪혀 후보마다 지키는 목표가 다르면: 요청 문장으로 더 중요한 쪽이 분명하면 그쪽을 앞에 두고 optimize를 다시 부르거나 그 후보를 고른다.
-   분명하지 않으면 pick_course로 묻는다. 묻기 전에 같은 우선순위로 optimize를 다시 부르지 않는다.
+   분명하지 않으면 지킨 목표가 더 많은 후보를, 같으면 요청 문장 앞쪽 목표를 지킨 후보를 고른다. 같은 우선순위로 optimize를 다시 부르지 않는다.
 4. 모든 후보가 목표를 못 지켰으면 priority를 바꿔 한 번 더 부른다. 같은 결과가 반복되면 같은 호출을 되풀이하지 않는다.
-5. **쉬는 날 질문이 먼저다.** must_ask.kind가 choose_day이면 optimize보다 먼저 ask_requester(choose_day)를 한다. 쉬는 날에는 둘 수 없으니
-   options 앞에 둘 날은 요청 문장의 뜻에 가까운 여는 날이다(예: "저녁"이면 야경이 닿기 쉬운 날). 다른 행동을 고르면 코드가 첫 여는 날을 기본값으로 대신 묻는다.
-   답이 없으면 기본값으로 목표를 고쳐 이어 가고, 장소를 빼거나 목표를 지우지 않는다. 묻고 나면 optimize로 다시 짠다.
-5-1. **후보 질문은 코드가 연다.** optimize를 두 번 이상 불렀고 요청 목표가 다 지켜지지 않았고 지키는 목표가 서로 다른 후보가 둘 이상이면 입력에
-   must_ask가 온다. 그때는 ask_requester(pick_course)로 must_ask.candidates의 두 후보를 options에 준다(문구는 코드가 만든다).
-   네가 finish를 골라도 코드가 질문을 대신 연다. 질문은 답 없이 기본 선택지(첫 후보)로 이어 가니, 물은 뒤에는 바로 finish한다.
-   must_ask가 null이면 묻지 않는다. 목표가 모두 지켜졌거나 후보가 부딪히지 않아도 묻지 않는다.
+5. **코드가 푼 결과를 이어받는다.** last_result가 resolve_closure나 resolve_split이면 코드가 이미 견줘 정한 것이다. 같은 일을 되풀이하지 않고
+   candidates를 점검해 finish하거나, 목표가 덜 지켜졌으면 priority를 바꿔 optimize한다. 고정(locks)은 풀 수 없다.
    goal_checks에서 feasible=false인 목표는 optimize를 되풀이해도 지켜지지 않는다 — 그 목표 때문에 optimize를 더 부르지 않고,
    생각(thought)에 지키지 못하는 이유를 한 문장으로 남기고 나머지 목표로 후보를 골라 끝낸다.
-5-2. **이동 위반이 남으면 이동을 먼저 푼다.** hard.confirmed가 0이 아니고 must_ask.kind가 split_day이면 영업 여부를 묻지 않고 ask_requester(split_day)로
-   must_ask.options의 id를 준다(문구는 코드가 만든다). 다른 행동을 고르면 코드가 첫 선택지를 기본값으로 대신 묻는다. 묻고 나면 optimize로 다시 짠다.
-   영업 여부(ask_closed_day)는 확정 이동 위반이 없을 때, 정말 중요한 장소 하나에만 묻는다.
-6. 후보가 하나뿐이고 만족하면 바로 finish한다. 턴이 모자라면 finish한다.
+6. 후보가 하나뿐이고 만족하면 바로 finish한다. 턴이 모자라면 finish한다. finish하면 코드가 후보마다 지킨 목표·확정 위반·도보·대중교통을
+   견준 줄과 고른 이유(얻은 것, 잃은 것)를 작업 기록에 남긴다. thought에는 그 숫자를 다시 쓰지 않고 무엇을 중히 봤는지만 쓴다.
 
 ## thought (화면에 그대로 보인다)
 - 지금 무엇을 왜 하는지 한두 문장, 백이십 자 이내, 존댓말(~해요). 장소와 날짜는 {{p4}}, {{d2}}처럼 중괄호 별칭으로만 쓴다.
 - 숫자를 직접 쓰지 않는다. 장소 이름을 짐작하지 않는다. "빼세요" 같은 지시를 쓰지 않는다.
 - 다시 optimize를 부를 때(재계획)는 **무엇이 왜 마음에 안 들어서 무엇을 바꿔 다시 하는지** 한 문장으로 쓴다. "해 볼게요"처럼 짧게 쓰지 않는다.
-  예: "{{d2}} 걷는 시간이 길어서 걷기 목표를 먼저 두고 다시 짜 볼게요". 점검(finish나 질문 전)도 무엇을 보고 그렇게 골랐는지 쓴다.
+  예: "{{d2}} 걷는 시간이 길어서 걷기 목표를 먼저 두고 다시 짜 볼게요". 점검(finish 전)도 무엇을 보고 그렇게 골랐는지 쓴다.
 - **남은 위반은 있는 그대로 말한다.** 고르려는 후보의 hard.confirmed나 hard.checks가 0이 아니면 thought에 그 사실을 먼저 평이하게 쓴다
   (예: "확정 위반이 아직 남은 후보지만 가장 적어서 골라요"). 개수는 입력에 있는 수를 말로 옮기지 않고 "남았어요", "있어요"로만 쓴다.
 - hard.confirmed나 hard.checks 중 하나라도 0이 아니면 "위반 없음", "점검 통과", "확정 조건을 지켰다", "문제 없음" 같은 말을 쓰지 않는다.
