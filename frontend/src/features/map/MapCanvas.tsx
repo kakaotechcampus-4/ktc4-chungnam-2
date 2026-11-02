@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
+import { allInside, fitCenter, fitLevel, fitPadding, zoomSteps } from './camera'
 import { createMarkerLayer, mapFade, type MarkerLayer } from './markerLayer'
 import { createCandidateMarkerElement, createSearchMarkerElement, markSelected } from './pinMarker'
 import type { PlaceSearchResultDto } from '@/features/search/model'
@@ -48,10 +49,11 @@ export type CandidateMarker = { id: string; rank: number; name: string; lat: num
 /** 지도 버튼(현재 위치·최근 핀·전체 핀)·검색·핀·AI 후보 선택이 지도를 움직이는 통로. */
 export type MapController = {
   panTo: (lat: number, lng: number) => void
-  /** 고른 곳으로 부드럽게 옮기고, 멀리 보고 있었으면 FOCUS_LEVEL 까지 부드럽게 확대한다. */
+  /** 고른 곳으로 부드럽게 옮기고, 멀리 보고 있었으면 FOCUS_LEVEL 까지 2단계씩 확대한다. */
   focusPin: (lat: number, lng: number) => void
   getCenter: () => { lat: number; lng: number }
-  fitPins: (points: { lat: number; lng: number }[]) => void
+  /** 점 전체가 보이게 맞춘다. 이미 다 보이면 그대로 둔다 — `force` 면(「전체 핀 보기」) 그래도 맞춘다. */
+  fitPins: (points: { lat: number; lng: number }[], opts?: { force?: boolean }) => void
 }
 
 /**
@@ -123,16 +125,47 @@ export default function MapCanvas({
         fade()
         layerRef.current = layer
 
-        // focusPin 이 옮기기를 마치고 확대하려고 기다리는 중이면 그 idle 처리기.
-        let pendingZoom: (() => void) | null = null
-        const cancelZoom = () => {
-          if (pendingZoom) maps.event.removeListener(map, 'idle', pendingZoom)
-          pendingZoom = null
+        // 지도가 스스로 움직이는 일(#1026). 옮기기와 2단계씩의 확대·축소를 차례로 하고, 하나가 끝나 지도가 멈추면(idle) 다음을 한다.
+        // 사용자가 지도를 잡거나 새 움직임이 오면 남은 일을 버린다.
+        let waiting: (() => void) | null = null
+        const stopMoves = () => {
+          if (waiting) maps.event.removeListener(map, 'idle', waiting)
+          waiting = null
         }
+        /** 일마다 지도를 움직였으면 true — 그러면 멈출 때까지 기다린다. 움직일 게 없던 일은 idle 이 오지 않아 바로 다음으로 간다. */
+        const runMoves = (moves: (() => boolean)[]) => {
+          stopMoves()
+          const next = () => {
+            stopMoves()
+            while (moves.length > 0) {
+              const onStop = () => next()
+              maps.event.addListener(map, 'idle', onStop)
+              waiting = onStop
+              if (moves.shift()!()) return
+              stopMoves()
+            }
+          }
+          next()
+        }
+        const panMove = (to: kakao.maps.LatLng) => () => {
+          const proj = map.getProjection()
+          const p = proj.containerPointFromCoords(to)
+          const c = proj.containerPointFromCoords(map.getCenter())
+          if (Math.hypot(p.x - c.x, p.y - c.y) < 1) return false
+          map.panTo(to)
+          return true
+        }
+        // 카카오 setLevel 은 레벨 차이 2 이하에서만 움직임을 보여 준다 — 그보다 멀면 2씩 나눠 이어 간다(camera.zoomSteps).
+        const zoomMoves = (to: number, anchor?: kakao.maps.LatLng) =>
+          zoomSteps(map.getLevel(), to).map((level) => () => {
+            map.setLevel(level, { anchor, animate: { duration: ZOOM_MS } })
+            return true
+          })
+        const still = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
         const onDragStart = () => {
-          // 옮기는 도중에 사용자가 지도를 잡으면 뒤늦게 확대하지 않는다.
-          cancelZoom()
+          // 움직이는 도중에 사용자가 지도를 잡으면 남은 옮기기·확대를 하지 않는다.
+          stopMoves()
           callbacks.current.onMovingChange(true)
         }
         const onIdle = () => callbacks.current.onMovingChange(false)
@@ -143,7 +176,7 @@ export default function MapCanvas({
         maps.event.addListener(map, 'click', onClick)
         maps.event.addListener(map, 'zoom_changed', fade)
         detach = () => {
-          cancelZoom()
+          stopMoves()
           maps.event.removeListener(map, 'dragstart', onDragStart)
           maps.event.removeListener(map, 'idle', onIdle)
           maps.event.removeListener(map, 'click', onClick)
@@ -158,47 +191,63 @@ export default function MapCanvas({
           const h = window.innerHeight
           return Math.round(h / 2 - (VISIBLE_TOP + h * 0.41) / 2)
         }
+        /** 그 곳이 보이는 자리(가운데보다 sheetLift 위)에 오게 하는 지도 가운데(지금 축척 기준). */
+        const liftedCenter = (to: kakao.maps.LatLng) => {
+          const proj = map.getProjection()
+          const p = proj.containerPointFromCoords(to)
+          return proj.coordsFromContainerPoint(new maps.Point(p.x, p.y + sheetLift()))
+        }
         callbacks.current.onReady({
+          // 축척은 그대로 두고 부드럽게 옮긴다(화면보다 먼 곳은 카카오가 바로 옮긴다).
           panTo: (lat, lng) => {
-            map.setCenter(new maps.LatLng(lat, lng))
-            map.panBy(0, sheetLift())
-          },
-          // 옮기고 나서 고른 곳을 붙든 채(anchor) 확대한다. 한꺼번에 하면 확대 중심이 화면 밖일 수 있다.
-          focusPin: (lat, lng) => {
-            cancelZoom()
             const target = new maps.LatLng(lat, lng)
-            const zoomIn = map.getLevel() > FOCUS_LEVEL
-            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-              if (zoomIn) map.setLevel(FOCUS_LEVEL)
+            if (still()) {
+              stopMoves()
               map.setCenter(target)
               map.panBy(0, sheetLift())
               return
             }
-            const zoom = () => map.setLevel(FOCUS_LEVEL, { anchor: target, animate: { duration: ZOOM_MS } })
-            // 고른 곳이 보이는 자리에 오게 하는 가운데(지금 축척 기준).
-            const proj = map.getProjection()
-            const p = proj.containerPointFromCoords(target)
-            const c = proj.containerPointFromCoords(map.getCenter())
-            const lift = sheetLift()
-            // 이미 그 자리면 옮길 게 없어서 idle 이 오지 않는다 — 바로 확대한다.
-            if (Math.hypot(p.x - c.x, p.y + lift - c.y) < 1) {
-              if (zoomIn) zoom()
+            runMoves([panMove(liftedCenter(target))])
+          },
+          // 옮기고 나서 고른 곳을 붙든 채(anchor) 2단계씩 확대한다. 한꺼번에 하면 확대 중심이 화면 밖일 수 있다.
+          focusPin: (lat, lng) => {
+            const target = new maps.LatLng(lat, lng)
+            const to = Math.min(map.getLevel(), FOCUS_LEVEL)
+            if (still()) {
+              stopMoves()
+              map.setLevel(to)
+              map.setCenter(target)
+              map.panBy(0, sheetLift())
               return
             }
-            if (zoomIn) {
-              pendingZoom = () => {
-                cancelZoom()
-                zoom()
-              }
-              maps.event.addListener(map, 'idle', pendingZoom)
-            }
-            map.panTo(proj.coordsFromContainerPoint(new maps.Point(p.x, p.y + lift)))
+            runMoves([panMove(liftedCenter(target)), ...zoomMoves(to, target)])
           },
           getCenter: () => {
             const c = map.getCenter()
             return { lat: c.getLat(), lng: c.getLng() }
           },
-          fitPins: (list) => layer.fit(list),
+          // 점 전체가 보이게 맞춘다. 이미 다 보이면 그대로 둔다(누른 사람이 원한 「전체 핀 보기」만 force).
+          // 가까이 갈 땐 먼저 옮기고 확대, 멀어질 땐 먼저 축소하고 옮긴다 — 어디서 어디로 가는지 보이게.
+          fitPins: (list, opts) => {
+            const el = containerRef.current
+            if (list.length === 0 || !el) return
+            const size = { w: el.clientWidth, h: el.clientHeight }
+            const pad = fitPadding(window.innerHeight, isDesktopNow())
+            const proj = map.getProjection()
+            const px = list.map((p) => proj.containerPointFromCoords(new maps.LatLng(p.lat, p.lng)))
+            if (!opts?.force && allInside(px, size, pad)) return
+            const level = map.getLevel()
+            const to = fitLevel(px, size, pad, level, FOCUS_LEVEL)
+            const c = fitCenter(px, size, pad, level, to)
+            const center = proj.coordsFromContainerPoint(new maps.Point(c.x, c.y))
+            if (still()) {
+              stopMoves()
+              map.setLevel(to)
+              map.setCenter(center)
+              return
+            }
+            runMoves(to < level ? [panMove(center), ...zoomMoves(to, center)] : [...zoomMoves(to), panMove(center)])
+          },
         })
         setReady(true)
       })
