@@ -69,7 +69,8 @@ def adjust_cuisine_labels(name: str, labels: Mapping[str, Mapping]) -> dict[str,
     for key, label in out.items():
         if _is_license_false(key, label):
             label.update(value="unknown", evidence="", source="")
-    foreign = FOREIGN_WORDS & set(hits.values())
+    lowered_name = (name or "").lower()   # name_hits와 같은 처리. 키마다 첫 낱말만 돌려주므로(근거 표시용) 외국 낱말은 이름에서 따로 찾는다
+    foreign = any(w in lowered_name for w in FOREIGN_WORDS)
     for key, word in hits.items():
         out[key] = {"value": "true", "evidence": f"가게 이름 '{word}'", "source": NAME_SOURCE}
     korean = out.get(KOREAN)

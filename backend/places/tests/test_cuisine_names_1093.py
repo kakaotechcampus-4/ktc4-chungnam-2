@@ -65,6 +65,12 @@ def test_korean_raw_fish_names_raise_raw_fish_but_keep_license_korean(name):
     assert out["cuisine_japanese"]["value"] == "unknown"
 
 
+@pytest.mark.parametrize("name", ["물회 사시미", "활어 사시미", "사시미 물회"])
+def test_domestic_and_foreign_words_on_the_same_key_still_lower_korean(name):
+    out = cn.adjust_cuisine_labels(name, _license("cuisine_korean"))
+    assert out["cuisine_raw_fish"]["value"] == "true" and out["cuisine_korean"]["value"] == "unknown"   # 같은 키의 첫 낱말(물회·활어)이 외국 낱말(사시미)을 가리면 안 된다
+
+
 def test_hyojadong_chobap_is_japanese_and_raw_fish_and_not_korean():
     out = cn.adjust_cuisine_labels("효자동초밥", _license("cuisine_korean"))
     assert (out["cuisine_japanese"]["value"], out["cuisine_raw_fish"]["value"], out["cuisine_korean"]["value"]) == ("true", "true", "unknown")
