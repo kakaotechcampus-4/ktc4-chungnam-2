@@ -1,6 +1,7 @@
 # 계획 보조 에이전트 모드 v2 구현 명세
 
 - 상태: 설계 확정 (2026-10-02), 마지막 개정 (2026-11-02, 아래 기록). 수치는 초기값이며 운영 기록을 보고 조정한다.
+- 2026-11-03 개정(#1152 ③): 미리 돌려 보기와 절충안(6.7) — 진단 전에 코드가 recommend의 읽기 전용 필터로 남는 수를 확인하고, 0곳이면 「추천 받기」를 빼고, 갈림에서는 양쪽을 다 만족하는 곳을 센다. recommend.api `preview_filter`를 새로 연다(구현 #1180).
 - 2026-11-03 개정(#1152): 갈림·정체 강화의 앞 두 단계를 더했다 — 우리 데이터 확인(6.6, 코드), 지도 현황 문단(8.2, 칸은 코드·문장은 모델), 서비스 일일 예산(19절). 계약(api-spec, data-model)은 별도 PR이다.
 - 2026-11-02 개정(#1120): 모델 제공자가 엘리스 ML API에서 OpenAI 직접 호출로 바뀌었다. 19절과 21.1에 반영했다(모델과 프롬프트는 그대로).
 - 2026-11-02 개정: 지금 코드와 맞지 않던 서술을 고쳤다(#1072). 추천 막힘 조언은 #749에서 코드로 옮겨, 지금 에이전트의 모델 호출은 진단(agent_diagnose) 하나다. 관찰 tick은 HTTP 엔드포인트가 아니라 서버 cron이 부르는 명령이다(12.1, #812). 끝단 시나리오와 코드·모델 분담(1.1), 진단 시간 상한(19절), 장애 대응과 사용자 안내(21.3), #717 이후 진단 재측정(21.1), 개입 적절성 라벨링 준비(21.5)를 더했다. 18절 작업 목록은 고치지 않고 지금 상태를 괄호로 덧붙였다. 그때 결정 필요로 둔 여섯 가지는 같은 날 정했다(#535 닫음, 21.3, 21.5, 12.3).
@@ -312,8 +313,8 @@ def detect_split(s: Snapshot, now: datetime, th: timedelta) -> list[Signal]:
 **진단 입력(`core.diagnosis_input`, #533, #534).** 모델이 알려고 도구를 한 번 더 부르지 않게, 공개 데이터 몇 칸을 처음부터 넣는다. 사유 글은 넣지 않고 도구(get_reasons)로만 읽게 한다.
 
 - 공통: signal_id, diagnosis
-- stall: category, against_pin_ids(🚫가 달린 핀. show_pins 버튼의 근거)
-- split: pin_id, place_id(실시간 핀은 null. get_place_facts용), counts({like, against}. 필수 claim 값), 비교 결과(compare_reasons, 6.3)
+- stall: category, against_pin_ids(🚫가 달린 핀. show_pins 버튼의 근거), preview(6.7, 없으면 null)
+- split: preview(6.7, different_axes일 때만, 없으면 null), pin_id, place_id(실시간 핀은 null. get_place_facts용), counts({like, against}. 필수 claim 값), 비교 결과(compare_reasons, 6.3)
 
 ### 6.4 반응 공백 (no_reaction)
 
@@ -378,6 +379,47 @@ def detect_category_gap(s: Snapshot) -> list[Signal]:
 - 핀 이름은 pin 조각으로 내린다(#717, 11.2 렌더와 같다).
 
 **저장과 렌더.** 제안에는 (pin_id, fact_key)만 저장하고 값은 렌더 때 places에서 다시 읽는다. 라벨이 바뀌면 화면도 바뀐다. 사유 원문은 쓰지 않는다(2절 13번).
+
+### 6.7 미리 돌려 보기와 절충안 (#1152 ③)
+
+진단이 「추천 받기」를 권하기 전에 **그 조건으로 후보가 실제로 남는지** 코드가 먼저 확인한다. 의견 갈림에서는 **양쪽을 다 만족하는 곳**이 있는지 본다(가드레일 10: 충돌 선언 전에 둘 다 만족하는 범주를 먼저 탐색한다). 모델 호출은 늘지 않는다.
+
+**무엇을 돌리나.** 지금 「추천 받기」를 누르면 쓰일 근거로 recommend의 필터를 읽기 전용으로 돌린다. run, 후보, 근거 줄, 제외 목록을 만들지도 읽지도 않는다.
+
+- 근거: 그 카테고리의 사유 있는 반응 전부(♥·🚫, 칩과 글). 칩은 칩 표, 글은 `structure_reasons`(②, (reaction_id, updated_at) 캐시)로 키와 방향을 붙이고, 배지는 반응 종류로 정한다(🚫 required, ♥ preferred) — 8절 요약이 줄을 만드는 방법과 같다.
+- recommend는 run을 만들 때와 **같은 함수**로 줄을 조립하고(#422·#617 내리기, `evidence_line_use`), 같은 필터 순서(반경 → 영업 종료 → 실격 조건)로 거른다. agent는 필터를 다시 구현하지 않는다.
+- **제외 목록(이미 제안·거절됨)은 보지 않는다.** 제외 목록은 사람마다 따로라 비공개다(2절 2번, data-model `exclusions`는 requested_by 단위). 그래서 실제 추천은 이 수보다 적을 수 있다. 문장은 약속하지 않는다(아래).
+- 기본 지역과 시·도 제한은 run과 같다(5-6-1 지금 구현).
+
+**recommend.api 함수(새로 연다, 모듈 경계 변경).**
+
+```python
+def preview_filter(db, *, map_id, category, lines, now, with_keys=()) -> dict:
+    """읽기 전용. run을 만들지 않는다. 결과는 수만 — 장소 이름과 id는 돌려주지 않는다.
+    lines: [{fact_key, wants, badge}] — agent가 반응에서 만든 줄(조립·내리기·쓰임 판정은 recommend가 한다)
+    with_keys: 통과한 곳 중 이 키들이 모두 참(known)인 곳을 따로 센다(절충안)
+    → {passed_count, with_keys_count, funnel[{key, removed_count}]}   # funnel은 pool·radius·closed·disqualify만"""
+```
+
+- **이름과 id를 돌려주지 않는다.** 이름까지 보이면 크레딧(#432) 없이 추천을 받는 길이 된다. 화면에는 수만 나간다.
+- 다른 모듈은 이 함수로만 미리 돌려 본다(`simulate_filter`는 run이 있어야 하는 추천 막힘 조언 전용으로 그대로 둔다).
+
+**언제 돌리나(코드가 진단 전에).** split의 충돌 종류처럼(6.3) 모델을 부르기 전에 코드가 계산해 진단 입력에 넣는다.
+
+| 신호 | 돌리는 것 | 진단 입력 |
+| --- | --- | --- |
+| stall | 그 카테고리 근거 전부 | `preview: {passed_count}` |
+| split, different_axes | 그 카테고리 근거 전부 + `with_keys` = ♥ 쪽이 원한 키(그 핀의 compare_reasons에서 wants=true인 ♥ 키) | `preview: {passed_count, with_keys_count, with_labels}` (with_labels는 그 키들의 표시 이름) |
+| split, same_axis·unclear | 돌리지 않는다 | — 같은 특징을 반대로 원하면 둘 다 만족하는 곳이 정의상 없다. 그렇다고 밝히고 「핀 보기」로 넘긴다 |
+
+- 결과는 도구 기록에 코드 호출 `p1`로 남긴다(도구 상한에 세지 않는다, 6.3의 비교와 같은 취급). 모델은 수를 `ToolClaim(call_id="p1", path="passed_count")`처럼 가리키고, 코드가 11.2 3단계에서 대조한다.
+- ②가 실패하면(UNAVAILABLE) 미리 돌려 보기를 건너뛰고 진단은 지금처럼 간다. 그때는 아래 행동 검사도 하지 않는다.
+
+**문장(모델, 지시문에 규칙).** 수는 claim 슬롯으로만 쓴다. 약속하지 않는다 — 「지금 조건으로 찾으면 맞는 곳이 {c3.value}곳 있어요」, 갈림은 「두 의견을 다 맞추는 곳이 {c4.value}곳 있어요」. 「이미 보여 준 곳은 빠질 수 있어요」는 필요할 때 덧붙인다. 장소 이름은 쓰지 않는다(입력에도 없다).
+
+**행동 검사(코드, 11.2 6단계에 더함).** 미리 돌려 본 `passed_count`가 0이면 `open_recommend`를 뺀다 — 0곳인 추천을 권해 크레딧을 쓰게 하지 않는다. 남은 행동이 없고 문장도 없으면 침묵이다(7단계).
+
+**평가.** 평가셋(`llm/tests/eval_agent/cases.json`)에 미리 돌려 본 결과가 있는 정체·갈림 케이스(0곳, 몇 곳, 절충 0곳/몇 곳)를 더하고 프롬프트 버전을 올린다(diagnose-v3). 0곳 케이스에서 「추천 받기」가 남지 않는지(코드), 수가 claim으로만 나오는지 본다.
 
 ## 7. 우선순위
 
@@ -586,6 +628,8 @@ advise-v4 프롬프트의 「종류 고르기」는 순서가 정해진 절차�
 | get_shortlist | `(map_id)` → [{pin_id, category, visit_order}] | shortlist.api |
 | get_route | `(map_id)` → [{region_label, ordered_pin_ids, total_distance_m}] 또는 null | shortlist.api |
 
+진단 전에 코드가 부르는 것(모델이 고르지 않고 도구 상한에 세지 않는다): split의 compare_reasons(6.3), 미리 돌려 보기 `recommend.api.preview_filter`(6.7, 도구 기록에 `p1`).
+
 유형별 허용 도구:
 
 - stall: get_map_overview, get_reasons, structure_reasons, get_readiness
@@ -678,7 +722,7 @@ class DiagnosisOutput(BaseModel):
 | 3. claim 대조 | count는 스냅샷에서 같은 지표를 다시 계산해 비교. quote는 공백 정규화 후 해당 reaction 원문에 포함되는지. ref는 이 지도의 공개 데이터에 존재하는지. tool_result는 이번 관찰 도구 로그의 call_id와 path 값이 같은지 | 실패한 claim 제거 |
 | 4. 구조 대조 | 요약의 요청 문장이 가리키는 reaction이 vague_fixable 칸에 있는지(not_filtered 사유에 구체화 요청을 붙이지 않았는지) | 해당 문장 제거 |
 | 5. 문장 | basis에 제거된 claim이 있는 문장. 슬롯 밖 숫자(정규식 `\d`). 구성원 표시 이름 포함. 금지 표현(FORBIDDEN_PHRASES). 슬롯 밖에서 사유 원문을 옮겨 쓴 문장(입력 사유와 공백을 뺀 연속 8글자 이상 일치, 초안) | 문장 제거 |
-| 6. 행동 | 유형별 허용 목록에 있는지. open_recommend의 category가 `categories.recommendable()`인지. basis가 유효한지. open_evidence는 진단의 허용 목록에 없다. 조언에서 본인 줄에만 붙이는 것은 코드다(9.1, 위 문단) | 행동 제거 |
+| 6. 행동 | 유형별 허용 목록에 있는지. open_recommend의 category가 `categories.recommendable()`인지. 미리 돌려 본 passed_count가 0이면 open_recommend를 뺀다(6.7). basis가 유효한지. open_evidence는 진단의 허용 목록에 없다. 조언에서 본인 줄에만 붙이는 것은 코드다(9.1, 위 문단) | 행동 제거 |
 | 7. 성립 판정 | 유형의 필수 claim이 남았는지(split: 해당 핀 like와 against count). 문장이나 행동이 하나 이상 남았는지 | 침묵 (invalid_claims) |
 
 ```python
