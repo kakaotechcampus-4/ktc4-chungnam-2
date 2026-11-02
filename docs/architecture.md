@@ -43,7 +43,7 @@
 | `realtime` | SSE 채널(전체/개인), `event_log` 폴링·재동기화 | 5-5-1 | — |
 | `notifications` | 앱 안 알림함과 알림 설정(#470). 다른 모듈은 이벤트를 쓰는 같은 트랜잭션에서 `notifications.api.notify`를 수신자마다 부르고, 문장은 `compose_message`로 만든다 | 신규(v2) | — |
 | `feedback` | 서비스 피드백 저장(#10). 읽는 API는 없다 | 신규(v2) | — |
-| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 각 모듈 api의 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth` (api.py만) |
+| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 각 모듈 api의 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth`, `pins` (api.py만) |
 | `ads` | 추천 탭 광고: 기간 광고 관리, 선택(코드), 노출과 클릭의 날짜별 집계(docs/ads.md, #642) | 신규 | `places`, `recommend`, `pins` (api.py만. `recommend`는 `ads`를 import하지 않는다) |
 | `credits` | 사람마다 하나인 AI 실행 크레딧: 잔액·원장, 가격표(`credits/constants.py` 한 곳), 확인·차감·환불·후기 보상(docs/credits-reviews.md, #432). 다른 모듈은 `credits.api`만 부른다 | 신규(v2, 구현 #948) | `auth` (api.py만, 게스트 판정) |
 | `reviews` | 자체 DB 장소에 붙는 후기(별점 + 글), 신고, 숨김 스크립트(docs/credits-reviews.md, #432). 핀으로 부르고 장소를 찾는다 | 신규(v2, 구현 #951) | `pins`, `credits` (api.py만) |
@@ -258,6 +258,16 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 - 지우는 테이블 12개: maps·memberships·invites(maps), pins·reactions(pins), shortlist_items·routes(shortlist), recommend_runs·candidates·evidence_lines·regions·exclusions(recommend), event_log(realtime). **`places`·`place_facts`는 지도에 속하지 않으므로 지우지 않는다.**
 - 실행은 손으로 돌리는 명령이다(`python -m maps.purge --older-than-days 30 [--dry-run]`). 지금 코드에는 예약 실행 장치가 없고, 예약은 배포 환경을 정할 때 붙인다(#168). `--dry-run`은 지울 지도 수와 테이블별 행 수만 보여 준다.
 - 되돌릴 수 없는 작업이라 조건이 엄격하다: `deleted_at`이 있고 기간이 지난 지도만 대상이며, 다른 지도의 데이터에는 손대지 않는다.
+
+## 1.5 핀 휴지통과 정리 (#864, #1013, #1063)
+
+핀을 지우면 `pins.deleted_at`과 함께 지운 사람(`deleted_by`)·삭제 직전 확정 여부(`deleted_was_confirmed`)를 남기고 30일 동안 되살릴 수 있다(`GET /maps/{mapId}/trash`, `POST /pins/{pinId}/restore`). 보관 기간(30일)과 실제 삭제 규칙은 **pins가 소유**한다 — maintenance는 부르기만 하고 값을 복사하지 않는다.
+
+| 공개 함수 | 부르는 곳 | 하는 일 |
+|---|---|---|
+| `pins.api.purge_deleted_pins(db, *, now: datetime) -> dict[str, int]` | maintenance(`pins` 단계, #1063) | 삭제한 지 30일이 지난 핀과 그 반응을 오래된 것부터 한 번에 최대 1000개 영구 삭제한다. 반환 `{"reactions": n, "pins": m}`. 멱등, 커밋은 호출자가 한다 |
+
+30일 안의 핀은 건드리지 않는다. 정리 작업의 dry-run은 호출자가 롤백해 확인한다(다른 단계와 같다).
 
 ## 2. 장소 데이터 3층 모델
 
