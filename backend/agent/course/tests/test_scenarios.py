@@ -1,4 +1,4 @@
-"""시연 시나리오 — 쉬는 날에 걸린 목표를 코드가 먼저 찾아 묻는 흐름(choose_day). 기대 흐름은 생성 스크립트가 원자료에서 따로 계산한다."""
+"""시연 시나리오 — 쉬는 날에 걸린 목표를 코드가 찾아 묻지 않고 푸는 흐름(#1131, 예전 choose_day 질문). 기대 흐름은 생성 스크립트가 원자료에서 따로 계산한다."""
 
 import copy
 from datetime import date
@@ -62,92 +62,84 @@ def test_시나리오는_5개_안팎이고_평가_세트_표시가_다르다(bui
     assert len({s["map_id"] for s in scenarios}) == len(scenarios)            # 지도마다 하나
 
 
+def _resolved(result):
+    return next(step for step in result.steps if step.call.get("tool") == direct.RESOLVE_CLOSURE)
+
+
 def test_기대_흐름이_스텁_모델_없이_그대로_나온다(built):
+    """묻지 않는다(#1131): 코드가 여는 날마다 옮겨 짜 보고 가장 나은 날로 목표를 고친다. 기대 흐름의 기본값은 여는 날 중 하나일 뿐이다."""
     maps, scenarios = built
     for s in scenarios:
         sc, gold, result = run(maps[s["map_id"]], s)
         exp = s["expected"]
         first_check = result.steps[0].result.data["checks"][0]
         assert first_check["reasons"] == exp["reasons"] and first_check["feasible"] is False
-        q = result.questions[0]
-        assert (q.kind, q.subject, q.default) == (exp["question"], exp["subject"], exp["default"])
-        assert q.options[-1] == direct.DROP and q.option_labels[-1] == "그 목표는 빼기" and exp["default"] in q.options
-        assert exp["goal_after"] in {g.id for g in result.state.goals}                       # 답(기본값)으로 목표가 고쳐졌다
-        assert exp["subject"] not in {g.id for g in result.state.goals}
-        ask = next(step for step in result.steps if step.call.get("tool") == "ask_requester")
-        assert ask.by == "code" and ask.substituted_for["error"] == "QUESTION_OPENED_BY_CODE"
-        assert "기본값" in q.default_reason and "코드가 고른 첫 여는 날" in q.default_reason
+        step = _resolved(result)
+        data = step.result.data
+        assert step.by == "code" and data["goal_before"] == exp["subject"]
+        assert exp["default"] in [t["day"] for t in data["tried"]] and data["chosen_day"] in [t["day"] for t in data["tried"]]
+        assert data["goal_after"] in {g.id for g in result.state.goals} and exp["subject"] not in {g.id for g in result.state.goals}
+        assert G.retarget(next(g for g in gold if g.id == exp["subject"]), data["chosen_day"]).id == data["goal_after"]
 
 
-def test_답한_뒤_다시_확인하고_다시_짠다(built):
+def test_고친_뒤_다시_확인하고_모델_없이_끝낸다(built):
     maps, scenarios = built
     s = scenarios[0]
     sc, gold, result = run(maps[s["map_id"]], s)
     tools = [step.call["tool"] for step in result.steps]
-    assert tools[:3] == ["check_goals", "ask_requester", "check_goals"] and "optimize" in tools[3:]
+    assert tools == ["check_goals", direct.RESOLVE_CLOSURE, "check_goals", "finish"]
     after = result.steps[2].result.data["checks"][0]
-    assert after["id"] == s["expected"]["goal_after"] and after["feasible"] is True
+    assert after["id"] == _resolved(result).result.data["goal_after"] and after["feasible"] is True
     # 장소를 빼지 않는다: 코스에 모든 장소가 그대로 있다
     assert sorted(p for day in result.course for p in day) == sorted(p.alias for p in sc.trip.places)
-    # 고친 목표는 코드가 새 날짜로 지켜 준다
-    new_goal = next(g for g in result.state.goals if g.id == s["expected"]["goal_after"])
+    new_goal = next(g for g in result.state.goals if g.id == _resolved(result).result.data["goal_after"])
     assert G.evaluate(sc.trip, result.course, new_goal).met is True
 
 
-def test_작업_기록은_확인_질문_답_다시짜기_순서로_이어진다(built):
+def test_고른_날은_옮겨_본_날_중_가장_낫다(built):
+    maps, scenarios = built
+    for s in scenarios:
+        _, _, result = run(maps[s["map_id"]], s)
+        tried = _resolved(result).result.data["tried"]
+        chosen = next(t for t in tried if t["day"] == _resolved(result).result.data["chosen_day"])
+        assert all((chosen["confirmed"], -chosen["kept"]) <= (t["confirmed"], -t["kept"]) for t in tried)
+
+
+def test_작업_기록은_찾기_옮겨보기_비교_결정_순서이고_질문이_없다(built):
     maps, scenarios = built
     s = scenarios[0]
     sc, gold, result = run(maps[s["map_id"]], s)
     lines = worklog.render(sc.trip, gold, [], result, understood_by="스텁")
     stages = [l.split("]")[0][1:] for l in lines]
-    order = [stages.index("확인"), stages.index("질문"), stages.index("답"), stages.index("다시 짜기")]
-    assert order == sorted(order) and "확인" in stages[stages.index("답"):]
-    ask = next(l for l in lines if l.startswith("[질문]"))
-    assert "코드가 열음" in ask and "로 옮길까요?" in ask and "그 목표는 빼기" in ask and "기본값" in ask and "코드가 고른 첫 여는 날" in ask
-    assert "이어 가요" in next(l for l in lines if l.startswith("[답]"))
+    assert "질문" not in stages and "답" not in stages
+    order = [stages.index("확인"), stages.index("찾기"), stages.index("옮겨 보기"), stages.index("비교"), stages.index("결정")]
+    assert order == sorted(order) and "확인" in stages[stages.index("결정"):]
+    assert stages.count("옮겨 보기") == len(_resolved(result).result.data["tried"])
+    decided = next(l for l in lines if l.startswith("[결정]"))
+    assert "쉬어요. 그래서 이 목표를" in decided and "{" not in decided and "결정(코드)" in decided
 
 
-def test_야경_시나리오는_야경_질문_문구를_쓴다(built):
+def test_야경_시나리오는_야경_결정_문구를_쓴다(built):
     maps, scenarios = built
     s = next(x for x in scenarios if x["kind"] == "closed_night")
-    sc, gold, result = run(maps[s["map_id"]], s)
-    q = result.questions[0]
-    assert "야경 장소" in q.text and "쉬어요" in q.text and q.text.endswith("마지막으로 할까요?")
+    _, _, result = run(maps[s["map_id"]], s)
+    assert "야경 장소가 모두 쉬어요. 그래서 야경 목표를" in _resolved(result).note and _resolved(result).guard == ()
 
 
-def test_모델이_제안한_날이_기본값이_되고_다른_행동은_코드가_먼저_묻는다(built):
+def test_모델이_있어도_코드가_먼저_풀고_모델_턴을_쓰지_않는다(built):
     maps, scenarios = built
-    s = next(x for x in scenarios if x["kind"] == "closed_place" and len(maps[x["map_id"]]["days"]) == 3)
+    s = next(x for x in scenarios if x["kind"] == "closed_place")
     sc = compare.scenario_from_map(maps[s["map_id"]])
     gold = compare.gold_goals(sc, s)
-    # 모델은 여는 날 중 마지막 날을 첫 선택지로 제안한다
     st = initial_state(sc.trip, sc.start_hours, core.draft_course(sc.trip), gold)
-    pend = direct.pending_closure(direct.DirectState(st, checks=G.check_goals(sc.trip, sc.start_hours, gold)))
-    proposal = list(reversed(pend["days"]))
-    decide = scripted({"tool": "ask_requester", "kind": "choose_day", "subject": pend["goal"].id, "options": proposal},
-                      {"tool": "optimize", "priority": [], "locks": []}, {"tool": "finish", "candidate_id": "c1"})
+    decide = scripted({"tool": "finish", "candidate_id": "c1"})
     result = direct.run_direct(st, decide=decide, hours=sc.gateway)
-    assert result.questions[0].default == proposal[0] and decide.seen[0]["must_ask"]["kind"] == "choose_day"
-    assert decide.seen[0]["must_ask"]["options"] == pend["days"] and "모델이 제안" in result.questions[0].default_reason
-    assert result.steps[1].by == "model"
-
-    # 모델이 질문 대신 optimize를 골라도 코드가 먼저 묻는다
-    decide = scripted({"tool": "optimize", "priority": [], "locks": []}, {"tool": "optimize", "priority": [], "locks": []},
-                      {"tool": "finish", "candidate_id": "c1"})
-    result = direct.run_direct(st, decide=decide, hours=sc.gateway)
-    ask = next(step for step in result.steps if step.call.get("tool") == "ask_requester")
-    assert ask.by == "code" and ask.substituted_for["call"]["tool"] == "optimize" and result.questions[0].default == pend["days"][0]
-
-    # 모델이 쉬는 날을 선택지에 넣으면 거절하고 코드가 대신 연다
-    closed = pend["goal"].day
-    decide = scripted({"tool": "ask_requester", "kind": "choose_day", "subject": pend["goal"].id, "options": [closed]},
-                      {"tool": "optimize", "priority": [], "locks": []}, {"tool": "finish", "candidate_id": "c1"})
-    result = direct.run_direct(st, decide=decide, hours=sc.gateway)
-    ask = next(step for step in result.steps if step.call.get("tool") == "ask_requester")
-    assert ask.by == "code" and ask.substituted_for["error"] == "INVALID_MOVE" and result.questions[0].default == pend["days"][0]
+    assert result.model_turns == 1 and decide.seen[0]["last_result"]["tool"] == "check_goals"
+    assert decide.seen[0]["candidates"] and "must_ask" not in decide.seen[0] and "asked" not in decide.seen[0]
+    assert {g.id for g in result.state.goals} == {g.id for g in st.goals} - {s["expected"]["subject"]} | {_resolved(result).result.data["goal_after"]}
 
 
-def test_옮길_여는_날이_없으면_묻지_않고_목표를_빼지도_않는다(built):
+def test_옮길_여는_날이_없으면_풀지_않고_목표를_빼지도_않는다(built):
     maps, scenarios = built
     s = scenarios[0]
     m = copy.deepcopy(maps[s["map_id"]])
@@ -155,12 +147,12 @@ def test_옮길_여는_날이_없으면_묻지_않고_목표를_빼지도_않는
     place = next(p for p in m["places"] if p["alias"] == pid)
     place["hours"] = {wd: "closed" for wd in place["hours"]}               # 어느 날도 안 연다
     sc, gold, result = run(m, s)
-    assert len(result.questions) == 0
+    assert not any(step.call.get("tool") == direct.RESOLVE_CLOSURE for step in result.steps)
     assert gold[0].id in {g.id for g in result.state.goals}                  # 목표를 코드가 대신 빼지 않는다
     assert result.steps[0].result.data["checks"][0]["reasons"] == [G.PLACE_CLOSED_ON_DAY]
 
 
-def test_질문_상한은_둘이고_넘는_쉬는_날_목표는_묻지_않는다(built):
+def test_쉬는_날_목표가_여럿이면_하나씩_모두_푼다(built):
     maps, scenarios = built
     m = copy.deepcopy(maps[scenarios[0]["map_id"]])
     first = str(date.fromisoformat(m["days"][0]).weekday())
@@ -173,8 +165,8 @@ def test_질문_상한은_둘이고_넘는_쉬는_날_목표는_묻지_않는다
     goals = tuple(G.normalize(sc.trip, "place_on_day", "d1", [p["alias"]])[0] for p in tours)
     st = initial_state(sc.trip, sc.start_hours, core.draft_course(sc.trip), goals)
     result = direct.run_direct(st, decide=None, hours=sc.gateway)
-    assert [q.kind for q in result.questions] == ["choose_day", "choose_day"]
-    assert sum(not G.check_goal(sc.trip, result.state.hours, g)["feasible"] for g in result.state.goals) == 1   # 셋째는 묻지 못하고 확인 줄로만 남는다
+    assert sum(step.call.get("tool") == direct.RESOLVE_CLOSURE for step in result.steps) == 3       # 질문 상한(둘)이 없어졌다
+    assert all(G.check_goal(sc.trip, result.state.hours, g)["feasible"] is not False for g in result.state.goals)
 
 
 def test_요청_세트와_숫자는_섞이지_않는다(built):

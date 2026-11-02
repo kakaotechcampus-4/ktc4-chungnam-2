@@ -86,7 +86,6 @@ DAILY_WALK_LOW_MAX_MIN = 60        # daily_walk_low: 하루 도보 합계의 최
 # 지휘 턴(pivot 3절)
 DIRECT_MAX_TURNS = 5
 CANDIDATES_MAX = 3
-ASK_MAX = 2
 CLIMB_MAX_STEPS = 60               # optimize 한 번이 채택하는 수리의 최대 수
 
 # 서비스 경로(AI 코스 짜기 API, #334 — 팀 결정 #580 전 브랜치 초안). 전부 초안이다

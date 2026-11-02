@@ -3,7 +3,7 @@
 DB를 모른다. 모델 자리는 planner로 주입한다(llm.api의 fixed/real planner 또는 테스트 대역). 그래서 서비스는 읽기 → 롤백 →
 이 함수(모델) → 쓰기 순서(backend/CLAUDE.md "모델 호출과 트랜잭션")를 지킬 수 있다.
 
-- 질문(ask_requester)에는 답을 받지 않는다. 엔진이 답이 없으면 기본값으로 이어 간다 — 이 경로에는 대기 상태가 없다.
+- 요청자에게 되묻지 않는다(#1131). 쉬는 날·이동이 넘치는 날은 엔진이 도구로 확인해 정하고, 모르는 영업시간은 가정 줄로 남긴다 — 대기 상태가 없다.
 - 요청 한 줄이 없으면 모델을 부르지 않는다(목표 0개 → 지휘 루프도 모델 없이 한 번 최적화). 목표 세우기가 실패하면 요청 전체가
   "반영하지 못했어요"로 남고 코스는 기본 목표로 짠다.
 - 영업시간은 `OpeningHoursGateway`로 읽는다. 시작 스냅샷도 같은 게이트웨이에서 만든다(`start_hours`).
@@ -98,7 +98,7 @@ def run_course(
     emit(records)
 
     def on_direct_step(step: direct.DirectStep, ds: direct.DirectState) -> None:
-        new = narrator.step(step, goals=ds.state.goals, questions=ds.questions)
+        new = narrator.step(step, goals=ds.state.goals)
         records.extend(new)
         emit(new)
 

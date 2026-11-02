@@ -229,9 +229,14 @@ def leftover_pieces(request_text: str, covered: Sequence[str]) -> list[str]:
 # 코드가 조각의 종류를 보고 고정 문장을 고른다(모델이 이유를 쓰지 않는다). 조각 원문은 문장에 섞지 않고 unmatched 조각으로 둔다(#717).
 _DELEGATE_RE = re.compile(r"알아서|맡길|맡겨|마음대로|적당히|아무렇게나|아무거나")
 _DELEGATE_FILLER = re.compile(r"그냥|대충|좀|잘|짜|해|줘|주세요|요")
-_REST_DAY_RE = re.compile(r"아무것도\s?(?:안|하지|없)|아무\s?데도|쉴래|쉬고\s?싶|쉬려|푹\s?쉬|쉬는\s?날로|비워|비우|비울|휴식")
+_REST_DAY_RE = re.compile(r"아무것도\s?(?:안|하지|없)|아무\s?데도|쉴래|쉬고\s?싶|쉬려|푹\s?쉬|쉬는\s?날로|비워|비우|비울")
 _TIME_RE = re.compile(r"(?<![0-9])[0-9]{1,2}\s?시(?![간장작])|[0-9]{1,2}:[0-9]{2}"
-                      r"|(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|열한|열두|몇)\s?시(?![간장작])|오전|오후|예약")
+                      r"|(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|열한|열두|몇)\s?시(?![간장작])|오전|오후")
+# 한 단어만으로는 뜻이 갈리는 말: 「경복궁 예약했어」는 시간 지정이 아니고 「카페에서 휴식」은 하루 비우기가 아니다 — 시각·날짜 말과 같이 있을 때만 본다
+_RESERVE_RE = re.compile(r"예약")
+_DAYPART_RE = re.compile(r"아침|점심|저녁|오전|오후|밤")
+_REST_RE = re.compile(r"휴식")
+_DAY_WORD_RE = re.compile(r"[월화수목금토일]요일|첫날|첫째|둘째|셋째|넷째|다섯째|마지막\s?날|[0-9]+\s?일(?:째|차)?(?![가-힣])|하루|그날")
 _DAILY_RE = re.compile(r"매일|날마다|모든\s?날|하루에\s?(?:한|하나)|하루\s?(?:한|하나)씩")
 REST_DAY, TIME_GIVEN = "REST_DAY", "TIME_GIVEN"
 PIECE_REASONS = {
@@ -251,9 +256,9 @@ def is_delegation(piece: str) -> bool:
 
 def piece_reason(piece: str) -> Optional[str]:
     """unmatched 조각을 목표로 바꾸지 않는 이유(PIECE_REASONS 키). 하루 비우기를 시간보다 먼저 본다. 모르면 None(판단할 수 없음)."""
-    if _REST_DAY_RE.search(piece):
+    if _REST_DAY_RE.search(piece) or (_REST_RE.search(piece) and _DAY_WORD_RE.search(piece)):
         return REST_DAY
-    if _TIME_RE.search(piece):
+    if _TIME_RE.search(piece) or (_RESERVE_RE.search(piece) and _DAYPART_RE.search(piece)):
         return TIME_GIVEN
     return None
 
