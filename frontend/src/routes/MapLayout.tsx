@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useMatch, useNavigate, useParams } from 'react-r
 import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Users, type LucideIcon } from 'lucide-react'
 
 import AgentButton from '@/features/agent/AgentButton'
+import { ImportSheetHost } from '@/features/kakaoImport/ImportSheet'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
@@ -497,6 +498,8 @@ export default function MapLayout() {
       )}
 
       {profileOpen && !desktop && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
+      {/* 카톡 가져오기 시트는 탭 화면 밖 한 자리에서 그린다 — 목록 머리가 바뀌어도 함께 사라지지 않게(#1045). */}
+      <ImportSheetHost mapId={mapId} />
     </>
   )
 }

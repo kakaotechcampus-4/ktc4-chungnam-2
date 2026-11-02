@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
+import { forgetImport } from '@/features/kakaoImport/queries'
+
 import { choosePendingAccount, fetchMe, fetchPendingAccount, isNoPendingLogin, isUnauthorized, joinAsGuest, logout, updateMe, withdraw } from './api'
+
 import type { PendingAccountDto, User } from './model'
 
 export const authKeys = {
@@ -91,6 +94,10 @@ export function useLogoutMutation() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: logout,
-    onSuccess: () => queryClient.clear(),
+    onSuccess: () => {
+      queryClient.clear()
+      // 카톡 가져오기 목록(지도별 링크·가게 이름)도 남기지 않는다(#1045).
+      forgetImport()
+    },
   })
 }
