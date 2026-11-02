@@ -5,6 +5,8 @@ M0는 범위 B(순서 + 이동시간 검증)만 구현한다. 범위 A(시간 �
 
 from datetime import timedelta
 
+from common import categories
+
 COURSE_MODE = "B"
 MIN_PLACES, MAX_PLACES = 2, 30
 
@@ -70,7 +72,16 @@ DAY_HAS_TAGS: dict[str, tuple[str, str]] = {
     "walkable": ("walkable", "산책"),
     "kid_friendly": ("kid_friendly", "아이와 가기 좋은"),
     "heritage": ("heritage_tour", "고궁·유적"),
+    "korean_food": ("cuisine_korean", "한식"),
 }
+# day_has의 카테고리 종류(#1094): 그날 코스에 그 카테고리 장소가 하나 이상. tag → (카테고리, 화면에 쓰는 말). 카테고리 이름은
+# common/categories.py의 것이어야 하고(아래 검사), tag 이름은 라벨 tag와 겹치지 않는다. 카테고리는 핀마다 항상 알아 "모름"이 없다.
+DAY_HAS_CATEGORY_TAGS: dict[str, tuple[str, str]] = {
+    "cafe": ("카페", "카페"),
+    "restaurant": ("음식점", "음식점"),
+}
+assert not set(DAY_HAS_CATEGORY_TAGS) & set(DAY_HAS_TAGS)
+assert all(c in categories.recommendable() for c, _ in DAY_HAS_CATEGORY_TAGS.values())
 DAILY_WALK_LOW_MAX_MIN = 60        # daily_walk_low: 하루 도보 합계의 최대가 이 이하면 충족
 # 지휘 턴(pivot 3절)
 DIRECT_MAX_TURNS = 5

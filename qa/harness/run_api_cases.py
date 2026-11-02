@@ -238,14 +238,16 @@ def b04_b08():
     uid, c = user(); mid = new_map(c)
     for cat in ("음식점", "카페", "관광지"):   # 카테고리마다 ♥ 핀이 있어야 readiness를 통과한다
         pin = add_pin(c, mid, cat=cat).json()["id"]
-        c.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "조용해서 좋아요"})
+        c.put(f"/pins/{pin}/reaction", json={"type": "like"})   # 사유 글이 없으면 ② 호출이 없다 — 31번 돌려도 모델 비용 0
     codes = []
-    for i in range(11):
+    for i in range(31):
         cat = ("음식점", "카페", "관광지")[i % 3]
         r = c.post(f"/maps/{mid}/runs", json={"category": cat}); codes.append(r.status_code)
     last = r
-    check("B04", codes[:10] == [202] * 10 and codes[10] == 429 and last.json().get("code") == "RETRY_LIMIT",
-          "10회까지 202, 11번째 429 RETRY_LIMIT", f"{codes} {last.text[:150]}")
+    d = last.json().get("detail") or {}
+    check("B04", codes[:30] == [202] * 30 and codes[30] == 402 and last.json().get("code") == "CREDIT_INSUFFICIENT"
+          and d.get("required") == 1 and d.get("balance") == 0,
+          "30회까지 202, 31번째 402 CREDIT_INSUFFICIENT(required 1, balance 0)", f"{codes} {last.text[:150]}")
     rid = c.get(f"/maps/{mid}/runs").json()[0]["id"]
     r = c.get(f"/runs/{rid}/result")
     check("B08", r.status_code == 409 and r.json().get("code") == "RUN_NOT_FINISHED", "execute 전 409 RUN_NOT_FINISHED", f"{r.status_code} {r.text[:120]}")
@@ -347,6 +349,64 @@ def s06():
         check(f"S06.{label}", r.status_code == 404, "비구성원 404", f"{r.status_code} {r.text[:80]}")
 
 
+def p01():
+    """비구성원 404를 id가 든 경로 전부에서(#1096, docs/permissions.md 「비구성원 vs 권한 없음」). 본문은 유효하게 보낸다 —
+    422가 404보다 먼저 나오면 권한을 본 게 아니다. 지우는 요청은 맨 뒤에 두고, 끝나고 A의 데이터가 그대로인지 본다.
+    404는 앱 오류 본문(code)이 있어야 통과다 — 경로가 없을 때의 404({"detail": "Not Found"})를 권한으로 세지 않는다.
+    핀 휴지통(GET /maps/{id}/trash, POST /pins/{id}/restore)은 서버 구현 전이라 넣지 않았다(#864, 생기면 넣는다)."""
+    _, a = user(); _, b = user(); mid = new_map(a)
+    pin = add_pin(a, mid).json()["id"]; pin2 = add_pin(a, mid, skip=1).json()["id"]
+    a.put(f"/pins/{pin}/reaction", json={"type": "like"})   # 사유 글 없이 — ② 호출 없음
+    review = a.put(f"/pins/{pin}/reviews/me", json={"rating": 4, "body": "QA 후기"}).json()["review"]["id"]
+    item = a.post(f"/maps/{mid}/shortlist", json={"pin_id": pin}).json()["id"]
+    tok = a.post(f"/maps/{mid}/invite").json()["token"]
+    rid = a.post(f"/maps/{mid}/runs", json={"category": "음식점", "execute": True}).json()["id"]
+    cands = (result(a, rid).json() or {}).get("candidates") or []
+    _, lat, lng, _ = place()
+    body_pin = {"category": "음식점", "place_id": "hint", "place_name": "QA", "lat": lat, "lng": lng}
+    calls = [
+        ("GET", f"/maps/{mid}", None), ("PATCH", f"/maps/{mid}", {"title": "남의 지도"}),
+        ("POST", f"/maps/{mid}/owner", {"user_id": "x"}), ("POST", f"/maps/{mid}/invite", None),
+        ("GET", f"/maps/{mid}/invites", None), ("DELETE", f"/invites/{tok}", None),
+        ("GET", f"/maps/{mid}/members", None), ("GET", f"/maps/{mid}/pins", None), ("POST", f"/maps/{mid}/pins", body_pin),
+        ("POST", f"/maps/{mid}/pins/link-preview", {"urls": ["https://map.kakao.com/"]}),
+        ("POST", f"/maps/{mid}/pins/bulk", {"pins": [body_pin]}), ("GET", f"/maps/{mid}/counts", None),
+        ("PATCH", f"/pins/{pin}", {"memo": "남의 핀"}),
+        ("POST", f"/pins/{pin}/resolve", {"place_name": "QA", "lat": lat, "lng": lng}),
+        ("GET", f"/pins/{pin}/reviews", None), ("PUT", f"/pins/{pin}/reviews/me", {"rating": 1, "body": "남의 지도 후기"}),
+        ("POST", f"/reviews/{review}/reports", None),
+        ("PUT", f"/pins/{pin}/reaction", {"type": "like"}), ("GET", f"/pins/{pin}/reactions", None),
+        ("GET", f"/maps/{mid}/recommend/readiness", None), ("GET", f"/maps/{mid}/runs", None),
+        ("POST", f"/maps/{mid}/runs", {"category": "음식점"}),
+        *[("POST", f"/candidates/{x['id']}/publish", None) for x in cands[:1]],   # 다시 추천이 후보를 바꾸기 전에
+        ("GET", f"/runs/{rid}/evidence", None), ("PATCH", f"/runs/{rid}/evidence", {"add": [{"text": "조용한 곳"}]}),
+        ("POST", f"/runs/{rid}/regions/confirm", {}), ("POST", f"/runs/{rid}/execute", None),
+        ("GET", f"/runs/{rid}/result", None), ("POST", f"/runs/{rid}/widen", None), ("POST", f"/runs/{rid}/retry", None),
+        ("GET", f"/runs/{rid}/advice", None),
+        ("GET", f"/maps/{mid}/shortlist", None), ("POST", f"/maps/{mid}/shortlist", {"pin_id": pin2}),
+        ("GET", f"/maps/{mid}/shortlist/export", None), ("PUT", f"/maps/{mid}/shortlist/order", {"item_ids": [item]}),
+        ("GET", f"/maps/{mid}/route", None), ("POST", f"/maps/{mid}/route", None),
+        ("GET", f"/maps/{mid}/ads?lat={lat}&lng={lng}", None),
+        ("GET", f"/maps/{mid}/agent", None), ("PUT", f"/maps/{mid}/agent/settings", {"enabled": False}),
+        ("POST", f"/maps/{mid}/courses", {"request_text": "QA"}), ("GET", f"/maps/{mid}/courses/latest", None),
+        # 지우는 요청은 마지막
+        ("DELETE", f"/pins/{pin}/reaction", None), ("DELETE", f"/pins/{pin}/reviews/me", None),
+        ("DELETE", f"/shortlist/{item}", None), ("DELETE", f"/pins/{pin2}", None),
+        ("DELETE", f"/maps/{mid}/members/me", None), ("POST", f"/maps/{mid}/restore", None), ("DELETE", f"/maps/{mid}", None),
+    ]
+    bad = []
+    for method, path, body in calls:
+        r = b.request(method, path, json=body) if body is not None else b.request(method, path)
+        if r.status_code != 404 or "code" not in r.json():
+            bad.append(f"{method} {path.replace(mid, '{map}').replace(pin2, '{pin2}').replace(pin, '{pin}').replace(rid, '{run}')} → {r.status_code} {r.text[:40] if r.status_code == 404 else ''}")
+    check("P01", not bad, f"비구성원 {len(calls)}개 요청 모두 404" + ("" if cands else " (후보 0곳 — publish 빠짐)"),
+          f"404가 아닌 {len(bad)}/{len(calls)}개: " + "; ".join(bad))
+    pins_after = {p["id"] for p in a.get(f"/maps/{mid}/pins").json()}
+    me = (a.get(f"/pins/{pin}/reviews").json() or {}).get("mine")
+    kept = a.get(f"/maps/{mid}").status_code == 200 and {pin, pin2} <= pins_after and me and len(a.get(f"/maps/{mid}/shortlist").json()) == 1
+    check("P01.kept", bool(kept), "A의 지도·핀·후기·확정 리스트 그대로", f"지도/핀/후기/확정 중 바뀐 것 있음: 핀 {len(pins_after)}, 후기 {bool(me)}")
+
+
 def l02_l03():
     _, a = user(); _, b = user(); mid = new_map(a)
     tok = a.post(f"/maps/{mid}/invite").json()["token"]; b.post(f"/invites/{tok}/accept")
@@ -382,16 +442,17 @@ def s03_s05():
 
 
 def r3_widen_retry():
-    """B05 구성원별 시도 독립 · B06 넓히기 상한 · B07 결과 0 근처 · 재시도 상한과의 관계."""
+    """B05 구성원별 크레딧 독립 · B06 넓히기 상한 · B07 결과 0 근처."""
     _, a = user(); _, b = user(); mid = new_map(a)
     tok = a.post(f"/maps/{mid}/invite").json()["token"]; b.post(f"/invites/{tok}/accept")
-    for c in (a, b):
-        pid = add_pin(c, mid, skip=0 if c is a else 7).json()["id"]
-        c.put(f"/pins/{pid}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})
-    codes_a = [a.post(f"/maps/{mid}/runs", json={"category": "음식점"}).status_code for _ in range(11)]
+    pa = add_pin(a, mid).json()["id"]
+    pb = add_pin(b, mid, skip=7).json()["id"]
+    a.put(f"/pins/{pa}/reaction", json={"type": "like"})   # A는 사유 글 없이 — 30번 돌려도 ② 호출이 없다
+    codes_a = [a.post(f"/maps/{mid}/runs", json={"category": "음식점"}).status_code for _ in range(31)]
+    b.put(f"/pins/{pb}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})   # B06의 결과용, ② 1번
     r = b.post(f"/maps/{mid}/runs", json={"category": "음식점"})
-    check("B05", codes_a[:10] == [202] * 10 and codes_a[10] == 429 and r.status_code == 202,
-          "A 10회 후 429, B는 독립적으로 202", f"A {codes_a}, B {r.status_code} {r.text[:100]}")
+    check("B05", codes_a[:30] == [202] * 30 and codes_a[30] == 402 and r.status_code == 202,
+          "A 30회 후 402, B는 자기 크레딧으로 202", f"A {codes_a}, B {r.status_code} {r.text[:100]}")
     rid = r.json()["id"]
     b.post(f"/runs/{rid}/regions/confirm", json={}); b.post(f"/runs/{rid}/execute"); result(b, rid)
     last = None; n = 0
@@ -464,8 +525,98 @@ def r3_republish_exclusion():
           f"1차 {names1} → 2차 {names2} (겹침 {set(names1) & set(names2)})")
 
 
+# ───────── 크레딧 원장(W, #1091) — docs/credits-reviews.md 3·5절 ─────────
+# 숫자(처음 값, 상한, 가격, 보상)는 적지 않고 GET /credits/me에서 받는다. ♥는 사유 글 없이 남겨 ② 호출이 없다.
+BUSAN = {"label": "부산", "lat": 35.1796, "lng": 129.0756}
+_W_USERS: list = []   # W07이 잔액 = 원장 합을 볼 계정
+
+
+def _credits(c):
+    return c.get("/credits/me").json()
+
+
+def _review(c, pin, body="QA 후기"):
+    return c.put(f"/pins/{pin}/reviews/me", json={"rating": 4, "body": body})
+
+
+def w01_w07():
+    uid, c = user(); _W_USERS.append(uid); mid = new_map(c)
+    r = c.get("/credits/me"); me = r.json()
+    cap, reward, price = me.get("max_balance"), me.get("review_reward"), (me.get("prices") or {}).get("recommend_run")
+    check("W01", r.status_code == 200 and me.get("balance") == cap and all(isinstance(v, int) and v > 0 for v in (cap, reward, price))
+          and (me.get("prices") or {}).get("course", 0) > 0,
+          f"처음 잔액 = 상한 {cap}, 추천 {price}, 보상 {reward}", f"{r.status_code} {r.text[:150]}")
+
+    p1 = add_pin(c, mid).json()["id"]; p2 = add_pin(c, mid, skip=1).json()["id"]
+    c.put(f"/pins/{p1}/reaction", json={"type": "like"})
+    first = _review(c, p1).json()
+    c.delete(f"/pins/{p1}/reviews/me")
+
+    k = max(1, reward // 2)   # 상한 바로 아래로 내려 보상이 상한까지만 채우는지 본다(30 → 25, 보상 10 → +5)
+    codes = [c.post(f"/maps/{mid}/runs", json={"category": "음식점"}).status_code for _ in range(k)]
+    bal = _credits(c)["balance"]
+    again = _review(c, p1).json()
+    check("W02", first.get("credited") == 0 and first.get("balance") == cap and again.get("credited") == 0 and again.get("balance") == bal,
+          "상한에서 후기 0, 지웠다 다시 써도 0", f"처음 {first}, 다시 {again} (그 전 잔액 {bal})")
+
+    new = _review(c, p2).json(); edit = _review(c, p2, "QA 후기 고침").json()
+    want = min(reward, cap - bal)
+    check("W03", codes == [202] * k and bal == cap - k * price and new.get("credited") == want and new.get("balance") == bal + want
+          and edit.get("credited") == 0 and edit.get("balance") == bal + want,
+          f"{k}번 추천 뒤 {bal}에서 새 장소 후기 +{want}, 고치기 0", f"추천 {codes}, 잔액 {bal}, 새 후기 {new}, 고치기 {edit}")
+
+    before = _credits(c)["balance"]; key = uuid.uuid4().hex
+    r1 = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}, headers={"Idempotency-Key": key})
+    r2 = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}, headers={"Idempotency-Key": key})
+    after = _credits(c)["balance"]
+    check("W04", r1.status_code == 202 and r2.is_success and r1.json().get("id") == r2.json().get("id") and after == before - price,
+          f"같은 키 두 번 → 같은 run, {price}만 빠짐", f"{r1.status_code}/{r2.status_code} 같은 run {r1.json().get('id') == r2.json().get('id')}, 잔액 {before} → {after}")
+
+    # 0곳: 여행 지역이 부산인 지도에 서울 핀 — 후보는 여행 지역과 같은 시·도만이라(#1055) 첫 실행이 0곳이다
+    uid2, z = user(); _W_USERS.append(uid2); zmid = new_map(z, region=BUSAN)
+    zp = add_pin(z, zmid).json()["id"]; z.put(f"/pins/{zp}/reaction", json={"type": "like"})
+    b0 = _credits(z)["balance"]
+    run = z.post(f"/maps/{zmid}/runs", json={"category": "음식점", "execute": True})
+    rid = run.json().get("id"); res = result(z, rid) if rid else run
+    b1 = _credits(z)["balance"]
+    zero = res.status_code == 404 and res.json().get("code") == "NO_RESULTS"
+    if not zero:
+        rec("W05", "INFO", f"0곳을 만들지 못함(결과 {res.status_code}) — 부산 지도·서울 핀 전제가 바뀌었는지 본다")
+    else:
+        rt = z.post(f"/runs/{rid}/retry"); result(z, rid); b2 = _credits(z)["balance"]
+        wd = z.post(f"/runs/{rid}/widen"); result(z, rid); b3 = _credits(z)["balance"]
+        check("W05", run.status_code == rt.status_code == wd.status_code == 202 and b0 == b1 == b2 == b3,   # 거절된 요청은 잔액이 그대로여도 본 게 아니다
+              f"첫 실행 0곳 차감 없음, 다시 추천({rt.status_code})·넓히기({wd.status_code})도 0", f"잔액 {b0} → {b1} → {b2} → {b3}")
+
+    _reset_guest_limiter()
+    tok = c.post(f"/maps/{mid}/invite").json()["token"]
+    g = client(); gr = g.post("/auth/guest", json={"display_name": "QA 게스트", "invite_token": tok})
+    if gr.status_code != 201:
+        rec("W06", "INFO", f"게스트를 만들지 못함({gr.status_code}) — 게스트 상한 때문일 수 있음")
+    else:
+        gm = g.get("/credits/me"); gr2 = g.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+        ok = all(x.status_code == 403 and x.json().get("code") == "GUEST_NOT_ALLOWED"
+                 and (x.json().get("detail") or {}).get("initial_credits") == cap for x in (gm, gr2))
+        check("W06", ok, f"게스트 /credits/me·추천 403 GUEST_NOT_ALLOWED, initial_credits {cap}",
+              f"/credits/me {gm.status_code} {gm.text[:100]}, 추천 {gr2.status_code} {gr2.text[:100]}")
+
+    if BASE_URL:
+        rec("W07", "SKIP", "원장은 API로 볼 수 없다 — 로컬 모드에서 본다")
+        return
+    import sqlalchemy as sa
+    from common import database
+    with database.SessionLocal() as db:
+        rows = db.execute(sa.text("""select a.user_id, a.balance, coalesce(sum(l.delta), 0) from credit_accounts a
+            left join credit_ledger l on l.user_id = a.user_id where a.user_id = any(:ids) group by a.user_id, a.balance"""),
+            {"ids": _W_USERS}).all()
+    bad = [r for r in rows if r[1] != r[2]]
+    check("W07", len(rows) == len(_W_USERS) and not bad, f"계정 {len(rows)}개 잔액 = 원장 합", f"계정 {len(rows)}/{len(_W_USERS)}, 어긋남 {bad}")
+
+
 CASES = {"A01": a01_a02, "A03": a03, "A04": a04_a05, "A06": a06_a09, "A10": a10_a12, "A13": a13_a14, "B01": b01_b03,
-         "B04": b04_b08, "C01": c01_c05, "L01": l01_l04, "L05": l05_l06, "L02": l02_l03, "L08": l08, "S03": s03_s05, "S06": s06, "R3a": r3_widen_retry, "R3b": r3_concurrent_shortlist, "R3c": r3_search_edges, "R3d": r3_pin_unsupported_and_dup_ui_codes, "R3e": r3_evidence_enforced, "R3f": r3_republish_exclusion}
+         "B04": b04_b08, "C01": c01_c05, "L01": l01_l04, "L05": l05_l06, "L02": l02_l03, "L08": l08, "S03": s03_s05, "S06": s06, "R3a": r3_widen_retry, "R3b": r3_concurrent_shortlist, "R3c": r3_search_edges, "R3d": r3_pin_unsupported_and_dup_ui_codes, "R3e": r3_evidence_enforced, "R3f": r3_republish_exclusion, "W01": w01_w07}
+
+CASES["P01"] = p01   # 사전 밖에 둔다 — 다른 PR이 사전 줄을 같이 고쳐도 충돌하지 않게
 
 if __name__ == "__main__":
     args = sys.argv[1:]

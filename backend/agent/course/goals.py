@@ -11,12 +11,13 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from typing import Literal, Optional, Sequence
 
 from agent.course import core
 from agent.course.constants import (
-    DAILY_WALK_LOW_MAX_MIN, DAY_HAS_TAGS, GOALS_MAX, INDOOR_LABEL, INDOOR_MET_RATIO, NIGHT_LABEL,
+    DAILY_WALK_LOW_MAX_MIN, DAY_HAS_CATEGORY_TAGS, DAY_HAS_TAGS, GOALS_MAX, INDOOR_LABEL, INDOOR_MET_RATIO, NIGHT_LABEL,
 )
 from agent.course.core import Course, Trip
 from agent.course.korean import attach
@@ -52,7 +53,7 @@ def normalize(
     """매개변수를 검사해 Goal을 만든다. 안 되면 (None, 이유). 종류에 필요 없는 매개변수는 버린다."""
     if kind not in GOAL_KINDS:
         return None, f"모르는 목표 종류 {kind}"
-    if kind == "day_has" and tag not in DAY_HAS_TAGS:
+    if kind == "day_has" and tag not in DAY_HAS_TAGS and tag not in DAY_HAS_CATEGORY_TAGS:
         return None, f"day_has에는 허용된 tag가 필요하다({tag})"
     needs_day = kind in ("day_indoor", "night_end", "day_light", "place_on_day", "day_has")
     n_places = {"place_on_day": 1, "together": 2}.get(kind, 0)
@@ -68,6 +69,18 @@ def normalize(
     return Goal(kind, day if needs_day else None, chosen, tag if kind == "day_has" else None), None
 
 
+def tag_noun(tag: Optional[str]) -> str:
+    """day_has의 tag를 화면에 쓰는 말로. 라벨 종류와 카테고리 종류가 같은 자리에서 나온다."""
+    return (DAY_HAS_TAGS.get(tag or "") or DAY_HAS_CATEGORY_TAGS[tag or ""])[1]
+
+
+def tag_hit(trip: Trip, place: str, tag: Optional[str]) -> bool:
+    """그 장소가 day_has tag에 든다. 카테고리 종류는 핀의 카테고리로, 라벨 종류는 Place.labels로 본다."""
+    if tag in DAY_HAS_CATEGORY_TAGS:
+        return trip.place(place).category == DAY_HAS_CATEGORY_TAGS[tag][0]
+    return DAY_HAS_TAGS[tag or ""][0] in trip.place(place).labels
+
+
 def _known(trip: Trip, place: str) -> bool:
     return bool(trip.place(place).labels)
 
@@ -76,15 +89,20 @@ def day_light_cap(trip: Trip) -> int:
     return max(1, len(trip.places) // len(trip.days) - 1)
 
 
+def day_min_places(trip: Trip) -> int:
+    """날짜 균형의 하한(#1008 K2). 한 날이 이보다 적으면 목표를 채우려고 그날 장소를 다른 날로 뺀 것으로 보고 지킨 것으로 세지 않는다.
+    상한(day_light_cap)과 같은 값이라 여유 목표와 한 코스에서 함께 지키려면 날짜가 고르게 나뉘어야 한다."""
+    return day_light_cap(trip)
+
+
 def evaluate(trip: Trip, course: Course, goal: Goal) -> GoalResult:
     unknown = GoalResult(goal, None, 0.0, None)
     if goal.kind == "day_has":
         i = core.day_index(trip, goal.day or "")
         day = course[i] if i is not None else ()
-        key = DAY_HAS_TAGS[goal.tag or ""][0]
-        if any(key in trip.place(p).labels for p in day):
+        if any(tag_hit(trip, p, goal.tag) for p in day):
             return GoalResult(goal, True, 0.0, 1.0)
-        if day and not any(_known(trip, p) for p in day):
+        if goal.tag not in DAY_HAS_CATEGORY_TAGS and day and not any(_known(trip, p) for p in day):
             return unknown                                   # 그날 장소의 라벨을 하나도 몰라 없다고 말할 수 없다
         return GoalResult(goal, False, 1.0, 0.0)
     if goal.kind in ("day_indoor", "night_end", "day_light"):
@@ -100,7 +118,9 @@ def evaluate(trip: Trip, course: Course, goal: Goal) -> GoalResult:
             if not known:
                 return unknown
             ratio = sum(INDOOR_LABEL in trip.place(p).labels for p in known) / len(known)
-            return GoalResult(goal, ratio >= INDOOR_MET_RATIO, max(0.0, INDOOR_MET_RATIO - ratio), ratio)
+            floor = day_min_places(trip)
+            thin = max(0, floor - len(day)) / floor              # 그날 장소를 빼서 비율을 채운 코스는 지킨 것이 아니다
+            return GoalResult(goal, ratio >= INDOOR_MET_RATIO and thin == 0, max(0.0, INDOOR_MET_RATIO - ratio) + thin, ratio)
         if not _known(trip, day[-1]):
             return unknown
         hit = NIGHT_LABEL in trip.place(day[-1]).labels
@@ -181,6 +201,45 @@ def goals_input(trip: Trip, request_text: str) -> dict:
     }
 
 
+_PIECE_SPLIT = re.compile(r"[,.;!?·\n]|그리고")
+_FILLER = re.compile(r"감사합니다|감사해요|고맙습니다|고마워요|안녕하세요|잘 ?부탁(?:드립니다|드려요|해요)|해\s?주세요|해줘요?|부탁(?:해요|드려요|드립니다)?|짜\s?주세요|짜줘요?|싶어요|싶고|싶다|했으면|좋겠어요|좋겠고|코스|일정|여행|그리고|또|저는|우리는|이번|으로|에서|에는|에도|까지|부터|[은는이가을를에도와과로의]")
+
+
+def leftover_pieces(request_text: str, covered: Sequence[str]) -> list[str]:
+    """요청에서 목표 quote와 unmatched 어디에도 쓰이지 않은 조각(#1008 K1). 모델이 한 문장의 일부를 말없이 버려도 사용자가 알 수 있게
+    unmatched로 남긴다. 덮인 글자를 지우고 남은 글을 구두점·접속어로 나눠, 군말(요청 문구, 조사)을 뺀 뒤 한글이 3자 이상 남는 조각만 쓴다.
+    원문 부분 문자열이라 화면에 그대로 쓸 수 있다."""
+    mask = [False] * len(request_text)
+    for piece in covered:
+        start = request_text.find(piece) if piece.strip() else -1
+        while start != -1:
+            for i in range(start, start + len(piece)):
+                mask[i] = True
+            start = request_text.find(piece, start + len(piece))
+    rest = "".join("\n" if m else c for c, m in zip(request_text, mask))
+    out: list[str] = []
+    for part in _PIECE_SPLIT.split(rest):
+        piece = part.strip()
+        if len(re.findall(r"[가-힣]", _FILLER.sub("", piece))) >= 3 and piece in request_text:
+            out.append(piece)
+    return out
+
+
+def unlisted_mentions(trip: Trip, request_text: str, goals: Sequence[Goal], quotes: Sequence[str]) -> list[str]:
+    """목표 quote 안에 코스 장소의 이름이 있는데 그 장소가 어떤 목표의 places에도 없으면, 그 장소를 말한 조각(#1008 K1).
+    「마지막 날 밤에 N서울타워」 전체를 quote로 쓰고 야경 목표 하나만 내면 장소 요청이 말없이 사라지기 때문이다."""
+    used = {p for g in goals for p in g.places}
+    out: list[str] = []
+    for place in trip.places:
+        if place.alias in used or len(place.name) < 2:
+            continue
+        if any(place.name in q for q in quotes):
+            clause = next((c.strip() for c in _PIECE_SPLIT.split(request_text) if place.name in c), "")
+            if clause and clause in request_text:
+                out.append(clause)
+    return out
+
+
 def verify_goal_set(trip: Trip, request_text: str, goal_set) -> VerifiedGoals:
     """모델이 낸 목표(CourseGoalSet)를 코드가 검증한다: 종류별 매개변수, 별칭, quote가 요청 원문의 부분 문자열인지.
     떨어진 목표는 버리고, 그 quote가 원문 조각이면 unmatched로 옮긴다. unmatched도 원문 부분 문자열만 남긴다."""
@@ -201,6 +260,9 @@ def verify_goal_set(trip: Trip, request_text: str, goal_set) -> VerifiedGoals:
         else:
             goals.append(goal)
     unmatched += [u for u in goal_set.unmatched if u.strip() and u in request_text]
+    quotes = [g.quote for g in goal_set.goals if g.quote.strip() and g.quote in request_text]
+    unmatched += unlisted_mentions(trip, request_text, goals, quotes)
+    unmatched += leftover_pieces(request_text, quotes + unmatched)
     return VerifiedGoals(truncate(goals), tuple(dict.fromkeys(unmatched)), tuple(dropped))
 
 
@@ -215,7 +277,7 @@ def label(trip: Trip, goal: Goal) -> str:
         "day_light": f"{day}은 여유 있게",
         "place_on_day": f"{attach(names[0], '을/를')} {day}에" if goal.kind == "place_on_day" else "",
         "together": f"{', '.join(names)} 같은 날" if goal.kind == "together" else "",
-        "day_has": f"{day}에 {DAY_HAS_TAGS[goal.tag][1]} 장소 넣기" if goal.kind == "day_has" else "",
+        "day_has": f"{day}에 {tag_noun(goal.tag)} 장소 넣기" if goal.kind == "day_has" else "",
     }[goal.kind]
 
 
@@ -282,11 +344,11 @@ def check_goal(trip: Trip, hours, goal: Goal) -> dict:
         elif status == "unknown":
             feasible = None
     elif goal.kind == "day_has":
-        key = DAY_HAS_TAGS[goal.tag or ""][0]
-        tagged = [p.alias for p in trip.places if key in p.labels]
+        by_category = goal.tag in DAY_HAS_CATEGORY_TAGS
+        tagged = [p.alias for p in trip.places if tag_hit(trip, p.alias, goal.tag)]
         facts = {"tag": goal.tag, "tagged_places": len(tagged), "labeled_places": len(labeled),
                  "tagged_closed_on_day": [p for p in tagged if goal.day in _closed_days(trip, hours, p)]}
-        if not labeled:
+        if not labeled and not by_category:
             feasible, reasons = None, [LABELS_UNKNOWN]
         elif not tagged:
             feasible, reasons = False, [NO_TAGGED_PLACE]
@@ -313,7 +375,7 @@ def check_sentence(trip: Trip, check: dict, goal: Goal) -> str:
     head = f"‘{label(trip, goal)}’ 목표는"
     if check["feasible"] is True:
         return f"{head} 가능해 보여요."
-    noun = DAY_HAS_TAGS[goal.tag][1] if goal.kind == "day_has" else ""
+    noun = tag_noun(goal.tag) if goal.kind == "day_has" else ""
     sentences = {**_CHECK_SENTENCES, NO_TAGGED_PLACE: f"확정 리스트에 {noun} 장소가 없어요",
                  TAGGED_PLACE_CLOSED_ON_DAY: f"{noun} 장소가 그날 모두 쉬어요"}
     why = ". ".join(sentences[r] for r in check["reasons"]) or "영업 여부를 몰라 확인이 필요해요"
@@ -330,7 +392,7 @@ def short_label(trip: Trip, goal: Goal, met: Optional[bool]) -> str:
         "place_on_day": (f"{names[0] if names else ''} 방문", f"{names[0] if names else ''} 못 감"),
         "together": ("같은 날", "다른 날"),
         "daily_walk_low": ("덜 걸음", "많이 걸음"),
-        "day_has": (f"{DAY_HAS_TAGS[goal.tag][1]} 있음", f"{DAY_HAS_TAGS[goal.tag][1]} 없음") if goal.kind == "day_has" else ("", ""),
+        "day_has": (f"{tag_noun(goal.tag)} 있음", f"{tag_noun(goal.tag)} 없음") if goal.kind == "day_has" else ("", ""),
     }[goal.kind]
     return yes if met else no
 
