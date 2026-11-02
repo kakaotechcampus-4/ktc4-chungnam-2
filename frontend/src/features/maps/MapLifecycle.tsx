@@ -3,9 +3,12 @@ import { useNavigate } from 'react-router'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
+import { droppedCount, tripDays } from '@/features/shortlist/schedule'
+import { useSchedule } from '@/features/shortlist/scheduleStore'
 import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
+import Notice from '@/ui/Notice'
 
 import { deleteMapBody, mapChanges, tripReady, type MapHeaderView, type MemberView, type TripDraft } from './model'
 import { useDeleteMapMutation, useLeaveMapMutation, useTransferOwnerMutation, useTrashQuery, useUpdateMapMutation } from './queries'
@@ -14,11 +17,14 @@ import TripFields from './TripFields'
 /**
  * 지도 제목·날짜·지역 수정 창(방장만, #465·#480). 바뀐 칸만 보낸다. 지역은 바꾸기만 되고 지울 수 없다.
  * 이미 받은 AI 추천 결과는 그대로라는 것을 미리 알린다(api-spec PATCH /maps/{mapId}).
+ * 확정 탭 일정에서 빠지는 날에 넣어 둔 장소가 있으면 몇 곳이 확정 리스트로 돌아가는지도 알린다(이 기기의 일정 기준).
  */
 export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel: () => void }) {
   const update = useUpdateMapMutation(map.id)
   const [draft, setDraft] = useState<TripDraft>({ title: map.title, region: map.region ?? null, startDate: map.startDate, endDate: map.endDate })
   const body = mapChanges(map, draft)
+  const schedule = useSchedule(map.id)
+  const dropped = tripReady(draft) ? droppedCount(schedule, tripDays(map.startDate, map.endDate), tripDays(draft.startDate, draft.endDate)) : 0
 
   return (
     <ConfirmDialog
@@ -40,6 +46,7 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
       <div className="pt-2">
         <TripFields value={draft} onChange={setDraft} regionClearable={!map.region} />
       </div>
+      {dropped > 0 && <Notice>빠지는 날에 넣은 {dropped}곳은 일정에서 빠져 확정된 장소로 돌아가요</Notice>}
       {update.error && <ErrorText message="지도 정보를 고치지 못했어요" error={update.error} />}
     </ConfirmDialog>
   )

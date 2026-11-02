@@ -59,9 +59,8 @@ function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
     'owner.changed': [map, members],
     'map.updated': [map, myMaps],
     'map.deleted': [myMaps],
-    // 확정 리스트와 동선은 다른 구성원이 바꿀 수 있다(5-10).
+    // 확정 리스트는 다른 구성원이 바꿀 수 있다(5-10). 동선은 이 기기의 일정 순서라(2026-11-03) 서버 동선(route.recalculated)은 받지 않는다.
     'shortlist.changed': [{ queryKey: shortlistKeys.list(mapId) }, pins],
-    'route.recalculated': [{ queryKey: shortlistKeys.route(mapId) }],
   }
 }
 
