@@ -58,11 +58,12 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   const selected = results.find((r) => r.id === selectedId)
 
   function pinIt(r: SearchResultView) {
-    const { place_id, place_name, lat, lng, category } = r.dto
+    const { place_id, place_name, lat, lng, category, address } = r.dto
     if (!category) return
     // 검색 결과는 매칭 힌트로 그대로 되돌려 보낸다 — 서버가 같은 자체 DB 장소를 찾는다(#191).
+    // 주소도 보낸다. 이름이 같은 지점이 30m 안에 있으면 서버가 주소로 가린다(#1056, PinCreateSearch.address).
     create.mutate(
-      { source: 'search', place_id, place_name, lat, lng, category },
+      { source: 'search', place_id, place_name, lat, lng, category, ...(address ? { address } : {}) },
       {
         onSuccess: (pin) => {
           const name = pin.place_name ?? place_name
