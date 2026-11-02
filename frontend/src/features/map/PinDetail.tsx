@@ -1,4 +1,5 @@
 import { useId, useRef, useState, type ReactNode } from 'react'
+import { useNavigate } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
@@ -58,8 +59,20 @@ export function PinDetailHeader({
   const confirmed = pin.kind === '확정'
   const canToggle = confirmed ? pin.permissions.can_remove_from_shortlist : pin.permissions.can_add_to_shortlist
   const busy = add.isPending || remove.isPending
+  const navigate = useNavigate()
+  const name = pin.place_name ?? '이 장소'
+  // 넣을 때만 토스트로 확정 리스트로 가는 길을 준다(#1030). 뺄 때는 버튼이 그대로 남아 다시 누르면 되므로 글자만 바뀐다.
   const toggle = () =>
-    confirmed ? remove.unconfirm(pin, { undo: false }) : add.mutate(pin.id, { onError: () => showToast('확정 리스트에 넣지 못했어요') })
+    confirmed
+      ? remove.unconfirm(pin, { undo: false })
+      : add.mutate(pin.id, {
+          onSuccess: () =>
+            showToast(`${name}${josa(name, '을', '를')} 확정 리스트에 넣었어요`, {
+              label: '확정 리스트 보기',
+              onClick: () => navigate(`/maps/${mapId}/shortlist`),
+            }),
+          onError: () => showToast('확정 리스트에 넣지 못했어요'),
+        })
 
   return (
     <div>
@@ -72,8 +85,7 @@ export function PinDetailHeader({
           {hasAiEvidence(pin) && <span className="tag tag-ai">AI</span>}
         </span>
         {canToggle ? (
-          // 켜고 끄는 버튼 하나다. 토스트 대신 버튼 글자가 바뀌어 결과를 알린다 — 좁은 화면에서 토스트가 시트를 가린다.
-          // 한 버튼이라 눌러도 포커스가 그대로다. 채움 버튼이 아니다 — 이 화면의 채움 버튼은 「의견 등록」 하나다.
+          // 켜고 끄는 버튼 하나다. 한 버튼이라 눌러도 포커스가 그대로다. 채움 버튼이 아니다 — 이 화면의 채움 버튼은 「의견 등록」 하나다.
           <button type="button" aria-pressed={confirmed} disabled={busy} onClick={toggle} className="btn-confirm btn-sm">
             {confirmed ? '✓ 확정됨' : '★ 확정 리스트에 넣기'}
           </button>

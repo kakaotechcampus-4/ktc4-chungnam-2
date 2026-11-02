@@ -33,7 +33,7 @@ function Header() {
   return pin ? <PinDetailHeader pin={pin} mapId={MAP} onBack={() => {}} /> : null
 }
 
-it('확정 버튼은 켜고 끄는 버튼 하나다 — 토스트 없이 글자가 바뀌고 포커스가 남는다', async () => {
+it('확정 버튼은 켜고 끄는 버튼 하나다 — 넣으면 「확정 리스트 보기」 토스트, 빼면 토스트 없이 글자만 바뀌고 포커스가 남는다', async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
@@ -47,10 +47,13 @@ it('확정 버튼은 켜고 끄는 버튼 하나다 — 토스트 없이 글자�
   const on = await screen.findByRole('button', { name: '✓ 확정됨', pressed: true })
   expect(on).toHaveFocus()
   expect(await fetchShortlist(MAP)).toHaveLength(1)
+  expect(useToastStore.getState().toast?.action?.label).toBe('확정 리스트 보기')
 
+  useToastStore.setState({ toast: null })
   await userEvent.click(on)
   const off = await screen.findByRole('button', { name: '★ 확정 리스트에 넣기', pressed: false })
   expect(off).toHaveFocus()
   expect(await fetchShortlist(MAP)).toHaveLength(0)
   expect(useToastStore.getState().toast).toBeNull()
-})
+  // 넣고 빼며 핀·확정 리스트를 두 번씩 다시 받는다 — 부하가 높으면 기본 5초를 넘는다.
+}, 15_000)
