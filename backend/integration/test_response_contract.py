@@ -740,6 +740,10 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     assert a.get(f"/maps/{map_id}/agent").json()["settings"]["enabled"] is False
     assert a.put(f"/maps/{map_id}/agent/settings", json={"enabled": True}).json()["enabled"] is True
 
+    # 이 테스트는 응답을 검증해 problems에 모으기만 하고 확인하지 않았다(#1152에서 발견). 다른 계약 테스트와 같이 확인한다
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
 
 def test_course_endpoints_match_the_openapi_spec(clients, app_client, db_session, pin_body):
     """AI 코스 짜기(#334, #580 결정 전 초안) — 요청(202), 완료된 run, 내 마지막 코스(204 → 200), 에러 봉투(422·404·403·409).

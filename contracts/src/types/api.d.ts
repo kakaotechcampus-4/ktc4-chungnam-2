@@ -4945,6 +4945,8 @@ export interface components {
             analysis?: components["schemas"]["AgentAnalysis"] | null;
             advice: components["schemas"]["AgentAdviceLine"][];
             actions: components["schemas"]["AgentAction"][];
+            /** @description 우리 데이터 확인(#1152, docs/agent-v2.md 6.6). stall·split 중 사실 다툼일 때만 들어 있다. 선택 필드 — 서버 구현(#1168) 전에는 없고, FE는 없거나 빈 목록이면 칸을 그리지 않는다 */
+            facts?: components["schemas"]["AgentFactLine"][];
             /** Format: date-time */
             created_at: string;
             /**
@@ -4952,6 +4954,32 @@ export interface components {
              * @description 만들고 24시간 뒤. 지나면 만료(agent.resolved, status=expired)
              */
             expires_at: string;
+        };
+        /**
+         * @description 우리 데이터 확인 한 줄(#1152, docs/agent-v2.md 6.6). 서버가 그 핀 장소의 라벨로 렌더한 고정 문구다. 모델이 쓰지 않는다.
+         *     value: yes(라벨 참), no(라벨 거짓 — 문구에 「데이터가 틀릴 수 있어요」가 들어 있다), unknown(모름).
+         *     segments는 AgentAdviceLine과 같은 조각이고 핀 이름은 pin 조각이다. 구성원 글(quote)은 들어가지 않는다. 화면은 판정 문구를 더하지 않는다.
+         *     예: [{kind: text, text: "우리 데이터: "}, {kind: pin, pin_id: "p1", text: "성수 칼국수"}, {kind: text, text: "은 주차할 수 있는 곳으로 나와요"}]
+         */
+        AgentFactLine: {
+            /** @description docs/constraints.md의 키 */
+            fact_key: string;
+            /** @enum {string} */
+            value: "yes" | "no" | "unknown";
+            segments: components["schemas"]["AdviceSegment"][];
+        };
+        /**
+         * @description 지도 현황 문단(#1152, docs/agent-v2.md 8.2). 코드가 계산한 칸(카테고리별 확정·후보·갈린 핀·정체, D-day, 먼저 볼 카테고리)을 모델이 보고 쓴 2~4문장이다.
+         *     서버가 사실과 모순인 판단, 칸에 없는 숫자, 다른 카테고리를 먼저 권하는 말, 금지 표현을 걸러 통과한 것만 내린다. 이름·사유 글·장소 이름은 없다. FE는 「AI」 배지를 붙인다.
+         *     예: "카페는 거의 정해졌고, 음식점은 갈린 곳 하나만 남았어요. 관광지는 아직 후보가 2곳뿐이에요. 출발이 5일 남았으니 음식점부터 보면 좋겠어요."
+         */
+        AgentMapStatus: {
+            paragraph: string;
+            /**
+             * Format: date-time
+             * @description 칸이 바뀌어 문단을 다시 만든 시각
+             */
+            updated_at: string;
         };
         AgentSummaryItem: {
             fact_key?: string | null;
@@ -5012,6 +5040,8 @@ export interface components {
             has_unseen: boolean;
             /** @description 요약이 만들어진 카테고리만 */
             summaries: components["schemas"]["AgentSummary"][];
+            /** @description 지도 현황 문단(#1152, docs/agent-v2.md 8.2). 아직 만든 적이 없으면 null. 선택 필드 — 서버 구현(#1168) 전에는 없고, FE는 없거나 null이면 자리를 두지 않는다 */
+            status?: components["schemas"]["AgentMapStatus"] | null;
         };
         AgentAcceptRequest: {
             action_index: number;
