@@ -315,6 +315,8 @@ components:
 | 반대 기호 | `AgainstMark` (lucide Ban) | `ui/AgainstMark` |
 | AI 코스 작업 기록(한 줄 · 이해 카드) | `WorkLog` | `features/course/WorkLog` |
 | 목록에서 여러 개 고르기 | `Checkbox` (상자 20px + 옆 글자, 줄 전체가 label이라 누르는 곳 44px · 켜짐은 `--action-fill`) | `ui/Checkbox` |
+| 후보 중 하나 고르기 | `Radio` (`Checkbox`와 같은 모양 — 원 20px + 옆 글자, 줄 전체가 label, 같은 `name`끼리 하나) | `ui/Radio` |
+| 카톡 대화에서 핀 가져오기(#578, #1046) | `ImportSheet` — 링크마다 4단: 찾은 곳(미리 체크, 「이름·주소가 같아서 찾았어요」·「이미 확인된 장소예요」) → 「이 장소가 맞나요?」(같은 주소 후보, 체크 안 함) → 이름으로 찾을 곳(후보 `Radio` + 「여기 없어요」, 주소가 같은 한 곳만 미리 고름 「주소가 같아요」, 「직접 찾기」) → 이름 확인 필요(같이 온 말 회색 + 「하나씩 찍기」). 제목은 장소·공유 이름이고 링크는 회색 보조 줄. 같은 장소는 「위와 같은 곳」으로 한 번만 찍는다 | `features/kakaoImport/ImportSheet` |
 | 켜고 끄기 | `Switch` (막대 44×24 · 누르는 곳 44, 켜짐 brand-600 · 꺼짐 ink-300) | `ui/Switch` |
 | 핑고 AI 조언 버튼(지도 왼쪽 아래) | `AgentButton` | `features/agent/AgentButton` |
 | 알림 종 버튼 + 알림함·알림 설정 시트(#483) | `NotificationBell` (`floating`이면 지도 위 흰 원 + 그림자, 아니면 테두리 원. 안 읽은 수는 brand-600 숫자 배지, 99+) | `features/notifications/NotificationBell` |
