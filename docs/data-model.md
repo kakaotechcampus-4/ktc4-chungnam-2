@@ -590,7 +590,7 @@ index ix_llm_calls_user_created (user_id, created_at)
 index ix_llm_calls_trace (trace_id)
 ```
 
-- 캐시 토큰은 엘리스 게이트웨이 응답의 `usage.prompt_tokens_details.cached_tokens`다(2026-10-30 확인). 캐시 미스면 게이트웨이가 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고한다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 엘리스 청구서와 대조해야 한다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
+- 캐시 토큰은 응답의 `usage.prompt_tokens_details.cached_tokens`다(엘리스 게이트웨이에서 2026-10-30 확인. OpenAI 직접 호출로 바꾼 뒤(#1120)에도 같은 필드를 읽지만, 값의 의미는 청구서와 대조해 확인해야 한다). 엘리스 게이트웨이는 캐시 미스면 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고했다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 청구서(OpenAI 대시보드의 사용량)와 대조해야 한다. 이 25% 가산은 엘리스 게이트웨이의 보고 방식이라 OpenAI 직접 호출에서는 없을 수 있다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
 - 탈퇴는 행을 남기고 `user_id`만 비운다(비용 통계는 사람 없이도 쓴다, `llm.api.anonymize_by_user`). 게스트 합치기는 `user_id`를 옮긴다. 30일 지난 행은 정기 정리(`maintenance.run`의 `llm_calls`)가 지운다. 지도 정리는 행을 지우지 않는다(map_id만 남고 가리키는 지도가 없다).
 
 ---
