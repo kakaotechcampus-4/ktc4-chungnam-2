@@ -5,6 +5,7 @@ core.thought_problem은 문장의 *모양*(슬롯 밖 숫자 금지, 금지 표�
   - 요청 목표를 지켰다/못 지켰다(목표별: 야경, 실내, 걷기, 여유, 장소·날짜, 같은 날)
   - 어떤 장소가 어느 날에 쉬어요/열어요/가능해요
   - 어떤 장소의 어느 날 영업 여부(「{p4}의 {d2} 영업 여부」) — 그 장소가 그 코스의 그날에 있는지(#1128)
+  - 어떤 장소를 어느 날에 두었다/옮겼다(「{p3}를 {d3}로 옮겨 나눴어요」) — 그 장소가 그 코스의 그날에 있는지(#1131)
   - 숫자 낱말(두 곳, 삼십 분 …)이 코드의 값에 없는 경우 — 숫자 글자는 이미 thought_problem이 막는다
 코드가 확인할 수 있는 주장이 틀리면 막는다. 코드가 확인할 수 없는 말(이유, 계획, 감상)은 그대로 둔다 — 보수적으로, 확실히 틀린 것만 막는다.
 막히면 모델을 다시 부르지 않고 코드 사실만으로 만든 문장(fact_sentence)으로 바꾼다. 문장 검사는 별칭 슬롯({p4}, {d2})이 든 원문에 한다.
@@ -28,16 +29,17 @@ _NO = r"없(?!는지|을지|을까|나\b|도록|게|으려|으면|다면|애|앨
 ZERO_RE = re.compile(_NO + r"|해결(?:됐|되었|돼|했|된)|해소(?:됐|되었|돼|했|된)|풀렸|풀린|사라졌|사라진|고쳤|고친|없앴|없앤")
 REMAIN_RE = re.compile(r"남아|남았|남은|있어|있는|있다|있네")
 CONDITIONAL_RE = re.compile(r"으면|다면|도록|려고|려면|지 않")
+PLACED_RE = re.compile(r"뒀|두었|넣었|배치했|배정했|옮겼|옮겨\s?(?:나눴|정했|뒀|두었)|나눴")   # 장소를 그날에 두었다는 주장(결과)
 PLAN_RE = re.compile(r"면(?=\s|$)|려고|려면|도록")      # 「{p4}를 {d2}로 옮기면」 — 아직 결과가 아닌 계획
 CLOSED_RE = re.compile(r"쉬|휴무|휴관|닫|영업하지 않|열지 않|안 열")
-OPEN_RE = re.compile(r"열(?!지)|영업(?!\s?(?:확인|여부))|운영")
+OPEN_RE = re.compile(r"열(?!지)|영업(?!\s?(?:확인|여부|시간))|운영")
 NEGATED_RE = re.compile(r"^.{0,4}(?:지 않|지 못|않|못)")
 FEASIBLE_RE = re.compile(r"가능")
 # 모델은 "확정 위반"을 "확정 조건", "확정 관련 문제"처럼도 쓴다(입력의 hard.confirmed). 같은 주장으로 본다.
 VIOLATION_TOPIC_RE = re.compile(r"위반|문제|확정\s?(?:조건|관련|위반|문제|오류|사항)")
 HARD_OK_RE = re.compile(r"통과|충족|만족")
 ALL_CLEAR_RE = re.compile(r"(?:점검|검사|검증)(?:을|도|은|는)?\s?통과")
-CHECK_TOPIC_RE = re.compile(r"영업 확인|확인 필요|영업 여부|휴무 확인")
+CHECK_TOPIC_RE = re.compile(r"영업 확인|확인 필요|영업 여부|휴무 확인|영업시간")
 CHECK_DONE_RE = re.compile(r"통과|완료|마쳤|끝났|" + _NO)
 CHECK_LEFT_RE = re.compile(r"남|있")
 KEEP_RE = re.compile(r"지켰|지킨|지켜졌|지켜요|지켜서|지키며|지키고|충족|달성|이뤘|이룬|만족했|반영됐|반영되었|반영했")
@@ -108,6 +110,7 @@ def problems(ref: Reference, text: str) -> list[str]:
         out += _violation_claims(ref, clause)
         out += _check_claims(ref, clause)
         out += _check_day_claims(ref, clause)
+        out += _placement_claims(ref, clause)
         out += _goal_claims(ref, clause)
         out += _closed_day_claims(ref, text, clause)
     out += _number_claims(ref, text)
@@ -157,23 +160,36 @@ def _check_claims(ref: Reference, clause: str) -> list[str]:
     return []
 
 
+def _pairs(ref: Reference, clause: str) -> list[tuple[str, str]]:
+    """절 안의 (장소, 날짜) 짝 — 장소마다 절 안에서 가장 가까운 날짜 슬롯. 날짜 슬롯이 없으면 빈 목록."""
+    slots = [(m.start(), m.group(1)) for m in SLOT.finditer(clause)]
+    days = [(pos, s) for pos, s in slots if s.startswith("d") and core.day_index(ref.trip, s) is not None]
+    if not days:
+        return []
+    return [(place, min(days, key=lambda d: abs(d[0] - pos))[1]) for pos, place in slots
+            if place.startswith("p") and ref.trip.has_place(place)]
+
+
+def _misplaced(ref: Reference, place: str, day: str, what: str) -> list[str]:
+    actual = ref.day_of(place)
+    if actual is None or actual == day:
+        return []
+    return [f"{ref.trip.place(place).name}의 {core.day_label(ref.trip, day)} {what} 말했지만 결과에서는 {core.day_label(ref.trip, actual)}에 있어요"]
+
+
+def _placement_claims(ref: Reference, clause: str) -> list[str]:
+    """「{p3}를 {d3}로 옮겨 나눴어요」 — 두었다/옮겼다고 말한 장소가 결과 코스의 그날에 있어야 한다. 영업 확인 문장은 _check_day_claims가 본다."""
+    if not PLACED_RE.search(clause) or CHECK_TOPIC_RE.search(clause) or PLAN_RE.search(clause):
+        return []
+    return [r for place, day in _pairs(ref, clause) for r in _misplaced(ref, place, day, "배치를")]
+
+
 def _check_day_claims(ref: Reference, clause: str) -> list[str]:
     """영업 확인 문장이 장소와 날짜를 함께 말하면(「{p4}의 {d2} 영업 여부가 확인되지 않아」) 그 장소가 그 코스의 그날에 있어야 한다.
     장소마다 절 안에서 가장 가까운 날짜 슬롯과 짝짓는다. 날짜 슬롯이 없으면 볼 것이 없다."""
     if not CHECK_TOPIC_RE.search(clause) or PLAN_RE.search(clause):
         return []
-    slots = [(m.start(), m.group(1)) for m in SLOT.finditer(clause)]
-    days = [(pos, s) for pos, s in slots if s.startswith("d") and core.day_index(ref.trip, s) is not None]
-    out = []
-    for pos, place in slots:
-        if not days or not place.startswith("p") or not ref.trip.has_place(place):
-            continue
-        day = min(days, key=lambda d: abs(d[0] - pos))[1]
-        actual = ref.day_of(place)
-        if actual is not None and actual != day:
-            out.append(f"{ref.trip.place(place).name}의 {core.day_label(ref.trip, day)} 영업 여부를 말했지만 "
-                       f"결과에서는 {core.day_label(ref.trip, actual)}에 있어요")
-    return out
+    return [r for place, day in _pairs(ref, clause) for r in _misplaced(ref, place, day, "영업 여부를")]
 
 
 def _goal_claims(ref: Reference, clause: str) -> list[str]:
@@ -328,3 +344,27 @@ def guard(ref: Reference, raw_text: str) -> Optional[Guarded]:
     """모델 문장(슬롯 원문)이 사실과 어긋나면 대신 보일 코드 문장과 이유를, 아니면 None."""
     found = problems(ref, raw_text)
     return Guarded(tuple(found), fact_sentence(ref)) if found else None
+
+
+# ---- 가정 줄 (#1131) — 영업시간을 모르는 곳을 묻지 않고 여는 것으로 보고 정했다 ----
+
+ASSUMED_PER_DAY = 3
+
+
+def assumed_pairs(ref: Reference) -> list[tuple[str, str]]:
+    """가정 줄에 쓸 (장소, 날짜). 결과 코스의 그날에 있고 그날 영업 여부를 모르는 짝만 — _check_day_claims와 같은 규칙으로 걸러 틀린 날짜·장소가 나가지 않는다."""
+    return [(v.places[0], v.day) for v in ref.checks
+            if not _misplaced(ref, v.places[0], v.day, "") and ref.status(v.places[0], v.day) == "unknown"]
+
+
+def assumption_sentence(ref: Reference) -> Optional[str]:
+    """「영업시간을 모르는 곳은 여는 것으로 보고 정했어요: 첫째 날 (월) 장소A, 장소B / …」. 날마다 ASSUMED_PER_DAY곳까지 이름을 쓴다. 없으면 None."""
+    by_day: dict[str, list[str]] = {}
+    for place, day in assumed_pairs(ref):
+        by_day.setdefault(day, []).append(ref.trip.place(place).name)
+    if not by_day:
+        return None
+    parts = [f"{core.day_label(ref.trip, d)} {', '.join(names[:ASSUMED_PER_DAY])}"
+             + (f" 외 {len(names) - ASSUMED_PER_DAY}곳" if len(names) > ASSUMED_PER_DAY else "")
+             for d, names in sorted(by_day.items(), key=lambda kv: core.day_index(ref.trip, kv[0]) or 0)]
+    return "영업시간을 모르는 곳은 묻지 않고 여는 것으로 보고 정했어요: " + " / ".join(parts) + "."
