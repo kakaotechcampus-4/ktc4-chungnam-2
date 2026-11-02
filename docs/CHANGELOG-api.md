@@ -2,6 +2,11 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-03, `AgentFactLine.value` 값에 따옴표 — 값은 그대로 (#1168)
+
+- `enum: [yes, no, unknown]`을 `["yes", "no", "unknown"]`로 고쳤다. 주고받는 값(문자열 "yes"·"no"·"unknown")은 바뀌지 않는다.
+- 이유: YAML 1.1로 읽는 파이썬 계약 검사(PyYAML)가 따옴표 없는 yes/no를 참거짓으로 읽어, 서버가 보내는 "yes"를 스펙 위반으로 봤다. TS 타입 생성(openapi-typescript)은 원래 문자열로 읽어 FE 타입은 그대로다.
+
 ## 2026-11-03, 에이전트 지도 현황 문단과 우리 데이터 확인 — `AgentState.status`, `AgentSuggestion.facts` (#1152)
 
 - `AgentState`에 선택 필드 `status`(`AgentMapStatus` {`paragraph`, `updated_at`} 또는 null)를 더했다. 핑고 AI 조언 시트 맨 위에 보일 지도 현황 문단이다. 칸은 코드가 계산하고 모델이 판단과 문장을 맡으며, 서버가 사실과 모순인 판단을 거른다(`docs/agent-v2.md` 8.2).
