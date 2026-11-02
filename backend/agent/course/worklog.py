@@ -91,11 +91,14 @@ def _choices_text(shown: Sequence[str], default: str) -> str:
 
 
 def meal_less_text(trip: core.Trip, day_index: int) -> str:
-    """식사할 곳이 없는 날의 확인 문장. 정하는 곳은 core.meal_less_days 하나다. 리스트에 식당이 모자라 어쩔 수 없는 경우와, 날마다 둘 만큼 있는데 그날에
-    배정되지 않은 경우를 나눈다(#1008 K2) — 뒤쪽을 "리스트에 없다"고 쓰면 사실과 다르다."""
+    """식사할 곳이 없는 날의 확인 문장. 정하는 곳은 core.meal_less_days 하나다. 세 경우로 나눈다(#1008 K2): 확정 리스트에 식당이 0곳 /
+    있지만 날마다 둘 만큼은 모자람 / 둘 만큼 있는데 그날에 배정되지 않고 다른 날에 놓임. 있는데 "리스트에 없다"고 쓰면 사실과 다르다."""
     day = core.day_label(trip, core.day_alias(day_index))
-    if sum(p.category == MEAL_CATEGORY for p in trip.places) < len(trip.days) * MEALS_PER_DAY_MIN:      # 식당이 모자라 어쩔 수 없다
+    meals = sum(p.category == MEAL_CATEGORY for p in trip.places)
+    if meals == 0:
         return f"{day}에는 식사할 곳이 확정 리스트에 없어요."
+    if meals < len(trip.days) * MEALS_PER_DAY_MIN:
+        return f"{day}에는 식사할 곳이 없어요. 확정 리스트의 식당이 모자라 이날은 비었어요."
     return f"{day}에는 식사할 곳이 배정되지 않았어요. 확정 리스트에는 있지만 다른 날에 놓였어요."
 
 

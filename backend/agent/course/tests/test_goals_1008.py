@@ -68,14 +68,51 @@ class TestIndoorBalance:
 
 
 class TestMealAlert:
-    def test_two_cases(self):
+    def test_three_cases(self):
         none = t(A("p1"), A("p2"))
-        assert "확정 리스트에 없어요" in worklog.meal_less_text(none, 1)
-        short = t(A("p1"), A("p2", cat="음식점"), A("p3"), days=(core_days := t(A("p1")).days) + (date(2026, 10, 21),))
-        assert "확정 리스트에 없어요" in worklog.meal_less_text(short, 2)        # 식당 1곳, 3일 — 모자라서 어쩔 수 없다
-        some = t(A("p1"), A("p2", cat="음식점"), A("p3", cat="음식점"))
+        assert "확정 리스트에 없어요" in worklog.meal_less_text(none, 1)                       # 식당 0곳
+        short = t(A("p1"), A("p2", cat="음식점"), A("p3"), days=t(A("p1")).days + (date(2026, 10, 21),))
+        text = worklog.meal_less_text(short, 2)                                                 # 식당 1곳, 3일
+        assert "모자라 이날은 비었어요" in text and "확정 리스트에 없어요" not in text
+        some = t(A("p1"), A("p2", cat="음식점"), A("p3", cat="음식점"))                          # 둘 만큼 있다
         text = worklog.meal_less_text(some, 1)
-        assert "배정되지 않았어요" in text and "확정 리스트에 없어요" not in text
+        assert "배정되지 않았어요" in text and "확정 리스트에 없어요" not in text and "모자라" not in text
+
+
+class TestNamedPlaceDropped:
+    """K1 핵심: 「마지막 날 밤에 N서울타워」 전체를 quote로 쓰고 night_end만 내면 장소 요청이 사라진다."""
+    TEXT = "마지막 날 밤에 N서울타워 가고 싶어요"
+
+    def tr(self):
+        return _named(t(A("p1"), A("p2")), "p2", "N서울타워")
+
+    def test_one_goal_for_the_whole_quote_leaves_the_place_in_unmatched(self):
+        v = _verify(self.tr(), self.TEXT, [_goal("night_end", self.TEXT, "d2")])
+        assert v.goals == (Goal("night_end", "d2"),) and v.unmatched == (self.TEXT,)
+
+    def test_two_goals_pass_cleanly(self):
+        v = _verify(self.tr(), self.TEXT, [_goal("place_on_day", self.TEXT, "d2", ["p2"]), _goal("night_end", self.TEXT, "d2")])
+        assert len(v.goals) == 2 and v.unmatched == ()
+
+    def test_restaurant_evening_needs_only_place_on_day(self):
+        text = "첫날 저녁엔 A식당"
+        tr = _named(t(A("p1"), A("p2", cat="음식점")), "p2", "A식당")
+        v = _verify(tr, text, [_goal("place_on_day", text, "d1", ["p2"])])
+        assert v.goals == (Goal("place_on_day", "d1", ("p2",)),) and v.unmatched == ()
+
+    def test_prompt_keeps_meal_places_out_of_night_end(self):
+        from llm.prompts import COURSE_GOALS_PROMPT
+        assert "음식점·카페면 저녁·밤은 끼니·시간 말이라 place_on_day만" in COURSE_GOALS_PROMPT
+
+
+def test_greetings_are_not_leftover():
+    assert G.leftover_pieces("감사합니다", []) == [] and G.leftover_pieces("잘 부탁드립니다", []) == []
+    assert G.leftover_pieces("첫날 감사합니다, 사진 많이 찍고 싶어요", ["첫날"]) == ["사진 많이 찍고 싶어요"]
+
+
+def _named(tr, alias, name):
+    from dataclasses import replace
+    return replace(tr, places=tuple(replace(p, name=name) if p.alias == alias else p for p in tr.places))
 
 
 class TestCannotKeepClaim:
