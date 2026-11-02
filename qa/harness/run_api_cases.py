@@ -464,8 +464,96 @@ def r3_republish_exclusion():
           f"1차 {names1} → 2차 {names2} (겹침 {set(names1) & set(names2)})")
 
 
+# ───────── 크레딧 원장(W, #1091) — docs/credits-reviews.md 3·5절 ─────────
+# 숫자(처음 값, 상한, 가격, 보상)는 적지 않고 GET /credits/me에서 받는다. ♥는 사유 글 없이 남겨 ② 호출이 없다.
+BUSAN = {"label": "부산", "lat": 35.1796, "lng": 129.0756}
+_W_USERS: list = []   # W07이 잔액 = 원장 합을 볼 계정
+
+
+def _credits(c):
+    return c.get("/credits/me").json()
+
+
+def _review(c, pin, body="QA 후기"):
+    return c.put(f"/pins/{pin}/reviews/me", json={"rating": 4, "body": body})
+
+
+def w01_w07():
+    uid, c = user(); _W_USERS.append(uid); mid = new_map(c)
+    r = c.get("/credits/me"); me = r.json()
+    cap, reward, price = me.get("max_balance"), me.get("review_reward"), (me.get("prices") or {}).get("recommend_run")
+    check("W01", r.status_code == 200 and me.get("balance") == cap and all(isinstance(v, int) and v > 0 for v in (cap, reward, price))
+          and (me.get("prices") or {}).get("course", 0) > 0,
+          f"처음 잔액 = 상한 {cap}, 추천 {price}, 보상 {reward}", f"{r.status_code} {r.text[:150]}")
+
+    p1 = add_pin(c, mid).json()["id"]; p2 = add_pin(c, mid, skip=1).json()["id"]
+    c.put(f"/pins/{p1}/reaction", json={"type": "like"})
+    first = _review(c, p1).json()
+    c.delete(f"/pins/{p1}/reviews/me")
+
+    k = max(1, reward // 2)   # 상한 바로 아래로 내려 보상이 상한까지만 채우는지 본다(30 → 25, 보상 10 → +5)
+    codes = [c.post(f"/maps/{mid}/runs", json={"category": "음식점"}).status_code for _ in range(k)]
+    bal = _credits(c)["balance"]
+    again = _review(c, p1).json()
+    check("W02", first.get("credited") == 0 and first.get("balance") == cap and again.get("credited") == 0 and again.get("balance") == bal,
+          "상한에서 후기 0, 지웠다 다시 써도 0", f"처음 {first}, 다시 {again} (그 전 잔액 {bal})")
+
+    new = _review(c, p2).json(); edit = _review(c, p2, "QA 후기 고침").json()
+    want = min(reward, cap - bal)
+    check("W03", codes == [202] * k and bal == cap - k * price and new.get("credited") == want and new.get("balance") == bal + want
+          and edit.get("credited") == 0 and edit.get("balance") == bal + want,
+          f"{k}번 추천 뒤 {bal}에서 새 장소 후기 +{want}, 고치기 0", f"추천 {codes}, 잔액 {bal}, 새 후기 {new}, 고치기 {edit}")
+
+    before = _credits(c)["balance"]; key = uuid.uuid4().hex
+    r1 = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}, headers={"Idempotency-Key": key})
+    r2 = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}, headers={"Idempotency-Key": key})
+    after = _credits(c)["balance"]
+    check("W04", r1.status_code == 202 and r2.is_success and r1.json().get("id") == r2.json().get("id") and after == before - price,
+          f"같은 키 두 번 → 같은 run, {price}만 빠짐", f"{r1.status_code}/{r2.status_code} 같은 run {r1.json().get('id') == r2.json().get('id')}, 잔액 {before} → {after}")
+
+    # 0곳: 여행 지역이 부산인 지도에 서울 핀 — 후보는 여행 지역과 같은 시·도만이라(#1055) 첫 실행이 0곳이다
+    uid2, z = user(); _W_USERS.append(uid2); zmid = new_map(z, region=BUSAN)
+    zp = add_pin(z, zmid).json()["id"]; z.put(f"/pins/{zp}/reaction", json={"type": "like"})
+    b0 = _credits(z)["balance"]
+    run = z.post(f"/maps/{zmid}/runs", json={"category": "음식점", "execute": True})
+    rid = run.json().get("id"); res = result(z, rid) if rid else run
+    b1 = _credits(z)["balance"]
+    zero = res.status_code == 404 and res.json().get("code") == "NO_RESULTS"
+    if not zero:
+        rec("W05", "INFO", f"0곳을 만들지 못함(결과 {res.status_code}) — 부산 지도·서울 핀 전제가 바뀌었는지 본다")
+    else:
+        rt = z.post(f"/runs/{rid}/retry"); result(z, rid); b2 = _credits(z)["balance"]
+        wd = z.post(f"/runs/{rid}/widen"); result(z, rid); b3 = _credits(z)["balance"]
+        check("W05", run.status_code == 202 and b0 == b1 == b2 == b3,
+              f"첫 실행 0곳 차감 없음, 다시 추천({rt.status_code})·넓히기({wd.status_code})도 0", f"잔액 {b0} → {b1} → {b2} → {b3}")
+
+    _reset_guest_limiter()
+    tok = c.post(f"/maps/{mid}/invite").json()["token"]
+    g = client(); gr = g.post("/auth/guest", json={"display_name": "QA 게스트", "invite_token": tok})
+    if gr.status_code != 201:
+        rec("W06", "INFO", f"게스트를 만들지 못함({gr.status_code}) — 게스트 상한 때문일 수 있음")
+    else:
+        gm = g.get("/credits/me"); gr2 = g.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+        ok = all(x.status_code == 403 and x.json().get("code") == "GUEST_NOT_ALLOWED"
+                 and (x.json().get("detail") or {}).get("initial_credits") == cap for x in (gm, gr2))
+        check("W06", ok, f"게스트 /credits/me·추천 403 GUEST_NOT_ALLOWED, initial_credits {cap}",
+              f"/credits/me {gm.status_code} {gm.text[:100]}, 추천 {gr2.status_code} {gr2.text[:100]}")
+
+    if BASE_URL:
+        rec("W07", "SKIP", "원장은 API로 볼 수 없다 — 로컬 모드에서 본다")
+        return
+    import sqlalchemy as sa
+    from common import database
+    with database.SessionLocal() as db:
+        rows = db.execute(sa.text("""select a.user_id, a.balance, coalesce(sum(l.delta), 0) from credit_accounts a
+            left join credit_ledger l on l.user_id = a.user_id where a.user_id = any(:ids) group by a.user_id, a.balance"""),
+            {"ids": _W_USERS}).all()
+    bad = [r for r in rows if r[1] != r[2]]
+    check("W07", len(rows) == len(_W_USERS) and not bad, f"계정 {len(rows)}개 잔액 = 원장 합", f"계정 {len(rows)}/{len(_W_USERS)}, 어긋남 {bad}")
+
+
 CASES = {"A01": a01_a02, "A03": a03, "A04": a04_a05, "A06": a06_a09, "A10": a10_a12, "A13": a13_a14, "B01": b01_b03,
-         "B04": b04_b08, "C01": c01_c05, "L01": l01_l04, "L05": l05_l06, "L02": l02_l03, "L08": l08, "S03": s03_s05, "S06": s06, "R3a": r3_widen_retry, "R3b": r3_concurrent_shortlist, "R3c": r3_search_edges, "R3d": r3_pin_unsupported_and_dup_ui_codes, "R3e": r3_evidence_enforced, "R3f": r3_republish_exclusion}
+         "B04": b04_b08, "C01": c01_c05, "L01": l01_l04, "L05": l05_l06, "L02": l02_l03, "L08": l08, "S03": s03_s05, "S06": s06, "R3a": r3_widen_retry, "R3b": r3_concurrent_shortlist, "R3c": r3_search_edges, "R3d": r3_pin_unsupported_and_dup_ui_codes, "R3e": r3_evidence_enforced, "R3f": r3_republish_exclusion, "W01": w01_w07}
 
 if __name__ == "__main__":
     args = sys.argv[1:]

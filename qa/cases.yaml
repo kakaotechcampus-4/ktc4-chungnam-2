@@ -69,6 +69,15 @@
 - {id: S05, layer: api, area: shortlist, scenario: "확정 리스트 내보내기·순서 변경 경계", expect: "빈 리스트, 1개, 많은 개수", status: pass}
 - {id: S06, layer: api, area: permission, scenario: "비구성원이 지도 리소스 접근", expect: "404(존재 노출 안 함)", status: pass}
 
+# ───────── 크레딧 원장(api) — 백엔드 A, #1091. 숫자는 GET /credits/me에서 받는다(괄호는 지금 값) ─────────
+- {id: W01, layer: api, area: credits, scenario: "정식 계정의 처음 GET /credits/me", expect: "balance = max_balance(30), prices.recommend_run·course(1), review_reward(10)", status: pass}
+- {id: W02, layer: api, area: credits, scenario: "상한에서 후기 쓰기, 지웠다 같은 장소에 다시 쓰기", expect: "credited 0 / 다시 써도 0(같은 장소 보상은 한 번, ref_id)", status: pass}
+- {id: W03, layer: api, area: credits, scenario: "추천으로 상한 아래(25)로 내린 뒤 새 장소 후기, 고치기", expect: "상한까지만 +5, 고치기 0", status: pass}
+- {id: W04, layer: api, area: credits, scenario: "같은 Idempotency-Key로 추천 두 번", expect: "같은 run, 차감 한 번", status: pass}
+- {id: W05, layer: api, area: credits, scenario: "첫 실행 0곳(부산 지도에 서울 핀, #1055) 뒤 다시 추천·넓히기", expect: "잔액 그대로(#1015), 다시 추천·넓히기도 차감 없음", status: pass}
+- {id: W06, layer: api, area: credits, scenario: "게스트의 GET /credits/me와 추천 받기", expect: "403 GUEST_NOT_ALLOWED + detail.initial_credits(30)", status: pass}
+- {id: W07, layer: api, area: credits, scenario: "W01~W06에서 쓴 계정의 잔액과 원장 합(로컬만)", expect: "credit_accounts.balance = sum(credit_ledger.delta)", status: pass}
+
 # ───────── UI(브라우저) ─────────
 - {id: U01, layer: ui, area: invite, scenario: "로그인 전 초대 링크 열기 → 로그인 → 수락 → 온보딩", expect: "pendingInvite 복원, 지도 진입", status: pass}
 - {id: U02, layer: ui, area: invite, scenario: "만료/폐기/없는 초대 링크", expect: "각각 명확한 안내(INVITE_REVOKED는 FE 미처리 예상)", status: bug#719}
