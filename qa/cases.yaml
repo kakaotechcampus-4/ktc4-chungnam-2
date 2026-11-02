@@ -96,7 +96,7 @@
 - {id: K03, layer: ui, area: course, scenario: "「마지막 날 밤에 N서울타워」", expect: "그날 마지막에 타워, 밤 목표가 지킨 목표 또는 못 쓴 조각에 남음(#1008 K1)", status: untested}
 - {id: K04, layer: ui, area: course, scenario: "「둘째 날은 실내 위주로」", expect: "그날 장소를 빼서 채우지 않음, 「지킬 수 없어요」 문장과 met 일치(#1008 K2·K3)", status: untested}
 - {id: K05, layer: ui, area: course, scenario: "확정 리스트 밖 장소 요청(「롯데월드 가고 싶어」)", expect: "지어내지 않고 리스트에 없다고 안내(가드레일 2)", status: fail}
-- {id: K06, layer: ui, area: course, scenario: "진행 중 시트 닫았다 다시 열기, 새로고침", expect: "진행 단계가 이어 보이고 끝나면 결과(courses/latest)", status: untested}
+- {id: K06, layer: ui, area: course, scenario: "진행 중 시트 닫았다 다시 열기, 새로고침", expect: "진행 단계가 이어 보이고 끝나면 결과(courses/latest)", status: pass}
 - {id: K07, layer: ui, area: course, scenario: "코스 결과 뒤 확정 탭·지도", expect: "확정 리스트·visit_order·지도 변화 없음(가드레일 1)", status: pass}
 - {id: K08, layer: api, area: course, scenario: "확정 1곳에서 요청 / 진행 중 다시 요청", expect: "422 COURSE_NOT_ENOUGH_PLACES {min,count} / 409 COURSE_IN_PROGRESS {course_run_id}", status: pass}
 - {id: K09, layer: api, area: course, scenario: "다른 구성원이 남의 run id 조회 / 비구성원 조회", expect: "403 / 404, courses/latest에 남의 코스 없음", status: untested}
