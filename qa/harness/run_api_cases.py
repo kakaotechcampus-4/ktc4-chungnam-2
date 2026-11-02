@@ -349,6 +349,64 @@ def s06():
         check(f"S06.{label}", r.status_code == 404, "비구성원 404", f"{r.status_code} {r.text[:80]}")
 
 
+def p01():
+    """비구성원 404를 id가 든 경로 전부에서(#1096, docs/permissions.md 「비구성원 vs 권한 없음」). 본문은 유효하게 보낸다 —
+    422가 404보다 먼저 나오면 권한을 본 게 아니다. 지우는 요청은 맨 뒤에 두고, 끝나고 A의 데이터가 그대로인지 본다.
+    404는 앱 오류 본문(code)이 있어야 통과다 — 경로가 없을 때의 404({"detail": "Not Found"})를 권한으로 세지 않는다.
+    핀 휴지통(GET /maps/{id}/trash, POST /pins/{id}/restore)은 서버 구현 전이라 넣지 않았다(#864, 생기면 넣는다)."""
+    _, a = user(); _, b = user(); mid = new_map(a)
+    pin = add_pin(a, mid).json()["id"]; pin2 = add_pin(a, mid, skip=1).json()["id"]
+    a.put(f"/pins/{pin}/reaction", json={"type": "like"})   # 사유 글 없이 — ② 호출 없음
+    review = a.put(f"/pins/{pin}/reviews/me", json={"rating": 4, "body": "QA 후기"}).json()["review"]["id"]
+    item = a.post(f"/maps/{mid}/shortlist", json={"pin_id": pin}).json()["id"]
+    tok = a.post(f"/maps/{mid}/invite").json()["token"]
+    rid = a.post(f"/maps/{mid}/runs", json={"category": "음식점", "execute": True}).json()["id"]
+    cands = (result(a, rid).json() or {}).get("candidates") or []
+    _, lat, lng, _ = place()
+    body_pin = {"category": "음식점", "place_id": "hint", "place_name": "QA", "lat": lat, "lng": lng}
+    calls = [
+        ("GET", f"/maps/{mid}", None), ("PATCH", f"/maps/{mid}", {"title": "남의 지도"}),
+        ("POST", f"/maps/{mid}/owner", {"user_id": "x"}), ("POST", f"/maps/{mid}/invite", None),
+        ("GET", f"/maps/{mid}/invites", None), ("DELETE", f"/invites/{tok}", None),
+        ("GET", f"/maps/{mid}/members", None), ("GET", f"/maps/{mid}/pins", None), ("POST", f"/maps/{mid}/pins", body_pin),
+        ("POST", f"/maps/{mid}/pins/link-preview", {"urls": ["https://map.kakao.com/"]}),
+        ("POST", f"/maps/{mid}/pins/bulk", {"pins": [body_pin]}), ("GET", f"/maps/{mid}/counts", None),
+        ("PATCH", f"/pins/{pin}", {"memo": "남의 핀"}),
+        ("POST", f"/pins/{pin}/resolve", {"place_name": "QA", "lat": lat, "lng": lng}),
+        ("GET", f"/pins/{pin}/reviews", None), ("PUT", f"/pins/{pin}/reviews/me", {"rating": 1, "body": "남의 지도 후기"}),
+        ("POST", f"/reviews/{review}/reports", None),
+        ("PUT", f"/pins/{pin}/reaction", {"type": "like"}), ("GET", f"/pins/{pin}/reactions", None),
+        ("GET", f"/maps/{mid}/recommend/readiness", None), ("GET", f"/maps/{mid}/runs", None),
+        ("POST", f"/maps/{mid}/runs", {"category": "음식점"}),
+        *[("POST", f"/candidates/{x['id']}/publish", None) for x in cands[:1]],   # 다시 추천이 후보를 바꾸기 전에
+        ("GET", f"/runs/{rid}/evidence", None), ("PATCH", f"/runs/{rid}/evidence", {"add": [{"text": "조용한 곳"}]}),
+        ("POST", f"/runs/{rid}/regions/confirm", {}), ("POST", f"/runs/{rid}/execute", None),
+        ("GET", f"/runs/{rid}/result", None), ("POST", f"/runs/{rid}/widen", None), ("POST", f"/runs/{rid}/retry", None),
+        ("GET", f"/runs/{rid}/advice", None),
+        ("GET", f"/maps/{mid}/shortlist", None), ("POST", f"/maps/{mid}/shortlist", {"pin_id": pin2}),
+        ("GET", f"/maps/{mid}/shortlist/export", None), ("PUT", f"/maps/{mid}/shortlist/order", {"item_ids": [item]}),
+        ("GET", f"/maps/{mid}/route", None), ("POST", f"/maps/{mid}/route", None),
+        ("GET", f"/maps/{mid}/ads?lat={lat}&lng={lng}", None),
+        ("GET", f"/maps/{mid}/agent", None), ("PUT", f"/maps/{mid}/agent/settings", {"enabled": False}),
+        ("POST", f"/maps/{mid}/courses", {"request_text": "QA"}), ("GET", f"/maps/{mid}/courses/latest", None),
+        # 지우는 요청은 마지막
+        ("DELETE", f"/pins/{pin}/reaction", None), ("DELETE", f"/pins/{pin}/reviews/me", None),
+        ("DELETE", f"/shortlist/{item}", None), ("DELETE", f"/pins/{pin2}", None),
+        ("DELETE", f"/maps/{mid}/members/me", None), ("POST", f"/maps/{mid}/restore", None), ("DELETE", f"/maps/{mid}", None),
+    ]
+    bad = []
+    for method, path, body in calls:
+        r = b.request(method, path, json=body) if body is not None else b.request(method, path)
+        if r.status_code != 404 or "code" not in r.json():
+            bad.append(f"{method} {path.replace(mid, '{map}').replace(pin2, '{pin2}').replace(pin, '{pin}').replace(rid, '{run}')} → {r.status_code} {r.text[:40] if r.status_code == 404 else ''}")
+    check("P01", not bad, f"비구성원 {len(calls)}개 요청 모두 404" + ("" if cands else " (후보 0곳 — publish 빠짐)"),
+          f"404가 아닌 {len(bad)}/{len(calls)}개: " + "; ".join(bad))
+    pins_after = {p["id"] for p in a.get(f"/maps/{mid}/pins").json()}
+    me = (a.get(f"/pins/{pin}/reviews").json() or {}).get("mine")
+    kept = a.get(f"/maps/{mid}").status_code == 200 and {pin, pin2} <= pins_after and me and len(a.get(f"/maps/{mid}/shortlist").json()) == 1
+    check("P01.kept", bool(kept), "A의 지도·핀·후기·확정 리스트 그대로", f"지도/핀/후기/확정 중 바뀐 것 있음: 핀 {len(pins_after)}, 후기 {bool(me)}")
+
+
 def l02_l03():
     _, a = user(); _, b = user(); mid = new_map(a)
     tok = a.post(f"/maps/{mid}/invite").json()["token"]; b.post(f"/invites/{tok}/accept")
@@ -557,6 +615,8 @@ def w01_w07():
 
 CASES = {"A01": a01_a02, "A03": a03, "A04": a04_a05, "A06": a06_a09, "A10": a10_a12, "A13": a13_a14, "B01": b01_b03,
          "B04": b04_b08, "C01": c01_c05, "L01": l01_l04, "L05": l05_l06, "L02": l02_l03, "L08": l08, "S03": s03_s05, "S06": s06, "R3a": r3_widen_retry, "R3b": r3_concurrent_shortlist, "R3c": r3_search_edges, "R3d": r3_pin_unsupported_and_dup_ui_codes, "R3e": r3_evidence_enforced, "R3f": r3_republish_exclusion, "W01": w01_w07}
+
+CASES["P01"] = p01   # 사전 밖에 둔다 — 다른 PR이 사전 줄을 같이 고쳐도 충돌하지 않게
 
 if __name__ == "__main__":
     args = sys.argv[1:]

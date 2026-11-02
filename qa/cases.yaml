@@ -68,6 +68,7 @@
 - {id: S04, layer: api, area: feedback, scenario: "피드백 제출 빈/긴/연타", expect: "422/429", status: untested}
 - {id: S05, layer: api, area: shortlist, scenario: "확정 리스트 내보내기·순서 변경 경계", expect: "빈 리스트, 1개, 많은 개수", status: pass}
 - {id: S06, layer: api, area: permission, scenario: "비구성원이 지도 리소스 접근", expect: "404(존재 노출 안 함)", status: pass}
+- {id: P01, layer: api, area: permission, scenario: "비구성원이 남의 지도·핀·후기·추천·후보·확정 리스트·초대 id로 경로마다 49개 요청(쓰기 포함, 본문은 유효하게, #1096). 핀 휴지통은 서버 구현 전(#864)", expect: "모두 앱 오류 본문이 있는 404(경로 없음 404는 실패), 끝나고 방장의 데이터 그대로(P01.kept)", status: pass}
 
 # ───────── 크레딧 원장(api) — 백엔드 A, #1091. 숫자는 GET /credits/me에서 받는다(괄호는 지금 값) ─────────
 - {id: W01, layer: api, area: credits, scenario: "정식 계정의 처음 GET /credits/me", expect: "balance = max_balance(30), prices.recommend_run·course(1), review_reward(10)", status: pass}
