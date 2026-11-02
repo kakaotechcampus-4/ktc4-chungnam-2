@@ -166,7 +166,7 @@ def run_direct_demo(
     out("\n".join(format_course(sc, result.course, sc.truth)))
     elapsed = time.monotonic() - started
     tail = f" · 모델 호출 {setter.calls + decider.calls} · 토큰 입력 {setter.tokens[0] + decider.tokens[0]:,} / 출력 {setter.tokens[1] + decider.tokens[1]:,}" if setter else ""
-    out(f"걸린 시간 {elapsed:.1f}초 · 지휘 모델 턴 {result.model_turns} · 질문 {len(result.questions)}{tail}")
+    out(f"걸린 시간 {elapsed:.1f}초 · 지휘 모델 턴 {result.model_turns}{tail}")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
