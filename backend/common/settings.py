@@ -170,6 +170,8 @@ class Settings:
 
     def __post_init__(self) -> None:
         # 잘못된 Settings는 애초에 "만들어질 수 없다" — 호출 순서에 기대지 않는 게 핵심이다.
+        # 환경 로딩과 직접 생성 모두 같은 키를 실제 places 어댑터에 넘긴다(#810).
+        object.__setattr__(self, "kakao_rest_api_key", self.kakao_rest_api_key.strip() or self.kakao_client_id.strip())
         if self.environment not in get_args(Environment):
             raise ConfigError(f"PINGO_ENV={self.environment!r} — {'|'.join(get_args(Environment))} 중 하나여야 한다")
         unknown_sources = [n for n in self.places_sources if n not in PLACE_SOURCE_NAMES]
@@ -277,7 +279,7 @@ class Settings:
             llm_price_cached_input_krw_per_m=_float("LLM_PRICE_CACHED_INPUT_KRW_PER_M", 14.0),
             llm_price_output_krw_per_m=_float("LLM_PRICE_OUTPUT_KRW_PER_M", 708.0),
             log_level=_log_level(),
-            kakao_rest_api_key=_env("KAKAO_REST_API_KEY", "") or _env("KAKAO_CLIENT_ID", ""),
+            kakao_rest_api_key=_env("KAKAO_REST_API_KEY", ""),
             naver_search_client_id=_env("NAVER_SEARCH_CLIENT_ID", ""),
             naver_search_client_secret=_env("NAVER_SEARCH_CLIENT_SECRET", ""),
             places_sources=tuple(n.strip() for n in _env("PLACES_SOURCES", "kakao").split(",") if n.strip()),

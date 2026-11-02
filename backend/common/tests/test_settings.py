@@ -43,7 +43,6 @@ def _settings(**overrides):
         places_mode="real",
         llm_mode="real",
         frontend_base_url="https://app.pingo.example",
-        kakao_client_id="kid", kakao_client_secret="ksecret", kakao_redirect_uri="https://app.pingo.example/cb",
         kakao_rest_api_key="rest-key",
         elice_ml_api_base_url="https://ml.example", elice_ml_api_key="elice-key",
     )
@@ -438,6 +437,13 @@ def test_from_env_staging_refuses_empty_kakao_key(monkeypatch):
 @pytest.mark.parametrize("environment", ["staging", "prod"])
 def test_kakao_search_does_not_require_oauth_settings(environment):
     _settings(environment=environment, kakao_client_id="", kakao_client_secret="", kakao_redirect_uri="")
+
+
+@pytest.mark.parametrize("environment", ["staging", "prod", "dev", "test"])
+@pytest.mark.parametrize("rest_key, expected", [("", "client-key"), (" \t ", "client-key"), (" rest-key ", "rest-key")])
+def test_direct_settings_resolve_the_key_given_to_kakao_adapter(environment, rest_key, expected):
+    s = _settings(environment=environment, kakao_client_id=" client-key ", kakao_rest_api_key=rest_key)
+    assert s.kakao_rest_api_key == expected
 
 
 @pytest.mark.parametrize("environment", ["staging", "prod"])

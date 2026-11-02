@@ -37,7 +37,6 @@ def _strict_settings(environment: str, *, qa_login_secret: str):
         cors_allow_origin_regex=None,
         frontend_base_url="https://staging.pingo.example",
         kakao_client_id="kid", kakao_client_secret="ksecret", kakao_redirect_uri="https://staging.pingo.example/cb",
-        kakao_rest_api_key="rest-key",   # places 어댑터에 직접 넘기는 키(#810)
         elice_ml_api_base_url="https://ml.example", elice_ml_api_key="elice-key",   # 실제 모드의 외부 키(#810)
     )
 
