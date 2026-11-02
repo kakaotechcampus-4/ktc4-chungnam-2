@@ -238,14 +238,16 @@ def b04_b08():
     uid, c = user(); mid = new_map(c)
     for cat in ("음식점", "카페", "관광지"):   # 카테고리마다 ♥ 핀이 있어야 readiness를 통과한다
         pin = add_pin(c, mid, cat=cat).json()["id"]
-        c.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "조용해서 좋아요"})
+        c.put(f"/pins/{pin}/reaction", json={"type": "like"})   # 사유 글이 없으면 ② 호출이 없다 — 31번 돌려도 모델 비용 0
     codes = []
-    for i in range(11):
+    for i in range(31):
         cat = ("음식점", "카페", "관광지")[i % 3]
         r = c.post(f"/maps/{mid}/runs", json={"category": cat}); codes.append(r.status_code)
     last = r
-    check("B04", codes[:10] == [202] * 10 and codes[10] == 429 and last.json().get("code") == "RETRY_LIMIT",
-          "10회까지 202, 11번째 429 RETRY_LIMIT", f"{codes} {last.text[:150]}")
+    d = last.json().get("detail") or {}
+    check("B04", codes[:30] == [202] * 30 and codes[30] == 402 and last.json().get("code") == "CREDIT_INSUFFICIENT"
+          and d.get("required") == 1 and d.get("balance") == 0,
+          "30회까지 202, 31번째 402 CREDIT_INSUFFICIENT(required 1, balance 0)", f"{codes} {last.text[:150]}")
     rid = c.get(f"/maps/{mid}/runs").json()[0]["id"]
     r = c.get(f"/runs/{rid}/result")
     check("B08", r.status_code == 409 and r.json().get("code") == "RUN_NOT_FINISHED", "execute 전 409 RUN_NOT_FINISHED", f"{r.status_code} {r.text[:120]}")
@@ -382,16 +384,17 @@ def s03_s05():
 
 
 def r3_widen_retry():
-    """B05 구성원별 시도 독립 · B06 넓히기 상한 · B07 결과 0 근처 · 재시도 상한과의 관계."""
+    """B05 구성원별 크레딧 독립 · B06 넓히기 상한 · B07 결과 0 근처."""
     _, a = user(); _, b = user(); mid = new_map(a)
     tok = a.post(f"/maps/{mid}/invite").json()["token"]; b.post(f"/invites/{tok}/accept")
-    for c in (a, b):
-        pid = add_pin(c, mid, skip=0 if c is a else 7).json()["id"]
-        c.put(f"/pins/{pid}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})
-    codes_a = [a.post(f"/maps/{mid}/runs", json={"category": "음식점"}).status_code for _ in range(11)]
+    pa = add_pin(a, mid).json()["id"]
+    pb = add_pin(b, mid, skip=7).json()["id"]
+    a.put(f"/pins/{pa}/reaction", json={"type": "like"})   # A는 사유 글 없이 — 30번 돌려도 ② 호출이 없다
+    codes_a = [a.post(f"/maps/{mid}/runs", json={"category": "음식점"}).status_code for _ in range(31)]
+    b.put(f"/pins/{pb}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})   # B06의 결과용, ② 1번
     r = b.post(f"/maps/{mid}/runs", json={"category": "음식점"})
-    check("B05", codes_a[:10] == [202] * 10 and codes_a[10] == 429 and r.status_code == 202,
-          "A 10회 후 429, B는 독립적으로 202", f"A {codes_a}, B {r.status_code} {r.text[:100]}")
+    check("B05", codes_a[:30] == [202] * 30 and codes_a[30] == 402 and r.status_code == 202,
+          "A 30회 후 402, B는 자기 크레딧으로 202", f"A {codes_a}, B {r.status_code} {r.text[:100]}")
     rid = r.json()["id"]
     b.post(f"/runs/{rid}/regions/confirm", json={}); b.post(f"/runs/{rid}/execute"); result(b, rid)
     last = None; n = 0
