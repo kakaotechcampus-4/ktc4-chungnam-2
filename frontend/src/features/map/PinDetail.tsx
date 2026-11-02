@@ -1,4 +1,5 @@
 import { useId, useRef, useState, type ReactNode } from 'react'
+import { useNavigate } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
@@ -18,6 +19,7 @@ import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 
 import { isLive, locationState, useLivePlaceStore } from './livePlaces'
+import ReactionHelp from './ReactionHelp'
 import { asReactionType, FILTER_CATEGORIES, hasAiEvidence, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
 import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReasonChipsQuery, useUpdatePinMutation } from './queries'
 
@@ -53,6 +55,7 @@ export function PinDetailHeader({
   onBack: () => void
 }) {
   const add = useAddToShortlistMutation(mapId)
+  const navigate = useNavigate()
   const confirmed = pin.kind === '확정'
 
   return (
@@ -79,7 +82,11 @@ export function PinDetailHeader({
                 add.mutate(pin.id, {
                   onSuccess: () => {
                     const name = pin.place_name ?? '이 장소'
-                    showToast(`${name}${josa(name, '을', '를')} 확정 리스트에 넣었어요`)
+                    // 넣은 뒤 어디로 가는지 보이게 확정 리스트로 가는 길을 같이 준다(#1030).
+                    showToast(`${name}${josa(name, '을', '를')} 확정 리스트에 넣었어요`, {
+                      label: '확정 리스트 보기',
+                      onClick: () => navigate(`/maps/${mapId}/shortlist`),
+                    })
                   },
                   onError: () => showToast('확정 리스트에 넣지 못했어요'),
                 })
@@ -247,13 +254,17 @@ export function PinDetailBody({
             >
               <span style={{ color: R[t].line }}>{R[t].mark}</span>
               <span className={mine === t ? '' : 'text-ink-900'}>{R[t].label}</span>
-              <span style={mine === t ? undefined : { color: R[t].text }}>{s[t]}</span>
+              <span style={mine === t ? undefined : { color: R[t].text }}>{s[t]}명</span>
               {mine === t && '· 나'}
             </span>
           ))}
           <span className="flex items-center gap-1 font-bold">
             <span className="text-ink-500">?</span> <span className="text-ink-900">미확인</span>
-            <span className="text-ink-600">{Math.max(0, memberCount - participants(pin))}</span>
+            <span className="text-ink-600">{Math.max(0, memberCount - participants(pin))}명</span>
+          </span>
+          {/* 「미확인」이 장소 정보가 확인 안 됐다는 말로 읽히지 않게 뜻을 그 자리에서 연다(#1030). */}
+          <span className="ml-auto">
+            <ReactionHelp />
           </span>
         </div>
       </div>

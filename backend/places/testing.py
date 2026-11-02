@@ -12,6 +12,7 @@ search_nearby_own은 영업 중인 장소만, get_places는 없는 ID를 키에�
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Sequence
@@ -83,6 +84,7 @@ def _sample_facts() -> dict[str, list[FactLabel]]:
 class FakePlaces:
     rows: list[_Row] = field(default_factory=_sample_rows)
     facts: dict[str, list[FactLabel]] = field(default_factory=_sample_facts)
+    external_ids: dict[tuple[str, str, str], dict] = field(default_factory=dict)   # (provider, 번호, place_id) → {"source", "votes": set}  번호표(#1048)
     hours: dict[str, PlaceHours] = field(default_factory=dict)   # place_id → 영업시간·휴무일. 기본은 비어 있다(= 모름, #690)
 
     # ---- 6개 공개 함수 (places.api와 같은 이름·시그니처). db는 메모리 대역이라 받기만 하고 쓰지 않는다 ----
@@ -160,21 +162,71 @@ class FakePlaces:
         return [Candidate(r.place_id, r.name, r.lat, r.lng, r.category, r.kakao_place_id,
                           haversine_distance_m(lat, lng, r.lat, r.lng), r.address) for r in near]
 
+    def sido(self, address: str | None) -> str | None:
+        return core.sido(address)
+
+    def sido_at(self, lat: float, lng: float, *, db: Session | None = None) -> str | None:
+        # 실제 구현과 같은 규칙. 샘플 장소는 주소가 없어 None(= 모름)이다 — 시·도를 보려면 행에 address를 넣는다
+        from places.api import SIDO_AT_RADIUS_M
+
+        near = self.own_places_near(lat, lng, SIDO_AT_RADIUS_M, len(self.rows))
+        return next((v for v in (core.sido(c.address) for c in near) if v), None)
+
     def own_places_by_kakao_id(self, kakao_place_id: str, *, db: Session | None = None) -> list[Candidate]:
         return [self._candidate(r, None) for r in self.rows if r.status == "open" and r.kakao_place_id == kakao_place_id]
 
-    def match_by_name_address(self, name: str, address: str | None, *, db: Session | None = None) -> list[PlaceSearchResult]:
+    def match_by_name_address(self, name: str, address: str | None, *, external_id: str | None = None, db: Session | None = None) -> list[PlaceSearchResult]:
         nq, prefixes = matching.hint_name_keys(name)
         if not nq:
             return []
         cands = [self._candidate(r, None) for r in self.rows
                  if r.status == "open" and r.category in OWN_CATEGORIES
-                 and (matching.normalize_name(r.name).startswith(nq) or matching.normalize_name(r.name) in prefixes)]
+                 and (matching.normalize_name(r.name).startswith(tuple(matching.hint_like_prefixes(name)))
+                      or matching.normalize_name(r.name) in prefixes)]
         if len(cands) > matching.HINT_MAX_CANDIDATES:
             return []
+        picked = matching.pick_hint_match(name, address, cands)
+        if picked and external_id and re.fullmatch(r"(kakao|naver):\d{1,20}", external_id):
+            self.record_external_id(external_id.split(":")[0], external_id, picked[0].place_id, source="hint")
         return [PlaceSearchResult(place_id=c.kakao_place_id or f"own:{c.place_id}", place_name=c.name[:100], lat=c.lat, lng=c.lng,
                                   category=c.category, address=c.address[:200] if c.address else None, pinnable=True)
-                for c in matching.pick_hint_match(name, address, cands)]
+                for c in picked]
+
+    def record_external_id(self, provider: str, external_id: str, place_id: str, *, source: str, voter_hash: str | None = None,
+                           db: Session | None = None) -> None:
+        if provider not in ("kakao", "naver") or source not in ("hint", "user") or (source == "user" and not voter_hash):
+            raise ValueError("계약에 맞지 않는다")
+        if not re.fullmatch(rf"{provider}:\d{{1,20}}", external_id or ""):
+            raise ValueError("번호 형식")
+        if self._row(place_id) is None:
+            raise KeyError(place_id)
+        row = self.external_ids.setdefault((provider, external_id, place_id), {"source": source, "votes": set()})
+        if source == "hint":
+            row["source"] = "hint"
+        elif voter_hash:
+            row["votes"].add(voter_hash)
+
+    def purge_external_id_votes(self, voter_hash: str, *, db: Session | None = None) -> int:
+        removed = 0
+        for row in self.external_ids.values():
+            if voter_hash in row["votes"]:
+                row["votes"].discard(voter_hash)
+                removed += 1
+        return removed
+
+    def own_places_by_external_id(self, external_id: str, *, db: Session | None = None) -> list[Candidate]:
+        rows = [(pid, row["source"], len(row["votes"])) for (prov, ext, pid), row in self.external_ids.items() if ext == external_id]
+        place_id = core.trusted_external_place(rows)
+        row = self._row(place_id) if place_id else None
+        return [self._candidate(row, None)] if row is not None and row.status == "open" and row.category in OWN_CATEGORIES else []
+
+    def match_address_candidates(self, address: str, *, db: Session | None = None) -> list[PlaceSearchResult]:
+        if matching.address_search_term(address or "") is None:
+            return []
+        cands = [self._candidate(r, None) for r in self.rows if r.status == "open" and r.category in OWN_CATEGORIES]
+        return [PlaceSearchResult(place_id=c.kakao_place_id or f"own:{c.place_id}", place_name=c.name[:100], lat=c.lat, lng=c.lng,
+                                  category=c.category, address=c.address[:200] if c.address else None, pinnable=True)
+                for c in matching.pick_address_candidate(address, cands)]
 
     # ---- 편의 ----
 
@@ -192,8 +244,8 @@ class FakePlaces:
         from places import api
 
         for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "count_curated", "get_facts", "get_hours",
-                     "get_week_open_status", "get_open_status_on_weekdays",
-                     "own_places_near", "own_places_by_kakao_id", "match_by_name_address"):
+                     "get_week_open_status", "get_open_status_on_weekdays", "sido", "sido_at",
+                     "own_places_near", "own_places_by_kakao_id", "match_by_name_address", "match_address_candidates", "record_external_id", "purge_external_id_votes", "own_places_by_external_id"):
             monkeypatch.setattr(api, name, getattr(self, name))
         return self
 

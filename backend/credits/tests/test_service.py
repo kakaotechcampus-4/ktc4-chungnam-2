@@ -320,17 +320,19 @@ def test_reassign_user_deletes_guest_rows_and_keeps_target(db_session, user):
 
     moved = api.reassign_user(db_session, from_user_id=stray, to_user_id=user)
 
-    assert moved == {"credit_accounts": 1, "credit_ledger": 2}
+    assert moved == {"credit_accounts": 1, "credit_ledger": 2, "credit_ad_sessions": 0}
     assert _account(db_session, stray) is None and _ledger(db_session, stray) == []
     assert _account(db_session, user).balance == target_balance
     assert [r.reason for r in _ledger(db_session, user)].count("initial") == 1
-    assert api.reassign_user(db_session, from_user_id=stray, to_user_id=user) == {"credit_accounts": 0, "credit_ledger": 0}
+    assert api.reassign_user(db_session, from_user_id=stray, to_user_id=user) == {
+        "credit_accounts": 0, "credit_ledger": 0, "credit_ad_sessions": 0}
 
 
 def test_reassign_same_id_is_noop(db_session, user):
     api.charge(db_session, user_id=user, feature=RUN, run_id=_run_id())
 
-    assert api.reassign_user(db_session, from_user_id=user, to_user_id=user) == {"credit_ledger": 0, "credit_accounts": 0}
+    assert api.reassign_user(db_session, from_user_id=user, to_user_id=user) == {
+        "credit_ledger": 0, "credit_accounts": 0, "credit_ad_sessions": 0}
     assert _account(db_session, user) is not None
 
 

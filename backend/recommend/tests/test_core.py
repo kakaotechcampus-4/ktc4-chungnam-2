@@ -169,15 +169,25 @@ def test_merge_circles_empty_raises_value_error():
 
 def test_next_default_radius_walk_min_steps_five_minutes_up_to_thirty():
     """docs/constraints.md "반경 넓히기 상수" — 15 → 20 → 25 → 30."""
-    assert core.next_default_radius_walk_min(15) == 20
-    assert core.next_default_radius_walk_min(20) == 25
-    assert core.next_default_radius_walk_min(25) == 30
+    assert core.next_default_radius_walk_min(15, "음식점") == 20
+    assert core.next_default_radius_walk_min(20, "카페") == 25
+    assert core.next_default_radius_walk_min(25, "음식점") == 30
 
 
 def test_next_default_radius_walk_min_at_limit_raises_widen_limit():
     with pytest.raises(AppError) as exc_info:
-        core.next_default_radius_walk_min(30)
+        core.next_default_radius_walk_min(30, "음식점")
     assert exc_info.value.code == "WIDEN_LIMIT"
+
+
+def test_radius_walk_mins_tourist_spot_starts_wider_and_widens_further():
+    # #1055 — 관광지만 기본 25분·상한 45분, 음식점·카페는 15/30 그대로.
+    assert core.radius_walk_mins("음식점") == core.radius_walk_mins("카페") == (15, 30)
+    assert core.radius_walk_mins("관광지") == (25, 45)
+    assert core.next_default_radius_walk_min(25, "관광지") == 30
+    assert core.pool_radius_factor(25, "관광지") == 1.8
+    with pytest.raises(AppError):
+        core.next_default_radius_walk_min(45, "관광지")
 
 
 def test_radius_m_for_walk_min_uses_walking_speed():
@@ -412,6 +422,27 @@ def test_score_candidates_scores_only_when_both_sides_are_true():
     hearted = [_place(_check("quiet", passed=True), members=frozenset({"u1"}))]
     scores = core.score_candidates(candidates, hearted, criteria)
     assert scores == {"match": 1, "mismatch": 0, "unknown": 0}
+
+
+def test_score_candidates_subtracts_written_preference_when_known_false():
+    # #1055 — 직접 쓴 선호가 확인된 거짓이면 작성자 1명당 −3, 모름은 0점 그대로.
+    criteria = {"quiet": True}
+    candidates = {
+        "false": [_check("quiet", passed=False)],
+        "unknown": [_check("quiet", passed=True, confidence="unknown")],
+    }
+    one = {"quiet": frozenset({"u1"})}
+    two = {"quiet": frozenset({"u1", "u2"})}
+    assert core.score_candidates(candidates, [], criteria, one) == {"false": -3, "unknown": 0}
+    assert core.score_candidates(candidates, [], criteria, two) == {"false": -6, "unknown": 0}
+
+
+def test_score_candidates_heart_only_preference_false_is_not_penalized():
+    # ♥에서 이어받은 선호만 있으면 거짓이어도 0점(#1055).
+    criteria = {"quiet": True}
+    hearted = [_place(_check("quiet", passed=True), members=frozenset({"u1"}))]
+    candidates = {"p1": [_check("quiet", passed=False)]}
+    assert core.score_candidates(candidates, hearted, criteria) == {"p1": 0}
 
 
 def test_score_candidates_criteria_false_never_scores():

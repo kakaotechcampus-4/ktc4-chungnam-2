@@ -41,6 +41,7 @@ ignore_imports = [
     "auth.service -> maps.api",
     "auth.service -> notifications.api",
     "auth.service -> pins.api",
+    "auth.service -> places.api",   # 외부 장소 번호표 확인 표(#1062). #452에서 탈퇴 흐름을 auth 밖으로 옮길 때 함께 정리
     "auth.service -> recommend.api",
     "auth.service -> reviews.api",   # 장소 후기 신고 reporter_id(#951)
     "auth.service -> shortlist.api",

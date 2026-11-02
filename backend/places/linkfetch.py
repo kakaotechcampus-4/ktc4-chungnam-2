@@ -1,10 +1,11 @@
-"""단축 링크(maps.app.goo.gl·goo.gl·kko.to)를 따라가 최종 주소를 얻는다(#474). SSRF 방어가 이 파일의 일이다.
+"""단축 링크(maps.app.goo.gl·goo.gl·kko.to·naver.me)를 따라가 최종 주소를 얻는다(#474, #1048). SSRF 방어가 이 파일의 일이다.
 
 - http(s)만, 포트는 기본(80/443)만, 호스트는 linkparse의 도메인 허용목록만 — 리다이렉트가 허용목록 밖으로 가면 멈춘다.
 - 리다이렉트는 직접 따라가며(최대 MAX_REDIRECTS) 매 홉마다 호스트를 다시 검사하고 DNS를 풀어 **전부 공인 IP인지** 본다
   (사설·루프백·링크로컬·예약 대역 차단). 검사한 IP로 직접 접속한다 — 검사와 접속 사이에 DNS가 바뀌는 것(rebinding)을 막는다.
 - 본문은 읽지 않는다(스트림으로 받아 헤더만 보고 닫는다) — 크기 제한을 따로 둘 필요가 없다. 타임아웃은 호출당 짧게.
 - 단축 호스트가 아닌 주소(이미 긴 지도 주소)는 가져오지 않고 그대로 돌려준다.
+- naver.me는 Location을 한 번만 읽고 네이버 지도 주소만 받는다. 다른 단축 링크로 이어져도 추가 요청하지 않는다(#1048).
 로그에는 링크 주소를 남기지 않는다(이름·좌표가 들어 있을 수 있다).
 """
 
@@ -64,6 +65,7 @@ def follow_short_link(
 ) -> str:
     """단축 링크를 따라가 처음 나오는 '단축이 아닌' 허용 주소를 돌려준다."""
     current = url
+    naver_redirect_read = False
     for _ in range(MAX_REDIRECTS + 1):
         parts = urlsplit(current)
         host = (parts.hostname or "").lower().rstrip(".")
@@ -72,8 +74,11 @@ def follow_short_link(
         port = parts.port or (443 if parts.scheme == "https" else 80)
         if port not in (80, 443):
             raise LinkFetchError("허용되지 않은 포트")
+        if naver_redirect_read and host not in ("map.naver.com", "m.place.naver.com"):
+            raise LinkFetchError("네이버 단축 링크의 최종 지도 주소가 아니다")
         if not linkparse.is_short_host(host):
             return current
+        naver_redirect_read = host == "naver.me"
         ip = resolve(host, port)
         literal = f"[{ip}]" if ":" in ip else ip
         pinned = parts._replace(netloc=literal if parts.port is None else f"{literal}:{parts.port}").geturl()

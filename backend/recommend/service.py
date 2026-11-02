@@ -23,6 +23,7 @@ def create_run(db: Session, *, map_id: str, category: str, requested_by: str, at
     run = RecommendRun(
         map_id=map_id, category=category, requested_by=requested_by,
         status="collecting_evidence", attempt_no=attempt_no,
+        default_radius_walk_min=core.radius_walk_mins(category)[0],
     )
     db.add(run)
     db.flush()

@@ -40,6 +40,7 @@ user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사
 -- 탈퇴 후 7일 정리 대상 (#855 — 「개인정보를 모두 지운다」는 users·user_identities만이 아니라 이름이 복사된 곳까지다. BE(auth)가 모듈별로 감사해 이 표를 확정한다)
 --   users            : display_name → '탈퇴한 구성원', last_seen_at·guest_invite_token 삭제 (행은 남김)
 --   user_identities  : 삭제
+--   외부 장소 번호표 표(place_external_id_votes): 7일 정리에서 삭제(#1062). 복구 기간에는 남김. 한계: SESSION_SECRET을 바꾸기 전에 쌓인 표는 현재 해시로 찾지 못해 남는다
 --   세션             : 탈퇴·복구 시 sessions_valid_after로 무효화(저장된 세션 행이 없다)
 --   반응·근거 줄·알림(본인 것)·agent 열람 기록·코스 요청: 탈퇴 때 이미 삭제(WITHDRAW_STEPS)
 --   피드백           : 작성자 연결은 탈퇴 때 끊김. 본문은 남긴다(사용자가 쓴 글 — 개인정보처리방침에 밝힌다)
@@ -207,6 +208,28 @@ places(
 )
   unique(source, source_id)
 
+place_external_ids(                     -- #1048 카카오·네이버 장소 번호 → 자체 DB 장소. 카톡 링크가 번호뿐이라 한 번 이어진 짝을 다음 사람부터 한 번에 찍는다
+  id pk,
+  provider,                             -- 'kakao' | 'naver'
+  external_id,                          -- 번호만(예 'naver:1412566798'). 카카오 응답의 이름·좌표·주소는 저장하지 않는다(#53)
+  place_id references places(id),
+  source,                               -- 'hint' = 서버가 상호명+주소로 스스로 확정(즉시 신뢰) | 'user' = 사람이 고른 짝(아래 votes 2명 이상이어야 신뢰)
+  created_at
+)
+  unique(provider, external_id, place_id)
+  index(provider, external_id)
+  -- 같은 번호가 서로 다른 place_id에 이어진 행이 둘 이상이면 충돌이다 — 자동 매칭에서 뺀다(둘 다 후보로만).
+  -- 조회(places.api.parse_link): 신뢰된 단일 행이고 그 장소가 영업 중(status='open')일 때만 matches(matched_by='external_id').
+
+place_external_id_votes(                -- #1048 'user' 짝의 확인 횟수. 서로 다른 사용자 2명이 같은 짝을 확인해야 신뢰한다
+  external_id_row references place_external_ids(id),
+  voter_hash,                           -- HMAC(user_id) 단방향. 사용자 id를 그대로 두지 않는다. 계정당 한 표
+  created_at
+)
+  unique(external_id_row, voter_hash)
+  -- 탈퇴 7일 뒤 정리에서 voter_hash = HMAC(탈퇴 사용자 id)인 행을 지운다(auth 정리가 places.api.purge_external_id_votes를 부른다).
+  -- 번호표 자체는 지도·사용자와 무관한 공용 데이터라 지우지 않는다.
+
 place_facts(
   place_id references places(id),
   fact_key,                             -- 'spicy_focused' | 'cuisine_korean' | 'parking_available' | ... (price_bucket은 #423, contains_shellfish는 #425에서 뺐다)
@@ -325,7 +348,7 @@ recommend_runs(
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
                                          -- 않도록 마지막 execute/widen/retry의 깔때기 표를
                                          -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.
-  default_radius_walk_min int default 15,  -- #158: 기본값 원의 지금 도보 분. regions.radius_m은 여기서 파생(분×80m).
+  default_radius_walk_min int default 15,  -- #158: 기본값 원의 지금 도보 분. run을 만들 때 카테고리 기본값을 넣는다(관광지 25, 그 밖 15 — #1055, recommend.core.radius_walk_mins). regions.radius_m은 여기서 파생(분×80m).
                                          -- docs/constraints.md "반경 넓히기 상수"
   created_at
 )
@@ -587,11 +610,19 @@ credit_ledger(
   id uuid PK,
   user_id varchar NOT NULL,
   delta integer NOT NULL,
-  reason('initial'|'spend'|'refund'|'review') NOT NULL,   -- 페이즈 2 구매는 'purchase', 광고 충전은 'ad'로 같은 표에 더한다
+  reason('initial'|'spend'|'refund'|'review'|'ad') NOT NULL,   -- ad = 광고 보고 충전(#1037). 페이즈 2 구매는 'purchase'로 같은 표에 더한다
   ref_id varchar NOT NULL UNIQUE,     -- initial:<user> · <feature>:<run_id> · refund:<차감 ref_id> · review:<user>:<place_id>
   created_at timestamptz NOT NULL default now()
 )
 index ix_credit_ledger_user_reason_created (user_id, reason, created_at)
+credit_ad_sessions(                 -- 광고 보고 충전(docs/credits-reviews.md 3.7, #1038)
+  id uuid PK,
+  user_id varchar NOT NULL,          -- FK 없음(#760)
+  issued_at timestamptz NOT NULL default now(),   -- 하루 횟수(KST)는 이것으로 센다
+  claimed_at timestamptz NULL,
+  credited integer NULL             -- 받을 때 들어간 양(0~AD_REWARD). 멱등 응답에 쓴다
+)
+index ix_credit_ad_sessions_user_issued (user_id, issued_at)
 ```
 
 - `ref_id` UNIQUE가 멱등을 맡는다 — 같은 실행 이중 차감, 이중 환불, 같은 장소 후기 보상 두 번이 구조적으로 막힌다.

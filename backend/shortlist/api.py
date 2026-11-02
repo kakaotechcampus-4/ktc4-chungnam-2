@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from authz.core import Principal
+from pins import api as pins_api
 from shortlist import flows, service
 from shortlist.models import ShortlistItem
 
@@ -23,11 +24,13 @@ def count_confirmed(db: Session, *, map_id: str) -> int:
     ).scalar_one()
 
 
-def remove_for_deleted_pin(db: Session, *, map_id: str, pin_id: str, principal: Principal) -> None:
+def remove_for_deleted_pin(db: Session, *, map_id: str, pin_id: str, principal: Principal) -> bool:
     """핀을 삭제하기 **직전에** pins가 부른다(#235). 그 핀이 확정 리스트에 있으면 항목을 같은
     트랜잭션에서 지우고 shortlist.changed(removed)를 낸다 — 안 지우면 확정 리스트 조회가 삭제된
     핀 때문에 통째로 404가 되고 confirmed_count가 어긋난다. 핀이 아직 읽혀야 이벤트 페이로드(핀 응답)를
     만들 수 있어서 소프트 삭제보다 먼저 부른다. 확정 항목이 없으면 아무것도 하지 않는다.
+    지운 항목이 있었으면 True, 없었으면 False를 돌려준다 — pins가 `deleted_was_confirmed`로 기록해 복구(restore_confirmed, #1013)
+    때 확정으로 되올린다. 같은 핀을 다시 부르면 False(멱등).
     동선(route.recalculated)은 확정 리스트 변경만으로는 발행하지 않는다(docs/events.md) —
     일반 제외(DELETE /shortlist/{itemId})와 같은 규칙이다."""
     item_row = db.execute(
@@ -35,6 +38,7 @@ def remove_for_deleted_pin(db: Session, *, map_id: str, pin_id: str, principal: 
     ).scalar_one_or_none()
     if item_row is not None:
         flows.unconfirm_pin(db, item_row=item_row, principal=principal)
+    return item_row is not None
 
 
 def list_items_for_agent(db: Session, *, map_id: str) -> list[dict]:
@@ -53,3 +57,17 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     """게스트 합치기(#560)가 부른다 — from_user가 추가한 확정 항목(shortlist_items.added_by)을 to_user로 옮기고
     테이블 이름 → 옮긴 행 수를 돌려준다. 멱등이고 같은 id면 아무것도 하지 않는다. 커밋하지 않는다."""
     return service.reassign_user(db, from_user_id=from_user_id, to_user_id=to_user_id)
+
+
+def restore_confirmed(db: Session, *, pin_id: str) -> bool:
+    """핀 휴지통 복구(#1013)가 부른다 — 삭제 때 확정이었던 핀을 확정 리스트 맨 뒤로 다시 올리고 kind를 확정으로 되돌린다.
+    **핀이 이미 복구된(deleted_at이 비워진) 뒤에 부른다** — 삭제된 핀은 pins.api가 404로 본다. 새로 올렸으면 True,
+    이미 확정 리스트에 있으면 False(멱등). 확정 개수 상한은 없어 한도로 거절하는 경우가 없다. 추가한 사람(added_by)은
+    원래 항목이 삭제 때 지워져 알 수 없으므로 핀을 찍은 사람(created_by)으로 쓴다. shortlist.changed는 내지 않는다 —
+    화면은 pin.restored에서 확정 리스트를 다시 읽고(docs/events.md), 동선은 수동 트리거로만 재계산된다.
+    커밋하지 않는다. 핀이 없거나 삭제된 상태면 404 NOT_FOUND."""
+    pin = pins_api.get_pin_for_viewer(db, pin_id=pin_id, viewer_id="")
+    created = service.restore_item(db, map_id=pin.map_id, pin_id=pin_id, added_by=pin.created_by)
+    if created:
+        pins_api.mark_confirmed(db, pin_id=pin_id, map_id=pin.map_id)
+    return created

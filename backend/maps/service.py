@@ -89,6 +89,13 @@ def _region_lat_lng_columns():
     return func.ST_Y(geom_as_geometry).label("region_lat"), func.ST_X(geom_as_geometry).label("region_lng")
 
 
+def get_map_region_center(db: Session, map_id: str) -> tuple[float, float] | None:
+    row = db.execute(
+        select(*_region_lat_lng_columns()).where(MapRow.id == map_id, MapRow.deleted_at.is_(None))
+    ).one_or_none()
+    return None if row is None or row.region_lat is None else (row.region_lat, row.region_lng)
+
+
 def get_map_or_404(db: Session, map_id: str, *, for_update: bool = False) -> MapRow:
     """삭제된 지도(#369)는 없는 지도와 같다 — 삭제 필터는 여기와 api.DbMembershipGateway에 모은다.
     for_update=True면 maps 행을 잠근다. 같은 지도의 나가기·삭제·탈퇴 위임이 이 잠금으로 줄을 선다
