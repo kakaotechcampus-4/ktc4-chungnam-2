@@ -1,7 +1,7 @@
 import type { PlaceSearchResultDto } from '@/features/search/model'
 import { PINGO_MARK } from '@/ui/pingoMark'
 
-import type { Pin } from './model'
+import { kindLabel, type Pin } from './model'
 
 type PinKind = Pin['kind']
 
@@ -33,7 +33,7 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
   const el = document.createElement('button')
   el.type = 'button'
   // 장소 이름은 setAttribute 로만 넣는다 — innerHTML 로 들어가면 이름이 마크업으로 해석된다.
-  el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'} · ${pin.kind} 핀`)
+  el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'} · ${kindLabel(pin.kind)} 핀`)
   el.style.cssText =
     'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
   el.innerHTML = `

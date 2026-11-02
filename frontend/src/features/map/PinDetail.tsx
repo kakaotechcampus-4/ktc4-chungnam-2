@@ -6,6 +6,7 @@ import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import type { MemberView } from '@/features/maps/model'
 import { useMeQuery } from '@/features/auth/queries'
+import { AiChecks, AiFulfillment, AiReason } from '@/features/recommend/Evidence'
 import { hasReviews } from '@/features/reviews/model'
 import PlaceReviews from '@/features/reviews/PlaceReviews'
 import PanelBackLink from '@/features/shell/PanelBackLink'
@@ -19,7 +20,7 @@ import TextField from '@/ui/TextField'
 
 import { isLive, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
-import { asReactionType, FILTER_CATEGORIES, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
+import { asReactionType, FILTER_CATEGORIES, hasAiEvidence, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
 import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReasonChipsQuery, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
@@ -62,7 +63,11 @@ export function PinDetailHeader({
       <PanelBackLink label={backLabel} onBack={onBack} />
       {/* 자리가 없으면(긴 이름·큰 글자) 확정 버튼이 제목 아래 줄로 내려간다(#406). */}
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
-        <SheetTitle>{pin.place_name ?? '이름 없는 장소'}</SheetTitle>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <SheetTitle>{pin.place_name ?? '이름 없는 장소'}</SheetTitle>
+          {/* AI 추천에서 올린 핀은 모두의 핀이 된 뒤에도 AI가 고른 곳임을 알린다(DESIGN.md 「지도 핀」, #1032). */}
+          {hasAiEvidence(pin) && <span className="tag tag-ai">AI</span>}
+        </span>
         {confirmed ? (
           <span className="btn-confirm btn-sm">
             ✓ 확정됨
@@ -118,6 +123,20 @@ function LiveInfo({ pin }: { pin: Pin }) {
  * 핀을 찍은 사람이 남긴 한마디(#466). 찍은 사람만 쓰고 고친다(`can_edit`) — AI 추천·확정 핀은 고칠 수 없다.
  * 메모가 없고 고칠 수도 없으면 줄을 그리지 않는다.
  */
+/**
+ * AI 추천에서 올린 핀의 근거(가드레일 5). 올리기 전 후보 카드와 같은 부품으로 같은 값을 그린다 — 올린 뒤에도 그대로 보인다(#1032).
+ */
+function AiPinEvidence({ pin, members }: { pin: Pin; members: MemberView[] }) {
+  return (
+    <section aria-label="AI 추천 근거" className="mt-2 space-y-2 rounded-xl border-[1.5px] border-brand-300 bg-brand-50 p-3">
+      <p className="text-xs font-bold text-brand-700">AI가 추천한 이유</p>
+      {pin.reason && <AiReason text={pin.reason} />}
+      <AiChecks evidence={pin} />
+      <AiFulfillment evidence={pin} members={members} />
+    </section>
+  )
+}
+
 function PinMemo({ pin, mapId }: { pin: Pin; mapId: string }) {
   const [editing, setEditing] = useState(false)
   const canEdit = pin.permissions.can_edit === true
@@ -219,6 +238,7 @@ export function PinDetailBody({
         </p>
         <PinMemo pin={pin} mapId={mapId} />
         {isLive(pin) && <LiveInfo pin={pin} />}
+        {hasAiEvidence(pin) && <AiPinEvidence pin={pin} members={members} />}
         {/* 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자로 꼭 적는다(colors.md 3절 한계). */}
         {memberCount > 0 && (
           <p className="text-xs font-bold text-ink-600">
