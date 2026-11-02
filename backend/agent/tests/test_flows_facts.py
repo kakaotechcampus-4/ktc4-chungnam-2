@@ -123,7 +123,7 @@ def test_split_fact_dispute_is_saved_as_ids_and_rendered_from_current_label(worl
     assert [s["kind"] for s in line["segments"]] == ["text", "pin", "text"]
     assert "".join(s["text"] for s in line["segments"]) == (
         f"우리 데이터: {PLACE_NAME}는 주차 가능이 아니라고 나와요. 데이터가 틀릴 수 있어요")
-    assert _spec_errors("AgentSuggestion", payload | {"facts": []}) == []   # facts의 스펙 대조는 아래 xfail 테스트
+    assert _spec_errors("AgentSuggestion", payload) == []
 
     state = client("u1").get(f"/maps/{map_id}/agent").json()
     assert state["active_suggestion"]["facts"] == payload["facts"]
@@ -196,15 +196,11 @@ def test_code_type_suggestions_have_no_fact_lines(world):
     assert suggested(world, map_id)["facts"] == []
 
 
-# ---------------------------------------------------------------- 계약 — api-spec의 enum이 YAML 1.1에서 참거짓으로 읽힌다
+# ---------------------------------------------------------------- 계약 — 값 세 가지가 스펙과 같다
 
-_SPEC_ENUM_BUG = pytest.mark.xfail(strict=True, reason="api-spec AgentFactLine.value enum의 yes/no에 따옴표가 없다 — 루트 보고(#1168)")
-
-
-@pytest.mark.parametrize("value", ["unknown", pytest.param("yes", marks=_SPEC_ENUM_BUG), pytest.param("no", marks=_SPEC_ENUM_BUG)])
+@pytest.mark.parametrize("value", ["yes", "no", "unknown"])
 def test_fact_line_value_matches_spec(value):
-    """AgentFactLine.value의 enum이 docs/api-spec.yaml에 따옴표 없이 [yes, no, unknown]으로 적혀 있어, 파이썬 계약 검사(PyYAML,
-    YAML 1.1)는 [True, False, "unknown"]으로 읽는다 — 서버가 보내는 "yes", "no"가 스펙과 다르다고 나온다. TS 타입(YAML 1.2)은
-    문자열로 읽어 맞다. 스펙 수정은 루트 몫이라(#1168 보고) strict xfail로 둔다 — 고쳐지면 XPASS로 깨져 표시를 지우라고 알린다."""
+    """AgentFactLine.value의 enum은 따옴표가 있어야 파이썬 계약 검사(PyYAML, YAML 1.1)가 yes/no를 참거짓이 아니라 문자열로
+    읽는다(#1179에서 고침, #1168 보고)."""
     line = {"fact_key": "quiet", "value": value, "segments": [{"kind": "text", "text": "우리 데이터로는 "}]}
     assert _spec_errors("AgentFactLine", line) == []

@@ -739,13 +739,18 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     assert b.post(f"/agent/suggestions/{second}/dismiss").status_code == 204
     assert a.get(f"/maps/{map_id}/agent").json()["active_suggestion"] is None
 
-    # 우리 데이터 확인(6.6): 저장은 (pin_id, fact_key)만, 응답은 지금 라벨로 렌더한다. 샘플 장소의 oily_focused는 모름이다.
-    # 참·거짓(yes·no)은 api-spec enum에 따옴표가 없어 파이썬 검사가 참거짓으로 읽는다 — 루트 보고(agent/tests/test_flows_facts.py)
-    third = suggest("카페", facts=[{"pin_id": pin_ids["seongsu-kalguksu"], "fact_key": "oily_focused"}])
+    # 우리 데이터 확인(6.6): 저장은 (pin_id, fact_key)만, 응답은 지금 라벨로 렌더한다. 샘플 장소 라벨은 cuisine_korean 참,
+    # spicy_focused 거짓, oily_focused 모름이다 — 값 세 가지가 모두 스펙(따옴표 있는 enum, #1179)과 같다. 응답은 많아야 2줄이다
+    kalguksu = pin_ids["seongsu-kalguksu"]
+    third = suggest("카페", facts=[{"pin_id": kalguksu, "fact_key": k} for k in ("cuisine_korean", "spicy_focused")])
+    facts = a.get(f"/maps/{map_id}/agent").json()["active_suggestion"]["facts"]
+    assert [(f["fact_key"], f["value"]) for f in facts] == [("cuisine_korean", "yes"), ("spicy_focused", "no")]
+    assert all([seg["kind"] for seg in f["segments"]] == ["text", "pin", "text"] for f in facts)
+    assert b.post(f"/agent/suggestions/{third}/dismiss").status_code == 204
+    fourth = suggest("카페", facts=[{"pin_id": kalguksu, "fact_key": "oily_focused"}])
     [fact] = a.get(f"/maps/{map_id}/agent").json()["active_suggestion"]["facts"]
     assert (fact["fact_key"], fact["value"]) == ("oily_focused", "unknown")
-    assert [seg["kind"] for seg in fact["segments"]] == ["text", "pin", "text"]
-    assert b.post(f"/agent/suggestions/{third}/dismiss").status_code == 204
+    assert b.post(f"/agent/suggestions/{fourth}/dismiss").status_code == 204
 
     # 지도 현황 문단(8.2): 관찰 끝에서 저장된 것을 시트를 열 때 받는다
     now = datetime.now(timezone.utc)
