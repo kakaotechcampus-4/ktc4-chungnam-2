@@ -205,6 +205,64 @@ def list_pins(
     return result
 
 
+def list_trash(
+    db: Session, map_id: str, principal: Principal, current_member_ids: set[str], *, now: datetime,
+) -> core.PinTrash:
+    """휴지통(#864) — **내가 되살릴 수 있는** 지운 핀. 방장은 이 지도의 지운 핀 전부, 일반 구성원은 내가 찍은 핀만(남이 지운 것을
+    구경거리로 만들지 않는다). 삭제한 지 30일 안인 것만, 최근 삭제순. 쿼리는 핀 수와 상관없이 고정이다(배치)."""
+    lat_col, lng_col = _lat_lng_columns()
+    reaction_counts = (
+        select(
+            ReactionRow.pin_id.label("pin_id"),
+            func.count().filter(ReactionRow.type == "like").label("like"),
+            func.count().filter(ReactionRow.type == "against").label("against"),
+        )
+        .group_by(ReactionRow.pin_id)
+        .subquery()
+    )
+    query = (
+        select(
+            PinRow, lat_col, lng_col,
+            func.coalesce(reaction_counts.c.like, 0).label("like_count"),
+            func.coalesce(reaction_counts.c.against, 0).label("against_count"),
+        )
+        .outerjoin(reaction_counts, reaction_counts.c.pin_id == PinRow.id)
+        .where(
+            PinRow.map_id == map_id,
+            PinRow.deleted_at.is_not(None),
+            PinRow.deleted_at > now - timedelta(days=core.TRASH_RETENTION_DAYS),   # is_restorable과 같은 경계
+        )
+        .order_by(PinRow.deleted_at.desc())
+    )
+    if principal.role != "owner":
+        query = query.where(PinRow.created_by == principal.user_id)
+    rows = db.execute(query).all()
+
+    pin_rows = [row[0] for row in rows]
+    author_names = author_display_names(db, [r.created_by for r in pin_rows], current_member_ids)
+    deleter_ids = [r.deleted_by for r in pin_rows if r.deleted_by]
+    deleter_names = author_display_names(db, deleter_ids, current_member_ids) if deleter_ids else {}
+    my_reactions = my_reactions_for_pins(db, [r.id for r in pin_rows], principal.user_id)
+    place_infos = places_api.get_places([r.place_id for r in pin_rows if r.place_id], db=db)
+
+    items = []
+    for row in rows:
+        pin_row: PinRow = row[0]
+        record = record_from_row(
+            pin_row, lat=row.lat, lng=row.lng,
+            reaction_counts=core.ReactionCounts(like=row.like_count, against=row.against_count),
+            created_by_display_name=author_names.get(pin_row.created_by),
+            my_reaction=my_reactions.get(pin_row.id),
+            place=place_infos.get(pin_row.place_id) if pin_row.place_id else None,
+        )
+        items.append(core.to_trashed_pin(
+            core.to_pin_response(record, principal), pin_row.deleted_at,
+            deleted_by_name=deleter_names.get(pin_row.deleted_by) if pin_row.deleted_by else None,
+            was_confirmed=bool(pin_row.deleted_was_confirmed), now=now,
+        ))
+    return core.PinTrash(items=items, retention_days=core.TRASH_RETENTION_DAYS)
+
+
 def record_from_row(
     pin_row: PinRow,
     *,
