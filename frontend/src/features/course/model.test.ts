@@ -5,7 +5,7 @@ import type { Pin } from '@/features/map/model'
 
 import { kakaoTrafficUrl } from '@/features/shortlist/model'
 
-import { courseDrawings, createErrorMessage, dayLine, daySummary, dayStops, dayTitle, goalState, inProgressRunId, isFinished, legLabel, pinNames, pinPoints, requestBody, transitLink, understandBody, walkLinks } from './model'
+import { courseDrawings, createErrorMessage, dayLine, daySummary, dayStops, dayTitle, goalState, inProgressRunId, isFinished, legLabel, pinNames, pinPoints, requestBody, showHoursKnown, transitLink, uncheckedPlaceCount, understandBody, walkLinks } from './model'
 
 const err = (code: string, detail?: Record<string, unknown>) => new ApiError(409, { code, message: code, detail })
 
@@ -139,5 +139,17 @@ describe('course model', () => {
     expect(first.legs).toEqual([]) // 구간 양 끝 좌표를 다 아는 구간이 없다
     const lines = Array.from({ length: 12 }, (_, i) => dayLine(i))
     expect(new Set(lines.map((l) => `${l.color}${l.style}`)).size).toBe(12)
+  })
+})
+
+describe('영업시간 표시(루트 검수 #1127)', () => {
+  it('그날 쉬는 장소 위반이 하나라도 있으면 「영업시간 확인됨」을 숨긴다 — 위반에 pin_id 가 없어 어느 곳인지 모른다', () => {
+    expect(showHoursKnown({ violations: [] })).toBe(true)
+    expect(showHoursKnown({ violations: [{ kind: 'travel', text: '도보가 길어요' }] })).toBe(true)
+    expect(showHoursKnown({ violations: [{ kind: 'closed', text: '○○은 둘째 날에 쉬는 날이에요' }] })).toBe(false)
+  })
+  it('영업시간을 모르는 장소 수는 장소로 센다 — 같은 장소가 여러 날이어도 한 곳', () => {
+    expect(uncheckedPlaceCount({ checks: [] })).toBe(0)
+    expect(uncheckedPlaceCount({ checks: [{ pin_id: 'a', text: '' }, { pin_id: 'a', text: '' }, { pin_id: 'b', text: '' }] })).toBe(2)
   })
 })

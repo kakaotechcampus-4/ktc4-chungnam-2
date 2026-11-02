@@ -13,6 +13,8 @@ import {
   courseDrawings,
   daySummary,
   dayStops,
+  showHoursKnown,
+  uncheckedPlaceCount,
   dayTitle,
   FAILURE_TEXT,
   goalState,
@@ -117,6 +119,8 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
     setStage('course', 1)
   }
   const name = (pinId: string) => names.get(pinId) ?? '이 장소'
+  const hoursTag = showHoursKnown(run)
+  const unchecked = uncheckedPlaceCount(run)
 
   return (
     <div className="space-y-4">
@@ -157,10 +161,12 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
       <Section title="날짜별 순서">
         <div className="space-y-2">
           {run.days.map((day, i) => (
-            <DayCard key={day.date} day={day} index={i} names={names} points={points} />
+            <DayCard key={day.date} day={day} index={i} names={names} points={points} hoursTag={hoursTag} />
           ))}
         </div>
         <p className="text-label text-ink-500">이동 시간은 직선거리로 어림한 값이에요. 정확한 길은 카카오맵에서 확인하세요</p>
+        {/* 장소마다 붙이지 않고 한 줄로 — 서버 작업 기록 「가게에 확인해야 하는 곳이 남았어요」와 맞춘다(루트 검수 #1127). */}
+        {unchecked > 0 && <p className="text-label text-ink-500">영업시간을 모르는 {unchecked}곳은 가게에 확인해 주세요</p>}
         {drawings.length > 0 && (
           <button type="button" onClick={showOnMap} className="btn-outline btn-md w-full">
             <MapIcon size={16} aria-hidden="true" /> 지도에서 날짜별로 보기
@@ -208,7 +214,7 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
 }
 
 /** 날짜 하나 — 방문 순서대로 장소, 장소 사이엔 도보·대중교통 분. 시간은 쓰지 않는다. 길찾기는 카카오맵 새 창이다. */
-function DayCard({ day, index, names, points }: { day: CourseRunDto['days'][number]; index: number; names: Map<string, string>; points: Points }) {
+function DayCard({ day, index, names, points, hoursTag }: { day: CourseRunDto['days'][number]; index: number; names: Map<string, string>; points: Points; hoursTag: boolean }) {
   const stops = dayStops(day, names, points)
   const summary = daySummary(stops.flatMap((s) => (s.leg ? [s.leg] : [])))
   const links = walkLinks(stops)
@@ -230,7 +236,7 @@ function DayCard({ day, index, names, points }: { day: CourseRunDto['days'][numb
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="break-keep text-body font-semibold text-ink-900">{s.name}</p>
-                    {s.hoursKnown && <span className="tag tag-good mt-1">영업시간 확인됨</span>}
+                    {hoursTag && s.hoursKnown && <span className="tag tag-good mt-1">영업시간 확인됨</span>}
                   </div>
                 </div>
                 {s.leg && (

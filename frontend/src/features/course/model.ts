@@ -141,6 +141,16 @@ export function dayStops(day: CourseDayDto, names: Map<string, string>, points: 
 
 export type DayStop = ReturnType<typeof dayStops>[number]
 
+/**
+ * 「영업시간 확인됨」을 달아도 되는 결과인가. 서버 needs_check 는 「그날 영업 여부를 모름」만 뜻해서, 그날 쉬는 장소(위반 kind closed)도
+ * false 다. 위반에는 pin_id 가 없어 어느 장소인지 모르므로, 쉬는 날 위반이 하나라도 있으면 태그를 모두 숨긴다(이름 문장을 글자로 맞추지 않는다, #717).
+ * 서버가 위반에 pin_ids 를 내리면(루트 검수 #1127) 그 장소만 빼도록 바꾼다.
+ */
+export const showHoursKnown = (run: Pick<CourseRunDto, 'violations'>) => !run.violations.some((v) => v.kind === 'closed')
+
+/** 영업시간을 모르는 장소 수 — 서버 checks 는 (장소, 날) 마다라 같은 장소가 여러 날이면 한 곳으로 센다. */
+export const uncheckedPlaceCount = (run: Pick<CourseRunDto, 'checks'>) => new Set(run.checks.map((c) => c.pin_id)).size
+
 export type DayLink = { url: string; label: string; cut: boolean }
 
 /** 하루 도보 길찾기 링크 — 이어지는 도보 구간(양 끝 좌표를 앎)을 한 경로로 묶는다. 경로가 둘 이상이면 「N 길찾기」로 가른다. */

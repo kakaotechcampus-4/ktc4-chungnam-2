@@ -37,6 +37,7 @@ export default function CourseBody({ mapId }: { mapId: string }) {
   const names = pinNames(all)
   const points = pinPoints(all)
   // 코스는 위치를 아는 확정 장소가 2곳부터다(실시간 핀은 좌표를 저장하지 않는다 — 확정 탭 「동선 보기」와 같은 기준).
+  // 서버 MIN_PLACES·intake.build_trip 과 같은 규칙의 복사본이다 — 서버가 값을 내리면(루트 검수 #1127 ② 4번) 그 값으로 바꾼다.
   const routable = items.filter((i) => i.pin.source !== 'live').length
 
   if (viewing) {
