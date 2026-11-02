@@ -134,11 +134,22 @@ export function dayStops(day: CourseDayDto, names: Map<string, string>, points: 
       const leg: Leg | null = found ? { mode: found.mode === 'transit' ? 'transit' : 'walk', minutes: found.approx_minutes } : null
       const name = names.get(slot.pin_id) ?? '이 장소'
       const at = points.get(slot.pin_id)
-      return { pinId: slot.pin_id, name, needsCheck: slot.needs_check, leg, point: at ? ({ name, ...at } satisfies KakaoPoint) : null }
+      // 그날 영업 여부를 아는 장소(서버 needs_check 가 false) — 「영업시간 확인됨」을 단다. 모르는 장소엔 아무것도 달지 않는다.
+      return { pinId: slot.pin_id, name, hoursKnown: !slot.needs_check, leg, point: at ? ({ name, ...at } satisfies KakaoPoint) : null }
     })
 }
 
 export type DayStop = ReturnType<typeof dayStops>[number]
+
+/**
+ * 「영업시간 확인됨」을 달아도 되는 결과인가. 서버 needs_check 는 「그날 영업 여부를 모름」만 뜻해서, 그날 쉬는 장소(위반 kind closed)도
+ * false 다. 위반에는 pin_id 가 없어 어느 장소인지 모르므로, 쉬는 날 위반이 하나라도 있으면 태그를 모두 숨긴다(이름 문장을 글자로 맞추지 않는다, #717).
+ * 서버가 위반에 pin_ids 를 내리면(루트 검수 #1127) 그 장소만 빼도록 바꾼다.
+ */
+export const showHoursKnown = (run: Pick<CourseRunDto, 'violations'>) => !run.violations.some((v) => v.kind === 'closed')
+
+/** 영업시간을 모르는 장소 수 — 서버 checks 는 (장소, 날) 마다라 같은 장소가 여러 날이면 한 곳으로 센다. */
+export const uncheckedPlaceCount = (run: Pick<CourseRunDto, 'checks'>) => new Set(run.checks.map((c) => c.pin_id)).size
 
 export type DayLink = { url: string; label: string; cut: boolean }
 
