@@ -349,7 +349,9 @@ def s06():
 
 def p01():
     """비구성원 404를 id가 든 경로 전부에서(#1096, docs/permissions.md 「비구성원 vs 권한 없음」). 본문은 유효하게 보낸다 —
-    422가 404보다 먼저 나오면 권한을 본 게 아니다. 지우는 요청은 맨 뒤에 두고, 끝나고 A의 데이터가 그대로인지 본다."""
+    422가 404보다 먼저 나오면 권한을 본 게 아니다. 지우는 요청은 맨 뒤에 두고, 끝나고 A의 데이터가 그대로인지 본다.
+    404는 앱 오류 본문(code)이 있어야 통과다 — 경로가 없을 때의 404({"detail": "Not Found"})를 권한으로 세지 않는다.
+    핀 휴지통(GET /maps/{id}/trash, POST /pins/{id}/restore)은 서버 구현 전이라 넣지 않았다(#864, 생기면 넣는다)."""
     _, a = user(); _, b = user(); mid = new_map(a)
     pin = add_pin(a, mid).json()["id"]; pin2 = add_pin(a, mid, skip=1).json()["id"]
     a.put(f"/pins/{pin}/reaction", json={"type": "like"})   # 사유 글 없이 — ② 호출 없음
@@ -365,20 +367,20 @@ def p01():
         ("POST", f"/maps/{mid}/owner", {"user_id": "x"}), ("POST", f"/maps/{mid}/invite", None),
         ("GET", f"/maps/{mid}/invites", None), ("DELETE", f"/invites/{tok}", None),
         ("GET", f"/maps/{mid}/members", None), ("GET", f"/maps/{mid}/pins", None), ("POST", f"/maps/{mid}/pins", body_pin),
-        ("GET", f"/maps/{mid}/trash", None), ("POST", f"/maps/{mid}/pins/link-preview", {"urls": ["https://map.kakao.com/"]}),
+        ("POST", f"/maps/{mid}/pins/link-preview", {"urls": ["https://map.kakao.com/"]}),
         ("POST", f"/maps/{mid}/pins/bulk", {"pins": [body_pin]}), ("GET", f"/maps/{mid}/counts", None),
-        ("PATCH", f"/pins/{pin}", {"memo": "남의 핀"}), ("POST", f"/pins/{pin}/restore", None),
+        ("PATCH", f"/pins/{pin}", {"memo": "남의 핀"}),
         ("POST", f"/pins/{pin}/resolve", {"place_name": "QA", "lat": lat, "lng": lng}),
         ("GET", f"/pins/{pin}/reviews", None), ("PUT", f"/pins/{pin}/reviews/me", {"rating": 1, "body": "남의 지도 후기"}),
         ("POST", f"/reviews/{review}/reports", None),
         ("PUT", f"/pins/{pin}/reaction", {"type": "like"}), ("GET", f"/pins/{pin}/reactions", None),
         ("GET", f"/maps/{mid}/recommend/readiness", None), ("GET", f"/maps/{mid}/runs", None),
         ("POST", f"/maps/{mid}/runs", {"category": "음식점"}),
-        ("GET", f"/runs/{rid}/evidence", None), ("PATCH", f"/runs/{rid}/evidence", {"add": ["조용한 곳"]}),
+        *[("POST", f"/candidates/{x['id']}/publish", None) for x in cands[:1]],   # 다시 추천이 후보를 바꾸기 전에
+        ("GET", f"/runs/{rid}/evidence", None), ("PATCH", f"/runs/{rid}/evidence", {"add": [{"text": "조용한 곳"}]}),
         ("POST", f"/runs/{rid}/regions/confirm", {}), ("POST", f"/runs/{rid}/execute", None),
         ("GET", f"/runs/{rid}/result", None), ("POST", f"/runs/{rid}/widen", None), ("POST", f"/runs/{rid}/retry", None),
         ("GET", f"/runs/{rid}/advice", None),
-        *[("POST", f"/candidates/{x['id']}/publish", None) for x in cands[:1]],
         ("GET", f"/maps/{mid}/shortlist", None), ("POST", f"/maps/{mid}/shortlist", {"pin_id": pin2}),
         ("GET", f"/maps/{mid}/shortlist/export", None), ("PUT", f"/maps/{mid}/shortlist/order", {"item_ids": [item]}),
         ("GET", f"/maps/{mid}/route", None), ("POST", f"/maps/{mid}/route", None),
@@ -393,8 +395,8 @@ def p01():
     bad = []
     for method, path, body in calls:
         r = b.request(method, path, json=body) if body is not None else b.request(method, path)
-        if r.status_code != 404:
-            bad.append(f"{method} {path.replace(mid, '{map}').replace(pin2, '{pin2}').replace(pin, '{pin}').replace(rid, '{run}')} → {r.status_code}")
+        if r.status_code != 404 or "code" not in r.json():
+            bad.append(f"{method} {path.replace(mid, '{map}').replace(pin2, '{pin2}').replace(pin, '{pin}').replace(rid, '{run}')} → {r.status_code} {r.text[:40] if r.status_code == 404 else ''}")
     check("P01", not bad, f"비구성원 {len(calls)}개 요청 모두 404" + ("" if cands else " (후보 0곳 — publish 빠짐)"),
           f"404가 아닌 {len(bad)}/{len(calls)}개: " + "; ".join(bad))
     pins_after = {p["id"] for p in a.get(f"/maps/{mid}/pins").json()}
