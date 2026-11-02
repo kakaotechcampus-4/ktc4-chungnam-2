@@ -37,7 +37,7 @@ export default function NotificationBell({ floating = false, currentMapId }: { f
           void list.refetch()
         }}
         className={`hit-44 relative flex size-8 shrink-0 items-center justify-center rounded-full bg-white text-ink-900 ${
-          floating ? 'pointer-events-auto shadow-float' : 'border border-ink-200 hover:bg-ink-50'
+          floating ? 'press pointer-events-auto shadow-float' : 'press border border-ink-200'
         }`}
       >
         <Bell size={18} aria-hidden="true" />
@@ -102,7 +102,7 @@ function InboxView({ currentMapId, onClose, onSettings }: { currentMapId?: strin
               <button
                 type="button"
                 onClick={() => open(n)}
-                className={`flex w-full items-start gap-2 px-4 py-3 text-left ${where === 'here' ? 'bg-brand-50 hover:bg-brand-100' : 'hover:bg-ink-50'}`}
+                className={`press flex w-full items-start gap-2 px-4 py-3 text-left ${where === 'here' ? 'bg-brand-50' : ''}`}
               >
                 <span aria-hidden="true" className={`mt-1.5 size-2 shrink-0 rounded-full ${n.read ? '' : 'bg-brand-600'}`} />
                 <span className="min-w-0 flex-1">

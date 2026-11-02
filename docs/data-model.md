@@ -40,6 +40,7 @@ user_identities(                      -- 로그인 수단(#694, 2026-10-24). 사
 -- 탈퇴 후 7일 정리 대상 (#855 — 「개인정보를 모두 지운다」는 users·user_identities만이 아니라 이름이 복사된 곳까지다. BE(auth)가 모듈별로 감사해 이 표를 확정한다)
 --   users            : display_name → '탈퇴한 구성원', last_seen_at·guest_invite_token 삭제 (행은 남김)
 --   user_identities  : 삭제
+--   외부 장소 번호표 표(place_external_id_votes): 7일 정리에서 삭제(#1062). 복구 기간에는 남김. 한계: SESSION_SECRET을 바꾸기 전에 쌓인 표는 현재 해시로 찾지 못해 남는다
 --   세션             : 탈퇴·복구 시 sessions_valid_after로 무효화(저장된 세션 행이 없다)
 --   반응·근거 줄·알림(본인 것)·agent 열람 기록·코스 요청: 탈퇴 때 이미 삭제(WITHDRAW_STEPS)
 --   피드백           : 작성자 연결은 탈퇴 때 끊김. 본문은 남긴다(사용자가 쓴 글 — 개인정보처리방침에 밝힌다)
@@ -589,7 +590,7 @@ index ix_llm_calls_user_created (user_id, created_at)
 index ix_llm_calls_trace (trace_id)
 ```
 
-- 캐시 토큰은 엘리스 게이트웨이 응답의 `usage.prompt_tokens_details.cached_tokens`다(2026-10-30 확인). 캐시 미스면 게이트웨이가 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고한다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 엘리스 청구서와 대조해야 한다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
+- 캐시 토큰은 응답의 `usage.prompt_tokens_details.cached_tokens`다(엘리스 게이트웨이에서 2026-10-30 확인. OpenAI 직접 호출로 바꾼 뒤(#1120)에도 같은 필드를 읽지만, 값의 의미는 청구서와 대조해 확인해야 한다). 엘리스 게이트웨이는 캐시 미스면 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고했다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 청구서(OpenAI 대시보드의 사용량)와 대조해야 한다. 이 25% 가산은 엘리스 게이트웨이의 보고 방식이라 OpenAI 직접 호출에서는 없을 수 있다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
 - 탈퇴는 행을 남기고 `user_id`만 비운다(비용 통계는 사람 없이도 쓴다, `llm.api.anonymize_by_user`). 게스트 합치기는 `user_id`를 옮긴다. 30일 지난 행은 정기 정리(`maintenance.run`의 `llm_calls`)가 지운다. 지도 정리는 행을 지우지 않는다(map_id만 남고 가리키는 지도가 없다).
 
 ---

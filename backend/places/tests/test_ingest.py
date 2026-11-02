@@ -352,7 +352,8 @@ def test_rest_prefix_is_stripped_and_source_is_permit(curated_labels):
 def test_string_values_become_bool_and_unknown_has_no_value(curated_labels):
     rows, _ = curated_labels
     by = {(r.source_id, r.fact_key): r for r in rows}
-    assert by[("R001", "cuisine_korean")].value is True and by[("R001", "cuisine_chinese")].value is False
+    assert by[("R001", "cuisine_korean")].value is True
+    assert (by[("R001", "cuisine_chinese")].confidence, by[("R001", "cuisine_chinese")].value) == ("unknown", None)   # 업종 유래 거짓은 모름으로(#1093)
     unknown = by[("R001", "wait_short")]
     assert (unknown.confidence, unknown.value) == ("unknown", None)
     assert by[("R001", "wait_short")].confidence == "unknown" and by[("R001", "pet_friendly")].confidence == "unknown"

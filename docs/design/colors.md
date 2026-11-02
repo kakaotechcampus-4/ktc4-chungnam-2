@@ -272,6 +272,11 @@ AI 머리글에는 이미 「AI」 배지가 붙어 있어서 구분은 그대�
   --action-danger:        #D02A2A;
   --action-disabled-bg:   var(--ink-100);
   --action-disabled-text: var(--ink-400);
+  --action-fill-pressed:  var(--brand-800);
+  --action-danger-hover:  var(--bad-text);
+  /* 누르는 면(press, DESIGN.md 「상태」). 어느 바탕 위에서든 잉크를 얇게 덮어 올림·눌림을 보인다 */
+  --press-hover:          rgba(20, 22, 31, 0.04);
+  --press-active:         rgba(20, 22, 31, 0.08);
 
   /* ── 선택 상태 ───────────────────────── */
   --selected-bg:   var(--brand-100);

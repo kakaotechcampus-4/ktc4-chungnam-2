@@ -228,7 +228,7 @@ function TermsSheet({ onClose }: { onClose: () => void }) {
       <ul className="mt-4 divide-y divide-ink-200 rounded-xl border border-ink-200">
         {TERMS.map((term) => (
           <li key={term.to}>
-            <Link to={term.to} className="flex min-h-14 items-center justify-between gap-3 px-4 py-3">
+            <Link to={term.to} className="press flex min-h-14 items-center justify-between gap-3 px-4 py-3">
               <span>
                 <span className="block font-semibold text-ink-900">{term.title}</span>
                 <span className="text-xs text-ink-500">(필수)</span>
