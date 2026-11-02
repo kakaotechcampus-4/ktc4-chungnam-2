@@ -525,7 +525,7 @@ export default function MapLayout() {
           </div>
           <PanelToggle open={panelOpen} onToggle={() => setPanelOpen(!panelOpen)} />
           <MapControls docked hidden={modalOpen} fading={mapMoving} active={activeControl} onPress={onControl} />
-          {onMarkingTab && <AgentButton docked mapId={mapId} hidden={modalOpen} fading={mapMoving} />}
+          <AgentButton docked mapId={mapId} hidden={modalOpen} fading={mapMoving} />
           {!modalOpen && <Toaster docked controlsVisible={!mapMoving} />}
         </div>
       )}

@@ -51,8 +51,8 @@ export default function TabSheet({
         !desktop && (
           <>
             <MapControls hidden={controlsHidden} fading={mapMoving} active={activeControl} onPress={onControl} onCrampedChange={setCramped} />
-            {/* 「핑고 AI 조언」은 마킹 탭 지도 왼쪽 아래(agent-v2 16.1). */}
-            {tab === 'map' && <AgentButton mapId={mapId} hidden={controlsHidden} fading={mapMoving} />}
+            {/* 「핑고 AI 조언」은 모든 탭의 지도 왼쪽 아래(agent-v2 16.1 「지도 탭」 = 지도 화면). */}
+            <AgentButton mapId={mapId} hidden={controlsHidden} fading={mapMoving} />
             {!modalOpen && <Toaster controlsVisible={!controlsHidden && !mapMoving} inside={stage === 3} />}
           </>
         )
