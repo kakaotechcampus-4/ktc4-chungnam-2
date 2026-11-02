@@ -203,6 +203,7 @@ class SummaryItem:
     wants: bool
     member_count: int
     name: str
+    must_keep: bool = False                  # 요약의 「꼭 지킬 것」(must_keep) 칸에서 왔다 — 취향이 아니라 필요 조건이다
 
 
 @dataclass(frozen=True)
@@ -211,6 +212,11 @@ class MapCandidate:
     kind: str
     items: tuple[SummaryItem, ...] = ()      # 근거가 된 요약 줄(사람 수가 많은 순)
     night_places: tuple[str, ...] = ()       # night_end: 야경 라벨이 있는 확정 장소 별칭
+
+    @property
+    def required(self) -> bool:
+        """필수 후보 — 근거 줄 중 하나라도 must_keep에서 왔다. 판정은 여기 한 곳이다. 모델이 고르지 않아도 verify_goal_set이 넣는다."""
+        return any(i.must_keep for i in self.items)
 
 
 def map_candidates(trip: Trip, items: Sequence[SummaryItem]) -> tuple[MapCandidate, ...]:
@@ -242,7 +248,7 @@ def goals_input(trip: Trip, request_text: str, candidates: Sequence[MapCandidate
     map_candidates는 지도 근거로 세울 수 있는 목표 후보 — 키, 방향, 사람 수, 장소 별칭만 넣는다(사유 원문과 표시 이름 없음)."""
     return {
         "request": request_text,
-        "map_candidates": [{"id": c.id, "kind": c.kind, "night_places": list(c.night_places),
+        "map_candidates": [{"id": c.id, "kind": c.kind, "required": c.required, "night_places": list(c.night_places),
                             "evidence": [{"category": i.category, "fact_key": i.fact_key, "wants": i.wants, "members": i.member_count}
                                          for i in c.items]} for c in candidates],
         "days": [{"day": core.day_alias(i), "weekday": "월화수목금토일"[d.weekday()] + "요일"} for i, d in enumerate(trip.days)],
@@ -340,7 +346,10 @@ def verify_goal_set(trip: Trip, request_text: str, goal_set, candidates: Sequenc
     """모델이 낸 목표(CourseGoalSet)를 코드가 검증한다: 종류별 매개변수, 별칭, quote가 요청 원문의 부분 문자열인지.
     떨어진 목표는 버리고, 그 quote가 원문 조각이면 unmatched로 옮긴다. unmatched도 원문 부분 문자열만 남긴다.
     날마다 나눈 day_has(「매일」)는 다른 목표 뒤에 붙여 GOALS_MAX를 넘으면 그쪽이 먼저 빠진다. 맡기는 말뿐인 조각은 unmatched에서 뺀다.
-    지도 목표(source=map)는 candidates 중 같은 종류의 후보를 가리킬 때만 받고, 후보마다 하나다. 요청 목표 뒤에 붙인다(#1131 B안)."""
+    지도 목표(source=map)는 candidates 중 같은 종류의 후보를 가리킬 때만 받고, 후보마다 하나다. 요청 목표 뒤에 붙인다(#1131 B안).
+    필수 후보(MapCandidate.required)는 모델이 고르지 않아도 넣는다 — 날이 필요 없는 종류만이고, 날이 필요한 종류는 모델이 날을 고르지
+    않으면 이유만 dropped에 남긴다(지어내지 않는다). 순서는 요청 → 「매일」 → 필수 지도 목표 → 그 밖 지도 목표라, GOALS_MAX로 자를 때
+    필수 지도 목표가 다른 지도 목표보다 늦게 빠진다."""
     goals: list[Goal] = []
     daily: list[Goal] = []
     from_map: list[Goal] = []
@@ -373,7 +382,16 @@ def verify_goal_set(trip: Trip, request_text: str, goal_set, candidates: Sequenc
     unmatched += unlisted_mentions(trip, request_text, goals + daily, quotes)
     unmatched += leftover_pieces(request_text, quotes + unmatched)
     kept = [u for u in dict.fromkeys(unmatched) if not is_delegation(u)]
-    return VerifiedGoals(truncate(goals + daily + from_map), tuple(kept), tuple(dropped))
+    chosen = {m.candidate for m in from_map}
+    for cand in (c for c in candidates if c.required and c.id not in chosen):
+        goal, _ = normalize(trip, cand.kind, None, ())
+        if goal is None:
+            dropped.append(f"{cand.kind}: 필수 지도 후보 {cand.id}의 날을 모델이 고르지 않았다")
+        else:
+            from_map.append(replace(goal, origin="map", candidate=cand.id))
+    required = {c.id for c in candidates if c.required}
+    ordered_map = [g for g in from_map if g.candidate in required] + [g for g in from_map if g.candidate not in required]
+    return VerifiedGoals(truncate(goals + daily + ordered_map), tuple(kept), tuple(dropped))
 
 
 MAP_MARK = " (지도에서 세운 목표)"
