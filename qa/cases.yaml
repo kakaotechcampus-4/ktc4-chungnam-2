@@ -58,7 +58,7 @@
 - {id: L04, layer: api, area: invite, scenario: "요약을 본 뒤 지도가 삭제된 초대 수락", expect: "404 INVITE_NOT_FOUND", status: pass}
 - {id: L05, layer: api, area: invite, scenario: "만료/폐기 토큰, 게스트 11번째", expect: "410 INVITE_EXPIRED/REVOKED, 409 GUEST_LIMIT", status: pass}
 - {id: L06, layer: api, area: auth, scenario: "게스트가 지도 생성", expect: "403 GUEST_NOT_ALLOWED", status: pass}
-- {id: L07, layer: api, area: auth, scenario: "게스트→카카오 전환 후 데이터 이전", expect: "핀·반응·추천 기록 유지", status: untested}
+- {id: L07, layer: api, area: auth, scenario: "게스트→카카오 전환 후 데이터 이전", expect: "핀·반응·구성원 자격이 카카오 계정으로 옮겨지고 게스트 deleted_at, 다시 불러도 같다(로컬 전용)", status: pass}
 - {id: L08, layer: api, area: auth, scenario: "탈퇴 후 같은 세션 쿠키로 API 호출", expect: "401", status: pass}
 
 # ───────── 실시간·알림·기타(api) ─────────
@@ -80,6 +80,10 @@
 - {id: W07, layer: api, area: credits, scenario: "W01~W06에서 쓴 계정의 잔액과 원장 합(로컬만)", expect: "credit_accounts.balance = sum(credit_ledger.delta)", status: pass}
 - {id: W08, layer: api, area: credits, scenario: "코스 요청: 확정 1곳 422, 게스트 403, 2곳 202 → 진행 중 재요청 409, 끝나면 done −course / failed 환불", expect: "422·409는 잔액 그대로, done이면 −prices.course, failed면 그대로", status: pass}
 - {id: W09, layer: api, area: credits, scenario: "잔액 0 계정의 코스 요청", expect: "402 CREDIT_INSUFFICIENT(required=prices.course, balance 0), run 안 남음(latest 204)", status: pass}
+- {id: L09, layer: api, area: auth, scenario: "탈퇴 → 같은 카카오로 로그인 → 되살리기 / 새로 시작(#855, 로컬 전용)", expect: "되살리기는 지도·핀·잔액(30 아닌 값)이 그대로, 새로 시작은 새 계정에 잔액 30·옛 크레딧 계정 삭제", status: pass}
+- {id: L10, layer: api, area: auth, scenario: "탈퇴 7일 뒤 정리(로컬 전용)", expect: "7일 전엔 그대로, 뒤엔 크레딧 계정·원장·로그인 수단 삭제, 후기는 남음, 이름 「탈퇴한 구성원」(핀 작성자·알림)", status: pass}
+- {id: W10, layer: api, area: credits, scenario: "코스 엔진 실패(ENGINE_ERROR)와 오래 진행 중(INTERRUPTED) 환불(로컬 전용)", expect: "잔액 그대로, 원장 차감·환불 행 수가 맞고 GET을 두 번 불러도 환불 한 번", status: pass}
+- {id: LOG01, layer: api, area: logging, scenario: "사유·후기·검색어·피드백에 넣은 고유 문자열이 로그에 남는지(로컬 전용, ② 모델 호출 1번)", expect: "모든 로그 레코드의 메시지·인자에 없음(로그 캡처 장치가 실제로 잡는지 먼저 확인)", status: pass}
 - {id: C06, layer: api, area: reviews, scenario: "후기 저장 동시 2번, 신고 동시 2번, 내 후기·게스트 신고", expect: "후기 1개·보상 한 번, 신고 204 둘, 내 후기 422, 게스트 403", status: pass}
 - {id: S07, layer: api, area: maps, scenario: "방장+게스트 구성원 목록의 is_guest", expect: "방장 false, 게스트 true, 모든 항목에 필드", status: pass}
 - {id: B09, layer: api, area: places, scenario: "새 사용자의 장소 검색 연속 호출", expect: "분당 상한 다음 호출이 429 RATE_LIMITED", status: pass}
