@@ -85,7 +85,11 @@ export function useWithdrawMutation() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: withdraw,
-    onSuccess: () => queryClient.clear(),
+    onSuccess: () => {
+      queryClient.clear()
+      // 탈퇴도 로그아웃처럼 카톡 가져오기 목록(대화에서 읽은 가게 이름·주소)을 남기지 않는다.
+      forgetImport()
+    },
   })
 }
 
