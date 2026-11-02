@@ -92,6 +92,8 @@ export default function MapLayout() {
   if (lastSource !== search.source) {
     setLastSource(search.source)
     if (search.source === null) setSearchText('')
+    // 오타 제안(「중국집」으로 다시 찾기)처럼 입력칸 밖에서 검색해도 입력칸이 그 검색어를 보인다.
+    else if (search.source.kind === 'name') setSearchText(search.source.query)
   }
   const found = useSourcePlacesQuery(search.source, search.near).data?.places
   // 검색 결과 파란 핀 — 결과나 선택이 바뀔 때만 다시 그린다.
