@@ -13,7 +13,7 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Any, Iterable, Iterator, Mapping
 
-from places import core   # 순수 함수만 쓴다(core는 places의 다른 모듈을 부르지 않는다)
+from places import core, cuisine_names   # 순수 함수만 쓴다(둘 다 places의 다른 모듈을 부르지 않는다)
 
 # ---------------------------------------------------------------- 공통
 
@@ -531,7 +531,10 @@ def curated_labels_to_rows(entries: Iterable[Mapping[str, Any]]) -> Iterator[dic
         place_id = str(entry.get("place_id", ""))
         prefix = next((p for p in CURATED_PLACE_ID_PREFIXES if place_id.startswith(p)), None)
         source_id = place_id[len(prefix):] if prefix else ""
-        for key, label in (entry.get("labels") or {}).items():
+        labels = entry.get("labels") or {}
+        if prefix == "rest_":   # 음식점의 음식 종류만 보정한다(#1093) — 업종 유래 거짓은 모름으로, 가게 이름 규칙은 참으로(cuisine_names)
+            labels = cuisine_names.adjust_cuisine_labels(str(entry.get("title") or ""), labels)
+        for key, label in labels.items():
             raw = str((label or {}).get("value", "")).strip()
             unknown = raw.lower() == "unknown" or raw == ""
             yield {
