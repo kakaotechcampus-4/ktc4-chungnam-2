@@ -88,6 +88,8 @@
 # ───────── 복합·까다로운 입력(reco) — run_complex.py, 불변식 I1~I8 자동 검사 ─────────
 - {id: X01-X15, layer: reco, area: recommend, scenario: "손으로 짠 엣지 15개(모순·약한 부정·140자 다조건·영문/오타/이모지·5명×핀3·줄 끄기·넓히기·직접 추가 5줄·안전/접근 사유·반경 기준점·인젝션)", expect: "불변식 위반 0", status: pass}
 - {id: F01-F40, layer: reco, area: recommend, scenario: "시드 20261024 무작위 조합 40개(1~4명, 핀1~3/인, ♥/🚫, 다양한 사유, 직접 추가 0~3, 날짜 5종, 3카테고리)", expect: "불변식 위반 0, 5xx 없음", status: pass}
+- {id: Y01-Y17, layer: reco, area: recommend, scenario: "run_complex.py y — 지역 6곳(강남·서면·해운대·동성로·둔산·충장로·춘천), 시·도 밖 핀, 월요일 하루(휴무), 같은 키 찬반, 뜻 없는 사유, 「+」 피함·원함 둘, 강남 양식 재현(#1099)", expect: "불변식 I1~I11 위반 0, W1 경고는 사람이 본다", status: "bug#1100"}
+- {id: KEYS, layer: reco, area: recommend, scenario: "run_complex.py keys — 사유 문구 30개 → ②의 키·방향(음식점 20·카페 5·관광지 5, #1099)", expect: "기대 키·방향을 포함, 안전 조건(알러지)은 키 없음", status: pass}
 - {id: R16-R19, layer: reco, area: recommend, scenario: "복합 설계 4개(3명+직접추가+월요일 / 카페 2명 / 충돌 한식 / 관광지 12월 2명)", expect: "가드레일 위반 0", status: pass}
 
 # ───────── AI 코스(course) — AI-B, 스테이징 (2026-11-02 추가, 11-01 실사용 점검 K1~K10) ─────────
