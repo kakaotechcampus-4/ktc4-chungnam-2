@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate, useParams } from 'react-router'
-import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Search, Users, type LucideIcon } from 'lucide-react'
+import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Route, Search, Users, type LucideIcon } from 'lucide-react'
 
 import AgentButton from '@/features/agent/AgentButton'
 import { ImportSheetHost } from '@/features/kakaoImport/ImportSheet'
@@ -42,7 +42,7 @@ import { ClearButton } from '@/ui/TextField'
 const PANEL_SLIDE_MS = 300
 
 /**
- * 지도 하나 안의 화면(최종기획안 4절). 지도는 항상 떠 있고, 하단 탭 3개가 그 위 바텀시트 내용을 바꾼다.
+ * 지도 하나 안의 화면(최종기획안 4절). 지도는 항상 떠 있고, 하단 탭 4개(마킹·AI 추천·확정·AI 코스)가 그 위 바텀시트 내용을 바꾼다.
  * 지도는 여기 한 번만 만든다 — 탭마다 만들면 탭을 바꿀 때마다 지도가 다시 뜬다.
  *
  * 넓은 화면(768px 이상, #338)은 왼쪽 480px(세로 탭 줄 72 + 높이 전체 내용 패널 408: 헤더·검색·탭 내용) + 오른쪽 지도 영역이다.
@@ -67,15 +67,21 @@ export default function MapLayout() {
   const connection = useMapEvents(mapId)
   const onMarkingTab = useMatch('/maps/:mapId') !== null
   const onShortlistTab = useMatch('/maps/:mapId/shortlist') !== null
-  // 마커와 목록이 같은 필터를 본다. 확정 탭은 확정 핀만, 다른 탭엔 필터가 없어 전부 보인다.
-  const pins = onShortlistTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters, memberCount)
+  const onCourseTab = useMatch('/maps/:mapId/course') !== null
+  // AI 코스 탭은 확정 리스트로 짜는 곳이라 지도도 확정 탭과 같게 본다(확정 핀만, 핀을 누르면 확정 탭 상세).
+  const onConfirmedTab = onShortlistTab || onCourseTab
+  // 마커와 목록이 같은 필터를 본다. 확정·코스 탭은 확정 핀만, 다른 탭엔 필터가 없어 전부 보인다.
+  const pins = onConfirmedTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters, memberCount)
   const routeOn = useRouteStore((s) => s.on) && onShortlistTab
   const routes = useRouteQuery(mapId, routeOn).data
   const course = useCourseMapStore()
-  // 「동선 보기」가 켜져 있으면 그게, 아니면 이 지도의 AI 코스(#683)가 확정 탭에서 선을 긋는다.
+  // 확정 탭은 「동선 보기」 선을, AI 코스 탭은 이 지도의 코스(#683) 선을 긋는다 — 한 화면에 둘이 겹치지 않는다.
   const routeDrawings = useMemo(
-    () => (routeOn && routes ? toRouteDrawings(routes, allPins) : onShortlistTab && course.mapId === mapId ? course.days : []),
-    [routeOn, routes, allPins, onShortlistTab, course.mapId, course.days, mapId],
+    () =>
+      onShortlistTab ? (routeOn && routes ? toRouteDrawings(routes, allPins) : [])
+      : onCourseTab && course.mapId === mapId ? course.days
+      : [],
+    [onShortlistTab, routeOn, routes, allPins, onCourseTab, course.mapId, course.days, mapId],
   )
   const markingStage = useSheetStore((s) => s.stages.map)
   const setStage = useSheetStore((s) => s.setStage)
@@ -348,7 +354,7 @@ export default function MapLayout() {
           setPanelOpen(true)
           // 검색 결과를 보다가 핀을 고르면 매달린 핑고는 들어간다.
           useSearchStore.getState().select(null)
-          navigate(`/maps/${mapId}${onShortlistTab ? '/shortlist' : ''}?pin=${encodeURIComponent(pinId)}`)
+          navigate(`/maps/${mapId}${onConfirmedTab ? '/shortlist' : ''}?pin=${encodeURIComponent(pinId)}`)
         }}
         onReady={onMapReady}
         onMovingChange={onMovingChange}
@@ -484,7 +490,7 @@ export default function MapLayout() {
         {!desktop && (
           <nav
             style={{ minHeight: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
-            className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 items-end border-t border-ink-100 bg-white"
+            className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 items-end border-t border-ink-100 bg-white"
           >
             {TABS.map((tab) =>
               tab.Icon ? (
@@ -531,13 +537,14 @@ export default function MapLayout() {
 }
 
 /**
- * 최종기획안 4절 — 탭은 이 3개로 고정, 라벨도 고정 용어(9절). 하단 탭과 넓은 화면 탭 줄이 이 표 하나를 쓴다.
+ * 최종기획안 4절의 탭 3개에 「AI 코스」(#683, 확정 탭의 시트였던 것)를 더한 4개. 라벨은 고정 용어(9절). 하단 탭과 넓은 화면 탭 줄이 이 표 하나를 쓴다.
  * AI 는 선 아이콘 대신 핑고 얼굴(PingoMark)이다(Icon 없음).
  */
 const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | null }[] = [
   { path: '', end: true, label: '마킹된 장소', Icon: MapPin },
   { path: '/recommend', label: 'AI 추천', Icon: null },
   { path: '/shortlist', label: '확정된 장소', Icon: FileText },
+  { path: '/course', label: 'AI 코스', Icon: Route },
 ]
 
 /** 비활성 #6B7181(흰 바탕 대비 약 5:1). */

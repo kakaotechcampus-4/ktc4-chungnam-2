@@ -72,10 +72,10 @@ describe('course model', () => {
       },
       names,
     )
-    expect(stops.map((s) => [s.name, s.leg, s.needsCheck])).toEqual([
-      ['가', { mode: 'walk', minutes: 7 }, true],
-      ['나', { mode: 'transit', minutes: 3 }, false],
-      ['이 장소', null, true],
+    expect(stops.map((s) => [s.name, s.leg])).toEqual([
+      ['가', { mode: 'walk', minutes: 7 }],
+      ['나', { mode: 'transit', minutes: 3 }],
+      ['이 장소', null],
     ])
   })
 

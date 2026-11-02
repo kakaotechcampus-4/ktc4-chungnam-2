@@ -134,7 +134,7 @@ export function dayStops(day: CourseDayDto, names: Map<string, string>, points: 
       const leg: Leg | null = found ? { mode: found.mode === 'transit' ? 'transit' : 'walk', minutes: found.approx_minutes } : null
       const name = names.get(slot.pin_id) ?? '이 장소'
       const at = points.get(slot.pin_id)
-      return { pinId: slot.pin_id, name, needsCheck: slot.needs_check, leg, point: at ? ({ name, ...at } satisfies KakaoPoint) : null }
+      return { pinId: slot.pin_id, name, leg, point: at ? ({ name, ...at } satisfies KakaoPoint) : null }
     })
 }
 

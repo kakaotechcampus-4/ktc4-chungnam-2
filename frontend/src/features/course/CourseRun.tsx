@@ -5,7 +5,6 @@ import ErrorText from '@/ErrorText'
 import { AiHeader } from '@/features/recommend/Readiness'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { KAKAO_ROUTE_MAX } from '@/features/shortlist/model'
-import { useRouteStore } from '@/features/shortlist/routeStore'
 import Notice from '@/ui/Notice'
 import PingoLoading from '@/ui/PingoLoading'
 
@@ -109,18 +108,15 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
   const [showLog, setShowLog] = useState(false)
   const drawings = courseDrawings(run, points)
   const showCourse = useCourseMapStore((s) => s.show)
-  const setRouteOn = useRouteStore((s) => s.set)
   const setStage = useSheetStore((s) => s.setStage)
 
-  // 지도에 날짜별 선을 긋고 시트는 절반으로 내려 지도와 범례가 함께 보이게 한다. 「동선 보기」 선과 같은 자리라 그건 끈다.
+  // 지도에 날짜별 선을 긋고, 시트를 접어 지도와 범례(탭 머리)가 보이게 한다. 결과는 그대로 남아 다시 펼치면 보인다.
+  // 「동선 보기」는 확정 탭에만, 코스 선은 AI 코스 탭에만 그려서 둘이 겹치지 않는다.
   function showOnMap() {
-    setRouteOn(false)
     showCourse(mapId, drawings)
-    setStage('shortlist', 2)
-    onClose()
+    setStage('course', 1)
   }
   const name = (pinId: string) => names.get(pinId) ?? '이 장소'
-  const anyCheck = run.checks.length > 0 || run.days.some((d) => d.slots.some((s) => s.needs_check))
 
   return (
     <div className="space-y-4">
@@ -165,7 +161,6 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
           ))}
         </div>
         <p className="text-label text-ink-500">이동 시간은 직선거리로 어림한 값이에요. 정확한 길은 카카오맵에서 확인하세요</p>
-        {anyCheck && <p className="text-label text-ink-500">영업 여부를 모르는 장소는 가게에 직접 확인해 주세요</p>}
         {drawings.length > 0 && (
           <button type="button" onClick={showOnMap} className="btn-outline btn-md w-full">
             <MapIcon size={16} aria-hidden="true" /> 지도에서 날짜별로 보기
@@ -235,7 +230,6 @@ function DayCard({ day, index, names, points }: { day: CourseRunDto['days'][numb
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="break-keep text-body font-semibold text-ink-900">{s.name}</p>
-                    {s.needsCheck && <span className="tag tag-warn mt-1">? 영업 확인 필요</span>}
                   </div>
                 </div>
                 {s.leg && (

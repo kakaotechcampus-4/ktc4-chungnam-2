@@ -6,7 +6,8 @@ import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import CourseSheet from './CourseSheet'
+import CourseBody from './CourseBody'
+import { useCourseViewStore } from './courseMapStore'
 
 const BASE = 'http://localhost'
 
@@ -16,6 +17,7 @@ afterEach(() => {
   server.resetHandlers()
   server.events.removeAllListeners()
   resetScenario('happy-path')
+  useCourseViewStore.setState({ runs: {} })
 })
 afterAll(() => server.close())
 
@@ -26,12 +28,12 @@ beforeEach(async () => {
   }
 })
 
-function renderSheet(onClose: () => void = () => {}) {
+function renderSheet() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <CourseSheet mapId="map_1" onClose={onClose} />
+        <CourseBody mapId="map_1" />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -71,7 +73,8 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.getByText('하루 걷는 시간 줄이기')).toBeInTheDocument()
     expect(screen.getByText('지킴')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /첫째 날 · / })).toBeInTheDocument()
-    expect(screen.getAllByText('? 영업 확인 필요').length).toBeGreaterThan(0)
+    // 영업시간을 모르는 장소(needs_check)에 따로 표시하지 않는다 — 장소 DB 대부분이 영업시간이 없어 거의 모든 줄에 붙었다(2026-11-02)
+    expect(screen.queryByText('? 영업 확인 필요')).not.toBeInTheDocument()
     expect(screen.queryByText('다시 짜기')).not.toBeInTheDocument() // stale 아님
     expect(screen.queryAllByRole('link', { name: /길찾기/, hidden: true }).every((a) => a.getAttribute('href')?.startsWith('https://map.kakao.com/link/by/') && a.getAttribute('target') === '_blank')).toBe(true)
     // 장소 이름은 이미 받은 확정 리스트에서 찾는다
@@ -133,27 +136,27 @@ describe('AI 코스 짜기 시트', () => {
     expect(after.balance).toBe(before.balance - before.prices.course)
   })
 
-  it('402 는 크레딧 부족 안내와 「후기 쓰러 가기」(확정 탭, 시트를 닫는다)', async () => {
+  it('402 는 크레딧 부족 안내와 「후기 쓰러 가기」(확정 탭으로 간다)', async () => {
     resetScenario('credits-empty')
     for (const pin_id of ['pin_1', 'pin_2']) {
       await fetch(`${BASE}/maps/map_1/shortlist`, { method: 'POST', body: JSON.stringify({ pin_id }) })
     }
     const { review_reward } = await fetch(`${BASE}/credits/me`).then((r) => r.json())
-    const onClose = vi.fn()
     const user = userEvent.setup()
-    renderSheet(onClose)
+    renderSheet()
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
 
     expect(await screen.findByText(`크레딧이 부족해요. 후기를 쓰면 ${review_reward} 크레딧을 드려요`)).toBeInTheDocument()
     expect(screen.queryByText(/코스를 요청하지 못했어요/)).not.toBeInTheDocument()
     const link = screen.getByRole('link', { name: '후기 쓰러 가기' })
     expect(link).toHaveAttribute('href', '/maps/map_1/shortlist')
-    await user.click(link)
-    expect(onClose).toHaveBeenCalled()
   })
 
   it('게스트는 처음부터 버튼 대신 카카오 안내 — 숫자는 403 detail 에서', async () => {
     resetScenario('guest')
+    for (const pin_id of ['pin_1', 'pin_2']) {
+      await fetch(`${BASE}/maps/map_1/shortlist`, { method: 'POST', body: JSON.stringify({ pin_id }) })
+    }
     const { detail } = await fetch(`${BASE}/credits/me`).then((r) => r.json())
     renderSheet()
 
@@ -212,6 +215,14 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.getByRole('button', { name: '다시 짜기' })).toBeInTheDocument()
     expect(screen.getByText(/반영하지 못했어요: 「아무거나」/)).toBeInTheDocument()
     expect(screen.getAllByText('도보 5분')).toHaveLength(2) // 구간 + 하루 합계
-    expect(screen.getAllByText('? 영업 확인 필요')).toHaveLength(1)
+    expect(screen.queryByText('? 영업 확인 필요')).not.toBeInTheDocument()
+  })
+
+  it('위치를 아는 확정 장소가 2곳 미만이면 입력 대신 이유와 확정 탭으로 가는 길을 보인다', async () => {
+    resetScenario('happy-path') // 확정 리스트가 빈 상태로
+    renderSheet()
+    expect(await screen.findByText('확정된 장소가 2곳부터 코스를 짤 수 있어요')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '확정된 장소 보기' })).toHaveAttribute('href', '/maps/map_1/shortlist')
+    expect(screen.queryByRole('button', { name: '코스 짜기' })).not.toBeInTheDocument()
   })
 })

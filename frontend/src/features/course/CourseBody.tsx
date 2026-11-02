@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Calendar } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router'
 
 import ErrorText from '@/ErrorText'
 import CreditGate from '@/features/credits/CreditGate'
@@ -8,63 +9,65 @@ import { creditBlock } from '@/features/credits/model'
 import { usePinsQuery } from '@/features/map/queries'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { useMapQuery } from '@/features/maps/queries'
-import ModalSheet from '@/features/shell/ModalSheet'
 import { useShortlistQuery } from '@/features/shortlist/queries'
 import Notice from '@/ui/Notice'
-import SheetTitle from '@/ui/SheetTitle'
+import EmptyState from '@/ui/EmptyState'
 import TextField from '@/ui/TextField'
 
+import { useCourseViewStore } from './courseMapStore'
 import CourseRun from './CourseRun'
 import { createErrorMessage, inProgressRunId, pinNames, pinPoints, REQUEST_MAX } from './model'
 import { courseKeys, useCreateCourseMutation, useLatestCourseQuery } from './queries'
 
 /**
- * 「AI 코스 짜기」 시트 — 진입(요청 한 줄) → 진행 → 결과가 한 시트 안에서 바뀐다.
+ * 「AI 코스 짜기」 탭의 내용 — 입력(요청 한 줄) → 진행 → 결과가 한 자리에서 바뀐다. 예전에는 확정 탭 위에 뜨는 시트였다.
+ * 보고 있는 코스는 지도별 화면 메모리(useCourseViewStore)에 둬서 탭을 오가도 이어진다.
  * 장소 이름은 맵 화면이 이미 받은 확정 리스트·핀 목록에서 찾는다(코스 응답은 pin_id 만 준다).
  */
-export default function CourseSheet({ mapId, onClose }: { mapId: string; onClose: () => void }) {
-  const [runId, setRunId] = useState<string | null>(null)
-  const [redirected, setRedirected] = useState(false)
+export default function CourseBody({ mapId }: { mapId: string }) {
+  const viewing = useCourseViewStore((s) => s.runs[mapId])
+  const open = useCourseViewStore((s) => s.open)
+  const close = useCourseViewStore((s) => s.close)
   const enrich = useEnrichPin()
-  const shortlist = useShortlistQuery(mapId).data ?? []
+  const shortlist = useShortlistQuery(mapId)
   const pins = usePinsQuery(mapId).data ?? []
   // 확정 리스트의 핀(실시간 핀 이름 포함)을 먼저, 없으면 핀 목록에서.
-  const all = [...shortlist.map((i) => enrich(i.pin)), ...pins]
+  const items = shortlist.data ?? []
+  const all = [...items.map((i) => enrich(i.pin)), ...pins]
   const names = pinNames(all)
   const points = pinPoints(all)
+  // 코스는 위치를 아는 확정 장소가 2곳부터다(실시간 핀은 좌표를 저장하지 않는다 — 확정 탭 「동선 보기」와 같은 기준).
+  const routable = items.filter((i) => i.pin.source !== 'live').length
 
+  if (viewing) {
+    return (
+      <div className="space-y-3">
+        {viewing.redirected && <Notice>이미 짜는 중인 코스가 있어서 그걸 보여 드려요</Notice>}
+        <CourseRun mapId={mapId} runId={viewing.runId} names={names} points={points} onRetry={() => close(mapId)} onClose={() => close(mapId)} />
+      </div>
+    )
+  }
+  if (shortlist.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
+  return <Entry mapId={mapId} routable={routable} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />
+}
+
+/** 위치를 아는 확정 장소가 2곳 미만이면 입력 대신 이유와 확정 탭으로 가는 길을 보인다(예전에는 칩을 누르면 토스트로 알렸다). */
+function NotEnough({ mapId }: { mapId: string }) {
   return (
-    <ModalSheet label="AI 코스 짜기" onClose={onClose}>
-      {runId ? (
-        <div className="space-y-3">
-          {redirected && <Notice>이미 짜는 중인 코스가 있어서 그걸 보여 드려요</Notice>}
-          <CourseRun
-            mapId={mapId}
-            runId={runId}
-            names={names}
-            points={points}
-            onRetry={() => {
-              setRedirected(false)
-              setRunId(null)
-            }}
-            onClose={onClose}
-          />
-        </div>
-      ) : (
-        <Entry
-          mapId={mapId}
-          onClose={onClose}
-          onRun={(id, fromInProgress = false) => {
-            setRedirected(fromInProgress)
-            setRunId(id)
-          }}
-        />
-      )}
-    </ModalSheet>
+    <EmptyState
+      title="확정된 장소가 2곳부터 코스를 짤 수 있어요"
+      action={
+        <Link to={`/maps/${mapId}/shortlist`} className="btn-outline btn-md">
+          확정된 장소 보기
+        </Link>
+      }
+    >
+      마킹된 장소에서 「확정 리스트에 넣기」를 누르면 확정된 장소에 모여요
+    </EmptyState>
   )
 }
 
-function Entry({ mapId, onClose, onRun }: { mapId: string; onClose: () => void; onRun: (runId: string, fromInProgress?: boolean) => void }) {
+function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; onRun: (runId: string, fromInProgress?: boolean) => void }) {
   const [text, setText] = useState('')
   const queryClient = useQueryClient()
   const map = useMapQuery(mapId).data
@@ -89,6 +92,8 @@ function Entry({ mapId, onClose, onRun }: { mapId: string; onClose: () => void; 
     onRun(latest.id)
   }
 
+  if (routable < 2 && !latest) return <NotEnough mapId={mapId} />
+
   return (
     <form
       onSubmit={(e) => {
@@ -97,10 +102,6 @@ function Entry({ mapId, onClose, onRun }: { mapId: string; onClose: () => void; 
       }}
       className="space-y-4"
     >
-      <div>
-        <SheetTitle>AI 코스 짜기</SheetTitle>
-        <p className="mt-1 break-keep text-sm text-ink-500">확정 리스트의 장소를 날짜별로 나눠 순서를 짜 줘요. 지도와 확정 리스트는 바뀌지 않고, 결과는 나한테만 보여요</p>
-      </div>
       {map && (
         <p className="flex items-center gap-1.5 text-sm text-ink-700">
           <Calendar size={16} aria-hidden="true" />
@@ -119,9 +120,9 @@ function Entry({ mapId, onClose, onRun }: { mapId: string; onClose: () => void; 
         <ErrorText message="코스를 요청하지 못했어요" error={create.error} />
       )}
       <div className="space-y-1">
-        {/* 게스트는 버튼 대신 카카오 안내, 잔액이 모자라면 후기 안내(확정 탭은 이 시트 아래라 시트만 닫는다). */}
-        <CreditGate feature="course" mapId={mapId} error={create.error} onReview={onClose} onCharged={create.reset}>
-          <button type="submit" disabled={create.isPending} className="btn-primary btn-lg w-full">
+        {/* 게스트는 버튼 대신 카카오 안내, 잔액이 모자라면 후기 안내(확정 탭으로 간다). 확정 장소가 모자라면 막는다. */}
+        <CreditGate feature="course" mapId={mapId} error={create.error} onCharged={create.reset}>
+          <button type="submit" disabled={create.isPending || routable < 2} className="btn-primary btn-lg w-full">
             {create.isPending ? '요청하는 중…' : '코스 짜기'}
           </button>
         </CreditGate>
