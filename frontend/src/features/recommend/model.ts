@@ -117,6 +117,9 @@ export function runErrorMessage(err: unknown): string {
 
 export type FunnelRow = RecommendResultDto['funnel'][number]
 
+/** 반경 안 후보가 「이미 제안·거절됨」으로 빠졌는가. 단계는 라벨 글자가 아니라 서버 key로 찾는다(#751·#1142). key가 없으면 false. */
+export const hasExcluded = (funnel: FunnelRow[]) => funnel.some((f) => f.key === 'excluded' && f.removed_count > 0)
+
 /** 결과가 0곳일 때(404 NO_RESULTS) 서버가 detail 에 깔때기를 실어 보낸다 — "무엇을 시도했는지 화면에 남긴다"(가드레일 10). */
 export function noResultsFunnel(err: unknown): FunnelRow[] | null {
   if (!(err instanceof ApiError) || err.code !== 'NO_RESULTS') return null
