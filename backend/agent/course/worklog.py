@@ -65,6 +65,8 @@ OUTCOME_TEXT = {
 # 요청 목표가 없을 때(빈 요청, 「알아서 잘 짜줘」) 무엇을 기준으로 짜는지(#1128). 기준선의 날짜 균형·이동과 같은 말이다.
 NO_GOALS_OPENING = "따로 지킬 목표는 없어요. 이동을 줄이고 날마다 장소 수를 고르게 나눠 짤게요."
 NO_GOALS_CLOSING = "따로 지킬 목표 없이 이동을 줄이고 날마다 장소 수를 고르게 나눠 짰어요."
+# 지도 목표 후보는 있었지만 목표 세우기가 하나도 고르지 않았을 때(#1131 B안). 후보가 아예 없을 때만 NO_GOALS_OPENING을 쓴다
+MAP_NONE_OPENING = "지도에서 목표 후보를 찾았지만 이번 코스에는 세우지 않았어요. 이동을 줄이고 날마다 장소 수를 고르게 나눠 짤게요."
 
 
 def _labels(by_id: dict[str, goals_mod.Goal], trip: core.Trip, ids: Sequence[str]) -> list[str]:
@@ -136,26 +138,43 @@ def meal_less_text(trip: core.Trip, day_index: int) -> str:
     return f"{day}에는 식사할 곳이 배정되지 않았어요. 확정 리스트에는 있지만 다른 날에 놓였어요."
 
 
-def _understood(trip: core.Trip, goals: Sequence[goals_mod.Goal], unmatched: Sequence[str]) -> str:
+def _understood(
+    trip: core.Trip, goals: Sequence[goals_mod.Goal], unmatched: Sequence[str], candidates: Sequence[goals_mod.MapCandidate] = (),
+) -> str:
     """「이해」 줄. 목표로 바꾸지 않은 조각은 종류가 정해진 것(시간, 하루 비우기)이면 코드의 고정 이유 문장을 쓰고 조각 원문은 넣지 않는다(#1128).
-    종류를 모르는 조각만 「…」는 판단할 수 없다고 쓴다."""
+    종류를 모르는 조각만 「…」는 판단할 수 없다고 쓴다. 지도 목표는 출처와 근거를 밝힌다(#1131 B안) — 근거는 키 이름·사람 수·장소 수뿐이다."""
     reasons = [goals_mod.piece_reason(u) for u in unmatched]
-    if goals:
-        head = ", ".join(goals_mod.label(trip, g) for g in goals) + "."
+    asked = [g for g in goals if g.origin != "map"]
+    mapped = [g for g in goals if g.origin == "map"]
+    if asked:
+        head = ", ".join(goals_mod.label(trip, g) for g in asked) + "."
+    elif unmatched:
+        head = "요청에서 지킬 목표를 찾지 못했어요."
+    elif mapped:
+        head = ""
     else:
-        head = "요청에서 지킬 목표를 찾지 못했어요." if unmatched else NO_GOALS_OPENING
-    return (head + "".join(f" {attach(f'「{u}」', '은/는')} 그대로는 판단할 수 없어요." for u, r in zip(unmatched, reasons) if r is None)
+        head = MAP_NONE_OPENING if candidates else NO_GOALS_OPENING
+    text = (head + "".join(f" {attach(f'「{u}」', '은/는')} 그대로는 판단할 수 없어요." for u, r in zip(unmatched, reasons) if r is None)
             + "".join(f" {goals_mod.PIECE_REASONS[r]}" for r in dict.fromkeys(r for r in reasons if r)))
+    if mapped:
+        by_id = {c.id: c for c in candidates}
+        lead = "요청이 없어서 지도에서 목표를 세웠어요: " if not asked and not unmatched else "지도에서도 목표를 세웠어요: "
+        basis = ", ".join(goals_mod.evidence_text(by_id[g.candidate]) for g in mapped if g.candidate in by_id)
+        text += (" " if text else "") + lead + ", ".join(goals_mod.label(trip, g, mark=False) for g in mapped) + "." + (f" (근거: {basis})" if basis else "")
+    return text
 
 
 class Narrator:
     """지휘 루프의 단계를 하나씩 받아 작업 기록으로 바꾼다. 앞 단계에서 세는 값(짜기 횟수 등)을 들고 있어서 단계 순서대로 불러야 한다.
     진행 중 저장(on_step)과 끝난 뒤 한 번에 찍기(render)가 같은 코드를 쓴다."""
 
-    def __init__(self, trip: core.Trip, goals: Sequence[goals_mod.Goal], unmatched: Sequence[str], *, understood_by: str = MODEL):
+    def __init__(
+        self, trip: core.Trip, goals: Sequence[goals_mod.Goal], unmatched: Sequence[str], *, understood_by: str = MODEL,
+        candidates: Sequence[goals_mod.MapCandidate] = (),
+    ):
         self.trip = trip
         self.by_id = {g.id: g for g in goals}
-        self._opening = _rec("이해", INTERPRET, understood_by, "이렇게 이해했어요: " + _understood(trip, goals, unmatched))
+        self._opening = _rec("이해", INTERPRET, understood_by, "이렇게 이해했어요: " + _understood(trip, goals, unmatched, candidates))
         self.optimized = 0
         self.redo = False                       # 코드가 쉬는 날·이동을 푼 뒤 처음 짜는 optimize는 "다시 짜기"다
         self.reviewing = False                  # 직전 단계가 후보를 돌려줬다 — 이번 모델 생각은 그 결과의 점검이다
@@ -224,10 +243,10 @@ class Narrator:
 
 def records(
     trip: core.Trip, goals: Sequence[goals_mod.Goal], unmatched: Sequence[str], result: DirectResult,
-    *, understood_by: str = MODEL,
+    *, understood_by: str = MODEL, candidates: Sequence[goals_mod.MapCandidate] = (),
 ) -> list[StepRecord]:
     """끝난 결과 전체를 한 번에 작업 기록으로(진행 중 저장이 내보낸 것과 같은 순서·내용)."""
-    narrator = Narrator(trip, goals, unmatched, understood_by=understood_by)
+    narrator = Narrator(trip, goals, unmatched, understood_by=understood_by, candidates=candidates)
     out = narrator.opening()
     for step in result.steps:
         out += narrator.step(step, goals=result.state.goals)
@@ -236,7 +255,7 @@ def records(
 
 def render(
     trip: core.Trip, goals: Sequence[goals_mod.Goal], unmatched: Sequence[str], result: DirectResult,
-    *, understood_by: str = MODEL,
+    *, understood_by: str = MODEL, candidates: Sequence[goals_mod.MapCandidate] = (),
 ) -> list[str]:
     """평가·시연 스크립트용 글 줄 `[단계] 역할(누가) 내용`."""
-    return [r.line() for r in records(trip, goals, unmatched, result, understood_by=understood_by)]
+    return [r.line() for r in records(trip, goals, unmatched, result, understood_by=understood_by, candidates=candidates)]

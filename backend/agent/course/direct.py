@@ -104,7 +104,7 @@ def direct_input(ds: DirectState, last: Optional[ToolResult], turn: int, unmatch
     state = ds.state
     return {
         "turn": turn,
-        "goals": [{"id": g.id, "kind": g.kind, "day": g.day, "places": list(g.places),
+        "goals": [{"id": g.id, "kind": g.kind, "day": g.day, "places": list(g.places), "source": g.origin,
                    **({"tag": g.tag} if g.tag else {})} for g in state.goals],
         "unmatched_count": unmatched_count,
         "goal_checks": list(ds.checks),
@@ -328,7 +328,9 @@ def execute(call, ds: DirectState, gateway: OpeningHoursGateway, by: str = "mode
             if state.locks.get(spec.place, spec.day) != spec.day:
                 return ds, _fail(tool, "LOCKED", f"{spec.place}는 {state.locks[spec.place]}에 고정돼 있다")
             locks[spec.place] = spec.day
-        new_state, candidates = opt.optimize(state, priority=call.priority, locks=locks, gateway=gateway)
+        by_id = {g.id: g for g in state.goals}
+        priority = sorted(call.priority, key=lambda i: by_id[i].origin == "map")     # 요청 목표가 지도 목표보다 앞이다(#1131 B안)
+        new_state, candidates = opt.optimize(state, priority=priority, locks=locks, gateway=gateway)
         ds = replace(ds, state=new_state, candidates=candidates, optimize_calls=ds.optimize_calls + 1)
         return ds, ToolResult(tool, ok=True, data={"candidates": [candidate_summary(new_state, c) for c in candidates]})
 

@@ -112,7 +112,7 @@ class TestDayHasOptimize:
         st = self.tagged_state()
         decide = scripted({"tool": "optimize", "priority": [], "locks": []}, {"tool": "finish", "candidate_id": "c1"})
         direct.run_direct(st, decide=decide, hours=TRUE_HOURS)
-        assert decide.seen[0]["goals"][0] == {"id": "day_has:d3:performance", "kind": "day_has", "day": "d3", "places": [], "tag": "performance"}
+        assert decide.seen[0]["goals"][0] == {"id": "day_has:d3:performance", "kind": "day_has", "day": "d3", "places": [], "source": "request", "tag": "performance"}
 
 
 class TestDirectWithoutModel:
