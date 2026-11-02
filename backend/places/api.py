@@ -360,7 +360,7 @@ def match_by_name_address(name: str, address: str | None, *, external_id: str | 
             m = _EXTERNAL_ID.fullmatch(external_id)
             if m is not None:
                 repository.upsert_external_id(s, m.group(1), external_id, picked[0].place_id, "hint", None)
-    return [_to_link_match(c) for c in picked]
+        return _link_matches(s, picked)
 
 
 _EXTERNAL_ID = re.compile(r"(kakao|naver):\d{1,20}")
@@ -423,7 +423,7 @@ def match_address_candidates(address: str, *, db: Session | None = None) -> list
         return []
     with _session(db) as s:
         candidates = repository.find_by_address_term(s, term)
-    return [_to_link_match(c) for c in matching.pick_address_candidate(address, candidates)]
+        return _link_matches(s, matching.pick_address_candidate(address, candidates))
 
 
 def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
@@ -442,21 +442,21 @@ def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
         raise AppError("LINK_UNRESOLVED" if shortened else "LINK_NOT_SUPPORTED")
 
     if parsed.provider == "kakao":
-        found = own_places_by_kakao_id(parsed.kakao_place_id, db=db)[: matching.LINK_MAX_MATCHES]
+        matches = _link_matches_in(db, own_places_by_kakao_id(parsed.kakao_place_id, db=db)[: matching.LINK_MAX_MATCHES])
         matched_by = None   # 카카오 ID로 기록된 장소는 「링크가 가리키는 장소」 — 호출 쪽(pins)이 link로 표시한다
-        if not found:   # 번호표에서 이어진 짝(#1048) — places.kakao_place_id 조회와 합친다
-            found = own_places_by_external_id(parsed.kakao_place_id, db=db)[: matching.LINK_MAX_MATCHES]
-            matched_by = "external_id" if found else None
+        if not matches:   # 번호표에서 이어진 짝(#1048) — places.kakao_place_id 조회와 합친다
+            matches = _link_matches_in(db, own_places_by_external_id(parsed.kakao_place_id, db=db)[: matching.LINK_MAX_MATCHES])
+            matched_by = "external_id" if matches else None
         result = LinkParseResult(
             provider="kakao", kakao_place_id=parsed.kakao_place_id, external_id=parsed.kakao_place_id, matched_by=matched_by,
-            matches=[_to_link_match(c) for c in found], needs_search_query=not found,
+            matches=matches, needs_search_query=not matches,
         )
     elif parsed.provider == "naver":
         # 번호뿐인 링크 — 이름·좌표를 모르니 번호표로만 찾는다(#1048). 없으면 호출 쪽이 힌트(상호명·주소)나 검색으로 잇는다
-        found = own_places_by_external_id(parsed.external_id, db=db)[: matching.LINK_MAX_MATCHES]
+        matches = _link_matches_in(db, own_places_by_external_id(parsed.external_id, db=db)[: matching.LINK_MAX_MATCHES])
         result = LinkParseResult(
-            provider="naver", external_id=parsed.external_id, matched_by="external_id" if found else None,
-            matches=[_to_link_match(c) for c in found], needs_search_query=not found,
+            provider="naver", external_id=parsed.external_id, matched_by="external_id" if matches else None,
+            matches=matches, needs_search_query=not matches,
         )
     else:
         found = []
@@ -472,13 +472,36 @@ def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
         if parsed.lat is not None and parsed.lng is not None:
             near = own_places_near(parsed.lat, parsed.lng, matching.LINK_MATCH_RADIUS_M, matching.MAX_CANDIDATES, db=db)
             found = matching.pick_link_matches(parsed.name_hint, near)
+        matches = _link_matches_in(db, found)
         result = LinkParseResult(
             provider="google", name_hint=parsed.name_hint,
-            matches=[_to_link_match(c) for c in found], needs_search_query=False,
-            address_candidates=None if found else address_candidates,
+            matches=matches, needs_search_query=False,
+            address_candidates=None if matches else address_candidates,
         )
     log.info("places.link provider=%s matches=%d", result.provider, len(result.matches))
     return result
+
+
+def _pinnable_candidates(s: Session, candidates: Sequence[Candidate]) -> list[Candidate]:
+    """링크 해석이 내보낼 장소 중 핀 생성이 받아 줄 곳만(#815). 핀 생성은 matches의 place_id·이름·좌표·분류를 힌트로 match_place를 부르므로
+    같은 힌트로 pick_match를 미리 돌려 거절될 곳(반경 안의 동명 점포 등)을 뺀다 — 「핀 찍기」가 활성인데 PLACE_NOT_SUPPORTED가 나지 않게.
+    거절된 곳은 matches에 없으니 호출 쪽이 실시간 핀 경로로 보낸다. 검색의 own 경로(_pinnable_rows)와 같은 검사다."""
+    if not candidates:
+        return []
+    hints = [PlaceHint(c.kakao_place_id or f"own:{c.place_id}", c.name[:100], c.lat, c.lng, c.category) for c in candidates]
+    lists = repository.find_candidates_many(s, hints)
+    return [c for c, h, cands in zip(candidates, hints, lists) if matching.pick_match(h, cands) is not None]
+
+
+def _link_matches(s: Session, candidates: Sequence[Candidate]) -> list[PlaceSearchResult]:
+    return [_to_link_match(c) for c in _pinnable_candidates(s, candidates)]
+
+
+def _link_matches_in(db: Session | None, candidates: Sequence[Candidate]) -> list[PlaceSearchResult]:
+    if not candidates:
+        return []
+    with _session(db) as s:
+        return _link_matches(s, candidates)
 
 
 def _to_link_match(c: Candidate) -> PlaceSearchResult:
