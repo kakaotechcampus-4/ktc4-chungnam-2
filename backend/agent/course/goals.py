@@ -225,6 +225,46 @@ def leftover_pieces(request_text: str, covered: Sequence[str]) -> list[str]:
     return out
 
 
+# ---- 목표로 바꾸지 않는 요청 조각 (#1128) ----
+# 코드가 조각의 종류를 보고 고정 문장을 고른다(모델이 이유를 쓰지 않는다). 조각 원문은 문장에 섞지 않고 unmatched 조각으로 둔다(#717).
+_DELEGATE_RE = re.compile(r"알아서|맡길|맡겨|마음대로|적당히|아무렇게나|아무거나")
+_DELEGATE_FILLER = re.compile(r"그냥|대충|좀|잘|짜|해|줘|주세요|요")
+_REST_DAY_RE = re.compile(r"아무것도\s?(?:안|하지|없)|아무\s?데도|쉴래|쉬고\s?싶|쉬려|푹\s?쉬|쉬는\s?날로|비워|비우|비울|휴식")
+_TIME_RE = re.compile(r"(?<![0-9])[0-9]{1,2}\s?시(?![간장작])|[0-9]{1,2}:[0-9]{2}"
+                      r"|(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|열한|열두|몇)\s?시(?![간장작])|오전|오후|예약")
+_DAILY_RE = re.compile(r"매일|날마다|모든\s?날|하루에\s?(?:한|하나)|하루\s?(?:한|하나)씩")
+REST_DAY, TIME_GIVEN = "REST_DAY", "TIME_GIVEN"
+PIECE_REASONS = {
+    REST_DAY: "확정 장소를 모든 날에 나눠요. 하루를 비우려면 장소를 줄여 주세요.",
+    TIME_GIVEN: "시간은 정하지 않아요. 코스는 날짜별 순서와 이동만 짜요.",
+}
+
+
+def is_delegation(piece: str) -> bool:
+    """「알아서 잘 짜줘」처럼 맡기는 말뿐인 조각. 목표도 unmatched도 아니다 — 빈 요청과 같이 기본 기준으로 짠다.
+    맡기는 말을 빼고도 한글이 3자 이상 남으면(「알아서 카페 넣어줘」) 맡김이 아니다."""
+    if not _DELEGATE_RE.search(piece):
+        return False
+    rest = _DELEGATE_FILLER.sub("", _FILLER.sub("", _DELEGATE_RE.sub("", piece)))
+    return len(re.findall(r"[가-힣]", rest)) < 3
+
+
+def piece_reason(piece: str) -> Optional[str]:
+    """unmatched 조각을 목표로 바꾸지 않는 이유(PIECE_REASONS 키). 하루 비우기를 시간보다 먼저 본다. 모르면 None(판단할 수 없음)."""
+    if _REST_DAY_RE.search(piece):
+        return REST_DAY
+    if _TIME_RE.search(piece):
+        return TIME_GIVEN
+    return None
+
+
+def _daily(trip: Trip, g) -> list[tuple[Optional[Goal], Optional[str]]]:
+    """「카페는 매일 하나씩」 — 날짜 없는 day_has의 quote가 모든 날을 말하면 날마다 day_has 하나씩(#1128). 아니면 빈 목록."""
+    if g.kind != "day_has" or g.day is not None or not _DAILY_RE.search(g.quote):
+        return []
+    return [normalize(trip, g.kind, core.day_alias(i), g.places, getattr(g, "tag", None)) for i in range(len(trip.days))]
+
+
 def unlisted_mentions(trip: Trip, request_text: str, goals: Sequence[Goal], quotes: Sequence[str]) -> list[str]:
     """목표 quote 안에 코스 장소의 이름이 있는데 그 장소가 어떤 목표의 places에도 없으면, 그 장소를 말한 조각(#1008 K1).
     「마지막 날 밤에 N서울타워」 전체를 quote로 쓰고 야경 목표 하나만 내면 장소 요청이 말없이 사라지기 때문이다."""
@@ -242,8 +282,10 @@ def unlisted_mentions(trip: Trip, request_text: str, goals: Sequence[Goal], quot
 
 def verify_goal_set(trip: Trip, request_text: str, goal_set) -> VerifiedGoals:
     """모델이 낸 목표(CourseGoalSet)를 코드가 검증한다: 종류별 매개변수, 별칭, quote가 요청 원문의 부분 문자열인지.
-    떨어진 목표는 버리고, 그 quote가 원문 조각이면 unmatched로 옮긴다. unmatched도 원문 부분 문자열만 남긴다."""
+    떨어진 목표는 버리고, 그 quote가 원문 조각이면 unmatched로 옮긴다. unmatched도 원문 부분 문자열만 남긴다.
+    날마다 나눈 day_has(「매일」)는 다른 목표 뒤에 붙여 GOALS_MAX를 넘으면 그쪽이 먼저 빠진다. 맡기는 말뿐인 조각은 unmatched에서 뺀다."""
     goals: list[Goal] = []
+    daily: list[Goal] = []
     dropped: list[str] = []
     unmatched: list[str] = []
     for g in goal_set.goals:
@@ -252,18 +294,19 @@ def verify_goal_set(trip: Trip, request_text: str, goal_set) -> VerifiedGoals:
             problem = "요청이 아닌 근거"
         elif not g.quote.strip() or g.quote not in request_text:
             problem = "quote가 원문에 없다"
-        goal, why = normalize(trip, g.kind, g.day, g.places, getattr(g, "tag", None)) if problem is None else (None, problem)
-        if goal is None:
-            dropped.append(f"{g.kind}: {why}")
+        made = (_daily(trip, g) or [normalize(trip, g.kind, g.day, g.places, getattr(g, "tag", None))]) if problem is None else [(None, problem)]
+        if any(goal is None for goal, _ in made):
+            dropped += [f"{g.kind}: {why}" for goal, why in made if goal is None][:1]
             if g.quote.strip() and g.quote in request_text:
                 unmatched.append(g.quote)
         else:
-            goals.append(goal)
+            (daily if len(made) > 1 else goals).extend(goal for goal, _ in made if goal is not None)
     unmatched += [u for u in goal_set.unmatched if u.strip() and u in request_text]
     quotes = [g.quote for g in goal_set.goals if g.quote.strip() and g.quote in request_text]
-    unmatched += unlisted_mentions(trip, request_text, goals, quotes)
+    unmatched += unlisted_mentions(trip, request_text, goals + daily, quotes)
     unmatched += leftover_pieces(request_text, quotes + unmatched)
-    return VerifiedGoals(truncate(goals), tuple(dict.fromkeys(unmatched)), tuple(dropped))
+    kept = [u for u in dict.fromkeys(unmatched) if not is_delegation(u)]
+    return VerifiedGoals(truncate(goals + daily), tuple(kept), tuple(dropped))
 
 
 def label(trip: Trip, goal: Goal) -> str:

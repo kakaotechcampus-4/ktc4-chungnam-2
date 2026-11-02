@@ -51,6 +51,11 @@ def _usage_meta(*metered: Any) -> tuple[Optional[str], Optional[str]]:
     return (", ".join(models) or None), (", ".join(versions) or None)
 
 
+def _whole(text: str) -> tuple[str, ...]:
+    """목표를 세우지 못했을 때 요청 전체를 unmatched로. 맡기는 말뿐이면(「알아서 잘 짜줘」) 빈 요청과 같다(#1128)."""
+    return () if goals_mod.is_delegation(text) else (text,)
+
+
 def run_course(
     build: TripBuild, request_text: str, *,
     goals_planner: Optional[Callable[[Mapping[str, Any]], Any]],
@@ -71,13 +76,13 @@ def run_course(
     understood_by = worklog.MODEL
     if text:
         if setter is None:                       # 목표를 세울 모델 자리가 없다 — 요청 전체를 반영하지 못했다고 밝힌다
-            unmatched, understood_by = (text,), "코드(목표 세우기 없음)"
+            unmatched, understood_by = _whole(text), "코드(목표 세우기 없음)"
         else:
             try:
                 verified = goals_mod.verify_goal_set(trip, text, setter(goals_mod.goals_input(trip, text)))
                 goals, unmatched = verified.goals, verified.unmatched
             except ModelTurnFailed:
-                unmatched, understood_by = (text,), "코드(목표 세우기 실패)"
+                unmatched, understood_by = _whole(text), "코드(목표 세우기 실패)"
 
     def emit(recs: list[worklog.StepRecord]) -> None:
         for rec in recs:
