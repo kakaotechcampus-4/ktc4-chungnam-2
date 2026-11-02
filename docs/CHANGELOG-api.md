@@ -2,6 +2,14 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-03, 에이전트 지도 현황 문단과 우리 데이터 확인 — `AgentState.status`, `AgentSuggestion.facts` (#1152)
+
+- `AgentState`에 선택 필드 `status`(`AgentMapStatus` {`paragraph`, `updated_at`} 또는 null)를 더했다. 핑고 AI 조언 시트 맨 위에 보일 지도 현황 문단이다. 칸은 코드가 계산하고 모델이 판단과 문장을 맡으며, 서버가 사실과 모순인 판단을 거른다(`docs/agent-v2.md` 8.2).
+- `AgentSuggestion`에 선택 필드 `facts`(`AgentFactLine[]`, 많아야 2개)를 더했다. 갈림·정체가 사실 다툼일 때 그 핀 장소의 라벨을 서버가 고정 문구로 렌더한 줄이다(`value`: yes·no·unknown, `segments`는 AgentAdviceLine과 같은 조각, 6.6). `agent.suggested` 페이로드(AgentSuggestion)에도 실린다.
+- 이유: #1152 — 갈림·정체 제안이 「무엇부터 볼지」와 「사실을 몰라 못 정하는 곳」을 함께 보이게 한다.
+- 하위호환: 둘 다 선택 필드다. 서버 구현(#1168) 전에는 실서버가 보내지 않는다 — FE는 없으면 칸을 그리지 않는다. 목 서버는 시드 지도에 `status`를 보내고 시드 제안의 `facts`는 빈 목록이다.
+- 서버: agent·llm(#1168). FE: #1169.
+
 ## 2026-11-03, 깔때기 항목에 단계 `key` (#1146)
 
 - `RecommendResult.funnel[]`과 `NO_RESULTS` 404의 `detail.funnel[]` 항목에 선택 필드 `key`를 더했다. 값은 `pool`·`radius`·`closed`·`disqualify`·`excluded`·`ranking`이고, 단계 표에 없는 옛 라벨로 저장된 깔때기는 null이다. `label`은 그대로 화면 문구다.
