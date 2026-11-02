@@ -71,6 +71,25 @@ export function groupEvidence(lines: EvidenceLineDto[]) {
   }
 }
 
+/** 같은 태그는 하나로 합친다. all = 그 태그의 줄 전부, mine = 그중 내 줄(뺄 수 있는 줄). */
+export function mergeTags(lines: EvidenceLineDto[]) {
+  const tags = new Map<string, { all: EvidenceLineDto[]; mine: EvidenceLineDto[] }>()
+  for (const line of lines) {
+    const tag = evidenceLabel(line)
+    const entry = tags.get(tag) ?? { all: [], mine: [] }
+    entry.all.push(line)
+    if (line.permissions.can_disable) entry.mine.push(line)
+    tags.set(tag, entry)
+  }
+  return [...tags].map(([tag, v]) => ({ tag, ...v }))
+}
+
+/** 화면에 보이는 조건 수 — 꼭은 줄마다, 선호는 같은 태그끼리 합쳐 센다(EvidenceGroups와 같은 묶음, #1143). */
+export function visibleConditionCount(lines: EvidenceLineDto[]): number {
+  const g = groupEvidence(lines)
+  return g.required.length + mergeTags(g.preferred).length
+}
+
 /** 추천이 쓰지 않는 줄의 이유 한 줄(docs/api-spec.yaml EvidenceLine.not_enforced_reason, #740). */
 export function notEnforcedNote(line: EvidenceLineDto): string {
   if (line.not_enforced_reason === 'no_key') return '걸러지지 않아요. 가게에 직접 확인해 주세요' // 가드레일 8

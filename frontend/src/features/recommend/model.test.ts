@@ -9,6 +9,7 @@ import {
   noResultsExternalSearch,
   notEnforcedNote,
   toReadinessCards,
+  visibleConditionCount,
   type EvidenceLineDto,
 } from './model'
 
@@ -63,6 +64,14 @@ describe('추천이 쓰지 않는 근거 줄(#742)', () => {
     expect(notEnforcedNote(line('a', 'required', { not_enforced_reason: 'off_season' }))).toBe('이번 여행 기간에는 해당 없어요')
     expect(notEnforcedNote(line('a', 'required', { not_enforced_reason: 'no_direction' }))).toBe('이번 추천에 쓰이지 않아요')
     expect(notEnforcedNote(line('a', 'required', { not_enforced_reason: 'not_for_category' }))).toBe('이번 추천에 쓰이지 않아요')
+  })
+})
+
+describe('「조건 N개」는 화면에 보이는 조건 수(#1143)', () => {
+  const pref = (id: string) => line(id, 'preferred', { fact_label: '양식', wants: true })
+  it('같은 키·방향 두 줄은 1개, 다른 키 두 줄은 2개', () => {
+    expect(visibleConditionCount([pref('a'), pref('b')])).toBe(1)
+    expect(visibleConditionCount([pref('a'), line('b', 'preferred', { fact_label: '국물', wants: true })])).toBe(2)
   })
 })
 
