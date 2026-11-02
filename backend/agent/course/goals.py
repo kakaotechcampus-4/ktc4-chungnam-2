@@ -229,18 +229,26 @@ def unlisted_mentions(trip: Trip, request_text: str, goals: Sequence[Goal], quot
     """목표 quote 안에 코스 장소의 이름이 있는데 그 장소가 어떤 목표의 places에도 없으면, 그 장소를 말한 조각(#1008 K1).
     「마지막 날 밤에 N서울타워」 전체를 quote로 쓰고 야경 목표 하나만 내면 장소 요청이 말없이 사라지기 때문이다.
 
-    이름이 겹치면 더 긴 이름이 그 말의 주인이다. 「서울숲」은 같은 quote에 있는 더 긴 이름(「서울숲 카페」)의 일부일 뿐이라 건너뛴다 —
-    긴 쪽이 목표에 쓰였으면 정상이고, 안 쓰였으면 긴 쪽이 따로 알려진다.
+    이름이 겹치면 실제 언급 범위를 비교해 긴 이름(「서울숲 카페」)에 포함된 짧은 문자열만 건너뛴다.
+    다른 quote나 같은 문장에 「서울숲」을 독립적으로 말했으면 누락 검사에 남긴다. quote가 이름 중간에서 끝나도
+    원문에서 긴 이름의 일부면 독립 언급으로 보지 않는다.
     한계: 이름 전체가 quote에 글자 그대로 있을 때만 잡는다. 프롬프트가 허용하는 줄임말(「롯데월드」→「롯데월드 어드벤처」)은 이 검사가
     못 본다. 별칭 표가 없어 코드가 줄임말을 장소에 잇지 않는 것이 규칙이다(장소를 잇는 것은 모델의 일)."""
     used = {p for g in goals for p in g.places}
-    named = [p for p in trip.places if len(p.name) >= 2 and any(p.name in q for q in quotes)]
+    mentions = [(p, m.start(), m.start() + len(p.name)) for p in trip.places if len(p.name) >= 2
+                for m in re.finditer(r"(?=" + re.escape(p.name) + r")", request_text)]
+    quoted = [(m.start(), m.start() + len(q)) for q in quotes if q.strip()
+              for m in re.finditer(r"(?=" + re.escape(q) + r")", request_text)]
+    splits = list(_PIECE_SPLIT.finditer(request_text))
+    clauses = list(zip([0] + [m.end() for m in splits], [m.start() for m in splits] + [len(request_text)]))
     out: list[str] = []
-    for place in named:
-        if place.alias in used or any(o is not place and place.name in o.name and len(o.name) > len(place.name) for o in named):
+    for place, start, end in mentions:
+        if place.alias in used or not any(left <= start and end <= right for left, right in quoted):
             continue
-        clause = next((c.strip() for c in _PIECE_SPLIT.split(request_text) if place.name in c), "")
-        if clause and clause in request_text:
+        if any(left <= start and end <= right and right - left > end - start for _, left, right in mentions):
+            continue
+        clause = next((request_text[left:right].strip() for left, right in clauses if left <= start and end <= right), "")
+        if clause and clause not in out:
             out.append(clause)
     return out
 
