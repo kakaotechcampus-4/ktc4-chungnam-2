@@ -295,3 +295,8 @@ def reaction_changed_event(
             "user_id": user_id, "display_name": display_name, "type": reaction_type,
         },
     )
+
+
+# 휴지통(#1013, #864) — 지운 핀은 30일 동안 남고 그 뒤 정리 작업이 영구 삭제한다. 보관 일수는 여기서만 정한다.
+TRASH_RETENTION_DAYS = 30
+PURGE_BATCH_LIMIT = 1000   # 한 번 정리하는 핀 수 상한 — 남은 것은 다음 실행이 이어서 지운다

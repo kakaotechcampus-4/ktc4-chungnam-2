@@ -139,8 +139,8 @@ def delete_pin(
 ):
     pin, principal = deletable
     # 확정 핀이면 확정 항목을 먼저 정리한다(#235) — 핀이 읽히는 동안이어야 이벤트를 만들 수 있다.
-    shortlist_api.remove_for_deleted_pin(db, map_id=pin.map_id, pin_id=str(pin.id), principal=principal)
-    service.delete_pin(db, pin=pin)
+    was_confirmed = shortlist_api.remove_for_deleted_pin(db, map_id=pin.map_id, pin_id=str(pin.id), principal=principal)
+    service.delete_pin(db, pin=pin, deleted_by=principal.user_id, was_confirmed=was_confirmed)   # 복구 때 확정이었으면 다시 올린다(#1013)
 
 
 @router.get("/pins/{pinId}/reactions", response_model=list[Reaction], response_model_exclude_none=True)

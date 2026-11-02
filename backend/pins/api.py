@@ -8,6 +8,7 @@ db.flush()만으로 PK/유니크 충돌 등은 여전히 그 자리에서 드러
 """
 
 import uuid
+from datetime import datetime
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -458,6 +459,7 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     pins_moved = db.execute(
         update(PinRow).where(PinRow.created_by == from_user_id).values(created_by=to_user_id)
     ).rowcount
+    db.execute(update(PinRow).where(PinRow.deleted_by == from_user_id).values(deleted_by=to_user_id))   # 휴지통의 삭제한 사람(#1013)
     pins_already_reacted = select(ReactionRow.pin_id).where(ReactionRow.user_id == to_user_id)
     db.execute(
         delete(ReactionRow).where(ReactionRow.user_id == from_user_id, ReactionRow.pin_id.in_(pins_already_reacted))
@@ -472,3 +474,10 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(maps.purge, #431)가 부른다 — 이 지도들의 reactions·pins만 지우고 테이블 이름 → 지운 행 수를
     돌려준다. shortlist_items가 핀을 참조하므로 shortlist.api.purge_map_data를 먼저 불러야 한다. 커밋하지 않는다."""
     return service.purge_map_data(db, map_ids=map_ids)
+
+
+def purge_deleted_pins(db: Session, *, now: datetime) -> dict[str, int]:
+    """정기 정리(maintenance, #1013)가 부른다 — 삭제한 지 30일이 지난 핀과 그 반응을 영구 삭제하고 테이블 이름 → 지운 행 수
+    (`reactions`, `pins`)를 돌려준다. 한 번에 1000개까지, 오래된 것부터(남은 것은 다음 실행). 멱등. 30일 안의 핀은 건드리지 않는다.
+    지도 정리(`purge_map_data`)와 별개다. 커밋은 호출자."""
+    return service.purge_deleted_pins(db, now=now)
