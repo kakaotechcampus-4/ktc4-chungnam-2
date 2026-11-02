@@ -1,16 +1,15 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 
 import { useToastStore } from '@/features/shell/toast'
-import { addToShortlist, fetchShortlist } from '@/features/shortlist/api'
+import { fetchShortlist } from '@/features/shortlist/api'
 
-import { fetchPins } from './api'
-import type { Pin } from './model'
 import { PinDetailHeader } from './PinDetail'
+import { usePinsQuery } from './queries'
 
 const MAP = 'map_1'
 
@@ -28,23 +27,30 @@ afterAll(() => {
   vi.unstubAllGlobals()
 })
 
-it('「✓ 확정됨」을 다시 누르면 확정 리스트에서 빠지고 「되돌리기」 토스트가 뜬다', async () => {
-  const item = await addToShortlist(MAP, (await fetchPins(MAP))[0].id)
-  const pin: Pin = { ...item.pin, kind: '확정', permissions: { ...item.pin.permissions, can_remove_from_shortlist: true } }
+/** 화면처럼 핀 목록 조회에서 핀을 받아 넘긴다 — 넣고 빼면 핀 종류가 바뀌어 버튼이 따라 바뀐다. */
+function Header() {
+  const pin = usePinsQuery(MAP).data?.[0]
+  return pin ? <PinDetailHeader pin={pin} mapId={MAP} onBack={() => {}} /> : null
+}
+
+it('확정 버튼은 켜고 끄는 버튼 하나다 — 토스트 없이 글자가 바뀌고 포커스가 남는다', async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <PinDetailHeader pin={pin} mapId={MAP} onBack={() => {}} />
+        <Header />
       </MemoryRouter>
     </QueryClientProvider>,
   )
 
-  const button = screen.getByRole('button', { name: '✓ 확정됨', pressed: true })
-  // 항목 id는 확정 리스트를 받아야 안다 — 받기 전에 누르면 안내만 한다.
-  await waitFor(() => expect(client.getQueryData(['shortlist', MAP])).toBeDefined())
-  await userEvent.click(button)
+  await userEvent.click(await screen.findByRole('button', { name: '★ 확정 리스트에 넣기', pressed: false }))
+  const on = await screen.findByRole('button', { name: '✓ 확정됨', pressed: true })
+  expect(on).toHaveFocus()
+  expect(await fetchShortlist(MAP)).toHaveLength(1)
 
-  await waitFor(() => expect(useToastStore.getState().toast?.action?.label).toBe('되돌리기'))
-  expect((await fetchShortlist(MAP)).some((i) => i.id === item.id)).toBe(false)
+  await userEvent.click(on)
+  const off = await screen.findByRole('button', { name: '★ 확정 리스트에 넣기', pressed: false })
+  expect(off).toHaveFocus()
+  expect(await fetchShortlist(MAP)).toHaveLength(0)
+  expect(useToastStore.getState().toast).toBeNull()
 })

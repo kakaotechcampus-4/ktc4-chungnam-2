@@ -1,5 +1,4 @@
 import { useId, useRef, useState, type ReactNode } from 'react'
-import { useNavigate } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
@@ -56,8 +55,11 @@ export function PinDetailHeader({
 }) {
   const add = useAddToShortlistMutation(mapId)
   const remove = useUnconfirm(mapId)
-  const navigate = useNavigate()
   const confirmed = pin.kind === '확정'
+  const canToggle = confirmed ? pin.permissions.can_remove_from_shortlist : pin.permissions.can_add_to_shortlist
+  const busy = add.isPending || remove.isPending
+  const toggle = () =>
+    confirmed ? remove.unconfirm(pin, { undo: false }) : add.mutate(pin.id, { onError: () => showToast('확정 리스트에 넣지 못했어요') })
 
   return (
     <div>
@@ -69,45 +71,14 @@ export function PinDetailHeader({
           {/* AI 추천에서 올린 핀은 모두의 핀이 된 뒤에도 AI가 고른 곳임을 알린다(DESIGN.md 「지도 핀」, #1032). */}
           {hasAiEvidence(pin) && <span className="tag tag-ai">AI</span>}
         </span>
-        {confirmed ? (
-          pin.permissions.can_remove_from_shortlist ? (
-            // 다시 누르면 확정이 풀리고 원래 핀으로 돌아간다. 실수로 눌렀으면 토스트의 「되돌리기」.
-            <button
-              type="button"
-              aria-pressed="true"
-              disabled={remove.isPending}
-              onClick={() => remove.unconfirm(pin)}
-              className="btn-confirm btn-sm"
-            >
-              ✓ 확정됨
-            </button>
-          ) : (
-            <span className="btn-confirm btn-sm">✓ 확정됨</span>
-          )
+        {canToggle ? (
+          // 켜고 끄는 버튼 하나다. 토스트 대신 버튼 글자가 바뀌어 결과를 알린다 — 좁은 화면에서 토스트가 시트를 가린다.
+          // 한 버튼이라 눌러도 포커스가 그대로다. 채움 버튼이 아니다 — 이 화면의 채움 버튼은 「의견 등록」 하나다.
+          <button type="button" aria-pressed={confirmed} disabled={busy} onClick={toggle} className="btn-confirm btn-sm">
+            {confirmed ? '✓ 확정됨' : '★ 확정 리스트에 넣기'}
+          </button>
         ) : (
-          pin.permissions.can_add_to_shortlist && (
-            // 채움 버튼이 아니다 — 이 화면의 채움 버튼은 「의견 등록」 하나다.
-            <button
-              type="button"
-              disabled={add.isPending}
-              onClick={() =>
-                add.mutate(pin.id, {
-                  onSuccess: () => {
-                    const name = pin.place_name ?? '이 장소'
-                    // 넣은 뒤 어디로 가는지 보이게 확정 리스트로 가는 길을 같이 준다(#1030).
-                    showToast(`${name}${josa(name, '을', '를')} 확정 리스트에 넣었어요`, {
-                      label: '확정 리스트 보기',
-                      onClick: () => navigate(`/maps/${mapId}/shortlist`),
-                    })
-                  },
-                  onError: () => showToast('확정 리스트에 넣지 못했어요'),
-                })
-              }
-              className="btn-confirm btn-sm"
-            >
-              ★ 확정 리스트에 넣기
-            </button>
-          )
+          confirmed && <span className="btn-confirm btn-sm">✓ 확정됨</span>
         )}
       </div>
     </div>
