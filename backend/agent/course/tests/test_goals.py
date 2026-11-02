@@ -171,17 +171,17 @@ class TestVerifyGoalSet:
 
     def test_quote_not_in_text_drops_goal(self):
         v = self.verify([self.goal(quote="야경 꼭 보여 주세요")])
-        assert v.goals == () and v.dropped and v.unmatched == ()
+        assert v.goals == () and v.dropped and v.unmatched == ("마지막 날 밤엔 야경 보고 싶어요", "웨이팅 없는 곳으로")   # 버려진 조각도 남는다(#1008 K1)
 
     def test_bad_parameters_drop_goal_and_move_its_quote_to_unmatched(self):
         v = self.verify([self.goal(day="d9")])
-        assert v.goals == () and v.unmatched == ("마지막 날 밤엔 야경 보고 싶어요",)
+        assert v.goals == () and v.unmatched == ("마지막 날 밤엔 야경 보고 싶어요", "웨이팅 없는 곳으로")
 
     def test_reason_source_is_out_of_scope(self):
         assert self.verify([self.goal(source="reason", reaction_ids=["r1"])]).goals == ()
 
     def test_unmatched_must_be_substring_of_request(self):
-        assert self.verify([], ["웨이팅 없는 곳으로", "가성비 좋게"]).unmatched == ("웨이팅 없는 곳으로",)
+        assert self.verify([], ["웨이팅 없는 곳으로", "가성비 좋게"]).unmatched == ("웨이팅 없는 곳으로", "마지막 날 밤엔 야경 보고 싶어요")
 
     def test_duplicates_merge_and_goal_count_is_capped(self):
         many = [self.goal(), self.goal()] + [self.goal(kind="place_on_day", day="d1", places=["p2"]),
@@ -264,9 +264,9 @@ class TestDayHas:
         mk = lambda tag: SimpleNamespace(kind="day_has", day="d2", places=[], tag=tag, source="request",
                                          quote="둘째 날 저녁엔 공연 보고 싶고", reaction_ids=[])
         ok = G.verify_goal_set(tr, text, SimpleNamespace(goals=[mk("performance")], unmatched=[]))
-        assert ok.goals == (self.PERF,) and ok.unmatched == ()
+        assert ok.goals == (self.PERF,) and ok.unmatched == ("많이 안 걸었으면 해요",)           # 목표로 안 쓰인 조각은 남는다(#1008 K1)
         bad = G.verify_goal_set(tr, text, SimpleNamespace(goals=[mk("opera")], unmatched=[]))
-        assert bad.goals == () and bad.unmatched == ("둘째 날 저녁엔 공연 보고 싶고",)
+        assert bad.goals == () and bad.unmatched == ("둘째 날 저녁엔 공연 보고 싶고", "많이 안 걸었으면 해요")
 
     def test_goals_with_same_day_and_different_tags_stay_distinct(self):
         tr = t(A("p1"))

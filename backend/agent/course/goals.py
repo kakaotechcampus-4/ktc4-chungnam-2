@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from typing import Literal, Optional, Sequence
 
@@ -88,6 +89,12 @@ def day_light_cap(trip: Trip) -> int:
     return max(1, len(trip.places) // len(trip.days) - 1)
 
 
+def day_min_places(trip: Trip) -> int:
+    """날짜 균형의 하한(#1008 K2). 한 날이 이보다 적으면 목표를 채우려고 그날 장소를 다른 날로 뺀 것으로 보고 지킨 것으로 세지 않는다.
+    상한(day_light_cap)과 같은 값이라 여유 목표와 한 코스에서 함께 지키려면 날짜가 고르게 나뉘어야 한다."""
+    return day_light_cap(trip)
+
+
 def evaluate(trip: Trip, course: Course, goal: Goal) -> GoalResult:
     unknown = GoalResult(goal, None, 0.0, None)
     if goal.kind == "day_has":
@@ -111,7 +118,9 @@ def evaluate(trip: Trip, course: Course, goal: Goal) -> GoalResult:
             if not known:
                 return unknown
             ratio = sum(INDOOR_LABEL in trip.place(p).labels for p in known) / len(known)
-            return GoalResult(goal, ratio >= INDOOR_MET_RATIO, max(0.0, INDOOR_MET_RATIO - ratio), ratio)
+            floor = day_min_places(trip)
+            thin = max(0, floor - len(day)) / floor              # 그날 장소를 빼서 비율을 채운 코스는 지킨 것이 아니다
+            return GoalResult(goal, ratio >= INDOOR_MET_RATIO and thin == 0, max(0.0, INDOOR_MET_RATIO - ratio) + thin, ratio)
         if not _known(trip, day[-1]):
             return unknown
         hit = NIGHT_LABEL in trip.place(day[-1]).labels
@@ -192,6 +201,45 @@ def goals_input(trip: Trip, request_text: str) -> dict:
     }
 
 
+_PIECE_SPLIT = re.compile(r"[,.;!?·\n]|그리고")
+_FILLER = re.compile(r"감사합니다|감사해요|고맙습니다|고마워요|안녕하세요|잘 ?부탁(?:드립니다|드려요|해요)|해\s?주세요|해줘요?|부탁(?:해요|드려요|드립니다)?|짜\s?주세요|짜줘요?|싶어요|싶고|싶다|했으면|좋겠어요|좋겠고|코스|일정|여행|그리고|또|저는|우리는|이번|으로|에서|에는|에도|까지|부터|[은는이가을를에도와과로의]")
+
+
+def leftover_pieces(request_text: str, covered: Sequence[str]) -> list[str]:
+    """요청에서 목표 quote와 unmatched 어디에도 쓰이지 않은 조각(#1008 K1). 모델이 한 문장의 일부를 말없이 버려도 사용자가 알 수 있게
+    unmatched로 남긴다. 덮인 글자를 지우고 남은 글을 구두점·접속어로 나눠, 군말(요청 문구, 조사)을 뺀 뒤 한글이 3자 이상 남는 조각만 쓴다.
+    원문 부분 문자열이라 화면에 그대로 쓸 수 있다."""
+    mask = [False] * len(request_text)
+    for piece in covered:
+        start = request_text.find(piece) if piece.strip() else -1
+        while start != -1:
+            for i in range(start, start + len(piece)):
+                mask[i] = True
+            start = request_text.find(piece, start + len(piece))
+    rest = "".join("\n" if m else c for c, m in zip(request_text, mask))
+    out: list[str] = []
+    for part in _PIECE_SPLIT.split(rest):
+        piece = part.strip()
+        if len(re.findall(r"[가-힣]", _FILLER.sub("", piece))) >= 3 and piece in request_text:
+            out.append(piece)
+    return out
+
+
+def unlisted_mentions(trip: Trip, request_text: str, goals: Sequence[Goal], quotes: Sequence[str]) -> list[str]:
+    """목표 quote 안에 코스 장소의 이름이 있는데 그 장소가 어떤 목표의 places에도 없으면, 그 장소를 말한 조각(#1008 K1).
+    「마지막 날 밤에 N서울타워」 전체를 quote로 쓰고 야경 목표 하나만 내면 장소 요청이 말없이 사라지기 때문이다."""
+    used = {p for g in goals for p in g.places}
+    out: list[str] = []
+    for place in trip.places:
+        if place.alias in used or len(place.name) < 2:
+            continue
+        if any(place.name in q for q in quotes):
+            clause = next((c.strip() for c in _PIECE_SPLIT.split(request_text) if place.name in c), "")
+            if clause and clause in request_text:
+                out.append(clause)
+    return out
+
+
 def verify_goal_set(trip: Trip, request_text: str, goal_set) -> VerifiedGoals:
     """모델이 낸 목표(CourseGoalSet)를 코드가 검증한다: 종류별 매개변수, 별칭, quote가 요청 원문의 부분 문자열인지.
     떨어진 목표는 버리고, 그 quote가 원문 조각이면 unmatched로 옮긴다. unmatched도 원문 부분 문자열만 남긴다."""
@@ -212,6 +260,9 @@ def verify_goal_set(trip: Trip, request_text: str, goal_set) -> VerifiedGoals:
         else:
             goals.append(goal)
     unmatched += [u for u in goal_set.unmatched if u.strip() and u in request_text]
+    quotes = [g.quote for g in goal_set.goals if g.quote.strip() and g.quote in request_text]
+    unmatched += unlisted_mentions(trip, request_text, goals, quotes)
+    unmatched += leftover_pieces(request_text, quotes + unmatched)
     return VerifiedGoals(truncate(goals), tuple(dict.fromkeys(unmatched)), tuple(dropped))
 
 
