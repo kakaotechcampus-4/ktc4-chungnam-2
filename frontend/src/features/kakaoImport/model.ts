@@ -3,7 +3,7 @@ import type { components } from '@pingo/contracts/src/types/api'
 import type { PinCreateRequest } from '@/features/map/model'
 import { livePinRequest, searchPinRequest } from '@/features/search/model'
 
-import { shortSido, type Share } from './share'
+import { LINK_MAX, shortSido, type Share } from './share'
 
 export type LinkPreviewItemDto = components['schemas']['LinkPreviewItem']
 export type LinkParseResultDto = components['schemas']['LinkParseResult']
@@ -37,6 +37,8 @@ export type ImportRow = {
   item?: LinkPreviewItemDto
   search?: { status: 'loading' | 'done' | 'error'; results: PlaceSearchResultDto[] }
   choice?: PlaceSearchResultDto | null
+  /** 새로고침 뒤 되살린 줄의 고른 장소 id(#1045). 주소 후보·이름 검색 응답이 오면 이 id로 `choice`를 다시 맞추고 지운다. */
+  choiceId?: string
   auto?: boolean
   picked: boolean
   outcome?: BulkPinItemResultDto['status']
@@ -74,7 +76,9 @@ export function rowState(row: ImportRow): RowState {
 /** 핀으로 만들 장소 — 사람이(또는 주소로 미리) 고른 곳, 없으면 서버가 찾은 첫 장소. */
 export function rowPlace(row: ImportRow): PlaceSearchResultDto | undefined {
   if (row.choice) return row.choice
-  return rowState(row) === 'found' ? row.item?.result?.matches[0] : undefined
+  // 이미 지도에 있는 곳(찍은 뒤 다시 확인한 줄 포함)도 서버가 찾은 장소로 이름·같은 곳 묶음을 맞춘다.
+  const state = rowState(row)
+  return state === 'found' || state === 'already' ? row.item?.result?.matches[0] : undefined
 }
 
 /** 줄 제목: 고른 장소 → 공유 글 이름 → 링크 속 이름 → 「이름 확인 필요」. 링크 주소는 제목으로 쓰지 않는다(#1046). */
@@ -137,10 +141,40 @@ export function toPinRequest(row: ImportRow): PinCreateRequest | null {
 }
 
 /** 같은 장소인지 — 고른 장소의 id. 다른 링크라도 같은 장소면 한 줄로 보이고 한 번만 찍는다. 고르지 않은 줄은 합치지 않는다. */
-export const placeKey = (row: ImportRow): string | undefined => rowPlace(row)?.place_id
+export const placeKey = (row: ImportRow): string | undefined => rowPlace(row)?.place_id ?? row.choiceId
 
 /** docs/errors.md 문구. */
 export function linkErrorMessage(code: string | undefined): string {
   if (code === 'LINK_NOT_SUPPORTED') return '구글맵·카카오맵 링크만 붙일 수 있어요'
   return '링크에서 장소를 찾지 못했어요'
+}
+
+/**
+ * 대화를 더 붙여넣으면 새 링크만 기존 줄에 더한다(#1045). 같은 링크는 한 줄이고, 앞서 이름·주소를 못 읽었는데 이번에 읽었으면
+ * 그 힌트로 바꿔 다시 확인하게 응답을 비운다(이미 찍은 줄은 그대로). 상한은 누적 합계 기준이다 — 넘친 링크는 버리고 `truncated`.
+ */
+export function mergeRows(rows: ImportRow[], shares: Share[], max = LINK_MAX): { rows: ImportRow[]; added: number; truncated: boolean } {
+  const out = [...rows]
+  const at = new Map(out.map((r, i) => [r.share.url, i]))
+  let added = 0
+  let truncated = false
+  for (const share of shares) {
+    const i = at.get(share.url)
+    if (i !== undefined) {
+      const old = out[i]
+      if (!old.share.name && share.name && !old.outcome) {
+        out[i] = { share, picked: false }
+        added += 1
+      }
+      continue
+    }
+    if (out.length >= max) {
+      truncated = true
+      continue
+    }
+    at.set(share.url, out.length)
+    out.push({ share, picked: false })
+    added += 1
+  }
+  return { rows: out, added, truncated }
 }

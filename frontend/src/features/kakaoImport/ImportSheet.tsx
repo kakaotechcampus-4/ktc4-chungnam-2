@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 
 import ErrorText from '@/ErrorText'
 import { usePinsQuery } from '@/features/map/queries'
@@ -12,11 +12,11 @@ import Radio from '@/ui/Radio'
 import SheetTitle from '@/ui/SheetTitle'
 
 import { foundLabel, linkErrorMessage, placeKey, rowName, rowPlace, rowState, rowTitle, toPinRequest, type ImportRow, type PlaceSearchResultDto } from './model'
-import { pinsCenter, useLinkImport } from './queries'
+import { closeImport, openImport, pinsCenter, useImportOpen, useLinkImport } from './queries'
 
 const OUTCOME: Record<NonNullable<ImportRow['outcome']>, { label: string; tag: string }> = {
   created: { label: '찍었어요', tag: 'tag-good' },
-  duplicate: { label: '이미 있음', tag: 'tag-neutral' },
+  duplicate: { label: '이미 있어요', tag: 'tag-neutral' },
   rejected: { label: '못 찍었어요', tag: 'tag-warn' },
 }
 
@@ -39,29 +39,30 @@ export default function ImportSheet({
   onOpenOne: (url: string) => void
   onSearchName: (name: string) => void
 }) {
-  const imp = useLinkImport(mapId)
   const near = pinsCenter(usePinsQuery(mapId).data)
+  const imp = useLinkImport(mapId, near)
+  const hasRows = imp.rows.length > 0
   return (
     <ModalSheet label="카톡 대화에서 핀 가져오기" onClose={onClose}>
       <SheetTitle>카톡 대화에서 핀 가져오기</SheetTitle>
-      {imp.phase === 'paste' ? (
-        <PasteStep onStart={(text) => imp.start(text, near)} />
-      ) : (
-        <ReviewStep imp={imp} onClose={onClose} onOpenOne={onOpenOne} onSearchName={onSearchName} />
-      )}
+      {/* 입력칸은 늘 있다 — 다른 대화를 붙여넣으면 아래 목록에 새 링크만 더한다(#1045). */}
+      <PasteBox onAdd={imp.add} more={hasRows} />
+      {hasRows && <ReviewStep imp={imp} onOpenOne={onOpenOne} onSearchName={onSearchName} />}
     </ModalSheet>
   )
 }
 
-function PasteStep({ onStart }: { onStart: (text: string) => boolean }) {
+function PasteBox({ onAdd, more }: { onAdd: (text: string) => boolean; more: boolean }) {
   const [text, setText] = useState('')
   const [none, setNone] = useState(false)
   const id = useId()
   return (
     <div className="mt-1 space-y-3">
-      <p className="text-sm text-ink-500">
-        대화를 복사하거나 「대화 내보내기」로 받은 글을 붙여넣어 주세요. 지도 링크와 공유한 가게 이름·주소만 읽고, 대화 내용은 보내지도 남기지도 않아요.
-      </p>
+      {!more && (
+        <p className="text-sm text-ink-500">
+          대화를 복사하거나 「대화 내보내기」로 받은 글을 붙여넣어 주세요. 지도 앱에서 공유한 메시지를 통째로 넣으면 가게 이름·주소로 찾아요. 대화 내용은 보내지도 남기지도 않아요.
+        </p>
+      )}
       <label htmlFor={id} className="sr-only">
         카톡 대화
       </label>
@@ -72,8 +73,8 @@ function PasteStep({ onStart }: { onStart: (text: string) => boolean }) {
           setText(e.target.value)
           setNone(false)
         }}
-        rows={6}
-        placeholder="여기에 대화를 붙여넣기"
+        rows={more ? 2 : 6}
+        placeholder={more ? '다른 대화를 붙여넣으면 아래에 더해요' : '여기에 대화를 붙여넣기'}
         className="field w-full resize-none py-3"
       />
       {none && <p className="text-sm text-warn-text">지도 링크를 찾지 못했어요. 링크가 포함된 대화 구간을 붙여넣어 주세요</p>}
@@ -81,14 +82,14 @@ function PasteStep({ onStart }: { onStart: (text: string) => boolean }) {
         type="button"
         disabled={!text.trim()}
         onClick={() => {
-          const ok = onStart(text)
+          const ok = onAdd(text)
           // 대화 원문은 읽자마자 버린다 — 링크가 없으면 고쳐 붙일 수 있게 남긴다.
           if (ok) setText('')
           else setNone(true)
         }}
-        className="btn-primary btn-lg w-full"
+        className={more ? 'btn-outline btn-md w-full' : 'btn-primary btn-lg w-full'}
       >
-        지도 링크 찾기
+        {more ? '링크 더하기' : '지도 링크 찾기'}
       </button>
     </div>
   )
@@ -104,8 +105,11 @@ function LinkRef({ url }: { url: string }) {
   )
 }
 
-function ReviewStep({ imp, onClose, onOpenOne, onSearchName }: { imp: Imp; onClose: () => void; onOpenOne: (url: string) => void; onSearchName: (name: string) => void }) {
-  const entries = imp.rows.map((row, i) => ({ row, i, state: rowState(row) }))
+function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (url: string) => void; onSearchName: (name: string) => void }) {
+  const all = imp.rows.map((row, i) => ({ row, i, state: rowState(row) }))
+  // 찍은 줄은 「찍음」으로 따로 접어 둔다 — 상태별 묶음에는 아직 찍지 않은 줄만.
+  const doneRows = all.filter((e) => e.row.outcome)
+  const entries = all.filter((e) => !e.row.outcome)
   const of = (s: string) => entries.filter((e) => e.state === s)
   const found = of('found')
   const confirm = of('confirm')
@@ -114,13 +118,7 @@ function ReviewStep({ imp, onClose, onOpenOne, onSearchName }: { imp: Imp; onClo
   const already = of('already')
   const failed = of('failed')
   const checking = of('checking').length
-  const busy = imp.phase !== 'review'
-  const done = imp.phase === 'done'
-  const count = (s: NonNullable<ImportRow['outcome']>) => {
-    // 같은 장소로 묶인 줄은 한 곳으로 센다.
-    const keys = new Set(entries.filter((e) => e.row.outcome === s).map((e) => placeKey(e.row) ?? `#${e.i}`))
-    return keys.size
-  }
+  const busy = imp.phase !== 'idle'
 
   // 다른 링크라도 같은 장소를 고르면 한 곳이다 — 처음 고른 줄만 세고, 뒤의 줄에는 「위와 같은 장소」를 단다.
   const firstOf = new Map<string, number>()
@@ -137,11 +135,21 @@ function ReviewStep({ imp, onClose, onOpenOne, onSearchName }: { imp: Imp; onClo
   return (
     <div className="mt-1 space-y-5">
       <div className="space-y-1">
-        <p className="text-sm text-ink-500">
-          지도 링크 {imp.rows.length}개를 찾았어요
-          {checking > 0 && imp.phase === 'checking' && ` · 확인하는 중 ${imp.rows.length - checking}/${imp.rows.length}`}
-        </p>
-        {imp.found > imp.rows.length && <p className="text-xs text-warn-text">앞부분만 읽었어요. 뒤쪽 대화를 잘라 다시 넣어 주세요</p>}
+        <div className="flex items-center gap-2">
+          <p className="min-w-0 flex-1 text-sm text-ink-500">
+            지도 링크 {imp.rows.length}개
+            {checking > 0 && imp.phase === 'checking' && ` · 확인하는 중 ${imp.rows.length - checking}/${imp.rows.length}`}
+          </p>
+          {(doneRows.length > 0 || already.length > 0) && (
+            <button type="button" onClick={imp.clearDone} disabled={busy} className="btn-text text-sm">
+              완료된 것 지우기
+            </button>
+          )}
+          <button type="button" onClick={imp.clearAll} disabled={busy} className="btn-text text-sm">
+            모두 비우기
+          </button>
+        </div>
+        {imp.truncated && <p className="text-xs text-warn-text">앞부분만 읽었어요. 뒤쪽 대화를 잘라 다시 넣어 주세요</p>}
       </div>
 
       {imp.error != null && (
@@ -266,21 +274,34 @@ function ReviewStep({ imp, onClose, onOpenOne, onSearchName }: { imp: Imp; onClo
         </section>
       )}
 
-      {done ? (
-        <div className="space-y-2">
-          <p className="text-sm font-bold text-ink-900">
-            찍었어요 {count('created')}곳 · 이미 있음 {count('duplicate')}곳 · 못 찍음 {count('rejected')}곳
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={imp.reset} className="btn-neutral btn-md">
-              다른 대화 붙여넣기
-            </button>
-            <button type="button" onClick={onClose} className="btn-primary btn-md">
-              닫기
-            </button>
-          </div>
-        </div>
-      ) : (
+      {doneRows.length > 0 && (
+        // 찍은 줄은 접어 둔다 — 새로고침하거나 대화를 더 넣어도 남아서, 무엇을 이미 찍었는지 볼 수 있다(#1045).
+        <details className="rounded-xl bg-ink-50 px-3 py-2">
+          <summary className="text-sm font-bold text-ink-900">찍음 {new Set(doneRows.map((e) => placeKey(e.row) ?? e.row.share.url)).size}곳</summary>
+          <ul className="mt-1 divide-y divide-ink-100">
+            {doneRows.map((e) => (
+              <li key={e.row.share.url} className="flex min-h-11 items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-body text-ink-700">{rowTitle(e.row)}</span>
+                <RowTags e={e} sameAsAbove={false} />
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {imp.lastSaved && (
+        <p className="text-sm font-bold text-ink-900">
+          {[
+            imp.lastSaved.created > 0 && `${imp.lastSaved.created}곳을 찍었어요`,
+            imp.lastSaved.duplicate > 0 && `${imp.lastSaved.duplicate}곳은 이미 있었어요`,
+            imp.lastSaved.rejected > 0 && `${imp.lastSaved.rejected}곳은 못 찍었어요`,
+          ]
+            .filter(Boolean)
+            .join('. ')}
+        </p>
+      )}
+
+      {(picked > 0 || entries.length > 0) && (
         <button
           type="button"
           disabled={picked === 0 || busy}
@@ -354,40 +375,48 @@ function SearchRow({ e, imp, busy, sameAsAbove, onSearchName }: { e: Entry; imp:
   )
 }
 
-/**
- * 마킹 탭 제목 줄의 「카톡 대화에서 가져오기」. 시트가 떠 있는 동안 지도 버튼을 숨긴다(지도 정보 모달과 같은 규칙).
- * 「하나씩 찍기」는 시트를 닫고 그 링크를 검색 시트(#487)에, 「직접 찾기」는 그 이름을 검색 시트에 연다 — 진행은 남아 있어 다시 열면 이어진다.
- */
+/** 마킹 탭 제목 줄의 「카톡 대화에서 가져오기」. 여는 일만 한다 — 시트는 `ImportSheetHost`가 화면 바뀜과 상관없이 한 자리에서 그린다(#1045). */
 export function ImportButton({ mapId }: { mapId: string }) {
-  const [open, setOpen] = useState(false)
+  return (
+    <button type="button" onClick={() => openImport(mapId)} className="btn-link shrink-0 text-sm">
+      카톡 대화에서 가져오기
+    </button>
+  )
+}
+
+/**
+ * 가져오기 시트를 그리는 자리. 지도 화면(MapLayout)에 하나만 둔다 — 버튼이 있는 목록 머리는 검색·핀 상세·온보딩으로 바뀌면 통째로 빠지는데,
+ * 시트를 그 안에서 그리면 열린 채 사라지면서 「모달 열림」(지도 버튼·핑고 조언·토스트를 숨김)이 꺼지지 않고 남았다(#1045).
+ * 그래서 열림은 스토어에 두고, 모달 열림은 열려 있는 동안만 켠다 — 어떻게 닫히든(닫기·다른 지도·화면 나가기) cleanup 이 끈다.
+ * 「하나씩 찍기」는 시트를 닫고 그 링크를, 「직접 찾기」는 그 이름을 검색 시트에 연다 — 목록은 남아 있어 다시 열면 이어진다.
+ */
+export function ImportSheetHost({ mapId }: { mapId: string }) {
+  const open = useImportOpen(mapId)
   const setModalOpen = useSheetStore((s) => s.setModalOpen)
   const pins = usePinsQuery(mapId).data
-  const toggle = (next: boolean) => {
-    setOpen(next)
-    setModalOpen(next)
-  }
+  useEffect(() => {
+    if (!open) return
+    setModalOpen(true)
+    return () => setModalOpen(false)
+  }, [open, setModalOpen])
+  // 다른 지도로 가거나 지도 화면을 떠나면 시트를 닫는다(목록은 지도별 저장소에 남는다).
+  useEffect(() => () => closeImport(), [mapId])
+  if (!open) return null
   const near: LatLng | null = pinsCenter(pins)
   return (
-    <>
-      <button type="button" onClick={() => toggle(true)} className="btn-link shrink-0 text-sm">
-        카톡 대화에서 가져오기
-      </button>
-      {open && (
-        <ImportSheet
-          mapId={mapId}
-          onClose={() => toggle(false)}
-          onOpenOne={(url) => {
-            toggle(false)
-            useSearchStore.getState().openLink(url, null)
-            useSheetStore.getState().setStage('map', 2)
-          }}
-          onSearchName={(name) => {
-            toggle(false)
-            useSearchStore.getState().submit(name.slice(0, 50), near)
-            useSheetStore.getState().setStage('map', 2)
-          }}
-        />
-      )}
-    </>
+    <ImportSheet
+      mapId={mapId}
+      onClose={closeImport}
+      onOpenOne={(url) => {
+        closeImport()
+        useSearchStore.getState().openLink(url, null)
+        useSheetStore.getState().setStage('map', 2)
+      }}
+      onSearchName={(name) => {
+        closeImport()
+        useSearchStore.getState().submit(name.slice(0, 50), near)
+        useSheetStore.getState().setStage('map', 2)
+      }}
+    />
   )
 }
