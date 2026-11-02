@@ -11,7 +11,7 @@ import { hasReviews } from '@/features/reviews/model'
 import PlaceReviews from '@/features/reviews/PlaceReviews'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
-import { useAddToShortlistMutation } from '@/features/shortlist/queries'
+import { useAddToShortlistMutation, useUnconfirm } from '@/features/shortlist/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import AgainstMark from '@/ui/AgainstMark'
 import { josa } from '@/ui/josa'
@@ -55,6 +55,7 @@ export function PinDetailHeader({
   onBack: () => void
 }) {
   const add = useAddToShortlistMutation(mapId)
+  const remove = useUnconfirm(mapId)
   const navigate = useNavigate()
   const confirmed = pin.kind === '확정'
 
@@ -69,9 +70,20 @@ export function PinDetailHeader({
           {hasAiEvidence(pin) && <span className="tag tag-ai">AI</span>}
         </span>
         {confirmed ? (
-          <span className="btn-confirm btn-sm">
-            ✓ 확정됨
-          </span>
+          pin.permissions.can_remove_from_shortlist ? (
+            // 다시 누르면 확정이 풀리고 원래 핀으로 돌아간다. 실수로 눌렀으면 토스트의 「되돌리기」.
+            <button
+              type="button"
+              aria-pressed="true"
+              disabled={remove.isPending}
+              onClick={() => remove.unconfirm(pin)}
+              className="btn-confirm btn-sm"
+            >
+              ✓ 확정됨
+            </button>
+          ) : (
+            <span className="btn-confirm btn-sm">✓ 확정됨</span>
+          )
         ) : (
           pin.permissions.can_add_to_shortlist && (
             // 채움 버튼이 아니다 — 이 화면의 채움 버튼은 「의견 등록」 하나다.

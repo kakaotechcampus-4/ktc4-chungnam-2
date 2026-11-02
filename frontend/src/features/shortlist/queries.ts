@@ -2,6 +2,8 @@ import { useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { pinKeys } from '@/features/map/queries'
+import { showToast } from '@/features/shell/toast'
+import { josa } from '@/ui/josa'
 
 import { addToShortlist, calculateRoute, exportShortlist, fetchRoute, fetchShortlist, removeFromShortlist, reorderShortlist } from './api'
 import { sortItems, type ExportFormat, type ShortlistItemDto } from './model'
@@ -34,6 +36,30 @@ export function useAddToShortlistMutation(mapId: string) {
 export function useRemoveFromShortlistMutation(mapId: string) {
   const refresh = useRefreshAfterChange(mapId)
   return useMutation({ mutationFn: (itemId: string) => removeFromShortlist(itemId), onSuccess: refresh })
+}
+
+/**
+ * 확정 해제 + 「되돌리기」 토스트. 확정 탭의 「빼기」와 핀 상세의 「✓ 확정됨」이 같이 쓴다.
+ * 핀 상세는 핀만 알아서 확정 리스트에서 그 핀의 항목 id를 찾는다.
+ */
+export function useUnconfirm(mapId: string) {
+  const remove = useRemoveFromShortlistMutation(mapId)
+  const add = useAddToShortlistMutation(mapId)
+  const items = useShortlistQuery(mapId).data
+  const unconfirm = (pin: { id: string; place_name?: string | null }) => {
+    const item = items?.find((i) => i.pin.id === pin.id)
+    if (!item) return showToast('확정 리스트를 불러오는 중이에요. 잠시 뒤에 다시 눌러 주세요')
+    const name = pin.place_name ?? '이 장소'
+    remove.mutate(item.id, {
+      onSuccess: () =>
+        showToast(`${name}${josa(name, '을', '를')} 확정 리스트에서 뺐어요`, {
+          label: '되돌리기',
+          onClick: () => add.mutate(pin.id, { onError: () => showToast('되돌리지 못했어요') }),
+        }),
+      onError: () => showToast('확정 리스트에서 빼지 못했어요'),
+    })
+  }
+  return { unconfirm, isPending: remove.isPending }
 }
 
 /** 끌어서 순서 바꾸기. 놓는 순간 화면을 먼저 바꾸고, 실패하면 되돌린다. */

@@ -13,10 +13,9 @@ import { useMembersQuery } from '@/features/maps/queries'
 import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
-import { KAKAO_ROUTE_MAX, kakaoDirectionsUrl, move, routeSummary, type RouteDto, type ShortlistItemDto } from '@/features/shortlist/model'
+import { KAKAO_ROUTE_MAX, kakaoDirectionsUrl, move, routeSummary, type RouteDto } from '@/features/shortlist/model'
 import {
-  useAddToShortlistMutation,
-  useRemoveFromShortlistMutation,
+  useUnconfirm,
   useReorderShortlistMutation,
   useRouteMutation,
   useRouteQuery,
@@ -39,8 +38,7 @@ export default function ShortlistTab() {
   const setRouteOn = useRouteStore((s) => s.set)
   const route = useRouteQuery(mapId, routeOn)
   const calc = useRouteMutation(mapId)
-  const remove = useRemoveFromShortlistMutation(mapId)
-  const add = useAddToShortlistMutation(mapId)
+  const { unconfirm } = useUnconfirm(mapId)
   const reorder = useReorderShortlistMutation(mapId)
   const [params, setParams] = useSearchParams()
   const [courseOpen, setCourseOpen] = useState(false)
@@ -76,18 +74,6 @@ export default function ShortlistTab() {
   function openCourse() {
     if (routable < 2) return showToast('위치를 아는 장소가 2곳부터 코스를 짤 수 있어요')
     setCourseOpen(true)
-  }
-
-  function removeItem(item: ShortlistItemDto) {
-    const name = item.pin.place_name ?? '이 장소'
-    remove.mutate(item.id, {
-      onSuccess: () =>
-        showToast(`${name}${josa(name, '을', '를')} 확정 리스트에서 뺐어요`, {
-          label: '되돌리기',
-          onClick: () => add.mutate(item.pin.id, { onError: () => showToast('되돌리지 못했어요') }),
-        }),
-      onError: () => showToast('확정 리스트에서 빼지 못했어요'),
-    })
   }
 
   if (openPin) {
@@ -161,7 +147,7 @@ export default function ShortlistTab() {
         <ShortlistList
           items={items}
           onOpen={setOpenPin}
-          onRemove={removeItem}
+          onRemove={(item) => unconfirm(item.pin)}
           onReorder={(from, to) => {
             const name = items[from].pin.place_name ?? '이 장소'
             reorder.mutate(move(items, from, to), {
