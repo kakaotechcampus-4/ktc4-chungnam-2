@@ -204,7 +204,9 @@ def test_stall_diagnosis_uses_readiness_tool(world):
     assert (sug.diagnosis, sug.category, sug.shadow) == ("stall", "음식점", False)
     run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert run.priority["source"] == "single" and run.used_model is True   # 진단만 불러도 1회
-    assert run.tool_calls[0]["name"] == "get_readiness" and run.tool_calls[0]["result"]["ready"] is True
+    preview, readiness = run.tool_calls   # 미리 돌려 보기(코드, 6.7)가 모델보다 먼저 p1로 남는다
+    assert (preview["name"], preview["call_id"]) == ("preview_filter", "p1")
+    assert readiness["name"] == "get_readiness" and readiness["result"]["ready"] is True
 
 
 # ---------------------------------------------------------------- outcome 매핑
@@ -260,7 +262,7 @@ def test_fixed_gateway_reads_reasons_and_stays_silent(world):
     assert observe(world, map_id, deps.FixedAgentLlmGateway()) == "silent"
 
     run = world.one(AgentRun, map_id=map_id, trigger="activity")
-    assert [c["name"] for c in run.tool_calls] == ["get_reasons"] and run.used_model is True
+    assert [c["name"] for c in run.tool_calls] == ["preview_filter", "get_reasons"] and run.used_model is True
 
 
 # ---------------------------------------------------------------- 7. 모델 호출 중 상태가 바뀌면 stale
@@ -501,8 +503,8 @@ def test_tool_error_after_the_model_call_is_recorded_and_counts_toward_the_cap(w
     assert (run.trigger, run.outcome, run.used_model) == ("activity", "error", True)
     assert run.outcome_detail == {"stage": "model", "error": "ToolRunnerError"}
     assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v2", 900, 200)
-    assert [c["name"] for c in run.tool_calls] == ["get_reasons"]
-    assert run.tool_calls[0]["result"]["reasons"][0]["text_len"] == len(AGAINST_TEXT)
+    assert [c["name"] for c in run.tool_calls] == ["preview_filter", "get_reasons"]
+    assert run.tool_calls[1]["result"]["reasons"][0]["text_len"] == len(AGAINST_TEXT)
     assert AGAINST_TEXT not in _dump_agent_rows(factory)
     assert _model_runs_today(world, map_id) == 1
 
@@ -567,7 +569,7 @@ def test_lease_lost_after_the_diagnosis_counts_toward_the_cap(world, factory):
     assert (run.trigger, run.outcome, run.outcome_detail) == ("activity", "stale", {"reason": "lease_lost"})
     assert run.used_model is True
     assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v2", 900, 200)
-    assert [c["name"] for c in run.tool_calls] == ["get_readiness"]
+    assert [c["name"] for c in run.tool_calls] == ["preview_filter", "get_readiness"]
     assert world.rows(AgentSuggestion, map_id=map_id) == []
     assert AGAINST_TEXT not in _dump_agent_rows(factory)
     assert _model_runs_today(world, map_id) == 1
