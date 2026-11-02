@@ -17,7 +17,7 @@ from typing import Optional, Sequence
 
 from agent.course import core, goals as goals_mod
 from agent.course.constants import DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, LEG_MAX_MIN
-from agent.course.korean import attach
+from agent.course.korean import attach, goals_sentence
 
 SLOT = re.compile(r"\{([pd][1-9][0-9]*)\}")
 CLAUSE_SPLIT = re.compile(r"[,.·;!?]|지만|는데|으나|면서|고(?=\s)")
@@ -121,7 +121,7 @@ def _scope(ref: Reference, clause: str) -> tuple[str, list[core.Violation]]:
 def _violation_claims(ref: Reference, clause: str) -> list[str]:
     if ALL_CLEAR_RE.search(clause) and not CONDITIONAL_RE.search(clause):       # "점검도 통과한 후보" — 위반도 확인 필요도 없다는 말이다
         left = ([f"확정 위반 {len(ref.confirmed)}개"] if ref.confirmed else []) + ([f"영업 확인이 필요한 곳 {len(ref.checks)}곳"] if ref.checks else [])
-        return [f"점검을 통과했다고 썼지만 결과에는 남은 것이 있어요({' · '.join(left)})"] if left else []
+        return [f"점검을 통과했다고 썼지만 결과에는 남은 것이 있어요({', '.join(left)})"] if left else []
     if not VIOLATION_TOPIC_RE.search(clause):
         return []
     word, scoped = _scope(ref, clause)
@@ -288,9 +288,8 @@ def fact_sentence(ref: Reference, shown: int = 3) -> str:
         sentence += f" 영업 확인이 필요한 곳은 {len(ref.checks)}곳이에요."
     results = ref.goal_results
     if results:
-        kept = ", ".join(goals_mod.label(ref.trip, r.goal) for r in results if r.met is True) or "없음"
-        gave = ", ".join(goals_mod.label(ref.trip, r.goal) for r in results if r.met is not True)
-        sentence += f" 지킨 목표: {kept}" + (f" · 못 지킨 목표: {gave}" if gave else "")
+        sentence += " " + goals_sentence([goals_mod.label(ref.trip, r.goal) for r in results if r.met is True],
+                                         [goals_mod.label(ref.trip, r.goal) for r in results if r.met is not True])
     return sentence
 
 
