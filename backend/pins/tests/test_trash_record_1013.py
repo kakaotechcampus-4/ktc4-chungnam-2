@@ -2,7 +2,10 @@
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+import pytest
+from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 import authz.deps
 from authz.testing import FakeMembership
@@ -66,10 +69,12 @@ def test_purge_removes_only_pins_past_thirty_days_with_their_reactions(db_sessio
 
 def test_purge_is_idempotent_and_batch_limited(db_session, monkeypatch):
     monkeypatch.setattr("pins.core.PURGE_BATCH_LIMIT", 2)
-    for _ in range(3):
-        _trash(db_session, days_ago=40)
+    newest = _trash(db_session, days_ago=31)
+    for age in (40, 35):
+        _trash(db_session, days_ago=age)
     assert pins_api.purge_deleted_pins(db_session, now=NOW)["pins"] == 2
     db_session.commit()
+    assert set(db_session.scalars(select(PinRow.id))) == {newest.id}
     assert pins_api.purge_deleted_pins(db_session, now=NOW)["pins"] == 1
     db_session.commit()
     assert pins_api.purge_deleted_pins(db_session, now=NOW) == {"reactions": 0, "pins": 0}
@@ -83,3 +88,88 @@ def test_reassign_user_moves_the_deleter_too(db_session):
     db_session.commit()
     db_session.expire_all()
     assert db_session.get(PinRow, row.id).deleted_by == "user_1"
+
+
+@pytest.fixture
+def committed_trash(test_engine):
+    # 두 연결에서 볼 수 있게 실제 커밋한다. savepoint 픽스처와 섞지 않는다.
+    with Session(test_engine) as db:
+        row = _trash(db, days_ago=31)
+        pin_id = row.id
+        db.add(ReactionRow(pin_id=pin_id, user_id="user_2", type="like"))
+        db.commit()
+    try:
+        yield pin_id
+    finally:
+        with test_engine.begin() as conn:
+            conn.execute(delete(ReactionRow).where(ReactionRow.pin_id == pin_id))
+            conn.execute(delete(PinRow).where(PinRow.id == pin_id))
+
+
+def test_restore_between_purge_select_and_delete_cannot_lose_pin_or_reactions(
+    test_engine, committed_trash, monkeypatch,
+):
+    """실제 SELECT 직후 별도 트랜잭션의 복구 UPDATE를 실행한다. 조회 행은 commit까지 잠겨야 한다."""
+    pin_id = committed_trash
+    restore_blocked = False
+    with Session(test_engine) as purge_db:
+        execute = purge_db.execute
+
+        def execute_then_restore(statement, *args, **kwargs):
+            nonlocal restore_blocked
+            result = execute(statement, *args, **kwargs)
+            if statement.is_select:
+                with Session(test_engine) as restore_db:
+                    restore_db.execute(text("SET LOCAL lock_timeout = '200ms'"))
+                    try:
+                        restore_db.execute(update(PinRow).where(PinRow.id == pin_id).values(
+                            deleted_at=None, deleted_by=None, deleted_was_confirmed=None,
+                        ))
+                        restore_db.commit()
+                    except OperationalError as exc:
+                        assert exc.orig.pgcode == "55P03"  # lock_not_available
+                        restore_db.rollback()
+                        restore_blocked = True
+            return result
+
+        monkeypatch.setattr(purge_db, "execute", execute_then_restore)
+        counts = pins_api.purge_deleted_pins(purge_db, now=NOW)
+        purge_db.commit()
+    with Session(test_engine) as db:
+        if restore_blocked:
+            assert counts == {"reactions": 1, "pins": 1}
+            assert db.get(PinRow, pin_id) is None
+        else:
+            assert counts == {"reactions": 0, "pins": 0}
+            assert db.get(PinRow, pin_id).deleted_at is None
+            assert db.scalar(select(func.count()).select_from(ReactionRow)) == 1
+
+
+def test_purge_skips_pin_while_restore_holds_lock(test_engine, committed_trash):
+    pin_id = committed_trash
+    with Session(test_engine) as restore_db, Session(test_engine) as purge_db:
+        restore_db.execute(update(PinRow).where(PinRow.id == pin_id).values(
+            deleted_at=None, deleted_by=None, deleted_was_confirmed=None,
+        ))
+        purge_db.execute(text("SET LOCAL statement_timeout = '2s'"))
+        assert pins_api.purge_deleted_pins(purge_db, now=NOW) == {"reactions": 0, "pins": 0}
+        purge_db.commit()
+        restore_db.commit()
+    with Session(test_engine) as db:
+        assert pins_api.purge_deleted_pins(db, now=NOW) == {"reactions": 0, "pins": 0}
+        assert db.get(PinRow, pin_id).deleted_at is None
+        assert db.scalar(select(func.count()).select_from(ReactionRow)) == 1
+
+
+def test_purge_rollback_preserves_pin_and_reactions_and_releases_lock(test_engine, committed_trash):
+    with Session(test_engine) as purge_db:
+        assert pins_api.purge_deleted_pins(purge_db, now=NOW) == {"reactions": 1, "pins": 1}
+        purge_db.rollback()
+    with Session(test_engine) as restore_db:
+        restore_db.execute(text("SET LOCAL lock_timeout = '200ms'"))
+        assert restore_db.execute(update(PinRow).where(PinRow.id == committed_trash).values(
+            deleted_at=None, deleted_by=None, deleted_was_confirmed=None,
+        )).rowcount == 1
+        restore_db.commit()
+        assert restore_db.get(PinRow, committed_trash).deleted_at is None
+        assert restore_db.scalar(select(func.count()).select_from(ReactionRow)) == 1

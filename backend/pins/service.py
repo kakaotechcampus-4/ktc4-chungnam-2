@@ -694,11 +694,13 @@ def delete_reaction(db: Session, pin: PinRow, viewer_id: str) -> None:
 
 def purge_deleted_pins(db: Session, *, now: datetime) -> dict[str, int]:
     """휴지통 정리(#1013) — 삭제한 지 TRASH_RETENTION_DAYS일이 지난 핀과 그 반응을 영구 삭제한다. 오래된 것부터
-    PURGE_BATCH_LIMIT개까지(나머지는 다음 실행). 30일 안의 핀은 건드리지 않는다. 멱등. 테이블 이름 → 지운 행 수."""
+    PURGE_BATCH_LIMIT개까지(나머지는 다음 실행). 30일 안의 핀은 건드리지 않는다. 멱등. 테이블 이름 → 지운 행 수.
+    조회한 행을 호출자의 commit/rollback까지 잠가 복구와 삭제 사이의 경합을 막는다. 잠긴 행은 다음 실행으로 넘긴다."""
     cutoff = now - timedelta(days=core.TRASH_RETENTION_DAYS)
     expired = (
         select(PinRow.id).where(PinRow.deleted_at.is_not(None), PinRow.deleted_at <= cutoff)
-        .order_by(PinRow.deleted_at).limit(core.PURGE_BATCH_LIMIT)
+        .order_by(PinRow.deleted_at, PinRow.id).limit(core.PURGE_BATCH_LIMIT)
+        .with_for_update(skip_locked=True)
     )
     pin_ids = list(db.execute(expired).scalars())
     if not pin_ids:

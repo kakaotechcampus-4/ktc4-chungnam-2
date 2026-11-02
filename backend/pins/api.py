@@ -479,5 +479,6 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
 def purge_deleted_pins(db: Session, *, now: datetime) -> dict[str, int]:
     """정기 정리(maintenance, #1013)가 부른다 — 삭제한 지 30일이 지난 핀과 그 반응을 영구 삭제하고 테이블 이름 → 지운 행 수
     (`reactions`, `pins`)를 돌려준다. 한 번에 1000개까지, 오래된 것부터(남은 것은 다음 실행). 멱등. 30일 안의 핀은 건드리지 않는다.
+    복구와 경합하지 않도록 선택한 핀은 호출자의 commit/rollback까지 잠근다. 다른 트랜잭션이 잠근 핀은 다음 실행으로 넘긴다.
     지도 정리(`purge_map_data`)와 별개다. 커밋은 호출자."""
     return service.purge_deleted_pins(db, now=now)
