@@ -6,11 +6,13 @@ import {
   evidenceLimitMessage,
   fulfillmentLine,
   groupEvidence,
+  hasExcluded,
   memberConditions,
   noResultsExternalSearch,
   notEnforcedNote,
   toReadinessCards,
   type CandidateDto,
+  visibleConditionCount,
   type EvidenceLineDto,
 } from './model'
 
@@ -68,6 +70,14 @@ describe('추천이 쓰지 않는 근거 줄(#742)', () => {
   })
 })
 
+describe('「조건 N개」는 화면에 보이는 조건 수(#1143)', () => {
+  const pref = (id: string) => line(id, 'preferred', { fact_label: '양식', wants: true })
+  it('같은 키·방향 두 줄은 1개, 다른 키 두 줄은 2개', () => {
+    expect(visibleConditionCount([pref('a'), pref('b')])).toBe(1)
+    expect(visibleConditionCount([pref('a'), line('b', 'preferred', { fact_label: '국물', wants: true })])).toBe(2)
+  })
+})
+
 describe('「+」 직접 추가 상한(#720)', () => {
   it('숫자는 응답 detail.limit 에서 가져오고, 다른 오류는 null', () => {
     const limitErr = (detail?: Record<string, unknown>) => new ApiError(409, { code: 'EVIDENCE_LIMIT', message: 'x', detail })
@@ -118,5 +128,13 @@ describe('구성원 조건별 충족(#796)', () => {
     const c = cand([{ user_id: 'u1', satisfied: true }, { user_id: 'u2', satisfied: true }])
     expect(memberConditions(c, members)).toEqual([])
     expect(fulfillmentLine(c, members)).toBe('조건을 건 지우 (나)·민재 모두 통과 · 준영은 건 조건 없음')
+  })
+})
+
+describe('후보를 다 보여 준 뒤의 안내(#1142)', () => {
+  it('excluded 단계가 0보다 크면 참, 0이거나 key가 없으면 거짓', () => {
+    expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 13 }])).toBe(true)
+    expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 0 }])).toBe(false)
+    expect(hasExcluded([{ label: '이미 제안·거절됨', removed_count: 13 }])).toBe(false)
   })
 })

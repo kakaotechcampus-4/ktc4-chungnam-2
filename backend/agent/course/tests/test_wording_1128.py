@@ -84,6 +84,10 @@ class TestRequestPieces:
         ("마지막 날은 비워 주세요", G.REST_DAY),
         ("웨이팅 없는 곳으로", None),
         ("하루 걷는 시간 줄여 주세요", None),
+        ("경복궁 예약했어", None),                                          # 「예약」만으로는 시간 지정이 아니다
+        ("저녁에 한정식 예약했어요", G.TIME_GIVEN),
+        ("카페에서 휴식", None),                                             # 「휴식」만으로는 하루 비우기가 아니다
+        ("화요일은 휴식", G.REST_DAY),
     ])
     def test_piece_reason(self, piece, reason):
         assert G.piece_reason(piece) == reason
