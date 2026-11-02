@@ -438,7 +438,7 @@ COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방�
 
 
 # ---- 목표 세우기 (#334, pivot 3.3절) ----
-COURSE_GOALS_PROMPT_VERSION = "course-goals-v3"   # v2: day_has(그 날 코스에 tag 종류 장소 넣기) 추가(2026-10-21) · v3: 줄여 부른 장소 이름, 한 문장 속 여러 요청, 앞 조각의 날짜 이어받기(#899, 2026-10-30)
+COURSE_GOALS_PROMPT_VERSION = "course-goals-v4"   # v2: day_has(그 날 코스에 tag 종류 장소 넣기) 추가(2026-10-21) · v3: 줄여 부른 장소 이름, 한 문장 속 여러 요청, 앞 조각의 날짜 이어받기(#899, 2026-10-30) · v4: day_has에 카테고리(cafe, restaurant)와 한식(korean_food) 추가(#1094, 2026-11-02)
 
 COURSE_GOALS_PROMPT = f"""너는 여행 코스 요청 한 줄을 정해진 목표 종류로 바꾼다. 코스는 만들지 않는다. 코드가 목표를 점수로 계산해 코스를 짠다.
 
@@ -458,8 +458,9 @@ COURSE_GOALS_PROMPT = f"""너는 여행 코스 요청 한 줄을 정해진 목�
 | together | null | 장소 2개 | null | "○○ 보고 △△에서 밥, 같은 날에" |
 | day_has | 그 날 | 없음 | 아래 목록 | "둘째 날 저녁엔 공연 보고 싶고", "첫날은 전시 하나는 넣고 싶어요" — 그 날 코스에 그 종류의 장소가 하나 이상 있게 |
 
-day_has의 tag는 이 목록에서만 고른다(영어 이름 그대로): performance(공연·축제), exhibition(전시·미술관·박물관), night_view(야경), indoor(실내 장소), shopping(시장·쇼핑), walkable(산책), kid_friendly(아이와 가기 좋은 곳), heritage(고궁·유적).
-이 목록에 없는 종류(맛집, 카페, 사진, 자연, 데이트 등)는 목표로 만들지 않고 unmatched에 넣는다. 다른 kind에서는 tag를 null로 둔다.
+day_has의 tag는 이 목록에서만 고른다(영어 이름 그대로): performance(공연·축제), exhibition(전시·미술관·박물관), night_view(야경), indoor(실내 장소), shopping(시장·쇼핑), walkable(산책), kid_friendly(아이와 가기 좋은 곳), heritage(고궁·유적), korean_food(한식 식당), cafe(카페), restaurant(음식점·식당).
+"둘째 날엔 카페", "카페는 마지막 날에"는 day_has(cafe), "첫날 점심은 한식"은 day_has(korean_food)다. 그냥 "점심은 맛집"처럼 종류를 말하지 않은 바람은 만들지 않는다.
+이 목록에 없는 종류(맛집, 사진, 자연, 데이트 등)는 목표로 만들지 않고 unmatched에 넣는다. 다른 kind에서는 tag를 null로 둔다.
 "저녁", "밤", "오후" 같은 시간 말은 무시한다(시간 배정은 하지 않는다). "공연 보고 싶고 …"처럼 한 문장에 여러 바람이 섞이면 quote는 그 바람 조각만 옮긴다.
 "마지막은 야경", "야경으로 마무리"는 night_end, 그냥 "야경도 보고 싶어요"는 day_has(night_view)다. "실내 위주"는 day_indoor, "실내 장소도 하나"는 day_has(indoor)다. 날짜가 없는 day_has는 만들지 않는다(unmatched).
 
