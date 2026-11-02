@@ -56,6 +56,9 @@ TAG_TOPICS = {                                  # day_has의 tag별로 문장이
     "walkable": re.compile(r"산책"),
     "kid_friendly": re.compile(r"아이|어린이"),
     "heritage": re.compile(r"고궁|궁궐|유적"),
+    "korean_food": re.compile(r"한식"),
+    "cafe": re.compile(r"카페"),
+    "restaurant": re.compile(r"음식점|식당|점심|저녁|밥"),
 }
 GOAL_WORD_RE = re.compile(r"목표|요청")
 PLACEMENT_RE = re.compile(r"배치|배정|날짜|방문")
