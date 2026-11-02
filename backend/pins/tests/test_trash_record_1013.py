@@ -4,6 +4,9 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
+import authz.deps
+from authz.testing import FakeMembership
+from main import app
 from pins import api as pins_api
 from pins.models import Pin as PinRow
 from pins.models import Reaction as ReactionRow
@@ -28,6 +31,8 @@ def test_delete_records_who_and_that_it_was_not_confirmed(app_client, db_session
 
 
 def test_owner_deleting_someone_elses_pin_is_recorded_as_the_deleter(app_client, db_session):
+    app.dependency_overrides[authz.deps.get_membership_gateway] = lambda: FakeMembership(
+        {("map_1", "user_1"): "owner", ("map_1", "user_2"): "member"})
     pin = _insert_pin(db_session, created_by="user_2")
     assert app_client.delete(f"/pins/{pin.id}", cookies=_auth("user_1")).status_code == 204   # user_1은 방장
     db_session.expire_all()
