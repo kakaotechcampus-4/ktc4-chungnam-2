@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
 from agent.course import core, goals as goals_mod
-from agent.course.constants import DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, LEG_MAX_MIN
+from agent.course.constants import DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, LEG_MAX_MIN, MEAL_CATEGORY, MEALS_PER_DAY_MIN
 from agent.course.direct import DirectResult, DirectStep, Question
 from agent.course.korean import attach, candidate_name, goals_sentence
 
@@ -55,13 +55,16 @@ def _rec(stage: str, role: str, who: str, text: str) -> StepRecord:
     return StepRecord(stage, role, who, text)
 
 
-# 결과(outcome) 값 → 화면 문장. 화면에 enum 글자를 그대로 내지 않는다. {n}은 남은 확정 위반 수.
+# 결과(outcome) 값 → 화면 문장. 화면에 enum 글자를 그대로 내지 않는다. {n}은 남은 확정 위반 수, {checks}는 영업시간을 모르는 곳 수(#1128).
 OUTCOME_TEXT = {
     "solved": "확정 위반 없이 코스를 다 짰어요.",
-    "solved_with_checks": "확정 위반은 없지만 영업 여부를 가게에 확인해야 하는 곳이 남았어요.",
+    "solved_with_checks": "확정 위반은 없어요. 영업시간을 모르는 {checks}곳은 가게에 확인해 주세요.",
     "unresolved": "확정 위반이 {n}개 남은 채로 끝났어요.",
     "timeout": "시간이 다 되어 확정 위반이 {n}개 남은 채로 끝났어요.",
 }
+# 요청 목표가 없을 때(빈 요청, 「알아서 잘 짜줘」) 무엇을 기준으로 짜는지(#1128). 기준선의 날짜 균형·이동과 같은 말이다.
+NO_GOALS_OPENING = "따로 지킬 목표는 없어요. 이동을 줄이고 날마다 장소 수를 고르게 나눠 짤게요."
+NO_GOALS_CLOSING = "따로 지킬 목표 없이 이동을 줄이고 날마다 장소 수를 고르게 나눠 짰어요."
 
 
 def _labels(by_id: dict[str, goals_mod.Goal], trip: core.Trip, ids: Sequence[str]) -> list[str]:
@@ -91,8 +94,27 @@ def _choices_text(shown: Sequence[str], default: str) -> str:
 
 
 def meal_less_text(trip: core.Trip, day_index: int) -> str:
-    """식사할 곳이 없는 날의 확인 문장. 정하는 곳은 core.meal_less_days 하나다."""
-    return f"{core.day_label(trip, core.day_alias(day_index))}에는 식사할 곳이 확정 리스트에 없어요."
+    """식사할 곳이 없는 날의 확인 문장. 정하는 곳은 core.meal_less_days 하나다. 세 경우로 나눈다(#1008 K2): 확정 리스트에 식당이 0곳 /
+    있지만 날마다 둘 만큼은 모자람 / 둘 만큼 있는데 그날에 배정되지 않고 다른 날에 놓임. 있는데 "리스트에 없다"고 쓰면 사실과 다르다."""
+    day = core.day_label(trip, core.day_alias(day_index))
+    meals = sum(p.category == MEAL_CATEGORY for p in trip.places)
+    if meals == 0:
+        return f"{day}에는 식사할 곳이 확정 리스트에 없어요."
+    if meals < len(trip.days) * MEALS_PER_DAY_MIN:
+        return f"{day}에는 식사할 곳이 없어요. 확정 리스트의 식당이 모자라 이날은 비었어요."
+    return f"{day}에는 식사할 곳이 배정되지 않았어요. 확정 리스트에는 있지만 다른 날에 놓였어요."
+
+
+def _understood(trip: core.Trip, goals: Sequence[goals_mod.Goal], unmatched: Sequence[str]) -> str:
+    """「이해」 줄. 목표로 바꾸지 않은 조각은 종류가 정해진 것(시간, 하루 비우기)이면 코드의 고정 이유 문장을 쓰고 조각 원문은 넣지 않는다(#1128).
+    종류를 모르는 조각만 「…」는 판단할 수 없다고 쓴다."""
+    reasons = [goals_mod.piece_reason(u) for u in unmatched]
+    if goals:
+        head = ", ".join(goals_mod.label(trip, g) for g in goals) + "."
+    else:
+        head = "요청에서 지킬 목표를 찾지 못했어요." if unmatched else NO_GOALS_OPENING
+    return (head + "".join(f" {attach(f'「{u}」', '은/는')} 그대로는 판단할 수 없어요." for u, r in zip(unmatched, reasons) if r is None)
+            + "".join(f" {goals_mod.PIECE_REASONS[r]}" for r in dict.fromkeys(r for r in reasons if r)))
 
 
 class Narrator:
@@ -102,9 +124,7 @@ class Narrator:
     def __init__(self, trip: core.Trip, goals: Sequence[goals_mod.Goal], unmatched: Sequence[str], *, understood_by: str = MODEL):
         self.trip = trip
         self.by_id = {g.id: g for g in goals}
-        understood = (", ".join(goals_mod.label(trip, g) for g in goals) + "." if goals else "요청에서 지킬 목표를 찾지 못했어요.")
-        self._opening = _rec("이해", INTERPRET, understood_by, "이렇게 이해했어요: " + understood
-                             + "".join(f" {attach(f'「{u}」', '은/는')} 그대로는 판단할 수 없어요." for u in unmatched))
+        self._opening = _rec("이해", INTERPRET, understood_by, "이렇게 이해했어요: " + _understood(trip, goals, unmatched))
         self.optimized = 0
         self.redo = False                       # 쉬는 날 질문에 답한 뒤 처음 짜는 optimize는 "다시 짜기"다
         self.reviewing = False                  # 직전 단계가 후보를 돌려줬다 — 이번 모델 생각은 그 결과의 점검이다
@@ -173,8 +193,9 @@ class Narrator:
         met = [r.goal.id for r in result.goal_results if r.met is True]
         gave = [r.goal.id for r in result.goal_results if r.met is not True]
         out.append(_rec("결과", VERIFY, CODE, " ".join([
-            goals_sentence(_labels(self.by_id, self.trip, met), _labels(self.by_id, self.trip, gave)),
-            OUTCOME_TEXT.get(result.outcome, "결과를 정하지 못했어요.").format(n=core.hard_score(result.violations)[0]),
+            goals_sentence(_labels(self.by_id, self.trip, met), _labels(self.by_id, self.trip, gave)) if result.goal_results else NO_GOALS_CLOSING,
+            OUTCOME_TEXT.get(result.outcome, "결과를 정하지 못했어요.").format(
+                n=core.hard_score(result.violations)[0], checks=len(core.find_checks(self.trip, result.course, result.state.hours))),
         ])))
         return out
 

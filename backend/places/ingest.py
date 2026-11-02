@@ -13,7 +13,7 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Any, Iterable, Iterator, Mapping
 
-from places import core   # 순수 함수만 쓴다(core는 places의 다른 모듈을 부르지 않는다)
+from places import core, cuisine_names   # 순수 함수만 쓴다(둘 다 places의 다른 모듈을 부르지 않는다)
 
 # ---------------------------------------------------------------- 공통
 
@@ -345,6 +345,9 @@ class LabelRow:
     label_source: str | None = None  # 근거의 종류(license_business_type, 모범음식점 …)
 
 
+RESTAURANT_CATEGORY = "음식점"   # 음식점 납품본의 분류 — 음식 종류(cuisine_*) 라벨은 이 분류의 장소만 갖는다(갱신 스크립트 relabel_cuisine_1093도 이 값으로 가른다)
+
+
 def _parse_bool(raw: str) -> bool | None:
     return {"true": True, "false": False}.get(raw.strip().lower())
 
@@ -477,7 +480,7 @@ BAR_TYPES = frozenset({"정종/대포집/소주방", "감성주점"})
 
 def parse_curated_rows(
     rows: Iterable[Mapping[str, Any]], *, exclude_bars: bool = False, seoul_only: bool = True,
-    category: str = "음식점",
+    category: str = RESTAURANT_CATEGORY,
 ) -> tuple[list[PlaceRow], Report]:
     """업태를 가리지 않고 서울·좌표가 있는 행을 모두 category로 적재한다(업태가 비면 경고)."""
     report = Report()
@@ -531,7 +534,10 @@ def curated_labels_to_rows(entries: Iterable[Mapping[str, Any]]) -> Iterator[dic
         place_id = str(entry.get("place_id", ""))
         prefix = next((p for p in CURATED_PLACE_ID_PREFIXES if place_id.startswith(p)), None)
         source_id = place_id[len(prefix):] if prefix else ""
-        for key, label in (entry.get("labels") or {}).items():
+        labels = entry.get("labels") or {}
+        if prefix == "rest_":   # 음식점의 음식 종류만 보정한다(#1093) — 업종 유래 거짓은 모름으로, 가게 이름 규칙은 참으로(cuisine_names)
+            labels = cuisine_names.adjust_cuisine_labels(str(entry.get("title") or ""), labels)
+        for key, label in labels.items():
             raw = str((label or {}).get("value", "")).strip()
             unknown = raw.lower() == "unknown" or raw == ""
             yield {
