@@ -25,7 +25,7 @@ from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
 from common.errors import AppError
 from llm import usage as usage_log
 from llm.client import (
-    PER_CALL_TIMEOUT_SECONDS, LlmCallError, call_agent_diagnosis_turn, call_course_direct, call_course_goals, call_course_turn,
+    PER_CALL_TIMEOUT_SECONDS, LlmCallError, call_agent_diagnosis_turn, call_agent_status, call_course_direct, call_course_goals, call_course_turn,
     call_planner, get_client, metering,
 )
 from llm.prompts import (
@@ -34,7 +34,7 @@ from llm.prompts import (
 )
 from llm.schemas import (
     AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
-    FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, RankedCandidate,
+    FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, RankedCandidate, StatusCategory, StatusOutput,
 )
 
 log = logging.getLogger("pingo.llm")
@@ -496,6 +496,52 @@ def agent_diagnose(
             exc.usage = usage
             raise
     log.info("agent_diagnose 완료: diagnosis=%s decision=%s tools_used=%d", diagnosis, output.decision, budget.used)
+    return AgentReply(output, usage)
+
+
+# ---- 지도 현황 문단 (#1168, docs/agent-v2.md 8.2) ----
+# 입력은 agent의 core.status_cells가 센 칸(사실)뿐이다 — 사유 글, 이름, 장소 이름이 없다. 도구 없이 한 번 부른다. 상태가 사실과
+# 맞는지, 숫자가 칸에 있는지, 먼저 볼 카테고리를 지켰는지는 agent의 core.verify_status가 본다. 실패는 재요청하지 않는다.
+
+StatusPlanner = Callable[[Mapping[str, Any]], StatusOutput]
+
+
+def _fixed_state(cell: Mapping[str, Any]) -> str:
+    """고정 응답 스텁의 상태 — 사실과 어긋나지 않는 쪽으로만 고른다(verify_status를 늘 통과한다)."""
+    if cell.get("stalled"):
+        return "stalled"
+    if cell.get("split_pins"):
+        return "split_left"
+    if cell.get("confirmed"):
+        return "almost"
+    return "gathering" if cell.get("pins") else "empty"
+
+
+def fixed_status_planner(status_input: Mapping[str, Any]) -> StatusOutput:
+    """고정 응답 스텁(dev, 테스트) — 모델을 부르지 않는다. 상태는 칸에서 어긋나지 않는 쪽으로 고르고, 문단은 숫자 없는 고정 문구다.
+    먼저 볼 카테고리가 있으면 그것만 권한다. 지어낸 숫자나 판단이 화면으로 나갈 길이 없다."""
+    categories = [StatusCategory(category=c["category"], state=_fixed_state(c)) for c in status_input.get("categories", ())]
+    first = status_input.get("first_category")
+    paragraph = f"지도 현황을 정리했어요. {first}부터 보면 좋겠어요." if first else "지도 현황을 정리했어요."
+    return StatusOutput(categories=categories, paragraph=paragraph)
+
+
+def real_status_planner(status_input: Mapping[str, Any]) -> StatusOutput:
+    """실제 모델. 클라이언트는 호출 때 만든다 — 설정이 비면 LlmCallError(call_failed)."""
+    return call_agent_status(get_client(), status_input)
+
+
+def agent_status(status_input: Mapping[str, Any], *, planner: StatusPlanner) -> AgentReply[StatusOutput]:
+    """지도 현황 문단(명세 8.2). status_input은 agent의 core.status_cells 결과 그대로다(dday, first_category, first_reason,
+    categories[{category, confirmed, pins, split_pins, stalled, unreacted_pins}]). 결과(StatusOutput 또는 AgentCallFailed)와
+    사용량을 함께 돌려준다. 실패(호출 실패, 타임아웃, 스키마 검증 실패)는 재요청하지 않고 AgentCallFailed다 — agent가 지난 문단을
+    그대로 둔다."""
+    with metering() as usage:
+        try:
+            output = planner(status_input)
+        except (LlmCallError, ValueError) as exc:
+            return AgentReply(_failed("agent_status", exc, "status"), usage)
+    log.info("agent_status 완료: categories=%d", len(output.categories))
     return AgentReply(output, usage)
 
 

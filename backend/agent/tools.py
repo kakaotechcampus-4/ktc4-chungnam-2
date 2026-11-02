@@ -334,6 +334,14 @@ def summary_reasons(ctx: ToolContext, category: str) -> list[dict[str, Any]]:
     ]
 
 
+def reasons_of(ctx: ToolContext, reaction_ids: Sequence[str]) -> list[dict[str, Any]]:
+    """그 반응들의 구조화 결과 [{reaction_id, type, lines[{fact_key, wants, badge}]}] — 우리 데이터 확인(6.6)이 정체 신호의 🚫
+    사유에서 키를 고를 때 쓴다. 모델 도구가 아니라 기록(calls)에 남지 않고 상위 30개로 자르지 않는다. 같은 글의 ②는 캐시로
+    한 번만 부른다. ②가 실패하면 PlanEvidenceFailed."""
+    wanted = set(reaction_ids)
+    return _structured(ctx, [r for r in _reasoned(ctx) if r["reaction_id"] in wanted])
+
+
 def structure_reasons(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
     """[{reaction_id, type, lines[{fact_key 또는 null, wants 또는 null, badge}]}]. 글은 ②, 칩은 칩 표 그대로(8.1).
     이 지도에 없는 반응 id는 not_found로 돌려준다."""

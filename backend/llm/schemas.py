@@ -258,6 +258,23 @@ class DiagnosisOutput(BaseModel):
     actions: list[Action]
 
 
+# ---- 지도 현황 문단 (#1168, docs/agent-v2.md 8.2) ----
+# 입력은 agent의 core.status_cells가 센 칸(사실)뿐이다. 모델은 카테고리마다 상태를 고르고 문단을 쓴다. 상태가 사실과
+# 어긋나는지, 문단의 숫자가 칸에 있는지, 먼저 볼 카테고리를 지켰는지는 agent의 core.verify_status가 본다 — 여기서는 스키마까지다.
+
+StatusState = Literal["decided", "almost", "split_left", "stalled", "few", "gathering", "empty"]
+
+
+class StatusCategory(BaseModel):
+    category: str  # 칸의 카테고리 이름 그대로. 빠뜨리거나 두 번 쓰면 검증에서 떨어진다
+    state: StatusState
+
+
+class StatusOutput(BaseModel):
+    categories: list[StatusCategory]
+    paragraph: str  # 2~4문장, 해요체. 숫자는 칸의 값만
+
+
 AgentFailureReason = Literal["invalid_schema", "timeout", "call_failed"]
 
 
