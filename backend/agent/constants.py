@@ -41,8 +41,8 @@ SUMMARY_NEW_REASONS = 3
 
 BLOCKED_RUN_MAX_RESULTS = FEW_RESULTS   # 결과가 이 값 미만이면 추천 막힘. 값은 recommend가 정한다(#800)
 BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS = 3   # 또는 같은 사람이 같은 카테고리 run을 이 값 이상 만들었으면 (초안)
-# 재시도 상한(attempt_no)은 개인 단위, 카테고리 무관, 5회다(#31). attempt_no로 세면 다른 카테고리 시도가 섞이고,
-# 4회면 1회밖에 남지 않는다. 그래서 같은 카테고리 run 수를 따로 센다(GET /maps/{mapId}/runs의 기록, #469).
+# 재시도 상한(attempt_no)은 개인 단위, 카테고리 무관, 10회다(#31, 2026-10-15 5→10회). attempt_no로 세면 다른 카테고리
+# 시도가 섞인다. 그래서 같은 카테고리 run 수를 따로 센다(GET /maps/{mapId}/runs의 기록, #469).
 # 깔때기에서 "뚜렷하게 많이 빠졌다"고 보는 탈락 수(9절 표의 "많음", #588 평가셋 기준, 루트 결정 #749). 이보다 적게 빠진
 # 단계로는 radius, soft_relax, exhausted를 고르지 않는다. soft_relax의 둘째 줄도 이만큼 늘어날 때만 말한다
 ADVICE_CLEAR_DROP = 5

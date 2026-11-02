@@ -6,13 +6,13 @@
 
 ## 책임
 
-- `credit_accounts`, `credit_ledger` 두 테이블(마이그레이션 0048). **원본은 원장이다.** `balance`는 원장 합을 담아 두는
+- `credit_accounts`, `credit_ledger` 두 테이블(마이그레이션 0048)과 광고 세션 `credit_ad_sessions`(0054, #1038). **원본은 원장이다.** `balance`는 원장 합을 담아 두는
   잠금용 값이고, 둘을 함께 바꾸는 곳은 `service._apply` 하나다
-- 가격표와 지급량 — `constants.py` 한 곳(`INITIAL_CREDITS`, `PRICES`, `REVIEW_REWARD`, `MAX_BALANCE`)
-- 잔액 상한 30(`MAX_BALANCE`, 명세 3.6, #981) — 후기 보상과 환불만 `core.capped_gain`으로 상한까지 채운다. 0이어도 원장 줄을
+- 가격표와 지급량 — `constants.py` 한 곳(`INITIAL_CREDITS`, `PRICES`, `REVIEW_REWARD`, `MAX_BALANCE`, 광고 충전 `AD_*`)
+- 잔액 상한 30(`MAX_BALANCE`, 명세 3.6, #981) — 후기 보상, 광고 보상, 환불만 `core.capped_gain`으로 상한까지 채운다. 0이어도 원장 줄을
   남긴다(멱등, 그 장소 보상 끝). 이미 넘은 잔액은 깎지 않고 DB CHECK도 걸지 않는다
 - 게스트 판정 — `auth.api.guest_user_ids` 한 곳. 부르는 쪽이 `is_guest`를 넘기지 않는다
-- `GET /credits/me`
+- `GET /credits/me`, 광고 보고 충전 `POST /credits/ad-sessions`, `POST /credits/ad-sessions/{id}/claim`(명세 3.7)
 - `api.py`: `check_can_spend`, `charge`, `refund`, `grant_review`, `get_balance`, `reject_guest`, `delete_by_user`, `reassign_user`
 - 탈퇴 때는 남기고 7일 정리(`auth.service.purge_withdrawn_user`)에서 지운다 — 되살리면 잔액이 그대로다(#948)
 
@@ -22,7 +22,8 @@
 - 가격 숫자를 밖으로 흘리지 않는다. 다른 모듈은 `constants.py`를 import하지 않고(`integration/test_import_rules.py`),
   화면은 `GET /credits/me`로 받는다
 - 커밋하지 않는다. 차감은 부르는 쪽의 실행 저장 트랜잭션에 얹힌다
-- 페이즈 2 구매(`purchase`), 광고 충전(`ad`, `grant_ad`)은 미리 만들지 않는다(명세 3.3)
+- 페이즈 2 구매(`purchase`)는 미리 만들지 않는다(명세 3.3)
+- 광고 충전은 명세 3.7절대로 이 모듈 라우터 안에서 끝난다. 광고 SDK는 FE 몫이다
 
 ## 다른 모듈
 
@@ -31,4 +32,4 @@ reviews #951, auth의 7일 정리·합치기).
 
 ## 테스트
 
-`credits/tests/`. 명세 12절 1~8. 커밋하는 테스트(동시 첫 차감)는 `committed_user`가 만든 사용자의 행만 끝나고 지운다.
+`credits/tests/`. 명세 12절 1~8, 광고 충전 25~31(`test_ad.py`, 시각은 주입한다). 커밋하는 테스트(동시 첫 차감)는 `committed_user`가 만든 사용자의 행만 끝나고 지운다.

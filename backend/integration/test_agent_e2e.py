@@ -20,6 +20,7 @@ agent/tests는 다른 모듈 데이터를 행으로 직접 넣는다(World). 여
 
 import dataclasses
 import json
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -50,6 +51,7 @@ from maps.models import Map
 from maps.purge import PURGE_STEPS
 from notifications.models import Notification, NotificationPref
 from recommend import api as recommend_api
+from recommend import core as recommend_core
 from recommend import deps as recommend_deps
 from recommend.deps import (
     RealPlaceFactsGateway, RealPlaceSearchGateway, get_evidence_plan_gateway, get_place_facts_gateway,
@@ -456,16 +458,27 @@ def test_instruction_hidden_in_a_reason_never_reaches_the_screen(e2e):
 # ---------------------------------------------------------------- 추천 막힘 조언: 추천 → 시뮬레이션 → 조언 → 사람이 넓힘
 
 def _thin_run(e2e):
-    """관광지 추천 결과가 0곳인 run. 추천의 기본 지역은 그 카테고리 핀들의 중심에서 도보 15분(1,200m)이다. 핀은 성수 한가운데
-    「성수 골목」 하나라(이미 핀이라 후보에서 빠진다) 결과가 없다. 반경 밖에는 다섯 곳이 있어 「반경 밖 제거」가 뚜렷한
-    단계(ADVICE_CLEAR_DROP 5곳 이상)가 된다: 중심에서 1,400m에 「성수 갤러리」, 1,650m에 「서울숲」, 1,850~2,200m에 공원
-    셋. 반경 넓히기 한 번(20분, 1,600m)은 갤러리 하나만 더 닿는다."""
+    """관광지 추천 결과가 0곳인 run. 추천의 기본 지역은 그 카테고리 핀들의 중심에서 관광지 기본 반경(radius_walk_mins)이다.
+    핀은 성수 한가운데 「성수 골목」 하나라(이미 핀이라 후보에서 빠진다) 결과가 없다. 기본 원 밖, 넓히기 상한 안에 다섯 곳이
+    있어 「반경 밖 제거」가 뚜렷한 단계(ADVICE_CLEAR_DROP 5곳 이상)가 된다: 기본 원 +150m에 「성수 갤러리」, 넓히기 한 번(+5분)의
+    원 +100m에 「서울숲」, 그 바깥 +200·300·400m에 공원 셋. 반경 넓히기 한 번은 갤러리 하나만 더 닿는다. 거리는 반경 값에서
+    계산해 관광지 반경이 바뀌어도 그대로 성립한다(#1055)."""
+    walk_min, _limit = recommend_core.radius_walk_mins("관광지")
+    base_m = recommend_core.radius_m_for_walk_min(walk_min)
+    widened_m = recommend_core.radius_m_for_walk_min(recommend_core.next_default_radius_walk_min(walk_min, "관광지"))
+
+    def east_of_center(meters: float) -> float:   # 중심에서 동쪽으로 meters만큼 간 경도
+        return REGION["lng"] + meters / (111_320 * math.cos(math.radians(REGION["lat"])))
+
     seoul_forest = next(r for r in e2e.fake_places.rows if r.key == "seoul-forest")
+    e2e.fake_places.rows = [r for r in e2e.fake_places.rows if r.key != "seoul-forest"]
     e2e.fake_places.rows += [
         dataclasses.replace(seoul_forest, key="seongsu-alley", name="성수 골목", lat=REGION["lat"], lng=REGION["lng"]),
-        dataclasses.replace(seoul_forest, key="seongsu-gallery", name="성수 갤러리", lat=REGION["lat"], lng=127.0402),
-        *(dataclasses.replace(seoul_forest, key=f"seongsu-park-{i}", name=f"성수 공원 {i}", lat=REGION["lat"], lng=lng)
-          for i, lng in enumerate((127.0351, 127.0331, 127.0311), start=1)),
+        dataclasses.replace(seoul_forest, key="seongsu-gallery", name="성수 갤러리", lat=REGION["lat"], lng=east_of_center(base_m + 150)),
+        dataclasses.replace(seoul_forest, lat=REGION["lat"], lng=east_of_center(widened_m + 100)),
+        *(dataclasses.replace(seoul_forest, key=f"seongsu-park-{i}", name=f"성수 공원 {i}", lat=REGION["lat"],
+                              lng=east_of_center(widened_m + extra))
+          for i, extra in enumerate((200, 300, 400), start=1)),
     ]
     a, b, outsider = e2e.users(a="가온", b="나래", x="바다")
     map_id = e2e.shared_map(a, b)

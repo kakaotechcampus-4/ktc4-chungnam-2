@@ -2,6 +2,42 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-02, 깔때기 「반경 밖 제거」에 다른 시·도 장소 포함 — 설명 문구만 (#1055)
+
+- 추천 후보는 모든 카테고리에서 여행 지역과 같은 시·도 안만이다(PR #1069). 빠진 장소는 새 단계 없이 「반경 밖 제거」로 센다.
+- `RecommendResult.funnel` 설명에 한 문장을 더했다. 응답·요청 구조와 단계 목록은 그대로다.
+- FE: 바꿀 것 없음(깔때기는 받은 표를 그대로 그린다).
+
+## 2026-11-02, 관광지 반경 넓히기 상수 — 기본 25분·상한 45분, 설명 문구만 (#1055)
+
+사용자 결정(2026-11-02): 관광지는 반경 안 후보가 적어 기본 원을 넓게 시작한다. 근거는 9차 시험(`docs/constraints.md` 「반경 넓히기 상수」 절).
+
+- **응답·요청 구조는 그대로다.** 바뀐 것은 값과 설명 문구뿐이다: `POST /runs/{runId}/widen` 설명, `WIDEN_LIMIT` 409 설명, `RecommendReadiness.curated_nearby`, `RecommendRun.default_radius_walk_min`.
+- 값: 음식점·카페 기본 15분·상한 30분(그대로), **관광지 기본 25분·상한 45분**. 1회 확대폭은 5분 그대로.
+- FE: 응답의 `default_radius_walk_min`·`widen_limit_walk_min`을 그대로 쓰면 바꿀 것이 없다. 화면에 15·30 숫자를 적어 둔 곳이 있으면 응답 값으로 바꾼다.
+- 서버: recommend(#1055, PR #1060). 점수 규칙의 확인된 거짓 감점도 같은 이슈지만 API에는 보이지 않는다(`docs/constraints.md` 점수 절).
+
+## 2026-11-02 (카톡 가져오기), 번호→장소 번호표·같은 주소 후보·네이버 링크 (#1047·#1048)
+
+사용자 결정(2026-11-02): 「카톡으로 핀 깔기」는 복잡도를 감수하고 사용자 편의를 우선한다. 실제 카톡 공유 글로 시험한 결과를 반영한다(#1019).
+
+- **`LinkParseResult`**: `matched_by`에 `external_id`(번호표로 찾음) 추가, 선택 필드 `external_id`(링크에서 읽은 카카오·네이버 번호), 선택 필드 `address_candidates`(같은 주소의 단일 점포, 사람이 확인하는 후보 — 자동 확정 아님). `provider: naver`의 뜻이 바뀐다: 이제 서버가 `naver.me` 단축 링크를 한 번 따라가 번호를 읽는다(페이지 본문은 열지 않는다).
+- **`PinCreateSearch.link_ref`**(선택, `{provider: kakao|naver, external_id}`): link-preview 응답의 값을 핀 생성에 그대로 돌려 보낸다. 핀에 저장되지 않고 서버의 번호표 학습에만 쓰인다(서로 다른 사용자 2명이 같은 짝을 확인하면 자동 매칭).
+- **`POST /maps/{mapId}/pins/link-preview` 설명**: 실제 공유 글 모양(네이버·카카오·구글)과 4단 해결 순서를 적었다. 서버가 힌트로 스스로 확정한 짝은 번호표에 캐시한다.
+- 하위호환: 새 응답 필드는 모두 선택이라 기존 FE는 무시해도 된다. `link_ref`는 선택 요청 필드.
+- 서버: places(#1047 주소 후보·지점 접미사·구글 이름 속 주소 분리, #1048 번호표·`naver.me`), pins(`link_ref` 기록 호출). 그 전까지 실서버는 새 필드를 보내지 않고 `link_ref`는 무시한다. 목 서버는 새 시나리오를 낸다.
+- FE: #1046(공유 글 읽기·4단 해결·네이버 링크). 새 필드 없이도 구현 가능하다.
+
+## 2026-11-02, 광고 보고 크레딧 충전 — `CreditBalance.ad`, 광고 세션 열기·받기 (#1037)
+
+명세 `docs/credits-reviews.md` 3.7절, 결정 #432(2026-11-02 코멘트). 크레딧이 바닥나면 보상형 광고를 끝까지 보고 10을 받는다(상한 30까지, 사람당 KST 하루 3번, 연 뒤 7초).
+
+- `CreditBalance.ad`(필수, `CreditAd { available, reward, used_today, daily_max, provider, unit_id }`). 화면은 `available`만 본다.
+- `POST /credits/ad-sessions`(201 `AdSession { ad_session_id, claim_after_s }`, 받지 않은 세션은 이어 받는다), `POST /credits/ad-sessions/{adSessionId}/claim`(200 `AdClaim { credited, balance }`, 멱등).
+- 오류 `AD_REWARD_UNAVAILABLE`(409, `reason`), `AD_REWARD_LIMIT`(429, `limit`), `AD_REWARD_INVALID`(409, `reason`, `retry_after_s`).
+- 목 서버: `ad` 블록(기본 `provider: "fake"`), 두 경로. 광고가 열리는 모습은 시나리오 `credits-empty`(잔액 0). 받기 전 7초를 지킨다.
+- 서버 구현 전까지 두 경로와 세 오류 코드, `/credits/me`의 `ad`는 알려진 목록에 #1038로 있다. 화면은 #1039.
+
 ## 2026-11-01 (다섯 번째), 후기 화면의 크레딧 문구를 한 줄로 (#982)
 
 계약은 그대로다. 화면 문구만 정한다(`docs/credits-reviews.md` 5절 「화면 문구」): 새 후기 작성 시트에 「후기를 작성하면 {review_reward} 크레딧이 충전돼요」 한 줄만 두고(잔액이 `max_balance` 이상이면 숨긴다 — #985 검수), 고치기·삭제·저장 토스트에는 크레딧 얘기를 넣지 않는다. 받은 양을 보여 주려고 `ReviewSaved.credited`를 화면에 쓰지 않아도 된다(필드는 그대로 내린다).

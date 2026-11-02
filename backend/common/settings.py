@@ -15,6 +15,8 @@ Environment = Literal["dev", "test", "staging", "prod"]
 # 운영과 같은 기동 가드와 엄격한 기본값을 받는 환경. staging은 실제 사용자가 없는 시험 서버다(#788, deploy_rules.md「스테이징」).
 _STRICT_ENVIRONMENTS = ("staging", "prod")
 AdapterMode = Literal["dev", "real"]
+# 광고 보고 충전의 광고 제공자(docs/credits-reviews.md 3.7, #1038). ""은 끔. fake는 테스트 광고 창이라 운영에서 막는다.
+CreditAdProvider = Literal["", "fake", "adsense", "gpt"]
 
 PLACE_SOURCE_NAMES = ("kakao", "naver")
 _PORTS = ("places", "llm")
@@ -152,6 +154,10 @@ class Settings:
     # 스테이징 전용 QA 로그인(POST /auth/qa-login, #788)의 비밀값. staging에서 값이 있을 때만 그 경로가 붙는다(qa_login_enabled).
     # prod에 값이 있으면 아래 __post_init__이 서버를 세운다.
     qa_login_secret: str = ""
+    # 광고 보고 충전(docs/credits-reviews.md 3.7, #1038). 서버는 두 값을 GET /credits/me의 ad로 그대로 내리고 광고 단위를
+    # 검증하지 않는다. 비어 있으면 광고 충전이 꺼진다. prod에서 fake면 아래 __post_init__이 서버를 세운다.
+    credit_ad_provider: CreditAdProvider = ""
+    credit_ad_unit_id: str = ""
     # DB 커넥션 풀(#810). 기본값은 SQLAlchemy 기본(풀 5 + 넘침 10 = 프로세스당 최대 15, 재활용 없음)과 같다.
     # 연결 수 계산은 deploy_rules.md「DB 연결 수」. pre_ping은 DB 컨테이너가 다시 뜬 뒤 끊긴 연결을 쓰지 않게 기본으로 켠다.
     db_pool_size: int = 5
@@ -172,6 +178,10 @@ class Settings:
             raise ConfigError(f"PLACES_SOURCES에 모르는 소스가 있다: {unknown_sources} — {PLACE_SOURCE_NAMES} 중에서 고른다")
         if self.environment == "prod" and self.qa_login_secret:
             raise ConfigError("prod에 QA_LOGIN_SECRET이 있다 — 스테이징 전용이다(#788). 운영 환경 변수에서 지운다")
+        if self.credit_ad_provider not in get_args(CreditAdProvider):
+            raise ConfigError(f"CREDIT_AD_PROVIDER={self.credit_ad_provider!r} — 비우거나 fake|adsense|gpt 중 하나여야 한다")
+        if self.environment == "prod" and self.credit_ad_provider == "fake":
+            raise ConfigError("prod에 CREDIT_AD_PROVIDER=fake가 있다 — 테스트 광고 창이다(#1038). 운영에서는 비우거나 실제 제공자를 쓴다")
         # 풀 값은 환경과 무관하게 막는다. 0과 음수는 SQLAlchemy에서 연결 무제한이라 DB max_connections를 넘길 수 있다(#810).
         # 무제한은 허용하지 않는다 — deploy_rules.md「DB 연결 수」의 계산식이 상한을 전제로 한다.
         if self.db_pool_size < 1:
@@ -276,6 +286,8 @@ class Settings:
             feedback_per_hour=_int("FEEDBACK_PER_HOUR", 10),
             agent_loop_in_process=_env("AGENT_LOOP_IN_PROCESS", "0").lower() in ("1", "true"),
             qa_login_secret=_env("QA_LOGIN_SECRET", ""),
+            credit_ad_provider=_env("CREDIT_AD_PROVIDER", ""),  # type: ignore[arg-type]
+            credit_ad_unit_id=_env("CREDIT_AD_UNIT_ID", ""),
             db_pool_size=_int("DB_POOL_SIZE", 5),
             db_max_overflow=_int("DB_MAX_OVERFLOW", 10),
             db_pool_pre_ping=_bool("DB_POOL_PRE_PING", True),

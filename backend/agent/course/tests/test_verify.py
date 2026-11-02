@@ -99,7 +99,7 @@ class TestFactSentence:
     def test_names_remaining_violation(self):
         text = verify.fact_sentence(ref())
         assert text.startswith("확정 위반 1개가 남은 후보예요. 남은 위반: 장소P4이름이 둘째 날 (화) 휴무.")
-        assert "지킨 목표: 장소P1이름을 둘째 날 (화)에" in text and "못 지킨 목표" not in text
+        assert "지킨 목표는 ‘장소P1이름을 둘째 날 (화)에’예요." in text and "못 지킨 목표" not in text
 
     def test_zero_violations_and_checks(self):
         text = verify.fact_sentence(ref(hours={**{p.alias: ALL_OPEN for p in PLACES}, "p3": {}}))
@@ -204,7 +204,7 @@ class TestRoleLabels:
         lines = worklog.render(st.trip, [P1_D2], [], result)
         role = lambda stage, who=None: next(l for l in lines if l.startswith(f"[{stage}]") and (who is None or who in l)).split(" ")[1]
         assert role("이해").startswith("해석(") and role("확인").startswith("검증(코드)")
-        assert role("짜기", "후보").startswith("계산(코드)") and role("끝").startswith("지휘(모델)")
+        assert role("짜기", "번 안").startswith("계산(코드)") and role("끝").startswith("지휘(모델)")
         assert next(l for l in lines if l.startswith("[결과]")).split(" ")[1] == "검증(코드)"
 
 

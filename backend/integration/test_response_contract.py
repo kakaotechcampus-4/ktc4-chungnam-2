@@ -26,7 +26,8 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {
 
 # 크레딧 계약 테스트(test_credits_responses_match_the_openapi_spec)만의 알려진 차이. 메인 테스트는 /credits/me를 부르지 않아
 # 위 KNOWN_DRIFT에 두면 「이미 고쳐졌다」로 걸린다. 비어 가는 것이 정상이다.
-KNOWN_CREDITS_DRIFT: dict[tuple[str, ...], str] = {}
+KNOWN_CREDITS_DRIFT: dict[tuple[str, ...], str] = {
+}
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
@@ -212,7 +213,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     found = a.post("/places/from-link", json={"url": google_link})
     assert found.status_code == 200 and len(found.json()["matches"]) == 1
     assert a.post("/places/from-link", json={"url": "https://place.map.kakao.com/1234567"}).json()["needs_search_query"] is True
-    assert a.post("/places/from-link", json={"url": "https://naver.me/abc"}).status_code == 422   # LINK_NOT_SUPPORTED
+    assert a.post("/places/from-link", json={"url": "https://blog.naver.com/abc"}).status_code == 422   # LINK_NOT_SUPPORTED
     assert a.post("/places/from-link", json={"url": ""}).status_code == 422
 
     pin_ids = []
@@ -449,11 +450,27 @@ def test_feedback_responses_match_the_openapi_spec(clients):
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
-def test_credits_responses_match_the_openapi_spec(clients, db_session):
-    """크레딧 잔액(#948) — 정식 계정 200, 게스트 403 GUEST_NOT_ALLOWED(detail.initial_credits), 로그인 없음 401."""
+def test_credits_responses_match_the_openapi_spec(clients, db_session, monkeypatch):
+    """크레딧 잔액(#948) — 정식 계정 200, 게스트 403 GUEST_NOT_ALLOWED(detail.initial_credits), 로그인 없음 401.
+    광고 보고 충전(#1038) — 열기 201(이어 받기 포함)·409(off, not_needed)·429, 받기 200(다시 받기 포함)·409(too_early)·404·403."""
+    import dataclasses
+
     from fastapi.testclient import TestClient
+    from sqlalchemy import func, update
 
     from auth.testing import create_guest
+    from credits import api as credits_api
+    from credits import service as credits_service
+    from credits.models import CreditAdSession
+
+    def ad(provider):
+        monkeypatch.setattr(credits_service, "settings",
+                            dataclasses.replace(credits_service.settings, credit_ad_provider=provider))
+
+    def drain():
+        while credits_api.get_balance(db_session, user_id="user_a") > 0:
+            credits_api.charge(db_session, user_id="user_a", feature="recommend_run", run_id=str(uuid.uuid4()))
+        db_session.commit()
 
     a, _b, problems = clients
     assert a.get("/credits/me").status_code == 200
@@ -463,6 +480,31 @@ def test_credits_responses_match_the_openapi_spec(clients, db_session):
     denied = guest.get("/credits/me")
     assert denied.status_code == 403 and denied.json()["code"] == "GUEST_NOT_ALLOWED"
     assert _Checked(TestClient(a._c.app), problems).get("/credits/me").status_code == 401
+
+    ad("")
+    assert a.post("/credits/ad-sessions").status_code == 409                      # off
+    ad("fake")
+    assert a.post("/credits/ad-sessions").status_code == 409                      # not_needed(잔액 30)
+    assert guest.post("/credits/ad-sessions").status_code == 403
+    drain()
+    assert a.get("/credits/me").json()["ad"]["available"] is True
+    opened = a.post("/credits/ad-sessions")
+    assert opened.status_code == 201
+    sid = opened.json()["ad_session_id"]
+    assert a.post("/credits/ad-sessions").status_code == 201                      # 받지 않은 세션을 이어 받는다
+    assert a.post(f"/credits/ad-sessions/{sid}/claim").status_code == 409         # too_early
+    assert guest.post(f"/credits/ad-sessions/{sid}/claim").status_code == 403
+    assert a.post(f"/credits/ad-sessions/{uuid.uuid4()}/claim").status_code == 404
+    db_session.execute(update(CreditAdSession).where(CreditAdSession.id == uuid.UUID(sid))
+                       .values(issued_at=func.now() - timedelta(minutes=1)))
+    db_session.commit()
+    assert a.post(f"/credits/ad-sessions/{sid}/claim").status_code == 200
+    assert a.post(f"/credits/ad-sessions/{sid}/claim").status_code == 200        # 멱등
+    drain()
+    db_session.add_all([CreditAdSession(user_id="user_a", issued_at=func.now(), claimed_at=func.now(), credited=0)
+                        for _ in range(2)])
+    db_session.commit()
+    assert a.post("/credits/ad-sessions").status_code == 429                      # 오늘 3번
 
     unique = list(dict.fromkeys(problems))
     unexpected = [p for p in unique if not any(all(s in p for s in marks) for marks in KNOWN_CREDITS_DRIFT)]
@@ -613,7 +655,7 @@ def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
 
     # 카톡 대화 링크 일괄 핀 찍기(#577) — 미리보기(이미 있음·지원 안 함·짝 없음, 일부 실패해도 200)와 일괄 생성(created·duplicate·rejected)
     preview = a.post(f"/maps/{map_id}/pins/link-preview", json={"urls": [
-        "https://place.map.kakao.com/555", "https://naver.me/abc", "https://place.map.kakao.com/1234567"]})
+        "https://place.map.kakao.com/555", "https://blog.naver.com/abc", "https://place.map.kakao.com/1234567"]})
     assert preview.status_code == 200, preview.text
     items = preview.json()["items"]
     assert [i["status"] for i in items] == ["ok", "error", "ok"] and items[1]["error_code"] == "LINK_NOT_SUPPORTED"

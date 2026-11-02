@@ -14,7 +14,7 @@ from typing import Any, Optional, Sequence
 from agent.course import core, goals as goals_mod
 from agent.course.constants import DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, LEG_MAX_MIN
 from agent.course.direct import DirectResult, DirectStep, Question
-from agent.course.korean import attach
+from agent.course.korean import attach, candidate_name, goals_sentence
 
 MODEL, CODE, PERSON = "모델", "코드", "사람"
 INTERPRET, DIRECT, COMPUTE, VERIFY, DECIDE = "해석", "지휘", "계산", "검증", "결정"
@@ -55,13 +55,44 @@ def _rec(stage: str, role: str, who: str, text: str) -> StepRecord:
     return StepRecord(stage, role, who, text)
 
 
-def _kept_text(by_id: dict[str, goals_mod.Goal], trip: core.Trip, ids: Sequence[str]) -> str:
-    return ", ".join(goals_mod.label(trip, by_id[i]) for i in ids if i in by_id) or "없음"
+# 결과(outcome) 값 → 화면 문장. 화면에 enum 글자를 그대로 내지 않는다. {n}은 남은 확정 위반 수.
+OUTCOME_TEXT = {
+    "solved": "확정 위반 없이 코스를 다 짰어요.",
+    "solved_with_checks": "확정 위반은 없지만 영업 여부를 가게에 확인해야 하는 곳이 남았어요.",
+    "unresolved": "확정 위반이 {n}개 남은 채로 끝났어요.",
+    "timeout": "시간이 다 되어 확정 위반이 {n}개 남은 채로 끝났어요.",
+}
+
+
+def _labels(by_id: dict[str, goals_mod.Goal], trip: core.Trip, ids: Sequence[str]) -> list[str]:
+    return [goals_mod.label(trip, by_id[i]) for i in ids if i in by_id]
+
+
+def _violations_sentence(confirmed: int) -> str:
+    return "확정 위반은 없어요." if confirmed == 0 else f"확정 위반이 {confirmed}개 남아 있어요."
+
+
+def _candidate_text(by_id: dict[str, goals_mod.Goal], trip: core.Trip, c: dict[str, Any]) -> str:
+    """후보 한 개의 계산 결과 — 한 문장에 한 가지 사실. 후보 id(c1)는 화면에서 "1번 안"이다."""
+    walk = c["walk"]
+    return " ".join([
+        f"{candidate_name(c['candidate_id'])}을 짰어요.",
+        goals_sentence(_labels(by_id, trip, c["kept"]), _labels(by_id, trip, c["gave_up"])),
+        f"하루 걷는 시간은 길어야 {walk['day_max']}분이에요." if walk["day_max"] else "걷는 구간이 없어요.",
+        f"대중교통은 {walk['transit_legs']}구간 타요." if walk["transit_legs"] else "대중교통은 타지 않아요.",
+        _violations_sentence(c["hard"]["confirmed"]),
+    ])
+
+
+def _choices_text(shown: Sequence[str], default: str) -> str:
+    """질문의 선택지와 기본값 — 선택지 글은 화면에 보이는 이름 그대로 낫표 대신 홑따옴표로 감싼다."""
+    listed = ", ".join(f"‘{o}’" for o in shown)
+    return f"선택지는 {listed} {len(shown)}가지예요. 답이 없으면 {attach(f'‘{default}’', '으로/로')} 이어 가요."
 
 
 def meal_less_text(trip: core.Trip, day_index: int) -> str:
     """식사할 곳이 없는 날의 확인 문장. 정하는 곳은 core.meal_less_days 하나다."""
-    return f"{core.day_label(trip, core.day_alias(day_index))}에는 식사할 곳이 확정 리스트에 없어요"
+    return f"{core.day_label(trip, core.day_alias(day_index))}에는 식사할 곳이 확정 리스트에 없어요."
 
 
 class Narrator:
@@ -71,9 +102,9 @@ class Narrator:
     def __init__(self, trip: core.Trip, goals: Sequence[goals_mod.Goal], unmatched: Sequence[str], *, understood_by: str = MODEL):
         self.trip = trip
         self.by_id = {g.id: g for g in goals}
-        self._opening = _rec("이해", INTERPRET, understood_by, "이렇게 이해했어요: "
-                             + (" · ".join(goals_mod.label(trip, g) for g in goals) or "요청 목표 없음")
-                             + "".join(f" · {attach(f'「{u}」', '은/는')} 그대로는 판단할 수 없어요" for u in unmatched))
+        understood = (", ".join(goals_mod.label(trip, g) for g in goals) + "." if goals else "요청에서 지킬 목표를 찾지 못했어요.")
+        self._opening = _rec("이해", INTERPRET, understood_by, "이렇게 이해했어요: " + understood
+                             + "".join(f" {attach(f'「{u}」', '은/는')} 그대로는 판단할 수 없어요." for u in unmatched))
         self.optimized = 0
         self.redo = False                       # 쉬는 날 질문에 답한 뒤 처음 짜는 optimize는 "다시 짜기"다
         self.reviewing = False                  # 직전 단계가 후보를 돌려줬다 — 이번 모델 생각은 그 결과의 점검이다
@@ -95,8 +126,8 @@ class Narrator:
             stage = "다시 짜기" if self.redo and tool == "optimize" else "짜기" if not self.reviewing and tool == "optimize" and self.optimized == 0 else (
                 "재계획" if tool == "optimize" else "점검")
             if step.guard:                      # 모델 문장은 화면에 내지 않는다 — 코드 사실로 만든 문장과, 바꿨다는 기록만
-                out.append(_rec("검증", VERIFY, CODE, "모델이 쓴 문장이 결과와 맞지 않아 코드가 만든 문장으로 바꿨어요 — "
-                                + " · ".join(step.guard)))
+                out.append(_rec("검증", VERIFY, CODE, "모델이 쓴 문장이 결과와 맞지 않아 코드가 만든 문장으로 바꿨어요. "
+                                + ". ".join(step.guard) + "."))
                 out.append(_rec(stage, DIRECT, CODE, step.thought))
             else:
                 out.append(_rec(stage, DIRECT, f"{MODEL} → {CODE}" if tool == "optimize" else MODEL, step.thought))
@@ -106,29 +137,29 @@ class Narrator:
             stage_name = "다시 짜기" if self.redo else "짜기"
             self.redo = False
             for c in step.result.data["candidates"]:
-                out.append(_rec(stage_name, COMPUTE, CODE, f"후보 {c['candidate_id']}: 지킴 {_kept_text(by_id, trip, c['kept'])} · "
-                                f"못 지킴 {_kept_text(by_id, trip, c['gave_up'])} · 하루 최대 도보 {c['walk']['day_max']}분 · "
-                                f"대중교통 {c['walk']['transit_legs']}구간 · 확정 위반 {c['hard']['confirmed']}"))
+                out.append(_rec(stage_name, COMPUTE, CODE, _candidate_text(by_id, trip, c)))
         elif tool == "lock" and step.result.ok:
             out.append(_rec("고정", DIRECT, MODEL, "장소를 한 날에 고정했어요"))
         elif tool == "ask_requester":
             if not step.result.ok:
-                out.append(_rec("질문", DIRECT, MODEL, f"질문을 열지 못했어요({step.result.error})"))
+                out.append(_rec("질문", DIRECT, MODEL, "질문을 열지 못했어요."))
                 return out
             q = next(q for q in questions if q.question_id == step.result.data["question_id"])
             opener = f"코드가 열고 {MODEL}이 고름 → {PERSON}" if step.by == "model" else f"코드가 열음 → {PERSON}"
             if q.kind in ("choose_day", "split_day"):
                 opener = f"코드가 열고 {MODEL}이 날짜를 제안 → {PERSON}" if step.by == "model" else f"코드가 열음 → {PERSON}"
-                out.append(_rec("질문", DIRECT, opener, f"{q.text} · 선택지 {' / '.join(q.option_labels)} · 기본값 {q.option_labels[0]}({q.default_reason})"))
-                out.append(_rec("답", DECIDE, CODE, f"답이 없어 기본값으로 이어 가요: {step.result.data['answer']}"))
+                out.append(_rec("질문", DIRECT, opener, f"{q.text} {_choices_text(q.option_labels, q.option_labels[0])} {q.default_reason}."))
+                out.append(_rec("답", DECIDE, CODE, f"답이 없어서 기본값으로 정했어요. {step.result.data['answer']}."))
                 self.redo = True
             else:
-                out.append(_rec("질문", DIRECT, opener, f"{q.text} · 선택지 {' / '.join(q.options)} · 기본값 {q.default}(답이 없어 기본값으로 이어 가요)"))
+                shown = [candidate_name(o) for o in q.options] if q.kind == "pick_course" else list(q.options)
+                default = candidate_name(q.default) if q.kind == "pick_course" else q.default
+                out.append(_rec("질문", DIRECT, opener, f"{q.text} {_choices_text(shown, default)}"))
         elif tool == "finish" and step.result.ok:
             self.reviewing = False
             note = step.result.data.get("note")
             out.append(_rec("끝", DIRECT, MODEL if step.by == "model" else CODE,
-                            f"후보 {step.result.data['candidate_id']}로 끝내요" + (f" — {note}" if note else "")))
+                            f"{attach(candidate_name(step.result.data['candidate_id']), '으로/로')} 정했어요." + (f" {note}." if note else "")))
         return out
 
     def closing(self, result: DirectResult) -> list[StepRecord]:
@@ -136,12 +167,15 @@ class Narrator:
         out = []
         if result.chosen.walk_infeasible:
             out.append(_rec("결과", COMPUTE, CODE, f"도보 구간 {LEG_MAX_MIN}분·하루 도보 {DAY_WALK_MAX_MIN}분·하루 이동 {DAY_TRAVEL_MAX_MIN}분(대중교통 포함, 약) 상한과 "
-                            "구성원 조건, 확인된 휴무를 모두 지키는 순서는 이 장소 구성으로는 없다는 것을 모든 경우를 따져 확인했어요 — 장소나 날짜 수가 바뀌어야 풀려요"))
+                            "구성원 조건, 확인된 휴무를 모두 지키는 순서는 이 장소 구성으로는 없다는 것을 모든 경우를 따져 확인했어요. 장소나 날짜 수가 바뀌어야 풀려요."))
         for i in core.meal_less_days(self.trip, result.course):     # 식당이 없는 날 알림(#918) — 장소를 더하거나 빼지 않고 알리기만 한다
             out.append(_rec("확인", VERIFY, CODE, meal_less_text(self.trip, i)))
         met = [r.goal.id for r in result.goal_results if r.met is True]
-        out.append(_rec("결과", VERIFY, CODE, f"지킨 목표: {_kept_text(self.by_id, self.trip, met)} · 확정 위반 "
-                        f"{core.hard_score(result.violations)[0]} · 결과 {result.outcome}"))
+        gave = [r.goal.id for r in result.goal_results if r.met is not True]
+        out.append(_rec("결과", VERIFY, CODE, " ".join([
+            goals_sentence(_labels(self.by_id, self.trip, met), _labels(self.by_id, self.trip, gave)),
+            OUTCOME_TEXT.get(result.outcome, "결과를 정하지 못했어요.").format(n=core.hard_score(result.violations)[0]),
+        ])))
         return out
 
 

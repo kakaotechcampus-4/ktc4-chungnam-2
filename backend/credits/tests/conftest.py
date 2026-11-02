@@ -6,6 +6,7 @@
   `committed_user`가 고유하게 만든다.
 """
 
+import dataclasses
 import os
 import re
 import uuid
@@ -18,7 +19,7 @@ import auth.models  # noqa: F401 — users 행(게스트 판정, 인증)
 import common.events  # noqa: F401 — main.py의 lifespan이 event_log를 읽는다
 import credits.models  # noqa: F401
 from common.database import Base, session_scope
-from credits.models import CreditAccount, CreditLedger
+from credits.models import CreditAccount, CreditAdSession, CreditLedger
 
 BASE_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://pingo:pingo@localhost:5432/pingo")
 
@@ -73,6 +74,25 @@ def committed_user(test_engine):
     with test_engine.begin() as conn:
         conn.execute(sa.delete(CreditLedger).where(CreditLedger.user_id == user_id))
         conn.execute(sa.delete(CreditAccount).where(CreditAccount.user_id == user_id))
+        conn.execute(sa.delete(CreditAdSession).where(CreditAdSession.user_id == user_id))
+
+
+def _set_ad(monkeypatch, provider: str, unit_id: str = "") -> None:
+    from credits import service
+    monkeypatch.setattr(service, "settings", dataclasses.replace(service.settings, credit_ad_provider=provider,
+                                                                 credit_ad_unit_id=unit_id))
+
+
+@pytest.fixture()
+def ad_off(monkeypatch):
+    """광고 충전 꺼짐(CREDIT_AD_PROVIDER 비움) — 로컬 .env 값과 무관하게."""
+    _set_ad(monkeypatch, "")
+
+
+@pytest.fixture()
+def ad_on(monkeypatch):
+    """테스트 광고 창(fake)으로 켠다(명세 3.7 「설정」)."""
+    _set_ad(monkeypatch, "fake")
 
 
 @pytest.fixture()

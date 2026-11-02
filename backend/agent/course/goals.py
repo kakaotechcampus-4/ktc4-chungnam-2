@@ -214,7 +214,7 @@ def label(trip: Trip, goal: Goal) -> str:
         "daily_walk_low": "하루 걷는 시간 줄이기",
         "day_light": f"{day}은 여유 있게",
         "place_on_day": f"{attach(names[0], '을/를')} {day}에" if goal.kind == "place_on_day" else "",
-        "together": f"{' · '.join(names)} 같은 날" if goal.kind == "together" else "",
+        "together": f"{', '.join(names)} 같은 날" if goal.kind == "together" else "",
         "day_has": f"{day}에 {DAY_HAS_TAGS[goal.tag][1]} 장소 넣기" if goal.kind == "day_has" else "",
     }[goal.kind]
 
@@ -310,14 +310,14 @@ def check_goals(trip: Trip, hours, goals: Sequence[Goal]) -> tuple[dict, ...]:
 
 def check_sentence(trip: Trip, check: dict, goal: Goal) -> str:
     """작업 기록의 "확인: …" 한 줄(코드 템플릿)."""
-    head = label(trip, goal)
+    head = f"‘{label(trip, goal)}’ 목표는"
     if check["feasible"] is True:
-        return f"{head}: 가능해 보여요"
+        return f"{head} 가능해 보여요."
     noun = DAY_HAS_TAGS[goal.tag][1] if goal.kind == "day_has" else ""
     sentences = {**_CHECK_SENTENCES, NO_TAGGED_PLACE: f"확정 리스트에 {noun} 장소가 없어요",
                  TAGGED_PLACE_CLOSED_ON_DAY: f"{noun} 장소가 그날 모두 쉬어요"}
-    why = " · ".join(sentences[r] for r in check["reasons"]) or "영업 여부를 몰라 확인이 필요해요"
-    return f"{head}: {why}"
+    why = ". ".join(sentences[r] for r in check["reasons"]) or "영업 여부를 몰라 확인이 필요해요"
+    return f"{head} 어려워 보여요. {why}."
 
 
 def short_label(trip: Trip, goal: Goal, met: Optional[bool]) -> str:

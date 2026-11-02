@@ -160,6 +160,7 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 - `PINGO_ENV=staging`. 운영과 같은 기동 가드를 받는다(스텁 금지, CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`).
 - `SESSION_SECRET`은 운영과 다른 값이다. 스테이징에서 만든 세션 쿠키가 운영에서 통하지 않게 한다.
 - `QA_LOGIN_SECRET`이 있을 때만 `POST /auth/qa-login`이 붙는다(#789). 운영에는 이 값을 넣지 않는다. 넣으면 서버가 뜨지 않는다.
+- `CREDIT_AD_PROVIDER=fake`면 잔액 부족 안내에 「광고 보고 크레딧 받기」가 뜨고 테스트 광고 창(7초)을 연다(docs/credits-reviews.md 3.7, #1037). 비우면 버튼이 없다. 확인은 잔액이 크레딧 가격보다 적은 계정으로 한다. 운영에 `fake`를 넣으면 서버가 뜨지 않는다(#1038). 운영은 비워 두고, 실제 광고(`adsense`, `gpt`)는 화면에 그 제공자가 생긴 뒤 켠다(아직 없음).
 - DB는 운영과 나눈다. 운영 DB를 복사하지 않는다(실사용자 데이터, #53).
 - 값은 저장소나 채팅에 남기지 않는다.
 
@@ -198,12 +199,31 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 ## 배포 뒤 볼 지표
 
-지도가 늘면 v2 관찰(tick)이 가장 먼저 걸린다(멘토 리뷰 #680). tick은 5분마다 지도를 최대 `TICK_MAX_MAPS`(6)곳 관찰한다(`agent/constants.py`).
+지도가 늘면 v2 관찰(tick)이 가장 먼저 걸린다(멘토 리뷰 #680). tick은 5분마다 지도를 최대 `TICK_MAX_MAPS`(6)곳 관찰한다(`agent/constants.py`). 자동 경보는 두지 않고 아래 기준을 사람이 하루 한 번 본다(2026-11-02 결정, #1072).
 
 | 지표 | 읽는 법 | 이렇게 보이면 |
 |---|---|---|
 | stale로 버린 관찰 비율 | `select outcome, count(*) from agent_runs where trigger in ('activity', 'time') and started_at > now() - interval '1 day' group by 1` 에서 stale ÷ 전체 | 늘면 관찰이 겹치거나 늦게 끝나고 있다. 결과가 틀리지는 않지만(저장할 때 지도 행을 잠그고 다시 확인한다) 모델 호출을 버린다 |
-| tick당 처리 수와 미룬 지도 수, 걸린 시간 | tick 끝의 로그 한 줄 `agent tick due= observed= deferred_by_max= deferred_by_budget= elapsed_ms=`(#756). 차례였던 지도, 관찰한 수, `TICK_MAX_MAPS`로 미룬 수, 시간 예산으로 미룬 수, 걸린 ms. 시간 예산으로 미룬 지도가 있으면 warning | 미룬 지도가 tick마다 남으면 처리 수나 주기를 바꾼다. 시간 예산은 150초(`TICK_BUDGET_SEC`)로 두고 이 지표로 본다(#754). 걸린 시간이 lease(180초)를 넘는 tick이 보이면 105초(`LEASE_SEC − 75`)로 낮춘다 |
+| tick당 처리 수와 미룬 지도 수, 걸린 시간 | tick 끝의 로그 한 줄 `agent tick due= observed= deferred_by_max= deferred_by_budget= elapsed_ms=`(#756). 차례였던 지도, 관찰한 수, `TICK_MAX_MAPS`로 미룬 수, 시간 예산으로 미룬 수, 걸린 ms. 시간 예산으로 미룬 지도가 있으면 warning | 미룬 지도가 tick마다 남으면 처리 수나 주기를 바꾼다. 시간 예산으로 미룬 지도가 연속 3 tick이면 본다(#1072). 시간 예산은 150초(`TICK_BUDGET_SEC`)로 두고 이 지표로 본다(#754). 걸린 시간이 lease(180초)를 넘는 tick이 보이면 105초(`LEASE_SEC − 75`)로 낮춘다. 로그는 서버의 `/srv/pingo/logs/agent-tick-<환경>.log`다 |
+| 진단 실패 비율 | `select outcome, count(*) from agent_runs where used_model and trigger in ('activity', 'time') and started_at > now() - interval '1 day' group by 1` 에서 model_failed와 invalid_schema ÷ 전체 | 20% 이상이면 모델 제공자 상태를 본다(#1072). 진단만 실패하고 다른 기능은 돈다. 진단 전체를 끄는 장치는 두지 않았다(`docs/agent-v2.md` 21.3) |
+| 관찰 예외 | `select outcome_detail->>'stage', outcome_detail->>'error', count(*) from agent_runs where outcome = 'error' and started_at > now() - interval '1 day' group by 1, 2` | 1건부터 본다(#1072). 코드 오류다. 그 지도는 30분, 2시간, 6시간 뒤 다시 관찰된다 |
+
+### 에이전트 개입 라벨링 표본 (#1072)
+
+v2 지도 제안이 쓸모 있었는지(탐지 정밀도, `docs/agent-v2.md` 21.5)를 재려고 스테이징의 제안 표본을 뽑아 사람이 라벨을 붙인다. QA로 지도가 쌓인 뒤 한다. **운영에서는 돌리지 않는다**(운영 DB를 밖으로 옮기지 않는다, #53). 명령은 PINGO_ENV가 staging이 아니면 `--staging`을 거부한다(#1076).
+
+1. 콘솔 EC2 → 연결 → Session Manager로 서버에 들어가 `cd /srv/pingo/deploy`.
+2. 표본 뽑기(유형마다 25건까지, 같은 seed면 같은 표본):
+   ```
+   ./run.sh staging python -m agent.label_sample --staging --out - > /tmp/agent-labels.csv
+   ./run.sh staging python -m agent.label_sample --staging --per-type 40 --seed 3 --out - > /tmp/agent-labels.csv
+   ```
+   유형별 건수는 화면(표준 오류)에 나오고 파일에는 CSV만 간다. 모두 0이면 아직 관찰된 제안이 없는 것이다.
+3. 파일 가져오기: 브라우저 터미널에는 내려받기가 없어 `cat /tmp/agent-labels.csv`로 띄워 복사하고, 이 PC에서 `.csv`로 저장한다. 엑셀에서 한글이 깨지면 데이터 → 텍스트/CSV에서 UTF-8로 연다.
+4. 서버의 파일 지우기: `rm /tmp/agent-labels.csv`. CSV는 저장소에 커밋하지 않는다.
+5. 「개입할 만했나」와 메모 칸을 채우고(판정 기준은 `docs/agent-v2.md` 21.5), 유형별 수를 21.5 표에 옮긴다.
+
+CSV에는 사유 원문, 구성원 이름, 인용 글, 실시간 핀 검색어가 없다. 인용은 「[인용]」, 핀 이름은 「[핀]」으로 바뀌어 나온다(`agent/label_sample.py`).
 
 ## 배포 전에 정할 것
 

@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from agent.course import baseline, core, goals as goals_mod, optimize as opt, verify
 from agent.course.constants import ASK_MAX, DIRECT_MAX_TURNS
-from agent.course.korean import attach
+from agent.course.korean import attach, candidate_name
 from agent.course.optimize import Candidate
 from agent.course.ports import OpeningHoursGateway
 from agent.course.schemas import MoveDay, ReorderDay
@@ -289,7 +289,7 @@ def _split_day(ds: DirectState, split: dict, options: list[str], proposed_by: st
             "다른 날로 나눌까요?")
     labels = tuple([f"{attach(_names(trip, by_id[o].places), '을/를')} {attach(core.day_label(trip, by_id[o].to_day), '으로/로')} 옮기기" for o in options]
                    + ["그대로 두기"])
-    reason = "이동 위반을 줄이는 나누기를 기본값으로 했어요, " + ("모델이 고른 것" if proposed_by == "model" else "코드가 고른 가장 나은 나누기")
+    reason = "이동 위반을 줄이는 나누기를 기본값으로 했어요. " + ("모델이 고른 것이에요" if proposed_by == "model" else "코드가 고른 가장 나은 나누기예요")
     question = Question(f"q{len(ds.questions) + 1}", "split_day", day, tuple([*options, KEEP]), text, options[0], labels, reason)
     locks = {**state.locks, **{p: chosen.to_day for p in chosen.places}}
     new_state = opt.with_course(replace(state, locks=locks), chosen.course)
@@ -326,7 +326,7 @@ def _choose_day(ds: DirectState, pend: dict, options: list[str], proposed_by: st
         closed = [trip.place(p).name for p in pend["check"]["facts"]["night_closed_days"] if goal.day in pend["check"]["facts"]["night_closed_days"][p]]
         text = f"{core.day_label(trip, goal.day)}엔 야경 장소 {attach(', '.join(closed), '이/가')} 쉬어요. 야경은 {core.day_label(trip, default)} 마지막으로 할까요?"
         answer = f"야경 목표를 {core.day_label(trip, default)}로 바꿔 이어 가요"
-    reason = "쉬는 날엔 둘 수 없어서 여는 날을 기본값으로 했어요, " + ("모델이 제안한 날" if proposed_by == "model" else "코드가 고른 첫 여는 날")
+    reason = "쉬는 날엔 둘 수 없어서 여는 날을 기본값으로 했어요. " + ("모델이 제안한 날이에요" if proposed_by == "model" else "코드가 고른 첫 여는 날이에요")
     question = Question(f"q{len(ds.questions) + 1}", "choose_day", goal.id, tuple([*options, DROP]), text, default, labels, reason)
     new_goal = goals_mod.retarget(goal, default)
     goals = tuple(dict.fromkeys(new_goal if g.id == goal.id else g for g in state.goals))
@@ -396,7 +396,7 @@ def execute(call, ds: DirectState, gateway: OpeningHoursGateway, by: str = "mode
             return ds, _fail(tool, "WORSENS_HARD", "확정 위반이 더 적은 후보가 있다 — 그 후보를 고른다")
         if ds.preferred is not None and chosen.candidate_id != ds.preferred:
             # 질문에 답이 없어 기본 선택지로 이어 간다 — 모델이 다른 후보로 끝내려 해도 기본 선택지가 이긴다(요청자가 안 정한 것을 모델이 정하지 않는다)
-            return ds, ToolResult(tool, ok=True, data={"candidate_id": ds.preferred, "note": "질문에 답이 없어 기본 선택지로 끝냈다"})
+            return ds, ToolResult(tool, ok=True, data={"candidate_id": ds.preferred, "note": "질문에 답이 없어서 기본 선택지로 끝냈어요"})
         return ds, ToolResult(tool, ok=True, data={"candidate_id": chosen.candidate_id})
     raise TypeError(f"실행할 수 없는 도구 {type(call).__name__}")
 
@@ -426,13 +426,14 @@ def _ask(call: CourseAskRequester, ds: DirectState, by: str = "model") -> tuple[
         if len(call.options) < 2 or any(o not in ids for o in call.options) or len(set(call.options)) != len(call.options):
             return ds, _fail(tool, "INVALID_MOVE", "pick_course는 지금 있는 후보 둘 이상을 options에 줘야 한다")
         lines = []
-        for letter, cid in zip("AB", call.options):
+        for cid in call.options:
             cand = next(c for c in ds.candidates if c.candidate_id == cid)
             parts = [goals_mod.short_label(state.trip, r.goal, r.met is True)
                      for r in goals_mod.evaluate_all(state.trip, cand.course, state.goals) if r.goal.kind != "daily_walk_low"]
-            parts.append(f"하루 최대 {_walk(state.trip, cand.course)['day_max']}분")
-            lines.append(f"{letter}: " + "·".join(parts))
-        question = Question(qid, call.kind, None, tuple(call.options), " / ".join(lines) + ". 어느 쪽?", call.options[0])
+            day_max = _walk(state.trip, cand.course)["day_max"]
+            walk = f"하루 걷는 시간은 길어야 {day_max}분이에요." if day_max else "걷는 구간이 없어요."
+            lines.append(f"{candidate_name(cid)}은 {', '.join(parts)}. {walk}" if parts else f"{candidate_name(cid)}은 {walk}")
+        question = Question(qid, call.kind, None, tuple(call.options), " ".join(lines) + " 어느 쪽이 좋을까요?", call.options[0])
         ds = replace(ds, questions=(*ds.questions, question), preferred=question.default)
     else:
         # 이동 위반이 남아 있으면 영업 여부를 물어도 풀리지 않는다 — 막힌 곳(이동)을 먼저 푼다
