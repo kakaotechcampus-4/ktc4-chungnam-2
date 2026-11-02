@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Route, Sear
 
 import AgentButton from '@/features/agent/AgentButton'
 import { ImportSheetHost } from '@/features/kakaoImport/ImportSheet'
+import { MIN_LEVEL } from '@/features/map/camera'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { mapTapAction } from '@/features/map/mapTap'
 import { usePinSelection } from '@/features/map/usePinSelection'
@@ -98,6 +99,7 @@ export default function MapLayout() {
   const searchMarkers = useMemo(
     () =>
       (found ?? []).map((r, i) => ({
+        id: r.place_id,
         n: i + 1,
         name: r.place_name,
         category: r.category,
@@ -204,9 +206,11 @@ export default function MapLayout() {
   }, [selectedPinId, allPins, mapReady])
 
   // 결과가 오면 결과 전체가, 하나를 고르면 그 장소가 보이게 지도를 옮긴다.
+  // 근처 찾기는 누른 자리 둘레(100m)라 결과가 이미 화면 안이기 쉽다. 그래도 결과에 맞춰 가장 가까운 축척까지 확대한다(#1174).
+  const tapSearch = search.source?.kind === 'tap'
   useEffect(() => {
-    if (found?.length) controller.current?.fitPins(found)
-  }, [found])
+    if (found?.length) controller.current?.fitPins(found, tapSearch ? { force: true, closest: MIN_LEVEL } : undefined)
+  }, [found, tapSearch])
   useEffect(() => {
     const r = found?.find((f) => f.place_id === search.selectedId)
     if (r) controller.current?.focusPin(r.lat, r.lng)
@@ -356,6 +360,11 @@ export default function MapLayout() {
           useSearchStore.getState().select(null)
           // 코스 탭은 코스 탭 안에서 연다 — 확정 탭으로 넘어가면 코스 선이 사라진다(#1127 리뷰).
           navigate(`/maps/${mapId}${onCourseTab ? '/course' : onShortlistTab ? '/shortlist' : ''}?pin=${encodeURIComponent(pinId)}`)
+        }}
+        onResultGroup={(ids) => {
+          useSearchStore.getState().showGroup(ids)
+          // 접힌 패널에선 묶인 곳 목록을 볼 곳이 없다(넓은 화면).
+          setPanelOpen(true)
         }}
         onReady={onMapReady}
         onMovingChange={onMovingChange}

@@ -48,7 +48,7 @@ export function SearchResultsHeader({ count }: { count: number | null }) {
 
 /** 검색 결과 목록·장소 상세(Figma 4절). 결과 0개는 0개로 보여준다(가드레일 2). */
 export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] }) {
-  const { source, near, selectedId, select, submit, close } = useSearchStore()
+  const { source, near, selectedId, group, select, showGroup, submit, close } = useSearchStore()
   const search = useSourcePlacesQuery(source, near)
   const create = useCreatePinMutation(mapId)
   const { selectPin } = usePinSelection()
@@ -56,6 +56,8 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   const link = search.data?.link
   const query = source?.kind === 'name' ? source.query : null
   const selected = results.find((r) => r.id === selectedId)
+  // 지도에서 겹쳐 묶인 「N곳」 핀을 눌렀으면 그곳들만 보인다(#1174). 번호는 전체 결과의 번호 그대로다.
+  const listed = results.map((r, i) => ({ r, n: i + 1 })).filter(({ r }) => !group || group.includes(r.id))
 
   function pinIt(r: SearchResultView) {
     const req = searchPinRequest(r.dto)
@@ -175,7 +177,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   if (selected) {
     return (
       <div className="space-y-3">
-        <PanelBackLink label={`검색 결과 ${results.length}곳`} onBack={() => select(null)} />
+        <PanelBackLink label={group ? `이 자리의 장소 ${listed.length}곳` : `검색 결과 ${results.length}곳`} onBack={() => select(null)} />
         <div>
           <SheetTitle as="h3">{selected.name}</SheetTitle>
           <p className="text-body text-ink-600">{selected.meta}</p>
@@ -202,30 +204,33 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   }
 
   return (
-    <ol className="space-y-2">
-      {results.map((r, i) => (
-        <li
-          key={r.id}
-          className={`flex items-center gap-3 rounded-xl border p-3 ${r.unsupported && !r.canLeaveLive ? 'border-ink-200 opacity-60' : 'border-ink-200'}`}
-        >
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
-            {i + 1}
-          </span>
-          <button type="button" onClick={() => select(r.id)} className="press -mx-1.5 min-w-0 flex-1 rounded-md px-1.5 text-left">
-            <p className="truncate font-bold text-ink-900">{r.name}</p>
-            <p className="truncate text-xs text-ink-500">{r.meta}</p>
-            {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}
-          </button>
-          {r.canLeaveLive && !r.alreadyPinned ? (
-            <button type="button" onClick={() => select(r.id)} className="btn-outline btn-sm">
-              핀 남기기
+    <div className="space-y-3">
+      {group && <PanelBackLink label={`검색 결과 ${results.length}곳`} onBack={() => showGroup(null)} />}
+      <ol className="space-y-2">
+        {listed.map(({ r, n }) => (
+          <li
+            key={r.id}
+            className={`flex items-center gap-3 rounded-xl border p-3 ${r.unsupported && !r.canLeaveLive ? 'border-ink-200 opacity-60' : 'border-ink-200'}`}
+          >
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
+              {n}
+            </span>
+            <button type="button" onClick={() => select(r.id)} className="press -mx-1.5 min-w-0 flex-1 rounded-md px-1.5 text-left">
+              <p className="truncate font-bold text-ink-900">{r.name}</p>
+              <p className="truncate text-xs text-ink-500">{r.meta}</p>
+              {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}
             </button>
-          ) : (
-            <PinItButton result={r} pending={create.isPending && !!create.variables && 'place_id' in create.variables && create.variables.place_id === r.id} onPin={() => pinIt(r)} />
-          )}
-        </li>
-      ))}
-    </ol>
+            {r.canLeaveLive && !r.alreadyPinned ? (
+              <button type="button" onClick={() => select(r.id)} className="btn-outline btn-sm">
+                핀 남기기
+              </button>
+            ) : (
+              <PinItButton result={r} pending={create.isPending && !!create.variables && 'place_id' in create.variables && create.variables.place_id === r.id} onPin={() => pinIt(r)} />
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
   )
 }
 
