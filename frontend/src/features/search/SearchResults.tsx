@@ -13,6 +13,7 @@ import EmptyState from '@/ui/EmptyState'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
+import TextArea from '@/ui/TextArea'
 
 import { toSearchResult, type SearchResultView } from './model'
 import { searchErrorMessage, useSourcePlacesQuery } from './queries'
@@ -284,18 +285,7 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
       <label className="block text-body font-bold text-ink-900" htmlFor="live-pin-memo">
         한마디 남기기 (선택)
       </label>
-      <textarea
-        id="live-pin-memo"
-        value={memo}
-        maxLength={MEMO_MAX}
-        onChange={(e) => setMemo(e.target.value)}
-        placeholder="예: 여기 곱창 맛있대"
-        rows={2}
-        className="field w-full resize-none py-3"
-      />
-      <p className="text-right text-label text-ink-500">
-        {memo.length}/{MEMO_MAX}
-      </p>
+      <TextArea id="live-pin-memo" value={memo} onChange={setMemo} maxLength={MEMO_MAX} placeholder="예: 여기 곱창 맛있대" rows={2} clearLabel="한마디 지우기" />
       <button
         type="button"
         onClick={() => onSubmit({ memo: memo.trim(), name: name.trim() || undefined, category: category ?? undefined })}

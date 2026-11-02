@@ -7,6 +7,7 @@ import { useSheetStore } from '@/features/shell/sheetStore'
 import { showToast } from '@/features/shell/toast'
 import Checkbox from '@/ui/Checkbox'
 import SheetTitle from '@/ui/SheetTitle'
+import TextArea from '@/ui/TextArea'
 
 import { linkErrorMessage, rowPlace, rowState, type ImportRow } from './model'
 import { useLinkImport } from './queries'
@@ -44,16 +45,16 @@ function PasteStep({ onStart }: { onStart: (text: string) => boolean }) {
       <label htmlFor={id} className="sr-only">
         카톡 대화
       </label>
-      <textarea
+      <TextArea
         id={id}
         value={text}
-        onChange={(e) => {
-          setText(e.target.value)
+        onChange={(v) => {
+          setText(v)
           setNone(false)
         }}
         rows={6}
         placeholder="여기에 대화를 붙여넣기"
-        className="field w-full resize-none py-3"
+        clearLabel="붙여넣은 대화 지우기"
       />
       {none && <p className="text-sm text-warn-text">지도 링크를 찾지 못했어요. 링크가 포함된 대화 구간을 붙여넣어 주세요</p>}
       <button
