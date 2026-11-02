@@ -73,8 +73,9 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.getByText('하루 걷는 시간 줄이기')).toBeInTheDocument()
     expect(screen.getByText('지킴')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /첫째 날 · / })).toBeInTheDocument()
-    // 영업시간을 모르는 장소(needs_check)에 따로 표시하지 않는다 — 장소 DB 대부분이 영업시간이 없어 거의 모든 줄에 붙었다(2026-11-02)
+    // 영업시간을 모르는 장소(needs_check)에는 표시하지 않고, 아는 장소에만 「영업시간 확인됨」(2026-11-02)
     expect(screen.queryByText('? 영업 확인 필요')).not.toBeInTheDocument()
+    expect(screen.queryByText('영업시간 확인됨')).not.toBeInTheDocument() // 목 서버는 모든 장소가 영업 여부를 모른다
     expect(screen.queryByText('다시 짜기')).not.toBeInTheDocument() // stale 아님
     expect(screen.queryAllByRole('link', { name: /길찾기/, hidden: true }).every((a) => a.getAttribute('href')?.startsWith('https://map.kakao.com/link/by/') && a.getAttribute('target') === '_blank')).toBe(true)
     // 장소 이름은 이미 받은 확정 리스트에서 찾는다
@@ -216,6 +217,7 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.getByText(/반영하지 못했어요: 「아무거나」/)).toBeInTheDocument()
     expect(screen.getAllByText('도보 5분')).toHaveLength(2) // 구간 + 하루 합계
     expect(screen.queryByText('? 영업 확인 필요')).not.toBeInTheDocument()
+    expect(screen.getAllByText('영업시간 확인됨')).toHaveLength(1) // pin_1 만 영업 여부를 안다
   })
 
   it('위치를 아는 확정 장소가 2곳 미만이면 입력 대신 이유와 확정 탭으로 가는 길을 보인다', async () => {

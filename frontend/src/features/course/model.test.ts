@@ -72,10 +72,11 @@ describe('course model', () => {
       },
       names,
     )
-    expect(stops.map((s) => [s.name, s.leg])).toEqual([
-      ['가', { mode: 'walk', minutes: 7 }],
-      ['나', { mode: 'transit', minutes: 3 }],
-      ['이 장소', null],
+    // 영업시간 확인됨은 서버 needs_check 의 반대다
+    expect(stops.map((s) => [s.name, s.leg, s.hoursKnown])).toEqual([
+      ['가', { mode: 'walk', minutes: 7 }, false],
+      ['나', { mode: 'transit', minutes: 3 }, true],
+      ['이 장소', null, false],
     ])
   })
 

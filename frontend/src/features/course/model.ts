@@ -134,7 +134,8 @@ export function dayStops(day: CourseDayDto, names: Map<string, string>, points: 
       const leg: Leg | null = found ? { mode: found.mode === 'transit' ? 'transit' : 'walk', minutes: found.approx_minutes } : null
       const name = names.get(slot.pin_id) ?? '이 장소'
       const at = points.get(slot.pin_id)
-      return { pinId: slot.pin_id, name, leg, point: at ? ({ name, ...at } satisfies KakaoPoint) : null }
+      // 그날 영업 여부를 아는 장소(서버 needs_check 가 false) — 「영업시간 확인됨」을 단다. 모르는 장소엔 아무것도 달지 않는다.
+      return { pinId: slot.pin_id, name, hoursKnown: !slot.needs_check, leg, point: at ? ({ name, ...at } satisfies KakaoPoint) : null }
     })
 }
 

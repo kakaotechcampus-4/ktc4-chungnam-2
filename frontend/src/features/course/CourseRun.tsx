@@ -230,6 +230,7 @@ function DayCard({ day, index, names, points }: { day: CourseRunDto['days'][numb
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="break-keep text-body font-semibold text-ink-900">{s.name}</p>
+                    {s.hoursKnown && <span className="tag tag-good mt-1">영업시간 확인됨</span>}
                   </div>
                 </div>
                 {s.leg && (
