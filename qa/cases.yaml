@@ -128,7 +128,7 @@
 - {id: G01, layer: ui, area: agent, scenario: "반대 뒤 정체 지도에서 제안 카드 수락 / 닫기", expect: "수락은 FE 동작만, 에이전트가 직접 실행하지 않음 / 닫으면 지도 단위로 사라짐", status: pass}
 - {id: G02, layer: ui, area: agent, scenario: "모드 끄기 → 켜기", expect: "끄면 새 제안 없음, 켜면 다시 관찰", status: pass}
 - {id: G03, layer: ui, area: agent, scenario: "우리 조건 요약", expect: "칸 나누기 맞음, 사유 원문이 서버 문장에 섞이지 않음(#717)", status: pass}
-- {id: G04, layer: ui, area: agent, scenario: "따옴표·이모지·140자 사유가 있는 지도의 제안·요약", expect: "문장이 깨지지 않음", status: untested}
+- {id: G04, layer: ui, area: agent, scenario: "따옴표·이모지·140자 사유가 있는 지도의 제안·요약", expect: "문장이 깨지지 않음", status: pass}
 - {id: G05, layer: api, area: agent, scenario: "이미 처리한 제안 accept/dismiss, 버튼 범위 밖 action_index", expect: "409 / 422 VALIDATION_ERROR, 비구성원 404", status: pass}
 - {id: G06, layer: api, area: agent, scenario: "지도 하루 모델 상한(구성원 수 × 4)", expect: "상한 넘으면 진단 안 부름, KST 자정 초기화", status: pass}
 # ───────── 모델 비용·실패(llm) — AI-B ─────────
