@@ -519,6 +519,7 @@ agent_suggestion_views(               -- 사용자별 열람. 버튼의 점(has_
 
 agent_reason_summaries(               -- 우리 조건 요약. 카테고리마다 최신본 하나를 덮어쓴다
   map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸(키, 개수, 문구 종류)과 근거 reaction_id. 사유 원문 없음
+                                      -- + rules_version(만들 때의 ② 규칙 버전, #1095 — 지금 버전과 다르면 다시 만든다. 옛 요약은 키 없음)
   based_on_reaction_count, run_id null, updated_at,
   primary key(map_id, category)
 )

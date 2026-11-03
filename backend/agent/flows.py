@@ -561,7 +561,8 @@ def update_summary(
 
     읽기는 도구처럼 짧은 세션으로 하고(사유는 pins에서 다시 읽는다 — 삭제된 핀의 사유 포함), ②는 세션 없이 부른다(12.6).
     저장은 지도 제안과 별도 트랜잭션이다. 문구가 고정이라 모델 사용 상한을 보지 않고 used_model=false로 남긴다."""
-    category, more = core.pick_summary(snap, hist.summaries)
+    rules_version = llm_api.plan_evidence_rules_version()
+    category, more = core.pick_summary(snap, hist.summaries, rules_version=rules_version)
     if category is None:
         return None
     started = time.monotonic()
@@ -571,7 +572,7 @@ def update_summary(
     try:
         with llm_api.usage_context("agent_summary", map_id=map_id):   # #870 — ②를 부르지만 지도 상한에는 세지 않는다
             reasons = tools.summary_reasons(ctx, category)
-        stored, outcome, detail = core.summarize_reasons(reasons), "summarized", None
+        stored, outcome, detail = core.summarize_reasons(reasons) | {"rules_version": rules_version}, "summarized", None
     except llm_api.PlanEvidenceFailed as exc:
         log.warning("agent 요약 실패(②) map_id=%s category=%s", map_id, category)
         stored, outcome, detail = None, "model_failed", {"reason": "structure_failed", "detail": type(exc).__name__}
