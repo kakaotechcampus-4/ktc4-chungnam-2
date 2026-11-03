@@ -29,7 +29,7 @@ export function SchedulePanelHost({ mapId }: { mapId: string }) {
 }
 
 /**
- * 여행 날짜마다 칸을 두고 일정을 짠다(넓은 화면, 화면만 — 일정은 이 기기에만 있다). 시간은 정하지 않는다.
+ * 여행 날짜마다 칸을 두고 일정을 짠다(넓은 화면 — 일정은 서버에 있어 구성원이 함께 본다). 시간은 정하지 않는다.
  * 넣을 장소는 왼쪽 확정 리스트에 있다 — 줄의 ≡ 를 끌어 칸에 놓거나 체크박스로 골라 넣는다. 칸 안의 줄은 끌어서 다른 날·다른 자리로,
  * 리스트 쪽에 놓으면 일정에서 빠진다. 그날 순서가 곧 「동선 보기」 순서다.
  */
@@ -39,6 +39,15 @@ export default function SchedulePanel({ mapId }: { mapId: string }) {
   const enrich = useEnrichPin()
 
   if (shortlist.error) return <ErrorText message="확정 리스트를 불러오지 못했어요" error={shortlist.error} />
+  if (edit.error)
+    return (
+      <div className="space-y-2">
+        <ErrorText message="일정을 불러오지 못했어요" error={edit.error} />
+        <button type="button" onClick={edit.retry} className="btn-outline btn-sm">
+          다시 불러오기
+        </button>
+      </div>
+    )
   if (!edit.ready) return <p className="text-sm text-ink-500">불러오는 중…</p>
   if (edit.dates.length === 0) return <p className="text-sm text-ink-500">여행 날짜를 정하면 일정을 짤 수 있어요</p>
   const items = shortlist.data ?? []
@@ -51,7 +60,7 @@ export default function SchedulePanel({ mapId }: { mapId: string }) {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-ink-500">지금은 이 기기에만 저장돼요</p>
+      <p className="text-xs text-ink-500">일정은 함께하는 구성원 모두에게 보여요</p>
       {scheduledIds(edit.schedule).size === 0 && <p className="text-sm text-ink-700">확정된 장소를 끌어 오거나 골라서 넣어요</p>}
       {edit.dates.map((d, i) => {
         const ids = edit.schedule.days[d] ?? []

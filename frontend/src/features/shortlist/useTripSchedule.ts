@@ -14,12 +14,20 @@ import { useQueryClient } from '@tanstack/react-query'
  * 서버가 미배정(확정 리스트)으로 돌려놓아 여기서 따로 맞추지 않는다.
  * 확정 탭, 「일정 짜기」 패널, 지도(동선 선)가 같이 쓴다.
  */
-export function useTripSchedule(mapId: string): { schedule: Schedule; dates: string[]; ready: boolean } {
+export function useTripSchedule(mapId: string): {
+  schedule: Schedule
+  dates: string[]
+  ready: boolean
+  /** 일정을 받지 못했다(받는 중이 아니라 실패). `retry`로 다시 받는다. */
+  error: unknown
+  retry: () => void
+} {
   const map = useMapQuery(mapId).data
-  const dto = useScheduleQuery(mapId).data
+  const query = useScheduleQuery(mapId)
+  const dto = query.data
   const schedule = useMemo(() => scheduleFromDto(dto), [dto])
   const dates = tripDays(map?.startDate, map?.endDate)
-  return { schedule, dates, ready: Boolean(map && dto) }
+  return { schedule, dates, ready: Boolean(map && dto), error: dto ? null : query.error, retry: () => void query.refetch() }
 }
 
 /**

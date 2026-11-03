@@ -29,7 +29,7 @@ import SheetTitle from '@/ui/SheetTitle'
  * 확정된 장소 탭(Figma 7절, 2026-11-03 일정으로 바뀜). 리스트는 아직 일정에 넣지 않은 확정 장소이고, 체크박스로 골라 그날로 넣는다.
  * 순서와 동선은 일정이 정한다 — 「동선 보기」를 켜면 본문이 그날 일정(`DayRoute`)이 되고 지도에 그날 순서대로 선이 그어진다.
  * 넓은 화면은 「일정 짜기」 패널(`SchedulePanelHost`)을 옆에 열어 끌어 넣는다. 몇 시에 어디는 정하지 않는다(범위 밖).
- * 일정은 아직 이 기기에만 있다(백엔드 일정 API 없음).
+ * 일정은 서버에 있어 구성원이 함께 본다(#1172).
  */
 export default function ShortlistTab() {
   const { mapId } = useShell()
@@ -108,7 +108,7 @@ export default function ShortlistTab() {
     )
   }
 
-  const subtitle = shortlist.isPending
+  const subtitle = shortlist.isPending || (!routeOn && !edit.ready && !edit.error)
     ? '불러오는 중…'
     : routeOn
       ? '일정에 넣은 순서대로 보여요'
@@ -162,7 +162,16 @@ export default function ShortlistTab() {
           data-day={UNSET_DAY}
           className={`space-y-3 rounded-xl pb-[100px] ${hover?.day === UNSET_DAY ? 'outline-2 outline-dashed outline-offset-4 outline-[var(--action-fill)]' : ''}`}
         >
-          {items.length === 0 ? (
+          {edit.error ? (
+            <div className="space-y-2">
+              <ErrorText message="일정을 불러오지 못했어요" error={edit.error} />
+              <button type="button" onClick={edit.retry} className="btn-outline btn-sm">
+                다시 불러오기
+              </button>
+            </div>
+          ) : !edit.ready ? (
+            <p className="text-sm text-ink-500">일정을 불러오는 중…</p>
+          ) : items.length === 0 ? (
             <p className="break-keep text-sm text-ink-500">모든 장소를 일정에 넣었어요. 「동선 보기」에서 날짜별로 볼 수 있어요</p>
           ) : (
             <ShortlistList
