@@ -137,4 +137,10 @@ describe('실시간 연결 점검(#832, docs/events.md 전달 보장 8번)', () 
     act(() => latest().emit('pin.created', { id: 'pin_9', created_by: 'u_me' }))
     expect(invalidated()).toContain(JSON.stringify(pinKeys.list(MAP)))
   })
+
+  it('지도 정보가 바뀌면 일정도 다시 받는다 — 날짜를 고치면 서버가 기간 밖 일정을 뺀다(#1273)', () => {
+    const { invalidated } = setup()
+    act(() => latest().emit('map.updated', { map_id: MAP }))
+    expect(invalidated()).toContain(JSON.stringify(shortlistKeys.list(MAP)))
+  })
 })

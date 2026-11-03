@@ -64,7 +64,8 @@ function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
     // 누가 나가면 그 사람의 의견이 지워진다.
     'member.left': [pins, counts, map, members, readiness],
     'owner.changed': [map, members],
-    'map.updated': [map, myMaps],
+    // 날짜가 바뀌면 서버가 기간 밖 일정을 빼고 일정 version(기간 포함)도 바뀐다 — 확정 리스트 키 아래 일정도 다시 받는다(#1273).
+    'map.updated': [map, myMaps, { queryKey: shortlistKeys.list(mapId) }],
     'map.deleted': [myMaps],
     // 확정 리스트는 다른 구성원이 바꿀 수 있다(5-10). 동선은 이 기기의 일정 순서라(2026-11-03) 서버 동선(route.recalculated)은 받지 않는다.
     'shortlist.changed': [{ queryKey: shortlistKeys.list(mapId) }, pins],
