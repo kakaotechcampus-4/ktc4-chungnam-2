@@ -4,10 +4,15 @@ import { ApiError } from '@/api'
 
 import {
   evidenceLimitMessage,
+  fulfillmentLine,
   groupEvidence,
+  hasExcluded,
+  memberConditions,
   noResultsExternalSearch,
   notEnforcedNote,
   toReadinessCards,
+  type CandidateDto,
+  visibleConditionCount,
   type EvidenceLineDto,
 } from './model'
 
@@ -65,11 +70,71 @@ describe('추천이 쓰지 않는 근거 줄(#742)', () => {
   })
 })
 
+describe('「조건 N개」는 화면에 보이는 조건 수(#1143)', () => {
+  const pref = (id: string) => line(id, 'preferred', { fact_label: '양식', wants: true })
+  it('같은 키·방향 두 줄은 1개, 다른 키 두 줄은 2개', () => {
+    expect(visibleConditionCount([pref('a'), pref('b')])).toBe(1)
+    expect(visibleConditionCount([pref('a'), line('b', 'preferred', { fact_label: '국물', wants: true })])).toBe(2)
+  })
+})
+
 describe('「+」 직접 추가 상한(#720)', () => {
   it('숫자는 응답 detail.limit 에서 가져오고, 다른 오류는 null', () => {
     const limitErr = (detail?: Record<string, unknown>) => new ApiError(409, { code: 'EVIDENCE_LIMIT', message: 'x', detail })
     expect(evidenceLimitMessage(limitErr({ limit: 10, used: 10 }))).toBe('직접 추가는 10개까지예요')
     expect(evidenceLimitMessage(limitErr())).toBe('직접 추가는 더 할 수 없어요')
     expect(evidenceLimitMessage(err('VALIDATION_ERROR'))).toBeNull()
+  })
+})
+
+describe('구성원 조건별 충족(#796)', () => {
+  const members = [
+    { userId: 'u1', name: '지우', isMe: true },
+    { userId: 'u2', name: '민재', isMe: false },
+    { userId: 'u3', name: '준영', isMe: false },
+  ]
+  const cand = (by: NonNullable<CandidateDto['member_fulfillment']['by_member']>) =>
+    ({ member_fulfillment: { satisfied: 1, total: 2, by_member: by } }) as CandidateDto
+
+  it('조건별 상태를 못 맞춘 것 → 확인 필요 → 맞춘 것 순으로 세고, 이름이 없으면 키를 그대로 쓴다', () => {
+    const c = cand([
+      {
+        user_id: 'u1',
+        satisfied: false,
+        conditions: [
+          { fact_key: 'spicy_focused', fact_label: '매운맛 전문', status: 'met' },
+          { fact_key: 'parking_available', fact_label: null, status: 'needs_check' },
+          { fact_key: 'quiet', fact_label: '조용함', status: 'unmet' },
+        ],
+      },
+      { user_id: 'u2', satisfied: true },
+    ])
+    expect(memberConditions(c, members)).toEqual([
+      {
+        userId: 'u1',
+        name: '지우 (나)',
+        met: 1,
+        checks: [
+          { label: '조용함', tone: 'fail' },
+          { label: 'parking_available', tone: 'check' },
+          { label: '매운맛 전문', tone: 'pass' },
+        ],
+      },
+    ])
+    expect(fulfillmentLine(c, members)).toBe('지우 (나) 조건 1/3 충족 · 민재 통과 · 준영은 건 조건 없음')
+  })
+
+  it('conditions 가 없으면(구버전 서버) 지금 한 줄 그대로다', () => {
+    const c = cand([{ user_id: 'u1', satisfied: true }, { user_id: 'u2', satisfied: true }])
+    expect(memberConditions(c, members)).toEqual([])
+    expect(fulfillmentLine(c, members)).toBe('조건을 건 지우 (나)·민재 모두 통과 · 준영은 건 조건 없음')
+  })
+})
+
+describe('후보를 다 보여 준 뒤의 안내(#1142)', () => {
+  it('excluded 단계가 0보다 크면 참, 0이거나 key가 없으면 거짓', () => {
+    expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 13 }])).toBe(true)
+    expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 0 }])).toBe(false)
+    expect(hasExcluded([{ label: '이미 제안·거절됨', removed_count: 13 }])).toBe(false)
   })
 })

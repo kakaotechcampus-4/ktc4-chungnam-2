@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useQueryClient, type InvalidateQueryFilters } from '@tanstack/react-query'
+import { useQueryClient, type InvalidateQueryFilters, type QueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 
 import { agentEventHandlers } from '@/features/agent/queries'
@@ -21,6 +21,13 @@ window.addEventListener('pagehide', () => (leaving = true))
 export const isPageLeaving = () => leaving
 
 export type ConnectionState = 'open' | 'reconnecting' | 'closed'
+
+/**
+ * 이벤트든 서버 ping(20초마다)이든 이만큼 아무것도 못 받으면 연결이 조용히 죽은 것으로 본다(docs/events.md 전달 보장 8번, #832).
+ * 노트북 절전·Wi-Fi 전환·공유기의 유휴 연결 정리 뒤에는 브라우저가 끊긴 줄 모르고 「열림」으로 기다린다.
+ */
+export const STALE_MS = 60_000
+const STALE_CHECK_MS = 10_000
 
 /** docs/events.md — 삭제면 type 이 null 이다. 사유는 싣지 않는다. */
 type ReactionChanged = {
@@ -59,9 +66,15 @@ function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
     'owner.changed': [map, members],
     'map.updated': [map, myMaps],
     'map.deleted': [myMaps],
-    // 확정 리스트와 동선은 다른 구성원이 바꿀 수 있다(5-10).
+    // 확정 리스트는 다른 구성원이 바꿀 수 있다(5-10). 동선은 이 기기의 일정 순서라(2026-11-03) 서버 동선(route.recalculated)은 받지 않는다.
     'shortlist.changed': [{ queryKey: shortlistKeys.list(mapId) }, pins],
-    'route.recalculated': [{ queryKey: shortlistKeys.route(mapId) }],
+  }
+}
+
+/** 끊긴 동안 놓친 변화는 이벤트로 다시 오지 않을 수 있어 새로 받는다(docs/events.md 전달 보장 8번). */
+function refreshMap(queryClient: QueryClient, mapId: string) {
+  for (const queryKey of [pinKeys.list(mapId), pinKeys.counts(mapId), shortlistKeys.list(mapId)]) {
+    void queryClient.invalidateQueries({ queryKey })
   }
 }
 
@@ -85,7 +98,14 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
     // 서버가 지도 삭제로 닫은 연결은 에러로 보지 않는다. 페이지를 떠나는 중(leaving)과는 따로 둔다.
     let closedByServer = false
     const source = new EventSource(`${BASE_URL}/maps/${mapId}/events`, { withCredentials: true })
-    const update = (fn: (pins: Pin[]) => Pin[]) => queryClient.setQueryData<Pin[]>(key, (pins) => pins && fn(pins))
+    // 핀 목록을 아직 받지 않았으면 고칠 게 없다 — 버리지 말고 새로 받게 한다(#832, 버리면 다시 받을 장치가 없었다).
+    const update = (fn: (pins: Pin[]) => Pin[]) => {
+      if (queryClient.getQueryData<Pin[]>(key)) queryClient.setQueryData<Pin[]>(key, (pins) => pins && fn(pins))
+      else void queryClient.invalidateQueries({ queryKey: key })
+    }
+    // 마지막으로 무엇이든 받은 시각. 모든 이벤트·ping·연결 열림에서 고친다.
+    let lastSeen = Date.now()
+    const seen = () => (lastSeen = Date.now())
     const parse = <T>(e: MessageEvent) => JSON.parse(e.data) as T
     const upsert = (e: MessageEvent) => {
       const pin = parse<Pin>(e)
@@ -133,11 +153,15 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
     const table = refetchTable(mapId)
     for (const type of new Set([...Object.keys(apply), ...Object.keys(table)])) {
       source.addEventListener(type, (e) => {
+        seen()
         apply[type]?.(e as MessageEvent)
         for (const filters of table[type] ?? []) void queryClient.invalidateQueries(filters)
       })
     }
+    // control 은 ping·replay_truncated 둘이다. 받은 것만 적고 type 은 보지 않는다(모르는 type 은 무시, events.md).
+    source.addEventListener('control', seen)
     source.onopen = () => {
+      seen()
       manual.current = false
       setState('open')
     }
@@ -154,14 +178,28 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
         setState('reconnecting')
       }
     }
-    return () => source.close()
+    // 60초 동안 조용하면 닫고 새로 맺는다. 탭이 숨겨진 동안은 타이머가 늦게 돌아서, 다시 보일 때도 점검한다.
+    // 브라우저가 재연결을 포기한(CLOSED) 연결은 인증 실패 같은 이유라 사람이 「다시 연결」을 누르는 쪽에 둔다.
+    const check = () => {
+      if (closedByServer || source.readyState === EventSource.CLOSED || Date.now() - lastSeen <= STALE_MS) return
+      console.warn('[realtime] 60초 동안 받은 것이 없어 다시 연결해요', mapId)
+      source.close()
+      refreshMap(queryClient, mapId)
+      setState('reconnecting')
+      setAttempt((n) => n + 1)
+    }
+    const onVisible = () => document.visibilityState === 'visible' && check()
+    const timer = setInterval(check, STALE_CHECK_MS)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+      source.close()
+    }
   }, [mapId, myUserId, queryClient, navigate, attempt])
 
   const reconnect = () => {
-    // 끊긴 동안 놓친 변화는 이벤트로 다시 오지 않을 수 있어 새로 받는다(docs/events.md 전달 보장 8번).
-    for (const queryKey of [pinKeys.list(mapId), pinKeys.counts(mapId), shortlistKeys.list(mapId)]) {
-      void queryClient.invalidateQueries({ queryKey })
-    }
+    refreshMap(queryClient, mapId)
     // Firefox 와 앞단 Caddy 를 거친 연결은 첫 데이터(서버 ping, 최대 20초)가 와야 열린다.
     // 그동안 버튼을 거둬 다시 눌러 처음부터 맺는 일을 막는다.
     manual.current = true

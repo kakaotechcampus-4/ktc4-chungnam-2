@@ -16,3 +16,9 @@
 `run_llm_cost.py`는 모델 호출 비용 측정 시나리오다(#870, BM 크레딧 설계). 스테이징에서 여행 세 가지(2명·4명·6명)를 HTTP로 진행하고 `llm_calls`를 모아 시나리오·기능별 호출 수, 토큰, 비용 리포트를 낸다. 실제 모델을 부르니 돌리기 전에 확인한다. 스테이징에서는 GitHub Actions의 `llm-cost`를 손으로 돌린다. 그 밖의 실행 방법은 파일 머리말에 있다.
 
 UI 케이스(`layer: ui`)는 FE 5173 + 백엔드 8000을 localhost로 띄우고 브라우저로 수행한다(카카오 로그인은 `auth.testing.session_cookie`로 만든 세션 쿠키로 대체).
+
+브라우저 E2E(`e2e/`, #1281)는 UI 케이스 중 핵심 흐름 하나를 자동으로 돈다. PR마다 GitHub Actions의 `e2e`가 돌고, 로컬에서는 이렇게 돈다.
+
+- 준비: `cd backend && docker-compose up -d`, E2E 전용 DB를 한 번 만든다(`docker exec backend-db-1 psql -U pingo -c "CREATE DATABASE pingo_e2e"`). `contracts`, `frontend`, `e2e`에서 `npm ci`, `e2e`에서 `npx playwright install chromium`.
+- 실행: `cd e2e && E2E_PYTHON=<backend 가상환경의 python> npx playwright test`. 마이그레이션, 백엔드(8010), 화면 빌드와 preview(4173), 시드를 설정이 한다. 이미 떠 있는 서버는 다시 쓴다.
+- 개발자 `backend/.env`(실제 키)는 읽지 않는다. 실패하면 `npx playwright show-trace test-results/<테스트>/trace.zip`.

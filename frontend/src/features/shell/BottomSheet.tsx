@@ -26,6 +26,7 @@ const TAP_SLOP = 6
  * 손잡이·제목 줄을 위로 끌면 한 단계 올라가고, 아래로 끌면 내려간다. 탭하면 접고 펼친다.
  * `top` 은 시트 위에 붙어 다니는 것(지도 버튼·토스트)을 넣는 자리다.
  * 넓은 화면에서는 왼쪽 패널 안을 채우는 평범한 스크롤 영역이다 — 단계·손잡이·끌기·자동 확장이 없다(#338).
+ * 지도 화면의 본문 영역(`main`)이라 스크린 리더의 「본문으로 이동」이 검색창·칩을 건너 여기로 온다(#1224).
  */
 export default function BottomSheet({
   stage,
@@ -53,13 +54,13 @@ export default function BottomSheet({
 
   if (desktop) {
     return (
-      <section aria-label="탭 내용" className="relative flex min-h-0 flex-1 flex-col bg-white">
+      <main aria-label="탭 내용" className="relative flex min-h-0 flex-1 flex-col bg-white">
         {top}
         {banner}
         {/* 위 여백은 패널 헤더의 pb-1(포커스 테두리 자리)과 합쳐 16px. */}
         <div className="shrink-0 px-4 pb-2 pt-3">{header}</div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6">{children}</div>
-      </section>
+      </main>
     )
   }
 
@@ -110,7 +111,7 @@ export default function BottomSheet({
     : {}
 
   return (
-    <section
+    <main
       aria-label="바텀시트"
       style={{
         top: dragging ? `calc(${STAGE_TOP[stage]} + ${dragY}px)` : STAGE_TOP[stage],
@@ -156,6 +157,6 @@ export default function BottomSheet({
       >
         {children}
       </div>
-    </section>
+    </main>
   )
 }

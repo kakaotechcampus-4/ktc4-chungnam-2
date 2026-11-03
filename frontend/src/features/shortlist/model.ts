@@ -3,7 +3,8 @@ import type { components } from '@pingo/contracts/src/types/api'
 import { isPlaced, type Pin } from '@/features/map/model'
 
 export type ShortlistItemDto = components['schemas']['ShortlistItem']
-export type RouteDto = components['schemas']['Route']
+export type ScheduleDto = components['schemas']['ShortlistSchedule']
+export type ScheduleUpdateDto = components['schemas']['ShortlistScheduleUpdate']
 /** 내보내기 형식(#471). 기본 이름에도 쓴다. */
 export type ExportFormat = 'txt' | 'csv'
 
@@ -19,24 +20,6 @@ export function sortItems(items: ShortlistItemDto[]): ShortlistItemDto[] {
  */
 export const routableCount = (items: Pick<ShortlistItemDto, 'pin'>[]) => items.filter((i) => i.pin.source !== 'live').length
 
-/** 배열에서 from 번째를 to 자리로 옮긴다(끌어서 순서 바꾸기). */
-export function move<T>(list: T[], from: number, to: number): T[] {
-  const next = [...list]
-  const [item] = next.splice(from, 1)
-  next.splice(to, 0, item)
-  return next
-}
-
-/** "대천 동선 · 3곳 · 총 약 14분 (직선거리 기준)" — 지역이 여럿이면 지역마다. 시간 배정은 하지 않는다(범위 밖). */
-export function routeSummary(routes: RouteDto[]): string {
-  return routes
-    .map((r) => {
-      const minutes = r.legs.reduce((sum, l) => sum + l.approx_minutes, 0)
-      return `${r.region_label} 동선 · ${r.ordered_pin_ids.length}곳 · 총 약 ${minutes}분`
-    })
-    .join(' / ')
-}
-
 export type RouteDrawing = {
   stops: { n: number; lat: number; lng: number }[]
   legs: { from: { lat: number; lng: number }; to: { lat: number; lng: number }; label: string }[]
@@ -45,20 +28,19 @@ export type RouteDrawing = {
   style?: string
 }
 
-/** 지도에 그릴 동선 — 경로선(직선), 순서 번호, 구간 "약 N분". 좌표는 핀에서 찾는다. 좌표가 없는 핀(실시간 핀)은 서버 동선에도 없지만 여기서도 걸러 둔다. */
-export function toRouteDrawings(routes: RouteDto[], pins: Pin[]): RouteDrawing[] {
-  const at = (id: string) => pins.find((p) => p.id === id)
-  return routes.map((r) => ({
-    stops: r.ordered_pin_ids.flatMap((id, i) => {
-      const p = at(id)
+/**
+ * 지도에 그릴 그날 동선 — 일정 순서대로 직선 경로선과 순서 번호(2026-11-03, 일정이 순서를 정한다). 좌표는 핀에서 찾는다.
+ * 번호는 일정 순서 그대로라 확정 탭 줄 번호와 같다. 좌표가 없는 핀(실시간 핀)은 그리지 않는다(그 번호는 비고 선은 건너 잇는다).
+ * 구간 「약 N분」은 서버 규칙이라 여기서 계산하지 않는다 — 시간은 카카오맵 길찾기가 보여 준다.
+ */
+export function scheduleDrawing(ids: string[], pins: Pin[]): RouteDrawing {
+  return {
+    stops: ids.flatMap((id, i) => {
+      const p = pins.find((pin) => pin.id === id)
       return p && isPlaced(p) ? [{ n: i + 1, lat: p.lat, lng: p.lng }] : []
     }),
-    legs: r.legs.flatMap((l) => {
-      const a = at(l.from_pin_id)
-      const b = at(l.to_pin_id)
-      return a && b && isPlaced(a) && isPlaced(b) ? [{ from: a, to: b, label: `약 ${l.approx_minutes}분` }] : []
-    }),
-  }))
+    legs: [],
+  }
 }
 
 /** 카카오맵 길찾기는 출발·도착 + 경유지 5곳까지 받는다(카카오맵 URL 규칙). */
@@ -78,16 +60,4 @@ export function kakaoWalkUrl(stops: KakaoPoint[]): string | null {
 /** 출발 → 도착 대중교통 길찾기 링크(경유지 없음). */
 export function kakaoTrafficUrl(from: KakaoPoint, to: KakaoPoint): string {
   return `https://map.kakao.com/link/by/traffic/${kakaoPoint(from)}/${kakaoPoint(to)}`
-}
-
-/**
- * 동선 순서대로 카카오맵 길찾기(도보)를 여는 링크 — 지역마다 하나(트리플 「거리 → 길찾기」).
- * 좌표·이름은 우리 핀 것이라 카카오 응답을 저장하는 게 아니다(#53). 이동 수단은 카카오맵에서 바꿀 수 있다.
- */
-export function kakaoDirectionsUrl(route: RouteDto, pins: Pin[]): string | null {
-  const stops = route.ordered_pin_ids.flatMap((id) => {
-    const p = pins.find((pin) => pin.id === id)
-    return p && isPlaced(p) ? [{ name: p.place_name ?? '장소', lat: p.lat, lng: p.lng }] : []
-  })
-  return kakaoWalkUrl(stops)
 }

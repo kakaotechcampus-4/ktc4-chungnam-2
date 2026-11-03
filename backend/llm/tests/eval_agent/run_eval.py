@@ -111,7 +111,7 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     expect = case["expect"]
     key = expect["target"]
     inp = world.diagnosis_input(key)
-    tools = fx.FixtureTools(world, DIAGNOSIS_TOOLS[inp["diagnosis"]])
+    tools = fx.FixtureTools(world, DIAGNOSIS_TOOLS[inp["diagnosis"]], preview=world.preview(key))
     _local.requests = []
     started = time.monotonic()
     reply = service.agent_diagnose(inp, tool_runner=tools.run, planner=service.real_diagnosis_planner)
@@ -124,10 +124,13 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     }
     phrases = expect.get("decision_phrases", [])
     row["injection"] = bool(phrases)
+    preview = inp.get("preview")
+    row["preview"] = preview   # 미리 돌려 본 수(6.7, #1180). 없으면 None
     if isinstance(out, AgentCallFailed):
         return row | {"decision": None, "outcome": core.failed_outcome(out.reason), "failure": out.detail,
                       "decision_match": False, "button_match": False, "kept_actions": [],
-                      "raw_echo": [], "shown_echo": [], "quoted_echo": []}
+                      "raw_echo": [], "shown_echo": [], "quoted_echo": [], "p1_claimed": False,
+                      "raw_open_recommend": False}
     verified = fx.verify(world, key, out, tools)
     raw_text = " ".join(a.text for a in out.advice)
     row |= {
@@ -139,7 +142,10 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
         "raw_claims": [c.model_dump() for c in out.claims],
         "raw_forbidden": [w for w in FORBIDDEN_RAW if w in raw_text.replace(" ", "")],
         "raw_echo": fx.decision_echoes((fx.outside_slots(a.text) for a in out.advice), phrases),
+        "raw_open_recommend": "open_recommend" in [a.type for a in out.actions],
     }
+    kept_ids = set((verified.record.get("claims") or {}).get("kept", []))
+    row["p1_claimed"] = any(c.kind == "tool_result" and c.call_id == "p1" and c.id in kept_ids for c in out.claims)
     expected_silent = expect["decision"] == "silent"
     row["decision_match"] = (out.decision != "suggest") if expected_silent else (out.decision == "suggest")
     draft = verified.draft
@@ -195,6 +201,7 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                   f"| 고른 버튼 일치(첫 버튼, 침묵 기대는 침묵) | {_pct(sum(r['button_match'] for r in diag), len(diag))} |",
                   f"| 원문에 결정 지시 표현 | {sum(bool(r.get('raw_forbidden')) for r in diag)} |",
                   *_echo_rows(diag),
+                  *_preview_rows(diag),
                   f"| 도구 호출 수(평균, 최대) | {_avg([len(r['tools']) for r in diag]):.1f}, {max(len(r['tools']) for r in diag)} |",
                   f"| 모델 요청 수(평균) | {_avg([r['requests'] for r in diag]):.1f} |",
                   f"| 입력 토큰(평균, 캐시) | {_avg([r['in'] for r in diag]):.0f} ({_avg([r['cached'] for r in diag]):.0f}) |",
@@ -245,6 +252,17 @@ def _echo_rows(rows: list[dict[str, Any]]) -> list[str]:
     return [f"| 결정 지시(케이스 문구): 모델 원문 슬롯 밖 | {_pct(sum(bool(r['raw_echo']) for r in inj), len(inj))} |",
             f"| 결정 지시(케이스 문구): 렌더 text 조각 | {_pct(sum(bool(r['shown_echo']) for r in inj), len(inj))} |",
             f"| (참고) 인용 조각에 지시문 — 구성원 글로 그려짐 | {_pct(sum(bool(r['quoted_echo']) for r in inj), len(inj))} |"]
+
+
+def _preview_rows(rows: list[dict[str, Any]]) -> list[str]:
+    """미리 돌려 보기(6.7, #1180) 지표 줄. 분모는 preview가 입력에 있었던 호출이다. 0곳에서 「추천 받기」는 코드(11.2 6단계)가
+    빼므로 남은 것은 0이어야 하고, 모델이 원문에서 고른 횟수는 지시문을 따랐는지 본다."""
+    with_preview = [r for r in rows if r.get("preview") and r.get("decision") == "suggest"]
+    zero = [r for r in with_preview if r["preview"]["passed_count"] == 0]
+    some = [r for r in with_preview if r["preview"]["passed_count"] > 0]
+    return [f"| 미리 돌려 본 수를 p1 claim으로 씀(남는 곳 있음, suggest 중) | {_pct(sum(r['p1_claimed'] for r in some), len(some))} |",
+            f"| 0곳인데 모델이 추천 받기를 고름(원문) | {_pct(sum(r['raw_open_recommend'] for r in zero), len(zero))} |",
+            f"| 0곳인데 추천 받기가 남음(검증 뒤, 0이어야 한다) | {sum('open_recommend' in r['kept_actions'] for r in zero)} |"]
 
 
 def _echo_cases(by_case: Mapping[str, list[dict[str, Any]]]) -> list[str]:

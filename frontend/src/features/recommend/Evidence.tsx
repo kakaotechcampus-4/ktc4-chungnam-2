@@ -1,8 +1,9 @@
+import { useState } from 'react'
 import { MessageSquare, Users } from 'lucide-react'
 
 import type { MemberView } from '@/features/maps/model'
 
-import { fulfillmentLine, sourceLabel, toChecks, type AiEvidence } from './model'
+import { fulfillmentLine, memberConditions, sourceLabel, toChecks, type AiEvidence, type CheckView } from './model'
 
 const TONE = { pass: 'tag-good', check: 'tag-warn', fail: 'tag-bad' } as const
 const MARK = { pass: '✓', check: '?', fail: '✗' } as const
@@ -23,6 +24,10 @@ export function AiReason({ text }: { text: string }) {
 export function AiChecks({ evidence }: { evidence: AiEvidence }) {
   const checks = toChecks(evidence)
   if (checks.length === 0) return null
+  return <CheckTags checks={checks} />
+}
+
+function CheckTags({ checks }: { checks: CheckView[] }) {
   return (
     <ul className="flex flex-wrap gap-1.5">
       {checks.map((k) => (
@@ -50,6 +55,34 @@ export function AiFulfillment({ evidence, members }: { evidence: AiEvidence; mem
         <span className="ml-auto font-normal text-ink-600">출처 · {sourceLabel(evidence)}</span>
       </p>
       {f && <p className="text-xs text-ink-600">{fulfillmentLine(evidence, members)}</p>}
+      <MemberConditions evidence={evidence} members={members} />
     </>
+  )
+}
+
+/**
+ * 구성원마다 조건별 ✓·✗·확인 필요(#796). 구성원 수 × 조건 수만큼 태그가 늘어 카드가 길어지므로
+ * 위 한 줄(「A 조건 2/3 충족」)만 늘 보이고 조건별 태그는 펼쳐서 본다. 구버전 서버(conditions 없음)면 아무것도 없다.
+ */
+function MemberConditions({ evidence, members }: { evidence: AiEvidence; members: MemberView[] }) {
+  const [open, setOpen] = useState(false)
+  const rows = memberConditions(evidence, members)
+  if (!rows.length) return null
+  return (
+    <div className="space-y-2">
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="btn-link text-xs">
+        {open ? '구성원별 조건 접기' : '구성원별 조건 보기'}
+      </button>
+      {open && (
+        <ul className="space-y-2" aria-label="구성원별 조건">
+          {rows.map((m) => (
+            <li key={m.userId} className="space-y-1">
+              <p className="text-xs font-semibold text-ink-900">{m.name}</p>
+              <CheckTags checks={m.checks} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }

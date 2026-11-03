@@ -344,3 +344,17 @@ def test_render_empty_advice_is_none():
     row = _row("exhausted", [{"id": "c1", "kind": "tool_result", "call_id": "t1", "path": "lines.0.label", "value": "확정하세요"}],
                [{"slot_text": "「{c1.value}」", "is_guess": False}])
     assert core.render_run_advice(RUN, row) is None
+
+
+# ---------------------------------------------------------------- 결과 상태 키 (#1103)
+
+_STATE_META = {"default_radius_walk_min": 15, "attempt_no": 1}
+_STATE_FUNNEL = {"result_count": 1, "passed_count": 1, "funnel": [{"key": "radius", "label": "반경 밖 제거", "removed_count": 5}]}
+
+
+def test_state_key_is_stable_for_the_same_result_and_changes_with_retry_or_widen():
+    key = core.advice_state_key(_STATE_META, _STATE_FUNNEL, [])
+    assert core.advice_state_key(dict(_STATE_META), dict(_STATE_FUNNEL), []) == key   # 같은 결과 재조회는 같은 키
+    # 집계 숫자(깔때기, 결과 수, 근거 줄)가 같아도 다시 추천하면 키가 달라진다 — 다른 run의 제외 목록이 바뀌었을 수 있다
+    assert core.advice_state_key({**_STATE_META, "attempt_no": 2}, _STATE_FUNNEL, []) != key
+    assert core.advice_state_key({**_STATE_META, "default_radius_walk_min": 20}, _STATE_FUNNEL, []) != key

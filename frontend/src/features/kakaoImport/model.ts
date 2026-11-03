@@ -150,7 +150,7 @@ export function linkErrorMessage(code: string | undefined): string {
 }
 
 /**
- * 대화를 더 붙여넣으면 새 링크만 기존 줄에 더한다(#1045). 같은 링크는 한 줄이고, 앞서 이름·주소를 못 읽었는데 이번에 읽었으면
+ * 대화 파일을 더 넣으면 새 링크만 기존 줄에 더한다(#1045). 같은 링크는 한 줄이고, 앞서 이름·주소를 못 읽었는데 이번에 읽었으면
  * 그 힌트로 바꿔 다시 확인하게 응답을 비운다(이미 찍은 줄은 그대로). 상한은 누적 합계 기준이다 — 넘친 링크는 버리고 `truncated`.
  */
 export function mergeRows(rows: ImportRow[], shares: Share[], max = LINK_MAX): { rows: ImportRow[]; added: number; truncated: boolean } {

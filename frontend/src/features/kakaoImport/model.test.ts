@@ -75,6 +75,8 @@ describe('핀 만들기 요청', () => {
       lat: 37.57,
       lng: 126.98,
       category: '음식점',
+      // 같은 이름의 지점이 가까이 있으면 서버가 주소로 가린다(#1056).
+      address: '서울 종로구 창덕궁1길 32',
       link_ref: { provider: 'naver', external_id: 'naver:1412566798' },
     })
   })
