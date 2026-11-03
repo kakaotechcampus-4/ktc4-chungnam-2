@@ -2,6 +2,62 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-03, `POST /maps` 응답 403·422와 `created_by` 반복 쿼리 명시 (#1197)
+
+- `POST /maps`에 **403 `GUEST_NOT_ALLOWED`**(게스트는 지도를 만들 수 없다 — 서버가 이미 그렇게 응답한다)와 **422**(제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락)를 응답 표에 더했다. 동작은 그대로이고 명세가 빠뜨린 것을 적었다. `PATCH /maps/{mapId}`의 422와 같은 문장이다.
+- `GET /maps/{mapId}/pins`의 `created_by`는 반복해서 보낸다(`?created_by=a&created_by=b`)고 `style: form`, `explode: true`로 명시했다(OpenAPI 기본값과 같아 동작 변화 없음, 목 서버가 지원하는 방식이다).
+- 옛 문서 PR #81(403 응답 커버리지)의 나머지는 **더하지 않는다**: 핀 생성·반응·확정 리스트 넣기/빼기는 모든 구성원이 가진 액션이라 구성원에게 403이 나올 수 없고(비구성원은 404), 명세 머리말도 엔드포인트 고유의 에러만 적는다.
+
+## 2026-11-03, 확정 장소 날짜별 일정 (#1172)
+
+- `GET /maps/{mapId}/shortlist/schedule`은 여행 기간, version과 확정 항목을 반환한다.
+- `PUT /maps/{mapId}/shortlist/schedule`은 모든 항목을 날짜 또는 미배정 그룹에 정확히 한 번씩 배정한다. version 충돌은 `SHORTLIST_STALE`이다.
+- 날짜 배정이 있으면 기존 전체 정렬은 `SHORTLIST_SCHEDULED`를 반환한다. 여행 기간이 줄어 범위 밖이 된 항목은 기존 미배정 목록 뒤에 날짜별 기존 순서대로 붙인다.
+- TXT와 CSV 내보내기에 날짜별 일정과 미배정을 반영한다.
+
+## 2026-11-03, 핀 복구의 403·404 정리 (#1013)
+
+- `POST /pins/{pinId}/restore`: 없는 핀·삭제되지 않은 핀·30일이 지나 정리된 핀은 404, **삭제된 핀을 찍은 사람도 방장도 아닌 구성원이 부르면 404**(존재를 숨긴다), 403은 `pin.restore` 액션이 없는 역할일 때만이다. 문장만 명확히 했고 응답 모양은 그대로다. 화면은 휴지통 목록에 보이는 핀만 복구 버튼을 그리므로 일반 흐름에서는 이 오류를 보지 않는다.
+
+## 2026-11-03, 카톡 대화 파일과 날짜 범위 (#1139)
+
+- 카톡 가져오기 입력을 .txt 파일과 여행 이야기를 한 시작일·종료일로 바꾸기로 했다. 양끝 날짜를 포함해 브라우저에서 링크와 공유 글 힌트를 추출한다. 화면 구현은 PR #1141에서 진행 중이다.
+- 대화 원문과 날짜는 서버에 보내거나 저장하지 않는다. `link-preview` 요청 계약은 기존 `urls`와 선택 `hints` 그대로다.
+
+## 2026-11-03, `AgentFactLine.value` 값에 따옴표 — 값은 그대로 (#1168)
+
+- `enum: [yes, no, unknown]`을 `["yes", "no", "unknown"]`로 고쳤다. 주고받는 값(문자열 "yes"·"no"·"unknown")은 바뀌지 않는다.
+- 이유: YAML 1.1로 읽는 파이썬 계약 검사(PyYAML)가 따옴표 없는 yes/no를 참거짓으로 읽어, 서버가 보내는 "yes"를 스펙 위반으로 봤다. TS 타입 생성(openapi-typescript)은 원래 문자열로 읽어 FE 타입은 그대로다.
+
+## 2026-11-03, 에이전트 웹 확인 — `AgentFactLine.web` (#1152 ④)
+
+- `AgentFactLine`에 선택 필드 `web`(`AgentWebCheck` {`status`: found·not_found·paused, `notice`, `statements`[{`text`, `source_url`, `source_name`}] 많아야 2개, `checked_at`})을 더했다. 우리 데이터가 「모름」인 줄 하나에, 모델이 웹을 읽고 출처와 함께 옮긴 문장이다(`docs/agent-v2.md` 6.8). `agent.suggested` 페이로드에도 실린다.
+- 화면: found면 「AI 웹 요약 · 확인되지 않음」 + 문장 + 출처 링크(새 탭). not_found·paused면 서버가 보낸 `notice` 글 그대로. FE는 문구를 적지 않는다.
+- 이유: #1152 — 사실을 몰라 못 정하는 곳에서 우리 데이터가 모를 때 웹에 적힌 내용을 출처와 함께 보인다. 검증된 claim만 화면에 낸다는 원칙(agent-v2 2절 3번)의 예외라 「확인되지 않음」을 붙인다.
+- 하위호환: 선택 필드다. 서버 구현(#1216) 전에는 없고, 확인이 실패해도 없다. 목 서버 시드 제안은 카테고리 공백이라 `facts`가 비어 있어 그대로다.
+- 서버: llm·agent(#1216). FE: #1217.
+
+## 2026-11-03, 에이전트 지도 현황 문단과 우리 데이터 확인 — `AgentState.status`, `AgentSuggestion.facts` (#1152)
+
+- `AgentState`에 선택 필드 `status`(`AgentMapStatus` {`paragraph`, `updated_at`} 또는 null)를 더했다. 핑고 AI 조언 시트 맨 위에 보일 지도 현황 문단이다. 칸은 코드가 계산하고 모델이 판단과 문장을 맡으며, 서버가 사실과 모순인 판단을 거른다(`docs/agent-v2.md` 8.2).
+- `AgentSuggestion`에 선택 필드 `facts`(`AgentFactLine[]`, 많아야 2개)를 더했다. 갈림·정체가 사실 다툼일 때 그 핀 장소의 라벨을 서버가 고정 문구로 렌더한 줄이다(`value`: yes·no·unknown, `segments`는 AgentAdviceLine과 같은 조각, 6.6). `agent.suggested` 페이로드(AgentSuggestion)에도 실린다.
+- 이유: #1152 — 갈림·정체 제안이 「무엇부터 볼지」와 「사실을 몰라 못 정하는 곳」을 함께 보이게 한다.
+- 하위호환: 둘 다 선택 필드다. 서버 구현(#1168) 전에는 실서버가 보내지 않는다 — FE는 없으면 칸을 그리지 않는다. 목 서버는 시드 지도에 `status`를 보내고 시드 제안의 `facts`는 빈 목록이다.
+- 서버: agent·llm(#1168). FE: #1169.
+
+## 2026-11-03, 깔때기 항목에 단계 `key` (#1146)
+
+- `RecommendResult.funnel[]`과 `NO_RESULTS` 404의 `detail.funnel[]` 항목에 선택 필드 `key`를 더했다. 값은 `pool`·`radius`·`closed`·`disqualify`·`excluded`·`ranking`이고, 단계 표에 없는 옛 라벨로 저장된 깔때기는 null이다. `label`은 그대로 화면 문구다.
+- 이유: 화면이 「이미 제안·거절됨」 단계를 찾아 안내 문구를 바꿔야 한다(#1142). 라벨 글자 비교는 #751이 없앤 방식이다.
+- 하위호환: 선택 필드라 기존 FE는 무시해도 된다. 서버 구현(recommend) 전에는 실서버가 `key`를 보내지 않는다 — FE는 `key`가 없으면 지금 동작을 유지한다. 목 서버는 `key`를 보낸다.
+- 서버: recommend(#1146 — `core.keyed_funnel`을 응답에도 쓴다). FE: #1142.
+
+## 2026-11-02, 추천 조언 캐시를 결과 상태별로 저장 (#1103)
+
+- `GET /runs/{runId}/advice`의 요청·응답 구조는 그대로다. 넓히기·다시 추천으로 반경, 깔때기, 결과 수, 조언에 쓰이는 근거 줄이 바뀌면 조언도 다시 계산한다. 같은 상태를 재조회하면 저장된 조언(빈 조언 포함)을 돌려준다.
+- 내부 저장: `agent_run_advice`에 `state_key` 칸을 더한다(expand, 마이그레이션 `0057_agent_advice_state_key`). 기본키는 `run_id` 그대로라 이전 서버도 새 스키마에서 돈다. 결과가 바뀌면 그 행을 새 상태의 조언으로 덮는다(옛 행은 빈 키라 다음 조회에 한 번 다시 만든다). 상태 키 정본은 `agent.core.advice_state_key`다(반경, 다시 추천 횟수 `attempt_no`, 깔때기, 근거 줄). 이를 위해 `recommend.api.get_run_meta`가 `attempt_no`를 더 돌려준다.
+- FE: 넓히기·다시 추천 뒤 기존 advice 조회를 그대로 사용한다.
+
 ## 2026-11-02, 깔때기 「반경 밖 제거」에 다른 시·도 장소 포함 — 설명 문구만 (#1055)
 
 - 추천 후보는 모든 카테고리에서 여행 지역과 같은 시·도 안만이다(PR #1069). 빠진 장소는 새 단계 없이 「반경 밖 제거」로 센다.

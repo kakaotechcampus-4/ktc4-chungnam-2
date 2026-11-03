@@ -362,7 +362,7 @@ def test_get_run_meta_tells_who_where_and_how_far(db_session):
     assert before == {
         "run_id": str(run.id), "map_id": "map_1", "category": "카페", "requested_by": "user_1",
         "status": "collecting_evidence", "result_count": 0, "created_at": run.created_at,
-        "default_radius_walk_min": 15, "widen_limit_walk_min": 30, "widen_step_walk_min": 5,
+        "default_radius_walk_min": 15, "widen_limit_walk_min": 30, "widen_step_walk_min": 5, "attempt_no": 1,
     }
     assert (after["status"], after["result_count"]) == ("done", 1)
 

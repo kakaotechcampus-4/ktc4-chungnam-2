@@ -159,6 +159,7 @@ FEW_RESULTS = 3
 
 
 class FunnelEntry(BaseModel):
+    key: str | None = None   # FUNNEL_STAGES 키. 표에 없는 옛 라벨은 None(#1146)
     label: str
     removed_count: int
 

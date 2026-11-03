@@ -62,13 +62,13 @@
 - {id: L08, layer: api, area: auth, scenario: "탈퇴 후 같은 세션 쿠키로 API 호출", expect: "401", status: pass}
 
 # ───────── 실시간·알림·기타(api) ─────────
-- {id: S01, layer: api, area: realtime, scenario: "SSE Last-Event-ID 재연결, 놓친 이벤트", expect: "놓친 이벤트 재전송 또는 새 스냅샷 안내", status: untested}
-- {id: S02, layer: api, area: realtime, scenario: "나가기/탈퇴/삭제 시 SSE 종료·map.deleted", expect: "스트림 정리", status: untested}
+- {id: S01, layer: api, area: realtime, scenario: "SSE Last-Event-ID 재연결, 놓친 이벤트(HTTP 전용)", expect: "끊긴 동안 생긴 핀 2개가 순서대로 다시 오고, 숫자 아닌 값은 무시하고 지금부터 받는다", status: pass}
+- {id: S02, layer: api, area: realtime, scenario: "나가기·지도 삭제 시 SSE 종료·map.deleted(HTTP 전용, 탈퇴는 realtime 단위 테스트)", expect: "나간 사람의 구독만 닫히고 재구독 404, 삭제하면 구독자 모두 map.deleted 뒤 닫힘, 비구성원 404(전체 채널·개인 채널 /events/me 모두, #1220)", status: pass}
 - {id: S03, layer: api, area: notification, scenario: "알림 목록·읽음·선호", expect: "권한 경계(남의 알림 접근 불가)", status: pass}
 - {id: S04, layer: api, area: feedback, scenario: "피드백 제출 빈/긴/연타", expect: "빈·공백·1001자·모르는 필드 422, 1000자 201, 상한에서 429 RATE_LIMITED", status: pass}
 - {id: S05, layer: api, area: shortlist, scenario: "확정 리스트 내보내기·순서 변경 경계", expect: "빈 리스트, 1개, 많은 개수", status: pass}
 - {id: S06, layer: api, area: permission, scenario: "비구성원이 지도 리소스 접근", expect: "404(존재 노출 안 함)", status: pass}
-- {id: P01, layer: api, area: permission, scenario: "비구성원이 남의 지도·핀·후기·추천·후보·확정 리스트·초대 id로 경로마다 49개 요청(쓰기 포함, 본문은 유효하게, #1096). 핀 휴지통은 서버 구현 전(#864)", expect: "모두 앱 오류 본문이 있는 404(경로 없음 404는 실패), 끝나고 방장의 데이터 그대로(P01.kept)", status: pass}
+- {id: P01, layer: api, area: permission, scenario: "비구성원이 남의 지도·핀·후기·추천·후보·확정 리스트·초대 id로 경로마다 53개 요청(쓰기 포함, 본문은 유효하게, #1096, 휴지통·확정 일정 #1220). 에이전트 제안 view·accept·dismiss는 제안 id를 만들 수 없어 뺐다", expect: "모두 앱 오류 본문이 있는 404(경로 없음 404는 실패), 끝나고 방장의 데이터·휴지통 그대로(P01.kept)", status: pass}
 
 # ───────── 크레딧 원장(api) — 백엔드 A, #1091. 숫자는 GET /credits/me에서 받는다(괄호는 지금 값) ─────────
 - {id: W01, layer: api, area: credits, scenario: "정식 계정의 처음 GET /credits/me", expect: "balance = max_balance(30), prices.recommend_run·course(1), review_reward(10)", status: pass}
@@ -78,7 +78,7 @@
 - {id: W05, layer: api, area: credits, scenario: "첫 실행 0곳(부산 지도에 서울 핀, #1055) 뒤 다시 추천·넓히기", expect: "잔액 그대로(#1015), 다시 추천·넓히기도 차감 없음", status: pass}
 - {id: W06, layer: api, area: credits, scenario: "게스트의 GET /credits/me와 추천 받기", expect: "403 GUEST_NOT_ALLOWED + detail.initial_credits(30)", status: pass}
 - {id: W07, layer: api, area: credits, scenario: "W01~W06에서 쓴 계정의 잔액과 원장 합(로컬만)", expect: "credit_accounts.balance = sum(credit_ledger.delta)", status: pass}
-- {id: W08, layer: api, area: credits, scenario: "코스 요청: 확정 1곳 422, 게스트 403, 2곳 202 → 진행 중 재요청 409, 끝나면 done −course / failed 환불", expect: "422·409는 잔액 그대로, done이면 −prices.course, failed면 그대로", status: pass}
+- {id: W08, layer: api, area: credits, scenario: "코스 요청: 확정 1곳 422, 게스트 403, 2곳 202 → 진행 중 재요청 409, 끝나면 done −course / failed 환불", expect: "422·409는 잔액 그대로, done이면 −prices.course, failed면 그대로. 코스 결과 GET /course-runs/{id}는 비구성원 404·다른 구성원 403(#1220)", status: pass}
 - {id: W09, layer: api, area: credits, scenario: "잔액 0 계정의 코스 요청", expect: "402 CREDIT_INSUFFICIENT(required=prices.course, balance 0), run 안 남음(latest 204)", status: pass}
 - {id: L09, layer: api, area: auth, scenario: "탈퇴 → 같은 카카오로 로그인 → 되살리기 / 새로 시작(#855, 로컬 전용)", expect: "되살리기는 지도·핀·잔액(30 아닌 값)이 그대로, 새로 시작은 새 계정에 잔액 30·옛 크레딧 계정 삭제", status: pass}
 - {id: L10, layer: api, area: auth, scenario: "탈퇴 7일 뒤 정리(로컬 전용)", expect: "7일 전엔 그대로, 뒤엔 크레딧 계정·원장·로그인 수단 삭제, 후기는 남음, 이름 「탈퇴한 구성원」(핀 작성자·알림)", status: pass}

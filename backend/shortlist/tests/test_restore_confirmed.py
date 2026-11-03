@@ -42,6 +42,7 @@ def test_restores_to_end_and_marks_kind(db_session):
     db_session.refresh(back)
     assert back.kind == "확정"
     assert db_session.query(ShortlistItem).filter_by(pin_id=back.id).one().added_by == "u2"
+    assert db_session.query(ShortlistItem).filter_by(pin_id=back.id).one().scheduled_date is None
 
 
 def test_idempotent(db_session):
