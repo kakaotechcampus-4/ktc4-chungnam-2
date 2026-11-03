@@ -12,7 +12,7 @@ import { usePendingAccountQuery, usePendingChoiceMutation } from './queries'
 /**
  * 탈퇴한 계정으로 다시 로그인했을 때의 선택 화면(#855·#858). 콜백이 세션 없이 `?login_pending=withdrawn_account` 로 돌려보낸다.
  * 고르기 전에는 로그인 상태가 아니다 — 고르면 `onDone`(응답의 User 로 로그인), 고를 게 없어졌으면(404) `onExpired`.
- * 남은 날수와 기한은 응답 값 그대로 쓴다. 「새 계정으로 시작」은 기존 계정을 되살릴 수 없게 지워서 한 번 더 묻는다.
+ * 남은 날수와 기한은 응답 값 그대로 쓴다. 「새 계정으로 시작」은 기존 계정을 복구할 수 없게 지워서 한 번 더 묻는다.
  */
 export default function PendingAccountScreen({ onDone, onExpired }: { onDone: () => void; onExpired: () => void }) {
   const pending = usePendingAccountQuery()
@@ -48,13 +48,13 @@ export default function PendingAccountScreen({ onDone, onExpired }: { onDone: ()
         <h1 className="mt-4 break-keep text-xl font-bold text-ink-900">이전에 탈퇴한 계정이 있어요</h1>
         <p className="mt-2 break-keep text-sm text-ink-700">
           ‘<span className="font-semibold text-ink-900">{display_name}</span>’ 계정이에요. 새 계정으로 시작하거나,{' '}
-          {days_left}일 안에는 기존 계정을 되살릴 수 있어요.
+          {days_left}일 안에는 기존 계정을 복구할 수 있어요.
         </p>
 
         <div className="mt-8 space-y-5">
           <div>
             <button type="button" onClick={() => {
-                // 앞서 되살리기가 실패했으면 그 문구를 확인 창에 끌고 들어가지 않는다.
+                // 앞서 복구가 실패했으면 그 문구를 확인 창에 끌고 들어가지 않는다.
                 choose.reset()
                 setConfirmRestart(true)
               }} disabled={choose.isPending} className="btn-primary btn-lg w-full">
@@ -64,12 +64,12 @@ export default function PendingAccountScreen({ onDone, onExpired }: { onDone: ()
           </div>
           <div>
             <button type="button" onClick={() => submit('restore')} disabled={choose.isPending} className="btn-outline btn-lg w-full">
-              기존 계정 되살리기
+              기존 계정 복구
             </button>
             <p className="mt-1.5 break-keep text-xs text-ink-500">
               {days_left}일 남음 · {formatRestoreUntil(restore_until)}까지
               <br />
-              되살리면 지도 참여가 돌아오고 내가 찍은 핀도 내 이름으로 보여요. 남긴 의견은 돌아오지 않아요
+              복구하면 지도 참여가 돌아오고 내가 찍은 핀도 내 이름으로 보여요. 남긴 의견은 돌아오지 않아요
             </p>
           </div>
           {chooseError && !confirmRestart && <ErrorText message="처리하지 못했어요. 다시 시도해 주세요" error={chooseError} />}
@@ -79,7 +79,7 @@ export default function PendingAccountScreen({ onDone, onExpired }: { onDone: ()
       {confirmRestart && (
         <ConfirmDialog
           title="새 계정으로 시작할까요?"
-          body="기존 계정은 바로 삭제되고 되살릴 수 없어요."
+          body="기존 계정은 바로 삭제되고 복구할 수 없어요."
           // 320px 의 반 칸 버튼에 들어가게 짧게 — 무엇을 시작하는지는 제목이 말한다.
           ok="새로 시작"
           danger
