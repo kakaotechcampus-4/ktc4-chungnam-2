@@ -77,7 +77,7 @@ export default function MapLayout() {
   const pins = onConfirmedTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters, memberCount)
   const routeOn = useRouteStore((s) => s.on) && onShortlistTab
   const routeChosen = useRouteStore((s) => s.day)
-  // 일정은 이 화면이 늘 기간·확정 리스트에 맞춰 둔다(빠진 장소가 있으면 확정 탭이 알린다).
+  // 일정은 서버가 기간·확정 리스트에 맞춰 둔다(#1172). 여기서는 동선 보기로 고른 날의 순서만 꺼낸다.
   const trip = useTripSchedule(mapId)
   const course = useCourseMapStore()
   // 확정 탭은 「동선 보기」로 고른 날의 일정 순서대로, AI 코스 탭은 이 지도의 코스(#683) 선을 긋는다 — 한 화면에 둘이 겹치지 않는다.
