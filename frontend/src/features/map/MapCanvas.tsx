@@ -110,6 +110,7 @@ export default function MapCanvas({
   })
   const fittedRef = useRef(false)
   // 첫 화면을 지역 가운데로 옮겼거나(started) 사용자가 지도를 움직였으면(moved) 지역으로 다시 옮기지 않는다 — 시야를 뺏지 않는다.
+  // moved 는 끌기뿐 아니라 화면이 사람 대신 옮긴 것(핀·검색 결과·AI 후보 고르기, 내 위치, 전체 핀 보기)도 센다.
   const startedRef = useRef(false)
   const movedRef = useRef(false)
   const startCenterRef = useRef(startCenter)
@@ -217,6 +218,7 @@ export default function MapCanvas({
         callbacks.current.onReady({
           // 축척은 그대로 두고 부드럽게 옮긴다(화면보다 먼 곳은 카카오가 바로 옮긴다).
           panTo: (lat, lng) => {
+            movedRef.current = true
             const target = new maps.LatLng(lat, lng)
             if (still()) {
               stopMoves()
@@ -228,6 +230,7 @@ export default function MapCanvas({
           },
           // 옮기고 나서 고른 곳을 붙든 채(anchor) 2단계씩 확대한다. 한꺼번에 하면 확대 중심이 화면 밖일 수 있다.
           focusPin: (lat, lng) => {
+            movedRef.current = true
             const target = new maps.LatLng(lat, lng)
             const to = Math.min(map.getLevel(), FOCUS_LEVEL)
             if (still()) {
@@ -248,6 +251,7 @@ export default function MapCanvas({
           fitPins: (list, opts) => {
             const el = containerRef.current
             if (list.length === 0 || !el) return
+            movedRef.current = true
             const size = { w: el.clientWidth, h: el.clientHeight }
             const pad = fitPadding(window.innerHeight, isDesktopNow())
             const proj = map.getProjection()
