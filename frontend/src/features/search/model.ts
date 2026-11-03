@@ -79,7 +79,9 @@ export function toSearchResult(r: PlaceSearchResultDto, center: LatLng | null, p
  */
 export function searchPinRequest(r: PlaceSearchResultDto): PinCreateRequest | null {
   if (!r.category) return null
-  return { source: 'search', place_id: r.place_id, place_name: r.place_name, lat: r.lat, lng: r.lng, category: r.category }
+  // 주소도 보낸다. 이름이 같은 지점이 30m 안에 있으면 서버가 주소로 가린다(#1056, PinCreateSearch.address).
+  const { place_id, place_name, lat, lng, category, address } = r
+  return { source: 'search', place_id, place_name, lat, lng, category, ...(address ? { address } : {}) }
 }
 
 /**
