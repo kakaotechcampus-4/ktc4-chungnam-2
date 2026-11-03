@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { forgetImport } from '@/features/kakaoImport/queries'
+import { forgetSchedule } from '@/features/shortlist/scheduleStore'
 
 import { choosePendingAccount, fetchMe, fetchPendingAccount, isNoPendingLogin, isUnauthorized, joinAsGuest, logout, updateMe, withdraw } from './api'
 
@@ -96,8 +97,9 @@ export function useLogoutMutation() {
     mutationFn: logout,
     onSuccess: () => {
       queryClient.clear()
-      // 카톡 가져오기 목록(지도별 링크·가게 이름)도 남기지 않는다(#1045).
+      // 카톡 가져오기 목록(지도별 링크·가게 이름, #1045)과 이 기기에 둔 일정도 남기지 않는다.
       forgetImport()
+      forgetSchedule()
     },
   })
 }
