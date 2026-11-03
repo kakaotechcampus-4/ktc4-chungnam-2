@@ -67,6 +67,30 @@ def test_purge_removes_only_pins_past_thirty_days_with_their_reactions(db_sessio
     assert db_session.execute(select(func.count()).select_from(ReactionRow)).scalar_one() == 0
 
 
+def test_purge_rejects_naive_now_and_deletes_nothing(db_session):
+    old = _trash(db_session, days_ago=40)
+    with pytest.raises(ValueError):
+        pins_api.purge_deleted_pins(db_session, now=NOW.replace(tzinfo=None))
+    assert db_session.get(PinRow, old.id) is not None
+
+
+def test_purge_boundary_is_the_same_instant_for_a_non_utc_now(db_session):
+    kst = timezone(timedelta(hours=9))
+    deleted_at = NOW - timedelta(days=10)
+    keep, gone = _insert_pin(db_session), _insert_pin(db_session)
+    keep.deleted_at = deleted_at
+    gone.deleted_at = deleted_at
+    db_session.commit()
+    keep_id, gone_id = keep.id, gone.id
+    before = (deleted_at + timedelta(days=30) - timedelta(minutes=1)).astimezone(kst)    # 29일 23시간 59분 뒤
+    assert pins_api.purge_deleted_pins(db_session, now=before) == {"reactions": 0, "pins": 0}
+    assert db_session.get(PinRow, keep_id) is not None
+    at = (deleted_at + timedelta(days=30)).astimezone(kst)                                  # 30일 뒤
+    assert pins_api.purge_deleted_pins(db_session, now=at)["pins"] == 2
+    db_session.expire_all()
+    assert db_session.get(PinRow, gone_id) is None
+
+
 def test_purge_is_idempotent_and_batch_limited(db_session, monkeypatch):
     monkeypatch.setattr("pins.core.PURGE_BATCH_LIMIT", 2)
     newest = _trash(db_session, days_ago=31)

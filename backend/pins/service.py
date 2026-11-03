@@ -696,6 +696,8 @@ def purge_deleted_pins(db: Session, *, now: datetime) -> dict[str, int]:
     """휴지통 정리(#1013) — 삭제한 지 TRASH_RETENTION_DAYS일이 지난 핀과 그 반응을 영구 삭제한다. 오래된 것부터
     PURGE_BATCH_LIMIT개까지(나머지는 다음 실행). 30일 안의 핀은 건드리지 않는다. 멱등. 테이블 이름 → 지운 행 수.
     조회한 행을 호출자의 commit/rollback까지 잠가 복구와 삭제 사이의 경합을 막는다. 잠긴 행은 다음 실행으로 넘긴다."""
+    if now.tzinfo is None:   # naive면 DB 세션 시간대에 따라 cutoff가 어긋나 30일 안의 핀이 지워질 수 있다(되돌릴 수 없다)
+        raise ValueError("now는 timezone-aware여야 한다")
     cutoff = now - timedelta(days=core.TRASH_RETENTION_DAYS)
     expired = (
         select(PinRow.id).where(PinRow.deleted_at.is_not(None), PinRow.deleted_at <= cutoff)
