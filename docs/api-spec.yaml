@@ -1442,6 +1442,7 @@ paths:
       tags: [shortlist]
       summary: |
         확정 리스트 수동 정렬 (#30). 보기 좋게 순서를 바꾸는 것뿐이고 동선과는 무관하다.
+        날짜가 배정된 항목이 있으면 409 SHORTLIST_SCHEDULED다. 화면은 일정(#1171) 뒤 이 API를 부르지 않고 `PUT /maps/{mapId}/shortlist/schedule`로 날짜와 그날 순서를 저장한다.
         동선을 다시 짜려면 POST /maps/{mapId}/route를 부른다.
         날짜가 배정된 항목이 하나라도 있으면 이 기존 API는 409 SHORTLIST_SCHEDULED를 반환한다. 날짜별 편집에는 schedule API를 쓴다.
       parameters: [ { $ref: "#/components/parameters/MapId" } ]
@@ -1519,7 +1520,8 @@ paths:
     post:
       tags: [shortlist]
       summary: |
-        「동선 짜주기」 — 현재 확정 리스트로 동선을 계산한다 (#30, 기획안 5-10의 "동선 보기" 토글).
+        「동선 짜주기」 — 현재 확정 리스트로 동선을 계산한다 (#30, 기획안 5-10의 처음 설계).
+        화면은 일정(#1171) 뒤 이 API를 부르지 않는다. 「동선 보기」는 사람이 정한 그날 일정 순서(`GET /maps/{mapId}/shortlist/schedule`)를 그린다.
         확정 리스트가 바뀌어도 자동 재계산하지 않는다. 사람이 이 버튼을 눌러야 실행된다.
       parameters: [ { $ref: "#/components/parameters/MapId" } ]
       responses:
