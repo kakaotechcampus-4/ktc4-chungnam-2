@@ -7,8 +7,9 @@ import { isUnauthorized } from '@/features/auth/api'
 import KakaoButton from '@/features/auth/KakaoButton'
 import { clearPendingInvite, savePendingInvite } from '@/features/auth/pendingInvite'
 import { DISPLAY_NAME_MAX } from '@/features/auth/model'
+import { randomGuestName } from '@/features/auth/guestName'
 import { useGuestJoinMutation, useMeQuery } from '@/features/auth/queries'
-import { inviteErrorMessage, inviteProblem, type InviteView } from '@/features/maps/model'
+import { inviteErrorMessage, inviteProblem, type InviteProblem, type InviteView } from '@/features/maps/model'
 import { useAcceptInviteMutation, useInviteSummaryQuery } from '@/features/maps/queries'
 import EmptyState from '@/ui/EmptyState'
 import PingoLoading from '@/ui/PingoLoading'
@@ -33,8 +34,10 @@ export default function InvitePage() {
     if (loggedIn) clearPendingInvite()
   }, [needsLogin, loggedIn, token])
 
-  const problem = inviteProblem(summary.error)
-  if (problem) return <InviteBroken expired={problem === 'expired'} />
+  // 보는 사이 링크가 꺼지면 참여·게스트 입장이 같은 에러로 실패한다 — 그때도 끝 화면으로 바꾼다.
+  const [lateProblem, setLateProblem] = useState<InviteProblem | null>(null)
+  const problem = inviteProblem(summary.error) ?? lateProblem
+  if (problem) return <InviteBroken problem={problem} />
 
   if (me.isPending || summary.isPending) return <PingoLoading label="초대를 확인하는 중…" className="min-h-dvh justify-center" />
 
@@ -48,7 +51,10 @@ export default function InvitePage() {
 
   const join = () =>
     // 구성원 온보딩(Figma 2절)은 지도 화면이 이 표시를 보고 띄운다.
-    accept.mutate(undefined, { onSuccess: (map) => navigate(`/maps/${map.id}?onboarding=member`, { replace: true }) })
+    accept.mutate(undefined, {
+      onSuccess: (map) => navigate(`/maps/${map.id}?onboarding=member`, { replace: true }),
+      onError: (err) => setLateProblem(inviteProblem(err)),
+    })
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6 pt-4">
@@ -73,7 +79,7 @@ export default function InvitePage() {
           <>
             <KakaoButton />
             <p className="text-xs text-ink-500">로그인하면 바로 이 지도에 참여해요</p>
-            <GuestJoin token={token} />
+            <GuestJoin token={token} onBroken={setLateProblem} />
           </>
         ) : (
           <>
@@ -95,20 +101,21 @@ export default function InvitePage() {
 }
 
 /**
- * 「이름만 입력하고 들어가기」(#485). 게스트 계정을 만들고 이 초대의 지도에 바로 들어간다(POST /auth/guest).
+ * 「로그인 없이 게스트로 들어가기」(#485). 게스트 계정을 만들고 이 초대의 지도에 바로 들어간다(POST /auth/guest).
  * 처음엔 버튼만 두고, 누르면 이름 칸이 열린다 — 카카오가 주 입구라 같은 무게로 펼쳐 두지 않는다.
+ * 이름 칸에는 아무 이름(「신나는 수달」)이 미리 들어 있어 바로 들어갈 수 있다. ✕로 지우고 자기 이름을 적어도 된다.
  */
-function GuestJoin({ token }: { token: string }) {
+function GuestJoin({ token, onBroken }: { token: string; onBroken: (problem: InviteProblem | null) => void }) {
   const navigate = useNavigate()
   const join = useGuestJoinMutation(token)
   const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
+  const [name, setName] = useState(randomGuestName)
   const trimmed = name.trim()
 
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)} className="btn-neutral btn-md w-full">
-        이름만 입력하고 들어가기
+        로그인 없이 게스트로 들어가기
       </button>
     )
   }
@@ -118,7 +125,10 @@ function GuestJoin({ token }: { token: string }) {
       onSubmit={(e) => {
         e.preventDefault()
         if (!trimmed) return
-        join.mutate(trimmed, { onSuccess: ({ map }) => navigate(`/maps/${map.id}?onboarding=member`, { replace: true }) })
+        join.mutate(trimmed, {
+          onSuccess: ({ map }) => navigate(`/maps/${map.id}?onboarding=member`, { replace: true }),
+          onError: (err) => onBroken(inviteProblem(err)),
+        })
       }}
       className="space-y-2 rounded-xl border border-ink-200 bg-white p-3 text-left"
     >
@@ -126,6 +136,7 @@ function GuestJoin({ token }: { token: string }) {
         구성원에게 보일 이름
       </label>
       <TextField id="guest-name" value={name} onChange={setName} maxLength={DISPLAY_NAME_MAX} placeholder="예: 지우" clearLabel="이름 지우기" autoFocus />
+      <p className="break-keep text-xs text-ink-500">아무렇게나 지은 이름이에요. 그대로 들어가도 되고, 지우고 내 이름을 적어도 돼요</p>
       <p className="break-keep text-xs text-ink-500">게스트는 새 지도를 만들 수 없어요. 나중에 카카오로 계정을 만들면 기록이 이어져요</p>
       {join.error && <ErrorText message={inviteErrorMessage(join.error)} error={join.error} />}
       <button type="submit" disabled={!trimmed || join.isPending} className="btn-primary btn-md w-full">
@@ -152,11 +163,18 @@ function InviteCard({ invite }: { invite: InviteView }) {
 }
 
 /** C-3 — 만료됐거나 없는 링크. 초대한 사람에게 새 링크를 받는 것 말고는 할 수 있는 게 없다. */
-function InviteBroken({ expired }: { expired: boolean }) {
+const BROKEN_TITLE: Record<InviteProblem, string> = {
+  expired: '초대 링크가 만료됐어요',
+  revoked: '방장이 이 초대 링크를 껐어요',
+  invalid: '유효하지 않은 초대 링크예요',
+}
+
+/** 더 쓸 수 없는 초대 링크(#719). 참여 버튼과 에러 코드를 보이지 않는다 — 다음 행동은 새 링크 받기와 내 지도로. */
+function InviteBroken({ problem }: { problem: InviteProblem }) {
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6">
       <div className="flex flex-1 flex-col justify-center">
-        <EmptyState mood="sorry" title={expired ? '초대 링크가 만료됐어요' : '유효하지 않은 초대 링크예요'}>
+        <EmptyState mood="sorry" title={BROKEN_TITLE[problem]}>
           초대한 친구에게 새 링크를 받아주세요
         </EmptyState>
       </div>

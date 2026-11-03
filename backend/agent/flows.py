@@ -70,7 +70,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from agent import core, deps, service, snapshot, tools
-from agent.constants import CODE_TYPES, DECIDED_WINDOW, SUGGESTION_TTL, TICK_BUDGET_SEC, TICK_MAX_MAPS
+from agent.constants import CODE_TYPES, DECIDED_WINDOW, SUGGESTION_TTL, TICK_BUDGET_SEC, TICK_MAX_MAPS, WEB_CHECK_REUSE
 from agent.models import AgentSuggestion as SuggestionRow
 from agent.schemas import (
     AgentAcceptResponse,
@@ -487,6 +487,9 @@ def _draft(
         draft = verified.draft
         if draft is not None:
             draft = replace(draft, facts=_facts(ctx, top, comparison))
+    if draft is not None and draft.facts:   # 진단 검증 → 6.6 줄 → 웹 확인 → 저장(6.8)
+        trace.stage = "web_check"
+        draft = replace(draft, facts=_web_checked(ctx, draft.facts, gateway))
     outcome = None if draft is not None else verified.outcome
     return _Step(draft, outcome, None if outcome is None else which | {"decision": out.decision},
                  used_model=True, tool_calls=ctx.calls, verification=verified.record, usage=reply.usage)
@@ -503,6 +506,44 @@ def _facts(ctx: tools.ToolContext, top: core.Signal, comparison: dict[str, Any] 
             log.warning("agent 우리 데이터 확인 실패(②) map_id=%s", ctx.map_id)
             return []
     return core.fact_targets(top, ctx.snap, comparison=comparison, against=against)
+
+
+def _web_checked(ctx: tools.ToolContext, facts: list[dict[str, Any]], gateway: deps.AgentLlmGateway) -> list[dict[str, Any]]:
+    """웹 확인(6.8, #1216). 값이 「모름」인 첫 줄 하나(core.web_check_target)에 web을 붙인 facts를 돌려준다. 대상이 없으면 그대로.
+
+    같은 지도에서 24시간 안에 같은 (핀, 키)를 확인했으면(found, not_found) 부르지 않고 그 결과를 쓴다(core.reusable_web). 아니면 짧은
+    읽기 세션으로 장소 이름, 동네, 특징 이름만 읽고 세션을 닫은 뒤 llm을 부른다(2절 6번). 모델 입력은 그 셋뿐이다 — 구성원 글, 이름,
+    지도 id가 들어갈 칸이 없다. 예산은 llm이 본다(agent는 따로 보지 않는다). 실패(failed)는 저장하지 않고 제안은 그대로 나간다.
+    지도 하루 상한과 도구 상한에 세지 않는다 — 진단을 부른 같은 관찰이고, 기록은 도구 기록 w1이다."""
+    started = time.monotonic()
+    with ctx.read() as db:
+        pins = _pins(db, ctx.map_id, {f["pin_id"] for f in facts})
+        index = core.web_check_target(facts, _fact_values(db, pins))
+        if index is None:
+            return facts
+        pin_id, key = facts[index]["pin_id"], facts[index]["fact_key"]
+        earlier = service.recent_suggestion_facts(db, ctx.map_id, ctx.now - WEB_CHECK_REUSE)
+        name, place_id = pins[pin_id]
+        place = places_api.get_places([place_id], db=db).get(place_id) if place_id else None
+    web = core.reusable_web(earlier, pin_id, key, ctx.now)
+    if web is not None:
+        record = core.web_tool_record(web["status"], len(web.get("statements") or ()), reused=True)
+    else:
+        label = recommend_api.fact_labels().get(key)
+        if not name or not label or place is None:
+            return facts
+        with llm_api.usage_context("agent_web_check", map_id=ctx.map_id):   # #870 — 비용은 서비스 일일 예산이 본다(19절)
+            result = gateway.web_check(place_name=name, area=places_api.neighborhood(place.address), feature=label,
+                                       forbidden=core.WEB_CHECK_FORBIDDEN)
+        web = core.web_record(result.status, result.statements, ctx.now)
+        record = core.web_tool_record(result.status, len(result.statements), reused=False) | {
+            "dropped": list(result.dropped), "web_searches": result.web_searches}
+        if result.status == "failed" and result.detail != "not_checked":   # not_checked는 dev 스텁(웹을 찾지 않음)
+            log.warning("agent 웹 확인 실패 map_id=%s detail=%s", ctx.map_id, result.detail)
+    tools.record_web_check(ctx, pin_id=pin_id, fact_key=key, result=record, started=started)
+    if web is None:
+        return facts
+    return [f | {"web": web} if i == index else f for i, f in enumerate(facts)]
 
 
 def _comparison(ctx: tools.ToolContext, top: core.Signal) -> dict[str, Any] | None:
@@ -676,6 +717,7 @@ def _render(db: Session, row: SuggestionRow) -> AgentSuggestion | None:
         reaction_texts=_reaction_texts(db, row.map_id, row.category) if core.quoted_reaction_ids(row.claims) else {},
         fact_labels=recommend_api.fact_labels() if row.analysis or facts else {},
         fact_values=_fact_values(db, pins) if facts else {},
+        source_name=llm_api.source_name,
     )
     return core.render_suggestion(row, refs)
 

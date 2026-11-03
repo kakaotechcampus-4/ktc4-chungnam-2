@@ -30,3 +30,12 @@ export function notificationTarget(n: Pick<NotificationDto, 'type' | 'map_id' | 
   if (n.type === 'pin_reaction' && n.pin_id) return `/maps/${n.map_id}?pin=${encodeURIComponent(n.pin_id)}`
   return `/maps/${n.map_id}`
 }
+
+/**
+ * 알림이 어느 지도에서 왔는지(#1036). 지도 화면이면 지금 보는 지도(here)와 다른 지도(other)로 나누고,
+ * 내 지도 목록처럼 지금 보는 지도가 없으면 나누지 않는다(all).
+ */
+export function mapOrigin(n: Pick<NotificationDto, 'map_id'>, currentMapId: string | undefined): 'here' | 'other' | 'all' {
+  if (!currentMapId) return 'all'
+  return n.map_id === currentMapId ? 'here' : 'other'
+}

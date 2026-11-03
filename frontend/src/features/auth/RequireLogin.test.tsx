@@ -53,17 +53,17 @@ describe('탈퇴 계정 재로그인 선택 화면(#858)', () => {
     expect(await screen.findByRole('heading', { name: '이전에 탈퇴한 계정이 있어요' })).toBeInTheDocument()
     // 목 서버는 이틀 전에 탈퇴했다 — 남은 날수는 응답의 days_left 그대로다.
     expect(screen.getByText('탈퇴했던 나')).toBeInTheDocument()
-    expect(screen.getByText(/5일 안에는 기존 계정을 되살릴 수 있어요/)).toBeInTheDocument()
+    expect(screen.getByText(/5일 안에는 기존 계정을 복구할 수 있어요/)).toBeInTheDocument()
     expect(screen.getByText(/5일 남음/)).toBeInTheDocument()
     expect(screen.getByText('기존 계정은 바로 삭제돼요')).toBeInTheDocument()
     expect(screen.getByTestId('search')).toHaveTextContent(/^$/)
     expect(screen.queryByText('내 지도 목록')).not.toBeInTheDocument()
   })
 
-  it('되살리기는 JSON 으로 restore 를 보내고 로그인된다', async () => {
+  it('복구는 JSON 으로 restore 를 보내고 로그인된다', async () => {
     const sent = recordChoices()
     show()
-    await userEvent.click(await screen.findByRole('button', { name: '기존 계정 되살리기' }))
+    await userEvent.click(await screen.findByRole('button', { name: '기존 계정 복구' }))
     expect(await screen.findByText('내 지도 목록')).toBeInTheDocument()
     expect(sent).toEqual([{ choice: 'restore', type: 'application/json' }])
   })
@@ -73,7 +73,7 @@ describe('탈퇴 계정 재로그인 선택 화면(#858)', () => {
     show()
     await userEvent.click(await screen.findByRole('button', { name: '새 계정으로 시작' }))
     const dialog = await screen.findByRole('alertdialog')
-    expect(within(dialog).getByText('기존 계정은 바로 삭제되고 되살릴 수 없어요.')).toBeInTheDocument()
+    expect(within(dialog).getByText('기존 계정은 바로 삭제되고 복구할 수 없어요.')).toBeInTheDocument()
 
     await userEvent.click(within(dialog).getByRole('button', { name: '취소' }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
@@ -101,7 +101,7 @@ describe('탈퇴 계정 재로그인 선택 화면(#858)', () => {
       ),
     )
     show()
-    await userEvent.click(await screen.findByRole('button', { name: '기존 계정 되살리기' }))
+    await userEvent.click(await screen.findByRole('button', { name: '기존 계정 복구' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(EXPIRED)
     expect(screen.queryByText('내 지도 목록')).not.toBeInTheDocument()
   })
@@ -113,9 +113,9 @@ describe('탈퇴 계정 재로그인 선택 화면(#858)', () => {
       ),
     )
     show()
-    await userEvent.click(await screen.findByRole('button', { name: '기존 계정 되살리기' }))
+    await userEvent.click(await screen.findByRole('button', { name: '기존 계정 복구' }))
     expect(await screen.findByText(/처리하지 못했어요/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '기존 계정 되살리기' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '기존 계정 복구' })).toBeEnabled()
   })
 
   it('login_pending 이 없으면 평소처럼 세션으로 판단한다', async () => {

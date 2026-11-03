@@ -350,6 +350,26 @@ def test_evidence_response_marks_enforced_by_fact_key_720(app_client, db_session
     assert all("effect" not in line for line in lines.values())   # effect는 recommend.api만 내준다(#751)
 
 
+def test_evidence_response_says_whether_a_line_filters_candidates_1260(app_client, db_session):
+    """#1260 — 쓰이는 줄 중 접근성 필요 조건만 후보를 뺀다(true). 취향 줄은 순위만 낮추고(false), 안 쓰이는 줄은 값이 없다."""
+    from recommend import service
+
+    run_id = _evidence_run(app_client, db_session)
+    service.add_reaction_evidence(db_session, run_id=uuid.UUID(run_id), lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "휠체어 필요", "badge": "required", "fact_key": "accessible", "wants": True},
+        {"author_id": "user_1", "source": "reaction", "text": "매운 건 싫어", "badge": "required", "fact_key": "spicy_focused", "wants": False},
+        {"author_id": "user_1", "source": "reaction", "text": "접근성 있으면 좋아", "badge": "preferred", "fact_key": "accessible", "wants": True},
+        {"author_id": "user_1", "source": "reaction", "text": "새우 알레르기", "badge": "required", "fact_key": None},
+    ])
+    db_session.commit()
+
+    lines = {line["text"]: line for line in app_client.get(f"/runs/{run_id}/evidence", cookies=_auth("user_1")).json()}
+    assert lines["휠체어 필요"]["filters_candidates"] is True
+    assert lines["매운 건 싫어"]["filters_candidates"] is False
+    assert lines["접근성 있으면 좋아"]["filters_candidates"] is False
+    assert lines["새우 알레르기"]["enforced"] is False and lines["새우 알레르기"].get("filters_candidates") is None
+
+
 def _evidence_run_with_three_authors(app_client, db_session) -> str:
     """철수(user_1, 구성원), 영희(user_2, 이 지도에서 나감), 민수(user_3, 탈퇴 — 멤버십 행은 남는다 #245)가 줄을 하나씩 쓴 run."""
     from datetime import datetime, timezone

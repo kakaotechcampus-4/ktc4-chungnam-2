@@ -75,6 +75,9 @@ class EvidenceLine(BaseModel):
     # 끈 줄(is_active=false)도 켜면 쓰이는지를 보인다. 쓰이지 않으면 이유(not_enforced_reason)가 따라온다. 응답에는 항상 채워 내려 준다.
     enforced: bool | None = None
     not_enforced_reason: Literal["no_key", "no_direction", "not_for_category", "off_season"] | None = None
+    # 쓰이는 줄이 후보를 빼는가(true, hard와 접근성 필요 조건) 순위만 낮추는가(false, 취향 줄)(#1260). 쓰이지 않으면 null.
+    # core.evidence_line_use(LineUse.filters_candidates)가 정한다.
+    filters_candidates: bool | None = None
     is_active: bool
     permissions: Permissions
 
