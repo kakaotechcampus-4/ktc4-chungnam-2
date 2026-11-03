@@ -111,18 +111,19 @@ export function FilterSelect({
 }) {
   const current = options.find((o) => o.value === value) ?? options[0]
   return (
-    <div className="relative flex h-8 items-center gap-1 whitespace-nowrap rounded-md border border-ink-200 bg-white pl-2.5 pr-6 text-xs has-[select:focus-visible]:outline-2 has-[select:focus-visible]:outline-offset-2 has-[select:focus-visible]:outline-[var(--line-focus)]">
+    <div className="relative flex h-8 min-w-0 max-w-full items-center gap-1 whitespace-nowrap rounded-md border border-ink-200 bg-white pl-2.5 pr-6 text-xs has-[select:focus-visible]:outline-2 has-[select:focus-visible]:outline-offset-2 has-[select:focus-visible]:outline-[var(--line-focus)]">
       {/* 읽어 주는 건 select(이름 + 고른 값)가 맡는다 — 보이는 글자는 스크린리더에서 뺀다. */}
       {label && (
-        <span aria-hidden="true" className="text-ink-500">
+        <span aria-hidden="true" className="shrink-0 text-ink-500">
           {label}
         </span>
       )}
       {/* 선택지 글자를 모두 한 자리에 겹쳐 두고 고른 것만 보인다 — 칸 폭이 가장 긴 선택지로 고정돼서,
-          값을 바꿔도 칸 폭이 그대로고 옆 칸이 다음 줄로 밀리지 않는다(기본 select 와 같은 폭 규칙). */}
-      <span aria-hidden="true" className="grid font-semibold text-ink-900">
+          값을 바꿔도 칸 폭이 그대로고 옆 칸이 다음 줄로 밀리지 않는다(기본 select 와 같은 폭 규칙).
+          다만 줄 폭은 넘지 않는다 — 구성원 이름은 50자까지라, 넘치면 「…」로 줄인다(고르는 창에는 전체가 보인다). */}
+      <span aria-hidden="true" className="grid min-w-0 grid-cols-[minmax(0,1fr)] font-semibold text-ink-900">
         {options.map((o) => (
-          <span key={o.value} className={`col-start-1 row-start-1 ${o.value === current?.value ? '' : 'invisible'}`}>
+          <span key={o.value} className={`col-start-1 row-start-1 truncate ${o.value === current?.value ? '' : 'invisible'}`}>
             {o.label}
           </span>
         ))}

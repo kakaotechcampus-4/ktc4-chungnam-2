@@ -86,6 +86,10 @@ describe('카톡 대화에서 링크와 공유 글 읽기(#1046)', () => {
 describe('여행 얘기를 한 기간의 메시지만 읽기(#1139)', () => {
   const urls = (r: ReturnType<typeof readShares>) => r.shares.map((s) => s.url)
 
+  it('종료일이 없으면 시작일부터 대화 끝까지 읽는다', () => {
+    expect(urls(readShares(DAYS_SAMPLE, { from: '2026-11-01' }))).toEqual(['https://kko.to/UPShtpIfbq', 'https://naver.me/FvTH6o34', 'https://naver.me/nextTrip'])
+  })
+
   it('모바일 내보내기 — 머리의 날짜로 거르고, 기간 밖 링크(지난·다음 여행)는 빠진다', () => {
     const r = readShares(DAYS_SAMPLE, { from: '2026-11-01', to: '2026-11-01' })
     expect(urls(r)).toEqual(['https://kko.to/UPShtpIfbq', 'https://naver.me/FvTH6o34'])
