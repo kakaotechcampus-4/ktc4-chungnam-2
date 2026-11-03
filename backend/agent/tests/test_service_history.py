@@ -2,7 +2,8 @@
 
 from datetime import timedelta
 
-from agent import core, service
+from agent import service
+from common.kst import kst_day_start
 from agent.tests import rows
 from agent.tests.rows import NOW
 
@@ -21,7 +22,7 @@ def test_history_is_newest_first_with_evidence_hash(db_session):
 
 
 def test_model_runs_today_counts_model_runs_since_kst_midnight(db_session):
-    day_start = core.kst_day_start(NOW)
+    day_start = kst_day_start(NOW)
     rows.run(db_session, "map_1", used_model=True, trigger="activity", started_at=day_start)
     rows.run(db_session, "map_1", used_model=True, trigger="summary", started_at=day_start + timedelta(hours=1))
     rows.run(db_session, "map_1", used_model=True, trigger="run_advice", started_at=day_start)   # 상한 밖

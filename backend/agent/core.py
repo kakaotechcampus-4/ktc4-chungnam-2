@@ -90,27 +90,12 @@ from agent.schemas import (
 )
 from common import categories
 from common.events import Event
+from common.kst import kst_day_start
 
 if TYPE_CHECKING:
     from agent.snapshot import Reaction, Snapshot
 
 DIAGNOSES = MODEL_TYPES + CODE_TYPES
-
-# constants.DAY_BOUNDARY_TZ("Asia/Seoul")의 고정 오프셋. 한국은 서머타임이 없어(1988년 이후) +9시간과 같다.
-# zoneinfo는 Windows에서 tzdata 패키지가 있어야 해서 쓰지 않는다.
-KST = timezone(timedelta(hours=9), "KST")
-
-
-def kst_date(now: datetime) -> date:
-    if now.tzinfo is None:
-        raise ValueError("now는 timezone-aware여야 합니다 — naive datetime은 KST/UTC 혼동을 부른다")
-    return now.astimezone(KST).date()
-
-
-def kst_day_start(now: datetime) -> datetime:
-    """now가 속한 KST 하루의 시작(자정). 모델 사용 상한과 no_reaction 하루 1회의 경계다."""
-    d = kst_date(now)
-    return datetime(d.year, d.month, d.day, tzinfo=KST)
 
 
 # ---------------------------------------------------------------- 기준 시간 (6.1)
@@ -350,6 +335,7 @@ class SummaryMeta:
     category: str
     reaction_ids: frozenset[str]
     updated_at: datetime
+    rules_version: str | None = None   # 이 요약을 만들 때의 ② 규칙 버전(llm.api.plan_evidence_rules_version, #1095). 옛 요약은 None
 
 
 @dataclass(frozen=True)
@@ -1446,30 +1432,39 @@ def newcomer_reacted(snap: Snapshot, category: str, since: datetime | None) -> b
     return any(c == category and (since is None or at > since) for at, c in _first_reactions(snap).values())
 
 
-def summary_changes(snap: Snapshot, category: str, meta: SummaryMeta | None) -> int | None:
+def summary_changes(
+    snap: Snapshot, category: str, meta: SummaryMeta | None, *, rules_version: str | None = None,
+) -> int | None:
     """그 카테고리 요약을 갱신해야 하면 바뀐 사유 수(새로 생긴 것 + 사라진 것), 아니면 None.
 
     - 새 사유가 SUMMARY_NEW_REASONS(3)개 이상. 새 사유 = 지금 사유 있는 반응 중 지난 요약이 보지 않은 것 — 지운 반응이
       없으면 명세의 "지금 수 - based_on_reaction_count"와 같고, 지운 반응이 있어도 새 사유를 놓치지 않는다.
     - 새 구성원이 지도에서 첫 반응을 이 카테고리에 남김(newcomer_reacted).
     - 지난 요약이 본 사유가 사라짐(반응 삭제, 지도 나가기 #369, 사유 지움). 지운 사람의 몫이 개수에 남지 않게 한다.
+    - 사유 글을 고친 반응(반응 id는 같고 updated_at이 요약 뒤)은 새 사유처럼 센다(#1095). 지난 요약은 옛 글을 봤다.
+    - ② 규칙이 바뀜(#1095): 요약에 남은 규칙 버전이 지금 버전(rules_version)과 다르면, 옛 요약(버전 없음)도, 사유가 하나라도 있으면
+      다시 만든다. 같은 사유도 규칙이 바뀌면 다르게 구조화된다. rules_version이 None이면 이 판단을 하지 않는다.
     요약이 없는 카테고리는 사유 있는 반응이 하나라도 있어야 만든다."""
     current = {r.reaction_id for r in snap.reasons if r.category == category}
     if meta is None and not current:
         return None
     known = meta.reaction_ids if meta is not None else frozenset()
-    new, gone = current - known, known - current
     since = meta.updated_at if meta is not None else None
-    if len(new) >= SUMMARY_NEW_REASONS or gone or newcomer_reacted(snap, category, since):
-        return len(new) + len(gone)
+    edited = {r.reaction_id for r in snap.reasons if r.category == category and r.reaction_id in known and r.updated_at > since}         if meta is not None else set()
+    new, gone = (current - known) | edited, known - current
+    stale_rules = meta is not None and rules_version is not None and meta.rules_version != rules_version and bool(current)
+    if len(new) >= SUMMARY_NEW_REASONS or gone or newcomer_reacted(snap, category, since) or stale_rules:
+        return len(new) + len(gone) if not stale_rules else max(len(new) + len(gone), len(current))
     return None
 
 
-def pick_summary(snap: Snapshot, metas: Sequence[SummaryMeta]) -> tuple[str | None, bool]:
+def pick_summary(
+    snap: Snapshot, metas: Sequence[SummaryMeta], *, rules_version: str | None = None,
+) -> tuple[str | None, bool]:
     """이번 관찰에서 갱신할 카테고리 하나(8절, 초안)와 그 밖에 갱신할 카테고리가 더 있는지. 바뀐 사유가 가장 많은 것,
     같으면 categories.pinnable() 순서."""
     by_category = {m.category: m for m in metas}
-    due = [(c, n) for c in categories.pinnable() if (n := summary_changes(snap, c, by_category.get(c))) is not None]
+    due = [(c, n) for c in categories.pinnable() if (n := summary_changes(snap, c, by_category.get(c), rules_version=rules_version)) is not None]
     if not due:
         return None, False
     return max(due, key=lambda d: d[1])[0], len(due) > 1
@@ -1582,7 +1577,8 @@ def summarize_reasons(reasons: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def summary_meta(category: str, summary: Mapping[str, Any], updated_at: datetime) -> SummaryMeta:
-    return SummaryMeta(category=category, reaction_ids=frozenset(summary.get("reaction_ids", ())), updated_at=updated_at)
+    return SummaryMeta(category=category, reaction_ids=frozenset(summary.get("reaction_ids", ())), updated_at=updated_at,
+                       rules_version=summary.get("rules_version"))
 
 
 def render_summary(

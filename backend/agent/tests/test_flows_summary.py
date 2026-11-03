@@ -166,6 +166,7 @@ def test_observation_summarizes_five_sections_and_announces(world, client):
     assert (row.category, row.based_on_reaction_count, row.run_id, row.updated_at) == (
         "음식점", 9, run.id, world.now)
     assert row.summary["reaction_ids"] == sorted(ids.values())
+    assert row.summary["rules_version"] == llm_api.plan_evidence_rules_version()   # 다음 관찰이 ② 규칙이 바뀌었는지 본다(#1095)
     assert row.summary["must_keep"][0] == {"fact_key": "spicy_focused", "wants": False, "member_count": 2,
                                            "reaction_ids": sorted([ids["u1_a"], ids["u2_a"]])}
     assert row.summary["not_filtered"] == {"count": 2, "reaction_ids": sorted([ids["u1_d"], ids["u3_d"]]),
