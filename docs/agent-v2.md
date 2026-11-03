@@ -1,6 +1,7 @@
 # 계획 보조 에이전트 모드 v2 구현 명세
 
-- 상태: 설계 확정 (2026-10-02), 마지막 개정 (2026-11-02, 아래 기록). 수치는 초기값이며 운영 기록을 보고 조정한다.
+- 상태: 설계 확정 (2026-10-02), 마지막 개정 (2026-11-04, 아래 기록). 수치는 초기값이며 운영 기록을 보고 조정한다.
+- 2026-11-04 개정(#1297): 작업 기록(11.3) — 제안마다 에이전트가 거친 단계(감지부터 재확인까지)를 AI 코스와 같은 모양(`WorkStep`)으로 응답에 싣는다. 살펴본 상태(21.3) — 마지막 관찰 시각과 제안이 없는 이유를 내려, 진단 실패와 「낼 제안 없음」을 구분한다(#1072의 사용자 안내 결정을 바꿈, 멘토 리뷰 2026-10-24). 계약은 같은 PR, 구현은 backend/agent와 FE 이슈다.
 - 2026-11-03 개정(#1216): 6.8을 구현(#1221)에 맞췄다 — `web_check`의 `forbidden`·`planner` 인자, 합계를 못 읽으면 부르지 않음, 토큰은 `llm_calls`에만, dev 스텁은 failed, 지시문 webcheck-v2, 금지 표현의 정본 상수. 21.6에 웹 확인 평가를 더했다.
 - 2026-11-03 개정(#1152 ④): 웹 확인(6.8) — 우리 데이터가 「모름」인 줄 하나를 별도 모델 호출(Responses API + 웹 검색)로 찾아 문장 1~2개와 출처로 붙인다. 출처 대조는 코드, 문장 내용은 대조하지 못해 「확인되지 않음」을 붙인다(2절 3번의 예외). 서비스 일일 예산을 넘으면 웹 확인만 쉰다(19절). 구현 #1216, FE #1217.
 - 2026-11-03 개정(#1180): 6.7을 구현(#1198)에 맞췄다 — `preview_filter`는 줄 대신 글 반응의 ② 결과를 받고 시각을 받지 않는다, 미리 돌려 보지 못하는 경우와 그때의 행동, `reason_text_inputs`. 21.1에 diagnose-v3 평가를 더했다.
@@ -825,6 +826,30 @@ M1-2(#533) 구현에서 정한 것:
 
 한계: 문장의 의미 자체는 코드로 검증하지 못한다. "♥ 세 명 모두 분위기를 좋아한다"처럼 개수와 의미를 섞은 주장은 걸러지지 않는다. 수치는 슬롯으로만 쓰게 하고, 의미 주장은 is_guess로 표시하게 하고, 나머지는 평가셋으로 잡는다.
 
+### 11.3 작업 기록 (#1297)
+
+제안마다 에이전트가 거친 단계를 「핑고가 한 일」로 보인다. 단계는 이미 `agent_runs`에 남아 있다(signals, priority, tool_calls, verification). 지금까지는 저장만 하고 응답에 내지 않아, 사람은 제목과 문장 몇 줄만 봤다.
+
+새 개념이 아니다. AI 코스의 작업 기록과 같은 개념이라 모양도 같이 쓴다(api-spec `WorkStep` = {stage, role, by, by_detail, text}, `CourseStep`은 이것을 가리킨다). 화면도 코스의 줄 모양을 같이 쓴다.
+
+**만드는 곳.** `agent.core`의 순수 함수 하나다. 입력은 그 제안의 `agent_runs` 행(제안의 `run_id`)과 제안의 `facts`다. 렌더 때 만들고 저장하지 않는다. 그래서 `GET /maps/{mapId}/agent`와 `agent.suggested`가 같은 렌더(`render_suggestion`)를 거쳐 같은 줄을 낸다. 문구는 core의 고정 문구 상수 한 곳이고, 숫자는 기록에서 읽는다.
+
+| stage | role | by | 언제, 문구 예 |
+| --- | --- | --- | --- |
+| 감지 | 계산 | code | 늘. 1순위 신호의 유형과 특징값. 「음식점에 반대 의견 2개가 남은 뒤로 새 후보가 없어요」, 「확정한 2곳 중 카페가 없어요」 |
+| 순위 | 결정 | code | 정책을 통과한 신호가 2개 이상일 때(`priority.source=rules`). 「살펴볼 곳 3개 중 이것부터 골랐어요」 |
+| 조사 | 지휘 | ai | 모델이 부른 도구(t1, t2 …)마다 한 줄. 도구 이름마다 문구가 하나다. 「반대 사유 2개를 읽었어요」(get_reasons), 「추천 준비를 확인했어요」(get_readiness), 「♥ 쪽과 🚫 쪽 조건을 견줘 봤어요」(compare_reasons). 상한에 걸린 호출(LIMIT_EXCEEDED)과 없는 도구(NOT_FOUND)는 「…하려다 멈췄어요」 |
+| 미리 찾기 | 계산 | code | p1이 있을 때(6.7). 「지금 조건으로 미리 찾아봤어요 · 12곳 남아요」, 절충이면 「두 의견을 다 맞추는 곳 3곳」 |
+| 우리 데이터 | 검증 | code | 제안에 facts가 있을 때(6.6). 「가게 정보 2개를 우리 데이터에서 확인했어요」 |
+| 웹 확인 | 검증 | ai, by_detail 「모델 → 코드」 | w1이 있을 때(6.8). 「웹에서 찾아봤어요 · 출처 2개」, not_found, paused, 다시 씀(24시간 안) |
+| 검증 | 검증 | code | 모델 유형일 때(11.2). 「숫자와 인용 4개를 지도와 대조했어요 · 문장 1개는 뺐어요」 |
+| 재확인 | 검증 | code | 늘(12.8). 「저장 직전에 지도가 그대로인지 다시 봤어요」 |
+
+- 순서는 위 표 그대로이고 있는 단계만 낸다. 코드 유형(반응 공백, 카테고리 공백)은 감지, 순위, 재확인뿐이다.
+- **넣지 않는 것.** 사유 글, 핀·장소 이름(실시간 핀 이름은 사용자가 친 글이다, #382), 별칭, URL, 웹 문장. 숫자와 고정 문구만이다(2절 11·13번, #717). 비공개 run 정보는 지금처럼 쓰지 않는다 — 정체 전제의 run 여부(6.2)는 감지 문구에 넣지 않고, 미리 돌려 본 수(p1)만 쓴다(6.7과 같은 범위).
+- run 행이 없으면(30일 정리, 12.9) 빈 목록이다. 탈퇴로 `tool_calls`가 비면(13절) 조사 줄이 빠진다.
+- 모델이 고른 것은 조사(어떤 도구를 부를지)와 웹 확인(무엇을 찾을지)뿐이다. 나머지는 코드다. 이 표가 1.1 「코드와 모델의 분담」을 화면에 그대로 보인다.
+
 ## 12. 실행 구조
 
 ### 12.1 트리거
@@ -1170,7 +1195,7 @@ CREATE TABLE agent_run_advice (
 
 | 메서드와 경로 | 용도 | 권한과 응답 |
 | --- | --- | --- |
-| `GET /maps/{mapId}/agent` | 바텀시트 상태(AgentState): settings, active_suggestion(shadow 제외, 모드가 꺼져 있으면 null), has_unseen, summaries[] | 구성원. 200 |
+| `GET /maps/{mapId}/agent` | 바텀시트 상태(AgentState): settings, active_suggestion(shadow 제외, 모드가 꺼져 있으면 null), has_unseen, summaries[], status, observation(#1297) | 구성원. 200 |
 | `PUT /maps/{mapId}/agent/settings` | 모드 변경 `{enabled}`. 끄면 활성 제안 superseded | 구성원 (agent.toggle). 200 AgentSettings, agent.settings_changed |
 | `POST /agent/suggestions/{id}/view` | 열람 기록. agent_suggestion_views upsert | 구성원. 204, 이벤트 없음 |
 | `POST /agent/suggestions/{id}/accept` | `{action_index}`. status='active'일 때만 바꾸는 가드 UPDATE | 구성원 (agent.suggestion.resolve). 200 `{action}`, 이미 처리됐으면 409 SUGGESTION_RESOLVED |
@@ -1179,6 +1204,7 @@ CREATE TABLE agent_run_advice (
 
 - #1152(계약은 별도 PR): AgentState에 `status`(지도 현황 문단, 8.2), AgentSuggestion에 `facts`(우리 데이터 확인, 6.6). agent_suggestions에 `facts jsonb`([{pin_id, fact_key}]).
 - #1152 ④(#1216): AgentFactLine에 선택 필드 `web`(`AgentWebCheck` {status, notice, statements[{text, source_url, source_name}], checked_at}, 6.8). `agent_suggestions.facts` 항목에 `web`. `llm_calls`에 `web_searches`, feature·call `agent_web_check`.
+- #1297: AgentSuggestion에 선택 필드 `steps`(`WorkStep[]`, 11.3), AgentState에 선택 필드 `observation`(`AgentObservation` {checked_at, notice}, 21.3). 테이블은 바뀌지 않는다 — steps는 `agent_runs`에서, checked_at은 `agent_cursors.last_observed_at`에서 렌더 때 읽는다.
 - 관찰 tick은 엔드포인트가 아니다. 배포에서는 서버 cron이 `python -m agent.tick`을 돌린다(12.1, #812). 10/2 판의 `POST /internal/agent/tick`(내부 인증, 202)은 만들지 않았다.
 - has_unseen: 활성 제안이 있고, 요청자의 agent_suggestion_views 행이 없으면 true.
 - accept의 응답 action은 FE가 실행할 기존 동작 설명이다(16.3). 서버는 그 동작을 대신 실행하지 않는다.
@@ -1191,7 +1217,7 @@ CREATE TABLE agent_run_advice (
 
 | type | 언제 | 페이로드 |
 | --- | --- | --- |
-| agent.suggested | 제안 저장 | AgentSuggestion: id, diagnosis, category, title, analysis, advice[{segments, is_guess}], actions[{index, type, label, params}], created_at, expires_at |
+| agent.suggested | 제안 저장 | AgentSuggestion: id, diagnosis, category, title, analysis, advice[{segments, is_guess}], actions[{index, type, label, params}], facts, steps(#1297), created_at, expires_at |
 | agent.resolved | 수락, 닫기, 만료, 무효화 | suggestion_id, status, resolved_action_type 또는 null |
 | agent.summary_updated | 우리 조건 요약 갱신 | AgentSummary: category, 다섯 칸, updated_at |
 | agent.settings_changed | 모드 변경 | enabled, updated_by |
@@ -1220,7 +1246,9 @@ agent.resolved에는 resolved_by를 싣지 않는다. 수락한 사람을 화면
     - AI 조언: is_guess=true 문장. "추정" 표시를 붙인다
     - 우리 데이터(6.6): 고정 문구 줄, 많아야 2줄. `web`이 있는 「모름」 줄 아래에 웹 요약(6.8): found면 「AI 웹 요약 · 확인되지 않음」 + 문장 + 문장마다 출처 링크(새 탭, `rel="noopener noreferrer"`), not_found·paused면 서버의 `notice` 한 줄
     - 행동 버튼(actions의 label)과 닫기
-    - 제안이 없으면 "지금은 따로 드릴 제안이 없어요"
+    - 「핑고가 한 일 보기」(11.3): steps가 있으면 접어 둔 토글. 펼치면 한 줄씩(단계 · 누가 칩 · 문장). AI 코스의 작업 기록 줄과 같은 모양이다
+    - 제안이 없으면 "지금은 따로 드릴 제안이 없어요"와 그 아래 `observation.notice`(서버 문구, 있을 때만, 21.3)
+    - `observation.checked_at`이 있으면 「핑고가 12분 전에 지도를 살펴봤어요」(상대 시각). 사람이 누르지 않아도 관찰이 돈다는 것이 보인다
 3. 우리 조건 요약: 카테고리 탭. 탭마다 다섯 칸(8절)과 "이 조건으로 추천 받기" 버튼.
 
 시트를 열었을 때 활성 제안이 있고 has_unseen이 true면 `POST /agent/suggestions/{id}/view`를 부르고 점을 없앤다.
@@ -1258,7 +1286,7 @@ FE는 슬롯을 다루지 않는다. 서버가 렌더한 조각을 차례로 이
 
 ### 16.5 AI 추천 결과 화면
 
-완료된 run이면 funnel을 먼저 보여준 뒤 `GET /runs/{runId}/advice`를 부른다. 로딩 중에는 조언 영역에 자리만 둔다. 대상인지는 서버가 정한다(9절). 204면 아무것도 보여주지 않는다. 200이면 문장과 버튼(widen_radius, open_evidence)을 보여준다.
+완료된 run이면 funnel을 먼저 보여준 뒤 `GET /runs/{runId}/advice`를 부른다. 로딩 중에는 조언 영역에 자리만 둔다. 대상인지는 서버가 정한다(9절). 204면 아무것도 보여주지 않는다. 200이면 문장과 버튼(widen_radius, open_evidence)을 보여준다. 500이면 자리를 숨기지 않고 「조언을 불러오지 못했어요」 한 줄을 보인다(#1297, 21.3).
 
 ## 17. 테스트와 완료 정의
 
@@ -1465,14 +1493,22 @@ FE 담당
 - 관찰 도중 예외: outcome=error 한 행(단계, 예외 클래스 이름)을 남기고 30분, 2시간, 6시간 뒤에 다시 본다(#677, 12.2). 서버 로그도 클래스 이름만이다(#765).
 - 조언 계산 실패: 500이고 FE는 조언 자리를 숨긴다(#750, 16.5). 조언은 모델을 부르지 않아(#749) 이 500은 코드 오류다. 모델 장애와 같은 줄에 두지 않는다.
 
-**사용자 안내.** 진단 실패(모델 호출 실패, 시간 초과, 스키마나 검증 실패)와 「낼 제안 없음」은 바텀시트에서 같은 문구(「지금은 따로 드릴 제안이 없어요」)다. 모델 장애 케이스는 `test_agent_e2e.py`가 본다. 이렇게 둔 근거는 다음과 같다.
+**사용자 안내(2026-11-04 결정, #1297).** 진단 실패와 「낼 제안 없음」을 구분한다. `GET /maps/{mapId}/agent`의 `observation`이 마지막 관찰 시각(`agent_cursors.last_observed_at`)과 안내 문구를 내린다. 문구는 서버 고정 문구이고, 판정은 `agent.core` 한 곳이다. 기준은 그 지도에서 trigger가 activity·time인 가장 최근 관찰 행이다.
 
-- 지도 제안은 사람이 요청하지 않은 백그라운드 관찰이라 기다리는 사람이 없다. 신호는 그대로 남아, 지도에 새 활동이 오면 다시 관찰되고 그때 모델을 다시 부른다(이미 지난 기준 시각은 다음 점검 후보에서 빠진다).
-- 사용자가 장애를 고칠 방법이 없어, 알려도 할 행동이 없다.
-- 우리 조건 요약은 모델을 쓰지 않아 장애와 관계없이 갱신된다.
-- 추천 막힘 조언의 500은 사람이 연 결과 화면에서 생기지만 본문(깔때기와 결과)은 그대로다. 그래서 조언 자리만 숨긴다(16.5).
+| 최근 관찰 | notice |
+| --- | --- |
+| model_failed, invalid_schema, error | 「이번에는 지도를 끝까지 살펴보지 못했어요. 새 활동이 생기면 다시 볼게요」 |
+| invalid_claims | 「핑고가 쓴 제안이 확인을 통과하지 못해 내보내지 않았어요」 |
+| blocked에 model_cap | 「오늘은 자세히 살펴보는 횟수를 다 썼어요. 내일 다시 볼게요」 (상한 값은 쓰지 않는다) |
+| trip_ended | 「여행이 끝나 더 살펴보지 않아요」 |
+| 그 밖(no_signal, silent, unknown, stale, suggested 등) | null — 화면은 「지금은 따로 드릴 제안이 없어요」만 |
 
-결정(2026-11-02, #1072): 장애를 따로 보여 주지 않고 지금 문구를 쓴다. 검토한 다른 길은 둘이다. 최근 관찰이 model_failed면 다른 문구를 내는 것(응답에 상태 칸이 필요해 계약이 바뀐다), 조언 500이면 자리를 숨기지 않고 「조언을 불러오지 못했어요」를 내는 것(FE만 바꾼다)이다. 다시 볼 조건: 사용자가 「제안이 안 나온다」를 장애로 알리기 시작할 때.
+- 지금 제안이 있거나 모드가 꺼져 있으면 notice는 null이다. 제안이 남아 있는데 뒤의 관찰이 실패한 것은 알릴 일이 아니다.
+- invalid_claims를 알리는 것은 가드레일이 일한 결과를 숨기지 않으려는 것이다. 무엇이 걸렸는지(claim, 문장)는 싣지 않는다.
+- 이벤트로 갱신하지 않는다. 시트를 열 때 받는다(현황 문단 8.2와 같다).
+- 추천 막힘 조언의 500은 자리를 숨기지 않고 「조언을 불러오지 못했어요」를 보인다(FE, 16.5). 본문(깔때기와 결과)은 그대로다.
+
+바꾼 근거: #1072(2026-11-02)는 「지도 제안은 기다리는 사람이 없고, 사용자가 장애를 고칠 방법이 없다」며 같은 문구를 쓰기로 했다. 그런데 멘토 리뷰(2026-10-24 4절)가 「실패와 할 말 없음을 구분하라, 바텀시트 상태 응답이 제안이 없는 이유를 알려 주지 않는다」고 짚었다. 사용자 쪽에서 봐도 할 행동이 없다는 것과 이유를 모르는 것은 다르다. 「다시 볼게요」라는 말로 에이전트가 계속 돈다는 것을 알리면 사용자가 장애로 오해하지 않는다. #1072에서 검토한 두 길(상태 칸, 조언 500 문구)을 둘 다 택했다. 모델 장애 케이스는 `test_agent_e2e.py`가 본다.
 
 **운영 경보.** 지금 볼 수 있는 숫자는 tick 끝의 처리량 로그 한 줄(12.2, `deploy_rules.md`「배포 뒤 볼 지표」의 `agent tick due= observed= deferred_by_max= deferred_by_budget= elapsed_ms=`)과 agent_runs의 outcome이다. 결정(2026-11-02, #1072): 자동 경보는 두지 않는다. 사람이 하루 한 번 아래 기준으로 본다. 조회 방법은 `deploy_rules.md`「배포 뒤 볼 지표」에 있다.
 
