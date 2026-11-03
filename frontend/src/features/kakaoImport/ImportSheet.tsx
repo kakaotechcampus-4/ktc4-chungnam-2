@@ -73,7 +73,7 @@ function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => Ad
   const [notice, setNotice] = useState<string | null>(null)
   const [reading, setReading] = useState(false)
   const input = useRef<HTMLInputElement>(null)
-  const errorId = useId()
+  const hintId = useId()
   const wrongOrder = Boolean(range.from && range.to && range.from > range.to)
   const ready = Boolean(range.from) && !wrongOrder
 
@@ -110,27 +110,22 @@ function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => Ad
             <input type="date" value={range.from} onChange={(e) => setDay({ from: e.target.value })} className="field w-full" />
           </label>
           <label className="block">
-            <span className="mb-1 block text-xs text-ink-500">
-              종료일 <span className="font-normal">(선택)</span>
-            </span>
+            <span className="mb-1 block text-xs text-ink-500">종료일 (선택)</span>
             <input
               type="date"
               value={range.to}
               min={range.from || undefined}
               onChange={(e) => setDay({ to: e.target.value })}
               aria-invalid={wrongOrder}
-              aria-describedby={wrongOrder ? errorId : undefined}
+              aria-describedby={hintId}
               className="field w-full"
             />
           </label>
         </div>
-        {wrongOrder ? (
-          <p id={errorId} className="mt-1.5 text-sm text-warn-text">
-            종료일은 시작일과 같거나 뒤여야 해요
-          </p>
-        ) : (
-          <p className="mt-1.5 text-xs text-ink-500">종료일을 비우면 대화 끝까지 읽어요</p>
-        )}
+        {/* 안내와 오류는 같은 자리·같은 id라 종료일 칸이 늘 지금 줄을 읽힌다. */}
+        <p id={hintId} className={wrongOrder ? 'mt-1.5 text-sm text-warn-text' : 'mt-1.5 text-xs text-ink-500'}>
+          {wrongOrder ? '종료일은 시작일과 같거나 뒤여야 해요' : '종료일을 비우면 대화 끝까지 읽어요'}
+        </p>
       </fieldset>
       {/* 파일 고르는 창은 아래 버튼이 연다 — 숨긴 입력칸은 화면 읽기에서 빠지고 버튼 하나만 남는다. */}
       <input
