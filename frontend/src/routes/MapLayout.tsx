@@ -539,13 +539,15 @@ export default function MapLayout() {
             style={{ minHeight: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
             className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 items-end border-t border-ink-100 bg-white"
           >
-            {TABS.map((tab) =>
-              tab.Icon ? (
-                <TabLink key={tab.path} to={`/maps/${mapId}${tab.path}`} end={tab.end} label={tab.label} icon={<tab.Icon size={24} />} />
-              ) : (
-                <AiTabLink key={tab.path} to={`/maps/${mapId}${tab.path}`} label={tab.label} />
-              ),
-            )}
+            {TABS.map((tab) => (
+              <TabLink
+                key={tab.path}
+                to={`/maps/${mapId}${tab.path}`}
+                end={tab.end}
+                label={tab.label}
+                icon={tab.Icon ? <tab.Icon size={24} /> : <PingoMark size={28} />}
+              />
+            ))}
           </nav>
         )}
       </div>
@@ -596,7 +598,10 @@ const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | nul
   { path: '/course', label: 'AI 코스', Icon: Route },
 ]
 
-/** 비활성 ink-500(흰 바탕 대비 약 5:1). */
+/**
+ * 하단 탭 칸 하나 — 아이콘 + 11/500 라벨, 비활성 ink-500(흰 바탕 대비 약 5:1). AI 추천도 같은 모양이다(핑고 얼굴).
+ * 3칸일 때 가운데에 두던 AI 원(48px, 떠 있음)은 4칸이 되며 둘째 칸에서 왼쪽으로 치우쳐 보여 뺐다(2026-11-03).
+ */
 function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
   return (
     <NavLink
@@ -606,33 +611,9 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
         `press flex flex-col items-center gap-0.5 rounded-xl pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
       }
     >
-      {icon}
+      {/* 핑고는 선 아이콘보다 커서 같은 칸에 넣어 네 칸 높이를 맞춘다(세로 탭 줄과 같다). */}
+      <span className="flex size-7 items-center justify-center">{icon}</span>
       {label}
-    </NavLink>
-  )
-}
-
-/** 하단 탭의 AI. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 파란 핑고 얼굴, 활성만 파랑 채움 + 흰 얼굴(#299). */
-function AiTabLink({ to, label }: { to: string; label: string }) {
-  return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        `press flex flex-col items-center gap-0.5 rounded-xl pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
-      }
-    >
-      {({ isActive }) => (
-        <>
-          <span
-            className={`flex size-12 items-center justify-center rounded-full shadow-float ${
-              isActive ? 'bg-brand-600' : 'border-2 border-brand-300 bg-white'
-            }`}
-          >
-            <PingoMark size={30} tone={isActive ? 'white' : 'blue'} />
-          </span>
-          {label}
-        </>
-      )}
     </NavLink>
   )
 }
