@@ -14,6 +14,8 @@
 - 결정 지시(#717): expect.decision_phrases가 있는 지시문 케이스에서, 그 문구가 모델 원문의 슬롯 밖 글과 렌더된 text 조각에
   나온 횟수를 센다. 금지어 목록이 아니라 케이스마다 적은 문구로 본다. 인용 조각(구성원 글)에 들어간 것도 따로 센다 —
   화면에서 구성원 의견으로 그려지는 데이터라 실패가 아니다.
+- 깨진 응답(#1299): 응답이 JSON으로 읽히지 않으면(json_invalid) 그 응답의 길이, 끝 몇 글자, 같은 JSON 객체의 반복인지를
+  결과 파일(request_errors[].broken)에만 남긴다. 운영 로그에는 남기지 않는다(#390, client는 클래스 이름만).
 """
 
 import argparse
@@ -61,6 +63,9 @@ class RecordingClient:
             row |= {"ms": _ms(started), "error": type(exc).__name__}
             if type(exc).__name__ == "ValidationError":   # 평가 전용: 어느 칸이 틀렸는지(평가셋의 지어낸 글뿐이다)
                 row["error_detail"] = [(e.get("loc"), e.get("type")) for e in exc.errors()][:5]
+                broken = _broken_response(exc.errors())
+                if broken:
+                    row["broken"] = broken
             _local.requests.append(row)
             raise
         usage = completion.usage
@@ -73,6 +78,29 @@ class RecordingClient:
         }
         _local.requests.append(row)
         return completion
+
+
+BROKEN_TAIL_CHARS = 40
+
+
+def _broken_response(errors: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """JSON으로 읽히지 않은 응답(json_invalid)의 모양(#1299, #767 3번). 평가 결과 파일에만 쓴다 — 운영 로그(client)는 여전히
+    클래스 이름만 남긴다(#390). pydantic은 json_invalid의 input에 응답 원문을 싣는다. 길이, 끝 몇 글자, 첫 JSON 객체가 끝나는
+    위치와 그 뒤가 같은 객체의 반복인지만 남긴다."""
+    raw = next((e.get("input") for e in errors if e.get("type") == "json_invalid" and isinstance(e.get("input"), str)), None)
+    if raw is None:
+        return None
+    shape: dict[str, Any] = {"len": len(raw), "tail": raw[-BROKEN_TAIL_CHARS:]}
+    try:
+        first, end = json.JSONDecoder().raw_decode(raw.lstrip())
+    except json.JSONDecodeError:
+        return shape | {"first_json_end": None, "repeated": False}
+    rest = raw.lstrip()[end:].strip()
+    try:
+        repeated = bool(rest) and json.loads(rest) == first
+    except json.JSONDecodeError:
+        repeated = False
+    return shape | {"first_json_end": end, "repeated": repeated}
 
 
 def _ms(started: float) -> int:
@@ -120,7 +148,8 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     row: dict[str, Any] = {
         "case": case["id"], "run": run, "ms": ms, **_totals(_local.requests),
         "tools": [c["name"] for c in tools.calls], "expected_decision": expect["decision"],
-        "request_errors": [{k: r[k] for k in ("error", "error_detail") if k in r} for r in _local.requests if "error" in r],
+        "request_errors": [{k: r[k] for k in ("error", "error_detail", "broken") if k in r}
+                           for r in _local.requests if "error" in r],
     }
     phrases = expect.get("decision_phrases", [])
     row["injection"] = bool(phrases)
@@ -221,6 +250,12 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                 steps[f"행동 제거: {c['reason']}"] += 1
         lines += ["", "단계별 탈락 사유(suggest 호출에서 센 횟수)", "", "| 사유 | 횟수 |", "|---|---|"]
         lines += [f"| {k} | {v} |" for k, v in steps.most_common()] or ["| 없음 | 0 |"]
+        broken = [(r["case"], e["broken"]) for r in diag for e in r["request_errors"] if "broken" in e]
+        if broken:
+            lines += ["", "JSON으로 읽히지 않은 응답(#1299) — 길이, 첫 객체 끝, 같은 객체 반복, 끝 글자", "",
+                      "| 케이스 | 길이 | 첫 객체 끝 | 반복 | 끝 |", "|---|---|---|---|---|"]
+            lines += [f"| {cid} | {b['len']} | {b['first_json_end']} | {b['repeated']} | `{b['tail'].replace('|', '¦')}` |"
+                      for cid, b in broken]
         lines += ["", "케이스별", "", "| 케이스 | 기대 결정/버튼 | 결정 일치 | 검증 통과 | 버튼 일치 | 고른 첫 버튼 | 도구 | 평균 ms |",
                   "|---|---|---|---|---|---|---|---|"]
         by_case = defaultdict(list)
