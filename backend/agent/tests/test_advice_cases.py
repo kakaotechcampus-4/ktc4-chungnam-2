@@ -199,8 +199,8 @@ def test_soft_relax_sentences():
     draft, _ = world.advise()
 
     assert [line.segments[0].text for line in world.render(draft).advice] == [
-        f"「{labels['oily_focused']} 제외」 조건을 빼면 9곳이 더 남아요.",
-        f"「{labels['wait_short']} 원함」 조건을 빼면 6곳이 더 남아요.",
+        f"「{labels['is_crowded_large']} 제외」 조건을 빼면 9곳이 더 남아요.",
+        f"「{labels['accessible']} 원함」 조건을 빼면 6곳이 더 남아요.",
     ]
     assert draft.actions == [{"index": 0, "type": "open_evidence", "label": "근거 확인에서 빼 보기",
                               "params": {"run_id": world.run_id, "evidence_line_ids": [world.line_id("l2")]}}]

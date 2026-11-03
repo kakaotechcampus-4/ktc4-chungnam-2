@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Optional, Sequence
 
 from agent.course import core
 from agent.course.constants import (
-    DAILY_WALK_LOW_MAX_MIN, DAY_HAS_CATEGORY_TAGS, DAY_HAS_TAGS, GOALS_MAX, INDOOR_LABEL, INDOOR_MET_RATIO, NIGHT_LABEL,
+    DAILY_WALK_LOW_MAX_MIN, DAY_HAS_CATEGORY_TAGS, DAY_HAS_TAGS, GOALS_MAX, INDOOR_LABEL, INDOOR_MET_RATIO, MAP_GOAL_KEYS, NIGHT_LABEL,
 )
 from agent.course.core import Course, Trip
 from agent.course.korean import attach
@@ -32,6 +32,8 @@ class Goal:
     day: Optional[str] = None            # d1 …
     places: tuple[str, ...] = ()         # p1 …
     tag: Optional[str] = None            # day_has만: DAY_HAS_TAGS의 키
+    origin: str = "request"              # request(요청) | map(지도 근거로 세운 목표, #1131 B안). 둘 다 선호이고 id에 넣지 않는다 — 같은 id면 요청이 이긴다
+    candidate: Optional[str] = None      # map이면 근거가 된 지도 목표 후보 id(g1 …)
 
     @property
     def id(self) -> str:
@@ -190,10 +192,65 @@ class VerifiedGoals:
     dropped: tuple[str, ...]                # 검증에서 떨어진 목표의 이유(시도 기록용, 화면에 쓰지 않는다)
 
 
-def goals_input(trip: Trip, request_text: str) -> dict:
-    """llm.course_set_goals 입력. 요청 속 장소 이름을 별칭으로 바꾸려면 name이 필요해 이름을 넣는다(지휘 턴 입력에는 이름이 없다)."""
+# ---- 지도 근거 → 지도 목표 후보 (#1131 B안) ----
+# 대응 표는 constants.MAP_GOAL_KEYS 한 곳이다. 후보는 종류와 근거만 갖고 날은 모델이 고른다. 근거에는 사유 원문과 구성원 이름이 없다.
+
+@dataclass(frozen=True)
+class SummaryItem:
+    """우리 조건 요약 한 줄을 코스가 읽는 모양(service.read_map_items가 만든다). name은 키의 표시 이름(코드 표)이다."""
+    category: str
+    fact_key: str
+    wants: bool
+    member_count: int
+    name: str
+    must_keep: bool = False                  # 요약의 「꼭 지킬 것」(must_keep) 칸에서 왔다 — 취향이 아니라 필요 조건이다
+
+
+@dataclass(frozen=True)
+class MapCandidate:
+    id: str                                  # g1 …
+    kind: str
+    items: tuple[SummaryItem, ...] = ()      # 근거가 된 요약 줄(사람 수가 많은 순)
+    night_places: tuple[str, ...] = ()       # night_end: 야경 라벨이 있는 확정 장소 별칭
+
+    @property
+    def required(self) -> bool:
+        """필수 후보 — 근거 줄 중 하나라도 must_keep에서 왔다. 판정은 여기 한 곳이다. 모델이 고르지 않아도 verify_goal_set이 넣는다."""
+        return any(i.must_keep for i in self.items)
+
+
+def map_candidates(trip: Trip, items: Sequence[SummaryItem]) -> tuple[MapCandidate, ...]:
+    """요약 줄과 확정 장소 라벨 → 목표 종류마다 후보 하나. 순서는 MAP_GOAL_KEYS에 처음 나오는 종류 순이다."""
+    by_kind: dict[str, list[SummaryItem]] = {}
+    for it in items:
+        if (kind := MAP_GOAL_KEYS.get((it.fact_key, it.wants))) is not None:
+            by_kind.setdefault(kind, []).append(it)
+    night = tuple(p.alias for p in trip.places if NIGHT_LABEL in p.labels)
+    out: list[MapCandidate] = []
+    for kind in dict.fromkeys(MAP_GOAL_KEYS.values()):
+        found = tuple(sorted(by_kind.get(kind, ()), key=lambda i: (-i.member_count, i.category, i.fact_key)))
+        nights = night if kind == "night_end" else ()
+        if found or nights:
+            out.append(MapCandidate(f"g{len(out) + 1}", kind, found, nights))
+    return tuple(out)
+
+
+def evidence_text(c: MapCandidate) -> str:
+    """후보의 근거 한 줄(코드 템플릿) — 「관광지 조건 요약의 ‘휠체어·유모차 원함’ 2명, 확정 장소 중 야경 명소 1곳」."""
+    parts = [f"{i.category} 조건 요약의 ‘{i.name} {'원함' if i.wants else '제외'}’ {i.member_count}명" for i in c.items]
+    if c.night_places:
+        parts.append(f"확정 장소 중 야경 명소 {len(c.night_places)}곳")
+    return ", ".join(parts)
+
+
+def goals_input(trip: Trip, request_text: str, candidates: Sequence[MapCandidate] = ()) -> dict:
+    """llm.course_set_goals 입력. 요청 속 장소 이름을 별칭으로 바꾸려면 name이 필요해 이름을 넣는다(지휘 턴 입력에는 이름이 없다).
+    map_candidates는 지도 근거로 세울 수 있는 목표 후보 — 키, 방향, 사람 수, 장소 별칭만 넣는다(사유 원문과 표시 이름 없음)."""
     return {
         "request": request_text,
+        "map_candidates": [{"id": c.id, "kind": c.kind, "required": c.required, "night_places": list(c.night_places),
+                            "evidence": [{"category": i.category, "fact_key": i.fact_key, "wants": i.wants, "members": i.member_count}
+                                         for i in c.items]} for c in candidates],
         "days": [{"day": core.day_alias(i), "weekday": "월화수목금토일"[d.weekday()] + "요일"} for i, d in enumerate(trip.days)],
         "first_day": core.day_alias(0),
         "last_day": core.day_alias(len(trip.days) - 1),
@@ -202,7 +259,10 @@ def goals_input(trip: Trip, request_text: str) -> dict:
 
 
 _PIECE_SPLIT = re.compile(r"[,.;!?·\n]|그리고")
-_FILLER = re.compile(r"감사합니다|감사해요|고맙습니다|고마워요|안녕하세요|잘 ?부탁(?:드립니다|드려요|해요)|해\s?주세요|해줘요?|부탁(?:해요|드려요|드립니다)?|짜\s?주세요|짜줘요?|싶어요|싶고|싶다|했으면|좋겠어요|좋겠고|코스|일정|여행|그리고|또|저는|우리는|이번|으로|에서|에는|에도|까지|부터|[은는이가을를에도와과로의]")
+_FILLER = re.compile(r"(?:방문|들르|둘러보|가보|가\s?보|가)(?:해|하)?고 ?싶(?:어요|어|다|습니다|은데요?)|감사합니다|감사해요|고맙습니다|고마워요|안녕하세요|잘 ?부탁(?:드립니다|드려요|해요)|해\s?주세요|해줘요?|부탁(?:해요|드려요|드립니다)?|짜\s?주세요|짜줘요?|싶어요|싶고|싶다|했으면|좋겠어요|좋겠고|코스|일정|여행|그리고|또|저는|우리는|이번|으로|에서|에는|에도|까지|부터|[은는이가을를에도와과로의]")
+
+# 요청 어미 군말은 "~하고 싶어요" 꼴로 확인될 때만 지운다. 이런 말이 든 조각은 의미 있는 제약이라 통째로 남긴다(「방문 금지」, 「가고 싶지 않아요」).
+_CONSTRAINT = re.compile(r"금지|제한|말고|빼고|빼줘|빼 |제외|안 |않|못|싫|하지 ?마|가지 ?마")
 
 
 def leftover_pieces(request_text: str, covered: Sequence[str]) -> list[str]:
@@ -220,7 +280,8 @@ def leftover_pieces(request_text: str, covered: Sequence[str]) -> list[str]:
     out: list[str] = []
     for part in _PIECE_SPLIT.split(rest):
         piece = part.strip()
-        if len(re.findall(r"[가-힣]", _FILLER.sub("", piece))) >= 3 and piece in request_text:
+        shown = piece if _CONSTRAINT.search(piece) else _FILLER.sub("", piece)     # 금지·제한·부정이 든 조각은 군말을 지우지 않는다
+        if len(re.findall(r"[가-힣]", shown)) >= 3 and piece in request_text:
             out.append(piece)
     return out
 
@@ -272,28 +333,55 @@ def _daily(trip: Trip, g) -> list[tuple[Optional[Goal], Optional[str]]]:
 
 def unlisted_mentions(trip: Trip, request_text: str, goals: Sequence[Goal], quotes: Sequence[str]) -> list[str]:
     """목표 quote 안에 코스 장소의 이름이 있는데 그 장소가 어떤 목표의 places에도 없으면, 그 장소를 말한 조각(#1008 K1).
-    「마지막 날 밤에 N서울타워」 전체를 quote로 쓰고 야경 목표 하나만 내면 장소 요청이 말없이 사라지기 때문이다."""
+    「마지막 날 밤에 N서울타워」 전체를 quote로 쓰고 야경 목표 하나만 내면 장소 요청이 말없이 사라지기 때문이다.
+
+    이름이 겹치면 실제 언급 범위를 비교해 긴 이름(「서울숲 카페」)에 포함된 짧은 문자열만 건너뛴다.
+    다른 quote나 같은 문장에 「서울숲」을 독립적으로 말했으면 누락 검사에 남긴다. quote가 이름 중간에서 끝나도
+    원문에서 긴 이름의 일부면 독립 언급으로 보지 않는다.
+    한계: 이름 전체가 quote에 글자 그대로 있을 때만 잡는다. 프롬프트가 허용하는 줄임말(「롯데월드」→「롯데월드 어드벤처」)은 이 검사가
+    못 본다. 별칭 표가 없어 코드가 줄임말을 장소에 잇지 않는 것이 규칙이다(장소를 잇는 것은 모델의 일)."""
     used = {p for g in goals for p in g.places}
+    mentions = [(p, m.start(), m.start() + len(p.name)) for p in trip.places if len(p.name) >= 2
+                for m in re.finditer(r"(?=" + re.escape(p.name) + r")", request_text)]
+    quoted = [(m.start(), m.start() + len(q)) for q in quotes if q.strip()
+              for m in re.finditer(r"(?=" + re.escape(q) + r")", request_text)]
+    splits = list(_PIECE_SPLIT.finditer(request_text))
+    clauses = list(zip([0] + [m.end() for m in splits], [m.start() for m in splits] + [len(request_text)]))
     out: list[str] = []
-    for place in trip.places:
-        if place.alias in used or len(place.name) < 2:
+    for place, start, end in mentions:
+        if place.alias in used or not any(left <= start and end <= right for left, right in quoted):
             continue
-        if any(place.name in q for q in quotes):
-            clause = next((c.strip() for c in _PIECE_SPLIT.split(request_text) if place.name in c), "")
-            if clause and clause in request_text:
-                out.append(clause)
+        if any(left <= start and end <= right and right - left > end - start for _, left, right in mentions):
+            continue
+        clause = next((request_text[left:right].strip() for left, right in clauses if left <= start and end <= right), "")
+        if clause and clause not in out:
+            out.append(clause)
     return out
 
 
-def verify_goal_set(trip: Trip, request_text: str, goal_set) -> VerifiedGoals:
+def verify_goal_set(trip: Trip, request_text: str, goal_set, candidates: Sequence[MapCandidate] = ()) -> VerifiedGoals:
     """모델이 낸 목표(CourseGoalSet)를 코드가 검증한다: 종류별 매개변수, 별칭, quote가 요청 원문의 부분 문자열인지.
     떨어진 목표는 버리고, 그 quote가 원문 조각이면 unmatched로 옮긴다. unmatched도 원문 부분 문자열만 남긴다.
-    날마다 나눈 day_has(「매일」)는 다른 목표 뒤에 붙여 GOALS_MAX를 넘으면 그쪽이 먼저 빠진다. 맡기는 말뿐인 조각은 unmatched에서 뺀다."""
+    날마다 나눈 day_has(「매일」)는 다른 목표 뒤에 붙여 GOALS_MAX를 넘으면 그쪽이 먼저 빠진다. 맡기는 말뿐인 조각은 unmatched에서 뺀다.
+    지도 목표(source=map)는 candidates 중 같은 종류의 후보를 가리킬 때만 받고, 후보마다 하나다. 요청 목표 뒤에 붙인다(#1131 B안).
+    필수 후보(MapCandidate.required)는 모델이 고르지 않아도 넣는다 — 날이 필요 없는 종류만이고, 날이 필요한 종류는 모델이 날을 고르지
+    않으면 이유만 dropped에 남긴다(지어내지 않는다). 순서는 요청 → 「매일」 → 필수 지도 목표 → 그 밖 지도 목표라, GOALS_MAX로 자를 때
+    필수 지도 목표가 다른 지도 목표보다 늦게 빠진다."""
     goals: list[Goal] = []
     daily: list[Goal] = []
+    from_map: list[Goal] = []
     dropped: list[str] = []
     unmatched: list[str] = []
+    by_candidate = {c.id: c for c in candidates}
     for g in goal_set.goals:
+        if g.source == "map":
+            cand = by_candidate.get(getattr(g, "candidate_id", None) or "")
+            goal, why = normalize(trip, g.kind, g.day, g.places, getattr(g, "tag", None)) if cand and cand.kind == g.kind else (None, "후보 밖 지도 목표")
+            if goal is None or any(m.candidate == cand.id for m in from_map):
+                dropped.append(f"{g.kind}: {why or '같은 후보를 두 번 썼다'}")
+            else:
+                from_map.append(replace(goal, origin="map", candidate=cand.id))
+            continue
         problem = None
         if g.source != "request":
             problem = "요청이 아닌 근거"
@@ -307,15 +395,31 @@ def verify_goal_set(trip: Trip, request_text: str, goal_set) -> VerifiedGoals:
         else:
             (daily if len(made) > 1 else goals).extend(goal for goal, _ in made if goal is not None)
     unmatched += [u for u in goal_set.unmatched if u.strip() and u in request_text]
-    quotes = [g.quote for g in goal_set.goals if g.quote.strip() and g.quote in request_text]
+    quotes = [g.quote for g in goal_set.goals if g.source == "request" and g.quote.strip() and g.quote in request_text]
     unmatched += unlisted_mentions(trip, request_text, goals + daily, quotes)
     unmatched += leftover_pieces(request_text, quotes + unmatched)
     kept = [u for u in dict.fromkeys(unmatched) if not is_delegation(u)]
-    return VerifiedGoals(truncate(goals + daily), tuple(kept), tuple(dropped))
+    chosen = {m.candidate for m in from_map}
+    for cand in (c for c in candidates if c.required and c.id not in chosen):
+        goal, _ = normalize(trip, cand.kind, None, ())
+        if goal is None:
+            dropped.append(f"{cand.kind}: 필수 지도 후보 {cand.id}의 날을 모델이 고르지 않았다")
+        else:
+            from_map.append(replace(goal, origin="map", candidate=cand.id))
+    required = {c.id for c in candidates if c.required}
+    ordered_map = [g for g in from_map if g.candidate in required] + [g for g in from_map if g.candidate not in required]
+    return VerifiedGoals(truncate(goals + daily + ordered_map), tuple(kept), tuple(dropped))
 
 
-def label(trip: Trip, goal: Goal) -> str:
-    """화면 문장 조각(코드 템플릿). 장소 이름은 화면에서만 쓴다."""
+MAP_MARK = " (지도에서 세운 목표)"
+
+
+def label(trip: Trip, goal: Goal, *, mark: bool = True) -> str:
+    """화면 문장 조각(코드 템플릿). 장소 이름은 화면에서만 쓴다. 지도 목표는 mark=True면 출처를 붙인다(응답 goals[].label에도 보인다)."""
+    return _label(trip, goal) + (MAP_MARK if mark and goal.origin == "map" else "")
+
+
+def _label(trip: Trip, goal: Goal) -> str:
     day = core.day_label(trip, goal.day) if goal.day else ""
     names = [trip.place(p).name for p in goal.places]
     return {
@@ -469,4 +573,4 @@ def alternative_days(trip: Trip, hours, goal: Goal) -> list[str]:
 
 
 def retarget(goal: Goal, day: str) -> Goal:
-    return Goal(goal.kind, day, goal.places, goal.tag)
+    return replace(goal, day=day)

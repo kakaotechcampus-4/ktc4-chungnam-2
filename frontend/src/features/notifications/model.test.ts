@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { badgeText, notificationTarget } from './model'
+import { badgeText, mapOrigin, notificationTarget } from './model'
 
 describe('알림 (#483)', () => {
   it('배지는 0이면 없고 99를 넘으면 99+', () => {
@@ -10,5 +10,8 @@ describe('알림 (#483)', () => {
     expect(notificationTarget({ type: 'pin_reaction', map_id: 'm1', pin_id: 'p 1' })).toBe('/maps/m1?pin=p%201')
     expect(notificationTarget({ type: 'map_deleted', map_id: 'm1' })).toBe('/')
     expect(notificationTarget({ type: 'member_joined', map_id: 'm1' })).toBe('/maps/m1')
+  })
+  it('지도 화면이면 이 지도와 다른 지도를 나누고, 목록 화면이면 나누지 않는다 (#1036)', () => {
+    expect([mapOrigin({ map_id: 'm1' }, 'm1'), mapOrigin({ map_id: 'm2' }, 'm1'), mapOrigin({ map_id: 'm1' }, undefined)]).toEqual(['here', 'other', 'all'])
   })
 })

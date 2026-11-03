@@ -96,7 +96,7 @@ class TestGoals:
     def test_prompt_lists_all_kinds_and_forbids_inventing(self):
         for kind in ("day_indoor", "night_end", "daily_walk_low", "day_light", "place_on_day", "together", "day_has", "performance", "unmatched", "그대로"):
             assert kind in COURSE_GOALS_PROMPT
-        assert COURSE_GOALS_PROMPT_VERSION == "course-goals-v6"
+        assert COURSE_GOALS_PROMPT_VERSION == "course-goals-v8"
 
 
 class TestDirect:
@@ -119,7 +119,7 @@ class TestDirect:
             assert word in COURSE_DIRECT_PROMPT
         for word in ("ask_requester", "must_ask", "pick_course", "ask_closed_day", "asks_left"):
             assert word not in COURSE_DIRECT_PROMPT
-        assert COURSE_DIRECT_PROMPT_VERSION == "course-direct-v9"
+        assert COURSE_DIRECT_PROMPT_VERSION == "course-direct-v11"
         for word in ("goal_checks", "NO_NIGHT_PLACE", "optimize_calls", "kept", "gave_up", "focus", "요청자에게 묻지 않는다", "resolve_closure", "resolve_split", "chosen_day", "다시 짜 볼게요", "점검 통과", "남은 위반은 있는 그대로", "평가하지 않는다"):
             assert word in COURSE_DIRECT_PROMPT
 

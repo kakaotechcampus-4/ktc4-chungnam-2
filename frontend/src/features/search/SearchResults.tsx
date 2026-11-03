@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { ExternalLink } from 'lucide-react'
 
-import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { useLivePlaceStore } from '@/features/map/livePlaces'
 import { FILTER_CATEGORIES, type Pin, type PinCategory } from '@/features/map/model'
@@ -15,9 +14,10 @@ import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 import TextArea from '@/ui/TextArea'
 
-import { livePinRequest, searchPinRequest, toSearchResult, type SearchResultView } from './model'
+import { livePinRequest, pinErrorMessage, searchPinRequest, toSearchResult, type SearchResultView } from './model'
 import { searchErrorMessage, useSourcePlacesQuery } from './queries'
 import { useSearchStore } from './searchStore'
+import { suggestQuery } from './typo'
 
 /**
  * 시트 제목 줄 — "'칼국수' 검색 결과 4곳" 또는 "링크에서 찾은 장소 1곳" + 닫기(잠깐 하는 작업이라 「닫기」, Figma 뒤로가기 규칙).
@@ -160,15 +160,22 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
     )
   }
   if (results.length === 0) {
+    // 흔한 말의 오타(「중곡집」)면 고친 말로 다시 찾게 한다. 아니면 검색어를 지우고 바로 다시 입력하게(#351).
+    const fixed = query ? suggestQuery(query) : null
     return (
-      // 다음 행동을 하나 둔다 — 검색어를 지우고 바로 다시 입력하게(#351).
       <EmptyState mood="sorry"
         title="찾는 장소가 없어요"
         action={
-          <SearchAgainButton onClose={close} label="검색어 지우고 다시 찾기" />
+          fixed ? (
+            <button type="button" onClick={() => submit(fixed, near)} className="btn-primary btn-md">
+              「{fixed}」 찾아보기
+            </button>
+          ) : (
+            <SearchAgainButton onClose={close} label="검색어 지우고 다시 찾기" />
+          )
         }
       >
-        이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요
+        {fixed ? `혹시 「${fixed}」${josa(fixed, '을', '를')} 찾으셨나요?` : '이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요'}
       </EmptyState>
     )
   }
@@ -316,11 +323,4 @@ function PinItButton({ result, filled = false, pending, onPin }: { result: Searc
       {pending ? '찍는 중…' : '핀 찍기'}
     </button>
   )
-}
-
-/** docs/errors.md — 핀 만들기 실패. */
-function pinErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.code === 'PIN_DUPLICATE') return '이미 지도에 있는 장소예요'
-  if (err instanceof ApiError && err.code === 'PLACE_NOT_SUPPORTED') return '아직 지원하지 않는 장소예요'
-  return '핀을 찍지 못했어요'
 }

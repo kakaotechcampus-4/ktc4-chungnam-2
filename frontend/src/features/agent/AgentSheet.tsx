@@ -11,6 +11,8 @@ import Switch from '@/ui/Switch'
 
 import { useRunAgentAction } from './actions'
 import AdviceText from './AdviceText'
+import FactLines from './FactLines'
+import MapStatus from './MapStatus'
 import SummarySection from './SummarySection'
 import { CONFLICT_LABEL, splitAdvice, type AgentAnalysisDto, type AgentSuggestionDto } from './model'
 import {
@@ -22,7 +24,7 @@ import {
 } from './queries'
 
 /**
- * 「핑고 AI 조언」 바텀시트(agent-v2 16.2). 위에서부터 모드 스위치 → 지금 제안(0개 또는 1개) → 우리 조건 요약.
+ * 「핑고 AI 조언」 바텀시트(agent-v2 16.2). 위에서부터 모드 스위치 → 지도 현황 문단 → 지금 제안(0개 또는 1개) → 우리 조건 요약.
  * 제안은 지도 단위라 구성원 모두에게 같다. 에이전트는 아무것도 직접 하지 않고, 버튼은 사람이 하던 동작의 지름길이다.
  */
 export default function AgentSheet({ mapId, onClose }: { mapId: string; onClose: () => void }) {
@@ -63,6 +65,7 @@ export default function AgentSheet({ mapId, onClose }: { mapId: string; onClose:
             꺼져 있어요{changer && ` · ${changer.isMe ? '내가' : `${changer.name}님이`} 껐어요`}. 켜면 지도가 막힌 곳을 찾아 구성원 모두에게 제안해요
           </p>
         )}
+        {state && enabled && <MapStatus status={state.status} />}
         {state && enabled && state.active_suggestion && <Suggestion mapId={mapId} suggestion={state.active_suggestion} onDone={onClose} />}
         {state && enabled && !state.active_suggestion && <AiHeader title="지금은 따로 드릴 제안이 없어요" sub="막힌 곳이 보이면 여기에 알려 드릴게요" />}
         {state && enabled && <SummarySection mapId={mapId} summaries={state.summaries} onDone={onClose} />}
@@ -87,7 +90,7 @@ function Suggestion({ mapId, suggestion, onDone }: { mapId: string; suggestion: 
           <ul className="space-y-1 text-body text-ink-900">
             {facts.map((l, i) => (
               <li key={i} className="break-keep">
-                <AdviceText line={l} />
+                <AdviceText segments={l.segments} />
               </li>
             ))}
           </ul>
@@ -102,13 +105,14 @@ function Suggestion({ mapId, suggestion, onDone }: { mapId: string; suggestion: 
               <li key={i} className="flex items-start gap-1.5">
                 <span className="tag tag-neutral mt-px">추정</span>
                 <span className="min-w-0 break-keep">
-                  <AdviceText line={l} />
+                  <AdviceText segments={l.segments} />
                 </span>
               </li>
             ))}
           </ul>
         </section>
       )}
+      <FactLines facts={suggestion.facts} />
       <div className="space-y-2">
         {suggestion.actions.map((a, i) => (
           <button

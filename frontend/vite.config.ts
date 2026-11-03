@@ -32,6 +32,9 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
+    // 화면 흐름 시험(누르고 치고 기다리기)은 혼자 돌면 1~4초다. 여러 파일이 동시에 돌고 컴퓨터가 바쁘면 기본 5초를 넘어
+    // 고장 없이 실패했다(11/02). 제한은 멈춤을 잡는 용도라 넉넉히 둔다. 글자 치기는 쉬는 시간 없이(userEvent delay: null).
+    testTimeout: 15_000,
     // 목 서버(msw/node)가 절대 URL 만 받아서, api() 가 붙이는 BASE_URL 을 채운다.
     env: { VITE_API_BASE_URL: 'http://localhost' },
   },
