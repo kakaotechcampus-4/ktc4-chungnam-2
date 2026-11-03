@@ -178,21 +178,50 @@ export function toChecks(e: AiEvidence): CheckView[] {
   return (e.checks ?? []).map((k) => ({ label: k.label, tone: !k.passed ? 'fail' : k.needs_check ? 'check' : 'pass' }))
 }
 
+type MemberRef = { userId: string; name: string; isMe: boolean }
+type ByMember = NonNullable<components['schemas']['MemberFulfillment']['by_member']>[number]
+
+const nameIn = (members: MemberRef[]) => (id: string, fallback?: string) => {
+  const m = members.find((x) => x.userId === id)
+  return m ? `${m.name}${m.isMe ? ' (나)' : ''}` : (fallback ?? '구성원')
+}
+
+const TONE_ORDER = { fail: 0, check: 1, pass: 2 } as const
+
+/**
+ * 구성원별 조건 상태(#796). conditions 가 없으면(구버전 서버) 빠진다 — 그 구성원은 satisfied 만 쓴다.
+ * 이름은 서버의 fact_label 이고, 없으면 키를 그대로 보인다(지어내지 않는다, #406). 못 맞춘 것 → 확인 필요 → 맞춘 것 순.
+ */
+export function memberConditions(e: AiEvidence, members: MemberRef[]) {
+  const nameOf = nameIn(members)
+  return (e.member_fulfillment?.by_member ?? [])
+    .filter((b): b is ByMember & { conditions: NonNullable<ByMember['conditions']> } => !!b.conditions?.length)
+    .map((b) => {
+      const checks: CheckView[] = b.conditions
+        .map((k) => ({
+          label: k.fact_label || k.fact_key,
+          tone: k.status === 'met' ? ('pass' as const) : k.status === 'unmet' ? ('fail' as const) : ('check' as const),
+        }))
+        .sort((x, y) => TONE_ORDER[x.tone] - TONE_ORDER[y.tone])
+      return { userId: b.user_id, name: nameOf(b.user_id, b.display_name), met: checks.filter((k) => k.tone === 'pass').length, checks }
+    })
+}
+
 /**
  * 구성원 충족 한 줄(Figma 구성원 의견 표시 원칙) — "조건을 건 A·B 모두 통과 · C·D는 건 조건 없음".
- * by_member 에 없는 구성원은 조건을 걸지 않은 사람이다.
+ * by_member 에 없는 구성원은 조건을 걸지 않은 사람이다. 조건별 상태가 오면 그 구성원은 「A 조건 2/3 충족」으로 쓴다(#796).
  */
-export function fulfillmentLine(e: AiEvidence, members: { userId: string; name: string; isMe: boolean }[]): string {
+export function fulfillmentLine(e: AiEvidence, members: MemberRef[]): string {
   const by = e.member_fulfillment?.by_member ?? []
-  const nameOf = (id: string, fallback?: string) => {
-    const m = members.find((x) => x.userId === id)
-    return m ? `${m.name}${m.isMe ? ' (나)' : ''}` : (fallback ?? '구성원')
-  }
-  const ok = by.filter((b) => b.satisfied).map((b) => nameOf(b.user_id, b.display_name))
-  const no = by.filter((b) => !b.satisfied).map((b) => nameOf(b.user_id, b.display_name))
+  const nameOf = nameIn(members)
+  const detailed = memberConditions(e, members)
+  const plain = by.filter((b) => !detailed.some((d) => d.userId === b.user_id))
+  const ok = plain.filter((b) => b.satisfied).map((b) => nameOf(b.user_id, b.display_name))
+  const no = plain.filter((b) => !b.satisfied).map((b) => nameOf(b.user_id, b.display_name))
   const none = members.filter((m) => !by.some((b) => b.user_id === m.userId)).map((m) => nameOf(m.userId))
   return [
-    ok.length && (no.length ? `${ok.join('·')} 통과` : `조건을 건 ${ok.join('·')} 모두 통과`),
+    ...detailed.map((d) => `${d.name} 조건 ${d.met}/${d.checks.length} 충족`),
+    ok.length && (no.length || detailed.length ? `${ok.join('·')} 통과` : `조건을 건 ${ok.join('·')} 모두 통과`),
     no.length && `${no.join('·')} 미충족`,
     none.length && `${none.join('·')}${josa(none[none.length - 1], '은', '는')} 건 조건 없음`,
   ]
