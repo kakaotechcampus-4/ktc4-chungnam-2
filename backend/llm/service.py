@@ -340,7 +340,10 @@ class ToolRunnerError(RuntimeError):
 class _ToolBudget:
     """호출 1회의 도구 상한(명세 10절, DIAGNOSIS_MAX_TOOL_CALLS). 넘는 호출과 허용되지 않은 도구는 tool_runner를 부르지 않고
     오류를 결과로 돌려준다 — 모델은 그 결과를 보고 답을 내면 된다. 실행한 호출만 상한에 센다(오류로 돌려준 호출은 실행하지
-    않았다)."""
+    않았다).
+
+    같은 호출(도구 이름 + 정렬한 JSON 인자)이 이미 실행됐으면 다시 실행하지 않고 DUPLICATE와 처음 call_id를 돌려준다(#1310).
+    상한에 세지 않는다. agent의 도구 기록에는 실행한 호출만 남는다."""
 
     def __init__(self, allowed: tuple[str, ...], tool_runner: ToolRunner, *, max_calls: int):
         self._allowed = allowed
@@ -348,6 +351,7 @@ class _ToolBudget:
         self.max_calls = max_calls
         self.used = 0
         self._structure_used = 0
+        self._seen: dict[tuple[str, str], str] = {}   # (도구 이름, 정렬한 JSON 인자) → 처음 call_id
 
     @property
     def exhausted(self) -> bool:
@@ -356,12 +360,16 @@ class _ToolBudget:
     def __call__(self, name: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if name not in self._allowed:
             return {"error": "NOT_FOUND"}
+        key = (name, json.dumps(dict(args), sort_keys=True, ensure_ascii=False, default=str))
+        if key in self._seen:
+            return {"error": "DUPLICATE", "call_id": self._seen[key]}
         is_structure = name == "structure_reasons"
         if self.exhausted or (is_structure and self._structure_used >= STRUCTURE_REASONS_MAX_CALLS):
             return {"error": "LIMIT_EXCEEDED"}
         self.used += 1
         self._structure_used += is_structure
         call_id = f"t{self.used}"
+        self._seen[key] = call_id
         try:
             result = self._tool_runner(call_id, name, dict(args))
         except Exception as exc:
