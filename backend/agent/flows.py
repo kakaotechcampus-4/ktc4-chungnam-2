@@ -66,6 +66,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from agent import core, deps, service, snapshot, tools
@@ -125,6 +126,14 @@ def _snapshot_read(factory: SessionFactory) -> Iterator[Session]:
             yield db
         finally:
             db.rollback()
+
+
+def _repeatable_read(db: Session) -> None:
+    """이 세션 연결에 REPEATABLE READ를 건다. 이미 트랜잭션이 열린 연결(테스트가 바깥 트랜잭션에 세션을 묶은 경우)은 수준을
+    바꿀 수 없어 그대로 둔다 — 운영 세션은 새 연결이라 항상 건다."""
+    bind = db.get_bind()
+    if not (isinstance(bind, Connection) and bind.in_transaction()):
+        db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
 
 
 @dataclass
@@ -770,12 +779,12 @@ def advise_run(
     """GET /runs/{runId}/advice(agent/router.py)가 부른다. 그 run의 요청자에게 그 run의 데이터로만 조언한다(2절 2번 예외).
     종류, 문장, 버튼은 코드가 정한다(core.choose_run_advice, #749 결정 — 모델 없음).
 
-    1. 짧은 읽기: run(없으면 NOT_FOUND, 요청자가 아니면 FORBIDDEN), 저장된 조언(있으면 그대로 렌더해 돌려준다), 대상 판정
+    1. 짧은 읽기: run(없으면 NOT_FOUND, 요청자가 아니면 FORBIDDEN), 대상 판정
        재료(같은 카테고리 run). 대상이 아니면 None(204) — 아무것도 쓰지 않는다. 진행 중인 run은 끝난 뒤 다시 부르면 된다.
-    2. 짧은 읽기: 깔때기, 근거 줄, 필요한 시뮬레이션(core.advice_simulations — 앞 결과를 기다리지 않는다). 그리고 고르기(순수,
-       core.choose_run_advice).
-    3. 짧은 쓰기: agent_runs(trigger=run_advice) 한 행과 조언 한 행(ON CONFLICT (run_id) DO NOTHING). 같은 트랜잭션에서 저장된
-       행을 다시 읽어 렌더한다 — 같은 run에 동시에 두 요청이 와도 먼저 커밋한 조언 하나만 남고 둘 다 그것을 돌려준다.
+    2. 같은 스냅샷에서 깔때기와 근거 줄을 읽어 결과 상태 키(core.advice_state_key, #1103)로 저장된 조언을 확인한다.
+       있으면 그대로 렌더한다. 없으면 필요한 시뮬레이션(core.advice_simulations)을 읽고 고른다(core.choose_run_advice).
+    3. 짧은 쓰기: agent_runs(trigger=run_advice) 한 행과 조언 한 행(ON CONFLICT (run_id) DO UPDATE ... WHERE state_key IS DISTINCT, 지금 결과 상태의 조언으로 덮는다). 같은 트랜잭션에서
+       저장된 행을 다시 읽어 렌더한다 — 같은 결과에 동시에 두 요청이 와도 먼저 커밋한 조언 하나만 남고 둘 다 그것을 돌려준다.
        침묵도 빈 조언으로 저장해 다시 만들지 않는다.
 
     2단계가 예외로 끝나면 agent_runs에 outcome=error 한 행(run, 예외 클래스 이름)만 남기고 예외를 올린다(라우터에서 500) —
@@ -790,9 +799,6 @@ def advise_run(
         meta = recommend_api.get_run_meta(db, run_id=run_id)
         if meta["requested_by"] != requester_id:
             raise AppError("FORBIDDEN")
-        stored = service.get_run_advice(db, run_id)
-        if stored is not None:
-            return core.render_run_advice(run_id, stored)
         same_runs = core.same_category_runs(recommend_api.get_recent_runs(db, run_id=run_id), meta["created_at"])
         if not core.run_advice_target(meta["status"], meta["result_count"], same_runs):
             return None
@@ -800,10 +806,23 @@ def advise_run(
     reads = _AdviceReads()
     try:
         with _short_read(session_factory) as db:
-            funnel = reads.add(core.FUNNEL_CALL_ID, "get_run_funnel", {},
-                               lambda: core.funnel_view(recommend_api.get_run_funnel(db, run_id=run_id)))
+            # 키와 계산 재료를 같은 스냅샷에서 읽는다. 계산 중 widen/retry가 커밋돼도 다른 결과의 키에 저장하지 않는다.
+            _repeatable_read(db)
+            meta = recommend_api.get_run_meta(db, run_id=run_id)
+            if meta["requested_by"] != requester_id:
+                raise AppError("FORBIDDEN")
+            if meta["status"] != "done":
+                return None
+            funnel_outcome = recommend_api.get_run_funnel(db, run_id=run_id)
+            funnel = reads.add(core.FUNNEL_CALL_ID, "get_run_funnel", {}, lambda: core.funnel_view(funnel_outcome))
             lines = reads.add(core.EVIDENCE_CALL_ID, "get_run_evidence", {}, lambda: core.advice_evidence(
                 recommend_api.get_run_evidence(db, run_id=run_id), requester_id, recommend_api.fact_labels()))
+            state_key = core.advice_state_key(meta, funnel_outcome, lines)
+            stored = service.get_run_advice(db, run_id, state_key)
+            if stored is not None:
+                return core.render_run_advice(run_id, stored)
+            if not core.run_advice_target(meta["status"], meta["result_count"], same_runs):
+                return None
             next_factor = core.next_radius_factor(meta)
             sims = {
                 call_id: reads.add(call_id, "simulate_filter", args, lambda args=args: core.simulate_view(
@@ -824,7 +843,7 @@ def advise_run(
     with _write(session_factory) as db:
         agent_run_id = uuid.uuid4()
         inserted = service.insert_run_advice(
-            db, run_id=run_id, map_id=meta["map_id"], draft=draft, agent_run_id=agent_run_id, now=now,
+            db, run_id=run_id, state_key=state_key, map_id=meta["map_id"], draft=draft, agent_run_id=agent_run_id, now=now,
         )
         service.insert_run(
             db, id=agent_run_id, map_id=meta["map_id"], started_at=now,

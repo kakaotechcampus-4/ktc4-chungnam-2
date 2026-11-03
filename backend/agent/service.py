@@ -10,7 +10,7 @@
   바꾸는 가드 UPDATE), 모드 끄기(`supersede_active`)
 - 우리 조건 요약(#586, 명세 8절, 13절): 덮어쓰기(`upsert_summary`), 읽기(`list_summaries`). 갱신 판단이 보는 요약
   메타는 `load_history`가 함께 읽는다
-- 추천 막힘 조언(#587, 명세 9절, 13절): run당 1행(`insert_run_advice` — ON CONFLICT (run_id) DO NOTHING), 읽기(`get_run_advice`)
+- 추천 막힘 조언(#587, 명세 9절, 13절): run당 1행에 지금 결과 상태의 조언(`insert_run_advice` — ON CONFLICT (run_id) DO UPDATE ... WHERE state_key IS DISTINCT, #1103), 읽기(`get_run_advice`)
 - 지도 현황 문단(#1168, 명세 8.2, 13절): 덮어쓰기(`upsert_map_status`), 읽기(`get_map_status`). 다시 만들지 판단하는 칸의
   해시는 `load_history`가 함께 읽는다
 
@@ -512,26 +512,33 @@ def list_summaries(db: Session, map_id: str) -> list[AgentReasonSummary]:
 
 # ---------------------------------------------------------------- 추천 막힘 조언 (9절, 13절)
 
-def get_run_advice(db: Session, run_id: str) -> AgentRunAdvice | None:
+def get_run_advice(db: Session, run_id: str, state_key: str | None = None) -> AgentRunAdvice | None:
+    """그 run의 조언 행. state_key를 주면 그 결과 상태의 조언일 때만(다르면 None — 결과가 바뀌어 다시 만든다), 없으면 지금 행 그대로."""
     try:
         key = uuid.UUID(run_id)
     except ValueError:
         return None
-    return db.get(AgentRunAdvice, key, populate_existing=True)
+    row = db.get(AgentRunAdvice, key, populate_existing=True)
+    return row if row is not None and (state_key is None or row.state_key == state_key) else None
 
 
 def insert_run_advice(
-    db: Session, *, run_id: str, map_id: str, draft: core.AdviceDraft, agent_run_id: uuid.UUID, now: datetime,
+    db: Session, *, run_id: str, state_key: str, map_id: str, draft: core.AdviceDraft, agent_run_id: uuid.UUID, now: datetime,
 ) -> bool:
-    """run당 한 행(명세 9절). 이미 있으면 넣지 않고 False — INSERT ... ON CONFLICT (run_id) DO NOTHING이라 같은 run에 동시에
-    두 요청이 와도 먼저 커밋한 하나만 남는다. 빈 조언(kind 없음)도 넣어 다시 만들지 않는다. 저장은 슬롯 문장, 검증을 통과한
-    tool_result claim, 버튼(근거 줄은 line_id만)뿐이다 — 근거 글과 구성원은 없다(명세 2절 13번)."""
+    """run당 한 행(명세 9절)에 지금 결과 상태(state_key)의 조언을 넣는다(#1103). 행이 없거나 다른 상태의 조언이면 넣고(덮고) True,
+    같은 상태가 이미 있으면 그대로 두고 False — INSERT ... ON CONFLICT (run_id) DO UPDATE ... WHERE state_key IS DISTINCT FROM이라
+    같은 결과에 동시에 두 요청이 와도 먼저 커밋한 하나만 남는다. 기본키가 run_id라 옛 서버의 DO NOTHING도 그대로 돈다(expand).
+    빈 조언(kind 없음)도 넣어 같은 결과로는 다시 만들지 않는다. 저장은 슬롯 문장, 검증을 통과한 tool_result claim,
+    버튼(근거 줄은 line_id만)뿐이다 — 근거 글과 구성원은 없다(명세 2절 13번)."""
+    insert = pg_insert(AgentRunAdvice).values(
+        run_id=uuid.UUID(run_id), state_key=state_key, map_id=map_id, kind=draft.kind, claims=draft.claims, advice=draft.advice,
+        actions=draft.actions, agent_run_id=agent_run_id, created_at=now)
     return db.execute(
-        pg_insert(AgentRunAdvice)
-        .values(run_id=uuid.UUID(run_id), map_id=map_id, kind=draft.kind, claims=draft.claims, advice=draft.advice,
-                actions=draft.actions, agent_run_id=agent_run_id, created_at=now)
-        .on_conflict_do_nothing(index_elements=[AgentRunAdvice.run_id])
-        .returning(AgentRunAdvice.run_id)
+        insert.on_conflict_do_update(
+            index_elements=[AgentRunAdvice.run_id],
+            set_={c: insert.excluded[c] for c in ("state_key", "kind", "claims", "advice", "actions", "agent_run_id", "created_at")},
+            where=AgentRunAdvice.state_key.is_distinct_from(insert.excluded.state_key),
+        ).returning(AgentRunAdvice.run_id)
     ).scalar_one_or_none() is not None
 
 

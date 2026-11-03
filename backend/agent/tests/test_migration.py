@@ -84,8 +84,8 @@ def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_u
         assert TABLES <= _tables(engine)
         for model in MODELS:
             columns = {c["name"] for c in inspector.get_columns(model.__tablename__)}
-            later = {AgentCursor: {"lease_token"}, AgentSuggestion: {"facts"}}.get(model, set())
-            assert columns == set(model.__table__.columns.keys()) - later, model.__tablename__   # 0047, 0056이 더한다(아래)
+            later = {AgentCursor: {"lease_token"}, AgentSuggestion: {"facts"}, AgentRunAdvice: {"state_key"}}.get(model, set())
+            assert columns == set(model.__table__.columns.keys()) - later, model.__tablename__   # 0047, 0056, 0057이 더한다(아래)
 
         indexes = {i["name"]: i for i in inspector.get_indexes("agent_suggestions")}
         active = indexes["uq_agent_suggestions_active"]
@@ -134,5 +134,34 @@ def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_u
 
         command.upgrade(cfg, REVISION)  # 다시 올려도 깨지지 않는다
         assert TABLES <= _tables(engine)
+    finally:
+        engine.dispose()
+
+
+def test_advice_state_key_migration_is_expand_only(mig_url):
+    """0057은 칸 하나만 더한다(#1103) — 기본키는 run_id 그대로라 이전 서버의 ON CONFLICT (run_id) DO NOTHING도 돈다."""
+    cfg = _config()
+    command.upgrade(cfg, "0056_agent_map_status_facts")
+    engine = sa.create_engine(mig_url)
+    insert = sa.text(
+        "INSERT INTO agent_run_advice (run_id, map_id, claims, advice, actions, created_at) "
+        "VALUES ('00000000-0000-0000-0000-000000001103', 'm1103', '[]', '[]', '[]', '2026-11-01') "
+        "ON CONFLICT (run_id) DO NOTHING"
+    )
+    try:
+        with engine.begin() as conn:
+            conn.execute(insert)
+        command.upgrade(cfg, "head")
+        inspector = sa.inspect(engine)
+        assert inspector.get_pk_constraint("agent_run_advice")["constrained_columns"] == ["run_id"]
+        assert {c["name"] for c in inspector.get_columns("agent_run_advice")} == set(AgentRunAdvice.__table__.columns.keys())
+        with engine.begin() as conn:
+            assert conn.execute(sa.text("SELECT state_key FROM agent_run_advice")).scalar_one() == ""
+            conn.execute(insert)   # 이전 서버의 쓰기가 새 스키마에서 그대로 돈다
+        command.downgrade(cfg, "0056_agent_map_status_facts")
+        with engine.connect() as conn:
+            assert conn.execute(sa.text("SELECT count(*) FROM agent_run_advice")).scalar_one() == 1
+        assert "state_key" not in {c["name"] for c in sa.inspect(engine).get_columns("agent_run_advice")}
+        command.upgrade(cfg, "head")
     finally:
         engine.dispose()
