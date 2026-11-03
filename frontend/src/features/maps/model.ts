@@ -170,6 +170,7 @@ export function restoreMapErrorMessage(err: unknown, retentionDays: number): str
 const INVITE_ERROR_MESSAGES: Record<string, string> = {
   INVITE_NOT_FOUND: '유효하지 않은 초대 링크예요',
   INVITE_EXPIRED: '초대 링크가 만료됐어요. 초대한 분께 새 링크를 요청하세요',
+  INVITE_REVOKED: '방장이 이 초대 링크를 껐어요. 새 링크를 요청하세요',
   // 게스트로 참여(#485)에서만 나는 코드. 문구는 docs/errors.md 표.
   GUEST_LIMIT: '이 링크로는 더 입장할 수 없어요. 초대한 분께 새 링크를 요청하세요',
   RATE_LIMITED: '요청이 너무 많아요. 잠시 뒤 다시 시도해 주세요',
@@ -207,10 +208,16 @@ export function toInviteView(invite: InviteSummaryDto): InviteView {
   }
 }
 
-/** 초대 요약을 못 받은 이유. 만료·없는 링크는 화면을 따로 띄운다(Figma C-3). */
-export function inviteProblem(err: unknown): 'expired' | 'invalid' | null {
+export type InviteProblem = 'expired' | 'revoked' | 'invalid'
+
+/**
+ * 초대 링크를 더 쓸 수 없는 이유. 만료·꺼짐·없는 링크는 참여 버튼 없이 끝 화면을 띄운다(Figma C-3, #719).
+ * 요약 조회뿐 아니라 참여·게스트 입장 중에 링크가 꺼져도 같다.
+ */
+export function inviteProblem(err: unknown): InviteProblem | null {
   if (!(err instanceof ApiError)) return null
   if (err.code === 'INVITE_EXPIRED') return 'expired'
+  if (err.code === 'INVITE_REVOKED') return 'revoked'
   if (err.code === 'INVITE_NOT_FOUND') return 'invalid'
   return null
 }
