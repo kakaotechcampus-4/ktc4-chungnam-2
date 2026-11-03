@@ -48,7 +48,7 @@ def unconfirm_pin(db, *, item_row, principal) -> None:
 
 def reorder_shortlist(db, *, map_id: str, item_ids: list[str], principal) -> list[ShortlistItem]:
     """PUT /maps/{mapId}/shortlist/order(#142) — visit_order만 바꾼다. 동선(routes)은 건드리지
-    않고 route.recalculated도 내지 않는다. shortlist.changed(reordered)는 같은 트랜잭션에 기록한다."""
+    않고 route.recalculated도 내지 않는다. shortlist.changed(reordered) 하나를 같은 트랜잭션에 기록한다."""
     rows = service.reorder_items(db, map_id=map_id, item_ids=item_ids)
     items = []
     for row in rows:
@@ -56,9 +56,15 @@ def reorder_shortlist(db, *, map_id: str, item_ids: list[str], principal) -> lis
             db, pin_id=str(row.pin_id), viewer_id=principal.user_id, principal=principal,
         )
         items.append(core.to_shortlist_item_response(row, pin, principal))
-    for item in items:
-        record_event(db, core.shortlist_changed_event(item, "reordered"))
+    _record_reordered(db, items)
     return items
+
+
+def _record_reordered(db, items: list[ShortlistItem]) -> None:
+    """순서 바꾸기·일정 저장 한 번에 shortlist.changed(reordered) 하나(#1274). 받는 쪽은 목록을 다시 받아
+    순서를 보므로 item은 첫 항목만 싣는다. 항목마다 내면 확정 20곳에 구성원마다 다시 받기가 수십 번 나갔다."""
+    if items:
+        record_event(db, core.shortlist_changed_event(items[0], "reordered"))
 
 
 def export_shortlist(db, *, map_id: str, principal, fmt: str) -> tuple[str, str, str]:
@@ -129,6 +135,5 @@ def schedule(db, *, map_id, principal, update=None):
         pin = pins_api.get_pin_response_for_viewer(db, pin_id=str(row.pin_id), viewer_id=principal.user_id, principal=principal)
         items.append(core.to_shortlist_item_response(row, pin, principal))
     if update is not None:
-        for item in items:
-            record_event(db, core.shortlist_changed_event(item, "reordered"))
+        _record_reordered(db, items)
     return Schedule(start_date=start, end_date=end, version=service.schedule_version(start, end, rows), items=items)

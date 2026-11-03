@@ -294,15 +294,14 @@ def test_reorder_non_member_is_404(app_client, db_session):
     assert resp.json()["code"] == "NOT_FOUND"
 
 
-def test_reorder_records_reordered_event_per_item_in_same_commit(app_client, db_session):
+def test_reorder_records_one_reordered_event_in_same_commit(app_client, db_session):
+    # 요청 한 번에 하나다(#1274) — 항목마다 내면 구성원마다 다시 받기가 항목 수만큼 나갔다.
     a, b = _confirm(app_client, db_session, n=2)
     before = len(_events(db_session, type="shortlist.changed"))
     app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [b, a]}, cookies=_auth())
 
     events = _events(db_session, type="shortlist.changed")[before:]
-    assert {e.payload["action"] for e in events} == {"reordered"}
-    by_item = {e.payload["item"]["id"]: e.payload["item"]["visit_order"] for e in events}
-    assert by_item == {b: 0, a: 1}
+    assert [(e.payload["action"], e.payload["item"]["id"]) for e in events] == [("reordered", b)]
 
 
 def test_reorder_does_not_touch_routes_or_emit_route_event(app_client, db_session):
@@ -427,9 +426,12 @@ def test_schedule_assign_move_and_reject_stale_update(app_client, db_session):
         {"date": "2026-11-01", "item_ids": [first]},
         {"date": "2026-11-02", "item_ids": [second]},
     ]}
+    before = len(_events(db_session, type="shortlist.changed"))
     result = app_client.put(path, json=body, cookies=_auth())
     assert result.status_code == 200
     assert [item["scheduled_date"] for item in result.json()["items"]] == ["2026-11-01", "2026-11-02"]
+    # 일정 저장 한 번에 이벤트 하나(#1274).
+    assert len(_events(db_session, type="shortlist.changed")) - before == 1
     stale = app_client.put(path, json=body, cookies=_auth())
     assert (stale.status_code, stale.json()["code"]) == (409, "SHORTLIST_STALE")
     old = app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [first, second]}, cookies=_auth())

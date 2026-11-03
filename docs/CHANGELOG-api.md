@@ -9,6 +9,11 @@
 - `CourseRun.goals` 설명에 지도 근거 목표를 적었다: 요청이 없어도 우리 조건 요약과 야경 라벨로 목표가 생기고, label 끝에 「(지도에서 세운 목표)」가 붙는다(#1131). 「요청이 없으면 빈 배열」은 틀린 설명이었다.
 - 목 서버의 코스 작업 기록을 실서버 흐름(찾기 → 옮겨 보기 → 결정 → 짜기 → 비교 → 끝 → 가정 → 결과, 14줄)으로 바꿨다. 진행 중 조회의 줄 수(2개, 5개)는 그대로다.
 
+## 2026-11-04, `shortlist.changed(reordered)`는 요청 한 번에 하나 (#1274)
+
+- 페이로드 모양은 그대로다. **동작이 바뀐다**: 순서 바꾸기(`PUT /maps/{mapId}/shortlist/order`)와 일정 저장(`PUT /maps/{mapId}/shortlist/schedule`)이 항목마다 내던 `reordered` 이벤트를 요청 한 번에 하나만 낸다. `item`은 첫 항목이다. 확정된 장소가 없으면 내지 않는다.
+- FE 영향 없음 — 이벤트를 받으면 `docs/events.md` 표대로 확정 리스트를 다시 받고 `item`은 쓰지 않는다. 항목마다 내면 확정 20곳에 구성원마다 다시 받기가 최대 40번 시작됐다.
+
 ## 2026-11-03, `EvidenceLine.filters_candidates` 추가 — 후보를 빼는 줄과 순위만 바꾸는 줄 구분 (#1260)
 
 - 근거 줄(`EvidenceLine`, 이 필드는 `applied_evidence` 스냅샷에도 같은 모양으로 실린다)에 선택 필드 `filters_candidates: boolean | null`을 더했다. 상위 호환이다 — 없으면 FE는 기존 칸 구분을 쓴다.
