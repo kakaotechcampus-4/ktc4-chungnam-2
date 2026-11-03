@@ -674,7 +674,7 @@ def test_create_run_demotes_wanted_cuisine_from_a_against_reason_to_preferred(db
         ("cuisine_korean", False, "required"),
         ("cuisine_bbq", True, "preferred"),
     ]
-    assert flows._active_soft_requirements(db_session, run) == [("cuisine_korean", False)]
+    assert flows._active_soft_requirements(db_session, run) == []
 
 
 def test_create_run_keeps_a_legacy_chip_value_as_text_without_key(db_session, monkeypatch):
@@ -706,9 +706,8 @@ def test_reaction_left_with_the_retired_shellfish_chip_filters_nothing(db_sessio
     assert flows._active_soft_requirements(db_session, run) == []
 
 
-def test_soft_chip_becomes_a_directed_requirement_only_when_it_avoids(db_session, monkeypatch):
-    """#412, #617 — 「매워요」(spicy_focused 피함)는 required라 #231 방향 실격으로 켜진다. 「좁아요」(spacious 원함)는
-    preferred로 내려가 실격 조건이 아니다."""
+def test_soft_chip_avoidance_no_longer_enables_a_filter(db_session, monkeypatch):
+    """#1253 — 매운맛 피함도 필터가 아니고 좁아요는 선호다."""
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="음식점")
     _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_cramped", "food_spicy"])
@@ -716,7 +715,7 @@ def test_soft_chip_becomes_a_directed_requirement_only_when_it_avoids(db_session
 
     run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
-    assert flows._active_soft_requirements(db_session, run) == [("spicy_focused", False)]
+    assert flows._active_soft_requirements(db_session, run) == []
 
 
 def _run_from_reactions(db_session, monkeypatch, *, category, reactions, facts_by_place, planned=None):
@@ -750,28 +749,52 @@ def test_cramped_chip_does_not_disqualify_small_restaurants_and_ranks_spacious_f
     assert funnel["실격 조건 제거"] == 0
 
 
-def test_inaccessible_chip_still_disqualifies(db_session, monkeypatch):
-    """#617 예외 — 「휠체어·유모차로 가기 힘들어요」(accessible 원함)는 필요 조건이라 required 그대로, 접근 불가는 실격이다."""
+def test_inaccessible_soft_chip_filters_known_false(db_session, monkeypatch):
+    """접근성 칩은 known 거짓만 거르고 모름을 확인 필요로 남긴다."""
     ranked, funnel = _run_from_reactions(
         db_session, monkeypatch, category="관광지", reactions=[("user_1", None, ["sight_inaccessible"])],
-        facts_by_place={"stairs": {"accessible": False}, "ramp": {"accessible": True}},
+        facts_by_place={"stairs": {"accessible": False}, "ramp": {"accessible": True}, "unknown": {}},
     )
-    assert ranked == ["ramp"]
+    assert set(ranked) == {"ramp", "unknown"}
     assert funnel["실격 조건 제거"] == 1
+    unknown = db_session.execute(select(Candidate).where(Candidate.place_id == "unknown")).scalar_one()
+    check = next(c for c in unknown.checks if c["fact_key"] == "accessible")
+    assert check["confidence"] == "unknown" and check["needs_check"] is True
 
 
-def test_spicy_chip_still_disqualifies(db_session, monkeypatch):
-    """#617 — 피함 칩 「매워요」는 그대로 required라 매운맛 전문은 실격이다."""
+def test_inaccessible_written_reason_filters_known_false_and_preserves_unknown(db_session):
+    candidates, funnel = _execute_with_lines(
+        db_session, [_line("user_1", "required", "accessible", True, "휠체어로 갈 수 있어야 해요")],
+        {"stairs": {"accessible": False}, "ramp": {"accessible": True}, "unknown": {}}, category="관광지",
+    )
+    assert set(candidates) == {"ramp", "unknown"}
+    assert funnel["실격 조건 제거"] == 1
+    check = next(c for c in candidates["unknown"].checks if c["fact_key"] == "accessible")
+    assert check["confidence"] == "unknown" and check["needs_check"] is True
+
+
+def test_accessible_avoid_is_scored_not_filtered(db_session):
+    candidates, funnel = _execute_with_lines(
+        db_session, [_line("user_1", "required", "accessible", False)],
+        {"accessible": {"accessible": True}, "stairs": {"accessible": False}}, category="관광지",
+    )
+    assert set(candidates) == {"accessible", "stairs"}
+    assert funnel["실격 조건 제거"] == 0
+    assert candidates["stairs"].rank < candidates["accessible"].rank
+
+
+def test_spicy_chip_penalizes(db_session, monkeypatch):
+    """피함 칩은 매운맛 전문을 제거하지 않고 감점한다."""
     ranked, funnel = _run_from_reactions(
         db_session, monkeypatch, category="음식점", reactions=[("user_1", None, ["food_spicy"])],
         facts_by_place={"spicy": {"spicy_focused": True}, "mild": {"spicy_focused": False}},
     )
-    assert ranked == ["mild"]
-    assert funnel["실격 조건 제거"] == 1
+    assert ranked == ["mild", "spicy"]
+    assert funnel["실격 조건 제거"] == 0
 
 
-def test_written_wanted_parking_stays_required(db_session, monkeypatch):
-    """#422 그대로 — 글 "주차 돼야 해요"(원함)는 칩이 아니고 음식 종류도 아니라 required, 주차 안 되는 곳은 실격이다."""
+def test_written_wanted_parking_affects_score(db_session, monkeypatch):
+    """주차 soft 사유는 주차 안 되는 곳을 제거하지 않고 감점한다."""
     from llm.schemas import EvidenceLine
     text = "주차 돼야 해요"
     ranked, funnel = _run_from_reactions(
@@ -780,8 +803,8 @@ def test_written_wanted_parking_stays_required(db_session, monkeypatch):
         planned=[[EvidenceLine(author_id="user_1", source="reaction", text=text, badge="required",
                                fact_key="parking_available", wants=True)]],
     )
-    assert ranked == ["parking"]
-    assert funnel["실격 조건 제거"] == 1
+    assert ranked == ["parking", "no_parking"]
+    assert funnel["실격 조건 제거"] == 0
 
 
 _KEYED_CHIP_IDS = {
@@ -1544,10 +1567,16 @@ def test_visible_member_fulfillment_preserves_ranking_and_filtering_1100(
 
     candidates = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
     # 직접 쓴 선호 +3, ♥ 두 사람 +2·직접 쓴 선호 거짓 −3, 모름 0. 실격 조건 위반은 제외된다.
-    assert {pid: c.rank for pid, c in candidates.items()} == {"written": 1, "unknown": 2, "heart": 3}
-    assert {pid: c.member_fulfillment["satisfied"] for pid, c in candidates.items()} == {
-        "written": 2, "heart": 2, "unknown": 1,
-    }
+    if category == "음식점":
+        assert {pid: c.rank for pid, c in candidates.items()} == {"written": 1, "excluded": 2, "unknown": 3}
+        assert {pid: c.member_fulfillment["satisfied"] for pid, c in candidates.items()} == {
+            "written": 2, "excluded": 2, "unknown": 1,
+        }
+    else:
+        assert {pid: c.rank for pid, c in candidates.items()} == {"written": 1, "unknown": 2, "heart": 3}
+        assert {pid: c.member_fulfillment["satisfied"] for pid, c in candidates.items()} == {
+            "written": 2, "heart": 2, "unknown": 1,
+        }
     for candidate in candidates.values():
         fulfillment = candidate.member_fulfillment
         members = {m["user_id"]: m for m in fulfillment["by_member"]}
@@ -1888,14 +1917,61 @@ def _execute_with_lines(db_session, lines, facts_by_place, *, category="음식�
     return candidates, funnel
 
 
-def test_required_wants_false_removes_places_whose_label_is_true(db_session):
-    """"한식 말고"(required, wants=false) — 한식 참인 후보는 제거되고 거짓이면 남는다. 깔때기에 세어진다."""
+def test_required_wants_false_penalizes_places_whose_label_is_true(db_session):
+    """한식 피함은 한식 후보를 감점한다."""
     candidates, funnel = _execute_with_lines(
         db_session, [_line("user_1", "required", "cuisine_korean", False)],
         {"korean": {"cuisine_korean": True}, "other": {"cuisine_korean": False}},
     )
-    assert set(candidates) == {"other"}
-    assert funnel["실격 조건 제거"] == 1
+    assert set(candidates) == {"other", "korean"}
+    assert candidates["other"].rank < candidates["korean"].rank
+    assert funnel["실격 조건 제거"] == 0
+
+
+@pytest.mark.parametrize("authors, penalty", [(["user_1"], -3), (["user_1", "user_2"], -6),
+                                              (["user_1", "user_1"], -3)])
+def test_required_soft_penalty_counts_distinct_authors(db_session, monkeypatch, authors, penalty):
+    scores_seen = []
+    score = core.score_candidates
+
+    def capture(*args, **kwargs):
+        result = score(*args, **kwargs)
+        scores_seen.append(result)
+        return result
+
+    monkeypatch.setattr(core, "score_candidates", capture)
+    candidates, funnel = _execute_with_lines(
+        db_session, [_line(author, "required", "spicy_focused", False) for author in authors],
+        {"hot": {"spicy_focused": True}, "unknown": {}},
+    )
+    assert set(candidates) == {"hot", "unknown"}
+    assert funnel["실격 조건 제거"] == 0
+    assert scores_seen[-1] == {"hot": penalty, "unknown": 0}
+    member = next(m for m in candidates["hot"].member_fulfillment["by_member"] if m["user_id"] == "user_1")
+    assert any(c["fact_key"] == "spicy_focused" and c["status"] == "unmet" for c in member["conditions"])
+
+
+def test_same_person_spicy_chip_on_two_pins_counts_once(db_session, monkeypatch):
+    _make_members(db_session, user_ids=["user_1"])
+    for lat in (35.1, 35.1002):
+        pin = _make_pin(db_session, category="음식점", lat=lat)
+        _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_spicy"])
+    monkeypatch.setattr(PLANNER, "plan_evidence", _no_plan_call)
+    captured = []
+    original = core.score_candidates
+
+    def capture(*args, **kwargs):
+        result = original(*args, **kwargs)
+        captured.append(result)
+        return result
+
+    monkeypatch.setattr(core, "score_candidates", capture)
+    db_session.commit()
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
+    flows.execute_run(db_session, run_id=str(run.id),
+                      place_search=_FakePlaceSearch([PlaceStub(place_id="hot", lat=35.1001, lng=129.0)]),
+                      place_facts=_FakePlaceFacts({"hot": {"spicy_focused": True}}))
+    assert captured[-1]["hot"] == -3
 
 
 def test_required_wants_false_unknown_label_passes_with_needs_check(db_session):
@@ -1907,14 +1983,14 @@ def test_required_wants_false_unknown_label_passes_with_needs_check(db_session):
     assert funnel["실격 조건 제거"] == 0
 
 
-def test_required_wants_true_is_the_inverse(db_session):
-    """"조용한 곳이어야 해"(required, wants=true) — 라벨 거짓이면 실격, 참이면 통과, 모름은 통과 + needs_check."""
+def test_required_wants_true_scores_without_filtering(db_session):
+    """조용함을 원하면 라벨 거짓도 후보에 남는다."""
     candidates, funnel = _execute_with_lines(
         db_session, [_line("user_1", "required", "quiet", True)],
         {"quiet": {"quiet": True}, "noisy": {"quiet": False}, "unknown_place": {}},
     )
-    assert set(candidates) == {"quiet", "unknown_place"}
-    assert funnel["실격 조건 제거"] == 1
+    assert set(candidates) == {"quiet", "noisy", "unknown_place"}
+    assert funnel["실격 조건 제거"] == 0
     check = next(c for c in candidates["unknown_place"].checks if c["fact_key"] == "quiet")
     assert check["needs_check"] is True
 
@@ -1940,14 +2016,15 @@ def test_hard_key_required_disqualifies_only_known_true_whatever_wants_says(db_s
         assert check["passed"] is True and check["needs_check"] is True, wants
 
 
-def test_spicy_and_oily_required_wants_false_disqualify_only_known_true_and_unknown_passes(db_session):
-    """#378 — 매운맛·기름진 메뉴는 취향 키: 🚫(required, wants=false)는 라벨이 참인 곳만 실격, 모름은 통과 + needs_check."""
+def test_spicy_and_oily_required_wants_false_penalizes_known_true(db_session):
+    """매운맛·기름진 메뉴는 감점하며 모름은 중립이다."""
     for key in ("spicy_focused", "oily_focused"):
         candidates, funnel = _execute_with_lines(
             db_session, [_line("user_1", "required", key, False)],
             {"hot": {key: True}, "mild": {key: False}, "unknown_place": {}},
         )
-        assert set(candidates) == {"mild", "unknown_place"} and funnel["실격 조건 제거"] == 1, key
+        assert set(candidates) == {"hot", "mild", "unknown_place"} and funnel["실격 조건 제거"] == 0, key
+        assert candidates["hot"].rank > candidates["mild"].rank
         check = next(c for c in candidates["unknown_place"].checks if c["fact_key"] == key)
         assert check["confidence"] == "unknown" and check["passed"] is True and check["needs_check"] is True
 
@@ -2365,9 +2442,8 @@ def test_create_run_splits_a_reason_into_one_line_per_condition_then_the_chips(d
         "user_2": [("고기 좋아요, 고기가 최고", None, "cuisine_bbq", True, "preferred", None)],
         "user_3": [("그냥 별로예요", None, None, None, "required", None)],
     }
-    # 거르기는 줄 단위 그대로다 — 나뉜 두 조건이 각각 켜진다(전에는 하나가 조용히 사라졌다).
-    # 고기구이 원함은 #422로 선호가 되어 실격 조건이 아니다.
-    assert flows._active_soft_requirements(db_session, run) == [("cuisine_korean", False), ("oily_focused", False)]
+    # 나뉜 일반 soft 조건은 각각 점수에 반영되고 실격을 켜지 않는다.
+    assert flows._active_soft_requirements(db_session, run) == []
 
 
 def test_split_lines_are_turned_off_one_condition_at_a_time(db_session, monkeypatch):
@@ -2436,14 +2512,14 @@ def test_satisfied_directed_checks_are_shown_as_satisfied(db_session):
     assert by_key["quiet"]["passed"] is True and by_key["quiet"]["label"] == "조용함"
 
 
-def test_same_key_disqualification_beats_a_supporter(db_session):
-    """가드레일 9 — 한 명은 "한식 먹자"(preferred true), 한 명은 "한식 말고"(required false)여도 한식집은 빠진다."""
+def test_same_key_opposing_preferences_do_not_disqualify(db_session):
+    """같은 soft 키에 원함과 피함이 있어도 실격하지 않는다."""
     candidates, funnel = _execute_with_lines(
         db_session,
         [_line("user_1", "preferred", "cuisine_korean", True), _line("user_2", "required", "cuisine_korean", False)],
         {"korean": {"cuisine_korean": True}, "other": {"cuisine_korean": False}},
     )
-    assert set(candidates) == {"other"} and funnel["실격 조건 제거"] == 1
+    assert set(candidates) == {"other", "korean"} and funnel["실격 조건 제거"] == 0
 
 
 def test_wants_is_stored_and_returned_by_the_evidence_api(db_session):

@@ -111,15 +111,16 @@ def _result(a, map_id):
     return {c["place_name"]: c for c in a.get(f"/runs/{run_id}/result").json()["candidates"]}
 
 
-def test_spicy_against_reason_disqualifies_only_known_true_and_unknown_passes_with_needs_check(
+def test_spicy_against_reason_penalizes_known_true_and_unknown_passes_with_needs_check(
     members, place_ids, safety_planner,
 ):
-    """#378 — 🚫 "너무 매워요"는 취향 키라 라벨이 참인 곳(S)만 실격이고 모름(U)은 통과 + 확인 필요다."""
+    """#1253 — 매운맛 반대는 참을 감점하고 모름은 확인 필요로 남긴다."""
     a, b, map_id = members
     k = _narrow_to_b_s_u(a, map_id, place_ids)
     assert b.put(f"/pins/{k}/reaction", json={"type": "against", "reason_text": "너무 매워요"}).status_code == 200
     candidates = _result(a, map_id)
-    assert set(candidates) == {"성수 분식집", "성수 이름모를집"}, set(candidates)
+    assert set(candidates) == {"성수 분식집", "성수 이름모를집", "성수 매운집"}, set(candidates)
+    assert candidates["성수 매운집"]["rank"] > candidates["성수 분식집"]["rank"]
     spicy = next(ch for ch in candidates["성수 이름모를집"]["checks"] if ch["fact_key"] == "spicy_focused")
     assert spicy["needs_check"] is True and spicy["passed"] is True
 
