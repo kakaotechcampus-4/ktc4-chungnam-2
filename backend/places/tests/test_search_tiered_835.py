@@ -69,10 +69,10 @@ def test_order_is_tier_first_even_when_the_lower_tier_is_nearer(db_session):
     assert _names(db_session, "맛집") == ["맛집 본점", "이 집은 맛집", "다른 가게"]
 
 
-def test_region_zone_tiers_all_come_before_the_far_zone(db_session):
+def test_far_zone_is_excluded(db_session):
     _add(db_session, "a", "다른 가게", 37.5666, 126.9781, address="서울 종로구 맛집길 1")   # 지역 구역의 주소 일치
     _add(db_session, "b", "맛집", 35.17, 129.07)                                              # 먼 구역의 완전 일치
-    assert _names(db_session, "맛집") == ["다른 가게", "맛집"]
+    assert _names(db_session, "맛집") == ["다른 가게"]
 
 
 def test_exact_before_prefix_inside_the_prefix_tier_and_spaces_ignored(db_session):

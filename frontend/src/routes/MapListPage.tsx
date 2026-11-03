@@ -4,6 +4,7 @@ import { Plus } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { readPendingInvite } from '@/features/auth/pendingInvite'
+import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
 import { useMeQuery } from '@/features/auth/queries'
 import AccountSheet, { AccountMenu } from '@/features/maps/AccountSheet'
 import { MAP_LIMIT_HINT, type MapListView, type MapView } from '@/features/maps/model'
@@ -31,6 +32,7 @@ export default function MapListPage() {
   const full = list?.full === true
   const limitHintId = useId()
   const me = useMeQuery().data
+  const guest = me?.is_guest === true
   const desktop = useIsDesktop()
   const [accountOpen, setAccountOpen] = useState(false)
   const trash = useTrashQuery().data
@@ -53,7 +55,7 @@ export default function MapListPage() {
           </div>
           {desktop ? (
             <div className="flex shrink-0 items-center gap-3">
-              <NewMapLink className="btn-md" blockedBy={full ? limitHintId : undefined} />
+              {!guest && <NewMapLink className="btn-md" blockedBy={full ? limitHintId : undefined} />}
               <NotificationBell />
               <AccountMenu maps={maps ?? []} name={me?.display_name} />
             </div>
@@ -103,7 +105,14 @@ export default function MapListPage() {
         )}
 
         {/* 모바일은 엄지가 닿는 바닥에 붙는다. 넓은 화면은 헤더 오른쪽에 있다. */}
-        {!desktop && <NewMapLink className="btn-lg sticky bottom-6 mt-4" blockedBy={full ? limitHintId : undefined} />}
+        {/* 게스트는 지도를 만들 수 없다(403 GUEST_NOT_ALLOWED) — 버튼 대신 카카오 계정 만들기를 권한다. */}
+        {guest ? (
+          <div className="mt-4 md:mx-auto md:w-full md:max-w-[480px]">
+            <GuestAccountNotice />
+          </div>
+        ) : (
+          !desktop && <NewMapLink className="btn-lg sticky bottom-6 mt-4" blockedBy={full ? limitHintId : undefined} />
+        )}
       </div>
 
       {trashOpen && trash && <TrashSheet trash={trash} onClose={() => setTrashOpen(false)} />}

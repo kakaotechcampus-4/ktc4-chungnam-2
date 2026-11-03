@@ -1,7 +1,7 @@
 # 데이터 모델
 
 작성 기준: `최종기획안.md`(2·5·9절) + `docs/architecture.md`
-DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). 실시간 보조: Redis(세션/멱등키, SSE 재전송 버퍼).
+DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). Redis는 쓰지 않는다 — 세션은 무상태 서명 쿠키, 멱등키는 `idempotency_keys` 표, SSE 재전송은 `event_log` 표가 맡는다(`docs/tech-stack.md`).
 
 이 문서는 테이블 단위 스키마다. 각 모듈은 자신이 소유한 테이블만 쓰기 접근하고, 다른 모듈 테이블은 해당 모듈의 함수/API를 통해서만 읽는다(`architecture.md` 1절).
 
@@ -391,7 +391,7 @@ regions(
                                          -- 압축 논리. 실제 PostGIS 연산이 필요해지면(예: 핀-지역
                                          -- 포함 판정을 DB 레벨로 옮길 때) geom 컬럼을 추가하는
                                          -- 별도 마이그레이션으로 되돌린다.
-  anchor_points jsonb default '[]',     -- #112: 원을 만든 기준 핀 좌표 [[lat, lng], ...]. 상위 3곳 동점 처리의 거리 평균에 쓴다
+  anchor_points jsonb default '[]',     -- #1252: 이 무리의 같은 카테고리 핀 좌표 [[lat, lng], ...]. 각 핀의 원 조회와 거리 평균에 쓴다
   confirmed boolean, confirmed_at
 )
 
@@ -573,9 +573,9 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 
 ---
 
-## llm_calls (모델 호출 사용량, #870, 마이그레이션 0043)
+## llm_calls (모델 호출 사용량, #870, 마이그레이션 0043, `web_searches`는 0060)
 
-> llm 모듈이 쓰는 테이블 1개. 모델 호출 1건 = 1행이다. 기록은 출구(`llm/client.py`의 `call_planner`, `_agent_parse`) 한 곳에서 하고,
+> llm 모듈이 쓰는 테이블 1개. 모델 호출 1건 = 1행이다. 기록은 출구(`llm/client.py`의 `call_planner`, `_agent_parse`, 웹 확인의 `call_web_check` #1216) 한 곳에서 하고,
 > 왜 불렀는지와 지도·사람·실행은 부르는 쪽이 `llm.api.usage_context`로 붙인다. 감싸지 않은 호출(평가 스크립트)은 남지 않는다.
 > **사유 원문, 요청 원문, 응답 본문은 저장하지 않는다.** 숫자와 분류만이다. 기록 실패는 본 기능을 막지 않는다(별도 세션, 예외는 로그만).
 > `agent_runs`, `agent_course_runs`의 `tokens_in/out`(실행 1건 합계)은 그대로 둔다. 겹침 정리는 측정 뒤 따로 한다.

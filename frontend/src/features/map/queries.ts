@@ -1,6 +1,10 @@
 import { useCallback, useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
+import { nudgeGuestOnce } from '@/features/auth/guestNudge'
+import type { User } from '@/features/auth/model'
+import { authKeys } from '@/features/auth/queries'
+
 import { createPin, deletePin, deleteReaction, fetchCounts, fetchPins, fetchReactions, fetchReasonChips, putReaction, resolvePin, updatePin } from './api'
 import { useLivePlaceStore, withLivePlace } from './livePlaces'
 import { withMyReaction, type Pin, type PinCategory, type PinCreateRequest, type PinResolveRequest, type PinUpdateRequest, type ReactionRequest } from './model'
@@ -113,6 +117,7 @@ export function useMyReactionMutation(mapId: string, pin: Pin) {
       )
       void queryClient.invalidateQueries({ queryKey: pinKeys.reactions(pin.id) })
       void queryClient.invalidateQueries({ queryKey: pinKeys.counts(mapId) })
+      if (reaction) nudgeGuestOnce(queryClient.getQueryData<User>(authKeys.me)?.is_guest)
     },
   })
 }
