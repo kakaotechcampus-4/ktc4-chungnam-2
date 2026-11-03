@@ -113,3 +113,59 @@ def test_restore_records_pin_restored_event_only_the_first_time(app_client, db_s
     _restore(app_client, pin)
     types = [e.type for e in db_session.query(EventRow).all()]
     assert types.count("pin.restored") == 1
+
+
+# ── Codex 검수(#1193): live↔db 중복 양방향, 실제 확정 리스트 복원 ──
+
+def test_live_pin_restore_is_409_when_a_db_pin_took_the_same_place_meanwhile(app_client, db_session):
+    from pins.tests.test_pins_api import KALGUKSU
+    live = app_client.post("/maps/map_1/pins", cookies=_auth(), json={
+        "source": "live", "category": "음식점", "kakao_place_id": "kakao:1001", "search_query": "성수 칼국수"}).json()
+    assert app_client.delete(f"/pins/{live['id']}", cookies=_auth()).status_code == 204
+    db_pin = app_client.post("/maps/map_1/pins", cookies=_auth(), json=KALGUKSU)    # 같은 카카오 ID가 자체 DB 장소에 기록된다
+    assert db_pin.status_code == 201
+    res = app_client.post(f"/pins/{live['id']}/restore", cookies=_auth())
+    assert res.status_code == 409 and res.json()["detail"]["pin_id"] == db_pin.json()["id"]
+    db_session.expire_all()
+    assert db_session.get(PinRow, __import__("uuid").UUID(live["id"])).deleted_at is not None
+
+
+def _confirmed_then_deleted(app_client, db_session):
+    from datetime import datetime, timedelta, timezone
+
+    from shortlist.models import ShortlistItem
+    past = datetime.now(timezone.utc) - timedelta(days=1)
+    first, second = _insert_pin(db_session, kind="확정"), _insert_pin(db_session, kind="확정")
+    db_session.add_all([ShortlistItem(map_id="map_1", pin_id=first.id, added_by="user_1", visit_order=0, added_at=past),
+                        ShortlistItem(map_id="map_1", pin_id=second.id, added_by="user_1", visit_order=1, added_at=past)])
+    db_session.commit()
+    assert app_client.delete(f"/pins/{first.id}", cookies=_auth()).status_code == 204   # 실제 삭제 경로가 확정 항목을 정리한다
+    db_session.expire_all()
+    assert db_session.get(PinRow, first.id).deleted_was_confirmed is True
+    return first, second
+
+
+def test_confirmed_pin_returns_to_the_end_of_the_real_shortlist_with_confirmed_kind_in_the_event(app_client, db_session):
+    from pins.tests.test_pins_api import _events
+    first, second = _confirmed_then_deleted(app_client, db_session)
+    res = _restore(app_client, first)
+    assert res.status_code == 200 and res.json()["kind"] == "확정"
+    items = app_client.get("/maps/map_1/shortlist", cookies=_auth()).json()
+    assert [i["pin"]["id"] for i in items] == [str(second.id), str(first.id)]            # 맨 뒤
+    event = _events(db_session, type="pin.restored")[-1]
+    assert event.payload["id"] == str(first.id) and event.payload["kind"] == "확정"
+
+
+def test_shortlist_failure_rolls_the_restore_back(app_client, db_session, monkeypatch):
+    import pytest
+    first, _ = _confirmed_then_deleted(app_client, db_session)
+
+    def boom(db, *, pin_id):
+        raise RuntimeError("shortlist down")
+
+    monkeypatch.setattr("shortlist.api.restore_confirmed", boom)
+    with pytest.raises(RuntimeError):
+        _restore(app_client, first)
+    db_session.rollback()
+    db_session.expire_all()
+    assert db_session.get(PinRow, first.id).deleted_at is not None

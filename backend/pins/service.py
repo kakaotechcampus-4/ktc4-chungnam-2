@@ -363,6 +363,16 @@ def list_live_kakao_place_ids(db: Session, map_id: str) -> list[str]:
     ).scalars().all())
 
 
+def _find_db_pin_for_kakao_id(db: Session, map_id: str, kakao_place_id: str) -> str | None:
+    """이 카카오 장소 ID가 가리키는 자체 DB 장소의 핀이 이 지도에 이미 있으면 그 id(#569). 실시간 핀을 만들거나 되살릴 때
+    같은 가게의 DB 핀과 겹치지 않게 한다(_find_live_pin_for_place의 반대 방향)."""
+    for place in places_api.own_places_by_kakao_id(kakao_place_id, db=db):
+        found = _find_existing_pin_id(db, map_id, place.place_id)
+        if found is not None:
+            return found
+    return None
+
+
 def _find_live_pin_for_place(
     db: Session, map_id: str, place_id: str, *, hint_kakao_id: str | None = None, exclude_pin_id: uuid.UUID | None = None,
 ) -> str | None:
@@ -512,10 +522,9 @@ def _create_live_pin(db: Session, map_id: str, principal: Principal, req: PinCre
     existing_id = _find_existing_live_pin_id(db, map_id, req.kakao_place_id)
     if existing_id is not None:
         raise AppError("PIN_DUPLICATE", detail={"pin_id": existing_id})
-    for place in places_api.own_places_by_kakao_id(req.kakao_place_id, db=db):   # 같은 가게의 자체 DB 핀(#569)
-        db_pin_id = _find_existing_pin_id(db, map_id, place.place_id)
-        if db_pin_id is not None:
-            raise AppError("PIN_DUPLICATE", detail={"pin_id": db_pin_id})
+    db_pin_id = _find_db_pin_for_kakao_id(db, map_id, req.kakao_place_id)   # 같은 가게의 자체 DB 핀(#569)
+    if db_pin_id is not None:
+        raise AppError("PIN_DUPLICATE", detail={"pin_id": db_pin_id})
 
     pin_row = PinRow(
         map_id=map_id,
@@ -697,10 +706,13 @@ def restore_pin(
         raise AppError("NOT_FOUND")
 
     was_confirmed = bool(pin.deleted_was_confirmed)
-    if pin.source == "db" and pin.place_id is not None:   # 같은 가게의 실시간 핀은 DB 유니크가 아니라 조회로 막는다(#569)
-        live_id = _find_live_pin_for_place(db, pin.map_id, pin.place_id, exclude_pin_id=pin.id)
-        if live_id is not None:
-            raise AppError("PIN_DUPLICATE", detail={"pin_id": live_id})
+    # live↔db 중복은 DB 유니크가 아니라 조회로 막는다(#569) — 생성과 같은 조회를 양방향으로 쓴다
+    if pin.source == "db" and pin.place_id is not None:
+        same_place_id = _find_live_pin_for_place(db, pin.map_id, pin.place_id, exclude_pin_id=pin.id)
+    else:
+        same_place_id = _find_db_pin_for_kakao_id(db, pin.map_id, pin.kakao_place_id)
+    if same_place_id is not None:
+        raise AppError("PIN_DUPLICATE", detail={"pin_id": same_place_id})
     pin.deleted_at = None
     pin.deleted_by = None
     pin.deleted_was_confirmed = None
