@@ -1,13 +1,13 @@
-"""backend/llm 비즈니스 로직 — 모델 호출 3곳(plan_evidence/label_place/rank_candidates)과 v2 에이전트 호출
+"""backend/llm 비즈니스 로직 — 모델 호출 2곳(plan_evidence/label_place)과 v2 에이전트 호출
 (agent_diagnose #532 — 맨 아래 절. 신호 순위는 #582에서 agent의 코드 규칙으로 옮겼다),
 v2 동선 에이전트 턴(agent_course_turn, #334 — 맨 아래 절).
 
 ② plan_evidence는 넘겨받은 planner로 부른다 — real_evidence_planner는 Luna를 실제로 부르고(#116), 기존
-passthrough_planner는 입력을 스키마로 검증·통과하는 스텁이다(LLM_MODE로 고르는 곳은 recommend/deps.py, #219). ③-a-1 label_place, ③-b rank_candidates는 아직 고정 응답
+passthrough_planner는 입력을 스키마로 검증·통과하는 스텁이다(LLM_MODE로 고르는 곳은 recommend/deps.py, #219). ③-a-1 label_place는 아직 고정 응답
 스텁이다(backend/llm/CLAUDE.md "우선순위" 절) — 시그니처는 최종 형태(입력=구조화 가능한 값,
 출력=schemas.py 스키마)로 미리 맞춰둔다.
 
-세 함수 모두 값을 지어내지 않는다: 판단 근거가 없으면 항상 unknown/None을 반환한다
+두 함수 모두 값을 지어내지 않는다: 판단 근거가 없으면 항상 unknown/None을 반환한다
 (backend/llm/CLAUDE.md "넘지 말 것"). 실격 여부 판단·unknown_policy 적용은 이 모듈의
 책임이 아니다 — recommend가 한다(가드레일 7).
 """
@@ -34,7 +34,7 @@ from llm.prompts import (
 )
 from llm.schemas import (
     AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
-    FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, RankedCandidate, StatusCategory, StatusOutput,
+    FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, StatusCategory, StatusOutput,
 )
 
 log = logging.getLogger("pingo.llm")
@@ -298,20 +298,6 @@ def label_place(
             PlaceFactLabel(fact_key=key, value=value, confidence="known", evidence=evidence)
         )
     return labels
-
-
-def rank_candidates(candidate_place_ids: Sequence[str]) -> list[RankedCandidate]:
-    """③-b 선호 순위 채점.
-
-    candidate_place_ids: 실격 통과분(recommend가 필터링을 마친 후보)만 들어온다는 전제.
-    이 함수는 순위만 매기며 실격 여부는 다시 판단하지 않는다(가드레일 7).
-    v1 스텁은 실제 모델 호출 없이 입력 순서를 그대로 순위로 반환하고, 근거가 없으므로
-    member_comment는 지어내지 않고 None으로 둔다(5-7-1).
-    """
-    return [
-        RankedCandidate(place_id=place_id, rank=index + 1, member_comment=None)
-        for index, place_id in enumerate(candidate_place_ids)
-    ]
 
 
 # ---------- v2 계획 보조 에이전트 (docs/agent-v2.md 7, 10, 11절, #532) ----------
