@@ -121,6 +121,8 @@ core.py로 옮긴다.
 
 `maps`는 여행 기간 변경 시 지도 행을 잠근 뒤 `shortlist.api.unassign_outside_dates(db, map_id=..., start_date=..., end_date=...)`를 호출한다. 범위 밖 일정은 미배정 뒤에 보존하며 호출자가 같은 트랜잭션을 커밋한다.
 
+`agent/course`는 `shortlist.api.get_schedule_for_agent(db, map_id=...)`로 일정(`start_date`, `end_date`, `version`, 항목별 `scheduled_date`·`visit_order`)을 읽는다. 순서와 `version`은 `GET /maps/{mapId}/shortlist/schedule`과 같고 읽기 전용이다(#1238).
+
 `api.py`가 없는 모듈은 아직 다른 모듈에게 열어줄 데이터가 없다는 뜻이다. 필요해지는 쪽이
 그 모듈 담당에게 이슈로 요청해서 만든다(`backend/CLAUDE.md`, #757).
 
