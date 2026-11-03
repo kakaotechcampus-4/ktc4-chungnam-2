@@ -9,7 +9,7 @@ info:
     개별 엔드포인트에는 그 엔드포인트 고유의 에러만 명시한다.
 servers:
   - url: https://api.pingo.example.com
-    description: 배포 시 Cloud Run URL로 교체
+    description: 배포 시 운영 도메인으로 교체
 
 security:
   - cookieAuth: []

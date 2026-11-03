@@ -8,6 +8,10 @@
 - `GET /maps/{mapId}/pins`의 `created_by`는 반복해서 보낸다(`?created_by=a&created_by=b`)고 `style: form`, `explode: true`로 명시했다(OpenAPI 기본값과 같아 동작 변화 없음, 목 서버가 지원하는 방식이다).
 - 옛 문서 PR #81(403 응답 커버리지)의 나머지는 **더하지 않는다**: 핀 생성·반응·확정 리스트 넣기/빼기는 모든 구성원이 가진 액션이라 구성원에게 403이 나올 수 없고(비구성원은 404), 명세 머리말도 엔드포인트 고유의 에러만 적는다.
 
+## 2026-11-03, `servers` 설명의 옛 배포 표기 정정 (#1227)
+
+- `servers[0].description`의 「배포 시 Cloud Run URL로 교체」를 「배포 시 운영 도메인으로 교체」로 고쳤다(배포가 AWS 서버 1대의 Docker Compose로 바뀌었다, `deploy_rules.md`). 설명 문장만 바뀌었고 계약·동작은 그대로다. `servers`는 생성 타입에 나오지 않아 `api.d.ts`는 바뀌지 않는다.
+
 ## 2026-11-03, 확정 장소 날짜별 일정 (#1172)
 
 - `GET /maps/{mapId}/shortlist/schedule`은 여행 기간, version과 확정 항목을 반환한다.

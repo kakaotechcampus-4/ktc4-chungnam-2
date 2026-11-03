@@ -1,7 +1,7 @@
 # 데이터 모델
 
 작성 기준: `최종기획안.md`(2·5·9절) + `docs/architecture.md`
-DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). 실시간 보조: Redis(세션/멱등키, SSE 재전송 버퍼).
+DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). Redis는 쓰지 않는다 — 세션은 무상태 서명 쿠키, 멱등키는 `idempotency_keys` 표, SSE 재전송은 `event_log` 표가 맡는다(`docs/tech-stack.md`).
 
 이 문서는 테이블 단위 스키마다. 각 모듈은 자신이 소유한 테이블만 쓰기 접근하고, 다른 모듈 테이블은 해당 모듈의 함수/API를 통해서만 읽는다(`architecture.md` 1절).
 
