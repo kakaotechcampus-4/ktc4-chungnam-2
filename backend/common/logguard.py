@@ -21,7 +21,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 REDACTED_QUERY = "?[redacted]"
 # 앞단 프록시 경로(--root-path /api)가 붙어 찍혀도 맞도록 앞을 고정하지 않는다(#168). 지도 초대 목록(`/maps/{id}/invites`)은 뒤에 세그먼트가 없어 걸리지 않는다.
-_INVITE_TOKEN = re.compile(r"(/invites/)[^/?]+")
+# 슬래시가 겹친 `/invites//<token>`과 대소문자가 다른 `/Invites/<token>`도 같은 토큰 자리다(#1201).
+_INVITE_TOKEN = re.compile(r"(/invites/+)[^/?]+", re.IGNORECASE)
 
 
 def mask_request_target(target: str) -> str:
@@ -42,15 +43,22 @@ class MaskRequestFilter(logging.Filter):
 
 
 def _chain(exc: BaseException | None):
-    seen = set()
-    while exc is not None and id(exc) not in seen:
-        seen.add(id(exc))
-        yield exc
-        exc = exc.__cause__ or exc.__context__
+    """예외와 그 원인·문맥·예외 그룹의 하위 예외를 모두 돈다(같은 예외는 한 번만)."""
+    seen: set[int] = set()
+    stack = [exc]
+    while stack:
+        e = stack.pop(0)
+        if e is None or id(e) in seen:
+            continue
+        seen.add(id(e))
+        yield e
+        stack.extend((e.__cause__, e.__context__, *getattr(e, "exceptions", ())))   # exceptions는 BaseExceptionGroup(3.11+)에만 있다
 
 
 class StripSqlParamsFilter(logging.Filter):
-    """예외 체인에 DB 오류가 있으면 traceback의 메시지(SQL·매개변수)를 빼고 종류와 호출 위치만 남긴다."""
+    """예외 체인에 DB 오류가 있으면 traceback의 메시지(SQL·매개변수)를 빼고 종류와 호출 위치만 남긴다.
+
+    완성한 문장을 exc_text에 넣고 exc_info를 비운다 — 남겨 두면 다른 포매터가 원 예외를 다시 찍는다."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         info = record.exc_info
@@ -58,17 +66,22 @@ class StripSqlParamsFilter(logging.Filter):
             kinds = " <- ".join(type(e).__name__ for e in _chain(info[1]))
             frames = "".join(traceback.format_tb(info[2]))
             record.exc_text = f"Traceback (메시지·SQL 매개변수 생략): {kinds}\n{frames}".rstrip()
+            record.exc_info = None
         return True
 
 
-def _add_once(logger_name: str, filter_type: type[logging.Filter]) -> None:
-    target = logging.getLogger(logger_name)
+def _add_once(target: logging.Logger | logging.Handler, filter_type: type[logging.Filter]) -> None:
     if not any(isinstance(f, filter_type) for f in target.filters):
         target.addFilter(filter_type())
 
 
 def install() -> None:
-    """여러 번 불러도 필터는 하나만 붙는다."""
-    _add_once("uvicorn.access", MaskRequestFilter)
-    _add_once("uvicorn.error", StripSqlParamsFilter)
-    _add_once("common.errors", StripSqlParamsFilter)
+    """여러 번 불러도 필터는 하나만 붙는다.
+
+    로거에 붙인 필터는 그 로거가 직접 찍은 레코드에만 돈다(자식 로거에서 올라온 레코드는 거치지 않는다). 그래서 앱 로거(`pingo.*`)가
+    DB 오류를 찍는 경로까지 덮으려고 루트 로거의 핸들러에도 붙인다 — main.py가 basicConfig로 핸들러를 만든 뒤에 부른다."""
+    _add_once(logging.getLogger("uvicorn.access"), MaskRequestFilter)
+    for name in ("uvicorn.error", "common.errors"):
+        _add_once(logging.getLogger(name), StripSqlParamsFilter)
+    for handler in logging.getLogger().handlers:
+        _add_once(handler, StripSqlParamsFilter)

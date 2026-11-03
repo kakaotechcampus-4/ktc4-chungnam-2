@@ -29,6 +29,8 @@ FAKE_PARAM = "synthetic-sql-param-1Pw"
     ("/invites/TOKEN/accept", "/invites/{token}/accept"),
     ("/api/invites/TOKEN?x=1", "/api/invites/{token}?[redacted]"),   # --root-path /api
     ("/maps/abc/invites", "/maps/abc/invites"),                      # 목록은 토큰 자리가 없다
+    ("/invites//TOKEN", "/invites//{token}"),                        # 슬래시가 겹쳐도
+    ("/Invites/TOKEN/accept", "/Invites/{token}/accept"),            # 대소문자가 달라도
     ("/maps/abc/pins", "/maps/abc/pins"),
     ("/places/nearest", "/places/nearest"),
 ])
@@ -115,3 +117,86 @@ def test_real_uvicorn_logs_hide_query_token_and_sql_params():
         assert value not in text
     assert "GET /auth/kakao/callback?[redacted] HTTP/1.1" in text and "GET /invites/{token} HTTP/1.1" in text   # 템플릿·상태는 남는다
     assert " 500" in text and "DBAPIError" in text                                                            # 오류는 종류와 위치만 남는다
+
+
+def _sql_error():
+    return DBAPIError("SELECT 1 WHERE q = %(q)s", {"q": FAKE_PARAM}, Exception("driver"))
+
+
+def _record(exc: BaseException, name="pingo.x") -> logging.LogRecord:
+    try:
+        raise exc
+    except BaseException:
+        import sys
+        return logging.LogRecord(name, logging.ERROR, "", 0, "failed", None, sys.exc_info())
+
+
+def test_strip_sql_params_clears_exc_info_so_no_formatter_prints_the_original():
+    rec = _record(_sql_error())
+
+    logguard.StripSqlParamsFilter().filter(rec)
+
+    assert rec.exc_info is None
+    out = logging.Formatter("%(message)s").format(rec)
+    assert FAKE_PARAM not in out and "DBAPIError" in out
+
+
+def test_chain_walks_cause_context_and_exception_groups():
+    inner = _sql_error()
+    cause = RuntimeError("c")
+    cause.__cause__ = inner
+    ctx = RuntimeError("x")
+    ctx.__context__ = inner
+    assert inner in list(logguard._chain(cause)) and inner in list(logguard._chain(ctx))
+    import builtins
+    if hasattr(builtins, "BaseExceptionGroup"):   # 3.11+
+        group = builtins.BaseExceptionGroup("g", [inner])
+        assert inner in list(logguard._chain(group))
+        assert logguard.StripSqlParamsFilter().filter(_record(group)) is True
+    loop = RuntimeError("loop")
+    loop.__cause__ = loop
+    assert list(logguard._chain(loop)) == [loop]   # 순환해도 끝난다
+
+
+def test_install_covers_app_loggers_through_root_handlers():
+    """pingo.* 같은 앱 로거가 DB 오류를 찍는 경로도 덮는다 — 로거가 아니라 루트 핸들러의 필터가 건다."""
+    import io
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(name)s %(message)s"))
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        logguard.install()
+        logguard.install()
+        assert sum(isinstance(f, logguard.StripSqlParamsFilter) for f in handler.filters) == 1
+        lg = logging.getLogger("pingo.test1201")
+        try:
+            raise _sql_error()
+        except DBAPIError:
+            lg.exception("db failed")
+    finally:
+        root.removeHandler(handler)
+    assert FAKE_PARAM not in stream.getvalue() and "DBAPIError" in stream.getvalue()
+
+
+def test_uvicorn_access_formatter_keeps_the_five_tuple_args():
+    """uvicorn의 AccessFormatter는 args를 (client, method, path, http_version, status) 다섯으로 읽는다 — 구조를 깨지 않는다."""
+    from uvicorn.logging import AccessFormatter, DefaultFormatter
+
+    rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
+                            ("127.0.0.1:1", "GET", f"/invites/{FAKE_TOKEN}?code={FAKE_CODE}", "1.1", 200), None)
+
+    logguard.MaskRequestFilter().filter(rec)
+
+    assert isinstance(rec.args, tuple) and len(rec.args) == 5 and rec.args[0] == "127.0.0.1:1" and rec.args[3:] == ("1.1", 200)
+    for formatter in (AccessFormatter('%(client_addr)s - "%(request_line)s" %(status_code)s', use_colors=False),
+                      DefaultFormatter("%(levelprefix)s %(message)s", use_colors=False)):
+        out = formatter.format(rec)
+        assert FAKE_TOKEN not in out and FAKE_CODE not in out and "/invites/{token}?[redacted]" in out
+
+
+def test_places_logguard_keeps_old_names():
+    from places import logguard as old
+
+    assert old.StripQueryFilter is logguard.MaskRequestFilter and old.SENSITIVE_PATHS == ("/places/nearest",)
