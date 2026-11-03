@@ -11,7 +11,7 @@ def test_schedule_migration_preserves_existing_rows(db_session, monkeypatch):
     connection = db_session.connection()
     connection.execute(text("CREATE TEMPORARY TABLE shortlist_items (id integer PRIMARY KEY, visit_order integer) ON COMMIT DROP"))
     connection.execute(text("INSERT INTO shortlist_items VALUES (1, 7)"))
-    path = Path(__file__).resolve().parents[2] / "alembic/versions/0058_shortlist_scheduled_date.py"
+    path = Path(__file__).resolve().parents[2] / "alembic/versions/0059_shortlist_scheduled_date.py"
     spec = importlib.util.spec_from_file_location("schedule_migration", path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
