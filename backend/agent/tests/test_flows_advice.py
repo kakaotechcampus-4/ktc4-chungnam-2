@@ -28,6 +28,7 @@ from common.database import get_db_session, session_scope
 from common.errors import AppError
 from places.schemas import FactLabel
 from recommend import api as recommend_api
+from recommend import core as recommend_core
 from recommend import deps as recommend_deps
 from recommend import flows as recommend_flows
 from recommend import service as recommend_service
@@ -69,7 +70,7 @@ class FakePlaceSearch:
         self.places = places
 
     def search_nearby(self, *, category, circles):
-        return self.places
+        return [p for p in self.places if recommend_core.is_within_any_region(p.lat, p.lng, circles)]
 
     def get_places(self, place_ids):
         return {}

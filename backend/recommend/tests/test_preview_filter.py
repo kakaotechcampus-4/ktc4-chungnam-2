@@ -14,7 +14,7 @@ from recommend import api, core, flows, service
 from recommend.models import Candidate, Exclusion, RecommendRun, Region
 from recommend.models import EvidenceLine as EvidenceLineRow
 from recommend.ports import PlaceStub
-from recommend.tests.test_flows import PLANNER, _FakePlaceFacts, _FakePlaceSearch, _make_members, _make_pin, _react
+from recommend.tests.test_flows import PLANNER, _CirclePlaceSearch, _FakePlaceFacts, _make_members, _make_pin, _react
 
 CATEGORY = "음식점"
 HANSIK_TEXT = "한식 말고 고기 먹고 싶어요"
@@ -39,7 +39,7 @@ PLACES.append(PlaceStub(place_id="far", lat=35.2, lng=129.0))
 
 
 def _gateways():
-    return {"place_search": _FakePlaceSearch(PLACES), "place_facts": _FakePlaceFacts(FACTS)}
+    return {"place_search": _CirclePlaceSearch(PLACES), "place_facts": _FakePlaceFacts(FACTS)}
 
 
 def _planned(raw):
@@ -92,7 +92,7 @@ def test_same_reasons_give_the_same_count_as_a_run_up_to_the_disqualify_step(db_
 
     assert preview["funnel"] == _filter_stages(run.last_funnel)
     assert preview["funnel"] == [
-        {"key": "pool", "removed_count": 0}, {"key": "radius", "removed_count": 1},
+        {"key": "pool", "removed_count": 0}, {"key": "radius", "removed_count": 0},
         {"key": "closed", "removed_count": 0}, {"key": "disqualify", "removed_count": 0},
     ]
     # 제외가 없는 run이라 통과 수가 같다. 결과(상위 3곳)보다 많다
