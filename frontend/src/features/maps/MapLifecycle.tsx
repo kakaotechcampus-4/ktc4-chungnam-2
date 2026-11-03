@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router'
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { droppedCount, tripDays } from '@/features/shortlist/schedule'
-import { useSchedule } from '@/features/shortlist/scheduleStore'
+import { useSchedule } from '@/features/shortlist/scheduleQueries'
 import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
@@ -17,7 +17,7 @@ import TripFields from './TripFields'
 /**
  * 지도 제목·날짜·지역 수정 창(방장만, #465·#480). 바뀐 칸만 보낸다. 지역은 바꾸기만 되고 지울 수 없다.
  * 이미 받은 AI 추천 결과는 그대로라는 것을 미리 알린다(api-spec PATCH /maps/{mapId}).
- * 확정 탭 일정에서 빠지는 날에 넣어 둔 장소가 있으면 몇 곳이 확정 리스트로 돌아가는지도 알린다(이 기기의 일정 기준).
+ * 확정 탭 일정에서 빠지는 날에 넣어 둔 장소가 있으면 몇 곳이 확정 리스트로 돌아가는지도 알린다(서버 일정 기준).
  */
 export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel: () => void }) {
   const update = useUpdateMapMutation(map.id)

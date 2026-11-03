@@ -17,13 +17,12 @@ import type { ShortlistItemDto } from '@/features/shortlist/model'
 import { useAddToShortlistMutation, useRemoveFromShortlistMutation, useShortlistQuery } from '@/features/shortlist/queries'
 import { useRouteStore } from '@/features/shortlist/routeStore'
 import { scheduledIds, UNSET_DAY } from '@/features/shortlist/schedule'
-import { closeSchedule, leaveScheduleTab, openSchedule, useDropHover, useMovedCount, useScheduleOpen } from '@/features/shortlist/scheduleStore'
+import { closeSchedule, leaveScheduleTab, openSchedule, useDropHover, useScheduleOpen } from '@/features/shortlist/scheduleStore'
 import ShortlistExport from '@/features/shortlist/ShortlistExport'
 import ShortlistList from '@/features/shortlist/ShortlistList'
 import { useScheduleEdit } from '@/features/shortlist/useTripSchedule'
 import { josa } from '@/ui/josa'
 import EmptyState from '@/ui/EmptyState'
-import Notice from '@/ui/Notice'
 import SheetTitle from '@/ui/SheetTitle'
 
 /**
@@ -44,14 +43,13 @@ export default function ShortlistTab() {
   const [params, setParams] = useSearchParams()
   const enrich = useEnrichPin()
   const edit = useScheduleEdit(mapId)
-  const moved = useMovedCount(mapId)
   const hover = useDropHover()
   const desktop = useIsDesktop()
   const scheduleOpen = useScheduleOpen(mapId)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [putDay, setPutDay] = useState<string | null>(null)
 
-  // 확정 탭을 떠나면 「일정 짜기」 패널을 닫고 빠진 수 알림을 지운다.
+  // 확정 탭을 떠나면 「일정 짜기」 패널을 닫는다.
   useEffect(() => () => leaveScheduleTab(), [mapId])
 
   // 확정 리스트 항목의 핀은 핀 목록 밖에서 온다 — 실시간 핀(#382)의 이름·좌표를 같은 값으로 얹는다.
@@ -164,7 +162,6 @@ export default function ShortlistTab() {
           data-day={UNSET_DAY}
           className={`space-y-3 rounded-xl pb-[100px] ${hover?.day === UNSET_DAY ? 'outline-2 outline-dashed outline-offset-4 outline-[var(--action-fill)]' : ''}`}
         >
-          {moved > 0 && <Notice>여행 날짜가 바뀌어 {moved}곳이 일정에서 빠졌어요</Notice>}
           {items.length === 0 ? (
             <p className="break-keep text-sm text-ink-500">모든 장소를 일정에 넣었어요. 「동선 보기」에서 날짜별로 볼 수 있어요</p>
           ) : (
@@ -198,7 +195,7 @@ export default function ShortlistTab() {
                   options={edit.dates.map((d, i) => ({ value: d, label: dayOrdinal(i) }))}
                   onChange={setPutDay}
                 />
-                <button type="button" onClick={putPicked} className="btn-primary btn-md flex-1">
+                <button type="button" onClick={putPicked} disabled={!edit.ready} className="btn-primary btn-md flex-1">
                   {picked.length}곳 넣기
                 </button>
               </div>

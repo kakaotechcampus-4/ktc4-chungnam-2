@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router'
@@ -8,7 +8,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { ShellContext } from '@/features/shell/shellContext'
 import { useToastStore } from '@/features/shell/toast'
 import { useRouteStore } from '@/features/shortlist/routeStore'
-import { forgetSchedule, loadSchedule } from '@/features/shortlist/scheduleStore'
+import { serverDays } from '@/features/shortlist/__fixtures__/serverSchedule'
+import { forgetSchedule } from '@/features/shortlist/scheduleStore'
 
 import ShortlistTab from './ShortlistTab'
 
@@ -78,13 +79,13 @@ describe('확정 탭 — 체크박스로 일정에 넣기, 동선 보기로 날�
     await putTwoOnSecondDay()
 
     expect(await screen.findByText('2곳을 둘째 날에 넣었어요')).toBeInTheDocument()
-    expect(loadSchedule(MAP).days['2026-10-11']).toEqual(['pin_1', 'pin_2'])
+    await waitFor(async () => expect((await serverDays(MAP))['2026-10-11']).toEqual(['pin_1', 'pin_2']))
     expect(screen.queryByRole('checkbox', { name: '흑돼지식당 고르기' })).not.toBeInTheDocument()
     expect(screen.getByText('1곳 · 일정에 넣은 곳 2')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '되돌리기' }))
     expect(await screen.findByRole('checkbox', { name: '흑돼지식당 고르기' })).toBeInTheDocument()
-    expect(loadSchedule(MAP).days).toEqual({})
+    await waitFor(async () => expect(await serverDays(MAP)).toEqual({}))
   })
 
   it('동선 보기를 켜면 날짜 칩과 그날 순서가 보이고, ↑↓ 로 순서를 바꾸고 「빼기」로 리스트에 돌린다', async () => {
@@ -100,11 +101,11 @@ describe('확정 탭 — 체크박스로 일정에 넣기, 동선 보기로 날�
     expect(screen.getByRole('link', { name: /카카오맵에서 길찾기/ })).toHaveAttribute('href', expect.stringContaining('map.kakao.com/link/by/walk/'))
 
     fireEvent.keyDown(second().getByRole('button', { name: '흑돼지식당 순서 바꾸기' }), { key: 'ArrowDown' })
-    expect(loadSchedule(MAP).days['2026-10-11']).toEqual(['pin_2', 'pin_1'])
+    await waitFor(async () => expect((await serverDays(MAP))['2026-10-11']).toEqual(['pin_2', 'pin_1']))
 
     await userEvent.click(second().getByRole('button', { name: '우진해장국 일정에서 빼기' }))
     expect(await screen.findByText('우진해장국을 일정에서 뺐어요')).toBeInTheDocument()
-    expect(loadSchedule(MAP).days['2026-10-11']).toEqual(['pin_1'])
+    await waitFor(async () => expect((await serverDays(MAP))['2026-10-11']).toEqual(['pin_1']))
 
     // 다른 날은 비어 있다.
     await userEvent.click(days.getByRole('button', { name: '첫째 날' }))

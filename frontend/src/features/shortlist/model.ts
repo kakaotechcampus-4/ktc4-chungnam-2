@@ -3,6 +3,8 @@ import type { components } from '@pingo/contracts/src/types/api'
 import { isPlaced, type Pin } from '@/features/map/model'
 
 export type ShortlistItemDto = components['schemas']['ShortlistItem']
+export type ScheduleDto = components['schemas']['ShortlistSchedule']
+export type ScheduleUpdateDto = components['schemas']['ShortlistScheduleUpdate']
 /** 내보내기 형식(#471). 기본 이름에도 쓴다. */
 export type ExportFormat = 'txt' | 'csv'
 

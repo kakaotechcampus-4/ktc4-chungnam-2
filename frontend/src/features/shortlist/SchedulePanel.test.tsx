@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { MemoryRouter } from 'react-router'
@@ -9,7 +9,8 @@ import { EditMapDialog } from '@/features/maps/MapLifecycle'
 import type { MapHeaderView } from '@/features/maps/model'
 
 import SchedulePanel from './SchedulePanel'
-import { forgetSchedule, loadSchedule, setSchedule } from './scheduleStore'
+import { seedSchedule, serverDays } from './__fixtures__/serverSchedule'
+import { forgetSchedule } from './scheduleStore'
 
 const BASE = 'http://localhost'
 const MAP = 'map_1' // 목 서버 지도: 2026-10-10 ~ 10-12(3일)
@@ -42,7 +43,7 @@ function renderPanel() {
 
 describe('「일정 짜기」 패널(넓은 화면)', () => {
   it('날짜 칸만 있고(끌어올 장소 칸은 없다), 그날 순서대로 번호가 붙는다', async () => {
-    setSchedule(MAP, { days: { '2026-10-11': ['pin_2', 'pin_1'] } })
+    await seedSchedule(MAP, { days: { '2026-10-11': ['pin_2', 'pin_1'] } })
     renderPanel()
     await screen.findByRole('region', { name: /^첫째 날/ })
     expect(screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['첫째 날 · 10.10 (토)', '둘째 날 · 10.11 (일)', '셋째 날 · 10.12 (월)'])
@@ -52,13 +53,13 @@ describe('「일정 짜기」 패널(넓은 화면)', () => {
   })
 
   it('≡ 에서 ↑↓ 로 그날 순서를 바꾸고, 「빼기」로 일정에서 뺀다 — 다시 열어도 남는다', async () => {
-    setSchedule(MAP, { days: { '2026-10-10': ['pin_1', 'pin_2'] } })
+    await seedSchedule(MAP, { days: { '2026-10-10': ['pin_1', 'pin_2'] } })
     renderPanel()
     fireEvent.keyDown(await screen.findByRole('button', { name: '흑돼지식당 순서 바꾸기' }), { key: 'ArrowDown' })
-    expect(loadSchedule(MAP).days['2026-10-10']).toEqual(['pin_2', 'pin_1'])
+    await waitFor(async () => expect((await serverDays(MAP))['2026-10-10']).toEqual(['pin_2', 'pin_1']))
 
     await userEvent.click(screen.getByRole('button', { name: '우진해장국 일정에서 빼기' }))
-    expect(loadSchedule(MAP).days['2026-10-10']).toEqual(['pin_1'])
+    await waitFor(async () => expect((await serverDays(MAP))['2026-10-10']).toEqual(['pin_1']))
 
     cleanup()
     renderPanel()
@@ -87,13 +88,14 @@ describe('지도 정보 수정 — 빠지는 날의 일정 안내', () => {
     )
   }
 
-  it('빠지는 날에 넣은 장소가 있으면 몇 곳이 돌아가는지 알리고, 없으면 알리지 않는다', () => {
-    setSchedule(MAP, { days: { '2026-10-10': ['pin_1', 'pin_2'], '2026-10-12': ['pin_3'] } })
+  it('빠지는 날에 넣은 장소가 있으면 몇 곳이 돌아가는지 알리고, 없으면 알리지 않는다', async () => {
+    await seedSchedule(MAP, { days: { '2026-10-10': ['pin_1', 'pin_2'], '2026-10-12': ['pin_3'] } })
     renderEdit()
     expect(screen.queryByText(/확정된 장소로 돌아가요/)).not.toBeInTheDocument()
 
+    // 서버 일정이 화면에 도착한 뒤(받는 동안은 일정이 비어 있다) 빠지는 날을 만든다.
     fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-10-11' } })
-    expect(screen.getByText('빠지는 날에 넣은 2곳은 일정에서 빠져 확정된 장소로 돌아가요')).toBeInTheDocument()
+    expect(await screen.findByText('빠지는 날에 넣은 2곳은 일정에서 빠져 확정된 장소로 돌아가요')).toBeInTheDocument()
 
     // 하루 늘리기만 하면 빠지는 날이 없다.
     fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-10-09' } })

@@ -1,10 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { Pin } from '@/features/map/model'
 
 import { scheduleDrawing } from './model'
 import { dayOf, droppedCount, EMPTY_SCHEDULE, place, prune, routeDay, scheduledIds, tripDays, type Schedule } from './schedule'
-import { forgetSchedule, loadSchedule, setSchedule } from './scheduleStore'
 
 const S = (days: Schedule['days']): Schedule => ({ days })
 
@@ -91,32 +90,5 @@ describe('일정 — 여행 날짜가 바뀌면 빠진 날의 장소만 확정 �
     // 이미 기간 밖에 남아 있던 날(아직 정리 전)은 이번 수정 때문에 빠지는 게 아니라 세지 않는다.
     const stale = S({ ...planned.days, '2026-10-20': ['x'] })
     expect(droppedCount(stale, now, tripDays('2026-11-01', '2026-11-02'))).toBe(1)
-  })
-})
-
-describe('일정 저장 — 이 기기의 localStorage', () => {
-  afterEach(() => {
-    forgetSchedule()
-    vi.restoreAllMocks()
-  })
-
-  it('지도별로 남고, 그 지도를 잊으면 지워진다. 로그아웃(전체)은 모든 지도를 지운다', () => {
-    setSchedule('m1', S({ '2026-11-01': ['a'] }))
-    setSchedule('m2', S({ '2026-11-02': ['b'] }))
-    expect(loadSchedule('m1').days).toEqual({ '2026-11-01': ['a'] })
-    forgetSchedule('m1')
-    expect(loadSchedule('m1')).toEqual(EMPTY_SCHEDULE)
-    expect(loadSchedule('m2').days).toEqual({ '2026-11-02': ['b'] })
-    forgetSchedule()
-    expect(loadSchedule('m2')).toEqual(EMPTY_SCHEDULE)
-  })
-
-  it('저장소가 막혀도 던지지 않고, 망가진 값은 빈 일정으로 읽는다', () => {
-    window.localStorage.setItem('pingo.schedule.v1.m3', '{"days":{"2026-11-01":[1]}}')
-    expect(loadSchedule('m3')).toEqual(EMPTY_SCHEDULE)
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('quota')
-    })
-    expect(() => setSchedule('m3', S({ '2026-11-01': ['a'] }))).not.toThrow()
   })
 })
