@@ -274,7 +274,8 @@ def _recent_summary_failures(db: Session, map_id: str, now: datetime) -> frozens
             AgentRun.started_at >= now - SUMMARY_FAILED_RETRY,
         )
     ).scalars().all()
-    return frozenset(d["category"] for d in rows if d and d.get("category"))
+    # started_at >= now - 간격: 정확히 간격만큼 전의 실패는 아직 미룬다(경계 포함). 옛·이상 행(dict가 아니거나 category가 문자열이 아님)은 건너뛴다.
+    return frozenset(d["category"] for d in rows if isinstance(d, dict) and isinstance(d.get("category"), str))
 
 
 def _last_status_hash(db: Session, map_id: str) -> str | None:
