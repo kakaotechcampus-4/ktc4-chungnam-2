@@ -792,15 +792,37 @@ def test_select_top_candidates_picks_highest_scores_first():
     assert core.select_top_candidates(candidates, anchors, limit=3) == ["high", "mid", "low"]
 
 
-def test_select_top_candidates_region_diversity_never_beats_score():
-    # 5점짜리가 전부 해운대고 광안리 최고점이 2점이면 해운대 3곳이 뽑힌다(이슈 본문 예시).
+def test_select_top_candidates_balances_regions_within_score_floor():
+    # 최고점 5점에서 3점 낮은 무리는 6점 하한 안이라 한 곳을 뽑는다.
     candidates = [
         core.ScoredCandidate(place_id=f"haeundae_{i}", score=5, region_label="해운대", lat=35.0, lng=129.0)
         for i in range(3)
     ] + [core.ScoredCandidate(place_id="gwangalli", score=2, region_label="광안리", lat=35.1, lng=129.1)]
     anchors = {"해운대": [(35.0, 129.0)], "광안리": [(35.1, 129.1)]}
     result = core.select_top_candidates(candidates, anchors, limit=3)
-    assert result == ["haeundae_0", "haeundae_1", "haeundae_2"]
+    assert result == ["haeundae_0", "gwangalli", "haeundae_1"]
+
+
+def test_select_top_candidates_excludes_overwhelmingly_lower_score_from_round_robin():
+    candidates = [core.ScoredCandidate(place_id=f"a{i}", score=10 - i, region_label="a", lat=35.0, lng=129.0)
+                  for i in range(3)] + [core.ScoredCandidate(place_id="b", score=3, region_label="b", lat=36.0, lng=130.0)]
+    assert core.select_top_candidates(candidates, {"a": [(35.0, 129.0)], "b": [(36.0, 130.0)]}) == ["a0", "a1", "a2"]
+
+
+def test_select_top_candidates_fills_remaining_slots_in_score_order_after_floor():
+    candidates = [core.ScoredCandidate(place_id="a", score=10, region_label="a", lat=35.0, lng=129.0),
+                  core.ScoredCandidate(place_id="b", score=3, region_label="b", lat=36.0, lng=130.0),
+                  core.ScoredCandidate(place_id="c", score=2, region_label="c", lat=37.0, lng=131.0)]
+    anchors = {"a": [(35.0, 129.0)], "b": [(36.0, 130.0)], "c": [(37.0, 131.0)]}
+    assert core.select_top_candidates(candidates, anchors) == ["a", "b", "c"]
+
+
+def test_select_top_candidates_at_floor_and_more_than_three_regions():
+    candidates = [core.ScoredCandidate(place_id=str(i), score=10 - i * 2, region_label=str(i), lat=35.0, lng=129.0)
+                  for i in range(4)]
+    anchors = {str(i): [(35.0, 129.0)] for i in range(4)}
+    assert core.select_top_candidates(candidates, anchors) == ["0", "1", "2"]
+    assert core.select_top_candidates([candidates[0], candidates[3]], anchors) == ["0", "3"]
 
 
 def test_select_top_candidates_tie_break_prefers_unpicked_region():
