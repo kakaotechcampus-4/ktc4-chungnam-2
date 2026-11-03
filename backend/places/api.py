@@ -160,8 +160,8 @@ _Stage = tuple[int, tuple[float | None, float | None], float | None]   # (계층
 
 
 def _search_stages(near: tuple[float, float] | None) -> list[_Stage]:
-    """계약의 순서(docs/api-spec.yaml /places/search 정렬 규칙)를 그대로 내는 읽기 순서.
-    좌표가 있으면 지역 구역(30km 안)의 모든 계층이 먼 구역보다 먼저다. 계층 2(부분 일치)는 가까운 순이라 가까운 띠(3km)를 먼저 읽고
+    """30km 안만 읽는 순서.
+    좌표가 있으면 지역 구역(30km 안)만 읽는다. 계층 2(부분 일치)는 가까운 순이라 가까운 띠(3km)를 먼저 읽고
     모자랄 때만 다음으로 가도 결과가 같다(가까운 띠의 장소가 어차피 더 앞이다). 다음은 계층 3 한 번으로 부분 일치(3km 밖)와
     주소 일치를 일치 정도 순으로 얻는다 — 비싼 전체 훑기를 구역마다 한 번만 한다. 계층 1은 인덱스라 띠를 나누지 않는다."""
     if near is None:
@@ -169,13 +169,12 @@ def _search_stages(near: tuple[float, float] | None) -> list[_Stage]:
     close, region = repository.NEAR_RADIUS_M, repository.REGION_RADIUS_M
     return [
         (TIER_NAME_PREFIX, (None, region), None), (TIER_NAME_PART, (None, close), None), (TIER_REST, (None, region), close),
-        (TIER_NAME_PREFIX, (region, None), None), (TIER_REST, (region, None), None),
     ]
 
 
 def search_own_for_query(query: str, near: tuple[float, float] | None, limit: int, *, db: Session | None = None) -> list[OwnSearchHit]:
     """장소 검색(#822, #835)의 자체 DB 몫. 이름 일치 정도 계층(완전·앞부분 > 부분 > 주소만) 순으로, 좌표가 있으면 지역 구역(30km 안)을
-    먼저, 먼 구역은 limit에 못 미칠 때만 읽는다(_search_stages). 각 단계 안은 가까운 순 → 정예. 핀으로 만들 수 있는 곳만
+    조회한다(_search_stages). 각 단계 안은 가까운 순 → 정예. 핀으로 만들 수 있는 곳만
     pinnable=True로 최대 limit곳. 단계마다 핀 가능한 곳이 모이거나 후보가 바닥날 때까지(최대 _SEARCH_MAX_PAGES 페이지) 이어 읽는다.
     카카오 값을 쓰지 않는다. 읽기 전용."""
     hits: list[OwnSearchHit] = []
