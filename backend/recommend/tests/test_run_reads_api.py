@@ -18,13 +18,13 @@ from recommend.ports import PlaceStub
 
 
 class _FakePlaceSearch:
-    """반경과 무관하게 같은 풀을 돌려준다 — 반경 판정은 _run_pipeline의 반경 단계가 한다."""
+    """반경 안만 반환하는 장소 게이트웨이 대역."""
 
     def __init__(self, places):
         self._places = places
 
     def search_nearby(self, *, category, circles):
-        return self._places
+        return [p for p in self._places if core.is_within_any_region(p.lat, p.lng, circles)]
 
     def get_places(self, place_ids):
         return {}

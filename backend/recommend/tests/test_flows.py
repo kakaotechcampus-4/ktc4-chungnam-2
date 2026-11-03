@@ -1025,10 +1025,10 @@ def test_execute_run_full_funnel_removes_out_of_radius_disqualified_and_excluded
     places = [
         PlaceStub(place_id="ok_place", lat=35.0005, lng=129.0005),       # 반경 안, 실격 아님(known) → 통과
         PlaceStub(place_id="crowded_place", lat=35.0005, lng=129.0006),  # 반경 안, 붐비는 대형(known) → 실격
-        PlaceStub(place_id="far_place", lat=40.0, lng=135.0),            # 반경 밖 → 제거
+        PlaceStub(place_id="far_place", lat=35.0135, lng=129.0),       # 현재 반경 밖, 넓히기 상한 안
         PlaceStub(place_id="excluded_place", lat=35.0004, lng=129.0004),  # 반경 안, 실격 아님(known), 제외목록 → 제거
     ]
-    place_search = _FakePlaceSearch(places)
+    place_search = _CirclePlaceSearch(places)
     # known 값을 명시해 실격이 "붐빔" 하나로만 갈리게 한다. facts에 없는 far_place는 반경 필터에서 이미 빠져
     # 라벨링 자체를 안 받는다.
     place_facts = _FakePlaceFacts({
@@ -1413,6 +1413,34 @@ class _CirclePlaceSearch(_FakePlaceSearch):
         ]
 
 
+def test_clusters_and_pin_circle_union_keep_both_ends_and_deduplicate(db_session):
+    anchors = [(35.0, 129.0), (35.018, 129.0), (35.036, 129.0), (35.10, 129.0)]
+    groups = flows._clustered_regions(Circle(35.0, 129.0, 1200), anchors)
+    assert [len(group) for _, group in groups] == [3, 1]  # 단일 연결과 별도 무리
+    regions = [flows._PipelineRegion(id=uuid.uuid4(), label=f"r{i}", center_lat=c.anchor_lat,
+               center_lng=c.anchor_lng, radius_m=c.radius_m, pool_radius_m=c.radius_m,
+               anchor_points=tuple(points)) for i, (c, points) in enumerate(groups)]
+    places = [PlaceStub("first", 35.0005, 129.0), PlaceStub("middle", 35.009, 129.0),
+              PlaceStub("last", 35.0355, 129.0), PlaceStub("other", 35.1005, 129.0),
+              PlaceStub("outside", 35.06, 129.0)]
+    result = flows._filter_places(db_session, map_id="map_1", category="음식점", regions=regions,
+                                  active_lines=[], place_search=_CirclePlaceSearch(places),
+                                  place_facts=_FakePlaceFacts(), off_season=frozenset())
+    assert {p.place_id for p in result.passed} == {"first", "middle", "last", "other"}
+    assert len(result.passed) == 4
+    assert result.regions_by_place["first"].label == result.regions_by_place["last"].label == "r0"
+    assert result.regions_by_place["other"].label == "r1"
+
+
+def test_default_anchor_order_is_stable_when_pin_query_order_changes(monkeypatch):
+    coordinates = [("b", 35.1, 129.0), ("a", 35.0, 129.0)]
+    monkeypatch.setattr(flows.pins_api, "get_category_pin_coordinates", lambda *args, **kwargs: list(coordinates))
+    first = flows._default_circle_and_anchors(None, map_id="map_1", category="음식점")
+    coordinates.reverse()
+    second = flows._default_circle_and_anchors(None, map_id="map_1", category="음식점")
+    assert first == second
+
+
 class _RecordingPlaceFacts(_FakePlaceFacts):
     """라벨과 영업시간을 읽은 장소를 남긴다 — 반경 밖 장소는 읽지 않아야 한다."""
 
@@ -1446,13 +1474,14 @@ def _pool_run(db_session, **run_overrides):
     return run, _CirclePlaceSearch(POOL_PLACES), _RecordingPlaceFacts()
 
 
-def test_pool_reaches_the_widen_limit_and_counts_places_outside_the_current_radius(db_session):
+def test_pool_and_current_radius_are_both_checked_by_gateway(db_session):
     run, search, facts = _pool_run(db_session)
 
     flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
 
-    assert search.radii == [[core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)]]
-    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 1   # ring. beyond는 풀에도 없다
+    assert search.radii == [[core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)],
+                            [core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)]]
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 1
     assert [c.place_id for c in service.list_candidates(db_session, str(run.id))] == ["inside"]   # 결과는 지금 반경 안만
     assert facts.read == {"inside"}   # 반경 밖 장소의 라벨·영업시간은 읽지 않는다
 
@@ -1465,7 +1494,7 @@ def test_widening_once_brings_the_counted_place_into_the_result(db_session):
 
     assert {c.place_id for c in service.list_candidates(db_session, str(run.id))} == {"inside", "ring"}
     assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 0
-    assert search.radii[-1] == [core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)]   # 넓힌 뒤에도 풀은 상한까지
+    assert search.radii[-1] == [core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN + core.WIDEN_STEP_MIN)]
     assert "beyond" not in facts.read
 
 
@@ -1474,7 +1503,7 @@ def test_pool_of_a_run_already_at_the_limit_is_its_radius(db_session):
 
     flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
 
-    assert search.radii == [[core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)]]
+    assert search.radii == [[core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)]] * 2
     assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 0
     assert {c.place_id for c in service.list_candidates(db_session, str(run.id))} == {"inside", "ring"}
 
@@ -1488,7 +1517,8 @@ def test_simulation_uses_the_same_pool_and_one_press_matches_the_widen_button(db
     )
 
     limit = core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)
-    assert search.radii == [[limit], [limit]]   # before와 after가 같은 풀
+    assert search.radii == [[limit], [core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)],
+                            [limit], [core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN + core.WIDEN_STEP_MIN)]]
     assert (result["before"]["passed_count"], result["after"]["passed_count"]) == (1, 2)
     with pytest.raises(ValueError):   # 상한을 넘는 배율은 셀 수 없다(풀 밖)
         flows.simulate_filter(
@@ -1791,11 +1821,11 @@ def test_the_funnel_has_no_not_recommendable_stage_and_radius_counts_only_the_po
     _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
     places = [
         PlaceStub(place_id="ok_place", lat=35.0005, lng=129.0005),
-        PlaceStub(place_id="far_place", lat=40.0, lng=135.0),   # 풀(정예)에 있지만 반경 밖
+        PlaceStub(place_id="far_place", lat=35.0135, lng=129.0),   # 상한 안이지만 현재 반경 밖
     ]
 
     updated = flows.execute_run(
-        db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts(),
+        db_session, run_id=str(run.id), place_search=_CirclePlaceSearch(places), place_facts=_FakePlaceFacts(),
     )
 
     assert [c.place_id for c in service.list_candidates(db_session, str(run.id))] == ["ok_place"]
