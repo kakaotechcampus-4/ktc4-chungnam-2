@@ -321,6 +321,7 @@ components:
 | 지도 바꾸기(넓은 화면 패널 제목) | `MapSwitcher` | `features/maps/MapSwitcher` |
 | 삭제한 지도 휴지통(목록 끝 `btn-text` 입구 + 바닥 시트, 줄마다 「복구」 `btn-outline btn-sm`) | `TrashSheet` | `features/maps/TrashSheet` |
 | 패널·시트 안 이전 화면(넓은 화면에선 패널 헤더 ‹ 로 옮김) | `PanelBackLink` (모바일은 `BackButton`) | `features/shell/PanelBackLink` |
+| 장소 검색 최근 검색어 | `RecentSearches` (검색창이 비어 있고 포커스가 있을 때 아래 흰 카드: 「최근 검색」 12/600 ink-500 + 「전체 삭제」 `btn-text`, 줄마다 시계 아이콘·검색어·✕. 이 브라우저에 계정마다 8개, 검색어만 남기고 지도 링크·결과는 남기지 않는다) | `features/search/RecentSearches` |
 | 알림 | `showToast` (+ 「되돌리기」·「다시 시도」 동작) | `features/shell/toast` |
 | 사람 | `Avatar` (회색 면 + 첫 글자, 32·44) | `ui/Avatar` |
 | 별점(보기·고르기, #953) | `StarRating` (`onChange` 없으면 보기 — 평균은 가까운 별 수로 칠하고 숫자는 옆 글자로. 있으면 별 하나가 라디오, 누르는 곳 44px. 켜짐 `--action-fill` · 꺼짐 `--line-control`, 골드는 확정 전용이라 쓰지 않는다) | `ui/StarRating` |
