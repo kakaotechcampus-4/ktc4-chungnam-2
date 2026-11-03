@@ -151,11 +151,13 @@
 |---|---|
 | `backend-test` | postgis 17-3.5 서비스 위에서 `lint-imports` → `alembic upgrade head` → `pytest -q`. `develop` 보호 규칙의 필수 검사는 `contracts`·`pytest`·`frontend`(GitHub 설정, 2026-11-03 확인) |
 | `frontend-test` | Node 22: oxlint → vitest → build(`tsc -b` 포함) |
+| `e2e` | 핵심 흐름 브라우저 E2E(Playwright, #1281). postgis 서비스 위에 실제 백엔드(모델 스텁, 시드한 정예 장소)와 화면 빌드를 띄워 방장·구성원 두 브라우저로 돈다. 아직 필수 검사가 아니다 |
 | `contracts-test` | `gen:types` → 생성 타입 diff 검사 → typecheck → test |
 | `pr-size` | PR 범위 코멘트(병합을 막지 않는다) |
 | `images` | develop·main·`v*` 태그에서 OIDC 역할로 ECR에 이미지 푸시, develop이면 스테이징 배포를 부른다 |
 | `deploy` | 수동 또는 호출로 SSM으로 서버의 `sync.sh`·`deploy.sh` 실행. 운영은 `v` 태그만 |
 | `staging-check` | 매일 06:00(KST) 서버 안에서 QA 하네스 실행 |
+| `uptime` | 10분마다 서버 밖에서 운영·스테이징의 `/`와 `/api/health` 확인. 실패하면 경보 이슈를 열고 회복하면 닫는다(#1280) |
 | `llm-cost`, `move-to-rds` | 수동 실행 |
 | `assign-mentor`, `convention-check`, `notify-discord` | main 대상 PR 보조(안내용, 차단 안 함) |
 
@@ -166,6 +168,7 @@
 
 - **백엔드**: pytest, **실제 PostgreSQL**(모킹하지 않는다). 동시에 여러 터미널에서 돌릴 때는 `PINGO_TEST_DB`로 DB를 분리한다. `live` 마커(실제 외부 API)는 기본 실행에서 뺀다(`pytest.ini`). 통합·계약 테스트는 `backend/integration/`에 37개 파일.
 - **프론트**: vitest + testing-library + msw(목 서버 시나리오 재사용). 접근성은 자동 검사 도구(axe 등)가 아니라 testing-library로 포커스·알림 영역을 직접 검증한다(`src/a11y.test.tsx`).
+- **E2E**(`e2e/`, #1281): Playwright로 지도 만들기 → 구성원 참여 → 핀 → 🚫 사유 → 추천 받기 → 「지도에 올리기」를 돈다. 구성원 화면은 새로고침하지 않아 실시간(SSE)까지 본다. 로그인은 카카오 대신 `auth.testing.session_cookie`, 모델은 스텁, 장소는 `e2e/seed.py`가 넣은 정예, 카카오 지도 키 없이 목록과 시트로 돈다. 실행법은 `qa/README.md`.
 - **QA 하네스**(`qa/`): 케이스 대장 `qa/cases.yaml`, 실행기는 `qa/harness/`의 `run_api_cases.py`(실제 HTTP, `--base-url`, `POST /auth/qa-login`), `run_reco.py`, `run_complex.py`, `run_llm_cost.py`. 격리 DB `pingo_eval`, 결과 기록은 `qa/results/`. 스테이징에서 매일 자동 점검(`staging-check`).
 
 ## 11. 개발 환경
