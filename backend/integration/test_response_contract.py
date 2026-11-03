@@ -364,9 +364,10 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     # 추천: 근거 수정 → 실행 → 반경 넓히기(15→20→25→30분, 그다음 409) → 다시 추천 → 게시
     run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
     evidence = a.get(f"/runs/{run_id}/evidence").json()
-    assert evidence
-    assert a.patch(f"/runs/{run_id}/evidence", json={"toggle": [{"id": evidence[0]["id"], "is_active": False}]}).status_code == 200
-    assert a.patch(f"/runs/{run_id}/evidence", json={"toggle": [{"id": evidence[0]["id"], "is_active": True}],
+    # b도 🚫 사유를 남겨서 첫 줄이 b의 것일 수 있다 — a가 끌 수 있는 자기 줄을 고른다(근거 줄 권한은 own, #1294)
+    own_line = next(e for e in evidence if e["permissions"]["can_disable"])
+    assert a.patch(f"/runs/{run_id}/evidence", json={"toggle": [{"id": own_line["id"], "is_active": False}]}).status_code == 200
+    assert a.patch(f"/runs/{run_id}/evidence", json={"toggle": [{"id": own_line["id"], "is_active": True}],
                                                      "add": [{"text": "조용한 곳"}]}).status_code == 200
     assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
