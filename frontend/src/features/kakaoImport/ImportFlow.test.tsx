@@ -178,6 +178,33 @@ describe('카톡 가져오기 — .txt 파일과 여행 얘기를 한 기간(#11
     expect(await screen.findByRole('alert')).toHaveTextContent('.txt 파일만 넣을 수 있어요')
     expect(screen.queryByText(/지도 링크 \d+개/)).not.toBeInTheDocument()
   })
+  it('확장자가 .txt 가 아니면 형식이 text/plain 이어도 읽지 않는다 — 대문자 .TXT 는 받는다', async () => {
+    const user = userEvent.setup({ applyAccept: false })
+    renderSheet()
+    setRange(DAY)
+    await user.upload(screen.getByLabelText('카톡 대화 파일'), new File([MOCK_SAMPLE], 'chat.csv', { type: 'text/plain' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('.txt 파일만 넣을 수 있어요')
+    expect(screen.queryByText(/지도 링크 \d+개/)).not.toBeInTheDocument()
+
+    await user.upload(screen.getByLabelText('카톡 대화 파일'), new File([MOCK_SAMPLE], 'KAKAO.TXT', { type: '' }))
+    expect(await screen.findByText(/지도 링크 \d+개/)).toBeInTheDocument()
+  })
+
+  it('목록이 가득 찬 뒤 새 파일을 넣으면 「더했다」가 아니라 가득 찼다고 알리고, 안내대로 완료된 것을 지우면 더해진다', async () => {
+    const lines = (from: number, n: number) =>
+      Array.from({ length: n }, (_, i) => `2026년 11월 2일 오전 1:00, 친구A : https://place.map.kakao.com/mock-${from + i}`).join('\n')
+    const previews = capture(`/maps/${MAP}/pins/link-preview`)
+    renderSheet()
+    await pickFile(lines(1, 50), '대화 파일 넣기')
+    await screen.findByText('지도 링크 50개')
+    await waitFor(() => expect(previews).toHaveLength(5))
+
+    // 가득 찬 목록에 새 링크 — 아무것도 더해지지 않고 이유를 알린다(기간을 좁혀도 풀리지 않는다)
+    await pickFile(lines(51, 3), '다른 대화 파일 더하기')
+    expect(await screen.findByRole('alert')).toHaveTextContent('목록이 가득 차서 새 링크를 더하지 못했어요')
+    expect(screen.getByText('지도 링크 50개')).toBeInTheDocument()
+    expect(previews).toHaveLength(5)
+  })
 })
 
 describe('카톡 가져오기 — 누적·새로고침 뒤 유지·버튼(#1045)', () => {

@@ -56,10 +56,11 @@ export default function ImportSheet({
 const NOTICE: Record<Exclude<AddResult, 'added'>, string> = {
   noLinks: '이 기간에 지도 링크가 없어요. 기간을 넓혀 다시 넣어 주세요',
   noDates: '날짜를 읽지 못했어요. 「대화 내보내기」로 받은 파일인지 확인해 주세요',
+  full: '목록이 가득 차서 새 링크를 더하지 못했어요. 지금 목록을 찍고 「완료된 것 지우기」를 누른 뒤 다시 넣어 주세요',
 }
 
 /** .txt 만 받는다 — accept 는 고르는 창의 힌트일 뿐이라 이름·형식을 한 번 더 본다. */
-const isTextFile = (file: File) => /\.txt$/i.test(file.name) || file.type === 'text/plain'
+const isTextFile = (file: File) => /\.txt$/i.test(file.name)
 
 /**
  * 기간(여행 얘기를 한 날짜) 두 칸 + 대화 파일 넣기(#1139). 기간을 고르기 전에는 파일을 넣지 못한다.
@@ -211,7 +212,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
             모두 비우기
           </button>
         </div>
-        {imp.truncated && <p className="text-xs text-warn-text">앞부분만 읽었어요. 기간을 좁혀 다시 넣어 주세요</p>}
+        {imp.truncated && <p className="text-xs text-warn-text">일부 링크는 더하지 못했어요. 찍고 「완료된 것 지우기」를 누른 뒤 나머지 기간을 다시 넣어 주세요</p>}
       </div>
 
       {imp.error != null && (

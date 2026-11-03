@@ -31,8 +31,8 @@ import { clearImport, loadImport, saveImport } from './storage'
 /** idle: 할 일 없음 · checking: 링크 미리보기 중 · saving: 핀 찍는 중. 결과는 같은 목록에 쌓인다(끝난 화면을 따로 두지 않는다, #1045). */
 export type ImportPhase = 'idle' | 'checking' | 'saving'
 
-/** 파일 하나를 넣은 결과. noLinks: 그 기간에 지도 링크가 없다 · noDates: 날짜를 하나도 읽지 못했다(내보내기 파일이 아니다, #1139). */
-export type AddResult = 'added' | 'noLinks' | 'noDates'
+/** 파일 하나를 넣은 결과. noLinks: 그 기간에 지도 링크가 없다 · noDates: 날짜를 하나도 읽지 못했다(내보내기 파일이 아니다, #1139) · full: 목록이 가득 차서 새 링크를 하나도 못 더했다(찍고 완료된 것을 지워야 더할 수 있다). */
+export type AddResult = 'added' | 'noLinks' | 'noDates' | 'full'
 
 type Outcome = NonNullable<BulkPinItemResultDto['status']>
 
@@ -207,6 +207,11 @@ export function useLinkImport(mapId: string, near: LatLng | null = null) {
       if (!dated) return 'noDates'
       if (shares.length === 0) return 'noLinks'
       const merged = mergeRows(useImportStore.getState().rows, shares)
+      // 누적 상한(50줄)이 이미 찼다면 새 링크가 하나도 안 들어간다 — 「더했다」고 하지 말고 따로 알린다. 기간을 좁혀도 풀리지 않는다.
+      if (merged.added === 0 && merged.truncated) {
+        patch({ truncated: true })
+        return 'full'
+      }
       // 파일 하나에서 상한을 넘은 링크(readShares 가 자른 것)도 넘친 것으로 센다.
       patch({ rows: merged.rows, truncated: merged.truncated || found > shares.length, lastSaved: null })
       if (merged.added > 0) void checkRemaining(mapId)
