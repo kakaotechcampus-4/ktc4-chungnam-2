@@ -1,0 +1,75 @@
+name: uptime
+# 운영·스테이징이 살아 있는지 서버 밖에서 10분마다 본다(#1280). 서버 안 cron은 서버가 죽으면 같이 죽는다.
+# 주소마다 화면(/)과 API(/api/health — 실시간 디스패처까지 본다)를 확인한다. 한 번 실패하면 30초 뒤 한 번 더 보고,
+# 두 번 다 실패한 주소만 장애로 센다.
+# 장애면 이슈를 하나 연다(이미 열려 있으면 그대로 둔다 — 10분마다 코멘트를 쌓지 않는다). 모두 회복하면 회복 코멘트를 남기고 닫는다.
+# 비밀값을 쓰지 않는다. 예약 실행은 GitHub 사정으로 몇 분 밀릴 수 있다(감시 간격은 「10분 안팎」).
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+env:
+  TITLE: "[경보] 운영·스테이징 헬스 체크 실패"
+  LABEL: "area:공통"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 주소 확인
+        id: probe
+        run: |
+          urls=(
+            "https://ktc-pingopingo.duckdns.org/"
+            "https://ktc-pingopingo.duckdns.org/api/health"
+            "https://staging.ktc-pingopingo.duckdns.org/"
+            "https://staging.ktc-pingopingo.duckdns.org/api/health"
+          )
+          probe() { curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$1" 2>/dev/null || echo 000; }
+          failed=""
+          for url in "${urls[@]}"; do
+            code=$(probe "$url")
+            if [ "$code" != 200 ]; then
+              sleep 30
+              code=$(probe "$url")
+            fi
+            echo "$url -> $code"
+            [ "$code" = 200 ] || failed+="- \`$url\` → $code"$'\n'
+          done
+          {
+            echo "failed<<EOF"
+            printf '%s' "$failed"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 이슈 열기·닫기
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FAILED: ${{ steps.probe.outputs.failed }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          open=$(gh issue list --state open --label "$LABEL" --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
+          now=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST')
+          if [ -n "$FAILED" ]; then
+            if [ -z "$open" ]; then
+              body=$(printf '%s 에 응답하지 않는 주소가 있다(30초 뒤 다시 봐도 실패).\n\n%s\n실행 기록: %s\n\n서버 접속은 `deploy_rules.md` 「서버 처음 준비」(Session Manager), 롤백은 「배포할 때마다」. 회복하면 이 이슈는 자동으로 닫힌다.' "$now" "$FAILED" "$RUN_URL")
+              gh issue create --title "$TITLE" --label "$LABEL" --body "$body"
+            fi
+            echo "::error::헬스 체크 실패"$'\n'"$FAILED"
+            exit 1
+          fi
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$now 모든 주소가 200으로 회복했다. 실행 기록: $RUN_URL"
+            gh issue close "$open"
+          fi

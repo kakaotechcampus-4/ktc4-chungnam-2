@@ -1,9 +1,11 @@
 import type { components } from '@pingo/contracts/src/types/api'
 
+import { ApiError } from '@/api'
 import { FILTER_CATEGORIES, isPlaced, type Pin, type PinCreateRequest } from '@/features/map/model'
 
 export type PlaceSearchResultDto = components['schemas']['PlaceSearchResult']
 export type LinkParseResultDto = components['schemas']['LinkParseResult']
+export type ExternalSearchDto = components['schemas']['ExternalSearch']
 
 /**
  * 검색창에 붙여넣은 값이 링크인가(#487). 링크면 이름 검색 대신 서버가 링크를 해석한다.
@@ -79,7 +81,9 @@ export function toSearchResult(r: PlaceSearchResultDto, center: LatLng | null, p
  */
 export function searchPinRequest(r: PlaceSearchResultDto): PinCreateRequest | null {
   if (!r.category) return null
-  return { source: 'search', place_id: r.place_id, place_name: r.place_name, lat: r.lat, lng: r.lng, category: r.category }
+  // 주소도 보낸다. 이름이 같은 지점이 30m 안에 있으면 서버가 주소로 가린다(#1056, PinCreateSearch.address).
+  const { place_id, place_name, lat, lng, category, address } = r
+  return { source: 'search', place_id, place_name, lat, lng, category, ...(address ? { address } : {}) }
 }
 
 /**
@@ -90,4 +94,11 @@ export function livePinRequest(r: PlaceSearchResultDto, query: string, memo?: st
   const category = r.category
   if (!category || !FILTER_CATEGORIES.includes(category) || !query) return null
   return { source: 'live', category, kakao_place_id: r.place_id, search_query: query.slice(0, 100), ...(memo ? { memo } : {}) }
+}
+
+/** docs/errors.md — 핀 만들기 실패. */
+export function pinErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.code === 'PIN_DUPLICATE') return '이미 지도에 있는 장소예요'
+  if (err instanceof ApiError && err.code === 'PLACE_NOT_SUPPORTED') return '아직 지원하지 않는 장소예요'
+  return '핀을 찍지 못했어요'
 }

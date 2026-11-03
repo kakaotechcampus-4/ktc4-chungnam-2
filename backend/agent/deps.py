@@ -14,6 +14,9 @@ planner다(#532): dev는 fixed planner, real은 real planner.
 - status(#1168): 지도 현황 문단(`llm.api.agent_status`, 명세 8.2). 입력은 core.status_cells의 칸뿐이다. 결과와 사용량을
   `AgentReply(result, usage)`로 돌려준다. dev 스텁은 칸에서 어긋나지 않는 상태와 숫자 없는 고정 문구를 낸다 — 검증을 늘 통과해
   저장·응답 경로를 dev에서도 지나간다.
+- web_check(#1216): 웹 확인(`llm.api.web_check`, 명세 6.8). 입력은 장소 이름, 동네, 특징 이름과 금지 표현 목록(agent.core)뿐이다.
+  예산 확인은 llm이 한다. 결과는 `WebCheckResult`(found|not_found|paused|failed)이고 실패도 예외가 아니다. dev 스텁은 웹을 찾지 않아
+  늘 failed다 — 칸도 저장도 없고, 찾아보지 않은 dev에서 「찾지 못했어요」라고 말하지 않는다(#1221). 예산을 넘으면 dev에서도 paused다.
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -44,6 +47,10 @@ class AgentLlmGateway(Protocol):
 
     def status(self, status_input: Mapping[str, Any]) -> AgentReply[StatusOutput]: ...
 
+    def web_check(
+        self, *, place_name: str, area: str | None, feature: str, forbidden: Sequence[str],
+    ) -> llm_api.WebCheckResult: ...
+
 
 class FixedAgentLlmGateway:
     """고정 응답 스텁 — 모델을 부르지 않는다. llm.api 함수에 fixed planner를 넘겨 오케스트레이션(도구 콜백, 실패 처리)은
@@ -63,6 +70,12 @@ class FixedAgentLlmGateway:
     def status(self, status_input: Mapping[str, Any]) -> AgentReply[StatusOutput]:
         return llm_api.agent_status(status_input, planner=llm_api.fixed_status_planner)
 
+    def web_check(
+        self, *, place_name: str, area: str | None, feature: str, forbidden: Sequence[str],
+    ) -> llm_api.WebCheckResult:
+        return llm_api.web_check(place_name=place_name, area=area, feature=feature, forbidden=forbidden,
+                                 planner=llm_api.fixed_web_check_planner)
+
 
 class RealAgentLlmGateway:
     """실제 모델(gpt-6-luna). summarize는 고정 문구라 llm 함수가 없다 — 부르면 바로 실패한다(real이라고 떴는데 스텁이 도는
@@ -78,6 +91,12 @@ class RealAgentLlmGateway:
 
     def status(self, status_input: Mapping[str, Any]) -> AgentReply[StatusOutput]:
         return llm_api.agent_status(status_input, planner=llm_api.real_status_planner)
+
+    def web_check(
+        self, *, place_name: str, area: str | None, feature: str, forbidden: Sequence[str],
+    ) -> llm_api.WebCheckResult:
+        return llm_api.web_check(place_name=place_name, area=area, feature=feature, forbidden=forbidden,
+                                 planner=llm_api.real_web_check_planner)
 
     def summarize(self, summary_input: Mapping[str, Any]) -> SummaryOutput:
         raise NotImplementedError("llm.api.agent_summarize가 없다 — 요약 문장은 고정 문구다(2026-10-16, #588에서 재검토)")

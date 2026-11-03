@@ -144,7 +144,7 @@ def read_map_items(db: Session, map_id: str) -> tuple[goals_mod.SummaryItem, ...
     labels = recommend_api.fact_labels()
     return tuple(
         goals_mod.SummaryItem(row.category, item["fact_key"], bool(item["wants"]), int(item["member_count"]),
-                              labels.get(item["fact_key"], item["fact_key"]))
+                              labels.get(item["fact_key"], item["fact_key"]), must_keep=section == "must_keep")
         for row in agent_service.list_summaries(db, map_id)
         for section in MAP_SUMMARY_SECTIONS
         for item in (row.summary or {}).get(section, ())

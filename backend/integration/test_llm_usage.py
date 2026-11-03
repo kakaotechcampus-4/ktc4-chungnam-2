@@ -91,6 +91,32 @@ def test_default_sink_writes_a_row(db_session, monkeypatch):
     assert row.cost_krw == usage.cost_krw(usage.TokenCounts(3700, 3600, 0, 90))
 
 
+def test_daily_spend_sums_from_kst_midnight_and_web_searches_are_stored(db_session, monkeypatch):
+    """서비스 일일 예산(#1216, agent-v2 19절)이 읽는 합계 — KST 0시부터의 cost_krw 전부(웹 확인만이 아니다). 기본 sink는 web_searches를
+    쓴다."""
+    from common.kst import kst_day_start
+
+    monkeypatch.setattr(usage, "SessionLocal", sessionmaker(bind=db_session.connection(), join_transaction_mode="create_savepoint"))
+    monkeypatch.setattr(usage, "sink", usage._write_row)
+    monkeypatch.setattr(usage, "spent_reader", usage._sum_since)
+    now = datetime.now(timezone.utc)
+    yesterday = _row()
+    yesterday.created_at, yesterday.cost_krw = kst_day_start(now) - timedelta(minutes=1), 500.0
+    today = _row()
+    today.cost_krw = 1.5
+    db_session.add_all([yesterday, today])
+    db_session.flush()
+
+    assert usage.spent_today(now) == 1.5
+
+    with llm_api.usage_context("agent_web_check", map_id="m-web"):
+        usage.record_call(call="agent_web_check", prompt_version="webcheck-v1", completion=None, outcome="ok", elapsed_ms=1,
+                          web_searches=2)
+    [row] = db_session.execute(select(LlmCall).where(LlmCall.map_id == "m-web")).scalars().all()
+    assert (row.web_searches, row.cost_krw) == (2, 2 * usage.settings.llm_price_web_search_krw)
+    assert usage.spent_today(now) == 1.5 + row.cost_krw
+
+
 def test_withdraw_keeps_rows_but_clears_the_user(db_session, two_users):
     from auth import service as auth_service
 

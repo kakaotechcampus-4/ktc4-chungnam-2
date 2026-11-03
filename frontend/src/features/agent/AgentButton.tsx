@@ -53,7 +53,7 @@ export default function AgentButton({
           {/* 말풍선 꼬리 — 핑고 쪽을 가리킨다. */}
           <span aria-hidden="true" className={`absolute -left-1 bottom-3.5 size-2.5 rotate-45 rounded-[2px] ${BUBBLE_PRESS}`} />
           <span className="relative">핑고 AI 조언</span>
-          {dot && <span aria-hidden="true" className="absolute -right-1 -top-1 size-3 rounded-full bg-brand-600 ring-2 ring-white" />}
+          {dot && <span aria-hidden="true" className="absolute -right-1 -top-1 size-3 rounded-full bg-[var(--notify-dot)] ring-2 ring-white" />}
         </span>
       </button>
       {open && <AgentSheet mapId={mapId} onClose={() => setOpen(false)} />}

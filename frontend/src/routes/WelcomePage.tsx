@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router'
 import { FEATURES } from '@/features/onboarding/features'
 import WelcomeScene from '@/features/onboarding/WelcomeScene'
 import { markWelcomeSeen } from '@/features/onboarding/welcomeSeen'
+import Toaster from '@/features/shell/Toaster'
 import StepDots from '@/ui/StepDots'
 
 /** 이만큼 넘게 옆으로 밀어야 장이 넘어간다. 그 아래는 누르기로 본다(바텀시트 끌기와 같은 값). */
@@ -92,6 +93,12 @@ export default function WelcomePage() {
           </div>
         </div>
       </main>
+
+      {/* 게스트가 카카오로 전환하면 목록을 거쳐 이 화면에 먼저 온다 — 그 결과 토스트(`guestMergedMessage`)를 여기서 보인다.
+          모바일은 바닥의 「다음」 버튼과 점을 가리지 않게 그 위에 띄운다. */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-28 top-0 z-[60] md:bottom-0">
+        <Toaster docked controlsVisible={false} />
+      </div>
     </div>
   )
 }

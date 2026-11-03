@@ -9,6 +9,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from authz.core import Principal
+from common.errors import AppError
+from maps import api as maps_api
 from pins import api as pins_api
 from shortlist import flows, service
 from shortlist.models import ShortlistItem
@@ -45,6 +47,18 @@ def list_items_for_agent(db: Session, *, map_id: str) -> list[dict]:
     """agent 스냅샷(docs/agent-v2.md 12.7, #522)이 부른다 — `[{pin_id, added_by, added_at}]`, added_at 순.
     count_confirmed와 같은 기준(map_id만)이라 소프트 삭제된 핀의 항목도 그대로 담는다. 읽기 전용, 커밋하지 않는다."""
     return service.list_items_for_agent(db, map_id=map_id)
+
+
+def get_schedule_for_agent(db: Session, *, map_id: str) -> dict:
+    """AI 코스(#1238)가 부른다 — `{start_date, end_date, version, items: [{pin_id, added_by, added_at, scheduled_date,
+    visit_order}]}`. 여행 기간은 maps.api에서 받는다. items 순서와 version은 GET /maps/{mapId}/shortlist/schedule과
+    같다(날짜 순, 미배정은 뒤, 같은 날은 visit_order 순). scheduled_date·visit_order는 미배정이면 None이다.
+    list_items_for_agent와 달리 일정 열을 담고 순서가 다르다. 소프트 삭제된 핀의 항목도 담는다(count_confirmed와 같은 기준).
+    읽기 전용이고 잠그지 않으며 커밋하지 않는다. 없거나 삭제된 지도는 404 NOT_FOUND."""
+    info = maps_api.get_map_for_agent(db, map_id)
+    if info is None or info["deleted"]:
+        raise AppError("NOT_FOUND")
+    return service.schedule_for_agent(db, map_id=map_id, start_date=info["start_date"], end_date=info["end_date"])
 
 
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:

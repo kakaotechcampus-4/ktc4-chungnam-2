@@ -355,12 +355,15 @@ def p01():
     """비구성원 404를 id가 든 경로 전부에서(#1096, docs/permissions.md 「비구성원 vs 권한 없음」). 본문은 유효하게 보낸다 —
     422가 404보다 먼저 나오면 권한을 본 게 아니다. 지우는 요청은 맨 뒤에 두고, 끝나고 A의 데이터가 그대로인지 본다.
     404는 앱 오류 본문(code)이 있어야 통과다 — 경로가 없을 때의 404({"detail": "Not Found"})를 권한으로 세지 않는다.
-    핀 휴지통(GET /maps/{id}/trash, POST /pins/{id}/restore)은 서버 구현 전이라 넣지 않았다(#864, 생기면 넣는다)."""
+    휴지통(#1013)과 일정(#1172)을 넣었다. 코스 결과(GET /course-runs/{id})는 코스를 만들어야 해서 W08에서, 개인 채널(GET /maps/{id}/events/me)은 S02에서 본다.
+    에이전트 제안 view·accept·dismiss는 제안 id를 만들 수 없어 뺐다 — 제안은 서버 관찰이 만들고 하네스에서 부를 방법이 없다."""
     _, a = user(); _, b = user(); mid = new_map(a)
     pin = add_pin(a, mid).json()["id"]; pin2 = add_pin(a, mid, skip=1).json()["id"]
     a.put(f"/pins/{pin}/reaction", json={"type": "like"})   # 사유 글 없이 — ② 호출 없음
     review = a.put(f"/pins/{pin}/reviews/me", json={"rating": 4, "body": "QA 후기"}).json()["review"]["id"]
     item = a.post(f"/maps/{mid}/shortlist", json={"pin_id": pin}).json()["id"]
+    pin3 = add_pin(a, mid, skip=2).json()["id"]; a.delete(f"/pins/{pin3}")   # 휴지통에 있는 핀
+    sched_ver = a.get(f"/maps/{mid}/shortlist/schedule").json()["version"]
     tok = a.post(f"/maps/{mid}/invite").json()["token"]
     rid = a.post(f"/maps/{mid}/runs", json={"category": "음식점", "execute": True}).json()["id"]
     cands = (result(a, rid).json() or {}).get("candidates") or []
@@ -387,6 +390,9 @@ def p01():
         ("GET", f"/runs/{rid}/advice", None),
         ("GET", f"/maps/{mid}/shortlist", None), ("POST", f"/maps/{mid}/shortlist", {"pin_id": pin2}),
         ("GET", f"/maps/{mid}/shortlist/export", None), ("PUT", f"/maps/{mid}/shortlist/order", {"item_ids": [item]}),
+        ("GET", f"/maps/{mid}/shortlist/schedule", None),
+        ("PUT", f"/maps/{mid}/shortlist/schedule", {"version": sched_ver, "groups": [{"date": None, "item_ids": [item]}]}),
+        ("GET", f"/maps/{mid}/trash", None), ("POST", f"/pins/{pin3}/restore", None),
         ("GET", f"/maps/{mid}/route", None), ("POST", f"/maps/{mid}/route", None),
         ("GET", f"/maps/{mid}/ads?lat={lat}&lng={lng}", None),
         ("GET", f"/maps/{mid}/agent", None), ("PUT", f"/maps/{mid}/agent/settings", {"enabled": False}),
@@ -400,13 +406,15 @@ def p01():
     for method, path, body in calls:
         r = b.request(method, path, json=body) if body is not None else b.request(method, path)
         if r.status_code != 404 or "code" not in r.json():
-            bad.append(f"{method} {path.replace(mid, '{map}').replace(pin2, '{pin2}').replace(pin, '{pin}').replace(rid, '{run}')} → {r.status_code} {r.text[:40] if r.status_code == 404 else ''}")
+            bad.append(f"{method} {path.replace(mid, '{map}').replace(pin3, '{pin3}').replace(pin2, '{pin2}').replace(pin, '{pin}').replace(rid, '{run}')} → {r.status_code} {r.text[:40] if r.status_code == 404 else ''}")
     check("P01", not bad, f"비구성원 {len(calls)}개 요청 모두 404" + ("" if cands else " (후보 0곳 — publish 빠짐)"),
           f"404가 아닌 {len(bad)}/{len(calls)}개: " + "; ".join(bad))
     pins_after = {p["id"] for p in a.get(f"/maps/{mid}/pins").json()}
     me = (a.get(f"/pins/{pin}/reviews").json() or {}).get("mine")
     kept = a.get(f"/maps/{mid}").status_code == 200 and {pin, pin2} <= pins_after and me and len(a.get(f"/maps/{mid}/shortlist").json()) == 1
-    check("P01.kept", bool(kept), "A의 지도·핀·후기·확정 리스트 그대로", f"지도/핀/후기/확정 중 바뀐 것 있음: 핀 {len(pins_after)}, 후기 {bool(me)}")
+    in_trash = pin3 in {t["pin"]["id"] for t in (a.get(f"/maps/{mid}/trash").json() or {}).get("items", [])}
+    kept = kept and in_trash
+    check("P01.kept", bool(kept), "A의 지도·핀·후기·확정 리스트·휴지통 그대로", f"지도/핀/후기/확정/휴지통 중 바뀐 것 있음: 핀 {len(pins_after)}, 후기 {bool(me)}, 휴지통 {in_trash}")
 
 
 def l02_l03():
@@ -711,7 +719,14 @@ def w08_s07():
     again = c.post(f"/maps/{mid}/courses", json={})
     if again.status_code == 202:   # 로컬 TestClient는 응답 전에 끝난다
         ids.append(again.json()["course_run_id"])
-    runs = [_wait_course(c, i).json() for i in ids]; b1 = _credits(c)["balance"]
+    runs = [_wait_course(c, i).json() for i in ids]
+    _, o = user()   # 비구성원은 404, 같은 지도의 다른 구성원은 403(스펙: 요청자 본인만)
+    r = o.get(f"/course-runs/{ids[0]}")
+    check("W08.view_nonmember", r.status_code == 404 and "code" in r.json(), "코스 결과 비구성원 404", f"{r.status_code} {r.text[:80]}")
+    if gr.status_code == 201:
+        r = g.get(f"/course-runs/{ids[0]}")
+        check("W08.view_member", r.status_code == 403 and r.json().get("code") == "FORBIDDEN", "코스 결과 다른 구성원 403 FORBIDDEN(게스트 차단 GUEST_NOT_ALLOWED와 구분)", f"{r.status_code} {r.text[:80]}")
+    b1 = _credits(c)["balance"]
     sts = [x.get("status") for x in runs]
     busy = again.status_code == 409 and again.json().get("code") == "COURSE_IN_PROGRESS"
     if not busy:
@@ -1164,6 +1179,8 @@ def s02():
     _, a = user(); _, n = user(); mid = new_map(a)
     s = _Sse(n, f"/maps/{mid}/events"); st = s.get(dl); s.close()
     check("S02.nonmember", st == ("status", 404), "비구성원 구독 404", f"{st}")
+    s = _Sse(n, f"/maps/{mid}/events/me"); st = s.get(dl); s.close()
+    check("S02.nonmember_me", st == ("status", 404), "비구성원 개인 채널 구독 404", f"{st}")
 
     def joined(owner, mid):
         uid, b = user(); tok = owner.post(f"/maps/{mid}/invite").json()["token"]

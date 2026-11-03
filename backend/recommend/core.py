@@ -248,24 +248,18 @@ def apply_disqualifier_filters(
 
     hard 체크만 본다. 선호(soft) 라벨(`constraints.SOFT_FACT_KEYS`)의 passed는 "실격 아님"이 아니라
     그 라벨의 참/거짓값이라(예: quiet=False → passed=False), 판정에 섞으면 아무도 원하지 않은
-    조건 때문에 후보가 전멸한다(#208). soft 체크는 선호 점수(score_candidates)의 입력으로만 쓴다.
+    조건 때문에 후보가 전멸한다(#208). 일반 soft 체크는 점수 입력으로 쓴다.
 
-    예외는 사람이 방향을 밝혀 `required`로 낸 soft 사유(#231, `soft_requirements` = (fact_key, wants)).
-    라벨이 known일 때만 본다 — wants=False("한식 말고")는 라벨 참이면, wants=True("조용한 곳이어야 해")는
-    라벨 거짓이면 실격이고, 모름은 통과(needs_check는 체크가 이미 달고 있다). 같은 키에 한 명은 "원함",
-    한 명은 "원하지 않음 required"여도 실격이 먼저다(가드레일 9) — 실격은 여기서만 정해진다."""
+    접근성 원함 예외는 known 거짓만 제거하고 모름은 통과시킨다."""
     return [
         all(check.passed for check in checks if check.fact_key not in constraints.SOFT_FACT_KEYS)
-        and not any(_violates_soft_requirement(checks, fact_key, wants) for fact_key, wants in soft_requirements)
+        and not any(
+            check.fact_key == key and check.confidence == "known" and check.passed != wants
+            for key, wants in soft_requirements if key in constraints.NEED_FILTER_SOFT_KEYS and wants is True
+            for check in checks
+        )
         for checks in candidate_checks
     ]
-
-
-def _violates_soft_requirement(checks: Sequence[Check], fact_key: str, wants: bool) -> bool:
-    for check in checks:
-        if check.fact_key == fact_key and check.confidence == "known":
-            return check.passed != wants  # passed = 라벨의 실제 참/거짓값
-    return False
 
 
 def checks_to_show(checks: Sequence[Check], wanted_fact_keys: Collection[str]) -> list[Check]:
@@ -330,7 +324,13 @@ def out_of_season_keys(start: date | None, end: date | None) -> frozenset[str]:
 class LineUse(NamedTuple):
     enforced: bool
     not_enforced_reason: str | None
-    effect: str | None   # 쓰이면 "filter"(후보를 거른다, required) | "score"(점수만, preferred), 안 쓰이면 None(#751)
+    effect: str | None   # hard·접근성 예외는 "filter", 일반 soft는 "score", 안 쓰이면 None(#751)
+
+    @property
+    def filters_candidates(self) -> bool | None:
+        """이 줄이 후보를 거르는가(#1260). 쓰이는 줄(enforced)이면 effect가 "filter"일 때 참, "score"면 거짓이고, 안 쓰이면 None이다.
+        근거 응답과 실행 스냅샷이 effect를 다시 해석하지 않고 이 값을 받는다."""
+        return self.effect == "filter" if self.enforced else None
 
 
 def evidence_line_use(
@@ -340,7 +340,7 @@ def evidence_line_use(
     기준이자 근거 응답이 보이는 값이라 이 함수 하나가 정한다. 이유는 no_key → off_season → 배지별 순서로 고른다:
     required+hard 키는 카테고리에 맞아야, soft 키(required·preferred)는 방향(wants)이 있어야 쓰인다.
     그 밖(hard도 soft도 아닌 키, preferred인 hard 키)은 not_for_category, reference는 no_direction.
-    쓰이는 required 줄은 실격 필터(_hard_fact_keys_from, _soft_requirements_from)에, preferred 줄은 점수에 들어간다."""
+    hard와 접근성 필요 조건은 필터에, 나머지 방향이 있는 soft 줄은 점수에 들어간다."""
     if fact_key is None:
         return LineUse(False, "no_key", None)
     if fact_key in off_season:
@@ -352,7 +352,8 @@ def evidence_line_use(
     if badge in ("required", "preferred") and fact_key in constraints.SOFT_FACT_KEYS:
         if wants is None:
             return LineUse(False, "no_direction", None)
-        return LineUse(True, None, "filter" if badge == "required" else "score")
+        effect = "filter" if badge == "required" and wants is True and fact_key in constraints.NEED_FILTER_SOFT_KEYS else "score"
+        return LineUse(True, None, effect)
     if badge not in ("required", "preferred"):
         return LineUse(False, "no_direction", None)
     return LineUse(False, "not_for_category", None)
@@ -373,7 +374,7 @@ def applied_evidence_entries(lines: Sequence[Any], category: str, off_season: Co
         entries.append({
             "id": str(line.id), "author_id": line.author_id, "text": line.text, "badge": line.badge,
             "fact_key": line.fact_key, "wants": line.wants, "enforced": use.enforced,
-            "not_enforced_reason": use.not_enforced_reason, "is_active": True,
+            "not_enforced_reason": use.not_enforced_reason, "filters_candidates": use.filters_candidates, "is_active": True,
         })
     return entries
 
@@ -557,13 +558,17 @@ class HeartedPlace:
 
 @dataclass(frozen=True)
 class ScoredCandidate:
-    """3단계(상위 N곳 고르기) 입력 — 후보 하나의 점수·소속 동네·좌표."""
+    """3단계(상위 N곳 고르기) 입력 — 후보 하나의 점수·소속 동네·좌표.
+
+    met_conditions는 카드에 싣는 충족 집계(`build_member_fulfillment`)의 met 수(`met_condition_count`)다 —
+    같은 점수끼리의 순서에만 쓴다(#1288)."""
 
     place_id: str
     score: int
     region_label: str
     lat: float
     lng: float
+    met_conditions: int = 0
 
 
 def filter_heart_signals(hearted_places: Sequence[HeartedPlace], category: str) -> list[HeartedPlace]:
@@ -789,6 +794,14 @@ def build_member_fulfillment(
     }
 
 
+def met_condition_count(fulfillment: Mapping) -> int:
+    """`build_member_fulfillment` 결과에서 구성원별 conditions[] 중 met인 것의 합 — 화면 「조건 n/m 충족」의 n을 다 더한 값.
+    새로 판정하지 않고 카드에 싣는 결과를 읽기만 한다. 같은 점수끼리의 순서에 쓴다(#1288)."""
+    return sum(
+        1 for member in fulfillment["by_member"] for condition in member["conditions"] if condition["status"] == "met"
+    )
+
+
 def _member_condition_entries(
     member_id: str,
     preferences: Collection[str],
@@ -858,13 +871,12 @@ def select_top_candidates(
     *,
     limit: int = 3,
 ) -> list[str]:
-    """3단계 — 상위 N곳(기본 3곳) 고르기(이슈 #112).
+    """상위 limit곳을 한 곳씩 고른다(docs/constraints.md 「상위 3곳 선택」). 매번 남은 후보 중 이 순서로 가장 앞선 곳이다.
 
-    한 번에 정렬하지 않고 점수 높은 순으로 하나씩 집는다 — 동네 배분 tie-break가 "이미 뽑힌
-    동네"에 따라 달라지기 때문이다. 우선순위: 1) 점수(무조건 우선 — 동네 배분이 점수를 이기지
-    않는다) 2) 점수가 같으면 아직 안 뽑힌 동네(region_label) 우선 3) 그래도 같으면 그 무리의
-    기준 핀들까지 거리 "평균"(합이 아니다 — 무리마다 기준 핀 개수가 달라 합으로 비교하면
-    핀이 적은 동네가 무조건 유리해진다)이 가까운 쪽.
+      점수 내림차순 → 충족 조건 수(`met_conditions`) 내림차순(#1288) → 아직 안 뽑힌 region_label 우선 → 기준 핀 거리 평균
+
+    지역 안배는 점수와 충족 수를 이기지 못한다 — 둘 다 같을 때만 다른 동네를 먼저 고른다(2026-11-04 결정, #1288.
+    #1252의 「6점 하한 안 무리별 라운드로빈」은 낮은 점수의 동네가 높은 점수를 밀어내 걷어냈다).
 
     anchor_points_by_region에 후보의 region_label 키가 없거나 빈 시퀀스면 ValueError —
     "후보가 존재한다는 건 그 후보가 어떤 원 안에 있다는 뜻이고, 그 원의 중심이 기준 핀이다.
@@ -880,17 +892,17 @@ def select_top_candidates(
         ]
         return sum(distances) / len(distances)
 
+    if limit <= 0:
+        return []
+    distances = {candidate.place_id: avg_distance(candidate) for candidate in candidates}
     remaining = list(candidates)
-    chosen_ids: list[str] = []
-    chosen_regions: set[str] = set()
-
-    while remaining and len(chosen_ids) < limit:
-        best = min(
-            remaining,
-            key=lambda c: (-c.score, c.region_label in chosen_regions, avg_distance(c)),
-        )
-        chosen_ids.append(best.place_id)
-        chosen_regions.add(best.region_label)
+    chosen: list[str] = []
+    picked_regions: set[str] = set()
+    while remaining and len(chosen) < limit:
+        best = min(remaining, key=lambda c: (
+            -c.score, -c.met_conditions, c.region_label in picked_regions, distances[c.place_id],
+        ))
         remaining.remove(best)
-
-    return chosen_ids
+        chosen.append(best.place_id)
+        picked_regions.add(best.region_label)
+    return chosen

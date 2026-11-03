@@ -1,10 +1,11 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { FEATURES } from '@/features/onboarding/features'
 import { hasSeenWelcome } from '@/features/onboarding/welcomeSeen'
+import { showToast } from '@/features/shell/toast'
 
 import WelcomePage from './WelcomePage'
 
@@ -45,6 +46,12 @@ describe('첫 로그인 온보딩', () => {
     await userEvent.click(screen.getByRole('button', { name: '건너뛰기' }))
     expect(screen.getByText('내 지도')).toBeInTheDocument()
     expect(hasSeenWelcome()).toBe(true)
+  })
+
+  it('게스트 전환 뒤 이 화면에 먼저 와도 토스트가 보인다', () => {
+    setup()
+    act(() => showToast('카카오 계정으로 이어졌어요'))
+    expect(screen.getByRole('status')).toHaveTextContent('카카오 계정으로 이어졌어요')
   })
 
   it('저장소가 막힌 브라우저에선 본 것으로 친다 — 목록에 올 때마다 다시 뜨지 않게', () => {

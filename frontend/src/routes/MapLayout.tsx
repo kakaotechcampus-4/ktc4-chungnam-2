@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate, useParams } 
 import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Route, Search, Users, type LucideIcon } from 'lucide-react'
 
 import AgentButton from '@/features/agent/AgentButton'
+import { useMeQuery } from '@/features/auth/queries'
 import { ImportSheetHost } from '@/features/kakaoImport/ImportSheet'
 import { SchedulePanelHost } from '@/features/shortlist/SchedulePanel'
 import { useScheduleOpen } from '@/features/shortlist/scheduleStore'
@@ -27,6 +28,8 @@ import { useRouteStore } from '@/features/shortlist/routeStore'
 import { routeDay } from '@/features/shortlist/schedule'
 import { useTripSchedule } from '@/features/shortlist/useTripSchedule'
 import { useCourseMapStore } from '@/features/course/courseMapStore'
+import { useRecentSearches } from '@/features/search/recentSearchStore'
+import RecentSearches from '@/features/search/RecentSearches'
 import { useSearchStore } from '@/features/search/searchStore'
 import { PANEL_W, RAIL_W, SIDE_PANEL_W, TAB_BAR_H } from '@/features/shell/layout'
 import MapControls, { type ControlKey } from '@/features/shell/MapControls'
@@ -92,11 +95,15 @@ export default function MapLayout() {
   const setStage = useSheetStore((s) => s.setStage)
   const search = useSearchStore()
   const [searchText, setSearchText] = useState('')
+  const [searchFocused, setSearchFocused] = useState(false)
+  const recent = useRecentSearches(useMeQuery().data?.id)
   // 결과 시트에서 「닫기」를 눌러도 입력칸에 글자가 남지 않게, 검색이 닫히면 같이 비운다(#351).
   const [lastSource, setLastSource] = useState(search.source)
   if (lastSource !== search.source) {
     setLastSource(search.source)
     if (search.source === null) setSearchText('')
+    // 오타 제안(「중국집」으로 다시 찾기)처럼 입력칸 밖에서 검색해도 입력칸이 그 검색어를 보인다.
+    else if (search.source.kind === 'name') setSearchText(search.source.query)
   }
   const found = useSourcePlacesQuery(search.source, search.near).data?.places
   // 검색 결과 파란 핀 — 결과나 선택이 바뀔 때만 다시 그린다.
@@ -152,14 +159,20 @@ export default function MapLayout() {
 
   function submitSearch(e: React.FormEvent) {
     e.preventDefault()
-    const q = searchText.trim()
+    runSearch(searchText.trim())
+  }
+
+  function runSearch(q: string) {
     if (!q) return
     // 검색은 마킹 탭의 일이다. 다른 탭에서 검색해도 마킹 탭으로 가서 결과를 보여준다.
     if (!onMarkingTab) navigate(`/maps/${mapId}`)
     const center = controller.current?.getCenter() ?? null
     // 지도 링크를 붙여넣었으면 이름 대신 링크로 장소를 찾는다(#487). 같은 결과 시트에서 핀을 찍는다.
     if (isLinkInput(q)) search.openLink(q, center)
-    else search.submit(q.slice(0, 50), center)
+    else {
+      search.submit(q.slice(0, 50), center)
+      recent.add(q.slice(0, 50))
+    }
     setStage('map', 2)
   }
 
@@ -324,7 +337,7 @@ export default function MapLayout() {
     setActiveControl(key)
   }
 
-  const context: ShellContext = { mapId, activeControl, onControl, connection }
+  const context: ShellContext = { mapId, activeControl, onControl, connection, getCenter: () => controller.current?.getCenter() ?? null }
   // 3단계에서는 칩이 시트 제목 아래로 옮겨 간다(MapTab). 넓은 화면엔 단계가 없다. 검색 중에는 숨긴다(Figma 규칙).
   const chipsShown = onMarkingTab && (desktop || markingStage !== 3) && !search.source
   const fade = mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
@@ -351,6 +364,8 @@ export default function MapLayout() {
     <>
       <MapCanvas
         pins={pins}
+        // 핀이 없으면 지도 만들 때 고른 지역에서 시작한다(없으면 서울).
+        startCenter={mapInfo?.regionCenter}
         selectedPinId={selectedPinId}
         memberCount={memberCount}
         results={searchMarkers}
@@ -391,7 +406,8 @@ export default function MapLayout() {
         {/* 넓은 화면 pb-1: 검색창 포커스 테두리(바깥 4px)가 바로 아래 탭 내용(흰 바탕)에 덮이지 않게 자리를 둔다. */}
         <header
           data-map-header
-          className={desktop ? 'shrink-0 space-y-3 px-4 pb-1 pt-3' : 'pointer-events-none fixed inset-x-0 top-0 z-20 space-y-2 px-4 pt-3'}
+          // 최근 검색 목록이 열리면 바텀시트(z-30) 위쪽에 붙은 지도 버튼보다 위로 올린다.
+          className={desktop ? 'shrink-0 space-y-3 px-4 pb-1 pt-3' : `pointer-events-none fixed inset-x-0 top-0 ${searchFocused ? 'z-40' : 'z-20'} space-y-2 px-4 pt-3`}
         >
           <div className={desktop ? 'flex items-center gap-2' : 'flex items-center justify-between'}>
             {desktop ? (
@@ -426,7 +442,7 @@ export default function MapLayout() {
             {/* 내 이니셜 원은 계정 버튼처럼 읽혀서, 구성원 아이콘 + 인원 수로 "이 지도의 정보·구성원"임을 보인다(#351). */}
             {/* 넓은 화면은 바닥 시트 대신 버튼 아래 메뉴로 연다 — 패널 옆 바닥 시트는 끌리지도 않는 손잡이만 남았다. */}
             {/* 알림함(#483) — 다른 지도의 알림도 여기서 본다. */}
-            {desktop && <NotificationBell />}
+            {desktop && <NotificationBell currentMapId={mapId} />}
             {desktop ? (
               <ProfileMenu
                 mapId={mapId}
@@ -443,7 +459,7 @@ export default function MapLayout() {
               />
             ) : (
               <div className="flex items-center gap-3">
-                <NotificationBell floating />
+                <NotificationBell floating currentMapId={mapId} />
                 <button
                   type="button"
                   aria-label={`지도 정보와 구성원 · ${memberCount}명`}
@@ -459,30 +475,53 @@ export default function MapLayout() {
           {/* 지도 위에는 검색창만 둔다(FE 회의). 지도를 끄는 동안엔 지도에 집중하게 흐려진다. 검색 동작은 #293. */}
           {/* 검색 결과는 화면에 보여 주기만 한다(#53). Enter 나 돋보기를 눌렀을 때만 부른다(호출 상한, api-spec). */}
           {/* 넓은 화면은 패널 안이라 그림자·흐림이 없다(그림자는 지도 위에 떠 있는 것에만). */}
-          <form
-            role="search"
-            inert={!desktop && mapMoving}
-            onSubmit={submitSearch}
-            className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-white px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
-              search.source ? 'border-brand-600' : 'border-ink-200'
-            }${desktop ? '' : ` ${fade}`}`}
+          {/* 포커스가 검색창이나 최근 검색 목록 안에 있는 동안만 목록을 연다. Esc는 닫는다. */}
+          <div
+            className="relative"
+            onFocus={() => setSearchFocused(true)}
+            onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setSearchFocused(false)}
+            onKeyDown={(e) => e.key === 'Escape' && setSearchFocused(false)}
           >
-            <input
-              id="place-search"
-              type="search"
-              enterKeyHint="search"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              maxLength={2000}
-              placeholder="장소 이름 또는 지도 링크"
-              aria-label="장소 검색"
-              className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-ink-500 [&::-webkit-search-cancel-button]:hidden"
-            />
-            {searchText && <ClearButton label="검색어 지우기" onClick={clearSearch} />}
-            <button type="submit" aria-label="검색" className="hit-44 text-brand-600">
-              <Search size={20} />
-            </button>
-          </form>
+            <form
+              role="search"
+              inert={!desktop && mapMoving}
+              onSubmit={submitSearch}
+              className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-white px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
+                search.source ? 'border-brand-600' : 'border-ink-200'
+              }${desktop ? '' : ` ${fade}`}`}
+            >
+              <input
+                id="place-search"
+                type="search"
+                enterKeyHint="search"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                maxLength={2000}
+                placeholder="장소 이름 또는 지도 링크"
+                aria-label="장소 검색"
+                className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-ink-500 [&::-webkit-search-cancel-button]:hidden"
+              />
+              {searchText && <ClearButton label="검색어 지우기" onClick={clearSearch} />}
+              <button type="submit" aria-label="검색" className="hit-44 text-brand-600">
+                <Search size={20} />
+              </button>
+            </form>
+            {searchFocused && !searchText && recent.list.length > 0 && (
+              <RecentSearches
+                list={recent.list}
+                floating={!desktop}
+                onPick={(q) => {
+                  setSearchText(q)
+                  runSearch(q)
+                }}
+                onRemove={recent.remove}
+                onClear={() => {
+                  recent.clear()
+                  document.getElementById('place-search')?.focus()
+                }}
+              />
+            )}
+          </div>
           {!desktop && chipsShown && (
             <CategoryChips
               value={filters.category}
@@ -500,13 +539,15 @@ export default function MapLayout() {
             style={{ minHeight: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
             className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 items-end border-t border-ink-100 bg-white"
           >
-            {TABS.map((tab) =>
-              tab.Icon ? (
-                <TabLink key={tab.path} to={`/maps/${mapId}${tab.path}`} end={tab.end} label={tab.label} icon={<tab.Icon size={24} />} />
-              ) : (
-                <AiTabLink key={tab.path} to={`/maps/${mapId}${tab.path}`} label={tab.label} />
-              ),
-            )}
+            {TABS.map((tab) => (
+              <TabLink
+                key={tab.path}
+                to={`/maps/${mapId}${tab.path}`}
+                end={tab.end}
+                label={tab.label}
+                icon={tab.Icon ? <tab.Icon size={24} /> : <PingoMark size={28} />}
+              />
+            ))}
           </nav>
         )}
       </div>
@@ -557,7 +598,10 @@ const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | nul
   { path: '/course', label: 'AI 코스', Icon: Route },
 ]
 
-/** 비활성 #6B7181(흰 바탕 대비 약 5:1). */
+/**
+ * 하단 탭 칸 하나 — 아이콘 + 11/500 라벨, 비활성 ink-500(흰 바탕 대비 약 5:1). AI 추천도 같은 모양이다(핑고 얼굴).
+ * 3칸일 때 가운데에 두던 AI 원(48px, 떠 있음)은 4칸이 되며 둘째 칸에서 왼쪽으로 치우쳐 보여 뺐다(2026-11-03).
+ */
 function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
   return (
     <NavLink
@@ -567,33 +611,9 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
         `press flex flex-col items-center gap-0.5 rounded-xl pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
       }
     >
-      {icon}
+      {/* 핑고는 선 아이콘보다 커서 같은 칸에 넣어 네 칸 높이를 맞춘다(세로 탭 줄과 같다). */}
+      <span className="flex size-7 items-center justify-center">{icon}</span>
       {label}
-    </NavLink>
-  )
-}
-
-/** 하단 탭의 AI. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 파란 핑고 얼굴, 활성만 파랑 채움 + 흰 얼굴(#299). */
-function AiTabLink({ to, label }: { to: string; label: string }) {
-  return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        `press flex flex-col items-center gap-0.5 rounded-xl pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
-      }
-    >
-      {({ isActive }) => (
-        <>
-          <span
-            className={`flex size-12 items-center justify-center rounded-full shadow-float ${
-              isActive ? 'bg-brand-600' : 'border-2 border-brand-300 bg-white'
-            }`}
-          >
-            <PingoMark size={30} tone={isActive ? 'white' : 'blue'} />
-          </span>
-          {label}
-        </>
-      )}
     </NavLink>
   )
 }

@@ -1,6 +1,6 @@
 """llm 모듈이 소유하는 테이블 1개 — `llm_calls`(마이그레이션 0043, #870).
 
-모델 호출 1건 = 1행이다. 기록은 출구(client.call_planner, client._agent_parse) 한 곳에서 llm.usage가 한다.
+모델 호출 1건 = 1행이다. 기록은 출구(client.call_planner, client._agent_parse, client.call_web_check)에서 llm.usage가 한다.
 - 무엇을 위해 불렀는지(feature), 어느 지도·사람·실행인지(map_id, user_id, run_id)는 부르는 쪽이 `llm.api.usage_context`로 붙인다.
   같은 usage_context 안의 호출은 trace_id가 같다 — run_id가 아직 없는 호출(추천 ②는 run INSERT 전, 진단은 agent_runs INSERT 전)도
   실행 1번 단위로 묶을 수 있다.
@@ -25,10 +25,11 @@ FEATURES = (
     "agent_diagnose",   # 관찰의 진단 — 진단 왕복과 그 안의 ②(사전 비교, structure_reasons, compare_reasons)
     "agent_summary",    # 우리 조건 요약의 ②
     "agent_status",     # 지도 현황 문단(#1168, agent-v2 8.2) — 관찰 끝에서 칸이 바뀔 때만
+    "agent_web_check",  # 웹 확인(#1216, agent-v2 6.8) — 진단 제안의 「모름」 줄 하나. 서비스 일일 예산을 넘으면 부르지 않는다
     "course",           # AI 코스 짜기 — 목표 세우기와 지휘 턴
 )
 # 무엇을 불렀는지 — client의 호출 함수
-CALLS = ("plan_evidence", "agent_diagnose", "agent_status", "course_goals", "course_direct", "course_turn")
+CALLS = ("plan_evidence", "agent_diagnose", "agent_status", "agent_web_check", "course_goals", "course_direct", "course_turn")
 OUTCOMES = ("ok", "refusal", "empty", "timeout", "invalid_schema", "call_failed")
 
 
@@ -62,5 +63,7 @@ class LlmCall(Base):
     # 뒤 묶음이 실패하거나 시간 상한을 넘으면 앞 묶음, 모델 뒤 run 저장·상한 재검사가 실패하면 그 trace의 성공 호출이 버려진 비용이다.
     batch_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     discarded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    # #1216 — 그 호출 안의 웹 검색 횟수(Responses 응답의 web_search_call 수). 웹 확인 밖은 0. cost_krw에 × LLM_PRICE_WEB_SEARCH_KRW로 들어 있다
+    web_searches: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     elapsed_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

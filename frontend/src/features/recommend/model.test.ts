@@ -4,13 +4,18 @@ import { ApiError } from '@/api'
 
 import {
   evidenceLimitMessage,
+  fulfillmentLine,
   groupEvidence,
   hasExcluded,
+  memberConditions,
   noResultsExternalSearch,
   notEnforcedNote,
   toReadinessCards,
+  type CandidateDto,
   visibleConditionCount,
+  runHistoryLine,
   type EvidenceLineDto,
+  type RunSummaryDto,
 } from './model'
 
 const search = { query: '춘천 한식', url: 'https://map.kakao.com/link/search/춘천 한식' }
@@ -84,10 +89,67 @@ describe('「+」 직접 추가 상한(#720)', () => {
   })
 })
 
+describe('구성원 조건별 충족(#796)', () => {
+  const members = [
+    { userId: 'u1', name: '지우', isMe: true },
+    { userId: 'u2', name: '민재', isMe: false },
+    { userId: 'u3', name: '준영', isMe: false },
+  ]
+  const cand = (by: NonNullable<CandidateDto['member_fulfillment']['by_member']>) =>
+    ({ member_fulfillment: { satisfied: 1, total: 2, by_member: by } }) as CandidateDto
+
+  it('조건별 상태를 못 맞춘 것 → 확인 필요 → 맞춘 것 순으로 세고, 이름이 없으면 키를 그대로 쓴다', () => {
+    const c = cand([
+      {
+        user_id: 'u1',
+        satisfied: false,
+        conditions: [
+          { fact_key: 'spicy_focused', fact_label: '매운맛 전문', status: 'met' },
+          { fact_key: 'parking_available', fact_label: null, status: 'needs_check' },
+          { fact_key: 'quiet', fact_label: '조용함', status: 'unmet' },
+        ],
+      },
+      { user_id: 'u2', satisfied: true },
+    ])
+    expect(memberConditions(c, members)).toEqual([
+      {
+        userId: 'u1',
+        name: '지우 (나)',
+        met: 1,
+        checks: [
+          { label: '조용함', tone: 'fail' },
+          { label: 'parking_available', tone: 'check' },
+          { label: '매운맛 전문', tone: 'pass' },
+        ],
+      },
+    ])
+    expect(fulfillmentLine(c, members)).toBe('지우 (나) 조건 1/3 충족 · 민재 통과 · 준영은 건 조건 없음')
+  })
+
+  it('conditions 가 없으면(구버전 서버) 지금 한 줄 그대로다', () => {
+    const c = cand([{ user_id: 'u1', satisfied: true }, { user_id: 'u2', satisfied: true }])
+    expect(memberConditions(c, members)).toEqual([])
+    expect(fulfillmentLine(c, members)).toBe('조건을 건 지우 (나)·민재 모두 통과 · 준영은 건 조건 없음')
+  })
+})
+
 describe('후보를 다 보여 준 뒤의 안내(#1142)', () => {
   it('excluded 단계가 0보다 크면 참, 0이거나 key가 없으면 거짓', () => {
     expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 13 }])).toBe(true)
     expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 0 }])).toBe(false)
     expect(hasExcluded([{ label: '이미 제안·거절됨', removed_count: 13 }])).toBe(false)
+  })
+})
+
+describe('runHistoryLine (#482 지난 추천)', () => {
+  const r = (over: Partial<RunSummaryDto>): RunSummaryDto => ({ id: 'r', map_id: 'm', category: '음식점', status: 'done', attempt_no: 1, created_at: '2026-11-01T00:00:00Z', candidate_count: 3, published_count: 0, ...over })
+  it('끝난 추천은 찾은 수와 올린 수, 끝나지 않았으면 상태', () => {
+    expect([r({}), r({ published_count: 1 }), r({ candidate_count: 0 }), r({ status: 'failed' }), r({ status: 'executing' })].map(runHistoryLine)).toEqual([
+      '3곳 찾음',
+      '3곳 찾음 · 지도에 올림 1곳',
+      '찾은 곳 없음',
+      '끝내지 못했어요',
+      '찾는 중',
+    ])
   })
 })
