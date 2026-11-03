@@ -26,8 +26,8 @@ export interface LegalDoc {
  */
 export const LEGAL_META = {
   operator: '핑고핑고 팀',
-  officer: '',
-  contact: '',
+  officer: '장현성',
+  contact: 'pingopingo.team@gmail.com',
   effectiveDate: '',
 }
 
