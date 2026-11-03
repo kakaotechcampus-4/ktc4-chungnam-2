@@ -31,8 +31,6 @@ KNOWN_CREDITS_DRIFT: dict[tuple[str, ...], str] = {
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
-    ("GET", "/maps/{mapId}/shortlist/schedule"): "서버 구현 #1172",
-    ("PUT", "/maps/{mapId}/shortlist/schedule"): "서버 구현 #1172",
     ("GET", "/maps/{mapId}/trash"): "핀 휴지통 목록 — 서버 구현 전(#864, 이슈 #1013). 구현되면 지운다",
     ("POST", "/pins/{pinId}/restore"): "지운 핀 복구 — 서버 구현 전(#864, 이슈 #1013). 구현되면 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
@@ -282,6 +280,11 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.get(f"/maps/{map_id}/shortlist").status_code == 200
     item_ids = [i["id"] for i in a.get(f"/maps/{map_id}/shortlist").json()]
     assert a.put(f"/maps/{map_id}/shortlist/order", json={"item_ids": list(reversed(item_ids))}).status_code == 200
+    schedule = a.get(f"/maps/{map_id}/shortlist/schedule")
+    assert schedule.status_code == 200
+    payload = schedule.json()
+    saved = a.put(f"/maps/{map_id}/shortlist/schedule", json={"version": payload["version"], "groups": [{"date": None, "item_ids": item_ids}]})
+    assert saved.status_code == 200
     assert a.post(f"/maps/{map_id}/route").status_code in (200, 201)
     assert a.get(f"/maps/{map_id}/route").status_code == 200
 
@@ -291,7 +294,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert export_txt.headers["content-disposition"].startswith("attachment")
     export_csv = a.get(f"/maps/{map_id}/shortlist/export", params={"format": "csv"})
     assert export_csv.status_code == 200 and export_csv.headers["content-type"].startswith("text/csv")
-    assert export_csv.content.startswith("\ufeff순서,".encode())
+    assert export_csv.content.startswith("\ufeff날짜,순서,".encode())
     assert len(export_csv.text.splitlines()) == 1 + len(item_ids)
     assert a.get(f"/maps/{map_id}/shortlist/export", params={"format": "pdf"}).status_code == 422
     assert b.get(f"/maps/{map_id}/shortlist/export").status_code == 200
