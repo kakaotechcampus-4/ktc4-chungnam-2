@@ -847,19 +847,19 @@ def build_reason(candidate_checks: Sequence[Check], criteria: Mapping[str, bool]
     return " · ".join(parts) if parts else "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
 
 
+SCORE_FLOOR_GAP = 6  # 지도 최고 점수보다 이 점수만큼까지 낮은 후보는 무리 안배에 참여한다(#1252).
+
+
 def select_top_candidates(
     candidates: Sequence[ScoredCandidate],
     anchor_points_by_region: Mapping[str, Sequence[tuple[float, float]]],
     *,
     limit: int = 3,
 ) -> list[str]:
-    """3단계 — 상위 N곳(기본 3곳) 고르기(이슈 #112).
+    """점수 하한 안에서 무리별 최고 점수 순으로 라운드로빈하고, 모자라면 남은 후보를 점수순으로 채운다.
 
-    한 번에 정렬하지 않고 점수 높은 순으로 하나씩 집는다 — 동네 배분 tie-break가 "이미 뽑힌
-    동네"에 따라 달라지기 때문이다. 우선순위: 1) 점수(무조건 우선 — 동네 배분이 점수를 이기지
-    않는다) 2) 점수가 같으면 아직 안 뽑힌 동네(region_label) 우선 3) 그래도 같으면 그 무리의
-    기준 핀들까지 거리 "평균"(합이 아니다 — 무리마다 기준 핀 개수가 달라 합으로 비교하면
-    핀이 적은 동네가 무조건 유리해진다)이 가까운 쪽.
+    각 무리 안의 동점은 기준 핀까지의 거리 평균으로 푼다. 최고점보다 SCORE_FLOOR_GAP을 초과해 낮은
+    후보는 라운드로빈에서만 제외한다. 그 후 빈자리는 하한 밖 후보를 포함한 남은 전체에서 점수순으로 채운다.
 
     anchor_points_by_region에 후보의 region_label 키가 없거나 빈 시퀀스면 ValueError —
     "후보가 존재한다는 건 그 후보가 어떤 원 안에 있다는 뜻이고, 그 원의 중심이 기준 핀이다.
@@ -875,17 +875,25 @@ def select_top_candidates(
         ]
         return sum(distances) / len(distances)
 
-    remaining = list(candidates)
-    chosen_ids: list[str] = []
-    chosen_regions: set[str] = set()
+    if not candidates or limit <= 0:
+        return []
+    ordered = sorted(candidates, key=lambda c: (-c.score, avg_distance(c)))
+    floor = ordered[0].score - SCORE_FLOOR_GAP
+    groups: dict[str, list[ScoredCandidate]] = {}
+    for candidate in ordered:
+        if candidate.score >= floor:
+            groups.setdefault(candidate.region_label, []).append(candidate)
 
-    while remaining and len(chosen_ids) < limit:
-        best = min(
-            remaining,
-            key=lambda c: (-c.score, c.region_label in chosen_regions, avg_distance(c)),
-        )
-        chosen_ids.append(best.place_id)
-        chosen_regions.add(best.region_label)
-        remaining.remove(best)
-
-    return chosen_ids
+    chosen: list[ScoredCandidate] = []
+    while len(chosen) < limit and any(groups.values()):
+        for group in groups.values():
+            if group and len(chosen) < limit:
+                chosen.append(group.pop(0))
+    chosen_ids = {candidate.place_id for candidate in chosen}
+    for candidate in ordered:
+        if len(chosen) >= limit:
+            break
+        if candidate.place_id not in chosen_ids:
+            chosen.append(candidate)
+            chosen_ids.add(candidate.place_id)
+    return [candidate.place_id for candidate in chosen]

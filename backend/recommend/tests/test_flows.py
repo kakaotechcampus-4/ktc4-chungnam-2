@@ -1441,6 +1441,19 @@ def test_default_anchor_order_is_stable_when_pin_query_order_changes(monkeypatch
     assert first == second
 
 
+def test_pipeline_balances_two_regions_and_stores_each_candidate_region(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    region_a = _make_region(db_session, run, center_lat=35.0, radius_m=500, label="A")
+    region_b = _make_region(db_session, run, center_lat=35.1, radius_m=500, label="B")
+    places = [PlaceStub("a1", 35.0, 129.0), PlaceStub("a2", 35.0002, 129.0),
+              PlaceStub("a3", 35.0003, 129.0), PlaceStub("b1", 35.1001, 129.0)]
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_CirclePlaceSearch(places),
+                      place_facts=_FakePlaceFacts())
+    candidates = sorted(service.list_candidates(db_session, str(run.id)), key=lambda c: c.rank)
+    assert [c.place_id for c in candidates] == ["a1", "b1", "a2"]
+    assert [c.region_id for c in candidates] == [region_a.id, region_b.id, region_a.id]
+
+
 class _RecordingPlaceFacts(_FakePlaceFacts):
     """라벨과 영업시간을 읽은 장소를 남긴다 — 반경 밖 장소는 읽지 않아야 한다."""
 
