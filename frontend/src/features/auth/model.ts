@@ -22,7 +22,7 @@ export function guestMergedMessage(value: string | null): string | null {
 export type PendingAccountDto = components['schemas']['PendingAccount']
 export type PendingChoice = components['schemas']['PendingChoiceRequest']['choice']
 
-/** 되살릴 수 있는 마지막 시각 — 「11.2 (월) 15:00」. 다른 화면의 날짜 표기(`M.D (요일)`)에 시각만 붙였다. */
+/** 복구할 수 있는 마지막 시각 — 「11.2 (월) 15:00」. 다른 화면의 날짜 표기(`M.D (요일)`)에 시각만 붙였다. */
 export function formatRestoreUntil(iso: string): string {
   const d = new Date(iso)
   const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`

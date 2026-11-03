@@ -38,8 +38,8 @@ _RESTAURANT_AND_CAFE: frozenset[str] = frozenset({"음식점", "카페"})
 _CAFE_AND_SIGHT: frozenset[str] = frozenset({"카페", "관광지"})
 _SIGHT: frozenset[str] = frozenset({"관광지"})
 
-# 선호(soft) 조건 — 실격 필터에는 안 쓰이고 선호 점수(core.score_candidates)에만 쓰인다(5-1: 선호는
-# 애초에 걸러내지 않는다). 전부 unknown_policy=pass. 카테고리는 docs/constraints.md 절 그대로다
+# 선호(soft) 조건 — 일반적으로 선호 점수에만 쓰이며 접근성 필요 조건만 필터 예외다(#1253).
+# 전부 unknown_policy=pass. 카테고리는 docs/constraints.md 절 그대로다
 # (공통 절의 pet_friendly만 전 카테고리).
 _SOFT_KEYS_BY_CATEGORY: dict[str, frozenset[str]] = {
     "pet_friendly": _ALL_CATEGORIES,
@@ -76,6 +76,8 @@ SOFT_REGISTRY: dict[str, ConstraintSpec] = {
     key: ConstraintSpec(key, applies_to, "soft", "pass") for key, applies_to in _SOFT_KEYS_BY_CATEGORY.items()
 }
 SOFT_FACT_KEYS: frozenset[str] = frozenset(SOFT_REGISTRY)
+# 휠체어·유모차 이동은 취향이 아닌 필요 조건이므로 반대 사유의 원함만 필터한다(#1253).
+NEED_FILTER_SOFT_KEYS: frozenset[str] = frozenset({"accessible"})
 
 # ♥ 핀 라벨을 선호 신호로 쓰는 방법 — docs/constraints.md "♥에서 선호로 쓰는 라벨" 표(음식점 #414, 카페·관광지 #681-3) 그대로.
 # 직접 쓴 선호 사유에는 적용하지 않는다(♥ 핀 라벨에서 나온 신호만 거른다).

@@ -6,7 +6,7 @@ import { chargeCredit, creditGate } from "./credits";
 /**
  * AI 코스 짜기(#334, 팀 결정 #580 전 초안). 실서버 구현 전이라 목 서버가 계약을 먼저 연다.
  * 실제 엔진을 흉내 내지 않는다 — 확정 리스트의 핀을 날짜에 고르게 나눠 담고, 같은 날은 들어온 순서로 이은 뒤
- * 구간은 직선거리 근사로 채운다(2km 이하는 도보, 넘으면 대중교통). 진행 화면의 폴링을 보려고 첫 GET은 running(단계 2개), 둘째는 running(단계 5개), 셋째부터 done이다 — 진행 중에도 steps가 단계마다 늘어난다.
+ * 구간은 직선거리 근사로 채운다(2km 이하는 도보, 넘으면 대중교통). 진행 화면의 폴링을 보려고 첫 GET은 running(단계 2개), 둘째는 running(단계 5개 — 찾기·옮겨 보기 포함), 셋째부터 done(14개)이다 — 진행 중에도 steps가 단계마다 늘어난다.
  * 영업시간을 아직 모르는 실서버와 같게 모든 장소가 「확인 필요」다(checks, needs_check).
  */
 
@@ -75,6 +75,10 @@ function buildRun(mapId: string, requestText: string, routable: ReturnType<typeo
   const unmatched = requestText && !wantsLightWalk ? [requestText] : [];
   const now = new Date().toISOString();
   const byName = new Map(routable.map((p) => [p.id, p.name]));
+  const goalText = goals.map((g) => `‘${g.label}’`).join(", ") || "없음";
+  const transit = days.reduce((n, d) => n + d.legs.filter((l) => l.mode === "transit").length, 0);
+  const second = dates.length > 1 ? dayLabel(dates[1], 1) : dayLabel(dates[0], 0);
+  const moved = routable[routable.length - 1].name;
   return {
     id: "",
     map_id: mapId,
@@ -83,14 +87,23 @@ function buildRun(mapId: string, requestText: string, routable: ReturnType<typeo
     failure_code: null,
     goals,
     unmatched,
+    // 실서버 작업 기록(agent/course/worklog.py)의 단계 흐름을 흉내 낸다 — 찾기·옮겨 보기·결정·비교·끝·가정 줄이 있어야 진행 화면의 줄 색과
+    // 단계 막대를 목 서버로 볼 수 있다(#1243). 문장은 고정 예시이고 계산과 맞추지 않는다. 진행 중 두 번째 조회(5줄)에 찾기·옮겨 보기가 보인다.
     steps: [
       { stage: "이해", role: "해석", by: "ai", by_detail: null, text: `이렇게 이해했어요: ${goals.map((g) => g.label).join(" · ") || "요청 목표 없음"}${unmatched.map((u) => ` · 「${u}」는 그대로는 판단할 수 없어요`).join("")}` },
       { stage: "확인", role: "검증", by: "code", by_detail: null, text: "요청한 목표가 이 장소들로 가능한지 데이터와 맞춰 봤어요" },
       { stage: "짜기", role: "지휘", by: "ai", by_detail: "모델 → 코드", text: "목표에 맞춰 짜 볼게요" },
-      { stage: "짜기", role: "계산", by: "code", by_detail: null, text: `후보 c1: 지킴 ${goals.map((g) => g.label).join(", ") || "없음"} · 못 지킴 없음 · 하루 최대 도보 30분 · 대중교통 ${days.reduce((n, d) => n + d.legs.filter((l) => l.mode === "transit").length, 0)}구간 · 확정 위반 0` },
-      { stage: "점검", role: "지휘", by: "ai", by_detail: null, text: "후보 c1이 목표를 지키고 확정 위반이 없어요" },
-      { stage: "끝", role: "지휘", by: "ai", by_detail: null, text: "후보 c1로 끝내요" },
-      { stage: "결과", role: "검증", by: "code", by_detail: null, text: "지킨 목표: " + (goals.map((g) => g.label).join(", ") || "없음") + " · 확정 위반 0 · 결과 solved_with_checks" },
+      { stage: "찾기", role: "검증", by: "code", by_detail: null, text: `${second}엔 이동 위반이 남았어요. 이동을 줄이는 나누기를 1가지 찾았어요.` },
+      { stage: "옮겨 보기", role: "계산", by: "code", by_detail: null, text: `${moved}을(를) 다른 날로 옮겨 짜 보면 확정 위반 0개, 하루 도보 최대 30분이에요.` },
+      { stage: "결정", role: "결정", by: "code", by_detail: null, text: `${moved}을(를) 옮기는 나누기로 정했어요.` },
+      { stage: "짜기", role: "계산", by: "code", by_detail: null, text: `1번 안을 짰어요. 지킨 목표는 ${goalText}예요. 하루 걷는 시간은 길어야 30분이에요. 대중교통 ${transit}구간. 확정 위반은 없어요.` },
+      { stage: "짜기", role: "계산", by: "code", by_detail: null, text: "2번 안을 짰어요. 하루 걷는 시간은 길어야 25분이에요. 확정 위반은 없어요." },
+      { stage: "점검", role: "지휘", by: "ai", by_detail: null, text: "목표를 지킨 1번 안을 골라요." },
+      { stage: "비교", role: "검증", by: "code", by_detail: null, text: `1번 안(요청 목표를 최대한): 목표 ${goals.length}개 중 ${goals.length}개 지킴, 확정 위반 0개, 하루 도보 최대 30분.` },
+      { stage: "비교", role: "검증", by: "code", by_detail: null, text: "2번 안(요청 목표 없이 이동과 날짜 균형 먼저): 확정 위반 0개, 하루 도보 최대 25분." },
+      { stage: "끝", role: "지휘", by: "ai", by_detail: null, text: "2번 안은 걷기는 짧지만 요청 목표를 덜 지켜서 1번 안으로 정했어요." },
+      { stage: "가정", role: "결정", by: "code", by_detail: null, text: "영업시간을 모르는 곳은 묻지 않고 여는 것으로 보고 정했어요." },
+      { stage: "결과", role: "계산", by: "code", by_detail: null, text: `지킨 목표는 ${goalText}예요. 확정 위반은 없어요. 영업시간을 모르는 ${routable.length}곳은 가게에 확인해 주세요.` },
     ],
     days,
     violations: [],

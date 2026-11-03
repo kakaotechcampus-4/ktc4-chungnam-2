@@ -31,8 +31,6 @@ KNOWN_CREDITS_DRIFT: dict[tuple[str, ...], str] = {
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
-    ("GET", "/maps/{mapId}/trash"): "핀 휴지통 목록 — 서버 구현 전(#864, 이슈 #1013). 구현되면 지운다",
-    ("POST", "/pins/{pinId}/restore"): "지운 핀 복구 — 서버 구현 전(#864, 이슈 #1013). 구현되면 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
@@ -280,6 +278,11 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.get(f"/maps/{map_id}/shortlist").status_code == 200
     item_ids = [i["id"] for i in a.get(f"/maps/{map_id}/shortlist").json()]
     assert a.put(f"/maps/{map_id}/shortlist/order", json={"item_ids": list(reversed(item_ids))}).status_code == 200
+    schedule = a.get(f"/maps/{map_id}/shortlist/schedule")
+    assert schedule.status_code == 200
+    payload = schedule.json()
+    saved = a.put(f"/maps/{map_id}/shortlist/schedule", json={"version": payload["version"], "groups": [{"date": None, "item_ids": item_ids}]})
+    assert saved.status_code == 200
     assert a.post(f"/maps/{map_id}/route").status_code in (200, 201)
     assert a.get(f"/maps/{map_id}/route").status_code == 200
 
@@ -289,7 +292,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert export_txt.headers["content-disposition"].startswith("attachment")
     export_csv = a.get(f"/maps/{map_id}/shortlist/export", params={"format": "csv"})
     assert export_csv.status_code == 200 and export_csv.headers["content-type"].startswith("text/csv")
-    assert export_csv.content.startswith("\ufeff순서,".encode())
+    assert export_csv.content.startswith("\ufeff날짜,순서,".encode())
     assert len(export_csv.text.splitlines()) == 1 + len(item_ids)
     assert a.get(f"/maps/{map_id}/shortlist/export", params={"format": "pdf"}).status_code == 422
     assert b.get(f"/maps/{map_id}/shortlist/export").status_code == 200
@@ -600,6 +603,36 @@ def test_map_restore_and_trash_match_the_openapi_spec(clients):
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
+def test_pin_trash_list_matches_the_openapi_spec(clients, pin_body):
+    """핀 휴지통 목록(#1013, 스펙 PinTrash) — 일반 구성원은 내가 찍은 지운 핀만, 방장은 전부. 에러 봉투(모르는 지도 404)."""
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "성수", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+    mine = a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-kalguksu")).json()["id"]
+    theirs = b.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-bunsik")).json()["id"]
+    assert a.get(f"/maps/{map_id}/trash").json() == {"items": [], "retention_days": 30}
+    assert a.delete(f"/pins/{mine}").status_code == 204
+    assert a.delete(f"/pins/{theirs}").status_code == 204          # 방장은 남의 핀도 지울 수 있다
+    owner_view = a.get(f"/maps/{map_id}/trash")
+    assert owner_view.status_code == 200
+    assert {i["pin"]["id"] for i in owner_view.json()["items"]} == {mine, theirs}
+    member_view = b.get(f"/maps/{map_id}/trash").json()
+    assert [i["pin"]["id"] for i in member_view["items"]] == [theirs]   # 일반 구성원은 내가 찍은 것만
+    assert a.get("/maps/no_such_map/trash").status_code == 404
+
+    # 복구(#1013) — 찍은 사람과 방장. 연타 200, 남의 지운 핀은 존재를 알리지 않는 404, 지우지 않은 남의 핀도 404, 없는 핀 404
+    assert b.post(f"/pins/{mine}/restore").status_code == 404
+    restored = a.post(f"/pins/{mine}/restore")
+    assert restored.status_code == 200 and restored.json()["id"] == mine
+    assert a.post(f"/pins/{mine}/restore").status_code == 200
+    assert b.post(f"/pins/{mine}/restore").status_code == 404
+    assert b.post(f"/pins/{theirs}/restore").status_code == 200
+    assert a.post("/pins/00000000-0000-0000-0000-000000000000/restore").status_code == 404
+    dup = a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-bunsik"))
+    assert dup.status_code == 409          # 방금 복구한 핀과 같은 장소
+
+
 def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
     """실시간 핀(#386, 스펙 PinCreateLive) — 응답에 좌표·이름이 없어도 Pin 스키마에 맞고, 목록·확정 항목·동선까지 같다."""
     a, b, problems = clients
@@ -685,7 +718,9 @@ def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
 
 def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     """v2 계획 보조 에이전트(#531) — 바텀시트 상태, 열람, 수락(422·409 포함), 닫기, 모드 끄고 켜기. 제안은 관찰 흐름의
-    저장 단계(스냅샷 → 탐지 → 템플릿 → 저장)를 이 테스트 세션에서 그대로 밟아 만든다(observe_map은 자기 세션을 연다)."""
+    저장 단계(스냅샷 → 탐지 → 템플릿 → 저장)를 이 테스트 세션에서 그대로 밟아 만든다(observe_map은 자기 세션을 연다).
+    지도 현황 문단(status)과 우리 데이터 확인(facts)이 실린 응답도 하나씩 본다(#1168)."""
+    from dataclasses import replace
     from datetime import datetime, timedelta, timezone
 
     from agent import core, service, snapshot
@@ -699,19 +734,21 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     empty = a.get(f"/maps/{map_id}/agent")
     assert empty.status_code == 200
     assert empty.json() == {"settings": {"enabled": True, "updated_by": None, "updated_at": None},
-                            "active_suggestion": None, "has_unseen": False, "summaries": []}
+                            "active_suggestion": None, "has_unseen": False, "summaries": [], "status": None}
 
+    pin_ids = {}
     for key in ("seongsu-kalguksu", "seongsu-bunsik"):   # 음식점만 2곳 확정 → 카페·관광지 공백(6.5)
-        pin_id = a.post(f"/maps/{map_id}/pins", json=pin_body(key)).json()["id"]
+        pin_ids[key] = pin_id = a.post(f"/maps/{map_id}/pins", json=pin_body(key)).json()["id"]
         assert a.post(f"/maps/{map_id}/shortlist", json={"pin_id": pin_id}).status_code == 201
 
-    def suggest(category: str) -> str:
+    def suggest(category: str, facts=()) -> str:
         now = datetime.now(timezone.utc)
         snap = snapshot.build(db_session, map_id, now)
         sig = next(s for s in core.detect_all(snap, now, timedelta(hours=1))
                    if s.diagnosis == "category_gap" and s.category == category)
         sid = service.insert_suggestion(db_session, map_id=map_id, run_id=None, signal=sig,
-                                        draft=core.render_template(sig), now=now, shadow=False)
+                                        draft=replace(core.render_template(sig), facts=list(facts)), now=now,
+                                        shadow=False)
         db_session.commit()
         return str(sid)
 
@@ -734,6 +771,44 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     second = suggest("관광지")
     assert b.post(f"/agent/suggestions/{second}/dismiss").status_code == 204
     assert a.get(f"/maps/{map_id}/agent").json()["active_suggestion"] is None
+
+    # 우리 데이터 확인(6.6): 저장은 (pin_id, fact_key)만, 응답은 지금 라벨로 렌더한다. 샘플 장소 라벨은 cuisine_korean 참,
+    # spicy_focused 거짓, oily_focused 모름이다 — 값 세 가지가 모두 스펙(따옴표 있는 enum, #1179)과 같다. 응답은 많아야 2줄이다
+    kalguksu = pin_ids["seongsu-kalguksu"]
+    third = suggest("카페", facts=[{"pin_id": kalguksu, "fact_key": k} for k in ("cuisine_korean", "spicy_focused")])
+    facts = a.get(f"/maps/{map_id}/agent").json()["active_suggestion"]["facts"]
+    assert [(f["fact_key"], f["value"]) for f in facts] == [("cuisine_korean", "yes"), ("spicy_focused", "no")]
+    assert all([seg["kind"] for seg in f["segments"]] == ["text", "pin", "text"] for f in facts)
+    assert b.post(f"/agent/suggestions/{third}/dismiss").status_code == 204
+    fourth = suggest("카페", facts=[{"pin_id": kalguksu, "fact_key": "oily_focused"}])
+    [fact] = a.get(f"/maps/{map_id}/agent").json()["active_suggestion"]["facts"]
+    assert (fact["fact_key"], fact["value"]) == ("oily_focused", "unknown")
+    assert "web" not in fact   # 웹 확인 전이면 칸이 없다(스펙은 null을 받지 않는다)
+    assert b.post(f"/agent/suggestions/{fourth}/dismiss").status_code == 204
+
+    # 웹 확인(6.8, #1216): 「모름」 줄에 저장된 web을 렌더한다. found(notice null, 출처 이름은 서버가 만든다)와 not_found·paused(notice)
+    checked_at = datetime.now(timezone.utc).isoformat()
+    for web in (
+        {"status": "found", "statements": [{"text": "느끼하지 않다는 후기가 있어요", "source_url": "https://www.blog.example.com/1"}],
+         "checked_at": checked_at},
+        {"status": "not_found", "statements": [], "checked_at": checked_at},
+        {"status": "paused", "statements": [], "checked_at": checked_at},
+    ):
+        sid = suggest("카페", facts=[{"pin_id": kalguksu, "fact_key": "oily_focused", "web": web}])
+        [fact] = a.get(f"/maps/{map_id}/agent").json()["active_suggestion"]["facts"]
+        assert fact["web"]["status"] == web["status"]
+        assert (fact["web"]["notice"] is None) == (web["status"] == "found")
+        if web["status"] == "found":
+            assert fact["web"]["statements"][0]["source_name"] == "blog.example.com"
+        assert b.post(f"/agent/suggestions/{sid}/dismiss").status_code == 204
+
+    # 지도 현황 문단(8.2): 관찰 끝에서 저장된 것을 시트를 열 때 받는다
+    now = datetime.now(timezone.utc)
+    service.upsert_map_status(db_session, map_id=map_id, cells={"categories": []}, cells_hash="h", states=[],
+                              paragraph="음식점은 거의 정해졌어요. 카페부터 보면 좋겠어요.", run_id=None, now=now)
+    db_session.commit()
+    status = a.get(f"/maps/{map_id}/agent").json()["status"]
+    assert status["paragraph"] == "음식점은 거의 정해졌어요. 카페부터 보면 좋겠어요."
 
     off = b.put(f"/maps/{map_id}/agent/settings", json={"enabled": False})
     assert off.status_code == 200 and off.json()["enabled"] is False and off.json()["updated_by"] == "user_b"

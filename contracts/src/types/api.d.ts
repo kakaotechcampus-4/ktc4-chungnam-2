@@ -506,7 +506,17 @@ export interface paths {
                         "application/json": components["schemas"]["Map"];
                     };
                 };
+                403: components["responses"]["GuestNotAllowed"];
                 409: components["responses"]["MapLimit"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1063,7 +1073,7 @@ export interface paths {
          *     `POST /maps/{mapId}/pins`(source: search)로 핀을 만든다. 결과는 서버 DB에 저장하지 않는다(메모리 캐시만, #53).
          *     **결과는 화면에 보여 주기만 하고 서버는 저장하지 않는다**(카카오 약관, #53) — 핀을 만들 때 "매칭 힌트"로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는다(POST /maps/{mapId}/pins).
          *     **결과는 우리 DB(자체 장소 DB)의 핀 가능한 장소가 먼저다(#822).** 서버는 먼저 자체 DB에서 이름·동네가 검색어와 맞는 장소를 찾아 `pinnable=true`로 앞에 싣고(순서는 아래 정렬 규칙), `limit`에 못 미칠 때만 카카오 결과로 남은 자리를 채운다(이미 실은 장소와 같은 가게는 뺀다). 카카오 상위권에 없어도 자체 DB에 있으면 나온다.
-         *     **자체 DB 결과의 정렬 규칙(#835)**: ① `lat`·`lng`가 있으면 지도 중심에서 30km 안(지역 구역)이 그 밖(먼 구역)보다 먼저다. 지역 구역이 `limit`을 못 채울 때만 먼 구역으로 이어 채운다. ② 각 구역 안에서 이름 일치 정도 — 완전 일치 > 앞부분 일치 > 부분 일치 > 주소 일치(공백·기호·괄호 안은 무시). ③ 같은 정도 안에서는 가까운 순(좌표가 없으면 이름순). ④ 거리까지 같을 때만 정예 먼저. 정예 여부는 추천에서 중요하고, 검색에서는 「핀을 꽂을 수 있는가」(`pinnable`)만 중요하다. 서울 지도에서 「맛집」을 쳤는데 대전 장소가 먼저 나오지 않는다. 카카오 결과로 채운 묶음 안은 카카오가 준 순서 그대로다. 핀 가능하지 않은 결과가 섞여 있는데 자체 DB 일치 장소가 빠지는 일은 없다.
+         *     **자체 DB 결과의 정렬 규칙(#835)**: ① `lat`·`lng`가 있으면 **지도 중심에서 30km 안의 장소만** 돌려준다(#1251 — 30km 밖 자체 DB 장소와 카카오 결과는 나오지 않는다). 순서는 ① 우리 DB 장소(30km 안) ② 우리 DB에 없는 곳(카카오 결과, 30km 안, `pinnable=false`)이다. ② 30km 안에서 이름 일치 정도 — 완전 일치 > 앞부분 일치 > 부분 일치 > 주소 일치(공백·기호·괄호 안은 무시). ③ 같은 정도 안에서는 가까운 순(좌표가 없으면 이름순). ④ 거리까지 같을 때만 정예 먼저. 정예 여부는 추천에서 중요하고, 검색에서는 「핀을 꽂을 수 있는가」(`pinnable`)만 중요하다. 서울 지도에서 「맛집」을 쳤는데 대전 장소가 먼저 나오지 않는다. 카카오 결과로 채운 묶음 안은 카카오가 준 순서 그대로다. 핀 가능하지 않은 결과가 섞여 있는데 자체 DB 일치 장소가 빠지는 일은 없다.
          *     결과가 0개면 빈 배열 그대로다 — 지어내서 채우지 않는다 (가드레일 2). 로그인만 필요하고 지도 구성원 여부는 보지 않는다.
          *     지도 API가 모두 실패하면 503 PLACES_UNAVAILABLE. 외부 지도 API의 일일 쿼터를 지키려고 사용자당 호출 상한이 있다(초과 시 429 RATE_LIMITED, 상한 값은 서버 설정 — 기본 분당 30회). FE는 입력 debounce 300ms 이상으로 부르고 Enter/선택 시점에만 부르는 걸 권한다.
          */
@@ -1072,7 +1082,7 @@ export interface paths {
                 query: {
                     /** @description 검색어. 앞뒤 공백을 걷은 뒤 1~50자 */
                     q: string;
-                    /** @description 현재 지도 중심 등. 이 좌표에서 30km 안의 장소를 먼저 보여 주고(자체 DB 결과), 그 안에서 이름 일치 정도 → 가까운 순으로 정렬한다. 반경으로 결과를 자르지는 않는다(지역 구역이 비면 먼 곳을 보여 준다). 없으면 이름 일치 정도 → 이름순. lat·lng는 함께 보낸다 */
+                    /** @description 현재 지도 중심 등. 이 좌표에서 30km 안의 장소만 돌려주고(#1251), 그 안에서 이름 일치 정도 → 가까운 순으로 정렬한다. 없으면 반경 제한 없이 이름 일치 정도 → 이름순. lat·lng는 함께 보낸다 */
                     lat?: number;
                     lng?: number;
                     /** @description 최대 결과 수 (기본 10) */
@@ -1332,7 +1342,7 @@ export interface paths {
                 query?: {
                     category?: components["schemas"]["Category"];
                     kind?: components["schemas"]["PinKind"];
-                    /** @description 구성원별 핀 필터 (#26). 여러 명을 지정하면 OR로 묶는다 */
+                    /** @description 구성원별 핀 필터 (#26). 여러 명을 지정하면 OR로 묶는다. 반복해서 보낸다(`?created_by=a&created_by=b`) */
                     created_by?: string[];
                 };
                 header?: never;
@@ -1460,7 +1470,7 @@ export interface paths {
         put?: never;
         /**
          * 카톡 대화에서 뽑은 지도 링크 미리보기 (#9, 기획안 5-9, v2). **쓰기 없음** — 링크마다 해석(`POST /places/from-link`와 같은 규칙)하고, 그 장소가 **이 지도에 이미 있는지**를 붙여 돌려준다.
-         *     **대화 내용은 서버로 보내지 않는다.** 화면이 붙여넣은 텍스트를 브라우저 안에서 정규식으로 스캔해 구글맵·카카오맵 링크만 뽑아 URL만 보낸다(네이버·인스타·블로그·그 밖은 항목이 `LINK_NOT_SUPPORTED`).
+         *     **대화 내용은 서버로 보내지 않는다.** 화면은 브라우저에서 지도 링크와 공유 글의 상호명·주소 힌트를 추출하고 URL과 선택적인 힌트만 보낸다. 카톡 대화 내보내기 .txt 파일과 사용자가 고른 시작일·종료일(양끝 포함)로 입력을 바꾸는 결정은 #1139이며, 화면 구현은 PR #1141에서 진행 중이다. 선택한 날짜도 서버에 보내거나 저장하지 않는다.
          *     한 번에 **최대 10개**다 — 화면이 50개까지 10개씩 나눠 보내며 진행을 보여 준다. 단축 링크 해제가 느릴 수 있어 서버가 병렬로 처리하고 요청 마감(약 15초)을 넘긴 항목은 `LINK_UNRESOLVED`로 둔다.
          *     항목마다 결과가 따로 온다(`items[i]`, `index`는 요청 `urls`의 순서) — 일부가 실패해도 요청은 200이다. 요청 형식 오류(빈 목록, 10개 초과, 2000자 초과)만 422.
          *     - `result.matches`가 있으면 그 장소로 `source: search` 핀(`bulk` 또는 `POST /maps/{mapId}/pins`). 없으면 구글 링크는 `result.name_hint`로 GET /places/search를 이어 가고, 카카오 링크는 `result.needs_search_query`(사용자가 이름을 입력해 `source: live`).
@@ -1704,7 +1714,7 @@ export interface paths {
         /**
          * 지운 핀 복구 (#864) — **찍은 사람과 방장**(`pin.restore`, 삭제 권한과 같다). 삭제한 지 30일 안인 핀만. 200 + `Pin`.
          *     돌아오는 것: 핀(메모·분류), **♥·🚫 의견과 사유**, 삭제 때 확정이었다면 확정 리스트 항목(순서는 맨 뒤, 동선은 다시 계산된다). 삭제 중에 구성원이 탈퇴했다면 그 사람의 반응은 탈퇴 때 지워져서 돌아오지 않는다.
-         *     이미 복구된 핀이면 같은 핀을 200으로(연타 안전). **휴지통에 있는 동안 같은 장소로 새 핀이 만들어졌다면 409 `PIN_DUPLICATE`**(`detail.pin_id` = 지금 지도에 있는 핀)다 — 화면은 「이미 지도에 같은 장소가 있어요」를 보인다. 권한이 없으면 403, 없는 핀·30일이 지나 정리된 핀·복구할 수 있는 핀이 아닌 것은 404(남의 핀의 존재를 알리지 않는다). 이벤트 `pin.restored`(payload `Pin`).
+         *     이미 복구된 핀이면 같은 핀을 200으로(연타 안전). **휴지통에 있는 동안 같은 장소로 새 핀이 만들어졌다면 409 `PIN_DUPLICATE`**(`detail.pin_id` = 지금 지도에 있는 핀)다 — 화면은 「이미 지도에 같은 장소가 있어요」를 보인다. 없는 핀·삭제되지 않은 핀·30일이 지나 정리된 핀은 404다. **삭제된 핀이라도 찍은 사람도 방장도 아닌 구성원이 부르면 404**다(휴지통에서 남의 핀을 보여 주지 않는 것과 같이 존재를 숨긴다). 403은 `pin.restore` 액션이 없는 역할일 때만이다. 이벤트 `pin.restored`(payload `Pin`).
          */
         post: {
             parameters: {
@@ -3177,8 +3187,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 확정 리스트 내보내기 — 구성원 누구나 (#471). 확정 순서(`visit_order`, 없으면 추가한 순서)대로 한 줄씩 담은 텍스트(`txt`) 또는 CSV(`csv`)를 내려준다.
-         *     열은 순서·이름·분류·카카오 링크·메모다. **실시간 핀(live)은 이름을 저장하지 않으므로**(#53) 이름 칸에 검색어를 쓰고 이름 뒤에 "(이름 확인 필요)"를 붙이며,
+         * 확정 리스트 내보내기 — 구성원 누구나 (#471). 날짜별 순서대로 담은 텍스트(`txt`) 또는 CSV(`csv`)를 내려준다. 미배정은 마지막이다.
+         *     TXT는 날짜별 머리말, CSV는 날짜·순서·이름·분류·카카오 링크·메모 열을 쓴다. 각 날짜의 순서는 1부터다. **실시간 핀(live)은 이름을 저장하지 않으므로**(#53) 이름 칸에 검색어를 쓰고 이름 뒤에 "(이름 확인 필요)"를 붙이며,
          *     링크 칸에는 `place.map.kakao.com/<id>` 링크를 넣는다. 자체 DB 핀은 장소 이름과 장소 페이지 링크를 쓴다. 좌표는 내보내지 않는다.
          *     CSV는 엑셀에서 한글이 깨지지 않게 UTF-8 BOM으로 시작한다. 확정 리스트가 비어 있으면 CSV는 머리글만, txt는 안내 한 줄이다.
          *     공개 공유 링크는 이 범위 밖이다.
@@ -3238,7 +3248,9 @@ export interface paths {
         get?: never;
         /**
          * 확정 리스트 수동 정렬 (#30). 보기 좋게 순서를 바꾸는 것뿐이고 동선과는 무관하다.
+         *     날짜가 배정된 항목이 있으면 409 SHORTLIST_SCHEDULED다. 화면은 일정(#1171) 뒤 이 API를 부르지 않고 `PUT /maps/{mapId}/shortlist/schedule`로 날짜와 그날 순서를 저장한다.
          *     동선을 다시 짜려면 POST /maps/{mapId}/route를 부른다.
+         *     날짜가 배정된 항목이 하나라도 있으면 이 기존 API는 409 SHORTLIST_SCHEDULED를 반환한다. 날짜별 편집에는 schedule API를 쓴다.
          */
         put: {
             parameters: {
@@ -3267,7 +3279,106 @@ export interface paths {
                         "application/json": components["schemas"]["ShortlistItem"][];
                     };
                 };
+                /** @description 날짜 배정 항목이 있어 전체 정렬 불가 (SHORTLIST_SCHEDULED) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
                 /** @description item_ids가 현재 확정 리스트와 맞지 않는다(VALIDATION_ERROR, detail에 불일치 항목) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/shortlist/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 날짜별 확정 리스트 조회
+         * @description 여행 시작일부터 종료일까지 양 끝을 포함해 날짜 칸을 표시한다. items는 날짜 순이고 미배정은 마지막이다. 날짜 칸은 항목이 없어도 화면에서 표시한다. 여행 기간이 줄면 범위 밖 항목은 기존 미배정 목록 뒤에 날짜별 기존 순서대로 붙는다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 현재 여행 기간, 변경 감지 version과 확정 항목 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ShortlistSchedule"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        /**
+         * 날짜 배정 및 날짜별 순서 저장
+         * @description 구성원 누구나 변경한다. 조회한 version과 모든 확정 항목 ID를 각 한 번씩 보낸다. 날짜는 여행 기간 안이거나 미배정 null이며 같은 날짜 그룹을 중복할 수 없다. 각 그룹의 item_ids 순서가 해당 날짜의 순서다. version이 바뀌면 재조회 후 다시 편집한다.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ShortlistScheduleUpdate"];
+                };
+            };
+            responses: {
+                /** @description 저장 후 최신 일정 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ShortlistSchedule"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                /** @description 조회 이후 일정이 바뀜 (SHORTLIST_STALE) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description 날짜 또는 항목 목록이 유효하지 않음 (VALIDATION_ERROR) */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -3321,7 +3432,8 @@ export interface paths {
         };
         put?: never;
         /**
-         * 「동선 짜주기」 — 현재 확정 리스트로 동선을 계산한다 (#30, 기획안 5-10의 "동선 보기" 토글).
+         * 「동선 짜주기」 — 현재 확정 리스트로 동선을 계산한다 (#30, 기획안 5-10의 처음 설계).
+         *     화면은 일정(#1171) 뒤 이 API를 부르지 않는다. 「동선 보기」는 사람이 정한 그날 일정 순서(`GET /maps/{mapId}/shortlist/schedule`)를 그린다.
          *     확정 리스트가 바뀌어도 자동 재계산하지 않는다. 사람이 이 버튼을 눌러야 실행된다.
          */
         post: {
@@ -4668,6 +4780,8 @@ export interface components {
              * @enum {string|null}
              */
             not_enforced_reason?: "no_key" | "no_direction" | "not_for_category" | "off_season" | null;
+            /** @description 이 줄이 후보를 목록에서 **뺄 수 있는가**(#1260). true=확인된 값이 방향과 다르면 후보에서 뺀다(붐비는 대형·접근성 필요 조건), false=후보는 그대로 두고 순위만 낮추거나 올린다(취향 조건, #1253). enforced=false이면 없다(null). 서버가 줄을 고르는 함수(recommend.core.evidence_line_use)의 effect를 그대로 내려 준다. FE는 이 값으로 「꼭 지켜야 하는 조건」(true)과 「피하고 싶어요 — 순위를 낮춰요」(false, badge=required이고 wants=false) 칸을 나누며 키 목록을 따로 들지 않는다. 구버전 서버라 필드가 없으면 기존 칸 구분을 쓴다 */
+            filters_candidates?: boolean | null;
             is_active: boolean;
             permissions: components["schemas"]["Permissions"];
         };
@@ -4725,7 +4839,7 @@ export interface components {
         MemberFulfillment: {
             /** @description 이 후보가 자기 조건을 전부 확인된 값으로 만족시키는 구성원 수. 라벨이 모름(확인 필요)인 조건이 하나라도 있으면 충족으로 세지 않는다(#620) */
             satisfied: number;
-            /** @description 집계 대상 구성원 수 — 서비스가 확인할 수 있는 조건을 남긴 구성원. 선호(♥·선호 사유)와 키가 있는 실격 사유(required)를 낸 구성원이다(#246 G1). 키 없는 반대 사유(알러지 글, 「취향이 아니에요」 등)만 남긴 구성원은 확인한 것이 없어 빠진다(#620, 2026-10-19) */
+            /** @description 집계 대상 구성원 수 — 서비스가 확인할 수 있는 조건을 남긴 구성원. 선호(♥·선호 사유)와 키가 있는 반대 사유(required)를 낸 구성원이다(#246 G1). 반대 사유는 후보를 빼는 조건(붐비는 대형·접근성)이거나 순위만 낮추는 취향 조건이다(#1253). 키 없는 반대 사유(알러지 글, 「취향이 아니에요」 등)만 남긴 구성원은 확인한 것이 없어 빠진다(#620, 2026-10-19) */
             total: number;
             by_member?: {
                 user_id: string;
@@ -4824,8 +4938,30 @@ export interface components {
             pin: components["schemas"]["Pin"];
             /** @description 순서를 정하지 않았으면 null이거나 필드가 없다 */
             visit_order?: number | null;
+            /**
+             * Format: date
+             * @description 방문 날짜. null은 미배정; 기존 목록 응답에서는 생략될 수 있다
+             */
+            scheduled_date?: string | null;
             added_by: string;
             permissions: components["schemas"]["Permissions"];
+        };
+        ShortlistSchedule: {
+            /** Format: date */
+            start_date: string;
+            /** Format: date */
+            end_date: string;
+            /** @description 변경 감지용 불투명 값 */
+            version: string;
+            items: components["schemas"]["ShortlistItem"][];
+        };
+        ShortlistScheduleUpdate: {
+            version: string;
+            groups: {
+                /** Format: date */
+                date: string | null;
+                item_ids: string[];
+            }[];
         };
         Route: {
             region_label: string;
@@ -4967,6 +5103,36 @@ export interface components {
             /** @enum {string} */
             value: "yes" | "no" | "unknown";
             segments: components["schemas"]["AdviceSegment"][];
+            /** @description 웹 확인(#1152 ④, docs/agent-v2.md 6.8). value가 unknown인 줄에만, 제안마다 많아야 한 줄. 선택 필드 — 서버 구현(#1216) 전에는 없고, 확인이 실패했으면 없다. FE는 없으면 그리지 않는다 */
+            web?: components["schemas"]["AgentWebCheck"];
+        };
+        /**
+         * @description 웹 확인 결과(#1152 ④, docs/agent-v2.md 6.8). 모델이 웹을 읽고 옮긴 문장이다. 서버는 출처가 그 호출의 검색 결과에 있는지와 금지 표현만 본다 — 문장 내용은 확인하지 못한다.
+         *     found: FE는 「AI 웹 요약 · 확인되지 않음」 표시를 붙이고 문장과 출처 링크를 보인다. not_found·paused: statements는 비어 있고 notice 글을 그대로 보인다.
+         *     예(found): {status: found, notice: null, statements: [{text: "가게 앞에 차 두세 대를 댈 수 있다고 적혀 있어요", source_url: "https://blog.example.com/123", source_name: "blog.example.com"}], checked_at: "2026-11-03T12:00:00+09:00"}
+         *     예(paused): {status: paused, notice: "오늘은 웹 확인을 쉬고 있어요. 내일 다시 찾아볼게요", statements: [], checked_at: …}
+         */
+        AgentWebCheck: {
+            /** @enum {string} */
+            status: "found" | "not_found" | "paused";
+            /** @description not_found·paused일 때 화면 문구(서버 고정 문구). found면 null */
+            notice: string | null;
+            statements: {
+                /** @description 모델 문장(조각이 아닌 문자열). 구성원 글은 들어가지 않는다 */
+                text: string;
+                /**
+                 * Format: uri
+                 * @description http·https만. 새 탭으로 연다(rel=noopener noreferrer)
+                 */
+                source_url: string;
+                /** @description 서버가 URL 호스트로 만든 이름(www. 뺌) */
+                source_name: string;
+            }[];
+            /**
+             * Format: date-time
+             * @description 웹 확인을 한 시각(같은 지도·핀·키는 24시간 안에 다시 쓴다)
+             */
+            checked_at: string;
         };
         /**
          * @description 지도 현황 문단(#1152, docs/agent-v2.md 8.2). 코드가 계산한 칸(카테고리별 확정·후보·갈린 핀·정체, D-day, 먼저 볼 카테고리)을 모델이 보고 쓴 2~4문장이다.
@@ -5098,11 +5264,11 @@ export interface components {
              * @enum {string|null}
              */
             failure_code: "INTERRUPTED" | "ENGINE_ERROR" | null;
-            /** @description 요청 한 줄에서 모델이 세우고 코드가 검증한 목표. 요청이 없으면 빈 배열 */
+            /** @description 요청 한 줄과 지도 근거에서 세우고 코드가 검증한 목표. 요청 목표가 먼저이고, 지도 근거(우리 조건 요약의 꼭 지킬 조건·겹치는 선호, 확정 장소의 야경 라벨)로 세운 목표는 label 끝에 「(지도에서 세운 목표)」가 붙는다(#1131). 요청도 지도 근거도 없으면 빈 배열 */
             goals: components["schemas"]["CourseGoal"][];
             /** @description 목표로 바꾸지 못한 요청 조각(요청 원문의 일부). 화면에 「반영하지 못했어요」로 보인다 */
             unmatched: string[];
-            /** @description 작업 기록 — 이해, 확인, 짜기, 점검, 재계획, 끝, 결과 순으로 누가 했는지와 함께. running 중에도 단계마다 늘어난다(앞 단계는 바뀌지 않고 뒤로만 붙는다). 그동안 goals, days 같은 결과 칸은 비어 있다 */
+            /** @description 작업 기록 — 이해에서 결과까지 단계마다 누가 했는지와 함께(단계 값은 CourseStep.stage). running 중에도 단계마다 늘어난다(앞 단계는 바뀌지 않고 뒤로만 붙는다). 그동안 goals, days 같은 결과 칸은 비어 있다 */
             steps: components["schemas"]["CourseStep"][];
             /** @description 지도 기간의 날짜별 순서(최대 14일). 날짜 하나가 비어 있을 수 있다 */
             days: components["schemas"]["CourseDay"][];
@@ -5135,10 +5301,10 @@ export interface components {
             met: boolean | null;
         };
         CourseStep: {
-            /** @description 이해 · 확인 · 짜기 · 점검 · 재계획 · 다시 짜기 · 고정 · 검증 · 질문 · 답 · 대행 · 끝 · 결과 */
+            /** @description 이해(목표 세우기) · 확인(목표가 데이터로 되는지) · 짜기 · 다시 짜기 · 점검 · 재계획(AI가 결과를 보고 다음 수) · 고정 · 찾기 · 옮겨 보기(쉬는 날·이동 과다를 코드가 찾아 옮겨 봄) · 대행(모델 실패를 코드가 이어받음) · 검증(모델 문장을 코드 문장으로 바꿈) · 가정(모르는 영업시간을 여는 것으로 봄) · 비교(후보끼리 견줌) · 결정(코드가 고름) · 끝(지휘가 고름) · 결과. 되묻지 않으므로 질문·답 단계는 없다(#1131). 화면은 모르는 값이 와도 깨지지 않게 그린다(#1243) */
             stage: string;
             /**
-             * @description 무슨 일이었나. 해석=요청을 목표로, 지휘=도구 고르기·점검·끝, 계산=최적화·수리, 검증=코드가 사실과 맞춰 봄(모델 문장을 코드 문장으로 바꾼 기록 포함), 결정=사람의 답 또는 기본값
+             * @description 무슨 일이었나. 해석=요청을 목표로, 지휘=도구 고르기·점검·끝, 계산=최적화·수리, 검증=코드가 사실과 맞춰 봄(모델 문장을 코드 문장으로 바꾼 기록 포함), 결정=코드가 고르거나 가정을 세움(결정·가정 단계)
              * @enum {string}
              */
             role: "해석" | "지휘" | "계산" | "검증" | "결정";

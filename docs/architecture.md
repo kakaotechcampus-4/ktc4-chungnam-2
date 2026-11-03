@@ -38,12 +38,12 @@
 | `places` | 자체 장소 DB(`places`, `place_facts`) 적재·DB 내 검색, 카카오 실시간 검색(표시용 `PlaceSource`) | #14, 멘토 피드백 5, #53 | — (외부 API는 카카오 실시간 표시만, 응답은 저장하지 않음) |
 | `seeding` | 프리시딩 배치 워커, 지도 생성·핀 생성·최초 ♥ 시 큐잉 | 신규(D3), #99 | `places` (예정) |
 | `recommend` | 추천 오케스트레이션(①②③-a-2④), 근거 조립, 검색범위(circles) 계산, 선호 순위 점수(#99), funnel, 제외목록, 재시도 | 3절, 5-5~5-6-1 | `pins` |
-| `llm` | 모델 호출 2곳(② 사유 구조화, ③-a-1 라벨링) + 프롬프트 + 구조화 출력 스키마 | 8절, #99 | (외부 LLM API) |
+| `llm` | 모델 호출(v1 요청 중에는 ② 사유 구조화 하나, ③-a-1 라벨링은 v1 스텁이라 모델을 부르지 않는다, v2 에이전트·AI 코스 호출은 `llm/models.py`의 `CALLS`) + 프롬프트 + 구조화 출력 스키마 | 8절, #99 | (외부 LLM API) |
 | `shortlist` | 확정 리스트 추가/제외, 동선 계산(모델 미사용) | 5-3, 5-10 | `pins` |
 | `realtime` | SSE 채널(전체/개인), `event_log` 폴링·재동기화 | 5-5-1 | — |
 | `notifications` | 앱 안 알림함과 알림 설정(#470). 다른 모듈은 이벤트를 쓰는 같은 트랜잭션에서 `notifications.api.notify`를 수신자마다 부르고, 문장은 `compose_message`로 만든다 | 신규(v2) | — |
 | `feedback` | 서비스 피드백 저장(#10). 읽는 API는 없다 | 신규(v2) | — |
-| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 각 모듈 api의 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth`, `pins` (api.py만) |
+| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 지도·알림·게스트·모델 호출·멱등 키·탈퇴 계정·이벤트·핀 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth`, `llm`, `recommend`, `realtime`, `pins` (api.py만) |
 | `ads` | 추천 탭 광고: 기간 광고 관리, 선택(코드), 노출과 클릭의 날짜별 집계(docs/ads.md, #642) | 신규 | `places`, `recommend`, `pins` (api.py만. `recommend`는 `ads`를 import하지 않는다) |
 | `credits` | 사람마다 하나인 AI 실행 크레딧: 잔액·원장, 가격표(`credits/constants.py` 한 곳), 확인·차감·환불·후기 보상(docs/credits-reviews.md, #432). 다른 모듈은 `credits.api`만 부른다 | 신규(v2, 구현 #948) | `auth` (api.py만, 게스트 판정) |
 | `reviews` | 자체 DB 장소에 붙는 후기(별점 + 글), 신고, 숨김 스크립트(docs/credits-reviews.md, #432). 핀으로 부르고 장소를 찾는다 | 신규(v2, 구현 #951) | `pins`, `credits` (api.py만) |
@@ -83,6 +83,7 @@ core.py로 옮긴다.
 |---|---|
 | 핀 CRUD, 반응 등록/삭제 | `pins` + `event_log` |
 | 확정 리스트 순서 변경 | `shortlist_items`만 |
+| 여행 기간 변경 후 범위 밖 일정 미배정 | `maps` + `shortlist_items` + `event_log` |
 | 동선 계산 | 계산 결과 + `event_log` |
 | 근거 추가/토글, 추천 실행 생성 | `recommend` 테이블 + `event_log` |
 | 초대 수락 | `memberships` + `event_log` |
@@ -117,6 +118,8 @@ core.py로 옮긴다.
 | 다른 모듈의 **데이터 조회·변경** | `<module>/api.py`만 | 예: `recommend/flows.py`가 `pins.api.create_ai_pin(...)`을 부른다 |
 | 다른 모듈의 `models.py` | **금지** | DB 테이블이다. 소유 모듈 밖에서 직접 다루면 스키마 변경이 어디까지 번지는지 알 수 없어진다 |
 | 다른 모듈의 `service.py` | **금지** | 공개 접점이 아니다. 필요하면 그 모듈이 `api.py`에 함수를 연다 |
+
+`maps`는 여행 기간 변경 시 지도 행을 잠근 뒤 `shortlist.api.unassign_outside_dates(db, map_id=..., start_date=..., end_date=...)`를 호출한다. 범위 밖 일정은 미배정 뒤에 보존하며 호출자가 같은 트랜잭션을 커밋한다.
 
 `api.py`가 없는 모듈은 아직 다른 모듈에게 열어줄 데이터가 없다는 뜻이다. 필요해지는 쪽이
 그 모듈 담당에게 이슈로 요청해서 만든다(`backend/CLAUDE.md`, #757).
@@ -265,9 +268,13 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 | 공개 함수 | 부르는 곳 | 하는 일 |
 |---|---|---|
-| `pins.api.purge_deleted_pins(db, *, now: datetime) -> dict[str, int]` | maintenance(`pins` 단계, #1063) | 삭제한 지 30일이 지난 핀과 그 반응을 오래된 것부터 한 번에 최대 1000개 영구 삭제한다. 반환 `{"reactions": n, "pins": m}`. 멱등, 커밋은 호출자가 한다 |
+| `pins.api.purge_deleted_pins(db, *, now: datetime) -> dict[str, int]` | maintenance(`pins` 단계, #1063) | 삭제한 지 30일이 지난 핀과 그 반응을 오래된 것부터 한 번에 최대 1000개 영구 삭제한다. 반환 `{"reactions": n, "pins": m}`. 멱등, `now`는 timezone-aware(naive면 ValueError), 커밋은 호출자가 한다 |
 
 30일 안의 핀은 건드리지 않는다. 정리 작업의 dry-run은 호출자가 롤백해 확인한다(다른 단계와 같다).
+
+### 추천 반대 사유와 필요 조건 (#1253)
+
+추천의 hard 레지스트리는 `is_crowded_large` 하나다. 일반 soft 반대 사유는 후보를 거르지 않고 같은 키를 직접 쓴 구성원당 3점을 감점한다. 한 사람이 같은 사유를 여러 번 내도 한 번만 센다. 글·칩에서 나온 `accessible`, `wants=true`, `required`는 예외적으로 known 거짓만 제외하고 모름은 통과 + 확인 필요로 둔다. 알러지·재료 키는 만들지 않고 기존 확인 안내를 유지한다.
 
 ## 2. 장소 데이터 3층 모델
 
@@ -336,7 +343,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 | `get_facts(place_ids) -> dict[str, list[FactLabel]]` | recommend(라벨) | `place_facts`의 `fact_key`·`value`·`confidence`를 그대로(없으면 빈 리스트). 호출하는 쪽이 `unknown_policy`를 적용한다 |
 
 - **`db` 선택 키워드 인자(#199에서 추가, 6개 함수 전부 `*, db: Session | None = None`)**: `db=db`를 넘기면 그 요청 트랜잭션에 참여한다(커밋은 호출한 쪽이 한다). **pins는 `record_kakao_match`를 반드시 `db=db`로 부른다** — 핀 생성과 같은 트랜잭션이어야 한다. 안 넘기면 places가 짧은 세션을 직접 열어 쓰고 닫는다(읽기 전용 호출은 충분하지만 호출마다 연결을 쓴다). `FakePlaces`도 같은 인자를 받는다.
-- **`maps.api.get_map_region_center(db, map_id) -> tuple[float, float] | None`**(#1059): 지도 여행 지역(`maps.region_center`)의 (lat, lng). 여행 지역을 안 고른 지도는 `None`이다. recommend는 이것이 있으면 `places.api.sido_at`으로 여행 지역의 시·도를 정하고, 없으면 기본 지역 중심(그 카테고리 의견 핀들의 중심)으로 정한다.
+- **`maps.api.get_map_region_center(db, map_id) -> tuple[float, float] | None`**(#1059): 지도 여행 지역(`maps.region_center`)의 (lat, lng). 여행 지역을 안 고른 지도는 `None`이다. recommend는 이것이 있으면 `places.api.sido_at`으로 여행 지역의 시·도를 정하고, 없으면 첫 기본 지역의 같은 카테고리 핀 무리 중심으로 정한다(#1252).
 - `sido`·`sido_at`은 `places.testing.FakePlaces`에도 같은 시그니처로 있다(recommend가 대역으로 테스트한다).
 - `place_id`는 문자열(`places.id`의 UUID). 타입은 `places/schemas.py`의 불변 dataclass: `PlaceHint`, `PlaceMatch`, `PlaceInfo`, `PlaceRef`, `FactLabel`.
 - **카카오 원자료는 이 함수들의 입출력 어디에도 없다.** `kakao_place_id`·`kakao_place_url`만 예외(저장 허용 범위).
@@ -370,7 +377,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
    5-4: 카테고리별로 ♥/🚫 의견이 달린 핀이 1개 이상이면 추천 버튼 활성화 (2026-10-07, #360)
         ↓
    [트리거 2, #99] 핀이 생기거나 처음 ♥를 받을 때 그 장소도 큐잉
-   ③-b가 ♥ 장소의 라벨을 선호 신호로 쓴다 — 요청 경로에서 라벨링하지 않으려고
+   코드로 옮긴 ③-b 선호 순위(#99)가 ♥ 장소의 라벨을 선호 신호로 쓴다 — 요청 경로에서 라벨링하지 않으려고
    이 시간대에 미리 채운다 (docs/constraints.md "선호 점수 계산" 참고)
         ↓
 「추천 받기」 실행 시점                                  ← 대부분 이미 채워져 있음

@@ -22,7 +22,7 @@ afterAll(() => {
   vi.unstubAllGlobals()
 })
 
-const shell: ShellContext = { mapId: 'map_1', activeControl: null, onControl: () => {}, connection: { state: 'open', reconnect: () => {} } }
+const shell: ShellContext = { mapId: 'map_1', activeControl: null, onControl: () => {}, connection: { state: 'open', reconnect: () => {} }, getCenter: () => null }
 
 function Where() {
   const { pathname, search } = useLocation()

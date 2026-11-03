@@ -3,8 +3,11 @@ import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate, useParams } 
 import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Route, Search, Users, type LucideIcon } from 'lucide-react'
 
 import AgentButton from '@/features/agent/AgentButton'
+import { useMeQuery } from '@/features/auth/queries'
 import { ImportSheetHost } from '@/features/kakaoImport/ImportSheet'
 import { MIN_LEVEL } from '@/features/map/camera'
+import { SchedulePanelHost } from '@/features/shortlist/SchedulePanel'
+import { useScheduleOpen } from '@/features/shortlist/scheduleStore'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { mapTapAction } from '@/features/map/mapTap'
 import { usePinSelection } from '@/features/map/usePinSelection'
@@ -21,12 +24,15 @@ import { useAiStore } from '@/features/recommend/aiStore'
 import { useResultQuery } from '@/features/recommend/queries'
 import { isLinkInput } from '@/features/search/model'
 import { useSourcePlacesQuery } from '@/features/search/queries'
-import { toRouteDrawings } from '@/features/shortlist/model'
-import { useRouteQuery } from '@/features/shortlist/queries'
+import { scheduleDrawing } from '@/features/shortlist/model'
 import { useRouteStore } from '@/features/shortlist/routeStore'
+import { routeDay } from '@/features/shortlist/schedule'
+import { useTripSchedule } from '@/features/shortlist/useTripSchedule'
 import { useCourseMapStore } from '@/features/course/courseMapStore'
+import { useRecentSearches } from '@/features/search/recentSearchStore'
+import RecentSearches from '@/features/search/RecentSearches'
 import { useSearchStore } from '@/features/search/searchStore'
-import { PANEL_W, RAIL_W, TAB_BAR_H } from '@/features/shell/layout'
+import { PANEL_W, RAIL_W, SIDE_PANEL_W, TAB_BAR_H } from '@/features/shell/layout'
 import MapControls, { type ControlKey } from '@/features/shell/MapControls'
 import { backAriaLabel, usePanelBackStore } from '@/features/shell/panelBack'
 import ProfileModal, { ProfileMenu } from '@/features/shell/ProfileModal'
@@ -74,25 +80,31 @@ export default function MapLayout() {
   // 마커와 목록이 같은 필터를 본다. 확정·코스 탭은 확정 핀만, 다른 탭엔 필터가 없어 전부 보인다.
   const pins = onConfirmedTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters, memberCount)
   const routeOn = useRouteStore((s) => s.on) && onShortlistTab
-  const routes = useRouteQuery(mapId, routeOn).data
+  const routeChosen = useRouteStore((s) => s.day)
+  // 일정은 이 화면이 늘 기간·확정 리스트에 맞춰 둔다(빠진 장소가 있으면 확정 탭이 알린다).
+  const trip = useTripSchedule(mapId)
   const course = useCourseMapStore()
-  // 확정 탭은 「동선 보기」 선을, AI 코스 탭은 이 지도의 코스(#683) 선을 긋는다 — 한 화면에 둘이 겹치지 않는다.
-  const routeDrawings = useMemo(
-    () =>
-      onShortlistTab ? (routeOn && routes ? toRouteDrawings(routes, allPins) : [])
-      : onCourseTab && course.mapId === mapId ? course.days
-      : [],
-    [onShortlistTab, routeOn, routes, allPins, onCourseTab, course.mapId, course.days, mapId],
-  )
+  // 확정 탭은 「동선 보기」로 고른 날의 일정 순서대로, AI 코스 탭은 이 지도의 코스(#683) 선을 긋는다 — 한 화면에 둘이 겹치지 않는다.
+  const routeDrawings = useMemo(() => {
+    if (onShortlistTab) {
+      const day = routeOn ? routeDay(trip.schedule, trip.dates, routeChosen) : null
+      return day ? [scheduleDrawing(trip.schedule.days[day] ?? [], allPins)] : []
+    }
+    return onCourseTab && course.mapId === mapId ? course.days : []
+  }, [onShortlistTab, routeOn, routeChosen, trip.schedule, trip.dates, allPins, onCourseTab, course.mapId, course.days, mapId])
   const markingStage = useSheetStore((s) => s.stages.map)
   const setStage = useSheetStore((s) => s.setStage)
   const search = useSearchStore()
   const [searchText, setSearchText] = useState('')
+  const [searchFocused, setSearchFocused] = useState(false)
+  const recent = useRecentSearches(useMeQuery().data?.id)
   // 결과 시트에서 「닫기」를 눌러도 입력칸에 글자가 남지 않게, 검색이 닫히면 같이 비운다(#351).
   const [lastSource, setLastSource] = useState(search.source)
   if (lastSource !== search.source) {
     setLastSource(search.source)
     if (search.source === null) setSearchText('')
+    // 오타 제안(「중국집」으로 다시 찾기)처럼 입력칸 밖에서 검색해도 입력칸이 그 검색어를 보인다.
+    else if (search.source.kind === 'name') setSearchText(search.source.query)
   }
   const found = useSourcePlacesQuery(search.source, search.near).data?.places
   // 검색 결과 파란 핀 — 결과나 선택이 바뀔 때만 다시 그린다.
@@ -149,14 +161,20 @@ export default function MapLayout() {
 
   function submitSearch(e: React.FormEvent) {
     e.preventDefault()
-    const q = searchText.trim()
+    runSearch(searchText.trim())
+  }
+
+  function runSearch(q: string) {
     if (!q) return
     // 검색은 마킹 탭의 일이다. 다른 탭에서 검색해도 마킹 탭으로 가서 결과를 보여준다.
     if (!onMarkingTab) navigate(`/maps/${mapId}`)
     const center = controller.current?.getCenter() ?? null
     // 지도 링크를 붙여넣었으면 이름 대신 링크로 장소를 찾는다(#487). 같은 결과 시트에서 핀을 찍는다.
     if (isLinkInput(q)) search.openLink(q, center)
-    else search.submit(q.slice(0, 50), center)
+    else {
+      search.submit(q.slice(0, 50), center)
+      recent.add(q.slice(0, 50))
+    }
     setStage('map', 2)
   }
 
@@ -323,7 +341,7 @@ export default function MapLayout() {
     setActiveControl(key)
   }
 
-  const context: ShellContext = { mapId, activeControl, onControl, connection }
+  const context: ShellContext = { mapId, activeControl, onControl, connection, getCenter: () => controller.current?.getCenter() ?? null }
   // 3단계에서는 칩이 시트 제목 아래로 옮겨 간다(MapTab). 넓은 화면엔 단계가 없다. 검색 중에는 숨긴다(Figma 규칙).
   const chipsShown = onMarkingTab && (desktop || markingStage !== 3) && !search.source
   const fade = mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
@@ -342,7 +360,9 @@ export default function MapLayout() {
   // 넓은 화면의 지도 영역 왼쪽 끝 — 패널을 접어도 탭 줄은 남는다.
   const mapLeft = desktop ? (panelSettled ? panelW : RAIL_W) : 0
   // 지도 위 덧칠(칩·« 손잡이)은 패널 가장자리를 따라 같이 미끄러진다.
-  const overlayLeft = panelOpen ? panelW : RAIL_W
+  // 「일정 짜기」 옆 패널이 열려 있으면 지도 위 토스트·버튼·칩이 그 오른쪽으로 비킨다(패널이 가리지 않게).
+  const sideOpen = useScheduleOpen(mapId) && onShortlistTab && desktop
+  const overlayLeft = (panelOpen ? panelW : RAIL_W) + (sideOpen ? SIDE_PANEL_W : 0)
 
   return (
     <>
@@ -393,7 +413,8 @@ export default function MapLayout() {
         {/* 넓은 화면 pb-1: 검색창 포커스 테두리(바깥 4px)가 바로 아래 탭 내용(흰 바탕)에 덮이지 않게 자리를 둔다. */}
         <header
           data-map-header
-          className={desktop ? 'shrink-0 space-y-3 px-4 pb-1 pt-3' : 'pointer-events-none fixed inset-x-0 top-0 z-20 space-y-2 px-4 pt-3'}
+          // 최근 검색 목록이 열리면 바텀시트(z-30) 위쪽에 붙은 지도 버튼보다 위로 올린다.
+          className={desktop ? 'shrink-0 space-y-3 px-4 pb-1 pt-3' : `pointer-events-none fixed inset-x-0 top-0 ${searchFocused ? 'z-40' : 'z-20'} space-y-2 px-4 pt-3`}
         >
           <div className={desktop ? 'flex items-center gap-2' : 'flex items-center justify-between'}>
             {desktop ? (
@@ -428,7 +449,7 @@ export default function MapLayout() {
             {/* 내 이니셜 원은 계정 버튼처럼 읽혀서, 구성원 아이콘 + 인원 수로 "이 지도의 정보·구성원"임을 보인다(#351). */}
             {/* 넓은 화면은 바닥 시트 대신 버튼 아래 메뉴로 연다 — 패널 옆 바닥 시트는 끌리지도 않는 손잡이만 남았다. */}
             {/* 알림함(#483) — 다른 지도의 알림도 여기서 본다. */}
-            {desktop && <NotificationBell />}
+            {desktop && <NotificationBell currentMapId={mapId} />}
             {desktop ? (
               <ProfileMenu
                 mapId={mapId}
@@ -445,7 +466,7 @@ export default function MapLayout() {
               />
             ) : (
               <div className="flex items-center gap-3">
-                <NotificationBell floating />
+                <NotificationBell floating currentMapId={mapId} />
                 <button
                   type="button"
                   aria-label={`지도 정보와 구성원 · ${memberCount}명`}
@@ -461,30 +482,53 @@ export default function MapLayout() {
           {/* 지도 위에는 검색창만 둔다(FE 회의). 지도를 끄는 동안엔 지도에 집중하게 흐려진다. 검색 동작은 #293. */}
           {/* 검색 결과는 화면에 보여 주기만 한다(#53). Enter 나 돋보기를 눌렀을 때만 부른다(호출 상한, api-spec). */}
           {/* 넓은 화면은 패널 안이라 그림자·흐림이 없다(그림자는 지도 위에 떠 있는 것에만). */}
-          <form
-            role="search"
-            inert={!desktop && mapMoving}
-            onSubmit={submitSearch}
-            className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-white px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
-              search.source ? 'border-brand-600' : 'border-ink-200'
-            }${desktop ? '' : ` ${fade}`}`}
+          {/* 포커스가 검색창이나 최근 검색 목록 안에 있는 동안만 목록을 연다. Esc는 닫는다. */}
+          <div
+            className="relative"
+            onFocus={() => setSearchFocused(true)}
+            onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setSearchFocused(false)}
+            onKeyDown={(e) => e.key === 'Escape' && setSearchFocused(false)}
           >
-            <input
-              id="place-search"
-              type="search"
-              enterKeyHint="search"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              maxLength={2000}
-              placeholder="장소 이름 또는 지도 링크"
-              aria-label="장소 검색"
-              className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-ink-500 [&::-webkit-search-cancel-button]:hidden"
-            />
-            {searchText && <ClearButton label="검색어 지우기" onClick={clearSearch} />}
-            <button type="submit" aria-label="검색" className="hit-44 text-brand-600">
-              <Search size={20} />
-            </button>
-          </form>
+            <form
+              role="search"
+              inert={!desktop && mapMoving}
+              onSubmit={submitSearch}
+              className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-white px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
+                search.source ? 'border-brand-600' : 'border-ink-200'
+              }${desktop ? '' : ` ${fade}`}`}
+            >
+              <input
+                id="place-search"
+                type="search"
+                enterKeyHint="search"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                maxLength={2000}
+                placeholder="장소 이름 또는 지도 링크"
+                aria-label="장소 검색"
+                className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-ink-500 [&::-webkit-search-cancel-button]:hidden"
+              />
+              {searchText && <ClearButton label="검색어 지우기" onClick={clearSearch} />}
+              <button type="submit" aria-label="검색" className="hit-44 text-brand-600">
+                <Search size={20} />
+              </button>
+            </form>
+            {searchFocused && !searchText && recent.list.length > 0 && (
+              <RecentSearches
+                list={recent.list}
+                floating={!desktop}
+                onPick={(q) => {
+                  setSearchText(q)
+                  runSearch(q)
+                }}
+                onRemove={recent.remove}
+                onClear={() => {
+                  recent.clear()
+                  document.getElementById('place-search')?.focus()
+                }}
+              />
+            )}
+          </div>
           {!desktop && chipsShown && (
             <CategoryChips
               value={filters.category}
@@ -542,6 +586,8 @@ export default function MapLayout() {
       {profileOpen && !desktop && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
       {/* 카톡 가져오기 시트는 탭 화면 밖 한 자리에서 그린다 — 목록 머리가 바뀌어도 함께 사라지지 않게(#1045). */}
       <ImportSheetHost mapId={mapId} />
+      {/* 확정 탭 「일정 짜기」 패널(넓은 화면만) — 탭을 떠나면 닫힌다. */}
+      {onShortlistTab && desktop && <SchedulePanelHost mapId={mapId} />}
     </>
   )
 }
@@ -557,7 +603,7 @@ const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | nul
   { path: '/course', label: 'AI 코스', Icon: Route },
 ]
 
-/** 비활성 #6B7181(흰 바탕 대비 약 5:1). */
+/** 비활성 ink-500(흰 바탕 대비 약 5:1). */
 function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
   return (
     <NavLink

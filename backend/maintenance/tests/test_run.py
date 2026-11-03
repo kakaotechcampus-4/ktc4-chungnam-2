@@ -68,10 +68,36 @@ def test_step_receives_now():
     assert seen == [NOW]
 
 
-def test_default_steps_are_the_seven_stages():
-    assert list(run.STEPS) == ["maps", "notifications", "guests", "llm_calls", "idempotency", "withdrawn", "events"]
+def test_default_steps_are_the_eight_stages():
+    assert list(run.STEPS) == ["maps", "notifications", "guests", "llm_calls", "idempotency", "withdrawn", "events", "pins"]
 
 
 def test_format_report_shows_map_count_apart_from_rows():
     out = run.format_report({"maps": {"deleted_maps": 2, "pins": 5, "maps": 2}}, dry_run=False)
     assert "maps: 7행 (지도 2개)" in out
+
+
+def test_pins_runs_in_full_and_only_modes(monkeypatch):
+    from pins import api as pins_api
+
+    calls = []
+    monkeypatch.setattr(pins_api, "purge_deleted_pins", lambda db, *, now: calls.append(now) or {})
+    steps = {name: (step if name == "pins" else lambda db, now: {}) for name, step in run.STEPS.items()}
+    assert _run(steps)[0] == 0
+    assert _run(steps, ["--only", "pins"])[0] == 0
+    assert calls == [NOW, NOW]
+
+
+def test_pins_runs_after_failure(monkeypatch, caplog):
+    from pins import api as pins_api
+
+    calls = []
+    monkeypatch.setattr(pins_api, "purge_deleted_pins", lambda db, *, now: calls.append(now) or {})
+
+    def fail(db, now):
+        raise ValueError("private data")
+
+    code, log = _run({"other": fail, "pins": run.purge_pins})
+    assert code == 1 and calls == [NOW]
+    assert log == ["rollback", "close", "commit", "close"]
+    assert "ValueError" in caplog.text and "private data" not in caplog.text

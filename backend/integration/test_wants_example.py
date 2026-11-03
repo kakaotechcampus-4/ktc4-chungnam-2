@@ -12,10 +12,10 @@ from recommend.ports import PlaceStub
 from recommend.tests.test_flows import _FakePlaceFacts, _FakePlaceSearch, _make_members, _make_region, _make_run
 
 FACTS = {
-    "korean_true": {"cuisine_korean": True, "spicy_focused": False},      # 한식집 → 실격(가)
+    "korean_true": {"cuisine_korean": True, "spicy_focused": False},      # 한식집 → 감점(가)
     "korean_unknown": {"spicy_focused": False},                          # 한식 라벨 모름 → 통과 + 확인 필요
     "raw_fish": {"cuisine_korean": False, "cuisine_raw_fish": True, "spicy_focused": False},  # 횟집 → +1점
-    "spicy_true": {"cuisine_korean": False, "spicy_focused": True},      # 매운맛 전문 → 실격(다)
+    "spicy_true": {"cuisine_korean": False, "spicy_focused": True},      # 매운맛 전문 → 감점(다)
     "spicy_unknown": {"cuisine_korean": False},                          # 매운맛 모름 → 통과 + 확인 필요(다, 취향 키)
 }
 
@@ -38,13 +38,13 @@ def test_three_person_example_from_the_constraints_doc(db_session):
     flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=_FakePlaceFacts(FACTS))
 
     candidates = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
-    assert set(candidates) == {"korean_unknown", "raw_fish", "spicy_unknown"}   # 한식집·매운맛 전문(참)만 실격
+    assert set(candidates) == {"korean_unknown", "raw_fish", "spicy_unknown"}   # 감점된 한식·매운맛은 상위 3곳 밖
     assert candidates["raw_fish"].rank == 1                               # 횟집은 +1점으로 위로
     korean_check = next(c for c in candidates["korean_unknown"].checks if c["fact_key"] == "cuisine_korean")
     assert korean_check["needs_check"] is True and korean_check["passed"] is True
     spicy_check = next(c for c in candidates["spicy_unknown"].checks if c["fact_key"] == "spicy_focused")
     assert spicy_check["needs_check"] is True and spicy_check["passed"] is True   # 모름은 통과 + 확인 필요
-    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["실격 조건 제거"] == 2
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["실격 조건 제거"] == 0
 
     principal = Principal(user_id="user_1", map_id=run.map_id, role="member")
     result = flows.get_result(db_session, run_id=str(run.id), principal=principal, place_search=search)

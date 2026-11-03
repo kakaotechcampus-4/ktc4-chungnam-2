@@ -3,7 +3,7 @@
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -25,6 +25,8 @@ class ShortlistItem(Base):
     # 테이블, #103)과는 무관한 별개 값이다. routes 재계산은 이 컬럼을 읽지도 쓰지도 않는다.
     # 수동 정렬(PUT .../shortlist/order, #142)만 이 값을 쓴다. NULL은 정렬 전에 추가된 항목.
     visit_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    scheduled_date: Mapped[date | None] = mapped_column(nullable=True)
 
     __table_args__ = (
         UniqueConstraint("map_id", "pin_id", name="uq_shortlist_map_pin"),
