@@ -391,7 +391,7 @@ regions(
                                          -- 압축 논리. 실제 PostGIS 연산이 필요해지면(예: 핀-지역
                                          -- 포함 판정을 DB 레벨로 옮길 때) geom 컬럼을 추가하는
                                          -- 별도 마이그레이션으로 되돌린다.
-  anchor_points jsonb default '[]',     -- #112: 원을 만든 기준 핀 좌표 [[lat, lng], ...]. 상위 3곳 동점 처리의 거리 평균에 쓴다
+  anchor_points jsonb default '[]',     -- #1252: 이 무리의 같은 카테고리 핀 좌표 [[lat, lng], ...]. 각 핀의 원 조회와 거리 평균에 쓴다
   confirmed boolean, confirmed_at
 )
 
