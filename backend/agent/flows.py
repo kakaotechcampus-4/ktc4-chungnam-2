@@ -708,7 +708,8 @@ def _summaries(db: Session, map_id: str) -> list[AgentSummary]:
 
 def _render(db: Session, row: SuggestionRow) -> AgentSuggestion | None:
     """저장된 슬롯 문장을 지금 상태로 렌더한다. 핀 이름, 사유 글, 우리 데이터 확인의 라벨 값은 여기서만 읽는다(명세 2절 13번,
-    6.6). split 분석의 축 이름과 우리 데이터 확인의 특징 이름은 recommend의 키 표시 이름이다(#564)."""
+    6.6). split 분석의 축 이름과 우리 데이터 확인의 특징 이름은 recommend의 키 표시 이름이다(#564). 작업 기록(11.3)은 제안을
+    만든 관찰 행으로 만든다 — GET과 agent.suggested가 이 함수 하나를 거친다."""
     facts = row.facts or []
     pin_ids = set(core.referenced_pin_ids(row.claims)) | {f["pin_id"] for f in facts}
     pins = _pins(db, row.map_id, pin_ids) if pin_ids else {}
@@ -719,7 +720,7 @@ def _render(db: Session, row: SuggestionRow) -> AgentSuggestion | None:
         fact_values=_fact_values(db, pins) if facts else {},
         source_name=llm_api.source_name,
     )
-    return core.render_suggestion(row, refs)
+    return core.render_suggestion(row, refs, service.get_run(db, row.run_id))
 
 
 def _pins(db: Session, map_id: str, pin_ids: set[str]) -> dict[str, tuple[str | None, str | None]]:
@@ -761,13 +762,16 @@ def _reaction_texts(db: Session, map_id: str, category: str | None) -> dict[str,
 
 def get_state(db: Session, *, map_id: str, user_id: str, now: datetime) -> AgentState:
     """GET /maps/{mapId}/agent. 지금 제안은 shadow가 아니고 만료 전인 활성 제안을 렌더한 것. 모드가 꺼져 있으면 null.
-    요약은 만들어진 카테고리만(8절). 현황 문단은 저장된 것(8.2) — 시트를 열 때 모델을 부르지 않는다."""
+    요약은 만들어진 카테고리만(8절). 현황 문단은 저장된 것(8.2) — 시트를 열 때 모델을 부르지 않는다. 살펴본 상태(21.3)는
+    커서의 마지막 관찰 시각과, 보여 줄 제안이 없을 때만 가장 최근 지도 관찰 행을 읽는다."""
     settings = core.settings_view(service.get_settings(db, map_id))
     row = service.active_suggestion(db, map_id, now) if settings.enabled else None
     active = _render(db, row) if row is not None else None
     viewed = active is not None and service.has_viewed(db, row.id, user_id)
     return core.agent_state(settings, active, viewed=viewed, summaries=_summaries(db, map_id),
-                            status=core.status_view(service.get_map_status(db, map_id)))
+                            status=core.status_view(service.get_map_status(db, map_id)),
+                            checked_at=service.last_observed_at(db, map_id),
+                            latest_observation=service.latest_observation(db, map_id) if active is None else None)
 
 
 def change_settings(db: Session, *, map_id: str, enabled: bool, user_id: str, now: datetime) -> AgentSettings:

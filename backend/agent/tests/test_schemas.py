@@ -20,6 +20,7 @@ from agent.schemas import (
     AgentAnalysis,
     AgentConflictAxis,
     AgentNotFiltered,
+    AgentObservation,
     AgentSettings,
     AgentSplitPref,
     AgentState,
@@ -30,6 +31,7 @@ from agent.schemas import (
     AgentVagueFixable,
     DiagnosisOutput,
     RunAdvice,
+    WorkStep,
 )
 
 SPEC = yaml.safe_load((Path(__file__).resolve().parents[3] / "docs" / "api-spec.yaml").read_text(encoding="utf-8"))
@@ -78,6 +80,20 @@ SUMMARY = AgentSummary(
         settings=AgentSettings(enabled=False, updated_by="u1", updated_at=NOW),
         active_suggestion=None, has_unseen=False, summaries=[],
     )),
+    # 작업 기록과 살펴본 상태(#1297)
+    ("AgentState", AgentState(
+        settings=AgentSettings(enabled=True), has_unseen=False, summaries=[],
+        active_suggestion=SUGGESTION.model_copy(update={"steps": [
+            WorkStep(stage="감지", role="계산", by="code", text="음식점에 반대 의견 2개가 남은 뒤로 새 후보가 없어요"),
+            WorkStep(stage="웹 확인", role="검증", by="ai", by_detail="모델 → 코드", text="웹에서 찾아봤어요 · 출처 2개"),
+        ]}),
+        observation=AgentObservation(checked_at=NOW, notice=None),
+    )),
+    ("AgentState", AgentState(
+        settings=AgentSettings(enabled=True), active_suggestion=None, has_unseen=False, summaries=[],
+        observation=AgentObservation(checked_at=NOW, notice="이번에는 지도를 끝까지 살펴보지 못했어요. 새 활동이 생기면 다시 볼게요"),
+    )),
+    ("AgentObservation", AgentObservation()),
     ("AgentSuggestion", SUGGESTION.model_copy(update={
         "diagnosis": "no_reaction", "category": None, "analysis": None,
         "actions": [AgentAction(index=0, type="show_pins", label="미확인 핀 보기",
