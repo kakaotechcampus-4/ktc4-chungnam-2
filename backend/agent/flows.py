@@ -87,6 +87,7 @@ from common import categories
 from common.database import SessionLocal, session_scope
 from common.errors import AppError
 from common.events import record_event
+from common.kst import kst_date
 from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
@@ -251,7 +252,7 @@ def daily_cleanup_if_due(now: datetime, *, session_factory: SessionFactory = Ses
     했으면 True. 날짜는 프로세스 메모리에 둔다 — 인스턴스가 여럿이거나 다시 뜨면 하루에 몇 번 돌 수 있지만 지우기와
     빈 칸 채우기라 결과는 같다."""
     global _cleanup_done_on
-    today = core.kst_date(now)
+    today = kst_date(now)
     if _cleanup_done_on == today:
         return False
     with _write(session_factory) as db:

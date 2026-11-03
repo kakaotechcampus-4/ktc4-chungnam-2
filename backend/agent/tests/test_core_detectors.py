@@ -6,6 +6,7 @@
 from datetime import timedelta
 
 from agent import core
+from common.kst import KST
 from agent.tests.snaps import NOW, hours, item, member, pin, react, snap
 
 TH = hours(3)
@@ -243,7 +244,7 @@ def test_fingerprint_ignores_evidence_order_and_hash_tracks_state():
 
 
 def test_evidence_hash_same_instant_in_other_timezone():
-    kst_now = NOW.astimezone(core.KST)
+    kst_now = NOW.astimezone(KST)
     assert core.evidence_hash([("r1", "like", NOW)]) == core.evidence_hash([("r1", "like", kst_now)])
 
 

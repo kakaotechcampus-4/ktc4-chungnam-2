@@ -39,6 +39,7 @@ from agent.models import (
     AgentSuggestion,
     AgentSuggestionView,
 )
+from common.kst import kst_day_start
 from realtime import api as realtime_api
 
 # 모델 사용 상한이 세는 trigger(12.3). 현황 문단(status, 8.2)은 모델을 부르지만 세지 않는다 — 비용은 서비스 일일 예산이 본다(19절)
@@ -244,7 +245,7 @@ def load_history(db: Session, map_id: str, now: datetime) -> core.History:
             AgentRun.map_id == map_id,
             AgentRun.used_model.is_(True),
             AgentRun.trigger.in_(MODEL_RUN_TRIGGERS),
-            AgentRun.started_at >= core.kst_day_start(now),
+            AgentRun.started_at >= kst_day_start(now),
         )
     ).scalar_one()
     return core.History(
