@@ -326,6 +326,12 @@ class LineUse(NamedTuple):
     not_enforced_reason: str | None
     effect: str | None   # hard·접근성 예외는 "filter", 일반 soft는 "score", 안 쓰이면 None(#751)
 
+    @property
+    def filters_candidates(self) -> bool | None:
+        """이 줄이 후보를 거르는가(#1260). 쓰이는 줄(enforced)이면 effect가 "filter"일 때 참, "score"면 거짓이고, 안 쓰이면 None이다.
+        근거 응답과 실행 스냅샷이 effect를 다시 해석하지 않고 이 값을 받는다."""
+        return self.effect == "filter" if self.enforced else None
+
 
 def evidence_line_use(
     badge: str, fact_key: str | None, wants: bool | None, category: str, off_season: Collection[str],
@@ -368,7 +374,7 @@ def applied_evidence_entries(lines: Sequence[Any], category: str, off_season: Co
         entries.append({
             "id": str(line.id), "author_id": line.author_id, "text": line.text, "badge": line.badge,
             "fact_key": line.fact_key, "wants": line.wants, "enforced": use.enforced,
-            "not_enforced_reason": use.not_enforced_reason, "is_active": True,
+            "not_enforced_reason": use.not_enforced_reason, "filters_candidates": use.filters_candidates, "is_active": True,
         })
     return entries
 
