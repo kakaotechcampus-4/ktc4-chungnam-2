@@ -1075,6 +1075,20 @@ def test_evidence_line_use_picks_the_reason_and_effect(badge, fact_key, wants, c
     assert core.evidence_line_use(badge, fact_key, wants, category, off_season) == expected
 
 
+@pytest.mark.parametrize("badge, fact_key, wants, category, off_season, expected", [
+    ("required", "is_crowded_large", None, "카페", (), True),            # hard 키
+    ("required", "accessible", True, "관광지", (), True),                # 접근성 필요 조건
+    ("required", "spicy_focused", False, "음식점", (), False),           # 취향 반대는 순위만
+    ("required", "accessible", False, "관광지", (), False),
+    ("preferred", "accessible", True, "관광지", (), False),
+    ("required", None, None, "카페", (), None),                          # 안 쓰이는 줄은 값이 없다
+    ("required", "quiet", None, "카페", (), None),
+    ("required", "cherry_blossom", True, "관광지", ("cherry_blossom",), None),
+])
+def test_evidence_line_use_filters_candidates_1260(badge, fact_key, wants, category, off_season, expected):
+    assert core.evidence_line_use(badge, fact_key, wants, category, off_season).filters_candidates is expected
+
+
 def test_evidence_line_use_reason_order_is_no_key_then_off_season_then_category():
     assert core.evidence_line_use("required", None, None, "음식점", {"x"}).not_enforced_reason == "no_key"
     assert core.evidence_line_use("required", "is_crowded_large", None, "음식점", {"is_crowded_large"}).not_enforced_reason == "off_season"
