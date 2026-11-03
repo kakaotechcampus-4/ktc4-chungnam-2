@@ -31,7 +31,6 @@ KNOWN_CREDITS_DRIFT: dict[tuple[str, ...], str] = {
 
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
-    ("POST", "/pins/{pinId}/restore"): "지운 핀 복구 — 서버 구현 전(#864, 이슈 #1013). 구현되면 지운다",
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
@@ -621,6 +620,17 @@ def test_pin_trash_list_matches_the_openapi_spec(clients, pin_body):
     member_view = b.get(f"/maps/{map_id}/trash").json()
     assert [i["pin"]["id"] for i in member_view["items"]] == [theirs]   # 일반 구성원은 내가 찍은 것만
     assert a.get("/maps/no_such_map/trash").status_code == 404
+
+    # 복구(#1013) — 찍은 사람과 방장. 연타 200, 남의 지운 핀은 존재를 알리지 않는 404, 지우지 않은 남의 핀도 404, 없는 핀 404
+    assert b.post(f"/pins/{mine}/restore").status_code == 404
+    restored = a.post(f"/pins/{mine}/restore")
+    assert restored.status_code == 200 and restored.json()["id"] == mine
+    assert a.post(f"/pins/{mine}/restore").status_code == 200
+    assert b.post(f"/pins/{mine}/restore").status_code == 404
+    assert b.post(f"/pins/{theirs}/restore").status_code == 200
+    assert a.post("/pins/00000000-0000-0000-0000-000000000000/restore").status_code == 404
+    dup = a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-bunsik"))
+    assert dup.status_code == 409          # 방금 복구한 핀과 같은 장소
 
 
 def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
