@@ -15,7 +15,9 @@
   나온 횟수를 센다. 금지어 목록이 아니라 케이스마다 적은 문구로 본다. 인용 조각(구성원 글)에 들어간 것도 따로 센다 —
   화면에서 구성원 의견으로 그려지는 데이터라 실패가 아니다.
 - 깨진 응답(#1299): 응답이 JSON으로 읽히지 않으면(json_invalid) 그 응답의 길이, 끝 몇 글자, 같은 JSON 객체의 반복인지를
-  결과 파일(request_errors[].broken)에만 남긴다. 운영 로그에는 남기지 않는다(#390, client는 클래스 이름만).
+  결과 파일(request_errors[].broken)에만 남긴다. 운영 로그에는 남기지 않는다(#390, client는 클래스 이름만). 반복 판정은 client의
+  read_json_repeat 하나다 — 반복이면 client가 첫 객체를 받으므로(#767 3번 b) 그 호출은 실패로 세지 않고 「반복 받음」으로 센다.
+- 낫표 겹침(#767 1번): 렌더된 text 조각(인용 조각 밖)에 「 또는 」가 남은 줄을 센다. quote 조각은 화면이 인용 모양으로 그린다.
 """
 
 import argparse
@@ -63,7 +65,7 @@ class RecordingClient:
             row |= {"ms": _ms(started), "error": type(exc).__name__}
             if type(exc).__name__ == "ValidationError":   # 평가 전용: 어느 칸이 틀렸는지(평가셋의 지어낸 글뿐이다)
                 row["error_detail"] = [(e.get("loc"), e.get("type")) for e in exc.errors()][:5]
-                broken = _broken_response(exc.errors())
+                broken = _broken_response(exc)
                 if broken:
                     row["broken"] = broken
             _local.requests.append(row)
@@ -83,24 +85,15 @@ class RecordingClient:
 BROKEN_TAIL_CHARS = 40
 
 
-def _broken_response(errors: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+def _broken_response(exc: BaseException) -> dict[str, Any] | None:
     """JSON으로 읽히지 않은 응답(json_invalid)의 모양(#1299, #767 3번). 평가 결과 파일에만 쓴다 — 운영 로그(client)는 여전히
-    클래스 이름만 남긴다(#390). pydantic은 json_invalid의 input에 응답 원문을 싣는다. 길이, 끝 몇 글자, 첫 JSON 객체가 끝나는
-    위치와 그 뒤가 같은 객체의 반복인지만 남긴다."""
-    raw = next((e.get("input") for e in errors if e.get("type") == "json_invalid" and isinstance(e.get("input"), str)), None)
+    클래스 이름만 남긴다(#390). 길이, 끝 몇 글자, 첫 JSON 객체가 끝나는 위치와 그 뒤가 같은 객체의 반복인지만 남긴다.
+    판정은 운영과 같은 llm_client.read_json_repeat다."""
+    raw = llm_client.json_invalid_input(exc)
     if raw is None:
         return None
-    shape: dict[str, Any] = {"len": len(raw), "tail": raw[-BROKEN_TAIL_CHARS:]}
-    try:
-        first, end = json.JSONDecoder().raw_decode(raw.lstrip())
-    except json.JSONDecodeError:
-        return shape | {"first_json_end": None, "repeated": False}
-    rest = raw.lstrip()[end:].strip()
-    try:
-        repeated = bool(rest) and json.loads(rest) == first
-    except json.JSONDecodeError:
-        repeated = False
-    return shape | {"first_json_end": end, "repeated": repeated}
+    shape = llm_client.read_json_repeat(raw)
+    return {"len": len(raw), "tail": raw[-BROKEN_TAIL_CHARS:], "first_json_end": shape.first_end, "repeated": shape.repeated}
 
 
 def _ms(started: float) -> int:
@@ -197,6 +190,10 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     return row
 
 
+def _has_bracket(segment: Mapping[str, Any]) -> bool:
+    return segment["kind"] == "text" and ("「" in segment["text"] or "」" in segment["text"])
+
+
 # ---------------------------------------------------------------- 요약
 
 def _pct(n: int, d: int) -> str:
@@ -228,6 +225,7 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                   f"| 결정(suggest/silent) 일치 | {_pct(sum(r['decision_match'] for r in diag), len(diag))} |",
                   f"| 검증 통과(suggest 중 초안이 남음) | {_pct(len(passed), len(suggest_rows))} |",
                   f"| 고른 버튼 일치(첫 버튼, 침묵 기대는 침묵) | {_pct(sum(r['button_match'] for r in diag), len(diag))} |",
+                  *_bracket_rows(diag),
                   f"| 원문에 결정 지시 표현 | {sum(bool(r.get('raw_forbidden')) for r in diag)} |",
                   *_echo_rows(diag),
                   *_preview_rows(diag),
@@ -279,6 +277,18 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                 texts = " / ".join(f"{x['text']}{' (짐작)' if x['is_guess'] else ''}" for x in good["rendered"])
                 lines.append(f"- {cid}: [{', '.join(good['kept_actions'])}] {texts}")
     return "\n".join(lines) + "\n"
+
+
+def _bracket_rows(rows: list[dict[str, Any]]) -> list[str]:
+    """낫표 겹침(#767 1번)과 같은 JSON 두 번(3번 b). 낫표는 렌더된 줄 중 인용 조각이 있는 줄을 분모로, text 조각에 「 또는 」가
+    남은 줄을 센다(인용 없이 「」를 쓴 줄도 분자에 든다). 반복 받음은 반복이었고 호출이 실패로 끝나지 않은 수다."""
+    shown = [x["segments"] for r in rows for x in r.get("rendered", []) if x["segments"]]   # 저장된 결과로도 다시 센다
+    quote_lines = sum(any(s["kind"] == "quote" for s in seg) for seg in shown)
+    bracket_lines = sum(any(_has_bracket(s) for s in seg) for seg in shown)
+    repeated = [r for r in rows for e in r["request_errors"] if (e.get("broken") or {}).get("repeated")]
+    accepted = sum(r["outcome"] not in ("model_failed", "invalid_schema") for r in repeated)
+    return [f"| 렌더 text 조각에 「」가 남은 줄(인용 조각이 있는 줄 대비) | {bracket_lines}/{quote_lines} |",
+            f"| 같은 JSON 두 번 — 받음/나옴 | {accepted}/{len(repeated)} |"]
 
 
 def _echo_rows(rows: list[dict[str, Any]]) -> list[str]:
