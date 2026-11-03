@@ -127,6 +127,7 @@ v2 동선 에이전트(「AI 코스 짜기」, #334)는 사람이 요청할 때 
 | `docs/events.md` · `docs/errors.md` | SSE 이벤트 · 에러 코드 카탈로그 |
 | `docs/openapi-workflow.md` | 목 서버·타입 생성·스펙 변경 통보·실서버 연동 점검 |
 | `docs/CHANGELOG-api.md` | 스펙 변경 이력 — 구조 변경 시 여기 먼저 |
+| `docs/tech-stack.md` | 기술 스택·버전·인프라·CI 한눈에 보기(근거 파일 표기) |
 | `docs/code-quality.md` | 클린 코드 원칙, AI 작성 코드 리뷰 포인트 |
 | `docs/design/colors.md` | 색 결정 이유(값 정본은 `frontend/src/styles/tokens.css`) |
 | `frontend/DESIGN.md` | 화면 디자인 규칙 — 글자·반경·컴포넌트·지도 핀·지도 버튼·토스트, Do/Don't(Impeccable 스킬이 읽음) |
