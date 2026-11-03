@@ -5,8 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from auth.testing import session_cookie
 from maintenance import run
 from pins import api as pins_api
-
-pytest_plugins = ("pins.tests.conftest",)
+from pins.tests.conftest import app_client, db_session, fake_places, test_engine  # noqa: F401
 
 DELETED_AT = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
