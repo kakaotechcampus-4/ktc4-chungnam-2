@@ -255,7 +255,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Map" }
+        "403": { $ref: "#/components/responses/GuestNotAllowed" }
         "409": { $ref: "#/components/responses/MapLimit" }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /maps/trash:
     get:
@@ -650,7 +652,9 @@ paths:
           schema: { $ref: "#/components/schemas/PinKind" }
         - name: created_by
           in: query
-          description: "구성원별 핀 필터 (#26). 여러 명을 지정하면 OR로 묶는다"
+          description: "구성원별 핀 필터 (#26). 여러 명을 지정하면 OR로 묶는다. 반복해서 보낸다(`?created_by=a&created_by=b`)"
+          style: form
+          explode: true
           schema:
             type: array
             items: { type: string }
