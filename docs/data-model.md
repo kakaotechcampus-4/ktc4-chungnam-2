@@ -573,9 +573,9 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 
 ---
 
-## llm_calls (모델 호출 사용량, #870, 마이그레이션 0043)
+## llm_calls (모델 호출 사용량, #870, 마이그레이션 0043, `web_searches`는 0060)
 
-> llm 모듈이 쓰는 테이블 1개. 모델 호출 1건 = 1행이다. 기록은 출구(`llm/client.py`의 `call_planner`, `_agent_parse`) 한 곳에서 하고,
+> llm 모듈이 쓰는 테이블 1개. 모델 호출 1건 = 1행이다. 기록은 출구(`llm/client.py`의 `call_planner`, `_agent_parse`, 웹 확인의 `call_web_check` #1216) 한 곳에서 하고,
 > 왜 불렀는지와 지도·사람·실행은 부르는 쪽이 `llm.api.usage_context`로 붙인다. 감싸지 않은 호출(평가 스크립트)은 남지 않는다.
 > **사유 원문, 요청 원문, 응답 본문은 저장하지 않는다.** 숫자와 분류만이다. 기록 실패는 본 기능을 막지 않는다(별도 세션, 예외는 로그만).
 > `agent_runs`, `agent_course_runs`의 `tokens_in/out`(실행 1건 합계)은 그대로 둔다. 겹침 정리는 측정 뒤 따로 한다.
