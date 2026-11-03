@@ -19,7 +19,8 @@ usage (스테이징 — 시크릿이 서버 밖으로 나오지 않게 API 컨�
 usage (로컬 staging 서버):
   PYTHONUTF8=1 QA_LOGIN_SECRET=... python qa/harness/seed_agent_demo.py --base-url http://localhost:8010 [--scenario split]
 옵션: --scenario stall|split, --web-url <화면 주소>(기본은 base-url에서 /api를 뗀 것), --wait-join <초>(stall은 기본 0,
-split은 기본 900), --tick(끝에 `python -m agent.tick`을 한 번 돌린다 — API 컨테이너 안에서만), --food-query, --cafe-query
+split은 기본 900), --tick(끝에 `python -m agent.tick`을 한 번 돌린다 — API 컨테이너 안에서만), --food-query, --cafe-query,
+--reason <글>(stall에서 두 번째 🚫의 글을 바꾼다. 1~140자. 따옴표·이모지·긴 글이 깨지지 않는지 보는 QA G04용)
 키·시크릿은 출력하지 않는다.
 """
 import os
@@ -32,7 +33,7 @@ from datetime import date, timedelta
 import httpx
 
 SEONGSU = {"label": "성수", "lat": 37.5446, "lng": 127.0557}
-OPTS = {"--scenario": "stall", "--web-url": None, "--wait-join": None, "--food-query": "성수 맛집", "--cafe-query": "성수 카페"}
+OPTS = {"--scenario": "stall", "--web-url": None, "--wait-join": None, "--food-query": "성수 맛집", "--cafe-query": "성수 카페", "--reason": None}
 FLAGS = {"--tick": False}
 
 # 사유는 지어낸 예시다. 칩 id는 docs/constraints.md 칩 표의 것이다(food_wait: wait_short, food_spicy: spicy_focused)
@@ -147,6 +148,8 @@ def main() -> None:
     scenario = OPTS["--scenario"]
     if scenario not in ("stall", "split"):
         fail("--scenario는 stall 또는 split")
+    if OPTS["--reason"] is not None and not 1 <= len(OPTS["--reason"].strip()) <= 140:
+        fail("--reason은 1~140자(서버의 사유 길이 상한과 같다)")
     web = (OPTS["--web-url"] or base.removesuffix("/api")).rstrip("/")
     wait = int(OPTS["--wait-join"] or (900 if scenario == "split" else 0))
 
@@ -167,7 +170,7 @@ def main() -> None:
         food2 = add_pin(b, mid, find_place(b, OPTS["--food-query"], "음식점", 1), "음식점")
         cafe = add_pin(a, mid, find_place(a, OPTS["--cafe-query"], "카페", 0), "카페")
         react(a, food2, "against", STALL_AGAINST[0])
-        react(b, food1, "against", STALL_AGAINST[1])
+        react(b, food1, "against", {**STALL_AGAINST[1], **({"reason_text": OPTS["--reason"]} if OPTS["--reason"] else {})})
         # 반대 뒤로 다른 카테고리에서 두 사람이 움직인다 — 정체의 활동 기준(6.2)
         react(a, cafe, "like")
         react(b, cafe, "like")
