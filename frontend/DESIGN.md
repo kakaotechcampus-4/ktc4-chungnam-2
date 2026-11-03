@@ -298,7 +298,7 @@ components:
 | 글자 버튼·링크 | `btn-text` · `btn-link` | `index.css` |
 | 버튼인 카드·줄·지도 위 원 버튼의 올림·눌림 | `press` (바탕 위에 잉크 4%·8%를 덮는다) | `index.css` |
 | 누르는 알약(필터·선택) | `chip` (+ `chip-against`), 카테고리 줄은 `CategoryChips` | `index.css` · `features/map/PinFilterControls` |
-| 필터 드롭다운 | `FilterSelect` (「라벨 값 ▾」, 칸 전체가 select · 폭은 가장 긴 선택지) | `features/map/PinFilterControls` |
+| 필터 드롭다운 | `FilterSelect` (「라벨 값 ▾」, 칸 전체가 select · 폭은 가장 긴 선택지, 줄 폭을 넘으면 값을 「…」로 줄인다) | `features/map/PinFilterControls` |
 | 짧은 표시 | `tag` + `tag-{neutral·ai·good·warn·bad}` | `index.css` |
 | 입력칸 | `TextField`(✕·글자 수 포함) · `ClearButton`, 그 밖의 입력은 `field` 틀 | `ui/TextField` · `index.css` |
 | 시트·모달 제목 | `SheetTitle` (20/700) | `ui/SheetTitle` |
