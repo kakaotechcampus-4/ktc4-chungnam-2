@@ -160,7 +160,7 @@ _Stage = tuple[int, tuple[float | None, float | None], float | None]   # (계층
 
 
 def _search_stages(near: tuple[float, float] | None) -> list[_Stage]:
-    """계약의 순서(docs/api-spec.yaml /places/search 정렬 규칙)를 그대로 내는 읽기 순서.
+    """30km 안만 읽는 순서.
     좌표가 있으면 지역 구역(30km 안)만 읽는다. 계층 2(부분 일치)는 가까운 순이라 가까운 띠(3km)를 먼저 읽고
     모자랄 때만 다음으로 가도 결과가 같다(가까운 띠의 장소가 어차피 더 앞이다). 다음은 계층 3 한 번으로 부분 일치(3km 밖)와
     주소 일치를 일치 정도 순으로 얻는다 — 비싼 전체 훑기를 구역마다 한 번만 한다. 계층 1은 인덱스라 띠를 나누지 않는다."""
