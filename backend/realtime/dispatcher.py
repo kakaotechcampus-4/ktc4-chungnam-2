@@ -1,6 +1,8 @@
 """asyncio 폴링 루프 + map_id별 in-memory 구독자 큐. lifespan에서 시작·종료한다."""
 
 import asyncio
+import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -11,6 +13,9 @@ from common.events import EventLog
 from realtime.core import advance, close_after
 
 POLL_INTERVAL = 0.5
+MAX_RETRY_INTERVAL = 8.0
+POLL_STALE_SECONDS = 30.0
+logger = logging.getLogger("pingo.realtime")
 
 # 종료 신호 — 구독 큐에 이 값이 들어오면 SSE 제너레이터는 스스로 빠져나온다(서버 종료, 또는
 # map.deleted·member.left 뒤 구독 끊기 — docs/events.md "구독을 끊는 경우").
@@ -47,6 +52,9 @@ class Dispatcher:
         # 넘나들며 재사용하지 않게 한다.
         self._stop: asyncio.Event | None = None
         self._stop_requested = False   # run_forever가 Event를 만들기 전에 온 정지 요청 보관
+        self.error_count = 0
+        self.last_success_at: float | None = None  # monotonic clock
+        self._health_since: float | None = None
         self._closing = False   # 종료 중이면 새 구독도 곧바로 닫힌 채로 내준다
 
     def initialize_last_seen(self) -> None:
@@ -95,10 +103,17 @@ class Dispatcher:
         if not subs:
             self._subscribers.pop(map_id, None)   # 빈 리스트를 계속 안 들고 있는다
 
+    def healthy(self) -> bool:
+        reference = self.last_success_at if self.last_success_at is not None else self._health_since
+        return self._started and reference is not None and time.monotonic() - reference <= POLL_STALE_SECONDS
+
     async def run_forever(self) -> None:
         if self._started:
             raise RuntimeError("Dispatcher.run_forever()는 두 번 시작할 수 없다")
         self._started = True
+        self.last_success_at = None
+        self._health_since = time.monotonic()
+        retry_interval = POLL_INTERVAL
         stop = self._stop = asyncio.Event()
         if self._stop_requested:
             stop.set()
@@ -106,13 +121,21 @@ class Dispatcher:
             while not stop.is_set():
                 try:
                     # sleep 대신 정지 신호를 기다린다 — 신호가 오면 폴링 텀을 안 채우고 바로 깬다.
-                    await asyncio.wait_for(stop.wait(), POLL_INTERVAL)
+                    await asyncio.wait_for(stop.wait(), retry_interval)
                     break
                 except asyncio.TimeoutError:
                     pass
                 # 동기 DB 쿼리를 async 루프 안에서 그대로 부르면 그 500ms 폴링 텀마다 이벤트 루프
                 # 전체(다른 SSE 연결 포함)가 DB 왕복 시간만큼 멈춘다. 스레드로 넘긴다.
-                await asyncio.to_thread(self._tick)
+                try:
+                    await asyncio.to_thread(self._tick)
+                except Exception as exc:  # noqa: BLE001
+                    self.error_count += 1
+                    logger.warning("dispatcher tick failed: %s", type(exc).__name__)
+                    retry_interval = min(retry_interval * 2, MAX_RETRY_INTERVAL)
+                else:
+                    self.last_success_at = time.monotonic()
+                    retry_interval = POLL_INTERVAL
         finally:
             # 같은 프로세스에서 lifespan이 다시 돌 수 있다(테스트의 여러 TestClient 등).
             self._started = False

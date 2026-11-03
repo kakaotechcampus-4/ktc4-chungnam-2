@@ -87,3 +87,56 @@ async def test_run_forever_cannot_start_twice():
         await task
     except asyncio.CancelledError:
         pass
+
+@pytest.mark.asyncio
+async def test_tick_failure_recovers_and_logs_only_type(monkeypatch, caplog):
+    import realtime.dispatcher as module
+
+    monkeypatch.setattr(module, "POLL_INTERVAL", 0.001)
+    d = Dispatcher()
+    calls = 0
+
+    def tick():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("sensitive database detail")
+        d.request_stop()
+
+    monkeypatch.setattr(d, "_tick", tick)
+    await asyncio.wait_for(d.run_forever(), 1)
+    assert calls == 2
+    assert d.error_count == 1
+    assert d.last_success_at is not None
+    assert "RuntimeError" in caplog.text
+    assert "sensitive database detail" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_continuous_failure_makes_health_unhealthy(monkeypatch):
+    import realtime.dispatcher as module
+    from fastapi import Response
+    from main import app, dispatcher, health
+
+    monkeypatch.setattr(module, "POLL_INTERVAL", 0.001)
+    monkeypatch.setattr(module, "MAX_RETRY_INTERVAL", 0.002)
+    monkeypatch.setattr(module, "POLL_STALE_SECONDS", 0.01)
+
+    def fail():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(dispatcher, "_tick", fail)
+    task = asyncio.create_task(dispatcher.run_forever())
+    monkeypatch.setattr(app.state, "dispatcher_task", task, raising=False)
+    try:
+        await asyncio.sleep(0.05)
+        response = Response()
+        assert health(response) == {"status": "error"}
+        assert response.status_code == 503
+        assert dispatcher.error_count > 0
+    finally:
+        dispatcher.request_stop()
+        await task
+    response = Response()
+    assert health(response) == {"status": "error"}
+    assert response.status_code == 503

@@ -9,7 +9,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from starlette.middleware.cors import CORSMiddleware
 
 from agent import loop as agent_loop
@@ -40,6 +40,7 @@ async def lifespan(_app: FastAPI):
     # 반드시 이 순서로: 이미 있는 event_log까지 따라잡은 뒤(동기, 한 번) 폴링 루프를 시작한다.
     dispatcher.initialize_last_seen()
     task = asyncio.create_task(dispatcher.run_forever())
+    _app.state.dispatcher_task = task
     try:   # 서버가 죽으면서 끊긴 AI 코스 짜기(백그라운드) run을 끝낸다. 표가 아직 없어도(마이그레이션 전) 서버는 떠야 한다
         interrupted = course_service.interrupt_unfinished_runs(SessionLocal)
         if interrupted:
@@ -73,7 +74,11 @@ register_error_handlers(app)
 
 
 @app.get("/health")
-def health():
+def health(response: Response):
+    task = getattr(app.state, "dispatcher_task", None)
+    if task is None or task.done() or not dispatcher.healthy():
+        response.status_code = 503
+        return {"status": "error"}
     return {"status": "ok"}
 
 
