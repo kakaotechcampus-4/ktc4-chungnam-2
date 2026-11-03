@@ -264,7 +264,79 @@ def test_advice_is_logged_as_run_advice_without_the_model(world, map_id, places)
         assert service.load_history(db, map_id, world.now).model_runs_today == 0   # 9절: 지도 상한에 세지 않는다
 
 
-# ---------------------------------------------------------------- run당 1회 (17절 13)
+# ---------------------------------------------------------------- 결과 상태당 1회, run당 한 행을 덮는다 (#1103, 17절 13)
+
+
+def change_result(world, run_id, action):
+    with world.factory() as db:
+        action(db, run_id=run_id, place_search=recommend_deps.get_place_search_gateway(),
+               place_facts=recommend_deps.get_place_facts_gateway())
+        db.commit()
+
+
+def test_widen_refreshes_empty_advice_even_when_result_count_is_unchanged(world, map_id, places, monkeypatch):
+    # 처음에는 반경 밖의 실격 장소. 넓혀도 결과는 1곳이지만 실격 탈락이 늘어 조언이 생긴다.
+    places.places = [_at("ok"), *_many("narrow", 6, lat=35.0135, lng=129.0)]
+    run_id = make_run(world, map_id, vague=False)
+    assert advise(world, run_id) is None
+    with monkeypatch.context() as m:
+        m.setattr(core, "choose_run_advice", _forbid)
+        assert advise(world, run_id) is None
+
+    change_result(world, run_id, recommend_flows.widen_run)
+    refreshed = advise(world, run_id)
+    assert refreshed.kind == "soft_relax"
+    assert "6곳" in said(refreshed)[0]
+    with world.factory() as db:
+        assert recommend_api.get_run_meta(db, run_id=run_id)["result_count"] == 1
+    assert len(advice_rows(world, run_id)) == 1   # run당 한 행 — 결과가 바뀌면 그 행을 덮는다
+    monkeypatch.setattr(core, "choose_run_advice", _forbid)
+    monkeypatch.setattr(recommend_api, "simulate_filter", _forbid)
+    assert advise(world, run_id) == refreshed
+    assert len(advice_runs(world, map_id)) == 2
+
+
+def test_widen_to_three_results_does_not_return_previous_radius_advice(world, map_id, places):
+    places.places = RADIUS
+    run_id = make_run(world, map_id)
+    assert advise(world, run_id).kind == "radius"
+    change_result(world, run_id, recommend_flows.widen_run)
+    assert advise(world, run_id) is None
+    assert len(advice_rows(world, run_id)) == 1
+
+
+@pytest.mark.parametrize("initial_advice", [False, True])
+def test_retry_refreshes_advice_and_repeated_reads_are_stable(world, map_id, places, monkeypatch, initial_advice):
+    places.places = EXHAUSTED if initial_advice else [_at("ok"), *_many("proposed", 4)]
+    run_id = make_run(world, map_id, vague=False)
+    first = advise(world, run_id)
+    assert (first.kind if first else None) == ("exhausted" if initial_advice else None)
+
+    change_result(world, run_id, recommend_flows.retry_run)
+    refreshed = advise(world, run_id)
+    assert refreshed.kind == "exhausted"
+    assert said(refreshed) == [f"이미 보여 줬거나 거절한 {7 if initial_advice else 5}곳은 다시 추천하지 않아요."]
+    assert len(advice_rows(world, run_id)) == 1
+    monkeypatch.setattr(core, "choose_run_advice", _forbid)
+    assert advise(world, run_id) == refreshed
+    assert len(advice_runs(world, map_id)) == 2
+
+
+@pytest.mark.parametrize("kind", [None, "exhausted"])
+def test_legacy_cache_is_rebuilt_once(world, map_id, places, monkeypatch, kind):
+    places.places = SOFT
+    run_id = make_run(world, map_id)
+    with world.factory() as db:
+        db.add(AgentRunAdvice(run_id=uuid.UUID(run_id), state_key="", map_id=map_id,
+                              kind=kind, claims=[], advice=[], actions=[], created_at=world.now))
+        db.commit()
+    refreshed = advise(world, run_id)
+    assert refreshed.kind == "soft_relax"
+    assert [r.state_key for r in advice_rows(world, run_id)] != [""]   # 옛 행을 덮었다
+    assert len(advice_rows(world, run_id)) == 1
+    monkeypatch.setattr(core, "choose_run_advice", _forbid)
+    assert advise(world, run_id) == refreshed
+    assert len(advice_runs(world, map_id)) == 1
 
 def test_second_request_returns_the_stored_advice_without_recomputing(world, map_id, monkeypatch):
     run_id = make_run(world, map_id)

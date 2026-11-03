@@ -15,6 +15,8 @@ authz.guard 밖에서 부르지 않는다(authz/tests/test_rule_a_static.py) —
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Path, Query, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from auth.deps import get_current_user
@@ -24,7 +26,7 @@ from pins import api as pins_api
 from shortlist import core, flows, service
 from shortlist.deps import DbSession
 from shortlist.loaders import load_pin_for_confirm, load_shortlist_item
-from shortlist.schemas import Route, ShortlistItem, ShortlistReorderRequest
+from shortlist.schemas import Route, Schedule, ScheduleUpdate, ShortlistItem, ShortlistReorderRequest
 
 router = APIRouter(tags=["shortlist"], dependencies=[Depends(get_current_user)])
 
@@ -90,6 +92,23 @@ def put_shortlist_order(
     db: Session = DbSession,
 ):
     return flows.reorder_shortlist(db, map_id=mapId, item_ids=body.item_ids, principal=principal)
+
+
+def _schedule_response(schedule: Schedule) -> JSONResponse:
+    data = jsonable_encoder(schedule, exclude_none=True)
+    for item, source in zip(data["items"], schedule.items):
+        item["scheduled_date"] = source.scheduled_date.isoformat() if source.scheduled_date else None
+    return JSONResponse(data)
+
+
+@router.get("/maps/{mapId}/shortlist/schedule", response_model=Schedule)
+def get_schedule(mapId: str = Path(...), principal: Principal = ShortlistForMap, db: Session = DbSession):
+    return _schedule_response(flows.schedule(db, map_id=mapId, principal=principal))
+
+
+@router.put("/maps/{mapId}/shortlist/schedule", response_model=Schedule)
+def put_schedule(body: ScheduleUpdate, mapId: str = Path(...), principal: Principal = ShortlistOrderForMap, db: Session = DbSession):
+    return _schedule_response(flows.schedule(db, map_id=mapId, principal=principal, update=body))
 
 
 @router.delete("/shortlist/{itemId}", status_code=204)

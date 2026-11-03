@@ -32,6 +32,7 @@ from agent import core
 from agent.constants import TOOL_RESULT_MAX_ITEMS
 from agent.snapshot import Snapshot
 from common import categories
+from common.kst import kst_date
 from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
@@ -167,7 +168,7 @@ def get_map_overview(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any
     times = ([p["created_at"] for p in matrix] + [r["updated_at"] for p in matrix for r in p["reactions"]]
              + [i["added_at"] for i in confirmed])
     return {
-        "dday": (found["start_date"] - core.kst_date(ctx.now)).days,
+        "dday": (found["start_date"] - kst_date(ctx.now)).days,
         "member_count": len(found["members"]),
         "categories": [
             {"category": c, "pins": sum(v == c for v in alive.values()),
@@ -332,6 +333,14 @@ def summary_reasons(ctx: ToolContext, category: str) -> list[dict[str, Any]]:
         {"reaction_id": r["reaction_id"], "member": r["user_id"], "text": r["reason_text"], "lines": lines}
         for r, lines in zip(rows, _lines(ctx, rows), strict=True)
     ]
+
+
+def reasons_of(ctx: ToolContext, reaction_ids: Sequence[str]) -> list[dict[str, Any]]:
+    """그 반응들의 구조화 결과 [{reaction_id, type, lines[{fact_key, wants, badge}]}] — 우리 데이터 확인(6.6)이 정체 신호의 🚫
+    사유에서 키를 고를 때 쓴다. 모델 도구가 아니라 기록(calls)에 남지 않고 상위 30개로 자르지 않는다. 같은 글의 ②는 캐시로
+    한 번만 부른다. ②가 실패하면 PlanEvidenceFailed."""
+    wanted = set(reaction_ids)
+    return _structured(ctx, [r for r in _reasoned(ctx) if r["reaction_id"] in wanted])
 
 
 def structure_reasons(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:

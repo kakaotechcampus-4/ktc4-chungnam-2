@@ -7,6 +7,8 @@
   DIAGNOSIS_TOOLS(진단 유형 → 허용 도구 이름)는 agent의 tool_runner가 한 번 더 막을 때 쓴다(#564).
   신호 순위(agent_prioritize)는 #582에서 지웠다 — agent의 코드 규칙(core.fallback_order)이다.
   요약의 구체화 문장은 고정 문구라 모델 함수가 없다(2026-10-16, #588에서 재검토).
+  agent_status(지도 현황 문단, #1168, agent-v2 8.2): 코드가 센 칸을 받아 카테고리별 상태와 문단(StatusOutput)을 낸다. 도구 없음.
+  관찰 끝에서 칸이 바뀔 때만 부른다. 검증(core.verify_status)은 agent가 한다. 실패는 AgentCallFailed.
 - agent.course(v2 동선 에이전트, #334): agent_course_turn(턴 하나 → 다음 행동, CourseTurn), course_set_goals(요청 한 줄 → 목표),
   course_direct_turn(지휘 턴). 실패는 AgentCallFailed.
 
@@ -23,14 +25,17 @@ agent/deps.py)가 planner 인자로 고른다.
   batch_size(② 묶음 크기)가 남아 묶음 수는 trace당 plan_evidence 행 수다.
 """
 
+import hashlib
+import json
 from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from llm import usage as _usage
-from llm.prompts import DIAGNOSIS_TOOLS
+from llm.prompts import DIAGNOSIS_TOOLS, PLAN_EVIDENCE_PROMPT
 from llm.schemas import (
     AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
+    PlanningOutput, StatusCategory, StatusOutput,
 )
 from llm.service import (
     CourseDirectPlanner,
@@ -41,8 +46,10 @@ from llm.service import (
     PlanEvidenceFailed,
     ToolCaller,
     ToolRunner,
+    StatusPlanner,
     ToolRunnerError,
     agent_course_turn,
+    agent_status,
     course_direct_turn,
     course_set_goals,
     fixed_course_goals_planner,
@@ -50,25 +57,37 @@ from llm.service import (
     real_course_goals_planner,
     agent_diagnose,
     fixed_diagnosis_planner,
+    fixed_status_planner,
     passthrough_planner,
     plan_deadline,
     plan_evidence,
     real_course_turn_planner,
     real_diagnosis_planner,
     real_evidence_planner,
+    real_status_planner,
 )
 
 __all__ = [
-    "EvidenceLine", "EvidencePlanner", "PlanEvidenceFailed",
+    "EvidenceLine", "EvidencePlanner", "PlanEvidenceFailed", "plan_evidence_rules_version",
     "passthrough_planner", "plan_evidence", "real_evidence_planner",
     "AgentCallFailed", "AgentReply", "AgentUsage", "DiagnosisOutput", "DIAGNOSIS_TOOLS",
     "DiagnosisPlanner", "ToolCaller", "ToolRunner", "ToolRunnerError",
     "agent_diagnose", "fixed_diagnosis_planner", "real_diagnosis_planner",
+    "StatusCategory", "StatusOutput", "StatusPlanner", "agent_status", "fixed_status_planner", "real_status_planner",
     "CourseTurn", "CourseTurnPlanner", "agent_course_turn", "real_course_turn_planner",
     "CourseGoalSet", "CourseGoalsPlanner", "course_set_goals", "fixed_course_goals_planner", "real_course_goals_planner",
     "CourseDirectTurn", "CourseDirectPlanner", "course_direct_turn", "real_course_direct_planner",
     "usage_context", "mark_discarded", "plan_deadline", "anonymize_by_user", "reassign_user", "purge_old",
 ]
+
+def plan_evidence_rules_version() -> str:
+    """② 사유 구조화 규칙의 버전(#1095) — 프롬프트 글과 응답 스키마의 해시 앞 12자리(16진). 둘 중 하나라도 바뀌면 값이 달라진다.
+    손으로 올리는 번호가 아니라 잊을 수 없다. agent가 우리 조건 요약에 이 값을 남겨 ② 규칙이 바뀌면 요약을 다시 만든다.
+    순수 함수이고 모델을 부르지 않는다."""
+    schema = json.dumps(PlanningOutput.model_json_schema(), sort_keys=True, ensure_ascii=False)
+    digest = hashlib.sha256((PLAN_EVIDENCE_PROMPT + "\n" + schema).encode("utf-8")).hexdigest()
+    return digest[:12]
+
 
 usage_context = _usage.usage_context
 mark_discarded = _usage.mark_discarded   # 모델은 불렸는데 결과가 저장되지 않은 호출을 표시한다(#848). trace_id는 usage_context가 준 라벨의 것

@@ -11,6 +11,9 @@ planner다(#532): dev는 fixed planner, real은 real planner.
 - summarize: 우리 조건 요약은 고정 문구라(2026-10-16 결정, #586) flows가 부르지 않는다. 맞춤 문장이 필요한지는 #588에서
   다시 본다. real은 부르면 NotImplementedError다.
 - 추천 막힘 조언(#587)은 종류, 문장, 버튼을 코드가 정해(#750) 모델 함수가 없다.
+- status(#1168): 지도 현황 문단(`llm.api.agent_status`, 명세 8.2). 입력은 core.status_cells의 칸뿐이다. 결과와 사용량을
+  `AgentReply(result, usage)`로 돌려준다. dev 스텁은 칸에서 어긋나지 않는 상태와 숫자 없는 고정 문구를 낸다 — 검증을 늘 통과해
+  저장·응답 경로를 dev에서도 지나간다.
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -19,7 +22,7 @@ from typing import Any, Protocol
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
-from agent.schemas import AgentReply, DiagnosisOutput, SummaryOutput
+from agent.schemas import AgentReply, DiagnosisOutput, StatusOutput, SummaryOutput
 from common.adapters import select
 from common.database import SessionLocal, get_db_session
 from common.settings import settings
@@ -39,6 +42,8 @@ class AgentLlmGateway(Protocol):
 
     def summarize(self, summary_input: Mapping[str, Any]) -> SummaryOutput: ...
 
+    def status(self, status_input: Mapping[str, Any]) -> AgentReply[StatusOutput]: ...
+
 
 class FixedAgentLlmGateway:
     """고정 응답 스텁 — 모델을 부르지 않는다. llm.api 함수에 fixed planner를 넘겨 오케스트레이션(도구 콜백, 실패 처리)은
@@ -55,6 +60,9 @@ class FixedAgentLlmGateway:
     def summarize(self, summary_input: Mapping[str, Any]) -> SummaryOutput:
         return SummaryOutput(decision="silent", claims=[], requests=[])
 
+    def status(self, status_input: Mapping[str, Any]) -> AgentReply[StatusOutput]:
+        return llm_api.agent_status(status_input, planner=llm_api.fixed_status_planner)
+
 
 class RealAgentLlmGateway:
     """실제 모델(gpt-6-luna). summarize는 고정 문구라 llm 함수가 없다 — 부르면 바로 실패한다(real이라고 떴는데 스텁이 도는
@@ -67,6 +75,9 @@ class RealAgentLlmGateway:
 
     def structure(self, raw_reasons: Sequence[Mapping[str, Any]]) -> list[list[llm_api.EvidenceLine]]:
         return llm_api.plan_evidence(raw_reasons, planner=llm_api.real_evidence_planner)
+
+    def status(self, status_input: Mapping[str, Any]) -> AgentReply[StatusOutput]:
+        return llm_api.agent_status(status_input, planner=llm_api.real_status_planner)
 
     def summarize(self, summary_input: Mapping[str, Any]) -> SummaryOutput:
         raise NotImplementedError("llm.api.agent_summarize가 없다 — 요약 문장은 고정 문구다(2026-10-16, #588에서 재검토)")

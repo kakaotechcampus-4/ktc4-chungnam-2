@@ -140,11 +140,8 @@ reactions(
 ```
 shortlist_items(
   id, map_id, pin_id, added_by, added_at,
-  visit_order int null                 -- #30 수동 정렬(허용 확정). 동선(routes)과는 무관한
-                                        -- 별개 컬럼이다(최종기획안.md 9/4 결정 "visit_order 수동
-                                        -- 정렬 허용, 동선과는 무관") — 플레인 리스트 화면의
-                                        -- 드래그 순서일 뿐, routes 재계산이 이 값을 읽거나 쓰지
-                                        -- 않는다.
+  scheduled_date date null,            -- 방문 날짜. NULL은 미배정, 기존 항목도 미배정으로 보존
+  visit_order int null                 -- 같은 날짜(또는 미배정) 안의 순서. routes 계산과 무관
 )
   unique(map_id, pin_id)
 
@@ -466,7 +463,7 @@ ad_daily_stats(
 
 ## agent (v2 계획 보조 에이전트, docs/agent-v2.md 13절, #510)
 
-> v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 7개 테이블만 쓰고, 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.
+> v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 8개 테이블만 쓰고(`agent_map_status`는 #1168), 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.
 > `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다. 지도 정리(#431)는 `agent.api.purge_map_data`, 탈퇴(#155)는 `agent.api.delete_by_user`가 맡는다.
 > **agent 테이블에는 사유 원문을 저장하지 않는다**(2026-10-15). 사유는 `reaction_id`로만 가리키고, 인용 문장은 응답과 이벤트를 만들 때 pins에서 읽어 렌더한다. 반응이 지워지면 인용도 사라진다(docs/agent-v2.md 2절 13번).
 
@@ -519,6 +516,7 @@ agent_suggestion_views(               -- 사용자별 열람. 버튼의 점(has_
 
 agent_reason_summaries(               -- 우리 조건 요약. 카테고리마다 최신본 하나를 덮어쓴다
   map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸(키, 개수, 문구 종류)과 근거 reaction_id. 사유 원문 없음
+                                      -- + rules_version(만들 때의 ② 규칙 버전, #1095 — 지금 버전과 다르면 다시 만든다. 옛 요약은 키 없음)
   based_on_reaction_count, run_id null, updated_at,
   primary key(map_id, category)
 )
@@ -531,9 +529,11 @@ agent_map_status(                     -- 지도 현황 문단(#1152, agent-v2 8.
   run_id null, updated_at
 )
 
-agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조언이 없어도 빈 값으로 저장해 다시 만들지 않는다
-  run_id primary key,                 -- recommend_runs.id. 모듈 경계라 FK 없음
-  map_id, kind null, claims jsonb, advice jsonb, actions jsonb, agent_run_id null, created_at
+agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 지금 결과 상태의 조언(#1103). 같은 상태의 빈 조언도 유지한다
+  run_id,                            -- recommend_runs.id. 모듈 경계라 FK 없음
+  state_key text not null default '', -- agent.core.advice_state_key. 기존 빈 키는 다음 조회에 재생성
+  map_id, kind null, claims jsonb, advice jsonb, actions jsonb, agent_run_id null, created_at,
+  primary key(run_id)                 -- 결과가 바뀌면 같은 행을 새 state_key의 조언으로 덮는다(옛 서버의 DO NOTHING도 그대로 돈다)
 )
 ```
 
@@ -582,8 +582,8 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 ```
 llm_calls(
   id uuid,
-  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'course'),   -- 왜 불렀는지
-  call('plan_evidence'|'agent_diagnose'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
+  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'agent_status'|'course'),   -- 왜 불렀는지. agent_status: 지도 현황 문단(#1168)
+  call('plan_evidence'|'agent_diagnose'|'agent_status'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
   trace_id uuid,                      -- 같은 usage_context 안의 호출. run_id가 아직 없는 호출(추천 ②, 진단)도 실행 1번으로 묶는다
   map_id null, user_id null,          -- user_id는 사용자가 부른 호출만. 서버 호출(진단, 요약)은 null
   run_id null,                        -- evidence_add는 recommend_runs.id, course는 agent_course_runs.id. 추천 ②와 진단은 null
@@ -772,7 +772,7 @@ event_log(
 
 - 지도 생성 입력 필드 — #22, 여행 제목 + 시작일·종료일로 확정, 위 `maps` 테이블에 반영
 - 구성원 색 — #26, 불필요로 확정, `memberships.color` 제거
-- `visit_order` 수동 정렬 — #30, 허용 확정(동선과 무관). `PUT /maps/{mapId}/shortlist/order` 참고
+- `visit_order` 수동 정렬 — 날짜별 순서이며 동선과 무관. 날짜 배정 이후에는 `PUT /maps/{mapId}/shortlist/schedule`을 쓴다.
 - AI 추천 결과 상태 관리 위치 — #43, 서버 DB 영속 확정. `recommend_runs`/`candidates`는 이제 확정 설계
 
 ## 루트가 확정한 것 (2026-09-22)

@@ -24,10 +24,11 @@ FEATURES = (
     "evidence_add",     # 「+」 근거 추가의 ② (PATCH /runs/{id}/evidence)
     "agent_diagnose",   # 관찰의 진단 — 진단 왕복과 그 안의 ②(사전 비교, structure_reasons, compare_reasons)
     "agent_summary",    # 우리 조건 요약의 ②
+    "agent_status",     # 지도 현황 문단(#1168, agent-v2 8.2) — 관찰 끝에서 칸이 바뀔 때만
     "course",           # AI 코스 짜기 — 목표 세우기와 지휘 턴
 )
 # 무엇을 불렀는지 — client의 호출 함수
-CALLS = ("plan_evidence", "agent_diagnose", "course_goals", "course_direct", "course_turn")
+CALLS = ("plan_evidence", "agent_diagnose", "agent_status", "course_goals", "course_direct", "course_turn")
 OUTCOMES = ("ok", "refusal", "empty", "timeout", "invalid_schema", "call_failed")
 
 
