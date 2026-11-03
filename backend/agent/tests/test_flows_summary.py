@@ -366,3 +366,19 @@ def test_structured_texts_are_cached_across_observations(world):
     assert len(summary_runs(world, map_id)) == 2
     assert gateway.structured.count("비밀사유_너무 매워요") == 1
     assert gateway.structured.count("비밀사유_고기 좋아요") == 3
+
+
+def test_failing_category_does_not_starve_the_other_category(world):
+    """가장 많이 바뀐 카테고리의 ②가 계속 실패해도 다음 관찰에서 다른 카테고리가 갱신된다(#1187). 실패한 쪽은 마지막에 다시 시도한다."""
+    map_id, _ = _five_section_map(world)   # 음식점 사유 9개
+    cafe = world.pin(map_id, category="카페", hours_ago=100)
+    for user in ("u1", "u2", "u3"):   # 새 사유 3개 — 갱신 대상
+        world.react(cafe, user, "against", hours_ago=2, text="비밀사유_시끄러워요")
+    world.event(map_id)
+
+    observe(world, map_id, gateway=KeyedGateway(fail=True))                       # 음식점이 먼저 뽑혀 실패
+    observe(world, map_id, gateway=KeyedGateway(), after=timedelta(minutes=5))     # 실패한 음식점은 미루고 카페를 갱신
+
+    runs = summary_runs(world, map_id)
+    assert [(r.outcome, r.outcome_detail["category"]) for r in runs] == [("model_failed", "음식점"), ("summarized", "카페")]
+    assert [r.category for r in world.rows(AgentReasonSummary, map_id=map_id)] == ["카페"]
