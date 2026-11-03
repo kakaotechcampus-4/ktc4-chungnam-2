@@ -48,6 +48,8 @@ test('방장이 반대한 곳을 빼고 추천받아 지도에 올리면 구성�
       await expect(card).toContainText('조건 충족')
       await expect(card).toContainText('출처')
     }
+    // 같은 점수면 매운맛이 「모름」인 곳보다 「없다고 확인된」 곳이 먼저다(#1288)
+    await expect(cards.first()).toContainText('조건 1/1 충족')
     picked = (await cards.first().getByRole('heading', { level: 3 }).getByRole('button').innerText()).trim()
   })
 
