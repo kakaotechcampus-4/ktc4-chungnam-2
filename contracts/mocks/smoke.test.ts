@@ -607,7 +607,7 @@ describe("#469·#471 — 지난 추천 기록, 확정 리스트 내보내기", (
     const bytes = new Uint8Array(await csv.clone().arrayBuffer());
     expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]); // 엑셀에서 한글이 깨지지 않게 UTF-8 BOM (fetch의 text()는 BOM을 벗기므로 바이트로 본다)
     const body = await csv.text();
-    expect(body.split(/\r?\n/)[0]).toBe("순서,이름,분류,링크,메모");
+    expect(body.split(/\r?\n/)[0]).toBe("날짜,순서,이름,분류,링크,메모");
     expect(body).toContain('"여기, 맛있대"'); // 쉼표가 든 칸은 따옴표로 감싼다
 
     expect((await fetch(`${BASE}/maps/map_1/shortlist/export?format=pdf`)).status).toBe(422);
@@ -1922,5 +1922,17 @@ describe("#1037 — 광고 보고 충전", () => {
     resetScenario("guest");
     expect((await open()).status).toBe(403);
     expect((await claim("00000000-0000-0000-0000-000000000000")).status).toBe(403);
+  });
+});
+
+describe("확정 일정 (#1172)", () => {
+  it("날짜 배정과 충돌을 확인한다", async () => {
+    const url = `${BASE}/maps/map_1/shortlist/schedule`;
+    const before = await (await fetch(url)).json();
+    const groups = [{ date: before.start_date, item_ids: before.items.map((i: {id: string}) => i.id) }];
+    const saved = await fetch(url, { method: "PUT", body: JSON.stringify({ version: before.version, groups }) });
+    expect(saved.status).toBe(200);
+    const stale = await fetch(url, { method: "PUT", body: JSON.stringify({ version: "stale", groups }) });
+    expect(stale.status).toBe(409);
   });
 });

@@ -140,11 +140,8 @@ reactions(
 ```
 shortlist_items(
   id, map_id, pin_id, added_by, added_at,
-  visit_order int null                 -- #30 수동 정렬(허용 확정). 동선(routes)과는 무관한
-                                        -- 별개 컬럼이다(최종기획안.md 9/4 결정 "visit_order 수동
-                                        -- 정렬 허용, 동선과는 무관") — 플레인 리스트 화면의
-                                        -- 드래그 순서일 뿐, routes 재계산이 이 값을 읽거나 쓰지
-                                        -- 않는다.
+  scheduled_date date null,            -- 방문 날짜. NULL은 미배정, 기존 항목도 미배정으로 보존
+  visit_order int null                 -- 같은 날짜(또는 미배정) 안의 순서. routes 계산과 무관
 )
   unique(map_id, pin_id)
 
@@ -775,7 +772,7 @@ event_log(
 
 - 지도 생성 입력 필드 — #22, 여행 제목 + 시작일·종료일로 확정, 위 `maps` 테이블에 반영
 - 구성원 색 — #26, 불필요로 확정, `memberships.color` 제거
-- `visit_order` 수동 정렬 — #30, 허용 확정(동선과 무관). `PUT /maps/{mapId}/shortlist/order` 참고
+- `visit_order` 수동 정렬 — 날짜별 순서이며 동선과 무관. 날짜 배정 이후에는 `PUT /maps/{mapId}/shortlist/schedule`을 쓴다.
 - AI 추천 결과 상태 관리 위치 — #43, 서버 DB 영속 확정. `recommend_runs`/`candidates`는 이제 확정 설계
 
 ## 루트가 확정한 것 (2026-09-22)

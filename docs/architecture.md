@@ -83,6 +83,7 @@ core.py로 옮긴다.
 |---|---|
 | 핀 CRUD, 반응 등록/삭제 | `pins` + `event_log` |
 | 확정 리스트 순서 변경 | `shortlist_items`만 |
+| 여행 기간 변경 후 범위 밖 일정 미배정 | `shortlist.api.unassign_outside_dates(db, map_id, start_date, end_date)` |
 | 동선 계산 | 계산 결과 + `event_log` |
 | 근거 추가/토글, 추천 실행 생성 | `recommend` 테이블 + `event_log` |
 | 초대 수락 | `memberships` + `event_log` |
