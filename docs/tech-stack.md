@@ -156,6 +156,7 @@
 | `images` | develop·main·`v*` 태그에서 OIDC 역할로 ECR에 이미지 푸시, develop이면 스테이징 배포를 부른다 |
 | `deploy` | 수동 또는 호출로 SSM으로 서버의 `sync.sh`·`deploy.sh` 실행. 운영은 `v` 태그만 |
 | `staging-check` | 매일 06:00(KST) 서버 안에서 QA 하네스 실행 |
+| `uptime` | 10분마다 서버 밖에서 운영·스테이징의 `/`와 `/api/health` 확인. 실패하면 경보 이슈를 열고 회복하면 닫는다(#1280) |
 | `llm-cost`, `move-to-rds` | 수동 실행 |
 | `assign-mentor`, `convention-check`, `notify-discord` | main 대상 PR 보조(안내용, 차단 안 함) |
 
