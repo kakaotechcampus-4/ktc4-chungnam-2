@@ -364,6 +364,8 @@ export default function MapLayout() {
     <>
       <MapCanvas
         pins={pins}
+        // 핀이 없으면 지도 만들 때 고른 지역에서 시작한다(없으면 서울).
+        startCenter={mapInfo?.regionCenter}
         selectedPinId={selectedPinId}
         memberCount={memberCount}
         results={searchMarkers}

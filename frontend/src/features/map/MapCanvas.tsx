@@ -74,6 +74,7 @@ export default function MapCanvas({
   onMapClick,
   tapBubble = null,
   leftInset = 0,
+  startCenter,
 }: {
   pins: Pin[]
   /** 핀 색(참여율)의 분모 — 지도 전체 구성원 수. */
@@ -97,6 +98,8 @@ export default function MapCanvas({
   tapBubble?: { lat: number; lng: number; onPress: () => void } | null
   /** 지도 왼쪽을 가리는 패널 폭(px). 넓은 화면에서 패널이 열려 있을 때만 0이 아니다. */
   leftInset?: number
+  /** 핀이 없을 때 첫 화면 가운데 — 지도 만들 때 고른 지역(시청·도청). 없으면 서울이다. 핀이 있으면 핀들에 맞춘다. */
+  startCenter?: { lat: number; lng: number }
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const layerRef = useRef<MarkerLayer | null>(null)
@@ -106,6 +109,14 @@ export default function MapCanvas({
     callbacks.current = { onSelect, onReady, onMovingChange, onMapClick }
   })
   const fittedRef = useRef(false)
+  // 첫 화면을 지역 가운데로 옮겼거나(started) 사용자가 지도를 움직였으면(moved) 지역으로 다시 옮기지 않는다 — 시야를 뺏지 않는다.
+  // moved 는 끌기뿐 아니라 화면이 사람 대신 옮긴 것(핀·검색 결과·AI 후보 고르기, 내 위치, 전체 핀 보기)도 센다.
+  const startedRef = useRef(false)
+  const movedRef = useRef(false)
+  const startCenterRef = useRef(startCenter)
+  useLayoutEffect(() => {
+    startCenterRef.current = startCenter
+  })
   const mapRef = useRef<{ maps: typeof kakao.maps; map: kakao.maps.Map } | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -117,8 +128,11 @@ export default function MapCanvas({
     loadKakaoMaps()
       .then((maps) => {
         if (cancelled || !containerRef.current) return
+        // 지도 정보(지역)가 먼저 와 있으면 그 지역에서 만든다. 늦게 오면 아래 effect 가 한 번 옮긴다.
+        const start = startCenterRef.current ?? FALLBACK_CENTER
+        startedRef.current = Boolean(startCenterRef.current)
         const map = new maps.Map(containerRef.current, {
-          center: new maps.LatLng(FALLBACK_CENTER.lat, FALLBACK_CENTER.lng),
+          center: new maps.LatLng(start.lat, start.lng),
           level: 5,
         })
         const layer = createMarkerLayer(maps, map, (pinId) => callbacks.current.onSelect(pinId))
@@ -167,6 +181,7 @@ export default function MapCanvas({
         const still = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
         const onDragStart = () => {
+          movedRef.current = true
           // 움직이는 도중에 사용자가 지도를 잡으면 남은 옮기기·확대를 하지 않는다.
           stopMoves()
           callbacks.current.onMovingChange(true)
@@ -203,6 +218,7 @@ export default function MapCanvas({
         callbacks.current.onReady({
           // 축척은 그대로 두고 부드럽게 옮긴다(화면보다 먼 곳은 카카오가 바로 옮긴다).
           panTo: (lat, lng) => {
+            movedRef.current = true
             const target = new maps.LatLng(lat, lng)
             if (still()) {
               stopMoves()
@@ -214,6 +230,7 @@ export default function MapCanvas({
           },
           // 옮기고 나서 고른 곳을 붙든 채(anchor) 2단계씩 확대한다. 한꺼번에 하면 확대 중심이 화면 밖일 수 있다.
           focusPin: (lat, lng) => {
+            movedRef.current = true
             const target = new maps.LatLng(lat, lng)
             const to = Math.min(map.getLevel(), FOCUS_LEVEL)
             if (still()) {
@@ -234,6 +251,7 @@ export default function MapCanvas({
           fitPins: (list, opts) => {
             const el = containerRef.current
             if (list.length === 0 || !el) return
+            movedRef.current = true
             const size = { w: el.clientWidth, h: el.clientHeight }
             const pad = fitPadding(window.innerHeight, isDesktopNow())
             const proj = map.getProjection()
@@ -275,12 +293,25 @@ export default function MapCanvas({
 
     layer.sync(pins, memberCount)
 
-    // 처음 핀이 들어왔을 때만 시야를 맞춘다. 매번 하면 사용자가 옮긴 시야를 뺏는다.
-    if (!fittedRef.current && pins.length > 0) {
-      layer.fit(pins.filter(isPlaced))
+    // 처음 위치를 아는 핀이 생겼을 때 한 번만 시야를 맞춘다. 매번 하면 사용자가 옮긴 시야를 뺏는다.
+    // 실시간 핀(#382)은 처음엔 좌표가 없고 카카오에서 찾은 뒤에 생긴다 — 좌표 없는 핀만 있을 때 맞추기를 써 버리면
+    // 나중에 좌표가 와도 맞추지 않아 지역(또는 서울)에 그대로 남았다. 그 사이 사용자가 지도를 움직였으면 맞추지 않는다.
+    const placed = pins.filter(isPlaced)
+    if (!fittedRef.current && !movedRef.current && placed.length > 0) {
+      layer.fit(placed)
       fittedRef.current = true
     }
   }, [pins, memberCount, ready])
+
+  // 위치를 아는 핀이 없는 지도는 지도 만들 때 고른 지역에서 시작한다(지역 정보가 지도보다 늦게 왔을 때 한 번).
+  // 핀 좌표가 오면(실시간 핀은 나중에 온다) 위에서 핀들에 맞춘다.
+  const hasPins = pins.some(isPlaced)
+  useEffect(() => {
+    const m = mapRef.current
+    if (!ready || !m || !startCenter || hasPins || startedRef.current || fittedRef.current || movedRef.current) return
+    m.map.setCenter(new m.maps.LatLng(startCenter.lat, startCenter.lng))
+    startedRef.current = true
+  }, [ready, startCenter, hasPins])
 
   useEffect(() => {
     if (ready) layerRef.current?.select(selectedPinId)
