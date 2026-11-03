@@ -43,7 +43,7 @@
 | `realtime` | SSE 채널(전체/개인), `event_log` 폴링·재동기화 | 5-5-1 | — |
 | `notifications` | 앱 안 알림함과 알림 설정(#470). 다른 모듈은 이벤트를 쓰는 같은 트랜잭션에서 `notifications.api.notify`를 수신자마다 부르고, 문장은 `compose_message`로 만든다 | 신규(v2) | — |
 | `feedback` | 서비스 피드백 저장(#10). 읽는 API는 없다 | 신규(v2) | — |
-| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 각 모듈 api의 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth`, `pins` (api.py만) |
+| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 지도·알림·게스트·모델 호출·멱등 키·탈퇴 계정·이벤트·핀 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth`, `llm`, `recommend`, `realtime`, `pins` (api.py만) |
 | `ads` | 추천 탭 광고: 기간 광고 관리, 선택(코드), 노출과 클릭의 날짜별 집계(docs/ads.md, #642) | 신규 | `places`, `recommend`, `pins` (api.py만. `recommend`는 `ads`를 import하지 않는다) |
 | `credits` | 사람마다 하나인 AI 실행 크레딧: 잔액·원장, 가격표(`credits/constants.py` 한 곳), 확인·차감·환불·후기 보상(docs/credits-reviews.md, #432). 다른 모듈은 `credits.api`만 부른다 | 신규(v2, 구현 #948) | `auth` (api.py만, 게스트 판정) |
 | `reviews` | 자체 DB 장소에 붙는 후기(별점 + 글), 신고, 숨김 스크립트(docs/credits-reviews.md, #432). 핀으로 부르고 장소를 찾는다 | 신규(v2, 구현 #951) | `pins`, `credits` (api.py만) |
