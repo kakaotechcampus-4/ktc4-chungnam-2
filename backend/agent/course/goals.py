@@ -253,7 +253,10 @@ def goals_input(trip: Trip, request_text: str, candidates: Sequence[MapCandidate
 
 
 _PIECE_SPLIT = re.compile(r"[,.;!?·\n]|그리고")
-_FILLER = re.compile(r"감사합니다|감사해요|고맙습니다|고마워요|안녕하세요|잘 ?부탁(?:드립니다|드려요|해요)|해\s?주세요|해줘요?|부탁(?:해요|드려요|드립니다)?|짜\s?주세요|짜줘요?|싶어요|싶고|싶다|했으면|좋겠어요|좋겠고|코스|일정|여행|그리고|또|저는|우리는|이번|으로|에서|에는|에도|까지|부터|[은는이가을를에도와과로의]")
+_FILLER = re.compile(r"(?:방문|들르|둘러보|가보|가\s?보|가)(?:해|하)?고 ?싶(?:어요|어|다|습니다|은데요?)|감사합니다|감사해요|고맙습니다|고마워요|안녕하세요|잘 ?부탁(?:드립니다|드려요|해요)|해\s?주세요|해줘요?|부탁(?:해요|드려요|드립니다)?|짜\s?주세요|짜줘요?|싶어요|싶고|싶다|했으면|좋겠어요|좋겠고|코스|일정|여행|그리고|또|저는|우리는|이번|으로|에서|에는|에도|까지|부터|[은는이가을를에도와과로의]")
+
+# 요청 어미 군말은 "~하고 싶어요" 꼴로 확인될 때만 지운다. 이런 말이 든 조각은 의미 있는 제약이라 통째로 남긴다(「방문 금지」, 「가고 싶지 않아요」).
+_CONSTRAINT = re.compile(r"금지|제한|말고|빼고|빼줘|빼 |제외|안 |않|못|싫|하지 ?마|가지 ?마")
 
 
 def leftover_pieces(request_text: str, covered: Sequence[str]) -> list[str]:
@@ -271,7 +274,8 @@ def leftover_pieces(request_text: str, covered: Sequence[str]) -> list[str]:
     out: list[str] = []
     for part in _PIECE_SPLIT.split(rest):
         piece = part.strip()
-        if len(re.findall(r"[가-힣]", _FILLER.sub("", piece))) >= 3 and piece in request_text:
+        shown = piece if _CONSTRAINT.search(piece) else _FILLER.sub("", piece)     # 금지·제한·부정이 든 조각은 군말을 지우지 않는다
+        if len(re.findall(r"[가-힣]", shown)) >= 3 and piece in request_text:
             out.append(piece)
     return out
 
@@ -323,16 +327,29 @@ def _daily(trip: Trip, g) -> list[tuple[Optional[Goal], Optional[str]]]:
 
 def unlisted_mentions(trip: Trip, request_text: str, goals: Sequence[Goal], quotes: Sequence[str]) -> list[str]:
     """목표 quote 안에 코스 장소의 이름이 있는데 그 장소가 어떤 목표의 places에도 없으면, 그 장소를 말한 조각(#1008 K1).
-    「마지막 날 밤에 N서울타워」 전체를 quote로 쓰고 야경 목표 하나만 내면 장소 요청이 말없이 사라지기 때문이다."""
+    「마지막 날 밤에 N서울타워」 전체를 quote로 쓰고 야경 목표 하나만 내면 장소 요청이 말없이 사라지기 때문이다.
+
+    이름이 겹치면 실제 언급 범위를 비교해 긴 이름(「서울숲 카페」)에 포함된 짧은 문자열만 건너뛴다.
+    다른 quote나 같은 문장에 「서울숲」을 독립적으로 말했으면 누락 검사에 남긴다. quote가 이름 중간에서 끝나도
+    원문에서 긴 이름의 일부면 독립 언급으로 보지 않는다.
+    한계: 이름 전체가 quote에 글자 그대로 있을 때만 잡는다. 프롬프트가 허용하는 줄임말(「롯데월드」→「롯데월드 어드벤처」)은 이 검사가
+    못 본다. 별칭 표가 없어 코드가 줄임말을 장소에 잇지 않는 것이 규칙이다(장소를 잇는 것은 모델의 일)."""
     used = {p for g in goals for p in g.places}
+    mentions = [(p, m.start(), m.start() + len(p.name)) for p in trip.places if len(p.name) >= 2
+                for m in re.finditer(r"(?=" + re.escape(p.name) + r")", request_text)]
+    quoted = [(m.start(), m.start() + len(q)) for q in quotes if q.strip()
+              for m in re.finditer(r"(?=" + re.escape(q) + r")", request_text)]
+    splits = list(_PIECE_SPLIT.finditer(request_text))
+    clauses = list(zip([0] + [m.end() for m in splits], [m.start() for m in splits] + [len(request_text)]))
     out: list[str] = []
-    for place in trip.places:
-        if place.alias in used or len(place.name) < 2:
+    for place, start, end in mentions:
+        if place.alias in used or not any(left <= start and end <= right for left, right in quoted):
             continue
-        if any(place.name in q for q in quotes):
-            clause = next((c.strip() for c in _PIECE_SPLIT.split(request_text) if place.name in c), "")
-            if clause and clause in request_text:
-                out.append(clause)
+        if any(left <= start and end <= right and right - left > end - start for _, left, right in mentions):
+            continue
+        clause = next((request_text[left:right].strip() for left, right in clauses if left <= start and end <= right), "")
+        if clause and clause not in out:
+            out.append(clause)
     return out
 
 

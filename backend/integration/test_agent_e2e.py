@@ -42,6 +42,7 @@ from auth.models import User
 from auth.testing import ensure_users, session_cookie
 from common.database import get_db_session, session_scope
 from common.events import EventLog
+from common.kst import kst_date
 from llm import api as llm_api
 from llm import client as llm_client
 from llm.schemas import (
@@ -237,7 +238,7 @@ class E2E:
 
     def shared_map(self, owner, *others) -> str:
         """owner가 만들고 others가 초대 링크로 들어온 지도. 출발은 30일 뒤다(D-day 계수 1.0, 명세 6.1)."""
-        start = core.kst_date(datetime.now(timezone.utc)) + timedelta(days=30)
+        start = kst_date(datetime.now(timezone.utc)) + timedelta(days=30)
         r = owner.post("/maps", json={"title": "성수 여행", "start_date": start.isoformat(),
                                       "end_date": (start + timedelta(days=2)).isoformat(), "region": REGION})
         assert r.status_code == 201, r.text

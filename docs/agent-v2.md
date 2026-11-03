@@ -559,7 +559,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 - 엔드포인트: `GET /runs/{runId}/advice`, api-spec의 recommend 태그. 코드는 `agent/router.py` → `agent/flows.advise_run`이다(#587). recommend 라우터에 두면 recommend와 agent가 서로를 import하게 돼서 옮겼다. 권한은 `recommend.api.get_run_meta`로 run을 읽어 authz가 판정한다. agent만 recommend.api를 쓰는 한 방향이다.
 - 권한: 비구성원 404, run 요청자가 아니면 403.
 - 대상이 아니면 204. 저장된 조언이 있으면 그대로 200. 없으면 생성해 저장하고 200.
-- run당 1회: `agent_run_advice`에 `INSERT ... ON CONFLICT (run_id) DO NOTHING` 후 저장된 행을 돌려준다. 낼 조언이 없어도(silent) 빈 advice로 저장해 다시 생성하지 않는다.
+- 결과 상태당 1회(#1103): `agent_run_advice`에 `INSERT ... ON CONFLICT (run_id) DO UPDATE ... WHERE state_key IS DISTINCT FROM EXCLUDED.state_key`(run당 한 행에 지금 결과 상태의 조언을 넣는다, 같은 상태가 이미 있으면 그대로) 후 저장된 행을 돌려준다. 낼 조언이 없어도(silent) 빈 advice로 저장해 같은 상태에서는 다시 생성하지 않는다. 넓히기·다시 추천으로 반경, 다시 추천 횟수(attempt_no), 깔때기, 결과 수, 조언에 쓰이는 근거 줄이 바뀌면 새 키로 다시 계산해 그 행을 덮는다. 상태 키 정본은 `agent.core.advice_state_key`이고 원문은 키에 넣지 않는다. 키와 계산 재료는 같은 DB 스냅샷에서 읽는다. 기존 빈 키의 캐시는 다음 조회에서 한 번 다시 만든다.
 - 계산이 실패하면 조언 없음(204)으로 삼키지 않고 500(`INTERNAL_ERROR`)이다. agent_runs에 outcome=error 한 행을 남기고 조언 행은 쓰지 않아 다음 요청이 다시 만든다(#750). FE는 500이면 조언 자리를 숨긴다(16.5).
 - 세션: 이 엔드포인트는 요청 단위 세션(get_db)을 쓰지 않는다. 조회와 저장을 짧은 세션으로 나눈다. `realtime/dispatcher.py`가 재전송 조회에 SessionLocal을 짧게 쓰는 것과 같은 이유다.
 - 모델을 부르지 않는다(2026-10-27 결정, #749). 종류, 버튼, 문장은 agent 코드(`core.advice_simulations`, `core.choose_run_advice`)가 깔때기 숫자, 근거 줄 종류, 시뮬레이션 결과로 정한다(9.1).
@@ -1076,16 +1076,18 @@ CREATE TABLE agent_map_status (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
--- 추천 막힘 조언. run당 1행. silent여도 빈 advice로 저장한다
+-- 추천 막힘 조언. run당 1행, 지금 결과 상태의 조언(#1103). silent여도 빈 advice로 저장한다
 CREATE TABLE agent_run_advice (
-  run_id        uuid PRIMARY KEY,           -- recommend_runs.id. 모듈 경계라 FK 없음
+  run_id        uuid NOT NULL,              -- recommend_runs.id. 모듈 경계라 FK 없음
+  state_key     text NOT NULL DEFAULT '',   -- agent.core.advice_state_key. 기존 빈 키는 재생성
   map_id        text NOT NULL,
   kind          text NULL,
   claims        jsonb NOT NULL,             -- quote는 reaction_id만
   advice        jsonb NOT NULL,             -- 슬롯 문장만
   actions       jsonb NOT NULL,
   agent_run_id  uuid NULL,
-  created_at    timestamptz NOT NULL DEFAULT now()
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (run_id)
 );
 ```
 
@@ -1202,7 +1204,7 @@ FE는 슬롯을 다루지 않는다. 서버가 렌더한 조각을 차례로 이
 10. lease: 동시에 두 run_tick이 돌아도 같은 지도는 한 번만 관찰한다.
 11. 세션: llm 스텁이 호출되는 동안 열린 DB 세션이 없다.
 12. 권한: 비구성원 404. advice는 요청자가 아니면 403. accept와 dismiss 경합 시 두 번째는 409.
-13. 추천 막힘 조언: 같은 run에 동시 요청이 와도 저장은 한 번이고 두 요청 모두 같은 결과를 돌려준다. 계산은 두 번 돌 수 있다(막으려면 "만드는 중" 상태 칸이 필요해 하지 않았다, #587). 모델 호출은 없다(#750).
+13. 추천 막힘 조언: 같은 run의 같은 결과 상태에 동시 요청이 와도 저장은 한 번이고 두 요청 모두 같은 결과를 돌려준다(#1103). 넓히기·다시 추천 뒤에는 빈 조언을 포함해 새 상태로 갱신한다. 계산은 두 번 돌 수 있다(막으려면 "만드는 중" 상태 칸이 필요해 하지 않았다, #587). 모델 호출은 없다(#750).
 14. 여행 종료와 지도 삭제: end_date 다음 날부터 관찰하지 않고 outcome=trip_ended로 끝난다. 삭제된 지도는 outcome=map_deleted로 끝나고, 모델 호출 중 삭제되면 저장 단계에서 아무것도 쓰지 않는다.
 15. shadow: `SHADOW_DIAGNOSES`에 든 유형의 제안은 저장되지만 이벤트가 없고 GET 응답에 나오지 않으며 view, accept, dismiss는 404다.
 16. 정리와 원문: `purge_map_data`가 그 지도의 agent_* 행을 모두 지운다. 픽스처 반응의 글이 관찰과 요약과 조언을 거친 뒤 어떤 agent_* 행의 직렬화에도 들어 있지 않다(2절 13번). 반응을 지우면 그 인용 문장이 응답에서 빠진다. 모델 문장이 슬롯 밖에서 사유를 옮겨 쓰면 문장이 제거된다.

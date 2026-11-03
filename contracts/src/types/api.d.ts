@@ -1460,7 +1460,7 @@ export interface paths {
         put?: never;
         /**
          * 카톡 대화에서 뽑은 지도 링크 미리보기 (#9, 기획안 5-9, v2). **쓰기 없음** — 링크마다 해석(`POST /places/from-link`와 같은 규칙)하고, 그 장소가 **이 지도에 이미 있는지**를 붙여 돌려준다.
-         *     **대화 내용은 서버로 보내지 않는다.** 화면이 붙여넣은 텍스트를 브라우저 안에서 정규식으로 스캔해 구글맵·카카오맵 링크만 뽑아 URL만 보낸다(네이버·인스타·블로그·그 밖은 항목이 `LINK_NOT_SUPPORTED`).
+         *     **대화 내용은 서버로 보내지 않는다.** 화면은 브라우저에서 지도 링크와 공유 글의 상호명·주소 힌트를 추출하고 URL과 선택적인 힌트만 보낸다. 카톡 대화 내보내기 .txt 파일과 사용자가 고른 시작일·종료일(양끝 포함)로 입력을 바꾸는 결정은 #1139이며, 화면 구현은 PR #1141에서 진행 중이다. 선택한 날짜도 서버에 보내거나 저장하지 않는다.
          *     한 번에 **최대 10개**다 — 화면이 50개까지 10개씩 나눠 보내며 진행을 보여 준다. 단축 링크 해제가 느릴 수 있어 서버가 병렬로 처리하고 요청 마감(약 15초)을 넘긴 항목은 `LINK_UNRESOLVED`로 둔다.
          *     항목마다 결과가 따로 온다(`items[i]`, `index`는 요청 `urls`의 순서) — 일부가 실패해도 요청은 200이다. 요청 형식 오류(빈 목록, 10개 초과, 2000자 초과)만 422.
          *     - `result.matches`가 있으면 그 장소로 `source: search` 핀(`bulk` 또는 `POST /maps/{mapId}/pins`). 없으면 구글 링크는 `result.name_hint`로 GET /places/search를 이어 가고, 카카오 링크는 `result.needs_search_query`(사용자가 이름을 입력해 `source: live`).
@@ -1704,7 +1704,7 @@ export interface paths {
         /**
          * 지운 핀 복구 (#864) — **찍은 사람과 방장**(`pin.restore`, 삭제 권한과 같다). 삭제한 지 30일 안인 핀만. 200 + `Pin`.
          *     돌아오는 것: 핀(메모·분류), **♥·🚫 의견과 사유**, 삭제 때 확정이었다면 확정 리스트 항목(순서는 맨 뒤, 동선은 다시 계산된다). 삭제 중에 구성원이 탈퇴했다면 그 사람의 반응은 탈퇴 때 지워져서 돌아오지 않는다.
-         *     이미 복구된 핀이면 같은 핀을 200으로(연타 안전). **휴지통에 있는 동안 같은 장소로 새 핀이 만들어졌다면 409 `PIN_DUPLICATE`**(`detail.pin_id` = 지금 지도에 있는 핀)다 — 화면은 「이미 지도에 같은 장소가 있어요」를 보인다. 권한이 없으면 403, 없는 핀·30일이 지나 정리된 핀·복구할 수 있는 핀이 아닌 것은 404(남의 핀의 존재를 알리지 않는다). 이벤트 `pin.restored`(payload `Pin`).
+         *     이미 복구된 핀이면 같은 핀을 200으로(연타 안전). **휴지통에 있는 동안 같은 장소로 새 핀이 만들어졌다면 409 `PIN_DUPLICATE`**(`detail.pin_id` = 지금 지도에 있는 핀)다 — 화면은 「이미 지도에 같은 장소가 있어요」를 보인다. 없는 핀·삭제되지 않은 핀·30일이 지나 정리된 핀은 404다. **삭제된 핀이라도 찍은 사람도 방장도 아닌 구성원이 부르면 404**다(휴지통에서 남의 핀을 보여 주지 않는 것과 같이 존재를 숨긴다). 403은 `pin.restore` 액션이 없는 역할일 때만이다. 이벤트 `pin.restored`(payload `Pin`).
          */
         post: {
             parameters: {
@@ -3177,8 +3177,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 확정 리스트 내보내기 — 구성원 누구나 (#471). 확정 순서(`visit_order`, 없으면 추가한 순서)대로 한 줄씩 담은 텍스트(`txt`) 또는 CSV(`csv`)를 내려준다.
-         *     열은 순서·이름·분류·카카오 링크·메모다. **실시간 핀(live)은 이름을 저장하지 않으므로**(#53) 이름 칸에 검색어를 쓰고 이름 뒤에 "(이름 확인 필요)"를 붙이며,
+         * 확정 리스트 내보내기 — 구성원 누구나 (#471). 날짜별 순서대로 담은 텍스트(`txt`) 또는 CSV(`csv`)를 내려준다. 미배정은 마지막이다.
+         *     TXT는 날짜별 머리말, CSV는 날짜·순서·이름·분류·카카오 링크·메모 열을 쓴다. 각 날짜의 순서는 1부터다. **실시간 핀(live)은 이름을 저장하지 않으므로**(#53) 이름 칸에 검색어를 쓰고 이름 뒤에 "(이름 확인 필요)"를 붙이며,
          *     링크 칸에는 `place.map.kakao.com/<id>` 링크를 넣는다. 자체 DB 핀은 장소 이름과 장소 페이지 링크를 쓴다. 좌표는 내보내지 않는다.
          *     CSV는 엑셀에서 한글이 깨지지 않게 UTF-8 BOM으로 시작한다. 확정 리스트가 비어 있으면 CSV는 머리글만, txt는 안내 한 줄이다.
          *     공개 공유 링크는 이 범위 밖이다.
@@ -3239,6 +3239,7 @@ export interface paths {
         /**
          * 확정 리스트 수동 정렬 (#30). 보기 좋게 순서를 바꾸는 것뿐이고 동선과는 무관하다.
          *     동선을 다시 짜려면 POST /maps/{mapId}/route를 부른다.
+         *     날짜가 배정된 항목이 하나라도 있으면 이 기존 API는 409 SHORTLIST_SCHEDULED를 반환한다. 날짜별 편집에는 schedule API를 쓴다.
          */
         put: {
             parameters: {
@@ -3267,7 +3268,106 @@ export interface paths {
                         "application/json": components["schemas"]["ShortlistItem"][];
                     };
                 };
+                /** @description 날짜 배정 항목이 있어 전체 정렬 불가 (SHORTLIST_SCHEDULED) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
                 /** @description item_ids가 현재 확정 리스트와 맞지 않는다(VALIDATION_ERROR, detail에 불일치 항목) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/shortlist/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 날짜별 확정 리스트 조회
+         * @description 여행 시작일부터 종료일까지 양 끝을 포함해 날짜 칸을 표시한다. items는 날짜 순이고 미배정은 마지막이다. 날짜 칸은 항목이 없어도 화면에서 표시한다. 여행 기간이 줄면 범위 밖 항목은 기존 미배정 목록 뒤에 날짜별 기존 순서대로 붙는다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 현재 여행 기간, 변경 감지 version과 확정 항목 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ShortlistSchedule"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        /**
+         * 날짜 배정 및 날짜별 순서 저장
+         * @description 구성원 누구나 변경한다. 조회한 version과 모든 확정 항목 ID를 각 한 번씩 보낸다. 날짜는 여행 기간 안이거나 미배정 null이며 같은 날짜 그룹을 중복할 수 없다. 각 그룹의 item_ids 순서가 해당 날짜의 순서다. version이 바뀌면 재조회 후 다시 편집한다.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ShortlistScheduleUpdate"];
+                };
+            };
+            responses: {
+                /** @description 저장 후 최신 일정 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ShortlistSchedule"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                /** @description 조회 이후 일정이 바뀜 (SHORTLIST_STALE) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description 날짜 또는 항목 목록이 유효하지 않음 (VALIDATION_ERROR) */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -4824,8 +4924,30 @@ export interface components {
             pin: components["schemas"]["Pin"];
             /** @description 순서를 정하지 않았으면 null이거나 필드가 없다 */
             visit_order?: number | null;
+            /**
+             * Format: date
+             * @description 방문 날짜. null은 미배정; 기존 목록 응답에서는 생략될 수 있다
+             */
+            scheduled_date?: string | null;
             added_by: string;
             permissions: components["schemas"]["Permissions"];
+        };
+        ShortlistSchedule: {
+            /** Format: date */
+            start_date: string;
+            /** Format: date */
+            end_date: string;
+            /** @description 변경 감지용 불투명 값 */
+            version: string;
+            items: components["schemas"]["ShortlistItem"][];
+        };
+        ShortlistScheduleUpdate: {
+            version: string;
+            groups: {
+                /** Format: date */
+                date: string | null;
+                item_ids: string[];
+            }[];
         };
         Route: {
             region_label: string;

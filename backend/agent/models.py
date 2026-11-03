@@ -166,11 +166,14 @@ class AgentMapStatus(Base):
 
 
 class AgentRunAdvice(Base):
-    """추천 막힘 조언. run당 1행. silent여도 빈 advice로 저장해 다시 만들지 않는다(명세 9절)."""
+    """추천 막힘 조언. run당 1행이고 지금 결과 상태(state_key)의 조언이다(#1103). 넓히기·다시 추천은 같은 run id로 결과를 바꾸므로
+    결과가 달라지면 그 행을 새 조언으로 덮는다(옛 서버의 ON CONFLICT (run_id) DO NOTHING이 그대로 돌게 기본키는 run_id다).
+    silent여도 빈 advice로 저장해 같은 결과로는 다시 만들지 않는다(명세 9절). state_key는 core.advice_state_key."""
 
     __tablename__ = "agent_run_advice"
 
     run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)  # recommend_runs.id, FK 없음
+    state_key: Mapped[str] = mapped_column(String, nullable=False, default="", server_default="")   # 이 행이 만든 결과 상태(#1103)
     map_id: Mapped[str] = mapped_column(String, nullable=False)
     kind: Mapped[str | None] = mapped_column(String, nullable=True)
     claims: Mapped[list] = mapped_column(JSONB, nullable=False)

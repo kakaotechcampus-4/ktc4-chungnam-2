@@ -167,13 +167,14 @@ class Settings:
     db_max_overflow: int = 10
     db_pool_pre_ping: bool = True
     db_pool_recycle_s: int = -1          # 초. 음수면 연결을 재활용하지 않는다
-    # 세션·state 쿠키의 Secure(#810). 설정 정의만 끝났고 실제 쿠키에 Secure를 거는 일은 auth 후속이다
-    # (auth/router.py의 set_cookie 두 곳이 아직 secure=settings.is_prod다). from_env는 staging·prod에서 참,
+    # auth의 세션·state·선택 대기 쿠키가 함께 쓰는 Secure(#810). from_env는 staging·prod에서 참,
     # 그 밖에서 거짓을 기본으로 준다. 직접 만든 Settings의 기본값은 안전한 쪽(참)이다.
     cookie_secure: bool = True
 
     def __post_init__(self) -> None:
         # 잘못된 Settings는 애초에 "만들어질 수 없다" — 호출 순서에 기대지 않는 게 핵심이다.
+        # 환경 로딩과 직접 생성 모두 같은 키를 실제 places 어댑터에 넘긴다(#810).
+        object.__setattr__(self, "kakao_rest_api_key", self.kakao_rest_api_key.strip() or self.kakao_client_id.strip())
         if self.environment not in get_args(Environment):
             raise ConfigError(f"PINGO_ENV={self.environment!r} — {'|'.join(get_args(Environment))} 중 하나여야 한다")
         unknown_sources = [n for n in self.places_sources if n not in PLACE_SOURCE_NAMES]
@@ -222,10 +223,13 @@ class Settings:
         if not self.frontend_base_url:
             raise ConfigError(f"{env}에서 FRONTEND_BASE_URL이 비어있다 — 초대 링크·로그인 리다이렉트가 백엔드 자신의 주소로 샌다")
         # 외부 키는 실제 모드일 때만 필요하다. 비어 있으면 첫 호출에서야 실패하니 기동에서 막는다(#810).
-        needed = {
-            "places": ("KAKAO_CLIENT_ID", "KAKAO_CLIENT_SECRET", "KAKAO_REDIRECT_URI"),
-            "llm": ("ELICE_ML_API_BASE_URL", "ELICE_ML_API_KEY"),
-        }
+        # places.api.build_sources가 선택한 소스에 넘기는 키만 검사한다. OAuth 키는 장소 검색의 의존성이 아니다.
+        needed = {"llm": ("ELICE_ML_API_BASE_URL", "ELICE_ML_API_KEY")}
+        if self.places_mode == "real":
+            if "kakao" in self.places_sources and not self.kakao_rest_api_key.strip():
+                raise ConfigError(f"{env}에서 PLACES_MODE=real인데 KAKAO_REST_API_KEY이(가) 비어있다 (KAKAO_CLIENT_ID 폴백 가능)")
+            if "naver" in self.places_sources:
+                needed["places"] = ("NAVER_SEARCH_CLIENT_ID", "NAVER_SEARCH_CLIENT_SECRET")
         for port, names in needed.items():
             if getattr(self, f"{port}_mode") != "real":
                 continue
@@ -279,7 +283,7 @@ class Settings:
             llm_price_output_krw_per_m=_float("LLM_PRICE_OUTPUT_KRW_PER_M", 708.0),
             llm_daily_budget_krw=_float("LLM_DAILY_BUDGET_KRW", 3000.0),
             log_level=_log_level(),
-            kakao_rest_api_key=_env("KAKAO_REST_API_KEY", "") or _env("KAKAO_CLIENT_ID", ""),
+            kakao_rest_api_key=_env("KAKAO_REST_API_KEY", ""),
             naver_search_client_id=_env("NAVER_SEARCH_CLIENT_ID", ""),
             naver_search_client_secret=_env("NAVER_SEARCH_CLIENT_SECRET", ""),
             places_sources=tuple(n.strip() for n in _env("PLACES_SOURCES", "kakao").split(",") if n.strip()),

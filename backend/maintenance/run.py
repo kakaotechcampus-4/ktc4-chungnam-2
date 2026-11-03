@@ -1,11 +1,11 @@
 """정기 정리 러너(#168). 사용법:
 
-    python -m maintenance.run [--dry-run] [--only maps|notifications|guests|llm_calls|idempotency|withdrawn|events]
+    python -m maintenance.run [--dry-run] [--only maps|notifications|guests|llm_calls|idempotency|withdrawn|events|pins]
 
 한 번 돌리면 ① 삭제한 지 30일 지난 지도 ② 90일 지난 알림 ③ 90일 안 쓴 게스트 ④ 30일 지난 모델 호출 사용량(#870)
-⑤ 24시간 지난 「추천 받기」 멱등 키(run이 연결된 것, #811) ⑥ 복구 기간(7일)이 지난 탈퇴 계정의 개인정보(#857)를 ⑦ 25시간 지난 실시간 이벤트(event_log, #1016)와 함께 차례로 지운다.
+⑤ 24시간 지난 「추천 받기」 멱등 키(run이 연결된 것, #811) ⑥ 복구 기간(7일)이 지난 탈퇴 계정의 개인정보(#857) ⑦ 25시간 지난 실시간 이벤트(event_log, #1016) ⑧ 삭제된 핀(#1063)을 차례로 지운다.
 실제 삭제는 각 모듈이 한다(`maps.api.purge_deleted_maps`, `notifications.api.purge_old`, `auth.api.purge_inactive_guests`,
-`llm.api.purge_old`, `recommend.api.purge_idempotency_keys`, `auth.api.purge_withdrawn_accounts`, `realtime.api.purge_old_events`) — 여기는 부르기만 한다.
+`llm.api.purge_old`, `recommend.api.purge_idempotency_keys`, `auth.api.purge_withdrawn_accounts`, `realtime.api.purge_old_events`, `pins.api.purge_deleted_pins`) — 여기는 부르기만 한다.
 
 - 단계마다 별도 세션·트랜잭션·커밋이다. 한 단계가 실패하면 그 단계만 되돌리고 다음으로 넘어간다. 실패는 로그에 단계
   이름과 에러 타입만 남긴다(메시지에는 사용자 데이터가 섞일 수 있다). 하나라도 실패하면 종료 코드는 1이다.
@@ -27,6 +27,12 @@ MAP_RETENTION_DAYS = 30
 GUEST_INACTIVE_DAYS = 90
 
 Step = Callable[[Session, datetime], dict[str, int]]
+
+
+def purge_pins(db: Session, now: datetime) -> dict[str, int]:
+    from pins import api as pins_api
+
+    return pins_api.purge_deleted_pins(db, now=now)
 
 
 def purge_maps(db: Session, now: datetime) -> dict[str, int]:
@@ -79,6 +85,7 @@ STEPS: dict[str, Step] = {
     "idempotency": purge_idempotency_keys,
     "withdrawn": purge_withdrawn,
     "events": purge_events,
+    "pins": purge_pins,
 }
 
 

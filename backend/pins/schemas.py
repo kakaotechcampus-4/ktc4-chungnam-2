@@ -259,6 +259,22 @@ class ReasonChip(BaseModel):
     wants: bool | None = Field(default=None, exclude=True)
 
 
+class TrashedPin(BaseModel):
+    """휴지통의 핀 한 건(#864, 스펙 TrashedPin) — 복구하면 Pin이 된다."""
+
+    pin: Pin
+    deleted_at: datetime
+    deleted_by_name: str | None = Field(default=None, max_length=50)
+    purge_at: datetime
+    days_left: int = Field(ge=0)
+    was_confirmed: bool
+
+
+class PinTrash(BaseModel):
+    items: list[TrashedPin]
+    retention_days: int
+
+
 class FilterCounts(BaseModel):
     members_with_opinion: int | None = None
     members_total: int | None = None

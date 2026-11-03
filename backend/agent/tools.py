@@ -34,6 +34,7 @@ from agent.constants import TOOL_RESULT_MAX_ITEMS
 from agent.snapshot import Snapshot
 from common import categories
 from common.errors import AppError
+from common.kst import kst_date
 from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
@@ -171,7 +172,7 @@ def get_map_overview(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any
     times = ([p["created_at"] for p in matrix] + [r["updated_at"] for p in matrix for r in p["reactions"]]
              + [i["added_at"] for i in confirmed])
     return {
-        "dday": (found["start_date"] - core.kst_date(ctx.now)).days,
+        "dday": (found["start_date"] - kst_date(ctx.now)).days,
         "member_count": len(found["members"]),
         "categories": [
             {"category": c, "pins": sum(v == c for v in alive.values()),

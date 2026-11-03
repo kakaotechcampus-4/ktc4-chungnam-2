@@ -71,3 +71,8 @@ def restore_confirmed(db: Session, *, pin_id: str) -> bool:
     if created:
         pins_api.mark_confirmed(db, pin_id=pin_id, map_id=pin.map_id)
     return created
+
+
+def unassign_outside_dates(db: Session, *, map_id: str, start_date, end_date) -> int:
+    """Called with the map row locked when its travel dates change; caller commits."""
+    return service.unassign_outside_dates(db, map_id=map_id, start_date=start_date, end_date=end_date)
