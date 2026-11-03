@@ -118,8 +118,8 @@ async function flush(queryClient: QueryClient, mapId: string) {
     setDraft(mapId, undefined)
     showToast(
       error instanceof ApiError && error.code === 'SHORTLIST_STALE'
-        ? '다른 구성원이 일정을 먼저 바꿨어요. 최신 일정으로 다시 보여 드릴게요'
-        : '일정을 저장하지 못했어요. 잠시 뒤 다시 해 주세요',
+        ? '다른 구성원이 먼저 일정을 바꿨어요. 바뀐 일정으로 다시 보여 줄게요'
+        : '일정을 저장하지 못했어요. 잠시 뒤 다시 해 보세요',
     )
     void queryClient.invalidateQueries({ queryKey: key })
   }

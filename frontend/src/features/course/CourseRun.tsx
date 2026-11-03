@@ -66,7 +66,7 @@ export default function CourseRun({ mapId, runId, names, points, onRetry, onClos
 function Progress({ run, error, onRetryLoad }: { run: CourseRunDto; error: Error | null; onRetryLoad: () => void }) {
   return (
     <div className="space-y-3">
-      <AiHeader title="코스를 짜고 있어요" sub="누가 무엇을 했는지 한 줄씩 보여 줘요" mood="thinking" />
+      <AiHeader title="코스를 짜고 있어요" sub="진행 상황을 한 줄씩 보여 드려요" mood="thinking" />
       <WorkLog steps={run.steps} running />
       {error && (
         <div className="space-y-2">
@@ -124,7 +124,7 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
 
   return (
     <div className="space-y-4">
-      <AiHeader title={run.outcome ? outcomeText(run.outcome) : '코스를 짰어요'} sub="순서와 이동 시간만 보여 줘요. 시간 배정은 하지 않아요" mood="happy" />
+      <AiHeader title={run.outcome ? outcomeText(run.outcome) : '코스를 짰어요'} sub="날짜별 순서와 이동 시간이에요" mood="happy" />
 
       {run.stale && (
         <Notice
@@ -134,12 +134,12 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
             </button>
           }
         >
-          확정 리스트가 바뀌었어요. 이 코스는 바뀌기 전 리스트로 짠 거예요
+          이 코스를 짠 뒤에 확정 리스트가 바뀌었어요
         </Notice>
       )}
 
       {run.goals.length > 0 && (
-        <Section title="요청한 것">
+        <Section title="요청 사항">
           <ul className="space-y-1.5">
             {run.goals.map((g) => {
               const state = goalState(g)
@@ -155,7 +155,7 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
       )}
 
       {run.unmatched.length > 0 && (
-        <p className="break-keep text-body text-ink-700">반영하지 못했어요: {run.unmatched.map((u) => `「${u}」`).join(' ')}</p>
+        <p className="break-keep text-body text-ink-700">반영하지 못한 요청: {run.unmatched.join(', ')}</p>
       )}
 
       <Section title="날짜별 순서">
@@ -265,7 +265,7 @@ function DayCard({ day, index, names, points, hoursTag }: { day: CourseRunDto['d
           {links.map((l) => (
             <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="btn-link text-sm">
               {l.label} <ExternalLink size={14} aria-hidden="true" />
-              {l.cut && <span className="font-normal text-ink-500"> · 앞 {KAKAO_ROUTE_MAX}곳</span>}
+              {l.cut && <span className="font-normal text-ink-500"> (앞 {KAKAO_ROUTE_MAX}곳만)</span>}
             </a>
           ))}
         </div>

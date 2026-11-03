@@ -30,7 +30,7 @@ export default function NotificationBell({ floating = false, currentMapId }: { f
     <>
       <button
         type="button"
-        aria-label={badge ? `알림 · 안 읽은 알림 ${badge}개` : '알림'}
+        aria-label={badge ? `알림, 안 읽은 알림 ${badge}개` : '알림'}
         onClick={() => {
           setOpen(true)
           // 알림함을 열 때 새로 받는다 — 실시간 푸시가 없다(api-spec GET /me/notifications).
@@ -107,7 +107,7 @@ function InboxView({ currentMapId, onClose, onSettings }: { currentMapId?: strin
                 <span aria-hidden="true" className={`mt-1.5 size-2 shrink-0 rounded-full ${n.read ? '' : 'bg-[var(--notify-dot)]'}`} />
                 <span className="min-w-0 flex-1">
                   <span className={`block text-body ${n.read ? 'text-ink-600' : 'font-semibold text-ink-900'}`}>
-                    {!n.read && <span className="sr-only">안 읽음 · </span>}
+                    {!n.read && <span className="sr-only">안 읽음, </span>}
                     {n.message}
                   </span>
                   <span className="mt-0.5 flex items-center gap-2 text-xs text-ink-500">
@@ -147,7 +147,7 @@ function PrefsView({ onBack }: { onBack: () => void }) {
     <>
       <BackButton label="알림" onClick={onBack} />
       <SheetTitle>알림 설정</SheetTitle>
-      <p className="mb-3 mt-1 text-xs text-ink-500">끄면 앞으로 그 알림을 만들지 않아요. 이미 온 알림은 남아요.</p>
+      <p className="mb-3 mt-1 text-xs text-ink-500">끄면 그 알림은 더 이상 오지 않아요.</p>
       {prefs.isPending && <CardSkeleton count={1} />}
       {prefs.error && <ErrorText message="알림 설정을 불러오지 못했어요" error={prefs.error} />}
       <ul className="divide-y divide-ink-100">

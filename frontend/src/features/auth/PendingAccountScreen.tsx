@@ -69,7 +69,7 @@ export default function PendingAccountScreen({ onDone, onExpired }: { onDone: ()
             <p className="mt-1.5 break-keep text-xs text-ink-500">
               {days_left}일 남음 · {formatRestoreUntil(restore_until)}까지
               <br />
-              복구하면 지도 참여가 돌아오고 내가 찍은 핀도 내 이름으로 보여요. 남긴 의견은 돌아오지 않아요
+              복구하면 참여하던 지도와 내 이름이 붙은 핀이 돌아와요. 남긴 의견은 돌아오지 않아요
             </p>
           </div>
           {chooseError && !confirmRestart && <ErrorText message="처리하지 못했어요. 다시 시도해 주세요" error={chooseError} />}

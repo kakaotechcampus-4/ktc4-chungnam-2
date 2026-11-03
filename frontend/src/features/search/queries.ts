@@ -31,9 +31,9 @@ export function useSourcePlacesQuery(source: SearchSource | null, near: LatLng |
 
 /** docs/errors.md 문구. */
 export function searchErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.code === 'RATE_LIMITED') return '너무 빨리 검색하고 있어요. 잠시 뒤 다시 시도해 주세요'
-  if (err instanceof ApiError && err.code === 'PLACES_UNAVAILABLE') return '지금은 장소를 검색할 수 없어요. 잠시 뒤 다시 시도해 주세요'
-  if (err instanceof ApiError && err.code === 'LINK_NOT_SUPPORTED') return '구글맵·카카오맵 링크만 붙일 수 있어요'
-  if (err instanceof ApiError && err.code === 'LINK_UNRESOLVED') return '링크에서 장소를 찾지 못했어요. 검색으로 남겨 주세요'
+  if (err instanceof ApiError && err.code === 'RATE_LIMITED') return '너무 자주 검색했어요. 잠시 뒤 다시 검색해 주세요'
+  if (err instanceof ApiError && err.code === 'PLACES_UNAVAILABLE') return '지금은 장소를 검색할 수 없어요. 잠시 뒤 다시 검색해 주세요'
+  if (err instanceof ApiError && err.code === 'LINK_NOT_SUPPORTED') return '구글맵, 카카오맵 링크만 붙일 수 있어요'
+  if (err instanceof ApiError && err.code === 'LINK_UNRESOLVED') return '링크에서 장소를 찾지 못했어요. 이름으로 검색해 주세요'
   return '검색하지 못했어요'
 }

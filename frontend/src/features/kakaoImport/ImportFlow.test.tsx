@@ -124,7 +124,7 @@ describe('카톡 대화에서 핀 가져오기 — 네이버·공유 글 힌트�
     expect(pins.find((p) => p.place_name === '해운대 바다 카페')).toMatchObject({ link_ref: { provider: 'naver', external_id: 'naver:addrB' } })
     expect(pins.find((p) => p.source === 'live')).toEqual({ source: 'live', category: '음식점', kakao_place_id: 'kakao:mock-6', search_query: '성수 노포 곱창' })
     expect(await screen.findByText('3곳을 찍었어요')).toBeInTheDocument()
-    expect(screen.getByText('찍음 3곳')).toBeInTheDocument()
+    expect(screen.getByText('찍은 곳 3개')).toBeInTheDocument()
   })
 })
 
@@ -242,7 +242,7 @@ describe('카톡 가져오기 — 누적·새로고침 뒤 유지·버튼(#1045)
     resetImport()
     renderSheet()
     expect(await screen.findByText('지도 링크 5개')).toBeInTheDocument()
-    expect(await screen.findByText('찍음 2곳')).toBeInTheDocument()
+    expect(await screen.findByText('찍은 곳 2개')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '다른 대화 파일 더하기' })).toBeInTheDocument()
   })
 

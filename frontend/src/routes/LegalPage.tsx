@@ -14,7 +14,7 @@ export default function LegalPage({ title }: { title: string }) {
         </Link>
         <h1 className="text-2xl font-bold text-ink-900">{title}</h1>
       </header>
-      <p className="text-sm text-ink-600">아직 준비 중인 문서예요. 정식으로 공개하기 전에 이 자리에 올려 둘게요.</p>
+      <p className="text-sm text-ink-600">아직 준비 중인 문서예요</p>
     </main>
   )
 }

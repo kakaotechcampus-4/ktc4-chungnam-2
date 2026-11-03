@@ -118,8 +118,8 @@ describe('우리 조건 요약(#589)', () => {
     expect(screen.getByText('매운 곳 제외 · 1명')).toBeInTheDocument()
     expect(screen.getByText('횟집 원함 · 2명')).toBeInTheDocument()
     expect(screen.getByText('체인점 · 원함 1 / 피함 1')).toBeInTheDocument()
-    expect(screen.getByText('더 적어 주면 반영돼요 · 1건')).toBeInTheDocument()
-    expect(screen.getByText('추천이 거르지 않아요 · 1건')).toBeInTheDocument()
+    expect(screen.getByText('더 적어 주면 반영돼요 (1건)')).toBeInTheDocument()
+    expect(screen.getByText('추천에서 거르지 않는 조건 (1건)')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '이 조건으로 음식점 추천 받기' })).toBeInTheDocument()
   })
 
@@ -248,7 +248,7 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
 
     it('found는 「확인되지 않음」 머리 + 서버 문장 그대로 + 문장마다 출처 이름 링크(새 탭)', () => {
       setup(state({ ...split, facts: [facts[0], { ...unknownFact, web: found }] }))
-      const block = screen.getByRole('heading', { name: 'AI 웹 요약 · 확인되지 않음' }).parentElement!
+      const block = screen.getByRole('heading', { name: 'AI 웹 요약 (확인 안 됨)' }).parentElement!
       for (const s of found.statements) {
         expect(screen.getByText(s.text)).toBeInTheDocument()
         const link = screen.getByRole('link', { name: `${s.source_name}에서 보기, 새 탭` })
@@ -264,10 +264,10 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
     it('웹 요약은 web이 있는 그 줄 아래에만 붙는다', () => {
       setup(state({ ...split, facts: [facts[0], { ...unknownFact, web: found }] }))
       const [plain, withWeb] = factLines()
-      expect(plain).not.toHaveTextContent('확인되지 않음')
+      expect(plain).not.toHaveTextContent('확인 안 됨')
       expect(plain.querySelector('a')).toBeNull()
       expect(withWeb).toHaveTextContent('이 주차할 수 있는 곳인지 몰라요')
-      expect(withWeb).toHaveTextContent('AI 웹 요약 · 확인되지 않음')
+      expect(withWeb).toHaveTextContent('AI 웹 요약 (확인 안 됨)')
     })
 
     it.each([['not_found' as const], ['paused' as const]])('%s는 서버 notice 글을 그대로 한 줄 — 화면이 문구를 적지 않는다', (status) => {
@@ -275,7 +275,7 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
       const notice = `서버가 보낸 ${status} 안내 글`
       setup(state({ ...split, facts: [{ ...unknownFact, web: { status, notice, statements: [], checked_at: found.checked_at } }] }))
       expect(screen.getByText(notice)).toBeInTheDocument()
-      expect(screen.queryByText(/확인되지 않음|웹에서도 찾지 못했어요|웹 확인을 쉬고/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/확인 안 됨|웹에서도 찾지 못했어요|웹 확인을 쉬고/)).not.toBeInTheDocument()
       expect(screen.queryByRole('link')).not.toBeInTheDocument()
     })
 
@@ -286,7 +286,7 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
       setup(state({ ...split, facts: [line] }))
       const [only] = factLines()
       expect(only).toHaveTextContent(/^우리 데이터로는 성수 카페이 주차할 수 있는 곳인지 몰라요$/)
-      expect(screen.queryByText(/확인되지 않음/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/확인 안 됨/)).not.toBeInTheDocument()
       expect(screen.queryByRole('link')).not.toBeInTheDocument()
     })
   })

@@ -112,9 +112,9 @@ function LiveInfo({ pin }: { pin: Pin }) {
   return (
     <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-body">
       <p className="font-semibold text-ink-900">장소 정보가 없는 핀이에요</p>
-      <p className="text-ink-600">우리 장소 데이터에 없는 곳이라 조건 확인·AI 추천·동선에는 쓰이지 않아요. 의견은 그대로 남길 수 있어요.</p>
+      <p className="text-ink-600">조건 확인, AI 추천, 동선에는 쓰이지 않아요. 의견은 남길 수 있어요.</p>
       {state === 'loading' && <p className="text-ink-500">위치를 찾는 중이에요…</p>}
-      {state === 'missing' && <p className="font-semibold text-warn-text">카카오에서 이 장소의 위치를 다시 찾지 못했어요. 지도에는 표시되지 않아요.</p>}
+      {state === 'missing' && <p className="font-semibold text-warn-text">위치를 찾지 못해서 지도에는 보이지 않아요.</p>}
     </div>
   )
 }
@@ -172,8 +172,8 @@ function EditPinDialog({ pin, mapId, onCancel }: { pin: Pin; mapId: string; onCa
 
   return (
     <ConfirmDialog
-      title={live ? '메모·분류 수정' : '메모 수정'}
-      body="이 핀을 찍은 사람만 고칠 수 있어요. 비우고 저장하면 메모가 지워져요."
+      title={live ? '메모와 분류 수정' : '메모 수정'}
+      body="비우고 저장하면 메모가 지워져요."
       ok="저장"
       pending={update.isPending || !changed}
       onCancel={onCancel}
@@ -312,7 +312,7 @@ function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
       {asking && (
         <ConfirmDialog
           title="이 핀을 삭제할까요?"
-          body={`${name} 핀과 거기에 남긴 의견이 모든 구성원에게서 사라져요. 확정 리스트에 있으면 함께 빠져요.`}
+          body={`${name} 핀과 남긴 의견이 모두에게서 사라져요. 확정 리스트에 있으면 거기서도 빠져요.`}
           ok="삭제"
           danger
           pending={del.isPending}
@@ -355,7 +355,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
         <div>
           <div className="flex items-center justify-between text-body">
             <p className="font-medium text-ink-900">
-              <span style={{ color: R.like.line }}>♥</span> {likes.map(nameOf).join(' · ')} 좋아해요
+              <span style={{ color: R.like.line }}>♥</span> {likes.map(nameOf).join(', ')} 좋아해요
             </p>
             {likes.some((l) => l.chips.length || l.text) && (
               <button type="button" onClick={() => setShowLikes((v) => !v)} className="btn-text text-xs">
@@ -374,7 +374,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
       )}
       {unknown.some((m) => !m.isMe) && (
         <p className="text-body text-ink-500">
-          ? 아직 안 남겼어요 · {unknown.filter((m) => !m.isMe).map((m) => m.name).join(' · ')}
+          ? {unknown.filter((m) => !m.isMe).map((m) => m.name).join(', ')} 아직 안 남겼어요
         </p>
       )}
     </section>
@@ -455,7 +455,7 @@ function MyOpinion({
     const previous: ReactionDto | null | undefined = saved
     react.mutate(null, {
       onSuccess: () =>
-        showToast('의견을 거뒀어요', {
+        showToast('의견을 취소했어요', {
           label: '되돌리기',
           onClick: () =>
             previous &&
@@ -518,7 +518,7 @@ function MyOpinion({
               })}
             </div>
           )}
-          {type === 'against' && chipsError && <ErrorText message="사유 칩을 불러오지 못했어요 — 글로 적어 주세요" error={chipsError} />}
+          {type === 'against' && chipsError && <ErrorText message="사유 칩을 불러오지 못했어요. 이유를 직접 적어 주세요" error={chipsError} />}
           <TextField
             value={text}
             onChange={setText}
@@ -534,7 +534,7 @@ function MyOpinion({
               {MISSING_REASON}
             </p>
           )}
-          {type === 'against' && <p className="text-label text-ink-500">자세히 적을수록 더 정확한 추천을 받을 수 있어요</p>}
+          {type === 'against' && <p className="text-label text-ink-500">자세히 적을수록 추천이 정확해져요</p>}
         </div>
       )}
 

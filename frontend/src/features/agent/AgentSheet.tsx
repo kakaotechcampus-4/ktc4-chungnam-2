@@ -62,7 +62,7 @@ export default function AgentSheet({ mapId, onClose }: { mapId: string; onClose:
         {query.error && <ErrorText message="조언을 불러오지 못했어요" error={query.error} />}
         {state && !enabled && (
           <p className="text-body text-ink-600">
-            꺼져 있어요{changer && ` · ${changer.isMe ? '내가' : `${changer.name}님이`} 껐어요`}. 켜면 지도가 막힌 곳을 찾아 구성원 모두에게 제안해요
+            {changer ? `${changer.isMe ? '내가' : `${changer.name}님이`} 껐어요` : '꺼져 있어요'}. 켜면 의견이 막힌 곳을 찾아 구성원 모두에게 제안해요
           </p>
         )}
         {state && enabled && <MapStatus status={state.status} />}
