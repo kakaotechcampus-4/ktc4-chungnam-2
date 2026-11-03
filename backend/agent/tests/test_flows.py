@@ -743,7 +743,8 @@ def test_no_agent_row_contains_reason_text(world, factory):
     assert run.outcome == "silent"
     assert run.outcome_detail == {"signal_id": "s1", "diagnosis": "stall", "decision": "silent"}
     assert against in run.signals[0]["evidence_ids"]   # 근거는 reaction_id로만
-    [call] = run.tool_calls
+    preview, call = run.tool_calls   # 미리 돌려 보기(코드, p1, 6.7)는 수만 남긴다
+    assert (preview["name"], preview["call_id"]) == ("preview_filter", "p1")
     assert call["name"] == "get_reasons" and call["call_id"] == "t1"
     [reason] = [r for r in call["result"]["reasons"] if r["reaction_id"] == against]
     assert reason["text_len"] == len(SECRET_AGAINST) and "text" not in reason

@@ -460,7 +460,7 @@ def _draft(
     session_factory: SessionFactory, gateway: deps.AgentLlmGateway, trace: _Trace,
 ) -> _Step:
     """제안 초안(12.4 6단계). 코드 유형은 템플릿. 모델 유형은 진단을 부른다 — split은 충돌 종류(compare_reasons, 코드)를
-    먼저 계산해 입력에 넣는다. 실패(AgentCallFailed)와 검증 실패는 재요청하지 않고 침묵한다(2절 10번). 예외는 그대로
+    먼저 계산해 입력에 넣고, 미리 돌려 보기(6.7, recommend.api.preview_filter)도 모델 전에 코드가 해서 입력과 도구 기록 p1에 넣는다. 실패(AgentCallFailed)와 검증 실패는 재요청하지 않고 침묵한다(2절 10번). 예외는 그대로
     올리고, 진단을 부른 뒤면 trace에 모델 사용이 남는다(#677)."""
     if top.diagnosis in CODE_TYPES:
         return _Step(core.render_template(top))
@@ -472,8 +472,9 @@ def _draft(
     # 없고, agent_runs 행은 아직 없어 run_id도 없다
     with llm_api.usage_context("agent_diagnose", map_id=map_id):
         comparison = _comparison(ctx, top)
+        preview = _preview(ctx, top, comparison)
         reply = _call_model(trace, ctx.calls, lambda: gateway.diagnose(
-            core.diagnosis_input(top, snap, comparison), tool_runner=ctx.run,
+            core.diagnosis_input(top, snap, comparison, preview), tool_runner=ctx.run,
         ))
         trace.stage = "verify"
         out = reply.result
@@ -481,7 +482,8 @@ def _draft(
         if isinstance(out, AgentCallFailed):
             return _Step(None, core.failed_outcome(out.reason), which | {"reason": out.reason, "detail": out.detail},
                          used_model=True, tool_calls=ctx.calls, usage=reply.usage)
-        verified = core.verify_diagnosis(out, top, snap, ctx.results, member_names=names, comparison=comparison)
+        verified = core.verify_diagnosis(out, top, snap, ctx.results, member_names=names, comparison=comparison,
+                                         preview=preview)
         draft = verified.draft
         if draft is not None:
             draft = replace(draft, facts=_facts(ctx, top, comparison))
@@ -512,6 +514,16 @@ def _comparison(ctx: tools.ToolContext, top: core.Signal) -> dict[str, Any] | No
     except llm_api.PlanEvidenceFailed:
         log.warning("agent compare_reasons 실패(②) map_id=%s", ctx.map_id)
         return None
+
+
+def _preview(ctx: tools.ToolContext, top: core.Signal, comparison: dict[str, Any] | None) -> dict[str, Any] | None:
+    """미리 돌려 보기(6.7). 무엇을 돌릴지는 core.preview_target(stall 전부, split은 different_axes만). ②가 실패하면 tools.preview가
+    None을 돌려주고 진단은 미리 돌려 보기 없이 간다 — 그때는 0곳 행동 검사도 하지 않는다."""
+    target = core.preview_target(top, comparison)
+    if target is None:
+        return None
+    category, with_keys = target
+    return tools.preview(ctx, category=category, with_keys=with_keys)
 
 
 def _planned_outcome(

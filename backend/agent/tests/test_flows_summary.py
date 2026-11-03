@@ -182,10 +182,12 @@ def test_observation_summarizes_five_sections_and_announces(world, client):
     assert all(t not in state.text for t in ALL_TEXTS)   # 알러지 원문을 포함해 사유 글이 응답에 없다
 
 
-def test_summary_structuring_carries_server_usage_label(world):
-    """요약의 ②는 사용량 기록(llm_calls, #870)에 agent_summary로 남는다. 서버 호출이라 user_id가 없다."""
+def test_summary_structuring_carries_server_usage_label(world, monkeypatch):
+    """요약의 ②는 사용량 기록(llm_calls, #870)에 agent_summary로 남는다. 서버 호출이라 user_id가 없다. 진단의 미리 돌려 보기(6.7)는
+    같은 카테고리 사유를 진단 trace에서 먼저 구조화해 캐시를 채우므로 여기서는 끈다 — 요약이 ②를 직접 부르는 경로를 본다."""
     from llm import usage
 
+    monkeypatch.setattr(flows, "_preview", lambda *args: None)
     map_id, _ = _five_section_map(world)
     labels = []
 

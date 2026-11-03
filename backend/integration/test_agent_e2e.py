@@ -373,7 +373,8 @@ def test_stall_is_found_diagnosed_with_tools_shown_and_accepted(e2e):
     # 에이전트가 스스로 도구 둘을 차례로 부르고(모델 요청 3번: 도구, 도구, 답) 검증을 통과한 제안을 저장했다
     run = e2e.runs(map_id)[-1]
     assert (run.outcome, run.used_model) == ("suggested", True)
-    assert [t["name"] for t in run.tool_calls] == ["get_reasons", "get_readiness"]
+    # 모델 전에 코드가 미리 돌려 본다(6.7, p1 — 모델이 고르지 않아 도구 상한에 세지 않는다)
+    assert [t["name"] for t in run.tool_calls] == ["preview_filter", "get_reasons", "get_readiness"]
     assert diagnosis_requests(e2e.model) == [("DiagnosisOutput", "auto")] * 3
     assert e2e.model.requests.count(("StatusOutput", None)) == 1   # 관찰 끝의 현황 문단(도구 없음)
     assert (run.tokens_in, run.tokens_out) == (2700, 180)

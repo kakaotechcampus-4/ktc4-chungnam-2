@@ -777,12 +777,45 @@ def render_template(sig: Signal) -> Draft:
 
 # ---------------------------------------------------------------- 모델 진단 입력 (6.2, 6.3, 10절)
 
-def diagnosis_input(top: Signal, snap: Snapshot, comparison: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def compromise_keys(comparison: Mapping[str, Any] | None) -> list[str]:
+    """절충안(6.7)의 with_keys — ♥ 쪽이 원한 키(compare_reasons의 want에 side=like가 있는 키), 키 순서. 🚫 쪽 조건은 근거 줄로
+    이미 들어가므로 여기 넣지 않는다."""
+    if not comparison:
+        return []
+    return [k["fact_key"] for k in comparison.get("keys", []) if any(r["side"] == "like" for r in k["want"])]
+
+
+def preview_target(top: Signal, comparison: Mapping[str, Any] | None) -> tuple[str, list[str]] | None:
+    """미리 돌려 보기(6.7)를 할지와 (카테고리, with_keys). stall은 그 카테고리 근거 전부, split은 충돌 종류가 different_axes일 때만
+    ♥ 쪽이 원한 키를 더해 돌린다. same_axis·unclear는 돌리지 않는다 — 같은 특징을 반대로 원하면 둘 다 만족하는 곳이 정의상 없다.
+    split의 비교가 없으면(② 실패) 돌리지 않는다."""
+    if top.diagnosis == "stall":
+        return top.category, []
+    if top.diagnosis == "split" and comparison and comparison.get("conflict_type") == "different_axes":
+        return top.category, compromise_keys(comparison)
+    return None
+
+
+PREVIEW_INPUT_KEYS = ("passed_count", "with_keys_count", "with_labels")   # 진단 입력에 넣는 칸(깔때기는 기록에만)
+
+
+def preview_input(preview: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """미리 돌려 본 결과 중 모델에 주는 칸. 수와 조건 이름뿐이다 — 장소 이름과 id는 처음부터 없다(recommend.api.preview_filter)."""
+    if preview is None:
+        return None
+    return {k: preview[k] for k in PREVIEW_INPUT_KEYS if k in preview}
+
+
+def diagnosis_input(
+    top: Signal, snap: Snapshot, comparison: Mapping[str, Any] | None = None, preview: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """llm.agent_diagnose에 넘길 1순위 신호. 모델에는 JSON 문자열로 그대로 간다 — 공개 데이터만 넣는다(명세 2절 2번).
     run의 존재(has_run_since)와 구성원 user_id는 넣지 않는다. 사유 글도 넣지 않는다(모델이 get_reasons로 읽는다).
     stall은 카테고리와 🚫 반응 id, 🚫가 달린 핀 id. split은 핀 id, place_id(실시간 핀은 None), 반응 id, 그 핀의 ♥·🚫
     수(counts — split 필수 claim의 값), compare_reasons 결과(충돌 종류는 코드가 정한다, 6.3). 핀 id와 수, place_id를
-    넣는 것은 모델이 그것을 알려고 도구를 한 번 더 부르지 않게 하려는 것이다(#534)."""
+    넣는 것은 모델이 그것을 알려고 도구를 한 번 더 부르지 않게 하려는 것이다(#534). 두 유형 모두 미리 돌려 본 결과(preview,
+    6.7 — stall {passed_count}, split의 different_axes {passed_count, with_keys_count, with_labels}, 없으면 None)를 넣는다.
+    같은 값이 도구 기록 p1에 있어 모델이 ToolClaim으로 가리킨다."""
     f = top.features
     out: dict[str, Any] = {
         "signal_id": top.id, "diagnosis": top.diagnosis, "category": top.category,
@@ -793,6 +826,7 @@ def diagnosis_input(top: Signal, snap: Snapshot, comparison: Mapping[str, Any] |
     if top.diagnosis == "stall":
         out["against_reaction_ids"] = list(top.evidence_ids)
         out["against_pin_ids"] = sorted({r.pin_id for r in snap.reactions if r.reaction_id in set(top.evidence_ids)})
+        out["preview"] = preview_input(preview)
     elif top.diagnosis == "split":
         pin = snap.pin(top.pin_id)
         reactions = snap.reactions_of(top.pin_id)
@@ -801,6 +835,7 @@ def diagnosis_input(top: Signal, snap: Snapshot, comparison: Mapping[str, Any] |
         out["reaction_ids"] = list(top.evidence_ids)
         out["counts"] = {t: sum(r.type == t for r in reactions) for t in ("like", "against")}
         out["comparison"] = comparison
+        out["preview"] = preview_input(preview)
     return out
 
 
@@ -1081,11 +1116,15 @@ def _check_line(
 
 
 def _model_action(
-    action: Any, top: Signal, snap: Snapshot, kept: Mapping[str, Any],
+    action: Any, top: Signal, snap: Snapshot, kept: Mapping[str, Any], preview: Mapping[str, Any] | None = None,
 ) -> tuple[tuple[str, str, dict[str, Any]] | None, str | None]:
-    """행동 하나(11.2 6단계) → ((type, label, params), None) 또는 (None, 이유). 버튼 이름은 코드가 정한다."""
+    """행동 하나(11.2 6단계) → ((type, label, params), None) 또는 (None, 이유). 버튼 이름은 코드가 정한다. 미리 돌려 본
+    passed_count가 0이면 open_recommend를 뺀다(6.7) — 0곳인 추천을 권해 크레딧을 쓰게 하지 않는다. 미리 돌려 보지 못했으면(② 실패
+    등, preview=None) 이 검사를 하지 않는다."""
     if action.type not in MODEL_ACTIONS[top.diagnosis]:
         return None, "type"
+    if action.type == "open_recommend" and preview is not None and preview.get("passed_count") == 0:
+        return None, "preview_empty"
     if not action.basis or any(b not in kept for b in action.basis):
         return None, "basis"
     if action.type == "show_pins" and action.pin_ids:
@@ -1113,16 +1152,18 @@ def _stored_claim(claim: Any, snap: Snapshot) -> dict[str, Any]:
 def verify_diagnosis(
     out: DiagnosisOutput, top: Signal, snap: Snapshot, tool_results: Mapping[str, Any], *,
     member_names: Iterable[str] = (), comparison: Mapping[str, Any] | None = None,
+    preview: Mapping[str, Any] | None = None,
 ) -> Verified:
     """모델 진단 출력 검증(11.2). 스키마(1단계)는 llm이 이미 봤다 — 여기 오는 것은 DiagnosisOutput이다.
 
     1 decision이 silent·unknown이면 그대로 침묵 2 signal_id와 diagnosis가 1순위 신호와 같은가 3 claim 대조(실패한
     claim 제거) 4 구조 대조(요약 전용이라 진단은 건너뛴다) 5 문장(제거된 claim을 가리킴, 슬롯 밖 숫자, 구성원 이름이나
-    별칭, 금지 표현, 슬롯 밖 사유 원문 옮겨 쓰기) 6 행동(유형별 허용, 추천 대상 카테고리, basis) 7 성립(split은 그 핀의
+    별칭, 금지 표현, 슬롯 밖 사유 원문 옮겨 쓰기) 6 행동(유형별 허용, 미리 돌려 본 수가 0이면 open_recommend 제거, 추천 대상
+    카테고리, basis) 7 성립(split은 그 핀의
     like·against count, 문장이나 행동이 하나 이상). 2단계나 7단계에서 실패하면 invalid_claims로 침묵한다.
 
-    tool_results: 이번 관찰의 도구 결과(call_id → 모델에 준 결과 그대로). member_names: 구성원 표시 이름(두 글자
-    이상만 본다 — 한 글자 이름은 보통 낱말과 겹친다)."""
+    tool_results: 이번 관찰의 도구 결과(call_id → 모델에 준 결과 그대로, 미리 돌려 보기 p1 포함). member_names: 구성원 표시
+    이름(두 글자 이상만 본다 — 한 글자 이름은 보통 낱말과 겹친다). preview: 미리 돌려 본 결과(6.7), 돌리지 않았으면 None."""
     record: dict[str, Any] = {"decision": out.decision}
     if out.decision != "suggest":
         return Verified(out.decision, None, record)
@@ -1147,7 +1188,7 @@ def verify_diagnosis(
 
     specs, removed_actions = [], []
     for i, action in enumerate(out.actions):
-        spec, reason = _model_action(action, top, snap, kept)
+        spec, reason = _model_action(action, top, snap, kept, preview)
         if reason is not None:
             removed_actions.append({"index": i, "reason": reason})
         elif spec not in specs:
