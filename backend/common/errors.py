@@ -117,7 +117,9 @@ def register_error_handlers(app) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_request, exc: RequestValidationError):
-        return error_response("VALIDATION_ERROR", detail={"errors": jsonable_encoder(exc.errors())})
+        # input·ctx·url은 요청 원문을 그대로 담는다 — loc·msg·type만 내린다(#1161)
+        errors = [{k: e[k] for k in ("loc", "msg", "type")} for e in exc.errors()]
+        return error_response("VALIDATION_ERROR", detail={"errors": jsonable_encoder(errors)})
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(_request, exc: StarletteHTTPException):

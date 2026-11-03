@@ -77,6 +77,7 @@ def run_course(
     goals: tuple[goals_mod.Goal, ...] = ()
     unmatched: tuple[str, ...] = ()
     understood_by = worklog.MODEL
+    goals_failure: Optional[str] = None
     if text or (setter is not None and candidates):
         if setter is None:                       # 목표를 세울 모델 자리가 없다 — 요청 전체를 반영하지 못했다고 밝힌다
             unmatched, understood_by = _whole(text), "코드(목표 세우기 없음)"
@@ -84,8 +85,9 @@ def run_course(
             try:
                 verified = goals_mod.verify_goal_set(trip, text, setter(goals_mod.goals_input(trip, text, candidates)), candidates)
                 goals, unmatched = verified.goals, verified.unmatched
-            except ModelTurnFailed:
+            except ModelTurnFailed as exc:       # 결과는 끝까지 낸다 — 이어받았다는 줄은 Narrator가 남긴다(#1131 D안)
                 unmatched, understood_by = (_whole(text) if text else ()), "코드(목표 세우기 실패)"
+                goals_failure = direct.failure_kind(exc)
 
     def emit(recs: list[worklog.StepRecord]) -> None:
         for rec in recs:
@@ -96,7 +98,7 @@ def run_course(
             except Exception as exc:   # noqa: BLE001 — 진행 저장 실패가 코스 계산을 멈추면 안 된다. 클래스 이름만 로그
                 log.warning("course 진행 기록 실패: %s", type(exc).__name__)
 
-    narrator = worklog.Narrator(trip, goals, unmatched, understood_by=understood_by, candidates=candidates)
+    narrator = worklog.Narrator(trip, goals, unmatched, understood_by=understood_by, candidates=candidates, goals_failure=goals_failure)
     records = narrator.opening()
     emit(records)
 

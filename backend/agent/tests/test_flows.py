@@ -45,6 +45,17 @@ def observe(world, map_id, **kw):
     return flows.observe_map(map_id, world.now, session_factory=world.factory, **kw)
 
 
+def map_runs(world, map_id) -> list[AgentRun]:
+    """지도 관찰의 행 — 관찰 끝의 현황 문단 행(trigger=status, #1168)은 빼고 본다. 현황 문단은 test_flows_status.py가 본다."""
+    return [r for r in world.rows(AgentRun, map_id=map_id) if r.trigger != "status"]
+
+
+def map_run(world, map_id) -> AgentRun:
+    found = map_runs(world, map_id)
+    assert len(found) == 1, found
+    return found[0]
+
+
 def _cursor(world, map_id) -> AgentCursor:
     return world.one(AgentCursor, map_id=map_id)
 
@@ -64,7 +75,7 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
     assert sug.advice == [{"slot_text": "확정 {c1.value}곳 중 카페 {c2.value}곳", "is_guess": False}]
     assert [c["value"] for c in sug.claims] == [2, 0]
     assert sug.expires_at == world.now + constants.SUGGESTION_TTL
-    run = world.one(AgentRun, map_id=map_id)
+    run = map_run(world, map_id)
     # 신호가 둘이지만 순위는 코드 규칙이고 진단도 없다 — 모델 사용 없음(#582)
     assert (run.outcome, run.trigger, run.snapshot_seq, run.used_model) == ("suggested", "activity", seq, False)
     assert sug.run_id == run.id
@@ -172,7 +183,7 @@ def test_own_event_reclaims_once_then_settles(world):
 
     assert map_id in tick(world, after=timedelta(minutes=5))
     assert map_id not in tick(world, after=timedelta(minutes=10))
-    outcomes = [r.outcome for r in sorted(world.rows(AgentRun, map_id=map_id), key=lambda r: r.started_at)]
+    outcomes = [r.outcome for r in sorted(map_runs(world, map_id), key=lambda r: r.started_at)]
     assert outcomes == ["suggested", "blocked"]
     assert [t for t, _ in world.agent_events(map_id)] == ["agent.suggested"]
 
@@ -184,17 +195,21 @@ def test_mode_turned_off_during_observation_saves_nothing(world, monkeypatch):
     world.event(map_id)
     real_lock = maps_api.lock_map_if_alive
 
+    turned_off = []
+
     def turn_off_then_lock(db, mid):
-        with world.factory() as other:
-            other.add(AgentSettings(map_id=map_id, enabled=False, updated_by=world.uid("u2")))
-            other.commit()
+        if not turned_off:   # 첫 잠금(제안 저장)에서만 끈다 — 관찰 끝의 현황 문단도 지도 행을 잠근다(#1168)
+            with world.factory() as other:
+                other.add(AgentSettings(map_id=map_id, enabled=False, updated_by=world.uid("u2")))
+                other.commit()
+            turned_off.append(True)
         return real_lock(db, mid)
 
     monkeypatch.setattr(maps_api, "lock_map_if_alive", turn_off_then_lock)
 
     observe(world, map_id)
 
-    run = world.one(AgentRun, map_id=map_id)
+    run = map_run(world, map_id)
     assert run.outcome == "blocked" and {"signal_id": "s1", "reason": "mode_off"} in run.blocked
     assert world.rows(AgentSuggestion, map_id=map_id) == []
     assert world.agent_events(map_id) == []
@@ -209,7 +224,7 @@ def test_active_suggestion_blocks_until_superseded(world):
 
     world.event(map_id)
     tick(world, after=timedelta(minutes=5))
-    runs = sorted(world.rows(AgentRun, map_id=map_id), key=lambda r: r.finished_at)
+    runs = sorted(map_runs(world, map_id), key=lambda r: r.finished_at)
     assert runs[-1].outcome == "blocked"
     assert {b["reason"] for b in runs[-1].blocked} == {"active_exists"}
 
@@ -246,7 +261,7 @@ def test_mode_off_map_is_not_claimed(world, factory):
         db.commit()
 
     assert map_id not in tick(world)
-    assert world.rows(AgentRun, map_id=map_id) == []
+    assert map_runs(world, map_id) == []
 
 
 def test_no_signal_outcome(world):
@@ -255,7 +270,7 @@ def test_no_signal_outcome(world):
 
     tick(world)
 
-    run = world.one(AgentRun, map_id=map_id)
+    run = map_run(world, map_id)
     assert (run.outcome, run.signals, run.priority) == ("no_signal", [], None)
 
 
@@ -268,15 +283,19 @@ def test_state_change_before_save_makes_it_stale(world, monkeypatch):
     world.event(map_id)
     real_lock = maps_api.lock_map_if_alive
 
+    confirmed = []
+
     def confirm_then_lock(db, mid):
-        world.confirm(map_id, cafe, hours_ago=0)   # 다른 연결에서 커밋(모델 호출 중 일어난 변화 대역)
+        if not confirmed:   # 첫 잠금(제안 저장)에서만 — 관찰 끝의 현황 문단도 지도 행을 잠근다(#1168)
+            world.confirm(map_id, cafe, hours_ago=0)   # 다른 연결에서 커밋(모델 호출 중 일어난 변화 대역)
+            confirmed.append(True)
         return real_lock(db, mid)
 
     monkeypatch.setattr(maps_api, "lock_map_if_alive", confirm_then_lock)
 
     tick(world)
 
-    assert world.one(AgentRun, map_id=map_id).outcome == "stale"
+    assert map_run(world, map_id).outcome == "stale"
     assert world.rows(AgentSuggestion, map_id=map_id) == []
     assert _cursor(world, map_id).last_seen_seq > 0   # stale도 관찰은 끝났으니 커서는 오른다
 
@@ -307,7 +326,7 @@ def test_two_concurrent_saves_leave_one_active(world, monkeypatch):
 
     assert sorted(outcomes) == ["blocked", "suggested"]
     assert len([s for s in world.rows(AgentSuggestion, map_id=map_id) if s.status == "active"]) == 1
-    blocked = next(r for r in world.rows(AgentRun, map_id=map_id) if r.outcome == "blocked")
+    blocked = next(r for r in map_runs(world, map_id) if r.outcome == "blocked")
     assert {"signal_id": "s1", "reason": "active_exists"} in blocked.blocked
 
 
@@ -382,7 +401,7 @@ def test_recent_event_pulls_next_check_to_now(world):
 
     assert _cursor(world, map_id).next_check_at == world.now
     assert map_id in tick(world)   # 새 이벤트가 없어도 시간 점검으로 다시 잡힌다
-    assert sorted(r.trigger for r in world.rows(AgentRun, map_id=map_id)) == ["activity", "time"]
+    assert sorted(r.trigger for r in map_runs(world, map_id)) == ["activity", "time"]
 
 
 def test_old_event_does_not_pull_next_check(world):
@@ -408,7 +427,7 @@ def test_failed_save_is_recorded_as_error_and_moves_the_cursor(world, monkeypatc
     assert map_id in tick(world)
 
     assert world.rows(AgentSuggestion, map_id=map_id) == []
-    run = world.one(AgentRun, map_id=map_id)
+    run = map_run(world, map_id)
     assert (run.outcome, run.trigger, run.used_model, run.tool_calls) == ("error", "activity", False, [])
     assert run.outcome_detail == {"stage": "save", "error": "RuntimeError"}   # 예외 메시지(사유 글)는 없다
     cur = _cursor(world, map_id)
@@ -445,7 +464,7 @@ def test_failed_map_is_not_claimed_again_until_its_retry_time(world, monkeypatch
         assert map_id not in tick(world, after=at + timedelta(minutes=5))
         assert _cursor(world, map_id).next_check_at == world.now + at + wait
         at += wait
-    runs = sorted(world.rows(AgentRun, map_id=map_id), key=lambda r: r.started_at)
+    runs = sorted(map_runs(world, map_id), key=lambda r: r.started_at)
     assert [(r.trigger, r.outcome) for r in runs] == [("activity", "error")] + [("time", "error")] * 3
     assert [r.outcome_detail for r in runs] == [{"stage": "snapshot", "error": "RuntimeError"}] * 4
 
@@ -468,7 +487,7 @@ def test_new_event_reclaims_a_failed_map_before_its_retry_time(world, monkeypatc
 
     world.event(map_id)
     assert map_id in tick(world, after=timedelta(minutes=5))
-    assert sorted(r.outcome for r in world.rows(AgentRun, map_id=map_id)) == ["error", "suggested"]
+    assert sorted(r.outcome for r in map_runs(world, map_id)) == ["error", "suggested"]
 
 
 def test_one_failing_map_does_not_stop_others(world, monkeypatch):
@@ -486,8 +505,8 @@ def test_one_failing_map_does_not_stop_others(world, monkeypatch):
 
     tick(world)
 
-    assert world.one(AgentRun, map_id=good).outcome == "suggested"
-    assert world.one(AgentRun, map_id=bad).outcome == "error"
+    assert map_run(world, good).outcome == "suggested"
+    assert map_run(world, bad).outcome == "error"
     assert _cursor(world, bad).lease_until is None and _cursor(world, good).lease_until is None
 
 
@@ -519,7 +538,7 @@ def test_tick_over_its_time_budget_only_releases_the_remaining_leases(world, cap
     for m in skipped:
         cur = _cursor(world, m)
         assert (cur.lease_until, cur.last_seen_seq, cur.next_check_at) == (None, 0, None)
-        assert world.rows(AgentRun, map_id=m) == []
+        assert map_runs(world, m) == []
     level, counts = _tick_log(caplog, maps)
     assert level == logging.WARNING
     assert counts["due"] >= 3   # 같은 DB에 남은 다른 지도도 차례면 센다. TICK_MAX_MAPS는 픽스처가 1000
@@ -569,7 +588,7 @@ def test_two_concurrent_ticks_observe_each_map_once(world):
     ours = [m for got in claimed for m in got if m in maps]
     assert sorted(ours) == sorted(maps)
     for m in maps:
-        assert len(world.rows(AgentRun, map_id=m)) == 1
+        assert len(map_runs(world, m)) == 1
 
 
 def test_locked_and_leased_cursor_is_skipped(world):
@@ -616,7 +635,7 @@ def test_expired_lease_holder_cannot_release_or_save_over_the_new_holder(world):
 
     outcome = flows.observe_map(map_id, world.now, session_factory=world.factory, token=first.token)   # 앞 실행의 저장
     assert outcome == "stale"
-    runs = world.rows(AgentRun, map_id=map_id)
+    runs = map_runs(world, map_id)
     assert [(r.outcome, r.outcome_detail) for r in runs] == [("stale", {"reason": "lease_lost"})]
     assert world.rows(AgentSuggestion, map_id=map_id) == []
     cursor = world.rows(AgentCursor, map_id=map_id)[0]
@@ -645,7 +664,7 @@ def test_trip_ended_map_only_advances_cursor(world):
 
     tick(world)
 
-    run = world.one(AgentRun, map_id=map_id)
+    run = map_run(world, map_id)
     assert (run.outcome, run.signals, run.snapshot_seq) == ("trip_ended", [], seq)
     assert world.rows(AgentSuggestion, map_id=map_id) == []
     cur = _cursor(world, map_id)
@@ -658,7 +677,7 @@ def test_last_trip_day_is_still_observed(world):
 
     tick(world)
 
-    assert world.one(AgentRun, map_id=map_id).outcome == "suggested"
+    assert map_run(world, map_id).outcome == "suggested"
 
 
 def test_deleted_map_ends_with_map_deleted(world):
@@ -667,7 +686,7 @@ def test_deleted_map_ends_with_map_deleted(world):
 
     tick(world)
 
-    assert world.one(AgentRun, map_id=map_id).outcome == "map_deleted"
+    assert map_run(world, map_id).outcome == "map_deleted"
     assert world.rows(AgentSuggestion, map_id=map_id) == []
     assert (_cursor(world, map_id).last_seen_seq, _cursor(world, map_id).next_check_at) == (seq, None)
 
@@ -680,7 +699,7 @@ def test_missing_map_ends_with_map_deleted(world):
 
     tick(world)
 
-    assert world.one(AgentRun, map_id=ghost).outcome == "map_deleted"
+    assert map_run(world, ghost).outcome == "map_deleted"
 
 
 def test_map_deleted_during_observation_writes_nothing(world, monkeypatch):
@@ -697,7 +716,7 @@ def test_map_deleted_during_observation_writes_nothing(world, monkeypatch):
 
     tick(world)
 
-    assert world.rows(AgentRun, map_id=map_id) == []
+    assert map_runs(world, map_id) == []
     assert world.rows(AgentSuggestion, map_id=map_id) == []
     cur = _cursor(world, map_id)
     assert (cur.last_seen_seq, cur.lease_until) == (0, None)
@@ -750,8 +769,8 @@ def test_daily_cleanup_deletes_old_runs_once_a_day(world):
         db.commit()
 
     assert flows.daily_cleanup_if_due(world.now, session_factory=world.factory) is True
-    assert {r.id for r in world.rows(AgentRun, map_id=map_id)} == {recent}
-    assert old not in {r.id for r in world.rows(AgentRun, map_id=map_id)}
+    assert {r.id for r in map_runs(world, map_id)} == {recent}
+    assert old not in {r.id for r in map_runs(world, map_id)}
     assert flows.daily_cleanup_if_due(world.now + timedelta(minutes=5), session_factory=world.factory) is False
 
 

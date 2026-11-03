@@ -119,7 +119,7 @@ class TestDirect:
             assert word in COURSE_DIRECT_PROMPT
         for word in ("ask_requester", "must_ask", "pick_course", "ask_closed_day", "asks_left"):
             assert word not in COURSE_DIRECT_PROMPT
-        assert COURSE_DIRECT_PROMPT_VERSION == "course-direct-v10"
+        assert COURSE_DIRECT_PROMPT_VERSION == "course-direct-v11"
         for word in ("goal_checks", "NO_NIGHT_PLACE", "optimize_calls", "kept", "gave_up", "focus", "요청자에게 묻지 않는다", "resolve_closure", "resolve_split", "chosen_day", "다시 짜 볼게요", "점검 통과", "남은 위반은 있는 그대로", "평가하지 않는다"):
             assert word in COURSE_DIRECT_PROMPT
 

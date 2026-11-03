@@ -12,6 +12,13 @@ export function sortItems(items: ShortlistItemDto[]): ShortlistItemDto[] {
   return [...items].sort((a, b) => (a.visit_order ?? Infinity) - (b.visit_order ?? Infinity))
 }
 
+/**
+ * 위치를 아는 확정 장소 수 — 「동선 보기」와 「AI 코스」가 2곳부터라 이 수로 판단한다(#1127 리뷰: 두 화면이 따로 세던 것을 한 곳으로).
+ * 실시간 핀(#382)은 좌표를 저장하지 않아 서버가 동선·코스에서 뺀다. 서버 `MIN_PLACES`·`intake.build_trip`과 같은 규칙의 복사본이다 —
+ * 서버가 값을 내리면(루트 검수 #1127 ② 4번) 그 값으로 바꾼다.
+ */
+export const routableCount = (items: Pick<ShortlistItemDto, 'pin'>[]) => items.filter((i) => i.pin.source !== 'live').length
+
 /** 배열에서 from 번째를 to 자리로 옮긴다(끌어서 순서 바꾸기). */
 export function move<T>(list: T[], from: number, to: number): T[] {
   const next = [...list]
