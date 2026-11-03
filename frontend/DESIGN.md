@@ -177,7 +177,7 @@ components:
 - **좋음** (good-bg / good-line / good-text), **조율·주의** (warn-*), **반대** (bad-bg / pin-red / bad-text): 배경·선·글자가 한 세트다. 선 색을 글자에 쓰지 않는다.
 
 ### Named Rules
-**영역 분리 규칙.** 빨강 계열은 지도 위 핀과 반응 🚫, 되돌릴 수 없는 액션, 핑고 ALERT(모자·핀)에만 쓴다. 버튼·배지·면이 빨개지면 화면 전체가 경고처럼 보여서다. 입력 오류는 빨강이 아니라 주의색(warn-line 테두리 + warn-text 글자)이다.
+**영역 분리 규칙.** 빨강 계열은 지도 위 핀과 반응 🚫, 되돌릴 수 없는 액션, 핑고 ALERT(모자·핀), 알림 종의 안 읽음 점(`--notify-dot`, #1036)에만 쓴다. 버튼·배지·면이 빨개지면 화면 전체가 경고처럼 보여서다. 입력 오류는 빨강이 아니라 주의색(warn-line 테두리 + warn-text 글자)이다.
 
 **한 화면 한 채움 규칙.** 한 화면에 채운 버튼은 하나다. 나머지는 외곽선이나 글자 버튼으로 둔다.
 
@@ -336,7 +336,7 @@ components:
 | 카톡 대화에서 핀 가져오기(#578, #1046, #1139) | `ImportSheet` — 링크마다 4단: 찾은 곳(미리 체크, 「이름·주소가 같아서 찾았어요」·「이미 확인된 장소예요」) → 「이 장소가 맞나요?」(같은 주소 후보, 체크 안 함) → 이름으로 찾을 곳(후보 `Radio` + 「여기 없어요」, 주소가 같은 한 곳만 미리 고름 「주소가 같아요」, 「직접 찾기」) → 이름 확인 필요(같이 온 말 회색 + 「하나씩 찍기」). 제목은 장소·공유 이름이고 링크는 회색 보조 줄. 같은 장소는 「위와 같은 곳」으로 한 번만 찍는다. 입력은 카톡 「대화 내보내기」 .txt 파일뿐이다(#1139). 위에 「여행 얘기를 한 기간」 날짜 두 칸이 있고, 기간을 다 고르기 전에는 「대화 파일 넣기」가 막힌다. 그 기간에 보낸 메시지의 링크만 읽는다. 파일을 더 넣으면 새 링크만 더해진다(「다른 대화 파일 더하기」). 찍은 줄은 「찍음 N곳」으로 접고 「완료된 것 지우기」·「모두 비우기」를 둔다. 목록은 지도별로 새로고침 뒤에도 남는다(#1045, 저장은 링크·공유 이름·주소·고른 장소 id뿐). 시트는 지도 화면에 한 자리(`ImportSheetHost`)에서 그린다 | `features/kakaoImport/ImportSheet` |
 | 켜고 끄기 | `Switch` (막대 44×24 · 누르는 곳 44, 켜짐 brand-600 · 꺼짐 ink-300) | `ui/Switch` |
 | 핑고 AI 조언 버튼(지도 왼쪽 아래) | `AgentButton` | `features/agent/AgentButton` |
-| 알림 종 버튼 + 알림함·알림 설정 시트(#483) | `NotificationBell` (`floating`이면 지도 위 흰 원 + 그림자, 아니면 테두리 원. 안 읽은 수는 brand-600 숫자 배지, 99+) | `features/notifications/NotificationBell` |
+| 알림 종 버튼 + 알림함·알림 설정 시트(#483) | `NotificationBell` (`floating`이면 지도 위 흰 원 + 그림자, 아니면 테두리 원. 안 읽은 알림이 있으면 오른쪽 위에 빨간 점(`--notify-dot`, 흰 테두리). 개수는 스크린리더 이름과 알림함에서 읽는다) | `features/notifications/NotificationBell` |
 | 서버가 렌더한 에이전트 문장(조각) | `AdviceText` (quote는 `<q>` + ink-100 면, pin은 600 굵기) — 조언 줄과 우리 데이터 줄이 같이 쓴다 | `features/agent/AdviceText` |
 | 지도 현황 문단(핑고 AI 조언 시트 맨 위, #1169) | `MapStatus` (brand-50 면 + brand-300 1.5px 테두리 + 반경 12, 머리 `tag-ai` 「AI」 + 「지금 지도 현황」, 문단은 서버 글 그대로) | `features/agent/MapStatus` |
 | 우리 데이터 줄(제안 안 버튼 위, #1169) | `FactLines` (「우리 데이터」 + 줄마다 아이콘 14 ink-500(참·거짓 `Database`, 모름 `CircleHelp`) + `AdviceText`. `web`이 있는 줄 아래 웹 요약(#1217): found는 핑고 면 + brand-300 테두리 칸에 `tag-ai` 「AI」 + 「웹 요약 · 확인되지 않음」 + 문장마다 출처 `btn-link`, not_found·paused는 서버 `notice` 12 ink-500 한 줄) | `features/agent/FactLines` |

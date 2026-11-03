@@ -63,6 +63,7 @@
   --pingo-line: var(--brand-300);
   --pingo-text: var(--brand-700);
   --pingo-outline: var(--ink-300); /* 평면 핑고 외곽선. brand-50 면 위에서도 몸이 묻히지 않게 */
+  --notify-dot: #D02A2A;          /* 알림 종의 안 읽음 점(#1036). 글자 없는 점 하나, 흰 바탕 대비 5.2:1. 앱 공통 관례라 빨강 */
   --pingo-alert: #DC6A6A;          /* 핑고 ALERT 모자·핀(시안 Alert Pink). 핑고 그림 전용 */
 
   /* ── 핀 · 지도 위 전용 ───────────────── */
