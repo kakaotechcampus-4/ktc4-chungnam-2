@@ -20,21 +20,25 @@ import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
 
 from common.errors import AppError
+from common.settings import settings
 from llm import usage as usage_log
 from llm.client import (
     PER_CALL_TIMEOUT_SECONDS, LlmCallError, call_agent_diagnosis_turn, call_agent_status, call_course_direct, call_course_goals, call_course_turn,
-    call_planner, get_client, metering,
+    call_planner, call_web_check, get_client, metering,
 )
 from llm.prompts import (
     AGENT_DIAGNOSE_PROMPT, DIAGNOSIS_MAX_TOOL_CALLS, DIAGNOSIS_TIME_BUDGET_SEC, DIAGNOSIS_TOOLS, STRUCTURE_REASONS_MAX_CALLS,
-    diagnosis_tools,
+    WEB_CHECK_MAX_STATEMENTS, WEB_STATEMENT_MAX_CHARS, diagnosis_tools,
 )
 from llm.schemas import (
     AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
     FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, StatusCategory, StatusOutput,
+    VerifiedStatement, WebAnswer, WebCheckOutput, WebCheckResult,
 )
 
 log = logging.getLogger("pingo.llm")
@@ -529,6 +533,136 @@ def agent_status(status_input: Mapping[str, Any], *, planner: StatusPlanner) -> 
             return AgentReply(_failed("agent_status", exc, "status"), usage)
     log.info("agent_status 완료: categories=%d", len(output.categories))
     return AgentReply(output, usage)
+
+
+# ---- 웹 확인 (#1216, docs/agent-v2.md 6.8, 결정 #1152 ④) ----
+# 진단과 따로 부르는 모델 호출 하나다. 입력은 장소 이름, 동네, 특징 이름뿐이다(부르는 쪽이 만든다 — 구성원 글, 이름, 지도 id가 들어갈
+# 칸이 없다). 문장 내용은 대조하지 못해(2절 3번의 예외) 아래만 코드가 본다. 걸린 문장은 빼고, 남은 것이 없으면 failed다.
+# 금지 표현 목록은 llm에 두지 않는다 — 정하는 곳은 agent.core(FORBIDDEN_PHRASES와 결론·권유 표현)이고 부르는 쪽이 넘긴다.
+
+WebCheckPlanner = Callable[[Mapping[str, Any]], WebAnswer]
+
+_URL_IN_TEXT = re.compile(r"https?://|www\.|[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_WEB_SPACES = re.compile(r"\s+")
+
+
+def _url_key(url: str) -> tuple[str, str, str, str] | None:
+    """출처 비교용 — 스킴·호스트는 소문자, 끝 /와 #… 는 무시한다. 경로와 쿼리는 그대로 비교한다. 읽지 못하면 None."""
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return None
+    if not parts.scheme or not parts.netloc:
+        return None
+    return parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query
+
+
+def source_name(url: str) -> str:
+    """출처 이름 — URL 호스트에서 www.를 뺀 것(예 "blog.naver.com"). 모델이 쓴 이름은 쓰지 않는다."""
+    host = (urlsplit(url).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _statement_problem(text: str, url: str, listed: set, forbidden: Sequence[str]) -> str | None:
+    """문장 하나를 뺄 이유(6.8 검증 1~4). 없으면 None. 순서: 스킴 → 출처 → 금지 표현 → 길이 → 줄바꿈·URL."""
+    key = _url_key(url)
+    scheme = url.strip().split(":", 1)[0].lower() if ":" in url else ""
+    if scheme not in ("http", "https"):
+        return "bad_scheme"
+    if key is None or key not in listed:
+        return "source_not_listed"
+    squashed = _WEB_SPACES.sub("", text)
+    if any(_WEB_SPACES.sub("", p) in squashed for p in forbidden if p.strip()):
+        return "forbidden"
+    if not 1 <= len(text.strip()) <= WEB_STATEMENT_MAX_CHARS:
+        return "length"
+    if "\n" in text or "\r" in text or _URL_IN_TEXT.search(text):
+        return "newline_or_url"
+    return None
+
+
+def verify_web_answer(answer: WebAnswer, *, forbidden: Sequence[str]) -> WebCheckResult:
+    """모델 답 → 검증한 결과(6.8). 순수 함수다.
+
+    1 http·https만 2 source_url이 그 호출의 검색 출처 목록에 있다(스킴·호스트 소문자, 끝 /와 # 무시) 3 금지 표현(공백을 빼고 비교)
+    4 1~120자, 줄바꿈과 URL이 문장 안에 없다. 통과한 문장은 앞에서부터 많아야 2개(넘는 것은 over_limit). 모델이 not_found면 문장을
+    버리고 not_found, found인데 남은 문장이 없으면 failed다."""
+    output = answer.output
+    if output.status == "not_found":
+        return WebCheckResult(status="not_found", web_searches=answer.web_searches)
+    listed = {k for k in (_url_key(u) for u in answer.sources) if k is not None}
+    kept: list[VerifiedStatement] = []
+    dropped: list[str] = []
+    for st in output.statements:
+        problem = _statement_problem(st.text, st.source_url, listed, forbidden)
+        if problem is None and len(kept) >= WEB_CHECK_MAX_STATEMENTS:
+            problem = "over_limit"
+        if problem is not None:
+            dropped.append(problem)
+            continue
+        url = st.source_url.strip()
+        kept.append(VerifiedStatement(text=st.text.strip(), source_url=url, source_name=source_name(url)))
+    if not kept:
+        return WebCheckResult(status="failed", dropped=tuple(dropped), web_searches=answer.web_searches,
+                              detail="no_statement_left")
+    return WebCheckResult(status="found", statements=tuple(kept), dropped=tuple(dropped), web_searches=answer.web_searches)
+
+
+def fixed_web_check_planner(check_input: Mapping[str, Any]) -> WebAnswer:
+    """고정 응답 스텁(dev, 테스트) — 모델을 부르지 않고 늘 not_found다. 지어낸 문장이나 링크가 화면으로 나갈 길이 없다."""
+    return WebAnswer(output=WebCheckOutput(status="not_found", statements=[]), sources=(), web_searches=0)
+
+
+def real_web_check_planner(check_input: Mapping[str, Any]) -> WebAnswer:
+    """실제 모델(Responses API + web_search). 클라이언트는 호출 때 만든다 — 설정이 비면 LlmCallError(call_failed)."""
+    return call_web_check(get_client(), check_input)
+
+
+def _budget_paused(now: datetime) -> bool | None:
+    """서비스 일일 예산(19절)을 넘었는지 — 그날(KST) llm_calls 비용 합계가 LLM_DAILY_BUDGET_KRW 이상이면 True. 합계를 읽지 못하면
+    None(모르면 부르지 않는다). 넘었으면 warning 한 줄을 남긴다(deploy_rules.md 「배포 뒤 볼 지표」가 이 줄을 센다)."""
+    budget = settings.llm_daily_budget_krw
+    try:
+        spent = usage_log.spent_today(now)
+    except Exception as exc:  # noqa: BLE001 — DB 오류의 메시지에는 쿼리가 실린다. 클래스 이름만
+        log.warning("llm daily budget unknown: %s", type(exc).__name__)
+        return None
+    if spent >= budget:
+        log.warning("llm daily budget paused spent=%.1f budget=%.1f", spent, budget)
+        return True
+    return False
+
+
+def web_check(
+    *, place_name: str, area: str | None, feature: str, forbidden: Sequence[str], planner: WebCheckPlanner,
+    now: datetime | None = None,
+) -> WebCheckResult:
+    """웹 확인(명세 6.8). 우리 데이터가 「모름」인 특징 하나를 웹에서 찾아 문장 1~2개와 출처로 돌려준다.
+
+    place_name, area(places.api.neighborhood, 없으면 None), feature(recommend.api.fact_labels의 표시 이름): 모델에 가는 것은 이 셋뿐이다.
+    forbidden: 금지 표현(agent.core가 정한다 — FORBIDDEN_PHRASES와 결론·권유 표현). planner: 받는 쪽 Gateway가 고른다(fixed/real).
+
+    1. 예산 — 모델을 부르기 전에 그날(KST) llm_calls 비용 합계가 LLM_DAILY_BUDGET_KRW 이상이면 부르지 않고 paused(0이면 늘 paused).
+       합계를 읽지 못하면 부르지 않고 failed. 예산을 보는 곳은 여기 하나다 — 부르는 쪽은 따로 보지 않는다.
+    2. 호출 — 실패(호출 실패, 시간 초과, 거절, 스키마 실패)는 재요청하지 않고 failed(2절 10번). 예외로 올리지 않는다.
+    3. 검증 — verify_web_answer. 사용량은 출구가 llm_calls에 남긴다(부르는 쪽이 usage_context("agent_web_check")로 감싼다).
+    DB 세션을 받지 않는다 — 부르는 쪽은 세션을 닫고 부른다(2절 6번). 합계는 usage가 짧은 세션으로 읽는다."""
+    paused = _budget_paused(now or datetime.now(timezone.utc))
+    if paused is None:
+        return WebCheckResult(status="failed", detail="budget_unknown")
+    if paused:
+        return WebCheckResult(status="paused")
+    check_input = {"place_name": place_name, "area": area, "feature": feature}
+    try:
+        answer = planner(check_input)
+    except (LlmCallError, ValueError) as exc:
+        failed = _failed("web_check", exc, "web_check")
+        return WebCheckResult(status="failed", web_searches=getattr(exc, "web_searches", 0),
+                              detail=f"{failed.reason}:{failed.detail}")
+    result = verify_web_answer(answer, forbidden=forbidden)
+    log.info("web_check 완료: status=%s statements=%d dropped=%d web_searches=%d",
+             result.status, len(result.statements), len(result.dropped), result.web_searches)
+    return result
 
 
 # ---- v2 동선 에이전트 턴 (#334) ----
