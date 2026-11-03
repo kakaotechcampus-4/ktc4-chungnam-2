@@ -26,7 +26,7 @@ export default function RegionPicker({
         {REGIONS.map((region) => {
           const on = picked?.label === region.label
           const open = region.label in AVAILABLE_REGIONS
-          const note = AVAILABLE_REGIONS[region.label]
+          const { note, beta } = AVAILABLE_REGIONS[region.label] ?? {}
           return (
             <button
               key={region.label}
@@ -38,11 +38,13 @@ export default function RegionPicker({
             >
               {region.label}
               {note && <span className="ml-1 text-xs">· {note}</span>}
-              {!open && <span className="ml-1 text-xs">· 곧 열려요</span>}
+              {beta && <span className="ml-1 text-xs">(베타)</span>}
+              {!open && <span className="ml-1 text-xs">· 준비 중</span>}
             </button>
           )
         })}
       </div>
+      <p className="mt-3 text-xs text-ink-500">(베타) 지역은 장소 정보가 아직 적을 수 있어요</p>
       <div className="mt-6 grid grid-cols-[1fr_2fr] gap-2">
         <button type="button" onClick={() => onDone(null)} className="btn-neutral btn-lg">
           선택 안 함
