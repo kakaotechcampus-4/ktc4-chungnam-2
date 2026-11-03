@@ -5,6 +5,9 @@
   운영과 같다.
 - 도구는 agent/tools.py와 같은 모양의 결과를 픽스처에서 만든다(FixtureTools). structure_reasons는 ②를 부르지 않고 픽스처의
   lines(②가 냈을 키와 방향)와 칩 표를 쓴다 — 평가 대상이 ②가 아니라서다.
+- 미리 돌려 보기(6.7, #1180)는 recommend를 부르지 않고 케이스의 preview(정해 둔 수)를 쓴다. 무엇을 돌릴지(stall 전부, split은
+  different_axes만)와 절충 키, 진단 입력 칸은 운영과 같은 core.preview_target, compromise_keys, diagnosis_input이다. 결과는 도구
+  기록 p1에 넣는다(운영의 tools.preview와 같은 모양). 케이스에 preview가 없으면 ② 실패처럼 null이다.
 - 사유 글은 지어낸 예시다. 실제 사용자 글을 넣지 않는다.
 
 평가 도구라 agent의 core와 snapshot(api.py가 아닌 모듈)을 직접 가져온다. 운영 코드는 이 파일을 가져오지 않는다.
@@ -18,6 +21,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from agent import core
+from agent.tools import PREVIEW_CALL_ID
+from recommend import api as recommend_api
 from agent.snapshot import Chip, MapInfo, Member, Pin, Reaction, Reason, ShortlistItem, Snapshot, derive_actions
 from common import categories
 
@@ -106,10 +111,25 @@ class World:
     def comparison(self, pin_id: str) -> dict[str, Any]:
         return core.compare_reasons(self.structured([r.reaction_id for r in self.snap.reasons if r.pin_id == pin_id]))
 
+    def preview(self, key: str) -> dict[str, Any] | None:
+        """미리 돌려 본 결과(agent/tools.preview와 같은 모양). 케이스의 preview 수에 절충 키의 표시 이름을 붙인다."""
+        top = self.find(key)
+        comparison = self.comparison(top.pin_id) if top.diagnosis == "split" else None
+        target = core.preview_target(top, comparison)
+        given = self.case.get("preview")
+        if target is None or given is None:
+            return None
+        _category, keys = target
+        result: dict[str, Any] = {"passed_count": given["passed_count"]}
+        if keys:
+            labels = recommend_api.fact_labels()
+            result |= {"with_keys_count": given["with_keys_count"], "with_labels": [labels[k] for k in keys if k in labels]}
+        return result | {"funnel": []}
+
     def diagnosis_input(self, key: str) -> dict[str, Any]:
         top = self.find(key)
         comparison = self.comparison(top.pin_id) if top.diagnosis == "split" else None
-        return core.diagnosis_input(top, self.snap, comparison)
+        return core.diagnosis_input(top, self.snap, comparison, self.preview(key))
 
 
 def build(case: Mapping[str, Any]) -> World:
@@ -161,11 +181,17 @@ NOT_FOUND = {"error": "NOT_FOUND"}
 
 @dataclass
 class FixtureTools:
-    """진단 한 번의 도구 창구. llm.agent_diagnose의 tool_runner로 넘긴다. results는 검증(tool_result claim)에 쓴다."""
+    """진단 한 번의 도구 창구. llm.agent_diagnose의 tool_runner로 넘긴다. results는 검증(tool_result claim)에 쓴다.
+    preview가 있으면 운영처럼 모델 전에 p1로 넣어 둔다(calls에는 남기지 않는다 — 모델이 고른 도구만 센다)."""
     world: World
     allowed: tuple[str, ...]
     calls: list[dict[str, Any]] = field(default_factory=list)
     results: dict[str, Any] = field(default_factory=dict)
+    preview: dict[str, Any] | None = None
+
+    def __post_init__(self):
+        if self.preview is not None:
+            self.results[PREVIEW_CALL_ID] = self.preview
 
     def run(self, call_id: str, name: str, args: Mapping[str, Any]) -> Any:
         fn = getattr(self, f"_{name}", None) if name in self.allowed else None
@@ -262,7 +288,8 @@ def verify(world: World, key: str, out: Any, tools: FixtureTools) -> core.Verifi
     top = world.find(key)
     comparison = world.comparison(top.pin_id) if top.diagnosis == "split" else None
     names = MEMBER_NAMES[:world.snap.member_count]
-    return core.verify_diagnosis(out, top, world.snap, tools.results, member_names=names, comparison=comparison)
+    return core.verify_diagnosis(out, top, world.snap, tools.results, member_names=names, comparison=comparison,
+                                 preview=world.preview(key))
 
 
 # ---------------------------------------------------------------- 결정 지시 (#717)

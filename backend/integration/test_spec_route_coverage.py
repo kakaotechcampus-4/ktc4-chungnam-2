@@ -22,8 +22,6 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
-    ("get", "/maps/{}/trash"): "핀 휴지통 목록 — 서버 구현 전(#864). 구현되면 지운다",
-    ("post", "/pins/{}/restore"): "지운 핀 복구 — 서버 구현 전(#864). 구현되면 지운다",
 }
 
 # 특정 환경에서만 붙는 경로 — main.py가 설정을 보고 include한다. 테스트 앱(PINGO_ENV=test)에는 없어야 한다.

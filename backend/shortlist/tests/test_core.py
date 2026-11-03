@@ -158,7 +158,7 @@ def test_to_export_row_does_not_expose_reactions_or_coordinates():
     row = core.to_export_row(1, _live_pin(my_reaction={"pin_id": "pin_1", "user_id": "user_1", "type": "against", "reason_text": "비밀 사유"}))
 
     assert "비밀" not in repr(row)
-    assert set(vars(row)) == {"order", "name", "category", "link", "memo"}
+    assert set(vars(row)) == {"order", "name", "category", "link", "memo", "scheduled_date"}
 
 
 def test_render_csv_starts_with_bom_uses_crlf_and_escapes_cells():
@@ -166,17 +166,17 @@ def test_render_csv_starts_with_bom_uses_crlf_and_escapes_cells():
 
     out = core.render_csv(rows)
 
-    assert out == '\ufeff순서,이름,분류,링크,메모\r\n1,"A, ""B""",음식점,https://x,"줄1\n줄2"\r\n'
+    assert out == '\ufeff날짜,순서,이름,분류,링크,메모\r\n미배정,1,"A, ""B""",음식점,https://x,"줄1\n줄2"\r\n'
 
 
 def test_render_csv_prefixes_formula_cells_with_apostrophe():
     rows = [core.ExportRow(1, "=SUM(A1)", "음식점", "", "-1 @a +b")]
 
-    assert core.render_csv(rows).splitlines()[1] == "1,'=SUM(A1),음식점,,'-1 @a +b"
+    assert core.render_csv(rows).splitlines()[1] == "미배정,1,'=SUM(A1),음식점,,'-1 @a +b"
 
 
 def test_render_csv_empty_list_is_header_only():
-    assert core.render_csv([]) == "\ufeff순서,이름,분류,링크,메모\r\n"
+    assert core.render_csv([]) == "\ufeff날짜,순서,이름,분류,링크,메모\r\n"
 
 
 def test_render_txt_one_line_per_place_with_link_and_memo():
@@ -186,6 +186,7 @@ def test_render_txt_one_line_per_place_with_link_and_memo():
     ]
 
     assert core.render_txt(rows) == (
+        "[미배정]\n"
         "1. 성수 칼국수 (음식점) https://p/1 — 웨이팅 길다\n"
         "2. 성수 곱창 (이름 확인 필요) (음식점)\n"
     )

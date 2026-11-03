@@ -43,7 +43,7 @@
 | `realtime` | SSE 채널(전체/개인), `event_log` 폴링·재동기화 | 5-5-1 | — |
 | `notifications` | 앱 안 알림함과 알림 설정(#470). 다른 모듈은 이벤트를 쓰는 같은 트랜잭션에서 `notifications.api.notify`를 수신자마다 부르고, 문장은 `compose_message`로 만든다 | 신규(v2) | — |
 | `feedback` | 서비스 피드백 저장(#10). 읽는 API는 없다 | 신규(v2) | — |
-| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 각 모듈 api의 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth`, `pins` (api.py만) |
+| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 지도·알림·게스트·모델 호출·멱등 키·탈퇴 계정·이벤트·핀 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth`, `llm`, `recommend`, `realtime`, `pins` (api.py만) |
 | `ads` | 추천 탭 광고: 기간 광고 관리, 선택(코드), 노출과 클릭의 날짜별 집계(docs/ads.md, #642) | 신규 | `places`, `recommend`, `pins` (api.py만. `recommend`는 `ads`를 import하지 않는다) |
 | `credits` | 사람마다 하나인 AI 실행 크레딧: 잔액·원장, 가격표(`credits/constants.py` 한 곳), 확인·차감·환불·후기 보상(docs/credits-reviews.md, #432). 다른 모듈은 `credits.api`만 부른다 | 신규(v2, 구현 #948) | `auth` (api.py만, 게스트 판정) |
 | `reviews` | 자체 DB 장소에 붙는 후기(별점 + 글), 신고, 숨김 스크립트(docs/credits-reviews.md, #432). 핀으로 부르고 장소를 찾는다 | 신규(v2, 구현 #951) | `pins`, `credits` (api.py만) |
@@ -83,6 +83,7 @@ core.py로 옮긴다.
 |---|---|
 | 핀 CRUD, 반응 등록/삭제 | `pins` + `event_log` |
 | 확정 리스트 순서 변경 | `shortlist_items`만 |
+| 여행 기간 변경 후 범위 밖 일정 미배정 | `maps` + `shortlist_items` + `event_log` |
 | 동선 계산 | 계산 결과 + `event_log` |
 | 근거 추가/토글, 추천 실행 생성 | `recommend` 테이블 + `event_log` |
 | 초대 수락 | `memberships` + `event_log` |
@@ -117,6 +118,8 @@ core.py로 옮긴다.
 | 다른 모듈의 **데이터 조회·변경** | `<module>/api.py`만 | 예: `recommend/flows.py`가 `pins.api.create_ai_pin(...)`을 부른다 |
 | 다른 모듈의 `models.py` | **금지** | DB 테이블이다. 소유 모듈 밖에서 직접 다루면 스키마 변경이 어디까지 번지는지 알 수 없어진다 |
 | 다른 모듈의 `service.py` | **금지** | 공개 접점이 아니다. 필요하면 그 모듈이 `api.py`에 함수를 연다 |
+
+`maps`는 여행 기간 변경 시 지도 행을 잠근 뒤 `shortlist.api.unassign_outside_dates(db, map_id=..., start_date=..., end_date=...)`를 호출한다. 범위 밖 일정은 미배정 뒤에 보존하며 호출자가 같은 트랜잭션을 커밋한다.
 
 `api.py`가 없는 모듈은 아직 다른 모듈에게 열어줄 데이터가 없다는 뜻이다. 필요해지는 쪽이
 그 모듈 담당에게 이슈로 요청해서 만든다(`backend/CLAUDE.md`, #757).
@@ -265,7 +268,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 | 공개 함수 | 부르는 곳 | 하는 일 |
 |---|---|---|
-| `pins.api.purge_deleted_pins(db, *, now: datetime) -> dict[str, int]` | maintenance(`pins` 단계, #1063) | 삭제한 지 30일이 지난 핀과 그 반응을 오래된 것부터 한 번에 최대 1000개 영구 삭제한다. 반환 `{"reactions": n, "pins": m}`. 멱등, 커밋은 호출자가 한다 |
+| `pins.api.purge_deleted_pins(db, *, now: datetime) -> dict[str, int]` | maintenance(`pins` 단계, #1063) | 삭제한 지 30일이 지난 핀과 그 반응을 오래된 것부터 한 번에 최대 1000개 영구 삭제한다. 반환 `{"reactions": n, "pins": m}`. 멱등, `now`는 timezone-aware(naive면 ValueError), 커밋은 호출자가 한다 |
 
 30일 안의 핀은 건드리지 않는다. 정리 작업의 dry-run은 호출자가 롤백해 확인한다(다른 단계와 같다).
 
@@ -370,7 +373,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
    5-4: 카테고리별로 ♥/🚫 의견이 달린 핀이 1개 이상이면 추천 버튼 활성화 (2026-10-07, #360)
         ↓
    [트리거 2, #99] 핀이 생기거나 처음 ♥를 받을 때 그 장소도 큐잉
-   ③-b가 ♥ 장소의 라벨을 선호 신호로 쓴다 — 요청 경로에서 라벨링하지 않으려고
+   코드로 옮긴 ③-b 선호 순위(#99)가 ♥ 장소의 라벨을 선호 신호로 쓴다 — 요청 경로에서 라벨링하지 않으려고
    이 시간대에 미리 채운다 (docs/constraints.md "선호 점수 계산" 참고)
         ↓
 「추천 받기」 실행 시점                                  ← 대부분 이미 채워져 있음

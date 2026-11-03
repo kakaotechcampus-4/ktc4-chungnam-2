@@ -10,7 +10,9 @@
   바꾸는 가드 UPDATE), 모드 끄기(`supersede_active`)
 - 우리 조건 요약(#586, 명세 8절, 13절): 덮어쓰기(`upsert_summary`), 읽기(`list_summaries`). 갱신 판단이 보는 요약
   메타는 `load_history`가 함께 읽는다
-- 추천 막힘 조언(#587, 명세 9절, 13절): run당 1행(`insert_run_advice` — ON CONFLICT (run_id) DO NOTHING), 읽기(`get_run_advice`)
+- 추천 막힘 조언(#587, 명세 9절, 13절): run당 1행에 지금 결과 상태의 조언(`insert_run_advice` — ON CONFLICT (run_id) DO UPDATE ... WHERE state_key IS DISTINCT, #1103), 읽기(`get_run_advice`)
+- 지도 현황 문단(#1168, 명세 8.2, 13절): 덮어쓰기(`upsert_map_status`), 읽기(`get_map_status`). 다시 만들지 판단하는 칸의
+  해시는 `load_history`가 함께 읽는다
 
 제안 상태를 바꾸는 함수는 (id, shadow) 목록을 돌려준다. agent.resolved는 shadow가 아닌 것만 낸다(호출부).
 
@@ -26,9 +28,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from agent import core
-from agent.constants import AGENT_RUNS_RETENTION_DAYS, ERROR_RETRY_DELAYS, LEASE_SEC, SUGGESTION_TTL
+from agent.constants import (
+    AGENT_RUNS_RETENTION_DAYS, ERROR_RETRY_DELAYS, LEASE_SEC, SUGGESTION_TTL, SUMMARY_FAILED_RETRY,
+)
 from agent.models import (
     AgentCursor,
+    AgentMapStatus,
     AgentReasonSummary,
     AgentRun,
     AgentRunAdvice,
@@ -36,12 +41,14 @@ from agent.models import (
     AgentSuggestion,
     AgentSuggestionView,
 )
+from common.kst import kst_day_start
 from realtime import api as realtime_api
 
-MODEL_RUN_TRIGGERS = ("activity", "time", "summary")   # 모델 사용 상한이 세는 trigger(12.3)
+# 모델 사용 상한이 세는 trigger(12.3). 현황 문단(status, 8.2)은 모델을 부르지만 세지 않는다 — 비용은 서비스 일일 예산이 본다(19절)
+MODEL_RUN_TRIGGERS = ("activity", "time", "summary")
 
 PURGE_TABLES = (
-    "agent_suggestion_views", "agent_suggestions", "agent_run_advice", "agent_reason_summaries",
+    "agent_suggestion_views", "agent_suggestions", "agent_run_advice", "agent_reason_summaries", "agent_map_status",
     "agent_runs", "agent_cursors", "agent_settings",
 )
 
@@ -62,6 +69,7 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
         "agent_reason_summaries": db.execute(
             delete(AgentReasonSummary).where(AgentReasonSummary.map_id.in_(map_ids))
         ).rowcount,
+        "agent_map_status": db.execute(delete(AgentMapStatus).where(AgentMapStatus.map_id.in_(map_ids))).rowcount,
         "agent_runs": db.execute(delete(AgentRun).where(AgentRun.map_id.in_(map_ids))).rowcount,
         "agent_cursors": db.execute(delete(AgentCursor).where(AgentCursor.map_id.in_(map_ids))).rowcount,
         "agent_settings": db.execute(delete(AgentSettings).where(AgentSettings.map_id.in_(map_ids))).rowcount,
@@ -229,7 +237,7 @@ def advance_cursor(
 
 def load_history(db: Session, map_id: str, now: datetime) -> core.History:
     """정책이 보는 이 지도의 제안 이력(최신순)과 오늘(KST 자정 이후) 모델을 쓴 관찰 수, 요약 갱신 판단이 보는 카테고리
-    요약 메타(8절, #586)."""
+    요약 메타(8절, #586), 현황 문단을 마지막으로 만들려 한 칸의 해시(8.2, #1168)."""
     rows = db.execute(
         select(AgentSuggestion).where(AgentSuggestion.map_id == map_id)
         .order_by(AgentSuggestion.created_at.desc(), AgentSuggestion.id)
@@ -239,10 +247,11 @@ def load_history(db: Session, map_id: str, now: datetime) -> core.History:
             AgentRun.map_id == map_id,
             AgentRun.used_model.is_(True),
             AgentRun.trigger.in_(MODEL_RUN_TRIGGERS),
-            AgentRun.started_at >= core.kst_day_start(now),
+            AgentRun.started_at >= kst_day_start(now),
         )
     ).scalar_one()
     return core.History(
+        status_hash=_last_status_hash(db, map_id),
         suggestions=tuple(
             core.PastSuggestion(
                 id=str(r.id), diagnosis=r.diagnosis, category=r.category, fingerprint=r.fingerprint,
@@ -253,7 +262,33 @@ def load_history(db: Session, map_id: str, now: datetime) -> core.History:
         ),
         model_runs_today=model_runs_today,
         summaries=tuple(core.summary_meta(r.category, r.summary, r.updated_at) for r in list_summaries(db, map_id)),
+        summary_failed=_recent_summary_failures(db, map_id, now),
     )
+
+
+def _recent_summary_failures(db: Session, map_id: str, now: datetime) -> frozenset[str]:
+    """최근 SUMMARY_FAILED_RETRY 안에 ②가 실패해(trigger=summary, outcome=model_failed) 요약을 못 만든 카테고리(#1187)."""
+    rows = db.execute(
+        select(AgentRun.outcome_detail).where(
+            AgentRun.map_id == map_id, AgentRun.trigger == "summary", AgentRun.outcome == "model_failed",
+            AgentRun.started_at >= now - SUMMARY_FAILED_RETRY,
+        )
+    ).scalars().all()
+    # started_at >= now - 간격: 정확히 간격만큼 전의 실패는 아직 미룬다(경계 포함). 옛·이상 행(dict가 아니거나 category가 문자열이 아님)은 건너뛴다.
+    return frozenset(d["category"] for d in rows if isinstance(d, dict) and isinstance(d.get("category"), str))
+
+
+def _last_status_hash(db: Session, map_id: str) -> str | None:
+    """현황 문단을 마지막으로 만들려 한 칸의 해시(8.2) — 가장 최근 status 관찰의 outcome_detail.cells_hash. 검증에서 떨어지거나
+    모델이 실패한 칸도 여기 남아 같은 칸으로 다시 부르지 않는다(2절 10번). status 관찰이 보존 기한(30일)으로 지워졌으면 저장된
+    문단의 칸 해시."""
+    last = db.execute(
+        select(AgentRun.outcome_detail).where(AgentRun.map_id == map_id, AgentRun.trigger == "status")
+        .order_by(AgentRun.started_at.desc()).limit(1)
+    ).scalar_one_or_none()
+    if last and last.get("cells_hash"):
+        return last["cells_hash"]
+    return db.execute(select(AgentMapStatus.cells_hash).where(AgentMapStatus.map_id == map_id)).scalar_one_or_none()
 
 
 # ---------------------------------------------------------------- 제안 상태 (12.4, 12.9)
@@ -305,15 +340,15 @@ def insert_suggestion(
     """활성 제안 하나를 넣는다. 이미 활성 제안이 있으면 넣지 않고 None(ON CONFLICT (map_id) WHERE
     status='active' DO NOTHING — 부분 유니크 인덱스가 지도당 하나를 지킨다, 17절 8번).
 
-    제목, 문장, 버튼은 초안(core.Draft)의 슬롯 문장과 claim 그대로 넣는다. 핀 이름과 사유 글은 어디에도 넣지 않는다
-    (명세 2절 13번) — 렌더는 응답과 이벤트를 만들 때 한다."""
+    제목, 문장, 버튼은 초안(core.Draft)의 슬롯 문장과 claim 그대로 넣는다. 우리 데이터 확인(6.6)은 (pin_id, fact_key)만 넣는다.
+    핀 이름, 사유 글, 라벨 값은 어디에도 넣지 않는다(명세 2절 13번) — 렌더는 응답과 이벤트를 만들 때 한다."""
     return db.execute(
         pg_insert(AgentSuggestion)
         .values(
             id=uuid.uuid4(), map_id=map_id, run_id=run_id, diagnosis=signal.diagnosis, category=signal.category,
             pin_id=uuid.UUID(signal.pin_id) if signal.pin_id else None, fingerprint=signal.fingerprint,
             evidence_hash=signal.evidence_hash, title=draft.title, claims=draft.claims, analysis=draft.analysis,
-            advice=draft.advice, actions=draft.actions,
+            advice=draft.advice, actions=draft.actions, facts=draft.facts,
             status="active", shadow=shadow, created_at=now, expires_at=now + SUGGESTION_TTL,
         )
         .on_conflict_do_nothing(index_elements=[AgentSuggestion.map_id], index_where=text("status = 'active'"))
@@ -493,24 +528,51 @@ def list_summaries(db: Session, map_id: str) -> list[AgentReasonSummary]:
 
 # ---------------------------------------------------------------- 추천 막힘 조언 (9절, 13절)
 
-def get_run_advice(db: Session, run_id: str) -> AgentRunAdvice | None:
+def get_run_advice(db: Session, run_id: str, state_key: str | None = None) -> AgentRunAdvice | None:
+    """그 run의 조언 행. state_key를 주면 그 결과 상태의 조언일 때만(다르면 None — 결과가 바뀌어 다시 만든다), 없으면 지금 행 그대로."""
     try:
         key = uuid.UUID(run_id)
     except ValueError:
         return None
-    return db.get(AgentRunAdvice, key, populate_existing=True)
+    row = db.get(AgentRunAdvice, key, populate_existing=True)
+    return row if row is not None and (state_key is None or row.state_key == state_key) else None
 
 
 def insert_run_advice(
-    db: Session, *, run_id: str, map_id: str, draft: core.AdviceDraft, agent_run_id: uuid.UUID, now: datetime,
+    db: Session, *, run_id: str, state_key: str, map_id: str, draft: core.AdviceDraft, agent_run_id: uuid.UUID, now: datetime,
 ) -> bool:
-    """run당 한 행(명세 9절). 이미 있으면 넣지 않고 False — INSERT ... ON CONFLICT (run_id) DO NOTHING이라 같은 run에 동시에
-    두 요청이 와도 먼저 커밋한 하나만 남는다. 빈 조언(kind 없음)도 넣어 다시 만들지 않는다. 저장은 슬롯 문장, 검증을 통과한
-    tool_result claim, 버튼(근거 줄은 line_id만)뿐이다 — 근거 글과 구성원은 없다(명세 2절 13번)."""
+    """run당 한 행(명세 9절)에 지금 결과 상태(state_key)의 조언을 넣는다(#1103). 행이 없거나 다른 상태의 조언이면 넣고(덮고) True,
+    같은 상태가 이미 있으면 그대로 두고 False — INSERT ... ON CONFLICT (run_id) DO UPDATE ... WHERE state_key IS DISTINCT FROM이라
+    같은 결과에 동시에 두 요청이 와도 먼저 커밋한 하나만 남는다. 기본키가 run_id라 옛 서버의 DO NOTHING도 그대로 돈다(expand).
+    빈 조언(kind 없음)도 넣어 같은 결과로는 다시 만들지 않는다. 저장은 슬롯 문장, 검증을 통과한 tool_result claim,
+    버튼(근거 줄은 line_id만)뿐이다 — 근거 글과 구성원은 없다(명세 2절 13번)."""
+    insert = pg_insert(AgentRunAdvice).values(
+        run_id=uuid.UUID(run_id), state_key=state_key, map_id=map_id, kind=draft.kind, claims=draft.claims, advice=draft.advice,
+        actions=draft.actions, agent_run_id=agent_run_id, created_at=now)
     return db.execute(
-        pg_insert(AgentRunAdvice)
-        .values(run_id=uuid.UUID(run_id), map_id=map_id, kind=draft.kind, claims=draft.claims, advice=draft.advice,
-                actions=draft.actions, agent_run_id=agent_run_id, created_at=now)
-        .on_conflict_do_nothing(index_elements=[AgentRunAdvice.run_id])
-        .returning(AgentRunAdvice.run_id)
+        insert.on_conflict_do_update(
+            index_elements=[AgentRunAdvice.run_id],
+            set_={c: insert.excluded[c] for c in ("state_key", "kind", "claims", "advice", "actions", "agent_run_id", "created_at")},
+            where=AgentRunAdvice.state_key.is_distinct_from(insert.excluded.state_key),
+        ).returning(AgentRunAdvice.run_id)
     ).scalar_one_or_none() is not None
+
+
+# ---------------------------------------------------------------- 지도 현황 문단 (8.2, 13절)
+
+def upsert_map_status(
+    db: Session, *, map_id: str, cells: dict, cells_hash: str, states: list[dict], paragraph: str, run_id: uuid.UUID,
+    now: datetime,
+) -> None:
+    """지도마다 최신본 하나만 덮어쓴다. 검증(core.verify_status)을 통과한 것만 온다 — 떨어진 문단은 부르지 않아 지난 행이 남는다.
+    칸에는 사실(개수, D-day, 카테고리 이름)뿐이고 사유 글, 이름, 장소 이름은 없다(명세 2절 11, 13번)."""
+    values = {"cells": cells, "cells_hash": cells_hash, "states": states, "paragraph": paragraph, "run_id": run_id,
+              "updated_at": now}
+    db.execute(
+        pg_insert(AgentMapStatus).values(map_id=map_id, **values)
+        .on_conflict_do_update(index_elements=[AgentMapStatus.map_id], set_=values)
+    )
+
+
+def get_map_status(db: Session, map_id: str) -> AgentMapStatus | None:
+    return db.get(AgentMapStatus, map_id)

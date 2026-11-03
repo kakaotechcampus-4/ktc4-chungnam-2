@@ -95,7 +95,7 @@ export function PinFilterBar({
  * 칸 어디를 눌러도 select 가 눌린다 — 넓힌 영역(::before)이 select 를 덮으면 label 만 눌려 목록이 안 열리고,
  * 모바일에서는 시트 제목 줄이 그 누름을 끌기·접기로 받아 시트가 접혔다(#600).
  */
-function FilterSelect({
+export function FilterSelect({
   label,
   ariaLabel = label,
   value,

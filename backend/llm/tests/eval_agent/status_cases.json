@@ -1,0 +1,102 @@
+[
+  {
+    "id": "s01_example_1152",
+    "title": "#1152 예시 — 카페 거의, 음식점 갈린 곳 하나, 관광지 후보 2곳, D-5",
+    "cells": {"dday": 5, "first_category": "음식점", "first_reason": "의견이 갈린 핀이 있다", "categories": [
+      {"category": "음식점", "confirmed": 1, "pins": 1, "split_pins": 1, "stalled": false, "unreacted_pins": 0},
+      {"category": "카페", "confirmed": 1, "pins": 1, "split_pins": 0, "stalled": false, "unreacted_pins": 0},
+      {"category": "관광지", "confirmed": 0, "pins": 2, "split_pins": 0, "stalled": false, "unreacted_pins": 1}]},
+    "expect_states": {"음식점": ["split_left"], "카페": ["almost"], "관광지": ["few"]},
+    "reference": "카페는 거의 정해졌고, 음식점은 갈린 곳 하나만 남았어요. 관광지는 아직 후보가 2곳뿐이에요. 출발이 5일 남았으니 음식점부터 보면 좋겠어요."
+  },
+  {
+    "id": "s02_all_decided",
+    "title": "모두 정해짐, 먼저 볼 곳 없음 — 한 문장",
+    "cells": {"dday": 10, "first_category": null, "first_reason": null, "categories": [
+      {"category": "음식점", "confirmed": 2, "pins": 0, "split_pins": 0, "stalled": false, "unreacted_pins": 0},
+      {"category": "카페", "confirmed": 1, "pins": 0, "split_pins": 0, "stalled": false, "unreacted_pins": 0},
+      {"category": "관광지", "confirmed": 2, "pins": 0, "split_pins": 0, "stalled": false, "unreacted_pins": 0}]},
+    "expect_states": {"음식점": ["decided"], "카페": ["decided"], "관광지": ["decided"]},
+    "reference": "음식점, 카페, 관광지 모두 다 정해졌어요."
+  },
+  {
+    "id": "s03_empty_map",
+    "title": "빈 지도 — 후보도 확정도 없음",
+    "cells": {"dday": 20, "first_category": null, "first_reason": null, "categories": [
+      {"category": "음식점", "confirmed": 0, "pins": 0, "split_pins": 0, "stalled": false, "unreacted_pins": 0},
+      {"category": "카페", "confirmed": 0, "pins": 0, "split_pins": 0, "stalled": false, "unreacted_pins": 0},
+      {"category": "관광지", "confirmed": 0, "pins": 0, "split_pins": 0, "stalled": false, "unreacted_pins": 0}]},
+    "expect_states": {"음식점": ["empty"], "카페": ["empty"], "관광지": ["empty"]},
+    "reference": "음식점, 카페, 관광지 모두 아직 후보가 없어요. 가 보고 싶은 곳을 지도에 올려 보면 좋겠어요."
+  },
+  {
+    "id": "s04_stall_sight",
+    "title": "관광지 반대 뒤 정체가 먼저, D-12",
+    "cells": {"dday": 12, "first_category": "관광지", "first_reason": "반대 뒤로 새 후보가 없다", "categories": [
+      {"category": "음식점", "confirmed": 1, "pins": 2, "split_pins": 0, "stalled": false, "unreacted_pins": 1},
+      {"category": "카페", "confirmed": 0, "pins": 3, "split_pins": 0, "stalled": false, "unreacted_pins": 2},
+      {"category": "관광지", "confirmed": 0, "pins": 1, "split_pins": 0, "stalled": true, "unreacted_pins": 0}]},
+    "expect_states": {"음식점": ["almost"], "카페": ["gathering"], "관광지": ["stalled"]},
+    "reference": "음식점은 확정한 곳이 있고 후보가 조금 남았어요. 카페는 후보를 모으며 의견을 듣는 중이에요. 관광지는 반대 의견이 나온 뒤로 새 후보가 없으니 관광지부터 보면 좋겠어요."
+  },
+  {
+    "id": "s05_on_trip_split_cafe",
+    "title": "여행 중(D+1) — 카페 갈림이 먼저, 날 수는 쓰지 않는다",
+    "cells": {"dday": -1, "first_category": "카페", "first_reason": "의견이 갈린 핀이 있다", "categories": [
+      {"category": "음식점", "confirmed": 3, "pins": 1, "split_pins": 0, "stalled": false, "unreacted_pins": 1},
+      {"category": "카페", "confirmed": 1, "pins": 2, "split_pins": 1, "stalled": false, "unreacted_pins": 0},
+      {"category": "관광지", "confirmed": 2, "pins": 0, "split_pins": 0, "stalled": false, "unreacted_pins": 0}]},
+    "expect_states": {"음식점": ["almost", "decided"], "카페": ["split_left"], "관광지": ["decided"]},
+    "reference": "관광지는 다 정해졌고 음식점도 거의 정해졌어요. 카페는 의견이 갈린 곳이 남아 있어요. 여행 중이니 카페부터 보면 좋겠어요."
+  },
+  {
+    "id": "s06_no_reaction_first",
+    "title": "반응 공백이 먼저 — 카테고리 없이 이유만, 어느 카테고리도 먼저 권하지 않는다",
+    "cells": {"dday": 9, "first_category": null, "first_reason": "아직 의견을 안 남긴 핀이 많다", "categories": [
+      {"category": "음식점", "confirmed": 0, "pins": 4, "split_pins": 0, "stalled": false, "unreacted_pins": 3},
+      {"category": "카페", "confirmed": 0, "pins": 3, "split_pins": 0, "stalled": false, "unreacted_pins": 3},
+      {"category": "관광지", "confirmed": 0, "pins": 1, "split_pins": 0, "stalled": false, "unreacted_pins": 1}]},
+    "expect_states": {"음식점": ["gathering"], "카페": ["gathering"], "관광지": ["few"]},
+    "reference": "음식점과 카페는 후보를 모으며 의견을 듣는 중이에요. 관광지는 아직 후보가 1곳뿐이에요. 아직 의견을 안 남긴 핀이 많으니 핀마다 의견을 남겨 보면 좋겠어요."
+  },
+  {
+    "id": "s07_gap_urgent",
+    "title": "출발 임박(D-2) 관광지 확정 공백이 먼저",
+    "cells": {"dday": 2, "first_category": "관광지", "first_reason": "출발이 가까운데 확정한 곳이 없다", "categories": [
+      {"category": "음식점", "confirmed": 2, "pins": 1, "split_pins": 0, "stalled": false, "unreacted_pins": 0},
+      {"category": "카페", "confirmed": 1, "pins": 0, "split_pins": 0, "stalled": false, "unreacted_pins": 0},
+      {"category": "관광지", "confirmed": 0, "pins": 2, "split_pins": 0, "stalled": false, "unreacted_pins": 1}]},
+    "expect_states": {"음식점": ["almost", "decided"], "카페": ["decided"], "관광지": ["few"]},
+    "reference": "음식점은 거의 정해졌고 카페는 다 정해졌어요. 관광지는 아직 확정한 곳이 없어요. 출발이 2일 남았으니 관광지부터 보면 좋겠어요."
+  },
+  {
+    "id": "s08_gap_far",
+    "title": "출발이 먼(D-30) 카페 확정 공백 — 「가까운데」를 쓰지 않는다",
+    "cells": {"dday": 30, "first_category": "카페", "first_reason": "확정한 곳이 아직 없다", "categories": [
+      {"category": "음식점", "confirmed": 2, "pins": 0, "split_pins": 0, "stalled": false, "unreacted_pins": 0},
+      {"category": "카페", "confirmed": 0, "pins": 2, "split_pins": 0, "stalled": false, "unreacted_pins": 0},
+      {"category": "관광지", "confirmed": 1, "pins": 1, "split_pins": 0, "stalled": false, "unreacted_pins": 1}]},
+    "expect_states": {"음식점": ["decided"], "카페": ["few"], "관광지": ["almost"]},
+    "reference": "음식점은 다 정해졌고 관광지는 거의 정해졌어요. 카페는 아직 확정한 곳이 없어요. 카페부터 보면 좋겠어요."
+  },
+  {
+    "id": "s09_many_issues",
+    "title": "음식점 정체와 갈림이 함께, 카페 갈림, 관광지 비었음 — 음식점이 먼저",
+    "cells": {"dday": 6, "first_category": "음식점", "first_reason": "반대 뒤로 새 후보가 없다", "categories": [
+      {"category": "음식점", "confirmed": 0, "pins": 3, "split_pins": 1, "stalled": true, "unreacted_pins": 1},
+      {"category": "카페", "confirmed": 0, "pins": 2, "split_pins": 1, "stalled": false, "unreacted_pins": 0},
+      {"category": "관광지", "confirmed": 0, "pins": 0, "split_pins": 0, "stalled": false, "unreacted_pins": 0}]},
+    "expect_states": {"음식점": ["stalled", "split_left"], "카페": ["split_left"], "관광지": ["empty"]},
+    "reference": "음식점은 반대 의견이 나온 뒤로 새 후보가 없고, 카페는 의견이 갈린 곳이 남아 있어요. 관광지는 아직 후보가 없어요. 출발이 6일 남았으니 음식점부터 보면 좋겠어요."
+  },
+  {
+    "id": "s10_departure_today",
+    "title": "오늘 출발(D-0) — 음식점 갈린 핀 2곳이 먼저",
+    "cells": {"dday": 0, "first_category": "음식점", "first_reason": "의견이 갈린 핀이 있다", "categories": [
+      {"category": "음식점", "confirmed": 1, "pins": 2, "split_pins": 2, "stalled": false, "unreacted_pins": 0},
+      {"category": "카페", "confirmed": 1, "pins": 1, "split_pins": 0, "stalled": false, "unreacted_pins": 1},
+      {"category": "관광지", "confirmed": 1, "pins": 3, "split_pins": 0, "stalled": false, "unreacted_pins": 3}]},
+    "expect_states": {"음식점": ["split_left"], "카페": ["almost"], "관광지": ["almost", "gathering"]},
+    "reference": "카페와 관광지는 확정한 곳이 있고 후보가 조금 남았어요. 음식점은 의견이 갈린 곳이 2곳 남아 있어요. 오늘 출발이니 음식점부터 보면 좋겠어요."
+  }
+]

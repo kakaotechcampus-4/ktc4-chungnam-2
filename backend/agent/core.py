@@ -7,6 +7,8 @@
 - 진단 입력(12.4 6단계), 충돌 종류(6.3), 모델 출력 검증(11.2) — #533
 - 우리 조건 요약(8절): 갱신 판단, 다섯 칸 나누기, 고정 문구 렌더 — #586
 - 추천 막힘 조언(9절): 대상 판정, 종류·문장·버튼 고르기(코드, #750), 렌더 — #587
+- 우리 데이터 확인(6.6): 사실 다툼의 (핀, 키) 고르기와 고정 문구 렌더 — #1168
+- 지도 현황 문단(8.2): 칸 계산(사실만), 모델 출력의 모순 검증, 응답 조립 — #1168
 
 입력은 `agent.snapshot.Snapshot`(관찰 한 번의 사본)과 `History`(이 지도의 제안 이력, #515가 채운다)다.
 Signal과 features에는 사유 글을 넣지 않는다 — 근거는 reaction_id와 pin_id로만 가리킨다(명세 2절 13번).
@@ -18,7 +20,7 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -43,6 +45,7 @@ from agent.constants import (
     DDAY_MID,
     DECIDED_WINDOW,
     ERROR_RETRY_DELAYS,
+    FACT_LINES_MAX,
     MODEL_TYPES,
     NO_REACTION_DAILY_LIMIT,
     NOT_FILTERED_CHIP_IDS,
@@ -66,6 +69,8 @@ from agent.schemas import (
     AgentAdviceLine,
     AgentAnalysis,
     AgentConflictAxis,
+    AgentFactLine,
+    AgentMapStatus,
     AgentNotFiltered,
     AgentSettings,
     AgentSplitPref,
@@ -80,31 +85,17 @@ from agent.schemas import (
     QuoteClaim,
     RefClaim,
     RunAdvice,
+    StatusOutput,
     ToolClaim,
 )
 from common import categories
 from common.events import Event
+from common.kst import kst_day_start
 
 if TYPE_CHECKING:
     from agent.snapshot import Reaction, Snapshot
 
 DIAGNOSES = MODEL_TYPES + CODE_TYPES
-
-# constants.DAY_BOUNDARY_TZ("Asia/Seoul")의 고정 오프셋. 한국은 서머타임이 없어(1988년 이후) +9시간과 같다.
-# zoneinfo는 Windows에서 tzdata 패키지가 있어야 해서 쓰지 않는다.
-KST = timezone(timedelta(hours=9), "KST")
-
-
-def kst_date(now: datetime) -> date:
-    if now.tzinfo is None:
-        raise ValueError("now는 timezone-aware여야 합니다 — naive datetime은 KST/UTC 혼동을 부른다")
-    return now.astimezone(KST).date()
-
-
-def kst_day_start(now: datetime) -> datetime:
-    """now가 속한 KST 하루의 시작(자정). 모델 사용 상한과 no_reaction 하루 1회의 경계다."""
-    d = kst_date(now)
-    return datetime(d.year, d.month, d.day, tzinfo=KST)
 
 
 # ---------------------------------------------------------------- 기준 시간 (6.1)
@@ -344,6 +335,7 @@ class SummaryMeta:
     category: str
     reaction_ids: frozenset[str]
     updated_at: datetime
+    rules_version: str | None = None   # 이 요약을 만들 때의 ② 규칙 버전(llm.api.plan_evidence_rules_version, #1095). 옛 요약은 None
 
 
 @dataclass(frozen=True)
@@ -351,6 +343,8 @@ class History:
     suggestions: tuple[PastSuggestion, ...] = ()   # 이 지도, 최신순(created_at 내림차순)
     model_runs_today: int = 0   # KST 자정 이후 used_model=true(진단을 부름)이고 trigger in (activity, time, summary)인 agent_runs 수
     summaries: tuple[SummaryMeta, ...] = ()   # 이 지도의 카테고리 요약(#586)
+    summary_failed: frozenset[str] = frozenset()   # 최근 SUMMARY_FAILED_RETRY 안에 ②가 실패한 카테고리(#1187). pick_summary가 뒤로 미룬다
+    status_hash: str | None = None   # 지도 현황 문단을 마지막으로 만들려 한 칸의 해시(8.2, #1168). 같으면 다시 부르지 않는다
 
     @property
     def active(self) -> PastSuggestion | None:
@@ -699,14 +693,39 @@ class Draft:
     advice: list[dict[str, Any]]    # [{slot_text, is_guess}]
     actions: list[dict[str, Any]]   # [{index, type, label, params}] — AgentAction 직렬화
     analysis: dict[str, Any] | None = None   # split: compare_reasons 결과(키와 reaction_id만, 사유 글 없음)
+    facts: list[dict[str, str]] = field(default_factory=list)   # 우리 데이터 확인(6.6): [{pin_id, fact_key}]만
 
 
-def _subject_particle(word: str) -> str:
-    """주격 조사 — 마지막 글자에 받침이 있으면 '이', 없으면 '가'(음식점이, 카페가, 관광지가)."""
-    last = word[-1] if word else ""
-    if "가" <= last <= "힣" and (ord(last) - ord("가")) % 28:
-        return "이"
-    return "가"
+_DIGIT_FINAL = {"0": 21, "1": 8, "2": 0, "3": 16, "4": 0, "5": 0, "6": 1, "7": 8, "8": 8, "9": 0}   # 숫자를 읽은 소리의 받침(ㄹ=8)
+
+
+def _final_consonant(word: str) -> int | None:
+    """낱말 끝 글자의 받침 번호(0 없음, 8 ㄹ). 끝의 괄호나 문장부호는 건너뛴다("스타벅스(성수점)" → 점). 한글이나 숫자가 아니면
+    None(조사를 고를 수 없다)."""
+    for ch in reversed(word.strip()):
+        if "가" <= ch <= "힣":
+            return (ord(ch) - ord("가")) % 28
+        if ch in _DIGIT_FINAL:
+            return _DIGIT_FINAL[ch]
+        if ch.isalpha():
+            return None
+    return None
+
+
+def _josa(word: str, with_final: str, without_final: str) -> str:
+    """받침에 맞는 조사(은/는, 이/가). 고를 수 없으면 둘을 함께 쓴다("은(는)")."""
+    final = _final_consonant(word)
+    if final is None:
+        return f"{with_final}({without_final})"
+    return with_final if final else without_final
+
+
+def _ro(word: str) -> str:
+    """(으)로 — 받침이 없거나 ㄹ이면 '로'."""
+    final = _final_consonant(word)
+    if final is None:
+        return "(으)로"
+    return "로" if final in (0, 8) else "으로"
 
 
 def _actions(*specs: tuple[str, str, Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -739,7 +758,7 @@ def _category_gap_draft(sig: Signal) -> Draft:
     in_category = CountClaim(id="c2", kind="count", subject="category", subject_id=c, metric="confirmed", value=0)
     first = ("open_recommend", f"{c} 추천 받기") if c in categories.recommendable() else ("search_place", f"{c} 검색")
     return Draft(
-        title=f"확정 리스트에 {c}{_subject_particle(c)} 아직 없어요",
+        title=f"확정 리스트에 {c}{_josa(c, '이', '가')} 아직 없어요",
         claims=[confirmed.model_dump(), in_category.model_dump()],
         advice=[{"slot_text": f"확정 {{c1.value}}곳 중 {c} {{c2.value}}곳", "is_guess": False}],
         actions=_actions((*first, {"category": c}), ("show_pins", f"{c} 핀 보기", {"category": c})),
@@ -758,12 +777,45 @@ def render_template(sig: Signal) -> Draft:
 
 # ---------------------------------------------------------------- 모델 진단 입력 (6.2, 6.3, 10절)
 
-def diagnosis_input(top: Signal, snap: Snapshot, comparison: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def compromise_keys(comparison: Mapping[str, Any] | None) -> list[str]:
+    """절충안(6.7)의 with_keys — ♥ 쪽이 원한 키(compare_reasons의 want에 side=like가 있는 키), 키 순서. 🚫 쪽 조건은 근거 줄로
+    이미 들어가므로 여기 넣지 않는다."""
+    if not comparison:
+        return []
+    return [k["fact_key"] for k in comparison.get("keys", []) if any(r["side"] == "like" for r in k["want"])]
+
+
+def preview_target(top: Signal, comparison: Mapping[str, Any] | None) -> tuple[str, list[str]] | None:
+    """미리 돌려 보기(6.7)를 할지와 (카테고리, with_keys). stall은 그 카테고리 근거 전부, split은 충돌 종류가 different_axes일 때만
+    ♥ 쪽이 원한 키를 더해 돌린다. same_axis·unclear는 돌리지 않는다 — 같은 특징을 반대로 원하면 둘 다 만족하는 곳이 정의상 없다.
+    split의 비교가 없으면(② 실패) 돌리지 않는다."""
+    if top.diagnosis == "stall":
+        return top.category, []
+    if top.diagnosis == "split" and comparison and comparison.get("conflict_type") == "different_axes":
+        return top.category, compromise_keys(comparison)
+    return None
+
+
+PREVIEW_INPUT_KEYS = ("passed_count", "with_keys_count", "with_labels")   # 진단 입력에 넣는 칸(깔때기는 기록에만)
+
+
+def preview_input(preview: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """미리 돌려 본 결과 중 모델에 주는 칸. 수와 조건 이름뿐이다 — 장소 이름과 id는 처음부터 없다(recommend.api.preview_filter)."""
+    if preview is None:
+        return None
+    return {k: preview[k] for k in PREVIEW_INPUT_KEYS if k in preview}
+
+
+def diagnosis_input(
+    top: Signal, snap: Snapshot, comparison: Mapping[str, Any] | None = None, preview: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """llm.agent_diagnose에 넘길 1순위 신호. 모델에는 JSON 문자열로 그대로 간다 — 공개 데이터만 넣는다(명세 2절 2번).
     run의 존재(has_run_since)와 구성원 user_id는 넣지 않는다. 사유 글도 넣지 않는다(모델이 get_reasons로 읽는다).
     stall은 카테고리와 🚫 반응 id, 🚫가 달린 핀 id. split은 핀 id, place_id(실시간 핀은 None), 반응 id, 그 핀의 ♥·🚫
     수(counts — split 필수 claim의 값), compare_reasons 결과(충돌 종류는 코드가 정한다, 6.3). 핀 id와 수, place_id를
-    넣는 것은 모델이 그것을 알려고 도구를 한 번 더 부르지 않게 하려는 것이다(#534)."""
+    넣는 것은 모델이 그것을 알려고 도구를 한 번 더 부르지 않게 하려는 것이다(#534). 두 유형 모두 미리 돌려 본 결과(preview,
+    6.7 — stall {passed_count}, split의 different_axes {passed_count, with_keys_count, with_labels}, 없으면 None)를 넣는다.
+    같은 값이 도구 기록 p1에 있어 모델이 ToolClaim으로 가리킨다."""
     f = top.features
     out: dict[str, Any] = {
         "signal_id": top.id, "diagnosis": top.diagnosis, "category": top.category,
@@ -774,6 +826,7 @@ def diagnosis_input(top: Signal, snap: Snapshot, comparison: Mapping[str, Any] |
     if top.diagnosis == "stall":
         out["against_reaction_ids"] = list(top.evidence_ids)
         out["against_pin_ids"] = sorted({r.pin_id for r in snap.reactions if r.reaction_id in set(top.evidence_ids)})
+        out["preview"] = preview_input(preview)
     elif top.diagnosis == "split":
         pin = snap.pin(top.pin_id)
         reactions = snap.reactions_of(top.pin_id)
@@ -782,6 +835,7 @@ def diagnosis_input(top: Signal, snap: Snapshot, comparison: Mapping[str, Any] |
         out["reaction_ids"] = list(top.evidence_ids)
         out["counts"] = {t: sum(r.type == t for r in reactions) for t in ("like", "against")}
         out["comparison"] = comparison
+        out["preview"] = preview_input(preview)
     return out
 
 
@@ -1062,11 +1116,15 @@ def _check_line(
 
 
 def _model_action(
-    action: Any, top: Signal, snap: Snapshot, kept: Mapping[str, Any],
+    action: Any, top: Signal, snap: Snapshot, kept: Mapping[str, Any], preview: Mapping[str, Any] | None = None,
 ) -> tuple[tuple[str, str, dict[str, Any]] | None, str | None]:
-    """행동 하나(11.2 6단계) → ((type, label, params), None) 또는 (None, 이유). 버튼 이름은 코드가 정한다."""
+    """행동 하나(11.2 6단계) → ((type, label, params), None) 또는 (None, 이유). 버튼 이름은 코드가 정한다. 미리 돌려 본
+    passed_count가 0이면 open_recommend를 뺀다(6.7) — 0곳인 추천을 권해 크레딧을 쓰게 하지 않는다. 미리 돌려 보지 못했으면(② 실패
+    등, preview=None) 이 검사를 하지 않는다."""
     if action.type not in MODEL_ACTIONS[top.diagnosis]:
         return None, "type"
+    if action.type == "open_recommend" and preview is not None and preview.get("passed_count") == 0:
+        return None, "preview_empty"
     if not action.basis or any(b not in kept for b in action.basis):
         return None, "basis"
     if action.type == "show_pins" and action.pin_ids:
@@ -1094,16 +1152,18 @@ def _stored_claim(claim: Any, snap: Snapshot) -> dict[str, Any]:
 def verify_diagnosis(
     out: DiagnosisOutput, top: Signal, snap: Snapshot, tool_results: Mapping[str, Any], *,
     member_names: Iterable[str] = (), comparison: Mapping[str, Any] | None = None,
+    preview: Mapping[str, Any] | None = None,
 ) -> Verified:
     """모델 진단 출력 검증(11.2). 스키마(1단계)는 llm이 이미 봤다 — 여기 오는 것은 DiagnosisOutput이다.
 
     1 decision이 silent·unknown이면 그대로 침묵 2 signal_id와 diagnosis가 1순위 신호와 같은가 3 claim 대조(실패한
     claim 제거) 4 구조 대조(요약 전용이라 진단은 건너뛴다) 5 문장(제거된 claim을 가리킴, 슬롯 밖 숫자, 구성원 이름이나
-    별칭, 금지 표현, 슬롯 밖 사유 원문 옮겨 쓰기) 6 행동(유형별 허용, 추천 대상 카테고리, basis) 7 성립(split은 그 핀의
+    별칭, 금지 표현, 슬롯 밖 사유 원문 옮겨 쓰기) 6 행동(유형별 허용, 미리 돌려 본 수가 0이면 open_recommend 제거, 추천 대상
+    카테고리, basis) 7 성립(split은 그 핀의
     like·against count, 문장이나 행동이 하나 이상). 2단계나 7단계에서 실패하면 invalid_claims로 침묵한다.
 
-    tool_results: 이번 관찰의 도구 결과(call_id → 모델에 준 결과 그대로). member_names: 구성원 표시 이름(두 글자
-    이상만 본다 — 한 글자 이름은 보통 낱말과 겹친다)."""
+    tool_results: 이번 관찰의 도구 결과(call_id → 모델에 준 결과 그대로, 미리 돌려 보기 p1 포함). member_names: 구성원 표시
+    이름(두 글자 이상만 본다 — 한 글자 이름은 보통 낱말과 겹친다). preview: 미리 돌려 본 결과(6.7), 돌리지 않았으면 None."""
     record: dict[str, Any] = {"decision": out.decision}
     if out.decision != "suggest":
         return Verified(out.decision, None, record)
@@ -1128,7 +1188,7 @@ def verify_diagnosis(
 
     specs, removed_actions = [], []
     for i, action in enumerate(out.actions):
-        spec, reason = _model_action(action, top, snap, kept)
+        spec, reason = _model_action(action, top, snap, kept, preview)
         if reason is not None:
             removed_actions.append({"index": i, "reason": reason})
         elif spec not in specs:
@@ -1161,6 +1221,7 @@ class RenderRefs:
     pin_names: Mapping[str, str]   # 삭제되지 않은 핀 → 이름(db 핀은 장소 이름, 실시간 핀은 검색어)
     reaction_texts: Mapping[str, str] = field(default_factory=dict)   # 지금 있는 반응 → 사유 글
     fact_labels: Mapping[str, str] = field(default_factory=dict)   # 키 → 표시 이름(split 분석의 축 이름)
+    fact_values: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)   # 핀 → {키: 라벨 값, 모르면 None}(6.6)
 
 
 def referenced_pin_ids(claims: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -1261,6 +1322,7 @@ def render_suggestion(sug: Any, refs: RenderRefs) -> AgentSuggestion | None:
         id=str(sug.id), diagnosis=sug.diagnosis, category=sug.category, title=title,
         analysis=render_analysis(sug.analysis, refs.fact_labels),
         advice=_advice_lines(sug.advice, claims, refs), actions=[AgentAction.model_validate(a) for a in sug.actions],
+        facts=render_fact_lines(getattr(sug, "facts", None) or (), refs),
         created_at=sug.created_at, expires_at=sug.expires_at,
     )
 
@@ -1269,6 +1331,109 @@ def action_at(actions: Sequence[Mapping[str, Any]], index: int) -> AgentAction |
     """accept의 action_index가 가리키는 버튼. 범위 밖이면 None(422)."""
     found = next((a for a in actions if a["index"] == index), None)
     return None if found is None else AgentAction.model_validate(found)
+
+
+# ---------------------------------------------------------------- 우리 데이터 확인 (6.6, #1168)
+# 사실을 몰라 못 정하는 병목을 코드가 먼저 보인다. 모델 호출은 없다. 진단(모델)이 낸 정체·갈림 제안에 붙는 칸이고 이 칸만으로
+# 제안을 만들지 않는다. 저장은 (pin_id, fact_key)만, 라벨 값은 렌더 때 다시 읽는다 — 라벨이 바뀌면 화면도 바뀐다. 구성원의
+# 반대가 틀렸다고 판정하지 않는다: 거짓 라벨은 근거 없이 기본값으로 들어간 경우가 많아 「데이터가 틀릴 수 있어요」를 붙이고
+# 결론을 쓰지 않는다. 사유 글은 입력에도 저장에도 없다(키와 reaction_id만).
+
+def _split_fact_keys(pin_id: str | None, comparison: Mapping[str, Any] | None) -> dict[tuple[str, str], set[str]]:
+    """갈림: 충돌 종류가 unclear이고 같은 키에 같은 방향으로 ♥ 쪽과 🚫 쪽이 함께 있는 키(6.3 표 마지막 줄). 취향이 아니라 그
+    가게가 그 특징을 가졌는지를 두고 갈린 것이다. (핀, 키) → 그 키를 말한 🚫 반응 id."""
+    if pin_id is None or not comparison or comparison.get("conflict_type") != "unclear":
+        return {}
+    out: dict[tuple[str, str], set[str]] = {}
+    for k in comparison.get("keys", ()):
+        for bucket in (k.get("want", ()), k.get("avoid", ())):
+            if {r["side"] for r in bucket} >= {"like", "against"}:
+                out.setdefault((pin_id, k["fact_key"]), set()).update(
+                    r["reaction_id"] for r in bucket if r["side"] == "against")
+    return out
+
+
+def _stall_fact_keys(
+    top: Signal, snap: Snapshot, against: Sequence[Mapping[str, Any]],
+) -> dict[tuple[str, str], set[str]]:
+    """정체: 신호가 가리킨 🚫 반응들의 사유에서 나온 키(칩은 칩 표, 글은 ②). against는 structure_reasons 모양
+    [{reaction_id, type, lines[{fact_key, …}]}]. (그 반응의 핀, 키) → 그 키를 말한 🚫 반응 id."""
+    evidence = set(top.evidence_ids)
+    pin_of = {r.reaction_id: r.pin_id for r in snap.reactions}
+    out: dict[tuple[str, str], set[str]] = {}
+    for r in against:
+        rid = r["reaction_id"]
+        if rid not in evidence or r.get("type") != "against" or rid not in pin_of:
+            continue
+        for line in r.get("lines", ()):
+            if line.get("fact_key"):
+                out.setdefault((pin_of[rid], line["fact_key"]), set()).add(rid)
+    return out
+
+
+def fact_targets(
+    top: Signal, snap: Snapshot, *, comparison: Mapping[str, Any] | None = None,
+    against: Sequence[Mapping[str, Any]] = (),
+) -> list[dict[str, str]]:
+    """제안에 붙일 우리 데이터 확인 (pin_id, fact_key), 많아야 FACT_LINES_MAX줄(6.6). 갈림은 comparison(코드가 계산한 충돌 분석),
+    정체는 against(🚫 반응의 구조화 결과)를 본다. 그 밖의 유형은 빈 목록.
+
+    - 자체 DB 장소 핀만 — 실시간 핀은 라벨이 없다(#382). 이 지도의 살아 있는 핀만(get_place_facts와 같은 범위).
+    - 줄이 많으면 그 키를 말한 🚫 사유가 많은 키부터, 같으면 그 핀에서 그 키를 말한 🚫 사유가 많은 쪽, 그다음 키와 핀 id 순(초안)."""
+    if top.diagnosis == "split":
+        pairs = _split_fact_keys(top.pin_id, comparison)
+    elif top.diagnosis == "stall":
+        pairs = _stall_fact_keys(top, snap, against)
+    else:
+        return []
+    by_key: dict[str, set[str]] = {}
+    for (_, key), rids in pairs.items():
+        by_key.setdefault(key, set()).update(rids)
+
+    def on_our_db(pin_id: str) -> bool:
+        pin = snap.pin(pin_id)
+        return pin is not None and pin.source != "live" and bool(pin.place_id)
+
+    ranked = sorted(
+        (pair for pair in pairs if on_our_db(pair[0])),
+        key=lambda pair: (-len(by_key[pair[1]]), -len(pairs[pair]), pair[1], pair[0]),
+    )
+    return [{"pin_id": pin_id, "fact_key": key} for pin_id, key in ranked[:FACT_LINES_MAX]]
+
+
+def fact_value(value: Any) -> str:
+    """라벨 값 → yes | no | unknown. 참·거짓이 아니거나(모름, 열거형) 라벨이 없으면 unknown이다 — 값을 지어내지 않는다."""
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return "unknown"
+
+
+def _fact_segments(name: str, pin_id: str, label: str, value: str) -> list[AdviceSegment]:
+    """고정 문구(6.6 표). 핀 이름은 pin 조각이고 그 뒤 조사는 이름의 받침으로 고른다."""
+    pin = AdviceSegment(kind="pin", text=name, pin_id=pin_id)
+    if value == "yes":
+        head, tail = "우리 데이터: ", f"{_josa(name, '은', '는')} {label}{_ro(label)} 나와요"
+    elif value == "no":
+        head, tail = "우리 데이터: ", f"{_josa(name, '은', '는')} {label}{_josa(label, '이', '가')} 아니라고 나와요. 데이터가 틀릴 수 있어요"
+    else:
+        head, tail = "우리 데이터로는 ", f"{_josa(name, '이', '가')} {label}인지 몰라요"
+    return [AdviceSegment(kind="text", text=head), pin, AdviceSegment(kind="text", text=tail)]
+
+
+def render_fact_lines(facts: Sequence[Mapping[str, Any]], refs: RenderRefs) -> list[AgentFactLine]:
+    """저장된 [{pin_id, fact_key}] → 응답·이벤트의 AgentFactLine. 값은 refs.fact_values(렌더 때 places에서 읽은 지금 라벨)다.
+    핀이 지워졌거나(이름 없음) 키의 표시 이름이 없으면 그 줄을 뺀다(render_analysis와 같은 규칙)."""
+    lines = []
+    for f in list(facts)[:FACT_LINES_MAX]:
+        pin_id, key = f["pin_id"], f["fact_key"]
+        name, label = refs.pin_names.get(pin_id), refs.fact_labels.get(key)
+        if not name or not label:
+            continue
+        value = fact_value(refs.fact_values.get(pin_id, {}).get(key))
+        lines.append(AgentFactLine(fact_key=key, value=value, segments=_fact_segments(name, pin_id, label, value)))
+    return lines
 
 
 # ---------------------------------------------------------------- 우리 조건 요약 (8절, #586)
@@ -1309,33 +1474,47 @@ def newcomer_reacted(snap: Snapshot, category: str, since: datetime | None) -> b
     return any(c == category and (since is None or at > since) for at, c in _first_reactions(snap).values())
 
 
-def summary_changes(snap: Snapshot, category: str, meta: SummaryMeta | None) -> int | None:
+def summary_changes(
+    snap: Snapshot, category: str, meta: SummaryMeta | None, *, rules_version: str | None = None,
+) -> int | None:
     """그 카테고리 요약을 갱신해야 하면 바뀐 사유 수(새로 생긴 것 + 사라진 것), 아니면 None.
 
     - 새 사유가 SUMMARY_NEW_REASONS(3)개 이상. 새 사유 = 지금 사유 있는 반응 중 지난 요약이 보지 않은 것 — 지운 반응이
       없으면 명세의 "지금 수 - based_on_reaction_count"와 같고, 지운 반응이 있어도 새 사유를 놓치지 않는다.
     - 새 구성원이 지도에서 첫 반응을 이 카테고리에 남김(newcomer_reacted).
     - 지난 요약이 본 사유가 사라짐(반응 삭제, 지도 나가기 #369, 사유 지움). 지운 사람의 몫이 개수에 남지 않게 한다.
+    - 사유 글을 고친 반응(반응 id는 같고 updated_at이 요약 뒤)은 새 사유처럼 센다(#1095). 지난 요약은 옛 글을 봤다.
+    - ② 규칙이 바뀜(#1095): 요약에 남은 규칙 버전이 지금 버전(rules_version)과 다르면, 옛 요약(버전 없음)도, 사유가 하나라도 있으면
+      다시 만든다. 같은 사유도 규칙이 바뀌면 다르게 구조화된다. rules_version이 None이면 이 판단을 하지 않는다.
     요약이 없는 카테고리는 사유 있는 반응이 하나라도 있어야 만든다."""
     current = {r.reaction_id for r in snap.reasons if r.category == category}
     if meta is None and not current:
         return None
     known = meta.reaction_ids if meta is not None else frozenset()
-    new, gone = current - known, known - current
     since = meta.updated_at if meta is not None else None
-    if len(new) >= SUMMARY_NEW_REASONS or gone or newcomer_reacted(snap, category, since):
-        return len(new) + len(gone)
+    edited = {r.reaction_id for r in snap.reasons if r.category == category and r.reaction_id in known and r.updated_at > since}         if meta is not None else set()
+    new, gone = (current - known) | edited, known - current
+    stale_rules = meta is not None and rules_version is not None and meta.rules_version != rules_version and bool(current)
+    if len(new) >= SUMMARY_NEW_REASONS or gone or newcomer_reacted(snap, category, since) or stale_rules:
+        return len(new) + len(gone) if not stale_rules else max(len(new) + len(gone), len(current))
     return None
 
 
-def pick_summary(snap: Snapshot, metas: Sequence[SummaryMeta]) -> tuple[str | None, bool]:
+def pick_summary(
+    snap: Snapshot, metas: Sequence[SummaryMeta], *, rules_version: str | None = None, failed: Collection[str] = (),
+) -> tuple[str | None, bool]:
     """이번 관찰에서 갱신할 카테고리 하나(8절, 초안)와 그 밖에 갱신할 카테고리가 더 있는지. 바뀐 사유가 가장 많은 것,
-    같으면 categories.pinnable() 순서."""
+    같으면 categories.pinnable() 순서. failed는 최근 ②가 실패한 카테고리(History.summary_failed, #1187) — 실패한 카테고리가 계속
+    뽑혀 다른 카테고리의 갱신을 막지 않게 뒤로 미룬다. 다른 갱신 대상이 없으면 실패한 것을 다시 시도한다."""
     by_category = {m.category: m for m in metas}
-    due = [(c, n) for c in categories.pinnable() if (n := summary_changes(snap, c, by_category.get(c))) is not None]
+    due = [
+        (c, n) for c in categories.pinnable()
+        if (n := summary_changes(snap, c, by_category.get(c), rules_version=rules_version)) is not None
+    ]
     if not due:
         return None, False
-    return max(due, key=lambda d: d[1])[0], len(due) > 1
+    first = [d for d in due if d[0] not in failed] or due
+    return max(first, key=lambda d: d[1])[0], len(due) > 1
 
 
 def _has_safety_word(text: str | None) -> bool:
@@ -1445,7 +1624,8 @@ def summarize_reasons(reasons: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def summary_meta(category: str, summary: Mapping[str, Any], updated_at: datetime) -> SummaryMeta:
-    return SummaryMeta(category=category, reaction_ids=frozenset(summary.get("reaction_ids", ())), updated_at=updated_at)
+    return SummaryMeta(category=category, reaction_ids=frozenset(summary.get("reaction_ids", ())), updated_at=updated_at,
+                       rules_version=summary.get("rules_version"))
 
 
 def render_summary(
@@ -1540,6 +1720,20 @@ def funnel_view(outcome: Mapping[str, Any]) -> dict[str, Any]:
         "funnel": [{"key": e["key"], "label": e["label"], "removed_count": e["removed_count"]} for e in outcome["funnel"]],
         "passed": outcome["passed_count"],
     }
+
+
+def advice_state_key(meta: Mapping[str, Any], funnel_outcome: Mapping[str, Any], evidence: Sequence[Mapping[str, Any]]) -> str:
+    """조언을 저장하는 결과 상태의 키(#1103). 넓히기와 다시 추천은 같은 run id로 결과를 바꾸므로 조언은 run이 아니라 이 상태마다
+    한 번 만든다. 같은 결과를 다시 열면 같은 키라 저장된 조언 그대로다. 결과를 가르는 것만 넣는다: 지금 반경(넓히기 단계),
+    깔때기와 결과 수, 조언 절차가 보는 근거 줄, 다시 추천 횟수(attempt_no — 같은 run에서 다른 run의 제외 목록이 달라져 집계가 같아도
+    넓히기 시뮬레이션이 달라질 수 있다). 원문은 넣지 않는다.
+    meta는 recommend.api.get_run_meta, funnel_outcome은 get_run_funnel, evidence는 advice_evidence의 결과다."""
+    state = {
+        "radius": meta["default_radius_walk_min"], "attempt": meta["attempt_no"], "count": funnel_outcome["result_count"], "passed": funnel_outcome["passed_count"],
+        "funnel": [[e["key"], e["removed_count"]] for e in funnel_outcome["funnel"]],
+        "lines": list(evidence),
+    }
+    return hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def simulate_view(raw: Mapping[str, Any], *, radius_factor: float | None, disable_line_ids: Sequence[str]) -> dict[str, Any]:
@@ -1759,6 +1953,163 @@ def render_run_advice(run_id: str, row: Any) -> RunAdvice | None:
     return RunAdvice(run_id=run_id, kind=row.kind, advice=advice, actions=actions)
 
 
+# ---------------------------------------------------------------- 지도 현황 문단 (8.2, #1168)
+# 칸 계산은 코드, 판단과 문장은 모델, 모순만 코드가 막는다(2026-11-03 결정, #1152). 칸에는 사실만 둔다 — 상태 이름은 붙이지
+# 않는다. 먼저 볼 카테고리는 7절 순위 규칙(fallback_order) 하나로 정한다(#582에서 순위를 코드로 옮긴 것과 같은 판단을 모델이
+# 다시 하지 않는다). 칸에는 사유 글, 이름, 장소 이름이 없어 모델 입력에도 문단에도 없다(2절 11, 13번).
+
+STATUS_PARAGRAPH_MAX = 400   # api-spec AgentMapStatus.paragraph maxLength
+# 먼저 볼 이유 — 1순위 신호 유형의 고정 문구. 카테고리 공백은 출발이 urgent_dday 안일 때만 「출발이 가까운데」를 붙인다(아래)
+FIRST_REASONS = {
+    "stall": "반대 뒤로 새 후보가 없다",
+    "split": "의견이 갈린 핀이 있다",
+    "no_reaction": "아직 의견을 안 남긴 핀이 많다",
+    "category_gap": "출발이 가까운데 확정한 곳이 없다",
+}
+FIRST_REASON_GAP_NOT_URGENT = "확정한 곳이 아직 없다"
+# 「먼저」, 「부터」로 카테고리를 권하는 말(검증 4). "음식점부터", "음식점을 먼저", "먼저 음식점을"
+_FIRST_WORDS = r"(?:먼저|부터)"
+_CATEGORY_JOSA = r"(?:을|를|은|는|이|가|도|의)?"
+
+
+def status_cells(snap: Snapshot, signals: Sequence[Signal], policy: PriorityPolicy) -> dict[str, Any]:
+    """지도 현황 칸(8.2) — 모델 입력이자 저장(agent_map_status.cells)이다. 사실만 담는다.
+
+    - dday: 출발까지 남은 날(여행 중이면 0 이하)
+    - categories(`categories.pinnable()` 순서): confirmed(확정 수), pins(확정이 아닌 핀 수), split_pins(확정이 아닌 핀 중 ♥와 🚫가
+      함께 있고 ♥ ≥ 🚫 — 6.3의 시간 조건과 무관), stalled(이번 관찰에서 그 카테고리 정체 신호가 났는가), unreacted_pins(확정이
+      아닌 핀 중 반응이 하나도 없는 핀 수)
+    - first_category, first_reason: 이번 관찰에서 탐지된 신호(정책 전)를 7절 순위 규칙으로 정렬한 1순위의 카테고리와 이유(고정
+      문구). 신호가 없으면 둘 다 null. 반응 공백은 카테고리가 없어 first_category가 null이다"""
+    stalled = {s.category for s in signals if s.diagnosis == "stall"}
+    cells = []
+    for c in categories.pinnable():
+        pins = [p for p in snap.pins if p.category == c]
+        open_pins = [p for p in pins if not snap.is_confirmed(p.pin_id)]
+        cells.append({
+            "category": c,
+            "confirmed": len(pins) - len(open_pins),
+            "pins": len(open_pins),
+            "split_pins": sum(_split_counts(snap, p.pin_id)[1] for p in open_pins),
+            "stalled": c in stalled,
+            "unreacted_pins": sum(not snap.reactions_of(p.pin_id) for p in open_pins),
+        })
+    dday = (snap.map.start_date - snap.today).days
+    first = fallback_order(signals, policy)[0] if signals else None
+    reason = None
+    if first is not None:
+        reason = FIRST_REASONS[first.diagnosis]
+        if first.diagnosis == "category_gap" and dday > policy.urgent_dday:
+            reason = FIRST_REASON_GAP_NOT_URGENT   # 출발이 멀면 「가까운데」는 사실이 아니다
+    return {
+        "dday": dday, "first_category": first.category if first is not None else None, "first_reason": reason,
+        "categories": cells,
+    }
+
+
+def status_hash(cells: Mapping[str, Any]) -> str:
+    """칸의 해시 — 같으면 문단을 다시 만들지 않는다(8.2 「언제 만드나」)."""
+    return _digest(cells)
+
+
+def _state_conflict(state: str, cell: Mapping[str, Any]) -> bool:
+    """상태가 사실과 어긋나는가(검증 2). 명세에 조건이 없는 few, gathering은 어긋나지 않는다."""
+    confirmed, split_pins, stalled = cell["confirmed"], cell["split_pins"], cell["stalled"]
+    if state == "decided":
+        return not (confirmed >= 1 and split_pins == 0 and not stalled)
+    if state == "almost":
+        return not (confirmed >= 1 and not stalled)
+    if state == "split_left":
+        return split_pins < 1
+    if state == "stalled":
+        return not stalled
+    if state == "empty":
+        return not (cell["pins"] == 0 and confirmed == 0)
+    return False
+
+
+def _cell_numbers(cells: Mapping[str, Any]) -> set[int]:
+    values = [cells["dday"]] + [cell[k] for cell in cells["categories"]
+                                for k in ("confirmed", "pins", "split_pins", "unreacted_pins")]
+    return {v for v in values if _is_int(v)}
+
+
+def _recommends_first(paragraph: str, category: str) -> bool:
+    c = re.escape(category)
+    return bool(re.search(rf"{c}\s*{_CATEGORY_JOSA}\s*{_FIRST_WORDS}", paragraph)
+                or re.search(rf"먼저\s*{c}", paragraph))
+
+
+@dataclass(frozen=True)
+class VerifiedStatus:
+    """verify_status 결과. ok가 아니면 문단을 버리고 지난 문단을 둔다. record는 agent_runs.verification — 걸린 검사와 이유만
+    (failed: 검사 이름 목록)."""
+    ok: bool
+    states: list[dict[str, str]]
+    paragraph: str
+    record: dict[str, Any]
+
+
+def verify_status(out: StatusOutput, cells: Mapping[str, Any]) -> VerifiedStatus:
+    """현황 문단 검증(8.2) — 모순만 막는다. 하나라도 걸리면 ok=False(통째로 버린다, 고쳐 쓰지 않는다).
+
+    1 categories: 칸의 모든 카테고리가 한 번씩 있고 칸에 없는 카테고리가 없다
+    2 states: 상태가 사실과 어긋나지 않는다(_state_conflict)
+    3 numbers: 문단의 숫자(정규식 `\\d+`, 11.2 5단계와 같은 방식)가 칸에 있는 값이다. 한글로 쓴 수는 보지 못한다
+    4 first_category: 있으면 문단에 나오고, 다른 카테고리를 「먼저」, 「부터」로 권하지 않는다. 없으면 어느 카테고리도 그렇게
+      권하지 않는다
+    5 forbidden: 금지 표현(FORBIDDEN_PHRASES)이 없다. 빈 문단과 STATUS_PARAGRAPH_MAX를 넘는 문단도 여기서 막는다"""
+    paragraph = _normalize(out.paragraph)
+    names = [c["category"] for c in cells["categories"]]
+    by_name = {c["category"]: c for c in cells["categories"]}
+    given = [c.category for c in out.categories]
+    failed: list[str] = []
+    record: dict[str, Any] = {}
+
+    record["categories"] = {"missing": [c for c in names if c not in given],
+                            "unknown": sorted({c for c in given if c not in by_name}),
+                            "duplicate": sorted({c for c in given if given.count(c) > 1})}
+    if any(record["categories"].values()):
+        failed.append("categories")
+
+    conflicts = [{"category": c.category, "state": c.state} for c in out.categories
+                 if c.category in by_name and _state_conflict(c.state, by_name[c.category])]
+    record["states"] = conflicts
+    if conflicts:
+        failed.append("states")
+
+    allowed = _cell_numbers(cells)
+    stray = sorted({int(n) for n in re.findall(r"\d+", paragraph) if int(n) not in allowed})
+    record["numbers"] = stray
+    if stray:
+        failed.append("numbers")
+
+    first = cells.get("first_category")
+    others = [c for c in dict.fromkeys([*names, *categories.all_categories()]) if c != first]
+    pushed = [c for c in others if _recommends_first(paragraph, c)]
+    record["first_category"] = {"mentioned": first is None or first in paragraph, "others_first": pushed}
+    if not record["first_category"]["mentioned"] or pushed:
+        failed.append("first_category")
+
+    squashed = _squash(paragraph)
+    record["forbidden"] = (not squashed or len(paragraph) > STATUS_PARAGRAPH_MAX
+                           or any(_squash(p) in squashed for p in FORBIDDEN_PHRASES))
+    if record["forbidden"]:
+        failed.append("forbidden")
+
+    record["failed"] = failed
+    states = [{"category": c, "state": next(s.state for s in out.categories if s.category == c)}
+              for c in names if c in given]
+    return VerifiedStatus(ok=not failed, states=states, paragraph=paragraph, record=record)
+
+
+def status_view(row: Any | None) -> AgentMapStatus | None:
+    """agent_map_status 행 → AgentState.status. 아직 만든 적이 없으면 None."""
+    if row is None:
+        return None
+    return AgentMapStatus(paragraph=row.paragraph, updated_at=row.updated_at)
+
+
 # ---------------------------------------------------------------- 응답 조립 (14절)
 
 def settings_view(row: Any | None) -> AgentSettings:
@@ -1770,12 +2121,13 @@ def settings_view(row: Any | None) -> AgentSettings:
 
 def agent_state(
     settings: AgentSettings, active: AgentSuggestion | None, *, viewed: bool, summaries: Sequence[AgentSummary] = (),
+    status: AgentMapStatus | None = None,
 ) -> AgentState:
-    """모드가 꺼져 있으면 제안은 늘 null이고 점도 없다. 요약은 모드와 상관없이 만들어진 카테고리만 싣는다(api-spec
-    AgentState.summaries — 끄면 관찰이 멈춰 더 갱신되지 않을 뿐이다)."""
+    """모드가 꺼져 있으면 제안은 늘 null이고 점도 없다. 요약과 현황 문단은 모드와 상관없이 만들어진 것을 싣는다(api-spec
+    AgentState.summaries, status — 끄면 관찰이 멈춰 더 갱신되지 않을 뿐이다. 꺼져 있을 때 화면은 스위치만 그린다, 16.2)."""
     shown = active if settings.enabled else None
     return AgentState(settings=settings, active_suggestion=shown, has_unseen=shown is not None and not viewed,
-                      summaries=list(summaries))
+                      summaries=list(summaries), status=status)
 
 
 # ---------------------------------------------------------------- 이벤트 (15절)

@@ -11,6 +11,7 @@ import MapListPage from '@/routes/MapListPage'
 import MapTab from '@/routes/MapTab'
 import RecommendTab from '@/routes/RecommendTab'
 import ShortlistTab from '@/routes/ShortlistTab'
+import CourseTab from '@/routes/CourseTab'
 import WelcomePage from '@/routes/WelcomePage'
 
 export default function App() {
@@ -36,6 +37,7 @@ export default function App() {
             <Route index element={<MapTab />} />
             <Route path="recommend" element={<RecommendTab />} />
             <Route path="shortlist" element={<ShortlistTab />} />
+            <Route path="course" element={<CourseTab />} />
           </Route>
         </Route>
       </Routes>

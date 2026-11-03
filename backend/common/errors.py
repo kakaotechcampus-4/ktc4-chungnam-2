@@ -56,6 +56,8 @@ CATALOG: dict[str, tuple[int, str]] = {
     "PLACES_UNAVAILABLE": (503, "장소 검색을 지금은 쓸 수 없습니다"),
     "RECOMMEND_FAILED": (500, "추천을 만들지 못했습니다"),
     "SHORTLIST_CATEGORY_EMPTY": (200, "이 분류에 확정된 곳이 없습니다"),
+    "SHORTLIST_STALE": (409, "확정 리스트가 변경되었습니다"),
+    "SHORTLIST_SCHEDULED": (409, "날짜별 일정을 사용 중입니다"),
     "UNAUTHORIZED": (401, "인증이 필요합니다"),
     "FORBIDDEN": (403, "권한이 없습니다"),
     "IDEMPOTENCY_CONFLICT": (409, "같은 키로 다른 내용의 요청이 왔습니다"),
@@ -117,7 +119,9 @@ def register_error_handlers(app) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_request, exc: RequestValidationError):
-        return error_response("VALIDATION_ERROR", detail={"errors": jsonable_encoder(exc.errors())})
+        # input·ctx·url은 요청 원문을 그대로 담는다 — loc·msg·type만 내린다(#1161)
+        errors = [{k: e[k] for k in ("loc", "msg", "type")} for e in exc.errors()]
+        return error_response("VALIDATION_ERROR", detail={"errors": jsonable_encoder(errors)})
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(_request, exc: StarletteHTTPException):

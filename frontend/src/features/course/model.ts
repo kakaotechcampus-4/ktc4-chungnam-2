@@ -91,10 +91,15 @@ export function inProgressRunId(error: unknown): string | null {
 
 const ORDINALS = ['첫째', '둘째', '셋째', '넷째', '다섯째', '여섯째', '일곱째', '여덟째', '아홉째', '열째', '열한째', '열두째', '열셋째', '열넷째']
 
+/** "첫째 날" — 확정 탭 「일정 짜기」의 날짜 고르기도 같은 말을 쓴다. */
+export function dayOrdinal(index: number): string {
+  return `${ORDINALS[index] ?? `${index + 1}번째`} 날`
+}
+
 /** "첫째 날 · 10.3 (토)" — 시간은 보이지 않고 날짜와 요일만. */
 export function dayTitle(date: string, index: number): string {
   const d = new Date(`${date}T00:00:00`)
-  return `${ORDINALS[index] ?? `${index + 1}번째`} 날 · ${d.getMonth() + 1}.${d.getDate()} (${'일월화수목금토'[d.getDay()]})`
+  return `${dayOrdinal(index)} · ${d.getMonth() + 1}.${d.getDate()} (${'일월화수목금토'[d.getDay()]})`
 }
 
 /** pin_id → 장소 이름. 이미 불러온 확정 리스트·핀 목록에서만 찾는다(새 요청 없음). 앞에 둔 것이 이긴다. */
@@ -134,11 +139,22 @@ export function dayStops(day: CourseDayDto, names: Map<string, string>, points: 
       const leg: Leg | null = found ? { mode: found.mode === 'transit' ? 'transit' : 'walk', minutes: found.approx_minutes } : null
       const name = names.get(slot.pin_id) ?? '이 장소'
       const at = points.get(slot.pin_id)
-      return { pinId: slot.pin_id, name, needsCheck: slot.needs_check, leg, point: at ? ({ name, ...at } satisfies KakaoPoint) : null }
+      // 그날 영업 여부를 아는 장소(서버 needs_check 가 false) — 「영업시간 확인됨」을 단다. 모르는 장소엔 아무것도 달지 않는다.
+      return { pinId: slot.pin_id, name, hoursKnown: !slot.needs_check, leg, point: at ? ({ name, ...at } satisfies KakaoPoint) : null }
     })
 }
 
 export type DayStop = ReturnType<typeof dayStops>[number]
+
+/**
+ * 「영업시간 확인됨」을 달아도 되는 결과인가. 서버 needs_check 는 「그날 영업 여부를 모름」만 뜻해서, 그날 쉬는 장소(위반 kind closed)도
+ * false 다. 위반에는 pin_id 가 없어 어느 장소인지 모르므로, 쉬는 날 위반이 하나라도 있으면 태그를 모두 숨긴다(이름 문장을 글자로 맞추지 않는다, #717).
+ * 서버가 위반에 pin_ids 를 내리면(루트 검수 #1127) 그 장소만 빼도록 바꾼다.
+ */
+export const showHoursKnown = (run: Pick<CourseRunDto, 'violations'>) => !run.violations.some((v) => v.kind === 'closed')
+
+/** 영업시간을 모르는 장소 수 — 서버 checks 는 (장소, 날) 마다라 같은 장소가 여러 날이면 한 곳으로 센다. */
+export const uncheckedPlaceCount = (run: Pick<CourseRunDto, 'checks'>) => new Set(run.checks.map((c) => c.pin_id)).size
 
 export type DayLink = { url: string; label: string; cut: boolean }
 
