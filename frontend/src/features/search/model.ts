@@ -1,5 +1,6 @@
 import type { components } from '@pingo/contracts/src/types/api'
 
+import { ApiError } from '@/api'
 import { FILTER_CATEGORIES, isPlaced, type Pin, type PinCreateRequest } from '@/features/map/model'
 
 export type PlaceSearchResultDto = components['schemas']['PlaceSearchResult']
@@ -92,4 +93,11 @@ export function livePinRequest(r: PlaceSearchResultDto, query: string, memo?: st
   const category = r.category
   if (!category || !FILTER_CATEGORIES.includes(category) || !query) return null
   return { source: 'live', category, kakao_place_id: r.place_id, search_query: query.slice(0, 100), ...(memo ? { memo } : {}) }
+}
+
+/** docs/errors.md — 핀 만들기 실패. */
+export function pinErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.code === 'PIN_DUPLICATE') return '이미 지도에 있는 장소예요'
+  if (err instanceof ApiError && err.code === 'PLACE_NOT_SUPPORTED') return '아직 지원하지 않는 장소예요'
+  return '핀을 찍지 못했어요'
 }
