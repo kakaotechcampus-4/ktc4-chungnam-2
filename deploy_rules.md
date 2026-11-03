@@ -172,6 +172,7 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 | 운영 DB 덤프 | `deploy/backup.sh prod` | 하루 한 번(04:00), 14일 보관 | 서버 cron. 운영 배포 직전에도 한다 |
 | v2 계획 보조 에이전트 관찰 | cron이 `python -m agent.tick`을 부른다(#812). 지도마다 lease와 token으로 겹쳐 돌아도 안전하다 | 5분(`docs/agent-v2.md` 12.1) | 서버 cron |
 | agent 일일 정리 | 없음 | 서버 안에서 돈다 | 따로 예약하지 않는다(`backend/maintenance/CLAUDE.md`) |
+| 헬스 체크 경보: 운영·스테이징의 화면(`/`)과 `/api/health` | `.github/workflows/uptime.yml`. 두 번(30초 간격) 다 실패하면 이슈 「[경보] 운영·스테이징 헬스 체크 실패」를 열고, 회복하면 닫는다(#1280) | 10분 안팎(GitHub 예약 실행) | GitHub Actions — 서버 밖에서 본다 |
 | 장소 후기 신고 확인 | 아래 「후기 신고 확인과 숨김」 | 매일(운영) | **사람이 한다.** 신고가 와도 알림이 없다 — 자동 알림은 아직 없다 |
 
 ### 후기 신고 확인과 숨김
