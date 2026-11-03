@@ -168,7 +168,7 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 | 작업 | 명령 | 주기 | 상태 |
 |---|---|---|---|
-| 정기 정리: 지도(삭제 30일 후), 알림(90일), 게스트(90일 미사용), 모델 호출 사용량 `llm_calls`(30일, #870) | `deploy/run.sh <환경> python -m maintenance.run` | 하루 한 번(03:30 운영, 03:40 스테이징) | 서버 cron(`deploy/crontab`) |
+| 정기 정리: 지도, 알림, 게스트, 모델 호출 사용량, 멱등 키, 탈퇴 계정, 이벤트, 삭제된 핀(#1063) | `deploy/run.sh <환경> python -m maintenance.run` | 하루 한 번(03:30 운영, 03:40 스테이징) | 서버 cron(`deploy/crontab`) |
 | 운영 DB 덤프 | `deploy/backup.sh prod` | 하루 한 번(04:00), 14일 보관 | 서버 cron. 운영 배포 직전에도 한다 |
 | v2 계획 보조 에이전트 관찰 | cron이 `python -m agent.tick`을 부른다(#812). 지도마다 lease와 token으로 겹쳐 돌아도 안전하다 | 5분(`docs/agent-v2.md` 12.1) | 서버 cron |
 | agent 일일 정리 | 없음 | 서버 안에서 돈다 | 따로 예약하지 않는다(`backend/maintenance/CLAUDE.md`) |
