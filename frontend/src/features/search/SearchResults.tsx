@@ -9,13 +9,14 @@ import { usePinSelection } from '@/features/map/usePinSelection'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import EmptyState from '@/ui/EmptyState'
+import ExternalSearchLink from '@/ui/ExternalSearchLink'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 import TextArea from '@/ui/TextArea'
 
 import { livePinRequest, pinErrorMessage, searchPinRequest, toSearchResult, type SearchResultView } from './model'
-import { searchErrorMessage, useSourcePlacesQuery } from './queries'
+import { searchErrorMessage, useExternalSearchQuery, useSourcePlacesQuery } from './queries'
 import { useSearchStore } from './searchStore'
 import { suggestQuery } from './typo'
 
@@ -162,22 +163,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   if (results.length === 0) {
     // 흔한 말의 오타(「중곡집」)면 고친 말로 다시 찾게 한다. 아니면 검색어를 지우고 바로 다시 입력하게(#351).
     const fixed = query ? suggestQuery(query) : null
-    return (
-      <EmptyState mood="sorry"
-        title="찾는 장소가 없어요"
-        action={
-          fixed ? (
-            <button type="button" onClick={() => submit(fixed, near)} className="btn-primary btn-md">
-              「{fixed}」 찾아보기
-            </button>
-          ) : (
-            <SearchAgainButton onClose={close} label="검색어 지우고 다시 찾기" />
-          )
-        }
-      >
-        {fixed ? `혹시 「${fixed}」${josa(fixed, '을', '를')} 찾으셨나요?` : '이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요'}
-      </EmptyState>
-    )
+    return <NoResults query={query} fixed={fixed} onRetry={() => fixed && submit(fixed, near)} onClose={close} />
   }
 
   if (selected) {
@@ -238,6 +224,38 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
 }
 
 /** 검색창을 비우고 다시 입력하게 한다(#351). */
+/**
+ * 이름 검색 0곳. 다음 행동은 검색어를 지우고 바로 다시 입력하기(#351)이고,
+ * 그 아래 친 검색어 그대로 카카오맵에서 찾는 출구를 둔다(#905, 새 창). 링크를 못 받으면 출구만 숨긴다.
+ */
+function NoResults({ query, fixed, onRetry, onClose }: { query: string | null; fixed: string | null; onRetry: () => void; onClose: () => void }) {
+  return (
+    <EmptyState
+      mood="sorry"
+      title="찾는 장소가 없어요"
+      action={
+        <div className="flex flex-col items-center gap-2">
+          {fixed ? (
+            <button type="button" onClick={onRetry} className="btn-primary btn-md">
+              「{fixed}」 찾아보기
+            </button>
+          ) : (
+            <SearchAgainButton onClose={onClose} label="검색어 지우고 다시 찾기" />
+          )}
+          {query && <KakaoMapExit query={query} />}
+        </div>
+      }
+    >
+      {fixed ? `혹시 「${fixed}」${josa(fixed, '을', '를')} 찾으셨나요?` : '이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요'}
+    </EmptyState>
+  )
+}
+
+function KakaoMapExit({ query }: { query: string }) {
+  const { data } = useExternalSearchQuery(query)
+  return data ? <ExternalSearchLink search={data} className="btn-link text-sm" /> : null
+}
+
 function SearchAgainButton({ onClose, label }: { onClose: () => void; label: string }) {
   return (
     <button

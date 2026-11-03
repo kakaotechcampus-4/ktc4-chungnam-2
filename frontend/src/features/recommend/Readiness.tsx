@@ -8,12 +8,12 @@ import { showToast } from '@/features/shell/toast'
 import Notice from '@/ui/Notice'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
+import ExternalSearchLink from '@/ui/ExternalSearchLink'
 
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
 
 import { useAiStore } from './aiStore'
-import ExternalSearchLink from './ExternalSearchLink'
 import { chosenCategory, runErrorMessage, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
 import { useCreateRunMutation, useReadinessQuery } from './queries'
 
