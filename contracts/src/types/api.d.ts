@@ -3177,8 +3177,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 확정 리스트 내보내기 — 구성원 누구나 (#471). 확정 순서(`visit_order`, 없으면 추가한 순서)대로 한 줄씩 담은 텍스트(`txt`) 또는 CSV(`csv`)를 내려준다.
-         *     열은 순서·이름·분류·카카오 링크·메모다. **실시간 핀(live)은 이름을 저장하지 않으므로**(#53) 이름 칸에 검색어를 쓰고 이름 뒤에 "(이름 확인 필요)"를 붙이며,
+         * 확정 리스트 내보내기 — 구성원 누구나 (#471). 날짜별 순서대로 담은 텍스트(`txt`) 또는 CSV(`csv`)를 내려준다. 미배정은 마지막이다.
+         *     TXT는 날짜별 머리말, CSV는 날짜·순서·이름·분류·카카오 링크·메모 열을 쓴다. 각 날짜의 순서는 1부터다. **실시간 핀(live)은 이름을 저장하지 않으므로**(#53) 이름 칸에 검색어를 쓰고 이름 뒤에 "(이름 확인 필요)"를 붙이며,
          *     링크 칸에는 `place.map.kakao.com/<id>` 링크를 넣는다. 자체 DB 핀은 장소 이름과 장소 페이지 링크를 쓴다. 좌표는 내보내지 않는다.
          *     CSV는 엑셀에서 한글이 깨지지 않게 UTF-8 BOM으로 시작한다. 확정 리스트가 비어 있으면 CSV는 머리글만, txt는 안내 한 줄이다.
          *     공개 공유 링크는 이 범위 밖이다.
@@ -3239,6 +3239,7 @@ export interface paths {
         /**
          * 확정 리스트 수동 정렬 (#30). 보기 좋게 순서를 바꾸는 것뿐이고 동선과는 무관하다.
          *     동선을 다시 짜려면 POST /maps/{mapId}/route를 부른다.
+         *     날짜가 배정된 항목이 하나라도 있으면 이 기존 API는 409 SHORTLIST_SCHEDULED를 반환한다. 날짜별 편집에는 schedule API를 쓴다.
          */
         put: {
             parameters: {
@@ -3267,7 +3268,106 @@ export interface paths {
                         "application/json": components["schemas"]["ShortlistItem"][];
                     };
                 };
+                /** @description 날짜 배정 항목이 있어 전체 정렬 불가 (SHORTLIST_SCHEDULED) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
                 /** @description item_ids가 현재 확정 리스트와 맞지 않는다(VALIDATION_ERROR, detail에 불일치 항목) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/shortlist/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 날짜별 확정 리스트 조회
+         * @description 여행 시작일부터 종료일까지 양 끝을 포함해 날짜 칸을 표시한다. items는 날짜 순이고 미배정은 마지막이다. 날짜 칸은 항목이 없어도 화면에서 표시한다. 여행 기간이 줄면 범위 밖 항목은 기존 미배정 목록 뒤에 날짜별 기존 순서대로 붙는다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 현재 여행 기간, 변경 감지 version과 확정 항목 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ShortlistSchedule"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        /**
+         * 날짜 배정 및 날짜별 순서 저장
+         * @description 구성원 누구나 변경한다. 조회한 version과 모든 확정 항목 ID를 각 한 번씩 보낸다. 날짜는 여행 기간 안이거나 미배정 null이며 같은 날짜 그룹을 중복할 수 없다. 각 그룹의 item_ids 순서가 해당 날짜의 순서다. version이 바뀌면 재조회 후 다시 편집한다.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ShortlistScheduleUpdate"];
+                };
+            };
+            responses: {
+                /** @description 저장 후 최신 일정 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ShortlistSchedule"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                /** @description 조회 이후 일정이 바뀜 (SHORTLIST_STALE) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description 날짜 또는 항목 목록이 유효하지 않음 (VALIDATION_ERROR) */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -4824,8 +4924,30 @@ export interface components {
             pin: components["schemas"]["Pin"];
             /** @description 순서를 정하지 않았으면 null이거나 필드가 없다 */
             visit_order?: number | null;
+            /**
+             * Format: date
+             * @description 방문 날짜. null은 미배정; 기존 목록 응답에서는 생략될 수 있다
+             */
+            scheduled_date?: string | null;
             added_by: string;
             permissions: components["schemas"]["Permissions"];
+        };
+        ShortlistSchedule: {
+            /** Format: date */
+            start_date: string;
+            /** Format: date */
+            end_date: string;
+            /** @description 변경 감지용 불투명 값 */
+            version: string;
+            items: components["schemas"]["ShortlistItem"][];
+        };
+        ShortlistScheduleUpdate: {
+            version: string;
+            groups: {
+                /** Format: date */
+                date: string | null;
+                item_ids: string[];
+            }[];
         };
         Route: {
             region_label: string;

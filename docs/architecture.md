@@ -83,6 +83,7 @@ core.py로 옮긴다.
 |---|---|
 | 핀 CRUD, 반응 등록/삭제 | `pins` + `event_log` |
 | 확정 리스트 순서 변경 | `shortlist_items`만 |
+| 여행 기간 변경 후 범위 밖 일정 미배정 | `maps` + `shortlist_items` + `event_log` |
 | 동선 계산 | 계산 결과 + `event_log` |
 | 근거 추가/토글, 추천 실행 생성 | `recommend` 테이블 + `event_log` |
 | 초대 수락 | `memberships` + `event_log` |
@@ -117,6 +118,8 @@ core.py로 옮긴다.
 | 다른 모듈의 **데이터 조회·변경** | `<module>/api.py`만 | 예: `recommend/flows.py`가 `pins.api.create_ai_pin(...)`을 부른다 |
 | 다른 모듈의 `models.py` | **금지** | DB 테이블이다. 소유 모듈 밖에서 직접 다루면 스키마 변경이 어디까지 번지는지 알 수 없어진다 |
 | 다른 모듈의 `service.py` | **금지** | 공개 접점이 아니다. 필요하면 그 모듈이 `api.py`에 함수를 연다 |
+
+`maps`는 여행 기간 변경 시 지도 행을 잠근 뒤 `shortlist.api.unassign_outside_dates(db, map_id=..., start_date=..., end_date=...)`를 호출한다. 범위 밖 일정은 미배정 뒤에 보존하며 호출자가 같은 트랜잭션을 커밋한다.
 
 `api.py`가 없는 모듈은 아직 다른 모듈에게 열어줄 데이터가 없다는 뜻이다. 필요해지는 쪽이
 그 모듈 담당에게 이슈로 요청해서 만든다(`backend/CLAUDE.md`, #757).

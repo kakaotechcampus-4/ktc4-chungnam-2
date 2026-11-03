@@ -278,6 +278,11 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.get(f"/maps/{map_id}/shortlist").status_code == 200
     item_ids = [i["id"] for i in a.get(f"/maps/{map_id}/shortlist").json()]
     assert a.put(f"/maps/{map_id}/shortlist/order", json={"item_ids": list(reversed(item_ids))}).status_code == 200
+    schedule = a.get(f"/maps/{map_id}/shortlist/schedule")
+    assert schedule.status_code == 200
+    payload = schedule.json()
+    saved = a.put(f"/maps/{map_id}/shortlist/schedule", json={"version": payload["version"], "groups": [{"date": None, "item_ids": item_ids}]})
+    assert saved.status_code == 200
     assert a.post(f"/maps/{map_id}/route").status_code in (200, 201)
     assert a.get(f"/maps/{map_id}/route").status_code == 200
 
@@ -287,7 +292,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert export_txt.headers["content-disposition"].startswith("attachment")
     export_csv = a.get(f"/maps/{map_id}/shortlist/export", params={"format": "csv"})
     assert export_csv.status_code == 200 and export_csv.headers["content-type"].startswith("text/csv")
-    assert export_csv.content.startswith("\ufeff순서,".encode())
+    assert export_csv.content.startswith("\ufeff날짜,순서,".encode())
     assert len(export_csv.text.splitlines()) == 1 + len(item_ids)
     assert a.get(f"/maps/{map_id}/shortlist/export", params={"format": "pdf"}).status_code == 422
     assert b.get(f"/maps/{map_id}/shortlist/export").status_code == 200
