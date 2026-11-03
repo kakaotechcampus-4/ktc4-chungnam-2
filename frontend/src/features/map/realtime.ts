@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQueryClient, type InvalidateQueryFilters, type QueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 
-import { agentEventHandlers } from '@/features/agent/queries'
+import { agentEventHandlers, agentKeys } from '@/features/agent/queries'
 import { useMeQuery } from '@/features/auth/queries'
 import { mapKeys } from '@/features/maps/queries'
 import { recommendKeys } from '@/features/recommend/queries'
@@ -137,6 +137,7 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       source.close()
       showToast('방장이 이 지도를 삭제했어요')
       queryClient.removeQueries({ queryKey: mapKeys.detail(mapId) })
+      queryClient.removeQueries({ queryKey: agentKeys.state(mapId) })
       navigate('/', { replace: true })
     }
 
@@ -148,6 +149,10 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       'pin.deleted': remove,
       'reaction.changed': reaction,
       'map.deleted': mapDeleted,
+      // 내가 나갔다(다른 기기에서 나가기 등) — 그 지도의 핑고 AI 조언 상태를 버린다(agent-v2 16.4). 남이 나간 건 표대로 다시 받는다.
+      'member.left': (e) => {
+        if (parse<{ user_id: string }>(e).user_id === myUserId) queryClient.removeQueries({ queryKey: agentKeys.state(mapId) })
+      },
       ...agentEventHandlers(queryClient, mapId),
     }
     const table = refetchTable(mapId)
