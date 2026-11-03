@@ -7,6 +7,7 @@ import { isUnauthorized } from '@/features/auth/api'
 import KakaoButton from '@/features/auth/KakaoButton'
 import { clearPendingInvite, savePendingInvite } from '@/features/auth/pendingInvite'
 import { DISPLAY_NAME_MAX } from '@/features/auth/model'
+import { randomGuestName } from '@/features/auth/guestName'
 import { useGuestJoinMutation, useMeQuery } from '@/features/auth/queries'
 import { inviteErrorMessage, inviteProblem, type InviteView } from '@/features/maps/model'
 import { useAcceptInviteMutation, useInviteSummaryQuery } from '@/features/maps/queries'
@@ -95,20 +96,21 @@ export default function InvitePage() {
 }
 
 /**
- * 「이름만 입력하고 들어가기」(#485). 게스트 계정을 만들고 이 초대의 지도에 바로 들어간다(POST /auth/guest).
+ * 「로그인 없이 게스트로 들어가기」(#485). 게스트 계정을 만들고 이 초대의 지도에 바로 들어간다(POST /auth/guest).
  * 처음엔 버튼만 두고, 누르면 이름 칸이 열린다 — 카카오가 주 입구라 같은 무게로 펼쳐 두지 않는다.
+ * 이름 칸에는 아무 이름(「신나는 수달」)이 미리 들어 있어 바로 들어갈 수 있다. ✕로 지우고 자기 이름을 적어도 된다.
  */
 function GuestJoin({ token }: { token: string }) {
   const navigate = useNavigate()
   const join = useGuestJoinMutation(token)
   const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
+  const [name, setName] = useState(randomGuestName)
   const trimmed = name.trim()
 
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)} className="btn-neutral btn-md w-full">
-        이름만 입력하고 들어가기
+        로그인 없이 게스트로 들어가기
       </button>
     )
   }
@@ -126,6 +128,7 @@ function GuestJoin({ token }: { token: string }) {
         구성원에게 보일 이름
       </label>
       <TextField id="guest-name" value={name} onChange={setName} maxLength={DISPLAY_NAME_MAX} placeholder="예: 지우" clearLabel="이름 지우기" autoFocus />
+      <p className="break-keep text-xs text-ink-500">아무렇게나 지은 이름이에요. 그대로 들어가도 되고, 지우고 내 이름을 적어도 돼요</p>
       <p className="break-keep text-xs text-ink-500">게스트는 새 지도를 만들 수 없어요. 나중에 카카오로 계정을 만들면 기록이 이어져요</p>
       {join.error && <ErrorText message={inviteErrorMessage(join.error)} error={join.error} />}
       <button type="submit" disabled={!trimmed || join.isPending} className="btn-primary btn-md w-full">

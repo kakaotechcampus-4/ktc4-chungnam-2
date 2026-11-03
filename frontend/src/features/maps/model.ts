@@ -95,11 +95,12 @@ export function mapChanges(
   return Object.keys(body).length ? body : null
 }
 
-export type MemberView = { userId: string; name: string; initial: string; isMe: boolean; isOwner: boolean }
+/** isGuest: 그 브라우저에서만 이어지는 게스트(#955). 방장이 될 수 없어 넘기기 목록에서 빠진다. */
+export type MemberView = { userId: string; name: string; initial: string; isMe: boolean; isOwner: boolean; isGuest: boolean }
 
 export function toMemberView(member: MemberDto, myUserId: string | undefined): MemberView {
   const name = member.display_name ?? '이름 없음'
-  return { userId: member.user_id, name, initial: name.slice(0, 1), isMe: member.user_id === myUserId, isOwner: member.role === 'owner' }
+  return { userId: member.user_id, name, initial: name.slice(0, 1), isMe: member.user_id === myUserId, isOwner: member.role === 'owner', isGuest: member.is_guest === true }
 }
 
 export function toMapView(map: MapDto): MapView {
