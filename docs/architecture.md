@@ -266,7 +266,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 | 공개 함수 | 부르는 곳 | 하는 일 |
 |---|---|---|
-| `pins.api.purge_deleted_pins(db, *, now: datetime) -> dict[str, int]` | maintenance(`pins` 단계, #1063) | 삭제한 지 30일이 지난 핀과 그 반응을 오래된 것부터 한 번에 최대 1000개 영구 삭제한다. 반환 `{"reactions": n, "pins": m}`. 멱등, 커밋은 호출자가 한다 |
+| `pins.api.purge_deleted_pins(db, *, now: datetime) -> dict[str, int]` | maintenance(`pins` 단계, #1063) | 삭제한 지 30일이 지난 핀과 그 반응을 오래된 것부터 한 번에 최대 1000개 영구 삭제한다. 반환 `{"reactions": n, "pins": m}`. 멱등, `now`는 timezone-aware(naive면 ValueError), 커밋은 호출자가 한다 |
 
 30일 안의 핀은 건드리지 않는다. 정리 작업의 dry-run은 호출자가 롤백해 확인한다(다른 단계와 같다).
 

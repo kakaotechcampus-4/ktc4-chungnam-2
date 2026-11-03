@@ -20,7 +20,7 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -343,6 +343,7 @@ class History:
     suggestions: tuple[PastSuggestion, ...] = ()   # 이 지도, 최신순(created_at 내림차순)
     model_runs_today: int = 0   # KST 자정 이후 used_model=true(진단을 부름)이고 trigger in (activity, time, summary)인 agent_runs 수
     summaries: tuple[SummaryMeta, ...] = ()   # 이 지도의 카테고리 요약(#586)
+    summary_failed: frozenset[str] = frozenset()   # 최근 SUMMARY_FAILED_RETRY 안에 ②가 실패한 카테고리(#1187). pick_summary가 뒤로 미룬다
     status_hash: str | None = None   # 지도 현황 문단을 마지막으로 만들려 한 칸의 해시(8.2, #1168). 같으면 다시 부르지 않는다
 
     @property
@@ -1459,15 +1460,20 @@ def summary_changes(
 
 
 def pick_summary(
-    snap: Snapshot, metas: Sequence[SummaryMeta], *, rules_version: str | None = None,
+    snap: Snapshot, metas: Sequence[SummaryMeta], *, rules_version: str | None = None, failed: Collection[str] = (),
 ) -> tuple[str | None, bool]:
     """이번 관찰에서 갱신할 카테고리 하나(8절, 초안)와 그 밖에 갱신할 카테고리가 더 있는지. 바뀐 사유가 가장 많은 것,
-    같으면 categories.pinnable() 순서."""
+    같으면 categories.pinnable() 순서. failed는 최근 ②가 실패한 카테고리(History.summary_failed, #1187) — 실패한 카테고리가 계속
+    뽑혀 다른 카테고리의 갱신을 막지 않게 뒤로 미룬다. 다른 갱신 대상이 없으면 실패한 것을 다시 시도한다."""
     by_category = {m.category: m for m in metas}
-    due = [(c, n) for c in categories.pinnable() if (n := summary_changes(snap, c, by_category.get(c), rules_version=rules_version)) is not None]
+    due = [
+        (c, n) for c in categories.pinnable()
+        if (n := summary_changes(snap, c, by_category.get(c), rules_version=rules_version)) is not None
+    ]
     if not due:
         return None, False
-    return max(due, key=lambda d: d[1])[0], len(due) > 1
+    first = [d for d in due if d[0] not in failed] or due
+    return max(first, key=lambda d: d[1])[0], len(due) > 1
 
 
 def _has_safety_word(text: str | None) -> bool:
