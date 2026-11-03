@@ -28,7 +28,7 @@ export const LEGAL_META = {
   operator: '핑고핑고 팀',
   officer: '장현성',
   contact: 'pingopingo.team@gmail.com',
-  effectiveDate: '',
+  effectiveDate: '2026년 11월 11일',
 }
 
 const CONTACT_LINE = '문의는 계정 메뉴의 「핑고핑고에 의견 보내기」나 아래 개인정보 보호책임자에게 보내 주세요.'
