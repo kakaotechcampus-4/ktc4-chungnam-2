@@ -44,7 +44,7 @@ class TestCandidates:
 
     def test_goals_input_has_candidates_without_names(self):
         got = G.goals_input(trip(), "", G.map_candidates(trip(), [WALK]))
-        assert got["map_candidates"][0] == {"id": "g1", "kind": "daily_walk_low", "night_places": [],
+        assert got["map_candidates"][0] == {"id": "g1", "kind": "daily_walk_low", "required": False, "night_places": [],
                                             "evidence": [{"category": "관광지", "fact_key": "accessible", "wants": True, "members": 2}]}
         assert "휠체어" not in str(got["map_candidates"])
 
@@ -160,4 +160,51 @@ class TestReadMapItems:
         monkeypatch.setattr(service.agent_service, "list_summaries", lambda db, map_id: rows)
         monkeypatch.setattr(service.recommend_api, "fact_labels", lambda: {"accessible": "휠체어·유모차", "is_indoor": "실내"})
         assert service.read_map_items(None, "m") == (
-            SummaryItem("관광지", "accessible", True, 2, "휠체어·유모차"), SummaryItem("관광지", "is_indoor", True, 3, "실내"))
+            SummaryItem("관광지", "accessible", True, 2, "휠체어·유모차", must_keep=True), SummaryItem("관광지", "is_indoor", True, 3, "실내"))
+
+
+class TestRequired:
+    """스테이징(11-03): 요약 must_keep의 「휠체어·유모차 원함」이 있는데 모델이 야경 후보만 골라 걷기 목표가 서지 않았다."""
+    MUST = SummaryItem("관광지", "accessible", True, 2, "휠체어·유모차", must_keep=True)
+    PREF_INDOOR = SummaryItem("관광지", "is_indoor", True, 3, "실내")
+    MUST_INDOOR = SummaryItem("관광지", "is_indoor", True, 2, "실내", must_keep=True)
+
+    def test_required_only_when_a_line_came_from_must_keep(self):
+        cands = G.map_candidates(trip(), [self.MUST, WALK, self.PREF_INDOOR])
+        assert [(c.kind, c.required) for c in cands] == [("daily_walk_low", True), ("day_indoor", False), ("night_end", False)]
+        assert G.goals_input(trip(), "", cands)["map_candidates"][0]["required"] is True
+
+    def test_required_walk_goal_is_set_even_if_the_model_picks_nothing(self):
+        v = _verify("", [], G.map_candidates(trip(), [self.MUST]))
+        assert [(g.id, g.origin, g.candidate) for g in v.goals] == [("daily_walk_low", "map", "g1")]
+
+    def test_required_goal_is_set_when_the_model_picked_only_night(self):
+        cands = G.map_candidates(trip(), [self.MUST])
+        v = _verify("", [_goal("night_end", "map", "g2", day="d3")], cands)
+        assert [g.id for g in v.goals] == ["daily_walk_low", "night_end:d3"]                     # 필수 지도 목표가 다른 지도 목표 앞
+
+    def test_preference_candidate_is_not_set_unless_the_model_picks_it(self):
+        v = _verify("", [], G.map_candidates(trip(), [WALK, self.PREF_INDOOR]))
+        assert v.goals == ()
+
+    def test_required_day_kind_is_not_invented(self):
+        v = _verify("", [], G.map_candidates(trip(), [self.MUST_INDOOR]))
+        assert v.goals == () and any("필수 지도 후보 g1" in d for d in v.dropped)
+
+    def test_request_goal_with_the_same_id_wins_and_required_outlasts_other_map_goals(self):
+        text = "많이 못 걸어요"
+        cands = G.map_candidates(trip(), [self.MUST])
+        v = _verify(text, [_goal("daily_walk_low", quote=text)], cands)
+        assert [(g.id, g.origin) for g in v.goals] == [("daily_walk_low", "request")]
+        asked = "첫날 여유, 둘째 날 여유, 셋째 날 여유"
+        three = [_goal("day_light", day=f"d{i}", quote=q) for i, q in enumerate(asked.split(", "), 1)]
+        v = _verify(asked, [_goal("night_end", "map", "g2", day="d1"), *three], cands)
+        assert len(v.goals) == GOALS_MAX and v.goals[-1].id == "daily_walk_low" and v.goals[-1].origin == "map"
+
+    def test_empty_request_runs_with_the_required_goal(self):
+        def nothing(_input):
+            return CourseGoalSet(goals=[], unmatched=[])
+
+        out = run_course(build(), "", goals_planner=nothing, direct_planner=None, gateway=NullOpeningHours(), map_items=(self.MUST,))
+        assert [(g["kind"], g["label"]) for g in out.view.goals] == [("daily_walk_low", "하루 걷는 시간 줄이기 (지도에서 세운 목표)")]
+        assert "(근거: 관광지 조건 요약의 ‘휠체어·유모차 원함’ 2명)" in out.view.steps[0]["text"]

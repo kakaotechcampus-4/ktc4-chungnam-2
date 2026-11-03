@@ -354,8 +354,9 @@ def test_export_txt_is_default_follows_visit_order_and_marks_live_pin(app_client
     assert resp.headers["content-disposition"].startswith("attachment; filename=")
     assert "filename*=UTF-8''" in resp.headers["content-disposition"]
     lines = resp.text.splitlines()
-    assert lines[0] == "1. 성수 곱창 (이름 확인 필요) (음식점) https://place.map.kakao.com/555 — 맛있대"
-    assert lines[1].startswith("2. ") and "129.12" not in resp.text   # 좌표는 내보내지 않는다
+    assert lines[0] == "[미배정]"
+    assert lines[1] == "1. 성수 곱창 (이름 확인 필요) (음식점) https://place.map.kakao.com/555 — 맛있대"
+    assert lines[2].startswith("2. ") and "129.12" not in resp.text   # 좌표는 내보내지 않는다
 
 
 def test_export_csv_has_bom_header_and_crlf(app_client, db_session):
@@ -365,13 +366,13 @@ def test_export_csv_has_bom_header_and_crlf(app_client, db_session):
 
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "text/csv; charset=utf-8"
-    assert resp.content.startswith("\ufeff순서,이름,분류,링크,메모\r\n".encode())
-    assert resp.content.decode("utf-8-sig").splitlines()[1] == "1,성수 곱창 (이름 확인 필요),음식점,https://place.map.kakao.com/555,"
+    assert resp.content.startswith("\ufeff날짜,순서,이름,분류,링크,메모\r\n".encode())
+    assert resp.content.decode("utf-8-sig").splitlines()[1] == "미배정,1,성수 곱창 (이름 확인 필요),음식점,https://place.map.kakao.com/555,"
 
 
 def test_export_empty_shortlist(app_client):
     assert app_client.get("/maps/map_1/shortlist/export", cookies=_auth()).text == "확정한 장소가 아직 없어요\n"
-    assert app_client.get("/maps/map_1/shortlist/export?format=csv", cookies=_auth()).text == "\ufeff순서,이름,분류,링크,메모\r\n"
+    assert app_client.get("/maps/map_1/shortlist/export?format=csv", cookies=_auth()).text == "\ufeff날짜,순서,이름,분류,링크,메모\r\n"
 
 
 def test_export_rejects_unknown_format_with_422(app_client):
@@ -412,7 +413,27 @@ def test_export_live_pin_link_is_pin_place_url(app_client, db_session):
     pin_url = app_client.get("/maps/map_1/shortlist", cookies=_auth()).json()[0]["pin"]["place_url"]
     resp = app_client.get("/maps/map_1/shortlist/export", cookies=_auth())
 
-    assert pin_url and resp.text.splitlines()[0] == f"1. 성수 곱창 (이름 확인 필요) (음식점) {pin_url}"
+    assert pin_url and resp.text.splitlines()[1] == f"1. 성수 곱창 (이름 확인 필요) (음식점) {pin_url}"
+
+
+def test_schedule_assign_move_and_reject_stale_update(app_client, db_session):
+    _insert_map(db_session, "여행")
+    first, second = _confirm_pins(app_client, _insert_live_pin(db_session), _insert_pin(db_session))
+    path = "/maps/map_1/shortlist/schedule"
+    original = app_client.get(path, cookies=_auth()).json()
+    assert original["start_date"] == "2026-11-01"
+    assert all(item["scheduled_date"] is None for item in original["items"])
+    body = {"version": original["version"], "groups": [
+        {"date": "2026-11-01", "item_ids": [first]},
+        {"date": "2026-11-02", "item_ids": [second]},
+    ]}
+    result = app_client.put(path, json=body, cookies=_auth())
+    assert result.status_code == 200
+    assert [item["scheduled_date"] for item in result.json()["items"]] == ["2026-11-01", "2026-11-02"]
+    stale = app_client.put(path, json=body, cookies=_auth())
+    assert (stale.status_code, stale.json()["code"]) == (409, "SHORTLIST_STALE")
+    old = app_client.put("/maps/map_1/shortlist/order", json={"item_ids": [first, second]}, cookies=_auth())
+    assert (old.status_code, old.json()["code"]) == (409, "SHORTLIST_SCHEDULED")
 
 
 def test_export_filename_uses_map_title_for_txt_and_csv(app_client, db_session):

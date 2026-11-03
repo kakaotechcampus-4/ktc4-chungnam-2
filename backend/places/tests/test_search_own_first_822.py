@@ -135,6 +135,13 @@ def test_no_results_is_an_empty_list(db_session, kakao):
     assert _search(db_session, q="없는가게") == []
 
 
+def test_only_nearby_live_candidates_when_no_own_results(db_session, kakao):
+    kakao.results = [_kakao("kakao:1", "가까운 곳"), _kakao("kakao:2", "먼 곳", lat=35.17, lng=129.07)]
+    out = _search(db_session, q="없는 가게", lat=37.5665, lng=126.9780)
+    assert [r.place_id for r in out] == ["kakao:1"]
+    assert out[0].pinnable is False
+
+
 def test_like_wildcards_in_query_are_literal(db_session, kakao):
     _add(db_session, _row("J1", "안국 식당"))
     assert _search(db_session, q="%") == []

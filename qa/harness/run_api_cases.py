@@ -16,7 +16,9 @@ usage:
 """
 import json
 import os
+import queue
 import sys
+import threading
 import time
 import unicodedata
 import uuid
@@ -353,12 +355,15 @@ def p01():
     """비구성원 404를 id가 든 경로 전부에서(#1096, docs/permissions.md 「비구성원 vs 권한 없음」). 본문은 유효하게 보낸다 —
     422가 404보다 먼저 나오면 권한을 본 게 아니다. 지우는 요청은 맨 뒤에 두고, 끝나고 A의 데이터가 그대로인지 본다.
     404는 앱 오류 본문(code)이 있어야 통과다 — 경로가 없을 때의 404({"detail": "Not Found"})를 권한으로 세지 않는다.
-    핀 휴지통(GET /maps/{id}/trash, POST /pins/{id}/restore)은 서버 구현 전이라 넣지 않았다(#864, 생기면 넣는다)."""
+    휴지통(#1013)과 일정(#1172)을 넣었다. 코스 결과(GET /course-runs/{id})는 코스를 만들어야 해서 W08에서, 개인 채널(GET /maps/{id}/events/me)은 S02에서 본다.
+    에이전트 제안 view·accept·dismiss는 제안 id를 만들 수 없어 뺐다 — 제안은 서버 관찰이 만들고 하네스에서 부를 방법이 없다."""
     _, a = user(); _, b = user(); mid = new_map(a)
     pin = add_pin(a, mid).json()["id"]; pin2 = add_pin(a, mid, skip=1).json()["id"]
     a.put(f"/pins/{pin}/reaction", json={"type": "like"})   # 사유 글 없이 — ② 호출 없음
     review = a.put(f"/pins/{pin}/reviews/me", json={"rating": 4, "body": "QA 후기"}).json()["review"]["id"]
     item = a.post(f"/maps/{mid}/shortlist", json={"pin_id": pin}).json()["id"]
+    pin3 = add_pin(a, mid, skip=2).json()["id"]; a.delete(f"/pins/{pin3}")   # 휴지통에 있는 핀
+    sched_ver = a.get(f"/maps/{mid}/shortlist/schedule").json()["version"]
     tok = a.post(f"/maps/{mid}/invite").json()["token"]
     rid = a.post(f"/maps/{mid}/runs", json={"category": "음식점", "execute": True}).json()["id"]
     cands = (result(a, rid).json() or {}).get("candidates") or []
@@ -385,6 +390,9 @@ def p01():
         ("GET", f"/runs/{rid}/advice", None),
         ("GET", f"/maps/{mid}/shortlist", None), ("POST", f"/maps/{mid}/shortlist", {"pin_id": pin2}),
         ("GET", f"/maps/{mid}/shortlist/export", None), ("PUT", f"/maps/{mid}/shortlist/order", {"item_ids": [item]}),
+        ("GET", f"/maps/{mid}/shortlist/schedule", None),
+        ("PUT", f"/maps/{mid}/shortlist/schedule", {"version": sched_ver, "groups": [{"date": None, "item_ids": [item]}]}),
+        ("GET", f"/maps/{mid}/trash", None), ("POST", f"/pins/{pin3}/restore", None),
         ("GET", f"/maps/{mid}/route", None), ("POST", f"/maps/{mid}/route", None),
         ("GET", f"/maps/{mid}/ads?lat={lat}&lng={lng}", None),
         ("GET", f"/maps/{mid}/agent", None), ("PUT", f"/maps/{mid}/agent/settings", {"enabled": False}),
@@ -398,13 +406,15 @@ def p01():
     for method, path, body in calls:
         r = b.request(method, path, json=body) if body is not None else b.request(method, path)
         if r.status_code != 404 or "code" not in r.json():
-            bad.append(f"{method} {path.replace(mid, '{map}').replace(pin2, '{pin2}').replace(pin, '{pin}').replace(rid, '{run}')} → {r.status_code} {r.text[:40] if r.status_code == 404 else ''}")
+            bad.append(f"{method} {path.replace(mid, '{map}').replace(pin3, '{pin3}').replace(pin2, '{pin2}').replace(pin, '{pin}').replace(rid, '{run}')} → {r.status_code} {r.text[:40] if r.status_code == 404 else ''}")
     check("P01", not bad, f"비구성원 {len(calls)}개 요청 모두 404" + ("" if cands else " (후보 0곳 — publish 빠짐)"),
           f"404가 아닌 {len(bad)}/{len(calls)}개: " + "; ".join(bad))
     pins_after = {p["id"] for p in a.get(f"/maps/{mid}/pins").json()}
     me = (a.get(f"/pins/{pin}/reviews").json() or {}).get("mine")
     kept = a.get(f"/maps/{mid}").status_code == 200 and {pin, pin2} <= pins_after and me and len(a.get(f"/maps/{mid}/shortlist").json()) == 1
-    check("P01.kept", bool(kept), "A의 지도·핀·후기·확정 리스트 그대로", f"지도/핀/후기/확정 중 바뀐 것 있음: 핀 {len(pins_after)}, 후기 {bool(me)}")
+    in_trash = pin3 in {t["pin"]["id"] for t in (a.get(f"/maps/{mid}/trash").json() or {}).get("items", [])}
+    kept = kept and in_trash
+    check("P01.kept", bool(kept), "A의 지도·핀·후기·확정 리스트·휴지통 그대로", f"지도/핀/후기/확정/휴지통 중 바뀐 것 있음: 핀 {len(pins_after)}, 후기 {bool(me)}, 휴지통 {in_trash}")
 
 
 def l02_l03():
@@ -709,7 +719,14 @@ def w08_s07():
     again = c.post(f"/maps/{mid}/courses", json={})
     if again.status_code == 202:   # 로컬 TestClient는 응답 전에 끝난다
         ids.append(again.json()["course_run_id"])
-    runs = [_wait_course(c, i).json() for i in ids]; b1 = _credits(c)["balance"]
+    runs = [_wait_course(c, i).json() for i in ids]
+    _, o = user()   # 비구성원은 404, 같은 지도의 다른 구성원은 403(스펙: 요청자 본인만)
+    r = o.get(f"/course-runs/{ids[0]}")
+    check("W08.view_nonmember", r.status_code == 404 and "code" in r.json(), "코스 결과 비구성원 404", f"{r.status_code} {r.text[:80]}")
+    if gr.status_code == 201:
+        r = g.get(f"/course-runs/{ids[0]}")
+        check("W08.view_member", r.status_code == 403 and r.json().get("code") == "FORBIDDEN", "코스 결과 다른 구성원 403 FORBIDDEN(게스트 차단 GUEST_NOT_ALLOWED와 구분)", f"{r.status_code} {r.text[:80]}")
+    b1 = _credits(c)["balance"]
     sts = [x.get("status") for x in runs]
     busy = again.status_code == 409 and again.json().get("code") == "COURSE_IN_PROGRESS"
     if not busy:
@@ -1008,11 +1025,213 @@ def g01():
           f"장치가 로그를 잡음 {caught}, 요청 {ok_codes}, 새어 나간 로그 {len(leaks)}줄 {leaks[:2]}")
 
 
+# ───────── 실시간 SSE(#1158) — HTTP 전용. 끝없는 스트림은 로컬 TestClient에 약하고 로컬은 realtime 단위 테스트가 덮는다 ─────────
+SSE_LINE_WAIT = 10   # 다음 줄을 기다리는 시간(초). 넘으면 그 케이스는 FAIL — 무한 대기 없음(매일 06시 점검)
+SSE_CASE_MAX = 30    # 케이스 하나의 최대 시간(초)
+
+
+class _Sse:
+    """SSE 구독 하나. 스레드가 httpx stream을 읽어 큐에 넣는다. 항목: ("status", 코드), ("ev", {id,event,data}), ("eof",), ("err", 클래스명)."""
+
+    def __init__(self, c, path, headers=None):
+        self.q = queue.Queue()
+        self.resp = None
+        self.cl = client(c.cookies)
+        threading.Thread(target=self._run, args=(path, headers or {}), daemon=True).start()
+
+    def _run(self, path, headers):
+        try:
+            with self.cl.stream("GET", path, headers=headers) as r:
+                self.resp = r
+                self.q.put(("status", r.status_code))
+                if r.status_code == 200:
+                    ev = {}
+                    for line in r.iter_lines():
+                        if line == "":
+                            if ev:
+                                self.q.put(("ev", ev)); ev = {}
+                        elif not line.startswith(":") and ":" in line:
+                            k, v = line.split(":", 1); ev[k] = v.lstrip(" ")
+            self.q.put(("eof",))
+        except Exception as e:  # noqa: BLE001 — 우리가 close()한 경우도 여기로 온다
+            self.q.put(("err", type(e).__name__))
+
+    def get(self, dl, wait=SSE_LINE_WAIT):
+        """다음 항목. 줄 타임아웃이나 케이스 시간이 다 되면 None."""
+        try:
+            return self.q.get(timeout=max(0.1, min(wait, dl - time.monotonic())))
+        except queue.Empty:
+            return None
+
+    def close(self):
+        if self.resp is not None:
+            try:
+                self.resp.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _sse_open(s, dl):
+    """(상태 코드, 첫 데이터가 control ping인가)."""
+    st = s.get(dl)
+    if not st or st[0] != "status":
+        return None, False
+    if st[1] != 200:
+        return st[1], False
+    e = s.get(dl)
+    return 200, bool(e and e[0] == "ev" and e[1].get("event") == "control" and json.loads(e[1]["data"]).get("type") == "ping")
+
+
+def _sse_event(s, dl, wait=SSE_LINE_WAIT):
+    """control이 아닌 다음 이벤트(dict). 스트림이 끝났으면 "eof", 시간 초과면 None."""
+    while True:
+        it = s.get(dl, wait)
+        if it is None:
+            return None
+        if it[0] != "ev":
+            return "eof"
+        if it[1].get("event") != "control":
+            return it[1]
+
+
+def _sse_drain(s, dl):
+    """스트림이 닫힐 때까지의 이벤트들과 끝 모양("eof" | None=시간 초과)."""
+    evs = []
+    while True:
+        e = _sse_event(s, dl)
+        if not isinstance(e, dict):
+            return evs, e
+        evs.append(e)
+
+
+def _sse_ready(s, cid, dl):
+    """구독을 열고 200 + ping을 확인한다. 구독 등록이 첫 ping 뒤라 잠깐 기다린다(ping 직후 이벤트를 놓치지 않게)."""
+    st, ping = _sse_open(s, dl)
+    check(f"{cid}.open", st == 200 and ping, "200, 첫 데이터 control ping", f"{st}, ping {ping}")
+    time.sleep(1)
+    return st == 200 and ping
+
+
+def s01():
+    if not BASE_URL:
+        rec("S01", "SKIP", "끝없는 스트림은 HTTP에서만 본다 — 로컬은 realtime 단위 테스트가 덮는다"); return
+    dl = time.monotonic() + SSE_CASE_MAX
+    _, a = user(); mid = new_map(a); path = f"/maps/{mid}/events"
+    s = _Sse(a, path)
+    if not _sse_ready(s, "S01", dl):
+        s.close(); return
+    p1 = add_pin(a, mid, 0).json()["id"]
+    e = _sse_event(s, dl); s.close()
+    live = isinstance(e, dict) and e.get("event") == "pin.created" and json.loads(e["data"]).get("id") == p1 and e.get("id", "").isdigit()
+    check("S01.live", live, f"구독 중 핀 → pin.created 받음(id {e.get('id') if live else ''})", f"받은 것 {e}")
+    if not live:
+        return
+    last = e["id"]
+    # 끊긴 동안 실제로 이벤트가 생겼는지부터 확인한다 — 안 생겼으면 「놓친 이벤트를 받았다」는 빈 통과다
+    added = [add_pin(a, mid, k) for k in (1, 2)]
+    ids = [r.json().get("id") for r in added]
+    have = [p["id"] for p in a.get(f"/maps/{mid}/pins").json()]
+    made = all(r.status_code == 201 for r in added) and all(i in have for i in ids) and p1 in have
+    check("S01.missed_made", made, "끊긴 동안 핀 2개가 실제로 생김", f"{[r.status_code for r in added]}, 지도 핀 {len(have)}개")
+    if not made:
+        return
+    s2 = _Sse(a, path, {"Last-Event-ID": last})
+    st, ping = _sse_open(s2, dl)
+    got = []
+    while st == 200 and len(got) < 2:
+        x = _sse_event(s2, dl)
+        if not isinstance(x, dict):
+            break
+        got.append(x)
+    s2.close()
+    seqs = [int(x["id"]) if x.get("id", "").isdigit() else -1 for x in got]
+    ok = (len(got) == 2 and [x.get("event") for x in got] == ["pin.created"] * 2
+          and [json.loads(x["data"]).get("id") for x in got] == ids and seqs[0] > int(last) and seqs[0] < seqs[1])
+    check("S01.replay", ok, f"놓친 핀 2개가 순서대로 다시 옴(id {seqs}, 기록한 id {last} 뒤)",
+          f"상태 {st}, ping {ping}, 받은 것 {[(x.get('id'), x.get('event')) for x in got]}, 기대 핀 {ids}")
+    # 숫자가 아닌 Last-Event-ID는 무시하고 지금부터 받는다 — 앞의 핀 3개가 다시 오면 안 된다
+    s3 = _Sse(a, path, {"Last-Event-ID": "abc"})
+    if not _sse_ready(s3, "S01.bad_id", dl):
+        s3.close(); return
+    p4 = add_pin(a, mid, 3).json()["id"]
+    # 폴러가 구멍을 기다리며 앞 이벤트(2792·2793)를 늦게 내보낼 수 있다 — 그건 재전송이 아니라서 새 핀이 올 때까지 읽고,
+    # 기록한 id 이하(처음부터 재전송하면 오는 것)가 오지 않았는지 본다. ponytail: 직전 두 핀만 다시 보내는 서버는 못 거른다
+    seen = []
+    while True:
+        x = _sse_event(s3, dl)
+        if not isinstance(x, dict):
+            break
+        seen.append(x)
+        if x.get("event") == "pin.created" and json.loads(x["data"]).get("id") == p4:
+            break
+    s3.close()
+    old = [x.get("id") for x in seen if x.get("id", "").isdigit() and int(x["id"]) <= int(last)]
+    got4 = bool(seen) and seen[-1].get("event") == "pin.created" and json.loads(seen[-1]["data"]).get("id") == p4
+    check("S01.bad_id", got4 and not old, f"숫자가 아닌 Last-Event-ID는 무시 — 기록한 id {last} 이하 재전송 없이 새 핀을 받음",
+          f"새 핀 받음 {got4}, 기록한 id 이하로 온 것 {old}, 받은 것 {[x.get('id') for x in seen]}")
+
+
+def s02():
+    if not BASE_URL:
+        rec("S02", "SKIP", "끝없는 스트림은 HTTP에서만 본다 — 로컬은 realtime 단위 테스트(test_close_on_leave)가 덮는다"); return
+    dl = time.monotonic() + SSE_CASE_MAX
+    # (c) 비구성원은 404
+    _, a = user(); _, n = user(); mid = new_map(a)
+    s = _Sse(n, f"/maps/{mid}/events"); st = s.get(dl); s.close()
+    check("S02.nonmember", st == ("status", 404), "비구성원 구독 404", f"{st}")
+    s = _Sse(n, f"/maps/{mid}/events/me"); st = s.get(dl); s.close()
+    check("S02.nonmember_me", st == ("status", 404), "비구성원 개인 채널 구독 404", f"{st}")
+
+    def joined(owner, mid):
+        uid, b = user(); tok = owner.post(f"/maps/{mid}/invite").json()["token"]
+        assert b.post(f"/invites/{tok}/accept").status_code in (200, 201), "초대 수락 실패"
+        return uid, b
+
+    # (a) 구성원이 나가면 그 구독만 닫힌다
+    buid, b = joined(a, mid)
+    sa, sb = _Sse(a, f"/maps/{mid}/events"), _Sse(b, f"/maps/{mid}/events")
+    if not (_sse_ready(sa, "S02.leave_a", dl) and _sse_ready(sb, "S02.leave_b", dl)):
+        sa.close(); sb.close(); return
+    r = b.delete(f"/maps/{mid}/members/me")
+    evs, end = _sse_drain(sb, dl)
+    check("S02.leave_closed", r.status_code == 204 and end == "eof", f"나간 사람의 구독이 닫힘(받은 이벤트 {[e.get('event') for e in evs]})",
+          f"나가기 {r.status_code}, 끝 모양 {end}(None=닫히지 않음), 이벤트 {[e.get('event') for e in evs]}")
+    e = _sse_event(sa, dl)
+    while isinstance(e, dict) and e.get("event") != "member.left":   # 초대 수락의 member.joined가 늦게 올 수 있다
+        e = _sse_event(sa, dl)
+    left = isinstance(e, dict) and json.loads(e["data"]).get("user_id") == buid
+    after = sa.get(dl, 2)   # 남은 구성원의 구독은 열려 있다 — 2초 동안 닫힘(eof/err)이 없어야 한다
+    check("S02.leave_others_stay", left and (after is None or after[0] == "ev"), "남은 구성원은 member.left를 받고 구독이 그대로", f"받은 것 {e}, 이어서 {after}")
+    sa.close()
+    s = _Sse(b, f"/maps/{mid}/events"); st = s.get(dl); s.close()
+    check("S02.leave_resub", st == ("status", 404), "나간 사람의 재구독 404", f"{st}")
+
+    # (b) 방장이 지도를 지우면 구독자 모두 map.deleted를 받고 닫힌다
+    _, a2 = user(); mid2 = new_map(a2); _, b2 = joined(a2, mid2)
+    subs = {"owner": (a2, _Sse(a2, f"/maps/{mid2}/events")), "member": (b2, _Sse(b2, f"/maps/{mid2}/events"))}
+    if not all(_sse_ready(s, f"S02.del_{k}", dl) for k, (_, s) in subs.items()):
+        for _, s in subs.values():
+            s.close()
+        return
+    r = a2.delete(f"/maps/{mid2}")
+    check("S02.delete", r.status_code == 204, "지도 삭제 204", f"{r.status_code}")
+    for k, (cl, s) in subs.items():
+        evs, end = _sse_drain(s, dl); s.close()
+        names = [e.get("event") for e in evs]
+        deleted = [e for e in evs if e.get("event") == "map.deleted" and json.loads(e["data"]).get("map_id") == mid2]
+        check(f"S02.del_{k}", bool(deleted) and end == "eof" and names[-1] == "map.deleted",
+              f"{k}: map.deleted를 받은 뒤 닫힘", f"{k}: 이벤트 {names}, 끝 모양 {end}(None=닫히지 않음)")
+        s2 = _Sse(cl, f"/maps/{mid2}/events"); st = s2.get(dl); s2.close()
+        check(f"S02.del_{k}_resub", st == ("status", 404), f"{k}: 삭제된 지도 재구독 404", f"{st}")
+
+
 CASES = {"A01": a01_a02, "A03": a03, "A04": a04_a05, "A06": a06_a09, "A10": a10_a12, "A13": a13_a14, "B01": b01_b03,
          "B04": b04_b08, "C01": c01_c05, "L01": l01_l04, "L05": l05_l06, "L02": l02_l03, "L08": l08, "S03": s03_s05, "S06": s06, "R3a": r3_widen_retry, "R3b": r3_concurrent_shortlist, "R3c": r3_search_edges, "R3d": r3_pin_unsupported_and_dup_ui_codes, "R3e": r3_evidence_enforced, "R3f": r3_republish_exclusion, "W01": w01_w07}
 
 CASES["P01"] = p01   # 사전 밖에 둔다 — 다른 PR이 사전 줄을 같이 고쳐도 충돌하지 않게
 for _k, _f in (("B07", b07), ("C02", c02), ("W08", w08_s07), ("W09", w09), ("C06", c06), ("S04", s04), ("B09", b09)):
+    CASES[_k] = _f
+for _k, _f in (("S01", s01), ("S02", s02)):
     CASES[_k] = _f
 for _k, _f in (("L07", l07), ("L09", l09), ("L10", l10), ("W10", w10), ("LOG01", g01)):
     CASES[_k] = _f

@@ -41,7 +41,7 @@ export default function AgentButton({
       >
         <PingoMark size={24} />
         핑고 AI 조언
-        {dot && <span aria-hidden="true" className="absolute -right-1 -top-1 size-3 rounded-full bg-brand-600 ring-2 ring-white" />}
+        {dot && <span aria-hidden="true" className="absolute -right-1 -top-1 size-3 rounded-full bg-[var(--notify-dot)] ring-2 ring-white" />}
       </button>
       {open && <AgentSheet mapId={mapId} onClose={() => setOpen(false)} />}
     </>

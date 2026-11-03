@@ -88,7 +88,7 @@ def test_serves_alcohol_is_restaurant_only_and_cafe_falls_to_unknown_policy():
     assert "serves_alcohol" in constraints.soft_fact_keys_for("음식점")
     check = core.build_check("serves_alcohol", "pass", known=False, value=None, passes=False)
     assert check.passed and check.needs_check and check.confidence == "unknown"
-    assert core.apply_disqualifier_filters([[check]], [("serves_alcohol", True)]) == [True]
+    assert core.apply_disqualifier_filters([[check]]) == [True]
 
 
 def test_late_and_alcohol_are_soft_keys_with_category_free_names():

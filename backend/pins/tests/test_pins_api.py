@@ -397,8 +397,8 @@ def test_delete_pin_concurrent_double_delete_publishes_event_only_once(db_sessio
     row = _insert_pin(db_session, created_by="user_1", place_id="race_delete")
     pin = db_session.get(PinRow, row.id)
 
-    service.delete_pin(db_session, pin)  # 1번 요청 — 실제로 지운다, 이벤트 1건
-    service.delete_pin(db_session, pin)  # 2번 요청(레이스) — rowcount=0, 이벤트 없음
+    service.delete_pin(db_session, pin, deleted_by="user_1", was_confirmed=False)  # 1번 요청 — 실제로 지운다, 이벤트 1건
+    service.delete_pin(db_session, pin, deleted_by="user_1", was_confirmed=False)  # 2번 요청(레이스) — rowcount=0, 이벤트 없음
 
     events = _events(db_session, type="pin.deleted")
     assert len(events) == 1

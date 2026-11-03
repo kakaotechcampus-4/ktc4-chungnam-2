@@ -8,6 +8,11 @@ import time
 import uuid
 
 sys.path.insert(0, ".")
+if len(sys.argv) > 1 and sys.argv[1] == "--readonly-1253":
+    from readonly_1253 import run_readonly
+    run_readonly()
+    sys.exit(0)
+
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 

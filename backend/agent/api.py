@@ -13,7 +13,7 @@ from agent.course import api as course_api
 
 
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
-    """지도 정리(maps.purge, #431)가 부른다 — 이 지도들의 agent_* 7개 테이블 행을 모두 지우고 테이블 이름 → 지운
+    """지도 정리(maps.purge, #431)가 부른다 — 이 지도들의 agent_* 8개 테이블 행을 모두 지우고 테이블 이름 → 지운
     행 수를 돌려준다. 다른 모듈 테이블을 참조하지 않아서 PURGE_STEPS 어디에 둬도 된다. 커밋하지 않는다."""
     return service.purge_map_data(db, map_ids=map_ids)
 

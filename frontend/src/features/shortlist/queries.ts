@@ -5,12 +5,11 @@ import { pinKeys } from '@/features/map/queries'
 import { showToast } from '@/features/shell/toast'
 import { josa } from '@/ui/josa'
 
-import { addToShortlist, calculateRoute, exportShortlist, fetchRoute, fetchShortlist, removeFromShortlist, reorderShortlist } from './api'
-import { sortItems, type ExportFormat, type ShortlistItemDto } from './model'
+import { addToShortlist, exportShortlist, fetchShortlist, removeFromShortlist } from './api'
+import { sortItems, type ExportFormat } from './model'
 
 export const shortlistKeys = {
   list: (mapId: string) => ['shortlist', mapId] as const,
-  route: (mapId: string) => ['shortlist', mapId, 'route'] as const,
 }
 
 export function useShortlistQuery(mapId: string) {
@@ -64,37 +63,6 @@ export function useUnconfirm(mapId: string) {
     })
   }
   return { unconfirm, isPending: remove.isPending }
-}
-
-/** 끌어서 순서 바꾸기. 놓는 순간 화면을 먼저 바꾸고, 실패하면 되돌린다. */
-export function useReorderShortlistMutation(mapId: string) {
-  const queryClient = useQueryClient()
-  const key = shortlistKeys.list(mapId)
-  return useMutation({
-    mutationFn: (items: ShortlistItemDto[]) => reorderShortlist(mapId, items.map((i) => i.id)),
-    onMutate: async (items) => {
-      await queryClient.cancelQueries({ queryKey: key })
-      const before = queryClient.getQueryData<ShortlistItemDto[]>(key)
-      queryClient.setQueryData(key, items.map((item, i) => ({ ...item, visit_order: i })))
-      return { before }
-    },
-    onError: (_err, _items, ctx) => queryClient.setQueryData(key, ctx?.before),
-    onSuccess: (items) => queryClient.setQueryData(key, items),
-  })
-}
-
-/** 동선 계산. 확정 리스트가 바뀌어도 서버는 다시 계산하지 않아서(#30) 동선 보기가 켜져 있으면 FE 가 다시 부른다. */
-export function useRouteMutation(mapId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: () => calculateRoute(mapId),
-    onSuccess: (routes) => queryClient.setQueryData(shortlistKeys.route(mapId), routes),
-  })
-}
-
-/** 지도에 그릴 동선. 「동선 보기」가 켜졌을 때만 본다. */
-export function useRouteQuery(mapId: string, enabled: boolean) {
-  return useQuery({ queryKey: shortlistKeys.route(mapId), queryFn: () => fetchRoute(mapId), enabled })
 }
 
 /**

@@ -114,7 +114,7 @@
 
 API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 설정은 `common/settings.py`의 `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_PRE_PING`, `DB_POOL_RECYCLE_S`, #810). 기본은 풀 5 + 넘침 10, `pool_pre_ping`은 켬이다. 풀은 1 이상, 넘침은 0 이상, 재활용은 -1 또는 1 이상만 받고 그 밖은 기동에서 막는다(0 이하는 SQLAlchemy에서 연결 무제한이다). 이 계산이 DB의 `max_connections`를 넘지 않게 맞춘다.
 
-`환경 2 × 프로세스 1 × (풀 + 넘침) + 작업 여유 ≤ DB max_connections` — 서버 안 DB는 `max_connections`가 60이라 2 × 1 × 15 = 30에 정리·백업·psql 작업 여유가 들어간다. 프로세스(워커)를 늘리면 곱하는 수가 늘어나니 풀 값을 같이 줄인다. RDS는 인스턴스 크기에 따른 `max_connections`를 확인하고 같은 식으로 센다.
+`환경 2 × 프로세스 1 × (풀 + 넘침) + 작업 여유 ≤ DB max_connections` — `deploy/compose.yml`의 API 컨테이너 둘이 각각 `backend/Dockerfile`의 `--workers 1`로 돈다. 기본 상한은 2 × 1 × (5 + 10) = 30이다. 서버 안 DB의 `max_connections=60` 기준으로 남은 30 안에 정리·백업·마이그레이션·psql과 재배포 중 겹치는 프로세스의 연결을 모두 잡는다. 프로세스(워커)를 늘리면 곱하는 수가 늘어나니 풀 값을 같이 줄인다. 현재 RDS에서는 실제 `SHOW max_connections` 결과를 확인하고 같은 식으로 센다(60으로 가정하지 않는다). 별도 명령 프로세스도 자기 풀이 생기므로 명령 개수와 풀 상한을 작업 여유에 포함한다.
 
 ## 스키마를 바꿀 때
 
@@ -168,10 +168,11 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 | 작업 | 명령 | 주기 | 상태 |
 |---|---|---|---|
-| 정기 정리: 지도(삭제 30일 후), 알림(90일), 게스트(90일 미사용), 모델 호출 사용량 `llm_calls`(30일, #870) | `deploy/run.sh <환경> python -m maintenance.run` | 하루 한 번(03:30 운영, 03:40 스테이징) | 서버 cron(`deploy/crontab`) |
+| 정기 정리: 지도, 알림, 게스트, 모델 호출 사용량, 멱등 키, 탈퇴 계정, 이벤트, 삭제된 핀(#1063) | `deploy/run.sh <환경> python -m maintenance.run` | 하루 한 번(03:30 운영, 03:40 스테이징) | 서버 cron(`deploy/crontab`) |
 | 운영 DB 덤프 | `deploy/backup.sh prod` | 하루 한 번(04:00), 14일 보관 | 서버 cron. 운영 배포 직전에도 한다 |
 | v2 계획 보조 에이전트 관찰 | cron이 `python -m agent.tick`을 부른다(#812). 지도마다 lease와 token으로 겹쳐 돌아도 안전하다 | 5분(`docs/agent-v2.md` 12.1) | 서버 cron |
 | agent 일일 정리 | 없음 | 서버 안에서 돈다 | 따로 예약하지 않는다(`backend/maintenance/CLAUDE.md`) |
+| 헬스 체크 경보: 운영·스테이징의 화면(`/`)과 `/api/health` | `.github/workflows/uptime.yml`. 두 번(30초 간격) 다 실패하면 이슈 「[경보] 운영·스테이징 헬스 체크 실패」를 열고, 회복하면 닫는다(#1280) | 10분 안팎(GitHub 예약 실행) | GitHub Actions — 서버 밖에서 본다 |
 | 장소 후기 신고 확인 | 아래 「후기 신고 확인과 숨김」 | 매일(운영) | **사람이 한다.** 신고가 와도 알림이 없다 — 자동 알림은 아직 없다 |
 
 ### 후기 신고 확인과 숨김
@@ -207,6 +208,7 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 | tick당 처리 수와 미룬 지도 수, 걸린 시간 | tick 끝의 로그 한 줄 `agent tick due= observed= deferred_by_max= deferred_by_budget= elapsed_ms=`(#756). 차례였던 지도, 관찰한 수, `TICK_MAX_MAPS`로 미룬 수, 시간 예산으로 미룬 수, 걸린 ms. 시간 예산으로 미룬 지도가 있으면 warning | 미룬 지도가 tick마다 남으면 처리 수나 주기를 바꾼다. 시간 예산으로 미룬 지도가 연속 3 tick이면 본다(#1072). 시간 예산은 150초(`TICK_BUDGET_SEC`)로 두고 이 지표로 본다(#754). 걸린 시간이 lease(180초)를 넘는 tick이 보이면 105초(`LEASE_SEC − 75`)로 낮춘다. 로그는 서버의 `/srv/pingo/logs/agent-tick-<환경>.log`다 |
 | 진단 실패 비율 | `select outcome, count(*) from agent_runs where used_model and trigger in ('activity', 'time') and started_at > now() - interval '1 day' group by 1` 에서 model_failed와 invalid_schema ÷ 전체 | 20% 이상이면 모델 제공자 상태를 본다(#1072). 진단만 실패하고 다른 기능은 돈다. 진단 전체를 끄는 장치는 두지 않았다(`docs/agent-v2.md` 21.3) |
 | 관찰 예외 | `select outcome_detail->>'stage', outcome_detail->>'error', count(*) from agent_runs where outcome = 'error' and started_at > now() - interval '1 day' group by 1, 2` | 1건부터 본다(#1072). 코드 오류다. 그 지도는 30분, 2시간, 6시간 뒤 다시 관찰된다 |
+| 서비스 일일 예산과 웹 확인 | `select date_trunc('day', created_at at time zone 'Asia/Seoul') d, feature, count(*), sum(web_searches), round(sum(cost_krw)) from llm_calls where created_at > now() - interval '7 days' group by 1, 2 order by 1, 2`. 막힌 날은 API 로그의 `llm daily budget paused` | 예산(`LLM_DAILY_BUDGET_KRW`, 3,000원)에 닿는 날이 이어지면 웹 확인 대상(제안당 1줄)이나 예산을 다시 본다. 웹 검색 요금은 OpenAI 대시보드의 web search 줄과 `sum(web_searches)`를 대조한다(#1216). 웹 확인을 끄려면 `LLM_DAILY_BUDGET_KRW=0` 뒤 API 다시 만들기 |
 
 ### 에이전트 개입 라벨링 표본 (#1072)
 
@@ -229,7 +231,7 @@ CSV에는 사유 원문, 구성원 이름, 인용 글, 실시간 핀 검색어�
 
 모델은 2026-11-02부터 OpenAI API를 직접 부른다(`gpt-6-luna`). 환경 변수 이름은 `ELICE_ML_API_*`로 남아 있다. 키를 새로 넣거나 새서 바꿀 때 이 순서로 한다. 환경마다 OpenAI 프로젝트와 키를 따로 쓴다(로컬, 스테이징, 운영).
 
-1. OpenAI 플랫폼에서 그 환경 프로젝트의 새 키를 만든다. 키는 만들 때 한 번만 보인다. 프로젝트마다 월 예산 한도를 걸어 둔다. 서비스 전체 일일 상한이 코드에 없어 이것이 유일한 지출 방어선이다(`docs/agent-v2.md` 19절).
+1. OpenAI 플랫폼에서 그 환경 프로젝트의 새 키를 만든다. 키는 만들 때 한 번만 보인다. 프로젝트마다 월 예산 한도를 걸어 둔다. 코드의 서비스 일일 예산(`LLM_DAILY_BUDGET_KRW`, 하루 3,000원)은 넘으면 웹 확인만 끄고 진단, 현황 문단, 추천, AI 코스는 그대로 부른다(`docs/agent-v2.md` 19절). 그래서 모든 호출을 막는 지출 방어선은 이 프로젝트 한도뿐이다.
 2. 서버 Session Manager에서 `bash`로 바꾼 뒤(기본 셸이 sh라 `read -s`가 안 된다) 키가 화면과 기록에 남지 않게 넣는다. `<환경>`은 `staging` 또는 `prod`다.
    ```
    bash
@@ -261,8 +263,8 @@ CSV에는 사유 원문, 구성원 이름, 인용 글, 실시간 핀 검색어�
 
 - 모델 제공자를 OpenAI 직접 호출로 바꾼 뒤(#1120) 정하지 않은 것: 사유 글이 미국 OpenAI로 가는 데 따른 개인정보 국외 이전 고지(`최종기획안.md` 12절, 개인정보처리방침), 결제 주체(개인 카드인지 팀 계정인지), 운영 전환 시기. 운영은 아직 엘리스 때의 설정이다.
 - `event_log` 오래된 행 삭제: 읽기는 24시간으로 자르지만(`realtime.service.RETENTION`) 지우는 작업은 아직 없다. `created_at` 인덱스는 삭제용으로 있다. 정기 정리(`maintenance.run`)에 단계로 넣을지 정한다.
-- 세션 쿠키의 `Secure`는 설정 `COOKIE_SECURE`가 정한다(#810). 기본은 staging, prod에서 켬이고 dev, test에서 끔이다. 아직은 설정 정의만 끝났다. 실제 쿠키에 Secure를 거는 일(`settings.cookie_secure` 사용)은 auth 후속이고, 그때 응답의 `Set-Cookie`도 검증한다. 로컬 http로 staging을 띄워 하네스를 돌릴 때만 `COOKIE_SECURE=0`으로 끈다. 배포된 서버의 env에는 적지 않는다.
-- staging, prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`에 더해 `PLACES_MODE=real`이면 카카오 키(`KAKAO_CLIENT_ID/SECRET/REDIRECT_URI`), `LLM_MODE=real`이면 `ELICE_ML_API_BASE_URL`, `ELICE_ML_API_KEY`가 비었을 때 서버를 세운다(#810). 2026-11-02부터 이 두 값은 OpenAI 주소와 프로젝트 키다. 이름만 ELICE로 남았다(#1120).
-- `/places/nearest`의 쿼리스트링(누른 좌표)은 uvicorn 접근 로그에서만 가린다(`places/logguard.py`). 앞단 Caddy는 접근 로그를 켜지 않는다(`deploy/Caddyfile`, #473). 켜야 하면 쿼리스트링을 지우는 형식으로 켠다.
+- auth의 세션·state·선택 대기 쿠키의 `Secure`는 모두 `settings.cookie_secure`를 쓴다(#810). `COOKIE_SECURE` 기본은 staging, prod에서 켬이고 dev, test에서 끔이다. 응답의 `Set-Cookie`는 `auth/tests/test_cookie_secure.py`에서 검증한다. 로컬 http로 staging을 띄워 하네스를 돌릴 때만 `COOKIE_SECURE=0`으로 끈다. 배포 서버에서는 기본값을 유지한다.
+- staging, prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`에 더해 실제 어댑터의 키가 비거나 공백뿐이면 `ConfigError`로 막는다(#810). `PLACES_MODE=real`일 때 `PLACES_SOURCES`에 `kakao`가 있으면 `KAKAO_REST_API_KEY`(비면 `KAKAO_CLIENT_ID`로 폴백), `naver`가 있으면 `NAVER_SEARCH_CLIENT_ID`와 `NAVER_SEARCH_CLIENT_SECRET`이 필요하다. 선택하지 않은 소스의 키는 요구하지 않는다. 로그인용 `KAKAO_CLIENT_SECRET`, `KAKAO_REDIRECT_URI`는 장소 어댑터 키가 아니며 로그인 설정은 별도로 채운다. `LLM_MODE=real`이면 `ELICE_ML_API_BASE_URL`, `ELICE_ML_API_KEY`가 필요하다(2026-11-02부터 이 두 값은 OpenAI 주소와 프로젝트 키이고 이름만 ELICE로 남았다, #1120). dev, test에서는 키 없이도 기동한다. 오류에는 누락된 변수 이름만 담고 키 값은 담지 않는다.
+- uvicorn 접근 로그는 모든 경로의 쿼리스트링(code·state·검색어·좌표)을 지우고 초대 토큰 경로는 `/invites/{token}`으로 바꿔 찍는다. DB 오류의 예외 로그는 SQL 매개변수 없이 종류와 호출 위치만 남긴다(`common/logguard.py`, #473, #1201). Dockerfile의 uvicorn 실행 인자는 바꾸지 않았다. 앞단 Caddy는 접근 로그를 켜지 않는다(`deploy/Caddyfile`, #473). 켜야 하면 쿼리스트링을 지우는 형식으로 켠다.
 - 비로그인 `GET /invites/{token}`에는 호출 상한이 없다. 토큰이 256비트라 추측은 비현실적이지만, 넣을지 정한다(#168).
 - 개발 중 로컬 DB에 쌓인 카카오 좌표와 이름은 배포 전에 지운다(`docs/architecture.md`, #53). 배포 DB를 로컬 DB에서 복사하지 않는다.

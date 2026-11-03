@@ -128,3 +128,31 @@ def test_patch_rejects_what_the_spec_forbids_with_validation_error(app_client, b
     map_id = _create_map(app_client)
     resp = _patch(app_client, map_id, body)
     assert (resp.status_code, resp.json()["code"]) == (422, "VALIDATION_ERROR")
+
+
+def test_date_change_notifies_shortlist_in_same_transaction(app_client, db_session, monkeypatch):
+    from maps import service
+
+    map_id = _create_map(app_client)
+    calls = []
+
+    def unassign(db, *, map_id, start_date, end_date):
+        calls.append((db, map_id, start_date, end_date))
+        return 0
+
+    monkeypatch.setattr(service.shortlist_api, "unassign_outside_dates", unassign)
+    assert _patch(app_client, map_id, {"title": "새 이름"}).status_code == 200
+    assert calls == []
+    assert _patch(app_client, map_id, {"end_date": "2026-10-11"}).status_code == 200
+    assert calls == [(db_session, map_id, date(2026, 10, 10), date(2026, 10, 11))]
+    assert _updated_events(db_session, map_id)[-1].payload["end_date"] == "2026-10-11"
+
+
+def test_invalid_date_change_does_not_notify_shortlist(app_client, monkeypatch):
+    from maps import service
+
+    map_id = _create_map(app_client)
+    calls = []
+    monkeypatch.setattr(service.shortlist_api, "unassign_outside_dates", lambda *args, **kwargs: calls.append(1))
+    assert _patch(app_client, map_id, {"end_date": "2026-10-09"}).status_code == 422
+    assert calls == []

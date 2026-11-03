@@ -14,7 +14,7 @@ from common.geo import Point
 from maps import api as maps_api
 from pins import api as pins_api
 from shortlist import core, routing, service
-from shortlist.schemas import Route, ShortlistItem
+from shortlist.schemas import Route, Schedule, ShortlistItem
 
 
 def confirm_pin(db, *, pin, principal) -> ShortlistItem:
@@ -65,11 +65,17 @@ def export_shortlist(db, *, map_id: str, principal, fmt: str) -> tuple[str, str,
     """GET /maps/{mapId}/shortlist/export(#471) — (본문, media_type, Content-Disposition). 읽기만 하고
     확정 순서(service.list_items)대로 pins.api로 핀을 받아 core의 순수 함수로 직렬화한다."""
     rows = []
-    for order, item in enumerate(service.list_items(db, map_id=map_id), start=1):
+    previous_date = object()
+    order = 0
+    for item in service.list_items(db, map_id=map_id):
+        if item.scheduled_date != previous_date:
+            order = 0
+            previous_date = item.scheduled_date
+        order += 1
         pin = pins_api.get_pin_response_for_viewer(
             db, pin_id=str(item.pin_id), viewer_id=principal.user_id, principal=principal,
         )
-        rows.append(core.to_export_row(order, pin))
+        rows.append(core.to_export_row(order, pin, item.scheduled_date.isoformat() if item.scheduled_date else ""))
     disposition = core.export_content_disposition(maps_api.get_map_title(db, map_id), fmt)
     if fmt == "csv":
         return core.render_csv(rows), "text/csv; charset=utf-8", disposition
@@ -103,3 +109,26 @@ def recalculate_route(db, *, map_id: str) -> list[Route]:
     saved_routes = [core.to_route_response(row) for row in service.list_routes(db, map_id=map_id)]
     record_event(db, core.route_recalculated_event(map_id, saved_routes))
     return saved_routes
+
+
+def schedule(db, *, map_id, principal, update=None):
+    from common.errors import AppError
+
+    if not maps_api.lock_map_if_alive(db, map_id):
+        raise AppError("NOT_FOUND")
+    map_info = maps_api.get_map_for_agent(db, map_id)
+    start, end = map_info["start_date"], map_info["end_date"]
+    service.lock_shortlist(db, map_id)
+    if update is None:
+        rows = service.list_items(db, map_id=map_id)
+    else:
+        rows = service.replace_schedule(db, map_id=map_id, start_date=start, end_date=end,
+                                        version=update.version, groups=update.groups)
+    items = []
+    for row in rows:
+        pin = pins_api.get_pin_response_for_viewer(db, pin_id=str(row.pin_id), viewer_id=principal.user_id, principal=principal)
+        items.append(core.to_shortlist_item_response(row, pin, principal))
+    if update is not None:
+        for item in items:
+            record_event(db, core.shortlist_changed_event(item, "reordered"))
+    return Schedule(start_date=start, end_date=end, version=service.schedule_version(start, end, rows), items=items)
