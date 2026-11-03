@@ -233,6 +233,64 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
     expect(await screen.findByRole('heading', { name: '우리 데이터' })).toBeInTheDocument()
   })
 
+  describe('웹 요약(#1217, agent-v2 6.8)', () => {
+    type Web = NonNullable<typeof unknownFact.web>
+    const found: Web = {
+      status: 'found',
+      notice: null,
+      statements: [
+        { text: '가게 앞에 차 두세 대를 댈 수 있다고 적혀 있어요', source_url: 'https://blog.example.com/123', source_name: 'blog.example.com' },
+        { text: '근처 공영주차장을 쓰라는 글이 있어요', source_url: 'http://cafe.example.org/p/9', source_name: 'cafe.example.org' },
+      ],
+      checked_at: '2026-11-03T12:00:00+09:00',
+    }
+    const factLines = () => [...screen.getByRole('heading', { name: '우리 데이터' }).parentElement!.querySelectorAll(':scope > ul > li')]
+
+    it('found는 「확인되지 않음」 머리 + 서버 문장 그대로 + 문장마다 출처 이름 링크(새 탭)', () => {
+      setup(state({ ...split, facts: [facts[0], { ...unknownFact, web: found }] }))
+      const block = screen.getByRole('heading', { name: 'AI 웹 요약 · 확인되지 않음' }).parentElement!
+      for (const s of found.statements) {
+        expect(screen.getByText(s.text)).toBeInTheDocument()
+        const link = screen.getByRole('link', { name: `${s.source_name}에서 보기, 새 탭` })
+        expect(link).toHaveTextContent(s.source_name)
+        expect(link).toHaveAttribute('href', s.source_url)
+        expect(link).toHaveAttribute('target', '_blank')
+        expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+      }
+      // 판정 아이콘·색을 붙이지 않는다(2절 3번 예외 — 결론·판정 없음).
+      expect(block.querySelector('.lucide-check, .lucide-x, [class*="good"], [class*="bad"]')).toBeNull()
+    })
+
+    it('웹 요약은 web이 있는 그 줄 아래에만 붙는다', () => {
+      setup(state({ ...split, facts: [facts[0], { ...unknownFact, web: found }] }))
+      const [plain, withWeb] = factLines()
+      expect(plain).not.toHaveTextContent('확인되지 않음')
+      expect(plain.querySelector('a')).toBeNull()
+      expect(withWeb).toHaveTextContent('이 주차할 수 있는 곳인지 몰라요')
+      expect(withWeb).toHaveTextContent('AI 웹 요약 · 확인되지 않음')
+    })
+
+    it.each([['not_found' as const], ['paused' as const]])('%s는 서버 notice 글을 그대로 한 줄 — 화면이 문구를 적지 않는다', (status) => {
+      // 실제 문구가 아닌 글을 줘서 화면이 자기 문구로 바꾸지 않는지 본다.
+      const notice = `서버가 보낸 ${status} 안내 글`
+      setup(state({ ...split, facts: [{ ...unknownFact, web: { status, notice, statements: [], checked_at: found.checked_at } }] }))
+      expect(screen.getByText(notice)).toBeInTheDocument()
+      expect(screen.queryByText(/확인되지 않음|웹에서도 찾지 못했어요|웹 확인을 쉬고/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    })
+
+    it.each([
+      ['web이 없는 줄', unknownFact],
+      ['statements가 빈 found', { ...unknownFact, web: { ...found, statements: [] } }],
+    ])('%s은 블록이 없다', (_, line) => {
+      setup(state({ ...split, facts: [line] }))
+      const [only] = factLines()
+      expect(only).toHaveTextContent(/^우리 데이터로는 성수 카페이 주차할 수 있는 곳인지 몰라요$/)
+      expect(screen.queryByText(/확인되지 않음/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    })
+  })
+
   it('목 서버 시드 지도는 현황 문단을 보낸다', async () => {
     setup()
     expect(await screen.findByRole('region', { name: '지금 지도 현황' })).toBeInTheDocument()
