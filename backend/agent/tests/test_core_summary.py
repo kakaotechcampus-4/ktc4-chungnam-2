@@ -387,3 +387,24 @@ def test_edited_reason_counts_as_new_even_with_the_same_reaction_id():
     assert core.summary_changes(snap(pins=[p], reactions=rs, reasons=edited(3)), "음식점", _meta("음식점", ids)) == 3
     # 다시 만든 뒤(요약 시각이 고친 시각 뒤)에는 더 세지 않는다
     assert core.summary_changes(snap(pins=[p], reactions=rs, reasons=edited(3)), "음식점", _meta("음식점", ids, at=NOW)) is None
+
+
+# ---------------------------------------------------------------- 실패한 카테고리는 뒤로 미룬다 (#1187)
+
+def _two_due():
+    """음식점(사유 4개 — 더 많이 바뀜)과 카페(사유 3개)가 모두 갱신 대상."""
+    p1, rs1, re1 = _reasons("음식점", n=4)
+    p2, rs2, re2 = _reasons("카페", n=3, start=10)
+    return snap(pins=[p1, p2], reactions=rs1 + rs2, reasons=re1 + re2)
+
+
+def test_failed_category_is_deferred_so_the_other_one_is_updated():
+    s = _two_due()
+    assert core.pick_summary(s, []) == ("음식점", True)                       # 평소엔 더 많이 바뀐 쪽
+    assert core.pick_summary(s, [], failed={"음식점"}) == ("카페", True)        # 실패했으면 다른 쪽이 먼저
+
+
+def test_failed_category_is_retried_when_nothing_else_is_due():
+    p, rs, reasons = _reasons("음식점", n=1)
+    s = snap(pins=[p], reactions=rs, reasons=reasons)
+    assert core.pick_summary(s, [], failed={"음식점"}) == ("음식점", False)
