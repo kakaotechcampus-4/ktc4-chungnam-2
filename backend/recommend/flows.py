@@ -445,7 +445,8 @@ def _evidence_response(
         id=str(line.id), author_id=line.author_id, author_display_name=author_names.get(line.author_id),
         text=line.text, badge=line.badge,
         fact_key=line.fact_key, fact_label=constraints.FACT_LABELS.get(line.fact_key) if line.fact_key else None,
-        wants=line.wants, enforced=use.enforced, not_enforced_reason=use.not_enforced_reason, is_active=line.is_active,
+        wants=line.wants, enforced=use.enforced, not_enforced_reason=use.not_enforced_reason,
+        filters_candidates=use.filters_candidates, is_active=line.is_active,
         permissions=Permissions(can_disable=can(principal, "evidence.disable", resource)),
     )
 
@@ -1222,6 +1223,7 @@ def _applied_evidence_responses(db: Session, run: RecommendRun, principal: Princ
             text=entry["text"], badge=entry["badge"], fact_key=entry["fact_key"],
             fact_label=constraints.FACT_LABELS.get(entry["fact_key"]) if entry["fact_key"] else None,
             wants=entry["wants"], enforced=entry["enforced"], not_enforced_reason=entry["not_enforced_reason"],
+            filters_candidates=entry.get("filters_candidates"),   # 이 값이 생기기 전 스냅샷은 null
             is_active=entry["is_active"], permissions=Permissions(can_disable=can(principal, "evidence.disable", resource)),
         ))
     return responses
