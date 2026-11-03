@@ -38,6 +38,7 @@ NO_REACTION_DAILY_LIMIT = 1        # 지도당
 CATEGORY_GAP_MIN_CONFIRMED = 2
 
 SUMMARY_NEW_REASONS = 3
+SUMMARY_FAILED_RETRY = timedelta(minutes=30)   # 요약 ②가 실패한 카테고리를 다시 시도하기까지의 간격(#1187). 그 동안 다른 카테고리가 먼저 갱신된다
 
 FACT_LINES_MAX = 2   # 우리 데이터 확인(6.6, #1168) — 한 제안에 붙는 줄 수 상한. AgentSuggestion.facts maxItems와 같다
 

@@ -28,7 +28,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from agent import core
-from agent.constants import AGENT_RUNS_RETENTION_DAYS, ERROR_RETRY_DELAYS, LEASE_SEC, SUGGESTION_TTL
+from agent.constants import (
+    AGENT_RUNS_RETENTION_DAYS, ERROR_RETRY_DELAYS, LEASE_SEC, SUGGESTION_TTL, SUMMARY_FAILED_RETRY,
+)
 from agent.models import (
     AgentCursor,
     AgentMapStatus,
@@ -260,7 +262,19 @@ def load_history(db: Session, map_id: str, now: datetime) -> core.History:
         ),
         model_runs_today=model_runs_today,
         summaries=tuple(core.summary_meta(r.category, r.summary, r.updated_at) for r in list_summaries(db, map_id)),
+        summary_failed=_recent_summary_failures(db, map_id, now),
     )
+
+
+def _recent_summary_failures(db: Session, map_id: str, now: datetime) -> frozenset[str]:
+    """최근 SUMMARY_FAILED_RETRY 안에 ②가 실패해(trigger=summary, outcome=model_failed) 요약을 못 만든 카테고리(#1187)."""
+    rows = db.execute(
+        select(AgentRun.outcome_detail).where(
+            AgentRun.map_id == map_id, AgentRun.trigger == "summary", AgentRun.outcome == "model_failed",
+            AgentRun.started_at >= now - SUMMARY_FAILED_RETRY,
+        )
+    ).scalars().all()
+    return frozenset(d["category"] for d in rows if d and d.get("category"))
 
 
 def _last_status_hash(db: Session, map_id: str) -> str | None:

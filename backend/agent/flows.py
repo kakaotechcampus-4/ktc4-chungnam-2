@@ -562,7 +562,8 @@ def update_summary(
     읽기는 도구처럼 짧은 세션으로 하고(사유는 pins에서 다시 읽는다 — 삭제된 핀의 사유 포함), ②는 세션 없이 부른다(12.6).
     저장은 지도 제안과 별도 트랜잭션이다. 문구가 고정이라 모델 사용 상한을 보지 않고 used_model=false로 남긴다."""
     rules_version = llm_api.plan_evidence_rules_version()
-    category, more = core.pick_summary(snap, hist.summaries, rules_version=rules_version)
+    category, more = core.pick_summary(
+        snap, hist.summaries, rules_version=rules_version, failed=hist.summary_failed)
     if category is None:
         return None
     started = time.monotonic()
