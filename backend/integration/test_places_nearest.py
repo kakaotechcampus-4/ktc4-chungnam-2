@@ -7,8 +7,9 @@ import pytest
 from sqlalchemy import text
 
 from auth.testing import session_cookie
+from common import logguard
 from main import app  # noqa: F401
-from places import api as places_api, logguard, repository
+from places import api as places_api, repository
 from places.models import Place
 from places.ratelimit import SlidingWindowLimiter
 
@@ -130,8 +131,8 @@ def test_coordinates_are_not_logged_or_stored(client, db_session, caplog):
     assert db_session.execute(text("SELECT count(*) FROM places")).scalar_one() == before   # 쓰기 없음
 
 
-def test_uvicorn_access_log_drops_the_query_string_of_nearest_only():
-    f = logguard.StripQueryFilter()
+def test_uvicorn_access_log_drops_the_query_string():
+    f = logguard.MaskRequestFilter()
 
     def line(path):
         rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
@@ -142,7 +143,7 @@ def test_uvicorn_access_log_drops_the_query_string_of_nearest_only():
     redacted = line("/places/nearest?lat=37.5445&lng=127.0561")
     assert "37.5445" not in redacted and "127.0561" not in redacted and "[redacted]" in redacted
     assert "37.5445" not in line("/api/places/nearest?lat=37.5445&lng=127.0561")   # 배포의 --root-path /api
-    assert "q=%EC%84%B1" in line("/places/search?q=%EC%84%B1")   # 다른 경로는 그대로
+    assert "%EC%84%B1" not in line("/places/search?q=%EC%84%B1")   # 모든 경로의 쿼리를 지운다(#1201)
     assert line("/places/nearest") == '127.0.0.1:1 - "GET /places/nearest HTTP/1.1" 200'
 
 

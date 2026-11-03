@@ -41,10 +41,12 @@
 | `PLACES_UNAVAILABLE` | 503 | 지도 API 검색이 전부 실패(키 없음·장애·호출 상한, #180) | "지금은 장소를 검색할 수 없어요. 잠시 뒤 다시 시도해 주세요" / 좌표로 찍기는 계속 가능 |
 | `RECOMMEND_FAILED` | 500 | 추천 파이프라인 실패 | "조건이 까다로워서가 아니에요" + "남긴 것은 그대로 있어요" |
 | `SHORTLIST_CATEGORY_EMPTY` | 200(빈 배열) | 확정 분류에 항목 없음 | "이 분류에는 확정된 곳이 없어요" |
+| `SHORTLIST_STALE` | 409 | 확정 일정 저장 중 조회한 version이 현재 일정과 다름 | 일정을 다시 조회하고 변경을 확인한다 |
+| `SHORTLIST_SCHEDULED` | 409 | 날짜가 배정된 확정 항목이 있어 기존 전체 순서 변경을 거부 | schedule API로 날짜별로 편집한다 |
 | `UNAUTHORIZED` | 401 | 인증 실패 | 전역 인터셉터 + next 파라미터 리다이렉트 |
 | `FORBIDDEN` | 403 | 권한 없는 액션 (permissions.md 범위 밖) | 해당 버튼이 애초에 disabled여야 함 — 403이 보이면 FE 버그 신호 |
 | `IDEMPOTENCY_CONFLICT` | 409 | 동일 Idempotency-Key로 다른 바디 요청 | 재시도 로직 버그 신호. 첫 적용처는 `POST /maps/{mapId}/runs`(#811, #48) |
-| `VALIDATION_ERROR` | 422 | 요청 형식·필수값 오류 | 폼 필드 오류 표시 — FE 버그 신호 |
+| `VALIDATION_ERROR` | 422 | 요청 형식·필수값 오류. `detail.errors[]`는 `{loc, msg, type}`만, 입력값은 싣지 않는다(#1161) | 폼 필드 오류 표시 — FE 버그 신호 |
 | `NOT_FOUND` | 404 | 없는 경로·없는 리소스 | 전역 404 |
 | `INTERNAL_ERROR` | 500 | 미처리 서버 예외 | 전역 에러 화면 |
 

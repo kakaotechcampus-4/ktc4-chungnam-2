@@ -8,7 +8,6 @@
 모델 호출(backend/llm/CLAUDE.md)에 대응하는 스키마만 담는다:
   ②    PlanningOutput (사유 → 실격/선호/반경 구조화)
   ③-a-1 PlaceFactLabel (장소 라벨링)
-  ③-b   RankedCandidate (선호 순위)
   v2 에이전트 DiagnosisOutput, AgentCallFailed (docs/agent-v2.md 11.1, #532), AgentUsage·AgentReply(#564).
        PriorityOutput은 #582에서, RunAdviceOutput은 #749에서 지웠다(우선순위와 추천 막힘 조언은 agent의 코드)
   v2 동선 에이전트 CourseTurn (drafts/agent-route-v2.md 11.1, #334), 목표 세우기 CourseGoalSet, 지휘 턴 CourseDirectTurn
@@ -182,14 +181,6 @@ class PlaceFactLabel(BaseModel):
         return self
 
 
-class RankedCandidate(BaseModel):
-    """③-b 선호 순위 채점 출력. 입력은 이미 실격 통과분이며, 이 스키마는 순위만 매긴다."""
-
-    place_id: str
-    rank: int
-    member_comment: Optional[str] = None  # 근거 없으면 None (5-7-1) — 지어내지 않는다
-
-
 # ---------- v2 계획 보조 에이전트 — 모델 출력 (docs/agent-v2.md 11.1, #532) ----------
 # agent_diagnose의 구조화 출력 스키마다. agent/schemas.py(#513)의 같은 이름 클래스와 필드가 같다 —
 # 하나로 합치는 일(agent가 여기서 가져가기)은 #533이 한다. 모델은 숫자를 문장에 직접 쓰지 않고 claim을 슬롯({c1.value},
@@ -256,6 +247,23 @@ class DiagnosisOutput(BaseModel):
     claims: list[Claim]
     advice: list[AdviceLine]
     actions: list[Action]
+
+
+# ---- 지도 현황 문단 (#1168, docs/agent-v2.md 8.2) ----
+# 입력은 agent의 core.status_cells가 센 칸(사실)뿐이다. 모델은 카테고리마다 상태를 고르고 문단을 쓴다. 상태가 사실과
+# 어긋나는지, 문단의 숫자가 칸에 있는지, 먼저 볼 카테고리를 지켰는지는 agent의 core.verify_status가 본다 — 여기서는 스키마까지다.
+
+StatusState = Literal["decided", "almost", "split_left", "stalled", "few", "gathering", "empty"]
+
+
+class StatusCategory(BaseModel):
+    category: str  # 칸의 카테고리 이름 그대로. 빠뜨리거나 두 번 쓰면 검증에서 떨어진다
+    state: StatusState
+
+
+class StatusOutput(BaseModel):
+    categories: list[StatusCategory]
+    paragraph: str  # 2~4문장, 해요체. 숫자는 칸의 값만
 
 
 AgentFailureReason = Literal["invalid_schema", "timeout", "call_failed"]

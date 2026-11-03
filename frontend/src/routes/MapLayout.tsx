@@ -4,6 +4,8 @@ import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Route, Sear
 
 import AgentButton from '@/features/agent/AgentButton'
 import { ImportSheetHost } from '@/features/kakaoImport/ImportSheet'
+import { SchedulePanelHost } from '@/features/shortlist/SchedulePanel'
+import { useScheduleOpen } from '@/features/shortlist/scheduleStore'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { mapTapAction } from '@/features/map/mapTap'
 import { usePinSelection } from '@/features/map/usePinSelection'
@@ -20,12 +22,13 @@ import { useAiStore } from '@/features/recommend/aiStore'
 import { useResultQuery } from '@/features/recommend/queries'
 import { isLinkInput } from '@/features/search/model'
 import { useSourcePlacesQuery } from '@/features/search/queries'
-import { toRouteDrawings } from '@/features/shortlist/model'
-import { useRouteQuery } from '@/features/shortlist/queries'
+import { scheduleDrawing } from '@/features/shortlist/model'
 import { useRouteStore } from '@/features/shortlist/routeStore'
+import { routeDay } from '@/features/shortlist/schedule'
+import { useTripSchedule } from '@/features/shortlist/useTripSchedule'
 import { useCourseMapStore } from '@/features/course/courseMapStore'
 import { useSearchStore } from '@/features/search/searchStore'
-import { PANEL_W, RAIL_W, TAB_BAR_H } from '@/features/shell/layout'
+import { PANEL_W, RAIL_W, SIDE_PANEL_W, TAB_BAR_H } from '@/features/shell/layout'
 import MapControls, { type ControlKey } from '@/features/shell/MapControls'
 import { backAriaLabel, usePanelBackStore } from '@/features/shell/panelBack'
 import ProfileModal, { ProfileMenu } from '@/features/shell/ProfileModal'
@@ -73,16 +76,18 @@ export default function MapLayout() {
   // 마커와 목록이 같은 필터를 본다. 확정·코스 탭은 확정 핀만, 다른 탭엔 필터가 없어 전부 보인다.
   const pins = onConfirmedTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters, memberCount)
   const routeOn = useRouteStore((s) => s.on) && onShortlistTab
-  const routes = useRouteQuery(mapId, routeOn).data
+  const routeChosen = useRouteStore((s) => s.day)
+  // 일정은 이 화면이 늘 기간·확정 리스트에 맞춰 둔다(빠진 장소가 있으면 확정 탭이 알린다).
+  const trip = useTripSchedule(mapId)
   const course = useCourseMapStore()
-  // 확정 탭은 「동선 보기」 선을, AI 코스 탭은 이 지도의 코스(#683) 선을 긋는다 — 한 화면에 둘이 겹치지 않는다.
-  const routeDrawings = useMemo(
-    () =>
-      onShortlistTab ? (routeOn && routes ? toRouteDrawings(routes, allPins) : [])
-      : onCourseTab && course.mapId === mapId ? course.days
-      : [],
-    [onShortlistTab, routeOn, routes, allPins, onCourseTab, course.mapId, course.days, mapId],
-  )
+  // 확정 탭은 「동선 보기」로 고른 날의 일정 순서대로, AI 코스 탭은 이 지도의 코스(#683) 선을 긋는다 — 한 화면에 둘이 겹치지 않는다.
+  const routeDrawings = useMemo(() => {
+    if (onShortlistTab) {
+      const day = routeOn ? routeDay(trip.schedule, trip.dates, routeChosen) : null
+      return day ? [scheduleDrawing(trip.schedule.days[day] ?? [], allPins)] : []
+    }
+    return onCourseTab && course.mapId === mapId ? course.days : []
+  }, [onShortlistTab, routeOn, routeChosen, trip.schedule, trip.dates, allPins, onCourseTab, course.mapId, course.days, mapId])
   const markingStage = useSheetStore((s) => s.stages.map)
   const setStage = useSheetStore((s) => s.setStage)
   const search = useSearchStore()
@@ -338,7 +343,9 @@ export default function MapLayout() {
   // 넓은 화면의 지도 영역 왼쪽 끝 — 패널을 접어도 탭 줄은 남는다.
   const mapLeft = desktop ? (panelSettled ? panelW : RAIL_W) : 0
   // 지도 위 덧칠(칩·« 손잡이)은 패널 가장자리를 따라 같이 미끄러진다.
-  const overlayLeft = panelOpen ? panelW : RAIL_W
+  // 「일정 짜기」 옆 패널이 열려 있으면 지도 위 토스트·버튼·칩이 그 오른쪽으로 비킨다(패널이 가리지 않게).
+  const sideOpen = useScheduleOpen(mapId) && onShortlistTab && desktop
+  const overlayLeft = (panelOpen ? panelW : RAIL_W) + (sideOpen ? SIDE_PANEL_W : 0)
 
   return (
     <>
@@ -533,6 +540,8 @@ export default function MapLayout() {
       {profileOpen && !desktop && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
       {/* 카톡 가져오기 시트는 탭 화면 밖 한 자리에서 그린다 — 목록 머리가 바뀌어도 함께 사라지지 않게(#1045). */}
       <ImportSheetHost mapId={mapId} />
+      {/* 확정 탭 「일정 짜기」 패널(넓은 화면만) — 탭을 떠나면 닫힌다. */}
+      {onShortlistTab && desktop && <SchedulePanelHost mapId={mapId} />}
     </>
   )
 }

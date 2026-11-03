@@ -17,12 +17,11 @@ from auth.schemas import CurrentUser
 from common.database import get_db_session
 from common.errors import AppError
 from common import categories, geo
-from places import api, logguard, matching
+from places import api, matching
 from places.schemas import ExternalSearch, LinkParseResult, PlaceHint, PlaceSearchResult
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["places"])
-logguard.install()   # /places/nearest의 좌표가 uvicorn 접근 로그에 남지 않게 한다(#473)
 
 class LinkParseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")

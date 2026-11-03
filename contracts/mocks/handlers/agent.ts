@@ -50,6 +50,7 @@ export const agentHandlers = [
       active_suggestion: entry?.suggestion ?? null,
       has_unseen: !!entry && !entry.viewed_by.includes(ME_USER_ID),
       summaries: store.agentSummaries[mapId] ?? [],
+      status: store.agentStatus[mapId] ?? null, // 지도 현황 문단(#1152, docs/agent-v2.md 8.2)
     });
   }),
 
