@@ -4,6 +4,7 @@ import { useMeQuery } from '@/features/auth/queries'
 
 import { acceptInvite, createInvite, createMap, deleteMap, fetchInvites, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, fetchTrash, leaveMap, restoreMap, revokeInvite, transferOwner, updateMap } from './api'
 import { ApiError } from '@/api'
+import { forgetImport } from '@/features/kakaoImport/queries'
 
 import { inviteProblem, toInviteRowView, toInviteView, toMapHeaderView, toMapListView, toMemberView, toTrashView, type InviteDto, type MapCreateRequest, type MapDto, type MapUpdateRequest } from './model'
 
@@ -56,6 +57,8 @@ function useLeaveCleanup() {
     queryClient.removeQueries({ queryKey: mapKeys.detail(mapId) })
     queryClient.removeQueries({ queryKey: ['pins', mapId] })
     queryClient.removeQueries({ queryKey: ['shortlist', mapId] })
+    // 그 지도의 카톡 가져오기 목록도 버린다(#1045).
+    forgetImport(mapId)
     void queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true })
   }
 }

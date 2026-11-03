@@ -8,6 +8,7 @@
 에이전트 진단과 추천 막힘 조언(#587)은 도구를 쓴다. gpt-6-luna는 chat.completions에서 도구를 reasoning_effort="none"일 때만
 받는다(그 밖의 값은 400 "Function tools with reasoning_effort are not supported", 2026-10-15 확인). 그래서 이 두 호출은
 reasoning_effort="none"을 넘긴다. 신호 순위 호출(agent_prioritize)은 #582에서 지웠다 — 순위는 agent의 코드 규칙이다.
+지도 현황 문단(agent_status, #1168)은 도구 없이 구조화 출력만 받고 reasoning_effort="none"이다(#1152 실험 3과 같은 설정).
 """
 
 import json
@@ -23,12 +24,13 @@ from openai import APITimeoutError, OpenAI
 from common.settings import settings
 from llm import usage as usage_log
 from llm.prompts import (
-    AGENT_DIAGNOSE_PROMPT_VERSION, COURSE_DIRECT_PROMPT, COURSE_DIRECT_PROMPT_VERSION,
+    AGENT_DIAGNOSE_PROMPT_VERSION, AGENT_STATUS_PROMPT, AGENT_STATUS_PROMPT_VERSION, COURSE_DIRECT_PROMPT, COURSE_DIRECT_PROMPT_VERSION,
     COURSE_GOALS_PROMPT, COURSE_GOALS_PROMPT_VERSION, COURSE_TURN_PROMPT, COURSE_TURN_PROMPT_VERSION,
     PLAN_EVIDENCE_PROMPT,
 )
 from llm.schemas import (
     AgentFailureReason, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, PlanningOutput,
+    StatusOutput,
 )
 
 # POST /runs 요청 안에서 동기로 도는 호출이라 길게 기다리지 않는다. 재시도도 안 한다 —
@@ -276,6 +278,23 @@ def call_agent_diagnosis_turn(
         client, messages, tools=tools, tool_choice=tool_choice, turn=turn,
         what="에이전트 진단", prompt_version=AGENT_DIAGNOSE_PROMPT_VERSION, response_format=DiagnosisOutput,
     )
+
+
+def call_agent_status(client: Any, status_input: Mapping[str, Any]) -> StatusOutput:
+    """지도 현황 문단 한 번(#1168, agent-v2 8.2). 도구 없이 구조화 출력만 받는다. reasoning_effort="none"은 #1152 실험 3과 같은
+    설정이다(약 0.1원·2초). 입력은 코드가 센 칸이고 JSON 문자열로만 넘긴다(프롬프트에 섞지 않는다)."""
+    message = _agent_parse(
+        client, call="agent_status", what="지도 현황 문단", context="status", prompt_version=AGENT_STATUS_PROMPT_VERSION,
+        messages=[
+            {"role": "system", "content": AGENT_STATUS_PROMPT},
+            {"role": "user", "content": json.dumps(dict(status_input), ensure_ascii=False, default=str)},
+        ],
+        reasoning_effort="none",
+        response_format=StatusOutput,
+    )
+    if message.parsed is None:  # 도구를 주지 않았는데 도구 호출만 왔다
+        raise LlmCallError("지도 현황 문단 응답이 비어 있다", reason="invalid_schema")
+    return message.parsed
 
 
 def call_course_turn(client: Any, turn_input: Mapping[str, Any], *, turn: int) -> CourseTurn:

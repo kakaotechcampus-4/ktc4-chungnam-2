@@ -1,6 +1,6 @@
 import type { components } from '@pingo/contracts/src/types/api'
 
-import { FILTER_CATEGORIES, isPlaced, type Pin } from '@/features/map/model'
+import { FILTER_CATEGORIES, isPlaced, type Pin, type PinCreateRequest } from '@/features/map/model'
 
 export type PlaceSearchResultDto = components['schemas']['PlaceSearchResult']
 export type LinkParseResultDto = components['schemas']['LinkParseResult']
@@ -71,4 +71,23 @@ export function toSearchResult(r: PlaceSearchResultDto, center: LatLng | null, p
     far: center !== null && distanceM(center, r) > FAR_M,
     dto: r,
   }
+}
+
+/**
+ * 검색 결과로 자체 DB 핀을 만드는 요청(#191). 결과는 매칭 힌트로 그대로 되돌려 보낸다 — 서버가 같은 자체 DB 장소를 찾는다.
+ * 분류를 모르면 요청을 채울 수 없다(category 필수). 검색 화면과 카톡 가져오기(#1046)가 같이 쓴다.
+ */
+export function searchPinRequest(r: PlaceSearchResultDto): PinCreateRequest | null {
+  if (!r.category) return null
+  return { source: 'search', place_id: r.place_id, place_name: r.place_name, lat: r.lat, lng: r.lng, category: r.category }
+}
+
+/**
+ * 자체 DB에 없는 카카오 장소를 실시간 핀으로 남기는 요청(#382). 서버에는 카카오 장소 ID·검색어·메모·분류만 보낸다 — 이름·좌표는 저장하지 않는다.
+ * 음식점·카페·관광지만 된다. `query`는 지도를 열 때 위치를 다시 찾는 검색어다.
+ */
+export function livePinRequest(r: PlaceSearchResultDto, query: string, memo?: string): PinCreateRequest | null {
+  const category = r.category
+  if (!category || !FILTER_CATEGORIES.includes(category) || !query) return null
+  return { source: 'live', category, kakao_place_id: r.place_id, search_query: query.slice(0, 100), ...(memo ? { memo } : {}) }
 }

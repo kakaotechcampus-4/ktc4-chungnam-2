@@ -39,6 +39,8 @@ CATEGORY_GAP_MIN_CONFIRMED = 2
 
 SUMMARY_NEW_REASONS = 3
 
+FACT_LINES_MAX = 2   # 우리 데이터 확인(6.6, #1168) — 한 제안에 붙는 줄 수 상한. AgentSuggestion.facts maxItems와 같다
+
 BLOCKED_RUN_MAX_RESULTS = FEW_RESULTS   # 결과가 이 값 미만이면 추천 막힘. 값은 recommend가 정한다(#800)
 BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS = 3   # 또는 같은 사람이 같은 카테고리 run을 이 값 이상 만들었으면 (초안)
 # 재시도 상한(attempt_no)은 개인 단위, 카테고리 무관, 10회다(#31, 2026-10-15 5→10회). attempt_no로 세면 다른 카테고리

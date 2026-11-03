@@ -38,7 +38,7 @@
 | `recommend_run` | 1 | 0~n (글 사유 10줄당 1) | 모델을 안 부르는 실행도 1. 누르기 전에 값이 정해진다 |
 | `course` | 1 | 2~6 (평균 3) | |
 | `evidence_add` | 0 (가격표에 없음) | 1 이상 | 「+」 근거 추가. run당 글 10개(`recommend/core.py`의 `MANUAL_EVIDENCE_LIMIT`, 넘으면 409 `EVIDENCE_LIMIT`)가 남용을 막는다 |
-| `agent_diagnose`, `agent_summary` | 0 (가격표에 없음) | — | 서버 백그라운드. 지도 하루 상한(구성원 수 × 4) 유지 |
+| `agent_diagnose`, `agent_summary`, `agent_status` | 0 (가격표에 없음) | — | 서버 백그라운드. 진단은 지도 하루 상한(구성원 수 × 4) 유지, 지도 현황 문단(`agent_status`, #1168)은 그 상한에 세지 않고 서비스 일일 예산(agent-v2 19절)이 본다 |
 
 다른 모듈은 가격 숫자를 들지 않는다. `credits.api.charge(feature=...)`만 부른다. 화면은 가격과 보상을 `GET /credits/me`로 받고 숫자를 적지 않는다.
 
