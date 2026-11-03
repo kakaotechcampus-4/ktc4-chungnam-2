@@ -9,6 +9,7 @@ Loaded(resource, obj)만 본다.
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Depends, Path
@@ -17,6 +18,9 @@ from sqlalchemy.orm import Session
 from auth.deps import get_current_user
 from auth.schemas import CurrentUser
 from authz.core import Resource
+from common.errors import AppError
+from authz.deps import get_membership_gateway
+from authz.ports import MembershipGateway
 from pins import service
 from pins.deps import get_db_session
 from pins.models import Pin as PinRow
@@ -37,5 +41,22 @@ def load_pin(
     return LoadedPin(
         resource=Resource(type="pin", map_id=row.map_id,   # ← URL이 아니라 읽은 행에서(authz Rule A)
                           author_id=row.created_by, kind=row.kind),
+        obj=row,
+    )
+
+
+def load_trashed_pin(
+    pinId: str = Path(...),
+    db: Session = Depends(get_db_session),
+    user: CurrentUser = Depends(get_current_user),
+    gateway: MembershipGateway = Depends(get_membership_gateway),
+) -> LoadedPin:
+    """복구(#1013)용 — 지운 핀도 읽는다(없거나 30일이 지난 핀은 404). 남이 찍은 지운 핀은 방장이 아니면 존재를 알리지 않으려
+    403이 아니라 404로 막는다(휴지통 목록이 그 핀을 보여 주지 않는 것과 같다). 지우지 않은 핀의 403은 그대로다."""
+    row: PinRow = service.get_trashed_or_live_pin_or_404(db, pinId, now=datetime.now(timezone.utc))
+    if row.deleted_at is not None and row.created_by != user.user_id             and gateway.get_role(row.map_id, user.user_id) != "owner":
+        raise AppError("NOT_FOUND")
+    return LoadedPin(
+        resource=Resource(type="pin", map_id=row.map_id, author_id=row.created_by, kind=row.kind),
         obj=row,
     )

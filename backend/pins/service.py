@@ -9,6 +9,7 @@
 
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import get_args
@@ -16,7 +17,7 @@ from typing import get_args
 from geoalchemy2 import Geometry
 from sqlalchemy import and_, cast, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import Session
 
 from auth import api as auth_api
@@ -663,6 +664,64 @@ def delete_pin(db: Session, pin: PinRow, *, deleted_by: str, was_confirmed: bool
         return
 
     record_event(db, core.pin_deleted_event(str(pin.id), pin.map_id))
+
+
+def get_trashed_or_live_pin_or_404(db: Session, pin_id: str, *, now: datetime) -> PinRow:
+    """복구용 조회(#1013) — 지운 핀도 읽는다. 없거나 정리 대상(30일 지남)이면 404 NOT_FOUND."""
+    try:
+        pin_uuid = uuid.UUID(pin_id)
+    except ValueError:
+        raise AppError("NOT_FOUND") from None
+    row = db.execute(select(PinRow).where(PinRow.id == pin_uuid)).scalar_one_or_none()
+    if row is None or (row.deleted_at is not None and not core.is_restorable(row.deleted_at, now)):
+        raise AppError("NOT_FOUND")
+    return row
+
+
+def restore_pin(
+    db: Session, pin: PinRow, principal: Principal, current_member_ids: set[str], *, now: datetime,
+    on_confirmed_restore: Callable[[], None],
+) -> Pin:
+    """휴지통에서 핀을 되살린다(#864). 삭제 때 확정이었다면 핀이 되살아난 직후 on_confirmed_restore()를 부른다(호출부가
+    shortlist에 맡긴다 — 핀 kind가 확정으로 돌아온 뒤 응답과 pin.restored 이벤트를 만든다). 이미 복구된 핀이면 같은 핀을 그대로(이벤트 없음).
+    행을 잠그고 다시 읽어 정리(purge)·동시 복구와 겹쳐도 한 번만 되살린다. 휴지통에 있는 동안 같은 장소의 새 핀이
+    생겼다면 409 PIN_DUPLICATE(detail.pin_id = 지금 지도에 있는 핀)."""
+    try:
+        db.refresh(pin, with_for_update=True)
+    except InvalidRequestError:    # 잠그려는 사이 정리가 행을 지웠다
+        raise AppError("NOT_FOUND") from None
+    if pin.deleted_at is None:
+        return _viewer_pin_response(db, pin, principal, current_member_ids)
+    if not core.is_restorable(pin.deleted_at, now):
+        raise AppError("NOT_FOUND")
+
+    was_confirmed = bool(pin.deleted_was_confirmed)
+    if pin.source == "db" and pin.place_id is not None:   # 같은 가게의 실시간 핀은 DB 유니크가 아니라 조회로 막는다(#569)
+        live_id = _find_live_pin_for_place(db, pin.map_id, pin.place_id, exclude_pin_id=pin.id)
+        if live_id is not None:
+            raise AppError("PIN_DUPLICATE", detail={"pin_id": live_id})
+    pin.deleted_at = None
+    pin.deleted_by = None
+    pin.deleted_was_confirmed = None
+    try:
+        with db.begin_nested():
+            db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        sqlstate = getattr(exc.orig, "pgcode", None)
+        message = str(exc.orig)
+        if sqlstate == "23505" and "uq_pins_map_place" in message:
+            raise AppError("PIN_DUPLICATE", detail={"pin_id": _find_existing_pin_id(db, pin.map_id, pin.place_id)}) from exc
+        if sqlstate == "23505" and "uq_pins_map_kakao_place" in message:
+            raise AppError("PIN_DUPLICATE", detail={"pin_id": _find_existing_live_pin_id(db, pin.map_id, pin.kakao_place_id)}) from exc
+        raise
+
+    if was_confirmed:
+        on_confirmed_restore()
+        db.refresh(pin)
+    restored = _viewer_pin_response(db, pin, principal, current_member_ids)
+    record_event(db, core.pin_restored_event(restored))
+    return restored
 
 
 def _reaction_counts_for_pin(db: Session, pin_id: uuid.UUID) -> core.ReactionCounts:
