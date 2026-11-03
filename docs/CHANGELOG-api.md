@@ -2,6 +2,16 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-04, `CourseRun`에 일정 기준 모드와 고칠 점 카드 추가, stale는 일정 version 기준으로 (#1237)
+
+- 결정(#1237, 2026-11-04): AI 코스 버튼은 하나이고 확정 리스트의 일정 상태에 따라 하는 일이 다르다. 서버가 요청 때 정하고 응답의 `mode`로 알려 준다 — `plan`(날짜에 넣은 장소 없음, 짜기) · `fill`(일부만 넣음, 남은 곳 채우기) · `review`(다 넣음, 점검과 최소 수정). 사람이 날짜에 넣은 장소는 AI가 바꾸지 않고, 일정은 사람이 카드마다 「반영」을 누를 때만 바뀐다.
+- `CourseRun`에 필수 칸 4개를 더했다: `mode`, `headline`(결과 화면 머리 문구, 모드별 서버 템플릿, 진행 중·failed는 null), `fixes[]`(고칠 점 카드), `checked[]`(점검했고 문제 없는 항목 — 「괜찮아요」). `plan`은 `fixes`·`checked`가 빈 배열이다. 새 스키마는 `CourseFix`, `CourseMove`, `CourseChecked`다.
+- `CourseFix`: `id`, `kind`(`closed`·`travel`·`member`·`goal`·`cluster`·`meal`·`unassigned`), `strength`(`hard`·`soft`), `text`(문제 문장), `moves[]`(`{pin_id, from_date, to_date}` — 날 맞바꾸기는 두 날의 모든 장소, 1곳 옮기기는 1개, 2곳 맞바꾸기는 2개, `from_date` null은 아직 날짜에 안 넣은 장소), `resolved_text`(풀리는 것), `remaining_text`(남는 것), `not_fixed_reason`(고치지 않은 이유). 고치지 않기로 한 카드는 `moves`가 비고 `not_fixed_reason`만 있다. 반영은 서버 API가 아니다 — FE가 `GET /maps/{mapId}/shortlist/schedule`로 지금 일정을 읽어 `moves`대로 옮기고 같은 응답의 `version`과 함께 `PUT`으로 저장한다. 그동안 일정이 바뀌어 409 `SHORTLIST_STALE`이 오면 「일정이 바뀌었어요」 + 「다시 점검」이다. 날 맞바꾸기에서 첫날·마지막 날을 빼지 않는다(도착·출발 데이터가 없다).
+- `CourseRun.stale`: 요청 때 저장한 일정 `version`과 지금 `version`이 다르면 true다(이전에는 확정 핀 집합만 비교). 장소를 더하거나 빼도, 날짜나 순서를 옮겨도, 여행 기간이 바뀌어도 true다. 화면 문구는 「일정이 바뀌었어요」(기존 「확정 리스트가 바뀌었어요」). `POST /maps/{mapId}/courses` 요약에도 모드를 적었다.
+- 요청·에러 코드는 그대로다. 크레딧은 모드와 상관없이 코스 1번에 1이다.
+- FE: `CourseRun`의 새 칸은 필수라 목 서버가 모든 run에 싣는다. 목 서버는 확정 리스트의 일정 상태로 모드를 정하고(`contracts/mocks/handlers/course.ts`), review는 날 맞바꾸기 1·1곳 옮기기 1·고치지 않음 1 카드를 예시로 낸다. 카드를 반영해 일정 PUT을 하면 목 서버의 코스는 stale이 된다.
+- 서버 구현은 backend/agent/course 후속 PR이다. 그 전까지 실서버 응답에는 새 칸이 없다(계약 테스트 `KNOWN_COURSE_DRIFT`에 #1237로 적었다) — FE는 `mode`가 없으면 plan으로 그린다.
+
 ## 2026-11-03, AI 코스 작업 기록 단계와 목표 설명을 지금 서버에 맞춤 (#1131, #1243)
 
 - `CourseStep.stage` 설명을 서버가 실제로 내는 값으로 바꿨다: 찾기·옮겨 보기·비교·결정·가정을 더하고 질문·답을 뺐다(#1131에서 되묻기를 없앴다). 값은 자유 문자열 그대로라 응답 모양은 바뀌지 않는다. 화면은 모르는 값이 와도 깨지지 않게 그린다(#1243).
