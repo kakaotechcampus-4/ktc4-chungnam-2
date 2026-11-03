@@ -234,6 +234,11 @@ def pin_updated_event(pin: Pin) -> Event:
     return Event(map_id=pin.map_id, channel="public", type="pin.updated", payload=_public_pin_payload(pin))
 
 
+def pin_restored_event(pin: Pin) -> Event:
+    """docs/events.md pin.restored — 지운 핀 복구(#864). 페이로드는 pin.created와 같은 Pin이다."""
+    return Event(map_id=pin.map_id, channel="public", type="pin.restored", payload=_public_pin_payload(pin))
+
+
 def pin_deleted_event(pin_id: str, map_id: str) -> Event:
     """docs/events.md pin.deleted — 페이로드는 {pin_id}뿐이다."""
     return Event(map_id=map_id, channel="public", type="pin.deleted", payload={"pin_id": pin_id})
