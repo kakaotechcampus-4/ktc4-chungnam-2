@@ -164,6 +164,13 @@ class TestOverlappingNames:
 def test_general_request_endings_are_not_leftover():
     assert G.leftover_pieces("첫날 N서울타워 방문하고 싶어요", ["첫날 N서울타워"]) == []
     assert G.leftover_pieces("첫날 N서울타워 가고 싶어요", ["첫날 N서울타워"]) == []
+    assert G.leftover_pieces("첫날 N서울타워 가보고 싶어요", ["첫날 N서울타워"]) == []
+
+
+def test_constraints_stay_unmatched():
+    """맨낱말 「방문」은 지우지 않는다 — 금지·제한·부정이 든 조각은 의미 있는 제약이라 말없이 사라지면 안 된다."""
+    for tail in ("방문 금지", "방문 제한", "가고 싶지 않아요", "방문하고 싶지 않아요", "방문 말고 다른 데"):
+        assert G.leftover_pieces(f"첫날 N서울타워 {tail}", ["첫날 N서울타워"]) == [tail], tail
 
 
 def test_greetings_are_not_leftover():

@@ -253,7 +253,10 @@ def goals_input(trip: Trip, request_text: str, candidates: Sequence[MapCandidate
 
 
 _PIECE_SPLIT = re.compile(r"[,.;!?·\n]|그리고")
-_FILLER = re.compile(r"방문하고|방문해|방문|가보고|가\s?보고|가고|가서|들르고|둘러보고|감사합니다|감사해요|고맙습니다|고마워요|안녕하세요|잘 ?부탁(?:드립니다|드려요|해요)|해\s?주세요|해줘요?|부탁(?:해요|드려요|드립니다)?|짜\s?주세요|짜줘요?|싶어요|싶고|싶다|했으면|좋겠어요|좋겠고|코스|일정|여행|그리고|또|저는|우리는|이번|으로|에서|에는|에도|까지|부터|[은는이가을를에도와과로의]")
+_FILLER = re.compile(r"(?:방문|들르|둘러보|가보|가\s?보|가)(?:해|하)?고 ?싶(?:어요|어|다|습니다|은데요?)|감사합니다|감사해요|고맙습니다|고마워요|안녕하세요|잘 ?부탁(?:드립니다|드려요|해요)|해\s?주세요|해줘요?|부탁(?:해요|드려요|드립니다)?|짜\s?주세요|짜줘요?|싶어요|싶고|싶다|했으면|좋겠어요|좋겠고|코스|일정|여행|그리고|또|저는|우리는|이번|으로|에서|에는|에도|까지|부터|[은는이가을를에도와과로의]")
+
+# 요청 어미 군말은 "~하고 싶어요" 꼴로 확인될 때만 지운다. 이런 말이 든 조각은 의미 있는 제약이라 통째로 남긴다(「방문 금지」, 「가고 싶지 않아요」).
+_CONSTRAINT = re.compile(r"금지|제한|말고|빼고|빼줘|빼 |제외|안 |않|못|싫|하지 ?마|가지 ?마")
 
 
 def leftover_pieces(request_text: str, covered: Sequence[str]) -> list[str]:
@@ -271,7 +274,8 @@ def leftover_pieces(request_text: str, covered: Sequence[str]) -> list[str]:
     out: list[str] = []
     for part in _PIECE_SPLIT.split(rest):
         piece = part.strip()
-        if len(re.findall(r"[가-힣]", _FILLER.sub("", piece))) >= 3 and piece in request_text:
+        shown = piece if _CONSTRAINT.search(piece) else _FILLER.sub("", piece)     # 금지·제한·부정이 든 조각은 군말을 지우지 않는다
+        if len(re.findall(r"[가-힣]", shown)) >= 3 and piece in request_text:
             out.append(piece)
     return out
 
