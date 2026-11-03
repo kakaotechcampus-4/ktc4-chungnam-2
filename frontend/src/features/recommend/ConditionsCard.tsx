@@ -4,13 +4,11 @@ import ErrorText from '@/ErrorText'
 import PingoLoading from '@/ui/PingoLoading'
 
 import EvidenceGroups from './EvidenceGroups'
-import type { EvidenceLineDto, RecommendRunDto } from './model'
+import { visibleConditionCount, type EvidenceLineDto, type RecommendRunDto } from './model'
 import { useEvidenceQuery } from './queries'
 
 /** 조건 줄(꼭·선호). 참고(원문 인용)는 조건이 아니다. */
 const isCondition = (l: EvidenceLineDto) => l.is_active && l.badge !== 'reference'
-/** 그중 이번 추천이 실제로 거르거나 순위에 쓴 줄 — 접힌 줄의 「조건 N개」는 이것만 센다(쓰이지 않는 줄은 펼치면 따로 보인다, #742). */
-const isUsed = (l: EvidenceLineDto) => isCondition(l) && l.enforced !== false
 
 /**
  * 「이 조건으로 찾았어요」(#849) — 결과 위 접힌 카드. 이번 결과에 실제 쓴 조건(applied_evidence 스냅숏)을 보여 주고,
@@ -39,7 +37,7 @@ export default function ConditionsCard({
   const pending = (l: EvidenceLineDto) => applied !== undefined && isCondition(l) && !appliedIds.has(l.id)
   const removed = applied === undefined ? [] : lines.filter((l) => !l.is_active && appliedIds.has(l.id))
   const changed = lines.filter(pending).length + removed.length
-  const count = (applied ?? lines).filter(isUsed).length
+  const count = visibleConditionCount(applied ?? lines) // 쓰인 줄만, 칩과 같은 묶음으로(#742·#1143)
 
   return (
     <section className="rounded-xl border border-ink-200 bg-white">
@@ -47,7 +45,7 @@ export default function ConditionsCard({
         type="button"
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
-        className="flex w-full items-start gap-2 p-3 text-left"
+        className="press flex w-full items-start gap-2 rounded-xl p-3 text-left"
       >
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-bold text-ink-900">

@@ -32,8 +32,8 @@
 |---|---|---|
 | 카카오 **REST API 키** | 카카오 로그인 + 장소 검색 | 3절 `KAKAO_CLIENT_ID` |
 | 카카오 **Client Secret** | 카카오 로그인 확인 | 3절 `KAKAO_CLIENT_SECRET` |
-| 엘리스 **주소**(BASE URL) | AI 서버 주소 | 3절 `ELICE_ML_API_BASE_URL` |
-| 엘리스 **키** | AI가 사람 말을 조건으로 정리 | 3절 `ELICE_ML_API_KEY` |
+| AI **주소**(BASE URL, `https://api.openai.com/v1`) | OpenAI 서버 주소 | 3절 `ELICE_ML_API_BASE_URL` |
+| OpenAI **키** | AI가 사람 말을 조건으로 정리(2026-11-02부터 엘리스가 아니라 OpenAI 프로젝트 키) | 3절 `ELICE_ML_API_KEY` |
 | 카카오 **JavaScript 키** | 지도 그리기 | 4절 `VITE_KAKAO_MAP_KEY` |
 
 > 🔒 **이 키들은 절대 공개하지 마세요.** 깃허브·디스코드 공개 채널·스크린샷·이슈에 붙이면 안 됩니다. 아래 `.env` 파일은 깃이 자동으로 무시하니 거기에만 적으세요.
@@ -79,8 +79,8 @@ notepad .env
 ```
 KAKAO_CLIENT_ID=여기에_REST_API_키
 KAKAO_CLIENT_SECRET=여기에_Client_Secret
-ELICE_ML_API_BASE_URL=여기에_엘리스_주소
-ELICE_ML_API_KEY=여기에_엘리스_키
+ELICE_ML_API_BASE_URL=https://api.openai.com/v1
+ELICE_ML_API_KEY=여기에_OpenAI_키
 ```
 
 (`.env`에서 채울 곳은 이 4줄뿐입니다. 지도 키는 4절 프론트에서 넣습니다.)
@@ -227,7 +227,7 @@ npm run dev
 | 로그인 후 「로그인하지 못했어요」 | 위 카카오 오류 중 하나이거나 내 계정 문제 | 서버 창의 `kakao login failed: reason=...` 한 줄을 팀 리드에게 보여 준다 |
 | 지도가 회색이거나 「지도를 불러오지 못했어요」 | 지도 키가 없다 | `frontend\.env.local`의 `VITE_KAKAO_MAP_KEY`를 확인하고 **`npm run dev`를 껐다 켠다** |
 | 장소 검색이 「쓸 수 없어요」 | `KAKAO_CLIENT_ID`가 비었거나 틀렸다 | `.env`를 확인하고 서버를 껐다 켠다 |
-| 추천이 실패하거나 AI가 안 읽는다 | 엘리스 키가 틀렸거나 만료됐다(서버 창에 `401`) | 팀 리드에게 새 키를 받는다 |
+| 추천이 실패하거나 AI가 안 읽는다 | AI 키가 틀렸거나 지워졌다(서버 창에 `401`) | 팀 리드에게 새 키를 받는다 |
 | 핀이 안 찍히고 「아직 지원하지 않는 장소예요」 | 우리 데이터에 없는 가게다 | 정상입니다. `docs/demo-guide.md` 장면 3의 가게를 **이름 그대로** 검색한다 |
 | 아무것도 없는데 `.env` 수정이 안 먹는다 | 서버가 옛 설정으로 돌고 있다 | 서버 창에서 `Ctrl + C`로 끄고 다시 켠다 |
 

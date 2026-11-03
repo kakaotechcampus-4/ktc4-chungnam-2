@@ -5,9 +5,11 @@ import { ApiError } from '@/api'
 import {
   evidenceLimitMessage,
   groupEvidence,
+  hasExcluded,
   noResultsExternalSearch,
   notEnforcedNote,
   toReadinessCards,
+  visibleConditionCount,
   type EvidenceLineDto,
 } from './model'
 
@@ -65,11 +67,27 @@ describe('추천이 쓰지 않는 근거 줄(#742)', () => {
   })
 })
 
+describe('「조건 N개」는 화면에 보이는 조건 수(#1143)', () => {
+  const pref = (id: string) => line(id, 'preferred', { fact_label: '양식', wants: true })
+  it('같은 키·방향 두 줄은 1개, 다른 키 두 줄은 2개', () => {
+    expect(visibleConditionCount([pref('a'), pref('b')])).toBe(1)
+    expect(visibleConditionCount([pref('a'), line('b', 'preferred', { fact_label: '국물', wants: true })])).toBe(2)
+  })
+})
+
 describe('「+」 직접 추가 상한(#720)', () => {
   it('숫자는 응답 detail.limit 에서 가져오고, 다른 오류는 null', () => {
     const limitErr = (detail?: Record<string, unknown>) => new ApiError(409, { code: 'EVIDENCE_LIMIT', message: 'x', detail })
     expect(evidenceLimitMessage(limitErr({ limit: 10, used: 10 }))).toBe('직접 추가는 10개까지예요')
     expect(evidenceLimitMessage(limitErr())).toBe('직접 추가는 더 할 수 없어요')
     expect(evidenceLimitMessage(err('VALIDATION_ERROR'))).toBeNull()
+  })
+})
+
+describe('후보를 다 보여 준 뒤의 안내(#1142)', () => {
+  it('excluded 단계가 0보다 크면 참, 0이거나 key가 없으면 거짓', () => {
+    expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 13 }])).toBe(true)
+    expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 0 }])).toBe(false)
+    expect(hasExcluded([{ label: '이미 제안·거절됨', removed_count: 13 }])).toBe(false)
   })
 })

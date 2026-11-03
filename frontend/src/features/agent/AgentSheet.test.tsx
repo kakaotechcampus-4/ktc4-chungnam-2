@@ -137,3 +137,104 @@ describe('우리 조건 요약(#589)', () => {
     expect(s.has_unseen).toBe(false)
   })
 })
+
+describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
+  const paragraph = '카페는 거의 정해졌고, 음식점은 갈린 곳 하나만 남았어요. 출발이 5일 남았으니 음식점부터 보면 좋겠어요.'
+  const withStatus: AgentStateDto = { ...state(null), status: { paragraph, updated_at: '2026-11-03T00:00:00Z' } }
+  const facts: AgentSuggestionDto['facts'] = [
+    {
+      fact_key: 'parking',
+      value: 'yes',
+      segments: [{ kind: 'text', text: '우리 데이터: ' }, { kind: 'pin', pin_id: 'p1', text: '성수 카페' }, { kind: 'text', text: '은 주차할 수 있는 곳으로 나와요' }],
+    },
+    {
+      fact_key: 'quiet',
+      value: 'no',
+      segments: [
+        { kind: 'text', text: '우리 데이터: ' },
+        { kind: 'pin', pin_id: 'p1', text: '성수 카페' },
+        { kind: 'text', text: '은 조용한 곳이 아니라고 나와요. 데이터가 틀릴 수 있어요' },
+      ],
+    },
+  ]
+  const unknownFact: NonNullable<AgentSuggestionDto['facts']>[number] = {
+    fact_key: 'parking',
+    value: 'unknown',
+    segments: [{ kind: 'text', text: '우리 데이터로는 ' }, { kind: 'pin', pin_id: 'p1', text: '성수 카페' }, { kind: 'text', text: '이 주차할 수 있는 곳인지 몰라요' }],
+  }
+
+  it('현황 문단은 모드 스위치 아래, 제안보다 위에 「AI」 배지와 서버 문단 그대로', () => {
+    setup({ ...withStatus, active_suggestion: split })
+    const section = screen.getByRole('region', { name: '지금 지도 현황' })
+    expect(section).toHaveTextContent('AI')
+    expect(screen.getByText(paragraph)).toBeInTheDocument()
+    // 문서 순서: 현황 문단 → 제안 제목.
+    const title = screen.getByText('의견이 갈린 핀이 있어요')
+    expect(section.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it.each([
+    ['없음', state(null)],
+    ['null', { ...state(null), status: null }],
+  ])('현황이 %s이면 자리를 두지 않는다', (_, s) => {
+    setup(s)
+    expect(screen.queryByRole('region', { name: '지금 지도 현황' })).not.toBeInTheDocument()
+    expect(screen.getByText('지금은 따로 드릴 제안이 없어요')).toBeInTheDocument()
+  })
+
+  it('모드가 꺼져 있으면 「꺼져 있어요」 한 줄만 — 현황 문단도 없다', () => {
+    setup({ ...withStatus, settings: { enabled: false, updated_by: null, updated_at: null } })
+    expect(screen.getByText(/꺼져 있어요/)).toBeInTheDocument()
+    expect(screen.queryByText(paragraph)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['없음', undefined],
+    ['빈 목록', []],
+  ])('facts가 %s이면 「우리 데이터」를 그리지 않는다', (_, f) => {
+    setup(state({ ...split, facts: f }))
+    expect(screen.queryByText('우리 데이터')).not.toBeInTheDocument()
+  })
+
+  it('facts 두 줄은 행동 버튼 위에 조각대로 잇고, 핀 이름은 핀 모양, 판정 문구를 더하지 않는다', () => {
+    setup(state({ ...split, facts }))
+    const head = screen.getByRole('heading', { name: '우리 데이터' })
+    const lines = head.parentElement!.querySelectorAll('li')
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toHaveTextContent('우리 데이터: 성수 카페은 주차할 수 있는 곳으로 나와요')
+    expect(lines[1]).toHaveTextContent(/^우리 데이터: 성수 카페은 조용한 곳이 아니라고 나와요\. 데이터가 틀릴 수 있어요$/)
+    expect(lines[0].querySelector('strong')).toHaveTextContent('성수 카페')
+    const button = screen.getByRole('button', { name: '갈린 핀 보기' })
+    expect(head.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  const lineIcons = () =>
+    [...screen.getByRole('heading', { name: '우리 데이터' }).parentElement!.querySelectorAll('li')].map((li) => li.querySelector('svg')!.getAttribute('class'))
+
+  it('참·거짓은 같은 「데이터」 아이콘 — ✓·✕로 판정하지 않는다(#1182)', () => {
+    setup(state({ ...split, facts }))
+    const [yes, no] = lineIcons()
+    expect(yes).toContain('lucide-database')
+    expect(no).toBe(yes)
+    expect(document.querySelector('.lucide-check, .lucide-x')).toBeNull()
+  })
+
+  it('모름만 물음표 아이콘(#1182)', () => {
+    setup(state({ ...split, facts: [facts[0], unknownFact] }))
+    const [yes, unknown] = lineIcons()
+    expect(yes).toContain('lucide-database')
+    expect(unknown).toMatch(/lucide-circle-(help|question-mark)/)
+  })
+
+  it('agent.suggested 로 온 제안의 facts도 다시 부르지 않고 그린다', async () => {
+    const { client } = setup(state(null))
+    const on = agentEventHandlers(client, MAP)
+    on['agent.suggested'](new MessageEvent('message', { data: JSON.stringify({ ...split, facts }) }))
+    expect(await screen.findByRole('heading', { name: '우리 데이터' })).toBeInTheDocument()
+  })
+
+  it('목 서버 시드 지도는 현황 문단을 보낸다', async () => {
+    setup()
+    expect(await screen.findByRole('region', { name: '지금 지도 현황' })).toBeInTheDocument()
+  })
+})

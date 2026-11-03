@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 /** 바텀시트 3단계(최종기획안 4절). 1 = 접힘(손잡이·제목만), 2 = 절반, 3 = 전체. */
 export type SheetStage = 1 | 2 | 3
-export type TabKey = 'map' | 'recommend' | 'shortlist'
+export type TabKey = 'map' | 'recommend' | 'shortlist' | 'course'
 
 type SheetState = {
   /** 탭마다 마지막 단계를 기억한다(FE 회의) — 탭을 오가도 시트가 매번 2단계로 튀지 않게. */
@@ -20,7 +20,7 @@ type SheetState = {
 }
 
 export const useSheetStore = create<SheetState>((set) => ({
-  stages: { map: 2, recommend: 2, shortlist: 2 },
+  stages: { map: 2, recommend: 2, shortlist: 2, course: 2 },
   setStage: (tab, stage) => set((s) => ({ stages: { ...s.stages, [tab]: stage } })),
   mapMoving: false,
   setMapMoving: (mapMoving) => set({ mapMoving }),

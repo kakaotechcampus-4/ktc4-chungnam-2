@@ -44,7 +44,7 @@
 | `UNAUTHORIZED` | 401 | 인증 실패 | 전역 인터셉터 + next 파라미터 리다이렉트 |
 | `FORBIDDEN` | 403 | 권한 없는 액션 (permissions.md 범위 밖) | 해당 버튼이 애초에 disabled여야 함 — 403이 보이면 FE 버그 신호 |
 | `IDEMPOTENCY_CONFLICT` | 409 | 동일 Idempotency-Key로 다른 바디 요청 | 재시도 로직 버그 신호. 첫 적용처는 `POST /maps/{mapId}/runs`(#811, #48) |
-| `VALIDATION_ERROR` | 422 | 요청 형식·필수값 오류 | 폼 필드 오류 표시 — FE 버그 신호 |
+| `VALIDATION_ERROR` | 422 | 요청 형식·필수값 오류. `detail.errors[]`는 `{loc, msg, type}`만, 입력값은 싣지 않는다(#1161) | 폼 필드 오류 표시 — FE 버그 신호 |
 | `NOT_FOUND` | 404 | 없는 경로·없는 리소스 | 전역 404 |
 | `INTERNAL_ERROR` | 500 | 미처리 서버 예외 | 전역 에러 화면 |
 

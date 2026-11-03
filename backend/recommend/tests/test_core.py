@@ -560,13 +560,30 @@ def test_build_member_fulfillment_counts_member_with_unmet_condition_in_total_on
     ]}
 
 
-def test_build_member_fulfillment_requires_all_of_a_members_conditions():
-    """한 구성원의 조건이 둘인데 하나만 맞으면 충족으로 세지 않는다."""
+def test_build_member_fulfillment_counts_only_visible_conditions_1100():
+    """#1100 — ♥에서 이어받은 숨은 선호(모름)는 집계에 넣지 않는다. 보이는 조건이 전부 met이면 충족이다."""
     criteria = {"quiet": True, "local_flavor": True}
     hearted = [_place(_check("quiet"), _check("local_flavor"), members=frozenset({"u1"}))]
     candidate = [_check("quiet", passed=True), _check("local_flavor", passed=True, confidence="unknown")]
     result = core.build_member_fulfillment(candidate, hearted, criteria)
-    assert result["satisfied"] == 0 and result["total"] == 1
+    assert _conditions(result, "u1") == [_cond("quiet", "met")]
+    assert result["satisfied"] == 1 and result["total"] == 1
+
+
+def test_build_member_fulfillment_unmet_visible_condition_is_not_satisfied_1100():
+    criteria = {"quiet": True}
+    hearted = [_place(_check("quiet"), members=frozenset({"u1"}))]
+    candidate = [_check("quiet", passed=True)]
+    result = core.build_member_fulfillment(
+        candidate, hearted, criteria, {"quiet": frozenset({"u1"})}, written_line_ids={("u1", "quiet"): "L1"},
+    )
+    assert result["satisfied"] == 1
+    result = core.build_member_fulfillment(
+        [_check("quiet", passed=False)], hearted, criteria, {"quiet": frozenset({"u1"})},
+        written_line_ids={("u1", "quiet"): "L1"},
+    )
+    assert _conditions(result, "u1") == [_cond("quiet", "unmet", "L1")]
+    assert result["satisfied"] == 0
 
 
 def test_build_member_fulfillment_ignores_members_without_criteria_conditions():
@@ -635,7 +652,7 @@ def test_build_reason_falls_back_to_selection_process_when_nothing_to_cite():
 
 
 def test_reason_does_not_print_a_member_count_that_contradicts_the_label_631():
-    """#631 — 한 구성원이 양식·조용함을 원했고 후보가 양식인데 조용한지는 모르면, 구성원은 충족(0/1)이 아니다.
+    """#631 — 한 구성원이 양식·조용함을 원했고 후보가 양식인데 조용한지는 모르면, 보이는 조건(양식)만 센다(#1100: 1/1).
     이유 문장은 "선호 충족: 양식"만 말하고 인원은 카드의 member_fulfillment가 말한다 — 같은 문장에 (0/1명)이 없다."""
     hearted = [
         _place(_check("cuisine_western", passed=True), members=frozenset({"u1"})),
@@ -647,7 +664,7 @@ def test_reason_does_not_print_a_member_count_that_contradicts_the_label_631():
     fulfillment = core.build_member_fulfillment(candidate, hearted, criteria)
     reason = core.build_reason(candidate, criteria)
 
-    assert (fulfillment["satisfied"], fulfillment["total"]) == (0, 1)
+    assert (fulfillment["satisfied"], fulfillment["total"]) == (1, 1)
     assert reason == "선호 충족: 양식"
     assert "명)" not in reason
 
@@ -694,7 +711,7 @@ def test_sight_hearts_only_user_is_satisfied_by_a_matching_candidate_681():
 
     raw = core.build_preference_criteria(hearted, disqualifying_fact_keys=[], preferred_authors={})
     assert len(raw) == len(everything)
-    assert core.build_member_fulfillment(candidate, hearted, raw)["satisfied"] == 0   # 고치기 전
+    assert core.build_member_fulfillment(candidate, hearted, raw)["total"] == 1
 
     filtered = core.filter_heart_signals(hearted, "관광지")
     criteria = core.build_preference_criteria(filtered, disqualifying_fact_keys=[], preferred_authors={})
@@ -1103,9 +1120,9 @@ def test_conditions_written_preference_shows_unmet_and_needs_check_but_heart_onl
         written_line_ids={("u1", "quiet"): "L1", ("u1", "bakery"): "L2"},
     )
     assert _conditions(result, "u1") == [_cond("bakery", "needs_check", "L2"), _cond("quiet", "unmet", "L1")]
-    # ♥에서만 나온 선호: met(한식)만 보이고 라벨이 모름인 bakery는 빠진다. satisfied는 모름이 있어 거짓 그대로.
+    # ♥에서만 나온 선호: met(한식)만 보이고 라벨이 모름인 bakery는 빠진다. 보이는 조건이 met이라 u2는 충족(#1100).
     assert _conditions(result, "u2") == [_cond("cuisine_korean", "met")]
-    assert {e["user_id"]: e["satisfied"] for e in result["by_member"]} == {"u1": False, "u2": False}
+    assert {e["user_id"]: e["satisfied"] for e in result["by_member"]} == {"u1": False, "u2": True}
 
 
 def test_conditions_heart_only_unmet_is_hidden_and_keyless_member_is_absent():
@@ -1114,10 +1131,12 @@ def test_conditions_heart_only_unmet_is_hidden_and_keyless_member_is_absent():
         [_check("quiet", passed=False)], hearted, {"quiet": True}, disqualifier_conditions={"u2": set()},
     )
     assert _conditions(result, "u1") == []
+    assert result["satisfied"] == 0 and result["total"] == 1
+    assert result["by_member"][0]["satisfied"] is False
     assert [e["user_id"] for e in result["by_member"]] == ["u1"]   # 키 없는 반대만 낸 u2는 넣지 않는다
 
 
-def test_conditions_do_not_change_satisfied_or_total():
+def test_met_condition_line_ids_do_not_change_satisfied_or_total():
     checks = [_check("quiet", passed=True), _label_check("spicy_focused")]
     args = (checks, [], {"quiet": True}, {"quiet": frozenset({"u1", "u2"})})
     kwargs = {"disqualifier_conditions": {"u1": {("spicy_focused", False)}}}

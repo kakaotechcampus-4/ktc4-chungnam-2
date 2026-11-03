@@ -466,7 +466,7 @@ ad_daily_stats(
 
 ## agent (v2 계획 보조 에이전트, docs/agent-v2.md 13절, #510)
 
-> v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 7개 테이블만 쓰고, 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.
+> v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 8개 테이블만 쓰고(`agent_map_status`는 #1168), 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.
 > `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다. 지도 정리(#431)는 `agent.api.purge_map_data`, 탈퇴(#155)는 `agent.api.delete_by_user`가 맡는다.
 > **agent 테이블에는 사유 원문을 저장하지 않는다**(2026-10-15). 사유는 `reaction_id`로만 가리키고, 인용 문장은 응답과 이벤트를 만들 때 pins에서 읽어 렌더한다. 반응이 지워지면 인용도 사라진다(docs/agent-v2.md 2절 13번).
 
@@ -485,14 +485,14 @@ agent_cursors(                        -- 관찰 흐름만 쓴다. 지도별 책�
 
 agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 끝나도 남긴다. 30일 보존
   id uuid, map_id, started_at, finished_at null,
-  trigger('activity'|'time'|'summary'|'run_advice'),
+  trigger('activity'|'time'|'summary'|'run_advice'|'status'),   -- status: 지도 현황 문단(#1152, agent-v2 8.2)
   snapshot_at null, snapshot_seq null,
   signals jsonb, blocked jsonb, priority jsonb null,
   policy_version null, prompt_version null, model null, used_model boolean,
   tool_calls jsonb,                   -- 도구 입력과 결과. 사유 글은 reaction_id와 글자 수로 바꿔 남긴다
   verification jsonb null, tokens_in, tokens_out,
   outcome('no_signal'|'blocked'|'silent'|'unknown'|'invalid_schema'|'invalid_claims'|'model_failed'|'stale'
-          |'suggested'|'summarized'|'advised'|'trip_ended'|'map_deleted'|'error'),   -- error: 예외로 끝남(#677)
+          |'suggested'|'summarized'|'advised'|'status_updated'|'trip_ended'|'map_deleted'|'error'),   -- error: 예외로 끝남(#677). status_updated: 현황 문단 저장(#1152)
   outcome_detail jsonb null
 )
   index(map_id, started_at)
@@ -506,7 +506,8 @@ agent_suggestions(                    -- 바텀시트의 지도 제안
   shadow boolean default false,       -- true면 저장만 하고 화면과 이벤트에 내지 않는다
   created_at, expires_at,             -- 24시간
   resolved_by null,                   -- 기록만. 화면과 이벤트에 싣지 않는다
-  resolved_at null, resolved_action jsonb null, decided_within_24h boolean null
+  resolved_at null, resolved_action jsonb null, decided_within_24h boolean null,
+  facts jsonb default '[]'             -- 우리 데이터 확인(#1152, agent-v2 6.6). [{pin_id, fact_key}]만, 값은 응답 때 places에서 다시 읽는다
 )
   unique(map_id) where status = 'active'   -- 지도당 활성 제안 하나
   index(map_id, fingerprint)
@@ -520,6 +521,14 @@ agent_reason_summaries(               -- 우리 조건 요약. 카테고리마�
   map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸(키, 개수, 문구 종류)과 근거 reaction_id. 사유 원문 없음
   based_on_reaction_count, run_id null, updated_at,
   primary key(map_id, category)
+)
+
+agent_map_status(                     -- 지도 현황 문단(#1152, agent-v2 8.2). 지도마다 최신본 하나를 덮어쓴다
+  map_id primary key, cells jsonb,     -- 코드가 계산한 칸(사실만)
+  cells_hash,                          -- 같으면 다시 만들지 않는다
+  states jsonb,                        -- 모델이 고른 카테고리별 상태
+  paragraph,                           -- 검증을 통과한 문단. 사유 원문·이름·장소 이름 없음
+  run_id null, updated_at
 )
 
 agent_run_advice(                     -- 추천 막힘 조언. 결과 상태당 1행(#1103), 같은 상태의 빈 조언도 유지한다
@@ -575,8 +584,8 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 ```
 llm_calls(
   id uuid,
-  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'course'),   -- 왜 불렀는지
-  call('plan_evidence'|'agent_diagnose'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
+  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'agent_status'|'course'),   -- 왜 불렀는지. agent_status: 지도 현황 문단(#1168)
+  call('plan_evidence'|'agent_diagnose'|'agent_status'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
   trace_id uuid,                      -- 같은 usage_context 안의 호출. run_id가 아직 없는 호출(추천 ②, 진단)도 실행 1번으로 묶는다
   map_id null, user_id null,          -- user_id는 사용자가 부른 호출만. 서버 호출(진단, 요약)은 null
   run_id null,                        -- evidence_add는 recommend_runs.id, course는 agent_course_runs.id. 추천 ②와 진단은 null
@@ -592,7 +601,7 @@ index ix_llm_calls_user_created (user_id, created_at)
 index ix_llm_calls_trace (trace_id)
 ```
 
-- 캐시 토큰은 엘리스 게이트웨이 응답의 `usage.prompt_tokens_details.cached_tokens`다(2026-10-30 확인). 캐시 미스면 게이트웨이가 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고한다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 엘리스 청구서와 대조해야 한다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
+- 캐시 토큰은 응답의 `usage.prompt_tokens_details.cached_tokens`다(엘리스 게이트웨이에서 2026-10-30 확인. OpenAI 직접 호출로 바꾼 뒤(#1120)에도 같은 필드를 읽지만, 값의 의미는 청구서와 대조해 확인해야 한다). 엘리스 게이트웨이는 캐시 미스면 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고했다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 청구서(OpenAI 대시보드의 사용량)와 대조해야 한다. 이 25% 가산은 엘리스 게이트웨이의 보고 방식이라 OpenAI 직접 호출에서는 없을 수 있다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
 - 탈퇴는 행을 남기고 `user_id`만 비운다(비용 통계는 사람 없이도 쓴다, `llm.api.anonymize_by_user`). 게스트 합치기는 `user_id`를 옮긴다. 30일 지난 행은 정기 정리(`maintenance.run`의 `llm_calls`)가 지운다. 지도 정리는 행을 지우지 않는다(map_id만 남고 가리키는 지도가 없다).
 
 ---

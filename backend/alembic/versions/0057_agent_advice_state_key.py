@@ -4,8 +4,8 @@
 저장한다. 기존 행은 state_key=''로 남고 어떤 결과 상태 키와도 같지 않아 다음 조회에 한 번 다시 만든다(조언은 코드가 만들고 모델이
 없어 비용이 없다).
 
-Revision ID: 0056_agent_advice_state_key
-Revises: 0055_place_external_ids
+Revision ID: 0057_agent_advice_state_key
+Revises: 0056_agent_map_status_facts
 Create Date: 2026-11-02
 
 """
@@ -15,8 +15,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0056_agent_advice_state_key"
-down_revision: Union[str, None] = "0055_place_external_ids"
+revision: str = "0057_agent_advice_state_key"
+down_revision: Union[str, None] = "0056_agent_map_status_facts"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
