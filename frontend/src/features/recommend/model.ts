@@ -6,6 +6,7 @@ import { josa } from '@/ui/josa'
 export type RecommendCategory = components['schemas']['RecommendCategory']
 export type ReadinessDto = components['schemas']['Readiness']
 export type RecommendRunDto = components['schemas']['RecommendRun']
+export type RunSummaryDto = components['schemas']['RunSummary']
 export type EvidenceLineDto = components['schemas']['EvidenceLine']
 export type EvidencePatchRequest = components['schemas']['EvidencePatchRequest']
 export type RegionDto = components['schemas']['Region']
@@ -234,3 +235,16 @@ export function fulfillmentLine(e: AiEvidence, members: MemberRef[]): string {
     .filter(Boolean)
     .join(' · ')
 }
+
+/**
+ * 지난 추천 한 줄(#482). 결과는 마지막 시도의 후보만 남아 있다(api-spec GET /maps/{mapId}/runs).
+ * 누르면 이 run 을 다시 연다 — 목록 항목이 run 의 필수 칸을 다 갖고 있어 그대로 run 으로 쓴다.
+ */
+export function runHistoryLine(r: RunSummaryDto): string {
+  if (r.status === 'failed') return '끝내지 못했어요'
+  if (r.status !== 'done') return '찾는 중'
+  if (r.candidate_count === 0) return '찾은 곳 없음'
+  return r.published_count > 0 ? `${r.candidate_count}곳 찾음 · 지도에 올림 ${r.published_count}곳` : `${r.candidate_count}곳 찾음`
+}
+
+export const summaryToRun = (r: RunSummaryDto): RecommendRunDto => ({ id: r.id, map_id: r.map_id, category: r.category, status: r.status, attempt_no: r.attempt_no })

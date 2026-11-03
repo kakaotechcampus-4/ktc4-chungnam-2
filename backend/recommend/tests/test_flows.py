@@ -793,6 +793,20 @@ def test_spicy_chip_penalizes(db_session, monkeypatch):
     assert funnel["실격 조건 제거"] == 0
 
 
+def test_spicy_chip_tie_ranks_confirmed_false_before_unknown_even_when_unknown_is_closer(db_session, monkeypatch):
+    """#1288 재현 — 🚫 「매워요」만 있을 때 매운맛 모름과 확인된 거짓은 둘 다 0점이다. 모름을 🚫 핀에 더 가깝게 놓아도
+    조건 1/1 충족인 확인된 거짓이 먼저 뽑히고, 카드의 충족 집계는 순서를 정한 그 값이다."""
+    ranked, funnel = _run_from_reactions(
+        db_session, monkeypatch, category="음식점", reactions=[("user_1", None, ["food_spicy"])],
+        facts_by_place={"unknown": {}, "mild": {"spicy_focused": False}},
+    )
+    assert ranked == ["mild", "unknown"]
+    assert funnel["실격 조건 제거"] == 0
+    cards = {c.place_id: c for c in db_session.execute(select(Candidate)).scalars()}
+    assert [c["status"] for c in cards["mild"].member_fulfillment["by_member"][0]["conditions"]] == ["met"]
+    assert [c["status"] for c in cards["unknown"].member_fulfillment["by_member"][0]["conditions"]] == ["needs_check"]
+
+
 def test_written_wanted_parking_affects_score(db_session, monkeypatch):
     """주차 soft 사유는 주차 안 되는 곳을 제거하지 않고 감점한다."""
     from llm.schemas import EvidenceLine

@@ -6,6 +6,7 @@ import ErrorText from '@/ErrorText'
 import { createMapErrorMessage, tripReady, type TripDraft } from '@/features/maps/model'
 import { useCreateMapMutation } from '@/features/maps/queries'
 import TripFields from '@/features/maps/TripFields'
+import EntryFrame from '@/ui/EntryFrame'
 
 /**
  * 지도 만들기 (#22, Figma 1절). 제목·날짜는 필수, 지역은 선택(시·도 목록).
@@ -28,7 +29,8 @@ export default function MapCreatePage() {
   }
 
   return (
-    <form onSubmit={submit} className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6 pt-4">
+    // 넓은 화면은 입구 카드다(#1269) — 버튼은 맨 아래가 아니라 칸 바로 아래.
+    <EntryFrame as="form" onSubmit={submit} className="bg-ink-50 px-4 pb-6 pt-4">
       <header className="mb-6 flex items-center gap-3">
         <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-float">
           <ChevronLeft size={20} />
@@ -43,10 +45,10 @@ export default function MapCreatePage() {
       <button
         type="submit"
         disabled={!ready || create.isPending}
-        className="btn-primary btn-lg mt-auto"
+        className="btn-primary btn-lg mt-auto md:mt-8"
       >
         {create.isPending ? '만드는 중…' : '지도 만들기'}
       </button>
-    </form>
+    </EntryFrame>
   )
 }

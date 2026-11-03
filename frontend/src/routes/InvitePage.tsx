@@ -11,6 +11,7 @@ import { randomGuestName } from '@/features/auth/guestName'
 import { useGuestJoinMutation, useMeQuery } from '@/features/auth/queries'
 import { inviteErrorMessage, inviteProblem, type InviteProblem, type InviteView } from '@/features/maps/model'
 import { useAcceptInviteMutation, useInviteSummaryQuery } from '@/features/maps/queries'
+import EntryFrame from '@/ui/EntryFrame'
 import EmptyState from '@/ui/EmptyState'
 import PingoLoading from '@/ui/PingoLoading'
 import MapIllustration from '@/ui/MapIllustration'
@@ -57,7 +58,8 @@ export default function InvitePage() {
     })
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6 pt-4">
+    // 넓은 화면은 입구 카드다(#1269).
+    <EntryFrame as="div" className="bg-ink-50 px-4 pb-6 pt-4">
       <div className="h-8">
         {loggedIn && (
           <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-float">
@@ -74,7 +76,7 @@ export default function InvitePage() {
         )}
       </div>
 
-      <div className="space-y-3 text-center">
+      <div className="space-y-3 text-center md:mt-6">
         {needsLogin ? (
           <>
             <KakaoButton />
@@ -96,7 +98,7 @@ export default function InvitePage() {
           </>
         )}
       </div>
-    </div>
+    </EntryFrame>
   )
 }
 
@@ -150,7 +152,8 @@ function InviteCard({ invite }: { invite: InviteView }) {
   return (
     <>
       <p className="mb-3 text-center text-sm text-ink-500">{invite.inviter}님이 초대했어요</p>
-      <div className="rounded-xl border border-ink-200 bg-white p-4 text-center">
+      {/* 넓은 화면은 바깥이 이미 카드라 테두리를 빼 카드 안 카드가 되지 않게 한다. */}
+      <div className="rounded-xl border border-ink-200 bg-white p-4 text-center md:border-0 md:p-0">
         <MapIllustration />
         <h1 className="mt-4 text-2xl font-bold text-ink-900">{invite.title}</h1>
         <p className="mt-1 text-sm text-ink-500">{invite.dates}</p>
@@ -172,15 +175,15 @@ const BROKEN_TITLE: Record<InviteProblem, string> = {
 /** 더 쓸 수 없는 초대 링크(#719). 참여 버튼과 에러 코드를 보이지 않는다 — 다음 행동은 새 링크 받기와 내 지도로. */
 function InviteBroken({ problem }: { problem: InviteProblem }) {
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col bg-ink-50 px-4 pb-6">
+    <EntryFrame as="div" className="bg-ink-50 px-4 pb-6">
       <div className="flex flex-1 flex-col justify-center">
         <EmptyState mood="sorry" title={BROKEN_TITLE[problem]}>
           초대한 친구에게 새 링크를 받아주세요
         </EmptyState>
       </div>
-      <Link to="/" className="btn-primary btn-lg">
+      <Link to="/" className="btn-primary btn-lg md:mt-6">
         내 지도로
       </Link>
-    </div>
+    </EntryFrame>
   )
 }
