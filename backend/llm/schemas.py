@@ -8,7 +8,6 @@
 모델 호출(backend/llm/CLAUDE.md)에 대응하는 스키마만 담는다:
   ②    PlanningOutput (사유 → 실격/선호/반경 구조화)
   ③-a-1 PlaceFactLabel (장소 라벨링)
-  ③-b   RankedCandidate (선호 순위)
   v2 에이전트 DiagnosisOutput, AgentCallFailed (docs/agent-v2.md 11.1, #532), AgentUsage·AgentReply(#564).
        PriorityOutput은 #582에서, RunAdviceOutput은 #749에서 지웠다(우선순위와 추천 막힘 조언은 agent의 코드)
   v2 동선 에이전트 CourseTurn (drafts/agent-route-v2.md 11.1, #334), 목표 세우기 CourseGoalSet, 지휘 턴 CourseDirectTurn
@@ -180,14 +179,6 @@ class PlaceFactLabel(BaseModel):
         if self.confidence == "known" and self.value is None:
             raise ValueError("confidence=known이면 value가 있어야 한다")
         return self
-
-
-class RankedCandidate(BaseModel):
-    """③-b 선호 순위 채점 출력. 입력은 이미 실격 통과분이며, 이 스키마는 순위만 매긴다."""
-
-    place_id: str
-    rank: int
-    member_comment: Optional[str] = None  # 근거 없으면 None (5-7-1) — 지어내지 않는다
 
 
 # ---------- v2 계획 보조 에이전트 — 모델 출력 (docs/agent-v2.md 11.1, #532) ----------
