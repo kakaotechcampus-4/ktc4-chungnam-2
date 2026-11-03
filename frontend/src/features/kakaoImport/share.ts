@@ -111,8 +111,8 @@ const SHARE_HEAD = /^\[(?:네이버\s?지도|카카오\s?맵|지도)\]\s*/
 
 type Line = { text: string; sender?: string; at?: number; head: boolean }
 
-/** 여행 얘기를 한 기간(#1139). `YYYY-MM-DD`, 양끝 포함. */
-export type DayRange = { from: string; to: string }
+/** 여행 얘기를 한 기간(#1139). `YYYY-MM-DD`, 양끝 포함. `to`가 없으면 파일 끝까지 읽는다. */
+export type DayRange = { from: string; to?: string }
 
 /** 메시지 하나와 보낸 날짜(`YYYY-MM-DD`). 파일 맨 앞 제목 줄처럼 첫 날짜보다 먼저 나온 줄은 날짜가 없다. */
 type Message = { day?: string; lines: Line[] }
@@ -203,14 +203,14 @@ function readAbove(above: string[]): { name?: string; address?: string } {
 }
 
 /**
- * 고른 기간(양끝 포함)에 보낸 메시지만 남겨 지도 링크를 뽑고, 링크마다 공유 글의 상호명·주소를 읽는다. 날짜를 모르는 메시지는 뺀다.
+ * 고른 기간(양끝 포함, 끝이 없으면 시작일부터 파일 끝까지)에 보낸 메시지만 남겨 지도 링크를 뽑고, 링크마다 공유 글의 상호명·주소를 읽는다. 날짜를 모르는 메시지는 뺀다.
  * 같은 링크는 한 번만, 나온 순서대로. 같은 링크가 여러 번이면 이름·주소를 읽은 쪽을 남긴다.
  * `found`는 중복을 뺀 전체 수, `shares`는 앞에서부터 LINK_MAX개, `dated`는 날짜를 하나라도 읽었는지다(내보내기 파일이 아니면 false).
  */
 export function readShares(text: string, range: DayRange): { shares: Share[]; found: number; dated: boolean } {
   const byUrl = new Map<string, Share>()
   const all = toMessages(text)
-  const messages = all.filter((m) => m.day !== undefined && m.day >= range.from && m.day <= range.to).map((m) => m.lines)
+  const messages = all.filter((m) => m.day !== undefined && m.day >= range.from && (!range.to || m.day <= range.to)).map((m) => m.lines)
   messages.forEach((message, mi) => {
     message.forEach((line, li) => {
       for (const m of line.text.matchAll(MAP_LINK)) {

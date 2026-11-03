@@ -63,17 +63,19 @@ const NOTICE: Record<Exclude<AddResult, 'added'>, string> = {
 const isTextFile = (file: File) => /\.txt$/i.test(file.name)
 
 /**
- * 기간(여행 얘기를 한 날짜) 두 칸 + 대화 파일 넣기(#1139). 기간을 고르기 전에는 파일을 넣지 못한다.
+ * 기간(여행 얘기를 한 날짜) 두 칸 + 대화 파일 넣기(#1139). 시작일을 고르기 전에는 파일을 넣지 못한다.
+ * 종료일은 선택이다 — 비우면 시작일부터 대화 끝까지 읽는다.
  * 파일은 브라우저 안에서만 읽고 바로 버린다. 기간은 시트가 열려 있는 동안 남아서 다른 대화 파일을 같은 기간으로 더 넣을 수 있다.
  */
 function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => AddResult; more: boolean }) {
-  const [range, setRange] = useState<DayRange>({ from: '', to: '' })
+  // 입력칸 값이라 빈 종료일은 ''다. 읽을 때는 없는 것(끝까지)으로 넘긴다.
+  const [range, setRange] = useState({ from: '', to: '' })
   const [notice, setNotice] = useState<string | null>(null)
   const [reading, setReading] = useState(false)
   const input = useRef<HTMLInputElement>(null)
   const errorId = useId()
   const wrongOrder = Boolean(range.from && range.to && range.from > range.to)
-  const ready = Boolean(range.from && range.to) && !wrongOrder
+  const ready = Boolean(range.from) && !wrongOrder
 
   async function read(file: File) {
     setNotice(null)
@@ -88,11 +90,11 @@ function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => Ad
     } finally {
       setReading(false)
     }
-    const result = onAdd(text.replace(/^﻿/, ''), range)
+    const result = onAdd(text.replace(/^﻿/, ''), { from: range.from, to: range.to || undefined })
     if (result !== 'added') setNotice(NOTICE[result])
   }
 
-  const setDay = (patch: Partial<DayRange>) => {
+  const setDay = (patch: Partial<typeof range>) => {
     setRange((r) => ({ ...r, ...patch }))
     setNotice(null)
   }
@@ -108,7 +110,9 @@ function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => Ad
             <input type="date" value={range.from} onChange={(e) => setDay({ from: e.target.value })} className="field w-full" />
           </label>
           <label className="block">
-            <span className="mb-1 block text-xs text-ink-500">종료일</span>
+            <span className="mb-1 block text-xs text-ink-500">
+              종료일 <span className="font-normal">(선택)</span>
+            </span>
             <input
               type="date"
               value={range.to}
@@ -120,10 +124,12 @@ function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => Ad
             />
           </label>
         </div>
-        {wrongOrder && (
+        {wrongOrder ? (
           <p id={errorId} className="mt-1.5 text-sm text-warn-text">
             종료일은 시작일과 같거나 뒤여야 해요
           </p>
+        ) : (
+          <p className="mt-1.5 text-xs text-ink-500">종료일을 비우면 대화 끝까지 읽어요</p>
         )}
       </fieldset>
       {/* 파일 고르는 창은 아래 버튼이 연다 — 숨긴 입력칸은 화면 읽기에서 빠지고 버튼 하나만 남는다. */}
