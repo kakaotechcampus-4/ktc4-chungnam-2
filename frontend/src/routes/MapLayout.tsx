@@ -561,7 +561,7 @@ const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | nul
 
 /**
  * 하단 탭 칸 하나 — 아이콘 + 11/500 라벨, 비활성 #6B7181(흰 바탕 대비 약 5:1). AI 추천도 같은 모양이다(핑고 얼굴).
- * 3칸일 때 가운데에 두던 AI 원(48px, 떠 있음)은 4칸이 되며 둘째 칸에서 왼쪽으로 치우쳐 보여 뺐다(2026-11-04).
+ * 3칸일 때 가운데에 두던 AI 원(48px, 떠 있음)은 4칸이 되며 둘째 칸에서 왼쪽으로 치우쳐 보여 뺐다(2026-11-03).
  */
 function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
   return (
