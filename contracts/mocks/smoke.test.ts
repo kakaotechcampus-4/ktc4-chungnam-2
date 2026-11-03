@@ -1955,3 +1955,17 @@ describe("여행 기간 변경과 확정 일정 (#1172)", () => {
     expect(result.items.every((i: { scheduled_date: string | null }) => i.scheduled_date === null)).toBe(true);
   });
 });
+
+describe("지도 만들기 응답(#1197)", () => {
+  it("종료일이 시작일보다 앞이면 422, 게스트는 403 GUEST_NOT_ALLOWED", async () => {
+    const post = (body: object) => fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify(body) });
+    const bad = await post({ title: "거꾸로", start_date: "2026-11-05", end_date: "2026-11-01" });
+    expect(bad.status).toBe(422);
+    expect((await bad.json()).code).toBe("VALIDATION_ERROR");
+
+    store.users[ME_USER_ID].is_guest = true;
+    const guest = await post({ title: "게스트", start_date: "2026-11-01", end_date: "2026-11-02" });
+    expect(guest.status).toBe(403);
+    expect((await guest.json()).code).toBe("GUEST_NOT_ALLOWED");
+  });
+});

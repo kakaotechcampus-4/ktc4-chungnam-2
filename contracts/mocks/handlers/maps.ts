@@ -70,6 +70,7 @@ export const mapsHandlers = [
       title: string; start_date: string; end_date: string; region?: MapRegion;
     };
     if (store.users[ME_USER_ID]?.is_guest) return apiError(403, "GUEST_NOT_ALLOWED", "지도를 만들려면 카카오로 로그인해 주세요"); // #472
+    if (body.start_date && body.end_date && body.end_date < body.start_date) return apiError(422, "VALIDATION_ERROR", "종료일은 시작일과 같거나 뒤여야 해요"); // #1197
     if (myMapCount() >= MAP_LIMIT) return mapLimitError();
     const mapId = nextId("map");
     store.maps[mapId] = {
