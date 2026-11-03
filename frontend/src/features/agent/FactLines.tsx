@@ -48,7 +48,7 @@ function WebSummary({ web }: { web: AgentWebCheckDto }) {
   }
   if (!web.statements.length) return null
   return (
-    <div className="mt-1.5 ml-5 space-y-1.5 rounded-md border border-brand-300 bg-[var(--pingo-bg)] p-2.5">
+    <div className="mt-1.5 ml-5 space-y-1.5 rounded-xl border border-brand-300 bg-[var(--pingo-bg)] p-2.5">
       <h4 className="flex items-center gap-1.5 text-xs font-semibold text-ink-600">
         <span className="tag tag-ai">AI</span> 웹 요약 · 확인되지 않음
       </h4>
