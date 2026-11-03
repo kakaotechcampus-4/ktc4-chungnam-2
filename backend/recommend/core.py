@@ -558,13 +558,17 @@ class HeartedPlace:
 
 @dataclass(frozen=True)
 class ScoredCandidate:
-    """3단계(상위 N곳 고르기) 입력 — 후보 하나의 점수·소속 동네·좌표."""
+    """3단계(상위 N곳 고르기) 입력 — 후보 하나의 점수·소속 동네·좌표.
+
+    met_conditions는 카드에 싣는 충족 집계(`build_member_fulfillment`)의 met 수(`met_condition_count`)다 —
+    같은 점수끼리의 순서에만 쓴다(#1288)."""
 
     place_id: str
     score: int
     region_label: str
     lat: float
     lng: float
+    met_conditions: int = 0
 
 
 def filter_heart_signals(hearted_places: Sequence[HeartedPlace], category: str) -> list[HeartedPlace]:
@@ -790,6 +794,14 @@ def build_member_fulfillment(
     }
 
 
+def met_condition_count(fulfillment: Mapping) -> int:
+    """`build_member_fulfillment` 결과에서 구성원별 conditions[] 중 met인 것의 합 — 화면 「조건 n/m 충족」의 n을 다 더한 값.
+    새로 판정하지 않고 카드에 싣는 결과를 읽기만 한다. 같은 점수끼리의 순서에 쓴다(#1288)."""
+    return sum(
+        1 for member in fulfillment["by_member"] for condition in member["conditions"] if condition["status"] == "met"
+    )
+
+
 def _member_condition_entries(
     member_id: str,
     preferences: Collection[str],
@@ -853,19 +865,18 @@ def build_reason(candidate_checks: Sequence[Check], criteria: Mapping[str, bool]
     return " · ".join(parts) if parts else "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
 
 
-SCORE_FLOOR_GAP = 6  # 지도 최고 점수보다 이 점수만큼까지 낮은 후보는 무리 안배에 참여한다(#1252).
-
-
 def select_top_candidates(
     candidates: Sequence[ScoredCandidate],
     anchor_points_by_region: Mapping[str, Sequence[tuple[float, float]]],
     *,
     limit: int = 3,
 ) -> list[str]:
-    """점수 하한 안에서 무리별 최고 점수 순으로 라운드로빈하고, 모자라면 남은 후보를 점수순으로 채운다.
+    """상위 limit곳을 한 곳씩 고른다(docs/constraints.md 「상위 3곳 선택」). 매번 남은 후보 중 이 순서로 가장 앞선 곳이다.
 
-    각 무리 안의 동점은 기준 핀까지의 거리 평균으로 푼다. 최고점보다 SCORE_FLOOR_GAP을 초과해 낮은
-    후보는 라운드로빈에서만 제외한다. 그 후 빈자리는 하한 밖 후보를 포함한 남은 전체에서 점수순으로 채운다.
+      점수 내림차순 → 충족 조건 수(`met_conditions`) 내림차순(#1288) → 아직 안 뽑힌 region_label 우선 → 기준 핀 거리 평균
+
+    지역 안배는 점수와 충족 수를 이기지 못한다 — 둘 다 같을 때만 다른 동네를 먼저 고른다(2026-11-04 결정, #1288.
+    #1252의 「6점 하한 안 무리별 라운드로빈」은 낮은 점수의 동네가 높은 점수를 밀어내 걷어냈다).
 
     anchor_points_by_region에 후보의 region_label 키가 없거나 빈 시퀀스면 ValueError —
     "후보가 존재한다는 건 그 후보가 어떤 원 안에 있다는 뜻이고, 그 원의 중심이 기준 핀이다.
@@ -881,25 +892,17 @@ def select_top_candidates(
         ]
         return sum(distances) / len(distances)
 
-    if not candidates or limit <= 0:
+    if limit <= 0:
         return []
-    ordered = sorted(candidates, key=lambda c: (-c.score, avg_distance(c)))
-    floor = ordered[0].score - SCORE_FLOOR_GAP
-    groups: dict[str, list[ScoredCandidate]] = {}
-    for candidate in ordered:
-        if candidate.score >= floor:
-            groups.setdefault(candidate.region_label, []).append(candidate)
-
-    chosen: list[ScoredCandidate] = []
-    while len(chosen) < limit and any(groups.values()):
-        for group in groups.values():
-            if group and len(chosen) < limit:
-                chosen.append(group.pop(0))
-    chosen_ids = {candidate.place_id for candidate in chosen}
-    for candidate in ordered:
-        if len(chosen) >= limit:
-            break
-        if candidate.place_id not in chosen_ids:
-            chosen.append(candidate)
-            chosen_ids.add(candidate.place_id)
-    return [candidate.place_id for candidate in chosen]
+    distances = {candidate.place_id: avg_distance(candidate) for candidate in candidates}
+    remaining = list(candidates)
+    chosen: list[str] = []
+    picked_regions: set[str] = set()
+    while remaining and len(chosen) < limit:
+        best = min(remaining, key=lambda c: (
+            -c.score, -c.met_conditions, c.region_label in picked_regions, distances[c.place_id],
+        ))
+        remaining.remove(best)
+        chosen.append(best.place_id)
+        picked_regions.add(best.region_label)
+    return chosen
