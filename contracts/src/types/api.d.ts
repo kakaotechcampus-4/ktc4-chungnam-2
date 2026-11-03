@@ -506,7 +506,17 @@ export interface paths {
                         "application/json": components["schemas"]["Map"];
                     };
                 };
+                403: components["responses"]["GuestNotAllowed"];
                 409: components["responses"]["MapLimit"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1332,7 +1342,7 @@ export interface paths {
                 query?: {
                     category?: components["schemas"]["Category"];
                     kind?: components["schemas"]["PinKind"];
-                    /** @description 구성원별 핀 필터 (#26). 여러 명을 지정하면 OR로 묶는다 */
+                    /** @description 구성원별 핀 필터 (#26). 여러 명을 지정하면 OR로 묶는다. 반복해서 보낸다(`?created_by=a&created_by=b`) */
                     created_by?: string[];
                 };
                 header?: never;
