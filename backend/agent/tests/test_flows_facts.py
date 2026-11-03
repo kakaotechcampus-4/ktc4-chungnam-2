@@ -168,9 +168,11 @@ def test_stall_gets_fact_lines_from_against_reasons_without_live_pins(world, lab
 
     assert observe(world, map_id, Gateway(good_stall, keys)) == "suggested"
 
-    assert world.one(AgentSuggestion, map_id=map_id).facts == [{"pin_id": food, "fact_key": "parking_available"}]
+    [stored] = world.one(AgentSuggestion, map_id=map_id).facts
+    assert (stored["pin_id"], stored["fact_key"]) == (food, "parking_available")
     [line] = suggested(world, map_id)["facts"]
     assert line["value"] == "unknown" and line["segments"][1]["pin_id"] == food
+    assert "web" not in line and "web" not in stored   # dev 스텁은 웹을 찾지 않아 failed — 칸도 저장도 없다(#1221, test_flows_web_check.py)
     assert LIVE_QUERY not in json.dumps(suggested(world, map_id), ensure_ascii=False)
 
 

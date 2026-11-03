@@ -61,8 +61,10 @@ class TestCost:
     def test_price_comes_from_settings(self, monkeypatch):
         monkeypatch.setattr(usage, "settings", SimpleNamespace(
             llm_price_input_krw_per_m=1_000_000, llm_price_cached_input_krw_per_m=0, llm_price_output_krw_per_m=0,
+            llm_price_web_search_krw=5,
         ))
         assert usage.cost_krw(usage.TokenCounts(input_tokens=3)) == 3
+        assert usage.cost_krw(usage.TokenCounts(input_tokens=3), web_searches=2) == 13   # 웹 검색 요금(#1216)
 
 
 class TestTokenCounts:
