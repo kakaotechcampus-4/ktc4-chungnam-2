@@ -90,12 +90,36 @@ class AgentAnalysis(BaseModel):
     axes: list[AgentConflictAxis]
 
 
+class AgentWebStatement(BaseModel):
+    text: str = Field(max_length=120)   # 모델이 웹 글에서 옮긴 문장(조각이 아닌 문자열). 구성원 글은 입력에 없다
+    source_url: str                     # http·https만(llm.verify_web_answer가 걸렀다)
+    source_name: str                    # URL 호스트에서 www.를 뺀 것(서버가 만든다)
+
+
+class AgentWebCheck(BaseModel):
+    """웹 확인 결과(명세 6.8, #1216). found면 notice는 null이고 문장이 1~2개, not_found·paused면 문장이 없고 notice가 서버 고정
+    문구다. failed는 여기 오지 않는다(그 줄에 web이 없다)."""
+    status: Literal["found", "not_found", "paused"]
+    notice: str | None
+    statements: list[AgentWebStatement] = Field(max_length=2)
+    checked_at: datetime
+
+
 class AgentFactLine(BaseModel):
     """우리 데이터 확인 한 줄(명세 6.6, #1168). 서버가 그 핀 장소의 라벨로 렌더한 고정 문구다 — 모델이 쓰지 않는다. 핀 이름은
-    pin 조각이고 구성원 글(quote)은 없다."""
+    pin 조각이고 구성원 글(quote)은 없다. web(6.8)은 값이 지금도 unknown인 줄에만 있고, 없으면 직렬화에서 뺀다(스펙은 null을 받지
+    않는다)."""
     fact_key: str
     value: Literal["yes", "no", "unknown"]
     segments: list[AdviceSegment] = Field(min_length=1)
+    web: AgentWebCheck | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_missing_web(self, handler):
+        data = handler(self)
+        if data.get("web") is None:
+            data.pop("web", None)
+        return data
 
 
 class AgentSuggestion(BaseModel):

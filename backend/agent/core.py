@@ -20,7 +20,7 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -62,6 +62,7 @@ from agent.constants import (
     TIME_MAX,
     TIME_MIN,
     TIME_MULTIPLIER,
+    WEB_CHECK_REUSE,
 )
 from agent.schemas import (
     AdviceSegment,
@@ -80,6 +81,8 @@ from agent.schemas import (
     AgentSummaryItem,
     AgentUsage,
     AgentVagueFixable,
+    AgentWebCheck,
+    AgentWebStatement,
     CountClaim,
     DiagnosisOutput,
     QuoteClaim,
@@ -1222,6 +1225,7 @@ class RenderRefs:
     reaction_texts: Mapping[str, str] = field(default_factory=dict)   # 지금 있는 반응 → 사유 글
     fact_labels: Mapping[str, str] = field(default_factory=dict)   # 키 → 표시 이름(split 분석의 축 이름)
     fact_values: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)   # 핀 → {키: 라벨 값, 모르면 None}(6.6)
+    source_name: Callable[[str], str] | None = None   # 웹 확인 출처 URL → 이름(llm.api.source_name, 6.8). 없으면 web을 내지 않는다
 
 
 def referenced_pin_ids(claims: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -1423,8 +1427,9 @@ def _fact_segments(name: str, pin_id: str, label: str, value: str) -> list[Advic
 
 
 def render_fact_lines(facts: Sequence[Mapping[str, Any]], refs: RenderRefs) -> list[AgentFactLine]:
-    """저장된 [{pin_id, fact_key}] → 응답·이벤트의 AgentFactLine. 값은 refs.fact_values(렌더 때 places에서 읽은 지금 라벨)다.
-    핀이 지워졌거나(이름 없음) 키의 표시 이름이 없으면 그 줄을 뺀다(render_analysis와 같은 규칙)."""
+    """저장된 [{pin_id, fact_key, web?}] → 응답·이벤트의 AgentFactLine. 값은 refs.fact_values(렌더 때 places에서 읽은 지금 라벨)다.
+    핀이 지워졌거나(이름 없음) 키의 표시 이름이 없으면 그 줄을 뺀다(render_analysis와 같은 규칙). 웹 확인(6.8)은 값이 지금도
+    unknown일 때만 낸다 — 라벨이 생기면 우리 데이터가 앞선다."""
     lines = []
     for f in list(facts)[:FACT_LINES_MAX]:
         pin_id, key = f["pin_id"], f["fact_key"]
@@ -1432,8 +1437,98 @@ def render_fact_lines(facts: Sequence[Mapping[str, Any]], refs: RenderRefs) -> l
         if not name or not label:
             continue
         value = fact_value(refs.fact_values.get(pin_id, {}).get(key))
-        lines.append(AgentFactLine(fact_key=key, value=value, segments=_fact_segments(name, pin_id, label, value)))
+        web = render_web(f.get("web"), refs.source_name) if value == "unknown" else None
+        lines.append(AgentFactLine(fact_key=key, value=value, segments=_fact_segments(name, pin_id, label, value), web=web))
     return lines
+
+
+# ---------------------------------------------------------------- 웹 확인 (6.8, #1216)
+# 우리 데이터가 「모름」인 줄 하나를 llm.api.web_check로 웹에서 찾는다. 모델은 llm이 부르고 예산도 llm이 본다(agent는 따로 보지 않는다).
+# 여기는 대상 고르기, 24시간 재사용, 저장 모양, 렌더, 금지 표현 목록(정본)이다. 저장에는 웹 문장과 출처 URL뿐 — 구성원 글은 입력에 없다.
+
+# 결론·권유 표현(6.8 지시문). 웹 문장은 「○○에 이렇게 적혀 있다」까지다. 공백을 빼고 비교한다(llm.verify_web_answer)
+WEB_CONCLUSION_PHRASES = (
+    "괜찮아요", "괜찮습니다", "가보세요", "가봐요", "추천해요", "추천합니다", "추천드려요", "추천드립니다", "좋겠어요",
+    "좋을것같아요", "문제없어요", "걱정없어요",
+)
+# llm.api.web_check에 넘기는 목록. llm에 복사하지 않는다 — 진단 문장과 같은 FORBIDDEN_PHRASES를 여기서 한 번 더 쓴다(11.2 5단계)
+WEB_CHECK_FORBIDDEN = FORBIDDEN_PHRASES + WEB_CONCLUSION_PHRASES
+WEB_NOTICES = {   # 서버 고정 문구(api-spec AgentWebCheck.notice). FE는 문구를 적지 않는다
+    "not_found": "웹에서도 찾지 못했어요",
+    "paused": "오늘은 웹 확인을 쉬고 있어요. 내일 다시 찾아볼게요",
+}
+WEB_STORED = ("found", "not_found", "paused")   # 저장하는 status. failed는 저장하지 않는다
+WEB_REUSED = ("found", "not_found")             # 24시간 안이면 다시 쓰는 status. paused는 다시 쓰지 않는다
+
+
+def web_check_target(facts: Sequence[Mapping[str, Any]], values: Mapping[str, Mapping[str, Any]]) -> int | None:
+    """웹 확인할 줄의 위치 — 값이 「모름」인 첫 줄(6.6 순서) 하나. 제안 하나에 많아야 1번이다. values는 핀 → {키: 지금 라벨, 모르면
+    None}(flows._fact_values). 자체 DB 장소가 아닌 핀(값을 못 읽은 핀)은 대상이 아니다 — 6.6 줄이 이미 그런 핀을 뺐다."""
+    for i, f in enumerate(facts):
+        if f["pin_id"] in values and fact_value(values[f["pin_id"]].get(f["fact_key"])) == "unknown":
+            return i
+    return None
+
+
+def _checked_at(web: Mapping[str, Any]) -> datetime | None:
+    try:
+        at = datetime.fromisoformat(web["checked_at"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return at if at.tzinfo is not None else None
+
+
+def reusable_web(
+    earlier: Iterable[Sequence[Mapping[str, Any]]], pin_id: str, fact_key: str, now: datetime,
+) -> dict[str, Any] | None:
+    """같은 지도의 이전 제안 facts들에서 24시간(WEB_CHECK_REUSE) 안에 같은 (핀, 키)를 확인한 결과 — found·not_found 중 가장 최근 것.
+    paused와 failed(저장되지 않음)는 다시 쓰지 않는다. 없으면 None."""
+    best: tuple[datetime, dict[str, Any]] | None = None
+    for facts in earlier:
+        for f in facts or ():
+            web = f.get("web")
+            if f.get("pin_id") != pin_id or f.get("fact_key") != fact_key or not isinstance(web, Mapping):
+                continue
+            at = _checked_at(web)
+            if web.get("status") not in WEB_REUSED or at is None or not now - WEB_CHECK_REUSE <= at <= now:
+                continue
+            if best is None or at > best[0]:
+                best = (at, dict(web))
+    return None if best is None else best[1]
+
+
+def web_record(status: str, statements: Sequence[Any], now: datetime) -> dict[str, Any] | None:
+    """llm.api.web_check 결과 → facts 항목의 web(data-model agent_suggestions.facts). failed는 None(저장하지 않는다).
+    문장은 {text, source_url}만 — 출처 이름은 렌더 때 URL로 다시 만든다."""
+    if status not in WEB_STORED:
+        return None
+    kept = [{"text": s.text, "source_url": s.source_url} for s in statements] if status == "found" else []
+    return {"status": status, "statements": kept, "checked_at": now.isoformat()}
+
+
+def web_tool_record(status: str, statements: int, *, reused: bool) -> dict[str, Any]:
+    """도구 기록 w1의 결과 — status와 문장 수만(6.8). 문장, URL, 장소 이름은 남기지 않는다."""
+    return {"status": status, "statements": statements, "reused": reused}
+
+
+def render_web(web: Mapping[str, Any] | None, source_name: Callable[[str], str] | None) -> AgentWebCheck | None:
+    """저장된 web → AgentWebCheck. notice는 여기서 붙이는 고정 문구다. 모양이 어긋나면(손상, 옛 모양) 내지 않는다."""
+    if not isinstance(web, Mapping) or source_name is None or web.get("status") not in WEB_STORED:
+        return None
+    at = _checked_at(web)
+    if at is None:
+        return None
+    status = web["status"]
+    statements = []
+    if status == "found":
+        for st in list(web.get("statements") or ())[:2]:
+            url = st.get("source_url") or ""
+            if not url.lower().startswith(("http://", "https://")) or not st.get("text"):
+                continue
+            statements.append(AgentWebStatement(text=st["text"], source_url=url, source_name=source_name(url)))
+        if not statements:
+            return None
+    return AgentWebCheck(status=status, notice=WEB_NOTICES.get(status), statements=statements, checked_at=at)
 
 
 # ---------------------------------------------------------------- 우리 조건 요약 (8절, #586)

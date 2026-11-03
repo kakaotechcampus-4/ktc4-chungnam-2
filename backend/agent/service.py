@@ -356,6 +356,16 @@ def insert_suggestion(
     ).scalar_one_or_none()
 
 
+def recent_suggestion_facts(db: Session, map_id: str, since: datetime) -> list[list[dict]]:
+    """since 이후 만든 이 지도 제안들의 facts(상태 상관없이) — 웹 확인 24시간 재사용(6.8)이 core.reusable_web으로 찾는다. 새 테이블
+    없이 agent_suggestions.facts만 읽는다. 빈 facts는 뺀다."""
+    rows = db.execute(
+        select(AgentSuggestion.facts)
+        .where(AgentSuggestion.map_id == map_id, AgentSuggestion.created_at >= since, AgentSuggestion.facts != text("'[]'::jsonb"))
+    ).scalars().all()
+    return [list(f) for f in rows if f]
+
+
 # ---------------------------------------------------------------- 기록과 보존 (12.4, 12.9)
 
 def insert_run(db: Session, **fields) -> uuid.UUID:

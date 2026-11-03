@@ -415,6 +415,15 @@ def preview(ctx: ToolContext, *, category: str | None, with_keys: Sequence[str] 
     return result
 
 
+WEB_CHECK_CALL_ID = "w1"   # 웹 확인의 도구 기록 번호(6.8, #1216). 모델이 고르지 않아 도구 상한에 세지 않는다(p1과 같은 취급)
+
+
+def record_web_check(ctx: ToolContext, *, pin_id: str, fact_key: str, result: dict[str, Any], started: float) -> None:
+    """웹 확인 한 번을 도구 기록 w1로 남긴다 — 인자는 pin_id·fact_key, 결과는 status와 문장 수만(core.web_tool_record). 문장, URL,
+    장소 이름은 남기지 않는다. 확인 자체는 flows가 llm을 불러 한다(진단 도구가 아니다)."""
+    _record(ctx, WEB_CHECK_CALL_ID, "web_check", {"pin_id": pin_id, "fact_key": fact_key}, result, started)
+
+
 def compare_reasons(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
     """♥ 쪽과 🚫 쪽 사유를 키별로 모은 결과와 충돌 종류(6.3, 코드 계산). keys[{fact_key, want[], avoid[]}]의 항목은
     {reaction_id, side}."""
