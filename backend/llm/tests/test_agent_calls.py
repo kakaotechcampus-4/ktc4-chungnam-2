@@ -84,6 +84,11 @@ def _schema_error():
 GET_REASONS = ("get_reasons", {"pin_ids": None, "category": "음식점", "types": None})
 
 
+def _reasons(i):
+    """인자가 서로 다른 get_reasons — 같은 인자는 DUPLICATE로 실행하지 않는다(#1310)."""
+    return ("get_reasons", {"pin_ids": None, "category": f"카테고리{i}", "types": None})
+
+
 class TestApi:
     def test_api_opens_agent_functions(self):
         assert llm_api.agent_diagnose is service.agent_diagnose
@@ -136,7 +141,7 @@ class TestStubRoundTrip:
 class TestToolLimit:
     def test_calls_over_five_are_not_run(self):
         runner = Runner()
-        planner = _scripted(*[GET_REASONS] * 7)
+        planner = _scripted(*[_reasons(i) for i in range(7)])
         service.agent_diagnose(STALL, tool_runner=runner, planner=planner)
 
         assert [call_id for call_id, _, _ in runner.calls] == ["t1", "t2", "t3", "t4", "t5"]
@@ -145,8 +150,10 @@ class TestToolLimit:
 
     def test_structure_reasons_runs_once(self):
         runner = Runner()
-        structure = ("structure_reasons", {"reaction_ids": ["r1"]})
-        planner = _scripted(structure, structure, *[GET_REASONS] * 4)
+        planner = _scripted(
+            ("structure_reasons", {"reaction_ids": ["r1"]}), ("structure_reasons", {"reaction_ids": ["r2"]}),
+            *[_reasons(i) for i in range(4)],
+        )
         service.agent_diagnose(STALL, tool_runner=runner, planner=planner)
 
         assert [name for _, name, _ in runner.calls] == ["structure_reasons"] + ["get_reasons"] * 4
@@ -175,6 +182,62 @@ class TestToolLimit:
     def test_model_never_chooses_map_id(self):
         for spec in AGENT_TOOL_SPECS.values():
             assert "map_id" not in spec["parameters"]["properties"]
+
+
+class TestDuplicateToolCall:
+    """같은 도구·같은 인자(정렬한 JSON)는 다시 실행하지 않고 DUPLICATE와 처음 call_id를 돌려준다(#1310). 상한에 세지 않는다."""
+
+    def test_same_call_is_not_run_again(self):
+        runner = Runner()
+        planner = _scripted(GET_REASONS, GET_REASONS)
+        service.agent_diagnose(STALL, tool_runner=runner, planner=planner)
+
+        assert [call_id for call_id, _, _ in runner.calls] == ["t1"]
+        assert planner.results[1] == {"error": "DUPLICATE", "call_id": "t1"}
+
+    def test_argument_order_does_not_matter(self):
+        runner = Runner()
+        reordered = ("get_reasons", {"types": None, "category": "음식점", "pin_ids": None})
+        planner = _scripted(GET_REASONS, reordered)
+        service.agent_diagnose(STALL, tool_runner=runner, planner=planner)
+
+        assert len(runner.calls) == 1
+        assert planner.results[1] == {"error": "DUPLICATE", "call_id": "t1"}
+
+    def test_different_arguments_run(self):
+        runner = Runner()
+        planner = _scripted(GET_REASONS, ("get_reasons", {"pin_ids": None, "category": "음식점", "types": ["against"]}))
+        service.agent_diagnose(STALL, tool_runner=runner, planner=planner)
+
+        assert [call_id for call_id, _, _ in runner.calls] == ["t1", "t2"]
+
+    def test_duplicates_do_not_use_the_limit(self):
+        runner = Runner()
+        steps = [GET_REASONS] * 4 + [_reasons(i) for i in range(4)] + [_reasons(9)]
+        planner = _scripted(*steps)
+        service.agent_diagnose(STALL, tool_runner=runner, planner=planner)
+
+        assert [call_id for call_id, _, _ in runner.calls] == ["t1", "t2", "t3", "t4", "t5"]
+        assert planner.results[1:4] == [{"error": "DUPLICATE", "call_id": "t1"}] * 3
+        assert planner.results[-1] == {"error": "LIMIT_EXCEEDED"}
+
+    def test_duplicate_after_the_limit_still_points_to_its_call(self):
+        runner = Runner()
+        planner = _scripted(*[_reasons(i) for i in range(5)], _reasons(2))
+        service.agent_diagnose(STALL, tool_runner=runner, planner=planner)
+
+        assert planner.results[-1] == {"error": "DUPLICATE", "call_id": "t3"}
+
+    def test_repeating_model_still_ends_the_conversation(self):
+        # 같은 호출만 되풀이해도 상한을 쓰지 않지만 왕복은 많아야 상한 + 1번이고 마지막은 "none"이다
+        steps = [_tool_call(*GET_REASONS, call_id=f"call_{i}") for i in range(DIAGNOSIS_MAX_TOOL_CALLS)]
+        client = FakeClient(*steps, _answer(_silent()))
+
+        out, runner = _diagnose(client)
+
+        assert out == _silent()
+        assert len(runner.calls) == 1
+        assert [c["tool_choice"] for c in client.calls] == ["auto"] * DIAGNOSIS_MAX_TOOL_CALLS + ["none"]
 
 
 class TestFailureIsReturnedNotRetried:
@@ -296,7 +359,7 @@ class TestRealDiagnosisPlanner:
         assert [t["function"]["name"] for t in client.calls[0]["tools"]] == list(DIAGNOSIS_TOOLS["split"])
 
     def test_tools_close_after_limit(self):
-        steps = [_tool_call(*GET_REASONS, call_id=f"call_{i}") for i in range(DIAGNOSIS_MAX_TOOL_CALLS)]
+        steps = [_tool_call(*_reasons(i), call_id=f"call_{i}") for i in range(DIAGNOSIS_MAX_TOOL_CALLS)]
         client = FakeClient(*steps, _answer(_silent()))
 
         out, runner = _diagnose(client)
@@ -407,7 +470,7 @@ class TestTimeBudget:
     def test_tools_stay_open_until_the_budget(self):
         # 도구 하나에 예산의 1/4 — 넷째 도구 뒤 왕복을 시작할 때 예산과 같아져 닫힌다(상한 5회보다 먼저)
         runner = SlowRunner(DIAGNOSIS_TIME_BUDGET_SEC / 4)
-        steps = [_tool_call(*GET_REASONS, call_id=f"call_{i}") for i in range(4)]
+        steps = [_tool_call(*_reasons(i), call_id=f"call_{i}") for i in range(4)]
         client = FakeClient(*steps, _answer(_silent()))
 
         out = self._diagnose_slowly(client, runner)
