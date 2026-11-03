@@ -846,7 +846,7 @@ def _run_pipeline(
 
     # ③-b — #99 이후 모델이 아니라 코드가 점수를 매기고 상위 3곳을 고른다(recommend/core.py,
     # 이슈 #112). ♥ 받은 핀들의 라벨로 "선호 기준"을 만들고, 그 기준으로 통과 후보 각각에
-    # 점수를 매긴 뒤, 점수 → 동네 배분 → 거리 평균 순으로 상위 3곳만 남긴다.
+    # 점수를 매긴 뒤, 점수 → 충족 조건 수(#1288) → 동네 배분 → 거리 평균 순으로 상위 3곳만 남긴다.
     liked_pins = pins_api.list_liked_pins(
         db, map_id=run.map_id, category=run.category, requested_by=run.requested_by,
     )
@@ -887,8 +887,19 @@ def _run_pipeline(
         {p.place_id: checks_by_place[p.place_id] for p in after_exclusions}, hearted_places, criteria,
         preferred_authors_frozen, avoided_authors_frozen,
     )
+    # 충족 집계는 선택 전에 통과 후보 전체에 한 번 만든다(#1288). 같은 점수면 met이 많은 곳이 먼저고, 뽑힌 카드에도 이 값을 그대로 싣는다.
+    fulfillment_by_place = {
+        p.place_id: core.build_member_fulfillment(
+            checks_by_place[p.place_id], hearted_places, criteria, preferred_authors_frozen, disqualifier_conditions,
+            written_line_ids,
+        )
+        for p in after_exclusions
+    }
     scored = [
-        core.ScoredCandidate(place_id=p.place_id, score=scores[p.place_id], region_label=filtered.regions_by_place[p.place_id].label, lat=p.lat, lng=p.lng)
+        core.ScoredCandidate(
+            place_id=p.place_id, score=scores[p.place_id], region_label=filtered.regions_by_place[p.place_id].label,
+            lat=p.lat, lng=p.lng, met_conditions=core.met_condition_count(fulfillment_by_place[p.place_id]),
+        )
         for p in after_exclusions
     ]
     top_place_ids = core.select_top_candidates(scored, anchor_points_by_region, limit=3) if scored else []
@@ -899,10 +910,6 @@ def _run_pipeline(
     for index, place_id in enumerate(top_place_ids):
         place = places_by_id[place_id]
         checks = checks_by_place[place_id]
-        fulfillment = core.build_member_fulfillment(
-            checks, hearted_places, criteria, preferred_authors_frozen, disqualifier_conditions,
-            written_line_ids,
-        )
         candidates_data.append({
             "place_id": place_id, "region_id": filtered.regions_by_place[place_id].id, "lat": place.lat, "lng": place.lng,
             "rank": index + 1,
@@ -913,7 +920,7 @@ def _run_pipeline(
                     required_soft_keys=required_soft_keys, weights=weights,
                 )
             ],
-            "member_fulfillment": fulfillment,
+            "member_fulfillment": fulfillment_by_place[place_id],
             "reason": core.build_reason(checks, criteria),
             "place_source": dict(place.source) if place.source else None,
         })
