@@ -2,6 +2,10 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-03, `servers` 설명의 옛 배포 표기 정정 (#1227)
+
+- `servers[0].description`의 「배포 시 Cloud Run URL로 교체」를 「배포 시 운영 도메인으로 교체」로 고쳤다(배포가 AWS 서버 1대의 Docker Compose로 바뀌었다, `deploy_rules.md`). 설명 문장만 바뀌었고 계약·동작은 그대로다. `servers`는 생성 타입에 나오지 않아 `api.d.ts`는 바뀌지 않는다.
+
 ## 2026-11-03, 확정 장소 날짜별 일정 (#1172)
 
 - `GET /maps/{mapId}/shortlist/schedule`은 여행 기간, version과 확정 항목을 반환한다.

@@ -50,8 +50,11 @@ import { resetScenario } from "@pingo/contracts/mocks/browser"; // 또는 mocks/
 resetScenario("empty");            // "아직 아무도 핀을 찍지 않았어요"
 resetScenario("happy-path");       // 기본값 — 추천 준비 완료 상태
 resetScenario("no-results");       // "필터에 걸리는 핀이 없어요" (run_no_results)
-resetScenario("retry-limit");      // "3번까지만 찾습니다" (run_retry_limit, attempt_no=3)
 resetScenario("region-conflict");  // "두 조건을 동시에 만족하는 곳이 없어요" (run_region_conflict)
+resetScenario("guest");            // 게스트 — 지도 만들기·추천·코스·크레딧·후기 쓰기는 403 GUEST_NOT_ALLOWED
+resetScenario("withdrawn-relogin"); // 탈퇴한 계정으로 다시 로그인 — 복구 기간 안이라 선택 화면으로
+resetScenario("credits-empty");    // 크레딧 0 — 추천 받기·코스는 402 CREDIT_INSUFFICIENT
+resetScenario("credits-full");     // 잔액이 상한(30) — 후기를 써도 크레딧을 받지 않는다
 ```
 
 화면 개발 중 상태 전환 버튼을 하나 만들어 이 함수를 붙여두면 편하다.
