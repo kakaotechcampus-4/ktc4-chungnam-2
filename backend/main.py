@@ -16,6 +16,7 @@ from agent import loop as agent_loop
 from agent.course import service as course_service
 from common.adapters import format_assembly
 from common.database import SessionLocal, engine
+from common import logguard
 from common.errors import register_error_handlers
 from common.settings import settings
 from realtime.dispatcher import dispatcher
@@ -27,6 +28,9 @@ logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s 
 # 외부 호출의 성공·실패는 pingo.llm·pingo.places 로그가 필요한 것만 남기므로 이 둘은 경고부터만 본다.
 for _noisy in ("httpx", "httpcore"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
+
+# uvicorn 접근 로그가 쿼리스트링(code·state·검색어·좌표)과 초대 토큰을 찍지 않게 한다(#473, #1201).
+logguard.install()
 
 logger = logging.getLogger("pingo")
 
