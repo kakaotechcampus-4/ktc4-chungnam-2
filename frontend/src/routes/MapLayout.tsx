@@ -594,7 +594,7 @@ const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | nul
   { path: '/course', label: 'AI 코스', Icon: Route },
 ]
 
-/** 비활성 #6B7181(흰 바탕 대비 약 5:1). */
+/** 비활성 ink-500(흰 바탕 대비 약 5:1). */
 function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
   return (
     <NavLink
