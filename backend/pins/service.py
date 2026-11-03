@@ -217,6 +217,7 @@ def list_trash(
             func.count().filter(ReactionRow.type == "like").label("like"),
             func.count().filter(ReactionRow.type == "against").label("against"),
         )
+        .where(ReactionRow.pin_id.in_(select(PinRow.id).where(PinRow.map_id == map_id, PinRow.deleted_at.is_not(None))))   # 이 지도의 지운 핀만
         .group_by(ReactionRow.pin_id)
         .subquery()
     )
@@ -232,7 +233,7 @@ def list_trash(
             PinRow.deleted_at.is_not(None),
             PinRow.deleted_at > now - timedelta(days=core.TRASH_RETENTION_DAYS),   # is_restorable과 같은 경계
         )
-        .order_by(PinRow.deleted_at.desc())
+        .order_by(PinRow.deleted_at.desc(), PinRow.id.desc())   # 동률이어도 순서가 흔들리지 않는다
     )
     if principal.role != "owner":
         query = query.where(PinRow.created_by == principal.user_id)

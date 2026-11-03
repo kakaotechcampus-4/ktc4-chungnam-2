@@ -65,3 +65,76 @@ def test_trash_is_per_map_and_non_member_is_404(app_client, db_session):
 
 def test_empty_trash_is_an_empty_list(app_client):
     assert _get(app_client).json() == {"items": [], "retention_days": 30}
+
+
+def test_equal_deleted_at_is_ordered_by_id_descending(app_client, db_session):
+    at = datetime.now(timezone.utc) - timedelta(days=3)
+    rows = [_trashed(db_session, days_ago=3) for _ in range(3)]
+    for r in rows:
+        r.deleted_at = at
+    db_session.commit()
+    ids = [i["pin"]["id"] for i in _get(app_client).json()["items"]]
+    assert ids == sorted((str(r.id) for r in rows), reverse=True)
+
+
+def test_thirty_day_boundary_matches_restore_and_purge(app_client, db_session):
+    from pins import core
+    inside = _trashed(db_session, days_ago=0)
+    outside = _trashed(db_session, days_ago=0)
+    inside.deleted_at = datetime.now(timezone.utc) - timedelta(days=30) + timedelta(minutes=1)   # 29일 23시간 59분 전
+    outside.deleted_at = datetime.now(timezone.utc) - timedelta(days=30) - timedelta(seconds=1)  # 30일이 막 지났다
+    db_session.commit()
+    items = _get(app_client).json()["items"]
+    assert [i["pin"]["id"] for i in items] == [str(inside.id)]
+    assert items[0]["days_left"] == 1
+    assert core.is_restorable(inside.deleted_at, datetime.now(timezone.utc))
+    assert not core.is_restorable(outside.deleted_at, datetime.now(timezone.utc))
+
+
+def _real_membership(db_session):
+    from maps import api as maps_api
+    app.dependency_overrides[authz.deps.get_membership_gateway] = lambda: maps_api.DbMembershipGateway(db_session)
+
+
+def test_deleted_map_trash_is_404_with_real_membership(app_client, db_session):
+    from auth.testing import ensure_users
+    from maps.models import Map as MapRow
+    from pins.tests.test_author_display_369 import _make_map
+    ensure_users(db_session, "user_1")
+    _make_map(db_session, "map_1", {"user_1": "owner"})
+    _trashed(db_session, days_ago=1)
+    _real_membership(db_session)
+    assert _get(app_client).status_code == 200
+    db_session.get(MapRow, "map_1").deleted_at = datetime.now(timezone.utc)
+    db_session.commit()
+    assert _get(app_client).status_code == 404
+
+
+def test_left_and_withdrawn_deleters_get_the_contract_names(app_client, db_session):
+    from auth.testing import ensure_users
+    from pins.tests.test_author_display_369 import _leave, _make_map, _withdraw
+    ensure_users(db_session, "user_1", "user_2", "user_3",
+                 display_names={"user_1": "철수", "user_2": "영희", "user_3": "민수"})
+    _make_map(db_session, "map_1", {"user_1": "owner", "user_2": "member", "user_3": "member"})
+    left = _trashed(db_session, days_ago=1, created_by="user_2", deleted_by="user_2")
+    gone = _trashed(db_session, days_ago=2, created_by="user_3", deleted_by="user_3")
+    named = _trashed(db_session, days_ago=3, created_by="user_1", deleted_by="user_1")
+    _leave(db_session, "map_1", "user_2")
+    _withdraw(db_session, "user_3")      # 탈퇴자 멤버십 행은 남는다(#245)
+    _real_membership(db_session)
+    names = {i["pin"]["id"]: i["deleted_by_name"] for i in _get(app_client).json()["items"]}
+    assert names == {str(left.id): "나간 구성원", str(gone.id): "탈퇴한 구성원", str(named.id): "철수"}
+
+
+def test_guest_member_sees_only_their_own_trashed_pins(app_client, db_session):
+    from auth.models import User
+    from auth.testing import ensure_users
+    from pins.tests.test_author_display_369 import _make_map
+    ensure_users(db_session, "user_1", "user_2")
+    db_session.get(User, "user_2").is_guest = True
+    db_session.commit()
+    _make_map(db_session, "map_1", {"user_1": "owner", "user_2": "member"})
+    _trashed(db_session, days_ago=1, created_by="user_1")
+    mine = _trashed(db_session, days_ago=2, created_by="user_2", deleted_by="user_2")
+    _real_membership(db_session)
+    assert [i["pin"]["id"] for i in _get(app_client, "user_2").json()["items"]] == [str(mine.id)]
