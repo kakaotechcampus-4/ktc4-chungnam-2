@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router'
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { droppedCount, tripDays } from '@/features/shortlist/schedule'
-import { scheduleFromDto, useScheduleQuery } from '@/features/shortlist/scheduleQueries'
+import { useSchedule, useScheduleQuery } from '@/features/shortlist/scheduleQueries'
 import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
@@ -24,7 +24,7 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
   const [draft, setDraft] = useState<TripDraft>({ title: map.title, region: map.region ?? null, startDate: map.startDate, endDate: map.endDate })
   const body = mapChanges(map, draft)
   const scheduleQuery = useScheduleQuery(map.id)
-  const schedule = scheduleFromDto(scheduleQuery.data)
+  const schedule = useSchedule(map.id)
   const dropped = tripReady(draft) ? droppedCount(schedule, tripDays(map.startDate, map.endDate), tripDays(draft.startDate, draft.endDate)) : 0
 
   return (
@@ -32,7 +32,7 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
       title="지도 정보 수정"
       body="바꾼 내용은 모든 구성원에게 바로 보여요. 이미 받은 AI 추천은 그대로 남아요."
       ok="저장"
-      pending={update.isPending || !body || !tripReady(draft) || !scheduleQuery.data}
+      pending={update.isPending || !body || !tripReady(draft) || !scheduleQuery.data || scheduleQuery.isError}
       onCancel={onCancel}
       onOk={() =>
         body &&

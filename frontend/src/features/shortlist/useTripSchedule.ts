@@ -1,11 +1,9 @@
-import { useMemo } from 'react'
-
 import { dayOrdinal } from '@/features/course/model'
 import { useMapQuery } from '@/features/maps/queries'
 import { showToast } from '@/features/shell/toast'
 import { josa } from '@/ui/josa'
 
-import { currentSchedule, scheduleFromDto, useSaveSchedule, useScheduleQuery } from './scheduleQueries'
+import { currentSchedule, useSaveSchedule, useSchedule, useScheduleQuery } from './scheduleQueries'
 import { dayOf, place, tripDays, UNSET_DAY, type DropSpot, type Schedule } from './schedule'
 import { useQueryClient } from '@tanstack/react-query'
 
@@ -25,7 +23,7 @@ export function useTripSchedule(mapId: string): {
   const map = useMapQuery(mapId).data
   const query = useScheduleQuery(mapId)
   const dto = query.data
-  const schedule = useMemo(() => scheduleFromDto(dto), [dto])
+  const schedule = useSchedule(mapId)
   const dates = tripDays(map?.startDate, map?.endDate)
   return { schedule, dates, ready: Boolean(map && dto), error: dto ? null : query.error, retry: () => void query.refetch() }
 }
