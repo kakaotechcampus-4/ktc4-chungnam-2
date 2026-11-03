@@ -98,14 +98,15 @@ export const placesHandlers = [
     if (q === "__unavailable__") return apiError(503, "PLACES_UNAVAILABLE", "지금은 장소를 검색할 수 없어요");
 
     let found = SEED_PLACES.filter((p) => p.place_name.includes(q));
-    // #835: 좌표가 있으면 30km 안(지역 구역)이 먼저, 각 구역 안에서 이름 일치 정도(완전 > 앞부분 > 부분) → 가까운 순. 없으면 일치 정도 → 이름순.
+    // #835·#1251: 좌표가 있으면 30km 안만, 이름 일치 정도(완전 > 앞부분 > 부분) → 가까운 순. 없으면 일치 정도 → 이름순.
     const norm = (s: string) => s.replace(/\([^)]*\)/g, "").replace(/[\s\p{P}]/gu, "").toLowerCase();
     const tier = (p: PlaceSearchResult) => (norm(p.place_name) === norm(q) ? 0 : norm(p.place_name).startsWith(norm(q)) ? 1 : 2);
     if (latRaw !== null && lngRaw !== null) {
       const lat = Number(latRaw);
       const lng = Number(lngRaw);
-      const far = (p: PlaceSearchResult) => (meters(lat, lng, p.lat, p.lng) > 30000 ? 1 : 0);
-      found = [...found].sort((a, b) => far(a) - far(b) || tier(a) - tier(b) || distanceScore(a, lat, lng) - distanceScore(b, lat, lng));
+      // #1251: 지도 중심 30km 안만 돌려준다(밖의 장소는 나오지 않는다)
+      found = found.filter((p) => meters(lat, lng, p.lat, p.lng) <= 30000);
+      found = [...found].sort((a, b) => tier(a) - tier(b) || distanceScore(a, lat, lng) - distanceScore(b, lat, lng));
     } else {
       found = [...found].sort((a, b) => tier(a) - tier(b) || a.place_name.localeCompare(b.place_name, "ko"));
     }
