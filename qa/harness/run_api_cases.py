@@ -725,7 +725,7 @@ def w08_s07():
     check("W08.view_nonmember", r.status_code == 404 and "code" in r.json(), "코스 결과 비구성원 404", f"{r.status_code} {r.text[:80]}")
     if gr.status_code == 201:
         r = g.get(f"/course-runs/{ids[0]}")
-        check("W08.view_member", r.status_code == 403, "코스 결과 다른 구성원 403", f"{r.status_code} {r.text[:80]}")
+        check("W08.view_member", r.status_code == 403 and r.json().get("code") == "FORBIDDEN", "코스 결과 다른 구성원 403 FORBIDDEN(게스트 차단 GUEST_NOT_ALLOWED와 구분)", f"{r.status_code} {r.text[:80]}")
     b1 = _credits(c)["balance"]
     sts = [x.get("status") for x in runs]
     busy = again.status_code == 409 and again.json().get("code") == "COURSE_IN_PROGRESS"
