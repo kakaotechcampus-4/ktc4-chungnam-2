@@ -25,15 +25,17 @@ agent/deps.py)가 planner 인자로 고른다.
   batch_size(② 묶음 크기)가 남아 묶음 수는 trace당 plan_evidence 행 수다.
 """
 
+import hashlib
+import json
 from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from llm import usage as _usage
-from llm.prompts import DIAGNOSIS_TOOLS
+from llm.prompts import DIAGNOSIS_TOOLS, PLAN_EVIDENCE_PROMPT
 from llm.schemas import (
     AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
-    StatusCategory, StatusOutput,
+    PlanningOutput, StatusCategory, StatusOutput,
 )
 from llm.service import (
     CourseDirectPlanner,
@@ -66,7 +68,7 @@ from llm.service import (
 )
 
 __all__ = [
-    "EvidenceLine", "EvidencePlanner", "PlanEvidenceFailed",
+    "EvidenceLine", "EvidencePlanner", "PlanEvidenceFailed", "plan_evidence_rules_version",
     "passthrough_planner", "plan_evidence", "real_evidence_planner",
     "AgentCallFailed", "AgentReply", "AgentUsage", "DiagnosisOutput", "DIAGNOSIS_TOOLS",
     "DiagnosisPlanner", "ToolCaller", "ToolRunner", "ToolRunnerError",
@@ -77,6 +79,15 @@ __all__ = [
     "CourseDirectTurn", "CourseDirectPlanner", "course_direct_turn", "real_course_direct_planner",
     "usage_context", "mark_discarded", "plan_deadline", "anonymize_by_user", "reassign_user", "purge_old",
 ]
+
+def plan_evidence_rules_version() -> str:
+    """② 사유 구조화 규칙의 버전(#1095) — 프롬프트 글과 응답 스키마의 해시 앞 12자리(16진). 둘 중 하나라도 바뀌면 값이 달라진다.
+    손으로 올리는 번호가 아니라 잊을 수 없다. agent가 우리 조건 요약에 이 값을 남겨 ② 규칙이 바뀌면 요약을 다시 만든다.
+    순수 함수이고 모델을 부르지 않는다."""
+    schema = json.dumps(PlanningOutput.model_json_schema(), sort_keys=True, ensure_ascii=False)
+    digest = hashlib.sha256((PLAN_EVIDENCE_PROMPT + "\n" + schema).encode("utf-8")).hexdigest()
+    return digest[:12]
+
 
 usage_context = _usage.usage_context
 mark_discarded = _usage.mark_discarded   # 모델은 불렸는데 결과가 저장되지 않은 호출을 표시한다(#848). trace_id는 usage_context가 준 라벨의 것
