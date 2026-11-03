@@ -531,11 +531,11 @@ agent_map_status(                     -- 지도 현황 문단(#1152, agent-v2 8.
   run_id null, updated_at
 )
 
-agent_run_advice(                     -- 추천 막힘 조언. 결과 상태당 1행(#1103), 같은 상태의 빈 조언도 유지한다
+agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 지금 결과 상태의 조언(#1103). 같은 상태의 빈 조언도 유지한다
   run_id,                            -- recommend_runs.id. 모듈 경계라 FK 없음
   state_key text not null default '', -- agent.core.advice_state_key. 기존 빈 키는 다음 조회에 재생성
   map_id, kind null, claims jsonb, advice jsonb, actions jsonb, agent_run_id null, created_at,
-  primary key(run_id, state_key)
+  primary key(run_id)                 -- 결과가 바뀌면 같은 행을 새 state_key의 조언으로 덮는다(옛 서버의 DO NOTHING도 그대로 돈다)
 )
 ```
 

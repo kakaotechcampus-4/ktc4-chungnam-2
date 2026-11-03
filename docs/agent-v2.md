@@ -559,7 +559,7 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 - 엔드포인트: `GET /runs/{runId}/advice`, api-spec의 recommend 태그. 코드는 `agent/router.py` → `agent/flows.advise_run`이다(#587). recommend 라우터에 두면 recommend와 agent가 서로를 import하게 돼서 옮겼다. 권한은 `recommend.api.get_run_meta`로 run을 읽어 authz가 판정한다. agent만 recommend.api를 쓰는 한 방향이다.
 - 권한: 비구성원 404, run 요청자가 아니면 403.
 - 대상이 아니면 204. 저장된 조언이 있으면 그대로 200. 없으면 생성해 저장하고 200.
-- 결과 상태당 1회(#1103): `agent_run_advice`에 `INSERT ... ON CONFLICT (run_id, state_key) DO NOTHING` 후 저장된 행을 돌려준다. 낼 조언이 없어도(silent) 빈 advice로 저장해 같은 상태에서는 다시 생성하지 않는다. 넓히기·다시 추천으로 반경, 깔때기, 결과 수, 조언에 쓰이는 근거 줄이 바뀌면 새 키로 다시 계산한다. 상태 키 정본은 `agent.core.advice_state_key`이고 원문은 키에 넣지 않는다. 키와 계산 재료는 같은 DB 스냅샷에서 읽는다. 기존 빈 키의 캐시는 다음 조회에서 한 번 다시 만든다.
+- 결과 상태당 1회(#1103): `agent_run_advice`에 `INSERT ... ON CONFLICT (run_id) DO UPDATE ... WHERE state_key IS DISTINCT FROM EXCLUDED.state_key`(run당 한 행에 지금 결과 상태의 조언을 넣는다, 같은 상태가 이미 있으면 그대로) 후 저장된 행을 돌려준다. 낼 조언이 없어도(silent) 빈 advice로 저장해 같은 상태에서는 다시 생성하지 않는다. 넓히기·다시 추천으로 반경, 다시 추천 횟수(attempt_no), 깔때기, 결과 수, 조언에 쓰이는 근거 줄이 바뀌면 새 키로 다시 계산해 그 행을 덮는다. 상태 키 정본은 `agent.core.advice_state_key`이고 원문은 키에 넣지 않는다. 키와 계산 재료는 같은 DB 스냅샷에서 읽는다. 기존 빈 키의 캐시는 다음 조회에서 한 번 다시 만든다.
 - 계산이 실패하면 조언 없음(204)으로 삼키지 않고 500(`INTERNAL_ERROR`)이다. agent_runs에 outcome=error 한 행을 남기고 조언 행은 쓰지 않아 다음 요청이 다시 만든다(#750). FE는 500이면 조언 자리를 숨긴다(16.5).
 - 세션: 이 엔드포인트는 요청 단위 세션(get_db)을 쓰지 않는다. 조회와 저장을 짧은 세션으로 나눈다. `realtime/dispatcher.py`가 재전송 조회에 SessionLocal을 짧게 쓰는 것과 같은 이유다.
 - 모델을 부르지 않는다(2026-10-27 결정, #749). 종류, 버튼, 문장은 agent 코드(`core.advice_simulations`, `core.choose_run_advice`)가 깔때기 숫자, 근거 줄 종류, 시뮬레이션 결과로 정한다(9.1).
@@ -1076,7 +1076,7 @@ CREATE TABLE agent_map_status (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
--- 추천 막힘 조언. 결과 상태당 1행(#1103). silent여도 빈 advice로 저장한다
+-- 추천 막힘 조언. run당 1행, 지금 결과 상태의 조언(#1103). silent여도 빈 advice로 저장한다
 CREATE TABLE agent_run_advice (
   run_id        uuid NOT NULL,              -- recommend_runs.id. 모듈 경계라 FK 없음
   state_key     text NOT NULL DEFAULT '',   -- agent.core.advice_state_key. 기존 빈 키는 재생성
@@ -1087,7 +1087,7 @@ CREATE TABLE agent_run_advice (
   actions       jsonb NOT NULL,
   agent_run_id  uuid NULL,
   created_at    timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (run_id, state_key)
+  PRIMARY KEY (run_id)
 );
 ```
 

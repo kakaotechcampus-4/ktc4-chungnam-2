@@ -30,7 +30,7 @@
 ## 2026-11-02, 추천 조언 캐시를 결과 상태별로 저장 (#1103)
 
 - `GET /runs/{runId}/advice`의 요청·응답 구조는 그대로다. 넓히기·다시 추천으로 반경, 깔때기, 결과 수, 조언에 쓰이는 근거 줄이 바뀌면 조언도 다시 계산한다. 같은 상태를 재조회하면 저장된 조언(빈 조언 포함)을 돌려준다.
-- 내부 저장: `agent_run_advice` 기본키가 `(run_id, state_key)`가 된다(마이그레이션 `0057_agent_advice_state_key`). 기존 행은 빈 키로 보존하고 다음 조회에서 새 키의 조언을 만든다. 상태 키 정본은 `agent.core.advice_state_key`다.
+- 내부 저장: `agent_run_advice`에 `state_key` 칸을 더한다(expand, 마이그레이션 `0057_agent_advice_state_key`). 기본키는 `run_id` 그대로라 이전 서버도 새 스키마에서 돈다. 결과가 바뀌면 그 행을 새 상태의 조언으로 덮는다(옛 행은 빈 키라 다음 조회에 한 번 다시 만든다). 상태 키 정본은 `agent.core.advice_state_key`다(반경, 다시 추천 횟수 `attempt_no`, 깔때기, 근거 줄). 이를 위해 `recommend.api.get_run_meta`가 `attempt_no`를 더 돌려준다.
 - FE: 넓히기·다시 추천 뒤 기존 advice 조회를 그대로 사용한다.
 
 ## 2026-11-02, 깔때기 「반경 밖 제거」에 다른 시·도 장소 포함 — 설명 문구만 (#1055)

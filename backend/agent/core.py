@@ -1682,10 +1682,11 @@ def funnel_view(outcome: Mapping[str, Any]) -> dict[str, Any]:
 def advice_state_key(meta: Mapping[str, Any], funnel_outcome: Mapping[str, Any], evidence: Sequence[Mapping[str, Any]]) -> str:
     """조언을 저장하는 결과 상태의 키(#1103). 넓히기와 다시 추천은 같은 run id로 결과를 바꾸므로 조언은 run이 아니라 이 상태마다
     한 번 만든다. 같은 결과를 다시 열면 같은 키라 저장된 조언 그대로다. 결과를 가르는 것만 넣는다: 지금 반경(넓히기 단계),
-    깔때기와 결과 수(다시 추천이 바꾼 결과), 조언 절차가 보는 근거 줄(근거만 고친 다시 추천). 원문은 넣지 않는다.
+    깔때기와 결과 수, 조언 절차가 보는 근거 줄, 다시 추천 횟수(attempt_no — 같은 run에서 다른 run의 제외 목록이 달라져 집계가 같아도
+    넓히기 시뮬레이션이 달라질 수 있다). 원문은 넣지 않는다.
     meta는 recommend.api.get_run_meta, funnel_outcome은 get_run_funnel, evidence는 advice_evidence의 결과다."""
     state = {
-        "radius": meta["default_radius_walk_min"], "count": funnel_outcome["result_count"], "passed": funnel_outcome["passed_count"],
+        "radius": meta["default_radius_walk_min"], "attempt": meta["attempt_no"], "count": funnel_outcome["result_count"], "passed": funnel_outcome["passed_count"],
         "funnel": [[e["key"], e["removed_count"]] for e in funnel_outcome["funnel"]],
         "lines": list(evidence),
     }

@@ -783,8 +783,8 @@ def advise_run(
        재료(같은 카테고리 run). 대상이 아니면 None(204) — 아무것도 쓰지 않는다. 진행 중인 run은 끝난 뒤 다시 부르면 된다.
     2. 같은 스냅샷에서 깔때기와 근거 줄을 읽어 결과 상태 키(core.advice_state_key, #1103)로 저장된 조언을 확인한다.
        있으면 그대로 렌더한다. 없으면 필요한 시뮬레이션(core.advice_simulations)을 읽고 고른다(core.choose_run_advice).
-    3. 짧은 쓰기: agent_runs(trigger=run_advice) 한 행과 조언 한 행(ON CONFLICT (run_id, state_key) DO NOTHING). 같은 트랜잭션에서 저장된
-       행을 다시 읽어 렌더한다 — 같은 결과에 동시에 두 요청이 와도 먼저 커밋한 조언 하나만 남고 둘 다 그것을 돌려준다.
+    3. 짧은 쓰기: agent_runs(trigger=run_advice) 한 행과 조언 한 행(ON CONFLICT (run_id) DO UPDATE ... WHERE state_key IS DISTINCT, 지금 결과 상태의 조언으로 덮는다). 같은 트랜잭션에서
+       저장된 행을 다시 읽어 렌더한다 — 같은 결과에 동시에 두 요청이 와도 먼저 커밋한 조언 하나만 남고 둘 다 그것을 돌려준다.
        침묵도 빈 조언으로 저장해 다시 만들지 않는다.
 
     2단계가 예외로 끝나면 agent_runs에 outcome=error 한 행(run, 예외 클래스 이름)만 남기고 예외를 올린다(라우터에서 500) —
@@ -851,7 +851,7 @@ def advise_run(
             tool_calls=reads.calls, outcome="silent" if draft.kind is None else "advised",
             outcome_detail={"run_id": run_id, "stored": inserted, "decision": draft.decision, "kind": draft.kind},
         )
-        return core.render_run_advice(run_id, service.get_run_advice(db, run_id, state_key))
+        return core.render_run_advice(run_id, service.get_run_advice(db, run_id))
 
 
 @dataclass

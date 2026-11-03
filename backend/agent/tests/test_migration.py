@@ -138,31 +138,30 @@ def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_u
         engine.dispose()
 
 
-def test_advice_state_key_migration_preserves_legacy_and_downgrades_latest(mig_url):
+def test_advice_state_key_migration_is_expand_only(mig_url):
+    """0057은 칸 하나만 더한다(#1103) — 기본키는 run_id 그대로라 이전 서버의 ON CONFLICT (run_id) DO NOTHING도 돈다."""
     cfg = _config()
-    command.upgrade(cfg, "0055_place_external_ids")
+    command.upgrade(cfg, "0056_agent_map_status_facts")
     engine = sa.create_engine(mig_url)
     insert = sa.text(
         "INSERT INTO agent_run_advice (run_id, map_id, claims, advice, actions, created_at) "
-        "VALUES ('00000000-0000-0000-0000-000000001103', 'm1103', '[]', '[]', '[]', '2026-11-01')"
+        "VALUES ('00000000-0000-0000-0000-000000001103', 'm1103', '[]', '[]', '[]', '2026-11-01') "
+        "ON CONFLICT (run_id) DO NOTHING"
     )
     try:
         with engine.begin() as conn:
             conn.execute(insert)
         command.upgrade(cfg, "head")
         inspector = sa.inspect(engine)
-        assert inspector.get_pk_constraint("agent_run_advice")["constrained_columns"] == ["run_id", "state_key"]
+        assert inspector.get_pk_constraint("agent_run_advice")["constrained_columns"] == ["run_id"]
         assert {c["name"] for c in inspector.get_columns("agent_run_advice")} == set(AgentRunAdvice.__table__.columns.keys())
         with engine.begin() as conn:
             assert conn.execute(sa.text("SELECT state_key FROM agent_run_advice")).scalar_one() == ""
-            conn.execute(sa.text(
-                "INSERT INTO agent_run_advice (run_id, state_key, map_id, kind, claims, advice, actions, created_at) "
-                "VALUES ('00000000-0000-0000-0000-000000001103', 'fresh', 'm1103', 'soft_relax', '[]', '[]', '[]', '2026-11-02')"
-            ))
-        command.downgrade(cfg, "0055_place_external_ids")
+            conn.execute(insert)   # 이전 서버의 쓰기가 새 스키마에서 그대로 돈다
+        command.downgrade(cfg, "0056_agent_map_status_facts")
         with engine.connect() as conn:
-            assert conn.execute(sa.text("SELECT kind FROM agent_run_advice")).scalars().all() == ["soft_relax"]
-        assert sa.inspect(engine).get_pk_constraint("agent_run_advice")["constrained_columns"] == ["run_id"]
+            assert conn.execute(sa.text("SELECT count(*) FROM agent_run_advice")).scalar_one() == 1
+        assert "state_key" not in {c["name"] for c in sa.inspect(engine).get_columns("agent_run_advice")}
         command.upgrade(cfg, "head")
     finally:
         engine.dispose()

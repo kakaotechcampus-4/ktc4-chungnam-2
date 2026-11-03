@@ -264,7 +264,7 @@ def test_advice_is_logged_as_run_advice_without_the_model(world, map_id, places)
         assert service.load_history(db, map_id, world.now).model_runs_today == 0   # 9절: 지도 상한에 세지 않는다
 
 
-# ---------------------------------------------------------------- 결과 상태당 1회 (#1103, 17절 13)
+# ---------------------------------------------------------------- 결과 상태당 1회, run당 한 행을 덮는다 (#1103, 17절 13)
 
 
 def change_result(world, run_id, action):
@@ -289,7 +289,7 @@ def test_widen_refreshes_empty_advice_even_when_result_count_is_unchanged(world,
     assert "6곳" in said(refreshed)[0]
     with world.factory() as db:
         assert recommend_api.get_run_meta(db, run_id=run_id)["result_count"] == 1
-    assert len(advice_rows(world, run_id)) == 2
+    assert len(advice_rows(world, run_id)) == 1   # run당 한 행 — 결과가 바뀌면 그 행을 덮는다
     monkeypatch.setattr(core, "choose_run_advice", _forbid)
     monkeypatch.setattr(recommend_api, "simulate_filter", _forbid)
     assert advise(world, run_id) == refreshed
@@ -316,7 +316,7 @@ def test_retry_refreshes_advice_and_repeated_reads_are_stable(world, map_id, pla
     refreshed = advise(world, run_id)
     assert refreshed.kind == "exhausted"
     assert said(refreshed) == [f"이미 보여 줬거나 거절한 {7 if initial_advice else 5}곳은 다시 추천하지 않아요."]
-    assert len(advice_rows(world, run_id)) == 2
+    assert len(advice_rows(world, run_id)) == 1
     monkeypatch.setattr(core, "choose_run_advice", _forbid)
     assert advise(world, run_id) == refreshed
     assert len(advice_runs(world, map_id)) == 2
@@ -332,7 +332,8 @@ def test_legacy_cache_is_rebuilt_once(world, map_id, places, monkeypatch, kind):
         db.commit()
     refreshed = advise(world, run_id)
     assert refreshed.kind == "soft_relax"
-    assert len(advice_rows(world, run_id)) == 2
+    assert [r.state_key for r in advice_rows(world, run_id)] != [""]   # 옛 행을 덮었다
+    assert len(advice_rows(world, run_id)) == 1
     monkeypatch.setattr(core, "choose_run_advice", _forbid)
     assert advise(world, run_id) == refreshed
     assert len(advice_runs(world, map_id)) == 1
