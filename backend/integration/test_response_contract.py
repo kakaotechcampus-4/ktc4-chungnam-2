@@ -783,7 +783,24 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     fourth = suggest("카페", facts=[{"pin_id": kalguksu, "fact_key": "oily_focused"}])
     [fact] = a.get(f"/maps/{map_id}/agent").json()["active_suggestion"]["facts"]
     assert (fact["fact_key"], fact["value"]) == ("oily_focused", "unknown")
+    assert "web" not in fact   # 웹 확인 전이면 칸이 없다(스펙은 null을 받지 않는다)
     assert b.post(f"/agent/suggestions/{fourth}/dismiss").status_code == 204
+
+    # 웹 확인(6.8, #1216): 「모름」 줄에 저장된 web을 렌더한다. found(notice null, 출처 이름은 서버가 만든다)와 not_found·paused(notice)
+    checked_at = datetime.now(timezone.utc).isoformat()
+    for web in (
+        {"status": "found", "statements": [{"text": "느끼하지 않다는 후기가 있어요", "source_url": "https://www.blog.example.com/1"}],
+         "checked_at": checked_at},
+        {"status": "not_found", "statements": [], "checked_at": checked_at},
+        {"status": "paused", "statements": [], "checked_at": checked_at},
+    ):
+        sid = suggest("카페", facts=[{"pin_id": kalguksu, "fact_key": "oily_focused", "web": web}])
+        [fact] = a.get(f"/maps/{map_id}/agent").json()["active_suggestion"]["facts"]
+        assert fact["web"]["status"] == web["status"]
+        assert (fact["web"]["notice"] is None) == (web["status"] == "found")
+        if web["status"] == "found":
+            assert fact["web"]["statements"][0]["source_name"] == "blog.example.com"
+        assert b.post(f"/agent/suggestions/{sid}/dismiss").status_code == 204
 
     # 지도 현황 문단(8.2): 관찰 끝에서 저장된 것을 시트를 열 때 받는다
     now = datetime.now(timezone.utc)
