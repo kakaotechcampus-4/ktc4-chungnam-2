@@ -538,7 +538,7 @@ def _web_checked(ctx: tools.ToolContext, facts: list[dict[str, Any]], gateway: d
         web = core.web_record(result.status, result.statements, ctx.now)
         record = core.web_tool_record(result.status, len(result.statements), reused=False) | {
             "dropped": list(result.dropped), "web_searches": result.web_searches}
-        if result.status == "failed":
+        if result.status == "failed" and result.detail != "not_checked":   # not_checked는 dev 스텁(웹을 찾지 않음)
             log.warning("agent 웹 확인 실패 map_id=%s detail=%s", ctx.map_id, result.detail)
     tools.record_web_check(ctx, pin_id=pin_id, fact_key=key, result=record, started=started)
     if web is None:

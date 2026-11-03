@@ -172,7 +172,7 @@ def test_stall_gets_fact_lines_from_against_reasons_without_live_pins(world, lab
     assert (stored["pin_id"], stored["fact_key"]) == (food, "parking_available")
     [line] = suggested(world, map_id)["facts"]
     assert line["value"] == "unknown" and line["segments"][1]["pin_id"] == food
-    assert line["web"]["status"] == "not_found"   # 「모름」 줄은 웹 확인(6.8) 대상이다. dev 스텁은 늘 not_found(test_flows_web_check.py)
+    assert "web" not in line and "web" not in stored   # dev 스텁은 웹을 찾지 않아 failed — 칸도 저장도 없다(#1221, test_flows_web_check.py)
     assert LIVE_QUERY not in json.dumps(suggested(world, map_id), ensure_ascii=False)
 
 

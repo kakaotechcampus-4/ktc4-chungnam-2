@@ -317,9 +317,28 @@ def test_spent_today_starts_at_kst_midnight(monkeypatch):
     assert seen == [datetime(2026, 11, 4, tzinfo=KST)]
 
 
-def test_fixed_planner_never_makes_up_statements(monkeypatch):
-    result = _check(llm_api.fixed_web_check_planner)
-    assert (result.status, result.statements) == ("not_found", ())
+def test_fixed_planner_is_failed_not_not_found(caplog):
+    """찾아보지 않은 dev에서 「웹에서도 찾지 못했어요」는 거짓이다 — failed(칸 없음, 저장 안 함, #1221). 실패 로그도 남기지 않는다."""
+    with caplog.at_level(logging.WARNING, logger="pingo.llm"):
+        result = _check(llm_api.fixed_web_check_planner)
+    assert (result.status, result.statements, result.detail) == ("failed", (), "not_checked")
+    assert "실패" not in caplog.text
+
+
+def test_fixed_planner_still_pauses_over_budget(monkeypatch):
+    monkeypatch.setattr(usage, "spent_reader", lambda since: 3000.0)
+    assert _check(llm_api.fixed_web_check_planner).status == "paused"
+
+
+def test_search_city_defaults_to_seoul_and_can_be_given():
+    """검색 위치는 모델 입력이 아니다. 운영은 서울, 평가는 장소의 시·도를 줄 수 있다(#1221 비교)."""
+    seoul = FakeResponses(_response({"status": "not_found", "statements": []}, _search_call(BLOG)))
+    call_web_check(seoul, INPUT)
+    assert seoul.kwargs["tools"][0]["user_location"]["city"] == "Seoul"
+    daegu = FakeResponses(_response({"status": "not_found", "statements": []}, _search_call(BLOG)))
+    call_web_check(daegu, INPUT, city="대구")
+    assert daegu.kwargs["tools"][0]["user_location"] == {"type": "approximate", "country": "KR", "city": "대구", "region": "대구"}
+    assert json.loads(daegu.kwargs["input"]) == INPUT
 
 
 def test_web_check_does_not_raise_llm_errors():

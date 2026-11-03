@@ -608,9 +608,14 @@ def verify_web_answer(answer: WebAnswer, *, forbidden: Sequence[str]) -> WebChec
     return WebCheckResult(status="found", statements=tuple(kept), dropped=tuple(dropped), web_searches=answer.web_searches)
 
 
+class WebNotChecked(LlmCallError):
+    """고정 응답 스텁이 웹을 찾지 않았다 — web_check가 failed로 바꾼다(칸 없음, 저장 안 함)."""
+
+
 def fixed_web_check_planner(check_input: Mapping[str, Any]) -> WebAnswer:
-    """고정 응답 스텁(dev, 테스트) — 모델을 부르지 않고 늘 not_found다. 지어낸 문장이나 링크가 화면으로 나갈 길이 없다."""
-    return WebAnswer(output=WebCheckOutput(status="not_found", statements=[]), sources=(), web_searches=0)
+    """고정 응답 스텁(dev, 테스트) — 모델을 부르지 않는다. 찾아보지 않았으니 「찾지 못했다」고 말하지 않고 failed가 되게 한다(#1221 루트
+    답 2). 지어낸 문장이나 링크, 거짓 안내가 dev 화면에 나갈 길이 없다. 예산을 넘었으면 이 함수까지 오지 않고 paused다."""
+    raise WebNotChecked("고정 응답 스텁은 웹을 찾지 않는다")
 
 
 def real_web_check_planner(check_input: Mapping[str, Any]) -> WebAnswer:
@@ -655,6 +660,8 @@ def web_check(
     check_input = {"place_name": place_name, "area": area, "feature": feature}
     try:
         answer = planner(check_input)
+    except WebNotChecked:
+        return WebCheckResult(status="failed", detail="not_checked")
     except (LlmCallError, ValueError) as exc:
         failed = _failed("web_check", exc, "web_check")
         return WebCheckResult(status="failed", web_searches=getattr(exc, "web_searches", 0),

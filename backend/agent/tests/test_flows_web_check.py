@@ -195,6 +195,18 @@ def test_known_label_is_not_checked(world, labels):
     assert gateway.web_inputs == [] and _stored_web(world, map_id) is None and _w1(world, map_id) == []
 
 
+def test_fixed_gateway_never_says_not_found(world):
+    """dev 스텁은 웹을 찾지 않는다 — 「웹에서도 찾지 못했어요」를 내지 않고 칸도 저장도 없다(#1221). 기록 w1에는 failed로 남는다."""
+    map_id, _ = _stall_map(world)
+
+    assert observe(world, map_id, Gateway(good_stall, KEYS)) == "suggested"
+
+    assert _stored_web(world, map_id) is None
+    [line] = suggested(world, map_id)["facts"]
+    assert "web" not in line
+    assert _w1(world, map_id)[0]["result"]["status"] == "failed"
+
+
 def test_real_budget_gate_pauses_through_the_fixed_gateway(world, monkeypatch):
     """예산은 llm이 본다 — agent는 따로 계산하지 않는다. 고정 응답 스텁 Gateway로도 예산을 넘으면 paused가 된다."""
     map_id, _ = _stall_map(world)

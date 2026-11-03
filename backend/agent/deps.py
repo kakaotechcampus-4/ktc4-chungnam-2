@@ -15,8 +15,8 @@ planner다(#532): dev는 fixed planner, real은 real planner.
   `AgentReply(result, usage)`로 돌려준다. dev 스텁은 칸에서 어긋나지 않는 상태와 숫자 없는 고정 문구를 낸다 — 검증을 늘 통과해
   저장·응답 경로를 dev에서도 지나간다.
 - web_check(#1216): 웹 확인(`llm.api.web_check`, 명세 6.8). 입력은 장소 이름, 동네, 특징 이름과 금지 표현 목록(agent.core)뿐이다.
-  예산 확인은 llm이 한다. 결과는 `WebCheckResult`(found|not_found|paused|failed)이고 실패도 예외가 아니다. dev 스텁은 늘 not_found라
-  지어낸 문장이나 링크가 dev 화면에 나갈 길이 없다(예산을 넘으면 dev에서도 paused다).
+  예산 확인은 llm이 한다. 결과는 `WebCheckResult`(found|not_found|paused|failed)이고 실패도 예외가 아니다. dev 스텁은 웹을 찾지 않아
+  늘 failed다 — 칸도 저장도 없고, 찾아보지 않은 dev에서 「찾지 못했어요」라고 말하지 않는다(#1221). 예산을 넘으면 dev에서도 paused다.
 """
 
 from collections.abc import Callable, Mapping, Sequence

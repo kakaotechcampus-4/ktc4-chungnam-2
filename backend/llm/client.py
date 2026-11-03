@@ -350,11 +350,20 @@ def call_course_direct(client: Any, turn_input: Mapping[str, Any], *, turn: int)
 
 # ---------- 웹 확인 (#1216, docs/agent-v2.md 6.8) ----------
 
-# 서울(KR) 기준으로 찾는다. 장소 DB가 서울 밖(대전·부산 등)도 있지만 입력의 동네 이름이 지역을 좁힌다(2026-11-03 실험 설정)
+# 서울(KR) 기준으로 찾는다. 장소 DB가 서울 밖(대전·부산 등)도 있지만 입력의 동네 이름이 지역을 좁힌다(2026-11-03 실험 설정).
+# city를 장소의 시·도로 주는 것은 평가(run_web_eval --city-sido, #1221)로 서울 고정과 비교한다 — 운영은 아직 서울이다
+WEB_SEARCH_CITY = "Seoul"
 WEB_SEARCH_TOOL = {
     "type": "web_search",
-    "user_location": {"type": "approximate", "country": "KR", "city": "Seoul", "region": "Seoul"},
+    "user_location": {"type": "approximate", "country": "KR", "city": WEB_SEARCH_CITY, "region": WEB_SEARCH_CITY},
 }
+
+
+def web_search_tool(city: str | None = None) -> dict[str, Any]:
+    """web_search 도구 설명. city가 없으면 서울(WEB_SEARCH_TOOL). country는 늘 KR이다."""
+    if not city:
+        return WEB_SEARCH_TOOL
+    return {"type": "web_search", "user_location": {"type": "approximate", "country": "KR", "city": city, "region": city}}
 
 
 def _web_search_calls(response: Any) -> list[Any]:
@@ -380,13 +389,14 @@ def _refused(response: Any) -> bool:
     return False
 
 
-def call_web_check(client: Any, check_input: Mapping[str, Any]) -> WebAnswer:
+def call_web_check(client: Any, check_input: Mapping[str, Any], *, city: str | None = None) -> WebAnswer:
     """웹 확인 한 번(Responses API). 입력은 장소 이름, 동네, 특징 이름의 JSON 문자열이다(프롬프트에 섞지 않는다).
 
     tool_choice=required(검색을 하지 않고 답하지 않게), max_tool_calls=1(그래도 검색이 1~2번 나올 수 있다, 실험), reasoning none,
     strict JSON 스키마, include=web_search_call.action.sources(출처 대조에 꼭 필요하다). 타임아웃 30초, 재시도 없음(클라이언트 기본
     0). 로그는 다른 출구와 같은 규칙이다(#390) — 입력, 검색어, 응답 본문, URL은 남기지 않고 검색 횟수와 토큰만 남긴다.
-    실패(호출 실패, 시간 초과, 거절, 빈 응답, 스키마 실패)는 LlmCallError다. 응답이 있었으면 검색 횟수와 토큰을 llm_calls에 남긴다."""
+    실패(호출 실패, 시간 초과, 거절, 빈 응답, 스키마 실패)는 LlmCallError다. 응답이 있었으면 검색 횟수와 토큰을 llm_calls에 남긴다.
+    city는 검색 위치(web_search_tool) — 모델 입력이 아니다. 운영은 넘기지 않는다(서울)."""
     started = time.monotonic()
     what, call = "웹 확인", "agent_web_check"
     try:
@@ -394,7 +404,7 @@ def call_web_check(client: Any, check_input: Mapping[str, Any]) -> WebAnswer:
             model=settings.llm_model,
             instructions=WEB_CHECK_PROMPT,
             input=json.dumps(dict(check_input), ensure_ascii=False),
-            tools=[WEB_SEARCH_TOOL],
+            tools=[web_search_tool(city)],
             tool_choice="required",
             max_tool_calls=1,
             reasoning={"effort": "none"},

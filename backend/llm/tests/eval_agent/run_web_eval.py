@@ -3,6 +3,7 @@
     cd backend
     python -m llm.tests.eval_agent.run_web_eval                    # 10개 × 3회(한 번 약 30원)
     python -m llm.tests.eval_agent.run_web_eval --runs 1 --cases w07_missing_kalguksu
+    python -m llm.tests.eval_agent.run_web_eval --cases w09_same_name_gukbap --city-sido   # 검색 위치를 장소의 시·도로(#1221 비교)
 
 - 돌리기 전에 케이스 수와 예상 비용을 사용자에게 보고하고 확인을 받는다(#1216). 키는 backend/.env의 설정(settings)으로만 읽고
   출력하거나 파일에 쓰지 않는다.
@@ -33,6 +34,7 @@ from llm import client as llm_client
 from llm import service, usage
 from llm.prompts import WEB_CHECK_PROMPT_VERSION
 from llm.tests.eval_agent.run_eval import RESULTS_DIR
+from places import api as places_api
 
 CASES_PATH = Path(__file__).with_name("web_cases.json")
 COST_PER_CALL_KRW = 30   # 6.8 「한 번에 보통 약 30원」(2026-11-03 실험) — 돌리기 전 보고용 어림
@@ -68,12 +70,13 @@ class RecordingResponses:
         return response
 
 
-def run_case(client: Any, case: dict[str, Any], run: int) -> dict[str, Any]:
+def run_case(client: Any, case: dict[str, Any], run: int, *, city_sido: bool = False) -> dict[str, Any]:
     _local.requests = []
     raw: dict[str, Any] = {}
+    city = places_api.sido(case["address"]) if city_sido else None   # None이면 운영과 같은 서울
 
     def planner(check_input):
-        answer = llm_client.call_web_check(client, check_input)
+        answer = llm_client.call_web_check(client, check_input, city=city)
         raw["answer"] = answer
         return answer
 
@@ -82,7 +85,8 @@ def run_case(client: Any, case: dict[str, Any], run: int) -> dict[str, Any]:
                                forbidden=core.WEB_CHECK_FORBIDDEN, planner=planner)
     req = _local.requests[0] if _local.requests else {}
     row: dict[str, Any] = {
-        "case": case["id"], "kind": case["kind"], "run": run, "ms": int((time.monotonic() - started) * 1000),
+        "case": case["id"], "kind": case["kind"], "run": run, "city": city or llm_client.WEB_SEARCH_CITY,
+        "ms": int((time.monotonic() - started) * 1000),
         "status": result.status, "detail": result.detail, "dropped": list(result.dropped),
         "web_searches": req.get("web_searches", result.web_searches), "cost_krw": req.get("cost_krw", 0.0),
         "tokens": {k: req.get(k, 0) for k in ("input", "cached", "output")},
@@ -111,7 +115,7 @@ def summarize(rows: list[dict[str, Any]], cases: list[dict[str, Any]]) -> str:
     by_case = {c["id"]: c for c in cases}
     lines = [f"# 웹 확인 평가 — {datetime.now().isoformat(timespec='seconds')}", "",
              f"모델 {settings.llm_model}, 프롬프트 {WEB_CHECK_PROMPT_VERSION}, Responses API + web_search, reasoning none, "
-             f"max_tool_calls=1, 케이스 {len(cases)} × {max(r['run'] for r in rows) + 1}회", ""]
+             f"max_tool_calls=1, 검색 위치 {sorted({r['city'] for r in rows})}, 케이스 {len(cases)} × {max(r['run'] for r in rows) + 1}회", ""]
     answered = [r for r in rows if "model_statements" in r]
     written = sum(len(r["model_statements"]) for r in answered)
     missing = [r for r in rows if r["kind"] == "missing"]
@@ -155,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--cases", nargs="*")
     parser.add_argument("--workers", type=int, default=3)
+    parser.add_argument("--city-sido", action="store_true", help="검색 위치 city를 장소 주소의 시·도로(기본은 운영과 같은 서울)")
     args = parser.parse_args(argv)
 
     cases = [c for c in load_cases() if not args.cases or c["id"] in args.cases]
@@ -163,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     client = RecordingResponses(llm_client.get_client())
     jobs = [(c, r) for c in cases for r in range(args.runs)]
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        rows = list(pool.map(lambda job: run_case(client, *job), jobs))
+        rows = list(pool.map(lambda job: run_case(client, *job, city_sido=args.city_sido), jobs))
 
     RESULTS_DIR.mkdir(exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
