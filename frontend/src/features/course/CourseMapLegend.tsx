@@ -1,23 +1,14 @@
-import { useEffect } from 'react'
-
-import { useRouteStore } from '@/features/shortlist/routeStore'
-
 import { useCourseMapStore } from './courseMapStore'
 
 /**
- * 확정 탭 머리에 붙는 AI 코스 범례(#683) — 지도에 그린 날짜별 선 모양과 「끄기」.
- * 「동선 보기」와 같은 자리에 선을 그어서 둘은 함께 켜지지 않는다. 동선 보기를 켜면 코스는 꺼진다.
+ * AI 코스 탭 머리에 붙는 범례(#683) — 지도에 그린 날짜별 선 모양과 「끄기」.
+ * 코스 선은 AI 코스 탭에서만, 「동선 보기」 선은 확정 탭에서만 그려서 둘은 한 화면에 겹치지 않는다.
  */
 export default function CourseMapLegend({ mapId }: { mapId: string }) {
   const { mapId: shownOn, days, hide } = useCourseMapStore()
-  const routeOn = useRouteStore((s) => s.on)
   const shown = shownOn === mapId && days.length > 0
 
-  useEffect(() => {
-    if (routeOn && shown) hide()
-  }, [routeOn, shown, hide])
-
-  if (!shown || routeOn) return null
+  if (!shown) return null
   return (
     <div className="mt-2 flex items-start gap-2 rounded-xl bg-white p-2.5 ring-1 ring-ink-200">
       <div className="min-w-0 flex-1">

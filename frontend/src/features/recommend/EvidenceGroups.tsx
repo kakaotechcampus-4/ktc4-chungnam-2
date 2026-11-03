@@ -6,7 +6,7 @@ import ConfirmDialog from '@/ui/ConfirmDialog'
 import Notice from '@/ui/Notice'
 import TextField from '@/ui/TextField'
 
-import { evidenceLabel, evidenceLimitMessage, groupEvidence, notEnforcedNote, type EvidenceLineDto } from './model'
+import { evidenceLabel, evidenceLimitMessage, groupEvidence, mergeTags, notEnforcedNote, type EvidenceLineDto } from './model'
 import { usePatchEvidenceMutation } from './queries'
 
 /** 「+」 글 한 줄 길이(docs/api-spec.yaml EvidencePatchRequest.add[].text, 앞뒤 공백을 뗀 뒤 1~140자). */
@@ -216,17 +216,4 @@ export default function EvidenceGroups({
       )}
     </div>
   )
-}
-
-/** 같은 태그는 하나로 합친다. all = 그 태그의 줄 전부, mine = 그중 내 줄(뺄 수 있는 줄). */
-function mergeTags(lines: EvidenceLineDto[]) {
-  const tags = new Map<string, { all: EvidenceLineDto[]; mine: EvidenceLineDto[] }>()
-  for (const line of lines) {
-    const tag = evidenceLabel(line)
-    const entry = tags.get(tag) ?? { all: [], mine: [] }
-    entry.all.push(line)
-    if (line.permissions.can_disable) entry.mine.push(line)
-    tags.set(tag, entry)
-  }
-  return [...tags].map(([tag, v]) => ({ tag, ...v }))
 }

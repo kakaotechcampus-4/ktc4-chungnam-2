@@ -105,6 +105,74 @@ class TestNamedPlaceDropped:
         assert "음식점·카페면 저녁·밤은 끼니·시간 말이라 place_on_day만" in COURSE_GOALS_PROMPT
 
 
+class TestOverlappingNames:
+    def tr(self):
+        return _named(_named(t(A("p1"), A("p2", cat="카페")), "p1", "서울숲"), "p2", "서울숲 카페")
+
+    def test_shorter_name_inside_a_used_longer_name_is_skipped(self):
+        text = "둘째 날 서울숲 카페 가고 싶어요"
+        v = _verify(self.tr(), text, [_goal("place_on_day", text, "d2", ["p2"])])
+        assert v.unmatched == ()
+
+    def test_unused_longer_name_is_reported_once(self):
+        text = "둘째 날 서울숲 카페 가고 싶어요"
+        v = _verify(self.tr(), text, [_goal("day_has", text, "d2", tag="cafe")])
+        assert v.unmatched == (text,)
+
+    def test_unrelated_short_name_is_still_reported(self):
+        tr = _named(self.tr(), "p1", "남산")
+        text = "둘째 날 남산, 서울숲 카페 가고 싶어요"
+        v = _verify(tr, text, [_goal("place_on_day", text, "d2", ["p2"])])
+        assert v.unmatched == ("둘째 날 남산",)
+
+    @pytest.mark.parametrize("reverse", [False, True])
+    @pytest.mark.parametrize("whole_quote", [False, True])
+    def test_independent_short_name_in_separate_clauses_is_reported(self, reverse, whole_quote):
+        clauses = ["첫날 서울숲", "둘째 날 서울숲 카페"]
+        if reverse:
+            clauses.reverse()
+        text = ", ".join(clauses)
+        quotes = [text] if whole_quote else clauses
+        goals = [Goal("place_on_day", "d2", ("p2",))]
+        assert G.unlisted_mentions(self.tr(), text, goals, quotes) == ["첫날 서울숲"]
+        v = _verify(self.tr(), text, [
+            _goal("day_light", quotes[0], "d1"),
+            _goal("place_on_day", quotes[-1], "d2", ["p2"]),
+        ])
+        assert v.unmatched == ("첫날 서울숲",)
+
+    @pytest.mark.parametrize("reverse", [False, True])
+    @pytest.mark.parametrize("used", [("p1",), ("p2",), ("p1", "p2")])
+    def test_independent_names_in_one_clause(self, reverse, used):
+        names = ["서울숲", "서울숲 카페"]
+        if reverse:
+            names.reverse()
+        text = "첫날 " + "과 ".join(names)
+        goals = [_goal("place_on_day", text, "d1", [alias]) for alias in used]
+        v = _verify(self.tr(), text, goals)
+        assert v.unmatched == (() if len(used) == 2 else (text,))
+
+    def test_partial_quote_does_not_make_a_nested_name_independent(self):
+        text = "첫날 서울숲 카페"
+        v = _verify(self.tr(), text, [
+            _goal("day_light", "첫날 서울숲", "d1"),
+            _goal("place_on_day", text, "d1", ["p2"]),
+        ])
+        assert v.unmatched == ()
+
+
+def test_general_request_endings_are_not_leftover():
+    assert G.leftover_pieces("첫날 N서울타워 방문하고 싶어요", ["첫날 N서울타워"]) == []
+    assert G.leftover_pieces("첫날 N서울타워 가고 싶어요", ["첫날 N서울타워"]) == []
+    assert G.leftover_pieces("첫날 N서울타워 가보고 싶어요", ["첫날 N서울타워"]) == []
+
+
+def test_constraints_stay_unmatched():
+    """맨낱말 「방문」은 지우지 않는다 — 금지·제한·부정이 든 조각은 의미 있는 제약이라 말없이 사라지면 안 된다."""
+    for tail in ("방문 금지", "방문 제한", "가고 싶지 않아요", "방문하고 싶지 않아요", "방문 말고 다른 데"):
+        assert G.leftover_pieces(f"첫날 N서울타워 {tail}", ["첫날 N서울타워"]) == [tail], tail
+
+
 def test_greetings_are_not_leftover():
     assert G.leftover_pieces("감사합니다", []) == [] and G.leftover_pieces("잘 부탁드립니다", []) == []
     assert G.leftover_pieces("첫날 감사합니다, 사진 많이 찍고 싶어요", ["첫날"]) == ["사진 많이 찍고 싶어요"]

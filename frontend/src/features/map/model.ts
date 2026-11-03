@@ -13,6 +13,12 @@ export function isPlaced(pin: Pin): pin is PlacedPin {
 }
 
 export type PinCategory = Pin['category']
+
+/**
+ * AI 추천에서 지도에 올린 핀인지. 서버는 올릴 때 근거(이유·조건 체크·구성원 충족·출처)를 핀에 그대로 옮기고(가드레일 5),
+ * 확정되면 kind 는 「확정」이 되지만 근거는 남는다 — 그래서 kind 가 아니라 근거가 있는지로 본다(#1032).
+ */
+export const hasAiEvidence = (pin: Pin) => Boolean(pin.reason || pin.checks?.length)
 /** ♥ 좋음 / 🚫 반대. △ 조율 필요는 2026-10-07에 없앴다(#360). 서버가 아직 neutral 을 줄 수 있는 동안엔 화면에서 걸러 쓴다. */
 export type ReactionType = 'like' | 'against'
 const isReactionType = (t: string): t is ReactionType => t === 'like' || t === 'against'
@@ -35,6 +41,8 @@ export const OPINIONS = { like: '좋음', against: '반대', unknown: '미확인
 export type PinOpinion = keyof typeof OPINIONS
 /** 종류 필터(기획안 5-2: 확정/일반/AI 추천 셋뿐). */
 export const KINDS: Pin['kind'][] = ['확정', '일반', 'AI추천']
+/** 핀 종류를 화면·읽는 이름에 적을 때. 값 「AI추천」은 띄어 쓴다(용어 「AI 추천」, 기획안 9절). */
+export const kindLabel = (kind: Pin['kind']) => (kind === 'AI추천' ? 'AI 추천' : kind)
 
 export type PinFilters = {
   category: PinCategory | null

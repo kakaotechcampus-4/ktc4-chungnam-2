@@ -12,8 +12,8 @@ from sqlalchemy.engine import make_url
 
 from pins.tests.conftest import BASE_DATABASE_URL, TEST_DB_NAME
 
-REVISION = "0056_pin_trash"
-PREVIOUS = "0055_place_external_ids"
+REVISION = "0058_pin_trash"
+PREVIOUS = "0057_agent_advice_state_key"
 
 
 def _config():

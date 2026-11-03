@@ -4,9 +4,9 @@
 둘 다 nullable 새 칸이라 기존 행은 그대로다(expand) — 옛 삭제 행은 NULL이고 복구 때 확정이 아니었던 것으로 본다.
 정리(purge_deleted_pins)가 deleted_at으로 오래된 행부터 찾으므로 삭제된 행만 담는 부분 인덱스를 둔다.
 
-Revision ID: 0056_pin_trash
-Revises: 0055_place_external_ids
-Create Date: 2026-11-02
+Revision ID: 0058_pin_trash
+Revises: 0057_agent_advice_state_key
+Create Date: 2026-11-03
 
 """
 
@@ -15,8 +15,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0056_pin_trash"
-down_revision: Union[str, None] = "0055_place_external_ids"
+revision: str = "0058_pin_trash"
+down_revision: Union[str, None] = "0057_agent_advice_state_key"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
