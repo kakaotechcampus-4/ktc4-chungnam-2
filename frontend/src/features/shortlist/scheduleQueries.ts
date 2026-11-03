@@ -39,15 +39,15 @@ export function useScheduleQuery(mapId: string) {
   return useQuery({
     queryKey: scheduleKeys.one(mapId),
     queryFn: async () => {
-      // 저장이 가는 중이면 끝나길 기다렸다가 받는다. 받는 동안 저장이 시작됐거나 끝났으면 그 응답은 낡았으니 다시 받는다(몇 번만).
+      // 저장이 가는 중이면 끝나길 기다렸다가 받는다. 받는 동안 저장이 시작됐거나 끝났으면 그 응답은 낡았으니 다시 받는다(몇 번만, 그래도 겹치면 실패로 알린다).
       for (let attempt = 0; attempt < 3; attempt++) {
         await running.get(mapId)
         const started = generations.get(mapId) ?? 0
         const dto = await fetchSchedule(mapId)
         if ((generations.get(mapId) ?? 0) === started && !running.has(mapId)) return dto
       }
-      await running.get(mapId)
-      return fetchSchedule(mapId)
+      // 저장이 계속 겹쳐 안전한 응답을 못 받았다 — 검사 없이 캐시에 넣지 않고 실패로 알려 다시 받게 한다.
+      throw new Error('일정을 받는 동안 저장이 계속 겹쳤다')
     },
   })
 }
