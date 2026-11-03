@@ -587,7 +587,7 @@ COURSE_TURN_PROMPT = f"""너는 여행 그룹의 확정 장소로 날짜별 방�
 
 
 # ---- 목표 세우기 (#334, pivot 3.3절) ----
-COURSE_GOALS_PROMPT_VERSION = "course-goals-v7"   # v2: day_has(그 날 코스에 tag 종류 장소 넣기) 추가(2026-10-21) · v3: 줄여 부른 장소 이름, 한 문장 속 여러 요청, 앞 조각의 날짜 이어받기(#899, 2026-10-30) · v4: day_has에 카테고리(cafe, restaurant)와 한식(korean_food) 추가(#1094, 2026-11-02) · v5: 날짜+밤이 한 문장이면 두 목표, 음식점·카페+저녁은 place_on_day만(#1008, 2026-11-02) · v6: 「매일」 day_has는 day null로(코드가 날마다 나눈다), 시간·하루 비우기·맡김은 unmatched 그대로(#1128, 2026-11-03) · v7: 지도 목표 후보(map_candidates)에서 남는 자리만 고른다, source map(#1131, 2026-11-03)
+COURSE_GOALS_PROMPT_VERSION = "course-goals-v8"   # v2: day_has(그 날 코스에 tag 종류 장소 넣기) 추가(2026-10-21) · v3: 줄여 부른 장소 이름, 한 문장 속 여러 요청, 앞 조각의 날짜 이어받기(#899, 2026-10-30) · v4: day_has에 카테고리(cafe, restaurant)와 한식(korean_food) 추가(#1094, 2026-11-02) · v5: 날짜+밤이 한 문장이면 두 목표, 음식점·카페+저녁은 place_on_day만(#1008, 2026-11-02) · v6: 「매일」 day_has는 day null로(코드가 날마다 나눈다), 시간·하루 비우기·맡김은 unmatched 그대로(#1128, 2026-11-03) · v7: 지도 목표 후보(map_candidates)에서 남는 자리만 고른다, source map(#1131, 2026-11-03) · v8: required 후보(꼭 지킬 조건)는 코드가 넣는다(#1131, 2026-11-03)
 
 COURSE_GOALS_PROMPT = f"""너는 여행 코스 요청 한 줄을 정해진 목표 종류로 바꾼다. 코스는 만들지 않는다. 코드가 목표를 점수로 계산해 코스를 짠다.
 
@@ -595,7 +595,7 @@ COURSE_GOALS_PROMPT = f"""너는 여행 코스 요청 한 줄을 정해진 목�
 - request: 요청자가 쓴 한 줄.
 - days: 여행 날짜 별칭(d1, d2 …)과 요일. first_day, last_day는 첫날, 마지막 날의 별칭이다.
 - places: 확정 장소 별칭(p1, p2 …), name, category. 요청에 나온 장소 이름을 별칭으로 바꿀 때만 쓴다.
-- map_candidates: 코드가 지도에서 모은 목표 후보. id(g1 …), kind, evidence(category, fact_key, wants, members — 구성원 사유 요약의 키와 사람 수),
+- map_candidates: 코드가 지도에서 모은 목표 후보. id(g1 …), kind, required, evidence(category, fact_key, wants, members — 구성원 사유 요약의 키와 사람 수),
   night_places(야경 라벨이 있는 장소 별칭). 비어 있을 수 있다.
 
 ## 목표 종류 (이 안에서만 고른다)
@@ -629,6 +629,8 @@ day_has의 tag는 이 목록에서만 고른다(영어 이름 그대로): perfor
 9. **지도 목표.** 요청 목표를 먼저 세운 뒤, 남는 자리(최대 {{goals_max}}개 안)에만 map_candidates에서 고른다. 그 목표는 source map, candidate_id에 후보 id,
    kind는 그 후보의 kind 그대로, quote는 빈 문자열이다. 후보 하나에 목표 하나다. 후보에 없는 지도 목표는 만들지 않는다(코드가 버린다).
    날이 필요한 종류(day_indoor, night_end)는 days에서 고른다. night_end는 night_places 장소가 닿기 좋은 날, 요청이 말한 날이 있으면 그날이다.
+   required가 true인 후보는 구성원이 꼭 지킬 조건으로 남긴 것이라 코드가 목표로 넣는다. 날이 필요 없는 종류(daily_walk_low)는 내지 않아도 되고,
+   날이 필요한 종류(day_indoor, night_end)는 날을 골라 꼭 낸다(자리가 모자라면 required가 아닌 후보보다 먼저 낸다).
    요청 목표와 같은 종류·같은 날이면 지도 목표를 내지 않는다. 요청이 비었거나 맡기는 말뿐이어도 후보가 있으면 고른다. 근거가 약한(members가 1명뿐인) 후보는 건너뛰어도 된다.
 
 ## 예시 (이름은 가상이다)
