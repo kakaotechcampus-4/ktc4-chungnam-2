@@ -90,27 +90,12 @@ from agent.schemas import (
 )
 from common import categories
 from common.events import Event
+from common.kst import kst_day_start
 
 if TYPE_CHECKING:
     from agent.snapshot import Reaction, Snapshot
 
 DIAGNOSES = MODEL_TYPES + CODE_TYPES
-
-# constants.DAY_BOUNDARY_TZ("Asia/Seoul")의 고정 오프셋. 한국은 서머타임이 없어(1988년 이후) +9시간과 같다.
-# zoneinfo는 Windows에서 tzdata 패키지가 있어야 해서 쓰지 않는다.
-KST = timezone(timedelta(hours=9), "KST")
-
-
-def kst_date(now: datetime) -> date:
-    if now.tzinfo is None:
-        raise ValueError("now는 timezone-aware여야 합니다 — naive datetime은 KST/UTC 혼동을 부른다")
-    return now.astimezone(KST).date()
-
-
-def kst_day_start(now: datetime) -> datetime:
-    """now가 속한 KST 하루의 시작(자정). 모델 사용 상한과 no_reaction 하루 1회의 경계다."""
-    d = kst_date(now)
-    return datetime(d.year, d.month, d.day, tzinfo=KST)
 
 
 # ---------------------------------------------------------------- 기준 시간 (6.1)
