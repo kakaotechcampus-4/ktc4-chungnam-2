@@ -336,7 +336,9 @@ components:
 | 켜고 끄기 | `Switch` (막대 44×24 · 누르는 곳 44, 켜짐 brand-600 · 꺼짐 ink-300) | `ui/Switch` |
 | 핑고 AI 조언 버튼(지도 왼쪽 아래) | `AgentButton` | `features/agent/AgentButton` |
 | 알림 종 버튼 + 알림함·알림 설정 시트(#483) | `NotificationBell` (`floating`이면 지도 위 흰 원 + 그림자, 아니면 테두리 원. 안 읽은 수는 brand-600 숫자 배지, 99+) | `features/notifications/NotificationBell` |
-| 서버가 렌더한 에이전트 문장(조각) | `AdviceText` (quote는 `<q>` + ink-100 면, pin은 600 굵기) | `features/agent/AdviceText` |
+| 서버가 렌더한 에이전트 문장(조각) | `AdviceText` (quote는 `<q>` + ink-100 면, pin은 600 굵기) — 조언 줄과 우리 데이터 줄이 같이 쓴다 | `features/agent/AdviceText` |
+| 지도 현황 문단(핑고 AI 조언 시트 맨 위, #1169) | `MapStatus` (brand-50 면 + brand-300 1.5px 테두리 + 반경 12, 머리 `tag-ai` 「AI」 + 「지금 지도 현황」, 문단은 서버 글 그대로) | `features/agent/MapStatus` |
+| 우리 데이터 줄(제안 안 버튼 위, #1169) | `FactLines` (「우리 데이터」 + 줄마다 아이콘 14 ink-500(참·거짓 `Database`, 모름 `CircleHelp`) + `AdviceText`) | `features/agent/FactLines` |
 | 우리 조건 요약(카테고리 칩 + 칸) | `SummarySection` | `features/agent/SummarySection` |
 | 추천 막힘 조언(결과 깔때기 아래) | `RunAdvice` | `features/agent/RunAdvice` |
 | 「이 조건으로 찾았어요」(추천 결과 맨 위 접힌 카드) | `ConditionsCard` (접힘: 쓴 조건 수 + 고지 + 「고친 조건 N개 · 다시 추천 때 반영」, 펼침: `EvidenceGroups`) | `features/recommend/ConditionsCard` |
@@ -467,7 +469,9 @@ components:
 
 - **버튼(`AgentButton`)** — 마킹 탭 지도 왼쪽 아래, 오른쪽 지도 버튼 묶음과 같은 줄이다. 모바일은 시트 윗변 12px 위에 붙어 오르내리고 숨는 조건(3단계·모달·좁은 화면)과 지도를 끌 때 흐려지는 것도 지도 버튼과 같다. 넓은 화면은 지도 영역 왼쪽 아래 16px 고정. 모양은 지도 버튼과 같은 흰 면 + `shadow-float` + 반경 12, 높이 44, `PingoMark` 24 + 「핑고 AI 조언」(14/700 brand-600). 새 제안을 아직 안 봤으면 오른쪽 위에 brand-600 점(12px, 흰 2px 테두리, 할 일은 파랑). 모드가 꺼져 있으면 점만 숨긴다.
 - **시트** — `ModalSheet`(지도 화면이라 `fullWidth`). 제목 줄 오른쪽에 `Switch`(모드). 꺼져 있으면 「꺼져 있어요 · ○○님이 껐어요」 한 줄만. 제안이 없으면 `AiHeader` 「지금은 따로 드릴 제안이 없어요」.
-- **제안** — `AiHeader`(서버 제목, 「구성원 모두에게 같은 제안이 보여요」) → 「확인된 것」(is_guess=false) → 「어디서 갈리나요」(의견 갈림만: 충돌 종류 한 줄 + 축마다 카드 한 칸, 「♥ 좋음 쪽 · 원함 2」 good-text, 반대 기호 + 「반대 쪽 · 원하지 않음 1」 bad-text) → 「AI 조언」(is_guess=true, 줄마다 `tag-neutral` 「추정」) → 버튼(첫 버튼만 `btn-primary btn-md`, 나머지 `btn-outline btn-md`, 전폭) → `btn-text` 「이 제안 닫기」(지도 단위라 모두에게서 닫힌다). 구성원 의견 인용(quote)은 따옴표 + ink-100 면이고 누가 썼는지 붙이지 않는다.
+- **지도 현황 문단(#1169, `MapStatus`)** — 제목 줄 바로 아래, 지금 제안 위. 모델이 쓴 문장이라 `tag-ai` 「AI」 + 「지금 지도 현황」(14/700) 머리에 13 ink-900 문단. 서버가 검증한 문단 그대로 보이고 화면이 고치거나 자르지 않는다. 없거나 null이면 자리(빈 칸·로딩)를 두지 않고, 모드가 꺼져 있으면 보이지 않는다.
+- **제안** — `AiHeader`(서버 제목, 「구성원 모두에게 같은 제안이 보여요」) → 「확인된 것」(is_guess=false) → 「어디서 갈리나요」(의견 갈림만: 충돌 종류 한 줄 + 축마다 카드 한 칸, 「♥ 좋음 쪽 · 원함 2」 good-text, 반대 기호 + 「반대 쪽 · 원하지 않음 1」 bad-text) → 「AI 조언」(is_guess=true, 줄마다 `tag-neutral` 「추정」) → 「우리 데이터」(#1169, `FactLines`, 없거나 비면 없음) → 버튼(첫 버튼만 `btn-primary btn-md`, 나머지 `btn-outline btn-md`, 전폭) → `btn-text` 「이 제안 닫기」(지도 단위라 모두에게서 닫힌다). 구성원 의견 인용(quote)은 따옴표 + ink-100 면이고 누가 썼는지 붙이지 않는다.
+- **우리 데이터 줄(#1169, `FactLines`)** — 줄은 서버 고정 문구 조각 그대로이고 핀 이름은 pin 조각(600 굵기)이다. `value`는 줄 앞 아이콘 모양에만 쓴다(참·거짓은 같은 `Database` · 모름만 `CircleHelp`, 14 ink-500, 읽는 글은 문구라 `aria-hidden`). 참·거짓은 좋고 나쁨이 아니라 「특징이 있다·없다」라서 ✓·✕와 good·bad 색을 쓰지 않는다 — ✓는 「좋다」, ✕는 「반대가 틀렸다」로 읽혀 우리 데이터가 구성원의 반대를 판정하게 된다(agent-v2 6.6, #1182). 「데이터가 틀릴 수 있어요」 같은 판정 문구는 서버 문구에 있어 화면이 더하지 않는다.
 - **우리 조건 요약(#589, `SummarySection`)** — 제안 아래 ink-100 선으로 나눈 구역. 카테고리가 둘 이상이면 `chip`(aria-pressed)으로 고른다. 칸은 흰 면 + ink-200 `ring-1` + 반경 12, 칸 이름 12/700 ink-600 + 줄마다 13/400 — 「지키려는 조건」·「겹치는 선호」(「매운 곳 제외 · 1명」), 「갈리는 선호」(「체인점 · 원함 1 / 피함 1」), 「더 적어 주면 반영돼요 · n건」, 「추천이 거르지 않아요 · n건」. 이름 없이 개수만이고 빈 칸은 그리지 않는다. 추천 대상 카테고리면 맨 아래 `btn-outline btn-md` 「이 조건으로 ○○ 추천 받기」(제안의 채움 버튼과 겹치지 않게 외곽선).
 - **추천 막힘 조언(#589, `RunAdvice`)** — AI 추천 결과의 깔때기 줄 아래, 핑고 면(`--pingo-bg`) + 반경 12 + 패딩 12. 머리 「더 많이 추천받으려면」(`PingoMark` 20 + 14/700), 문장(추정이면 `tag-neutral` 「추정」), 버튼 `btn-outline btn-sm`(「반경 넓히기」는 화면의 확인 창 버튼 그대로, 근거 버튼은 결과 위 조건 카드를 연다). 기다리는 동안 ink-50 자리(높이 64)만, 대상이 아니거나 실패면 아무것도 없다. 0곳 화면은 아래에 같은 버튼이 있어 문장만 보인다.
 - **실패** — 다른 구성원이 먼저 처리했으면(409) 토스트 「다른 구성원이 먼저 처리한 제안이에요」 후 상태를 다시 받는다. 버튼이 이어 간 기존 동작이 막히면(준비가 풀림 등) 토스트 「상황이 바뀌었어요」.

@@ -466,7 +466,7 @@ ad_daily_stats(
 
 ## agent (v2 계획 보조 에이전트, docs/agent-v2.md 13절, #510)
 
-> v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 7개 테이블만 쓰고, 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.
+> v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 8개 테이블만 쓰고(`agent_map_status`는 #1168), 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.
 > `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다. 지도 정리(#431)는 `agent.api.purge_map_data`, 탈퇴(#155)는 `agent.api.delete_by_user`가 맡는다.
 > **agent 테이블에는 사유 원문을 저장하지 않는다**(2026-10-15). 사유는 `reaction_id`로만 가리키고, 인용 문장은 응답과 이벤트를 만들 때 pins에서 읽어 렌더한다. 반응이 지워지면 인용도 사라진다(docs/agent-v2.md 2절 13번).
 
@@ -582,8 +582,8 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 ```
 llm_calls(
   id uuid,
-  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'course'),   -- 왜 불렀는지
-  call('plan_evidence'|'agent_diagnose'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
+  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'agent_status'|'course'),   -- 왜 불렀는지. agent_status: 지도 현황 문단(#1168)
+  call('plan_evidence'|'agent_diagnose'|'agent_status'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
   trace_id uuid,                      -- 같은 usage_context 안의 호출. run_id가 아직 없는 호출(추천 ②, 진단)도 실행 1번으로 묶는다
   map_id null, user_id null,          -- user_id는 사용자가 부른 호출만. 서버 호출(진단, 요약)은 null
   run_id null,                        -- evidence_add는 recommend_runs.id, course는 agent_course_runs.id. 추천 ②와 진단은 null
