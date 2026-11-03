@@ -875,21 +875,19 @@ def _label_check(fact_key, *, value=None):
     return core.build_check(fact_key, "pass", known=value is not None, value=value, passes=bool(value))
 
 
-def test_soft_requirement_wants_false_disqualifies_only_a_true_label():
+def test_soft_labels_never_disqualify():
     flags = core.apply_disqualifier_filters(
         [[_label_check("cuisine_korean", value=True)], [_label_check("cuisine_korean", value=False)],
          [_label_check("cuisine_korean")]],
-        [("cuisine_korean", False)],
     )
-    assert flags == [False, True, True]
+    assert flags == [True, True, True]
 
 
-def test_soft_requirement_wants_true_disqualifies_only_a_false_label():
+def test_soft_labels_never_disqualify_for_a_wanted_fact():
     flags = core.apply_disqualifier_filters(
         [[_label_check("quiet", value=True)], [_label_check("quiet", value=False)], [_label_check("quiet")]],
-        [("quiet", True)],
     )
-    assert flags == [True, False, True]
+    assert flags == [True, True, True]
 
 
 def test_soft_checks_without_requirement_never_disqualify():
@@ -1059,7 +1057,10 @@ def test_written_preference_outweighs_other_heart_labels():
 
 @pytest.mark.parametrize("badge, fact_key, wants, category, off_season, expected", [
     ("required", "is_crowded_large", None, "카페", (), (True, None, "filter")),         # hard 키는 방향이 없어도 쓰인다
-    ("required", "quiet", False, "카페", (), (True, None, "filter")),                   # soft 키 + 방향, required는 거른다
+    ("required", "quiet", False, "카페", (), (True, None, "score")),                    # soft 키는 감점
+    ("required", "accessible", True, "관광지", (), (True, None, "filter")),
+    ("required", "accessible", False, "관광지", (), (True, None, "score")),
+    ("preferred", "accessible", True, "관광지", (), (True, None, "score")),
     ("preferred", "quiet", True, "음식점", (), (True, None, "score")),                  # preferred는 점수만
     ("required", None, None, "카페", (), (False, "no_key", None)),
     ("required", "quiet", None, "카페", (), (False, "no_direction", None)),

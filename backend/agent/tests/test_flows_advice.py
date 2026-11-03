@@ -2,7 +2,7 @@
 절차(core.choose_run_advice)를 지나간다. 모델은 없다.
 
 run은 recommend 모듈 테스트(test_run_reads_api.py)와 같은 판이다: 카페 반경 1000m, 근거 줄 셋(다른 구성원의 「붐빔」, 요청자
-본인의 「넓은 곳」, 요청자 본인의 조건 없는 글). 장소는 판마다 고른다 — 기본 판은 단계마다 한 곳씩만 빠져 뚜렷한 탈락이 없고,
+본인의 「접근 가능」, 요청자 본인의 조건 없는 글). 장소는 판마다 고른다 — 기본 판은 단계마다 한 곳씩만 빠져 뚜렷한 탈락이 없고,
 SOFT는 실격 조건, RADIUS는 반경, EXHAUSTED는 이미 제안한 곳이 뚜렷하게(ADVICE_CLEAR_DROP 이상) 많다. 결과는 ok 한 곳이라
 조언 대상이다. 장소 검색과 라벨은 recommend.deps를 대역으로 바꾼다.
 """
@@ -61,7 +61,7 @@ MORE = [_at("ok2"), _at("ok3")]
 
 
 def _facts(place_id):
-    return {"is_crowded_large": place_id.startswith("crowded"), "spacious": not place_id.startswith("narrow")}
+    return {"is_crowded_large": place_id.startswith("crowded"), "accessible": not place_id.startswith("narrow")}
 
 
 class FakePlaceSearch:
@@ -125,7 +125,7 @@ def make_run(world, map_id, *, execute=True, walk=15, requester="u1", vague=True
         line = {"source": "reaction", "badge": "required"}
         lines = [
             line | {"author_id": world.uid("u2"), "text": OTHER_TEXT, "fact_key": "is_crowded_large", "wants": None},
-            line | {"author_id": world.uid(requester), "text": OWN_TEXT, "fact_key": "spacious", "wants": True},
+            line | {"author_id": world.uid(requester), "text": OWN_TEXT, "fact_key": "accessible", "wants": True},
         ]
         if vague:
             lines.append(line | {"author_id": world.uid(requester), "text": VAGUE_TEXT})
@@ -182,7 +182,7 @@ def test_soft_relax_button_only_for_own_line_and_nothing_private_is_said_or_stor
     assert advice.kind == "soft_relax"
     assert said(advice) == [   # 다른 구성원 줄(6곳)이 더 많이 걸렀어도 본인 줄(5곳)을 말하고 버튼은 본인 줄에만
         f"「{labels['is_crowded_large']}」 조건을 빼면 6곳이 더 남아요.",
-        f"「{labels['spacious']} 원함」 조건을 빼면 5곳이 더 남아요.",
+        f"「{labels['accessible']} 원함」 조건을 빼면 5곳이 더 남아요.",
     ]
     assert [a.model_dump(mode="json") for a in advice.actions] == [{
         "index": 0, "type": "open_evidence", "label": "근거 확인에서 빼 보기",

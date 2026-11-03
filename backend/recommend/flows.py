@@ -579,11 +579,10 @@ def _hard_fact_keys_from(used_lines: Sequence[EvidenceLineRow]) -> list[str]:
 
 
 def _soft_requirements_from(used_lines: Sequence[EvidenceLineRow]) -> list[tuple[str, bool]]:
-    """#231 — 쓰이는 줄 중 soft 키 + `required`인 사유를 (fact_key, wants)로 켠다. 사람이 직접 밝힌 사유라 카테고리 기본 키에
-    없어도 적용한다(선호 사유와 같다 — 아래 soft_keys가 그 키의 체크를 붙인다)."""
+    """접근성 원함의 required 사유만 실격 조건으로 모은다."""
     return sorted({
         (line.fact_key, line.wants) for line in used_lines
-        if line.badge == "required" and line.fact_key in constraints.SOFT_FACT_KEYS
+        if line.badge == "required" and line.fact_key in constraints.NEED_FILTER_SOFT_KEYS and line.wants is True
     })
 
 
@@ -732,10 +731,11 @@ def _filter_places(
     active_hard_keys = _hard_fact_keys_from(used_lines)
     soft_requirements = _soft_requirements_from(used_lines)
     preferred_authors: dict[str, set[str]] = {}
-    avoided_authors: dict[str, set[str]] = {}  # preferred + wants=false — 점수에서 반대 구성원(#231)
+    avoided_authors: dict[str, set[str]] = {}  # soft + wants=false — 점수에서 반대 구성원
     for line in used_lines:
         # wants=None(방향을 모름)인 선호는 쓰이는 줄이 아니라 지지·반대 어디에도 세지 않는다 — 효과 없음(constraints.md 표, #237).
-        if line.badge == "preferred":
+        if (line.badge in ("preferred", "required") and line.fact_key in constraints.SOFT_FACT_KEYS
+                and (line.fact_key, line.wants) not in soft_requirements):
             by_direction = preferred_authors if line.wants else avoided_authors
             by_direction.setdefault(line.fact_key, set()).add(line.author_id)
     # 선호 라벨 체크는 이 카테고리에 적용되는 키 + 사람이 직접 원한 키만 붙인다 — 50여 개를 전부 붙이면
@@ -766,9 +766,7 @@ def _filter_places(
             checks.append(core.build_check(fact_key, "pass", known=known, value=value, passes=bool(value)))
         checks_by_place[place.place_id] = checks
 
-    pass_flags = core.apply_disqualifier_filters(
-        [checks_by_place[p.place_id] for p in within_radius], soft_requirements,
-    )
+    pass_flags = core.apply_disqualifier_filters([checks_by_place[p.place_id] for p in within_radius], soft_requirements)
     after_disqualify = [p for p, ok in zip(within_radius, pass_flags) if ok]
     return _Filtered(
         active_lines=active_lines, used_lines=used_lines, hard_keys=active_hard_keys,
@@ -846,7 +844,7 @@ def _run_pipeline(
     ], run.category)
     criteria = core.build_preference_criteria(
         hearted_places,
-        disqualifying_fact_keys=[*active_hard_keys, *{fact_key for fact_key, _wants in soft_requirements}],
+        disqualifying_fact_keys=[*active_hard_keys, *{key for key, _ in soft_requirements}],
         preferred_authors=preferred_authors_frozen,
     )
     # #216 — 점수 계산은 전체 soft 체크를 쓰지만 저장·응답에는 사람이 원하지 않은 soft 체크(known 포함)를 싣지 않는다.
@@ -861,7 +859,8 @@ def _run_pipeline(
             line.fact_key: line.wants for line in active_lines
             if line.badge == badge and line.fact_key in constraints.SOFT_FACT_KEYS and line.wants is not None
         })
-    required_soft_keys = {fact_key for fact_key, _wants in soft_requirements}   # 🚫 사유로 낸 soft 키는 실격 조건이다
+    required_soft_keys = {line.fact_key for line in used_lines
+                          if line.badge == "required" and line.fact_key in constraints.SOFT_FACT_KEYS}
     weights = core.preference_weights(hearted_places, criteria, preferred_authors_frozen, avoided_authors_frozen)
     region_label = regions[0].label if regions else ""
     anchor_points_by_region = {region_label: list(regions[0].anchor_points)} if regions else {}
