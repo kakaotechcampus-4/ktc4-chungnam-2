@@ -74,7 +74,7 @@
 근거: `docs/events.md`, `backend/realtime/`, `frontend/src/features/map/realtime.ts`.
 
 - **기록**: 모든 상태 변경이 `common.events.record_event`로 **같은 트랜잭션**에 `event_log`를 남긴다.
-- **전달**: realtime dispatcher가 **0.5초마다 폴링**해 구독자에게 SSE로 보낸다. at-least-once, seq에 구멍이 생기면 최대 2초 기다린다. 채널은 지도 공개 이벤트와 개인 이벤트(`/events/me`) 두 개. ping은 20초마다, 재전송 보존 창은 24시간.
+- **전달**: realtime dispatcher가 **0.5초마다 폴링**해 구독자에게 SSE로 보낸다. at-least-once, seq에 구멍이 생기면 최대 2초 기다린다. 채널은 지도 공개 이벤트(`/maps/{mapId}/events`)와 개인 이벤트(`/maps/{mapId}/events/me`) 두 개. ping은 20초마다, 재전송 보존 창은 24시간.
 - **프록시**: Caddy가 `flush_interval -1`로 SSE를 바로 흘려보낸다(`deploy/Caddyfile`).
 - **화면**: `EventSource`는 `realtime.ts` 한 곳. 이벤트는 TanStack Query 캐시에 반영하거나 해당 쿼리를 무효화한다. **60초 무수신 재연결**(#832)은 PR #1135가 병합 대기 중이다(2026-11-03 기준). 개인 채널은 스펙과 목에는 있지만 FE가 구독하는 곳은 확인하지 못했다.
 - **한계**: 폴러가 프로세스 안 백그라운드 태스크라 API 컨테이너 1개를 전제한다. 구독 큐 상한·스레드 경계는 #1211.
@@ -149,7 +149,7 @@
 
 | 워크플로 | 하는 일 |
 |---|---|
-| `backend-test` | postgis 17-3.5 서비스 위에서 `lint-imports` → `alembic upgrade head` → `pytest -q`. develop 필수 검사 |
+| `backend-test` | postgis 17-3.5 서비스 위에서 `lint-imports` → `alembic upgrade head` → `pytest -q`. `develop` 보호 규칙의 필수 검사는 `contracts`·`pytest`·`frontend`(GitHub 설정, 2026-11-03 확인) |
 | `frontend-test` | Node 22: oxlint → vitest → build(`tsc -b` 포함) |
 | `contracts-test` | `gen:types` → 생성 타입 diff 검사 → typecheck → test |
 | `pr-size` | PR 범위 코멘트(병합을 막지 않는다) |
@@ -159,14 +159,14 @@
 | `llm-cost`, `move-to-rds` | 수동 실행 |
 | `assign-mentor`, `convention-check`, `notify-discord` | main 대상 PR 보조(안내용, 차단 안 함) |
 
-- **병합**: 저장소가 스쿼시 병합을 막아 **merge commit**으로 병합한다. 기준·PR 대상은 `develop`, `main`은 릴리스용. 브랜치 `feat/<주제>-<이슈#>`, 커밋 `type(scope): 요약 (#이슈)`.
+- **병합**: 저장소 설정이 **merge commit만 허용**한다(스쿼시·리베이스 병합은 꺼져 있음, GitHub 설정, 2026-11-03 확인). 기준·PR 대상은 `develop`, `main`은 릴리스용. 브랜치 `feat/<주제>-<이슈#>`, 커밋 `type(scope): 요약 (#이슈)`.
 - **계약·구조 가드**: `integration/test_spec_route_coverage.py`(`KNOWN_MISSING`), `test_response_contract.py`(`KNOWN_UNCOVERED`), `test_request_constraints_match_spec.py`(`KNOWN_DRIFT`), authz 정책 표 일치, `errors.md` ↔ 에러 카탈로그, import 규칙, 환경 일치(`test_env_parity.py`).
 
 ## 10. 테스트·QA
 
 - **백엔드**: pytest, **실제 PostgreSQL**(모킹하지 않는다). 동시에 여러 터미널에서 돌릴 때는 `PINGO_TEST_DB`로 DB를 분리한다. `live` 마커(실제 외부 API)는 기본 실행에서 뺀다(`pytest.ini`). 통합·계약 테스트는 `backend/integration/`에 37개 파일.
 - **프론트**: vitest + testing-library + msw(목 서버 시나리오 재사용). 접근성은 자동 검사 도구(axe 등)가 아니라 testing-library로 포커스·알림 영역을 직접 검증한다(`src/a11y.test.tsx`).
-- **QA 하네스**(`qa/`): 케이스 대장 `cases.yaml`, 실행기 `run_api_cases.py`(실제 HTTP, `--base-url`, `POST /auth/qa-login`), `run_reco.py`, `run_complex.py`, `run_llm_cost.py`. 격리 DB `pingo_eval`, 결과 기록은 `qa/results/`. 스테이징에서 매일 자동 점검(`staging-check`).
+- **QA 하네스**(`qa/`): 케이스 대장 `qa/cases.yaml`, 실행기는 `qa/harness/`의 `run_api_cases.py`(실제 HTTP, `--base-url`, `POST /auth/qa-login`), `run_reco.py`, `run_complex.py`, `run_llm_cost.py`. 격리 DB `pingo_eval`, 결과 기록은 `qa/results/`. 스테이징에서 매일 자동 점검(`staging-check`).
 
 ## 11. 개발 환경
 
