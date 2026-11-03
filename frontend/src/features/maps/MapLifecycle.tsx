@@ -128,12 +128,12 @@ export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; ti
 
 /**
  * 방장 넘기기 확인 창(방장만, #468). 넘긴 뒤 나는 구성원으로 남는다 — 나가기가 아니다.
- * 넘길 수 있는 사람인지는 서버가 정한다. 그사이 나간 사람을 골랐으면 서버가 거절하고 구성원 목록이 새로 온다.
+ * 게스트는 방장이 될 수 없어 목록에서 뺀다(#955). 그 밖에 넘길 수 있는 사람인지는 서버가 정한다. 그사이 나간 사람을 골랐으면 서버가 거절하고 구성원 목록이 새로 온다.
  */
 export function TransferOwnerConfirm({ mapId, members, onCancel }: { mapId: string; members: MemberView[]; onCancel: () => void }) {
   const transfer = useTransferOwnerMutation(mapId)
   const [to, setTo] = useState<MemberView | null>(null)
-  const others = members.filter((m) => !m.isMe)
+  const others = members.filter((m) => !m.isMe && !m.isGuest)
 
   return (
     <ConfirmDialog
