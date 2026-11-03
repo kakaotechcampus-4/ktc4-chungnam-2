@@ -16,10 +16,13 @@ type SearchState = {
   source: SearchSource | null
   near: LatLng | null
   selectedId: string | null
+  /** 지도에서 겹쳐 묶인 「N곳」 핀을 눌러 시트에 그곳들만 보일 때의 장소 id(#1174). 아니면 null. */
+  group: string[] | null
   submit: (query: string, near: LatLng | null) => void
   openLink: (url: string, near: LatLng | null) => void
   openTap: (at: LatLng) => void
   select: (id: string | null) => void
+  showGroup: (ids: string[] | null) => void
   close: () => void
 }
 
@@ -27,10 +30,12 @@ export const useSearchStore = create<SearchState>((set) => ({
   source: null,
   near: null,
   selectedId: null,
-  submit: (query, near) => set({ source: { kind: 'name', query }, near, selectedId: null }),
-  openLink: (url, near) => set({ source: { kind: 'link', url }, near, selectedId: null }),
+  group: null,
+  submit: (query, near) => set({ source: { kind: 'name', query }, near, selectedId: null, group: null }),
+  openLink: (url, near) => set({ source: { kind: 'link', url }, near, selectedId: null, group: null }),
   // 누른 자리에서 가까운 순으로 받으니 거리도 그 자리에서 잰다.
-  openTap: (at) => set({ source: { kind: 'tap', at }, near: at, selectedId: null }),
+  openTap: (at) => set({ source: { kind: 'tap', at }, near: at, selectedId: null, group: null }),
   select: (selectedId) => set({ selectedId }),
-  close: () => set({ source: null, near: null, selectedId: null }),
+  showGroup: (group) => set({ group, selectedId: null }),
+  close: () => set({ source: null, near: null, selectedId: null, group: null }),
 }))
