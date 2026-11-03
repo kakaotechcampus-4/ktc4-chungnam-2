@@ -1511,6 +1511,59 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
     assert bare.place_source is None  # 출처를 못 얻으면 지어내지 않는다
 
 
+@pytest.mark.parametrize("category,heart_key,written_key,required_key,wants", [
+    ("음식점", "cuisine_foreign", "cuisine_western", "spicy_focused", False),
+    ("관광지", "performance", "exhibition", "is_crowded_large", None),
+])
+def test_visible_member_fulfillment_preserves_ranking_and_filtering_1100(
+    db_session, category, heart_key, written_key, required_key, wants,
+):
+    """숨은 ♥ 선호와 직접 쓴 조건이 달라도 표시와 집계는 일치한다. 순위·실격은 기존 정책이다."""
+    run = _make_run(db_session, status="collecting_evidence", category=category)
+    _make_region(db_session, run, radius_m=1000)
+    liked = _make_pin(db_session, category=category, lat=35.0008, lng=129.0008)
+    for user_id in ("user_1", "user_2"):
+        _react(db_session, liked, user_id=user_id)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        _line("user_1", "preferred", written_key, True),
+        _line("user_3", "required", required_key, wants),
+        _line("neutral", "preferred", written_key, None),
+        {"author_id": "keyless", "source": "reaction", "text": "취향이 아니에요", "badge": "required"},
+    ])
+    facts = _FakePlaceFacts({
+        liked.place_id: {heart_key: True},
+        "written": {written_key: True, heart_key: False, required_key: False},
+        "heart": {written_key: False, heart_key: True, required_key: False},
+        "unknown": {required_key: False},
+        "excluded": {written_key: True, heart_key: True, required_key: True},
+    })
+    places = [PlaceStub(place_id=pid, lat=35.0005, lng=129.0005)
+              for pid in ("written", "heart", "unknown", "excluded")]
+
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
+
+    candidates = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+    # 직접 쓴 선호 +3, ♥ 두 사람 +2·직접 쓴 선호 거짓 −3, 모름 0. 실격 조건 위반은 제외된다.
+    assert {pid: c.rank for pid, c in candidates.items()} == {"written": 1, "unknown": 2, "heart": 3}
+    assert {pid: c.member_fulfillment["satisfied"] for pid, c in candidates.items()} == {
+        "written": 2, "heart": 2, "unknown": 1,
+    }
+    for candidate in candidates.values():
+        fulfillment = candidate.member_fulfillment
+        members = {m["user_id"]: m for m in fulfillment["by_member"]}
+        assert set(members) == {"user_1", "user_2", "user_3"}  # 중립·키 없는 사유는 조건이 아니다.
+        assert fulfillment["total"] == 3
+        assert fulfillment["satisfied"] == sum(m["satisfied"] for m in members.values())
+        for member in members.values():
+            statuses = [condition["status"] for condition in member["conditions"]]
+            assert member["satisfied"] == (bool(statuses) and all(s == "met" for s in statuses))
+    written_members = candidates["written"].member_fulfillment["by_member"]
+    assert [c["fact_key"] for c in written_members[0]["conditions"]] == [written_key]
+    assert written_members[1]["conditions"] == []
+    unknown_members = candidates["unknown"].member_fulfillment["by_member"]
+    assert [c["status"] for c in unknown_members[0]["conditions"]] == ["needs_check"]
+
+
 def _satisfied_view(fulfillment: dict) -> dict:
     """satisfied·total·by_member.satisfied만 — conditions(#805)는 표시용이라 이 판정 테스트에서는 벗기고 따로 본다."""
     return {**fulfillment, "by_member": [{k: v for k, v in e.items() if k != "conditions"} for e in fulfillment["by_member"]]}
