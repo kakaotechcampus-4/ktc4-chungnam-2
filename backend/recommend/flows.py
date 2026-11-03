@@ -1097,7 +1097,7 @@ def get_result(
     regions = service.list_regions(db, run_id)
     region_labels = {r.id: r.label for r in regions}
     candidates = service.list_candidates(db, run_id)
-    funnel = run.last_funnel or []
+    funnel = core.keyed_funnel(run.last_funnel or [])   # 키는 응답에서만 붙인다(#1146)
     snapshot = _applied_evidence_fields(db, run, principal)
     if not candidates:
         external = _run_external_search(db, run, place_search)

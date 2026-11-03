@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from common.errors import CATALOG, AppError, error_response, register_error_handlers
 
@@ -23,6 +23,11 @@ NOT_RAISABLE = sorted(code for code, (status, _) in CATALOG.items() if status < 
 
 class _Body(BaseModel):
     place_id: str
+
+
+class _Limited(BaseModel):
+    name: str = Field(max_length=3)
+    note: str = ""
 
 
 def _client(raise_server_exceptions: bool = True) -> TestClient:
@@ -40,6 +45,10 @@ def _client(raise_server_exceptions: bool = True) -> TestClient:
     @app.post("/validate")
     def _validate(body: _Body):
         return {"place_id": body.place_id}
+
+    @app.post("/limited")
+    def _limited(body: _Limited):
+        return {}
 
     @app.post("/method-only")
     def _method_only():
@@ -200,3 +209,19 @@ def test_server_error_app_error_is_warned_with_code_and_stage_only(caplog):
     [record] = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert "RECOMMEND_FAILED" in record.getMessage() and "plan_evidence" in record.getMessage()
     assert "비밀" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"name": "고유값-길이초과-9f3a"},  # 길이 초과: 값이 input에 실리던 경우
+        {"note": "고유값-필수누락-9f3a"},  # 필수 필드 누락: input이 본문 전체(다른 필드 포함)
+    ],
+)
+def test_validation_error_does_not_echo_input(body):
+    """422 detail.errors[]는 {loc, msg, type}만 — 요청 값을 돌려주지 않는다(#1161)."""
+    response = _client().post("/limited", json=body)
+    assert response.status_code == 422
+    assert "9f3a" not in response.text
+    errors = response.json()["detail"]["errors"]
+    assert errors and all(set(e) == {"loc", "msg", "type"} for e in errors)

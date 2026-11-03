@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from agent import flows
 from agent.models import (
     AgentCursor,
+    AgentMapStatus,
     AgentReasonSummary,
     AgentRun,
     AgentRunAdvice,
@@ -94,13 +95,14 @@ def db_session(test_engine):
 
 # FK 순서(열람 → 제안 → 나머지)
 AGENT_TABLES = (
-    AgentSuggestionView, AgentSuggestion, AgentRunAdvice, AgentReasonSummary, AgentRun, AgentCursor, AgentSettings,
+    AgentSuggestionView, AgentSuggestion, AgentRunAdvice, AgentReasonSummary, AgentMapStatus, AgentRun, AgentCursor,
+    AgentSettings,
 )
 
 
 @pytest.fixture()
 def factory(test_engine):
-    """실제로 커밋하는 테스트용 sessionmaker(world.py). 끝나면 agent_* 7개 테이블을 통째로 비운다(#594).
+    """실제로 커밋하는 테스트용 sessionmaker(world.py). 끝나면 agent_* 8개 테이블을 통째로 비운다(#594).
 
     world.cleanup은 자기 지도 행만 지우는데, run_tick은 event_log에 남은 다른 지도(예: 다른 모듈 테스트가 커밋하고
     남긴 map_race)도 잡아 관찰하고 agent_runs, agent_cursors를 커밋한다. 그 행이 뒤 테스트에 남지 않게 한다.

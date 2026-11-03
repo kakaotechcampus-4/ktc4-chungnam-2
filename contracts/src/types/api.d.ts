@@ -1460,7 +1460,7 @@ export interface paths {
         put?: never;
         /**
          * 카톡 대화에서 뽑은 지도 링크 미리보기 (#9, 기획안 5-9, v2). **쓰기 없음** — 링크마다 해석(`POST /places/from-link`와 같은 규칙)하고, 그 장소가 **이 지도에 이미 있는지**를 붙여 돌려준다.
-         *     **대화 내용은 서버로 보내지 않는다.** 화면이 붙여넣은 텍스트를 브라우저 안에서 정규식으로 스캔해 구글맵·카카오맵 링크만 뽑아 URL만 보낸다(네이버·인스타·블로그·그 밖은 항목이 `LINK_NOT_SUPPORTED`).
+         *     **대화 내용은 서버로 보내지 않는다.** 화면은 브라우저에서 지도 링크와 공유 글의 상호명·주소 힌트를 추출하고 URL과 선택적인 힌트만 보낸다. 카톡 대화 내보내기 .txt 파일과 사용자가 고른 시작일·종료일(양끝 포함)로 입력을 바꾸는 결정은 #1139이며, 화면 구현은 PR #1141에서 진행 중이다. 선택한 날짜도 서버에 보내거나 저장하지 않는다.
          *     한 번에 **최대 10개**다 — 화면이 50개까지 10개씩 나눠 보내며 진행을 보여 준다. 단축 링크 해제가 느릴 수 있어 서버가 병렬로 처리하고 요청 마감(약 15초)을 넘긴 항목은 `LINK_UNRESOLVED`로 둔다.
          *     항목마다 결과가 따로 온다(`items[i]`, `index`는 요청 `urls`의 순서) — 일부가 실패해도 요청은 200이다. 요청 형식 오류(빈 목록, 10개 초과, 2000자 초과)만 422.
          *     - `result.matches`가 있으면 그 장소로 `source: search` 핀(`bulk` 또는 `POST /maps/{mapId}/pins`). 없으면 구글 링크는 `result.name_hint`로 GET /places/search를 이어 가고, 카카오 링크는 `result.needs_search_query`(사용자가 이름을 입력해 `source: live`).
@@ -4784,6 +4784,12 @@ export interface components {
             run_id: string;
             /** @description 5-6 깔때기 표. 단계: 카테고리 후보 풀 → 반경 밖 제거 → 영업 종료 제거 → 실격 조건 제거 → 이미 제안·거절됨 → 상위 3곳 선정. 후보 풀은 넓히기 상한 안의 영업 중인 추천 가능(정예) 장소라, 「반경 밖 제거」는 넓히면 들어올 수 있는 최대 수다(#912). 여행 지역과 다른 시·도의 장소도 「반경 밖 제거」로 센다(#1055 — 이 장소는 넓혀도 들어오지 않는다, constraints.md 「반경 넓히기 상수」). 2026-10-15~#913 구현 전에는 「영업 종료 제거」 다음에 「추천 가능 아님 제거」가 있었다 — 그때 저장된 결과에는 그 줄이 남아 있고, 화면은 받은 표를 그대로 그린다 */
             funnel: {
+                /**
+                 * @description 단계 키(#1146, #751). 화면이 단계를 찾을 때는 라벨 글자가 아니라 이 값을 본다. 단계 표에 없는 옛 라벨로 저장된 깔때기는 null. 이 필드가 없는 옛 서버 응답도 있다(선택 필드)
+                 * @enum {string|null}
+                 */
+                key?: "pool" | "radius" | "closed" | "disqualify" | "excluded" | "ranking" | null;
+                /** @description 화면에 그대로 보이는 단계 이름 */
                 label: string;
                 removed_count: number;
             }[];
@@ -4939,6 +4945,8 @@ export interface components {
             analysis?: components["schemas"]["AgentAnalysis"] | null;
             advice: components["schemas"]["AgentAdviceLine"][];
             actions: components["schemas"]["AgentAction"][];
+            /** @description 우리 데이터 확인(#1152, docs/agent-v2.md 6.6). stall·split 중 사실 다툼일 때만 들어 있다. 선택 필드 — 서버 구현(#1168) 전에는 없고, FE는 없거나 빈 목록이면 칸을 그리지 않는다 */
+            facts?: components["schemas"]["AgentFactLine"][];
             /** Format: date-time */
             created_at: string;
             /**
@@ -4946,6 +4954,32 @@ export interface components {
              * @description 만들고 24시간 뒤. 지나면 만료(agent.resolved, status=expired)
              */
             expires_at: string;
+        };
+        /**
+         * @description 우리 데이터 확인 한 줄(#1152, docs/agent-v2.md 6.6). 서버가 그 핀 장소의 라벨로 렌더한 고정 문구다. 모델이 쓰지 않는다.
+         *     value: yes(라벨 참), no(라벨 거짓 — 문구에 「데이터가 틀릴 수 있어요」가 들어 있다), unknown(모름).
+         *     segments는 AgentAdviceLine과 같은 조각이고 핀 이름은 pin 조각이다. 구성원 글(quote)은 들어가지 않는다. 화면은 판정 문구를 더하지 않는다.
+         *     예: [{kind: text, text: "우리 데이터: "}, {kind: pin, pin_id: "p1", text: "성수 칼국수"}, {kind: text, text: "은 주차할 수 있는 곳으로 나와요"}]
+         */
+        AgentFactLine: {
+            /** @description docs/constraints.md의 키 */
+            fact_key: string;
+            /** @enum {string} */
+            value: "yes" | "no" | "unknown";
+            segments: components["schemas"]["AdviceSegment"][];
+        };
+        /**
+         * @description 지도 현황 문단(#1152, docs/agent-v2.md 8.2). 코드가 계산한 칸(카테고리별 확정·후보·갈린 핀·정체, D-day, 먼저 볼 카테고리)을 모델이 보고 쓴 2~4문장이다.
+         *     서버가 사실과 모순인 판단, 칸에 없는 숫자, 다른 카테고리를 먼저 권하는 말, 금지 표현을 걸러 통과한 것만 내린다. 이름·사유 글·장소 이름은 없다. FE는 「AI」 배지를 붙인다.
+         *     예: "카페는 거의 정해졌고, 음식점은 갈린 곳 하나만 남았어요. 관광지는 아직 후보가 2곳뿐이에요. 출발이 5일 남았으니 음식점부터 보면 좋겠어요."
+         */
+        AgentMapStatus: {
+            paragraph: string;
+            /**
+             * Format: date-time
+             * @description 칸이 바뀌어 문단을 다시 만든 시각
+             */
+            updated_at: string;
         };
         AgentSummaryItem: {
             fact_key?: string | null;
@@ -5006,6 +5040,8 @@ export interface components {
             has_unseen: boolean;
             /** @description 요약이 만들어진 카테고리만 */
             summaries: components["schemas"]["AgentSummary"][];
+            /** @description 지도 현황 문단(#1152, docs/agent-v2.md 8.2). 아직 만든 적이 없으면 null. 선택 필드 — 서버 구현(#1168) 전에는 없고, FE는 없거나 null이면 자리를 두지 않는다 */
+            status?: components["schemas"]["AgentMapStatus"] | null;
         };
         AgentAcceptRequest: {
             action_index: number;
@@ -5362,7 +5398,7 @@ export interface components {
             };
         };
         /**
-         * @description 필터 통과 후보 0개 (6절 "결과 0개"). **이전에 지도에 올린 후보까지 포함해 후보가 하나도 없을 때만** 온다 — 게시한 후보가 남아 있으면 200이고 `RecommendResult.new_count`가 0이다(#845). `detail.funnel`(단계별로 빠진 수)과 `detail.external_search`(ExternalSearch, 카카오맵 검색 링크, #798)가 온다. **`detail.applied_evidence`·`detail.no_applied_conditions`**(200의 `RecommendResult`와 같은 값, #845)도 와서 화면이 0건일 때도 「이 조건으로 찾았어요」를 보일 수 있다.
+         * @description 필터 통과 후보 0개 (6절 "결과 0개"). **이전에 지도에 올린 후보까지 포함해 후보가 하나도 없을 때만** 온다 — 게시한 후보가 남아 있으면 200이고 `RecommendResult.new_count`가 0이다(#845). `detail.funnel`(단계별로 빠진 수, 항목 모양은 `RecommendResult.funnel`과 같다 — `key` 포함, #1146)과 `detail.external_search`(ExternalSearch, 카카오맵 검색 링크, #798)가 온다. **`detail.applied_evidence`·`detail.no_applied_conditions`**(200의 `RecommendResult`와 같은 값, #845)도 와서 화면이 0건일 때도 「이 조건으로 찾았어요」를 보일 수 있다.
          *     화면은 반경 넓히기, 근거 고치기와 함께 「카카오맵에서 더 찾아보기」를 보여 준다
          */
         NoResults: {

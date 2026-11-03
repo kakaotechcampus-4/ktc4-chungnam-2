@@ -51,6 +51,7 @@ class FakeGateway:
         self._diagnosis_usage = diagnosis_usage or AgentUsage()
         self.calls: list[str] = []
         self.inputs: list[dict] = []
+        self.status_inputs: list[dict] = []
 
     def __getattr__(self, name):
         if name.startswith("_"):
@@ -80,6 +81,11 @@ class FakeGateway:
 
     def structure(self, raw):
         return llm_api.plan_evidence(raw, planner=llm_api.passthrough_planner)
+
+    def status(self, cells):
+        """관찰 끝의 지도 현황 문단(#1168) — 고정 응답 스텁. 진단 호출 목록(calls)에는 남기지 않는다(test_flows_status.py가 본다)."""
+        self.status_inputs.append(cells)
+        return llm_api.agent_status(cells, planner=llm_api.fixed_status_planner)
 
 
 def observe(world, map_id, gateway):

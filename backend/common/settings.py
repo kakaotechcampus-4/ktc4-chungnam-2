@@ -133,6 +133,9 @@ class Settings:
     llm_price_input_krw_per_m: float = 141.0
     llm_price_cached_input_krw_per_m: float = 14.0
     llm_price_output_krw_per_m: float = 708.0
+    # 서비스 일일 예산(원, KST 하루, 환경마다, #1152 결정, docs/agent-v2.md 19절). 그날 llm_calls 비용 합계가 넘으면 웹 확인(④)만
+    # 끈다 — 끄는 동작은 ④ 구현 때 넣는다(#1168에서는 값만). 세는 곳은 llm_calls 한 곳이고 단가와 같이 여기 둔다.
+    llm_daily_budget_krw: float = 3000.0
     # 로그 레벨(LOG_LEVEL). main.py가 logging.basicConfig에 넘긴다(#390).
     log_level: str = "INFO"
     # places 실시간 연결(#34a) — 지도 API 키 2종. 기본값 ""는 위 kakao_*와 같은 이유(dev에서 키 없이도
@@ -278,6 +281,7 @@ class Settings:
             llm_price_input_krw_per_m=_float("LLM_PRICE_INPUT_KRW_PER_M", 141.0),
             llm_price_cached_input_krw_per_m=_float("LLM_PRICE_CACHED_INPUT_KRW_PER_M", 14.0),
             llm_price_output_krw_per_m=_float("LLM_PRICE_OUTPUT_KRW_PER_M", 708.0),
+            llm_daily_budget_krw=_float("LLM_DAILY_BUDGET_KRW", 3000.0),
             log_level=_log_level(),
             kakao_rest_api_key=_env("KAKAO_REST_API_KEY", ""),
             naver_search_client_id=_env("NAVER_SEARCH_CLIENT_ID", ""),

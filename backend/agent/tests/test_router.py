@@ -70,7 +70,7 @@ def test_state_without_suggestion_defaults_to_on(world, client):
     body = client("u1").get(f"/maps/{map_id}/agent").json()
 
     assert body == {"settings": {"enabled": True, "updated_by": None, "updated_at": None},
-                    "active_suggestion": None, "has_unseen": False, "summaries": []}
+                    "active_suggestion": None, "has_unseen": False, "summaries": [], "status": None}
 
 
 def test_has_unseen_is_per_member_and_view_is_idempotent(world, client):

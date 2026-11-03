@@ -755,16 +755,13 @@ def build_member_fulfillment(
          hard 키는 wants=None, 방향이 있는 soft 키는 그 방향이다.
       조건이 하나도 없는 구성원은 집계 대상이 아니다(♥만 누르고 기준에 안 든 사람, 키 없는 반대 사유만 남긴 사람 —
       알러지 글이나 「취향이 아니에요」는 아무것도 확인하지 않았다).
-    - **satisfied** = 자기 조건을 *전부* 이 후보가 known으로 충족한 구성원 수. 선호는 known+참, 반대는 known이고
-      `_meets`(hard는 통과, soft는 방향에 맞음). 라벨이 모름(「확인 필요」)이면 실격 필터는 통과시켜도 충족으로
-      세지 않는다. 일부만 맞으면 충족으로 세지 않는다(구성원 만족을 부풀리지 않는다).
-    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다.
+    - **satisfied** = 화면에 보이는 conditions[]가 비어 있지 않고 *전부* met인 구성원 수(#1100).
+      ♥에서 이어받은 숨은 선호는 세지 않는다. 보이는 조건에 unmet·needs_check가 있으면 충족이 아니다.
     - **conditions**(#805, 표시용) = 구성원마다 조건별 상태. `written_line_ids`((구성원, fact_key) → 직접 쓴 근거 줄 id)에
       있는 조건은 met·unmet·needs_check를 모두 내리고, ♥에서만 나온 선호는 met만 내린다. 위 두 갈래에 든 조건만
-      담는다(키 없는 반대는 없다). satisfied·total·순위에는 영향이 없다."""
+      담는다(키 없는 반대는 없다). 이 목록으로 satisfied를 계산하며 total·순위·실격에는 영향이 없다."""
     line_ids = written_line_ids or {}
     support = _member_support(hearted_places, preferred_authors)
-    met = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
     known_checks = {c.fact_key: c for c in candidate_checks if c.confidence == "known"}
     conditions: dict[str, set[str]] = {}
     for fact_key, wanted in criteria.items():
@@ -774,19 +771,17 @@ def build_member_fulfillment(
         for member_id in supporting:
             conditions.setdefault(member_id, set()).add(fact_key)
     against = {member_id: set(keys) for member_id, keys in (disqualifier_conditions or {}).items() if keys}
-    by_member = [
-        {
+    by_member = []
+    for member_id in sorted(conditions.keys() | against.keys()):
+        entries = _member_condition_entries(
+            member_id, conditions.get(member_id, set()), against.get(member_id, set()), known_checks, line_ids,
+        )
+        # 보이는 conditions[]만으로 센다(#1100). ♥에서 이어받은 숨은 선호는 집계에 넣지 않는다. 보이는 조건이 없으면 충족이 아니다.
+        by_member.append({
             "user_id": member_id,
-            "satisfied": conditions.get(member_id, set()) <= met and all(
-                fact_key in known_checks and _meets(known_checks[fact_key], wants)
-                for fact_key, wants in against.get(member_id, ())
-            ),
-            "conditions": _member_condition_entries(
-                member_id, conditions.get(member_id, set()), against.get(member_id, set()), known_checks, line_ids,
-            ),
-        }
-        for member_id in sorted(conditions.keys() | against.keys())
-    ]
+            "satisfied": bool(entries) and all(entry["status"] == "met" for entry in entries),
+            "conditions": entries,
+        })
     return {
         "satisfied": sum(1 for entry in by_member if entry["satisfied"]),
         "total": len(by_member),

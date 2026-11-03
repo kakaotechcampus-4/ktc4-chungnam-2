@@ -25,7 +25,7 @@
 | 배포 | `.github/workflows/deploy.yml`이 OIDC 역할로 SSM 명령을 보내 서버의 `deploy/deploy.sh <환경> <태그>`를 돌린다. develop은 이미지가 만들어지면 스테이징에 자동, 운영은 사람이 v 태그를 골라 수동 | 22번 포트와 서버 키가 없다. 운영은 태그를 골라 올린다(멘토) | — |
 | 확인 | 스테이징에서 QA 하네스(`qa/harness/run_api_cases.py --base-url`)로 핵심 흐름을 돈다. 통과한 `main` 커밋에만 태그를 단다 | 멘토 「배포된 주소의 핵심 흐름 테스트, 통과한 커밋에만 태그」 | — |
 | 환경 맞추기 | 운영, CI, 로컬, 배포 도구가 같은 Python(3.12)과 PostgreSQL/PostGIS(17 / 3.5)를 쓴다. Python은 `backend/.python-version`이 정본이고 CI가 읽는다. 이미지, CI, 로컬, 배포 스크립트의 버전과 아래 DB 줄의 운영 버전은 `backend/integration/test_env_parity.py`가 대조한다(#916) | CI는 운영에서 돌 것을 미리 확인하는 곳이라 환경이 다르면 운영을 대신하지 못한다(멘토). 처음에는 CI만 3.10, PostGIS 16이었다 | 버전을 올릴 때 — 한쪽만 올리면 테스트가 실패한다 |
-| 비밀 | 서버의 `deploy/env/*.env`(권한 600). 세션 비밀, DB 비밀번호, QA 비밀은 서버에서 만들었고 외부 키(카카오, 엘리스)만 옮겼다. 저장소, 이미지, 채팅에 남기지 않는다. 값마다 새면 열리는 범위와 바꾸는 법은 아래 「비밀이 새면」 | 서버 1대에 가장 단순하다. 보관함으로 옮겨도 서버가 값을 읽어야 해서 침입당한 서버에서 새는 범위는 비슷하다(멘토) | 사람이나 서버가 늘 때 보관함과 접근 기록 |
+| 비밀 | 서버의 `deploy/env/*.env`(권한 600). 세션 비밀, DB 비밀번호, QA 비밀은 서버에서 만들었고 외부 키(카카오, 모델 제공자 OpenAI)만 옮겼다. 저장소, 이미지, 채팅에 남기지 않는다. 값마다 새면 열리는 범위와 바꾸는 법은 아래 「비밀이 새면」 | 서버 1대에 가장 단순하다. 보관함으로 옮겨도 서버가 값을 읽어야 해서 침입당한 서버에서 새는 범위는 비슷하다(멘토) | 사람이나 서버가 늘 때 보관함과 접근 기록 |
 | 주기 작업 | 서버 cron(`deploy/crontab`). 두 번 돌아도 안전한 작업만 둔다 | 멘토 「주기 작업은 바깥에서 부르되 두 번 돌아도 안전하게」 | — |
 
 ### 타협과 다시 볼 조건
@@ -49,7 +49,7 @@
 | DB 앱 계정 비밀번호(`DATABASE_URL`) | `env/<환경>.env`, `pingo_prod_app`과 `pingo_staging_app`이 따로다(#873) | 그 환경 DB 전부(사유 글, 구성원). 다른 환경 DB에는 접속이 거절된다. RDS는 팀 EC2에서만 붙으므로 서버 밖에서는 이 값만으로 못 들어온다 | 마스터로 `ALTER ROLE pingo_<환경>_app PASSWORD '…'` → `env/<환경>.env`의 `DATABASE_URL` 고치기 → API 다시 올리기 | 다시 올리는 몇 초 동안 그 환경이 열리지 않는다 |
 | RDS 마스터(`pingo_admin`) | Secrets Manager. 서버에 저장하지 않는다 | 두 환경 DB 전부, 계정 만들기와 지우기 | Secrets Manager가 30일마다 바꾼다. 급하면 콘솔에서 즉시 교체 | 앱은 마스터를 쓰지 않아 영향이 없다 |
 | 카카오 `KAKAO_CLIENT_SECRET`, `KAKAO_REST_API_KEY` | `env/<환경>.env` | 우리 앱 이름으로 로그인 코드 교환, 로컬 API 호출(호출 한도를 쓴다). 두 환경이 같은 카카오 앱이면(「서버 처음 준비」 8번) 한쪽에서 새도 둘 다다 — 같은 앱인지 확인 필요 | 카카오 Developers에서 다시 발급 → 두 환경 env 고치기 → 다시 올리기 | 그 사이 로그인과 장소 검색이 실패한다 |
-| 엘리스 `ELICE_ML_API_KEY` | `env/<환경>.env` | 팀 비용으로 모델 호출. 두 환경이 같은 키인지 확인 필요 | 엘리스에서 다시 발급 → env 고치기 → 다시 올리기 | 그 사이 추천의 사유 구조화와 AI 코스가 실패한다 |
+| 모델 제공자 `ELICE_ML_API_KEY`(2026-11-02부터 OpenAI 프로젝트 키, 이름만 ELICE로 남았다, #1120) | `env/<환경>.env`. 환경마다 OpenAI 프로젝트와 키가 따로다 | 팀 비용으로 모델 호출(그 프로젝트의 월 예산 한도까지 쓴다). 사유 글이 모델로 간다 | OpenAI에서 새 키 발급 → env 고치기 → 다시 올리기. 순서는 아래 「모델 제공자 키 바꾸기」. 옛 키는 OpenAI에서 지운다 | 그 사이 추천의 사유 구조화와 AI 코스가 실패한다 |
 | `QA_LOGIN_SECRET` | `env/staging.env`만. 운영에 있으면 서버가 뜨지 않는다(#789) | 스테이징에 사용자를 만들 수 있다. 운영에는 경로가 없다 | 새 값으로 바꾸고 스테이징 API 다시 올리기 | 없음(하네스는 서버 안에서 같은 값을 읽는다) |
 | DuckDNS 토큰 | `/srv/pingo/secrets/duckdns_token` | 주소가 가리키는 IP를 바꿔 사용자를 다른 서버로 보낼 수 있다 | DuckDNS에서 토큰 재발급 | 없음(고정 IP라 갱신 작업을 꺼 두었다) |
 | 옛 서버 안 DB 비밀번호 | `env/db.env`, `env/<환경>.env.before-rds` | 멈춘 컨테이너 DB(되돌리기용 볼륨). 외부 포트가 없다 | 11/20에 볼륨과 함께 없앤다 | 없음 |
@@ -58,7 +58,7 @@
 
 값이 아닌데 새면 큰 것: `/srv/pingo/backups/*.dump`(운영 DB 전체 덤프, 14일 보관, 암호화 안 됨)는 DB 비밀번호보다 넓다 — 데이터 자체다.
 
-**서버가 통째로 새면**(env 파일, 덤프, 인스턴스 역할이 한꺼번에): 1) 보안 그룹에서 80과 443을 닫아 격리한다 2) 덤프가 있었으니 데이터가 나갔다고 보고 운영진에게 알린다 3) DB 앱 계정 비밀번호 → `SESSION_SECRET` → 카카오, 엘리스 키 순서로 바꾼다(앞의 둘은 우리가 바로 바꿀 수 있고, 데이터와 사용자 사칭을 막는다).
+**서버가 통째로 새면**(env 파일, 덤프, 인스턴스 역할이 한꺼번에): 1) 보안 그룹에서 80과 443을 닫아 격리한다 2) 덤프가 있었으니 데이터가 나갔다고 보고 운영진에게 알린다 3) DB 앱 계정 비밀번호 → `SESSION_SECRET` → 카카오, 모델 제공자(OpenAI) 키 순서로 바꾼다(앞의 둘은 우리가 바로 바꿀 수 있고, 데이터와 사용자 사칭을 막는다).
 
 다시 볼 때: 사람이나 서버가 늘 때(보관함과 접근 기록), 위 교체를 한 번 리허설할 때(바꾸는 법 칸이 실제로 맞는지).
 
@@ -225,11 +225,44 @@ v2 지도 제안이 쓸모 있었는지(탐지 정밀도, `docs/agent-v2.md` 21.
 
 CSV에는 사유 원문, 구성원 이름, 인용 글, 실시간 핀 검색어가 없다. 인용은 「[인용]」, 핀 이름은 「[핀]」으로 바뀌어 나온다(`agent/label_sample.py`).
 
+### 모델 제공자 키 바꾸기 (#1120)
+
+모델은 2026-11-02부터 OpenAI API를 직접 부른다(`gpt-6-luna`). 환경 변수 이름은 `ELICE_ML_API_*`로 남아 있다. 키를 새로 넣거나 새서 바꿀 때 이 순서로 한다. 환경마다 OpenAI 프로젝트와 키를 따로 쓴다(로컬, 스테이징, 운영).
+
+1. OpenAI 플랫폼에서 그 환경 프로젝트의 새 키를 만든다. 키는 만들 때 한 번만 보인다. 프로젝트마다 월 예산 한도를 걸어 둔다. 서비스 전체 일일 상한이 코드에 없어 이것이 유일한 지출 방어선이다(`docs/agent-v2.md` 19절).
+2. 서버 Session Manager에서 `bash`로 바꾼 뒤(기본 셸이 sh라 `read -s`가 안 된다) 키가 화면과 기록에 남지 않게 넣는다. `<환경>`은 `staging` 또는 `prod`다.
+   ```
+   bash
+   cd /srv/pingo/deploy
+   cp -p env/<환경>.env env/<환경>.env.before-key
+   sed -i 's|^ELICE_ML_API_BASE_URL=.*|ELICE_ML_API_BASE_URL=https://api.openai.com/v1|' env/<환경>.env
+   read -s -p "키: " K; echo
+   sed -i "s|^ELICE_ML_API_KEY=.*|ELICE_ML_API_KEY=$K|" env/<환경>.env; unset K
+   docker compose up -d --no-deps --force-recreate api-<환경>
+   docker compose ps api-<환경>        # 1~2분 안에 (healthy)
+   ```
+   `env/<환경>.env`를 `cat`으로 통째로 보지 않는다(비밀값이 나온다). 확인은 주소 줄만 `grep '^ELICE_ML_API_BASE_URL'`로 한다. 키 입력 칸은 붙여 넣어도 화면에 아무것도 안 보이는 것이 정상이다. 여러 줄을 한꺼번에 붙여 넣으면 다음 줄이 키로 들어가므로 한 줄씩 한다.
+3. 키가 통하는지 컨테이너 안에서 본다. 출력은 모델 이름이나 오류 클래스뿐이다.
+   ```
+   docker compose exec -T api-<환경> python -c "
+   from common.settings import settings
+   from openai import OpenAI
+   try:
+       print(OpenAI(base_url=settings.elice_ml_api_base_url, api_key=settings.elice_ml_api_key).models.retrieve('gpt-6-luna').id)
+   except Exception as e:
+       print(type(e).__name__, getattr(e, 'status_code', ''))
+   "
+   ```
+   `gpt-6-luna`가 나오면 된다. `AuthenticationError 401`은 키가 틀렸거나 붙여 넣을 때 잘못 들어간 것이다. `NotFoundError 404`, `PermissionDeniedError 403`은 그 프로젝트에 모델 접근이 없는 것이다.
+4. 스테이징이면 Actions의 `staging-check`를 돌리고 화면에서 추천과 AI 코스를 한 번씩 누른다.
+5. 되돌리기: `cp -p env/<환경>.env.before-key env/<환경>.env` 뒤 같은 `up` 명령. 사본은 바꾸기 전 값이다. 새서 바꾼 거라면 사본을 지운다(`rm`).
+
 ## 배포 전에 정할 것
 
+- 모델 제공자를 OpenAI 직접 호출로 바꾼 뒤(#1120) 정하지 않은 것: 사유 글이 미국 OpenAI로 가는 데 따른 개인정보 국외 이전 고지(`최종기획안.md` 12절, 개인정보처리방침), 결제 주체(개인 카드인지 팀 계정인지), 운영 전환 시기. 운영은 아직 엘리스 때의 설정이다.
 - `event_log` 오래된 행 삭제: 읽기는 24시간으로 자르지만(`realtime.service.RETENTION`) 지우는 작업은 아직 없다. `created_at` 인덱스는 삭제용으로 있다. 정기 정리(`maintenance.run`)에 단계로 넣을지 정한다.
 - auth의 세션·state·선택 대기 쿠키의 `Secure`는 모두 `settings.cookie_secure`를 쓴다(#810). `COOKIE_SECURE` 기본은 staging, prod에서 켬이고 dev, test에서 끔이다. 응답의 `Set-Cookie`는 `auth/tests/test_cookie_secure.py`에서 검증한다. 로컬 http로 staging을 띄워 하네스를 돌릴 때만 `COOKIE_SECURE=0`으로 끈다. 배포 서버에서는 기본값을 유지한다.
-- staging, prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`에 더해 실제 어댑터의 키가 비거나 공백뿐이면 `ConfigError`로 막는다(#810). `PLACES_MODE=real`일 때 `PLACES_SOURCES`에 `kakao`가 있으면 `KAKAO_REST_API_KEY`(비면 `KAKAO_CLIENT_ID`로 폴백), `naver`가 있으면 `NAVER_SEARCH_CLIENT_ID`와 `NAVER_SEARCH_CLIENT_SECRET`이 필요하다. 선택하지 않은 소스의 키는 요구하지 않는다. 로그인용 `KAKAO_CLIENT_SECRET`, `KAKAO_REDIRECT_URI`는 장소 어댑터 키가 아니며 로그인 설정은 별도로 채운다. `LLM_MODE=real`이면 `ELICE_ML_API_BASE_URL`, `ELICE_ML_API_KEY`가 필요하다. dev, test에서는 키 없이도 기동한다. 오류에는 누락된 변수 이름만 담고 키 값은 담지 않는다.
+- staging, prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`에 더해 실제 어댑터의 키가 비거나 공백뿐이면 `ConfigError`로 막는다(#810). `PLACES_MODE=real`일 때 `PLACES_SOURCES`에 `kakao`가 있으면 `KAKAO_REST_API_KEY`(비면 `KAKAO_CLIENT_ID`로 폴백), `naver`가 있으면 `NAVER_SEARCH_CLIENT_ID`와 `NAVER_SEARCH_CLIENT_SECRET`이 필요하다. 선택하지 않은 소스의 키는 요구하지 않는다. 로그인용 `KAKAO_CLIENT_SECRET`, `KAKAO_REDIRECT_URI`는 장소 어댑터 키가 아니며 로그인 설정은 별도로 채운다. `LLM_MODE=real`이면 `ELICE_ML_API_BASE_URL`, `ELICE_ML_API_KEY`가 필요하다(2026-11-02부터 이 두 값은 OpenAI 주소와 프로젝트 키이고 이름만 ELICE로 남았다, #1120). dev, test에서는 키 없이도 기동한다. 오류에는 누락된 변수 이름만 담고 키 값은 담지 않는다.
 - `/places/nearest`의 쿼리스트링(누른 좌표)은 uvicorn 접근 로그에서만 가린다(`places/logguard.py`). 앞단 Caddy는 접근 로그를 켜지 않는다(`deploy/Caddyfile`, #473). 켜야 하면 쿼리스트링을 지우는 형식으로 켠다.
 - 비로그인 `GET /invites/{token}`에는 호출 상한이 없다. 토큰이 256비트라 추측은 비현실적이지만, 넣을지 정한다(#168).
 - 개발 중 로컬 DB에 쌓인 카카오 좌표와 이름은 배포 전에 지운다(`docs/architecture.md`, #53). 배포 DB를 로컬 DB에서 복사하지 않는다.

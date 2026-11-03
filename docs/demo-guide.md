@@ -20,7 +20,7 @@
 - [ ] **키 3종**을 갖고 있다
   - 카카오 **REST API 키** (로그인 + 장소 검색용)
   - 카카오 **JavaScript 키** (지도 그리기용)
-  - **엘리스 ML API 키** (AI가 사유를 읽을 때 쓴다)
+  - **OpenAI API 키** (AI가 사유를 읽을 때 쓴다. 2026-11-02부터 엘리스 ML API가 아니라 OpenAI에서 발급한다, #1120)
 - [ ] **카카오 계정 2~3개** (사람 역할을 할 계정. 한 명이 여러 창에서 서로 다른 계정으로 로그인한다)
 - [ ] 브라우저 2종 또는 **일반 창 + 시크릿 창** (계정을 나눠 로그인하려면 필요하다)
 
@@ -73,8 +73,8 @@ pip install -r requirements.txt
 | `KAKAO_CLIENT_ID=` | 카카오 **REST API 키** | **`=` 바로 뒤에 붙여서** 적는다. 공백이나 따옴표를 넣지 않는다 |
 | `KAKAO_CLIENT_SECRET=` | (Client Secret을 켰을 때만) | 안 켰으면 줄을 비운다 |
 | `KAKAO_REDIRECT_URI=` | `http://localhost:8000/auth/kakao/callback` | 2-1에서 등록한 것과 똑같이 |
-| `ELICE_ML_API_BASE_URL=` | 엘리스에서 받은 주소 | 키를 새로 받아도 보통 그대로다 |
-| `ELICE_ML_API_KEY=` | 엘리스 키 | 새로 받은 키 (옛 키는 만료돼서 `401`이 난다) |
+| `ELICE_ML_API_BASE_URL=` | `https://api.openai.com/v1` | 변수 이름에 ELICE가 남아 있지만 OpenAI 주소를 넣는다 |
+| `ELICE_ML_API_KEY=` | OpenAI 프로젝트 키 | 새로 받은 키 (틀리거나 지운 키는 `401`이 난다. 옛 엘리스 키는 쓸 수 없다) |
 
 `.env` 안에 `AUTH_MODE=` 로 시작하는 줄이 있으면 **지워도 됩니다**(더 이상 쓰지 않는 설정).
 

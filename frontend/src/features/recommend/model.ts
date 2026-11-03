@@ -13,6 +13,17 @@ export type RecommendResultDto = components['schemas']['RecommendResult']
 export type CandidateDto = components['schemas']['Candidate']
 export type ExternalSearchDto = components['schemas']['ExternalSearch']
 
+/**
+ * AI가 고른 장소의 근거(가드레일 5) — 후보(Candidate)와 그 후보를 지도에 올린 핀(Pin)이 같은 값을 갖는다.
+ * 후보 카드와 핀 상세가 같은 함수·부품(Evidence.tsx)으로 그린다(#1032). 핀에서는 AI 핀이 아니면 없다.
+ */
+export type AiEvidence = {
+  reason?: string
+  checks?: components['schemas']['Check'][]
+  member_fulfillment?: components['schemas']['MemberFulfillment']
+  place_source?: components['schemas']['PlaceSource']
+}
+
 /** AI 추천 대상 카테고리(#145 — 숙소는 추천 대상이 아니다). 순서는 화면 순서. */
 export const RECOMMEND_CATEGORIES: RecommendCategory[] = ['음식점', '카페', '관광지']
 
@@ -60,6 +71,25 @@ export function groupEvidence(lines: EvidenceLineDto[]) {
   }
 }
 
+/** 같은 태그는 하나로 합친다. all = 그 태그의 줄 전부, mine = 그중 내 줄(뺄 수 있는 줄). */
+export function mergeTags(lines: EvidenceLineDto[]) {
+  const tags = new Map<string, { all: EvidenceLineDto[]; mine: EvidenceLineDto[] }>()
+  for (const line of lines) {
+    const tag = evidenceLabel(line)
+    const entry = tags.get(tag) ?? { all: [], mine: [] }
+    entry.all.push(line)
+    if (line.permissions.can_disable) entry.mine.push(line)
+    tags.set(tag, entry)
+  }
+  return [...tags].map(([tag, v]) => ({ tag, ...v }))
+}
+
+/** 화면에 보이는 조건 수 — 꼭은 줄마다, 선호는 같은 태그끼리 합쳐 센다(EvidenceGroups와 같은 묶음, #1143). */
+export function visibleConditionCount(lines: EvidenceLineDto[]): number {
+  const g = groupEvidence(lines)
+  return g.required.length + mergeTags(g.preferred).length
+}
+
 /** 추천이 쓰지 않는 줄의 이유 한 줄(docs/api-spec.yaml EvidenceLine.not_enforced_reason, #740). */
 export function notEnforcedNote(line: EvidenceLineDto): string {
   if (line.not_enforced_reason === 'no_key') return '걸러지지 않아요. 가게에 직접 확인해 주세요' // 가드레일 8
@@ -86,6 +116,9 @@ export function runErrorMessage(err: unknown): string {
 }
 
 export type FunnelRow = RecommendResultDto['funnel'][number]
+
+/** 반경 안 후보가 「이미 제안·거절됨」으로 빠졌는가. 단계는 라벨 글자가 아니라 서버 key로 찾는다(#751·#1142). key가 없으면 false. */
+export const hasExcluded = (funnel: FunnelRow[]) => funnel.some((f) => f.key === 'excluded' && f.removed_count > 0)
 
 /** 결과가 0곳일 때(404 NO_RESULTS) 서버가 detail 에 깔때기를 실어 보낸다 — "무엇을 시도했는지 화면에 남긴다"(가드레일 10). */
 export function noResultsFunnel(err: unknown): FunnelRow[] | null {
@@ -127,19 +160,30 @@ export function missingWants(candidates: CandidateDto[], evidence: EvidenceLineD
     .map(([, label]) => label)
 }
 
+const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이버지도', google: '구글맵', permit: '인허가 공공데이터', tourapi: '한국관광공사' }
+
+/**
+ * 출처는 항상 붙는다(가드레일 5). 장소는 자체 DB에서만 오므로(#53) 제공처를 모르면 「확인 안 됨」 대신 그 사실을 적는다.
+ * 모르는 제공처 코드가 오면 코드를 그대로 보인다 — 지어내지 않는다(#406).
+ */
+export function sourceLabel(e: AiEvidence): string {
+  const p = e.place_source?.provider
+  return (p && PROVIDER[p]) ?? p ?? '핑고 장소 DB'
+}
+
 export type CheckView = { label: string; tone: 'pass' | 'check' | 'fail' }
 
 /** 조건별 충족 체크(가드레일 5). 모름(needs_check)은 통과가 아니라 "확인 필요"로 따로 보인다. */
-export function toChecks(c: CandidateDto): CheckView[] {
-  return c.checks.map((k) => ({ label: k.label, tone: !k.passed ? 'fail' : k.needs_check ? 'check' : 'pass' }))
+export function toChecks(e: AiEvidence): CheckView[] {
+  return (e.checks ?? []).map((k) => ({ label: k.label, tone: !k.passed ? 'fail' : k.needs_check ? 'check' : 'pass' }))
 }
 
 /**
  * 구성원 충족 한 줄(Figma 구성원 의견 표시 원칙) — "조건을 건 A·B 모두 통과 · C·D는 건 조건 없음".
  * by_member 에 없는 구성원은 조건을 걸지 않은 사람이다.
  */
-export function fulfillmentLine(c: CandidateDto, members: { userId: string; name: string; isMe: boolean }[]): string {
-  const by = c.member_fulfillment.by_member ?? []
+export function fulfillmentLine(e: AiEvidence, members: { userId: string; name: string; isMe: boolean }[]): string {
+  const by = e.member_fulfillment?.by_member ?? []
   const nameOf = (id: string, fallback?: string) => {
     const m = members.find((x) => x.userId === id)
     return m ? `${m.name}${m.isMe ? ' (나)' : ''}` : (fallback ?? '구성원')

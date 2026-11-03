@@ -7,6 +7,8 @@
   DIAGNOSIS_TOOLS(진단 유형 → 허용 도구 이름)는 agent의 tool_runner가 한 번 더 막을 때 쓴다(#564).
   신호 순위(agent_prioritize)는 #582에서 지웠다 — agent의 코드 규칙(core.fallback_order)이다.
   요약의 구체화 문장은 고정 문구라 모델 함수가 없다(2026-10-16, #588에서 재검토).
+  agent_status(지도 현황 문단, #1168, agent-v2 8.2): 코드가 센 칸을 받아 카테고리별 상태와 문단(StatusOutput)을 낸다. 도구 없음.
+  관찰 끝에서 칸이 바뀔 때만 부른다. 검증(core.verify_status)은 agent가 한다. 실패는 AgentCallFailed.
 - agent.course(v2 동선 에이전트, #334): agent_course_turn(턴 하나 → 다음 행동, CourseTurn), course_set_goals(요청 한 줄 → 목표),
   course_direct_turn(지휘 턴). 실패는 AgentCallFailed.
 
@@ -31,6 +33,7 @@ from llm import usage as _usage
 from llm.prompts import DIAGNOSIS_TOOLS
 from llm.schemas import (
     AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
+    StatusCategory, StatusOutput,
 )
 from llm.service import (
     CourseDirectPlanner,
@@ -41,8 +44,10 @@ from llm.service import (
     PlanEvidenceFailed,
     ToolCaller,
     ToolRunner,
+    StatusPlanner,
     ToolRunnerError,
     agent_course_turn,
+    agent_status,
     course_direct_turn,
     course_set_goals,
     fixed_course_goals_planner,
@@ -50,12 +55,14 @@ from llm.service import (
     real_course_goals_planner,
     agent_diagnose,
     fixed_diagnosis_planner,
+    fixed_status_planner,
     passthrough_planner,
     plan_deadline,
     plan_evidence,
     real_course_turn_planner,
     real_diagnosis_planner,
     real_evidence_planner,
+    real_status_planner,
 )
 
 __all__ = [
@@ -64,6 +71,7 @@ __all__ = [
     "AgentCallFailed", "AgentReply", "AgentUsage", "DiagnosisOutput", "DIAGNOSIS_TOOLS",
     "DiagnosisPlanner", "ToolCaller", "ToolRunner", "ToolRunnerError",
     "agent_diagnose", "fixed_diagnosis_planner", "real_diagnosis_planner",
+    "StatusCategory", "StatusOutput", "StatusPlanner", "agent_status", "fixed_status_planner", "real_status_planner",
     "CourseTurn", "CourseTurnPlanner", "agent_course_turn", "real_course_turn_planner",
     "CourseGoalSet", "CourseGoalsPlanner", "course_set_goals", "fixed_course_goals_planner", "real_course_goals_planner",
     "CourseDirectTurn", "CourseDirectPlanner", "course_direct_turn", "real_course_direct_planner",
