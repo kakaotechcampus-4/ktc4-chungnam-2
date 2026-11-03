@@ -3039,6 +3039,32 @@ components:
         fact_key: { type: string, description: "docs/constraints.md의 키" }
         value: { type: string, enum: ["yes", "no", "unknown"] }   # 따옴표 필수 — YAML 1.1(PyYAML)은 yes/no를 참거짓으로 읽는다(#1168)
         segments: { type: array, minItems: 1, items: { $ref: "#/components/schemas/AdviceSegment" } }
+        web:
+          $ref: "#/components/schemas/AgentWebCheck"
+          description: "웹 확인(#1152 ④, docs/agent-v2.md 6.8). value가 unknown인 줄에만, 제안마다 많아야 한 줄. 선택 필드 — 서버 구현(#1216) 전에는 없고, 확인이 실패했으면 없다. FE는 없으면 그리지 않는다"
+
+    AgentWebCheck:
+      type: object
+      required: [status, notice, statements, checked_at]
+      description: |
+        웹 확인 결과(#1152 ④, docs/agent-v2.md 6.8). 모델이 웹을 읽고 옮긴 문장이다. 서버는 출처가 그 호출의 검색 결과에 있는지와 금지 표현만 본다 — 문장 내용은 확인하지 못한다.
+        found: FE는 「AI 웹 요약 · 확인되지 않음」 표시를 붙이고 문장과 출처 링크를 보인다. not_found·paused: statements는 비어 있고 notice 글을 그대로 보인다.
+        예(found): {status: found, notice: null, statements: [{text: "가게 앞에 차 두세 대를 댈 수 있다고 적혀 있어요", source_url: "https://blog.example.com/123", source_name: "blog.example.com"}], checked_at: "2026-11-03T12:00:00+09:00"}
+        예(paused): {status: paused, notice: "오늘은 웹 확인을 쉬고 있어요. 내일 다시 찾아볼게요", statements: [], checked_at: …}
+      properties:
+        status: { type: string, enum: [found, not_found, paused] }
+        notice: { type: [string, "null"], description: "not_found·paused일 때 화면 문구(서버 고정 문구). found면 null" }
+        statements:
+          type: array
+          maxItems: 2
+          items:
+            type: object
+            required: [text, source_url, source_name]
+            properties:
+              text: { type: string, maxLength: 120, description: "모델 문장(조각이 아닌 문자열). 구성원 글은 들어가지 않는다" }
+              source_url: { type: string, format: uri, description: "http·https만. 새 탭으로 연다(rel=noopener noreferrer)" }
+              source_name: { type: string, description: "서버가 URL 호스트로 만든 이름(www. 뺌)" }
+        checked_at: { type: string, format: date-time, description: "웹 확인을 한 시각(같은 지도·핀·키는 24시간 안에 다시 쓴다)" }
 
     AgentMapStatus:
       type: object

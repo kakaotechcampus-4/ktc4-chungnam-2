@@ -23,6 +23,14 @@
 - `enum: [yes, no, unknown]`을 `["yes", "no", "unknown"]`로 고쳤다. 주고받는 값(문자열 "yes"·"no"·"unknown")은 바뀌지 않는다.
 - 이유: YAML 1.1로 읽는 파이썬 계약 검사(PyYAML)가 따옴표 없는 yes/no를 참거짓으로 읽어, 서버가 보내는 "yes"를 스펙 위반으로 봤다. TS 타입 생성(openapi-typescript)은 원래 문자열로 읽어 FE 타입은 그대로다.
 
+## 2026-11-03, 에이전트 웹 확인 — `AgentFactLine.web` (#1152 ④)
+
+- `AgentFactLine`에 선택 필드 `web`(`AgentWebCheck` {`status`: found·not_found·paused, `notice`, `statements`[{`text`, `source_url`, `source_name`}] 많아야 2개, `checked_at`})을 더했다. 우리 데이터가 「모름」인 줄 하나에, 모델이 웹을 읽고 출처와 함께 옮긴 문장이다(`docs/agent-v2.md` 6.8). `agent.suggested` 페이로드에도 실린다.
+- 화면: found면 「AI 웹 요약 · 확인되지 않음」 + 문장 + 출처 링크(새 탭). not_found·paused면 서버가 보낸 `notice` 글 그대로. FE는 문구를 적지 않는다.
+- 이유: #1152 — 사실을 몰라 못 정하는 곳에서 우리 데이터가 모를 때 웹에 적힌 내용을 출처와 함께 보인다. 검증된 claim만 화면에 낸다는 원칙(agent-v2 2절 3번)의 예외라 「확인되지 않음」을 붙인다.
+- 하위호환: 선택 필드다. 서버 구현(#1216) 전에는 없고, 확인이 실패해도 없다. 목 서버 시드 제안은 카테고리 공백이라 `facts`가 비어 있어 그대로다.
+- 서버: llm·agent(#1216). FE: #1217.
+
 ## 2026-11-03, 에이전트 지도 현황 문단과 우리 데이터 확인 — `AgentState.status`, `AgentSuggestion.facts` (#1152)
 
 - `AgentState`에 선택 필드 `status`(`AgentMapStatus` {`paragraph`, `updated_at`} 또는 null)를 더했다. 핑고 AI 조언 시트 맨 위에 보일 지도 현황 문단이다. 칸은 코드가 계산하고 모델이 판단과 문장을 맡으며, 서버가 사실과 모순인 판단을 거른다(`docs/agent-v2.md` 8.2).

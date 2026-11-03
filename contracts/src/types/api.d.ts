@@ -5089,6 +5089,36 @@ export interface components {
             /** @enum {string} */
             value: "yes" | "no" | "unknown";
             segments: components["schemas"]["AdviceSegment"][];
+            /** @description 웹 확인(#1152 ④, docs/agent-v2.md 6.8). value가 unknown인 줄에만, 제안마다 많아야 한 줄. 선택 필드 — 서버 구현(#1216) 전에는 없고, 확인이 실패했으면 없다. FE는 없으면 그리지 않는다 */
+            web?: components["schemas"]["AgentWebCheck"];
+        };
+        /**
+         * @description 웹 확인 결과(#1152 ④, docs/agent-v2.md 6.8). 모델이 웹을 읽고 옮긴 문장이다. 서버는 출처가 그 호출의 검색 결과에 있는지와 금지 표현만 본다 — 문장 내용은 확인하지 못한다.
+         *     found: FE는 「AI 웹 요약 · 확인되지 않음」 표시를 붙이고 문장과 출처 링크를 보인다. not_found·paused: statements는 비어 있고 notice 글을 그대로 보인다.
+         *     예(found): {status: found, notice: null, statements: [{text: "가게 앞에 차 두세 대를 댈 수 있다고 적혀 있어요", source_url: "https://blog.example.com/123", source_name: "blog.example.com"}], checked_at: "2026-11-03T12:00:00+09:00"}
+         *     예(paused): {status: paused, notice: "오늘은 웹 확인을 쉬고 있어요. 내일 다시 찾아볼게요", statements: [], checked_at: …}
+         */
+        AgentWebCheck: {
+            /** @enum {string} */
+            status: "found" | "not_found" | "paused";
+            /** @description not_found·paused일 때 화면 문구(서버 고정 문구). found면 null */
+            notice: string | null;
+            statements: {
+                /** @description 모델 문장(조각이 아닌 문자열). 구성원 글은 들어가지 않는다 */
+                text: string;
+                /**
+                 * Format: uri
+                 * @description http·https만. 새 탭으로 연다(rel=noopener noreferrer)
+                 */
+                source_url: string;
+                /** @description 서버가 URL 호스트로 만든 이름(www. 뺌) */
+                source_name: string;
+            }[];
+            /**
+             * Format: date-time
+             * @description 웹 확인을 한 시각(같은 지도·핀·키는 24시간 안에 다시 쓴다)
+             */
+            checked_at: string;
         };
         /**
          * @description 지도 현황 문단(#1152, docs/agent-v2.md 8.2). 코드가 계산한 칸(카테고리별 확정·후보·갈린 핀·정체, D-day, 먼저 볼 카테고리)을 모델이 보고 쓴 2~4문장이다.

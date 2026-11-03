@@ -504,7 +504,8 @@ agent_suggestions(                    -- 바텀시트의 지도 제안
   created_at, expires_at,             -- 24시간
   resolved_by null,                   -- 기록만. 화면과 이벤트에 싣지 않는다
   resolved_at null, resolved_action jsonb null, decided_within_24h boolean null,
-  facts jsonb default '[]'             -- 우리 데이터 확인(#1152, agent-v2 6.6). [{pin_id, fact_key}]만, 값은 응답 때 places에서 다시 읽는다
+  facts jsonb default '[]'             -- 우리 데이터 확인(#1152, agent-v2 6.6). [{pin_id, fact_key, web?}], 값은 응답 때 places에서 다시 읽는다.
+                                      -- web(6.8, #1216): {status: found|not_found|paused, statements[{text, source_url}], checked_at} — 모델이 웹에서 옮긴 문장과 출처. 구성원 글 없음
 )
   unique(map_id) where status = 'active'   -- 지도당 활성 제안 하나
   index(map_id, fingerprint)
@@ -582,14 +583,15 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 ```
 llm_calls(
   id uuid,
-  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'agent_status'|'course'),   -- 왜 불렀는지. agent_status: 지도 현황 문단(#1168)
-  call('plan_evidence'|'agent_diagnose'|'agent_status'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
+  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'agent_status'|'agent_web_check'|'course'),   -- 왜 불렀는지. agent_status: 지도 현황 문단(#1168). agent_web_check: 웹 확인(#1216)
+  call('plan_evidence'|'agent_diagnose'|'agent_status'|'agent_web_check'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
   trace_id uuid,                      -- 같은 usage_context 안의 호출. run_id가 아직 없는 호출(추천 ②, 진단)도 실행 1번으로 묶는다
   map_id null, user_id null,          -- user_id는 사용자가 부른 호출만. 서버 호출(진단, 요약)은 null
   run_id null,                        -- evidence_add는 recommend_runs.id, course는 agent_course_runs.id. 추천 ②와 진단은 null
   model, prompt_version null,         -- ②는 프롬프트 버전 상수가 없어 null
   input_tokens, cached_input_tokens, cache_write_tokens, output_tokens,   -- 입력은 캐시 몫과 캐시 쓰기 할증 포함, 출력은 추론 토큰 포함
-  cost_krw numeric(12,4),             -- 기록 시점 단가(common.settings의 LLM_PRICE_*)로 계산. 할증이 input_tokens에 있어 cache_write_tokens는 따로 더하지 않는다
+  web_searches int default 0,         -- 그 호출 안의 웹 검색 횟수(응답의 web_search_call 수, #1216). 웹 확인 밖은 0
+  cost_krw numeric(12,4),             -- 기록 시점 단가(common.settings의 LLM_PRICE_*)로 계산. 할증이 input_tokens에 있어 cache_write_tokens는 따로 더하지 않는다. 웹 검색 요금(web_searches × LLM_PRICE_WEB_SEARCH_KRW)을 더한다
   outcome('ok'|'refusal'|'empty'|'timeout'|'invalid_schema'|'call_failed'), ok bool,
   elapsed_ms, created_at
 )
@@ -600,6 +602,7 @@ index ix_llm_calls_trace (trace_id)
 ```
 
 - 캐시 토큰은 응답의 `usage.prompt_tokens_details.cached_tokens`다(엘리스 게이트웨이에서 2026-10-30 확인. OpenAI 직접 호출로 바꾼 뒤(#1120)에도 같은 필드를 읽지만, 값의 의미는 청구서와 대조해 확인해야 한다). 엘리스 게이트웨이는 캐시 미스면 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고했다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 청구서(OpenAI 대시보드의 사용량)와 대조해야 한다. 이 25% 가산은 엘리스 게이트웨이의 보고 방식이라 OpenAI 직접 호출에서는 없을 수 있다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
+- 서비스 일일 예산(#1152, agent-v2 19절): 그날(KST) `cost_krw` 합계가 `LLM_DAILY_BUDGET_KRW` 이상이면 웹 확인(`llm.api.web_check`)만 부르지 않는다. 세는 곳은 이 테이블 한 곳이다(`ix_llm_calls_created`).
 - 탈퇴는 행을 남기고 `user_id`만 비운다(비용 통계는 사람 없이도 쓴다, `llm.api.anonymize_by_user`). 게스트 합치기는 `user_id`를 옮긴다. 30일 지난 행은 정기 정리(`maintenance.run`의 `llm_calls`)가 지운다. 지도 정리는 행을 지우지 않는다(map_id만 남고 가리키는 지도가 없다).
 
 ---
