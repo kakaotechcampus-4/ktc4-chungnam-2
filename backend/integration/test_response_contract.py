@@ -616,6 +616,17 @@ def test_pin_trash_list_matches_the_openapi_spec(clients, pin_body):
     assert [i["pin"]["id"] for i in member_view["items"]] == [theirs]   # 일반 구성원은 내가 찍은 것만
     assert a.get("/maps/no_such_map/trash").status_code == 404
 
+    # 복구(#1013) — 찍은 사람과 방장. 연타 200, 남의 지운 핀은 존재를 알리지 않는 404, 지우지 않은 남의 핀도 404, 없는 핀 404
+    assert b.post(f"/pins/{mine}/restore").status_code == 404
+    restored = a.post(f"/pins/{mine}/restore")
+    assert restored.status_code == 200 and restored.json()["id"] == mine
+    assert a.post(f"/pins/{mine}/restore").status_code == 200
+    assert b.post(f"/pins/{mine}/restore").status_code == 404
+    assert b.post(f"/pins/{theirs}/restore").status_code == 200
+    assert a.post("/pins/00000000-0000-0000-0000-000000000000/restore").status_code == 404
+    dup = a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-bunsik"))
+    assert dup.status_code == 409          # 방금 복구한 핀과 같은 장소
+
 
 def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
     """실시간 핀(#386, 스펙 PinCreateLive) — 응답에 좌표·이름이 없어도 Pin 스키마에 맞고, 목록·확정 항목·동선까지 같다."""

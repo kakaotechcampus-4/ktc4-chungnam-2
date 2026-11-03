@@ -57,10 +57,10 @@ def test_member_cannot_restore_someone_elses_trashed_pin_and_does_not_learn_it_e
     assert db_session.get(PinRow, pin.id).deleted_at is not None
 
 
-def test_member_gets_403_for_someone_elses_live_pin(app_client, db_session):
+def test_member_gets_404_for_someone_elses_live_pin(app_client, db_session):
     _roles(map_1__user_1="owner", map_1__user_2="member")
     pin = _insert_pin(db_session, created_by="user_1")
-    assert _restore(app_client, pin, "user_2").status_code == 403
+    assert _restore(app_client, pin, "user_2").status_code == 404     # 복구할 수 있는 핀이 아니다 — 존재를 알리지 않는다
 
 
 def test_non_member_missing_and_expired_pins_are_404(app_client, db_session):

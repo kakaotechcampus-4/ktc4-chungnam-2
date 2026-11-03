@@ -51,10 +51,11 @@ def load_trashed_pin(
     user: CurrentUser = Depends(get_current_user),
     gateway: MembershipGateway = Depends(get_membership_gateway),
 ) -> LoadedPin:
-    """복구(#1013)용 — 지운 핀도 읽는다(없거나 30일이 지난 핀은 404). 남이 찍은 지운 핀은 방장이 아니면 존재를 알리지 않으려
-    403이 아니라 404로 막는다(휴지통 목록이 그 핀을 보여 주지 않는 것과 같다). 지우지 않은 핀의 403은 그대로다."""
+    """복구(#1013)용 — 지운 핀도 읽는다(없거나 30일이 지난 핀은 404). 남이 찍은 핀은 방장이 아니면 존재를 알리지 않으려
+    403이 아니라 404로 막는다(휴지통 목록이 그 핀을 보여 주지 않는 것과 같다). 지우지 않은 남의 핀도 복구할 수 있는 핀이
+    아니라서 404다. 찍은 사람·방장이 이미 복구된 핀을 다시 부르면 200(연타 안전)."""
     row: PinRow = service.get_trashed_or_live_pin_or_404(db, pinId, now=datetime.now(timezone.utc))
-    if row.deleted_at is not None and row.created_by != user.user_id             and gateway.get_role(row.map_id, user.user_id) != "owner":
+    if row.created_by != user.user_id and gateway.get_role(row.map_id, user.user_id) != "owner":
         raise AppError("NOT_FOUND")
     return LoadedPin(
         resource=Resource(type="pin", map_id=row.map_id, author_id=row.created_by, kind=row.kind),
