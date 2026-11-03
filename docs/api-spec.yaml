@@ -1467,7 +1467,7 @@ paths:
     get:
       tags: [shortlist]
       summary: 날짜별 확정 리스트 조회
-      description: 여행 시작일부터 종료일까지 양 끝을 포함해 날짜 칸을 표시한다. items는 날짜 순이고 미배정은 마지막이다. 날짜 칸은 항목이 없어도 화면에서 표시한다.
+      description: 여행 시작일부터 종료일까지 양 끝을 포함해 날짜 칸을 표시한다. items는 날짜 순이고 미배정은 마지막이다. 날짜 칸은 항목이 없어도 화면에서 표시한다. 여행 기간이 줄면 범위 밖 항목은 기존 미배정 목록 뒤에 날짜별 기존 순서대로 붙는다.
       parameters: [ { $ref: "#/components/parameters/MapId" } ]
       responses:
         "200":

@@ -1936,3 +1936,22 @@ describe("확정 일정 (#1172)", () => {
     expect(stale.status).toBe(409);
   });
 });
+
+describe("여행 기간 변경과 확정 일정 (#1172)", () => {
+  it("범위 밖 항목을 기존 미배정 뒤에 날짜별 순서로 보존한다", async () => {
+    const base = `${BASE}/maps/map_1`;
+    await fetch(base, { method: "PATCH", body: JSON.stringify({ start_date: "2026-11-01", end_date: "2026-11-05" }) });
+    const items = await Promise.all(["pin_1", "pin_2", "pin_3"].map(pin_id => fetch(`${base}/shortlist`, { method: "POST", body: JSON.stringify({ pin_id }) }).then(r => r.json())));
+    const original = await (await fetch(`${base}/shortlist/schedule`)).json();
+    const groups = [{ date: null, item_ids: [items[0].id] }, { date: "2026-11-04", item_ids: [items[2].id, items[1].id] }];
+    expect((await fetch(`${base}/shortlist/schedule`, { method: "PUT", body: JSON.stringify({ version: original.version, groups }) })).status).toBe(200);
+    const stale = await fetch(`${base}/shortlist/schedule`, { method: "PUT", body: JSON.stringify({ version: original.version, groups }) });
+    expect((await stale.json()).message).toBe("확정 리스트가 변경되었습니다");
+    const order = await fetch(`${base}/shortlist/order`, { method: "PUT", body: JSON.stringify({ item_ids: items.map(i => i.id) }) });
+    expect((await order.json()).message).toBe("날짜별 일정을 사용 중입니다");
+    expect((await fetch(base, { method: "PATCH", body: JSON.stringify({ end_date: "2026-11-02" }) })).status).toBe(200);
+    const result = await (await fetch(`${base}/shortlist/schedule`)).json();
+    expect(result.items.map((i: { id: string }) => i.id)).toEqual([items[0].id, items[2].id, items[1].id]);
+    expect(result.items.every((i: { scheduled_date: string | null }) => i.scheduled_date === null)).toBe(true);
+  });
+});

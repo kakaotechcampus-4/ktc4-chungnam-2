@@ -40,7 +40,7 @@ export const shortlistHandlers = [
     const map = store.maps[mapId];
     if (!map) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
     const body = await request.json() as { version: string; groups: { date: string | null; item_ids: string[] }[] };
-    if (body.version !== scheduleSnapshot(mapId).version) return apiError(409, "SHORTLIST_STALE", "일정이 변경되었습니다");
+    if (body.version !== scheduleSnapshot(mapId).version) return apiError(409, "SHORTLIST_STALE", "확정 리스트가 변경되었습니다");
     const items = (store.shortlist[mapId] ?? []) as ScheduledItem[];
     const ids = body.groups.flatMap(g => g.item_ids);
     const dates = body.groups.map(g => g.date);
@@ -111,7 +111,7 @@ export const shortlistHandlers = [
     const mapId = params.mapId as string;
     const body = (await request.json()) as { item_ids: string[] };
     const items = store.shortlist[mapId] ?? [];
-    if ((items as ScheduledItem[]).some(i => i.scheduled_date)) return apiError(409, "SHORTLIST_SCHEDULED", "날짜별 일정을 사용하세요");
+    if ((items as ScheduledItem[]).some(i => i.scheduled_date)) return apiError(409, "SHORTLIST_SCHEDULED", "날짜별 일정을 사용 중입니다");
     const byId = new Map(items.map((i) => [i.id, i]));
     body.item_ids.forEach((id, idx) => {
       const item = byId.get(id);

@@ -6,7 +6,7 @@
 
 - `GET /maps/{mapId}/shortlist/schedule`은 여행 기간, version과 확정 항목을 반환한다.
 - `PUT /maps/{mapId}/shortlist/schedule`은 모든 항목을 날짜 또는 미배정 그룹에 정확히 한 번씩 배정한다. version 충돌은 `SHORTLIST_STALE`이다.
-- 날짜 배정이 있으면 기존 전체 정렬은 `SHORTLIST_SCHEDULED`를 반환한다. 여행 기간 밖 배정은 미배정으로 옮긴다.
+- 날짜 배정이 있으면 기존 전체 정렬은 `SHORTLIST_SCHEDULED`를 반환한다. 여행 기간이 줄어 범위 밖이 된 항목은 기존 미배정 목록 뒤에 날짜별 기존 순서대로 붙인다.
 - TXT와 CSV 내보내기에 날짜별 일정과 미배정을 반영한다.
 
 ## 2026-11-03, 핀 복구의 403·404 정리 (#1013)
