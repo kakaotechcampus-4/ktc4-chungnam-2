@@ -13,7 +13,9 @@ import {
   toReadinessCards,
   type CandidateDto,
   visibleConditionCount,
+  runHistoryLine,
   type EvidenceLineDto,
+  type RunSummaryDto,
 } from './model'
 
 const search = { query: '춘천 한식', url: 'https://map.kakao.com/link/search/춘천 한식' }
@@ -136,5 +138,18 @@ describe('후보를 다 보여 준 뒤의 안내(#1142)', () => {
     expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 13 }])).toBe(true)
     expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 0 }])).toBe(false)
     expect(hasExcluded([{ label: '이미 제안·거절됨', removed_count: 13 }])).toBe(false)
+  })
+})
+
+describe('runHistoryLine (#482 지난 추천)', () => {
+  const r = (over: Partial<RunSummaryDto>): RunSummaryDto => ({ id: 'r', map_id: 'm', category: '음식점', status: 'done', attempt_no: 1, created_at: '2026-11-01T00:00:00Z', candidate_count: 3, published_count: 0, ...over })
+  it('끝난 추천은 찾은 수와 올린 수, 끝나지 않았으면 상태', () => {
+    expect([r({}), r({ published_count: 1 }), r({ candidate_count: 0 }), r({ status: 'failed' }), r({ status: 'executing' })].map(runHistoryLine)).toEqual([
+      '3곳 찾음',
+      '3곳 찾음 · 지도에 올림 1곳',
+      '찾은 곳 없음',
+      '끝내지 못했어요',
+      '찾는 중',
+    ])
   })
 })

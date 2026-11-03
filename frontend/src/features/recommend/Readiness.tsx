@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router'
 import { Check } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import { timeAgo } from '@/features/map/model'
 import { CHANGED, START_PARAM } from '@/features/agent/actions'
 import { showToast } from '@/features/shell/toast'
 import Notice from '@/ui/Notice'
@@ -14,8 +15,8 @@ import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
 
 import { useAiStore } from './aiStore'
-import { chosenCategory, runErrorMessage, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
-import { useCreateRunMutation, useReadinessQuery } from './queries'
+import { chosenCategory, runErrorMessage, runHistoryLine, summaryToRun, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
+import { useCreateRunMutation, useReadinessQuery, useRunHistoryQuery } from './queries'
 
 /** AI 탭 시트 머리글 — 핑고 + 「AI」 배지. 표정은 그 화면의 상황을 따른다(Pingo.tsx). */
 export function AiHeader({ title, sub, mood }: { title: string; sub: string; mood?: PingoMood }) {
@@ -132,6 +133,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           {create.isPending ? '추천을 찾는 중…' : chosen ? `${chosen} 추천받기` : '아직 추천할 수 있는 곳이 없어요'}
         </button>
       </CreditGate>
+      <RunHistory mapId={mapId} />
     </div>
   )
 }
@@ -192,5 +194,48 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
         의견 핀 {card.answered}곳 · <span className="whitespace-nowrap">필요 {card.required}곳</span>
       </p>
     </button>
+  )
+}
+
+/**
+ * 지난 추천(#482) — 내가 이 지도에서 받은 추천만, 최근순. 누르면 그 결과를 다시 연다(크레딧을 쓰지 않는다).
+ * 없으면 아무것도 그리지 않는다. 못 받으면 조용히 넘기지 않고 한 줄 알린다.
+ */
+const HISTORY_SHOWN = 5
+
+function RunHistory({ mapId }: { mapId: string }) {
+  const history = useRunHistoryQuery(mapId)
+  const setRun = useAiStore((s) => s.setRun)
+  const [all, setAll] = useState(false)
+  if (history.error) return <ErrorText message="지난 추천을 불러오지 못했어요" error={history.error} />
+  const runs = history.data ?? []
+  if (runs.length === 0) return null
+  const shown = all ? runs : runs.slice(0, HISTORY_SHOWN)
+
+  return (
+    <section aria-labelledby="run-history" className="pt-3">
+      <h3 id="run-history" className="mb-1 text-sm font-bold text-ink-900">
+        지난 추천
+      </h3>
+      <ul className="-mx-4 divide-y divide-ink-100">
+        {shown.map((r) => (
+          <li key={r.id}>
+            <button type="button" onClick={() => setRun(mapId, summaryToRun(r))} className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-ink-50">
+              <span className="min-w-0 flex-1">
+                <span className="block text-body font-semibold text-ink-900">{r.category} 추천</span>
+                <span className="mt-0.5 block text-xs text-ink-500">
+                  {runHistoryLine(r)} · {timeAgo(r.created_at)}
+                </span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {!all && runs.length > HISTORY_SHOWN && (
+        <button type="button" onClick={() => setAll(true)} className="btn-text mt-1 w-full text-center text-body">
+          지난 추천 {runs.length - HISTORY_SHOWN}개 더 보기
+        </button>
+      )}
+    </section>
   )
 }
