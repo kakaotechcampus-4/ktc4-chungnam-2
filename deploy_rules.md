@@ -207,6 +207,7 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 | tick당 처리 수와 미룬 지도 수, 걸린 시간 | tick 끝의 로그 한 줄 `agent tick due= observed= deferred_by_max= deferred_by_budget= elapsed_ms=`(#756). 차례였던 지도, 관찰한 수, `TICK_MAX_MAPS`로 미룬 수, 시간 예산으로 미룬 수, 걸린 ms. 시간 예산으로 미룬 지도가 있으면 warning | 미룬 지도가 tick마다 남으면 처리 수나 주기를 바꾼다. 시간 예산으로 미룬 지도가 연속 3 tick이면 본다(#1072). 시간 예산은 150초(`TICK_BUDGET_SEC`)로 두고 이 지표로 본다(#754). 걸린 시간이 lease(180초)를 넘는 tick이 보이면 105초(`LEASE_SEC − 75`)로 낮춘다. 로그는 서버의 `/srv/pingo/logs/agent-tick-<환경>.log`다 |
 | 진단 실패 비율 | `select outcome, count(*) from agent_runs where used_model and trigger in ('activity', 'time') and started_at > now() - interval '1 day' group by 1` 에서 model_failed와 invalid_schema ÷ 전체 | 20% 이상이면 모델 제공자 상태를 본다(#1072). 진단만 실패하고 다른 기능은 돈다. 진단 전체를 끄는 장치는 두지 않았다(`docs/agent-v2.md` 21.3) |
 | 관찰 예외 | `select outcome_detail->>'stage', outcome_detail->>'error', count(*) from agent_runs where outcome = 'error' and started_at > now() - interval '1 day' group by 1, 2` | 1건부터 본다(#1072). 코드 오류다. 그 지도는 30분, 2시간, 6시간 뒤 다시 관찰된다 |
+| 서비스 일일 예산과 웹 확인 | `select date_trunc('day', created_at at time zone 'Asia/Seoul') d, feature, count(*), sum(web_searches), round(sum(cost_krw)) from llm_calls where created_at > now() - interval '7 days' group by 1, 2 order by 1, 2`. 막힌 날은 API 로그의 `llm daily budget paused` | 예산(`LLM_DAILY_BUDGET_KRW`, 3,000원)에 닿는 날이 이어지면 웹 확인 대상(제안당 1줄)이나 예산을 다시 본다. 웹 검색 요금은 OpenAI 대시보드의 web search 줄과 `sum(web_searches)`를 대조한다(#1216). 웹 확인을 끄려면 `LLM_DAILY_BUDGET_KRW=0` 뒤 API 다시 만들기 |
 
 ### 에이전트 개입 라벨링 표본 (#1072)
 
