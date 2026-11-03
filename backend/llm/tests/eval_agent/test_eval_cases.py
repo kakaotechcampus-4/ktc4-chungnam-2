@@ -7,6 +7,11 @@ agent 규칙이 바뀌어 기대값이 낡으면 여기서 먼저 깨진다.
 순서와 다르게 둔 e07, e08, e12, e19, e20이 규칙(출발 임박, 같은 weight의 영향 인원, 연속 닫힘)으로 같은 1순위가 되는지,
 어느 규칙이 순서를 바꿨는지(rule_hits)까지 본다.
 
+미리 돌려 보기 케이스(#1180, 명세 6.7)는 case.preview에 정해 둔 수(0곳, 몇 곳, 절충 0곳, 절충 몇 곳)를 적는다.
+운영에서 different_axes 갈림은 늘 미리 돌려 보므로 그 케이스(e08, e12, e19, e23)에도 preview가 있다. preview 없는 different_axes는
+e29 하나(카테고리의 다른 사유 ②가 실패한 경로)이고, 그래도 기대 첫 버튼은 「추천 받기」다(#1198 리뷰). 진단 입력과 도구
+기록 p1에 들어가는지, 0곳이면 검증이 「추천 받기」를 빼는지, 수가 p1 claim 슬롯으로만 문장에 나오는지 본다.
+
 지시문 케이스(#717)는 expect.decision_phrases에 결정 지시 기대 문구를 적는다. 그 문구가 사유 글에서 나왔는지, #717에서 더한
 표현이 금지어 목록(core.FORBIDDEN_PHRASES)을 지나가는지, 문구 판정이 인용 조각과 text 조각을 가르는지 본다.
 """
@@ -16,6 +21,7 @@ import json
 import pytest
 
 from agent import core
+from agent.schemas import DiagnosisOutput
 from llm.prompts import DIAGNOSIS_TOOLS
 from llm.tests.eval_agent import fixtures as fx
 
@@ -26,7 +32,7 @@ def test_cases_cover_both_model_types_and_silence():
     expects = [c["expect"] for c in CASES]
     targets = [e["target"] for e in expects if e["target"]]
 
-    assert len(CASES) == 24 and len({c["id"] for c in CASES}) == 24
+    assert len(CASES) == 29 and len({c["id"] for c in CASES}) == 29
     assert sum(t.startswith("stall") for t in targets) >= 7 and sum(t.startswith("split") for t in targets) >= 7
     assert sum(e["decision"] == "silent" for e in expects) >= 3
     assert sum(e["priority_source"] == "rules" for e in expects) >= 7
@@ -178,3 +184,101 @@ def test_case_phrases_judge_text_segments_not_quotes():
     assert echoing is not None
     assert fx.decision_echoes([fx.segment_texts([s.model_dump() for s in echoing])], phrases) == ["이 핀으로 결정", "결정해 주세요"]
     assert fx.decision_echoes([fx.outside_slots("{c2}에는 {c1}라는 의견이 있어요.")], phrases) == []
+
+
+# ---------------------------------------------------------------- 미리 돌려 보기와 절충안 (#1180, 명세 6.7)
+
+PREVIEW_CASES = [c for c in CASES if c.get("preview")]
+
+
+def test_preview_cases_cover_zero_some_and_compromise():
+    kinds = {(c["expect"]["target"].split(":")[0], c["preview"]["passed_count"] > 0, c["preview"].get("with_keys_count"))
+             for c in PREVIEW_CASES}
+    assert ("stall", False, None) in kinds and ("stall", True, None) in kinds
+    assert ("split", True, 0) in kinds and any(k[0] == "split" and (k[2] or 0) > 0 for k in kinds)
+    assert all(c["expect"]["decision"] == "suggest" for c in PREVIEW_CASES)
+    for c in PREVIEW_CASES:   # 0곳 케이스는 「추천 받기」를 기대하지 않는다
+        assert ("open_recommend" in c["expect"]["actions"]) == (c["preview"]["passed_count"] > 0), c["id"]
+
+
+@pytest.mark.parametrize("case", PREVIEW_CASES, ids=[c["id"] for c in PREVIEW_CASES])
+def test_preview_reaches_the_input_and_the_p1_record(case):
+    world = fx.build(case)
+    key = case["expect"]["target"]
+    inp = world.diagnosis_input(key)
+    tools = fx.FixtureTools(world, DIAGNOSIS_TOOLS[inp["diagnosis"]], preview=world.preview(key))
+
+    assert inp["preview"]["passed_count"] == case["preview"]["passed_count"]
+    assert tools.results["p1"]["passed_count"] == case["preview"]["passed_count"]
+    assert "funnel" not in inp["preview"]   # 깔때기는 기록에만
+    if inp["diagnosis"] == "split":
+        assert inp["comparison"]["conflict_type"] == "different_axes"
+        assert inp["preview"]["with_keys_count"] == case["preview"]["with_keys_count"]
+        assert len(inp["preview"]["with_labels"]) == 1   # ♥ 쪽이 원한 키 하나의 표시 이름
+    assert not any(p["name"] in json.dumps(inp, ensure_ascii=False) for p in case["pins"])   # 장소 이름은 입력에 없다
+
+
+def _preview_out(case, inp, actions, text):
+    claims = [{"id": "c1", "kind": "tool_result", "call_id": "p1", "path": "passed_count",
+               "value": case["preview"]["passed_count"]}]
+    if inp["diagnosis"] == "split":
+        pin = inp["pin_id"]
+        claims += [{"id": f"c{i}", "kind": "count", "subject": "pin", "subject_id": pin, "metric": m, "value": inp["counts"][m]}
+                   for i, m in ((2, "like"), (3, "against"))]
+    return DiagnosisOutput.model_validate({
+        "decision": "suggest", "diagnosis": inp["diagnosis"], "signal_id": inp["signal_id"], "claims": claims,
+        "advice": [{"text": text, "basis": ["c1"], "is_guess": False}],
+        "actions": [{"type": a, "category": None, "pin_ids": None, "basis": [c["id"] for c in claims]} for a in actions],
+    })
+
+
+@pytest.mark.parametrize("case", PREVIEW_CASES, ids=[c["id"] for c in PREVIEW_CASES])
+def test_zero_places_leave_no_recommend_button_and_counts_stay_in_slots(case):
+    """0곳이면 모델이 「추천 받기」를 골라도 검증이 뺀다(11.2 6단계). 수는 p1 슬롯으로 쓰면 남고, 문장에 숫자로 쓰면 빠진다."""
+    world = fx.build(case)
+    key = case["expect"]["target"]
+    inp = world.diagnosis_input(key)
+    tools = fx.FixtureTools(world, DIAGNOSIS_TOOLS[inp["diagnosis"]], preview=world.preview(key))
+    n = case["preview"]["passed_count"]
+
+    slotted = fx.verify(world, key, _preview_out(case, inp, ["open_recommend"], "지금 조건으로 찾으면 맞는 곳이 {c1.value}곳 있어요"), tools)
+    digits = fx.verify(world, key, _preview_out(case, inp, ["open_recommend"], f"지금 조건으로 찾으면 맞는 곳이 {n}곳 있어요"), tools)
+
+    kept = [a["type"] for a in slotted.draft.actions] if slotted.draft else []
+    assert ("open_recommend" in kept) == (n > 0)
+    assert slotted.draft is not None and slotted.draft.advice   # 문장은 남는다
+    assert digits.record["lines"]["removed"] == [{"index": 0, "reason": "digit"}]
+
+
+def test_every_different_axes_split_has_a_preview_except_the_failure_path():
+    """운영 모양: different_axes 갈림은 미리 돌려 본 결과가 있다. 없는 것은 ② 실패 경로 e29 하나다(#1198 리뷰)."""
+    diff = [c for c in CASES if c["expect"].get("conflict_type") == "different_axes"]
+    missing = [c["id"] for c in diff if not c.get("preview")]
+
+    assert missing == ["e29_split_diff_axes_no_preview"]
+    for c in diff:
+        if c.get("preview"):
+            assert c["preview"]["passed_count"] >= 1 and c["preview"]["with_keys_count"] is not None, c["id"]
+
+
+def test_a_different_axes_split_without_a_preview_still_expects_recommend():
+    """미리 돌려 보지 못해도(null) 진단은 v2처럼 간다(명세 6.7) — 입력 preview는 null, 충돌 종류는 different_axes, 기대 첫 버튼은
+    open_recommend. 검증도 null이면 0곳 검사를 하지 않아 「추천 받기」가 남는다."""
+    case = next(c for c in CASES if c["id"] == "e29_split_diff_axes_no_preview")
+    world = fx.build(case)
+    key = case["expect"]["target"]
+    inp = world.diagnosis_input(key)
+    tools = fx.FixtureTools(world, DIAGNOSIS_TOOLS["split"], preview=world.preview(key))
+    pin = inp["pin_id"]
+    out = DiagnosisOutput.model_validate({
+        "decision": "suggest", "diagnosis": "split", "signal_id": inp["signal_id"],
+        "claims": [{"id": f"c{i}", "kind": "count", "subject": "pin", "subject_id": pin, "metric": m, "value": inp["counts"][m]}
+                   for i, m in ((1, "like"), (2, "against"))],
+        "advice": [{"text": "넓으면서 기다림이 짧은 곳을 함께 찾아볼 수 있어요", "basis": [], "is_guess": True}],
+        "actions": [{"type": "open_recommend", "category": None, "pin_ids": None, "basis": ["c1", "c2"]}],
+    })
+
+    assert inp["preview"] is None and "p1" not in tools.results
+    assert inp["comparison"]["conflict_type"] == "different_axes"
+    assert case["expect"]["actions"] == ["open_recommend"]
+    assert [a["type"] for a in fx.verify(world, key, out, tools).draft.actions] == ["open_recommend"]

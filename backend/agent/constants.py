@@ -38,6 +38,12 @@ NO_REACTION_DAILY_LIMIT = 1        # 지도당
 CATEGORY_GAP_MIN_CONFIRMED = 2
 
 SUMMARY_NEW_REASONS = 3
+SUMMARY_FAILED_RETRY = timedelta(minutes=30)   # 요약 ②가 실패한 카테고리를 다시 시도하기까지의 간격(#1187). 그 동안 다른 카테고리가 먼저 갱신된다
+
+FACT_LINES_MAX = 2   # 우리 데이터 확인(6.6, #1168) — 한 제안에 붙는 줄 수 상한. AgentSuggestion.facts maxItems와 같다
+# 웹 확인(6.8, #1216) — 같은 지도에서 이 시간 안에 같은 (핀, 키)를 확인했으면(found, not_found) 다시 부르지 않고 그 결과를 쓴다.
+# 횟수 상한이 아니다 — 비용은 서비스 일일 예산(llm.api.web_check)이 본다
+WEB_CHECK_REUSE = timedelta(hours=24)
 
 BLOCKED_RUN_MAX_RESULTS = FEW_RESULTS   # 결과가 이 값 미만이면 추천 막힘. 값은 recommend가 정한다(#800)
 BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS = 3   # 또는 같은 사람이 같은 카테고리 run을 이 값 이상 만들었으면 (초안)

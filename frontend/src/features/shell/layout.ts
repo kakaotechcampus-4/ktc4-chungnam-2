@@ -14,3 +14,6 @@ export const PANEL_W = { pc: 480, tablet: 432 }
 
 /** 넓은 화면 왼쪽 끝 세로 탭 줄 폭(네이버 지도처럼). 패널을 접어도 남는다. */
 export const RAIL_W = 72
+
+/** 내용 패널 옆에 붙는 패널(확정 탭 「일정 짜기」, `SidePanel`) 폭. 열려 있으면 지도 위 토스트·버튼이 그만큼 오른쪽으로 비킨다. */
+export const SIDE_PANEL_W = 360

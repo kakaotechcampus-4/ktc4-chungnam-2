@@ -13,10 +13,10 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import delete, func, select
 
 from agent import api as agent_api
-from agent import core
 from auth.models import User
 from auth.testing import ensure_users
 from common.events import EventLog
+from common.kst import kst_date
 from credits import api as credits_api
 from maps.models import Map, Membership
 from pins.models import Pin, Reaction
@@ -30,7 +30,7 @@ class World:
     def __init__(self, factory, now: datetime):
         self.factory = factory
         self.now = now
-        self.today: date = core.kst_date(now)
+        self.today: date = kst_date(now)
         self.prefix = f"agt{uuid.uuid4().hex[:6]}"
         self.map_ids: list[str] = []
         self.user_ids: set[str] = set()

@@ -1,4 +1,4 @@
-"""마이그레이션 0029_agent_tables, 0030_agent_cursor_drop_gap_seq up/down — 빈 DB에 head까지 올리고, 0025로 내렸다가
+"""마이그레이션 0029_agent_tables, 0030_agent_cursor_drop_gap_seq, 0047, 0056(현황 문단과 facts, #1168) up/down — 빈 DB에 head까지 올리고, 0025로 내렸다가
 다시 올린다.
 
 다른 테스트와 테이블을 섞지 않도록 `<PINGO_TEST_DB>_agent_mig` DB를 따로 만들고 끝나면 지운다.
@@ -14,6 +14,7 @@ from alembic.config import Config
 
 from agent.models import (
     AgentCursor,
+    AgentMapStatus,
     AgentReasonSummary,
     AgentRun,
     AgentRunAdvice,
@@ -26,6 +27,7 @@ from agent.tests.conftest import BASE_DATABASE_URL, TEST_DB_NAME, replace_dbname
 BACKEND = Path(__file__).resolve().parents[2]
 REVISION = "0030_agent_cursor_drop_gap_seq"   # agent 마지막 마이그레이션(뒤에 다른 모듈 것이 붙어도 된다)
 LEASE_REVISION = "0047_agent_cursor_lease_token"
+STATUS_REVISION = "0056_agent_map_status_facts"   # agent_map_status 테이블, agent_suggestions.facts(#1168)
 TABLES_REVISION = "0029_agent_tables"
 PREVIOUS = "0025_invite_revoke"
 MODELS = (AgentSettings, AgentCursor, AgentRun, AgentSuggestion, AgentSuggestionView, AgentReasonSummary, AgentRunAdvice)
@@ -82,8 +84,8 @@ def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_u
         assert TABLES <= _tables(engine)
         for model in MODELS:
             columns = {c["name"] for c in inspector.get_columns(model.__tablename__)}
-            expected = set(model.__table__.columns.keys()) - ({"lease_token"} if model is AgentCursor else set())
-            assert columns == expected, model.__tablename__   # lease_token은 0047이 더한다(아래)
+            later = {AgentCursor: {"lease_token"}, AgentSuggestion: {"facts"}, AgentRunAdvice: {"state_key"}}.get(model, set())
+            assert columns == set(model.__table__.columns.keys()) - later, model.__tablename__   # 0047, 0056, 0057이 더한다(아래)
 
         indexes = {i["name"]: i for i in inspector.get_indexes("agent_suggestions")}
         active = indexes["uq_agent_suggestions_active"]
@@ -106,6 +108,17 @@ def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_u
         with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:
             conn.execute(insert, {"status": "active"})
 
+        # 0056이 현황 문단 테이블과 facts를 더하고(#1168), 모델과 칸이 같다. 기존 제안의 facts는 빈 목록이다
+        command.upgrade(cfg, STATUS_REVISION)
+        inspector = sa.inspect(engine)
+        assert {c["name"] for c in inspector.get_columns("agent_map_status")} == set(AgentMapStatus.__table__.columns.keys())
+        assert "facts" in {c["name"] for c in inspector.get_columns("agent_suggestions")}
+        with engine.begin() as conn:
+            assert conn.execute(sa.text("SELECT facts FROM agent_suggestions")).scalars().all() == [[], []]
+        command.downgrade(cfg, LEASE_REVISION)
+        assert "agent_map_status" not in _tables(engine)
+        assert "facts" not in {c["name"] for c in sa.inspect(engine).get_columns("agent_suggestions")}
+
         # 0047이 lease_token을 더하고, 내리면 지운다(#812)
         command.upgrade(cfg, LEASE_REVISION)
         assert "lease_token" in {c["name"] for c in sa.inspect(engine).get_columns("agent_cursors")}
@@ -121,5 +134,34 @@ def test_upgrade_creates_tables_matching_models_and_downgrade_removes_them(mig_u
 
         command.upgrade(cfg, REVISION)  # 다시 올려도 깨지지 않는다
         assert TABLES <= _tables(engine)
+    finally:
+        engine.dispose()
+
+
+def test_advice_state_key_migration_is_expand_only(mig_url):
+    """0057은 칸 하나만 더한다(#1103) — 기본키는 run_id 그대로라 이전 서버의 ON CONFLICT (run_id) DO NOTHING도 돈다."""
+    cfg = _config()
+    command.upgrade(cfg, "0056_agent_map_status_facts")
+    engine = sa.create_engine(mig_url)
+    insert = sa.text(
+        "INSERT INTO agent_run_advice (run_id, map_id, claims, advice, actions, created_at) "
+        "VALUES ('00000000-0000-0000-0000-000000001103', 'm1103', '[]', '[]', '[]', '2026-11-01') "
+        "ON CONFLICT (run_id) DO NOTHING"
+    )
+    try:
+        with engine.begin() as conn:
+            conn.execute(insert)
+        command.upgrade(cfg, "head")
+        inspector = sa.inspect(engine)
+        assert inspector.get_pk_constraint("agent_run_advice")["constrained_columns"] == ["run_id"]
+        assert {c["name"] for c in inspector.get_columns("agent_run_advice")} == set(AgentRunAdvice.__table__.columns.keys())
+        with engine.begin() as conn:
+            assert conn.execute(sa.text("SELECT state_key FROM agent_run_advice")).scalar_one() == ""
+            conn.execute(insert)   # 이전 서버의 쓰기가 새 스키마에서 그대로 돈다
+        command.downgrade(cfg, "0056_agent_map_status_facts")
+        with engine.connect() as conn:
+            assert conn.execute(sa.text("SELECT count(*) FROM agent_run_advice")).scalar_one() == 1
+        assert "state_key" not in {c["name"] for c in sa.inspect(engine).get_columns("agent_run_advice")}
+        command.upgrade(cfg, "head")
     finally:
         engine.dispose()

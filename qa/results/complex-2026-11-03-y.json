@@ -1,0 +1,853 @@
+[
+ {
+  "id": "Y01",
+  "name": "강남 양식: ♥ 베트남·한식(글 없음) + 「+」 양식 먹고 싶어요",
+  "members": 1,
+  "pins": 2,
+  "evidence": 1,
+  "unenforced": 0,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 61,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 0,
+   "이미 제안·거절됨": 2,
+   "상위 3곳 선정": 71
+  },
+  "cands": [
+   [
+    "로리스 더 프라임립 레스토랑",
+    1,
+    1
+   ],
+   [
+    "고에몬",
+    1,
+    1
+   ],
+   [
+    "을지다락 강남역",
+    1,
+    1
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 12,
+  "reasons": [
+   "양식 먹고 싶어요"
+  ],
+  "lines": [
+   [
+    "양식 먹고 싶어요",
+    "cuisine_western",
+    true,
+    "preferred",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y02",
+  "name": "강남 양식: 외국음식 핀에 ♥ 「양식 좋아요」",
+  "members": 1,
+  "pins": 1,
+  "evidence": 1,
+  "unenforced": 0,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 66,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 0,
+   "이미 제안·거절됨": 1,
+   "상위 3곳 선정": 68
+  },
+  "cands": [
+   [
+    "로리스 더 프라임립 레스토랑",
+    1,
+    1
+   ],
+   [
+    "고에몬",
+    1,
+    1
+   ],
+   [
+    "을지다락 강남역",
+    1,
+    1
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "양식 좋아요"
+  ],
+  "lines": [
+   [
+    "양식 좋아요",
+    "cuisine_western",
+    true,
+    "preferred",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y03",
+  "name": "강남 양식: 🚫 한식 「양식 먹고 싶어요」",
+  "members": 1,
+  "pins": 2,
+  "evidence": 1,
+  "unenforced": 0,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 116,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 0,
+   "이미 제안·거절됨": 0,
+   "상위 3곳 선정": 33
+  },
+  "cands": [
+   [
+    "데일리 픽스",
+    1,
+    1
+   ],
+   [
+    "빌즈(bills)",
+    1,
+    1
+   ],
+   [
+    "마노디셰프 강남점",
+    1,
+    1
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "양식 먹고 싶어요"
+  ],
+  "lines": [
+   [
+    "양식 먹고 싶어요",
+    "cuisine_western",
+    true,
+    "preferred",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y04",
+  "name": "부산 서면: 회 좋아 + 한식 질림",
+  "members": 1,
+  "pins": 2,
+  "evidence": 2,
+  "unenforced": 0,
+  "forbidden": [
+   "cuisine_korean"
+  ],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 49,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 19,
+   "이미 제안·거절됨": 1,
+   "상위 3곳 선정": 57
+  },
+  "cands": [
+   [
+    "부산복집",
+    1,
+    1
+   ],
+   [
+    "칠암아나고",
+    1,
+    1
+   ],
+   [
+    "바다산곰장어",
+    1,
+    1
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "회 좋아해요",
+   "한식은 질려요"
+  ],
+  "lines": [
+   [
+    "회 좋아해요",
+    "cuisine_raw_fish",
+    true,
+    "preferred",
+    true
+   ],
+   [
+    "한식은 질려요",
+    "cuisine_korean",
+    false,
+    "required",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y05",
+  "name": "부산 해운대 카페: 빵 + 시끄러움",
+  "members": 1,
+  "pins": 2,
+  "evidence": 2,
+  "unenforced": 0,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 28,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 7,
+   "이미 제안·거절됨": 2,
+   "상위 3곳 선정": 31
+  },
+  "cands": [
+   [
+    "보노베리",
+    0,
+    1
+   ],
+   [
+    "원어거스트팔월일",
+    0,
+    1
+   ],
+   [
+    "로우앤스윗",
+    0,
+    1
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "빵이 맛있는 곳",
+   "너무 시끄러워요"
+  ],
+  "lines": [
+   [
+    "빵이 맛있는 곳",
+    "bakery",
+    true,
+    "preferred",
+    true
+   ],
+   [
+    "너무 시끄러워요",
+    "quiet",
+    true,
+    "required",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y06",
+  "name": "대구 동성로 카페 2명: 조용 / 프랜차이즈 싫음",
+  "members": 2,
+  "pins": 2,
+  "evidence": 2,
+  "unenforced": 0,
+  "forbidden": [
+   "franchise"
+  ],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 51,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 2,
+   "이미 제안·거절됨": 1,
+   "상위 3곳 선정": 35
+  },
+  "cands": [
+   [
+    "워킹컵",
+    1,
+    2
+   ],
+   [
+    "인바이트디저트",
+    1,
+    2
+   ],
+   [
+    "티클래스",
+    1,
+    2
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "조용해서 좋아요",
+   "프랜차이즈는 싫어요"
+  ],
+  "lines": [
+   [
+    "조용해서 좋아요",
+    "quiet",
+    true,
+    "preferred",
+    true
+   ],
+   [
+    "프랜차이즈는 싫어요",
+    "franchise",
+    false,
+    "required",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y07",
+  "name": "대전 둔산 관광지(겨울): 아이랑",
+  "members": 1,
+  "pins": 1,
+  "evidence": 1,
+  "unenforced": 0,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 29,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 0,
+   "이미 제안·거절됨": 1,
+   "상위 3곳 선정": 19
+  },
+  "cands": [
+   [
+    "이응노 미술관",
+    1,
+    1
+   ],
+   [
+    "대전시립미술관",
+    1,
+    1
+   ],
+   [
+    "대전곤충생태관",
+    1,
+    1
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "아이랑 가기 좋아요"
+  ],
+  "lines": [
+   [
+    "아이랑 가기 좋아요",
+    "kid_friendly",
+    true,
+    "preferred",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y08",
+  "note": "run 500 RECOMMEND_FAILED",
+  "members": 1
+ },
+ {
+  "id": "Y09",
+  "name": "춘천: 닭갈비 먹으러 왔어요",
+  "members": 1,
+  "pins": 1,
+  "evidence": 1,
+  "unenforced": 0,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 135,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 0,
+   "이미 제안·거절됨": 1,
+   "상위 3곳 선정": 47
+  },
+  "cands": [
+   [
+    "소양강다슬기전문점",
+    1,
+    1
+   ],
+   [
+    "원조갈비탕",
+    1,
+    1
+   ],
+   [
+    "우미닭갈비본점",
+    1,
+    1
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "닭갈비 먹으러 왔어요"
+  ],
+  "lines": [
+   [
+    "닭갈비 먹으러 왔어요",
+    "cuisine_korean",
+    true,
+    "preferred",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y10",
+  "name": "여행 지역 부산인데 핀은 강남(시·도 밖)",
+  "members": 1,
+  "pins": 1,
+  "evidence": 0,
+  "unenforced": 0,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 139,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 0,
+   "이미 제안·거절됨": 0,
+   "상위 3곳 선정": 0
+  },
+  "cands": [],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 1,
+  "reasons": [],
+  "lines": []
+ },
+ {
+  "id": "Y11",
+  "name": "월요일 하루 여행(종로) — 월요 휴무 제거",
+  "members": 1,
+  "pins": 1,
+  "evidence": 1,
+  "unenforced": 0,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 138,
+   "영업 종료 제거": 7,
+   "실격 조건 제거": 0,
+   "이미 제안·거절됨": 1,
+   "상위 3곳 선정": 178
+  },
+  "cands": [
+   [
+    "종가만두",
+    1,
+    1
+   ],
+   [
+    "종로뚝배기",
+    1,
+    1
+   ],
+   [
+    "대련집",
+    1,
+    1
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "한식 좋아요"
+  ],
+  "lines": [
+   [
+    "한식 좋아요",
+    "cuisine_korean",
+    true,
+    "preferred",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y12",
+  "name": "월요일 하루 여행 관광지(종로) — 박물관 월요 휴관",
+  "members": 1,
+  "pins": 1,
+  "evidence": 1,
+  "unenforced": 0,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 102,
+   "영업 종료 제거": 63,
+   "실격 조건 제거": 0,
+   "이미 제안·거절됨": 1,
+   "상위 3곳 선정": 106
+  },
+  "cands": [
+   [
+    "북촌한옥마을",
+    1,
+    1
+   ],
+   [
+    "동대문디자인플라자(DDP)",
+    1,
+    1
+   ],
+   [
+    "북촌동양문화박물관",
+    1,
+    1
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "전시 보는 거 좋아해요"
+  ],
+  "lines": [
+   [
+    "전시 보는 거 좋아해요",
+    "exhibition",
+    true,
+    "preferred",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y13",
+  "name": "같은 키 찬반: A 한식 좋아 / B 한식 말고",
+  "members": 2,
+  "pins": 2,
+  "evidence": 2,
+  "unenforced": 0,
+  "forbidden": [
+   "cuisine_korean"
+  ],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 35,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 20,
+   "이미 제안·거절됨": 0,
+   "상위 3곳 선정": 36
+  },
+  "cands": [
+   [
+    "스케줄 성수",
+    1,
+    2
+   ],
+   [
+    "(주)성격에프앤비 탐광",
+    1,
+    2
+   ],
+   [
+    "꿉당(성수점)",
+    1,
+    2
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "한식 말고 다른 거",
+   "한식 좋아요"
+  ],
+  "lines": [
+   [
+    "한식 말고 다른 거",
+    "cuisine_korean",
+    false,
+    "required",
+    true
+   ],
+   [
+    "한식 좋아요",
+    "cuisine_korean",
+    true,
+    "preferred",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y14",
+  "name": "뜻 없는 사유(ㅋㅋㅋ, 그냥)",
+  "members": 1,
+  "pins": 2,
+  "evidence": 2,
+  "unenforced": 2,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 62,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 0,
+   "이미 제안·거절됨": 2,
+   "상위 3곳 선정": 107
+  },
+  "cands": [
+   [
+    "돈수백",
+    1,
+    1
+   ],
+   [
+    "홍스쭈꾸미 분점",
+    1,
+    1
+   ],
+   [
+    "콩불홍대점",
+    1,
+    1
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "그냥",
+   "ㅋㅋㅋㅋ"
+  ],
+  "lines": [
+   [
+    "그냥",
+    null,
+    null,
+    "required",
+    false
+   ],
+   [
+    "ㅋㅋㅋㅋ",
+    null,
+    null,
+    "preferred",
+    false
+   ]
+  ]
+ },
+ {
+  "id": "Y15",
+  "name": "「+」 피함: 양식은 피하고 싶어요",
+  "members": 1,
+  "pins": 1,
+  "evidence": 1,
+  "unenforced": 0,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 68,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 0,
+   "이미 제안·거절됨": 1,
+   "상위 3곳 선정": 67
+  },
+  "cands": [
+   [
+    "강남교자칼국수",
+    1,
+    1
+   ],
+   [
+    "강남진해장",
+    1,
+    1
+   ],
+   [
+    "1992덮밥 & 짜글이",
+    1,
+    1
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "양식은 피하고 싶어요"
+  ],
+  "lines": [
+   [
+    "양식은 피하고 싶어요",
+    "cuisine_western",
+    false,
+    "preferred",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y16",
+  "name": "「+」 원함 둘(회, 고기)",
+  "members": 1,
+  "pins": 1,
+  "evidence": 2,
+  "unenforced": 0,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 59,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 0,
+   "이미 제안·거절됨": 1,
+   "상위 3곳 선정": 99
+  },
+  "cands": [
+   [
+    "전설의우대갈비 해운대직영점",
+    0,
+    1
+   ],
+   [
+    "육장갈비",
+    0,
+    1
+   ],
+   [
+    "크랩피크",
+    0,
+    1
+   ]
+  ],
+  "violations": [],
+  "warnings": [
+   "W1 원함 cuisine_raw_fish인데 후보에 없음(핀 반경 1200m 안 참인 정예 7곳)"
+  ],
+  "log": [],
+  "sec": 3,
+  "reasons": [
+   "회 먹고 싶어요",
+   "고기 먹고 싶어요"
+  ],
+  "lines": [
+   [
+    "회 먹고 싶어요",
+    "cuisine_raw_fish",
+    true,
+    "preferred",
+    true
+   ],
+   [
+    "고기 먹고 싶어요",
+    "cuisine_bbq",
+    true,
+    "preferred",
+    true
+   ]
+  ]
+ },
+ {
+  "id": "Y17",
+  "name": "부산 관광지 3명: 야경 / 사진 / 계단 많음",
+  "members": 3,
+  "pins": 3,
+  "evidence": 3,
+  "unenforced": 0,
+  "forbidden": [],
+  "funnel": {
+   "카테고리 후보 풀": 0,
+   "반경 밖 제거": 34,
+   "영업 종료 제거": 0,
+   "실격 조건 제거": 1,
+   "이미 제안·거절됨": 3,
+   "상위 3곳 선정": 21
+  },
+  "cands": [
+   [
+    "더베이101",
+    3,
+    3
+   ],
+   [
+    "더베이101요트투어",
+    3,
+    3
+   ],
+   [
+    "부산 영화의 거리",
+    3,
+    3
+   ]
+  ],
+  "violations": [],
+  "warnings": [],
+  "log": [],
+  "sec": 4,
+  "reasons": [
+   "사진 찍기 좋아요",
+   "야경이 예뻐요",
+   "계단이 너무 많아요"
+  ],
+  "lines": [
+   [
+    "사진 찍기 좋아요",
+    "photogenic",
+    true,
+    "preferred",
+    true
+   ],
+   [
+    "야경이 예뻐요",
+    "night_view",
+    true,
+    "preferred",
+    true
+   ],
+   [
+    "계단이 너무 많아요",
+    "accessible",
+    true,
+    "required",
+    true
+   ]
+  ]
+ }
+]

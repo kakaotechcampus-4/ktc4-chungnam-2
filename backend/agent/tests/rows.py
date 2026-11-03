@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from agent.models import (
     AgentCursor,
+    AgentMapStatus,
     AgentReasonSummary,
     AgentRun,
     AgentRunAdvice,
@@ -50,6 +51,12 @@ def advice(db, map_id, **kw):
     return add(db, AgentRunAdvice(**fields))
 
 
+def map_status(db, map_id, **kw):
+    fields = {"map_id": map_id, "cells": {"categories": []}, "cells_hash": "h", "states": [],
+              "paragraph": "지도 현황을 정리했어요."} | kw
+    return add(db, AgentMapStatus(**fields))
+
+
 def cursor(db, map_id):
     return add(db, AgentCursor(map_id=map_id))
 
@@ -59,12 +66,13 @@ def settings(db, map_id, enabled=True):
 
 
 def fill_map(db, map_id):
-    """한 지도에 agent_* 7개 테이블 행을 하나씩 넣는다(열람은 둘)."""
+    """한 지도에 agent_* 8개 테이블 행을 하나씩 넣는다(열람은 둘)."""
     r = run(db, map_id)
     s = suggestion(db, map_id, run_id=r.id)
     view(db, s.id, "u1")
     view(db, s.id, "u2")
     summary(db, map_id)
     advice(db, map_id)
+    map_status(db, map_id)
     cursor(db, map_id)
     settings(db, map_id)

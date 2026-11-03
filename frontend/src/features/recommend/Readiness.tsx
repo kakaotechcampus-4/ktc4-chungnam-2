@@ -13,9 +13,9 @@ import PingoLoading from '@/ui/PingoLoading'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
 
-import ExternalSearchLink from './ExternalSearchLink'
 import { useAiStore } from './aiStore'
-import { runErrorMessage, runHistoryLine, summaryToRun, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
+import ExternalSearchLink from './ExternalSearchLink'
+import { chosenCategory, runErrorMessage, runHistoryLine, summaryToRun, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
 import { useCreateRunMutation, useReadinessQuery, useRunHistoryQuery } from './queries'
 
 /** AI 탭 시트 머리글 — 핑고 + 「AI」 배지. 표정은 그 화면의 상황을 따른다(Pingo.tsx). */
@@ -86,12 +86,12 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const readiness = useReadinessQuery(mapId)
   const create = useCreateRunMutation(mapId)
   const cards = readiness.data ? toReadinessCards(readiness.data) : []
-  const firstReady = cards.find((c) => c.ready)?.category ?? null
-  const [picked, setPicked] = useState<RecommendCategory | null>(null)
-  const chosen = picked && cards.find((c) => c.category === picked)?.ready ? picked : firstReady
+  const picked = useAiStore((s) => s.picked[mapId])
+  const setPicked = useAiStore((s) => s.setPicked)
+  const chosen = chosenCategory(cards, picked)
   const search = cards.find((c) => c.category === chosen)?.externalSearch
   useAgentStart(cards, (category) => {
-    setPicked(category)
+    setPicked(mapId, category)
     // 크레딧 때문이면(게스트·잔액 부족) 「상황이 바뀌었어요」가 아니다 — 버튼 자리의 안내가 말한다.
     create.start(category, { onError: (err) => creditBlock(err) || showToast(CHANGED) })
   })
@@ -108,7 +108,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
             card={c}
             selected={c.category === chosen}
             wide={cards.length % 2 === 1 && i === cards.length - 1}
-            onPick={() => setPicked(c.category)}
+            onPick={() => setPicked(mapId, c.category)}
           />
         ))}
       </div>

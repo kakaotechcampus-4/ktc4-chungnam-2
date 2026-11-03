@@ -1,0 +1,114 @@
+[
+  {
+    "id": "w01_many_wait",
+    "kind": "many_posts",
+    "title": "웹 글이 많은 가게 — 대기가 자주 적힌다",
+    "place_name": "런던베이글뮤지엄 안국 2층",
+    "address": "서울특별시 종로구 북촌로4길 20, 2층 (계동)",
+    "area": "종로구 계동",
+    "fact_key": "wait_short",
+    "feature": "대기가 짧은 곳",
+    "expect": "found"
+  },
+  {
+    "id": "w02_many_parking",
+    "kind": "many_posts",
+    "title": "웹 글이 많은 가게 — 주차가 자주 적힌다",
+    "place_name": "우래옥",
+    "address": "서울특별시 중구 창경궁로 62-29 (주교동)",
+    "area": "중구 주교동",
+    "fact_key": "parking_available",
+    "feature": "주차 가능",
+    "expect": "found"
+  },
+  {
+    "id": "w03_many_parking_2",
+    "kind": "many_posts",
+    "title": "웹 글이 많은 가게 — 주차",
+    "place_name": "을지면옥",
+    "address": "서울특별시 종로구 삼일대로30길 12, 지상 1, 2, 3층 (낙원동)",
+    "area": "종로구 낙원동",
+    "fact_key": "parking_available",
+    "feature": "주차 가능",
+    "expect": "found"
+  },
+  {
+    "id": "w04_mixed_quiet",
+    "kind": "mixed_reviews",
+    "title": "리뷰가 서로 다른 특징 — 조용한지",
+    "place_name": "어니언 성수점",
+    "address": "서울특별시 성동구 아차산로9길 8 1, 2층",
+    "area": "성동구",
+    "fact_key": "quiet",
+    "feature": "조용한 곳",
+    "expect": "either"
+  },
+  {
+    "id": "w05_few_parking",
+    "kind": "few_posts",
+    "title": "웹 글이 적은 동네 가게 — 주차",
+    "place_name": "기막힌 밥상",
+    "address": "서울특별시 도봉구 도당로 84, 1층 (방학동)",
+    "area": "도봉구 방학동",
+    "fact_key": "parking_available",
+    "feature": "주차 가능",
+    "expect": "either"
+  },
+  {
+    "id": "w06_few_alcohol",
+    "kind": "few_posts",
+    "title": "웹 글이 적은 동네 가게 — 술",
+    "place_name": "화적패",
+    "address": "서울특별시 도봉구 도봉로112길 16, 1층 (창동)",
+    "area": "도봉구 창동",
+    "fact_key": "serves_alcohol",
+    "feature": "술도 파는 곳",
+    "expect": "either"
+  },
+  {
+    "id": "w07_missing_kalguksu",
+    "kind": "missing",
+    "title": "없는 가게 — 지어낸 이름(not_found가 정답)",
+    "place_name": "성수 무지개고래 칼국수",
+    "address": null,
+    "area": "성동구 성수동2가",
+    "fact_key": "parking_available",
+    "feature": "주차 가능",
+    "expect": "not_found"
+  },
+  {
+    "id": "w08_missing_bistro",
+    "kind": "missing",
+    "title": "없는 가게 — 지어낸 이름(not_found가 정답)",
+    "place_name": "망원 달빛소금 비스트로",
+    "address": null,
+    "area": "마포구 망원동",
+    "fact_key": "pet_friendly",
+    "feature": "반려동물 동반",
+    "expect": "not_found"
+  },
+  {
+    "id": "w09_same_name_gukbap",
+    "kind": "same_name",
+    "title": "같은 이름 다른 동네 — 대구 원조할매국밥(지산동). 동구 신서동 같은 이름 가게 글을 쓰면 안 된다",
+    "place_name": "원조할매국밥",
+    "address": "대구광역시 수성구 용학로 167 (지산동)",
+    "area": "수성구 지산동",
+    "fact_key": "parking_available",
+    "feature": "주차 가능",
+    "expect": "either",
+    "other_areas": ["동구 신서동", "동구 지저동", "서구 비산동"]
+  },
+  {
+    "id": "w10_same_name_sundae",
+    "kind": "same_name",
+    "title": "같은 이름 다른 동네 — 할매순대국(용산구 원효로). 주소 괄호가 겹쳐 동네가 구까지만 간다(운영과 같다). 다른 동네 글을 쓰면 안 된다",
+    "place_name": "할매순대국",
+    "address": "서울특별시 용산구 원효로 259 (원효로1가,(지상1층))",
+    "area": "용산구",
+    "fact_key": "wait_short",
+    "feature": "대기가 짧은 곳",
+    "expect": "either",
+    "other_areas": []
+  }
+]

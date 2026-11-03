@@ -91,10 +91,15 @@ export function inProgressRunId(error: unknown): string | null {
 
 const ORDINALS = ['첫째', '둘째', '셋째', '넷째', '다섯째', '여섯째', '일곱째', '여덟째', '아홉째', '열째', '열한째', '열두째', '열셋째', '열넷째']
 
+/** "첫째 날" — 확정 탭 「일정 짜기」의 날짜 고르기도 같은 말을 쓴다. */
+export function dayOrdinal(index: number): string {
+  return `${ORDINALS[index] ?? `${index + 1}번째`} 날`
+}
+
 /** "첫째 날 · 10.3 (토)" — 시간은 보이지 않고 날짜와 요일만. */
 export function dayTitle(date: string, index: number): string {
   const d = new Date(`${date}T00:00:00`)
-  return `${ORDINALS[index] ?? `${index + 1}번째`} 날 · ${d.getMonth() + 1}.${d.getDate()} (${'일월화수목금토'[d.getDay()]})`
+  return `${dayOrdinal(index)} · ${d.getMonth() + 1}.${d.getDate()} (${'일월화수목금토'[d.getDay()]})`
 }
 
 /** pin_id → 장소 이름. 이미 불러온 확정 리스트·핀 목록에서만 찾는다(새 요청 없음). 앞에 둔 것이 이긴다. */

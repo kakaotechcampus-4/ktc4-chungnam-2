@@ -20,20 +20,53 @@ function exportRow(i: ShortlistItem, n: number) {
   return [String(n), name, pin.category, link, pin.memo ?? ""];
 }
 
+type ScheduledItem = ShortlistItem & { scheduled_date?: string | null };
+function scheduleSnapshot(mapId: string) {
+  const map = store.maps[mapId];
+  const items = (store.shortlist[mapId] ?? []) as ScheduledItem[];
+  const sorted = [...items].sort((a, b) => (a.scheduled_date ?? "9999").localeCompare(b.scheduled_date ?? "9999") || (a.visit_order ?? 1e9) - (b.visit_order ?? 1e9));
+  const version = JSON.stringify([map.start_date, map.end_date, sorted.map(i => [i.id, i.scheduled_date ?? null, i.visit_order ?? null])]);
+  return { start_date: map.start_date, end_date: map.end_date, version, items: sorted.map(i => ({ ...i, scheduled_date: i.scheduled_date ?? null, permissions: shortlistPermissions(i) })) };
+}
+
 export const shortlistHandlers = [
+  http.get("*/maps/:mapId/shortlist/schedule", ({ params }) => {
+    const mapId = params.mapId as string;
+    if (!store.maps[mapId]) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    return HttpResponse.json(scheduleSnapshot(mapId));
+  }),
+  http.put("*/maps/:mapId/shortlist/schedule", async ({ params, request }) => {
+    const mapId = params.mapId as string;
+    const map = store.maps[mapId];
+    if (!map) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    const body = await request.json() as { version: string; groups: { date: string | null; item_ids: string[] }[] };
+    if (body.version !== scheduleSnapshot(mapId).version) return apiError(409, "SHORTLIST_STALE", "확정 리스트가 변경되었습니다");
+    const items = (store.shortlist[mapId] ?? []) as ScheduledItem[];
+    const ids = body.groups.flatMap(g => g.item_ids);
+    const dates = body.groups.map(g => g.date);
+    if (new Set(dates).size !== dates.length || dates.some(d => d !== null && (d < map.start_date || d > map.end_date)) || ids.length !== items.length || new Set(ids).size !== ids.length || ids.some(id => !items.some(i => i.id === id))) return apiError(422, "VALIDATION_ERROR", "일정이 유효하지 않습니다");
+    for (const group of body.groups) group.item_ids.forEach((id, index) => { const item = items.find(i => i.id === id)!; item.scheduled_date = group.date; item.visit_order = index; });
+    return HttpResponse.json(scheduleSnapshot(mapId));
+  }),
+
   // #471 확정 리스트 내보내기 — 확정 순서대로. 응답은 JSON이 아니라 파일이다.
   http.get("*/maps/:mapId/shortlist/export", ({ params, request }) => {
     const mapId = params.mapId as string;
     if (!store.maps[mapId]) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
     const format = new URL(request.url).searchParams.get("format") ?? "txt";
     if (format !== "txt" && format !== "csv") return apiError(422, "VALIDATION_ERROR", "format은 txt 또는 csv");
-    const items = [...(store.shortlist[mapId] ?? [])].sort((a, b) => (a.visit_order ?? 1e9) - (b.visit_order ?? 1e9));
-    const rows = items.map((i, idx) => exportRow(i, idx + 1));
+    const items = scheduleSnapshot(mapId).items;
+    let previous: string | null | undefined = undefined;
+    let order = 0;
+    const rows = items.map(i => {
+      if (i.scheduled_date !== previous) { previous = i.scheduled_date; order = 0; }
+      return [i.scheduled_date ?? "미배정", ...exportRow(i, ++order)];
+    });
     if (format === "csv") {
-      const body = "\uFEFF" + [["순서", "이름", "분류", "링크", "메모"], ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
+      const body = "\uFEFF" + [["날짜", "순서", "이름", "분류", "링크", "메모"], ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
       return new HttpResponse(body, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": "attachment; filename*=UTF-8''shortlist.csv" } });
     }
-    const body = rows.length === 0 ? "확정한 장소가 아직 없어요\n" : rows.map((r) => `${r[0]}. ${r[1]} (${r[2]})${r[3] ? ` ${r[3]}` : ""}${r[4] ? ` — ${r[4]}` : ""}`).join("\n") + "\n";
+    const body = rows.length === 0 ? "확정한 장소가 아직 없어요\n" : rows.map((r, idx) => `${idx === 0 || rows[idx - 1][0] !== r[0] ? `[${r[0]}]\n` : ""}${r[1]}. ${r[2]} (${r[3]})${r[4] ? ` ${r[4]}` : ""}${r[5] ? ` — ${r[5]}` : ""}`).join("\n") + "\n";
     return new HttpResponse(body, { headers: { "Content-Type": "text/plain; charset=utf-8", "Content-Disposition": "attachment; filename*=UTF-8''shortlist.txt" } });
   }),
 
@@ -78,6 +111,7 @@ export const shortlistHandlers = [
     const mapId = params.mapId as string;
     const body = (await request.json()) as { item_ids: string[] };
     const items = store.shortlist[mapId] ?? [];
+    if ((items as ScheduledItem[]).some(i => i.scheduled_date)) return apiError(409, "SHORTLIST_SCHEDULED", "날짜별 일정을 사용 중입니다");
     const byId = new Map(items.map((i) => [i.id, i]));
     body.item_ids.forEach((id, idx) => {
       const item = byId.get(id);

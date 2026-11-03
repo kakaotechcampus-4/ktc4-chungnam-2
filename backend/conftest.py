@@ -74,6 +74,8 @@ def llm_usage_rows(monkeypatch):
     monkeypatch.setattr(usage, "sink", rows.append)
     # 버려진 호출 표시(#848)도 DB에 쓰지 않는다 — 표시한 trace_id를 llm_usage_discards 픽스처가 모은다
     monkeypatch.setattr(usage, "discard_sink", lambda trace_ids: rows_discarded.extend(trace_ids))
+    # 서비스 일일 예산의 합계(#1216)도 개발 DB를 읽지 않는다 — 기본은 0원이고, 예산을 보는 테스트가 usage.spent_reader를 바꾼다
+    monkeypatch.setattr(usage, "spent_reader", lambda since: 0.0)
     return rows
 
 

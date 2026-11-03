@@ -1,7 +1,7 @@
 # 데이터 모델
 
 작성 기준: `최종기획안.md`(2·5·9절) + `docs/architecture.md`
-DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). 실시간 보조: Redis(세션/멱등키, SSE 재전송 버퍼).
+DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). Redis는 쓰지 않는다 — 세션은 무상태 서명 쿠키, 멱등키는 `idempotency_keys` 표, SSE 재전송은 `event_log` 표가 맡는다(`docs/tech-stack.md`).
 
 이 문서는 테이블 단위 스키마다. 각 모듈은 자신이 소유한 테이블만 쓰기 접근하고, 다른 모듈 테이블은 해당 모듈의 함수/API를 통해서만 읽는다(`architecture.md` 1절).
 
@@ -140,11 +140,8 @@ reactions(
 ```
 shortlist_items(
   id, map_id, pin_id, added_by, added_at,
-  visit_order int null                 -- #30 수동 정렬(허용 확정). 동선(routes)과는 무관한
-                                        -- 별개 컬럼이다(최종기획안.md 9/4 결정 "visit_order 수동
-                                        -- 정렬 허용, 동선과는 무관") — 플레인 리스트 화면의
-                                        -- 드래그 순서일 뿐, routes 재계산이 이 값을 읽거나 쓰지
-                                        -- 않는다.
+  scheduled_date date null,            -- 방문 날짜. NULL은 미배정, 기존 항목도 미배정으로 보존
+  visit_order int null                 -- 같은 날짜(또는 미배정) 안의 순서. routes 계산과 무관
 )
   unique(map_id, pin_id)
 
@@ -394,7 +391,7 @@ regions(
                                          -- 압축 논리. 실제 PostGIS 연산이 필요해지면(예: 핀-지역
                                          -- 포함 판정을 DB 레벨로 옮길 때) geom 컬럼을 추가하는
                                          -- 별도 마이그레이션으로 되돌린다.
-  anchor_points jsonb default '[]',     -- #112: 원을 만든 기준 핀 좌표 [[lat, lng], ...]. 상위 3곳 동점 처리의 거리 평균에 쓴다
+  anchor_points jsonb default '[]',     -- #1252: 이 무리의 같은 카테고리 핀 좌표 [[lat, lng], ...]. 각 핀의 원 조회와 거리 평균에 쓴다
   confirmed boolean, confirmed_at
 )
 
@@ -466,7 +463,7 @@ ad_daily_stats(
 
 ## agent (v2 계획 보조 에이전트, docs/agent-v2.md 13절, #510)
 
-> v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 7개 테이블만 쓰고, 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.
+> v2. 계약만 먼저 올렸고 마이그레이션은 agent 모듈 M0에서 지금 head 다음 번호로 만든다. agent는 이 8개 테이블만 쓰고(`agent_map_status`는 #1168), 다른 모듈 데이터는 `<module>/api.py`로만 읽는다.
 > `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다. 지도 정리(#431)는 `agent.api.purge_map_data`, 탈퇴(#155)는 `agent.api.delete_by_user`가 맡는다.
 > **agent 테이블에는 사유 원문을 저장하지 않는다**(2026-10-15). 사유는 `reaction_id`로만 가리키고, 인용 문장은 응답과 이벤트를 만들 때 pins에서 읽어 렌더한다. 반응이 지워지면 인용도 사라진다(docs/agent-v2.md 2절 13번).
 
@@ -485,14 +482,14 @@ agent_cursors(                        -- 관찰 흐름만 쓴다. 지도별 책�
 
 agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 끝나도 남긴다. 30일 보존
   id uuid, map_id, started_at, finished_at null,
-  trigger('activity'|'time'|'summary'|'run_advice'),
+  trigger('activity'|'time'|'summary'|'run_advice'|'status'),   -- status: 지도 현황 문단(#1152, agent-v2 8.2)
   snapshot_at null, snapshot_seq null,
   signals jsonb, blocked jsonb, priority jsonb null,
   policy_version null, prompt_version null, model null, used_model boolean,
   tool_calls jsonb,                   -- 도구 입력과 결과. 사유 글은 reaction_id와 글자 수로 바꿔 남긴다
   verification jsonb null, tokens_in, tokens_out,
   outcome('no_signal'|'blocked'|'silent'|'unknown'|'invalid_schema'|'invalid_claims'|'model_failed'|'stale'
-          |'suggested'|'summarized'|'advised'|'trip_ended'|'map_deleted'|'error'),   -- error: 예외로 끝남(#677)
+          |'suggested'|'summarized'|'advised'|'status_updated'|'trip_ended'|'map_deleted'|'error'),   -- error: 예외로 끝남(#677). status_updated: 현황 문단 저장(#1152)
   outcome_detail jsonb null
 )
   index(map_id, started_at)
@@ -506,7 +503,9 @@ agent_suggestions(                    -- 바텀시트의 지도 제안
   shadow boolean default false,       -- true면 저장만 하고 화면과 이벤트에 내지 않는다
   created_at, expires_at,             -- 24시간
   resolved_by null,                   -- 기록만. 화면과 이벤트에 싣지 않는다
-  resolved_at null, resolved_action jsonb null, decided_within_24h boolean null
+  resolved_at null, resolved_action jsonb null, decided_within_24h boolean null,
+  facts jsonb default '[]'             -- 우리 데이터 확인(#1152, agent-v2 6.6). [{pin_id, fact_key, web?}], 값은 응답 때 places에서 다시 읽는다.
+                                      -- web(6.8, #1216): {status: found|not_found|paused, statements[{text, source_url}], checked_at} — 모델이 웹에서 옮긴 문장과 출처. 구성원 글 없음
 )
   unique(map_id) where status = 'active'   -- 지도당 활성 제안 하나
   index(map_id, fingerprint)
@@ -518,13 +517,24 @@ agent_suggestion_views(               -- 사용자별 열람. 버튼의 점(has_
 
 agent_reason_summaries(               -- 우리 조건 요약. 카테고리마다 최신본 하나를 덮어쓴다
   map_id, category, summary jsonb,    -- api-spec AgentSummary의 다섯 칸(키, 개수, 문구 종류)과 근거 reaction_id. 사유 원문 없음
+                                      -- + rules_version(만들 때의 ② 규칙 버전, #1095 — 지금 버전과 다르면 다시 만든다. 옛 요약은 키 없음)
   based_on_reaction_count, run_id null, updated_at,
   primary key(map_id, category)
 )
 
-agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 조언이 없어도 빈 값으로 저장해 다시 만들지 않는다
-  run_id primary key,                 -- recommend_runs.id. 모듈 경계라 FK 없음
-  map_id, kind null, claims jsonb, advice jsonb, actions jsonb, agent_run_id null, created_at
+agent_map_status(                     -- 지도 현황 문단(#1152, agent-v2 8.2). 지도마다 최신본 하나를 덮어쓴다
+  map_id primary key, cells jsonb,     -- 코드가 계산한 칸(사실만)
+  cells_hash,                          -- 같으면 다시 만들지 않는다
+  states jsonb,                        -- 모델이 고른 카테고리별 상태
+  paragraph,                           -- 검증을 통과한 문단. 사유 원문·이름·장소 이름 없음
+  run_id null, updated_at
+)
+
+agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 지금 결과 상태의 조언(#1103). 같은 상태의 빈 조언도 유지한다
+  run_id,                            -- recommend_runs.id. 모듈 경계라 FK 없음
+  state_key text not null default '', -- agent.core.advice_state_key. 기존 빈 키는 다음 조회에 재생성
+  map_id, kind null, claims jsonb, advice jsonb, actions jsonb, agent_run_id null, created_at,
+  primary key(run_id)                 -- 결과가 바뀌면 같은 행을 새 state_key의 조언으로 덮는다(옛 서버의 DO NOTHING도 그대로 돈다)
 )
 ```
 
@@ -563,9 +573,9 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 
 ---
 
-## llm_calls (모델 호출 사용량, #870, 마이그레이션 0043)
+## llm_calls (모델 호출 사용량, #870, 마이그레이션 0043, `web_searches`는 0060)
 
-> llm 모듈이 쓰는 테이블 1개. 모델 호출 1건 = 1행이다. 기록은 출구(`llm/client.py`의 `call_planner`, `_agent_parse`) 한 곳에서 하고,
+> llm 모듈이 쓰는 테이블 1개. 모델 호출 1건 = 1행이다. 기록은 출구(`llm/client.py`의 `call_planner`, `_agent_parse`, 웹 확인의 `call_web_check` #1216) 한 곳에서 하고,
 > 왜 불렀는지와 지도·사람·실행은 부르는 쪽이 `llm.api.usage_context`로 붙인다. 감싸지 않은 호출(평가 스크립트)은 남지 않는다.
 > **사유 원문, 요청 원문, 응답 본문은 저장하지 않는다.** 숫자와 분류만이다. 기록 실패는 본 기능을 막지 않는다(별도 세션, 예외는 로그만).
 > `agent_runs`, `agent_course_runs`의 `tokens_in/out`(실행 1건 합계)은 그대로 둔다. 겹침 정리는 측정 뒤 따로 한다.
@@ -573,14 +583,15 @@ unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queu
 ```
 llm_calls(
   id uuid,
-  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'course'),   -- 왜 불렀는지
-  call('plan_evidence'|'agent_diagnose'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
+  feature('recommend_run'|'evidence_add'|'agent_diagnose'|'agent_summary'|'agent_status'|'agent_web_check'|'course'),   -- 왜 불렀는지. agent_status: 지도 현황 문단(#1168). agent_web_check: 웹 확인(#1216)
+  call('plan_evidence'|'agent_diagnose'|'agent_status'|'agent_web_check'|'course_goals'|'course_direct'|'course_turn'),  -- 무엇을 불렀는지
   trace_id uuid,                      -- 같은 usage_context 안의 호출. run_id가 아직 없는 호출(추천 ②, 진단)도 실행 1번으로 묶는다
   map_id null, user_id null,          -- user_id는 사용자가 부른 호출만. 서버 호출(진단, 요약)은 null
   run_id null,                        -- evidence_add는 recommend_runs.id, course는 agent_course_runs.id. 추천 ②와 진단은 null
   model, prompt_version null,         -- ②는 프롬프트 버전 상수가 없어 null
   input_tokens, cached_input_tokens, cache_write_tokens, output_tokens,   -- 입력은 캐시 몫과 캐시 쓰기 할증 포함, 출력은 추론 토큰 포함
-  cost_krw numeric(12,4),             -- 기록 시점 단가(common.settings의 LLM_PRICE_*)로 계산. 할증이 input_tokens에 있어 cache_write_tokens는 따로 더하지 않는다
+  web_searches int default 0,         -- 그 호출 안의 웹 검색 횟수(응답의 web_search_call 수, #1216). 웹 확인 밖은 0
+  cost_krw numeric(12,4),             -- 기록 시점 단가(common.settings의 LLM_PRICE_*)로 계산. 할증이 input_tokens에 있어 cache_write_tokens는 따로 더하지 않는다. 웹 검색 요금(web_searches × LLM_PRICE_WEB_SEARCH_KRW)을 더한다
   outcome('ok'|'refusal'|'empty'|'timeout'|'invalid_schema'|'call_failed'), ok bool,
   elapsed_ms, created_at
 )
@@ -591,6 +602,7 @@ index ix_llm_calls_trace (trace_id)
 ```
 
 - 캐시 토큰은 응답의 `usage.prompt_tokens_details.cached_tokens`다(엘리스 게이트웨이에서 2026-10-30 확인. OpenAI 직접 호출로 바꾼 뒤(#1120)에도 같은 필드를 읽지만, 값의 의미는 청구서와 대조해 확인해야 한다). 엘리스 게이트웨이는 캐시 미스면 `cache_write_tokens`의 25%를 `prompt_tokens`에 더해 보고했다(1598 = 1279 + 1276 × 0.25). 이 계산이 청구와 같은지는 청구서(OpenAI 대시보드의 사용량)와 대조해야 한다. 이 25% 가산은 엘리스 게이트웨이의 보고 방식이라 OpenAI 직접 호출에서는 없을 수 있다. 응답 없이 실패한 호출은 토큰 0이고, 잘린 응답(상한 초과)처럼 예외에 응답이 붙어 오면 그 토큰을 남긴다. SDK가 스키마 검증에 실패한 응답은 사용량을 넘기지 않아 0으로 남는다(실제보다 적다).
+- 서비스 일일 예산(#1152, agent-v2 19절): 그날(KST) `cost_krw` 합계가 `LLM_DAILY_BUDGET_KRW` 이상이면 웹 확인(`llm.api.web_check`)만 부르지 않는다. 세는 곳은 이 테이블 한 곳이다(`ix_llm_calls_created`).
 - 탈퇴는 행을 남기고 `user_id`만 비운다(비용 통계는 사람 없이도 쓴다, `llm.api.anonymize_by_user`). 게스트 합치기는 `user_id`를 옮긴다. 30일 지난 행은 정기 정리(`maintenance.run`의 `llm_calls`)가 지운다. 지도 정리는 행을 지우지 않는다(map_id만 남고 가리키는 지도가 없다).
 
 ---
@@ -763,7 +775,7 @@ event_log(
 
 - 지도 생성 입력 필드 — #22, 여행 제목 + 시작일·종료일로 확정, 위 `maps` 테이블에 반영
 - 구성원 색 — #26, 불필요로 확정, `memberships.color` 제거
-- `visit_order` 수동 정렬 — #30, 허용 확정(동선과 무관). `PUT /maps/{mapId}/shortlist/order` 참고
+- `visit_order` 수동 정렬 — 날짜별 순서이며 동선과 무관. 날짜 배정 이후에는 `PUT /maps/{mapId}/shortlist/schedule`을 쓴다.
 - AI 추천 결과 상태 관리 위치 — #43, 서버 DB 영속 확정. `recommend_runs`/`candidates`는 이제 확정 설계
 
 ## 루트가 확정한 것 (2026-09-22)

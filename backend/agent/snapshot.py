@@ -17,8 +17,8 @@ from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
-from agent import core
 from common import categories
+from common.kst import kst_date
 from maps import api as maps_api
 from pins import api as pins_api
 from realtime import api as realtime_api
@@ -156,7 +156,7 @@ def build(db: Session, map_id: str, now: datetime) -> Snapshot | None:
     map_info = MapInfo(
         map_id=found["map_id"], start_date=found["start_date"], end_date=found["end_date"], deleted=found["deleted"],
     )
-    today = core.kst_date(now)
+    today = kst_date(now)
     latest_seq, latest_event_at = realtime_api.latest_seq_by_map(db).get(map_id, (None, None))
     if map_info.deleted:
         return Snapshot(map=map_info, today=today, latest_seq=latest_seq, latest_event_at=latest_event_at)

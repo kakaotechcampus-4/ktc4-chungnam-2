@@ -45,7 +45,7 @@ describe.each(SCREENS)('$name 초대 링크', ({ ui, shareButton }) => {
     const share = vi.fn()
     vi.stubGlobal('navigator', { ...navigator, share })
     const calls = failFirstInvite()
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderWithClient(ui)
 
     expect(await screen.findByText('초대 링크를 만들지 못했어요')).toBeInTheDocument()
@@ -68,7 +68,7 @@ describe('온보딩 초대 버튼', () => {
   it('만드는 중에는 꺼져 있고, 실패해도 「나중에 할게요」는 누를 수 있다', async () => {
     failFirstInvite()
     const onDone = vi.fn()
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderWithClient(<OnboardingBody mapId="map_1" kind="owner" onDone={onDone} />)
 
     expect(screen.getByRole('button', { name: '초대 링크를 만드는 중…' })).toBeDisabled()

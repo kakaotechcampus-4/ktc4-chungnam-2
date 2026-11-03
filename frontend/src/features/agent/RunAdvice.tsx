@@ -46,7 +46,7 @@ export default function RunAdvice({ run, widen, onOpenEvidence }: { mapId: strin
           <li key={i} className="flex items-start gap-1.5">
             {l.is_guess && <span className="tag tag-neutral mt-px">추정</span>}
             <span className="min-w-0 break-keep">
-              <AdviceText line={l} />
+              <AdviceText segments={l.segments} />
             </span>
           </li>
         ))}
