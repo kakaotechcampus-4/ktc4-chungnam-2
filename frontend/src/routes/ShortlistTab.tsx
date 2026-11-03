@@ -145,7 +145,8 @@ export default function ShortlistTab() {
         // 리스트 자리도 끌어 놓을 칸이다 — 「일정 짜기」 패널의 줄을 여기에 놓으면 일정에서 빠진다.
         <div
           data-day={UNSET_DAY}
-          className={`space-y-3 rounded-xl pb-[100px] ${hover?.day === UNSET_DAY ? 'outline-2 outline-dashed outline-offset-4 outline-[var(--action-fill)]' : ''}`}
+          data-over={hover?.day === UNSET_DAY}
+          className="drop-target space-y-3 rounded-xl pb-[100px] outline-offset-4"
         >
           {edit.error ? (
             <div className="space-y-2">
