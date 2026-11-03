@@ -1433,7 +1433,8 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     const placed = done.days.flatMap((d: { slots: { pin_id: string }[] }) => d.slots.map((s) => s.pin_id));
     expect(placed.sort()).toEqual(["pin_1", "pin_2"]);
     expect(done.checks.length).toBe(2);
-    expect(done.steps.length).toBe(7);
+    expect(done.steps.length).toBe(14);
+    expect(done.steps.map((s: { stage: string }) => s.stage)).toEqual(expect.arrayContaining(["찾기", "옮겨 보기", "결정", "비교", "끝", "가정"])); // 진행 화면 줄 색·단계 막대(#1243)
     expect(done.stale).toBe(false);
 
     await confirm("pin_3");

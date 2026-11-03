@@ -80,6 +80,7 @@ def test_applied_evidence_entries_use_the_single_enforcement_rule(db_session):
     assert [(e["fact_key"], e["enforced"], e["not_enforced_reason"]) for e in entries] == [
         ("is_crowded_large", True, None), (None, False, "no_key"), ("cherry_blossom", False, "off_season"),
     ]
+    assert [e["filters_candidates"] for e in entries] == [True, None, None]   # 스냅샷도 같은 값(#1260)
     assert all(e["is_active"] for e in entries) and entries[0]["author_id"] == "user_1" and entries[0]["text"] == "너무 붐벼요"
 
 
@@ -96,6 +97,7 @@ def test_execute_stores_the_snapshot_and_result_returns_it_with_new_count(db_ses
     assert [(line.fact_key, line.fact_label, line.enforced, line.is_active) for line in result.applied_evidence] == [
         ("is_crowded_large", constraints.FACT_LABELS["is_crowded_large"], True, True),
     ]
+    assert result.applied_evidence[0].filters_candidates is True   # 실행 때 값 그대로(#1260)
     assert result.applied_evidence[0].permissions.can_disable is True   # 본인 줄
 
 

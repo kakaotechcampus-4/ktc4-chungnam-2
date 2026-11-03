@@ -172,6 +172,26 @@ def list_items_for_agent(db: Session, *, map_id: str) -> list[dict]:
     return [{"pin_id": str(pin_id), "added_by": added_by, "added_at": added_at} for pin_id, added_by, added_at in rows]
 
 
+def schedule_for_agent(db: Session, *, map_id: str, start_date, end_date) -> dict:
+    """AI 코스용(#1238) — GET .../shortlist/schedule과 같은 순서(list_items)와 같은 version(schedule_version)."""
+    rows = list_items(db, map_id=map_id)
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "version": schedule_version(start_date, end_date, rows),
+        "items": [
+            {
+                "pin_id": str(row.pin_id),
+                "added_by": row.added_by,
+                "added_at": row.added_at,
+                "scheduled_date": row.scheduled_date,
+                "visit_order": row.visit_order,
+            }
+            for row in rows
+        ],
+    }
+
+
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(#431) — 이 지도들의 확정 항목과 동선을 지운다. 테이블 이름 → 지운 행 수."""
     if not map_ids:

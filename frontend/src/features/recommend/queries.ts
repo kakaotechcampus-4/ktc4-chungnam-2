@@ -14,6 +14,7 @@ import {
   fetchEvidence,
   fetchReadiness,
   fetchResult,
+  fetchRunHistory,
   patchEvidence,
   publishCandidate,
   retryRun,
@@ -23,9 +24,15 @@ import { runErrorMessage, type EvidencePatchRequest, type RecommendCategory, typ
 
 export const recommendKeys = {
   readiness: (mapId: string) => ['recommend', mapId, 'readiness'] as const,
+  history: (mapId: string) => ['recommend', mapId, 'history'] as const,
   evidence: (runId: string) => ['runs', runId, 'evidence'] as const,
   result: (runId: string) => ['runs', runId, 'result'] as const,
   evidencePatch: (runId: string) => ['runs', runId, 'evidence-patch'] as const,
+}
+
+/** 지난 추천 기록(#482). 새 추천·다시 추천·올리기로 바뀌니 준비 화면에 올 때마다 다시 받는다. */
+export function useRunHistoryQuery(mapId: string) {
+  return useQuery({ queryKey: recommendKeys.history(mapId), queryFn: () => fetchRunHistory(mapId), refetchOnMount: 'always' })
 }
 
 /** 카테고리별 추천 가능 여부(5-4). 의견이 바뀌면 달라지니 탭을 열 때마다 다시 본다. */

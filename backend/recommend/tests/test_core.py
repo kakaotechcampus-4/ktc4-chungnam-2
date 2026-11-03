@@ -792,15 +792,26 @@ def test_select_top_candidates_picks_highest_scores_first():
     assert core.select_top_candidates(candidates, anchors, limit=3) == ["high", "mid", "low"]
 
 
-def test_select_top_candidates_region_diversity_never_beats_score():
-    # 5점짜리가 전부 해운대고 광안리 최고점이 2점이면 해운대 3곳이 뽑힌다(이슈 본문 예시).
-    candidates = [
-        core.ScoredCandidate(place_id=f"haeundae_{i}", score=5, region_label="해운대", lat=35.0, lng=129.0)
-        for i in range(3)
-    ] + [core.ScoredCandidate(place_id="gwangalli", score=2, region_label="광안리", lat=35.1, lng=129.1)]
+def test_select_top_candidates_region_balance_never_beats_score():
+    """constraints.md 예 — 5점이 전부 해운대고 광안리 최고점이 2점이면 해운대 3곳이 뽑힌다. 1점 차이여도 같다."""
     anchors = {"해운대": [(35.0, 129.0)], "광안리": [(35.1, 129.1)]}
-    result = core.select_top_candidates(candidates, anchors, limit=3)
-    assert result == ["haeundae_0", "haeundae_1", "haeundae_2"]
+    for gwangalli_score in (2, 4):
+        candidates = [
+            core.ScoredCandidate(place_id=f"haeundae_{i}", score=5, region_label="해운대", lat=35.0, lng=129.0)
+            for i in range(3)
+        ] + [core.ScoredCandidate(place_id="gwangalli", score=gwangalli_score, region_label="광안리", lat=35.1, lng=129.1)]
+        assert core.select_top_candidates(candidates, anchors, limit=3) == ["haeundae_0", "haeundae_1", "haeundae_2"]
+
+
+def test_select_top_candidates_met_conditions_beat_region_balance():
+    """#1288 — 같은 점수면 충족 수가 먼저고, 아직 안 뽑힌 동네는 그다음이다."""
+    candidates = [
+        core.ScoredCandidate(place_id="a_met_1", score=5, region_label="a", lat=35.0, lng=129.0, met_conditions=2),
+        core.ScoredCandidate(place_id="a_met_2", score=5, region_label="a", lat=35.0, lng=129.0, met_conditions=2),
+        core.ScoredCandidate(place_id="b_none", score=5, region_label="b", lat=36.0, lng=130.0, met_conditions=0),
+    ]
+    anchors = {"a": [(35.0, 129.0)], "b": [(36.0, 130.0)]}
+    assert core.select_top_candidates(candidates, anchors) == ["a_met_1", "a_met_2", "b_none"]
 
 
 def test_select_top_candidates_tie_break_prefers_unpicked_region():
@@ -814,6 +825,34 @@ def test_select_top_candidates_tie_break_prefers_unpicked_region():
     # 첫 번째는 (동점이라) 거리로 정해지고(해운대_a가 앵커에 더 가까움), 두 번째는 이미 해운대가
     # 뽑혔으니 동점이면 아직 안 뽑힌 광안리를 우선한다 — 해운대_b가 아니라.
     assert result == ["haeundae_a", "gwangalli"]
+
+
+def test_select_top_candidates_same_score_prefers_more_met_conditions_over_distance():
+    """#1288 — 같은 점수면 충족 조건 수가 많은 곳이 기준 핀에 더 먼 곳이어도 먼저다."""
+    candidates = [
+        core.ScoredCandidate(place_id="near_unknown", score=0, region_label="r", lat=35.0, lng=129.0, met_conditions=0),
+        core.ScoredCandidate(place_id="far_met", score=0, region_label="r", lat=35.01, lng=129.0, met_conditions=1),
+    ]
+    assert core.select_top_candidates(candidates, {"r": [(35.0, 129.0)]}) == ["far_met", "near_unknown"]
+
+
+def test_select_top_candidates_score_still_beats_met_conditions():
+    """#1288 — 충족 수는 점수가 같을 때만 쓴다. 점수가 높으면 충족이 적어도 먼저다."""
+    candidates = [
+        core.ScoredCandidate(place_id="met_many", score=1, region_label="r", lat=35.0, lng=129.0, met_conditions=5),
+        core.ScoredCandidate(place_id="high", score=3, region_label="r", lat=35.0, lng=129.0, met_conditions=0),
+    ]
+    assert core.select_top_candidates(candidates, {"r": [(35.0, 129.0)]}) == ["high", "met_many"]
+
+
+def test_met_condition_count_sums_met_across_members():
+    checks = [_label_check("spicy_focused", value=False), _label_check("quiet")]  # 매운맛 거짓, 조용함 모름
+    fulfillment = core.build_member_fulfillment(
+        checks, [], {},
+        disqualifier_conditions={"u1": {("spicy_focused", False), ("quiet", True)}, "u2": {("spicy_focused", False)}},
+        written_line_ids={("u1", "spicy_focused"): "l1", ("u1", "quiet"): "l2", ("u2", "spicy_focused"): "l3"},
+    )
+    assert core.met_condition_count(fulfillment) == 2  # u1 매운맛 met + u2 매운맛 met, u1 조용함은 needs_check
 
 
 def test_select_top_candidates_distance_tie_break_uses_average_not_sum():
@@ -875,21 +914,19 @@ def _label_check(fact_key, *, value=None):
     return core.build_check(fact_key, "pass", known=value is not None, value=value, passes=bool(value))
 
 
-def test_soft_requirement_wants_false_disqualifies_only_a_true_label():
+def test_soft_labels_never_disqualify():
     flags = core.apply_disqualifier_filters(
         [[_label_check("cuisine_korean", value=True)], [_label_check("cuisine_korean", value=False)],
          [_label_check("cuisine_korean")]],
-        [("cuisine_korean", False)],
     )
-    assert flags == [False, True, True]
+    assert flags == [True, True, True]
 
 
-def test_soft_requirement_wants_true_disqualifies_only_a_false_label():
+def test_soft_labels_never_disqualify_for_a_wanted_fact():
     flags = core.apply_disqualifier_filters(
         [[_label_check("quiet", value=True)], [_label_check("quiet", value=False)], [_label_check("quiet")]],
-        [("quiet", True)],
     )
-    assert flags == [True, False, True]
+    assert flags == [True, True, True]
 
 
 def test_soft_checks_without_requirement_never_disqualify():
@@ -1059,7 +1096,10 @@ def test_written_preference_outweighs_other_heart_labels():
 
 @pytest.mark.parametrize("badge, fact_key, wants, category, off_season, expected", [
     ("required", "is_crowded_large", None, "카페", (), (True, None, "filter")),         # hard 키는 방향이 없어도 쓰인다
-    ("required", "quiet", False, "카페", (), (True, None, "filter")),                   # soft 키 + 방향, required는 거른다
+    ("required", "quiet", False, "카페", (), (True, None, "score")),                    # soft 키는 감점
+    ("required", "accessible", True, "관광지", (), (True, None, "filter")),
+    ("required", "accessible", False, "관광지", (), (True, None, "score")),
+    ("preferred", "accessible", True, "관광지", (), (True, None, "score")),
     ("preferred", "quiet", True, "음식점", (), (True, None, "score")),                  # preferred는 점수만
     ("required", None, None, "카페", (), (False, "no_key", None)),
     ("required", "quiet", None, "카페", (), (False, "no_direction", None)),
@@ -1072,6 +1112,20 @@ def test_written_preference_outweighs_other_heart_labels():
 ])
 def test_evidence_line_use_picks_the_reason_and_effect(badge, fact_key, wants, category, off_season, expected):
     assert core.evidence_line_use(badge, fact_key, wants, category, off_season) == expected
+
+
+@pytest.mark.parametrize("badge, fact_key, wants, category, off_season, expected", [
+    ("required", "is_crowded_large", None, "카페", (), True),            # hard 키
+    ("required", "accessible", True, "관광지", (), True),                # 접근성 필요 조건
+    ("required", "spicy_focused", False, "음식점", (), False),           # 취향 반대는 순위만
+    ("required", "accessible", False, "관광지", (), False),
+    ("preferred", "accessible", True, "관광지", (), False),
+    ("required", None, None, "카페", (), None),                          # 안 쓰이는 줄은 값이 없다
+    ("required", "quiet", None, "카페", (), None),
+    ("required", "cherry_blossom", True, "관광지", ("cherry_blossom",), None),
+])
+def test_evidence_line_use_filters_candidates_1260(badge, fact_key, wants, category, off_season, expected):
+    assert core.evidence_line_use(badge, fact_key, wants, category, off_season).filters_candidates is expected
 
 
 def test_evidence_line_use_reason_order_is_no_key_then_off_season_then_category():

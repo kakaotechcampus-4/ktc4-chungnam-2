@@ -51,22 +51,28 @@ def test_wants_direction_flows_from_planner_to_result_on_real_places(members, pl
         assert c["reason"] and c["member_fulfillment"]["total"] >= 1 and c["permissions"]["can_publish"] is True
 
 
-def test_conflicting_directions_exclusion_wins_and_unknown_label_passes_with_needs_check(
+def test_avoided_cuisine_is_penalized_and_unknown_label_passes_with_needs_check(
     members, place_ids, fake_planner, db_session,
 ):
-    """a는 "한식 말고"(required, false), b는 "한식"을 required로 원한다고 쓴 경우 — 한 명이라도 실격이면 후보에서 내린다(가드레일 9)."""
+    """a의 🚫 "한식 말고"(required, wants=false). `cuisine_korean`은 soft 키라 한식집은 실격이 아니라 감점이고,
+    한식 라벨이 모름인 U는 통과하되 확인 필요다(docs/constraints.md 「점수」, `unknown_policy`).
+
+    「한식 아님」이 확인된 R·B·C는 지도에 핀으로 올려 후보에서 뺀다. 같은 0점이면 조건 충족이 많은 곳이 먼저라(#1288)
+    그 셋이 남으면 U가 상위 3곳 밖으로 밀려 「모름은 통과」를 볼 수 없다. 남는 후보는 K와 U 둘이다."""
     a, b, map_id = members
     pin = _pin(a, map_id, "S", place_ids)
+    for key in ("R", "B", "C"):
+        _pin(a, map_id, key, place_ids)
     assert a.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_text": "한식 말고 다른 거"}).status_code == 200
     run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
     a.post(f"/runs/{run_id}/regions/confirm", json={})
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     result = a.get(f"/runs/{run_id}/result")
     assert result.status_code == 200, result.text
-    names = {c["place_name"] for c in result.json()["candidates"]}
-    assert "성수 한식집" not in names, "한식 라벨이 참인 곳은 '한식 말고'로 실격이다"
+    ranked = sorted(result.json()["candidates"], key=lambda c: c["rank"])
+    # 한식집은 감점(−3)으로 모름(0점)보다 아래다 — 빠지지는 않는다
+    assert [c["place_name"] for c in ranked] == ["성수 이름모를집", "성수 한식집"], ranked
     # 한식 라벨이 없는 U는 모름 → 통과하되 확인 필요 표시(취향 영역)
-    unknown = next((c for c in result.json()["candidates"] if c["place_name"] == "성수 이름모를집"), None)
-    assert unknown is not None, "라벨 모름은 취향 조건에서 통과여야 한다"
+    unknown = ranked[0]
     korean = next(ch for ch in unknown["checks"] if ch["fact_key"] == "cuisine_korean")
     assert korean["needs_check"] is True and korean["passed"] is True

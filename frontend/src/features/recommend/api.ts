@@ -9,6 +9,7 @@ import type {
   RecommendResultDto,
   RecommendRunDto,
   RegionDto,
+  RunSummaryDto,
 } from './model'
 
 export const fetchReadiness = (mapId: string) =>
@@ -42,3 +43,6 @@ export const widenRun = (runId: string) => api<RecommendRunDto>(`/runs/${runId}/
 export const retryRun = (runId: string) => api<RecommendRunDto>(`/runs/${runId}/retry`, { method: 'POST' })
 
 export const publishCandidate = (candidateId: string) => api<PinDto>(`/candidates/${candidateId}/publish`, { method: 'POST' })
+
+/** 내가 이 지도에서 요청한 지난 추천, 최근순(#482). 다른 구성원의 run 은 없다(가드레일 1). */
+export const fetchRunHistory = (mapId: string) => api<RunSummaryDto[]>(`/maps/${mapId}/runs`)
