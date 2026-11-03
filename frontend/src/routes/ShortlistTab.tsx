@@ -13,15 +13,13 @@ import TabSheet from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import DayRoute from '@/features/shortlist/DayRoute'
-import type { ShortlistItemDto } from '@/features/shortlist/model'
-import { useAddToShortlistMutation, useRemoveFromShortlistMutation, useShortlistQuery } from '@/features/shortlist/queries'
+import { useShortlistQuery, useUnconfirm } from '@/features/shortlist/queries'
 import { useRouteStore } from '@/features/shortlist/routeStore'
 import { scheduledIds, UNSET_DAY } from '@/features/shortlist/schedule'
 import { closeSchedule, leaveScheduleTab, openSchedule, useDropHover, useScheduleOpen } from '@/features/shortlist/scheduleStore'
 import ShortlistExport from '@/features/shortlist/ShortlistExport'
 import ShortlistList from '@/features/shortlist/ShortlistList'
 import { useScheduleEdit } from '@/features/shortlist/useTripSchedule'
-import { josa } from '@/ui/josa'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
 
@@ -38,8 +36,7 @@ export default function ShortlistTab() {
   const members = useMembersQuery(mapId).data ?? []
   const routeOn = useRouteStore((s) => s.on)
   const setRouteOn = useRouteStore((s) => s.set)
-  const remove = useRemoveFromShortlistMutation(mapId)
-  const add = useAddToShortlistMutation(mapId)
+  const { unconfirm } = useUnconfirm(mapId)
   const [params, setParams] = useSearchParams()
   const enrich = useEnrichPin()
   const edit = useScheduleEdit(mapId)
@@ -82,18 +79,6 @@ export default function ShortlistTab() {
       day,
     )
     setChecked(new Set())
-  }
-
-  function removeItem(item: ShortlistItemDto) {
-    const name = item.pin.place_name ?? '이 장소'
-    remove.mutate(item.id, {
-      onSuccess: () =>
-        showToast(`${name}${josa(name, '을', '를')} 확정 리스트에서 뺐어요`, {
-          label: '되돌리기',
-          onClick: () => add.mutate(item.pin.id, { onError: () => showToast('되돌리지 못했어요') }),
-        }),
-      onError: () => showToast('확정 리스트에서 빼지 못했어요'),
-    })
   }
 
   if (openPin) {
@@ -186,7 +171,7 @@ export default function ShortlistTab() {
                 })
               }
               onOpen={setOpenPin}
-              onRemove={removeItem}
+              onRemove={(item) => unconfirm(item.pin)}
               onDrop={
                 desktop && scheduleOpen
                   ? (item, spot) => spot.day !== UNSET_DAY && edit.put([item.pin.id], [item.pin.place_name ?? '이 장소'], spot.day, spot.index)
