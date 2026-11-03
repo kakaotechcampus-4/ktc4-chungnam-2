@@ -39,6 +39,7 @@ async def lifespan(_app: FastAPI):
     logger.info("\n%s", format_assembly())
     # 반드시 이 순서로: 이미 있는 event_log까지 따라잡은 뒤(동기, 한 번) 폴링 루프를 시작한다.
     dispatcher.initialize_last_seen()
+    dispatcher.begin_health_window()   # task 첫 실행 전 /health가 불려도 유예 구간이 이미 시작돼 있다
     task = asyncio.create_task(dispatcher.run_forever())
     _app.state.dispatcher_task = task
     try:   # 서버가 죽으면서 끊긴 AI 코스 짜기(백그라운드) run을 끝낸다. 표가 아직 없어도(마이그레이션 전) 서버는 떠야 한다

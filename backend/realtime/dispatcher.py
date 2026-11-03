@@ -103,16 +103,24 @@ class Dispatcher:
         if not subs:
             self._subscribers.pop(map_id, None)   # 빈 리스트를 계속 안 들고 있는다
 
+    def begin_health_window(self) -> None:
+        """health 상태를 동기로 초기화한다 — lifespan이 task를 만들기 전에 부른다. task 첫 실행 전에
+        /health가 불려도 시작 시각이 이미 있어 오탐 503이 나지 않는다(run_forever도 없으면 스스로 부른다)."""
+        self.error_count = 0
+        self.last_success_at = None
+        self._health_since = time.monotonic()
+
     def healthy(self) -> bool:
+        # 시작 시각(_health_since)이 있어야 한다 — begin_health_window가 기록하고 run_forever 종료 때 지운다.
         reference = self.last_success_at if self.last_success_at is not None else self._health_since
-        return self._started and reference is not None and time.monotonic() - reference <= POLL_STALE_SECONDS
+        return reference is not None and time.monotonic() - reference <= POLL_STALE_SECONDS
 
     async def run_forever(self) -> None:
         if self._started:
             raise RuntimeError("Dispatcher.run_forever()는 두 번 시작할 수 없다")
         self._started = True
-        self.last_success_at = None
-        self._health_since = time.monotonic()
+        if self._health_since is None:   # lifespan이 미리 기록하지 않은 경우(직접 호출)
+            self.begin_health_window()
         retry_interval = POLL_INTERVAL
         stop = self._stop = asyncio.Event()
         if self._stop_requested:
@@ -139,6 +147,8 @@ class Dispatcher:
         finally:
             # 같은 프로세스에서 lifespan이 다시 돌 수 있다(테스트의 여러 TestClient 등).
             self._started = False
+            self.last_success_at = None
+            self._health_since = None   # 멈춘 폴러는 healthy()가 False
             self._stop = None
             self._stop_requested = False
 

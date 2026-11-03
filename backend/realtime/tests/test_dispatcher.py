@@ -106,20 +106,48 @@ async def test_tick_failure_recovers_and_logs_only_type(monkeypatch, caplog):
     monkeypatch.setattr(d, "_tick", tick)
     await asyncio.wait_for(d.run_forever(), 1)
     assert calls == 2
-    assert d.error_count == 1
-    assert d.last_success_at is not None
+    assert d.error_count == 1   # 정지 뒤에도 오류 횟수는 남는다(last_success_at은 정지 때 지운다)
     assert "RuntimeError" in caplog.text
     assert "sensitive database detail" not in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_continuous_failure_makes_health_unhealthy(monkeypatch):
+@pytest.fixture
+def global_dispatcher(monkeypatch):
+    """전역 main.dispatcher / app.state.dispatcher_task를 쓰는 시험이 상태를 남기지 않게 한다.
+    monkeypatch가 속성을 되돌리고, 남은 가변 상태는 시험 뒤 초기값으로 복원한다."""
     import realtime.dispatcher as module
-    from fastapi import Response
-    from main import app, dispatcher, health
+    from main import app, dispatcher
 
     monkeypatch.setattr(module, "POLL_INTERVAL", 0.001)
     monkeypatch.setattr(module, "MAX_RETRY_INTERVAL", 0.002)
+    had_task = hasattr(app.state, "dispatcher_task")
+    old_task = getattr(app.state, "dispatcher_task", None)
+    yield app, dispatcher
+    dispatcher.request_stop()
+    dispatcher._stop_requested = False
+    dispatcher._started = False
+    dispatcher.error_count = 0
+    dispatcher.last_success_at = None
+    dispatcher._health_since = None
+    if had_task:
+        app.state.dispatcher_task = old_task
+    elif hasattr(app.state, "dispatcher_task"):
+        del app.state.dispatcher_task
+
+
+def _health():
+    from fastapi import Response
+    from main import health
+
+    response = Response()
+    return health(response), response.status_code
+
+
+@pytest.mark.asyncio
+async def test_continuous_failure_makes_health_unhealthy(monkeypatch, global_dispatcher):
+    import realtime.dispatcher as module
+
+    app, dispatcher = global_dispatcher
     monkeypatch.setattr(module, "POLL_STALE_SECONDS", 0.01)
 
     def fail():
@@ -127,16 +155,131 @@ async def test_continuous_failure_makes_health_unhealthy(monkeypatch):
 
     monkeypatch.setattr(dispatcher, "_tick", fail)
     task = asyncio.create_task(dispatcher.run_forever())
-    monkeypatch.setattr(app.state, "dispatcher_task", task, raising=False)
+    app.state.dispatcher_task = task
     try:
         await asyncio.sleep(0.05)
-        response = Response()
-        assert health(response) == {"status": "error"}
-        assert response.status_code == 503
+        assert _health() == ({"status": "error"}, 503)
         assert dispatcher.error_count > 0
     finally:
         dispatcher.request_stop()
         await task
-    response = Response()
-    assert health(response) == {"status": "error"}
-    assert response.status_code == 503
+    assert _health() == ({"status": "error"}, 503)
+
+
+@pytest.mark.asyncio
+async def test_health_ok_after_successful_tick(monkeypatch, global_dispatcher):
+    app, dispatcher = global_dispatcher
+    ticks = 0
+
+    def ok():
+        nonlocal ticks
+        ticks += 1
+
+    monkeypatch.setattr(dispatcher, "_tick", ok)
+    task = asyncio.create_task(dispatcher.run_forever())
+    app.state.dispatcher_task = task
+    try:
+        for _ in range(200):
+            if dispatcher.last_success_at is not None:
+                break
+            await asyncio.sleep(0.005)
+        assert ticks >= 1
+        assert dispatcher.last_success_at is not None
+        assert _health() == ({"status": "ok"}, 200)
+    finally:
+        dispatcher.request_stop()
+        await task
+
+
+@pytest.mark.asyncio
+async def test_health_ok_in_grace_before_first_tick(monkeypatch, global_dispatcher):
+    """첫 tick이 아직 성공하기 전(느린 DB)에도 유예 구간 안이면 200이다.
+    lifespan처럼 begin_health_window를 task 생성 전에 부르고, task가 첫 실행을 하기도 전에 확인한다."""
+    app, dispatcher = global_dispatcher
+    def slow():
+        # 스레드에서 도는 tick — 끝나기 전에 health를 본다
+        import time
+
+        time.sleep(0.1)
+
+    monkeypatch.setattr(dispatcher, "_tick", slow)
+    dispatcher.begin_health_window()
+    task = asyncio.create_task(dispatcher.run_forever())
+    app.state.dispatcher_task = task
+    try:
+        assert _health() == ({"status": "ok"}, 200)   # task가 아직 돌기 전
+        await asyncio.sleep(0.03)
+        assert dispatcher.last_success_at is None
+        assert _health() == ({"status": "ok"}, 200)   # tick 진행 중, 성공 기록 전
+    finally:
+        dispatcher.request_stop()
+        await task
+
+
+def test_health_is_503_without_lifespan():
+    """lifespan 없이(폴러 task 없음) 부르면 503 — 의도된 동작이다."""
+    from main import app
+
+    saved = getattr(app.state, "dispatcher_task", None)
+    app.state.dispatcher_task = None
+    try:
+        assert _health() == ({"status": "error"}, 503)
+    finally:
+        if saved is None:
+            del app.state.dispatcher_task
+        else:
+            app.state.dispatcher_task = saved
+
+
+@pytest.mark.asyncio
+async def test_run_forever_resets_state_and_cleans_up(monkeypatch):
+    import realtime.dispatcher as module
+
+    monkeypatch.setattr(module, "POLL_INTERVAL", 0.001)
+    d = Dispatcher()
+    d.error_count = 7   # 이전 실행의 흔적
+    d.last_success_at = 123.0
+
+    def tick():
+        assert d.error_count == 0
+        assert d.last_success_at is None or d.last_success_at != 123.0
+        d.request_stop()
+
+    monkeypatch.setattr(d, "_tick", tick)
+    await asyncio.wait_for(d.run_forever(), 1)
+    assert d.last_success_at is None and d._health_since is None
+    assert d.healthy() is False
+
+
+@pytest.mark.asyncio
+async def test_run_forever_does_not_swallow_cancellation(monkeypatch):
+    import realtime.dispatcher as module
+
+    monkeypatch.setattr(module, "POLL_INTERVAL", 0.001)
+    d = Dispatcher()
+    entered = asyncio.Event()
+
+    async def hang(_func):
+        entered.set()
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(module.asyncio, "to_thread", hang)
+    task = asyncio.create_task(d.run_forever())
+    await asyncio.wait_for(entered.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert d._started is False and d._health_since is None
+
+
+@pytest.mark.asyncio
+async def test_stop_during_retry_wait_is_immediate(monkeypatch):
+    import realtime.dispatcher as module
+
+    monkeypatch.setattr(module, "POLL_INTERVAL", 5.0)   # 대기가 길어도 정지는 즉시 먹어야 한다
+    monkeypatch.setattr(module, "MAX_RETRY_INTERVAL", 5.0)
+    d = Dispatcher()
+    task = asyncio.create_task(d.run_forever())
+    await asyncio.sleep(0.02)   # 재시도 대기에 들어간 상태
+    d.request_stop()
+    await asyncio.wait_for(task, 0.5)
