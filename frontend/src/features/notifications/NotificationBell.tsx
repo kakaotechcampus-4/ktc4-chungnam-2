@@ -104,7 +104,7 @@ function InboxView({ currentMapId, onClose, onSettings }: { currentMapId?: strin
                 onClick={() => open(n)}
                 className={`press flex w-full items-start gap-2 px-4 py-3 text-left ${where === 'here' ? 'bg-brand-50' : ''}`}
               >
-                <span aria-hidden="true" className={`mt-1.5 size-2 shrink-0 rounded-full ${n.read ? '' : 'bg-brand-600'}`} />
+                <span aria-hidden="true" className={`mt-1.5 size-2 shrink-0 rounded-full ${n.read ? '' : 'bg-[var(--notify-dot)]'}`} />
                 <span className="min-w-0 flex-1">
                   <span className={`block text-body ${n.read ? 'text-ink-600' : 'font-semibold text-ink-900'}`}>
                     {!n.read && <span className="sr-only">안 읽음 · </span>}

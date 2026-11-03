@@ -7,12 +7,12 @@
   --brand-600: #2A57C4;  --brand-700: #1E4197;
   --brand-800: #142C68;
 
-  /* ── 중립 · 228° 저채도 ──────────────── */
-  --ink-50:  #F8F9FB;  --ink-100: #F0F1F5;
-  --ink-200: #E2E4EB;  --ink-300: #C9CCD6;
-  --ink-400: #9EA3B2;  --ink-500: #6B7181;
-  --ink-600: #545A6B;  --ink-700: #3B4050;
-  --ink-900: #14161F;
+  /* ── 중립 · 35° 저채도(따뜻한 회색, #1223) ── */
+  --ink-50:  #FAF8F5;  --ink-100: #F3F0EB;
+  --ink-200: #E7E4DF;  --ink-300: #D2CDC6;
+  --ink-400: #A8A199;  --ink-500: #6F6962;
+  --ink-600: #5C5650;  --ink-700: #403B36;
+  --ink-900: #1F1C19;
 
   /* ── 시맨틱 ──────────────────────────── */
   --good-bg: #E6F4ED;  --good-line: #12855A;  --good-text: #0D6B49;
@@ -24,8 +24,8 @@
   --surface-card:    #FFFFFF;
   --surface-sunken:  var(--ink-100);
   --surface-overlay: #FFFFFF;
-  --toast-bg:        rgba(58, 63, 75, 0.82);
-  --scrim:           rgba(20, 22, 31, 0.32);   /* 지도가 비쳐야 모달이 지도 위에 뜬 맥락이 남는다(#299) */
+  --toast-bg:        rgba(64, 58, 52, 0.85);
+  --scrim:           rgba(31, 28, 25, 0.32);   /* 지도가 비쳐야 모달이 지도 위에 뜬 맥락이 남는다(#299) */
 
   /* ── 글자 ────────────────────────────── */
   --text-primary:   var(--ink-900);
@@ -49,8 +49,8 @@
   --action-fill-pressed:  var(--brand-800);
   --action-danger-hover:  var(--bad-text);
   /* 누르는 면(press, DESIGN.md 「상태」). 어느 바탕 위에서든 잉크를 얇게 덮어 올림·눌림을 보인다 */
-  --press-hover:          rgba(20, 22, 31, 0.04);
-  --press-active:         rgba(20, 22, 31, 0.08);
+  --press-hover:          rgba(31, 28, 25, 0.04);
+  --press-active:         rgba(31, 28, 25, 0.08);
 
   /* ── 선택 상태 ───────────────────────── */
   --selected-bg:   var(--brand-100);
@@ -63,7 +63,7 @@
   --pingo-line: var(--brand-300);
   --pingo-text: var(--brand-700);
   --pingo-outline: var(--ink-300); /* 평면 핑고 외곽선. brand-50 면 위에서도 몸이 묻히지 않게 */
-  --notify-dot: #D02A2A;          /* 알림 종의 안 읽음 점(#1036). 글자 없는 점 하나, 흰 바탕 대비 5.2:1. 앱 공통 관례라 빨강 */
+  --notify-dot: #C2410C;          /* 새 소식 점(알림 종 안 읽음 #1036, 핑고 AI 조언 새 조언). 귤색 — 빨강은 핀·반대·되돌릴 수 없는 동작 몫(#1223). 흰 바탕 5.2:1 */
   --pingo-alert: #DC6A6A;          /* 핑고 ALERT 모자·핀(시안 Alert Pink). 핑고 그림 전용 */
 
   /* ── 핀 · 지도 위 전용 ───────────────── */
