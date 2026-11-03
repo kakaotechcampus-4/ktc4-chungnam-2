@@ -29,7 +29,7 @@
 | `pin.updated` | `Pin` | 핀을 찍은 사람이 메모·분류를 고침(#466), 또는 구성원이 실시간 핀을 자체 DB 핀으로 승격함(#501 — `source`가 `live`→`db`, `place_id`·장소 값이 채워지고 반응·확정 항목은 그대로). `pin.created`와 같은 모양이다. 받은 FE는 그 핀을 갈아끼우고 확정 리스트를 다시 받는다. 분류가 바뀌었으면 `FilterCounts`·readiness도 다시 불러온다 |
 | `reaction.changed` | `{ pin_id, reaction_summary, user_id, display_name, type }` | 반응 등록/수정/삭제. `user_id`·`display_name`은 그 반응을 남긴(지운) 구성원, `type`은 `like`·`against`이고 삭제면 `null`이다(2026-10-04, FE 요청 — 「지우님이 반대 의견을 남겼어요」). 반응 내용(사유)은 싣지 않는다 |
 | `shortlist.changed` | `{ item: ShortlistItem, action: 'added'\|'removed'\|'reordered' }` | 확정 리스트 변경. `reordered`는 수동 정렬 (#30) |
-| `route.recalculated` | `Route[]` | **「동선 짜주기」 실행 시** (#30, `POST /maps/{mapId}/route`). 확정 리스트 변경만으로는 발행하지 않는다 |
+| `route.recalculated` | `Route[]` | **「동선 짜주기」 실행 시** (#30, `POST /maps/{mapId}/route`). 확정 리스트 변경만으로는 발행하지 않는다. 화면은 일정(#1171) 뒤 `/route`를 부르지 않아 지금은 발행되지 않는다 |
 | `member.joined` | `Member` | 초대 수락 |
 | `member.left` | `{ map_id, user_id, new_owner_user_id \| null }` | 구성원이 지도에서 나감(#369). **방장이 계정을 탈퇴해 그 지도의 방장이 위임된 경우에도 보낸다**(`user_id`는 탈퇴한 사람, 2026-10-07 결정). 방장이 나가거나 탈퇴해 위임됐으면 `new_owner_user_id`에 새 방장, 아니면 null. 탈퇴했는데 넘길 사람이 없어 지도가 삭제되면 이 이벤트 대신 `map.deleted`만 보낸다. 받은 FE는 핀 목록(작성자 표시 포함), 핀 참여율, `FilterCounts`, readiness를 다시 불러온다. 나간 사람의 반응 삭제마다 따로 이벤트를 보내지 않는다 |
 | `map.restored` | `{ map_id }` | 방장이 삭제한 지도를 복구함(#464). 복구와 같은 트랜잭션에 기록된다. 삭제 때 구성원의 연결이 닫혔으므로 대부분은 다음에 지도 목록을 열 때 본다(복구한 방장의 다른 탭이나 재연결한 구독자용) |
