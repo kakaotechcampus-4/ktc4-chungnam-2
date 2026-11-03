@@ -32,7 +32,7 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
       title="지도 정보 수정"
       body="바꾼 내용은 모든 구성원에게 바로 보여요. 이미 받은 AI 추천은 그대로 남아요."
       ok="저장"
-      pending={update.isPending || !body || !tripReady(draft) || scheduleQuery.isPending}
+      pending={update.isPending || !body || !tripReady(draft) || !scheduleQuery.data}
       onCancel={onCancel}
       onOk={() =>
         body &&
@@ -47,7 +47,14 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
       <div className="pt-2">
         <TripFields value={draft} onChange={setDraft} regionClearable={!map.region} />
       </div>
-      {scheduleQuery.isError && <Notice>일정을 확인하지 못했어요. 빠지는 날에 넣은 장소가 있는지 알 수 없어요</Notice>}
+      {scheduleQuery.isError && (
+        <div className="space-y-2">
+          <Notice>일정을 확인하지 못했어요. 빠지는 날에 넣은 장소가 있는지 알 수 없어 저장할 수 없어요</Notice>
+          <button type="button" onClick={() => void scheduleQuery.refetch()} className="btn-outline btn-sm">
+            다시 확인하기
+          </button>
+        </div>
+      )}
       {dropped > 0 && <Notice>빠지는 날에 넣은 {dropped}곳은 일정에서 빠져 확정된 장소로 돌아가요</Notice>}
       {update.error && <ErrorText message="지도 정보를 고치지 못했어요" error={update.error} />}
     </ConfirmDialog>

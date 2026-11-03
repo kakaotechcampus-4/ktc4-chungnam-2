@@ -32,19 +32,26 @@ const tails = new Map<string, Promise<void>>()
 const epochs = new Map<string, number>()
 /** 저장이 실패했거나 저장 중에 받은 일정을 버려서 서버 일정을 다시 받아야 하는 지도. */
 const stale = new Set<string>()
+/** 저장이 시작되거나 끝날 때마다 오르는 번호(지도별) — 일정을 받는 동안 번호가 바뀌었으면 그 응답은 저장보다 앞선 것이라 반영하지 않는다. */
+const generations = new Map<string, number>()
+const bump = (mapId: string) => generations.set(mapId, (generations.get(mapId) ?? 0) + 1)
+/** 서버가 확인해 준 가장 최근 일정(지도별) — 저장이 실패하면 화면을 이것으로 바로 되돌린다. */
+const confirmed = new Map<string, ScheduleDto>()
 
 export function useScheduleQuery(mapId: string) {
   const queryClient = useQueryClient()
   return useQuery({
     queryKey: scheduleKeys.one(mapId),
     queryFn: async () => {
+      const started = generations.get(mapId) ?? 0
       const dto = await fetchSchedule(mapId)
-      // 저장이 가는 중이면 받은 일정으로 화면과 version을 바꾸지 않는다(저장이 끝나면 다시 받는다).
-      if ((pending.get(mapId) ?? 0) > 0) {
+      // 받는 동안 저장이 시작됐거나 끝났거나 지금 가는 중이면 받은 일정으로 화면과 version을 바꾸지 않는다(저장이 끝나면 다시 받는다).
+      if ((pending.get(mapId) ?? 0) > 0 || (generations.get(mapId) ?? 0) !== started) {
         stale.add(mapId)
         return queryClient.getQueryData<ScheduleDto>(scheduleKeys.one(mapId)) ?? dto
       }
       versions.set(mapId, dto.version)
+      confirmed.set(mapId, dto)
       return dto
     },
   })
@@ -111,6 +118,7 @@ export function saveSchedule(queryClient: QueryClient, mapId: string, next: Sche
   const { groups, items } = groupsFor(dto, next)
   queryClient.setQueryData<ScheduleDto>(key, { ...dto, items })
   pending.set(mapId, (pending.get(mapId) ?? 0) + 1)
+  bump(mapId)
   const epoch = epochs.get(mapId) ?? 0
 
   const send = async () => {
@@ -118,12 +126,18 @@ export function saveSchedule(queryClient: QueryClient, mapId: string, next: Sche
       if ((epochs.get(mapId) ?? 0) !== epoch) return // 앞 저장이 실패했다 — 그 고침을 품은 이 저장은 보내지 않는다
       const saved = await putSchedule(mapId, { version: versions.get(mapId) ?? dto.version, groups })
       versions.set(mapId, saved.version)
+      confirmed.set(mapId, saved)
       // 이어서 보낼 저장이 남아 있으면 그 고침이 화면에 먼저 있으니 덮지 않는다.
       if ((pending.get(mapId) ?? 1) <= 1) queryClient.setQueryData<ScheduleDto>(key, saved)
     } catch (error) {
       epochs.set(mapId, epoch + 1)
       versions.delete(mapId)
       stale.add(mapId)
+      const last = confirmed.get(mapId)
+      if (last) {
+        queryClient.setQueryData<ScheduleDto>(key, last)
+        versions.set(mapId, last.version)
+      }
       showToast(
         error instanceof ApiError && error.code === 'SHORTLIST_STALE'
           ? '다른 구성원이 일정을 먼저 바꿨어요. 최신 일정으로 다시 보여 드릴게요'
@@ -132,6 +146,7 @@ export function saveSchedule(queryClient: QueryClient, mapId: string, next: Sche
     } finally {
       const left = Math.max(0, (pending.get(mapId) ?? 1) - 1)
       pending.set(mapId, left)
+      bump(mapId)
       // 저장이 모두 끝났다 — 실패했거나 저장 중 받지 못한 일정이 있을 수 있으니 서버 일정을 다시 받아 맞춘다.
       if (left === 0 && stale.delete(mapId)) void queryClient.invalidateQueries({ queryKey: key })
     }
