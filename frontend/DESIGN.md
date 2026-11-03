@@ -300,7 +300,7 @@ components:
 | 누르는 알약(필터·선택) | `chip` (+ `chip-against`), 카테고리 줄은 `CategoryChips` | `index.css` · `features/map/PinFilterControls` |
 | 필터 드롭다운 | `FilterSelect` (「라벨 값 ▾」, 칸 전체가 select · 폭은 가장 긴 선택지) | `features/map/PinFilterControls` |
 | 짧은 표시 | `tag` + `tag-{neutral·ai·good·warn·bad}` | `index.css` |
-| 입력칸 | `TextField`(✕·글자 수 포함) · `ClearButton`, 그 밖의 입력은 `field` 틀 | `ui/TextField` · `index.css` |
+| 입력칸 | 한 줄 `TextField` · 여러 줄 `TextArea`(둘 다 ✕·글자 수 포함) · `ClearButton`, 날짜 입력은 `field` 틀 | `ui/TextField` · `ui/TextArea` · `index.css` |
 | 시트·모달 제목 | `SheetTitle` (20/700) | `ui/SheetTitle` |
 | 시트 안 이전 화면 | `BackButton` 「‹ 마킹된 장소」 | `ui/BackButton` |
 | 비어 있을 때 | `EmptyState` (핑고 + 제목 + 설명 + 다음 행동, 찾던 게 없으면 `mood="sorry"`) | `ui/EmptyState` |
@@ -403,7 +403,7 @@ components:
 - **입구(로그인 화면):** 위에서부터 워드마크(`Wordmark`, 높이 40) + 부제 → 지도 그림 위를 날아가는 핑고(`fly`, 지도에 그림자) → 한 줄 안내 → 카카오·게스트 버튼 → 구분선 → 「핑고핑고에서 누릴 수 있는 기능이에요」 기능 목록(쓰는 순서대로 핀·말풍선·반짝임·별 아이콘, brand-50 둥근 사각형 32 + brand-600 아이콘 16. 같은 체크 반복과 초록은 쓰지 않는다 — 초록은 좋음·조건 충족 전용) → 약관 동의 줄이다. 넓은 화면(768px 이상)은 종이 배경 가운데 흰 바탕 + ink-200 테두리 입구 카드(반경 16, 최대 폭 400, 안쪽 좌우 32·위아래 40, 그림자 없음)이고 순서는 같다. 1024px 이상은 두 칸이다 — 왼쪽에 워드마크(높이 56)·부제·핑고 그림을 크게(핑고 1.35배), 오른쪽 입구 카드에 안내 줄부터 약관 줄까지 둔다. 휴대폰은 카드 없이 흰 화면 전체를 쓰고 약관 줄은 화면 맨 아래다. 약관 동의 줄은 12/400 ink-500이고 「이용약관」만 brand-600 굵게 + 밑줄이다. 누르면 「이용약관 목록」 모달 시트(이용약관·개인정보처리방침·위치기반서비스 이용약관, 모두 필수)가 뜨고 줄마다 문서를 연다. 법적 고지라 이 줄만 「동의하는 것으로 간주됩니다」처럼 ~됩니다체로 쓴다(#602).
 
 ### Inputs / Fields
-- **입력칸(`field` · `ui/TextField`):** 흰 바탕, ink-300 테두리, 반경 12, 높이 48, 글자 16이다. 글자가 있을 때만 오른쪽에 ✕(`ClearButton`)와 글자 수가 보인다. 포커스하면 테두리가 brand-500으로 바뀌고 2px 포커스 링이 붙는다. 날짜·여러 줄 입력도 같은 `field` 틀이다.
+- **입력칸(`field` · `ui/TextField`):** 흰 바탕, ink-300 테두리, 반경 12, 높이 48, 글자 16이다. 글자가 있을 때만 오른쪽에 ✕(`ClearButton`)와 글자 수가 보인다. 여러 줄 입력(`ui/TextArea`)은 ✕가 오른쪽 위, 글자 수가 칸 아래 오른쪽이다. 글을 쓰는 칸에는 모두 ✕가 있다(검색창 포함). 포커스하면 테두리가 brand-500으로 바뀌고 2px 포커스 링이 붙는다. 날짜·여러 줄 입력도 같은 `field` 틀이다.
 - **오류:** `aria-invalid`를 켜면 warn-line 테두리가 되고, 문구는 warn-text다.
 
 ### Navigation

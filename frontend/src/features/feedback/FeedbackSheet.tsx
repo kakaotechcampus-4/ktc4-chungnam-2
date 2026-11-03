@@ -4,6 +4,7 @@ import ErrorText from '@/ErrorText'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
 import SheetTitle from '@/ui/SheetTitle'
+import TextArea from '@/ui/TextArea'
 
 import { FEEDBACK_CATEGORIES, feedbackErrorMessage, type FeedbackCategory } from './model'
 import { useSendFeedbackMutation } from './queries'
@@ -45,18 +46,15 @@ export default function FeedbackSheet({ mapId, onClose }: { mapId?: string; onCl
         ))}
       </div>
 
-      <textarea
-        aria-label="의견"
+      <TextArea
+        label="의견"
         value={message}
+        onChange={setMessage}
         maxLength={MESSAGE_MAX}
-        onChange={(e) => setMessage(e.target.value)}
         placeholder="예: 핀을 지울 때 되돌리기가 있으면 좋겠어요"
         rows={5}
-        className="field w-full resize-none py-3"
+        clearLabel="의견 지우기"
       />
-      <p className="mt-1 text-right text-label text-ink-500">
-        {message.length}/{MESSAGE_MAX}
-      </p>
 
       {send.error && <ErrorText message={feedbackErrorMessage(send.error)} error={send.error} />}
 
