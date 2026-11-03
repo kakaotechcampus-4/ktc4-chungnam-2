@@ -1,6 +1,6 @@
 import { api } from '@/api'
 
-import type { LatLng, LinkParseResultDto, PlaceSearchResultDto } from './model'
+import type { ExternalSearchDto, LatLng, LinkParseResultDto, PlaceSearchResultDto } from './model'
 
 /** 결과는 화면에 보여 주기만 한다 — 저장·캐시하지 않는다(카카오 약관, #53). */
 export function searchPlaces(q: string, near: LatLng | null) {
@@ -22,3 +22,9 @@ export const nearestPlaces = (at: LatLng) =>
 /** 지도 링크 해석(#474). 핀을 만들지 않고 아무것도 저장하지 않는다 — 장소를 찾을 단서만 돌려준다. */
 export const parseLink = (url: string) =>
   api<LinkParseResultDto>('/places/from-link', { method: 'POST', body: JSON.stringify({ url }) })
+
+/**
+ * 장소 검색 결과가 없을 때의 카카오맵 검색 링크(#902, #905). 사용자가 친 검색어 그대로 넘긴다 — 링크는 서버가 만든다.
+ * 서버는 카카오를 부르지 않고 검색어를 저장하지 않는다.
+ */
+export const externalSearch = (q: string) => api<ExternalSearchDto>(`/places/external-search?${new URLSearchParams({ q })}`)
