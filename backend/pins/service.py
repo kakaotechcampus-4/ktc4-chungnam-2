@@ -10,7 +10,7 @@
 import logging
 import uuid
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import get_args
 
 from geoalchemy2 import Geometry
@@ -586,7 +586,8 @@ def resolve_pin(
     return resolved
 
 
-def delete_pin(db: Session, pin: PinRow) -> None:
+def delete_pin(db: Session, pin: PinRow, *, deleted_by: str, was_confirmed: bool) -> None:
+    """휴지통으로 옮긴다(#864). 삭제한 사람과 삭제 직전 확정 여부(shortlist가 알려 준 값)를 deleted_at과 함께 남긴다."""
     # 조건부 UPDATE — "확인 후 처리"(check-then-act, pin.deleted_at = ...; db.flush())는
     # 동시 삭제 요청 두 개가 둘 다 loader를 통과한 뒤 둘 다 UPDATE에 성공해 pin.deleted
     # 이벤트가 두 번 발행될 수 있다(#51 — realtime이 실제로 이벤트를 전송하므로 더 이상
@@ -596,7 +597,7 @@ def delete_pin(db: Session, pin: PinRow) -> None:
     result = db.execute(
         update(PinRow)
         .where(PinRow.id == pin.id, PinRow.deleted_at.is_(None))
-        .values(deleted_at=datetime.now(timezone.utc))
+        .values(deleted_at=datetime.now(timezone.utc), deleted_by=deleted_by, deleted_was_confirmed=was_confirmed)
     )
     if result.rowcount == 0:
         # 이미 다른 요청이 먼저 지웠다 — 상태 변화가 없으므로 이벤트를 또 쏘지 않는다
@@ -689,6 +690,27 @@ def delete_reaction(db: Session, pin: PinRow, viewer_id: str) -> None:
     record_event(db, core.reaction_changed_event(
         str(pin.id), pin.map_id, summary, viewer_id, display_name, None,
     ))
+
+
+def purge_deleted_pins(db: Session, *, now: datetime) -> dict[str, int]:
+    """휴지통 정리(#1013) — 삭제한 지 TRASH_RETENTION_DAYS일이 지난 핀과 그 반응을 영구 삭제한다. 오래된 것부터
+    PURGE_BATCH_LIMIT개까지(나머지는 다음 실행). 30일 안의 핀은 건드리지 않는다. 멱등. 테이블 이름 → 지운 행 수.
+    조회한 행을 호출자의 commit/rollback까지 잠가 복구와 삭제 사이의 경합을 막는다. 잠긴 행은 다음 실행으로 넘긴다."""
+    if now.tzinfo is None:   # naive면 DB 세션 시간대에 따라 cutoff가 어긋나 30일 안의 핀이 지워질 수 있다(되돌릴 수 없다)
+        raise ValueError("now는 timezone-aware여야 한다")
+    cutoff = now - timedelta(days=core.TRASH_RETENTION_DAYS)
+    expired = (
+        select(PinRow.id).where(PinRow.deleted_at.is_not(None), PinRow.deleted_at <= cutoff)
+        .order_by(PinRow.deleted_at, PinRow.id).limit(core.PURGE_BATCH_LIMIT)
+        .with_for_update(skip_locked=True)
+    )
+    pin_ids = list(db.execute(expired).scalars())
+    if not pin_ids:
+        return {"reactions": 0, "pins": 0}
+    return {
+        "reactions": db.execute(delete(ReactionRow).where(ReactionRow.pin_id.in_(pin_ids))).rowcount,
+        "pins": db.execute(delete(PinRow).where(PinRow.id.in_(pin_ids))).rowcount,
+    }
 
 
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:

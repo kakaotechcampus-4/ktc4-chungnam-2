@@ -13,6 +13,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Boolean,
     Index,
     String,
     UniqueConstraint,
@@ -80,8 +81,12 @@ class Pin(Base):
     created_by: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # #1013 휴지통: 지운 사람(user id, 탈퇴하면 표시만 「탈퇴한 구성원」)과 삭제 때 확정 리스트에 있었는지(복구 때 다시 올린다). 복구하면 셋 다 비운다.
+    deleted_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    deleted_was_confirmed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     __table_args__ = (
+        Index("ix_pins_deleted_at", "deleted_at", postgresql_where=deleted_at.is_not(None)),
         # 가드레일 6 / 중복 판정(#33 보류) — data-model.md의 unique(map_id, place_id) where deleted_at is null 그대로.
         Index(
             "uq_pins_map_place",
