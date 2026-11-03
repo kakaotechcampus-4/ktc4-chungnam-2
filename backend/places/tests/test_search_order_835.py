@@ -24,7 +24,7 @@ def _names(db, q, near=SEOUL, limit=10):
 def test_near_non_curated_beats_far_curated(db_session):
     _add(db_session, "a", "대전 맛집", 36.35, 127.38, curated=True)    # 140km
     _add(db_session, "b", "서울 맛집", 37.5700, 126.9800)
-    assert _names(db_session, "맛집") == ["서울 맛집", "대전 맛집"]
+    assert _names(db_session, "맛집") == ["서울 맛집"]
 
 
 def test_exact_before_prefix_before_substring_before_address(db_session):
@@ -56,19 +56,19 @@ def test_curated_wins_only_on_equal_distance(db_session):
     assert _names(db_session, "맛집") == ["맛집 나", "맛집 가"]
 
 
-def test_far_zone_fills_only_when_region_is_short(db_session):
+def test_far_zone_is_excluded_even_when_region_is_short(db_session):
     _add(db_session, "a", "맛집 서울", 37.5700, 126.9800)
     _add(db_session, "b", "맛집 부산", 35.17, 129.07)
     assert _names(db_session, "맛집", limit=1) == ["맛집 서울"]
-    assert _names(db_session, "맛집", limit=5) == ["맛집 서울", "맛집 부산"]
-    assert _names(db_session, "맛집", near=(35.18, 129.08), limit=5) == ["맛집 부산", "맛집 서울"]
+    assert _names(db_session, "맛집", limit=5) == ["맛집 서울"]
+    assert _names(db_session, "맛집", near=(35.18, 129.08), limit=5) == ["맛집 부산"]
 
 
-def test_far_zone_alone_can_fill_the_limit(db_session):
-    # 지역 구역이 비면 먼 구역만으로 채운다
+def test_far_zone_alone_returns_no_results(db_session):
+    # 지역 구역이 비어도 먼 장소는 반환하지 않는다
     for i in range(3):
         _add(db_session, f"f{i}", f"맛집 먼{i}", 35.17 + i * 0.01, 129.07)
-    assert len(_names(db_session, "맛집", limit=3)) == 3
+    assert _names(db_session, "맛집", limit=3) == []
 
 
 def test_without_coordinates_level_then_curated_then_name(db_session):
