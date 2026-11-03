@@ -128,7 +128,7 @@ function Face({ mood }: { mood: PingoMood }) {
 }
 
 /**
- * 단순화 로고(시안 「Simplified Version」) — 얼굴만. 작은 아이콘 자리(하단 탭 AI 원, 넓은 화면 탭 줄)에 쓴다.
+ * 단순화 로고(시안 「Simplified Version」) — 얼굴만. 작은 아이콘 자리(하단 탭, 넓은 화면 탭 줄)에 쓴다.
  * tone="white" 는 파랑 채움 원 위(활성 AI 탭)용이다.
  */
 export function PingoMark({ size = 28, tone = 'blue' }: { size?: number; tone?: 'blue' | 'white' }) {
