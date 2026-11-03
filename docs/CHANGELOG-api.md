@@ -2,6 +2,13 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-03, `EvidenceLine.filters_candidates` 추가 — 후보를 빼는 줄과 순위만 바꾸는 줄 구분 (#1260)
+
+- 근거 줄(`EvidenceLine`, 이 필드는 `applied_evidence` 스냅샷에도 같은 모양으로 실린다)에 선택 필드 `filters_candidates: boolean | null`을 더했다. 상위 호환이다 — 없으면 FE는 기존 칸 구분을 쓴다.
+- 값: `true` = 확인된 값이 방향과 다르면 후보에서 뺀다(붐비는 대형, 접근성 필요 조건). `false` = 후보는 두고 순위만 바꾼다(취향 조건, #1253). `enforced=false`인 줄은 `null`. 서버가 `evidence_line_use`의 effect(`filter`/`score`)를 그대로 내려 준다.
+- FE 사용: 「꼭 지켜야 하는 조건」 칸은 `filters_candidates=true`인 줄, 「피하고 싶어요 — 순위를 낮춰요」 칸은 `badge=required`·`wants=false`·`filters_candidates=false`인 줄(줄 이름은 「{fact_label} 줄이기」). 정본 이슈 #1260.
+- 서버 구현은 backend/recommend 후속 작업, 목 서버는 줄을 만드는 곳이 모두 `enforced=false`라 값이 필요 없어 그대로다.
+
 ## 2026-11-03, 취향 반대 사유는 후보를 빼지 않고 순위만 낮춘다 (#1253)
 
 - 요청·응답 모양과 enum은 바뀌지 않았다. **동작이 바뀐다**: 🚫 사유가 매운맛·기름진 메뉴·음식 종류 같은 취향 조건(soft 키)을 피하는 것이어도 그 후보를 목록에서 빼지 않고, 같은 사유를 낸 사람마다 3점씩 순위를 낮춘다(한 사람은 한 번). 라벨이 모름이면 감점도 없다.

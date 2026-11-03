@@ -4778,6 +4778,8 @@ export interface components {
              * @enum {string|null}
              */
             not_enforced_reason?: "no_key" | "no_direction" | "not_for_category" | "off_season" | null;
+            /** @description 이 줄이 후보를 목록에서 **뺄 수 있는가**(#1260). true=확인된 값이 방향과 다르면 후보에서 뺀다(붐비는 대형·접근성 필요 조건), false=후보는 그대로 두고 순위만 낮추거나 올린다(취향 조건, #1253). enforced=false이면 없다(null). 서버가 줄을 고르는 함수(recommend.core.evidence_line_use)의 effect를 그대로 내려 준다. FE는 이 값으로 「꼭 지켜야 하는 조건」(true)과 「피하고 싶어요 — 순위를 낮춰요」(false, badge=required이고 wants=false) 칸을 나누며 키 목록을 따로 들지 않는다. 구버전 서버라 필드가 없으면 기존 칸 구분을 쓴다 */
+            filters_candidates?: boolean | null;
             is_active: boolean;
             permissions: components["schemas"]["Permissions"];
         };
