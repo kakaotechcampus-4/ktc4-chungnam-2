@@ -247,17 +247,28 @@ def sido(address: str | None) -> str | None:
     return core.sido(address)
 
 
-SIDO_AT_RADIUS_M = 10_000.0   # sido_at이 장소를 찾는 반경. 이 안에 주소 있는 자체 DB 장소가 없으면 None
+SIDO_AT_RADIUS_M = 10_000.0   # 경계 표가 비었을 때 sido_at이 장소를 찾는 반경. 이 안에 주소 있는 자체 DB 장소가 없으면 None
 _SIDO_AT_FETCH = 5            # 가장 가까운 곳의 주소가 비어도 다음 곳으로 정하도록 조금 더 읽는다
 
 
 def sido_at(lat: float, lng: float, *, db: Session | None = None) -> str | None:
-    """좌표의 시·도(sido와 같은 짧은 이름). 10km 안에서 가장 가까운 영업 중 자체 DB 장소 주소의 시·도로 정한다.
-    못 정하면 None — 부르는 쪽은 None이면 거르지 않는다(#1059). 읽기 전용, 좌표를 남기지 않는다."""
-    # ponytail: 경계 근처 좌표는 건너편 시·도 장소가 더 가까우면 그쪽으로 나온다. 행정 경계 폴리곤이 생기면 그것으로 바꾼다
+    """좌표의 시·도(sido와 같은 짧은 이름, #1385). 시·도 경계 표(sido_boundaries)가 적재돼 있으면 경계로 정확히 판정한다 —
+    바다·국외·경계 밖은 None이고, 장소 데이터가 없는 곳(제주 등)도 판정된다. 표가 비어 있으면 10km 안에서 가장 가까운 영업 중 자체 DB
+    장소 주소의 시·도로 정한다(적재 전 환경용 근사: 경계 근처에서는 건너편 장소가 더 가까우면 틀린다). 못 정하면 None —
+    부르는 쪽은 None이면 거르지 않는다(#1059). 읽기 전용, 좌표를 남기지 않는다."""
     with _session(db) as s:
+        if repository.boundary_count(s):
+            return repository.sido_by_boundary(s, lat, lng)
         rows = repository.find_nearby_own(s, lat, lng, SIDO_AT_RADIUS_M, _SIDO_AT_FETCH)
     return next((v for v in (core.sido(r.address) for r in rows) if v), None)
+
+
+def circle_outside_region(lat: float, lng: float, radius_m: float, sido: str, *, db: Session | None = None) -> bool | None:
+    """중심 (lat, lng), 반경 radius_m(m)의 원 **전체**가 그 시·도 밖이면 True(걸치기만 해도 False). sido는 sido·sido_at이
+    돌려주는 짧은 이름("서울", "전남광주"). 경계 표가 비었거나 그 시·도의 경계를 모르면 None — 막지 않는다는 뜻이다.
+    원은 geography로 만든다(위도마다 다른 경도 거리를 반영). 읽기 전용, 좌표를 남기지 않는다. recommend의 OUTSIDE_TRIP_REGION 판정이 부른다."""
+    with _session(db) as s:
+        return repository.circle_outside_sido(s, lat, lng, radius_m, sido)
 
 
 def kakao_search_url(query: str) -> str:
