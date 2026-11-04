@@ -592,7 +592,7 @@ llm_calls(
   input_tokens, cached_input_tokens, cache_write_tokens, output_tokens,   -- 입력은 캐시 몫과 캐시 쓰기 할증 포함, 출력은 추론 토큰 포함
   web_searches int default 0,         -- 그 호출 안의 웹 검색 횟수(응답의 web_search_call 수, #1216). 웹 확인 밖은 0
   cost_krw numeric(12,4),             -- 기록 시점 단가(common.settings의 LLM_PRICE_*)로 계산. 할증이 input_tokens에 있어 cache_write_tokens는 따로 더하지 않는다. 웹 검색 요금(web_searches × LLM_PRICE_WEB_SEARCH_KRW)을 더한다
-  outcome('ok'|'refusal'|'empty'|'timeout'|'invalid_schema'|'call_failed'), ok bool,
+  outcome('ok'|'ok_repeated_json'|'refusal'|'empty'|'timeout'|'invalid_schema'|'call_failed'), ok bool,   -- ok_repeated_json: 같은 JSON 객체가 두 번 온 응답의 첫 객체를 받음(ok=true, #767). 토큰은 0으로 남는다(SDK가 검증 실패에 usage를 붙이지 않는다)
   elapsed_ms, created_at
 )
 index ix_llm_calls_created (created_at)

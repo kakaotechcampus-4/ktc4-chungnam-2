@@ -1338,6 +1338,28 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
     store.runRequestedBy["run_no_results"] = "u_2";
     expect((await fetch(`${BASE}/runs/run_no_results/advice`)).status).toBe(403);
   });
+
+  it("#1297 작업 기록: 제안에 WorkStep 모양의 단계가 붙고, 코드 유형은 감지로 시작해 재확인으로 끝난다", async () => {
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    const steps = state.active_suggestion.steps;
+    expect(steps.map((s: { stage: string }) => s.stage)).toEqual(["감지", "순위", "재확인"]);
+    for (const s of steps) expect(Object.keys(s).sort()).toEqual(["by", "by_detail", "role", "stage", "text"]);
+  });
+
+  it("#1297 살펴본 상태: 제안이 있으면 안내 문구가 없고, 제안이 없을 때만 최근 관찰의 문구가 실린다", async () => {
+    const notice = "이번에는 지도를 끝까지 살펴보지 못했어요. 새 활동이 생기면 다시 볼게요";
+    store.agentObservation["map_1"] = { checked_at: "2026-10-15T00:00:00.000Z", notice };
+    const withSuggestion = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(withSuggestion.observation).toEqual({ checked_at: "2026-10-15T00:00:00.000Z", notice: null });
+
+    await fetch(`${BASE}/agent/suggestions/sug_1/dismiss`, { method: "POST" });
+    const quiet = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(quiet.observation.notice).toBe(notice);
+
+    await fetch(`${BASE}/maps/map_1/agent/settings`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+    const off = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(off.observation.notice).toBeNull(); // 모드가 꺼져 있으면 스위치만 보인다
+  });
 });
 
 describe("#623 지도 목록에 상한을 함께", () => {

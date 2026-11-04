@@ -122,6 +122,16 @@ class AgentFactLine(BaseModel):
         return data
 
 
+class WorkStep(BaseModel):
+    """작업 기록 한 줄(api-spec WorkStep, #1297). AI 코스(`course.api_schemas.CourseStep`)와 「핑고 AI 조언」(AgentSuggestion.steps)이
+    같이 쓴다. 문장은 서버 고정 문구와 숫자뿐이다."""
+    stage: str
+    role: Literal["해석", "지휘", "계산", "검증", "결정"]
+    by: Literal["ai", "code", "human"]   # 섞여 있으면 대표값(사람 > 모델 > 코드)이고 by_detail에 원문
+    by_detail: str | None = None         # 예: "모델 → 코드", "코드(목표 세우기 실패)". 단순하면 null
+    text: str
+
+
 class AgentSuggestion(BaseModel):
     id: str
     diagnosis: AgentDiagnosis
@@ -131,6 +141,7 @@ class AgentSuggestion(BaseModel):
     advice: list[AgentAdviceLine]
     actions: list[AgentAction]
     facts: list[AgentFactLine] = Field(default_factory=list, max_length=2)   # 6.6. 사실 다툼이 아니면 빈 목록
+    steps: list[WorkStep] = Field(default_factory=list)   # 11.3 작업 기록(#1297). run 기록이 지워졌으면 빈 목록
     created_at: datetime
     expires_at: datetime
 
@@ -184,12 +195,19 @@ class AgentMapStatus(BaseModel):
     updated_at: datetime
 
 
+class AgentObservation(BaseModel):
+    """살펴본 상태(명세 21.3, #1297). notice는 core.observation_notice가 정한 서버 고정 문구다."""
+    checked_at: datetime | None = None   # agent_cursors.last_observed_at. 관찰한 적이 없으면 null
+    notice: str | None = Field(default=None, max_length=100)   # 지금 제안이 있거나 모드가 꺼져 있으면 null
+
+
 class AgentState(BaseModel):
     settings: AgentSettings
     active_suggestion: AgentSuggestion | None  # 모드가 꺼져 있거나 shadow면 null
     has_unseen: bool
     summaries: list[AgentSummary]
     status: AgentMapStatus | None = None  # 8.2. 아직 만든 적이 없으면 null
+    observation: AgentObservation = Field(default_factory=AgentObservation)   # 21.3(#1297)
 
 
 class AgentAcceptRequest(BaseModel):

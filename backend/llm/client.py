@@ -18,9 +18,12 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Mapping, Optional, Sequence
 
 from openai import APITimeoutError, OpenAI
+from pydantic import ValidationError
 
 from common.settings import settings
 from llm import usage as usage_log
@@ -184,6 +187,61 @@ def _agent_failure_reason(exc: BaseException) -> AgentFailureReason:
     return "call_failed"
 
 
+# ---------- 같은 JSON 두 번(#767 3번 b) ----------
+# 모델이 같은 JSON 객체를 두 번 이어 내면 parse가 json_invalid로 실패한다(#1299 e19). 같은 응답 안의 반복이면 첫 객체를 같은
+# 스키마로 검증해 받는다 — 다시 묻지 않는다(명세 2절 10번). 반복이 아니거나 다른 객체면 지금처럼 실패다. 평가 도구의 깨진 응답
+# 기록(run_eval._broken_response)도 이 판정을 쓴다. 원문은 로그에 남기지 않는다(#390).
+
+REPEATED_JSON_OUTCOME = "ok_repeated_json"   # 받았을 때의 llm_calls.outcome(ok=true) — 운영에서 센다
+
+
+@dataclass(frozen=True)
+class JsonRepeat:
+    """깨진 응답의 모양. first는 앞뒤 공백을 뺀 응답의 첫 JSON 값(못 읽으면 None), first_end는 그 값이 끝나는 위치,
+    repeated는 그 뒤(공백 뺌)가 첫 값과 똑같은 값 하나인지."""
+    first: Any
+    first_end: Optional[int]
+    repeated: bool
+
+
+def read_json_repeat(raw: str) -> JsonRepeat:
+    text = raw.strip()
+    try:
+        first, end = json.JSONDecoder().raw_decode(text)
+    except json.JSONDecodeError:
+        return JsonRepeat(None, None, False)
+    rest = text[end:].strip()
+    try:
+        repeated = bool(rest) and json.loads(rest) == first
+    except json.JSONDecodeError:
+        repeated = False
+    return JsonRepeat(first, end, repeated)
+
+
+def json_invalid_input(exc: BaseException) -> Optional[str]:
+    """parse가 낸 ValidationError 중 JSON으로 읽히지 않은 응답(json_invalid)의 원문. pydantic이 input에 응답 원문을 싣는다.
+    부른 쪽은 이 글을 로그에 남기지 않는다."""
+    if not isinstance(exc, ValidationError):
+        return None
+    return next(
+        (e.get("input") for e in exc.errors() if e.get("type") == "json_invalid" and isinstance(e.get("input"), str)), None,
+    )
+
+
+def _repeated_answer(exc: BaseException, response_format: Any) -> Any:
+    """같은 JSON 객체의 반복이면 첫 객체를 response_format으로 검증한 값, 아니면 None."""
+    raw = json_invalid_input(exc)
+    if raw is None or response_format is None:
+        return None
+    shape = read_json_repeat(raw)
+    if not shape.repeated or not isinstance(shape.first, dict):
+        return None
+    try:
+        return response_format.model_validate(shape.first)
+    except ValidationError:
+        return None
+
+
 # agent 호출 한 번의 사용량 모으기(#564). service.agent_diagnose가 metering()으로 열고, 그 안의 왕복마다
 # _agent_parse가 더한다. planner 시그니처를 바꾸지 않고 모으려고 컨텍스트 변수를 쓴다(스텁 planner는 닿지 않아 0이다).
 _usage_meter: ContextVar[Optional[AgentUsage]] = ContextVar("agent_usage_meter", default=None)
@@ -220,7 +278,10 @@ def _agent_parse(client: Any, *, call: str, what: str, context: str, prompt_vers
 
     로그는 ②와 같은 규칙이다(#390): 실패는 모델명·예외 클래스·status_code·request_id·소요 ms만, 성공은 토큰 수만 남긴다.
     입력(신호, 사유)과 응답 본문은 남기지 않는다. 사용량은 응답이 오면 거절·빈 응답이어도 더한다(#564).
-    call은 llm_calls.call(#870)이다."""
+    call은 llm_calls.call(#870)이다.
+
+    응답이 같은 JSON 객체 두 번이면(#767 3번 b) 첫 객체를 받아 parsed로 돌려주고 outcome을 REPEATED_JSON_OUTCOME으로 남긴다.
+    SDK가 검증 실패에 응답(usage)을 붙이지 않아 그 행의 토큰은 0이다 — json_invalid 실패 행과 같다."""
     started = time.monotonic()
     _meter_request(prompt_version)
     try:
@@ -228,6 +289,14 @@ def _agent_parse(client: Any, *, call: str, what: str, context: str, prompt_vers
         _meter_response(completion)
         message = completion.choices[0].message
     except Exception as exc:  # noqa: BLE001 — 예상 못 한 예외도 원인 타입만 남기고 같은 실패로 올린다
+        parsed = _repeated_answer(exc, kwargs.get("response_format"))
+        if parsed is not None:
+            log.warning(
+                "%s 같은 JSON 두 번 — 첫 객체를 받음: model=%s %s elapsed_ms=%d",
+                what, settings.llm_model, context, _elapsed_ms(started),
+            )
+            _record(call, prompt_version, None, REPEATED_JSON_OUTCOME, started)
+            return SimpleNamespace(parsed=parsed, tool_calls=None, refusal=None, content=None)
         log.warning(
             "%s 호출 실패: model=%s %s %s elapsed_ms=%d",
             what, settings.llm_model, context, _failure_fields(exc), _elapsed_ms(started),

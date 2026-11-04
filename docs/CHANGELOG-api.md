@@ -12,6 +12,16 @@
 - FE: `CourseRun`의 새 칸은 필수라 목 서버가 모든 run에 싣는다. 목 서버는 확정 리스트의 일정 상태로 모드를 정하고(`contracts/mocks/handlers/course.ts`), review는 날 맞바꾸기 1·1곳 옮기기 1·고치지 않음 1 카드를 예시로 낸다. 카드를 반영해 일정 PUT을 하면 목 서버의 코스는 stale이 된다.
 - 구현 이슈: 서버 backend/agent/course #1321, 화면 frontend #1322. 서버 구현 전에는 실서버 응답에 `mode`, `headline`, `fixes`, `checked`가 모두 없을 수 있다(계약 테스트 `KNOWN_COURSE_DRIFT`에 #1321로 적었고 구현 PR이 지운다) — FE가 먼저 붙으면 `mode`가 없을 때 plan으로, `fixes`·`checked`가 없을 때 빈 배열로 그린다.
 
+## 2026-11-04, 「핑고 AI 조언」 작업 기록(`AgentSuggestion.steps`)과 살펴본 상태(`AgentState.observation`) (#1297)
+
+- `AgentSuggestion`에 선택 필드 `steps: WorkStep[]`를 더했다. 이 제안을 만들 때 핑고가 거친 단계(감지 → 순위 → 조사 → 미리 찾기 → 우리 데이터 → 웹 확인 → 검증 → 재확인, 있는 것만)다. 문장은 서버 고정 문구와 숫자뿐이고 사유 글·핀 이름·URL은 없다. `agent.suggested` 페이로드에도 같은 값이 실린다. 정본 설명은 `docs/agent-v2.md` 11.3.
+- AI 코스의 작업 기록과 같은 모양이라 스키마를 `WorkStep`으로 옮기고 `CourseStep`은 그것을 가리킨다. **`CourseStep` 이름과 모양은 그대로라 코스 화면은 바꿀 것이 없다.** `role` enum도 그대로다(조언의 단계는 계산·결정·지휘·검증 중 하나).
+- `AgentState`에 선택 필드 `observation: AgentObservation {checked_at, notice}`를 더했다. `checked_at`은 마지막 관찰 시각(관찰 전이면 null), `notice`는 지금 제안이 없을 때 그 이유를 말하는 서버 고정 문구다(진단 실패, 검증에서 걸러짐, 그날 진단 횟수를 다 씀, 여행이 끝남). 제안이 있거나 모드가 꺼져 있으면 null, 낼 제안이 없었을 뿐이어도 null이다. 이벤트로 갱신하지 않고 시트를 열 때 받는다. #1072의 「장애를 따로 보여 주지 않는다」 결정을 바꿨다(`docs/agent-v2.md` 21.3).
+- 둘 다 상위 호환이다 — 서버 구현 전에는 필드가 없고, FE는 없거나 빈 목록이면 자리를 두지 않는다. 테이블 변경은 없다(렌더 때 `agent_runs`와 `agent_cursors`에서 읽는다).
+- 목 서버: 시드 제안(카테고리 공백)에 감지·순위·재확인 세 줄, 지도 `map_1`에 `observation`(시드는 제안이 있어 notice가 null). `store.agentObservation[mapId].notice`를 넣고 제안을 닫으면 문구가 실린다.
+- FE 할 일(구현 이슈): 제안 카드 아래 「핑고가 한 일 보기」 토글(코스 `WorkLog`의 줄을 공용으로), 「핑고가 n분 전에 지도를 살펴봤어요」, 제안이 없을 때 notice 한 줄, 추천 막힘 조언 500이면 「조언을 불러오지 못했어요」.
+- 서버 구현은 backend/agent 이슈.
+
 ## 2026-11-03, AI 코스 작업 기록 단계와 목표 설명을 지금 서버에 맞춤 (#1131, #1243)
 
 - `CourseStep.stage` 설명을 서버가 실제로 내는 값으로 바꿨다: 찾기·옮겨 보기·비교·결정·가정을 더하고 질문·답을 뺐다(#1131에서 되묻기를 없앴다). 값은 자유 문자열 그대로라 응답 모양은 바뀌지 않는다. 화면은 모르는 값이 와도 깨지지 않게 그린다(#1243).

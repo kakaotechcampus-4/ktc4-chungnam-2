@@ -128,12 +128,11 @@ function Face({ mood }: { mood: PingoMood }) {
 }
 
 /**
- * 단순화 로고(시안 「Simplified Version」) — 얼굴만. 작은 아이콘 자리(하단 탭 AI 원, 넓은 화면 탭 줄)에 쓴다.
- * tone="white" 는 파랑 채움 원 위(활성 AI 탭)용이다.
+ * 단순화 로고(시안 「Simplified Version」) — 얼굴만. 작은 아이콘 자리(하단 탭, 넓은 화면 탭 줄)에 쓴다.
  */
-export function PingoMark({ size = 28, tone = 'blue' }: { size?: number; tone?: 'blue' | 'white' }) {
-  const face = tone === 'white' ? 'white' : 'var(--pingo-body)'
-  const hole = tone === 'white' ? 'var(--brand-600)' : 'white'
+export function PingoMark({ size = 28 }: { size?: number }) {
+  const face = 'var(--pingo-body)'
+  const hole = 'white'
   const { pin, hole: h, face: f, eyes } = PINGO_MARK
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className="shrink-0">

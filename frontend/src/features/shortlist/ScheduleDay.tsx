@@ -8,7 +8,7 @@ import { useScheduleDrag } from './useScheduleDrag'
 
 /**
  * 일정 하루 칸 — 「일정 짜기」 패널(넓은 화면)과 「동선 보기」가 같이 쓴다. 칸이 끌어 놓을 자리다(`data-day`).
- * 끄는 줄이 위에 오면 `--action-fill` 점선 테두리가 된다.
+ * 끄는 줄이 위에 오면 점선 테두리가 된다(`drop-target`, index.css).
  */
 export function ScheduleDayBox({ day, title, count, children }: { day: string; title: string; count: number; children: ReactNode }) {
   const hover = useDropHover()
@@ -16,7 +16,8 @@ export function ScheduleDayBox({ day, title, count, children }: { day: string; t
     <section
       data-day={day}
       aria-label={title}
-      className={`rounded-xl border border-ink-200 bg-white p-3 ${hover?.day === day ? 'outline-2 outline-dashed outline-[var(--action-fill)]' : ''}`}
+      data-over={hover?.day === day}
+      className="drop-target rounded-xl border border-ink-200 bg-white p-3"
     >
       <h3 className="text-sm font-bold text-ink-900">
         {title} <span className="font-normal text-ink-500">{count}곳</span>
