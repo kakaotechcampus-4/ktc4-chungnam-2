@@ -87,6 +87,8 @@ class MapList(BaseModel):
     items: list[Map]
     # maps/core.py::MAP_LIMIT — 409 MAP_LIMIT의 detail.limit과 같은 값이다.
     limit: int
+    # maps/core.py::TRIP_MAX_DAYS — 422 TRIP_TOO_LONG의 detail.limit과 같은 값이다(#1371).
+    trip_max_days: int
 
 
 class TrashedMap(BaseModel):
