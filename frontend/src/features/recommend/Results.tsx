@@ -50,7 +50,7 @@ export function ResultsHeader({ mapId, run, count }: { mapId: string; run: Recom
           <AiHeader
             title={count ? `${run.category} 대안 ${count}곳을 찾았어요` : '이번엔 새로 찾은 곳이 없어요'}
             sub="지도에 올린 곳만 구성원 모두에게 보여요"
-            mood={count ? 'happy' : 'sorry'}
+            mood={count ? 'heart' : 'sad'}
           />
         </div>
         <button

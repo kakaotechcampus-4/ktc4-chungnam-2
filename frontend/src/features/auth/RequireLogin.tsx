@@ -201,7 +201,7 @@ function GuestSheet({ onClose }: { onClose: () => void }) {
   return (
     <ModalSheet label="게스트로 시작하기" onClose={onClose}>
       <div className="flex items-center gap-3">
-        <Pingo mood="wave" size={44} />
+        <Pingo mood="welcome" size={44} />
         <SheetTitle>게스트로 시작하기</SheetTitle>
       </div>
       <p className="mt-3 break-keep text-sm text-ink-700">

@@ -126,7 +126,7 @@ function PinScene() {
           </span>
         </div>
       </At>
-      <PingoAt x={32} y={92} w={30} mood={held ? 'wave' : 'happy'} />
+      <PingoAt x={32} y={92} w={30} mood={held ? 'welcome' : 'excited'} />
       {phase >= 2 && (
         <At x={66} y={80} anchor="center">
           <div key={phase === 2 ? 'drop' : 'stay'} className="enter-fade h-1.5 w-6 rounded-full bg-ink-300/70" />
@@ -147,7 +147,7 @@ function PinScene() {
 
 /** ① 핀과 의견 카드 → ② 좋음 → ③ 반대 + 이유 칩. */
 const REACTION_PHASES = [800, 1200, 1800]
-const REACTION_MOOD: PingoMood[] = ['default', 'happy', 'default']
+const REACTION_MOOD: PingoMood[] = ['default', 'heart', 'default']
 function ReactionScene() {
   const phase = usePhaseLoop(REACTION_PHASES)
   const like = phase === 1
@@ -239,7 +239,7 @@ function AiScene() {
             </div>
           </At>
         ))}
-      <PingoAt x={74} y={92} w={30} mood={phase === 2 ? 'happy' : phase === 1 ? 'thinking' : 'default'} />
+      <PingoAt x={74} y={92} w={30} mood={phase === 2 ? 'heart' : phase === 1 ? 'thinking' : 'default'} />
     </>
   )
 }
@@ -294,7 +294,7 @@ function ShortlistScene() {
           ))}
         </div>
       </At>
-      <PingoAt x={74} y={94} w={28} mood={confirmed ? 'happy' : 'default'} />
+      <PingoAt x={74} y={94} w={28} mood={confirmed ? 'relieved' : 'default'} />
     </>
   )
 }

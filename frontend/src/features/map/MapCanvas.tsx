@@ -534,7 +534,7 @@ export default function MapCanvas({
         <div className="absolute inset-x-0 top-32 flex flex-col items-center gap-1 px-4 text-center">
           {error ? (
             <>
-              <Pingo size={48} mood="error" />
+              <Pingo size={48} mood="flustered" />
               <p className="text-sm text-warn-text">지도를 불러오지 못했어요</p>
               {/* 원인(앱키·도메인)은 개발자에게만 보인다. 쓰는 사람에겐 할 수 있는 일을 말한다. */}
               <p className="text-xs text-ink-500">

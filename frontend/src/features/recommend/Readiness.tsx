@@ -43,7 +43,7 @@ export function ReadinessHeader({ mapId }: { mapId: string }) {
   return short ? (
     <AiHeader title="의견이 부족해요" sub="핀에 좋음이나 반대 의견이 모이면 추천할 수 있어요" mood="alert" />
   ) : (
-    <AiHeader title="AI 추천" sub="추천받을 카테고리를 골라 주세요" />
+    <AiHeader title="AI 추천" sub="추천받을 카테고리를 골라 주세요" mood="welcome" />
   )
 }
 
