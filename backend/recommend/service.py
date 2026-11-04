@@ -79,6 +79,16 @@ class Reservation(NamedTuple):
     run_id: uuid.UUID | None
 
 
+def idempotency_key_exists(db: Session, *, requested_by: str, key: str) -> bool:
+    """이 (요청자, 키)의 기록이 있는가(읽기만, #1331). center 없는 요청이 옛 키의 재시도인지 가르는 데 쓴다 — 예약을 만들지 않는다."""
+    return db.execute(
+        select(IdempotencyKey.id).where(
+            IdempotencyKey.requested_by == requested_by, IdempotencyKey.scope == core.IDEMPOTENCY_SCOPE,
+            IdempotencyKey.key == key,
+        )
+    ).first() is not None
+
+
 def reserve_idempotency_key(
     db: Session, *, requested_by: str, key: str, request_hash: str, now: datetime,
 ) -> Reservation:
