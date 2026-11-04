@@ -580,7 +580,7 @@ def reason_text_inputs(reactions) -> list[dict]:
 | --- | --- | --- |
 | 추천 필터(`recommend.api.preview_filter`) | 미리 찾기 p1(6.7, 코드가 진단 전에 부름) | 「{카테고리} 추천 받기」(open_recommend) |
 | 코스 끼워 보기(`agent.course` 일정 입력, `core.best_position`·`day_travel`, `places.api.get_week_open_status`) | 모델 도구 `try_in_schedule`(10절) | 「이 핀 보기」(open_pin) — 확정은 사람이 한다 |
-| 코스 점검(`agent.course.review.find_problems`) | 일정 점검 탐지(아래, 코드) | 「AI 코스로 고칠 안 받기」(open_course) |
+| 코스 점검(`agent.course.review.find_problems`) | 일정 점검 탐지(아래, 코드) | 「AI 코스로 고쳐 보기」(open_course) |
 
 **`try_in_schedule(pin_ids)`**(모델 도구, 많아야 5개 핀, 도구 상한에 센다)
 - 확정 일정에 아직 확정하지 않은 그 핀을 끼워 본다. 사람이 넣은 일정은 바꾸지 않는다.
@@ -610,7 +610,7 @@ def reason_text_inputs(reactions) -> list[dict]:
 - 템플릿
   - 제목: 「일정에 다시 볼 곳이 있어요」
   - 확인된 것(문제마다 한 줄, 많아야 2줄): 「{d}일차에 쉬는 날인 곳이 있어요 · {핀}」, 「{d}일차 이동이 길어요」
-  - 버튼: 「AI 코스로 고칠 안 받기」(open_course) 하나
+  - 버튼: 「AI 코스로 고쳐 보기」(open_course) 하나
 - 문제가 없으면 내지 않는다 — 크레딧 1을 쓰는 버튼을 헛되이 권하지 않는다(6.7의 0곳 원칙과 같다).
 - fingerprint는 (schedule, 문제 종류와 날짜, 핀)이고, evidence_hash는 일정과 그 장소들의 영업 판정이다. 사람이 일정을 고치면 무효화(superseded)되거나 풀린다.
 - 순위: weights에 `schedule: 2`를 더하고, urgent_dday를 category_gap과 schedule에 건다.

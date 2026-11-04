@@ -170,7 +170,7 @@ function buildAgentLinked(): StoreState {
   return state;
 }
 
-/** #1356 — 사람이 넣은 일정에 쉬는 날 방문이 있어 조언이 「AI 코스로 고칠 안 받기」(open_course)로 넘긴다. 코드 유형이다. */
+/** #1356 — 사람이 넣은 일정에 쉬는 날 방문이 있어 조언이 「AI 코스로 고쳐 보기」(open_course)로 넘긴다. 코드 유형이다. */
 function buildAgentSchedule(): StoreState {
   const state = buildBaseState();
   const s = state.agentSuggestions[SEED_SUGGESTION_ID].suggestion;
@@ -186,7 +186,7 @@ function buildAgentSchedule(): StoreState {
       is_guess: false,
     },
   ];
-  s.actions = [{ index: 0, type: "open_course", label: "AI 코스로 고칠 안 받기", params: {} }];
+  s.actions = [{ index: 0, type: "open_course", label: "AI 코스로 고쳐 보기", params: {} }];
   s.steps = [
     { stage: "감지", role: "계산", by: "code", by_detail: null, text: "AI 코스 점검으로 일정을 살펴봤어요 · 고칠 곳 1곳" },
     { stage: "재확인", role: "검증", by: "code", by_detail: null, text: "저장 직전에 지도가 그대로인지 다시 봤어요" },

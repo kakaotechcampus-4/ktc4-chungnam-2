@@ -93,7 +93,7 @@ describe('조언 버튼 open_pin·open_course(#1359)', () => {
     expect(await screen.findByText('일정에 다시 볼 곳이 있어요')).toBeInTheDocument()
     expect(screen.getByText('카페 한라')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: 'AI 코스로 고칠 안 받기' }))
+    await userEvent.click(screen.getByRole('button', { name: 'AI 코스로 고쳐 보기' }))
     await waitFor(() => expect(where()).toBe(`/maps/${MAP}/course?${START_PARAM}=1`))
     expect(useCourseViewStore.getState().runs[MAP]).toBeUndefined()
   })

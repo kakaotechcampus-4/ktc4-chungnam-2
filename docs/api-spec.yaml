@@ -3003,7 +3003,7 @@ components:
       properties:
         index: { type: integer, minimum: 0, description: "accept 요청의 action_index" }
         type: { type: string, enum: [open_recommend, show_pins, search_place, open_route, widen_radius, open_evidence, open_pin, open_course] }
-        label: { type: string, maxLength: 40, description: "버튼 문구(서버 렌더). 예: \"음식점 추천 받기\", \"미확인 핀 보기\", \"이 핀 보기\", \"AI 코스로 고칠 안 받기\"" }
+        label: { type: string, maxLength: 40, description: "버튼 문구(서버 렌더). 예: \"음식점 추천 받기\", \"미확인 핀 보기\", \"이 핀 보기\", \"AI 코스로 고쳐 보기\"" }
         params:
           type: object
           description: "type마다 쓰는 것만 채운다"

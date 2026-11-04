@@ -871,7 +871,7 @@ SCHEDULE_LINES = {   # 문제마다 한 줄(많아야 SCHEDULE_LINES_MAX). day�
     "travel": "{day}일차 이동이 길어요",
 }
 SCHEDULE_LINES_MAX = 2
-SCHEDULE_ACTION = ("open_course", "AI 코스로 고칠 안 받기")
+SCHEDULE_ACTION = ("open_course", "AI 코스로 고쳐 보기")
 
 
 def _day_number(day: str | None) -> int | None:
@@ -880,7 +880,7 @@ def _day_number(day: str | None) -> int | None:
 
 def _schedule_draft(sig: Signal) -> Draft:
     """일정 점검(6.10). 제목 「일정에 다시 볼 곳이 있어요」, 확인된 것은 문제마다 한 줄(쉬는 날은 그 핀 이름, 이동 과다는 날만), 버튼은
-    「AI 코스로 고칠 안 받기」(open_course) 하나. 사람이 넣은 일정을 바꾸지 않는다 — 고칠 안은 사람이 누른 AI 코스가 낸다."""
+    「AI 코스로 고쳐 보기」(open_course) 하나. 사람이 넣은 일정을 바꾸지 않는다 — 고칠 안은 사람이 누른 AI 코스가 낸다."""
     claims: list[dict[str, Any]] = []
     lines = []
     for problem in (sig.features.get("problems") or ())[:SCHEDULE_LINES_MAX]:
