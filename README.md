@@ -38,7 +38,7 @@ n명이 지도 하나에 핀을 찍어 여행 장소를 정하고, 의견이 갈
 3. `decision` 라벨이 붙은 이슈는 아직 팀이 결정하지 않은 것들이다. 맡으려는 작업이 거기 걸려 있으면 결정부터 확인한다. 회의할 게 생긴 거다.
 
 ### 프론트엔드 담당자 (장현성, 표강준)
-- `frontend/CLAUDE.md`부터 읽는다. 스택, 화면 구조(탭 3개: 지도/AI추천/리스트), 디렉토리 컨벤션이 있다.
+- `frontend/CLAUDE.md`부터 읽는다. 스택, 화면 구조(탭 4개: 마킹된 장소/AI 추천/확정된 장소/AI 코스), 디렉토리 컨벤션이 있다.
 - 백엔드를 기다릴 필요가 없다. `contracts/`가 타입과, 실제로 상태가 바뀌는 목 서버(msw)를 준다. `contracts/README.md`대로 세팅하면 실제 API 없이 전 화면을 만들 수 있다.
 - `docs/api-spec.yaml`이 계약 정본이다. 여기서 스펙을 바꾸지 않고, 부족하거나 틀렸다고 생각되면 루트에 보고한다. 스펙이 바뀌면 `docs/CHANGELOG-api.md`에 먼저 기록된다. 근데 기록만 하고 깃허브에 반영 안 하면 모르니까, 가능하면 걍 스펙 바뀌자마자 디스코드에 자세하게 설명해 주면 좋겠다.
 
@@ -67,7 +67,7 @@ pip install -r requirements.txt
 
 copy .env.example .env        # 맥/리눅스는: cp .env.example .env
 
-docker-compose up -d          # DB(PostgreSQL+PostGIS)·Redis를 로컬에 띄운다
+docker-compose up -d          # DB(PostgreSQL+PostGIS)를 로컬에 띄운다
 
 uvicorn main:asgi_app --reload
 ```
