@@ -73,7 +73,7 @@ def test_export_masks_member_text_and_keeps_agent_words(world, factory, tmp_path
     assert json.loads(split["신호 특징값"]) == signal["features"]
     assert rows["no_reaction"]["제안 문장"].splitlines() == [
         "아직 확인되지 않은 핀이 3개 있어요", "- 「[핀]」", "- 「[핀]」", "- 「[핀]」"]
-    assert rows["category_gap"]["버튼"] in ("카페 추천 받기 / 카페 핀 보기", "관광지 추천 받기 / 관광지 핀 보기")
+    assert rows["category_gap"]["버튼"] in ("카페 추천 받기", "관광지 추천 받기")
 
 
 def _sampled(diagnosis: str, i: int) -> label_sample.Sampled:

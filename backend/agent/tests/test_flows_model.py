@@ -182,7 +182,7 @@ def test_split_diagnosis_is_verified_and_saved(world, factory):
     assert [s["diagnosis"] for s in run.signals] == ["stall", "split"]
     assert (run.priority["final_order"], run.priority["rule_hits"]) == (["s2", "s1"], ["affected_members"])
     assert run.verification["established"] is True and run.verification["claims"]["removed"] == []
-    assert [c["name"] for c in run.tool_calls] == ["get_reasons"]
+    assert [c["name"] for c in run.tool_calls] == ["preview_filter", "get_reasons"]   # 갈림도 미리 센다(#1317)
     [(type_, payload)] = suggestion_events(world, map_id)   # 모델 유형도 노출(#582)
     assert (type_, payload["id"], payload["diagnosis"]) == ("agent.suggested", str(sug.id), "split")
     # 이벤트도 응답과 같은 조각 모양이고, 인용은 검증한 앞 8글자만 나간다 — 사유 글 전체가 아니다(#717)
