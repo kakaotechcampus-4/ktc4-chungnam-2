@@ -149,7 +149,7 @@ python -m alembic upgrade head
 
 ```powershell
 $env:PYTHONUTF8=1
-$S = "C:\경로\정예DB_final_2026-11-04_서울\정예DB_공유_2026-10-25\서울"
+$S = "C:\경로\정예DB_final_2026-11-04_서울\서울"
 # 1) 서울 정예: 음식점 → 카페 → 관광지 순서
 python -m places.load restaurants --authoritative --file "$S\음식점\final_restaurant_places_hotspot.csv" --labels "$S\음식점\seoul_restaurant_labels_hotspot.json"
 python -m places.load cafes --authoritative --file "$S\카페\cafe_seoul_curated.csv" --labels "$S\카페\cafe_seoul_curated_labels.json"
