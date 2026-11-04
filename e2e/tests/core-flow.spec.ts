@@ -35,7 +35,7 @@ test('방장이 반대한 곳을 빼고 추천받아 지도에 올리면 구성�
     await owner.getByRole('link', { name: 'AI 추천' }).click()
     await owner.getByRole('button', { name: '음식점 추천받기' }).click()
     await expect(owner.getByText(/음식점 대안 \d곳을 찾았어요/)).toBeVisible({ timeout: 30_000 })
-    await expect(owner.getByText('나에게만 보여요', { exact: false })).toBeVisible()
+    await expect(owner.getByText('지도에 올린 곳만 구성원 모두에게 보여요')).toBeVisible()
 
     const cards = owner.getByRole('article')
     const count = await cards.count()
