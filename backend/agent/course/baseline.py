@@ -100,8 +100,9 @@ def _soft_key(trip, course) -> tuple[float, ...]:
 
 
 def strong_key(state: State, course: core.Course, violations) -> tuple:
-    # 확정 위반 → 확인 필요 → 요청 목표(충족 수, 우선순위순) → 기본 목표. 요청 목표가 없으면 이 자리는 빈 값이다
-    return (*core.hard_score(violations), goals_mod.key_part(state.trip, course, state.goals, state.priority, state.strict_priority),
+    # 확정 위반 → 확인 필요 → 옮긴 장소 수(사람 일정을 덜 바꾸는 쪽, #1321) → 요청 목표(충족 수, 우선순위순) → 기본 목표.
+    # 요청 목표가 없으면 그 자리는 빈 값이고, 점검 중이 아니면(state.home 없음) 옮긴 수는 늘 0이다
+    return (*core.hard_score(violations), core.moved_count(state.home, course), goals_mod.key_part(state.trip, course, state.goals, state.priority, state.strict_priority),
             _soft_key(state.trip, course))
 
 

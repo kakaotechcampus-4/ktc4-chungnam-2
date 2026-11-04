@@ -47,6 +47,7 @@ class State:
     goals: tuple[Goal, ...] = ()                               # 요청 목표(명세 8.2). 강한 기준선의 비교에 들어간다
     priority: tuple[str, ...] = ()                             # 목표 id 순서(앞이 더 중요). 비면 goals 순서
     strict_priority: bool = False                              # True면 맨 앞 목표를 목표 수보다 먼저 본다(집중 후보)
+    home: Course = ()                                          # 사람이 정한 일정(점검 중일 때만). 옮긴 장소 수의 기준 — 비면 0으로 센다
     plan: tuple[str, ...] = ()
     lessons: tuple[str, ...] = ()
 
