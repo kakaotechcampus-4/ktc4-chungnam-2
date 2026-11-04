@@ -2,6 +2,18 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-05, 추천 기본 반경 3km 통일(미터로 재정의)·여행 지역 밖 오류·반경 칸 4종 (#1385, #1370, #1164)
+
+- **동작 변경(정책)**: 추천 기본 반경이 **모든 카테고리 3,000m**로 통일된다(전: 음식점·카페 도보 15분, 관광지 25분). 「반경 넓히기」는 유지하되 **미터로 재정의**한다 — 기본 3,000m, 1회 +1,000m, 상한 5,000m(모든 카테고리 같다). 상한을 넘으면 409 `WIDEN_LIMIT`(기존). 사용자 결정 2026-11-05. 값은 `docs/constraints.md`의 「반경 넓히기 상수」.
+- **새 오류 422 `OUTSIDE_TRIP_REGION`**(`POST /maps/{mapId}/runs`): 요청 `center` 기준 반경 3km 원 **전체**가 그 지도의 여행 지역(시·도) 밖이면 거절한다. 걸치기만 하면 막지 않고, 지도에 여행 지역이 없으면 막지 않는다. `detail`은 `{ region_label }`. 크레딧·모델·run 모두 쓰지 않는다. 지역 경계 판정은 서버(places)가 시·도 경계 데이터로 한다. 화면 문구는 「여행 지역 밖이에요」 + 「여행 지역으로 가기」(`docs/errors.md`).
+- **새 선택 필드 4종(상위 호환, `required` 아님)**
+  - `Readiness.radius_m`: 그 카테고리의 기본 추천 반경(m), 지금 3000. 화면이 run 만들기 전에 원을 그린다(정책 값은 응답으로).
+  - `RecommendRun.default_radius_m`: 현재 기본 반경(m). 넓히면 +1000씩, 상한 5000. `RecommendRun.next_default_radius_m`: 넓히면 바뀔 반경, 이미 상한이면 `null`(#1370).
+  - `RunSummary.default_radius_m`·`next_default_radius_m`: 지난 추천에서도 같은 값(#1164).
+- `default_radius_walk_min`은 **호환용**으로 남기고 곧 없앤다 — 화면은 `default_radius_m`를 쓴다. 폐기된 `WIDEN_LIMIT_MIN`·도보 분 설명은 `POST /runs/{runId}/widen`·`WidenLimit` 응답·`curated_nearby` 설명에서 미터 기준으로 고쳤다.
+- 서버 구현은 `backend/recommend`(`core.py` 상수, 응답 칸)·`backend/places`(지역 경계 판정, `OUTSIDE_TRIP_REGION`, `common/errors.py`) 후속. `docs/data-model.md`의 `default_radius_walk_min` 컬럼은 서버 PR에서 정리한다.
+- 목 서버: readiness `radius_m: 3000`, run·widen·`RunSummary`의 `default_radius_m`·`next_default_radius_m`(5000이면 widen 409 `WIDEN_LIMIT`), run 생성에서 `center`가 부산(35.1587, 129.1604)이고 지도가 서울이면 422 `OUTSIDE_TRIP_REGION`. 타입 재생성 필요 — FE는 `npm run gen:types`.
+
 ## 2026-11-05, 여행 기간 상한 90일과 방장 권한 칸 두 개 — `MapList.trip_max_days`, `Permissions.can_manage_invites`·`can_transfer_owner`, 422 `TRIP_TOO_LONG` (#1371, #1154)
 
 - 모두 **상위 호환 선택 필드**다. 서버 구현은 backend/maps 후속이라 그 전까지 실서버는 보내지 않는다(없으면 FE는 지금처럼 동작).
