@@ -80,7 +80,7 @@ def test_a_successful_run_spends_one(text_reason_map, db_session, llm_usage_rows
 def test_not_ready_spends_nothing(members, db_session, llm_usage_rows):
     """11 — run 생성 중 예외(NOT_READY: 반응이 없다)면 차감도 없다. 계정 행도 만들지 않는다."""
     _a, b, map_id = members
-    resp = b.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    resp = b.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": {"lat": 37.5, "lng": 127.0}})   # center는 필수(#1331)
     assert resp.status_code == 409, resp.text
     assert resp.json()["code"] == "NOT_READY"
     assert _ledger(db_session, "user_b") == []

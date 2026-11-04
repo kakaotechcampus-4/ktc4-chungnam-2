@@ -373,3 +373,26 @@ def test_center_idempotency_replay_and_conflict(env):
         create(planner, map_id="idem_center", center=(35.1, 129.0))
     assert exc.value.code == "IDEMPOTENCY_CONFLICT"
     assert planner.calls == 1
+
+
+@pytest.mark.no_center_shim
+def test_old_key_without_center_still_replays_its_run_but_a_new_key_without_center_is_422_1331(env):
+    """center가 필수가 되기 전에 만든 키(해시에 center 없음)의 재시도는 그 run을 그대로 돌려준다(24시간 보관). 새 키는 422이고 예약이 남지 않는다."""
+    Session, create = env
+    planner = _Planner()
+    first = create(planner, map_id="idem_legacy", center=(35.0, 129.0))
+    session = Session()
+    session.execute(update(IdempotencyKey).where(IdempotencyKey.run_id == first).values(
+        request_hash=core.idempotency_request_hash("idem_legacy", "음식점", False, None)))
+    session.commit()
+    session.close()
+
+    assert create(planner, map_id="idem_legacy", center=None) == first
+    with pytest.raises(AppError) as exc:
+        create(planner, map_id="idem_legacy", center=None, key="key-00000002")
+    assert exc.value.code == "VALIDATION_ERROR"
+    session = Session()
+    assert session.execute(select(func.count()).select_from(IdempotencyKey).where(
+        IdempotencyKey.key == "key-00000002")).scalar_one() == 0
+    session.close()
+    assert planner.calls == 1
