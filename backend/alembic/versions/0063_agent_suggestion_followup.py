@@ -8,8 +8,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "0062_agent_suggestion_followup"
-down_revision = "0061_recommend_run_origin"
+revision = "0063_agent_suggestion_followup"
+down_revision = "0062_course_run_modes"   # 번호가 겹쳐 먼저 병합된 0062(course) 뒤로 옮겼다(#1347)
 branch_labels = None
 depends_on = None
 
