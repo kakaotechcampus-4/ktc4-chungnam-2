@@ -14,8 +14,8 @@ def test_every_type_has_a_message_and_it_fits_the_spec_limit():
 
 
 def test_message_examples():
-    assert core.compose_message("pin_reaction", actor_name="지우", reaction="like") == "지우님이 내 핀에 ♥를 남겼어요"
-    assert core.compose_message("pin_reaction", actor_name="지우", reaction="dislike") == "지우님이 내 핀에 🚫 반대를 남겼어요"
+    assert core.compose_message("pin_reaction", actor_name="지우", reaction="like") == "지우님이 내 핀에 좋음을 남겼어요"
+    assert core.compose_message("pin_reaction", actor_name="지우", reaction="dislike") == "지우님이 내 핀에 반대 의견을 남겼어요"
     assert core.compose_message("pin_reaction", actor_name="지우") == "지우님이 내 핀에 반응을 남겼어요"
     assert core.compose_message("member_joined", actor_name="  ") == "구성원님이 지도에 들어왔어요"
     assert core.compose_message("map_deleted", map_title="부산 여행") == "'부산 여행' 지도가 삭제되었어요"

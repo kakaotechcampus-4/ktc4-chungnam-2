@@ -82,7 +82,7 @@ def test_request_runs_in_background_and_get_returns_done(world, places, client):
     assert body["status"] == "done" and body["outcome"] == "solved_with_checks" and body["failure_code"] is None
     goal = body["goals"][0]                      # 요일은 지도 날짜에 따라 달라진다(world는 오늘 + 30일)
     assert len(body["goals"]) == 1 and (goal["id"], goal["kind"], goal["met"]) == ("day_indoor:d2", "day_indoor", True)
-    assert goal["label"].startswith("둘째 날 (") and goal["label"].endswith(")은 실내 위주로")
+    assert goal["label"].startswith("둘째 날 (") and goal["label"].endswith((")은 실내 위주로", ")는 실내 위주로"))
     assert body["unmatched"] == ["웨이팅 없는 곳으로"]
     step = body["steps"][0]
     assert (step["stage"], step["role"], step["by"], step["by_detail"]) == ("이해", "해석", "ai", None) and step["text"].endswith("「웨이팅 없는 곳으로」는 그대로는 판단할 수 없어요.")
@@ -147,7 +147,7 @@ def test_not_enough_places_is_422(world, places, client):
     map_id, _ = confirmed_map(world, places, 1, live=2)
     res = client("u1").post(f"/maps/{map_id}/courses")
     assert res.status_code == 422
-    assert res.json() == {"code": "COURSE_NOT_ENOUGH_PLACES", "message": "코스를 짤 확정 장소가 부족합니다",
+    assert res.json() == {"code": "COURSE_NOT_ENOUGH_PLACES", "message": "코스를 짤 확정 장소가 부족해요",
                           "detail": {"min": 2, "count": 1}}
 
 

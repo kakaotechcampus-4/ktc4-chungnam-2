@@ -195,7 +195,7 @@ class PinUpdateRequest(BaseModel):
         if not self.model_fields_set:
             raise ValueError("수정할 필드(memo, category)가 하나는 있어야 해요")
         if any(getattr(self, name) is None for name in self.model_fields_set):
-            raise ValueError("memo와 category는 null일 수 없어요 — 메모는 빈 문자열로 지운다")
+            raise ValueError("memo와 category는 null일 수 없어요. 메모는 빈 문자열로 지워요")
         return self
 
 

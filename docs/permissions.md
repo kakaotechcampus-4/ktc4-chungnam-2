@@ -59,8 +59,8 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
     - map.settings.edit
     - map.delete                # 지도 삭제(#369). 방장만. soft delete라 모든 구성원에게서 사라진다
     - map.restore               # 삭제한 지도 복구(#464). 방장만, 삭제한 지 30일 안에만. 삭제된 지도는 일반 지도 조회가 404라 복구용 조회(get_deleted_map)를 따로 둔다
-    - invite.revoke             # 초대 링크 목록 보기·끄기(#467). 방장만. 발급(invite.create)은 구성원 누구나
-    - owner.transfer            # 방장 직접 넘기기(#468). 방장만
+    - invite.revoke             # 초대 링크 목록 보기·끄기(#467). 방장만. 발급(invite.create)은 구성원 누구나. 응답 칸 `permissions.can_manage_invites`(#1154)
+    - owner.transfer            # 방장 직접 넘기기(#468). 방장만. 응답 칸 `permissions.can_transfer_owner`(#1154)
 ```
 
 역할은 배타적이지 않고 누적된다 — 한 사용자는 `member` + (자기 evidence·candidate·run에 한해) `author` + (자기 지도에 한해) `owner`를 동시에 가질 수 있다. 판정은 "이 액션이 이 리소스의 scope 안에 있는가"로 계산한다.
@@ -112,8 +112,8 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 | 핀 메모·분류 수정 — 찍은 사람만 (#466) | `author.scope.pin: own`, `author.actions: [pin.edit]`, 응답 `permissions.can_edit` |
 | 초대 링크 발급 — 구성원 누구나 (#4) | `member.actions: [invite.create]` |
 | 지도 제목·날짜·지역 수정 — 방장만 (#465) | `owner.actions: [map.settings.edit]`, 응답 `permissions.can_edit` |
-| 초대 링크 목록·끄기 — 방장만 (#467) | `owner.actions: [invite.revoke]` |
-| 방장 직접 넘기기 — 방장만 (#468) | `owner.actions: [owner.transfer]` |
+| 초대 링크 목록·끄기 — 방장만 (#467) | `owner.actions: [invite.revoke]`, 응답 `permissions.can_manage_invites` (#1154) |
+| 방장 직접 넘기기 — 방장만 (#468) | `owner.actions: [owner.transfer]`, 응답 `permissions.can_transfer_owner` (#1154) |
 | 동선 재계산 — 구성원 누구나 (#103) | `member.actions: [route.recalculate]` |
 | 계획 보조 에이전트 모드 켜고 끄기 — 구성원 누구나 (v2, #510) | `member.actions: [agent.toggle]` |
 | 지도 제안 수락·닫기 — 구성원 누구나 (v2, #510) | `member.actions: [agent.suggestion.resolve]`. 열람 기록과 상태 조회는 구성원이면 되고 별도 액션이 없다 |

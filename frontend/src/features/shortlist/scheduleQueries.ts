@@ -141,6 +141,20 @@ export function saveSchedule(queryClient: QueryClient, mapId: string, next: Sche
   running.set(mapId, job)
 }
 
+/**
+ * 저장 루프 밖에서 일정을 저장할 때(AI 코스 「반영」, #1322) 쓴다. 보내는 중인 저장이 끝나길 기다렸다가 보내고,
+ * 앞뒤로 번호를 올려 그동안 받은 일정 응답이 저장한 일정을 덮지 않게 한다.
+ */
+export async function saveScheduleOutside<T>(mapId: string, save: () => Promise<T>): Promise<T> {
+  await running.get(mapId)
+  bump(mapId)
+  try {
+    return await save()
+  } finally {
+    bump(mapId)
+  }
+}
+
 /** 일정 고치기 함수 — `useScheduleEdit`과 화면이 쓴다. */
 export function useSaveSchedule(mapId: string) {
   const queryClient = useQueryClient()

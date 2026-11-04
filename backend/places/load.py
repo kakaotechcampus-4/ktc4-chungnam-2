@@ -9,6 +9,7 @@
     python -m places.load cafes   --file cafe_seoul_curated.csv [--labels cafe_seoul_curated_labels.json|.csv]
                                   [--exclude-bars] [--all-regions] [--constraints ...] [--dry-run]
     python -m places.load place-hours --file <정예 라벨 JSON | 서울 관광지 tourist_seoul_closed_days.json> [--all-regions] [--dry-run]
+    python -m places.load boundaries --dir 시도경계/ [--dry-run]     # 시·도 경계 17개(11.json … 39.json), 멱등. 해시가 화면 정본과 다르면 거절(#1385)
     python -m places.load restaurant-labels --file restaurant_seoul_curated_labels.json [--overwrite] [--constraints ...] [--dry-run]
 
 - 정예 우선(#507): `restaurants`·`cafes`·`tourapi`에 `--authoritative`를 주면 같은 (source, source_id)의 이름·분류·주소·좌표를 파일 값으로
@@ -43,7 +44,7 @@ from typing import Callable, Iterator
 
 from sqlalchemy.orm import Session
 
-from places import ingest, repository
+from places import boundaries, ingest, repository
 
 _ENCODINGS = ("utf-8-sig", "cp949")   # 인허가 CSV는 cp949(EUC-KR)인 경우가 많다
 DEFAULT_CONSTRAINTS = Path(__file__).resolve().parents[2] / "docs" / "constraints.md"
@@ -217,9 +218,48 @@ def load_place_hours(db: Session, path: Path, *, seoul_only: bool = True) -> lis
     return report.lines() + [f"DB: place_hours upsert {result.upserted}, {skipped}"]
 
 
+def load_boundaries(db: Session, folder: Path) -> list[str]:
+    """시·도 경계(#1385). 17개 파일의 해시가 화면 정본과 같을 때만 같은 코드를 덮어써 넣는다(멱등). 보고 줄을 돌려준다."""
+    rows = boundaries.read_boundaries(folder)
+    count = repository.upsert_boundaries(db, rows)
+    return [f"경계 파일 {len(rows)}개 확인(해시 일치)", f"DB: sido_boundaries upsert {count}, 표 전체 {repository.boundary_count(db)}행"]
+
+
+def _run_boundaries(args, session_factory) -> int:
+    if not args.dir.is_dir():
+        print(f"폴더가 없다: {args.dir}", file=sys.stderr)
+        return 2
+    if session_factory is None:
+        from common.database import SessionLocal
+
+        session_factory = SessionLocal
+    db = session_factory()
+    try:
+        lines = load_boundaries(db, args.dir)
+        if args.dry_run:
+            db.rollback()
+            lines.append("(dry-run — DB에 쓰지 않았다)")
+        else:
+            db.commit()
+    except boundaries.BoundaryFileError as exc:
+        db.rollback()
+        print(f"거부: {exc}", file=sys.stderr)
+        return 2
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    print("\n".join(lines))
+    return 0
+
+
 def main(argv: list[str] | None = None, *, session_factory: Callable[[], Session] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m places.load", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
+    pb = sub.add_parser("boundaries")
+    pb.add_argument("--dir", required=True, type=Path, dest="dir", help="시·도 경계 파일 폴더(11.json … 39.json)")
+    pb.add_argument("--dry-run", action="store_true", help="파일을 확인하고 DB에는 쓰지 않는다(롤백)")
     for name in ("permit", "tourapi", "labels", "restaurants", "cafes", "restaurant-labels", "place-hours"):
         p = sub.add_parser(name)
         p.add_argument("--file", required=True, type=Path, action="append" if name == "permit" else "store",
@@ -249,6 +289,8 @@ def main(argv: list[str] | None = None, *, session_factory: Callable[[], Session
             p.add_argument("--exclude-bars", action="store_true", help="유흥·주점류(정종/대포집/소주방, 감성주점) 제외 — 루트 결정 대기")
     args = parser.parse_args(argv)
 
+    if args.command == "boundaries":
+        return _run_boundaries(args, session_factory)
     if args.command == "permit":
         try:
             args.file = expand_files(args.file)

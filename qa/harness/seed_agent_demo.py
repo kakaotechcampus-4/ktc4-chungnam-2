@@ -10,6 +10,12 @@
 - split: QA 구성원 둘이 카페 핀 하나에 ♥(「조용해서 좋아요」)와 🚫(「주차가 안 돼서…」)를 남긴다. 발표자가 들어올 때까지
   기다렸다가 멈춘다. **발표자가 그 핀에 ♥를 누르는 순간** 모두 응답한 것이 되어 다음 관찰에 갈림 제안(절충안 수)이 뜬다.
 
+- --followup stuck(stall 뒤에 이어서, #1345 후속 관찰 6.9): QA 구성원이 제안을 수락한다(서버는 실행하지 않고 동작만
+  돌려주므로 추천도 크레딧도 쓰지 않는다) → 「지켜보는 중」 → 서버의 최소 대기(FOLLOWUP_MIN_WAIT 30분)를 실제로 기다린 뒤
+  카페에 두 사람이 새 핀을 찍는다(음식점에는 새 핀 없음) → 다음 관찰에 「다음 방법」(attempt 1, 장소 검색) → 다시 수락하고
+  기다렸다 움직이면 「충돌 선언」(attempt 2, 버튼 없음). 시각을 조작하지 않으므로 약 한 시간 걸린다 — 시연 전에 미리 돌려 둔다.
+- --followup resolve: 수락 뒤 QA 구성원이 음식점에 새 핀을 찍는다 → 다음 관찰에 그 막힌 곳이 「풀렸어요」(기다림 없음).
+
 웹 확인 줄(6.8)은 그 장소의 라벨이 「모름」일 때만 생긴다. 라벨은 API로 볼 수 없어 이 스크립트가 고르지 못한다 — 웨이팅처럼
 라벨이 비기 쉬운 특징을 사유로 쓴다. 다른 장소를 쓰려면 `--food-query`, `--cafe-query`로 검색어를 바꾼다.
 
@@ -20,7 +26,8 @@ usage (로컬 staging 서버):
   PYTHONUTF8=1 QA_LOGIN_SECRET=... python qa/harness/seed_agent_demo.py --base-url http://localhost:8010 [--scenario split]
 옵션: --scenario stall|split, --web-url <화면 주소>(기본은 base-url에서 /api를 뗀 것), --wait-join <초>(stall은 기본 0,
 split은 기본 900), --tick(끝에 `python -m agent.tick`을 한 번 돌린다 — API 컨테이너 안에서만), --food-query, --cafe-query,
---reason <글>(stall에서 두 번째 🚫의 글을 바꾼다. 1~140자. 따옴표·이모지·긴 글이 깨지지 않는지 보는 QA G04용)
+--reason <글>(stall에서 두 번째 🚫의 글을 바꾼다. 1~140자. 따옴표·이모지·긴 글이 깨지지 않는지 보는 QA G04용),
+--followup stuck|resolve(stall 뒤 후속 관찰, --tick과 함께 쓴다. QA G07~G09), --followup-wait <초>(기본 1860 — 서버 최소 대기 30분 + 1분)
 키·시크릿은 출력하지 않는다.
 """
 import os
@@ -33,7 +40,8 @@ from datetime import date, timedelta
 import httpx
 
 SEONGSU = {"label": "성수", "lat": 37.5446, "lng": 127.0557}
-OPTS = {"--scenario": "stall", "--web-url": None, "--wait-join": None, "--food-query": "성수 맛집", "--cafe-query": "성수 카페", "--reason": None}
+OPTS = {"--scenario": "stall", "--web-url": None, "--wait-join": None, "--food-query": "성수 맛집", "--cafe-query": "성수 카페", "--reason": None,
+        "--followup": None, "--followup-wait": "1860"}
 FLAGS = {"--tick": False}
 
 # 사유는 지어낸 예시다. 칩 id는 docs/constraints.md 칩 표의 것이다(food_wait: wait_short, food_spicy: spicy_focused)
@@ -106,21 +114,74 @@ def wait_reactions(c: httpx.Client, pin_id: str, want: int, seconds: int) -> boo
 TICK_TRIES = 8   # tick 한 번은 차례인 지도를 6곳(TICK_MAX_MAPS)만 보고, 새 지도는 차례가 뒤라 몇 번 걸릴 수 있다
 
 
-def run_tick(c: httpx.Client, mid: str) -> None:
-    """이 지도에 제안이 뜰 때까지 `python -m agent.tick`을 돌린다. API 컨테이너 안(또는 backend 폴더)에서만 된다.
+def agent_state(c: httpx.Client, mid: str) -> dict:
+    return ok(c.get(f"/maps/{mid}/agent"), "에이전트 상태").json()
+
+
+def has_suggestion(attempt: int):
+    def done(state: dict) -> bool:
+        s = state.get("active_suggestion")
+        return bool(s) and s.get("attempt", 0) == attempt
+    return done
+
+
+def run_tick(c: httpx.Client, mid: str, done=has_suggestion(0), what: str = "제안") -> dict | None:
+    """done(상태)가 참이 될 때까지 `python -m agent.tick`을 돌린다. API 컨테이너 안(또는 backend 폴더)에서만 된다.
     tick은 cron과 같은 명령이라 다른 지도도 같이 관찰한다 — 5분 뒤 cron이 할 일을 앞당길 뿐이다."""
     for n in range(1, TICK_TRIES + 1):
         r = subprocess.run([sys.executable, "-m", "agent.tick"], capture_output=True, text=True)
         if r.returncode != 0:
             print("관찰 tick을 돌리지 못했다(API 컨테이너 밖이면 정상) — 5분 안에 cron이 돌거나 서버에서 "
                   "`./run.sh staging python -m agent.tick`을 돌린다.")
-            return
-        state = ok(c.get(f"/maps/{mid}/agent"), "에이전트 상태").json()
-        if state.get("active_suggestion"):
-            print(f"tick {n}번 만에 제안이 떴다: {state['active_suggestion']['title']}")
-            return
-    print(f"tick {TICK_TRIES}번 동안 제안이 뜨지 않았다 — 다음 cron에서 다시 본다. 원인은 agent_runs의 outcome으로 본다"
+            return None
+        state = agent_state(c, mid)
+        if done(state):
+            s = state.get("active_suggestion")
+            print(f"tick {n}번 만에 {what}: {s['title'] if s else '(지금 제안 없음)'}")
+            return state
+    print(f"tick {TICK_TRIES}번 동안 {what}이(가) 보이지 않았다 — 다음 cron에서 다시 본다. 원인은 agent_runs의 outcome으로 본다"
           "(docs/demo-guide.md 「핑고 AI 조언 시연」 문제 해결).")
+    return None
+
+
+def accept_first(c: httpx.Client, suggestion: dict) -> str:
+    """제안의 첫 버튼을 수락한다. 서버는 동작을 실행하지 않고 돌려주기만 한다(agent-v2 16.3) — 추천·크레딧이 쓰이지 않는다."""
+    action = suggestion["actions"][0]
+    ok(c.post(f"/agent/suggestions/{suggestion['id']}/accept", json={"action_index": action["index"]}), "제안 수락")
+    print(f"QA 구성원이 「{action['label']}」을 수락했다(attempt {suggestion.get('attempt', 0)}).")
+    return action["label"]
+
+
+def show_tracking(c: httpx.Client, mid: str) -> None:
+    for t in agent_state(c, mid).get("tracking") or []:
+        print(f"  지켜보는 곳: [{t['status']}] {t['text']}")
+
+
+def followup(a: httpx.Client, b: httpx.Client, mid: str, first: dict, mode: str, wait: int) -> None:
+    """수락한 정체를 지켜보는 흐름(#1345, agent-v2 6.9). stuck: 다음 방법 → 충돌 선언, resolve: 새 음식점 핀으로 풀림."""
+    accept_first(b, first)
+    show_tracking(a, mid)
+    if mode == "resolve":
+        add_pin(a, mid, find_place(a, OPTS["--food-query"], "음식점", 2), "음식점")
+        print("QA 구성원이 음식점에 새 핀을 찍었다 — 다음 관찰에 「풀렸어요」.")
+        if run_tick(a, mid, lambda st: any(t["status"] == "resolved" for t in st.get("tracking") or []), "풀림"):
+            show_tracking(a, mid)
+        return
+    cafe_skip = 1
+    for attempt in (1, 2):
+        print(f"서버 최소 대기(30분)를 기다린다 — {wait}초. 그동안 음식점에는 새 핀을 찍지 않는다.")
+        time.sleep(wait)
+        add_pin(a, mid, find_place(a, OPTS["--cafe-query"], "카페", cafe_skip), "카페")
+        add_pin(b, mid, find_place(b, OPTS["--cafe-query"], "카페", cafe_skip + 1), "카페")
+        cafe_skip += 2
+        print("카페에 두 사람이 새 핀을 찍었다(다른 카테고리 활동 2명). 음식점은 그대로다.")
+        state = run_tick(a, mid, has_suggestion(attempt), "다음 방법" if attempt == 1 else "충돌 선언")
+        if not state:
+            return
+        s = state["active_suggestion"]
+        print(f"  해 본 것: {[t['label'] for t in s.get('tried') or []]}, 버튼: {[x['label'] for x in s['actions']]}")
+        if attempt == 1:
+            accept_first(a, s)
 
 
 def main() -> None:
@@ -148,6 +209,8 @@ def main() -> None:
     scenario = OPTS["--scenario"]
     if scenario not in ("stall", "split"):
         fail("--scenario는 stall 또는 split")
+    if OPTS["--followup"] is not None and (OPTS["--followup"] not in ("stuck", "resolve") or scenario != "stall" or not FLAGS["--tick"]):
+        fail("--followup은 stuck 또는 resolve이고, --scenario stall과 --tick이 함께 있어야 한다")
     if OPTS["--reason"] is not None and not 1 <= len(OPTS["--reason"].strip()) <= 140:
         fail("--reason은 1~140자(서버의 사유 길이 상한과 같다)")
     web = (OPTS["--web-url"] or base.removesuffix("/api")).rstrip("/")
@@ -192,7 +255,9 @@ def main() -> None:
             if not wait_reactions(a, cafe, 3, wait):
                 fail("발표자의 반응이 오지 않았다 — 누른 뒤 서버에서 `./run.sh staging python -m agent.tick`")
     if FLAGS["--tick"]:
-        run_tick(a, mid)
+        state = run_tick(a, mid)
+        if state and OPTS["--followup"]:
+            followup(a, b, mid, state["active_suggestion"], OPTS["--followup"], int(OPTS["--followup-wait"]))
     else:
         print("다음 cron tick(5분 안)에 관찰된다. 바로 보려면 서버에서 `./run.sh staging python -m agent.tick`.")
 

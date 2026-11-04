@@ -73,9 +73,12 @@ function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
   }
 }
 
-/** 끊긴 동안 놓친 변화는 이벤트로 다시 오지 않을 수 있어 새로 받는다(docs/events.md 전달 보장 8번). */
+/**
+ * 끊긴 동안 놓친 변화는 이벤트로 다시 오지 않을 수 있어 새로 받는다(docs/events.md 전달 보장 8번).
+ * 열려 있는 AI 코스 결과도 다시 받는다 — 그동안 일정이 바뀌었으면 stale 로 「일정이 바뀌었어요」를 보여야 해서다(#1322).
+ */
 function refreshMap(queryClient: QueryClient, mapId: string) {
-  for (const queryKey of [pinKeys.list(mapId), pinKeys.counts(mapId), shortlistKeys.list(mapId)]) {
+  for (const queryKey of [pinKeys.list(mapId), pinKeys.counts(mapId), shortlistKeys.list(mapId), courseKeys.latest(mapId), courseKeys.runs]) {
     void queryClient.invalidateQueries({ queryKey })
   }
 }
