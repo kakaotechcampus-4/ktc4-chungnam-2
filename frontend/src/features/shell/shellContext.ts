@@ -11,7 +11,7 @@ export type ShellContext = {
   onControl: (key: ControlKey) => void
   /** 실시간 연결. 끊기면 시트 윗변 띠로 알린다. */
   connection: { state: ConnectionState; reconnect: () => void }
-  /** 지금 지도 화면 중심. 지도가 아직 없으면 null. */
+  /** 지금 보이는 지도의 가운데(모바일은 시트에 가린 부분을 뺀다, #1331). 지도가 없으면 핀들의 위치 기준(livePlaceAnchor). 셸 밖 테스트만 null. */
   getCenter: () => { lat: number; lng: number } | null
 }
 
