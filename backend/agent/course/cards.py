@@ -12,7 +12,13 @@ from agent.course import core, goals as goals_mod, review as review_mod
 from agent.course.korean import attach
 from agent.course.worklog import problem_text
 
-NOT_FIXED_TEXT = {review_mod.BIG_CHANGE: "크게 바꿔야 해요", review_mod.NOT_WORTH: "고치지 않기로 했어요"}
+NOT_FIXED_TEXT = {
+    review_mod.BIG_CHANGE: "크게 바꿔야 해요", review_mod.NOT_WORTH: "고치지 않기로 했어요",
+    # 모델이 고른 이유 코드(llm CourseReviewReason의 keep 3종) → 서버 문장. 모델은 문장을 짓지 않는다(#717)
+    "TOO_MANY_MOVES": "옮길 곳이 많아서 고치지 않기로 했어요",
+    "LEAVES_PROBLEMS": "따라도 다른 문제가 남아서 고치지 않기로 했어요",
+    "MINOR_GAIN": "얻는 것이 작아서 고치지 않기로 했어요",
+}
 
 CHECKED_TEXT = {
     "closed": "쉬는 날에 넣은 곳은 없어요",
@@ -43,10 +49,8 @@ def _resolved_text(trip: core.Trip, goals: Sequence[goals_mod.Goal], p: review_m
 
 
 def _remaining_text(trip: core.Trip, goals: Sequence[goals_mod.Goal], fix: review_mod.Fix) -> Optional[str]:
-    """안을 따라도 그대로 남는 문제 — 옮기는 날에 걸린 것만(그 카드를 반영하고도 그 날에 남는 문제). 다른 날의 문제는 자기 카드가 있다."""
-    touched = {core.day_alias(i) for m in fix.moves for i in (m.from_day, m.to_day)}
-    moved = {m.place for m in fix.moves}
-    left = [p for p in fix.remaining if p.day in touched or moved & set(p.places)]
+    """안을 따라도 그대로 남는 문제의 문장. 어느 문제가 남는지는 `review.leftover`가 정한다."""
+    left = review_mod.leftover(fix)
     if not left:
         return None
     return " · ".join(f"{problem_text(trip, goals, p)} — 그대로예요" for p in left[:2])
@@ -68,7 +72,7 @@ def _card(trip: core.Trip, goals: Sequence[goals_mod.Goal], fix: review_mod.Fix,
         "moves": [_move(trip, m, unassigned) for m in fix.moves],
         "resolved_text": _resolved_text(trip, goals, p) if solved else None,
         "remaining_text": _remaining_text(trip, goals, fix) if solved else None,
-        "not_fixed_reason": None if solved else NOT_FIXED_TEXT.get(fix.not_fixed or review_mod.BIG_CHANGE),
+        "not_fixed_reason": None if solved else NOT_FIXED_TEXT.get(fix.not_fixed or review_mod.BIG_CHANGE, NOT_FIXED_TEXT[review_mod.NOT_WORTH]),
     }
 
 

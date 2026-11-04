@@ -349,12 +349,10 @@ class _NoHours:
         return {pid: None for pid in place_ids}
 
 
-class _ReviewCall:
-    """llm이 더할 점검 도구(CourseReviewCall, #1326)의 대역 — 이 모듈은 그 클래스를 import하지 않고 tool 이름으로만 본다."""
-    tool = "review"
-
-    def model_dump(self):
-        return {"tool": "review"}
+def _ReviewCall():
+    """llm의 점검 도구 호출(CourseReviewCall) — 판단은 비어 있어도 도구 자체는 review 모드 밖에서 실패한다."""
+    from llm.schemas import CourseReviewCall
+    return CourseReviewCall(tool="review", order=[], verdicts=[], picks=[])
 
 
 def test_review_tool_outside_review_mode_is_a_failed_result_and_the_turn_continues():
